@@ -63,7 +63,7 @@ public:
         m_isInRegion = WTF::move(regionForCalls);
         BitVector crowdedBlocks = findCrowdedBlocks(numberOfRegisters);
         if (!crowdedBlocks.isEmpty()) {
-            std::optional<BitVector> region = findFrameRegionBeforeAllocation(m_code, crowdedBlocks);
+            std::optional<BitVector> region = growFrameRegionBeforeAllocation(m_code, m_isInRegion, crowdedBlocks);
             if (!region)
                 return false;
             m_isInRegion = WTF::move(*region);
@@ -287,7 +287,7 @@ bool splitLiveRangesAroundFrame(Code& code)
     constexpr unsigned minBlocksForPathWithoutFrame = 3;
     if (code.size() < minBlocksForPathWithoutFrame)
         return false;
-    std::optional<BitVector> regionForCalls = findFrameRegionBeforeAllocation(code, { });
+    std::optional<BitVector> regionForCalls = findFrameRegionBeforeAllocation(code);
     if (!regionForCalls)
         return false;
     CountByBank numberOfRegisters = countRegistersUsableWithoutFrame(code);

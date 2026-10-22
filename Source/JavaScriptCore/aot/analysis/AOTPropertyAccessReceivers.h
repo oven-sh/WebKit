@@ -7,10 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFamilyTables.h"
 #include "AOTGuardAvailability.h"
 #include "AOTIR.h"
 #include "AOTSortedSet.h"
 #include <compare>
+#include <limits>
 #include <span>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
@@ -20,41 +22,29 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class FlowResults;
 
-using LayoutList = SortedSet<LayoutID, 4>;
-
 struct PropertyAccessContext {
     const Program& program;
     const FlowResults* flow { nullptr };
 };
 
-struct ReceiverState {
-    OptionSet<ObjectMutation> impossibleMutations;
-    KeyEnumeration keys { KeyEnumeration::Unknown };
-    bool addedKeysAreComplete { false };
-
-    bool cannot(ObjectMutation mutation) const { return impossibleMutations.contains(mutation); }
-    void meetWith(const ReceiverState&);
-
-    friend bool operator==(const ReceiverState&, const ReceiverState&) = default;
-};
-
 ReceiverState receiverStateOf(const Program&, LayoutID);
+ReceiverState receiverStateOf(const Program&, LayoutSetID);
 ReceiverState receiverStateOf(const Program&, std::span<const LayoutID>);
 
 enum class OwnPropertyGain : uint8_t { Unknown, Impossible };
 
 OwnPropertyGain ownPropertyGainOf(const Program&, LayoutID, PropertyKeyID);
 
-enum class LayoutTestKind : uint8_t { Shape, Type };
+enum class LayoutTestKind : uint8_t { Type };
 
-LayoutTestKind layoutTestKindFor(const Program&, std::span<const LayoutID>);
+constexpr LayoutTestKind layoutTestKindFor(const Program&, std::span<const LayoutID>) { return LayoutTestKind::Type; }
 
 enum class InstanceCount : uint8_t { Unknown, AtMostOne };
 
 InstanceCount instanceCountOf(const PropertyAccessContext&);
 
 struct MemberCondition {
-    enum class Kind : uint8_t { MemberUnchanged, PrototypeLinkUnchanged, ClassEvaluatedOnce };
+    enum class Kind : uint8_t { MemberUnchanged, PrototypeLinkUnchanged, ClassEvaluatedOnce, InstancePrototypeUnchanged, MemberNotHidden, MemberPassedByStores };
 
     Kind kind { Kind::MemberUnchanged };
     LayoutID layout;
@@ -88,10 +78,11 @@ struct ReceiverCandidates {
 };
 
 // The allocated layouts whose objects have every one of the names, each as a field or as a member of a class above them.
-LayoutList allocatedLayoutsWith(const Program&, std::span<const PropertyKeyID> names);
+bool hasMemberToFindUnder(const Program&, LayoutID, PropertyKeyID name);
+LayoutList allocatedLayoutsWith(const Program&, std::span<const PropertyKeyID> names, size_t stopsCountingAbove = std::numeric_limits<size_t>::max());
 
-ReceiverCandidates candidatesOf(const Program&, const Type& receiver, const Type* prediction, LayoutSetID stamp);
-ReceiverCandidates receiverCandidates(const Program&, const Function&, ValueID receiver, LayoutSetID stamp);
+ReceiverCandidates candidatesOf(const Program&, const Type& receiver, const Type* expected, LayoutSetID stamp);
+ReceiverCandidates receiverCandidates(const Program&, const Function&, ValueID receiver, LayoutSetID stamp = { });
 
 enum class UnionPartKind : uint8_t {
     OtherObjects,
@@ -116,7 +107,11 @@ struct UnionPart {
 using UnionParts = Vector<UnionPart, 4>;
 
 UnionParts unionPartsOf(const Type&);
+// No fewer than unionPartsOf() gives, without the parts. Whoever needs two of them asks first.
+size_t maxNumberOfUnionParts(const Type&);
 bool isClosedUnion(const UnionParts&);
+// The same answer without the parts. Whoever gives up at the part OtherObjects asks first: most operands of untyped code have it, and the parts are a dozen types to build.
+inline bool isClosedUnion(const Type& type) { return !type.anyObject && !type.anyFunction && !type.environment && !type.opaque; }
 
 } } } // namespace JSC::AOT::Typed
 

@@ -102,7 +102,7 @@ function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
 }
 function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = ClaimDeclared v0 declared={type=L1}
+    v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = String string="typed"
     PropSet v1, v2 key="name"
     v4 = Double number=3.5
@@ -113,7 +113,7 @@ function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anythi
 }
 function f3 name="storeBackwards" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = ClaimDeclared v0 declared={type=L1}
+    v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = Null
     PropSet v1, v2 key="orNull"
     v4 = Boolean boolean=false
@@ -206,12 +206,12 @@ function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
-    v3 = ClaimDeclared v2 declared={type=undefined|null|L1}
+    v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
     Return v3
 }
 function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = ClaimDeclared v0 declared={type=L1}
+    v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = String string="typed"
     PropSet v1, v2 key="name"
     v4 = Double number=3.5
@@ -222,7 +222,7 @@ function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anythi
 }
 function f3 name="storeBackwards" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = ClaimDeclared v0 declared={type=L1}
+    v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = Null
     PropSet v1, v2 key="orNull"
     v4 = Boolean boolean=false

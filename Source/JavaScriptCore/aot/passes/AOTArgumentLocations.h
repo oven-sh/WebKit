@@ -95,8 +95,6 @@ EntryConvention entryConventionOf(const Function&);
 
 ConventionRegisters maxConventionRegisters();
 
-uint32_t numberOfStackWordsFor(std::span<const Representation>, ConventionRegisters);
-
 constexpr bool isCellOrBoxedValue(Representation representation)
 {
     return representation == Representation::Cell || representation == Representation::JSValue;

@@ -1,9 +1,9 @@
-# A heap environment allocated in a loop goes back to its layout's free list unless a reference to it escaped
+# A heap environment goes back to its layout's free list where the function has done with it, unless a reference to it escaped
 # FORM: Prepared
 # RUN: pass ReuseEnvironments
 # OPTIONS: disable=pass:AllocateInFrames
-# STATISTIC: EnvironmentsReused = 4
-# CHECK: reused environments: [L0 L1 L2 L3]
+# STATISTIC: EnvironmentsReused = 6
+# CHECK: reused environments: [L0 L1 L2 L3 L4 L7]
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment name="copiedPerIteration" fields=[{key="x" declared={type=anything}}]
@@ -46,6 +46,9 @@ function f0 name="copiedPerIteration" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: NewObject
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: b5():
+# CHECK-NEXT: ReleaseEnvironment v8
+# CHECK-NOT: ReleaseEnvironment
 
 function f1 name="diesOnTwoPaths" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
@@ -154,6 +157,10 @@ function f6 name="neverDeadInside" parameters=[{type=anything}, {type=boolean}] 
 # CHECK-LABEL: function f6 name="neverDeadInside"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: b3():
+# CHECK-NEXT: = GetEnvironmentField v5
+# CHECK-NEXT: ReleaseEnvironment v5
+# CHECK-NOT: ReleaseEnvironment
 
 function f7 name="markedOnEveryPath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
@@ -210,6 +217,9 @@ function f9 name="captureParameterDies" captures=[{type=env L7}] parameters=[{ty
 # CHECK-LABEL: function f9 name="captureParameterDies"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: b3():
+# CHECK-NEXT: ReleaseEnvironment v6
+# CHECK-NOT: ReleaseEnvironment
 
 function f10 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):

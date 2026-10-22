@@ -1,0 +1,22 @@
+# globalThis[name]("12")
+# The key names none of the members of the global object. What may be `eval`, `Function` or `Worker` is none of them: the call is a call of something nobody knows and no event.
+# The run time refuses an evaluator in an image whose build saw no application of one. read-of-the-global-object-by-name-hands-out-the-evaluator.ir names one
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK-NOT: unseen LoadsModuleByName
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=DateNow
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = ElemGet v3, v2
+    v5 = String string="12"
+    v6 = Call v4, -, v5
+    Return
+}

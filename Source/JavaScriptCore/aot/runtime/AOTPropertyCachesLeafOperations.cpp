@@ -8,12 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
 #include "AOTChainDependents.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleNamespace.h"
 #include "AOTModules.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeValidation.h"
@@ -68,7 +71,9 @@ static NEVER_INLINE void validateLookupResult(VM& vm, JSObject* object, UniquedS
     DeferGCForAWhile deferGC(vm);
     JSGlobalObject* globalObject = object->realm();
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool has = object->getPropertySlot(globalObject, uid, slot);
+    auto* proxy = dynamicDowncast<JSGlobalProxy>(object);
+    JSObject* first = proxy ? proxy->target() : object;
+    bool has = first->getPropertySlot(globalObject, uid, slot);
     if (has == isPresent && (!has || !value || (slot.isValue() && slot.getValue(globalObject, uid) == value)))
         return;
     crashOnValidationFailure(vm, { ValidationFailureKind::FastPathResultDiffers, { }, { }, object });
@@ -90,14 +95,74 @@ static StructuralRead readGeneric(VM& vm, JSObject* base, UniquedStringImpl* uid
     return read;
 }
 
+// A read of a field that no slot answers: the key order may list the field where its slot is empty, else the objects above answer as they are at this moment.
+static JSValue readFieldGeneric(Instance* instance, Object* object, UniquedStringImpl* uid)
+{
+    VM& vm = *instance->vm;
+    DeferGCForAWhile deferGC(vm);
+    const FieldData* field = object->fieldNamed(object->state(), uid);
+    if (!field || field->isAccessor() || field->isPrivate() || field->slot.representation() == SlotRepresentation::DeferredClosure)
+        return { };
+    if (JSValue value = object->readInline(*field))
+        return value;
+    if (object->hasExtraProperties() && livesInExtraProperties(vm, *object, *field))
+        return { };
+    ChainWalk walk = walkChain({ instance->globalObject, object->structure(), object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid);
+    switch (walk.result) {
+    case ChainWalkResult::Unknown:
+        return { };
+    case ChainWalkResult::Absent:
+        return jsUndefined();
+    case ChainWalkResult::Found:
+        if (walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || !isValidOffset(walk.offset))
+            return { };
+        return walk.holder->getDirect(walk.offset);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetGeneric, EncodedJSValue, (Instance* instance, JSCell* base, UniquedStringImpl* uid))
 {
+    LeafOperationScope leaf(*instance->vm);
+    if (Object* object = compiledObjectOrNull(base))
+        return JSValue::encode(readFieldGeneric(instance, object, uid));
     return JSValue::encode(readGeneric(*instance->vm, asObject(base), uid).value);
 }
 
 static bool isCachedByKey(PropertyCaches& caches, Structure* structure, UniquedStringImpl* uid, SlotAccess access)
 {
     return caches.findByKey(structure, uid, access);
+}
+
+// A stub finds no slot under a key whose name it cannot tell: a string that is no atom. What is filed under the name answers here.
+static StructuralRead readByFiledSlot(const JSObject* receiver, const Slot& slot)
+{
+    switch (slot.kind) {
+    case Slot::Kind::Absent:
+        return { jsUndefined(), LeafPresence::Absent };
+    case Slot::Kind::Value:
+        if (slot.has(Slot::isOwn))
+            return { receiver->getDirect(slot.offsetInStorage()), LeafPresence::Own };
+        // The own properties of a global proxy are those of its target, which a slot names as their holder.
+        return { asObject(slot.holder)->getDirect(slot.offsetInStorage()), receiver->type() == GlobalProxyType ? LeafPresence::TakeSlowPath : LeafPresence::Inherited };
+    default:
+        return { };
+    }
+}
+
+// What the stubs answer where the slot of the field is empty. A field that may exist without storage reads as undefined there, and whether it exists is left to the key order.
+static StructuralRead readEmptyFieldByFiledSlot(const Object& object, UniquedStringImpl* uid, const Slot& slot)
+{
+    if (slot.kind != Slot::Kind::Field)
+        return { };
+    const FieldData* field = object.fieldNamed(object.state(), uid);
+    if (!field || object.isInSlot(*field))
+        return { };
+    if (slot.has(Slot::absentIsUndefined))
+        return { jsUndefined(), LeafPresence::Absent };
+    if (slot.has(Slot::emptySlotMayBeUndefined))
+        return { jsUndefined(), LeafPresence::TakeSlowPath };
+    return { };
 }
 
 static JSValue readModuleNamespaceExport(Instance* instance, ModuleNamespace* namespaceObject, UniquedStringImpl* uid)
@@ -140,9 +205,13 @@ static JSValue getFromCompiledObject(Instance* instance, Object* object, Uniqued
 {
     JSValue value;
     if (const FieldData* field = object->fieldNamed(object->state(), uid)) {
+        if (field->isAccessor())
+            return { };
         if (field->slot.representation() != SlotRepresentation::DeferredClosure)
             value = object->readInline(*field);
-    } else if (JSObject* extra = object->extraProperties()) {
+    } else if (hasPendingStars(*object))
+        return { };
+    else if (JSObject* extra = object->extraProperties()) {
         Structure* extraPropertiesStructure = extra->structure();
         unsigned attributes;
         auto offset = extraPropertiesStructure->getWithoutMaterializing(uid, attributes);
@@ -201,7 +270,13 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
     Structure* structure = base->structure();
-    bool shouldCache = (structure->isDictionary() ? isHeldByCacheableDictionary(structure, uid) : true) && !isCachedByKey(*instance->state->propertyCaches, structure, uid, SlotAccess::Read);
+    const Slot* filedSlot = instance->state->propertyCaches->findByKey(structure, uid, SlotAccess::Read);
+    if (filedSlot) {
+        if (StructuralRead read = readByFiledSlot(base, *filedSlot); read.value)
+            return read;
+    }
+    bool shouldCache = (structure->isDictionary() ? isHeldByCacheableDictionary(structure, uid) : true) && !filedSlot;
+    shouldCache = shouldCache && instance->state->propertyCaches->shouldFile(structure->id(), uid, SlotAccess::Read);
     Object* object = compiledObjectOrNull(base);
     bool isNamespace = base->type() == ObjectType && isModuleNamespace(base);
     bool isOrdinary = !object && !isNamespace;
@@ -212,9 +287,11 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
     JSValue value;
     if (isOrdinary)
         value = getFromOrdinaryObject(instance, base, uid, slot);
-    else if (object)
+    else if (object) {
         value = getFromCompiledObject(instance, object, uid, slot, shouldCache);
-    else {
+        if (!value && filedSlot)
+            return readEmptyFieldByFiledSlot(*object, uid, *filedSlot);
+    } else {
         value = readModuleNamespaceExport(instance, uncheckedDowncast<ModuleNamespace>(base), uid);
         if (value)
             slot.setValue(base, 0, value);
@@ -238,12 +315,22 @@ static StructuralRead readElement(JSObject* object, uint32_t index)
     return { value, LeafPresence::Own };
 }
 
+// A stub has left because it could not tell the name of the key. The next key with the same text it can.
+static KeyName nameOfKeyForLeaf(Instance* instance, JSCell* key, KeyAtomization atomization)
+{
+    bool wasAtom = atomOfKey(key);
+    KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, atomization);
+    if (!wasAtom && name.kind == KeyNameKind::Name)
+        instance->state->propertyCaches->tables().rememberNameOfText(name.uid);
+    return name;
+}
+
 static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
 {
     if (!base->isObject())
         return { };
     JSObject* object = asObject(base);
-    KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, KeyAtomization::OnlyExisting);
+    KeyName name = nameOfKeyForLeaf(instance, key, KeyAtomization::OnlyExisting);
     switch (name.kind) {
     case KeyNameKind::NotAName:
         return { };
@@ -261,11 +348,13 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetByValGeneric, EncodedJSValue, (Instance* instance, JSCell* base, JSCell* key))
 {
+    LeafOperationScope leaf(*instance->vm);
     return JSValue::encode(readByKey(instance, base, key).value);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key))
 {
+    LeafOperationScope leaf(*instance->vm);
     return static_cast<size_t>(readByKey(instance, base, key).presence);
 }
 
@@ -285,11 +374,13 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
         auto stored = object->tryStoreExtraProperty(vm, uid, value, { Object::ExtraPropertyStoreFlag::IsKnownNotToBeField });
         return stored.kind == Object::ExtraPropertyStore::NotHandled ? LeafAnswer::TakeSlowPath : LeafAnswer::Yes;
     }
+    if (field->flags & (fieldIsReadOnly | fieldIsAccessor))
+        return LeafAnswer::TakeSlowPath;
     if (field->slot.representation() == SlotRepresentation::DeferredClosure || value.isObject() || object->hasFlagsInOrderWord() || !object->readInline(*field))
         return LeafAnswer::TakeSlowPath;
     if (!object->tryStore(vm, *field, value))
         return LeafAnswer::TakeSlowPath;
-    if (!isCached) {
+    if (!isCached && caches.shouldFile(structure->id(), uid, SlotAccess::Store)) {
         PutPropertySlot slot(object, true);
         caches.cache({ structure, { uid, std::nullopt }, SlotAccess::Store }, classifyCompiledObjectStore({ instance->globalObject, object, structure, uid, slot, PutMode::Strict }, *object));
     }
@@ -334,7 +425,9 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
             return LeafAnswer::TakeSlowPath;
         object->putDirectOffset(vm, *offset, value);
         slot.setExistingProperty(object, *offset);
-        cacheStore(instance, object, structure, uid, slot);
+        // Filing costs several times what the store has cost here, and most pairs of a Structure and a key never come again.
+        if (instance->state->propertyCaches->shouldFile(structure->id(), uid, SlotAccess::Store))
+            cacheStore(instance, object, structure, uid, slot);
         return LeafAnswer::Yes;
     }
     if (canOnlyReplace || !structure->isStructureExtensible())
@@ -350,7 +443,7 @@ static LeafAnswer putByKey(Instance* instance, JSCell* base, JSCell* key, JSValu
 {
     if (!base->isObject())
         return LeafAnswer::TakeSlowPath;
-    KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, KeyAtomization::Atomize);
+    KeyName name = nameOfKeyForLeaf(instance, key, KeyAtomization::Atomize);
     switch (name.kind) {
     case KeyNameKind::NotAName:
     case KeyNameKind::HasNoAtom:
@@ -368,6 +461,7 @@ static LeafAnswer putByKey(Instance* instance, JSCell* base, JSCell* key, JSValu
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key, EncodedJSValue encodedValue))
 {
+    LeafOperationScope leaf(*instance->vm);
     DeferGCForAWhile deferGC(*instance->vm);
     return static_cast<size_t>(putByKey(instance, base, key, JSValue::decode(encodedValue)));
 }

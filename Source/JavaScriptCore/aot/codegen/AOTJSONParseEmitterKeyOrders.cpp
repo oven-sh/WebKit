@@ -15,6 +15,9 @@
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "B3PatchpointValue.h"
+#include "B3StackmapGenerationParams.h"
+#include "CCallHelpers.h"
 #include <bit>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -50,7 +53,21 @@ public:
     }
 
     Pointer findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss);
+
+private:
+    void forgetTableOfEarlierProbes();
 };
+
+// A table that grows moves, and the pages it leaves are unmapped. What adds a transition only remembers an answer, so operations such as JSONObjectKey
+// declare no write for it, and without this B3 would probe with the base and the mask that an earlier probe loaded.
+void KeyOrderTransitionProbe::forgetTableOfEarlierProbes()
+{
+    B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);
+    clobber->effects = B3::Effects::none();
+    m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_mutableFields, clobber);
+    clobber->setRunsWithoutFrame(true);
+    clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+}
 
 Pointer KeyOrderTransitionProbe::findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss)
 {
@@ -65,6 +82,7 @@ Pointer KeyOrderTransitionProbe::findOrderAfter(Pointer numberedOrder, uint32_t 
     Integer wordsBefore = bitOr(orderAndCount, integer(static_cast<int64_t>(static_cast<uint64_t>(shapeWord) << 32)));
     Word32 product = mul(bitXor(low32(orderAndCount), word32(static_cast<int32_t>(constantHashTerms(shapeWord, slotKey)))), word32(static_cast<int32_t>(KeyOrderTransition::hashMultiplier)));
     Word32 hash = bitXor(product, shiftRightUnsigned(product, word32(KeyOrderTransition::hashFoldShift)));
+    forgetTableOfEarlierProbes();
     Word32 mask = loadMutable32(AOT_INSTANCE_OFFSET(objects.keyOrderTransitionMask));
     Pointer transitions(loadMutable64(AOT_INSTANCE_OFFSET(objects.keyOrderTransitions)).value());
     ValueFromBlock firstIndex = m_out.anchor(hash.value());

@@ -62,7 +62,7 @@ function f2 name="literalOrNull" parameters=[{type=number}, {type=number}, {type
 # CHECK: [[null2]]():
 # CHECK-NEXT: [[constant2]]: null = Null
 # CHECK-NEXT: Jump -> next [[merge2]]([[constant2]])
-# CHECK: [[merge2]]([[result2]]: null|object):
+# CHECK: [[merge2]]([[result2]]: null|L0):
 
 function f3 name="literalOrNullOrCached" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: number, v1: number):
@@ -234,8 +234,24 @@ function f8 name="nullOrCached" parameters=[{type=boolean}] results=[{type=anyth
 # CHECK: = Results {{*}}, v1, v0
 # CHECK: function [[worker7]] name="variantsMeetBeforeOneReturn" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=number}, {type=number}]
 # CHECK-NOT: NewObject
-# CHECK: [[literalTag7]]: 1 = Integer integer=1
-# CHECK: = Results [[literalTag7]], v0, v1
-# CHECK-NOT: NewObject
 # CHECK: [[nullTag7]]: 2 = Integer integer=2
 # CHECK: = Results [[nullTag7]], 
+# CHECK-NOT: NewObject
+# CHECK: [[literalTag7]]: 1 = Integer integer=1
+# CHECK: = Results [[literalTag7]], v0, v1
+
+# Whoever calls them needs no object
+function f9 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=boolean}, {type=number}, {type=number}, {type=boolean}, {type=number}, {type=number}, {type=number}, {type=string}, {type=boolean}, {type=number}, {type=string}, {type=boolean}, {type=number}, {type=number}, {type=boolean}, {type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: boolean, v5: number, v6: number, v7: boolean, v8: number, v9: number, v10: number, v11: string, v12: boolean, v13: number, v14: string, v15: boolean, v16: number, v17: number, v18: boolean, v19: number, v20: number, v21: boolean, v22: boolean):
+    v23 = CallDirect v0, v1 function=f0
+    v24 = CallDirect v2, v3, v4 function=f1
+    v25 = CallDirect v5, v6, v7 function=f2
+    v26 = CallDirect v8, v9 function=f3
+    v27 = CallDirect v10, v11, v12 function=f4
+    v28 = CallDirect v13, v14, v15 function=f5
+    v29 = CallDirect v16, v17, v18 function=f6
+    v30 = CallDirect v19, v20, v21 function=f7
+    v31 = CallDirect v22 function=f8
+    v32 = Undefined
+    Return v32
+}

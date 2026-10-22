@@ -78,8 +78,20 @@ ALWAYS_INLINE Latin1Character* appendJSONLiteral(Latin1Character* cursor, ASCIIL
     return cursor + text.length();
 }
 
+ALWAYS_INLINE Latin1Character* appendJSONBoolean(Latin1Character* cursor, bool value)
+{
+    memcpy(cursor, value ? "true" : "fals", 4);
+    cursor[4] = 'e';
+    return cursor + 5 - value;
+}
+
 ALWAYS_INLINE Latin1Character* appendJSONNumber(Latin1Character* cursor, double number)
 {
+    if (number >= 0 && number < 10000) [[likely]] {
+        uint32_t truncated = static_cast<uint32_t>(number);
+        if (static_cast<double>(truncated) == number) [[likely]]
+            return appendUpToFourJSONDigits(cursor, truncated);
+    }
     if (auto int32 = tryConvertToStrictInt32(number))
         return appendJSONInteger(cursor, *int32);
     if (!std::isfinite(number))

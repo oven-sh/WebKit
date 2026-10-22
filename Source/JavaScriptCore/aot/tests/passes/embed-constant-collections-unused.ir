@@ -1,0 +1,31 @@
+# A Set or a Map of constants that nobody reads is not made at all: the call goes away with its literal, and no data record is written for it
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unusedSetAndMap" results=[{type=undefined}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = NewArray v0, v1 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return
+}
+# CHECK-LABEL: function f0 name="unusedSetAndMap"
+# CHECK-NEXT: b0():
+# CHECK-NOT: NewArray
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: NewSetFromData
+# CHECK: Return
+
+function f1 name="usedSet" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = NewArray v0, v1 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f1 name="usedSet"
+# CHECK: = NewSetFromData data=d0

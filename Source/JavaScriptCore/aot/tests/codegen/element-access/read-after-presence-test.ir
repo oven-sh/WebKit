@@ -1,6 +1,6 @@
 # A read of an array element after the test for its presence has no arm for an absent element: the number that `undefined` converts to is not among the constants
 # FORM: Placed
-# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=b3:PinnedConstants
 # RUN: generate-code
 # CHECK: f0: size={{*}} constants=0
 # CHECK: f1: size={{*}} constants=1

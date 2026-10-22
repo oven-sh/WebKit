@@ -1,7 +1,7 @@
 # A literal handed to a callee that keeps it in an array for the length of the call is on the heap: a collection during the call follows the array. The same literal handed to a callee that reads it is in the frame
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
-# OPTIONS: check=VerifyEachPass
+# OPTIONS: check=VerifyEachPass disable=pass:SinkAllocations
 # STATISTIC: ObjectsInFrames = 1
 # CHECK: L1 may be in a frame
 # CHECK-NOT: L0 may be in a frame

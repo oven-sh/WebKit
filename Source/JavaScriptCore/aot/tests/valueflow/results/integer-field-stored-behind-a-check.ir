@@ -1,0 +1,37 @@
+# A typed constructor checks its parameters, so all that it stores rests on a check, and the type of such a value counts for nothing: the generic version stores what the same operations make of whatever the check has turned away.
+# `clamped` ends in `& 255`, which makes an integer from 0 to 255 of anything. `passed` is the parameter itself, at which integers from 4 to 6 arrive. `sum` is computed from it. No value of another type is ever stored to them.
+# `turnedAway` is a parameter at which any int32 arrives, behind a check for 0 to 1000: the generic version stores the rest, so the field may be stored a value of another type
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Point" fields=[{key="clamped" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="passed" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="sum" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="turnedAway" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="clamped" declared={type=int[0, 1000]} flags=[IsRequired]}, {key="passed" declared={type=int[0, 1000]} flags=[IsRequired]}, {key="sum" declared={type=int[0, 1000]} flags=[IsRequired]}, {key="turnedAway" declared={type=int[0, 1000]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = Integer integer=4
+    v6 = Integer integer=6
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v2, v5, v4
+    v9 = Call v7, -, v2, v6, v4
+    v10 = NewArray v8, v9 contents=anything holes=[]
+    Return v10
+}
+function f1 name="make" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=int[0, 1000] flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0, v1, v2):
+    v3 = Check v0 castType=number
+    v4 = Check v1 castType=number
+    v5 = Check v2 castType=int[0, 1000]
+    v6 = Integer integer=255
+    v7 = BitAnd v3, v6
+    v8 = Integer integer=1
+    v9 = Add v4, v8
+    v10 = NewObject -, v7, v4, v9, v5 layout=L0 fields=[0, 1, 2, 3]
+    v11 = FinishObject v10
+    Return v11
+}

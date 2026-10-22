@@ -20,6 +20,11 @@ public:
     void generateObjectHasOwn(const InlineCall&);
     void generateObjectPropertyIsEnumerable(const InlineCall&);
     void generateOwnPropertyDescriptorFields(const InlineCall&);
+    void generateObjectValues(const InlineCall&);
+    void generateObjectEntries(const InlineCall&);
+
+private:
+    Boxed firstArgumentOrUndefined(const InlineCall&);
 };
 
 } } } // namespace JSC::AOT::Typed

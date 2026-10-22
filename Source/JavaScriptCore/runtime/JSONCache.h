@@ -90,6 +90,8 @@ public:
         WriteBarrierStructureID to;
         PropertyOffset offset;
         uint8_t textLength;
+        // A source that is no Latin-1 text has one byte for each of its characters, and the same byte for many of them. An ASCII byte stands for itself in every source.
+        bool textIsASCII;
         uint16_t toNameIndex;
     };
     static_assert(sizeof(NameEntry) == 16);
@@ -102,6 +104,7 @@ public:
     struct StringEntry {
         JSString* string { nullptr };
         unsigned textLength { 0 };
+        bool textIsASCII { false };
     };
 
     class ParsingScope {
@@ -154,7 +157,7 @@ public:
     // of the source.
     ALWAYS_INLINE const StringEntry* findString(std::span<const Latin1Character> source) const LIFETIME_BOUND;
     // Records the first textLength characters of source, a string token without escapes, as the text of string.
-    ALWAYS_INLINE void addString(std::span<const Latin1Character> source, unsigned textLength, JSString*);
+    ALWAYS_INLINE void addString(std::span<const Latin1Character> source, unsigned textLength, JSString*, bool textIsASCII = false);
 
     ALWAYS_INLINE void clearStrings()
     {
@@ -245,7 +248,7 @@ private:
     // Laid out like NameTable. A text is only meaningful while its entry has a string.
     struct StringTable {
         ALWAYS_INLINE const StringEntry* match(unsigned index, std::span<const Latin1Character> source) const LIFETIME_BOUND;
-        ALWAYS_INLINE void insert(unsigned set, JSString*, std::span<const Latin1Character> source, unsigned textLength);
+        ALWAYS_INLINE void insert(unsigned set, JSString*, std::span<const Latin1Character> source, unsigned textLength, bool textIsASCII);
 
         std::array<StringEntry, stringEntrySize> m_entries { };
         std::array<NameText, stringEntrySize> m_texts { };

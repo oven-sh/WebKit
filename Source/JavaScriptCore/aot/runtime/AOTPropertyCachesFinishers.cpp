@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"
 #include "AOTRuntimeCounters.h"
@@ -46,8 +47,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallSetterOfSlot, void, (Instance* instance
 
 static void addPropertyByTransition(VM& vm, JSObject* target, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
-    ASSERT(newStructure->previousID() == target->structure() && newStructure->isValidOffset(offset));
-    target->growOutOfLineStorageForTransition(vm, newStructure);
+    ASSERT((newStructure->isTransitionFrom(target->structure()) || newStructure->transitionKind() == TransitionKind::PropertyRunAddition) && newStructure->isValidOffset(offset));
+    // An array that was born with room for its first named properties has the storage that the transition asks for.
+    bool hasRoomInOwnCell = !target->structure()->outOfLineCapacity() && newStructure->outOfLineCapacity() == initialOutOfLineCapacity
+        && std::bit_cast<char*>(target->butterfly()) == std::bit_cast<char*>(target) + sizeOfArrayWithStorage(0, propertyRoomOfArray);
+    if (!hasRoomInOwnCell)
+        target->growOutOfLineStorageForTransition(vm, newStructure);
     target->putDirectOffset(vm, offset, value);
     target->setStructure(vm, newStructure);
 }

@@ -49,8 +49,12 @@ struct SolvedContents {
     bool isLeaked { false };
 };
 
+AnswerFromTypes answerFromTypes(const EscapeAnalysisInputs&, AnswerFromTypes::Question, uint32_t subject, uint32_t operandIndex);
+
 struct PointsToResults {
     bool gaveUp { false };
+    uint64_t work { 0 };
+    Vector<AnswerFromTypes> answersFromTypes;
     Vector<SolvedObject> objects;
     Vector<SolvedUse> uses;
     Vector<SolvedContents> contents;
@@ -65,6 +69,9 @@ struct PointsToResults {
 };
 
 PointsToResults solvePointsTo(const EscapeAnalysisInputs&);
+
+// The solver takes a value of no other opcode for an object of its own. In a body that holds none of them, and no terminator whose result may be fresh, the objects are the entry parameters.
+const OpcodeSet& opcodesThatMayDefineObjects();
 
 } } } // namespace JSC::AOT::Typed
 

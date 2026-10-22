@@ -345,68 +345,68 @@ function f10 name="bodyTooLarge" parameters=[{type=anything}] results=[{type=any
 # CHECK: = StepGenerator
 # CHECK-NOT: @12:1
 
-function f11 name="callerTooLarge" parameters=[{type=anything}] results=[{type=anything}] {
+function f11 name="callerTooLarge" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f16 callPosition=1 module=m0}] {
   b0(v0: anything):
-    v1 = Call v0
-    v2 = Call v0
-    v3 = Call v0
-    v4 = Call v0
-    v5 = Call v0
-    v6 = Call v0
-    v7 = Call v0
-    v8 = Call v0
-    v9 = Call v0
-    v10 = Call v0
-    v11 = Call v0
-    v12 = Call v0
-    v13 = Call v0
-    v14 = Call v0
-    v15 = Call v0
-    v16 = Call v0
-    v17 = Call v0
-    v18 = Call v0
-    v19 = Call v0
-    v20 = Call v0
-    v21 = Call v0
-    v22 = Call v0
-    v23 = Call v0
-    v24 = Call v0
-    v25 = Call v0
-    v26 = Call v0
-    v27 = Call v0
-    v28 = Call v0
-    v29 = Call v0
-    v30 = Call v0
-    v31 = Call v0
-    v32 = Call v0
-    v33 = Call v0
-    v34 = Call v0
-    v35 = Call v0
-    v36 = Call v0
-    v37 = Call v0
-    v38 = Call v0
-    v39 = Call v0
-    v40 = Call v0
-    v41 = Call v0
-    v42 = Call v0
-    v43 = Call v0
-    v44 = Call v0
-    v45 = Call v0
-    v46 = Call v0
-    v47 = Call v0
-    v48 = Call v0
-    v49 = Call v0
-    v50 = Call v0
-    v51 = Call v0
-    v52 = Call v0
-    v53 = Call v0
-    v54 = Call v0
-    v55 = Call v0
-    v56 = Call v0
-    v57 = Call v0
-    v58 = Call v0
-    v59 = Call v0
-    v60 = Call v0
+    v1 = Call v0 @1:1
+    v2 = Call v0 @1:1
+    v3 = Call v0 @1:1
+    v4 = Call v0 @1:1
+    v5 = Call v0 @1:1
+    v6 = Call v0 @1:1
+    v7 = Call v0 @1:1
+    v8 = Call v0 @1:1
+    v9 = Call v0 @1:1
+    v10 = Call v0 @1:1
+    v11 = Call v0 @1:1
+    v12 = Call v0 @1:1
+    v13 = Call v0 @1:1
+    v14 = Call v0 @1:1
+    v15 = Call v0 @1:1
+    v16 = Call v0 @1:1
+    v17 = Call v0 @1:1
+    v18 = Call v0 @1:1
+    v19 = Call v0 @1:1
+    v20 = Call v0 @1:1
+    v21 = Call v0 @1:1
+    v22 = Call v0 @1:1
+    v23 = Call v0 @1:1
+    v24 = Call v0 @1:1
+    v25 = Call v0 @1:1
+    v26 = Call v0 @1:1
+    v27 = Call v0 @1:1
+    v28 = Call v0 @1:1
+    v29 = Call v0 @1:1
+    v30 = Call v0 @1:1
+    v31 = Call v0 @1:1
+    v32 = Call v0 @1:1
+    v33 = Call v0 @1:1
+    v34 = Call v0 @1:1
+    v35 = Call v0 @1:1
+    v36 = Call v0 @1:1
+    v37 = Call v0 @1:1
+    v38 = Call v0 @1:1
+    v39 = Call v0 @1:1
+    v40 = Call v0 @1:1
+    v41 = Call v0 @1:1
+    v42 = Call v0 @1:1
+    v43 = Call v0 @1:1
+    v44 = Call v0 @1:1
+    v45 = Call v0 @1:1
+    v46 = Call v0 @1:1
+    v47 = Call v0 @1:1
+    v48 = Call v0 @1:1
+    v49 = Call v0 @1:1
+    v50 = Call v0 @1:1
+    v51 = Call v0 @1:1
+    v52 = Call v0 @1:1
+    v53 = Call v0 @1:1
+    v54 = Call v0 @1:1
+    v55 = Call v0 @1:1
+    v56 = Call v0 @1:1
+    v57 = Call v0 @1:1
+    v58 = Call v0 @1:1
+    v59 = Call v0 @1:1
+    v60 = Call v0 @1:1
     v61 = NewClosure function=f17
     v62 = NewGenerator v61 function=f17 @112
     v63 = CallDirect v61, v0, v62 function=f22 @112
@@ -432,7 +432,7 @@ function f11 name="callerTooLarge" parameters=[{type=anything}] results=[{type=a
     Return v74
 }
 # CHECK-LABEL: function f11 name="callerTooLarge"
-# CHECK-NOT: inlineFrames=
+# CHECK-NOT: callee=f22
 # CHECK: = StepGenerator
 # CHECK-NOT: @12:1
 
@@ -499,7 +499,7 @@ function f13 name="oneEscapes" parameters=[{type=anything}, {type=anything}] res
     Return v21
 }
 # CHECK-LABEL: function f13 name="oneEscapes"
-# CHECK: inlineFrames=[{}, {callee=f22 callPosition=114 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f22 callPosition=90 module=m0}]
 # CHECK-NOT: StepGenerator v3
 # CHECK: = CallDirect v5, v0, v6 function=f22
 # CHECK-NOT: StepGenerator v3
@@ -534,7 +534,7 @@ function f14 name="stepsThroughCast" parameters=[{type=anything}] results=[{type
     Return v15
 }
 # CHECK-LABEL: function f14 name="stepsThroughCast"
-# CHECK: inlineFrames=[{}, {callee=f22 callPosition=116 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f22 callPosition=90 module=m0}]
 # CHECK-NOT: StepGenerator
 
 function f15 name="asyncGenerator" parameters=[{type=anything}] results=[{type=anything}] {

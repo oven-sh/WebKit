@@ -31,6 +31,9 @@ struct FieldAsProperty {
     const FieldData* field;
     // ,"name": as JSON writes it. Empty for a symbol and for a name with a character outside Latin-1.
     std::span<const Latin1Character> jsonKey;
+    // For a writer of JSON that reads the slot by itself. What it cannot write so has the representation of a deferred closure here: a field out of line, a field without a key for JSON.
+    uint32_t offsetForJSON;
+    SlotRepresentation representationForJSON;
 };
 
 // The keys of one list lie one behind the other.

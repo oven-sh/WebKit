@@ -1,6 +1,6 @@
 # In a layout with many optional fields that few of its objects get, those that do not fit under the inline cap are stored in the Extension, the least accessed ones first
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts
 # STATISTIC: FieldsOutOfLine = 52
 

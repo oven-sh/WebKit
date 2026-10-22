@@ -1,7 +1,7 @@
 # A splice that inserts as many elements as the limit allows is expanded inline
 # RUN: compile
 # RUN(SELECTED): pipeline Select
-# OPTIONS: limit=MaxInlineSpliceInsertions:1
+# OPTIONS: limit=MaxInlineSpliceInsertions:1 heat=EverythingIsHot
 # CHECK-NOT: loss MaxInlineSpliceInsertions
 # CHECK: image not empty
 
@@ -24,8 +24,11 @@ function f1 name="insertsOne" parameters=[{type=Array<number>}, {type=number}] r
     v4 = Call v3, v0, v2, v2, v1 calleeKey="splice"
     Return v4
 }
-# SELECTED-LABEL: function f1 name="insertsOne"
-# SELECTED: TryCallInline v0, {{*}}, v1 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/
+# Only its entrypoint enters each function, so the body is there
+# SELECTED-LABEL: name="insertsOne" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: TryCallInline [[array]], {{*}}, [[number]] inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/
 function f2 name="insertsOneWithUnknownDeleteCount" parameters=[{type=Array<number>}, {type=number}, {type=i32}] results=[{type=anything}] {
   b0(v0: Array<number>, v1: number, v2: i32):
     v3 = Integer integer=0
@@ -33,5 +36,8 @@ function f2 name="insertsOneWithUnknownDeleteCount" parameters=[{type=Array<numb
     v5 = Call v4, v0, v3, v2, v1 calleeKey="splice"
     Return v5
 }
-# SELECTED-LABEL: function f2 name="insertsOneWithUnknownDeleteCount"
-# SELECTED: TryCallInline v0, {{*}}, v2, v1 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/
+# SELECTED-LABEL: name="insertsOneWithUnknownDeleteCount" module=m0 role=GenericEntrypoint
+# SELECTED: [[receiver]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[inserted]]: number = AssumeType v3 castType=number
+# SELECTED: [[deleteCount]]: i32 = AssumeType v4 castType=i32
+# SELECTED: TryCallInline [[receiver]], {{*}}, [[deleteCount]], [[inserted]] inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/

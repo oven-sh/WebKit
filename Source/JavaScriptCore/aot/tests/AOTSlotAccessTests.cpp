@@ -34,7 +34,7 @@ static constexpr uint64_t untouchedBits = 0xa5a5a5a5a5a5a5a5ULL;
 
 static constexpr int32_t int32Samples[] = {
     0, 1, -1, 7, INT8_MIN, INT8_MAX, UINT8_MAX, INT16_MIN, INT16_MAX, UINT16_MAX, 1 << 24, (1 << 24) + 1,
-    INT32_MAX, INT32_MIN, absentInt32, undefinedInt32, nullInt32, doubleInExtensionInt32, minInlineInt32,
+    INT32_MAX, INT32_MIN, absentInt32, undefinedInt32, nullInt32, minInlineInt32 - 1, minInlineInt32,
 };
 
 static constexpr double doubleSamples[] = {
@@ -60,7 +60,6 @@ static constexpr IntegerRange integerRanges[] = {
     { SlotRepresentation::Int16, INT16_MIN, INT16_MAX },
     { SlotRepresentation::Int32, INT32_MIN, INT32_MAX },
     { SlotRepresentation::Uint32, 0, UINT32_MAX },
-    { SlotRepresentation::Int32OrDouble, minInlineInt32, INT32_MAX },
     { SlotRepresentation::OptionalInt32, minInlineInt32, INT32_MAX },
 };
 
@@ -154,8 +153,7 @@ static void testCellsRoundTrip(LoadedProgram& program)
         AOT_TEST_CHECK(tryWriteSlot(strings, representation, &slot, object));
         AOT_TEST_CHECK(bitsOutsideSlot(representation, slot) == bitsOutsideSlot(representation, untouchedBits));
         AOT_TEST_CHECK(cellInSlot(representation, &slot, cageBase) == object);
-        if (traits.valueKind != SlotValueKind::DeferredClosure)
-            AOT_TEST_CHECK(readSlot(representation, &slot, strings) == JSValue(object));
+        AOT_TEST_CHECK(readSlot(representation, &slot, strings) == JSValue(object));
     }
 }
 

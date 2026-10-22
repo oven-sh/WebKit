@@ -8,8 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTThreads.h"
+#include <memory>
 #include <optional>
 #include <span>
+#include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
@@ -32,9 +35,12 @@ struct OutliningSite {
     std::optional<uint32_t> exitArgument;
     ValueID root;
     bool rootIsUsed { false };
+    bool canPayOff { false };
+    uint32_t orderOfEntryBlock { 0 };
     Vector<ValueID, 6> liveIns;
     TypeID resultType;
     uint32_t codeBytes { 0 };
+    uint32_t callBytes { 0 };
     unsigned hash { 0 };
 };
 
@@ -43,9 +49,31 @@ inline std::span<const ValueID> entryValuesOf(const Function& function, const Ou
     return function.at(site.entryBlock).values.subspan(site.firstIndex, site.numberOfEntryValues);
 }
 
-Vector<OutliningSite> findOutliningSites(const Program&, const OptimizationInputs&, BuildContext&);
+// Looks at one function at a time, so that whoever has a function in the cache can have it looked at there.
+class OutliningSiteFinder {
+    WTF_MAKE_NONCOPYABLE(OutliningSiteFinder);
+public:
+    OutliningSiteFinder(const Program&, const OptimizationInputs&, BuildContext&);
+    ~OutliningSiteFinder();
+
+    // Once for a function, from any thread, while the caches of the program and an interning phase of its types are open. The body holds no provisional id.
+    // False where the function has no site, so that outlining leaves it as it is.
+    bool findIn(FunctionID);
+    // By function, as many as the program had when the finder was made.
+    std::span<const uint8_t> hasSites() const LIFETIME_BOUND;
+    // Behind the last function.
+    ParallelArray<OutliningSite> takeSites();
+
+private:
+    struct State;
+    std::unique_ptr<State> m_state;
+};
+
+ParallelArray<OutliningSite> findOutliningSites(const Program&, const OptimizationInputs&, BuildContext&);
 
 bool areEqualSites(const Program&, const OutliningSite&, const OutliningSite&);
+
+uint32_t estimatedCallBytes(const OutliningSite&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -8,36 +8,33 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTDiagnostics.h"
 #include "AOTThreads.h"
 #include <algorithm>
-#include <array>
-#include <optional>
 #include <tuple>
 #include <wtf/SaturatingArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using FailureByOpcode = std::array<std::optional<Wire::TypeTestFailure>, numberOfEnumerators<Opcode>>;
-
-static std::optional<Wire::TypeTestFailure> failureOf(Opcode opcode)
+static bool isTypeTest(Opcode opcode)
 {
-    if (opcode == Opcode::Claim || std::ranges::contains(replacedOperationsOf(opcode), Opcode::Claim))
-        return Wire::TypeTestFailure::Throws;
-    if (opcode == Opcode::TypeTest || familyOf(opcode) == OperationFamily::Guard)
-        return Wire::TypeTestFailure::TakesGenericPath;
-    return std::nullopt;
+    if (opcode == Opcode::Check || std::ranges::contains(replacedOperationsOf(opcode), Opcode::Check))
+        return true;
+    return opcode == Opcode::TypeTest || familyOf(opcode) == OperationFamily::Guard;
 }
 
-static FailureByOpcode computeFailureByOpcode()
+static OpcodeSet computeTypeTestOpcodes()
 {
-    FailureByOpcode failureByOpcode;
-    for (Opcode opcode : allMembersOf<Opcode>)
-        failureByOpcode[static_cast<size_t>(opcode)] = failureOf(opcode);
-    return failureByOpcode;
+    OpcodeSet typeTestOpcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (isTypeTest(opcode))
+            typeTestOpcodes.add(opcode);
+    }
+    return typeTestOpcodes;
 }
 
-static void appendRecord(const Program& program, FunctionID id, const Instruction& test, Wire::TypeTestFailure failure, Vector<Wire::TypeTestRecord>& records)
+static void appendRecord(const Program& program, FunctionID id, const Instruction& test, Vector<Wire::TypeTestRecord>& records)
 {
     const Function& function = program.at(id);
     Origin origin = test.origin();
@@ -49,40 +46,34 @@ static void appendRecord(const Program& program, FunctionID id, const Instructio
     records.append(Wire::TypeTestRecord {
         .location = location,
         .function = findFunctionAsRead(&program, source).index(),
-        .failure = failure,
+        .failure = Wire::TypeTestFailure::TakesGenericPath,
         .copies = 1,
     });
 }
 
-static void appendRecordsOf(const Program& program, FunctionID id, const FailureByOpcode& failureByOpcode, Vector<Wire::TypeTestRecord>& records)
+static void appendRecordsOf(const Program& program, FunctionID id, const OpcodeSet& typeTestOpcodes, Vector<Wire::TypeTestRecord>& records)
 {
-    const Function& function = program.at(id);
-    for (const Block& block : function.blocks) {
-        for (ValueID valueID : block.values) {
-            const Value& value = function.at(valueID);
-            if (std::optional<Wire::TypeTestFailure> failure = failureByOpcode[static_cast<size_t>(value.opcode)])
-                appendRecord(program, id, value, *failure, records);
-        }
+    forEachListedValue(program, id, typeTestOpcodes, [&](BlockID, uint32_t, ValueID, const Value& value) {
+        appendRecord(program, id, value, records);
+    });
+    if (!mayEndBlockWith(program, id, { TerminatorKind::SwitchOnShape }))
+        return;
+    for (const Block& block : program.at(id).blocks) {
         if (block.terminator.kind == TerminatorKind::SwitchOnShape)
-            appendRecord(program, id, block.terminator, Wire::TypeTestFailure::TakesGenericPath, records);
+            appendRecord(program, id, block.terminator, records);
     }
 }
 
 static auto orderKey(const Wire::TypeTestRecord& record)
 {
-    return std::tuple { record.location.module, record.location.position, record.failure, record.function };
-}
-
-static bool isSameSourceTest(const Wire::TypeTestRecord& a, const Wire::TypeTestRecord& b)
-{
-    return a.location == b.location && a.failure == b.failure;
+    return std::tuple { record.location.module, record.location.position, record.function };
 }
 
 static void foldCopies(Vector<Wire::TypeTestRecord>& sortedRecords)
 {
     size_t recordCount = 0;
     for (Wire::TypeTestRecord record : sortedRecords) {
-        if (recordCount && isSameSourceTest(sortedRecords[recordCount - 1], record)) {
+        if (recordCount && sortedRecords[recordCount - 1].location == record.location) {
             uint32_t& copies = sortedRecords[recordCount - 1].copies;
             copies = saturatingSum<uint32_t>(copies, record.copies);
             continue;
@@ -100,9 +91,9 @@ Vector<Wire::TypeTestRecord> collectTypeTestRecords(const Program& program)
 
 Vector<Wire::TypeTestRecord> collectTypeTestRecords(const Program& program, const ParallelLoops& loops)
 {
-    FailureByOpcode failureByOpcode = computeFailureByOpcode();
+    OpcodeSet typeTestOpcodes = computeTypeTestOpcodes();
     Vector<Wire::TypeTestRecord> records = collectInParallel<Wire::TypeTestRecord>(loops, program.functions.size(), [&](unsigned index, Vector<Wire::TypeTestRecord>& found) {
-        appendRecordsOf(program, FunctionID(index), failureByOpcode, found);
+        appendRecordsOf(program, FunctionID(index), typeTestOpcodes, found);
     });
 
     parallelSort(loops, records.mutableSpan(), [](const Wire::TypeTestRecord& a, const Wire::TypeTestRecord& b) {

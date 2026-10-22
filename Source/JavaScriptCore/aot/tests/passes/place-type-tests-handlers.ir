@@ -1,26 +1,34 @@
 # No proof is carried over a handler edge, and the copy of a stretch under a handler names the same handler
 # FORM: Prepared
-# RUN(F0): test-placement function=f0 site=v1:v4 site=v3:v4
+# RUN(F0): test-placement function=f0 site=v3:v6 site=v5:v6
 # RUN(F1): test-placement function=f1 site=v1:v3 site=v2:v3
 # RUN(PLAN): test-placement
 # RUN(IR): pass PlaceTypeTests
 # STATISTIC: StretchesNotClonable = 0
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Other" fields=[{key="c" declared={type=number}}]
 
+# Code that is not usual, as a handler is, gets a test only where another test of the value has failed on the way in.
 function f0 name="useInHandler" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object) handler=b1():
-    v1 = PropGet v0 key="a"
-    Return v1
-  b1() role=CatchHandler:
-    v2 = CatchValue
-    v3 = PropGet v0 key="b"
-    v4 = ShapeTest v0 layouts=[L0]
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Undefined
+    Return v2
+  b2() frequency=Unlikely handler=b3():
+    v3 = PropGet v0 key="a"
     Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = PropGet v0 key="b"
+    v6 = ShapeTest v0 layouts=[L0]
+    Return v5
 }
-# F0: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 4
-# F0-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v3; uses v3; cloned 0
+# F0: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3; cloned 4
+# F0-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v5; uses v5; cloned 0
 # F0-NOT: stretch
 
 function f1 name="useAfterJump" parameters=[{type=object}] results=[{type=anything}] {
@@ -35,8 +43,8 @@ function f1 name="useAfterJump" parameters=[{type=object}] results=[{type=anythi
 # F1: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1 v2; cloned 4
 # F1-NOT: stretch
 
-function f2 name="stretchUnderHandler" parameters=[{type=object predicted=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: number) handler=b2(v1):
+function f2 name="stretchUnderHandler" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number) handler=b2(v1):
     v2 = PropGet v0 key="a"
     Jump -> next b1()
   b1() handler=b2(v1):
@@ -47,17 +55,17 @@ function f2 name="stretchUnderHandler" parameters=[{type=object predicted=L0}, {
     Return v4
 }
 # PLAN-LABEL: function f2
-# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v2; uses v2 v3; cloned 8
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v2; test BelongsToInstance v0 before v2; uses v2 v3; cloned 8
 # PLAN-NOT: stretch
 # IR-LABEL: function f2 name="stretchUnderHandler"
-# IR: [[test2]]: boolean = ShapeTest v0 layouts=[L0]
-# IR-NEXT: Branch [[test2]] -> taken [[passed2]](| 0), notTaken [[failed2]]()
+# IR: [[test2]]:{{*}}= TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[test2]] -> taken [[passed2]](| 0), notTaken [[copy2]]()
 # IR-NEXT: b1() handler=b2(v1):
-# IR-NEXT: v3: number = GetSlot v0, [[guard2]] key="b" receivers=[L0] level=Predicted
+# IR-NEXT: v3: number = GetSlot [[object2]], [[guard2]] key="b" receivers=[L0] level=Expected
 # IR-NEXT: Return v3
 # IR-NEXT: b2(v4: number) role=CatchHandler:
-# IR: [[fast2]]() handler=b2(v1):
-# IR-NEXT: v2: number = GetSlot v0, [[guard2]] key="a" receivers=[L0] level=Predicted
+# IR: [[fast2]]([[guard2]]: guard) handler=b2(v1):
+# IR-NEXT: v2: number = GetSlot [[object2]], [[guard2]] key="a" receivers=[L0] level=Expected
 # IR-NEXT: Jump -> next b1()
 # IR-NEXT: [[copy2]]() frequency=Unlikely handler=b2(v1):
 # IR-NEXT: = PropGet v0 key="a"
@@ -65,16 +73,15 @@ function f2 name="stretchUnderHandler" parameters=[{type=object predicted=L0}, {
 # IR-NEXT: [[copyOfRest2]]() frequency=Unlikely handler=b2(v1):
 # IR-NEXT: [[generic2]]:{{*}}= PropGet v0 key="b"
 # IR-NEXT: Return [[generic2]]
-# IR-NEXT: [[passed2]]([[guard2]]: guard):
-# IR-NEXT: Jump -> next [[fast2]]()
-# IR-NEXT: [[failed2]]() frequency=Unlikely:
-# IR-NEXT: Jump -> next [[copy2]]()
-# IR-NEXT: }
+# IR-NEXT: [[passed2]]([[object2]]: L0):
+# IR-NEXT: [[own2]]: boolean = BelongsToInstance [[object2]]
+# IR-NEXT: Branch [[own2]] -> taken [[fast2]](| 0), notTaken [[copy2]]()
+# IR: }
 
-function f3 name="throwingValueBetween" parameters=[{type=anything predicted=number}, {type=anything}] results=[{type=anything}] {
+function f3 name="throwingValueBetween" parameters=[{type=number flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ number, v1: anything) handler=b1():
     v2 = Mul v0, v0
-    v3 = Claim v1 castType=string
+    v3 = CheckInitialized v1 name="late"
     v4 = Mul v0, v0
     Return v4
   b1() role=CatchHandler:
@@ -88,6 +95,6 @@ function f3 name="throwingValueBetween" parameters=[{type=anything predicted=num
 # IR: = TypeTest v0 testedType=number
 # IR-NOT: TypeTest
 # IR: v2: number = Mul [[number3]], [[number3]]
-# IR-NEXT: v3: string = Claim v1 castType=string
+# IR-NEXT: v3: anything = CheckInitialized v1 name="late"
 # IR-NEXT: v4: number = Mul [[number3]], [[number3]]
 # IR-NOT: TypeTest

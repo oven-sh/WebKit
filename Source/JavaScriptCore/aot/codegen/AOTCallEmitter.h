@@ -19,7 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class ClosureCells : uint8_t;
 
 // The entry of the table that the callee is known to be. Validation compares the call with it.
 struct CalledBuiltin {
@@ -31,8 +30,9 @@ struct ValueCall {
     Boxed callee;
     Boxed thisValue;
     std::span<const Boxed> arguments;
-    std::optional<StringID> calleeName;
     CalledBuiltin builtin { };
+    // AOTStubsCalls.h, callValueLending().
+    uint8_t lentArguments { 0 };
 };
 
 struct ConventionCall {
@@ -54,7 +54,7 @@ public:
     void generateCallList(const ValueContext&);
     void generateConstructList(const ValueContext&);
     void generateCallDirect(const ValueContext&);
-    void generateCallGroup(const ValueContext&);
+    void generateCallTable(const ValueContext&);
     void generateResults(const ValueContext&);
     void generateResultAt(const ValueContext&);
 
@@ -66,10 +66,11 @@ public:
     Operand callDirect(const OperationContext&, FunctionID, std::span<const Operand> arguments, const CallOptions& = { });
 
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
-    void requireCallableBeforeTailCall(const OperationContext&, Boxed callee, std::optional<StringID> name);
+    void requireCallableBeforeTailCall(const OperationContext&, Boxed callee);
     void didEmitTailCall();
 
     void returnValues(const TerminatorContext&, std::span<const Operand>);
+    void returnMisfit(Boxed);
 
 private:
     enum class OmittedArguments : uint8_t { MustBePassed, MayBeOmitted };
@@ -111,15 +112,17 @@ private:
     void defineResultsOfCall(const ValueContext&, std::span<const ArgumentLocation> results, B3::PatchpointValue*);
     Operand resultOfCall(const ArgumentLocation&, LValue);
 
-    Pointer valueEntryOf(const OperationContext&, CellPointer closure, ClosureCells);
 
+    void meetLandingOfMisfit(const ValueContext&, LValue returned);
     void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&);
     void jumpAfterFrameTeardown(const CallTarget&, const PlacedArguments&);
     void callFromArgumentListFrame(const CallTarget&, const PlacedArguments&);
     void tailCallValue(const ValueContext&, const ValueCall&);
+    void callAndReturnIfCalleeEndsItsTailCalls(const ValueContext&, const ValueCall&);
     bool hasStackWordsOfCaller(uint32_t numberOfWords) const;
 
     std::optional<Vector<BuiltinID>> m_builtinsCalledByNativeCode;
+    LBasicBlock m_landingOfLastCall { nullptr };
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3Common.h"
 #include "B3CycleForest.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
@@ -122,18 +123,65 @@ private:
     Procedure& m_proc;
 };
 
+class FrequencyEstimateOfProcedure final : public FrequencyEstimate {
+public:
+    explicit FrequencyEstimateOfProcedure(Procedure& proc)
+        : m_proc(proc)
+        , m_cycles(proc)
+        , m_graph(proc)
+        , m_estimator(m_graph, m_cycles)
+    {
+        m_estimator.estimateWeights();
+        if (shouldValidateIRAtEachPhase(proc))
+            m_estimatedBlocks = collectBlocks();
+    }
+
+    void setBlockFrequencies() final
+    {
+        if (shouldValidateIRAtEachPhase(m_proc))
+            RELEASE_ASSERT(m_estimatedBlocks == collectBlocks());
+        m_estimator.estimateFrequencies();
+        for (BasicBlock* block : m_proc)
+            block->setFrequency(static_cast<float>(m_estimator.frequencyOf(block)));
+    }
+
+private:
+    struct EstimatedBlock {
+        friend bool operator==(const EstimatedBlock&, const EstimatedBlock&) = default;
+
+        BasicBlock* block;
+        unsigned index;
+        BasicBlock::SuccessorList successors;
+        bool entersEverySuccessor;
+    };
+
+    Vector<EstimatedBlock> collectBlocks()
+    {
+        Vector<EstimatedBlock> result;
+        for (BasicBlock* block : m_proc)
+            result.append(EstimatedBlock { block, block->index(), block->successors(), m_graph.entersEverySuccessor(block) });
+        return result;
+    }
+
+    Procedure& m_proc;
+    CycleForest m_cycles;
+    FrequencyGraph m_graph;
+    WTF::FrequencyEstimator<FrequencyGraph> m_estimator;
+    Vector<EstimatedBlock> m_estimatedBlocks;
+};
+
 } // anonymous namespace
 
-bool estimateFrequencies(Procedure& proc)
+std::unique_ptr<FrequencyEstimate> FrequencyEstimate::create(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "estimateFrequencies"_s);
     proc.resetValueOwners();
-    CycleForest cycles(proc);
-    FrequencyGraph graph(proc);
-    WTF::FrequencyEstimator<FrequencyGraph> estimator(graph, cycles);
-    estimator.run();
-    for (BasicBlock* block : proc)
-        block->setFrequency(static_cast<float>(estimator.frequencyOf(block)));
+    return makeUnique<FrequencyEstimateOfProcedure>(proc);
+}
+
+bool estimateFrequencies(Procedure& proc)
+{
+    FrequencyEstimate::create(proc)->setBlockFrequencies();
     return true;
 }
 

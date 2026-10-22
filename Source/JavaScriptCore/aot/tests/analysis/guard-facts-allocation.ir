@@ -1,4 +1,4 @@
-# An allocation proves its own shape, one fact per set of locations it depends on, and what the shape epoch renews is a fact of its own
+# An allocation proves its own shape, one fact per set of locations it depends on
 # FORM: Prepared
 # RUN: guards
 
@@ -12,7 +12,7 @@ function f0 name="objectNamedAsGuard" parameters=[{type=anything}] results=[{typ
     Return v2
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v1 facts: [Shape OwnInstance of v1 by allocation v1 reads ShapeWords[L0], SlotFilled of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties of v1 by allocation v1 reads NamedProperties, NotFrozen KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
+# CHECK-NEXT: v1 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled NotFrozen of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
 # CHECK-NEXT: b0 available at head: []
 
 function f1 name="arrayNamedAsGuard" parameters=[{type=anything}] results=[{type=anything}] {

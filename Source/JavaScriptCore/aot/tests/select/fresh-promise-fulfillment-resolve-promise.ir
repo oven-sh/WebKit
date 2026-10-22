@@ -1,6 +1,6 @@
 # A promise that no operation has taken since its allocation is fulfilled by two stores, under a test of the value where its type admits a thenable
 # FORM: Prepared
-# OPTIONS: heat=only-loops-are-hot
+# OPTIONS: heat=everything-is-hot
 # STATISTIC: FreshPromiseFulfillmentGroups = 6
 # RUN: pass Select
 # RUN(SLOW): pass Select

@@ -1,9 +1,8 @@
-# A loop that also leaves through a second test is still counted for the back end: every trip passes the comparison with the bound, so the poll leaves the loop
+# A loop that also leaves through a second test is still counted for the back end: every trip passes the comparison with the bound
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code
 # STATISTIC: KnownInductionsUsed >= 1
-# STATISTIC: LoopPollsStripMined = 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -11,12 +10,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
-    v2 = BitOr v1, v1
-    v3 = CallDirect v2, v2 function=f1
-    Return v3
+    v2 = ToNumber v1
+    v3 = BitOr v2, v2
+    v4 = CallDirect v3, v3 function=f1
+    Return v4
 }
-function f1 name="leavesEarly" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
+function f1 name="leavesEarly" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
     v2 = Integer integer=0
     Jump -> next b1(v2, v2)
   b1(v3, v4):

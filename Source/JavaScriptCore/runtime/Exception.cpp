@@ -27,6 +27,7 @@
 #include "Exception.h"
 
 #include "AOTStackTrace.h"
+#include "CallFrameInlines.h"
 #include "DeferGCInlines.h"
 #include "ErrorInstance.h"
 #include "Interpreter.h"
@@ -35,6 +36,7 @@
 #include "StructureCreateInlines.h"
 #include "JSWebAssemblyException.h"
 #include "StructureInlines.h"
+#include "VMInlines.h"
 #include "WasmTag.h"
 
 namespace JSC {
@@ -105,20 +107,59 @@ Exception::Exception(VM& vm, JSValue thrownValue)
 Exception::~Exception() = default;
 
 #if ENABLE(AOT)
-NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm)
+void Exception::retainReturnAddresses(VM& vm, AOT::ReturnAddressTrace* returnAddresses, Vector<StackFrame>&& otherFrames)
 {
-    std::unique_ptr<Vector<StackFrame>> otherFrames;
-    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, Options::exceptionStackTraceLimit(), otherFrames);
-    if (!returnAddresses)
-        return false;
     {
         Locker locker { cellLock() };
-        if (otherFrames)
-            m_stack = WTF::move(*otherFrames);
+        m_stack = WTF::move(otherFrames);
         setReturnAddresses(returnAddresses);
     }
     vm.writeBarrier(this);
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
+}
+
+// Two readers tell the stack of the Error from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
+ErrorInstance* Exception::errorToTakeStackFrom(VM& vm, JSValue thrownValue)
+{
+    auto* error = dynamicDowncast<ErrorInstance>(thrownValue);
+    if (!error || !error->returnAddresses() || error->realm()->debugger())
+        return nullptr;
+    CallFrame* topFrame = vm.topJSCallFrame();
+    if (topFrame && topFrame->codeBlock())
+        return nullptr;
+    return error;
+}
+
+void Exception::takeStackFrom(VM& vm, ErrorInstance& error)
+{
+    const Vector<StackFrame>* otherFrames = error.framesBesideReturnAddresses();
+    retainReturnAddresses(vm, error.returnAddresses(), otherFrames ? Vector<StackFrame>(*otherFrames) : Vector<StackFrame>());
+}
+
+Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue)
+{
+    ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
+    if (!error)
+        return nullptr;
+    // The end of a collection may turn the stack of the Error into text.
+    DeferGC deferGC(vm);
+    Exception* result = new (NotNull, allocateCell<Exception>(vm)) Exception(vm, thrownValue);
+    result->Base::finishCreation(vm);
+    result->takeStackFrom(vm, *error);
+    return result;
+}
+
+NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm)
+{
+    if (ErrorInstance* error = errorToTakeStackFrom(vm, value())) {
+        takeStackFrom(vm, *error);
+        return true;
+    }
+    std::unique_ptr<Vector<StackFrame>> otherFrames;
+    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, Options::exceptionStackTraceLimit(), otherFrames);
+    if (!returnAddresses)
+        return false;
+    retainReturnAddresses(vm, returnAddresses, otherFrames ? WTF::move(*otherFrames) : Vector<StackFrame>());
     return true;
 }
 #endif

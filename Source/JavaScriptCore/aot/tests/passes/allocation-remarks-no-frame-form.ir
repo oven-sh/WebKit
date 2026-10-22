@@ -1,11 +1,12 @@
-# An array is never placed in a frame, and its remark says so; an object that could be in a frame names what keeps it on the heap
+# An array with a hole is never placed in a frame, and its remark says so; an object and an array that could be in a frame name what keeps them on the heap
 # OPTIONS: report=Allocations
 # RUN: allocation-remarks
 # CHECK: main.js:2: heap: Call cause=HasNoFrameForm
 # CHECK-NEXT: main.js:3: heap: Call cause=Escapes
+# CHECK-NEXT: main.js:4: heap: Call cause=Escapes
 # CHECK-NOT: :
 
-module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 10, 20, 30]}
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 10, 20, 30, 40]}
 entry module=m0
 layout L0 name="Pair" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
 
@@ -13,8 +14,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
-    v2 = NewArray v1, v1 contents=anything @10
+    v2 = NewArray v1, v1 contents=anything holes=[1] @10
     v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1] @20
-    v4 = Call v1, -, v2, v3
+    v4 = NewArray v1, v1 contents=anything @30
+    v5 = Call v1, -, v2, v3, v4
     Return
 }

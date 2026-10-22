@@ -233,7 +233,7 @@ public:
         AssemblerLabel emittedLabel = call.m_label;
         call.m_label = applyOffset(emittedLabel);
         MacroAssembler::linkCall(code(), call, function);
-        if (recordsLinks()) [[unlikely]]
+        if (m_records) [[unlikely]]
             didLinkCall(call, emittedLabel, function.untaggedPtr());
     }
     
@@ -254,7 +254,7 @@ public:
         MacroAssembler::linkJump(code(), jump, label);
         BranchEncoding encoding = BranchEncoding::Direct;
 #endif
-        if (recordsLinks()) [[unlikely]]
+        if (m_records) [[unlikely]]
             didLinkJump(jump, emittedLabel, encoding, label.dataLocation());
     }
 
@@ -269,7 +269,7 @@ public:
     {
         AssemblerLabel target = applyOffset(label.m_label);
         MacroAssembler::linkPointer(code(), target, value);
-        if (recordsLinks()) [[unlikely]]
+        if (m_records) [[unlikely]]
             recordExternalLink(target, value);
     }
 
@@ -278,7 +278,7 @@ public:
     {
         AssemblerLabel target = applyOffset(label.m_label);
         MacroAssembler::linkPointer(code(), target, value);
-        if (recordsLinks()) [[unlikely]]
+        if (m_records) [[unlikely]]
             recordExternalLink(target, value.untaggedPtr());
     }
 
@@ -414,21 +414,21 @@ ALLOW_NONLITERAL_FORMAT_END
     const Vector<WideImmediate>& wideImmediates() const LIFETIME_BOUND
     {
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
-        return m_wideImmediates;
+        return m_records->wideImmediates;
     }
 
     const Vector<ExternalLink>& externalLinks() const LIFETIME_BOUND
     {
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
-        return m_externalLinks;
+        return m_records->externalLinks;
     }
 
     bool hasProcessAddress() const
     {
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
-        if (m_patchablePointerCount || !m_externalLinks.isEmpty())
+        if (m_records->patchablePointerCount || !m_records->externalLinks.isEmpty())
             return true;
-        return m_wideImmediates.containsIf([](const WideImmediate& immediate) {
+        return m_records->wideImmediates.containsIf([](const WideImmediate& immediate) {
             return immediate.provenance == ImmediateProvenance::Pointer;
         });
     }
@@ -438,10 +438,28 @@ ALLOW_NONLITERAL_FORMAT_END
     const Vector<LinkedSite>& linkedSites() const LIFETIME_BOUND
     {
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsLinkedSites);
-        return m_linkedSites;
+        return m_records->linkedSites;
     }
 
 private:
+    struct Records {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(Records);
+
+#if CPU(X86_64)
+        Vector<X86JumpShift> jumpShifts;
+        size_t jumpShiftCursor { 0 };
+        Vector<X86EmittedJump> emittedJumps;
+#endif
+        unsigned patchablePointerCount { 0 };
+        Vector<WideImmediate> wideImmediates;
+        Vector<ExternalLink> externalLinks;
+        Vector<LinkedSite> linkedSites;
+    };
+
+    struct RecordsDeleter {
+        JS_EXPORT_PRIVATE void operator()(Records*) const;
+    };
+
     JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithoutDisassemblyImpl(ASCIILiteral);
     JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithDisassemblyImpl(bool dumpDisassembly, ASCIILiteral, const char* format, ...) WTF_ATTRIBUTE_PRINTF(4, 5);
 
@@ -464,8 +482,8 @@ private:
         src = src.labelAtOffset(-executableOffsetFor(src.offset()));
 #endif
 #if CPU(X86_64)
-        if (!m_jumpShifts.isEmpty()) [[unlikely]]
-            src = src.labelAtOffset(-static_cast<int>(shortenedJumpShiftAt(m_jumpShifts.span(), src.offset())));
+        if (m_records) [[unlikely]]
+            src = src.labelAtOffset(-static_cast<int>(jumpShiftAt(src.offset())));
 #endif
         return src;
     }
@@ -484,6 +502,10 @@ private:
     bool recordsLinks() const { return m_policy.recordsProcessAddresses || m_policy.recordsLinkedSites; }
 
     void takeRecords(MacroAssembler&);
+    void finalizeRecords();
+#if CPU(X86_64)
+    JS_EXPORT_PRIVATE uint32_t jumpShiftAt(uint32_t offset) const;
+#endif
     JS_EXPORT_PRIVATE void didLinkCall(Call, AssemblerLabel emittedLabel, const void* target);
     JS_EXPORT_PRIVATE void didLinkJump(Jump, AssemblerLabel emittedLabel, BranchEncoding, const void* target);
     JS_EXPORT_PRIVATE void recordExternalLink(AssemblerLabel, const void* target);
@@ -532,10 +554,6 @@ private:
 #endif
     bool m_shouldPerformBranchCompaction { true };
 #endif
-#if CPU(X86_64)
-    Vector<X86JumpShift> m_jumpShifts;
-    Vector<X86EmittedJump> m_emittedJumps;
-#endif
     bool m_didAllocate { false };
     bool m_didFinalize { false };
     AssemblerPolicy m_policy;
@@ -553,10 +571,7 @@ private:
     CodePtr<LinkBufferPtrTag> m_code;
     Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_linkTasks;
     Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_lateLinkTasks;
-    unsigned m_patchablePointerCount { 0 };
-    Vector<WideImmediate> m_wideImmediates;
-    Vector<ExternalLink> m_externalLinks;
-    Vector<LinkedSite> m_linkedSites;
+    std::unique_ptr<Records, RecordsDeleter> m_records;
     std::unique_ptr<IRDumpDebugInfo> m_irDumpDebugInfo;
     std::unique_ptr<SourceCodeDumpDebugInfo> m_sourceCodeDebugInfo;
 

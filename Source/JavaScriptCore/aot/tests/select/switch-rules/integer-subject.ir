@@ -29,13 +29,13 @@ function f0 name="three-integers" parameters=[{type=i32}] results=[{type=i32}] {
     Return v0
 }
 
-# CHECK-LABEL: function f1 name="number-claimed-as-integer-after-chain"
+# CHECK-LABEL: function f1 name="number-cast-to-integer-after-chain"
 # CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: [[integer]]: i32 = Claim v0 castType=i32
+# CHECK-NEXT: [[integer]]: i32 = AssumeType v0 castType=i32
 # CHECK: Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b4()
-function f1 name="number-claimed-as-integer-after-chain" parameters=[{type=number}] results=[{type=number}] {
+function f1 name="number-cast-to-integer-after-chain" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
-    v1 = Claim v0 castType=i32
+    v1 = AssumeType v0 castType=i32
     v2 = Integer integer=1
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -61,7 +61,7 @@ function f1 name="number-claimed-as-integer-after-chain" parameters=[{type=numbe
 # CHECK-NOT: Switch
 function f2 name="integer-ends-chain" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
-    v1 = Claim v0 castType=i32
+    v1 = AssumeType v0 castType=i32
     v2 = Integer integer=1
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()

@@ -1,0 +1,83 @@
+# local = [1]; local[i] = 1; local[0]            named = [1]; named[name] = 1            below = [1]; Object.setPrototypeOf(below, { get 0() { } })
+# function makesArray() { const made = [1]; made[i] = 1; return made }            class Box { set x(value) { } }; class Plain { constructor() { this.x = 1 } }; box = new Box; plain = new Plain
+# An array that stays in its function arrives at no position: flow's proofs about it stand with its site. What a call answers is described by the results of its callees.
+# RUN: runs-no-code x 0
+# CHECK: f0 v4: Array<1>: x=no|no 0=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f0 v4 made: x=yes|yes 0=yes|yes any=yes|yes keys=yes iterate=yes convert=yes define=no unlisted=no called=yes
+# CHECK: f0 v7 made: x=no|no 0=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f0 v12 made: x=no|no 0=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f0 v16 made: x=yes|yes 0=yes|yes any=yes|yes keys=yes iterate=yes convert=yes define=no unlisted=no called=yes
+# CHECK: f0 v22 made: x=no|no 0=no|no any=no|no keys=no iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f0 v27 made: x=yes|yes 0=no|no any=no|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f3 v1 made and returned: x=yes|yes 0=yes|yes any=yes|yes keys=yes iterate=yes convert=yes define=no unlisted=no called=yes
+# CHECK: f4 v2: object: x=no|no 0=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f4 v2 made and returned: x=no|no 0=no|no any=no|no keys=no iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f5 v2 made and returned: x=yes|yes 0=no|no any=no|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Spy"
+layout L1 kind=Instance name="Box" constructor=f4
+layout L2 kind=Instance name="Plain" constructor=f5 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="name" [isFreeName]
+    v4 = NewArray v0 contents=anything
+    ElemSet v4, v0, v0 mode=Strict
+    v6 = ElemGet v4, v1
+    v7 = NewArray v0 contents=anything
+    ElemSet v7, v3, v0 mode=Strict
+    v9 = NewObject layout=L0 fields=[]
+    v10 = NewClosure function=f1
+    DefineGetter v9, v10 key="0"
+    v12 = NewArray v0 contents=anything
+    v13 = Builtin builtin=ObjectSetPrototypeOf
+    v14 = Call v13, -, v12, v9
+    v15 = NewClosure function=f3
+    v16 = Call v15
+    v17 = NewClosure function=f4
+    v18 = NewClass v17 layout=L1
+    v19 = NewClosure function=f2
+    DefineMethod v18, v19 layout=L1 methodKind=Setter key="x"
+    v21 = FinishClass v18 layout=L1
+    v22 = Construct v21
+    PropSet v22, v0 key="x" mode=Strict
+    v24 = NewClosure function=f5
+    v25 = NewClass v24 layout=L2
+    v26 = FinishClass v25 layout=L2
+    v27 = Construct v26
+    PropSet v27, v0 key="x" mode=Strict
+    Return
+}
+function f1 name="spy" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="spy" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="makesArray" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    ElemSet v1, v0, v0 mode=Strict
+    Return v1
+}
+function f4 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f5 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}

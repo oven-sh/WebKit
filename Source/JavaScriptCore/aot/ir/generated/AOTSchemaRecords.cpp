@@ -10,13 +10,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ASCIILiteral nameOf(ClaimSource::Kind kind)
-{
-    static constexpr std::array<ASCIILiteral, 3> names { "None"_s, "Field"_s, "Contents"_s };
-    RELEASE_ASSERT(static_cast<size_t>(kind) < names.size());
-    return names[static_cast<size_t>(kind)];
-}
-
 ASCIILiteral nameOf(ValidationRule::Kind kind)
 {
     static constexpr std::array<ASCIILiteral, 16> names {
@@ -39,9 +32,9 @@ ASCIILiteral nameOf(ValidationShape::Kind kind)
 
 ASCIILiteral nameOf(CreatorRecord::Kind kind)
 {
-    static constexpr std::array<ASCIILiteral, 14> names {
-        "None"_s, "Entrypoint"_s, "Version"_s, "Coroutine"_s, "BoundFunction"_s, "ResultWrapper"_s, "ResultWorker"_s, "ParameterWrapper"_s,
-        "Continuation"_s, "Serializer"_s, "Parser"_s, "Validator"_s, "ChainStep"_s, "StubBody"_s
+    static constexpr std::array<ASCIILiteral, 15> names {
+        "None"_s, "Entrypoint"_s, "TableLookup"_s, "Version"_s, "Coroutine"_s, "BoundFunction"_s, "ResultWrapper"_s, "ResultWorker"_s,
+        "ParameterWrapper"_s, "EntryChecks"_s, "Serializer"_s, "Parser"_s, "Validator"_s, "ChainStep"_s, "StubBody"_s
     };
     RELEASE_ASSERT(static_cast<size_t>(kind) < names.size());
     return names[static_cast<size_t>(kind)];
@@ -74,60 +67,34 @@ DeclaredType PayloadWords<DeclaredType>::decode(std::span<const uint32_t, count>
 {
     DeclaredType record;
     record.type = decodePayloadWord<TypeID>(words[0]);
-    record.written = decodePayloadWord<TypeID>(words[1]);
-    record.predicted = decodePayloadWord<TypeID>(words[2]);
-    record.site = decodePayloadWord<TypeSiteID>(words[3]);
-    record.flags = decodePayloadWord<OptionSet<PositionFlags>>(words[4]);
+    record.site = decodePayloadWord<TypeSiteID>(words[1]);
+    record.flags = decodePayloadWord<OptionSet<PositionFlags>>(words[2]);
     return record;
 }
 
 void PayloadWords<DeclaredType>::encode(const DeclaredType& record, std::span<uint32_t, count> words)
 {
     words[0] = encodePayloadWord(record.type);
-    words[1] = encodePayloadWord(record.written);
-    words[2] = encodePayloadWord(record.predicted);
-    words[3] = encodePayloadWord(record.site);
-    words[4] = encodePayloadWord(record.flags);
+    words[1] = encodePayloadWord(record.site);
+    words[2] = encodePayloadWord(record.flags);
 }
 
-ClaimSource PayloadWords<ClaimSource>::decode(std::span<const uint32_t, count> words)
+MemberConditionRecord PayloadWords<MemberConditionRecord>::decode(std::span<const uint32_t, count> words)
 {
-    switch (static_cast<ClaimSource::Kind>(words[0])) {
-    case ClaimSource::Kind::None:
-        return ClaimSource::None { };
-    case ClaimSource::Kind::Field: {
-        ClaimSource::Field value;
-        value.key = decodePayloadWord<PropertyKeyID>(words[1]);
-        return value;
-    }
-    case ClaimSource::Kind::Contents: {
-        ClaimSource::Contents value;
-        value.slot = decodePayloadWord<ContentsSlot>(words[1]);
-        return value;
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    MemberConditionRecord record;
+    record.kind = decodePayloadWord<MemberConditionKind>(words[0]);
+    record.layout = decodePayloadWord<LayoutID>(words[1]);
+    record.side = decodePayloadWord<ClassSide>(words[2]);
+    record.key = decodePayloadWord<PropertyKeyID>(words[3]);
+    return record;
 }
 
-void PayloadWords<ClaimSource>::encode(const ClaimSource& variant, std::span<uint32_t, count> words)
+void PayloadWords<MemberConditionRecord>::encode(const MemberConditionRecord& record, std::span<uint32_t, count> words)
 {
-    std::ranges::fill(words, 0);
-    words[0] = static_cast<uint32_t>(variant.kind());
-    switch (variant.kind()) {
-    case ClaimSource::Kind::None:
-        return;
-    case ClaimSource::Kind::Field: {
-        const auto& value = variant.as<ClaimSource::Field>();
-        words[1] = encodePayloadWord(value.key);
-        return;
-    }
-    case ClaimSource::Kind::Contents: {
-        const auto& value = variant.as<ClaimSource::Contents>();
-        words[1] = encodePayloadWord(value.slot);
-        return;
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    words[0] = encodePayloadWord(record.kind);
+    words[1] = encodePayloadWord(record.layout);
+    words[2] = encodePayloadWord(record.side);
+    words[3] = encodePayloadWord(record.key);
 }
 
 Origin PayloadWords<Origin>::decode(std::span<const uint32_t, count> words)
@@ -167,15 +134,15 @@ void PayloadWords<PlacedKey>::encode(const PlacedKey& record, std::span<uint32_t
 TailCast PayloadWords<TailCast>::decode(std::span<const uint32_t, count> words)
 {
     TailCast record;
-    record.declared = PayloadWords<DeclaredType>::decode(words.subspan<0, 5>());
-    record.resolution = decodePayloadWord<CastResolution>(words[5]);
+    record.declared = PayloadWords<DeclaredType>::decode(words.subspan<0, 3>());
+    record.resolution = decodePayloadWord<CastResolution>(words[3]);
     return record;
 }
 
 void PayloadWords<TailCast>::encode(const TailCast& record, std::span<uint32_t, count> words)
 {
-    PayloadWords<DeclaredType>::encode(record.declared, words.subspan<0, 5>());
-    words[5] = encodePayloadWord(record.resolution);
+    PayloadWords<DeclaredType>::encode(record.declared, words.subspan<0, 3>());
+    words[3] = encodePayloadWord(record.resolution);
 }
 
 } } } // namespace JSC::AOT::Typed

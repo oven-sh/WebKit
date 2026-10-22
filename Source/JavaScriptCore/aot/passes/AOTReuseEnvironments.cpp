@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
+#include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
@@ -18,7 +20,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTLargeVectors.h"
 #include "AOTLiveness.h"
+#include "AOTResultRules.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <optional>
@@ -55,11 +59,23 @@ struct EnvironmentSite {
     friend auto operator<=>(const EnvironmentSite&, const EnvironmentSite&) = default;
 };
 
+// All that the pass asks the escape analysis of a function.
+struct OwnedValues {
+    // See isOwned().
+    BitVector owned;
+    // Those of them that may be an object that the function hands back among several results.
+    BitVector handedBack;
+};
+
 struct FunctionPlan {
     Vector<EscapeMark> marks;
     Vector<ReleasePoint> releases;
     Vector<LayoutID> disqualifiedLayouts;
-    Vector<EnvironmentSite> sitesInCycles;
+    Vector<EnvironmentSite> sites;
+    // Which of its several results are environments that the function has made itself, whichever way it returns.
+    BitVector resultsMadeHere;
+    // No body and no summary changes until the functions are rewritten. So the first step that needs the analysis leaves what it says for the steps behind it.
+    std::optional<OwnedValues> ownedValues;
 };
 
 class CandidateTypes {
@@ -77,9 +93,14 @@ public:
     LayoutID environmentOf(TypeID type) const { return type ? m_environments[type.index()] : LayoutID(); }
     LayoutID environmentOf(const Function& function, ValueID id) const { return environmentOf(function.at(id).type); }
 
-    bool hasCandidateValue(const Function& function) const
+    bool hasCandidateValue(const Program& program, FunctionID id) const
     {
-        return function.values.containsIf([&](const Value& value) {
+        BodyIndex* index = program.bodyIndex();
+        std::optional<NamesInBody> names = index ? index->namesIn(program, id) : std::nullopt;
+        bool mayHaveOne = !names || std::ranges::any_of(names->types, [&](TypeID type) {
+            return !!environmentOf(type);
+        });
+        return mayHaveOne && program.at(id).values.containsIf([&](const Value& value) {
             return !!environmentOf(value.type);
         });
     }
@@ -100,6 +121,16 @@ static bool isAlwaysCell(const Program& program, const Function& function, Value
     return !program.typeOf(function, id).primitives;
 }
 
+// No operation reads the hidden field that holds the environment. The closures that the object makes on demand do: they are cells of the heap wherever the object lies.
+static bool isEnvironmentOfDeferredClosures(const Program& program, const Value& user, uint32_t operandIndex)
+{
+    if (user.opcode != Opcode::NewObject)
+        return false;
+    std::optional<uint32_t> field = program.at(user.layout()).flow.closureEnvironmentField;
+    std::optional<uint32_t> position = user.variadicOperandIndex(operandIndex);
+    return field && position && *position < user.fields().size() && user.fields()[*position] == *field;
+}
+
 static bool isOwned(const Function& function, const EscapeAnalysis& escape, ValueID id)
 {
     if (escape.gaveUp())
@@ -118,9 +149,48 @@ static bool isOwned(const Function& function, const EscapeAnalysis& escape, Valu
     return true;
 }
 
+static OwnedValues findOwnedValues(const Function& function, const EscapeAnalysis& escape)
+{
+    OwnedValues values;
+    if (escape.gaveUp())
+        return values;
+
+    BitVector objectsHandedBack;
+    for (const Value& value : function.values) {
+        if (value.opcode != Opcode::Results)
+            continue;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            objectsHandedBack.merge(escape.pointsTo(operand).objects.bits());
+        });
+    }
+    for (unsigned index = 0; index < function.values.size(); ++index) {
+        ValueID id(index);
+        if (!isOwned(function, escape, id))
+            continue;
+        values.owned.set(index);
+        for (ObjectID object : escape.pointsTo(id).objects) {
+            if (objectsHandedBack.get(object.index()))
+                values.handedBack.set(index);
+        }
+    }
+    return values;
+}
+
+static const OwnedValues& ownedValuesOf(FunctionPlan& plan, FunctionAnalyses& analyses)
+{
+    if (plan.ownedValues)
+        return *plan.ownedValues;
+    // A value is owned only if it is an object that the function has allocated on the heap.
+    bool allocatesOnHeap = analyses.function().values.containsIf([](const Value& value) {
+        return value.opcode == Opcode::NewObject && value.storage() == AllocationStorage::Heap;
+    });
+    plan.ownedValues = allocatesOnHeap ? findOwnedValues(analyses.function(), analyses.escape()) : OwnedValues { };
+    return *plan.ownedValues;
+}
+
 static void forEachLayoutWithSites(const FunctionPlan& plan, NOESCAPE const Invocable<void(LayoutID, std::span<const EnvironmentSite>)> auto& functor)
 {
-    std::span<const EnvironmentSite> sites = plan.sitesInCycles.span();
+    std::span<const EnvironmentSite> sites = plan.sites.span();
     while (!sites.empty()) {
         LayoutID layout = sites.front().layout;
         size_t count = std::ranges::find_if(sites, [&](const EnvironmentSite& site) {
@@ -139,23 +209,23 @@ static bool isReusableAllocation(const Program& program, const FrameAllocation& 
     return program.at(layout).kind == LayoutKind::Environment && !frameAllocation.mayBeInFrame(layout);
 }
 
-static void findSitesInCycles(const Program& program, const FrameAllocation& frameAllocation, const Function& function, FunctionPlan& plan)
+// The next turn of a loop can take the cell that this turn has done with, and so can the next call of the function.
+static void findSites(const Program& program, const FrameAllocation& frameAllocation, const BitVector& environmentLayouts, FunctionID id, FunctionPlan& plan)
 {
-    Vector<EnvironmentSite>& sites = plan.sitesInCycles;
-    for (unsigned blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        for (ValueID id : function.blocks[blockIndex].values) {
-            const Value& value = function.at(id);
-            if (isReusableAllocation(program, frameAllocation, value))
-                sites.append({ value.layout(), BlockID(blockIndex) });
-        }
-    }
+    Vector<EnvironmentSite>& sites = plan.sites;
+    auto isEnvironmentLayout = [&](NameKind kind, uint32_t index) {
+        return kind == NameKind::Layout && environmentLayouts.get(index);
+    };
+    forEachListedValueNaming(program, id, { Opcode::NewObject }, isEnvironmentLayout, [&](BlockID block, ValueID, const Value& value) {
+        if (isReusableAllocation(program, frameAllocation, value))
+            sites.append({ value.layout(), block });
+    });
     if (sites.isEmpty())
         return;
 
-    CFG cfg(function);
-    BlockCycles cycles(cfg);
+    CFG cfg(program.functions[id.index()]);
     sites.removeAllMatching([&](const EnvironmentSite& site) {
-        return !cfg.isReachable(site.block) || !cycles.isInCycle(site.block);
+        return !cfg.isReachable(site.block);
     });
     std::ranges::sort(sites);
     removeRepeatedElements(sites);
@@ -163,15 +233,18 @@ static void findSitesInCycles(const Program& program, const FrameAllocation& fra
 
 static BitVector findCandidateLayouts(const Program& program, const FrameAllocation& frameAllocation, const ParallelLoops& loops, Vector<FunctionPlan>& plans)
 {
+    BitVector environmentLayouts(program.layouts.size());
+    for (uint32_t index : findIndicesInParallel(loops, program.layouts.size(), [&](unsigned index) {
+        return program.layouts[index].kind == LayoutKind::Environment;
+    }))
+        environmentLayouts.quickSet(index);
     forEachIndexInParallel(loops, plans.size(), [&](unsigned index) {
-        const Function& function = program.functions[index];
-        if (function.hasBody())
-            findSitesInCycles(program, frameAllocation, function, plans[index]);
+        findSites(program, frameAllocation, environmentLayouts, FunctionID(index), plans[index]);
     });
 
     BitVector candidateLayouts;
     for (const FunctionPlan& plan : plans) {
-        for (const EnvironmentSite& site : plan.sitesInCycles)
+        for (const EnvironmentSite& site : plan.sites)
             candidateLayouts.set(site.layout.index());
     }
     return candidateLayouts;
@@ -267,12 +340,18 @@ HolderAction HolderClassifier::classifyOperand(ValueID userID, uint32_t operandI
     const Value& user = m_function.at(userID);
     if (user.opcode == Opcode::CallDirect)
         return classifyDirectCallArgument(user, operandIndex, layout);
+    // One of several results goes to the caller under its declared type, and the caller's uses of it are classified like any other. What holds the results in between is followed like the environment itself.
+    if (user.opcode == Opcode::Results)
+        return operandIndex < m_function.results.size() && m_types.environmentOf(m_function.results[operandIndex].type) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
+    if (isEnvironmentOfDeferredClosures(m_context.program, user, operandIndex))
+        return HolderAction::Mark;
 
     OperandSummary summary = summarizeOperand(m_effects, m_function, user, operandIndex);
     if (summary.uses.contains(OperandUse::PassesToUserCode))
         return HolderAction::Mark;
+    // A closure that is lent may be copied to the heap by the stub of its call, and the copy holds what the closure holds.
     if (summary.uses.contains(OperandUse::Retains))
-        return summary.retainedIn == RetainedIn::Result && isFrameCell(m_function, userID) ? HolderAction::Ignore : HolderAction::Mark;
+        return summary.retainedIn == RetainedIn::Result && isFrameCell(m_function, userID) && !(user.opcode == Opcode::NewClosure && user.isLent()) ? HolderAction::Ignore : HolderAction::Mark;
     if (summary.uses.contains(OperandUse::Returns) && environmentOf(userID) != layout)
         return HolderAction::Disqualify;
     return HolderAction::Ignore;
@@ -334,7 +413,7 @@ void HolderClassifier::markAcrossSuspensions()
             ValueID suspension = values[index];
             if (maySuspend(m_function.at(suspension).opcode)) {
                 calc.forEachLive([&](ValueID live) {
-                    if (live != suspension && !isOwned(m_function, analyses.escape(), live))
+                    if (live != suspension && !ownedValuesOf(m_plan, analyses).owned.get(live.index()))
                         apply(HolderAction::Mark, { blockID, index }, live, environmentOf(live));
                 });
             }
@@ -360,9 +439,100 @@ void HolderClassifier::removeRepeatedEntries()
 
 static void classifyHolders(const AnalysisContext& context, const EffectContext& effects, const CandidateTypes& types, FunctionPlan& plan)
 {
-    const Function& function = context.program.at(context.id);
-    if (function.hasBody() && types.hasCandidateValue(function))
+    if (hasBody(context.program, context.id) && types.hasCandidateValue(context.program, context.id))
         HolderClassifier(context, effects, types, plan).run();
+}
+
+// Several results are held by a value that has no type of its own: by Results until the function returns, and by the call until the last ResultAt.
+static bool holdsAmongSeveralResults(const Program& program, const CandidateTypes& types, const Function& function, const Value& value, LayoutID layout)
+{
+    switch (value.opcode) {
+    case Opcode::Results: {
+        bool holds = false;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            holds |= types.environmentOf(function, operand) == layout;
+        });
+        return holds;
+    }
+    case Opcode::CallDirect:
+    case Opcode::CallTable: {
+        auto& results = program.at(value.function()).results;
+        return results.size() > 1 && results.containsIf([&](const auto& result) {
+            return types.environmentOf(result.type) == layout;
+        });
+    }
+    default:
+        return false;
+    }
+}
+
+// An environment that a function has made and hands back among its results is the caller's from there on: nobody else has it, but for those who have marked it.
+// A function that returns what a call of another function answered says nothing about who made it.
+static void findResultsMadeHere(const AnalysisContext& context, const CandidateTypes& types, FunctionPlan& plan)
+{
+    RecordFacts facts = recordFactsOf(context.program, context.id);
+    if (!facts.hasBody || facts.numberOfResults < 2)
+        return;
+    const Function& function = context.program.at(context.id);
+    BitVector madeHere;
+    for (unsigned index = 0; index < function.results.size(); ++index) {
+        if (types.environmentOf(function.results[index].type))
+            madeHere.set(index);
+    }
+    if (madeHere.isEmpty())
+        return;
+
+    FunctionAnalyses analyses(context, function);
+    for (unsigned blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        if (!analyses.cfg().isReachable(BlockID(blockIndex)))
+            continue;
+        const Terminator& terminator = function.blocks[blockIndex].terminator;
+        if (terminator.kind == TerminatorKind::ReturnCall)
+            return;
+        if (terminator.kind != TerminatorKind::Return)
+            continue;
+        ValueID returned = terminator.valueOperand();
+        if (!returned || function.at(returned).opcode != Opcode::Results)
+            return;
+        const Value& results = function.at(returned);
+        if (results.numberOfVariadicOperands() != function.results.size())
+            return;
+        results.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (madeHere.get(operandIndex) && !(isAlwaysCell(context.program, function, operand) && ownedValuesOf(plan, analyses).owned.get(operand.index())))
+                madeHere.clear(operandIndex);
+        });
+    }
+    plan.resultsMadeHere = WTF::move(madeHere);
+}
+
+static bool isMadeByCallee(const Function& function, std::span<const FunctionPlan> plans, const Value& value)
+{
+    if (value.opcode != Opcode::ResultAt)
+        return false;
+    const Value& call = function.at(value.resultsOperand());
+    return call.opcode == Opcode::CallDirect && plans[call.function().index()].resultsMadeHere.get(value.index());
+}
+
+// Where a caller takes an environment that the callee has made out of the results, it has one to let go of, as where it makes one.
+static void findSitesOfResults(const Program& program, const CandidateTypes& types, const BitVector& candidateLayouts, FunctionID id, std::span<FunctionPlan> plans)
+{
+    const Function& function = program.at(id);
+    Vector<EnvironmentSite>& sites = plans[id.index()].sites;
+    size_t numberOfSitesBefore = sites.size();
+    forEachListedValue(program, id, { Opcode::ResultAt }, [&](BlockID block, uint32_t, ValueID, const Value& value) {
+        LayoutID layout = types.environmentOf(value.type);
+        if (layout && candidateLayouts.get(layout.index()) && isMadeByCallee(function, plans, value))
+            sites.append({ layout, block });
+    });
+    if (sites.size() == numberOfSitesBefore)
+        return;
+
+    CFG cfg(function);
+    sites.removeAllMatching([&](const EnvironmentSite& site) {
+        return !cfg.isReachable(site.block);
+    });
+    std::ranges::sort(sites);
+    removeRepeatedElements(sites);
 }
 
 namespace {
@@ -382,16 +552,17 @@ struct TrackedValues {
 
 class ReleaseFinder {
 public:
-    ReleaseFinder(const AnalysisContext& context, const CandidateTypes& types, const Function& function, FunctionPlan& plan)
+    ReleaseFinder(const AnalysisContext& context, const CandidateTypes& types, const Function& function, std::span<const FunctionPlan> plans, FunctionPlan& plan)
         : m_types(types)
         , m_function(function)
+        , m_plans(plans)
         , m_plan(plan)
         , m_analyses(context, function)
         , m_framePointers(function)
     {
     }
 
-    void findReleasePoints(LayoutID, std::span<const EnvironmentSite>);
+    void findReleasePoints(LayoutID);
 
 private:
     bool isOwnedEnvironment(ValueID, LayoutID);
@@ -402,6 +573,7 @@ private:
 
     const CandidateTypes& m_types;
     const Function& m_function;
+    std::span<const FunctionPlan> m_plans;
     FunctionPlan& m_plan;
     FunctionAnalyses m_analyses;
     FramePointers m_framePointers;
@@ -411,7 +583,11 @@ bool ReleaseFinder::isOwnedEnvironment(ValueID id, LayoutID layout)
 {
     if (m_types.environmentOf(m_function, id) != layout || !isAlwaysCell(m_analyses.program(), m_function, id))
         return false;
-    return isOwned(m_function, m_analyses.escape(), id);
+    if (isMadeByCallee(m_function, m_plans, m_function.at(id)))
+        return true;
+    // This function has done with an environment that it hands back among its results, and the caller has not: it is the caller's to let go of.
+    const OwnedValues& values = ownedValuesOf(m_plan, m_analyses);
+    return values.owned.get(id.index()) && !values.handedBack.get(id.index());
 }
 
 TrackedValues ReleaseFinder::computeTrackedValues(LayoutID layout)
@@ -430,7 +606,10 @@ TrackedValues ReleaseFinder::computeTrackedValues(LayoutID layout)
     tracked.definingBlocks.ensureSize(m_function.blocks.size());
     for (unsigned index = 0; index < m_function.values.size(); ++index) {
         ValueID id(index);
-        if (m_types.environmentOf(m_function, id) != layout && !(tracksFramePointers && m_framePointers.contains(id)))
+        bool isFollowed = m_types.environmentOf(m_function, id) == layout
+            || (tracksFramePointers && m_framePointers.contains(id))
+            || holdsAmongSeveralResults(m_analyses.program(), m_types, m_function, m_function.at(id), layout);
+        if (!isFollowed)
             continue;
         ValueLocation location = useLists.locationOf(id);
         if (location.placement == ValuePlacement::Detached)
@@ -464,12 +643,11 @@ std::optional<ValueID> ReleaseFinder::findReleasableEnvironment(const TrackedVal
 
 void ReleaseFinder::findReleasesOnEdges(BlockID blockID, LayoutID layout, const TrackedValues& tracked, const Liveness& liveness, const Liveness::LocalCalc& calc)
 {
-    const BlockCycles& cycles = m_analyses.blockCycles();
     auto& targets = m_function.at(blockID).terminator.targets;
     Vector<Edge, 2> edges;
     for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
         BlockID successor = targets[targetIndex].block;
-        if (!cycles.areInSameCycle(blockID, successor) || !liveness.liveAtHead(successor).empty())
+        if (!liveness.liveAtHead(successor).empty())
             continue;
         bool hasTrackedParameter = std::ranges::any_of(m_function.at(successor).parameters, [&](ValueID parameter) {
             return tracked.bits.quickGet(parameter.index());
@@ -502,36 +680,33 @@ void ReleaseFinder::findReleasesInBlock(BlockID blockID, LayoutID layout, const 
         isLiveAfter = isLiveBefore;
         if (!isLastUse)
             continue;
+        // Nothing stands between a tail call and the end of the block, and the callee still has the environment.
+        if (block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index])
+            continue;
         if (std::optional<ValueID> environment = findReleasableEnvironment(tracked, calc, layout))
             m_plan.releases.append({ std::nullopt, { blockID, index + 1 }, *environment, layout });
     }
 }
 
-void ReleaseFinder::findReleasePoints(LayoutID layout, std::span<const EnvironmentSite> sites)
+void ReleaseFinder::findReleasePoints(LayoutID layout)
 {
     TrackedValues tracked = computeTrackedValues(layout);
     Liveness liveness(m_function, m_analyses.cfg(), m_analyses.useLists(), LivenessOptions { .trackedValues = &tracked.bits });
-    const BlockCycles& cycles = m_analyses.blockCycles();
     for (unsigned blockIndex = 0; blockIndex < m_function.blocks.size(); ++blockIndex) {
         BlockID blockID(blockIndex);
-        if (liveness.liveAtHead(blockID).empty() && !tracked.definingBlocks.quickGet(blockIndex))
-            continue;
-        bool isInCycleOfSite = std::ranges::any_of(sites, [&](const EnvironmentSite& site) {
-            return cycles.areInSameCycle(blockID, site.block);
-        });
-        if (isInCycleOfSite)
+        if (!liveness.liveAtHead(blockID).empty() || tracked.definingBlocks.quickGet(blockIndex))
             findReleasesInBlock(blockID, layout, tracked, liveness);
     }
 }
 
 } // anonymous namespace
 
-static void findReleasePoints(const AnalysisContext& context, const CandidateTypes& types, const BitVector& candidateLayouts, FunctionPlan& plan)
+static void findReleasePoints(const AnalysisContext& context, const CandidateTypes& types, const BitVector& candidateLayouts, std::span<const FunctionPlan> plans, FunctionPlan& plan)
 {
-    ReleaseFinder finder(context, types, context.program.at(context.id), plan);
-    forEachLayoutWithSites(plan, [&](LayoutID layout, std::span<const EnvironmentSite> sites) {
+    ReleaseFinder finder(context, types, context.program.at(context.id), plans, plan);
+    forEachLayoutWithSites(plan, [&](LayoutID layout, std::span<const EnvironmentSite>) {
         if (candidateLayouts.get(layout.index()))
-            finder.findReleasePoints(layout, sites);
+            finder.findReleasePoints(layout);
     });
 }
 
@@ -666,7 +841,7 @@ static Vector<FunctionID> findFunctionsWithSites(const BuildContext& build, cons
 {
     Vector<FunctionID> functions;
     for (unsigned index = 0; index < plans.size(); ++index) {
-        bool hasSite = plans[index].sitesInCycles.containsIf([&](const EnvironmentSite& site) {
+        bool hasSite = plans[index].sites.containsIf([&](const EnvironmentSite& site) {
             return candidateLayouts.get(site.layout.index());
         });
         if (hasSite && build.isEnabled(PassID::ReuseEnvironments, FunctionID(index)))
@@ -684,32 +859,48 @@ void EnvironmentReuse::dump(PrintStream& out, const Program&) const
     out.println("]");
 }
 
-EnvironmentReuse reuseEnvironments(ProgramEditor& editor, const FlowResults& flow, const FrameAllocation& frameAllocation, BuildContext& build)
+EnvironmentReuse reuseEnvironments(ProgramEditor& editor, const FlowResults& flow, const FrameAllocation& frameAllocation, BuildContext& build, NOESCAPE const ScopedLambda<BorrowedParameters()>& computeBorrowedParameters)
 {
     const Program& program = editor.program();
-    Vector<FunctionPlan> plans(program.functions.size());
+    Vector<FunctionPlan> plans = createVectorInParallel<FunctionPlan>(build.parallelLoops(), program.functions.size());
     BitVector candidateLayouts = findCandidateLayouts(program, frameAllocation, build.parallelLoops(), plans);
     if (candidateLayouts.isEmpty())
         return { };
 
-    EffectSummaries summaries = createSummariesFromFlow(program, flow, build);
+    EffectSummaries summaries = createSummariesFromFlow(program, flow, computeBorrowedParameters(), build);
     EffectContext effects { program, summaries };
     AnalysisContext programContext { build, program, &flow, &summaries };
     CandidateTypes types(program, candidateLayouts);
-    forEachIndexInParallel(build.parallelLoops(), plans.size(), [&](unsigned index) {
+    Vector<uint32_t> largestFunctionsFirst = largeFunctions(program, build.parallelLoops());
+    forEachIndexInParallel(build.parallelLoops(), plans.size(), largestFunctionsFirst.span(), [&](unsigned index) {
         classifyHolders(contextOf(programContext, FunctionID(index)), effects, types, plans[index]);
+        findResultsMadeHere(contextOf(programContext, FunctionID(index)), types, plans[index]);
     });
     for (const FunctionPlan& plan : plans) {
         for (LayoutID layout : plan.disqualifiedLayouts)
             candidateLayouts.clear(layout.index());
     }
+    bool someResultIsMadeByItsFunction = plans.containsIf([](const FunctionPlan& plan) {
+        return !plan.resultsMadeHere.isEmpty();
+    });
+    if (someResultIsMadeByItsFunction) {
+        forEachIndexInParallel(build.parallelLoops(), plans.size(), largestFunctionsFirst.span(), [&](unsigned index) {
+            findSitesOfResults(program, types, candidateLayouts, FunctionID(index), plans.mutableSpan());
+        });
+    }
 
     Vector<FunctionID> functionsWithSites = findFunctionsWithSites(build, plans, candidateLayouts);
     Vector<Vector<LayoutID>> profitableLayouts(functionsWithSites.size());
-    forEachIndexInParallel(build.parallelLoops(), functionsWithSites.size(), [&](unsigned index) {
+    Vector<uint32_t> largestWithSitesFirst;
+    for (uint32_t large : largestFunctionsFirst) {
+        auto found = std::ranges::lower_bound(functionsWithSites, FunctionID(large));
+        if (found != functionsWithSites.end() && *found == FunctionID(large))
+            largestWithSitesFirst.append(static_cast<uint32_t>(found - functionsWithSites.begin()));
+    }
+    forEachIndexInParallel(build.parallelLoops(), functionsWithSites.size(), largestWithSitesFirst.span(), [&](unsigned index) {
         FunctionID id = functionsWithSites[index];
         FunctionPlan& plan = plans[id.index()];
-        findReleasePoints(contextOf(programContext, id), types, candidateLayouts, plan);
+        findReleasePoints(contextOf(programContext, id), types, candidateLayouts, plans.span(), plan);
         profitableLayouts[index] = findProfitableLayouts(program.at(id), plan);
     });
 
@@ -725,6 +916,7 @@ EnvironmentReuse reuseEnvironments(ProgramEditor& editor, const FlowResults& flo
         build.statistics().count(StatisticID::EnvironmentsReused, reusedLayouts.bitCount());
     }
     build.destroyLater(WTF::move(summaries));
+    build.destroyLater(WTF::move(plans));
     return result;
 }
 

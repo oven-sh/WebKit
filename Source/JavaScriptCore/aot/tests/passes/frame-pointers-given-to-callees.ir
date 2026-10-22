@@ -9,6 +9,7 @@ variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefi
 layout L0 name="Point" fields=[{key="y" declared={type=anything}}]
 layout L1 name="Holder" fields=[{key="held" declared={type=anything}}]
 layout L2 kind=Environment name="scope" fields=[{key="o" declared={type=anything}}]
+layout L3 name="OnlyRead" fields=[{key="y" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -43,7 +44,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="givenToReadsField" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Integer integer=1
-    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v2 = NewObject -, v1 layout=L3 fields=[0] storage=Frame
     v3 = CallDirect v2 function=f24
     Return
 }
@@ -53,7 +54,7 @@ function f1 name="givenToReadsField" parameters=[{type=anything}] results=[{type
 function f2 name="givenToPassesToReading" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Integer integer=1
-    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v2 = NewObject -, v1 layout=L3 fields=[0] storage=Frame
     v3 = CallDirect v2 function=f25
     Return
 }
@@ -271,14 +272,14 @@ function f23 name="givenToPassesToUnknownCode" parameters=[{type=anything}] resu
 # CHECK: function f23
 # CHECK: v2 v3(0) may leak: yes
 
-function f24 name="readsField" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
+function f24 name="readsField" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: L3):
     v1 = PropGet v0 key="y"
     Return v1
 }
 
-function f25 name="passesToReading" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
+function f25 name="passesToReading" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: L3):
     v1 = CallDirect v0 function=f24
     Return v1
 }

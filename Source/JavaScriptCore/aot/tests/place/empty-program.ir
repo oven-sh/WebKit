@@ -17,5 +17,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NOT: access
 # CHECK: allocation 0 L0 shape=1 fields=[] order=0 count=0 size=48 captures=1
 # CHECK-NOT: allocation
-# CHECK: statics size=8 filledAtEntry=0 roots=1 cleared=[]
-# CHECK-NEXT: moduleValue m0 @0
+# CHECK: statics size=0 filledAtEntry=0 roots=0 cleared=[]
+# CHECK-NOT: moduleValue

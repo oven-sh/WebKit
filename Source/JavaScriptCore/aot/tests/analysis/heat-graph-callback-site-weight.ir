@@ -4,7 +4,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=66 function=f1
+runtimefunction id=65 function=f1
 
 function f0 name="" kind=Module results=[{type=anything}] {
   b0():
@@ -12,7 +12,7 @@ function f0 name="" kind=Module results=[{type=anything}] {
     v1 = CallDirect v0 function=f5
     Return v1
 }
-function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=66 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = Call v1 callees=[f2, f3, f4]
     Return v2

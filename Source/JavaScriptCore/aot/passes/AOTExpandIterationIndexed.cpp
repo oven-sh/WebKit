@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTResolveCallsDirectCall.h"
 #include "AOTSplitStringWalk.h"
 #include "JSArrayIterator.h"
 #include <algorithm>
@@ -26,6 +28,9 @@ static Range positionRangeOf(IterationForm form)
     case IterationForm::Array:
     case IterationForm::TypedArray:
         return { 0, maxExactInteger - 1 };
+    case IterationForm::OwnEntries:
+        // A step adds two to an index whose type only says that it is below the length.
+        return { 0, maxExactInteger };
     case IterationForm::String:
         // A surrogate pair adds two to an index whose type only says that it is below the length.
         return { 0, Range::length().maximum + 1 };
@@ -44,6 +49,11 @@ static Range positionRangeOf(IterationForm form)
 static TypeID positionTypeOf(IterationExpansion& expansion, const ArmState& state)
 {
     return expansion.types().intern(Type::integer(positionRangeOf(state.arm.form)));
+}
+
+TypeID positionTypeOfStringWalk(TypeArena& types)
+{
+    return types.intern(Type::integer(positionRangeOf(IterationForm::String)));
 }
 
 static BlockID addSiblingBlock(IterationExpansion& expansion)
@@ -176,6 +186,36 @@ void emitSplitStringStep(IterationExpansion& expansion, ArmState& state)
     expansion.finishStepAsDone();
 }
 
+// The run time lists the keys and values as Object.entries does, at the moment the call stood for, one behind the other in one list.
+void emitOwnEntriesOpen(IterationExpansion& expansion, ArmState& state)
+{
+    BuiltinOverloadID overload = *expansion.program().builtins().overloadIDsOf(Builtins::CompilerHelpersOwnEntriesFlat).begin();
+    state.subject = expansion.builder().append(makeBuiltinCall(overload, BuiltinCallForm::Whole, { { }, { state.subject } }, { }));
+    emitIndexedOpen(expansion, state);
+}
+
+// The pair is made here, where whoever takes it apart sees what it is made of.
+void emitOwnEntriesStep(IterationExpansion& expansion, ArmState& state)
+{
+    IRBuilder& builder = expansion.builder();
+    ValueID length = builder.append(Opcode::ToLength, { expansion.appendPropGet(state.subject, expansion.keyOf(BuiltinNames::length)) });
+    IRBuilder::ProvenBranch branch = branchOnInRange(expansion, state.position->anyDefinition, length);
+    ValueID index = branch.provenOnTaken;
+
+    auto appendRead = [&](ValueID at) {
+        Value read = IRBuilder::make(Opcode::ElemGet, { state.subject, at });
+        read.setKeyIsIntegral(true);
+        return builder.append(WTF::move(read));
+    };
+    ValueID key = appendRead(index);
+    ValueID value = appendRead(expansion.appendIncrement(index, 1));
+    expansion.define(*state.position, expansion.appendIncrement(index, 2));
+    expansion.finishStep(builder.appendBoolean(false), expansion.appendPair(key, value));
+
+    builder.moveToEndOf(branch.notTaken);
+    expansion.finishStepAsDone();
+}
+
 static ValueID appendFieldRead(IterationExpansion& expansion, ValueID iterator, JSArrayIterator::Field field)
 {
     Value read = IRBuilder::make(Opcode::GetInternalField, { iterator });
@@ -190,12 +230,11 @@ static void appendPositionStore(IterationExpansion& expansion, ValueID iterator,
     expansion.builder().append(WTF::move(store));
 }
 
+// An array iterator is made for an object and keeps it.
 static ValueID appendIteratedObject(IterationExpansion& expansion, ValueID iterator)
 {
-    Value claim = IRBuilder::make(Opcode::Claim, { appendFieldRead(expansion, iterator, JSArrayIterator::Field::IteratedObject) });
-    claim.setCastType(TypeTable::object);
-    claim.setCause(CheckCause::AddedByPass);
-    return expansion.builder().append(WTF::move(claim));
+    ValueID iterated = appendFieldRead(expansion, iterator, JSArrayIterator::Field::IteratedObject);
+    return convertTo(expansion.builder(), iterated, DeclaredType { .type = TypeTable::object });
 }
 
 static ValueID appendIsTypedArrayView(IterationExpansion& expansion, ValueID object)
@@ -265,11 +304,14 @@ static void emitArrayIteratorStep(IterationExpansion& expansion, ValueID iterato
 PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder& builder)
 {
     Vector<ProgramPoint, 1> steps;
+    Vector<ValueID, 1> producers;
     for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
         const BlockValues& values = pass.function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
-            if (pass.function.at(values[index]).opcode == Opcode::StepArrayIterator)
-                steps.append(ProgramPoint { block, index });
+            if (pass.function.at(values[index]).opcode != Opcode::StepArrayIterator)
+                continue;
+            steps.append(ProgramPoint { block, index });
+            producers.append(values[index]);
         }
     }
     if (steps.isEmpty())
@@ -280,13 +322,15 @@ PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder& build
     });
     SSARepair repair(builder, pass.analyses);
     IterationExpansion expansion(pass, builder, repair, IterationOrigin::Source);
+    IRBuilder::DeferredResultReads resultReads(builder, producers.span());
     for (const ProgramPoint& point : steps) {
         Value original = pass.function.at(pass.function.at(point.block).values[point.index]);
         builder.setOrigin(original.origin());
-        IRBuilder::Expansion cut = builder.beginExpansion(point);
+        IRBuilder::Expansion cut = builder.beginExpansion(point, resultReads);
         expansion.beginOperation(cut);
         emitArrayIteratorStep(expansion, original.iteratorOperand());
     }
+    resultReads.finish();
     builder.setHandler(std::nullopt);
     return PassOutcome::Changed;
 }

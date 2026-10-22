@@ -39,9 +39,10 @@ function f1 name="applyOnBuiltin" parameters=[{type=Array<number>}] results=[{ty
 # BOTH: frequency=Unlikely:
 # BOTH-NEXT: anything = CallList v1, v2, v0
 
+# Of a constructor of the host that does not stand on the global object the table does not say that it keeps `call`.
 function f2 name="calleeNotProven" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
   b0(v0: string, v1: i32):
-    v2 = Builtin builtin=StringPrototypeSlice
+    v2 = Builtin builtin=BunGlob
     v3 = PropGet v2 key="call"
     v4 = Call v3, v2, v0, v1 calleeKey="call" callees=[builtin(FunctionPrototypeCall), ..]
     Return v4
@@ -76,8 +77,8 @@ function f5 name="methodWithUnprovenThis" parameters=[{type=RegExp}, {type=strin
 }
 # CHECK-LABEL: function f5 name="methodWithUnprovenThis"
 # CHECK-NOT: IsPristine
-# CHECK-NOT: CallBuiltin
-# CHECK: v3: anything = Call v2, v0, v1
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v3: boolean = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0 builtinCallForm=AnyReceiver
 
 function f6 name="methodTakingAnyThis" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
   b0(v0: anything, v1: string):
@@ -103,6 +104,7 @@ function f8 name="methodWithNullableThis" parameters=[{type=undefined|string}, {
     v3 = Call v2, v0, v1
     Return v3
 }
+# The call is direct, and waits so for the test of its receiver, which is expected to be there: resolve-receiver-expected-to-be-present.ir
 # CHECK-LABEL: function f8 name="methodWithNullableThis"
 # CHECK-NOT: RequireObjectCoercible
 # CHECK: v3: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0 builtinCallForm=AnyReceiver
@@ -166,3 +168,27 @@ function f13 name="surplusArgument" parameters=[{type=anything}, {type=string}, 
 }
 # CHECK-LABEL: function f13 name="surplusArgument"
 # CHECK: v4: boolean = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+
+# A native function of the engine never has a `call` of its own and keeps its prototype, so the member of Function.prototype is found without a word from flow.
+function f14 name="callOnNativeFunction" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=StringPrototypeSlice
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call"
+    Return v4
+}
+# BOTH-LABEL: function f14 name="callOnNativeFunction"
+# BOTH-NOT: = Call
+# BOTH: string = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+
+# Nor has a built-in function that the library writes in JavaScript.
+function f15 name="callOnFunctionOfLibrary" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call"
+    Return v4
+}
+# BOTH-LABEL: function f15 name="callOnFunctionOfLibrary"
+# BOTH-NOT: = Call
+# BOTH: object = CallBuiltin v0, v1 overload=ArrayPrototypeMap/1 builtinCallForm=AnyReceiver

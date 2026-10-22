@@ -11,13 +11,14 @@
 #include "AOTBuildContext.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTEffectsCheck.h"
+#include "AOTErrorMessages.h"
 #include "AOTFlowResults.h"
-#include "AOTFlowUnseenCode.h"
-#include "AOTResolveCallsCallees.h"
+#include "AOTResolveCalls.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTResultRules.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
-#include <algorithm>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -35,10 +36,24 @@ struct EntryArguments {
 
 } // anonymous namespace
 
-EntrypointVariants entrypointVariantsOf(const Function& target)
+bool hasAllocatingConstructEntrypoint(const Program& program, const Function& target)
+{
+    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line. The length of the source never changes.
+    constexpr uint32_t mostCharactersOfShortConstructor = 1000;
+    if (target.text.end - target.text.start > mostCharactersOfShortConstructor)
+        return false;
+    // The constructor functions of the runtime's own modules are constructed by name.
+    if (target.role == FunctionRole::Library || target.enclosingRuntimeFunction || (target.module && program.at(target.module).kind == ModuleKind::RuntimeSource))
+        return false;
+    if (target.hasAny({ FunctionFlags::HasNewTarget, FunctionFlags::IsAsync, FunctionFlags::IsGenerator }) || target.role == FunctionRole::CoroutineRamp || target.results.size() != 1)
+        return false;
+    return isConstructorFunction(program, target) && program.at(target.constructedClass).flow.allocation != AllocationState::NeverAllocated;
+}
+
+EntrypointVariants entrypointVariantsOf(const Program& program, const Function& target)
 {
     if (!target.has(FunctionFlags::HasNewTarget))
-        return EntrypointVariants::WithoutNewTarget;
+        return hasAllocatingConstructEntrypoint(program, target) ? EntrypointVariants::Both : EntrypointVariants::WithoutNewTarget;
 
     switch (target.kind) {
     case FunctionKind::BaseConstructor:
@@ -66,16 +81,29 @@ static ArgumentPassing argumentPassingOf(const Function& target)
     return readsArgumentList ? ArgumentPassing::Buffer : ArgumentPassing::Registers;
 }
 
-static Function createEntryWithoutBody(TypeArena& types, const Function& target, const GenericEntrypointRequest& request)
+// The run time enters the bodies of all modules with one closure, which it made for the first of them: Modules::callBody().
+static TypeID closureTypeOf(TypeArena& types, const Function& target, FunctionID id)
+{
+    bool isBodyOfModule = target.kind == FunctionKind::Module || target.kind == FunctionKind::CommonJsModule;
+    return isBodyOfModule ? TypeTable::function : types.intern(Type::forFunction(id));
+}
+
+static uint32_t keyParameterOf(const Program& program, const Function& target, const GenericEntrypointRequest& request)
+{
+    if (!request.takesNewTarget || entrypointVariantsOf(program, target) != EntrypointVariants::Both)
+        return callEntrypointParameter;
+    return request.allocatesThis ? allocatingConstructEntrypointParameter : constructEntrypointParameter;
+}
+
+static Function createEntryWithoutBody(const Program& program, TypeArena& types, const Function& target, const GenericEntrypointRequest& request)
 {
     const DeclaredType anything { .type = TypeTable::anything };
-    bool isConstructVariant = request.takesNewTarget && entrypointVariantsOf(target) == EntrypointVariants::Both;
     ArgumentPassing passing = argumentPassingOf(target);
 
-    Function entry = createDerivedHeader(target, request.target, FunctionRole::GenericEntrypoint, isConstructVariant ? constructEntrypointParameter : callEntrypointParameter);
+    Function entry = createDerivedHeader(target, request.target, FunctionRole::GenericEntrypoint, keyParameterOf(program, target, request));
     entry.flags.add(FunctionFlags::HasThis);
     entry.thisType = anything;
-    entry.captures.append(DeclaredType { .type = types.intern(Type::forFunction(request.target)) });
+    entry.captures.append(DeclaredType { .type = closureTypeOf(types, target, request.target) });
     entry.results.append(anything);
     switch (passing) {
     case ArgumentPassing::Registers:
@@ -88,11 +116,9 @@ static Function createEntryWithoutBody(TypeArena& types, const Function& target,
     }
     entry.creator = CreatorRecord::Entrypoint {
         .target = request.target,
-        .group = { },
         .arguments = passing,
         .takesNewTarget = request.takesNewTarget,
         .constructEntrypoint = request.constructEntrypoint,
-        .groupEntrypoint = request.groupEntrypoint,
     };
     if (request.isEnteredByHost)
         entry.capabilities.remove(FunctionCapabilities::IsNeverCalledByHost);
@@ -147,37 +173,47 @@ static EntryArguments addEntryArguments(IRBuilder& builder, const Function& targ
     return arguments;
 }
 
-static bool canUnseenJavaScriptRun(const FlowResults& flow)
+static String messageOfEntryThatNothingEnters(const AnalysisContext& context, const Function& target)
 {
-    return !flow.hasResults() || std::ranges::any_of(flow.unseenCode(), [](const UnseenCodeRecord& record) {
-        return admitsUnknownJavaScript(record.cause);
-    });
+    const StringTable& strings = context.program.strings;
+    ASCIILiteral advice = context.build.recordedOptions().adviceToKeepFunctionSource();
+    // An obfuscated executable says nothing about its sources.
+    bool mayNameSources = !context.build.options().obfuscates();
+    if (mayNameSources && target.name && target.name != strings.emptyString())
+        return functionNotCompiledMessage(strings.toWTFString(target.name), advice);
+    if (mayNameSources && target.module)
+        return functionNotCompiledMessage(strings.toWTFString(context.program.pathForLineColumns(target.module)), context.program.lineColumnFor(target.module, target.position).line, advice);
+    return functionNotCompiledMessage(advice);
 }
 
-// No code that flow follows comes here. Code that nobody has seen may find the closure on an object that native code hung where such code can name it, and is refused like everything else flow did not see.
-static void emitEntryThatNothingEnters(IRBuilder& builder, const FlowResults& flow, StringArena& strings)
+// No call that flow follows comes here. A call that it lost track of may still find the closure, and throws like the use of an API that was trimmed.
+// Flow follows every call of a function of the program, so a validating build reports such an entry. A function of the library that is found under a computed name alone is left out on purpose.
+static void emitEntryThatNothingEnters(IRBuilder& builder, const Function& target, StringArena& strings)
 {
-    if (canUnseenJavaScriptRun(flow)) {
-        Value error = IRBuilder::make(Opcode::ThrowNewError);
-        error.setErrorKind(ErrorKind::Error);
-        error.setMessage(strings.intern(StringView("Cannot call this function: nothing in the program calls it, so it was not compiled into this executable. Call it in the program itself, or compile with --admit=runtime-code (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)"_s)));
-        builder.append(WTF::move(error));
+    const AnalysisContext& context = builder.context();
+    if (context.build.validates() && context.flow && !context.flow->unseenCodeCanRun() && target.role != FunctionRole::Library) {
+        builder.emitUnreachable();
+        return;
     }
+    String message = messageOfEntryThatNothingEnters(context, target);
+    Value error = IRBuilder::make(Opcode::ThrowNewError);
+    error.setErrorKind(ErrorKind::Error);
+    error.setMessage(strings.intern(StringView(message)));
+    builder.append(WTF::move(error));
     builder.emitUnreachable();
 }
 
 // A body is removed once nothing can enter it. The closure may still be created, and its identity is the entrypoint.
-static bool canSeenCodeEnter(const Program& program, const FlowResults& flow, const GenericEntrypointRequest& request)
+static bool canSeenCodeEnter(const Function& target)
 {
-    return request.callers == GenericCallers::Unknown && program.at(versionToEnter(program, flow, request.target, CalleeSetID())).hasBody();
+    return target.hasBody();
 }
 
-static void appendTargetCall(IRBuilder& builder, const FlowResults& flow, FunctionID targetID, const EntryArguments& arguments)
+static void appendTargetCall(IRBuilder& builder, FunctionID target, const EntryArguments& arguments)
 {
-    FunctionID callee = versionToEnter(builder.context().program, flow, targetID, CalleeSetID());
-    Vector<ValueID, 8> captures = appendCaptures(builder, targetID, arguments.closure);
-    ValueID result = appendDirectCall(builder, {
-        .callee = callee,
+    Vector<ValueID, 8> captures = appendCaptures(builder, target, arguments.closure);
+    ValueID call = appendDirectCall(builder, {
+        .callee = target,
         .captures = captures.span(),
         .thisValue = arguments.thisValue,
         .calleeValue = arguments.closure,
@@ -186,26 +222,53 @@ static void appendTargetCall(IRBuilder& builder, const FlowResults& flow, Functi
         .restArray = arguments.restArray,
         .argumentCount = arguments.argumentCount,
         .hiddenRest = arguments.hiddenRest,
-        .resultCheck = resultCheckOf(flow, callee),
     });
-    emitReturnOfEntrypointCall(builder, flow, callee, result, EntrypointResultTest::MadeUnlessCallerTests);
+    emitReturnOfEntrypointCall(builder, call);
+}
+
+// new.target is the closure here: whoever enters has seen to that.
+// A short constructor is worth a copy, in which its stores fill the slots of the new object. A long one is entered by a call: the entrypoint of [[Call]] enters it too.
+static void appendConstruction(IRBuilder& builder, FunctionID target, const EntryArguments& arguments, StringArena& strings)
+{
+    constexpr size_t mostValuesOfCopiedConstructor = 64;
+    ValueID object = appendThisOfConstructorFunction(builder, target, arguments.closure);
+    // Flow narrows `this` from every call that reaches the function. `function Base() {}` that is only called with the objects of others, by Base.call(this) and by super(), never sees an object of its own layout.
+    TypingContext typing { builder.context().program, builder.function(), builder.types() };
+    if (typing.typeOf(object).castTo(typing.typeOf(builder.context().program.at(target).thisType), builder.types()).isNever()) {
+        emitEntryThatNothingEnters(builder, builder.context().program.at(target), strings);
+        return;
+    }
+    Vector<ValueID, 8> captures = appendCaptures(builder, target, arguments.closure);
+    ValueID returned = appendDirectCall(builder, {
+        .callee = target,
+        .captures = captures.span(),
+        .thisValue = object,
+        .calleeValue = arguments.closure,
+        .arguments = arguments.fixedArguments.span(),
+        .restArray = arguments.restArray,
+        .argumentCount = arguments.argumentCount,
+        .hiddenRest = arguments.hiddenRest,
+        .isConstruction = true,
+        .isNeverInlined = builder.context().program.at(target).values.size() > mostValuesOfCopiedConstructor,
+    });
+    emitReturnOfConstruction(builder, returned, object);
 }
 
 Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& types, StringArena& strings, const GenericEntrypointRequest& request)
 {
-    RELEASE_ASSERT(context.flow);
-    RELEASE_ASSERT(request.callers == GenericCallers::Unknown || !request.isEnteredByHost);
-
     const Function& target = context.program.at(request.target);
-    Function entry = createEntryWithoutBody(types, target, request);
+    Function entry = createEntryWithoutBody(context.program, types, target, request);
     IRBuilder builder(context, entry, types);
     builder.setOrigin({ target.position, 0 });
     EntryArguments arguments = addEntryArguments(builder, target);
-    if (!canSeenCodeEnter(context.program, *context.flow, request)) {
-        emitEntryThatNothingEnters(builder, *context.flow, strings);
+    if (!canSeenCodeEnter(target)) {
+        emitEntryThatNothingEnters(builder, target, strings);
         return entry;
     }
-    appendTargetCall(builder, *context.flow, request.target, arguments);
+    if (request.allocatesThis)
+        appendConstruction(builder, request.target, arguments, strings);
+    else
+        appendTargetCall(builder, request.target, arguments);
     if (context.build.validates())
         checkCallByValueCoversEntrypoint(context.program, request.target, entry, context.build.diagnostics());
     return entry;
@@ -214,18 +277,20 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
 Function buildGenericEntrypoint(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
 {
     const Function& target = inputs.program.at(key.target);
-    EntrypointVariants variants = entrypointVariantsOf(target);
+    EntrypointVariants variants = entrypointVariantsOf(inputs.program, target);
     RELEASE_ASSERT(canBeCalledByValueOf(target.role));
+    bool allocatesThis = hasAllocatingConstructEntrypoint(inputs.program, target);
 
     GenericEntrypointRequest request { .target = key.target };
-    if (key.parameter == constructEntrypointParameter) {
-        RELEASE_ASSERT(variants == EntrypointVariants::Both);
+    if (key.parameter == constructEntrypointParameter || key.parameter == allocatingConstructEntrypointParameter) {
+        RELEASE_ASSERT(variants == EntrypointVariants::Both && allocatesThis == (key.parameter == allocatingConstructEntrypointParameter));
         request.takesNewTarget = true;
+        request.allocatesThis = allocatesThis;
     } else {
         RELEASE_ASSERT(key.parameter == callEntrypointParameter);
         request.takesNewTarget = variants == EntrypointVariants::WithNewTarget;
         if (variants == EntrypointVariants::Both)
-            request.constructEntrypoint = inputs.derivedFunctions.ensure(derivedFunctionKey(FunctionRole::GenericEntrypoint, key.target, constructEntrypointParameter));
+            request.constructEntrypoint = inputs.derivedFunctions.ensure(derivedFunctionKey(FunctionRole::GenericEntrypoint, key.target, allocatesThis ? allocatingConstructEntrypointParameter : constructEntrypointParameter));
     }
     return createGenericEntrypoint({ inputs.build, inputs.program, &inputs.flow, nullptr }, inputs.types, inputs.strings, request);
 }

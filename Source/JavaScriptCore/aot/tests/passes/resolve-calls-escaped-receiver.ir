@@ -1,11 +1,22 @@
-# A method call on an instance that reached native code is a direct call without a test, also when the program stores through unknown receivers under another name and under an index: neither can hide the method
+# A method call on an instance that was handed to code nobody compiled is a direct call behind one test of a bit of its class: that code may give the instance a property that hides the method.
+# What the program itself stores through unknown receivers, under another name and under an index, cannot hide the method and adds no test
 # FORM: AsRead
 # RUN: pipeline ResolveCalls
 # OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses
 # CHECK-LABEL: function f3 name="use"
 # CHECK: [[point]]: L0 = GetModuleVariable variable=g0
 # CHECK-NOT: Branch
-# CHECK: = CallDirect [[point]] function=f2
+# CHECK: [[isNotHidden]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="norm"}]
+# CHECK-NEXT: Branch [[isNotHidden]] -> taken [[direct]](), notTaken [[byName]]()
+# CHECK-NOT: Branch
+# CHECK: [[direct]]():
+# CHECK-NEXT: = CallDirect [[point]] function=f2
+# CHECK-NOT: Branch
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: [[callee]]: anything = PropGet [[point]] key="norm"
+# CHECK-NEXT: = Call [[callee]], [[point]] calleeKey="norm"
+# CHECK-NOT: Branch
+# CHECK-LABEL: function f4
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -25,9 +25,10 @@ static constexpr GPRReg T11 = gprOf(StubRegister::T11);
 static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
 static constexpr Address softStackLimit { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
 
+// In a frame with a record, with the stack pointer aligned as at the entry of a stub.
 static void callPollSlow(StubAssembler& jit)
 {
-    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+    jit.preservingRegistersClobberedBy(StubCallee::Operation, false, [&](unsigned) {
         jit.move(instanceGPR, A0);
         jit.callOperation(Entry::operationAOTPollSlow, T11);
     });
@@ -36,6 +37,25 @@ static void callPollSlow(StubAssembler& jit)
 StubSignature signatureOfPollAtPrologue(StubKey) { return { }; }
 StubSignature signatureOfPollAtLoop(StubKey) { return { }; }
 StubSignature signatureOfPollBeforeEntering(StubKey) { return { }; }
+
+#if CPU(X86_64)
+// The return address of the stub is on top of the stack. Nothing that the function holds in registers is wanted any more.
+// A frame with a record is dropped by the stub that throws. Only the tables say how large a frame without one is.
+static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStubAtPrologue, StubKey throwingStub)
+{
+    jit.loadPtr(Address(sp), A1);
+    jit.move(instanceGPR, A0);
+    jit.subPtr(TrustedImm32(sizeof(void*)), sp);
+    // This path does not return to the function, so it clobbers nothing for it.
+    jit.withSavedRegisters(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()), [&] {
+        jit.callOperation(Entry::operationAOTBytesAllocatedAtPrologueCheck, T11);
+    });
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+    jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR), throwingStubAtPrologue);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(sp, GPRInfo::returnValueGPR, CCallHelpers::TimesOne, sizeof(void*)), sp);
+    jit.jumpToStub(throwingStub);
+}
+#endif
 
 void generatePollAtPrologue(StubAssembler& jit)
 {
@@ -46,26 +66,38 @@ void generatePollAtPrologue(StubAssembler& jit)
     jit.addPtr(TrustedImm32(2 * sizeof(void*)), sp, stackPointerAtSite);
     jit.m_assembler.cmpq_mr(softStackLimit.offset, softStackLimit.base, stackPointerAtSite);
     jit.pop(stackPointerAtSite);
-    jit.linkToStub(Jump(jit.m_assembler.jCC(X86Assembler::ConditionB)), throwStackOverflow(true));
-#else
-    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, softStackLimit), throwStackOverflow(true));
-#endif
+    Jump doesNotFit(jit.m_assembler.jCC(X86Assembler::ConditionB));
+    Jump hasThrown;
+    Jump mustThrow;
     jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
         jit.loadCallerReturnAddress(bytes, A1);
         jit.move(instanceGPR, A0);
         jit.callOperation(Entry::operationAOTPollAtPrologue, T11);
-#if CPU(X86_64)
+        hasThrown = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
+        mustThrow = jit.branch64(CCallHelpers::Equal, GPRInfo::returnValueGPR, TrustedImm32(pollAtPrologueMustThrow));
         jit.storePtr(GPRInfo::returnValueGPR, Address(sp, bytes));
-#else
-        jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
-#endif
     });
-#if CPU(X86_64)
-    jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, Address(sp)), handleExceptionAtPrologue());
-#else
-    jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, CCallHelpers::linkRegister), handleExceptionAtPrologue());
-#endif
     jit.ret();
+
+    hasThrown.link(&jit);
+    jit.emitFunctionEpilogue();
+    leaveFunctionAtPrologue(jit, handleExceptionAtPrologue(), handleException(false));
+
+    mustThrow.link(&jit);
+    jit.emitFunctionEpilogue();
+    doesNotFit.link(&jit);
+    leaveFunctionAtPrologue(jit, throwStackOverflow(true), throwStackOverflow(false));
+#else
+    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, softStackLimit), throwStackOverflow(true));
+    jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
+        jit.loadCallerReturnAddress(bytes, A1);
+        jit.move(instanceGPR, A0);
+        jit.callOperation(Entry::operationAOTPollAtPrologue, T11);
+        jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
+    });
+    jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, CCallHelpers::linkRegister), handleExceptionAtPrologue());
+    jit.ret();
+#endif
 }
 
 void generatePollAtLoop(StubAssembler& jit)
@@ -97,17 +129,19 @@ void generatePollBeforeEntering(StubAssembler& jit)
     constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
     jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
     Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimit);
-    jit.subPtr(TrustedImm32(sizeof(void*)), sp);
+    jit.emitFunctionPrologue();
     callPollSlow(jit);
-    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+    jit.emitFunctionEpilogue();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
     Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset()));
+    Jump mustThrow = jit.branchTest8(CCallHelpers::NonZero, Address(scratch, VM::offsetOfTraps() + VMTraps::offsetOfStackManager() + StackManager::offsetOfStopsAtFunctionEntries()));
     jit.ret();
 
     hasThrown.link(&jit);
     jit.addPtr(TrustedImm32(sizeof(void*)), sp);
     jit.jumpToStub(handleException(false));
 
+    mustThrow.link(&jit);
     doesNotFit.link(&jit);
     jit.addPtr(TrustedImm32(sizeof(void*)), sp);
 #else

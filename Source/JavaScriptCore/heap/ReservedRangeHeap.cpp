@@ -68,7 +68,9 @@ namespace JSC {
 #if CPU(ADDRESS64)
 
 static constexpr size_t granuleSize = MarkedBlock::blockSize;
-static constexpr unsigned maxReservationAttempts = 8;
+static constexpr size_t sizeStep = MB;
+static constexpr unsigned maxReservationAttempts = 10;
+static_assert(!(sizeStep % granuleSize));
 // mimalloc divides a range into chunks of this size and refuses a range that holds none.
 static constexpr size_t mallocChunkSize = 32 * MB;
 #if OS(LINUX)
@@ -129,37 +131,32 @@ static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
 
 ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
 {
-    RELEASE_ASSERT(hasOneBitSet(request.size) && hasOneBitSet(request.minSize) && request.minSize <= request.size, request.size, request.minSize);
+    RELEASE_ASSERT(request.minSize && !(request.size % sizeStep) && !(request.minSize % sizeStep) && request.minSize <= request.size, request.size, request.minSize);
     RELEASE_ASSERT(!request.alignment || hasOneBitSet(request.alignment), request.alignment);
     RELEASE_ASSERT(!(request.unusedPrefixSize % granuleSize) && request.unusedPrefixSize < request.minSize, request.unusedPrefixSize, request.minSize);
 
-    size_t size = request.size;
-    while (size > request.addressSpaceBudget && size > request.minSize)
-        size /= 2;
-
-    for (unsigned attempt = 0; attempt < maxReservationAttempts && size >= request.minSize; ++attempt, size /= 2) {
-        uintptr_t start = tryReserve(size, request);
-        if (!start)
-            continue;
-
-        std::optional<Backing> backing = tryCreateBacking(start, size, request);
-        if (!backing) {
-            bool hasAnotherAttempt = attempt + 1 < maxReservationAttempts && size / 2 >= request.minSize;
-            bool mallocMayAcceptHalf = size / 2 >= request.unusedPrefixSize + mallocChunkSize;
-            if (hasAnotherAttempt && mallocMayAcceptHalf) {
-                releaseReservation(start, size);
-                continue;
-            }
-            backing = Backing { BackEnd::Granules, nullptr, size };
+    size_t size = std::max(std::min(request.size, request.addressSpaceBudget / sizeStep * sizeStep), request.minSize);
+    for (unsigned attempt = 0; attempt < maxReservationAttempts; ++attempt) {
+        size_t nextSize = std::max(size / 2 / sizeStep * sizeStep, request.minSize);
+        bool hasAnotherAttempt = attempt + 1 < maxReservationAttempts && nextSize < size;
+        if (uintptr_t start = tryReserve(size, request)) {
+            std::optional<Backing> backing = tryCreateBacking(start, size, request);
+            if (!backing && !(hasAnotherAttempt && nextSize >= request.unusedPrefixSize + mallocChunkSize))
+                backing = Backing { BackEnd::Granules, nullptr, size };
+            if (backing)
+                return new ReservedRangeHeap(start, *backing, request);
+            releaseReservation(start, size);
         }
-        return new ReservedRangeHeap(start, *backing, request);
+        if (!hasAnotherAttempt)
+            break;
+        size = nextSize;
     }
     return nullptr;
 }
 
 uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
 {
-    size_t alignment = std::max(request.alignment, size);
+    size_t alignment = std::max(request.alignment, roundUpToPowerOfTwo(size));
     bool isWritable = !reservesWithoutAccess(request);
     void* address = nullptr;
 #if OS(LINUX)

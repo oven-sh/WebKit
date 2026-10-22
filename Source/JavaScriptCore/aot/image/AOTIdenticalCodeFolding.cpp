@@ -203,7 +203,7 @@ static void appendTraceWords(ComparisonKey& key, const CompiledCode& code, const
 
 static void appendFrameWords(ComparisonKey& key, const FrameDescription& frame)
 {
-    appendWords(key, { frame.frameSizeInBytes, frame.calleeSaveRegisters.registerCount(), frame.frameRanges.size() });
+    appendWords(key, { frame.frameSizeInBytes, frame.hasFrameRecord, frame.calleeSaveRegisters.registerCount(), frame.frameRanges.size() });
     for (auto& entry : frame.calleeSaveRegisters)
         appendWords(key, { entry.reg().index(), static_cast<uint64_t>(entry.offset()) });
     for (const CodeRange& range : frame.frameRanges)
@@ -295,7 +295,7 @@ static void appendLinkWords(ComparisonKey& key, const CodeBody& body)
 static void appendComparisonKey(ComparisonKey& key, const CompiledCode& code, const TraceKind& kind, const AppendedEntryList& appendedEntries)
 {
     auto& frame = code.frame;
-    appendWords(key, { !frame.hasFrame(), kind.isSharedBody(), kind.trace.rejectsOnThrow, frame.stackUsedAtCalls, frame.isEnteredWithoutStackCheck, code.entry.hasValueEntry, frame.prologueChecks.size(), appendedEntries.size() });
+    appendWords(key, { !frame.hasFrame(), frame.spillsArgumentRegisters, kind.isSharedBody(), kind.trace.rejectsOnThrow, frame.stackUsedAtCalls, frame.isEnteredWithoutStackCheck, frame.prologueChecks.size(), appendedEntries.size() });
     for (const PrologueCheck& check : frame.prologueChecks)
         key.append(packWords(check.callOffset, check.resumeOffset));
     for (auto& appendedEntry : appendedEntries)

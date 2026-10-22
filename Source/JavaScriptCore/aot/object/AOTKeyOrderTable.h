@@ -15,7 +15,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC {
@@ -28,19 +27,21 @@ namespace AOT {
 
 struct State;
 
-enum class PrefixRegistration : bool { EveryPrefix, WholeOrderOnly };
-
 class KeyOrderTable final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(KeyOrderTable);
 public:
     explicit KeyOrderTable(State&);
     ~KeyOrderTable();
 
+    // What entriesInOrder() and propertiesInOrder() return stays where it is, unchanged, for as long as the table lives.
     std::span<const uint16_t> entriesInOrder(const LayoutData&, uint32_t order);
-    std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries, PrefixRegistration = PrefixRegistration::EveryPrefix);
-    std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry);
+    std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
+    // Published: compiled code finds the step of an object without extra keys by itself from then on.
+    enum class Step : bool { IsPublished, IsNotPublished };
+    std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
 
+    // Neither lists an order with an extra key or with a field that is anything but a writable, enumerable, configurable data property.
     JSCellButterfly* keysInOrder(VM&, const LayoutData&, uint32_t orderWord);
     std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord, Object::SymbolKeys = Object::SymbolKeys::Skip);
     JSPropertyNameEnumerator* enumerator(const LayoutData&, uint32_t orderWord, StructureChain* prototypeChain) const;
@@ -56,17 +57,55 @@ public:
 
     template<typename Visitor> void visitRoots(Visitor&);
 
-private:
-    struct OrderTable;
+    ALWAYS_INLINE std::optional<bool> rememberedWhetherOrderLists(uint32_t shape, uint32_t orderAndCount, uint32_t key) const
+    {
+        size_t newer = indexOfListedField(shape, orderAndCount, key) & ~static_cast<size_t>(1);
+        for (size_t place : { newer, newer + 1 }) {
+            const ListedField& remembered = m_listedFields[place];
+            if (remembered.shape == shape && remembered.orderAndCount == orderAndCount && remembered.key == key && remembered.answer)
+                return remembered.answer == isListed;
+        }
+        return std::nullopt;
+    }
+    // Two questions that fall on one place may be asked in turns for ever: a server asks the same few at every request. Throwing each other out, both would be worked out anew each time.
+    // So a place holds two answers, and a new one takes the room of the older.
+    void rememberWhetherOrderLists(uint32_t shape, uint32_t orderAndCount, uint32_t key, bool lists)
+    {
+        size_t newer = indexOfListedField(shape, orderAndCount, key) & ~static_cast<size_t>(1);
+        ListedField& place = m_listedFields[newer];
+        if (place.shape != shape || place.orderAndCount != orderAndCount || place.key != key)
+            m_listedFields[newer + 1] = place;
+        place = { shape, orderAndCount, key, lists ? isListed : isNotListed };
+    }
 
-    OrderTable& orderTableFor(const LayoutData&);
+private:
+    struct Storage;
+    struct ListedField {
+        uint32_t shape;
+        uint32_t orderAndCount;
+        uint32_t key;
+        uint32_t answer;
+    };
+    static constexpr uint32_t isNotListed = 1;
+    static constexpr uint32_t isListed = 2;
+    static size_t indexOfListedField(uint32_t shape, uint32_t orderAndCount, uint32_t key) { return ((shape ^ orderAndCount << 9 ^ key << 17) * 0x9e3779b1u) >> 25; }
+
     void growTransitions();
 
     State& m_state;
     const ProgramTables& m_tables;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<OrderTable>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_orderTables;
+    std::unique_ptr<Storage> m_storage;
     RememberedSlotSet m_writes;
     uint32_t m_numberOfTransitions { 0 };
+    std::array<ListedField, 128> m_listedFields { };
+    // Where the walk of fieldAt() begins: behind the field that it found last in a layout.
+    struct FieldFoundLast {
+        uint32_t shape;
+        uint32_t next;
+    };
+    std::array<FieldFoundLast, 64> m_fieldsFoundLast { };
+    size_t indexOfFieldAt(const LayoutData&, uint32_t slotKey);
+    UncheckedKeyHashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;
 };
 

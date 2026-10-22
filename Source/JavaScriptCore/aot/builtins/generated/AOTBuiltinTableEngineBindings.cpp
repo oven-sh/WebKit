@@ -55,10 +55,13 @@ JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPush);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
 JSC_DECLARE_HOST_FUNCTION(functionProtoFuncBind);
 JSC_DECLARE_HOST_FUNCTION(globalFuncIsNaN);
+JSC_DECLARE_HOST_FUNCTION(jsonProtoFuncStringify);
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncDelete);
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGet);
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncHas);
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSet);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSize);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorGetPrototypeOf);
 JSC_DECLARE_HOST_FUNCTION(objectConstructorIs);
 JSC_DECLARE_HOST_FUNCTION(objectConstructorSetPrototypeOf);
 JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapGet);
@@ -68,8 +71,13 @@ JSC_DECLARE_HOST_FUNCTION(protoFuncWeakSetHas);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncAdd);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncDelete);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncHas);
+JSC_DECLARE_HOST_FUNCTION(setProtoFuncSize);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);
+JSC_DECLARE_HOST_FUNCTION(typedArrayViewProtoGetterFuncLength);
 
 namespace AOT {
 
@@ -85,8 +93,11 @@ static constexpr BuiltinClassBinding classes[] = {
 static constexpr BuiltinNativeFunctionBinding nativeFunctions[] = {
     { .builtin = Builtins::IsNaN, .function = JSC_REGISTERED_HOST_FUNCTION(globalFuncIsNaN), .length = 1 },
     { .builtin = Builtins::ArrayIsArray, .function = JSC_REGISTERED_HOST_FUNCTION(arrayConstructorIsArray), .length = 1 },
+    { .builtin = Builtins::JSONStringify, .function = JSC_REGISTERED_HOST_FUNCTION(jsonProtoFuncStringify), .length = 3 },
+    { .builtin = Builtins::ObjectGetPrototypeOf, .function = JSC_REGISTERED_HOST_FUNCTION(objectConstructorGetPrototypeOf), .length = 1 },
     { .builtin = Builtins::ObjectIs, .function = JSC_REGISTERED_HOST_FUNCTION(objectConstructorIs), .length = 2 },
     { .builtin = Builtins::ObjectSetPrototypeOf, .function = JSC_REGISTERED_HOST_FUNCTION(objectConstructorSetPrototypeOf), .length = 2 },
+    { .builtin = Builtins::TypedArrayPrototypeLength, .function = JSC_REGISTERED_HOST_FUNCTION(typedArrayViewProtoGetterFuncLength) },
     { .builtin = Builtins::ArrayPrototypeIncludes, .function = JSC_REGISTERED_HOST_FUNCTION(arrayProtoFuncIncludes), .length = 1 },
     { .builtin = Builtins::ArrayPrototypeIndexOf, .function = JSC_REGISTERED_HOST_FUNCTION(arrayProtoFuncIndexOf), .length = 1 },
     { .builtin = Builtins::ArrayPrototypePush, .function = JSC_REGISTERED_HOST_FUNCTION(arrayProtoFuncPush), .length = 1 },
@@ -96,11 +107,16 @@ static constexpr BuiltinNativeFunctionBinding nativeFunctions[] = {
     { .builtin = Builtins::MapPrototypeGet, .function = JSC_REGISTERED_HOST_FUNCTION(mapProtoFuncGet), .length = 1 },
     { .builtin = Builtins::MapPrototypeHas, .function = JSC_REGISTERED_HOST_FUNCTION(mapProtoFuncHas), .length = 1 },
     { .builtin = Builtins::MapPrototypeSet, .function = JSC_REGISTERED_HOST_FUNCTION(mapProtoFuncSet), .length = 2 },
+    { .builtin = Builtins::MapPrototypeSize, .function = JSC_REGISTERED_HOST_FUNCTION(mapProtoFuncSize) },
     { .builtin = Builtins::SetPrototypeAdd, .function = JSC_REGISTERED_HOST_FUNCTION(setProtoFuncAdd), .length = 1 },
     { .builtin = Builtins::SetPrototypeDelete, .function = JSC_REGISTERED_HOST_FUNCTION(setProtoFuncDelete), .length = 1 },
     { .builtin = Builtins::SetPrototypeHas, .function = JSC_REGISTERED_HOST_FUNCTION(setProtoFuncHas), .length = 1 },
+    { .builtin = Builtins::SetPrototypeSize, .function = JSC_REGISTERED_HOST_FUNCTION(setProtoFuncSize) },
     { .builtin = Builtins::StringPrototypeIndexOf, .function = JSC_REGISTERED_HOST_FUNCTION(stringProtoFuncIndexOf), .length = 1 },
+    { .builtin = Builtins::StringPrototypeSlice, .function = JSC_REGISTERED_HOST_FUNCTION(stringProtoFuncSlice), .length = 2 },
     { .builtin = Builtins::StringPrototypeStartsWith, .function = JSC_REGISTERED_HOST_FUNCTION(stringProtoFuncStartsWith), .length = 1 },
+    { .builtin = Builtins::StringPrototypeToLowerCase, .function = JSC_REGISTERED_HOST_FUNCTION(stringProtoFuncToLowerCase) },
+    { .builtin = Builtins::StringPrototypeTrim, .function = JSC_REGISTERED_HOST_FUNCTION(stringProtoFuncTrim) },
     { .builtin = Builtins::WeakMapPrototypeGet, .function = JSC_REGISTERED_HOST_FUNCTION(protoFuncWeakMapGet), .length = 1 },
     { .builtin = Builtins::WeakMapPrototypeHas, .function = JSC_REGISTERED_HOST_FUNCTION(protoFuncWeakMapHas), .length = 1 },
     { .builtin = Builtins::WeakMapPrototypeSet, .function = JSC_REGISTERED_HOST_FUNCTION(protoFuncWeakMapSet), .length = 2 },

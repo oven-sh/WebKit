@@ -12,8 +12,8 @@ layout L1 name="Rectangle" fields=[{key="size" declared={type=anything} flags=[I
 
 function f0 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
-    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4
@@ -38,7 +38,7 @@ function f0 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=
 
 function f1 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
-    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v4 = Call v0, -, v3

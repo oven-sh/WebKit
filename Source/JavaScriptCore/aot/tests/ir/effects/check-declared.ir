@@ -1,4 +1,4 @@
-# The written effects of every row lie inside those of the rows it names in its replaces column
+# The declared effects of every row lie inside those of the rows it names in its replaces column
 # RUN: check-effects
 # CHECK: valid
 # RUN(BAD): check-effects everything

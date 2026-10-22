@@ -8,10 +8,50 @@
 
 #if ENABLE(AOT)
 
+#include "AOTOrderedInterning.h"
 #include <algorithm>
+#include <atomic>
 #include <utility>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+struct DeclaredFamilies {
+    Vector<Vector<LayoutID>> members;
+    BitVector hasMembersWithoutLayout;
+};
+
+struct Conversion {
+    uint32_t source;
+    uint32_t target;
+};
+
+// The names of the fields that a structural type requires, and the names that the objects of a layout have as fields. All ascending.
+struct DeclaredNames {
+    bool lacksRequiredName(LayoutID member, uint32_t type) const;
+
+    Vector<Vector<uint32_t>> required;
+    Vector<Vector<uint32_t>> declared;
+    // Not the objects of a constructor. `new Type(checker, flags)`, then `result.id = ..; result.symbol = ..`: the program stores names that the type requires after the constructor has
+    // returned, and the record lists what the constructor stores. An instance of a class may also find a name in an accessor of a prototype, or in a base that the engine brings along.
+    BitVector declaresEveryName;
+    uint32_t firstTaggedLayout { 0 };
+    Vector<Vector<uint32_t>> declaredByTaggedLayouts;
+};
+
+// What the objects of each layout pass for: what the program converts them to, and every type whose names they have. A conversion carries the whole family of its source along.
+// Names do not: a layout below one that has the names of a type may lack those that are optional there.
+struct Conversions {
+    const Wire::Sections& checkedSections;
+    Vector<Vector<uint32_t>> typesMetByNames;
+    TellingFields tellingFields;
+    DeclaredNames declaredNames;
+    std::span<const TaggedFamily> taggedFamilies;
+};
+
+} // anonymous namespace
 
 static InternalError inLayout(uint32_t index)
 {
@@ -25,7 +65,7 @@ static Failure checkDeclaredSupertypes(const Reader& reader, uint32_t index)
     RecordChecker checker(reader, inLayout(index));
 
     checker.enumerator<LayoutKind>(layout.kind);
-    checker.require(layout.predictedBase == Wire::none || layout.predictedBase < layouts.size(), InternalErrorKind::IdOutOfRange);
+    checker.require(layout.base == Wire::none || layout.base < layouts.size(), InternalErrorKind::IdOutOfRange);
     for (uint32_t supertype : checker.words(layout.supertypes))
         checker.require(supertype < layouts.size(), InternalErrorKind::IdOutOfRange);
     return checker.takeFailure();
@@ -36,36 +76,449 @@ static bool isEnvironment(const Wire::Layout& checkedLayout)
     return isEnvironmentKind(static_cast<LayoutKind>(checkedLayout.kind));
 }
 
-static Vector<Vector<LayoutID>> collectDeclaredMembers(const Wire::Sections& checkedSections)
+static bool has(const Wire::Layout& layout, LayoutFlags flag)
+{
+    return layout.flags & static_cast<uint32_t>(flag);
+}
+
+static bool has(const Wire::Field& field, FieldFlags flag)
+{
+    return field.flags & static_cast<uint32_t>(flag);
+}
+
+// The fields have not been read yet, so nothing about them has been checked.
+static std::span<const Wire::Field> fieldsOf(const Wire::Sections& sections, const Wire::Layout& layout)
+{
+    std::span<const Wire::Field> fields = sections.fields;
+    if (layout.fields.start > fields.size() || layout.fields.count > fields.size() - layout.fields.start)
+        return { };
+    return fields.subspan(layout.fields.start, layout.fields.count);
+}
+
+static bool isNamedByProgram(const Wire::Field& field)
+{
+    return field.key != Wire::none && !has(field, FieldFlags::IsPrivate) && !has(field, FieldFlags::IsBrand) && !has(field, FieldFlags::IsHidden);
+}
+
+static bool isStructuralType(const Wire::Layout& checkedLayout)
+{
+    return static_cast<LayoutKind>(checkedLayout.kind) == LayoutKind::Record && checkedLayout.constructor == Wire::none && !has(checkedLayout, LayoutFlags::IsTypeParameter);
+}
+
+static bool hasFieldsOfObjects(const Wire::Layout& checkedLayout)
+{
+    switch (static_cast<LayoutKind>(checkedLayout.kind)) {
+    case LayoutKind::Record:
+    case LayoutKind::Instance:
+    case LayoutKind::Container:
+        return !has(checkedLayout, LayoutFlags::IsTypeParameter);
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
+        return false;
+    }
+    return false;
+}
+
+// Ascending: the names of its own fields and of those of its bases.
+static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint32_t index)
 {
     std::span<const Wire::Layout> layouts = checkedSections.layouts;
-    Vector<Vector<LayoutID>> members(layouts.size());
-    Vector<uint32_t> stamps(FillWith { }, layouts.size(), 0u);
-    Vector<uint32_t, 16> worklist;
-    for (uint32_t index = 0; index < layouts.size(); ++index) {
-        LayoutID member(index);
-        if (isEnvironment(layouts[index])) {
-            members[index].append(member);
-            continue;
-        }
-
-        uint32_t stamp = index + 1;
-        auto visit = [&](uint32_t layout) {
-            if (std::exchange(stamps[layout], stamp) != stamp && !isEnvironment(layouts[layout]))
-                worklist.append(layout);
-        };
-        visit(index);
-        while (!worklist.isEmpty()) {
-            uint32_t reachedIndex = worklist.takeLast();
-            const Wire::Layout& reached = layouts[reachedIndex];
-            members[reachedIndex].append(member);
-            if (reached.predictedBase != Wire::none)
-                visit(reached.predictedBase);
-            for (uint32_t supertype : checkedSections.words.subspan(reached.supertypes.start, reached.supertypes.count))
-                visit(supertype);
+    Vector<uint32_t> names;
+    size_t remainingBases = layouts.size();
+    for (uint32_t current = index; current != Wire::none && remainingBases--; current = layouts[current].base) {
+        for (const Wire::Field& field : fieldsOf(checkedSections, layouts[current])) {
+            if (isNamedByProgram(field))
+                names.append(field.key);
         }
     }
-    return members;
+    std::ranges::sort(names);
+    removeRepeatedElements(names);
+    return names;
+}
+
+bool DeclaredNames::lacksRequiredName(LayoutID member, uint32_t type) const
+{
+    const Vector<uint32_t>& names = required[type];
+    if (names.isEmpty())
+        return false;
+    uint32_t index = member.index();
+    if (index < declared.size())
+        return declaresEveryName.quickGet(index) && !std::ranges::includes(declared[index], names);
+    if (index < firstTaggedLayout || index - firstTaggedLayout >= declaredByTaggedLayouts.size())
+        return false;
+    return !std::ranges::includes(declaredByTaggedLayouts[index - firstTaggedLayout], names);
+}
+
+static bool declaresEveryName(const Wire::Layout& checkedLayout)
+{
+    switch (static_cast<LayoutKind>(checkedLayout.kind)) {
+    case LayoutKind::Record:
+    case LayoutKind::Container:
+        return !has(checkedLayout, LayoutFlags::IsTypeParameter);
+    case LayoutKind::Instance:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
+        return false;
+    }
+    return false;
+}
+
+// A method is not asked for: an object may find it on a prototype. Nor is a name that nothing writes: no object has it.
+static bool isRequiredField(const Wire::Field& field)
+{
+    return isNamedByProgram(field) && has(field, FieldFlags::IsRequired) && !has(field, FieldFlags::IsMethod) && !has(field, FieldFlags::IsNeverWritten);
+}
+
+static DeclaredNames collectDeclaredNames(const ParallelLoops& loops, const Wire::Sections& checkedSections)
+{
+    std::span<const Wire::Layout> layouts = checkedSections.layouts;
+    unsigned numberOfLayouts = static_cast<unsigned>(layouts.size());
+
+    DeclaredNames result;
+    result.required.grow(numberOfLayouts);
+    result.declared.grow(numberOfLayouts);
+    result.declaresEveryName = BitVector(numberOfLayouts);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (declaresEveryName(layouts[index]))
+            result.declaresEveryName.quickSet(index);
+    }
+    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
+        if (result.declaresEveryName.quickGet(index))
+            result.declared[index] = collectNames(checkedSections, index);
+        if (!isStructuralType(layouts[index]))
+            return;
+        for (const Wire::Field& field : fieldsOf(checkedSections, layouts[index])) {
+            if (isRequiredField(field))
+                result.required[index].append(field.key);
+        }
+        std::ranges::sort(result.required[index]);
+    });
+    return result;
+}
+
+// A tagged layout has the fields of its maker and those that appendFieldsOfTaggedLayouts() takes from its declaring types.
+static void addNamesOfTaggedLayouts(DeclaredNames& names, const Wire::Sections& checkedSections, std::span<const TaggedFamily> families)
+{
+    if (families.empty())
+        return;
+    names.firstTaggedLayout = families[0].members[0].layout.index();
+    for (const TaggedFamily& family : families) {
+        Vector<uint32_t> namesOfMaker = collectNames(checkedSections, family.maker.index());
+        for (const TaggedLayout& member : family.members) {
+            Vector<uint32_t> declared = namesOfMaker;
+            for (LayoutID type : member.declaringTypes) {
+                for (const Wire::Field& field : fieldsOf(checkedSections, checkedSections.layouts[type.index()])) {
+                    if (field.key != Wire::none && !has(field, FieldFlags::IsMethod) && !has(field, FieldFlags::IsNeverWritten))
+                        declared.append(field.key);
+                }
+            }
+            std::ranges::sort(declared);
+            removeRepeatedElements(declared);
+            RELEASE_ASSERT(member.layout.index() - names.firstTaggedLayout == names.declaredByTaggedLayouts.size());
+            names.declaredByTaggedLayouts.append(WTF::move(declared));
+        }
+    }
+}
+
+// Calls the functor once for each run of pairs with the same first half, on any thread. The pairs are sorted.
+static void forEachGroupInParallel(const ParallelLoops& loops, std::span<const uint64_t> sortedPairs, NOESCAPE const Invocable<void(uint32_t first, std::span<const uint64_t> group)> auto& functor)
+{
+    constexpr size_t pairsPerTask = 4096;
+    size_t count = sortedPairs.size();
+    auto firstOf = [&](size_t index) {
+        return static_cast<uint32_t>(sortedPairs[index] >> 32);
+    };
+    forEachIndexInParallel(loops, static_cast<unsigned>((count + pairsPerTask - 1) / pairsPerTask), [&](unsigned task) {
+        size_t index = static_cast<size_t>(task) * pairsPerTask;
+        size_t end = std::min(count, index + pairsPerTask);
+        while (index < end && index && firstOf(index) == firstOf(index - 1))
+            ++index;
+        while (index < end) {
+            size_t groupEnd = index + 1;
+            while (groupEnd < count && firstOf(groupEnd) == firstOf(index))
+                ++groupEnd;
+            functor(firstOf(index), sortedPairs.subspan(index, groupEnd - index));
+            index = groupEnd;
+        }
+    });
+}
+
+static constexpr uint64_t pairOf(uint32_t first, uint32_t second) { return static_cast<uint64_t>(first) << 32 | second; }
+
+constexpr size_t maxLayoutsMetByNames = 128;
+
+// An object that has every name a type requires passes for the type, whatever brought it there: a cast, `any`, another file. That is more than the checker lets through,
+// and it is sound: what a read finds under a name is what the layout of the object declares for it, which every store is tested against, never what the type says.
+// A type that requires no name says nothing about the names of an object.
+static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
+{
+    std::span<const Wire::Layout> layouts = checkedSections.layouts;
+    unsigned numberOfLayouts = static_cast<unsigned>(layouts.size());
+
+    Vector<Vector<uint32_t>> names(numberOfLayouts);
+    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
+        // What is written under `Record<string, T>` is a map to the program, whatever names it has: it is not what a type with those names is written for.
+        if (hasFieldsOfObjects(layouts[index]) && !has(layouts[index], LayoutFlags::IsNeverAllocated) && !has(layouts[index], LayoutFlags::IsWrittenUnderDictionaryType))
+            names[index] = collectNames(checkedSections, index);
+    });
+    Vector<Vector<uint32_t>> layoutsWithName(checkedSections.propertyKeys.size());
+    Vector<uint64_t> layoutsByName = collectInParallel<uint64_t>(loops, numberOfLayouts, [&](unsigned index, Vector<uint64_t>& found) {
+        for (uint32_t name : names[index]) {
+            if (name < layoutsWithName.size())
+                found.append(pairOf(name, index));
+        }
+    });
+    parallelSort(loops, layoutsByName.mutableSpan(), std::less<uint64_t> { });
+    forEachGroupInParallel(loops, layoutsByName.span(), [&](uint32_t name, std::span<const uint64_t> group) {
+        layoutsWithName[name] = Vector<uint32_t>(group.size(), [&](size_t index) {
+            return static_cast<uint32_t>(group[index]);
+        });
+    });
+
+    Vector<Conversion> met = collectInParallel<Conversion>(loops, numberOfLayouts, [&](unsigned type, Vector<Conversion>& found) {
+        if (!isStructuralType(layouts[type]))
+            return;
+        Vector<uint32_t, 16> required;
+        const Vector<uint32_t>* fewest = nullptr;
+        for (const Wire::Field& field : fieldsOf(checkedSections, layouts[type])) {
+            if (!isNamedByProgram(field) || !has(field, FieldFlags::IsRequired) || has(field, FieldFlags::IsNeverWritten) || field.key >= layoutsWithName.size())
+                continue;
+            required.append(field.key);
+            if (!fewest || layoutsWithName[field.key].size() < fewest->size())
+                fewest = &layoutsWithName[field.key];
+        }
+        if (!fewest)
+            return;
+        std::ranges::sort(required);
+        size_t sizeBefore = found.size();
+        for (uint32_t layout : *fewest) {
+            if (layout != type && std::ranges::includes(names[layout], required) && !tellingFields.tellApart(layout, type))
+                found.append({ layout, type });
+        }
+        // Names that this many layouts have say little about an object, and every type that lists them all costs the compiler time and memory.
+        if (found.size() - sizeBefore > maxLayoutsMetByNames)
+            found.shrink(sizeBefore);
+    });
+
+    Vector<Vector<uint32_t>> typesMetByNames(numberOfLayouts);
+    Vector<uint64_t> typesBySource(met.size(), [&](size_t index) {
+        return pairOf(met[index].source, met[index].target);
+    });
+    parallelSort(loops, typesBySource.mutableSpan(), std::less<uint64_t> { });
+    forEachGroupInParallel(loops, typesBySource.span(), [&](uint32_t source, std::span<const uint64_t> group) {
+        typesMetByNames[source] = Vector<uint32_t>(group.size(), [&](size_t index) {
+            return static_cast<uint32_t>(group[index]);
+        });
+    });
+    return typesMetByNames;
+}
+
+// The program converts the objects of a layout to its base and to each of its supertypes.
+static void forEachConversionTarget(const Conversions& conversions, uint32_t source, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
+{
+    const Wire::Sections& checkedSections = conversions.checkedSections;
+    const Wire::Layout& layout = checkedSections.layouts[source];
+    if (layout.base != Wire::none)
+        functor(layout.base);
+    for (uint32_t supertype : checkedSections.words.subspan(layout.supertypes.start, layout.supertypes.count))
+        functor(supertype);
+}
+
+static bool requiresNoName(const Conversions& conversions, uint32_t type)
+{
+    return isStructuralType(conversions.checkedSections.layouts[type]) && conversions.declaredNames.required[type].isEmpty();
+}
+
+// A type that requires no name is a view of every object: `interface Handle { readonly brand?: never }`, `{}`, a bag of options. Whatever the program converts to it passes for it,
+// which says nothing about what else the object is: an assertion out of such a type is an assertion out of `object`. So what has reached the type goes on from there to the types
+// that require no name either, and to no other, or everything that goes up into it would come down as a member of everything that it is asserted to be.
+// The objects that are born with its own layout go wherever the program converts them.
+static bool passesOn(const Conversions& conversions, Conversion conversion, LayoutID member)
+{
+    if (!requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target))
+        return true;
+    return member.index() == conversion.source && !has(conversions.checkedSections.layouts[conversion.source], LayoutFlags::IsNeverAllocated);
+}
+
+static DeclaredFamilies collectDeclaredMembers(const ParallelLoops& loops, const Conversions& conversions)
+{
+    constexpr uint32_t layoutsPerTask = 64;
+    std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
+    uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
+    DeclaredFamilies families { Vector<Vector<LayoutID>>(layouts.size()), BitVector(layouts.size()) };
+    // The pairs are sorted, so it does not matter which thread finds which.
+    Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
+    Vector<Vector<uint64_t>> foundByWorkers(loops.width());
+    forEachIndexInParallel(loops, (numberOfLayouts + layoutsPerTask - 1) / layoutsPerTask, [&](unsigned task, unsigned worker) {
+        Vector<uint32_t>& stamps = stampsOfWorkers[worker];
+        if (stamps.isEmpty())
+            stamps.fill(0u, layouts.size());
+        Vector<uint64_t>& found = foundByWorkers[worker];
+        Vector<uint32_t, 16> worklist;
+        for (uint32_t index = task * layoutsPerTask, end = std::min(numberOfLayouts, index + layoutsPerTask); index < end; ++index) {
+            if (isEnvironment(layouts[index])) {
+                found.append(pairOf(index, index));
+                continue;
+            }
+
+            LayoutID member(index);
+            uint32_t stamp = index + 1;
+            auto visit = [&](uint32_t layout) {
+                if (std::exchange(stamps[layout], stamp) != stamp && !isEnvironment(layouts[layout]) && !conversions.tellingFields.tellApart(index, layout))
+                    worklist.append(layout);
+            };
+            visit(index);
+            for (uint32_t type : conversions.typesMetByNames[index])
+                visit(type);
+            while (!worklist.isEmpty()) {
+                uint32_t reached = worklist.takeLast();
+                found.append(pairOf(reached, index));
+                forEachConversionTarget(conversions, reached, [&](uint32_t target) {
+                    if (passesOn(conversions, { reached, target }, member))
+                        visit(target);
+                });
+            }
+        }
+    });
+    ParallelArray<uint64_t> reachedByMember = ParallelArray<uint64_t>::concatenationOf(loops, WTF::move(foundByWorkers));
+    parallelSort(loops, reachedByMember.mutableSpan(), std::less<uint64_t> { });
+    Vector<uint8_t> hasMembersWithoutLayout(FillWith { }, layouts.size(), static_cast<uint8_t>(0));
+    forEachGroupInParallel(loops, reachedByMember.span(), [&](uint32_t reached, std::span<const uint64_t> group) {
+        Vector<LayoutID>& members = families.members[reached];
+        members.reserveInitialCapacity(group.size());
+        for (uint64_t pair : group) {
+            uint32_t member = static_cast<uint32_t>(pair);
+            members.append(LayoutID(member));
+            if (!isEnvironment(layouts[member]) && has(layouts[member], LayoutFlags::HasMembersWithoutLayout))
+                hasMembersWithoutLayout[reached] = 1;
+        }
+    });
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (hasMembersWithoutLayout[index])
+            families.hasMembersWithoutLayout.quickSet(index);
+    }
+    return families;
+}
+
+// The set of a type is the layouts that declare the names it requires, whatever brought them near it. A layout that has the names of a small type, which the program asserts to be
+// a larger one, has not got the names of the larger one. Nor has the empty literal of `{} as T`. No read of such a name finds a field there: to the flow analysis it would be a
+// property that anybody may have added, an accessor among them, and one such member takes the proof from the whole set.
+// The planner of tagged layouts looks for the types of a maker in the families as the conversions give them, so this comes behind it.
+static void removeMembersThatLackRequiredNames(const ParallelLoops& loops, const DeclaredNames& names, DeclaredFamilies& families)
+{
+    forEachIndexInParallel(loops, static_cast<unsigned>(families.members.size()), [&](unsigned type) {
+        if (names.required[type].isEmpty())
+            return;
+        families.members[type].removeAllMatching([&](LayoutID member) {
+            return names.lacksRequiredName(member, type);
+        });
+    });
+}
+
+// A tagged layout has no record to ask. The planner of those has left it out where its tags say so, and the maker's own layout where each tag that the type writes has a layout.
+static bool canPassFor(const Conversions& conversions, LayoutID member, uint32_t type)
+{
+    if (member.index() >= conversions.checkedSections.layouts.size() || conversions.tellingFields.tellApart(member.index(), type) || conversions.declaredNames.lacksRequiredName(member, type))
+        return false;
+    for (const TaggedFamily& family : conversions.taggedFamilies) {
+        if (family.maker != member || member.index() == type)
+            continue;
+        size_t numberOfTags = 0;
+        for (const TaggedLayout& tagged : family.members)
+            numberOfTags += tagged.tags.size();
+        return !conversions.tellingFields.declaresOnlyLiterals(type, family.tagKey.index(), numberOfTags, [&](const LayoutTag& literal) {
+            return family.members.containsIf([&](const TaggedLayout& tagged) {
+                return tagged.tags.contains(literal);
+            });
+        });
+    }
+    return true;
+}
+
+static bool isInsideFamily(const Conversions& conversions, const DeclaredFamilies& families, Conversion conversion)
+{
+    bool passesOnEveryMember = !requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target);
+    if (passesOnEveryMember && families.hasMembersWithoutLayout.quickGet(conversion.source) && !families.hasMembersWithoutLayout.quickGet(conversion.target))
+        return false;
+    const Vector<LayoutID>& listed = families.members[conversion.target];
+    if (std::ranges::includes(listed, families.members[conversion.source]))
+        return true;
+    return std::ranges::all_of(families.members[conversion.source], [&](LayoutID member) {
+        return std::ranges::binary_search(listed, member) || !passesOn(conversions, conversion, member) || !canPassFor(conversions, member, conversion.target);
+    });
+}
+
+static Vector<Conversion> findConversionsOutsideFamilies(const ParallelLoops& loops, const Conversions& conversions, const DeclaredFamilies& families)
+{
+    std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
+    return collectInParallel<Conversion>(loops, static_cast<unsigned>(layouts.size()), [&](unsigned source, Vector<Conversion>& found) {
+        if (isEnvironment(layouts[source]))
+            return;
+        ASSERT(std::ranges::is_sorted(families.members[source]));
+        forEachConversionTarget(conversions, source, [&](uint32_t target) {
+            if (!isEnvironment(layouts[target]) && !isInsideFamily(conversions, families, { source, target }))
+                found.append({ source, target });
+        });
+    });
+}
+
+static LayoutID findMemberOutsideFamily(const Conversions& conversions, const DeclaredFamilies& families, Conversion conversion)
+{
+    const Vector<LayoutID>& listed = families.members[conversion.target];
+    for (LayoutID member : families.members[conversion.source]) {
+        if (!std::ranges::binary_search(listed, member) && passesOn(conversions, conversion, member) && canPassFor(conversions, member, conversion.target))
+            return member;
+    }
+    return LayoutID(conversion.source);
+}
+
+// The smallest families that hold the given ones and are closed, so the order of the work does not show.
+static void widenFamilies(const Conversions& conversions, DeclaredFamilies& families, Vector<Conversion>&& worklist)
+{
+    std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
+    while (!worklist.isEmpty()) {
+        Conversion conversion = worklist.takeLast();
+        if (isInsideFamily(conversions, families, conversion))
+            continue;
+
+        Vector<LayoutID>& members = families.members[conversion.target];
+        for (LayoutID member : families.members[conversion.source]) {
+            if (passesOn(conversions, conversion, member) && canPassFor(conversions, member, conversion.target))
+                members.append(member);
+        }
+        std::ranges::sort(members);
+        removeRepeatedElements(members);
+        bool passesOnEveryMember = !requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target);
+        if (passesOnEveryMember && families.hasMembersWithoutLayout.quickGet(conversion.source))
+            families.hasMembersWithoutLayout.quickSet(conversion.target);
+
+        forEachConversionTarget(conversions, conversion.target, [&](uint32_t target) {
+            if (!isEnvironment(layouts[target]))
+                worklist.append({ conversion.target, target });
+        });
+    }
+}
+
+// Nobody allocates a type parameter. Without a type argument that has a layout, or with one that has none, its type says nothing.
+static BitVector findTypeParametersWithoutFamily(std::span<const Wire::Layout> layouts, const DeclaredFamilies& families)
+{
+    BitVector result(layouts.size());
+    for (uint32_t index = 0; index < layouts.size(); ++index) {
+        if (!has(layouts[index], LayoutFlags::IsTypeParameter))
+            continue;
+        bool hasArgumentWithLayout = std::ranges::any_of(families.members[index], [&](LayoutID member) {
+            return member.index() >= layouts.size() || !has(layouts[member.index()], LayoutFlags::IsTypeParameter);
+        });
+        if (!hasArgumentWithLayout || families.hasMembersWithoutLayout.quickGet(index))
+            result.quickSet(index);
+    }
+    return result;
 }
 
 bool Reader::computeDeclaredMembers()
@@ -81,16 +534,70 @@ bool Reader::computeDeclaredMembers()
             return report(*failure);
     }
 
-    Vector<Vector<LayoutID>> members = collectDeclaredMembers(m_sections);
-    planTaggedLayouts(members);
+    if (m_keepsLayoutsAsWritten) {
+        m_typeParametersWithoutFamily = BitVector(numberOfLayouts);
+        m_viewsWithoutLayouts = BitVector(numberOfLayouts);
+        for (size_t index = 0; index < numberOfRecords<LayoutID>(); ++index)
+            m_declaredMembers.append(m_program.types.intern(LayoutSet { { LayoutID(index) }, true }));
+        return true;
+    }
+
+    TellingFields tellingFields(m_build.parallelLoops(), m_sections);
+    Conversions conversions { m_sections, findTypesMetByNames(m_build.parallelLoops(), m_sections, tellingFields), WTF::move(tellingFields), collectDeclaredNames(m_build.parallelLoops(), m_sections), { } };
+    DeclaredFamilies families = collectDeclaredMembers(m_build.parallelLoops(), conversions);
+    planTaggedLayouts(families.members, conversions.tellingFields);
+    conversions.taggedFamilies = m_program.taggedFamilies.span();
+    addNamesOfTaggedLayouts(conversions.declaredNames, m_sections, conversions.taggedFamilies);
+    removeMembersThatLackRequiredNames(m_build.parallelLoops(), conversions.declaredNames, families);
+
+    Vector<Conversion> outside = findConversionsOutsideFamilies(m_build.parallelLoops(), conversions, families);
+    if (!outside.isEmpty()) {
+        m_build.statistics().count(StatisticID::ConversionsOutsideFamily, outside.size());
+        if (m_build.options().verifiesAfterEveryStage) {
+            Conversion first = outside.first();
+            return report({ .kind = InternalErrorKind::FamilyNotClosed, .layout = findMemberOutsideFamily(conversions, families, first), .count = first.target, .detail = makeString("the type is L"_s, first.target) });
+        }
+        widenFamilies(conversions, families, WTF::move(outside));
+    }
+    m_typeParametersWithoutFamily = findTypeParametersWithoutFamily(m_sections.layouts, families);
+
     size_t numberOfLayoutIDs = numberOfRecords<LayoutID>();
-    m_declaredMembers.reserveInitialCapacity(numberOfLayoutIDs);
-    for (Vector<LayoutID>& membersOfLayout : members)
-        m_declaredMembers.append(m_program.types.intern(LayoutSet { WTF::move(membersOfLayout), true }));
-    for (size_t index = numberOfLayouts; index < numberOfLayoutIDs; ++index)
-        m_declaredMembers.append(m_program.types.intern(LayoutSet { { LayoutID(index) }, true }));
+    // No test finds a member without a layout, and every value of a position has passed a test or comes from one that has. So the type of a position lists the layouts alone:
+    // an object without one fails the test and goes on in the generic version.
+    // A type is a view: a record that nothing allocates is the layout of no object, so it is a member of no set, not even of its own. A view that no layout of the program
+    // can pass for says nothing about the layout of what arrives: an object that the program did not make, or one without a declared layout.
+    m_viewsWithoutLayouts = BitVector(numberOfLayouts);
+    Vector<LayoutSet> sets(numberOfLayoutIDs);
+    Vector<uint8_t> isViewWithoutLayouts(FillWith { }, numberOfLayouts, static_cast<uint8_t>(0));
+    forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>(numberOfLayoutIDs), [&](unsigned index) {
+        if (index >= numberOfLayouts) {
+            sets[index] = LayoutSet { { LayoutID(index) }, true };
+            return;
+        }
+        Vector<LayoutID>& members = families.members[index];
+        members.removeAllMatching([&](LayoutID member) {
+            return member.index() < numberOfLayouts && has(m_sections.layouts[member.index()], LayoutFlags::IsNeverAllocated);
+        });
+        if (members.isEmpty()) {
+            isViewWithoutLayouts[index] = 1;
+            members.append(LayoutID(index));
+        }
+        sets[index] = LayoutSet { WTF::move(members), true };
+        canonicalize(sets[index]);
+    });
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (!isViewWithoutLayouts[index])
+            continue;
+        if (has(m_sections.layouts[index], LayoutFlags::IsTypeParameter))
+            m_typeParametersWithoutFamily.quickSet(index);
+        m_viewsWithoutLayouts.quickSet(index);
+    }
+    m_declaredMembers = internAllInOrder<LayoutSet, LayoutSetID>(m_program.types, m_build.parallelLoops(), sets.mutableSpan());
+    m_build.destroyLater(WTF::move(sets));
     return true;
 }
+
+static SortedSet<BuiltinID> readBuiltins(RecordChecker&, Wire::Span);
 
 static bool isSignature(const Wire::Function& function)
 {
@@ -103,32 +610,79 @@ static Failure checkFunctionTypes(const Reader& reader, uint32_t index)
     RecordChecker checker(reader, { .kind = InternalErrorKind::Unknown, .function = FunctionID(index), .count = index });
     for (uint32_t functionType : checker.words(functions[index].functionTypes))
         checker.require(functionType < functions.size() && isSignature(functions[functionType]), InternalErrorKind::IdOutOfRange);
+    checker.require(!functions[index].builtinMembers.count || isSignature(functions[index]), InternalErrorKind::IdOutOfRange);
     return checker.takeFailure();
 }
 
-static Vector<Vector<FunctionID>> collectFunctionFamilies(const Wire::Sections& checkedSections)
+static void forEachFunctionTypeAbove(const Wire::Sections& checkedSections, uint32_t start, Vector<uint32_t>& stamps, NOESCAPE const Invocable<void(uint32_t)> auto& visit)
 {
     std::span<const Wire::Function> functions = checkedSections.functions;
-    Vector<Vector<FunctionID>> families(functions.size());
-    Vector<uint32_t> stamps(FillWith { }, functions.size(), 0u);
-    Vector<uint32_t, 16> worklist;
-    for (uint32_t index = 0; index < functions.size(); ++index) {
-        if (isSignature(functions[index]))
-            continue;
-
-        uint32_t stamp = index + 1;
-        worklist.append(index);
-        while (!worklist.isEmpty()) {
-            uint32_t reachedIndex = worklist.takeLast();
-            families[reachedIndex].append(FunctionID(index));
-            Wire::Span functionTypes = functions[reachedIndex].functionTypes;
-            for (uint32_t functionType : checkedSections.words.subspan(functionTypes.start, functionTypes.count)) {
-                if (std::exchange(stamps[functionType], stamp) != stamp)
-                    worklist.append(functionType);
-            }
+    uint32_t stamp = start + 1;
+    Vector<uint32_t, 16> worklist { start };
+    while (!worklist.isEmpty()) {
+        uint32_t reachedIndex = worklist.takeLast();
+        visit(reachedIndex);
+        Wire::Span functionTypes = functions[reachedIndex].functionTypes;
+        for (uint32_t functionType : checkedSections.words.subspan(functionTypes.start, functionTypes.count)) {
+            if (std::exchange(stamps[functionType], stamp) != stamp)
+                worklist.append(functionType);
         }
     }
+}
+
+// A function type is a signature, so a function that is none is the only member of its own family.
+static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections)
+{
+    constexpr uint32_t functionsPerTask = 512;
+    std::span<const Wire::Function> functions = checkedSections.functions;
+    uint32_t numberOfFunctions = static_cast<uint32_t>(functions.size());
+    Vector<Vector<FunctionID>> families(functions.size());
+    // The pairs are sorted, so it does not matter which thread finds which.
+    Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
+    Vector<Vector<uint64_t>> foundByWorkers(loops.width());
+    forEachIndexInParallel(loops, (numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [&](unsigned task, unsigned worker) {
+        Vector<uint32_t>& stamps = stampsOfWorkers[worker];
+        Vector<uint64_t>& found = foundByWorkers[worker];
+        for (uint32_t index = task * functionsPerTask, end = std::min(numberOfFunctions, index + functionsPerTask); index < end; ++index) {
+            if (isSignature(functions[index]))
+                continue;
+            families[index] = { FunctionID(index) };
+            if (!functions[index].functionTypes.count)
+                continue;
+            if (stamps.isEmpty())
+                stamps.fill(0u, functions.size());
+            forEachFunctionTypeAbove(checkedSections, index, stamps, [&](uint32_t reachedIndex) {
+                if (reachedIndex != index)
+                    found.append(pairOf(reachedIndex, index));
+            });
+        }
+    });
+    ParallelArray<uint64_t> membersByType = ParallelArray<uint64_t>::concatenationOf(loops, WTF::move(foundByWorkers));
+    parallelSort(loops, membersByType.mutableSpan(), std::less<uint64_t> { });
+    forEachGroupInParallel(loops, membersByType.span(), [&](uint32_t type, std::span<const uint64_t> group) {
+        families[type] = Vector<FunctionID>(group.size(), [&](size_t index) {
+            return FunctionID(static_cast<uint32_t>(group[index]));
+        });
+    });
     return families;
+}
+
+static Vector<Vector<BuiltinID>> collectBuiltinMembers(const Wire::Sections& checkedSections, std::span<const SortedSet<BuiltinID>> convertedBuiltins)
+{
+    Vector<Vector<BuiltinID>> members(convertedBuiltins.size());
+    Vector<uint32_t> stamps(FillWith { }, convertedBuiltins.size(), 0u);
+    for (uint32_t index = 0; index < convertedBuiltins.size(); ++index) {
+        if (convertedBuiltins[index].isEmpty())
+            continue;
+        forEachFunctionTypeAbove(checkedSections, index, stamps, [&](uint32_t reachedIndex) {
+            members[reachedIndex].append(convertedBuiltins[index].span());
+        });
+    }
+    for (Vector<BuiltinID>& list : members) {
+        std::ranges::sort(list);
+        list.shrink(std::ranges::unique(list).begin() - list.begin());
+    }
+    return members;
 }
 
 static StatisticID statisticForFamilyOf(size_t numberOfMembers, uint64_t maxDispatchCases)
@@ -140,21 +694,75 @@ static StatisticID statisticForFamilyOf(size_t numberOfMembers, uint64_t maxDisp
     return numberOfMembers <= maxDispatchCases ? StatisticID::FunctionTypesWithFewMembers : StatisticID::FunctionTypesWithManyMembers;
 }
 
-bool Reader::computeFunctionFamilies()
+Failure Reader::computeFunctionFamilies()
 {
+    constexpr size_t functionsPerChunk = 1024;
+    const ParallelLoops& loops = m_build.parallelLoops();
     uint32_t numberOfFunctions = static_cast<uint32_t>(m_sections.functions.size());
-    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
-        if (auto failure = checkFunctionTypes(*this, index))
-            return report(*failure);
-    }
+    auto firstOf = [](const Vector<Failure>& failures) -> Failure {
+        for (const Failure& failure : failures) {
+            if (failure)
+                return failure;
+        }
+        return std::nullopt;
+    };
+    if (Failure failure = firstOf(readInChunks(loops, numberOfFunctions, functionsPerChunk, [&](uint32_t index) { return checkFunctionTypes(*this, index); })))
+        return failure;
 
-    Vector<Vector<FunctionID>> families = collectFunctionFamilies(m_sections);
-    m_functionFamilies.reserveInitialCapacity(numberOfFunctions);
-    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
-        if (isSignature(m_sections.functions[index]))
-            m_build.statistics().count(statisticForFamilyOf(families[index].size(), m_build.limit(LimitID::MaxDispatchCases)), 1);
-        m_functionFamilies.append(m_program.types.intern(CalleeSet { WTF::move(families[index]), { }, false }));
-    }
+    Vector<SortedSet<BuiltinID>> convertedBuiltins(numberOfFunctions);
+    Failure failureInBuiltins = firstOf(readInChunks(loops, numberOfFunctions, functionsPerChunk, [&](uint32_t index) -> Failure {
+        RecordChecker checker(*this, { .kind = InternalErrorKind::Unknown, .function = FunctionID(index), .count = index });
+        convertedBuiltins[index] = readBuiltins(checker, m_sections.functions[index].builtinMembers);
+        return checker.takeFailure();
+    }));
+    if (failureInBuiltins)
+        return failureInBuiltins;
+
+    Vector<Vector<FunctionID>> families = collectFunctionFamilies(loops, m_sections);
+    Vector<Vector<BuiltinID>> builtinMembers = collectBuiltinMembers(m_sections, convertedBuiltins.span());
+    Vector<CalleeSet> sets(numberOfFunctions);
+    forEachIndexInParallel(loops, static_cast<unsigned>((numberOfFunctions + functionsPerChunk - 1) / functionsPerChunk), [&](unsigned chunk) {
+        for (size_t index = chunk * functionsPerChunk, end = std::min<size_t>(numberOfFunctions, index + functionsPerChunk); index < end; ++index) {
+            if (isSignature(m_sections.functions[index]))
+                m_build.statistics().count(statisticForFamilyOf(families[index].size() + builtinMembers[index].size(), m_build.limit(LimitID::MaxDispatchCases)), 1);
+            sets[index] = CalleeSet { WTF::move(families[index]), WTF::move(builtinMembers[index]), true };
+            canonicalize(sets[index]);
+        }
+    });
+    m_functionFamilies = internAllInOrder<CalleeSet, CalleeSetID>(m_program.types, loops, sets.mutableSpan());
+    m_build.destroyLater(WTF::move(sets));
+    return std::nullopt;
+}
+
+// The passes add about as many functions again. Room that is not used is not touched, and moving every function to a larger buffer is work for one thread.
+void Reader::makeRoomForFunctions()
+{
+    size_t numberOfFunctions = m_sections.functions.size();
+    m_program.functions.reserveInitialCapacity(numberOfFunctions + numberOfFunctions * 3 / 2);
+    growFromEmpty(m_build.parallelLoops(), m_program.functions, numberOfFunctions);
+}
+
+// Each is work for one thread for most of its time, and none looks at what another makes: the sets of layouts and the sets of callees are tables of their own,
+// and nothing asks for a function before the layouts are read. A failure in the layouts is the one that is reported, as if the rest had not been tried.
+bool Reader::computeFamilies()
+{
+    bool hasDeclaredMembers = false;
+    Failure failureInFunctionFamilies;
+    runTasksInParallel(m_build.parallelLoops(), {
+        [&] {
+            hasDeclaredMembers = computeDeclaredMembers();
+        },
+        [&] {
+            failureInFunctionFamilies = computeFunctionFamilies();
+        },
+        [&] {
+            makeRoomForFunctions();
+        },
+    });
+    if (!hasDeclaredMembers)
+        return false;
+    if (failureInFunctionFamilies)
+        return report(*failureInFunctionFamilies);
     return true;
 }
 
@@ -170,15 +778,6 @@ static Vector<IDType, 8> collectAscendingIDs(RecordChecker& checker, std::span<c
         ids.append(id);
     }
     return ids;
-}
-
-static TypeID earlierType(RecordChecker& checker, std::span<const TypeID> earlierTypes, uint32_t word)
-{
-    if (word >= earlierTypes.size()) {
-        checker.fail(InternalErrorKind::TypeRefersForward);
-        return { };
-    }
-    return earlierTypes[word];
 }
 
 static void readPrimitives(RecordChecker& checker, const Wire::Type& wire, OptionSet<TypeFlags> flags, Type& type)
@@ -207,63 +806,225 @@ static SortedSet<BuiltinID> readBuiltins(RecordChecker& checker, Wire::Span span
     return SortedSet<BuiltinID>(canonicalIDs.span());
 }
 
-static LayoutSetID internLayouts(TypeTable& types, IRForm form, std::span<const LayoutSetID> declaredMembers, std::span<const LayoutID> written)
+bool Reader::readsAsAnything(std::span<const LayoutID> named) const
 {
-    if (written.empty())
-        return { };
-    if (form != IRForm::AsRead)
-        return types.intern(LayoutSet { Vector<LayoutID>(written), true });
-    if (written.size() == 1)
-        return declaredMembers[written[0].index()];
-
-    Vector<LayoutID> members;
-    for (LayoutID layout : written)
-        members.appendVector(types.at(declaredMembers[layout.index()]).members);
-    return types.intern(LayoutSet { WTF::move(members), true });
+    return m_form == IRForm::AsRead && std::ranges::any_of(named, [&](LayoutID layout) {
+        return m_typeParametersWithoutFamily.get(layout.index());
+    });
 }
 
-void Reader::addFunctions(Type& type, std::span<const FunctionID> written) const
+void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named, bool hasMembersWithoutLayout) const
 {
-    if (written.empty() || type.anyFunction)
+    if (result.type.anyObject || (named.empty() && !hasMembersWithoutLayout))
         return;
     if (m_form != IRForm::AsRead) {
-        type.functions = SortedSet<FunctionID>(written);
+        result.layoutsToIntern = LayoutSet { Vector<LayoutID>(named), true, hasMembersWithoutLayout };
         return;
     }
 
+    if (named.size() == 1) {
+        LayoutSetID family = m_declaredMembers[named[0].index()];
+        if (!hasMembersWithoutLayout || m_program.at(family).hasMembersWithoutLayout) {
+            result.type.layouts = family;
+            return;
+        }
+    }
+
+    LayoutSet families { { }, true, hasMembersWithoutLayout };
+    for (LayoutID layout : named) {
+        const LayoutSet& family = m_program.at(m_declaredMembers[layout.index()]);
+        families.members.appendVector(family.members);
+        families.hasMembersWithoutLayout |= family.hasMembersWithoutLayout;
+    }
+    canonicalize(families);
+    result.layoutsToIntern = WTF::move(families);
+}
+
+void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
+{
+    if (named.empty())
+        return;
+    if (m_form != IRForm::AsRead || m_keepsLayoutsAsWritten) {
+        type.functions = SortedSet<FunctionID>(named);
+        return;
+    }
+    if (type.anyFunction)
+        return;
+
+    // Every function whose signature fits satisfies a function type, and no test at run time knows a signature. So the type admits every function,
+    // and lists those that the program is seen to convert to it: they are what a call through the type expects.
     Vector<FunctionID, 8> members;
-    for (FunctionID function : written) {
-        const Vector<FunctionID>& family = m_program.at(m_functionFamilies[function.index()]).functions;
-        if (family.isEmpty()) {
+    Vector<BuiltinID, 4> builtinMembers(type.builtins.span());
+    for (FunctionID function : named) {
+        type.anyFunction |= isSignature(m_sections.functions[function.index()]);
+        const CalleeSet& family = m_program.at(m_functionFamilies[function.index()]);
+        if (family.functions.isEmpty() && family.builtins.isEmpty()) {
             type.anyFunction = true;
             return;
         }
-        members.appendVector(family);
+        members.appendVector(family.functions);
+        builtinMembers.appendVector(family.builtins);
+    }
+    if (members.size() > m_build.limit(LimitID::MaxFunctionsInType) || builtinMembers.size() > m_build.limit(LimitID::MaxBuiltinsInType)) {
+        type.anyFunction = true;
+        return;
     }
     type.functions = SortedSet<FunctionID>(members.span());
-    if (type.functions.size() > m_build.limit(LimitID::MaxFunctionsInType)) {
-        type.functions = { };
-        type.anyFunction = true;
-    }
+    type.builtins = SortedSet<BuiltinID>(builtinMembers.span());
 }
 
 bool Reader::readTypes()
 {
+    if (m_completeType)
+        return readTypesOneByOne();
+
+    constexpr size_t typesPerChunk = 64;
+    const ParallelLoops& loops = m_build.parallelLoops();
     uint32_t numberOfTypes = static_cast<uint32_t>(m_sections.types.size());
-    m_types.reserveInitialCapacity(numberOfTypes);
+    unsigned numberOfChunks = static_cast<unsigned>((numberOfTypes + typesPerChunk - 1) / typesPerChunk);
+    auto forEachTypeInParallel = [&](const auto& functor) {
+        forEachIndexInParallel(loops, numberOfChunks, [&](unsigned chunk) {
+            for (uint32_t index = chunk * typesPerChunk, end = std::min<uint32_t>(numberOfTypes, index + typesPerChunk); index < end; ++index)
+                functor(index);
+        });
+    };
+
+    Vector<Vector<TypeAsRead>> chunksAsRead(numberOfChunks);
+    auto typeAsRead = [&](uint32_t index) -> TypeAsRead& {
+        return chunksAsRead[index / typesPerChunk][index % typesPerChunk];
+    };
+    Vector<Failure> failures(numberOfChunks);
+    forEachIndexInParallel(loops, numberOfChunks, [&](unsigned chunk) {
+        uint32_t first = chunk * typesPerChunk;
+        chunksAsRead[chunk].grow(std::min<size_t>(typesPerChunk, numberOfTypes - first));
+        for (uint32_t offset = 0; offset < chunksAsRead[chunk].size() && !failures[chunk]; ++offset)
+            failures[chunk] = readType(first + offset, chunksAsRead[chunk][offset]);
+    });
+    if (!reportFirst(failures.span()))
+        return false;
+
+    Vector<uint32_t> typesWithNewSets = findIndicesInParallel(loops, numberOfTypes, [&](unsigned index) {
+        return typeAsRead(index).layoutsToIntern.has_value();
+    });
+    Vector<LayoutSet> sets(typesWithNewSets.size(), [&](size_t position) {
+        return WTF::move(*typeAsRead(typesWithNewSets[position]).layoutsToIntern);
+    });
+    Vector<LayoutSetID> setIDs = internAllInOrder<LayoutSet, LayoutSetID>(m_program.types, loops, sets.mutableSpan());
+    for (size_t position = 0; position < setIDs.size(); ++position)
+        typeAsRead(typesWithNewSets[position]).type.layouts = setIDs[position];
+
+    auto contentsOf = [&](uint32_t index, size_t classIndex) {
+        Wire::Span checkedContents = m_sections.classParts[m_sections.types[index].classes.start + classIndex].contents;
+        return m_sections.words.subspan(checkedContents.start, checkedContents.count);
+    };
+    ParallelArray<Type> types(loops, numberOfTypes, [&](unsigned index) {
+        return WTF::move(typeAsRead(index).type);
+    });
+    Vector<uint8_t> nestingDepths(FillWith { }, numberOfTypes, static_cast<uint8_t>(0));
+    forEachTypeInParallel([&](uint32_t index) {
+        for (size_t classIndex = 0; classIndex < types[index].classes.size(); ++classIndex)
+            nestingDepths[index] |= !contentsOf(index, classIndex).empty();
+    });
+    Vector<Vector<uint32_t>> typesByDepth(1);
     for (uint32_t index = 0; index < numberOfTypes; ++index) {
-        Type type;
-        if (auto failure = readType(index, type))
-            return report(*failure);
-        m_types.append(m_program.types.intern(type));
+        if (nestingDepths[index]) {
+            unsigned depth = 0;
+            for (size_t classIndex = 0; classIndex < types[index].classes.size(); ++classIndex) {
+                for (uint32_t earlierType : contentsOf(index, classIndex))
+                    depth = std::max<unsigned>(depth, nestingDepths[earlierType]);
+            }
+            nestingDepths[index] = static_cast<uint8_t>(std::min(depth + 1, 255u));
+            if (nestingDepths[index] == 255)
+                return readTypesOneByOne();
+            if (nestingDepths[index] >= typesByDepth.size())
+                typesByDepth.grow(nestingDepths[index] + 1);
+        }
+        typesByDepth[nestingDepths[index]].append(index);
+    }
+
+    auto& table = m_program.types.recordsForOrderedInterning<Type>();
+    OrderedInterning<Type, TypeID, std::remove_reference_t<decltype(table)>> interning(table, loops, types.mutableSpan());
+    for (const Vector<uint32_t>& typesAtDepth : typesByDepth) {
+        forEachIndexInParallel(loops, static_cast<unsigned>((typesAtDepth.size() + typesPerChunk - 1) / typesPerChunk), [&](unsigned chunk) {
+            for (size_t position = chunk * typesPerChunk, end = std::min(typesAtDepth.size(), position + typesPerChunk); position < end; ++position) {
+                uint32_t index = typesAtDepth[position];
+                Type& type = types[index];
+                for (size_t classIndex = 0; classIndex < type.classes.size(); ++classIndex) {
+                    auto& contents = type.classes[classIndex].contents;
+                    std::span<const uint32_t> earlierTypes = contentsOf(index, classIndex);
+                    contents.reserveInitialCapacity(earlierTypes.size());
+                    for (uint32_t earlierType : earlierTypes) {
+                        TypeID existing = interning.existingID(earlierType);
+                        contents.append(existing ? existing : TypeID(TypeTable::provisionalBit | interning.equivalenceClass(earlierType)));
+                    }
+                }
+                type.canonicalize();
+                interning.setHash(index, TypeTable::hashOfCanonical(type));
+            }
+        });
+        interning.classify(typesAtDepth.span());
+    }
+    interning.assignIDs();
+    forEachTypeInParallel([&](uint32_t index) {
+        if (!nestingDepths[index] || !interning.isNew(index))
+            return;
+        bool hasChanged = false;
+        for (ClassPart& part : types[index].classes) {
+            for (TypeID& contents : part.contents) {
+                if (!TypeTable::isProvisional(contents))
+                    continue;
+                contents = interning.idAt(contents.index() & ~TypeTable::provisionalBit);
+                hasChanged = true;
+            }
+        }
+        if (hasChanged)
+            interning.setHash(index, TypeTable::hashOfCanonical(types[index]));
+    });
+    interning.commit();
+    m_types = interning.takeIDs();
+    m_build.destroyLater(WTF::move(chunksAsRead));
+    m_build.destroyLater(WTF::move(types));
+    m_build.destroyLater(WTF::move(sets));
+    return true;
+}
+
+bool Reader::readTypesOneByOne()
+{
+    constexpr size_t typesPerChunk = 64;
+    constexpr size_t typesPerRound = 1 << 16;
+    size_t numberOfTypes = m_sections.types.size();
+    m_types.reserveInitialCapacity(numberOfTypes);
+    for (size_t first = 0; first < numberOfTypes; first += typesPerRound) {
+        Vector<TypeAsRead> types(std::min(typesPerRound, numberOfTypes - first));
+        auto failures = readInChunks(m_build.parallelLoops(), types.size(), typesPerChunk, [&](uint32_t position) {
+            return readType(static_cast<uint32_t>(first + position), types[position]);
+        });
+        if (!reportFirst(failures.span()))
+            return false;
+        internLayoutSetsInOrder(types.mutableSpan());
+        if (!m_completeType) {
+            forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>((types.size() + typesPerChunk - 1) / typesPerChunk), [&](unsigned chunk) {
+                size_t end = std::min(types.size(), (static_cast<size_t>(chunk) + 1) * typesPerChunk);
+                for (size_t position = static_cast<size_t>(chunk) * typesPerChunk; position < end; ++position)
+                    hashTypeWithoutContents(static_cast<uint32_t>(first + position), types[position]);
+            });
+        }
+        constexpr size_t typesAhead = 8;
+        for (size_t position = 0; position < types.size(); ++position) {
+            if (position + typesAhead < types.size() && types[position + typesAhead].hashOfType)
+                m_program.types.prefetchForType(*types[position + typesAhead].hashOfType);
+            m_types.append(internType(static_cast<uint32_t>(first + position), WTF::move(types[position])));
+        }
+        m_build.destroyLater(WTF::move(types));
     }
     return true;
 }
 
-Failure Reader::readType(uint32_t index, Type& type)
+Failure Reader::readType(uint32_t index, TypeAsRead& result) const
 {
     const Wire::Type& wire = m_sections.types[index];
     RecordChecker checker(*this, inRecord(index));
+    Type& type = result.type;
 
     auto flags = checker.flags<TypeFlags>(wire.flags);
     readPrimitives(checker, wire, flags, type);
@@ -291,12 +1052,62 @@ Failure Reader::readType(uint32_t index, Type& type)
     if (auto failure = checker.takeFailure())
         return failure;
 
-    type.layouts = internLayouts(m_program.types, m_form, m_declaredMembers.span(), layouts.span());
+    if (readsAsAnything(layouts.span())) {
+        type = Type::anything().withPrimitives(type.primitives & Primitive::Absent);
+        return std::nullopt;
+    }
+    if (m_form == IRForm::AsRead && std::ranges::any_of(layouts, [&](LayoutID layout) { return m_viewsWithoutLayouts.get(layout.index()); }))
+        type.anyObject = true;
+    addLayouts(result, layouts.span(), flags.contains(TypeFlags::HasMembersWithoutLayout));
     addFunctions(type, functions.span());
+    if (result.layoutsToIntern) {
+        canonicalize(*result.layoutsToIntern);
+        result.hashOfLayouts = TypeTable::hashOfCanonical(*result.layoutsToIntern);
+    }
+    return std::nullopt;
+}
 
+void Reader::internLayoutSetsInOrder(std::span<TypeAsRead> types)
+{
+    constexpr size_t typesAhead = 8;
+    for (size_t position = 0; position < types.size(); ++position) {
+        if (position + typesAhead < types.size() && types[position + typesAhead].layoutsToIntern)
+            m_program.types.prefetchForLayoutSet(types[position + typesAhead].hashOfLayouts);
+        TypeAsRead& read = types[position];
+        if (!read.layoutsToIntern)
+            continue;
+        read.type.layouts = m_program.types.internCanonicalWithHash(WTF::move(*read.layoutsToIntern), read.hashOfLayouts);
+        read.layoutsToIntern = std::nullopt;
+    }
+}
+
+void Reader::hashTypeWithoutContents(uint32_t index, TypeAsRead& read) const
+{
+    Wire::Span checkedClasses = m_sections.types[index].classes;
+    for (size_t position = 0; position < read.type.classes.size(); ++position) {
+        if (m_sections.classParts[checkedClasses.start + position].contents.count)
+            return;
+    }
+    read.type.canonicalize();
+    read.hashOfType = TypeTable::hashOfCanonical(read.type);
+}
+
+TypeID Reader::internType(uint32_t index, TypeAsRead&& read)
+{
+    Type& type = read.type;
+    if (read.hashOfType)
+        return m_program.types.internCanonicalWithHash(WTF::move(type), *read.hashOfType);
+    Wire::Span checkedClasses = m_sections.types[index].classes;
+    for (size_t position = 0; position < type.classes.size(); ++position) {
+        Wire::Span checkedContents = m_sections.classParts[checkedClasses.start + position].contents;
+        auto& contents = type.classes[position].contents;
+        contents.reserveInitialCapacity(checkedContents.count);
+        for (uint32_t earlierType : m_sections.words.subspan(checkedContents.start, checkedContents.count))
+            contents.append(m_types[earlierType]);
+    }
     if (m_completeType)
         m_completeType(index, type);
-    return std::nullopt;
+    return m_program.types.intern(WTF::move(type));
 }
 
 Failure Reader::readClassPart(RecordChecker& checker, uint32_t typeIndex, const Wire::ClassPart& wire, ClassPart& part) const
@@ -305,94 +1116,51 @@ Failure Reader::readClassPart(RecordChecker& checker, uint32_t typeIndex, const 
     if (auto failure = checker.takeFailure())
         return failure;
     checker.require(wire.contents.count == m_builtins.numberOfSlotsInType(part.builtinClass), InternalErrorKind::ListOutOfBounds);
-
-    auto contents = checker.words(wire.contents);
-    auto earlierTypes = m_types.span().first(typeIndex);
-    part.contents.reserveInitialCapacity(contents.size());
-    for (uint32_t word : contents)
-        part.contents.append(earlierType(checker, earlierTypes, word));
+    for (uint32_t word : checker.words(wire.contents))
+        checker.require(word < typeIndex, InternalErrorKind::TypeRefersForward);
     return checker.takeFailure();
 }
 
-bool Reader::computePromisedTypes()
+// Flow analysis only distinguishes a string constant that is also a property key.
+static void internStringTagKeys(Program& program, const ParallelLoops& loops)
 {
-    if (m_form != IRForm::AsRead)
-        return true;
-
-    uint32_t numberOfTypes = m_program.types.size();
-    m_promisedTypes.reserveInitialCapacity(numberOfTypes);
-    for (uint32_t index = 0; index < numberOfTypes; ++index) {
-        TypeID asWritten(index);
-        if (!m_program.at(asWritten).layouts) {
-            m_promisedTypes.append(asWritten);
-            continue;
+    Vector<StringID> literals = collectInParallel<StringID>(loops, program.layouts.size(), [&](unsigned index, Vector<StringID>& found) {
+        for (const Field& field : program.layouts[index].fields) {
+            if (!field.declared.type)
+                continue;
+            for (StringID literal : program.at(field.declared.type).stringLiterals)
+                found.append(literal);
         }
-        Type promised = m_program.at(asWritten);
-        promised.layouts = { };
-        promised.anyObject = true;
-        m_promisedTypes.append(m_program.types.intern(promised));
-    }
-    m_anythingOrAbsent = m_program.types.intern(Type::anything().withPrimitives(Primitive::Absent));
-    return true;
+    });
+    for (StringID literal : literals)
+        program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal });
 }
 
-// A mismatch that is only reported lets the value through, so a written type holds for nothing that enters the position.
-bool Reader::promisesType(const DeclaredType& declared) const
-{
-    switch (m_build.options().recorded.policy()) {
-    case MismatchPolicy::Throw:
-        return true;
-    case MismatchPolicy::Report:
-        return declared.flags.contains(PositionFlags::IsFromCompiler);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// Nothing tests what enters an int32 promise when the program runs.
-bool Reader::isTestedAtRunTime(const DeclaredType& declared) const
-{
-    return promisesType(declared) && !declared.flags.contains(PositionFlags::IsInt32Promise);
-}
-
-TypeID Reader::promisedTypeOf(const DeclaredType& declared) const
-{
-    TypeID asWritten = declared.type;
-    if (isTestedAtRunTime(declared) || !asWritten || asWritten.index() >= m_promisedTypes.size())
-        return promisedTypeOf(asWritten);
-    return m_program.at(asWritten).primitives & Primitive::Absent ? m_anythingOrAbsent : TypeTable::anything;
-}
-
-TypeID Reader::promisedTypeOf(TypeID asWritten) const
-{
-    if (!asWritten || asWritten.index() >= m_promisedTypes.size())
-        return asWritten;
-    return m_promisedTypes[asWritten.index()];
-}
-
-static void appendDerivedLayouts(Program& program, BuildContext& build, std::span<const LayoutSetID> declaredMembers, std::span<const TaggedFamily> taggedFamilies, size_t numberOfFunctions)
+static void appendDerivedLayouts(Program& program, BuildContext& build, std::span<const LayoutSetID> declaredMembers)
 {
     size_t numberOfLayoutsAsRead = program.layouts.size();
-    // The passes add about as many functions again. Room that is not used is not touched, and moving every function to a larger buffer is work for one thread.
-    program.functions.reserveInitialCapacity(numberOfFunctions + numberOfFunctions * 3 / 2);
-    program.functions.grow(numberOfFunctions);
     program.recordCountsAsRead();
 
     program.internBuiltinNameKeys();
+    internStringTagKeys(program, build.parallelLoops());
     program.appendBuiltinLayouts();
     program.appendNamespaceLayouts();
-    appendTaggedLayouts(program, taggedFamilies);
+    appendTaggedLayouts(program, program.taggedFamilies.span());
     RELEASE_ASSERT(program.layouts.size() == declaredMembers.size());
 
     for (size_t index = 0; index < numberOfLayoutsAsRead; ++index)
         program.setDeclaredMembers(LayoutID(index), declaredMembers[index]);
     initializeLayouts(program, build);
-    appendFieldsOfTaggedLayouts(program, taggedFamilies);
+    appendFieldsOfTaggedLayouts(program, program.taggedFamilies.span());
 }
 
 bool Reader::readLayouts()
 {
     constexpr size_t layoutsPerChunk = 64;
-    m_program.layouts.grow(m_sections.layouts.size());
+    // The derived layouts follow, and the passes add more. As with the functions, room that is not used is not touched.
+    size_t numberOfLayoutIDs = numberOfRecords<LayoutID>();
+    m_program.layouts.reserveCapacity(numberOfLayoutIDs + numberOfLayoutIDs / 2);
+    growFromEmpty(m_build.parallelLoops(), m_program.layouts, m_sections.layouts.size());
     auto failures = readInChunks(m_build.parallelLoops(), m_sections.layouts.size(), layoutsPerChunk, [&](uint32_t index) {
         RecordChecker checker(*this, inLayout(index));
         read(checker, m_sections.layouts[index], static_cast<LayoutRecord&>(m_program.layouts[index]));
@@ -401,23 +1169,45 @@ bool Reader::readLayouts()
     if (!reportFirst(failures.span()))
         return false;
 
-    appendDerivedLayouts(m_program, m_build, m_declaredMembers.span(), m_taggedFamilies.span(), m_sections.functions.size());
+    appendDerivedLayouts(m_program, m_build, m_declaredMembers.span());
     m_program.setFunctionFamilies(WTF::move(m_functionFamilies));
     return checkTypesAgainstLayouts();
 }
 
 bool Reader::checkTypesAgainstLayouts()
 {
-    for (uint32_t index = 0; index < m_types.size(); ++index) {
-        const Type& type = m_program.at(m_types[index]);
-        for (LayoutID layout : membersOf(m_program, type)) {
-            if (m_program.at(layout).isEnvironment())
-                return report({ .kind = InternalErrorKind::InvalidLayout, .layout = layout, .count = index });
+    constexpr size_t recordsPerChunk = 256;
+    const ParallelLoops& loops = m_build.parallelLoops();
+    // Many types share a set. Each set that a type names is looked at once, and the first type in order with a wrong set is reported, whichever thread finds it.
+    Vector<uint8_t> isNamedByType(FillWith { }, m_program.types.numberOfLayoutSets(), static_cast<uint8_t>(0));
+    forEachIndexInParallel(loops, static_cast<unsigned>((m_types.size() + recordsPerChunk - 1) / recordsPerChunk), [&](unsigned chunk) {
+        for (size_t index = chunk * recordsPerChunk, end = std::min<size_t>(m_types.size(), index + recordsPerChunk); index < end; ++index) {
+            if (LayoutSetID set = m_program.at(m_types[index]).layouts)
+                std::atomic_ref(isNamedByType[set.index()]).store(1, std::memory_order_relaxed);
         }
+    });
+    Vector<LayoutID> environmentInSet(isNamedByType.size());
+    forEachIndexInParallel(loops, static_cast<unsigned>((isNamedByType.size() + recordsPerChunk - 1) / recordsPerChunk), [&](unsigned chunk) {
+        for (size_t index = chunk * recordsPerChunk, end = std::min<size_t>(isNamedByType.size(), index + recordsPerChunk); index < end; ++index) {
+            if (!isNamedByType[index])
+                continue;
+            for (LayoutID layout : m_program.at(LayoutSetID(static_cast<uint32_t>(index))).members) {
+                if (m_program.at(layout).isEnvironment()) {
+                    environmentInSet[index] = layout;
+                    break;
+                }
+            }
+        }
+    });
+    auto failures = readInChunks(loops, m_types.size(), recordsPerChunk, [&](uint32_t index) -> Failure {
+        const Type& type = m_program.at(m_types[index]);
+        if (LayoutID layout = type.layouts ? environmentInSet[type.layouts.index()] : LayoutID())
+            return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = layout, .count = index };
         if (type.environment && !m_program.at(type.environment).isEnvironment())
-            return report({ .kind = InternalErrorKind::InvalidLayout, .layout = type.environment, .count = index });
-    }
-    return true;
+            return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = type.environment, .count = index };
+        return std::nullopt;
+    });
+    return reportFirst(failures.span());
 }
 
 } } } // namespace JSC::AOT::Typed

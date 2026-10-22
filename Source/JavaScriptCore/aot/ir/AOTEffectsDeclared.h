@@ -9,6 +9,7 @@
 
 #include "AOTEffects.h"
 #include "AOTSchemaEffects.h"
+#include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -57,11 +58,32 @@ private:
     bool m_isAsOverload { false };
 };
 
+// Their rows say `throws` for the lack of memory alone. The first three make what is written in the program. The others resolve ropes or make a string and do nothing else,
+// and their operands are strings and numbers already, so nothing is converted.
+inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
+    Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData,
+    Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringOrderToCharacter,
+    Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
+    Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt, Opcode::StringRangeSubstringOrUndefined,
+    Opcode::StringRangeCodeUnitOrNaN, Opcode::StringRangeCodeUnitOrMinusOne, Opcode::StringRangeCodePointOrUndefined, Opcode::StringRangeCharacterOrEmpty, Opcode::StringRangeCharacterOrUndefined
+};
+
+constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
+{
+    if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
+        effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    return effects;
+}
+
+const Effects* findDeclaredEffectsOfEveryValue(Opcode);
+
 inline Effects declaredEffectsOf(const Program& program, const Value& value)
 {
+    if (const Effects* effects = findDeclaredEffectsOfEveryValue(value.opcode))
+        return *effects;
     EffectsBuilder builder(program);
     forEachDeclaredEffect(value, builder);
-    return builder.effects();
+    return withDeclaredKindOfThrow(value.opcode, builder.effects());
 }
 
 inline Effects declaredEffectsOf(const Program& program, const Terminator& terminator)
@@ -71,12 +93,30 @@ inline Effects declaredEffectsOf(const Program& program, const Terminator& termi
     return builder.effects();
 }
 
+const Effects& declaredBoundInTable(Opcode);
+
 template<typename Entry>
 constexpr Effects declaredBoundOf(Entry entry)
 {
+    if constexpr (std::is_same_v<Entry, Opcode>) {
+        if (!std::is_constant_evaluated())
+            return declaredBoundInTable(entry);
+    }
     EffectBoundBuilder builder;
     forEachDeclaredEffect(entry, builder);
-    return builder.effects();
+    if constexpr (std::is_same_v<Entry, Opcode>)
+        return withDeclaredKindOfThrow(entry, builder.effects());
+    else
+        return builder.effects();
+}
+
+// Whether a row says what the named set says and nothing else. The row may know more about the kind of error.
+constexpr bool isBoundOf(NamedEffectSet set, const Effects& bound)
+{
+    Effects named = declaredBoundOf(set);
+    if (named.mayThrow && bound.mayThrow)
+        named.mayThrow = bound.mayThrow;
+    return bound == named;
 }
 
 constexpr bool hasEffectsOfOverload(InlineBuiltin builtin)

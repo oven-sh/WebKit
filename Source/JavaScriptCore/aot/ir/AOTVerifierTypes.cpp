@@ -9,9 +9,14 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTFlowSiteData.h"
 #include "AOTGuardAvailability.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
+#include "AOTThreads.h"
+#include "AOTTypeClosure.h"
+#include "AOTTypePropagation.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -62,9 +67,19 @@ static bool isOnlyReturned(std::span<const Use> uses)
 
 static bool hasValidTypeIDs(const FunctionVerifier& verifier, const Value& value)
 {
-    TypeID written = value.written();
-    TypeID prediction = value.prediction();
-    return verifier.isValid(value.type) && (!written || verifier.isValid(written)) && (!prediction || verifier.isValid(prediction));
+    TypeID expected = value.expected();
+    return verifier.isValid(value.type) && (!expected || verifier.isValid(expected));
+}
+
+// An expected type is set where it says more than the type does.
+static bool hasExpectedTypeInsideType(const Program& program, const Value& value)
+{
+    TypeID expectedID = value.expected();
+    if (!expectedID)
+        return true;
+    const Type& type = program.at(value.type);
+    const Type& expected = program.at(expectedID);
+    return expected != type && expected.isSubsetOf(type, program);
 }
 
 static ValueID findValueWithInvalidTypeID(const FunctionVerifier& verifier, const Block& block)
@@ -95,8 +110,8 @@ static std::optional<uint32_t> expectedNumberOfVariadicOperands(const Program& p
     case Opcode::CloneAs:
         return static_cast<uint32_t>(user.fields().size());
     case Opcode::CallDirect:
+    case Opcode::CallTable:
         return program.at(user.function()).numberOfEntryParameters();
-    case Opcode::CallGroup:
     case Opcode::AwaitCallBySavingFrame: {
         unsigned numberOfEntryParameters = program.at(user.function()).numberOfEntryParameters();
         return numberOfEntryParameters ? numberOfEntryParameters - 1 : 0;
@@ -139,12 +154,16 @@ void FunctionVerifier::verifyTypes()
     if (hasFailed())
         return;
 
+    bool mayHaveCodeAfterNever = waitsForGenericVersion(m_program, m_function);
     for (BlockID blockID : reversePostOrder) {
         const Block& block = m_function.at(blockID);
         verifyParameterTypes(blockID, block);
         for (ValueID parameter : block.parameters) {
+            const Value& value = m_function.at(parameter);
+            if (!hasFailed() && !hasExpectedTypeInsideType(m_program, value))
+                fail(InternalErrorKind::TypeOutOfDate, blockID, parameter);
             if (!hasFailed())
-                verifyRepresentations(blockID, parameter, m_function.at(parameter));
+                verifyRepresentations(blockID, parameter, value);
         }
         if (hasFailed())
             return;
@@ -163,13 +182,14 @@ void FunctionVerifier::verifyTypes()
         }
 
         verifyOperands(blockID, block.terminator);
-        if (!hasFailed() && block.terminator.kind == TerminatorKind::Return)
+        // A join takes in what the code behind a never value hands on, so until that code is cut the returned value may be typed wider than the result.
+        if (!hasFailed() && block.terminator.kind == TerminatorKind::Return && !mayHaveCodeAfterNever)
             verifyReturn(blockID, block.terminator);
-        if (!hasFailed() && m_function.representationsAreChosen) {
+        if (!hasFailed() && m_function.representationsAreChosen && !m_function.operandsAreConvertedAtFetch) {
             if (ValueID operand = findOperandInWrongRepresentation(m_program, m_function, block.terminator))
                 fail(InternalErrorKind::WrongRepresentation, blockID, { }, operand.index());
         }
-        if (!hasFailed())
+        if (!hasFailed() && !mayHaveCodeAfterNever)
             verifyCodeAfterNever(blockID, block);
         if (hasFailed())
             return;
@@ -181,19 +201,16 @@ void FunctionVerifier::verifyOwnType(BlockID block, ValueID id, const Value& val
     const Type& stored = typeOf(id);
     Type computed = computeResultType(typing(), value);
     computed.canonicalize();
-    if (computed != stored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) {
+    // A pass is verified before what its arena has interned is merged, and another arena gives the same list of layouts another id.
+    bool isAsStored = computed == stored || computed == typing().types.adopt(stored);
+    if (!isAsStored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) {
         fail(InternalErrorKind::TypeOutOfDate, block, id);
         return;
     }
 
-    for (TypeID narrowerID : { value.written(), value.prediction() }) {
-        if (!narrowerID)
-            continue;
-        const Type& narrower = m_program.at(narrowerID);
-        if (narrower == stored || !narrower.isSubsetOf(stored, m_program)) {
-            fail(InternalErrorKind::TypeOutOfDate, block, id);
-            return;
-        }
+    if (!hasExpectedTypeInsideType(m_program, value)) {
+        fail(InternalErrorKind::TypeOutOfDate, block, id);
+        return;
     }
 
     if (!numberOfResultsOf(m_program, m_function, value))
@@ -361,6 +378,10 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (hasFailed() || value.operandKind(operandIndex) != OperandKind::Declared)
             return;
+        // Nothing passes a check for `never`: what stands behind it runs in the generic version alone, and its result keeps the type of the source.
+        const Value& definition = m_function.at(operand);
+        if (definition.opcode == Opcode::Check && context.types.at(definition.castType()).isNever())
+            return;
         if (TypeID required = requiredTypeOfOperand(context, value, operandIndex))
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required));
     });
@@ -392,6 +413,8 @@ void FunctionVerifier::verifyReturn(BlockID block, const Terminator& terminator)
     if (returned)
         numberOfReturnedResults = numberOfResultsOf(m_program, m_function, m_function.at(returned));
 
+    // The type of an expected result bounds nothing that is returned.
+    TypingContext context = typing();
     bool returnsInnerValue = m_function.isUnsplitCoroutine();
     if (!returnsInnerValue && m_function.results.size() != 1) {
         if (numberOfReturnedResults != m_function.results.size()) {
@@ -399,8 +422,8 @@ void FunctionVerifier::verifyReturn(BlockID block, const Terminator& terminator)
             return;
         }
         for (uint32_t resultIndex = 0; resultIndex < *numberOfReturnedResults; ++resultIndex) {
-            Type result = computeResultType(typing(), m_function.at(returned), resultIndex);
-            if (!result.isSubsetOf(m_program.at(m_function.results[resultIndex].type), m_program)) {
+            Type result = computeResultType(context, m_function.at(returned), resultIndex);
+            if (!result.isSubsetOf(context.typeOf(m_function.results[resultIndex]), m_program)) {
                 fail(InternalErrorKind::ReturnTypeMismatch, block);
                 return;
             }
@@ -418,7 +441,7 @@ void FunctionVerifier::verifyReturn(BlockID block, const Terminator& terminator)
         return;
     }
 
-    const Type& declared = m_program.at(m_function.result().type);
+    const Type& declared = context.typeOf(m_function.result());
     if (returned) {
         need(InternalErrorKind::ReturnTypeMismatch, block, { }, returned, declared);
         return;
@@ -439,6 +462,8 @@ void FunctionVerifier::verifyRepresentations(BlockID block, ValueID id, const Va
         fail(InternalErrorKind::WrongRepresentation, block, id);
         return;
     }
+    if (m_function.operandsAreConvertedAtFetch)
+        return;
     if (ValueID operand = findOperandInWrongRepresentation(m_program, m_function, value))
         fail(InternalErrorKind::WrongRepresentation, block, id, operand.index());
 }
@@ -453,6 +478,43 @@ void FunctionVerifier::verifyCodeAfterNever(BlockID block, const Block& contents
             fail(InternalErrorKind::ValueAfterNever, block, id);
         return;
     }
+}
+
+static bool fillsFieldsInsideTheirTypes(const Program& program, const DataNode::Object& object)
+{
+    if (!object.layout)
+        return true;
+    const Layout& layout = program.at(object.layout);
+    return std::ranges::all_of(object.members, [&](const DataMember& member) {
+        std::optional<uint32_t> field = layout.findField(member.key);
+        if (!field)
+            return true;
+        const Field& filled = layout.fields[*field];
+        return filled.declared.flags.contains(PositionFlags::IsExpected) || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
+    });
+}
+
+static LayoutID findLayoutFilledOutsideFieldTypes(const Program& program, const DataNode& root)
+{
+    LayoutID found;
+    forEachDataNodeInPreorder(root, [&](uint32_t, const DataNode& node) {
+        const auto* object = node.tryAs<DataNode::Object>();
+        if (!found && object && !fillsFieldsInsideTheirTypes(program, *object))
+            found = object->layout;
+    });
+    return found;
+}
+
+// The slot of a field holds values of the field's type, and the run time stores the members of constant data without a test.
+// Passes narrow the types of fields, so this holds in every form.
+void ProgramVerifier::verifyDataTypes()
+{
+    Vector<InternalError> errors = collectInParallel<InternalError>(m_build.parallelLoops(), m_program.data.size(), [&](unsigned index, Vector<InternalError>& found) {
+        if (LayoutID layout = findLayoutFilledOutsideFieldTypes(m_program, m_program.data[index].root))
+            found.append(InternalError { .kind = InternalErrorKind::DataOutsideFieldType, .layout = layout, .count = index });
+    });
+    for (InternalError& error : errors)
+        fail(WTF::move(error));
 }
 
 } } } // namespace JSC::AOT::Typed

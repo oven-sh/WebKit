@@ -33,6 +33,16 @@ static bool isInt32AndBoxedValue(const Type& integer, const Type& other)
     return integer.isInt32() && defaultRepresentationOf(other) == Representation::JSValue;
 }
 
+static bool isStringOrUndefined(const Type& type)
+{
+    return type.primitives & Primitive::AnyString && type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined);
+}
+
+static bool isLiteralStringWord(const Type& type)
+{
+    return defaultRepresentationOf(type) == Representation::LiteralString;
+}
+
 static bool needsGenericTest(const Type& type)
 {
     return type.primitives & Primitive::Number && type.primitives & Primitive::BigInt;
@@ -60,8 +70,11 @@ static OperatorForm chooseRelationForm(const OperatorTypes& types, CodeShape sha
         return OperatorForm::Generic;
     if (isEither(types, &Type::isNumber))
         return OperatorForm::NumberAndValue;
-    if (shape != CodeShape::Compact && areBoth(types, &Type::isAnyString))
+    if (shape == CodeShape::Fast && areBoth(types, &Type::isAnyString))
         return OperatorForm::Strings;
+    // A character read beyond the end of a text. undefined is compared as NaN, so no relation holds. (null is compared as 0, which the text of a string may say.)
+    if (shape == CodeShape::Fast && areBoth(types, isStringOrUndefined))
+        return OperatorForm::NullableStrings;
     return OperatorForm::Generic;
 }
 
@@ -78,7 +91,8 @@ static OperatorForm chooseStrictEqualityForm(const OperatorTypes& types, CodeSha
         return OperatorForm::Bits;
     if (areBoth(types, isBigInt))
         return OperatorForm::BigInts;
-    if (shape == CodeShape::Compact)
+    // Two words are compared in fewer bytes than the call takes.
+    if (shape != CodeShape::Fast && !areBoth(types, isLiteralStringWord))
         return OperatorForm::Generic;
 
     if (areBoth(types, &Type::isAnyString))
@@ -102,7 +116,7 @@ static OperatorForm chooseLooseEqualityForm(const OperatorTypes& types, CodeShap
         return chooseStrictEqualityForm(types, shape);
     if (areBoth(types, isNullableNumber))
         return OperatorForm::Numbers;
-    if (shape != CodeShape::Compact && areBoth(types, &Type::isAnyStringOrNullish))
+    if (shape == CodeShape::Fast && areBoth(types, &Type::isAnyStringOrNullish))
         return OperatorForm::NullableStrings;
     if (areBoth(types, isObjectOrNullish))
         return OperatorForm::Bits;
@@ -162,7 +176,7 @@ static OperatorForm chooseToStringForm(const Type& type, CodeShape shape)
         bool mayBeNumber = !type.hasObjects() && type.primitives & Primitive::Number;
         return mayBeNumber ? OperatorForm::MayBeStringOrNumber : OperatorForm::MayBeString;
     }
-    if (type.isNumberOrNullish() && shape != CodeShape::Compact)
+    if (type.isNumberOrNullish() && shape == CodeShape::Fast)
         return OperatorForm::NullableNumber;
     return OperatorForm::Generic;
 }

@@ -8,7 +8,7 @@
 # ROWS: export 0 name="match" kind=Variable
 # ROWS-NOT: name="unused"
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="called.js" displayPath="called.js" body=f1 exports=[{name="match" variable=g0}, {name="unused" variable=g1}]
 entry module=m0
 layout L0 name="Own" fields=[{key="match" declared={type=anything}}]

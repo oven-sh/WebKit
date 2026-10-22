@@ -1,6 +1,7 @@
-# The creation of an environment and PutEnvironmentField are the stores to its fields. A field whose every read is the callee of a call is only called
+# The creation of an environment and PutEnvironmentField are the stores to its fields. A field whose every read is the callee of a call is only called.
+# No operation deletes or redefines a field of an environment. So a field whose writers are all known holds its type for good, and one that the creation fills is always filled
 # RUN: valueflow-apply
-# CHECK: layout L0 {{*}}{key="called" {{*}}flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled}}}, {key="count" {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation}}}, {key="unused" {{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation {{*}}reads=NeverRead isUnchangedDuringActivation=true}}}]
+# CHECK: layout L0 {{*}}{key="called" {{*}}flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="unused" {{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation {{*}}reads=NeverRead isUnchangedDuringActivation=true} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

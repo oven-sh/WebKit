@@ -34,6 +34,8 @@ public:
     void count(StatisticID, uint64_t amount = 1);
     void countHit(LimitID limit) { count(hitsOf(limit)); }
     void countChanges(PassID pass, uint64_t amount) { count(Wire::changesOf(pass), amount); }
+    void countCodeBytesAdded(PassID pass, uint64_t amount) { count(Wire::codeBytesAddedOf(pass), amount); }
+    void countCodeBytesRemoved(PassID pass, uint64_t amount) { count(Wire::codeBytesRemovedOf(pass), amount); }
     void addTime(Stage stage, Seconds time) { count(Wire::timeOf(stage), time.nanosecondsAs<uint64_t>()); }
     JS_EXPORT_PRIVATE Vector<uint64_t> values() const;
 

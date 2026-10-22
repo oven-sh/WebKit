@@ -61,16 +61,27 @@ static bool hasObjectPart(const Type* type)
     return type && type->hasObjects();
 }
 
+static bool isInRareBlock(const InlineBuiltinSite& site)
+{
+    BlockID block = site.context.analyses().useLists().blockOf(site.call);
+    return site.context.function().at(block).frequency == BlockFrequency::Rare;
+}
+
 InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
     case InlineBuiltin::OwnPropertyKeys:
-        return callIf(site, !hasObjectPart(argumentTypeOf(site, 0)) || site.shape == CodeShape::Compact, InlineForm::TwoWay);
+        // The list that is remembered for the shape of the object is found in line. That is worth its bytes wherever the code may well run.
+        if (site.shape != CodeShape::Fast && isInRareBlock(site))
+            return InlineForm::Whole;
+        return callIf(site, !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::ObjectGetOwnPropertyDescriptor:
         return callIf(site, !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::ObjectHasOwn:
     case InlineBuiltin::ObjectPropertyIsEnumerable:
     case InlineBuiltin::OwnPropertyDescriptorFields:
+    case InlineBuiltin::ObjectValues:
+    case InlineBuiltin::ObjectEntries:
         return InlineForm::Whole;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -89,7 +100,12 @@ static bool canFreezeInPlace(const InlineBuiltinSite& site)
         return false;
     const Program& program = site.context.program();
     std::span<const LayoutID> members = membersOf(program, *object);
-    return !members.empty() && !receiverStateOf(program, members).cannot(ObjectMutation::ChangeIntegrity);
+    // A module namespace object cannot be frozen: its exports stay writable, and the attempt throws.
+    bool areOrdinaryObjects = std::ranges::all_of(members, [&](LayoutID member) {
+        LayoutKind kind = program.at(member).kind;
+        return kind == LayoutKind::Record || kind == LayoutKind::Instance;
+    });
+    return !members.empty() && areOrdinaryObjects && !receiverStateOf(program, members).cannot(ObjectMutation::ChangeIntegrity);
 }
 
 static bool mayCompareCellContents(const Type& left, const Type& right)
@@ -108,7 +124,7 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinSite& site)
     case InlineBuiltin::CallObjectConstructor:
         return callIf(site, !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::SetPrototypeOf:
-        return callIf(site, site.arguments().size() < 2 || !hasObjectPart(argumentTypeOf(site, 0)) || site.shape == CodeShape::Compact, InlineForm::TwoWay);
+        return callIf(site, site.arguments().size() < 2 || !hasObjectPart(argumentTypeOf(site, 0)) || site.shape != CodeShape::Fast, InlineForm::TwoWay);
     case InlineBuiltin::ObjectPrototypeToString:
         return callIf(site, !receiverTypeOf(site).hasObjects(), InlineForm::TwoWay);
     case InlineBuiltin::ObjectFreeze:

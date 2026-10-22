@@ -18,6 +18,7 @@
 #include "GlobalObjectMethodTable.h"
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
+#include "JSPromise.h"
 #include "MarkedVector.h"
 #include "PropertyNameArray.h"
 #include "PureNaN.h"
@@ -35,19 +36,7 @@ namespace JSC { namespace AOT {
 static_assert(Int8ArrayType == FirstTypedArrayType && BigUint64ArrayType == LastTypedArrayTypeExcludingDataView);
 static_assert(ArrayType + 1 == DerivedArrayType);
 
-#if OS(ANDROID)
-static constexpr BuiltinPlatform currentPlatform = BuiltinPlatform::Android;
-#elif OS(DARWIN)
-static constexpr BuiltinPlatform currentPlatform = BuiltinPlatform::Darwin;
-#elif OS(LINUX)
-static constexpr BuiltinPlatform currentPlatform = BuiltinPlatform::Linux;
-#elif OS(WINDOWS)
-static constexpr BuiltinPlatform currentPlatform = BuiltinPlatform::Windows;
-#elif OS(FREEBSD)
-static constexpr BuiltinPlatform currentPlatform = BuiltinPlatform::FreeBSD;
-#else
-#error "The table of built-ins has no platform for this operating system."
-#endif
+static constexpr BuiltinPlatform currentPlatform = targetOfThisBuild().platform;
 
 using CellLookup = std::expected<JSCell*, BuiltinLookupFailure>;
 
@@ -113,13 +102,39 @@ static bool hasHookThatCreates(JSGlobalObject* realm, BuiltinID id)
     return true;
 }
 
+// A flag of the command line or an option of the engine puts these on the global object or on process.
+static bool isAddedByOption(BuiltinID id)
+{
+    static constexpr BuiltinID members[] {
+        Builtins::Dollarvm,
+        Builtins::Gc,
+        Builtins::Loader,
+        Builtins::ProcessNoDeprecation,
+        Builtins::ProcessNoProcessWarnings,
+        Builtins::ProcessPendingDeprecation,
+        Builtins::ProcessThrowDeprecation,
+        Builtins::ProcessTraceDeprecation,
+        Builtins::ProcessTraceProcessWarnings,
+        Builtins::__disableSamplingProfiler,
+        Builtins::__disableSuperSampler,
+        Builtins::__dumpAndClearSamplingProfilerSamples,
+        Builtins::__enableSamplingProfiler,
+        Builtins::__enableSuperSampler,
+        Builtins::__signpostStart,
+        Builtins::__signpostStop,
+        Builtins::__tracePointStart,
+        Builtins::__tracePointStop,
+    };
+    return std::ranges::contains(members, id);
+}
+
 static bool isExpectedInRealm(const RealmComparison& comparison, BuiltinID id)
 {
     auto& table = comparison.table;
     auto& builtin = table.at(id);
     if (builtin.kind == BuiltinKind::NativeBinding || builtin.scope == BuiltinScope::Module || !table.existsOn(id, currentPlatform))
         return false;
-    if (!hasHookThatCreates(comparison.realm, id))
+    if (!hasHookThatCreates(comparison.realm, id) || isAddedByOption(id))
         return false;
     return BuiltinBindings::provides(builtin.origin);
 }
@@ -203,6 +218,30 @@ static void checkCells(RealmComparison& comparison, BuiltinID id)
         comparison.report(id, "is not a function"_s);
 }
 
+static bool liesInside(const BuiltinType& type, JSValue value)
+{
+    if (type.isAnything())
+        return true;
+    if (value.isObject())
+        return type.mayBeObject();
+    if (value.isString())
+        return type.primitives.contains(BuiltinPrimitive::String) || !type.stringLiterals.empty();
+    if (value.isNumber()) {
+        double number = value.asNumber();
+        bool isInRange = number == std::trunc(number) && number >= static_cast<double>(type.integers.minimum) && number <= static_cast<double>(type.integers.maximum);
+        return type.primitives.contains(BuiltinPrimitive::Number) || isInRange;
+    }
+    if (value.isBoolean())
+        return type.primitives.contains(BuiltinPrimitive::Boolean);
+    if (value.isUndefined())
+        return type.primitives.contains(BuiltinPrimitive::Undefined);
+    if (value.isNull())
+        return type.primitives.contains(BuiltinPrimitive::Null);
+    if (value.isSymbol())
+        return type.primitives.contains(BuiltinPrimitive::Symbol);
+    return value.isBigInt() && type.primitives.contains(BuiltinPrimitive::BigInt);
+}
+
 static void checkValue(RealmComparison& comparison, BuiltinID id)
 {
     auto& table = comparison.table;
@@ -211,12 +250,23 @@ static void checkValue(RealmComparison& comparison, BuiltinID id)
         return;
     auto found = findValueInHolder(comparison.realm, comparison.objectOf(builtin.holder), table.identifierOf(comparison.vm(), builtin.name));
     if (!found) {
-        comparison.report(id, describe(found.error()));
+        // What changes on its own may not be there yet: the host puts some members on an object of the realm when a module is loaded.
+        if (found.error() != BuiltinLookupFailure::IsMissing || builtin.mutability != BuiltinMutability::ChangesOnItsOwn)
+            comparison.report(id, describe(found.error()));
         return;
+    }
+    for (const BuiltinOverload& overload : table.overloadsOf(id)) {
+        if (overload.mode == BuiltinCallMode::Get && !liesInside(table.at(overload.result.type), *found))
+            comparison.report(id, "holds a value outside the type that the table gives it"_s);
     }
     std::optional<double> number = table.numberOf(id);
     if (number && (!found->isNumber() || std::bit_cast<uint64_t>(purifyNaN(found->asNumber())) != std::bit_cast<uint64_t>(purifyNaN(*number))))
         comparison.report(id, "is not "_s, *number);
+    if (std::optional<StringView> text = table.stringOf(id)) {
+        String held = found->isString() ? String(asString(*found)->value(comparison.realm)) : String();
+        if (held != *text)
+            comparison.report(id, "is not "_s, *text);
+    }
 }
 
 static void checkEntry(RealmComparison& comparison, BuiltinID id)
@@ -372,6 +422,8 @@ static void checkOwnKeys(RealmComparison& comparison, BuiltinID holder, JSObject
         if (table.existsOn(member, currentPlatform))
             members.add(table.identifierOf(vm, table.at(member).name).impl());
     }
+    if (table.at(holder).flags.contains(BuiltinFlag::IsGlobalObject))
+        members.add(table.identifierOf(vm, table.at(holder).name).impl());
     BuiltinKind kind = table.at(holder).kind;
     if (kind == BuiltinKind::Function || kind == BuiltinKind::Method) {
         for (BuiltinID member : table.membersOf(Builtins::FunctionPrototype)) {
@@ -398,9 +450,30 @@ static void checkClosedHolders(RealmComparison& comparison)
 {
     forEachFoundObject(comparison, [&](BuiltinID holder, JSObject* object) {
         auto& builtin = comparison.table.at(holder);
-        bool isClosed = holder == Builtins::ObjectPrototype || builtin.flags.contains(BuiltinFlag::ListsAllMembers);
+        // Whoever makes a realm without the host puts properties of its own on the global object.
+        bool isClosedGlobalObject = builtin.flags.contains(BuiltinFlag::IsGlobalObject) && BuiltinBindings::provides(BuiltinOrigin::Host);
+        bool isClosed = holder == Builtins::ObjectPrototype || builtin.flags.contains(BuiltinFlag::ListsAllMembers) || isClosedGlobalObject;
         if (isClosed && !builtin.sameObjectAs)
             checkOwnKeys(comparison, holder, object);
+    });
+}
+
+// The flow analysis takes no object of the table for a promise, and none but a prototype object for a thenable.
+static void checkThatNothingSettlesLater(RealmComparison& comparison)
+{
+    VM& vm = comparison.vm();
+    forEachFoundObject(comparison, [&](BuiltinID id, JSObject* object) {
+        if (object->inherits<JSPromise>())
+            comparison.report(id, "is a promise"_s);
+        if (comparison.table.at(id).kind == BuiltinKind::Prototype)
+            return;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasThen = object->getPropertySlot(comparison.realm, vm.propertyNames->then, slot);
+        if (scope.exception()) [[unlikely]]
+            scope.clearException();
+        else if (hasThen)
+            comparison.report(id, "has a property `then`"_s);
     });
 }
 
@@ -511,6 +584,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkInheritance(comparison);
     checkObjectIdentities(comparison);
     checkClosedHolders(comparison);
+    checkThatNothingSettlesLater(comparison);
     checkClasses(comparison);
     return WTF::move(comparison.mismatches);
 }

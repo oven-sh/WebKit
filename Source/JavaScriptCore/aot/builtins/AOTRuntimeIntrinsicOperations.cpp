@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "DeferGCInlines.h"
@@ -22,7 +23,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireBuiltinModule, EncodedJSValue, (Inst
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireBuiltinModule);
     auto* requireBuiltinModule = globalObject->globalObjectMethodTable()->requireBuiltinModule;
     if (!requireBuiltinModule) [[unlikely]] {
-        throwTypeError(globalObject, scope, withAOTErrorNote("This realm has no builtin modules"_s));
+        throwException(globalObject, scope, createBuiltinModulesUnavailableError(globalObject));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     JSValue result = requireBuiltinModule(globalObject, id);
@@ -35,7 +36,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNativeBinding, EncodedJSValue, (Instance* i
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNativeBinding);
     auto* nativeBinding = globalObject->globalObjectMethodTable()->nativeBinding;
     if (!nativeBinding) [[unlikely]] {
-        throwTypeError(globalObject, scope, withAOTErrorNote("This realm has no native bindings"_s));
+        throwException(globalObject, scope, createNativeBindingsUnavailableError(globalObject));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     JSValue result = nativeBinding(globalObject, index);

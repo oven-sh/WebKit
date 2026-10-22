@@ -247,10 +247,167 @@ static void discardedPhaseLeavesNoRecord()
     AOT_TEST_CHECK(!types.hasOpenPhase() && types.size() == initialSize);
 }
 
+static SharedTypeMemo::Key sharedKeyAt(unsigned index)
+{
+    if (index % 2)
+        return SharedTypeMemo::keyOf(SharedTypeMemo::Relation::Union, TypeID(index), TypeID(index + 1));
+    return SharedTypeMemo::keyOf(index * 0x9e3779b97f4a7c15ull, static_cast<uint64_t>(index) << 40);
+}
+
+static void sharedMemoIsThreadSafe()
+{
+    constexpr unsigned numberOfKeys = 20000;
+    SharedTypeMemo memo(false, true);
+    ParallelLoops loops(8);
+    forEachIndexInParallel(loops, numberOfKeys * 4, [&](unsigned position) {
+        unsigned index = position % numberOfKeys;
+        TypeID known = memo.find(sharedKeyAt(index));
+        AOT_TEST_CHECK(!known || known == TypeID(index));
+        if (!known)
+            memo.add(sharedKeyAt(index), TypeID(index));
+    });
+    for (unsigned index = 0; index < numberOfKeys; ++index)
+        AOT_TEST_CHECK(memo.find(sharedKeyAt(index)) == TypeID(index));
+    AOT_TEST_CHECK(!memo.find(SharedTypeMemo::keyOf(SharedTypeMemo::Relation::Intersection, TypeID(1u), TypeID(2u))));
+    AOT_TEST_CHECK(!memo.find(sharedKeyAt(numberOfKeys)) && !memo.find(sharedKeyAt(numberOfKeys + 1)));
+
+    SharedTypeMemo::Counts counts = memo.counts();
+    AOT_TEST_CHECK(counts.entries == numberOfKeys && !counts.fullShards);
+    AOT_TEST_CHECK(counts.found + counts.notFound == numberOfKeys * 5 + 3 && counts.notFound >= numberOfKeys + 3);
+}
+
+static void fullSharedMemoRejectsNewEntries()
+{
+    constexpr unsigned numberOfKeys = 1200000;
+    SharedTypeMemo memo(false, false);
+    for (unsigned index = 0; index < numberOfKeys; ++index)
+        memo.add(sharedKeyAt(index), TypeID(index));
+    uint64_t numberOfKeysFound = 0;
+    for (unsigned index = 0; index < numberOfKeys; ++index) {
+        TypeID known = memo.find(sharedKeyAt(index));
+        AOT_TEST_CHECK(!known || known == TypeID(index));
+        numberOfKeysFound += !!known;
+    }
+    SharedTypeMemo::Counts counts = memo.counts();
+    AOT_TEST_CHECK(counts.fullShards && counts.entries == numberOfKeysFound && numberOfKeysFound < numberOfKeys);
+}
+
+static void arenasShareOnlySideEffectFreeAnswers()
+{
+    TypeTable types(BuiltinTable::singleton());
+    SharedTypeMemo aboutTypes(false, true);
+    SharedTypeMemo aboutProgram(false, true);
+    types.setSharedMemos(&aboutTypes, &aboutProgram);
+    SharedTypeMemo::Key keyOfUnion = SharedTypeMemo::keyOf(SharedTypeMemo::Relation::Union, TypeTable::string, TypeTable::boolean);
+
+    TypeID stringOrBoolean;
+    {
+        TypeInterningPhase phase(types, 1);
+        {
+            TypeArena arena(phase, 0);
+            stringOrBoolean = arena.unionOf(TypeTable::string, TypeTable::boolean);
+            AOT_TEST_CHECK(TypeTable::isProvisional(stringOrBoolean) && !aboutTypes.find(keyOfUnion));
+            AOT_TEST_CHECK(!TypeArena::sharedKeyOf(SharedTypeMemo::Relation::Union, stringOrBoolean, TypeTable::null));
+        }
+        stringOrBoolean = phase.finish(StringRemap())(stringOrBoolean);
+    }
+
+    SharedTypeMemo::Key firstQuestion = SharedTypeMemo::keyOf(1, 1);
+    SharedTypeMemo::Key secondQuestion = SharedTypeMemo::keyOf(2, 2);
+    SharedTypeMemo::Key thirdQuestion = SharedTypeMemo::keyOf(3, 3);
+    TypeInterningPhase phase(types, 3);
+    {
+        TypeArena arena(phase, 0);
+        AOT_TEST_CHECK(arena.unionOf(TypeTable::string, TypeTable::boolean) == stringOrBoolean && aboutTypes.find(keyOfUnion) == stringOrBoolean);
+
+        // The arena answers the union from its own memo now.
+        TypeID answer = arena.sharedAnswer(SharedAnswers::AboutProgram, firstQuestion, [&] {
+            return arena.unionOf(TypeTable::string, TypeTable::boolean);
+        });
+        AOT_TEST_CHECK(answer == stringOrBoolean && !aboutProgram.find(firstQuestion));
+
+        answer = arena.sharedAnswer(SharedAnswers::AboutProgram, secondQuestion, [&] {
+            arena.intern(Type::integer(Range { 0, 1000 }));
+            return TypeTable::number;
+        });
+        AOT_TEST_CHECK(answer == TypeTable::number && !aboutProgram.find(secondQuestion));
+
+        answer = arena.sharedAnswer(SharedAnswers::AboutProgram, thirdQuestion, [&] {
+            arena.markCurrentAnswersUnshareable();
+            return TypeTable::number;
+        });
+        AOT_TEST_CHECK(answer == TypeTable::number && !aboutProgram.find(thirdQuestion));
+    }
+    {
+        TypeArena arena(phase, 1);
+        TypeID answer = arena.sharedAnswer(SharedAnswers::AboutProgram, firstQuestion, [&] {
+            return arena.unionOf(TypeTable::string, TypeTable::boolean);
+        });
+        AOT_TEST_CHECK(answer == stringOrBoolean && aboutProgram.find(firstQuestion) == stringOrBoolean && !aboutTypes.find(firstQuestion));
+    }
+    {
+        TypeArena arena(phase, 2);
+        TypeID answer = arena.sharedAnswer(SharedAnswers::AboutProgram, firstQuestion, [&]() -> TypeID {
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+        AOT_TEST_CHECK(answer == stringOrBoolean);
+        answer = arena.sharedAnswer(SharedAnswers::AboutProgram, std::nullopt, [&] {
+            return TypeTable::object;
+        });
+        AOT_TEST_CHECK(answer == TypeTable::object);
+    }
+    TypeRemap remap = phase.finish(StringRemap());
+    AOT_TEST_CHECK(!remap.isIdentityFor(0) && remap.isIdentityFor(1) && remap.isIdentityFor(2));
+    types.setSharedMemos(nullptr, nullptr);
+}
+
+static void verifyingSharedMemoRecomputesAnswers()
+{
+    TypeTable types(BuiltinTable::singleton());
+    SharedTypeMemo aboutTypes(true, false);
+    SharedTypeMemo aboutProgram(true, false);
+    types.setSharedMemos(&aboutTypes, &aboutProgram);
+    SharedTypeMemo::Key question = SharedTypeMemo::keyOf(1, 1);
+    unsigned numberOfComputations = 0;
+    for (unsigned round = 0; round < 3; ++round) {
+        ScratchTypeArena scratch(types);
+        TypeID answer = scratch.arena().sharedAnswer(SharedAnswers::AboutTypes, question, [&] {
+            ++numberOfComputations;
+            return TypeTable::string;
+        });
+        AOT_TEST_CHECK(answer == TypeTable::string && aboutTypes.find(question) == TypeTable::string);
+    }
+    AOT_TEST_CHECK(numberOfComputations == 3);
+    types.setSharedMemos(nullptr, nullptr);
+}
+
+static void internedTablesDoNotDependOnSharedAnswers()
+{
+    constexpr unsigned numberOfTasks = 500;
+    TypeTable plainTypes(BuiltinTable::singleton());
+    TypeTable sharingTypes(BuiltinTable::singleton());
+    SharedTypeMemo aboutTypes(false, true);
+    SharedTypeMemo aboutProgram(false, true);
+    sharingTypes.setSharedMemos(&aboutTypes, &aboutProgram);
+    for (unsigned round = 0; round < 3; ++round) {
+        Vector<RecordsOfTask> plainRecords = internInParallel(plainTypes, 1, numberOfTasks);
+        Vector<RecordsOfTask> sharedRecords = internInParallel(sharingTypes, 8, numberOfTasks);
+        AOT_TEST_CHECK(plainRecords == sharedRecords);
+        AOT_TEST_CHECK((aboutTypes.counts().entries > 0) == (round > 0));
+    }
+    sharingTypes.setSharedMemos(nullptr, nullptr);
+
+    AOT_TEST_CHECK(aboutTypes.counts().found && !aboutProgram.counts().entries);
+    AOT_TEST_CHECK(plainTypes.size() == sharingTypes.size() && plainTypes.numberOfLayoutSets() == sharingTypes.numberOfLayoutSets());
+    AOT_TEST_CHECK(haveEqualRecords<TypeID>(plainTypes, sharingTypes, plainTypes.size()));
+    AOT_TEST_CHECK(haveEqualRecords<LayoutSetID>(plainTypes, sharingTypes, plainTypes.numberOfLayoutSets()));
+}
+
 #define FOR_EACH_AOT_TYPE_ARENA_TEST(v) \
     v(internedTablesDoNotDependOnThreads) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
     v(scratchArenaWithoutOpenPhaseLeavesNoRecord) v(scratchArenasWithoutOpenPhaseOnManyThreads) v(layoutSetOfTwoTasksGetsOneID) \
-    v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord)
+    v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord) v(sharedMemoIsThreadSafe) v(fullSharedMemoRejectsNewEntries) \
+    v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers)
 
 std::span<const NativeTest> typeArenaTests()
 {

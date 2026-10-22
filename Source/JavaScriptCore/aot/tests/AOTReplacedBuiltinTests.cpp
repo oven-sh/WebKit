@@ -47,7 +47,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral patchInModuleImportedFirst = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+static constexpr ASCIILiteral patchInModuleImportedFirst = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/polyfill.js" displayPath="polyfill.js" body=f1
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -161,9 +161,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
-    v3 = PropGet v0 key="Object" [isFreeName]
-    v4 = PropGet v3 key="getOwnPropertyNames"
-    PropSet v3, v2 key="getOwnPropertyNames"
+    v3 = PropGet v0 key="JSON" [isFreeName]
+    v4 = PropGet v3 key="parse"
+    PropSet v3, v2 key="parse"
     Jump -> next b1()
   b1() handler=b3():
     v6 = Undefined
@@ -432,7 +432,7 @@ static void testWrapperCallsOriginal()
 
 static void testOriginalThrowsItsOwnError()
 {
-    checkShellOutput({ originalNamesAfterReplacement }, "caught-TypeError\n"_s);
+    checkShellOutput({ originalNamesAfterReplacement }, "caught-SyntaxError\n"_s);
 }
 
 static void testReplacedGlobal()
@@ -464,19 +464,19 @@ static void testReplacedGetter()
 static void testUncompiledPolyfillRunsFirst()
 {
     auto check = [](ASCIILiteral statementsBeforeProgram, ASCIILiteral expectedOutput) {
-        Run run { builtinCalledOnce, "admit=RuntimeCode"_s, statementsBeforeProgram };
+        Run run { builtinCalledOnce, "admit=Inspector"_s, statementsBeforeProgram };
         for (ASCIILiteral optionWords : { "references=wide"_s, "references=narrow"_s, "references=narrow heat=EverythingIsHot"_s, "references=narrow disable=flow-results"_s })
             AOT_TEST_CHECK(runInShell(run, optionWords) == expectedOutput);
     };
     check("Math.sign = () => 'polyfill';"_s, "polyfill\n"_s);
     check("delete Math.sign; Math.sign = () => 'polyfill';"_s, "polyfill\n"_s);
-    check("globalThis.Math = { sign: () => 'polyfill' };"_s, "1\n"_s);
+    check("try { globalThis.Math = { sign: () => 'polyfill' }; } catch { }"_s, "1\n"_s);
     check(""_s, "1\n"_s);
 }
 
 static void testWriteThatFlowDoesNotExpect()
 {
-    Run run { builtinCalledOnce, ""_s, "Math.sign = () => 'polyfill';"_s };
+    Run run { builtinCalledOnce, ""_s, "try { Math.sign = () => 'polyfill'; } catch { }"_s };
     AOT_TEST_CHECK(runInShell(run, "references=narrow"_s) == "1\n"_s);
     AOT_TEST_CHECK(runInShell(run, "references=narrow disable=flow-results"_s) == "polyfill\n"_s);
 }
@@ -503,11 +503,15 @@ static void checkCellsAfterReplacement(LoadedProgram& program)
     JSValue sign = evaluate("Math.sign"_s);
     JSValue sinh = evaluate("Math.sinh"_s);
     JSValue now = evaluate("Date.now"_s);
+    JSValue date = evaluate("Date"_s);
 
-    AOT_TEST_CHECK(JSValue(wordOf(Builtins::MathSign)) == sign && JSValue(wordOf(Builtins::Date)) == evaluate("Date"_s));
+    // Nothing is looked up before the program runs.
+    AOT_TEST_CHECK(!wordOf(Builtins::MathSign) && !wordOf(Builtins::Date) && !wordOf(Builtins::MathSinh) && !wordOf(Builtins::DateNow));
+
+    evaluate("Math.sign = () => 0; try { Math.sinh = () => 0; } catch { } globalThis.Date = { now() { } }"_s);
+    // The first write to a member fills its cell with what is still there.
+    AOT_TEST_CHECK(JSValue(wordOf(Builtins::MathSign)) == sign && JSValue(wordOf(Builtins::Date)) == date);
     AOT_TEST_CHECK(!wordOf(Builtins::MathSinh) && !wordOf(Builtins::DateNow));
-
-    evaluate("Math.sign = () => 0; Math.sinh = () => 0; globalThis.Date = { now() { } }"_s);
     AOT_TEST_CHECK(evaluate("Math.sign"_s) != sign && evaluate("Math.sinh"_s) == sinh && evaluate("Date.now"_s) != now);
     AOT_TEST_CHECK(JSValue(cells.cell(numberOf(program, Builtins::MathSign))) == sign && JSValue(cells.findObject(Builtins::MathSign)) == sign);
     AOT_TEST_CHECK(JSValue(cells.cell(numberOf(program, Builtins::MathSinh))) == sinh);

@@ -5,8 +5,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Scale" fields=[{key="k" declared={type=number} flags=[IsRequired]}]
 
-function f0 name="iterableMadeInIteration" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=Map<string, number>}, {type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: Map<string, number>, v2: object ~ L0):
+function f0 name="iterableMadeInIteration" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=Map<string, number>}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: Map<string, number>, v2: anything ~ L0):
     v3 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -29,8 +29,8 @@ function f0 name="iterableMadeInIteration" parameters=[{type=Array<anything, pro
     Return
 }
 # CHECK-LABEL: function f0 name="iterableMadeInIteration"
-# CHECK-NOT: ShapeTest
+# CHECK-NOT: testedType=L0
 # CHECK: = PropGet v2 key="k"
-# CHECK: = TypeTest {{*}} testedType=builtin(MapPrototypeValues)
 # CHECK: : MapIterator = CallBuiltin v1 overload=MapPrototypeValues/0
-# CHECK-NOT: ShapeTest
+# CHECK: = TypeTest {{*}} testedType=builtin(MapPrototypeValues)
+# CHECK-NOT: testedType=L0

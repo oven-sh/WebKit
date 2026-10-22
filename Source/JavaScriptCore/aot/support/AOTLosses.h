@@ -73,6 +73,7 @@ public:
     void addDecline(const Wire::DeclineRecord&);
     void addAllocationRemark(const AllocationRemark&);
 
+    Vector<Typed::FunctionID> functionsWithUnresolvedWitnesses();
     JS_EXPORT_PRIVATE Vector<Wire::LossRecord> takeLosses(const Typed::Program*);
     JS_EXPORT_PRIVATE Vector<Wire::DeclineRecord> takeDeclines(const Typed::Program*);
     JS_EXPORT_PRIVATE Vector<AllocationRemark> takeAllocationRemarks();

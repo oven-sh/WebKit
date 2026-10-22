@@ -124,10 +124,10 @@ JSValue regExpExec(JSGlobalObject* globalObject, JSValue thisValue, JSString* st
     if (regExpExec != regExpBuiltinExec && regExpExec.isCallable()) [[unlikely]] {
         auto callData = JSC::getCallDataInline(regExpExec);
         ASSERT(callData.type != CallData::Type::None);
-        auto cachedCall = CachedCall::tryCreate(globalObject, asObject(regExpExec), callData, 1);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (cachedCall) [[likely]] {
-            match = cachedCall->callWithArguments(globalObject, thisValue, str);
+        if (callData.type == CallData::Type::JS) [[likely]] {
+            CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(regExpExec), 1);
+            RETURN_IF_EXCEPTION(scope, { });
+            match = cachedCall.callWithArguments(globalObject, thisValue, str);
             RETURN_IF_EXCEPTION(scope, { });
         } else {
             auto args = WTF::toArray<EncodedJSValue>({
@@ -797,19 +797,6 @@ static JSArray* createArrayFromSplitSpans(JSGlobalObject* globalObject, VM& vm, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     unsigned resultLength = splitSpanCount(spans);
-    if (!globalObject->isHavingABadTime()) {
-        if (JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), resultLength)) {
-            for (unsigned i = 0; i < resultLength; ++i) {
-                unsigned start = spans[i * 2];
-                unsigned length = spans[i * 2 + 1];
-                JSValue value = start == undefinedSplitSpanStart ? jsUndefined() : jsSubstringOfResolved(vm, inputString, start, length);
-                RETURN_IF_EXCEPTION(scope, nullptr);
-                result->butterfly()->contiguous().at(result, i).set(vm, result, value);
-            }
-            return result;
-        }
-    }
-
     JSArray* result = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), resultLength);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -878,6 +865,26 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
     return JSArray::createWithButterfly(vm, nullptr, arrayStructure, newButterfly->toButterfly());
 }
 
+// What splitAtSeparators() has found: every element is a piece of the input, so the array is made at its length and filled in place.
+static JSArray* createArrayOfPieces(JSGlobalObject* globalObject, VM& vm, JSString* inputString, const Vector<unsigned>& spans)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    unsigned resultLength = splitSpanCount(spans);
+    if (globalObject->isHavingABadTime() || resultLength >= MIN_SPARSE_ARRAY_INDEX)
+        RELEASE_AND_RETURN(scope, createArrayFromSplitSpans(globalObject, vm, inputString, spans));
+
+    JSArray* result = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), resultLength);
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    const unsigned* span = spans.span().data();
+    for (unsigned i = 0; i < resultLength; ++i, span += 2)
+        result->butterfly()->contiguous().at(result, i).set(vm, result, jsSubstringOfResolved(vm, inputString, span[0], span[1]));
+    return result;
+}
+
 struct SeparatorSplit {
     unsigned limit;
     unsigned maxSpans;
@@ -888,16 +895,17 @@ template<typename CharacterType, typename IsSeparator>
 static MatchResult splitAtSeparators(std::span<const CharacterType> characters, const SeparatorSplit& split, NOESCAPE const IsSeparator& isSeparator, Vector<unsigned>& spans, unsigned& position)
 {
     MatchResult last = MatchResult::failed();
+    const CharacterType* units = characters.data();
     unsigned size = characters.size();
     unsigned scan = position;
     while (scan < size) {
-        if (!isSeparator(characters[scan])) {
+        if (!isSeparator(units[scan])) {
             ++scan;
             continue;
         }
         unsigned end = scan + 1;
         if (split.runsCountAsOne) {
-            while (end < size && isSeparator(characters[end]))
+            while (end < size && isSeparator(units[end]))
                 ++end;
         }
         last = MatchResult(scan, end);
@@ -1049,11 +1057,14 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
         if (lastMatchResult)
             globalObject->regExpGlobalData().recordMatch(vm, globalObject, regexp, inputString, lastMatchResult, false);
     };
-    if (auto separators = regexp->specificCharacterClass())
-        splitInputAtSeparators(regexp->specificPattern() == Yarr::SpecificPattern::CharacterClassPlus, [&](auto character) { return separators->contains(character); });
-    else if (regexp->specificPattern() == Yarr::SpecificPattern::Atom && regexp->atom().length() == 1) {
-        char16_t unit = regexp->atom()[0];
-        splitInputAtSeparators(false, [&](auto character) { return character == unit; });
+    Yarr::SpecificPattern specificPattern = regexp->specificPattern();
+    bool isSplitAtSeparators = specificPattern == Yarr::SpecificPattern::CharacterClass || specificPattern == Yarr::SpecificPattern::CharacterClassPlus;
+    auto createArray = [&] {
+        return isSplitAtSeparators ? createArrayOfPieces(globalObject, vm, inputString, spans) : createArrayFromSplitSpans(globalObject, vm, inputString, spans);
+    };
+    if (isSplitAtSeparators) [[unlikely]] {
+        Yarr::CharacterSetView separators = *regexp->specificCharacterClass();
+        splitInputAtSeparators(specificPattern == Yarr::SpecificPattern::CharacterClassPlus, [separators](auto character) ALWAYS_INLINE_LAMBDA { return separators.contains(character); });
     } else {
         lastMatchResult = genericSplit(
             globalObject, regexp, inputString, input, inputSize, position, matchPosition, regExpIsSticky, regExpIsUnicode,
@@ -1072,7 +1083,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
     RETURN_IF_EXCEPTION(scope, { });
 
     if (splitSpanCount(spans) >= limit)
-        RELEASE_AND_RETURN(scope, createArrayFromSplitSpans(globalObject, vm, inputString, spans));
+        RELEASE_AND_RETURN(scope, createArray());
 
     if (splitSpanCount(spans) < maxSizeForDirectPath) {
         // 20. Let substring be the substring of string from lastMatchEnd to size.
@@ -1087,7 +1098,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
         }
 
         // 22. Return array.
-        RELEASE_AND_RETURN(scope, createArrayFromSplitSpans(globalObject, vm, inputString, spans));
+        RELEASE_AND_RETURN(scope, createArray());
     }
 
     // Absurdly large results are not cached, and recording every element up front would cost more
@@ -1190,7 +1201,7 @@ static JSObject* constructFromSpecies(JSGlobalObject* globalObject, JSObject* sp
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSString* flagsString = jsString(vm, flags);
-    if (speciesConstructor == globalObject->regExpConstructor()) {
+    if (isFeatureRemoved(RemovableFeature::RegExpFromString) && speciesConstructor == globalObject->regExpConstructor()) [[unlikely]] {
         if (auto* regExpObject = dynamicDowncast<RegExpObject>(regexp))
             RELEASE_AND_RETURN(scope, constructRegExpWithFlags(globalObject, regExpObject, flagsString));
     }

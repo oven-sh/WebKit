@@ -61,18 +61,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* in
     OPERATION_RETURN(scope, JSValue::encode(modules.import(ModuleID(module), ModuleID(referrer))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
+JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireModule);
     Modules& modules = modulesOf(*instance);
-    OPERATION_RETURN(scope, JSValue::encode(modules.requireFrom(ModuleID(module), ModuleID(referrer))));
+    OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordRequire);
+    modulesOf(*instance).recordRequire(ModuleID(module), ModuleID(referrer));
+    scope.assertNoException();
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t, uint32_t isURL))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTResolveModule);
     Modules& modules = modulesOf(*instance);
-    OPERATION_RETURN(scope, JSValue::encode(modules.resolveFrom(ModuleID(module), ModuleID(referrer), StringID(specifier), specifierFormOf(isURL))));
+    OPERATION_RETURN(scope, JSValue::encode(modules.resolve(ModuleID(module), specifierFormOf(isURL))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance* instance, uint32_t failure))
@@ -81,6 +88,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance* instan
     Modules& modules = modulesOf(*instance);
     modules.throwFailure(ModuleFailureID(failure));
     OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTBeginModuleEvaluation, size_t, (Instance* instance, uint32_t module))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTBeginModuleEvaluation);
+    Modules& modules = modulesOf(*instance);
+    OPERATION_RETURN(scope, modules.beginEvaluationOfModuleInRecord(ModuleID(module)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAbandonModuleEvaluation, void, (Instance* instance, uint32_t module, JSCell* exception))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAbandonModuleEvaluation);
+    modulesOf(*instance).abandonEvaluation(ModuleID(module), cellArgument<Exception>(exception, Entry::operationAOTAbandonModuleEvaluation)->value());
+    scope.assertNoException();
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTImportDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer))
@@ -97,11 +118,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireDynamic, EncodedJSValue, (Instance* 
     OPERATION_RETURN(scope, JSValue::encode(modules.requireDynamic(JSValue::decode(specifier), ModuleID(referrer))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTResolveDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, uint32_t referrer, uint32_t isURL))
+JSC_DEFINE_JIT_OPERATION(operationAOTResolveDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, uint32_t referrer, uint32_t isURL, uint32_t isForRequire))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTResolveDynamic);
     Modules& modules = modulesOf(*instance);
-    OPERATION_RETURN(scope, JSValue::encode(modules.resolveDynamic(JSValue::decode(specifier), ModuleID(referrer), specifierFormOf(isURL))));
+    OPERATION_RETURN(scope, JSValue::encode(modules.resolveDynamic(JSValue::decode(specifier), ModuleID(referrer), isForRequire ? ResolvedSpecifierForm::PathForRequire : specifierFormOf(isURL))));
 }
 
 } } // namespace JSC::AOT

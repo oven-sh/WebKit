@@ -1229,7 +1229,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/CellSize.h
     runtime/DateTimeWriter.h
     runtime/ImmutablePropertyNames.h
-    runtime/IntlFormatPattern.h
     runtime/JSObjectVisitInlines.h
     runtime/JSStringVisitInlines.h
     runtime/PropertyRun.h
@@ -1661,6 +1660,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/OperationsInlines.h
     runtime/Options.h
     runtime/OptionsList.h
+    runtime/OwedOutOfMemoryError.h
     runtime/PageCount.h
     runtime/ParseInt.h
     runtime/PinballCompletion.h

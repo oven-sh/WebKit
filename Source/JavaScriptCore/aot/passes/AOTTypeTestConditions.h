@@ -28,7 +28,6 @@ struct TestCondition {
 
     bool lastsForever() const { return provesForever(proof); }
     bool lastsForStretch() const { return provesForStretch(proof); }
-    bool isRenewable() const { return proofsRenewedByShapeEpoch.contains(proof); }
 };
 
 enum class TestPlaceability : uint8_t { Unknown, CanBePlaced };
@@ -48,7 +47,6 @@ public:
     unsigned size() const { return m_conditions.size(); }
 
     const BitVector& stretchConditions() const LIFETIME_BOUND { return m_stretchConditions; }
-    const BitVector& renewableConditions() const LIFETIME_BOUND { return m_renewableConditions; }
     AbstractHeapSet heapsDependedOn() const { return m_heapsDependedOn; }
 
     void dump(PrintStream&, const Program&, TestConditionID) const;
@@ -63,7 +61,6 @@ private:
     Vector<TestCondition> m_conditions;
     HashedIndex m_index;
     BitVector m_stretchConditions;
-    BitVector m_renewableConditions;
     AbstractHeapSet m_heapsDependedOn;
 };
 
@@ -74,6 +71,7 @@ public:
     explicit FailedConditions(FunctionAnalyses&);
 
     bool mayHaveFailed(const Value& test, BlockID at) const;
+    bool mayHaveFailedTestOf(ValueID subject, BlockID at) const;
 
 private:
     TestConditions m_conditions;

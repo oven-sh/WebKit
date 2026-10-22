@@ -34,9 +34,9 @@ function f3 name="rows" parameters=[{type=L0}, {type=number}, {type=function}, {
 }
 # CHECK-LABEL: function f3
 # CHECK-NEXT: v5 PutSlot: writes(ObjectFields/1) | beyond operands: none
-# CHECK-NEXT: v6 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects | beyond operands: reads(ObjectFields/1, OrderWords, AllocatorState) writes(AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v6 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) | beyond operands: reads(ObjectFields/1, OrderWords, AllocatorState) writes(AllocatorState, RuntimeState)
 # CHECK-NEXT: v7 GetSlot: reads(ObjectFields/1)
-# CHECK-NEXT: v8 DefineMethod: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch, NamedProperties, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v8 DefineMethod: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards/1, NamedProperties, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v9 PropSet: {{*}}callsUnknownCode
 # CHECK-NEXT: b0 Return
 # SAME-LABEL: function f3

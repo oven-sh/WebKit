@@ -29,6 +29,11 @@ extern "C" EncodedJSValue Bun__throwForRemovedBuiltin(JSGlobalObject*, uint16_t,
     CRASH();
 }
 
+extern "C" EncodedJSValue Bun__throwForRemovedFunction(JSGlobalObject*, uint16_t, StringImpl*)
+{
+    CRASH();
+}
+
 extern "C" const char* Bun__removableFeatureName(uint16_t)
 {
     return nullptr;

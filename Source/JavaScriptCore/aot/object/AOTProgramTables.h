@@ -13,9 +13,11 @@
 #include "AOTLayoutData.h"
 #include "AOTModuleData.h"
 #include "AOTOperationData.h"
+#include "AOTPagedBitSet.h"
 #include "AOTRuntimeType.h"
 #include <algorithm>
 #include <bit>
+#include <iterator>
 #include <span>
 #include <wtf/Assertions.h>
 
@@ -61,8 +63,11 @@ static_assert(sizeof(RemovedFieldData) == 8 && isImageRecord<RemovedFieldData>);
 
 // Only a validating image has any, in ascending order: for each layout whose list is complete, the names that its objects get beside their fields,
 // and in a table of its own for each class whose list is complete, the names that its prototype object ever has beside `constructor`.
+// In every image, in a third table: for each class, the names that compiled code takes to be absent from its prototype object, because an object below it keeps a field of the name. The run time lets nobody add them.
 struct AddedNameData {
     static constexpr uint32_t listIsComplete = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t getsSharedNames = listIsComplete - 1;
+    static constexpr uint32_t layoutOfSharedNames = std::numeric_limits<uint32_t>::max();
 
     uint32_t layout;
     uint32_t name;
@@ -71,6 +76,39 @@ struct AddedNameData {
 };
 static_assert(sizeof(AddedNameData) == 8 && isImageRecord<AddedNameData>);
 
+// Sorted. One row per field of each record layout that the JSON parser may allocate.
+// And one per required member of each kind of object that a compiled validator accepts: it takes plain data, so what has all of those members stays an ordinary object.
+struct ParsedRecordFieldData {
+    static constexpr uint32_t isMemberForValidator = 1u << 31;
+    static constexpr unsigned requiredMembersShift = 20;
+    static constexpr uint32_t maxRequiredMembers = (isMemberForValidator >> requiredMembersShift) - 1;
+    static constexpr uint32_t maxValidatedObjects = 1u << requiredMembersShift;
+
+    static constexpr uint32_t memberForValidator(uint32_t validatedObject, uint32_t numberOfRequiredMembers) { return isMemberForValidator | numberOfRequiredMembers << requiredMembersShift | validatedObject; }
+    bool isForValidator() const { return shape & isMemberForValidator; }
+    uint32_t numberOfRequiredMembers() const { return (shape & ~isMemberForValidator) >> requiredMembersShift; }
+
+    uint32_t name;
+    uint32_t shape;
+
+    friend auto operator<=>(const ParsedRecordFieldData&, const ParsedRecordFieldData&) = default;
+};
+static_assert(sizeof(ParsedRecordFieldData) == 8 && isImageRecord<ParsedRecordFieldData>);
+
+struct MethodTableData {
+    static constexpr uint32_t noFunction = std::numeric_limits<uint32_t>::max();
+};
+
+// In ascending order. While the guard bit with the number is set, the entry of the method table holds what the image has there. While it is clear, the entry holds the lookup of the selector.
+struct MethodTableDependentData {
+    uint32_t guardBit;
+    uint32_t entry;
+    uint32_t selector;
+
+    friend auto operator<=>(const MethodTableDependentData&, const MethodTableDependentData&) = default;
+};
+static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTableDependentData>);
+
 #define FOR_EACH_AOT_OBJECT_PROGRAM_TABLE(v) \
     v(types, uint32_t) \
     v(typeSites, TypeSiteData) \
@@ -78,13 +116,20 @@ static_assert(sizeof(AddedNameData) == 8 && isImageRecord<AddedNameData>);
     v(classes, uint32_t) \
     v(layoutSets, LayoutSetData) \
     v(allocations, AllocationData) \
-    v(shapeSetBits, uint32_t) \
+    v(constructedAllocations, ConstructedAllocationData) \
+    v(shapeSetBits, uint64_t) \
     v(propertyRuns, uint32_t) \
     v(fieldTable, uint32_t) \
     v(fieldRecordIndices, uint16_t) \
+    v(classMemberRows, uint32_t) \
+    v(classAccessors, uint64_t) \
+    v(methodTableFunctions, uint32_t) \
+    v(methodLookupFunctions, uint32_t) \
+    v(methodTableDependents, MethodTableDependentData) \
     v(removedFields, RemovedFieldData) \
     v(addedNames, AddedNameData) \
-    v(classPrototypeNames, AddedNameData)
+    v(classPrototypeNames, AddedNameData) \
+    v(parsedRecordFields, ParsedRecordFieldData)
 
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \
     FOR_EACH_AOT_OBJECT_PROGRAM_TABLE(v) \
@@ -119,6 +164,7 @@ struct ProgramTables {
     uint32_t firstEnvironmentShape;
     uint32_t numberOfLayoutIndices;
     uint32_t numberOfFieldTableRows;
+    uint32_t numberOfClosureCells;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];
 
@@ -134,6 +180,12 @@ struct ProgramTables {
     FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ACCESSOR)
 #undef AOT_PROGRAM_TABLE_ACCESSOR
 
+    uint32_t constructorOfAllocation(uint32_t number) const
+    {
+        if (!allocations()[number].isConstructed)
+            return AllocationData::notConstructed;
+        return std::ranges::lower_bound(constructedAllocations(), number, { }, [](const ConstructedAllocationData& entry) -> uint32_t { return entry.allocation; })->constructedBy;
+    }
     bool hasLayoutForShape(uint32_t shape) const { return shape < firstEnvironmentShape && layouts()[shape]; }
     const LayoutData& layoutForShape(uint32_t shape) const
     {
@@ -174,13 +226,12 @@ struct ProgramTables {
     }
     bool passes(const ShapeTestData& test, uint32_t shape) const
     {
-        uint32_t indexFromLast = test.first + test.count - 1 - shape;
+        uint32_t indexFromLast = test.last - shape;
         if (indexFromLast >= test.count)
             return false;
         if (test.bitSetOffset == noBitSet)
             return true;
-        uint32_t bit = test.bitSetOffset + indexFromLast;
-        return shapeSetBits()[bit / 32] >> bit % 32 & 1;
+        return PagedBitSet::contains(shapeSetBits().data() + PagedBitSet::firstWordAt(test.bitSetOffset), PagedBitSet::entriesAt(test.bitSetOffset), indexFromLast);
     }
     uint32_t numberOfClassGroupWords() const { return (numberOfLayoutIndices + 31) / 32 * 2; }
     uint32_t numberOfClasses() const { return classes().size() - numberOfClassGroupWords(); }
@@ -202,17 +253,64 @@ struct ProgramTables {
         const uint32_t* starts = propertyRuns().data();
         return { starts + starts[number], starts[number + 1] - starts[number] };
     }
-    uint32_t functionLengthOf(uint32_t function) const { return functionLengths()[function - closureFunctions.first]; }
+    const FunctionWithLargeCountsData& largeCountsOf(uint32_t function) const
+    {
+        return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
+    }
+    uint32_t functionLengthOf(uint32_t function) const
+    {
+        uint8_t length = functionLengths()[function - closureFunctions.first];
+        return length == countsAreListed ? largeCountsOf(function).length() : length;
+    }
+    CaptureCounts captureCountsOf(uint32_t function) const
+    {
+        uint8_t counts = closureCaptureCounts()[function - closureFunctions.first];
+        if (counts == countsAreListed) [[unlikely]]
+            return largeCountsOf(function).captureCounts;
+        return CaptureCounts::decode(counts);
+    }
+    size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
+    const FunctionRecordData& recordOfFunction(uint32_t function) const
+    {
+        uint8_t number = functionRecordNumbers()[function];
+        if (number != functionRecordIsListedByFunction) [[likely]]
+            return functionRecords()[number];
+        return std::ranges::lower_bound(functionRecordsByFunction(), function, { }, &FunctionRecordByFunctionData::function)->record;
+    }
+    const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
+    // The kinds of the functions that closures are made of have a table of their own, which stubs read too: Instance::image.closureFunctionKindsOrigin.
+    FunctionKindData kindOfFunction(uint32_t function) const
+    {
+        std::span<const FunctionKindData> kinds = closureFunctionKinds();
+        uint32_t index = function - closureFunctions.first;
+        if (index < kinds.size()) [[likely]]
+            return kinds[index];
+        return recordOfFunction(function).kind;
+    }
     // Every function in front of the first one that is a form of another is its own source. The table starts at that one.
     uint32_t sourceFunctionOf(uint32_t function) const
     {
-        std::span<const uint32_t> sources = functionSources();
-        size_t firstListed = functionTraces().size() - sources.size();
+        std::span<const Number24> sources = functionSources();
+        size_t firstListed = numberOfFunctions() - sources.size();
         return function < firstListed ? function : sources[function - firstListed];
+    }
+    // A form of a function has the name of its source. Most functions in front of the first form have no name: functionNameGroups() has two words for every 32 of them
+    // (which have a name, how many in front of them have one), and functionNames() the names of those that have one.
+    // The sources behind them are functions that the compiler made, whole stretches of which share a name.
+    static constexpr uint32_t numberOfFunctionNameGroupWords(size_t numberOfFunctions) { return static_cast<uint32_t>((numberOfFunctions + 31) / 32 * 2); }
+    uint32_t nameOfFunction(uint32_t function) const
+    {
+        uint32_t source = sourceFunctionOf(function);
+        if (source >= numberOfFunctions() - functionSources().size())
+            return std::prev(std::ranges::upper_bound(functionNameRuns(), source, { }, &FunctionNameRunData::firstFunction))->name;
+        const uint32_t* group = functionNameGroups().data() + source / 32 * 2;
+        if (!(group[0] >> source % 32 & 1))
+            return 0;
+        return functionNames()[group[1] + std::popcount(group[0] & ((1u << source % 32) - 1))];
     }
     std::optional<uint32_t> builtinImplementedBy(uint32_t function) const
     {
-        if (!functionTraces()[function].implementsBuiltin)
+        if (!traceOfFunction(function).implementsBuiltin)
             return std::nullopt;
         return std::ranges::lower_bound(implementedBuiltins(), function, { }, &ImplementedBuiltinData::function)->builtin;
     }

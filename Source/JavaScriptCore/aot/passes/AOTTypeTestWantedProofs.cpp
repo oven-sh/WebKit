@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include <algorithm>
 #include <ranges>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -47,7 +48,7 @@ WantedProofs::WantedProofs(const TestEvents& events, const TestCoverage& coverag
     : m_events(events)
     , m_coverage(coverage)
     , m_wantedAtHead(events.cfg().numNodes())
-    , m_beforeRequirement(events.requirements().size())
+    , m_wantedAtTail(events.cfg().numNodes())
     , m_wantedHoistedTests(events.hoistedTests().size())
     , m_wantedProofs(events.proofs().size())
     , m_valuesInStretch(events.function().values.size())
@@ -65,6 +66,8 @@ WantedProofs::WantedProofs(const TestEvents& events, const TestCoverage& coverag
                 changed = true;
             }
         }
+        // Without a cycle a block comes behind every block that it leads to, so another round would find the same.
+        changed &= cfg.hasCycle();
     }
     RELEASE_ASSERT(m_wantedAtHead[cfg.root().index()].isEmpty());
 
@@ -72,11 +75,32 @@ WantedProofs::WantedProofs(const TestEvents& events, const TestCoverage& coverag
         BitVector wanted = wantedAtTail(block, Recording::On);
         if (!wanted.isEmpty())
             m_terminatorsInStretch.set(block.index());
+        m_wantedAtTail[block.index()] = wanted;
         walkBackward(block, wanted, Recording::On);
         ASSERT(wanted == m_wantedAtHead[block.index()]);
         if (!m_wantedAtHead[block.index()].isEmpty())
             m_headsInStretch.set(block.index());
     }
+}
+
+// The points of one block are asked for one after another, so one walk over the events of the block answers for all of them.
+bool WantedProofs::isAnyProofWantedAt(ProgramPoint point)
+{
+    std::span<const TestEvent> events = m_events.eventsOf(point.block);
+    if (m_blockOfEventFlags != point.block) {
+        m_blockOfEventFlags = point.block;
+        m_isProofWantedInFrontOfEvent.clearAll();
+        BitVector wanted = m_wantedAtTail[point.block.index()];
+        for (size_t index = events.size();; --index) {
+            if (!wanted.isEmpty())
+                m_isProofWantedInFrontOfEvent.set(index);
+            if (!index)
+                break;
+            applyEventBackward(point.block, events[index - 1], wanted, Recording::Off);
+        }
+    }
+    size_t firstEventBehindPoint = std::ranges::lower_bound(events, point.index, { }, &TestEvent::index) - events.begin();
+    return m_isProofWantedInFrontOfEvent.get(firstEventBehindPoint);
 }
 
 BitVector WantedProofs::wantedAtTail(BlockID block, Recording recording)
@@ -107,6 +131,16 @@ BitVector WantedProofs::wantedOn(Edge edge, Recording recording)
             return { };
     }
 
+    applyHoistedTestsBackward(edge, wanted, recording);
+    m_events.forEachProofOn(edge, [&](uint32_t proof) {
+        if (wanted.clear(m_events.proofs()[proof].condition.index()) && isRecording)
+            m_wantedProofs.set(proof);
+    });
+    return wanted;
+}
+
+void WantedProofs::applyHoistedTestsBackward(Edge edge, BitVector& wanted, Recording recording)
+{
     Vector<uint32_t, 4> hoistedTests;
     m_events.forEachHoistedTestOn(edge, [&](uint32_t hoistedTest) {
         hoistedTests.append(hoistedTest);
@@ -116,23 +150,23 @@ BitVector WantedProofs::wantedOn(Edge edge, Recording recording)
         case RequirementCoverage::Unknown:
         case RequirementCoverage::Covered:
             break;
-        case RequirementCoverage::NeedsTest:
-        case RequirementCoverage::NeedsRenewal: {
+        case RequirementCoverage::NeedsTest: {
             const HoistedTest& hoisted = m_events.hoistedTests()[hoistedTest];
             if (!wanted.clear(hoisted.condition.index()))
                 break;
-            if (isRecording)
+            if (recording == Recording::On)
                 m_wantedHoistedTests.set(hoistedTest);
             markTestPrerequisites(m_events, hoisted.requirement, wanted);
             break;
         }
         }
     }
+}
 
-    m_events.forEachProofOn(edge, [&](uint32_t proof) {
-        if (wanted.clear(m_events.proofs()[proof].condition.index()) && isRecording)
-            m_wantedProofs.set(proof);
-    });
+BitVector WantedProofs::wantedInFrontOfTestsOn(Edge edge)
+{
+    BitVector wanted = m_wantedAtHead[targetOf(m_events.function(), edge).block.index()];
+    applyHoistedTestsBackward(edge, wanted, Recording::Off);
     return wanted;
 }
 
@@ -192,11 +226,6 @@ void WantedProofs::applyEventBackward(BlockID block, const TestEvent& event, Bit
         return;
     case RequirementCoverage::NeedsTest:
         wanted.clear(condition);
-        return;
-    case RequirementCoverage::NeedsRenewal:
-        wanted.set(condition);
-        if (isRecording)
-            m_beforeRequirement[event.payload] = wanted;
         return;
     case RequirementCoverage::Covered:
         wanted.set(condition);

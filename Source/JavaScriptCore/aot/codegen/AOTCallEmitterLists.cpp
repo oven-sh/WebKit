@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTConvention.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
@@ -22,6 +23,7 @@ Boxed CallEmitter::callWithList(const OperationContext& context, Boxed callee, B
 void CallEmitter::generateCallList(const ValueContext& value)
 {
     Boxed callee = in<Boxed>(value->calleeOperand());
+    emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed thisValue = thisOrUndefined(value->thisValueOperand());
     LValue list = in<CellPointer>(value->listOperand()).value();
     ConventionCall call {
@@ -36,10 +38,8 @@ void CallEmitter::generateCallList(const ValueContext& value)
         return;
     }
 
-    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program)) {
-        StringID name = value->calleeName();
-        requireCallableBeforeTailCall(value, callee, name ? std::optional(name) : std::nullopt);
-    }
+    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
+        requireCallableBeforeTailCall(value, callee);
     tailCallByConvention(value, call);
 }
 
@@ -69,17 +69,19 @@ void CallEmitter::generateConstruct(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
     Boxed callee = in<Boxed>(value->calleeOperand());
+    emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
-    define(value, unboxCell(constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands())));
+    define(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands()));
 }
 
 void CallEmitter::generateConstructList(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
     Boxed callee = in<Boxed>(value->calleeOperand());
+    emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
     Boxed list = boxCell(in<CellPointer>(value->listOperand()));
-    define(value, unboxCell(callOperation<Boxed>(value, RuntimeOperation::ConstructWithArray, { callee, newTarget, list }, { .constructs = true })));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::ConstructWithArray, { callee, newTarget, list }, { .constructs = true }));
 }
 
 } } } // namespace JSC::AOT::Typed

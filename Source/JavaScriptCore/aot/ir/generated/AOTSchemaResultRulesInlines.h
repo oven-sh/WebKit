@@ -26,12 +26,15 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
     case Opcode::SetMappedArgument: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::ElemSet: case Opcode::ElemDefine:
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype:
     case Opcode::CopyDataProperties: case Opcode::SuperSet: case Opcode::LoopHint: case Opcode::DefineMethod: case Opcode::PrivateSet:
-    case Opcode::PrivateDefine: case Opcode::IteratorClose: case Opcode::InitialYield: case Opcode::ResolvePromise: case Opcode::RejectPromise:
-    case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GrowNewArray: case Opcode::ReportMismatch: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd: case Opcode::PutArrayElement: case Opcode::AppendElements: case Opcode::ReserveArrayCapacity:
-    case Opcode::PutTypedArrayElement: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::RequireAttachedTypedArray:
-    case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderRollBack:
-    case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue:
+    case Opcode::PrivateDefine: case Opcode::IteratorClose: case Opcode::InitialYield: case Opcode::EvaluateModule: case Opcode::RecordRequire:
+    case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GrowNewArray:
+    case Opcode::ReportMismatch: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth:
+    case Opcode::SetGlobalBinding: case Opcode::PutArrayElement: case Opcode::AppendElements: case Opcode::ReserveArrayCapacity:
+    case Opcode::ConvertToDoubleStorage: case Opcode::PutTypedArrayElement: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
+    case Opcode::RequireAttachedTypedArray: case Opcode::ReserveCollectionCapacity: case Opcode::TakeGeneratorPrototype:
+    case Opcode::MarkGeneratorRunning: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation: case Opcode::StringBuilderAppend:
+    case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderRollBack: case Opcode::ValidateType:
+    case Opcode::ValidateCallee: case Opcode::ValidateLookup: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue:
     case Opcode::JSONSourceAbandon: case Opcode::ExpectRows: case Opcode::StringBuilderCommit: case Opcode::PutSlots: case Opcode::DefineAccessors:
     case Opcode::FulfillFreshPromise: case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger:
     case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
@@ -39,28 +42,33 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         return rules.none(value);
     case Opcode::GetEnvironmentField:
         return rules.declared(value, value.layout(), value.field());
-    case Opcode::ScopeHasBinding: case Opcode::PropHas: case Opcode::PropDelete: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::Less:
-    case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf:
-    case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeTest: case Opcode::PrivateHas: case Opcode::IsConstructor:
-    case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::HasJSType: case Opcode::IsPristineArray:
-    case Opcode::HasContiguousIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::ShapeTest: case Opcode::IsSlotFilled:
-    case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance:
-    case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable: case Opcode::IsMemberUnchanged:
-    case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady: case Opcode::HasKeyOrder:
-    case Opcode::IsShapeEpochCurrent: case Opcode::IsClosureOf: case Opcode::IsEnumeratorCurrent: case Opcode::PropHasOwn: case Opcode::TryCopyFields:
-    case Opcode::HasArrayElement: case Opcode::HasSpareArrayCapacity: case Opcode::ReturnsToResultTest: case Opcode::IsUnmodifiedAsyncGenerator:
-    case Opcode::HasInPrototypeChain: case Opcode::StringBuilderAppendJSON: case Opcode::JSONSourceOpen: case Opcode::JSONSourceClose:
-    case Opcode::JSONStartsWith: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyRepeats: case Opcode::JSONKeyHasEscapes:
-    case Opcode::JSONHasStackSpace: case Opcode::IsPlainDataObject: case Opcode::PropGetAndTest: case Opcode::TryPutByIds:
-    case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral:
-    case Opcode::StringEndsWithLiteral: case Opcode::StringRangeEqualsLiteral:
+    case Opcode::ScopeHasBinding: case Opcode::PropHas: case Opcode::PropDelete: case Opcode::ElemHas: case Opcode::ElemDelete:
+    case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::Less: case Opcode::LessEq: case Opcode::Greater:
+    case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::ToBoolean: case Opcode::LogicalNot:
+    case Opcode::TypeTest: case Opcode::PrivateHas: case Opcode::IsConstructor: case Opcode::IsGeneratorSuspendedAtStart:
+    case Opcode::IsUnmodifiedGenerator: case Opcode::HasJSType: case Opcode::IsPristineArray: case Opcode::HasContiguousIndex:
+    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::IsClosureOf: case Opcode::ShapeTest: case Opcode::IsSlotFilled:
+    case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen:
+    case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds:
+    case Opcode::IsElementPresent: case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
+    case Opcode::IsEnumeratorCurrent: case Opcode::PropHasOwn: case Opcode::TryCopyFields: case Opcode::HasArrayElement:
+    case Opcode::HasSpareArrayCapacity: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin: case Opcode::IsCollectionTableFull:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::AwaitMayContinue:
+    case Opcode::HasInPrototypeChain: case Opcode::BeginModuleEvaluation: case Opcode::StringBuilderAppendJSON: case Opcode::JSONSourceOpen:
+    case Opcode::JSONSourceClose: case Opcode::JSONStartsWith: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyRepeats:
+    case Opcode::JSONKeyHasEscapes: case Opcode::JSONHasStackSpace: case Opcode::IsPlainDataObject: case Opcode::PropGetAndTest:
+    case Opcode::TryPutByIds: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral:
+    case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral: case Opcode::StringRangeEqualsLiteral: case Opcode::HasByKeyParts:
         return rules.natural(value, NaturalType { { Primitives::False, Primitives::True }, std::nullopt, false, false, std::nullopt, { } });
     case Opcode::NewObject: case Opcode::CloneAs:
         return rules.allocation(value, value.layout());
-    case Opcode::FinishObject: case Opcode::ClaimDeclared: case Opcode::ClaimRead: case Opcode::Predict: case Opcode::NewClass:
-    case Opcode::FinishClass: case Opcode::MaterializeEnvironment: case Opcode::DefineOwnProperty: case Opcode::Box: case Opcode::Unbox:
-    case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode:
-    case Opcode::Compress:
+    case Opcode::NewDictionary: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::CopyObject: case Opcode::ToObject:
+    case Opcode::ToThis: case Opcode::GetClassPrototype: case Opcode::GetConstructPrototype: case Opcode::CreateAsyncFromSyncIterator:
+        return rules.natural(value, NaturalType { { }, std::nullopt, true, false, std::nullopt, { } });
+    case Opcode::FinishObject: case Opcode::Convert: case Opcode::NewClass: case Opcode::FinishClass: case Opcode::ReadAgain:
+    case Opcode::BorrowedParameter: case Opcode::MakeBorrowedObject: case Opcode::MaterializeEnvironment: case Opcode::DefineOwnProperty:
+    case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger:
+    case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
         return rules.sameAs(value, 0);
     case Opcode::NewArray:
         return rules.allocation(value, BuiltinClasses::Array, value.contents());
@@ -69,20 +77,16 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
     case Opcode::NewTemplateObject: case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike:
     case Opcode::NewArrayWithCapacity: case Opcode::TruncateNewArray: case Opcode::CreateRest: case Opcode::NewArgumentList:
         return rules.allocation(value, BuiltinClasses::Array);
-    case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::ToObject: case Opcode::ToThis: case Opcode::Construct:
-    case Opcode::ConstructList: case Opcode::GetClassPrototype: case Opcode::GetConstructPrototype: case Opcode::CopyObject:
-    case Opcode::CreateAsyncFromSyncIterator:
-        return rules.natural(value, NaturalType { { }, std::nullopt, true, false, std::nullopt, { } });
     case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments:
         return rules.allocation(value, BuiltinClasses::Arguments);
-    case Opcode::GetMappedArgument: case Opcode::SuperGet: case Opcode::Call: case Opcode::CallList: case Opcode::CatchValue:
-    case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::DirectEval:
-    case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ResumeGenerator:
-    case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::GetInternalField:
-    case Opcode::CollectionTable: case Opcode::GetArgument: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
-    case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::AwaitCallBySavingFrame: case Opcode::ReturnAsyncResult:
-    case Opcode::GetRequiredValue: case Opcode::JSONDecodeBytes: case Opcode::GetOwnDataProperty: case Opcode::PropGetChain: case Opcode::CallMethod:
-    case Opcode::CallResolved:
+    case Opcode::GetMappedArgument: case Opcode::SuperGet: case Opcode::Call: case Opcode::Construct: case Opcode::CallList:
+    case Opcode::ConstructList: case Opcode::CatchValue: case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::RequireDynamic:
+    case Opcode::ResolveDynamic: case Opcode::DirectEval: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty:
+    case Opcode::ResumeGenerator: case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant:
+    case Opcode::GetInternalField: case Opcode::CollectionTable: case Opcode::GetGlobalBinding: case Opcode::GetArgument:
+    case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs: case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::ReturnAsyncResult: case Opcode::JSONDecodeBytes: case Opcode::GetOwnDataProperty:
+    case Opcode::PropGetChain: case Opcode::CallMethod: case Opcode::MapGetByKeyParts: case Opcode::CallResolved:
         return rules.unknown(value);
     case Opcode::PropGet:
         return isProven ? rules.declared(value, value.key()) : rules.unknown(value);
@@ -110,11 +114,11 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         return rules.natural(value, NaturalType { { Primitives::String }, std::nullopt, false, false, std::nullopt, { } });
     case Opcode::ToPropertyKey:
         return rules.natural(value, NaturalType { { Primitives::String, Primitives::Symbol }, std::nullopt, false, false, std::nullopt, { } });
-    case Opcode::Upcast: case Opcode::Claim: case Opcode::AssumeType:
+    case Opcode::Upcast: case Opcode::Check: case Opcode::AssumeType:
         return rules.cast(value, 0, value.castType());
-    case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject:
+    case Opcode::NarrowByField: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject:
         return rules.cast(value, 0);
-    case Opcode::CallDirect: case Opcode::CallGroup: case Opcode::GetCapture:
+    case Opcode::CallDirect: case Opcode::CallTable: case Opcode::GetCapture:
         return rules.declared(value, value.function(), resultIndex);
     case Opcode::Results:
         return rules.resultOperand(value, resultIndex);
@@ -198,15 +202,14 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
-    case Opcode::Unspecified:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList:
         return rules.declared(value, value.valueType());
     case Opcode::Parameter:
         return rules.declaredParameter(value);
-    case Opcode::GetShapeEpoch: case Opcode::DivideIntegers: case Opcode::IntegerBound:
-        return rules.natural(value, NaturalType { { }, IntegerBounds { -4611686018427387903ll, 4611686018427387903ll }, false, false, std::nullopt, { } });
     case Opcode::AllGuards:
         return rules.natural(value, NaturalType { { }, std::nullopt, false, false, OpaqueKind::Guard, { } });
-    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
         return rules.declared(value, value.key());
     case Opcode::GetTypedArrayLength:
         return rules.natural(value, NaturalType { { }, IntegerBounds { 0, 17179869184ll }, false, false, std::nullopt, { } });
@@ -216,8 +219,10 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         return rules.natural(value, NaturalType { { }, IntegerBounds { 0, 2147483647 }, false, false, std::nullopt, { } });
     case Opcode::GetStringCodeUnit:
         return rules.natural(value, NaturalType { { }, IntegerBounds { 0, 65535 }, false, false, std::nullopt, { } });
-    case Opcode::CallBuiltin: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
+    case Opcode::CallBuiltin: case Opcode::GetBuiltinValue: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
         return rules.declared(value, value.overload(), resultIndex);
+    case Opcode::DivideIntegers: case Opcode::IntegerBound:
+        return rules.natural(value, NaturalType { { }, IntegerBounds { -4611686018427387903ll, 4611686018427387903ll }, false, false, std::nullopt, { } });
     case Opcode::ToInt32:
         return rules.natural(value, NaturalType { { }, IntegerBounds { -2147483648, 2147483647 }, false, false, std::nullopt, { } });
     case Opcode::NewSetFromData:
@@ -230,6 +235,8 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         return rules.allocation(value, BuiltinClasses::Generator);
     case Opcode::NewAsyncGenerator:
         return rules.allocation(value, BuiltinClasses::AsyncGenerator);
+    case Opcode::TakeGeneratorStepStatus: case Opcode::JSONObjectFinish:
+        return rules.natural(value, NaturalType { { }, IntegerBounds { 0, 2 }, false, false, std::nullopt, { } });
     case Opcode::PromiseAllOfElements:
         return rules.allocation(value, BuiltinClasses::Promise, value.contents());
     case Opcode::StringBuilderBegin:
@@ -293,8 +300,6 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         }
     case Opcode::JSONObjectBegin: case Opcode::JSONObjectKey:
         return rules.natural(value, NaturalType { { }, std::nullopt, false, false, OpaqueKind::KeyOrder, { } });
-    case Opcode::JSONObjectFinish:
-        return rules.natural(value, NaturalType { { }, IntegerBounds { 0, 2 }, false, false, std::nullopt, { } });
     case Opcode::JSONParseExtraMembers:
         switch (resultIndex) {
         case 0:
@@ -329,8 +334,6 @@ typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
-    case Opcode::PropGetChecked:
-        return rules.declared(value, value.checkedType());
     case Opcode::PropGetPair:
         switch (resultIndex) {
         case 0:

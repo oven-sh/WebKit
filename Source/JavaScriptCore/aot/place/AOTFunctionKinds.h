@@ -11,8 +11,13 @@
 #include "AOTIR.h"
 #include "JSExportMacros.h"
 #include <span>
+#include <wtf/Vector.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+class ParallelLoops;
+
+namespace Typed {
 
 class FlowResults;
 class SlotPlan;
@@ -35,9 +40,12 @@ JS_EXPORT_PRIVATE unsigned closureCaptureSlotOf(const Program&, const Function&,
 JS_EXPORT_PRIVATE FunctionID closureTargetOf(const Program&, FunctionID);
 JS_EXPORT_PRIVATE FunctionID firstSourceOf(const Program&, FunctionID);
 bool isInRuntimeModule(const Program&, const Function&);
+bool rejectsOnThrow(const Program&, const Function&);
 JS_EXPORT_PRIVATE FunctionKindData functionKindOf(const Program&, const SlotPlan&, FunctionID);
 JS_EXPORT_PRIVATE FunctionTraceRecord functionTraceOf(const Program&, FunctionID);
 JS_EXPORT_PRIVATE ClosureFunctionRange closureFunctionRangeOf(const Program&);
+// Indexed by function. 0 means the function has no cell: cell 0 is reserved and never written.
+JS_EXPORT_PRIVATE Vector<uint32_t> numberClosureCells(const Program&, const ParallelLoops&);
 
 } } } // namespace JSC::AOT::Typed
 

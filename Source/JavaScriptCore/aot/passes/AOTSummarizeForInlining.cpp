@@ -20,6 +20,8 @@
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
+#include <atomic>
+#include <limits>
 #include <optional>
 #include <wtf/CommaPrinter.h>
 #include <wtf/GenerationalSet.h>
@@ -59,20 +61,21 @@ bool isWrapperCreatedByEngine(const Function& function)
     switch (function.creator.kind()) {
     case CreatorRecord::Kind::ResultWrapper:
     case CreatorRecord::Kind::ParameterWrapper:
+    case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::BoundFunction:
         return true;
     case CreatorRecord::Kind::Coroutine:
-        return function.hasOrdinaryFrame();
+        return function.hasOrdinaryFrame() && function.role != FunctionRole::AsyncWorker;
     case CreatorRecord::Kind::None:
     case CreatorRecord::Kind::Entrypoint:
     case CreatorRecord::Kind::Version:
     case CreatorRecord::Kind::ResultWorker:
-    case CreatorRecord::Kind::Continuation:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
     case CreatorRecord::Kind::ChainStep:
     case CreatorRecord::Kind::StubBody:
+    case CreatorRecord::Kind::TableLookup:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -122,6 +125,11 @@ static bool isRepeated(BuiltinCallbackTimes times)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isKeyedStore(Opcode opcode)
+{
+    return storedOf(opcode) && receiverOf(opcode) && Value::opcodesWithKey.contains(opcode);
 }
 
 static bool isCoroutine(const Function& function)
@@ -237,7 +245,6 @@ public:
 
         summary.codeBytes = computeBlockBytes();
         summary.isWrapper = isWrapperCreatedByEngine(m_function);
-        summary.returnsFreshAggregate = returnsFreshAggregate(m_analyses);
         if (isCold(heat))
             return summary;
 
@@ -246,6 +253,7 @@ public:
             findConditions(summary);
         }
         findCalledParameters(summary);
+        findIteratedParameters(summary);
         findReceiverParameters(summary);
         return summary;
     }
@@ -276,16 +284,38 @@ private:
         }
     }
 
+    bool isSlowPath(BlockID id) const
+    {
+        return m_function.at(id).frequency == BlockFrequency::Rare && m_function.at(entryBlock).frequency != BlockFrequency::Rare;
+    }
+
     uint32_t computeBlockBytes()
     {
         m_blockBytes.fill(0, m_function.blocks.size());
         uint32_t codeBytes = 0;
         for (BlockID id : m_analyses.cfg().reversePostOrder()) {
+            if (isSlowPath(id))
+                continue;
             uint32_t bytes = estimatedCodeBytes(m_program, m_function, m_function.at(id));
             m_blockBytes[id.index()] = bytes;
             codeBytes = saturatingSum<uint32_t>(codeBytes, bytes);
         }
         return codeBytes;
+    }
+
+    std::optional<uint32_t> entryParameterBehind(ValueID value) const
+    {
+        size_t index = m_function.at(entryBlock).parameters.find(sameObjectThroughCasts(m_function, value));
+        if (index == notFound)
+            return std::nullopt;
+        return static_cast<uint32_t>(index);
+    }
+
+    std::optional<uint32_t> entryParameterWithIdentityOf(ValueID value)
+    {
+        if (std::optional<uint32_t> index = entryParameterBehind(value))
+            return index;
+        return entryParameterBehind(m_analyses.identityOf(value));
     }
 
     bool isAdmissibleInHead(const InliningSummary& summary, BlockID id)
@@ -349,7 +379,6 @@ private:
             m_visitedValues.resize(m_function.values.size());
         m_visitedValues.clear();
 
-        auto& entryParameters = m_function.at(entryBlock).parameters;
         std::optional<uint32_t> decidingParameter;
         uint64_t chainLength = 0;
         Vector<ValueID, 16> worklist { condition };
@@ -360,10 +389,10 @@ private:
             m_visitedValues.add(id.index());
             const Value& value = m_function.at(id);
             if (value.opcode == Opcode::Parameter) {
-                size_t index = entryParameters.find(id);
-                if (index == notFound || (decidingParameter && *decidingParameter != index))
+                std::optional<uint32_t> index = entryParameterWithIdentityOf(id);
+                if (!index || (decidingParameter && *decidingParameter != *index))
                     return std::nullopt;
-                decidingParameter = static_cast<uint32_t>(index);
+                decidingParameter = index;
                 continue;
             }
             if (isRematerializable(value))
@@ -381,8 +410,20 @@ private:
     {
         CFG& cfg = m_analyses.cfg();
         Vector<BlockID, 2> branchingBlocks;
+        Vector<BlockID, 1> switchingBlocks;
         for (BlockID block : cfg.reversePostOrder()) {
             auto& terminator = m_function.at(block).terminator;
+            if (terminator.kind == TerminatorKind::Switch || terminator.kind == TerminatorKind::SwitchString) {
+                if (std::optional<uint32_t> entryParameter = entryParameterWithIdentityOf(terminator.subjectOperand())) {
+                    bool isOnStrings = terminator.kind == TerminatorKind::SwitchString;
+                    summary.switches.append(ParameterSwitch { *entryParameter, isOnStrings, { }, 0 });
+                    summary.switches.last().caseRanges.grow(terminator.targets.size() - 1);
+                    for (size_t position = 0; position + 1 < terminator.targets.size(); ++position)
+                        summary.switches.last().bytesOnlyInCase.append({ isOnStrings ? int64_t { terminator.strings()[position].index() } : terminator.cases()[position], 0 });
+                    switchingBlocks.append(block);
+                }
+                continue;
+            }
             if (terminator.kind != TerminatorKind::Branch)
                 continue;
             if (std::optional<uint32_t> entryParameter = findDecidingParameter(terminator.conditionOperand())) {
@@ -390,36 +431,110 @@ private:
                 branchingBlocks.append(block);
             }
         }
-        if (branchingBlocks.isEmpty())
+        if (branchingBlocks.isEmpty() && switchingBlocks.isEmpty())
             return;
 
-        Vector<uint32_t*> subtreeOwners(FillWith { }, m_function.blocks.size(), nullptr);
-        auto addOwner = [&](const Target& target, uint32_t& bytes) {
-            if (cfg.singleIncomingEdge(target.block))
-                subtreeOwners[target.block.index()] = &bytes;
+        struct Subtree {
+            uint32_t* ownBytes { nullptr };
+            DominatedRange* range { nullptr };
+            uint32_t totalBytes { 0 };
+        };
+        constexpr uint32_t noSubtree = std::numeric_limits<uint32_t>::max();
+        Vector<Subtree, 8> subtrees;
+        Vector<uint32_t> subtreeAtRoot(FillWith { }, m_function.blocks.size(), noSubtree);
+        auto addSubtree = [&](const Target& target, uint32_t& bytes, DominatedRange& range) {
+            if (!cfg.singleIncomingEdge(target.block))
+                return;
+            subtreeAtRoot[target.block.index()] = subtrees.size();
+            subtrees.append(Subtree { &bytes, &range });
         };
         for (size_t i = 0; i < branchingBlocks.size(); ++i) {
             auto& terminator = m_function.at(branchingBlocks[i]).terminator;
-            addOwner(terminator.taken(), summary.conditions[i].bytesOnlyIfTrue);
-            addOwner(terminator.notTaken(), summary.conditions[i].bytesOnlyIfFalse);
+            addSubtree(terminator.taken(), summary.conditions[i].bytesOnlyIfTrue, summary.conditions[i].rangeIfTrue);
+            addSubtree(terminator.notTaken(), summary.conditions[i].bytesOnlyIfFalse, summary.conditions[i].rangeIfFalse);
+        }
+        for (size_t i = 0; i < switchingBlocks.size(); ++i) {
+            auto& terminator = m_function.at(switchingBlocks[i]).terminator;
+            ParameterSwitch& parameterSwitch = summary.switches[i];
+            for (size_t position = 0; position < parameterSwitch.bytesOnlyInCase.size(); ++position)
+                addSubtree(terminator.targets[position], parameterSwitch.bytesOnlyInCase[position].second, parameterSwitch.caseRanges[position]);
+            addSubtree(terminator.otherwise(), parameterSwitch.bytesOnlyOtherwise, parameterSwitch.rangeOtherwise);
         }
 
-        Vector<uint32_t*, 16> enclosingOwners;
+        Vector<uint32_t, 16> enclosingSubtrees;
+        uint32_t nextPreorderIndex = 0;
         auto enter = [&](BlockID block) {
-            if (uint32_t* owner = subtreeOwners[block.index()])
-                enclosingOwners.append(owner);
-            if (!enclosingOwners.isEmpty())
-                *enclosingOwners.last() = saturatingSum<uint32_t>(*enclosingOwners.last(), m_blockBytes[block.index()]);
+            uint32_t preorderIndex = nextPreorderIndex++;
+            if (uint32_t subtree = subtreeAtRoot[block.index()]; subtree != noSubtree) {
+                subtrees[subtree].range->begin = preorderIndex;
+                enclosingSubtrees.append(subtree);
+            }
+            if (enclosingSubtrees.isEmpty())
+                return;
+            Subtree& innermost = subtrees[enclosingSubtrees.last()];
+            *innermost.ownBytes = saturatingSum<uint32_t>(*innermost.ownBytes, m_blockBytes[block.index()]);
+            innermost.totalBytes = saturatingSum<uint32_t>(innermost.totalBytes, m_blockBytes[block.index()]);
         };
         auto leave = [&](BlockID block) {
-            if (subtreeOwners[block.index()])
-                enclosingOwners.removeLast();
+            if (subtreeAtRoot[block.index()] == noSubtree)
+                return;
+            Subtree& subtree = subtrees[enclosingSubtrees.takeLast()];
+            subtree.range->end = nextPreorderIndex;
+            if (!subtree.totalBytes)
+                *subtree.range = { };
+            if (!enclosingSubtrees.isEmpty()) {
+                Subtree& parent = subtrees[enclosingSubtrees.last()];
+                parent.totalBytes = saturatingSum<uint32_t>(parent.totalBytes, subtree.totalBytes);
+            }
         };
         m_analyses.dominators().walkTree(enter, leave);
 
-        summary.conditions.removeAllMatching([](const ParameterCondition& condition) {
-            return !condition.bytesOnlyIfTrue && !condition.bytesOnlyIfFalse;
+        Vector<uint32_t, 4> totalBytesIfFalse(branchingBlocks.size(), [&](size_t i) {
+            uint32_t subtree = subtreeAtRoot[m_function.at(branchingBlocks[i]).terminator.notTaken().block.index()];
+            return subtree == noSubtree ? 0 : subtrees[subtree].totalBytes;
         });
+        findBytesBehindFailedTests(summary, branchingBlocks.span(), totalBytesIfFalse.span());
+
+        summary.conditions.removeAllMatching([](const ParameterCondition& condition) {
+            return condition.rangeIfTrue.begin == condition.rangeIfTrue.end && condition.rangeIfFalse.begin == condition.rangeIfFalse.end && !condition.isTestInFrontOfSharedBytes;
+        });
+    }
+
+    void findBytesBehindFailedTests(InliningSummary& summary, std::span<const BlockID> branchingBlocks, std::span<const uint32_t> totalBytesIfFalse)
+    {
+        CFG& cfg = m_analyses.cfg();
+        BitVector failedTargets(m_function.blocks.size());
+        Vector<size_t, 4> tests;
+        for (size_t i = 0; i < branchingBlocks.size(); ++i) {
+            BlockID failed = m_function.at(branchingBlocks[i]).terminator.notTaken().block;
+            if (!cfg.singleIncomingEdge(failed) || m_function.at(failed).frequency <= m_function.at(entryBlock).frequency)
+                continue;
+            failedTargets.set(failed.index());
+            tests.append(i);
+        }
+        if (tests.size() < 2)
+            return;
+
+        BitVector reachedWhereTestsPass = cfg.blocksReachableFrom(cfg.root(), failedTargets);
+        uint32_t bytesBehindTests = 0;
+        for (BlockID block : cfg.reversePostOrder()) {
+            if (!reachedWhereTestsPass.get(block.index()))
+                bytesBehindTests = saturatingSum<uint32_t>(bytesBehindTests, m_blockBytes[block.index()]);
+        }
+        uint32_t ownedBytes = 0;
+        for (size_t i : tests) {
+            bool isNested = std::ranges::any_of(tests, [&](size_t other) {
+                return other != i && summary.conditions[other].rangeIfFalse.contains(summary.conditions[i].rangeIfFalse);
+            });
+            if (!isNested)
+                ownedBytes = saturatingSum<uint32_t>(ownedBytes, totalBytesIfFalse[i]);
+        }
+        if (bytesBehindTests <= ownedBytes)
+            return;
+
+        summary.bytesOnlyIfSomeTestFails = bytesBehindTests - ownedBytes;
+        for (size_t i : tests)
+            summary.conditions[i].isTestInFrontOfSharedBytes = true;
     }
 
     bool isRepeatedBuiltinCallback(const Use& use) const
@@ -471,12 +586,10 @@ private:
         if (escape.gaveUp())
             return;
         const BlockCycles& cycles = m_analyses.blockCycles();
-        for (uint32_t i = 0; i < entryParameters.size(); ++i) {
-            if (!mayBeFunction(entryParameters[i]))
-                continue;
-            std::optional<ObjectID> object = escape.objectDefinedBy(entryParameters[i]);
+        auto noteCallsOf = [&](uint32_t i, ValueID definition) {
+            std::optional<ObjectID> object = escape.objectDefinedBy(definition);
             if (!object)
-                continue;
+                return;
             for (const ObjectUse& objectUse : escape.usesOf(*object)) {
                 if (!isCalledAt(objectUse))
                     continue;
@@ -486,29 +599,72 @@ private:
                     break;
                 }
             }
+        };
+        for (uint32_t i = 0; i < entryParameters.size(); ++i) {
+            if (mayBeFunction(entryParameters[i]))
+                noteCallsOf(i, entryParameters[i]);
+        }
+    }
+
+    static bool iterates(const Value& user, uint32_t operandIndex)
+    {
+        if (user.opcode == Opcode::StepGenerator)
+            return operandIndex == OperandIndex::StepGenerator::generator;
+        return user.opcode == Opcode::IteratorOpen && operandIndex == OperandIndex::IteratorOpen::iterable && user.iteratorKind() == IteratorKind::Sync;
+    }
+
+    void findIteratedParameters(InliningSummary& summary)
+    {
+        bool hasLoop = std::ranges::any_of(m_function.blocks, [&](const Block& block) {
+            return std::ranges::any_of(block.values, [&](ValueID id) {
+                Opcode opcode = m_function.at(id).opcode;
+                return opcode == Opcode::IteratorOpen || opcode == Opcode::StepGenerator;
+            });
+        });
+        if (!hasLoop)
+            return;
+
+        const EscapeAnalysis& escape = m_analyses.escape();
+        if (escape.gaveUp())
+            return;
+        auto& entryParameters = m_function.at(entryBlock).parameters;
+        for (uint32_t i = 0; i < entryParameters.size(); ++i) {
+            std::optional<ObjectID> object = escape.objectDefinedBy(entryParameters[i]);
+            if (!object)
+                continue;
+            bool isIterated = std::ranges::any_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
+                return objectUse.use.kind == Use::Kind::Operand && iterates(m_function.at(objectUse.use.user), objectUse.use.operandIndex);
+            });
+            if (isIterated)
+                summary.iteratedParameters.set(i);
         }
     }
 
     void findReceiverParameters(InliningSummary& summary)
     {
         auto& entryParameters = m_function.at(entryBlock).parameters;
-        Vector<uint32_t, 8> accessesByName(FillWith { }, entryParameters.size(), 0u);
+        Vector<ReceiverParameter, 8> receivers(entryParameters.size(), [](size_t index) {
+            return ReceiverParameter { static_cast<uint32_t>(index), 0, 0 };
+        });
         for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (isSlowPath(block))
+                continue;
             for (ValueID id : m_function.at(block).values) {
                 const Value& access = m_function.at(id);
-                if (!isNamedAccess(access.opcode))
+                bool isStore = isKeyedStore(access.opcode);
+                if (!isNamedAccess(access.opcode) && !isStore)
                     continue;
                 ValueID receiver = access.operand(*receiverOf(access.opcode));
-                if (m_program.typeOf(m_function, receiver).layouts)
+                std::optional<uint32_t> index = entryParameterBehind(m_analyses.identityOf(receiver));
+                if (!index)
                     continue;
-                size_t index = entryParameters.find(sameObjectThroughCasts(m_function, receiver));
-                if (index != notFound)
-                    ++accessesByName[index];
+                receivers[*index].stores += isStore;
+                receivers[*index].accessesByName += isNamedAccess(access.opcode) && !m_program.typeOf(m_function, receiver).layouts;
             }
         }
-        for (uint32_t i = 0; i < entryParameters.size(); ++i) {
-            if (accessesByName[i])
-                summary.receiverParameters.append(ReceiverParameter { i, accessesByName[i] });
+        for (const ReceiverParameter& receiver : receivers) {
+            if (receiver.accessesByName || receiver.stores)
+                summary.receiverParameters.append(receiver);
         }
     }
 
@@ -527,16 +683,16 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     return FunctionSummarizer(context, function).summarize(heat);
 }
 
-static void propagateNeverReturns(const Program& program, const CallGraph& callGraph, PerFunction<InliningSummary>& summaries, const ParallelLoops& loops)
+static void propagateNeverReturns(const Program& program, const CallGraph& callGraph, ParallelArray<InliningSummary>& summaries, const ParallelLoops& loops)
 {
+    Vector<FunctionID> worklist = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
+        return summaries[index].neverReturns;
+    }).map([](uint32_t index) {
+        return FunctionID(index);
+    });
     BitVector noReturnFunctions(summaries.size());
-    Vector<FunctionID> worklist;
-    for (unsigned index = 0; index < summaries.size(); ++index) {
-        if (!summaries[FunctionID(index)].neverReturns)
-            continue;
-        noReturnFunctions.quickSet(index);
-        worklist.append(FunctionID(index));
-    }
+    for (FunctionID function : worklist)
+        noReturnFunctions.quickSet(function.index());
     auto neverReturns = [&](FunctionID callee) {
         return noReturnFunctions.get(callee.index());
     };
@@ -544,7 +700,7 @@ static void propagateNeverReturns(const Program& program, const CallGraph& callG
         Vector<FunctionID> callers;
         for (FunctionID callee : worklist) {
             for (FunctionID caller : callGraph.callersOf(callee)) {
-                const InliningSummary& summary = summaries[caller];
+                const InliningSummary& summary = summaries[caller.index()];
                 if (summary.neverReturns || summary.barrier == InlineBarrier::Unknown || summary.barrier == InlineBarrier::NoBody)
                     continue;
                 callers.append(caller);
@@ -553,12 +709,12 @@ static void propagateNeverReturns(const Program& program, const CallGraph& callG
         sortAndRemoveDuplicates(loops, callers);
         forEachIndexInParallel(loops, callers.size(), [&](unsigned index) {
             const Function& function = program.at(callers[index]);
-            summaries[callers[index]].noReturnBlocks = computeNoReturnBlocks(program, function, CFG(function), neverReturns);
+            summaries[callers[index].index()].noReturnBlocks = computeNoReturnBlocks(program, function, CFG(function), neverReturns);
         });
 
         worklist.shrink(0);
         for (FunctionID caller : callers) {
-            InliningSummary& summary = summaries[caller];
+            InliningSummary& summary = summaries[caller.index()];
             if (!summary.noReturnBlocks.get(entryBlock.index()))
                 continue;
             summary.neverReturns = true;
@@ -570,20 +726,45 @@ static void propagateNeverReturns(const Program& program, const CallGraph& callG
 
 InliningSummaries summarizeForInlining(const Program& program, const CallGraph& callGraph, const Heat& heat, const FlowResults& flow, BuildContext& build)
 {
-    unsigned count = program.functions.size();
-    PerFunction<InliningSummary> summaries(count);
-    forEachIndexInParallel(build.parallelLoops(), count, [&](unsigned index) {
+    const ParallelLoops& loops = build.parallelLoops();
+    Vector<uint32_t> largestFirst = largeFunctions(program, loops);
+    ParallelArray<InliningSummary> summaries(loops, program.functions.size(), largestFirst.span(), [&](unsigned index) {
         FunctionID id(index);
         if (!build.isEnabled(PassID::SummarizeForInlining, id))
-            return;
+            return InliningSummary { };
         AnalysisContext context { build, program, &flow, nullptr, id };
-        summaries[id] = summarizeFunctionForInlining(context, program.at(id), heat.of(program, id));
+        return summarizeFunctionForInlining(context, program.at(id), heat.of(program, id));
     });
-    propagateNeverReturns(program, callGraph, summaries, build.parallelLoops());
+    propagateNeverReturns(program, callGraph, summaries, loops);
 
     InliningSummaries result;
     result.m_summaries = WTF::move(summaries);
+    result.m_build = &build;
+    result.m_flow = &flow;
+    result.m_returnsFreshAggregate.fill(InliningSummaries::Answer::NotAsked, program.functions.size());
+    result.m_locksOfAnswers = makeUniqueWithoutFastMallocCheck<std::array<Lock, InliningSummaries::numberOfLocks>>();
     return result;
+}
+
+bool InliningSummaries::returnsFreshAggregate(const Program& program, FunctionID id) const
+{
+    RELEASE_ASSERT(contains(id));
+    if (m_summaries[id.index()].barrier != InlineBarrier::None)
+        return false;
+
+    std::atomic_ref answer(m_returnsFreshAggregate[id.index()]);
+    Answer known = answer.load(std::memory_order_relaxed);
+    if (known != Answer::NotAsked)
+        return known == Answer::Yes;
+
+    Locker locker { (*m_locksOfAnswers)[id.index() % numberOfLocks] };
+    known = answer.load(std::memory_order_relaxed);
+    if (known != Answer::NotAsked)
+        return known == Answer::Yes;
+    FunctionAnalyses analyses(AnalysisContext { *m_build, program, m_flow, nullptr, id }, program.at(id));
+    known = Typed::returnsFreshAggregate(analyses) ? Answer::Yes : Answer::No;
+    answer.store(known, std::memory_order_relaxed);
+    return known == Answer::Yes;
 }
 
 static void dumpIndices(PrintStream& out, ASCIILiteral opening, ASCIILiteral prefix, const BitVector& indices)
@@ -615,14 +796,30 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
             out.print(" bareReturn");
         if (summary.isWrapper)
             out.print(" wrapper");
-        if (summary.returnsFreshAggregate)
+        if (contains(id) && returnsFreshAggregate(program, id))
             out.print(" returnsFreshAggregate");
         dumpIndices(out, " called=["_s, ""_s, summary.calledParameters);
         dumpIndices(out, " calledInCycles=["_s, ""_s, summary.parametersCalledInCycles);
-        for (const ParameterCondition& condition : summary.conditions)
+        dumpIndices(out, " iterated=["_s, ""_s, summary.iteratedParameters);
+        for (const ParameterCondition& condition : summary.conditions) {
             out.print(" condition(v", condition.condition.index(), " p", condition.entryParameter, " true=", condition.bytesOnlyIfTrue, " false=", condition.bytesOnlyIfFalse, ")");
+            if (condition.isTestInFrontOfSharedBytes)
+                out.print(" guardsSharedBytes(v", condition.condition.index(), ")");
+        }
+        for (const ParameterSwitch& parameterSwitch : summary.switches) {
+            out.print(" switch(p", parameterSwitch.entryParameter);
+            for (auto [key, bytes] : parameterSwitch.bytesOnlyInCase) {
+                if (parameterSwitch.isOnStrings)
+                    out.print(" s", key, "=", bytes);
+                else
+                    out.print(" ", key, "=", bytes);
+            }
+            out.print(" otherwise=", parameterSwitch.bytesOnlyOtherwise, ")");
+        }
+        if (summary.bytesOnlyIfSomeTestFails)
+            out.print(" someTestFails=", summary.bytesOnlyIfSomeTestFails);
         for (const ReceiverParameter& receiver : summary.receiverParameters)
-            out.print(" receiver(p", receiver.entryParameter, " accesses=", receiver.accessesByName, ")");
+            out.print(" receiver(p", receiver.entryParameter, " accesses=", receiver.accessesByName, " stores=", receiver.stores, ")");
         out.print("\n");
     }
 }

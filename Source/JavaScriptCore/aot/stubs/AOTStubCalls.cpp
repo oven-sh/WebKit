@@ -14,6 +14,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubsCalls.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
 #include <algorithm>
@@ -112,20 +113,16 @@ void StubCalls::reportChangedRegister(CCallHelpers& jit)
     jit.breakpoint();
 }
 
-uint32_t StubCalls::emitCall(CCallHelpers& jit, StubKey called, CodeSymbol symbol, const RecordedCall& record, const KeptRegisterCheck* keptRegisters, ReturnSiteMark mark)
+uint32_t StubCalls::emitCall(CCallHelpers& jit, StubKey called, CodeSymbol symbol, const RecordedCall& record, const KeptRegisterCheck* keptRegisters)
 {
     // A check may emit a call of its own behind this one, and the records are in the order of the code.
     uint32_t call = 0;
     auto emit = [&] {
         call = safeCast<uint32_t>(m_calls.size());
         m_calls.append({ m_relocations.call(symbol), record.site, record.firstReadSite });
-        if (mark == ReturnSiteMark::ResultTest) {
-            jit.m_assembler.buffer().putInt(static_cast<int32_t>(ResultTestMark::firstWord));
-            jit.m_assembler.buffer().putInt(static_cast<int32_t>(ResultTestMark::secondWord));
-        }
     };
     bool isFunction = symbol.space == SymbolSpace::Function;
-    if (m_catalog.options().validates && !isFunction && canCheckPreservedRegisters(m_catalog, called)) {
+    if (m_catalog.options().validates && m_checksPreservedRegisters && !isFunction && canCheckPreservedRegisters(m_catalog, called)) {
         StubSummary summary = m_catalog.summaryOf(called);
         if (symbol.space == SymbolSpace::ArgumentThunk)
             summary.clobbered.merge(destinationRegistersOf(m_argumentMoves[symbol.index]));
@@ -198,9 +195,31 @@ void StubCalls::tailCall(CCallHelpers& jit, StubKey key, uint32_t immediate)
     emitJump({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) });
 }
 
-void StubCalls::callFunction(CCallHelpers& jit, FunctionID callee, uint16_t entry, OptionalIndex site, const KeptRegisterCheck* keptRegisters, ReturnSiteMark mark)
+void StubCalls::callFunction(CCallHelpers& jit, FunctionID callee, uint16_t entry, OptionalIndex site, const KeptRegisterCheck* keptRegisters)
 {
-    emitCall(jit, StubKey(), { SymbolSpace::Function, indexOf(callee), entry }, { 0, site, { } }, keptRegisters, mark);
+    emitCall(jit, StubKey(), { SymbolSpace::Function, indexOf(callee), entry }, { 0, site, { } }, keptRegisters);
+}
+
+void StubCalls::callRegister(CCallHelpers& jit, GPRReg address, OptionalIndex site, const KeptRegisterCheck* keptRegisters)
+{
+    auto emit = [&] {
+        CCallHelpers::Label begin = jit.label();
+        jit.call(address, JSEntryPtrTag);
+        CCallHelpers::Label end = jit.label();
+        m_units.pin(begin, end);
+        m_calls.append({ 0, site, { }, end });
+    };
+    // As for a call of the stub that jumps to the address.
+    if (!keptRegisters || !returnsToItsCallSite(m_catalog, callResolvedValue())) {
+        emit();
+        return;
+    }
+    RELEASE_ASSERT(m_catalog.options().validates);
+    emitStoresOfKeptRegisters(jit, *keptRegisters);
+    emit();
+    emitChecksOfKeptRegisters(jit, *keptRegisters, ValidationFailureKind::CallChangedKeptRegister, std::nullopt, [&] {
+        reportChangedRegister(jit);
+    });
 }
 
 void StubCalls::jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry)
@@ -208,21 +227,22 @@ void StubCalls::jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry)
     emitJump({ SymbolSpace::Function, indexOf(callee), entry });
 }
 
-void StubCalls::emitDistanceToFunction(CCallHelpers&, FunctionID callee, uint16_t entry, int32_t addend)
-{
-    m_relocations.emitDistance32({ SymbolSpace::Function, indexOf(callee), entry }, addend);
-}
-
-void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body)
+void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body, LinkBuffer* linkBuffer)
 {
     body.stubKeys = WTF::move(m_stubKeys);
     body.callees = WTF::move(m_callees);
     body.argumentMoves = WTF::move(m_argumentMoves);
     body.returnSites.reserveCapacity(m_calls.size());
     for (const RecordedCall& call : m_calls) {
-        const Relocation& relocation = relocations[call.relocation];
-        RELEASE_ASSERT(relocation.kind == RelocationKind::Call);
-        uint32_t returnOffset = relocation.offset + static_cast<uint32_t>(sizeOfNearCall);
+        uint32_t returnOffset;
+        if (call.returnAddress) {
+            RELEASE_ASSERT(linkBuffer);
+            returnOffset = linkBuffer->offsetOf(*call.returnAddress);
+        } else {
+            const Relocation& relocation = relocations[call.relocation];
+            RELEASE_ASSERT(relocation.kind == RelocationKind::Call);
+            returnOffset = relocation.offset + static_cast<uint32_t>(sizeOfNearCall);
+        }
         body.returnSites.append({ returnOffset, call.site });
         if (call.firstReadSite)
             body.firstReadSites.append({ returnOffset, *call.firstReadSite });

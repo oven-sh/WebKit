@@ -1,6 +1,6 @@
 # A 32-bit reference becomes a 64-bit one where its cell has 8 free bytes. A slot that may hold a string stays narrow, a hidden word is not moved, and no cell grows
 # FORM: AsRead
-# OPTIONS: references=narrow only-passes=AnalyzeFlow
+# OPTIONS: references=narrow only-passes=AnalyzeFlow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots
 
 module m0 path="main.js" displayPath="main.js" body=f0

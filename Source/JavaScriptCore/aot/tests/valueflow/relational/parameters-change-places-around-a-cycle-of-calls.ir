@@ -1,0 +1,53 @@
+# function changePlaces(a, b, n) { return n ? changePlaces(b, a, n - 1) : a }
+# function link(a, b, n) { if (n) link(b, a, n - 1); else a.next = b }
+# The record of each says of `b` only that it is handed on. Once round the cycle it stands where `a` stood: both are returned, each is stored into the other.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: returned | contents: nothing results=1
+# CHECK-NEXT: p1: returned | contents: nothing results=1
+# CHECK: result0: one of [o0, o1] | o0 = parameter 0 | o1 = parameter 1
+# CHECK: f2
+# CHECK-NEXT: p0: members-written | contents: nothing stored-into-parameters=2
+# CHECK-NEXT: p1: members-written | contents: nothing stored-into-parameters=1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thing" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="changePlaces" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="link" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = NewObject -, v4 layout=L0 fields=[0]
+    v7 = Call v0, -, v5, v6, v4
+    v8 = Call v2, -, v5, v6, v4
+    Return
+}
+function f1 name="changePlaces" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsReturned] results=1}, {kind=Parameter index=1}, {kind=CallResult index=5 fate=[IsReturned] results=1}] handed=[{source=1 call=5 argument=2}, {source=0 call=5 argument=3}] resultsFullyListed=1} {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v1, v0, v2
+    Return v5
+  b2():
+    Return v0
+}
+function f2 name="link" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersWritten]}, {kind=Parameter index=1}] stores=[{source=1 target=0 key="next"}] handed=[{source=1 call=5 argument=2}, {source=0 call=5 argument=3}]} {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v1, v0, v2
+    Return
+  b2():
+    PropSet v0, v1 key="next" mode=Strict
+    Return
+}

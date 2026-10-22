@@ -12,9 +12,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTFlowResults.h"
 #include "AOTInterningPhases.h"
-#include "AOTResolveCallsCallees.h"
-#include "AOTResolveCallsDirectCall.h"
-#include "AOTResultRules.h"
+#include "AOTSlotPlan.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include <wtf/BitVector.h>
@@ -39,96 +37,88 @@ Function createDerivedHeader(const Function& target, FunctionID targetID, Functi
     return header;
 }
 
-static bool canReturnWithTailCall(const Function& function, BlockID blockID, ValueID result)
-{
-    const Block& block = function.at(blockID);
-    return !block.handler && !block.values.isEmpty() && block.values.last() == result && function.at(result).opcode == Opcode::CallDirect;
-}
-
-static void emitRequiredTailCall(IRBuilder& builder, ValueID call)
-{
-    builder.emitTerminator(IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { call }));
-}
-
-// The frame this one returns to may already wait to test the result of a chain of tail calls, against the type written on the function it called.
-// Then the chain goes on. Else this frame becomes the one that waits.
-static void emitTailCallUnlessResultNeedsTest(IRBuilder& builder, ResultCheck check, FunctionID callee, ValueID result)
-{
-    BlockID block = builder.currentBlock();
-    Value call = builder.function().at(result);
-    BitVector erasedIndexes;
-    erasedIndexes.set(builder.function().at(block).values.size() - 1);
-    builder.eraseValues(block, erasedIndexes);
-
-    IRBuilder::BranchBlocks arms = builder.emitBranch(builder.append(Opcode::ReturnsToResultTest, { }));
-    builder.moveToEndOf(arms.taken);
-    emitRequiredTailCall(builder, builder.append(Value(call)));
-
-    builder.moveToEndOf(arms.notTaken);
-    builder.emitReturn(appendResultCheck(builder, check, callee, builder.append(WTF::move(call))));
-}
-
-void emitReturnOfEntrypointCall(IRBuilder& builder, const FlowResults& flow, FunctionID callee, ValueID result, EntrypointResultTest resultTest)
+void emitReturnOfEntrypointCall(IRBuilder& builder, ValueID call)
 {
     const Function& function = builder.function();
-    if (builder.context().program.typeOf(function, result).isNever()) {
+    const Block& block = function.at(builder.currentBlock());
+    RELEASE_ASSERT(!block.handler && block.values.last() == call && function.at(call).opcode == Opcode::CallDirect);
+    if (builder.context().program.typeOf(function, call).isNever()) {
         builder.emitUnreachable();
         return;
     }
 
-    ResultCheck check = resultCheckOf(flow, callee);
-    if (resultTest == EntrypointResultTest::MadeUnlessCallerTests && needsResultCheck(builder, check, callee, result) && canReturnWithTailCall(function, builder.currentBlock(), result)) {
-        emitTailCallUnlessResultNeedsTest(builder, check, callee, result);
-        return;
-    }
-
-    bool isLeftToReceiver = resultTest == EntrypointResultTest::LeftToReceiver;
-    ValueID checked = isLeftToReceiver ? result : appendResultCheck(builder, check, callee, result);
-    if (checked != result || !canReturnWithTailCall(function, builder.currentBlock(), result)) {
-        builder.emitReturn(checked);
-        return;
-    }
-
-    Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { result });
-    terminator.setRequirement(isLeftToReceiver ? TailCallRequirement::Required : TailCallRequirement::Allowed);
+    // The frame stays only where the callee returns its result in another form than the entrypoint.
+    // A callee on a cycle of tail calls that leads back through the entrypoint returns it in the same form.
+    Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { call });
+    terminator.setRequirement(TailCallRequirement::Allowed);
     builder.emitTerminator(WTF::move(terminator));
 }
 
-static BitVector findFunctionsEnteredWithoutReference(const Program& program, const FlowResults& flow)
+static bool mayBeReadWithItsFunction(const Variable& variable)
 {
-    BitVector calledByHost = functionsCalledByHost(program);
+    switch (variable.flow.reads) {
+    case ReadState::Unknown:
+    case ReadState::OnlyAccessed:
+        return true;
+    case ReadState::OnlyCalled:
+        // A call cannot name its callee while another value may be stored, so it reads the variable.
+        return variable.flow.stores != StoreCount::Never;
+    case ReadState::NeverRead:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The functions whose closure exists without a NewClosure: a read of the variable that starts with the function creates it.
+static BitVector findFunctionsReadFromVariables(const Program& program, const FlowResults& flow)
+{
+    BitVector described = findVariablesDescribedToRunTime(program, flow);
+    BitVector functions(program.functions.size());
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        const Variable& variable = program.variables[index];
+        if (variable.function && (described.quickGet(index) || mayBeReadWithItsFunction(variable)))
+            functions.quickSet(variable.function.index());
+    }
+    return functions;
+}
+
+static BitVector findFunctionsEnteredWithoutReference(const Program& program, const FlowResults& flow, const ParallelLoops& loops)
+{
+    BitVector calledByHost = functionsCalledByHost(program, loops);
     BitVector readFromVariables = findFunctionsReadFromVariables(program, flow);
 
     BitVector entered(program.functions.size());
-    for (unsigned index = 0; index < program.functions.size(); ++index) {
+    auto found = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
         // A function that is read and never called loses its body. The read still creates the closure, whose identity is the entrypoint.
         bool isEntered = readFromVariables.quickGet(index) || (calledByHost.quickGet(index) && function.hasBody());
-        if (isEntered && canBeCalledByValueOf(function.role))
-            entered.quickSet(index);
-    }
+        return isEntered && canBeCalledByValueOf(function.role);
+    });
+    for (uint32_t index : found)
+        entered.quickSet(index);
     return entered;
+}
+
+static FunctionID addConstructEntrypoint(const Program& program, const GenericEntrypointRequest& request, NOESCAPE const Invocable<FunctionID(const GenericEntrypointRequest&)> auto& add)
+{
+    if (entrypointVariantsOf(program, program.at(request.target)) != EntrypointVariants::Both)
+        return { };
+    GenericEntrypointRequest constructRequest = request;
+    constructRequest.takesNewTarget = true;
+    constructRequest.allocatesThis = hasAllocatingConstructEntrypoint(program, program.at(request.target));
+    return add(constructRequest);
+}
+
+static FunctionID addEntrypointNamedByClosures(const Program& program, GenericEntrypointRequest request, NOESCAPE const Invocable<FunctionID(const GenericEntrypointRequest&)> auto& add)
+{
+    request.takesNewTarget = entrypointVariantsOf(program, program.at(request.target)) == EntrypointVariants::WithNewTarget;
+    return add(request);
 }
 
 static FunctionID addGenericEntrypoints(const Program& program, GenericEntrypointRequest request, NOESCAPE const Invocable<FunctionID(const GenericEntrypointRequest&)> auto& add)
 {
-    switch (entrypointVariantsOf(program.at(request.target))) {
-    case EntrypointVariants::WithoutNewTarget:
-        request.takesNewTarget = false;
-        return add(request);
-    case EntrypointVariants::WithNewTarget:
-        request.takesNewTarget = true;
-        return add(request);
-    case EntrypointVariants::Both: {
-        GenericEntrypointRequest constructRequest = request;
-        constructRequest.takesNewTarget = true;
-        constructRequest.groupEntrypoint = FunctionID();
-        request.takesNewTarget = false;
-        request.constructEntrypoint = add(constructRequest);
-        return add(request);
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    request.constructEntrypoint = addConstructEntrypoint(program, request, add);
+    return addEntrypointNamedByClosures(program, request, add);
 }
 
 // The entrypoints get the ids, and their types the ids, that they would get one after the other.
@@ -145,7 +135,7 @@ static void addEntrypointsForHost(ProgramEditor& editor, const AnalysisContext& 
     unsigned numberAdded = 0;
     for (FunctionID target : targets) {
         firstAdded.append(numberAdded);
-        numberAdded += entrypointVariantsOf(program.at(target)) == EntrypointVariants::Both ? 2 : 1;
+        numberAdded += entrypointVariantsOf(program, program.at(target)) == EntrypointVariants::Both ? 2 : 1;
     }
     uint32_t firstID = editor.reserveFunctions(numberAdded).index();
 
@@ -168,50 +158,19 @@ static void addEntrypointsForHost(ProgramEditor& editor, const AnalysisContext& 
     });
 }
 
-void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, const CallGroups& groups, BuildContext& build)
+void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build)
 {
     const Program& program = editor.program();
     AnalysisContext context { build, program, &inputs.flow, nullptr };
-    BitVector entered = findFunctionsEnteredWithoutReference(program, inputs.flow);
-    BitVector done(program.functions.size());
     size_t numberOfFunctionsBefore = program.functions.size();
-    uint64_t numberOfGroupEntrypoints = 0;
 
-    {
-        TypeArena types(editor.types());
-        StringArena strings(editor.strings());
-        auto add = [&](const GenericEntrypointRequest& variant) {
-            return editor.addFunctionLike(variant.target, createGenericEntrypoint(context, types, strings, variant));
-        };
-        for (unsigned index = 0; index < groups.numberOfGroups(); ++index) {
-            const CallGroup& group = groups.at(CallGroupID(index));
-            GroupSignature signature = createGroupSignature(program, inputs.flow, types, groups, group);
-            for (FunctionID member : group.members) {
-                RELEASE_ASSERT(!inputs.derivedFunctions->find(derivedFunctionKey(FunctionRole::GenericEntrypoint, member)));
-                EntrypointResultTest resultTest = groups.leavesResultTestToReceiver(member) ? EntrypointResultTest::LeftToReceiver : EntrypointResultTest::MadeByEntrypoint;
-                FunctionID groupEntrypoint = editor.addFunctionLike(member, createGroupEntrypoint(context, types, member, signature, resultTest));
-                addGenericEntrypoints(program, {
-                    .target = member,
-                    .groupEntrypoint = groupEntrypoint,
-                    .callers = groups.genericCallersOf(member),
-                    .isEnteredByHost = entered.get(member.index()),
-                }, add);
-                done.set(member.index());
-                ++numberOfGroupEntrypoints;
-            }
-        }
-    }
-
-    Vector<FunctionID> enteredByHostOnly;
-    for (size_t index : entered) {
-        if (!done.get(index))
-            enteredByHostOnly.append(FunctionID(index));
-    }
-    addEntrypointsForHost(editor, context, enteredByHostOnly.span());
+    Vector<FunctionID> entered;
+    for (size_t index : findFunctionsEnteredWithoutReference(program, inputs.flow, build.parallelLoops()))
+        entered.append(FunctionID(index));
+    addEntrypointsForHost(editor, context, entered.span());
 
     uint64_t numberOfAddedFunctions = program.functions.size() - numberOfFunctionsBefore;
-    build.statistics().count(StatisticID::GroupEntrypoints, numberOfGroupEntrypoints);
-    build.statistics().count(StatisticID::GenericEntrypoints, numberOfAddedFunctions - numberOfGroupEntrypoints);
+    build.statistics().count(StatisticID::GenericEntrypoints, numberOfAddedFunctions);
     build.statistics().countChanges(PassID::CreateEntrypoints, numberOfAddedFunctions);
 }
 

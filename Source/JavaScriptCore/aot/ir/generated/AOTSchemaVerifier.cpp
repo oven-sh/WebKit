@@ -69,31 +69,34 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
     PayloadVerifier payload(verifier, block, id, value);
     payload.operands(value.opcode);
     switch (value.opcode) {
-    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Integer: case Opcode::Double: case Opcode::FinishObject:
-    case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewSuppressedError: case Opcode::GetMappedArgument:
-    case Opcode::SetMappedArgument: case Opcode::SetLiteralPrototype: case Opcode::InstanceOf: case Opcode::LogicalNot: case Opcode::TypeOf:
-    case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToThis: case Opcode::Results: case Opcode::ResultAt: case Opcode::CatchValue:
-    case Opcode::CatchException: case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::ForInOpen: case Opcode::ForInStep:
-    case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate:
-    case Opcode::GetByValWithThis: case Opcode::ToLength: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
-    case Opcode::StepArrayIterator: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ResolvePromise:
-    case Opcode::RejectPromise: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex:
-    case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
-    case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::CollectionTable: case Opcode::MapNext:
-    case Opcode::SetNext: case Opcode::Parameter: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
-    case Opcode::BelongsToInstance: case Opcode::IsInBounds: case Opcode::IsNotThenable: case Opcode::IsShapeEpochCurrent:
-    case Opcode::IsEnumeratorCurrent: case Opcode::GetShapeEpoch: case Opcode::AllGuards: case Opcode::GetArrayLength: case Opcode::AppendElements:
-    case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
-    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::ReturnsToResultTest: case Opcode::GetMyArgumentByVal:
-    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::ToInt32: case Opcode::ToUint32:
-    case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList: case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal:
-    case Opcode::RequireAttachedTypedArray: case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable:
-    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame:
-    case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain: case Opcode::StringBuilderBegin:
-    case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString:
-    case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
-    case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose:
-    case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte:
+    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Integer: case Opcode::Double: case Opcode::NewDictionary:
+    case Opcode::FinishObject: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewSuppressedError:
+    case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::TryDefineLiveBinding: case Opcode::SetLiteralPrototype:
+    case Opcode::InstanceOf: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToThis:
+    case Opcode::Results: case Opcode::ResultAt: case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint:
+    case Opcode::ResolveHeritage: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield:
+    case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::ToLength:
+    case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::StepArrayIterator: case Opcode::GetInternalField:
+    case Opcode::PutInternalField: case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::IsPristineArray:
+    case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
+    case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
+    case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext: case Opcode::Parameter: case Opcode::ReadAgain:
+    case Opcode::BorrowedParameter: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::IsInBounds: case Opcode::IsNotThenable:
+    case Opcode::IsEnumeratorCurrent: case Opcode::AllGuards: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject:
+    case Opcode::GetArrayLength: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity:
+    case Opcode::ConvertToDoubleStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::GetArgument:
+    case Opcode::GetRestLength: case Opcode::GetMyArgumentByVal: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
+    case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList: case Opcode::DestructureIterable:
+    case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable:
+    case Opcode::IsCollectionTableFull: case Opcode::ReserveCollectionCapacity: case Opcode::TakeGeneratorPrototype:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
+    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain:
+    case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength:
+    case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint:
+    case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart:
+    case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte:
     case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
     case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONKeyRepeats: case Opcode::JSONKeyHasEscapes:
     case Opcode::JSONHasStackSpace: case Opcode::IsPlainDataObject: case Opcode::StringBuilderReserve: case Opcode::StringBuilderCommit:
@@ -105,8 +108,9 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
     case Opcode::StringRangeParseInt: case Opcode::StringRangeSubstringOrUndefined: case Opcode::StringBuilderAppendInteger:
     case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
     case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
-    case Opcode::ResolveCallTarget: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger:
-    case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
+    case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts: case Opcode::ResolveCallTarget: case Opcode::Box: case Opcode::Unbox:
+    case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode:
+    case Opcode::Compress:
         return;
     case Opcode::Boolean:
         payload.boolean(payload.word(0));
@@ -118,7 +122,7 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
     case Opcode::StringBuilderAppendConstant:
         payload.id<StringID>(payload.word(0));
         return;
-    case Opcode::Builtin: case Opcode::NativeBinding:
+    case Opcode::Builtin: case Opcode::NativeBinding: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin:
         payload.externalID<BuiltinID>(payload.word(0));
         return;
     case Opcode::ModuleBuiltin:
@@ -155,12 +159,13 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         payload.id<LayoutID>(payload.word(0));
         payload.field(payload.word(0), payload.word(1));
         return;
-    case Opcode::ScopeHasBinding: case Opcode::GetOwnProperty: case Opcode::KeyConstant: case Opcode::GetOwnDataProperty:
+    case Opcode::ScopeHasBinding: case Opcode::NarrowByField: case Opcode::GetOwnProperty: case Opcode::KeyConstant: case Opcode::ValidateLookup:
+    case Opcode::GetOwnDataProperty:
         payload.id<PropertyKeyID>(payload.word(0));
         return;
     case Opcode::NewObject:
         payload.id<LayoutID>(payload.word(0));
-        for (uint32_t word : payload.list(std::max<unsigned>(numberOfInlinePayloadWords, 5)))
+        for (uint32_t word : payload.list(std::max<unsigned>(numberOfInlinePayloadWords, 6)))
             payload.field(payload.word(0), word);
         if (payload.word(1) != absentPayloadWord)
             payload.id<AllocationSiteID>(payload.word(1));
@@ -171,14 +176,19 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
             payload.id<AllocationID>(payload.word(3));
         if (payload.word(4) != absentPayloadWord)
             payload.id<AllocationClassID>(payload.word(4));
+        if (payload.word(5) != absentPayloadWord)
+            payload.id<LayoutID>(payload.word(5));
         return;
     case Opcode::NewArray:
         payload.id<TypeID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
             payload.id<AllocationSiteID>(payload.word(1));
-        payload.enumerator<ArrayLiteralStorage>(payload.word(2));
+        payload.enumerator<AllocationStorage>(payload.word(2));
+        payload.enumerator<ArrayLiteralStorage>(payload.word(3));
+        if (payload.word(4) != absentPayloadWord)
+            payload.id<LayoutID>(payload.word(4));
         if (payload.isBefore(IRForm::Placed))
-            payload.require(payload.word(3) == absentPayloadWord);
+            payload.require(payload.word(5) == absentPayloadWord);
         return;
     case Opcode::NewRegExp:
         payload.id<StringID>(payload.word(0));
@@ -240,7 +250,34 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(4) != absentPayloadWord)
             payload.id<SiteCacheID>(payload.word(4));
         return;
-    case Opcode::ElemGet: case Opcode::ElemHas: case Opcode::ElemDefine:
+    case Opcode::ElemGet:
+        if (payload.word(0) != absentPayloadWord)
+            payload.id<AccessSiteID>(payload.word(0));
+        if (payload.word(1) != absentPayloadWord)
+            payload.id<LayoutSetID>(payload.word(1));
+        if (payload.isBefore(IRForm::Placed))
+            payload.require(payload.word(2) == absentPayloadWord);
+        if (payload.word(2) != absentPayloadWord)
+            payload.id<SiteCacheID>(payload.word(2));
+        if (payload.isBefore(IRForm::Selected))
+            payload.require(payload.word(3) == 0);
+        payload.enumerator<ExpectedElements>(payload.word(3));
+        return;
+    case Opcode::ElemSet:
+        payload.enumerator<ECMAMode>(payload.word(0));
+        if (payload.word(1) != absentPayloadWord)
+            payload.id<AccessSiteID>(payload.word(1));
+        if (payload.word(2) != absentPayloadWord)
+            payload.id<LayoutSetID>(payload.word(2));
+        if (payload.isBefore(IRForm::Placed))
+            payload.require(payload.word(3) == absentPayloadWord);
+        if (payload.word(3) != absentPayloadWord)
+            payload.id<SiteCacheID>(payload.word(3));
+        if (payload.isBefore(IRForm::Selected))
+            payload.require(payload.word(4) == 0);
+        payload.enumerator<ExpectedElements>(payload.word(4));
+        return;
+    case Opcode::ElemHas: case Opcode::ElemDefine:
         if (payload.word(0) != absentPayloadWord)
             payload.id<AccessSiteID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
@@ -250,7 +287,7 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(2) != absentPayloadWord)
             payload.id<SiteCacheID>(payload.word(2));
         return;
-    case Opcode::ElemSet: case Opcode::ElemDelete:
+    case Opcode::ElemDelete:
         payload.enumerator<ECMAMode>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
             payload.id<AccessSiteID>(payload.word(1));
@@ -266,6 +303,9 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
             payload.id<PropertyKeyID>(payload.word(0));
         if (!payload.isAbsent(0) == !!value.operand(2))
             payload.fail(InternalErrorKind::NotExactlyOneParameter);
+        return;
+    case Opcode::TryReExportFields: case Opcode::IsClosureOf: case Opcode::GetCapture:
+        payload.id<FunctionID>(payload.word(0));
         return;
     case Opcode::SetFunctionName:
         payload.enumerator<MethodKind>(payload.word(0));
@@ -321,36 +361,22 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(0) != absentPayloadWord)
             payload.id<StringID>(payload.word(0));
         return;
-    case Opcode::Upcast: case Opcode::Predict: case Opcode::TypeTest: case Opcode::Unspecified: case Opcode::AssumeType:
+    case Opcode::Upcast: case Opcode::TypeTest: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::AssumeType:
     case Opcode::PromiseAllOfElements: case Opcode::ValidateType: case Opcode::ValidateCallee:
         payload.id<TypeID>(payload.word(0));
         return;
-    case Opcode::Claim:
+    case Opcode::Check:
         payload.id<TypeID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
             payload.id<TypeSiteID>(payload.word(1));
         payload.enumerator<CheckCause>(payload.word(2));
         return;
-    case Opcode::ClaimDeclared:
+    case Opcode::Convert:
         payload.id<TypeID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
-            payload.id<TypeID>(payload.word(1));
-        if (payload.word(2) != absentPayloadWord)
-            payload.id<TypeID>(payload.word(2));
-        if (payload.word(3) != absentPayloadWord)
-            payload.id<TypeSiteID>(payload.word(3));
-        payload.flags<PositionFlags>(payload.word(4));
-        return;
-    case Opcode::ClaimRead:
-        payload.require(payload.word(0) < 3);
-        if (payload.word(0) == 1) {
-            payload.id<PropertyKeyID>(payload.word(1));
-        }
-        if (payload.word(0) == 2) {
-            payload.enumerator<ContentsSlot>(payload.word(1));
-        }
-        if (payload.word(2) != absentPayloadWord)
-            payload.id<TypeSiteID>(payload.word(2));
+            payload.id<TypeSiteID>(payload.word(1));
+        payload.flags<PositionFlags>(payload.word(2));
+        payload.enumerator<IllTypedCause>(payload.word(3));
         return;
     case Opcode::RequireObjectCoercible:
         payload.enumerator<NullishAccess>(payload.word(0));
@@ -372,17 +398,7 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(4) != absentPayloadWord)
             payload.id<CalleeSetID>(payload.word(4));
         return;
-    case Opcode::Construct:
-        if (payload.word(0) != absentPayloadWord)
-            payload.id<StringID>(payload.word(0));
-        if (payload.word(1) != absentPayloadWord)
-            payload.id<AccessSiteID>(payload.word(1));
-        if (payload.word(2) != absentPayloadWord)
-            payload.id<CalleeSetID>(payload.word(2));
-        if (payload.word(3) != absentPayloadWord)
-            payload.id<LayoutID>(payload.word(3));
-        return;
-    case Opcode::ConstructList: case Opcode::CallResolved:
+    case Opcode::Construct: case Opcode::ConstructList: case Opcode::CallResolved:
         if (payload.word(0) != absentPayloadWord)
             payload.id<StringID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
@@ -390,11 +406,10 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(2) != absentPayloadWord)
             payload.id<CalleeSetID>(payload.word(2));
         return;
-    case Opcode::CallDirect:
+    case Opcode::CallDirect: case Opcode::AwaitCallBySavingFrame:
         payload.id<FunctionID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
             payload.id<AccessSiteID>(payload.word(1));
-        payload.enumerator<ResultCheck>(payload.word(2));
         return;
     case Opcode::NewClass:
         payload.id<LayoutID>(payload.word(0));
@@ -449,7 +464,7 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         payload.id<ModuleID>(payload.word(0));
         payload.enumerator<ImportPhase>(payload.word(1));
         return;
-    case Opcode::ImportModule:
+    case Opcode::ImportModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
         payload.id<ModuleID>(payload.word(0));
         payload.id<ModuleID>(payload.word(1));
         return;
@@ -461,7 +476,8 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
     case Opcode::ThrowModuleFailure:
         payload.id<ModuleFailureID>(payload.word(0));
         return;
-    case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::GetRequiredValue:
+    case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::BeginModuleEvaluation:
+    case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation:
         payload.id<ModuleID>(payload.word(0));
         return;
     case Opcode::DirectEval:
@@ -495,7 +511,7 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
             payload.id<AllocationSiteID>(payload.word(0));
         payload.enumerator<ArrayStorage>(payload.word(1));
         return;
-    case Opcode::TryPutByValDirect: case Opcode::HasArrayStorage:
+    case Opcode::TryPutByValDirect: case Opcode::HasArrayStorage: case Opcode::IsElementPresent:
         payload.enumerator<ArrayStorage>(payload.word(0));
         return;
     case Opcode::ReportMismatch:
@@ -503,18 +519,23 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(1) != absentPayloadWord)
             payload.id<TypeSiteID>(payload.word(1));
         return;
-    case Opcode::CallGroup:
+    case Opcode::CallTable:
         payload.id<FunctionID>(payload.word(0));
-        if (payload.word(1) != absentPayloadWord)
-            payload.id<AccessSiteID>(payload.word(1));
-        if (payload.word(2) != absentPayloadWord)
-            payload.id<CalleeSetID>(payload.word(2));
+        payload.id<PropertyKeyID>(payload.word(1));
+        payload.id<LayoutSetID>(payload.word(2));
+        for (uint32_t word : payload.list(std::max<unsigned>(numberOfInlinePayloadWords, 5)))
+            payload.id<FunctionID>(word);
+        if (payload.word(3) != absentPayloadWord)
+            payload.id<AccessSiteID>(payload.word(3));
+        if (payload.word(4) != absentPayloadWord)
+            payload.id<CalleeSetID>(payload.word(4));
         return;
     case Opcode::ShapeTest:
         payload.id<LayoutSetID>(payload.word(0));
         return;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         payload.id<PropertyKeyID>(payload.word(0));
         payload.id<LayoutSetID>(payload.word(1));
         payload.enumerator<KnowledgeLevel>(payload.word(2));
@@ -529,35 +550,25 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         payload.externalID<BuiltinClassID>(payload.word(0));
         payload.flags<PristineAspects>(payload.word(1));
         return;
-    case Opcode::IsMemberUnchanged:
-        payload.id<LayoutID>(payload.word(0));
-        payload.enumerator<ClassSide>(payload.word(1));
-        payload.id<PropertyKeyID>(payload.word(2));
-        if (payload.isBefore(IRForm::Placed))
-            payload.require(payload.word(3) == absentPayloadWord);
-        if (payload.word(3) != absentPayloadWord)
-            payload.id<GuardBitID>(payload.word(3));
+    case Opcode::IsInsideView: case Opcode::GetTypedArrayLength:
+        payload.require(payload.word(0) < static_cast<uint32_t>(JSC::TypeDataView) + 1);
         return;
-    case Opcode::IsPrototypeLinkUnchanged:
-        payload.id<LayoutID>(payload.word(0));
-        payload.enumerator<ClassSide>(payload.word(1));
+    case Opcode::AreMembersUnchanged:
+        {
+            auto words = payload.list(std::max<unsigned>(numberOfInlinePayloadWords, 1));
+            payload.require(!(words.size() % 4));
+            for (size_t offset = 0; offset + 4 <= words.size(); offset += 4) {
+                payload.enumerator<MemberConditionKind>(words[offset]);
+                payload.id<LayoutID>(words[offset + 1]);
+                payload.enumerator<ClassSide>(words[offset + 2]);
+                if (words[offset + 3] != absentPayloadWord)
+                    payload.id<PropertyKeyID>(words[offset + 3]);
+            }
+        }
         if (payload.isBefore(IRForm::Placed))
-            payload.require(payload.word(2) == absentPayloadWord);
-        if (payload.word(2) != absentPayloadWord)
-            payload.id<GuardBitID>(payload.word(2));
-        return;
-    case Opcode::IsClassEvaluatedOnce:
-        payload.id<LayoutID>(payload.word(0));
-        if (payload.isBefore(IRForm::Placed))
-            payload.require(payload.word(1) == absentPayloadWord);
-        if (payload.word(1) != absentPayloadWord)
-            payload.id<GuardBitID>(payload.word(1));
-        return;
-    case Opcode::IsRequireEdgeReady:
-        payload.id<ModuleID>(payload.word(0));
-        payload.id<ModuleID>(payload.word(1));
-        if (payload.isBefore(IRForm::Placed))
-            payload.require(payload.word(2) == absentPayloadWord);
+            payload.require(payload.word(0) == absentPayloadWord);
+        if (payload.word(0) != absentPayloadWord)
+            payload.id<GuardBitID>(payload.word(0));
         return;
     case Opcode::HasKeyOrder:
         payload.id<LayoutID>(payload.word(0));
@@ -566,8 +577,26 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.isBefore(IRForm::Placed))
             payload.require(payload.word(1) == absentPayloadWord);
         return;
-    case Opcode::IsClosureOf: case Opcode::GetCapture:
-        payload.id<FunctionID>(payload.word(0));
+    case Opcode::GetGlobalBinding:
+        payload.id<PropertyKeyID>(payload.word(0));
+        payload.enumerator<KnowledgeLevel>(payload.word(1));
+        if (payload.word(2) != absentPayloadWord)
+            payload.id<AccessSiteID>(payload.word(2));
+        if (payload.isBefore(IRForm::Placed))
+            payload.require(payload.word(3) == absentPayloadWord);
+        if (payload.word(3) != absentPayloadWord)
+            payload.id<GlobalBindingID>(payload.word(3));
+        return;
+    case Opcode::SetGlobalBinding:
+        payload.id<PropertyKeyID>(payload.word(0));
+        payload.enumerator<ECMAMode>(payload.word(1));
+        payload.enumerator<KnowledgeLevel>(payload.word(2));
+        if (payload.word(3) != absentPayloadWord)
+            payload.id<AccessSiteID>(payload.word(3));
+        if (payload.isBefore(IRForm::Placed))
+            payload.require(payload.word(4) == absentPayloadWord);
+        if (payload.word(4) != absentPayloadWord)
+            payload.id<GlobalBindingID>(payload.word(4));
         return;
     case Opcode::GetArrayElement: case Opcode::HasArrayElement:
         payload.enumerator<ArrayStorage>(payload.word(0));
@@ -582,9 +611,6 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.word(3) != absentPayloadWord)
             payload.id<AccessSiteID>(payload.word(3));
         return;
-    case Opcode::GetTypedArrayLength:
-        payload.require(payload.word(0) < static_cast<uint32_t>(JSC::TypeDataView) + 1);
-        return;
     case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
         payload.require(payload.word(0) < static_cast<uint32_t>(JSC::TypeDataView) + 1);
         payload.enumerator<KnowledgeLevel>(payload.word(1));
@@ -594,6 +620,7 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
     case Opcode::CreateRest:
         if (payload.word(1) != absentPayloadWord)
             payload.id<AllocationSiteID>(payload.word(1));
+        payload.enumerator<AllocationStorage>(payload.word(2));
         return;
     case Opcode::CallForwardVarargs:
         if (payload.word(1) != absentPayloadWord)
@@ -649,15 +676,14 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         if (payload.isBefore(IRForm::Placed))
             payload.require(payload.word(3) == absentPayloadWord);
         return;
+    case Opcode::GetBuiltinValue:
+        payload.externalID<BuiltinID>(payload.word(0));
+        payload.externalID<BuiltinOverloadID>(payload.word(1));
+        return;
     case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
         payload.id<FunctionID>(payload.word(0));
         if (payload.word(1) != absentPayloadWord)
             payload.id<AllocationSiteID>(payload.word(1));
-        return;
-    case Opcode::AwaitCallBySavingFrame:
-        payload.id<FunctionID>(payload.word(0));
-        if (payload.word(1) != absentPayloadWord)
-            payload.id<AccessSiteID>(payload.word(1));
         return;
     case Opcode::StringBuilderAppendBuiltin:
         payload.externalID<BuiltinOverloadID>(payload.word(0));
@@ -676,20 +702,6 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, ValueID id, const V
         return;
     case Opcode::JSONAppendValue:
         payload.enumerator<JSONPosition>(payload.word(0));
-        return;
-    case Opcode::PropGetChecked:
-        payload.id<PropertyKeyID>(payload.word(0));
-        payload.id<TypeID>(payload.word(1));
-        payload.id<TypeSiteID>(payload.word(2));
-        payload.enumerator<CheckCause>(payload.word(3));
-        if (payload.word(6) != absentPayloadWord)
-            payload.id<AccessSiteID>(payload.word(6));
-        if (payload.word(7) != absentPayloadWord)
-            payload.id<LayoutSetID>(payload.word(7));
-        if (payload.isBefore(IRForm::Placed))
-            payload.require(payload.word(8) == absentPayloadWord);
-        if (payload.word(8) != absentPayloadWord)
-            payload.id<SiteCacheID>(payload.word(8));
         return;
     case Opcode::PropGetChain: case Opcode::PropGetPair:
         payload.id<PropertyKeyID>(payload.word(0));
@@ -817,17 +829,13 @@ void verifyFields(FunctionVerifier& verifier, BlockID block, const Terminator& t
     case TerminatorKind::ReturnCall:
         {
             auto words = payload.list(std::max<unsigned>(numberOfInlinePayloadWords, 1));
-            payload.require(!(words.size() % 6));
-            for (size_t offset = 0; offset + 6 <= words.size(); offset += 6) {
+            payload.require(!(words.size() % 4));
+            for (size_t offset = 0; offset + 4 <= words.size(); offset += 4) {
                 payload.id<TypeID>(words[offset]);
                 if (words[offset + 1] != absentPayloadWord)
-                    payload.id<TypeID>(words[offset + 1]);
-                if (words[offset + 2] != absentPayloadWord)
-                    payload.id<TypeID>(words[offset + 2]);
-                if (words[offset + 3] != absentPayloadWord)
-                    payload.id<TypeSiteID>(words[offset + 3]);
-                payload.flags<PositionFlags>(words[offset + 4]);
-                payload.enumerator<CastResolution>(words[offset + 5]);
+                    payload.id<TypeSiteID>(words[offset + 1]);
+                payload.flags<PositionFlags>(words[offset + 2]);
+                payload.enumerator<CastResolution>(words[offset + 3]);
             }
         }
         payload.enumerator<TailCallRequirement>(payload.word(0));

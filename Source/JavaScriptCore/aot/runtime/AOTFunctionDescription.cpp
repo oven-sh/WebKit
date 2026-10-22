@@ -22,9 +22,9 @@ FunctionDescription::FunctionDescription(FunctionID function)
 {
     const Image* image = Image::current();
     RELEASE_ASSERT(image);
-    auto traces = image->programTables().functionTraces();
-    RELEASE_ASSERT(function && function.index() < traces.size());
-    m_record = &traces[function.index()];
+    const ProgramTables& tables = image->programTables();
+    RELEASE_ASSERT(function && function.index() < tables.numberOfFunctions());
+    m_record = &tables.traceOfFunction(function.index());
 }
 
 String FunctionDescription::name(VM& vm) const
@@ -59,6 +59,11 @@ bool FunctionDescription::isConstructor() const
 bool FunctionDescription::isNakedConstructor() const
 {
     return m_record->isNakedConstructor;
+}
+
+bool FunctionDescription::isNamedBySymbol() const
+{
+    return m_record->isNamedBySymbol;
 }
 
 bool FunctionDescription::isAsync() const

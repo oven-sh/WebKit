@@ -21,7 +21,9 @@ struct SlotStamp {
 void setSlotStamp(Value&, const SlotStamp&);
 
 Value makeObjectTest(Proof, ValueID object, const SlotStamp&);
-Value makeConditionTest(const MemberCondition&);
+// One test for all the conditions, in the order in which addCondition keeps them.
+Value makeConditionsTest(TypeArena&, std::span<const MemberCondition>);
+bool testsCoverConditions(std::span<const Value> tests, std::span<const MemberCondition>);
 
 struct AccessTests {
     Vector<Value, 4> tests;
@@ -40,19 +42,6 @@ Type testableStoredTypeOf(const PropertyAccessContext&, const Type& stored, cons
 
 AccessTests createAccessTests(FunctionPassContext&, const PropertyAccessPlan&, const AccessTestInputs&);
 std::optional<ReceiverCandidates> receiversEstablishedBy(const Program&, std::span<const Value> tests);
-
-struct ArmWeight {
-    bool findsMember { false };
-    uint32_t predictedMembers { 0 };
-    uint32_t members { 0 };
-    LayoutID firstMember;
-
-    friend bool operator==(const ArmWeight&, const ArmWeight&) = default;
-};
-
-ArmWeight weightOf(const MemberArm&, const ReceiverCandidates&);
-bool isHeavier(const ArmWeight&, const ArmWeight&);
-const MemberArm* findHeaviestArm(const MemberPartition&, const ReceiverCandidates&, NOESCAPE const ScopedLambda<bool(const MemberArm&)>& isWanted);
 
 struct DispatchPlan {
     Vector<uint32_t, 4> arms;

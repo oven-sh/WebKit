@@ -415,9 +415,22 @@ public:
         visitLists(m_heapListForPatchpointWrite, mark.patchpointWrites);
     }
 
+    JS_EXPORT_PRIVATE HeapRange rangeOf(const AbstractHeap&) const;
+
 protected:
+    struct GrownHeap {
+        AbstractHeap* heap;
+        size_t numberOfRetainedChildren;
+        unsigned end { 0 };
+        unsigned growth { 0 };
+        unsigned growthUpToHere { 0 };
+    };
+
     virtual void removeTemporaryClientHeaps() { }
     virtual bool hasTemporaryClientHeaps() const { return false; }
+    virtual void appendGrownClientHeaps(Vector<GrownHeap, 16>&) { }
+
+    JS_EXPORT_PRIVATE void keepRangesAcrossProcedures();
 
 private:
 
@@ -449,7 +462,14 @@ private:
 #undef DECORATION_VECTOR_DECLARATION
 
     Procedure* m_procedure { nullptr };
+    void computeRanges();
+    void placeTemporaryHeaps();
+    size_t firstGrownHeapEndingAtOrBehind(unsigned position) const;
+    unsigned growthBefore(unsigned position) const;
+
     bool m_rangesExcludeTemporaryHeaps { false };
+    bool m_keepsRangesAcrossProcedures { false };
+    Vector<GrownHeap, 16> m_grownHeaps;
 };
 
 } // namespace JSC::B3

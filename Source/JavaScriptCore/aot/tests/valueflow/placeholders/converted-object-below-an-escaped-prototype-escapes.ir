@@ -1,0 +1,49 @@
+# class Shown { constructor() { this.given = given } }  somethingNoTableLists(Shown); `${new Shown()}`; plain = { held }; `${plain}`
+# Code that nobody compiles holds the class, so it may have put a toString on the prototype object. The conversion finds that function through the instance and hands it the instance, which escapes with what it holds.
+# Nothing that has escaped lies above the plain object: what the conversion finds there is the function of the table, and the object stays in the program.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# RUN(ESCAPED): valueflow-why escaped=f2 escaped=f3 escaped-layout=L1
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped-layout=L1
+# ESCAPED-NOT: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shown" constructor=f1 fields=[{key="given" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = Construct v2
+    v7 = ToString v6
+    v8 = NewClosure function=f3
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = ToString v9
+    Return
+}
+function f1 name="Shown" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewClosure function=f2
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}
+function f2 name="given" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="held" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

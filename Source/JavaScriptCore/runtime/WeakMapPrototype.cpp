@@ -187,10 +187,11 @@ JSC_DEFINE_HOST_FUNCTION(protoFuncWeakMapGetOrInsertComputed, (JSGlobalObject* g
     }
 
     JSValue value;
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(valueCallback), callData, 1);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
-        value = cachedCall->callWithArguments(globalObject, jsUndefined(), key);
+    if (callData.type == CallData::Type::JS) [[likely]] {
+        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(valueCallback), 1);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        value = cachedCall.callWithArguments(globalObject, jsUndefined(), key);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
         auto args = WTF::toArray<EncodedJSValue>({

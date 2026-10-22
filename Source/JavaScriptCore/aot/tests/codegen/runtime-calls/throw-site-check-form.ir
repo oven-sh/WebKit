@@ -1,4 +1,4 @@
-# Without a handler a failed check is a check of the back end that needs no frame: a leaf that reads a variable in its dead zone or claims a number has one throw site and no frame, and a variable that is always initialized has no throw site
+# Without a handler a failed check is a check of the back end that needs no frame: a leaf that reads a variable in its dead zone or refuses undefined and null has one throw site and no frame, and a variable that is always initialized has no throw site
 # FORM: AsRead
 # RUN: generate-code
 # OPTIONS: heat=everything-is-cold disable=pass:InlineCalls check=validate-back-end
@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-typesite w0 module=m0 position=3 kind=Assertion text="number"
 variable g0 name="late" module=m0 declared={type=anything|absent} initialization=Uninitialized
 variable g1 name="ready" module=m0 declared={type=anything} initialization=Undefined
 
@@ -31,11 +30,10 @@ function f1 name="readsInDeadZone" results=[{type=anything}] {
     v1 = CheckInitialized v0 name="late"
     Return v1
 }
-function f2 name="claimsNumber" parameters=[{type=anything}] results=[{type=number}] {
+function f2 name="refusesUndefinedAndNull" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=number site=w0
-    v2 = Add v1, v1
-    Return v2
+    v1 = RequireObjectCoercible v0 name="length"
+    Return v1
 }
 function f3 name="readsInitialized" results=[{type=anything}] {
   b0():

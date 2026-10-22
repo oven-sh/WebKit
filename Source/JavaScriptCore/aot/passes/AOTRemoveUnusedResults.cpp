@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
 #include "AOTFunctionEditing.h"
@@ -16,6 +17,7 @@
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <optional>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -104,6 +106,33 @@ Vector<ResultCallSite> collectResultCallSites(const Program& program, const Func
 Vector<ResultCallSiteList> collectAllResultCallSites(const Program& program, BuildContext& build)
 {
     return collectInParallel<ResultCallSiteList>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<ResultCallSiteList>& lists) {
+        bool hasSite = false;
+        forEachDirectCall(program, FunctionID(index), [&](BlockID, ValueID, FunctionID callee) {
+            hasSite = hasSite || recordFactsOf(program, callee).numberOfResults > 1;
+        });
+        if (!hasSite)
+            return;
+        auto sites = collectResultCallSites(program, program.functions[index]);
+        if (!sites.isEmpty())
+            lists.append({ FunctionID(index), WTF::move(sites) });
+    });
+}
+
+// The lists of the callers that call some function with a body and several results. A function without a body keeps its results, whoever reads them.
+static Vector<ResultCallSiteList> collectResultCallSitesOfBodies(const Program& program, const CallGraph& callGraph, BuildContext& build)
+{
+    BitVector callsSuchFunction(program.functions.size());
+    auto suchFunctions = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        RecordFacts callee = recordFactsOf(program, FunctionID(index));
+        return callee.hasBody && callee.numberOfResults > 1;
+    });
+    for (uint32_t index : suchFunctions) {
+        for (FunctionID caller : callGraph.callersOf(FunctionID(index)))
+            callsSuchFunction.quickSet(caller.index());
+    }
+    return collectInParallel<ResultCallSiteList>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<ResultCallSiteList>& lists) {
+        if (!callsSuchFunction.quickGet(index))
+            return;
         auto sites = collectResultCallSites(program, program.functions[index]);
         if (!sites.isEmpty())
             lists.append({ FunctionID(index), WTF::move(sites) });
@@ -167,15 +196,15 @@ void retainResults(Function& function, const BitVector& retained)
     }
     if (retainedCount > 1) {
         for (size_t index : returnedValues)
-            retainOperands(function.values[index], retained);
+            retainOperands(function.edit(ValueID(index)), retained);
     } else {
         size_t retainedIndex = *retained.begin();
-        for (auto& block : function.blocks) {
+        for (auto& block : function.editAllBlocks()) {
             auto& terminator = block.terminator;
             if (terminator.kind == TerminatorKind::Return)
                 terminator.setValueOperand(function.at(terminator.valueOperand()).valuesOperands()[retainedIndex]);
         }
-        for (auto& block : function.blocks) {
+        for (auto& block : function.editAllBlocks()) {
             block.values.removeAllMatching([&](ValueID id) {
                 return returnedValues.quickGet(id.index());
             });
@@ -207,7 +236,7 @@ void retargetResultCallSites(Function& caller, std::span<const RetargetedCallSit
     for (size_t index = 0; index < sites.size(); ++index) {
         auto& site = sites[index];
         siteByValue[site.call.index()] = SiteIndex(index);
-        auto& call = caller.at(site.call);
+        auto& call = caller.edit(site.call);
         call.setFunction(site.callee);
         if (site.singleResultType)
             call.type = site.singleResultType;
@@ -216,7 +245,7 @@ void retargetResultCallSites(Function& caller, std::span<const RetargetedCallSit
     std::optional<ValueSubstitution> substitution;
     for (auto& block : caller.blocks) {
         for (ValueID id : block.values) {
-            auto& read = caller.at(id);
+            auto& read = caller.edit(id);
             if (read.opcode != Opcode::ResultAt)
                 continue;
             SiteIndex index = siteByValue[read.resultsOperand().index()];
@@ -227,11 +256,9 @@ void retargetResultCallSites(Function& caller, std::span<const RetargetedCallSit
                 read.setIndex(countRetainedResultsBelow(*site.retained, read.index()));
                 continue;
             }
-            auto& call = caller.at(site.call);
-            if (!call.written())
-                call.setWritten(read.written());
-            if (!call.prediction())
-                call.setPrediction(read.prediction());
+            auto& call = caller.edit(site.call);
+            if (!call.expected())
+                call.setExpected(read.expected());
             if (!substitution)
                 substitution.emplace(caller);
             substitution->replace(id, site.call);
@@ -239,12 +266,17 @@ void retargetResultCallSites(Function& caller, std::span<const RetargetedCallSit
     }
     if (!substitution)
         return;
-    for (auto& block : caller.blocks) {
+    for (auto& block : caller.editAllBlocks()) {
         block.values.removeAllMatching([&](ValueID id) {
             return substitution->resolve(id) != id;
         });
     }
     substitution->apply(caller, nullptr);
+}
+
+static TypeID provenResultTypeOf(const DeclaredType& result)
+{
+    return result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type;
 }
 
 static ResultRemovalPlan planResultRemoval(const Program& program, const CallGraph& callGraph, const BuildContext& build, const Vector<ResultCallSiteList>& callers)
@@ -276,7 +308,7 @@ static ResultRemovalPlan planResultRemoval(const Program& program, const CallGra
         if (used.isEmpty())
             used.set(0);
         if (used.bitCount() == 1)
-            plan.singleResultTypes[index] = results[*used.begin()].type;
+            plan.singleResultTypes[index] = provenResultTypeOf(results[*used.begin()]);
         plan.numberOfRemovedResults += results.size() - used.bitCount();
         plan.isCandidate.quickSet(index);
         plan.candidates.append(id);
@@ -300,7 +332,7 @@ void removeUnusedResults(ProgramEditor& editor, const OptimizationInputs& inputs
 {
     BuildContext& build = runner.build();
     const Program& program = editor.program();
-    Vector<ResultCallSiteList> callers = collectAllResultCallSites(program, build);
+    Vector<ResultCallSiteList> callers = collectResultCallSitesOfBodies(program, inputs.callGraph, build);
     ResultRemovalPlan plan = planResultRemoval(program, inputs.callGraph, build, callers);
     if (plan.candidates.isEmpty())
         return;

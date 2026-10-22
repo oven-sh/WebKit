@@ -17,9 +17,17 @@ namespace JSC { namespace AOT {
 constexpr StubKey ropeCharacters() { return StubKey(StubFamily::RopeCharacters); }
 constexpr StubKey flattenString() { return StubKey(StubFamily::FlattenString); }
 constexpr StubKey stringsAreEqual() { return StubKey(StubFamily::StringsAreEqual); }
+constexpr StubKey distinctStringsAreEqual() { return StubKey(StubFamily::DistinctStringsAreEqual); }
 constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings); }
+// The operands: a string and a position, which is in range where it is below the length as an unsigned 64-bit number. The result: the code point there, or undefinedInteger.
+constexpr StubKey stringCodePointAt() { return StubKey(StubFamily::StringCodePointAt); }
+// The operands: a builder and a string.
+constexpr StubKey stringBuilderAppendString() { return StubKey(StubFamily::StringBuilderAppendString); }
+// The operands: a StackStringBuilder, its cursor and a string. The result: the cursor behind the string.
+constexpr StubKey stackStringBuilderAppendString() { return StubKey(StubFamily::StackStringBuilderAppendString); }
 constexpr StubKey integerToString() { return StubKey(StubFamily::IntegerToString); }
 constexpr StubKey substring() { return StubKey(StubFamily::Substring); }
+constexpr StubKey findCharacter8() { return StubKey(StubFamily::FindCharacter8); }
 
 constexpr StubKey concatenate(unsigned count)
 {
@@ -27,8 +35,9 @@ constexpr StubKey concatenate(unsigned count)
     return StubKey(StubFamily::Concatenate).withCount(count);
 }
 
-static_assert(exists(ropeCharacters()) && exists(flattenString()));
-static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()));
+static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stackStringBuilderAppendString()));
+static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
+static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
 
@@ -61,9 +70,10 @@ struct ComparedBytes {
     GPRReg firstWord;
     GPRReg secondWord;
 };
-// Falls through when the bytes are the same. At differ the two words, zero-extended, are the bytes at one position, and the bytes before it are the same.
+// Falls through when the bytes are the same. At differ, with DifferingWords::AreLoaded, the two words, zero-extended, are the bytes at one position, and the bytes before it are the same.
 // Bits 32 to 63 of size are zero. Overwrites all five registers.
-void branchIfBytesDiffer(StubAssembler&, const ComparedBytes&, MacroAssembler::JumpList& differ);
+enum class DifferingWords : bool { AreLoaded, MayBeUnloaded };
+void branchIfBytesDiffer(StubAssembler&, const ComparedBytes&, MacroAssembler::JumpList& differ, DifferingWords = DifferingWords::AreLoaded);
 struct ComparedImpls {
     GPRReg first;
     GPRReg second;

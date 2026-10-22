@@ -34,6 +34,7 @@
 #include "AirDominators.h"
 #include "AirEmitShuffle.h"
 #include "AirEnsureDedicatedLoopEntryExitBlocks.h"
+#include "AirExtendedForms.h"
 #include "AirFixSpillsAfterTerminals.h"
 #include "AirFormTable.h"
 #include "AirFormTraits.h"
@@ -1713,6 +1714,7 @@ public:
         : m_code(code)
         , m_registerPolicy(code.policy().registers)
         , m_splitPolicy(code.policy().splitting)
+        , m_usesExtendedForms(code.proc().policy().selection.extendsInstructionSelection)
         , m_discountsPreferredRegisterMoves(isX86_64() && m_registerPolicy.discountsPreferredRegisterMoves)
         , m_blockToHeadPoint(code.size())
         , m_tailPoints(code.size())
@@ -3063,6 +3065,13 @@ private:
         return block->at(ordinal - positionOfHead(block) / PointOffsets::PointsPerInst);
     }
 
+    bool admitsStack(Inst& inst, Arg& arg)
+    {
+        if (!inst.admitsStack(arg))
+            return false;
+        return m_usesExtendedForms || !admitsStackOnlyInExtendedForm(inst, &arg - &inst.args()[0]);
+    }
+
     bool cannotSpillInPlace(Tmp tmp, Interval interval)
     {
         unsigned last = (interval.end() - 1) / PointOffsets::PointsPerInst;
@@ -3070,7 +3079,7 @@ private:
             Inst& inst = instAtOrdinal(ordinal);
             for (Arg& arg : inst.args()) {
                 if (arg.isTmp()) {
-                    if (arg.tmp() == tmp && !inst.admitsStack(arg))
+                    if (arg.tmp() == tmp && !admitsStack(inst, arg))
                         return true;
                     continue;
                 }
@@ -5320,7 +5329,7 @@ private:
                             return;
                         ASSERT(!arg.isReg());
                         bool needScratchIfSpilledInPlace = false;
-                        if (!inst.admitsStack(arg)) {
+                        if (!admitsStack(inst, arg)) {
                             switch (inst.kind.opcode) {
                             case Move:
                             case Move32:
@@ -5916,6 +5925,7 @@ private:
     Code& m_code;
     const RegisterPolicy& m_registerPolicy;
     const LiveRangeSplitPolicy& m_splitPolicy;
+    const bool m_usesExtendedForms;
     const bool m_discountsPreferredRegisterMoves;
     Vector<Reg> m_allowedRegistersInPriorityOrder[numBanks];
     ScalarRegisterSet m_allAllowedRegisters;

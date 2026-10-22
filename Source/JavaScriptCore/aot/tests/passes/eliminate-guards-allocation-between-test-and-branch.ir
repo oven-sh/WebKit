@@ -15,14 +15,14 @@ function f0 name="underHandler" parameters=[{type=object}, {type=number}] result
     v3 = NewObject -, v1 layout=L1 fields=[0]
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Predicted
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
     Jump -> next b3()
   b3():
     LoopHint
     v7 = ShapeTest v3 layouts=[L1]
     Branch v7 -> taken b4(| 0), notTaken b6()
   b4(v8):
-    v9 = GetSlot v3, v8 key="a" receivers=[L1] level=Predicted
+    v9 = GetSlot v3, v8 key="a" receivers=[L1] level=Expected
     v10 = ToBoolean v9
     Branch v10 -> taken b3(), notTaken b5()
   b5():
@@ -40,7 +40,7 @@ function f0 name="underHandler" parameters=[{type=object}, {type=number}] result
 # CHECK-NEXT: [[proof0]]: guard = AllGuards v3
 # CHECK-NEXT: Jump -> next [[rest0]]()
 # CHECK-NEXT: b2(v4: guard):
-# CHECK-NEXT: v5: number = GetSlot v0, v4 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: v5: number = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
 # CHECK-NOT: ShapeTest
 # CHECK: [[rest0]]() handler=b7():
 # CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3([[proof0]])
@@ -53,14 +53,14 @@ function f1 name="withoutHandler" parameters=[{type=object}, {type=number}] resu
     v3 = NewObject -, v1 layout=L1 fields=[0]
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Predicted
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
     Jump -> next b3()
   b3():
     LoopHint
     v7 = ShapeTest v3 layouts=[L1]
     Branch v7 -> taken b4(| 0), notTaken b6()
   b4(v8):
-    v9 = GetSlot v3, v8 key="a" receivers=[L1] level=Predicted
+    v9 = GetSlot v3, v8 key="a" receivers=[L1] level=Expected
     v10 = ToBoolean v9
     Branch v10 -> taken b3(), notTaken b5()
   b5():

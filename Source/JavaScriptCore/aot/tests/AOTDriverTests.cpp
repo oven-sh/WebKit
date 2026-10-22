@@ -90,17 +90,39 @@ static constexpr ASCIILiteral concatenationProgram =
     "}\n"
     "entry\n"_s;
 
-static constexpr ASCIILiteral invalidPatternAndReturnProgram =
+// An error of the user ends the pipeline in front of the first verification. Code is generated for each function whatever happens to the others, so here one run has a diagnostic of each list.
+static constexpr ASCIILiteral inlineFrameAndOperationWithoutCodeProgram =
+    "# FORM: Selected\n"
+    "# LOSS: InlineFramesPerFunction\n"
     "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
-    "function f0 name=\"invalidPattern\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    v0 = NewRegExp pattern=\"(\"\n"
-    "    Return v0\n"
+    "function f0 name=\"hasInlineFrame\" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 callPosition=7 module=m0}] {\n"
+    "  b0(v0: anything):\n"
+    "    v1 = Call v0 @3:1\n"
+    "    Return v1\n"
     "}\n"
-    "function f1 name=\"invalidReturn\" results=[{type=number}] {\n"
+    "function f1 name=\"hasNoMissEdge\" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {\n"
+    "  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):\n"
+    "    v2 = CallInline v0, v1 overload=ArrayPrototypeAt/0\n"
+    "    Return v2\n"
+    "}\n"
+    "function f2 name=\"callsArgument\" parameters=[{type=anything}] results=[{type=anything}] {\n"
+    "  b0(v0: anything):\n"
+    "    v1 = Call v0 @3\n"
+    "    Return v1\n"
+    "}\n"_s;
+
+static constexpr ASCIILiteral invalidUpcastProgram =
+    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
+    "function f0 name=\"valid\" results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = String string=\"a\"\n"
     "    Return v0\n"
+    "}\n"
+    "function f1 name=\"invalidUpcast\" results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    v0 = String string=\"a\"\n"
+    "    v1 = Upcast v0 castType=number\n"
+    "    Return v1\n"
     "}\n"
     "entry\n"_s;
 
@@ -561,7 +583,7 @@ static void testRunnerOnlyDiagnostic()
     expectFailuresFor("TypeOutOfDate"_s, { }, withDirectives("# RUN: print\n"_s, unparsableProgram), { });
 
     // Nothing else of the file is compared.
-    expectFailuresFor("IRTextError"_s, { }, withDirectives("# RUN: print\n# CHECK: NoSuchLine\n# DIAGNOSTIC: TypeOutOfDate\n# STATISTIC: FlowNodes = 7\n"_s), { });
+    expectFailuresFor("IRTextError"_s, { }, withDirectives("# RUN: print\n# CHECK: NoSuchLine\n# DIAGNOSTIC: TypeOutOfDate\n# STATISTIC: FlowAllocationSites = 7\n"_s), { });
     expectFailuresFor("IRTextError"_s, { }, withDirectives("# NOSUCHDIRECTIVE: print\n"_s), { });
 
     expectFailuresFor("IRTextError"_s, { "check=VerifyEachPass"_s }, withDirectives("# RUN: print\n"_s), { });
@@ -570,24 +592,25 @@ static void testRunnerOnlyDiagnostic()
 
 static void testRunnerDiagnosticsOfBothLists()
 {
-    static constexpr ASCIILiteral run = "# RUN: pipeline VerifyProgram\n# OPTIONS: check=VerifyEachPass\n"_s;
+    static constexpr ASCIILiteral run = "# RUN: generate-code\n# OPTIONS: limit=InlineFramesPerFunction:1\n"_s;
     auto expectFailuresWith = [](ASCIILiteral expectations, std::initializer_list<unsigned> lines) {
-        expectFailures(makeString(run, expectations, invalidPatternAndReturnProgram), lines);
+        expectFailures(makeString(run, expectations, inlineFrameAndOperationWithoutCodeProgram), lines);
     };
 
-    expectFailuresWith("# DIAGNOSTIC: InvalidRegExpLiteral 1\n# DIAGNOSTIC: ReturnTypeMismatch 1\n# DIAGNOSTIC: VerificationFailedAfterPass 1\n"_s, { });
-    expectFailuresWith("# DIAGNOSTIC: ReturnTypeMismatch\n# DIAGNOSTIC: VerificationFailedAfterPass\n"_s, { 1 });
-    expectFailuresWith("# DIAGNOSTIC: InvalidRegExpLiteral\n# DIAGNOSTIC: VerificationFailedAfterPass\n"_s, { 1 });
-    expectFailuresWith("# DIAGNOSTIC: InvalidRegExpLiteral\n"_s, { 1, 1 });
-    expectFailuresWith("# DIAGNOSTIC: InvalidRegExpLiteral 2\n# DIAGNOSTIC: ReturnTypeMismatch\n# DIAGNOSTIC: VerificationFailedAfterPass\n"_s, { 3 });
+    expectFailuresWith("# DIAGNOSTIC: LimitExceeded 1\n# DIAGNOSTIC: OpcodeWithoutCode 1\n"_s, { });
+    expectFailuresWith("# DIAGNOSTIC: OpcodeWithoutCode\n"_s, { 1 });
+    expectFailuresWith("# DIAGNOSTIC: LimitExceeded\n"_s, { 1 });
+    expectFailuresWith(""_s, { 1, 1 });
+    expectFailuresWith("# DIAGNOSTIC: LimitExceeded 2\n# DIAGNOSTIC: OpcodeWithoutCode\n"_s, { 3 });
+    expectFailuresWith("# DIAGNOSTIC: LimitExceeded\n# DIAGNOSTIC: OpcodeWithoutCode 2\n"_s, { 4 });
 }
 
 // The front end lists a limited number of internal errors, the lines that name a pass first. Such a line says what the verifier found.
 static void testVerificationFailureNamesCheck()
 {
-    Vector<TestFailure> failures = runTestText(makeString("# RUN: pipeline VerifyProgram\n# OPTIONS: check=VerifyEachPass\n# DIAGNOSTIC: InvalidRegExpLiteral\n# DIAGNOSTIC: ReturnTypeMismatch\n"_s, invalidPatternAndReturnProgram));
+    Vector<TestFailure> failures = runTestText(makeString("# RUN: pipeline VerifyProgram\n# OPTIONS: check=VerifyEachPass\n# DIAGNOSTIC: UpcastNotSubset\n"_s, invalidUpcastProgram));
     AOT_TEST_CHECK(failures.size() == 1);
-    AOT_TEST_CHECK(failures[0].message.contains("VerificationFailedAfterPass: verification failed after CheckInt32Promises; function 'invalidReturn' (f1); ReturnTypeMismatch, block b0"_s));
+    AOT_TEST_CHECK(failures[0].message.contains("VerificationFailedAfterPass: verification failed after NarrowFieldTypes; function 'invalidUpcast' (f1); UpcastNotSubset, block b0, value v1 (Upcast)"_s));
 }
 
 static void testRunnerStatistics()
@@ -686,7 +709,7 @@ static void testRunnerListsPasses()
     AOT_TEST_CHECK(outputs[0].line == 1);
 
     const String& listing = outputs[0].text;
-    AOT_TEST_CHECK(listing.startsWith("AdmitAssertedObjects Program Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
+    AOT_TEST_CHECK(listing.startsWith("AllocateTaggedLayouts Program Required AsRead..AsRead\nCheckTypesAtEntry Program Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
     AOT_TEST_CHECK(listing.contains("\nAnalyzeFlow Program Optional AsRead..AsRead\n"_s));
     AOT_TEST_CHECK(listing.contains("\nApplyFlowResults Program Required AsRead..AsRead -> Prepared\n"_s));
     AOT_TEST_CHECK(listing.contains("\nVerifyProgram Program Required AsRead..Placed\n"_s));
@@ -724,6 +747,7 @@ static void testCommandsLookup()
     expectCommand("verify"_s, IRForm::AsRead);
     expectCommand("round-trip"_s, IRForm::AsRead);
     expectCommand("pass"_s, IRForm::Prepared);
+    expectCommand("function-passes"_s, IRForm::Prepared);
     expectCommand("pipeline"_s, IRForm::AsRead);
     expectCommand("compile"_s, IRForm::AsRead);
     expectCommand("pass-context"_s, IRForm::Prepared);
@@ -836,7 +860,7 @@ static bool statesEngineFieldsOfValue(StringView line)
     if (assignment == notFound)
         return false;
     StringView definition = line.left(assignment);
-    return definition.contains(':') || definition.contains('?') || definition.contains('~') || definition.contains('@');
+    return definition.contains(':') || definition.contains('~') || definition.contains('@');
 }
 
 static void expectWireText(StringView text, std::span<const uint8_t> bytes)
@@ -854,7 +878,7 @@ static void testPrintWireAccepts()
     TemporaryFile program(".bin"_s, fixture.bytes.span());
     ChildProcessResult result = runPrintWire(program);
     expectExitCode(result, exitCodeForSuccess);
-    AOT_TEST_CHECK(result.output.contains(" = Predict v9 predicted=number"_s));
+    AOT_TEST_CHECK(result.output.contains(" = Convert v9 declared={type=number flags=[IsExpected]}"_s));
     expectWireText(result.output, fixture.bytes.span());
 }
 

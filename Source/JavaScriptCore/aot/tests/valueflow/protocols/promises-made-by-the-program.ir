@@ -1,9 +1,12 @@
 # first = new Promise(resolve => resolve(one)); second = new Promise(resolve => resolve(two)); (await first)(); (await second)()
 # A promise that the program constructs and the function that resolves it are objects of the construction, so each await finds what its own promise was resolved with, and nothing escapes on the way.
-# Nothing says that the object of a construction is a promise of the realm, so the await also gives that object.
+# What the built-in constructor allocates as a promise is sure to be one, so the await gives what the promise was resolved with and not the object of the construction beside it.
 # RUN: valueflow-solve calls
-# CHECK: f1 v6 -> f4 object
-# CHECK: f1 v8 -> f5 object
+# CHECK: f1 v6 -> f4
+# CHECK-NOT: object
+# CHECK: f1 v8 -> f5
+# CHECK-NOT: object
+# CHECK: f2 v2 ->
 # RUN(ESCAPED): valueflow-why escaped=f4 escaped=f5
 # ESCAPED: escaped=f4
 # ESCAPED-NEXT: not held

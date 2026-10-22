@@ -1,0 +1,18 @@
+# The build lists the modules whose code is outside the image (--external): the run time asks for them at the first name that is loaded at run time, and a large program has thousands of modules.
+# An external module that the host answers with a value (m3) is not code.
+# LIBRARY: own
+# RUN: tables
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m1 path="first-package" displayPath="first-package" kind=External referrer=m0
+module m2 path="second-package" displayPath="second-package" kind=External referrer=m0
+module m3 path="x" displayPath="x" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: modulesByPath
+# CHECK-NEXT: modulesOfUncompiledCode 2 8

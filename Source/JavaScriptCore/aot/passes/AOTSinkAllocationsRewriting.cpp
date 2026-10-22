@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <utility>
@@ -106,19 +107,46 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
 void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shape)
 {
     m_resultShape = shape;
+    findWhetherObjectsAreBuiltBeforeBranches();
     RewriteTables& tables = m_tables.emplace();
     tables.headValues.grow(m_function.blocks.size());
     tables.firstHeadParameter.fill(0, m_function.blocks.size());
     tables.order.append(m_analyses.cfg().reversePostOrder());
+    // No analysis can be made of a function that is half rewritten.
+    tables.blocksLeftAsTheyAre.ensureSize(m_function.blocks.size());
+    for (BlockID block : tables.order) {
+        if (!isReached(block))
+            continue;
+        if (isLeftAsItIs(block) && !m_checksShortcuts)
+            tables.blocksLeftAsTheyAre.quickSet(block.index());
+        else
+            prepare(block);
+    }
+    if (m_analyses.opcodesOfValues().contains(Opcode::GetArgument)) {
+        const ValueIdentities& identities = m_analyses.identities();
+        tables.identityOfValue = Vector<ValueID>(identities.numberOfValues(), [&](size_t index) {
+            return identities.identityOf(ValueID(index));
+        });
+    }
     m_cursor.emplace(*this, builder);
 
     addHeadParameters(builder);
+    tables.enteredBlocks.set(entryBlock.index());
     for (BlockID block : tables.order)
         rewriteBlock(block);
     insertEntryConstants();
     builder.emptyUnreachableBlocks();
     removeBoundParameters(builder);
     applyReplacements();
+}
+
+// An entry that checks an argument goes on with what the test hands to its passing side, which is the argument.
+ValueID AllocationSinking::sameValueThroughTests(ValueID id)
+{
+    if (m_tables)
+        return id.index() < m_tables->identityOfValue.size() ? m_tables->identityOfValue[id.index()] : sameObjectThroughCasts(m_function, id);
+    const ValueIdentities& identities = m_analyses.identities();
+    return id.index() < identities.numberOfValues() ? identities.identityOf(id) : sameObjectThroughCasts(m_function, id);
 }
 
 void AllocationSinking::forEachHeadValue(const SinkingState& head, NOESCAPE const ScopedLambda<void(const HeadValue&)>& functor) const
@@ -160,10 +188,27 @@ TypeID AllocationSinking::typeOfHeadValue(const SinkingState& head, const HeadVa
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool AllocationSinking::isLeftAsItIs(BlockID block) const
+{
+    auto mayHaveObjectsAtHead = [&](BlockID other) {
+        return !isReached(other) || hasObjectsAtHead(other);
+    };
+    const Block& contents = m_function.at(block);
+    if (!holdsNothingAtHead(block) || m_inputs.blocksWithCandidates.get(block.index()))
+        return false;
+    // The entry is cut in front of what its handler covers.
+    if (contents.handler && (block == entryBlock || mayHaveObjectsAtHead(contents.handler->block)))
+        return false;
+    if (mentionsName(contents.terminator, block) || m_names.names.get(contents.subject ? contents.subject.index() : m_function.values.size()))
+        return false;
+    return std::ranges::none_of(contents.terminator.targets, [&](const Target& target) {
+        return mayHaveObjectsAtHead(target.block);
+    });
+}
+
 bool AllocationSinking::needsHeadParameters(BlockID block) const
 {
-    const SinkingState* head = headOf(block);
-    if (!head || head->objects.isEmpty())
+    if (!hasObjectsAtHead(block))
         return false;
     return m_inputs.mergeBlocks.get(block.index()) || m_inputs.blocksInCycles.get(block.index()) || m_function.at(block).isHandlerBlock();
 }
@@ -218,8 +263,19 @@ void AllocationSinking::loadHeadValues(BlockID block, const SinkingState& head, 
 
 void AllocationSinking::rewriteBlock(BlockID block)
 {
+    if (m_tables->blocksLeftAsTheyAre.quickGet(block.index())) {
+        forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
+            m_tables->enteredBlocks.set(target.block.index());
+        });
+        return;
+    }
     const SinkingState* head = headOf(block);
     if (!head)
+        return;
+    // The states at the heads only grow while they are computed: a block keeps the one it got over an edge that the final states decide the other way.
+    // A block without parameters for its head is filled by the one edge that enters it, from a block that comes before it. Where that edge is gone, nothing fills the block and nothing reaches it.
+    bool isFilledByOneEdge = !head->objects.isEmpty() && !m_tables->blocksWithHeadParameters.get(block.index());
+    if (isFilledByOneEdge && !m_tables->enteredBlocks.get(block.index()))
         return;
 
     SinkingState state = *head;
@@ -231,18 +287,20 @@ void AllocationSinking::rewriteBlock(BlockID block)
     for (uint32_t targetIndex = 0; targetIndex < function.at(block).terminator.targets.size(); ++targetIndex)
         edges.append(outgoingEdgeOf(function, Edge { block, targetIndex }));
 
-    BlockValues oldValues = std::exchange(function.at(block).values, { });
-    Terminator terminator = std::exchange(function.at(block).terminator, Terminator());
-    std::optional<Target> handler = std::exchange(function.at(block).handler, std::nullopt);
+    BlockValues oldValues = std::exchange(function.edit(block).values, { });
+    Terminator terminator = std::exchange(function.edit(block).terminator, Terminator());
+    std::optional<Target> handler = std::exchange(function.edit(block).handler, std::nullopt);
+    if (handler)
+        m_tables->enteredBlocks.set(handler->block.index());
 
     ObjectInterpreter interpreter(*this, SinkingMode::Rewrite, state, &values);
     if (VirtualObjectID subject = interpreter.objectOf(function.at(block).subject)) {
         RELEASE_ASSERT(state.find(subject)->isCell());
-        function.at(block).subject = values.find(subject)->cell;
+        function.edit(block).subject = values.find(subject)->cell;
     }
     m_cursor->beginBlock(block, WTF::move(handler), interpreter);
     if (state.objects.isEmpty() && !m_inputs.blocksWithCandidates.get(block.index()))
-        function.at(m_cursor->block()).values = WTF::move(oldValues);
+        function.edit(m_cursor->block()).values = WTF::move(oldValues);
     else {
         for (ValueID id : oldValues)
             interpreter.execute(id);
@@ -260,6 +318,8 @@ void AllocationSinking::rewriteBlock(BlockID block)
         m_cursor->willKeepThrowingValue(interpreter);
     rewriteEdges(interpreter, terminator, edges.span());
     foldTerminator(interpreter, terminator);
+    for (const Target& target : terminator.targets)
+        m_tables->enteredBlocks.set(target.block.index());
     interpreter.resolveOperands(terminator);
     if (condition)
         m_cursor->keep(condition);
@@ -464,13 +524,13 @@ ValueID AllocationSinking::entryConstant(Value&& value)
 
 void AllocationSinking::insertEntryConstants()
 {
-    m_cursor->builder().function().at(entryBlock).values.insertVector(0, m_tables->entryConstants);
+    m_cursor->builder().function().edit(entryBlock).values.insertVector(0, m_tables->entryConstants);
 }
 
 void AllocationSinking::removeBoundParameters(IRBuilder& builder)
 {
     for (BlockID block : m_tables->order) {
-        if (!headOf(block))
+        if (!isReached(block) || holdsNothingAtHead(block))
             continue;
 
         const CompactList<ValueID>& parameters = m_function.at(block).parameters;

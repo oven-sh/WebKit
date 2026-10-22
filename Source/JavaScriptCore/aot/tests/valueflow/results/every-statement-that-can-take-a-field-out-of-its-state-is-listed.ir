@@ -1,0 +1,45 @@
+# function Item(size) { this.size = size; this.next = null }    shown = new Item(1); publish(shown); kept = new Item(2)
+# handedIn.size = "large"; delete handedIn[key]; kept.next = kept; Object.defineProperty(handedIn, "next", descriptor)
+# One object stands for all that Item constructs, and it has escaped: whatever a statement does through a value nobody knows it may do to an Item.
+# RUN: valueflow-why falsifiers=L0
+# CHECK: family L0 objects 1 escaped 1 lost 0
+# CHECK: F{{*}}L0{{*}}store{{*}}size{{*}}unknown{{*}}PropSet f0 v11{{*}}main{{*}}string
+# CHECK: F{{*}}L0{{*}}delete-under-unknown-key{{*}}-{{*}}unknown{{*}}ElemDelete f0 v13
+# CHECK: F{{*}}L0{{*}}store{{*}}next{{*}}listed{{*}}PropSet f0 v14{{*}}L0
+# CHECK: F{{*}}L0{{*}}redefine{{*}}next{{*}}unknown{{*}}Call f0 v19
+# CHECK: F{{*}}L0{{*}}store{{*}}size{{*}}PropSet f1 v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Item" constructor=f1 fields=[{key="size" declared={type=number} flags=[IsRequired]}, {key="next" declared={type=null flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = PropGet v0 key="handedIn" [isFreeName]
+    v3 = PropGet v0 key="key" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = Integer integer=1
+    v6 = Construct v4, -, v5
+    v7 = Call v1, -, v6
+    v8 = Integer integer=2
+    v9 = Construct v4, -, v8
+    v10 = String string="large"
+    PropSet v2, v10 key="size" mode=Strict
+    v12 = Undefined
+    v13 = ElemDelete v2, v3 mode=Strict
+    PropSet v9, v9 key="next" mode=Strict
+    v15 = Builtin builtin=Object
+    v16 = PropGet v15 key="defineProperty"
+    v17 = String string="next"
+    v18 = PropGet v0 key="descriptor" [isFreeName]
+    v19 = Call v16, v15, v2, v17, v18 calleeKey="defineProperty"
+    Return
+}
+function f1 name="Item" module=m0 flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="size" mode=Strict
+    v3 = Null
+    PropSet v0, v3 key="next" mode=Strict
+    Return
+}

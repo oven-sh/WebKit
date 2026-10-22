@@ -12,9 +12,11 @@
 #include "AOTHost.h"
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
+#include "AOTImageText.h"
 #include "Options.h"
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
+#include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/threads/Signals.h>
@@ -25,6 +27,15 @@
 #if OS(DARWIN)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#endif
+#if OS(LINUX) || OS(FREEBSD)
+#include <fcntl.h>
+#include <link.h>
+#include <unistd.h>
+#if OS(LINUX)
+#include <sys/auxv.h>
+#include <sys/personality.h>
+#endif
 #endif
 #elif OS(WINDOWS)
 #include <windows.h>
@@ -78,10 +89,27 @@ static bool tryReserveLowPages()
 
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 
+#if OS(LINUX)
+static bool isAddressRandomizationDisabled()
+{
+    int persona = personality(0xffffffff);
+    return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+}
+#endif
+
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
 {
     int fileDescriptor = static_cast<int>(descriptor);
-    void* code = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+    void* hint = nullptr;
+#if OS(LINUX) && CPU(ADDRESS64)
+    static constexpr uintptr_t lowestRandomAddress = 64 * GB;
+    static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
+    uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - size) / imagePageSize;
+    if (!isAddressRandomizationDisabled())
+        hint = std::bit_cast<void*>(lowestRandomAddress + cryptographicallyRandomNumber<uint64_t>() % numberOfSlots * imagePageSize);
+#endif
+    void* code = mmap(hint, size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+#if !OS(LINUX)
     if (code == MAP_FAILED && errno == EPERM) {
         code = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
         if (code != MAP_FAILED && mprotect(code, size, PROT_READ | PROT_EXEC)) {
@@ -89,6 +117,7 @@ static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
             code = MAP_FAILED;
         }
     }
+#endif
     if (code == MAP_FAILED)
         return nullptr;
 #if OS(DARWIN)
@@ -164,9 +193,10 @@ namespace {
 
 class CodeMapping {
 public:
-    enum class Kind : uint8_t { FileMapping, LoadedSection, AnonymousCopy };
+    enum class Kind : uint8_t { FileMapping, ExecutableSegment, LoadedSection, AnonymousCopy };
 
     static std::optional<CodeMapping> mapFile(ImageFile, uint64_t codeOffset, size_t size);
+    static CodeMapping useExecutableSegment(std::span<const uint8_t> code);
     static std::optional<CodeMapping> protectLoadedSection(std::span<const uint8_t> code);
 #if OS(LINUX)
     static std::optional<CodeMapping> copy(std::span<const uint8_t> code);
@@ -196,11 +226,16 @@ std::optional<CodeMapping> CodeMapping::mapFile(ImageFile file, uint64_t codeOff
     return CodeMapping { Kind::FileMapping, code, size };
 }
 
+CodeMapping CodeMapping::useExecutableSegment(std::span<const uint8_t> code)
+{
+    return { Kind::ExecutableSegment, const_cast<uint8_t*>(code.data()), code.size() };
+}
+
 std::optional<CodeMapping> CodeMapping::protectLoadedSection(std::span<const uint8_t> code)
 {
     CodeMapping mapping { Kind::LoadedSection, const_cast<uint8_t*>(code.data()), code.size() };
     // On Darwin the section is in a segment that the loader maps executable.
-#if OS(LINUX) || OS(FREEBSD)
+#if OS(FREEBSD)
     if (mprotect(mapping.m_code, mapping.m_size, PROT_READ | PROT_EXEC))
         return std::nullopt;
 #elif OS(WINDOWS)
@@ -231,6 +266,8 @@ void CodeMapping::release()
     case Kind::FileMapping:
         unmapCode(m_code, m_size);
         return;
+    case Kind::ExecutableSegment:
+        return;
     case Kind::LoadedSection: {
 #if OS(LINUX) || OS(FREEBSD)
         mprotect(m_code, m_size, PROT_READ);
@@ -250,10 +287,84 @@ void CodeMapping::release()
 
 } // anonymous namespace
 
-// The loader of an ELF executable maps the payload with write access. The section that holds it in a Mach-O or PE executable has none.
+#if OS(LINUX) || OS(FREEBSD)
+namespace {
+
+struct PositionInFile {
+    int descriptor { -1 };
+    int64_t offset { 0 };
+};
+
+struct LoadedSegment {
+    int64_t offsetInFile;
+    uint32_t flags;
+};
+
+struct SegmentSearch {
+    uintptr_t address;
+    std::optional<LoadedSegment> found;
+};
+
+} // anonymous namespace
+
+// Where the image begins in a file that stays open: the file it was loaded from, or the executable whose loader mapped it.
+static std::optional<PositionInFile> s_positionOfImage;
+
+static int findSegmentContaining(struct dl_phdr_info* object, size_t, void* data)
+{
+    auto& search = *static_cast<SegmentSearch*>(data);
+    for (unsigned index = 0; index < object->dlpi_phnum; ++index) {
+        const auto& header = object->dlpi_phdr[index];
+        uintptr_t start = object->dlpi_addr + header.p_vaddr;
+        if (header.p_type != PT_LOAD || search.address < start || search.address - start >= header.p_filesz)
+            continue;
+        search.found = LoadedSegment { static_cast<int64_t>(header.p_offset + (search.address - start)), header.p_flags };
+        return 1;
+    }
+    // The executable is the first object, and the image is in no other.
+    return 1;
+}
+
+static std::optional<LoadedSegment> findLoadedSegment(const uint8_t* address)
+{
+    SegmentSearch search { reinterpret_cast<uintptr_t>(address), std::nullopt };
+    dl_iterate_phdr(findSegmentContaining, &search);
+    return search.found;
+}
+
+static void rememberPositionOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file)
+{
+    if (file) {
+        int descriptor = fcntl(static_cast<int>(file->descriptor), F_DUPFD_CLOEXEC, 0);
+        if (descriptor >= 0)
+            s_positionOfImage = PositionInFile { descriptor, file->offset };
+        return;
+    }
+    std::optional<LoadedSegment> segment = findLoadedSegment(bytes.data());
+    if (!segment)
+        return;
+    int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
+#if OS(LINUX)
+    if (descriptor < 0) {
+        if (auto* path = std::bit_cast<const char*>(getauxval(AT_EXECFN)))
+            descriptor = open(path, O_RDONLY | O_CLOEXEC);
+        std::array<uint8_t, offsetof(ImageHeader, codeSize) + sizeof(ImageHeader::codeSize)> header;
+        if (descriptor >= 0 && (pread(descriptor, header.data(), header.size(), segment->offsetInFile) != static_cast<ssize_t>(header.size()) || memcmp(header.data(), bytes.data(), header.size()))) {
+            close(descriptor);
+            descriptor = -1;
+        }
+    }
+#endif
+    if (descriptor >= 0)
+        s_positionOfImage = PositionInFile { descriptor, segment->offsetInFile };
+}
+#endif
+
 static bool removeWriteAccessFromLoadedSection(std::span<const uint8_t> image)
 {
 #if OS(LINUX) || OS(FREEBSD)
+    if (std::optional<LoadedSegment> segment = findLoadedSegment(image.data()); segment && !(segment->flags & PF_W))
+        return true;
     return !mprotect(const_cast<uint8_t*>(image.data()), image.size(), PROT_READ);
 #else
     UNUSED_PARAM(image);
@@ -270,7 +381,55 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
 #endif
     if (file)
         return CodeMapping::mapFile(*file, header.codeOffset, size);
-    return CodeMapping::protectLoadedSection(bytes.subspan(header.codeOffset, size));
+    std::span<const uint8_t> code = bytes.subspan(header.codeOffset, size);
+#if OS(LINUX) || OS(FREEBSD)
+    std::optional<LoadedSegment> segment = findLoadedSegment(code.data());
+    bool isLoadedExecutable = segment && segment->flags & PF_X;
+#if OS(LINUX)
+    if (isLoadedExecutable && isAddressRandomizationDisabled())
+        return CodeMapping::useExecutableSegment(code);
+#endif
+    if (s_positionOfImage) {
+        if (std::optional<CodeMapping> mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size)) {
+            // Compiled code reads the constants in the code part through pointers into the loaded image.
+            if (isLoadedExecutable)
+                mprotect(const_cast<uint8_t*>(code.data()), code.size(), PROT_READ);
+            return mapping;
+        }
+    }
+    if (isLoadedExecutable)
+        return CodeMapping::useExecutableSegment(code);
+#endif
+#if OS(LINUX)
+    return std::nullopt;
+#else
+    return CodeMapping::protectLoadedSection(code);
+#endif
+}
+
+bool mapPrivateCloneOfImagePages(std::span<const uint8_t> pages, void* target)
+{
+    RELEASE_ASSERT(!(reinterpret_cast<uintptr_t>(pages.data()) % pageSize()) && !(pages.size() % pageSize()) && !(reinterpret_cast<uintptr_t>(target) % pageSize()));
+#if OS(DARWIN)
+    mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(target);
+    vm_prot_t currentProtection;
+    vm_prot_t maxProtection;
+    kern_return_t result = mach_vm_remap(mach_task_self(), &address, pages.size(), 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
+        reinterpret_cast<mach_vm_address_t>(pages.data()), true, &currentProtection, &maxProtection, VM_INHERIT_COPY);
+    if (result != KERN_SUCCESS)
+        return false;
+    // The clone inherits the limits of the section, which nobody may write.
+    return mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS
+        && mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS;
+#elif OS(LINUX) || OS(FREEBSD)
+    if (!s_positionOfImage)
+        return false;
+    int64_t offset = s_positionOfImage->offset + (pages.data() - reinterpret_cast<const uint8_t*>(&Image::current()->header()));
+    return mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, s_positionOfImage->descriptor, offset) != MAP_FAILED;
+#else
+    UNUSED_PARAM(target);
+    return false;
+#endif
 }
 
 static bool hasFaultSites(const ImageHeader& header)
@@ -310,8 +469,13 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     if (hasFaultSites(header) && !tryReserveLowPages())
         return ImageVerdict::LowPagesAccessible;
 
-    if (!file && !removeWriteAccessFromLoadedSection(bytes.first(header.size)))
+    if (!relocateLoadedImage(bytes.first(header.size)))
         return ImageVerdict::CannotMapCode;
+    if (!removeWriteAccessFromLoadedSection(bytes.first(header.size)))
+        return ImageVerdict::CannotMapCode;
+#if OS(LINUX) || OS(FREEBSD)
+    rememberPositionOfImage(bytes, file);
+#endif
     std::optional<CodeMapping> mapping = createCodeMapping(bytes, file, header);
     if (!mapping)
         return ImageVerdict::CannotMapCode;

@@ -104,12 +104,16 @@ static Slot createSlotOfKind(const Cells& cells, Slot::Kind kind, uint8_t flags)
     case SlotPayload::None:
         return Slot::createWithoutPayload(cells.id(), kind, flags);
     case SlotPayload::Holder:
+        if (kind == Slot::Kind::InheritedField)
+            return Slot::createInheritedField(cells.id(), flags, cells.holder);
         return Slot::createInStorage(cells.id(), kind, flags & ~Slot::isOutOfLine, flags & Slot::isOwn ? nullptr : cells.holder, flags & Slot::isOutOfLine ? firstOutOfLineOffset + 3 : 3);
     case SlotPayload::WordIndex:
         return Slot::createInStorage(cells.id(), Slot::Kind::Value, flags & ~Slot::isOutOfLine, nullptr, firstFarOffset);
     case SlotPayload::Field:
         return Slot::createField(cells.id(), kind, flags, SlotData::create(24, SlotRepresentation::Int32), 0, Slot::locationOf(kind) == SlotLocation::HiddenWordOffset ? 16 : 0);
     case SlotPayload::FieldAndHolder:
+        if (kind == Slot::Kind::FieldOrInheritedField)
+            return *Slot::tryCreateFieldOrInheritedField(cells.id(), flags, SlotData::create(24, SlotRepresentation::Int32), cells.holder, 16, cells.cageBase);
         return *Slot::tryCreateFieldAndHolder(cells.id(), kind, flags & ~Slot::inheritedIsOutOfLine, SlotData::create(24, SlotRepresentation::Int32), cells.holder, flags & Slot::inheritedIsOutOfLine ? firstOutOfLineOffset + 3 : 3, cells.cageBase);
     case SlotPayload::ExtraProperty:
         return Slot::createExtraProperty(cells.id(), kind, flags & ~Slot::isOutOfLine, StructureID(), flags & Slot::isOutOfLine ? firstOutOfLineOffset + 1 : 1, 20);
@@ -134,8 +138,10 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
         return false;
     if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage))
         return false;
-    if ((flags & Slot::inheritedIsOutOfLine) && Slot::payloadOf(kind) != SlotPayload::FieldAndHolder)
+    if ((flags & Slot::inheritedIsOutOfLine) && (Slot::payloadOf(kind) != SlotPayload::FieldAndHolder || Slot::locationOf(kind) != SlotLocation::WordIndex))
         return false;
+    if (kind == Slot::Kind::InheritedField)
+        return !(flags & (Slot::isOwn | Slot::isOutOfLine));
     switch (Slot::payloadOf(kind)) {
     case SlotPayload::WordIndex:
         return (flags & Slot::isOwn) && (flags & Slot::isOutOfLine);
@@ -199,6 +205,10 @@ static void testEveryKindReadsBack()
         case SlotPayload::Holder:
             AOT_TEST_CHECK(slot.holder == (flags & Slot::isOwn ? nullptr : cells.holder));
             AOT_TEST_CHECK(slot.payloadBits() == std::bit_cast<uintptr_t>(slot.holder));
+            if (Slot::locationOf(kind) == SlotLocation::None) {
+                AOT_TEST_CHECK(!slot.location);
+                break;
+            }
             AOT_TEST_CHECK(slot.offsetInStorage() == (isOutOfLine ? firstOutOfLineOffset + 3 : 3));
             AOT_TEST_CHECK(static_cast<int64_t>(header) >> Slot::locationShiftInHeader == slot.wordIndex());
             break;
@@ -216,7 +226,10 @@ static void testEveryKindReadsBack()
             AOT_TEST_CHECK(slot.fieldSlot() == SlotData::create(24, SlotRepresentation::Int32));
             AOT_TEST_CHECK(MarkedBlockCage::decode(cells.cageBase, slot.fieldAndHolder.holder) == cells.holder);
             AOT_TEST_CHECK(slot.payloadBits() == (static_cast<uint64_t>(slot.fieldAndHolder.holder) << 32 | slot.fieldSlot().encoded()));
-            AOT_TEST_CHECK(slot.offsetInStorage() == (flags & Slot::inheritedIsOutOfLine ? firstOutOfLineOffset + 3 : 3));
+            if (Slot::locationOf(kind) == SlotLocation::HiddenWordOffset)
+                AOT_TEST_CHECK(slot.hiddenWordOffset() == 16);
+            else
+                AOT_TEST_CHECK(slot.offsetInStorage() == (flags & Slot::inheritedIsOutOfLine ? firstOutOfLineOffset + 3 : 3));
             break;
         case SlotPayload::ExtraProperty:
             AOT_TEST_CHECK(!slot.extraProperty.structureID && slot.hiddenWordOffset() == 20);
@@ -252,11 +265,12 @@ static void testPresenceByKind()
     AOT_TEST_CHECK(Slot::presenceOf(Slot::Kind::Field) == SlotPresence::ReadsSlot);
     AOT_TEST_CHECK(Slot::presenceOf(Slot::Kind::Empty) == SlotPresence::Unknown);
     AOT_TEST_CHECK(Slot::presenceOf(Slot::Kind::Uncacheable) == SlotPresence::Unknown);
+    AOT_TEST_CHECK(Slot::presenceOf(Slot::Kind::InheritedField) == SlotPresence::Unknown && Slot::presenceOf(Slot::Kind::FieldOrInheritedField) == SlotPresence::Unknown);
 
     AOT_TEST_CHECK(Slot::kindFlagOf(Slot::Kind::Field) == Slot::absentIsUndefined);
     AOT_TEST_CHECK(Slot::kindFlagOf(Slot::Kind::Transition) == Slot::growsStorage);
     AOT_TEST_CHECK(Slot::kindFlagOf(Slot::Kind::FieldOrInherited) == Slot::inheritsGetter && !Slot::kindFlagOf(Slot::Kind::FieldOrInheritedSetter));
-    AOT_TEST_CHECK(!Slot::kindFlagOf(Slot::Kind::Value));
+    AOT_TEST_CHECK(!Slot::kindFlagOf(Slot::Kind::Value) && !Slot::kindFlagOf(Slot::Kind::InheritedField) && !Slot::kindFlagOf(Slot::Kind::FieldOrInheritedField));
 
     AOT_TEST_CHECK(accessFor(PutMode::Strict) == SlotAccess::Store);
     AOT_TEST_CHECK(accessFor(PutMode::Sloppy) == SlotAccess::Store);
@@ -341,6 +355,7 @@ static void testFarIndexDegrades()
     AOT_TEST_CHECK(Slot::tryCreateFieldAndHolder(cells.id(), Slot::Kind::FieldOrInherited, 0, slotData, cells.holder, lastOffsetInLocation, cells.cageBase));
     AOT_TEST_CHECK(!Slot::tryCreateFieldAndHolder(cells.id(), Slot::Kind::FieldOrInherited, 0, slotData, cells.holder, firstFarOffset, cells.cageBase));
     AOT_TEST_CHECK(!Slot::tryCreateFieldAndHolder(cells.id(), Slot::Kind::FieldOrInherited, 0, slotData, cells.holder, 0, cells.cageBase + MarkedBlockCage::maxSize));
+    AOT_TEST_CHECK(!Slot::tryCreateFieldOrInheritedField(cells.id(), 0, slotData, cells.holder, 16, cells.cageBase + MarkedBlockCage::maxSize));
 }
 
 static bool alwaysStaysOutsideTheFront(Slot::Kind kind)
@@ -396,6 +411,8 @@ static void testHolderOutsideTheCageDoesNotPack()
         Slot own = Slot::createInStorage(cells.id(), kind, Slot::isOwn, nullptr, 1);
         AOT_TEST_CHECK(packsAndUnpacks(own, otherCageBase));
     }
+    Slot inheritedField = Slot::createInheritedField(cells.id(), Slot::dependsOnChain, cells.holder);
+    AOT_TEST_CHECK(packsAndUnpacks(inheritedField, cells.cageBase) && !PackedSlot::tryPack(inheritedField, testName, otherCageBase));
 }
 
 static void testFieldOfStoreDoesNotPack()
@@ -524,6 +541,8 @@ static void testLivenessNamesEveryCell()
         { Slot::createField(cells.id(), Slot::Kind::Field, Slot::isOwn, SlotData::create(16, SlotRepresentation::Int32), 0, 0), { structureCell } },
         { *Slot::tryCreateFieldAndHolder(cells.id(), Slot::Kind::FieldOrInherited, 0, SlotData::create(16, SlotRepresentation::Int32), cells.holder, 0, cells.cageBase), { structureCell, cells.holder } },
         { *Slot::tryCreateFieldAndHolder(cells.id(), Slot::Kind::FieldOrInheritedSetter, 0, SlotData::create(16, SlotRepresentation::Int32), cells.holder, 0, cells.cageBase), { structureCell, cells.holder } },
+        { Slot::createInheritedField(cells.id(), Slot::dependsOnChain, cells.holder), { structureCell, cells.holder } },
+        { *Slot::tryCreateFieldOrInheritedField(cells.id(), Slot::dependsOnChain, SlotData::create(16, SlotRepresentation::Int32), cells.holder, 16, cells.cageBase), { structureCell, cells.holder } },
         { Slot::createCustomAccessor(cells.id(), Slot::Kind::CustomGetter, 0, 1), { structureCell } },
         { Slot::createExtraProperty(cells.id(), Slot::Kind::ExtraProperty, Slot::isOwn, StructureID(), 0, 16), { structureCell } },
         { Slot::createExtraProperty(cells.id(), Slot::Kind::ExtraProperty, Slot::isOwn, cells.otherID(), 0, 16), { structureCell, otherStructureCell } },
@@ -555,7 +574,7 @@ static void testMissesBeforeRefill()
 
 static void testInstanceLayoutOffsets()
 {
-    static_assert(sizeof(InstancePrefix) <= 128);
+    static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == std::numeric_limits<int8_t>::min() && sizeof(InstancePrefix) <= 256);
     const InstanceSizes allSizes[] = {
         { 0, 0, 0 },
         { 1, 1, 1 },
@@ -577,17 +596,28 @@ static void testInstanceLayoutOffsets()
         size_t stringCells = InstanceLayout::offsetOfStringCell(0);
         size_t siteCaches = InstanceLayout::offsetOfSiteCaches(sizes);
         size_t end = InstanceLayout::bytesReservedFromInstance(sizes);
-        AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 64 * KB);
+        AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 384 * KB);
         AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(sizes.numberOfStringCells) <= siteCaches);
         AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, 0) == siteCaches && !(siteCaches % sizeof(Slot)));
         AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, sizes.numberOfSiteCaches) <= end);
     }
 
     InstanceSizes sizes = allSizes[2];
-    AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(7) == 64 * KB + 7 * sizeof(uint32_t));
+    AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(7) == 384 * KB + 7 * sizeof(uint32_t));
     AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, 9) == InstanceLayout::offsetOfSiteCaches(sizes) + 9 * sizeof(Slot));
     AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCaches({ 0, 5000, 0 }) > InstanceLayout::offsetOfSiteCaches({ 0, 1, 0 }));
     AOT_TEST_CHECK(InstanceLayout::offsetOfStatics({ 64 * KB + 1, 0, 0 }) < InstanceLayout::offsetOfStatics({ 64 * KB, 0, 0 }));
+
+    // The small tables between the key order steps and the string cells: each ends where the next begins, and a table that is one entry too large is not held.
+    size_t endOfKeyOrderSteps = InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache);
+    AOT_TEST_CHECK(endOfKeyOrderSteps <= InstanceLayout::offsetOfBuiltinLocationStates && InstanceLayout::holdsBuiltinLocationStates(numberOfBuiltins));
+    size_t roomForStates = InstanceLayout::offsetOfGlobalBindings - InstanceLayout::offsetOfBuiltinLocationStates;
+    AOT_TEST_CHECK(InstanceLayout::holdsBuiltinLocationStates(roomForStates) && !InstanceLayout::holdsBuiltinLocationStates(roomForStates + 1));
+    size_t roomForBindings = InstanceLayout::offsetOfBuiltinCells - InstanceLayout::offsetOfGlobalBindings;
+    AOT_TEST_CHECK(InstanceLayout::holdsGlobalBindings(roomForBindings) && !InstanceLayout::holdsGlobalBindings(roomForBindings + sizeof(GlobalBinding)));
+    size_t mostKeys = (InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells) / sizeof(JSCell*);
+    AOT_TEST_CHECK(InstanceLayout::holdsBuiltinCells(mostKeys) && !InstanceLayout::holdsBuiltinCells(mostKeys + 1));
+    AOT_TEST_CHECK(InstanceLayout::offsetOfBuiltinValues + mostKeys * sizeof(EncodedJSValue) == InstanceLayout::offsetOfStringCells);
 }
 
 static void testInstanceLayoutAddressability()
@@ -633,7 +663,7 @@ static void testOrderWord()
 {
     const uint32_t orders[] = { 0, 1, 255, maxKeyOrdersPerLayout - 1 };
     const uint32_t counts[] = { 0, 1, 16, maxFieldsInOrder };
-    const uint32_t otherBits[] = { 0, orderWordHasExtraProperties, orderWordIsFrozen, orderWordIsSealed, orderWordIsNotExtensible, orderWordIntegrityBits | orderWordHasExtraProperties };
+    const uint32_t otherBits[] = { 0, orderWordHasFieldOutsideSlot, orderWordHasExtraProperties, orderWordIsFrozen, orderWordIsSealed, orderWordIsNotExtensible, orderWordIntegrityBits | orderWordHasExtraProperties };
     for (uint32_t order : orders) {
         for (uint32_t count : counts) {
             uint32_t word = orderWordOf(order, count);
@@ -646,10 +676,10 @@ static void testOrderWord()
         }
     }
 
-    AOT_TEST_CHECK(orderStoredOutOfLine == 0xffff && maxFieldsInOrder == 4095);
+    AOT_TEST_CHECK(orderStoredOutOfLine == 0x7fff && maxFieldsInOrder == 4095);
     AOT_TEST_CHECK(isOrderStoredOutOfLine(outOfLineOrderWord) && !countOf(outOfLineOrderWord));
     AOT_TEST_CHECK(!unorderedOrderWord);
-    AOT_TEST_CHECK(orderWordHasExtraProperties == 1u << 28 && orderWordIsFrozen == 1u << 29 && orderWordIsSealed == 1u << 30 && orderWordIsNotExtensible == 1u << 31);
+    AOT_TEST_CHECK(orderWordHasFieldOutsideSlot == 1u << 27 && orderWordHasExtraProperties == 1u << 28 && orderWordIsFrozen == 1u << 29 && orderWordIsSealed == 1u << 30 && orderWordIsNotExtensible == 1u << 31);
 
     uint64_t words = static_cast<uint64_t>(shapeWordOf(9)) << 32 | orderWordOf(2, 5) | orderWordIntegrityBits | orderWordHasExtraProperties;
     AOT_TEST_CHECK((words & orderCountAndShapeMask) == (static_cast<uint64_t>(shapeWordOf(9)) << 32 | orderWordOf(2, 5)));

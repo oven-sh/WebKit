@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrivalSiteNumbers.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowReport.h"
 #include "AOTID.h"
@@ -28,6 +29,7 @@
 namespace JSC { namespace AOT {
 
 class BuildContext;
+struct ExternalFunctionBodies;
 struct HostThreadPool;
 
 namespace Typed {
@@ -45,8 +47,9 @@ struct FunctionReport {
     Typed::FunctionID source;
     Typed::FunctionRole role { Typed::FunctionRole::Source };
     uint32_t codeBytes { 0 };
-    std::array<uint32_t, 4> accesses { };
-    std::array<uint32_t, 4> calls { };
+    std::array<uint32_t, 3> accesses { };
+    std::array<uint32_t, 4> accessCosts { };
+    std::array<uint32_t, 3> calls { };
     Vector<std::pair<Typed::Opcode, uint32_t>> operations;
 };
 
@@ -65,11 +68,19 @@ struct CompileOutput {
     Vector<FunctionReport> functionReports;
     Vector<uint8_t> symbols;
     ObfuscatedSites obfuscatedSites;
+    Typed::ArrivalSiteReport arrivalSites;
     WTF::BitSet<numberOfEntries> entriesUsed;
     ImageContents contents;
 };
 
-JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr);
+// The compiler calls release(owner) at most once, on any thread, when it has read the program bytes.
+struct ProgramOwner {
+    void (*release)(void* owner) { nullptr };
+    void* owner { nullptr };
+    const ExternalFunctionBodies* externalBodies { nullptr };
+};
+
+JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgram(std::unique_ptr<Typed::Program>, BuildContext&);
 JS_EXPORT_PRIVATE size_t imageAlignment();
 

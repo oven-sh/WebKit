@@ -1,0 +1,22 @@
+# counts = new Map(); counts.set("a", 5); counts.set("b", 7); return counts.get("a")
+# A set knows an integer by its kind alone. Every value gets into this Map by a call of set that spells it out, so the numbers among its values are those of the operands.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int[5, 7]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0, -
+    v2 = Builtin builtin=MapPrototypeSet
+    v3 = String string="a"
+    v4 = Integer integer=5
+    v5 = Call v2, v1, v3, v4
+    v6 = String string="b"
+    v7 = Integer integer=7
+    v8 = Call v2, v1, v6, v7
+    v9 = Builtin builtin=MapPrototypeGet
+    v10 = Call v9, v1, v3
+    Return v10
+}

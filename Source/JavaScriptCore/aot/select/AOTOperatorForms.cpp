@@ -42,7 +42,7 @@ constexpr OpcodeSet operatorsOnNumberAndValue = OpcodeSet { Opcode::Add, Opcode:
 constexpr OpcodeSet operatorsOnBits = equalityOperators | OpcodeSet { Opcode::ToBoolean };
 constexpr OpcodeSet operatorsOnBigInts = numberArithmeticOperators | bigIntBitwiseOperators | comparisonOperators;
 constexpr OpcodeSet operatorsOnStrings = OpcodeSet { Opcode::Add } | comparisonOperators;
-constexpr OpcodeSet operatorsOnNullableStrings = OpcodeSet { Opcode::Add } | equalityOperators;
+constexpr OpcodeSet operatorsOnNullableStrings = OpcodeSet { Opcode::Add } | comparisonOperators;
 constexpr OpcodeSet operatorsOnNullableNumber = OpcodeSet { Opcode::ToString } | numberConversionOperators;
 
 constexpr OpcodeSet operatorsCallingOnNumbers = bitwiseOperators | OpcodeSet { Opcode::Mod, Opcode::Pow };
@@ -110,6 +110,19 @@ OperatorChoice chooseOperatorForm(const OperatorSite& site, const Value& value)
     choice.form = chooseFormByTypes(site, value.opcode, typesOf(site, value, choice.result));
     checkChoice(value.opcode, choice);
     return choice;
+}
+
+OperatorForm chooseFormOfOperator(const OperatorSite& site, const Value& value)
+{
+    RELEASE_ASSERT(hasOperatorForm(value.opcode));
+
+    OperatorForm form = chooseFormByTypes(site, value.opcode, typesOf(site, value, site.typing.types.at(value.type)));
+    RELEASE_ASSERT(isLegalOperatorForm(value.opcode, form));
+    if (form == OperatorForm::Generic)
+        return form;
+    Effects bound = effectsBoundOf(value.opcode, form);
+    RELEASE_ASSERT(bound.isPure() || bound.isSubsetOf(effectsOf(site.effects, site.typing.function, value).onAnyEdge()));
+    return form;
 }
 
 OperatorChoice chooseOperatorFormFor(const OperatorSite& site, Opcode opcode, std::span<const Type> operandTypes)

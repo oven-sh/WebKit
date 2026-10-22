@@ -33,10 +33,6 @@
 #include <wtf/WeakRandom.h>
 #include <wtf/text/MakeString.h>
 
-#if OS(LINUX)
-#include <sys/mman.h>
-#endif
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT {
@@ -177,41 +173,27 @@ static constexpr ASCIILiteral roleProgramText =
     "  b0():\n"
     "    Return\n"
     "}\n"
-    "function f2 role=Continuation results=[{type=anything}] derivation={source=f1} creator=Continuation{origin=f1}\n"
+    "function f2 name=\"c\" results=[{type=anything}]\n"
     "function f3 role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1}\n"
-    "function f4 role=Continuation results=[{type=anything}] derivation={source=f1} creator=Continuation{origin=f1 index=1}\n"
+    "function f4 name=\"d\" results=[{type=anything}]\n"
     "function f5 name=\"b\" results=[{type=anything}]\n"_s;
 
-static constexpr ASCIILiteral rankProgramText =
+// f1 is the entrance of "a": f5 is the typed body behind its tests, f6 the generic version. f3 is entered by value and leads to the entrance. f7 is an entrance with fewer tests.
+static constexpr ASCIILiteral entranceProgramText =
     "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
     "entry\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
-    "    v0 = Builtin builtin=GlobalThis\n"
-    "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"
-    "    v2 = NewClosure function=f1\n"
-    "    v3 = Call v1, -, v2\n"
-    "    v4 = NewClosure function=f2\n"
-    "    v5 = Call v1, -, v4\n"
-    "    v6 = NewClosure function=f3\n"
-    "    v7 = Call v1, -, v6\n"
     "    Return\n"
     "}\n"
-    "function f1 name=\"f1\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    Return\n"
-    "}\n"
-    "function f2 name=\"f2\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    v0 = Builtin builtin=GlobalThis\n"
-    "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"
-    "    v2 = Call v1\n"
-    "    Return\n"
-    "}\n"
-    "function f3 name=\"f3\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    Return\n"
-    "}\n"_s;
+    "function f1 name=\"a\" role=EntryChecks parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] creator=EntryChecks{body=f5 fallback=f6}\n"
+    "function f2 name=\"b\" results=[{type=anything}]\n"
+    "function f3 role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1}\n"
+    "function f4 name=\"c\" results=[{type=anything}]\n"
+    "function f5 name=\"a\" parameters=[{type=number}] results=[{type=anything}] derivation={source=f1}\n"
+    "function f6 name=\"a\" role=GenericVersion parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] derivation={source=f1} creator=Version{provenVersion=f5}\n"
+    "function f7 name=\"a\" role=CallSiteVersion parameters=[{type=number}] results=[{type=anything}] derivation={source=f1} creator=Version{provenVersion=f1}\n"
+    "function f8 name=\"d\" results=[{type=anything}]\n"_s;
 
 ProgramWithUnknownHeat::ProgramWithUnknownHeat(const String& text, Typed::IRForm form)
 {
@@ -231,7 +213,15 @@ static void testOrderRoles()
 {
     ProgramWithUnknownHeat roles(roleProgramText, Typed::IRForm::Prepared);
     Vector<uint32_t> ids { 5, 4, 3, 2, 1, 0 };
-    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), roles.pipeline, roles.context) == Vector<uint32_t>({ 0, 3, 1, 2, 4, 5 }));
+    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), roles.pipeline, roles.context) == Vector<uint32_t>({ 3, 1, 2, 4, 5, 0 }));
+}
+
+// What leads into a body lies in front of it, the nearer the fewer steps it takes. The generic version lies with the cold code.
+static void testEntranceLiesInFrontOfItsBody()
+{
+    ProgramWithUnknownHeat program(entranceProgramText, Typed::IRForm::Prepared);
+    Vector<uint32_t> ids { 8, 7, 6, 5, 4, 3, 2, 1, 0 };
+    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), program.pipeline, program.context) == Vector<uint32_t>({ 2, 4, 3, 7, 1, 5, 8, 0, 6 }));
 }
 
 static void testUnknownHeatIsIDOrder()
@@ -248,34 +238,8 @@ static void testAnyInputOrder()
     Vector<uint32_t> ids { 0, 1, 2, 3, 4, 5 };
     for (unsigned round = 0; round < 10; ++round) {
         shuffle(ids, random);
-        AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), roles.pipeline, roles.context) == Vector<uint32_t>({ 0, 3, 1, 2, 4, 5 }));
+        AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), roles.pipeline, roles.context) == Vector<uint32_t>({ 3, 1, 2, 4, 5, 0 }));
     }
-}
-
-static Vector<uint32_t> rankByFunction(const Typed::Program& program, const Typed::Heat& heat)
-{
-    Vector<uint32_t> ranks(FillWith { }, program.functions.size(), std::numeric_limits<uint32_t>::max());
-    uint32_t rank = 0;
-    for (FunctionID function : heat.hottestFirst())
-        ranks[function.index()] = rank++;
-    return ranks;
-}
-
-static void testHotFunctionsByRank()
-{
-    // In a closed program nothing calls a closure that is handed to a global nobody defines, and functions that are never called rank in the order of their ids.
-    TestBuild build(makeString(rankProgramText, runtimeFunctionsText(4)), { .heat = Wire::HeatOverride::EverythingIsHot, .admittedCode = Wire::AdmittedCode::RuntimeCode });
-    const Typed::Heat& heat = *build.pipeline().heat;
-    AOT_TEST_CHECK(!heat.hottestFirst().empty());
-
-    Vector<uint32_t> ranks = rankByFunction(build.program(), heat);
-    Vector<uint32_t> ids { 3, 2, 1 };
-    Vector<uint32_t> expected = ids;
-    std::ranges::sort(expected, [&](uint32_t a, uint32_t b) {
-        return std::tuple { ranks[a], a } < std::tuple { ranks[b], b };
-    });
-    AOT_TEST_CHECK(expected != Vector<uint32_t>({ 1, 2, 3 }));
-    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), build.pipeline(), build.context()) == expected);
 }
 
 static uint32_t bandOf(Typed::HeatClass heatClass)
@@ -294,24 +258,16 @@ static uint32_t bandOf(Typed::HeatClass heatClass)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::array<uint32_t, 6> orderKey(const Typed::Program& program, const Typed::Heat& heat, std::span<const uint32_t> ranks, FunctionID function)
+static std::array<uint32_t, 4> orderKey(const Typed::Program& program, const Typed::Heat& heat, FunctionID function)
 {
-    uint32_t part = 0;
-    FunctionID subject = function;
-    if (program.at(function).role == FunctionRole::Continuation) {
-        const auto& record = program.at(function).creator.as<CreatorRecord::Continuation>();
-        part = 1 + record.index;
-        subject = record.origin;
-    }
     uint32_t side = 1;
-    FunctionID leader = subject;
-    FunctionRole role = program.at(subject).role;
-    if (role == FunctionRole::GenericEntrypoint || role == FunctionRole::GroupEntrypoint) {
+    FunctionID leader = function;
+    if (program.at(function).role == FunctionRole::GenericEntrypoint) {
         side = 0;
-        leader = program.at(subject).creator.as<CreatorRecord::Entrypoint>().target;
+        leader = program.at(function).creator.as<CreatorRecord::Entrypoint>().target;
     }
-    uint32_t band = bandOf(heat.of(program, leader));
-    return { band, band ? 0 : ranks[leader.index()], leader.index(), side, part, function.index() };
+    uint32_t band = program.at(leader).isModuleBody() ? bandOf(Typed::HeatClass::RunsOnce) : bandOf(heat.of(program, leader));
+    return { band, leader.index(), side, function.index() };
 }
 
 static void testFollowsKey()
@@ -332,11 +288,10 @@ static void testFollowsKey()
     WeakRandom random(1);
     shuffle(ids, random);
 
-    Vector<uint32_t> ranks = rankByFunction(program, heat);
     Vector<uint32_t> ordered = orderedIDs(plainBodies(ids.span()), build.pipeline(), build.context());
     AOT_TEST_CHECK(ordered.size() == ids.size());
     for (size_t index = 1; index < ordered.size(); ++index)
-        AOT_TEST_CHECK(orderKey(program, heat, ranks.span(), FunctionID(ordered[index - 1])) < orderKey(program, heat, ranks.span(), FunctionID(ordered[index])));
+        AOT_TEST_CHECK(orderKey(program, heat, FunctionID(ordered[index - 1])) < orderKey(program, heat, FunctionID(ordered[index])));
 }
 
 namespace {
@@ -425,10 +380,11 @@ static void testEqualStreamsShare()
 {
     BuildContext context(wireOptions());
     LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5), handlerBody(2, 5), handlerBody(3, 6), handlerBody(4, 5)), context);
-    constexpr std::array<uint32_t, 4> callSiteOffsets { 8, 8, 8, 16 };
-    SideTables tables = encodeSideTables(functions, callSiteOffsets, context);
+    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 }, { 8 }, { 16 } };
+    SideTables tables = encodeSideTables(functions, callSites.span(), context);
     AOT_TEST_CHECK(tables.offsets[0] == tables.offsets[1]);
-    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[2]);
+    // The third differs from the first in a line alone, and the positions lie apart.
+    AOT_TEST_CHECK(tables.offsets[0] == tables.offsets[2]);
     AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[3]);
 }
 
@@ -436,8 +392,8 @@ static void testFrameMapsDivide()
 {
     BuildContext context(wireOptions());
     LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 })), context);
-    constexpr std::array<uint32_t, 2> callSiteOffsets { 8, 8 };
-    SideTables tables = encodeSideTables(functions, callSiteOffsets, context);
+    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 } };
+    SideTables tables = encodeSideTables(functions, callSites.span(), context);
     AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[1]);
     AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 2 }));
 }
@@ -745,6 +701,20 @@ static void testRelocation()
     AOT_TEST_CHECK(address == reinterpret_cast<intptr_t>(copy.start() + codeOffsetOf(image, 2)));
 }
 
+static void testBytesOutsideColdBlocks()
+{
+    TestBuild build(4);
+    CompiledCode withHotBlocks = plainBody(1);
+    CompiledCode allCold = plainBody(2);
+    uint64_t sizeOfFirst = withHotBlocks.body.bytes.size();
+    uint64_t sizeOfBoth = sizeOfFirst + allCold.body.bytes.size();
+    withHotBlocks.body.sizeOfHotBlocks = safeCast<uint32_t>(sizeOfFirst);
+    AOT_TEST_CHECK(!allCold.body.sizeOfHotBlocks);
+    builtImage(build, bodies(WTF::move(withHotBlocks), WTF::move(allCold)));
+    AOT_TEST_CHECK(build.statistic(StatisticID::BytesGeneratedInHotAndWarmBands) == sizeOfBoth);
+    AOT_TEST_CHECK(build.statistic(StatisticID::BytesGeneratedOutsideColdBlocksInHotAndWarmBands) == sizeOfFirst);
+}
+
 static void testAccepted()
 {
     TestBuild build(4);
@@ -816,43 +786,6 @@ static void testReservedRangeEndsPastCode()
     checkReservedRangeFailsBuild(imagePageSize, 2 * imagePageSize);
     checkReservedRangeFailsBuild(2 * imagePageSize, imagePageSize);
 }
-
-static CompiledCode bodyWithConstantWord(uint32_t function, uint64_t word)
-{
-    CompiledCode code = plainBody(function);
-    code.body.constants.append(ConstantData { Vector<uint8_t>(asByteSpan(word)), sizeof(uint64_t) });
-    return code;
-}
-
-static void testValidationFindsAddressInConstants()
-{
-    int local = 0;
-    TestBuild build(2, TestOptions { .checks = Wire::CheckSet::Validate });
-    AOT_TEST_CHECK(!build.build(bodies(bodyWithConstantWord(1, std::bit_cast<uintptr_t>(&local)))).image == mappedIntegersAreAddresses);
-    AOT_TEST_CHECK(build.count(InternalErrorKind::WritableSectionInImage) == mappedIntegersAreAddresses);
-}
-
-static void testValidationPassesNumbersInConstants()
-{
-    TestBuild build(3, TestOptions { .checks = Wire::CheckSet::Validate });
-    AOT_TEST_CHECK(build.build(bodies(bodyWithConstantWord(1, std::bit_cast<uint64_t>(1.5)), bodyWithConstantWord(2, 0))).image);
-    AOT_TEST_CHECK(!build.count(InternalErrorKind::WritableSectionInImage));
-}
-
-#if OS(LINUX)
-static void testValidationPassesMappedWordsOfThirtyTwoBits()
-{
-    constexpr uintptr_t wantedAddress = 0x80000000;
-    void* page = mmap(std::bit_cast<void*>(wantedAddress), imagePageSize, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    AOT_TEST_CHECK(page != MAP_FAILED);
-    uintptr_t address = std::bit_cast<uintptr_t>(page);
-    AOT_TEST_CHECK(address <= std::numeric_limits<uint32_t>::max());
-    TestBuild build(2, TestOptions { .checks = Wire::CheckSet::Validate });
-    AOT_TEST_CHECK(build.build(bodies(bodyWithConstantWord(1, address))).image);
-    AOT_TEST_CHECK(!build.count(InternalErrorKind::WritableSectionInImage));
-    munmap(page, imagePageSize);
-}
-#endif
 
 static Vector<uint8_t> randomBytes()
 {
@@ -936,9 +869,9 @@ std::span<const NativeTest> imageBuildTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/order/roles"_s, testOrderRoles },
+        { "image/order/entrance-lies-in-front-of-its-body"_s, testEntranceLiesInFrontOfItsBody },
         { "image/order/unknown-heat-is-id-order"_s, testUnknownHeatIsIDOrder },
         { "image/order/any-input-order"_s, testAnyInputOrder },
-        { "image/order/hot-functions-by-rank"_s, testHotFunctionsByRank },
         { "image/order/follows-key"_s, testFollowsKey },
         { "image/callees/call-without-code"_s, testCallWithoutCode },
         { "image/callees/every-relocation-needs-code"_s, testEveryRelocationNeedsCode },
@@ -962,16 +895,12 @@ std::span<const NativeTest> imageBuildTests()
         { "image/writer/through-veneer"_s, whenExecutable<testThroughVeneer> },
         { "image/writer/relocation"_s, whenExecutable<testRelocation> },
         { "image/writer/accepted"_s, testAccepted },
+        { "image/writer/bytes-outside-cold-blocks"_s, testBytesOutsideColdBlocks },
         { "image/writer/reserved-range-of-empty-pages"_s, testReservedRangeOfEmptyPages },
         { "image/writer/callback-context-of-generated-stubs-is-reserved"_s, testCallbackContextOfGeneratedStubsIsReserved },
         { "image/writer/reserved-range-holds-bytes"_s, testReservedRangeHoldsBytes },
         { "image/writer/reserved-range-shares-page"_s, testReservedRangeSharesPage },
         { "image/writer/reserved-range-ends-past-code"_s, testReservedRangeEndsPastCode },
-        { "image/writer/validation-finds-address-in-constants"_s, testValidationFindsAddressInConstants },
-        { "image/writer/validation-passes-numbers-in-constants"_s, testValidationPassesNumbersInConstants },
-#if OS(LINUX)
-        { "image/writer/validation-passes-mapped-words-of-thirty-two-bits"_s, testValidationPassesMappedWordsOfThirtyTwoBits },
-#endif
         { "image/compile/random-bytes"_s, testCompileRandomBytes },
         { "image/compile/bad-options-size"_s, testCompileBadOptionsSize },
         { "image/compile/limit-values"_s, testCompileLimitValues },

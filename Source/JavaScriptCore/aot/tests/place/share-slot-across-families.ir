@@ -1,4 +1,5 @@
 # Two classes that are not related declare fields of the same names in another order, and each has a class below it. What reads the fields through all four layouts joins the two families: each name gets one location in all four
+# TODO: flow-termination: one site stands for what a base constructor allocates for every class below it, so a field of a derived class is filed under the base and a shared slot is refused
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses references=narrow
 # RUN: plan-slots layouts accesses
@@ -7,9 +8,9 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Node" constructor=f1 fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="parent" declared={type=anything} flags=[IsRequired]}]
-layout L1 kind=Instance name="NodeBelow" predictedBase=L0 constructor=f2 fields=[{key="name" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L1 kind=Instance name="NodeBelow" base=L0 constructor=f2 fields=[{key="name" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
 layout L2 kind=Instance name="Token" constructor=f3 fields=[{key="parent" declared={type=anything} flags=[IsRequired]}, {key="own" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
-layout L3 kind=Instance name="TokenBelow" predictedBase=L2 constructor=f4 fields=[{key="text" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L3 kind=Instance name="TokenBelow" base=L2 constructor=f4 fields=[{key="text" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
 variable g0 name="Node" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="Token" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="any" module=m0 declared={type=anything} initialization=Undefined

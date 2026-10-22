@@ -125,6 +125,12 @@ void FunctionRewriter::rewriteStore(Value& store)
 void FunctionRewriter::removeCapturedOperands(Value& supplier)
 {
     std::span<const PlannedCapture> planned = m_plan.capturesOf(supplier.function());
+    // A closure that is made on demand lists no captures: the object that holds it keeps what it captures, in itself or in a hidden field.
+    // The run time hands that to the function, so the plan leaves the captures of the function and the environment in the hidden field as they are.
+    if (supplier.opcode == Opcode::NewClosure && supplier.isMadeOnDemand()) {
+        RELEASE_ASSERT(planned.empty());
+        return;
+    }
     for (uint32_t capture = planned.size(); capture--;) {
         if (planned[capture].change != CaptureChange::None)
             supplier.removeVariadicOperand(capture);
@@ -133,7 +139,7 @@ void FunctionRewriter::removeCapturedOperands(Value& supplier)
 
 void FunctionRewriter::rewriteValues(BlockID block)
 {
-    BlockValues values = std::exchange(m_function.at(block).values, { });
+    BlockValues values = std::exchange(m_function.edit(block).values, { });
     uint32_t numberOfCaughtValues = 0;
     while (numberOfCaughtValues < values.size() && isCaughtValue(m_function.at(values[numberOfCaughtValues]).opcode))
         ++numberOfCaughtValues;
@@ -154,15 +160,15 @@ void FunctionRewriter::rewriteValues(BlockID block)
         if (opcode == Opcode::NewObject && replaceAllocation(id, rewritten))
             continue;
         if (opcode == Opcode::GetEnvironmentField)
-            rewriteRead(m_function.at(id));
+            rewriteRead(m_function.edit(id));
         else if (opcode == Opcode::PutEnvironmentField)
-            rewriteStore(m_function.at(id));
+            rewriteStore(m_function.edit(id));
         else if (opcode == Opcode::NewClosure || opcode == Opcode::CallDirect)
-            removeCapturedOperands(m_function.at(id));
+            removeCapturedOperands(m_function.edit(id));
         rewritten.append(id);
         appendCapturedValueStore(rewritten, id);
     }
-    m_function.at(block).values = WTF::move(rewritten);
+    m_function.edit(block).values = WTF::move(rewritten);
 }
 
 void FunctionRewriter::removeBlockParameters(BlockID block)
@@ -183,23 +189,37 @@ void FunctionRewriter::replaceCaptures()
         return;
 
     BlockValues values;
+    Vector<ValueID, 4> replacedParameters;
     Vector<Value, 4> reads;
     const auto& parameters = m_function.at(entryBlock).parameters;
     for (size_t capture = 0; capture < planned.size(); ++capture) {
         if (!planned[capture].variable)
             continue;
         Value read = m_function.at(parameters[capture]);
+        TypeID provenType = read.type;
         read.become(Opcode::GetModuleVariable);
         read.setVariable(planned[capture].variable);
+        // One variable stands for the captures of several functions, and is only expected as soon as one of them is. What is proven of this capture is then said by a cast.
+        bool promisesLess = m_builder.context().program.at(planned[capture].variable).declared.flags.contains(PositionFlags::IsExpected) && provenType != TypeTable::anything;
+        if (promisesLess) {
+            m_builder.setOrigin(read.origin());
+            ValueID readOfVariable = m_builder.addDetached(WTF::move(read));
+            values.append(readOfVariable);
+            read = IRBuilder::make(Opcode::AssumeType, { readOfVariable });
+            read.setOrigin(m_function.at(readOfVariable).origin());
+            read.setCastType(provenType);
+            read.type = provenType;
+        }
         values.append(parameters[capture]);
+        replacedParameters.append(parameters[capture]);
         reads.append(WTF::move(read));
     }
 
     removeEntryParameters(m_function, m_plan.removedCapturesOf(m_id));
     for (size_t index = 0; index < reads.size(); ++index)
-        m_function.at(values[index]) = WTF::move(reads[index]);
+        m_function.edit(replacedParameters[index]) = WTF::move(reads[index]);
     values.appendVector(m_function.at(entryBlock).values);
-    m_function.at(entryBlock).values = WTF::move(values);
+    m_function.edit(entryBlock).values = WTF::move(values);
 }
 
 void FunctionRewriter::run()

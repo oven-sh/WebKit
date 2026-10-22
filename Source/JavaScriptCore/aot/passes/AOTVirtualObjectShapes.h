@@ -74,6 +74,11 @@ public:
 
     uint32_t ensureField(const VirtualField&);
     std::optional<uint32_t> findField(const VirtualField&) const;
+    // Of a Named field the UnprovenNamed field of its key, and the other way round.
+    std::optional<uint32_t> findCounterpart(uint32_t field) const;
+    bool hasUnprovenFields() const { return m_hasUnprovenFields; }
+    bool refusesUnprovenValues() const { return m_refusesUnprovenValues; }
+    void refuseUnprovenValues() { m_refusesUnprovenValues = true; }
     const VirtualField& fieldAt(uint32_t field) const LIFETIME_BOUND { return m_fields[field]; }
     uint32_t numberOfFields() const { return m_fields.size(); }
 
@@ -93,6 +98,8 @@ public:
 private:
     Vector<VirtualObjectDescription, 1> m_descriptions;
     Vector<VirtualField, 8> m_fields;
+    bool m_hasUnprovenFields { false };
+    bool m_refusesUnprovenValues { false };
     Vector<VirtualShape, 4> m_shapes;
     UncheckedKeyHashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_tagBits;
     unsigned m_numberOfTagBits { 0 };
@@ -109,6 +116,8 @@ struct ShapeContext {
 
 TypeID typeOfShape(const ShapeContext&, const VirtualShape&);
 bool hasStored(const VirtualShape&, uint32_t field);
+bool hasStoredCounterpart(const VirtualFamily&, const VirtualShape&, uint32_t field);
+bool hasUnprovenField(const VirtualFamily&, const VirtualShape&);
 
 VirtualShape shapeAtAllocation(const VirtualObjectContext&, VirtualFamily&, KeyOrderTable&, uint32_t descriptionIndex);
 VirtualShape shapeAfterStore(const VirtualFamily&, KeyOrderTable&, const VirtualShape&, uint32_t field);
@@ -123,14 +132,14 @@ std::optional<uint32_t> findShapeCase(const ShapeContext&, const VirtualShape&, 
 
 inline constexpr OpcodeSet evaluatedTests {
     Opcode::PropHas, Opcode::ElemHas, Opcode::StrictEq, Opcode::ToBoolean, Opcode::TypeTest, Opcode::PrivateHas, Opcode::ShapeTest,
-    Opcode::IsSlotFilled, Opcode::HasNoExtraProperties, Opcode::IsNotFrozen, Opcode::HasLayoutPrototype, Opcode::BelongsToInstance,
-    Opcode::IsPristine, Opcode::HasKeyOrder, Opcode::IsShapeEpochCurrent, Opcode::IsClosureOf, Opcode::PropHasOwn, Opcode::HasArrayElement,
+    Opcode::IsSlotFilled, Opcode::HasNoExtraProperties, Opcode::HasNoFieldOutsideSlot, Opcode::HasBirthFieldsFilled, Opcode::IsNotFrozen, Opcode::HasLayoutPrototype, Opcode::BelongsToInstance,
+    Opcode::IsPristine, Opcode::HasKeyOrder, Opcode::IsClosureOf, Opcode::PropHasOwn, Opcode::HasArrayElement, Opcode::IsElementPresent,
     Opcode::HasArrayStorage, Opcode::IsInBounds,
 };
 
 inline constexpr OpcodeSet testsLeftToRun {
-    Opcode::IsNotThenable, Opcode::IsMemberUnchanged, Opcode::IsPrototypeLinkUnchanged, Opcode::IsClassEvaluatedOnce,
-    Opcode::IsRequireEdgeReady, Opcode::IsEnumeratorCurrent,
+    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView,
+    Opcode::IsBuiltinLocationUnchanged,
 };
 
 static_assert((evaluatedTests | testsLeftToRun | opcodesInterpretedAs(Interpretation::Test)) == (evaluatedTests | testsLeftToRun));

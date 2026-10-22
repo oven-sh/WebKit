@@ -294,6 +294,12 @@ public:
     inline void requestStop();
     inline void cancelStop();
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool stopsAtEveryPoll() const { return m_stack.stopsAtEveryPoll(); }
+    bool needsOutOfMemoryError() const { return m_stack.stopsAtFunctionEntries(); }
+    void setNeedsOutOfMemoryError(bool needsError) { m_stack.setStopsAtFunctionEntries(needsError); }
+#endif
+
 private:
     ALWAYS_INLINE BitField clearTrapWithoutCancellingThreadStop(Event event)
     {

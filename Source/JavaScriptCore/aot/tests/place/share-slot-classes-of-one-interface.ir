@@ -1,7 +1,7 @@
 # Two classes implement one interface and declare its members in another order, among members of their own. What reads through the interface reads each member at one location.
 # "tag" is a number in one class and a string in the other, and each class reads its own more often than anything reads it through the interface: it keeps two representations, and the read through the interface has two groups
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
 # STATISTIC: SharedSlots = 3
 # STATISTIC: SharesRefused = 1

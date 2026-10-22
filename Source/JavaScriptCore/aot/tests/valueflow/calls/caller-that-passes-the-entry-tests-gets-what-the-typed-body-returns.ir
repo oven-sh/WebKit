@@ -1,0 +1,32 @@
+# function pick(a: number) { return a }; first = pick(1); second = pick(somethingNobodyKnows)
+# The second call may fail the test, so the generic version runs and returns whatever it was given. That goes to the second caller alone:
+# for the first caller, whose argument fits, only the typed body runs, and it returns a number
+# RUN: valueflow-why split values=f0:v2 values=f0:v5
+# CHECK: values=f0:v2
+# CHECK: result {{*}} members: primitive4
+# CHECK: values=f0:v5
+# CHECK: result {{*}}unknown
+# RUN(FIRST): valueflow-why split values=f0:v2
+# FIRST-NOT: result {{*}}unknown
+# RUN(REACHED): valueflow-solve split unreached
+# REACHED-NOT: unreached f3
+# REACHED-NOT: unreached f4
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingNobodyKnows" [isFreeName]
+    v5 = Call v0, -, v4
+    v6 = NewArray v2, v5 contents=anything
+    Return v6
+}
+function f1 name="pick" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}

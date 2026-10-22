@@ -667,7 +667,7 @@ static void becomeCodeUnit(const Program& program, GroupRewriter& rewriter, cons
     replaceRootWith(rewriter, makeCodeUnitRead(rewriter, match));
     rewriter.leaveUnclaimed(root);
     for (BlockID block : match.switchBlocks)
-        switchOnCodeUnit(program, rewriter.function().at(block).terminator, root);
+        switchOnCodeUnit(program, rewriter.function().edit(block).terminator, root);
 }
 
 static void becomeRangeOfBase(GroupRewriter& rewriter, const Match& match)
@@ -676,7 +676,7 @@ static void becomeRangeOfBase(GroupRewriter& rewriter, const Match& match)
     const StringRangeSource& source = match.chain.last();
     StringRangeBounds bounds = insertBounds(rewriter, match);
     if (source.bounds) {
-        Value& substring = rewriter.function().at(root);
+        Value& substring = rewriter.function().edit(root);
         substring.setStringOperand(match.base);
         substring.setStartOperand(bounds.start);
         substring.setEndOperand(bounds.end);

@@ -7,16 +7,48 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFunctionLoop.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPassRunner.h"
 #include "AOTPipeline.h"
 #include "AOTProgramAnalyses.h"
+#include "AOTProgramCaches.h"
+#include "AOTTypeArena.h"
 #include <memory>
+#include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+class FactsOfSelectedBodies;
+class OutliningSiteFinder;
+struct PlacementInputs;
+struct ReadersOfOutlinedFunctions;
+
+class CachesAroundStepsThatRunBesideEachOther {
+    WTF_MAKE_NONCOPYABLE(CachesAroundStepsThatRunBesideEachOther);
+public:
+    CachesAroundStepsThatRunBesideEachOther(const Program& program, BuildContext& build)
+    {
+        if (!program.types.hasOpenPhase())
+            m_scratch.emplace(program.types, 0u, TypeInterningPhase::Scratch);
+        m_caches.emplace(program, build);
+    }
+
+    ~CachesAroundStepsThatRunBesideEachOther()
+    {
+        m_caches.reset();
+        if (m_scratch)
+            m_scratch->discard();
+    }
+
+private:
+    std::optional<TypeInterningPhase> m_scratch;
+    std::optional<ProgramCaches> m_caches;
+};
 
 class Pipeline {
     WTF_MAKE_NONCOPYABLE(Pipeline);
@@ -25,6 +57,7 @@ public:
     ~Pipeline();
 
     void runAllStages();
+    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
     std::unique_ptr<PipelineOutput> takeOutput();
 
     void runReadStage();
@@ -34,13 +67,20 @@ public:
     void runSelectStage();
     void runPlacementStage();
     void runRepresentationStage();
+    void runPlacementAndRepresentationStagesTogether();
 
     PassOutcome runProgramPass(PassID);
-    void runSchedule(FunctionSchedule);
+    void runSchedule(FunctionSchedule, const StepsAroundSchedule& = { });
     void dumpResultOf(PassID, PrintStream&) const;
 
-    PassOutcome admitAssertedObjects();
+    PassOutcome allocateTaggedLayouts();
+    PassOutcome checkTypesAtEntry();
+    PassOutcome splitBehindEntryChecks();
+    PassOutcome skipAnsweredEntryChecks();
+    PassOutcome narrowFieldTypes();
+    PassOutcome nameCreatedSymbols();
     PassOutcome verify(IRForm);
+    PassOutcome guardTaintedPositions();
     PassOutcome analyzeFlow();
     PassOutcome applyFlowResults();
     PassOutcome checkLockedBuiltinWrites();
@@ -50,8 +90,12 @@ public:
     PassOutcome summarizeForInlining();
     PassOutcome removeUnreadExports();
     PassOutcome deferDefinitions();
+    PassOutcome narrowConstantVariables();
+    PassOutcome deferInitializers();
+    PassOutcome markResultsUsedAsKeys();
     PassOutcome deferClosuresInFields();
     PassOutcome promoteEnvironmentsToVariables();
+    PassOutcome readCapturesFromEnvironments();
     PassOutcome removeUnreadFields();
     PassOutcome removeUnusedResults();
     PassOutcome removeUnusedParameters();
@@ -59,21 +103,31 @@ public:
     PassOutcome splitFreshResults();
     PassOutcome promoteAggregateParameters();
     PassOutcome splitCoroutines();
+    PassOutcome callModules();
     PassOutcome createEntrypoints();
-    PassOutcome groupCallsByValue();
     PassOutcome chooseCallingConventions();
     PassOutcome allocateInFrames();
+    PassOutcome allocateInnerObjects();
+    PassOutcome flattenInnerObjects();
     PassOutcome reuseEnvironments();
     PassOutcome numberLiteralStrings();
     PassOutcome embedConstantCollections();
     PassOutcome collectRegExpLiterals();
-    PassOutcome outlineColdOperations();
-    PassOutcome splitFunctionsAtCalls();
+    PassOutcome outlineColdOperations(OutliningSiteFinder* = nullptr, const ReadersOfOutlinedFunctions* = nullptr);
+    PassOutcome inlineHeads(const ReaderOfScheduledFunction* readEditedFunction = nullptr);
     PassOutcome elideStackChecks();
     PassOutcome planSlots();
     PassOutcome numberAndEncode();
     PassOutcome placeSiteCaches();
     PassOutcome checkPlacement();
+
+    void planSlotsBesideOtherReadersOfPreparedBodies();
+    PassOutcome numberAndEncodeBesideOtherReadersOfSelectedBodies();
+    PassOutcome numberAndEncode(NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites);
+    void collectRegExpsAndElideStackChecks(const CallGraph&);
+    // The stages NumberAndEncode and ChooseRepresentations as one. It says when a step has ended.
+    void numberBesideChoosingRepresentations(NOESCAPE const ScopedLambda<void(ASCIILiteral)>& didFinish);
+    PlacementInputs createPlacementInputs(const CallGraph&);
 
     Program& program() { return m_program; }
     PassRunner& runner() { return m_runner; }
@@ -81,11 +135,19 @@ public:
     PipelineOutput& output() { return *m_output; }
     const FlowResults& flow() const { return *m_output->flow; }
 
-    OptimizationInputs createInputs(OptionSet<ProgramResult> needed);
-    OptimizationInputs inputsFor(PassID id) { return createInputs(descriptorOf(id).inputs); }
-    OptimizationInputs inputsFor(FunctionSchedule schedule) { return createInputs(inputsOf(schedule)); }
+    OptimizationInputs createInputs(OptionSet<ProgramResult> needed, EffectSummariesFor = EffectSummariesFor::Reader);
+    OptimizationInputs inputsFor(PassID id) { return createInputs(descriptorOf(id).inputs, readsEffectSummaries(id) ? EffectSummariesFor::Reader : EffectSummariesFor::Nobody); }
+    OptimizationInputs inputsFor(FunctionSchedule schedule) { return createInputs(inputsOf(schedule), readsEffectSummaries(schedule) ? EffectSummariesFor::Reader : EffectSummariesFor::Nobody); }
 
 private:
+    // To bring the effect summaries up to date is to read every body that has changed and to solve the program again. That pays where functions are optimized, where objects are
+    // put into frames, where operations are selected and where code is made. To every other program pass and loop a call is unknown code, whatever state the summaries are in.
+    static bool readsEffectSummaries(PassID id)
+    {
+        return descriptorOf(id).scope == PassScope::Function || id == PassID::AllocateInFrames || id == PassID::OutlineColdOperations;
+    }
+    static bool readsEffectSummaries(FunctionSchedule schedule) { return schedule != FunctionSchedule::Resolve && schedule != FunctionSchedule::Represent; }
+
     template<typename Functor>
     auto edit(PassID id, const Functor& functor)
     {
@@ -94,10 +156,10 @@ private:
     }
 
     template<typename Functor>
-    auto editProgram(PassID id, const Functor& functor)
+    auto editProgram(PassID id, const Functor& functor, BodiesAreChanged bodiesAreChanged = BodiesAreChanged::Anyhow)
     {
         inputsFor(id);
-        return m_runner.runProgramPassWithoutEditor(id, m_program, m_analyses, functor);
+        return m_runner.runProgramPassWithoutEditor(id, m_program, m_analyses, functor, bodiesAreChanged);
     }
 
     template<typename Functor>
@@ -116,6 +178,9 @@ private:
     BuildContext& m_build;
     ProgramAnalyses m_analyses;
     PlacedTableSizes m_placedTableSizes;
+    // From the loop that selects until the bodies are numbered.
+    std::unique_ptr<FactsOfSelectedBodies> m_factsOfSelectedBodies;
+    Vector<Int32ParameterCandidate> m_int32ParameterCandidates;
 };
 
 void computeResultsForTesting(Pipeline&, OptionSet<ProgramResult> needed);

@@ -140,19 +140,21 @@ Value makeStringRangeRead(Opcode read, ValueID string, std::optional<StringRange
     return value;
 }
 
-static Vector<RangeCall> collectRangeCalls(FunctionPassContext& context)
+BuiltinCallSites collectBuiltinCallSites(FunctionPassContext& context)
+{
+    return BuiltinCallSites(context.sitesIn(SiteList::BuiltinCalls));
+}
+
+static Vector<RangeCall> collectRangeCalls(FunctionPassContext& context, const BuiltinCallSites& sites)
 {
     const Function& function = context.function;
     Vector<RangeCall> calls;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
-        const Value& value = function.at(site.value);
-        if (value.opcode != Opcode::CallBuiltin)
-            return;
-        std::optional<StringRangeSource> source = stringRangeSourceOf(context.program, function, value);
+    for (const ValueSite& site : sites) {
+        std::optional<StringRangeSource> source = stringRangeSourceOf(context.program, function, function.at(site.value));
         // A Substring does not say that it holds at most one unit, and selection reads the code unit of charAt and at only from the call.
         if (source && !source->isSingleUnit())
             calls.append(RangeCall { site, *source });
-    });
+    }
     return calls;
 }
 
@@ -162,21 +164,20 @@ static bool hasRangeAppendForm(const Program& program, const Value& call)
     return forms && (forms->appendForm == InlineBuiltin::StringSliceAppend || forms->appendForm == InlineBuiltin::StringSubstringAppend);
 }
 
-static Vector<RangeCall> collectAppendedRangeCalls(FunctionPassContext& context)
+static Vector<RangeCall> collectAppendedRangeCalls(FunctionPassContext& context, const BuiltinCallSites& sites)
 {
     const Function& function = context.function;
-    const UseLists& useLists = context.analyses.useLists();
     Vector<RangeCall> calls;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
+    for (const ValueSite& site : sites) {
         const Value& value = function.at(site.value);
-        if (value.opcode != Opcode::CallBuiltin || !hasRangeAppendForm(context.program, value))
-            return;
-        std::optional<Use> use = useLists.singleUse(site.value);
+        if (!hasRangeAppendForm(context.program, value))
+            continue;
+        std::optional<Use> use = context.analyses.useLists().singleUse(site.value);
         if (!use || use->kind != Use::Kind::Operand || use->block != site.block || function.at(use->user).opcode != Opcode::StringBuilderAppend)
-            return;
+            continue;
         if (std::optional<StringRangeSource> source = stringRangeSourceOf(context.program, function, value))
             calls.append(RangeCall { site, *source });
-    });
+    }
     return calls;
 }
 
@@ -194,7 +195,7 @@ static PassOutcome expandRangeCalls(FunctionPassContext& context, const Vector<R
         builder.setOrigin(function.at(call.site.value).origin());
         StringRangeBounds bounds = insertStringRange(builder, call.site.point(), call.source, std::nullopt);
 
-        Value& value = function.at(call.site.value);
+        Value& value = function.edit(call.site.value);
         value.become(Opcode::Substring);
         value.setStringOperand(call.source.string);
         value.setStartOperand(bounds.start);
@@ -206,14 +207,14 @@ static PassOutcome expandRangeCalls(FunctionPassContext& context, const Vector<R
     return PassOutcome::Changed;
 }
 
-PassOutcome expandStringRanges(FunctionPassContext& context)
+PassOutcome expandStringRanges(FunctionPassContext& context, const BuiltinCallSites& sites)
 {
-    return expandRangeCalls(context, collectRangeCalls(context));
+    return expandRangeCalls(context, collectRangeCalls(context, sites));
 }
 
 PassOutcome expandAppendedStringRanges(FunctionPassContext& context)
 {
-    return expandRangeCalls(context, collectAppendedRangeCalls(context));
+    return expandRangeCalls(context, collectAppendedRangeCalls(context, collectBuiltinCallSites(context)));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -171,7 +171,7 @@ static void emitReverseSearch(FunctionPassContext& context, IRBuilder& builder, 
     ValueID start = insertStartOfLastPiece(context, builder, piece, string);
     ValueID end = builder.insertBefore(piece.read.point(), IRBuilder::make(Opcode::GetStringLength, { string }));
 
-    Value& read = function.at(piece.read.value);
+    Value& read = function.edit(piece.read.value);
     read.become(Opcode::Substring);
     read.setStringOperand(string);
     read.setStartOperand(start);
@@ -216,9 +216,16 @@ static void emitForwardWalks(FunctionPassContext& context, IRBuilder& builder, s
     builder.setHandler(std::nullopt);
 }
 
-unsigned simplifyLastPiecesOfSplits(FunctionPassContext& context)
+unsigned simplifyLastPiecesOfSplits(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;
+    // The read may be an operation of any kind. What it reads is the result of a call.
+    bool hasSplit = std::ranges::any_of(calls, [&](const ValueSite& site) {
+        return !!splitStringOf(context, function.at(site.value));
+    });
+    if (!hasSplit)
+        return 0;
+
     Vector<LastPiece> pieces;
     forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
         if (std::optional<LastPiece> piece = matchLastPiece(context, site))

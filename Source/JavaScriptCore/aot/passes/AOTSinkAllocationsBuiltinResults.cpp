@@ -42,22 +42,18 @@ static const VirtualShape* findDeliveredShape(const VirtualFamily& family, uint3
     return nullptr;
 }
 
-static bool hasOnlyRequiredFields(const Program& program, LayoutID layout, uint32_t numberOfParts)
+static bool deliversEveryField(const Program& program, LayoutID layout, uint32_t numberOfParts)
 {
     BuiltinLayoutID builtinLayout = program.at(layout).builtinLayout;
-    if (!builtinLayout)
-        return false;
-    std::span<const BuiltinLayoutField> fields = program.builtins().at(builtinLayout).fields;
-    return fields.size() == numberOfParts && std::ranges::none_of(fields, &BuiltinLayoutField::isOptional);
+    return builtinLayout && program.builtins().at(builtinLayout).fields.size() == numberOfParts;
 }
 
 static void retypeProducer(const Program& program, IRBuilder& builder, ValueID producer)
 {
     Function& function = builder.function();
-    Value& value = function.at(producer);
+    Value& value = function.edit(producer);
     value.type = resultTypeOf(program, function, value, builder.types());
-    value.setWritten(writtenTypeOf(program, function, value, builder.types()));
-    value.setPrediction(predictionOf(program, function, value, builder.types()));
+    value.setExpected(expectedTypeOf(program, function, value, builder.types()));
 }
 
 static ValueID emitResult(IRBuilder& builder, ValueID producer, uint32_t resultIndex)
@@ -109,7 +105,7 @@ Execution ObjectInterpreter::executeBuiltinResult(ValueID call, VirtualObjectID 
     RELEASE_ASSERT(indexes);
     if (description.absentResult && !indexes->presence)
         return leaveWhole();
-    if (!isPrefix && !hasOnlyRequiredFields(program(), description.layout, indexes->numberOfParts))
+    if (!isPrefix && !deliversEveryField(program(), description.layout, indexes->numberOfParts))
         return leaveWhole();
 
     VirtualShape present;
@@ -153,9 +149,9 @@ Execution ObjectInterpreter::executeBuiltinResult(ValueID call, VirtualObjectID 
     }
 
     IRBuilder& builder = cursor().builder();
-    builder.function().at(call).setBuiltinCallForm(form);
+    builder.function().edit(call).setBuiltinCallForm(form);
     if (isPrefix)
-        builder.function().at(call).setPrefixLength(prefixLength);
+        builder.function().edit(call).setPrefixLength(prefixLength);
     keep(call);
     retypeProducer(program(), builder, call);
     m_state.add(object, WTF::move(state));

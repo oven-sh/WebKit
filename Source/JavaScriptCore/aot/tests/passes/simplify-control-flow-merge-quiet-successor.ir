@@ -1,7 +1,7 @@
 # A block without a handler in which nothing may throw merges into its covered predecessor, and the result keeps the handler
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
-# STATISTIC: SimplifyControlFlowChanges = 3
+# STATISTIC: SimplifyControlFlowChanges = 4
 # CHECK: outcome: Changed
 # RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
 # AGAIN: outcome: Changed
@@ -101,21 +101,21 @@ function f5 name="successorThrows" parameters=[{type=function}] results=[{type=a
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Throw v1
 
-function f6 name="successorClaims" parameters=[{type=function}] results=[{type=anything}] {
+function f6 name="successorHasCastThatMayThrow" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
     v1 = Call v0
     Jump -> next b1()
   b1():
-    v2 = Claim v1 castType=number
+    v2 = RequireObjectCoercible v1 nullishAccess=Read name="x"
     Return v2
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
 }
-# CHECK-LABEL: function f6 name="successorClaims"
+# CHECK-LABEL: function f6 name="successorHasCastThatMayThrow"
 # CHECK: Jump -> next b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: = Claim v1 castType=number
+# CHECK-NEXT: = RequireObjectCoercible v1
 
 function f7 name="successorEndsInTailCall" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -133,3 +133,21 @@ function f7 name="successorEndsInTailCall" parameters=[{type=function}] results=
 # CHECK-NEXT: b1():
 # CHECK-NEXT: = CallDirect function=f0
 # CHECK-NEXT: ReturnCall v2
+
+function f8 name="successorChecks" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    v2 = Check v1 castType=number
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# A check that fails throws nothing.
+# CHECK-LABEL: function f8 name="successorChecks"
+# CHECK: b0(v0: function) handler=b2():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Check v1 castType=number
+# CHECK-NEXT: Return v2

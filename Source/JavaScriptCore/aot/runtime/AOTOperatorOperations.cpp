@@ -126,10 +126,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryConvertToInteger, int64_t, (Enc
         JSValue other = JSValue::decode(value); \
         JSValue result = bits.numberIsOnRight ? function(globalObject, other, boxed) : function(globalObject, boxed, other); \
         OPERATION_RETURN_IF_EXCEPTION(scope, 0); \
-        if (!result.isNumber()) [[unlikely]] { \
-            throwTypeMismatch(instance, globalObject, scope, result, bits.type); \
-            OPERATION_RETURN(scope, 0); \
-        } \
+        RELEASE_ASSERT(result.isNumber()); \
         OPERATION_RETURN(scope, result.asNumber()); \
     }
 AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTAddNumberAndValueAsNumber, jsAdd)

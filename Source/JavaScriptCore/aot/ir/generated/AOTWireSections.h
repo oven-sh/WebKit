@@ -45,6 +45,10 @@ struct Sections {
     std::span<const ModuleFailure> moduleFailures;
     std::span<const EvalScope> evalScopes;
     std::span<const EvalBinding> evalBindings;
+    std::span<const RelationSubject> relationSubjects;
+    std::span<const StoredInto> storedIntos;
+    std::span<const HandedTo> handedTos;
+    std::span<const OperandOf> operandsOf;
     std::span<const Function> functions;
     std::span<const uint32_t> code;
     std::span<const DataNode> dataNodes;
@@ -80,6 +84,10 @@ template<> inline std::span<const ColumnAdjustment> Sections::listOf<ColumnAdjus
 template<> inline std::span<const ModuleFailure> Sections::listOf<ModuleFailure>() const { return moduleFailures; }
 template<> inline std::span<const EvalScope> Sections::listOf<EvalScope>() const { return evalScopes; }
 template<> inline std::span<const EvalBinding> Sections::listOf<EvalBinding>() const { return evalBindings; }
+template<> inline std::span<const RelationSubject> Sections::listOf<RelationSubject>() const { return relationSubjects; }
+template<> inline std::span<const StoredInto> Sections::listOf<StoredInto>() const { return storedIntos; }
+template<> inline std::span<const HandedTo> Sections::listOf<HandedTo>() const { return handedTos; }
+template<> inline std::span<const OperandOf> Sections::listOf<OperandOf>() const { return operandsOf; }
 template<> inline std::span<const Function> Sections::listOf<Function>() const { return functions; }
 template<> inline std::span<const DataNode> Sections::listOf<DataNode>() const { return dataNodes; }
 template<> inline std::span<const DataMember> Sections::listOf<DataMember>() const { return dataMembers; }
@@ -119,6 +127,10 @@ struct SectionVectors {
     Vector<ModuleFailure> moduleFailures;
     Vector<EvalScope> evalScopes;
     Vector<EvalBinding> evalBindings;
+    Vector<RelationSubject> relationSubjects;
+    Vector<StoredInto> storedIntos;
+    Vector<HandedTo> handedTos;
+    Vector<OperandOf> operandsOf;
     Vector<Function> functions;
     Vector<uint32_t> code;
     Vector<DataNode> dataNodes;
@@ -154,6 +166,10 @@ template<> inline Vector<ColumnAdjustment>& SectionVectors::listOf<ColumnAdjustm
 template<> inline Vector<ModuleFailure>& SectionVectors::listOf<ModuleFailure>() { return moduleFailures; }
 template<> inline Vector<EvalScope>& SectionVectors::listOf<EvalScope>() { return evalScopes; }
 template<> inline Vector<EvalBinding>& SectionVectors::listOf<EvalBinding>() { return evalBindings; }
+template<> inline Vector<RelationSubject>& SectionVectors::listOf<RelationSubject>() { return relationSubjects; }
+template<> inline Vector<StoredInto>& SectionVectors::listOf<StoredInto>() { return storedIntos; }
+template<> inline Vector<HandedTo>& SectionVectors::listOf<HandedTo>() { return handedTos; }
+template<> inline Vector<OperandOf>& SectionVectors::listOf<OperandOf>() { return operandsOf; }
 template<> inline Vector<Function>& SectionVectors::listOf<Function>() { return functions; }
 template<> inline Vector<DataNode>& SectionVectors::listOf<DataNode>() { return dataNodes; }
 template<> inline Vector<DataMember>& SectionVectors::listOf<DataMember>() { return dataMembers; }
@@ -192,6 +208,10 @@ void SectionVectors::forEachList(const Functor& functor) const
     functor(Typed::ProgramList::ModuleFailures, asByteSpan(moduleFailures.span()), static_cast<uint32_t>(moduleFailures.size()));
     functor(Typed::ProgramList::EvalScopes, asByteSpan(evalScopes.span()), static_cast<uint32_t>(evalScopes.size()));
     functor(Typed::ProgramList::EvalBindings, asByteSpan(evalBindings.span()), static_cast<uint32_t>(evalBindings.size()));
+    functor(Typed::ProgramList::RelationSubjects, asByteSpan(relationSubjects.span()), static_cast<uint32_t>(relationSubjects.size()));
+    functor(Typed::ProgramList::StoredIntos, asByteSpan(storedIntos.span()), static_cast<uint32_t>(storedIntos.size()));
+    functor(Typed::ProgramList::HandedTos, asByteSpan(handedTos.span()), static_cast<uint32_t>(handedTos.size()));
+    functor(Typed::ProgramList::OperandsOf, asByteSpan(operandsOf.span()), static_cast<uint32_t>(operandsOf.size()));
     functor(Typed::ProgramList::Functions, asByteSpan(functions.span()), static_cast<uint32_t>(functions.size()));
     functor(Typed::ProgramList::Code, asByteSpan(code.span()), static_cast<uint32_t>(code.size()));
     functor(Typed::ProgramList::DataNodes, asByteSpan(dataNodes.span()), static_cast<uint32_t>(dataNodes.size()));

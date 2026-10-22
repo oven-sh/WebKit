@@ -114,22 +114,6 @@ static bool passesValuesOf(const Block& block, const Arguments& passed)
     });
 }
 
-// A prediction proves nothing, so an edge that skips it passes what it was made of.
-static ValueID valueBehindPredictions(const Function& function, const Block& block, ValueID value)
-{
-    while (function.at(value).opcode == Opcode::Predict && block.values.contains(value))
-        value = function.at(value).valueOperand();
-    return value;
-}
-
-static Arguments argumentsWithoutTestAndPredictions(const Function& function, Edge edge)
-{
-    Arguments passed = argumentsWithoutTest(function, edge);
-    for (ValueID& argument : passed)
-        argument = valueBehindPredictions(function, function.at(edge.from), argument);
-    return passed;
-}
-
 namespace {
 
 class EdgeThreader {
@@ -173,7 +157,7 @@ protected:
 
     std::optional<Target> createThreadedTarget(const Block& mergePoint, Edge chosenEdge, const Arguments& incomingArguments) const
     {
-        Target target = substituteParameters(mergePoint, targetOf(m_function, chosenEdge).block, argumentsWithoutTestAndPredictions(m_function, chosenEdge), incomingArguments);
+        Target target = substituteParameters(mergePoint, targetOf(m_function, chosenEdge).block, argumentsWithoutTest(m_function, chosenEdge), incomingArguments);
         if (hasEdgeResults(m_function, chosenEdge) && !argumentsFitParameters(m_program, m_function, target))
             return std::nullopt;
         return target;
@@ -353,11 +337,13 @@ private:
                 addDefinition(value);
         }
 
-        Terminator dispatch = std::exchange(m_function.at(copied.copy).terminator, Terminator { });
+        Terminator dispatch = std::exchange(m_function.edit(copied.copy).terminator, Terminator { });
         Target& chosen = dispatch.targets[targetIndex];
         m_builder.setOrigin(dispatch.origin());
         m_builder.moveToEndOf(copied.copy);
         m_builder.emitJump(chosen.block, WTF::move(chosen.arguments));
+        // The builder reports the jump, not the terminator in whose place it stands.
+        m_analyses.didChangeControlFlow();
         didAddEdge(Edge { copied.copy, 0 });
 
         BlockID copy = copied.copy;
@@ -425,10 +411,12 @@ private:
         Target taken = substituteParameters(mergePoint, branch.taken().block, branch.taken().arguments, incomingArguments);
         Target notTaken = substituteParameters(mergePoint, branch.notTaken().block, branch.notTaken().arguments, incomingArguments);
 
-        m_function.at(source).terminator = Terminator { };
+        m_function.edit(source).terminator = Terminator { };
         m_builder.setOrigin(origin);
         m_builder.moveToEndOf(source);
         m_builder.emitBranch(condition, WTF::move(taken), WTF::move(notTaken));
+        // The builder reports the branch, not the terminator in whose place it stands.
+        m_analyses.didChangeControlFlow();
         didAddEdge(Edge { source, 0 });
         didAddEdge(Edge { source, 1 });
         m_outcome = PassOutcome::Changed;
@@ -451,16 +439,32 @@ public:
         copyConstantsToUsersOutsideBlocks();
         collectIncomingEdges();
         findUsersOutsideBlocks();
+        numberDominatorTree();
         for (BlockID candidate : m_candidates)
             threadEdgesInto(candidate);
+        passParametersAlongSkippingEdges();
         return m_outcome;
     }
 
 private:
+    enum class UsersBelow : uint8_t { None, Some, Unknown };
+
+    struct SkippingEdge {
+        Edge edge;
+        uint32_t targetIndex { 0 };
+    };
+
+    struct PassedParameters {
+        BlockID mergePoint;
+        Arguments original;
+        Arguments passed;
+    };
+
     void findCandidates()
     {
         const CFG& cfg = m_analyses.cfg();
         for (BlockID block : cfg.reversePostOrder()) {
+            m_hasHandlers |= m_function.at(block).isHandlerBlock();
             if (isMergePoint(cfg, block) && !isLoopHeader(cfg, block) && canSkip(m_function.at(block)) && hasDecidedEdge(cfg, block))
                 m_candidates.append(block);
         }
@@ -474,7 +478,7 @@ private:
         if (!block.parameters.contains(tested) && !block.values.contains(tested))
             return false;
         bool canRemoveValues = std::ranges::all_of(block.values, [&](ValueID value) {
-            return m_analyses.effectsOf(value).onAnyEdge().isRemovableWhenUnused();
+            return m_analyses.isRemovableWhenUnused(value);
         });
         return canRemoveValues && !m_context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size(), tested);
     }
@@ -499,21 +503,24 @@ private:
         };
         for (ValueID id : mergePoint.values) {
             KnownValue value = evaluateWithKnownOperands(m_program, m_function, m_function.at(id), lookUp);
-            known.append({ id, value.isKnown() ? value : evaluateTypeTestOfArgument(mergePoint, m_function.at(id), incomingArguments) });
+            known.append({ id, value.isKnown() ? value : evaluateTestOfArgument(mergePoint, m_function.at(id), incomingArguments) });
         }
         return lookUp(testedValueOf(mergePoint.terminator));
     }
 
     // The type of what an edge passes may decide a test that the type of the parameter leaves open.
-    KnownValue evaluateTypeTestOfArgument(const Block& mergePoint, const Value& test, const Arguments& incomingArguments) const
+    KnownValue evaluateTestOfArgument(const Block& mergePoint, const Value& test, const Arguments& incomingArguments) const
     {
-        if (test.opcode != Opcode::TypeTest)
+        if (test.opcode != Opcode::TypeTest && test.opcode != Opcode::IsClosureOf)
             return { };
-        ValueID tested = valueBehindPredictions(m_function, mergePoint, test.valueOperand());
+        ValueID tested = test.valueOperand();
         if (!mergePoint.parameters.contains(tested))
             return { };
         const Type& passed = m_program.typeOf(m_function, substituteParameter(mergePoint, tested, incomingArguments));
-        switch (evaluateTypeTest(m_program, passed, m_context.types.at(test.testedType()))) {
+        KnownBoolean result = test.opcode == Opcode::TypeTest
+            ? evaluateTypeTest(m_program, passed, m_context.types.at(test.testedType()))
+            : evaluateIsClosureOf(m_program, passed, test.function());
+        switch (result) {
         case KnownBoolean::Unknown:
             return { };
         case KnownBoolean::False:
@@ -555,6 +562,8 @@ private:
             replaceUse(m_function, outside.use, m_builder.insertBefore(outside.point, WTF::move(copy)));
         }
         m_builder.applyInsertions();
+        // The builder reports the copies, not the uses that now name them.
+        m_analyses.didChangeValues();
         m_outcome = PassOutcome::Changed;
     }
 
@@ -567,7 +576,7 @@ private:
             auto addUsersOf = [&](ValueID definition) {
                 m_definingCandidate[definition] = candidate;
                 for (const Use& use : useLists.usesOf(definition))
-                    addUserOutsideBlock(candidate, use.block);
+                    addUserOutsideBlock(candidate, definition, use.block);
             };
             const Block& mergePoint = m_function.at(candidate);
             for (ValueID parameter : mergePoint.parameters)
@@ -577,17 +586,43 @@ private:
         }
     }
 
-    void addUserOutsideBlock(BlockID candidate, BlockID user)
+    void addUserOutsideBlock(BlockID candidate, ValueID definition, BlockID user)
     {
-        if (user != candidate)
-            m_usersOutsideBlock[candidate].add(user);
+        if (user == candidate)
+            return;
+        m_usersOutsideBlock[candidate].add(user);
+        if (!m_function.at(candidate).parameters.contains(definition))
+            m_computesValuesForOthers.add(candidate);
     }
 
-    bool reachesUser(BlockID candidate, BlockID start)
+    void numberDominatorTree()
+    {
+        m_firstInSubtree = IndexMap<BlockID, uint32_t>(m_function.blocks.size());
+        m_lastInSubtree = IndexMap<BlockID, uint32_t>(m_function.blocks.size());
+        m_numberOfNumberedBlocks = m_function.blocks.size();
+        uint32_t number = 0;
+        m_analyses.dominators().walkTree([&](BlockID block) {
+            m_firstInSubtree[block] = ++number;
+        }, [&](BlockID block) {
+            m_lastInSubtree[block] = number;
+        });
+    }
+
+    // A block made since the tree was numbered counts as dominated.
+    bool wasDominatedBy(BlockID candidate, BlockID block) const
+    {
+        if (block.index() >= m_numberOfNumberedBlocks)
+            return true;
+        return m_firstInSubtree[block] >= m_firstInSubtree[candidate] && m_firstInSubtree[block] <= m_lastInSubtree[candidate];
+    }
+
+    // The block dominates its users, so a way to a user that does not pass through the block leads only through what the block dominates. An edge that this pass has redirected stands for
+    // a way through another candidate, which led through the same blocks.
+    UsersBelow findUsersBelow(BlockID candidate, BlockID start)
     {
         const IndexSet<BlockID>& users = m_usersOutsideBlock[candidate];
-        if (users.isEmpty())
-            return false;
+        if (users.isEmpty() || !wasDominatedBy(candidate, start))
+            return UsersBelow::None;
         IndexSet<BlockID> seen;
         seen.add(candidate);
         seen.add(start);
@@ -596,26 +631,32 @@ private:
         while (!worklist.isEmpty()) {
             BlockID block = worklist.takeLast();
             if (users.contains(block))
-                return true;
+                return UsersBelow::Some;
             if (!remainingSteps--) {
                 m_context.gaveUp(LimitID::MaxThreadingReachabilitySteps, testedValueOf(m_function.at(candidate).terminator));
-                return true;
+                return UsersBelow::Unknown;
             }
             m_function.at(block).forEachTarget([&](const Target& target) {
-                if (seen.add(target.block))
+                if (wasDominatedBy(candidate, target.block) && seen.add(target.block))
                     worklist.append(target.block);
             });
         }
-        return false;
+        return UsersBelow::None;
     }
 
-    bool canJumpDirectlyAlong(Edge chosenEdge)
+    std::optional<UsersBelow> findUsersBelowSkippedTest(Edge chosenEdge)
     {
         if (!canFollowWithoutTest(m_function, chosenEdge))
-            return false;
-        if (passesValuesOf(m_function.at(chosenEdge.from), argumentsWithoutTestAndPredictions(m_function, chosenEdge)))
-            return false;
-        return !reachesUser(chosenEdge.from, targetOf(m_function, chosenEdge).block);
+            return std::nullopt;
+        if (passesValuesOf(m_function.at(chosenEdge.from), argumentsWithoutTest(m_function, chosenEdge)))
+            return std::nullopt;
+        return findUsersBelow(chosenEdge.from, targetOf(m_function, chosenEdge).block);
+    }
+
+    // An edge that skips the block has a value for each of its parameters. What the block computes exists only behind it.
+    bool canPassParametersAlong(BlockID mergePoint) const
+    {
+        return !m_hasHandlers && !m_computesValuesForOthers.contains(mergePoint);
     }
 
     void threadEdgesInto(BlockID candidate)
@@ -624,31 +665,284 @@ private:
         const Terminator& terminator = mergePoint.terminator;
         if (hasEdgeTo(terminator, candidate))
             return;
-        Vector<std::optional<bool>, 2> canJumpDirectlyTo(FillWith { }, terminator.targets.size(), std::nullopt);
+        Vector<std::optional<std::optional<UsersBelow>>, 2> usersBelowTargets(FillWith { }, terminator.targets.size(), std::nullopt);
         for (Edge edge : m_incomingEdges[candidate]) {
             const Arguments& incomingArguments = targetOf(m_function, edge).arguments;
             std::optional<uint32_t> targetIndex = decidedTargetOf(terminator, evaluateBranch(mergePoint, incomingArguments));
             if (!targetIndex)
                 continue;
             Edge chosenEdge { candidate, *targetIndex };
-            std::optional<bool>& canJumpDirectly = canJumpDirectlyTo[*targetIndex];
-            if (!canJumpDirectly)
-                canJumpDirectly = canJumpDirectlyAlong(chosenEdge);
-            if (!*canJumpDirectly)
+            std::optional<std::optional<UsersBelow>>& usersBelow = usersBelowTargets[*targetIndex];
+            if (!usersBelow)
+                usersBelow = findUsersBelowSkippedTest(chosenEdge);
+            if (!*usersBelow || **usersBelow == UsersBelow::Unknown)
                 continue;
+            if (**usersBelow == UsersBelow::Some) {
+                m_skippingEdges.append({ edge, *targetIndex });
+                continue;
+            }
             std::optional<Target> target = createThreadedTarget(mergePoint, chosenEdge, incomingArguments);
             if (!target)
                 continue;
             for (ValueID argument : target->arguments) {
                 if (BlockID definingCandidate = m_definingCandidate[argument])
-                    addUserOutsideBlock(definingCandidate, edge.from);
+                    addUserOutsideBlock(definingCandidate, argument, edge.from);
             }
             redirect(edge, WTF::move(*target));
         }
     }
 
+    // The edge goes through a block of its own with the parameters of the block that it skips: each is one more definition of what the parameter stands for,
+    // and the joins below get parameters for the two. The block holds no code.
+    void passParametersAlongSkippingEdges()
+    {
+        Vector<PassedParameters, 4> passed;
+        for (auto [edge, targetIndex] : m_skippingEdges) {
+            BlockID mergePoint = targetOf(m_function, edge).block;
+            Edge chosenEdge { mergePoint, targetIndex };
+            if (!m_isCandidate.contains(mergePoint) || !canPassParametersAlong(mergePoint))
+                continue;
+            Arguments incomingArguments = targetOf(m_function, edge).arguments;
+            if (!createThreadedTarget(m_function.at(mergePoint), chosenEdge, incomingArguments))
+                continue;
+
+            BlockID target = targetOf(m_function, chosenEdge).block;
+            Arguments argumentsOfChosenEdge = argumentsWithoutTest(m_function, chosenEdge);
+            m_builder.setOrigin(m_function.at(mergePoint).terminator.origin());
+            BlockID skippingBlock = m_builder.addBlock(m_function.at(edge.from).frequency);
+            Arguments parameters;
+            for (ValueID argument : incomingArguments)
+                parameters.append(m_builder.addParameter(skippingBlock, m_function.at(argument).type));
+            Target next = substituteParameters(m_function.at(mergePoint), target, argumentsOfChosenEdge, parameters);
+            m_builder.moveToEndOf(skippingBlock);
+            m_builder.emitJump(next.block, WTF::move(next.arguments));
+            redirect(edge, Target { skippingBlock, WTF::move(incomingArguments), { } });
+            passed.append({ mergePoint, m_function.at(mergePoint).parameters, WTF::move(parameters) });
+        }
+        if (passed.isEmpty())
+            return;
+
+        m_builder.emptyUnreachableBlocks();
+        SSARepair repair(m_builder, m_analyses);
+        for (size_t first = 0; first < passed.size(); ++first) {
+            BlockID mergePoint = passed[first].mergePoint;
+            bool isFirstOfMergePoint = std::ranges::none_of(passed.span().first(first), [&](const PassedParameters& earlier) {
+                return earlier.mergePoint == mergePoint;
+            });
+            if (!isFirstOfMergePoint)
+                continue;
+            for (size_t index = 0; index < passed[first].original.size(); ++index) {
+                SSARepair::Variable variable = repair.addVariable(passed[first].original[index]);
+                for (const PassedParameters& other : passed.span().subspan(first)) {
+                    if (other.mergePoint == mergePoint)
+                        repair.addDefinition(variable, other.passed[index]);
+                }
+            }
+        }
+        repair.run();
+    }
+
     IndexMap<ValueID, BlockID> m_definingCandidate;
     IndexMap<BlockID, IndexSet<BlockID>> m_usersOutsideBlock;
+    IndexMap<BlockID, uint32_t> m_firstInSubtree;
+    IndexMap<BlockID, uint32_t> m_lastInSubtree;
+    size_t m_numberOfNumberedBlocks { 0 };
+    IndexSet<BlockID> m_computesValuesForOthers;
+    Vector<SkippingEdge, 4> m_skippingEdges;
+    bool m_hasHandlers { false };
+};
+
+// Each run of RepeatedTestThreader takes one step along a row of equal tests, and every step costs a round of the passes beside this one. A row of calls of one function is short.
+static const Value* findFunctionTestBranchedOn(const FunctionPassContext& context, const Block& block)
+{
+    if (block.terminator.kind != TerminatorKind::Branch)
+        return nullptr;
+    const Value& condition = context.function.at(block.terminator.conditionOperand());
+    if (condition.opcode != Opcode::TypeTest)
+        return nullptr;
+    const Type& tested = context.types.at(condition.testedType());
+    bool listsOnlyFunctions = !tested.functions.isEmpty() && tested.hasOnlyKnownCallees() && !tested.primitives && !tested.layouts && tested.builtins.isEmpty();
+    return listsOnlyFunctions ? &condition : nullptr;
+}
+
+static bool hasTwoFunctionTestsForOneType(const FunctionPassContext& context)
+{
+    Vector<TypeID, 8> testedTypes;
+    for (const Block& block : context.function.blocks) {
+        const Value* test = findFunctionTestBranchedOn(context, block);
+        if (!test)
+            continue;
+        if (testedTypes.contains(test->testedType()))
+            return true;
+        testedTypes.append(test->testedType());
+    }
+    return false;
+}
+
+// Two ways part at a test of a value for a type, come together again, and the same test of the same value follows: `f(f(x))` where f may be one of the functions that its type lists or any other.
+// Each way knows how the test ends. It gets a copy of the block with the test, which the first test then dominates, so that PropagateBranchConditions decides the copy,
+// and what the ways computed in between is no longer merged.
+class RepeatedTestThreader : public EdgeThreader {
+public:
+    using EdgeThreader::EdgeThreader;
+
+    PassOutcome run()
+    {
+        collectTests();
+        if (m_tests.isEmpty())
+            return PassOutcome::Unchanged;
+        findCandidates();
+        if (m_candidates.isEmpty())
+            return PassOutcome::Unchanged;
+        collectIncomingEdges();
+
+        Vector<DecidedEdge, 8> decidedEdges;
+        for (BlockID candidate : m_candidates) {
+            for (Edge edge : m_incomingEdges[candidate]) {
+                if (isDecidedAt(candidate, edge.from))
+                    decidedEdges.append({ candidate, edge });
+            }
+        }
+        for (const DecidedEdge& decided : decidedEdges)
+            giveCopyTo(decided);
+        mergeCopiedDefinitions();
+        return m_outcome;
+    }
+
+private:
+    struct Test {
+        ValueID subject;
+        TypeID testedType;
+        BlockID block;
+
+        auto key() const { return std::tuple { subject.index(), testedType.index() }; }
+    };
+
+    struct DecidedEdge {
+        BlockID mergePoint;
+        Edge edge;
+    };
+
+    struct Copy {
+        BlockID original;
+        Arguments originalDefinitions;
+        Arguments copiedDefinitions;
+    };
+
+    void collectTests()
+    {
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (const Value* test = findFunctionTestBranchedOn(m_context, m_function.at(block)))
+                m_tests.append({ test->valueOperand(), test->testedType(), block });
+        }
+        // The identities of values are asked for only where two tests are for one type.
+        std::ranges::stable_sort(m_tests, { }, &Test::testedType);
+        Vector<Test> repeated;
+        for (size_t index = 0; index < m_tests.size(); ++index) {
+            bool equalsPrevious = index && m_tests[index - 1].testedType == m_tests[index].testedType;
+            bool equalsNext = index + 1 < m_tests.size() && m_tests[index + 1].testedType == m_tests[index].testedType;
+            if (equalsPrevious || equalsNext)
+                repeated.append(m_tests[index]);
+        }
+        m_tests = WTF::move(repeated);
+        for (Test& test : m_tests)
+            test.subject = m_analyses.identityOf(test.subject);
+        std::ranges::stable_sort(m_tests, { }, &Test::key);
+
+        m_positionOfBlock = IndexMap<BlockID, uint32_t>(m_function.blocks.size());
+        for (uint32_t position = 0; position < m_tests.size(); ++position)
+            m_positionOfBlock[m_tests[position].block] = position + 1;
+    }
+
+    std::span<const Test> testsLike(BlockID block) const
+    {
+        uint32_t positionPlusOne = m_positionOfBlock[block];
+        if (!positionPlusOne)
+            return { };
+        auto range = std::ranges::equal_range(m_tests, m_tests[positionPlusOne - 1].key(), { }, &Test::key);
+        return { range.begin(), range.end() };
+    }
+
+    bool holdsOnlyTheTest(BlockID id)
+    {
+        const Block& block = m_function.at(id);
+        ValueID condition = block.terminator.conditionOperand();
+        if (block.isHandlerBlock() || !block.values.contains(condition) || m_context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size(), condition))
+            return false;
+        bool hasOtherCode = std::ranges::any_of(block.values, [&](ValueID value) {
+            return value != condition && estimatedCodeBytes(m_program, m_function, m_function.at(value));
+        });
+        return !hasOtherCode && !hasEdgeTo(block.terminator, id) && RegionCloner::checkCanDuplicate(m_analyses, singleElementSpan(id)) == CloneCheck::CanClone;
+    }
+
+    void findCandidates()
+    {
+        const CFG& cfg = m_analyses.cfg();
+        for (BlockID block : cfg.reversePostOrder()) {
+            if (isMergePoint(cfg, block) && !isLoopHeader(cfg, block) && testsLike(block).size() > 1 && holdsOnlyTheTest(block))
+                m_candidates.append(block);
+        }
+    }
+
+    bool isDecidedAt(BlockID mergePoint, BlockID predecessor)
+    {
+        return std::ranges::any_of(testsLike(mergePoint), [&](const Test& earlier) {
+            if (earlier.block == mergePoint)
+                return false;
+            return m_analyses.dominates(Edge { earlier.block, 0 }, predecessor) || m_analyses.dominates(Edge { earlier.block, 1 }, predecessor);
+        });
+    }
+
+    void giveCopyTo(const DecidedEdge& decided)
+    {
+        RegionCloner cloner(m_builder, m_function);
+        cloner.cloneBlocks(singleElementSpan(decided.mergePoint), [](ValueID, Value&) { });
+
+        Copy copy { decided.mergePoint, { }, { } };
+        auto addDefinition = [&](ValueID definition) {
+            copy.originalDefinitions.append(definition);
+            copy.copiedDefinitions.append(cloner.cloneOf(definition));
+        };
+        for (ValueID parameter : m_function.at(decided.mergePoint).parameters)
+            addDefinition(parameter);
+        for (ValueID value : m_function.at(decided.mergePoint).values) {
+            if (resultRuleOf(m_function.at(value).opcode) != ResultRule::None)
+                addDefinition(value);
+        }
+        m_copies.append(WTF::move(copy));
+
+        Arguments arguments = targetOf(m_function, decided.edge).arguments;
+        m_builder.redirectEdge(decided.edge, Target { cloner.cloneOf(decided.mergePoint), WTF::move(arguments), { } });
+        m_outcome = PassOutcome::Changed;
+    }
+
+    void mergeCopiedDefinitions()
+    {
+        if (m_copies.isEmpty())
+            return;
+        m_builder.emptyUnreachableBlocks();
+        SSARepair repair(m_builder, m_analyses);
+        for (size_t first = 0; first < m_copies.size(); ++first) {
+            const Copy& firstCopy = m_copies[first];
+            bool isFirstCopyOfOriginal = std::ranges::none_of(m_copies.span().first(first), [&](const Copy& earlier) {
+                return earlier.original == firstCopy.original;
+            });
+            if (!isFirstCopyOfOriginal)
+                continue;
+            for (size_t index = 0; index < firstCopy.originalDefinitions.size(); ++index) {
+                SSARepair::Variable variable = repair.addVariable(firstCopy.originalDefinitions[index]);
+                for (const Copy& copy : m_copies.span().subspan(first)) {
+                    if (copy.original == firstCopy.original)
+                        repair.addDefinition(variable, copy.copiedDefinitions[index]);
+                }
+            }
+        }
+        repair.run();
+    }
+
+    Vector<Test> m_tests;
+    IndexMap<BlockID, uint32_t> m_positionOfBlock;
+    Vector<Copy, 4> m_copies;
 };
 
 } // anonymous namespace
@@ -657,6 +951,10 @@ PassOutcome threadJumps(FunctionPassContext& context)
 {
     PassOutcome outcome = ParameterBranchThreader(context).run();
     outcome |= DecidedBranchThreader(context).run();
+    if (hasTwoFunctionTestsForOneType(context))
+        outcome |= RepeatedTestThreader(context).run();
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses;
     return outcome;
 }
 

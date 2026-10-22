@@ -7,10 +7,18 @@ const self = b.operand("this");
 const stringReceiver = b.string.loose.refusing(b.null);
 const regExpConstructor = b.builtin("RegExp");
 const pristineRegExp = b.instance("RegExp").pristine("Names");
-const newRegExp = b.instance("RegExp").fresh;
+// The slot holds what the program stores as lastIndex. A new one starts at 0.
+const newRegExp = b.instance("RegExp").holding({ lastIndex: b.length }).fresh;
 const newMatchIterator = b.instance("RegExpStringIterator").fresh;
 const capture = b.union(b.string, b.undefined);
 const matchResult = b.union(b.instance("Array").holding({ element: capture }).unaliased, b.strictNull);
+// A group that took no part in the match is there and holds undefined. `indices` is there under the flag d.
+const matchProperties = {
+  index: nonNegativeInt32,
+  input: b.string,
+  groups: b.union(b.object, b.undefined),
+  indices: b.union(b.object, b.undefined),
+};
 const newArrayOf = (element: b.TableType) => b.instance("Array").holding({ element }).fresh;
 
 const characters = [b.readAsCharacters];
@@ -126,7 +134,7 @@ const flagGetter = (flag: string) =>
       implementation: b.inline("RegExpFlag", { parameters: [flag] }),
     },
     {
-      this: b.any,
+      this: b.any.refusing(b.null),
       getter: b.undefined,
       capability: "none",
       throws: true,
@@ -152,7 +160,7 @@ const symbolMethod = (nativeSymbol: string, columns: SymbolMethodColumns) =>
 
 const invokeSymbolMethod = (...membersOfRegExp: readonly b.ProtocolSpec[]) =>
   ({
-    this: b.any,
+    this: b.any.refusing(b.null),
     args: { regexp: b.any.optional },
     returns: b.any,
     capability: "js",
@@ -173,6 +181,7 @@ const replace = (inlineBuiltin: string, times: b.CallbackTimes, ...membersOfSear
       returns: b.string,
       capability: "js",
       throws: true,
+      deterministic: true,
       runsOnlyOperandCode: true,
       readsStateBeforeConversions: true,
       uses: {
@@ -216,7 +225,7 @@ const replace = (inlineBuiltin: string, times: b.CallbackTimes, ...membersOfSear
       implementation: b.hostCall,
     },
     {
-      this: b.any,
+      this: b.any.refusing(b.null),
       args: { searchValue: b.any.optional, replaceValue: b.any.optional },
       returns: b.any,
       capability: "js",
@@ -264,8 +273,11 @@ const splitAtRegExp = (limit: b.TableType) =>
   }) satisfies b.FunctionField;
 
 export default b.declarations(
+  // Every method that matches calls what it finds under `exec` with the text.
+  b.namedMemberCall("exec", [b.string]),
   b.class("RegExp", {
     jsType: "RegExpObjectType",
+    constructorOnlyReadsPrototypeOfNewTarget: true,
     slots: { lastIndex: b.state(state, b.any) },
     stateHeap: state,
     lockedObjects: ["prototype"],
@@ -395,6 +407,7 @@ export default b.declarations(
       exec: {
         args: { string: b.string.loose },
         returns: matchResult,
+        resultProperties: matchProperties,
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
@@ -506,6 +519,7 @@ export default b.declarations(
       this: stringReceiver,
       args: { regexp: pristineRegExp },
       returns: matchResult,
+      resultProperties: matchProperties,
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
@@ -544,6 +558,7 @@ export default b.declarations(
       returns: b.int(-1, maximumInt32),
       capability: "heap",
       throws: true,
+      deterministic: true,
       readsStateBeforeConversions: true,
       uses: { regexp: b.inspected },
       reads: [state],
@@ -568,7 +583,7 @@ export default b.declarations(
       implementation: b.hostCall,
     },
     {
-      this: b.any,
+      this: b.any.refusing(b.null),
       args: { separator: b.any.optional, limit: b.any.optional },
       returns: b.any,
       capability: "js",

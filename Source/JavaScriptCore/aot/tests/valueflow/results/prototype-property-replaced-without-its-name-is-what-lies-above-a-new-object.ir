@@ -1,0 +1,67 @@
+# function ByKey(p) { this.p = p }    ByKey[key] = spy    new ByKey(1.5).p        spy = { set p(value) {} }, key is a string nobody knows
+# function ByCopy(p) { this.p = p }   Object.assign(ByCopy, { prototype: spy })   new ByCopy(1.5).p
+# function Plain(p) { this.p = p }    new Plain(1.5).p
+# The key may be "prototype", and the copy brings that name: then spy lies above what `new` makes from then on, its setter takes the store of the constructor, and the object has no `p` of its own.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="ByKey"
+# CHECK-NOT: SetAtCreation
+# CHECK-NOT: AlwaysFilled
+# CHECK: layout L1 kind=Instance name="ByCopy"
+# CHECK-NOT: SetAtCreation
+# CHECK-NOT: AlwaysFilled
+# CHECK: layout L2 kind=Instance name="Plain" {{*}}{key="p"{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="ByKey" constructor=f1 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="ByCopy" constructor=f2 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Plain" constructor=f3 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L3 name="Spy" fields=[]
+layout L4 name="Source" fields=[{key="prototype" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewObject layout=L3 fields=[]
+    v2 = NewClosure function=f4
+    DefineSetter v1, v2 key="p"
+    v4 = FinishObject v1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="key" [isFreeName]
+    v7 = ToString v6
+    v8 = NewClosure function=f1
+    ElemSet v8, v7, v4 mode=Strict
+    v10 = Construct v8, -, v0
+    v11 = PropGet v10 key="p"
+    v12 = NewClosure function=f2
+    v13 = NewObject -, v4 layout=L4 fields=[0]
+    v14 = Undefined
+    v15 = FinishObject v13
+    v16 = Builtin builtin=Object
+    v17 = Builtin builtin=ObjectAssign
+    v18 = Call v17, v16, v12, v15
+    v19 = Construct v12, -, v0
+    v20 = PropGet v19 key="p"
+    v21 = NewClosure function=f3
+    v22 = Construct v21, -, v0
+    v23 = PropGet v22 key="p"
+    Return
+}
+function f1 name="ByKey" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}
+function f2 name="ByCopy" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}
+function f3 name="Plain" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}
+function f4 name="p" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

@@ -6,7 +6,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Task" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f3 mutability=Fixed}]}
+layout L0 kind=Instance name="Task" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f3 mutability=Fixed}]}
 function f0 name="first" results=[{type=anything}] {
   b0():
     Return
@@ -18,11 +18,11 @@ function f1 name="second" results=[{type=anything}] {
 function f2 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
-    v2 = NewObject v1 layout=L0 [keepsShape]
+    v2 = NewObject v1 layout=L0
     Return v2
 }
-function f3 name="run" kind=Method flags=[HasThis] thisType={type=object written=L0} results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f3 name="run" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
     Return
 }
 
@@ -53,14 +53,14 @@ function f6 name="construct" parameters=[{type=f2}] results=[{type=anything}] {
 # CHECK-LABEL: function f6 name="construct"
 # CHECK: = CallDirect {{*}} [isConstruction]
 # CHECK-NOT: = Construct
-function f7 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f7 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
 }
-# CHECK-LABEL: function f7 name="predicted-receiver"
-# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-LABEL: function f7 name="expected-receiver"
+# CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: = PropGet v0 key="run"
 # CHECK-NEXT: = Call v1, v0 calleeKey="run"
 # CHECK-NEXT: Return v2

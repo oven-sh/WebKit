@@ -1,4 +1,5 @@
-# An async iteration over a value that is expected to be of a class without an arm is the protocol alone: an unsplit function awaits with Await behind each call of next and return, a coroutine body by saving its frame
+# An async iteration over a value of a class without an arm is the protocol alone: an unsplit function awaits with Await behind each call of next and return, a coroutine body by saving its frame.
+# The open says whether it wrapped a sync iterator. The program never sees the wrapper, so its next is not called: it is stepped with StepAsyncGenerator, which suspends the function by itself
 # FORM: Prepared optimizing
 # RUN: pass ExpandIteration
 # RUN(ABSENT): pass ExpandIteration
@@ -9,8 +10,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
-function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|object ? L0, v1: anything):
+function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -38,30 +39,39 @@ function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|obj
     Return v1
 }
 # CHECK-LABEL: function f0 name="forAwait"
-# CHECK: b0(v0: undefined|null|object ? L0
+# CHECK: b0(v0: undefined|null|L0
 # CHECK-NEXT: [[object0]]: {{*}} = RequireObjectCoercible v0 nullishAccess=Iterate
 # CHECK-NEXT: [[asyncMethod0]]: anything = PropGet [[object0]] key=@@asyncIterator
 # CHECK-NEXT: [[isNullish0]]: boolean = TypeTest [[asyncMethod0]] testedType=undefined|null
 # CHECK-NEXT: Branch [[isNullish0]] -> taken [[sync0]](| 0), notTaken [[async0]](| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: [[promise0]]: anything = Call [[next0]], [[iterator0]]
-# CHECK-NEXT: [[result0]]: anything = Await [[promise0]]
-# CHECK-NEXT: = RequireObject [[result0]] runtimeError=IteratorResultNotObject
+# CHECK-NEXT: Branch [[isStepped0]] -> taken [[steps0]](), notTaken [[calls0]]()
 # CHECK: b4():
 # CHECK-NEXT: = PropGet [[iterator0]] key="return"
-# CHECK: [[merge0]]([[iterator0]]: object):
+# CHECK: [[merge0]]([[iterator0]]: object, [[isWrapper0]]: boolean):
 # CHECK-NEXT: [[next0]]: anything = PropGet [[iterator0]] key="next"
+# CHECK-NEXT: Branch [[isWrapper0]] -> taken [[wrapped0]](), notTaken [[given0]]()
 # CHECK: [[sync0]]({{*}}: undefined|null):
 # CHECK-NEXT: = PropGet [[object0]] key=@@iterator
 # CHECK: [[async0]]([[asyncCallee0]]: {{*}}):
 # CHECK-NEXT: [[made0]]: anything = Call [[asyncCallee0]], [[object0]]
 # CHECK-NEXT: [[asyncIterator0]]: object = RequireObject [[made0]] runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: Jump -> next [[merge0]]([[asyncIterator0]])
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[merge0]]([[asyncIterator0]], [[no0]])
 # CHECK: [[syncIterator0]]: object = RequireObject {{*}} runtimeError=IteratorIsNotAnObject
 # CHECK-NEXT: [[syncNext0]]: anything = PropGet [[syncIterator0]] key="next"
 # CHECK-NEXT: [[wrapper0]]: object = CreateAsyncFromSyncIterator [[syncIterator0]], [[syncNext0]]
-# CHECK-NEXT: Jump -> next [[merge0]]([[wrapper0]])
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next [[merge0]]([[wrapper0]], [[yes0]])
+# What the iterable's own method gave is stepped as well where it is an async generator and the method that was read from it is the built-in.
+# CHECK: [[opened0]]([[isStepped0]]: boolean):
+# CHECK: [[given0]]():
+# CHECK-NEXT: [[isGenerator0]]: boolean = TypeTest [[iterator0]] testedType=AsyncGenerator
+# CHECK-NEXT: Branch [[isGenerator0]] -> taken [[generator0]](), notTaken [[other0]]()
+# CHECK-NEXT: [[generator0]]():
+# CHECK-NEXT: [[isBuiltin0]]: boolean = TypeTest [[next0]] testedType=builtin(AsyncGeneratorPrototypeNext)
+# CHECK-NEXT: Jump -> next [[opened0]]([[isBuiltin0]])
 # The close in the landing block: the await is covered by the handler that drops, so a rejection is dropped as well.
 # CHECK: [[dropped0]]() role=CatchHandler frequency=Rare:
 # CHECK: frequency=Rare handler=[[dropped0]]():
@@ -73,6 +83,17 @@ function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|obj
 # CHECK: [[normalClose0]]: anything = Call {{*}}, [[iterator0]]
 # CHECK-NEXT: [[closed0]]: anything = Await [[normalClose0]]
 # CHECK-NEXT: = RequireObject [[closed0]] runtimeError=IteratorResultNotObject
+# The step. A loop sends nothing, so the next of the sync iterator is called without an argument.
+# CHECK: [[steps0]]():
+# CHECK-NEXT: [[nothingSent0]]: absent = Absent
+# CHECK: [[step0]]{{*}} = StepAsyncGenerator [[iterator0]], [[nothingSent0]], [[noDriver0]]
+# CHECK-NEXT: [[value0]]: anything = ResultAt [[step0]]
+# CHECK-NEXT: [[status0]]: int[0, 2] = ResultAt [[step0]] index=1
+# CHECK-NEXT: [[isResult0]]: 0 = Integer
+# CHECK: [[calls0]]():
+# CHECK-NEXT: [[promise0]]: anything = Call [[next0]], [[iterator0]]
+# CHECK-NEXT: [[result0]]: anything = Await [[promise0]]
+# CHECK-NEXT: = RequireObject [[result0]] runtimeError=IteratorResultNotObject
 # ABSENT-LABEL: function f0 name="forAwait"
 # ABSENT-NOT: testedType=Array
 # ABSENT-NOT: AwaitBySavingFrame
@@ -103,8 +124,8 @@ function f1 name="syncKindInAsyncFunction" flags=[IsAsync] parameters=[{type=any
 # ABSENT-COUNT-2: = Await
 # ABSENT-NOT: = Await
 
-function f2 name="returnWithoutMethod" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: object ? L0, v2: anything):
+function f2 name="returnWithoutMethod" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: L0, v2: anything):
     v3 = IteratorOpen v1 iteratorKind=Async
     v4 = IteratorResume v3, v2 iteratorKind=Async resumeMode=Return [readsValueWhenDone]
     v5 = ResultAt v4
@@ -134,12 +155,12 @@ function f2 name="returnWithoutMethod" flags=[IsAsync, IsGenerator, TakesCallee]
 # CHECK-NEXT: Jump -> next [[after2]]([[done2]], [[value2]])
 # ABSENT-LABEL: function f2 name="returnWithoutMethod"
 
-function f3 name="forAwaitInBody" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object written=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1}
+function f3 name="forAwaitInBody" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1}
 # CHECK-LABEL: function f3 name="forAwaitInBody"
 # ABSENT-LABEL: function f3 name="forAwaitInBody"
 
-function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=object written=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1} {
-  b0(v0: object ? L0, v1: undefined|Promise):
+function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: undefined|Promise):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -164,13 +185,18 @@ function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=
 }
 # CHECK-LABEL: function f4 name="forAwaitInBody"
 # CHECK: LoopHint
-# CHECK-NEXT: [[promise4]]: anything = Call [[next4]], [[iterator4]]
-# CHECK-NEXT: [[result4]]: anything = AwaitBySavingFrame [[promise4]], v1
-# CHECK-NEXT: = RequireObject [[result4]] runtimeError=IteratorResultNotObject
+# CHECK-NEXT: Branch {{*}} -> taken [[steps4]](), notTaken [[calls4]]()
 # CHECK: = PropGet [[iterator4]] key="return"
 # CHECK: [[close4]]: anything = Call {{*}}, [[iterator4]]
 # CHECK-NEXT: [[closed4]]: anything = AwaitBySavingFrame [[close4]], v1
 # CHECK-NEXT: = RequireObject [[closed4]] runtimeError=IteratorResultNotObject
+# The step names the driver of the body, as an await does.
+# CHECK: [[steps4]]():
+# CHECK: = StepAsyncGenerator [[iterator4]], {{*}}, v1
+# CHECK: [[calls4]]():
+# CHECK-NEXT: [[promise4]]: anything = Call [[next4]], [[iterator4]]
+# CHECK-NEXT: [[result4]]: anything = AwaitBySavingFrame [[promise4]], v1
+# CHECK-NEXT: = RequireObject [[result4]] runtimeError=IteratorResultNotObject
 # ABSENT-LABEL: function f4 name="forAwaitInBody"
 # ABSENT-NOT: = Await v
 # ABSENT-COUNT-2: = AwaitBySavingFrame

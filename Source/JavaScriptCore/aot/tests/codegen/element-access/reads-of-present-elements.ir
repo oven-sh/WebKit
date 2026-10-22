@@ -1,0 +1,403 @@
+# A read of an array element that a test has found present is a load and nothing else. It compares with no length, looks for no hole and has no arm for a position that is no index, so a function that only tests and reads calls nothing and has no frame.
+# Its result is an element: the type has no `undefined`, and a number comes out unboxed. It asks nothing of the prototypes, so none of these arrays is pristine.
+# Inside the length of storage of doubles the same holds for a read that takes a hole for NaN. Beside each stands the read that may find nothing
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="presentInInt32AtIndex" parameters=[{type=Array<i32, proven, Int32>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, Int32>, v1: int[0, 4294967294]):
+    v2 = IsElementPresent v0, v1 arrayStorage=Int32
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f0: size={{*}} frame=none
+# R-LABEL: function f0 name="presentInInt32AtIndex"
+# R: v4: i32 @Int32 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven [isPresent]
+function f1 name="presentInInt32AtNumber" parameters=[{type=Array<i32, proven, Int32>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, Int32>, v1: number):
+    v2 = IsElementPresent v0, v1 arrayStorage=Int32
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f1: size={{*}} frame=none
+# R-LABEL: function f1 name="presentInInt32AtNumber"
+# R: v4: i32 @Int32 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven [isPresent]
+function f2 name="presentInDoubleAtIndex" parameters=[{type=Array<number, proven, Double>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double>, v1: int[0, 4294967294]):
+    v2 = IsElementPresent v0, v1 arrayStorage=Double
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f2: size={{*}} frame=none
+# R-LABEL: function f2 name="presentInDoubleAtIndex"
+# R: v4: number @Double = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isPresent]
+function f3 name="presentInDoubleAtNumber" parameters=[{type=Array<number, proven, Double>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double>, v1: number):
+    v2 = IsElementPresent v0, v1 arrayStorage=Double
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f3: size={{*}} frame=none
+# R-LABEL: function f3 name="presentInDoubleAtNumber"
+# R: v4: number @Double = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isPresent]
+function f4 name="presentInContiguousAtIndex" parameters=[{type=Array<string, proven, Contiguous>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, Contiguous>, v1: int[0, 4294967294]):
+    v2 = IsElementPresent v0, v1 arrayStorage=Contiguous
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f4: size={{*}} frame=none
+# R-LABEL: function f4 name="presentInContiguousAtIndex"
+# R: v4: string @JSValue = GetArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven [isPresent]
+function f5 name="presentInContiguousAtNumber" parameters=[{type=Array<string, proven, Contiguous>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, Contiguous>, v1: number):
+    v2 = IsElementPresent v0, v1 arrayStorage=Contiguous
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f5: size={{*}} frame=none
+# R-LABEL: function f5 name="presentInContiguousAtNumber"
+# R: v4: string @JSValue = GetArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven [isPresent]
+function f6 name="presentInInt32UnderGuardOfKind" parameters=[{type=Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array, v1: number):
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Int32
+    TestAndBranch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Expected [isPresent]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-NEXT: f6: size={{*}} frame=none
+# R-LABEL: function f6 name="presentInInt32UnderGuardOfKind"
+# R: v7: i32 @Int32 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Expected [isPresent]
+function f7 name="presentInDoubleUnderGuardOfKind" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double
+    TestAndBranch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [isPresent]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-NEXT: f7: size={{*}} frame=none
+# R-LABEL: function f7 name="presentInDoubleUnderGuardOfKind"
+# R: v7: number @Double = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [isPresent]
+function f8 name="presentInContiguousUnderGuardOfKind" parameters=[{type=Array<string>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<string>, v1: number):
+    v2 = HasArrayStorage v0 arrayStorage=Contiguous
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Contiguous
+    TestAndBranch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Contiguous level=Expected [isPresent]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+# CHECK: f8: size={{*}} frame=none
+# R-LABEL: function f8 name="presentInContiguousUnderGuardOfKind"
+# R: v7: anything @JSValue = GetArrayElement v0, v1, v6 arrayStorage=Contiguous level=Expected [isPresent]
+function f9 name="holeIsNaN" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = IsInBounds v0, v1
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isInBounds, readsHoleAsNaN]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f9: size={{*}} frame=none
+# R-LABEL: function f9 name="holeIsNaN"
+# R: v4: number @Double = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isInBounds, readsHoleAsNaN]
+function f10 name="holeIsUndefined" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = IsInBounds v0, v1
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isInBounds]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f10: size={{*}} frame=none
+# R-LABEL: function f10 name="holeIsUndefined"
+# R: v4: undefined|number @OptionalDouble = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isInBounds]
+function f11 name="mayFindNothingAtNumber" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: number):
+    v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    Return v2
+}
+# A number that is no index names a property, which the stub looks up.
+# CHECK: f11: size=
+# CHECK-NOT: frame=none
+# CHECK: stub ArrayGetAtNumber
+# R-LABEL: function f11 name="mayFindNothingAtNumber"
+# R: v2: undefined|number @OptionalDouble = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+function f12 name="presentInInt32" parameters=[{type=Array<i32, proven, Int32>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, Int32>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = IsElementPresent v0, v1 arrayStorage=Int32
+    TestAndBranch v6 -> taken b1(| 0), notTaken b11()
+  b1(v7):
+    v8 = IsElementPresent v0, v2 arrayStorage=Int32
+    TestAndBranch v8 -> taken b2(| 0), notTaken b11()
+  b2(v9):
+    v10 = IsElementPresent v0, v3 arrayStorage=Int32
+    TestAndBranch v10 -> taken b3(| 0), notTaken b11()
+  b3(v11):
+    v12 = IsElementPresent v0, v4 arrayStorage=Int32 [keyIsIntegral]
+    TestAndBranch v12 -> taken b4(| 0), notTaken b11()
+  b4(v13):
+    v14 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven [isPresent]
+    v15 = GetArrayElement v0, v2, v9 arrayStorage=Int32 level=Proven [isPresent]
+    v16 = GetArrayElement v0, v3, v11 arrayStorage=Int32 level=Proven [isPresent]
+    v17 = GetArrayElement v0, v4, v13 arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+    v18 = NewArray v14, v15, v16, v17 contents=anything
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven [isPresent]
+    v22 = GetArrayElement v0, v2, v9 arrayStorage=Int32 level=Proven [isPresent]
+    v23 = GetArrayElement v0, v3, v11 arrayStorage=Int32 level=Proven [isPresent]
+    v24 = GetArrayElement v0, v4, v13 arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Branch v5 -> taken b6(), notTaken b7()
+  b7():
+    Branch v5 -> taken b5(), notTaken b8()
+  b8():
+    Branch v5 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v26 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven [isPresent]
+    v27 = GetArrayElement v0, v2, v9 arrayStorage=Int32 level=Proven [isPresent]
+    v28 = GetArrayElement v0, v3, v11 arrayStorage=Int32 level=Proven [isPresent]
+    v29 = GetArrayElement v0, v4, v13 arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+    v30 = NewArray v26, v27, v28, v29 contents=anything
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f12: size=
+# CHECK-NOT: ByVal
+# S: f12 b4 Balanced
+# S: f12 b6 Fast
+# S: f12 b9 Compact
+# R-LABEL: function f12 name="presentInInt32"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-12: : i32 @Int32 = GetArrayElement v0,
+# R-NOT: = GetArrayElement
+function f13 name="presentInDouble" parameters=[{type=Array<number, proven, Double>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, Double>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = IsElementPresent v0, v1 arrayStorage=Double
+    TestAndBranch v6 -> taken b1(| 0), notTaken b11()
+  b1(v7):
+    v8 = IsElementPresent v0, v2 arrayStorage=Double
+    TestAndBranch v8 -> taken b2(| 0), notTaken b11()
+  b2(v9):
+    v10 = IsElementPresent v0, v3 arrayStorage=Double
+    TestAndBranch v10 -> taken b3(| 0), notTaken b11()
+  b3(v11):
+    v12 = IsElementPresent v0, v4 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v12 -> taken b4(| 0), notTaken b11()
+  b4(v13):
+    v14 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Proven [isPresent]
+    v15 = GetArrayElement v0, v2, v9 arrayStorage=Double level=Proven [isPresent]
+    v16 = GetArrayElement v0, v3, v11 arrayStorage=Double level=Proven [isPresent]
+    v17 = GetArrayElement v0, v4, v13 arrayStorage=Double level=Proven [keyIsIntegral, isPresent]
+    v18 = NewArray v14, v15, v16, v17 contents=anything
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Proven [isPresent]
+    v22 = GetArrayElement v0, v2, v9 arrayStorage=Double level=Proven [isPresent]
+    v23 = GetArrayElement v0, v3, v11 arrayStorage=Double level=Proven [isPresent]
+    v24 = GetArrayElement v0, v4, v13 arrayStorage=Double level=Proven [keyIsIntegral, isPresent]
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Branch v5 -> taken b6(), notTaken b7()
+  b7():
+    Branch v5 -> taken b5(), notTaken b8()
+  b8():
+    Branch v5 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v26 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Proven [isPresent]
+    v27 = GetArrayElement v0, v2, v9 arrayStorage=Double level=Proven [isPresent]
+    v28 = GetArrayElement v0, v3, v11 arrayStorage=Double level=Proven [isPresent]
+    v29 = GetArrayElement v0, v4, v13 arrayStorage=Double level=Proven [keyIsIntegral, isPresent]
+    v30 = NewArray v26, v27, v28, v29 contents=anything
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f13: size=
+# CHECK-NOT: ByVal
+# S: f13 b4 Balanced
+# S: f13 b6 Fast
+# S: f13 b9 Compact
+# R-LABEL: function f13 name="presentInDouble"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-12: : number @Double = GetArrayElement v0,
+# R-NOT: = GetArrayElement
+function f14 name="presentInContiguous" parameters=[{type=Array<string, proven, Contiguous>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, Contiguous>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = IsElementPresent v0, v1 arrayStorage=Contiguous
+    TestAndBranch v6 -> taken b1(| 0), notTaken b11()
+  b1(v7):
+    v8 = IsElementPresent v0, v2 arrayStorage=Contiguous
+    TestAndBranch v8 -> taken b2(| 0), notTaken b11()
+  b2(v9):
+    v10 = IsElementPresent v0, v3 arrayStorage=Contiguous
+    TestAndBranch v10 -> taken b3(| 0), notTaken b11()
+  b3(v11):
+    v12 = IsElementPresent v0, v4 arrayStorage=Contiguous [keyIsIntegral]
+    TestAndBranch v12 -> taken b4(| 0), notTaken b11()
+  b4(v13):
+    v14 = GetArrayElement v0, v1, v7 arrayStorage=Contiguous level=Proven [isPresent]
+    v15 = GetArrayElement v0, v2, v9 arrayStorage=Contiguous level=Proven [isPresent]
+    v16 = GetArrayElement v0, v3, v11 arrayStorage=Contiguous level=Proven [isPresent]
+    v17 = GetArrayElement v0, v4, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral, isPresent]
+    v18 = NewArray v14, v15, v16, v17 contents=anything
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = GetArrayElement v0, v1, v7 arrayStorage=Contiguous level=Proven [isPresent]
+    v22 = GetArrayElement v0, v2, v9 arrayStorage=Contiguous level=Proven [isPresent]
+    v23 = GetArrayElement v0, v3, v11 arrayStorage=Contiguous level=Proven [isPresent]
+    v24 = GetArrayElement v0, v4, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral, isPresent]
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Branch v5 -> taken b6(), notTaken b7()
+  b7():
+    Branch v5 -> taken b5(), notTaken b8()
+  b8():
+    Branch v5 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v26 = GetArrayElement v0, v1, v7 arrayStorage=Contiguous level=Proven [isPresent]
+    v27 = GetArrayElement v0, v2, v9 arrayStorage=Contiguous level=Proven [isPresent]
+    v28 = GetArrayElement v0, v3, v11 arrayStorage=Contiguous level=Proven [isPresent]
+    v29 = GetArrayElement v0, v4, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral, isPresent]
+    v30 = NewArray v26, v27, v28, v29 contents=anything
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f14: size=
+# CHECK-NOT: ByVal
+# S: f14 b4 Balanced
+# S: f14 b6 Fast
+# S: f14 b9 Compact
+# R-LABEL: function f14 name="presentInContiguous"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-12: : string @JSValue = GetArrayElement v0,
+# R-NOT: = GetArrayElement
+function f15 name="sumTakesHolesForNaN" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=number}] results=[{type=number}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: int[0, 4294967295]):
+    LoopHint
+    v6 = GetArrayLength v0
+    v7 = Less v4, v6 form=Integers
+    TestAndBranch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8: int[0, 4294967294]):
+    v9 = IsInBounds v0, v8
+    TestAndBranch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10):
+    v11 = GetArrayElement v0, v8, v10 arrayStorage=Double level=Proven [isInBounds, readsHoleAsNaN]
+    v12 = Add v3, v11 form=Numbers
+    v13 = Increment v8 form=Integers
+    Jump -> next b1(v12, v13)
+  b4():
+    Return v3
+}
+# CHECK-LABEL: f15: size=
+# CHECK-NOT: ByVal
+# R-LABEL: function f15 name="sumTakesHolesForNaN"
+# R: v11: number @Double = GetArrayElement v0, v8, v10 arrayStorage=Double level=Proven [isInBounds, readsHoleAsNaN]
+function f16 name="sumTestsForHoles" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=number}] results=[{type=number}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: int[0, 4294967295]):
+    LoopHint
+    v6 = GetArrayLength v0
+    v7 = Less v4, v6 form=Integers
+    TestAndBranch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8: int[0, 4294967294]):
+    v9 = IsInBounds v0, v8
+    TestAndBranch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10):
+    v11 = GetArrayElement v0, v8, v10 arrayStorage=Double level=Proven [isInBounds]
+    v12 = Add v3, v11 form=Numbers
+    v13 = Increment v8 form=Integers
+    Jump -> next b1(v12, v13)
+  b4():
+    Return v3
+}
+# CHECK-LABEL: f16: size=
+# CHECK-NOT: ByVal
+# R-LABEL: function f16 name="sumTestsForHoles"
+# R: v11: undefined|number @OptionalDouble = GetArrayElement v0, v8, v10 arrayStorage=Double level=Proven [isInBounds]

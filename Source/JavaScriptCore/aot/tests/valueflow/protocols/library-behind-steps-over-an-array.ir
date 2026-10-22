@@ -8,8 +8,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=70 function=f1
-runtimefunction id=71 function=f2 visibility=Private
+runtimefunction id=69 function=f1
+runtimefunction id=70 function=f2 visibility=Private
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
@@ -18,11 +18,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = IteratorResume v2
     Return
 }
-function f1 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+function f1 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
   b0(v0: anything):
     Return v0
 }
-function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=71 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Return v1
 }

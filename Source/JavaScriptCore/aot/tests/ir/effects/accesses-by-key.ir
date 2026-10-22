@@ -1,4 +1,4 @@
-# An access by key has the effects of the element form its plan proves, else it is unknown code; the element forms have their written effects, with the lookup by name only where the position may be no index
+# An access by key has the effects of the element form its plan proves, else it is unknown code; the element forms have their declared effects, with the lookup by name only where the position may be no index
 # FORM: Prepared
 # RUN: effects
 # RUN(ONLY): effects f0
@@ -38,7 +38,7 @@ function f1 name="otherReceivers" parameters=[{type=Array<number>}, {type=number
 # CHECK-LABEL: function f1
 # CHECK-NEXT: v5 ElemGet: unknownCode
 # CHECK-NEXT: v6 ElemGet: unknownCode
-# CHECK-NEXT: v7 ElemGet: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v7 ElemGet: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK: v9 ElemGet: reads(ObjectFields/1)
 # CHECK-NEXT: v10 ElemGet: unknownCode
 # CHECK-NEXT: v11 GetStringLength: none
@@ -51,9 +51,9 @@ function f2 name="guardedArrayAtIndex" parameters=[{type=Array<number>}, {type=i
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6):
     v7 = AllGuards v4, v6
-    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
-    v9 = HasArrayElement v0, v1, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
-    PutArrayElement v0, v1, v2, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [keyIsIntegral]
+    v9 = HasArrayElement v0, v1, v7 arrayStorage=Double level=Expected [keyIsIntegral]
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Double level=Expected [keyIsIntegral]
     Return
   b3():
     Return
@@ -74,10 +74,10 @@ function f3 name="guardedArrayAtAnyNumber" parameters=[{type=Array<number>}, {ty
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6):
     v7 = AllGuards v4, v6
-    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
-    v9 = HasArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
-    v10 = GetArrayElement v0, v2, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
-    PutArrayElement v0, v1, v1, v7 arrayStorage=Double level=Predicted
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected
+    v9 = HasArrayElement v0, v1, v7 arrayStorage=Double level=Expected
+    v10 = GetArrayElement v0, v2, v7 arrayStorage=Double level=Expected [keyIsIntegral]
+    PutArrayElement v0, v1, v1, v7 arrayStorage=Double level=Expected
     Return
   b3():
     Return

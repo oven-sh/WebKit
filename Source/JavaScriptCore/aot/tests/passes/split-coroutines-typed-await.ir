@@ -1,4 +1,4 @@
-# An await keeps its type and its prediction when it becomes a suspension, so its uses see the same type and no check is added
+# An await keeps its type and its expected type when it becomes a suspension, so its uses see the same type and no cast is added
 # FORM: Prepared
 # RUN: pass SplitCoroutines
 # STATISTIC: CoroutinesSplit = 2
@@ -26,7 +26,7 @@ function f1 name="awaitsNumberInAsyncGenerator" flags=[IsAsync, IsGenerator, Tak
 }
 
 # CHECK-LABEL: function f2 name="awaitsTypedValues"
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 # CHECK: v5: number = AwaitBySavingFrame v0, [[promise]] @10
 # CHECK-NEXT: v6: number = Mul v5, v5
 # CHECK-NEXT: v7: undefined|string = AwaitBySavingFrame v1, [[promise]] @11
@@ -34,11 +34,11 @@ function f1 name="awaitsNumberInAsyncGenerator" flags=[IsAsync, IsGenerator, Tak
 # CHECK-NEXT: v9: anything ~ string = AwaitBySavingFrame v2, [[promise]] @12
 # CHECK-NEXT: v10: anything ~ number = AwaitBySavingFrame v3, [[promise]] @13
 # CHECK-NEXT: v11: anything = AwaitBySavingFrame v4, [[promise]] @14
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 
 # CHECK-LABEL: function f3 name="awaitsNumberInAsyncGenerator"
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 # CHECK: v4: number = AwaitBySavingFrame v1, [[generator]] @21
 # CHECK-NEXT: v5: number = Negate v4
 # CHECK-NEXT: v6: anything ~ boolean = AwaitBySavingFrame v2, [[generator]] @22
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType

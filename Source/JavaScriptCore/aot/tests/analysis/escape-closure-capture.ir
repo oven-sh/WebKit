@@ -1,4 +1,4 @@
-# A captured object escapes when its closure escapes
+# A captured object escapes when its closure escapes, and when the closure is called while nothing says what its function does with what it captures. The call alone keeps the closure: only a function that takes its callee gets hold of it
 # FORM: AsRead
 # RUN: analyses escape
 # RUN(FLOW): analyses escape flow function=f0
@@ -92,13 +92,14 @@ function f5 name="callsArgument" parameters=[{type=function}] results=[{type=und
 # CHECK-NEXT: o0 definition: v0
 # CHECK-NEXT: o0 kind: Allocation
 # CHECK-NEXT: o0 state: Escapes
-# CHECK-NEXT: o0 reasons: [StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer]
+# CHECK-NEXT: o0 reasons: [StoredInUnknownMemory PassedToUnknownCode RetainedByCallee]
 # CHECK-NEXT: o0 first escape: v1(0)
 # CHECK: o1 definition: v1
 # CHECK-NEXT: o1 kind: Allocation
-# CHECK-NEXT: o1 state: Escapes
-# CHECK-NEXT: o1 reasons: [Returned StoredInUnknownMemory PassedToUnknownCode RetainedByCallee]
-# CHECK-NEXT: o1 first escape: v2(0)
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK-NEXT: o1 first escape: none
+# CHECK-NEXT: o1 uses: [Calls]
 # FLOW: function f0
 # FLOW-NEXT: escape:
 # FLOW-NEXT: objects: 2

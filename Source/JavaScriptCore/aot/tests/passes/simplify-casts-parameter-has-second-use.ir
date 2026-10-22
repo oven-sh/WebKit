@@ -1,4 +1,4 @@
-# A claim stays at the head of its merge block when the parameter has another use: that use sees the value before the test
+# A check stays at the head of its merge block when the parameter has another use: that use sees the value before the test
 # FORM: Prepared
 # RUN: pass SimplifyCasts
 # STATISTIC: SimplifyCastsChanges = 0
@@ -14,7 +14,7 @@ function f0 name="usedByValue" parameters=[{type=anything}, {type=boolean}] resu
   b2():
     Jump -> next b3(v0)
   b3(v3):
-    v4 = Claim v3 castType=number
+    v4 = Check v3 castType=number
     v5 = StrictEq v3, v4
     Return v5
 }
@@ -22,7 +22,7 @@ function f0 name="usedByValue" parameters=[{type=anything}, {type=boolean}] resu
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
-# CHECK-NEXT: v4: number = Claim v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Return v5
 
@@ -35,7 +35,7 @@ function f1 name="usedAsHandlerArgument" parameters=[{type=anything}, {type=bool
   b2():
     Jump -> next b3(v0)
   b3(v3):
-    v4 = Claim v3 castType=number
+    v4 = Check v3 castType=number
     Jump -> next b4()
   b4() handler=b5(v3):
     v5 = Call v0, -, v4
@@ -48,6 +48,6 @@ function f1 name="usedAsHandlerArgument" parameters=[{type=anything}, {type=bool
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
-# CHECK-NEXT: v4: number = Claim v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5(v3):

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <wtf/ASCIICType.h>
 #include <wtf/BitVector.h>
@@ -27,17 +28,14 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-constexpr unsigned numberOfCommonJsParameters = numberOfEnumerators<CommonJsParameter>;
-
 enum class BodyRule : uint8_t { Absent, Optional, Required };
 
 struct ModuleKindRules {
     BodyRule body { BodyRule::Absent };
-    unsigned numberOfParameters { 0 };
-    OptionSet<FunctionFlags> requiredBodyFlags;
     OptionSet<FunctionFlags> forbiddenBodyFlags;
     bool hasExportTable { false };
     bool hasRequests { false };
+    bool hasRequiredNames { false };
     bool canHaveData { false };
     bool hasRuntimeModule { false };
     bool hasReferrer { false };
@@ -57,9 +55,9 @@ static ModuleKindRules rulesOf(ModuleKind kind)
 {
     switch (kind) {
     case ModuleKind::SourceText:
-        return { .body = BodyRule::Optional, .hasExportTable = true, .hasRequests = true, .hasUniquePath = true };
+        return { .body = BodyRule::Optional, .hasExportTable = true, .hasRequests = true, .hasRequiredNames = true, .hasUniquePath = true };
     case ModuleKind::CommonJs:
-        return { .body = BodyRule::Required, .numberOfParameters = numberOfCommonJsParameters, .requiredBodyFlags = FunctionFlags::HasThis, .hasUniquePath = true };
+        return { .body = BodyRule::Required, .forbiddenBodyFlags = FunctionFlags::HasThis, .hasRequests = true, .hasUniquePath = true };
     case ModuleKind::Data:
         return { .body = BodyRule::Optional, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasExportTable = true, .canHaveData = true, .hasUniquePath = true };
     case ModuleKind::RuntimeSource:
@@ -89,14 +87,25 @@ static bool hasRequiredIDs(const Module& module)
         && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::name);
 }
 
-static bool hasValidInterop(const Module& module)
+static bool isCommonJsRule(SyntheticExportRule rule)
+{
+    return rule == SyntheticExportRule::CommonJs || rule == SyntheticExportRule::CommonJsIgnoringAnnotation;
+}
+
+static bool hasValidInterop(const Program& program, const Module& module)
 {
     switch (module.kind) {
     case ModuleKind::SourceText:
+        if (module.requireResult == RequireResult::ModuleExports)
+            return false;
+        return module.exportRule == SyntheticExportRule::None || (isCommonJsRule(module.exportRule) && commonJsModuleCapturedBy(program, module));
     case ModuleKind::Data:
         return module.exportRule == SyntheticExportRule::None && module.requireResult != RequireResult::ModuleExports;
     case ModuleKind::CommonJs:
-        return module.exportRule == SyntheticExportRule::CommonJs || module.exportRule == SyntheticExportRule::CommonJsIgnoringAnnotation;
+        // The body of a file of the program stores the names that somebody reads, so the loader has no rule to fill them by.
+        if (module.flags.contains(ModuleFlags::IsLibrary))
+            return isCommonJsRule(module.exportRule);
+        return (module.exportRule == SyntheticExportRule::None || isCommonJsRule(module.exportRule)) && module.syntheticExports.isEmpty();
     case ModuleKind::RuntimeSource:
     case ModuleKind::Runtime:
         return module.exportRule == SyntheticExportRule::RuntimeModule;
@@ -127,10 +136,34 @@ static bool hasOneBinding(const Program& program, const ModuleExport& entry)
 static bool hasDuplicateRequests(const Vector<ModuleRequest>& requests)
 {
     auto keys = WTF::map(requests, [](const ModuleRequest& request) {
-        return std::pair { request.target, request.phase };
+        return std::tuple { request.target, request.phase, request.kind };
     });
     std::ranges::sort(keys);
     return std::ranges::adjacent_find(keys) != keys.end();
+}
+
+// An import has run its target to the end before the importer starts. A `require` stands in the code of the requirer: it is never deferred and brings no names.
+static bool isValidRequest(const ModuleRequest& request)
+{
+    switch (request.kind) {
+    case ModuleRequestKind::Import:
+        return request.completes || request.phase == ImportPhase::Defer;
+    case ModuleRequestKind::Require:
+        return request.phase == ImportPhase::Evaluation && !request.isDynamicStarExport;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isFileOfProgram(const Module& module)
+{
+    return (module.kind == ModuleKind::SourceText || module.kind == ModuleKind::CommonJs) && !module.flags.contains(ModuleFlags::IsLibrary);
+}
+
+static bool hasValidExportsVariable(const Program& program, const Module& module)
+{
+    if (!module.exportsVariable)
+        return true;
+    return module.kind == ModuleKind::CommonJs && isFileOfProgram(module) && program.at(module.exportsVariable).initialization == VariableInitialization::Undefined;
 }
 
 template<typename Export>
@@ -146,26 +179,50 @@ static std::optional<InternalErrorKind> findNameOrderError(const Program& progra
     return std::nullopt;
 }
 
+// Bun's own code in the form of a file of the program. The role of the body says whose code it is, and a module without a body has only the flag to say so.
+static bool hasValidBundlerHelperFlag(const Program& program, const Module& module)
+{
+    bool isBundlerHelper = module.flags.contains(ModuleFlags::IsBundlerHelper);
+    switch (module.kind) {
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs: {
+        bool hasBodyOfLibrary = module.body && program.at(module.body).role == FunctionRole::Library;
+        if (!isBundlerHelper)
+            return !hasBodyOfLibrary;
+        return (!module.body || hasBodyOfLibrary) && !module.flags.containsAny({ ModuleFlags::IsLibrary, ModuleFlags::HasNoSideEffects });
+    }
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
+        return !isBundlerHelper;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody)
 {
     ModuleKindRules rules = rulesOf(module.kind);
     bool isLibrary = module.flags.contains(ModuleFlags::IsLibrary);
-    bool hasValidLists = (rules.hasExportTable ? module.syntheticExports.isEmpty() : module.exports.isEmpty())
-        && (rules.hasRequests || (module.requests.isEmpty() && module.requiredNames.isEmpty()));
+    bool hasValidLists = (rules.hasExportTable ? module.syntheticExports.isEmpty() || module.exportRule != SyntheticExportRule::None : module.exports.isEmpty())
+        && (rules.hasRequests || module.requests.isEmpty())
+        && (rules.hasRequiredNames || module.requiredNames.isEmpty())
+        && std::ranges::all_of(module.requests, isValidRequest);
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
-    bool hasValidSideEffectsFlag = !module.flags.contains(ModuleFlags::HasNoSideEffects) || ((module.kind == ModuleKind::SourceText || module.kind == ModuleKind::CommonJs) && !isLibrary);
+    bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::KeepsError, ModuleFlags::NamesWayToModuleObjects }) || isFileOfProgram(module);
     bool hasValidRuntimeModule = module.runtimeModule
         ? rules.hasRuntimeModule && program.builtins().contains(module.runtimeModule)
         : !rules.hasRuntimeModule || isLibrary;
-    bool hasValidLinks = !!module.referrer == rules.hasReferrer
+    // The referrer of a CommonJS module is the file that evaluates the text it was made of.
+    bool hasValidLinks = (!!module.referrer == rules.hasReferrer || (module.referrer && module.kind == ModuleKind::CommonJs))
         && (!module.data || rules.canHaveData)
         && !!module.namespaceLayout == (module.kind == ModuleKind::SourceText);
     auto isBound = [&](const ModuleExport& entry) {
         return hasOneBinding(program, entry);
     };
-    if (!hasValidBody || !hasRequiredIDs(module) || !hasValidLists || !hasValidLibraryFlag || !hasValidImportOnlyFlag || !hasValidSideEffectsFlag || !hasValidRuntimeModule || !hasValidLinks
-        || !hasValidInterop(module) || !std::ranges::all_of(module.exports, isBound))
+    if (!hasValidBody || !hasRequiredIDs(module) || !hasValidLists || !hasValidLibraryFlag || !hasValidImportOnlyFlag || !hasValidFlagsOfFiles || !hasValidExportsVariable(program, module) || !hasValidRuntimeModule || !hasValidLinks
+        || !hasValidBundlerHelperFlag(program, module) || !hasValidInterop(program, module) || !std::ranges::all_of(module.exports, isBound))
         return InternalErrorKind::InvalidModule;
     if (hasDuplicateRequests(module.requests))
         return InternalErrorKind::DuplicateListEntry;
@@ -189,12 +246,15 @@ void ProgramVerifier::verifyModules()
 
     BitVector usedPaths(m_program.strings.size());
     BitVector usedBodies(m_program.functions.size());
+    BitVector usedExportsVariables(m_program.variables.size());
     for (unsigned index = 0; index < modules.size(); ++index) {
         const Module& module = modules[index];
         if (rulesOf(module.kind).hasUniquePath && usedPaths.quickSet(module.path.index()))
             fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
         if (module.body && usedBodies.quickSet(module.body.index()))
             fail({ .kind = InternalErrorKind::InvalidModule, .function = module.body, .count = index });
+        if (module.exportsVariable && usedExportsVariables.quickSet(module.exportsVariable.index()))
+            fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
     }
 }
 
@@ -216,12 +276,98 @@ bool ProgramVerifier::hasValidBody(const Module& module) const
     auto isAnything = [](TypeID type) { return type == TypeTable::anything; };
     return rules.body != BodyRule::Absent
         && body->captures.isEmpty()
-        && body->parameters.size() == rules.numberOfParameters
-        && std::ranges::all_of(body->parameters, isAnything, &DeclaredType::type)
+        && body->parameters.isEmpty()
         && body->results.size() == 1
         && isAnything(body->results[0].type)
-        && body->flags.containsAll(rules.requiredBodyFlags)
         && !body->flags.containsAny(rules.forbiddenBodyFlags);
+}
+
+namespace {
+
+// The numbers are part of the message.
+enum class EvaluationRule : uint32_t {
+    TargetIsFileThatEndsAtOnce = 1,
+    ReferrerRequestsTarget,
+    BareSiteStandsInBodyOfReferrer,
+    BareSiteStandsInBodyThatNeverWaits,
+    BareSiteHasNoHandler,
+    BareSiteRunsOnce,
+    BareSitesRunInOneOrder,
+    EveryRunThatEndsPassesBareSite,
+};
+
+} // anonymous namespace
+
+void FunctionVerifier::verifyModuleEvaluation(BlockID block, ValueID id, const Value& value)
+{
+    auto failRule = [&](EvaluationRule rule) {
+        fail(InternalErrorKind::InvalidModuleEvaluation, block, id, static_cast<uint32_t>(rule));
+    };
+    const Module& target = m_program.at(value.module());
+    if (!isFileOfProgram(target) || target.flags.contains(ModuleFlags::HasTopLevelAwait))
+        return failRule(EvaluationRule::TargetIsFileThatEndsAtOnce);
+
+    // Where a bare site stands is what the front end promises. The pass that turns the sites into calls looks again: one that another pass has moved counts as late there.
+    bool isBare = value.opcode == Opcode::EvaluateModule && value.isBare() && form() == IRForm::AsRead && !isOptimizing();
+    m_moduleEvaluations.append(ModuleEvaluationSite { value.referrer(), value.module(), block, id, isBare });
+    if (!isBare)
+        return;
+    if (m_program.at(value.referrer()).body != m_id)
+        return failRule(EvaluationRule::BareSiteStandsInBodyOfReferrer);
+    if (m_function.has(FunctionFlags::IsAsync))
+        return failRule(EvaluationRule::BareSiteStandsInBodyThatNeverWaits);
+    if (m_function.at(block).handler)
+        return failRule(EvaluationRule::BareSiteHasNoHandler);
+    if (analyses().isInCycle(block))
+        failRule(EvaluationRule::BareSiteRunsOnce);
+}
+
+// The pass that turns the sites into calls walks them in the order of the text and lets the second site of a module do nothing. So every run comes to them in
+// that order, and a run that misses one ends in a throw, which no handler of the body sees. The sites are listed in reverse postorder.
+void FunctionVerifier::verifyBareEvaluations()
+{
+    if (hasFailed())
+        return;
+    const ModuleEvaluationSite* last = nullptr;
+    for (const ModuleEvaluationSite& site : m_moduleEvaluations) {
+        if (!site.isBare)
+            continue;
+        if (last && !analyses().dominators().dominates(last->block, site.block))
+            return fail(InternalErrorKind::InvalidModuleEvaluation, site.block, site.value, static_cast<uint32_t>(EvaluationRule::BareSitesRunInOneOrder));
+        last = &site;
+    }
+    if (!last)
+        return;
+    for (BlockID block : analyses().cfg().reversePostOrder()) {
+        TerminatorKind kind = m_function.at(block).terminator.kind;
+        bool returns = kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall;
+        if (returns && !analyses().dominators().dominates(last->block, block))
+            return fail(InternalErrorKind::InvalidModuleEvaluation, last->block, last->value, static_cast<uint32_t>(EvaluationRule::EveryRunThatEndsPassesBareSite));
+    }
+}
+
+void FunctionVerifier::verifyRequestsOfEvaluations()
+{
+    if (hasFailed() || m_moduleEvaluations.isEmpty())
+        return;
+    std::ranges::sort(m_moduleEvaluations, { }, [](const ModuleEvaluationSite& site) {
+        return std::tuple { site.referrer, site.target, site.value };
+    });
+    ModuleID referrer;
+    Vector<ModuleID> requiredModules;
+    for (const ModuleEvaluationSite& site : m_moduleEvaluations) {
+        if (site.referrer != referrer) {
+            referrer = site.referrer;
+            requiredModules.shrink(0);
+            for (const ModuleRequest& request : m_program.at(referrer).requests) {
+                if (request.kind == ModuleRequestKind::Require)
+                    requiredModules.append(request.target);
+            }
+            std::ranges::sort(requiredModules);
+        }
+        if (!std::ranges::binary_search(requiredModules, site.target))
+            return fail(InternalErrorKind::InvalidModuleEvaluation, site.block, site.value, static_cast<uint32_t>(EvaluationRule::ReferrerRequestsTarget));
+    }
 }
 
 template<typename Functor>
@@ -377,16 +523,17 @@ static bool canHaveExtraKeys(LayoutKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasValidMembers(const Program& program, const DataNode::Object& object, Vector<PropertyKeyID, 16>& keys)
+// An object without a layout is what NewDictionary makes. The optimizer writes such records behind the passes that ask every object of a record for its layout.
+static bool hasValidMembers(const Program& program, const DataNode::Object& object, bool mayLackLayout, Vector<PropertyKeyID, 16>& keys)
 {
-    if (!hasObjectKind(program, object.layout))
+    if (object.layout ? !hasObjectKind(program, object.layout) : !mayLackLayout)
         return false;
 
-    const Layout& layout = program.at(object.layout);
-    bool hasOnlyFields = !canHaveExtraKeys(layout.kind);
+    const Layout* layout = object.layout ? &program.at(object.layout) : nullptr;
+    bool hasOnlyFields = layout && !canHaveExtraKeys(layout->kind);
     keys.shrink(0);
     for (const DataMember& member : object.members) {
-        if (!member.key || member.value.is<DataNode::Hole>() || (hasOnlyFields && !layout.findField(member.key)))
+        if (!member.key || member.value.is<DataNode::Hole>() || (hasOnlyFields && !layout->findField(member.key)))
             return false;
         keys.append(member.key);
     }
@@ -394,7 +541,7 @@ static bool hasValidMembers(const Program& program, const DataNode::Object& obje
     return std::ranges::adjacent_find(keys) == keys.end();
 }
 
-static bool isValidDataNode(const Program& program, const DataNode& node, Vector<PropertyKeyID, 16>& keys)
+static bool isValidDataNode(const Program& program, const DataNode& node, bool mayLackLayout, Vector<PropertyKeyID, 16>& keys)
 {
     switch (node.kind()) {
     case DataNode::Kind::Undefined:
@@ -412,17 +559,17 @@ static bool isValidDataNode(const Program& program, const DataNode& node, Vector
     case DataNode::Kind::Array:
         return !!node.as<DataNode::Array>().contents;
     case DataNode::Kind::Object:
-        return hasValidMembers(program, node.as<DataNode::Object>(), keys);
+        return hasValidMembers(program, node.as<DataNode::Object>(), mayLackLayout, keys);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isValidDataTree(const Program& program, const DataNode& root)
+static bool isValidDataTree(const Program& program, const DataNode& root, bool mayLackLayout)
 {
     bool isValid = !root.is<DataNode::Hole>();
     Vector<PropertyKeyID, 16> keys;
     forEachDataNodeInPreorder(root, [&](uint32_t, const DataNode& node) {
-        isValid = isValid && isValidDataNode(program, node, keys);
+        isValid = isValid && isValidDataNode(program, node, mayLackLayout, keys);
     });
     return isValid;
 }
@@ -433,7 +580,7 @@ void ProgramVerifier::verifyData()
         return;
     auto& data = m_program.data;
     Vector<uint32_t> invalidRecords = findIndicesInParallel(m_build.parallelLoops(), data.size(), [&](unsigned index) {
-        return !isValidDataTree(m_program, data[index].root);
+        return !isValidDataTree(m_program, data[index].root, !isAsRead());
     });
     for (uint32_t index : invalidRecords)
         verifyDataNode(DataID(index), data[index].root);
@@ -441,7 +588,7 @@ void ProgramVerifier::verifyData()
 
 void ProgramVerifier::verifyDataNode(DataID id, const DataNode& root)
 {
-    if (!isValidDataTree(m_program, root))
+    if (!isValidDataTree(m_program, root, !isAsRead()))
         fail({ .kind = InternalErrorKind::InvalidData, .count = id.index() });
 }
 

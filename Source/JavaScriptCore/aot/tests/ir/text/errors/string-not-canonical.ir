@@ -1,4 +1,4 @@
-# The bytes of a string go to the reader as they are written, and it refuses a byte that starts no code point
+# The bytes of a string go to the reader as the text has them, and it refuses a byte that starts no code point
 # RUN: print
 # DIAGNOSTIC: StringNotCanonical
 

@@ -7,7 +7,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Widget" constructor=f0 flow={baseState=None}
-layout L1 kind=Instance name="Button" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L1 kind=Instance name="Button" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0}
 function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="Button" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f2 name="describeWidget" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {

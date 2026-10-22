@@ -13,7 +13,6 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-typesite w0 module=m0 position=3 kind=Assertion text="number"
 
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -30,21 +29,19 @@ function f1 name="calls" parameters=[{type=anything}] results=[{type=anything}] 
     v1 = Call v0
     Return v1
 }
-function f2 name="leaf" parameters=[{type=anything}] results=[{type=number}] {
+function f2 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=number site=w0
-    v2 = Add v1, v1
-    Return v2
+    v1 = RequireObjectCoercible v0 name="length"
+    Return v1
 }
-function f3 name="leafWithHandler" parameters=[{type=anything}] results=[{type=number}] {
+function f3 name="leafWithHandler" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
-    v1 = Claim v0 castType=number site=w0
+    v1 = RequireObjectCoercible v0 name="length"
     Jump -> next b1()
   b1():
-    v2 = Add v1, v1
-    Return v2
+    Return v1
   b2() role=CatchHandler:
-    v3 = CatchValue
-    v4 = Integer integer=0
-    Return v4
+    v2 = CatchValue
+    v3 = Integer integer=0
+    Return v3
 }

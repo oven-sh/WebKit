@@ -42,6 +42,7 @@ namespace JSC { namespace Yarr {
 #define FOR_EACH_FLAT_OP_PUSHING_FRAME(macro) \
     macro(Choice) \
     macro(ChoiceByFirst) \
+    macro(ChoiceByTable) \
     macro(GreedyLoopChoice) \
     macro(NegativeLookaheadBegin) \
     macro(GreedyRun) \
@@ -108,9 +109,9 @@ struct FlatOp {
     uint16_t firstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what this alternative can begin with. *BeforeKnownCharacters: what follows the run.
     uint16_t laterFirstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what any later alternative can begin with.
     uint16_t registerIndex { 0 };
-    uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin.
+    uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin. ChoiceByTable: where this alternative's row of FlatProgram::dispatchEntries begins.
     uint32_t target { 0 };
-    uint32_t needed { 0 };
+    uint32_t needed { 0 }; // ChoiceByTable: where its table's part of FlatProgram::dispatchClasses begins.
 };
 
 // Says nothing about characters from 256 up.
@@ -141,6 +142,15 @@ public:
     Vector<FlatOp> ops;
     Vector<CharacterSetBits> characterSets;
     Vector<FirstSetBits> firstSets;
+    // A disjunction of more than two alternatives has a table. Its part of dispatchClasses gives every Latin-1 character, and the end of the input, a class: the characters of a class begin the same alternatives.
+    // An alternative's row of dispatchEntries says for every class which alternative, from this one on, is the first that can begin with it: this one, or the op to go on at.
+    static constexpr unsigned dispatchClassesPerTable = 257;
+    static constexpr uint32_t onlyThisAlternativeBeginsHere = 0;
+    static constexpr uint32_t thisAndLaterAlternativesBeginHere = 1;
+    static constexpr uint32_t noAlternativeBeginsHere = 2;
+    static constexpr uint32_t firstDispatchTarget = 3;
+    Vector<uint16_t> dispatchClasses;
+    Vector<uint32_t> dispatchEntries;
     Vector<CharacterRange> wideRanges;
     Vector<Latin1Character> text;
     Vector<char16_t> wideText;
@@ -152,6 +162,8 @@ public:
     unsigned numRegisters { 0 };
     std::optional<unsigned> endAnchoredFixedSize;
     bool triesOnlyOnce { false };
+    // Of a pattern in unicode mode with a step that can consume a surrogate pair. A subject of 8-bit characters has none. Any other subject goes to the bytecode interpreter.
+    bool runsOnlyOn8BitSubjects { false };
 };
 
 enum class FlatProgramDecline : uint8_t {
@@ -174,6 +186,7 @@ struct RegExpMatchOutcome {
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&);
 void removeUnneededLogging(FlatProgram&);
 JSRegExpResult matchFlatProgram(const FlatProgram&, StringView input, unsigned start, unsigned* output);
+JS_EXPORT_PRIVATE JSRegExpResult matchFlatProgram(const FlatProgram&, std::span<const Latin1Character> input, unsigned start, unsigned* output);
 void validateFlatProgramResult(const FlatProgram&, StringView input, unsigned start, RegExpMatchOutcome flatProgramOutcome, RegExpMatchOutcome interpreterOutcome);
 ASCIILiteral description(FlatProgramDecline);
 

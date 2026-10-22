@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"
@@ -16,9 +18,10 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTTypeErrorMessages.h"
+#include "AOTState.h"
 #include "DeferGCInlines.h"
 #include "IteratorOperations.h"
+#include "JSArrayIterator.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSCInlines.h"
 #include "JSPropertyNameEnumeratorInlines.h"
@@ -97,7 +100,7 @@ static IterationRecord getIterator(JSGlobalObject* globalObject, JSValue iterabl
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (iterable.isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, nullishIterationMessage(iterable));
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, iterable));
         return { };
     }
     JSValue method = iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
@@ -109,7 +112,7 @@ static IterationRecord getIterator(JSGlobalObject* globalObject, JSValue iterabl
     JSValue iterator = call(globalObject, method, JSC::getCallData(method), iterable, ArgList());
     RETURN_IF_EXCEPTION(scope, { });
     if (!iterator.isObject()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwException(globalObject, scope, createIteratorResultNotObjectError(globalObject));
         return { };
     }
     JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
@@ -156,7 +159,7 @@ static void closeIterator(JSGlobalObject* globalObject, JSValue iterator)
     JSValue result = call(globalObject, method, JSC::getCallData(method), iterator, ArgList());
     RETURN_IF_EXCEPTION(scope, void());
     if (!result.isObject()) [[unlikely]]
-        throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwException(globalObject, scope, createIteratorResultNotObjectError(globalObject));
 }
 
 void destructureIterable(JSGlobalObject* globalObject, JSValue iterable, uint32_t count, EncodedJSValue* results)
@@ -220,14 +223,36 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCreateAsyncFromSyncIterator, JSCel
 {
     constexpr Entry entry = Entry::operationAOTCreateAsyncFromSyncIterator;
     AOT_OPERATION_BEGIN(instance, entry);
-    RELEASE_AND_RETURN(scope, JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), cellArgument<JSObject>(iterator, entry), JSValue::decode(next), IterationMode::Generic));
+    JSObject* syncIterator = cellArgument<JSObject>(iterator, entry);
+    JSValue nextMethod = JSValue::decode(next);
+    IterationMode mode = IterationMode::Generic;
+    if (auto* arrayIterator = dynamicDowncast<JSArrayIterator>(syncIterator); arrayIterator && nextMethod.isCell() && nextMethod.asCell() == instance->state->builtinCells->findObject(Builtins::ArrayIteratorPrototypeNext)) {
+        JSValue iterated = arrayIterator->internalField(JSArrayIterator::Field::IteratedObject).get();
+        if (iterated.isCell() && isJSArray(iterated.asCell())) {
+            switch (arrayIterator->kind()) {
+            case IterationKind::Keys:
+                mode = IterationMode::FastArrayKeys;
+                break;
+            case IterationKind::Values:
+                mode = IterationMode::FastArrayValues;
+                break;
+            case IterationKind::Entries:
+                mode = IterationMode::FastArrayEntries;
+                break;
+            }
+        }
+    }
+    RELEASE_AND_RETURN(scope, JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), syncIterator, nextMethod, mode));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowNotIterable, void, (Instance* instance, EncodedJSValue encodedIterable, uint32_t isSpread))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowNotIterable);
     JSValue iterable = JSValue::decode(encodedIterable);
-    throwTypeError(globalObject, scope, isSpread ? "Spread syntax requires ...iterable[Symbol.iterator] to be a function"_s : getIteratorErrorMessage(validateIterable(vm, iterable, jsUndefined()), iterable));
+    if (isSpread)
+        throwException(globalObject, scope, createSpreadIteratorNotFunctionError(globalObject));
+    else
+        throwTypeError(globalObject, scope, getIteratorErrorMessage(validateIterable(vm, iterable, jsUndefined()), iterable));
     OPERATION_RETURN(scope);
 }
 

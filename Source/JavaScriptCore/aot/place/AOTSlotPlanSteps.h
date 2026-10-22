@@ -16,7 +16,6 @@
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/HashMap.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
@@ -59,6 +58,8 @@ public:
         SlotRow declaringRow { 0 };
         uint32_t firstRow { 0 };
         uint32_t numberOfRows { 0 };
+        uint32_t firstRowInUnallocatedBases { 0 };
+        uint32_t numberOfRowsInUnallocatedBases { 0 };
     };
 
     InheritedRows(const Program&, const SlotRows&, std::span<const LayoutStorage>);
@@ -71,6 +72,8 @@ public:
     std::span<const Family> families() const LIFETIME_BOUND { return m_families.span(); }
     // The rows in compiled objects. The declaring layout is among them only where it is allocated.
     std::span<const SlotRow> rowsOf(const Family& family) const LIFETIME_BOUND { return m_rows.span().subspan(family.firstRow, family.numberOfRows); }
+    // The rows in bases that are never allocated themselves. Nothing is placed for them, but what the constructor of such a base stores is counted on them.
+    std::span<const SlotRow> rowsInUnallocatedBasesOf(const Family& family) const LIFETIME_BOUND { return m_rowsInUnallocatedBases.span().subspan(family.firstRowInUnallocatedBases, family.numberOfRowsInUnallocatedBases); }
     // The compiled objects and their proven bases, a base before the layouts below it.
     std::span<const Vector<LayoutID>> layoutsByDepth() const LIFETIME_BOUND { return m_layoutsByDepth.span(); }
 
@@ -80,12 +83,14 @@ private:
     Vector<SlotRow> m_declaringRow;
     Vector<Family> m_families;
     Vector<SlotRow> m_rows;
+    Vector<SlotRow> m_rowsInUnallocatedBases;
     Vector<Vector<LayoutID>> m_layoutsByDepth;
 };
 
 struct SlotPlanContext {
     bool isCompiledObject(LayoutID id) const { return layoutStorage[id.index()] == LayoutStorage::CompiledObject; }
     bool isEnvironment(LayoutID id) const { return layoutStorage[id.index()] == LayoutStorage::Environment; }
+    bool isMadeSeldom(LayoutID id) const { return layoutsMadeSeldom.get(id.index()); }
 
     const Program& program;
     const SlotPlanInputs& inputs;
@@ -95,6 +100,10 @@ struct SlotPlanContext {
     std::span<const LayoutStorage> layoutStorage;
     bool usesWideReferences;
     const InheritedRows& inheritedRows;
+    // What saves memory at the price of instructions is for the layouts that are not among them. Known once the uses are collected.
+    BitVector layoutsMadeSeldom { };
+    // Their slots also lie in objects of other layouts, which have no Extension to offer.
+    BitVector layoutsFlattenedInOthers { };
 };
 
 struct SlotAccessKey {
@@ -109,49 +118,58 @@ struct SlotAccessUse {
     SlotAccessKey access;
     uint32_t sites { 0 };
     SiteWeight weight { 0 };
-    uint32_t integerUses { 0 };
-    uint32_t doubleUses { 0 };
-    uint32_t doubleStores { 0 };
-    uint32_t rangeTestedStores { 0 };
+    // Of the stores of something else than the constant undefined, in heat without a limit.
+    double fillHeat { 0 };
     uint32_t storesWithoutAllocation { 0 };
     uint32_t storesIntoFilledSlots { 0 };
-    uint32_t wideStoresWithoutAllocation { 0 };
+    uint32_t storesIntoNewObjects { 0 };
 };
 
 struct StoreByNameUse {
     PropertyKeyID key;
     LayoutSetID receivers;
-    SiteWeight weight { 0 };
+    double heat { 0 };
 };
 
 struct SlotRowUse {
-    // An estimate of the share of objects that get the field: how often it is stored against how often its holders are allocated. The weights of a constructor and of
-    // the code that calls it do not compare, so what the constructor itself stores at every activation is counted by itself.
-    bool isLikelyFilled() const { return storesOfConstructorWithValue || isRequiredByDeclaringType || (holderWeight && fillWeight >= holderWeight / 2); }
+    // Whether any code that was seen gives the field something, be it undefined.
+    bool isStoredSomewhere() const { return fillHeat || initializingSites || storesOfConstructorWithValue || storesOfUndefined; }
+    // An estimate of the share of objects that get the field: how often it is stored against how often its holders are made. A store may run again and again for one object,
+    // so what is stored into an object that has just been made is counted by itself. A type may require a field that nothing stores.
+    // A little under a half, so that a half that was added up from parts is a half.
+    bool isLikelyFilled() const { return isFilledBesideCreation() || (holderHeat && fillHeat >= holderHeat * 0.4999); }
+    bool isFilledBesideCreation() const { return storesOfConstructorWithValue || (isRequiredByDeclaringType && isStoredSomewhere()); }
 
     SiteWeight accessWeight { 0 };
-    SiteWeight fillWeight { 0 };
-    SiteWeight holderWeight { 0 };
+    // In heat without a limit: by the estimate half the functions of a large program are entered more often than maxSiteActivations, and limited weights say nothing about one another.
+    double fillHeat { 0 };
+    double holderHeat { 0 };
+    bool hasHoldersMadeInLoop { false };
+    // How often an object of the layout is made at a place whose function goes on to store a value into the field.
+    double heatFilledBesideCreation { 0 };
     uint32_t initializingSites { 0 };
+    uint32_t initializingSitesOfOwnLayout { 0 };
     uint32_t sitesInitializingWithValue { 0 };
     uint32_t storesOfConstructorWithValue { 0 };
+    // Stores of the constant undefined behind the allocation: they say that the field exists and fill nothing.
+    uint32_t storesOfUndefined { 0 };
     bool isRequiredByDeclaringType { false };
-    // Allocations and slot stores that give a field which flow lets defer its closure something else than a closure of that function created beside them. A pass may have made one since.
-    uint32_t storesOfOtherThanDeferredClosure { 0 };
+    // The field of a constructor function is required because the constructor stores it, be it undefined. The type that `this` is declared to have says whether the program counts on a value.
+    bool isOptionalInTypeOfThis { false };
     uint32_t environmentUses { 0 };
-    uint32_t integerUses { 0 };
-    uint32_t doubleUses { 0 };
-    uint32_t doubleStores { 0 };
-    uint32_t rangeTestedStores { 0 };
     uint32_t storesWithoutAllocation { 0 };
     uint32_t storesIntoFilledSlots { 0 };
-    uint32_t wideStoresWithoutAllocation { 0 };
+    // Slot stores into an object of exactly this layout that the same function has allocated. A pass that makes objects fills them so in place of the list of the allocation:
+    // a compiled parser stores the members that the text may leave out. Flow ran before that pass and says nothing of its stores.
+    uint32_t storesIntoNewObjects { 0 };
     uint32_t privateDefinitionsByName { 0 };
 };
 
 struct LayoutUse {
     uint32_t allocationSites { 0 };
-    SiteWeight allocationWeight { 0 };
+    double creationHeat { 0 };
+    // By what the code itself shows: see findFunctionsThatRunInLoops. An event counts for far more than a loop in the heat of a run, so the heat does not say it.
+    bool isMadeInLoop { false };
 };
 
 struct VariableUse {
@@ -160,13 +178,23 @@ struct VariableUse {
     bool isUsedBeforeProgramEntry { false };
 };
 
+// Two rows of one layout that a function stores one after the other into one object: an object that has the one mostly has the other.
+struct RowsStoredTogether {
+    SlotRow first { 0 };
+    SlotRow second { 0 };
+    SiteWeight weight { 0 };
+};
+
 struct SlotUses {
     Vector<SlotAccessUse> accesses;
     Vector<StoreByNameUse> storesByName;
+    // The heaviest first.
+    Vector<RowsStoredTogether> rowsStoredTogether;
     Vector<SlotRowUse> rows;
     Vector<LayoutUse> layouts;
     Vector<VariableUse> variables;
     Vector<SiteWeight> keyWeights;
+    BitVector functionsWhoseNewClosuresAreStoredInto;
 };
 
 // The fields that one access reaches under one key in several layouts are joined, and the rows of their families with them. Joined rows want one claim and one location.
@@ -215,10 +243,10 @@ struct SlotClaim {
     bool needsAbsentState { false };
     bool needsWideReference { false };
     bool deferredClosureCapturesObject { false };
+    bool deferredClosureCapturesEnvironment { false };
+    bool defersFlattenedObject { false };
     SlotRepresentation representation { SlotRepresentation::JSValue };
     SlotRepresentation outOfLineRepresentation { SlotRepresentation::JSValue };
-    // What an Int32OrDouble slot becomes where the Extension has no granule left for its double.
-    SlotRepresentation representationWithoutOverflowArea { SlotRepresentation::JSValue };
     FunctionID deferredFunction;
 };
 
@@ -261,6 +289,7 @@ struct SlotPlanParts {
     Vector<PlannedVariable> variables;
     Vector<ClosureForm> closureForms;
     Vector<ClassCreationPlan> classCreation;
+    FormsExpectedOfNames formsExpectedOfNames;
     BitVector keysWithColumn;
 };
 
@@ -271,15 +300,6 @@ constexpr uint64_t bytesAt(uint32_t offset, uint32_t size)
     return ((1ull << size) - 1) << (offset % 64);
 }
 
-enum class NumberUse : uint8_t {
-    Unknown,
-    AsInteger,
-    AsDouble,
-    PassedOn,
-};
-
-using NumberSources = UncheckedKeyHashMap<ValueID, Vector<uint32_t, 1>>;
-
 constexpr bool isSlotStore(Opcode opcode) { return storedOf(opcode).has_value(); }
 
 bool everyAllocationClassCannot(const Program&, const FlowResults&, LayoutID, OptionSet<ObjectMutation>);
@@ -287,8 +307,6 @@ bool someAllocationClassMay(const Program&, const FlowResults&, LayoutID, Option
 bool keysAreNeverEnumerated(const Program&, const FlowResults&, LayoutID);
 bool mayHaveUnorderedShape(const Program&, const FlowResults&, LayoutID);
 bool declaresPrivateName(const Layout&);
-bool isPredictedInt32(const Program&, const Field&);
-bool isPredictedInt32(const Program&, PropertyKeyID, LayoutSetID receivers);
 bool isDescribedToRunTime(const Program&, const FlowResults&, ModuleID exporter, const ModuleExport&);
 
 Vector<LayoutStorage> chooseLayoutStorage(const Program&, const SlotPlanInputs&, BuildContext&);
@@ -296,7 +314,6 @@ JS_EXPORT_PRIVATE BitVector chooseKeysWithColumn(const SlotPlanContext&, const S
 JS_EXPORT_PRIVATE SlotUses collectSlotUses(const SlotPlanContext&);
 void shareUsesOfInheritedRows(const InheritedRows&, SlotUses&);
 JS_EXPORT_PRIVATE void dumpFillEstimates(PrintStream&, const Program&, const SlotUses&);
-void countNumberUses(const SlotPlanContext&, FunctionAnalyses&, NumberSources&&, Vector<SlotAccessUse>& accessesOfFunction);
 BitVector findZeroEncodingCandidates(const SlotPlanContext&);
 void findUncheckedVariableReads(FunctionAnalyses&, const BitVector& candidates, Vector<VariableID>& unchecked);
 
@@ -310,13 +327,12 @@ Vector<SlotClaim> chooseSlotRepresentations(const SlotPlanContext&, const SlotUs
 PackedLayouts packObjects(const SlotPlanContext&, const SlotUses&, const JoinedRows&, std::span<const SlotClaim>);
 void packEnvironments(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, PackedLayouts&);
 OccupiedBytes occupiedBytesOf(const SlotPlanContext&, const PackedLayouts&, LayoutID);
-void updateExtensionSizes(const SlotPlanContext&, PackedLayouts&);
 void widenSlotsIntoPadding(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
 void reserveEmptySlots(const SlotPlanContext&, const SlotUses&, PackedLayouts&, const EmptySlotRoom&);
 void reserveEmptySlotsInPadding(const SlotPlanContext&, const SlotUses&, PackedLayouts&);
 
 Vector<PlannedVariable> planVariables(const SlotPlanContext&, const SlotUses&);
-Vector<ClosureForm> chooseClosureForms(const SlotPlanContext&);
+Vector<ClosureForm> chooseClosureForms(const SlotPlanContext&, const SlotUses&);
 Vector<ClassCreationPlan> planClassCreation(const SlotPlanContext&);
 
 } } } // namespace JSC::AOT::Typed

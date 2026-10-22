@@ -35,6 +35,7 @@
 #include "AOTCompiledFrame.h"
 #include "AOTNativeCallValidation.h"
 #include "AOTRemovableFeature.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTStackTrace.h"
 #include "AOTUnwinding.h"
 #include "AbortReason.h"
@@ -118,6 +119,7 @@ struct DirectEvalSite {
     JSScope* scope;
     JSValue thisValue;
     CodeBlock* codeBlockWithCache;
+    DirectEvalCodeCache* cache;
     BytecodeIndex callSite;
 };
 
@@ -175,7 +177,8 @@ static ALWAYS_INLINE JSValue evaluateDirectEvalAt(JSGlobalObject* globalObject, 
     auto programStr = programString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     auto cacheKey = DirectEvalCodeCache::CacheLookupKey(programStr.data.impl(), site.callSite);
-    DirectEvalExecutable* eval = site.codeBlockWithCache ? site.codeBlockWithCache->directEvalCodeCache().get(cacheKey) : nullptr;
+    DirectEvalCodeCache* cache = site.codeBlockWithCache ? &site.codeBlockWithCache->directEvalCodeCache() : site.cache;
+    DirectEvalExecutable* eval = cache ? cache->get(cacheKey) : nullptr;
     if (!eval) {
         // GC needs to be deferred as it's possible cacheKey holds one of programString's fibers'
         // contents as a raw StringImpl*. Even though programString is on the stack, rope
@@ -209,8 +212,10 @@ static ALWAYS_INLINE JSValue evaluateDirectEvalAt(JSGlobalObject* globalObject, 
             return { };
 
         // Skip the eval cache if tainted since another eval call could have a different taintedness.
-        if (caller.codeBlockWithCache && !sourceTaintedOrigin.couldBeTainted())
-            caller.codeBlockWithCache->directEvalCodeCache().set(globalObject, caller.codeBlockWithCache, cacheKey, eval);
+        if (cache && !sourceTaintedOrigin.couldBeTainted()) {
+            JSCell* cacheOwner = caller.codeBlockWithCache ? caller.codeBlockWithCache : caller.cacheOwner;
+            cache->set(globalObject, cacheOwner, cacheKey, eval);
+        }
     }
 
     RELEASE_AND_RETURN(scope, vm.interpreter.executeEval(eval, site.thisValue, site.scope));
@@ -270,14 +275,18 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
             .callSite = bytecodeIndex,
         };
     };
-    DirectEvalSite site { callFrame, callerScopeChain, thisValue, callerBaselineCodeBlock, bytecodeIndex };
+    DirectEvalSite site { callFrame, callerScopeChain, thisValue, callerBaselineCodeBlock, nullptr, bytecodeIndex };
     RELEASE_AND_RETURN(scope, evaluateDirectEvalAt(globalObject, program, site, describeCaller));
 }
 
 JSValue evaluateDirectEval(JSGlobalObject* globalObject, JSValue program, const DirectEvalCaller& caller)
 {
-    DirectEvalSite site { caller.callFrame, caller.scope, caller.thisValue, caller.codeBlockWithCache, caller.callSite };
+    ASSERT(!caller.cache || caller.cacheOwner);
+    DirectEvalSite site { caller.callFrame, caller.scope, caller.thisValue, caller.codeBlockWithCache, caller.cache, caller.callSite };
     return evaluateDirectEvalAt(globalObject, program, site, [&]() -> const DirectEvalCaller& {
+#if ENABLE(AOT)
+        AOT::count(globalObject->vm(), AOT::RuntimeCounterID::DirectEvalsParsed);
+#endif
         return caller;
     });
 }
@@ -688,6 +697,101 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         results.shrink(maxStackSize);
 }
 
+void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize)
+{
+    RELEASE_ASSERT(Options::useAsyncStackTrace());
+    ASSERT(generator);
+
+    AssertNoGC assertNoGC;
+
+    VM& vm = this->vm();
+
+    auto getContextValueFromPromise = [&](JSPromise* promise) -> JSValue {
+        if (!promise)
+            return { };
+        JSValue context = promise->asyncStackTraceContext();
+#if USE(BUN_JSC_ADDITIONS)
+        // JSPromise::resolveWithInternalMicrotaskForAsyncAwait stores
+        // InternalFieldTuple(context, asyncContext) when ALS is active.
+        if (context) {
+            if (auto* tuple = dynamicDowncast<InternalFieldTuple>(context))
+                return tuple->getInternalField(0);
+        }
+#endif
+        return context;
+    };
+
+    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) -> JSAsyncFunctionGenerator* {
+        JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
+        ASSERT(generatorContext);
+        JSPromise* awaitedPromise = dynamicDowncast<JSPromise>(generatorContext);
+        JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
+
+        if (!promiseContext)
+            return nullptr;
+
+        // handle simple `await`
+        if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
+            return generator;
+
+        // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
+        if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(promiseContext)) {
+            JSValue promiseValue = globalContext->promise();
+            ASSERT(promiseValue);
+            if (auto* promise = dynamicDowncast<JSPromise>(promiseValue)) {
+                if (JSValue promiseContext = getContextValueFromPromise(promise)) {
+                    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
+                        return generator;
+                }
+            }
+        }
+
+        // handle and `Promise.race`
+        if (auto* contextPromise = dynamicDowncast<JSPromise>(promiseContext)) {
+            if (JSValue parentContext = getContextValueFromPromise(contextPromise)) {
+                if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(parentContext))
+                    return generator;
+            }
+        }
+
+        return nullptr;
+    };
+
+    auto computeBytecodeIndex = [&](CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator) -> BytecodeIndex {
+        BytecodeIndex bytecodeIndex(0);
+        JSValue stateValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
+        if (stateValue.isInt32()) {
+            int32_t state = stateValue.asInt32();
+            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+            if (state > 0 && numberOfJumpTables > 0) {
+                size_t lastTableIndex = numberOfJumpTables - 1;
+                const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+                int32_t offset = jumpTable.offsetForValue(state);
+                if (offset)
+                    bytecodeIndex = BytecodeIndex(offset);
+            }
+        }
+        return bytecodeIndex;
+    };
+
+    JSAsyncFunctionGenerator* currentGenerator = getParentGenerator(generator);
+    while (currentGenerator && results.size() < maxStackSize) {
+        JSValue nextValue = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Next)).get();
+        JSFunction* asyncFunction = dynamicDowncast<JSFunction>(nextValue);
+        if (asyncFunction && !asyncFunction->isHostOrPrivateBuiltinFunction()) {
+            if (FunctionExecutable* executable = asyncFunction->jsExecutable()) {
+                // If a CodeBlock doesn't already exist, the stack trace will only show the filename and won't show line column
+                if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
+                    BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
+                    results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
+                } else
+                    results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+            }
+        }
+        currentGenerator = getParentGenerator(currentGenerator);
+    }
+}
+
 void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo)
 {
     AssertNoGC assertNoGC;
@@ -736,7 +840,99 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
     }
 
-    appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller }, maxStackSize);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller }, maxStackSize);
+        return;
+    }
+#endif
+
+    bool foundCaller = !caller;
+    JSAsyncFunctionGenerator* asyncStackTraceOriginGenerator = nullptr;
+    size_t asyncStackTraceInsertPos = 0;
+    EntryFrame* previousEntryFrame = nullptr;
+    size_t previousEntryFrameStackTraceInsertPos = 0;
+    auto updateAsyncStackTraceOriginGenerator = [&]() -> void {
+        ASSERT(Options::useAsyncStackTrace());
+        auto* record = vmEntryRecord(previousEntryFrame);
+        if (record->m_context) {
+            if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(record->m_context)) {
+                asyncStackTraceOriginGenerator = generator;
+                asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
+            }
+        }
+    };
+
+    StackVisitor::visitWithoutCompiledFrames(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+        if (results.size() >= maxStackSize)
+            return IterationStatus::Done;
+
+        if (skippedFrames < framesToSkip) {
+            skippedFrames++;
+            return IterationStatus::Continue;
+        }
+
+        if (!foundCaller) {
+            if (!visitor->callee().isNativeCallee() && visitor->callee().asCell() == caller)
+                foundCaller = true;
+            skippedFrames++;
+            return IterationStatus::Continue;
+        }
+
+        auto* currentEntryFrame = visitor->entryFrame();
+        if (Options::useAsyncStackTrace()) {
+            if (currentEntryFrame != previousEntryFrame && previousEntryFrame)
+                updateAsyncStackTraceOriginGenerator();
+        }
+
+        if (!visitor->isImplementationVisibilityPrivate()) {
+            if (visitor->isNativeCalleeFrame()) {
+                auto* nativeCallee = visitor->callee().asNativeCallee();
+                switch (nativeCallee->category()) {
+                case NativeCallee::Category::Wasm: {
+                    results.append(StackFrame(visitor->wasmFunctionIndexOrName(), visitor->wasmFunctionIndex()));
+                    break;
+                }
+                case NativeCallee::Category::InlineCache: {
+                    break;
+                }
+                }
+#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+            } else if (!!visitor->codeBlock())
+#else
+            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+#endif
+                results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
+            else
+                results.append(StackFrame(vm, owner, visitor->callee().asCell()));
+
+            previousEntryFrame = currentEntryFrame;
+            previousEntryFrameStackTraceInsertPos = results.size();
+        }
+        return IterationStatus::Continue;
+    });
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Add the single async frame if it exists and we have space
+    if (maxStackSize > results.size()) {
+        const auto& appender = vm.onAppendStackTrace();
+        if (appender)
+            appender(vm, owner, results, maxStackSize - results.size());
+    }
+#endif
+
+    if (Options::useAsyncStackTrace()) {
+        // Check if the last entry frame had a generator context
+        // that wasn't captured during stack traversal (e.g. TLA)
+        if (!asyncStackTraceOriginGenerator && previousEntryFrame)
+            updateAsyncStackTraceOriginGenerator();
+        if (asyncStackTraceOriginGenerator) {
+            Vector<StackFrame> asyncFrames;
+            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
+            if (!asyncFrames.isEmpty())
+                results.insertVector(asyncStackTraceInsertPos, asyncFrames);
+        }
+    }
 }
 
 void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, const StackTraceStart& start, size_t maxStackSize)
@@ -827,8 +1023,10 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
     if (start.compiledFrameExit)
         StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame);
     else
+        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame);
+#else
+    StackVisitor::visit(start.callFrame, vm, appendFrame);
 #endif
-        StackVisitor::visit(start.callFrame, vm, appendFrame);
 
 #if ENABLE(AOT)
     if (start.compiledFramesBelow)
@@ -943,11 +1141,13 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
     AssertNoGC assertNoGC;
     VM& vm = this->vm();
     bool result = false;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+    StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) ALWAYS_INLINE_LAMBDA {
 #if ENABLE(AOT)
-        if (visitor->isCompiledFrame()) {
-            result = AOT::isCaughtByCompiledCode(vm, visitor.compiledFrames());
-            return IterationStatus::Done;
+        if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                result = AOT::isCaughtByCompiledCode(vm, visitor.compiledFrames());
+                return IterationStatus::Done;
+            }
         }
 #endif
         if (visitor->isNativeCalleeFrame())
@@ -1040,6 +1240,10 @@ public:
                 m_catchableFromWasm = error->isCatchableFromWasm();
             else
                 m_catchableFromWasm = true;
+
+            // https://webassembly.github.io/exception-handling/js-api/#create-a-host-function
+            if (!m_wasmTag && !vm.hasCompiledCode())
+                m_wasmTag = &Wasm::Tag::jsExceptionTag();
         }
     }
 #else
@@ -1055,7 +1259,7 @@ public:
         AOT::CompiledUnwindResult result = AOT::unwindCompiledFrames(m_vm, frames, *m_vmEntryRecord, m_isTermination);
         switch (result.status) {
         case AOT::CompiledUnwindStatus::FoundHandler:
-            m_callFrame = result.handler.callFrame;
+            m_callFrame = result.handler.framePointer;
             m_handler = CatchInfo(result.handler);
             break;
         case AOT::CompiledUnwindStatus::LeftCompiledCode:
@@ -1070,13 +1274,16 @@ public:
     std::optional<AOT::CompiledFrameIterator::Exit> takeExitFromCompiledCode() const { return std::exchange(m_exitFromCompiledCode, std::nullopt); }
 #endif
 
-    IterationStatus operator()(StackVisitor& visitor) const
+    template<typename Visitor>
+    IterationStatus operator()(Visitor& visitor) const
     {
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
 #if ENABLE(AOT)
-        if (visitor->isCompiledFrame()) [[unlikely]]
-            return unwindCompiledFrames(visitor.compiledFrames());
+        if constexpr (Visitor::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame())
+                return unwindCompiledFrames(visitor.compiledFrames());
+        }
 #endif
         m_codeBlock = visitor->codeBlock();
 
@@ -1229,11 +1436,14 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     CatchInfo catchInfo;
     JSRemoteFunction* seenRemoteFunction = nullptr;
     UnwindFunctor functor(vm, callFrame, exception, exceptionValue, codeBlock, catchInfo, seenRemoteFunction);
-    StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
 #if ENABLE(AOT)
-    while (auto exit = functor.takeExitFromCompiledCode())
-        StackVisitor::visitFrom(vm, *exit, functor);
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        StackVisitor::visitWithCompiledFrames<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
+        while (auto exit = functor.takeExitFromCompiledCode())
+            StackVisitor::visitFrom(vm, *exit, functor);
+    } else
 #endif
+        StackVisitor::visitWithoutCompiledFrames<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
 
     if (seenRemoteFunction) {
         ASSERT(!vm.isTerminationException(exception));
@@ -1515,13 +1725,14 @@ failedJSONP:
 // Never inlined: executeCall and executeConstruct would otherwise have words in their frames that only a validated call writes, and the
 // conservative scan reads whatever an earlier call left in them.
 template<CodeSpecializationKind kind>
-static NEVER_INLINE EncodedJSValue enterNativeFunctionUnderValidation(JSGlobalObject* globalObject, JSObject* callee, JSValue thisValueOrNewTarget, const ArgList& args, TaggedNativeFunction nativeFunction, ProtoCallFrame& protoCallFrame)
+static NEVER_INLINE EncodedJSValue enterNativeFunctionUnderValidation(JSGlobalObject* globalObject, JSObject* callee, JSValue thisValueOrNewTarget, const ArgList& args, TaggedNativeFunction nativeFunction, ProtoCallFrame& protoCallFrame, bool& didRunCode)
 {
     VM& vm = globalObject->vm();
     AOT::NativeCallValidationScope validation(vm, { globalObject, callee, kind, thisValueOrNewTarget, args });
     EncodedJSValue result = vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame);
     if constexpr (kind == CodeSpecializationKind::CodeForCall)
         validation.didReturn(JSValue::decode(result));
+    didRunCode = validation.finishAndAskWhetherCodeRan();
     return result;
 }
 #endif
@@ -1628,8 +1839,13 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
 #endif
 
 #if ENABLE(AOT)
-    if (AOT::validatesRuntime(vm)) [[unlikely]]
-        return JSValue::decode(enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForCall>(globalObject, function, thisValue, args, nativeFunction, protoCallFrame));
+    if (AOT::validatesRuntime(vm)) [[unlikely]] {
+        bool didRunCode = true;
+        EncodedJSValue result = enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForCall>(globalObject, function, thisValue, args, nativeFunction, protoCallFrame, didRunCode);
+        if (!didRunCode)
+            clobberizeValidator.release();
+        return JSValue::decode(result);
+    }
 #endif
     return JSValue::decode(vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame));
 }
@@ -1726,9 +1942,12 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
         result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame);
     } else {
 #if ENABLE(AOT)
-        if (AOT::validatesRuntime(vm)) [[unlikely]]
-            result = enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForConstruct>(globalObject, constructor, newTarget, args, constructData.native.function, protoCallFrame);
-        else
+        if (AOT::validatesRuntime(vm)) [[unlikely]] {
+            bool didRunCode = true;
+            result = enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForConstruct>(globalObject, constructor, newTarget, args, constructData.native.function, protoCallFrame, didRunCode);
+            if (!didRunCode)
+                clobberizeValidator.release();
+        } else
 #endif
             result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
     }

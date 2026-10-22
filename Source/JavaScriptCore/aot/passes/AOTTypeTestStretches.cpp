@@ -25,7 +25,6 @@ static bool needsTestInFront(RequirementCoverage coverage)
 {
     switch (coverage) {
     case RequirementCoverage::NeedsTest:
-    case RequirementCoverage::NeedsRenewal:
         return true;
     case RequirementCoverage::Unknown:
     case RequirementCoverage::Covered:
@@ -202,18 +201,6 @@ void TestStretches::measureStretches()
         }
         if (range.isCloned && range.end == block.values.size())
             stretch.clonedBytes += estimatedCodeBytes(block.terminator);
-    }
-
-    std::span<const TestRequirement> requirements = m_events.requirements();
-    for (uint32_t index = 0; index < requirements.size(); ++index) {
-        if (needsTestInFront(m_coverage.of(index)))
-            ++m_stretches[stretchAt(requirements[index].point)].numberOfTests;
-    }
-
-    std::span<const HoistedTest> hoistedTests = m_events.hoistedTests();
-    for (uint32_t index = 0; index < hoistedTests.size(); ++index) {
-        if (m_wanted.isHoistedTestWanted(index))
-            ++m_stretches[stretchAtHeadOf(targetOf(function, hoistedTests[index].edge).block)].numberOfTests;
     }
 
     for (Stretch& stretch : m_stretches)

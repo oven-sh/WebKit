@@ -1,6 +1,6 @@
 # Without rotation the test stays at the head of each of the two loops, and so does its poll
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:StripMinePolls disable=b3:RotateLoops
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
 # RUN: generate-code
 # STATISTIC: LoopsRotated = 0
 # CHECK: f1: size={{*}} polls=2

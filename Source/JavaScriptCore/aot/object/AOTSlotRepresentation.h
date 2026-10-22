@@ -64,7 +64,6 @@ static_assert(maxSlotInteger < undefinedInteger);
 static constexpr int32_t absentInt32 = INT32_MIN + 1;
 static constexpr int32_t undefinedInt32 = INT32_MIN + 2;
 static constexpr int32_t nullInt32 = INT32_MIN + 3;
-static constexpr int32_t doubleInExtensionInt32 = INT32_MIN + 4;
 static constexpr int32_t minInlineInt32 = INT32_MIN + 5;
 
 static constexpr unsigned cell32Shift = MarkedBlockCage::shift;
@@ -74,12 +73,17 @@ static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
 static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined && absentCell32 == JSValue::ValueEmpty);
 
+static constexpr uint32_t uncreatedDeferredClosure = 0;
+static constexpr uint32_t absentDeferredClosure = 1;
+static_assert(absentDeferredClosure != uncreatedDeferredClosure && absentDeferredClosure < minCell32);
+static_assert(absentDeferredClosure != nullCell32 && absentDeferredClosure != undefinedCell32);
+
 static constexpr uint32_t emptyLiteralStringWord = 14;
 static constexpr unsigned literalStringShift = 2;
 static constexpr uint32_t maxLiteralStrings = 1 << 18;
 static constexpr uint32_t literalStringWord(uint32_t number) { return emptyLiteralStringWord + (number << literalStringShift); }
 static constexpr uint32_t literalStringIndex(uint32_t word) { return (word - emptyLiteralStringWord) >> literalStringShift; }
-static_assert(literalStringWord(maxLiteralStrings) <= minCell32);
+static_assert(literalStringWord(maxLiteralStrings) <= minCell32 && absentDeferredClosure < emptyLiteralStringWord);
 inline bool isLiteralStringWord(uint64_t word) { return word - emptyLiteralStringWord < minCell32 - emptyLiteralStringWord; }
 
 static constexpr size_t maxShortStringLength = 7;
@@ -116,7 +120,6 @@ enum class SlotValueKind : uint8_t {
     Boolean,
     Boxed,
     Cell,
-    Int32OrDouble,
     LiteralString,
     DeferredClosure,
 };
@@ -197,8 +200,6 @@ constexpr SlotTraits traitsOf(SlotRepresentation representation)
         return SlotTraits::of(4, SlotValueKind::UnsignedInteger);
     case SlotRepresentation::Float:
         return SlotTraits::of(4, SlotValueKind::Float);
-    case SlotRepresentation::Int32OrDouble:
-        return SlotTraits::of(4, SlotValueKind::Int32OrDouble).withMarkers(int32Markers);
     case SlotRepresentation::OptionalInt32:
         return SlotTraits::of(4, SlotValueKind::SignedInteger).withMarkers(int32Markers);
     case SlotRepresentation::Cell32:
@@ -208,7 +209,7 @@ constexpr SlotTraits traitsOf(SlotRepresentation representation)
     case SlotRepresentation::LiteralString32:
         return SlotTraits::of(4, SlotValueKind::LiteralString).holdingNarrowReference().withMarkers(cell32Markers);
     case SlotRepresentation::DeferredClosure:
-        return SlotTraits::of(4, SlotValueKind::DeferredClosure).holdingNarrowReference();
+        return SlotTraits::of(4, SlotValueKind::DeferredClosure).holdingNarrowReference().withAbsent(absentDeferredClosure);
     case SlotRepresentation::Int64:
         return SlotTraits::of(8, SlotValueKind::SignedInteger);
     case SlotRepresentation::OptionalInt64:
@@ -235,7 +236,8 @@ constexpr SlotRepresentation hiddenReferenceRepresentation(bool usesWideReferenc
 
 static_assert(widthOf(SlotRepresentation::Cell32) == sizeof(uint32_t) && widthOf(SlotRepresentation::Cell) == sizeof(uint64_t));
 static_assert(representsAbsentAsZero(SlotRepresentation::Cell32) && representsAbsentAsZero(SlotRepresentation::Cell));
-static_assert(!canLeaveSlot(SlotRepresentation::Int32) && canLeaveSlot(SlotRepresentation::Int32OrDouble) && canLeaveSlot(SlotRepresentation::OptionalInt32));
+static_assert(!canLeaveSlot(SlotRepresentation::Int32) && canLeaveSlot(SlotRepresentation::OptionalInt32));
+static_assert(canLeaveSlot(SlotRepresentation::DeferredClosure) && !representsAbsentAsZero(SlotRepresentation::DeferredClosure));
 
 } } // namespace JSC::AOT
 

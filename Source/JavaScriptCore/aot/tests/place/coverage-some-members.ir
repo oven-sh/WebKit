@@ -53,6 +53,7 @@ function f2 name="readThroughBothWithSlot" results=[{type=anything}] {
 # PLAN-NEXT: L2 CompiledObject size=32
 # PLAN-NEXT: .0 "y" Double @16
 # PLAN-NOT: "x"
+# An empty slot reads as undefined: the read is one site and has no test.
 # PLAN: "x" {L0 L1 L2} read weight={{*}} sites=1
 # PLAN-NEXT: one location Double @16
 # PLAN-NEXT: without slot {L2}

@@ -1,0 +1,79 @@
+# A number field takes 4 bytes where every store that the program shows puts an int32 into it, however many such fields its object has. One store of another number, and it takes 8.
+# A variable of an environment is no field of an object: it holds numbers, as it is declared
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ResolveAccesses disable=flow:NarrowedTypes
+# RUN: plan-slots
+# STATISTIC: FieldsNarrowedToInt32 = 12
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="TwoIntegers" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number}}, {key="integer" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="OneInteger" fields=[{key="single" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Environment name="scope" fields=[{key="left" declared={type=number}}, {key="right" declared={type=number}}]
+layout L3 name="StoredDoubles" fields=[{key="fraction" declared={type=number} flags=[IsRequired]}, {key="whole" declared={type=number} flags=[IsRequired]}, {key="tally" declared={type=number} flags=[IsRequired]}, {key="maybeFraction" declared={type=number}}, {key="filler0" declared={type=i32} flags=[IsRequired]}, {key="filler1" declared={type=i32} flags=[IsRequired]}]
+layout L4 name="TwoIntegersOneCommon" fields=[{key="common" declared={type=number} flags=[IsRequired]}, {key="other" declared={type=number} flags=[IsRequired]}, {key="filler" declared={type=i32} flags=[IsRequired]}]
+layout L5 name="OneIntegerAndCommon" fields=[{key="common" declared={type=number} flags=[IsRequired]}]
+layout L6 name="OtherNumbers" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 2]
+    v5 = FinishObject v4
+    v6 = NewObject -, v3, v3, v3 layout=L0 fields=[0, 1, 2]
+    v7 = FinishObject v6
+    v8 = NewObject -, v3 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = NewObject -, v3, v3 layout=L2 fields=[0, 1]
+    v11 = NewClosure v10 function=f1
+    v12 = NewObject -, v2, v3, v3, v3, v3 layout=L3 fields=[0, 1, 2, 4, 5]
+    v13 = FinishObject v12
+    v14 = NewObject -, v2, v3, v3, v2, v3, v3 layout=L3 fields=[0, 1, 2, 3, 4, 5]
+    v15 = FinishObject v14
+    v16 = NewObject -, v3, v3, v3 layout=L4 fields=[0, 1, 2]
+    v17 = FinishObject v16
+    PutModuleVariable v17 variable=g0
+    v19 = NewObject -, v3 layout=L5 fields=[0]
+    v20 = FinishObject v19
+    PutModuleVariable v20 variable=g0
+    v22 = GetModuleVariable variable=g0
+    v23 = PropGet v22 key="common"
+    v24 = NewObject -, v2, v2 layout=L6 fields=[0, 1]
+    v25 = FinishObject v24
+    Return
+}
+function f1 name="closure" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    v2 = GetEnvironmentField v0 layout=L2 field=1
+    v3 = Add v1, v2
+    Return v3
+}
+# A slot that is always filled holds the int32 itself, and one that may be empty keeps the lowest int32s for its markers. Both take 4 bytes.
+# CHECK: L0 CompiledObject size=32 fields=3
+# CHECK-NEXT: "first" {{*}}Int32 @
+# CHECK-NEXT: "second" {{*}}Int32 @
+# CHECK-NEXT: "integer" {{*}}Int32 @
+# CHECK: L1 CompiledObject size=32 fields=1
+# CHECK-NEXT: "single" {{*}}Int32 @16
+# CHECK: L2 Environment
+# CHECK-NEXT: "left" Double @
+# CHECK-NEXT: "right" Double @
+# CHECK-NEXT: L3 CompiledObject size=48 fields=6
+# CHECK-NEXT: "fraction" Double @
+# CHECK-NEXT: "whole" {{*}}Int32 @
+# CHECK-NEXT: "tally" {{*}}Int32 @
+# CHECK-NEXT: "maybeFraction" OptionalDouble @
+# The field that is read through L4|L5 lies at one place in both.
+# CHECK: L4 CompiledObject size=32 fields=3
+# CHECK-NEXT: "common" {{*}}Int32 @16
+# CHECK-NEXT: "other" {{*}}Int32 @
+# CHECK: L5 CompiledObject size=32 fields=1
+# CHECK-NEXT: "common" {{*}}Int32 @16
+# CHECK: L6 CompiledObject size=32 fields=2
+# CHECK-NEXT: "x" Double @
+# CHECK-NEXT: "y" Double @

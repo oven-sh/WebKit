@@ -18,7 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // An interned, immutable set of members of the universe. Equal sets have equal ids.
 using ValueSetID = ID<struct ValueSetIDTag>;
-// A member of the universe: a kind of primitive, the unknown object, an allocation site, the closure of a function, a built-in, a constant key.
+// A member of the universe: a kind of primitive, one of the two placeholders, an allocation site, the closure of a function, a built-in, a constant key.
 using ValueFlowObjectID = ID<struct ValueFlowObjectIDTag>;
 using ValueFlowNodeID = ID<struct ValueFlowNodeIDTag>;
 using ValueFlowStatementID = ID<struct ValueFlowStatementIDTag>;
@@ -44,8 +44,13 @@ enum class ValueFlowNameKind : uint8_t {
     // Something, once a member of a built-in holder may have been deleted under the key, or under a key that the analysis does not know.
     DeletedMember,
     DeletedMemberUnderUnknownKey,
+    // Something, once a property of an object of the program may have been given another form under the key, or under a key that the analysis does not know.
+    RedefinedMember,
+    RedefinedMemberUnderUnknownKey,
     PrivateField,
     Slot,
+    // A slot that no code reads out of the object, whoever holds the object: what a bound function was made of.
+    HiddenSlot,
     // An internal field that is named by its number, which may be any slot of the object.
     InternalFields,
     // What a built-in iterator or a generator hands out step by step, what the body of a generator returns, and what a step hands in.
@@ -57,6 +62,9 @@ enum class ValueFlowNameKind : uint8_t {
     // Of a function that native code has made for the executor of a promise: the promises that a call of it resolves, or rejects.
     ResolvedPromises,
     RejectedPromises,
+    // Of an object that a built-in has allocated: the prototype object of each class as whose instance one has allocated it, and the object itself where an allocation names no such class.
+    // One object stands for all that the callees of a call allocate, so this moves while the callees do.
+    AllocatedAs,
     // Not places in an object but what a protocol gives: only lookup() takes them.
     // What opening an iteration over the set gives, and the values that such an iteration hands out. The payload is the IteratorKind.
     OpenedIterators,
@@ -68,6 +76,14 @@ enum class ValueFlowNameKind : uint8_t {
     MemberWritten,
     EveryMemberWritten,
     EveryMemberRead,
+    // Of the array of a rest parameter that its function only spreads into one call: what the callers have passed, by the index at which it lies in the array. The payload is that index;
+    // numberOfGroupedArguments for what lies further back, and one more for what lies at an index nobody knows. No code reads it out of the array.
+    RestArgument,
+    // The names under which a store or a definition has added a property to an object of the program that its layout does not declare: key constants, and the kinds of strings and symbols where nobody knows the name.
+    AddedNames,
+    // No value, and only lookup() takes it: the statement does what code that nobody compiles does with what it finds above the escaped instances in the set. The set is all that one class or one constructor function
+    // of the program constructs, and the payload is the object that stands for those: see runEscape().
+    FoundThroughEscapedInstances,
 };
 
 // A store under a name of the first kind may be what a read under a name of the second kind finds although the two names differ: the read takes whatever lies under any name of that sort,
@@ -91,23 +107,28 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
         return written == ValueFlowNameKind::Setter || written == ValueFlowNameKind::SetterUnderUnknownKey;
     case ValueFlowNameKind::DeletedMember:
         return written == ValueFlowNameKind::DeletedMemberUnderUnknownKey;
+    case ValueFlowNameKind::RedefinedMember:
+        return written == ValueFlowNameKind::RedefinedMemberUnderUnknownKey;
+    case ValueFlowNameKind::Slot:
+        return written == ValueFlowNameKind::InternalFields;
+    case ValueFlowNameKind::InternalFields:
+        return written == ValueFlowNameKind::Slot;
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::GetterUnderUnknownKey:
     case ValueFlowNameKind::SetterUnderUnknownKey:
     case ValueFlowNameKind::PrototypeLink:
     case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::Slot:
-        return written == ValueFlowNameKind::InternalFields;
-    case ValueFlowNameKind::InternalFields:
-        return written == ValueFlowNameKind::Slot;
     case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
     case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::HiddenSlot:
     case ValueFlowNameKind::SteppedValues:
     case ValueFlowNameKind::ReturnedValue:
     case ValueFlowNameKind::SentValues:
     case ValueFlowNameKind::OpenedBy:
     case ValueFlowNameKind::ResolvedPromises:
     case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
     case ValueFlowNameKind::OpenedIterators:
     case ValueFlowNameKind::IteratedValues:
     case ValueFlowNameKind::IteratorResults:
@@ -115,6 +136,9 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::MemberWritten:
     case ValueFlowNameKind::EveryMemberWritten:
     case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
     return false;
@@ -134,11 +158,65 @@ struct ValueFlowName {
     friend constexpr auto operator<=>(const ValueFlowName&, const ValueFlowName&) = default;
 };
 
-// The value is mask & (the node's set | constant). An operand without a node holds the constant alone.
+// Hidden slots that are no slots of the table, whose numbers count up from zero.
+// Of a pair that Object.entries has made: the key and the value that it was made with, which lie together under the indexes of the pair as in any array, and the objects whose own values those values are.
+inline constexpr ValueFlowName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
+inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
+inline constexpr ValueFlowName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
+// Of a Map: the pairs out of which its constructor has taken its keys and values.
+inline constexpr ValueFlowName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
+
+// What a mask does to the two placeholders, and to an object that it does not list.
+enum class ValueFlowMaskKind : uint8_t {
+    // A set that a rule asks for. Whatever it does not list is left out.
+    Plain,
+    // A test at run time stands behind it: the arm of a type test, an operation that goes on only with what passes its test.
+    // Whatever it does not list is left out. Where the type names objects of the program alone, those objects take the place of a placeholder.
+    Checked,
+    // The type of a position or of a value with no test in front of it. It keeps nothing out: primitives, objects that the analysis follows and the unknown object pass untouched.
+    // Where the type names objects of the program alone, those objects take the place of the untracked object.
+    Declared,
+    // The type that a value has while the checks in front of it pass: of a Check, and of what is typed by the result of one. It does what Declared does.
+    // What a check turns away goes on through the same operations in the generic version of the function, so a stranger here is no fault of anybody's.
+    Expected,
+};
+
+// Two members of the universe stand for objects that no set lists one by one.
+struct ValueFlowPlaceholders {
+    // An object or a function that compiled code has allocated and that the analysis has stopped following.
+    ValueFlowObjectID untracked;
+    // Anything: a value from code that nobody compiles or from an unsound edge, and any object that was handed to such code.
+    ValueFlowObjectID unknown;
+    // What the families of types are made of.
+    ValueSetID objectsWithLayoutOfProgram;
+    ValueSetID closures;
+};
+
+// Where the unknown object comes into being. Whoever brings it into being names one of these.
+enum class ValueFlowUnknownSource : uint8_t {
+    // An overload of the table without a declaration, a native binding, a property of a host object that the table does not declare.
+    UndescribedNativeResult,
+    // Evaluated text, a native add-on.
+    UnseenCode,
+    UncheckedConversionOfUntracked,
+    // JSON.parse without a typed parser, a file outside the image.
+    DataFromOutside,
+    // A stack overflow, the TypeError of a heap operation: what `catch (e)` sees.
+    ThrownByRunTime,
+    ParameterOfEscapedFunction,
+    ContentsOfEscapedObject,
+    // What a callee answers that nobody knows.
+    ResultOfUnknownCallee,
+    // The construction of a plain function without a layout, the prototype object of such a function, the raw strings of a template.
+    ObjectWithoutLayout,
+};
+
+// The value is what the mask lets through of (the node's set | constant). An operand without a node holds the constant alone.
 struct ValueFlowOperand {
     ValueFlowNodeID node;
     ValueSetID constant;
     ValueSetID mask;
+    ValueFlowMaskKind maskKind { ValueFlowMaskKind::Plain };
 };
 
 struct ValueFlowEdge {
@@ -154,11 +232,12 @@ struct ValueFlowNodeSet {
     ValueSetID set;
 };
 
-// One member of the universe stands for objects that nobody follows. The mask of a type that lists every object inside it does not admit that member, yet any of the objects it lists may be one that the member stands for.
-struct ValueFlowStandIn {
-    ValueFlowObjectID member;
-    // The objects that such masks list.
-    ValueSetID covered;
+struct ValueFlowNodeMask {
+    ValueFlowNodeID node;
+    ValueSetID mask;
+    ValueFlowMaskKind kind { ValueFlowMaskKind::Plain };
+    // What takes the place of a placeholder. None where a placeholder that the mask admits passes as itself.
+    ValueSetID familyObjects;
 };
 
 // Where what belongs to one body starts in the lists of all bodies; it ends where the next body's starts.
@@ -166,8 +245,6 @@ struct ValueFlowBodyRange {
     uint32_t statement { 0 };
     // The statements in front of this one only look at their operands and may run before the function is reached.
     uint32_t statementLeavingBody { 0 };
-    // From here on the statements of bodies that were copied into call sites of this one.
-    uint32_t copiedStatement { 0 };
     uint32_t edgeOnceReached { 0 };
     uint32_t seedOnceReached { 0 };
     uint32_t functionEntered { 0 };
@@ -185,6 +262,9 @@ enum class ValueFlowStatementKind : uint8_t {
     ModuleEvaluation,
     // What goes between the body of an async function or a generator and the promise or the generator that its callers get: the statement lies in that body.
     Coroutine,
+    // In a function that only tests its arguments, and in the typed body that it calls. What fits the types goes on in typed code. Each operand is what one of the tests, or one of the checks
+    // of the typed body, turns away: once one of them holds something, the generic version of the function runs too.
+    EntryChecks,
     // In the host's body, one of each.
     HostRoots,
     UsedBuiltins,
@@ -202,8 +282,6 @@ struct ValueFlowStatement {
     // None where nobody reads it.
     ValueFlowNodeID result;
     ValueFlowNodeID thrown;
-    // Of a call that has a copy of this function's body for itself: where this function is called, the operands go into the copy and the result comes out of it.
-    FunctionID copiedCallee;
     // Where the sites of the operation start in the list of the universe.
     uint32_t firstSite { UINT32_MAX };
 };
@@ -217,6 +295,8 @@ enum class ValueFlowCallKind : uint8_t {
     // A call that no operation of the program spells out: native code calls a callback, runs a protocol or goes through a bound function. A function is entered exactly as by Call and Construct.
     CallByNativeCode,
     ConstructByNativeCode,
+    // A call that native code makes where no call of the program is under way, with operands that a record of the table lists. No statement of the program leads to what is entered, so it is no seen code for that.
+    CallByHost,
 };
 
 constexpr bool isConstruction(ValueFlowCallKind kind)
@@ -231,12 +311,15 @@ struct ValueFlowCallGroup {
     ValueFlowNodeID thisValue;
     ValueFlowNodeID newTarget;
     ValueFlowNodeID firstArgument;
-    // Arguments past the grouped ones, and what is spread: they may land at any parameter.
+    // Arguments whose position nobody knows, as what is spread: they may land at any parameter.
     ValueFlowNodeID otherArguments;
+    // Arguments at the positions past the grouped ones: they land at no parameter in front of those positions.
+    ValueFlowNodeID laterArguments;
     ValueFlowNodeID result;
     ValueFlowNodeID thrown;
 
     ValueFlowNodeID argument(unsigned index) const { return ValueFlowNodeID(firstArgument.index() + index); }
+    ValueFlowNodeID argumentAt(unsigned position) const { return position < numberOfGroupedArguments ? argument(position) : laterArguments; }
 };
 
 } } } // namespace JSC::AOT::Typed

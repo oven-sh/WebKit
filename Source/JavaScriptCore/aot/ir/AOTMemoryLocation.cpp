@@ -31,8 +31,14 @@ static uint64_t maskOfKey(PropertyKeyID key)
 
 static uint64_t maskOfLayouts(const LayoutSet& layouts)
 {
-    if (!layouts.isComplete)
+    if (!layouts.isComplete || layouts.hasMembersWithoutLayout)
         return LocationMasks::entireHeap;
+
+    // A family of hundreds of layouts sets nearly every bit, and the mask is asked for at each access. No answer takes more steps than the mask has bits.
+    constexpr size_t numberOfBits = 64;
+    if (layouts.members.size() > numberOfBits)
+        return LocationMasks::entireHeap;
+
     uint64_t mask = 0;
     for (LayoutID member : layouts.members)
         mask |= bitOf(member.index(), 0);
@@ -70,7 +76,6 @@ static uint64_t computeMask(const MemoryLocation& location, NOESCAPE const Invoc
     case AbstractHeap::Elements:
         return maskOfElementBase(location.elementBase());
     case AbstractHeap::OrderWords:
-    case AbstractHeap::ShapeEpoch:
     case AbstractHeap::PrototypeLinks:
     case AbstractHeap::ArrayStorage:
     case AbstractHeap::TypedArrayStorage:
@@ -108,7 +113,8 @@ void LocationMasks::add(const MemoryLocation& location)
 
 static LocationOverlap overlapOfLayouts(const LayoutSet& a, const LayoutSet& b)
 {
-    if (!a.isComplete || !b.isComplete || overlaps(a, b))
+    bool mayShareObjectWithoutLayout = a.hasMembersWithoutLayout && b.hasMembersWithoutLayout;
+    if (!a.isComplete || !b.isComplete || mayShareObjectWithoutLayout || overlaps(a, b))
         return LocationOverlap::May;
     return LocationOverlap::None;
 }
@@ -153,7 +159,6 @@ LocationOverlap overlapOf(const Program& program, const MemoryLocation& a, const
     case AbstractHeap::NamedProperties:
         return a == b ? LocationOverlap::Exact : LocationOverlap::None;
     case AbstractHeap::OrderWords:
-    case AbstractHeap::ShapeEpoch:
     case AbstractHeap::PrototypeLinks:
     case AbstractHeap::ArrayStorage:
     case AbstractHeap::TypedArrayStorage:
@@ -182,6 +187,8 @@ static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)
         printer.out().print(bar);
         printer.print(member);
     }
+    if (layouts.hasMembersWithoutLayout)
+        printer.out().print(bar, "nolayout"_s);
     if (!layouts.isComplete)
         printer.out().print(bar, "?"_s);
 }
@@ -223,7 +230,6 @@ void MemoryLocation::dump(PrintStream& out, const Program& program) const
         printer.print(elementBase());
         break;
     case AbstractHeap::OrderWords:
-    case AbstractHeap::ShapeEpoch:
     case AbstractHeap::PrototypeLinks:
     case AbstractHeap::ArrayStorage:
     case AbstractHeap::TypedArrayStorage:

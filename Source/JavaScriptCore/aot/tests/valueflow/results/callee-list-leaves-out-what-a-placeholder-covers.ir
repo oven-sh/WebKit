@@ -1,0 +1,66 @@
+# publish(handed, alsoHanded); (flag ? unknown : other ? handed : third ? alsoHanded : kept)(); kept(); handed()
+# A callee that may be anything. The unknown object stands for `handed` and `alsoHanded`, which have escaped, so the list that is not complete leaves them out.
+# In a real program hundreds of functions and built-ins have escaped, thousands of calls have such a callee, and every later pass pays for every entry (1,497,333 entries on a server of 60 lines).
+# `kept` has not escaped: only the list says that the call enters it, so it stays, and its callers stay known. A list that is complete says all there is, whatever has escaped.
+# A construction keeps a few: callee-list-of-a-construction-keeps-the-few-that-have-escaped.ir
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Call v13 {{*}}callees=[f3, ..]
+# CHECK: = Call v2 {{*}}callees=[f3]
+# CHECK: = Call v0 {{*}}callees=[f1]
+# RUN(RESULTS): valueflow-results
+# RESULTS: function f1 cause=ReachesNativeCode
+# RESULTS: function f2 cause=ReachesNativeCode
+# RESULTS: function f3 callers=AllKnown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v0, v1 calleeName="publish"
+    v6 = PropGet v3 key="unknown" [isFreeName]
+    v7 = PropGet v3 key="flag" [isFreeName]
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b7(v6)
+  b2():
+    v9 = PropGet v3 key="other" [isFreeName]
+    v10 = ToBoolean v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b7(v0)
+  b4():
+    v11 = PropGet v3 key="third" [isFreeName]
+    v12 = ToBoolean v11
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b7(v1)
+  b6():
+    Jump -> next b7(v2)
+  b7(v13):
+    v14 = Call v13
+    v15 = Call v2
+    v16 = Call v0
+    Return
+}
+function f1 name="handed" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="alsoHanded" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="kept" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}

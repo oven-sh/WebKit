@@ -38,9 +38,12 @@ namespace ElemDelete { inline constexpr uint32_t object = 0; inline constexpr ui
 namespace ElemDefine { inline constexpr uint32_t object = 0; inline constexpr uint32_t property = 1; inline constexpr uint32_t value = 2; }
 namespace DefineGetter { inline constexpr uint32_t object = 0; inline constexpr uint32_t function = 1; inline constexpr uint32_t computedKey = 2; }
 namespace DefineSetter { inline constexpr uint32_t object = 0; inline constexpr uint32_t function = 1; inline constexpr uint32_t computedKey = 2; }
+namespace TryDefineLiveBinding { inline constexpr uint32_t target = 0; inline constexpr uint32_t source = 1; inline constexpr uint32_t sourceKey = 2; inline constexpr uint32_t targetKey = 3; inline constexpr uint32_t getter = 4; }
+namespace TryReExportFields { inline constexpr uint32_t target = 0; inline constexpr uint32_t source = 1; }
 namespace SetFunctionName { inline constexpr uint32_t function = 0; inline constexpr uint32_t computedKey = 1; }
-namespace SetLiteralPrototype { inline constexpr uint32_t object = 0; inline constexpr uint32_t prototype = 1; }
+namespace SetLiteralPrototype { inline constexpr uint32_t object = 0; inline constexpr uint32_t prototype = 1; inline constexpr uint32_t replacedCallee = 2; inline constexpr uint32_t replacedThis = 3; }
 namespace CopyDataProperties { inline constexpr uint32_t target = 0; inline constexpr uint32_t source = 1; inline constexpr uint32_t excluded = 2; }
+namespace CopyObject { inline constexpr uint32_t source = 0; inline constexpr uint32_t excluded = 1; }
 namespace GetSuperBase { inline constexpr uint32_t home = 0; }
 namespace SuperGet { inline constexpr uint32_t base = 0; inline constexpr uint32_t receiver = 1; inline constexpr uint32_t computedKey = 2; }
 namespace SuperSet { inline constexpr uint32_t base = 0; inline constexpr uint32_t receiver = 1; inline constexpr uint32_t value = 2; inline constexpr uint32_t computedKey = 3; }
@@ -78,10 +81,9 @@ namespace ToPropertyKey { inline constexpr uint32_t value = 0; }
 namespace ToObject { inline constexpr uint32_t value = 0; }
 namespace ToThis { inline constexpr uint32_t value = 0; }
 namespace Upcast { inline constexpr uint32_t value = 0; }
-namespace Claim { inline constexpr uint32_t value = 0; }
-namespace ClaimDeclared { inline constexpr uint32_t value = 0; }
-namespace ClaimRead { inline constexpr uint32_t value = 0; inline constexpr uint32_t receiver = 1; }
-namespace Predict { inline constexpr uint32_t value = 0; }
+namespace NarrowByField { inline constexpr uint32_t value = 0; inline constexpr uint32_t read = 1; }
+namespace Check { inline constexpr uint32_t value = 0; }
+namespace Convert { inline constexpr uint32_t value = 0; }
 namespace CheckInitialized { inline constexpr uint32_t value = 0; }
 namespace RequireObjectCoercible { inline constexpr uint32_t value = 0; }
 namespace RequireObject { inline constexpr uint32_t value = 0; }
@@ -151,32 +153,44 @@ namespace TruncateNewArray { inline constexpr uint32_t array = 0; inline constex
 namespace CollectionTable { inline constexpr uint32_t collection = 0; }
 namespace MapNext { inline constexpr uint32_t map = 0; inline constexpr uint32_t table = 1; inline constexpr uint32_t entry = 2; }
 namespace SetNext { inline constexpr uint32_t set = 0; inline constexpr uint32_t table = 1; inline constexpr uint32_t entry = 2; }
+namespace IsClosureOf { inline constexpr uint32_t value = 0; }
 namespace AssumeType { inline constexpr uint32_t value = 0; }
+namespace ReadAgain { inline constexpr uint32_t object = 0; inline constexpr uint32_t again = 1; }
+namespace BorrowedParameter { inline constexpr uint32_t value = 0; }
 namespace ReportMismatch { inline constexpr uint32_t value = 0; }
-namespace CallGroup { inline constexpr uint32_t closure = 0; inline constexpr uint32_t arguments = 1; }
+namespace CallTable { inline constexpr uint32_t arguments = 0; }
 namespace ShapeTest { inline constexpr uint32_t object = 0; }
 namespace IsSlotFilled { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace HasNoExtraProperties { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
+namespace HasNoFieldOutsideSlot { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
+namespace HasBirthFieldsFilled { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace IsNotFrozen { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace HasLayoutPrototype { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace BelongsToInstance { inline constexpr uint32_t object = 0; }
 namespace IsPristine { inline constexpr uint32_t value = 0; }
 namespace HasArrayStorage { inline constexpr uint32_t array = 0; }
 namespace IsInBounds { inline constexpr uint32_t array = 0; inline constexpr uint32_t position = 1; }
+namespace IsElementPresent { inline constexpr uint32_t array = 0; inline constexpr uint32_t position = 1; inline constexpr uint32_t guard = 2; }
+namespace IsInsideView { inline constexpr uint32_t view = 0; inline constexpr uint32_t position = 1; }
 namespace IsNotThenable { inline constexpr uint32_t value = 0; }
 namespace HasKeyOrder { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
-namespace IsShapeEpochCurrent { inline constexpr uint32_t epoch = 0; inline constexpr uint32_t guard = 1; }
-namespace IsClosureOf { inline constexpr uint32_t value = 0; }
 namespace IsEnumeratorCurrent { inline constexpr uint32_t enumerator = 0; inline constexpr uint32_t object = 1; inline constexpr uint32_t position = 2; }
 namespace AllGuards { inline constexpr uint32_t guards = 0; }
 namespace GetSlot { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace GetSlotOrUndefined { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
+namespace GetSlotGetter { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
+namespace GetFlattenedSlot { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
+namespace GetFlattenedSlotOrUndefined { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace GetDeferredClosureSlot { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
+namespace GetDeferredClosureSlotOrUndefined { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; }
 namespace PutSlot { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; inline constexpr uint32_t value = 2; }
 namespace PutSlotOrAdd { inline constexpr uint32_t object = 0; inline constexpr uint32_t guard = 1; inline constexpr uint32_t value = 2; }
+namespace FinishBirth { inline constexpr uint32_t object = 0; }
+namespace TryFinishBirth { inline constexpr uint32_t object = 0; }
+namespace MakeBorrowedObject { inline constexpr uint32_t value = 0; }
 namespace PropHasOwn { inline constexpr uint32_t object = 0; }
-namespace CopyObject { inline constexpr uint32_t source = 0; inline constexpr uint32_t excluded = 1; }
 namespace TryCopyFields { inline constexpr uint32_t object = 0; inline constexpr uint32_t source = 1; }
+namespace SetGlobalBinding { inline constexpr uint32_t value = 0; }
 namespace GetArrayLength { inline constexpr uint32_t array = 0; inline constexpr uint32_t guard = 1; }
 namespace GetArrayElement { inline constexpr uint32_t array = 0; inline constexpr uint32_t position = 1; inline constexpr uint32_t guard = 2; }
 namespace PutArrayElement { inline constexpr uint32_t array = 0; inline constexpr uint32_t position = 1; inline constexpr uint32_t value = 2; inline constexpr uint32_t guard = 3; }
@@ -184,9 +198,10 @@ namespace HasArrayElement { inline constexpr uint32_t array = 0; inline constexp
 namespace AppendElements { inline constexpr uint32_t array = 0; inline constexpr uint32_t source = 1; inline constexpr uint32_t guard = 2; }
 namespace HasSpareArrayCapacity { inline constexpr uint32_t array = 0; }
 namespace ReserveArrayCapacity { inline constexpr uint32_t array = 0; inline constexpr uint32_t additional = 1; }
+namespace ConvertToDoubleStorage { inline constexpr uint32_t array = 0; }
 namespace GetTypedArrayLength { inline constexpr uint32_t view = 0; }
-namespace GetTypedArrayElement { inline constexpr uint32_t view = 0; inline constexpr uint32_t position = 1; }
-namespace PutTypedArrayElement { inline constexpr uint32_t view = 0; inline constexpr uint32_t position = 1; inline constexpr uint32_t value = 2; }
+namespace GetTypedArrayElement { inline constexpr uint32_t view = 0; inline constexpr uint32_t position = 1; inline constexpr uint32_t guard = 2; }
+namespace PutTypedArrayElement { inline constexpr uint32_t view = 0; inline constexpr uint32_t position = 1; inline constexpr uint32_t value = 2; inline constexpr uint32_t guard = 3; }
 namespace GetStringLength { inline constexpr uint32_t string = 0; }
 namespace GetStringCodeUnit { inline constexpr uint32_t string = 0; inline constexpr uint32_t position = 1; }
 namespace GetMyArgumentByVal { inline constexpr uint32_t property = 0; }
@@ -202,15 +217,23 @@ namespace ToInt32 { inline constexpr uint32_t value = 0; }
 namespace ToUint32 { inline constexpr uint32_t value = 0; }
 namespace ToIntegerOrInfinity { inline constexpr uint32_t value = 0; }
 namespace NewArgumentList { inline constexpr uint32_t callee = 0; inline constexpr uint32_t arrayLike = 1; }
+namespace IsFunctionOfBuiltin { inline constexpr uint32_t value = 0; }
 namespace DestructureIterable { inline constexpr uint32_t iterable = 0; }
 namespace EnumeratorGetByVal { inline constexpr uint32_t object = 0; inline constexpr uint32_t property = 1; inline constexpr uint32_t enumerator = 2; inline constexpr uint32_t position = 3; inline constexpr uint32_t guard = 4; }
 namespace RequireAttachedTypedArray { inline constexpr uint32_t view = 0; }
 namespace CreateAsyncFromSyncIterator { inline constexpr uint32_t iterator = 0; inline constexpr uint32_t next = 1; }
 namespace ThrowNotIterable { inline constexpr uint32_t iterable = 0; }
+namespace IsCollectionTableFull { inline constexpr uint32_t collection = 0; }
+namespace ReserveCollectionCapacity { inline constexpr uint32_t collection = 0; inline constexpr uint32_t remaining = 1; inline constexpr uint32_t finished = 2; inline constexpr uint32_t sizeAtEntry = 3; }
 namespace NewGenerator { inline constexpr uint32_t callee = 0; }
 namespace NewAsyncGenerator { inline constexpr uint32_t callee = 0; }
+namespace TakeGeneratorPrototype { inline constexpr uint32_t generator = 0; inline constexpr uint32_t callee = 1; }
+namespace IsGeneratorUnstarted { inline constexpr uint32_t generator = 0; }
+namespace IsGeneratorRunning { inline constexpr uint32_t generator = 0; }
+namespace MarkGeneratorRunning { inline constexpr uint32_t generator = 0; }
+namespace TakeGeneratorStepStatus { inline constexpr uint32_t generator = 0; }
 namespace IsUnmodifiedAsyncGenerator { inline constexpr uint32_t value = 0; }
-namespace StepAsyncGenerator { inline constexpr uint32_t generator = 0; inline constexpr uint32_t value = 1; }
+namespace StepAsyncGenerator { inline constexpr uint32_t generator = 0; inline constexpr uint32_t value = 1; inline constexpr uint32_t driver = 2; }
 namespace AwaitBySavingFrame { inline constexpr uint32_t awaited = 0; inline constexpr uint32_t promise = 1; }
 namespace AwaitCallBySavingFrame { inline constexpr uint32_t promise = 0; inline constexpr uint32_t arguments = 1; }
 namespace YieldBySavingFrame { inline constexpr uint32_t generator = 0; inline constexpr uint32_t value = 1; }
@@ -218,7 +241,7 @@ namespace AsyncGeneratorYield { inline constexpr uint32_t generator = 0; inline 
 namespace ReturnAsyncResult { inline constexpr uint32_t promise = 0; inline constexpr uint32_t value = 1; }
 namespace PromiseAllOfElements { inline constexpr uint32_t elements = 0; }
 namespace HasInPrototypeChain { inline constexpr uint32_t value = 0; inline constexpr uint32_t prototype = 1; }
-namespace GetRequiredValue { inline constexpr uint32_t guard = 0; }
+namespace AbandonModuleEvaluation { inline constexpr uint32_t exception = 0; }
 namespace StringBuilderAppend { inline constexpr uint32_t builder = 0; inline constexpr uint32_t parts = 1; }
 namespace StringBuilderAppendBuiltin { inline constexpr uint32_t builder = 0; inline constexpr uint32_t receiver = 1; inline constexpr uint32_t arguments = 2; }
 namespace StringBuilderAppendJSON { inline constexpr uint32_t builder = 0; inline constexpr uint32_t value = 1; inline constexpr uint32_t property = 2; }
@@ -230,6 +253,7 @@ namespace StringBuilderCheckpoint { inline constexpr uint32_t builder = 0; }
 namespace StringBuilderRollBack { inline constexpr uint32_t builder = 0; inline constexpr uint32_t checkpoint = 1; }
 namespace ValidateType { inline constexpr uint32_t value = 0; }
 namespace ValidateCallee { inline constexpr uint32_t callee = 0; }
+namespace ValidateLookup { inline constexpr uint32_t object = 0; inline constexpr uint32_t expected = 1; }
 namespace ValidateSameValue { inline constexpr uint32_t kept = 0; inline constexpr uint32_t replacement = 1; }
 namespace JSONSourceOpen { inline constexpr uint32_t text = 0; }
 namespace JSONSourceStart { inline constexpr uint32_t guard = 0; }
@@ -268,7 +292,6 @@ namespace JSONAppendNumber { inline constexpr uint32_t builder = 0; inline const
 namespace JSONAppendDate { inline constexpr uint32_t builder = 0; inline constexpr uint32_t cursor = 1; inline constexpr uint32_t value = 2; }
 namespace JSONAppendString { inline constexpr uint32_t builder = 0; inline constexpr uint32_t cursor = 1; inline constexpr uint32_t value = 2; }
 namespace JSONAppendValue { inline constexpr uint32_t builder = 0; inline constexpr uint32_t cursor = 1; inline constexpr uint32_t value = 2; }
-namespace PropGetChecked { inline constexpr uint32_t object = 0; }
 namespace PropGetChain { inline constexpr uint32_t object = 0; }
 namespace PropGetPair { inline constexpr uint32_t object = 0; inline constexpr uint32_t other = 1; }
 namespace PropGetAndTest { inline constexpr uint32_t object = 0; }
@@ -310,6 +333,8 @@ namespace StringBuilderAppendStringRange { inline constexpr uint32_t builder = 0
 namespace StringBuilderAppendBoolean { inline constexpr uint32_t builder = 0; inline constexpr uint32_t value = 1; }
 namespace StringBuilderAppendStringOrNullish { inline constexpr uint32_t builder = 0; inline constexpr uint32_t value = 1; }
 namespace StringBuilderAppendValue { inline constexpr uint32_t builder = 0; inline constexpr uint32_t value = 1; }
+namespace MapGetByKeyParts { inline constexpr uint32_t map = 0; inline constexpr uint32_t parts = 1; }
+namespace HasByKeyParts { inline constexpr uint32_t collection = 0; inline constexpr uint32_t parts = 1; }
 namespace ResolveCallTarget { inline constexpr uint32_t callee = 0; }
 namespace CallResolved { inline constexpr uint32_t callee = 0; inline constexpr uint32_t target = 1; inline constexpr uint32_t thisValue = 2; inline constexpr uint32_t arguments = 3; }
 namespace RegExpMatchLiteral { inline constexpr uint32_t string = 0; inline constexpr uint32_t regExp = 1; inline constexpr uint32_t guard = 2; }

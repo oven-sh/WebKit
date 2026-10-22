@@ -88,6 +88,7 @@ export default b.declarations(
     usesFeature: realmFeatures,
     nativeSymbols: ["callShadowRealm", "constructWithShadowRealmConstructor"],
     prototypeTable: b.staticTable("runtime/ShadowRealmPrototype.cpp", "shadowRealmPrototypeTable"),
+    call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: {
       returns: b.instance("ShadowRealm").fresh,
       capability: "js",

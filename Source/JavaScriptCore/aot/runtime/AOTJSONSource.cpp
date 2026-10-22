@@ -12,9 +12,16 @@
 #include "AOTInstance.h"
 #include "AOTJSONRuntime.h"
 #include "AOTJSONScanner.h"
+#include "AOTModuleHost.h"
+#include "AOTObjectBuilder.h"
+#include "AOTObjectModel.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTState.h"
+#include "GlobalObjectMethodTable.h"
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
+#include "JSONObject.h"
 #include <wtf/text/ASCIIFastPath.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -47,7 +54,119 @@ JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry)
     : m_instance(instance)
 {
     instance.json.runtime = this;
+    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordFields().empty();
     registry.add(CacheKind::ClearedEachCollection, "JSON source copy"_s, *this);
+}
+
+JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
+{
+    if (!m_learnedNames) [[unlikely]]
+        m_learnedNames = makeUnique<JSONValueParser::LearnedNames>();
+    return *m_learnedNames;
+}
+
+static bool hasEveryMemberForSomeValidator(VM& vm, State& state, std::span<UniquedStringImpl* const> names)
+{
+    struct MembersFound {
+        uint32_t validatedObject;
+        uint32_t count;
+    };
+    Vector<MembersFound, 8> found;
+    for (UniquedStringImpl* name : names) {
+        std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
+        if (!number)
+            continue;
+        for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *number, { }, &ParsedRecordFieldData::name)) {
+            if (!row.isForValidator())
+                continue;
+            size_t index = found.findIf([&](const MembersFound& entry) {
+                return entry.validatedObject == row.shape;
+            });
+            if (index == notFound) {
+                index = found.size();
+                found.append({ row.shape, 0 });
+            }
+            if (++found[index].count == row.numberOfRequiredMembers())
+                return true;
+        }
+    }
+    return false;
+}
+
+std::unique_ptr<ObjectBuilderPlan> JSONRuntime::createRecordPlan(VM& vm, std::span<UniquedStringImpl* const> names)
+{
+    State& state = *m_instance.state;
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    std::optional<uint32_t> lastName = vm.aotState().identifiers->numberOf(names.back());
+    if (!lastName || hasEveryMemberForSomeValidator(vm, state, names))
+        return nullptr;
+
+    std::unique_ptr<ObjectBuilderPlan> best;
+    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::name)) {
+        if (row.isForValidator())
+            continue;
+        const LayoutData& layout = layouts.layoutForShape(row.shape);
+        if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !ObjectBuilder::canBuildWithoutCompilerKnowledge(layout))
+            continue;
+        bool hasEveryName = std::ranges::all_of(names, [&](UniquedStringImpl* name) {
+            return !!layouts.field(vm, layout, name);
+        });
+        if (!hasEveryName)
+            continue;
+        std::unique_ptr<ObjectBuilderPlan> plan = ObjectBuilder::tryCreatePlan(state, layout, names);
+        if (plan && plan->hasFastPath())
+            best = WTF::move(plan);
+    }
+    return best;
+}
+
+const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure)
+{
+    if (structure->isDictionary())
+        return nullptr;
+    UniquedStringImpl* lastName = structure->transitionPropertyName();
+    std::optional<uint32_t> lastNameNumber = lastName ? vm.aotState().identifiers->numberOf(lastName) : std::nullopt;
+    if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::name).empty())
+        return nullptr;
+
+    unsigned inlineCapacity = structure->inlineCapacity();
+    Vector<UniquedStringImpl*, 16> names;
+    names.fill(nullptr, numberOfSlotsForMaxOffset(structure->maxOffset(), inlineCapacity));
+    bool hasOnlyPlainProperties = !names.isEmpty();
+    structure->forEachProperty(vm, [&](const auto& entry) -> bool {
+        size_t index = isInlineOffset(entry.offset()) ? entry.offset() : inlineCapacity + (entry.offset() - firstOutOfLineOffset);
+        if (entry.attributes() || entry.key()->isSymbol() || index >= names.size())
+            hasOnlyPlainProperties = false;
+        else
+            names[index] = entry.key();
+        return hasOnlyPlainProperties;
+    });
+    if (!hasOnlyPlainProperties || names.contains(nullptr) || names.last() != lastName)
+        return nullptr;
+
+    for (const RecordPlanForNames& known : m_recordPlans) {
+        if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get))
+            return known.plan.get();
+    }
+    if (m_recordPlans.size() == maxRecordPlans)
+        return nullptr;
+    m_recordPlans.append({ { }, createRecordPlan(vm, names.span()) });
+    m_recordPlans.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
+        return RefPtr { name };
+    });
+    return m_recordPlans.last().plan.get();
+}
+
+NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structure* ordinaryStructure)
+{
+    if (!m_recordPlanCache)
+        m_recordPlanCache = makeUniqueWithoutFastMallocCheck<RecordPlanCache>();
+    RecordPlan recordPlan;
+    if (const ObjectBuilderPlan* plan = findOrCreateRecordPlan(vm, ordinaryStructure))
+        recordPlan = { plan, m_instance.state->objects->structures.objectStructure(vm, plan->layout().shape) };
+    uint32_t id = ordinaryStructure->id().bits();
+    (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan };
+    return recordPlan;
 }
 
 JSONRuntime::~JSONRuntime()
@@ -290,6 +409,14 @@ void JSONRuntime::dropSourcesBelow(void* stackPointer)
 
 void JSONRuntime::clear()
 {
+    if (m_learnedNames)
+        m_learnedNames->clear();
+    if (m_recordPlanCache)
+        m_recordPlanCache->fill({ });
+    for (const RecordPlanForNames& known : m_recordPlans) {
+        if (known.plan)
+            known.plan->clearAcceptedStructures();
+    }
     if (m_instance.json.sourceOwnerStackPointer)
         return;
     m_keyOrderLists.shrink(0);
@@ -356,7 +483,11 @@ JSValue decodeJSONBody(JSGlobalObject* globalObject, JSValue value)
         return value;
     std::span<const uint8_t> bytes = uncheckedDowncast<JSArrayBufferView>(value.asCell())->span();
     if (bytes.empty()) {
-        throwSyntaxError(globalObject, scope, "Unexpected end of JSON input"_s);
+        const ModuleHost* host = globalObject->globalObjectMethodTable()->moduleHost;
+        if (host && host->createEmptyJSONBodyError)
+            throwException(globalObject, scope, host->createEmptyJSONBodyError(globalObject));
+        else
+            JSONParseWithException(globalObject, emptyString());
         return { };
     }
     if (!StringImpl::isValidLength<char16_t>(bytes.size()))

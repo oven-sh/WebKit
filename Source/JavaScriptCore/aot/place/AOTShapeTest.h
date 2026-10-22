@@ -10,6 +10,7 @@
 #include "AOTCellFormat.h"
 #include "AOTIR.h"
 #include "AOTLayoutData.h"
+#include "AOTPagedBitSet.h"
 #include "JSExportMacros.h"
 #include <algorithm>
 #include <compare>
@@ -86,6 +87,11 @@ constexpr unsigned numberOfNonzeroHalfwords(uint64_t bits)
     return halfwords;
 }
 
+// The set of a test holds the distance of each shape from the last one. The distance behind the greatest has a bit too, which is clear: compiled code asks for it when a shape is out of reach.
+constexpr uint64_t numberOfPagesInShapeSet(uint32_t count) { return PagedBitSet::numberOfPages(static_cast<uint64_t>(count) + 1); }
+// A set of so few pages has no entries, however few of its pages hold a shape: the test is a load shorter, and there is little to save.
+inline constexpr uint64_t maxPagesInShortShapeSet = 8;
+
 constexpr unsigned instructionsFor(const ShapeTest& test)
 {
     unsigned longConstant = test.count && test.last() >= firstShapeWithLongConstant ? 1 : 0;
@@ -105,7 +111,7 @@ constexpr unsigned instructionsFor(const ShapeTest& test)
     case ShapeTestForm::ImmediateBits:
         return 5 + numberOfNonzeroHalfwords(test.bits) + longConstant;
     case ShapeTestForm::BitSet:
-        return 9 + longConstant;
+        return 9 + (numberOfPagesInShapeSet(test.count) > maxPagesInShortShapeSet ? 1 : 0) + longConstant;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
@@ -139,6 +145,14 @@ inline bool passes(const ShapeTest& test, uint32_t shape, std::span<const uint32
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+struct EncodedShapeSet {
+    Vector<uint64_t> words;
+    PagedBitSet::Entries entries { PagedBitSet::Entries::None };
+};
+
+JS_EXPORT_PRIVATE bool canEncodeShapeSet(std::span<const uint32_t> ascendingShapes);
+JS_EXPORT_PRIVATE EncodedShapeSet encodeShapeSet(std::span<const uint32_t> ascendingShapes);
+
 struct ShapeRange {
     bool isEmpty() const { return !count; }
     uint32_t end() const { return first + count; }
@@ -159,6 +173,11 @@ struct ShapeTestWithinKnownSet {
     ShapeTest test;
 };
 
+struct ShapeSetRange {
+    uint32_t firstWord;
+    uint32_t numberOfWords;
+};
+
 struct ShapeTableParts {
     Vector<PlacedShape> shapes;
     Vector<ShapeRange> shapesOfLayout;
@@ -170,7 +189,8 @@ struct ShapeTableParts {
     Vector<uint32_t> firstMemberShape;
     Vector<uint32_t> memberShapes;
     Vector<uint32_t> shapeCountPrefixSums;
-    BitVector shapeSetBits;
+    Vector<uint64_t> shapeSetWords;
+    Vector<ShapeSetRange> shapeSetRanges;
 };
 
 class ShapeTable {
@@ -201,7 +221,9 @@ public:
     JS_EXPORT_PRIVATE std::span<const uint32_t> memberShapes(LayoutSetID) const;
 
     uint32_t shapeCountInRange(uint32_t first, uint32_t last) const { return first > last ? 0 : m_parts.shapeCountPrefixSums[last] - m_parts.shapeCountPrefixSums[first - 1]; }
-    const BitVector& shapeSetBits() const { return m_parts.shapeSetBits; }
+    std::span<const uint64_t> shapeSetWords() const LIFETIME_BOUND { return m_parts.shapeSetWords.span(); }
+    // Where each set lies in the words, ascending. Between two sets there may be a word that aligns the second.
+    std::span<const ShapeSetRange> shapeSetRanges() const LIFETIME_BOUND { return m_parts.shapeSetRanges.span(); }
     std::span<const ShapeTestWithinKnownSet> testsWithinKnownSets() const { return m_parts.testsWithinKnownSets.span(); }
 
     JS_EXPORT_PRIVATE ShapeTestData dataOf(const ShapeTest&) const;

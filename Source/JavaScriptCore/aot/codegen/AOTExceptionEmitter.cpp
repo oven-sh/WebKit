@@ -17,6 +17,7 @@
 #include "AirCode.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
+#include "AOTHandlerTable.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3VariableValue.h"
@@ -70,7 +71,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
     patchpoint->clobberLateOnSuccessor(landingPadIndex, registersClobberedAtLandingPads());
     patchpoint->effects.terminal = true;
 
-    B3::Air::StackSlot* registerStorage = generator().validates() ? emitter<RuntimeCallEmitter>().landingPadRegisterStorage() : nullptr;
+    B3::Air::StackSlot* registerStorage = generator().checksKeptRegisters() ? emitter<RuntimeCallEmitter>().landingPadRegisterStorage() : nullptr;
     if (registerStorage)
         patchpoint->clobberEarly(RegisterSet::macroClobberedGPRs());
     RegisterSet clobberedOnTheWay = registersClobberedAtLandingPads();
@@ -84,7 +85,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
             notCompared.exclude(params.code().calleeSaveRegisters());
             notCompared.filter(params.code().mutableRegs());
             notCompared.merge(clobbered);
-            check = KeptRegisterCheck { notCompared, CCallHelpers::Address(GPRInfo::callFrameRegister, static_cast<int32_t>(registerStorage->offsetFromFP())), function, ValueID().index() };
+            check = KeptRegisterCheck { notCompared, params.code().addressInFrame(registerStorage->offsetFromFP()), function, ValueID().index() };
             emitStoresOfKeptRegisters(jit, *check);
         }
         siteGenerator->run(jit, params);
@@ -103,13 +104,17 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
             landingPadNumber = added.iterator->value;
             isNewEntry = added.isNewEntry;
         }
-        if (isNewEntry) {
+        // On x86-64 the stub that jumps to a landing pad has set the stack pointer.
+        if (isNewEntry && isX86_64() && !check)
+            records->landingPads.append(successor);
+        else if (isNewEntry) {
             Box<CCallHelpers::Label> unwindTarget = Box<CCallHelpers::Label>::create();
             records->landingPads.append(unwindTarget);
             params.addLatePath([unwindTarget, successor, bytesBelowFrameRecord = params.code().bytesBelowFrameRecord(), check, stubCalls](CCallHelpers& jit) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 *unwindTarget = jit.label();
-                jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(bytesBelowFrameRecord)), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+                if (!isX86_64())
+                    jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(bytesBelowFrameRecord)), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
                 if (check) {
                     emitChecksOfKeptRegisters(jit, *check, ValidationFailureKind::UnwindingChangedKeptRegister, std::nullopt, [&] {
                         stubCalls->reportChangedRegister(jit);
@@ -123,6 +128,31 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
 
     if (continuation)
         m_out.appendTo(continuation);
+}
+
+LBasicBlock ExceptionEmitter::attachLandingOfMisfit(B3::PatchpointValue* patchpoint, uint32_t site)
+{
+    LBasicBlock block = m_out.m_block;
+    RELEASE_ASSERT(block->last() == patchpoint && patchpoint->generator() && !block->numSuccessors() && !generator().checksKeptRegisters());
+    LBasicBlock continuation = newBlock();
+    LBasicBlock landing = newBlock();
+    block->appendSuccessor(normalEdge(continuation));
+    block->appendSuccessor(rareEdge(landing));
+    patchpoint->effects.terminal = true;
+    patchpoint->setGenerator([records = &m_records.exceptions, siteGenerator = patchpoint->generator(), site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        siteGenerator->run(jit, params);
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        if (!params.fallsThroughToSuccessor(0)) {
+            params.addLatePath([jump = jit.jump(), returnTarget = labels[0]](CCallHelpers& jit) {
+                jump.linkTo(*returnTarget, &jit);
+            });
+        }
+        uint32_t landingPadNumber = static_cast<uint32_t>(records->landingPads.size());
+        records->landingPads.append(labels[1]);
+        records->sites.append(SiteLandingPad { site, landingPadNumber, landingOfMisfit });
+    });
+    m_out.appendTo(continuation);
+    return landing;
 }
 
 LBasicBlock ExceptionEmitter::landingPadFor(const Target& handler)
@@ -148,7 +178,7 @@ void ExceptionEmitter::generateLandingPad(const Target& handler, LBasicBlock lan
     m_out.appendTo(landingPad);
     // No operation of such a handler takes the pending exception from the run time.
     if (handlerTypeOf(handler.block) == HandlerType::SynthesizedCatch)
-        callWithoutSite<Boxed>(RuntimeOperation::Catch, { }, { .isOnRarePath = true });
+        callWithoutSite<Boxed>(RuntimeOperation::Catch, { }, { .isOnRarePath = true, .followsThrow = true });
     if (isEnteredByJump(handler.block))
         setCaughtVariable(handler.block, m_out.int64Zero);
     generator().passHandlerArguments(handler);
@@ -181,7 +211,7 @@ LValue ExceptionEmitter::caughtWord(const ValueContext& value)
 
     RuntimeOperation operation = handlerTypeOf(handler) == HandlerType::Finally ? RuntimeOperation::CatchException : RuntimeOperation::Catch;
     auto takeFromRuntime = [&] {
-        return callOperation<Boxed>(value, operation, { });
+        return callOperation<Boxed>(value, operation, { }, { .followsThrow = true });
     };
     if (!isEnteredByJump(handler)) {
         LValue caught = takeFromRuntime().value();

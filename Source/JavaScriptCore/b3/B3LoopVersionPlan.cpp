@@ -188,9 +188,6 @@ std::expected<LoopVersionPlan, GaveUp> LoopVersionPlanner::tryPlan(const HotRegi
     bool clampsLoopBounds = m_proc.policy().loops.clampsLoopBounds;
     if (!clampsLoopBounds)
         plan.boundNotClampedReason = GaveUpReason::None;
-    plan.poll = canRewriteTest ? findStripMinedPoll(attempt) : nullptr;
-    if (plan.poll)
-        ++plan.numberOfRemovedValues;
     if (plan.countedLoop) {
         plan.rangeChecks = planRangeChecks({ m_proc, m_phiChildren, plan.region, attempt.invariance, *plan.countedLoop, attempt.blocksBeforeTopTest, canRewriteTest && clampsLoopBounds });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
@@ -461,32 +458,6 @@ bool LoopVersionPlanner::canRewriteLoopTest(const Attempt& attempt) const
             return false;
     }
     return true;
-}
-
-PatchpointValue* LoopVersionPlanner::findStripMinedPoll(const Attempt& attempt) const
-{
-    if (!m_proc.policy().loops.stripMinesPolls)
-        return nullptr;
-    const HotRegion& region = attempt.plan.region;
-    PatchpointValue* poll = nullptr;
-    for (BasicBlock* block : region.blocks) {
-        for (Value* value : *block) {
-            if (!isLoopPoll(value))
-                continue;
-            if (poll)
-                return nullptr;
-            poll = value->as<PatchpointValue>();
-        }
-    }
-    if (!poll)
-        return nullptr;
-
-    Dominators& dominators = m_proc.dominators();
-    for (BasicBlock* predecessor : region.header->predecessors()) {
-        if (m_loops.belongsTo(predecessor, *region.loop) && !dominators.dominates(poll->owner, predecessor))
-            return nullptr;
-    }
-    return poll;
 }
 
 unsigned LoopVersionPlanner::countRemovedComparisons(const Attempt& attempt) const

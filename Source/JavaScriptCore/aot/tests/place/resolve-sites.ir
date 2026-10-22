@@ -29,6 +29,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v10, v2 key="x"
     v16 = NewObject layout=L2 fields=[]
     v17 = FinishObject v16
+    Jump -> next b1()
+  b1():
     PropSet v17, v2 key="x"
     PropSet v17, v2 key="y"
     v20 = ForInOpen v17
@@ -55,5 +57,5 @@ function f2 name="two" flags=[HasNewTarget] captures=[{type=number}, {type=numbe
 # CHECK: = GetSlot v10 key="x" receivers=[L0] {{*}} fieldAccess=[[read]]
 # CHECK-NOT: PutSlot v10, -, v2 key="x" receivers=[L0] {{*}} fieldAccess=[[read]]
 # CHECK: PutSlots v17, -, v2, v2 placedKeys=[{key="x" fieldAccess=[[storeX]] {{*}}}, {key="y" fieldAccess=[[storeY]] {{*}}}] receivers=[L2]
-# CHECK: = NewClosure function=f1 {{*}} allocation=0
-# CHECK: = NewClosure v2, v2 function=f2 {{*}} allocation=1
+# CHECK: = NewClosure function=f1 {{*}}allocation=0
+# CHECK: = NewClosure v2, v2 function=f2 {{*}}allocation=1

@@ -1,4 +1,5 @@
-# A store into an object that the function allocated before another allocation is a slot store without a guard, and its barrier is a call that passes the back-end checks
+# A store into an object that the function allocated before another allocation is a slot store that nothing tests, the allocation itself is its guard, and its barrier is a call that passes the back-end checks.
+# An allocation lists the first store under a name and moves down behind its value, so the store that is looked at is the second under its name
 # FORM: AsRead
 # RUN: compile BarriersEmitted
 # RUN(PLACED): pipeline CheckPlacement
@@ -6,7 +7,8 @@
 # CHECK: image not empty
 # CHECK: statistic BarriersEmitted 1
 # PLACED-LABEL: name="storeIntoOlderAllocation"
-# PLACED: PutSlot [[older]], -, [[younger]] key="next"
+# PLACED-NOT: TestAndBranch
+# PLACED: PutSlot [[older]], [[older]], [[younger]] key="next"
 
 layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -24,7 +26,8 @@ function f1 name="storeIntoOlderAllocation" results=[{type=anything}] {
   b0():
     v0 = Null
     v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = NewObject -, v0 layout=L0 fields=[0]
-    PropSet v1, v2 key="next" mode=Strict
+    PropSet v1, v0 key="next" mode=Strict
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v3 key="next" mode=Strict
     Return v1
 }

@@ -1,0 +1,50 @@
+# class A { m(...xs) { return this } n() { } }  function run(o, x) { o.m(...[x]).n() }  const a = new A(); run(a, a)
+# A known receiver goes straight to the `this` of the method that the read from it answers, past the group of the callees. A method that returns `this` gives the group back what the group has passed,
+# so what went past the group has to come back past it. A call that passes a list takes what the group answers: without the receiver its result held nothing, and `n` was called by nobody.
+# RUN: valueflow-why values=f4:v5
+# CHECK: values=f4:v5
+# CHECK: operand 0 {{*}} 1 members: [[a]]
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f4 v4 -> {{*}}f2
+# CALLS: f4 v6 -> {{*}}f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="n"
+    v6 = FinishClass v1 layout=L0
+    v7 = NewClosure function=f4
+    v8 = Construct v6
+    v9 = Call v7, -, v8, v8
+    Return
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="n" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="run" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = NewArray v1 contents=anything
+    v4 = CallList v2, v0, v3 calleeKey="m"
+    v5 = PropGet v4 key="n"
+    v6 = Call v5, v4 calleeKey="n"
+    Return
+}

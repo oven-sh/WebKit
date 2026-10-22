@@ -1,4 +1,5 @@
 # The type flow gives a field that holds arrays has proofs no test can give: a parser, validating or not, and a validator test the class of the array they created and assume the rest
+# The results are handed to a built-in that looks at its operand and neither keeps nor writes it: a callee nobody knows may store into the arrays, and then nothing is proven of them
 # FORM: AsRead
 # OPTIONS: report=Declines only-passes=ResolveBuiltins,SelectTypedResults
 # RUN: pipeline SelectTypedResults
@@ -20,7 +21,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = ToString v1
-    v3 = PropGet v0 key="sink" [isFreeName]
+    v3 = Builtin builtin=ArrayIsArray
     v4 = CallDirect v2 function=f1
     v5 = Call v3, -, v4
     v6 = CallDirect v2 function=f2
@@ -31,14 +32,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 
-function f1 name="claimed" parameters=[{type=string}] results=[{type=anything}] {
+function f1 name="converted" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
-    v3 = ClaimDeclared v2 declared={type=undefined|null|L1}
+    v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
     Return v3
 }
-# CHECK-LABEL: function f1 name="claimed"
+# CHECK-LABEL: function f1 name="converted"
 # CHECK: = CallDirect {{*}} function=[[parserOfPage]]
 
 function f2 name="validated" parameters=[{type=string}] results=[{type=anything}] {
@@ -58,7 +59,7 @@ function f3 name="validatedValue" parameters=[{type=anything}] results=[{type=an
 }
 # CHECK-LABEL: function f3 name="validatedValue"
 # CHECK: = CallDirect v0 function=[[validatorOfCheckedPage]]
-# CHECK: function [[parserOfRows]] {{*}}role=Parser {{*}}predicted=Array<L0>}
+# CHECK: function [[parserOfRows]] {{*}}role=Parser {{*}}type=undefined|Array<L0>}
 # CHECK: function [[parserOfPage]] {{*}}role=Parser
 # CHECK: ({{*}}: undefined|Array<L0>, {{*}}: boolean, {{*}}: undefined|number, {{*}}):
 # CHECK-NEXT: LoopHint

@@ -1,0 +1,135 @@
+# `p.name.length`: a test that only undefined and null fail, where what follows on the failing side is an access that throws for them, becomes the check, which costs nothing where the access goes through the value.
+# It stays a test where another value fails it too, where the tested type holds null, where something that can be seen comes first on the failing side, where that side reads another value or none, and under a handler
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass InsertObjectCoercibleChecks
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="lengthOfText" parameters=[{type=undefined|null|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4(v1)
+  b1():
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4: string):
+    v5 = CallBuiltin v4 overload=StringPrototypeLength/0
+    Return v5
+  b3(v6: undefined|null) frequency=Unlikely:
+    Jump -> next b4(v6)
+  b4(v7: anything) frequency=Unlikely:
+    v8 = PropGet v7 key="length"
+    Return v8
+}
+# CHECK-LABEL: function f0
+# CHECK: b1():
+# CHECK: [[text]]: string = RequireObjectCoercible v0 name="length"
+# CHECK-NEXT: Jump -> next b2([[text]])
+# CHECK: b2(
+
+function f1 name="elementOfList" parameters=[{type=undefined|Array<string>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: undefined|Array<string>, v1: i32):
+    v2 = TypeTest v0 testedType=Array<string>
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3: Array<string>):
+    Return v3
+  b2(v4: undefined) frequency=Unlikely:
+    v5 = Upcast v4 castType=undefined|null
+    v6 = ElemGet v5, v1
+    Unreachable
+}
+# CHECK-LABEL: function f1
+# CHECK: [[list]]: Array<string> = RequireObjectCoercible v0
+# CHECK-NEXT: Jump -> next b1([[list]])
+# CHECK-NOT: ElemGet
+
+function f2 name="aNumberFailsToo" parameters=[{type=undefined|number|string}] results=[{type=anything}] {
+  b0(v0: undefined|number|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: string):
+    Return v2
+  b2(v3: undefined|number) frequency=Unlikely:
+    v4 = PropGet v3 key="length"
+    Return v4
+}
+# CHECK-LABEL: function f2
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch
+
+function f3 name="nullPasses" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+  b0(v0: undefined|null|string):
+    v1 = TypeTest v0 testedType=null|string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: null|string):
+    Return v2
+  b2(v3: undefined) frequency=Unlikely:
+    v4 = PropGet v3 key="length"
+    Unreachable
+}
+# CHECK-LABEL: function f3
+# CHECK: = TypeTest v0 testedType=null|string
+# CHECK-NEXT: Branch
+
+function f4 name="aStoreComesFirst" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: string):
+    Return v2
+  b2(v3: undefined) frequency=Unlikely:
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v3 key="length"
+    Unreachable
+}
+# CHECK-LABEL: function f4
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch
+
+function f5 name="anotherValueIsRead" parameters=[{type=undefined|string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|string, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3: string):
+    Return v3
+  b2(v4: undefined) frequency=Unlikely:
+    v5 = PropGet v1 key="length"
+    Return v5
+}
+# CHECK-LABEL: function f5
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch
+
+function f6 name="theFailingSideReturns" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: string):
+    Return v2
+  b2(v3: undefined) frequency=Unlikely:
+    Return v3
+}
+# CHECK-LABEL: function f6
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch
+
+function f7 name="underHandler" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v2: string):
+    Return v2
+  b3(v3: undefined) frequency=Unlikely handler=b4():
+    v4 = PropGet v3 key="length"
+    Unreachable
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f7
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch

@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTPropertyAccessReceivers.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -58,19 +57,14 @@ static TypeFit provenFitOf(const OverloadQuery& query, const BuiltinDispatchNode
     return fitOfEveryPosition;
 }
 
-// A test establishes no proof: a predicted layout counts where the type narrowed so far lists layouts or objects of the layout keep their shape.
-static TypeID predictedWithin(const OverloadQuery& query, BuiltinOperand operand, TypeID current)
+// What a test can find of the expected type, inside the type narrowed so far. An object keeps its shape, so a test finds a layout for good.
+static TypeID expectedWithin(const OverloadQuery& query, BuiltinOperand operand, TypeID current)
 {
-    TypeID predicted = query.predicted.at(operand);
-    if (!predicted || predicted == query.proven.at(operand))
+    TypeID expected = query.expected.at(operand);
+    if (!expected || expected == query.proven.at(operand))
         return { };
-    const Program& program = query.context.program;
     TypeArena& types = query.context.types;
-    const Type& prediction = types.at(predicted);
-    const Type& currentType = types.at(current);
-    bool canTestLayouts = currentType.layouts || layoutTestKindFor(program, membersOf(program, prediction)) == LayoutTestKind::Type;
-    Type testable = canTestLayouts ? withoutClassProofs(prediction) : prediction.withoutProofs();
-    TypeID met = types.intern(testable.intersectWith(currentType, types));
+    TypeID met = types.intern(withoutClassProofs(types.at(expected)).intersectWith(types.at(current), types));
     return met == TypeTable::never ? TypeID() : met;
 }
 
@@ -151,7 +145,7 @@ private:
     void collectOverloadsBehind(BuiltinDispatchTarget, Vector<BuiltinOverloadID, 4>&) const;
     TypeFit decideBranch(std::span<const BuiltinOperand> positions, BuiltinTypeID tested);
     OperandDecision decideOperand(BuiltinOperand, BuiltinTypeID tested) const;
-    TypeID chooseNarrowedType(const Type& widest, TypeID predicted, BuiltinTypeID tested, TypeFit decision) const;
+    TypeID chooseNarrowedType(const Type& widest, TypeID expected, BuiltinTypeID tested, TypeFit decision) const;
     void record(const OperandDecision&);
     BuiltinOverloadID firstReachableOverload(BuiltinDispatchTarget) const;
 
@@ -251,32 +245,32 @@ OperandDecision OverloadWalk::decideOperand(BuiltinOperand operand, BuiltinTypeI
         return { operand, proven.fit, { }, proven.unprovenPristine };
 
     OperandDecision undecided { operand, TypeFit::Unknown, { }, { } };
-    TypeID predicted = predictedWithin(m_query, operand, current);
-    if (!predicted)
+    TypeID expected = expectedWithin(m_query, operand, current);
+    if (!expected)
         return undecided;
 
     Type testedType = typeOfBuiltinType({ context, nullptr }, tested);
-    switch (fitOf(context, predicted, tested).fit) {
+    switch (fitOf(context, expected, tested).fit) {
     case TypeFit::Unknown:
         return undecided;
     case TypeFit::Inside: {
-        TypeID narrowed = chooseNarrowedType(types.at(current).intersectWith(testedType, types), predicted, tested, TypeFit::Inside);
+        TypeID narrowed = chooseNarrowedType(types.at(current).intersectWith(testedType, types), expected, tested, TypeFit::Inside);
         return { operand, TypeFit::Inside, narrowed, fitOf(context, narrowed, tested).unprovenPristine };
     }
     case TypeFit::Outside:
-        return { operand, TypeFit::Outside, chooseNarrowedType(types.at(current).without(testedType, types), predicted, tested, TypeFit::Outside), { } };
+        return { operand, TypeFit::Outside, chooseNarrowedType(types.at(current).without(testedType, types), expected, tested, TypeFit::Outside), { } };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A table type without an exact IR type (a class with subclasses, plain data) leaves only the prediction itself to test.
-TypeID OverloadWalk::chooseNarrowedType(const Type& widest, TypeID predicted, BuiltinTypeID tested, TypeFit decision) const
+// A table type without an exact IR type (a class with subclasses, plain data) leaves only the expected type itself to test.
+TypeID OverloadWalk::chooseNarrowedType(const Type& widest, TypeID expected, BuiltinTypeID tested, TypeFit decision) const
 {
     const TypingContext& context = m_query.context;
-    if (!context.types.at(predicted).isSubsetOf(widest, context.program))
-        return predicted;
+    if (!context.types.at(expected).isSubsetOf(widest, context.program))
+        return expected;
     TypeID widestID = context.types.intern(widest);
-    return fitOf(context, widestID, tested).fit == decision ? widestID : predicted;
+    return fitOf(context, widestID, tested).fit == decision ? widestID : expected;
 }
 
 void OverloadWalk::record(const OperandDecision& decision)

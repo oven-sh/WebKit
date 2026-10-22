@@ -2,4 +2,4 @@
 # RUN: print
 # DIAGNOSTIC: UnsortedList
 
-module m0 path="/c.cjs" displayPath="c.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="b"}, {name="a"}]
+module m0 path="node:c" displayPath="node:c" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="b"}, {name="a"}]

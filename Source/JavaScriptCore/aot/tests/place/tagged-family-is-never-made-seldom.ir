@@ -1,0 +1,93 @@
+# The nodes of a tree come from one constructor, which stores their tag, and the program calls it through a variable: by the estimate it runs seldom, and there are a great many nodes.
+# So the layouts of a tagged family never count as made seldom: what does not fit under the inline cap lies in the Extension, as in pack-out-of-line.ir
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated]
+layout L2 name="Wide" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=undefined|number}}, {key="late1" declared={type=undefined|number}}, {key="late2" declared={type=undefined|number}}, {key="late3" declared={type=undefined|number}}, {key="late4" declared={type=undefined|number}}, {key="late5" declared={type=undefined|number}}, {key="late6" declared={type=undefined|number}}, {key="late7" declared={type=undefined|number}}, {key="late8" declared={type=undefined|number}}, {key="late9" declared={type=undefined|number}}, {key="late10" declared={type=undefined|number}}, {key="late11" declared={type=undefined|number}}, {key="late12" declared={type=undefined|number}}, {key="late13" declared={type=undefined|number}}, {key="late14" declared={type=undefined|number}}, {key="late15" declared={type=undefined|number}}, {key="late16" declared={type=undefined|number}}, {key="late17" declared={type=undefined|number}}, {key="late18" declared={type=undefined|number}}, {key="late19" declared={type=undefined|number}}, {key="late20" declared={type=undefined|number}}, {key="late21" declared={type=undefined|number}}, {key="late22" declared={type=undefined|number}}, {key="late23" declared={type=undefined|number}}] supertypes=[L1] flags=[IsNeverAllocated]
+layout L3 name="Num" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+variable g0 name="NodeConstructor" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer integer=1
+    v4 = Integer integer=2
+    v5 = Construct v2, -, v3, v4
+    v6 = Construct v2, -, v4, v4
+    v7 = Check v5 castType=undefined|null|L2
+    v8 = CallDirect v7, v4 function=f2
+    v9 = CallDirect v7 function=f3
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1, v1: number, v2: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="fill" parameters=[{type=undefined|null|L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|L2, v1: number):
+    PropSet v0, v1 key="late0"
+    PropSet v0, v1 key="late1"
+    PropSet v0, v1 key="late2"
+    PropSet v0, v1 key="late3"
+    PropSet v0, v1 key="late4"
+    PropSet v0, v1 key="late5"
+    PropSet v0, v1 key="late6"
+    PropSet v0, v1 key="late7"
+    PropSet v0, v1 key="late8"
+    PropSet v0, v1 key="late9"
+    PropSet v0, v1 key="late10"
+    PropSet v0, v1 key="late11"
+    PropSet v0, v1 key="late12"
+    PropSet v0, v1 key="late13"
+    PropSet v0, v1 key="late14"
+    PropSet v0, v1 key="late15"
+    PropSet v0, v1 key="late16"
+    PropSet v0, v1 key="late17"
+    PropSet v0, v1 key="late18"
+    PropSet v0, v1 key="late19"
+    PropSet v0, v1 key="late20"
+    PropSet v0, v1 key="late21"
+    PropSet v0, v1 key="late22"
+    PropSet v0, v1 key="late23"
+    Return
+}
+function f3 name="look" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
+  b0(v0: undefined|null|L2):
+    v1 = PropGet v0 key="late0"
+    v2 = PropGet v0 key="late1"
+    v3 = PropGet v0 key="late2"
+    v4 = PropGet v0 key="late3"
+    v5 = PropGet v0 key="late4"
+    v6 = PropGet v0 key="late5"
+    v7 = PropGet v0 key="late6"
+    v8 = PropGet v0 key="late7"
+    v9 = PropGet v0 key="late8"
+    v10 = PropGet v0 key="late9"
+    v11 = PropGet v0 key="late10"
+    v12 = PropGet v0 key="late11"
+    v13 = PropGet v0 key="late12"
+    v14 = PropGet v0 key="late13"
+    v15 = PropGet v0 key="late14"
+    v16 = PropGet v0 key="late15"
+    v17 = PropGet v0 key="late16"
+    v18 = PropGet v0 key="late17"
+    v19 = PropGet v0 key="late18"
+    v20 = PropGet v0 key="late19"
+    v21 = PropGet v0 key="late20"
+    v22 = PropGet v0 key="late21"
+    v23 = PropGet v0 key="late22"
+    v24 = PropGet v0 key="late23"
+    Return
+}
+
+# CHECK: L4 CompiledObject size=64 extension=152
+# CHECK: "late23" JSValue out@144
+# CHECK-NEXT: extension Cell32 @16

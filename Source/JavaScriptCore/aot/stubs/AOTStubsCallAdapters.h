@@ -16,6 +16,7 @@ class StubAssembler;
 
 constexpr StubKey enterClosure() { return StubKey(StubFamily::EnterClosure); }
 constexpr StubKey enterSlimClosure() { return StubKey(StubFamily::EnterSlimClosure); }
+constexpr StubKey enterModuleBody() { return StubKey(StubFamily::EnterModuleBody); }
 constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterClosureForConstruct); }
 
 void emitEnterAdapter(StubAssembler&, GPRReg calleeScratch, unsigned extraBytes = 0);
@@ -24,6 +25,8 @@ void emitAdapterEpilogue(StubAssembler&);
 // The callee is a closure of this realm that can be called, and word is its word. The argument registers are spilled under a frame record, new.target first.
 // Leaves the callee and the count as they are where it jumps.
 void emitConstructWithPlainFunction(StubAssembler&, GPRReg word, CCallHelpers::JumpList& isNotPlainFunction);
+// Where ConstructWordCache has the function of a word of [[Call]].
+CCallHelpers::Address emitLocateRememberedConstructWord(StubAssembler&, GPRReg wordOfCall, GPRReg entry);
 
 } } // namespace JSC::AOT
 

@@ -10,6 +10,7 @@
 
 #include "AOTStubDescriptor.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsConstruct.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 
@@ -33,6 +34,8 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTBarrierSlowPreservingRegisters, emitBarrierPrelude },
         { Entry::operationAOTCatch, emitCatchPrelude },
         { Entry::operationAOTCatchException, emitCatchPrelude },
+        { Entry::operationAOTGetConstructPrototype, emitGetConstructPrototypePrelude },
+        { Entry::operationAOTGetSuperBase, emitGetSuperBasePrelude },
         { Entry::operationAOTStringToLowerCase, emitToLowerCasePrelude },
         { Entry::operationAOTStringToUpperCase, emitToUpperCasePrelude },
         { Entry::operationAOTThrow, emitThrowPrelude },

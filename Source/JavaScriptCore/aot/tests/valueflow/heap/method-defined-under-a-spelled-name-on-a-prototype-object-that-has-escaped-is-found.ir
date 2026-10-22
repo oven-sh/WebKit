@@ -1,0 +1,46 @@
+# somethingNoTableLists(Array.prototype)      Object.defineProperty(globalThis[name].prototype, "grouped", { value: grouped })      [].grouped(callback)
+# The export helper of core-js, in a program that has handed `Array.prototype` to hands nobody follows. Beside the unknown object the receiver of the definition no longer shows that object,
+# so the definition goes through the unknown object. It reaches whatever has escaped and takes the name, also where an operation of the program spells the name, as the call does here:
+# the run time refuses no new name on `Array.prototype`. Once it reached only names that nobody spells: the call found nothing to call, and the callback was left out of the executable though it runs
+# RUN: valueflow-solve calls
+# CHECK: f0 v17 ->{{*}} f1
+# CHECK: f1 v1 ->{{*}} unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}, {key="configurable" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=ArrayPrototype
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="name" [isFreeName]
+    v5 = ElemGet v0, v4
+    v6 = PropGet v5 key="prototype"
+    v7 = NewClosure function=f1
+    v8 = Boolean boolean=true
+    v9 = NewObject -, v7, v8, v8 layout=L0 fields=[0, 1, 2]
+    v10 = Builtin builtin=Object
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = String string="grouped"
+    v13 = Call v11, v10, v6, v12, v9
+    v14 = NewArray
+    v15 = PropGet v14 key="grouped"
+    v16 = NewClosure function=f2
+    v17 = Call v15, v14, v16
+    Return v17
+}
+function f1 name="grouped" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 name="callback" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

@@ -1,0 +1,37 @@
+# class Meter { measure() {} }; input(new Meter).measure = function replacement() {}
+# A store through the unknown object goes to what has escaped: the instance. Nobody has asked what lies above it, so the prototype object keeps its method.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}members=[{key="measure" function=f2 mutability=Fixed isWritableData=true}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Meter" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="measure"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Call v7, -, v5
+    v9 = NewClosure function=f3
+    PropSet v8, v9 key="measure"
+    Return
+}
+function f1 name="Meter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="measure" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="replacement" results=[{type=anything}] {
+  b0():
+    Return
+}

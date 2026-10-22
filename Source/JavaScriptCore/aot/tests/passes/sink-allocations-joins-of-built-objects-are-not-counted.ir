@@ -1,0 +1,22 @@
+# A parameter at which only built objects arrive merges no allocation
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 1
+# STATISTIC: AllocationsMergedAtJoins = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="theObjectIsBuiltInFrontOfTheParameter" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: L0):
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v4
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v3)
+  b3(v6: L0):
+    v7 = Call v1, -, v6
+    Return v7
+}

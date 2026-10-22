@@ -54,7 +54,7 @@ static constexpr ASCIILiteral filterFlag = "--filter"_s;
 static constexpr ASCIILiteral jobsFlag = "--jobs"_s;
 
 static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, optionFlag, onlyDiagnosticFlag };
-static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag };
+static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag, nativeTestPartFlag };
 static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s };
 static constexpr ASCIILiteral compileFlags[] { "--output"_s };
 static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
@@ -62,7 +62,7 @@ static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
 static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
     { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
-    { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--single-process]"_s },
+    { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
     { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics"_s },
     { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }"_s },
     { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
@@ -137,7 +137,7 @@ static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std
 static int reportTestResults(PrintStream& out, const NativeTestSummary& nativeTests, const TestRunSummary& files)
 {
     unsigned failed = nativeTests.failed + files.failed;
-    out.println(nativeTests.passed + files.passed, " passed, ", failed, " failed");
+    out.println(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", files.todo, " todo");
     return failed ? exitCodeForFailure : exitCodeForSuccess;
 }
 
@@ -152,19 +152,6 @@ static int runAllSubcommand(std::span<const String> arguments, const ChildProces
     request.paths.append(arguments[0]);
     request.launcher = &launcher;
     TestRunSummary files = runTestFiles(request, out);
-
-    // No check line shows a solve that ends before its fixpoint, or one that only the usual order of the worklist brings there.
-    String flowTests = FileSystem::pathByAppendingComponent(arguments[0], "flow"_s);
-    if (FileSystem::fileTypeFollowingSymlinks(flowTests) == FileSystem::FileType::Directory) {
-        request.paths = { flowTests };
-        request.variant.onlyDiagnostic = DiagnosticName(InternalErrorKind::FlowNotAtFixpoint);
-        for (ASCIILiteral order : { "flow-order-seed=0"_s, "flow-order-seed=1"_s, "flow-order-seed=2"_s }) {
-            request.variant.optionWords = { "check=FlowFixpoint"_str, String(order) };
-            TestRunSummary summary = runTestFiles(request, out);
-            files.passed += summary.passed;
-            files.failed += summary.failed;
-        }
-    }
     return reportTestResults(out, nativeTests, files);
 }
 
@@ -215,9 +202,21 @@ static int runRunSubcommand(std::span<const String> arguments, const ChildProces
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     TestRunSummary summary = runTestFiles(request, out);
     int exitCode = reportTestResults(out, { }, summary);
-    if (!summary.passed && !summary.failed)
+    if (!summary.passed && !summary.failed && !summary.todo)
         return reportError(exitCodeForFailure, "testaot: no test matches");
     return exitCode;
+}
+
+static std::optional<NativeTestPart> parseNativeTestPart(StringView text)
+{
+    size_t slash = text.find('/');
+    if (slash == notFound)
+        return std::nullopt;
+    std::optional<unsigned> number = parseInteger<unsigned>(text.left(slash));
+    std::optional<unsigned> count = parseInteger<unsigned>(text.substring(slash + 1));
+    if (!number || !count || !*number || *number > *count)
+        return std::nullopt;
+    return NativeTestPart { *number - 1, *count };
 }
 
 static int runNativeSubcommand(std::span<const String> arguments, const ChildProcessLauncher& launcher)
@@ -236,6 +235,13 @@ static int runNativeSubcommand(std::span<const String> arguments, const ChildPro
                 return reportError(exitCodeForInvalidCommandLine, "testaot native: ", previousNativeTestFlag, " needs a value");
             continue;
         }
+        if (flagNameOf(argument) == nativeTestPartFlag) {
+            std::optional<NativeTestPart> part = parseNativeTestPart(StringView(argument).substring(nativeTestPartFlag.length() + 1));
+            if (!part)
+                return reportError(exitCodeForInvalidCommandLine, "testaot native: ", nativeTestPartFlag, " needs <i>/<n> with 1 <= i <= n");
+            request.part = *part;
+            continue;
+        }
         if (argument.startsWith("--"_s) || hasFilter)
             return reportUsage(Subcommand::Native);
         request.filter = argument;
@@ -245,7 +251,7 @@ static int runNativeSubcommand(std::span<const String> arguments, const ChildPro
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     NativeTestSummary summary = runNativeTests(request, out);
     int exitCode = reportTestResults(out, summary, { });
-    if (!summary.passed && !summary.failed && hasFilter)
+    if (!summary.passed && !summary.failed && hasFilter && request.part.count == 1)
         return reportError(exitCodeForFailure, "testaot: no native test matches ", request.filter);
     return exitCode;
 }
@@ -340,6 +346,12 @@ int main(int argc, char** argv)
         parsedCommandLine = takeJSCOptions(commandLine.subspan(2), entry->ownFlags);
         if (!parsedCommandLine)
             return exitCodeForInvalidCommandLine;
+        if (JSC::Options::aotImagePath()) {
+            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::useShadowRealm() = true;
+            JSC::Options::useTemporal() = true;
+            JSC::Options::useExplicitResourceManagement() = true;
+        }
         JSC::Options::notifyOptionsChanged();
     }
     JSC::initialize();

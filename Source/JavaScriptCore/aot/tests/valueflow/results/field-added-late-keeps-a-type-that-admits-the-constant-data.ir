@@ -1,0 +1,40 @@
+# type Meta = { a?: string; [key: string]: boolean | string | undefined }   function keep<T extends object>(x: T): T
+# publish({ flag: true } as Meta, { flag: "x" } as Text, { flag: text }): the three layouts meet in the family of T, and unknown code has the objects.
+# "flag" is no field of Meta or Text as read, so flow appends it. The objects have escaped, so nothing says that only values of one type are stored,
+# and the field takes the type that the key has in the other members of the family: undefined|null|string, from Declares.
+# A store is tested against that type. The run time fills constant data without a test: where a record of the layout holds a boolean under the key (Meta), the field keeps flow's own type.
+# Where the record holds a string (Text), the type of the family stands.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Meta"
+# CHECK: {key="flag" declared={type=anything} flags=[IsAddedLate
+# CHECK: layout L1 name="Text"
+# CHECK: {key="flag" declared={type=undefined|null|string} flags=[IsAddedLate
+# CHECK: layout L2 name="Declares"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Record name="Meta" fields=[{key="a" declared={type=undefined|null|string}}] supertypes=[L3]
+layout L1 kind=Record name="Text" fields=[{key="a" declared={type=undefined|null|string}}] supertypes=[L3]
+layout L2 kind=Record name="Declares" fields=[{key="flag" declared={type=undefined|null|string} flags=[IsRequired]}] supertypes=[L3]
+layout L3 kind=Record name="T"
+data d0 root=Object{layout=L0 members=[{key="flag" value=Boolean{value=true}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="flag" value=String{value="x"}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Data data=d1
+    v2 = String string="y"
+    v3 = NewObject -, v2 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    v5 = Boolean
+    v6 = NewObject layout=L0
+    PropDefine v6, v5 key="flag"
+    v8 = FinishObject v6
+    v9 = NewObject layout=L1
+    PropDefine v9, v2 key="flag"
+    v11 = FinishObject v9
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="publish" [isFreeName]
+    v14 = Call v13, -, v0, v1, v4, v8, v11
+    Return
+}

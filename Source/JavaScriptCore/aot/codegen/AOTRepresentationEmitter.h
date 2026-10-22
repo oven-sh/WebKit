@@ -23,6 +23,12 @@ public:
     void generateNarrowInteger(const ValueContext&);
     void generateDecode(const ValueContext&);
     void generateCompress(const ValueContext&);
+
+    // One step of a conversion that is no operation of the function: the context is that of the operation that takes the result. The source has no id where an earlier step has made it.
+    Operand convert(const OperationContext&, Opcode conversion, ValueID sourceID, Operand source, const Type&, Representation to);
+
+private:
+    void generate(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

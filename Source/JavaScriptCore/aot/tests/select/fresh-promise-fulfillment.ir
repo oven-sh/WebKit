@@ -1,6 +1,6 @@
 # Until an async function first suspends nobody but its ramp has seen its promise, so its result is stored without a call
 # FORM: Prepared
-# OPTIONS: heat=only-loops-are-hot
+# OPTIONS: heat=everything-is-hot
 # STATISTIC: FreshPromiseFulfillmentGroups = 7
 # RUN: pass Select
 # RUN(OTHER): pass Select

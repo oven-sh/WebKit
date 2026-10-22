@@ -113,7 +113,7 @@ void expectSuccessAfterTyping(FunctionChange change, IRForm form, const Verifier
     change(copy);
     // SelectTypedResults leaves no call that still names a result to validate.
     if (form != IRForm::AsRead && !inputs.isOptimizing)
-        copy.at(v4).setExpectedResult({ });
+        copy.edit(v4).setExpectedResult({ });
     typeFunctionAsRead(*test.program, f7, copy, test.build());
     bool isValid = verifyFunction(*test.program, f7, copy, form, test.build(), inputs);
     test.expectNoError();
@@ -153,38 +153,38 @@ void testAcceptsCopies()
 void testValueListedTwice()
 {
     expectFailure(Kind::ValueListedTwice, [](Typed::Function& copy) {
-        copy.at(b1).values.append(v2);
+        copy.edit(b1).values.append(v2);
     });
     expectFailure(Kind::ValueListedTwice, [](Typed::Function& copy) {
-        copy.at(b0).values.append(v2);
+        copy.edit(b0).values.append(v2);
     });
     expectFailure(Kind::ValueListedTwice, [](Typed::Function& copy) {
-        copy.at(b1).parameters.append(v0);
+        copy.edit(b1).parameters.append(v0);
     });
 }
 
 void testParameterNotInList()
 {
     expectFailure(Kind::ParameterNotInList, [](Typed::Function& copy) {
-        copy.at(b3).values.clear();
-        copy.at(b3).parameters.append(v16);
+        copy.edit(b3).values.clear();
+        copy.edit(b3).parameters.append(v16);
     });
     expectFailure(Kind::ParameterNotInList, [](Typed::Function& copy) {
-        copy.at(b3).parameters.clear();
-        copy.at(b3).values.append(v15);
+        copy.edit(b3).parameters.clear();
+        copy.edit(b3).values.append(v15);
     });
 }
 
 void testListedIDOutOfRange()
 {
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b1).values.append(ValueID(1000u));
+        copy.edit(b1).values.append(ValueID(1000u));
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b1).values.append(ValueID());
+        copy.edit(b1).values.append(ValueID());
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b1).parameters.append(ValueID(1000u));
+        copy.edit(b1).parameters.append(ValueID(1000u));
     });
 }
 
@@ -203,142 +203,139 @@ void testValueNotListed()
 void testOperandIDOutOfRange()
 {
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v5).setOperand(0, ValueID(1000u));
+        copy.edit(v5).setOperand(0, ValueID(1000u));
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v4).mutableVariadicOperands()[0] = ValueID(1000u);
+        copy.edit(v4).mutableVariadicOperands()[0] = ValueID(1000u);
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b0).terminator.setOperand(0, ValueID(1000u));
+        copy.edit(b0).terminator.setOperand(0, ValueID(1000u));
     });
 }
 
 void testTargetIDOutOfRange()
 {
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b0).terminator.taken().block = BlockID(9u);
+        copy.edit(b0).terminator.taken().block = BlockID(9u);
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b0).terminator.taken().block = BlockID();
+        copy.edit(b0).terminator.taken().block = BlockID();
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b1).terminator.targets[0].arguments[0] = ValueID(1000u);
+        copy.edit(b1).terminator.targets[0].arguments[0] = ValueID(1000u);
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b1).handler = Target { BlockID(9u), { }, { } };
+        copy.edit(b1).handler = Target { BlockID(9u), { }, { } };
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(b1).subject = ValueID(1000u);
+        copy.edit(b1).subject = ValueID(1000u);
     });
 }
 
 void testTargetCount()
 {
     expectFailure(Kind::TargetCountMismatch, [](Typed::Function& copy) {
-        copy.at(b0).terminator.targets.append(Target { b3, { v2 }, { } });
+        copy.edit(b0).terminator.targets.append(Target { b3, { v2 }, { } });
     });
     expectFailure(Kind::TargetCountMismatch, [](Typed::Function& copy) {
-        copy.at(b3).terminator.targets.append(Target { b3, { v2 }, { } });
+        copy.edit(b3).terminator.targets.append(Target { b3, { v2 }, { } });
     });
 }
 
 void testOperandMissing()
 {
     expectFailure(Kind::OperandMissing, [](Typed::Function& copy) {
-        copy.at(v4).mutableVariadicOperands()[0] = ValueID();
+        copy.edit(v4).mutableVariadicOperands()[0] = ValueID();
     });
     expectFailure(Kind::OperandMissing, [](Typed::Function& copy) {
-        copy.at(v9).setOperand(0, ValueID());
+        copy.edit(v9).setOperand(0, ValueID());
     });
     expectFailure(Kind::OperandMissing, [](Typed::Function& copy) {
-        copy.at(b0).terminator.setOperand(0, ValueID());
+        copy.edit(b0).terminator.setOperand(0, ValueID());
     });
 }
 
 void testUnexpectedOperand()
 {
     expectFailure(Kind::UnexpectedOperand, [](Typed::Function& copy) {
-        copy.at(v9).appendVariadicOperand(v0);
+        copy.edit(v9).appendVariadicOperand(v0);
     });
 }
 
 void testFlagNotDeclared()
 {
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
-        copy.at(v2).flags = 1;
+        copy.edit(v2).flags = 1;
     });
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
-        copy.at(v9).flags = 1 << 2;
+        copy.edit(v9).flags = 1 << 2;
     });
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
-        copy.at(b0).terminator.flags = 1;
+        copy.edit(b0).terminator.flags = 1;
     });
 }
 
 void testOpcodeOutOfRange()
 {
     expectFailure(Kind::OpcodeNotInForm, [](Typed::Function& copy) {
-        copy.at(v2).opcode = static_cast<Opcode>(numberOfEnumerators<Opcode>);
+        copy.edit(v2).opcode = static_cast<Opcode>(numberOfEnumerators<Opcode>);
     });
     expectFailure(Kind::OpcodeNotInForm, [](Typed::Function& copy) {
-        copy.at(b0).terminator.kind = static_cast<TerminatorKind>(numberOfEnumerators<TerminatorKind>);
+        copy.edit(b0).terminator.kind = static_cast<TerminatorKind>(numberOfEnumerators<TerminatorKind>);
     });
 }
 
 void testStorageOfAnotherOperation()
 {
     expectFailure(Kind::OperandMissing, [](Typed::Function& copy) {
-        copy.at(v2).opcode = Opcode::PropGet;
+        copy.edit(v2).opcode = Opcode::PropGet;
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v2).opcode = Opcode::NewClosure;
+        copy.edit(v2).opcode = Opcode::NewClosure;
     });
     expectFailure(Kind::OperandMissing, [](Typed::Function& copy) {
-        copy.at(b3).terminator.kind = TerminatorKind::Unreachable;
+        copy.edit(b3).terminator.kind = TerminatorKind::Unreachable;
     });
 }
 
 void testPayloadOutOfRange()
 {
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v9).setKey(PropertyKeyID(idPastEveryTable));
+        copy.edit(v9).setKey(PropertyKeyID(idPastEveryTable));
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v9).setKey(PropertyKeyID());
+        copy.edit(v9).setKey(PropertyKeyID());
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v14).setData(DataID(7u));
+        copy.edit(v14).setData(DataID(7u));
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v4).setExpectedResult(ExpectedResultID(7u));
+        copy.edit(v4).setExpectedResult(ExpectedResultID(7u));
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v13).setTestedType(TypeID(idPastEveryTable));
+        copy.edit(v13).setTestedType(TypeID(idPastEveryTable));
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v11).setBuiltin(BuiltinID(60000));
+        copy.edit(v11).setBuiltin(BuiltinID(60000));
     });
     expectFailure(Kind::PayloadOutOfRange, [](Typed::Function& copy) {
-        copy.at(v7).setMode(static_cast<ECMAMode>(9));
+        copy.edit(v7).setMode(static_cast<ECMAMode>(9));
     });
 }
 
 void testTypeIDOutOfRange()
 {
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v2).type = { };
+        copy.edit(v2).type = { };
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v2).type = TypeID(idPastEveryTable);
+        copy.edit(v2).type = TypeID(idPastEveryTable);
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v9).setWritten(TypeID(idPastEveryTable));
+        copy.edit(v9).setExpected(TypeID(idPastEveryTable));
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v9).setPrediction(TypeID(idPastEveryTable));
-    });
-    expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.at(v15).type = { };
+        copy.edit(v15).type = { };
     });
 }
 
@@ -355,24 +352,24 @@ void testUntypedFunction()
 void testWrongRepresentation()
 {
     expectFailure(Kind::WrongRepresentation, [](Typed::Function& copy) {
-        copy.at(v2).representation = Representation::Double;
+        copy.edit(v2).representation = Representation::Double;
     });
     expectFailure(Kind::WrongRepresentation, [](Typed::Function& copy) {
-        copy.at(v0).representation = Representation::JSValue;
+        copy.edit(v0).representation = Representation::JSValue;
     });
 }
 
 void addRequest(Typed::Function& function)
 {
-    ValueID request = addValue(function, b3, Opcode::ClaimDeclared, { v0 });
+    ValueID request = addValue(function, b3, Opcode::Convert, { v0 });
     DeclaredType declared;
     declared.type = TypeTable::anything;
-    function.at(request).setDeclared(declared);
+    function.edit(request).setDeclared(declared);
 }
 
 void addPreparedOperation(Typed::Function& function)
 {
-    addValue(function, b3, Opcode::GetShapeEpoch);
+    addValue(function, b3, Opcode::JSONHasStackSpace);
 }
 
 void addOperationsOfBothForms(Typed::Function& function)
@@ -411,14 +408,14 @@ void testRequestAfterTyping()
 
 void widenUnusedValue(Typed::Function& function)
 {
-    function.at(v13).type = TypeTable::anything;
+    function.edit(v13).type = TypeTable::anything;
 }
 
 void testOptimizingAcceptsWiderType()
 {
     expectFailure(Kind::TypeOutOfDate, widenUnusedValue);
     expectFailure(Kind::TypeOutOfDate, [](Typed::Function& copy) {
-        copy.at(v13).type = TypeTable::undefined;
+        copy.edit(v13).type = TypeTable::undefined;
     }, IRForm::AsRead, whileOptimizing);
 
     expectSuccessIn(f7, widenUnusedValue, whileOptimizing);
@@ -427,29 +424,29 @@ void testOptimizingAcceptsWiderType()
 void testEntryParameterTypes()
 {
     expectFailure(Kind::EntryParametersMismatch, [](Typed::Function& copy) {
-        copy.at(v1).type = TypeTable::anything;
+        copy.edit(v1).type = TypeTable::anything;
     });
     expectFailure(Kind::EntryParametersMismatch, [](Typed::Function& copy) {
-        copy.at(v1).type = TypeTable::never;
+        copy.edit(v1).type = TypeTable::never;
     });
     expectFailure(Kind::EntryParametersMismatch, [](Typed::Function& copy) {
-        copy.at(v0).type = TypeTable::number;
+        copy.edit(v0).type = TypeTable::number;
     });
     expectFailure(Kind::EntryParametersMismatch, [](Typed::Function& copy) {
-        copy.at(v1).type = TypeTable::anything;
+        copy.edit(v1).type = TypeTable::anything;
     }, IRForm::AsRead, whileOptimizing);
 }
 
 void testEdgeArgumentTypes()
 {
     expectFailure(Kind::EdgeArgumentMismatch, [](Typed::Function& copy) {
-        copy.at(v15).type = TypeTable::undefined;
+        copy.edit(v15).type = TypeTable::undefined;
     });
     expectFailure(Kind::EdgeArgumentMismatch, [](Typed::Function& copy) {
-        copy.at(v15).type = TypeTable::never;
+        copy.edit(v15).type = TypeTable::never;
     });
     expectSuccessIn(f7, [](Typed::Function& copy) {
-        copy.at(v15).type = TypeTable::anything;
+        copy.edit(v15).type = TypeTable::anything;
     });
 }
 
@@ -459,13 +456,13 @@ void testEdgeResultTypes()
     AOT_TEST_CHECK(test.program->at(f8).at(v2).type == TypeTable::number);
 
     expectFailureIn(f8, Kind::EdgeArgumentMismatch, [](Typed::Function& copy) {
-        copy.at(v2).type = TypeTable::undefined;
+        copy.edit(v2).type = TypeTable::undefined;
     });
     expectFailureIn(f8, Kind::EdgeArgumentMismatch, [](Typed::Function& copy) {
-        copy.at(v2).type = TypeTable::never;
+        copy.edit(v2).type = TypeTable::never;
     });
     expectSuccessIn(f8, [](Typed::Function& copy) {
-        copy.at(v2).type = TypeTable::anything;
+        copy.edit(v2).type = TypeTable::anything;
     });
 }
 
@@ -475,10 +472,10 @@ void testHandlerArgumentTypes()
     AOT_TEST_CHECK(test.program->at(f8).at(v4).type == TypeTable::anything);
 
     expectFailureIn(f8, Kind::EdgeArgumentMismatch, [](Typed::Function& copy) {
-        copy.at(v4).type = TypeTable::number;
+        copy.edit(v4).type = TypeTable::number;
     });
     expectFailureIn(f8, Kind::EdgeArgumentMismatch, [](Typed::Function& copy) {
-        copy.at(v4).type = TypeTable::never;
+        copy.edit(v4).type = TypeTable::never;
     });
 }
 
@@ -490,17 +487,18 @@ constexpr uint32_t placedID = 4;
 
 Typed::Function createPlacedFunction(Program& program)
 {
-    Typed::Function function = createFunction({ Opcode::NewRegExp, Opcode::NewObject, Opcode::IsClassEvaluatedOnce, Opcode::GetSlot });
+    Typed::Function function = createFunction({ Opcode::NewRegExp, Opcode::NewObject, Opcode::AreMembersUnchanged, Opcode::GetSlot });
     function.module = ModuleID(0u);
 
-    function.at(placedRegExp).setPattern(program.strings.emptyString());
-    function.at(placedRegExp).setRegExpRecord(RegExpRecordID(placedID));
-    function.at(placedObject).setLayout(L0);
-    function.at(placedObject).setAllocation(AllocationID(placedID));
-    function.at(placedGuard).setLayout(L2);
-    function.at(placedGuard).setGuardBit(GuardBitID(placedID));
+    function.edit(placedRegExp).setPattern(program.strings.emptyString());
+    function.edit(placedRegExp).setRegExpRecord(RegExpRecordID(placedID));
+    function.edit(placedObject).setLayout(L0);
+    function.edit(placedObject).setAllocation(AllocationID(placedID));
+    MemberConditionRecord evaluatedOnce { .kind = MemberConditionKind::ClassEvaluatedOnce, .layout = L2 };
+    function.edit(placedGuard).setConditions(singleElementSpan(evaluatedOnce));
+    function.edit(placedGuard).setGuardBit(GuardBitID(placedID));
 
-    Value& read = function.at(placedRead);
+    Value& read = function.edit(placedRead);
     read.setOperand(0, placedObject);
     read.setKey(program.at(L0).fields[0].key);
     read.setReceivers(program.types.intern(LayoutSet { { L0 }, true }));
@@ -591,7 +589,7 @@ void testEffectsExceedReplacedGroup()
     ValueID comparisonOfIntegers = addValue(copy, b0, Opcode::StrictEq, { v2, v2 });
     ValueID comparisonOfAnything = addValue(copy, b0, Opcode::StrictEq, { v0, v0 });
     ValueID replacement = addValue(copy, b0, Opcode::StringEqualsLiteral, { v0 });
-    copy.at(replacement).setLiteral(program.strings.emptyString());
+    copy.edit(replacement).setLiteral(program.strings.emptyString());
     typeFunctionAsRead(program, f7, copy, test.build());
 
     EffectSummaries summaries;
@@ -618,7 +616,7 @@ void testEffectsExceedReplacedGroupInProvisionalFunction()
     copy.derivation.source = f7;
     ValueID comparisonOfIntegers = addValue(copy, b0, Opcode::StrictEq, { v2, v2 });
     ValueID replacement = addValue(copy, b0, Opcode::StringEqualsLiteral, { v0 });
-    copy.at(replacement).setLiteral(program.strings.emptyString());
+    copy.edit(replacement).setLiteral(program.strings.emptyString());
     typeFunctionAsRead(program, f7, copy, test.build());
 
     EffectSummaries summaries;
@@ -632,7 +630,7 @@ void testEffectsExceedReplacedGroupInProvisionalFunction()
     AOT_TEST_CHECK(error.function == f7 && !error.block && !error.value);
 }
 
-// The record of a type is planned from the type without its proofs, and the tables hold the cells of the realm alone.
+// The record of a type is planned from the type without what no test finds, and the tables hold the cells of the realm alone.
 void testRecordOfEveryBuiltinNamesOnlyCellsOfRealm()
 {
     VerifierTest test;
@@ -648,9 +646,10 @@ void testRecordOfEveryBuiltinNamesOnlyCellsOfRealm()
         AOT_TEST_CHECK(isTestableBuiltin(builtins, id) == hasCell);
         AOT_TEST_CHECK(type.isSingleValue() == hasCell);
         AOT_TEST_CHECK((type.withUntestableBuiltinsWidened() == type) == hasCell);
-        AOT_TEST_CHECK((type.withoutProofs() == type) == hasCell);
+        Type testable = type.withoutClassProofs().withUntestableBuiltinsWidened();
+        AOT_TEST_CHECK((testable == type) == hasCell);
 
-        TypeTestPlan plan = computeTypeTestPlanFromAnything(program, type.withoutProofs());
+        TypeTestPlan plan = computeTypeTestPlanFromAnything(program, testable);
         AOT_TEST_CHECK(plan.someCellPasses());
         for (const CellTest& cellTest : plan.cellTests)
             AOT_TEST_CHECK(cellTest.kind != CellTestKind::IsBuiltinCell || BuiltinCellKey::object(cellTest.builtin).hasCell(builtins));

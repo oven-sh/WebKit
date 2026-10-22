@@ -58,16 +58,22 @@ static std::optional<IDTable> tableOf(const Program& program, IDPrefix prefix)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isDerived(const Layout& layout)
+static bool isBuiltinOrNamespaceLayout(const Layout& layout)
 {
     return layout.kind == LayoutKind::BuiltinResult || layout.kind == LayoutKind::ModuleNamespace;
 }
 
-static uint32_t countDerivedLayoutsBefore(const Program& program, LayoutID id)
+// The reader of a program as read makes these again from the other layouts, so their lines are comments. The parser takes a number past its own lines for one of them.
+static bool isDerivedAgainByReader(const Program& program, const Layout& layout)
+{
+    return program.form() == IRForm::AsRead && layout.isDerived();
+}
+
+static uint32_t countBuiltinAndNamespaceLayoutsBefore(const Program& program, LayoutID id)
 {
     uint32_t firstAddedLayout = std::min<uint32_t>(program.numberOfLayoutsAsRead(), id.index());
     std::span<const Layout> addedLayouts = program.layouts.span().subspan(firstAddedLayout, id.index() - firstAddedLayout);
-    return static_cast<uint32_t>(std::ranges::partition_point(addedLayouts, isDerived) - addedLayouts.begin());
+    return static_cast<uint32_t>(std::ranges::partition_point(addedLayouts, isBuiltinOrNamespaceLayout) - addedLayouts.begin());
 }
 
 static void printLayoutID(IRPrinter& printer, LayoutID id)
@@ -76,8 +82,8 @@ static void printLayoutID(IRPrinter& printer, LayoutID id)
     const Layout& layout = program.at(id);
     PrintStream& out = printer.out();
     out.print(letterOf(IDPrefix::Layout));
-    if (!isDerived(layout)) {
-        out.print(id.index() - countDerivedLayoutsBefore(program, id));
+    if (!isBuiltinOrNamespaceLayout(layout)) {
+        out.print(id.index() - countBuiltinAndNamespaceLayoutsBefore(program, id));
         return;
     }
 
@@ -158,11 +164,18 @@ static void printLines(IRPrinter& printer, ProgramList list, const Vector<Record
 
 static void printLayoutLines(IRPrinter& printer)
 {
+    const Program& program = printer.program();
     uint32_t numberOfLines = 0;
-    for (const Layout& layout : printer.program().layouts) {
-        if (isDerived(layout))
+    for (const Layout& layout : program.layouts) {
+        if (isBuiltinOrNamespaceLayout(layout))
             continue;
-        beginLineOf(printer, ProgramList::Layouts, numberOfLines++);
+        uint32_t number = numberOfLines++;
+        if (isDerivedAgainByReader(program, layout)) {
+            if (!printer.printsEngineFields())
+                continue;
+            printer.out().print("# "_s);
+        }
+        beginLineOf(printer, ProgramList::Layouts, number);
         printFields(printer, static_cast<const LayoutRecord&>(layout));
         printer.endLine();
     }
@@ -234,6 +247,10 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::RequiredNames:
     case ProgramList::ColumnAdjustments:
     case ProgramList::EvalBindings:
+    case ProgramList::RelationSubjects:
+    case ProgramList::StoredIntos:
+    case ProgramList::HandedTos:
+    case ProgramList::OperandsOf:
     case ProgramList::Code:
     case ProgramList::DataNodes:
     case ProgramList::DataMembers:
@@ -427,13 +444,9 @@ void IRPrinter::printEngineValueFields(const Value& value)
         m_out.print(": "_s);
         print(value.type);
     }
-    if (value.written()) {
-        m_out.print(" ? "_s);
-        print(value.written());
-    }
-    if (value.prediction()) {
+    if (value.expected()) {
         m_out.print(" ~ "_s);
-        print(value.prediction());
+        print(value.expected());
     }
     if (value.representation != Representation::Unchosen) {
         m_out.print(" @"_s);

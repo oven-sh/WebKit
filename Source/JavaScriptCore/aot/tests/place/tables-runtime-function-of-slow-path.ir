@@ -17,11 +17,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = PropGet v1 key="at"
     v3 = Integer integer=0
     v4 = Call v2, v1, v3 calleeKey="at"
-    Jump -> next b2()
-  b2():
-    Return
+    Jump -> next b2(v4)
+  b2(v5):
+    Return v5
   b3() role=CatchHandler:
-    v5 = CatchValue
+    v6 = CatchValue
     Return
 }
 function f1 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=8 parameters=[{type=anything}] results=[{type=anything}] {

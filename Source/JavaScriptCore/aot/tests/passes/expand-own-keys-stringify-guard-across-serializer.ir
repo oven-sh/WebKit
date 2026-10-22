@@ -1,6 +1,6 @@
 # A test of an array holds across JSON.stringify of an object that brings no code of the program, and still holds across the call of the serializer that takes its place. The serializer of a layout that may hold anything ends it, as the call it replaces does
 # FORM: Prepared
-# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
 # STATISTIC: OwnKeyWalksExpanded = 2
 # STATISTIC: SerializersCreated = 2
@@ -18,7 +18,7 @@ function f0 name="guardAcrossTheSerializer" parameters=[{type=Array<number, prov
     v4 = Undefined
     v5 = CallBuiltin -, v1, v4, v4 overload=JSONStringify/0
     v6 = Integer integer=0
-    v7 = GetArrayElement v0, v6, v3 arrayStorage=Int32 level=Predicted [keyIsIntegral]
+    v7 = GetArrayElement v0, v6, v3 arrayStorage=Int32 level=Expected [keyIsIntegral]
     Return v7
   b2():
     v8 = Undefined
@@ -36,7 +36,7 @@ function f1 name="testedAgainBehindUnknownCode" parameters=[{type=Array<number, 
     Branch v4 -> taken b1(| 0), notTaken b2()
   b1(v5: guard):
     v6 = Integer integer=0
-    v7 = GetArrayElement v0, v6, v5 arrayStorage=Int32 level=Predicted [keyIsIntegral]
+    v7 = GetArrayElement v0, v6, v5 arrayStorage=Int32 level=Expected [keyIsIntegral]
     Return v7
   b2():
     Return v2

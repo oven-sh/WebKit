@@ -124,7 +124,7 @@ public:
         add(heaps);
     }
 
-    static constexpr LocationMasks top() { return LocationMasks(allHeaps); }
+    static constexpr LocationMasks top();
 
     constexpr bool isEmpty() const { return m_heaps.isEmpty(); }
     constexpr bool isTop() const { return *this == top(); }
@@ -153,10 +153,10 @@ public:
 
     constexpr void add(AbstractHeapSet heaps)
     {
-        for (unsigned index = 0; index < numberOfHeaps; ++index) {
-            auto heap = static_cast<AbstractHeap>(index);
-            if (heaps.contains(heap))
-                add(heap);
+        m_heaps.add(heaps);
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
+            if (heaps.contains(indexedHeapsInOrder[index]))
+                m_masks[index] = entireHeap;
         }
     }
 
@@ -180,10 +180,9 @@ public:
     constexpr void remove(AbstractHeapSet heaps)
     {
         m_heaps.remove(heaps);
-        for (unsigned index = 0; index < numberOfHeaps; ++index) {
-            auto heap = static_cast<AbstractHeap>(index);
-            if (heaps.contains(heap) && indexedHeaps.contains(heap))
-                m_masks[maskIndexOf(heap)] = 0;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
+            if (heaps.contains(indexedHeapsInOrder[index]))
+                m_masks[index] = 0;
         }
     }
 
@@ -199,11 +198,12 @@ public:
     constexpr LocationMasks intersectedWith(const LocationMasks& other) const
     {
         LocationMasks result;
-        AbstractHeapSet common = m_heaps & other.m_heaps;
-        for (unsigned index = 0; index < numberOfHeaps; ++index) {
-            auto heap = static_cast<AbstractHeap>(index);
-            if (common.contains(heap))
-                result.add(heap, maskOf(heap) & other.maskOf(heap));
+        result.m_heaps = (m_heaps & other.m_heaps) - indexedHeaps;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
+            uint64_t common = m_masks[index] & other.m_masks[index];
+            result.m_masks[index] = common;
+            if (common)
+                result.m_heaps.add(indexedHeapsInOrder[index]);
         }
         return result;
     }
@@ -240,6 +240,14 @@ public:
             functor(heap, maskOf(heap));
     }
 
+    constexpr uint64_t mixedWords() const
+    {
+        uint64_t mixed = static_cast<uint64_t>(m_heaps.toRaw());
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
+            mixed = (mixed ^ m_masks[index]) * 0x9e3779b97f4a7c15ull;
+        return mixed;
+    }
+
     void dump(PrintStream&) const;
 
     friend constexpr bool operator==(const LocationMasks&, const LocationMasks&) = default;
@@ -248,6 +256,12 @@ private:
     AbstractHeapSet m_heaps;
     std::array<uint64_t, numberOfIndexedHeaps> m_masks { };
 };
+
+constexpr LocationMasks LocationMasks::top()
+{
+    constexpr LocationMasks everyHeap(allHeaps);
+    return everyHeap;
+}
 
 struct MemoryAccess {
     enum class Kind : uint8_t { NotExact, Read, Write };

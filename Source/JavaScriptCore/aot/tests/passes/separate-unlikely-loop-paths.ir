@@ -262,7 +262,7 @@ function f5 name="noTestForTypeOfLoop" parameters=[{type=Array<number, proven>},
 # CHECK-NOT: TypeTest
 # CHECK: Jump -> next [[header5]](v13, v14)
 # CHECK-NOT: TypeTest
-# CHECK: [[header5]]({{*}}: anything, {{*}}: int|whole) frequency=Unlikely:
+# CHECK: [[header5]]({{*}}: anything ~ Array<number, proven>, {{*}}: int|whole) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: TypeTest
 

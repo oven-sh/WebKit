@@ -1,19 +1,25 @@
-# The elements of an array member are written as what is predicted of its proven contents; without a prediction every object goes to the helper
+# The elements of an array member are written as what the contents of its type say: contents that are only expected behind a test of the shape, proven contents without one. Where the contents name no layout every object goes to the helper
 # FORM: Prepared
-# RUN: derived-functions Serializer:L0 Serializer:L1
-# STATISTIC: SerializersCreated = 3
+# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2
+# STATISTIC: SerializersCreated = 4
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Predicted" fields=[{key="list" declared={type=Array<object ~ L2, proven>}}] flow={constructorOrders=[{fields=[0]}]}
-layout L1 name="Unknown" fields=[{key="list" declared={type=Array<object, proven>}}] flow={constructorOrders=[{fields=[0]}]}
-layout L2 name="Item" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
+layout L0 name="Expected" fields=[{key="list" declared={type=Array<L3>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L1 name="Proven" fields=[{key="list" declared={type=Array<L3, proven>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L2 name="Unknown" fields=[{key="list" declared={type=Array<object, proven>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
 
 # CHECK: function {{*}}creator=Serializer{layout=L0}
 # CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous [keyIsIntegral]
-# CHECK: = ShapeTest [[object]] layouts=[L2]
+# CHECK: = ShapeTest [[object]] layouts=[L3]
 # CHECK: = CallDirect [[object]], v1 function=[[serializerOfItem]]
 # CHECK: function {{*}}creator=Serializer{layout=L1}
 # CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NOT: ShapeTest
+# CHECK: = CallDirect {{*}}, v1 function=[[serializerOfItem]]
+# CHECK-NOT: ShapeTest
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NOT: ShapeTest
 # CHECK-NOT: CallDirect
-# CHECK: function [[serializerOfItem]] {{*}}creator=Serializer{layout=L2}
+# CHECK: function [[serializerOfItem]] {{*}}creator=Serializer{layout=L3}

@@ -1,7 +1,7 @@
-# A constant that a block passes to its handler, or that a terminator reads, stays where it is defined: only operands of values can take a copy
+# A constant that a block passes to its handler stays where it is defined: it has to be there at the head of the block. One that a terminator reads is created in front of the terminator
 # FORM: Prepared
 # RUN: pass SinkConstants
-# STATISTIC: SinkConstantsChanges = 1
+# STATISTIC: SinkConstantsChanges = 2
 # CHECK: outcome: Changed
 # RUN(AGAIN): pass SinkConstants SinkConstants
 # AGAIN: outcome: Changed
@@ -104,6 +104,7 @@ function f5 name="terminatorOperand" parameters=[{type=boolean}, {type=function}
 }
 # CHECK-LABEL: function f5 name="terminatorOperand"
 # CHECK: b0(v0: boolean, v1: function):
-# CHECK-NEXT: v2: f0 = NewClosure function=f0
-# CHECK: b1():
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: [[returned]]: f0 = NewClosure function=f0
+# CHECK-NEXT: Return [[returned]]

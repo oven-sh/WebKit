@@ -21,7 +21,6 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/aot/builtins"
     "${JAVASCRIPTCORE_DIR}/aot/builtins/generated"
     "${JAVASCRIPTCORE_DIR}/aot/codegen"
-    "${JAVASCRIPTCORE_DIR}/aot/flow"
     "${JAVASCRIPTCORE_DIR}/aot/image"
     "${JAVASCRIPTCORE_DIR}/aot/ir"
     "${JAVASCRIPTCORE_DIR}/aot/ir/generated"
@@ -42,7 +41,9 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
 # Written by aot-source-lists.ts: what Bun, a JavaScriptCore header outside aot/ or an exported header of the built-ins table includes, and what those include.
 set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/builtins/AOTBuiltinNameSlots.h
-    aot/flow/AOTFlowReport.h
+    aot/builtins/AOTBuiltinWords.h
+    aot/codegen/AOTArrivalSiteNumbers.h
+    aot/codegen/AOTCodegenScratchWords.h
     aot/image/AOTCallSiteTable.h
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
@@ -86,6 +87,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/ir/generated/AOTWireEnums.h
     aot/ir/generated/AOTWireLimitColumns.h
     aot/ir/generated/AOTWireRecords.h
+    aot/object/AOTAllocationSiteRecord.h
     aot/object/AOTCellFormat.h
     aot/object/AOTClosure.h
     aot/object/AOTClosureWord.h
@@ -98,6 +100,8 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTObject.h
     aot/object/AOTObjectCensus.h
     aot/object/AOTObjectVisiting.h
+    aot/object/AOTObjectWords.h
+    aot/object/AOTPagedBitSet.h
     aot/object/AOTProgramTables.h
     aot/object/AOTPropertyList.h
     aot/object/AOTPropertyWalk.h
@@ -117,18 +121,27 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTCompiledFrame.h
     aot/runtime/AOTCompiledFrameExit.h
     aot/runtime/AOTCoroutineData.h
+    aot/runtime/AOTCoroutineWords.h
     aot/runtime/AOTFunctionDescription.h
     aot/runtime/AOTGenerator.h
     aot/runtime/AOTHeapCellClasses.h
     aot/runtime/AOTHeapCellVisits.h
+    aot/runtime/AOTHeapHooks.h
+    aot/runtime/AOTHeapWords.h
     aot/runtime/AOTHost.h
+    aot/runtime/AOTInstance.h
     aot/runtime/AOTInstanceLayout.h
     aot/runtime/AOTInterpreterSlowPaths.h
+    aot/runtime/AOTIterationWords.h
     aot/runtime/AOTJSONHooks.h
+    aot/runtime/AOTJSONWords.h
+    aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
     aot/runtime/AOTModuleHost.h
     aot/runtime/AOTModuleRecord.h
+    aot/runtime/AOTModuleWords.h
     aot/runtime/AOTOperationData.h
+    aot/runtime/AOTPropertyCachesStringKeys.h
     aot/runtime/AOTPropertyCachesWords.h
     aot/runtime/AOTRealmStartup.h
     aot/runtime/AOTRemovableFeature.h
@@ -144,13 +157,16 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTStringBuilderWords.h
     aot/runtime/AOTTraceFrame.h
     aot/runtime/AOTVMState.h
+    aot/stubs/AOTConvention.h
     aot/stubs/AOTStubCoreFamilies.def
     aot/stubs/AOTStubFamilies.def
     aot/stubs/AOTStubFrames.h
     aot/stubs/AOTStubKey.h
     aot/stubs/AOTStubLeafConvention.h
     aot/stubs/AOTStubRegisters.h
+    aot/stubs/AOTStubWords.h
     aot/stubs/AOTStubsArrayFamilies.def
+    aot/stubs/AOTStubsArrayWords.h
     aot/stubs/AOTStubsCallFamilies.def
     aot/stubs/AOTStubsCoroutineFamilies.def
     aot/stubs/AOTStubsPropertyFamilies.def
@@ -161,6 +177,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTLimits.h
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
+    aot/valueflow/AOTFlowReport.h
 )
 
 list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
@@ -178,16 +195,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/codegen/AOTCollectorTestCommands.cpp
     aot/codegen/AOTGeneratedCodeTestCommands.cpp
     aot/codegen/AOTValidationTestCommands.cpp
-    aot/flow/AOTFlowApplyTestCommands.cpp
-    aot/flow/AOTFlowCallTestCommands.cpp
-    aot/flow/AOTFlowConstructionTestCommands.cpp
-    aot/flow/AOTFlowCoreTestCommands.cpp
-    aot/flow/AOTFlowOriginTestCommands.cpp
-    aot/flow/AOTFlowPropertyTestCommands.cpp
-    aot/flow/AOTFlowReportTestCommands.cpp
-    aot/flow/AOTFlowSitesTestCommands.cpp
-    aot/flow/AOTFlowTestCommands.cpp
-    aot/flow/AOTFlowValidationTestCommands.cpp
     aot/ir/AOTEffectsTestCommands.cpp
     aot/ir/AOTIRTestCommands.cpp
     aot/ir/AOTTypeTestCommands.cpp
@@ -206,6 +213,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/support/AOTThreadTestCommands.cpp
     aot/support/AOTTypeArenaTestCommands.cpp
     aot/tests/AOTArrayTests.cpp
+    aot/tests/AOTArrivalCountTests.cpp
     aot/tests/AOTAssignmentPlanTests.cpp
     aot/tests/AOTB3HeapTests.cpp
     aot/tests/AOTB3PolicyTests.cpp
@@ -213,11 +221,13 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTBackEndReportTests.cpp
     aot/tests/AOTBoxedCallProgramTests.cpp
     aot/tests/AOTBuiltinCellsTests.cpp
+    aot/tests/AOTBuiltinLocationWatchTests.cpp
     aot/tests/AOTBuiltinResultObjectTests.cpp
     aot/tests/AOTBuiltinSubclassTests.cpp
     aot/tests/AOTBuiltinTableTests.cpp
     aot/tests/AOTCacheRegistryRootTests.cpp
     aot/tests/AOTCacheRegistryTests.cpp
+    aot/tests/AOTCacheSweepTests.cpp
     aot/tests/AOTCallingConventionTests.cpp
     aot/tests/AOTCheckLines.cpp
     aot/tests/AOTChildProcess.cpp
@@ -227,17 +237,19 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTClosedWorldTests.cpp
     aot/tests/AOTCodeUnitTests.cpp
     aot/tests/AOTCollectorTests.cpp
-    aot/tests/AOTCommonJSRerunTests.cpp
     aot/tests/AOTCompactStorageTests.cpp
     aot/tests/AOTCompactTableTests.cpp
     aot/tests/AOTCompiledFrameTests.cpp
     aot/tests/AOTCompiledStructureTests.cpp
+    aot/tests/AOTConcurrentComponentsTests.cpp
     aot/tests/AOTConstructorFunctionTests.cpp
+    aot/tests/AOTCoroutineJobTests.cpp
     aot/tests/AOTDataBuilderTests.cpp
     aot/tests/AOTDeferredClosureProgramTests.cpp
     aot/tests/AOTDictionaryAccessByNameProgramTests.cpp
     aot/tests/AOTDictionaryExtraPropertiesTests.cpp
     aot/tests/AOTDriverTests.cpp
+    aot/tests/AOTEffectSummariesTests.cpp
     aot/tests/AOTEngineHookTests.cpp
     aot/tests/AOTExtensionTests.cpp
     aot/tests/AOTFFIStubTests.cpp
@@ -247,7 +259,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTFlowWorkLimitProgramTests.cpp
     aot/tests/AOTForInExpansionProgramTests.cpp
     aot/tests/AOTFrameCellProgramTests.cpp
+    aot/tests/AOTGlobalBindingProgramTests.cpp
     aot/tests/AOTGlobalProxyReadProgramTests.cpp
+    aot/tests/AOTHashedSlotTableTests.cpp
     aot/tests/AOTHeapCageTests.cpp
     aot/tests/AOTHeapRememberedSlotTests.cpp
     aot/tests/AOTHeatGraphTests.cpp
@@ -278,6 +292,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTImageTextTests.cpp
     aot/tests/AOTImageUnitPlacementTests.cpp
     aot/tests/AOTInlinedSerializerTests.cpp
+    aot/tests/AOTInnerObjectTests.cpp
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
     aot/tests/AOTListedFieldsTests.cpp
@@ -287,9 +302,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTLockedRealmTests.cpp
     aot/tests/AOTMemberGuardTests.cpp
     aot/tests/AOTMembersNamedLikeBuiltinsTests.cpp
-    aot/tests/AOTModuleAdoptionTests.cpp
     aot/tests/AOTModuleGraphTests.cpp
     aot/tests/AOTModuleProgramTests.cpp
+    aot/tests/AOTModuleRequestListTests.cpp
     aot/tests/AOTModuleTableTests.cpp
     aot/tests/AOTNakedConstructorTests.cpp
     aot/tests/AOTNarrowReferenceValidationTests.cpp
@@ -342,9 +357,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTSiteCacheFillTests.cpp
     aot/tests/AOTSlimClosureTests.cpp
     aot/tests/AOTSlotAccessTests.cpp
-    aot/tests/AOTSplitFunctionProgramTests.cpp
     aot/tests/AOTStackCheckTests.cpp
     aot/tests/AOTStackTraceTests.cpp
+    aot/tests/AOTStartupTests.cpp
     aot/tests/AOTStaticFieldTests.cpp
     aot/tests/AOTStaticMembersNamedLikeBuiltinsTests.cpp
     aot/tests/AOTStorageOwnerProgramTests.cpp
@@ -400,8 +415,15 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/unit/ResultNodeTests.cpp
     aot/tests/unit/ValidationPlanTextTests.cpp
     aot/tests/valueflow/AOTValueFlowCoreTests.cpp
+    aot/valueflow/AOTFlowApplyTestCommands.cpp
+    aot/valueflow/AOTFlowReportTestCommands.cpp
+    aot/valueflow/AOTFlowTestCommands.cpp
+    aot/valueflow/AOTFlowValidationTestCommands.cpp
+    aot/valueflow/AOTRelationalSummariesAccessorsTestCommands.cpp
+    aot/valueflow/AOTRelationalSummariesAtCallsTestCommands.cpp
+    aot/valueflow/AOTRelationalSummariesOriginsTestCommands.cpp
+    aot/valueflow/AOTRelationalSummariesTestCommands.cpp
     aot/valueflow/AOTValueFlowBodiesTestCommands.cpp
-    aot/valueflow/AOTValueFlowCompareTestCommands.cpp
     aot/valueflow/AOTValueFlowFamiliesTestCommands.cpp
     aot/valueflow/AOTValueFlowResultsTestCommands.cpp
     aot/valueflow/AOTValueFlowSolveTestCommands.cpp
@@ -418,6 +440,269 @@ set(JavaScriptCore_AOT_PROGRAM_SOURCES
 set(JavaScriptCore_AOT_SHELL_SOURCES
     aot/tests/AOTShell.cpp
 )
+
+# Build-only sources: nothing of them is left in an executable without the compiler. What a build runs once (the emitters of stubs), never (verifiers, printers) or hardly ever (passes for rare forms).
+set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE
+    aot/analysis/AOTAnalysisDump.cpp
+    aot/analysis/AOTAnalysisVerification.cpp
+    aot/analysis/AOTCheckCause.cpp
+    aot/analysis/AOTClosureObservers.cpp
+    aot/analysis/AOTWholeLiterals.cpp
+    aot/builtins/AOTArrayBufferViewBuiltinEmitter.cpp
+    aot/builtins/AOTBufferBuiltinEmitter.cpp
+    aot/builtins/AOTBufferBuiltinEmitterAtomics.cpp
+    aot/builtins/AOTBuiltinCallEmitterNumbers.cpp
+    aot/builtins/AOTBuiltinTableDescription.cpp
+    aot/builtins/AOTBuiltinTableValidation.cpp
+    aot/builtins/AOTDateBuiltinEmitter.cpp
+    aot/builtins/AOTEngineIntrinsicEmitter.cpp
+    aot/builtins/AOTErrorBuiltinEmitter.cpp
+    aot/builtins/AOTFunctionBuiltinEmitter.cpp
+    aot/builtins/AOTIntlBuiltinEmitter.cpp
+    aot/builtins/AOTMapSetBuiltinEmitter.cpp
+    aot/builtins/AOTMathBuiltinEmitter.cpp
+    aot/builtins/AOTObjectBuiltinEmitter.cpp
+    aot/builtins/AOTRegExpBuiltinEmitter.cpp
+    aot/builtins/AOTRuntimeIntrinsicEmitter.cpp
+    aot/builtins/AOTSimplifyBuiltinCallsSplits.cpp
+    aot/codegen/AOTASANShadowChecks.cpp
+    aot/codegen/AOTArgumentsEmitter.cpp
+    aot/codegen/AOTArrayBuiltinEmitterCopies.cpp
+    aot/codegen/AOTArrivalSiteNumbers.cpp
+    aot/codegen/AOTBranchCounterNumbers.cpp
+    aot/codegen/AOTCallEmitterLists.cpp
+    aot/codegen/AOTCallMethod.cpp
+    aot/codegen/AOTClassEmitter.cpp
+    aot/codegen/AOTCodeSizeMap.cpp
+    aot/codegen/AOTCollectionIntrinsicEmitter.cpp
+    aot/codegen/AOTElementAccessEmitterTypedArrays.cpp
+    aot/codegen/AOTElementEmitterLiterals.cpp
+    aot/codegen/AOTEvalEmitter.cpp
+    aot/codegen/AOTExpandedIterationEmitter.cpp
+    aot/codegen/AOTForInEmitter.cpp
+    aot/codegen/AOTFrameAddressValidation.cpp
+    aot/codegen/AOTHintEmitter.cpp
+    aot/codegen/AOTJSONParseEmitter.cpp
+    aot/codegen/AOTJSONParseEmitterKeyOrders.cpp
+    aot/codegen/AOTJSONWriteEmitter.cpp
+    aot/codegen/AOTModuleEmitter.cpp
+    aot/codegen/AOTObjectCreationEmitter.cpp
+    aot/codegen/AOTOperatorEmitterBitwise.cpp
+    aot/codegen/AOTOperatorEmitterInstanceOf.cpp
+    aot/codegen/AOTOwnAccessEmitter.cpp
+    aot/codegen/AOTPrivateAccessEmitter.cpp
+    aot/codegen/AOTPromiseBuiltinEmitter.cpp
+    aot/codegen/AOTPromiseIntrinsicEmitter.cpp
+    aot/codegen/AOTResolvedCallEmitter.cpp
+    aot/codegen/AOTRuntimeValidationChecks.cpp
+    aot/codegen/AOTRuntimeValidationEmitter.cpp
+    aot/codegen/AOTSelectedOperatorEmitter.cpp
+    aot/codegen/AOTStackCheckEmitter.cpp
+    aot/codegen/AOTStringBuilderCursor.cpp
+    aot/codegen/AOTStringBuilderPartEmitter.cpp
+    aot/codegen/AOTStringBuiltinEmitter.cpp
+    aot/codegen/AOTValidationEmitter.cpp
+    aot/ir/AOTCheckInt32Promises.cpp
+    aot/ir/AOTIRPrinter.cpp
+    aot/ir/AOTIRPrinterTypes.cpp
+    aot/ir/AOTInt32Proof.cpp
+    aot/ir/AOTProgramVerifier.cpp
+    aot/ir/AOTProgramVerifierFunctions.cpp
+    aot/ir/AOTProgramVerifierModules.cpp
+    aot/ir/AOTRelationsVerifier.cpp
+    aot/ir/AOTResultRuleMonotonicity.cpp
+    aot/ir/AOTTaggedLayouts.cpp
+    aot/ir/AOTTypeClosure.cpp
+    aot/ir/AOTVerifier.cpp
+    aot/ir/AOTVerifierAccesses.cpp
+    aot/ir/AOTVerifierCalls.cpp
+    aot/ir/AOTVerifierDominance.cpp
+    aot/ir/AOTVerifierEdges.cpp
+    aot/ir/AOTVerifierGuards.cpp
+    aot/ir/AOTVerifierOperations.cpp
+    aot/ir/AOTVerifierTypes.cpp
+    aot/ir/generated/AOTSchemaEntryPrinter.cpp
+    aot/ir/generated/AOTSchemaRecordPrinter.cpp
+    aot/ir/generated/AOTSchemaRecords.cpp
+    aot/ir/generated/AOTSchemaVerifier.cpp
+    aot/ir/generated/AOTWire.cpp
+    aot/passes/AOTAllocateTaggedLayouts.cpp
+    aot/passes/AOTArrayChainInterleaving.cpp
+    aot/passes/AOTArrayChainStep.cpp
+    aot/passes/AOTCalleeVersions.cpp
+    aot/passes/AOTCheckTypesAtEntry.cpp
+    aot/passes/AOTChooseCallingConventionsStubBodies.cpp
+    aot/passes/AOTCoroutineSplit.cpp
+    aot/passes/AOTCreateBoundFunctions.cpp
+    aot/passes/AOTCreatedObjectLayouts.cpp
+    aot/passes/AOTEliminateTailRecursion.cpp
+    aot/passes/AOTExpandIterationCollections.cpp
+    aot/passes/AOTExpandIterationForIn.cpp
+    aot/passes/AOTExpandIterationGenerators.cpp
+    aot/passes/AOTExpandIterationIndexed.cpp
+    aot/passes/AOTExpandIterationProtocol.cpp
+    aot/passes/AOTExpandIterationSupport.cpp
+    aot/passes/AOTExpandOwnKeysStringify.cpp
+    aot/passes/AOTFrameAllocationMaterialization.cpp
+    aot/passes/AOTFrameAllocationVerifier.cpp
+    aot/passes/AOTFuseGeneratorLoops.cpp
+    aot/passes/AOTFuseGeneratorLoopsMerge.cpp
+    aot/passes/AOTInlineHeads.cpp
+    aot/passes/AOTJSONEmission.cpp
+    aot/passes/AOTJSONParserArrays.cpp
+    aot/passes/AOTJSONParserBuilder.cpp
+    aot/passes/AOTJSONParserFunction.cpp
+    aot/passes/AOTJSONParserObjects.cpp
+    aot/passes/AOTJSONParserUnions.cpp
+    aot/passes/AOTJSONSerializerArrays.cpp
+    aot/passes/AOTJSONSerializerBuilder.cpp
+    aot/passes/AOTJSONSerializerFunction.cpp
+    aot/passes/AOTJSONSerializerObjects.cpp
+    aot/passes/AOTJSONSupport.cpp
+    aot/passes/AOTJSONVerification.cpp
+    aot/passes/AOTJSONVerificationCapacity.cpp
+    aot/passes/AOTReduceIntegerDivisions.cpp
+    aot/passes/AOTRemoveUnreadExports.cpp
+    aot/passes/AOTResolveAccessesVariables.cpp
+    aot/passes/AOTResolveCallsLists.cpp
+    aot/passes/AOTSelectTypedResultsDecisions.cpp
+    aot/passes/AOTSelectTypedResultsForms.cpp
+    aot/passes/AOTSelectTypedResultsNodes.cpp
+    aot/passes/AOTSelectTypedResultsTargets.cpp
+    aot/passes/AOTSelectTypedResultsTypeNodes.cpp
+    aot/passes/AOTSinkAllocationsArguments.cpp
+    aot/passes/AOTSinkAllocationsBuiltinResults.cpp
+    aot/passes/AOTStartGeneratorsAtFirstStep.cpp
+    aot/passes/AOTValidationPlanText.cpp
+    aot/passes/AOTValidationRules.cpp
+    aot/passes/AOTValidatorBuilder.cpp
+    aot/passes/AOTValidatorFunction.cpp
+    aot/passes/AOTValidatorObjects.cpp
+    aot/passes/AOTValidatorUnions.cpp
+    aot/pipeline/AOTInterningPhases.cpp
+    aot/pipeline/AOTPipelineSteps.cpp
+    aot/place/AOTCellSizeClasses.cpp
+    aot/place/AOTEnvironmentPacking.cpp
+    aot/place/AOTGlobalBindingPlacement.cpp
+    aot/place/AOTGuardBits.cpp
+    aot/place/AOTMethodTableEncoding.cpp
+    aot/place/AOTPlacementCheck.cpp
+    aot/place/AOTPlacementDump.cpp
+    aot/place/AOTPlacementSiteCheck.cpp
+    aot/place/AOTPlacementSlotCheck.cpp
+    aot/place/AOTPropertyRuns.cpp
+    aot/place/AOTRequestRecords.cpp
+    aot/place/AOTRequestTableEncoding.cpp
+    aot/place/AOTShapeVariants.cpp
+    aot/place/AOTSiteWeight.cpp
+    aot/place/AOTSlotPlanDump.cpp
+    aot/place/AOTStaticsLayout.cpp
+    aot/place/AOTStaticsTableEncoding.cpp
+    aot/represent/AOTRepresentationCheck.cpp
+    aot/select/AOTArrayRules.cpp
+    aot/select/AOTArrayRulesInlineForms.cpp
+    aot/select/AOTBuiltinFormRulesCollections.cpp
+    aot/select/AOTBuiltinFormRulesNumbers.cpp
+    aot/select/AOTDataRules.cpp
+    aot/select/AOTNumberPathRules.cpp
+    aot/select/AOTObjectCreationRules.cpp
+    aot/select/AOTPromiseRulesInlineForms.cpp
+    aot/select/AOTRawWordCheck.cpp
+    aot/select/AOTRawWordWebs.cpp
+    aot/select/AOTStringBuiltinForms.cpp
+    aot/select/AOTSwitchRules.cpp
+    aot/stubs/AOTStubArgumentThunks.cpp
+    aot/stubs/AOTStubAssembler.cpp
+    aot/stubs/AOTStubAssemblerCalls.cpp
+    aot/stubs/AOTStubAssemblerOperationCalls.cpp
+    aot/stubs/AOTStubBlob.cpp
+    aot/stubs/AOTStubBodyConvention.cpp
+    aot/stubs/AOTStubCallValidation.cpp
+    aot/stubs/AOTStubCalls.cpp
+    aot/stubs/AOTStubCatalog.cpp
+    aot/stubs/AOTStubDescriptor.cpp
+    aot/stubs/AOTStubFrontEnds.cpp
+    aot/stubs/AOTStubHelpersAllocation.cpp
+    aot/stubs/AOTStubHelpersFrames.cpp
+    aot/stubs/AOTStubHelpersFunctions.cpp
+    aot/stubs/AOTStubHelpersStorage.cpp
+    aot/stubs/AOTStubHelpersValues.cpp
+    aot/stubs/AOTStubPolicy.cpp
+    aot/stubs/AOTStubsAllocation.cpp
+    aot/stubs/AOTStubsArithmetic.cpp
+    aot/stubs/AOTStubsArrayHoles.cpp
+    aot/stubs/AOTStubsArrayLiterals.cpp
+    aot/stubs/AOTStubsArrayPush.cpp
+    aot/stubs/AOTStubsArrayReads.cpp
+    aot/stubs/AOTStubsArraySlice.cpp
+    aot/stubs/AOTStubsArrayStores.cpp
+    aot/stubs/AOTStubsBarriers.cpp
+    aot/stubs/AOTStubsBoxedCalls.cpp
+    aot/stubs/AOTStubsCallAdapters.cpp
+    aot/stubs/AOTStubsCallEngine.cpp
+    aot/stubs/AOTStubsCallFrames.cpp
+    aot/stubs/AOTStubsCallHost.cpp
+    aot/stubs/AOTStubsCallLists.cpp
+    aot/stubs/AOTStubsCalls.cpp
+    aot/stubs/AOTStubsClosures.cpp
+    aot/stubs/AOTStubsCollections.cpp
+    aot/stubs/AOTStubsConstants.cpp
+    aot/stubs/AOTStubsConstruct.cpp
+    aot/stubs/AOTStubsCoroutineJobs.cpp
+    aot/stubs/AOTStubsCoroutinePromises.cpp
+    aot/stubs/AOTStubsCoroutineSteps.cpp
+    aot/stubs/AOTStubsCoroutineSuspension.cpp
+    aot/stubs/AOTStubsElements.cpp
+    aot/stubs/AOTStubsExceptions.cpp
+    aot/stubs/AOTStubsFieldCreation.cpp
+    aot/stubs/AOTStubsFieldReads.cpp
+    aot/stubs/AOTStubsFieldStores.cpp
+    aot/stubs/AOTStubsFieldTypeTests.cpp
+    aot/stubs/AOTStubsGlobalBindings.cpp
+    aot/stubs/AOTStubsHashTables.cpp
+    aot/stubs/AOTStubsKeyedAccess.cpp
+    aot/stubs/AOTStubsKnownFieldStores.cpp
+    aot/stubs/AOTStubsObjectCreation.cpp
+    aot/stubs/AOTStubsOperations.cpp
+    aot/stubs/AOTStubsPolls.cpp
+    aot/stubs/AOTStubsPrimitiveFastPaths.cpp
+    aot/stubs/AOTStubsPropertyAccessors.cpp
+    aot/stubs/AOTStubsPropertyCannot.cpp
+    aot/stubs/AOTStubsPropertyExtraProperties.cpp
+    aot/stubs/AOTStubsPropertyFreeNames.cpp
+    aot/stubs/AOTStubsPropertyInlineCode.cpp
+    aot/stubs/AOTStubsPropertyInstanceOf.cpp
+    aot/stubs/AOTStubsPropertyMethodCalls.cpp
+    aot/stubs/AOTStubsPropertyProbes.cpp
+    aot/stubs/AOTStubsPropertyRead.cpp
+    aot/stubs/AOTStubsPropertyReadHandlers.cpp
+    aot/stubs/AOTStubsPropertyReadPairs.cpp
+    aot/stubs/AOTStubsPropertySiteCaches.cpp
+    aot/stubs/AOTStubsPropertyStore.cpp
+    aot/stubs/AOTStubsPropertyStoreHandlers.cpp
+    aot/stubs/AOTStubsRegExp.cpp
+    aot/stubs/AOTStubsRegExpLiterals.cpp
+    aot/stubs/AOTStubsStringConcatenation.cpp
+    aot/stubs/AOTStubsStringConversions.cpp
+    aot/stubs/AOTStubsStringHelpers.cpp
+    aot/stubs/AOTStubsStringLiterals.cpp
+    aot/stubs/AOTStubsStringSearches.cpp
+    aot/stubs/AOTStubsStringSubstrings.cpp
+    aot/stubs/AOTStubsStrings.cpp
+    aot/stubs/AOTStubsValues.cpp
+    aot/valueflow/AOTFlowLockedWrites.cpp
+    aot/valueflow/AOTFlowNamespaces.cpp
+    aot/valueflow/AOTFlowResultsDump.cpp
+    aot/valueflow/AOTFlowValidation.cpp
+    aot/valueflow/AOTRelationalSummariesOriginsValidation.cpp
+    aot/valueflow/AOTValueFlowResultsSymbols.cpp
+)
+
+function(AOT_COMPILE_SOURCES_FOR_SIZE)
+    if (COMPILER_IS_CLANG AND NOT MSVC)
+        set_source_files_properties(${JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=optsize>")
+    endif ()
+endfunction()
 
 function(AOT_CHECK_SCHEMA_IS_FRESH)
     set(digests "")
@@ -533,6 +818,7 @@ function(AOT_REPORT_LIST_PROBLEMS)
     message(FATAL_ERROR "The lists of aot/ do not match the tree.\n  ${report}\nTo write them again, in Bun's tree: `bun scripts/build/aot-source-lists.ts --webkit=${checkout}`")
 endfunction()
 
+AOT_COMPILE_SOURCES_FOR_SIZE()
 AOT_CHECK_SCHEMA_IS_FRESH()
 AOT_CHECK_SOURCE_LISTS()
 AOT_CHECK_EXPORTED_HEADERS()

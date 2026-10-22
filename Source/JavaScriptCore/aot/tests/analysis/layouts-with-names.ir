@@ -23,10 +23,10 @@ layout L0 name="Fiber" fields=[{key="tag" declared={type=number}}, {key="lanes" 
 layout L1 name="Update" fields=[{key="tag" declared={type=number}}, {key="lanes" declared={type=number}}]
 layout L2 name="Token" fields=[{key="tag" declared={type=number}}, {key="text" declared={type=string}}]
 layout L3 name="NeverMade" fields=[{key="tag" declared={type=number}}, {key="lanes" declared={type=number}}, {key="alternate" declared={type=anything}}, {key="nowhere" declared={type=anything}}] flow={allocation=NeverAllocated}
-layout L4 name="Grown" fields=[{key="lanes" declared={type=number} flags=[IsAppendedByFlow]}]
+layout L4 name="Grown" fields=[{key="lanes" declared={type=number} flags=[IsAddedLate]}]
 layout L5 kind=Instance name="Scanner" constructor=f0 fields=[{key="pos" declared={type=number}}, {key=#"#mark"@L5 declared={type=number} flags=[IsPrivate]}] flow={baseState=None} classFlow={members=[{key="scan" function=f3}, {key="create" side=Static function=f4}]}
-layout L6 kind=Instance name="DeepScanner" predictedBase=L5 constructor=f1 fields=[{key="depth" declared={type=number}}] flags=[HasHeritage] flow={baseState=Layout base=L5}
-layout L7 kind=Instance name="LooseScanner" predictedBase=L5 constructor=f2 fields=[{key="loose" declared={type=number}}] flags=[HasHeritage]
+layout L6 kind=Instance name="DeepScanner" base=L5 constructor=f1 fields=[{key="depth" declared={type=number}}] flags=[HasHeritage] flow={baseState=Layout base=L5}
+layout L7 kind=Instance name="LooseScanner" base=L5 constructor=f2 fields=[{key="loose" declared={type=number}}] flags=[HasHeritage]
 layout L8 kind=Instance name="Failure" constructor=f5 fields=[{key="code" declared={type=number}}] flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Error}
 layout L9 kind=Environment name="Scope" fields=[{key="captured" declared={type=number}}]
 

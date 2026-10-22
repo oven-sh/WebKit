@@ -1,0 +1,130 @@
+# A loop of the library (some, every, find ..) calls what it is handed once for each element. Where the caller hands it a function that is known, the copy calls that function directly, or holds its body:
+# the bet on that is twice the bet on a known function that a callee of the program calls in a cycle. So the loop comes in at a site of ordinary heat.
+# Where code runs seldom no bets are made, and the same call stays a call
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: anything, v1: int[0, 100], v2: number):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Call v0, -, v4
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+  b4():
+    v10 = Mul v2, v2
+    v11 = Mul v10, v2
+    v12 = Mul v11, v2
+    v13 = Mul v12, v2
+    v14 = Mul v13, v2
+    v15 = Mul v14, v2
+    v16 = Mul v15, v2
+    v17 = Mul v16, v2
+    v18 = Mul v17, v2
+    v19 = Mul v18, v2
+    v20 = Mul v19, v2
+    v21 = Mul v20, v2
+    v22 = Mul v21, v2
+    v23 = Mul v22, v2
+    v24 = Mul v23, v2
+    v25 = Mul v24, v2
+    v26 = Increment v4
+    Jump -> next b1(v26)
+  b5():
+    v27 = Boolean boolean=false
+    Return v27
+}
+
+function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: anything, v1: int[0, 100], v2: number):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Call v0, -, v4
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+  b4():
+    v10 = Mul v2, v2
+    v11 = Mul v10, v2
+    v12 = Mul v11, v2
+    v13 = Mul v12, v2
+    v14 = Mul v13, v2
+    v15 = Mul v14, v2
+    v16 = Mul v15, v2
+    v17 = Mul v16, v2
+    v18 = Mul v17, v2
+    v19 = Mul v18, v2
+    v20 = Mul v19, v2
+    v21 = Mul v20, v2
+    v22 = Mul v21, v2
+    v23 = Mul v22, v2
+    v24 = Mul v23, v2
+    v25 = Mul v24, v2
+    v26 = Increment v4
+    Jump -> next b1(v26)
+  b5():
+    v27 = Boolean boolean=false
+    Return v27
+}
+
+function f2 name="handed" kind=Arrow parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = Less v0, v1
+    Return v2
+}
+
+function f3 name="atASiteOfOrdinaryHeat" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: f2, v1: int[0, 100], v2: number):
+    v3 = CallDirect v0, v1, v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="atASiteOfOrdinaryHeat"
+# CHECK-NOT: CallDirect v0, v1, v2
+# CHECK: LoopHint
+
+function f4 name="whereCodeRunsSeldom" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: f2, v1: int[0, 100], v2: number, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v4 = CallDirect v0, v1, v2 function=f0
+    Return v4
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f4 name="whereCodeRunsSeldom"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v0, v1, v2
+
+function f5 name="theSameLoopOfTheProgram" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: f2, v1: int[0, 100], v2: number):
+    v3 = CallDirect v0, v1, v2 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f5 name="theSameLoopOfTheProgram"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v0, v1, v2
+
+function f6 name="theSameLoopOfTheProgramAgain" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: f2, v1: int[0, 100], v2: number):
+    v3 = CallDirect v0, v1, v2 function=f1
+    Return v3
+}

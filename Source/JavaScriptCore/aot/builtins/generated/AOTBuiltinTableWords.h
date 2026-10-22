@@ -170,11 +170,13 @@ inline constexpr ASCIILiteral builtinCalleeWords[] = {
     "Function"_s,
     "HostFunction"_s,
     "InternalFunction"_s,
+    "CustomGetter"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinCallee::None) == 0);
 static_assert(static_cast<unsigned>(BuiltinCallee::Function) == 1);
 static_assert(static_cast<unsigned>(BuiltinCallee::HostFunction) == 2);
 static_assert(static_cast<unsigned>(BuiltinCallee::InternalFunction) == 3);
+static_assert(static_cast<unsigned>(BuiltinCallee::CustomGetter) == 4);
 
 inline constexpr ASCIILiteral builtinCapabilityWords[] = {
     "js"_s,
@@ -269,6 +271,8 @@ inline constexpr ASCIILiteral builtinPropertyActionKindWords[] = {
     "ReadsSetter"_s,
     "TestsByKey"_s,
     "DescribesOwnProperties"_s,
+    "DescribesResult"_s,
+    "DefinesFrom"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::ReadsByKey) == 0);
 static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::StoresByKey) == 1);
@@ -286,6 +290,8 @@ static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::ReadsGetter) == 1
 static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::ReadsSetter) == 13);
 static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::TestsByKey) == 14);
 static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::DescribesOwnProperties) == 15);
+static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::DescribesResult) == 16);
+static_assert(static_cast<unsigned>(BuiltinPropertyActionKind::DefinesFrom) == 17);
 
 inline constexpr ASCIILiteral builtinImplementationKindWords[] = {
     "Generic"_s,
@@ -295,6 +301,7 @@ inline constexpr ASCIILiteral builtinImplementationKindWords[] = {
     "Number"_s,
     "Cell"_s,
     "CachedGetter"_s,
+    "OwnSlot"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinImplementationKind::Generic) == 0);
 static_assert(static_cast<unsigned>(BuiltinImplementationKind::HostCall) == 1);
@@ -303,6 +310,7 @@ static_assert(static_cast<unsigned>(BuiltinImplementationKind::Inline) == 3);
 static_assert(static_cast<unsigned>(BuiltinImplementationKind::Number) == 4);
 static_assert(static_cast<unsigned>(BuiltinImplementationKind::Cell) == 5);
 static_assert(static_cast<unsigned>(BuiltinImplementationKind::CachedGetter) == 6);
+static_assert(static_cast<unsigned>(BuiltinImplementationKind::OwnSlot) == 7);
 
 inline constexpr ASCIILiteral builtinInstanceTestWords[] = {
     "None"_s,
@@ -314,6 +322,13 @@ static_assert(static_cast<unsigned>(BuiltinInstanceTest::None) == 0);
 static_assert(static_cast<unsigned>(BuiltinInstanceTest::JSTypeEquals) == 1);
 static_assert(static_cast<unsigned>(BuiltinInstanceTest::ClassInfoInherits) == 2);
 static_assert(static_cast<unsigned>(BuiltinInstanceTest::SharingModeEquals) == 3);
+
+inline constexpr ASCIILiteral builtinPristineTestWords[] = {
+    "Mark"_s,
+    "ClosureAsCreated"_s,
+};
+static_assert(static_cast<unsigned>(BuiltinPristineTest::Mark) == 0);
+static_assert(static_cast<unsigned>(BuiltinPristineTest::ClosureAsCreated) == 1);
 
 inline constexpr ASCIILiteral builtinPrototypeLinkWords[] = {
     "Unknown"_s,
@@ -328,10 +343,14 @@ inline constexpr ASCIILiteral builtinHostReadUseWords[] = {
     "Inspected"_s,
     "Called"_s,
     "PassedTo"_s,
+    "Kept"_s,
+    "IsValueOf"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinHostReadUse::Inspected) == 0);
 static_assert(static_cast<unsigned>(BuiltinHostReadUse::Called) == 1);
 static_assert(static_cast<unsigned>(BuiltinHostReadUse::PassedTo) == 2);
+static_assert(static_cast<unsigned>(BuiltinHostReadUse::Kept) == 3);
+static_assert(static_cast<unsigned>(BuiltinHostReadUse::IsValueOf) == 4);
 
 inline constexpr ASCIILiteral iterationKindWords[] = {
     "Keys"_s,
@@ -348,7 +367,6 @@ inline constexpr ASCIILiteral abstractHeapWords[] = {
     "ObjectFields"_s,
     "ShapeWords"_s,
     "OrderWords"_s,
-    "ShapeEpoch"_s,
     "MemberGuards"_s,
     "PrototypeLinks"_s,
     "NamedProperties"_s,
@@ -374,26 +392,25 @@ static_assert(static_cast<unsigned>(AbstractHeap::EnvironmentFields) == 1);
 static_assert(static_cast<unsigned>(AbstractHeap::ObjectFields) == 2);
 static_assert(static_cast<unsigned>(AbstractHeap::ShapeWords) == 3);
 static_assert(static_cast<unsigned>(AbstractHeap::OrderWords) == 4);
-static_assert(static_cast<unsigned>(AbstractHeap::ShapeEpoch) == 5);
-static_assert(static_cast<unsigned>(AbstractHeap::MemberGuards) == 6);
-static_assert(static_cast<unsigned>(AbstractHeap::PrototypeLinks) == 7);
-static_assert(static_cast<unsigned>(AbstractHeap::NamedProperties) == 8);
-static_assert(static_cast<unsigned>(AbstractHeap::Elements) == 9);
-static_assert(static_cast<unsigned>(AbstractHeap::ArrayStorage) == 10);
-static_assert(static_cast<unsigned>(AbstractHeap::TypedArrayStorage) == 11);
-static_assert(static_cast<unsigned>(AbstractHeap::TypedArrayElements) == 12);
-static_assert(static_cast<unsigned>(AbstractHeap::CollectionStorage) == 13);
-static_assert(static_cast<unsigned>(AbstractHeap::CollectionEntries) == 14);
-static_assert(static_cast<unsigned>(AbstractHeap::InternalFields) == 15);
-static_assert(static_cast<unsigned>(AbstractHeap::RegExpState) == 16);
-static_assert(static_cast<unsigned>(AbstractHeap::PromiseState) == 17);
-static_assert(static_cast<unsigned>(AbstractHeap::StringStorage) == 18);
-static_assert(static_cast<unsigned>(AbstractHeap::StringBuilderContents) == 19);
-static_assert(static_cast<unsigned>(AbstractHeap::ParserState) == 20);
-static_assert(static_cast<unsigned>(AbstractHeap::ExternalState) == 21);
-static_assert(static_cast<unsigned>(AbstractHeap::AllocatorState) == 22);
-static_assert(static_cast<unsigned>(AbstractHeap::RuntimeState) == 23);
-static_assert(static_cast<unsigned>(AbstractHeap::ValidationState) == 24);
+static_assert(static_cast<unsigned>(AbstractHeap::MemberGuards) == 5);
+static_assert(static_cast<unsigned>(AbstractHeap::PrototypeLinks) == 6);
+static_assert(static_cast<unsigned>(AbstractHeap::NamedProperties) == 7);
+static_assert(static_cast<unsigned>(AbstractHeap::Elements) == 8);
+static_assert(static_cast<unsigned>(AbstractHeap::ArrayStorage) == 9);
+static_assert(static_cast<unsigned>(AbstractHeap::TypedArrayStorage) == 10);
+static_assert(static_cast<unsigned>(AbstractHeap::TypedArrayElements) == 11);
+static_assert(static_cast<unsigned>(AbstractHeap::CollectionStorage) == 12);
+static_assert(static_cast<unsigned>(AbstractHeap::CollectionEntries) == 13);
+static_assert(static_cast<unsigned>(AbstractHeap::InternalFields) == 14);
+static_assert(static_cast<unsigned>(AbstractHeap::RegExpState) == 15);
+static_assert(static_cast<unsigned>(AbstractHeap::PromiseState) == 16);
+static_assert(static_cast<unsigned>(AbstractHeap::StringStorage) == 17);
+static_assert(static_cast<unsigned>(AbstractHeap::StringBuilderContents) == 18);
+static_assert(static_cast<unsigned>(AbstractHeap::ParserState) == 19);
+static_assert(static_cast<unsigned>(AbstractHeap::ExternalState) == 20);
+static_assert(static_cast<unsigned>(AbstractHeap::AllocatorState) == 21);
+static_assert(static_cast<unsigned>(AbstractHeap::RuntimeState) == 22);
+static_assert(static_cast<unsigned>(AbstractHeap::ValidationState) == 23);
 
 inline constexpr ASCIILiteral inlineBuiltinWords[] = {
     "ArrayAt"_s,
@@ -424,6 +441,8 @@ inline constexpr ASCIILiteral inlineBuiltinWords[] = {
     "ObjectHasOwn"_s,
     "ObjectPropertyIsEnumerable"_s,
     "OwnPropertyDescriptorFields"_s,
+    "ObjectValues"_s,
+    "ObjectEntries"_s,
     "ObjectCreate"_s,
     "GetPrototypeOf"_s,
     "SetPrototypeOf"_s,
@@ -433,6 +452,7 @@ inline constexpr ASCIILiteral inlineBuiltinWords[] = {
     "ObjectIs"_s,
     "ReturnThis"_s,
     "NewMap"_s,
+    "NewSet"_s,
     "MapGet"_s,
     "MapHas"_s,
     "SetHas"_s,
@@ -578,131 +598,134 @@ static_assert(static_cast<unsigned>(InlineBuiltin::ObjectGetOwnPropertyDescripto
 static_assert(static_cast<unsigned>(InlineBuiltin::ObjectHasOwn) == 25);
 static_assert(static_cast<unsigned>(InlineBuiltin::ObjectPropertyIsEnumerable) == 26);
 static_assert(static_cast<unsigned>(InlineBuiltin::OwnPropertyDescriptorFields) == 27);
-static_assert(static_cast<unsigned>(InlineBuiltin::ObjectCreate) == 28);
-static_assert(static_cast<unsigned>(InlineBuiltin::GetPrototypeOf) == 29);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetPrototypeOf) == 30);
-static_assert(static_cast<unsigned>(InlineBuiltin::CallObjectConstructor) == 31);
-static_assert(static_cast<unsigned>(InlineBuiltin::ObjectFreeze) == 32);
-static_assert(static_cast<unsigned>(InlineBuiltin::ObjectPrototypeToString) == 33);
-static_assert(static_cast<unsigned>(InlineBuiltin::ObjectIs) == 34);
-static_assert(static_cast<unsigned>(InlineBuiltin::ReturnThis) == 35);
-static_assert(static_cast<unsigned>(InlineBuiltin::NewMap) == 36);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapGet) == 37);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapHas) == 38);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetHas) == 39);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapSet) == 40);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetAdd) == 41);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapSize) == 42);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetSize) == 43);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetFromIterable) == 44);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapFromEntries) == 45);
-static_assert(static_cast<unsigned>(InlineBuiltin::WeakMapGet) == 46);
-static_assert(static_cast<unsigned>(InlineBuiltin::WeakMapHas) == 47);
-static_assert(static_cast<unsigned>(InlineBuiltin::WeakSetHas) == 48);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapDelete) == 49);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetDelete) == 50);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapClear) == 51);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetClear) == 52);
-static_assert(static_cast<unsigned>(InlineBuiltin::MapIterator) == 53);
-static_assert(static_cast<unsigned>(InlineBuiltin::SetIterator) == 54);
-static_assert(static_cast<unsigned>(InlineBuiltin::PromiseResolve) == 55);
-static_assert(static_cast<unsigned>(InlineBuiltin::PromiseThen) == 56);
-static_assert(static_cast<unsigned>(InlineBuiltin::PromiseCatch) == 57);
-static_assert(static_cast<unsigned>(InlineBuiltin::DataViewGet) == 58);
-static_assert(static_cast<unsigned>(InlineBuiltin::DataViewSet) == 59);
-static_assert(static_cast<unsigned>(InlineBuiltin::Atomics) == 60);
-static_assert(static_cast<unsigned>(InlineBuiltin::BufferAccess) == 61);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathMinOfArray) == 62);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathMaxOfArray) == 63);
-static_assert(static_cast<unsigned>(InlineBuiltin::CallNumberConstructor) == 64);
-static_assert(static_cast<unsigned>(InlineBuiltin::NumberToString) == 65);
-static_assert(static_cast<unsigned>(InlineBuiltin::ParseInt) == 66);
-static_assert(static_cast<unsigned>(InlineBuiltin::NumberToStringAppend) == 67);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathAbs) == 68);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathFloor) == 69);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathCeil) == 70);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathTrunc) == 71);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathRound) == 72);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathFround) == 73);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathF16Round) == 74);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathSqrt) == 75);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathPow) == 76);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathMin) == 77);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathMax) == 78);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathImul) == 79);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathClz32) == 80);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathSign) == 81);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathFunction) == 82);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathATan2) == 83);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathHypot) == 84);
-static_assert(static_cast<unsigned>(InlineBuiltin::IsNaN) == 85);
-static_assert(static_cast<unsigned>(InlineBuiltin::IsFinite) == 86);
-static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsNaN) == 87);
-static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsFinite) == 88);
-static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsInteger) == 89);
-static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsSafeInteger) == 90);
-static_assert(static_cast<unsigned>(InlineBuiltin::MathRandom) == 91);
-static_assert(static_cast<unsigned>(InlineBuiltin::DateGetField) == 92);
-static_assert(static_cast<unsigned>(InlineBuiltin::DateToISOString) == 93);
-static_assert(static_cast<unsigned>(InlineBuiltin::DateNow) == 94);
-static_assert(static_cast<unsigned>(InlineBuiltin::DateGetTime) == 95);
-static_assert(static_cast<unsigned>(InlineBuiltin::DateGetMilliseconds) == 96);
-static_assert(static_cast<unsigned>(InlineBuiltin::DateSetTime) == 97);
-static_assert(static_cast<unsigned>(InlineBuiltin::FunctionBind) == 98);
-static_assert(static_cast<unsigned>(InlineBuiltin::ReflectApply) == 99);
-static_assert(static_cast<unsigned>(InlineBuiltin::FunctionApply) == 100);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringRepeat) == 101);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringPadStart) == 102);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringPadEnd) == 103);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringIsWellFormed) == 104);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringToWellFormed) == 105);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringNormalize) == 106);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringFromCodePoint) == 107);
-static_assert(static_cast<unsigned>(InlineBuiltin::CallStringConstructor) == 108);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringUTF8ByteLength) == 109);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringLength) == 110);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringAt) == 111);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringCharAt) == 112);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringCharCodeAt) == 113);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringCodePointAt) == 114);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSlice) == 115);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSubstring) == 116);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSubstr) == 117);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringStartsWith) == 118);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringEndsWith) == 119);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringIncludes) == 120);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringIndexOf) == 121);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringLastIndexOf) == 122);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringToLowerCase) == 123);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringToUpperCase) == 124);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringTrim) == 125);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringTrimStart) == 126);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringTrimEnd) == 127);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringLocaleCompare) == 128);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringConcat) == 129);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringFromCharCode) == 130);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSplitPrefix) == 131);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSliceAppend) == 132);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSubstringAppend) == 133);
-static_assert(static_cast<unsigned>(InlineBuiltin::CallStringConstructorAppend) == 134);
-static_assert(static_cast<unsigned>(InlineBuiltin::NewRegExp) == 135);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringMatch) == 136);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSearch) == 137);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpExec) == 138);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpTest) == 139);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpFlags) == 140);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpSource) == 141);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringReplace) == 142);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringReplaceAll) == 143);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringSplit) == 144);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpFlag) == 145);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpGetLastIndex) == 146);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpSetLastIndex) == 147);
-static_assert(static_cast<unsigned>(InlineBuiltin::RegExpExecPrefix) == 148);
-static_assert(static_cast<unsigned>(InlineBuiltin::StringMatchPrefix) == 149);
-static_assert(static_cast<unsigned>(InlineBuiltin::NewError) == 150);
-static_assert(static_cast<unsigned>(InlineBuiltin::FormatDateTime) == 151);
-static_assert(static_cast<unsigned>(InlineBuiltin::FormatNumber) == 152);
+static_assert(static_cast<unsigned>(InlineBuiltin::ObjectValues) == 28);
+static_assert(static_cast<unsigned>(InlineBuiltin::ObjectEntries) == 29);
+static_assert(static_cast<unsigned>(InlineBuiltin::ObjectCreate) == 30);
+static_assert(static_cast<unsigned>(InlineBuiltin::GetPrototypeOf) == 31);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetPrototypeOf) == 32);
+static_assert(static_cast<unsigned>(InlineBuiltin::CallObjectConstructor) == 33);
+static_assert(static_cast<unsigned>(InlineBuiltin::ObjectFreeze) == 34);
+static_assert(static_cast<unsigned>(InlineBuiltin::ObjectPrototypeToString) == 35);
+static_assert(static_cast<unsigned>(InlineBuiltin::ObjectIs) == 36);
+static_assert(static_cast<unsigned>(InlineBuiltin::ReturnThis) == 37);
+static_assert(static_cast<unsigned>(InlineBuiltin::NewMap) == 38);
+static_assert(static_cast<unsigned>(InlineBuiltin::NewSet) == 39);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapGet) == 40);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapHas) == 41);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetHas) == 42);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapSet) == 43);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetAdd) == 44);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapSize) == 45);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetSize) == 46);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetFromIterable) == 47);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapFromEntries) == 48);
+static_assert(static_cast<unsigned>(InlineBuiltin::WeakMapGet) == 49);
+static_assert(static_cast<unsigned>(InlineBuiltin::WeakMapHas) == 50);
+static_assert(static_cast<unsigned>(InlineBuiltin::WeakSetHas) == 51);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapDelete) == 52);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetDelete) == 53);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapClear) == 54);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetClear) == 55);
+static_assert(static_cast<unsigned>(InlineBuiltin::MapIterator) == 56);
+static_assert(static_cast<unsigned>(InlineBuiltin::SetIterator) == 57);
+static_assert(static_cast<unsigned>(InlineBuiltin::PromiseResolve) == 58);
+static_assert(static_cast<unsigned>(InlineBuiltin::PromiseThen) == 59);
+static_assert(static_cast<unsigned>(InlineBuiltin::PromiseCatch) == 60);
+static_assert(static_cast<unsigned>(InlineBuiltin::DataViewGet) == 61);
+static_assert(static_cast<unsigned>(InlineBuiltin::DataViewSet) == 62);
+static_assert(static_cast<unsigned>(InlineBuiltin::Atomics) == 63);
+static_assert(static_cast<unsigned>(InlineBuiltin::BufferAccess) == 64);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathMinOfArray) == 65);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathMaxOfArray) == 66);
+static_assert(static_cast<unsigned>(InlineBuiltin::CallNumberConstructor) == 67);
+static_assert(static_cast<unsigned>(InlineBuiltin::NumberToString) == 68);
+static_assert(static_cast<unsigned>(InlineBuiltin::ParseInt) == 69);
+static_assert(static_cast<unsigned>(InlineBuiltin::NumberToStringAppend) == 70);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathAbs) == 71);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathFloor) == 72);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathCeil) == 73);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathTrunc) == 74);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathRound) == 75);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathFround) == 76);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathF16Round) == 77);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathSqrt) == 78);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathPow) == 79);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathMin) == 80);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathMax) == 81);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathImul) == 82);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathClz32) == 83);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathSign) == 84);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathFunction) == 85);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathATan2) == 86);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathHypot) == 87);
+static_assert(static_cast<unsigned>(InlineBuiltin::IsNaN) == 88);
+static_assert(static_cast<unsigned>(InlineBuiltin::IsFinite) == 89);
+static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsNaN) == 90);
+static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsFinite) == 91);
+static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsInteger) == 92);
+static_assert(static_cast<unsigned>(InlineBuiltin::NumberIsSafeInteger) == 93);
+static_assert(static_cast<unsigned>(InlineBuiltin::MathRandom) == 94);
+static_assert(static_cast<unsigned>(InlineBuiltin::DateGetField) == 95);
+static_assert(static_cast<unsigned>(InlineBuiltin::DateToISOString) == 96);
+static_assert(static_cast<unsigned>(InlineBuiltin::DateNow) == 97);
+static_assert(static_cast<unsigned>(InlineBuiltin::DateGetTime) == 98);
+static_assert(static_cast<unsigned>(InlineBuiltin::DateGetMilliseconds) == 99);
+static_assert(static_cast<unsigned>(InlineBuiltin::DateSetTime) == 100);
+static_assert(static_cast<unsigned>(InlineBuiltin::FunctionBind) == 101);
+static_assert(static_cast<unsigned>(InlineBuiltin::ReflectApply) == 102);
+static_assert(static_cast<unsigned>(InlineBuiltin::FunctionApply) == 103);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringRepeat) == 104);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringPadStart) == 105);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringPadEnd) == 106);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringIsWellFormed) == 107);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringToWellFormed) == 108);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringNormalize) == 109);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringFromCodePoint) == 110);
+static_assert(static_cast<unsigned>(InlineBuiltin::CallStringConstructor) == 111);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringUTF8ByteLength) == 112);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringLength) == 113);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringAt) == 114);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringCharAt) == 115);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringCharCodeAt) == 116);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringCodePointAt) == 117);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSlice) == 118);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSubstring) == 119);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSubstr) == 120);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringStartsWith) == 121);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringEndsWith) == 122);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringIncludes) == 123);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringIndexOf) == 124);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringLastIndexOf) == 125);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringToLowerCase) == 126);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringToUpperCase) == 127);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringTrim) == 128);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringTrimStart) == 129);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringTrimEnd) == 130);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringLocaleCompare) == 131);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringConcat) == 132);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringFromCharCode) == 133);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSplitPrefix) == 134);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSliceAppend) == 135);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSubstringAppend) == 136);
+static_assert(static_cast<unsigned>(InlineBuiltin::CallStringConstructorAppend) == 137);
+static_assert(static_cast<unsigned>(InlineBuiltin::NewRegExp) == 138);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringMatch) == 139);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSearch) == 140);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpExec) == 141);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpTest) == 142);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpFlags) == 143);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpSource) == 144);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringReplace) == 145);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringReplaceAll) == 146);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringSplit) == 147);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpFlag) == 148);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpGetLastIndex) == 149);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpSetLastIndex) == 150);
+static_assert(static_cast<unsigned>(InlineBuiltin::RegExpExecPrefix) == 151);
+static_assert(static_cast<unsigned>(InlineBuiltin::StringMatchPrefix) == 152);
+static_assert(static_cast<unsigned>(InlineBuiltin::NewError) == 153);
+static_assert(static_cast<unsigned>(InlineBuiltin::FormatDateTime) == 154);
+static_assert(static_cast<unsigned>(InlineBuiltin::FormatNumber) == 155);
 
 inline constexpr ASCIILiteral contentsSlotWords[] = {
     "Element"_s,
@@ -738,6 +761,13 @@ static_assert(static_cast<unsigned>(BuiltinPlatform::Linux) == 1u << 1);
 static_assert(static_cast<unsigned>(BuiltinPlatform::Windows) == 1u << 2);
 static_assert(static_cast<unsigned>(BuiltinPlatform::FreeBSD) == 1u << 3);
 static_assert(static_cast<unsigned>(BuiltinPlatform::Android) == 1u << 4);
+
+inline constexpr ASCIILiteral builtinArchitectureWords[] = {
+    "ARM64"_s,
+    "X86_64"_s,
+};
+static_assert(static_cast<unsigned>(BuiltinArchitecture::ARM64) == 1u << 0);
+static_assert(static_cast<unsigned>(BuiltinArchitecture::X86_64) == 1u << 1);
 
 inline constexpr ASCIILiteral builtinPrimitiveWords[] = {
     "Undefined"_s,
@@ -827,6 +857,7 @@ inline constexpr ASCIILiteral builtinOverloadFlagWords[] = {
     "RunsOnlyOperandCode"_s,
     "ReadsStateBeforeConversions"_s,
     "IsSpecialCase"_s,
+    "OnlyPropagatesErrors"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::IsUndeclared) == 1u << 0);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::IsProvenByConstruction) == 1u << 1);
@@ -834,6 +865,7 @@ static_assert(static_cast<unsigned>(BuiltinOverloadFlag::Throws) == 1u << 2);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::RunsOnlyOperandCode) == 1u << 3);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::ReadsStateBeforeConversions) == 1u << 4);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::IsSpecialCase) == 1u << 5);
+static_assert(static_cast<unsigned>(BuiltinOverloadFlag::OnlyPropagatesErrors) == 1u << 6);
 
 inline constexpr ASCIILiteral operandUseWords[] = {
     "Inspects"_s,

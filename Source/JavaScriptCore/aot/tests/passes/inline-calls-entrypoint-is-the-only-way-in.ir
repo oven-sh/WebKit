@@ -1,0 +1,100 @@
+# An entrypoint has the budget of any caller. A body over it stays a function of its own and the entrypoint calls it, also where nothing else is seen to enter the body:
+# a call that tests for the function, a call of a method by its name or a version of the caller may come to name it while its caller is optimized, and then a body that the entrypoint had taken in would be there twice
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    v5 = PropGet v0 key="input" [isFreeName]
+    v6 = Call v3, -, v5
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Call {{*}}callees=[f2]
+
+function f1 name="enteredByUnknownCodeAlone" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = Mul v1, v1
+    v3 = Mul v2, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    v10 = Mul v9, v1
+    v11 = Mul v10, v1
+    v12 = Mul v11, v1
+    v13 = Mul v12, v1
+    v14 = Mul v13, v1
+    v15 = Mul v14, v1
+    v16 = Mul v15, v1
+    v17 = Mul v16, v1
+    v18 = Mul v17, v1
+    v19 = Mul v18, v1
+    v20 = Mul v19, v1
+    v21 = Mul v20, v1
+    v22 = CallDirect v21 function=f3
+    Return v22
+}
+
+function f2 name="alsoCalledByValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = Mul v1, v1
+    v3 = Mul v2, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    v10 = Mul v9, v1
+    v11 = Mul v10, v1
+    v12 = Mul v11, v1
+    v13 = Mul v12, v1
+    v14 = Mul v13, v1
+    v15 = Mul v14, v1
+    v16 = Mul v15, v1
+    v17 = Mul v16, v1
+    v18 = Mul v17, v1
+    v19 = Mul v18, v1
+    v20 = Mul v19, v1
+    v21 = Mul v20, v1
+    v22 = CallDirect v21 function=f3
+    Return v22
+}
+
+function f3 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+# CHECK-LABEL: name="enteredByUnknownCodeAlone" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-LABEL: name="alsoCalledByValue" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}}function=f2

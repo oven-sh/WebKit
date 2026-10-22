@@ -12,13 +12,16 @@
 #include "AOTFaultTable.h"
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
+#include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
 #include "AOTOperationData.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubKey.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsExceptions.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
+#include "AOTUnwinding.h"
 #include "MachineContext.h"
 #include <optional>
 #include <wtf/threads/Signals.h>
@@ -41,7 +44,7 @@ struct Fault {
 #if CPU(ARM64)
 static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
 {
-    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == cellCageBaseGPR);
+    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == cellCageBaseGPR || reg == instanceGPR);
     unsigned number = static_cast<unsigned>(reg);
 #if OS(DARWIN)
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.__lr) : reinterpret_cast<uintptr_t&>(registers.__x[number]);
@@ -67,6 +70,13 @@ static uintptr_t& scratchRegisterOf(PlatformRegisters& registers)
     return reinterpret_cast<uintptr_t&>(registers.machineContext.gregs[REG_R11]);
 #endif
 }
+
+static thread_local uint64_t s_scratchRegisterBeforeFault;
+
+uint64_t scratchRegisterBeforeFault()
+{
+    return s_scratchRegisterBeforeFault;
+}
 #endif
 
 static uintptr_t cellCageBaseIn(PlatformRegisters& registers)
@@ -83,6 +93,24 @@ static uintptr_t cellCageBaseIn(PlatformRegisters& registers)
     return registers.machineContext.mc_r14;
 #else
     return registers.machineContext.gregs[REG_R14];
+#endif
+#endif
+}
+
+static uintptr_t instanceIn(PlatformRegisters& registers)
+{
+#if CPU(ARM64)
+    return registerOf(registers, instanceGPR);
+#elif CPU(X86_64)
+    static_assert(instanceGPR == X86Registers::r13);
+#if OS(DARWIN)
+    return registers.__r13;
+#elif OS(WINDOWS)
+    return registers.R13;
+#elif OS(FREEBSD)
+    return registers.machineContext.mc_r13;
+#else
+    return registers.machineContext.gregs[REG_R13];
 #endif
 #endif
 }
@@ -110,6 +138,7 @@ static SignalAction handleNullCheck(const Fault& fault, PlatformRegisters& regis
         registerOf(registers, faultCallerLinkGPR) = registerOf(registers, ARM64Registers::lr);
     registerOf(registers, ARM64Registers::lr) = returnAddress;
 #elif CPU(X86_64)
+    s_scratchRegisterBeforeFault = scratchRegisterOf(registers);
     scratchRegisterOf(registers) = returnAddress;
 #endif
     MachineContext::setInstructionPointer(registers, target);
@@ -143,6 +172,24 @@ static SignalAction handleLoopPoll(const Fault& fault, PlatformRegisters& regist
 }
 #endif
 
+static SignalAction handleDivertedReturn(const Image& image, PlatformRegisters& registers)
+{
+    void* target = findStub(image, handleException(false));
+    if (!target)
+        return SignalAction::NotHandled;
+    uintptr_t returnAddress = std::bit_cast<uintptr_t>(std::bit_cast<Instance*>(instanceIn(registers))->runtime.exceptions.stackPointerOfHandler);
+#if CPU(ARM64)
+    registerOf(registers, ARM64Registers::lr) = returnAddress;
+#elif CPU(X86_64)
+    void*& stackPointer = MachineContext::stackPointerImpl(registers);
+    auto* top = static_cast<uintptr_t*>(stackPointer);
+    *--top = returnAddress;
+    stackPointer = top;
+#endif
+    MachineContext::setInstructionPointer(registers, target);
+    return SignalAction::Handled;
+}
+
 void installFaultHandler()
 {
     addSignalHandler(Signal::AccessFault, [](Signal, SigInfo& info, PlatformRegisters& registers) {
@@ -153,6 +200,8 @@ void installFaultHandler()
         if (!image)
             return SignalAction::NotHandled;
         void* pc = instructionPointer->untaggedPtr();
+        if (std::bit_cast<uintptr_t>(pc) == instanceIn(registers) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
+            return handleDivertedReturn(*image, registers);
         std::optional<FaultSite> site = image->faultSiteAt(pc);
         if (!site)
             return SignalAction::NotHandled;

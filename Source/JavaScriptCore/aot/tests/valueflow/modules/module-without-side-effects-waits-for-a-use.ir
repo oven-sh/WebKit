@@ -1,7 +1,8 @@
-# An import alone does not evaluate a module that its package declares free of side effects. Naming one of its variables does, and so does entering one of its functions. The barrel between them and the file nobody uses are not evaluated
+# An import alone does not evaluate a module that its package declares free of side effects. Naming one of its variables does, and so does entering one of its functions.
+# The barrel that exports the named variable again is used with it, as in an executable without --aot. The file nobody uses is not evaluated
 # LIBRARY: own
 # RUN: valueflow-solve unreached
-# CHECK: unreached f1
+# CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2
 # CHECK: unreached f3
 # CHECK-NOT: unreached f4
@@ -11,8 +12,8 @@ variable g0 name="first" module=m2 declared={type=anything} initialization=Unini
 variable g1 name="second" module=m3 declared={type=anything} initialization=Uninitialized
 variable g2 name="limit" module=m4 declared={type=anything} initialization=Uninitialized
 variable g3 name="kept" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
-module m1 path="/package/index.js" displayPath="package/index.js" flags=[HasNoSideEffects] body=f1 requests=[{target=m2}, {target=m3}, {target=m4}] exports=[{name="first" variable=g0}, {name="second" variable=g1}]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/package/index.js" displayPath="package/index.js" flags=[HasNoSideEffects] body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}] exports=[{name="first" variable=g0}, {name="second" variable=g1}]
 module m2 path="/package/first.js" displayPath="package/first.js" flags=[HasNoSideEffects] body=f2 exports=[{name="first" variable=g0}]
 module m3 path="/package/second.js" displayPath="package/second.js" flags=[HasNoSideEffects] body=f3 exports=[{name="second" variable=g1}]
 module m4 path="/package/third.js" displayPath="package/third.js" flags=[HasNoSideEffects] body=f4

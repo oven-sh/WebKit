@@ -128,7 +128,29 @@ static bool hasOnlyCallableObjects(const Type& type)
     return !type.anyObject && !type.layouts && type.classes.isEmpty() && type.builtins.isEmpty();
 }
 
-KnownValue knownValueOfType(const Program&, const Type& type)
+KnownValue knownValueOf(const DataNode& node)
+{
+    switch (node.kind()) {
+    case DataNode::Kind::Undefined:
+        return KnownValue::undefined();
+    case DataNode::Kind::Null:
+        return KnownValue::null();
+    case DataNode::Kind::Boolean:
+        return KnownValue::boolean(node.as<DataNode::Boolean>().value);
+    case DataNode::Kind::Number:
+        return KnownValue::number(node.as<DataNode::Number>().value);
+    case DataNode::Kind::String:
+        return KnownValue::string(node.as<DataNode::String>().value);
+    case DataNode::Kind::Hole:
+    case DataNode::Kind::BigInt:
+    case DataNode::Kind::Array:
+    case DataNode::Kind::Object:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+KnownValue knownValueOfType(const Program& program, const Type& type)
 {
     if (!type.isJavaScriptValue())
         return { };
@@ -138,16 +160,19 @@ KnownValue knownValueOfType(const Program&, const Type& type)
         return { };
     if (hasOnlyCallableObjects(type))
         return KnownValue::function();
-    if (type.hasOnlyLayouts())
+    if (type.hasOnlyLayouts(program))
         return KnownValue::object();
     return { };
 }
 
 KnownValue knownValueOf(const Program& program, const Function& function, ValueID id)
 {
-    if (std::optional<ValueID> constant = constantThroughCasts(program, function, id); constant && primitiveConstantOpcodes.contains(function.at(*constant).opcode))
-        return evaluateConstant(function.at(*constant));
-    if (KnownValue allocation = knownValueOfAllocation(program, function.at(sameObjectThroughCasts(function, id))); allocation.isKnown())
+    const Value& definition = function.at(sameObjectThroughCasts(function, id));
+    if (primitiveConstantOpcodes.contains(definition.opcode)) {
+        if (std::optional<ValueID> constant = constantThroughCasts(program, function, id))
+            return evaluateConstant(function.at(*constant));
+    }
+    if (KnownValue allocation = knownValueOfAllocation(program, definition); allocation.isKnown())
         return allocation;
     return knownValueOfType(program, program.typeOf(function, id));
 }
@@ -181,26 +206,41 @@ KnownBoolean evaluateTypeTest(const Program& program, const Type& source, const 
     return KnownBoolean::Unknown;
 }
 
+Type typeOfKnownPrimitive(KnownValue value)
+{
+    switch (value.kind()) {
+    case KnownValue::Kind::Undefined:
+        return Type::fromPrimitives(Primitive::Undefined);
+    case KnownValue::Kind::Null:
+        return Type::fromPrimitives(Primitive::Null);
+    case KnownValue::Kind::Boolean:
+        return Type::fromPrimitives(value.asBoolean() ? Primitive::True : Primitive::False);
+    case KnownValue::Kind::Integer:
+        return Type::integer(Range::one(value.asInteger()));
+    case KnownValue::Kind::Double:
+        return Type::number(value.asNumber());
+    case KnownValue::Kind::String:
+        return Type::stringLiteral(value.asString());
+    case KnownValue::Kind::Unknown:
+    case KnownValue::Kind::Object:
+    case KnownValue::Kind::Function:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 KnownBoolean evaluateTypeTest(const Program& program, KnownValue value, const Type& tested)
 {
-    auto isInTestedType = [&](const Type& type) {
-        return knownBoolean(type.isSubsetOf(tested, program));
-    };
     switch (value.kind()) {
     case KnownValue::Kind::Unknown:
         return KnownBoolean::Unknown;
     case KnownValue::Kind::Undefined:
-        return isInTestedType(Type::fromPrimitives(Primitive::Undefined));
     case KnownValue::Kind::Null:
-        return isInTestedType(Type::fromPrimitives(Primitive::Null));
     case KnownValue::Kind::Boolean:
-        return isInTestedType(Type::fromPrimitives(value.asBoolean() ? Primitive::True : Primitive::False));
     case KnownValue::Kind::Integer:
-        return isInTestedType(Type::integer(Range::one(value.asInteger())));
     case KnownValue::Kind::Double:
-        return isInTestedType(Type::number(value.asNumber()));
     case KnownValue::Kind::String:
-        return isInTestedType(Type::stringLiteral(value.asString()));
+        return knownBoolean(typeOfKnownPrimitive(value).isSubsetOf(tested, program));
     case KnownValue::Kind::Object:
         if (!tested.hasObjects() || hasOnlyCallableObjects(tested))
             return KnownBoolean::False;
@@ -238,7 +278,7 @@ static KnownBoolean truthinessOf(const Program& program, const Type& type)
     return KnownBoolean::True;
 }
 
-static KnownBoolean evaluateIsClosureOf(const Program& program, const Type& source, FunctionID function)
+KnownBoolean evaluateIsClosureOf(const Program& program, const Type& source, FunctionID function)
 {
     if (source.singleFunction() == function && !source.mayBeUndefinedOrNull())
         return KnownBoolean::True;
@@ -321,11 +361,11 @@ static KnownValue evaluateCast(const Program& program, const Value& value, Known
 {
     switch (value.opcode) {
     case Opcode::Upcast:
-    case Opcode::Predict:
+    case Opcode::NarrowByField:
     case Opcode::AssumeType:
     case Opcode::CheckInitialized:
         return operand;
-    case Opcode::Claim:
+    case Opcode::Check:
         if (evaluateTypeTest(program, operand, program.at(value.castType())) != KnownBoolean::True)
             return { };
         return operand;
@@ -460,8 +500,8 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::String:
         return evaluateConstant(value);
     case Opcode::Upcast:
-    case Opcode::Claim:
-    case Opcode::Predict:
+    case Opcode::NarrowByField:
+    case Opcode::Check:
     case Opcode::AssumeType:
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:

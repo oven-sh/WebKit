@@ -8,13 +8,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeRecords.h"
+#include "AOTSiteCachePlacement.h"
 #include "AOTStringEmitter.h"
+#include "AOTStubsPropertyKeys.h"
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -23,11 +27,6 @@ static_assert(!Slot::offsetOfStructureID() && sizeof(StructureID) == sizeof(uint
 static_assert(OBJECT_OFFSETOF(Slot, transition.newStructureID) == Slot::offsetOfPayload());
 
 namespace {
-
-struct CheckedPrimitives {
-    CheckedReadKind kind;
-    uint16_t primitives;
-};
 
 struct PropertyRun {
     CellPointer object;
@@ -45,32 +44,13 @@ public:
     Condition tryStore(const ValueContext&);
 
 private:
+    bool paysWithoutSiteCache(const ValueContext&);
     Condition countMiss(Pointer cache);
-    Condition storeByOperation(const ValueContext&, const PropertyRun&, Pointer cache);
+    Condition storeByOperation(const ValueContext&, const PropertyRun&, Pointer cache, bool isOnRarePath);
     void storeThroughSiteCache(const ValueContext&, const PropertyRun&, Pointer cache, Integer header, Word32 kind);
 };
 
 } // anonymous namespace
-
-static constexpr CheckedPrimitives checkedPrimitives[] {
-    { CheckedReadKind::Number, Primitive::Number | Primitive::UndefinedOrNull },
-    { CheckedReadKind::Boolean, Primitive::Boolean | Primitive::UndefinedOrNull },
-    { CheckedReadKind::String, Primitive::String | Primitive::UndefinedOrNull },
-};
-
-std::optional<CheckedReadKind> checkedReadKindOf(const Program&, const Type& type)
-{
-    for (auto [kind, primitives] : checkedPrimitives) {
-        if (type == Type::fromPrimitives(primitives))
-            return kind;
-    }
-    if (type.primitives != Primitive::UndefinedOrNull)
-        return std::nullopt;
-    const ClassPart* part = type.singleBuiltinClass();
-    if (part && part->builtinClass == BuiltinClasses::Array && !part->contentsAreProven && part->provenPristine.isEmpty() && part->arrayStorage == ArrayStorage::Other)
-        return CheckedReadKind::Array;
-    return std::nullopt;
-}
 
 static std::optional<uint32_t> columnOf(const IdentifierNumbering& numbering, PropertyKeyID key)
 {
@@ -113,37 +93,6 @@ FusedAccessEmitter::FusedAccessEmitter(CodeGenerator& generator)
 {
 }
 
-void FusedAccessEmitter::generatePropGetChecked(const ValueContext& value)
-{
-    TypeID checkedType = value->checkedType();
-    std::optional<CheckedReadKind> kind = checkedReadKindOf(m_program, m_program.at(checkedType));
-    std::optional<uint32_t> column = columnOf(build().identifierNumbering(), value->key());
-    if (!kind || !column) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
-        return;
-    }
-
-    TypeSiteID site = value->site();
-    CallOptions options {
-        .immediate = *column,
-        .origin = value->readOrigin(),
-        .throwSite = ThrowSite { ThrowKind::TypeMismatch, checkedType.index(), site && *kind == CheckedReadKind::Array ? std::optional(site.index()) : std::nullopt },
-    };
-    LValue read = callStub(value, getByIdChecked(*kind), { in<Boxed>(value->objectOperand()).value() }, options).first;
-    switch (*kind) {
-    case CheckedReadKind::Number:
-        define(value, OptionalNumber(read));
-        return;
-    case CheckedReadKind::Boolean:
-    case CheckedReadKind::String:
-    case CheckedReadKind::Array:
-        define(value, Boxed(read));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void FusedAccessEmitter::generatePropGetChain(const ValueContext& value)
 {
     std::optional<uint32_t> columns = pairedColumnsOf(build().identifierNumbering(), value->key(), value->secondKey());
@@ -153,6 +102,7 @@ void FusedAccessEmitter::generatePropGetChain(const ValueContext& value)
         return;
     }
 
+    emitter<AccessEmitter>().recordArrival(value, in<Boxed>(value->objectOperand()));
     LValue operands[] = { in<Boxed>(value->objectOperand()).value() };
     CallOptions options { .immediate = *columns };
     define(value, Boxed(emitter<RuntimeCallEmitter>().callStubForTwoReads(value, getByIdChain(), operands, options, value->readOrigin()).first));
@@ -173,8 +123,15 @@ void FusedAccessEmitter::generatePropGetPair(const ValueContext& value)
     Vector<LValue, 2> operands { in<Boxed>(value->objectOperand()).value() };
     if (secondReceiver == SecondReceiver::Other)
         operands.append(in<Boxed>(other).value());
+    AccessEmitter& accesses = emitter<AccessEmitter>();
+    Boxed receiver = in<Boxed>(value->objectOperand());
+    accesses.recordArrival(value, receiver);
+    if (secondReceiver != SecondReceiver::FirstResult)
+        accesses.recordArrival(value, secondReceiver == SecondReceiver::Other ? in<Boxed>(other) : receiver, 1);
     CallOptions options { .immediate = *columns };
     StubCallResult read = emitter<RuntimeCallEmitter>().callStubForTwoReads(value, getByIdPair(secondReceiver), operands.span(), options, value->readOrigin());
+    if (secondReceiver == SecondReceiver::FirstResult)
+        accesses.recordArrival(value, Boxed(read.first), 1);
     defineResults(value, { Boxed(read.first), Boxed(read.second) });
 }
 
@@ -191,6 +148,7 @@ void FusedAccessEmitter::generatePropGetAndTest(const ValueContext& value)
 
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     LValue receiver = in<Boxed>(value->objectOperand()).value();
+    emitter<AccessEmitter>().recordArrival(value, Boxed(receiver));
     CallOptions options { .immediate = *column };
     if (!literal) {
         LValue operands[] = { receiver };
@@ -208,16 +166,20 @@ void FusedAccessEmitter::generateTryPutByIds(const ValueContext& value)
 
 Condition PropertyRunEmitter::tryStore(const ValueContext& store)
 {
-    // The operation fills the site cache. Without one the single stores cost less, in time and in bytes.
     std::optional<Request> request = store->request();
+    if (!request)
+        return boolean(false);
     SiteCacheID siteCache = store->siteCache();
-    if (!request || !siteCache || !probesSiteCacheInline(store.shape()))
+    bool probesSiteCache = siteCache && probesSiteCacheInline(store.shape());
+    if (!probesSiteCache && !paysWithoutSiteCache(store))
         return boolean(false);
 
     PropertyRun run { in<CellPointer>(store->objectOperand()), { }, *request };
     for (ValueID stored : store->valuesOperands())
         run.values.append(in<Boxed>(stored));
     RELEASE_ASSERT(run.values.size() == store->keys().size());
+    if (!probesSiteCache)
+        return storeByOperation(store, run, pointerConstant(0), false);
 
     Pointer cache = siteCacheAddress(siteCache);
     Integer header(m_out.load64(m_out.address(m_heaps.AOTInstance_siteCaches, cache.value(), Slot::offsetOfStructureID())));
@@ -232,28 +194,40 @@ Condition PropertyRunEmitter::tryStore(const ValueContext& store)
     }, [&] {
         // A site that sees several Structures in turn takes the single stores between its refills.
         return either<Condition>(countMiss(cache), [&] {
-            return storeByOperation(store, run, cache);
+            return storeByOperation(store, run, cache, true);
         }, [&] {
             return boolean(false);
         });
     });
 }
 
+// A run of stores calls the operation to fill its site cache. Without one the single stores cost less, in time and in bytes.
+// A definition that runs for the first time misses every table, which costs many times its share of the operation. So a run of definitions calls the operation every time
+// in code that seldom runs: compact code, and a site that has no cache because nothing would read it again.
+// A site that lost its cache to the limit runs often, and there the single definitions hit the tables.
+bool PropertyRunEmitter::paysWithoutSiteCache(const ValueContext& store)
+{
+    if (!store->isDefinition())
+        return false;
+    return !probesSiteCacheInline(store.shape()) || !mayReadSiteCachesAgain(analyses(), store.block());
+}
+
 // What countSiteCacheMiss() does in a stub. The answer says whether the site is due for a refill.
 Condition PropertyRunEmitter::countMiss(Pointer cache)
 {
-    Pointer stateBias = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStateBias));
-    LValue state = m_out.add(stateBias.value(), m_out.lShr(cache.value(), m_out.constInt32(SiteCacheState::slotAddressShift)));
+    Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
+    LValue offset = m_out.bitAnd(m_out.lShr(cache.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
+    LValue state = m_out.add(states.value(), offset);
     TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
     Word32 count(m_out.load8ZeroExt32(missesLeft));
     m_out.store32As8(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
     return equal(count, word32(0));
 }
 
-Condition PropertyRunEmitter::storeByOperation(const ValueContext& store, const PropertyRun& run, Pointer cache)
+Condition PropertyRunEmitter::storeByOperation(const ValueContext& store, const PropertyRun& run, Pointer cache, bool isOnRarePath)
 {
     Pointer buffer = argumentBuffer(run.values.span());
-    return callOperation<Condition>(store, RuntimeOperation::TryPutProperties, { cache, boxCell(run.object), word32(run.request.value()), buffer }, { .isOnRarePath = true });
+    return callOperation<Condition>(store, RuntimeOperation::TryPutProperties, { cache, boxCell(run.object), word32(run.request.value()), buffer, word32(store->isDefinition()) }, { .isOnRarePath = isOnRarePath });
 }
 
 void PropertyRunEmitter::storeThroughSiteCache(const ValueContext& store, const PropertyRun& run, Pointer cache, Integer header, Word32 kind)

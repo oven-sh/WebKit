@@ -4,7 +4,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="c" declared={type=anything}}]
-layout L1 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]}
+layout L1 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType]}
 variable g0 name="kept" declared={type=undefined|L1} initialization=Undefined
 function f0 name="storeIntoOwnAllocation" parameters=[{type=anything}] results=[{type=undefined}] {
   b0(v0: anything):
@@ -21,7 +21,7 @@ function f1 name="storeIntoCapture" captures=[{type=env L0}] parameters=[{type=a
 # CHECK: f1 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Retains] in p0
 function f2 name="propSetOnOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     PropSet v1, v0 key="x"
     Return
 }
@@ -40,14 +40,14 @@ function f4 name="callsStoreIntoOwnAllocation" parameters=[{type=anything}] resu
 # CHECK: f4 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
 function f5 name="constructsOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = CallDirect v1, v0 function=f3
     Return
 }
 # CHECK: f5 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
 function f6 name="returnsOwnAllocation" parameters=[{type=number}] results=[{type=L1}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     PropSet v1, v0 key="x"
     Return v1
 }
@@ -67,7 +67,7 @@ function f8 name="fillsParameterArray" parameters=[{type=Array<number>}, {type=n
 # CHECK: f8 return: reads({{*}}) writes(AllocatorState, RuntimeState) throws collects throw: reads({{*}}) writes(AllocatorState, RuntimeState) throws collects p0: [{{*}}]{{*}} writes(Elements/1, ArrayStorage)
 function f9 name="storeAfterKeepingOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     PutModuleVariable v1 variable=g0
     PropSet v1, v0 key="x"
     Return
@@ -75,7 +75,7 @@ function f9 name="storeAfterKeepingOwnAllocation" parameters=[{type=number}] res
 # CHECK: f9 return: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) collects throw: none
 function f10 name="storeThroughVariable" parameters=[{type=number}] results=[{type=undefined}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     PutModuleVariable v1 variable=g0
     v3 = GetModuleVariable variable=g0
     v4 = TypeTest v3 testedType=L1
@@ -91,7 +91,7 @@ function f11 name="storeIntoAllocationOrParameter" parameters=[{type=L1}, {type=
   b0(v0: L1, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v3 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L1 fields=[0]
     Jump -> next b3(v3)
   b2():
     Jump -> next b3(v0)

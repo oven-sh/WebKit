@@ -31,8 +31,7 @@ static bool isZero(const LocationFlow& record)
 {
     return record.writers == WriterState::Unknown && record.stores == StoreCount::Unknown && record.storeNaming == StoreNaming::Unknown &&
         record.initialization == InitializationState::Unknown && record.reads == ReadState::Unknown && record.deferral == ClosureDeferral::Unknown &&
-        !record.deferredFunction && !record.isUnchangedDuringActivation && !record.mayKeepObservedObjectAlive &&
-        record.cause == UnprovenCause::Unknown && isZero(record.witness);
+        !record.deferredFunction && !record.isUnchangedDuringActivation && record.cause == UnprovenCause::Unknown && isZero(record.witness);
 }
 
 static bool isZero(const FieldFlow& record)
@@ -45,10 +44,10 @@ static bool isZero(const LayoutFlow& record)
 {
     return record.allocation == AllocationState::Unknown && record.baseState == BaseState::Unknown && !record.base && !record.baseClass &&
         record.members.isEmpty() && record.allocationClasses.isEmpty() && record.constructorOrders.isEmpty() &&
-        record.fieldCreation == FieldCreation::Unknown && record.thisLeak == ThisLeak::Unknown && record.observedUses.isEmpty() &&
-        record.cause == UnprovenCause::Unknown && isZero(record.witness) && record.impossibleMutations.isEmpty() &&
-        record.keys == KeyEnumeration::Unknown && record.addedKeys.isEmpty() && !record.addedKeysAreComplete && record.ownAccessors.isEmpty() &&
-        !record.ownAccessorsAreComplete;
+        record.fieldCreation == FieldCreation::Unknown && record.observedUses.isEmpty() && record.cause == UnprovenCause::Unknown &&
+        isZero(record.witness) && record.impossibleMutations.isEmpty() && record.keys == KeyEnumeration::Unknown && record.addedKeys.isEmpty() &&
+        !record.addedKeysAreComplete && !record.isReachedThroughUnknownReceivers && record.ownAccessors.isEmpty() &&
+        !record.ownAccessorsAreComplete && !record.closureEnvironmentField;
 }
 
 static bool isZero(const ClassFlow& record)
@@ -87,39 +86,10 @@ void parseFields(TextParser& parser, Wire::DeclaredType& wire)
 {
     if (parser.acceptField("type"_s))
         wire.type = parser.parseTypeWord();
-    if (parser.acceptField("written"_s))
-        wire.written = parser.parseTypeWord();
-    if (parser.acceptField("predicted"_s))
-        wire.predicted = parser.parseTypeWord();
     if (parser.acceptField("site"_s))
         wire.site = parser.parseIDWord(IDPrefix::TypeSite);
     if (parser.acceptField("flags"_s))
         wire.flags = parser.parseFlagWord<PositionFlags>();
-}
-
-void parseVariant(TextParser& parser, Wire::ClaimSource& wire)
-{
-    if (parser.acceptWord("None"_s)) {
-        wire.kind = 0;
-        return;
-    }
-    if (parser.acceptWord("Field"_s)) {
-        wire.kind = 1;
-        parser.parseRecord([&] {
-            if (parser.acceptField("key"_s))
-                wire.words[0] = parser.parsePropertyKeyWord();
-        });
-        return;
-    }
-    if (parser.acceptWord("Contents"_s)) {
-        wire.kind = 2;
-        parser.parseRecord([&] {
-            if (parser.acceptField("slot"_s))
-                wire.words[0] = static_cast<uint32_t>(parser.parseEnumerator<ContentsSlot>());
-        });
-        return;
-    }
-    parser.fail();
 }
 
 void parseFields(TextParser& parser, Wire::TailCast& wire, TailCast& engineFields)
@@ -491,12 +461,16 @@ void parseFields(TextParser& parser, Wire::Field& wire, Field& engineFields)
         parser.parseRecord([&] { parseFields(parser, wire.declared); });
     if (parser.acceptField("flags"_s))
         wire.flags = parser.parseFlagWord<FieldFlags>();
+    if (parser.acceptField("form"_s))
+        wire.form = parser.parseFlagWord<FieldForm>();
     if (parser.acceptField("originLayout"_s))
         wire.originLayout = parser.parseIDWord(IDPrefix::Layout);
     if (parser.acceptField("originField"_s))
         wire.originField = parser.parseUInt32();
     if (parser.acceptField("flow"_s))
         parser.parseRecord([&] { parseFields(parser, engineFields.flow); });
+    if (parser.acceptField("slotType"_s))
+        engineFields.slotType = TypeID(parser.parseTypeWord());
 }
 
 void parseFields(TextParser& parser, Wire::StaticField& wire)
@@ -519,8 +493,8 @@ void parseFields(TextParser& parser, Wire::Layout& wire, LayoutRecord& engineFie
         wire.module = parser.parseIDWord(IDPrefix::Module);
     if (parser.acceptField("position"_s))
         wire.position = parser.parseUInt32();
-    if (parser.acceptField("predictedBase"_s))
-        wire.predictedBase = parser.parseIDWord(IDPrefix::Layout);
+    if (parser.acceptField("base"_s))
+        wire.base = parser.parseIDWord(IDPrefix::Layout);
     if (parser.acceptField("constructor"_s))
         wire.constructor = parser.parseIDWord(IDPrefix::Function);
     if (parser.acceptField("fields"_s)) {
@@ -557,6 +531,14 @@ void parseFields(TextParser& parser, Wire::Layout& wire, LayoutRecord& engineFie
         wire.computedKeyCount = parser.parseUInt32();
     if (parser.acceptField("flags"_s))
         wire.flags = parser.parseFlagWord<LayoutFlags>();
+    if (parser.acceptField("declaredOrder"_s)) {
+        Vector<uint32_t> words;
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            words.append(parser.parseUInt32());
+        });
+        Wire::Span span = parser.builder().appendWords(words.span());
+        wire.declaredOrder = span;
+    }
     if (parser.acceptField("builtinLayout"_s))
         engineFields.builtinLayout = parser.parseBuiltinLayout();
     if (parser.acceptField("namespaceOf"_s))
@@ -567,6 +549,20 @@ void parseFields(TextParser& parser, Wire::Layout& wire, LayoutRecord& engineFie
         parser.parseRecord([&] { parseFields(parser, engineFields.flow); });
     if (parser.acceptField("classFlow"_s))
         parser.parseRecord([&] { parseFields(parser, engineFields.classFlow); });
+    if (parser.acceptField("innerObjects"_s)) {
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            InnerObject element;
+            parser.parseRecord([&] { parseFields(parser, element); });
+            engineFields.innerObjects.append(WTF::move(element));
+        });
+    }
+    if (parser.acceptField("flattenedObjects"_s)) {
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            FlattenedObject element;
+            parser.parseRecord([&] { parseFields(parser, element); });
+            engineFields.flattenedObjects.append(WTF::move(element));
+        });
+    }
 }
 
 void parseFields(TextParser& parser, Wire::Variable& wire, Variable& engineFields)
@@ -595,6 +591,104 @@ void parseFields(TextParser& parser, Wire::SourceRange& wire)
         wire.start = parser.parseUInt32();
     if (parser.acceptField("end"_s))
         wire.end = parser.parseUInt32();
+}
+
+void parseFields(TextParser& parser, Wire::RelationSubject& wire)
+{
+    if (parser.acceptField("kind"_s))
+        wire.kind = static_cast<uint32_t>(parser.parseEnumerator<RelationSubjectKind>());
+    if (parser.acceptField("index"_s))
+        wire.index = parser.parseUInt32();
+    if (parser.acceptField("source"_s))
+        wire.source = parser.parseUInt32();
+    if (parser.acceptField("key"_s))
+        wire.key = parser.parsePropertyKeyWord();
+    if (parser.acceptField("fate"_s))
+        wire.fate = parser.parseFlagWord<ValueFate>();
+    if (parser.acceptField("results"_s))
+        wire.results = parser.parseUInt32();
+}
+
+void parseFields(TextParser& parser, Wire::StoredInto& wire)
+{
+    if (parser.acceptField("source"_s))
+        wire.source = parser.parseUInt32();
+    if (parser.acceptField("target"_s))
+        wire.target = parser.parseUInt32();
+    if (parser.acceptField("key"_s))
+        wire.key = parser.parsePropertyKeyWord();
+    if (parser.acceptField("creationOperand"_s))
+        wire.creationOperand = parser.parseUInt32();
+    if (parser.acceptField("isOnEveryPath"_s))
+        wire.isOnEveryPath = static_cast<uint32_t>(parser.parseBool());
+    if (parser.acceptField("isBeforeTargetLeaves"_s))
+        wire.isBeforeTargetLeaves = static_cast<uint32_t>(parser.parseBool());
+}
+
+void parseFields(TextParser& parser, Wire::HandedTo& wire)
+{
+    if (parser.acceptField("source"_s))
+        wire.source = parser.parseUInt32();
+    if (parser.acceptField("call"_s))
+        wire.call = parser.parseUInt32();
+    if (parser.acceptField("argument"_s))
+        wire.argument = parser.parseUInt32();
+}
+
+void parseFields(TextParser& parser, Wire::OperandOf& wire)
+{
+    if (parser.acceptField("source"_s))
+        wire.source = parser.parseUInt32();
+    if (parser.acceptField("user"_s))
+        wire.user = parser.parseUInt32();
+    if (parser.acceptField("position"_s))
+        wire.position = parser.parseUInt32();
+}
+
+void parseFields(TextParser& parser, Wire::FunctionRelations& wire)
+{
+    if (parser.acceptField("subjects"_s)) {
+        Vector<Wire::RelationSubject> elements;
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            Wire::RelationSubject element;
+            parser.parseRecord([&] { parseFields(parser, element); });
+            elements.append(element);
+        });
+        Wire::Span span = parser.builder().appendRecords<Wire::RelationSubject>(elements.span());
+        wire.subjects = span;
+    }
+    if (parser.acceptField("stores"_s)) {
+        Vector<Wire::StoredInto> elements;
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            Wire::StoredInto element;
+            parser.parseRecord([&] { parseFields(parser, element); });
+            elements.append(element);
+        });
+        Wire::Span span = parser.builder().appendRecords<Wire::StoredInto>(elements.span());
+        wire.stores = span;
+    }
+    if (parser.acceptField("handed"_s)) {
+        Vector<Wire::HandedTo> elements;
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            Wire::HandedTo element;
+            parser.parseRecord([&] { parseFields(parser, element); });
+            elements.append(element);
+        });
+        Wire::Span span = parser.builder().appendRecords<Wire::HandedTo>(elements.span());
+        wire.handed = span;
+    }
+    if (parser.acceptField("operands"_s)) {
+        Vector<Wire::OperandOf> elements;
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            Wire::OperandOf element;
+            parser.parseRecord([&] { parseFields(parser, element); });
+            elements.append(element);
+        });
+        Wire::Span span = parser.builder().appendRecords<Wire::OperandOf>(elements.span());
+        wire.operands = span;
+    }
+    if (parser.acceptField("resultsFullyListed"_s))
+        wire.resultsFullyListed = parser.parseUInt32();
 }
 
 void parseFields(TextParser& parser, Wire::Function& wire, FunctionRecord& engineFields)
@@ -657,6 +751,16 @@ void parseFields(TextParser& parser, Wire::Function& wire, FunctionRecord& engin
         Wire::Span span = parser.builder().appendWords(words.span());
         wire.functionTypes = span;
     }
+    if (parser.acceptField("builtinMembers"_s)) {
+        Vector<uint32_t> words;
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            words.append(parser.parseBuiltin().index());
+        });
+        Wire::Span span = parser.builder().appendWords(words.span());
+        wire.builtinMembers = span;
+    }
+    if (parser.acceptField("relations"_s))
+        parser.parseRecord([&] { parseFields(parser, wire.relations); });
     if (parser.acceptField("capabilities"_s))
         engineFields.capabilities = OptionSet<FunctionCapabilities>::fromRaw(static_cast<OptionSet<FunctionCapabilities>::StorageType>(parser.parseFlagWord<FunctionCapabilities>()));
     if (parser.acceptField("derivation"_s))
@@ -720,8 +824,8 @@ void parseFields(TextParser& parser, Wire::ColumnAdjustment& wire)
         wire.offset = parser.parseUInt32();
     if (parser.acceptField("line"_s))
         wire.line = parser.parseUInt32();
-    if (parser.acceptField("excessBytes"_s))
-        wire.excessBytes = parser.parseUInt32();
+    if (parser.acceptField("column"_s))
+        wire.column = parser.parseUInt32();
 }
 
 void parseFields(TextParser& parser, Wire::SourcePositions& wire)
@@ -754,6 +858,10 @@ void parseFields(TextParser& parser, Wire::ModuleRequest& wire)
         wire.phase = static_cast<uint32_t>(parser.parseEnumerator<ImportPhase>());
     if (parser.acceptField("isDynamicStarExport"_s))
         wire.isDynamicStarExport = static_cast<uint32_t>(parser.parseBool());
+    if (parser.acceptField("kind"_s))
+        wire.kind = static_cast<uint32_t>(parser.parseEnumerator<ModuleRequestKind>());
+    if (parser.acceptField("completes"_s))
+        wire.completes = static_cast<uint32_t>(parser.parseBool());
 }
 
 void parseFields(TextParser& parser, Wire::ModuleExport& wire)
@@ -800,6 +908,8 @@ void parseFields(TextParser& parser, Wire::ModuleFailure& wire)
         wire.importer = parser.parseIDWord(IDPrefix::Module);
     if (parser.acceptField("specifier"_s))
         wire.specifier = parser.parseStringWord();
+    if (parser.acceptField("exporter"_s))
+        wire.exporter = parser.parseIDWord(IDPrefix::Module);
 }
 
 void parseFields(TextParser& parser, Wire::Module& wire, Module& engineFields)
@@ -824,6 +934,8 @@ void parseFields(TextParser& parser, Wire::Module& wire, Module& engineFields)
         wire.referrer = parser.parseIDWord(IDPrefix::Module);
     if (parser.acceptField("body"_s))
         wire.body = parser.parseIDWord(IDPrefix::Function);
+    if (parser.acceptField("exportsVariable"_s))
+        wire.exportsVariable = parser.parseIDWord(IDPrefix::Variable);
     if (parser.acceptField("data"_s))
         wire.data = parser.parseIDWord(IDPrefix::Data);
     if (parser.acceptField("requests"_s)) {
@@ -1072,8 +1184,6 @@ void parseFields(TextParser& parser, LocationFlow& record)
         record.deferredFunction = FunctionID(parser.parseIDWord(IDPrefix::Function));
     if (parser.acceptField("isUnchangedDuringActivation"_s))
         record.isUnchangedDuringActivation = parser.parseBool();
-    if (parser.acceptField("mayKeepObservedObjectAlive"_s))
-        record.mayKeepObservedObjectAlive = parser.parseBool();
     if (parser.acceptField("cause"_s))
         record.cause = parser.parseEnumerator<UnprovenCause>();
     if (parser.acceptField("witness"_s))
@@ -1090,6 +1200,40 @@ void parseFields(TextParser& parser, FieldFlow& record)
         record.prototypeName = parser.parseEnumerator<PrototypeNameState>();
     if (parser.acceptField("stability"_s))
         record.stability = OptionSet<FieldStability>::fromRaw(static_cast<OptionSet<FieldStability>::StorageType>(parser.parseFlagWord<FieldStability>()));
+}
+
+void parseFields(TextParser& parser, InnerObject& record)
+{
+    if (parser.acceptField("field"_s))
+        record.field = parser.parseUInt32();
+    if (parser.acceptField("layout"_s))
+        record.layout = LayoutID(parser.parseIDWord(IDPrefix::Layout));
+    if (parser.acceptField("arrayCapacity"_s))
+        record.arrayCapacity = parser.parseUInt32();
+    if (parser.acceptField("outerFields"_s)) {
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            record.outerFields.append(parser.parseUInt32());
+        });
+    }
+    if (parser.acceptField("outerAllocationClass"_s))
+        record.outerAllocationClass = AllocationClassID(parser.parseUInt32());
+    if (parser.acceptField("isAlwaysInPlace"_s))
+        record.isAlwaysInPlace = parser.parseBool();
+}
+
+void parseFields(TextParser& parser, FlattenedObject& record)
+{
+    if (parser.acceptField("field"_s))
+        record.field = parser.parseUInt32();
+    if (parser.acceptField("layout"_s))
+        record.layout = LayoutID(parser.parseIDWord(IDPrefix::Layout));
+    if (parser.acceptField("fields"_s)) {
+        parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+            record.fields.append(parser.parseUInt32());
+        });
+    }
+    if (parser.acceptField("allocationClass"_s))
+        record.allocationClass = AllocationClassID(parser.parseUInt32());
 }
 
 void parseFields(TextParser& parser, FieldOrder& record)
@@ -1148,8 +1292,6 @@ void parseFields(TextParser& parser, LayoutFlow& record)
     }
     if (parser.acceptField("fieldCreation"_s))
         record.fieldCreation = parser.parseEnumerator<FieldCreation>();
-    if (parser.acceptField("thisLeak"_s))
-        record.thisLeak = parser.parseEnumerator<ThisLeak>();
     if (parser.acceptField("observedUses"_s))
         record.observedUses = OptionSet<ObservedUse>::fromRaw(static_cast<OptionSet<ObservedUse>::StorageType>(parser.parseFlagWord<ObservedUse>()));
     if (parser.acceptField("cause"_s))
@@ -1167,6 +1309,8 @@ void parseFields(TextParser& parser, LayoutFlow& record)
     }
     if (parser.acceptField("addedKeysAreComplete"_s))
         record.addedKeysAreComplete = parser.parseBool();
+    if (parser.acceptField("isReachedThroughUnknownReceivers"_s))
+        record.isReachedThroughUnknownReceivers = parser.parseBool();
     if (parser.acceptField("ownAccessors"_s)) {
         parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
             ClassMember element;
@@ -1176,6 +1320,8 @@ void parseFields(TextParser& parser, LayoutFlow& record)
     }
     if (parser.acceptField("ownAccessorsAreComplete"_s))
         record.ownAccessorsAreComplete = parser.parseBool();
+    if (parser.acceptField("closureEnvironmentField"_s))
+        record.closureEnvironmentField = parser.parseUInt32();
 }
 
 void parseFields(TextParser& parser, ClassFlow& record)
@@ -1248,16 +1394,21 @@ void parseVariant(TextParser& parser, CreatorRecord& variant)
         parser.parseRecord([&] {
             if (parser.acceptField("target"_s))
                 value.target = FunctionID(parser.parseIDWord(IDPrefix::Function));
-            if (parser.acceptField("group"_s))
-                value.group = parser.parseCalleeSet();
             if (parser.acceptField("arguments"_s))
                 value.arguments = parser.parseEnumerator<ArgumentPassing>();
             if (parser.acceptField("takesNewTarget"_s))
                 value.takesNewTarget = parser.parseBool();
             if (parser.acceptField("constructEntrypoint"_s))
                 value.constructEntrypoint = FunctionID(parser.parseIDWord(IDPrefix::Function));
-            if (parser.acceptField("groupEntrypoint"_s))
-                value.groupEntrypoint = FunctionID(parser.parseIDWord(IDPrefix::Function));
+        });
+        variant = WTF::move(value);
+        return;
+    }
+    if (parser.acceptWord("TableLookup"_s)) {
+        CreatorRecord::TableLookup value;
+        parser.parseRecord([&] {
+            if (parser.acceptField("key"_s))
+                value.key = PropertyKeyID(parser.parsePropertyKeyWord());
         });
         variant = WTF::move(value);
         return;
@@ -1286,6 +1437,8 @@ void parseVariant(TextParser& parser, CreatorRecord& variant)
                 value.promiseType = TypeID(parser.parseTypeWord());
             if (parser.acceptField("promiseParameter"_s))
                 value.promiseParameter = parser.parseUInt32();
+            if (parser.acceptField("worker"_s))
+                value.worker = FunctionID(parser.parseIDWord(IDPrefix::Function));
         });
         variant = WTF::move(value);
         return;
@@ -1338,13 +1491,13 @@ void parseVariant(TextParser& parser, CreatorRecord& variant)
         variant = WTF::move(value);
         return;
     }
-    if (parser.acceptWord("Continuation"_s)) {
-        CreatorRecord::Continuation value;
+    if (parser.acceptWord("EntryChecks"_s)) {
+        CreatorRecord::EntryChecks value;
         parser.parseRecord([&] {
-            if (parser.acceptField("origin"_s))
-                value.origin = FunctionID(parser.parseIDWord(IDPrefix::Function));
-            if (parser.acceptField("index"_s))
-                value.index = parser.parseUInt32();
+            if (parser.acceptField("body"_s))
+                value.body = FunctionID(parser.parseIDWord(IDPrefix::Function));
+            if (parser.acceptField("fallback"_s))
+                value.fallback = FunctionID(parser.parseIDWord(IDPrefix::Function));
         });
         variant = WTF::move(value);
         return;
@@ -1432,14 +1585,10 @@ void parseFields(TextParser& parser, FunctionFlow& record)
         record.executions = parser.parseEnumerator<ExecutionCount>();
     if (parser.acceptField("closureUse"_s))
         record.closureUse = parser.parseEnumerator<ClosureUse>();
-    if (parser.acceptField("genericVersion"_s))
-        record.genericVersion = FunctionID(parser.parseIDWord(IDPrefix::Function));
     if (parser.acceptField("cause"_s))
         record.cause = parser.parseEnumerator<UnprovenCause>();
     if (parser.acceptField("witness"_s))
         parser.parseRecord([&] { parseFields(parser, record.witness); });
-    if (parser.acceptField("resultCheck"_s))
-        record.resultCheck = parser.parseEnumerator<ResultCheck>();
 }
 
 void parseFields(TextParser& parser, ModuleFlow& record)
@@ -1469,6 +1618,8 @@ void parseFields(TextParser& parser, LayoutSet& record)
     }
     if (parser.acceptField("isComplete"_s))
         record.isComplete = parser.parseBool();
+    if (parser.acceptField("hasMembersWithoutLayout"_s))
+        record.hasMembersWithoutLayout = parser.parseBool();
 }
 
 void parseFields(TextParser& parser, CalleeSet& record)
@@ -1519,8 +1670,6 @@ void parseFields(TextParser& parser, AllocationClass& record)
         record.builtinClass = parser.parseBuiltinClass();
     if (parser.acceptField("closureFunction"_s))
         record.closureFunction = FunctionID(parser.parseIDWord(IDPrefix::Function));
-    if (parser.acceptField("pristine"_s))
-        record.pristine = OptionSet<PristineAspects>::fromRaw(static_cast<OptionSet<PristineAspects>::StorageType>(parser.parseFlagWord<PristineAspects>()));
     if (parser.acceptField("impossibleMutations"_s))
         record.impossibleMutations = OptionSet<ObjectMutation>::fromRaw(static_cast<OptionSet<ObjectMutation>::StorageType>(parser.parseFlagWord<ObjectMutation>()));
     if (parser.acceptField("keys"_s))
@@ -1534,6 +1683,8 @@ void parseFields(TextParser& parser, AllocationClass& record)
     }
     if (parser.acceptField("addedKeysAreComplete"_s))
         record.addedKeysAreComplete = parser.parseBool();
+    if (parser.acceptField("isReachedThroughUnknownReceivers"_s))
+        record.isReachedThroughUnknownReceivers = parser.parseBool();
     if (parser.acceptField("cause"_s))
         record.cause = parser.parseEnumerator<UnprovenCause>();
     if (parser.acceptField("witness"_s))
@@ -1560,6 +1711,18 @@ void parseFields(TextParser& parser, Origin& record)
         record.position = parser.parseUInt32();
     if (parser.acceptField("inlineFrame"_s))
         record.inlineFrame = parser.parseUInt32();
+}
+
+void parseFields(TextParser& parser, MemberConditionRecord& record)
+{
+    if (parser.acceptField("kind"_s))
+        record.kind = parser.parseEnumerator<MemberConditionKind>();
+    if (parser.acceptField("layout"_s))
+        record.layout = LayoutID(parser.parseIDWord(IDPrefix::Layout));
+    if (parser.acceptField("side"_s))
+        record.side = parser.parseEnumerator<ClassSide>();
+    if (parser.acceptField("key"_s))
+        record.key = PropertyKeyID(parser.parsePropertyKeyWord());
 }
 
 void parseFields(TextParser& parser, PlacedKey& record)
@@ -1592,9 +1755,10 @@ void applyEngineFields(const PatchContext& context, const TailCast& parsed, Tail
 
 void applyEngineFields(const PatchContext& context, const Field& parsed, Field& target)
 {
-    UNUSED_PARAM(context);
     if (!isZero(parsed.flow))
         target.flow = parsed.flow;
+    if (parsed.slotType)
+        target.slotType = context.type(parsed.slotType.index());
 }
 
 void applyEngineFields(const PatchContext& context, const LayoutRecord& parsed, LayoutRecord& target)
@@ -1611,6 +1775,10 @@ void applyEngineFields(const PatchContext& context, const LayoutRecord& parsed, 
         target.flow = parsed.flow;
     if (!isZero(parsed.classFlow))
         target.classFlow = parsed.classFlow;
+    if (!parsed.innerObjects.isEmpty())
+        target.innerObjects = parsed.innerObjects;
+    if (!parsed.flattenedObjects.isEmpty())
+        target.flattenedObjects = parsed.flattenedObjects;
 }
 
 void applyEngineFields(const PatchContext& context, const Variable& parsed, Variable& target)

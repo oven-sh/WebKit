@@ -56,14 +56,15 @@ static size_t balance;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlock);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlockHandle);
 
-MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)
+MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, IsFirstInDirectory isFirstInDirectory)
 {
     if (computeBalance) {
         balance++;
         if (!(balance % 10))
             dataLog("MarkedBlock Balance: ", balance, "\n");
     }
-    void* blockSpace = alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
+    // The first block of a directory is often its only one and is seldom filled.
+    void* blockSpace = isFirstInDirectory == IsFirstInDirectory::Yes ? alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize) : alignedMemoryAllocator->tryAllocateBlockToFill();
     if (!blockSpace)
         return nullptr;
     if (scribbleFreeCells())
@@ -168,6 +169,39 @@ static void clearBits(std::span<Word> words, size_t start, size_t end)
     words[lastWord] &= preservedInLastWord;
 }
 
+void MarkedBlock::Handle::rebuildNewlyAllocatedByWord(const FreeList& freeList)
+{
+    auto newlyAllocated = blockHeader().m_newlyAllocated.storage();
+    constexpr size_t wordSize = sizeof(newlyAllocated[0]) * 8;
+    static_assert(!(endAtom % wordSize));
+    blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
+    if (m_atomsPerCell < wordSize)
+        fillWithEachNthBit(newlyAllocated, m_atomsPerCell, m_startAtom);
+    else {
+        blockHeader().m_newlyAllocated.clearAll();
+        blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    }
+
+    ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
+    bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+    std::optional<WTF::BitSet<atomsPerBlock>> expected;
+    if (ASSERT_ENABLED || Options::verifyGC()) [[unlikely]] {
+        expected.emplace();
+        expected->setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    }
+    freeList.forEachInterval(
+        [&](char* intervalStart, char* intervalEnd) {
+            if (needsZapping) {
+                for (char* cell = intervalStart; cell < intervalEnd; cell += freeList.cellSize())
+                    std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
+            }
+            clearBits(newlyAllocated, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+            if (expected) [[unlikely]]
+                expected->clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+        });
+    RELEASE_ASSERT(!expected || *expected == blockHeader().m_newlyAllocated);
+}
+
 void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
 {
     Locker locker { blockHeader().m_lock };
@@ -208,24 +242,19 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 
     
-    auto newlyAllocated = blockHeader().m_newlyAllocated.storage();
-    static_assert(!(endAtom % (sizeof(newlyAllocated[0]) * 8)));
-    bool usesWords = Options::useAOT();
-    bool fillsByWords = usesWords && m_atomsPerCell < sizeof(newlyAllocated[0]) * 8;
-    blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
-    if (fillsByWords)
-        fillWithEachNthBit(newlyAllocated, m_atomsPerCell, m_startAtom);
-    else {
-        blockHeader().m_newlyAllocated.clearAll();
-        blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    if (Options::useAOT()) {
+        rebuildNewlyAllocatedByWord(freeList);
+        m_isFreeListed = false;
+        directory()->didFinishUsingBlock(this);
+        return;
     }
+
+    blockHeader().m_newlyAllocated.clearAll();
+    blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
+    blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
 
     ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
     bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
-    bool validatesBits = ASSERT_ENABLED || Options::verifyGC();
-    WTF::BitSet<atomsPerBlock> expected;
-    if (validatesBits) [[unlikely]]
-        expected.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
     freeList.forEachInterval(
         [&](char* intervalStart, char* intervalEnd) {
             if (needsZapping || MarkedBlockInternal::verbose) {
@@ -236,14 +265,8 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
                         std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
                 }
             }
-            if (usesWords)
-                clearBits(newlyAllocated, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
-            else
-                blockHeader().m_newlyAllocated.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
-            if (validatesBits) [[unlikely]]
-                expected.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+            blockHeader().m_newlyAllocated.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
         });
-    RELEASE_ASSERT(!validatesBits || expected == blockHeader().m_newlyAllocated);
     
     m_isFreeListed = false;
     directory()->didFinishUsingBlock(this);
@@ -386,7 +409,7 @@ void MarkedBlock::resetStaleMarks(HeapVersion markingVersion, HeapCell* cell)
             // stopAllocating() rebuilt m_newlyAllocated during this collection by setting
             // every cell not on the free list. Survivors are never on a free list, so
             // m_newlyAllocated already holds them.
-            ASSERT(header().m_newlyAllocated.subsumes(header().m_marks));
+            ASSERT(hasInnerCells() || header().m_newlyAllocated.subsumes(header().m_marks));
             header().m_marks.clearAll();
         } else {
             // m_newlyAllocated is stale, so stopAllocating() has not run on the block
@@ -473,7 +496,21 @@ void MarkedBlock::Handle::didConsumeFreeList()
 
 size_t MarkedBlock::markCount()
 {
-    return areMarksStale() ? 0 : header().m_marks.count();
+    if (areMarksStale())
+        return 0;
+    if (!hasInnerCells()) [[likely]]
+        return header().m_marks.count();
+    WTF::BitSet<atomsPerBlock> marks = header().m_marks;
+    clearBitsOfInnerCells(marks);
+    return marks.count();
+}
+
+void MarkedBlock::clearBitsOfInnerCells(WTF::BitSet<atomsPerBlock>& bits) const
+{
+    ASSERT(hasInnerCells());
+    WTF::BitSet<atomsPerBlock> outerCells;
+    outerCells.setEachNthBit(handle().m_atomsPerCell, handle().m_startAtom, endAtom);
+    bits.filter(outerCells);
 }
 
 void MarkedBlock::clearHasAnyMarked()
@@ -509,7 +546,8 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     
     size_t cellSize = directory->cellSize();
     m_atomsPerCell = (cellSize + atomSize - 1) / atomSize;
-    blockHeader().m_cellSize = m_atomsPerCell * atomSize;
+    blockHeader().m_cellSize = static_cast<uint32_t>(m_atomsPerCell * atomSize);
+    blockHeader().m_hasInnerCells = directory->attributes().hasInnerCells;
 
     // Discount the payload atoms at the front so that m_startAtom can start on an atom such that
     // m_atomsPerCell increments from m_startAtom will get us exactly to endAtom when we have filled
@@ -579,7 +617,10 @@ void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollecti
     // swept first, so dead Structures must stay readable; and at shutdown everything is swept as dead in arbitrary order.
     bool isStructureSpace = false;
 #define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == &heap()->name;
-    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+    FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+#undef CHECK_STRUCTURE_SPACE
+#define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == heap()->name<SubspaceAccess::Concurrently>();
+    FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
 #undef CHECK_STRUCTURE_SPACE
     if (isStructureSpace || heap()->isShuttingDown())
         return;
@@ -708,7 +749,7 @@ void MarkedBlock::Handle::recommitPages()
 #if ASAN_ENABLED
 void MarkedBlock::Handle::poisonDeadCells()
 {
-    if (m_isFreeListed)
+    if (!Options::useAOT() || m_isFreeListed)
         return;
     size_t size = cellSize();
     char* begin = nullptr;
@@ -733,7 +774,7 @@ void MarkedBlock::Handle::poisonDeadCells()
 void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
-    if (!m_directory->isUnswept(this))
+    if (!Options::useAOT() || !m_directory->isUnswept(this))
         return;
     bool hasNewlyDeadCells = false;
     forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
@@ -752,9 +793,27 @@ void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
 
 void MarkedBlock::Handle::unpoisonCells()
 {
-    __asan_unpoison_memory_region(&block(), blockSize);
+    if (Options::useAOT())
+        __asan_unpoison_memory_region(&block(), blockSize);
 }
 #endif
+
+void MarkedBlock::Handle::validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>> intervals)
+{
+    size_t intervalIndex = 0;
+    unsigned intervalBegin = m_startAtom;
+    auto handleLiveCell = [&](unsigned index) {
+        if (intervalBegin != index) {
+            RELEASE_ASSERT(intervalIndex < intervals.size());
+            auto [begin, length] = intervals[intervalIndex++];
+            RELEASE_ASSERT(begin == intervalBegin && length == index - intervalBegin, begin, length, intervalBegin, index);
+        }
+        intervalBegin = index + m_atomsPerCell;
+    };
+    live.forEachSetBit(handleLiveCell);
+    handleLiveCell(endAtom);
+    RELEASE_ASSERT(intervalIndex == intervals.size());
+}
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {

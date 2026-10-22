@@ -6,8 +6,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
 variable g0 name="count" declared={type=number} initialization=Undefined
-runtimefunction id=66 function=f0
-function f0 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=66 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+runtimefunction id=65 function=f0
+function f0 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = Integer integer=1
     PutModuleVariable v2 variable=g0
@@ -30,7 +30,7 @@ function f2 name="protocolsAndCallbacks" parameters=[{type=L0}, {type=object}, {
 }
 # CHECK-LABEL: function f2
 # CHECK-NEXT: v6 CallBuiltin: none
-# CHECK-NEXT: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v8 CallBuiltin: {{*}}callsUnknownCode
 # CHECK-NEXT: v9 CallBuiltin: reads(TypedArrayStorage, TypedArrayElements, StringStorage, AllocatorState, RuntimeState) writes(ModuleVariables/1, StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v10 CallBuiltin: {{*}}callsUnknownCode
@@ -53,7 +53,7 @@ function f4 name="otherOverloads" parameters=[{type=Array<number, pristine[Stora
     Return
 }
 # CHECK-LABEL: function f4
-# CHECK-NEXT: v3 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v3 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v4 CallBuiltin: {{*}}callsUnknownCode
 # CHECK-NEXT: v5 CallBuiltin: {{*}}callsUnknownCode
 function f5 name="nullishReceiver" parameters=[{type=object}, {type=undefined|object}, {type=null|object}] results=[{type=undefined}] {

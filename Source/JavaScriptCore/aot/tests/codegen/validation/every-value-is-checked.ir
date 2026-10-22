@@ -12,6 +12,12 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Parameter
+typesite w5 module=m0 position=60 kind=Parameter
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L1 kind=Environment fields=[{key="total" declared={type=anything}}]
 variable g0 module=m0 declared={type=undefined|L0} initialization=Undefined
@@ -21,7 +27,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Double number=1.5
     v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = ClaimDeclared v1 declared={type=undefined|L0}
+    v2 = Convert v1 declared={type=undefined|L0}
     PutModuleVariable v2 variable=g0
     v4 = NewClosure function=f1
     v5 = NewClosure function=f2
@@ -34,7 +40,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PutModuleVariable v11 variable=g1
     Return v10
 }
-function f1 name="everyRepresentation" parameters=[{type=anything}, {type=number}, {type=boolean}, {type=int}, {type=undefined|number}, {type=undefined|int}, {type=string}] results=[{type=anything}] {
+function f1 name="everyRepresentation" parameters=[{type=anything}, {type=number site=w0}, {type=boolean site=w1}, {type=int site=w2}, {type=undefined|number site=w3}, {type=undefined|int site=w4}, {type=string site=w5}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: boolean, v3: int, v4: undefined|number, v5: undefined|int, v6: string):
     v7 = Add v1, v1
     v8 = TypeTest v0 testedType=undefined|null
@@ -54,7 +60,10 @@ function f2 name="provenLayout" results=[{type=anything}] {
     Branch v1 -> taken b2(), notTaken b1(| 0)
   b1(v2):
     v3 = PropGet v2 key="x" @30
-    Return v3
+    v4 = Double number=2.5
+    v5 = CallDirect v4 function=f6 [isNeverInlined]
+    v6 = Add v3, v5
+    Return v6
   b2():
     Return
 }
@@ -98,4 +107,9 @@ function f5 name="provenContents" results=[{type=anything}] {
     v8 = CheckInitialized v7 name="list"
     v9 = ElemGet v8, v2
     Return v9
+}
+function f6 name="coveredByCaller" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Pow v0, v0
+    Return v1
 }

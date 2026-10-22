@@ -1,6 +1,6 @@
 # A run that creates more fields than one word has slot keys for still has one test of the order word, and tells the run time about an object in another state a word at a time
 # FORM: Selected
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=EverythingIsHot
 # RUN: generate-code calls
 # RUN(COMPACT): generate-code calls
 
@@ -32,12 +32,14 @@ function f4 name="nine-fields-on-a-rare-path" parameters=[{type=L0}, {type=numbe
     Return
 }
 # CHECK: f1: size=
-# CHECK-NEXT: stub DidCreateField.Run x1
+# CHECK-NEXT: stub DidCreateFieldAtPlace.Run x1
 # CHECK-NEXT: f2: size=
 # CHECK-NEXT: stub DidCreateField.Run x2
+# CHECK-NEXT: stub RememberKeyOrderStep x1
 # CHECK-NEXT: f3: size=
 # CHECK-NEXT: stub DidCreateField.Run x3
+# CHECK-NEXT: stub RememberKeyOrderStep x1
 # CHECK-NOT: DidCreateField.One
 # COMPACT: f4: size=
-# COMPACT-NEXT: operation operationAOTDidCreateFieldsAt x3
-# COMPACT-NOT: stub DidCreateField
+# COMPACT-NEXT: stub DidCreateField.Run x3
+# COMPACT-NOT: operationAOTDidCreateFieldsAt

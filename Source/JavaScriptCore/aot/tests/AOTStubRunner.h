@@ -31,6 +31,14 @@
 #include <memory>
 #include <wtf/HashFunctions.h>
 
+#if CPU(X86_64) && OS(LINUX)
+#include <signal.h>
+#include <ucontext.h>
+#define AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS 1
+#else
+#define AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS 0
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
@@ -112,6 +120,11 @@ struct StubEnvironment {
     uint64_t resultOfRecordedOperation;
     CallRegisterValues call;
     LandedCall landedCall;
+    // None is filled, so none answers.
+    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
+    std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
+    // What a small StructureID leads to unless a test has Structures of its own: a Structure that has seen no name and says nothing about a prototype, so whoever asks it learns nothing.
+    std::array<uint8_t, 0x2000> emptyStructures;
 };
 static_assert(OBJECT_OFFSETOF(StubEnvironment, instance) == sizeof(InstancePrefix));
 static_assert(OBJECT_OFFSETOF(StubEnvironment, stringCells) == OBJECT_OFFSETOF(StubEnvironment, instance) + InstanceLayout::offsetOfStringCells && sizeof(uint32_t) == InstanceLayout::sizeOfStringCell);
@@ -122,6 +135,8 @@ struct StubRun {
     unsigned numberOfRecordedCalls;
     RecordedArguments recordedArguments;
     LandedCall landedCall;
+    // How many instructions of stubs the run executed, where the runner was told to count and can: an exact number, the same at every run. What stubs call is not counted.
+    std::optional<uint32_t> instructionsInStubs { };
 };
 
 class StubRunner {
@@ -131,6 +146,7 @@ public:
     static constexpr uint64_t resultOfEngineCallee = 0x2222;
 
     StubRunner();
+    explicit StubRunner(const StubOptions&);
     StubRunner(StubPolicy&&, std::span<const StubKey> keysWithBoundImmediates);
 
     StubRun run(StubKey, std::initializer_list<uint64_t> operands, std::optional<uint32_t> immediate = std::nullopt);
@@ -146,8 +162,14 @@ public:
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
+    // Each run begins as if no pair had missed before, unless a test is about the count.
+    void setCountsMissesAcrossRuns(bool counts) { m_countsMissesAcrossRuns = counts; }
+    // The processor stops behind each instruction while a run lasts. Only where AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS.
+    void setCountsInstructions(bool counts) { m_countsInstructions = counts; }
 
 private:
+    StubRunner(const StubOptions&, StubPolicy&&, std::span<const StubKey> keysWithBoundImmediates);
+
     static constexpr uint64_t distanceOfCompiledFunction = 64;
 
     static UGPRPair JIT_OPERATION_ATTRIBUTES countOperationCall(Instance*);
@@ -167,7 +189,48 @@ private:
     ImageTests::ExecutableCopy m_code;
     MacroAssemblerCodeRef<JSEntryPtrTag> m_landings;
     std::unique_ptr<StubEnvironment> m_environment;
+    bool m_countsMissesAcrossRuns { false };
+    bool m_countsInstructions { false };
 };
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+class InstructionCounter {
+    WTF_MAKE_NONCOPYABLE(InstructionCounter);
+public:
+    InstructionCounter(const uint8_t* start, size_t size)
+    {
+        s_start = std::bit_cast<uintptr_t>(start);
+        s_size = size;
+        s_count = 0;
+        struct sigaction action { };
+        action.sa_sigaction = didStep;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+        AOT_TEST_CHECK(!sigaction(SIGTRAP, &action, &m_previousAction));
+    }
+
+    ~InstructionCounter() { AOT_TEST_CHECK(!sigaction(SIGTRAP, &m_previousAction, nullptr)); }
+
+    // The trap flag. The red zone of the caller lies below the stack pointer.
+    static ALWAYS_INLINE void start() { asm volatile("subq $128, %%rsp\n\tpushfq\n\torq $0x100, (%%rsp)\n\tpopfq\n\taddq $128, %%rsp" ::: "memory", "cc"); }
+    static ALWAYS_INLINE void stop() { asm volatile("subq $128, %%rsp\n\tpushfq\n\tandq $~0x100, (%%rsp)\n\tpopfq\n\taddq $128, %%rsp" ::: "memory", "cc"); }
+    static uint32_t count() { return s_count; }
+
+private:
+    // The context holds the instruction that comes next, so each instruction of a stub is seen once, before it runs.
+    static void didStep(int, siginfo_t*, void* context)
+    {
+        uintptr_t next = static_cast<uintptr_t>(static_cast<ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP]);
+        if (next - s_start < s_size)
+            ++s_count;
+    }
+
+    static inline uintptr_t s_start;
+    static inline size_t s_size;
+    static inline uint32_t s_count;
+    struct sigaction m_previousAction { };
+};
+#endif
 
 inline UGPRPair JIT_OPERATION_ATTRIBUTES StubRunner::countOperationCall(Instance* instance)
 {
@@ -317,8 +380,18 @@ inline StubRunner::StubRunner()
 {
 }
 
+inline StubRunner::StubRunner(const StubOptions& options)
+    : StubRunner(options, StubPolicy { }, { })
+{
+}
+
 inline StubRunner::StubRunner(StubPolicy&& policy, std::span<const StubKey> keysWithBoundImmediates)
-    : m_catalog(StubOptions { .targetFeatures = CPUFeatureSet::buildTarget() }, WTF::move(policy))
+    : StubRunner(StubOptions { .targetFeatures = CPUFeatureSet::buildTarget() }, WTF::move(policy), keysWithBoundImmediates)
+{
+}
+
+inline StubRunner::StubRunner(const StubOptions& options, StubPolicy&& policy, std::span<const StubKey> keysWithBoundImmediates)
+    : m_catalog(options, WTF::move(policy))
     , m_blob(buildBlob(m_catalog, keysWithBoundImmediates))
     , m_code(m_blob.code.bytes.span())
     , m_environment(makeUniqueWithoutFastMallocCheck<StubEnvironment>())
@@ -331,6 +404,10 @@ inline StubRunner::StubRunner(StubPolicy&& policy, std::span<const StubKey> keys
     instance.numberTag = JSValue::NumberTag;
     instance.notCellMask = JSValue::NotCellMask;
     std::ranges::copy(WTF::intHashSecrets, instance.numbers.hashSecrets);
+    instance.propertyCaches.absenceFilters = m_environment->absenceFilters.data();
+    instance.propertyCaches.absenceFilterGeneration = 1;
+    instance.propertyCaches.missesOfPairs = m_environment->missesOfPairs.data();
+    instance.prefix().structureIDBase = std::bit_cast<uintptr_t>(m_environment->emptyStructures.data());
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (Slot::Kind kind : allSlotKinds)
             instance.propertyCaches.handlers[static_cast<unsigned>(table)][static_cast<unsigned>(kind)] = addressOf(slotHandlerFor(table, kind));
@@ -372,17 +449,29 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     environment.recordedArguments = { };
     environment.landedCall = { };
     environment.numbers = markers;
+    if (!m_countsMissesAcrossRuns)
+        environment.missesOfPairs.fill(0);
     std::ranges::copy(operands, environment.operands.begin());
 
     MacroAssemblerCodeRef<JSEntryPtrTag> caller = compileStubCaller(signature, immediate.has_value());
     void* callerAddress = untagCFunctionPtr<JSEntryPtrTag>(caller.code().taggedPtr());
-    std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
+    std::optional<uint32_t> instructionsInStubs;
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    if (m_countsInstructions) {
+        InstructionCounter counter(m_code.start(), m_blob.code.bytes.size());
+        InstructionCounter::start();
+        std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
+        InstructionCounter::stop();
+        instructionsInStubs = InstructionCounter::count();
+    } else
+#endif
+        std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
 
     for (size_t i = 0; i < markedFPRs.size(); ++i) {
         if (!containsRegister(summary.clobbered, markedFPRs[i]))
             AOT_TEST_CHECK(environment.numbersAfterCall[i] == environment.numbers[i]);
     }
-    return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall };
+    return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall, instructionsInStubs };
 }
 
 inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments)

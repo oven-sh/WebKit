@@ -47,6 +47,7 @@ public:
     void generateStrictEq(const ValueContext&);
     void generateInstanceOf(const ValueContext&);
     void generateHasInPrototypeChain(const ValueContext&);
+    bool fetchesPrototypeItself(ValueID builtin);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);
@@ -64,8 +65,11 @@ public:
     Condition isStrictlyEqual(const OperationContext&, Boxed, const Type&, Boxed, const Type&);
     CellPointer toString(const OperationContext&, Operand, const Type&);
     Boxed toPropertyKey(const OperationContext&, Boxed, const Type&);
+    std::optional<Integer> wholeRemainderAsIndex(ValueID position, LBasicBlock isNotAnIndex);
+    bool leavesRemainderToTest(ValueID remainder) { return !!findRemainderLeftToTest(remainder); }
 
 private:
+    bool testsForCellBeforeWalk(const Value& walk);
     void generateArithmetic(const ValueContext&, ArithmeticOperator);
     void generateBitwise(const ValueContext&, BitwiseOperator);
     void generateUnary(const ValueContext&, UnaryOperator);
@@ -75,6 +79,7 @@ private:
     void failOnUnsupportedForm(const ValueContext&);
 
     Number asNumericOperand(ValueID);
+    Number asNumber(Operand, const Type&);
     Number asNumberLikeOperand(ValueID);
     template<typename Functor> Operand withIntegerOperand(const ValueContext&, const Functor&);
     template<typename Functor> CellPointer objectOrConverted(ValueID, const Functor& convertPrimitive);
@@ -82,6 +87,7 @@ private:
     Operand arithmeticOnIntegers(const ValueContext&, ArithmeticOperator);
     Operand arithmeticOnCheckedIntegers(const ValueContext&, ArithmeticOperator);
     Number arithmeticOnNumbers(ArithmeticOperator, Number, Number);
+    Boxed sumOfBoxedNumbers(ArithmeticOperator, Operand left, const Type& leftType, Operand right, const Type& rightType);
     Number arithmeticOnNumberAndValue(const ValueContext&, ArithmeticOperator, RuntimeOperation);
     CellPointer arithmeticOnBigInts(const ValueContext&, ArithmeticOperator);
     Boxed arithmeticOnValues(const ValueContext&, ArithmeticOperator);
@@ -91,8 +97,14 @@ private:
     Operand unaryOnCheckedIntegers(const ValueContext&, UnaryOperator);
     Operand unaryOnNumbers(UnaryOperator, Number);
     Word32 bitwiseOnWords(BitwiseOperator, Word32, Word32);
+    template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert);
     Boxed bitwiseOnValues(const ValueContext&, BitwiseOperator);
+    void generateRelationOnNumbers(const ValueContext&, Relation);
+    bool tryGenerateComparisonOfWholeRemainder(const ValueContext&, std::optional<Relation>);
+    void generateEqualityOfNumbers(const ValueContext&);
     Condition relationOnStrings(const ValueContext&, Relation);
+    Condition relationOnStringCells(const ValueContext&, Relation, CellPointer left, CellPointer right);
+    Condition relationOnNullableStrings(const ValueContext&, Relation);
     Condition relationOnValues(const ValueContext&, Relation);
     Condition equalityOnNumberAndValue(const ValueContext&, bool isStrict);
     Condition equalityOnStrings(const ValueContext&);
@@ -102,6 +114,31 @@ private:
     static RuntimeOperation runtimeOperationOf(BitwiseOperator);
     static RuntimeOperation runtimeOperationOf(UnaryOperator);
     static RuntimeOperation runtimeOperationOf(Relation);
+
+    struct Int32OfNumber {
+        BlockID block;
+        Word32 word;
+    };
+    UncheckedKeyHashMap<uint32_t, Vector<Int32OfNumber, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
+
+    struct WholeRemainder {
+        Operand whole;
+        Operand zeroWhereWholeIsZero;
+        Condition isNumber;
+        Operand dividend;
+        uint64_t powerOfTwoDivisor { 0 };
+    };
+    template<typename T> Number remainderOfCheckedIntegers(const ValueContext&);
+    struct RemainderLeftToTest {
+        ValueID dividend;
+        int32_t divisor;
+        std::optional<int64_t> comparedWith;
+    };
+    std::optional<RemainderLeftToTest> findRemainderLeftToTest(ValueID remainder);
+    bool tryGenerateTestOfRemainder(const ValueContext& test, ValueID remainder);
+    const WholeRemainder* findWholeRemainder(ValueID number);
+    Number asTermOfSum(ValueID term, ValueID otherTerm);
+    UncheckedKeyHashMap<uint32_t, WholeRemainder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_wholeRemainders;
 };
 
 } } } // namespace JSC::AOT::Typed

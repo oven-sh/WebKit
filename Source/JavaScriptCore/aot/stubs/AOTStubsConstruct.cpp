@@ -162,6 +162,94 @@ StubSignature signatureOfSuperConstructFrontEnd(StubKey)
     return operationFrontEndSignature(4);
 }
 
+// A function whose Structure is remembered has its `prototype` property at the remembered place, and an object found there is the answer.
+// A class object whose Structure does not list the property is remembered itself. The function is a cell.
+static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function, GPRReg structureID, GPRReg place, GPRReg offset, GPRReg prototype, JumpList& isNotRemembered)
+{
+    static_assert(sizeof(PlaceOfPrototypeProperty) == sizeof(uint64_t) && !(numberOfPlacesOfPrototypeProperties & (numberOfPlacesOfPrototypeProperties - 1)));
+    static_assert(sizeof(PrototypeOfClassObject) == 2 * sizeof(uint64_t) && !(numberOfPrototypesOfClassObjects & (numberOfPrototypesOfClassObjects - 1)));
+    RELEASE_ASSERT(noOverlap(function, structureID, place, offset, prototype));
+    jit.load32(Address(function, JSCell::structureIDOffset()), structureID);
+    jit.move(structureID, place);
+    jit.urshift32(TrustedImm32(shiftOfStructureIDForPlaceOfPrototypeProperty), place);
+    jit.and32(TrustedImm32(numberOfPlacesOfPrototypeProperties - 1), place);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.placesOfPrototypeProperties)), offset);
+    jit.getEffectiveAddress(BaseIndex(offset, place, CCallHelpers::TimesEight), place);
+    Jump isStructureNotRemembered = jit.branch32(CCallHelpers::NotEqual, Address(place, OBJECT_OFFSETOF(PlaceOfPrototypeProperty, structureID)), structureID);
+    jit.load32(Address(place, OBJECT_OFFSETOF(PlaceOfPrototypeProperty, offset)), offset);
+    jit.loadProperty(function, offset, prototype);
+    isNotRemembered.append(jit.branchIfNotCell(prototype));
+    isNotRemembered.append(jit.branchIfNotObject(prototype));
+    Jump isLoaded = jit.jump();
+
+    isStructureNotRemembered.link(&jit);
+    jit.move(function, place);
+    jit.urshift64(TrustedImm32(shiftOfClassObjectForPrototype), place);
+    jit.and32(TrustedImm32(numberOfPrototypesOfClassObjects - 1), place);
+    jit.lshift32(TrustedImm32(1), place);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.prototypesOfClassObjects)), offset);
+    jit.getEffectiveAddress(BaseIndex(offset, place, CCallHelpers::TimesEight), place);
+    isNotRemembered.append(jit.branchPtr(CCallHelpers::NotEqual, Address(place, OBJECT_OFFSETOF(PrototypeOfClassObject, classObject)), function));
+    jit.loadPtr(Address(place, OBJECT_OFFSETOF(PrototypeOfClassObject, prototype)), prototype);
+    isLoaded.link(&jit);
+}
+
+// What the operation does first.
+PreludeExit emitGetConstructPrototypePrelude(StubAssembler& jit)
+{
+    // A call that preserves registers has none to look with.
+    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg newTarget = operationArgumentGPR(1);
+    const GPRReg structureID = jit.allocateScratch(StubRegister::A2);
+    const GPRReg place = jit.allocateScratch(StubRegister::A3);
+    const GPRReg offset = jit.allocateScratch(StubRegister::A4);
+    const GPRReg prototype = jit.result();
+
+    JumpList isNotRemembered;
+    isNotRemembered.append(jit.branchIfNotCell(newTarget));
+    loadRememberedPrototypeProperty(jit, newTarget, structureID, place, offset, prototype, isNotRemembered);
+    jit.returnToCaller();
+
+    isNotRemembered.link(&jit);
+    return PreludeExit::CallsOperation;
+}
+
+// Where `super.name` begins to look: above the home object, which is the operand or the prototype property of the class object that is the operand.
+PreludeExit emitGetSuperBasePrelude(StubAssembler& jit)
+{
+    // A call that preserves registers has none to look with. An operation that is called in tail position answers the caller of the stub in the register of its result.
+    StubFamily family = jit.key().family();
+    bool isTailCall = family == StubFamily::TailCallOperation;
+    if (!isTailCall && (family != StubFamily::CallOperation || jit.signature().result != StubResult::GPR))
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg home = operationArgumentGPR(1);
+    constexpr GPRReg homeKind = operationArgumentGPR(2);
+    const GPRReg structureID = jit.allocateScratch(StubRegister::A3);
+    const GPRReg place = jit.allocateScratch(StubRegister::A4);
+    const GPRReg offset = jit.allocateScratch(StubRegister::A5);
+    const GPRReg homeObject = isTailCall ? jit.allocateScratch(StubRegister::R0) : jit.result();
+    RELEASE_ASSERT(homeObject == GPRInfo::returnValueGPR && noOverlap(home, homeKind, structureID, place, offset, homeObject));
+    static_assert(!static_cast<uint32_t>(Typed::HomeObjectKind::Object) && static_cast<uint32_t>(Typed::HomeObjectKind::ClassPrototype) == 1);
+
+    JumpList callsOperation;
+    callsOperation.append(jit.branchIfNotCell(home));
+    jit.move(home, homeObject);
+    Jump operandIsHomeObject = jit.branchTest32(CCallHelpers::Zero, homeKind);
+    loadRememberedPrototypeProperty(jit, home, structureID, place, offset, homeObject, callsOperation);
+    operandIsHomeObject.link(&jit);
+    callsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(homeObject, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+    loadStructure(jit, homeObject, homeObject);
+    jit.load64(Address(homeObject, Structure::prototypeOffset()), homeObject);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, homeObject));
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    return PreludeExit::CallsOperation;
+}
+
 void generateSuperConstructFrontEnd(StubAssembler& jit)
 {
     const GPRReg parent = jit.clobberOperand(0);

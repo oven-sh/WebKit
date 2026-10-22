@@ -27,18 +27,21 @@ namespace AOT {
 class CacheRegistry;
 class CustomAccessorTable;
 
+// Addresses for the largest table are reserved once, and the table grows in place: it never moves, no earlier table is left behind, and a page takes memory from the first entry that is written to it.
 class HashedSlotTable {
     WTF_MAKE_NONCOPYABLE(HashedSlotTable);
     WTF_MAKE_TZONE_ALLOCATED(HashedSlotTable);
 public:
     static constexpr uint32_t initialNumberOfEntries = 1u << 10;
-    static constexpr unsigned regionShift = 8;
+    // One set. The entries that are written between two collections lie all over the table, and a young collection looks at every entry of a region that was written to.
+    static constexpr unsigned regionShift = 7;
 
     HashedSlotTable(VM&, CacheRegistry&, const CustomAccessorTable&);
     ~HashedSlotTable();
 
     const HashedSlot* entries() const { return &m_entries->get(); }
     uint32_t numberOfEntries() const { return m_numberOfEntries; }
+    uint32_t numberOfFilledEntries() const { return m_numberOfFilledEntries; }
     uint64_t offsetMask() const { return HashedSlot::offsetMaskFor(m_numberOfEntries); }
 
     enum class SetResult : uint8_t { Stored, StoredAndGrew };
@@ -74,17 +77,19 @@ private:
     void evict(Entry&);
     void eraseDuringCollection(Entry&);
     void releaseNamesErasedDuringCollection();
+    bool isAtLeastHalfFull() const { return m_numberOfFilledEntries >= m_numberOfEntries / 2; }
     bool shouldGrow() const;
     void grow();
-    static Entry* allocateEntries(uint32_t numberOfEntries);
-    static void freeEntries(Entry*);
+    static Entry* reserveEntries(uint32_t maxNumberOfEntries);
 
     VM& m_vm;
     const CustomAccessorTable& m_customAccessors;
-    Entry* m_entries { nullptr };
-    uint32_t m_numberOfEntries { 0 };
     uint32_t m_maxNumberOfEntries { 0 };
-    uint32_t m_evictionsSinceGrowth { 0 };
+    uint32_t m_numberOfEntries { 0 };
+    Entry* m_entries { nullptr };
+    uint32_t m_numberOfFilledEntries { 0 };
+    uint32_t m_evictionsWhileHalfFull { 0 };
+    uint32_t m_evictionsSinceCollection { 0 };
     uint32_t m_nextVictimWay { 0 };
     Vector<UniquedStringImpl*> m_namesErasedDuringCollection;
     RememberedSlotSet m_writtenRegions;

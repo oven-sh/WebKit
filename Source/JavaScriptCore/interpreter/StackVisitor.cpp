@@ -43,17 +43,8 @@
 
 namespace JSC {
 
-StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame, CompiledFrameVisit compiledFrameVisit)
-#if ENABLE(AOT)
-    : m_vm(vm)
-    , m_compiledFrameVisit(compiledFrameVisit)
-#endif
+StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 {
-#if !ENABLE(AOT)
-    UNUSED_PARAM(compiledFrameVisit);
-#else
-    bool startsAtTop = startFrame == vm.topCallFrame;
-#endif
     CallFrame* topFrame = nullptr;
     if (startFrame) {
         ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
@@ -62,30 +53,16 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame, C
         topFrame = vm.topCallFrame;
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
-#if ENABLE(AOT)
-            m_nextFrameIsPublished = true;
-            if (tryEnterCompiledFrames(topFrame)) {
-                startInCompiledFrames(startFrame, skipFirstFrame);
-                return;
-            }
-#endif
             if (skipFirstFrame || topFrame->isZombieFrame()) {
                 m_previousReturnPC = topFrame->rawReturnPC();
                 topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
                 m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
-#if ENABLE(AOT)
-                m_nextFrameIsPublished = m_topEntryFrameIsEmpty;
-#endif
                 if (startFrame == vm.topCallFrame)
                     startFrame = topFrame;
             }
         }
     }
     readFrame(topFrame);
-#if ENABLE(AOT)
-    if (startsAtTop)
-        return;
-#endif
 
     // Find the frame the caller wants to start unwinding from.
     while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
@@ -93,18 +70,62 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame, C
 }
 
 #if ENABLE(AOT)
-StackVisitor::StackVisitor(VM& vm, const AOT::CompiledFrameExit& exit, CompiledFrameVisit compiledFrameVisit)
+StackVisitor::WithCompiledFrames::WithCompiledFrames(CallFrame* startFrame, VM& vm, bool skipFirstFrame, CompiledFrameVisit compiledFrameVisit)
+    : m_vm(vm)
+    , m_compiledFrameVisit(compiledFrameVisit)
+{
+    bool startsAtTop = startFrame == vm.topCallFrame;
+    CallFrame* topFrame = nullptr;
+    if (startFrame) {
+        ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
+
+        m_frame.m_entryFrame = vm.topEntryFrame;
+        topFrame = vm.topCallFrame;
+        if (topFrame) {
+            m_previousReturnPC = vm.maybeReturnPC;
+            m_nextFrameIsPublished = true;
+            if (tryEnterCompiledFrames(topFrame)) {
+                startInCompiledFrames(startFrame, skipFirstFrame);
+                return;
+            }
+            if (skipFirstFrame || topFrame->isZombieFrame()) {
+                m_previousReturnPC = topFrame->rawReturnPC();
+                m_previousCalleeFrame = topFrame;
+                topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
+                m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
+                m_nextFrameIsPublished = m_topEntryFrameIsEmpty;
+                if (startFrame == vm.topCallFrame)
+                    startFrame = topFrame;
+            }
+        }
+    }
+    readFrame(topFrame);
+    if (startsAtTop)
+        return;
+
+    while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
+        gotoNextFrame();
+}
+
+StackVisitor::WithCompiledFrames::WithCompiledFrames(VM& vm, const AOT::CompiledFrameExit& exit, CompiledFrameVisit compiledFrameVisit)
     : m_vm(vm)
     , m_shownFrameFilter(true)
     , m_compiledFrameVisit(compiledFrameVisit)
 {
     m_frame.m_entryFrame = exit.entryFrame;
     m_previousReturnPC = exit.returnPC;
+    m_previousCalleeFrame = exit.calleeFrame;
     m_nextFrameIsPublished = exit.crossedEntryFrame;
     readFrame(exit.callFrame);
 }
 
-void StackVisitor::startInCompiledFrames(CallFrame* startFrame, bool skipFirstFrame)
+StackVisitor::WithCompiledFrames::~WithCompiledFrames()
+{
+    if (m_frame.m_compiledFrames)
+        std::destroy_at(m_frame.m_compiledFrames);
+}
+
+void StackVisitor::WithCompiledFrames::startInCompiledFrames(CallFrame* startFrame, bool skipFirstFrame)
 {
     bool startsAtTop = startFrame == m_vm.topCallFrame;
     if (!showFirstCompiledFrame())
@@ -120,14 +141,15 @@ void StackVisitor::startInCompiledFrames(CallFrame* startFrame, bool skipFirstFr
         gotoNextFrame();
 }
 
-bool StackVisitor::tryEnterCompiledFrames(CallFrame* callFrame)
+bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFrame)
 {
     using OperationState = AOT::CompiledFrameIterator::OperationState;
     CallFrame* callee = m_frame.m_callFrame;
-    if (!m_vm.hasCompiledCode() || callee == callFrame)
+    if (callee == callFrame)
         return false;
     bool isPublished = callee ? m_frame.m_callerIsEntryFrame : m_nextFrameIsPublished;
     void* returnPC = callee ? callee->rawReturnPC() : m_previousReturnPC;
+    CallFrame* calleeFrame = callee ? callee : m_previousCalleeFrame;
     OperationState operationState = OperationState::MayNotHaveCalled;
     if (isPublished) {
         if (!AOT::isOperationFrameRecord(m_vm, callFrame))
@@ -135,26 +157,27 @@ bool StackVisitor::tryEnterCompiledFrames(CallFrame* callFrame)
         if (callFrame != m_vm.topCallFrame)
             operationState = OperationState::HasCalled;
         auto* record = std::bit_cast<CallerFrameAndPC*>(callFrame);
+        calleeFrame = callFrame;
         callFrame = record->callerFrame;
         returnPC = record->returnPC;
     }
-    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, removeCodePtrTag(returnPC), m_frame.m_entryFrame, operationState);
+    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, removeCodePtrTag(returnPC), m_frame.m_entryFrame, operationState, calleeFrame ? AOT::stackPointerOfCaller(calleeFrame) : nullptr);
     RELEASE_ASSERT(frames || !isPublished);
     if (!frames)
         return false;
-    static_assert(sizeof(AOT::CompiledFrameIterator) <= Frame::compiledFrameIteratorCapacity && alignof(AOT::CompiledFrameIterator) <= alignof(void*));
+    static_assert(sizeof(AOT::CompiledFrameIterator) <= compiledFrameIteratorCapacity && alignof(AOT::CompiledFrameIterator) <= alignof(void*));
     ASSERT(!m_frame.m_compiledFrames);
-    m_frame.m_compiledFrames = new (NotNull, m_frame.m_compiledFramesStorage) AOT::CompiledFrameIterator(WTF::move(*frames));
+    m_frame.m_compiledFrames = new (NotNull, m_compiledFramesStorage) AOT::CompiledFrameIterator(WTF::move(*frames));
     setCompiledFrame(callFrame, nullptr);
     return true;
 }
 
-bool StackVisitor::showFirstCompiledFrame()
+bool StackVisitor::WithCompiledFrames::showFirstCompiledFrame()
 {
     return m_compiledFrameVisit == CompiledFrameVisit::EachRunOnce || showNextCompiledFrame();
 }
 
-bool StackVisitor::showNextCompiledFrame()
+bool StackVisitor::WithCompiledFrames::showNextCompiledFrame()
 {
     auto& frames = *m_frame.m_compiledFrames;
     for (; !frames.isAtEnd(); frames.advance()) {
@@ -167,7 +190,7 @@ bool StackVisitor::showNextCompiledFrame()
     return false;
 }
 
-void StackVisitor::setCompiledFrame(CallFrame* callFrame, const void* returnAddress)
+void StackVisitor::WithCompiledFrames::setCompiledFrame(CallFrame* callFrame, const void* returnAddress)
 {
     m_frame.m_callFrame = callFrame;
     m_frame.m_returnPC = m_previousReturnPC = const_cast<void*>(returnAddress);
@@ -185,18 +208,19 @@ void StackVisitor::setCompiledFrame(CallFrame* callFrame, const void* returnAddr
     m_frame.m_callerIsEntryFrame = false;
 }
 
-CallFrame* StackVisitor::leaveCompiledFrames()
+CallFrame* StackVisitor::WithCompiledFrames::leaveCompiledFrames()
 {
     auto exit = m_frame.m_compiledFrames->exit();
     std::destroy_at(std::exchange(m_frame.m_compiledFrames, nullptr));
     m_frame.m_callFrame = nullptr;
     m_frame.m_entryFrame = exit.entryFrame;
     m_previousReturnPC = exit.returnPC;
+    m_previousCalleeFrame = exit.calleeFrame;
     m_nextFrameIsPublished = exit.crossedEntryFrame;
     return exit.callFrame;
 }
 
-void StackVisitor::gotoNextCompiledFrame()
+void StackVisitor::WithCompiledFrames::gotoNextCompiledFrame()
 {
     auto& frames = *m_frame.m_compiledFrames;
     if (m_compiledFrameVisit == CompiledFrameVisit::EachRunOnce) {
@@ -209,18 +233,49 @@ void StackVisitor::gotoNextCompiledFrame()
     }
     readFrame(leaveCompiledFrames());
 }
+
+void StackVisitor::WithCompiledFrames::gotoNextFrame()
+{
+    m_frame.m_index++;
+    if (m_frame.m_compiledFrames) {
+        gotoNextCompiledFrame();
+        return;
+    }
+    m_shownFrameFilter = AOT::ShownFrameFilter(true);
+#if ENABLE(DFG_JIT)
+    if (m_frame.isInlinedDFGFrame()) {
+        InlineCallFrame* inlineCallFrame = m_frame.inlineCallFrame();
+        CodeOrigin* callerCodeOrigin = inlineCallFrame->getCallerSkippingTailCalls();
+        if (!callerCodeOrigin) {
+            while (inlineCallFrame) {
+                readInlinedFrame(m_frame.callFrame(), &inlineCallFrame->directCaller);
+                inlineCallFrame = m_frame.inlineCallFrame();
+            }
+            m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+            readFrame(m_frame.callerFrame());
+        } else
+            readInlinedFrame(m_frame.callFrame(), callerCodeOrigin);
+        return;
+    }
+#endif
+    m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+    readFrame(m_frame.callerFrame());
+}
+
+void StackVisitor::WithCompiledFrames::readFrame(CallFrame* callFrame)
+{
+    while (callFrame && tryEnterCompiledFrames(callFrame)) {
+        if (showFirstCompiledFrame())
+            return;
+        callFrame = leaveCompiledFrames();
+    }
+    StackVisitor::readFrame(callFrame);
+}
 #endif // ENABLE(AOT)
 
 void StackVisitor::gotoNextFrame()
 {
     m_frame.m_index++;
-#if ENABLE(AOT)
-    if (m_frame.m_compiledFrames) [[unlikely]] {
-        gotoNextCompiledFrame();
-        return;
-    }
-    m_shownFrameFilter = AOT::ShownFrameFilter(true);
-#endif
 #if ENABLE(DFG_JIT)
     if (m_frame.isInlinedDFGFrame()) {
         InlineCallFrame* inlineCallFrame = m_frame.inlineCallFrame();
@@ -264,13 +319,6 @@ inline CallFrame* StackVisitor::updatePreviousReturnPCIfNecessary(CallFrame* cal
 
 void StackVisitor::readFrame(CallFrame* callFrame)
 {
-#if ENABLE(AOT)
-    while (callFrame && tryEnterCompiledFrames(callFrame)) {
-        if (showFirstCompiledFrame())
-            return;
-        callFrame = leaveCompiledFrames();
-    }
-#endif
     if (!callFrame) {
         m_frame.setToEnd();
         return;
@@ -479,12 +527,6 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
 #endif // ENABLE(DFG_JIT)
 
 #if ENABLE(AOT)
-StackVisitor::Frame::~Frame()
-{
-    if (m_compiledFrames)
-        std::destroy_at(m_compiledFrames);
-}
-
 const AOT::CompiledFrame& StackVisitor::Frame::compiledFrame() const
 {
     return m_compiledFrames->frame();

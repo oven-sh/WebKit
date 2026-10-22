@@ -52,6 +52,11 @@ StubSignature signatureOfPutByIdHashed(StubKey)
     return signatureWith({ firstStubOperandRegister, storedValueByIdRegister });
 }
 
+StubSignature signatureOfPutByIdBehindFieldTable(StubKey)
+{
+    return signatureWith({ firstStubOperandRegister, storedValueByIdRegister });
+}
+
 struct PutByIdBody {
     SlotHandlerTable handlerTable(SlotForm form) const { return slotHandlerTable(operationFor(mode), SlotOrigin::ById, form); }
 
@@ -193,6 +198,8 @@ static Jump emitFrontProbe(PutByIdBody& body)
     body.miss.append(jit.branchIfNotCell(R0));
     storeFieldByTable(jit, { R0, number, structureID, cell, std::nullopt, true, true }, body.A1, row, operationFor(body.mode), isNotInFieldTable);
     isNotInFieldTable.link(&jit);
+    // The receiver is a cell.
+    jit.bindEntry(putByIdBehindFieldTable(body.mode));
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadFrontCell(jit, accessFor(body.mode), { structureID, number, row, cell, T10 });
     Jump isNotOwnInlineValue = branchUnlessOwnInlineValue(jit, number, cell, T10);
@@ -223,8 +230,30 @@ static void emitHashedProbe(PutByIdBody& body, Jump hasOtherNameInFront)
     hasOtherNameInFront.link(&jit);
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadIdentifier(jit, number, uid, body.miss);
+#if CPU(X86_64)
+    JumpList isInNoTable;
+    findHashedSlot(jit, accessFor(body.mode), { structureID, uid, entry, header, payload, payload }, isInNoTable);
+    jumpToSlotHandler(jit, body.handlerTable(SlotForm::Slot), header, uid);
+
+    // No table has the Structure and the name. A value that the object itself has, plain and writable, is replaced where it lies, and nothing is filed:
+    // so a pair that comes again and again leaves now and then for the operation that files. The search has put the access into the low bits of the name, which tells the pair from that of a read.
+    isInNoTable.link(&jit);
+    countMissOfPair(jit, structureID, uid, header, body.miss);
+    jit.xor64(TrustedImm32(static_cast<int32_t>(accessFor(body.mode))), uid);
+    replaceOwnValueAndReturn(jit, operationFor(body.mode), {
+        .receiver = R0,
+        .name = number,
+        .uid = uid,
+        .object = header,
+        .structure = structureID,
+        .size = payload,
+        .vector = entry,
+        .index = jit.scratchRegister(),
+    }, ObjectLookupName::IsGivenByNumber, body.A1, body.miss);
+#else
     findHashedSlot(jit, accessFor(body.mode), { structureID, uid, entry, header, payload, payload }, body.miss);
     jumpToSlotHandler(jit, body.handlerTable(SlotForm::Slot), header, uid);
+#endif
 }
 
 void generatePutById(StubAssembler& jit)

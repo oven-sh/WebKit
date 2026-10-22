@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureWord.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
@@ -35,6 +36,15 @@ StubSignature signatureOfToBoolean(StubKey)
 }
 
 StubSignature signatureOfValueIsTruthy(StubKey)
+{
+    StubSignature signature;
+    signature.addOperand(gprOf(StubRegister::R0));
+    signature.result = StubResult::Flags;
+    signature.trueCondition = MacroAssembler::NonZero;
+    return signature;
+}
+
+StubSignature signatureOfValueIsCallable(StubKey)
 {
     StubSignature signature;
     signature.addOperand(gprOf(StubRegister::R0));
@@ -165,6 +175,67 @@ void generateValueIsTruthy(StubAssembler& jit)
     });
 }
 
+static JumpList branchIfFunction(StubAssembler& jit, GPRReg cell, GPRReg scratch)
+{
+    static_assert(functionTypes.last < slimClosureTypes.first);
+    JumpList isFunction;
+    // A slim closure that is as it was created.
+    isFunction.append(jit.branch8(CCallHelpers::GreaterThanOrEqual, Address(cell, offsetOfSlimClosureWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(ClosureWord::maxNumberOfParameters))));
+    jit.load8(Address(cell, JSCell::typeInfoTypeOffset()), scratch);
+    jit.sub32(TrustedImm32(functionTypes.first), scratch);
+    isFunction.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, TrustedImm32(functionTypes.last - functionTypes.first)));
+    jit.sub32(TrustedImm32(slimClosureTypes.first - functionTypes.first), scratch);
+    isFunction.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, TrustedImm32(slimClosureTypes.last - slimClosureTypes.first)));
+    return isFunction;
+}
+
+void generateValueIsCallable(StubAssembler& jit)
+{
+    const GPRReg value = jit.operand(0);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+
+    Jump notCell = jit.branchIfNotCell(value);
+    JumpList isFunction = branchIfFunction(jit, value, scratch);
+    Jump hasOwnAnswer = jit.branchTest8(CCallHelpers::NonZero, Address(value, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetCallData));
+    notCell.link(&jit);
+    jit.returnFlagsConstant(false);
+
+    isFunction.link(&jit);
+    Label isCallable = jit.label();
+    jit.returnFlagsConstant(true);
+
+    // ProxyObject::createStructure() gives this flag to the Structure of those whose target is callable, and to no other.
+    hasOwnAnswer.link(&jit);
+    Jump isNoProxy = jit.branchIfNotType(value, ProxyObjectType);
+    jit.branchTest8(CCallHelpers::NonZero, Address(value, JSCell::typeInfoFlagsOffset()), TrustedImm32(ImplementsDefaultHasInstance)).linkTo(isCallable, &jit);
+    jit.returnFlagsConstant(false);
+
+    isNoProxy.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTIsCallable, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = value, .valueDestination = scratch }, [&] {
+        jit.compareOnFlags32(scratch, TrustedImm32(0));
+    });
+}
+
+// The value is where the call that follows wants its callee.
+StubSignature signatureOfThrowUnlessCallable(StubKey)
+{
+    return StubSignature::withoutResult({ calleeGPR });
+}
+
+void generateThrowUnlessCallable(StubAssembler& jit)
+{
+    const GPRReg value = jit.operand(0);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+
+    Jump notCell = jit.branchIfNotCell(value);
+    JumpList isFunction = branchIfFunction(jit, value, scratch);
+    notCell.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .secondArgumentIn = value });
+
+    isFunction.link(&jit);
+    jit.returnToCaller();
+}
+
 struct EqualityExits {
     JumpList isTrue;
     JumpList isFalse;
@@ -255,10 +326,20 @@ void generateEqual(StubAssembler& jit)
     Jump haveSameBits = jit.branch64(CCallHelpers::Equal, left, right);
     jit.or64(left, right, leftValue);
     Jump areNotBothCells = jit.branchIfNotCell(leftValue);
-    jit.load8(Address(left, JSCell::typeInfoTypeOffset()), leftValue);
-    jit.load8(Address(right, JSCell::typeInfoTypeOffset()), rightValue);
-    kindsDiffer.append(jit.branch32(CCallHelpers::NotEqual, leftValue, rightValue));
-    Jump notStrings = jit.branch32(CCallHelpers::NotEqual, leftValue, TrustedImm32(StringType));
+    Jump notStrings;
+    if (isStrict) {
+        // Two cells that are not one cell. Only strings and BigInts have content to compare: a symbol or an object is strictly equal to nothing else.
+        // One comparison of the left type decides among the three.
+        static_assert(StringType + 1 == HeapBigIntType && HeapBigIntType == LastValueCompareCellType);
+        exits.isFalse.append(jit.branch8(CCallHelpers::Above, Address(left, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
+        notStrings = jit.branchOnFlags(CCallHelpers::Equal);
+        exits.isFalse.append(jit.branch8(CCallHelpers::NotEqual, Address(right, JSCell::typeInfoTypeOffset()), TrustedImm32(StringType)));
+    } else {
+        jit.load8(Address(left, JSCell::typeInfoTypeOffset()), leftValue);
+        jit.load8(Address(right, JSCell::typeInfoTypeOffset()), rightValue);
+        kindsDiffer.append(jit.branch32(CCallHelpers::NotEqual, leftValue, rightValue));
+        notStrings = jit.branch32(CCallHelpers::NotEqual, leftValue, TrustedImm32(StringType));
+    }
     jit.loadPtr(Address(left, JSString::offsetOfValue()), leftValue);
     jit.loadPtr(Address(right, JSString::offsetOfValue()), rightValue);
     jit.or64(leftValue, rightValue, length);
@@ -277,7 +358,10 @@ void generateEqual(StubAssembler& jit)
     jit.returnToCaller();
 
     notStrings.link(&jit);
-    exits.needsContent.append(jit.branch32(CCallHelpers::Equal, leftValue, TrustedImm32(HeapBigIntType)));
+    if (isStrict)
+        exits.needsContent.append(jit.branch8(CCallHelpers::Equal, Address(right, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
+    else
+        exits.needsContent.append(jit.branch32(CCallHelpers::Equal, leftValue, TrustedImm32(HeapBigIntType)));
     exits.isFalse.append(jit.jump());
 
     areNotBothCells.link(&jit);

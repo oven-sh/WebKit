@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectSummaries.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTIR.h"
+#include <array>
 #include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
 
@@ -35,7 +37,7 @@ void Effects::dump(PrintStream& out) const
     if (!writes.isEmpty())
         out.print(separator, "writes("_s, writes, ")"_s);
     if (mayThrow)
-        out.print(separator, "throws"_s);
+        out.print(separator, mayThrowByRule() ? "throws"_s : "throwsForLackOfMemory"_s);
     if (mayCollect)
         out.print(separator, "collects"_s);
     if (mayCallUnknownCode)
@@ -51,6 +53,67 @@ void EffectsOnEdges::dump(PrintStream& out) const
     out.print(normal);
     if (*this != onBothEdges(normal))
         out.print(" | on throw: "_s, handler);
+}
+
+const Effects& declaredBoundInTable(Opcode opcode)
+{
+    static const std::array<Effects, numberOfOpcodes> bounds = [] {
+        std::array<Effects, numberOfOpcodes> result;
+        for (Opcode member : allMembersOf<Opcode>) {
+            EffectBoundBuilder builder;
+            forEachDeclaredEffect(member, builder);
+            result[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
+        }
+        return result;
+    }();
+    return bounds[static_cast<unsigned>(opcode)];
+}
+
+namespace {
+
+class RowWithoutPayloadBuilder {
+public:
+    void reads(const MemoryLocation& location) { m_effects.reads.add(location); }
+    void writes(const MemoryLocation& location) { m_effects.writes.add(location); }
+    void readsAtPayload(AbstractHeap) { m_namesPlaceByPayload = true; }
+    void writesAtPayload(AbstractHeap) { m_namesPlaceByPayload = true; }
+    void readsAllHeaps() { m_effects.reads = LocationMasks::top(); }
+    void throws() { m_effects.mayThrow = true; }
+    void collects() { m_effects.mayCollect = true; }
+    void suspends() { m_effects.maySuspend = true; }
+    void terminates() { m_effects.mayBeTerminated = true; }
+    void unknownCode() { m_effects.merge(Effects::unknownCode()); }
+
+    const Effects& effects() const LIFETIME_BOUND { return m_effects; }
+    bool namesPlaceByPayload() const { return m_namesPlaceByPayload; }
+
+private:
+    Effects m_effects { Effects::none() };
+    bool m_namesPlaceByPayload { false };
+};
+
+struct RowsWithoutPayload {
+    std::array<Effects, numberOfOpcodes> effects;
+    OpcodeSet opcodes;
+};
+
+} // anonymous namespace
+
+const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode)
+{
+    static const RowsWithoutPayload rows = [] {
+        RowsWithoutPayload result;
+        for (Opcode member : allMembersOf<Opcode>) {
+            RowWithoutPayloadBuilder builder;
+            forEachDeclaredEffect(member, builder);
+            if (builder.namesPlaceByPayload())
+                continue;
+            result.effects[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
+            result.opcodes.add(member);
+        }
+        return result;
+    }();
+    return rows.opcodes.contains(opcode) ? &rows.effects[static_cast<unsigned>(opcode)] : nullptr;
 }
 
 EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Value& value)
@@ -93,10 +156,10 @@ static EffectsOnEdges calleeEffectsBeyondOperands(const EffectContext& context, 
     const Function& callee = context.program.at(id);
     CalleeSummary summary(context, id);
     BitVector mapped = mappedEntryParameters(callee, call);
-    EffectsOnEdges effects = summary->elsewhere;
+    EffectsOnEdges effects = summary->elsewhere();
     for (unsigned parameter = 0; parameter < callee.numberOfEntryParameters(); ++parameter) {
         if (!mapped.quickGet(parameter))
-            addMemory(effects, summary->parameter(parameter).memory);
+            addMemory(effects, summary->memory(parameter));
     }
     return effects;
 }
@@ -382,6 +445,17 @@ static_assert(withThrow(none).alwaysCompletes());
 static_assert(!unknownCode.alwaysCompletes());
 static_assert(withTermination(none).interferesWith(writeOf(objectFields)));
 static_assert(unknownCode.mayBeTerminated);
+
+static_assert(EffectTraits(none).isPure());
+static_assert(EffectTraits(Effects()) == EffectTraits::all());
+static_assert(!EffectTraits(readOf(objectFields)).isPure() && EffectTraits(readOf(objectFields)).isUnobservable());
+static_assert(EffectTraits(allocation).isRemovableWhenUnused() && !EffectTraits(allocation).mayWriteWhatIsSeen() && EffectTraits(allocation).mayTouchMemory());
+static_assert(!EffectTraits(writeOf(objectFields)).isRemovableWhenUnused());
+static_assert(!EffectTraits(withThrow(allocation)).isRemovableWhenUnused());
+static_assert(EffectTraits(withThrow(none)).alwaysCompletes() && EffectTraits(withThrow(none)).mayExitSideways());
+static_assert(!EffectTraits(withTermination(none)).alwaysCompletes());
+static_assert(EffectTraits(withSuspension(none)).mayRunOtherCode() && EffectTraits(withUnknownCall(none)).mayRunOtherCode());
+static_assert(EffectTraitsOnEdges(EffectsOnEdges::onBothEdges(withThrow(allocation))).anyEdge == EffectTraits(withThrow(allocation)));
 
 static_assert(EffectsOnEdges::onBothEdges(allocation).handler == none);
 static_assert(EffectsOnEdges::onBothEdges(withThrow(allocation)).handler == withThrow(allocation));

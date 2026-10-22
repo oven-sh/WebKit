@@ -16,11 +16,77 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperands.h"
+#include "AOTFlowOrder.h"
+#include "AOTKnownClosures.h"
+#include "AOTResultRules.h"
+#include "AOTTypeRelations.h"
+#include "AOTValueFlowTypedResults.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+// Where a check fails, the generic version of the function goes on with what the check has turned away, through the same operations. One node holds what a value is in both versions.
+// So wherever the type of a value rests on what a check lets through, the type keeps nothing out here. It still says what an untracked object among the members is.
+BitVector findValuesBehindChecks(const Program& program, const Function& function, const CFG& cfg, const BitVector* checksThatTestNothing)
+{
+    BitVector isBehindCheck;
+    isBehindCheck.ensureSize(function.values.size());
+    bool hasChanged = false;
+    auto isNoted = [&](ValueID value) {
+        return value && isBehindCheck.get(value.index());
+    };
+    auto note = [&](ValueID value) {
+        hasChanged |= !isBehindCheck.set(value.index());
+    };
+    auto visitParameter = [&](BlockID block, uint32_t index, ValueID parameter) {
+        for (Edge edge : cfg.incomingEdges(block)) {
+            IncomingValue incoming = incomingValueOf(function, edge, index);
+            if (incoming.kind == IncomingValue::Kind::Argument) {
+                if (isNoted(incoming.argument))
+                    note(parameter);
+                continue;
+            }
+            // What a test lets by is typed by all that the test reads: behind `x === k` by the type of k too.
+            // Behind `i < n` it takes the bounds of the integers of n and nothing else, and a `number` has none to give: a counter does not rest on the check of its limit.
+            const EdgeResult& result = edgeResultAt(function, incoming.result);
+            bool takesTypeFromTest = isNoted(result.test);
+            if (takesTypeFromTest && !isNoted(result.subject)) {
+                const Value& test = function.at(result.test);
+                if (test.opcode == Opcode::Less || test.opcode == Opcode::LessEq || test.opcode == Opcode::Greater || test.opcode == Opcode::GreaterEq)
+                    takesTypeFromTest = program.typeOf(function, test.operand(result.operandIndex ? 0 : 1)).integers != Range::full();
+            }
+            if (isNoted(result.subject) || takesTypeFromTest)
+                note(parameter);
+        }
+    };
+    auto visitValue = [&](ValueID id) {
+        const Value& value = function.at(id);
+        if (value.opcode == Opcode::Check && !(checksThatTestNothing && checksThatTestNothing->get(id.index())))
+            return note(id);
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            if (isNoted(value.operand(index)))
+                return note(id);
+        }
+    };
+    do {
+        hasChanged = false;
+        for (BlockID id : cfg.reversePostOrder()) {
+            const Block& block = function.at(id);
+            for (uint32_t index = 0; id != entryBlock && index < block.parameters.size(); ++index) {
+                if (!isNoted(block.parameters[index]))
+                    visitParameter(id, index, block.parameters[index]);
+            }
+            for (ValueID value : block.values) {
+                if (!isNoted(value))
+                    visitValue(value);
+            }
+        }
+    } while (hasChanged);
+    return isBehindCheck;
+}
 
 namespace {
 
@@ -52,12 +118,16 @@ struct Source {
 struct Description {
     Role role { Role::Nothing };
     bool isLive { false };
+    // Nothing but `==` or `===` looks at it. Its set says which closures can be told apart, and nobody is told anything else about it.
+    bool isLiveForComparisonsOnly { false };
     NodeName name;
     uint32_t constant { 0 };
     uint32_t firstSource { 0 };
     uint32_t sourceCount { 0 };
     uint32_t operandReaders { 0 };
     uint32_t otherReaders { 0 };
+    // Of a read in a typed body: what goes on in typed code. The node holds all that was found.
+    uint32_t mask { 0 };
     // Members of one cycle of plain copies have the same head and hold the same.
     ValueID head;
 };
@@ -82,7 +152,7 @@ constexpr OpcodeSet operationsWithoutRule {
     Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt, Opcode::KeyConstant,
     Opcode::Parameter, Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::NewClosure,
     Opcode::CallDirect, Opcode::Results, Opcode::ResultAt, Opcode::CatchValue, Opcode::CatchException, Opcode::Yield, Opcode::ToObject, Opcode::ToThis,
-    Opcode::LoopHint, Opcode::InitialYield, Opcode::ReportMismatch,
+    Opcode::LoopHint, Opcode::InitialYield, Opcode::ReportMismatch, Opcode::RecordRequire,
 };
 
 // The callee may be a built-in that allocates.
@@ -121,7 +191,7 @@ uint16_t kindsOf(uint16_t primitives)
 
 bool isCoroutine(const Function& function)
 {
-    return function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
+    return function.isUnsplitCoroutine();
 }
 
 template<typename Record>
@@ -153,11 +223,13 @@ private:
 class BodyReducer {
     WTF_MAKE_NONCOPYABLE(BodyReducer);
 public:
-    BodyReducer(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id)
+    BodyReducer(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions, FunctionID genericVersion)
         : m_program(program)
         , m_tables(tables)
+        , m_unobservedDefinitions(unobservedDefinitions)
         , m_id(id)
         , m_function(program.at(id))
+        , m_isTypedBody(genericVersion && program.at(id).role != FunctionRole::EntryChecks)
         , m_cfg(m_function)
         , m_constants(m_body.constants)
         , m_masks(m_body.masks)
@@ -170,6 +242,7 @@ public:
     Body reduce()
     {
         addInterface();
+        findValuesBehindChecks();
         for (BlockID block : m_cfg.reversePostOrder())
             describeBlock(block);
         markLiveValues();
@@ -180,6 +253,7 @@ public:
         emitStatements();
         noteClassesOfInstances();
         noteUsesOfModules();
+        appendSitesOfTypedResults(m_program, m_tables, m_function, m_cfg, m_body.sites);
         sortSites();
         sortAndRemoveRepeats(m_body.edges);
         sortAndRemoveRepeats(m_body.edgesOnceReached);
@@ -219,9 +293,11 @@ private:
             else if (site.layout)
                 note(builtinBaseClassOf(m_program, site.layout));
         }
+        if (!isCoroutine(m_function))
+            return;
         if (m_function.has(FunctionFlags::IsGenerator))
             note(m_function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator);
-        else if (m_function.has(FunctionFlags::IsAsync))
+        else
             note(BuiltinClasses::Promise);
     }
 
@@ -232,12 +308,20 @@ private:
             if (module && awaitsUse(m_program, module) && m_program.at(module).body != m_id)
                 m_body.functionsEnteredOnceReached.append(m_program.at(module).body);
         };
+        // A module with side effects may be imported by modules alone that nothing uses.
+        auto useVariableOf = [&](ModuleID module) {
+            if (!module || module == m_function.module)
+                return;
+            FunctionID body = m_program.at(module).body;
+            if (body && m_program.at(body).hasBody())
+                m_body.functionsEnteredOnceReached.append(body);
+        };
         use(m_function.module);
         for (BlockID block : m_cfg.reversePostOrder()) {
             for (ValueID id : m_function.at(block).values) {
                 const Value& value = m_function.at(id);
                 if (value.opcode == Opcode::GetModuleVariable || value.opcode == Opcode::PutModuleVariable)
-                    use(m_program.at(value.variable()).module);
+                    useVariableOf(m_program.at(value.variable()).module);
             }
         }
     }
@@ -320,6 +404,7 @@ private:
         if (mask.admitsEverything())
             return 0;
         Hasher hasher;
+        add(hasher, static_cast<uint8_t>(mask.kind), mask.trustsInstancesOfRootClasses);
         for (TypeID type : mask.inside)
             add(hasher, type);
         add(hasher, 0x5eed);
@@ -328,15 +413,28 @@ private:
         return m_masks.intern(WTF::move(mask), hasher.hash());
     }
 
-    uint32_t maskInside(TypeID type)
+    uint32_t maskInside(TypeID type, ValueFlowMaskKind kind)
     {
         const Type& record = m_program.at(type);
         if (record.isAnything() || !record.isJavaScriptValue())
             return 0;
-        return internMask({ { type }, { } });
+        return internMask({ { type }, { }, kind });
     }
 
-    uint32_t maskOutside(TypeID type) { return internMask({ { }, { type } }); }
+    // Only a test turns something away.
+    uint32_t maskOutside(TypeID type) { return internMask({ { }, { type }, ValueFlowMaskKind::Checked }); }
+    uint32_t maskOutsideUnlessNewTargetDiffers(TypeID type) { return internMask({ { }, { type }, ValueFlowMaskKind::Checked, true }); }
+
+    uint32_t maskOfTruthinessTest(EdgeSide side)
+    {
+        bool isTaken = side == EdgeSide::Taken;
+        Vector<TypeID, 1> outside { isTaken ? TypeTable::nullish : TypeTable::object };
+        if (std::optional<TypeID> boolean = m_program.types.find(Type::fromPrimitives(isTaken ? Primitive::False : Primitive::True)))
+            outside.append(*boolean);
+        return internMask({ { }, WTF::move(outside), ValueFlowMaskKind::Checked });
+    }
+
+    bool areOfOneKind(uint32_t first, uint32_t second) const { return !first || !second || m_body.masks[first].kind == m_body.masks[second].kind; }
 
     uint32_t intersectMasks(uint32_t first, uint32_t second)
     {
@@ -344,6 +442,7 @@ private:
             return second;
         if (!second)
             return first;
+        RELEASE_ASSERT(areOfOneKind(first, second));
         auto unite = [](const Vector<TypeID, 1>& a, const Vector<TypeID, 1>& b) {
             Vector<TypeID, 1> all;
             all.appendVector(a);
@@ -352,15 +451,35 @@ private:
             all.shrink(std::ranges::unique(all).begin() - all.begin());
             return all;
         };
-        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside) });
+        bool trustsInstancesOfRootClasses = m_body.masks[first].trustsInstancesOfRootClasses || m_body.masks[second].trustsInstancesOfRootClasses;
+        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, trustsInstancesOfRootClasses });
     }
 
-    // The mask of a value that passes from one type to another: none where the type it comes from says as much.
+    // The mask of a value that an operation or a branch lets through from one type to another: none where the type it comes from says as much.
     uint32_t maskFor(TypeID from, TypeID to)
     {
         if (from == to || m_program.at(from).isSubsetOf(m_program.at(to), m_program))
             return 0;
-        return maskInside(to);
+        // Every value of the language passes. The mark of a location that nothing has been stored into is none of them.
+        const Type& target = m_program.at(to);
+        if (target.isAnything() && !(target.primitives & Primitive::Absent))
+            return maskOutside(TypeTable::absent);
+        return maskInside(to, ValueFlowMaskKind::Checked);
+    }
+
+    // The type of the result is a fact where the operation makes the value itself or tests it. Where the operation hands on what lies in a position, the type is that of the position, which nothing has tested here.
+    static ValueFlowMaskKind kindOfResultMask(Opcode opcode)
+    {
+        switch (flowOf(opcode)) {
+        case ValueFlowEdgeClass::Allocates:
+        case ValueFlowEdgeClass::TableProves:
+        case ValueFlowEdgeClass::Checks:
+            return ValueFlowMaskKind::Checked;
+        case ValueFlowEdgeClass::Copies:
+        case ValueFlowEdgeClass::Unsound:
+            return ValueFlowMaskKind::Declared;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     NodeName addNode(ValueFlowBodyNodeKind kind, ValueID value, uint32_t mask = 0)
@@ -388,11 +507,13 @@ private:
         m_body.function = m_id;
         m_body.numberOfEntryParameters = m_function.numberOfEntryParameters();
         m_body.numberOfResults = m_function.results.size();
-        m_body.hasYieldedAndSent = m_function.has(FunctionFlags::IsGenerator);
+        m_body.hasYieldedAndSent = isCoroutine(m_function) && m_function.has(FunctionFlags::IsGenerator);
         RELEASE_ASSERT(entry.parameters.size() == m_body.numberOfEntryParameters);
 
+        // Whoever enters a typed body has tested what it passes or knows that it fits. An operand of such a caller that later holds more goes to the tests as well, and only what fits goes on coming here.
+        ValueFlowMaskKind kindOfParameterMasks = m_isTypedBody ? ValueFlowMaskKind::Checked : ValueFlowMaskKind::Declared;
         for (ValueID parameter : entry.parameters) {
-            NodeName node = addNode(ValueFlowBodyNodeKind::EntryParameter, parameter, carriesValue(parameter) ? maskInside(m_function.at(parameter).type) : 0);
+            NodeName node = addNode(ValueFlowBodyNodeKind::EntryParameter, parameter, carriesValue(parameter) ? maskInside(m_function.at(parameter).type, kindOfParameterMasks) : 0);
             if (carriesValue(parameter))
                 at(parameter) = { .role = Role::Node, .name = node };
         }
@@ -436,6 +557,9 @@ private:
         return node;
     }
 
+    // An operation throws what its own code throws, and what comes out of the code that it runs for an operand: a trap of a proxy, a getter, a conversion.
+    static bool mayThrowValue(Opcode opcode) { return mayThrow(opcode) || mayRunOperandCode(opcode); }
+
     // An error that the run time makes is an object that native code makes.
     void noteHostError(BlockID block)
     {
@@ -474,6 +598,35 @@ private:
         if (value && at(value).role != Role::Nothing)
             m_edges.append({ value, target });
     }
+
+    bool isBehindCheck(ValueID value) const { return value && m_isBehindCheck.get(value.index()); }
+
+    void findValuesBehindChecks()
+    {
+        if (!m_isTypedBody)
+            m_isBehindCheck = Typed::findValuesBehindChecks(m_program, m_function, m_cfg);
+    }
+
+    // The type of the result is read from the type of an operand: of the receiver of a read, of what a cast narrows, of what an operator converts.
+    static bool takesTypeFromOperands(Opcode opcode)
+    {
+        switch (resultRuleOf(opcode)) {
+        case ResultRule::Unknown:
+        case ResultRule::Cast:
+            return true;
+        case ResultRule::Natural:
+            return answersByKindsOfOperands(opcode);
+        case ResultRule::None:
+        case ResultRule::Constant:
+        case ResultRule::Allocation:
+        case ResultRule::Declared:
+        case ResultRule::Results:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    bool isTypedByChecks(ValueID id) const { return isBehindCheck(id) && takesTypeFromOperands(m_function.at(id).opcode); }
 
     void describeBlock(BlockID id)
     {
@@ -514,21 +667,39 @@ private:
         }
     }
 
+    static bool isStrictlyEqualOnlyToItself(const Type& type) { return type.isSingleValue() && !(type.primitives & Primitive::Number); }
+
     void addEdgeResult(ValueID parameter, const EdgeResult& result)
     {
         TypeID type = m_function.at(parameter).type;
         switch (result.kind) {
         case EdgeResultKind::NarrowedOperand: {
-            uint32_t mask = maskFor(m_function.at(result.subject).type, type);
+            // Behind a check only the test itself says what comes by.
+            bool restsOnCheck = isBehindCheck(parameter);
+            uint32_t mask = restsOnCheck ? 0 : maskFor(m_function.at(result.subject).type, type);
+            if (restsOnCheck && result.test && result.side == EdgeSide::Taken) {
+                const Value& test = m_function.at(result.test);
+                if (test.opcode == Opcode::TypeTest)
+                    mask = maskInside(test.testedType(), ValueFlowMaskKind::Checked);
+                else if (test.opcode == Opcode::StrictEq) {
+                    ValueID other = test.operand(result.operandIndex ? 0 : 1);
+                    if (!isBehindCheck(other) && isStrictlyEqualOnlyToItself(typeOf(other)))
+                        mask = maskInside(m_function.at(other).type, ValueFlowMaskKind::Checked);
+                    else if (!isBehindCheck(other) && typeOf(other).isNumber())
+                        mask = maskInside(TypeTable::number, ValueFlowMaskKind::Checked);
+                } else if (test.opcode == Opcode::ToBoolean)
+                    mask = maskOfTruthinessTest(result.side);
+            }
             if (result.test && result.side == EdgeSide::NotTaken) {
                 const Value& test = m_function.at(result.test);
                 if (test.opcode == Opcode::TypeTest)
                     mask = intersectMasks(mask, maskOutside(test.testedType()));
                 else if (test.opcode == Opcode::StrictEq) {
                     ValueID other = test.operand(result.operandIndex ? 0 : 1);
-                    if (typeOf(other).isSingleValue())
+                    if (!isBehindCheck(other) && typeOf(other).isSingleValue())
                         mask = intersectMasks(mask, maskOutside(m_function.at(other).type));
-                }
+                } else if (restsOnCheck && test.opcode == Opcode::ToBoolean)
+                    mask = maskOfTruthinessTest(result.side);
             }
             addSource(parameter, result.subject, mask);
             return;
@@ -545,8 +716,6 @@ private:
     void describeValue(BlockID block, ValueID id)
     {
         const Value& value = m_function.at(id);
-        if (value.opcode == Opcode::Claim)
-            m_claims.append(id);
         if (operationsWithoutRule.contains(value.opcode)) {
             if (mayThrow(value.opcode))
                 noteHostError(block);
@@ -557,19 +726,56 @@ private:
         describeResult(id, value);
         if (value.opcode == Opcode::NewObject && m_program.at(value.layout()).isEnvironment())
             seedDeadZonesOf(value);
+        if (value.opcode == Opcode::SetLiteralPrototype)
+            noteLiteralNamingPrototype(definitionThroughSameValues(m_function, value.operand(OperandIndex::SetLiteralPrototype::object)));
         if (!needsRule(id, value)) {
             if (mayThrow(value.opcode))
                 noteHostError(block);
             return;
         }
-        if (hasRuleOfItsOwn(value.opcode))
+        if (hasRuleOfItsOwn(value.opcode)) {
             addStatement(block, id, value);
-        else
+            return;
+        }
+
+        // What holds for an operation without a rule of its own depends on no set, so it needs no statement. The schema says of each operation how its result comes about, and it takes no operation that leaves that out.
+        switch (flowOf(value.opcode)) {
+        case ValueFlowEdgeClass::Allocates:
+        case ValueFlowEdgeClass::Copies:
+        case ValueFlowEdgeClass::TableProves:
+        case ValueFlowEdgeClass::Checks:
             describeBySchema(block, id, value);
+            return;
+        case ValueFlowEdgeClass::Unsound:
+            describeUnsoundOperation(block, id, value);
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // What holds for an operation without a rule of its own depends on no set, so it needs no statement: an operand that only protocols can get hold of goes into the hub of its behavior,
-    // any other that is more than looked at escapes, the result is whatever its type admits, and what is thrown is unknown.
+    // The allocation dominates the operation, so its site is there.
+    void noteLiteralNamingPrototype(ValueID literal)
+    {
+        for (ValueFlowSite& site : m_body.sites | std::views::reverse) {
+            if (site.value != literal)
+                continue;
+            site.namesPrototype = site.origin == ValueFlowSiteOrigin::Operation && m_function.at(literal).opcode == Opcode::NewObject;
+            return;
+        }
+    }
+
+    // Nothing says what the operation does with its operands and where its result comes from: it is code that nobody compiles.
+    void describeUnsoundOperation(BlockID block, ValueID id, const Value& value)
+    {
+        size_t numberOfEdges = m_edges.size();
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index)
+            connect(value.operand(index), NodeName::escaped());
+        if (m_edges.size() != numberOfEdges)
+            m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::UnknownCodeWrites), constantOf({ ValueFlowObjectKind::UnknownObject, 0, { } }), 0 });
+        describeUnknownOutcome(block, id, value);
+    }
+
+    // An operand that only protocols can get hold of goes into the hub of its behavior, any other that is more than looked at escapes, the result is whatever its type admits, and what is thrown is unknown.
     void describeBySchema(BlockID block, ValueID id, const Value& value)
     {
         constexpr OperandUses usesOfProtocols { OperandUse::Inspects, OperandUse::Returns, OperandUse::AppliesTransitively };
@@ -587,12 +793,16 @@ private:
             connect(value.operand(index), NodeName::escaped());
             // Nothing follows what the operation does to the operand beyond keeping it.
             if (!info.uses.containsOnly(usesThatKeep))
-                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::EscapedObjectsAreOpen), constantOf({ ValueFlowObjectKind::UnknownObject, 0, { } }), 0 });
+                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::UnknownCodeWrites), constantOf({ ValueFlowObjectKind::UnknownObject, 0, { } }), 0 });
         }
+        describeUnknownOutcome(block, id, value);
+    }
 
+    void describeUnknownOutcome(BlockID block, ValueID id, const Value& value)
+    {
         if (at(id).role == Role::Result)
             m_resultsOfUnknownValue.append(id);
-        if (!mayThrow(value.opcode))
+        if (!mayThrowValue(value.opcode))
             return;
         NodeName target = thrownTargetOf(block);
         if (m_targetsWithUnknownValue.get(target.owner))
@@ -631,6 +841,8 @@ private:
         case Opcode::LoopHint:
         case Opcode::InitialYield:
         case Opcode::ReportMismatch:
+        // It notes for the host who has required whom first. What `children` and `parent` may answer the requests say.
+        case Opcode::RecordRequire:
             return;
         case Opcode::GetModuleVariable:
             if (carriesValue(id))
@@ -684,9 +896,15 @@ private:
         const Function& callee = m_program.at(calleeID);
         std::span<const ValueID> arguments = value.variadicOperands();
         RELEASE_ASSERT(arguments.size() == callee.numberOfEntryParameters());
-        for (uint32_t index = 0; index < arguments.size(); ++index)
-            connect(arguments[index], NodeName::entryParameter(calleeID, index));
-        m_body.functionsEnteredOnceReached.append(calleeID);
+        // The generic version runs only for a caller whose arguments fail a test. The statement of the tests reaches it and says what it is handed.
+        const auto* entryChecks = m_function.creator.tryAs<CreatorRecord::EntryChecks>();
+        if (entryChecks && entryChecks->fallback == calleeID)
+            m_testsArguments = true;
+        else {
+            for (uint32_t index = 0; index < arguments.size(); ++index)
+                connect(arguments[index], NodeName::entryParameter(calleeID, index));
+            m_body.functionsEnteredOnceReached.append(calleeID);
+        }
 
         // The caller gets the promise or the generator. What the body returns and throws goes into that object.
         if (isCoroutine(callee)) {
@@ -719,14 +937,90 @@ private:
         }
         // One node holds whatever any result of the operation holds, and each result is the part of it that its type admits.
         beginSources(id);
-        addSource(id, producerID, maskInside(value.type));
+        addSource(id, producerID, maskInside(value.type, kindOfResultMask(producer.opcode)));
+    }
+
+    // `function F(..) { if (!(this instanceof F)) return new F(..); .. this[key] = value; .. }`: a constructor function that may be called without `new`. Called so in sloppy code its `this` is the global object,
+    // which is an instance of no function of the program: the test sends it away, and whatever else the body does with `this` lies behind the test.
+    // F.prototype = Object.prototype would let it pass. Then the body writes the global object behind the analysis, and start-up has locked what compiled code relies on there.
+    bool isUsedOnlyAsInstanceOfOwnFunction(ValueID thisValue)
+    {
+        auto isThis = [&](ValueID id) {
+            return id && definitionThroughSameValues(m_function, id) == thisValue;
+        };
+        BlockID testing;
+        ValueID test;
+        for (uint32_t index = 0; index < m_function.blocks.size() && !test; ++index) {
+            for (ValueID id : m_function.blocks[index].values) {
+                const Value& candidate = m_function.at(id);
+                if (candidate.opcode != Opcode::InstanceOf || !isThis(candidate.operand(0)))
+                    continue;
+                const Type& constructor = typeOf(candidate.operand(1));
+                if (constructor.primitives || constructor.anyObject || constructor.anyFunction || constructor.functions.size() != 1 || constructor.functions[0] != m_id)
+                    return false;
+                testing = BlockID(index);
+                test = id;
+                break;
+            }
+        }
+        if (!test)
+            return false;
+        const Terminator& terminator = m_function.at(testing).terminator;
+        if (terminator.kind != TerminatorKind::Branch)
+            return false;
+        ValueID condition = terminator.operand(0);
+        if (m_function.at(condition).opcode == Opcode::ToBoolean)
+            condition = m_function.at(condition).operand(0);
+        BlockID passed = terminator.taken().block;
+        if (condition != test || passed == terminator.notTaken().block || passed == entryBlock)
+            return false;
+
+        // The blocks that control reaches without coming by the block behind the test. That block is entered from among them by the passing edge alone.
+        BitVector isReachedOtherwise(m_function.blocks.size());
+        Vector<BlockID, 16> worklist { entryBlock };
+        isReachedOtherwise.quickSet(entryBlock.index());
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            for (BlockID successor : m_cfg.successors(block)) {
+                if (successor == passed) {
+                    if (block != testing)
+                        return false;
+                    continue;
+                }
+                if (!isReachedOtherwise.quickSet(successor.index()))
+                    worklist.append(successor);
+            }
+        }
+        for (size_t index : isReachedOtherwise) {
+            const Block& block = m_function.blocks[index];
+            for (ValueID id : block.values) {
+                const Value& user = m_function.at(id);
+                if (id == test || sameValueOperandOf(user))
+                    continue;
+                for (uint32_t operand = 0; operand < user.numberOfOperands(); ++operand) {
+                    if (isThis(user.operand(operand)))
+                        return false;
+                }
+            }
+            for (uint32_t operand = 0; operand < block.terminator.numberOfOperands(); ++operand) {
+                if (isThis(block.terminator.operand(operand)))
+                    return false;
+            }
+            for (const Target& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments) {
+                    if (isThis(argument))
+                        return false;
+                }
+            }
+        }
+        return true;
     }
 
     void describeToObject(ValueID id, const Value& value)
     {
         ValueID operand = value.valueOperand();
         beginSources(id);
-        addSource(id, operand, maskInside(TypeTable::object));
+        addSource(id, operand, maskInside(TypeTable::object, ValueFlowMaskKind::Checked));
 
         // One wrapper for each class of wrappers that the operand may need. The ordinal tells them apart.
         static constexpr std::pair<uint16_t, BuiltinClassID> wrappers[] {
@@ -742,9 +1036,23 @@ private:
             if (type.primitives & wrappers[ordinal].first)
                 made.append(addSite({ ValueFlowSiteOrigin::Operation, id, ordinal, { }, wrappers[ordinal].second }));
         }
-        if (value.opcode == Opcode::ToThis && type.mayBeUndefinedOrNull())
+        if (value.opcode == Opcode::ToThis && type.mayBeUndefinedOrNull() && !isUsedOnlyAsInstanceOfOwnFunction(id))
             made.append({ ValueFlowObjectKind::Builtin, m_program.builtins().canonicalID(Builtins::GlobalThis).index(), { } });
         at(id).constant = constantOf(0, made.span());
+    }
+
+    uint32_t maskInEveryVersion(Opcode opcode)
+    {
+        switch (opcode) {
+        case Opcode::CheckInitialized:
+            return maskOutside(TypeTable::absent);
+        case Opcode::RequireObjectCoercible:
+            return maskOutside(TypeTable::nullish);
+        case Opcode::RequireObject:
+            return maskInside(TypeTable::object, ValueFlowMaskKind::Checked);
+        default:
+            return 0;
+        }
     }
 
     std::optional<uint32_t> returnedOperandOf(const Value& value) const
@@ -758,9 +1066,26 @@ private:
 
     void describeResult(ValueID id, const Value& value)
     {
+        // Two closures of one function are two objects, and a comparison is what tells.
+        if (provesOf(value.opcode) == Proof::Equality && m_program.typeOf(m_function, value.operand(0)).mayBeFunction() && m_program.typeOf(m_function, value.operand(1)).mayBeFunction())
+            m_comparedValues.append({ value.operand(0), value.operand(1) });
         // A step over a map hands out a pair that it allocates.
         if (value.opcode == Opcode::IteratorResume || value.opcode == Opcode::AppendSpread)
             addSite({ ValueFlowSiteOrigin::Operation, id, 0, { }, BuiltinClasses::Array });
+        if (value.opcode == Opcode::NewDictionary || value.opcode == Opcode::CopyObject)
+            addSite({ ValueFlowSiteOrigin::Operation, id, 0, { }, BuiltinClasses::Object });
+        // What a load under a name nobody knows finds outside the image is data: the objects and the arrays that the loader makes of a file. See dataFromOutsideImage().
+        if (value.opcode == Opcode::RequireDynamic || value.opcode == Opcode::ImportDynamic) {
+            addSite({ ValueFlowSiteOrigin::Operation, id, 1, { }, BuiltinClasses::Object });
+            addSite({ ValueFlowSiteOrigin::Operation, id, 2, { }, BuiltinClasses::Array });
+        }
+
+        if (value.opcode == Opcode::PropGet) {
+            const BuiltinTable& builtins = m_program.builtins();
+            BuiltinID named = entryNamedByOperations(m_program, m_function, id);
+            if (named && builtins.at(named).origin == BuiltinOrigin::Host && isCallableBuiltin(builtins, named))
+                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), constantOf({ ValueFlowObjectKind::Builtin, builtins.canonicalID(named).index(), { } }), 0 });
+        }
 
         ResultRule rule = resultRuleOf(value.opcode);
         if (rule == ResultRule::Results) {
@@ -773,21 +1098,33 @@ private:
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { } });
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 1, { }, { } });
         }
-        if (value.opcode == Opcode::RequireDynamic || value.opcode == Opcode::ImportDynamic) {
-            addSite({ ValueFlowSiteOrigin::ParsedData, id, 0, { }, BuiltinClasses::Object });
-            addSite({ ValueFlowSiteOrigin::ParsedData, id, 1, { }, BuiltinClasses::Array });
-        }
         if (!carriesValue(id))
             return;
 
+        // Nothing covers the conversion. A rule takes the value for what it may not be.
+        if (value.opcode == Opcode::Convert && value.illTypedCause() != IllTypedCause::None) {
+            at(id).role = Role::Result;
+            return;
+        }
+        // What the test turns away goes on through the same operations in the generic version of the function, so the result holds it too, unless that version is a function of its own.
+        if (value.opcode == Opcode::Check) {
+            beginSources(id);
+            addSource(id, value.valueOperand(), maskInside(value.castType(), m_isTypedBody ? ValueFlowMaskKind::Checked : ValueFlowMaskKind::Expected));
+            m_checks.append(id);
+            return;
+        }
         if (std::optional<uint32_t> returned = returnedOperandOf(value)) {
             ValueID operand = value.operand(*returned);
             beginSources(id);
-            addSource(id, operand, maskFor(m_function.at(operand).type, value.type));
+            addSource(id, operand, isBehindCheck(operand) ? maskInEveryVersion(value.opcode) : maskFor(m_function.at(operand).type, value.type));
             return;
         }
 
-        const Type& type = typeOf(id);
+        // While the check passes nothing may reach an operation behind it, which then has no type at all. The generic version of the function runs it on what the check has turned away.
+        std::optional<Type> typeInGenericVersion;
+        if (rule == ResultRule::Natural && isBehindCheck(id) && typeOf(id).isNever())
+            typeInGenericVersion = tryWidestNaturalTypeOf(value);
+        const Type& type = typeInGenericVersion ? *typeInGenericVersion : typeOf(id);
         switch (value.opcode) {
         case Opcode::Builtin: {
             const BuiltinTable& builtins = m_program.builtins();
@@ -797,18 +1134,43 @@ private:
                 at(id).role = Role::Result;
                 return;
             }
-            setConstant(id, isObjectKind(builtins.at(builtin).kind) ? constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }) : constantOfType(type));
+            BuiltinName symbol = builtins.nameOfSymbol(builtin);
+            if (PropertyKeyID key = symbol ? m_program.keyOf(symbol) : PropertyKeyID()) {
+                setConstant(id, constantOf({ ValueFlowObjectKind::Key, key.index(), { } }));
+                return;
+            }
+            if (!isObjectKind(builtins.at(builtin).kind)) {
+                setConstant(id, constantOfType(type));
+                return;
+            }
+            setConstant(id, constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }));
+            m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::BuiltinsThatStatementsName), constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }), 0 });
             return;
         }
-        case Opcode::ModuleBuiltin:
-            setConstant(id, constantOf({ ValueFlowObjectKind::ModuleBuiltin, m_program.builtins().canonicalID(value.builtin()).index(), value.module() }));
+        case Opcode::ModuleBuiltin: {
+            // The path and the folder of a module are strings.
+            if (!isObjectKind(m_program.builtins().at(m_program.builtins().canonicalID(value.builtin())).kind)) {
+                setConstant(id, constantOfType(type));
+                return;
+            }
+            uint32_t object = constantOf({ ValueFlowObjectKind::ModuleBuiltin, m_program.builtins().canonicalID(value.builtin()).index(), value.module() });
+            setConstant(id, object);
+            if (m_program.builtins().canonicalID(value.builtin()) == Builtins::ModuleObject)
+                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::ModuleObjectsHandedOut), object, 0 });
             return;
+        }
         case Opcode::Data:
             describeData(id, value);
             return;
-        case Opcode::NewObject:
-            setConstant(id, constantOf(addSite({ ValueFlowSiteOrigin::Operation, id, 0, value.layout(), { } })));
+        case Opcode::NewObject: {
+            ObjectName site = addSite({ ValueFlowSiteOrigin::Operation, id, 0, value.layout(), { } });
+            // The prototype picks the class, and each class has an object of its own for its instances: the rule says which of them the operation answers.
+            if (mayAllocateOtherLayout(m_program, value))
+                at(id).role = Role::Result;
+            else
+                setConstant(id, constantOf(site));
             return;
+        }
         case Opcode::NewRuntimeError:
         case Opcode::NewSuppressedError:
             // Native code makes the error, with a class, a message and a stack that no operation spells out.
@@ -822,7 +1184,22 @@ private:
             setConstant(id, constantOf(addSiteFor(id)));
             return;
         }
-        if (!type.hasObjects() && type.isJavaScriptValue()) {
+        // The types of the operands say which boolean a test answers, which text `typeof` and which numbers a conversion. Behind a check those types hold only while the check passes:
+        // the generic version of the function asks the same of what the check has turned away, and one node holds the answers of both.
+        if (rule == ResultRule::Natural && isBehindCheck(id) && !type.hasObjects() && type.isJavaScriptValue() && !answersByKindsOfOperands(value.opcode)) {
+            uint16_t kinds = kindsOf(type.primitives);
+            for (uint16_t group : { Primitive::Boolean, Primitive::Number }) {
+                if (kinds & group)
+                    kinds |= group;
+            }
+            setConstant(id, constantOf(kinds));
+            return;
+        }
+        // Where the type leaves open whether an operator answers a number, a string or a bigint, the kinds of its operands decide.
+        // So do they where the type is a number that may have a fraction and the operator makes none of operands that have none: the types know a variable and a result as numbers, flow knows what arrives there.
+        bool mayTurnOutWithoutFraction = type.primitives & Primitive::FractionalNumber && makesNoFraction(value.opcode);
+        bool isOfOneKind = (type.hasOnlyPrimitives(Primitive::Number) && !mayTurnOutWithoutFraction) || type.hasOnlyPrimitives(Primitive::AnyString) || type.hasOnlyPrimitives(Primitive::BigInt);
+        if (!type.hasObjects() && type.isJavaScriptValue() && !isTypedByChecks(id) && (isOfOneKind || !answersByKindsOfOperands(value.opcode))) {
             setConstant(id, constantOfType(type));
             return;
         }
@@ -873,6 +1250,9 @@ private:
             return true;
         if (value.opcode == Opcode::Data)
             return !m_body.constants[at(id).constant].objects.isEmpty();
+        // It has no operand, and it is born with its elements.
+        if (value.opcode == Opcode::NewTemplateObject)
+            return true;
 
         bool hasOperand = false;
         for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
@@ -888,7 +1268,7 @@ private:
             return true;
         if (!hasOperand && resultRuleOf(value.opcode) == ResultRule::Allocation)
             return false;
-        return !bound.writes.containsOnly(bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage });
+        return !bound.writes.containsOnly(heapsWhoseWritesNobodySees);
     }
 
     static bool onlyLooksAtOperands(const Value& value)
@@ -928,8 +1308,11 @@ private:
             std::span<const ValueID> values = value.variadicOperands();
             std::span<const uint32_t> fields = value.fields();
             RELEASE_ASSERT(values.size() == fields.size());
-            for (uint32_t index = 0; index < values.size(); ++index)
-                connect(values[index], NodeName::field(value.layout(), fields[index]));
+            // The host's body holds what a `var` starts as.
+            for (uint32_t index = 0; index < values.size(); ++index) {
+                if (!listsStartOfVar(m_function, value, index))
+                    connect(values[index], NodeName::field(value.layout(), fields[index]));
+            }
             return;
         }
 
@@ -947,6 +1330,7 @@ private:
             return;
         case TerminatorKind::ReturnCall:
             connect(terminator.callOperand(), NodeName::ofBody(m_body.result(0)));
+            m_returnsCall = true;
             return;
         case TerminatorKind::Throw:
             connect(terminator.valueOperand(), thrownTargetOf(block));
@@ -984,9 +1368,52 @@ private:
         m_observedValues.append({ ValueID(), tested });
     }
 
+    bool isOwnNewTarget(ValueID id) const
+    {
+        std::optional<unsigned> index = m_function.newTargetParameterIndex();
+        return id && index && definitionThroughSameValues(m_function, id) == m_function.at(entryBlock).parameters[*index];
+    }
+
+    // What the function gets as `this`, what the constructor of a base class allocates for its new.target, and what the constructor above answers to that new.target.
+    bool isObjectUnderConstruction(ValueID id) const
+    {
+        const Value& value = m_function.at(id);
+        if (std::optional<unsigned> index = m_function.thisParameterIndex())
+            return id == m_function.at(entryBlock).parameters[*index];
+        if (value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList)
+            return isOwnNewTarget(value.operand(1));
+        if (value.opcode != Opcode::NewObject || m_function.kind != FunctionKind::BaseConstructor || m_program.at(value.layout()).kind != LayoutKind::Instance)
+            return false;
+        if (!value.prototypeOperand())
+            return true;
+        const Value& prototype = m_function.at(definitionThroughSameValues(m_function, value.prototypeOperand()));
+        return prototype.opcode == Opcode::GetConstructPrototype && isOwnNewTarget(prototype.operand(0));
+    }
+
+    // A constructor answers its completion value if that is an object, and else the object that it constructs.
+    bool answersOnlyWhatItConstructs()
+    {
+        if (m_function.constructorForm() == ConstructorForm::NotConstructor || m_function.isUnsplitCoroutine() || m_returnsCall)
+            return false;
+        BitVector isVisited(m_function.values.size());
+        Vector<ValueID, 8> worklist = m_returnedValues;
+        while (!worklist.isEmpty()) {
+            ValueID value = worklist.takeLast();
+            if (isVisited.set(value.index()) || at(value).role == Role::Nothing || !typeOf(value).hasObjects() || isObjectUnderConstruction(value))
+                continue;
+            if (at(value).role != Role::Passing)
+                return false;
+            for (const Source& source : sourcesOf(value))
+                worklist.append(source.value);
+        }
+        return true;
+    }
+
     void describeReturn(const Terminator& terminator)
     {
         ValueID returned = terminator.valueOperand();
+        if (returned)
+            m_returnedValues.append(returned);
         if (!returned) {
             m_body.seedsOnceReached.append({ NodeName::ofBody(m_body.result(0)), constantOf(Primitive::Undefined), 0 });
             return;
@@ -1016,13 +1443,25 @@ private:
     void markLiveValues()
     {
         addSourcesOfBlockParameters();
+        m_body.answersOnlyWhatItConstructs = answersOnlyWhatItConstructs();
 
         Vector<ValueID, 64> worklist;
+        bool marksForComparisons = false;
         auto markLive = [&](ValueID value) {
             if (!value || at(value).role == Role::Nothing || at(value).isLive)
                 return;
             at(value).isLive = true;
+            at(value).isLiveForComparisonsOnly = marksForComparisons;
             worklist.append(value);
+        };
+        auto markSources = [&] {
+            while (!worklist.isEmpty()) {
+                ValueID value = worklist.takeLast();
+                if (at(value).role != Role::Passing)
+                    continue;
+                for (const Source& source : sourcesOf(value))
+                    markLive(source.value);
+            }
         };
         for (ValueID operand : m_statementOperands)
             markLive(operand);
@@ -1030,19 +1469,19 @@ private:
             markLive(edge.value);
         for (auto [test, value] : m_observedValues)
             markLive(value);
-        while (!worklist.isEmpty()) {
-            ValueID value = worklist.takeLast();
-            if (at(value).role != Role::Passing)
-                continue;
-            for (const Source& source : sourcesOf(value))
-                markLive(source.value);
+        markSources();
+        marksForComparisons = true;
+        for (auto [left, right] : m_comparedValues) {
+            markLive(left);
+            markLive(right);
         }
+        markSources();
 
-        // Whether a claim can go is asked of what it looks at. A claim alone keeps no value alive.
-        for (ValueID claim : m_claims) {
-            ValueID claimed = m_function.at(claim).operand(0);
-            if (at(claimed).isLive)
-                m_observedValues.append({ claim, claimed });
+        // Whether a check can go is asked of what it looks at. A check alone keeps no value alive.
+        for (ValueID check : m_checks) {
+            ValueID tested = m_function.at(check).valueOperand();
+            if (at(tested).isLive && !at(tested).isLiveForComparisonsOnly)
+                m_observedValues.append({ check, tested });
         }
     }
 
@@ -1054,6 +1493,10 @@ private:
         }
         for (auto [test, value] : m_observedValues)
             ++at(value).operandReaders;
+        for (auto [left, right] : m_comparedValues) {
+            ++at(left).operandReaders;
+            ++at(right).operandReaders;
+        }
         for (const EdgeToNode& edge : m_edges)
             ++at(edge.value).otherReaders;
         for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
@@ -1063,6 +1506,32 @@ private:
             for (const Source& source : sourcesOf(value))
                 ++at(source.value).otherReaders;
         }
+    }
+
+    // The step that finds the end answers undefined as its value. A for..of reads the value in the block that the branch on `done` goes to while the step has not found the end, and nowhere else:
+    // there the value is what the iterator has handed out. What a step of a pattern answers the rule says, which knows what the pattern goes over.
+    bool readsValueOfStepThatFindsEnd(BlockID block, ValueID step)
+    {
+        const Value& operation = m_function.at(step);
+        if (operation.readsValueWhenDone() || operation.stepIndex())
+            return false;
+        auto reads = [&](ValueID id, IteratorResumeResult result) {
+            const Value& value = m_function.at(id);
+            return value.opcode == Opcode::ResultAt && value.resultsOperand() == step && value.index() == static_cast<uint32_t>(result);
+        };
+        const Terminator& terminator = m_function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || !reads(terminator.operand(0), IteratorResumeResult::Done))
+            return true;
+        BlockID behind = terminator.notTaken().block;
+        if (behind == terminator.taken().block || m_cfg.incomingEdges(behind).size() != 1)
+            return true;
+        size_t numberOfReads = 0;
+        for (uint32_t index = step.index() + 1; index < m_function.values.size(); ++index)
+            numberOfReads += reads(ValueID(index), IteratorResumeResult::Value);
+        size_t numberOfReadsBehind = std::ranges::count_if(m_function.at(behind).values, [&](ValueID id) {
+            return reads(id, IteratorResumeResult::Value);
+        });
+        return numberOfReads != numberOfReadsBehind;
     }
 
     void addResultNodes()
@@ -1076,7 +1545,18 @@ private:
                 Opcode opcode = m_function.at(id).opcode;
                 // The type of a Builtin names the built-in alone. One with a rule also holds what the body of a compiled module makes.
                 bool isInsideType = type && resultRuleOf(opcode) != ResultRule::Results && opcode != Opcode::Builtin;
-                description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, isInsideType ? maskInside(type) : 0);
+                ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : kindOfResultMask(opcode);
+                // Typed code takes the type of a position for what a read of it gives: the read finds a value of the type in the slot, or it leaves typed code. So a read is a check of what it finds.
+                if (m_isTypedBody && isInsideType && kind == ValueFlowMaskKind::Declared && !typeOf(id).isAnything()) {
+                    description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, 0);
+                    description.mask = maskInside(type, ValueFlowMaskKind::Checked);
+                    if (!description.isLiveForComparisonsOnly)
+                        m_readsInTypedBody.append(id);
+                    continue;
+                }
+                description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, isInsideType ? maskInside(type, kind) : 0);
+                if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(block, id))
+                    m_body.seedsOnceReached.append({ description.name, constantOf(Primitive::Undefined), 0 });
             }
         }
         for (ValueID id : m_resultsOfUnknownValue) {
@@ -1132,6 +1612,14 @@ private:
         return node;
     }
 
+    // What the mask lets through of the form. Masks of one kind are one mask. A type that is taken on trust keeps nothing out: it only says what an untracked object may be, and a test says that better.
+    Form throughMask(const Form& form, uint32_t mask)
+    {
+        if (areOfOneKind(form.mask, mask))
+            return { form.node, form.constant, intersectMasks(form.mask, mask) };
+        return { form.node, form.constant, m_body.masks[mask].kind == ValueFlowMaskKind::Checked ? mask : form.mask };
+    }
+
     Form makeNode(ValueID value, const Forms& forms)
     {
         bool isFilter = forms.size() == 1;
@@ -1139,7 +1627,22 @@ private:
         NodeName node = addNode(isFilter ? ValueFlowBodyNodeKind::Filter : ValueFlowBodyNodeKind::Merge, value, mask);
         for (const Form& form : forms)
             connectForm(form, node, mask);
+        if (isFilter)
+            m_sharedFilters.append({ node, forms[0] });
         return { node, 0, 0 };
+    }
+
+    Form throughSharedFilters(Form form)
+    {
+        while (form.node && !form.constant) {
+            size_t index = m_sharedFilters.findIf([&](const auto& filter) {
+                return filter.first == form.node;
+            });
+            if (index == notFound)
+                break;
+            form = throughMask(m_sharedFilters[index].second, form.mask);
+        }
+        return form;
     }
 
     const Forms& formsOf(ValueID value) LIFETIME_BOUND
@@ -1161,7 +1664,7 @@ private:
                 break;
             case Role::Node:
             case Role::Result:
-                m_forms[index].append({ description.name, 0, 0 });
+                m_forms[index].append({ description.name, 0, description.mask });
                 break;
             case Role::Passing:
             case Role::Nothing:
@@ -1263,7 +1766,7 @@ private:
                     continue;
                 }
                 for (const Form& form : formsOf(source.value))
-                    addForm(forms, { form.node, form.constant, intersectMasks(form.mask, source.mask) });
+                    addForm(forms, throughMask(form, source.mask));
             }
         }
         uniteFormsWithSameMask(forms);
@@ -1292,16 +1795,65 @@ private:
                 connectForm({ { }, at(member).constant, 0 }, node, 0);
             for (const Source& source : sourcesOf(member)) {
                 for (const Form& form : formsOf(source.value))
-                    connectForm({ form.node, form.constant, intersectMasks(form.mask, source.mask) }, node, 0);
+                    connectForm(throughMask(form, source.mask), node, 0);
             }
         }
     }
 
+    // The index of the operand of a call that the node stands for: `this` or a parameter with a position.
+    std::optional<uint32_t> operandOfCallerAt(NodeName node) const
+    {
+        if (node.kind != NodeName::Kind::OfBody || node.owner >= m_body.numberOfEntryParameters)
+            return std::nullopt;
+        EntryParameter kind = m_function.entryParameterKind(node.owner);
+        if (kind == EntryParameter::This)
+            return node.owner;
+        if (kind == EntryParameter::Parameter && node.owner - m_function.firstParameterIndex() < m_function.numberOfPositionalParameters())
+            return node.owner;
+        return std::nullopt;
+    }
+
     void emitEdges()
     {
+        NodeName result = NodeName::ofBody(m_body.result(0));
+        bool mayHaveSummary = m_body.numberOfResults == 1 && !isCoroutine(m_function);
+        bool returnsParameter = false;
         for (const EdgeToNode& edge : m_edges) {
+            if (!mayHaveSummary || edge.target != result)
+                continue;
             for (const Form& form : formsOf(edge.value))
+                returnsParameter |= !!operandOfCallerAt(throughSharedFilters(form).node);
+        }
+        NodeName ownResult;
+        if (returnsParameter) {
+            ownResult = addNode(ValueFlowBodyNodeKind::Merge, ValueID());
+            m_body.ownResult = ownResult.owner;
+            // A return without a value has put its constant into the result already.
+            for (size_t index = 0, end = m_body.seedsOnceReached.size(); index < end; ++index) {
+                if (m_body.seedsOnceReached[index].node == result) {
+                    auto seed = m_body.seedsOnceReached[index];
+                    seed.node = ownResult;
+                    m_body.seedsOnceReached.append(seed);
+                }
+            }
+        }
+        for (const EdgeToNode& edge : m_edges) {
+            for (const Form& form : formsOf(edge.value)) {
                 connectForm(form, edge.target, 0);
+                if (!returnsParameter || edge.target != result)
+                    continue;
+                Form source = throughSharedFilters(form);
+                std::optional<uint32_t> parameter = operandOfCallerAt(source.node);
+                if (!parameter) {
+                    connectForm(form, ownResult, 0);
+                    continue;
+                }
+                if (source.constant)
+                    connectForm({ { }, source.constant, source.mask }, ownResult, 0);
+                ValueFlowBody::PassedParameter passed { *parameter, source.mask };
+                if (!m_body.passedParameters.containsIf([&](const auto& known) { return known.entryParameter == passed.entryParameter && known.mask == passed.mask; }))
+                    m_body.passedParameters.append(passed);
+            }
         }
     }
 
@@ -1314,15 +1866,36 @@ private:
         return forms.isEmpty() ? Form { } : forms[0];
     }
 
+    // Through a receiver and through a callee a rule looks things up member by member. Where the type of the value lists what it may be, it says what an untracked object among the members is.
+    // What is only handed on needs no such mask: the position that takes it has a type of its own.
+    Form operandFormOf(const Value& operation, uint32_t index, ValueID value)
+    {
+        Form form = operandFormOf(value);
+        bool isLookedThrough = receiverOf(operation.opcode) == index || (!index && operationsCallingValues.contains(operation.opcode));
+        if (!isLookedThrough || !form.node || form.mask)
+            return form;
+        const Type& type = typeOf(value);
+        if (!type.anyObject && !type.anyFunction && type.classes.isEmpty() && (type.layouts || !type.functions.isEmpty()))
+            form.mask = maskInside(m_function.at(value).type, isBehindCheck(value) ? ValueFlowMaskKind::Expected : ValueFlowMaskKind::Declared);
+        return form;
+    }
+
+    bool isNeverObserved(ValueID operation, uint32_t operandIndex) const
+    {
+        Opcode opcode = m_function.at(operation).opcode;
+        bool isDefinedValue = (opcode == Opcode::PropDefine && operandIndex == OperandIndex::PropDefine::value) || (opcode == Opcode::PrivateDefine && operandIndex == OperandIndex::PrivateDefine::value);
+        return m_unobservedDefinitions && isDefinedValue && m_unobservedDefinitions->contains(m_id, operation);
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
-        for (ValueID operand : m_statementOperands.subspan(pending.firstOperand, pending.operandCount))
-            m_body.operands.append(operandFormOf(operand));
+        for (uint32_t index = 0; index < pending.operandCount; ++index)
+            m_body.operands.append(isNeverObserved(pending.site, index) ? Form { } : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         if (at(pending.site).role == Role::Result && at(pending.site).isLive)
             statement.result = at(pending.site).name;
-        if (mayThrow(value.opcode))
+        if (mayThrowValue(value.opcode))
             statement.thrown = thrownTargetOf(pending.block);
         m_body.statements.append(statement);
     }
@@ -1342,8 +1915,34 @@ private:
             m_body.statements.append({ { }, { }, static_cast<uint32_t>(m_body.operands.size()), 0, { }, { }, ValueFlowStatementKind::ModuleEvaluation });
         if (isCoroutine(m_function))
             m_body.statements.append({ { }, { }, static_cast<uint32_t>(m_body.operands.size()), 0, { }, { }, ValueFlowStatementKind::Coroutine });
+        if (m_testsArguments || (m_isTypedBody && (!m_checks.isEmpty() || !m_readsInTypedBody.isEmpty())))
+            emitEntryChecks();
+
         for (auto [test, value] : m_observedValues)
             m_body.observedValues.append({ test, operandFormOf(value) });
+        for (auto [left, right] : m_comparedValues)
+            m_body.comparedValues.append({ operandFormOf(left), operandFormOf(right) });
+        for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
+            if (m_descriptions[index].isLiveForComparisonsOnly)
+                m_body.valuesAliveForComparisonsOnly.append(ValueID(index));
+        }
+    }
+
+    void emitEntryChecks()
+    {
+        uint32_t firstOperand = m_body.operands.size();
+        for (const Block& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& value = m_function.at(id);
+                if (m_testsArguments && value.opcode == Opcode::TypeTest)
+                    m_body.operands.append(throughMask(operandFormOf(value.valueOperand()), maskOutsideUnlessNewTargetDiffers(value.testedType())));
+                if (m_isTypedBody && value.opcode == Opcode::Check)
+                    m_body.operands.append(throughMask(operandFormOf(value.valueOperand()), maskOutsideUnlessNewTargetDiffers(value.castType())));
+            }
+        }
+        for (ValueID read : m_readsInTypedBody)
+            m_body.operands.append({ at(read).name, 0, maskOutsideUnlessNewTargetDiffers(m_function.at(read).type) });
+        m_body.statements.append({ { }, { }, firstOperand, static_cast<uint32_t>(m_body.operands.size()) - firstOperand, { }, { }, ValueFlowStatementKind::EntryChecks });
     }
 
     struct BlockParameter {
@@ -1359,6 +1958,7 @@ private:
 
     const Program& m_program;
     const ValueFlowBuiltinTables& m_tables;
+    const UnobservedFieldDefinitions* m_unobservedDefinitions;
     FunctionID m_id;
     const Function& m_function;
     CFG m_cfg;
@@ -1368,6 +1968,8 @@ private:
     Vector<Description> m_descriptions;
     Vector<Source> m_sources;
     Vector<BlockParameter> m_blockParameters;
+    Vector<ValueID, 8> m_returnedValues;
+    bool m_returnsCall { false };
     Vector<NodeName> m_caughtNodes;
     BitVector m_targetsWithHostError;
     BitVector m_targetsWithUnknownValue;
@@ -1376,9 +1978,15 @@ private:
     Vector<PendingStatement> m_statements;
     Vector<ValueID> m_statementOperands;
     Vector<ObservedValue> m_observedValues;
-    Vector<ValueID> m_claims;
+    Vector<std::pair<ValueID, ValueID>> m_comparedValues;
+    Vector<ValueID> m_checks;
+    bool m_testsArguments { false };
+    Vector<ValueID> m_readsInTypedBody;
+    const bool m_isTypedBody;
+    BitVector m_isBehindCheck;
     Vector<Forms> m_forms;
     Vector<std::pair<Form, NodeName>, 4> m_filterNodes;
+    Vector<std::pair<NodeName, Form>, 4> m_sharedFilters;
 };
 
 } // namespace
@@ -1404,12 +2012,19 @@ static ValueFlowBody makeBodyWithoutOperations(FunctionID id, uint32_t numberOfE
     return body;
 }
 
-ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id)
+ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions, FunctionID genericVersion)
 {
     const Function& function = program.at(id);
     if (!function.hasBody())
-        return makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.has(FunctionFlags::IsGenerator));
-    return BodyReducer(program, tables, id).reduce();
+        return makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), isCoroutine(function) && function.has(FunctionFlags::IsGenerator));
+    ValueFlowBody body = BodyReducer(program, tables, id, unobservedDefinitions, genericVersion).reduce();
+    body.genericVersion = genericVersion;
+    return body;
+}
+
+bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
+{
+    return variable.initialization == VariableInitialization::Undefined && variable.flags.contains(VariableFlags::IsImmutable) && variable.module && program.at(variable.module).kind == ModuleKind::RuntimeSource;
 }
 
 ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables)
@@ -1429,7 +2044,8 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
             body.seedsOnceReached.append({ node, absentValue, 0 });
             break;
         case VariableInitialization::Undefined:
-            body.seedsOnceReached.append({ node, undefinedValue, 0 });
+            if (!startsWithoutValueInSolve(program, variable))
+                body.seedsOnceReached.append({ node, undefinedValue, 0 });
             break;
         case VariableInitialization::Function:
             if (variable.function) {
@@ -1437,6 +2053,19 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
                 body.constants.append({ 0, { ValueFlowObjectName { ValueFlowObjectKind::Closure, variable.function.index(), { } } } });
             }
             break;
+        }
+    }
+
+    // So does a `var` that lives in an environment. Its `undefined` stands here, apart from what the code of the program stores: where no read sees the start, the type of the field is that of the stores.
+    for (const Function& function : program.functions) {
+        for (const Value& value : function.values) {
+            if (value.opcode != Opcode::NewObject || !program.at(value.layout()).isEnvironment())
+                continue;
+            std::span<const uint32_t> fields = value.fields();
+            for (uint32_t index = 0; index < fields.size(); ++index) {
+                if (listsStartOfVar(function, value, index))
+                    body.seedsOnceReached.append({ ValueFlowNodeName::field(value.layout(), fields[index]), undefinedValue, 0 });
+            }
         }
     }
 

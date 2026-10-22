@@ -13,6 +13,8 @@ namespace JSC { namespace AOT {
 
 enum class TrimmedEnds : uint8_t { Start, End, Both };
 
+enum class URICoding : uint8_t { DecodeURI, DecodeURIComponent, EncodeURI, EncodeURIComponent };
+
 // Both bounds of an element that an array does not have, or that is undefined, where the elements are delivered as bounds in a string.
 constexpr int32_t absentBound = -1;
 

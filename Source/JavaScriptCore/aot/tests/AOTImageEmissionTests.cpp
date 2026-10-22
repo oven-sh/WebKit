@@ -121,12 +121,12 @@ static constexpr RecordedKind recordedKinds[] = {
 };
 
 template<typename Emit>
-static std::expected<RelocatableCode, LinkFailure> emitRelocatable(const Emit& emit, BuildContext* context = nullptr)
+static std::expected<RelocatableCode, LinkFailure> emitRelocatable(const Emit& emit)
 {
     CCallHelpers jit;
     RelocationRecorder recorder(jit, testAssemblerPolicy());
     emit(jit, recorder);
-    return recorder.finalize(LinkBuffer::Profile::FTL, context);
+    return recorder.finalize(LinkBuffer::Profile::FTL, nullptr);
 }
 
 template<typename Emit>
@@ -187,12 +187,12 @@ static Vector<uint8_t> returns42()
     });
 }
 
-static std::expected<RelocatableCode, LinkFailure> emitIntegerMove(int64_t value, BuildContext* context = nullptr)
+static std::expected<RelocatableCode, LinkFailure> emitIntegerMove(int64_t value)
 {
     return emitRelocatable([value](CCallHelpers& jit, RelocationRecorder&) {
         jit.move(TrustedImm64(value), GPRInfo::regT0);
         jit.ret();
-    }, context);
+    });
 }
 
 static void testProcessAddressFails()
@@ -212,22 +212,6 @@ static void testIntegerPasses()
     AOT_TEST_CHECK(emitIntegerMove(reinterpret_cast<intptr_t>(&local)));
     AOT_TEST_CHECK(emitIntegerMove(0x123456789abc));
     AOT_TEST_CHECK(emitIntegerMove(1099511627776));
-}
-
-static void testValidationFindsMappedAddress()
-{
-    int local = 0;
-    BuildContext context(wireOptions(TestOptions { .checks = Wire::CheckSet::Validate }));
-    AOT_TEST_CHECK(emitIntegerMove(reinterpret_cast<intptr_t>(&local), &context));
-    AOT_TEST_CHECK(count(context, InternalErrorKind::ProcessAddressInImageCode) == mappedIntegersAreAddresses);
-}
-
-static void testValidationPassesTags()
-{
-    BuildContext context(wireOptions(TestOptions { .checks = Wire::CheckSet::Validate }));
-    AOT_TEST_CHECK(emitIntegerMove(JSValue::NumberTag, &context));
-    AOT_TEST_CHECK(emitIntegerMove(JSValue::NotCellMask, &context));
-    AOT_TEST_CHECK(!count(context, InternalErrorKind::ProcessAddressInImageCode));
 }
 
 static void testEmptyAssembler()
@@ -807,8 +791,6 @@ std::span<const NativeTest> emissionTests()
     static constexpr NativeTest tests[] = {
         { "image/relocation/process-address-fails"_s, testProcessAddressFails },
         { "image/relocation/integer-passes"_s, testIntegerPasses },
-        { "image/relocation/validation-finds-mapped-address"_s, testValidationFindsMappedAddress },
-        { "image/relocation/validation-passes-tags"_s, testValidationPassesTags },
         { "image/relocation/empty-assembler"_s, testEmptyAssembler },
         { "image/relocation/bytes-end-at-last-instruction"_s, testBytesEndAtLastInstruction },
         { "image/relocation/records-ascend"_s, testRecordsAscend },

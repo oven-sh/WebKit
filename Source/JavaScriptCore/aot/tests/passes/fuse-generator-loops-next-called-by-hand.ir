@@ -69,7 +69,7 @@ function f2 name="createdHere" parameters=[{type=number}, {type=anything}] resul
   b3():
     v13 = Integer integer=1
     v14 = StrictEq v9, v13
-    v15 = NewObject -, v8, v14 layout=L(IteratorResult) fields=[0, 1] [keepsShape]
+    v15 = NewObject -, v8, v14 layout=L(IteratorResult) fields=[0, 1]
     Jump -> next b4(v15)
   b4(v16):
     v17 = PropGet v16 key="done"
@@ -84,7 +84,8 @@ function f2 name="createdHere" parameters=[{type=number}, {type=anything}] resul
     Return v21
 }
 # CHECK-LABEL: function f2 name="createdHere"
-# CHECK: inlineFrames=[{}, {callee=f1 callPosition=40 module=m0}]
+# In a stack trace the caller of the body stands at the step that runs it (50), not where the generator was made (40).
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # SIMPLE-LABEL: function f2 name="createdHere"

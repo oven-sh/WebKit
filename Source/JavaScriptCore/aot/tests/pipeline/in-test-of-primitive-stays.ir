@@ -30,8 +30,9 @@ function f1 name="testsPrimitive" parameters=[{type=anything}] results=[{type=an
     v6 = PropHas v5 key="missing"
     Unreachable
 }
-# CHECK-LABEL: function f1 name="testsPrimitive"
-# CHECK: frequency=Unlikely:
+# Only its entrypoint enters each function, so the body is there
+# CHECK-LABEL: name="testsPrimitive" module=m0 role=GenericEntrypoint
+# CHECK: frequency=Rare:
 # CHECK-NEXT: = PropHas {{*}}key="missing"
 # CHECK-NEXT: Unreachable
 function f2 name="testsRecord" results=[{type=anything}] {
@@ -40,7 +41,8 @@ function f2 name="testsRecord" results=[{type=anything}] {
     v1 = PropHas v0 key="missing"
     Return v1
 }
-# CHECK-LABEL: function f2 name="testsRecord"
+# CHECK-LABEL: name="testsRecord" module=m0 role=GenericEntrypoint
 # CHECK-NOT: PropHas
 # CHECK: false = Boolean
-# CHECK-LABEL: role=GenericEntrypoint
+# CHECK-NOT: PropHas
+# CHECK-LABEL: entry module=m0

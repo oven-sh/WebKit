@@ -48,6 +48,9 @@
     ValueID receiverOperand() const { return operand(declaredPosition(OperandPosition::receiver(kind))); }
     void setReceiverOperand(ValueID receiver) { setOperand(declaredPosition(OperandPosition::receiver(kind)), receiver); }
 
+    ValueID exceptionOperand() const { return operand(declaredPosition(OperandPosition::exception(kind))); }
+    void setExceptionOperand(ValueID exception) { setOperand(declaredPosition(OperandPosition::exception(kind)), exception); }
+
     ValueID conditionOperand() const { return operand(declaredPosition(OperandPosition::condition(kind))); }
     void setConditionOperand(ValueID condition) { setOperand(declaredPosition(OperandPosition::condition(kind)), condition); }
 
@@ -56,9 +59,6 @@
 
     ValueID callOperand() const { return operand(declaredPosition(OperandPosition::call(kind))); }
     void setCallOperand(ValueID call) { setOperand(declaredPosition(OperandPosition::call(kind)), call); }
-
-    ValueID exceptionOperand() const { return operand(declaredPosition(OperandPosition::exception(kind))); }
-    void setExceptionOperand(ValueID exception) { setOperand(declaredPosition(OperandPosition::exception(kind)), exception); }
 
     std::span<const ValueID> argumentsOperands() const LIFETIME_BOUND { RELEASE_ASSERT(VariadicOperandPosition::arguments(kind)); return variadicOperands(); }
     void setArgumentsOperands(std::span<const ValueID> arguments) { RELEASE_ASSERT(VariadicOperandPosition::arguments(kind)); setVariadicOperands(arguments); }

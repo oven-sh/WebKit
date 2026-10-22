@@ -1,0 +1,18 @@
+# Text that Function is given starts no second instance beside this one. What makes a realm is in the image only if the program uses it, and a realm that is made in an image
+# built for one instance gets no instance. A worker has a VM of its own, and no object crosses over.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: unseen-code EvaluatesText
+# CHECK: program instances AtMostOne
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3
+    Return
+}

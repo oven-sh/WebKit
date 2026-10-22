@@ -2,7 +2,7 @@
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow
 # RUN: place
-# RUN(FLOW): flow-order locations
+# RUN(FLOW): valueflow-apply
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -36,8 +36,8 @@ function f2 name="initializeCounter" kind=Initializer flags=[HasThis] thisType={
     PropDefine v0, v1 key="count"
     Return
 }
-# FLOW: g0: StoredBeforeEveryRead AtMostOnce
-# FLOW-NEXT: g1: StoredBeforeEveryRead AtMostOnce
+# FLOW: variable g0 module=m0 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# FLOW-NEXT: variable g1 name="moduleCount" module=m0 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
 # CHECK: g0 offset={{*}} representation=OptionalDouble encoding=Plain region=FilledAtProgramEntry initial=0x7ffc000000000000
 # CHECK-NEXT: g1 offset={{*}} representation=Double encoding=Plain region=FilledAtInstanceCreation
 # CHECK-NOT: initial=

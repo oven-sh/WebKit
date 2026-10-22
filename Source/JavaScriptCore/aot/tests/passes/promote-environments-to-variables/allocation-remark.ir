@@ -17,7 +17,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[0] @10
     v3 = NewClosure v2 function=f1 @20
-    v4 = Call v1, -, v3
+    v4 = Call v1, -, v1, v1, v3
     Return
 }
 function f1 name="reads" captures=[{type=env L0}] results=[{type=anything}] {

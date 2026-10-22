@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFunctionAnalyses.h"
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -37,9 +39,9 @@ static Access lookupAccessOf(MethodKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<CallArm> planAccessorArm(const Program& program, const FlowResults& flow, const MemberAnswer& answer, MethodKind kind)
+static std::optional<CallArm> planAccessorArm(const Program& program, const MemberAnswer& answer, MethodKind kind)
 {
-    if (kind == MethodKind::Method || !answer.needsNoTest())
+    if (kind == MethodKind::Method)
         return std::nullopt;
 
     FunctionID accessor = answer.accessorFor(lookupAccessOf(kind));
@@ -50,7 +52,7 @@ static std::optional<CallArm> planAccessorArm(const Program& program, const Flow
     }
     if (!canCallWithoutClosure(program, accessor))
         return std::nullopt;
-    return createDirectCallArm(program, flow, accessor, { });
+    return createDirectCallArm(accessor);
 }
 
 static std::optional<CallArm> planOriginalOperationsArm(const CallSite& site, MethodKind kind)
@@ -104,36 +106,31 @@ static bool coversObjectsOf(FunctionPassContext& context, const ValueSplit& spli
     return receiver.withoutNullish().isSubsetOf(covered, context.program);
 }
 
-static FunctionID findMethodToPredict(FunctionPassContext& context, const CallSite& site, const Value& read)
+// What the class definitions say of a member holds while the bits of its conditions are set, and one test at the site asks for all of them.
+static bool canTestConditions(FunctionPassContext& context, const CallSite& site, const MemberAnswer& answer, MethodKind kind)
 {
-    const Program& program = context.program;
-    const Function& function = context.function;
-    ReceiverCandidates candidates = receiverCandidates(program, function, read.operand(OperandIndex::PropGet::object), read.receivers());
-    const LayoutList& members = candidates.isProven() ? candidates.proven : candidates.predicted;
+    if (!answer.receiverProofs.isEmpty())
+        return false;
+    if (answer.conditions.isEmpty())
+        return true;
+    // The failing side reads the member again, at the call.
+    if (kind == MethodKind::Method && !site.memberRead.canSinkToCall)
+        return false;
+    // A bit that was cleared stays cleared, so the operations behind a failed test stay as they are.
+    context.planAsksAboutPlace = true;
+    return context.analyses.findEarlierTest(makeConditionsTest(context.types, answer.conditions.span()), site.position.block) != EarlierTest::Failed;
+}
 
-    // planReceiverDispatch has recorded the loss of a proven set that is over the limit.
-    bool isOverLimit = candidates.isProven()
-        ? members.size() > context.limit(LimitID::MaxAccessPlanMembers)
-        : context.exceeds(LimitID::MaxAccessPlanMembers, members.size(), site.position.value);
-    if (isOverLimit)
-        return { };
+static void appendLookupValidation(IRBuilder& builder, const CallArm& arm, ValueID receiver, PropertyKeyID key)
+{
+    Value closure = IRBuilder::make(Opcode::NewClosure);
+    closure.setFunction(arm.closureFunction);
+    if (arm.capturesReceiver)
+        closure.setCapturesOperands(std::array { receiver });
 
-    MemberPartition partition = partitionMembers({ program, &context.inputs.flow }, members.span(), read.key(), Access::Read);
-    const MemberArm* arm = findHeaviestArm(partition, candidates, [](const MemberArm& candidate) {
-        return candidate.answer.kind == MemberKind::Method;
-    });
-    if (!arm)
-        return { };
-
-    FunctionID method = arm->answer.method;
-    if (!mayBeCalledDirectly(program, method) || canCallWithoutClosure(program, method))
-        return { };
-
-    Type predicted = Type::forFunction(method);
-    const Type& known = program.predictionOrTypeOf(function, function.at(site.position.value).operand(OperandIndex::Call::callee));
-    if (known == predicted || !known.overlaps(predicted, program))
-        return { };
-    return method;
+    Value validation = IRBuilder::make(Opcode::ValidateLookup, { receiver, builder.append(WTF::move(closure)) });
+    validation.setKey(key);
+    builder.append(WTF::move(validation));
 }
 
 PlanOrDecline<CallPlan> CallResolver::planMemberCall(const CallSite& site)
@@ -145,12 +142,9 @@ PlanOrDecline<CallPlan> CallResolver::planMemberCall(const CallSite& site)
         return std::unexpected(CallDeclineReason::None);
 
     PlanOrDecline<ReceiverDispatchPlan> dispatch = planReceiverDispatch(site, MethodKind::Method);
-    if (dispatch)
-        return CallPlan(WTF::move(*dispatch));
-
-    if (FunctionID method = findMethodToPredict(m_context, site, *read))
-        return CallPlan(MethodPredictionPlan { method });
-    return std::unexpected(dispatch.error());
+    if (!dispatch)
+        return std::unexpected(dispatch.error());
+    return CallPlan(WTF::move(*dispatch));
 }
 
 PlanOrDecline<ReceiverDispatchPlan> CallResolver::planReceiverDispatch(const CallSite& site, MethodKind kind)
@@ -173,8 +167,6 @@ PlanOrDecline<ReceiverDispatchPlan> CallResolver::planReceiverDispatch(const Cal
             return std::unexpected(CallDeclineReason::NeedsTest);
         return std::unexpected(isCall ? CallDeclineReason::UnknownMember : CallDeclineReason::None);
     }
-    if (m_context.exceeds(LimitID::MaxAccessPlanMembers, candidates.proven.size(), site.position.value))
-        return std::unexpected(CallDeclineReason::UnknownMember);
     if (candidates.mayBeNullish) {
         if (!isCall)
             return std::unexpected(CallDeclineReason::None);
@@ -191,6 +183,7 @@ PlanOrDecline<ReceiverDispatchPlan> CallResolver::planReceiverDispatch(const Cal
     });
     if (!resolvesSomeArm)
         return std::unexpected(declineWithoutResolvedArm(partition, kind));
+    m_context.planAsksAboutPlace = true;
 
     DispatchPlan dispatch = planDispatch(m_context, partition, candidates, site.position.value, [&](const MemberArm& arm) {
         return arms[static_cast<size_t>(&arm - partition.arms.begin())].has_value();
@@ -206,7 +199,7 @@ PlanOrDecline<ReceiverDispatchPlan> CallResolver::planReceiverDispatch(const Cal
     for (uint32_t armIndex : dispatch.arms) {
         CallArm arm = *arms[armIndex];
         arm.receivers = m_context.types.completeLayoutSet(partition.arms[armIndex].layouts.span());
-        copiesMemberRead |= arm.kind == CallArmKind::OriginalOperations;
+        copiesMemberRead |= arm.kind == CallArmKind::OriginalOperations || !arm.conditions.isEmpty();
         plan.arms.append(arm);
     }
     if (isCall && copiesMemberRead && !site.memberRead.canSinkToCall)
@@ -221,14 +214,23 @@ std::optional<CallArm> CallResolver::planReceiverArm(const CallSite& site, const
 {
     const MemberAnswer& answer = arm.answer;
     switch (answer.kind) {
-    case MemberKind::Method:
-        if (kind != MethodKind::Method || !answer.needsNoTest())
+    case MemberKind::Method: {
+        if (kind != MethodKind::Method || !canTestConditions(m_context, site, answer, kind))
             return std::nullopt;
         if (!canCallWithoutClosure(m_program, answer.method) || !canRetireMemberRead(site, answer.method))
             return std::nullopt;
-        return createDirectCallArm(m_program, m_flow, answer.method, m_function.at(site.position.value).callees());
-    case MemberKind::Accessor:
-        return planAccessorArm(m_program, m_flow, answer, kind);
+        CallArm direct = createDirectCallArm(answer.method);
+        direct.conditions = answer.conditions;
+        return direct;
+    }
+    case MemberKind::Accessor: {
+        if (!canTestConditions(m_context, site, answer, kind))
+            return std::nullopt;
+        std::optional<CallArm> accessorArm = planAccessorArm(m_program, answer, kind);
+        if (accessorArm)
+            accessorArm->conditions = answer.conditions;
+        return accessorArm;
+    }
     case MemberKind::Field: {
         if (kind != MethodKind::Method)
             return std::nullopt;
@@ -236,7 +238,7 @@ std::optional<CallArm> CallResolver::planReceiverArm(const CallSite& site, const
         PropertyAccessPlan read = planCalledFieldRead(accessContext(), arm, key, m_context.limit(LimitID::MaxAccessPlanMembers));
         if (!canCallDeferredClosure(m_program, m_context.types, read) || !canRetireMemberRead(site, read.member.method))
             return planOriginalOperationsArm(site, kind);
-        CallArm direct = createDirectCallArm(m_program, m_flow, read.member.method, m_function.at(site.position.value).callees());
+        CallArm direct = createDirectCallArm(read.member.method);
         direct.capturesReceiver = read.capturesReceiver;
         return direct;
     }
@@ -275,8 +277,13 @@ void CallResolver::rewriteReceiverDispatch(const CallSite& site, const ReceiverD
 
 void CallResolver::emitReceiverArm(const ReceiverDispatchPlan& plan, const CallArm& arm, ValueID receiver, std::span<const ValueID> arguments)
 {
+    OriginalCopy original { plan.receiverOperandIndex, receiver, arm.receivers, { } };
+    branchOnConditions(arm.conditions.span(), original);
+
     switch (arm.kind) {
     case CallArmKind::DirectCall: {
+        if (plan.kind == MethodKind::Method && m_context.build.validates())
+            appendLookupValidation(m_builder, arm, receiver, plan.key);
         ValueID result = appendCall(arm, receiver, { }, arguments);
         if (typeOf(result).isNever())
             m_expansion.finishArmAsUnreachable();
@@ -290,22 +297,10 @@ void CallResolver::emitReceiverArm(const ReceiverDispatchPlan& plan, const CallA
         m_expansion.finishArm(m_builder.appendUndefined());
         return;
     case CallArmKind::OriginalOperations:
-        m_expansion.finishArm(m_expansion.appendOriginal({ plan.receiverOperandIndex, receiver, arm.receivers, { } }));
+        m_expansion.finishArm(m_expansion.appendOriginal(original));
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-void CallResolver::rewriteMethodPrediction(const CallSite& site, const MethodPredictionPlan& plan)
-{
-    const Value& call = m_function.at(site.position.value);
-    Value predict = IRBuilder::make(Opcode::Predict, { call.operand(OperandIndex::Call::callee) });
-    predict.setPredicted(m_context.types.intern(Type::forFunction(plan.method)));
-    m_builder.setOrigin(call.origin());
-
-    ValueID predicted = m_builder.insertBefore(site.position.point(), WTF::move(predict));
-    m_function.at(site.position.value).setOperand(OperandIndex::Call::callee, predicted);
-    m_builder.applyInsertions();
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -61,14 +61,14 @@ static std::optional<Value> makeExecOfMatch(FunctionPassContext& context, const 
     return exec;
 }
 
-unsigned simplifyMatches(FunctionPassContext& context)
+unsigned simplifyMatches(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Vector<MatchRewrite> rewrites;
-    forEachValueSite(context.analyses, context.function, [&](const ValueSite& site) {
+    for (const ValueSite& site : calls) {
         std::optional<Value> rewritten = makeExecOfMatch(context, context.function.at(site.value));
         if (rewritten && keepsTypeOf(context, site.value, *rewritten))
             rewrites.append(MatchRewrite { site.value, WTF::move(*rewritten) });
-    });
+    }
 
     for (MatchRewrite& rewrite : rewrites)
         replaceKeepingType(context, rewrite.original, WTF::move(rewrite.rewritten));

@@ -10,6 +10,7 @@
 #include "AOTCodeRecords.h"
 #include "AirCode.h"
 #include "CCallHelpers.h"
+#include <optional>
 
 namespace JSC {
 
@@ -29,6 +30,8 @@ struct PendingStackCheck {
     CCallHelpers::JumpList doesNotFit;
     CCallHelpers::Label resume;
     unsigned bytesBelowFrameRecord { 0 };
+    // Of a frame without a record.
+    std::optional<unsigned> bytesAllocatedBelowReturnAddress;
     StackLimit limit { StackLimit::TrapAwareSoft };
 };
 

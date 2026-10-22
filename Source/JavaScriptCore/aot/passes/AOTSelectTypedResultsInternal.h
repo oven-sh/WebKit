@@ -16,12 +16,19 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// SelectTypedResults has nothing to do in a function without any of these.
+inline constexpr OpcodeSet typedResultCallOpcodes { Opcode::Call, Opcode::CallBuiltin };
+
 struct TypedResultSite {
     BlockID block;
     uint32_t index { 0 };
     ValueID call;
     ValueID source;
     ValueID await;
+    // Of a body. A call behind a test of its receiver ends its block with a jump that hands the promise on, beside what the call by name on the other arm answers:
+    // then the await stands in the block that the arms meet in, and takes the parameter of that block.
+    BlockID awaitBlock;
+    ValueID mergedPromise;
     TypedResultForm form { TypedResultForm::None };
     ResultNodeRef root;
     LayoutID rowLayout;
@@ -53,6 +60,7 @@ private:
     void expandValidatedValue(const TypedResultSite&);
     void expandValidatedCall(const TypedResultSite&);
 
+    ValueID addParameterForOriginOfPromise(const TypedResultSite&);
     ValueID emitParseOf(const TypedResultSite&, ValueID textOrBytes, BlockID generic);
     ValueID emitValidationOf(const TypedResultSite&, ValueID value);
     ValueID emitGeneralValidation(const TypedResultSite&, ValueID value);

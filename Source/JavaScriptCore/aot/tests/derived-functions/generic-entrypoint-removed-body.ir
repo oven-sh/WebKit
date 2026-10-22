@@ -1,4 +1,4 @@
-# A closure of a function that lost its body may still be created. No seen code enters its generic entrypoint, and nothing was analyzed here, so unseen code may: it gets an error
+# A closure of a function that lost its body may still be created. No seen code enters its generic entrypoint, and nothing was analyzed here, so unseen code may: it gets an error that names the function
 # FORM: Prepared
 # RUN: derived-functions GenericEntrypoint:f0
 # STATISTIC: GenericEntrypoints = 1
@@ -7,5 +7,5 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="neverCalled" parameters=[{type=number}] results=[{type=anything}]
 # CHECK: role=GenericEntrypoint{{*}}parameters=[{type=anything}]{{*}}creator=Entrypoint{target=f0 arguments=Registers} {
 # CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[argument]]: anything):
-# CHECK-NEXT: = ThrowNewError message="Cannot call this function: nothing in the program calls it
+# CHECK-NEXT: = ThrowNewError message="'neverCalled' was not compiled into this executable because your code never calls it.
 # CHECK-NEXT: Unreachable

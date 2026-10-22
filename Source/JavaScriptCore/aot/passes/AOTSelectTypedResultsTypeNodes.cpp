@@ -10,7 +10,9 @@
 
 #include "AOTExpandOwnKeysOrders.h"
 #include <algorithm>
+#include <functional>
 #include <span>
+#include <utility>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -19,9 +21,7 @@ using TypeAlternatives = Vector<TypeAlternative, 4>;
 
 TypeID expectationOf(const DeclaredType& declared)
 {
-    if (declared.predicted)
-        return declared.predicted;
-    return declared.written ? declared.written : declared.type;
+    return declared.type;
 }
 
 static void appendBooleanAlternative(const Type& type, TypeAlternatives& alternatives)
@@ -53,24 +53,121 @@ static void appendStringAlternatives(const Type& type, TypeAlternatives& alterna
     }
 }
 
-static void appendHeadLayouts(const Program& program, const Type& type, TypeAlternatives& alternatives)
-{
-    std::span<const LayoutID> members = membersOf(program, type);
-    BitVector isSubtypeOfMember;
-    for (LayoutID member : members) {
-        for (LayoutID subtype : program.at(program.declaredMembersOf(member)).members) {
-            if (subtype == member)
-                continue;
-            auto position = std::ranges::lower_bound(members, subtype);
-            if (position != members.end() && *position == subtype)
-                isSubtypeOfMember.set(static_cast<size_t>(position - members.begin()));
+namespace {
+
+struct FamilyOfMembers {
+    LayoutSetID family;
+    LayoutID owner;
+    bool hasSeveralOwners { false };
+};
+
+class HeadCandidates {
+public:
+    HeadCandidates(const Program& program, std::span<const LayoutID> members)
+    {
+        for (LayoutID member : members) {
+            if (program.at(member).kind == LayoutKind::Record)
+                m_layouts.append(member);
         }
+        m_numberLeft = m_layouts.size();
     }
 
-    for (size_t index = 0; index < members.size(); ++index) {
-        if (program.at(members[index]).kind == LayoutKind::Record && !isSubtypeOfMember.get(index))
-            alternatives.append(TypeAlternative { .shape = ResultShape::Object, .layout = members[index] });
+    size_t numberLeft() const { return m_numberLeft; }
+
+    void removeIf(NOESCAPE const Invocable<bool(LayoutID)> auto& functor)
+    {
+        compact();
+        m_layouts.removeAllMatching(functor);
+        m_numberLeft = m_layouts.size();
     }
+
+    void remove(LayoutID layout)
+    {
+        auto position = std::ranges::lower_bound(m_layouts, layout);
+        if (position == m_layouts.end() || *position != layout || m_isRemoved.set(static_cast<size_t>(position - m_layouts.begin())))
+            return;
+        --m_numberLeft;
+    }
+
+    Vector<LayoutID, 4> take()
+    {
+        compact();
+        return std::exchange(m_layouts, { });
+    }
+
+private:
+    void compact()
+    {
+        if (m_numberLeft == m_layouts.size())
+            return;
+        size_t index = 0;
+        m_layouts.removeAllMatching([&](LayoutID) {
+            return m_isRemoved.get(index++);
+        });
+        m_isRemoved.clearAll();
+    }
+
+    Vector<LayoutID, 4> m_layouts;
+    BitVector m_isRemoved;
+    size_t m_numberLeft { 0 };
+};
+
+} // anonymous namespace
+
+static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<const LayoutID> members)
+{
+    Vector<FamilyOfMembers> families(members.size(), [&](size_t index) {
+        return FamilyOfMembers { program.declaredMembersOf(members[index]), members[index] };
+    });
+    std::ranges::sort(families, { }, [](const FamilyOfMembers& family) {
+        return std::pair { family.family, family.owner };
+    });
+    size_t numberOfFamilies = 0;
+    for (const FamilyOfMembers& family : families) {
+        if (numberOfFamilies && families[numberOfFamilies - 1].family == family.family)
+            families[numberOfFamilies - 1].hasSeveralOwners = true;
+        else
+            families[numberOfFamilies++] = family;
+    }
+    families.shrink(numberOfFamilies);
+    std::ranges::sort(families, std::ranges::greater { }, [&](const FamilyOfMembers& family) {
+        return std::pair { program.at(family.family).members.size(), family.family };
+    });
+    return families;
+}
+
+Vector<LayoutID, 4> headLayoutsOf(const Program& program, const Type& type)
+{
+    std::span<const LayoutID> members = membersOf(program, type);
+    HeadCandidates candidates(program, members);
+    if (!candidates.numberLeft())
+        return { };
+
+    for (const FamilyOfMembers& family : familiesOf(program, members)) {
+        if (!candidates.numberLeft())
+            break;
+        std::span<const LayoutID> subtypes = program.at(family.family).members.span();
+        auto isOwnerAlone = [&](LayoutID layout) {
+            return !family.hasSeveralOwners && layout == family.owner;
+        };
+        if (candidates.numberLeft() <= subtypes.size()) {
+            candidates.removeIf([&](LayoutID candidate) {
+                return !isOwnerAlone(candidate) && std::ranges::binary_search(subtypes, candidate);
+            });
+            continue;
+        }
+        for (LayoutID subtype : subtypes) {
+            if (!isOwnerAlone(subtype))
+                candidates.remove(subtype);
+        }
+    }
+    return candidates.take();
+}
+
+static void appendHeadLayouts(const Program& program, const Type& type, TypeAlternatives& alternatives)
+{
+    for (LayoutID layout : headLayoutsOf(program, type))
+        alternatives.append(TypeAlternative { .shape = ResultShape::Object, .layout = layout });
 }
 
 TypeAlternatives alternativesOf(const Program& program, TypeID id)
@@ -94,6 +191,27 @@ static bool mayBeUndefined(const Program& program, TypeID type)
     return !type || program.at(type).primitives & Primitive::Undefined;
 }
 
+// What flow has proven about the arrays in a field says nothing about what a parser has to make. Fields that differ in that alone share a parser: the one of the type as it was read.
+static TypeID withoutProofsAboutClasses(const Program& program, TypeID id)
+{
+    if (!id || TypeTable::isProvisional(id))
+        return id;
+    auto hasProof = [](const ClassPart& part) {
+        return part.contentsAreProven || !part.provenPristine.isEmpty() || part.arrayStorage != ArrayStorage::Other;
+    };
+    if (std::ranges::none_of(program.at(id).classes, hasProof))
+        return id;
+
+    Type type = program.at(id);
+    for (ClassPart& part : type.classes) {
+        part.contentsAreProven = false;
+        part.provenPristine = { };
+        part.arrayStorage = ArrayStorage::Other;
+    }
+    type.canonicalize();
+    return program.types.find(type).value_or(id);
+}
+
 static void appendMembers(const Program& program, LayoutID layout, ResultNode& node)
 {
     const Vector<Field>& fields = program.at(layout).fields;
@@ -101,7 +219,7 @@ static void appendMembers(const Program& program, LayoutID layout, ResultNode& n
         const Field& field = fields[index];
         if (!isEnumerableStringField(program, field))
             continue;
-        TypeID expectation = expectationOf(field.declared);
+        TypeID expectation = withoutProofsAboutClasses(program, expectationOf(field.declared));
         node.members.append(ResultMember {
             .key = field.key,
             .node = ResultNodeRef::forType(expectation ? expectation : TypeTable::anything),

@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ErrorInstance.h"
 
+#include "AOTErrorMessages.h"
 #include "AOTStackTrace.h"
 #include "CodeBlock.h"
 #include "CustomGetterSetter.h"
@@ -202,9 +203,26 @@ void ErrorInstance::materializeStackTrace()
 #endif
 }
 
+#if ENABLE(AOT)
+NEVER_INLINE bool ErrorInstance::tryRetainReturnAddresses(VM& vm, bool useCurrentFrame, JSCell* subclassCaller, std::unique_ptr<Vector<StackFrame>>& otherFrames)
+{
+    if (!useCurrentFrame)
+        return false;
+    std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit();
+    if (!stackTraceLimit)
+        return false;
+    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, otherFrames, subclassCaller);
+    if (!returnAddresses)
+        return false;
+    Locker locker { cellLock() };
+    m_returnAddresses = returnAddresses;
+    return true;
+}
+#endif
+
 void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size_t framesToSkip, bool append)
 {
-    if (m_returnAddresses) {
+    if (m_returnAddresses) [[unlikely]] {
         if (append)
             materializeStackTrace();
         else {
@@ -248,21 +266,13 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     m_runtimeTypeForCause = type;
 
     std::unique_ptr<Vector<StackFrame>> stackTrace;
-    AOT::ReturnAddressTrace* returnAddresses = nullptr;
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode()) [[unlikely]] {
-        if (useCurrentFrame) {
-            if (std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit())
-                returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, stackTrace, subclassCaller);
-        }
-    }
+    if (!vm.hasCompiledCode() || !tryRetainReturnAddresses(vm, useCurrentFrame, subclassCaller, stackTrace)) [[likely]]
 #endif
-    if (!returnAddresses)
         stackTrace = getStackTrace(vm, this, useCurrentFrame, nullptr, nullptr, subclassCaller);
     {
         Locker locker { cellLock() };
         m_stackTrace = WTF::move(stackTrace);
-        m_returnAddresses = returnAddresses;
     }
     vm.writeBarrier(this);
 
@@ -277,6 +287,15 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
             clearRuntimeTypeForCause();
             messageWithSource = appendSourceToErrorMessage(codeBlock, bytecodeIndex, message, type, appender);
         }
+#if ENABLE(AOT)
+        else if (StringView quoted = AOT::quotedSourceOfFailedExpression(); !quoted.isNull() && !message.isNull()) {
+            ErrorInstance::SourceAppender appender = sourceAppender();
+            clearSourceAppender();
+            RuntimeType type = runtimeTypeForCause();
+            clearRuntimeTypeForCause();
+            messageWithSource = appender(message, quoted, type, SourceTextWhereErrorOccurred::FoundExactSource);
+        }
+#endif
     }
 
     if (!messageWithSource.isNull())
@@ -464,7 +483,7 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     }
 
 #if ENABLE(AOT)
-    if (m_returnAddresses && !vm.heap.isMarked(AOT::livenessToken(m_returnAddresses->instance))) {
+    if (m_returnAddresses && !vm.heap.isMarked(AOT::livenessToken(m_returnAddresses->instance))) [[unlikely]] {
         computeErrorInfo(vm, false);
         return;
     }
@@ -480,7 +499,7 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     // that case, DeferGC's destructor might trigger another GC cycle which is unexpected.
     DeferGCForAWhile deferGC(vm);
     UNUSED_PARAM(allocationAllowed);
-    if (m_returnAddresses)
+    if (m_returnAddresses) [[unlikely]]
         materializeStackTrace();
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
@@ -538,7 +557,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     bool materializedCapturedStackProperty = materializeCapturedStackPropertyIfSaved(vm);
     if (m_errorInfoMaterialized)
         return materializedCapturedStackProperty;
-    if (m_returnAddresses)
+    if (m_returnAddresses) [[unlikely]]
         materializeStackTrace();
 
 #if USE(BUN_JSC_ADDITIONS)

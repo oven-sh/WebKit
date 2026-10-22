@@ -13,9 +13,14 @@
 #include "AOTRepresentation.h"
 #include <wtf/Vector.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+class BuildContext;
+
+namespace Typed {
 
 class CallingConventions;
+class Heat;
 class Placement;
 
 struct RepresentationInputs {
@@ -28,21 +33,41 @@ struct RepresentationInputs {
     const Type& typeOf(ValueID value) const { return program.typeOf(function, value); }
 };
 
-using RepresentationSet = EnumeratorBitSet<Representation, numberOfEnumerators<Representation>>;
+// Nothing says that the function runs often, so its code is made without the optimizing back end.
+bool isGeneratedWithoutOptimizing(const BuildContext&, const Heat&, const Program&, FunctionID);
+// For such a function ChooseRepresentations writes the forms of values and leaves the conversions to the code generator, which makes them where an operand is fetched.
+bool leavesConversionsToCodeGenerator(const BuildContext&, const Heat&, const Program&, FunctionID);
 
 inline constexpr RepresentationSet integerRepresentations { Representation::Int32, Representation::Int64 };
 inline constexpr RepresentationSet numberRepresentations { Representation::Int32, Representation::Int64, Representation::Double };
 inline constexpr RepresentationSet optionalRepresentations { Representation::OptionalInt64, Representation::OptionalDouble };
 inline constexpr RepresentationSet cellRepresentations { Representation::Cell, Representation::Cell32, Representation::LiteralString };
 
+inline constexpr OpcodeSet constantsInFormOfUses {
+    Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::KeyConstant
+};
+
 constexpr bool hasRegister(Representation representation)
 {
     return representation != Representation::Unchosen && representation != Representation::Void;
 }
 
+constexpr bool isSameWord(Representation from, Representation to)
+{
+    if (from == to)
+        return true;
+    return (from == Representation::Cell && to == Representation::JSValue) || (from == Representation::JSValue && to == Representation::Cell);
+}
+
+constexpr OpcodeSet sumsOfNumbers { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+
+bool isSumOfBoxedNumbers(const Value&);
+bool isEqualityOfNumbers(const Program&, const Function&, const Value&);
+
 Representation integerRepresentationOf(const Type&);
 
 bool picksOwnRepresentation(const Function&, ValueID);
+bool isForwardedOperand(const Value& user, uint32_t operandIndex);
 
 Representation wantedRepresentationOf(const Program&, const Function&, const Value& user, uint32_t operandIndex);
 Representation wantedRepresentationOf(const Program&, const Function&, const Terminator& user, uint32_t operandIndex);

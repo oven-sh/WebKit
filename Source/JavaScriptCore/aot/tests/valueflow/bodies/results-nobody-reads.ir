@@ -20,7 +20,7 @@ function f0 name="deadResults" parameters=[{type=anything}] results=[{type=anyth
   b0(v0: anything):
     v1 = Call v0
     v2 = PropGet v0 key="a"
-    v3 = Predict v2 predicted=object
+    v3 = Convert v2 declared={type=object flags=[IsExpected]}
     v4 = Call v0
     Return v4
 }

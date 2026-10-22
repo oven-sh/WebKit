@@ -58,7 +58,8 @@ function f3 name="restListIsEveryArgument" flags=[HasThis, HasArgumentCount, Has
 }
 # CHECK-LABEL: function f3 name="restListIsEveryArgument"
 # CHECK-NOT: CreateUnmappedArguments
-# CHECK: v5:{{*}}= NewArgumentList v0, v3
+# CHECK-NOT: NewArgumentList
+# CHECK: v5: Array = Upcast v3 castType=Array
 # CHECK-NEXT: v6: anything = CallList v0, v1, v5
 
 function f4 name="countDoesNotSayHowManyParameters" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=function}] results=[{type=anything}] {

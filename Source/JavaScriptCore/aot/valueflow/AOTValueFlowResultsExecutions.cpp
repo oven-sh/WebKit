@@ -9,9 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
-#include "AOTBuiltinIDs.h"
 #include "AOTThreads.h"
-#include "AOTValueFlowResultsUnseenCode.h"
 #include <atomic>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -51,23 +49,33 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
     return counts;
 }
 
-static bool isUsedOtherThanTested(const ValueFlowResultInputs& inputs, BuiltinID builtin)
+// By module: only the evaluation of the module enters the body. A body that takes its callee can hand itself on.
+static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, const Vector<uint32_t>& numberOfEnteringOperations)
 {
-    return !(inputs.solver().usesOf(builtin) - BuiltinUse::Tested).isEmpty();
+    const Program& program = inputs.program;
+    BitVector modules(program.modules.size());
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        FunctionID body = program.modules[index].body;
+        if (!body || !inputs.isReached(body))
+            continue;
+        // No stamp lists what a placeholder beside it covers.
+        ValueFlowObjectID closure = inputs.universe().closureOf(body);
+        if (!numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure))
+            modules.quickSet(index);
+    }
+    return modules;
 }
 
-// An ES module keeps the outcome of its one evaluation. The loader runs the body of any other module again once its entry has left the module cache,
-// and it forgets a CommonJS module whose body threw: the next require() runs the body again, beside whatever the failed run has let out.
-static bool isEvaluatedAtMostOnce(const ValueFlowResultInputs& inputs, const Module& module, bool cacheKeepsEntries)
+// A module of the image is evaluated at most once, whatever its kind: no cache lists it, and a body that has thrown is not run again.
+// What the host loads for a module of the run time or from outside the image nobody counts.
+static bool isEvaluatedAtMostOnce(ModuleKind kind)
 {
-    switch (module.kind) {
+    switch (kind) {
     case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
     case ModuleKind::RuntimeSource:
         return true;
-    case ModuleKind::CommonJs:
-        return cacheKeepsEntries && inputs.solver().valueOf(inputs.bodies().nodes().thrown(module.body)) == ValueSets::nothing;
-    case ModuleKind::Data:
-        return cacheKeepsEntries;
     case ModuleKind::Runtime:
     case ModuleKind::External:
         return false;
@@ -81,7 +89,7 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
     const FlowApplication& application = *tables.application;
     Vector<FunctionFlow>& flows = tables.functions.functions;
     Vector<uint32_t> numberOfEnteringOperations = countEnteringOperations(inputs, tables, application);
-    bool cacheKeepsEntries = !unseenCodeCanRun(inputs.solution) && !isUsedOtherThanTested(inputs, Builtins::ModuleRequireCache) && !isUsedOtherThanTested(inputs, Builtins::NodeModule_cache);
+    BitVector modulesWithBodiesThatOnlyLoaderEnters = findModulesWithBodiesThatOnlyLoaderEnters(inputs, calls, numberOfEnteringOperations);
 
     Vector<FunctionID> worklist;
     auto runsAtMostOnce = [&](FunctionID function) {
@@ -90,18 +98,13 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
         flows[function.index()].executions = ExecutionCount::AtMostOnce;
         worklist.append(function);
     };
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+    for (size_t index : modulesWithBodiesThatOnlyLoaderEnters) {
         const Module& module = program.modules[index];
-        if (!module.body || !inputs.isReached(module.body) || !isEvaluatedAtMostOnce(inputs, module, cacheKeepsEntries))
-            continue;
-        // A body that takes its callee can hand itself on.
-        bool isEnteredOnlyByEvaluation = !numberOfEnteringOperations[module.body.index()] && !calls.someCallEntersAnything
-            && !calls.functionsEnteredWithoutStamp.get(module.body.index()) && !inputs.hasEscaped(inputs.universe().closureOf(module.body));
-        if (isEnteredOnlyByEvaluation)
+        if (isEvaluatedAtMostOnce(module.kind))
             runsAtMostOnce(module.body);
     }
 
-    // The one operation that enters a function runs at most once if it lies outside every cycle of a function that does.
+    // The one operation that enters a function runs at most once if it lies outside every cycle of a function that does. An accessor, a protocol or a callback that enters the function too is in no stamp.
     while (!worklist.isEmpty()) {
         FunctionID caller = worklist.takeLast();
         const Function& function = program.at(caller);
@@ -113,7 +116,7 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             for (ValueID id : function.at(block).values) {
                 forEachFunctionEnteredBy(program, application.bodies[caller.index()], function, id, [&](FunctionID callee) {
                     const FunctionFlow& flow = flows[callee.index()];
-                    if (numberOfEnteringOperations[callee.index()] == 1 && flow.callers == CallerState::AllKnown && flow.executions == ExecutionCount::Unknown)
+                    if (numberOfEnteringOperations[callee.index()] == 1 && !calls.functionsEnteredWithoutStamp.get(callee.index()) && flow.callers == CallerState::AllKnown && flow.executions == ExecutionCount::Unknown)
                         runsAtMostOnce(callee);
                 });
             }

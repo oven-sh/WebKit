@@ -40,6 +40,7 @@ public:
     
     ~AllocatingScope()
     {
+        static_assert(OBJECT_OFFSETOF(JSC::Heap, m_hasAllocatedSinceLastCollection) == OBJECT_OFFSETOF(JSC::Heap, m_mutatorState) + sizeof(MutatorState), "The compiler can write both with one store");
         RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Allocating);
         m_heap.m_mutatorState = MutatorState::Running;
         m_heap.m_hasAllocatedSinceLastCollection = true;

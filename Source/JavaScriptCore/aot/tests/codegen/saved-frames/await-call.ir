@@ -8,7 +8,7 @@ function f0 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=a
   b0(v0: anything):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f3
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 function f1 name="awaitsCall" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1}
@@ -26,7 +26,7 @@ function f4 name="awaitsCall" role=CoroutineBody flags=[IsAsync] parameters=[{ty
     Return v3
 }
 # CHECK: f3: size={{*}} sites=2
-# CHECK: f4: size={{*}} sites=3
+# CHECK: f4: size={{*}} sites=2
 # CHECK-NOT: function f0
 # CHECK: function f3 x1
 # CHECK: stub AwaitBySavingFrame.ResultOfCallWithoutPromise x1

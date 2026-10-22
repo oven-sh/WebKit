@@ -19,29 +19,28 @@
 # CHECK-NEXT: PropSet v0, v1 key="x" siteCache=2
 # CHECK-NEXT: v8:{{*}}= GetSlotOrUndefined v2 key="x" receivers=[L0] level=Proven fieldAccess=3
 # CHECK-NEXT: PutSlots v5, v5, v0 placedKeys=[{key="x" fieldAccess=4 level=Proven}] receivers=[L0]
-# CHECK-NEXT: v10:{{*}}= IsMemberUnchanged layout=L1 key="m" guardBit=5
-# CHECK-NEXT: v11:{{*}}= IsPrototypeLinkUnchanged layout=L1 guardBit=6
-# CHECK-NEXT: v12:{{*}}= IsClassEvaluatedOnce layout=L1 guardBit=7
-# CHECK-NEXT: v13:{{*}}= IsRequireEdgeReady module=m1 referrer=m0 edge=8
-# CHECK-NEXT: v14:{{*}}= HasKeyOrder v2 layout=L0 fields=[0, 1] orderWord=9
-# CHECK-NEXT: v15:{{*}}= Data data=d0 encoding=Expanded request=10
-# CHECK-NEXT: v16:{{*}}= NewArray v1 contents=number staticsOffset=16
-# CHECK-NEXT: v17:{{*}}= NewRegExp pattern="a" regExpRecord=11 staticsOffset=24
-# CHECK-NEXT: v18:{{*}}= SharedRegExpLiteral pattern="a" regExpRecord=11 staticsOffset=32
-# CHECK-NEXT: v19:{{*}}= NewTemplateObject templateStrings=[{cooked="a" raw="a"}] request=12 staticsOffset=40
-# CHECK-NEXT: v20:{{*}}= NewClosure function=f0 allocation=13
-# CHECK-NEXT: v21:{{*}}= NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized allocation=14
-# CHECK-NEXT: v22:{{*}}= MaterializeEnvironment v21 layout=L2 allocation=15
-# CHECK-NEXT: v23:{{*}}= NewSetFromData data=d0 request=16
-# CHECK-NEXT: v24:{{*}}= NewMapFromData data=d0 request=17
-# CHECK-NEXT: v25:{{*}}= RegExpMatchLiteral v3 overload=RegExpPrototypeTest/0 pattern="a" regExpRecord=11
-# CHECK-NEXT: v26:{{*}}= TryPutByIds v5, v0 keys=["z"] request=18 siteCache=19
+# CHECK-NEXT: v10:{{*}}= AreMembersUnchanged conditions=[{layout=L1 key="m"}] guardBit=5
+# CHECK-NEXT: v11:{{*}}= AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}] guardBit=6
+# CHECK-NEXT: v12:{{*}}= AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}] guardBit=7
+# CHECK-NEXT: v13:{{*}}= HasKeyOrder v2 layout=L0 fields=[0, 1] orderWord=9
+# CHECK-NEXT: v14:{{*}}= Data data=d0 encoding=Expanded request=10
+# CHECK-NEXT: v15:{{*}}= NewArray v1 contents=number staticsOffset=16
+# CHECK-NEXT: v16:{{*}}= NewRegExp pattern="a" regExpRecord=11 staticsOffset=24
+# CHECK-NEXT: v17:{{*}}= SharedRegExpLiteral pattern="a" regExpRecord=11 staticsOffset=32
+# CHECK-NEXT: v18:{{*}}= NewTemplateObject templateStrings=[{cooked="a" raw="a"}] request=12 staticsOffset=40
+# CHECK-NEXT: v19:{{*}}= NewClosure function=f0 allocation=13
+# CHECK-NEXT: v20:{{*}}= NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized allocation=14
+# CHECK-NEXT: v21:{{*}}= MaterializeEnvironment v20 layout=L2 allocation=15
+# CHECK-NEXT: v22:{{*}}= NewSetFromData data=d0 request=16
+# CHECK-NEXT: v23:{{*}}= NewMapFromData data=d0 request=17
+# CHECK-NEXT: v24:{{*}}= RegExpMatchLiteral v3 overload=RegExpPrototypeTest/0 pattern="a" regExpRecord=11
+# CHECK-NEXT: v25:{{*}}= TryPutByIds v5, v0 keys=["z"] request=18 siteCache=19
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-NEXT: function f2 name="accesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0}, {type=number}, {type=object}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything, v1: L0, v2: number, v3: object):
 # CHECK-NEXT: v4:{{*}}= PropHasOwn v0 key="x" siteCache=20
-# CHECK-NEXT: v5:{{*}}= PropGetChecked v0 key="x" checkedType=number site=w0 siteCache=21
+# CHECK-NEXT: v5:{{*}}= PropGet v0 key="x" siteCache=21
 # CHECK-NEXT: v6:{{*}}= PropGetChain v0 key="x" secondKey="y" siteCache=22
 # CHECK-NEXT: v7:{{*}}= PropGetPair v0 key="x" secondKey="y" siteCache=23
 # CHECK-NEXT: v8:{{*}}= CallMethod v0 key="m" siteCache=24
@@ -98,29 +97,28 @@ function f1 name="fieldsFromPlaced" module=m0 thisType={type=anything} parameter
     PropSet v0, v1 key="x" siteCache=2
     v8 = GetSlotOrUndefined v2 key="x" receivers=[L0] level=Proven fieldAccess=3
     PutSlots v5, v5, v0 placedKeys=[{key="x" fieldAccess=4 level=Proven}] receivers=[L0]
-    v10 = IsMemberUnchanged layout=L1 key="m" guardBit=5
-    v11 = IsPrototypeLinkUnchanged layout=L1 guardBit=6
-    v12 = IsClassEvaluatedOnce layout=L1 guardBit=7
-    v13 = IsRequireEdgeReady module=m1 referrer=m0 edge=8
-    v14 = HasKeyOrder v2 layout=L0 fields=[0, 1] orderWord=9
-    v15 = Data data=d0 encoding=Expanded request=10
-    v16 = NewArray v1 contents=number staticsOffset=16
-    v17 = NewRegExp pattern="a" regExpRecord=11 staticsOffset=24
-    v18 = SharedRegExpLiteral pattern="a" regExpRecord=11 staticsOffset=32
-    v19 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}] request=12 staticsOffset=40
-    v20 = NewClosure function=f0 allocation=13
-    v21 = NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized allocation=14
-    v22 = MaterializeEnvironment v21 layout=L2 allocation=15
-    v23 = NewSetFromData data=d0 request=16
-    v24 = NewMapFromData data=d0 request=17
-    v25 = RegExpMatchLiteral v3 overload=RegExpPrototypeTest/0 pattern="a" regExpRecord=11
-    v26 = TryPutByIds v5, v0 keys=["z"] request=18 siteCache=19
+    v10 = AreMembersUnchanged conditions=[{layout=L1 key="m"}] guardBit=5
+    v11 = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}] guardBit=6
+    v12 = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}] guardBit=7
+    v13 = HasKeyOrder v2 layout=L0 fields=[0, 1] orderWord=9
+    v14 = Data data=d0 encoding=Expanded request=10
+    v15 = NewArray v1 contents=number staticsOffset=16
+    v16 = NewRegExp pattern="a" regExpRecord=11 staticsOffset=24
+    v17 = SharedRegExpLiteral pattern="a" regExpRecord=11 staticsOffset=32
+    v18 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}] request=12 staticsOffset=40
+    v19 = NewClosure function=f0 allocation=13
+    v20 = NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized allocation=14
+    v21 = MaterializeEnvironment v20 layout=L2 allocation=15
+    v22 = NewSetFromData data=d0 request=16
+    v23 = NewMapFromData data=d0 request=17
+    v24 = RegExpMatchLiteral v3 overload=RegExpPrototypeTest/0 pattern="a" regExpRecord=11
+    v25 = TryPutByIds v5, v0 keys=["z"] request=18 siteCache=19
     Return v8
 }
 function f2 name="accesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0}, {type=number}, {type=object}] results=[{type=anything}] {
   b0(v0: anything, v1: L0, v2: number, v3: object):
     v4 = PropHasOwn v0 key="x" siteCache=20
-    v5 = PropGetChecked v0 key="x" checkedType=number site=w0 siteCache=21
+    v5 = PropGet v0 key="x" siteCache=21
     v6 = PropGetChain v0 key="x" secondKey="y" siteCache=22
     v7 = PropGetPair v0 key="x" secondKey="y" siteCache=23
     v8 = CallMethod v0 key="m" siteCache=24

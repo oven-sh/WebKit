@@ -68,11 +68,16 @@ private:
     Vector<uint32_t> m_webOfValue;
 };
 
+inline constexpr OpcodeSet concatenationOpcodes { Opcode::Add, Opcode::Strcat };
+
 bool isStringConcatenation(const Program&, const Function&, const Value&);
 bool isStringBuilderPart(const Type&);
 StringBuilderPlan analyzeStringBuilders(FunctionPassContext&);
 bool mergeNestedStringWebs(FunctionPassContext&, const StringBuilderPlan&);
 bool markLikelyKeys(FunctionPassContext&);
+bool canBeMarkedAsLikelyKey(const Program&, const Function&, const Value&);
+void markAsLikelyKey(Function&, ValueID);
+bool isKeyOperand(const Program&, const Function&, const Use&);
 
 } } } // namespace JSC::AOT::Typed
 

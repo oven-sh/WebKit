@@ -18,6 +18,11 @@ static bool mayBeString(const Type& type)
     return type.primitives & Primitive::AnyString;
 }
 
+bool hasTextByItself(const Type& type)
+{
+    return !type.isNever() && type.hasOnlyPrimitives(Primitive::NumberLike | Primitive::AnyString | Primitive::BigInt);
+}
+
 namespace {
 
 struct OperandClasses {
@@ -25,6 +30,8 @@ struct OperandClasses {
     bool areAllInert { true };
     bool mayAllBeStrings { true };
     bool hasProtocol { false };
+    bool haveAllTextByThemselves { true };
+    bool hasString { false };
 
     void add(const Type& type, const OperandBehavior& behavior)
     {
@@ -33,6 +40,14 @@ struct OperandClasses {
         areAllInert &= runsProtocol ? type.isNumberLike() : type.withoutObjects().isNumberLike();
         mayAllBeStrings &= mayBeString(type);
         hasProtocol |= runsProtocol;
+        haveAllTextByThemselves &= hasTextByItself(type);
+        hasString |= type.isAnyString();
+    }
+
+    // `text + 1`, String(1): the texts of primitives are joined. A number added to a BigInt is an error of the language.
+    bool onlyMakesText(Opcode opcode) const
+    {
+        return haveAllTextByThemselves && (opcode == Opcode::ToString || (opcode == Opcode::Add && hasString));
     }
 };
 
@@ -53,7 +68,10 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
     if (provesOf(opcode) == Proof::Equality && !classes.hasProtocol && !classes.mayAllBeStrings)
         return;
 
-    description.addOwn(declared);
+    Effects own = declared;
+    if (own.mayThrow && classes.onlyMakesText(opcode))
+        own.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    description.addOwn(own);
     if (!classes.convertsObjects)
         return;
     forEachOperandType([&](const Type& type, uint32_t operandIndex) {

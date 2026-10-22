@@ -21,9 +21,8 @@ static ValueID appendCopy(IRBuilder& builder, Value&& copy)
         TypeID type = copy.type;
         return builder.appendWithType(WTF::move(copy), type);
     }
-    // A narrower operand may narrow the type, and a prediction has to lie strictly inside the type: the builder computes both again.
-    copy.setWritten({ });
-    copy.setPrediction({ });
+    // A narrower operand may narrow the type, and the expected type has to lie strictly inside the type: the builder computes both again.
+    copy.setExpected({ });
     return builder.append(WTF::move(copy));
 }
 
@@ -46,6 +45,8 @@ void forEachValueSite(FunctionAnalyses& analyses, const Function& function, NOES
 
 void checkRewrite(FunctionPassContext& context, const ValueSite& site, const ReplacedEffects& replaced)
 {
+    if (!context.build.options().verifiesProgram)
+        return;
     const Value& value = context.function.at(site.value);
     if (replacedOperationsOf(value.opcode).empty())
         return;
@@ -84,7 +85,7 @@ void SiteExpansion::begin(const ValueSite& site)
 
 void SiteExpansion::takeTailCall()
 {
-    Block& continuation = function().at(m_expansion.continuation);
+    Block& continuation = function().edit(m_expansion.continuation);
     if (continuation.terminator.kind != TerminatorKind::ReturnCall || continuation.terminator.callOperand() != m_site.value)
         return;
 
@@ -108,6 +109,8 @@ void SiteExpansion::end()
 
 void SiteExpansion::addReplaced(const Value& value)
 {
+    if (!m_context.build.options().verifiesProgram)
+        return;
     m_replaced.add({ m_context.program, m_context.inputs.effects }, function(), value);
 }
 
@@ -215,9 +218,10 @@ void SiteExpansion::finishArmWithReturn(ValueID result)
     RELEASE_ASSERT(result);
     bool endsWithTailCall = canEndWithTailCall(result);
     // An arm marks its call before it is known whether the call can stay a tail call.
-    if (endsWithTailCall)
-        function().at(result).setIsDemotedTailCall(false);
-    else
+    if (endsWithTailCall) {
+        function().edit(result).setIsDemotedTailCall(false);
+        m_context.analyses.didChangeValues();
+    } else
         result = convertTo(m_builder, result, DeclaredType { .type = m_original.type });
     if (function().at(result).type == TypeTable::never) {
         finishArmAsUnreachable();

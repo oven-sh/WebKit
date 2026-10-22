@@ -8,9 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
+#include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTNumberLiteralStrings.h"
+#include "AOTOpcodesNamingRecords.h"
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyAccess.h"
@@ -48,11 +52,38 @@ static constexpr bool looksUpKeysByName(Operation operation)
     return accessClassOf(operation) == AccessClass::ByName || familyOf(operation) == OperationFamily::FusedAccess;
 }
 
+// The text is read when an error is made: the name of what is called, of a variable that has no value yet, of what is null, the message itself.
+static bool hasStringsForMessagesOnly(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::Call:
+    case Opcode::CallList:
+    case Opcode::CallMethod:
+    case Opcode::CallResolved:
+    case Opcode::Construct:
+    case Opcode::ConstructList:
+    case Opcode::CheckInitialized:
+    case Opcode::RequireObjectCoercible:
+    case Opcode::ToObject:
+    case Opcode::NewRuntimeError:
+    case Opcode::ThrowNewError:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool hasStringsForMessagesOnly(TerminatorKind)
+{
+    return false;
+}
+
 namespace {
 
 struct SharedUses {
     explicit SharedUses(const Program& program)
         : isNamed(program.strings.size())
+        , isNamedBesideCreation(program.strings.size())
         , isConstant(program.strings.size())
         , isCreatedRepeatedly(program.strings.size())
         , isAtom(program.strings.size())
@@ -61,6 +92,7 @@ struct SharedUses {
     }
 
     FastBitVector isNamed;
+    FastBitVector isNamedBesideCreation;
     FastBitVector isConstant;
     FastBitVector isCreatedRepeatedly;
     FastBitVector isAtom;
@@ -74,6 +106,8 @@ public:
     Vector<uint32_t> run();
 
 private:
+    bool runsAtMostOnce(BlockID);
+    void visit(const Value&, bool runsAtMostOnce);
     template<typename InstructionType, typename Operation> void visit(const InstructionType&, Operation, bool runsAtMostOnce);
     template<typename InstructionType> void markAtomStrings(const InstructionType&, bool usesEveryOperandAsKey);
     void nameString(StringID);
@@ -83,7 +117,9 @@ private:
     const Program& m_program;
     const Function& m_function;
     FunctionID m_id;
-    FunctionAnalyses m_analyses;
+    AnalysisContext m_context;
+    bool m_functionRunsAtMostOnce;
+    std::optional<FunctionAnalyses> m_analyses;
     SharedUses& m_shared;
     Vector<uint32_t> m_namedStrings;
     UncheckedKeyHashSet<StringID> m_namedStringSet;
@@ -123,23 +159,82 @@ FunctionWalk::FunctionWalk(const PipelineOutput& pipeline, BuildContext& context
     : m_program(*pipeline.program)
     , m_function(m_program.at(id))
     , m_id(id)
-    , m_analyses(AnalysisContext { context, m_program, pipeline.flow.get(), pipeline.effects.get(), id }, m_function)
+    , m_context { context, m_program, pipeline.flow.get(), nullptr, id }
+    , m_functionRunsAtMostOnce(pipeline.flow->runsAtMostOnce(m_program, id))
     , m_shared(shared)
 {
 }
 
+bool FunctionWalk::runsAtMostOnce(BlockID block)
+{
+    if (!m_functionRunsAtMostOnce)
+        return false;
+    if (!m_analyses)
+        m_analyses.emplace(m_context, m_function);
+    return m_analyses->executionCountOf(block) == ExecutionCount::AtMostOnce;
+}
+
+template<typename Operation>
+static bool takesKeyAsOperand(Operation operation)
+{
+    uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(operation) + (hasVariadicOperand(operation) ? 1 : 0);
+    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
+        if (operandKindOf(operation, operandIndex) == OperandKind::PropertyKey)
+            return true;
+    }
+    return false;
+}
+
+static OpcodeSet findOpcodesWithUses()
+{
+    OpcodeSet opcodes = findOpcodesNaming<StringID, PropertyKeyID>() | keyOrComparisonOpcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (takesKeyAsOperand(opcode) || familyOf(opcode) == OperationFamily::PrivateAccess)
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}
+
+static TerminatorKindSet findTerminatorKindsWithUses()
+{
+    TerminatorKindSet kinds = findTerminatorKindsNaming<StringID, PropertyKeyID>() | keyOrComparisonTerminators;
+    for (TerminatorKind kind : allMembersOf<TerminatorKind>) {
+        if (takesKeyAsOperand(kind))
+            kinds.add(kind);
+    }
+    return kinds;
+}
+
+void FunctionWalk::visit(const Value& value, bool runsAtMostOnce)
+{
+    visit(value, value.opcode, runsAtMostOnce);
+    nameString(impliedNameOf(m_program, value));
+}
+
 Vector<uint32_t> FunctionWalk::run()
 {
+    static const OpcodeSet opcodesWithUses = findOpcodesWithUses();
+    static const TerminatorKindSet terminatorKindsWithUses = findTerminatorKindsWithUses();
+    if (!mayEndBlockWith(m_program, m_id, terminatorKindsWithUses)) {
+        BlockID current;
+        bool currentRunsAtMostOnce = false;
+        forEachListedValue(m_program, m_id, opcodesWithUses, [&](BlockID block, uint32_t, ValueID, const Value& value) {
+            if (block != current) {
+                current = block;
+                currentRunsAtMostOnce = runsAtMostOnce(block);
+            }
+            visit(value, currentRunsAtMostOnce);
+        });
+        return WTF::move(m_namedStrings);
+    }
+
     for (uint32_t blockIndex = 0; blockIndex < m_function.blocks.size(); ++blockIndex) {
         BlockID id(blockIndex);
         const Block& block = m_function.at(id);
-        bool runsAtMostOnce = m_analyses.executionCountOf(id) == ExecutionCount::AtMostOnce;
-        for (ValueID valueID : block.values) {
-            const Value& value = m_function.at(valueID);
-            visit(value, value.opcode, runsAtMostOnce);
-            nameString(impliedNameOf(m_program, value));
-        }
-        visit(block.terminator, block.terminator.kind, runsAtMostOnce);
+        bool blockRunsAtMostOnce = runsAtMostOnce(id);
+        for (ValueID valueID : block.values)
+            visit(m_function.at(valueID), blockRunsAtMostOnce);
+        visit(block.terminator, block.terminator.kind, blockRunsAtMostOnce);
     }
     return WTF::move(m_namedStrings);
 }
@@ -154,6 +249,8 @@ void FunctionWalk::visit(const InstructionType& instruction, Operation operation
             nameString(reference);
             if (createsStringConstant)
                 countCreationSite(reference, runsAtMostOnce);
+            else if (reference && !hasStringsForMessagesOnly(operation))
+                m_shared.isNamedBesideCreation.atomicSetAndCheck(reference.index(), true);
         } else if constexpr (std::same_as<Reference, PropertyKeyID>)
             countKey(reference, accessOf(operation), looksUpInTables);
     });
@@ -203,6 +300,7 @@ static void addStringsOfRegExps(const RegExpRequests& requests, StringUses& stri
 {
     requests.forEachString([&](StringID string) {
         strings.isNamed.quickSet(string.index());
+        strings.isNamedBesideCreation.quickSet(string.index());
     });
     for (const RegExpRequest& request : requests.all()) {
         for (StringID name : request.captureGroupNames) {
@@ -211,6 +309,14 @@ static void addStringsOfRegExps(const RegExpRequests& requests, StringUses& stri
         }
         for (const RegExpNamedGroupStrings& group : request.namedGroups)
             strings.isAtom.quickSet(group.name.index());
+    }
+}
+
+static void addLiteralStringsWithoutWord(const Typed::LiteralStringTable& literalStrings, StringUses& strings)
+{
+    for (StringID string : literalStrings.stringsWithoutWord()) {
+        strings.isNamed.quickSet(string.index());
+        strings.isNamedBesideCreation.quickSet(string.index());
     }
 }
 
@@ -258,7 +364,7 @@ static void collectNamesInTables(const Program& program, const FlowResults& flow
         for (const ClassMember& member : layout.classFlow.members)
             nameKey(member.key);
     }
-    for (size_t type : placement.typesNeededAtRunTime()) {
+    for (size_t type : placement.typesWithCells()) {
         for (PropertyKeyID symbol : program.at(TypeID(type)).symbolLiterals)
             nameKey(symbol);
     }
@@ -268,8 +374,26 @@ static void collectNamesInTables(const Program& program, const FlowResults& flow
     }
     for (const PlacedGuardBit& guardBit : placement.guardBits().bits)
         nameKey(guardBit.key);
-    for (const ClosedAbsentName& name : flow.closedAbsentNames())
-        nameKey(name.key);
+    for (PropertyKeyID key : placement.keyCells())
+        nameKey(key);
+    for (const RequestRecord& record : placement.requests().records()) {
+        DataID data = WTF::switchOn(record,
+            [](const DataRecord& request) { return request.data; },
+            [](const CollectionDataRecord& request) { return request.data; },
+            [](const auto&) { return DataID(); });
+        if (!data)
+            continue;
+        forEachDataNodeInPreorder(program.at(data).root, [&](uint32_t, const DataNode& node) {
+            const DataNode::Object* object = node.tryAs<DataNode::Object>();
+            if (!object)
+                return;
+            const Layout* layout = object->layout ? &program.at(object->layout) : nullptr;
+            for (const DataMember& member : object->members) {
+                if (!layout || !layout->findField(member.key))
+                    nameKey(member.key);
+            }
+        });
+    }
 
     for (unsigned index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
@@ -305,10 +429,12 @@ ProgramUses collectProgramUses(const PipelineOutput& pipeline, BuildContext& con
     });
 
     uses.strings.isNamed = toBitVector(shared.isNamed);
+    uses.strings.isNamedBesideCreation = toBitVector(shared.isNamedBesideCreation);
     uses.strings.isConstant = toBitVector(shared.isConstant);
     uses.strings.isCreatedRepeatedly = toBitVector(shared.isCreatedRepeatedly);
     uses.strings.isAtom = toBitVector(shared.isAtom);
     addStringsOfRegExps(*pipeline.regExpRequests, uses.strings);
+    addLiteralStringsWithoutWord(*pipeline.literalStrings, uses.strings);
     addStringConstantsInTables(*pipeline.placement, uses.strings);
     uses.strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
 

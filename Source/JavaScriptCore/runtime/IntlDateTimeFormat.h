@@ -53,7 +53,6 @@ struct UFormattedDateIntervalDeleter {
 using UDateFormatDeleter = ICUDeleter<udat_close>;
 
 class IntlDateTimeFormatImpl;
-class IntlFormatPattern;
 
 class IntlDateTimeFormat final : public JSNonFinalObject {
 public:
@@ -175,10 +174,6 @@ public:
 
 private:
     friend class IntlDateTimeFormatImpl;
-    friend class IntlFormatPatternCompiler;
-
-    String tryFormatWithICU(double) const;
-    IntlFormatPattern* formatPattern() const;
 
     IntlDateTimeFormat(VM&, Structure*);
     DECLARE_DEFAULT_FINISH_CREATION;
@@ -266,13 +261,9 @@ public:
     Vector<char16_t, 32> m_userSkeleton; // user's explicit options as skeleton, before defaults injection; used by computeGetDateTimeFormat
     std::unique_ptr<UDateFormat, UDateFormatDeleter> m_dateFormat;
     mutable std::unique_ptr<IntlDateTimeFormatTemporalFormatterCache> m_temporalFormatterCache;
-    mutable std::unique_ptr<IntlFormatPattern> m_formatPattern;
-    mutable uint8_t m_numberOfFormatsBeforeCompilingPattern;
-
-    ~IntlDateTimeFormatImpl();
 
 private:
-    IntlDateTimeFormatImpl();
+    IntlDateTimeFormatImpl() = default;
 };
 
 } // namespace JSC

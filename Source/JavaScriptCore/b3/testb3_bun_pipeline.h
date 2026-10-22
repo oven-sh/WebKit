@@ -751,13 +751,16 @@ static void testPinnedConstantInMemory()
     PinnedBitsInBothBanks inspectedBanks(policy);
     CHECK(materializeAndValidate(inspectedBanks.proc));
     checkReadsPinnedTable(inspectedBanks.root, inspectedBanks.difference, 1, Int64, OBJECT_OFFSETOF(PinnedConstantTable, word));
-    CHECK(inspectedBanks.sum->child(1)->opcode() == ConstDouble);
+    checkReadsPinnedTable(inspectedBanks.root, inspectedBanks.sum, 1, Double, OBJECT_OFFSETOF(PinnedConstantTable, word));
 
     PinnedBitsInBothBanks compiledBanks(policy);
     auto banksCode = compileAndCheckReport(compiledBanks.proc, Options::defaultB3OptLevel());
     table.word = pinnedWord;
     CHECK_EQ(invoke<double>(*banksCode, pinnedWord, &table, 0.0), std::bit_cast<double>(pinnedWord));
     CHECK_EQ(invoke<double>(*banksCode, pinnedWord ^ 2, &table, 1.0), 3.0);
+    table.word = std::bit_cast<int64_t>(2.0);
+    CHECK_EQ(invoke<double>(*banksCode, table.word, &table, 1.0), 3.0);
+    CHECK_EQ(invoke<double>(*banksCode, table.word ^ 4, &table, 1.0), 7.0);
 }
 
 struct PinnedSmallWordUses {
@@ -1003,6 +1006,7 @@ static ReadsOfPinnedTable readsOfPinnedTable(Procedure& proc)
 static void testPinnedMaskIsOperandOfEveryTest()
 {
     Policy policy = pinnedConstantPolicy(findTestConstant<true, true>);
+    policy.selection.extendsInstructionSelection = true;
     for (MaskTestUsers users : { MaskTestUsers::Boolean, MaskTestUsers::Select, MaskTestUsers::TwoBranches, MaskTestUsers::BranchAndBoolean, MaskTestUsers::BranchAndSelect }) {
         for (MaskSource source : { MaskSource::PinnedConstant, MaskSource::MutableWordOfPinnedTable }) {
             PinnedMaskUsers compiled(policy, users, source);

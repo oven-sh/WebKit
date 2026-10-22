@@ -1,0 +1,31 @@
+# To bring the effect summaries up to date is to read every body that has changed, to keep the summaries of the others and to solve the program again. That is done for the loop that optimizes, for AllocateInFrames, for selection and for code generation. To the other program passes and loops a call is unknown code. What is kept counts the updates: the number below rises when another reader joins those four.
+# FORM: AsRead
+# RUN: generate-code BodySummariesKept
+# CHECK: statistic BodySummariesKept 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="input" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v2
+    v8 = Call v1, -, v7
+    Return
+}
+function f1 name="first" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="first"
+    Return v1
+}
+function f2 name="second" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject
+    PropSet v1, v0 key="second"
+    Return v1
+}

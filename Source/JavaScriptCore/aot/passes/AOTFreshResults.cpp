@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTFlattenInnerObjects.h"
 #include "AOTSinkAllocationsInternal.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <iterator>
 #include <utility>
@@ -23,24 +26,28 @@ static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture:
 static bool isWrapperOrWorker(FunctionRole role)
 {
     switch (role) {
+    case FunctionRole::AsyncWorker:
     case FunctionRole::ResultWrapper:
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
         return true;
     case FunctionRole::Source:
     case FunctionRole::Library:
     case FunctionRole::Model:
     case FunctionRole::Signature:
     case FunctionRole::GenericEntrypoint:
-    case FunctionRole::GroupEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
     case FunctionRole::GenericVersion:
     case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
     case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineRamp:
     case FunctionRole::CoroutineBody:
     case FunctionRole::BoundFunction:
     case FunctionRole::OutlinedBody:
-    case FunctionRole::Continuation:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
@@ -59,6 +66,9 @@ bool canReturnParts(const Function& function)
     if (function.results.size() != 1 || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
         return false;
     if (isWrapperOrWorker(function.role))
+        return false;
+    // A construction by value names the function itself, and is resolved only while that is no wrapper. The body that a resolved construction calls is split like any other.
+    if (function.role == FunctionRole::Source && function.constructedClass)
         return false;
     switch (function.kind) {
     case FunctionKind::Plain:
@@ -121,7 +131,7 @@ static bool mayBeAllocation(FunctionAnalyses& analyses, ValueID value)
     return false;
 }
 
-static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses)
+static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
 {
     const Function& function = analyses.function();
     bool hasAllocation = false;
@@ -146,20 +156,20 @@ static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses)
     if (!sinking.collectCandidates())
         return { .state = FreshResultsState::NotFresh };
     sinking.analyze();
-    return shapeOfReturns(sinking);
+    return shapeOfReturns(sinking, objectsThatBecomeOneCell);
 }
 
 FreshResultShape computeFreshResults(FunctionAnalyses& analyses)
 {
     if (!canReturnParts(analyses.function()))
         return { .state = FreshResultsState::NotFresh };
-    return computeShapeOfReturns(analyses);
+    return computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::StayWhole);
 }
 
 bool returnsFreshAggregate(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
-    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses).isFresh();
+    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::AreFreshLikeOthers).isFresh();
 }
 
 FreshResultVariant variantOfShape(const AllocationSinking& sinking, VirtualObjectID object, const VirtualShape& shape)
@@ -177,7 +187,7 @@ FreshResultVariant variantOfShape(const AllocationSinking& sinking, VirtualObjec
 
     if (description.hasKeyOrder) {
         for (uint32_t field : sinking.orders().fieldsOf(shape.order))
-            variant.properties.append(FreshResultField { family.fieldAt(field), 0 });
+            variant.properties.append(FreshResultField { family.fieldAt(hasStored(shape, field) ? field : family.findCounterpart(field).value_or(field)), 0 });
     }
     for (size_t storedField : shape.stored) {
         const VirtualField& field = family.fieldAt(static_cast<uint32_t>(storedField));
@@ -232,9 +242,14 @@ static void addVariantsOfReturn(const AllocationSinking& sinking, const VirtualR
         case VirtualShapeKind::Constant:
             addVariant(shape, { .kind = VirtualShapeKind::Constant, .constant = objectShape.constant });
             break;
-        case VirtualShapeKind::Fields:
-            addVariant(shape, variantOfShape(sinking, returned.object, objectShape));
+        case VirtualShapeKind::Fields: {
+            FreshResultVariant variant = variantOfShape(sinking, returned.object, objectShape);
+            // Only a rare arm stores a value that nothing proves to fit its field, whatever merges with it on the way to the return.
+            if (hasUnprovenField(family, objectShape))
+                variant.frequency = BlockFrequency::Rare;
+            addVariant(shape, WTF::move(variant));
             break;
+        }
         }
     }
 }
@@ -263,7 +278,8 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     if (hasVariantOfKind(shape, VirtualShapeKind::Cell)) {
         shape.cellPart = 0;
         shape.fieldOfPart.append(VirtualField { });
-        shape.partTypes.append(sinking.function().result().type);
+        const DeclaredType& result = sinking.function().result();
+        shape.partTypes.append(result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type);
     }
 
     for (FreshResultVariant& variant : shape.variants) {
@@ -277,7 +293,27 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     }
 }
 
-FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
+// The parts of such an object would leave the function with the inner object made, and the caller would build the outer one around it: two cells for ever.
+// Left in one piece the two become one cell, which is no more than the function allocates with the parts.
+static bool listsObjectThatMayLieInIt(const AllocationSinking& sinking, const FreshResultVariant& variant)
+{
+    if (variant.kind != VirtualShapeKind::Fields)
+        return false;
+    const Function& function = sinking.function();
+    const Value& allocation = function.at(variant.description.allocation);
+    if (allocation.opcode != Opcode::NewObject)
+        return false;
+    auto fields = allocation.fields();
+    auto values = allocation.valuesOperands();
+    for (size_t index = 0; index < fields.size(); ++index) {
+        const Value& listed = function.at(sameObjectThroughCasts(function, values[index]));
+        if (listed.opcode == Opcode::NewObject && mayLieInOuterObject(sinking.program(), { allocation.layout(), fields[index] }, listed.layout()))
+            return true;
+    }
+    return false;
+}
+
+FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
 {
     std::span<const VirtualReturn> returns = sinking.virtualReturns();
     if (returns.empty())
@@ -290,6 +326,11 @@ FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
         addVariantsOfReturn(sinking, returned, shape);
 
     if (!hasVariantOfKind(shape, VirtualShapeKind::Fields))
+        return { .state = FreshResultsState::NotFresh };
+    bool mayBecomeOneObject = objectsThatBecomeOneCell == ObjectsThatBecomeOneCell::StayWhole && sinking.context().build.isEnabled(PassID::FlattenInnerObjects, FunctionID()) && std::ranges::any_of(shape.variants, [&](const FreshResultVariant& variant) {
+        return listsObjectThatMayLieInIt(sinking, variant);
+    });
+    if (mayBecomeOneObject)
         return { .state = FreshResultsState::NotFresh };
     if (shape.variants.size() > sinking.limit(LimitID::MaxVirtualObjectVariants)) {
         shape.state = FreshResultsState::Unknown;
@@ -309,13 +350,23 @@ static bool haveSameFields(std::span<const FreshResultField> a, std::span<const 
     return std::ranges::equal(a, b, { }, &FreshResultField::field, &FreshResultField::field);
 }
 
+// The place of an allocation is what reports and counts go by: two places that say the same otherwise build the same value.
+static bool haveSamePayloadButForPlace(const Value& a, const Value& b)
+{
+    if (!Value::opcodesWithAllocationSite.contains(a.opcode) || a.allocationSite() == b.allocationSite())
+        return a.hasSamePayloadAs(b);
+    Value atSamePlace = b;
+    atSamePlace.setAllocationSite(a.allocationSite());
+    return atSamePlace.hasSamePayloadAs(a);
+}
+
 bool FreshResultVariant::buildsSameValueAs(const FreshResultVariant& other) const
 {
     return kind == other.kind
         && constant == other.constant
         && description.kind == other.description.kind
         && prototype.opcode == other.prototype.opcode
-        && prototype.hasSamePayloadAs(other.prototype)
+        && haveSamePayloadButForPlace(prototype, other.prototype)
         && length == other.length
         && haveSameFields(properties.span(), other.properties.span())
         && haveSameFields(parts.span(), other.parts.span());

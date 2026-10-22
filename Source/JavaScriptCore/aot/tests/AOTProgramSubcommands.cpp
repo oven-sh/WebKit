@@ -17,6 +17,7 @@
 #include "AOTPassID.h"
 #include "AOTPipeline.h"
 #include "AOTProgramFile.h"
+#include "AOTReaderInternal.h"
 #include "AOTSchemaEnums.h"
 #include "AOTThreads.h"
 #include "AOTVerifier.h"
@@ -216,21 +217,43 @@ static bool hasDiagnostics(const Diagnostics& diagnostics)
     return !diagnostics.userDiagnostics().isEmpty() || !diagnostics.internalErrors().isEmpty();
 }
 
+// The program as it arrived: a type names `L5`, whatever set of layouts the compiler takes `L5` for. Encoded again, the text gives the bytes that were read.
+static std::unique_ptr<Program> createProgramAsWritten(const ProgramFile& file, BuildContext& build)
+{
+    if (file.kind != ProgramFile::Kind::Bytes)
+        return createProgram(file, build);
+    auto program = makeUnique<Program>(BuiltinTable::singleton());
+    program->borrowBuffer(file.bytes.span());
+    Reader reader(*program, IRForm::AsRead, build);
+    reader.keepLayoutsAsWritten();
+    if (!reader.run())
+        return nullptr;
+    return program;
+}
+
 static int printWire(const ProgramFile& file, Wire::CompileOptions options)
 {
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     FilePrintStream errors(stderr, FilePrintStream::Borrow);
 
     options.action = Wire::CompileAction::VerifyOnly;
+    StringPrintStream text;
+    {
+        BuildContext build(options);
+        std::unique_ptr<Program> arrived = createProgramAsWritten(file, build);
+        if (!arrived) {
+            build.diagnostics().finish(nullptr);
+            return reportDiagnostics(build.diagnostics(), errors);
+        }
+        printProgram(text, *arrived, PrintedFields::WireOnly);
+    }
+
     BuildContext build(options);
     std::unique_ptr<Program> program = createProgram(file, build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         return reportDiagnostics(build.diagnostics(), errors);
     }
-
-    StringPrintStream text;
-    printProgram(text, *program, PrintedFields::WireOnly);
 
     std::unique_ptr<CompileOutput> output = compileParsed(WTF::move(program), build);
     if (hasDiagnostics(output->diagnostics))

@@ -25,6 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 #define FOR_EACH_AOT_TEST_SITE_RULE(v) \
     v(EnumeratedKeyUse, reportEnumeratedKeyTests, rewriteTestedEnumeratedKeyUse) \
+    v(UnionReceiver, reportUnionReceiverTests, rewriteTestedUnionReceiver) \
     v(BuiltinUse, reportBuiltinUseTests, rewriteTestedBuiltinUse) \
     v(Call, reportCallTests, rewriteTestedCall) \
     v(PropertyAccess, reportPropertyAccessTests, rewriteTestedPropertyAccess) \
@@ -79,6 +80,22 @@ inline Value makeBoundsTest(ValueID array, ValueID position)
     return IRBuilder::make(Opcode::IsInBounds, { array, position });
 }
 
+inline Value makePresenceTest(ValueID array, ValueID position, ArrayStorage arrayStorage, bool keyIsIntegral)
+{
+    Value test = IRBuilder::make(Opcode::IsElementPresent, { array, position });
+    test.setArrayStorage(arrayStorage);
+    test.setKeyIsIntegral(keyIsIntegral);
+    return test;
+}
+
+inline Value makeViewBoundsTest(ValueID view, ValueID position, TypedArrayType typedArrayType, bool keyIsIntegral)
+{
+    Value test = IRBuilder::make(Opcode::IsInsideView, { view, position });
+    test.setTypedArrayType(typedArrayType);
+    test.setKeyIsIntegral(keyIsIntegral);
+    return test;
+}
+
 inline Value makeClosureTest(ValueID value, FunctionID function)
 {
     Value test = IRBuilder::make(Opcode::IsClosureOf, { value });
@@ -119,7 +136,7 @@ public:
     ProgramPoint point() const { return m_point; }
 
     const Type& typeOf(ValueID value) const LIFETIME_BOUND { return m_context.types.at(m_context.function.at(value).type); }
-    std::optional<Type> predictedPartOf(ValueID operand, uint16_t droppedPrimitives = Primitive::UndefinedOrNull) const;
+    std::optional<Type> expectedPartOf(ValueID operand, uint16_t droppedPrimitives = Primitive::UndefinedOrNull) const;
     EarlierTest findEarlierTest(const Value& test) const;
 
     void report(std::span<const Value> tests, const Effects& effectsWhenPassed);
@@ -149,6 +166,10 @@ public:
 
 private:
     bool canPlace(const Value& test) const;
+    bool hasFailedTest(std::span<const Value> tests) const;
+    bool isAboutSubjectOfFailedTest(std::span<const Value> tests) const;
+    bool refusesObjectsThatAreExpected(std::span<const Value> tests) const;
+    bool asksForBagOfOptions(std::span<const Value> tests) const;
     void findUsesAwaitingExpansion();
 
     FunctionPassContext& m_context;
@@ -156,6 +177,7 @@ private:
     ValueID m_use;
     ProgramPoint m_point;
     bool m_didReport { false };
+    mutable bool m_hasFailedEarlierTest { false };
     BitVector m_isClaimed;
     BitVector m_awaitsExpansion;
     TestSites m_sites;
@@ -188,7 +210,7 @@ public:
     IRBuilder& builder() const { return m_inputs.builder; }
 
     ValueID use() const { return m_inputs.site.use; }
-    Value& useValue() const LIFETIME_BOUND { return m_inputs.context.function.at(m_inputs.site.use); }
+    Value& useValue() const LIFETIME_BOUND { return m_inputs.context.function.edit(m_inputs.site.use); }
     ProgramPoint point() const { return m_inputs.point; }
 
     std::span<const Value> tests() const { return m_inputs.tests; }

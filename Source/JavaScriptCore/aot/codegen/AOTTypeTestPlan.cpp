@@ -122,7 +122,8 @@ static void appendInstanceTest(TypeTestPlan& plan, const Program& program, const
     case BuiltinInstanceTest::None:
         return;
     case BuiltinInstanceTest::JSTypeEquals:
-        plan.cellTests.append(CellTest::cellTypeIs({ builtinClass.type, builtinClass.type == ArrayType ? DerivedArrayType : builtinClass.type }));
+        // Not DerivedArrayType beside ArrayType: that is Array.prototype, whose butterfly has no indexing header.
+        plan.cellTests.append(CellTest::cellTypeIs({ builtinClass.type, builtinClass.type }));
         return;
     case BuiltinInstanceTest::ClassInfoInherits:
         plan.cellTests.append(CellTest::inheritsClassInfo(builtinClass.id));
@@ -176,7 +177,7 @@ static void appendClassTests(TypeTestPlan& plan, const Program& program, const T
 static void appendFunctionAndBuiltinTests(TypeTestPlan& plan, const Program& program, const Type& to, const Type& fromObjects)
 {
     for (FunctionID function : to.functions) {
-        if (Type::forFunction(function).overlaps(fromObjects, program))
+        if (!to.anyFunction && Type::forFunction(function).overlaps(fromObjects, program))
             plan.cellTests.append(CellTest::isClosureOf(function));
     }
     for (BuiltinID builtin : to.builtins) {

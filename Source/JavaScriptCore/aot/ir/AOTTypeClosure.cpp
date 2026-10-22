@@ -8,9 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTBuiltinIDTypes.h"
 #include "AOTFlowSiteData.h"
 #include "AOTKnownClosures.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTSchemaResultRules.h"
+#include "AOTThreads.h"
+#include <algorithm>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -72,10 +77,7 @@ ValueKinds kindsOutside(const Program& program, const Type& entering, const Type
 
 void admitKinds(DeclaredType& declared, ValueKinds kinds, TypeArena& types)
 {
-    TypeID admitted = types.intern(kinds.type());
-    declared.type = types.unionOf(declared.type, admitted);
-    if (declared.written)
-        declared.written = types.unionOf(declared.written, admitted);
+    declared.type = types.unionOf(declared.type, types.intern(kinds.type()));
 }
 
 static std::optional<Type> tryTypeWithoutOperands(const Value& value)
@@ -103,19 +105,22 @@ static std::optional<Type> tryTypeWithoutOperands(const Value& value)
 bool mayHaveConversionThatAlwaysFails(const Program& program, const Function& function)
 {
     for (const Value& value : function.values) {
-        if (value.opcode != Opcode::ClaimDeclared)
+        if (value.opcode != Opcode::Convert)
+            continue;
+        DeclaredType declared = value.declared();
+        if (declared.flags.contains(PositionFlags::IsExpected))
             continue;
         std::optional<Type> entering = tryTypeWithoutOperands(function.at(definitionThroughSameValues(function, value.valueOperand())));
         if (!entering)
             continue;
-        const Type& tested = program.at(value.declared().type);
+        const Type& tested = program.at(declared.type);
         if (!entering->isSubsetOf(tested, program) && !(entering->hasObjects() && tested.hasObjects()))
             return true;
     }
     return false;
 }
 
-static Type typeOfMember(const DataNode& node)
+static Type typeOfMember(const DataNode& node, TypeArena& types)
 {
     switch (node.kind()) {
     case DataNode::Kind::Undefined:
@@ -131,8 +136,9 @@ static Type typeOfMember(const DataNode& node)
     case DataNode::Kind::BigInt:
         return Type::fromPrimitives(Primitive::BigInt);
     case DataNode::Kind::Array:
+        return Type::builtinClass(BuiltinClasses::Array);
     case DataNode::Kind::Object:
-        return Type::object();
+        return node.as<DataNode::Object>().layout ? Type::forLayout(node.as<DataNode::Object>().layout, types) : Type::object();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -142,17 +148,83 @@ void forEachDataMemberThatAlwaysFailsConversion(const Program& program, TypeAren
     for (const Data& data : program.data) {
         forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
             const auto* object = node.tryAs<DataNode::Object>();
-            if (!object)
+            if (!object || !object->layout)
                 return;
             for (const DataMember& member : object->members) {
                 std::optional<FieldReference> field = findField(program, object->layout, member.key, BaseChain::Predicted);
                 if (!field)
                     continue;
-                Type entering = typeOfMember(member.value);
-                if (alwaysFailsConversion(entering, program.at(fieldAt(program, *field).declared.type), types))
+                const DeclaredType& declared = fieldAt(program, *field).declared;
+                if (declared.flags.contains(PositionFlags::IsExpected))
+                    continue;
+                Type entering = typeOfMember(member.value, types);
+                if (alwaysFailsConversion(entering, program.at(declared.type), types))
                     functor(*field, ValueKinds::of(entering));
             }
         });
+    }
+}
+
+static bool includesLayout(const Program& program, const Type& type, LayoutID layout)
+{
+    return type.anyObject || (type.layouts && std::ranges::binary_search(program.at(type.layouts).members, layout));
+}
+
+// An array is an object without a layout. What is proven about its contents and its storage is flow's to answer for: the slot holds any array.
+static bool includesArrays(const Program& program, const Type& type)
+{
+    return type.anyObject || type.findClassPart(BuiltinClasses::Array) || hasMembersWithoutLayout(program, type);
+}
+
+bool includesData(const Program& program, const Type& type, const DataNode& node)
+{
+    switch (node.kind()) {
+    case DataNode::Kind::Undefined:
+        return type.primitives & Primitive::Undefined;
+    case DataNode::Kind::Null:
+        return type.primitives & Primitive::Null;
+    case DataNode::Kind::Hole:
+        return type.primitives & Primitive::Absent;
+    case DataNode::Kind::Boolean:
+        return type.primitives & (node.as<DataNode::Boolean>().value ? Primitive::True : Primitive::False);
+    case DataNode::Kind::Number:
+        return Type::number(node.as<DataNode::Number>().value).isSubsetOf(type, program);
+    case DataNode::Kind::String:
+        return Type::stringLiteral(node.as<DataNode::String>().value).isSubsetOf(type, program);
+    case DataNode::Kind::BigInt:
+        return type.primitives & Primitive::BigInt;
+    case DataNode::Kind::Array:
+        return includesArrays(program, type);
+    case DataNode::Kind::Object:
+        return node.as<DataNode::Object>().layout ? includesLayout(program, type, node.as<DataNode::Object>().layout) : type.anyObject;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void expectFieldsFilledWithOtherData(Program& program, BuildContext& build)
+{
+    Vector<FieldReference> fields = collectInParallel<FieldReference>(build.parallelLoops(), program.data.size(), [&](unsigned index, Vector<FieldReference>& found) {
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t, const DataNode& node) {
+            const auto* object = node.tryAs<DataNode::Object>();
+            if (!object || !object->layout)
+                return;
+            const Layout& layout = program.at(object->layout);
+            for (const DataMember& member : object->members) {
+                std::optional<uint32_t> field = layout.findField(member.key);
+                if (!field)
+                    continue;
+                const DeclaredType& declared = layout.fields[*field].declared;
+                if (!declared.flags.contains(PositionFlags::IsExpected) && !includesData(program, program.at(slotTypeOf(program, layout.fields[*field])), member.value))
+                    found.append({ object->layout, *field });
+            }
+        });
+    });
+    for (FieldReference filled : fields) {
+        for (FieldReference field : { filled, declarationOf(program, filled) }) {
+            DeclaredType& declared = program.at(field.layout).fields[field.field].declared;
+            declared.flags.add(PositionFlags::IsExpected);
+            declared.flags.remove(PositionFlags::IsInt32Promise);
+        }
     }
 }
 

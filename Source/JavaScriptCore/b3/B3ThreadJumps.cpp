@@ -80,7 +80,7 @@ public:
             return false;
         }
 
-        m_cloner.demoteEscapingValues(RegionCloner::PhiTreatment::KeepIfJumpFed);
+        m_cloner.demoteEscapingValues(RegionCloner::PhiTreatment::KeepIfJumpFed, RegionCloner::ValueOwners::AreCurrent);
         copyPaths();
         copyWholeTails();
         return m_cloner.finish();
@@ -190,6 +190,9 @@ private:
         if (block->numSuccessors() > m_maxSuccessors)
             return false;
         if (block->last()->type() != Void)
+            return false;
+        // A copy saves a jump where it runs and costs its bytes everywhere.
+        if (m_blockClasses[block->index()] != FrequencyClass::Normal)
             return false;
 
         bool hasPhi = false;

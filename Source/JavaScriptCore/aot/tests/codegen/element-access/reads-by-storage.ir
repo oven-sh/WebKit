@@ -321,7 +321,7 @@ function f8 name="underGuards" parameters=[{type=Array}, {type=i32}, {type=boole
     Branch v5 -> taken b2(| 0), notTaken b9()
   b2(v6):
     v7 = AllGuards v4, v6
-    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected
     v9 = NewArray v8 contents=anything
     Jump -> next b3()
   b3():
@@ -329,7 +329,7 @@ function f8 name="underGuards" parameters=[{type=Array}, {type=i32}, {type=boole
     Jump -> next b4()
   b4():
     LoopHint
-    v12 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v12 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected
     v13 = NewArray v12 contents=anything
     Branch v2 -> taken b4(), notTaken b5()
   b5():
@@ -337,7 +337,7 @@ function f8 name="underGuards" parameters=[{type=Array}, {type=i32}, {type=boole
   b6():
     Branch v2 -> taken b7(), notTaken b8()
   b7() frequency=Rare:
-    v14 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v14 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected
     v15 = NewArray v14 contents=anything
     Jump -> next b8()
   b8():

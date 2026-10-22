@@ -101,10 +101,10 @@ function f17 name="badUnresolvedCast" parameters=[{type=anything}] results=[{typ
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=anything}}]
 }
-function f18 name="badClaim" parameters=[{type=anything}] results=[{type=number}] {
+function f18 name="badCheck" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):
     v1 = Call v0
-    ReturnCall v1 casts=[{declared={type=number} resolution=Claim}]
+    ReturnCall v1 casts=[{declared={type=number} resolution=Check}]
 }
 function f19 name="badNothingNarrows" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):
@@ -116,13 +116,13 @@ function f20 name="badUpcastNarrows" parameters=[{type=anything}] results=[{type
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=number} resolution=Upcast}]
 }
-function f21 name="badPredictionNarrows" parameters=[{type=anything}] results=[{type=number}] {
+function f21 name="badExpectedTypeNarrows" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):
     v1 = Call v0
-    ReturnCall v1 casts=[{declared={type=number} resolution=Prediction}]
+    ReturnCall v1 casts=[{declared={type=number flags=[IsExpected]} resolution=Nothing}]
 }
 function f22 name="goodCasts" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):
     v1 = Call v0
-    ReturnCall v1 casts=[{declared={type=anything} resolution=Nothing}, {declared={type=number} resolution=Assume}, {declared={type=number|string} resolution=Upcast}, {declared={type=number} resolution=Prediction}]
+    ReturnCall v1 casts=[{declared={type=anything} resolution=Nothing}, {declared={type=number} resolution=Assume}, {declared={type=number|string} resolution=Upcast}, {declared={type=number flags=[IsExpected]} resolution=Nothing}]
 }

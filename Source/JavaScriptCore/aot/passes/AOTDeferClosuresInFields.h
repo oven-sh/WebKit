@@ -7,18 +7,21 @@
 
 #if ENABLE(AOT)
 
+#include "AOTID.h"
+
 namespace JSC { namespace AOT {
 
 class BuildContext;
 
 namespace Typed {
 
+class FunctionAnalyses;
 class ProgramEditor;
 
-// A field defers its closure where every allocation of its layout gives it, before any other code can see the object, a closure of one function that was made for it alone
-// and that captures nothing or only the object. The allocation then lists the closure, which is marked as made on demand and has no code, and the first read of the field makes it.
-// The decision rests on the operations of the program alone: what unknown code does to the object later is left to the run time.
 void deferClosuresInFields(ProgramEditor&, BuildContext&);
+
+// Whether the closure that an allocation's list or a store in `block` gives a field of `object` is one that the pass can leave unmade: a pass that would take the closure away from the allocation asks.
+bool canLeaveClosureUnmade(FunctionAnalyses&, BlockID, ValueID object, ValueID given);
 
 } } } // namespace JSC::AOT::Typed
 

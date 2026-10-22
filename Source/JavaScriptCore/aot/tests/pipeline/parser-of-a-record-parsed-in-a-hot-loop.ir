@@ -1,0 +1,52 @@
+# The parser of a record is entered as often as the functions that parse the record. Parsed in the innermost of three loops, its likely blocks are hot: the small parser of a nullable string is inlined into it
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pipeline RemoveUnusedParameters
+# STATISTIC: ParsersCreated = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|null|string}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v0 key="sink" [isFreeName]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v7 = CallDirect v2 function=f1
+    v8 = Call v3, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b4():
+    v10 = Call v3, -, v2
+    v11 = ToBoolean v10
+    Branch v11 -> taken b2(), notTaken b5()
+  b5():
+    v12 = Call v3, -, v1
+    v13 = ToBoolean v12
+    Branch v13 -> taken b1(), notTaken b6()
+  b6():
+    Return
+}
+
+function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    Return v3
+}
+# CHECK: function {{*}}role=Parser {{*}}creator=Parser{type=undefined|null|L0
+# CHECK-NOT: CallDirect
+# CHECK: = JSONParseString
+# CHECK: = NewObject

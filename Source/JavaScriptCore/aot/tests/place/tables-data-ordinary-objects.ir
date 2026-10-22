@@ -1,0 +1,20 @@
+# A dictionary literal of constants is one node of the data table: the values of its properties in the order of their creation, then the identifier number of each name.
+# RUN: tables data
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewDictionary
+    v3 = String string="a"
+    PropDefine v2, v3 key="+1"
+    v5 = Integer integer=1
+    PropDefine v2, v5 key="smile"
+    v7 = Null
+    PropDefine v2, v7 key="nothing"
+    v9 = Call v1, -, v2
+    Return v9
+}
+# CHECK: ordinaryObject 1 keys=["+1" "smile" "nothing"] values=["a" 1 null]

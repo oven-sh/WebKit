@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTInstance.h"
 #include "AOTTypeTable.h"
 #include "LinkTimeConstant.h"
@@ -27,7 +28,8 @@ void RuntimeIntrinsicEmitter::generateRequireBuiltinModule(const ValueContext& v
 
 void RuntimeIntrinsicEmitter::generateNativeBinding(const ValueContext& value)
 {
-    defineAs(value, callOperation<Boxed>(value, RuntimeOperation::NativeBinding, { word32(m_builtins.at(value->builtin()).hostNumber) }), typeOf(value.id()));
+    // Without a host nothing runs what is generated here.
+    defineAs(value, callOperation<Boxed>(value, RuntimeOperation::NativeBinding, { word32(BuiltinBindings::hostNumberOf(value->builtin()).value_or(0)) }), typeOf(value.id()));
 }
 
 void RuntimeIntrinsicEmitter::generateLinkTimeConstant(const ValueContext& value)

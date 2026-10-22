@@ -41,6 +41,65 @@ static TypeID partInside(const Program& program, TypeArena& types, TypeID narrow
     return part;
 }
 
+// What is expected of the value from here on stands on a cast that changes nothing else.
+static ValueID appendExpectation(IRBuilder& builder, ValueID result, const DeclaredType& declared)
+{
+    const Program& program = builder.context().program;
+    TypeArena& types = builder.types();
+    TypingContext expecting { program, builder.function(), types, TypeLevel::Expected };
+    const Value& value = builder.function().at(result);
+    TypeID converted = types.intern(typeOfConvert(expecting, expecting.typeOf(result), types.at(value.type), declared));
+    TypeID expected = partInside(program, types, converted, value.type);
+    if (!expected || expected == value.expected())
+        return result;
+
+    Value cast = makeCast(Opcode::Upcast, result, value.type);
+    cast.setExpected(expected);
+    return builder.append(WTF::move(cast));
+}
+
+// What is proven of the result says which cast is left to make. How the tail cast was resolved says whether a test may be made, and whether flow has proven that it passes.
+static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const TailCast& cast)
+{
+    const AnalysisContext& context = builder.context();
+    TypingContext typing { context.program, builder.function(), builder.types() };
+    ConvertResolution resolution = resolveConvert(typing, typing.typeOf(result), cast.declared);
+    switch (resolution.cast) {
+    case CastResolution::Nothing:
+        return result;
+    case CastResolution::Upcast:
+        return builder.appendUpcast(result, resolution.castType);
+    case CastResolution::Check:
+        break;
+    case CastResolution::Unresolved:
+    case CastResolution::Assume:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    switch (cast.resolution) {
+    case CastResolution::Check: {
+        Value check = makeCast(Opcode::Check, result, resolution.castType);
+        check.setSite(cast.declared.site);
+        return builder.append(WTF::move(check));
+    }
+    // Flow has proven the whole type. A test would find only a part of it: none of `Arguments`, for one.
+    case CastResolution::Assume: {
+        TypeID assumed = typing.typeIDOf(cast.declared);
+        if (context.build.validates() && resolution.castType == assumed) {
+            Value test = IRBuilder::make(Opcode::ValidateType, { result });
+            test.setValidatedType(assumed);
+            builder.append(WTF::move(test));
+        }
+        return builder.append(makeCast(Opcode::AssumeType, result, assumed));
+    }
+    case CastResolution::Unresolved:
+    case CastResolution::Nothing:
+    case CastResolution::Upcast:
+        return result;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 BlockID IRBuilder::splitEdge(Edge edge)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
@@ -55,7 +114,7 @@ BlockID IRBuilder::splitEdge(Edge edge)
     uint32_t firstResult = firstEdgeResultParameter(m_function, edge.from, edge.targetIndex);
     Origin origin = m_function.at(edge.from).terminator.origin();
 
-    Target& split = targetOf(m_function, edge);
+    Target& split = editTarget(m_function, edge);
     Target original = std::exchange(split, Target { added, { }, { } });
     split.proofs = WTF::move(original.proofs);
 
@@ -64,19 +123,19 @@ BlockID IRBuilder::splitEdge(Edge edge)
         const Value& result = m_function.at(m_function.at(original.block).parameters[firstResult + resultIndex]);
         Value parameter(Opcode::Parameter);
         parameter.type = typeOnEdge(program, m_function, { edge.from, edge.targetIndex, resultIndex }, m_types);
-        parameter.setWritten(partInside(program, m_types, result.written(), parameter.type));
-        parameter.setPrediction(partInside(program, m_types, result.prediction(), parameter.type));
+        parameter.setExpected(partInside(program, m_types, result.expected(), parameter.type));
         parameter.setOrigin(origin);
         ValueID id = addValue(WTF::move(parameter));
-        m_function.at(added).parameters.append(id);
+        m_function.edit(added, BlockEdit::Parameters).parameters.append(id);
         original.arguments.append(id);
+        didAddDetachedValue(id);
     }
 
-    Terminator& jump = m_function.at(added).terminator;
+    Terminator& jump = m_function.edit(added).terminator;
     jump.become(TerminatorKind::Jump);
     jump.targets.append(Target { original.block, WTF::move(original.arguments), { } });
     jump.setOrigin(origin);
-    didChangeControlFlow();
+    didChangeControlFlow(singleElementSpan(edge.from));
     return added;
 }
 
@@ -104,26 +163,26 @@ Vector<BlockID> IRBuilder::splitBlock(BlockID block, std::span<const uint32_t> a
     parts.reserveInitialCapacity(ascendingIndexes.size());
     for (size_t i = 0; i < ascendingIndexes.size(); ++i) {
         parts.append(addBlock(frequency));
-        m_function.at(parts.last()).shape = shape;
+        m_function.edit(parts.last()).shape = shape;
     }
     m_handler = WTF::move(handler);
 
-    auto& first = m_function.at(block);
+    auto& first = m_function.edit(block);
     Terminator terminator = std::exchange(first.terminator, Terminator { });
     BlockID previous = block;
     for (size_t i = 0; i < parts.size(); ++i) {
         size_t begin = ascendingIndexes[i];
         size_t end = i + 1 < parts.size() ? ascendingIndexes[i + 1] : numberOfValues;
-        m_function.at(parts[i]).values.append(first.values.subspan(begin, end - begin));
-        auto& jump = m_function.at(previous).terminator;
+        m_function.edit(parts[i]).values.append(first.values.subspan(begin, end - begin));
+        auto& jump = m_function.edit(previous).terminator;
         jump.become(TerminatorKind::Jump);
         jump.targets.append(Target { parts[i], { }, { } });
         jump.setOrigin(m_origin);
         previous = parts[i];
     }
-    m_function.at(previous).terminator = WTF::move(terminator);
+    m_function.edit(previous).terminator = WTF::move(terminator);
     first.values.shrink(ascendingIndexes.front());
-    didChangeControlFlow();
+    didChangeControlFlow(singleElementSpan(block));
     return parts;
 }
 
@@ -131,24 +190,24 @@ void IRBuilder::redirectEdge(Edge edge, BlockID target, Arguments&& arguments)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
     RELEASE_ASSERT(target != entryBlock);
-    Target& redirected = targetOf(m_function, edge);
+    Target& redirected = editTarget(m_function, edge);
     redirected.block = target;
     redirected.arguments = WTF::move(arguments);
-    didChangeControlFlow();
+    didChangeControlFlow(singleElementSpan(edge.from));
 }
 
 void IRBuilder::redirectEdge(Edge edge, Target&& target)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
     RELEASE_ASSERT(target.block != entryBlock);
-    targetOf(m_function, edge) = WTF::move(target);
-    didChangeControlFlow();
+    editTarget(m_function, edge) = WTF::move(target);
+    didChangeControlFlow(singleElementSpan(edge.from));
 }
 
 void IRBuilder::convertBranchToJump(BlockID block, uint32_t targetIndex)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
-    auto& terminator = m_function.at(block).terminator;
+    auto& terminator = m_function.edit(block).terminator;
     RELEASE_ASSERT(terminator.isConditionalBranch());
 
     Vector<ValueID, 2> results;
@@ -164,8 +223,9 @@ void IRBuilder::convertBranchToJump(BlockID block, uint32_t targetIndex)
             prepare(guard);
             guard.setOrigin(terminator.origin());
             ValueID id = addValue(WTF::move(guard));
-            m_function.at(block).values.append(id);
+            m_function.edit(block, BlockEdit::Values).values.append(id);
             results.append(id);
+            didAddDetachedValue(id);
             break;
         }
         case EdgeResultKind::DeclaredResult:
@@ -178,17 +238,17 @@ void IRBuilder::convertBranchToJump(BlockID block, uint32_t targetIndex)
     target.proofs.clear();
     terminator.become(TerminatorKind::Jump);
     terminator.targets.append(WTF::move(target));
-    didChangeControlFlow();
+    didChangeControlFlow(singleElementSpan(block));
 }
 
 void IRBuilder::demoteReturnCall(BlockID block)
 {
-    Terminator& terminator = m_function.at(block).terminator;
+    Terminator& terminator = m_function.edit(block).terminator;
     RELEASE_ASSERT(terminator.kind == TerminatorKind::ReturnCall && block != m_block && m_insertions.isEmpty());
 
     ValueID result = terminator.callOperand();
     // SiteExpansion returns the converted result of a call that it has marked itself.
-    if (Value& call = m_function.at(result); FlagMask::isDemotedTailCall(call.opcode))
+    if (Value& call = m_function.edit(result); FlagMask::isDemotedTailCall(call.opcode))
         call.setIsDemotedTailCall(true);
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts())
@@ -200,47 +260,18 @@ void IRBuilder::demoteReturnCall(BlockID block)
     terminator = Terminator();
     moveToEndOf(block);
 
-    TypingContext typing { m_context.program, m_function, m_types };
-    bool canPredict = isLegalIn(Opcode::Predict, m_context.program.form());
+    bool keepsExpectedTypes = m_context.program.form() < IRForm::Selected;
     for (const TailCast& cast : casts) {
-        TypeID castType = typing.typeIDOf(cast.declared);
-        switch (cast.resolution) {
-        case CastResolution::Unresolved: {
-            Value request = make(Opcode::ClaimDeclared, { result });
+        if (cast.resolution == CastResolution::Unresolved) {
+            Value request = make(Opcode::Convert, { result });
             request.setDeclared(cast.declared);
             result = append(WTF::move(request));
             continue;
         }
-        case CastResolution::Nothing:
-            continue;
-        case CastResolution::Upcast:
-            result = appendUpcast(result, castType);
-            break;
-        case CastResolution::Claim: {
-            Value claim = makeCast(Opcode::Claim, result, castType);
-            claim.setSite(cast.declared.site);
-            claim.setCause(CheckCause::MayFail);
-            result = append(WTF::move(claim));
-            break;
-        }
-        case CastResolution::Prediction:
-            break;
-        case CastResolution::Assume:
-            if (m_context.build.validates()) {
-                Value test = make(Opcode::ValidateType, { result });
-                test.setValidatedType(castType);
-                append(WTF::move(test));
-            }
-            result = append(makeCast(Opcode::AssumeType, result, castType));
-            break;
-        }
-
-        TypeID predicted = typing.predicting().typeIDOf(cast.declared);
-        if (!canPredict || predicted == castType)
-            continue;
-        Value predict = make(Opcode::Predict, { result });
-        predict.setPredicted(predicted);
-        result = append(WTF::move(predict));
+        if (cast.resolution != CastResolution::Nothing)
+            result = appendResolvedTailCast(*this, result, cast);
+        if (keepsExpectedTypes && cast.declared.flags.contains(PositionFlags::IsExpected))
+            result = appendExpectation(*this, result, cast.declared);
     }
     emitReturn(result);
 
@@ -250,8 +281,8 @@ void IRBuilder::demoteReturnCall(BlockID block)
 
 void IRBuilder::removeHandler(BlockID block)
 {
-    m_function.at(block).handler = std::nullopt;
-    didChangeControlFlow();
+    m_function.edit(block).handler = std::nullopt;
+    didChangeControlFlow(singleElementSpan(block));
 }
 
 size_t IRBuilder::emptyUnreachableBlocks()
@@ -259,17 +290,16 @@ size_t IRBuilder::emptyUnreachableBlocks()
     RELEASE_ASSERT(!m_block && m_insertions.isEmpty());
     std::optional<CFG> localCFG;
     const CFG& cfg = m_analyses ? m_analyses->cfg() : localCFG.emplace(m_function);
-    size_t numberOfEmptiedBlocks = 0;
+    Vector<BlockID, 8> emptiedBlocks;
     for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
-        Block& block = m_function.at(BlockID(index));
-        if (cfg.isReachable(BlockID(index)) || !hasContents(block))
+        if (cfg.isReachable(BlockID(index)) || !hasContents(m_function.blocks[index]))
             continue;
-        block = Block { };
-        ++numberOfEmptiedBlocks;
+        m_function.edit(BlockID(index)) = Block { };
+        emptiedBlocks.append(BlockID(index));
     }
-    if (numberOfEmptiedBlocks)
-        didChangeControlFlow();
-    return numberOfEmptiedBlocks;
+    if (!emptiedBlocks.isEmpty())
+        didChangeControlFlow(emptiedBlocks.span());
+    return emptiedBlocks.size();
 }
 
 void IRBuilder::coverWithHandler(std::span<const BlockID> blocks, const Target& callerHandler)
@@ -278,11 +308,10 @@ void IRBuilder::coverWithHandler(std::span<const BlockID> blocks, const Target& 
     RELEASE_ASSERT(callerHandler.block != entryBlock);
     Target handler = callerHandler;
     for (BlockID block : blocks) {
-        std::optional<Target>& covering = m_function.at(block).handler;
-        if (!covering)
-            covering = handler;
+        if (!m_function.at(block).handler)
+            m_function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = handler;
     }
-    didChangeControlFlow();
+    didChangeControlFlow(blocks);
 }
 
 } } } // namespace JSC::AOT::Typed

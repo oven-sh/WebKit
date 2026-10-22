@@ -1,6 +1,7 @@
-# A call by value goes through the entrypoint of its callee, which tests `this` and the arguments against the declared types: the call throws where an operand may fail its test, whatever the summary of the body says
+# A call by value goes through the entrypoint of its callee, which refuses a call of the wrong kind and collects the rest arguments.
+# The tests of `this` and of the arguments against the declared types are operations of the body of the callee, and none of them throws: an operand that may fail its test adds nothing to the call
 # FORM: Prepared
-# RUN: effects summaries f7 f8 f9
+# RUN: effects summaries f8 f9 f10
 
 module m0 path="main.ts" displayPath="main.ts"
 layout L0 kind=Instance name="Counter" constructor=f5 flow={baseState=None members=[L0]}
@@ -8,12 +9,12 @@ function f0 name="deadBody" parameters=[{type=undefined|null|number}] results=[{
   b0(v0: undefined|null|number):
     Unreachable
 }
-function f1 name="narrowed" parameters=[{type=int written=undefined|null|number}] results=[{type=undefined}] {
+function f1 name="narrowed" parameters=[{type=int}] results=[{type=undefined}] {
   b0(v0: int):
     Return
 }
-function f2 name="untypedNarrowed" parameters=[{type=int written=anything}] results=[{type=undefined}] {
-  b0(v0: int):
+function f2 name="expected" parameters=[{type=int flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: anything ~ int):
     Return
 }
 function f3 name="typedThis" flags=[HasThis] thisType={type=undefined|null|string} results=[{type=undefined}] {
@@ -32,7 +33,11 @@ function f6 name="asynchronous" flags=[IsAsync] parameters=[{type=undefined|null
   b0(v0: undefined|null|number):
     Unreachable
 }
-function f7 name="arguments" parameters=[{type=f0}, {type=f1}, {type=f2}, {type=f4}, {type=anything}, {type=string}, {type=number}, {type=undefined}, {type=int}] results=[{type=undefined}] {
+function f7 name="rest" flags=[HasRestParameter] parameters=[{type=Array<number>}] results=[{type=undefined}] {
+  b0(v0: Array<number>):
+    Return
+}
+function f8 name="arguments" parameters=[{type=f0}, {type=f1}, {type=f2}, {type=f4}, {type=anything}, {type=string}, {type=number}, {type=undefined}, {type=int}] results=[{type=undefined}] {
   b0(v0: f0, v1: f1, v2: f2, v3: f4, v4: anything, v5: string, v6: number, v7: undefined, v8: int):
     v9 = Call v0, -, v5 callees=[f0]
     v10 = Call v0, -, v4 callees=[f0]
@@ -49,45 +54,52 @@ function f7 name="arguments" parameters=[{type=f0}, {type=f1}, {type=f2}, {type=
     v21 = Call v3, -, v6 callees=[f4]
     Return
 }
-# The body of f0 is dead and its summary is `none`: what is left of the call is the test of the argument
-# CHECK-LABEL: function f7
-# CHECK-NEXT: v9 Call: throws
-# CHECK-NEXT: v10 Call: throws
+# The body of f0 is dead and its summary is `none`: nothing is left of the call, whatever the argument
+# CHECK-LABEL: function f8
+# CHECK-NEXT: v9 Call: none
+# CHECK-NEXT: v10 Call: none
 # CHECK-NEXT: v11 Call: none
 # CHECK-NEXT: v12 Call: none
 # CHECK-NEXT: v13 Call: none
-# What flow narrowed is tested as well: a number that is not known to be an integer meets the second test
-# CHECK-NEXT: v14 Call: throws
-# CHECK-NEXT: v15 Call: throws
+# The same for a type that flow narrowed and for a type that is only expected
+# CHECK-NEXT: v14 Call: none
+# CHECK-NEXT: v15 Call: none
 # CHECK-NEXT: v16 Call: none
-# CHECK-NEXT: v17 Call: throws
+# CHECK-NEXT: v17 Call: none
 # CHECK-NEXT: v18 Call: none
-# CHECK-NEXT: v19 Call: throws
+# CHECK-NEXT: v19 Call: none
 # CHECK-NEXT: v20 Call: none
 # CHECK-NEXT: v21 Call: none
-function f8 name="receivers" parameters=[{type=f3}, {type=string}, {type=number}] results=[{type=undefined}] {
+function f9 name="receivers" parameters=[{type=f3}, {type=string}, {type=number}] results=[{type=undefined}] {
   b0(v0: f3, v1: string, v2: number):
     v3 = Call v0, v1 callees=[f3]
     v4 = Call v0, v2 callees=[f3]
     v5 = Call v0 callees=[f3]
     Return
 }
-# CHECK-LABEL: function f8
+# CHECK-LABEL: function f9
 # CHECK-NEXT: v3 Call: none
-# CHECK-NEXT: v4 Call: throws
+# CHECK-NEXT: v4 Call: none
 # CHECK-NEXT: v5 Call: none
-function f9 name="otherEntries" parameters=[{type=f5}, {type=f6}, {type=string}, {type=number}, {type=Array}] results=[{type=undefined}] {
-  b0(v0: f5, v1: f6, v2: string, v3: number, v4: Array):
-    v5 = Construct v0, -, v2 callees=[f5]
+function f10 name="otherEntries" parameters=[{type=f5}, {type=f6}, {type=f7}, {type=string}, {type=number}, {type=Array}] results=[{type=undefined}] {
+  b0(v0: f5, v1: f6, v2: f7, v3: string, v4: number, v5: Array):
     v6 = Construct v0, -, v3 callees=[f5]
-    v7 = Call v1, -, v2 callees=[f6]
+    v7 = Construct v0, -, v4 callees=[f5]
     v8 = Call v1, -, v3 callees=[f6]
-    v9 = CallList v1, -, v4 callees=[f6]
+    v9 = Call v1, -, v4 callees=[f6]
+    v10 = Call v2, -, v3 callees=[f7]
+    v11 = Call v2, -, v4 callees=[f7]
+    v12 = Call v2 callees=[f7]
+    v13 = CallList v1, -, v5 callees=[f6]
     Return
 }
-# CHECK-LABEL: function f9
-# CHECK-NEXT: v5 Construct: throws
+# CHECK-LABEL: function f10
 # CHECK-NEXT: v6 Construct: none
-# CHECK-NEXT: v7 Call: {{*}}writes({{*}}PromiseState{{*}}throws
+# CHECK-NEXT: v7 Construct: none
 # CHECK-NEXT: v8 Call: none
-# CHECK-NEXT: v9 CallList: {{*}}throws
+# CHECK-NEXT: v9 Call: none
+# CHECK-NEXT: v10 Call: reads(AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v11 Call: reads(AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v12 Call: reads(AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v13 CallList: reads(Elements, ArrayStorage)
+# CHECK-NOT: throws

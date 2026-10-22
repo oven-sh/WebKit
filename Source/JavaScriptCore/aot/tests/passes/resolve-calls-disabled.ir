@@ -19,6 +19,6 @@ function f1 name="call-of-proven-callee" parameters=[{type=f0}, {type=number}] r
 }
 # CHECK-LABEL: function f1 name="call-of-proven-callee"
 # CHECK-NEXT: b0(v0: f0, v1: number):
-# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: v2: number = Call v0, -, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }

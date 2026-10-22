@@ -18,16 +18,20 @@ public:
     void generateModuleNamespace(const ValueContext&);
     void generateImportModule(const ValueContext&);
     void generateRequireModule(const ValueContext&);
+    void generateRecordRequire(const ValueContext&);
     void generateResolveModule(const ValueContext&);
     void generateThrowModuleFailure(const ValueContext&);
     void generateImportDynamic(const ValueContext&);
     void generateRequireDynamic(const ValueContext&);
     void generateResolveDynamic(const ValueContext&);
-    void generateGetRequiredValue(const ValueContext&);
+    void generateBeginModuleEvaluation(const ValueContext&);
+    void generateFinishModuleEvaluation(const ValueContext&);
+    void generateAbandonModuleEvaluation(const ValueContext&);
 
 private:
     Word32 moduleIndex(ModuleID);
     Boxed loadModuleValue(ModuleID);
+    TypedPointer statusOf(ModuleID);
 };
 
 } } } // namespace JSC::AOT::Typed

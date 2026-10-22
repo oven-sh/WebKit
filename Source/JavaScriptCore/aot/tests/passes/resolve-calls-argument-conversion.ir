@@ -1,4 +1,4 @@
-# Every argument of a direct call is inside the type its callee declares, and a conversion that fails in front of an async callee rejects the promise
+# Every argument of a direct call is inside the type its callee declares. What the types of the caller do not show is assumed: nothing is tested in front of the call, so nothing throws there and no promise is rejected
 # FORM: Prepared
 # RUN: pass ResolveCalls
 # STATISTIC: CallsResolved = 6
@@ -26,24 +26,24 @@ function f4 name="synchronous" parameters=[{type=number site=w0}, {type=string}]
     Return
 }
 
-function f5 name="written-parameter" parameters=[{type=f4}, {type=anything}, {type=number|string}] results=[{type=anything}] {
+function f5 name="typed-parameter" parameters=[{type=f4}, {type=anything}, {type=number|string}] results=[{type=anything}] {
   b0(v0: f4, v1: anything, v2: number|string):
     v3 = Call v0, -, v1, v2
     Return v3
 }
-# CHECK-LABEL: function f5 name="written-parameter"
+# CHECK-LABEL: function f5 name="typed-parameter"
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: number|string):
-# CHECK-NEXT: [[unknownArgument]]: number = Claim v1 castType=number site=w0 cause=UnknownObject
-# CHECK-NEXT: [[unionArgument]]: string = Claim v2 castType=string cause=AddedByPass
+# CHECK-NEXT: [[unknownArgument]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: [[unionArgument]]: string = AssumeType v2 castType=string
 # CHECK-NEXT: = CallDirect [[unknownArgument]], [[unionArgument]] function=f4
-function f6 name="known-argument-may-fail" parameters=[{type=f4}, {type=number|string}, {type=string}] results=[{type=anything}] {
+function f6 name="argument-of-a-wider-type" parameters=[{type=f4}, {type=number|string}, {type=string}] results=[{type=anything}] {
   b0(v0: f4, v1: number|string, v2: string):
     v3 = Call v0, -, v1, v2
     Return v3
 }
-# CHECK-LABEL: function f6 name="known-argument-may-fail"
+# CHECK-LABEL: function f6 name="argument-of-a-wider-type"
 # CHECK-NEXT: b0(v0: f4, v1: number|string, v2: string):
-# CHECK-NEXT: [[narrowedArgument]]: number = Claim v1 castType=number site=w0 cause=MayFail
+# CHECK-NEXT: [[narrowedArgument]]: number = AssumeType v1 castType=number
 # CHECK-NEXT: = CallDirect [[narrowedArgument]], v2 function=f4
 function f7 name="arguments-inside" parameters=[{type=f4}, {type=i32}, {type="a"}] results=[{type=anything}] {
   b0(v0: f4, v1: i32, v2: "a"):
@@ -53,7 +53,7 @@ function f7 name="arguments-inside" parameters=[{type=f4}, {type=i32}, {type="a"
 # CHECK-LABEL: function f7 name="arguments-inside"
 # CHECK-NEXT: b0(v0: f4, v1: i32, v2: "a"):
 # CHECK-NEXT: = CallDirect v1, v2 function=f4
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 
 function f8 name="async-callee-under-handler" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
   b0(v0: f0, v1: anything) handler=b2():
@@ -66,17 +66,10 @@ function f8 name="async-callee-under-handler" parameters=[{type=f0}, {type=anyth
     Return v3
 }
 # CHECK-LABEL: function f8 name="async-callee-under-handler"
-# CHECK: [[rejection]]() role=CatchHandler frequency=Rare handler=b2():
-# CHECK-NEXT: [[error]]: anything = CatchValue
-# CHECK-NEXT: [[rejected]]: Promise = NewPromise
-# CHECK-NEXT: RejectPromise [[rejected]], [[error]]
-# CHECK-NEXT: Jump -> next [[join]]([[rejected]])
-# CHECK: () handler=[[rejection]]():
-# CHECK-NEXT: [[claimedArgument]]: number = Claim v1 castType=number site=w0 cause=UnknownObject
-# CHECK-NEXT: Jump -> next [[call]]()
-# CHECK: [[call]]() handler=b2():
-# CHECK-NEXT: [[pending]]: Promise = CallDirect [[claimedArgument]] function=f0
-# CHECK-NEXT: Jump -> next [[join]]([[pending]])
+# CHECK-NEXT: b0(v0: f0, v1: anything) handler=b2():
+# CHECK-NEXT: [[asyncArgument]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: : Promise = CallDirect [[asyncArgument]] function=f0
+# CHECK-NOT: RejectPromise
 function f9 name="async-callee-arguments-inside" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
   b0(v0: f0, v1: number):
     v2 = Call v0, -, v1
@@ -93,6 +86,6 @@ function f10 name="generator-callee" parameters=[{type=f2}, {type=anything}] res
 }
 # CHECK-LABEL: function f10 name="generator-callee"
 # CHECK-NEXT: b0(v0: f2, v1: anything):
-# CHECK-NEXT: [[generatorArgument]]: number = Claim v1 castType=number cause=AddedByPass
+# CHECK-NEXT: [[generatorArgument]]: number = AssumeType v1 castType=number
 # CHECK-NEXT: = CallDirect v0, [[generatorArgument]] function=f2
 # CHECK-NOT: CatchValue

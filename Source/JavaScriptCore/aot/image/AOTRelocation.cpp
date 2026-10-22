@@ -107,13 +107,11 @@ std::expected<RelocatableCode, LinkFailure> RelocationRecorder::finalize(LinkBuf
     return RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
 }
 
-std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLinkBuffer& buffer, BuildContext* context)
+std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLinkBuffer& buffer, BuildContext*)
 {
     LinkBuffer& linkBuffer = buffer.linkBuffer();
     if (linkBuffer.hasProcessAddress())
         return makeUnexpected(LinkFailure::ProcessAddressInCode);
-    if (context && context->validates())
-        validateNoMappedAddress(linkBuffer, *context);
 
     Vector<Relocation> relocations = m_pending.map([&](const PendingRelocation& pending) {
         return Relocation { linkBuffer.offsetOf(pending.site), pending.kind, pending.symbol.space, pending.symbol.entry, pending.symbol.index };

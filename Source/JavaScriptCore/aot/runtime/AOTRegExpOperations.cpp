@@ -28,6 +28,7 @@
 #include "RegExpPrototype.h"
 #include "StringPrototypeInlines.h"
 #include "YarrFlags.h"
+#include "YarrFlatProgram.h"
 #include <algorithm>
 #include <span>
 
@@ -208,6 +209,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instan
     }
     globalObject->regExpGlobalData().recordMatch(vm, globalObject, cell, subject, result, false);
     OPERATION_RETURN(scope, JSValue::encode(value));
+}
+
+// Answers as the code of a pattern in the image does: where the match starts, -1 where there is none, less where the match has to be given to somebody else.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram8, int64_t, (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output))
+{
+    switch (Yarr::matchFlatProgram(*static_cast<const Yarr::FlatProgram*>(program), std::span { characters, length }, 0, output)) {
+    case Yarr::JSRegExpResult::Match:
+        return output[0];
+    case Yarr::JSRegExpResult::NoMatch:
+        return -1;
+    default:
+        return static_cast<int64_t>(Yarr::JSRegExpResult::JITCodeFailure);
+    }
 }
 
 static JSValue valueOfFailedMatch(RegExpMatchForm form)

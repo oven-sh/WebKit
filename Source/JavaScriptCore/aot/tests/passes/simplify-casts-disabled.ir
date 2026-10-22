@@ -1,4 +1,4 @@
-# With the pass disabled a claim that repeats a dominating claim stays
+# With the pass disabled a check that repeats a dominating check stays
 # FORM: Prepared
 # OPTIONS: disable=pass:SimplifyCasts
 # RUN: pass SimplifyCasts
@@ -8,20 +8,20 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
   b0(v0: anything, v1: boolean):
-    v2 = Claim v0 castType=number
+    v2 = Check v0 castType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = Claim v0 castType=number
+    v3 = Check v0 castType=number
     Return v3
   b2():
     Return v2
 }
 # CHECK-LABEL: function f0 name="repeatedBelow"
 # CHECK-NEXT: b0(v0: anything, v1: boolean):
-# CHECK-NEXT: v2: number = Claim v0 castType=number
+# CHECK-NEXT: v2: number = Check v0 castType=number
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: number = Claim v0 castType=number
+# CHECK-NEXT: v3: number = Check v0 castType=number
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v2

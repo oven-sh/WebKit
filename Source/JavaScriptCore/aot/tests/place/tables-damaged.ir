@@ -5,6 +5,7 @@
 # RUN(FLAG): tables damage=UnknownFieldFlag
 # RUN(LOST): tables damage=FieldMissingFromFieldTable
 # RUN(STRAY): tables damage=FieldTableEntryWithoutField
+# RUN(MEMBER): tables damage=MemberMissingFromClassMemberTable
 # DIAGNOSTIC: ProgramTableCheckFailed
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -45,3 +46,4 @@ function f2 name="Second" kind=BaseConstructor flags=[HasNewTarget] parameters=[
 # FLAG: rule UnknownFieldFlag
 # LOST: rule FieldMissingFromFieldTable
 # STRAY: rule FieldTableEntryWithoutField
+# MEMBER: rule MemberMissingFromClassMemberTable

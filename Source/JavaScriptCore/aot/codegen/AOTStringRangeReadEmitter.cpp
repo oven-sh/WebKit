@@ -10,6 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTStubsStrings.h"
 #include "PureNaN.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -117,10 +118,35 @@ void StringRangeReadEmitter::generateStringRangeCodeUnitOrMinusOne(const ValueCo
     }));
 }
 
+// A negative position is above every length when it is read as unsigned.
+Integer StringRangeReadEmitter::readCodePointByStub(const ValueContext& value)
+{
+    Operand position = get(value->positionOperand());
+    Integer index = integer(0);
+    if (position.is<Word32>())
+        index = zeroExtended(position.as<Word32>());
+    else
+        index = position.is<Number>() ? emitter<StringEmitter>().truncateToIndex(position.as<Number>()) : integerOf(value->positionOperand());
+    return Integer(callStub(value, stringCodePointAt(), { in<CellPointer>(value->stringOperand()).value(), index.value() }).first);
+}
+
 void StringRangeReadEmitter::generateStringRangeCodePointOrUndefined(const ValueContext& value)
 {
     StringEmitter& strings = emitter<StringEmitter>();
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    uint64_t undefinedMarker = ConversionEmitter::markerBits(Primitive::Undefined, Representation::OptionalInt64);
+    bool readsWholeString = !value->startOperand() && !value->endOperand();
+    bool hasCodeForResult = value.representation() == Representation::Int32 || value.representation() == Representation::OptionalInt64;
+    if (value.shape() != CodeShape::Fast && readsWholeString && hasCodeForResult) {
+        RELEASE_ASSERT(undefinedMarker == static_cast<uint64_t>(undefinedInteger));
+        Integer codePointOrMarker = readCodePointByStub(value);
+        if (value.representation() == Representation::Int32)
+            define(value, low32(codePointOrMarker));
+        else
+            define(value, conversions.fromBits(codePointOrMarker, Representation::OptionalInt64));
+        return;
+    }
+
     IndexedRead read = openIndexedRead(value);
     if (value.representation() == Representation::Int32) {
         define(value, strings.codePointAt(read.view, read.index));
@@ -133,8 +159,7 @@ void StringRangeReadEmitter::generateStringRangeCodePointOrUndefined(const Value
     define(value, readIfInRange(m_out, read.isInRange, Representation::OptionalInt64, [&] {
         return conversions.fromBits(zeroExtended(strings.codePointAt(read.view, read.index)), Representation::OptionalInt64);
     }, [&] {
-        uint64_t marker = ConversionEmitter::markerBits(Primitive::Undefined, Representation::OptionalInt64);
-        return conversions.fromBits(integer(static_cast<int64_t>(marker)), Representation::OptionalInt64);
+        return conversions.fromBits(integer(static_cast<int64_t>(undefinedMarker)), Representation::OptionalInt64);
     }));
 }
 

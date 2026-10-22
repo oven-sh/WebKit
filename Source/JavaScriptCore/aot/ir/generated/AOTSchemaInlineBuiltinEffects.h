@@ -24,25 +24,25 @@ constexpr void forEachDeclaredEffect(InlineBuiltin builtin, Sink& sink)
     case InlineBuiltin::ArraySlice: case InlineBuiltin::ArraySplice: case InlineBuiltin::ArrayUnshift: case InlineBuiltin::ArraySplicePrefix:
     case InlineBuiltin::ArrayFrom: case InlineBuiltin::OwnPropertyKeys: case InlineBuiltin::ObjectGetOwnPropertyDescriptor:
     case InlineBuiltin::ObjectHasOwn: case InlineBuiltin::ObjectPropertyIsEnumerable: case InlineBuiltin::OwnPropertyDescriptorFields:
-    case InlineBuiltin::ObjectCreate: case InlineBuiltin::GetPrototypeOf: case InlineBuiltin::SetPrototypeOf:
-    case InlineBuiltin::CallObjectConstructor: case InlineBuiltin::ObjectFreeze: case InlineBuiltin::ObjectPrototypeToString:
-    case InlineBuiltin::SetFromIterable: case InlineBuiltin::MapFromEntries: case InlineBuiltin::MapDelete: case InlineBuiltin::SetDelete:
-    case InlineBuiltin::MapClear: case InlineBuiltin::SetClear: case InlineBuiltin::PromiseResolve: case InlineBuiltin::PromiseThen:
-    case InlineBuiltin::PromiseCatch: case InlineBuiltin::BufferAccess: case InlineBuiltin::CallNumberConstructor: case InlineBuiltin::NumberToString:
-    case InlineBuiltin::ParseInt: case InlineBuiltin::NumberToStringAppend: case InlineBuiltin::DateGetField: case InlineBuiltin::DateToISOString:
-    case InlineBuiltin::FunctionBind: case InlineBuiltin::ReflectApply: case InlineBuiltin::FunctionApply: case InlineBuiltin::StringRepeat:
-    case InlineBuiltin::StringPadStart: case InlineBuiltin::StringPadEnd: case InlineBuiltin::StringIsWellFormed:
-    case InlineBuiltin::StringToWellFormed: case InlineBuiltin::StringNormalize: case InlineBuiltin::StringFromCodePoint:
-    case InlineBuiltin::CallStringConstructor: case InlineBuiltin::StringUTF8ByteLength: case InlineBuiltin::StringSliceAppend:
-    case InlineBuiltin::StringSubstringAppend: case InlineBuiltin::CallStringConstructorAppend: case InlineBuiltin::NewRegExp:
-    case InlineBuiltin::StringMatch: case InlineBuiltin::StringSearch: case InlineBuiltin::RegExpExec: case InlineBuiltin::RegExpTest:
-    case InlineBuiltin::RegExpFlags: case InlineBuiltin::RegExpSource: case InlineBuiltin::StringReplace: case InlineBuiltin::StringReplaceAll:
-    case InlineBuiltin::StringSplit: case InlineBuiltin::RegExpFlag: case InlineBuiltin::RegExpGetLastIndex: case InlineBuiltin::RegExpSetLastIndex:
-    case InlineBuiltin::RegExpExecPrefix: case InlineBuiltin::StringMatchPrefix: case InlineBuiltin::NewError: case InlineBuiltin::FormatDateTime:
-    case InlineBuiltin::FormatNumber:
+    case InlineBuiltin::ObjectValues: case InlineBuiltin::ObjectEntries: case InlineBuiltin::ObjectCreate: case InlineBuiltin::GetPrototypeOf:
+    case InlineBuiltin::SetPrototypeOf: case InlineBuiltin::CallObjectConstructor: case InlineBuiltin::ObjectFreeze:
+    case InlineBuiltin::ObjectPrototypeToString: case InlineBuiltin::SetFromIterable: case InlineBuiltin::MapFromEntries:
+    case InlineBuiltin::MapDelete: case InlineBuiltin::SetDelete: case InlineBuiltin::MapClear: case InlineBuiltin::SetClear:
+    case InlineBuiltin::PromiseResolve: case InlineBuiltin::PromiseThen: case InlineBuiltin::PromiseCatch: case InlineBuiltin::BufferAccess:
+    case InlineBuiltin::CallNumberConstructor: case InlineBuiltin::NumberToString: case InlineBuiltin::ParseInt:
+    case InlineBuiltin::NumberToStringAppend: case InlineBuiltin::DateGetField: case InlineBuiltin::DateToISOString: case InlineBuiltin::FunctionBind:
+    case InlineBuiltin::ReflectApply: case InlineBuiltin::FunctionApply: case InlineBuiltin::StringRepeat: case InlineBuiltin::StringPadStart:
+    case InlineBuiltin::StringPadEnd: case InlineBuiltin::StringIsWellFormed: case InlineBuiltin::StringToWellFormed:
+    case InlineBuiltin::StringNormalize: case InlineBuiltin::StringFromCodePoint: case InlineBuiltin::CallStringConstructor:
+    case InlineBuiltin::StringUTF8ByteLength: case InlineBuiltin::StringSliceAppend: case InlineBuiltin::StringSubstringAppend:
+    case InlineBuiltin::CallStringConstructorAppend: case InlineBuiltin::NewRegExp: case InlineBuiltin::StringMatch: case InlineBuiltin::StringSearch:
+    case InlineBuiltin::RegExpExec: case InlineBuiltin::RegExpTest: case InlineBuiltin::RegExpFlags: case InlineBuiltin::RegExpSource:
+    case InlineBuiltin::StringReplace: case InlineBuiltin::StringReplaceAll: case InlineBuiltin::StringSplit: case InlineBuiltin::RegExpFlag:
+    case InlineBuiltin::RegExpGetLastIndex: case InlineBuiltin::RegExpSetLastIndex: case InlineBuiltin::RegExpExecPrefix:
+    case InlineBuiltin::StringMatchPrefix: case InlineBuiltin::NewError: case InlineBuiltin::FormatDateTime: case InlineBuiltin::FormatNumber:
         sink.asOverload();
         return;
-    case InlineBuiltin::ArrayIterator: case InlineBuiltin::NewMap:
+    case InlineBuiltin::ArrayIterator: case InlineBuiltin::NewMap: case InlineBuiltin::NewSet:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.collects();
@@ -79,11 +79,14 @@ constexpr void forEachDeclaredEffect(InlineBuiltin builtin, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::TypedArrayStorage));
         return;
     case InlineBuiltin::MapGet: case InlineBuiltin::MapHas: case InlineBuiltin::SetHas:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.reads(MemoryLocation(AbstractHeap::StringStorage));
         sink.reads(MemoryLocation(AbstractHeap::CollectionStorage));
         sink.reads(MemoryLocation(AbstractHeap::CollectionEntries));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::StringStorage));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.writes(MemoryLocation(AbstractHeap::CollectionStorage));
         sink.throws();
         sink.collects();
         return;
@@ -172,7 +175,7 @@ template<typename Sink>
 constexpr void forEachDeclaredEffect(NamedEffectSet set, Sink& sink)
 {
     switch (set) {
-    case NamedEffectSet::CreatesConstant:
+    case NamedEffectSet::CreatesConstant: case NamedEffectSet::AllocatesWithoutCollecting:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         return;
@@ -241,7 +244,22 @@ constexpr void forEachDeclaredEffect(NamedEffectSet set, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
+        sink.collects();
+        return;
+    case NamedEffectSet::DefinesMemberOfClass:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.reads(MemoryLocation(AbstractHeap::OrderWords));
+        sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
@@ -283,7 +301,6 @@ constexpr void forEachDeclaredEffect(NamedEffectSet set, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
-        sink.collects();
         return;
     case NamedEffectSet::RuntimeMatchesRegExp:
         sink.readsAllHeaps();

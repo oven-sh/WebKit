@@ -13,7 +13,7 @@ function f0 name="conditionForInt32" parameters=[{type=Array<anything, pristine[
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
-    v5 = GetArrayElement v0, v1, v4 arrayStorage=Int32 level=Predicted
+    v5 = GetArrayElement v0, v1, v4 arrayStorage=Int32 level=Expected
     v6 = NewArray v5 contents=anything
     Jump -> next b2()
   b2():
@@ -21,7 +21,7 @@ function f0 name="conditionForInt32" parameters=[{type=Array<anything, pristine[
     v8 = HasArrayStorage v0 arrayStorage=Int32
     Branch v8 -> taken b3(| 0), notTaken b4()
   b3(v9):
-    v10 = GetArrayElement v0, v1, v9 arrayStorage=Int32 level=Predicted
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Int32 level=Expected
     v11 = NewArray v10 contents=anything
     Jump -> next b4()
   b4():
@@ -32,7 +32,7 @@ function f0 name="conditionForInt32" parameters=[{type=Array<anything, pristine[
     v12 = HasArrayStorage v0 arrayStorage=Int32
     Branch v12 -> taken b7(| 0), notTaken b8()
   b7(v13) frequency=Rare:
-    v14 = GetArrayElement v0, v1, v13 arrayStorage=Int32 level=Predicted
+    v14 = GetArrayElement v0, v1, v13 arrayStorage=Int32 level=Expected
     v15 = NewArray v14 contents=anything
     Jump -> next b8()
   b8():
@@ -50,7 +50,7 @@ function f1 name="conditionForDouble" parameters=[{type=Array<anything, pristine
     v3 = HasArrayStorage v0 arrayStorage=Double
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
-    v5 = GetArrayElement v0, v1, v4 arrayStorage=Double level=Predicted
+    v5 = GetArrayElement v0, v1, v4 arrayStorage=Double level=Expected
     v6 = NewArray v5 contents=anything
     Jump -> next b2()
   b2():
@@ -58,7 +58,7 @@ function f1 name="conditionForDouble" parameters=[{type=Array<anything, pristine
     v8 = HasArrayStorage v0 arrayStorage=Double
     Branch v8 -> taken b3(| 0), notTaken b4()
   b3(v9):
-    v10 = GetArrayElement v0, v1, v9 arrayStorage=Double level=Predicted
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Double level=Expected
     v11 = NewArray v10 contents=anything
     Jump -> next b4()
   b4():
@@ -69,7 +69,7 @@ function f1 name="conditionForDouble" parameters=[{type=Array<anything, pristine
     v12 = HasArrayStorage v0 arrayStorage=Double
     Branch v12 -> taken b7(| 0), notTaken b8()
   b7(v13) frequency=Rare:
-    v14 = GetArrayElement v0, v1, v13 arrayStorage=Double level=Predicted
+    v14 = GetArrayElement v0, v1, v13 arrayStorage=Double level=Expected
     v15 = NewArray v14 contents=anything
     Jump -> next b8()
   b8():
@@ -87,7 +87,7 @@ function f2 name="conditionForContiguous" parameters=[{type=Array<anything, pris
     v3 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
-    v5 = GetArrayElement v0, v1, v4 arrayStorage=Contiguous level=Predicted
+    v5 = GetArrayElement v0, v1, v4 arrayStorage=Contiguous level=Expected
     v6 = NewArray v5 contents=anything
     Jump -> next b2()
   b2():
@@ -95,7 +95,7 @@ function f2 name="conditionForContiguous" parameters=[{type=Array<anything, pris
     v8 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v8 -> taken b3(| 0), notTaken b4()
   b3(v9):
-    v10 = GetArrayElement v0, v1, v9 arrayStorage=Contiguous level=Predicted
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Contiguous level=Expected
     v11 = NewArray v10 contents=anything
     Jump -> next b4()
   b4():
@@ -106,7 +106,7 @@ function f2 name="conditionForContiguous" parameters=[{type=Array<anything, pris
     v12 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v12 -> taken b7(| 0), notTaken b8()
   b7(v13) frequency=Rare:
-    v14 = GetArrayElement v0, v1, v13 arrayStorage=Contiguous level=Predicted
+    v14 = GetArrayElement v0, v1, v13 arrayStorage=Contiguous level=Expected
     v15 = NewArray v14 contents=anything
     Jump -> next b8()
   b8():

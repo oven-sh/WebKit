@@ -1,4 +1,4 @@
-# Where the walk leaves compiled classes: a locked member is found, a closed key stays absent, and any other location of the built-ins table is unknown without flow results
+# Where the walk leaves compiled classes: a locked member is found, a closed key stays absent, an own property that the table lists for the instances of the base is found, and any other location of the built-ins table is unknown without flow results
 # FORM: Prepared
 # RUN(LOCKEDMEMBER): member-lookup layout=L0 key="hasOwnProperty"
 # LOCKEDMEMBER: Builtin level=Proven builtin=B
@@ -6,9 +6,9 @@
 # RUN(CLOSEDOBJECT): member-lookup layout=L0 key="nope"
 # CLOSEDOBJECT: Absent level=Proven
 # RUN(OPENRECORD): member-lookup layout=L1 key="hasOwnProperty"
-# OPENRECORD: Builtin level=Predicted builtin=B{{*}} proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+# OPENRECORD: Builtin level=Expected builtin=B{{*}} proofs=[NoExtraProperties, PrototypeLinkUnchanged]
 # RUN(OPENRECORDABSENT): member-lookup layout=L1 key="nope"
-# OPENRECORDABSENT: Absent level=Predicted proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+# OPENRECORDABSENT: Absent level=Expected proofs=[NoExtraProperties, PrototypeLinkUnchanged]
 # RUN(PLAINCLASS): member-lookup layout=L6 key="hasOwnProperty"
 # PLAINCLASS: Builtin level=Proven builtin=B
 # RUN(PLAINCLASSABSENT): member-lookup layout=L6 key="nope"
@@ -17,18 +17,22 @@
 # WRITABLEMEMBER: Unknown level=Unknown cause=UnknownWriter
 # RUN(UNLISTEDMEMBERS): member-lookup start=ClassPrototype layout=L2 key="nope"
 # UNLISTEDMEMBERS: Unknown level=Unknown cause=PropertyAdded
-# RUN(NAMEDEFINEDBYBASE): member-lookup layout=L2 key="message"
+# RUN(NAMEDEFINEDBYBASE): member-lookup layout=L2 key="stack"
 # NAMEDEFINEDBYBASE: Unknown level=Unknown cause=BuiltinBase
+# RUN(OWNSLOTOFBASE): member-lookup layout=L2 key="message"
+# OWNSLOTOFBASE: Builtin level=Proven builtin=B
 # RUN(NAMENOTDEFINEDBYBASE): member-lookup layout=L2 key="toString"
 # NAMENOTDEFINEDBYBASE: Unknown level=Unknown cause=UnknownWriter
-# RUN(UNLISTEDOWNNAMESBELOW): member-lookup layout=L9 key="message"
+# RUN(UNLISTEDOWNNAMESBELOW): member-lookup layout=L9 key="stack"
 # UNLISTEDOWNNAMESBELOW: Unknown level=Unknown cause=BuiltinBase
+# RUN(OWNSLOTOFBASEBELOW): member-lookup layout=L9 key="message"
+# OWNSLOTOFBASEBELOW: Builtin level=Proven builtin=B
 # RUN(OWNPROPERTYOFINSTANCES): member-lookup layout=L10 key="length"
 # OWNPROPERTYOFINSTANCES: Builtin level=Proven builtin=B
 # OWNPROPERTYOFINSTANCES-NOT: getter=
 # RUN(PROTOTYPEHASGETTER): member-lookup start=ClassPrototype layout=L10 key="length"
 # PROTOTYPEHASGETTER: Accessor level=Proven holder=L10 getter=F
-# RUN(WRITABLELISTED): member-lookup layout=L4 key="getTime"
+# RUN(WRITABLELISTED): member-lookup layout=L4 key="deref"
 # WRITABLELISTED: Unknown level=Unknown cause=UnknownWriter
 # RUN(EXTENSIBLELISTED): member-lookup layout=L4 key="nope"
 # EXTENSIBLELISTED: Unknown level=Unknown cause=PropertyAdded
@@ -55,7 +59,7 @@
 # RUN(FROMPROTOTYPE): member-lookup start=ClassPrototype layout=L3 key="get"
 # FROMPROTOTYPE: Builtin level=Proven builtin=B
 # RUN(CONDITIONSKEPT): member-lookup layout=L7 key="get"
-# CONDITIONSKEPT: Builtin level=Predicted builtin=B{{*}} conditions=[MemberUnchanged(L7, Prototype, K{{*}}), PrototypeLinkUnchanged(L7, Prototype)]
+# CONDITIONSKEPT: Builtin level=Expected builtin=B{{*}} conditions=[MemberUnchanged(L7, Prototype, K{{*}}), PrototypeLinkUnchanged(L7, Prototype)]
 # RUN(CONDITIONSDROPPED): member-lookup layout=L7 key="nope"
 # CONDITIONSDROPPED: Unknown level=Unknown cause=PropertyAdded
 # CONDITIONSDROPPED-NOT: conditions=
@@ -96,17 +100,17 @@ layout L0 name="Options" flow={impossibleMutations=[ChangePrototype] addedKeysAr
 layout L1 name="NothingProven"
 layout L2 kind=Instance name="Failure" constructor=f0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Error impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L3 kind=Instance name="Registry" constructor=f1 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L4 kind=Instance name="Moment" constructor=f2 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Date impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="Handle" constructor=f2 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=WeakRef impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L5 kind=Instance name="Task" constructor=f3 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Promise impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L6 kind=Instance name="Plain" constructor=f4 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L7 kind=Instance name="LooseRegistry" constructor=f5 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce staticLink=Fixed staticNamesAreComplete=true}
-layout L8 kind=Instance name="SubRegistry" predictedBase=L3 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L3 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L9 kind=Instance name="DeeperFailure" predictedBase=L2 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L2 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="SubRegistry" base=L3 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L3 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L9 kind=Instance name="DeeperFailure" base=L2 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L2 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L10 kind=Instance name="Stack" constructor=f10 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="length" kind=Getter function=f11 mutability=Fixed}]}
 
 function f0 name="Failure" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
 function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
-function f2 name="Moment" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f2 name="Handle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 function f3 name="Task" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
 function f4 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
 function f5 name="LooseRegistry" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
@@ -120,7 +124,7 @@ function f7 name="reads" parameters=[{type=L0}, {type=L3}, {type=L5}, {type=f4},
     v11 = PropGet v3 key="call"
     v12 = PropGet v4 key="resolve"
     v13 = PropGet v5 key="toString"
-    v14 = PropGet v6 key="getTime"
+    v14 = PropGet v6 key="deref"
     Return v14
 }
 function f8 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
@@ -131,7 +135,8 @@ function f8 name="otherKeys" parameters=[{type=anything}] results=[{type=anythin
     v4 = PropGet v0 key=@@iterator
     v5 = PropGet v0 key="captureStackTrace"
     v6 = PropGet v0 key="message"
-    Return v6
+    v7 = PropGet v0 key="stack"
+    Return v7
 }
 function f9 name="DeeperFailure" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L9
 function f10 name="Stack" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L10

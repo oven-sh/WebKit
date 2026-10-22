@@ -51,7 +51,20 @@ static ALWAYS_INLINE size_t reverseFindCharacter(const CharacterType* characters
 template<typename CharacterType>
 static ALWAYS_INLINE size_t findString(const CharacterType* characters, uint32_t length, const CharacterType* other, uint32_t otherLength, uint32_t start)
 {
-    return StringView { unsafeMakeSpan(characters, length) }.find(StringView { unsafeMakeSpan(other, otherLength) }, start);
+    if (start > length)
+        return notFound;
+    if (!otherLength)
+        return start;
+    if (otherLength > length - start)
+        return notFound;
+    CharacterType first = other[0];
+    auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
+    auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
+    for (size_t i = start;; ++i) {
+        i = WTF::find(starts, first, i);
+        if (i == notFound || equal(characters + i + 1, rest))
+            return i;
+    }
 }
 
 template<typename CharacterType>
@@ -62,7 +75,14 @@ static ALWAYS_INLINE size_t reverseFindString(const CharacterType* characters, u
     unsigned start = std::min<unsigned>(std::max(position, 0), length - otherLength);
     if (!otherLength)
         return start;
-    return StringView { unsafeMakeSpan(characters, length) }.reverseFind(StringView { unsafeMakeSpan(other, otherLength) }, start);
+    CharacterType first = other[0];
+    auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
+    for (size_t i = start;; --i) {
+        if (characters[i] == first && equal(characters + i + 1, rest))
+            return i;
+        if (!i)
+            return notFound;
+    }
 }
 
 template<typename CharacterType>

@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTInt32Proof.h"
+#include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <optional>
@@ -23,9 +24,9 @@ namespace {
 
 struct RequestCounts {
     unsigned erased { 0 };
-    unsigned predicted { 0 };
+    unsigned kept { 0 };
 
-    bool isEmpty() const { return !erased && !predicted; }
+    bool isEmpty() const { return !erased && !kept; }
 };
 
 struct Flow {
@@ -39,6 +40,12 @@ struct Flow {
 static bool isPromise(const DeclaredType& declared)
 {
     return declared.flags.contains(PositionFlags::IsInt32Promise);
+}
+
+// A promise is about numbers: `int32 | Box` holds any Box. Whether a value of another kind may enter the position is for the conversion to test.
+static bool hasOnlyInt32sAmongNumbers(const Type& type)
+{
+    return !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
 }
 
 static bool isNumberConstant(const Function& function, ValueID value)
@@ -65,8 +72,12 @@ static Int32ProofFailure failureOf(const NumberBounds& bounds)
 static void reportUnprovenFlow(FunctionPassContext& context, const Flow& flow, const NumberBounds& bounds)
 {
     bool isSingleInteger = bounds.kind == BoundsKind::Integers && bounds.range.isSingleValue();
+    UserDiagnosticKind kind = flow.isConstant || isSingleInteger ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32;
+    // Who builds the program cannot mend such a file. The build goes on: the flow is tested like any other conversion.
+    if (flow.position.flags.contains(PositionFlags::IsDeclaredByDependency))
+        kind = UserDiagnosticKind::Int32OfDependencyNotProven;
     UserDiagnostic diagnostic {
-        .kind = flow.isConstant || isSingleInteger ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32,
+        .kind = kind,
         .function = context.id,
         .count = static_cast<uint32_t>(failureOf(bounds)),
         .location = flow.location,
@@ -93,21 +104,26 @@ enum class Judge : uint8_t {
 static bool judgeRequests(FunctionPassContext& context, Int32Prover& prover, Judge judge)
 {
     const Function& function = context.function;
-    TypingContext predicted { context.program, function, context.types, TypeLevel::Predicted };
+    // What is only expected of a value is no proof.
+    TypingContext typing { context.program, function, context.types };
     bool hasReported = false;
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
             const Value& request = function.at(id);
-            if (request.opcode != Opcode::ClaimDeclared)
+            if (request.opcode != Opcode::Convert)
                 continue;
 
             DeclaredType declared = request.declared();
             RELEASE_ASSERT(isPromise(declared));
             ValueID value = request.valueOperand();
-            bool isProvenByTypes = predicted.typeOf(value).isInt32OrNullish();
+            // A list of arguments stands for its elements, of which nothing is known. It is no value of the position.
+            const Type& known = typing.typeOf(value);
+            bool isProvenByTypes = hasOnlyInt32sAmongNumbers(known) && (known.isNever() || known.overlaps(typing.typeOf(declared), context.program));
             if (!isEnteredAt(siteKindOf(context.program, declared)) || isProvenByTypes != (judge == Judge::FlowsThatTypesProve))
                 continue;
-            NumberBounds bounds = prover.boundsOf(value);
+            // What is expected of an `any` comes from how it is used, and this flow is one of the uses.
+            bool isFromLooseType = request.illTypedCause() == IllTypedCause::FromLooseType;
+            NumberBounds bounds = isFromLooseType && !isProvenByTypes ? boundsOfType(known) : prover.boundsOf(value);
             if (bounds.isInt32OrNullish() || (isProvenByTypes && !prover.reliesOnUnprovenFlow()))
                 continue;
             reportUnprovenFlow(context, { declared, function.locationOf(id), isNumberConstant(function, value) }, bounds);
@@ -131,7 +147,7 @@ static bool hasPromisedTailCast(const Terminator& terminator)
 static bool judgeTailCasts(FunctionPassContext& context, Int32Prover& prover)
 {
     const Function& function = context.function;
-    TypingContext predicted { context.program, function, context.types, TypeLevel::Predicted };
+    TypingContext expected { context.program, function, context.types, TypeLevel::Expected };
     bool hasReported = false;
     for (const Block& block : function.blocks) {
         const Terminator& terminator = block.terminator;
@@ -141,7 +157,7 @@ static bool judgeTailCasts(FunctionPassContext& context, Int32Prover& prover)
         NumberBounds bounds = prover.boundsOf(terminator.callOperand());
         for (TailCast cast : terminator.casts()) {
             if (!isPromise(cast.declared)) {
-                bounds = narrowToType(bounds, predicted.typeOf(cast.declared));
+                bounds = narrowToType(bounds, expected.typeOf(cast.declared));
                 continue;
             }
             if (bounds.isInt32OrNullish())
@@ -162,26 +178,18 @@ static bool hasPromises(const Function& function)
         if (hasPromisedTailCast(block.terminator))
             return true;
         for (ValueID id : block.values) {
-            if (function.at(id).opcode == Opcode::ClaimDeclared)
+            if (function.at(id).opcode == Opcode::Convert)
                 return true;
         }
     }
     return false;
 }
 
-static bool shouldKeepPrediction(const TypingContext& predicted, ValueID value, TypeID expectedID)
-{
-    if (!expectedID)
-        return false;
-    const Type& source = predicted.typeOf(value);
-    const Type& expected = predicted.types.at(expectedID);
-    return source.overlaps(expected, predicted.program) && !source.isSubsetOf(expected, predicted.program);
-}
-
+// The proof is what the build demands of the program. What the compiled code relies on is the types: a flow that they do not prove is tested like any other conversion.
 static RequestCounts resolveRequests(FunctionPassContext& context)
 {
     Function& function = context.function;
-    TypingContext predicted { context.program, function, context.types, TypeLevel::Predicted };
+    TypingContext typing { context.program, function, context.types };
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     std::optional<ValueSubstitution> substitution;
     RequestCounts counts;
@@ -192,17 +200,13 @@ static RequestCounts resolveRequests(FunctionPassContext& context)
         BitVector erasedIndexes;
         for (uint32_t index = 0; index < values.size(); ++index) {
             ValueID id = values[index];
-            Value& request = function.at(id);
-            if (request.opcode != Opcode::ClaimDeclared)
+            const Value& request = function.at(id);
+            if (request.opcode != Opcode::Convert)
                 continue;
 
-            DeclaredType declared = request.declared();
             ValueID value = request.valueOperand();
-            if (shouldKeepPrediction(predicted, value, declared.predicted)) {
-                request.become(Opcode::Predict);
-                request.setValueOperand(value);
-                request.setPredicted(declared.predicted);
-                ++counts.predicted;
+            if (becomeResolved(function, id, resolveConvert(typing, typing.typeOf(value), request.declared()))) {
+                ++counts.kept;
                 continue;
             }
 
@@ -218,7 +222,7 @@ static RequestCounts resolveRequests(FunctionPassContext& context)
 
     if (substitution)
         substitution->apply(function, &context.analyses);
-    if (counts.predicted)
+    if (counts.kept)
         context.analyses.didChangeValues();
     return counts;
 }
@@ -240,7 +244,12 @@ PassOutcome checkInt32Promises(FunctionPassContext& context)
         compactFunction(context.function);
         context.analyses.didChangeControlFlow();
     }
-    return counts.isEmpty() ? PassOutcome::Unchanged : PassOutcome::Changed;
+    if (counts.isEmpty())
+        return PassOutcome::Unchanged;
+    finishTypedValues(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo });
+    // The analyses were told of every edit when it was made.
+    context.keptAnalyses = allAnalyses;
+    return PassOutcome::Changed;
 }
 
 } } } // namespace JSC::AOT::Typed

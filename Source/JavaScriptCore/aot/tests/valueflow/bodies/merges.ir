@@ -3,7 +3,7 @@
 # CHECK: body f0: nodes=6 sites=0 edges=2 edgesOnceReached=0 seeds=1 statements=1
 # CHECK-NEXT: n0 parameter v0
 # CHECK-NEXT: n1 parameter v1
-# CHECK-NEXT: n2 parameter v2 & boolean
+# CHECK-NEXT: n2 parameter v2 : boolean
 # CHECK-NEXT: n3 result
 # CHECK-NEXT: n4 thrown
 # CHECK-NEXT: n5 merge v3
@@ -11,17 +11,20 @@
 # CHECK-NEXT: edge n1 -> n5
 # CHECK-NEXT: reached: seed n3 <- undefined
 # CHECK-NEXT: PropGet v4 (n5) throws n4
-# CHECK-NEXT: body f1: nodes=5 sites=0 edges=2 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: body f1: nodes=6 sites=0 edges=2 edgesOnceReached=0 seeds=0 statements=0
 # CHECK-NEXT: n0 parameter v0
 # CHECK-NEXT: n1 parameter v1
-# CHECK-NEXT: n2 parameter v2 & boolean
+# CHECK-NEXT: n2 parameter v2 : boolean
 # CHECK-NEXT: n3 result
 # CHECK-NEXT: n4 thrown
+# CHECK-NEXT: n5 merge
 # CHECK-NEXT: edge n0 -> n3
 # CHECK-NEXT: edge n1 -> n3
+# CHECK-NEXT: returns n0 as it came, the rest in n5
+# CHECK-NEXT: returns n1 as it came, the rest in n5
 # CHECK-NEXT: body f2: nodes=4 sites=0 edges=0 edgesOnceReached=0 seeds=1 statements=1
 # CHECK-NEXT: n0 parameter v0
-# CHECK-NEXT: n1 parameter v1 & boolean
+# CHECK-NEXT: n1 parameter v1 : boolean
 # CHECK-NEXT: n2 result
 # CHECK-NEXT: n3 thrown
 # CHECK-NEXT: reached: seed n2 <- undefined

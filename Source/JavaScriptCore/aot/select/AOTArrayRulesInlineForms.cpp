@@ -57,9 +57,17 @@ static bool isArray(const Type& type)
     return part && part->builtinClass == BuiltinClasses::Array;
 }
 
-static bool searchesForNumber(const InlineBuiltinSite& site)
+// Code in line serves a number, and what is compared by identity: an object, a function, a symbol, a boolean, undefined, null.
+// Where the type leaves open which it is, the tests for that pay in fast code alone.
+static bool canSearchInline(const InlineBuiltinSite& site)
 {
-    return isNumberArgument(site, 0);
+    constexpr uint16_t comparedByValue = Primitive::Number | Primitive::AnyString | Primitive::BigInt;
+    const Type* searched = argumentTypeOf(site, 0);
+    if (!searched || site.arguments().size() != 1 || searched->isNever() || !searched->isJavaScriptValue())
+        return false;
+    if (searched->isNumber() || !(searched->primitives & comparedByValue))
+        return true;
+    return site.shape == CodeShape::Fast && (searched->hasObjects() || searched->primitives & ~comparedByValue);
 }
 
 static bool canJoinInline(const InlineBuiltinSite& site)
@@ -88,20 +96,20 @@ static bool canSpliceInline(const InlineBuiltinSite& site)
 {
     constexpr size_t numberOfRangeArguments = 2;
     std::span<const ValueID> arguments = site.arguments();
-    if (arguments.size() < numberOfRangeArguments || !areIntegers(site, arguments.first(numberOfRangeArguments)))
+    if (arguments.size() < numberOfRangeArguments || !isNumberArgument(site, 0) || !isNumberArgument(site, 1))
         return false;
     return !exceeds(site, LimitID::MaxInlineSpliceInsertions, arguments.size() - numberOfRangeArguments);
 }
 
 InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
 {
-    bool isCompact = site.shape == CodeShape::Compact;
+    bool isCompact = site.shape != CodeShape::Fast;
     switch (site.builtin) {
     case InlineBuiltin::ArrayAt:
         return twoWayIf(site, isNumberArgument(site, 0));
     case InlineBuiltin::ArrayIndexOf:
     case InlineBuiltin::ArrayIncludes:
-        return twoWayIf(site, searchesForNumber(site) && site.arguments().size() <= 1);
+        return twoWayIf(site, canSearchInline(site));
     case InlineBuiltin::ArrayJoin:
         return twoWayIf(site, canJoinInline(site));
     case InlineBuiltin::ArrayConcat:
@@ -113,7 +121,7 @@ InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
     case InlineBuiltin::ArraySlice:
         return twoWayIf(site, canSliceInline(site));
     case InlineBuiltin::ArraySplice:
-        return twoWayIf(site, !isCompact && canSpliceInline(site));
+        return twoWayIf(site, canSpliceInline(site));
     case InlineBuiltin::ArraySplicePrefix:
         return InlineForm::Whole;
     case InlineBuiltin::ArrayUnshift:

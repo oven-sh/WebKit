@@ -47,6 +47,8 @@ struct StubWords {
 
     const void* returnAddresses[numberOfStubFrameKinds];
     BoxedCallEntry boxedCalls[numberOfBoxedCallEntries];
+    const void* closureEntrypoint;
+    const void* slimClosureEntrypoint;
 };
 static_assert(std::is_trivially_default_constructible_v<StubWords>);
 static_assert(std::has_single_bit(StubWords::numberOfBoxedCallEntries));

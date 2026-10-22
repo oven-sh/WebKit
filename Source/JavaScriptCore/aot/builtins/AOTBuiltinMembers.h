@@ -32,6 +32,7 @@ BuiltinMemberName builtinMemberNameOf(const Program&, PropertyKeyID);
 // The member that the holder has of its own under the key. An engine private name finds the member that it is the private alias of.
 BuiltinID findOwnMember(const Program&, BuiltinID holder, PropertyKeyID);
 // Of what the host keeps under engine private names the table lists the private aliases alone, so it never says that a holder has nothing under such a key.
+// The table has every property that the global object is created with. The entry of the global object lacks the flag, which flow reads: to flow a free name that the table lacks is a value nobody knows.
 bool listsEveryMemberUnder(const Program&, BuiltinID holder, PropertyKeyID);
 
 enum class BuiltinReceiverKind : uint8_t { Unknown, BuiltinObject, Instance, Primitive };
@@ -72,17 +73,33 @@ LocationProof absenceProofOf(const BuiltinLookupContext&, BuiltinID holder, Prop
 BuiltinMemberAnswer findMemberFrom(const BuiltinLookupContext&, BuiltinID holder, PropertyKeyID);
 BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext&, BuiltinClassID, PropertyKeyID);
 
+// ByName: the lookup is made at run time, each time. Constant: it finds the member, always. Absent: it finds nothing, ever. Bound: a record of the name remembers where the lookup ended.
+enum class FreeNameAnswerKind : uint8_t { ByName, Constant, Absent, Bound };
+
+struct FreeNameAnswer {
+    FreeNameAnswerKind kind { FreeNameAnswerKind::ByName };
+    BuiltinID member;
+};
+
+// What `name` and `globalThis.name` find. A free name of the program looks among the top-level let, const and class bindings of scripts first. The host's own modules sit below those.
+// Whoever asks for `typeof name` or `delete name` takes Bound for ByName: a record serves reads and stores.
+FreeNameAnswer freeNameAnswerOf(const BuiltinLookupContext&, PropertyKeyID, bool seesScriptBindings);
+
 struct MemberOfClasses {
     BuiltinID member;
     Vector<BuiltinClassID, 2> classes;
 };
 
 Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable&, BuiltinName);
+// The same, found once for a name while a ProgramCaches stands.
+Vector<MemberOfClasses, 4> methodsNamed(const Program&, BuiltinName);
 
 BuiltinID singleBuiltinOf(const Type&);
 BuiltinID singleBuiltinCalleeOf(const Program&, const Function&, const Value& call);
 
 std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable&, BuiltinID member);
+// Also a member that holds a text.
+std::optional<Value> tryMakeBuiltinConstant(const Program&, BuiltinID member);
 
 } } } // namespace JSC::AOT::Typed
 

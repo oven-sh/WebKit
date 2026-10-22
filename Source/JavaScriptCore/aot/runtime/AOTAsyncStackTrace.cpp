@@ -40,7 +40,8 @@ static SuspendedAsyncFunction findSuspendedAsyncFunction(JSCell* cell)
     SavedFrame* saved = tryGetSavedFrame(cell);
     if (!saved || saved->kind() != CoroutineKind::AsyncFunction)
         return { };
-    return { saved, saved->promise(), saved->waiter() };
+    JSPromise* promise = saved->promise();
+    return { saved, promise ? promise : saved->promiseOfCombinator(), saved->waiter() };
 }
 
 static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, Vector<StackFrame>& results)
@@ -50,11 +51,13 @@ static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, Vector
     const Image& image = *Image::current();
     // The function goes on behind the call that suspended it, so its resume address lies in it.
     const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(image, suspended.coroutine->resumeAddress());
-    if (!entry || FunctionDescription(image.rootFunctionOf(entry->code.index())).codeType() == ModuleCode)
+    if (!entry || entry->isStubReturnSite() || FunctionDescription(image.rootFunctionOf(entry->code.index())).codeType() == ModuleCode)
         return;
     ShownFrameFilter filter(true);
-    forEachShownFrame(entry->code, entry->site.callSite, filter, [&](const TraceFrame& frame) {
-        results.constructAndAppend(frame, true);
+    forEachShownFrame(entry->code, entry->site, filter, [&](const TraceFrame& frame) {
+        // A function that is not async cannot wait: it has handed on the promise of its callee and returned. Only its code was taken into the function that waits.
+        if (FunctionDescription(frame.function).isAsync())
+            results.constructAndAppend(frame, true);
     });
 }
 

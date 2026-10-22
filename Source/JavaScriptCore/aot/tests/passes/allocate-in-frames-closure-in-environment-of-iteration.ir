@@ -1,4 +1,4 @@
-# A frame closure may be held by a frame environment that is allocated in the same iteration of a loop: both die with the iteration
+# A closure stored in a field of a frame environment is on the heap, also where both are allocated in the same iteration of a loop: no environment field holds a frame pointer
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # RUN(PLAN): frame-plan flow
@@ -17,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = CallDirect v1 function=f1
     Return
 }
-# CHECK: L0.0 holds frame pointers
 # CHECK-NOT: holds frame pointers
 
 function f1 name="bothAllocatedInIteration" parameters=[{type=anything}] results=[{type=anything}] {
@@ -36,10 +35,11 @@ function f1 name="bothAllocatedInIteration" parameters=[{type=anything}] results
 }
 # CHECK-LABEL: function f1 name="bothAllocatedInIteration"
 # CHECK: layout=L0 {{*}}storage=Frame
-# CHECK: function=f2 {{*}}storage=Frame
+# CHECK: NewClosure function=f2
+# CHECK-NOT: storage=
 # PLAN-LABEL: function f1
 # PLAN-NEXT: v2: Frame
-# PLAN-NEXT: v3: Frame
+# PLAN-NEXT: v3: Heap SeveralLiveInstances
 
 function f2 name="callback" kind=Arrow results=[{type=anything}] {
   b0():

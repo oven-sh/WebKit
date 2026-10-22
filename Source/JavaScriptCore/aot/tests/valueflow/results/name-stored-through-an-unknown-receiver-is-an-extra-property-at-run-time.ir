@@ -1,0 +1,64 @@
+# class Point { norm() { return "method" } }  changed = new Point; plain = new Point; input = id(changed); input.norm = own; input.extra = "extra"
+# print(changed.norm()); print(changed.extra); print(plain.norm()); print(plain.extra)
+# Nobody knows what id answers, so the two stores go through a receiver that nobody knows, and the layout of the points gets no field for their names.
+# The point that was handed out gets both as extra properties all the same: its own norm hides the method of the class, and a read by name finds extra. The point that stayed is as it was made.
+# FORM: AsRead
+# RUN(APPLY): valueflow-apply
+# APPLY: layout L0 kind=Instance name="Point"
+# APPLY-NOT: IsAddedLate
+# APPLY: function f0
+# RUN: run-in-shell
+# CHECK: own
+# CHECK-NEXT: extra
+# CHECK-NEXT: method
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="norm"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Construct v4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="id" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = NewClosure function=f3
+    PropSet v9, v10 key="norm" mode=Strict
+    v12 = String string="extra"
+    PropSet v9, v12 key="extra" mode=Strict
+    v14 = PropGet v7 key="print" [isFreeName]
+    v15 = PropGet v5 key="norm"
+    v16 = Call v15, v5 calleeKey="norm"
+    v17 = Call v14, -, v16
+    v18 = PropGet v5 key="extra"
+    v19 = Call v14, -, v18
+    v20 = PropGet v6 key="norm"
+    v21 = Call v20, v6 calleeKey="norm"
+    v22 = Call v14, -, v21
+    v23 = PropGet v6 key="extra"
+    v24 = Call v14, -, v23
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="method"
+    Return v1
+}
+function f3 name="own" results=[{type=anything}] {
+  b0():
+    v0 = String string="own"
+    Return v0
+}

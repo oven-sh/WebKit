@@ -12,6 +12,7 @@
 namespace JSC {
 
 class JSObject;
+class Structure;
 class VM;
 
 namespace AOT {
@@ -20,6 +21,8 @@ struct Instance;
 
 enum class TargetPrototypes : uint8_t { Ignored, MayIntercept };
 
+// An ordinary object with such a Structure gets a plain property by a store and, for a new name, the next Structure. Nobody has to be told.
+bool takesPlainPropertiesDirectly(Structure* target);
 bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, TargetPrototypes = TargetPrototypes::Ignored);
 bool tryCopyRecordDataProperties(Instance*, VM&, JSObject* target, JSObject* record);
 

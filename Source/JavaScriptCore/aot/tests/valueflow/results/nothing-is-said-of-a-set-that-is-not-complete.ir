@@ -1,7 +1,7 @@
 # A set that holds the unknown object is not complete: the position keeps the type it was read with, whatever else the set holds
 # RUN: valueflow-apply
 # CHECK: variable g0 name="open" {{*}}declared={type=anything}
-# CHECK: variable g1 name="closed" {{*}}declared={type=undefined|int written=anything}
+# CHECK: variable g1 name="closed" {{*}}declared={type=1}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

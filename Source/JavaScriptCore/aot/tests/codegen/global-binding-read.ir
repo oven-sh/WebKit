@@ -1,0 +1,90 @@
+# A read or a store through a global binding tests the record inline. Its only call is the slow path, and each form has its own operation
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot check=ValidateBackEnd
+# RUN: generate-code calls GlobalBindingsPlaced
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readsFreeName" results=[{type=anything}] {
+  b0():
+    v0 = GetGlobalBinding key="counter" level=Expected [seesScriptBindings]
+    Return v0
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTGetGlobalBinding x1
+# CHECK-NOT: operation
+
+function f1 name="readsGlobalObject" results=[{type=anything}] {
+  b0():
+    v0 = GetGlobalBinding key="counter" level=Expected
+    Return v0
+}
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTGetGlobalObjectBinding x1
+# CHECK-NOT: operation
+
+function f2 name="readsTwoNames" results=[{type=anything}] {
+  b0():
+    v0 = GetGlobalBinding key="counter" level=Expected [seesScriptBindings]
+    v1 = GetGlobalBinding key="limit" level=Expected [seesScriptBindings]
+    Return v1
+}
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTGetGlobalBinding x2
+# CHECK-NOT: operation
+
+function f3 name="storesFreeName" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    SetGlobalBinding v0 key="counter" level=Expected [seesScriptBindings]
+    Return
+}
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTSetGlobalBinding x1
+# CHECK-NOT: operation
+# CHECK: stub WriteBarrier{{*}} x1
+
+function f4 name="storesFreeNameSloppy" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    SetGlobalBinding v0 key="counter" mode=Sloppy level=Expected [seesScriptBindings]
+    Return
+}
+# CHECK-LABEL: f4: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTSetGlobalBindingSloppy x1
+# CHECK-NOT: operation
+
+function f5 name="storesGlobalObject" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    SetGlobalBinding v0 key="counter" level=Expected
+    Return
+}
+# CHECK-LABEL: f5: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTSetGlobalObjectBinding x1
+# CHECK-NOT: operation
+
+function f6 name="storesGlobalObjectSloppy" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    SetGlobalBinding v0 key="counter" mode=Sloppy level=Expected
+    Return
+}
+# CHECK-LABEL: f6: size=
+# CHECK-NOT: operation
+# CHECK: operation operationAOTSetGlobalObjectBindingSloppy x1
+# CHECK-NOT: operation
+
+function f7 name="storesNumber" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    SetGlobalBinding v0 key="counter" level=Expected [seesScriptBindings]
+    Return
+}
+# CHECK-LABEL: f7: size=
+# CHECK-NOT: stub WriteBarrier
+# CHECK: operation operationAOTSetGlobalBinding x1
+# CHECK-NOT: stub WriteBarrier
+
+# CHECK-LABEL: statistic GlobalBindingsPlaced 5

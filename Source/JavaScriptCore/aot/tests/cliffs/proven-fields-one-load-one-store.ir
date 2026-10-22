@@ -1,0 +1,148 @@
+# class Filled { count: number; next: Filled; constructor(seed) { this.count = seed | 0; this.next = this } }   a.next = b; b.next = a
+# Nothing but the program holds the objects, so every field is proven: `p = p.next` is one load, `p.count = 3` is one store, with no test of a type, of a shape, of a filled slot or of nil.
+# What costs that: `undefined` from the definitions of the fields in the types, a read by name that may find nothing, an int32 that counts as a value of another type
+# The read of `count` has the type of its field, an int32 without the five numbers that mark the states of an int slot; until 10-20 08:02 it had the wider i32. It is one load of an @Int32 either way
+# FORM: AsRead
+# OPTIONS: disable=pass:DeferInitializers
+# RUN: pipeline ChooseRepresentations
+# RUN(GO): run-in-shell globalThis.run = (a, b, c, d) => { print(a(), b(), c(), d(), a()); };
+# GO: 7 7 3 3 3
+# GO-NEXT: exited with 0
+# CHECK-LABEL: name="chain4" module=m0 thisType
+# CHECK: [[a]]: L0 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: [[first]]: undefined|L0 {{*}} = GetSlot [[a]] key="next" receivers=[L0] level=Proven
+# CHECK-NEXT: = AssumeType [[first]] castType=L0
+# CHECK-NOT: Test
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: RequireObjectCoercible
+# CHECK-NOT: PropGet
+# CHECK: int[-2147483643, 2147483647] @Int32 = GetSlot {{*}} key="count" receivers=[L0] level=Proven
+# CHECK-LABEL: name="store4" module=m0 thisType
+# CHECK: [[stored]]: 3 @Int32 = Integer integer=3
+# CHECK-NEXT: PutSlot {{*}}, -, [[stored]] key="count" receivers=[L0] level=Proven
+# CHECK-NOT: Test
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: IsNotFrozen
+# CHECK-NOT: PropSet
+# CHECK: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="count" declared={type=number} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L0} flags=[IsRequired]}]
+variable g0 name="a" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = Construct v3, -, v0
+    v5 = Integer integer=9
+    v6 = Construct v3, -, v5
+    PropSet v4, v6 key="next" mode=Strict
+    PropSet v6, v4 key="next" mode=Strict
+    PutModuleVariable v4 variable=g0
+    v10 = NewClosure function=f4
+    v11 = NewClosure function=f5
+    v12 = NewClosure function=f6
+    v13 = NewClosure function=f7
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="run" [isFreeName]
+    v16 = Call v15, -, v10, v11, v12, v13
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = Integer integer=0
+    v7 = BitOr v1, v6
+    PropSet v4, v7 key="count" mode=Strict
+    PropSet v4, v4 key="next" mode=Strict
+    Return v4
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    PropDefine v0, v1 key="next"
+    Return v1
+}
+function f3 name="unused" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="chain4" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v2 key="next"
+    v4 = PropGet v3 key="next"
+    v5 = PropGet v4 key="count"
+    Return v5
+}
+function f5 name="chain12" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v2 key="next"
+    v4 = PropGet v3 key="next"
+    v5 = PropGet v4 key="next"
+    v6 = PropGet v5 key="next"
+    v7 = PropGet v6 key="next"
+    v8 = PropGet v7 key="next"
+    v9 = PropGet v8 key="next"
+    v10 = PropGet v9 key="next"
+    v11 = PropGet v10 key="next"
+    v12 = PropGet v11 key="next"
+    v13 = PropGet v12 key="count"
+    Return v13
+}
+function f6 name="store4" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=3
+    PropSet v0, v1 key="count" mode=Strict
+    v3 = PropGet v0 key="next"
+    PropSet v3, v1 key="count" mode=Strict
+    v5 = PropGet v3 key="next"
+    PropSet v5, v1 key="count" mode=Strict
+    v7 = PropGet v5 key="next"
+    PropSet v7, v1 key="count" mode=Strict
+    v9 = PropGet v7 key="next"
+    Return v1
+}
+function f7 name="store12" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=3
+    PropSet v0, v1 key="count" mode=Strict
+    v3 = PropGet v0 key="next"
+    PropSet v3, v1 key="count" mode=Strict
+    v5 = PropGet v3 key="next"
+    PropSet v5, v1 key="count" mode=Strict
+    v7 = PropGet v5 key="next"
+    PropSet v7, v1 key="count" mode=Strict
+    v9 = PropGet v7 key="next"
+    PropSet v9, v1 key="count" mode=Strict
+    v11 = PropGet v9 key="next"
+    PropSet v11, v1 key="count" mode=Strict
+    v13 = PropGet v11 key="next"
+    PropSet v13, v1 key="count" mode=Strict
+    v15 = PropGet v13 key="next"
+    PropSet v15, v1 key="count" mode=Strict
+    v17 = PropGet v15 key="next"
+    PropSet v17, v1 key="count" mode=Strict
+    v19 = PropGet v17 key="next"
+    PropSet v19, v1 key="count" mode=Strict
+    v21 = PropGet v19 key="next"
+    PropSet v21, v1 key="count" mode=Strict
+    v23 = PropGet v21 key="next"
+    PropSet v23, v1 key="count" mode=Strict
+    v25 = PropGet v23 key="next"
+    Return v1
+}

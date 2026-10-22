@@ -1,9 +1,8 @@
-# A trip can go round without passing the comparison with the bound, so the back end is told of no counter and the poll stays in the loop
+# A trip can go round without passing the comparison with the bound, so the back end is told of no counter
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code
 # STATISTIC: KnownInductionsUsed = 0
-# STATISTIC: LoopPollsStripMined = 0
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

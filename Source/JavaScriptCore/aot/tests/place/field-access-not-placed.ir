@@ -1,6 +1,6 @@
 # Placement gives a slot operation one location. It stops the build at a read whose receivers hold the field in two places, which selection dispatches on shape, and at a store one of whose receivers has no slot for the field, which the access plan does not form
 # FORM: Selected
-# OPTIONS: references=narrow
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: pass NumberAndEncode
 # DIAGNOSTIC: SlotAccessNotPlaced 2
 

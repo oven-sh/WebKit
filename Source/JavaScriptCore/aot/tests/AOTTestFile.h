@@ -73,6 +73,11 @@ struct TestFileError {
     String message;
 };
 
+struct TestTodo {
+    String reason;
+    unsigned line;
+};
+
 struct TestFile {
     String text;
     Vector<RunDirective> runs;
@@ -84,6 +89,7 @@ struct TestFile {
     Vector<ExpectedDiagnostic> diagnostics;
     Vector<ExpectedStatistic> statistics;
     Vector<ExpectedLoss> losses;
+    std::optional<TestTodo> todo;
     Vector<TestFileError> errors;
 
     std::span<const CheckLine> checkLinesFor(StringView prefix) const;

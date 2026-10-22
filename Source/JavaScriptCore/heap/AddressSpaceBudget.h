@@ -17,12 +17,8 @@
 
 namespace JSC {
 
-// malloc, stacks and mapped files get at least 1/N of the address space still free under RLIMIT_AS.
-static constexpr unsigned unreservedAddressSpaceDivisor = 4;
-// They also get at least this many bytes.
-static constexpr size_t unreservedAddressSpaceFloor = GB;
-// The floor is capped at 1/N of the free address space.
-static constexpr unsigned unreservedAddressSpaceFloorDivisor = 2;
+// malloc, stacks and mapped files get 1/N of the address space still free under RLIMIT_AS.
+static constexpr unsigned unreservedAddressSpaceDivisor = 2;
 
 // Returns SIZE_MAX when there is no limit, and on every system but Linux.
 inline size_t addressSpaceToReserve()
@@ -40,8 +36,7 @@ inline size_t addressSpaceToReserve()
         }
         size_t mapped = mappedPages * pageSize();
         size_t free = limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
-        size_t unreserved = std::max(free / unreservedAddressSpaceDivisor, std::min(unreservedAddressSpaceFloor, free / unreservedAddressSpaceFloorDivisor));
-        return free - unreserved;
+        return free - free / unreservedAddressSpaceDivisor;
     }();
     return result;
 #else
@@ -49,11 +44,29 @@ inline size_t addressSpaceToReserve()
 #endif
 }
 
-// All cages of the process together get 1/N of addressSpaceToReserve().
-static constexpr unsigned addressSpaceDivisorForMarkedBlockCages = 2;
 // The structure heap gets 1/N of addressSpaceToReserve().
 static constexpr unsigned addressSpaceDivisorForStructures = 8;
-// The two shares add up to at most the whole.
-static_assert(addressSpaceDivisorForMarkedBlockCages + addressSpaceDivisorForStructures <= addressSpaceDivisorForMarkedBlockCages * addressSpaceDivisorForStructures);
+
+// All cages of the process together get the rest.
+inline size_t addressSpaceForMarkedBlockCages()
+{
+    size_t whole = addressSpaceToReserve();
+    return whole - whole / addressSpaceDivisorForStructures;
+}
+
+// No share is so small that the structure heap gets less than this.
+static constexpr size_t smallestStructureHeapSize = MB;
+// mimalloc refuses a range that holds none of its 32 MB chunks, and the first block of the structure heap isn't handed to it.
+static constexpr size_t smallestStructureHeapSizeForMimalloc = 64 * MB;
+
+// Only processes with Options::useAOT() keep to the budget: they also reserve the cages.
+inline size_t structureHeapSizeWithinBudget(size_t preferredSize)
+{
+    size_t budget = addressSpaceToReserve() / addressSpaceDivisorForStructures;
+    size_t size = preferredSize;
+    while (size > budget && size > smallestStructureHeapSize)
+        size /= 2;
+    return size;
+}
 
 } // namespace JSC

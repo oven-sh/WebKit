@@ -7,6 +7,7 @@
 
 #include "AlignedMemoryAllocator.h"
 #include "MarkedBlockCage.h"
+#include <memory>
 
 namespace JSC {
 
@@ -17,6 +18,7 @@ public:
 
     void* tryAllocateAlignedMemory(size_t alignment, size_t) final;
     void freeAlignedMemory(void*) final;
+    void* tryAllocateBlockToFill() final;
 
     void dump(PrintStream&) const final;
 
@@ -27,7 +29,11 @@ public:
     MarkedBlockCage& cage() LIFETIME_BOUND { return m_cage; }
 
 private:
+    class ResidentBlocks;
+
     MarkedBlockCage m_cage;
+    std::unique_ptr<ResidentBlocks> m_residentBlocks;
+    unsigned m_numberOfBlocksToFillRequested { 0 };
 };
 
 } // namespace JSC

@@ -1,9 +1,9 @@
 # What no operation does to any object of a layout can never happen to one. Anything may happen to an object that has escaped once a callee is unknown, and a layout that only an unreached function allocates is never allocated
 # RUN: valueflow-results
-# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, StoreAfterCreation, LoseShape]
-# CHECK-NEXT: class C1 layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, StoreAfterCreation, LoseShape]
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation{{*}}]
+# CHECK-NEXT: class C1 layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation{{*}}]
 # CHECK-NEXT: class C2 layout=L2
-# CHECK-NOT: class C3
+# CHECK-NOT: layout=L3
 # RUN(APPLIED): valueflow-apply
 # APPLIED: layout L3 {{*}}allocation=NeverAllocated
 

@@ -11,17 +11,22 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCodeShapes.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTHeat.h"
 #include "AOTOutliningNormalForm.h"
 #include "AOTPass.h"
+#include "AOTProgramCaches.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <optional>
@@ -35,13 +40,18 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 enum class BackwardExtension : uint8_t { ConstantsOnly, UsedValues, AllValues };
+enum class SitesThatCannotPayOff : uint8_t { AreKeptToBeSplit, AreDropped };
+enum class NamedGuards : uint8_t { None, AllDefinedInSite, SomeDefinedOutside };
 
 struct FinderInputs {
     AnalysisContext contextOf(FunctionID id) const { return { build, program, &inputs.flow, &inputs.effects, id }; }
 
     const Program& program;
-    const OptimizationInputs& inputs;
+    const OptimizationInputs inputs;
     BuildContext& build;
+    OpcodeSet opcodesThatMayDefineObjects;
+    OpcodeSet opcodesThatDefineObjectsThatNeedNotBeFresh;
+    OpcodeSet opcodesThatProve;
 };
 
 class GuardsInUse {
@@ -53,7 +63,8 @@ public:
     bool isAnyLiveOnEdge(const Target&);
 
 private:
-    bool contains(ValueID id) const { return id && m_guards.quickGet(id.index()); }
+    bool hasGuards();
+    bool contains(ValueID id) { return id && hasGuards() && m_guards->quickGet(id.index()); }
     bool isAnyLiveAtHead(BlockID);
     const Liveness& liveness();
     uint32_t findEndOfUses(BlockID);
@@ -61,7 +72,8 @@ private:
     const Function& m_function;
     const CFG& m_cfg;
     const UseLists& m_useLists;
-    BitVector m_guards;
+    // Found when somebody asks.
+    std::optional<BitVector> m_guards;
     bool m_hasGuards { false };
     std::optional<Liveness> m_liveness;
     Vector<std::optional<uint32_t>> m_endOfUses;
@@ -70,13 +82,21 @@ private:
 // What another rule wants in the function where it stands.
 // JSONObjectFinish takes an object that its own function allocated, so neither of the two leaves without the other.
 // A guard on an allocation lasts across unknown code while nothing else holds the object, which is seen only where the allocation is.
-BitVector findValuesBoundToFunction(FunctionAnalyses& analyses)
+// The two copies of `{ ...first, ...second }` get their code together.
+static BitVector findValuesBoundToFunction(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
     BitVector bound(function.values.size());
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
             const Value& value = function.at(id);
+            if (value.opcode == Opcode::CopyObject) {
+                if (ValueID second = findCopyIntoCopy(function, function.at(block), id)) {
+                    bound.quickSet(id.index());
+                    bound.quickSet(second.index());
+                }
+                continue;
+            }
             if (value.opcode == Opcode::JSONObjectFinish) {
                 bound.quickSet(id.index());
                 for (ValueID link : CastChain(function, value.objectOperand()))
@@ -97,9 +117,25 @@ BitVector findValuesBoundToFunction(FunctionAnalyses& analyses)
     return bound;
 }
 
+// The objects that a test has made a guard about, each under the value that all its casts lead back to.
+static BitVector findSubjectsOfGuards(FunctionAnalyses& analyses)
+{
+    const Function& function = analyses.function();
+    BitVector subjects(function.values.size());
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (provesOf(value.opcode) != Proof::None && value.numberOfOperands() && value.operand(subjectOperandIndex))
+                subjects.quickSet(analyses.identityOf(value.operand(subjectOperandIndex)).index());
+        }
+    }
+    return subjects;
+}
+
 struct FunctionScan {
     FunctionScan(const FinderInputs& finder, FunctionID id, FunctionAnalyses& analyses)
-        : program(finder.program)
+        : finder(finder)
+        , program(finder.program)
         , build(finder.build)
         , id(id)
         , analyses(analyses)
@@ -107,14 +143,91 @@ struct FunctionScan {
         , cfg(analyses.cfg())
         , useLists(analyses.useLists())
         , subject(analyses.subject())
-        , framePointers(function)
         , guards(analyses)
-        , valuesBoundToFunction(findValuesBoundToFunction(analyses))
+        , unspecifiedValues(analyses)
         , valuesInSites(function.values.size())
         , blocksInSites(function.blocks.size())
+        , cachedIsMovable(function.values.size())
+        , cachedCodeBytes(function.values.size())
+        , maxRegionValues(finder.build.limit(LimitID::MaxOutlinedRegionValues))
+        , mayHaveFrameStorage(analyses.opcodesOfValues().intersects(Value::opcodesWithStorage))
+        , mayBindAnyValue(analyses.opcodesOfValues().intersects(OpcodeSet { Opcode::JSONObjectFinish, Opcode::CopyObject }))
+        , hasOperationThatProves(analyses.opcodesOfValues().intersects(finder.opcodesThatProve))
     {
     }
 
+    bool isFramePointer(ValueID id)
+    {
+        if (!mayHaveFrameStorage)
+            return false;
+        if (!framePointers)
+            framePointers.emplace(function);
+        return framePointers->contains(id);
+    }
+
+    bool exceedsRegionValues(uint64_t numberOfValues) { return numberOfValues > maxRegionValues && build.exceeds(LimitID::MaxOutlinedRegionValues, numberOfValues, subject); }
+
+    // Whether the escape analysis takes the result for an object of its own. Nothing else is bound, but for what belongs to a JSONObjectFinish or to a CopyObject.
+    bool mayDefineObject(ValueID id)
+    {
+        const Value& value = function.at(id);
+        if (!finder.opcodesThatMayDefineObjects.contains(value.opcode))
+            return false;
+        if (finder.opcodesThatDefineObjectsThatNeedNotBeFresh.contains(value.opcode))
+            return true;
+        auto keptEffects = [&] {
+            return analyses.effectsOf(id);
+        };
+        return freshnessOf(analyses.effectContext(), function, value, ScopedLambda<EffectsOnEdges()>(keptEffects)) != ResultFreshness::Unknown;
+    }
+
+    bool isBoundToFunction(ValueID value)
+    {
+        if (!mayBindAnyValue && !mayDefineObject(value))
+            return false;
+        if (!valuesBoundToFunction)
+            findBoundValues();
+        return valuesBoundToFunction->quickGet(value.index());
+    }
+
+    bool isSubjectOfGuard(ValueID identity)
+    {
+        if (!subjectsOfGuards)
+            subjectsOfGuards = findSubjectsOfGuards(analyses);
+        return subjectsOfGuards->quickGet(identity.index());
+    }
+
+    void findBoundValues()
+    {
+        valuesBoundToFunction = findValuesBoundToFunction(analyses);
+        bindAllocationsWrittenUnderGuards();
+        if (mayBindAnyValue)
+            return;
+        for (size_t index : *valuesBoundToFunction)
+            RELEASE_ASSERT(function.values[index].opcode == Opcode::Parameter || mayDefineObject(ValueID(index)));
+    }
+
+    // A guard about one object lasts over a write to another that is seen to be allocated in this function. What a call returns may be any object, the guarded one among them.
+    void bindAllocationsWrittenUnderGuards()
+    {
+        for (BlockID block : cfg.reversePostOrder()) {
+            const auto& values = function.at(block).values;
+            for (uint32_t index = 0; index < values.size(); ++index) {
+                if (!guards.isAnyLiveAt({ block, index + 1 }))
+                    break;
+                const EffectsOnEdges& effects = analyses.effectsOf(values[index]);
+                if (effects.normal.writes.isEmpty() && effects.handler.writes.isEmpty())
+                    continue;
+                const EscapeAnalysis& escape = analyses.escape();
+                function.at(values[index]).forEachOperand([&](ValueID operand, uint32_t) {
+                    for (ObjectID object : escape.pointsTo(operand).objects)
+                        valuesBoundToFunction->quickSet(escape.at(object).definition.index());
+                });
+            }
+        }
+    }
+
+    const FinderInputs& finder;
     const Program& program;
     BuildContext& build;
     FunctionID id;
@@ -123,11 +236,19 @@ struct FunctionScan {
     const CFG& cfg;
     const UseLists& useLists;
     Subject subject;
-    FramePointers framePointers;
+    std::optional<FramePointers> framePointers;
     GuardsInUse guards;
-    BitVector valuesBoundToFunction;
+    UnspecifiedValues unspecifiedValues;
+    std::optional<BitVector> valuesBoundToFunction;
+    std::optional<BitVector> subjectsOfGuards;
     BitVector valuesInSites;
     BitVector blocksInSites;
+    Vector<std::optional<bool>> cachedIsMovable;
+    Vector<std::optional<uint32_t>> cachedCodeBytes;
+    uint64_t maxRegionValues;
+    bool mayHaveFrameStorage;
+    bool mayBindAnyValue;
+    bool hasOperationThatProves;
 };
 
 struct ValueRange {
@@ -136,10 +257,24 @@ struct ValueRange {
     uint32_t end { 0 };
 };
 
-struct SiteRange {
-    uint32_t begin { 0 };
-    uint32_t end { 0 };
-    bool hasUnrepeatedSite { false };
+struct SplittableSite {
+    uint32_t site { 0 };
+    uint32_t firstPart { 0 };
+    uint32_t numberOfParts { 0 };
+    bool isRepeated { false };
+};
+
+// The parts are what takes the place of a site that no other site in the program is equal to.
+struct FunctionSites {
+    Vector<OutliningSite> sites;
+    Vector<OutliningSite> parts;
+    Vector<SplittableSite> splittableSites;
+};
+
+struct SplittableSiteReference {
+    unsigned hash { 0 };
+    uint32_t function { 0 };
+    uint32_t splittableSite { 0 };
 };
 
 } // anonymous namespace
@@ -148,22 +283,29 @@ GuardsInUse::GuardsInUse(FunctionAnalyses& analyses)
     : m_function(analyses.function())
     , m_cfg(analyses.cfg())
     , m_useLists(analyses.useLists())
-    , m_guards(guardValuesOf(m_function, m_cfg))
-    , m_hasGuards(!m_guards.isEmpty())
     , m_endOfUses(m_function.blocks.size())
 {
+}
+
+bool GuardsInUse::hasGuards()
+{
+    if (!m_guards) {
+        m_guards = guardValuesOf(m_function, m_cfg);
+        m_hasGuards = !m_guards->isEmpty();
+    }
+    return m_hasGuards;
 }
 
 const Liveness& GuardsInUse::liveness()
 {
     if (!m_liveness)
-        m_liveness.emplace(m_function, m_cfg, m_useLists, LivenessOptions { .trackedValues = &m_guards });
+        m_liveness.emplace(m_function, m_cfg, m_useLists, LivenessOptions { .trackedValues = &*m_guards });
     return *m_liveness;
 }
 
 bool GuardsInUse::isAnyLiveAtHead(BlockID block)
 {
-    return m_hasGuards && !liveness().liveAtHead(block).empty();
+    return hasGuards() && !liveness().liveAtHead(block).empty();
 }
 
 bool GuardsInUse::isAnyLiveOnEdge(const Target& target)
@@ -199,7 +341,7 @@ uint32_t GuardsInUse::findEndOfUses(BlockID id)
 
 bool GuardsInUse::isAnyLiveAt(ProgramPoint point)
 {
-    if (!m_hasGuards)
+    if (!hasGuards())
         return false;
     std::optional<uint32_t>& end = m_endOfUses[point.block.index()];
     if (!end)
@@ -246,18 +388,29 @@ static bool isDemotedTailCall(const Value& value)
     return FlagMask::isDemotedTailCall(value.opcode) && value.isDemotedTailCall();
 }
 
-static bool isMovable(const FunctionScan& scan, ValueID id)
+static bool computeIsMovable(FunctionScan& scan, ValueID id)
 {
     const Value& value = scan.function.at(id);
     if (boundToOf(value.opcode) != BoundTo::Nothing || value.type == TypeTable::never)
+        return false;
+    // Only the body of a coroutine may hold it.
+    if (value.opcode == Opcode::TakeGeneratorPrototype)
         return false;
     if (isCallOfReturnCall(scan, id) || isDemotedTailCall(value))
         return false;
     if (dependsOnInlineFrame(value) || dependsOnTopErrorFrame(scan.program, scan.function, value) || hasOperandKeyedByAccessSite(scan.program, value))
         return false;
-    if (hasFrameStorage(value) || scan.valuesBoundToFunction.quickGet(id.index()))
+    if (hasFrameStorage(value) || scan.isBoundToFunction(id))
         return false;
-    return !scan.analyses.effectsOf(id).normal.maySuspend;
+    return !maySuspend(value.opcode) || !scan.analyses.maySuspend(id);
+}
+
+static bool isMovable(FunctionScan& scan, ValueID id)
+{
+    std::optional<bool>& cached = scan.cachedIsMovable[id.index()];
+    if (!cached)
+        cached = computeIsMovable(scan, id);
+    return *cached;
 }
 
 static bool canCrossCallBoundary(const Program& program, TypeID type)
@@ -266,18 +419,41 @@ static bool canCrossCallBoundary(const Program& program, TypeID type)
 }
 
 // No use of an Unspecified value is reached, and an operand or the result of the call of the shared function would be one.
-static bool canBeLiveIn(const FunctionScan& scan, ValueID id)
+static bool canBeLiveIn(FunctionScan& scan, ValueID id)
 {
     const Value& value = scan.function.at(id);
-    return canCrossCallBoundary(scan.program, value.type) && !scan.framePointers.contains(id) && branchesOf(value.opcode) != Branches::Only && !isDeferredClosure(scan.function, id) && !mayBeUnspecified(scan.analyses, id);
+    return canCrossCallBoundary(scan.program, value.type) && !scan.isFramePointer(id) && branchesOf(value.opcode) != Branches::Only && !isDeferredClosure(scan.function, id) && !isBorrowedInnerObject(scan.function, id) && !scan.unspecifiedValues.mayContain(id);
+}
+
+static bool usesExecutionCounts(HeatOverride heat)
+{
+    switch (heat) {
+    case HeatOverride::EverythingIsHot:
+    case HeatOverride::EverythingIsCold:
+        return false;
+    case HeatOverride::None:
+    case HeatOverride::OnlyLoopsAreHot:
+    case HeatOverride::NothingIsHottest:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isColdOutsideCycles(const FinderInputs& finder, FunctionAnalyses& analyses)
+{
+    const AnalysisContext& context = analyses.context();
+    if (usesExecutionCounts(finder.build.recordedOptions().heat()) && finder.inputs.flow.runsAtMostOnce(context.program, context.id))
+        return true;
+    const Heat& heat = finder.inputs.heat;
+    return isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses.cfg());
 }
 
 static BitVector findColdBlocks(const FinderInputs& finder, FunctionAnalyses& analyses)
 {
-    const BlockCycles& cycles = analyses.blockCycles();
+    bool isColdWithoutLooking = isColdOutsideCycles(finder, analyses);
     BitVector coldBlocks(analyses.function().blocks.size());
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (!cycles.isInCycle(block) && isCold(heatClassOf(finder.inputs.heat, analyses, block)))
+        if (!analyses.isInCycle(block) && (isColdWithoutLooking || isCold(heatClassOf(finder.inputs.heat, analyses, block))))
             coldBlocks.quickSet(block.index());
     }
     return coldBlocks;
@@ -327,32 +503,22 @@ static bool anyValueInSite(const Function& function, const OutliningSite& site, 
     });
 }
 
-static bool namesGuard(const Function& function, const OutliningSite& site)
+static NamedGuards findNamedGuards(const FunctionScan& scan, const OutliningSite& site)
 {
-    return anyValueInSite(function, site, [&](ValueID id) {
-        const Value& value = function.at(id);
-        bool hasGuardOperand = false;
-        value.forEachOperand([&](ValueID, uint32_t operandIndex) {
-            hasGuardOperand |= value.operandKind(operandIndex) == OperandKind::Guard;
-        });
-        return hasGuardOperand;
-    });
-}
-
-static bool namesGuardDefinedOutside(const FunctionScan& scan, const OutliningSite& site)
-{
-    return anyValueInSite(scan.function, site, [&](ValueID id) {
+    NamedGuards result = NamedGuards::None;
+    bool namesOneDefinedOutside = anyValueInSite(scan.function, site, [&](ValueID id) {
         const Value& value = scan.function.at(id);
-        bool renewsGuards = provesOf(value.opcode) == Proof::EpochCurrent;
         for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
             ValueID operand = value.operand(operandIndex);
-            if (!operand || isDefinedInSite(scan, site, operand))
+            if (!operand || value.operandKind(operandIndex) != OperandKind::Guard)
                 continue;
-            if (renewsGuards || value.operandKind(operandIndex) == OperandKind::Guard)
+            if (!isDefinedInSite(scan, site, operand))
                 return true;
+            result = NamedGuards::AllDefinedInSite;
         }
         return false;
     });
+    return namesOneDefinedOutside ? NamedGuards::SomeDefinedOutside : result;
 }
 
 static bool runsUnknownCode(const FunctionScan& scan, ValueID id)
@@ -427,12 +593,12 @@ static bool mayBeLocalAllocation(const FunctionScan& scan, ValueID id)
 }
 
 // Analyses may treat the call as unknown code, and a local allocation passed to it is a parameter in the body, so it no longer counts as unescaped.
-static bool mayEndGuardInUse(FunctionScan& scan, const OutliningSite& site, std::span<const ValueID> liveIns)
+static bool mayEndGuardInUse(FunctionScan& scan, const OutliningSite& site, std::span<const ValueID> liveIns, NamedGuards namedGuards)
 {
     bool crossesLiveGuard = isAnyGuardLiveAfter(scan, site);
     if (crossesLiveGuard && !alwaysRunsUnknownCode(scan, site))
         return true;
-    if (!crossesLiveGuard && !namesGuard(scan.function, site))
+    if (!crossesLiveGuard && namedGuards == NamedGuards::None)
         return false;
     return std::ranges::any_of(liveIns, [&](ValueID liveIn) {
         return mayBeLocalAllocation(scan, liveIn);
@@ -504,7 +670,7 @@ static bool addPendingTargets(FunctionScan& scan, const OutliningSite& region, c
         if (position < pending.size() && pending[position] == order)
             continue;
         pending.insert(position, order);
-        if (scan.build.exceeds(LimitID::MaxOutlinedRegionValues, region.interiorBlocks.size() + pending.size() - 1, scan.subject))
+        if (scan.exceedsRegionValues(region.interiorBlocks.size() + pending.size() - 1))
             return false;
     }
     return true;
@@ -543,7 +709,7 @@ static bool findRegionBlocks(FunctionScan& scan, const BitVector& coldBlocks, Ou
 
         const Block& block = scan.function.at(blockID);
         numberOfValues += block.values.size();
-        if (scan.build.exceeds(LimitID::MaxOutlinedRegionValues, numberOfValues, scan.subject))
+        if (scan.exceedsRegionValues(numberOfValues))
             return false;
         if (block.terminator.inlineFrame != origin.inlineFrame)
             return false;
@@ -580,7 +746,7 @@ static uint32_t extendBackward(FunctionScan& scan, OutliningSite& site, uint32_t
             break;
         if (!hasOnlyUsesInSite(scan, site, id))
             break;
-        if (scan.build.exceeds(LimitID::MaxOutlinedRegionValues, ++numberOfValues, scan.subject))
+        if (scan.exceedsRegionValues(++numberOfValues))
             break;
         --site.firstIndex;
         ++site.numberOfEntryValues;
@@ -649,15 +815,19 @@ static bool findExitArgument(const FunctionScan& scan, OutliningSite& region)
     return true;
 }
 
-static uint32_t computeCodeBytes(const FunctionScan& scan, const OutliningSite& site)
+static uint32_t computeCodeBytes(FunctionScan& scan, const OutliningSite& site)
 {
     const Function& function = scan.function;
     uint32_t bytes = 0;
     auto addValues = [&](std::span<const ValueID> values) {
         for (ValueID id : values) {
             const Value& value = function.at(id);
-            if (!isRematerializable(value))
-                bytes += estimatedCodeBytes(scan.program, function, value);
+            if (isRematerializable(value))
+                continue;
+            std::optional<uint32_t>& cached = scan.cachedCodeBytes[id.index()];
+            if (!cached)
+                cached = estimatedCodeBytes(scan.program, function, value);
+            bytes += *cached;
         }
     };
 
@@ -673,7 +843,65 @@ static uint32_t computeCodeBytes(const FunctionScan& scan, const OutliningSite& 
     return bytes;
 }
 
-static bool completeSite(FunctionScan& scan, OutliningSite& site)
+// In cold code an access by key and a call of a value are the moves of their operands and one call of a stub: what a call of a function is. As a function of its own it gets a frame and two more jumps each time it runs.
+static bool isOneCallOfStub(const Program& program, const OutliningSite& site)
+{
+    static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete };
+    if (site.isRegion())
+        return false;
+    const Function& function = program.at(site.function);
+    auto passesConstantThatTakesCode = [&](const Value& call) {
+        bool result = false;
+        call.forEachOperand([&](ValueID operand, uint32_t) {
+            result |= isRematerializable(function.at(operand)) && estimatedCodeBytes(program, function, function.at(operand));
+        });
+        return result;
+    };
+    unsigned numberOfOperations = 0;
+    for (ValueID id : entryValuesOf(function, site)) {
+        const Value& value = function.at(id);
+        if (isRematerializable(value) || !estimatedCodeBytes(program, function, value))
+            continue;
+        bool isCallOfValue = accessClassOf(value.opcode) == AccessClass::IndirectCall && !passesConstantThatTakesCode(value);
+        if (!(isCallOfValue || accessesByKey.contains(value.opcode)) || ++numberOfOperations > 1)
+            return false;
+    }
+    return numberOfOperations;
+}
+
+// However many equal sites there are, each of them gets no shorter.
+static bool canPayOff(const Program& program, const OutliningSite& site)
+{
+    return site.codeBytes > site.callBytes && !isOneCallOfStub(program, site);
+}
+
+// What a call returns is a value of its own. Checks that hand on the object they were given would, as a call, cut the object in two:
+// a guard that a test has made about what comes out no longer speaks of what went in, and the function may reach the object from there again, by other casts, and name that guard.
+static bool handsOnSubjectOfGuard(FunctionScan& scan, const OutliningSite& site, ValueID result)
+{
+    if (!scan.hasOperationThatProves)
+        return false;
+    ValueID identity = scan.analyses.identityOf(result);
+    return identity != result && scan.isSubjectOfGuard(identity) && !isDefinedInSite(scan, site, identity);
+}
+
+// A parameter is a value of its own too. Two names of one object that both go in are two objects inside, and a guard that a test there makes about the one does not speak of the other.
+static bool passesOneObjectUnderTwoNames(FunctionScan& scan, std::span<const ValueID> liveIns)
+{
+    for (size_t index = 0; index < liveIns.size(); ++index) {
+        ValueID identity = scan.analyses.identityOf(liveIns[index]);
+        bool isPassedBefore = std::ranges::any_of(liveIns.first(index), [&](ValueID earlier) {
+            return scan.analyses.identityOf(earlier) == identity;
+        });
+        if (isPassedBefore)
+            return true;
+    }
+    return false;
+}
+
+static bool canBeSplit(const Program&, const OutliningSite&);
+
+static bool completeSite(FunctionScan& scan, OutliningSite& site, SitesThatCannotPayOff unprofitableSites)
 {
     const Function& function = scan.function;
     site.resultType = TypeTable::undefined;
@@ -684,9 +912,12 @@ static bool completeSite(FunctionScan& scan, OutliningSite& site)
         result = function.at(site.exitBlock).parameters[*site.exitArgument];
     if (result)
         site.resultType = function.at(result).type;
-    if (!canCrossCallBoundary(scan.program, site.resultType) || (result && mayBeUnspecified(scan.analyses, result)))
+    if (!canCrossCallBoundary(scan.program, site.resultType) || (result && scan.unspecifiedValues.mayContain(result)))
         return false;
-    if (namesGuardDefinedOutside(scan, site))
+    NamedGuards namedGuards = findNamedGuards(scan, site);
+    if (namedGuards == NamedGuards::SomeDefinedOutside)
+        return false;
+    if (result && handsOnSubjectOfGuard(scan, site, result))
         return false;
 
     OutliningNormalForm form(function, site, scan.build.limit(LimitID::MaxOutlinedOperands));
@@ -696,14 +927,19 @@ static bool completeSite(FunctionScan& scan, OutliningSite& site)
         if (!canBeLiveIn(scan, liveIn))
             return false;
     }
-    if (mayEndGuardInUse(scan, site, form.liveIns().span()))
+    if (mayEndGuardInUse(scan, site, form.liveIns().span(), namedGuards))
+        return false;
+    if (namedGuards != NamedGuards::None && passesOneObjectUnderTwoNames(scan, form.liveIns().span()))
         return false;
     if (scan.build.exceeds(LimitID::MaxOutlinedOperands, form.liveIns().size(), scan.subject))
         return false;
 
     site.liveIns = form.liveIns();
     site.codeBytes = computeCodeBytes(scan, site);
-    site.hash = form.hash();
+    site.callBytes = estimatedCallBytes(site);
+    site.canPayOff = canPayOff(scan.program, site);
+    if (site.canPayOff || (unprofitableSites == SitesThatCannotPayOff::AreKeptToBeSplit && canBeSplit(scan.program, site)))
+        site.hash = form.hash();
     return true;
 }
 
@@ -730,12 +966,13 @@ static std::optional<OutliningSite> tryCreateRegion(FunctionScan& scan, const Bi
     OutliningSite region;
     region.function = scan.id;
     region.entryBlock = blockID;
+    region.orderOfEntryBlock = scan.cfg.reversePostOrderIndex(blockID);
     region.firstIndex = block.values.size();
     uint32_t numberOfValues = 0;
     if (!findRegionBlocks(scan, coldBlocks, region, numberOfValues))
         return std::nullopt;
     extendBackward(scan, region, 0, BackwardExtension::UsedValues, numberOfValues);
-    if (!findExitArgument(scan, region) || !completeSite(scan, region))
+    if (!findExitArgument(scan, region) || !completeSite(scan, region, SitesThatCannotPayOff::AreKeptToBeSplit))
         return std::nullopt;
     return region;
 }
@@ -761,7 +998,7 @@ static bool canUseCallResult(const Function& function, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool canBeRoot(const FunctionScan& scan, ValueID id)
+static bool canBeRoot(FunctionScan& scan, ValueID id)
 {
     const Function& function = scan.function;
     const Value& value = function.at(id);
@@ -770,7 +1007,7 @@ static bool canBeRoot(const FunctionScan& scan, ValueID id)
     if (isConditionOfBranchWithProofs(function, scan.useLists, id))
         return false;
     // A deferred closure has no code and no value: it moves only together with the store that names it.
-    if (isDeferredClosure(function, id))
+    if (isDeferredClosure(function, id) || isBorrowedInnerObject(function, id))
         return false;
 
     std::span<const Use> uses = scan.useLists.usesOf(id);
@@ -786,6 +1023,7 @@ static OutliningSite createSingleValueRun(const FunctionScan& scan, BlockID bloc
     OutliningSite run;
     run.function = scan.id;
     run.entryBlock = block;
+    run.orderOfEntryBlock = scan.cfg.reversePostOrderIndex(block);
     run.firstIndex = rootIndex;
     run.numberOfEntryValues = 1;
     run.root = scan.function.at(block).values[rootIndex];
@@ -793,61 +1031,37 @@ static OutliningSite createSingleValueRun(const FunctionScan& scan, BlockID bloc
     return run;
 }
 
-static std::optional<OutliningSite> tryCreateRun(FunctionScan& scan, const ValueRange& range, uint32_t rootIndex, BackwardExtension extension)
+static bool isOneOperationThatCannotPayOff(FunctionScan& scan, const OutliningSite& run)
+{
+    const Function& function = scan.function;
+    Vector<ValueID, 6> liveIns;
+    if (!isRematerializable(function.at(run.root))) {
+        function.at(run.root).forEachOperand([&](ValueID operand, uint32_t) {
+            if (!isRematerializable(function.at(operand)) && !liveIns.contains(operand))
+                liveIns.append(operand);
+        });
+    }
+    if (liveIns.size() > scan.build.limit(LimitID::MaxOutlinedOperands))
+        return false;
+    return computeCodeBytes(scan, run) <= estimatedDirectCallBytes(liveIns.size()) || isOneCallOfStub(scan.program, run);
+}
+
+static std::optional<OutliningSite> tryCreateRun(FunctionScan& scan, const ValueRange& range, uint32_t rootIndex, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites)
 {
     OutliningSite run = createSingleValueRun(scan, range.block, rootIndex);
     uint32_t numberOfOperationsAdded = extendBackward(scan, run, range.begin, extension, 1);
-    if (completeSite(scan, run))
+    if (!numberOfOperationsAdded && isOneOperationThatCannotPayOff(scan, run))
+        return run;
+    if (completeSite(scan, run, unprofitableSites))
         return run;
     if (!numberOfOperationsAdded)
         return std::nullopt;
 
     run = createSingleValueRun(scan, range.block, rootIndex);
     extendBackward(scan, run, range.begin, BackwardExtension::ConstantsOnly, 1);
-    if (completeSite(scan, run))
+    if (completeSite(scan, run, unprofitableSites))
         return run;
     return std::nullopt;
-}
-
-static void findRuns(FunctionScan& scan, const ValueRange& range, BackwardExtension extension, Vector<OutliningSite>& sites)
-{
-    const Block& block = scan.function.at(range.block);
-    for (uint32_t index = range.end; index-- > range.begin;) {
-        ValueID root = block.values[index];
-        if (scan.valuesInSites.quickGet(root.index()) || !canBeRoot(scan, root))
-            continue;
-        std::optional<OutliningSite> run = tryCreateRun(scan, range, index, extension);
-        if (!run)
-            continue;
-        markSite(scan, *run);
-        index = run->firstIndex;
-        sites.append(WTF::move(*run));
-    }
-}
-
-static void findSitesInFunction(const FinderInputs& finder, FunctionID id, Vector<OutliningSite>& sites)
-{
-    const Function& function = finder.program.at(id);
-    if (!function.hasBody() || !finder.build.isEnabled(PassID::OutlineColdOperations, id))
-        return;
-
-    FunctionAnalyses analyses(finder.contextOf(id), function);
-    BitVector coldBlocks = findColdBlocks(finder, analyses);
-    if (coldBlocks.isEmpty())
-        return;
-
-    FunctionScan scan(finder, id, analyses);
-    for (BlockID block : scan.cfg.reversePostOrder()) {
-        if (!coldBlocks.quickGet(block.index()))
-            continue;
-        size_t firstSiteOfBlock = sites.size();
-        if (std::optional<OutliningSite> region = tryCreateRegion(scan, coldBlocks, block)) {
-            markSite(scan, *region);
-            sites.append(WTF::move(*region));
-        }
-        findRuns(scan, { block, 0, static_cast<uint32_t>(function.at(block).values.size()) }, BackwardExtension::AllValues, sites);
-        std::ranges::reverse(sites.mutableSubspan(firstSiteOfBlock));
-    }
 }
 
 static bool canBeSplit(const Program& program, const OutliningSite& site)
@@ -862,80 +1076,239 @@ static bool canBeSplit(const Program& program, const OutliningSite& site)
     }) > 1;
 }
 
-static BitVector findUnrepeatedSites(const FinderInputs& finder, const Vector<OutliningSite>& sites)
+static void findRuns(FunctionScan& scan, const ValueRange& range, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites, Vector<OutliningSite>& sites)
+{
+    const Block& block = scan.function.at(range.block);
+    for (uint32_t index = range.end; index-- > range.begin;) {
+        ValueID root = block.values[index];
+        if (scan.valuesInSites.quickGet(root.index()) || !canBeRoot(scan, root))
+            continue;
+        std::optional<OutliningSite> run = tryCreateRun(scan, range, index, extension, unprofitableSites);
+        if (!run)
+            continue;
+        markSite(scan, *run);
+        index = run->firstIndex;
+        if (run->canPayOff || (unprofitableSites == SitesThatCannotPayOff::AreKeptToBeSplit && canBeSplit(scan.program, *run)))
+            sites.append(WTF::move(*run));
+    }
+}
+
+static void findParts(FunctionScan& scan, const OutliningSite& site, Vector<OutliningSite>& parts)
+{
+    findRuns(scan, { site.entryBlock, site.firstIndex, site.firstIndex + site.numberOfEntryValues }, BackwardExtension::ConstantsOnly, SitesThatCannotPayOff::AreDropped, parts);
+    for (BlockID block : site.interiorBlocks)
+        findRuns(scan, { block, 0, static_cast<uint32_t>(scan.function.at(block).values.size()) }, BackwardExtension::ConstantsOnly, SitesThatCannotPayOff::AreDropped, parts);
+}
+
+// Whether a site is repeated is known when all functions have been looked at. Its parts are found at once, while the analyses of the function are there.
+// A part lies within its site and sites do not overlap, so the parts of one site are found without regard to any other site.
+static void findPartsOfSplittableSites(FunctionScan& scan, FunctionSites& found)
+{
+    scan.valuesInSites.clearAll();
+    for (uint32_t index = 0; index < found.sites.size(); ++index) {
+        const OutliningSite& site = found.sites[index];
+        if (!canBeSplit(scan.program, site))
+            continue;
+        uint32_t firstPart = found.parts.size();
+        findParts(scan, site, found.parts);
+        found.splittableSites.append(SplittableSite { index, firstPart, static_cast<uint32_t>(found.parts.size() - firstPart), false });
+    }
+}
+
+static FunctionSites findSitesInFunction(const FinderInputs& finder, FunctionID id)
+{
+    FunctionSites found;
+    const Function& function = finder.program.at(id);
+    if (!function.hasBody() || !finder.build.isEnabled(PassID::OutlineColdOperations, id))
+        return found;
+
+    FunctionAnalyses analyses(finder.contextOf(id), function);
+    BitVector coldBlocks = findColdBlocks(finder, analyses);
+    if (coldBlocks.isEmpty())
+        return found;
+
+    FunctionScan scan(finder, id, analyses);
+    Vector<OutliningSite>& sites = found.sites;
+    for (BlockID block : scan.cfg.reversePostOrder()) {
+        if (!coldBlocks.quickGet(block.index()))
+            continue;
+        size_t firstSiteOfBlock = sites.size();
+        if (std::optional<OutliningSite> region = tryCreateRegion(scan, coldBlocks, block)) {
+            markSite(scan, *region);
+            sites.append(WTF::move(*region));
+        }
+        findRuns(scan, { block, 0, static_cast<uint32_t>(function.at(block).values.size()) }, BackwardExtension::AllValues, SitesThatCannotPayOff::AreKeptToBeSplit, sites);
+        std::ranges::reverse(sites.mutableSubspan(firstSiteOfBlock));
+    }
+    if (!sites.isEmpty())
+        findPartsOfSplittableSites(scan, found);
+    return found;
+}
+
+static void findRepeatedSites(const FinderInputs& finder, ParallelArray<FunctionSites>& functions)
 {
     const ParallelLoops& loops = finder.build.parallelLoops();
-    Vector<uint32_t> candidates = findIndicesInParallel(loops, sites.size(), [&](unsigned index) {
-        return canBeSplit(finder.program, sites[index]);
+    ParallelArray<SplittableSiteReference> candidates = collectIntoArrayInParallel<SplittableSiteReference>(loops, functions.size(), { }, [&](unsigned index, Vector<SplittableSiteReference>& found) {
+        const FunctionSites& function = functions[index];
+        for (uint32_t position = 0; position < function.splittableSites.size(); ++position)
+            found.append(SplittableSiteReference { function.sites[function.splittableSites[position].site].hash, index, position });
     });
-    parallelSort(loops, candidates.mutableSpan(), [&](uint32_t a, uint32_t b) {
-        return sites[a].hash < sites[b].hash;
+    parallelSort(loops, candidates.mutableSpan(), [](const SplittableSiteReference& a, const SplittableSiteReference& b) {
+        return a.hash < b.hash;
     });
-
-    BitVector unrepeatedSites(sites.size());
-    for (size_t index = 0; index < candidates.size(); ++index) {
-        unsigned hash = sites[candidates[index]].hash;
-        bool equalsPrevious = index && sites[candidates[index - 1]].hash == hash;
-        bool equalsNext = index + 1 < candidates.size() && sites[candidates[index + 1]].hash == hash;
-        if (!equalsPrevious && !equalsNext)
-            unrepeatedSites.quickSet(candidates[index]);
-    }
-    return unrepeatedSites;
+    forEachIndexInParallel(loops, candidates.size(), [&](unsigned index) {
+        const SplittableSiteReference& candidate = candidates[index];
+        bool equalsPrevious = index && candidates[index - 1].hash == candidate.hash;
+        bool equalsNext = index + 1 < candidates.size() && candidates[index + 1].hash == candidate.hash;
+        functions[candidate.function].splittableSites[candidate.splittableSite].isRepeated = equalsPrevious || equalsNext;
+    });
 }
 
-static void splitSitesInFunction(const FinderInputs& finder, std::span<OutliningSite> sites, SiteRange range, const BitVector& unrepeatedSites, Vector<OutliningSite>& result)
+static void appendChosenSites(FunctionSites& function, Vector<OutliningSite*>& result)
 {
-    if (!range.hasUnrepeatedSite) {
-        for (OutliningSite& site : sites.subspan(range.begin, range.end - range.begin))
-            result.append(WTF::move(site));
-        return;
-    }
-
-    FunctionID id = sites[range.begin].function;
-    FunctionAnalyses analyses(finder.contextOf(id), finder.program.at(id));
-    FunctionScan scan(finder, id, analyses);
     size_t firstSiteOfFunction = result.size();
-    for (uint32_t index = range.begin; index < range.end; ++index) {
-        OutliningSite& site = sites[index];
-        if (!unrepeatedSites.quickGet(index)) {
-            result.append(WTF::move(site));
-            continue;
+    bool didSplit = false;
+    std::span<const SplittableSite> splittableSites = function.splittableSites.span();
+    for (uint32_t index = 0; index < function.sites.size(); ++index) {
+        bool isSplit = false;
+        if (!splittableSites.empty() && splittableSites.front().site == index) {
+            const SplittableSite& splittable = splittableSites.front();
+            isSplit = !splittable.isRepeated;
+            if (isSplit) {
+                for (OutliningSite& part : function.parts.mutableSubspan(splittable.firstPart, splittable.numberOfParts))
+                    result.append(&part);
+            }
+            splittableSites = splittableSites.subspan(1);
         }
-        findRuns(scan, { site.entryBlock, site.firstIndex, site.firstIndex + site.numberOfEntryValues }, BackwardExtension::ConstantsOnly, result);
-        for (BlockID block : site.interiorBlocks)
-            findRuns(scan, { block, 0, static_cast<uint32_t>(scan.function.at(block).values.size()) }, BackwardExtension::ConstantsOnly, result);
+        didSplit |= isSplit;
+        if (!isSplit && function.sites[index].canPayOff)
+            result.append(&function.sites[index]);
     }
-    std::ranges::sort(result.mutableSubspan(firstSiteOfFunction), { }, [&](const OutliningSite& site) {
-        return std::pair { scan.cfg.reversePostOrderIndex(site.entryBlock), site.firstIndex };
+    if (!didSplit)
+        return;
+    std::ranges::sort(result.mutableSubspan(firstSiteOfFunction), { }, [](const OutliningSite* site) {
+        return std::pair { site->orderOfEntryBlock, site->firstIndex };
     });
 }
 
-static Vector<OutliningSite> splitUnrepeatedSites(const FinderInputs& finder, Vector<OutliningSite>&& sites)
+// Every operation whose result the escape analysis may take for an object of its own.
+static OpcodeSet findOpcodesThatMayDefineObjects()
 {
-    BitVector unrepeatedSites = findUnrepeatedSites(finder, sites);
-    if (unrepeatedSites.isEmpty())
-        return WTF::move(sites);
-
-    Vector<SiteRange> functions;
-    for (uint32_t index = 0; index < sites.size(); ++index) {
-        if (functions.isEmpty() || sites[functions.last().begin].function != sites[index].function)
-            functions.append(SiteRange { index, index, false });
-        functions.last().end = index + 1;
-        functions.last().hasUnrepeatedSite |= unrepeatedSites.quickGet(index);
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        bool mayDefineObject = resultRuleOf(opcode) == ResultRule::Allocation || resultRuleOf(opcode) == ResultRule::Declared || OperandPosition::parent(opcode);
+        switch (effectRuleOf(opcode)) {
+        case EffectRule::Builtin:
+        case EffectRule::Inline:
+            mayDefineObject = true;
+            break;
+        case EffectRule::Declared:
+        case EffectRule::Operator:
+        case EffectRule::Access:
+        case EffectRule::Call:
+            break;
+        }
+        uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
+        for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex)
+            mayDefineObject |= operandUsesOf(opcode, operandIndex).contains(OperandUse::Retains) && retainedInOf(opcode, operandIndex) == RetainedIn::Result;
+        if (mayDefineObject)
+            opcodes.add(opcode);
     }
-
-    return collectInParallel<OutliningSite>(finder.build.parallelLoops(), functions.size(), [&](unsigned index, Vector<OutliningSite>& result) {
-        splitSitesInFunction(finder, sites.mutableSpan(), functions[index], unrepeatedSites, result);
-    });
+    return opcodes;
 }
 
-Vector<OutliningSite> findOutliningSites(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
+static OpcodeSet findOpcodesThatDefineObjectsThatNeedNotBeFresh()
 {
-    FinderInputs finder { program, inputs, build };
-    Vector<OutliningSite> sites = collectInParallel<OutliningSite>(build.parallelLoops(), program.functions.size(), largeFunctions(program, build.parallelLoops()).span(), [&](unsigned index, Vector<OutliningSite>& found) {
-        findSitesInFunction(finder, FunctionID(index), found);
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        bool returnsOperand = false;
+        uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
+        for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex)
+            returnsOperand |= operandUsesOf(opcode, operandIndex).contains(OperandUse::Returns);
+        if ((returnsOperand && resultRuleOf(opcode) == ResultRule::Allocation) || OperandPosition::parent(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}
+
+static OpcodeSet findOpcodesThatProve()
+{
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (provesOf(opcode) != Proof::None)
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}
+
+struct OutliningSiteFinder::State {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
+
+    State(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
+        : finder { program, inputs, build, findOpcodesThatMayDefineObjects(), findOpcodesThatDefineObjectsThatNeedNotBeFresh(), findOpcodesThatProve() }
+        , functions(build.parallelLoops(), program.functions.size(), [](unsigned) { return FunctionSites(); })
+        , hasSites(FillWith { }, program.functions.size(), static_cast<uint8_t>(0))
+    {
+    }
+
+    FinderInputs finder;
+    ParallelArray<FunctionSites> functions;
+    Vector<uint8_t> hasSites;
+};
+
+OutliningSiteFinder::OutliningSiteFinder(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
+    : m_state(makeUnique<State>(program, inputs, build))
+{
+}
+
+OutliningSiteFinder::~OutliningSiteFinder() = default;
+
+bool OutliningSiteFinder::findIn(FunctionID id)
+{
+    FunctionSites& found = m_state->functions[id.index()];
+    found = findSitesInFunction(m_state->finder, id);
+    m_state->hasSites[id.index()] = !found.sites.isEmpty();
+    return !found.sites.isEmpty();
+}
+
+std::span<const uint8_t> OutliningSiteFinder::hasSites() const
+{
+    return m_state->hasSites.span();
+}
+
+ParallelArray<OutliningSite> OutliningSiteFinder::takeSites()
+{
+    const FinderInputs& finder = m_state->finder;
+    ParallelArray<FunctionSites>& functions = m_state->functions;
+    const ParallelLoops& loops = finder.build.parallelLoops();
+    findRepeatedSites(finder, functions);
+    ParallelArray<OutliningSite*> chosenSites = collectIntoArrayInParallel<OutliningSite*>(loops, functions.size(), { }, [&](unsigned index, Vector<OutliningSite*>& result) {
+        appendChosenSites(functions[index], result);
     });
-    return splitUnrepeatedSites(finder, WTF::move(sites));
+    ParallelArray<OutliningSite> sites(loops, chosenSites.size(), [&](unsigned index) {
+        return WTF::move(*chosenSites[index]);
+    });
+    finder.build.destroyLater(WTF::move(functions));
+    return sites;
+}
+
+ParallelArray<OutliningSite> findOutliningSites(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
+{
+    OutliningSiteFinder finder(program, inputs, build);
+    const ParallelLoops& loops = build.parallelLoops();
+    std::optional<TypeInterningPhase> scratch;
+    if (!program.types.hasOpenPhase())
+        scratch.emplace(program.types, 0u, TypeInterningPhase::Scratch);
+    {
+        ProgramCaches caches(program, build);
+        Vector<uint32_t> largestFirst = largeFunctions(program, loops);
+        forEachIndexInParallel(loops, program.functions.size(), largestFirst.span(), [&](unsigned index) {
+            finder.findIn(FunctionID(index));
+        });
+    }
+    if (scratch)
+        scratch->discard();
+    return finder.takeSites();
 }
 
 } } } // namespace JSC::AOT::Typed

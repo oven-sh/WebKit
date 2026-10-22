@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTErrorMessages.h"
 #include "AOTModuleHost.h"
 #include "ArrayIteratorPrototype.h"
 #include "AsyncFunctionPrototype.h"
@@ -25,13 +26,17 @@
 #include "JSCInlines.h"
 #include "JSIteratorHelperPrototype.h"
 #include "JSIteratorPrototype.h"
+#include "Lookup.h"
 #include "MapIteratorPrototype.h"
+#include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "SetIteratorPrototype.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <array>
+#include <mutex>
 #include <wtf/BitVector.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
@@ -44,6 +49,16 @@ using Lookup = std::expected<JSValue, BuiltinLookupFailure>;
 using ObjectLookup = std::expected<JSObject*, BuiltinLookupFailure>;
 using CellLookup = std::expected<JSCell*, BuiltinLookupFailure>;
 
+static bool hasValueCell(const BuiltinTable& table, BuiltinID id)
+{
+    const Builtin& member = table.at(id);
+    return member.kind == BuiltinKind::DataProperty
+        && member.scope == BuiltinScope::Realm
+        && member.mutability == BuiltinMutability::ConstantUnlessWritten
+        && member.flags.contains(BuiltinFlag::IsLazilyCreated)
+        && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
+}
+
 std::optional<BuiltinCellKey> BuiltinCellKey::decode(uint32_t bits, const BuiltinTable& table)
 {
     BuiltinID id(bits & ((1u << 24) - 1));
@@ -53,6 +68,8 @@ std::optional<BuiltinCellKey> BuiltinCellKey::decode(uint32_t bits, const Builti
         if (BuiltinCellKey key(kind, id); key.encoded() == bits)
             return key;
     }
+    if (value(id).encoded() == bits && hasValueCell(table, id))
+        return value(id);
     return std::nullopt;
 }
 
@@ -70,18 +87,20 @@ static bool hasObjectCell(const BuiltinTable& table, BuiltinID id)
     return isObjectKind(kind) || (kind == BuiltinKind::Constant && table.nameOfSymbol(id));
 }
 
-static bool mayCallEntryFunction(const BuiltinImplementation& implementation)
+static bool mayCallEntryFunction(const BuiltinOverloadSummary& overload)
 {
-    switch (implementation.kind) {
+    switch (overload.kind) {
     case BuiltinImplementationKind::HostCall:
+        return overload.callee != BuiltinCallee::CustomGetter;
     case BuiltinImplementationKind::Compiled:
     case BuiltinImplementationKind::CachedGetter:
         return true;
     case BuiltinImplementationKind::Inline:
-        return implementation.otherwise.has_value();
+        return overload.hasOtherwise;
     case BuiltinImplementationKind::Generic:
     case BuiltinImplementationKind::Number:
     case BuiltinImplementationKind::Cell:
+    case BuiltinImplementationKind::OwnSlot:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -89,8 +108,8 @@ static bool mayCallEntryFunction(const BuiltinImplementation& implementation)
 
 static bool hasAccessorCallee(const BuiltinTable& table, BuiltinID id, BuiltinCallMode mode)
 {
-    return table.at(id).kind == BuiltinKind::Accessor && std::ranges::any_of(table.overloadsOf(id), [&](const BuiltinOverload& overload) {
-        return overload.mode == mode && mayCallEntryFunction(overload.code.implementation);
+    return table.at(id).kind == BuiltinKind::Accessor && std::ranges::any_of(table.overloadSummariesOf(id), [&](const BuiltinOverloadSummary& overload) {
+        return overload.mode == mode && mayCallEntryFunction(overload);
     });
 }
 
@@ -105,6 +124,8 @@ bool BuiltinCellKey::hasCell(const BuiltinTable& table) const
         return hasAccessorCallee(table, m_builtin, BuiltinCallMode::Get);
     case Kind::Setter:
         return hasAccessorCallee(table, m_builtin, BuiltinCallMode::Set);
+    case Kind::Value:
+        return hasValueCell(table, m_builtin);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -236,19 +257,57 @@ static LazyClassStructure* lazyClassStructureOf(JSGlobalObject* realm, const Has
     return std::bit_cast<LazyClassStructure*>(std::bit_cast<char*>(realm) + entry.lazyClassStructureOffset());
 }
 
+struct ClassesOfStaticTables {
+    const ClassInfo* infoOfRealm { nullptr };
+    Vector<const HashTableValue*> entries;
+};
+
+static const ClassesOfStaticTables& classesOfStaticTablesOfFirstRealm(JSGlobalObject* realm)
+{
+    static std::once_flag once;
+    static LazyNeverDestroyed<ClassesOfStaticTables> classes;
+    std::call_once(once, [&] {
+        classes.construct();
+        classes->infoOfRealm = realm->classInfo();
+        forEachStaticTableOf(realm, [&](const HashTable& hashTable) {
+            for (auto& entry : hashTable) {
+                if (entry.attributes() & PropertyAttribute::ClassStructure)
+                    classes->entries.append(&entry);
+            }
+        });
+    });
+    return classes.get();
+}
+
 BuiltinID findGlobalCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
-    BuiltinID found;
-    forEachStaticTableOf(realm, [&](const HashTable& hashTable) {
-        for (auto& entry : hashTable) {
-            if (found || !(entry.attributes() & PropertyAttribute::ClassStructure) || lazyClassStructureOf(realm, entry) != &lazyStructure)
-                continue;
-            if (BuiltinName name = table.nameOf(byteCast<uint8_t>(entry.m_key.span())))
-                found = table.findGlobal(name);
+    auto globalOf = [&](const HashTableValue& entry) -> BuiltinID {
+        if (lazyClassStructureOf(realm, entry) != &lazyStructure)
+            return { };
+        BuiltinName name = table.nameOf(byteCast<uint8_t>(entry.m_key.span()));
+        return name ? table.findGlobal(name) : BuiltinID();
+    };
+    const ClassesOfStaticTables& classes = classesOfStaticTablesOfFirstRealm(realm);
+    if (classes.infoOfRealm == realm->classInfo()) [[likely]] {
+        for (const HashTableValue* entry : classes.entries) {
+            if (BuiltinID found = globalOf(*entry))
+                return found;
         }
-    });
-    return found;
+        return { };
+    }
+    for (const ClassInfo* info = realm->classInfo(); info; info = info->parentClass) {
+        const HashTable* hashTable = info->staticPropHashTable;
+        if (!hashTable)
+            continue;
+        for (auto& entry : *hashTable) {
+            if (!(entry.attributes() & PropertyAttribute::ClassStructure))
+                continue;
+            if (BuiltinID found = globalOf(entry))
+                return found;
+        }
+    }
+    return { };
 }
 
 void forEachCreatedClassOfGlobal(JSGlobalObject* realm, const ScopedLambda<void(BuiltinID, JSObject* constructor)>& function)
@@ -283,9 +342,10 @@ static JSObject* findConstructorOfLazyClass(JSGlobalObject* realm, const Identif
     return constructor;
 }
 
-void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(BuiltinClassID, Structure*)>& function)
+template<typename Function>
+static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm, const Function& function)
 {
-    auto visitIfCreated = [&](BuiltinClassID builtinClass, Structure* structure) {
+    auto visitIfCreated = [&](BuiltinClassID builtinClass, Structure* structure) ALWAYS_INLINE_LAMBDA {
         if (structure)
             function(builtinClass, structure);
     };
@@ -314,10 +374,31 @@ void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(Bui
     visitIfCreated(BuiltinClasses::IteratorHelper, realm->iteratorHelperStructure());
     visitIfCreated(BuiltinClasses::WrapForValidIterator, realm->wrapForValidIteratorStructure());
     visitIfCreated(BuiltinClasses::AsyncFromSyncIterator, realm->asyncFromSyncIteratorStructure());
+}
+
+void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(BuiltinClassID, Structure*)>& function)
+{
+    forEachInstanceStructureOfEngine(realm, function);
     for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if (binding.findInstanceStructure)
-            visitIfCreated(binding.builtinClass, binding.findInstanceStructure(realm));
+        Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
+        if (structure)
+            function(binding.builtinClass, structure);
     }
+}
+
+BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* structure)
+{
+    BuiltinClassID found;
+    forEachInstanceStructureOfEngine(realm, [&](BuiltinClassID builtinClass, Structure* original) ALWAYS_INLINE_LAMBDA {
+        if (original == structure)
+            found = builtinClass;
+    });
+    const ClassInfo* info = structure->classInfoForCells();
+    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
+        if (binding.instanceClassInfo && info->isSubClassOf(binding.instanceClassInfo) && binding.findInstanceStructure && binding.findInstanceStructure(realm) == structure)
+            found = binding.builtinClass;
+    }
+    return found;
 }
 
 static JSObject* findExistingHiddenPrototype(JSGlobalObject* realm, BuiltinClassID builtinClass)
@@ -370,20 +451,22 @@ static ObjectLookup findHiddenRootOfClass(JSGlobalObject* realm, BuiltinID id)
 
 static ObjectLookup findHolderObject(JSGlobalObject*, BuiltinID);
 
-// No name leads from the global object to the cache of modules: each module reads it from a require function of its own.
-static ObjectLookup findModuleCache(JSGlobalObject* realm)
+// No name leads from the global object to the two tables of the loader: each module reads them from a require function of its own.
+static ObjectLookup findTableOfLoader(JSGlobalObject* realm, JSObject* (*ModuleHost::*table)(JSGlobalObject*))
 {
     const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost;
-    JSObject* cache = host && host->requireCache ? host->requireCache(realm) : nullptr;
-    if (!cache)
+    JSObject* object = host && host->*table ? (host->*table)(realm) : nullptr;
+    if (!object)
         return makeUnexpected(BuiltinLookupFailure::HolderIsMissing);
-    return cache;
+    return object;
 }
 
 static ObjectLookup findHiddenRoot(JSGlobalObject* realm, BuiltinID id)
 {
     if (id == Builtins::ModuleCache)
-        return findModuleCache(realm);
+        return findTableOfLoader(realm, &ModuleHost::requireCache);
+    if (id == Builtins::ModuleExtensions)
+        return findTableOfLoader(realm, &ModuleHost::requireExtensions);
     if (std::optional<LinkTimeConstant> constant = BuiltinBindings::linkTimeConstantOf(id))
         return asObject(realm->linkTimeConstant(*constant));
     BuiltinID subclassConstructor = findSubclassConstructor(BuiltinTable::singleton(), id);
@@ -427,12 +510,9 @@ static Lookup findDeclaredProperty(JSGlobalObject* realm, BuiltinID id, Property
 
 static JSFunction* createLibraryFunction(JSGlobalObject* realm, BuiltinID id)
 {
-    for (const BuiltinOverload& overload : BuiltinTable::singleton().overloadsOf(id)) {
-        if (overload.mode != BuiltinCallMode::Call)
-            continue;
-        RuntimeFunctionID function = overload.libraryFunction() ? overload.libraryFunction() : overload.slowPathFunction();
-        if (function)
-            return builtinFunction(realm, function.index());
+    for (const BuiltinOverloadSummary& overload : BuiltinTable::singleton().overloadSummariesOf(id)) {
+        if (overload.mode == BuiltinCallMode::Call && overload.function)
+            return builtinFunction(realm, overload.function.index());
     }
     return nullptr;
 }
@@ -499,6 +579,7 @@ static bool hasExpectedCallee(BuiltinCallee expected, JSValue value)
 {
     switch (expected) {
     case BuiltinCallee::None:
+    case BuiltinCallee::CustomGetter:
         return true;
     case BuiltinCallee::Function:
         return calleeKindOf(value) != BuiltinCallee::None;
@@ -518,6 +599,8 @@ static bool isOverloadOfKey(BuiltinCellKey::Kind kind, BuiltinCallMode mode)
         return mode == BuiltinCallMode::Get;
     case BuiltinCellKey::Kind::Setter:
         return mode == BuiltinCallMode::Set;
+    case BuiltinCellKey::Kind::Value:
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -532,8 +615,15 @@ static CellLookup checkFound(const BuiltinTable& table, BuiltinCellKey key, JSVa
             return makeUnexpected(BuiltinLookupFailure::IsNotSymbol);
     } else if (!value.isObject())
         return makeUnexpected(BuiltinLookupFailure::IsNotObject);
-    for (auto& overload : table.overloadsOf(id)) {
-        if (isOverloadOfKey(key.kind(), overload.mode) && !hasExpectedCallee(overload.code.implementation.callee, value))
+    for (const BuiltinOverloadSummary& overload : table.overloadSummariesOf(id)) {
+        if (isOverloadOfKey(key.kind(), overload.mode) && !hasExpectedCallee(overload.callee, value))
+            return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
+    }
+    // Compiled code takes a native function to have been born with the Structure of the host functions of its realm, for what that Structure refuses.
+    // A function that the library writes in JavaScript refuses the same as a closure. Where its code is not in the image another function stands for it, which nothing compiled calls.
+    if (key.kind() == BuiltinCellKey::Kind::Object && table.isHostFunctionOfEngine(id)) {
+        Structure* structure = value.asCell()->structure();
+        if (structure->globalObject()->hostFunctionStructure()->mayHaveImmutableProperties() && !structure->mayHaveImmutableProperties())
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
     }
     return value.asCell();
@@ -543,6 +633,7 @@ static PropertyKind propertyKindOf(BuiltinCellKey::Kind kind)
 {
     switch (kind) {
     case BuiltinCellKey::Kind::Object:
+    case BuiltinCellKey::Kind::Value:
         return PropertyKind::Data;
     case BuiltinCellKey::Kind::Getter:
         return PropertyKind::Getter;
@@ -585,6 +676,59 @@ std::expected<JSCell*, BuiltinLookupFailure> findInHolder(JSGlobalObject* realm,
     return checkFound(table, key, *found);
 }
 
+static const HashTableValue* findStaticTableEntry(JSObject* holder, const Identifier& key, const ClassInfo*& classInfo)
+{
+    for (classInfo = holder->classInfo(); classInfo; classInfo = classInfo->parentClass) {
+        const HashTable* hashTable = classInfo->staticPropHashTable;
+        if (const HashTableValue* entry = hashTable ? hashTable->entry(key) : nullptr)
+            return entry;
+    }
+    return nullptr;
+}
+
+std::expected<JSCell*, BuiltinLookupFailure> makeMemberOfStaticTable(JSGlobalObject* realm, BuiltinCellKey key, JSObject* holder)
+{
+    VM& vm = realm->vm();
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& table = BuiltinTable::singleton();
+    Identifier name = table.identifierOf(vm, table.at(key.builtin()).name);
+    const ClassInfo* classInfo = nullptr;
+    const HashTableValue* entry = findStaticTableEntry(holder, name, classInfo);
+    if (!entry)
+        return makeUnexpected(BuiltinLookupFailure::IsMissing);
+
+    unsigned attributes = entry->attributes();
+    if (attributes & (PropertyAttribute::CellProperty | PropertyAttribute::ClassStructure | PropertyAttribute::PropertyCallback)) {
+        if (key.kind() != BuiltinCellKey::Kind::Object)
+            return makeUnexpected(BuiltinLookupFailure::IsNotAccessor);
+        JSValue made;
+        if (attributes & PropertyAttribute::CellProperty)
+            made = std::bit_cast<LazyCellProperty*>(std::bit_cast<char*>(holder) + entry->lazyCellPropertyOffset())->get(holder);
+        else if (attributes & PropertyAttribute::ClassStructure)
+            made = std::bit_cast<LazyClassStructure*>(std::bit_cast<char*>(holder) + entry->lazyClassStructureOffset())->constructor(uncheckedDowncast<JSGlobalObject>(holder));
+        else
+            made = entry->lazyPropertyCallback()(vm, holder);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return makeUnexpected(BuiltinLookupFailure::LookupThrew);
+        }
+        if (!made)
+            return makeUnexpected(BuiltinLookupFailure::IsMissing);
+        return checkFound(table, key, made);
+    }
+    // The getter of any other entry is handed the object that it is read from.
+    if (!(attributes & (PropertyAttribute::Builtin | PropertyAttribute::Function | PropertyAttribute::Accessor)))
+        return makeUnexpected(BuiltinLookupFailure::IsMissing);
+
+    JSObject* standIn = constructEmptyObject(realm);
+    reifyStaticProperty(vm, classInfo, name, *entry, *standIn);
+    Lookup found = findOwnProperty(realm, standIn, name, propertyKindOf(key.kind()));
+    if (!found)
+        return makeUnexpected(found.error());
+    return checkFound(table, key, *found);
+}
+
 std::expected<JSValue, BuiltinLookupFailure> findValueInHolder(JSGlobalObject* realm, JSObject* holder, const Identifier& key)
 {
     DeferTerminationForAWhile deferTermination(realm->vm());
@@ -597,7 +741,7 @@ JSValue getByPath(JSGlobalObject* realm, BuiltinID id)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& table = BuiltinTable::singleton();
     auto throwNoPath = [&] {
-        throwTypeError(realm, scope, "Built-in has no path from the global object"_s);
+        throwException(realm, scope, createBuiltinWithoutPathError(realm));
         return JSValue();
     };
     if (!table.contains(id))
@@ -713,38 +857,38 @@ namespace {
 
 class FixedNamesOfBuiltin final : public ImmutablePropertyNames::OutsideNames {
 public:
-    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, RefPtr<const OutsideNames>&& namesOfProgram)
+    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
         : m_vm(vm)
         , m_holder(holder)
         , m_closedKeys(BuiltinTable::singleton().closedKeysOf(holder))
         , m_constantMembers(constantMembers)
-        , m_namesOfProgram(WTF::move(namesOfProgram))
+        , m_writes(writes)
     {
+    }
+
+    void willWrite(UniquedStringImpl* uid) const final
+    {
+        if (!m_writes || m_vm.allowLazyMaterializationOfImmutablePropertiesCount)
+            return;
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinName name = table.nameOf(m_vm, uid);
+        if (BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID())
+            m_writes->willWrite(member, uid);
     }
 
     bool contains(UniquedStringImpl* uid) const final
     {
         BuiltinName name = BuiltinTable::singleton().nameOf(m_vm, uid);
-        if (name && isFixed(name))
-            return true;
-        return m_namesOfProgram && m_namesOfProgram->contains(uid);
+        return name && isFixed(name);
     }
 
-    String messageOfRefusal(UniquedStringImpl* uid) const final
-    {
-        String holder = BuiltinTable::singleton().textOf(m_holder);
-        String property = uid->isSymbol() ? makeString(holder, "[Symbol("_s, StringView(uid), ")]"_s) : makeString(holder, '.', StringView(uid));
-        if (m_holder == Builtins::GlobalThis && !uid->isSymbol())
-            property = String(uid);
-        BuiltinName name = BuiltinTable::singleton().nameOf(m_vm, uid);
-        if (!(name && isFixed(name)) && m_namesOfProgram && m_namesOfProgram->contains(uid))
-            return withAOTErrorNote(makeString("Cannot add "_s, property, ": the compiled program looks for this property, and it was compiled to find that "_s, holder, " does not have it. Add it in code that is compiled with the program"_s));
-        return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s));
-    }
+    String messageOfRefusal(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
+    String messageOfRefusedDeletion(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
+    bool refusalAlwaysThrows() const final { return true; }
 
     String messageOfRefusedPrototype() const final
     {
-        return withAOTErrorNote(makeString("Cannot change the prototype of "_s, BuiltinTable::singleton().textOf(m_holder), " because built-in objects are read-only in a compiled executable"_s));
+        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder));
     }
 
 private:
@@ -772,18 +916,18 @@ private:
     BuiltinID m_holder;
     std::span<const BuiltinName> m_closedKeys;
     std::span<const uint32_t> m_constantMembers;
-    RefPtr<const OutsideNames> m_namesOfProgram;
+    WritesToBuiltinMembers* m_writes;
 };
 
 } // anonymous namespace
 
-Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, RefPtr<const ImmutablePropertyNames::OutsideNames>&& namesOfProgram)
+Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     OptionSet<ImmutablePropertyNames::Part> parts;
     if (table.closesIndexKeys(holder))
         parts.add(ImmutablePropertyNames::Part::NumericKeys);
-    if (table.hasLockedPrototypeLink(holder) || namesOfProgram)
+    if (table.hasLockedPrototypeLink(holder))
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
@@ -796,7 +940,7 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
                 openStrings.add(table.identifierOf(vm, table.at(member).name).impl());
         }
     }
-    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, WTF::move(namesOfProgram))));
+    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes)));
 }
 
 } // namespace JSC::AOT

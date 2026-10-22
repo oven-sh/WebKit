@@ -1,23 +1,23 @@
-# An entrypoint leaves by a tail call. Where the analysis leaves the check to the callee it has no frame and no check. A function with a check of its own checks at its tail call, which is the poll of a cycle of tail calls
+# An entrypoint leaves by a tail call and has no frame and no check: whatever calls a closure has tested the stack. What it enters has no check either, and a tail call of a value polls in the stub that makes it
 # FORM: AsRead
 # RUN: generate-code
 # RUN(PLACED): pipeline CheckPlacement
-# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
-# STATISTIC: StackChecksDeferredToCallee >= 1
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
+# STATISTIC: StackChecksCoveredByCallers >= 7
 # PLACED: function f2 name="returnsAnything"
 # PLACED: ReturnCall
-# PLACED: function f7 name="returnsNumber" {{*}}role=GenericEntrypoint
+# PLACED: function f6 name="returnsNumber" {{*}}role=GenericEntrypoint
 # PLACED: ReturnCall
-# PLACED: function f8 name="returnsAnything" {{*}}role=GenericEntrypoint
+# PLACED: function f7 name="returnsAnything" {{*}}role=GenericEntrypoint
 # PLACED: ReturnCall
-# PLACED: function f9 name="leaf" {{*}}role=GenericEntrypoint
+# PLACED: function f8 name="leaf" {{*}}role=GenericEntrypoint
 # PLACED: ReturnCall
-# CHECK: f1: size={{*}} prologueChecks=1
-# CHECK: f2: size={{*}} prologueChecks=1
+# CHECK: f1: size={{*}} prologueChecks=0 enteredWithoutStackCheck provenToFitOnStack
+# CHECK: f2: size={{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: f3: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: f6: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: f7: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: f8: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
-# CHECK: f9: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

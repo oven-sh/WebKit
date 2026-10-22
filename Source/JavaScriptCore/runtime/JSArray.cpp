@@ -28,6 +28,7 @@
 #include "IndexingTypeInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
+#include "JSObjectVisitInlines.h"
 #include "PropertyNameArray.h"
 #include "ResourceExhaustion.h"
 #include "ScopedArguments.h"
@@ -59,11 +60,11 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
     unsigned propertyCapacity = structure->outOfLineCapacity();
     unsigned oldVectorLength = butterfly->vectorLength();
 
-    unsigned availableOldLength = Butterfly::availableContiguousVectorLength(propertyCapacity, oldVectorLength);
+    void* theBase = butterfly->base(0, propertyCapacity);
+    unsigned availableOldLength = isStorageInOwnCell(object, theBase) ? oldVectorLength : Butterfly::availableContiguousVectorLength(propertyCapacity, oldVectorLength);
     if (availableOldLength >= newLength)
         return false;
 
-    void* theBase = butterfly->base(0, propertyCapacity);
     bool canReallocInPlace = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation();
     if (canReallocInPlace)
         return false;
@@ -204,7 +205,12 @@ void JSArray::setLengthWritable(JSGlobalObject* globalObject, bool writable)
     if (!isLengthWritable() || writable)
         return;
 
-    enterDictionaryIndexingMode(globalObject->vm());
+    // ensureArrayStorage() gives an object whose indexed properties are immutable no storage, because compiled code asks for it before it stores elements in place.
+    // This conversion is the engine's own, as in switchToSlowPutArrayStorage(): Array.prototype is frozen.
+    if (structure()->hasImmutableIndexedProperties()) [[unlikely]]
+        ensureArrayStorageExistsAndEnterDictionaryIndexingMode(globalObject->vm());
+    else
+        enterDictionaryIndexingMode(globalObject->vm());
 
     SparseArrayValueMap* map = arrayStorage()->m_sparseMap.get();
     ASSERT(map);
@@ -218,6 +224,9 @@ bool JSArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSArray* array = uncheckedDowncast<JSArray>(object);
+
+    if (array->structure()->hasFrozenElementsInPlace()) [[unlikely]]
+        array->moveFrozenElementsToSparseMap(vm);
 
     // 2. If P is "length", then
     // https://tc39.es/ecma262/#sec-arraysetlength
@@ -236,7 +245,8 @@ bool JSArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
         }
 
         // (Validated against the current descriptor with the converted value, and nothing below applies.)
-        if (array->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
+        // A definition that leaves the length as it is goes on below, where all it can do is make the length read-only. An array whose every property is immutable has its elements in place and stays as it is.
+        if (array->structure()->isImmutableProperty(propertyName.uid()) && (newLength != array->length() || array->structure()->hasImmutableProperties())) [[unlikely]] {
             PropertyDescriptor convertedDescriptor = descriptor;
             if (descriptor.value())
                 convertedDescriptor.setValue(jsNumber(newLength));
@@ -985,7 +995,7 @@ JSArray* JSArray::fastToSpliced(JSGlobalObject* globalObject, CallFrame* callFra
         if (newLength > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
             return nullptr;
 
-        if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), newLength)) [[unlikely]]
+        if (newLength >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), newLength)) [[unlikely]]
             return nullptr;
 
         if (length > this->butterfly()->vectorLength()) [[unlikely]]
@@ -1108,7 +1118,7 @@ bool JSArray::fastSplice(JSGlobalObject* globalObject, uint64_t length, uint64_t
     uint64_t newLength = length - deleteCount + itemCount;
     if (newLength > MAX_STORAGE_VECTOR_LENGTH)
         return false;
-    if (itemCount != deleteCount && !movesElementsInDenseStorage(vm.arrayStoragePolicy(), length - start - deleteCount, length, UINT32_MAX))
+    if (itemCount != deleteCount && length - start - deleteCount >= MIN_SPARSE_ARRAY_INDEX && vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
         return false;
 
     if (itemCount < deleteCount) {
@@ -1225,7 +1235,7 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     } else if (type != copyType)
         return false;
 
-    if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), values.size()))
+    if (values.size() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), values.size()))
         return false;
 
     CheckedUint32 checkedNewLength = startIndex;
@@ -1237,7 +1247,7 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     }
     unsigned newLength = checkedNewLength;
 
-    if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), newLength))
+    if (newLength >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), newLength))
         return false;
 
     if (!ensureLength(vm, newLength)) {
@@ -1305,7 +1315,7 @@ void JSArray::validatePristine(VM& vm) const
     check(!structure->isDictionary() && structure->hasMonoProto() && structure->storedPrototype() == realm->arrayPrototype());
     if (structure->hasPristineElements()) {
         check(!structure->mayInterceptIndexedAccesses() && !hasSlowPutArrayStorage(structure->indexingType()));
-        check(!realm->isHavingABadTime() && realm->arrayPrototypeChainIsSaneWatchpointSet().isStillValid());
+        check(!realm->isHavingABadTime());
     }
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* name = entry.key();
@@ -1355,7 +1365,7 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     }
     unsigned newLength = checkedNewLength;
 
-    if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), newLength))
+    if (newLength >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), newLength))
         return false;
 
     if (!ensureLength(vm, newLength)) {
@@ -1478,6 +1488,9 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
+        moveFrozenElementsToSparseMap(vm);
+
     if (!tryMakeWritable(vm)) [[unlikely]] {
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return jsUndefined();
@@ -1599,9 +1612,13 @@ JSValue JSArray::fastShift(VM& vm)
         if (!length)
             return jsUndefined();
 
-        bool movesStart = length > shiftThreshold;
-        if (movesStart && vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed) [[unlikely]]
-            return { };
+        if (length > shiftThreshold) [[unlikely]] {
+            if (vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
+                return { };
+            JSValue first = butterfly->contiguous().at(this, 0).get();
+            if (first && !holesMustForwardToPrototype() && tryMoveElementsStartForward(vm, 1))
+                return first;
+        }
 
         JSValue result = butterfly->contiguous().at(this, 0).get();
         if (!result)
@@ -1611,8 +1628,6 @@ JSValue JSArray::fastShift(VM& vm)
         if (moveCount) {
             if (holesMustForwardToPrototype()) [[unlikely]]
                 return { };
-            if (movesStart && tryMoveElementsStartForward(vm, 1))
-                return result;
             if (indexingType == ArrayWithInt32)
                 memmove(butterfly->contiguous().data(), butterfly->contiguous().data() + 1, sizeof(JSValue) * moveCount);
             else
@@ -1631,9 +1646,13 @@ JSValue JSArray::fastShift(VM& vm)
         if (!length)
             return jsUndefined();
 
-        bool movesStart = length > shiftThreshold;
-        if (movesStart && vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed) [[unlikely]]
-            return { };
+        if (length > shiftThreshold) [[unlikely]] {
+            if (vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
+                return { };
+            double first = butterfly->contiguousDouble().at(this, 0);
+            if (first == first && !holesMustForwardToPrototype() && tryMoveElementsStartForward(vm, 1))
+                return JSValue(JSValue::EncodeAsDouble, first);
+        }
 
         double result = butterfly->contiguousDouble().at(this, 0);
         if (result != result)
@@ -1643,8 +1662,6 @@ JSValue JSArray::fastShift(VM& vm)
         if (moveCount) {
             if (holesMustForwardToPrototype()) [[unlikely]]
                 return { };
-            if (movesStart && tryMoveElementsStartForward(vm, 1))
-                return JSValue(JSValue::EncodeAsDouble, result);
             memmove(butterfly->contiguousDouble().data(), butterfly->contiguousDouble().data() + 1, sizeof(double) * moveCount);
         }
         butterfly->contiguousDouble().at(this, moveCount) = PNaN;
@@ -1688,7 +1705,7 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
     case ArrayWithDouble:
     case ArrayWithInt32:
     case ArrayWithContiguous: {
-        if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), count) || sourceStructure->holesMustForwardToPrototype(source))
+        if ((count >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), count)) || sourceStructure->holesMustForwardToPrototype(source))
             return nullptr;
 
         if (startIndex + count > source->butterfly()->vectorLength())
@@ -1725,7 +1742,7 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         return createWithButterfly(vm, nullptr, resultStructure, butterfly);
     }
     case ArrayWithArrayStorage: {
-        if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), count) || sourceStructure->holesMustForwardToPrototype(source))
+        if ((count >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), count)) || sourceStructure->holesMustForwardToPrototype(source))
             return nullptr;
 
         if (startIndex + count > source->butterfly()->arrayStorage()->vectorLength())
@@ -1870,9 +1887,16 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         
         // We may have to walk the entire array to do the shift. We're willing to do
         // so only if it's not horribly slow.
-        bool isSlowToMove = !movesElementsInDenseStorage(ArrayStoragePolicy::UsesArrayStorageForSpeed, oldLength - (startIndex + count), oldLength, shiftArrayStorageThreshold);
-        if (isSlowToMove && vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
-            return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm));
+        if (oldLength - (startIndex + count) >= MIN_SPARSE_ARRAY_INDEX || oldLength > shiftArrayStorageThreshold) {
+            if (vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
+                return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm));
+            if (!startIndex && count < oldLength) {
+                if (holesMustForwardToPrototype() && containsHole(butterfly->contiguous().data() + count, oldLength - count)) [[unlikely]]
+                    return false;
+                if (tryMoveElementsStartForward(vm, count))
+                    return true;
+            }
+        }
 
         // Reading a hole may have to consult the prototype chain, which only the generic path does. Check before
         // moving anything so that returning false leaves the array untouched.
@@ -1881,8 +1905,6 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         if (moveCount) {
             if (holesMustForwardToPrototype() && containsHole(butterfly->contiguous().data() + startIndex + count, moveCount)) [[unlikely]]
                 return false;
-            if (isSlowToMove && !startIndex && tryMoveElementsStartForward(vm, count))
-                return true;
             if (indexingType == ArrayWithContiguous)
                 gcSafeMemmove(butterfly->contiguous().data() + startIndex, butterfly->contiguous().data() + startIndex + count, sizeof(JSValue) * moveCount);
             else
@@ -1910,9 +1932,16 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         
         // We may have to walk the entire array to do the shift. We're willing to do
         // so only if it's not horribly slow.
-        bool isSlowToMove = !movesElementsInDenseStorage(ArrayStoragePolicy::UsesArrayStorageForSpeed, oldLength - (startIndex + count), oldLength, shiftArrayStorageThreshold);
-        if (isSlowToMove && vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
-            return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm));
+        if (oldLength - (startIndex + count) >= MIN_SPARSE_ARRAY_INDEX || oldLength > shiftArrayStorageThreshold) {
+            if (vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed)
+                return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm));
+            if (!startIndex && count < oldLength) {
+                if (holesMustForwardToPrototype() && containsHole(butterfly->contiguousDouble().data() + count, oldLength - count)) [[unlikely]]
+                    return false;
+                if (tryMoveElementsStartForward(vm, count))
+                    return true;
+            }
+        }
 
         // Reading a hole may have to consult the prototype chain, which only the generic path does. Check before
         // moving anything so that returning false leaves the array untouched.
@@ -1921,8 +1950,6 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         if (moveCount) {
             if (holesMustForwardToPrototype() && containsHole(butterfly->contiguousDouble().data() + startIndex + count, moveCount)) [[unlikely]]
                 return false;
-            if (isSlowToMove && !startIndex && tryMoveElementsStartForward(vm, count))
-                return true;
             memmove(butterfly->contiguousDouble().data() + startIndex,
                 butterfly->contiguousDouble().data() + startIndex + count,
                 sizeof(double) * moveCount);
@@ -2005,6 +2032,8 @@ bool JSArray::unshiftCountWithArrayStorage(JSGlobalObject* globalObject, unsigne
 
 bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsigned startIndex, unsigned count)
 {
+    static_assert(shiftThreshold < MIN_SPARSE_ARRAY_INDEX);
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2027,8 +2056,17 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         // We may have to walk the entire array to do the unshift. We're willing to do so
         // only if it's not horribly slow.
         unsigned moveCount = oldLength - startIndex;
-        if (!movesElementsInDenseStorage(vm.arrayStoragePolicy(), moveCount, oldLength, UINT32_MAX))
-            RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorage(globalObject, startIndex, count, ensureArrayStorage(vm)));
+        if (moveCount > shiftThreshold) [[unlikely]] {
+            if (vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed) {
+                if (moveCount >= MIN_SPARSE_ARRAY_INDEX)
+                    RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorage(globalObject, startIndex, count, ensureArrayStorage(vm)));
+            } else if (!startIndex && count <= MAX_STORAGE_VECTOR_LENGTH - oldLength) {
+                if (holesMustForwardToPrototype() && containsHole(butterfly->contiguous().data(), oldLength)) [[unlikely]]
+                    return false;
+                if (tryMoveElementsStartBackward(vm, count))
+                    return true;
+            }
+        }
 
         CheckedUint32 checkedLength(oldLength);
         checkedLength += count;
@@ -2044,9 +2082,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         // moving anything so that returning false leaves the array untouched.
         if (moveCount && holesMustForwardToPrototype() && containsHole(butterfly->contiguous().data() + startIndex, moveCount)) [[unlikely]]
             return false;
-
-        if (!startIndex && oldLength > shiftThreshold && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense && tryMoveElementsStartBackward(vm, count))
-            return true;
 
         if (newLength > butterfly->vectorLength()) {
             if (tryGrowAndShiftButterflyRight<WriteBarrier<Unknown>>(this, vm, butterfly, oldLength, newLength, startIndex, count))
@@ -2080,8 +2115,17 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         // We may have to walk the entire array to do the unshift. We're willing to do so
         // only if it's not horribly slow.
         unsigned moveCount = oldLength - startIndex;
-        if (!movesElementsInDenseStorage(vm.arrayStoragePolicy(), moveCount, oldLength, UINT32_MAX))
-            RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorage(globalObject, startIndex, count, ensureArrayStorage(vm)));
+        if (moveCount > shiftThreshold) [[unlikely]] {
+            if (vm.arrayStoragePolicy() == ArrayStoragePolicy::UsesArrayStorageForSpeed) {
+                if (moveCount >= MIN_SPARSE_ARRAY_INDEX)
+                    RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorage(globalObject, startIndex, count, ensureArrayStorage(vm)));
+            } else if (!startIndex && count <= MAX_STORAGE_VECTOR_LENGTH - oldLength) {
+                if (holesMustForwardToPrototype() && containsHole(butterfly->contiguousDouble().data(), oldLength)) [[unlikely]]
+                    return false;
+                if (tryMoveElementsStartBackward(vm, count))
+                    return true;
+            }
+        }
 
         CheckedUint32 checkedLength(oldLength);
         checkedLength += count;
@@ -2097,9 +2141,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         // moving anything so that returning false leaves the array untouched.
         if (moveCount && holesMustForwardToPrototype() && containsHole(butterfly->contiguousDouble().data() + startIndex, moveCount)) [[unlikely]]
             return false;
-
-        if (!startIndex && oldLength > shiftThreshold && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense && tryMoveElementsStartBackward(vm, count))
-            return true;
 
         if (newLength > butterfly->vectorLength()) {
             if (tryGrowAndShiftButterflyRight<double>(this, vm, butterfly, oldLength, newLength, startIndex, count))
@@ -2432,7 +2473,7 @@ JSArray* tryCloneArrayFromFast(JSGlobalObject* globalObject, JSValue arrayValue)
 
     Butterfly* butterfly= array->butterfly();
     unsigned resultSize = butterfly->publicLength();
-    if (hasAnyArrayStorage(sourceType) || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), resultSize)) [[unlikely]] {
+    if (hasAnyArrayStorage(sourceType) || (resultSize >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), resultSize))) [[unlikely]] {
         JSArray* result = constructEmptyArray(globalObject, nullptr, resultSize);
         RETURN_IF_EXCEPTION(scope, { });
 

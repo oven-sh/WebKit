@@ -17,6 +17,7 @@
 #include "AOTTypeTestSite.h"
 #include <algorithm>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <wtf/BitVector.h>
 
@@ -88,17 +89,16 @@ static size_t indexAfterLastOperation(const Function& function, ValueID open, co
 }
 
 // What may run between the open and the last operation of the pattern, but for those operations themselves and the landing code.
-static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration& iteration, NOESCAPE const Invocable<bool(ValueID)> auto& matchesValue, NOESCAPE const Invocable<bool(BlockID)> auto& matchesTerminator)
+static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration& iteration, std::span<const BlockID> liveRegion, NOESCAPE const Invocable<bool(ValueID)> auto& matchesValue, NOESCAPE const Invocable<bool(BlockID)> auto& matchesTerminator)
 {
     const Function& function = pass.function;
     FunctionAnalyses& analyses = pass.analyses;
 
-    Vector<BlockID> region = findLiveRegion(pass, iteration.open);
     BitVector liveAtHead(function.blocks.size());
-    for (BlockID id : region)
+    for (BlockID id : liveRegion)
         liveAtHead.quickSet(id.index());
 
-    for (BlockID id : region) {
+    for (BlockID id : liveRegion) {
         if (isLandingCode(analyses.dominators(), iteration, id))
             continue;
 
@@ -116,10 +116,10 @@ static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration&
     return false;
 }
 
-static bool regionInterferesWithSteps(FunctionPassContext& pass, const Iteration& iteration)
+static bool regionInterferesWithSteps(FunctionPassContext& pass, const Iteration& iteration, std::span<const BlockID> liveRegion)
 {
     constexpr Effects step = Effects::unknownCode();
-    return anyOperationBetweenSteps(pass, iteration, [&](ValueID value) {
+    return anyOperationBetweenSteps(pass, iteration, liveRegion, [&](ValueID value) {
         return pass.analyses.effectsOf(value).onAnyEdge().interferesWith(step);
     }, [&](BlockID block) {
         return pass.analyses.effectsOfTerminator(block).onAnyEdge().interferesWith(step);
@@ -128,7 +128,7 @@ static bool regionInterferesWithSteps(FunctionPassContext& pass, const Iteration
 
 // The reads stay where the steps stood, so what stands between them only has to leave alone what they rely on: the length, and what the open tested.
 // Whatever would end the proof of a test of those ends this one. What the type proves holds for good.
-static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, ValueID array)
+static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, ValueID array)
 {
     FunctionAnalyses& analyses = pass.analyses;
     Vector<Value, 2> tests { makeArrayStorageTest(array, ArrayStorage::Contiguous) };
@@ -142,7 +142,7 @@ static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& ite
         dependencies.append(WTF::move(*dependenciesOfTest));
     }
 
-    return anyOperationBetweenSteps(pass, iteration, [&](ValueID value) {
+    return anyOperationBetweenSteps(pass, iteration, liveRegion, [&](ValueID value) {
         GuardWriter writer(analyses, value);
         return std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) {
             return writer.mayEnd(relied);
@@ -193,7 +193,7 @@ bool hasProvenPlainElements(const Type& iterable)
 
 // No read of an element runs code, and a read past the end or of a hole finds undefined, as a step past the end does. An array that nothing changes
 // between the steps has one length for all of them, so a step after the last one is a read past the end.
-static bool hasStepsThatReadElements(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, uint32_t count)
+static bool hasStepsThatReadElements(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, uint32_t count)
 {
     if (arm.kind != JSC::IterationKind::Values)
         return false;
@@ -201,10 +201,10 @@ static bool hasStepsThatReadElements(FunctionPassContext& pass, const Iteration&
     // The test of the names has a failing edge, and the elements are tested with them.
     if (arm.namesAreProven && !hasProvenPlainElements(pass.program.typeOf(pass.function, array)))
         return false;
-    return stepsMatchElements(pass.function, iteration, count) && !regionMayChangeArray(pass, iteration, arm, array);
+    return stepsMatchElements(pass.function, iteration, count) && !regionMayChangeArray(pass, iteration, arm, liveRegion, array);
 }
 
-PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm)
+PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion)
 {
     if (iteration.kind == IteratorKind::Async)
         return PatternRead::BySteps;
@@ -215,7 +215,7 @@ PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iterat
     if (!open.isDestructuring() || open.hasRest() || !count || !*count)
         return PatternRead::BySteps;
     if (arm.form == IterationForm::Array)
-        return hasStepsThatReadElements(pass, iteration, arm, *count) ? PatternRead::ByIndex : PatternRead::BySteps;
+        return hasStepsThatReadElements(pass, iteration, arm, liveRegion, *count) ? PatternRead::ByIndex : PatternRead::BySteps;
     if (arm.form != IterationForm::Protocol)
         return PatternRead::BySteps;
     if (pass.exceeds(LimitID::MaxDestructuredElements, *count, iteration.open))
@@ -226,82 +226,132 @@ PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iterat
         return PatternRead::BySteps;
     if (findsKnownIteratorMethod(pass.program, pass.program.typeOf(function, open.iterableOperand())))
         return PatternRead::BySteps;
-    if (regionInterferesWithSteps(pass, iteration))
+    if (regionInterferesWithSteps(pass, iteration, liveRegion))
         return PatternRead::BySteps;
     return PatternRead::InOneRead;
 }
 
-static void redirectResultReads(FunctionPassContext& pass, const Iteration& iteration, ValueID oneRead)
+namespace {
+
+struct ResultRead {
+    ValueID read;
+    uint32_t stepIndex { 0 };
+};
+
+// What a pattern takes from the function as it stands before any pattern is changed.
+struct PlannedRead {
+    ProgramPoint firstStep;
+    Origin origin;
+    uint32_t count { 0 };
+    ReplacedEffects replaced;
+    Vector<ResultRead, 8> resultReads;
+    ValueID oneRead;
+};
+
+} // anonymous namespace
+
+static bool isBefore(const ProgramPoint& a, const ProgramPoint& b)
 {
-    Function& function = pass.function;
-    const UseLists& useLists = pass.analyses.useLists();
-    for (ValueID resume : iteration.resumes) {
-        uint32_t stepIndex = *function.at(resume).stepIndex();
-        for (const Use& use : useLists.usesOf(resume)) {
-            RELEASE_ASSERT(use.kind == Use::Kind::Operand);
-            Value& read = function.at(use.user);
-            RELEASE_ASSERT(read.opcode == Opcode::ResultAt);
-            switch (static_cast<IteratorResumeResult>(read.index())) {
-            case IteratorResumeResult::Done:
-                read.become(Opcode::Boolean);
-                read.setBoolean(false);
-                continue;
-            case IteratorResumeResult::Value:
-                read.setResultsOperand(oneRead);
-                read.setIndex(stepIndex);
-                continue;
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-    pass.analyses.didChangeValues();
+    return std::tie(a.block, a.index) < std::tie(b.block, b.index);
 }
 
-static void eraseOperations(FunctionPassContext& pass, IRBuilder& builder, const Iteration& iteration)
+static PlannedRead planOneRead(FunctionPassContext& pass, const UseLists& useLists, const Iteration& operations, Vector<ProgramPoint>& pointsOfOperations)
 {
-    Vector<ProgramPoint, 8> points;
-    {
-        const UseLists& useLists = pass.analyses.useLists();
-        for (ValueID resume : iteration.resumes)
-            points.append(useLists.pointOf(resume));
-        for (ValueID close : iteration.closes)
-            points.append(useLists.pointOf(close));
-    }
-    std::ranges::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {
-        return std::tie(a.block, a.index) < std::tie(b.block, b.index);
-    });
+    const Function& function = pass.function;
+    const EffectContext& effectContext = pass.analyses.effectContext();
+    const Value& open = function.at(operations.open);
 
-    for (size_t first = 0; first < points.size();) {
-        BlockID block = points[first].block;
+    PlannedRead plan;
+    plan.firstStep = useLists.pointOf(findFirstStep(function, operations));
+    plan.origin = open.origin();
+    plan.count = *open.elementCount();
+    plan.replaced.add(effectContext, function, open);
+
+    for (ValueID resume : operations.resumes) {
+        plan.replaced.add(effectContext, function, function.at(resume));
+        pointsOfOperations.append(useLists.pointOf(resume));
+        uint32_t stepIndex = *function.at(resume).stepIndex();
+        for (const Use& use : useLists.usesOf(resume)) {
+            RELEASE_ASSERT(use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ResultAt);
+            plan.resultReads.append(ResultRead { use.user, stepIndex });
+        }
+    }
+    for (ValueID close : operations.closes) {
+        plan.replaced.add(effectContext, function, function.at(close));
+        pointsOfOperations.append(useLists.pointOf(close));
+    }
+    return plan;
+}
+
+static void eraseOperations(IRBuilder& builder, std::span<const ProgramPoint> sortedPoints)
+{
+    for (size_t first = 0; first < sortedPoints.size();) {
+        BlockID block = sortedPoints[first].block;
         BitVector indexes;
-        for (; first < points.size() && points[first].block == block; ++first)
-            indexes.set(points[first].index);
+        for (; first < sortedPoints.size() && sortedPoints[first].block == block; ++first)
+            indexes.set(sortedPoints[first].index);
         builder.eraseValues(block, indexes);
     }
 }
 
-void expandPatternInOneRead(FunctionPassContext& pass, IRBuilder& builder, const Iteration& iteration, ValueID iterable)
+static ProgramPoint pointAfterErasing(std::span<const ProgramPoint> sortedPoints, ProgramPoint point)
 {
+    auto firstInBlock = std::ranges::lower_bound(sortedPoints, ProgramPoint::atHeadOf(point.block), isBefore);
+    auto firstNotBefore = std::ranges::lower_bound(sortedPoints, point, isBefore);
+    return { point.block, point.index - static_cast<uint32_t>(firstNotBefore - firstInBlock) };
+}
+
+static void redirectResultReads(Function& function, const PlannedRead& plan)
+{
+    for (const ResultRead& resultRead : plan.resultReads) {
+        Value& read = function.edit(resultRead.read);
+        switch (static_cast<IteratorResumeResult>(read.index())) {
+        case IteratorResumeResult::Done:
+            read.become(Opcode::Boolean);
+            read.setBoolean(false);
+            continue;
+        case IteratorResumeResult::Value:
+            read.setResultsOperand(plan.oneRead);
+            read.setIndex(resultRead.stepIndex);
+            continue;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+// Every point and every use is read before the first change, so the use lists are computed once for all patterns.
+void expandPatternsInOneRead(FunctionPassContext& pass, IRBuilder& builder, std::span<const PatternInOneRead> patterns)
+{
+    if (patterns.empty())
+        return;
+
     Function& function = pass.function;
-    const EffectContext& effectContext = pass.analyses.effectContext();
+    Vector<PlannedRead> plans;
+    plans.reserveInitialCapacity(patterns.size());
+    Vector<ProgramPoint> pointsOfOperations;
+    {
+        const UseLists& useLists = pass.analyses.useLists();
+        for (const PatternInOneRead& pattern : patterns)
+            plans.append(planOneRead(pass, useLists, pattern.operations, pointsOfOperations));
+    }
+    std::ranges::sort(pointsOfOperations, isBefore);
+    eraseOperations(builder, pointsOfOperations.span());
 
-    ReplacedEffects replaced;
-    replaced.add(effectContext, function, function.at(iteration.open));
-    for (ValueID resume : iteration.resumes)
-        replaced.add(effectContext, function, function.at(resume));
-    for (ValueID close : iteration.closes)
-        replaced.add(effectContext, function, function.at(close));
-
-    ProgramPoint firstStep = pass.analyses.useLists().pointOf(findFirstStep(function, iteration));
-    builder.setOrigin(function.at(iteration.open).origin());
-    Value read = IRBuilder::make(Opcode::DestructureIterable, { iterable });
-    read.setCount(*function.at(iteration.open).elementCount());
-    ValueID oneRead = builder.insertBefore(firstStep, WTF::move(read));
+    for (size_t index = 0; index < patterns.size(); ++index) {
+        PlannedRead& plan = plans[index];
+        builder.setOrigin(plan.origin);
+        Value read = IRBuilder::make(Opcode::DestructureIterable, { patterns[index].iterable });
+        read.setCount(plan.count);
+        plan.oneRead = builder.insertBefore(pointAfterErasing(pointsOfOperations.span(), plan.firstStep), WTF::move(read));
+    }
     builder.applyInsertions();
-    checkReplacement(effectContext, function, ReplacementSite { pass.id, firstStep.block, oneRead }, function.at(oneRead), replaced, pass.build.diagnostics());
 
-    redirectResultReads(pass, iteration, oneRead);
-    eraseOperations(pass, builder, iteration);
+    const EffectContext& effectContext = pass.analyses.effectContext();
+    for (const PlannedRead& plan : plans) {
+        checkReplacement(effectContext, function, ReplacementSite { pass.id, plan.firstStep.block, plan.oneRead }, function.at(plan.oneRead), plan.replaced, pass.build.diagnostics());
+        redirectResultReads(function, plan);
+    }
+    pass.analyses.didChangeValues();
 }
 
 } } } // namespace JSC::AOT::Typed

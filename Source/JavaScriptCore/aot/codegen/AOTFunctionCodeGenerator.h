@@ -10,6 +10,7 @@
 #include "AOTB3Policy.h"
 #include "AOTCodeRecords.h"
 #include "AOTCompileFunctions.h"
+#include "AOTDirectCodeGenerator.h"
 #include "AOTFrameAddressValidation.h"
 #include "AOTNarrowReferenceValidation.h"
 #include "AOTRelocationLowering.h"
@@ -23,21 +24,47 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs&, FunctionID, const Function&, const FrameMaps&);
-BitVector findColdAirBlocks(const CodeGenerationInputs&, FunctionID, const B3::Air::Code&);
+struct ColdAirBlocks {
+    BitVector cold;
+    // No path without a rare edge leads there, or the code runs once.
+    BitVector rarelyRun;
+};
+ColdAirBlocks findColdAirBlocks(const CodeGenerationInputs&, FunctionID, const B3::Air::Code&);
+
+struct BlockColdness {
+    bool isCold;
+    bool isRarelyRun;
+};
+
+class BlockColdnessRule {
+public:
+    BlockColdnessRule(const CodeGenerationInputs&, FunctionID);
+
+    BlockColdness of(double frequency, bool isRare) const;
+
+private:
+    const CodeGenerationInputs& m_inputs;
+    FunctionID m_id;
+    double m_activations;
+    bool m_isExpectedNotToBeEntered;
+};
 
 class FunctionCodeGenerator {
     WTF_MAKE_NONCOPYABLE(FunctionCodeGenerator);
     WTF_MAKE_TZONE_ALLOCATED(FunctionCodeGenerator);
 public:
-    static std::unique_ptr<FunctionCodeGenerator> create(const CodeGenerationWorker&, const CodeGenerationInputs&, FunctionID, CodeGenerationTotals&);
+    static std::unique_ptr<FunctionCodeGenerator> create(const CodeGenerationWorker&, const CodeGenerationInputs&, FunctionID, CodeGenerationTotals&, DirectCodeAttempt = DirectCodeAttempt::First);
 
     B3::Procedure& procedure() { return *m_procedure; }
+    bool generatesDirectly() const { return !!m_directCode; }
+    bool didFailToGenerateDirectly() const { return m_didFailToGenerateDirectly; }
+    DirectCodeAttempt nextDirectCodeAttempt() const { return attemptAfterFailure(*m_directCode); }
     CompiledCode finish();
 
 private:
     FunctionCodeGenerator(const CodeGenerationWorker&, const CodeGenerationInputs&, FunctionID, CodeGenerationTotals&);
 
-    bool generateB3();
+    bool generateB3(DirectCodeAttempt);
     CompiledCode emitCode();
     bool frameFitsImage();
     void reportLinkFailure(LinkFailure);
@@ -57,6 +84,8 @@ private:
     uint32_t m_numberOfLateReferenceGuards { 0 };
     // Last, so that it is destroyed first: its generators and client phases point into the members above.
     std::unique_ptr<B3::Procedure> m_procedure;
+    DirectCodeGeneratorPointer m_directCode;
+    bool m_didFailToGenerateDirectly { false };
 };
 
 } } } // namespace JSC::AOT::Typed

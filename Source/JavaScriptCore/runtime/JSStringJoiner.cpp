@@ -205,12 +205,6 @@ static inline String joinStrings(JSGlobalObject* globalObject, const WriteBarrie
                 data = data.subspan(length);
                 return;
             }
-#if USE(BUN_JSC_ADDITIONS)
-            if (value.isDouble()) {
-                appendStringToData(data, static_cast<int32_t>(value.asDouble()));
-                return;
-            }
-#endif
         }
         ASSERT(value.isInt32());
         appendStringToData(data, value.asInt32());
@@ -321,7 +315,7 @@ JSString* JSOnlyStringsAndInt32sJoiner::joinImpl(JSGlobalObject* globalObject, c
     return jsString(vm, WTF::move(result));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(AOT)
 template<typename CharacterType>
 static inline String joinInt32s(JSGlobalObject* globalObject, const double* numbers, unsigned size, std::span<const CharacterType> separator, unsigned joinedLength)
 {

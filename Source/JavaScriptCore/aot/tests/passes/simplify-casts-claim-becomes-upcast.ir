@@ -1,4 +1,4 @@
-# A claim that cannot fail loses its test and stays as an upcast where only one of operand and result has literal strings
+# A check that cannot fail loses its test and stays as an upcast where only one of operand and result has literal strings
 # FORM: Prepared optimizing
 # RUN: pass SimplifyCasts
 # STATISTIC: SimplifyCastsChanges = 4
@@ -7,7 +7,7 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="onlyOperandHasLiterals" parameters=[{type="a"|"b"}] results=[{type=string}] {
   b0(v0: "a"|"b"):
-    v1: string = Claim v0 castType=string
+    v1: string = Check v0 castType=string
     Return v1
 }
 # CHECK-LABEL: function f0 name="onlyOperandHasLiterals"
@@ -17,7 +17,7 @@ function f0 name="onlyOperandHasLiterals" parameters=[{type="a"|"b"}] results=[{
 
 function f1 name="onlyResultHasLiterals" parameters=[{type=number}] results=[{type=number|"a"}] {
   b0(v0: number):
-    v1: number|"a" = Claim v0 castType=number|"a"
+    v1: number|"a" = Check v0 castType=number|"a"
     Return v1
 }
 # CHECK-LABEL: function f1 name="onlyResultHasLiterals"
@@ -27,7 +27,7 @@ function f1 name="onlyResultHasLiterals" parameters=[{type=number}] results=[{ty
 
 function f2 name="bothHaveLiterals" parameters=[{type="a"|"b"}] results=[{type=string}] {
   b0(v0: "a"|"b"):
-    v1 = Claim v0 castType=string
+    v1 = Check v0 castType=string
     Return v1
 }
 # CHECK-LABEL: function f2 name="bothHaveLiterals"
@@ -36,21 +36,21 @@ function f2 name="bothHaveLiterals" parameters=[{type="a"|"b"}] results=[{type=s
 
 function f3 name="neitherHasLiterals" parameters=[{type=string}] results=[{type=string}] {
   b0(v0: string):
-    v1 = Claim v0 castType=string
+    v1 = Check v0 castType=string
     Return v1
 }
 # CHECK-LABEL: function f3 name="neitherHasLiterals"
 # CHECK-NEXT: b0(v0: string):
 # CHECK-NEXT: Return v0
 
-function f4 name="claimCanFail" parameters=[{type=string}] results=[{type=string}] {
+function f4 name="checkCanFail" parameters=[{type=string}] results=[{type=string}] {
   b0(v0: string):
-    v1 = Claim v0 castType="a"|"b"
+    v1 = Check v0 castType="a"|"b"
     Return v1
 }
-# CHECK-LABEL: function f4 name="claimCanFail"
+# CHECK-LABEL: function f4 name="checkCanFail"
 # CHECK-NEXT: b0(v0: string):
-# CHECK-NEXT: v1: "a"|"b" = Claim v0 castType="a"|"b"
+# CHECK-NEXT: v1: "a"|"b" = Check v0 castType="a"|"b"
 # CHECK-NEXT: Return v1
 
 function f5 name="upcastStays" parameters=[{type="a"|"b"}] results=[{type=string}] {

@@ -1,19 +1,22 @@
-# A variable that is stored once, with a closure that captures nothing, and that no read sees before the store is born as that function: the module body neither makes the closure nor stores it
+# A variable that is stored once, with a closure that captures nothing, is born as that function: the module body neither makes the closure nor stores it. Where a read may come before the store, the variable keeps only the mark of its dead zone, and a second variable is born as the function
 # FORM: Prepared
 # RUN: pass DeferDefinitions
-# STATISTIC: ClosuresDeferredInVariables = 1
+# STATISTIC: ClosuresDeferredInVariables = 2
 # CHECK: outcome: Changed
 # CHECK: variable g0 name="deferred" module=m0 declared={type=f1} initialization=Function function=f1 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
-# CHECK-NEXT: variable g1 name="mayBeReadEarly" module=m0 declared={type=absent|f2} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g1 name="mayBeReadEarly" module=m0 declared={type=undefined|absent} flow={writers=AllKnown stores=AtMostOnce}
 # CHECK-NEXT: variable g2 name="capturesSomething" module=m0 declared={type=f3} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 # CHECK-NEXT: variable g3 name="closureIsUsedTwice" module=m0 declared={type=f4} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 # CHECK-NEXT: variable g4 name="firstOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 # CHECK-NEXT: variable g5 name="secondOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 # CHECK-NEXT: variable g6 name="unknownWriters" module=m0 declared={type=anything} flow={stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g7 name="mayBeReadEarly" module=m0 declared={type=f2} initialization=Function function=f2 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
 # CHECK-LABEL: function f0 name="main"
 # CHECK-NOT: function=f1
 # CHECK-NOT: variable=g0
-# CHECK: = NewClosure function=f2
+# CHECK-NOT: function=f2
+# CHECK: [[marker]]: undefined = Undefined
+# CHECK-NEXT: PutModuleVariable [[marker]] variable=g1
 # CHECK: Return
 
 module m0 path="/main.ts" displayPath="main.ts" body=f0

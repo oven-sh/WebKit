@@ -1,0 +1,38 @@
+# Object.defineProperty(Array.prototype, "last", { get() { } }); plain = [1, 1]
+# Start-up locks the members of Array.prototype and leaves it open to other names. A read under a key nobody knows may name the accessor.
+# Each is handed to a helper of its own, and the question is asked of the type that flow proves for the helper's parameter.
+# RUN: runs-no-code length last push
+# CHECK: f3 v0: Array<1, proven, Int32, pristine[Storage, Names, Dense]>: length=yes|yes last=no|no push=yes|yes any=no|no keys=yes iterate=yes convert=yes define=no unlisted=no called=yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Spy"
+layout L1 name="GetterDescriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=ArrayPrototype
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = String string="last"
+    v6 = Call v2, -, v1, v5, v4
+    v7 = NewArray v0, v0 contents=anything
+    v8 = PropGet v7 key="length"
+    v9 = PropGet v7 key="push"
+    v10 = NewClosure function=f3
+    v11 = Call v10, -, v7
+    Return
+}
+function f1 name="spy" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="spy" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="takesPlain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

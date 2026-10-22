@@ -74,6 +74,7 @@ function f6 name="setPrototype" parameters=[{type=anything}, {type=anything}] re
 )IR"_s;
 
 // Each line walks fifty new objects. Objects of one Structure and one key order ask the run time for their enumerator once, and once more after each collection, whenever that comes: "found".
+// So do objects with extra properties, once their Structure names the Structure of those.
 static constexpr ASCIILiteral statements = R"JS(
 globalThis.publish = (makePair, makeReversedPair, walk, set, remove, setPrototype) => {
     const calls = () => Number(aotOperationCount("operationAOTGetPropertyEnumerator"));
@@ -102,6 +103,7 @@ globalThis.publish = (makePair, makeReversedPair, walk, set, remove, setPrototyp
     prototype[3] = 0;
     measure("index on the other prototype", i => setPrototype(makePair(i), prototype));
     measure("no prototype", i => setPrototype(makePair(i), null));
+    measure("no prototype and an extra property", i => set(setPrototype(makePair(i), null), "third", i));
     measure("pairs after all that", makePair);
     gc();
     measure("pairs after a collection", makePair);
@@ -115,13 +117,14 @@ static constexpr ASCIILiteral expectedOutput =
     "reversed pairs: found, second first\n"
     "both orders in turn: found, first second\n"
     "one field deleted: found, second\n"
-    "extra property: 50 calls, first second third\n"
-    "another extra property: 50 calls, first second fourth\n"
-    "extra property stored by the interpreter: 50 calls, first second third\n"
+    "extra property: found, first second third\n"
+    "another extra property: found, first second fourth\n"
+    "extra property stored by the interpreter: found, first second third\n"
     "index: 50 calls, 7 first second\n"
     "other prototype: 50 calls, first second inherited\n"
     "index on the other prototype: 50 calls, first second 3 inherited\n"
     "no prototype: 50 calls, first second\n"
+    "no prototype and an extra property: found, first second third\n"
     "pairs after all that: found, first second\n"
     "pairs after a collection: found, first second\n"
     "ordinary objects: found, first second\n"

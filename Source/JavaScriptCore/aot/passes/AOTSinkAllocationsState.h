@@ -101,10 +101,14 @@ struct SinkingState {
     Vector<TestEntry, 1> tests;
 
     static SinkingState unreachableAt(BlockID);
+    static SinkingState nothingAt(BlockID);
 
     ObjectState* find(VirtualObjectID);
     const ObjectState* find(VirtualObjectID) const;
+    std::optional<size_t> indexOf(VirtualObjectID) const;
     ObjectState& add(VirtualObjectID, ObjectState&&);
+    void set(std::span<ObjectEntry> movedEntries);
+    size_t weight() const;
     void remove(VirtualObjectID);
     bool canReach(VirtualObjectID from, VirtualObjectID to) const;
 
@@ -125,12 +129,15 @@ struct SinkingState {
 class SinkingDecisions {
 public:
     bool isBuiltAtHead(BlockID, VirtualObjectID) const;
+    bool buildsAtHeadOf(BlockID block) const { return m_blocksWithObjectsBuiltAtHeads.get(block.index()); }
     // A parameter that takes cells, or a cast that stays a value of the program: the name is no alias of an object.
     bool holdsCells(ValueID parameterOrCast) const { return m_parametersHoldingCells.get(parameterOrCast.index()); }
     bool holdsCells(VirtualObjectID holder, uint32_t field) const;
 
     void buildAtHead(BlockID, VirtualObjectID);
     void holdCells(ValueID parameterOrCast, VirtualObjectID boundObject);
+    void holdCellsAsBefore(ValueID parameter) { m_parametersHoldingCells.set(parameter.index()); }
+    void holdObjectsAgain(ValueID parameter) { m_parametersHoldingCells.clear(parameter.index()); }
     void holdCells(VirtualObjectID holder, uint32_t field);
 
     bool takeDidChange() { return std::exchange(m_didChange, false); }
@@ -144,6 +151,7 @@ private:
     void didDecide(VirtualObjectID);
 
     PairSet m_objectsBuiltAtHeads;
+    BitVector m_blocksWithObjectsBuiltAtHeads;
     PairSet m_fieldsHoldingCells;
     BitVector m_parametersHoldingCells;
     Vector<VirtualObjectID, 4> m_objectsOfNewDecisions;

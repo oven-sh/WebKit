@@ -1,0 +1,25 @@
+# interface Above { b?: number }  interface Middle extends Above { a: number }  interface NeedsB { b: number }  const onlyA = { a: 1 }
+# A layout joins the types whose names it has itself. OnlyA has the one name that Middle requires, and the layout Middle has the name that NeedsB requires, an optional one.
+# That makes a Middle of OnlyA and a NeedsB of Middle, and no NeedsB of OnlyA, which has no `b`.
+# Beside it: a conversion of the program carries the whole family of its source along. Whatever is a Middle is converted to Above with it, so OnlyA is an Above, which takes nobody by name
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Middle" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number}}] supertypes=[L3]
+layout L1 name="NeedsB" fields=[{key="b" declared={type=number} flags=[IsRequired]}]
+layout L2 name="OnlyA" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Above" fields=[{key="b" declared={type=number}}]
+# CHECK: L0: members [L0, L2]
+# CHECK-NEXT: L1: members [L0, L1, L3]
+# CHECK-NEXT: L2: members [L0, L2]
+# CHECK-NEXT: L3: members [L0, L2, L3]
+
+function f0 name="take" parameters=[{type=L1}, {type=L3}] results=[{type=anything}] {
+  b0(v0: L1, v1: L3):
+    Return
+}
+# READ-LABEL: function f0 name="take"
+# READ: parameters=[{type=L0|L1|L3}, {type=L0|L2|L3}]

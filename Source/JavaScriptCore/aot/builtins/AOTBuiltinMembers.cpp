@@ -10,6 +10,7 @@
 
 #include "AOTFlowResults.h"
 #include "AOTIRBuilder.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTPropertyAccessMembers.h"
 #include <algorithm>
@@ -72,7 +73,8 @@ BuiltinID findOwnMember(const Program& program, BuiltinID holder, PropertyKeyID 
 
 bool listsEveryMemberUnder(const Program& program, BuiltinID holder, PropertyKeyID key)
 {
-    return program.builtins().at(holder).flags.contains(BuiltinFlag::ListsAllMembers) && program.at(key).kind != PropertyKeyKind::EnginePrivateName;
+    constexpr OptionSet<BuiltinFlag> flagsOfCompleteLists { BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject };
+    return program.builtins().at(holder).flags.containsAny(flagsOfCompleteLists) && program.at(key).kind != PropertyKeyKind::EnginePrivateName;
 }
 
 BuiltinClassID primitiveClassOf(uint16_t primitives)
@@ -121,7 +123,7 @@ Type typeOfInstances(const BuiltinTable& table, BuiltinClassID builtinClass, con
     if (const ClassPart* part = receiver.findClassPart(builtinClass)) {
         Type instances;
         instances.classes.append(*part);
-        return instances.withoutProofs();
+        return instances.withoutClassProofs();
     }
     if (!table.at(builtinClass).isPrimitiveWrapper)
         return Type::builtinClass(builtinClass);
@@ -245,7 +247,37 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     bool isOwnProperty = found.member && table.at(found.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isOwnProperty && !name.isPrivateAlias)
         return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant };
+    // The instance answers first, and it may be a typed array.
+    if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
+        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
     return answerFor(context, table.canonicalID(prototype), key, found, name);
+}
+
+// Only a script adds a let, const or class binding to the realm: what eval and Function declare stays their own.
+// A script may declare no name under which the global object holds a locked property, so such a name is never shadowed.
+static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
+{
+    if (isLockedLocation(context.program, Builtins::GlobalThis, key))
+        return false;
+    return !context.flow.hasResults() || context.flow.unseenScriptsCanRun();
+}
+
+static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)
+{
+    return program.at(key).kind == PropertyKeyKind::Text && keyLookupOf(program, key) == KeyLookup::Ordinary;
+}
+
+FreeNameAnswer freeNameAnswerOf(const BuiltinLookupContext& context, PropertyKeyID key, bool seesScriptBindings)
+{
+    if (!seesScriptBindings || !canBeShadowedByScript(context, key)) {
+        BuiltinMemberAnswer found = findMemberFrom(context, Builtins::GlobalThis, key);
+        if (found.isConstant())
+            return { FreeNameAnswerKind::Constant, found.member };
+        MemberAnswer walked = findBuiltinObjectMember(accessContextOf(context), Builtins::GlobalThis, key, Access::Read);
+        if (walked.kind == MemberKind::Absent && walked.needsNoTest())
+            return { FreeNameAnswerKind::Absent, { } };
+    }
+    return { canHaveGlobalBinding(context.program, key) ? FreeNameAnswerKind::Bound : FreeNameAnswerKind::ByName, { } };
 }
 
 Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName name)
@@ -267,6 +299,20 @@ Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName n
     }
     std::ranges::sort(methods, { }, &MemberOfClasses::member);
     return methods;
+}
+
+Vector<MemberOfClasses, 4> methodsNamed(const Program& program, BuiltinName name)
+{
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache)
+        return methodsNamed(program.builtins(), name);
+    uint32_t hash = static_cast<uint32_t>(name.index() * 0x9e3779b1u);
+    auto isWanted = [&](const PropertyAccessCache::MethodsOfName& entry) {
+        return entry.name == name;
+    };
+    if (const PropertyAccessCache::MethodsOfName* known = cache->methodsByName.find(hash, isWanted))
+        return known->methods;
+    return cache->methodsByName.add(hash, { name, methodsNamed(program.builtins(), name) }, isWanted).methods;
 }
 
 BuiltinID singleBuiltinOf(const Type& type)
@@ -293,6 +339,8 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
         constant.setBuiltin(table.canonicalID(member));
         return constant;
     }
+    if (table.canonicalID(member) == Builtins::Undefined)
+        return IRBuilder::make(Opcode::Undefined);
     std::optional<double> number = table.numberOf(member);
     if (!number)
         return std::nullopt;
@@ -303,6 +351,25 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
     }
     Value constant = IRBuilder::make(Opcode::Double);
     constant.setNumber(*number);
+    return constant;
+}
+
+std::optional<Value> tryMakeBuiltinConstant(const Program& program, BuiltinID member)
+{
+    const BuiltinTable& table = program.builtins();
+    if (std::optional<Value> constant = tryMakeBuiltinConstant(table, member))
+        return constant;
+    if (table.at(member).scope == BuiltinScope::Module)
+        return std::nullopt;
+    std::optional<StringView> text = table.stringOf(member);
+    if (!text)
+        return std::nullopt;
+    // A pass adds no string to the program. The names of the table are in it from the start.
+    StringID string = program.strings.find(encodeProgramString(*text).span());
+    if (!string)
+        return std::nullopt;
+    Value constant = IRBuilder::make(Opcode::String);
+    constant.setString(string);
     return constant;
 }
 

@@ -1,0 +1,38 @@
+# function l3(p) { throw p }   function l2(p) { l3(p) }   function l1(p) { l2({ cause: p }) }
+# What a callee throws leaves the caller as well, and what lies in a thrown object goes with it.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: thrown
+# CHECK: f2
+# CHECK-NEXT: p0: thrown
+# CHECK: f3
+# CHECK-NEXT: p0: thrown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thing" fields=[{key="cause" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Call v0, -, v2
+    Return
+}
+function f1 name="l1" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1 fate=[IsCalled]}, {kind=Allocation index=2}] stores=[{source=0 target=2 key="cause" isOnEveryPath=true isBeforeTargetLeaves=true}] handed=[{source=1 call=3 argument=0}, {source=2 call=3 argument=2}]} {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="l2" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1 fate=[IsCalled]}] handed=[{source=1 call=2 argument=0}, {source=0 call=2 argument=2}]} {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = Call v1, -, v0
+    Return
+}
+function f3 name="l3" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsThrown]}]} {
+  b0(v0: anything):
+    Throw v0
+}

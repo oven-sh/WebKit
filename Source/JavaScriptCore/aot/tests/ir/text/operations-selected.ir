@@ -6,7 +6,7 @@
 # CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: object):
-# CHECK-NEXT: v3:{{*}}= PropGetChecked v0 key="x" checkedType=number site=w0 cause=MayFail readOrigin={position=5} accessSite=1 receivers=[L0, ..]
+# CHECK-NEXT: v3:{{*}}= PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
 # CHECK-NEXT: v4:{{*}}= PropGetChain v0 key="x" secondKey="y" readOrigin={position=6} accessSite=2 receivers=[L0] secondAccessSite=3
 # CHECK-NEXT: v5:{{*}}= PropGetPair v0, v1 key="x" secondKey="y" readOrigin={position=7} accessSite=4 secondAccessSite=5
 # CHECK-NEXT: v6:{{*}}= ResultAt v5
@@ -27,7 +27,7 @@
 # CHECK-NEXT: function f1 name="objects" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=object}, {type=string}, {type=function}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything, v1: number, v2: object, v3: string, v4: function):
 # CHECK-NEXT: v5:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
-# CHECK-NEXT: PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Written}] receivers=[L0]
+# CHECK-NEXT: PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Expected}] receivers=[L0]
 # CHECK-NEXT: v7:{{*}}= DefineOwnProperty v2, v3, v0 descriptorFlags=[HasValue, HasWritable, IsWritable, HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable]
 # CHECK-NEXT: v8:{{*}}= DefineOwnProperty v2, v3, -, v4, v4 descriptorFlags=[HasGet, HasSet]
 # CHECK-NEXT: DefineAccessors v2, v4, v4 keys=["g", "s"] getterMask=1 enumerableMask=2
@@ -123,7 +123,7 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" decl
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: object):
-    v3 = PropGetChecked v0 key="x" checkedType=number site=w0 cause=MayFail readOrigin={position=5} accessSite=1 receivers=[L0, ..]
+    v3 = PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
     v4 = PropGetChain v0 key="x" secondKey="y" readOrigin={position=6} accessSite=2 receivers=[L0] secondAccessSite=3
     v5 = PropGetPair v0, v1 key="x" secondKey="y" readOrigin={position=7} accessSite=4 secondAccessSite=5
     v6 = ResultAt v5
@@ -144,7 +144,7 @@ function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[
 function f1 name="objects" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=object}, {type=string}, {type=function}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: object, v3: string, v4: function):
     v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
-    PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Written}] receivers=[L0]
+    PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Expected}] receivers=[L0]
     v7 = DefineOwnProperty v2, v3, v0 descriptorFlags=[HasValue, HasWritable, IsWritable, HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable]
     v8 = DefineOwnProperty v2, v3, -, v4, v4 descriptorFlags=[HasGet, HasSet]
     DefineAccessors v2, v4, v4 keys=["g", "s"] getterMask=1 enumerableMask=2

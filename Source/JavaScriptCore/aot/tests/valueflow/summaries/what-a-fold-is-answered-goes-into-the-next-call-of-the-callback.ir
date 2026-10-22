@@ -1,0 +1,45 @@
+# list.reduce(swapper, start) with swapper = (accumulator, element) => { kept.push(accumulator); return element }     list.reduce(adder, start) with adder = (accumulator, element) => accumulator     list.find(test)
+# `reduce` hands what the callback has answered to the next call as the accumulator. So an element that `swapper` returns is an accumulator the next time, and is kept like one.
+# The initial value is the first accumulator, and what `reduce` answers for an empty list. `adder` returns its accumulator, so there it is what `reduce` answers for every list. `find` passes an element or undefined: the type that says so stands for the element itself.
+# RUN: fates-at-calls f1.p0=stored-in-variable f1.p1=nothing f1.p1.results=1 f2.p0=nothing f2.p0.results=1 f2.p1=members-read f3.p0=compared
+# CHECK: f0 v7 Call operand 1: members-read contents=returned+stored-in-variable read=[any]
+# CHECK-NEXT: f0 v7 Call operand 2: called contents=nothing
+# CHECK-NEXT: f0 v7 Call operand 3: returned+stored-in-variable contents=nothing results=[0]
+# CHECK: f0 v9 Call operand 1: members-read contents=members-read read=[any]
+# CHECK-NEXT: f0 v9 Call operand 2: called contents=nothing
+# CHECK-NEXT: f0 v9 Call operand 3: returned contents=returned results=[any]
+# CHECK: f0 v12 Call operand 1: members-read contents=returned+compared read=[any]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewArray v1 contents=anything
+    v4 = NewClosure function=f1
+    v5 = PropGet v3 key="reduce"
+    v6 = Undefined
+    v7 = Call v5, v3, v4, v2 calleeKey="reduce"
+    v8 = NewClosure function=f2
+    v9 = Call v5, v3, v8, v2 calleeKey="reduce"
+    v10 = NewClosure function=f3
+    v11 = PropGet v3 key="find"
+    v12 = Call v11, v3, v10 calleeKey="find"
+    Return
+}
+function f1 name="swapper" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f2 name="adder" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="test" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Boolean boolean=true
+    Return v1
+}

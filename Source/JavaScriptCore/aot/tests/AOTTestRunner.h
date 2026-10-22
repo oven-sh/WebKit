@@ -38,6 +38,7 @@ struct TestRunRequest {
 struct TestRunSummary {
     unsigned passed { 0 };
     unsigned failed { 0 };
+    unsigned todo { 0 };
 };
 
 TestRunSummary runTestFiles(const TestRunRequest&, PrintStream&);
@@ -57,7 +58,7 @@ struct RunOutput {
     String text;
 };
 
-Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs = nullptr, const TestVariant& = { });
+Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs = nullptr, const TestVariant& = { }, std::optional<TestTodo>* = nullptr);
 
 void reopenDiagnostics(BuildContext&);
 

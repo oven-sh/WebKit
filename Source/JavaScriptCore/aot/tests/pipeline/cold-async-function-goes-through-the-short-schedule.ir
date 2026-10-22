@@ -1,0 +1,87 @@
+# An async function none of whose code is expected to run often goes through a short schedule: its tests are placed, its allocations sink, and nothing else is tried on it. Here no call is taken in.
+# The same body takes the call in where the function is not async, and where four functions call the async function. The callee is no larger than its call, so it is taken in where code runs seldom too.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass limit=MaxWarmCodeValues:1 only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = PropGet v0 key="sink" [isFreeName]
+    v5 = Call v4, -, v2, v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = CallDirect v1 function=f5
+    v8 = CallDirect v1 function=f6
+    v9 = CallDirect v1 function=f7
+    v10 = CallDirect v1 function=f8
+    v11 = ToBoolean v7
+    Branch v11 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+
+function f1 name="asyncAndSeldomCalled" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Await v0
+    v2 = CallDirect v1 function=f4
+    Return v2
+}
+
+function f2 name="seldomCalled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+# CHECK-LABEL: function f2 name="seldomCalled"
+# CHECK-NOT: = CallDirect
+# CHECK: = TypeTest
+
+function f3 name="asyncAndCalledByFour" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Await v0
+    v2 = CallDirect v1 function=f4
+    Return v2
+}
+
+function f4 name="isMissing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined
+    Return v1
+}
+
+function f5 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+
+function f6 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+
+function f7 name="thirdCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+
+function f8 name="fourthCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+# CHECK-LABEL: name="asyncAndSeldomCalled" module=m0 role=CoroutineBody
+# CHECK: = CallDirect {{*}}function=f4
+# CHECK-LABEL: name="asyncAndCalledByFour" module=m0 role=CoroutineBody
+# CHECK-NOT: = CallDirect
+# CHECK: = TypeTest

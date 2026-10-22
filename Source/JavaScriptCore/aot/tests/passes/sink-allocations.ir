@@ -218,22 +218,22 @@ function f10 name="neededInHandler" parameters=[{type=anything}, {type=anything}
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: Switch [[tag10]] cases=[
 
-function f11 name="claimIsLeftToRun" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+function f11 name="checkIsLeftToRun" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v4 = Claim v3 castType=L1
+    v4 = Check v3 castType=L1
     Return v4
   b2():
     Return v1
 }
-# CHECK-LABEL: function f11 name="claimIsLeftToRun"
+# CHECK-LABEL: function f11 name="checkIsLeftToRun"
 # CHECK: b0(
 # CHECK-NEXT: Branch
 # CHECK: b1():
 # CHECK-NEXT: [[cell11]]:{{*}}= NewObject
-# CHECK-NEXT: = Claim [[cell11]] castType=L1
+# CHECK-NEXT: = Check [[cell11]] castType=L1
 
 function f12 name="testsFold" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -655,7 +655,7 @@ function f36 name="builtinCallNeedsCell" parameters=[{type=anything}, {type=bool
 
 function f37 name="narrowedAliasOnlyRead" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
-    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v4 = Upcast v3 castType=anything
     v5 = TypeTest v4 testedType=L0
     Branch v5 -> taken b1(| 0), notTaken b2()

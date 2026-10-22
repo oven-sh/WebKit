@@ -813,8 +813,9 @@ static void applyCompiledCodeDefaults()
         return;
     Options::useJIT() = false;
     Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();
-    if (!OptionsHelper::wasOverridden(Options::useWarmUpMarkedBlocksID))
-        Options::useWarmUpMarkedBlocks() = false;
+    // A heap that stays small gains nothing from blocks that a helper thread keeps resident, and pays for them.
+    if (!OptionsHelper::wasOverridden(Options::warmUpMarkedBlockStartAfterBlocksID))
+        Options::warmUpMarkedBlockStartAfterBlocks() = 4096;
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

@@ -1,8 +1,8 @@
-# The copy of a block has the rarer of its own frequency and the frequency of the block with the call
+# The copy of a block has the rarer of its own frequency and the frequency of the block with the call. A call in a rare block stays a call, whatever it is marked with
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass InlineCalls
-# STATISTIC: InlineDecisionInline = 3
+# STATISTIC: InlineDecisionInline = 2
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -57,9 +57,8 @@ function f3 name="callInRareBlock" parameters=[{type=number}, {type=boolean}] re
     Return v0
 }
 # CHECK-LABEL: name="callInRareBlock"
-# CHECK-NOT: CallDirect
-# CHECK: Branch v1 -> taken [[unlikely3]](), notTaken [[ordinary3]]() @0:1
-# CHECK: [[unlikely3]]() frequency=Rare:
-# CHECK-NEXT: = Mul v0, v0
-# CHECK: [[ordinary3]]() frequency=Rare:
-# CHECK-NEXT: = Add v0, v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = Mul
+# CHECK-NOT: = Add

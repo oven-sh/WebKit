@@ -9,11 +9,23 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowResults.h"
+#include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
 #include "AOTTypeTestSite.h"
 #include <ranges>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+static bool findsOrdinaryHasInstance(const BuiltinLookupContext& context, BuiltinID constructor)
+{
+    const Program& program = context.program;
+    const BuiltinTable& table = program.builtins();
+    // File answers the operator by native code of its own, which no property shows (JSDOMFile::customHasInstance): its prototype property holds Blob.prototype, and a Blob is no File.
+    if (constructor == table.canonicalID(Builtins::File))
+        return false;
+    BuiltinMemberAnswer hasInstance = findMemberFrom(context, constructor, program.keyOf(table.nameOf(WellKnownSymbol::HasInstance)));
+    return hasInstance.isConstant() && hasInstance.member == table.canonicalID(Builtins::FunctionPrototypeSymbolHasInstance);
+}
 
 // The class whose prototype object the test looks for: the constructor finds the ordinary Symbol.hasInstance, and its prototype property holds that object for good.
 static BuiltinClassID builtinClassTestedThrough(const BuiltinLookupContext& context, BuiltinID constructor)
@@ -21,8 +33,7 @@ static BuiltinClassID builtinClassTestedThrough(const BuiltinLookupContext& cont
     const Program& program = context.program;
     const BuiltinTable& table = program.builtins();
 
-    BuiltinMemberAnswer hasInstance = findMemberFrom(context, constructor, program.keyOf(table.nameOf(WellKnownSymbol::HasInstance)));
-    if (!hasInstance.isConstant() || hasInstance.member != table.canonicalID(Builtins::FunctionPrototypeSymbolHasInstance))
+    if (!findsOrdinaryHasInstance(context, constructor))
         return { };
 
     BuiltinClassID builtinClass = table.at(constructor).instanceClass;
@@ -86,6 +97,18 @@ static InstanceOfAnswer answerForClassPart(const BuiltinLookupContext& context, 
     return findInPrototypeChain(context, part.builtinClass, soughtPrototype);
 }
 
+// What an object literal makes has Object.prototype above it, which inherits from nothing for good.
+static InstanceOfAnswer answerForLayouts(const BuiltinLookupContext& context, LayoutSetID layouts, BuiltinID soughtPrototype)
+{
+    const Program& program = context.program;
+    bool areRecordsAsMade = std::ranges::all_of(program.at(layouts).members, [&](LayoutID layout) {
+        return program.at(layout).kind == LayoutKind::Record && receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype);
+    });
+    if (!areRecordsAsMade)
+        return InstanceOfAnswer::Unknown;
+    return soughtPrototype == program.builtins().canonicalID(Builtins::ObjectPrototype) ? InstanceOfAnswer::Yes : InstanceOfAnswer::No;
+}
+
 static InstanceOfAnswer joinAnswers(InstanceOfAnswer a, InstanceOfAnswer b)
 {
     return a == b ? a : InstanceOfAnswer::Unknown;
@@ -96,16 +119,23 @@ InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext& context, const 
     const BuiltinTable& table = context.program.builtins();
     if (!subject.hasObjects())
         return InstanceOfAnswer::No;
-    if (subject.anyObject || subject.anyFunction || subject.layouts || !subject.functions.isEmpty() || !subject.builtins.isEmpty())
+    if (subject.anyObject || subject.anyFunction || !subject.functions.isEmpty() || !subject.builtins.isEmpty())
         return InstanceOfAnswer::Unknown;
     if (!table.at(builtinClass).prototype)
         return InstanceOfAnswer::Unknown;
 
     BuiltinID soughtPrototype = table.canonicalID(table.at(builtinClass).prototype);
-    InstanceOfAnswer answer = subject.primitives ? InstanceOfAnswer::No : answerForClassPart(context, subject.classes.first(), soughtPrototype);
+    std::optional<InstanceOfAnswer> answer;
+    auto add = [&](InstanceOfAnswer ofPart) {
+        answer = answer ? joinAnswers(*answer, ofPart) : ofPart;
+    };
+    if (subject.primitives)
+        add(InstanceOfAnswer::No);
+    if (subject.layouts)
+        add(answerForLayouts(context, subject.layouts, soughtPrototype));
     for (const ClassPart& part : subject.classes)
-        answer = joinAnswers(answer, answerForClassPart(context, part, soughtPrototype));
-    return answer;
+        add(answerForClassPart(context, part, soughtPrototype));
+    return *answer;
 }
 
 static bool isWorthTesting(FunctionPassContext& context, const ValueSite& site, BuiltinClassID builtinClass)
@@ -149,24 +179,30 @@ Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext& co
     BuiltinLookupContext lookup { program, context.inputs.flow };
 
     Vector<BuiltinInstanceOfSite> sites;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
+    context.forEachSiteIn(SiteList::InstanceOfTests, [&](const ValueSite& site) {
         const Value& value = function.at(site.value);
-        if (value.opcode != Opcode::InstanceOf)
-            return;
         BuiltinID constructor = singleBuiltinOf(program.typeOf(function, value.constructorOperand()));
         bool isProvenConstructor = !!constructor;
         if (!constructor)
-            constructor = singleBuiltinOf(program.predictionOrTypeOf(function, value.constructorOperand()));
+            constructor = singleBuiltinOf(program.expectedOrTypeOf(function, value.constructorOperand()));
         if (!constructor)
             return;
         constructor = table.canonicalID(constructor);
         BuiltinClassID builtinClass = builtinClassTestedThrough(lookup, constructor);
-        if (!builtinClass)
+        bool readsPrototype = !builtinClass && table.at(constructor).kind == BuiltinKind::Constructor && findsOrdinaryHasInstance(lookup, constructor);
+        if (!builtinClass && !readsPrototype)
             return;
         if (!isProvenConstructor && !isWorthTestingConstructor(context, site, constructor))
             return;
+        if (readsPrototype) {
+            // The arm of what is no object keeps the whole operation, and is marked so.
+            if (context.analyses.blockFrequencies().classOf(site.block) == BlockFrequency::Rare)
+                return;
+            sites.append(BuiltinInstanceOfSite { site, { }, InstanceOfAnswer::Unknown, isProvenConstructor ? BuiltinID() : constructor, false, true });
+            return;
+        }
 
-        BuiltinInstanceOfSite plan { site, builtinClass, instanceOfAnswerFor(lookup, program.typeOf(function, value.valueOperand()), builtinClass), { }, false };
+        BuiltinInstanceOfSite plan { site, builtinClass, instanceOfAnswerFor(lookup, program.typeOf(function, value.valueOperand()), builtinClass), { }, false, false };
         if (!isProvenConstructor)
             plan.constructorToTest = constructor;
         plan.testsClass = plan.answer == InstanceOfAnswer::Unknown && isWorthTesting(context, site, builtinClass);
@@ -177,18 +213,24 @@ Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext& co
 
 static void becomeAnswer(FunctionPassContext& context, ValueID id, bool answer)
 {
-    Value& value = context.function.at(id);
+    Value& value = context.function.edit(id);
     value.become(Opcode::Boolean);
     value.setBoolean(answer);
     value.type = resultTypeOf(context.program, context.function, value, context.types);
-    value.setWritten(TypeID());
-    value.setPrediction(TypeID());
+    value.setExpected(TypeID());
 }
 
 // Both lookups on the constructor are answered, so what is left of the operation is the walk up the chain of the value.
 static void finishArmWithWalk(SiteExpansion& expansion, BuiltinClassID builtinClass, ValueID subject)
 {
-    const BuiltinTable& table = expansion.context().program.builtins();
+    FunctionPassContext& context = expansion.context();
+    const BuiltinTable& table = context.program.builtins();
+    // What a test has left of the value may be known where the whole was not.
+    InstanceOfAnswer answer = instanceOfAnswerFor({ context.program, context.inputs.flow }, context.program.typeOf(context.function, subject), builtinClass);
+    if (answer != InstanceOfAnswer::Unknown) {
+        expansion.finishArm(expansion.builder().appendBoolean(answer == InstanceOfAnswer::Yes));
+        return;
+    }
     ValueID prototype = expansion.builder().append(*tryMakeBuiltinConstant(table, table.at(builtinClass).prototype));
     expansion.finishArm(expansion.append(IRBuilder::make(Opcode::HasInPrototypeChain, { subject, prototype })));
 }
@@ -217,6 +259,22 @@ static void finishArmsWithClassTests(SiteExpansion& expansion, const BuiltinInst
     finishArmWithWalk(expansion, site.builtinClass, subject);
 }
 
+// The first lookup on the constructor is answered. The second is a read of its property, and what is no object there is for the whole operation to refuse.
+static void finishArmsWithPrototypeRead(SiteExpansion& expansion)
+{
+    FunctionPassContext& context = expansion.context();
+    IRBuilder& builder = expansion.builder();
+    Value read = IRBuilder::make(Opcode::PropGet, { expansion.original().constructorOperand() });
+    read.setKey(context.program.keyOf(BuiltinNames::prototype));
+    ValueID prototype = expansion.append(WTF::move(read));
+    ValueID test = builder.appendTypeTest(prototype, Type::object());
+    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, expansion.frequency(), BlockFrequency::Rare);
+    builder.moveToEndOf(branch.notTaken);
+    expansion.finishArm(expansion.appendOriginal());
+    builder.moveToEndOf(branch.taken);
+    expansion.finishArm(expansion.append(IRBuilder::make(Opcode::HasInPrototypeChain, { expansion.original().valueOperand(), branch.provenOnTaken })));
+}
+
 static void expand(SiteExpansion& expansion, const BuiltinInstanceOfSite& site)
 {
     IRBuilder& builder = expansion.builder();
@@ -232,7 +290,9 @@ static void expand(SiteExpansion& expansion, const BuiltinInstanceOfSite& site)
 
     switch (site.answer) {
     case InstanceOfAnswer::Unknown:
-        if (site.testsClass)
+        if (site.readsPrototype)
+            finishArmsWithPrototypeRead(expansion);
+        else if (site.testsClass)
             finishArmsWithClassTests(expansion, site);
         else
             finishArmWithWalk(expansion, site.builtinClass, expansion.original().valueOperand());

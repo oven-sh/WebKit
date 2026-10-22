@@ -77,8 +77,8 @@ function f2 name="text" flags=[IsChecked] parameters=[{type=anything}, {type=any
 }
 )IR"_s;
 
-// A call that is no tail call is tested however deep it lies under a frame that waits for a test of its own:
-// function outer(f): number { const inner = f(1, wrong); return inner === "text" ? 1 : 2 }, where f is `down` and wrong gives a string: the inner call throws.
+// A call that is no tail call lies under a frame with a declared result of its own, and gives a value outside the declared result of its callee. Nothing throws that plain JavaScript does not:
+// function outer(f, wrong): number { const inner = f(1, wrong); return inner === "text" ? f(1, f) : 1 }, where f is `down` and wrong gives a string: inner is that string, and outer answers with down(1, down).
 static constexpr ASCIILiteral ordinaryCallUnderWaitingFrame = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=10 kind=Result
@@ -149,10 +149,8 @@ static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expecte
         "heat=EverythingIsCold"_s,
         "disable=flow:CalleeSets"_s,
         "disable=flow:NarrowedTypes"_s,
-        "disable=flow:CallVersions"_s,
         "disable=pass:ResolveCalls"_s,
         "disable=pass:InlineCalls"_s,
-        "disable=pass:GroupCallsByValue"_s,
         "disable=pass:ChooseCallingConventions"_s,
     };
     checkOutputOfProgramInShell(programText, expectedOutput, { });
@@ -162,12 +160,12 @@ static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expecte
 
 static void testTypedFunctionsCalledByValue()
 {
-    checkUnderEveryOption(typedFunctionsCalledByValue, "0.5\n0.5\nTypeError\ntext\n"_s);
+    checkUnderEveryOption(typedFunctionsCalledByValue, "0.5\n0.5\ntext\ntext\n"_s);
 }
 
 static void testOrdinaryCallUnderWaitingFrame()
 {
-    checkUnderEveryOption(ordinaryCallUnderWaitingFrame, "TypeError\n"_s);
+    checkUnderEveryOption(ordinaryCallUnderWaitingFrame, "0.5\n"_s);
 }
 
 std::span<const NativeTest> tailCallProgramTests()

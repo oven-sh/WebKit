@@ -87,7 +87,6 @@ JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, ASCIIL
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
 #if USE(BUN_JSC_ADDITIONS)
 JS_EXPORT_PRIVATE String withAOTErrorNote(const String& message);
-JS_EXPORT_PRIVATE String withAOTTypeCheckNote(const String& message);
 #endif
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&, const String& errorMessage);

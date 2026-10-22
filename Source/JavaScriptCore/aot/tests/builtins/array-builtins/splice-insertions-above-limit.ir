@@ -1,7 +1,7 @@
 # A splice that inserts more elements than the limit stays a call
 # RUN: compile
 # RUN(SELECTED): pipeline Select
-# OPTIONS: limit=MaxInlineSpliceInsertions:1
+# OPTIONS: limit=MaxInlineSpliceInsertions:1 heat=EverythingIsHot
 # LOSS: MaxInlineSpliceInsertions f1
 # CHECK: loss MaxInlineSpliceInsertions
 # CHECK: image not empty
@@ -24,7 +24,10 @@ function f1 name="insertsTwo" parameters=[{type=Array<number>}, {type=number}] r
     v4 = Call v3, v0, v2, v2, v1, v1 calleeKey="splice"
     Return v4
 }
-# SELECTED-LABEL: function f1 name="insertsTwo"
+# Only its entrypoint enters the function, so the body is there
+# SELECTED-LABEL: name="insertsTwo" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 castType=number
 # SELECTED-NOT: inlineBuiltin=ArraySplice
-# SELECTED: = CallBuiltin v0, {{*}}, v1, v1 overload=ArrayPrototypeSplice/
+# SELECTED: = CallBuiltin [[array]], {{*}}, [[number]], [[number]] overload=ArrayPrototypeSplice/
 # SELECTED-NOT: inlineBuiltin=ArraySplice

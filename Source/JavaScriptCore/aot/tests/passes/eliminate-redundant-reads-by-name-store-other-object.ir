@@ -23,8 +23,8 @@ function f0 name="receiverHasAnotherLayout" parameters=[{type=L0}, {type=L1}, {t
 
 function f1 name="receiverIsAnotherAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
     PropSet v3, v1 key="x" mode=Strict receivers=[L0]
     v5 = GetSlot v2 key="x" receivers=[L0] level=Proven
     Return v5
@@ -35,7 +35,7 @@ function f1 name="receiverIsAnotherAllocation" parameters=[{type=anything}, {typ
 
 function f2 name="receiverCameFromOutside" parameters=[{type=L0}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything, v2: anything):
-    v3 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
     PropSet v0, v2 key="x" mode=Strict receivers=[L0]
     v5 = GetSlot v3 key="x" receivers=[L0] level=Proven
     Return v5
@@ -46,7 +46,7 @@ function f2 name="receiverCameFromOutside" parameters=[{type=L0}, {type=anything
 
 function f3 name="unknownReceiverAndObjectNobodyHolds" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
     PropSet v0, v2 key="x" mode=Strict
     v5 = GetSlot v3 key="x" receivers=[L0] level=Proven
     Return v5

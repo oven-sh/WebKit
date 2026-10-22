@@ -20,7 +20,7 @@
 namespace JSC { namespace AOT {
 
 static_assert([] {
-    for (StubFamily family : { StubFamily::EnterClosure, StubFamily::EnterSlimClosure, StubFamily::EnterClosureForConstruct }) {
+    for (StubFamily family : { StubFamily::EnterClosure, StubFamily::EnterSlimClosure, StubFamily::EnterModuleBody, StubFamily::EnterClosureForConstruct }) {
         if (descriptorOf(family).linkage != StubLinkage::EnteredByRuntime)
             return false;
     }
@@ -48,6 +48,12 @@ CodePtr<JSEntryPtrTag> slimClosureEntrypoint()
     return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
 }
 
+CodePtr<JSEntryPtrTag> moduleBodyEntrypoint()
+{
+    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(StubKey(StubFamily::EnterModuleBody)));
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+}
+
 CodePtr<JSEntryPtrTag> constructEntrypoint()
 {
     static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(StubKey(StubFamily::EnterClosureForConstruct)));
@@ -65,6 +71,15 @@ static BoxedCallEntry& findBoxedCallEntry(StubWords& words, const void* nativeFu
 
 void initializeStubWords(Instance& instance)
 {
+    instance.stubs.closureEntrypoint = closureEntrypoint().taggedPtr();
+    instance.stubs.slimClosureEntrypoint = slimClosureEntrypoint().taggedPtr();
+
+    constexpr unsigned numberOfCounts = BoxedCallEntry::maxArgumentCount - BoxedCallEntry::minArgumentCount + 1;
+    const Image& image = *Image::current();
+    const uint8_t* sharedCode = image.sharedCodeCopy(0);
+    std::span<const StubAddressInImage> handlers = image.stubAddressesOf(StubFamily::CallBoxedBuiltin);
+    RELEASE_ASSERT_WITH_MESSAGE(handlers.size() == descriptorOf(StubFamily::CallBoxedBuiltin).numberOfForms * numberOfCounts, "The AOT image has no such stub.");
+
     unsigned numberOfUsedEntries = 0;
     for (const BuiltinBoxedCall& call : BuiltinTable::singleton().boxedCalls()) {
         const BuiltinNativeFunctionBinding* binding = BuiltinBindings::nativeFunctionOf(call.builtin);
@@ -75,19 +90,20 @@ void initializeStubWords(Instance& instance)
         BoxedCallEntry& entry = findBoxedCallEntry(instance.stubs, nativeFunction);
         bool isFree = !entry.nativeFunction;
         if (isFree) {
-            // A probe, here and in emitBoxedCallDispatch(), ends at a free entry.
+            // A probe, here and in FindBoxedCall, ends at a free entry.
             ++numberOfUsedEntries;
             RELEASE_ASSERT(numberOfUsedEntries * 2 <= StubWords::numberOfBoxedCallEntries);
             entry.nativeFunction = nativeFunction;
         }
 
         BoxedCallForm form = boxedCallFormOf(call.stub);
+        std::span handlersOfForm = handlers.subspan(static_cast<unsigned>(form) * numberOfCounts, numberOfCounts);
         std::span targets { entry.targets };
-        for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count) {
-            const void* handler = addressOfStubInCurrentImage(callBoxedBuiltin(form, count));
-            const void*& target = targets[count - BoxedCallEntry::minArgumentCount];
-            RELEASE_ASSERT(isFree || target == handler);
-            target = handler;
+        for (unsigned index = 0; index < numberOfCounts; ++index) {
+            ASSERT(handlersOfForm[index].key == callBoxedBuiltin(form, BoxedCallEntry::minArgumentCount + index).bits());
+            const void* handler = sharedCode + handlersOfForm[index].offset;
+            RELEASE_ASSERT(isFree || targets[index] == handler);
+            targets[index] = handler;
         }
     }
 }

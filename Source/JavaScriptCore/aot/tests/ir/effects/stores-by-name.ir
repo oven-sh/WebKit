@@ -3,12 +3,12 @@
 # RUN: effects summaries f0 f1 f2
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Filled" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape]}
-layout L1 name="CreatedLate" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape]}
-layout L2 name="CreatedLateNeverEnumerated" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape] keys=NeverEnumerated}
-layout L3 name="MayBeFrozen" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangePrototype, StoreOfOtherType, LoseShape]}
-layout L4 kind=Instance name="Gauge" constructor=f3 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f5 mutability=Fixed}]}
-layout L5 kind=Instance name="ReplaceableGauge" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="level" kind=Setter function=f5}] namedMembers=[{key="level" kind=Setter function=f5}]}
+layout L0 name="Filled" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
+layout L1 name="CreatedLate" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
+layout L2 name="CreatedLateNeverEnumerated" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType] keys=NeverEnumerated}
+layout L3 name="MayBeFrozen" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangePrototype, StoreOfOtherType]}
+layout L4 kind=Instance name="Gauge" constructor=f3 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f5 mutability=Fixed}]}
+layout L5 kind=Instance name="ReplaceableGauge" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="level" kind=Setter function=f5}] namedMembers=[{key="level" kind=Setter function=f5}]}
 variable g0 name="lastLevel" declared={type=anything} initialization=Undefined
 function f0 name="fields" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=null|L0}, {type=number}, {type=string}] results=[{type=undefined}] {
   b0(v0: L0, v1: L1, v2: L2, v3: L3, v4: null|L0, v5: number, v6: string):
@@ -24,7 +24,7 @@ function f0 name="fields" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}
 # CHECK-NEXT: v7 PropSet: writes(ObjectFields/1)
 # CHECK-NOT: throws
 # CHECK: v8 PropSet: writes(ObjectFields/1) throws
-# CHECK-NEXT: v9 PropSet: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v9 PropSet: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
 # CHECK-NEXT: v10 PropSet: writes(ObjectFields/1)
 # CHECK-NOT: ShapeWords
 # CHECK: v11 PropSet: reads(all) {{*}}ShapeWords{{*}}callsUnknownCode
@@ -41,15 +41,15 @@ function f1 name="setters" parameters=[{type=L4}, {type=L5}, {type=number}] resu
 # CHECK: v4 PropSet: reads(all) {{*}}callsUnknownCode
 function f2 name="definitions" parameters=[{type=number}] results=[{type=undefined}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     PropDefine v1, v0 key="x"
-    v3 = NewObject layout=L1 [keepsShape]
+    v3 = NewObject layout=L1
     PropDefine v3, v0 key="y"
     Return
 }
 # CHECK-LABEL: function f2
 # CHECK: v2 PropDefine: writes(ObjectFields/1)
-# CHECK: v4 PropDefine: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK: v4 PropDefine: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
 # CHECK-NOT: ShapeWords
 function f3 name="Gauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 function f4 name="ReplaceableGauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5

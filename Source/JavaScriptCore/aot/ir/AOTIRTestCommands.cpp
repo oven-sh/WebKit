@@ -12,6 +12,8 @@
 #include "AOTIRParser.h"
 #include "AOTIRPrinter.h"
 #include "AOTInt32Proof.h"
+#include "AOTRelationsVerifier.h"
+#include "AOTResultRuleMonotonicity.h"
 #include "AOTResultRules.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
@@ -137,6 +139,22 @@ static void typeProgramAsRead(Program& program, BuildContext& build)
     }
 }
 
+static void runVerifyRelations(TestCommandContext& context)
+{
+    if (!context.arguments.empty())
+        return printBadArgument(context.out, context.arguments[0]);
+    for (uint32_t index = 0; index < context.program->functions.size(); ++index) {
+        for (const InternalError& error : findErrorsInRelations(FunctionID(index), context.program->functions[index])) {
+            context.out.print("f"_s, index);
+            if (error.block)
+                context.out.print(" b"_s, error.block.index());
+            if (error.value)
+                context.out.print(" v"_s, error.value.index());
+            context.out.println(" "_s, error.detail);
+        }
+    }
+}
+
 static void runVerify(TestCommandContext& context)
 {
     PlacedTableSizes unboundedSizes { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
@@ -155,14 +173,14 @@ static void runVerify(TestCommandContext& context)
         context.out.println("valid"_s);
 }
 
-static void printTypeAndPrediction(PrintStream& out, const TypingContext& typing, ValueID id)
+static void printTypeAndExpectedType(PrintStream& out, const TypingContext& typing, ValueID id)
 {
     const Value& value = typing.function.at(id);
     out.print("v"_s, id.index(), ": "_s);
     printType(out, typing.program, value.type);
-    if (TypeID prediction = value.prediction()) {
+    if (TypeID expected = value.expected()) {
         out.print(" ~ "_s);
-        printType(out, typing.program, prediction);
+        printType(out, typing.program, expected);
     }
     out.print("\n"_s);
 }
@@ -173,7 +191,7 @@ static void printResultTypes(PrintStream& out, const TypingContext& typing, Valu
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(typing.program, typing.function, value);
     if (!numberOfResults) {
         if (resultRuleOf(value.opcode) != ResultRule::None)
-            printTypeAndPrediction(out, typing, id);
+            printTypeAndExpectedType(out, typing, id);
         return;
     }
     for (uint32_t resultIndex = 0; resultIndex < *numberOfResults; ++resultIndex) {
@@ -193,7 +211,7 @@ static void printResultTypesOfFunction(TestCommandContext& context, FunctionID i
     TypingContext typing { program, function, types };
     for (const Block& block : function.blocks) {
         for (ValueID parameter : block.parameters)
-            printTypeAndPrediction(context.out, typing, parameter);
+            printTypeAndExpectedType(context.out, typing, parameter);
         for (ValueID value : block.values)
             printResultTypes(context.out, typing, value);
     }
@@ -243,7 +261,7 @@ static void printInt32BoundsOfFunction(TestCommandContext& context, FunctionID i
     for (const Block& block : function.blocks) {
         for (ValueID value : block.values) {
             const Value& request = function.at(value);
-            if (request.opcode != Opcode::ClaimDeclared || !request.declared().flags.contains(PositionFlags::IsInt32Promise))
+            if (request.opcode != Opcode::Convert || !request.declared().flags.contains(PositionFlags::IsInt32Promise))
                 continue;
             context.out.print("v"_s, value.index(), ": "_s);
             printBounds(context.out, prover.boundsOf(request.valueOperand()));
@@ -264,13 +282,39 @@ static void runInt32Bounds(TestCommandContext& context)
     }
 }
 
+static void runLawsOfResultRules(TestCommandContext& context)
+{
+    std::optional<Vector<FunctionID>> functions = parseFunctionWords(context, context.arguments);
+    if (!functions)
+        return;
+
+    const Program& program = *context.program;
+    TypeArena types(context.program->types);
+    ShapesWithMonotoneResult checkedShapes;
+    for (FunctionID id : *functions) {
+        if (!program.at(id).hasBody())
+            continue;
+        Function function = program.at(id);
+        typeFunction(program, id, function, types, context.build);
+        std::optional<BrokenResultRule> found = findBrokenResultRule(program, function, types, checkedShapes);
+        context.out.print("function f"_s, id.index(), ": "_s);
+        if (found)
+            found->dump(context.out, program, function);
+        else
+            context.out.print("every rule keeps both laws"_s);
+        context.out.println();
+    }
+}
+
 std::span<const TestCommand> irTestCommands()
 {
     static constexpr TestCommand commands[] = {
         { "round-trip"_s, IRForm::AsRead, runRoundTrip },
         { "print"_s, IRForm::AsRead, runPrint },
         { "verify"_s, IRForm::AsRead, runVerify },
+        { "verify-relations"_s, IRForm::AsRead, runVerifyRelations },
         { "result-types"_s, IRForm::AsRead, runResultTypes },
+        { "laws-of-result-rules"_s, IRForm::AsRead, runLawsOfResultRules },
         { "int32-bounds"_s, IRForm::AsRead, runInt32Bounds },
     };
     return commands;

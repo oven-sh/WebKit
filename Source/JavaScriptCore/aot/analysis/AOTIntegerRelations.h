@@ -11,6 +11,7 @@
 #include "AOTPrimitives.h"
 #include <optional>
 #include <utility>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
@@ -28,6 +29,7 @@ public:
     Answer isAtMost(ValueID, int64_t maximum, BlockID at);
     Answer isWholeNumber(ValueID, BlockID at);
 
+    // The value is an integer of the range wherever the scope's end dominates, whatever its type says.
     void assumeRange(ValueID, Range, BlockID scope);
     void assumeSameValue(ValueID copy, ValueID original);
 
@@ -71,6 +73,7 @@ private:
     std::optional<Range> assumedRangeOf(ValueID base, std::optional<BlockID> at) const;
     bool hasAssumption(ValueID base, BlockID at) const { return !!assumedRangeOf(base, at); }
     bool isIntegerOrAssumed(ValueID, BlockID at) const;
+    bool isNumberOrAssumed(ValueID, BlockID at) const;
     bool isIdentityConversion(const Value&) const;
     bool takeStep();
 
@@ -80,6 +83,9 @@ private:
     static void appendRelationship(Vector<Relationship, 2>&, Term left, Term right, int64_t offset);
     Vector<Relationship, 2> relationshipsOfEdge(const Value& comparison, EdgeSide, ValueID base, BlockID at);
     template<typename Functor> bool forEachDominatingRelationship(ValueID base, BlockID at, const Functor&);
+    bool isEnteredOverEdgeOfComparison(BlockID) const;
+    BlockID nextBlockBehindComparison(BlockID);
+    bool comparisonOnEdgeIntoIsAbout(BlockID, const Value& comparison, ValueID base);
 
     Answer proveTerms(Term left, Term right, int64_t offset, BlockID at);
     Answer prove(ValueID left, ValueID right, int64_t offset, BlockID at, UpperBoundGoals&);
@@ -100,6 +106,21 @@ private:
     const Function& m_function;
     Vector<Assumption, 2> m_assumptions;
     Vector<std::pair<ValueID, ValueID>, 4> m_sameValues;
+    // By block: nextBlockBehindComparison(), as far as somebody has asked. The number of a block, or one of the two marks.
+    Vector<uint32_t> m_nextBlockBehindComparison;
+    // By block that is entered over the edge of a comparison: what the two operands are sums of, as far as somebody has asked. They hang on no place and on no assumed range; a new pair of same values ends them.
+    struct ComparedBases {
+        ValueID left;
+        ValueID right;
+        bool isKnown { false };
+    };
+    Vector<ComparedBases> m_comparedBases;
+    // Once the walks up the tree have looked at more blocks than the function has: by base, the blocks that are entered over the edge of a comparison about it, the deepest in the tree of dominators first.
+    void indexComparisonsByBase();
+    HashMap<uint32_t, Vector<BlockID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksBehindComparisonsAbout;
+    Vector<uint32_t> m_depthInDominatorTree;
+    size_t m_numberOfBlocksWalked { 0 };
+    bool m_hasIndexOfComparisons { false };
     unsigned m_steps { 0 };
     bool m_didReportLimit { false };
 };

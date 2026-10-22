@@ -280,11 +280,21 @@ static void testHandlersMerging()
     AOT_TEST_CHECK(!handlerIn(gap, 6));
 }
 
-static void testHandlersWidths()
+static void testHandlersSizes()
 {
-    constexpr std::array<std::array<uint32_t, 3>, 6> cases { { { 254, 255, 4 }, { 255, 1, 7 }, { 1, 256, 7 }, { 65534, 65535, 7 }, { 65535, 1, 13 }, { 1, 65536, 13 } } };
+    constexpr std::array<std::array<uint32_t, 3>, 6> cases { { { 1, 15, 3 }, { 254, 255, 5 }, { 255, 1, 4 }, { 1, 256, 4 }, { 65535, 1, 5 }, { 1, 65536, 5 } } };
     for (auto [site, target, size] : cases)
         AOT_TEST_CHECK(checkEncodedHandlers(handlersAt({ { site, target } })).size() == size);
+}
+
+// In a large body the sites lie side by side and few landing pads take turns, however far into the body they are.
+static void testHandlersOfLargeBody()
+{
+    constexpr uint32_t count = 1000;
+    Vector<SiteHandler> handlers;
+    for (uint32_t k = 0; k < count; ++k)
+        handlers.append(SiteHandler { 70000 + 2 * k, 2000000 + 64 * (k % 2), HandlerType::Catch });
+    AOT_TEST_CHECK(checkEncodedHandlers(handlers).size() <= 4 * count + 8);
 }
 
 static size_t checkManyHandlers(uint32_t count)
@@ -302,8 +312,8 @@ static size_t checkManyHandlers(uint32_t count)
 
 static void testHandlersMany()
 {
-    AOT_TEST_CHECK(checkManyHandlers(31) == 94);
-    AOT_TEST_CHECK(checkManyHandlers(32) == 98);
+    AOT_TEST_CHECK(checkManyHandlers(31) == 93);
+    AOT_TEST_CHECK(checkManyHandlers(32) == 96);
     checkManyHandlers(1000);
 }
 
@@ -354,7 +364,8 @@ std::span<const NativeTest> faultTableTests()
         { "image/fault-sites/outside"_s, testFaultSitesOutside },
         { "image/handlers/one"_s, testHandlersOne },
         { "image/handlers/merging"_s, testHandlersMerging },
-        { "image/handlers/widths"_s, testHandlersWidths },
+        { "image/handlers/sizes"_s, testHandlersSizes },
+        { "image/handlers/large-body"_s, testHandlersOfLargeBody },
         { "image/handlers/many"_s, testHandlersMany },
         { "image/handlers/types"_s, testHandlersTypes },
         { "image/handlers/empty"_s, [] { AOT_TEST_CHECK(encodeHandlerList({ }).isEmpty()); AOT_TEST_CHECK(!findHandler({ }, CallSiteIndex(1))); } },

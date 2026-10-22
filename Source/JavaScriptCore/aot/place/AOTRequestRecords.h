@@ -48,12 +48,14 @@ struct DirectEvalRecord {
 struct DataRecord {
     DataID data;
     std::optional<uint32_t> sharedStorageOffset;
+    // Where the node of an array that is its own storage begins in the table of the image.
+    std::optional<uint32_t> node;
 
     friend bool operator==(const DataRecord&, const DataRecord&) = default;
 };
 
 // How the elements of an array of constants are stored, in the table of the image and in the array that is made of it.
-JS_EXPORT_PRIVATE IndexingType indexingTypeOf(const DataNode::Array&);
+JS_EXPORT_PRIVATE IndexingType indexingTypeOf(const Program&, const DataNode::Array&);
 
 struct CollectionDataRecord {
     DataID data;

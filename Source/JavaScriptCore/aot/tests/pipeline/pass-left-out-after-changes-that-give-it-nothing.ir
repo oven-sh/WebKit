@@ -1,0 +1,51 @@
+# A pass is left out where nothing that changed the function since its last run can give it work.
+# CompactBlocks ends every run of Simplify and wakes no pass but RetypeValues, so the round after the one that inlined `identity` leaves the other passes of Simplify out.
+# With VerifyEachPass each pass that is left out runs on a copy of the function, and a change there is SkippedPassChangesFunction.
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pipeline RemoveUnreadFields
+# STATISTIC: FunctionPassRunsSkipped >= 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+
+function f1 name="callsIdentity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = Integer integer=1
+    v3 = CallDirect v2 function=f2
+    v4 = Integer integer=2
+    v5 = Add v3, v4
+    v6 = Mul v1, v5
+    Return v6
+}
+
+function f2 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f3 name="namesTheArm" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="left"
+    v2 = String string="right"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v4, -, v1
+    Return v6
+  b2():
+    v7 = Call v4, -, v2
+    Return v7
+}

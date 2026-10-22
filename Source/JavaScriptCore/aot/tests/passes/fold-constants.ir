@@ -123,8 +123,8 @@ function f7 name="possibleElementKeys" parameters=[{type=anything}] results=[{ty
 # CHECK-NOT: PropGet
 # CHECK-COUNT-3: = ElemGet v0,
 
-function f8 name="undecided" parameters=[{type=0}, {type=number}, {type=undefined|object}, {type=anything}, {type=object written=L1}] results=[{type=boolean}] {
-  b0(v0: 0, v1: number, v2: undefined|object, v3: anything, v4: object ? L1):
+function f8 name="undecided" parameters=[{type=0}, {type=number}, {type=undefined|object}, {type=anything}, {type=object}] results=[{type=boolean}] {
+  b0(v0: 0, v1: number, v2: undefined|object, v3: anything, v4: object ~ L1):
     v5 = StrictEq v0, v1
     v6 = ToBoolean v2
     v7 = BitAnd v0, v3

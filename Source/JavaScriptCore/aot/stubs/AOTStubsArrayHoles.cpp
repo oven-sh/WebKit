@@ -11,6 +11,7 @@
 #include "AOTArrayAllocationProfile.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "ArrayConventions.h"
@@ -91,8 +92,9 @@ static void emitLoadAllocatorForCapacity(StubAssembler& jit, const HoleArrayRegi
     const auto [array, allocator, scratch, storage, capacity, length] = registers;
     jit.add32(TrustedImm32(1), capacity, scratch);
     jit.urshift32(TrustedImm32(1), scratch);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
-    jit.loadPtr(BaseIndex(allocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    static_assert(sizeof(JSArray) == MarkedSpace::sizeStep);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(Allocator)), allocator);
 }
 
 static void emitChooseStorageAllocator(StubAssembler& jit, const HoleArrayShape& shape, const HoleArrayRegisters& registers, JumpList& slowPath)
@@ -100,8 +102,8 @@ static void emitChooseStorageAllocator(StubAssembler& jit, const HoleArrayShape&
     const auto [array, allocator, scratch, storage, capacity, length] = registers;
     switch (shape.operand) {
     case HoleArrayOperand::None:
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
-        jit.loadPtr(Address(allocator, offsetOfArrayStorageAllocator(shape.fixedCapacity)), allocator);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+        jit.loadPtr(Address(allocator, offsetOfArrayWithStorageAllocator(shape.fixedCapacity)), allocator);
         break;
     case HoleArrayOperand::LengthAndCapacity: {
         const GPRReg lengthAndCapacity = allocator;
@@ -213,7 +215,7 @@ static void emitCallNewArrayOfHoles(StubAssembler& jit, const HoleArrayShape& sh
 
 static void emitArrayOfHoles(StubAssembler& jit, const HoleArrayShape& shape)
 {
-    static_assert(sizeof(IndexingHeader) + maxHoleArrayCapacity * sizeof(EncodedJSValue) <= MarkedSpace::largeCutoff && maxHoleArrayCapacity & 1);
+    static_assert(sizeOfArrayWithStorage(maxHoleArrayCapacity) <= MarkedSpace::largeCutoff && maxHoleArrayCapacity & 1);
     RELEASE_ASSERT(shape.indexingType == ArrayWithDouble || shape.indexingType == ArrayWithInt32 || shape.indexingType == ArrayWithContiguous);
     RELEASE_ASSERT(shape.operand != HoleArrayOperand::None || shape.fixedCapacity & 1);
     const HoleArrayRegisters registers = allocateHoleArrayRegisters(jit, shape.operand);
@@ -230,9 +232,8 @@ static void emitArrayOfHoles(StubAssembler& jit, const HoleArrayShape& shape)
         break;
     }
     emitChooseStorageAllocator(jit, shape, registers, slowPath);
-    allocateCell(jit, storage, allocator, scratch, slowPath);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), allocator);
     allocateCell(jit, array, allocator, scratch, slowPath);
+    jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
     emitFillWithHoles(jit, shape, registers);
     jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(shape.indexingType)), scratch);
     jit.storePair64(scratch, storage, array, TrustedImm32(0));
@@ -273,6 +274,8 @@ void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
         return;
     case EmptyArray::ContiguousCapacity1:
     case EmptyArray::ContiguousCapacity3:
+    case EmptyArray::ContiguousCapacity1OwnStorage:
+    case EmptyArray::ContiguousCapacity3OwnStorage:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -303,6 +306,63 @@ StubSignature signatureOfNewArrayWithLength(StubKey)
 void generateNewArrayWithLength(StubAssembler& jit)
 {
     emitArrayOfHoles(jit, { .indexingType = indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form())), .operand = HoleArrayOperand::LengthAndCapacity });
+}
+
+StubSignature signatureOfNewArrayFrontEnd(StubKey)
+{
+    return operationFrontEndSignature(2);
+}
+
+// The operands are those of the operation: the count and where the values are. An array of at least one value that lies in one cell with its storage. An empty array, one
+// that asks for storage of its own and one that is too long are the operation's: their counts are zero or have high bits.
+void generateNewArrayFrontEnd(StubAssembler& jit)
+{
+    static_assert(arrayLiteralVectorLength(2) == 3 && arrayLiteralVectorLength(3) == 3 && maxHoleArrayCapacity & 1);
+    static_assert(maxHoleArrayCapacity < storageOfItsOwnInArrayLiteralCount && storageOfItsOwnInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
+    const GPRReg count = jit.operand(0);
+    const GPRReg values = jit.operand(1);
+    const GPRReg array = jit.result();
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T9);
+    const GPRReg capacity = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg position = allocator;
+    RELEASE_ASSERT(noOverlap(count, values, array, allocator, capacity, scratch, storage));
+
+    JumpList callsOperation;
+    jit.zeroExtend32ToWord(count, count);
+    jit.sub32(count, TrustedImm32(1), scratch);
+    callsOperation.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(maxHoleArrayCapacity)));
+    callsOperation.append(branchIfHavingABadTime(jit));
+    jit.or32(TrustedImm32(1), count, capacity);
+    jit.add32(TrustedImm32(1), capacity, scratch);
+    jit.urshift32(TrustedImm32(1), scratch);
+    static_assert(sizeof(JSArray) == MarkedSpace::sizeStep);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(Allocator)), allocator);
+    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, array, allocator, scratch, callsOperation);
+
+    jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
+    jit.store32(count, Address(storage, 0));
+    jit.store32(capacity, Address(storage, sizeof(uint32_t)));
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+    // A hole behind an even number of values.
+    jit.store64(TrustedImm32(0), BaseIndex(storage, capacity, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(EncodedJSValue))));
+    jit.move(TrustedImm32(0), position);
+    Label copy = jit.label();
+    jit.load64(BaseIndex(values, position, CCallHelpers::TimesEight), scratch);
+    jit.store64(scratch, BaseIndex(storage, position, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), position);
+    jit.branch32(CCallHelpers::Below, position, count).linkTo(copy, &jit);
+    jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
+    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    fenceAfterAllocation(jit);
+    jit.move(TrustedImm32(0), jit.secondResult());
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.tailCallOperation(Entry::RawNewArray, OperationCall::FirstArgument::Instance);
 }
 
 static constexpr IndexingType indexingShapeOf(ArrayElementKind kind)

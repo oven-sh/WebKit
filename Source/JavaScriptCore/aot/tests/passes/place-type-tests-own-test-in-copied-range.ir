@@ -1,14 +1,16 @@
+# The generic copy comes back, without a test, where the tested code knows nothing more than the copy: the shapes below follow that rule.
 # The program's own test of a condition stands in a copied range behind a use of the same stretch: its proof, the copy of the proof and the proof of the placed test are one variable
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
-# OPTIONS: check=VerifyEachPass
+# OPTIONS: check=VerifyEachPass heat=NothingIsHottest
 # STATISTIC: StretchesGuarded = 9
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0] impossibleMutations=[DeleteField, RedefineProperty, LoseShape]}
-function f0 name="useInFrontOfOwnTest" parameters=[{type=anything}] results=[{type=anything}] {
+layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0] impossibleMutations=[DeleteField, RedefineProperty]}
+function f0 name="useInFrontOfOwnTest" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=undefined|L0
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=L0
     Branch v3 -> taken b1(), notTaken b2()
@@ -26,14 +28,14 @@ function f0 name="useInFrontOfOwnTest" parameters=[{type=anything}] results=[{ty
 # CHECK: v2: anything = GetSlot [[proven0]],
 # CHECK: Branch v3 -> taken b1(| 0), notTaken b2(v2)
 # CHECK: [[copiedTest0]]: boolean = TypeTest v1 testedType=L0
-# CHECK-NEXT: Branch [[copiedTest0]] -> taken [[copiedTaken0]](| 0), notTaken b2(
-# CHECK-NEXT: [[copiedTaken0]]([[copiedProof0]]: L0) frequency=Unlikely:
+# CHECK-NEXT: Branch [[copiedTest0]] -> taken [[copiedTaken0]](| 0), notTaken b2({{*}})
+# CHECK-NEXT: [[copiedTaken0]]([[copiedProof0]]: L0) frequency=Rare:
 # CHECK-NEXT: anything = PropGet v1 key="y"
 # CHECK: [[passed0]]([[proven0]]: L0):
 
-function f1 name="joinBehindOwnTest" parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="joinBehindOwnTest" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=undefined|L0
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=L0
     Branch v3 -> taken b1(), notTaken b2()
@@ -55,9 +57,9 @@ function f1 name="joinBehindOwnTest" parameters=[{type=anything}] results=[{type
 # CHECK: v2: anything = GetSlot [[proven1]],
 # CHECK: ([[proven1]]: L0):
 
-function f2 name="ownTestInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+function f2 name="ownTestInLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: anything, v1: boolean):
-    v2 = Predict v0 predicted=undefined|L0
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
     Jump -> next b1()
   b1():
     LoopHint
@@ -77,7 +79,8 @@ function f2 name="ownTestInLoop" parameters=[{type=anything}, {type=boolean}] re
     Return
 }
 # CHECK-LABEL: function f2 name="ownTestInLoop"
-# CHECK: b1([[header2]]: L0):
+# CHECK: Jump -> next [[entering2]]()
+# CHECK-NEXT: b1([[header2]]: L0):
 # CHECK: v4: anything = GetSlot [[header2]],
 # CHECK: Branch v5 -> taken b3(| 0), notTaken b4()
 # CHECK-NEXT: b3([[adopted2]]: L0):
@@ -89,14 +92,17 @@ function f2 name="ownTestInLoop" parameters=[{type=anything}, {type=boolean}] re
 # CHECK-NEXT: Jump -> next b1([[joined2]])
 # CHECK: [[placed2]]: boolean = TypeTest v2 testedType=L0
 # CHECK-NEXT: Branch [[placed2]] -> taken [[passed2]](| 0), notTaken
-# CHECK-NEXT: () frequency=Unlikely:
+# CHECK-NEXT: [[wayBack2]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[entering2]]()
+# CHECK-NEXT: () frequency=Rare:
 # CHECK-NEXT: LoopHint
+# CHECK: Jump -> next [[wayBack2]]()
 # CHECK: [[passed2]]([[proven2]]: L0):
 # CHECK: Jump -> next b1([[proven2]])
 
-function f3 name="ownTestsOnBothArmsInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+function f3 name="ownTestsOnBothArmsInLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: anything, v1: boolean):
-    v2 = Predict v0 predicted=undefined|L0
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
     Jump -> next b1()
   b1():
     LoopHint
@@ -127,9 +133,9 @@ function f3 name="ownTestsOnBothArmsInLoop" parameters=[{type=anything}, {type=b
 # CHECK: v6: anything = GetSlot [[joined3]],
 # CHECK-NEXT: Jump -> next b1()
 
-function f4 name="proofUsedBehindStretch" parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="proofUsedBehindStretch" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=undefined|L0
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=L0
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -145,16 +151,15 @@ function f4 name="proofUsedBehindStretch" parameters=[{type=anything}] results=[
 # CHECK-LABEL: function f4 name="proofUsedBehindStretch"
 # CHECK: b1(v4: L0):
 # CHECK: v5: anything = GetSlot v4,
-# CHECK-NEXT: Jump -> next [[behind4]](v4, v5)
-# CHECK: [[behind4]]([[joined4]]: L0, [[read4]]: anything):
+# CHECK: [[behind4]]({{*}}[[joined4]]: L0{{*}}):
 # CHECK: Return [[joined4]]
-# CHECK: ([[copiedProof4]]: L0) frequency=Unlikely:
+# CHECK: ([[copiedProof4]]: L0) frequency=Rare:
 # CHECK-NEXT: [[genericRead4]]: anything = PropGet v1 key="y"
-# CHECK-NEXT: Jump -> next [[behind4]]([[copiedProof4]], [[genericRead4]])
+# CHECK: Jump -> next [[behind4]]({{*}}[[copiedProof4]]
 
-function f5 name="branchOnOtherCondition" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+function f5 name="branchOnOtherCondition" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
-    v2 = Predict v0 predicted=undefined|L0
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
     v3 = PropGet v2 key="y" receivers=[L0, ..]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -170,9 +175,9 @@ function f5 name="branchOnOtherCondition" parameters=[{type=anything}, {type=boo
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(v3)
 # CHECK: ([[proven5]]: L0):
 
-function f6 name="ownTestOfOtherType" parameters=[{type=anything}] results=[{type=anything}] {
+function f6 name="ownTestOfOtherType" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=undefined|L0
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=undefined
     Branch v3 -> taken b2(), notTaken b1()
@@ -189,9 +194,9 @@ function f6 name="ownTestOfOtherType" parameters=[{type=anything}] results=[{typ
 # CHECK: Branch v3 -> taken b2(v2), notTaken b1()
 # CHECK: ([[proven6]]: L0):
 
-function f7 name="ownTestBehindLastUse" parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="ownTestBehindLastUse" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=undefined|L0
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = Builtin builtin=GlobalThis
     v4 = PropGet v3 key="sink" [isFreeName]
@@ -208,9 +213,9 @@ function f7 name="ownTestBehindLastUse" parameters=[{type=anything}] results=[{t
 # CHECK: v6: boolean = TypeTest v1 testedType=L0
 # CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
 
-function f8 name="ownTestInCoveredLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+function f8 name="ownTestInCoveredLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
-    v2 = Predict v0 predicted=undefined|L0
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
     Jump -> next b1()
   b1() handler=b7():
     LoopHint
@@ -237,14 +242,18 @@ function f8 name="ownTestInCoveredLoop" parameters=[{type=anything}, {type=boole
     Return v11
 }
 # CHECK-LABEL: function f8 name="ownTestInCoveredLoop"
-# CHECK: b1([[header8]]: L0, [[guard8]]: guard, [[epoch8]]: int) handler=b7():
-# CHECK: boolean = IsShapeEpochCurrent [[epoch8]], [[guard8]]
+# CHECK: b1([[header8]]: L0) handler=b7():
+# CHECK-NOT: BelongsToInstance
 # CHECK: b3([[adopted8]]: L0) handler=b7():
 # CHECK-NEXT: Jump -> next b5([[adopted8]])
 # CHECK-NEXT: b4() handler=b7():
 # CHECK-NEXT: Jump -> next b5([[header8]])
 # CHECK-NEXT: b5([[joined8]]: L0) handler=b7():
 # CHECK: v6: anything = GetSlot [[joined8]],
-# CHECK: Jump -> next b1([[joined8]],
+# CHECK: Jump -> next b1([[joined8]])
 # CHECK: v11: anything = PropGet v2 key="y"
 # CHECK: v4: anything = GetSlot [[header8]],
+# No call ends the proof that the object belongs to this instance, so it is tested once, in front of the loop.
+# CHECK: ([[entered8]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[entered8]]
+# CHECK: Jump -> next b1([[entered8]])

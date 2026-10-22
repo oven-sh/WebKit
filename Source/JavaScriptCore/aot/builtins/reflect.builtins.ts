@@ -3,9 +3,9 @@ import * as b from "bun-builtins-table";
 const ownProperties = ["ObjectFields", "NamedProperties", "Elements", "ArrayStorage", "ShapeWords", "OrderWords"];
 const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
-const shapeGuards = ["ShapeEpoch", "MemberGuards"];
+const memberGuards = ["MemberGuards"];
 // An array under a prototype that may hold indexed accessors gets a storage that asks it at every store.
-const prototypeChange = [...prototypeLink, ...shapeGuards, "ArrayStorage"];
+const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
 
 const operandCodeEffects = { capability: "js", runsOnlyOperandCode: true } as const;
 const key = b.keyFrom("propertyKey");
@@ -68,17 +68,18 @@ export default b.declarations(
         throws: true,
         uses: { target: [b.definedBy(key, "attributes"), ...b.ownPropertyTraps], attributes: b.inspected },
         reads: ownProperties,
-        writes: shapeGuards,
+        writes: memberGuards,
         implementation: b.hostCall,
       },
       deleteProperty: {
         ...operandCodeEffects,
         args: keyedArguments,
         returns: b.bool,
+        throws: true,
         uses: { target: [b.deletedByKey(key), ...b.ownPropertyTraps] },
         reads: ownProperties,
-        writes: shapeGuards,
-        implementation: b.compiled("ReflectObject", "deleteProperty"),
+        writes: memberGuards,
+        implementation: b.hostCall,
       },
       get: [
         {
@@ -106,10 +107,9 @@ export default b.declarations(
         throws: true,
         uses: {
           target: [
-            b.readByKey(key, b.resultField("value")),
-            b.accessorReadByKey("Getter", key, b.resultField("get")),
-            b.accessorReadByKey("Setter", key, b.resultField("set")),
-            b.contentsStoredIn(b.nativeMemory),
+            b.readByKey(key, b.resultFieldHoldingOnlyWhatIsStored("value")),
+            b.accessorReadByKey("Getter", key, b.resultFieldHoldingOnlyWhatIsStored("get")),
+            b.accessorReadByKey("Setter", key, b.resultFieldHoldingOnlyWhatIsStored("set")),
             ...b.ownPropertyTraps,
           ],
         },
@@ -129,7 +129,7 @@ export default b.declarations(
         ...operandCodeEffects,
         args: keyedArguments,
         returns: b.bool,
-        uses: { target: [...b.ownPropertyTraps, b.runs("PrototypeChain")] },
+        uses: { target: [b.testedByKey(b.keyFrom("propertyKey")), ...b.ownPropertyTraps, b.runs("PrototypeChain")] },
         reads: inheritedProperties,
         implementation: b.compiled("ReflectObject", "has"),
       },
@@ -155,7 +155,7 @@ export default b.declarations(
         returns: b.bool,
         uses: { target: [b.integrityRaisedTo("NonExtensible"), ...b.ownPropertyTraps] },
         reads: ownProperties,
-        writes: [...ownProperties, ...shapeGuards],
+        writes: [...ownProperties, ...memberGuards],
         implementation: b.hostCall,
       },
       set: [
@@ -167,7 +167,7 @@ export default b.declarations(
           runsOnlyOperandCode: true,
           uses: { target: [b.storedByKey(key, b.operand("value"))], value: b.inspected },
           reads: inheritedProperties,
-          writes: shapeGuards,
+          writes: memberGuards,
           implementation: b.hostCall,
         },
         {
@@ -183,6 +183,7 @@ export default b.declarations(
         ...operandCodeEffects,
         args: { target: b.object, proto: b.union(b.object, b.strictNull) },
         returns: b.bool,
+        throws: true,
         uses: { target: [b.prototypeSetTo("proto"), b.runs("PrototypeChain")], proto: b.inspected },
         reads: prototypeLink,
         writes: prototypeChange,

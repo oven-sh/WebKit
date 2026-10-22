@@ -1,0 +1,54 @@
+# publish(made, annotated, shaped, circle)    spare = another circle
+# Code that nobody compiles enters a function that has escaped with whatever it likes. It comes in through an entrypoint, and every entrypoint assumes a type that has no site and is not only expected:
+# the compiler has made that type, no annotation has. So of all that such code may pass only what the type admits arrives at the parameter, and where the type names objects of the program alone,
+# those of them that such code has in its hands: the circle that was handed over, not the one that the program has kept.
+# Beside it: a type that an annotation gave is taken on trust, and the unknown object is still in the set behind it.
+# A call that the analysis follows is cut by neither: known-layout-outside-the-family-is-not-proven.ir
+# RUN: valueflow-why values=f0:v6 values=f0:v8 values=f1:v1 values=f2:v1 values=f3:v1
+# CHECK: values=f0:v6
+# CHECK: operand 5 1 members: [[circle]]@f0
+# CHECK: values=f0:v8
+# CHECK: operand 0 1 members: [[spare]]@f0
+# CHECK: values=f1:v1
+# CHECK-NOT: unknown
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} unknown
+# CHECK: values=f3:v1
+# CHECK: operand 0
+# CHECK-NOT: unknown
+# CHECK-NOT: untracked
+# CHECK-NOT: [[spare]]@f0
+# CHECK: 1 members: [[circle]]@f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=5 kind=Parameter
+layout L0 name="Circle"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f3
+    v6 = Call v2, -, v3, v4, v5, v0
+    v7 = NewObject layout=L0 fields=[]
+    v8 = PropGet v7 key="side"
+    Return
+}
+function f1 name="made" module=m0 parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="length"
+    Return
+}
+function f2 name="annotated" module=m0 parameters=[{type=string site=w0}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="length"
+    Return
+}
+function f3 name="shaped" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="side"
+    Return
+}

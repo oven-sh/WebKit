@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrivalCounts.h"
 #include "AOTCompactTable.h"
 #include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
@@ -15,6 +16,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTNativeCallValidation.h"
+#include "AOTState.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubsExceptions.h"
 #include "AOTVMState.h"
@@ -28,9 +30,12 @@
 #include "Opcode.h"
 #include "Options.h"
 #include "WebAssemblyFunction.h"
+#include <array>
 #include <bit>
 #include <type_traits>
 #include <wtf/DataLog.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT {
@@ -69,6 +74,16 @@ static ALWAYS_INLINE VM& vmFor(const JSCell* cell) { return cell->vm(); }
 template<typename First>
 concept CanFindVM = requires(First first) { vmFor(first); };
 
+template<typename First>
+static ALWAYS_INLINE void countCall(First first, Entry entry)
+{
+    vmFor(first).aotState().runtimeTable->didCall(entry);
+    if constexpr (std::is_same_v<First, Instance*>) {
+        if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
+            arrivals->didCallOperation(entry);
+    }
+}
+
 template<Entry entry, auto operation, typename Function>
 struct CountedCall {
     static constexpr auto call = operation;
@@ -79,7 +94,7 @@ template<Entry entry, auto operation, typename Result, typename First, typename.
 struct CountedCall<entry, operation, Result(First, Rest...)> {
     static Result JIT_OPERATION_ATTRIBUTES call(First first, Rest... rest)
     {
-        vmFor(first).aotState().runtimeTable->didCall(entry);
+        countCall(first, entry);
         MUST_TAIL_CALL return operation(first, rest...);
     }
 };
@@ -89,7 +104,7 @@ template<Entry entry, auto operation, typename Result, typename First, typename.
 struct CountedCall<entry, operation, Result(First, Rest...) noexcept> {
     static Result JIT_OPERATION_ATTRIBUTES call(First first, Rest... rest) noexcept
     {
-        vmFor(first).aotState().runtimeTable->didCall(entry);
+        countCall(first, entry);
         MUST_TAIL_CALL return operation(first, rest...);
     }
 };
@@ -152,25 +167,40 @@ static void installOperationFrontEnds(void** entries, const Image& image)
     }
 }
 
-static void trapUnusedEntries(void** entries, const Image& image)
-{
-    const uint32_t* entriesUsed = image.header().entriesUsed;
-    auto trapUnlessUsed = [&](Entry entry) {
-        unsigned index = static_cast<unsigned>(entry);
-        if (!(entriesUsed[index / 32] >> index % 32 & 1))
-            entries[index] = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);
-    };
+static constexpr auto entriesThatAreCalled = [] {
+    std::array<uint32_t, std::extent_v<decltype(ImageHeader::entriesUsed)>> bits { };
     for (unsigned index = 0; index < numberOfEntries; ++index) {
         Entry entry = static_cast<Entry>(index);
-        if (isOperation(entry))
-            trapUnlessUsed(entry);
+        if (isOperation(entry) || isRawOperation(entry))
+            bits[index / 32] |= 1u << index % 32;
     }
-    for (const OperationFrontEnd& row : operationFrontEnds())
-        trapUnlessUsed(row.raw);
+    return bits;
+}();
+
+static void trapUnusedEntries(void** entries, const Image& image)
+{
+    void* trap = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);
+    const uint32_t* entriesUsed = image.header().entriesUsed;
+    for (unsigned word = 0; word < entriesThatAreCalled.size(); ++word) {
+        for (uint32_t unused = entriesThatAreCalled[word] & ~entriesUsed[word]; unused; unused &= unused - 1)
+            entries[word * 32 + std::countr_zero(unused)] = trap;
+    }
 }
 
+#if defined(BUN_HARDENED)
+static size_t entryPagesSize()
+{
+    return roundUpToMultipleOf(pageSize(), numberOfEntries * sizeof(void*));
+}
+#endif
+
 RuntimeTable::RuntimeTable(VM& vm)
+#if defined(BUN_HARDENED)
+    : m_entries(static_cast<void**>(OSAllocator::reserveAndCommit(entryPagesSize())))
+    , m_countsCalls(HAVE_MUST_TAIL_CALL && Options::aotCountsPath())
+#else
     : m_countsCalls(HAVE_MUST_TAIL_CALL && Options::aotCountsPath())
+#endif
 {
     const Image& image = *vm.aotState().image;
     fillOperations(m_entries, m_countsCalls);
@@ -182,7 +212,12 @@ RuntimeTable::RuntimeTable(VM& vm)
     vm.aotState().caches->addStrongRoots("compact table structure"_s, { reinterpret_cast<JSCell* const*>(&m_compactTableStructure), 1 });
 }
 
-RuntimeTable::~RuntimeTable() = default;
+RuntimeTable::~RuntimeTable()
+{
+#if defined(BUN_HARDENED)
+    OSAllocator::decommitAndRelease(m_entries, entryPagesSize());
+#endif
+}
 
 void RuntimeTable::finishInitialization(VM& vm)
 {
@@ -192,6 +227,9 @@ void RuntimeTable::finishInitialization(VM& vm)
     m_callLinkInfoForCall.initialize(vm, nullptr, CallLinkInfo::Call, CodeOrigin { });
     m_callLinkInfoForCall.setVirtualCall(vm);
     entry = static_cast<CallLinkInfo*>(&m_callLinkInfoForCall);
+#if defined(BUN_HARDENED)
+    OSAllocator::protect(m_entries, entryPagesSize(), true, false);
+#endif
 }
 
 uint64_t RuntimeTable::callCount(Entry entry) const
@@ -223,6 +261,13 @@ uint64_t operationCallCount(VM& vm, Entry entry)
 {
     const RuntimeTable* runtimeTable = vm.aotState().runtimeTable.get();
     return runtimeTable ? runtimeTable->callCount(entry) : 0;
+}
+
+const Identifier& RuntimeTable::nameOfApplyTrap(VM& vm)
+{
+    if (m_nameOfApplyTrap.isNull()) [[unlikely]]
+        m_nameOfApplyTrap = Identifier::fromString(vm, "apply"_s);
+    return m_nameOfApplyTrap;
 }
 
 } } // namespace JSC::AOT

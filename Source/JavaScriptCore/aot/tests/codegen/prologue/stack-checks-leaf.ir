@@ -1,7 +1,7 @@
 # A stack check belongs to the code that sets a frame up: a leaf without a frame has none, a function that calls has one at its entry, and a leaf that calls only in rare code has one there
 # FORM: AsRead
 # RUN: generate-code
-# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:ElideStackChecks
 # CHECK: f1: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: f2: size={{*}} frame={{*}}@[[setup]]-{{*}} prologueChecks=1
 # CHECK-NOT: enteredWithoutStackCheck

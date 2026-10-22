@@ -5,7 +5,7 @@
 # STATISTIC: IterationsExpandedByClass = 4
 # STATISTIC: IterationsExpandedGenerically = 0
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="tagged.js" displayPath="tagged.js" body=f1
 entry module=m0
 layout L0 name="Key" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
@@ -46,20 +46,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b3():
     Return
 }
-# CHECK-LABEL: function f0 name="main"
-# CHECK: [[step]]: undefined = MapNext
-# CHECK: [[key]]: undefined|L0 = ResultAt [[step]] index=2
-# CHECK: [[value]]: undefined|L1 = ResultAt [[step]] index=3
-# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]] castType=L0
-# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]] castType=L1
-# CHECK: Array = NewArray [[keyOfEntry]], [[valueOfEntry]] contents=anything
-# TYPE-LABEL: function f0 name="main"
-# TYPE: = AssumeType {{*}} castType=undefined|Array<L0|L1, proven, pristine[Storage, Names, Dense]>
-# NOWHERE-LABEL: function f0 name="main"
-# NOWHERE-NOT: = TypeTest
-# NOWHERE-NOT: = IsPristine
-# NOWHERE-NOT: DestructureIterable
-# NOWHERE-NOT: Unreachable
 function f1 name="tagged" module=m1 kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
@@ -97,13 +83,32 @@ function f1 name="tagged" module=m1 kind=Module results=[{type=anything}] {
   b3():
     Return
 }
+# This module imports nothing, so its body stays the function that it was read as, in front of the function with the code of `main`.
 # CHECK-LABEL: function f1 name="tagged"
 # CHECK: = IsPristine {{*}} builtinClass=Array aspects=[Storage, Names]
 # CHECK: = DestructureIterable {{*}} count=2
 # CHECK-LABEL: function f2 name=
 # TYPE-LABEL: function f1 name="tagged"
-# TYPE: = AssumeType {{*}} castType=undefined|Array<L0|L1, proven, pristine[Storage, Dense]>
+# TYPE: = AssumeType {{*}} castType=Array<L0|L1, proven, pristine[Storage, Dense]>
 # TYPE-LABEL: function f2 name=
 # NOWHERE-LABEL: function f1 name="tagged"
 # NOWHERE-NOT: Unreachable
 # NOWHERE-LABEL: function f2 name=
+# The module imports another, so its body calls that one's and then its own code, which stands in a function of its own (CallModules).
+# CHECK-LABEL: function f3 name="main"
+# CHECK: [[step]]: undefined = MapNext
+# CHECK: [[key]]: undefined|L0 = ResultAt [[step]] index=2
+# CHECK: [[value]]: undefined|L1 = ResultAt [[step]] index=3
+# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]] castType=L0
+# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]] castType=L1
+# CHECK: Array = NewArray [[keyOfEntry]], [[valueOfEntry]] contents=anything
+# TYPE-LABEL: function f3 name="main"
+# TYPE: = AssumeType {{*}} castType=Array<L0|L1, proven, pristine[Storage, Names, Dense]>
+# The loop is expanded in front of the optimizer, so at this point the reads of `x` and `y` have their own tests of L0|L1. None is a test of the pair.
+# NOWHERE-LABEL: function f3 name="main"
+# NOWHERE-NOT: testedType=Array
+# NOWHERE-NOT: testedType=undefined
+# NOWHERE-NOT: = IsPristine
+# NOWHERE-NOT: DestructureIterable
+# NOWHERE-NOT: Unreachable
+# NOWHERE-LABEL: function f4 name=

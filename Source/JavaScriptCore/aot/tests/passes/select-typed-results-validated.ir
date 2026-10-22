@@ -3,7 +3,7 @@
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 5
 # STATISTIC: ParsersCreated = 2
-# STATISTIC: ValidatorsCreated = 1
+# STATISTIC: ValidatorsCreated = 0
 # CHECK: outcome: Changed
 # CHECK-NEXT: outcome: Unchanged
 
@@ -68,6 +68,7 @@ function f3 name="inRareBlock" parameters=[{type=string}, {type=boolean}] result
 # CHECK: = CallDirect {{*}} function=[[parserOfFirstList]]
 # CHECK-NOT: expectedResult
 
+# What a reviver returns may be an object that the program holds, and a copy of it would be another object: the answer is checked by the general validator and handed on as it is.
 function f4 name="reviver" parameters=[{type=string}, {type=function}] results=[{type=anything}] {
   b0(v0: string, v1: function):
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/1 expectedResult=x1
@@ -76,16 +77,10 @@ function f4 name="reviver" parameters=[{type=string}, {type=function}] results=[
 # CHECK-LABEL: function f4 name="reviver"
 # CHECK: b0(v0: string, v1: function):
 # CHECK-NEXT: [[revived]]: anything = CallBuiltin -, v0, v1 overload=JSONParse/1
-# CHECK-NEXT: [[results4]]:{{*}}= CallDirect [[revived]] function=[[validatorOfFirstList]]
-# CHECK-NEXT: [[outcome4]]: int[0, 2] = ResultAt [[results4]]
-# CHECK-NEXT: [[copy4]]:{{*}}= ResultAt [[results4]] index=1
-# CHECK-NEXT: Switch [[outcome4]] cases=[1] -> case [[accepted4]](), otherwise [[general4]]()
-# CHECK: [[accepted4]]():
-# CHECK-NEXT: Jump -> next [[merge4]]([[copy4]])
-# CHECK: [[general4]]() frequency=Rare:
 # CHECK-NEXT: [[plan4]]:{{*}}= String string="[{\"shape\":\"Object\",
 # CHECK-NEXT: = CallBuiltin -, [[revived]], [[plan4]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: Jump -> next [[merge4]]([[revived]])
 # CHECK-NOT: JSONSourceOpen
 # CHECK: function [[parserOfFirstList]] {{*}}role=ValidatingParser {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x0}
 # CHECK: function [[parserOfOtherList]] {{*}}role=ValidatingParser {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x2}
-# CHECK: function [[validatorOfFirstList]] {{*}}role=Validator {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}
+# CHECK-NOT: role=Validator

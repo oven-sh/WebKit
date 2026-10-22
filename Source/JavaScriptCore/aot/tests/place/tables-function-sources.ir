@@ -20,10 +20,13 @@ function f2 name="second" results=[{type=anything}] {
     Return
 }
 
-# CHECK: functionNames 4 16
-# CHECK-NEXT: functionKinds 4 8
-# CHECK-NEXT: functionTraces 4 8
-# CHECK-NEXT: functionSources 1 4
+# CHECK: functionNames 3 9
+# CHECK-NEXT: functionNameGroups 2 8
+# CHECK-NEXT: functionNameRuns 0 0
+# CHECK-NEXT: functionRecordNumbers 4 4
+# CHECK-NEXT: functionRecords
+# CHECK-NEXT: functionRecordsByFunction 0 0
+# CHECK-NEXT: functionSources 1 3
 # CHECK-NEXT: implementedBuiltins 0 0
 # TRACES: trace f0 role=Source source=f0 implements=-
 # TRACES-NEXT: trace f1 role=Source source=f1 implements=-

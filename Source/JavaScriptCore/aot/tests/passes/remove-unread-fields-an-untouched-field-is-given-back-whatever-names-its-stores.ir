@@ -1,0 +1,38 @@
+# A field that flow calls untouched (every writer known, never stored, never read) has no storage. Where a placed test names it all the same, it gets its storage back: its store count becomes unknown.
+# That holds also where flow does not say that every store names the field: nobody else gives it back, and the test would name a field without a slot
+# FORM: Prepared optimizing
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Busy" fields=[{key="since" declared={type=number}}, {key="kind" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Idle" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}, {key="kind" declared={type=string} flags=[IsRequired]}]
+layout L2 name="NamedByNobody" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}, {key="kind" declared={type=string} flags=[IsRequired]}]
+# CHECK: layout L1 name="Idle" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown reads=NeverRead}}},
+# CHECK: layout L2 name="NamedByNobody" fields=[{key="since" declared={type=number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}},
+
+function f0 name="describes" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0, L1]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = IsSlotFilled v0, v2 key="since" receivers=[L0, L1] level=Expected
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = AllGuards v2, v4
+    v6 = GetSlot v0, v5 key="since" receivers=[L0, L1] level=Expected
+    Return v6
+  b3():
+    v7 = PropGet v0 key="since"
+    Return v7
+}
+function f1 name="makes" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = NewObject -, v0 layout=L1 fields=[1]
+    v3 = NewObject -, v0 layout=L2 fields=[1]
+    v4 = NewArray v1, v2, v3 contents=anything holes=[]
+    Return v4
+}
+# CHECK-LABEL: function f0 name="describes"
+# CHECK: IsSlotFilled v0, v2 key="since" receivers=[L0, L1]

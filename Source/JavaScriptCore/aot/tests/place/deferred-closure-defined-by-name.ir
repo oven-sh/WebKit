@@ -1,4 +1,5 @@
 # The slot of `run = () => this.x` defers its closure whether or not the store that creates the field was resolved: with ResolveAccesses off the definition stays by name and the run time enters the closure it is handed (native this-allocation/deferred-closure-defined-by-name runs this program)
+# TODO: closures-in-fields: a closure that a field definition by name holds gets a plain cell instead of a slot that makes it on demand
 # OPTIONS: references=narrow disable=pass:ResolveAccesses
 # RUN: tables layouts
 # CHECK: layout shape={{*}} index=L0 kind=Instance name="Counter"
@@ -40,7 +41,7 @@ function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     v1 = PropGet v0 key="x"
     Return v1
 }

@@ -1,0 +1,38 @@
+# let held; const readHeld = () => held; collect(readHeld); held = { x: 1.5 }; collect()
+# A store flagged laterBarrierCovers must be followed by a barrier for the same owner before anything can collect. A validating build tests that, and this flag is a lie written by hand.
+# The lie: laterBarrierCovers. No store follows: what follows is a call, which may collect, and the first collection has marked the environment.
+# The closure goes to code that nobody compiled, so the environment lies on the heap, and the pass that would turn it into variables of the module is off. The pass that sets the flags is off too, so the flag stays as written.
+# The test does not ask whether the owner is marked: it ends the process at the first operation that may collect while the promised barrier is outstanding, so the run without a collection ends the same way.
+# The file beside this one has the flag where it says the truth
+# FORM: AsRead
+# RUN: run-in-shell globalThis.collect = () => { gc(); };
+# RUN(SAME): run-in-shell globalThis.collect = () => { };
+# OPTIONS: validate disable=pass:RemoveRedundantBarriers disable=pass:PromoteEnvironmentsToVariables
+# CHECK: AOT validation: BarrierWasNeeded f0
+# CHECK: crashed with
+# SAME: AOT validation: BarrierWasNeeded f0
+# SAME: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{key="held" declared={type=anything}}]
+layout L1 name="Thing" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="collect" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Double number=1.5
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutEnvironmentField v0, v7 layout=L0 field=0 [laterBarrierCovers]
+    v9 = Call v3, -
+    Return
+}
+function f1 name="readHeld" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

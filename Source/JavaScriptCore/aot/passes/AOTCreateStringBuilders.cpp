@@ -43,8 +43,7 @@ static constexpr AbstractHeapSet stringCreationHeaps = bookkeepingHeaps | Abstra
 static void retype(FunctionPassContext& context, Value& value)
 {
     value.type = resultTypeOf(context.program, context.function, value, context.types);
-    value.setWritten({ });
-    value.setPrediction({ });
+    value.setExpected({ });
 }
 
 // The append makes the same conversion, so it runs out of memory where the call would have.
@@ -236,12 +235,11 @@ private:
     void assignHandles(const StringWeb& web)
     {
         for (ValueID member : web.members) {
-            Value& value = m_function.at(member);
+            Value& value = m_function.edit(member);
             if (value.opcode != Opcode::Parameter)
                 continue;
             value.type = m_handleType;
-            value.setWritten({ });
-            value.setPrediction({ });
+            value.setExpected({ });
             m_handleOf[member.index()] = member;
         }
         for (const StringWebEntry& entry : web.entries) {
@@ -285,7 +283,7 @@ private:
     void rewriteLengthRead(const Use& use, ValueID handle)
     {
         if (!equalityComparisons.contains(m_function.at(use.user).opcode)) {
-            Value& user = m_function.at(use.user);
+            Value& user = m_function.edit(use.user);
             user.become(Opcode::StringBuilderLength);
             user.setBuilderOperand(handle);
             retype(m_context, user);
@@ -294,7 +292,7 @@ private:
         InsertionSite site = siteOf(use.user);
         ValueID length = insert(site, IRBuilder::make(Opcode::StringBuilderLength, { handle }));
         ValueID lengthOfEmptyString = insert(site, makeInteger(0));
-        Value& comparison = m_function.at(use.user);
+        Value& comparison = m_function.edit(use.user);
         comparison.setLeftOperand(length);
         comparison.setRightOperand(lengthOfEmptyString);
     }
@@ -329,7 +327,7 @@ private:
             if (!isStringBuilderPart(typeOf(part)))
                 part = insertConversion(siteOf(id), opcode, part);
         }
-        Value& append = m_function.at(id);
+        Value& append = m_function.edit(id);
         append.become(Opcode::StringBuilderAppend);
         append.setBuilderOperand(m_handleOf[id.index()]);
         append.setPartsOperands(parts.span());
@@ -406,8 +404,8 @@ private:
     Target& targetOnEdge(Edge edge)
     {
         if (std::optional<BlockID> block = blockOnEdge(edge))
-            return m_function.at(*block).terminator.next();
-        return targetOf(m_function, edge);
+            return m_function.edit(*block).terminator.next();
+        return editTarget(m_function, edge);
     }
 
     BlockID blockInFrontOf(BlockID block) const
@@ -580,7 +578,7 @@ private:
             ValueID converted = convertedOperandOf(m_function.at(part), *forms);
             if (!converted || !onlyCreatesString(m_context.analyses.effectsOf(part).onAnyEdge()))
                 continue;
-            m_function.at(append).setOperand(operandIndex, converted);
+            m_function.edit(append).setOperand(operandIndex, converted);
             erase(part);
         }
     }
@@ -641,7 +639,7 @@ private:
         if (parts.isEmpty())
             erase(fold.append);
         else
-            m_function.at(fold.append).setPartsOperands(parts.span());
+            m_function.edit(fold.append).setPartsOperands(parts.span());
     }
 
     void erase(ValueID value)
@@ -794,7 +792,7 @@ private:
         ProgramPoint end = m_useLists.pointOf(nested.concatenation);
         if (!analyses.dominates(nested.begin, end) || (outer && !analyses.dominates(outer, start)))
             return false;
-        if (start.block != end.block && analyses.blockCycles().isInCycle(end.block) && analyses.cfg().isInCycleAvoiding(end.block, start.block))
+        if (start.block != end.block && analyses.isInCycle(end.block) && analyses.cfg().isInCycleAvoiding(end.block, start.block))
             return false;
         bool canAppendParts = true;
         m_function.at(nested.concatenation).forEachOperand([&](ValueID part, uint32_t operandIndex) {
@@ -892,7 +890,7 @@ private:
     void redirectWrites(ValueID begin, ValueID outer)
     {
         for (const Use& use : m_useLists.usesOf(begin)) {
-            Value& user = m_function.at(use.user);
+            Value& user = m_function.edit(use.user);
             if (!closingOperations.contains(user.opcode)) {
                 user.setOperand(use.operandIndex, outer);
                 continue;
@@ -907,7 +905,7 @@ private:
             }
             retype(m_context, user);
         }
-        Value& checkpoint = m_function.at(begin);
+        Value& checkpoint = m_function.edit(begin);
         checkpoint.become(Opcode::StringBuilderCheckpoint);
         checkpoint.setBuilderOperand(outer);
         retype(m_context, checkpoint);
@@ -916,13 +914,13 @@ private:
     void finishConcatenation(ValueID concatenation, ValueID outer, std::span<const ValueID> laterParts)
     {
         if (m_function.at(concatenation).opcode == Opcode::StringBuilderAppend) {
-            m_function.at(concatenation).setPartsOperands(laterParts);
+            m_function.edit(concatenation).setPartsOperands(laterParts);
             return;
         }
         bool isLikelyKey = m_function.at(concatenation).opcode == Opcode::Strcat && m_function.at(concatenation).isLikelyKey();
         m_builder.setOrigin(m_function.at(concatenation).origin());
         m_builder.insertBefore(m_useLists.pointOf(concatenation), makeAppend(outer, laterParts));
-        Value& finish = m_function.at(concatenation);
+        Value& finish = m_function.edit(concatenation);
         finish.become(Opcode::StringBuilderFinish);
         finish.setBuilderOperand(outer);
         finish.setIsLikelyKey(isLikelyKey);
@@ -941,7 +939,7 @@ private:
 
 } // anonymous namespace
 
-PassOutcome createStringBuilders(FunctionPassContext& context)
+static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     StringBuilderPlan plan = analyzeStringBuilders(context);
@@ -957,6 +955,15 @@ PassOutcome createStringBuilders(FunctionPassContext& context)
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
     return outcome | expandAppendedStringRanges(context);
+}
+
+PassOutcome createStringBuilders(FunctionPassContext& context)
+{
+    PassOutcome outcome = createAndJoinBuilders(context);
+    // Each step that edits tells the analyses when it is done, for the step behind it asks them. So whatever they hold was made behind the last edit.
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses;
+    return outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

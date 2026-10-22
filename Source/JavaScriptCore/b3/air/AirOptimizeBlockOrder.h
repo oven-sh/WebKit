@@ -50,6 +50,11 @@ void optimizeBlockOrder(Code&);
 
 JS_EXPORT_PRIVATE void moveBlocksWithoutSuccessorsToEnd(Code&);
 
+// x86-64: a conditional jump over at most 127 bytes takes 2 bytes, any other 6. A branch that leaves for rare code, or stands in it,
+// goes to an unconditional jump to the same block instead, where one is near: one that the code has anyway,
+// or a new one, behind a block that does not fall through, that several such branches share. Keeps the block order.
+void routeRareBranchesThroughJumps(Code&);
+
 } } } // namespace JSC::B3::Air
 
 #endif // ENABLE(B3_JIT)

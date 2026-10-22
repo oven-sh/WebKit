@@ -21,9 +21,15 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 struct LivenessOptions {
+    // Both solvers compute the same sets.
+    enum class Solver : uint8_t { ChosenBySize, PerValue };
+
     const BitVector* trackedValues { nullptr };
     const BitVector* trackedBlocks { nullptr };
     std::span<const std::pair<BlockID, BlockID>> additionalEdges;
+    // May be a superset.
+    const OpcodeSet* opcodesOfValues { nullptr };
+    Solver solver { Solver::ChosenBySize };
 };
 
 class Liveness {
@@ -71,12 +77,37 @@ private:
         friend auto operator<=>(const InteriorPointer&, const InteriorPointer&) = default;
     };
 
+    struct CrossBlockValue {
+        ValueID value;
+        BlockID definingBlock;
+        uint32_t firstUseBlockIndex;
+    };
+
+    // Sorted by value.
+    struct CrossBlockValues {
+        std::span<const BlockID> useBlocksOf(size_t index) const LIFETIME_BOUND
+        {
+            size_t begin = values[index].firstUseBlockIndex;
+            size_t end = index + 1 < values.size() ? values[index + 1].firstUseBlockIndex : useBlocks.size();
+            return useBlocks.subspan(begin, end - begin);
+        }
+
+        Vector<CrossBlockValue, 32> values;
+        Vector<BlockID, 64> useBlocks;
+    };
+
+    using AdditionalPredecessors = Vector<Vector<BlockID, 1>>;
+
     bool isTrackedValue(ValueID id) const { return !m_trackedValues || m_trackedValues->get(id.index()); }
     bool isTrackedBlock(BlockID) const;
     ValueID baseOf(ValueID) const;
     template<typename Functor> void forEachBase(ValueID, NOESCAPE const Functor&) const;
     Vector<InteriorPointer> collectInteriorPointers() const;
-    void computeLiveAtHeads(std::span<const InteriorPointer>);
+    template<typename Functor> void forEachValueWithUseBlocks(std::span<const InteriorPointer>, NOESCAPE const Functor&) const;
+    CrossBlockValues collectCrossBlockValues(std::span<const InteriorPointer>) const;
+    void computeLiveAtHeads(std::span<const InteriorPointer>, LivenessOptions::Solver);
+    void solvePerValue(const CrossBlockValues&, const AdditionalPredecessors&);
+    void solvePerBlock(const CrossBlockValues&, const AdditionalPredecessors&);
 
     const Function& m_function;
     const CFG& m_cfg;
@@ -84,8 +115,34 @@ private:
     std::optional<BitVector> m_trackedValues;
     std::optional<BitVector> m_trackedBlocks;
     Vector<std::pair<BlockID, BlockID>> m_additionalEdges;
-    Vector<Vector<ValueID>> m_liveAtHead;
+    Vector<ValueID> m_liveValues;
+    Vector<uint32_t> m_firstLiveValue;
     bool m_hasTrackedBases { false };
+};
+
+// What Liveness says of a value, found when the value is first asked about: from its uses up to its definition. For whoever asks about few of the values of a function.
+class LivenessOfAskedValues {
+    WTF_MAKE_NONCOPYABLE(LivenessOfAskedValues);
+public:
+    LivenessOfAskedValues(const Function&, const CFG&, const UseLists&);
+
+    // A pointer into an object keeps the object alive, and only Liveness follows that.
+    static bool answersFor(const OpcodeSet& opcodesOfValues);
+
+    bool isLiveAtHead(ValueID, BlockID);
+    // By index of the block. It stays where it is until the next value is asked about.
+    const BitVector& blocksEnteredWith(ValueID);
+
+private:
+    uint32_t findBlocksEnteredWith(ValueID);
+
+    const Function& m_function;
+    const CFG& m_cfg;
+    const UseLists& m_useLists;
+    // One more than the index of the set. Zero for a value that nobody has asked about.
+    Vector<uint32_t> m_setOfValue;
+    Vector<BitVector> m_blocksEnteredWithValue;
+    std::optional<Vector<std::pair<ValueID, BlockID>>> m_narrowedOperandUses;
 };
 
 } } } // namespace JSC::AOT::Typed

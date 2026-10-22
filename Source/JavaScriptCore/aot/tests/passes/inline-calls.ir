@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass InlineCalls
-# STATISTIC: InlineDecisionInline = 15
+# STATISTIC: InlineDecisionInline = 12
 # STATISTIC: InlineDecisionInlineHead = 1
 # STATISTIC: InlineDecisionCostExceedsBenefit = 11
 # STATISTIC: InlineDecisionBarrier = 6
@@ -14,14 +14,12 @@
 # STATISTIC: InlineBenefitFoldedCode = 1
 # STATISTIC: InlineBenefitKnownCalleeArgument = 1
 # STATISTIC: InlineBenefitSunkAllocation = 2
-# STATISTIC: InlineBenefitOnlyCallSite = 2
 # LOSS: MaxInlineDepth x1 f22 v1
-# LOSS: MaxOnlyCallSiteBytes x1 f32 v1
 # LOSS: MaxInlineHeadBytes x7 f1
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
 evalscope e0 mode=Strict
 
 function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
@@ -538,7 +536,8 @@ function f19 name="rareCalls" parameters=[{type=number}, {type=boolean}] results
 }
 # CHECK-LABEL: name="rareCalls"
 # CHECK: = CallDirect v0 function=f1
-# CHECK-NOT: CallDirect
+# CHECK-NEXT: = CallDirect v2 function=f0
+# CHECK-NEXT: Return v3
 
 function f20 name="callAtDepthOne" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}] {
   b0(v0: number):
@@ -566,16 +565,16 @@ function f22 name="callAtDepthFour" parameters=[{type=number}] results=[{type=nu
 # CHECK: = CallDirect {{*}} function=f1
 # CHECK-NEXT: Return
 
-function f23 name="wrapperInRareBlockAtDepthFive" parameters=[{type=number}, {type=boolean}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}, {callee=f2 parent=3 module=m0}, {callee=f2 parent=4 module=m0}] {
+function f23 name="wrapperInUnlikelyBlockAtDepthFive" parameters=[{type=number}, {type=boolean}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}, {callee=f2 parent=3 module=m0}, {callee=f2 parent=4 module=m0}] {
   b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
+  b1() frequency=Unlikely:
     v2 = CallDirect v0 function=f45 @0:5
     Return v2
   b2():
     Return v0
 }
-# CHECK-LABEL: name="wrapperInRareBlockAtDepthFive"
+# CHECK-LABEL: name="wrapperInUnlikelyBlockAtDepthFive"
 # CHECK-NOT: CallDirect
 
 function f24 name="callsAsyncRamp" parameters=[{type=anything}] results=[{type=Promise}] {
@@ -623,7 +622,7 @@ function f28 name="passesUnknownFunction" parameters=[{type=anything}, {type=num
 
 function f29 name="passesLocalObject" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
-    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = CallDirect v1 function=f5
     Return v2
 }
@@ -632,7 +631,7 @@ function f29 name="passesLocalObject" parameters=[{type=number}] results=[{type=
 
 function f30 name="passesEscapingObject" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
   b0(v0: number, v1: anything):
-    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = Call v1, -, v2
     v4 = CallDirect v2 function=f5
     Return v4
@@ -646,7 +645,7 @@ function f31 name="onlyCallerOfBigFunction" parameters=[{type=anything}] results
     Return v1
 }
 # CHECK-LABEL: name="onlyCallerOfBigFunction"
-# CHECK-NOT: CallDirect
+# CHECK: = CallDirect v0 function=f6
 
 function f32 name="onlyCallerOfHugeFunction" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -718,7 +717,7 @@ function f38 name="callsNoReturnFunction" parameters=[{type=anything}, {type=boo
 }
 # CHECK-LABEL: name="callsNoReturnFunction"
 # CHECK: b1() frequency=Rare:
-# CHECK-NOT: CallDirect
+# CHECK-NEXT: = CallDirect v0 function=f15
 
 function f39 name="hotCallWithHead" parameters=[{type=undefined|object}, {type=number}, {type=boolean}] results=[{type=number}] {
   b0(v0: undefined|object, v1: number, v2: boolean):
@@ -790,7 +789,7 @@ function f42 name="createsPair" parameters=[{type=number}] results=[{type=L0}] {
     v22 = Mul v21, v0
     v23 = Mul v22, v0
     v24 = Mul v23, v0
-    v25 = NewObject -, v24, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v25 = NewObject -, v24, v0 layout=L0 fields=[0, 1]
     Return v25
 }
 

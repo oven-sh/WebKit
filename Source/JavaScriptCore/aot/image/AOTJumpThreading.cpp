@@ -54,7 +54,7 @@ struct RemovedBodies {
 
 static constexpr size_t maxPinnedUnitLength = UINT16_MAX / codeOffsetUnit * codeOffsetUnit;
 
-static void appendPinnedRange(Vector<CodeUnit>& units, size_t begin, size_t end)
+static void appendPinnedRange(auto& units, size_t begin, size_t end)
 {
     while (begin < end) {
         size_t length = std::min(end - begin, maxPinnedUnitLength);
@@ -78,13 +78,7 @@ static void trimPadding(CompiledCode& code, const CodeTemplates& templates)
     size_t size = std::max<size_t>(body.paddingStart, lastReturnSite ? *lastReturnSite + codeOffsetUnit : 0);
     if (size < body.bytes.size()) {
         body.bytes.shrink(size);
-        while (!body.units.isEmpty() && body.units.last().offset >= size)
-            body.units.removeLast();
-        if (!body.units.isEmpty() && body.units.last().offset + body.units.last().length > size) {
-            CodeUnit& last = body.units.last();
-            RELEASE_ASSERT(last.kind == CodeUnit::Kind::Pinned);
-            last.length = safeCast<uint16_t>(size - last.offset);
-        }
+        body.units.shrinkCodeSize(safeCast<uint32_t>(size));
     } else if (size > body.bytes.size()) {
         size_t start = body.bytes.size();
         RELEASE_ASSERT(!((size - start) % templates.breakpoint.size()));
@@ -95,24 +89,34 @@ static void trimPadding(CompiledCode& code, const CodeTemplates& templates)
     body.paddingStart = safeCast<uint32_t>(size);
 }
 
-static const Relocation* findOnlyJump(const CompiledCode& code)
+// Code without a frame that calls nothing, faults nowhere and is described by nothing but its bytes and the jumps in them.
+static bool leavesOnlyByJumps(const CompiledCode& code)
 {
     const CodeBody& body = code.body;
     const SiteDescription& sites = code.sites;
     if (code.frame.hasFrame() || !code.frame.prologueChecks.isEmpty())
-        return nullptr;
-    if (body.relocations.size() != 1 || body.entries.size() != 1)
-        return nullptr;
-    if (!body.localSites.isEmpty() || !body.returnSites.isEmpty() || !body.firstReadSites.isEmpty() || !body.constants.isEmpty() || !body.jumpTables.isEmpty())
-        return nullptr;
+        return false;
+    if (body.relocations.isEmpty() || body.entries.size() != 1)
+        return false;
+    if (!body.returnSites.isEmpty() || !body.firstReadSites.isEmpty() || !body.constants.isEmpty() || !body.jumpTables.isEmpty())
+        return false;
     if (sites.positions.size() != 1 || sites.numberOfSitesWithoutCode
         || !sites.inlineFrames.isEmpty() || !sites.spreadSites.isEmpty() || !sites.flaggedSites.isEmpty() || !sites.handlers.isEmpty()
         || !sites.faultingAccesses.isEmpty() || !sites.pollSites.isEmpty() || !sites.frameMapWords.isEmpty())
+        return false;
+    return std::ranges::all_of(body.relocations, [](const Relocation& jump) {
+        return jump.kind == RelocationKind::Jump && jump.space == SymbolSpace::Function && jump.entry == primaryEntry;
+    });
+}
+
+static const Relocation* findOnlyJump(const CompiledCode& code)
+{
+    const CodeBody& body = code.body;
+    if (!leavesOnlyByJumps(code) || body.relocations.size() != 1 || !body.localSites.isEmpty())
         return nullptr;
     const Relocation& jump = body.relocations[0];
-    if (jump.kind != RelocationKind::Jump || jump.space != SymbolSpace::Function || jump.entry != primaryEntry || jump.offset + sizeOfJump != body.bytes.size())
+    if (jump.offset + sizeOfJump != body.bytes.size())
         return nullptr;
-    RELEASE_ASSERT(!code.entry.hasValueEntry);
     RELEASE_ASSERT(body.primaryEntryOffset() <= jump.offset);
     return &jump;
 }
@@ -204,7 +208,7 @@ static RemovedBodies createAliases(LinkedFunctions& functions, const Vector<Opti
     auto choosePlacement = [&](uint32_t position, uint32_t end) -> std::optional<AliasPlacement> {
         if (isOneJump(functions, jumpsTo, position))
             return AliasPlacement::AtPrimaryEntry;
-        if (*jumpsTo[position] == end && !hasPrependedHead.get(end) && canPrependHead(functions[end].body))
+        if (!hasPrependedHead.get(end) && canPrependHead(functions[end].body))
             return AliasPlacement::BeforeBody;
         if (lastRetained)
             return AliasPlacement::AfterBody;
@@ -254,11 +258,9 @@ static void prependHead(CompiledCode& target, const CompiledCode& removed, const
         offset += shift;
     });
     if (!body.units.isEmpty()) {
-        for (CodeUnit& unit : body.units)
-            unit.offset += shift;
         Vector<CodeUnit> pinnedUnits;
         appendPinnedRange(pinnedUnits, 0, shift);
-        body.units.insertVector(0, pinnedUnits);
+        body.units.prepend(pinnedUnits.span());
     }
     body.bytes.insertFill(0, 0, shift);
     memcpySpan(body.bytes.mutableSpan(), head);
@@ -294,6 +296,69 @@ static void appendBody(CodeBody& host, const CompiledCode& guest, FunctionID tar
     host.paddingStart = safeCast<uint32_t>(host.bytes.size());
 }
 
+#if CPU(X86_64)
+// The override for the data segment, which in 64-bit code changes no address.
+static constexpr uint8_t prefixWithoutMeaning = 0x3e;
+#else
+static constexpr uint8_t prefixWithoutMeaning = 0;
+#endif
+
+// Tests in front of a body: where all of them pass, a jump to the body, which lies next. Behind that jump, out of the way, stands what a test that fails goes on with, and that ends in jumps to other functions.
+// With that part in front of the entry the jump to the body is the last instruction, and a jump to what lies next is not needed.
+// Returns by how much the entry, and a head that lies in front of it, have moved.
+static uint32_t endInJumpToNextBody(CompiledCode& code, FunctionID next)
+{
+    CodeBody& body = code.body;
+    if (!leavesOnlyByJumps(code) || body.relocations.size() < 2 || body.paddingStart != body.bytes.size())
+        return 0;
+    const Relocation jump = body.relocations[0];
+    if (body.callees[jump.symbol] != next)
+        return 0;
+    uint32_t endOfJump = safeCast<uint32_t>(jump.offset + sizeOfJump);
+    uint32_t sizeBehindJump = safeCast<uint32_t>(body.bytes.size()) - endOfJump;
+    // The entry of the entrance and the entry of the body are both aligned. Where the tests between them have an odd size, the missing byte is a prefix without meaning
+    // on the first instruction, which costs nothing, and not an instruction more behind the last.
+    uint32_t sizeOfPrefix = 0;
+#if CPU(X86_64)
+    static_assert(imageFunctionAlignment == 2);
+    if (!body.primaryEntryOffset() && jump.offset % imageFunctionAlignment)
+        sizeOfPrefix = 1;
+#endif
+    auto moved = [&](uint32_t offset) {
+        return offset < endOfJump ? offset + sizeBehindJump + sizeOfPrefix : offset - endOfJump;
+    };
+
+    Vector<uint8_t> bytes;
+    bytes.reserveInitialCapacity(body.bytes.size() + sizeOfPrefix);
+    bytes.append(body.bytes.span().subspan(endOfJump));
+    if (sizeOfPrefix)
+        bytes.append(prefixWithoutMeaning);
+    bytes.append(body.bytes.span().first(endOfJump));
+    Vector<LinkedSite> localSites = body.localSites;
+    for (LinkedSite& site : localSites) {
+        unsigned size = MacroAssembler::relocationSize(site.kind);
+        if (!size || site.kind == RelocationKind::Distance32 || site.target >= body.bytes.size())
+            return 0;
+        site.offset = moved(site.offset);
+        site.target = moved(site.target);
+        if (!MacroAssembler::setRelocationDistance(site.kind, bytes.mutableSpan().subspan(site.offset, size), static_cast<int64_t>(site.target) - static_cast<int64_t>(site.offset)))
+            return 0;
+    }
+    std::ranges::sort(localSites, { }, &LinkedSite::offset);
+
+    body.bytes = WTF::move(bytes);
+    body.paddingStart = safeCast<uint32_t>(body.bytes.size());
+    body.localSites = WTF::move(localSites);
+    body.relocations.removeAt(0);
+    for (Relocation& relocation : body.relocations)
+        relocation.offset = moved(relocation.offset);
+    body.relocations.append(jump);
+    body.relocations.last().offset = moved(jump.offset);
+    body.entries[0].offset += sizeBehindJump;
+    body.units = { };
+    return sizeBehindJump;
+}
+
 void removeJumpOnlyFunctions(LinkedFunctions& functions, Vector<EntryAlias>& aliases, const CodeTemplates& templates, BuildContext& context)
 {
     RELEASE_ASSERT(aliases.isEmpty());
@@ -324,6 +389,21 @@ void removeJumpOnlyFunctions(LinkedFunctions& functions, Vector<EntryAlias>& ali
             return !removed.isRemoved.get(position);
         });
         functions.reorder(retainedPositions.span(), context);
+    }
+    CodeIndex indexOfRetained(functions.span());
+    BitVector isHost(functions.size());
+    for (const EntryAlias& alias : aliases) {
+        if (alias.placement == AliasPlacement::AfterBody)
+            isHost.set(*indexOfRetained.indexOf(alias.body));
+    }
+    Vector<uint32_t> distanceMoved(FillWith { }, functions.size(), 0u);
+    forEachIndexInParallel(loops, safeCast<unsigned>(functions.size()), [&](unsigned position) {
+        if (position + 1 < functions.size() && !isHost.get(position))
+            distanceMoved[position] = endInJumpToNextBody(functions[position], functions[position + 1].function);
+    });
+    for (EntryAlias& alias : aliases) {
+        if (alias.placement == AliasPlacement::BeforeBody)
+            alias.start += distanceMoved[*indexOfRetained.indexOf(alias.body)];
     }
     context.statistics().count(StatisticID::JumpOnlyFunctionsRemoved, aliases.size());
 }

@@ -1,7 +1,7 @@
 # The names that are read most take the lowest offsets of the two large layouts. Those are the only offsets that the small layout has for "pos" and "end", which it shares with them.
 # The sets that found no room go first in a second round, and every name gets one location. No cell grows
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
 # STATISTIC: SharedSlots = 4
 # STATISTIC: SharesRefused = 0

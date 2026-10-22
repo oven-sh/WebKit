@@ -1,6 +1,6 @@
 # Where the copies of the body for all arms of a for-in loop are too much code, the arms that fit are expanded, and the objects of the others take the loop as written
 # FORM: Prepared optimizing
-# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass limit=MaxVersionedIterationBytes:400
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass limit=MaxVersionedIterationBytes:400
 # RUN: pass ExpandOwnKeys
 # STATISTIC: OwnKeyWalksExpanded = 1
 # LOSS: MaxVersionedIterationBytes f0 v2
@@ -9,7 +9,7 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="One" fields=[{key="only" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
 layout L1 name="Many" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="e" declared={type=number}}, {key="f" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4, 5]}]}
 
-function f0 name="copies" parameters=[{type=object predicted=L0|L1}, {type=object}] results=[{type=undefined}] {
+function f0 name="copies" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
   b0(v0: object ~ L0|L1, v1: object):
     v2 = ForInOpen v0
     v3 = Integer integer=0

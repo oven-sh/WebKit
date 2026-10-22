@@ -10,11 +10,15 @@
 
 #include "AOTChooseCallingConventions.h"
 #include "AOTClosureTestEmitter.h"
+#include "AOTCodeSites.h"
 #include "AOTConvention.h"
 #include "AOTElideStackChecks.h"
+#include "AOTHintEmitter.h"
+#include "AOTRuntimeCallEmitter.h"
+#include "AOTStubsClosures.h"
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCalls.h"
-#include "AOTTypeTestEmitter.h"
+#include "AOTStubsValues.h"
 #include "AirCode.h"
 #include "AirFrameEmission.h"
 #include "AirGenerationContext.h"
@@ -48,9 +52,9 @@ static unsigned spilledBytesOf(const CodeGenerationInputs& inputs, FunctionID id
     return inputs.conventions.of(inputs.program, id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0;
 }
 
-static void emitStoreToStackWord(CCallHelpers& jit, const ValueRep& source, GPRReg scratch, uint32_t stackIndex)
+static void emitStoreToStackWord(CCallHelpers& jit, const Air::Code& code, const ValueRep& source, GPRReg scratch, uint32_t stackIndex)
 {
-    CCallHelpers::Address word(GPRInfo::callFrameRegister, static_cast<int32_t>(offsetOfStackWordFromFrame(stackIndex)));
+    CCallHelpers::Address word = code.addressInFrame(offsetOfStackWordFromFrame(stackIndex));
     if (source.isGPR()) {
         jit.store64(source.gpr(), word);
         return;
@@ -59,7 +63,10 @@ static void emitStoreToStackWord(CCallHelpers& jit, const ValueRep& source, GPRR
         jit.storeDouble(source.fpr(), word);
         return;
     }
-    source.emitRestore(jit, scratch);
+    if (source.isStack())
+        jit.load64(code.addressInFrame(source.offsetFromFP()), scratch);
+    else
+        source.emitRestore(jit, scratch);
     jit.store64(scratch, word);
 }
 
@@ -85,13 +92,24 @@ static void emitJumpTo(CCallHelpers& jit, CodeRecords& records, const Target& ta
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A function whose check its callers cover is entered behind a check. Every other target checks the stack for itself where it sets up a frame.
+template<typename Target>
+static bool pollsWithoutFrame(const CodeGenerationInputs& inputs, FunctionID id, const Target& target)
+{
+    using TargetKind = decltype(Target::kind);
+    if (!hasFaultingLoopPolls || spilledBytesOf(inputs, id))
+        return false;
+    return target.kind != TargetKind::Function || inputs.stackChecks.of(target.calledFunction) != StackCheck::CoveredByCallers;
+}
+
 bool CallEmitter::hasStackWordsOfCaller(uint32_t numberOfWords) const
 {
     return !numberOfWords || (hasStackArgumentAreaOf(m_function.role) && numberOfWords <= inputs().conventions.stackWordsReservedByCallersOf(m_program, m_id));
 }
 
 // The check is the poll of a cycle of tail calls. Callers cover only what is in no cycle. An entrypoint that leaves its check to its callees enters functions
-// with a check of their own, and a cycle goes on from there through one of their tail calls.
+// with a check of their own, and a cycle goes on from there through one of their tail calls. Where a poll is one load that faults, a tail call on a path without
+// a frame polls with that load and sets up none, unless what it enters leaves its check to its callers.
 void CallEmitter::didEmitTailCall()
 {
     if (inputs().stackChecks.of(m_id) == StackCheck::Required)
@@ -120,9 +138,11 @@ void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget
     }
 
     didEmitTailCall();
-    if (fitsInIncomingArea)
+    if (fitsInIncomingArea) {
+        if (m_records.frame.needsStackCheckForTailCalls && pollsWithoutFrame(inputs(), m_id, target))
+            emitter<HintEmitter>().pollWhereNoFrameIsSetUp(context);
         jumpAfterFrameTeardown(target, placed);
-    else
+    } else
         callFromArgumentListFrame(target, placed);
 }
 
@@ -148,21 +168,29 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
         patchpoint->numGPScratchRegisters = 1;
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->effects.terminal = true;
+    patchpoint->setRunsWithoutFrame(stackIndices.isEmpty());
     // The stack check is part of the frame setup.
-    patchpoint->setRunsWithoutFrame(stackIndices.isEmpty() && !m_records.frame.needsStackCheckForTailCalls);
+    patchpoint->setFollowsFrameSetup(m_records.frame.needsStackCheckForTailCalls && !pollsWithoutFrame(inputs(), m_id, target));
 
     CallTarget destination = target;
     destination.calledAddress = nullptr;
     patchpoint->setGenerator([records = &m_records, destination, numberInRegisters, stackIndices, spilledBytes](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         for (unsigned i = 0; i < stackIndices.size(); ++i)
-            emitStoreToStackWord(jit, params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
+            emitStoreToStackWord(jit, params.code(), params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
         if (params.context().frameIsSetUp)
-            Air::emitFrameTeardown(jit, params.code());
+            Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
         if (spilledBytes)
             emitDropSpilledArgumentRegisters(jit);
         emitJumpTo(jit, *records, destination);
     });
+}
+
+void CallEmitter::returnMisfit(Boxed value)
+{
+    PlacedArguments placed;
+    placed.inRegisters.append(ConstrainedValue(value.value(), ValueRep::reg(GPRInfo::returnValueGPR)));
+    jumpAfterFrameTeardown(CallTarget::stub(AOT::returnMisfit(), std::nullopt), placed);
 }
 
 void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const PlacedArguments& placed)
@@ -183,6 +211,7 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobber(registersClobberedByCompiledCalls());
     patchpoint->effects.terminal = true;
+    patchpoint->setNeedsFrameRecord(true);
 
     CallTarget destination = target;
     destination.calledAddress = nullptr;
@@ -202,35 +231,59 @@ void CallEmitter::tailCallByConvention(const OperationContext& context, const Co
     emitTailCall(context, CallTarget::stub(call.stub, std::nullopt), placeConventionArguments(call));
 }
 
-void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<StringID> name)
+// The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then.
+// Only fast code knows every kind of function in line. Elsewhere a closure that is as it was created passes in line, and the stub knows the others.
+void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context, Boxed callee)
 {
-    if (name) {
-        requireOrThrow(context, isCell(callee), ThrowKind::NotAFunction, Operand(callee), name->index());
-        requireOrThrow(context, emitter<TypeTestEmitter>().isCallable(unboxCell(callee)), ThrowKind::NotAFunction, Operand(callee), name->index());
-        return;
-    }
-
+    ClosureTestEmitter& closures = emitter<ClosureTestEmitter>();
     LBasicBlock mayNotBeCallable = newBlock();
     LBasicBlock continuation = newBlock();
     branchUnless(isCell(callee), mayNotBeCallable);
-    m_out.branch(emitter<ClosureTestEmitter>().hasFunctionCellType(unboxCell(callee)).value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
+    Condition isKnownToBeCallable = context.shape() == CodeShape::Fast ? closures.hasFunctionCellType(unboxCell(callee)) : closures.isSlimClosureAsCreated(unboxCell(callee));
+    m_out.branch(isKnownToBeCallable.value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
 
     m_out.appendTo(mayNotBeCallable);
-    callVoidOperation(context, RuntimeOperation::ThrowUnlessCallable, { callee }, { .isOnRarePath = true });
+    callStub(context, throwUnlessCallable(), { callee.value() }, { .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
 }
 
+// The frame holds closures that the call lends. It stays until a callee returns that cannot come round to this call again by tail calls alone. Goes on where the callee is any other.
+void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& value, const ValueCall& call)
+{
+    ArgumentLocations own = inputs().conventions.locationsOf(m_program, m_id);
+    if (own.results.size() != 1 || own.results[0].representation != Representation::JSValue)
+        return;
+
+    LBasicBlock keepsFrame = newBlock();
+    LBasicBlock givesUpFrame = newBlock();
+    LValue operands[] = { call.callee.value() };
+    emitter<RuntimeCallEmitter>().callStubWithoutSiteAndBranch(valueEndsItsTailCalls(), operands, { normalEdge(keepsFrame), normalEdge(givesUpFrame) });
+
+    m_out.appendTo(keepsFrame);
+    Operand result = callValue(value, call, { .isTailCall = true });
+    returnValues(*value.returnCall(), singleElementSpan(result));
+
+    m_out.appendTo(givesUpFrame);
+}
+
 void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call)
 {
     if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, call.callee, call.calleeName);
+        requireCallableBeforeTailCall(value, call.callee);
 
     unsigned count = static_cast<unsigned>(call.arguments.size());
     Vector<LValue, 8> values;
     for (Boxed argument : call.arguments)
         values.append(argument.value());
+    if (call.lentArguments) {
+        callAndReturnIfCalleeEndsItsTailCalls(value, call);
+        for (unsigned index = 0; index < count; ++index) {
+            if (call.lentArguments >> index & 1)
+                values[index] = boxCell(callOperation<CellPointer>(value, RuntimeOperation::MoveClosureToHeap, { unboxCell(call.arguments[index]) }, { .isOnRarePath = true })).value();
+        }
+    }
 
     ConventionCall conventionCall;
     conventionCall.callee = call.callee.value();

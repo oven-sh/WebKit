@@ -245,10 +245,6 @@ public:
 
     const uint8_t* addLatin1Table(const CharacterClass::ByteTable& table)
     {
-        for (auto& stored : m_latin1Tables) {
-            if (stored->data == table.data)
-                return stored->data.data();
-        }
         m_latin1Tables.append(makeUniqueRef<CharacterClass::ByteTable>(table));
         return m_latin1Tables.last()->data.data();
     }
@@ -326,12 +322,10 @@ public:
 
     bool has8BitCodeMatchOnly() { return !!m_matchOnly8; }
     bool has16BitCodeMatchOnly() { return !!m_matchOnly16; }
-    bool isFromImage() const { return m_isFromImage; }
     void setCodeFromImage(const void* for8Bit, const void* for16Bit)
     {
         m_ref8 = MacroAssemblerCodeRef<Yarr8BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr8BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for8Bit)));
         m_ref16 = MacroAssemblerCodeRef<Yarr16BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr16BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for16Bit)));
-        m_isFromImage = true;
     }
     void set8BitCodeMatchOnly(MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag> matchOnly, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
@@ -458,7 +452,6 @@ public:
         m_matchOnly8 = MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag>();
         m_matchOnly16 = MacroAssemblerCodeRef<YarrMatchOnly16BitPtrTag>();
         m_failureReason = std::nullopt;
-        m_isFromImage = false;
         clearMaps();
         m_characterClassBitTables.clear();
     }
@@ -474,12 +467,11 @@ private:
     InlineStats m_matchOnly16Stats;
     Vector<UniqueRef<CharacterClassBitTable>> m_characterClassBitTables;
     RegExp* m_regExp { nullptr };
-    bool m_isFromImage { false };
 
     std::optional<JITFailureReason> m_failureReason;
 };
 
-void jitCompile(const YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
+void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
 
 struct CodeGenerationRequest {
     const YarrPattern& pattern;

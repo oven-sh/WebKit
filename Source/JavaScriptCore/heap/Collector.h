@@ -28,6 +28,7 @@
 #include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/GCRequest.h>
 #include <JavaScriptCore/MachineStackMarker.h>
+#include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/SlotVisitor.h>
 #include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
@@ -197,7 +198,7 @@ private:
     // The per-heap part of the Begin and End phases.
     void beginCollectionInEachHeap(CollectionScope, MonotonicTime startTime);
     void setUpVisitors(CollectionScope);
-    static bool startsHelpersLazily();
+    static bool startsHelpersLazily() { return Options::useAOT(); }
     void startHelpers();
     void endCollectionInEachHeap();
 
@@ -236,6 +237,7 @@ private:
     bool m_parallelMarkersShouldExit { false };
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
+    std::atomic<bool> m_hasStartedHelpers { false };
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
@@ -256,7 +258,6 @@ private:
     // GC marking threads claim these at the start of marking, and return them at the end.
     Vector<SlotVisitor*> m_availableParallelSlotVisitors WTF_GUARDED_BY_LOCK(m_parallelSlotVisitorLock);
     ParallelHelperClient m_helperClient;
-    std::atomic<bool> m_hasStartedHelpers { false };
 
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
 
@@ -267,6 +268,7 @@ private:
     bool m_threadIsWorking WTF_GUARDED_BY_LOCK(*m_threadLock) { false };
     bool m_threadShouldStop WTF_GUARDED_BY_LOCK(*m_threadLock) { false };
     bool m_isCompilerThreadsSuspended { false };
+    std::atomic<bool> m_hasQueuedRequest { false };
     uint64_t m_phaseVersion { 0 };
     std::unique_ptr<MutatorScheduler> m_scheduler;
 
@@ -275,7 +277,6 @@ private:
     const Ref<AutomaticThreadCondition> m_threadCondition; // The mutator must not wait on this. It would cause a deadlock.
     const RefPtr<AutomaticThread> m_thread;
     Deque<GCRequest> m_requests WTF_GUARDED_BY_LOCK(*m_threadLock);
-    std::atomic<bool> m_hasQueuedRequest { false };
     GCRequest m_currentRequest;
     GCRequest::Ticket m_lastServedTicket WTF_GUARDED_BY_LOCK(*m_threadLock) { 0 };
     GCRequest::Ticket m_lastGrantedTicket WTF_GUARDED_BY_LOCK(*m_threadLock) { 0 };

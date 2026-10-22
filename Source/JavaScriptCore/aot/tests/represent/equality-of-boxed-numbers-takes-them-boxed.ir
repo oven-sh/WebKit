@@ -1,0 +1,61 @@
+# x === y where the numbers arrive boxed: they are compared as they are: behind one test of the tags it is a comparison of two int32, and nothing is unboxed to a double.
+# An int32 beside a boxed number stays an int32: `pos === 0`. A number that is a double already is compared as a double. Where one of them may be undefined the forms with markers are compared as before
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoTestedNumbers" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = AssumeType v0 castType=number
+    v3 = AssumeType v1 castType=number
+    v4 = StrictEq v2, v3 form=Numbers
+    Return v4
+}
+# CHECK-LABEL: function f0 name="twoTestedNumbers"
+# CHECK-NOT: Unbox
+# CHECK: v4: boolean @Boolean = StrictEq v2, v3 form=Numbers
+
+function f1 name="branchOnBoxedNumberAndZero" parameters=[{type=anything}] results=[{type=i32}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    TestAndBranch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2: number):
+    v3 = Integer integer=0
+    v4 = StrictEq v2, v3 form=Numbers
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    Return v5
+  b3():
+    v6 = Integer integer=2
+    Return v6
+}
+# CHECK-LABEL: function f1 name="branchOnBoxedNumberAndZero"
+# CHECK: b1(v2: number @JSValue):
+# CHECK-NEXT: v3: 0 @Int32 = Integer
+# CHECK-NEXT: v4: boolean @Boolean = StrictEq v2, v3 form=Numbers
+
+function f2 name="doubleStaysDouble" parameters=[{type=number}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: number, v1: anything):
+    v2 = AssumeType v1 castType=number
+    v3 = Mul v0, v0 form=Numbers
+    v4 = Eq v3, v2 form=Numbers
+    Return v4
+}
+# CHECK-LABEL: function f2 name="doubleStaysDouble"
+# CHECK-NOT: Unbox
+# CHECK: v4: boolean @Boolean = Eq v3, v2 form=Numbers
+
+function f3 name="oneMayBeUndefined" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = AssumeType v0 castType=number
+    v3 = AssumeType v1 castType=undefined|number
+    v4 = StrictEq v2, v3 form=Numbers
+    Return v4
+}
+# CHECK-LABEL: function f3 name="oneMayBeUndefined"
+# CHECK: = Unbox
+# CHECK: = StrictEq {{*}} form=Numbers
+# CODE-NOT: no code

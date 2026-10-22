@@ -27,7 +27,6 @@
 
 #pragma once
 
-#include "IntlFormatPattern.h"
 #include "JSObject.h"
 #include "MathCommon.h"
 #include "TemporalObject.h"
@@ -203,13 +202,8 @@ public:
     static ASCIILiteral trailingZeroDisplayString(IntlTrailingZeroDisplay);
 
 private:
-    friend class IntlFormatPatternCompiler;
-
     IntlNumberFormat(VM&, Structure*);
     DECLARE_DEFAULT_FINISH_CREATION;
-
-    String tryFormatWithICU(double) const;
-    const IntlFormatPattern* formatPattern() const;
 
     static Vector<String> localeData(const String&, RelevantExtensionKey);
 
@@ -256,8 +250,6 @@ private:
     UseGrouping m_useGrouping { UseGrouping::Always };
     RoundingMode m_roundingMode { RoundingMode::HalfExpand };
     IntlRoundingType m_roundingType { IntlRoundingType::FractionDigits };
-    mutable uint8_t m_numberOfFormatsBeforeCompilingPattern { IntlFormatPattern::numberOfFormatsBeforeCompiling };
-    mutable std::unique_ptr<IntlFormatPattern> m_formatPattern;
 };
 
 } // namespace JSC

@@ -42,10 +42,10 @@ function f1 name="twoLayouts" parameters=[{type=anything}, {type=anything}, {typ
   b3(v5):
     SwitchOnShape v5 layoutSets=[[L0], [L1]] -> case b4(| 0), case b5(| 0), otherwise b6()
   b4(v6):
-    v7 = GetSlotOrUndefined v5, v6 key="y" receivers=[L0] level=Predicted
+    v7 = GetSlotOrUndefined v5, v6 key="y" receivers=[L0] level=Expected
     Return v7
   b5(v8):
-    v9 = GetSlotOrUndefined v5, v8 key="end" receivers=[L1] level=Predicted
+    v9 = GetSlotOrUndefined v5, v8 key="end" receivers=[L1] level=Expected
     Return v9
   b6():
     v10 = PropGet v5 key="x"
@@ -227,7 +227,7 @@ function f8 name="joinSourceBuiltWithHolder" parameters=[{type=anything}, {type=
 # CHECK-NEXT: [[held14]]:{{*}}= NewObject -, v0, v0
 # CHECK-NEXT: [[holder14]]:{{*}}= NewObject -, [[held14]], v0
 # CHECK: Jump -> next b3([[held14]], [[holder14]]
-# CHECK: b3([[join14]]: object{{*}}, [[other14]]: object
+# CHECK: b3([[join14]]: L0, [[other14]]: object
 # CHECK: PropSet [[join14]], v2 key="y"
 # CHECK-NEXT: = PropGet [[other14]] key="x"
 
@@ -260,7 +260,7 @@ function f9 name="builtObjectMeetsLiteralAfterMerge" parameters=[{type=anything}
 # CHECK-NEXT: Switch
 # CHECK: b1():
 # CHECK-NEXT: [[built15]]:{{*}}= NewObject -, v0, v0
-# CHECK: b4([[cell15]]: object):
+# CHECK: b4([[cell15]]: L0):
 # CHECK: Jump -> next b6({{*}}, [[cell15]], 
 # CHECK: b5():
 # CHECK-NOT: NewObject
@@ -268,6 +268,6 @@ function f9 name="builtObjectMeetsLiteralAfterMerge" parameters=[{type=anything}
 # CHECK: b6([[tag15]]: i32, 
 # CHECK: b7():
 # CHECK-NEXT: Switch [[tag15]] cases=[
-# CHECK: ([[read15]]: object):
+# CHECK: ([[read15]]: L0):
 # CHECK-NEXT: = PropGet [[read15]] key="y"
 # CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]

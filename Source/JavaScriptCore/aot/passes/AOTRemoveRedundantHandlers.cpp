@@ -88,7 +88,7 @@ private:
 
     bool doesNothing(ValueID id)
     {
-        return m_analyses.effectsOf(id).onAnyEdge().isRemovableWhenUnused();
+        return m_analyses.isRemovableWhenUnused(id);
     }
 
     bool rethrowsCaughtValue(const Block& block) const
@@ -106,9 +106,10 @@ private:
         return false;
     }
 
-    bool isUsedOutside(BlockID id, const Block& block, const UseLists& useLists) const
+    bool isUsedOutside(BlockID id, const Block& block) const
     {
         const std::optional<Target>& outer = block.handler;
+        const UseLists& useLists = m_analyses.useLists();
         return std::ranges::any_of(block.values, [&](ValueID value) {
             if (outer && outer->arguments.contains(value))
                 return true;
@@ -118,7 +119,7 @@ private:
         });
     }
 
-    bool onlyRethrows(BlockID id, const UseLists& useLists)
+    bool onlyRethrows(BlockID id)
     {
         const Block& block = m_function.at(id);
         if (!rethrowsCaughtValue(block))
@@ -127,7 +128,7 @@ private:
             if (!doesNothing(block.values[index]))
                 return false;
         }
-        return !isUsedOutside(id, block, useLists);
+        return !isUsedOutside(id, block);
     }
 
     void collectHandlers()
@@ -139,10 +140,9 @@ private:
         if (!cfg.hasHandlers())
             return;
 
-        const UseLists& useLists = m_analyses.useLists();
         for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
             BlockID block(index);
-            if (cfg.isReachable(block) && onlyRethrows(block, useLists))
+            if (cfg.isReachable(block) && onlyRethrows(block))
                 m_handlers.append(block);
         }
         if (m_handlers.isEmpty())
@@ -165,7 +165,7 @@ private:
             m_builder.removeHandler(edge.from);
             return;
         }
-        m_function.at(edge.from).handler = *outer;
+        m_function.edit(edge.from).handler = *outer;
         m_incomingEdges[outer->block.index()].append(edge);
     }
 
@@ -201,7 +201,10 @@ PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
-    return RedundantHandlerRemover(context).run();
+    PassOutcome outcome = RedundantHandlerRemover(context).run();
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
+    return outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

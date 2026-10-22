@@ -1,0 +1,61 @@
+# base = { x: 1 }; given = {}; Object.setPrototypeOf(given, base); stored = {}; stored.__proto__ = base; literal = { __proto__: base }; lone = {}
+# class Kept {}  new Kept()    class Moved {}  Object.setPrototypeOf(new Moved(), base)
+# The prototype of an object may change where something stores to its prototype link after the object is made: Object.setPrototypeOf, a store under `__proto__`, which runs the setter of the table,
+# and `__proto__` in a literal. Each takes "never changes its prototype" from all objects of the layout, and where nothing else happens to them that is the cause the layout names.
+# An object that nothing stores the link of keeps the prototype it was made with. So does an instance of a class: its constructor makes it under the prototype object of the class, which is the one its layout has.
+# At the end: an instance that is given another prototype afterwards
+# RUN: valueflow-results
+# CHECK: class [[given]] layout=L1 impossibleMutations=[{{*}}ChangeIntegrity, BecomePrototype{{*}}cause=PrototypeChanged
+# CHECK-NEXT: class [[stored]] layout=L2 impossibleMutations=[{{*}}ChangeIntegrity, BecomePrototype
+# CHECK-NEXT: class [[literal]] layout=L3 impossibleMutations=[{{*}}ChangeIntegrity, BecomePrototype{{*}}cause=PrototypeChanged
+# CHECK-NEXT: class [[lone]] layout=L4 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, BecomePrototype
+# CHECK-NEXT: class [[kept]] layout=L5 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, BecomePrototype
+# CHECK-NEXT: class [[moved]] layout=L6 impossibleMutations=[{{*}}ChangeIntegrity, BecomePrototype{{*}}cause=PrototypeChanged
+# RUN(NOWHERE): valueflow-results
+# NOWHERE-NOT: layout=L4 {{*}}cause=
+# NOWHERE-NOT: layout=L5 {{*}}cause=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Base" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Given"
+layout L2 name="Stored"
+layout L3 name="Literal"
+layout L4 name="Lone"
+layout L5 kind=Instance name="Kept" constructor=f1
+layout L6 kind=Instance name="Moved" constructor=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1 fields=[]
+    v3 = Builtin builtin=ObjectSetPrototypeOf
+    v4 = Call v3, -, v2, v1
+    v5 = NewObject layout=L2 fields=[]
+    PropSet v5, v1 key="__proto__" mode=Strict
+    v7 = NewObject layout=L3 fields=[]
+    SetLiteralPrototype v7, v1
+    v9 = NewObject layout=L4 fields=[]
+    v10 = NewClosure function=f1
+    v11 = NewClass v10 layout=L5
+    v12 = FinishClass v11 layout=L5
+    v13 = Construct v12
+    v14 = NewClosure function=f2
+    v15 = NewClass v14 layout=L6
+    v16 = FinishClass v15 layout=L6
+    v17 = Construct v16
+    v18 = Call v3, -, v17, v1
+    Return
+}
+function f1 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5 fields=[]
+    Return v2
+}
+function f2 name="Moved" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6 fields=[]
+    Return v2
+}

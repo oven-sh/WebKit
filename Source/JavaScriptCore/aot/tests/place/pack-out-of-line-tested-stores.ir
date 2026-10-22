@@ -1,6 +1,6 @@
 # A PutSlot behind a proof that the slot is filled finds the Extension that the creating store left, so it does not keep the field in the cell
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests references=narrow
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests references=narrow heat=EverythingIsHot testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts
 
 module m0 path="main.js" displayPath="main.js" body=f0

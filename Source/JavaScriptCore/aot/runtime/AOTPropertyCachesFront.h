@@ -155,6 +155,7 @@ private:
     // The first access commits a page of a plane, so a region that was never written is not even read.
     bool canHaveCellAt(SlotAccess access, uint32_t index) const { return m_writtenRegions[static_cast<unsigned>(access)]->cards()[index * sizeof(PackedSlot) >> regionShift] != RememberedSlotSet::neverWrittenCard; }
     size_t sweepRow(VM&, uint32_t rowNumber);
+    void decommitEmptyPagesOfPlanes();
 
     VM& m_vm;
     const CustomAccessorTable& m_customAccessors;

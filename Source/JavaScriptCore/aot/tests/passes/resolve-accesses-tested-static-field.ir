@@ -11,7 +11,7 @@ variable g2 name="count" module=m0 declared={type=number} owner=L3 flow={writers
 variable g3 name="count" module=m0 declared={type=number} owner=L4
 layout L0 kind=Instance name="UnknownWriters" constructor=f0 staticFields=[{key="count" variable=g0}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L1 kind=Instance name="EvaluatedAgain" constructor=f1 staticFields=[{key="count" variable=g1}] flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L2 kind=Instance name="LinkMayChange" predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="LinkMayChange" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L3 kind=Instance name="Proven" constructor=f3 staticFields=[{key="count" variable=g2}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L4 kind=Instance name="ReadEarly" constructor=f4 staticFields=[{key="count" variable=g3}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 
@@ -28,7 +28,7 @@ function f5 name="read" parameters=[{type=f0}] results=[{type=anything}] {
 }
 # CHECK-LABEL: function f5 name="read"
 # CHECK-NEXT: b0(v0: f0):
-# CHECK-NEXT: [[unchanged5]]: boolean = IsMemberUnchanged layout=L0 side=Static key="count"
+# CHECK-NEXT: [[unchanged5]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged5]] -> taken
 # CHECK: v1: number = GetModuleVariable variable=g0
 # CHECK: frequency=Unlikely:
@@ -39,7 +39,7 @@ function f6 name="store" parameters=[{type=f0}, {type=number}] results=[{type=an
     Return
 }
 # CHECK-LABEL: function f6 name="store"
-# CHECK: [[unchanged6]]: boolean = IsMemberUnchanged layout=L0 side=Static key="count"
+# CHECK: [[unchanged6]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged6]] -> taken
 # CHECK: PutModuleVariable v1 variable=g0
 # CHECK: frequency=Unlikely:
@@ -50,7 +50,7 @@ function f7 name="test" parameters=[{type=f0}] results=[{type=anything}] {
     Return v1
 }
 # CHECK-LABEL: function f7 name="test"
-# CHECK: [[unchanged7]]: boolean = IsMemberUnchanged layout=L0 side=Static key="count"
+# CHECK: [[unchanged7]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged7]] -> taken
 # CHECK: v1: true = Boolean boolean=true
 # CHECK: frequency=Unlikely:
@@ -63,23 +63,23 @@ function f8 name="two-reads" parameters=[{type=f0}] results=[{type=anything}] {
     Return v3
 }
 # CHECK-LABEL: function f8 name="two-reads"
-# CHECK: = IsMemberUnchanged layout=L0 side=Static key="count"
-# CHECK-NOT: IsMemberUnchanged
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
+# CHECK-NOT: AreMembersUnchanged
 # CHECK: v1: number = GetModuleVariable variable=g0
 # CHECK-NEXT: v2: number = GetModuleVariable variable=g0
-# CHECK-NOT: IsMemberUnchanged
+# CHECK-NOT: AreMembersUnchanged
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
 # CHECK-NEXT: = PropGet v0 key="count"
-# CHECK-NOT: IsMemberUnchanged
+# CHECK-NOT: AreMembersUnchanged
 function f9 name="class-may-be-evaluated-again" parameters=[{type=f1}] results=[{type=anything}] {
   b0(v0: f1):
     v1 = PropGet v0 key="count"
     Return v1
 }
 # CHECK-LABEL: function f9 name="class-may-be-evaluated-again"
-# CHECK-NOT: IsMemberUnchanged
-# CHECK: [[once9]]: boolean = IsClassEvaluatedOnce layout=L1
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: [[once9]]: boolean = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}]
 # CHECK-NEXT: Branch [[once9]] -> taken
 # CHECK: v1: number = GetModuleVariable variable=g1
 # CHECK: frequency=Unlikely:
@@ -95,11 +95,9 @@ function f10 name="through-subclass-whose-link-may-change" parameters=[{type=f2}
 # CHECK-NEXT: = PropGet v0 key="count"
 # ORDER-LABEL: function f10 name="through-subclass-whose-link-may-change"
 # ORDER-NEXT: b0(v0: f2):
-# ORDER-NEXT: [[unchanged]]: boolean = IsMemberUnchanged layout=L2 side=Static key="count"
-# ORDER-NEXT: Branch [[unchanged]] -> taken [[second]](| 0)
-# ORDER: [[second]]([[guard]]: guard):
-# ORDER-NEXT: [[link]]: boolean = IsPrototypeLinkUnchanged layout=L2 side=Static
-# ORDER-NEXT: Branch [[link]] -> taken
+# ORDER-NEXT: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="count"}, {kind=PrototypeLinkUnchanged layout=L2 side=Static}]
+# ORDER-NEXT: Branch [[unchanged]] -> taken
+# ORDER-NOT: AreMembersUnchanged
 function f11 name="proven" parameters=[{type=f3}] results=[{type=anything}] {
   b0(v0: f3):
     v1 = PropGet v0 key="count"
@@ -140,7 +138,7 @@ function f14 name="rare-block" parameters=[{type=f0}, {type=boolean}] results=[{
     Return
 }
 # CHECK-LABEL: function f14 name="rare-block"
-# CHECK-NOT: IsMemberUnchanged
+# CHECK-NOT: AreMembersUnchanged
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = PropGet v0 key="count"
-# CHECK-NOT: IsMemberUnchanged
+# CHECK-NOT: AreMembersUnchanged

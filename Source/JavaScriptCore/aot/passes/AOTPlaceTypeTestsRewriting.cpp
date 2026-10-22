@@ -44,6 +44,55 @@ private:
     Vector<ValueID> m_wrappers;
 };
 
+// The uses of everything that has the identity of a tested value are listed once for all tests. A replaced use stays in the list, under the value it named at first.
+// An insertion ends the life of the use lists, so the casts are inserted when every test has been looked at.
+class DominatedUseReplacer {
+    WTF_MAKE_NONCOPYABLE(DominatedUseReplacer);
+public:
+    DominatedUseReplacer(FunctionPassContext&, IRBuilder&, Vector<ValueID>& changedValues);
+
+    void addSubject(ValueID);
+    void collectUses();
+    void replaceUsesDominatedBy(Edge, ValueID subject, ValueID proven);
+    void insertCasts();
+    const BitVector& provenValuesInUse() const LIFETIME_BOUND { return m_isInUse; }
+
+private:
+    struct NarrowableUse {
+        ValueID identity;
+        ValueID alias;
+        Use use;
+        bool getsCast { false };
+    };
+
+    struct PlannedCast {
+        Edge edge;
+        ValueID proven;
+        TypeID castType;
+        uint32_t use { 0 };
+    };
+
+    struct Narrowing {
+        TypeID replacedType;
+        bool holdsProvenType { false };
+        std::optional<TypeID> castType;
+    };
+
+    Narrowing& narrowingOf(TypeID replacedType, const Type& provenType);
+    TypeID castTypeFor(Narrowing&, const Type& provenType);
+    void replace(const Use&, ValueID replacement);
+
+    FunctionPassContext& m_context;
+    Function& m_function;
+    IRBuilder& m_builder;
+    Vector<ValueID>& m_changedValues;
+    BitVector m_isSubject;
+    Vector<NarrowableUse> m_uses;
+    Vector<PlannedCast> m_plannedCasts;
+    Vector<Narrowing, 4> m_narrowings;
+    BitVector m_isInUse;
+};
+
 ValueID GuardWrappers::wrap(ValueID guard, ProgramPoint pointAfter)
 {
     RELEASE_ASSERT(!wrapperOf(guard));
@@ -57,7 +106,7 @@ ValueID GuardWrappers::wrap(ValueID guard, ProgramPoint pointAfter)
 
 void GuardWrappers::redirectGuardOperandsOf(ValueID user) const
 {
-    Value& value = m_function.at(user);
+    Value& value = m_function.edit(user);
     value.forEachOperand([&](ValueID& operand, uint32_t operandIndex) {
         if (value.operandKind(operandIndex) != OperandKind::Guard)
             return;
@@ -139,11 +188,28 @@ void TestPlacer::rewriteUses()
         }
     }
 
+    Vector<std::pair<ValueID, TypeID>, 4> typesOfRepresentatives;
+    for (const Vector<ValueID, 2>& definitions : m_definitions) {
+        if (definitions.size() < 2)
+            continue;
+        TypeID typeOfFirst = m_function.at(definitions.first()).type;
+        if (std::ranges::all_of(definitions, [&](ValueID definition) { return m_function.at(definition).type == typeOfFirst; }))
+            continue;
+        Type typeOfAll = m_context.types.at(typeOfFirst);
+        for (ValueID definition : definitions.subspan(1))
+            typeOfAll = typeOfAll.unionWith(m_context.types.at(m_function.at(definition).type), m_context.types);
+        typesOfRepresentatives.append({ definitions.first(), typeOfFirst });
+        m_function.edit(definitions.first()).type = m_context.types.intern(typeOfAll);
+    }
     for (uint32_t useIndex = 0; useIndex < m_plan.uses.size(); ++useIndex) {
         if (isPlaced(m_plan.uses[useIndex].stretch))
             rewriteUse(m_plan.uses[useIndex], useIndex);
     }
+    for (auto [representative, type] : typesOfRepresentatives)
+        m_function.edit(representative).type = type;
     m_builder.applyInsertions();
+    // The uses and the guard operands of the tests were written past the builder.
+    m_context.analyses.didChangeValues();
 }
 
 // One value stands for everything that has the identity of the tested value. The site was planned with the type of its own operand, which a branch or a cast may have narrowed in another way than the test.
@@ -173,7 +239,7 @@ void TestPlacer::rewriteUse(const PlannedUse& planned, uint32_t useIndex)
         ValueID passed = representativeOf(requirementAt(narrowed.requirement).condition);
         ValueID operand = m_function.at(site.use).operand(narrowed.operandIndex);
         ValueID replacement = narrowToOperand(passed, operand, useIndex);
-        m_function.at(site.use).setOperand(narrowed.operandIndex, replacement);
+        m_function.edit(site.use).setOperand(narrowed.operandIndex, replacement);
     }
 
     Vector<ValueID, 4> proofs;
@@ -205,11 +271,15 @@ void TestPlacer::rewriteUse(const PlannedUse& planned, uint32_t useIndex)
         Vector<ValueID, 4> prerequisites;
         forEachTestPrerequisite(m_plan.requirements.span(), *m_plan.conditions, requirement, [&](const TestPrerequisite& prerequisite) {
             ValueID proof = representativeOf(prerequisite.condition);
-            if (prerequisite.narrowedOperand)
-                repeated.setOperand(*prerequisite.narrowedOperand, proof);
-            else
+            if (!prerequisite.narrowedOperand) {
                 prerequisites.appendIfNotContains(proof);
+                return;
+            }
+            if (std::optional<TypeID> castType = findTypeOfOperand(repeated, *prerequisite.narrowedOperand, proof))
+                proof = m_builder.insertBefore(m_usePoints[useIndex], makeAssumeType(proof, *castType));
+            repeated.setOperand(*prerequisite.narrowedOperand, proof);
         });
+        keepOnlyWhatOperandsProve(repeated);
         if (!prerequisites.isEmpty()) {
             Value allPrerequisites = IRBuilder::make(Opcode::AllGuards);
             allPrerequisites.setGuardsOperands(prerequisites.span());
@@ -228,13 +298,11 @@ void TestPlacer::rewriteUse(const PlannedUse& planned, uint32_t useIndex)
     // Until SSA is repaired a site behind the join names the value of the fast copy. Its rule has to see the type the site was planned with, which is the type of the join.
     const Value& useAsPlanned = m_function.at(site.use);
     TypeID type = useAsPlanned.type;
-    TypeID written = useAsPlanned.written();
-    TypeID prediction = useAsPlanned.prediction();
+    TypeID expected = useAsPlanned.expected();
     ruleOf(site.rule).rewrite(rewriter);
-    Value& use = m_function.at(site.use);
+    Value& use = m_function.edit(site.use);
     use.type = type;
-    use.setWritten(written);
-    use.setPrediction(prediction);
+    use.setExpected(expected);
 }
 
 void TestPlacer::repairProofs()
@@ -250,12 +318,140 @@ void TestPlacer::repairProofs()
     };
     for (const Vector<ValueID, 2>& definitions : m_definitions)
         addVariable(definitions.span());
-    addVariable(m_epochReads.span());
 
     // An adopted proof in a copied range stands for its condition at uses it does not reach, so one repair has to know it, its copy and the other proofs as one variable.
-    if (m_cloner)
-        m_cloner->addVariablesTo(repair, analyses);
+    if (m_copy)
+        m_copy->addVariablesTo(repair);
     repair.run();
+}
+
+DominatedUseReplacer::DominatedUseReplacer(FunctionPassContext& context, IRBuilder& builder, Vector<ValueID>& changedValues)
+    : m_context(context)
+    , m_function(context.function)
+    , m_builder(builder)
+    , m_changedValues(changedValues)
+    , m_isSubject(context.function.values.size())
+{
+}
+
+void DominatedUseReplacer::addSubject(ValueID subject)
+{
+    m_isSubject.set(m_context.analyses.identityOf(subject).index());
+}
+
+void DominatedUseReplacer::collectUses()
+{
+    const ValueIdentities& identities = m_context.analyses.identities();
+    const UseLists& useLists = m_context.analyses.useLists();
+    for (size_t index = 0; index < m_function.values.size(); ++index) {
+        ValueID alias(index);
+        ValueID identity = identities.identityOf(alias);
+        if (!m_isSubject.get(identity.index()))
+            continue;
+        for (const Use& use : useLists.usesOf(alias)) {
+            if (acceptsNarrowedValue(m_function, use))
+                m_uses.append(NarrowableUse { identity, alias, use });
+        }
+    }
+    std::ranges::stable_sort(m_uses, { }, &NarrowableUse::identity);
+}
+
+auto DominatedUseReplacer::narrowingOf(TypeID replacedType, const Type& provenType) -> Narrowing&
+{
+    size_t found = m_narrowings.findIf([&](const Narrowing& known) {
+        return known.replacedType == replacedType;
+    });
+    if (found == notFound) {
+        found = m_narrowings.size();
+        m_narrowings.append(Narrowing { replacedType, provenType.isSubsetOf(m_context.types.at(replacedType), m_context.program), std::nullopt });
+    }
+    return m_narrowings[found];
+}
+
+// The type of the value may say what no test finds out, such as what flow proved about a class.
+TypeID DominatedUseReplacer::castTypeFor(Narrowing& narrowing, const Type& provenType)
+{
+    if (!narrowing.castType) {
+        TypeArena& types = m_context.types;
+        Type replacedType = types.at(narrowing.replacedType);
+        Type both = provenType.intersectWith(replacedType, types);
+        bool saysMore = !both.isNever() && both != replacedType && both.isSubsetOf(replacedType, m_context.program);
+        narrowing.castType = saysMore ? types.intern(both) : TypeID();
+    }
+    return *narrowing.castType;
+}
+
+void DominatedUseReplacer::replace(const Use& use, ValueID replacement)
+{
+    replaceUse(m_function, use, replacement);
+    if (use.kind == Use::Kind::Operand)
+        m_changedValues.append(use.user);
+}
+
+void DominatedUseReplacer::replaceUsesDominatedBy(Edge edge, ValueID subject, ValueID proven)
+{
+    FunctionAnalyses& analyses = m_context.analyses;
+    TypeID provenTypeID = m_function.at(proven).type;
+    Type provenType = m_context.types.at(provenTypeID);
+    ProgramPoint pointOfTest = pointBeforeTerminatorOf(m_function, edge.from);
+    m_narrowings.shrink(0);
+
+    auto uses = std::ranges::equal_range(m_uses, analyses.identityOf(subject), { }, &NarrowableUse::identity);
+    uint32_t firstUse = static_cast<uint32_t>(uses.begin() - m_uses.begin());
+    for (uint32_t index = firstUse; index < firstUse + uses.size(); ++index) {
+        NarrowableUse& narrowable = m_uses[index];
+        // A use that gets a cast will name none of the values that were listed.
+        if (narrowable.alias == proven || narrowable.getsCast)
+            continue;
+        const Use& use = narrowable.use;
+        ValueID current = usedValueOf(m_function, use);
+        if (current == proven || !analyses.dominates(edge, use.block))
+            continue;
+        TypeID currentTypeID = m_function.at(current).type;
+        if (currentTypeID == provenTypeID)
+            continue;
+        Narrowing& narrowing = narrowingOf(currentTypeID, provenType);
+        if (narrowing.holdsProvenType) {
+            replace(use, proven);
+            m_isInUse.set(proven.index());
+            continue;
+        }
+        // What a value defined behind the edge says holds from its definition on.
+        if (!analyses.dominates(current, pointOfTest))
+            continue;
+        if (TypeID castType = castTypeFor(narrowing, provenType)) {
+            narrowable.getsCast = true;
+            m_plannedCasts.append(PlannedCast { edge, proven, castType, index });
+            m_isInUse.set(proven.index());
+        }
+    }
+}
+
+void DominatedUseReplacer::insertCasts()
+{
+    Vector<std::pair<TypeID, ValueID>, 2> castsOfProvenValue;
+    ValueID proven;
+    for (const PlannedCast& planned : m_plannedCasts) {
+        if (planned.proven != proven) {
+            proven = planned.proven;
+            castsOfProvenValue.shrink(0);
+            m_builder.setOrigin(m_function.at(planned.edge.from).terminator.origin());
+        }
+        size_t found = castsOfProvenValue.findIf([&](const auto& known) {
+            return known.first == planned.castType;
+        });
+        if (found == notFound) {
+            found = castsOfProvenValue.size();
+            BlockID target = targetOf(m_function, planned.edge).block;
+            ProgramPoint head { target, indexAfterCaughtValues(m_function, m_function.at(target)) };
+            if (m_context.build.validates())
+                m_builder.insertBefore(head, makeValidateType(proven, planned.castType));
+            castsOfProvenValue.append({ planned.castType, m_builder.insertBefore(head, makeAssumeType(proven, planned.castType)) });
+        }
+        replace(m_uses[planned.use].use, castsOfProvenValue[found].second);
+    }
+    if (!m_plannedCasts.isEmpty())
+        m_builder.applyInsertions();
 }
 
 void TestPlacer::replaceDominatedUses()
@@ -263,107 +459,65 @@ void TestPlacer::replaceDominatedUses()
     Vector<uint32_t, 8> narrowingTests;
     for (uint32_t index = 0; index < m_emittedTests.size(); ++index) {
         const PlannedTest& planned = m_plan.tests[m_emittedTests[index].plannedTest];
-        if (planned.kind == PlannedTestKind::Test && conditionOf(planned.condition).lastsForever())
+        if (conditionOf(planned.condition).lastsForever())
             narrowingTests.append(index);
     }
-    if (narrowingTests.isEmpty())
+    if (narrowingTests.isEmpty()) {
+        leaveOutBlocksOfUnusedProofs({ });
         return;
+    }
 
     FunctionAnalyses& analyses = m_context.analyses;
     const CFG& cfg = analyses.cfg();
-    const ValueIdentities& identities = analyses.identities();
-
-    BitVector isSubject(m_function.values.size());
-    for (uint32_t index : narrowingTests)
-        isSubject.set(identities.identityOf(m_emittedTests[index].subject).index());
-    for (size_t index = 0; index < m_function.values.size(); ++index) {
-        ValueID identity = identities.identityOf(ValueID(index));
-        if (isSubject.get(identity.index()))
-            m_aliasesByIdentity.append({ identity, ValueID(index) });
-    }
-    std::ranges::sort(m_aliasesByIdentity);
-
     auto edgeInto = [&](BlockID block) {
         std::optional<Edge> edge = cfg.singleIncomingEdge(block);
         RELEASE_ASSERT(edge);
         return *edge;
     };
+
+    DominatedUseReplacer replacer(m_context, m_builder, m_changedValues);
+    for (uint32_t index : narrowingTests)
+        replacer.addSubject(m_emittedTests[index].subject);
+    replacer.collectUses();
     for (uint32_t index : narrowingTests) {
         const EmittedTest& emitted = m_emittedTests[index];
-        replaceUsesDominatedBy(edgeInto(emitted.passed), emitted.subject, emitted.provenWhenPassed);
+        replacer.replaceUsesDominatedBy(edgeInto(emitted.passed), emitted.subject, emitted.provenWhenPassed);
         if (emitted.provenWhenFailed)
-            replaceUsesDominatedBy(edgeInto(emitted.failed), emitted.subject, emitted.provenWhenFailed);
+            replacer.replaceUsesDominatedBy(edgeInto(emitted.failed), emitted.subject, emitted.provenWhenFailed);
     }
+    replacer.insertCasts();
     analyses.didChangeValues();
+    leaveOutBlocksOfUnusedProofs(replacer.provenValuesInUse());
 }
 
-void TestPlacer::replaceUsesDominatedBy(Edge edge, ValueID subject, ValueID proven)
+// What a test proves where it fails is a parameter of a block on the failing edge. Most of the time nobody can use it: the copy has other ways in, or the type says no more than before.
+// Then the block only jumps, and SimplifyControlFlow would take it out in the same round.
+void TestPlacer::leaveOutBlocksOfUnusedProofs(const BitVector& isUsed)
 {
-    FunctionAnalyses& analyses = m_context.analyses;
-    const UseLists& useLists = analyses.useLists();
-    TypeArena& types = m_context.types;
-    TypeID provenTypeID = m_function.at(proven).type;
-    Type provenType = types.at(provenTypeID);
-    Vector<Use, 4> usesNarrowedAnotherWay;
-
-    for (const auto& [identity, alias] : std::ranges::equal_range(m_aliasesByIdentity, analyses.identityOf(subject), { }, &std::pair<ValueID, ValueID>::first)) {
-        if (alias == proven)
+    bool changed = false;
+    for (const EmittedTest& emitted : m_emittedTests) {
+        if (!emitted.provenWhenFailed || isUsed.get(emitted.provenWhenFailed.index()))
             continue;
-        for (const Use& use : useLists.usesOf(alias)) {
-            ValueID current = usedValueOf(m_function, use);
-            if (current == proven || !analyses.dominates(edge, use.block) || !acceptsNarrowedValue(m_function, use))
-                continue;
-            TypeID currentTypeID = m_function.at(current).type;
-            if (currentTypeID == provenTypeID)
-                continue;
-            if (!provenType.isSubsetOf(types.at(currentTypeID), m_context.program)) {
-                // What a value defined behind the edge says holds from its definition on.
-                if (analyses.dominates(current, pointBeforeTerminatorOf(m_function, edge.from)))
-                    usesNarrowedAnotherWay.append(use);
-                continue;
-            }
-            replaceUse(m_function, use, proven);
-            if (use.kind == Use::Kind::Operand)
-                m_changedValues.append(use.user);
-        }
-    }
-
-    // The type of the value may say what no test finds out, such as what flow proved about a class. The first insertion ends the life of the use lists.
-    BlockID target = targetOf(m_function, edge).block;
-    Vector<std::pair<TypeID, ValueID>, 2> castsByReplacedType;
-    m_builder.setOrigin(m_function.at(edge.from).terminator.origin());
-    for (const Use& use : usesNarrowedAnotherWay) {
-        TypeID replacedTypeID = m_function.at(usedValueOf(m_function, use)).type;
-        size_t found = castsByReplacedType.findIf([&](const auto& known) {
-            return known.first == replacedTypeID;
-        });
-        if (found == notFound) {
-            found = castsByReplacedType.size();
-            Type replacedType = types.at(replacedTypeID);
-            Type both = provenType.intersectWith(replacedType, types);
-            ValueID cast;
-            if (!both.isNever() && both != replacedType && both.isSubsetOf(replacedType, m_context.program)) {
-                TypeID castType = types.intern(both);
-                ProgramPoint head { target, indexAfterCaughtValues(m_function, m_function.at(target)) };
-                if (m_context.build.validates())
-                    m_builder.insertBefore(head, makeValidateType(proven, castType));
-                cast = m_builder.insertBefore(head, makeAssumeType(proven, castType));
-            }
-            castsByReplacedType.append({ replacedTypeID, cast });
-        }
-        ValueID cast = castsByReplacedType[found].second;
-        if (!cast)
+        // A rewritten use may have split the block of the test, so the branch is looked for from its target.
+        Block& failed = m_function.edit(emitted.failed);
+        std::optional<Edge> edge = m_context.analyses.cfg().singleIncomingEdge(emitted.failed);
+        RELEASE_ASSERT(edge && failed.terminator.kind == TerminatorKind::Jump);
+        // The repair of SSA may have led a value through the block, and a cast may stand in it.
+        if (!failed.values.isEmpty() || failed.parameters.size() != 1)
             continue;
-        replaceUse(m_function, use, cast);
-        if (use.kind == Use::Kind::Operand)
-            m_changedValues.append(use.user);
+        Target& notTaken = editTarget(m_function, *edge);
+        notTaken = Target { failed.terminator.next().block, WTF::move(failed.terminator.next().arguments), { } };
+        failed.parameters.clear();
+        failed.terminator = Terminator { };
+        changed = true;
     }
-    m_builder.applyInsertions();
+    if (changed)
+        m_context.analyses.didChangeControlFlow();
 }
 
 void TestPlacer::retypeChangedValues()
 {
-    narrowValueTypes(TypePropagationInputs { m_context.program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build }, m_changedValues.span());
+    narrowValueTypes(TypePropagationInputs { m_context.program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build, &m_context.typingMemo }, m_changedValues.span());
 }
 
 } } } // namespace JSC::AOT::Typed

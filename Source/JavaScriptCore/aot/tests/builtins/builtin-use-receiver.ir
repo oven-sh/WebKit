@@ -1,11 +1,12 @@
-# A read, store or call on a receiver predicted as a built-in class or a primitive reports the class test, then the pristine aspects its entry needs, and is resolved in the fast copy
+# A read, store or call on a receiver expected to be an instance of a built-in class or a primitive reports the class test, then the pristine aspects its entry needs, and is resolved in the fast copy
+# A receiver of a method call that is expected to be of one of several classes is tested for all of them at once. Nothing is resolved yet: what has passed is told apart like any value whose type lists them
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="inheritedConstant" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f0 name="inheritedConstant" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
     v1 = PropGet v0 key="constructor"
     Return v1
@@ -21,7 +22,7 @@ function f0 name="inheritedConstant" parameters=[{type=anything predicted=Array}
 # CHECK: [[tested0]]([[array0]]: Array):
 # CHECK-NEXT: boolean = IsPristine [[array0]] builtinClass=Array aspects=[Names]
 
-function f1 name="ownPropertyOfInstances" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f1 name="ownPropertyOfInstances" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
     v1 = PropGet v0 key="length"
     Return v1
@@ -32,15 +33,15 @@ function f1 name="ownPropertyOfInstances" parameters=[{type=anything predicted=A
 # CHECK-NOT: IsPristine
 # CHECK: = TypeTest v0 testedType=Array
 # CHECK-NOT: IsPristine
+# CHECK: ([[array1]]: Array):
+# CHECK-NOT: IsPristine
 # CHECK: v1: int[0, 4294967295] = CallBuiltin [[array1]] overload=ArrayPrototypeLength/0
 # CHECK-NOT: IsPristine
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = PropGet v0 key="length"
 # CHECK-NOT: IsPristine
-# CHECK: ([[array1]]: Array):
-# CHECK-NOT: IsPristine
 
-function f2 name="entryNeedsStorage" parameters=[{type=anything predicted=Array}, {type=anything}] results=[{type=anything}] {
+function f2 name="entryNeedsStorage" parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ Array, v1: anything):
     v2 = Builtin builtin=ArrayPrototypePush
     v3 = Call v2, v0, v1 calleeKey="push"
@@ -55,7 +56,7 @@ function f2 name="entryNeedsStorage" parameters=[{type=anything predicted=Array}
 # CHECK: ([[array2]]: Array):
 # CHECK-NEXT: boolean = IsPristine [[array2]] builtinClass=Array aspects=[Storage]
 
-function f3 name="entryNeedsStorageAndNames" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f3 name="entryNeedsStorageAndNames" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
     v1 = Builtin builtin=ArrayPrototypeSlice
     v2 = Call v1, v0 calleeKey="slice"
@@ -66,7 +67,7 @@ function f3 name="entryNeedsStorageAndNames" parameters=[{type=anything predicte
 # CHECK-LABEL: function f3 name="entryNeedsStorageAndNames"
 # CHECK: v2: Array = CallBuiltin {{*}} overload=ArrayPrototypeSlice/0 [needsPristineReceiver]
 
-function f4 name="receiverIsAlsoArgument" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f4 name="receiverIsAlsoArgument" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
     v1 = Builtin builtin=ArrayPrototypePush
     v2 = Call v1, v0, v0 calleeKey="push"
@@ -80,7 +81,7 @@ function f4 name="receiverIsAlsoArgument" parameters=[{type=anything predicted=A
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = Call v1, v0, v0 calleeKey="push"
 
-function f5 name="readAndCall" parameters=[{type=anything predicted=Array}, {type=anything}] results=[{type=anything}] {
+function f5 name="readAndCall" parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ Array, v1: anything):
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1 calleeKey="push"
@@ -96,26 +97,26 @@ function f5 name="readAndCall" parameters=[{type=anything predicted=Array}, {typ
 # CHECK: anything = PropGet v0 key="push"
 # CHECK: anything = Call {{*}}, v0, v1 calleeKey="push"
 
-function f6 name="predictedPrimitive" parameters=[{type=anything predicted=string}] results=[{type=anything}] {
+function f6 name="expectedPrimitive" parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ string):
     v1 = PropGet v0 key="length"
     Return v1
 }
 # PLAN: function f6
 # PLAN-NEXT: stretch 0: test TypeTest v0 testedType=string before v1; uses v1;
-# CHECK-LABEL: function f6 name="predictedPrimitive"
+# CHECK-LABEL: function f6 name="expectedPrimitive"
 # CHECK-NOT: IsPristine
 # CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: IsPristine
+# CHECK: ([[text6]]: string):
 # CHECK-NOT: IsPristine
 # CHECK: v1: int[0, 2147483647] = CallBuiltin [[text6]] overload=StringPrototypeLength/0
 # CHECK-NOT: IsPristine
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = PropGet {{*}} key="length"
 # CHECK-NOT: IsPristine
-# CHECK: ([[text6]]: string):
-# CHECK-NOT: IsPristine
 
-function f7 name="conversionsInFastCopy" parameters=[{type=anything predicted=string}, {type=anything}] results=[{type=anything}] {
+function f7 name="conversionsInFastCopy" parameters=[{type=string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ string, v1: anything):
     v2 = PropGet v0 key="padStart"
     v3 = Call v2, v0, v1 calleeKey="padStart"
@@ -133,7 +134,7 @@ function f7 name="conversionsInFastCopy" parameters=[{type=anything predicted=st
 # CHECK-NOT: IsPristine
 # CHECK: [[number7]]: number = ToNumber v1
 # CHECK-NEXT: [[integer7]]: {{*}} = ToIntegerOrInfinity [[number7]]
-# CHECK-NEXT: string = CallBuiltin {{*}}, [[integer7]] overload=StringPrototypePadStart/0
+# CHECK-NEXT: string = CallBuiltin {{*}}, [[integer7]] overload=StringPrototypePadStart/1
 # CHECK-NOT: IsPristine
 # CHECK-NOT: ToNumber
 # CHECK: anything = PropGet {{*}} key="padStart"
@@ -141,7 +142,7 @@ function f7 name="conversionsInFastCopy" parameters=[{type=anything predicted=st
 # CHECK: anything = Call {{*}}, v1 calleeKey="padStart"
 # CHECK-NOT: ToNumber
 
-function f8 name="usesOfOneReceiverShareTests" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f8 name="usesOfOneReceiverShareTests" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
     v1 = PropGet v0 key="length"
     v2 = PropGet v0 key="constructor"
@@ -161,7 +162,7 @@ function f8 name="usesOfOneReceiverShareTests" parameters=[{type=anything predic
 # CHECK-NEXT: v3: builtin(ArrayPrototypeValues) = Builtin builtin=ArrayPrototypeValues
 # CHECK-NOT: IsPristine
 
-function f9 name="accessorOfClassWithLockedMembers" parameters=[{type=anything predicted=Map}] results=[{type=anything}] {
+function f9 name="accessorOfClassWithLockedMembers" parameters=[{type=Map flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Map):
     v1 = PropGet v0 key="size"
     Return v1
@@ -173,7 +174,7 @@ function f9 name="accessorOfClassWithLockedMembers" parameters=[{type=anything p
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = PropGet v0 key="size"
 
-function f10 name="accessorOfClassNeverPristine" parameters=[{type=anything predicted=Buffer}] results=[{type=anything}] {
+function f10 name="accessorOfClassNeverPristine" parameters=[{type=Buffer flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Buffer):
     v1 = PropGet v0 key="length"
     Return v1
@@ -185,7 +186,7 @@ function f10 name="accessorOfClassNeverPristine" parameters=[{type=anything pred
 # CHECK-NEXT: v1: anything = PropGet v0 key="length"
 # CHECK-NEXT: Return v1
 
-function f11 name="strictStore" parameters=[{type=anything predicted=RegExp}, {type=number}] results=[{type=undefined}] {
+function f11 name="strictStore" parameters=[{type=RegExp flags=[IsExpected]}, {type=number}] results=[{type=undefined}] {
   b0(v0: anything ~ RegExp, v1: number):
     PropSet v0, v1 key="lastIndex" mode=Strict
     Return
@@ -196,7 +197,7 @@ function f11 name="strictStore" parameters=[{type=anything predicted=RegExp}, {t
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, v1 key="lastIndex"
 
-function f12 name="sloppyStoreThatMayFail" parameters=[{type=anything predicted=RegExp}, {type=number}] results=[{type=undefined}] {
+function f12 name="sloppyStoreThatMayFail" parameters=[{type=RegExp flags=[IsExpected]}, {type=number}] results=[{type=undefined}] {
   b0(v0: anything ~ RegExp, v1: number):
     PropSet v0, v1 key="lastIndex" mode=Sloppy
     Return
@@ -208,18 +209,18 @@ function f12 name="sloppyStoreThatMayFail" parameters=[{type=anything predicted=
 # CHECK-NEXT: PropSet v0, v1 key="lastIndex" mode=Sloppy
 # CHECK-NEXT: Return
 
-function f13 name="predictedBuiltinObject" parameters=[{type=anything predicted=builtin(Promise)}] results=[{type=anything}] {
+function f13 name="expectedBuiltinObject" parameters=[{type=builtin(Promise) flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ builtin(Promise)):
     v1 = PropGet v0 key="resolve"
     Return v1
 }
 # PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(Promise) before v1; uses v1;
-# CHECK-LABEL: function f13 name="predictedBuiltinObject"
+# CHECK-LABEL: function f13 name="expectedBuiltinObject"
 # CHECK: v1: builtin(PromiseResolve) = Builtin builtin=PromiseResolve
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = PropGet v0 key="resolve"
 
-function f14 name="underHandler" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f14 name="underHandler" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array) handler=b2():
     v1 = PropGet v0 key="constructor"
     Jump -> next b1()
@@ -236,45 +237,53 @@ function f14 name="underHandler" parameters=[{type=anything predicted=Array}] re
 # CHECK: frequency=Unlikely handler=b2():
 # CHECK-NEXT: anything = PropGet v0 key="constructor"
 
-function f15 name="noPrediction" parameters=[{type=anything}] results=[{type=anything}] {
+function f15 name="nothingExpected" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="constructor"
     Return v1
 }
 # PLAN: function f15
 # PLAN-NEXT: function f16
-# CHECK-LABEL: function f15 name="noPrediction"
+# CHECK-LABEL: function f15 name="nothingExpected"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything = PropGet v0 key="constructor"
 # CHECK-NEXT: Return v1
 
-function f16 name="twoClassesPredicted" parameters=[{type=anything predicted=Array|Map}] results=[{type=anything}] {
+function f16 name="twoClassesExpected" parameters=[{type=Array|Map flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array|Map):
     v1 = PropGet v0 key="keys"
     v2 = Call v1, v0 calleeKey="keys"
     Return v2
 }
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Array|Map before v1; uses v1 v2;
 # PLAN-NEXT: function f17
-# CHECK-LABEL: function f16 name="twoClassesPredicted"
+# CHECK-LABEL: function f16 name="twoClassesExpected"
 # CHECK-NEXT: b0(v0: anything ~ Array|Map):
-# CHECK-NEXT: v1: anything = PropGet v0 key="keys"
-# CHECK-NEXT: v2: anything = Call v1, v0 calleeKey="keys"
+# CHECK-NEXT: [[isEither]]: boolean ~ true = TypeTest v0 testedType=Array|Map
+# CHECK-NEXT: Branch [[isEither]] -> taken [[passed]](| 0), notTaken [[failed]]({{*}})
+# CHECK: [[passed]]([[either]]: Array|Map):
+# CHECK-NOT: IsPristine
+# CHECK: v1: anything = PropGet [[either]] key="keys"
+# CHECK-NEXT: v2: anything = Call v1, [[either]] calleeKey="keys"
 # CHECK-NEXT: Return v2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: [[byName]]: anything = PropGet v0 key="keys"
+# CHECK-NEXT: anything = Call [[byName]], v0 calleeKey="keys"
 
-function f17 name="classHasNoSuchMember" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f17 name="classHasNoSuchMember" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
-    v1 = PropGet v0 key="enqueue"
-    v2 = Call v1, v0 calleeKey="enqueue"
+    v1 = PropGet v0 key="memberOfNoClass"
+    v2 = Call v1, v0 calleeKey="memberOfNoClass"
     Return v2
 }
 # PLAN-NEXT: function f18
 # CHECK-LABEL: function f17 name="classHasNoSuchMember"
 # CHECK-NEXT: b0(v0: anything ~ Array):
-# CHECK-NEXT: v1: anything = PropGet v0 key="enqueue"
-# CHECK-NEXT: v2: anything = Call v1, v0 calleeKey="enqueue"
+# CHECK-NEXT: v1: anything = PropGet v0 key="memberOfNoClass"
+# CHECK-NEXT: v2: anything = Call v1, v0 calleeKey="memberOfNoClass"
 # CHECK-NEXT: Return v2
 
-function f18 name="predictionOutsideType" parameters=[{type=anything predicted=Array}] results=[{type=anything}] {
+function f18 name="expectedTypeOutsideType" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(| 0), notTaken b2()
@@ -285,7 +294,7 @@ function f18 name="predictionOutsideType" parameters=[{type=anything predicted=A
     Return v0
 }
 # PLAN-NOT: stretch
-# CHECK-LABEL: function f18 name="predictionOutsideType"
+# CHECK-LABEL: function f18 name="expectedTypeOutsideType"
 # CHECK-NOT: testedType=Array
 # CHECK: b1(v2: number):
 # CHECK-NEXT: v3: anything = PropGet v2 key="push"

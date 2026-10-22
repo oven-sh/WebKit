@@ -57,6 +57,26 @@ struct alignas(16) KeyOrderTransition {
     uint32_t orderAndCountAfter;
 };
 
+// What a run of up to four slot keys, as a call of DidCreateField takes them, makes of the words of an object without extra properties: the transitions of its keys taken one after the other.
+// Transitions never change, so neither does this. Each run has one place: a run that finds another one there takes the place over.
+struct alignas(32) KeyOrderRun {
+    static constexpr ptrdiff_t offsetOfOrderAndShapeWordsBefore() { return 0; }
+    static constexpr ptrdiff_t offsetOfSlotKeys() { return 8; }
+    static constexpr ptrdiff_t offsetOfOrderAndCountAfter() { return 16; }
+
+    uint64_t orderAndShapeWordsBefore;
+    uint64_t slotKeys;
+    uint32_t orderAndCountAfter;
+};
+
+static constexpr uint32_t numberOfKeyOrderRuns = 2048;
+static constexpr unsigned logSizeOfKeyOrderRun = 5;
+static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun && !(numberOfKeyOrderRuns & (numberOfKeyOrderRuns - 1)));
+static constexpr uint32_t indexOfKeyOrderRun(uint64_t orderAndShapeWordsBefore, uint64_t slotKeys)
+{
+    return (static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys)) % numberOfKeyOrderRuns;
+}
+
 struct KeyListCacheEntry {
     uint32_t orderWord;
     uint32_t shapeWord;
@@ -84,9 +104,24 @@ struct PrototypeTransition {
     uint32_t after;
 };
 
-static constexpr uint32_t numberOfPrototypeTransitions = 64;
+static constexpr uint32_t numberOfPrototypeTransitions = 1024;
 static constexpr unsigned prototypeTransitionHashShift = 6;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }
+
+// What the run time last answered at one place in compiled code where a store, or a run of stores, adds fields: an object with these two words has this order word once the fields are listed.
+// The two words say which keys an object lists as long as the order is numbered and the order word has no bit beside the order and the count. Nothing else is remembered.
+struct KeyOrderStepCache {
+    uint32_t orderWordBefore;
+    uint32_t shapeWord;
+    uint32_t orderWordAfter;
+    uint32_t turnPlusOne;
+};
+
+// Places share the entries by their numbers, and an entry names the place that wrote it: few places of a program run, and one entry for each would dirty a page for a handful of them.
+// The number of a place modulo the number of entries says which entry it has. The quotient, its turn, tells it from the others that have the same entry, and compiled code compares one byte.
+static constexpr unsigned logNumberOfKeyOrderStepCaches = 11;
+static constexpr uint32_t numberOfKeyOrderStepCaches = 1u << logNumberOfKeyOrderStepCaches;
+static constexpr uint32_t maxPlacesWithKeyOrderStepCache = numberOfKeyOrderStepCaches * UINT8_MAX;
 
 struct ObjectWords {
     // One word per allocation: the distance in bytes, zero or negative, from the empty record to the record of the allocation.
@@ -99,6 +134,7 @@ struct ObjectWords {
     JSCell* emptyKeyList;
     PrototypeTransition* prototypeTransitions;
     EnumeratorCacheEntry* enumerators;
+    KeyOrderRun* keyOrderRuns;
 
     AllocationSiteRecord* emptyAllocationSite() const { return reinterpret_cast<AllocationSiteRecord*>(distancesToAllocationSites) - 1; }
 
@@ -116,12 +152,46 @@ struct ClosureWords {
     const uint64_t* closureWords;
     JSCell* executables[numberOfExecutables];
     uint64_t closureHeaders[numberOfClosureStructures];
+    // The Structures of plain functions that have got their `prototype` property and nothing else, as they come up. Zero where there is none yet.
+    static constexpr unsigned numberOfStructuresWithPrototypeProperty = 4;
+    uint32_t structuresWithPrototypeProperty[numberOfStructuresWithPrototypeProperty];
     // Allocator i serves cells of MarkedSpace::sizeStep * (i + 1) bytes. They are there before any compiled code runs.
     LocalAllocator* slimClosureAllocators[numberOfSlimClosureAllocators];
 };
 
+// The entrypoints that allocate the object of a construction themselves, as ProgramTables::constructEntrypoints was searched for them: the word of a function's [[Call]], which is never zero,
+// and the word of that entrypoint. What belongs to a word never changes.
+struct ConstructWordCache {
+    static constexpr unsigned numberOfEntriesLog2 = 6;
+
+    struct Entry {
+        uint64_t wordOfCall;
+        uint64_t wordOfConstruct;
+    };
+    Entry entries[1u << numberOfEntriesLog2];
+};
+static_assert(sizeof(ConstructWordCache::Entry) == 16);
+
+// Where functions with one Structure keep their `prototype` property. No Structure has the number zero.
+struct PlaceOfPrototypeProperty {
+    uint32_t structureID;
+    int32_t offset;
+};
+constexpr unsigned numberOfPlacesOfPrototypeProperties = 8;
+constexpr unsigned shiftOfStructureIDForPlaceOfPrototypeProperty = 5;
+
+// A class object whose Structure does not list `prototype`: the definition of the class was left to its record. No store changes that property of a class, so the object stands for it.
+struct PrototypeOfClassObject {
+    JSCell* classObject;
+    JSCell* prototype;
+};
+constexpr unsigned numberOfPrototypesOfClassObjects = 32;
+constexpr unsigned shiftOfClassObjectForPrototype = 4;
+
 struct ClassWords {
     JSCell** classPrototypes;
+    const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
+    const PrototypeOfClassObject* prototypesOfClassObjects;
 };
 
 static_assert(sizeof(KeyOrderTransition) == 16);

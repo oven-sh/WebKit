@@ -1,0 +1,38 @@
+# const above = { plain: 1, get lazy() { return 2 } }   const heir = { __proto__: above }   function read() { return heir.lazy }
+# A slot for an accessor serves the reads that start at the object. Every read of `lazy` starts at the heir, so the accessor of L0 stays an extra property, which the tables of the run time find from below.
+# RUN: valueflow-apply
+# CHECK: layout L0
+# CHECK-NOT: IsAccessor
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
+layout L1
+variable g0 name="heir" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="lazy"
+    v4 = FinishObject v1
+    v5 = NewObject layout=L1
+    SetLiteralPrototype v5, v4
+    v7 = FinishObject v5
+    PutModuleVariable v7 variable=g0
+    v9 = NewClosure function=f1
+    v10 = Call v9, -
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="lazy"
+    Return v1
+}
+function f2 name="lazy" kind=Getter results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

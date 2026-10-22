@@ -2,7 +2,7 @@
 # FORM: Prepared
 # RUN: pass ResolveBuiltins
 # CHECK: outcome: Changed
-# STATISTIC: BuiltinCallsResolved = 9
+# STATISTIC: BuiltinCallsResolved = 10
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="applyWithAnyList" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -100,7 +100,8 @@ function f7 name="callOfAnything" parameters=[{type=anything}, {type=anything}, 
 # CHECK-NEXT: [[own7]]: anything = Call v3, [[noFunction7]], v1, v2
 # CHECK-NEXT: ReturnCall [[own7]]
 
-# Promise.try calls its operand once with the arguments after it, as call does, and returns a promise of the result.
+# Promise.try calls its operand once with the arguments after it, as call does, and returns a promise of the result: it passes no call on. It is native and returns to its caller,
+# so it takes the ordinary way: resolve-builtins-required-tail-call.ir
 function f8 name="resultIsNotReturned" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
   b0(v0: function, v1: anything):
     v2 = Builtin builtin=Promise
@@ -109,8 +110,8 @@ function f8 name="resultIsNotReturned" parameters=[{type=function}, {type=anythi
     ReturnCall v4
 }
 # CHECK-LABEL: function f8 name="resultIsNotReturned"
-# CHECK: v4: anything = Call v3, v2, v0, v1
-# CHECK-NEXT: ReturnCall v4
+# CHECK: v4: Promise = CallBuiltin v2, v0, v1 overload=PromiseTry/0 [isDemotedTailCall]
+# CHECK-NEXT: Return v4
 
 # A tail call that may be demoted takes the ordinary way.
 function f9 name="allowedTailCall" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {

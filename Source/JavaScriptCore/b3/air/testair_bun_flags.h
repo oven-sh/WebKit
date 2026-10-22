@@ -16,6 +16,7 @@
         RUN(testReuseFlagsOfTestsAgainstMasks()); \
         RUN(testCompareOnFlagsWithZeroIsTest()); \
         RUN(testReuseFlagsIsIdempotent()); \
+        RUN(testBranchOnFlagsOfResult()); \
     } while (false)
 
 struct ComparisonOpcodes {
@@ -842,4 +843,163 @@ void testReuseFlagsIsIdempotent()
     checkFlagReuse(code, false);
     auto compilation = compile(proc);
     checkComparisonChainResults(*compilation, ComparisonChain::Reused);
+}
+
+enum class ResultOperation : uint8_t { ShiftLeft, ShiftLeftByNothing, AndWithMask, AndWithNegativeMask, AndWithMaskOfByte, AndWithMaskOfHalfWord, AndWithAllBits, AndWithRegister, AndIntoOtherRegister, AndOfRegisterWithItself };
+enum class ResultTestNeighbor : uint8_t { None, MoveBetween, OtherRegisterTested, OtherWidthTested };
+enum class ResultTestForm : uint8_t { TestAgainstItself, TestAgainstAllBits, CompareWithZero };
+
+static int64_t maskOf(ResultOperation operation)
+{
+    switch (operation) {
+    case ResultOperation::AndWithMask:
+        return 0x18100000;
+    case ResultOperation::AndWithNegativeMask:
+        return -16;
+    case ResultOperation::AndWithMaskOfByte:
+        return 0xff;
+    case ResultOperation::AndWithMaskOfHalfWord:
+        return 0xffff;
+    case ResultOperation::AndWithAllBits:
+        return -1;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static constexpr int32_t shiftAmountOfResultTests = 3;
+
+// Says whether the operation leaves the flags of its result.
+static bool appendTestOfResult(Code& code, bool is64Bit, ResultOperation operation, const TestCondition& test, ResultTestForm form, ResultTestNeighbor neighbor)
+{
+    constexpr int32_t shiftAmount = shiftAmountOfResultTests;
+    auto [a0, a1, a2, a3, a4, ret] = PassRegisters { };
+    B3::Air::Opcode shift = is64Bit ? Lshift64 : Lshift32;
+    B3::Air::Opcode bitAnd = is64Bit ? And64 : And32;
+    bool tests64Bits = is64Bit != (neighbor == ResultTestNeighbor::OtherWidthTested);
+    BasicBlock* root = code.addBlock();
+    BasicBlock* taken = code.addBlock();
+    BasicBlock* notTaken = code.addBlock();
+
+    Tmp result = a0;
+    bool leavesFlags = true;
+    switch (operation) {
+    case ResultOperation::ShiftLeft:
+        appendChecked(root, shift, Arg::imm(shiftAmount), a0);
+        break;
+    case ResultOperation::ShiftLeftByNothing:
+        appendChecked(root, shift, Arg::imm(is64Bit ? 64 : 32), a0);
+        leavesFlags = false;
+        break;
+    case ResultOperation::AndWithMask:
+    case ResultOperation::AndWithNegativeMask:
+        appendChecked(root, bitAnd, Arg::imm(maskOf(operation)), a0);
+        break;
+    case ResultOperation::AndWithMaskOfByte:
+    case ResultOperation::AndWithMaskOfHalfWord:
+    case ResultOperation::AndWithAllBits:
+        appendChecked(root, bitAnd, Arg::imm(maskOf(operation)), a0);
+        leavesFlags = false;
+        break;
+    case ResultOperation::AndWithRegister:
+        appendChecked(root, bitAnd, a1, a0);
+        break;
+    case ResultOperation::AndIntoOtherRegister:
+        appendChecked(root, bitAnd, a0, a1, a2);
+        result = a2;
+        break;
+    case ResultOperation::AndOfRegisterWithItself:
+        appendChecked(root, bitAnd, a0, a0, a2);
+        result = a2;
+        leavesFlags = false;
+        break;
+    }
+    if (neighbor == ResultTestNeighbor::MoveBetween)
+        appendChecked(root, Move, a3, a4);
+    Tmp tested = neighbor == ResultTestNeighbor::OtherRegisterTested ? a3 : result;
+    switch (form) {
+    case ResultTestForm::TestAgainstItself:
+        appendChecked(root, tests64Bits ? BranchTest64 : BranchTest32, Arg::resCond(test.condition), tested, tested);
+        break;
+    case ResultTestForm::TestAgainstAllBits:
+        appendChecked(root, tests64Bits ? BranchTest64 : BranchTest32, Arg::resCond(test.condition), tested, Arg::bitImm(-1));
+        break;
+    case ResultTestForm::CompareWithZero:
+        appendChecked(root, tests64Bits ? Branch64 : Branch32, Arg::relCond(*test.conditionAgainstZero), tested, Arg::imm(0));
+        break;
+    }
+    root->setSuccessors(taken, notTaken);
+    appendReturn(taken, 1);
+    appendReturn(notTaken, 2);
+    return leavesFlags;
+}
+
+static void checkBranchOnFlagsOfResult(bool is64Bit, ResultOperation operation, const TestCondition& test, ResultTestForm form = ResultTestForm::TestAgainstItself, ResultTestNeighbor neighbor = ResultTestNeighbor::None)
+{
+    constexpr int32_t shiftAmount = shiftAmountOfResultTests;
+    if (!test.conditionAgainstZero && form == ResultTestForm::CompareWithZero)
+        return;
+    {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        bool leavesFlags = appendTestOfResult(proc.code(), is64Bit, operation, test, form, neighbor);
+        bool isExpected = leavesFlags && test.conditionAgainstZero && neighbor == ResultTestNeighbor::None;
+        checkFlagReuse(proc.code(), isExpected);
+        if (isExpected)
+            CHECK(isInst(proc.code()[0]->last(), BranchOnFlags, { Arg::resCond(test.condition) }));
+    }
+    if (!test.conditionAgainstZero || neighbor != ResultTestNeighbor::None)
+        return;
+
+    // The step is the last of the pipeline: nothing behind it may come between the operation and the branch.
+    B3::Policy policy;
+    policy.air.peepholes.reusesConditionFlags = true;
+    B3::Procedure proc(policy);
+    proc.setOptLevel(2);
+    appendTestOfResult(proc.code(), is64Bit, operation, test, form, neighbor);
+    auto compilation = compile(proc);
+    constexpr int64_t values[] = { 0, 1, -1, 15, 16, 0xff, 0x100, 0x10000, 0x100000, 0x10000000, 0x7fffffff, 0x80000000ll, 0xffffffffll, 0x100000000ll, 0x1000000000000000ll, INT64_MIN, INT64_MAX };
+    for (int64_t value : values) {
+        for (int64_t other : { int64_t { -1 }, int64_t { 0 }, int64_t { 0x80000010ll }, INT64_MIN }) {
+            uint64_t bits = static_cast<uint64_t>(value);
+            switch (operation) {
+            case ResultOperation::ShiftLeft:
+                bits <<= shiftAmount;
+                break;
+            case ResultOperation::ShiftLeftByNothing:
+            case ResultOperation::AndOfRegisterWithItself:
+                break;
+            case ResultOperation::AndWithRegister:
+            case ResultOperation::AndIntoOtherRegister:
+                bits &= static_cast<uint64_t>(other);
+                break;
+            default:
+                bits &= static_cast<uint64_t>(maskOf(operation));
+                break;
+            }
+            int64_t signedResult = is64Bit ? static_cast<int64_t>(bits) : static_cast<int32_t>(static_cast<uint32_t>(bits));
+            bool isTaken = evaluateCondition<int64_t>(*test.conditionAgainstZero, signedResult, 0);
+            CHECK(invokeInt64(*compilation, value, other, 0, 0, 0) == (isTaken ? 1 : 2));
+        }
+    }
+}
+
+void testBranchOnFlagsOfResult()
+{
+    constexpr ResultOperation operations[] = {
+        ResultOperation::ShiftLeft, ResultOperation::ShiftLeftByNothing, ResultOperation::AndWithMask, ResultOperation::AndWithNegativeMask, ResultOperation::AndWithMaskOfByte,
+        ResultOperation::AndWithMaskOfHalfWord, ResultOperation::AndWithAllBits, ResultOperation::AndWithRegister, ResultOperation::AndIntoOtherRegister, ResultOperation::AndOfRegisterWithItself,
+    };
+    if (!isX86())
+        return;
+    for (bool is64Bit : { false, true }) {
+        for (const TestCondition& test : testConditions) {
+            for (ResultOperation operation : operations) {
+                for (ResultTestForm form : { ResultTestForm::TestAgainstItself, ResultTestForm::TestAgainstAllBits, ResultTestForm::CompareWithZero })
+                    checkBranchOnFlagsOfResult(is64Bit, operation, test, form);
+            }
+        }
+        for (ResultTestNeighbor neighbor : { ResultTestNeighbor::MoveBetween, ResultTestNeighbor::OtherRegisterTested, ResultTestNeighbor::OtherWidthTested })
+            checkBranchOnFlagsOfResult(is64Bit, ResultOperation::ShiftLeft, testConditions[0], ResultTestForm::TestAgainstItself, neighbor);
+    }
 }

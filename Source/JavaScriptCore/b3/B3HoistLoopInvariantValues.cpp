@@ -40,6 +40,7 @@
 #include "B3RegisterPressure.h"
 #include "B3ValueInlines.h"
 #include <array>
+#include <wtf/HashSet.h>
 #include <wtf/RangeSet.h>
 
 namespace JSC { namespace B3 {
@@ -66,6 +67,12 @@ static bool isTrappingLoad(const Value* value)
     default:
         return false;
     }
+}
+
+// Whether a poll leaves depends on nothing that the procedure computes, so it guards no value behind it.
+static bool isBarrier(const Value* value, const Effects& effects)
+{
+    return effects.isTrapBarrier() && !isLoopPoll(value);
 }
 
 static bool isReachedWithoutTrapBarrier(const NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block, const IndexSet<BasicBlock*>& blockBarriers)
@@ -127,6 +134,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
     proc.resetValueOwners();
     Dominators& dominators = proc.dominators();
     const bool hoistsOnlyFromLikelyPaths = proc.policy().loops.hoistsOnlyFromLikelyPaths;
+    const bool hoistsImmutableLoadsPastWrites = proc.policy().loops.hoistsImmutableLoadsPastWrites;
     
     // FIXME: We should have a reusable B3::EffectsSet data structure.
     // https://bugs.webkit.org/show_bug.cgi?id=174762
@@ -136,10 +144,10 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool writesPinned { false };
         bool exitsSideways { false };
         BasicBlock* preHeader { nullptr };
-        IndexSet<BasicBlock*> blocksOnEveryLikelyPath;
-        IndexSet<BasicBlock*> likelyBlocks;
+        UncheckedKeyHashSet<BasicBlock*> blocksOnEveryLikelyPath;
+        UncheckedKeyHashSet<BasicBlock*> likelyBlocks;
         RegisterBudget registerBudget;
-        IndexSet<Value*> loadsLiveThroughLoop;
+        UncheckedKeyHashSet<Value*> loadsLiveThroughLoop;
         std::array<unsigned, numBanks> numberOfLoadsLiveThroughLoop { };
         unsigned numberOfHoistedLoads { 0 };
         bool didReachLoadLimit { false };
@@ -150,7 +158,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
         return load->type().isNumeric() ? load->resultBank() : GP;
     };
     auto addLoadLiveThroughLoop = [&](const NaturalLoop& loop, Value* load) {
-        if (data[loop].loadsLiveThroughLoop.add(load))
+        if (data[loop].loadsLiveThroughLoop.add(load).isNewEntry)
             ++data[loop].numberOfLoadsLiveThroughLoop[bankOfLoad(load)];
     };
     IndexSet<BasicBlock*> blockBarriers;
@@ -167,8 +175,16 @@ bool hoistLoopInvariantValues(Procedure& proc)
             data[loop].preHeader = predecessor;
         }
         if (hoistsOnlyFromLikelyPaths) {
-            likelyPaths->findBlocksOnEveryLikelyPath(loop, data[loop].blocksOnEveryLikelyPath);
-            data[loop].likelyBlocks = findLikelyBlocks(loops, loop);
+            auto keepBlocksOfLoop = [&](const IndexSet<BasicBlock*>& blocks, UncheckedKeyHashSet<BasicBlock*>& result) {
+                for (unsigned index = loop.size(); index--;) {
+                    if (blocks.contains(loop.at(index)))
+                        result.add(loop.at(index));
+                }
+            };
+            IndexSet<BasicBlock*> blocksOnEveryLikelyPath;
+            likelyPaths->findBlocksOnEveryLikelyPath(loop, blocksOnEveryLikelyPath);
+            keepBlocksOfLoop(blocksOnEveryLikelyPath, data[loop].blocksOnEveryLikelyPath);
+            keepBlocksOfLoop(findLikelyBlocks(loops, loop), data[loop].likelyBlocks);
             data[loop].registerBudget = allocatableRegisters(proc);
         }
     }
@@ -182,7 +198,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
             effects.writes.addTo(data[*loop].writes);
             data[*loop].writesLocalState |= effects.writesLocalState;
             data[*loop].writesPinned |= effects.writesPinned;
-            data[*loop].exitsSideways |= effects.exitsSideways;
+            data[*loop].exitsSideways |= effects.exitsSideways && !isLoopPoll(value);
             if (hoistsOnlyFromLikelyPaths && data[*loop].likelyBlocks.contains(block))
                 data[*loop].registerBudget.restrictTo(registersPreservedBy(proc, value));
             if (hoistsOnlyFromLikelyPaths) {
@@ -193,7 +209,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         addLoadLiveThroughLoop(*current, child);
                 }
             }
-            if (effects.isTrapBarrier())
+            if (isBarrier(value, effects))
                 blockBarriers.add(block);
         }
     }
@@ -279,7 +295,8 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     if (effects.readsLocalState && data[loop].writesLocalState)
                         continue;
 
-                    if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(data[loop].writes))
+                    bool ignoresWrites = hoistsImmutableLoadsPastWrites && effects.readsMutability == Mutability::Immutable;
+                    if (!ignoresWrites && effects.reads.overlaps(data[loop].writes))
                         continue;
 
                     if (isControlDependent || trappingLoad) {
@@ -312,7 +329,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
             }
 
             if (!hoisted)
-                trapBarrierInBlock |= effects.isTrapBarrier();
+                trapBarrierInBlock |= isBarrier(value, effects);
         }
     }
     

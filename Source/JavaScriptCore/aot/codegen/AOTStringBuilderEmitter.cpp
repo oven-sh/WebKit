@@ -9,9 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringBuilderStorage.h"
+#include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
+#include "B3VariableValue.h"
 #include "CCallHelpers.h"
 #include <algorithm>
 #include <wtf/Vector.h>
@@ -59,10 +62,182 @@ StringBuilderEmitter::StringBuilderEmitter(CodeGenerator& generator)
 {
 }
 
+static constexpr OpcodeSet stackBuilderOperations {
+    Opcode::StringBuilderAppendConstant, Opcode::StringBuilderAppendInteger, Opcode::StringBuilderAppendNumber, Opcode::StringBuilderAppendBoolean, Opcode::StringBuilderAppendString,
+    Opcode::StringBuilderAppendStringRange, Opcode::StringBuilderAppendStringOrNullish, Opcode::StringBuilderAppendValue, Opcode::StringBuilderLength, Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard,
+};
+
+void StringBuilderEmitter::findStackBuilders()
+{
+    m_hasFoundStackBuilders = true;
+    if (m_function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }) || !m_function.hasOrdinaryFrame())
+        return;
+
+    const CFG& cfg = analyses().cfg();
+    const UseLists& useLists = analyses().useLists();
+    struct Web {
+        bool isOnStack { true };
+        bool isOnlyInCompactCode { true };
+        bool readsLength { false };
+        uint32_t slot { 0 };
+        BitVector websOpenAtOnce;
+    };
+    Vector<Web, 2> webs;
+    Vector<uint32_t> webOf;
+    webOf.fill(noStackBuilder, m_function.values.size());
+    BitVector isMember(m_function.values.size());
+    Vector<ValueID, 8> worklist;
+    auto visit = [&](ValueID member) {
+        if (webOf[member.index()] != noStackBuilder)
+            return;
+        webOf[member.index()] = webs.size() - 1;
+        isMember.set(member.index());
+        worklist.append(member);
+    };
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID begin : m_function.at(block).values) {
+            if (m_function.at(begin).opcode != Opcode::StringBuilderBegin || webOf[begin.index()] != noStackBuilder)
+                continue;
+            webs.append(Web { });
+            visit(begin);
+            while (!worklist.isEmpty()) {
+                ValueID member = worklist.takeLast();
+                Web& web = webs.last();
+                ValueLocation location = useLists.locationOf(member);
+                if (location.placement == ValuePlacement::Parameter) {
+                    web.isOnStack &= location.block != cfg.root();
+                    for (Edge edge : cfg.incomingEdges(location.block)) {
+                        IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+                        if (edge.isHandlerEdge() || incoming.kind != IncomingValue::Kind::Argument)
+                            web.isOnStack = false;
+                        else
+                            visit(incoming.argument);
+                    }
+                } else
+                    web.isOnStack &= m_function.at(member).opcode == Opcode::StringBuilderBegin;
+                for (const Use& use : useLists.usesOf(member)) {
+                    if (use.kind == Use::Kind::EdgeArgument) {
+                        visit(m_function.at(targetOf(m_function, use.edge()).block).parameters[use.operandIndex]);
+                        continue;
+                    }
+                    if (use.kind != Use::Kind::Operand) {
+                        web.isOnStack = false;
+                        continue;
+                    }
+                    const Value& user = m_function.at(use.user);
+                    web.isOnStack &= stackBuilderOperations.contains(user.opcode) && user.builderOperand() == member;
+                    web.readsLength |= user.opcode == Opcode::StringBuilderLength;
+                    web.isOnlyInCompactCode &= m_function.at(use.block).shape == CodeShape::Compact;
+                }
+            }
+            // There the calls of the other form are shorter.
+            webs.last().isOnStack &= !webs.last().isOnlyInCompactCode;
+        }
+    }
+    if (!std::ranges::any_of(webs, &Web::isOnStack))
+        return;
+
+    // One record serves a web, so no two of its builders may be open at once, and an exception must end it: the cursor that a handler would go on with may be stale.
+    // Webs that are never open at once share a record.
+    Liveness liveness(m_function, cfg, useLists, { .trackedValues = &isMember });
+    for (BlockID block : cfg.reversePostOrder()) {
+        if (m_function.at(block).isHandlerBlock()) {
+            for (ValueID live : liveness.liveAtHead(block))
+                webs[webOf[live.index()]].isOnStack = false;
+        }
+        const BlockValues& values = m_function.at(block).values;
+        bool hasBegin = std::ranges::any_of(values, [&](ValueID id) {
+            return m_function.at(id).opcode == Opcode::StringBuilderBegin;
+        });
+        if (!hasBegin)
+            continue;
+        Liveness::LocalCalc liveBefore(liveness, block);
+        for (uint32_t index = values.size(); index--;) {
+            liveBefore.execute(index);
+            if (m_function.at(values[index]).opcode != Opcode::StringBuilderBegin)
+                continue;
+            uint32_t web = webOf[values[index].index()];
+            liveBefore.forEachLive([&](ValueID live) {
+                uint32_t other = webOf[live.index()];
+                webs[web].isOnStack &= other != web;
+                webs[web].websOpenAtOnce.set(other);
+                webs[other].websOpenAtOnce.set(web);
+            });
+        }
+    }
+
+    Vector<B3::Air::StackSlot*, 2> slots;
+    m_stackBuilders.grow(webs.size());
+    for (uint32_t index = 0; index < webs.size(); ++index) {
+        Web& web = webs[index];
+        if (!web.isOnStack)
+            continue;
+        BitVector taken;
+        for (uint32_t other : web.websOpenAtOnce) {
+            if (other < index && webs[other].isOnStack)
+                taken.set(webs[other].slot);
+        }
+        web.slot = taken.findBit(0, false);
+        if (web.slot == slots.size())
+            slots.append(m_proc.addStackSlot(sizeof(StackStringBuilder)));
+        m_stackBuilders[index] = StackBuilder { slots[web.slot], m_proc.addVariable(B3::Int64), web.readsLength };
+    }
+    m_stackBuilderOf = WTF::move(webOf);
+}
+
+auto StringBuilderEmitter::stackBuilderFor(ValueID builder) -> const StackBuilder*
+{
+    if (!m_hasFoundStackBuilders)
+        findStackBuilders();
+    if (m_stackBuilderOf.isEmpty())
+        return nullptr;
+    uint32_t index = m_stackBuilderOf[builder.index()];
+    return index != noStackBuilder && m_stackBuilders[index].slot ? &m_stackBuilders[index] : nullptr;
+}
+
+Pointer StringBuilderEmitter::addressOf(const StackBuilder& builder)
+{
+    return Pointer(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), builder.slot));
+}
+
+TypedPointer StringBuilderEmitter::stackBuilderField(const StackBuilder& builder, ptrdiff_t offset)
+{
+    return TypedPointer(m_heaps.entire(AbstractHeap::StringBuilderContents), addressOf(builder).value(), offset);
+}
+
+Pointer StringBuilderEmitter::cursorOf(const StackBuilder& builder)
+{
+    return Pointer(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), builder.cursor));
+}
+
+void StringBuilderEmitter::setCursor(const StackBuilder& builder, Pointer cursor)
+{
+    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), builder.cursor, cursor.value());
+}
+
+Pointer StringBuilderEmitter::limitOf(const StackBuilder& builder)
+{
+    return Pointer(m_out.loadPtr(stackBuilderField(builder, OBJECT_OFFSETOF(StackStringBuilder, limit))));
+}
+
+void StringBuilderEmitter::advance(const OperationContext& context, const StackBuilder& builder, Pointer cursor)
+{
+    setCursor(builder, either<Pointer>(belowOrEqual(cursor, limitOf(builder)), [&] {
+        return cursor;
+    }, [&] {
+        return callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderGrow, { addressOf(builder), cursor }, { .isOnRarePath = true });
+    }));
+}
+
 void StringBuilderEmitter::generateStringBuilderBegin(const ValueContext& value)
 {
-    if (value.shape() == CodeShape::Compact) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::StringBuilderBegin, { }));
+    if (const StackBuilder* builder = stackBuilderFor(value.id())) {
+        Pointer buffer = offsetBy(addressOf(*builder), OBJECT_OFFSETOF(StackStringBuilder, buffer));
+        m_out.storePtr(offsetBy(buffer, StackStringBuilder::capacity).value(), stackBuilderField(*builder, OBJECT_OFFSETOF(StackStringBuilder, limit)));
+        if (builder->readsLength)
+            m_out.storePtr(buffer.value(), stackBuilderField(*builder, OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin)));
+        setCursor(*builder, buffer);
+        define(value, CellPointer(addressOf(*builder).value()));
         return;
     }
     // Every collection clears the word.
@@ -103,6 +278,11 @@ void StringBuilderEmitter::generateStringBuilderAppendJSON(const ValueContext& v
 
 void StringBuilderEmitter::generateStringBuilderLength(const ValueContext& value)
 {
+    if (const StackBuilder* builder = stackBuilderFor(value->builderOperand())) {
+        LValue lengthOrigin = m_out.loadPtr(stackBuilderField(*builder, OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin)));
+        define(value, Word32(m_out.castToInt32(m_out.sub(cursorOf(*builder).value(), lengthOrigin))));
+        return;
+    }
     define(value, lengthOf(in<CellPointer>(value->builderOperand())));
 }
 
@@ -113,11 +293,22 @@ void StringBuilderEmitter::generateStringBuilderToString(const ValueContext& val
 
 void StringBuilderEmitter::generateStringBuilderFinish(const ValueContext& value)
 {
+    if (const StackBuilder* builder = stackBuilderFor(value->builderOperand())) {
+        define(value, callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderFinish, { addressOf(*builder), cursorOf(*builder), word32(value->isLikelyKey()) }));
+        return;
+    }
     define(value, callOperation<CellPointer>(value, RuntimeOperation::StringBuilderFinish, { in<CellPointer>(value->builderOperand()), word32(value->isLikelyKey()) }));
 }
 
 void StringBuilderEmitter::generateStringBuilderDiscard(const ValueContext& value)
 {
+    if (const StackBuilder* builder = stackBuilderFor(value->builderOperand())) {
+        Pointer limitOnStack = offsetBy(addressOf(*builder), OBJECT_OFFSETOF(StackStringBuilder, buffer) + StackStringBuilder::capacity);
+        ifElse(equal(limitOf(*builder), limitOnStack), [] { }, [&] {
+            callVoidOperation(value, RuntimeOperation::StackStringBuilderDiscard, { addressOf(*builder) }, { .isOnRarePath = true, .accessesCollectorState = true });
+        });
+        return;
+    }
     // The operation returns the builder to the pool, whose word is collector state, and it does not collect.
     callVoidOperation(value, RuntimeOperation::StringBuilderDiscard, { in<CellPointer>(value->builderOperand()) }, { .accessesCollectorState = true });
 }
@@ -155,6 +346,17 @@ Pointer StringBuilderEmitter::tryReserve(CellPointer builder, Word32 size, LBasi
     Integer limit = zeroExtended(Word32(m_out.load32(storageField(builder, Storage::offsetOfLimit()))));
     branchUnless(belowOrEqual(add(position, zeroExtended(size)), limit), whenThereIsNoRoom);
     return offsetBy(Pointer(m_out.loadPtr(storageField(builder, Storage::offsetOfCharacters()))), position, 0);
+}
+
+Pointer StringBuilderEmitter::reserve(const OperationContext& context, CellPointer builder, uint32_t length)
+{
+    LBasicBlock slow = newBlock();
+    Join<Pointer> join(m_out);
+    join.add(tryReserve(builder, word32(static_cast<int32_t>(roundUpToMultipleOf<sizeof(uint64_t)>(length))), slow));
+
+    m_out.appendTo(slow);
+    join.add(callOperation<Pointer>(context, RuntimeOperation::StringBuilderReserve, { builder, integer(length) }, { .isOnRarePath = true }));
+    return join.finish();
 }
 
 Pointer StringBuilderEmitter::reserve(const OperationContext& context, CellPointer builder, Word32 size)

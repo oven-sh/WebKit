@@ -9,7 +9,10 @@
 
 #include "AOTChildProcess.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTTemporaryFile.h"
 #include "AbstractSlotVisitorInlines.h"
@@ -472,12 +475,14 @@ static void testFinishKeepsPooledBuffer(LoadedProgram& program)
 static void testFinishGivesLargeBufferAway(LoadedProgram& program)
 {
     uint32_t retained = limitValue(program, LimitID::MaxRetainedStringBuilderCapacity);
+    // reserve() makes room for whole words.
+    uint32_t large = roundUpToMultipleOf<sizeof(uint64_t)>(retained + 1);
     Builder builder(program);
-    AOT_TEST_CHECK(builder->reserve(program.realm(), retained + 1));
-    AOT_TEST_CHECK(builder.limit() == retained + 1);
+    AOT_TEST_CHECK(builder->reserve(program.realm(), large));
+    AOT_TEST_CHECK(builder.limit() == large);
     for (unsigned i = 0; i < 5; ++i)
         builder.appendRepeated('a', 40000);
-    AOT_TEST_CHECK(builder.limit() == retained + 1);
+    AOT_TEST_CHECK(builder.limit() == large);
     const Latin1Character* buffer = builder.characters();
     JSString* result = builder.finish();
     AOT_TEST_CHECK(charactersOf(result) == buffer && textOf(program, result) == repeated('a', 200000));
@@ -491,11 +496,11 @@ static void testFinishGivesLargeBufferAway(LoadedProgram& program)
     again->release(program.instance());
 
     Builder full(program);
-    AOT_TEST_CHECK(full->reserve(program.realm(), retained + 1));
-    full.appendRepeated('b', retained + 1);
+    AOT_TEST_CHECK(full->reserve(program.realm(), large));
+    full.appendRepeated('b', large);
     const Latin1Character* fullBuffer = full.characters();
     JSString* whole = full.finish();
-    AOT_TEST_CHECK(charactersOf(whole) == fullBuffer && !whole->tryGetValueImpl()->isSubString() && whole->length() == retained + 1);
+    AOT_TEST_CHECK(charactersOf(whole) == fullBuffer && !whole->tryGetValueImpl()->isSubString() && whole->length() == large);
 }
 
 static void testSegmentsFlat(LoadedProgram& program)
@@ -606,6 +611,29 @@ static String fillWithPiecesAndSegments(LoadedProgram& program, Builder& builder
     expected.append('f');
     remember();
     return expected.toString();
+}
+
+// One wide character makes a whole text wide. A part of it without one, and a wide string without one, are copied into the buffer like any plain text.
+static void testPlainPartsOfWideStringsLieInTheBuffer(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    static constexpr char16_t text[] = { 0x3c0, 'a', 'b', 'c', 0xe9, ',', 'd' };
+    Strong<JSString> wide(vm, jsString(vm, String(std::span(text))));
+    AOT_TEST_CHECK(!wide->is8Bit());
+
+    Builder builder(program);
+    builder.append("<"_s);
+    builder.append(jsSubstring(program.realm(), wide.get(), 1, 4));
+    AOT_TEST_CHECK(builder.position() == 5 && !builder.lengthOutsideBuffer());
+    builder.append(jsString(vm, String(std::span(text).subspan(5))));
+    AOT_TEST_CHECK(builder.position() == 7 && !builder.lengthOutsideBuffer());
+    JSString* plain = builder.toString();
+    AOT_TEST_CHECK(plain->is8Bit() && builder.text() == String::fromUTF8("<abc\xc3\xa9,d"));
+
+    builder.append(jsSubstring(program.realm(), wide.get(), 0, 2));
+    AOT_TEST_CHECK(builder.position() == 7 && builder.lengthOutsideBuffer() == 2);
+    AOT_TEST_CHECK(builder.text() == String::fromUTF8("<abc\xc3\xa9,d\xcf\x80" "a"));
+    builder->release(program.instance());
 }
 
 static void testRollBackEverywhere(LoadedProgram& program)
@@ -786,6 +814,133 @@ static void testKeysThatAreIntegers(LoadedProgram& program)
     AOT_TEST_CHECK(buildKey(program, "7"_s, StringUse::Unknown) == vm.smallStrings.singleCharacterString('7'));
 }
 
+namespace {
+
+class StackBuilderForTest {
+public:
+    explicit StackBuilderForTest(LoadedProgram& program)
+        : m_program(program)
+    {
+        m_builder.limit = m_builder.buffer + StackStringBuilder::capacity;
+        m_builder.lengthOrigin = m_builder.buffer;
+        m_cursor = m_builder.buffer;
+    }
+
+    bool isOnStack() const { return m_builder.isOnStack(); }
+    size_t length() const { return m_cursor - m_builder.lengthOrigin; }
+    const String expected() { return m_expected.toString(); }
+
+    void appendInline(StringView text)
+    {
+        AOT_TEST_CHECK(text.length() <= StackStringBuilder::maxBytesWrittenPastLimit && m_cursor <= m_builder.limit);
+        memset(m_cursor, '?', StackStringBuilder::maxBytesWrittenPastLimit);
+        text.getCharacters(std::span<Latin1Character> { m_cursor, text.length() });
+        m_cursor += text.length();
+        m_expected.append(text);
+        if (m_cursor > m_builder.limit) {
+            AOT_TEST_CHECK(m_builder.moveToStorage(m_program.realm(), m_program.instance(), m_cursor));
+            didChangeStorage();
+        }
+    }
+
+    void appendToStorage(JSString* string)
+    {
+        StringBuilderStorage* storage = m_builder.moveToStorage(m_program.realm(), m_program.instance(), m_cursor);
+        AOT_TEST_CHECK(storage && storage->append(m_program.realm(), string) == AppendResult::Appended);
+        m_expected.append(textOf(m_program, string));
+        didChangeStorage();
+    }
+
+    JSString* finish(StringUse use)
+    {
+        AOT_TEST_CHECK(length() == m_expected.length());
+        JSString* result = m_builder.finish(m_program.realm(), m_program.instance(), m_cursor, use);
+        AOT_TEST_CHECK(result && textOf(m_program, result) == m_expected.toString());
+        return result;
+    }
+
+private:
+    void didChangeStorage()
+    {
+        m_cursor = m_builder.didChangeStorage(m_program.realm());
+        AOT_TEST_CHECK(m_cursor && m_cursor <= m_builder.limit && !m_builder.isOnStack());
+    }
+
+    LoadedProgram& m_program;
+    StackStringBuilder m_builder;
+    Latin1Character* m_cursor;
+    WTF::StringBuilder m_expected;
+};
+
+} // anonymous namespace
+
+static void testStackBuilder(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (size_t length : { 0u, 1u, 2u, 63u, 64u, 65u, 127u, 128u, 129u, 143u, 144u, 145u, 4095u, 4096u, 4097u, 300000u }) {
+        for (size_t step : { 1u, 7u, 16u }) {
+            StackBuilderForTest builder(program);
+            String piece = repeated('a' + step, step);
+            while (builder.length() + step <= length)
+                builder.appendInline(piece);
+            builder.appendInline(StringView(piece).left(length - builder.length()));
+            AOT_TEST_CHECK(builder.isOnStack() == (length <= StackStringBuilder::capacity));
+            JSString* key = builder.finish(StringUse::LikelyKey);
+            if (length >= 2 && length <= 64)
+                AOT_TEST_CHECK(key == buildKey(program, builder.expected(), StringUse::LikelyKey));
+        }
+    }
+
+    StackBuilderForTest index(program);
+    index.appendInline("40000"_s);
+    AOT_TEST_CHECK(index.finish(StringUse::LikelyKey) == int32ToString(vm, 40000, 10));
+
+    JSString* longString = jsString(vm, repeated('x', 100000));
+    StackBuilderForTest only(program);
+    only.appendToStorage(longString);
+    AOT_TEST_CHECK(only.finish(StringUse::Unknown) == longString);
+
+    static constexpr char16_t japan[] = { 0x65e5, 0x672c };
+    StackBuilderForTest mixed(program);
+    for (unsigned round = 0; round < 40; ++round) {
+        mixed.appendInline("0123456789"_s);
+        if (round % 8 == 3)
+            mixed.appendToStorage(longString);
+        if (round % 8 == 5)
+            mixed.appendToStorage(jsString(vm, String(std::span(japan))));
+        if (round % 8 == 7)
+            mixed.appendToStorage(jsString(vm, repeated('y', 200)));
+    }
+    mixed.finish(StringUse::Unknown);
+}
+
+static void testParseIndex()
+{
+    static constexpr std::array<uint8_t, 12> alphabet { '0', '0', '1', '5', '9', '9', '/', ':', ',', 'a', 0xb0, 0xff };
+    std::array<Latin1Character, StringKeyCache::maxIndexLength + StringKeyCache::minReadableBytes> buffer;
+    auto check = [&](size_t length) {
+        std::span<const Latin1Character> text = std::span { buffer }.first(length);
+        AOT_TEST_CHECK(StringKeyCache::tryParseIndex(text) == parseIndex(text));
+    };
+    uint64_t state = 1;
+    for (size_t length = 1; length <= StringKeyCache::maxIndexLength; ++length) {
+        for (unsigned round = 0; round < 50000; ++round) {
+            for (Latin1Character& character : buffer) {
+                state = state * 6364136223846793005ull + 1442695040888963407ull;
+                unsigned digitsOnly = round % 2 * 6;
+                character = static_cast<Latin1Character>(alphabet[(state >> 33) % (alphabet.size() - digitsOnly)]);
+            }
+            check(length);
+        }
+    }
+    for (uint64_t value : { 0ull, 1ull, 9ull, 10ull, 99ull, 100ull, 65535ull, 9999999ull, 10000000ull, 99999999ull, 100000000ull, 999999999ull, 1000000000ull, 2147483647ull, 2147483648ull, 4294967294ull, 4294967295ull, 4294967296ull, 9999999999ull }) {
+        String text = String::number(value);
+        buffer.fill(static_cast<Latin1Character>('7'));
+        memcpySpan(std::span { buffer }, text.span8());
+        check(text.length());
+    }
+}
+
 static void testKeysUpToTheCachedLength(LoadedProgram& program)
 {
     uint32_t cached = limitValue(program, LimitID::MaxCachedKeyLength);
@@ -851,6 +1006,84 @@ static void testConcatenatedKeys(LoadedProgram& program)
     AOT_TEST_CHECK(concatenate(program, { longest, jsNumber(123) }, StringUse::LikelyKey) == concatenate(program, { longest, jsNumber(123) }, StringUse::LikelyKey));
 }
 
+static JSString* concatenateAsCompiledCodeDoes(LoadedProgram& program, std::initializer_list<JSValue> parts)
+{
+    Vector<EncodedJSValue, 8> encoded;
+    WTF::StringBuilder expected;
+    for (JSValue part : parts) {
+        encoded.append(JSValue::encode(part));
+        expected.append(part.toWTFString(program.realm()));
+    }
+    JSString* found = StringBuilderStorage::tryFindKeyByParts(program.instance(), encoded.span());
+    AOT_TEST_CHECK(!found || textOf(program, found) == expected.toString());
+    return found ? found : concatenate(program, parts, StringUse::LikelyKey);
+}
+
+static NEVER_INLINE void makeKeysOfPartsNobodyElseHolds(LoadedProgram& program, unsigned round)
+{
+    VM& vm = program.vm();
+    for (unsigned i = 0; i < 2000; ++i) {
+        JSString* part = jsString(vm, makeString("part"_s, round, 'x', i));
+        concatenateAsCompiledCodeDoes(program, { part, jsNumber(i) });
+        concatenateAsCompiledCodeDoes(program, { jsNumber(i), part, jsNumber(round) });
+        concatenateAsCompiledCodeDoes(program, { jsNumber(100000 + round * 2000 + i), jsEmptyString(vm) });
+    }
+}
+
+static void testKeysFoundByTheirParts(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto find = [&](std::initializer_list<JSValue> parts) {
+        Vector<EncodedJSValue, 8> encoded;
+        for (JSValue part : parts)
+            encoded.append(JSValue::encode(part));
+        return StringBuilderStorage::tryFindKeyByParts(program.instance(), encoded.span());
+    };
+    JSString* row = jsString(vm, String("row"_s));
+    JSString* otherRow = jsString(vm, String("row"_s));
+    AOT_TEST_CHECK(!find({ row, jsNumber(12) }));
+    JSString* key = concatenateAsCompiledCodeDoes(program, { row, jsNumber(12) });
+    AOT_TEST_CHECK(find({ row, jsNumber(12) }) == key);
+    AOT_TEST_CHECK(!find({ row, jsNumber(13) }) && !find({ jsNumber(12), row }) && !find({ row, jsNumber(12), jsEmptyString(vm) }));
+    AOT_TEST_CHECK(!find({ otherRow, jsNumber(12) }));
+    AOT_TEST_CHECK(concatenateAsCompiledCodeDoes(program, { otherRow, jsNumber(12) }) == key);
+    AOT_TEST_CHECK(find({ otherRow, jsNumber(12) }) == key);
+
+    JSString* integerKey = concatenateAsCompiledCodeDoes(program, { jsNumber(40000), jsEmptyString(vm) });
+    AOT_TEST_CHECK(integerKey == int32ToString(vm, 40000, 10));
+    AOT_TEST_CHECK(find({ jsNumber(40000), jsEmptyString(vm) }) == integerKey && find({ jsNumber(40000) }) == integerKey);
+    AOT_TEST_CHECK(!find({ jsNumber(40001), jsEmptyString(vm) }) && !find({ jsNumber(-40000), jsEmptyString(vm) }));
+    AOT_TEST_CHECK(textOf(program, concatenateAsCompiledCodeDoes(program, { jsNumber(-40000), jsEmptyString(vm) })) == "-40000"_s);
+    AOT_TEST_CHECK(!find({ row, jsUndefined() }) && !find({ row, jsNumber(1.5) }));
+    AOT_TEST_CHECK(find({ row, jsEmptyString(vm) }) == row && find({ jsEmptyString(vm), row }) == row && find({ row }) == row);
+    AOT_TEST_CHECK(!find({ jsEmptyString(vm), jsEmptyString(vm) }) && !find({ jsUndefined(), jsEmptyString(vm) }));
+    AOT_TEST_CHECK(find({ jsEmptyString(vm), jsNumber(40000) }) == integerKey);
+    AOT_TEST_CHECK(concatenate(program, { jsEmptyString(vm), row }, StringUse::LikelyKey) == row);
+    AOT_TEST_CHECK(!concatenate(program, { jsEmptyString(vm), jsEmptyString(vm) }, StringUse::LikelyKey)->length());
+    AOT_TEST_CHECK(textOf(program, concatenate(program, { jsNumber(12), jsNumber(34) }, StringUse::LikelyKey)) == "1234"_s);
+    AOT_TEST_CHECK(concatenate(program, { jsNumber(412), jsNumber(34) }, StringUse::LikelyKey) == int32ToString(vm, 41234, 10));
+    AOT_TEST_CHECK(textOf(program, concatenate(program, { jsNumber(2147483647), jsNumber(1) }, StringUse::LikelyKey)) == "21474836471"_s);
+    AOT_TEST_CHECK(textOf(program, concatenate(program, { jsNumber(0), jsNumber(7) }, StringUse::LikelyKey)) == "07"_s);
+    AOT_TEST_CHECK(textOf(program, concatenate(program, { jsNumber(2147483647), jsEmptyString(vm) }, StringUse::LikelyKey)) == "2147483647"_s);
+    AOT_TEST_CHECK(textOf(program, concatenate(program, { jsNumber(0), jsEmptyString(vm) }, StringUse::LikelyKey)) == "0"_s);
+    AOT_TEST_CHECK(!find({ row, row, row, row, row, row, row }));
+
+    for (unsigned round = 0; round < 24; ++round) {
+        makeKeysOfPartsNobodyElseHolds(program, round);
+        vm.heap.collectNow(Sync, round % 3 ? CollectionScope::Eden : CollectionScope::Full);
+    }
+    JSString* foundAfterwards = find({ row, jsNumber(12) });
+    AOT_TEST_CHECK(!foundAfterwards || foundAfterwards == key);
+    foundAfterwards = find({ jsNumber(40000), jsEmptyString(vm) });
+    AOT_TEST_CHECK(!foundAfterwards || foundAfterwards == integerKey);
+    concatenateAsCompiledCodeDoes(program, { row, jsNumber(12) });
+    concatenateAsCompiledCodeDoes(program, { jsNumber(40000), jsEmptyString(vm) });
+    ensureStillAliveHere(row);
+    ensureStillAliveHere(otherRow);
+    ensureStillAliveHere(key);
+    ensureStillAliveHere(integerKey);
+}
+
 static NEVER_INLINE String fillWithStringsNobodyElseHolds(LoadedProgram& program, Builder& builder)
 {
     VM& vm = program.vm();
@@ -905,6 +1138,53 @@ static void testCollector()
     }
 }
 
+static JSString* toLowerCase(LoadedProgram& program, JSString* string)
+{
+    return uncheckedDowncast<JSString>(operationAOTStringToLowerCase(&program.instance(), string).value);
+}
+
+static JSString* toUpperCase(LoadedProgram& program, JSString* string)
+{
+    return uncheckedDowncast<JSString>(operationAOTStringToUpperCase(&program.instance(), string).value);
+}
+
+static NEVER_INLINE void convertAStringThatDies(LoadedProgram& program, uintptr_t& addressOfSource)
+{
+    JSString* source = jsNontrivialString(program.vm(), "X-Dies-With-The-Request"_s);
+    addressOfSource = std::bit_cast<uintptr_t>(source);
+    AOT_TEST_CHECK(textOf(program, toLowerCase(program, source)) == "x-dies-with-the-request"_s);
+    AOT_TEST_CHECK(program.state().propertyCaches->stringKeys().tryFindCaseConversion(source, StringKeyCache::LetterCase::Lower));
+}
+
+// The conversion of one and the same string is remembered for each case. Nothing is remembered of a string that died: another string may get its cell.
+static void testCaseConversionOfTheSameStringIsRemembered(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StringKeyCache& keys = program.state().propertyCaches->stringKeys();
+    using LetterCase = StringKeyCache::LetterCase;
+    Strong<JSString> source(vm, jsNontrivialString(vm, "Content-Type"_s));
+    Strong<JSString> twin(vm, jsNontrivialString(vm, "Content-Type"_s));
+    AOT_TEST_CHECK(!keys.tryFindCaseConversion(source.get(), LetterCase::Lower) && !keys.tryFindCaseConversion(source.get(), LetterCase::Upper));
+
+    Strong<JSString> lower(vm, toLowerCase(program, source.get()));
+    AOT_TEST_CHECK(textOf(program, lower.get()) == "content-type"_s);
+    AOT_TEST_CHECK(keys.tryFindCaseConversion(source.get(), LetterCase::Lower) == lower.get() && !keys.tryFindCaseConversion(source.get(), LetterCase::Upper));
+    AOT_TEST_CHECK(!keys.tryFindCaseConversion(twin.get(), LetterCase::Lower));
+    AOT_TEST_CHECK(toLowerCase(program, source.get()) == lower.get() && toLowerCase(program, twin.get()) == lower.get());
+
+    Strong<JSString> upper(vm, toUpperCase(program, source.get()));
+    AOT_TEST_CHECK(textOf(program, upper.get()) == "CONTENT-TYPE"_s);
+    AOT_TEST_CHECK(keys.tryFindCaseConversion(source.get(), LetterCase::Upper) == upper.get() && keys.tryFindCaseConversion(source.get(), LetterCase::Lower) == lower.get());
+    AOT_TEST_CHECK(toLowerCase(program, lower.get()) == lower.get() && !keys.tryFindCaseConversion(lower.get(), LetterCase::Lower));
+
+    uintptr_t addressOfDeadSource = 0;
+    convertAStringThatDies(program, addressOfDeadSource);
+    clobberStack();
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(!keys.tryFindCaseConversion(std::bit_cast<JSString*>(addressOfDeadSource), LetterCase::Lower));
+    AOT_TEST_CHECK(keys.tryFindCaseConversion(source.get(), LetterCase::Lower) == lower.get() && keys.tryFindCaseConversion(source.get(), LetterCase::Upper) == upper.get());
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withInstance)() = runNativeTestWithLoadedProgram<stringBuilderStorageTests, programText, body>;
 
@@ -912,6 +1192,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
 {
     static constexpr NativeTest tests[] = {
         { "string-builder-storage/append-latin1"_s, withInstance<testAppendLatin1> },
+        { "string-builder-storage/case-conversion-of-the-same-string-is-remembered"_s, withInstance<testCaseConversionOfTheSameStringIsRemembered> },
         { "string-builder-storage/limit-is-room"_s, withInstance<testLimitIsRoom> },
         { "string-builder-storage/length-is-two-words"_s, withInstance<testLengthIsTwoWords> },
         { "string-builder-storage/first-string-comes-back"_s, withInstance<testFirstStringComesBack> },
@@ -927,6 +1208,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/segments-by-reference"_s, withInstance<testSegmentsByReference> },
         { "string-builder-storage/segments-cap"_s, withInstance<testSegmentsCap> },
         { "string-builder-storage/read-with-segments-twice"_s, withInstance<testReadWithSegmentsTwice> },
+        { "string-builder-storage/plain-parts-of-wide-strings-lie-in-the-buffer"_s, withInstance<testPlainPartsOfWideStringsLieInTheBuffer> },
         { "string-builder-storage/roll-back-everywhere"_s, withInstance<testRollBackEverywhere> },
         { "string-builder-storage/append-values-is-atomic"_s, withInstance<testAppendValuesIsAtomic> },
         { "string-builder-storage/reserve-commit"_s, withInstance<testReserveCommit> },
@@ -934,8 +1216,11 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/pool-depth"_s, withInstance<testPoolDepth> },
         { "string-builder-storage/pool-cleared-by-collection"_s, withInstance<testPoolClearedByCollection> },
         { "string-builder-storage/keys-that-are-integers"_s, withInstance<testKeysThatAreIntegers> },
+        { "string-builder-storage/parse-index"_s, testParseIndex },
+        { "string-builder-storage/stack-builder"_s, withInstance<testStackBuilder> },
         { "string-builder-storage/keys-up-to-the-cached-length"_s, withInstance<testKeysUpToTheCachedLength> },
         { "string-builder-storage/concatenated-keys"_s, withInstance<testConcatenatedKeys> },
+        { "string-builder-storage/keys-found-by-their-parts"_s, withInstance<testKeysFoundByTheirParts> },
         { collectorTest, testCollector },
     };
     return tests;

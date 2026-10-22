@@ -45,25 +45,25 @@ function f1 name="upcast" parameters=[{type=number}] results=[{type=number}] {
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: Upcast
 
-function f2 name="prediction" parameters=[{type=number}] results=[{type=number}] {
+function f2 name="expectedType" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect v0 function=f2
-    ReturnCall v2 casts=[{declared={type=number predicted=i32} resolution=Prediction}]
+    ReturnCall v2 casts=[{declared={type=i32 flags=[IsExpected]} resolution=Nothing}]
   b2():
     Return v0
 }
-# CHECK-LABEL: function f2 name="prediction"
-# CHECK-NOT: Predict
+# CHECK-LABEL: function f2 name="expectedType"
+# CHECK-NOT: Upcast
 # CHECK: Jump -> next [[header2]](v0)
-# CHECK-NOT: Predict
+# CHECK-NOT: Upcast
 # CHECK: Jump -> next [[header2]]([[carried2]])
-# CHECK-NOT: Predict
+# CHECK-NOT: Upcast
 # CHECK: [[header2]]([[carried2]]: number):
 # CHECK-NEXT: LoopHint
-# CHECK-NOT: Predict
+# CHECK-NOT: Upcast
 
 function f3 name="severalCasts" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
@@ -71,7 +71,7 @@ function f3 name="severalCasts" parameters=[{type=number}] results=[{type=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect v0 function=f3
-    ReturnCall v2 casts=[{declared={type=anything} resolution=Upcast}, {declared={type=number predicted=i32} resolution=Prediction}, {declared={type=number} resolution=Nothing}]
+    ReturnCall v2 casts=[{declared={type=anything} resolution=Upcast}, {declared={type=i32 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Nothing}]
   b2():
     Return v0
 }
@@ -108,7 +108,7 @@ function f5 name="castThatTests" parameters=[{type=number}] results=[{type=numbe
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect v0 function=f5
-    v3 = Claim v2 castType=i32 site=w0
+    v3 = Check v2 castType=i32 site=w0
     Return v3
   b2():
     Return v0
@@ -116,5 +116,5 @@ function f5 name="castThatTests" parameters=[{type=number}] results=[{type=numbe
 # CHECK-LABEL: function f5 name="castThatTests"
 # CHECK-NOT: LoopHint
 # CHECK: v2: number = CallDirect v0 function=f5
-# CHECK-NEXT: = Claim v2 castType=i32
+# CHECK-NEXT: = Check v2 castType=i32
 # CHECK-NOT: LoopHint

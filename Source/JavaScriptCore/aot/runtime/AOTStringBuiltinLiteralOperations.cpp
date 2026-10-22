@@ -169,7 +169,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringReverseFindLiteral8, size_t,
     return operationAOTStringReverseFind8(characters, length, other.span8().data(), other.length(), position);
 }
 
+static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringLastIndexOfLiteralGeneric(Instance*, JSCell*, uint32_t text, int32_t position);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOfLiteral, size_t, (Instance* instance, JSCell* cell, uint32_t text, int32_t position))
+{
+    if (const StringImpl* impl = uncheckedDowncast<JSString>(cell)->tryGetValueImpl(); position <= 0 && impl && impl->is8Bit()) {
+        StringView other = textOf(text);
+        if (other.is8Bit()) [[likely]] {
+            if (impl->length() < other.length())
+                return { notFound, nullptr };
+            return { WTF::equal(impl->span8().data(), other.span8()) ? 0 : notFound, nullptr };
+        }
+    }
+    [[clang::musttail]] return stringLastIndexOfLiteralGeneric(instance, cell, text, position);
+}
+
+static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringLastIndexOfLiteralGeneric(Instance* instance, JSCell* cell, uint32_t text, int32_t position)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringLastIndexOfLiteral);
     JSString* string = cellArgument<JSString>(cell, Entry::operationAOTStringLastIndexOfLiteral);

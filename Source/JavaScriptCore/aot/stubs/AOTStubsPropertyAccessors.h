@@ -13,6 +13,8 @@ namespace JSC { namespace AOT {
 
 // Each ends the stub on every path but its list, where receiver, closure, value and getterSetter are intact.
 void callGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg getterSetter, JumpList& cannot);
+// getter is T11.
+void callGetterFunctionAndReturn(StubAssembler&, GPRReg receiver, GPRReg getter, JumpList& cannot);
 void callSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg getterSetter, JumpList& cannot);
 void callCustomGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg accessorIndex, GPRReg uid);
 void callCustomSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid);

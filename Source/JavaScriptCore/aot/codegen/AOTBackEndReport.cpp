@@ -60,13 +60,10 @@ static std::optional<Wire::DeclineKind> declineKindOf(B3::RemarkKind kind)
     switch (kind) {
     case B3::RemarkKind::LoopNotVersioned:
         return Wire::DeclineKind::LoopNotVersioned;
-    case B3::RemarkKind::PollNotStripMined:
-        return Wire::DeclineKind::LoopPollNotStripMined;
     case B3::RemarkKind::LoopBoundNotClamped:
         return Wire::DeclineKind::LoopBoundNotClamped;
     case B3::RemarkKind::LoopVersioned:
     case B3::RemarkKind::LoopRotated:
-    case B3::RemarkKind::PollStripMined:
     case B3::RemarkKind::RangeChecksRemoved:
         return std::nullopt;
     }
@@ -98,10 +95,6 @@ static Wire::LoopDeclineReason declineReasonOf(B3::GaveUpReason reason)
         return Wire::LoopDeclineReason::TestNotOnLikelyPath;
     case B3::GaveUpReason::EffectsBeforeTopTest:
         return Wire::LoopDeclineReason::EffectsBeforeTopTest;
-    case B3::GaveUpReason::PollNotOnEveryIteration:
-        return Wire::LoopDeclineReason::PollNotOnEveryIteration;
-    case B3::GaveUpReason::SeveralPolls:
-        return Wire::LoopDeclineReason::SeveralPolls;
     case B3::GaveUpReason::LimitReached:
         return Wire::LoopDeclineReason::LimitReached;
     }
@@ -115,8 +108,6 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::LoopsVersioned;
     case B3::Counter::LoopsRotated:
         return StatisticID::LoopsRotated;
-    case B3::Counter::PollsStripMined:
-        return StatisticID::LoopPollsStripMined;
     case B3::Counter::RangeChecksRemoved:
         return StatisticID::RangeChecksRemoved;
     case B3::Counter::LoopBoundsClamped:

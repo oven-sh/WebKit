@@ -31,48 +31,60 @@ static constexpr uint32_t rightOperand = 1;
 
 static constexpr std::array<TestedOperands, 3> testedOperandSets { { { true, false }, { false, true }, { true, true } } };
 
-static TypeID testedTypeContaining(const Type& predicted)
+static TypeID testedTypeContaining(const Type& expected)
 {
-    if (predicted.isNumber())
-        return testedNumberTypeContaining(predicted);
-    if (predicted.isAnyString())
+    if (expected.isNumber())
+        return testedNumberTypeContaining(expected);
+    if (expected.isAnyString())
         return TypeTable::string;
-    if (predicted.isBoolean())
+    if (expected.isBoolean())
         return TypeTable::boolean;
-    if (predicted.isObject())
+    if (expected.isObject())
         return TypeTable::object;
     return { };
 }
 
-static TypeID testedTypeFor(TestSiteReporter& reporter, ValueID operand)
+// Whoever asks whether a value is truthy reckons with undefined and null: `if (props.bold)` with `bold?: boolean`. Where one of them is expected, both pass the test.
+// So it is with `===` on a value that is expected to be null or an object: the bits are compared either way, and a test for an object alone would fail on what is expected.
+static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, TypeID tested)
 {
-    std::optional<Type> predicted = reporter.predictedPartOf(operand);
-    if (!predicted)
+    TypeArena& types = reporter.types();
+    if (!(types.at(reporter.function().at(operand).expectedOrType()).primitives & Primitive::UndefinedOrNull))
+        return tested;
+    return types.intern(types.at(tested).withPrimitives(Primitive::UndefinedOrNull));
+}
+
+static TypeID testedTypeFor(TestSiteReporter& reporter, const Value& user, ValueID operand)
+{
+    std::optional<Type> expected = reporter.expectedPartOf(operand);
+    if (!expected)
         return { };
-    TypeID tested = testedTypeContaining(*predicted);
+    TypeID tested = testedTypeContaining(*expected);
+    if (tested && (user.opcode == Opcode::ToBoolean || (user.opcode == Opcode::StrictEq && tested == TypeTable::object)))
+        tested = admitExpectedNullish(reporter, operand, tested);
     if (!tested || reporter.typeOf(operand).isSubsetOf(reporter.types().at(tested), reporter.program()))
         return { };
     return tested;
 }
 
-static bool isNumberByTypeOrPrediction(TestSiteReporter& reporter, ValueID operand)
+static bool isNumberByTypeOrExpectedType(TestSiteReporter& reporter, ValueID operand)
 {
     // An element of an array of numbers is a number or missing.
     if (reporter.typeOf(operand).isNumberOrNullish())
         return true;
-    std::optional<Type> predicted = reporter.predictedPartOf(operand);
-    return predicted && predicted->isNumber();
+    std::optional<Type> expected = reporter.expectedPartOf(operand);
+    return expected && expected->isNumber();
 }
 
-// A prediction that names no primitive, or leaves out no kind of them, says nothing to an operator. Such an operand is taken for a number where the operand beside it is one.
+// An expected type that names no primitive, or leaves out no kind of them, says nothing to an operator. Such an operand is taken for a number where the operand beside it is one.
 static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, ValueID operand, ValueID other)
 {
     const Type& type = reporter.typeOf(operand);
-    if (!(type.primitives & Primitive::Number) || type.isNumber() || !isNumberByTypeOrPrediction(reporter, other))
+    if (!(type.primitives & Primitive::Number) || type.isNumber() || !isNumberByTypeOrExpectedType(reporter, other))
         return { };
     constexpr uint16_t noPrimitives = 0;
-    std::optional<Type> predicted = reporter.predictedPartOf(operand, noPrimitives);
-    if (predicted && predicted->primitives && predicted->primitives != type.primitives)
+    std::optional<Type> expected = reporter.expectedPartOf(operand, noPrimitives);
+    if (expected && expected->primitives && expected->primitives != type.primitives)
         return { };
     return TypeTable::number;
 }
@@ -123,7 +135,7 @@ static std::optional<OperatorTests> findFewestTests(TestSiteReporter& reporter, 
 void reportOperatorTests(TestSiteReporter& reporter)
 {
     TypingContext typing { reporter.program(), reporter.function(), reporter.types() };
-    OperatorSite site { typing, reporter.analyses().effectContext(), CodeShape::Balanced };
+    OperatorSite site { typing, reporter.analyses().effectContext(), CodeShape::Fast };
 
     reporter.forEachCandidate([&](const Value& value) {
         if (!hasOperatorForm(value.opcode))
@@ -133,7 +145,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
         TestedTypePerOperand tested;
         for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
-            tested[operandIndex] = testedTypeFor(reporter, value.operand(operandIndex));
+            tested[operandIndex] = testedTypeFor(reporter, value, value.operand(operandIndex));
         if (numberOfOperands == 2) {
             for (uint32_t operandIndex : { leftOperand, rightOperand }) {
                 if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)

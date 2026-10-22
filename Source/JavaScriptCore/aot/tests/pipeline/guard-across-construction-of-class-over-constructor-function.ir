@@ -1,4 +1,4 @@
-# A test of the array stays in front of a loop whose callback constructs a class over a constructor function. The super call allocates `this` for new.target, and ResolveCalls writes that out as a read of the prototype and an allocation: the summaries from before that pass say no less than the ones after it, so the guard that was placed with the first holds under the second
+# A loop whose callback constructs a class over a constructor function. The call ends what the test of the array has proven, so the array is tested again in each turn, in front of its first use. The one callback that flow knows is taken in behind a test of the closure, and the construction in it ends the proof as the call does. The super call allocates `this` for new.target, and ResolveCalls writes that out as a read of the prototype and an allocation: the summaries from before that pass say no less than the ones after it, so a guard that was placed with the first holds under the second
 # FORM: AsRead
 # RUN: pipeline PlanSlots
 
@@ -7,7 +7,7 @@ entry module=m0
 layout L0 kind=Instance name="Legacy" module=m0 constructor=f1 fields=[{key="r" declared={type=anything}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="BelowLegacy" module=m0 constructor=f3 fields=[{key="s" declared={type=anything}}] flags=[HasHeritage]
 variable g0 name="BelowLegacy" module=m0 declared={type=function|absent} flags=[IsImmutable]
-variable g1 name="made" module=m0 declared={type=anything|absent predicted=Array} flags=[IsImmutable]
+variable g1 name="made" module=m0 declared={type=Array|absent flags=[IsExpected]} flags=[IsImmutable]
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -20,7 +20,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v5 = FinishClass v4 layout=L1
     PutModuleVariable v5 variable=g0
     v7 = Builtin builtin=GlobalThis
-    PropSet v7, v1 key="each"
+    PropSet v7, v1 key="each" [isFreeName]
     v9 = Data data=d0
     PutModuleVariable v9 variable=g1
     v11 = Data data=d1
@@ -29,7 +29,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v14 = Undefined
     Return v14
 }
-function f1 name="Legacy" module=m0 flags=[HasThis] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="Legacy" module=m0 flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="r"
     v3 = Undefined
@@ -59,10 +59,22 @@ function f2 name="each" module=m0 length=2 thisType={type=anything} parameters=[
     Return v11
 }
 # CHECK-LABEL: function f2 name="each"
-# CHECK: [[pristine]]: boolean = IsPristine
-# CHECK: LoopHint
 # CHECK-NOT: IsPristine
-# CHECK: = HasArrayElement
+# CHECK: LoopHint
+# CHECK: [[pristine]]: boolean = IsPristine [[array]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[pristine]] -> taken [[tested]](| 0), notTaken
+# CHECK-NEXT: [[tested]]([[guard]]: guard):
+# CHECK-NEXT: = HasArrayElement [[array]], {{*}}, [[guard]]
+# CHECK: = GetArrayElement [[array]], {{*}}, [[guard]]
+# CHECK-NEXT: [[isCallback]]: boolean = IsClosureOf v1 function=f4
+# CHECK-NEXT: Branch [[isCallback]] -> taken [[inlined]](), notTaken
+# CHECK-NEXT: [[inlined]]():
+# CHECK-NOT: IsPristine
+# CHECK: = NewObject {{*}}layout=L1
+# CHECK-NOT: IsPristine
+# CHECK: = Call v1, -,
+# CHECK-NOT: IsPristine
+# CHECK-LABEL: function f3 name="BelowLegacy"
 function f3 name="BelowLegacy" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object}] {
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0

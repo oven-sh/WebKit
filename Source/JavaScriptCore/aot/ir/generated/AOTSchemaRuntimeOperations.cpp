@@ -35,175 +35,197 @@ static constexpr RuntimeValueKind parameterKinds9[] = {
 static constexpr RuntimeValueKind parameterKinds10[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds11[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds12[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds13[] = {
+static constexpr RuntimeValueKind parameterKinds11[] = {
+    RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue,
+    RuntimeValueKind::Cell
+};
+static constexpr RuntimeValueKind parameterKinds12[] = {
+    RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
+};
+static constexpr RuntimeValueKind parameterKinds13[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds14[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds14[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds15[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell };
-static constexpr RuntimeValueKind parameterKinds16[] = { RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds17[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell };
-static constexpr RuntimeValueKind parameterKinds18[] = {
+static constexpr RuntimeValueKind parameterKinds15[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds16[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds17[] = { RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds18[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds19[] = {
     RuntimeValueKind::UInt32, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue
 };
-static constexpr RuntimeValueKind parameterKinds19[] = { RuntimeValueKind::Cell };
-static constexpr RuntimeValueKind parameterKinds20[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds21[] = {
+static constexpr RuntimeValueKind parameterKinds20[] = { RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds21[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds22[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds22[] = {
+static constexpr RuntimeValueKind parameterKinds23[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds23[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds24[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds25[] = {
-    RuntimeValueKind::SiteCache, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
+static constexpr RuntimeValueKind parameterKinds24[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds25[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds26[] = {
+    RuntimeValueKind::SiteCache, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds26[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds27[] = {
+static constexpr RuntimeValueKind parameterKinds27[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds28[] = {
     RuntimeValueKind::UInt64, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64
 };
-static constexpr RuntimeValueKind parameterKinds28[] = { RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds29[] = { RuntimeValueKind::Pointer, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds30[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt64 };
-static constexpr RuntimeValueKind parameterKinds31[] = { RuntimeValueKind::Cell, RuntimeValueKind::Int64, RuntimeValueKind::Int64 };
-static constexpr RuntimeValueKind parameterKinds32[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt64 };
-static constexpr RuntimeValueKind parameterKinds33[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds34[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds35[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt64, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds36[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::Cell };
-static constexpr RuntimeValueKind parameterKinds37[] = { RuntimeValueKind::Cell, RuntimeValueKind::Int32, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds38[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds39[] = { RuntimeValueKind::UInt64 };
-static constexpr RuntimeValueKind parameterKinds40[] = { RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds41[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds42[] = {
+static constexpr RuntimeValueKind parameterKinds29[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds30[] = { RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds31[] = { RuntimeValueKind::Pointer, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds32[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt64 };
+static constexpr RuntimeValueKind parameterKinds33[] = { RuntimeValueKind::Cell, RuntimeValueKind::Int64, RuntimeValueKind::Int64 };
+static constexpr RuntimeValueKind parameterKinds34[] = {
+    RuntimeValueKind::Cell, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64
+};
+static constexpr RuntimeValueKind parameterKinds35[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt64 };
+static constexpr RuntimeValueKind parameterKinds36[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds37[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds38[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt64, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds39[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds40[] = { RuntimeValueKind::Cell, RuntimeValueKind::Int32, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds41[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds42[] = { RuntimeValueKind::UInt64 };
+static constexpr RuntimeValueKind parameterKinds43[] = { RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds44[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds45[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::Int32, RuntimeValueKind::Int32
 };
-static constexpr RuntimeValueKind parameterKinds43[] = {
+static constexpr RuntimeValueKind parameterKinds46[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds44[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds45[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds46[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt64 };
-static constexpr RuntimeValueKind parameterKinds47[] = { RuntimeValueKind::Double, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds48[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds49[] = {
+static constexpr RuntimeValueKind parameterKinds47[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds48[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds49[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds50[] = {
+    RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::Cell, RuntimeValueKind::Int32, RuntimeValueKind::Int32
+};
+static constexpr RuntimeValueKind parameterKinds51[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds52[] = { RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds53[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds54[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt64 };
+static constexpr RuntimeValueKind parameterKinds55[] = { RuntimeValueKind::Double, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds56[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds57[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds50[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell };
-static constexpr RuntimeValueKind parameterKinds51[] = {
+static constexpr RuntimeValueKind parameterKinds58[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds59[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds52[] = { RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds53[] = {
+static constexpr RuntimeValueKind parameterKinds60[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell
 };
-static constexpr RuntimeValueKind parameterKinds54[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds55[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds56[] = {
+static constexpr RuntimeValueKind parameterKinds61[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds62[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds57[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds58[] = { RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds59[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Cell, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds60[] = {
+static constexpr RuntimeValueKind parameterKinds63[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt64, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds64[] = { RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds65[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds66[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds67[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Cell, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds68[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Cell, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds61[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds62[] = {
+static constexpr RuntimeValueKind parameterKinds69[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds70[] = {
     RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds63[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache };
-static constexpr RuntimeValueKind parameterKinds64[] = {
+static constexpr RuntimeValueKind parameterKinds71[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds72[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache };
+static constexpr RuntimeValueKind parameterKinds73[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache,
     RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds65[] = {
+static constexpr RuntimeValueKind parameterKinds74[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds66[] = { RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache };
-static constexpr RuntimeValueKind parameterKinds67[] = { RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache, RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds68[] = { RuntimeValueKind::Cell, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds69[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue };
-static constexpr RuntimeValueKind parameterKinds70[] = {
+static constexpr RuntimeValueKind parameterKinds75[] = { RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache };
+static constexpr RuntimeValueKind parameterKinds76[] = { RuntimeValueKind::UInt32, RuntimeValueKind::SiteCache, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds77[] = { RuntimeValueKind::UInt32, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds78[] = { RuntimeValueKind::Cell, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds79[] = { RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue };
+static constexpr RuntimeValueKind parameterKinds80[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds71[] = {
+static constexpr RuntimeValueKind parameterKinds81[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt64, RuntimeValueKind::UInt64, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds72[] = {
+static constexpr RuntimeValueKind parameterKinds82[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds73[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds74[] = {
+static constexpr RuntimeValueKind parameterKinds83[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds75[] = {
+static constexpr RuntimeValueKind parameterKinds84[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::Int32, RuntimeValueKind::Int32, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds76[] = { RuntimeValueKind::Cell, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds77[] = {
+static constexpr RuntimeValueKind parameterKinds85[] = {
+    RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue
+};
+static constexpr RuntimeValueKind parameterKinds86[] = { RuntimeValueKind::Cell, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds87[] = {
     RuntimeValueKind::UInt32, RuntimeValueKind::Double, RuntimeValueKind::Double, RuntimeValueKind::Double, RuntimeValueKind::Double
 };
-static constexpr RuntimeValueKind parameterKinds78[] = {
+static constexpr RuntimeValueKind parameterKinds88[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt64, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds79[] = {
+static constexpr RuntimeValueKind parameterKinds89[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds80[] = {
+static constexpr RuntimeValueKind parameterKinds90[] = {
     RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Int32, RuntimeValueKind::EncodedJSValue
 };
-static constexpr RuntimeValueKind parameterKinds81[] = { RuntimeValueKind::UInt64, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds82[] = {
+static constexpr RuntimeValueKind parameterKinds91[] = { RuntimeValueKind::UInt64, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds92[] = {
     RuntimeValueKind::UInt32, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::EncodedJSValue
 };
-static constexpr RuntimeValueKind parameterKinds83[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds84[] = { RuntimeValueKind::Double, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds85[] = { RuntimeValueKind::Int32, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds86[] = { RuntimeValueKind::Cell, RuntimeValueKind::Double, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds87[] = { RuntimeValueKind::Double, RuntimeValueKind::Double, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds88[] = { RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds89[] = {
+static constexpr RuntimeValueKind parameterKinds93[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds94[] = { RuntimeValueKind::Double, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds95[] = { RuntimeValueKind::Int32, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds96[] = { RuntimeValueKind::Cell, RuntimeValueKind::Double, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds97[] = { RuntimeValueKind::Double, RuntimeValueKind::Double, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds98[] = { RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds99[] = {
     RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds90[] = {
+static constexpr RuntimeValueKind parameterKinds100[] = {
     RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::Int32
 };
-static constexpr RuntimeValueKind parameterKinds91[] = {
+static constexpr RuntimeValueKind parameterKinds101[] = {
     RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds92[] = {
+static constexpr RuntimeValueKind parameterKinds102[] = {
     RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::Int32
 };
-static constexpr RuntimeValueKind parameterKinds93[] = { RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds94[] = {
+static constexpr RuntimeValueKind parameterKinds103[] = { RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds104[] = {
     RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds95[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds96[] = {
+static constexpr RuntimeValueKind parameterKinds105[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds97[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Int32 };
-static constexpr RuntimeValueKind parameterKinds98[] = {
+static constexpr RuntimeValueKind parameterKinds106[] = { RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Int32 };
+static constexpr RuntimeValueKind parameterKinds107[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::Cell, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds99[] = {
+static constexpr RuntimeValueKind parameterKinds108[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::Cell, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32
 };
-static constexpr RuntimeValueKind parameterKinds100[] = { RuntimeValueKind::UInt32, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds101[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds102[] = { RuntimeValueKind::UInt64, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
-static constexpr RuntimeValueKind parameterKinds103[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer };
-static constexpr RuntimeValueKind parameterKinds104[] = {
+static constexpr RuntimeValueKind parameterKinds109[] = {
+    RuntimeValueKind::Pointer, RuntimeValueKind::Pointer, RuntimeValueKind::UInt32, RuntimeValueKind::Pointer
+};
+static constexpr RuntimeValueKind parameterKinds110[] = { RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds111[] = { RuntimeValueKind::UInt64, RuntimeValueKind::UInt32, RuntimeValueKind::UInt32 };
+static constexpr RuntimeValueKind parameterKinds112[] = { RuntimeValueKind::UInt32, RuntimeValueKind::Pointer, RuntimeValueKind::Pointer };
+static constexpr RuntimeValueKind parameterKinds113[] = {
     RuntimeValueKind::UInt32, RuntimeValueKind::Cell, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::Pointer
 };
-static constexpr RuntimeValueKind parameterKinds105[] = { RuntimeValueKind::Cell, RuntimeValueKind::Pointer, RuntimeValueKind::Cell };
-static constexpr RuntimeValueKind parameterKinds106[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Int64 };
-static constexpr RuntimeValueKind parameterKinds107[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Double };
-static constexpr RuntimeValueKind parameterKinds108[] = {
+static constexpr RuntimeValueKind parameterKinds114[] = { RuntimeValueKind::Cell, RuntimeValueKind::Pointer, RuntimeValueKind::Cell };
+static constexpr RuntimeValueKind parameterKinds115[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Int64 };
+static constexpr RuntimeValueKind parameterKinds116[] = { RuntimeValueKind::Pointer, RuntimeValueKind::Double };
+static constexpr RuntimeValueKind parameterKinds117[] = {
     RuntimeValueKind::Cell, RuntimeValueKind::Pointer, RuntimeValueKind::EncodedJSValue, RuntimeValueKind::UInt32
 };
 
@@ -227,6 +249,7 @@ RuntimeSignature signatureOf(RuntimeOperation operation)
     case RuntimeOperation::GetSuperPropertyById: case RuntimeOperation::ImportDynamic:
         return { RuntimeValueKind::EncodedJSValue, parameterKinds4, true, true };
     case RuntimeOperation::SuperGet: case RuntimeOperation::Apply: case RuntimeOperation::ConstructWithArray: case RuntimeOperation::GetByValWithThis:
+    case RuntimeOperation::TypedArraySetOfAnyValue: case RuntimeOperation::TypedArraySubarrayOfAnyValue:
         return { RuntimeValueKind::EncodedJSValue, parameterKinds5, true, true };
     case RuntimeOperation::SuperSet: case RuntimeOperation::DefineOwnProperty:
         return { RuntimeValueKind::Void, parameterKinds6, true, true };
@@ -240,398 +263,457 @@ RuntimeSignature signatureOf(RuntimeOperation operation)
         return { RuntimeValueKind::Void, parameterKinds9, true, true };
     case RuntimeOperation::DefineMethod:
         return { RuntimeValueKind::Void, parameterKinds10, true, true };
-    case RuntimeOperation::SetFunctionName:
-        return { RuntimeValueKind::Void, parameterKinds11, true, true };
-    case RuntimeOperation::SetLiteralPrototype: case RuntimeOperation::RememberElement: case RuntimeOperation::RejectPromise:
-        return { RuntimeValueKind::Void, parameterKinds12, true, false };
+    case RuntimeOperation::TryDefineLiveBinding:
+        return { RuntimeValueKind::Size, parameterKinds11, true, false };
+    case RuntimeOperation::TryReExportFields:
+        return { RuntimeValueKind::Size, parameterKinds12, true, false };
+    case RuntimeOperation::SetFunctionName: case RuntimeOperation::SetLiteralPrototype:
+        return { RuntimeValueKind::Void, parameterKinds13, true, true };
     case RuntimeOperation::Construct: case RuntimeOperation::SuperConstruct:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds13, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds14, true, true };
     case RuntimeOperation::NewArgumentList:
-        return { RuntimeValueKind::Cell, parameterKinds14, true, true };
-    case RuntimeOperation::SuperConstructList: case RuntimeOperation::EnumeratorGetByVal:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds15, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds15, true, true };
+    case RuntimeOperation::SuperConstructList: case RuntimeOperation::EnumeratorGetByVal: case RuntimeOperation::ArrayJoinOfAnyReceiver:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds16, true, true };
     case RuntimeOperation::ThrowUnlessCallable: case RuntimeOperation::Throw: case RuntimeOperation::ThrowToHandlerInFunction:
-        return { RuntimeValueKind::Void, parameterKinds16, true, true };
+        return { RuntimeValueKind::Void, parameterKinds17, true, true };
     case RuntimeOperation::ThrowUnlessCallableNamed: case RuntimeOperation::ThrowNotIterable:
         return { RuntimeValueKind::Void, parameterKinds0, true, true };
     case RuntimeOperation::CreateThis: case RuntimeOperation::Concat: case RuntimeOperation::ArrayJoin:
-        return { RuntimeValueKind::Cell, parameterKinds17, true, true };
-    case RuntimeOperation::ResolveHeritage: case RuntimeOperation::ValueNegate: case RuntimeOperation::ValueBitNot: case RuntimeOperation::ToNumeric:
-    case RuntimeOperation::ToKey: case RuntimeOperation::Increment: case RuntimeOperation::Decrement: case RuntimeOperation::ToLength:
-    case RuntimeOperation::JSONDecodeBytes:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds16, true, true };
-    case RuntimeOperation::NewClass:
         return { RuntimeValueKind::Cell, parameterKinds18, true, true };
-    case RuntimeOperation::GetClassPrototype: case RuntimeOperation::ObjectCreate:
-        return { RuntimeValueKind::Cell, parameterKinds19, true, false };
+    case RuntimeOperation::ResolveHeritage: case RuntimeOperation::ValueNegate: case RuntimeOperation::ValueBitNot: case RuntimeOperation::ToNumeric:
+    case RuntimeOperation::ToKey: case RuntimeOperation::Increment: case RuntimeOperation::Decrement: case RuntimeOperation::NumberOfAnyValue:
+    case RuntimeOperation::StringOfAnyValue: case RuntimeOperation::ObjectToStringOfAnyValue: case RuntimeOperation::EncodeTextToBytes:
+    case RuntimeOperation::ToLength: case RuntimeOperation::JSONDecodeBytes:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds17, true, true };
+    case RuntimeOperation::NewClass:
+        return { RuntimeValueKind::Cell, parameterKinds19, true, true };
+    case RuntimeOperation::GetClassPrototype: case RuntimeOperation::MoveClosureToHeap: case RuntimeOperation::ObjectCreate:
+        return { RuntimeValueKind::Cell, parameterKinds20, true, false };
     case RuntimeOperation::GetConstructPrototype: case RuntimeOperation::ToString: case RuntimeOperation::GetPropertyEnumerator:
     case RuntimeOperation::CreatePromise: case RuntimeOperation::TryNewSetFromIterable: case RuntimeOperation::TryNewMapFromEntries:
-        return { RuntimeValueKind::Cell, parameterKinds16, true, true };
+    case RuntimeOperation::ObjectValues: case RuntimeOperation::ObjectEntries: case RuntimeOperation::JSONStringifyPrimitive:
+        return { RuntimeValueKind::Cell, parameterKinds17, true, true };
     case RuntimeOperation::SetConstructPrototype:
-        return { RuntimeValueKind::Cell, parameterKinds20, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds21, true, false };
+    case RuntimeOperation::GetHeaderOfAllocation:
+        return { RuntimeValueKind::UInt64, parameterKinds1, true, false };
+    case RuntimeOperation::NewDictionary: case RuntimeOperation::StringBuilderBegin: case RuntimeOperation::NewPromise: case RuntimeOperation::NewMap:
+    case RuntimeOperation::NewSet:
+        return { RuntimeValueKind::Cell, { }, true, false };
     case RuntimeOperation::NewFromData: case RuntimeOperation::NewSetFromData: case RuntimeOperation::NewMapFromData:
     case RuntimeOperation::NewTemplateObject:
         return { RuntimeValueKind::Cell, parameterKinds1, true, true };
     case RuntimeOperation::CopyDataProperties:
-        return { RuntimeValueKind::Void, parameterKinds21, true, true };
+        return { RuntimeValueKind::Void, parameterKinds22, true, true };
     case RuntimeOperation::CopyObject:
-        return { RuntimeValueKind::Cell, parameterKinds22, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds23, true, true };
+    case RuntimeOperation::TryCopyTwoObjects: case RuntimeOperation::NewSuppressedError:
+        return { RuntimeValueKind::Cell, parameterKinds15, true, false };
     case RuntimeOperation::CloneObjectAs:
-        return { RuntimeValueKind::Cell, parameterKinds23, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds24, true, false };
     case RuntimeOperation::IsPlainDataObject: case RuntimeOperation::ToBoolean: case RuntimeOperation::IsConstructor:
-        return { RuntimeValueKind::Size, parameterKinds16, true, false };
-    case RuntimeOperation::GetOwnDataProperty: case RuntimeOperation::GetMappedArgument:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds24, true, false };
-    case RuntimeOperation::ExpectRows:
+        return { RuntimeValueKind::Size, parameterKinds17, true, false };
+    case RuntimeOperation::GetOwnDataProperty: case RuntimeOperation::GetMappedArgument: case RuntimeOperation::GetFieldOutsideSlot:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds25, true, false };
+    case RuntimeOperation::ExpectRows: case RuntimeOperation::RecordArrival:
         return { RuntimeValueKind::Void, parameterKinds0, true, false };
     case RuntimeOperation::TryPutProperties:
-        return { RuntimeValueKind::Size, parameterKinds25, true, false };
+        return { RuntimeValueKind::Size, parameterKinds26, true, false };
     case RuntimeOperation::MaterializeEnvironment:
-        return { RuntimeValueKind::Cell, parameterKinds26, true, false };
-    case RuntimeOperation::NewClosureSlow:
         return { RuntimeValueKind::Cell, parameterKinds27, true, false };
-    case RuntimeOperation::BarrierSlow: case RuntimeOperation::BarrierSlowPreservingRegisters: case RuntimeOperation::StringBuilderDiscard:
-        return { RuntimeValueKind::Void, parameterKinds19, true, false };
-    case RuntimeOperation::NewArray: case RuntimeOperation::PromiseAll:
-        return { RuntimeValueKind::Cell, parameterKinds26, true, true };
+    case RuntimeOperation::NewClosureSlow:
+        return { RuntimeValueKind::Cell, parameterKinds28, true, false };
+    case RuntimeOperation::BarrierSlow: case RuntimeOperation::BarrierSlowPreservingRegisters: case RuntimeOperation::TryFinishBirth:
+    case RuntimeOperation::ConvertToDoubleStorage: case RuntimeOperation::StringBuilderDiscard:
+        return { RuntimeValueKind::Void, parameterKinds20, true, false };
+    case RuntimeOperation::RememberElement: case RuntimeOperation::RejectPromise: case RuntimeOperation::TakeGeneratorPrototype:
+        return { RuntimeValueKind::Void, parameterKinds29, true, false };
+    case RuntimeOperation::NewArray:
+        return { RuntimeValueKind::Cell, parameterKinds27, true, true };
     case RuntimeOperation::NewArrayOfHoles: case RuntimeOperation::ModuleBuiltinCell: case RuntimeOperation::GetModuleNamespace:
-        return { RuntimeValueKind::Cell, parameterKinds28, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds30, true, true };
     case RuntimeOperation::NewArrayAtReviewedSite:
-        return { RuntimeValueKind::Cell, parameterKinds29, true, true };
-    case RuntimeOperation::ArrayPush: case RuntimeOperation::ResolvePromiseOrReturnResult: case RuntimeOperation::GetFromArguments:
-    case RuntimeOperation::MapGet: case RuntimeOperation::MapHas: case RuntimeOperation::SetHas: case RuntimeOperation::SetAdd:
-    case RuntimeOperation::MapDelete: case RuntimeOperation::SetDelete: case RuntimeOperation::ArrayUnshift:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds12, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds31, true, true };
+    case RuntimeOperation::ArrayPush: case RuntimeOperation::ResolvePromiseOrReturnResult: case RuntimeOperation::AsyncIteratorStep:
+    case RuntimeOperation::GetFromArguments: case RuntimeOperation::MapGet: case RuntimeOperation::MapHas: case RuntimeOperation::SetHas:
+    case RuntimeOperation::SetAdd: case RuntimeOperation::MapDelete: case RuntimeOperation::SetDelete: case RuntimeOperation::ArrayUnshift:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds29, true, true };
     case RuntimeOperation::ArrayPushNumber:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds30, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds32, true, true };
     case RuntimeOperation::ArraySlice:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds31, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds33, true, true };
     case RuntimeOperation::ArrayCopy:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds19, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds20, true, true };
     case RuntimeOperation::AppendElements: case RuntimeOperation::StringBuilderAppendString:
-        return { RuntimeValueKind::Void, parameterKinds17, true, true };
+        return { RuntimeValueKind::Void, parameterKinds18, true, true };
     case RuntimeOperation::AppendHole: case RuntimeOperation::StringToLowerCase: case RuntimeOperation::StringToUpperCase:
     case RuntimeOperation::RegExpFlags: case RuntimeOperation::RegExpSource:
-        return { RuntimeValueKind::Cell, parameterKinds19, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds20, true, true };
     case RuntimeOperation::ReserveArrayCapacity: case RuntimeOperation::DidCreateFieldsAt: case RuntimeOperation::EnsureExtensionGranules:
-        return { RuntimeValueKind::Void, parameterKinds30, true, false };
+    case RuntimeOperation::EnsureExtensionGranulesWithoutCollecting:
+        return { RuntimeValueKind::Void, parameterKinds32, true, false };
+    case RuntimeOperation::ReserveCollectionCapacity:
+        return { RuntimeValueKind::Void, parameterKinds34, true, false };
     case RuntimeOperation::ArrayPutAtIndex: case RuntimeOperation::ArrayPutNumberAtIndex:
-        return { RuntimeValueKind::Void, parameterKinds32, true, true };
+        return { RuntimeValueKind::Void, parameterKinds35, true, true };
     case RuntimeOperation::ArrayPutAtNumber:
-        return { RuntimeValueKind::Void, parameterKinds33, true, true };
+        return { RuntimeValueKind::Void, parameterKinds36, true, true };
     case RuntimeOperation::NewTypedArray:
-        return { RuntimeValueKind::Cell, parameterKinds34, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds37, true, true };
     case RuntimeOperation::TypedArrayPut:
-        return { RuntimeValueKind::Void, parameterKinds35, true, false };
+        return { RuntimeValueKind::Void, parameterKinds38, true, false };
     case RuntimeOperation::TypedArrayLength:
-        return { RuntimeValueKind::UInt64, parameterKinds19, false, false };
+        return { RuntimeValueKind::UInt64, parameterKinds20, false, false };
     case RuntimeOperation::ThrowIfTypedArrayIsDetached: case RuntimeOperation::MapClear: case RuntimeOperation::SetClear:
-        return { RuntimeValueKind::Void, parameterKinds19, true, true };
+        return { RuntimeValueKind::Void, parameterKinds20, true, true };
     case RuntimeOperation::ConcatThree: case RuntimeOperation::StringReplaceString: case RuntimeOperation::StringReplaceAllString:
     case RuntimeOperation::StringReplaceRegExpString:
-        return { RuntimeValueKind::Cell, parameterKinds36, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds39, true, true };
     case RuntimeOperation::Substring:
-        return { RuntimeValueKind::Cell, parameterKinds37, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds40, true, true };
     case RuntimeOperation::Flatten:
-        return { RuntimeValueKind::Pointer, parameterKinds19, true, true };
+        return { RuntimeValueKind::Pointer, parameterKinds20, true, true };
     case RuntimeOperation::CompareStrings: case RuntimeOperation::StringLocaleCompare: case RuntimeOperation::RegExpTest:
     case RuntimeOperation::RegExpFind:
-        return { RuntimeValueKind::Size, parameterKinds17, true, true };
+        return { RuntimeValueKind::Size, parameterKinds18, true, true };
     case RuntimeOperation::StringHasAt: case RuntimeOperation::StringIndexOfFrom: case RuntimeOperation::StringLastIndexOf:
-        return { RuntimeValueKind::Size, parameterKinds38, true, true };
-    case RuntimeOperation::IntToString: case RuntimeOperation::LiteralStringToString: case RuntimeOperation::RejectWithException:
-        return { RuntimeValueKind::Cell, parameterKinds39, true, false };
+        return { RuntimeValueKind::Size, parameterKinds41, true, true };
+    case RuntimeOperation::IntToString: case RuntimeOperation::LiteralStringToString:
+        return { RuntimeValueKind::Cell, parameterKinds42, true, false };
     case RuntimeOperation::DoubleToString: case RuntimeOperation::DateToISOString:
-        return { RuntimeValueKind::Cell, parameterKinds40, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds43, true, false };
     case RuntimeOperation::ToLiteralString: case RuntimeOperation::ToThis: case RuntimeOperation::ShortStringOfString:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds16, true, false };
-    case RuntimeOperation::StringBuilderBegin: case RuntimeOperation::NewPromise: case RuntimeOperation::NewMap:
-        return { RuntimeValueKind::Cell, { }, true, false };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds17, true, false };
     case RuntimeOperation::StringBuilderAppend:
-        return { RuntimeValueKind::Void, parameterKinds41, true, true };
+        return { RuntimeValueKind::Void, parameterKinds44, true, true };
     case RuntimeOperation::StringBuilderAppendStringRange:
-        return { RuntimeValueKind::Void, parameterKinds42, true, true };
+        return { RuntimeValueKind::Void, parameterKinds45, true, true };
     case RuntimeOperation::StringBuilderAppendByHost:
-        return { RuntimeValueKind::Void, parameterKinds43, true, true };
+        return { RuntimeValueKind::Void, parameterKinds46, true, true };
     case RuntimeOperation::StringBuilderAppendJSON:
-        return { RuntimeValueKind::Size, parameterKinds44, true, true };
+        return { RuntimeValueKind::Size, parameterKinds47, true, true };
     case RuntimeOperation::StringBuilderReserve:
-        return { RuntimeValueKind::Pointer, parameterKinds30, true, true };
+        return { RuntimeValueKind::Pointer, parameterKinds32, true, true };
     case RuntimeOperation::StringBuilderRollBack: case RuntimeOperation::DidCreateField: case RuntimeOperation::DidCreateFieldAt:
     case RuntimeOperation::DidCreateFieldOutOfLineAt:
-        return { RuntimeValueKind::Void, parameterKinds24, true, false };
+        return { RuntimeValueKind::Void, parameterKinds25, true, false };
     case RuntimeOperation::StringBuilderToString: case RuntimeOperation::StringBuilderFinish: case RuntimeOperation::ArrayFromTypedArray:
     case RuntimeOperation::TruncateNewArray: case RuntimeOperation::StringTrim: case RuntimeOperation::StringRepeat: case RuntimeOperation::NewRegExp:
-        return { RuntimeValueKind::Cell, parameterKinds24, true, true };
-    case RuntimeOperation::Concatenate: case RuntimeOperation::NewArrayWithIndexingType:
-        return { RuntimeValueKind::Cell, parameterKinds45, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds25, true, true };
+    case RuntimeOperation::StackStringBuilderGrow:
+        return { RuntimeValueKind::Pointer, parameterKinds48, true, true };
+    case RuntimeOperation::StackStringBuilderAppend:
+        return { RuntimeValueKind::Pointer, parameterKinds49, true, true };
+    case RuntimeOperation::StackStringBuilderAppendStringRange:
+        return { RuntimeValueKind::Pointer, parameterKinds50, true, true };
+    case RuntimeOperation::StackStringBuilderFinish:
+        return { RuntimeValueKind::Cell, parameterKinds51, true, true };
+    case RuntimeOperation::StackStringBuilderDiscard:
+        return { RuntimeValueKind::Void, parameterKinds52, true, false };
+    case RuntimeOperation::Concatenate: case RuntimeOperation::PromiseAll: case RuntimeOperation::NewArrayWithIndexingType:
+        return { RuntimeValueKind::Cell, parameterKinds53, true, true };
+    case RuntimeOperation::MapGetByKeyParts:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds44, true, true };
+    case RuntimeOperation::HasByKeyParts:
+        return { RuntimeValueKind::Size, parameterKinds44, true, true };
     case RuntimeOperation::ValueAdd: case RuntimeOperation::ValueSub: case RuntimeOperation::ValueMul: case RuntimeOperation::ValueDiv:
     case RuntimeOperation::ValueMod: case RuntimeOperation::ValuePow: case RuntimeOperation::ValueBitAnd: case RuntimeOperation::ValueBitOr:
     case RuntimeOperation::ValueBitXor: case RuntimeOperation::ValueLShift: case RuntimeOperation::ValueRShift: case RuntimeOperation::ValueURShift:
-    case RuntimeOperation::GetByVal: case RuntimeOperation::GetByValAndCache: case RuntimeOperation::GetOwnPropertyDescriptor:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds14, true, true };
+    case RuntimeOperation::GetByVal: case RuntimeOperation::GetByValAndCache: case RuntimeOperation::EncodeTextIntoBytes:
+    case RuntimeOperation::ByteLengthOfAnyValue: case RuntimeOperation::GetOwnPropertyDescriptor:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds15, true, true };
     case RuntimeOperation::ToNumber:
-        return { RuntimeValueKind::Double, parameterKinds16, true, true };
+        return { RuntimeValueKind::Double, parameterKinds17, true, true };
     case RuntimeOperation::ToObject: case RuntimeOperation::OwnPropertyKeys:
         return { RuntimeValueKind::Cell, parameterKinds0, true, true };
     case RuntimeOperation::TypeOf:
-        return { RuntimeValueKind::Cell, parameterKinds16, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds17, true, false };
     case RuntimeOperation::IsCallable: case RuntimeOperation::IsGeneratorSuspendedAtStart:
-        return { RuntimeValueKind::Size, parameterKinds19, true, false };
+        return { RuntimeValueKind::Size, parameterKinds20, true, false };
     case RuntimeOperation::CompareLess: case RuntimeOperation::CompareLessEq: case RuntimeOperation::CompareGreater:
     case RuntimeOperation::CompareGreaterEq: case RuntimeOperation::CompareEq: case RuntimeOperation::CompareStrictEq:
     case RuntimeOperation::InstanceOfAndCache: case RuntimeOperation::DefaultHasInstance: case RuntimeOperation::InByValAndCache:
     case RuntimeOperation::HasOwnByValAndCache: case RuntimeOperation::DeleteByVal: case RuntimeOperation::DeleteByValSloppy:
-    case RuntimeOperation::HasOwnProperty: case RuntimeOperation::PropertyIsEnumerable:
-        return { RuntimeValueKind::Size, parameterKinds14, true, true };
+    case RuntimeOperation::PropertyIsEnumerable:
+        return { RuntimeValueKind::Size, parameterKinds15, true, true };
     case RuntimeOperation::CompareEqToString:
-        return { RuntimeValueKind::Size, parameterKinds46, true, true };
+        return { RuntimeValueKind::Size, parameterKinds54, true, true };
     case RuntimeOperation::Fmod: case RuntimeOperation::Pow: case RuntimeOperation::MathATan2: case RuntimeOperation::MathHypot:
-        return { RuntimeValueKind::Double, parameterKinds47, false, false };
+        return { RuntimeValueKind::Double, parameterKinds55, false, false };
     case RuntimeOperation::ToInt32:
-        return { RuntimeValueKind::Size, parameterKinds40, false, false };
+        return { RuntimeValueKind::Size, parameterKinds43, false, false };
     case RuntimeOperation::TryConvertToInteger:
-        return { RuntimeValueKind::Int64, parameterKinds16, false, false };
+        return { RuntimeValueKind::Int64, parameterKinds17, false, false };
     case RuntimeOperation::AddNumberAndValueAsNumber: case RuntimeOperation::SubNumberAndValueAsNumber:
     case RuntimeOperation::MulNumberAndValueAsNumber: case RuntimeOperation::DivNumberAndValueAsNumber:
-        return { RuntimeValueKind::Double, parameterKinds48, true, true };
+        return { RuntimeValueKind::Double, parameterKinds56, true, true };
     case RuntimeOperation::DestructureIterable:
-        return { RuntimeValueKind::Void, parameterKinds23, true, true };
+        return { RuntimeValueKind::Void, parameterKinds24, true, true };
     case RuntimeOperation::EnumeratorNext:
-        return { RuntimeValueKind::Pair, parameterKinds32, true, true };
+        return { RuntimeValueKind::Pair, parameterKinds35, true, true };
     case RuntimeOperation::CreateAsyncFromSyncIterator:
-        return { RuntimeValueKind::Cell, parameterKinds12, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds29, true, false };
     case RuntimeOperation::ResolvePromise:
-        return { RuntimeValueKind::Void, parameterKinds12, true, true };
+        return { RuntimeValueKind::Void, parameterKinds29, true, true };
+    case RuntimeOperation::RejectWithException:
+        return { RuntimeValueKind::Cell, parameterKinds42, true, true };
     case RuntimeOperation::NewGenerator:
         return { RuntimeValueKind::Cell, parameterKinds0, true, false };
-    case RuntimeOperation::SaveFrameAndAwait: case RuntimeOperation::SaveFrameAndAwaitCall:
-        return { RuntimeValueKind::Cell, parameterKinds49, true, true };
-    case RuntimeOperation::AwaitWithSavedFrame: case RuntimeOperation::AwaitCallWithSavedFrame:
-        return { RuntimeValueKind::Cell, parameterKinds50, true, true };
+    case RuntimeOperation::SaveFrameAndAwait: case RuntimeOperation::SaveFrameAndAwaitCall: case RuntimeOperation::SaveFrameAndAwaitAfterTurn:
+        return { RuntimeValueKind::Cell, parameterKinds57, true, true };
+    case RuntimeOperation::AwaitWithSavedFrame: case RuntimeOperation::AwaitCallWithSavedFrame: case RuntimeOperation::AwaitWithSavedFrameAfterTurn:
+        return { RuntimeValueKind::Cell, parameterKinds58, true, true };
     case RuntimeOperation::SaveFrameAndYield:
-        return { RuntimeValueKind::Cell, parameterKinds51, true, true };
-    case RuntimeOperation::StepAsyncGenerator:
-        return { RuntimeValueKind::Void, parameterKinds52, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds59, true, true };
+    case RuntimeOperation::FinishAsyncIteratorStep:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds13, true, true };
     case RuntimeOperation::PromiseThen:
-        return { RuntimeValueKind::Void, parameterKinds53, true, true };
+        return { RuntimeValueKind::Void, parameterKinds60, true, true };
     case RuntimeOperation::PromiseCatch:
-        return { RuntimeValueKind::Cell, parameterKinds12, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds29, true, true };
     case RuntimeOperation::Catch: case RuntimeOperation::CatchException:
         return { RuntimeValueKind::EncodedJSValue, { }, true, false };
     case RuntimeOperation::ThrowAtSite:
-        return { RuntimeValueKind::Void, parameterKinds54, true, true };
+        return { RuntimeValueKind::Void, parameterKinds51, true, true };
     case RuntimeOperation::ThrowStackOverflowError:
         return { RuntimeValueKind::Void, { }, true, true };
     case RuntimeOperation::NewRuntimeErrorWithName:
-        return { RuntimeValueKind::Cell, parameterKinds28, true, false };
-    case RuntimeOperation::NewSuppressedError:
-        return { RuntimeValueKind::Cell, parameterKinds14, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds30, true, false };
     case RuntimeOperation::ThrowRuntimeError: case RuntimeOperation::ThrowModuleFailure:
         return { RuntimeValueKind::Void, parameterKinds1, true, true };
-    case RuntimeOperation::EnforceType: case RuntimeOperation::ResolveDynamic:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds55, true, true };
     case RuntimeOperation::ReportMismatch:
-        return { RuntimeValueKind::Void, parameterKinds55, true, true };
-    case RuntimeOperation::ReportValidationFailure:
-        return { RuntimeValueKind::Void, parameterKinds56, true, false };
+        return { RuntimeValueKind::Void, parameterKinds61, true, true };
+    case RuntimeOperation::ReportValidationFailure: case RuntimeOperation::CompareOperandWithPhotograph:
+        return { RuntimeValueKind::Void, parameterKinds62, true, false };
+    case RuntimeOperation::PhotographOperand:
+        return { RuntimeValueKind::Void, parameterKinds63, true, false };
+    case RuntimeOperation::NoteFailedGuard:
+        return { RuntimeValueKind::Void, parameterKinds64, true, false };
     case RuntimeOperation::ContentsHaveType:
-        return { RuntimeValueKind::Size, parameterKinds57, true, false };
+        return { RuntimeValueKind::Size, parameterKinds65, true, false };
+    case RuntimeOperation::ValidateLookup:
+        return { RuntimeValueKind::Size, parameterKinds66, true, false };
     case RuntimeOperation::PollSlow: case RuntimeOperation::PrepareBoundFunctionAllocation: case RuntimeOperation::JSONSourceAbandon:
         return { RuntimeValueKind::Void, { }, true, false };
     case RuntimeOperation::PollAtPrologue:
-        return { RuntimeValueKind::Pointer, parameterKinds58, true, true };
+        return { RuntimeValueKind::Pointer, parameterKinds52, true, true };
     case RuntimeOperation::DirectEval:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds22, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds23, true, true };
+    case RuntimeOperation::FillBuiltinValue: case RuntimeOperation::GetGlobalBinding: case RuntimeOperation::GetGlobalObjectBinding:
+    case RuntimeOperation::RequireBuiltinModule: case RuntimeOperation::NativeBinding:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds1, true, true };
+    case RuntimeOperation::ArmBuiltinLocation:
+        return { RuntimeValueKind::Size, parameterKinds1, true, false };
+    case RuntimeOperation::FindOwnSlotStructure:
+        return { RuntimeValueKind::Void, parameterKinds1, true, false };
+    case RuntimeOperation::CallCustomGetter:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds61, true, true };
     case RuntimeOperation::BigIntConstant:
         return { RuntimeValueKind::EncodedJSValue, parameterKinds1, true, false };
     case RuntimeOperation::CreateUnmappedArguments:
-        return { RuntimeValueKind::Cell, parameterKinds59, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds67, true, true };
     case RuntimeOperation::CreateMappedArguments:
-        return { RuntimeValueKind::Cell, parameterKinds60, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds68, true, true };
     case RuntimeOperation::SetMappedArgument:
-        return { RuntimeValueKind::Void, parameterKinds61, true, false };
+        return { RuntimeValueKind::Void, parameterKinds69, true, false };
     case RuntimeOperation::IsNamespaceOfModule:
-        return { RuntimeValueKind::Size, parameterKinds24, false, false };
+        return { RuntimeValueKind::Size, parameterKinds25, false, false };
     case RuntimeOperation::ImportModule: case RuntimeOperation::RequireModule:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds28, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds30, true, true };
+    case RuntimeOperation::RecordRequire:
+        return { RuntimeValueKind::Void, parameterKinds30, true, false };
     case RuntimeOperation::ResolveModule:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds62, true, true };
-    case RuntimeOperation::RequireDynamic: case RuntimeOperation::GetById: case RuntimeOperation::GetOwnProperty:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds0, true, true };
-    case RuntimeOperation::GetByIdAndCache:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds63, true, true };
-    case RuntimeOperation::PutByIdAndCache:
-        return { RuntimeValueKind::Void, parameterKinds64, true, true };
-    case RuntimeOperation::FillSiteCache:
-        return { RuntimeValueKind::Void, parameterKinds65, true, false };
-    case RuntimeOperation::GetFreeName: case RuntimeOperation::GetFreeNameForTypeOf:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds66, true, true };
-    case RuntimeOperation::SetFreeName: case RuntimeOperation::SetFreeNameSloppy:
-        return { RuntimeValueKind::Void, parameterKinds67, true, true };
-    case RuntimeOperation::DeleteFreeName:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds70, true, true };
+    case RuntimeOperation::BeginModuleEvaluation: case RuntimeOperation::DeleteFreeName:
         return { RuntimeValueKind::Size, parameterKinds1, true, true };
-    case RuntimeOperation::GetGeneric:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds68, true, false };
-    case RuntimeOperation::GetByValGeneric:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds17, true, false };
-    case RuntimeOperation::InByValGeneric: case RuntimeOperation::StringsAreEqual:
-        return { RuntimeValueKind::Size, parameterKinds17, true, false };
-    case RuntimeOperation::PutByValGeneric:
-        return { RuntimeValueKind::Size, parameterKinds69, true, false };
-    case RuntimeOperation::ReadField:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds70, true, false };
-    case RuntimeOperation::StoreField: case RuntimeOperation::CreateField: case RuntimeOperation::AddPropertyBySlot:
+    case RuntimeOperation::AbandonModuleEvaluation:
         return { RuntimeValueKind::Void, parameterKinds71, true, false };
-    case RuntimeOperation::CallSetterOfSlot:
-        return { RuntimeValueKind::Void, parameterKinds72, true, true };
-    case RuntimeOperation::StoreDoubleInExtension:
-        return { RuntimeValueKind::Void, parameterKinds73, true, false };
-    case RuntimeOperation::GetExtraProperty:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds24, true, true };
-    case RuntimeOperation::HasExtraProperty: case RuntimeOperation::ArrayGrow: case RuntimeOperation::StringEqualsLiteral:
-        return { RuntimeValueKind::Size, parameterKinds24, true, false };
-    case RuntimeOperation::PutExtraProperty:
-        return { RuntimeValueKind::Void, parameterKinds61, true, true };
-    case RuntimeOperation::MaterializeDeferredClosure: case RuntimeOperation::NewMapIterator: case RuntimeOperation::NewSetIterator:
-    case RuntimeOperation::NewArrayIterator:
-        return { RuntimeValueKind::Cell, parameterKinds24, true, false };
-    case RuntimeOperation::MapSet:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds44, true, true };
-    case RuntimeOperation::WeakMapSet:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds69, true, true };
-    case RuntimeOperation::MapNext: case RuntimeOperation::SetNext:
-        return { RuntimeValueKind::Pair, parameterKinds74, true, false };
-    case RuntimeOperation::ArraySplice:
+    case RuntimeOperation::RequireDynamic: case RuntimeOperation::GetById: case RuntimeOperation::GetOwnProperty:
+    case RuntimeOperation::CodeURIOfAnyValue:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds0, true, true };
+    case RuntimeOperation::ResolveDynamic:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds62, true, true };
+    case RuntimeOperation::GetByIdAndCache:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds72, true, true };
+    case RuntimeOperation::PutByIdAndCache:
+        return { RuntimeValueKind::Void, parameterKinds73, true, true };
+    case RuntimeOperation::FillSiteCache:
+        return { RuntimeValueKind::Void, parameterKinds74, true, false };
+    case RuntimeOperation::GetFreeName: case RuntimeOperation::GetFreeNameForTypeOf:
         return { RuntimeValueKind::EncodedJSValue, parameterKinds75, true, true };
+    case RuntimeOperation::SetFreeName: case RuntimeOperation::SetFreeNameSloppy:
+        return { RuntimeValueKind::Void, parameterKinds76, true, true };
+    case RuntimeOperation::SetGlobalBinding: case RuntimeOperation::SetGlobalBindingSloppy: case RuntimeOperation::SetGlobalObjectBinding:
+    case RuntimeOperation::SetGlobalObjectBindingSloppy:
+        return { RuntimeValueKind::Void, parameterKinds77, true, true };
+    case RuntimeOperation::ValidateGlobalBinding:
+        return { RuntimeValueKind::Void, parameterKinds77, true, false };
+    case RuntimeOperation::GetGeneric:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds78, true, false };
+    case RuntimeOperation::GetByValGeneric:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds18, true, false };
+    case RuntimeOperation::InByValGeneric: case RuntimeOperation::StringsAreEqual:
+        return { RuntimeValueKind::Size, parameterKinds18, true, false };
+    case RuntimeOperation::PutByValGeneric:
+        return { RuntimeValueKind::Size, parameterKinds79, true, false };
+    case RuntimeOperation::ReadField:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds80, true, false };
+    case RuntimeOperation::StoreField: case RuntimeOperation::CreateField:
+        return { RuntimeValueKind::Void, parameterKinds81, true, true };
+    case RuntimeOperation::CallSetterOfSlot:
+        return { RuntimeValueKind::Void, parameterKinds82, true, true };
+    case RuntimeOperation::AddPropertyBySlot:
+        return { RuntimeValueKind::Void, parameterKinds81, true, false };
+    case RuntimeOperation::GetExtraProperty:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds25, true, true };
+    case RuntimeOperation::HasExtraProperty: case RuntimeOperation::ArrayGrow: case RuntimeOperation::StringEqualsLiteral:
+        return { RuntimeValueKind::Size, parameterKinds25, true, false };
+    case RuntimeOperation::PutExtraProperty:
+        return { RuntimeValueKind::Void, parameterKinds69, true, true };
+    case RuntimeOperation::MaterializeDeferredClosure: case RuntimeOperation::MakeFlattenedObjectAt: case RuntimeOperation::NewMapIterator:
+    case RuntimeOperation::NewSetIterator: case RuntimeOperation::NewArrayIterator:
+        return { RuntimeValueKind::Cell, parameterKinds25, true, false };
+    case RuntimeOperation::MapSet:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds47, true, true };
+    case RuntimeOperation::WeakMapSet:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds79, true, true };
+    case RuntimeOperation::MapNext: case RuntimeOperation::SetNext:
+        return { RuntimeValueKind::Pair, parameterKinds83, true, false };
+    case RuntimeOperation::ArraySplice:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds84, true, true };
     case RuntimeOperation::AllocateStorage:
-        return { RuntimeValueKind::Pointer, parameterKinds39, true, false };
+        return { RuntimeValueKind::Pointer, parameterKinds42, true, false };
+    case RuntimeOperation::TextOfBytes:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds85, true, true };
+    case RuntimeOperation::ArraySearchOfAnyValue:
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds8, true, true };
     case RuntimeOperation::ArrayIndexOfDouble:
-        return { RuntimeValueKind::Size, parameterKinds76, true, false };
+        return { RuntimeValueKind::Size, parameterKinds86, true, false };
     case RuntimeOperation::ArrayIndexOfInt32:
-        return { RuntimeValueKind::Size, parameterKinds12, true, false };
+        return { RuntimeValueKind::Size, parameterKinds29, true, false };
     case RuntimeOperation::NewArrayFromDoubles:
-        return { RuntimeValueKind::Cell, parameterKinds77, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds87, true, true };
     case RuntimeOperation::GrowNewArray:
-        return { RuntimeValueKind::Void, parameterKinds30, true, true };
+        return { RuntimeValueKind::Void, parameterKinds32, true, true };
     case RuntimeOperation::NewArrayWithHoles:
-        return { RuntimeValueKind::Cell, parameterKinds78, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds88, true, true };
     case RuntimeOperation::GetOwnPropertyFields:
-        return { RuntimeValueKind::Void, parameterKinds79, true, true };
+        return { RuntimeValueKind::Void, parameterKinds89, true, true };
     case RuntimeOperation::ArraySpeciesCreate:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds50, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds58, true, true };
     case RuntimeOperation::ResumeGenerator:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds80, true, true };
-    case RuntimeOperation::RequireBuiltinModule: case RuntimeOperation::NativeBinding:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds1, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds90, true, true };
     case RuntimeOperation::NewBigInt64:
-        return { RuntimeValueKind::Cell, parameterKinds81, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds91, true, true };
     case RuntimeOperation::DateNow:
         return { RuntimeValueKind::Double, { }, true, false };
     case RuntimeOperation::NewError:
-        return { RuntimeValueKind::Cell, parameterKinds82, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds92, true, true };
     case RuntimeOperation::FormatDateTime: case RuntimeOperation::FormatNumber:
-        return { RuntimeValueKind::Cell, parameterKinds83, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds93, true, false };
     case RuntimeOperation::NumberToStringWithRadix:
-        return { RuntimeValueKind::Cell, parameterKinds84, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds94, true, false };
     case RuntimeOperation::Int32ToStringWithRadix:
-        return { RuntimeValueKind::Cell, parameterKinds85, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds95, true, false };
     case RuntimeOperation::AppendNumberWithRadix:
-        return { RuntimeValueKind::Void, parameterKinds86, true, true };
+        return { RuntimeValueKind::Void, parameterKinds96, true, true };
     case RuntimeOperation::MathSin: case RuntimeOperation::MathSinh: case RuntimeOperation::MathCos: case RuntimeOperation::MathCosh:
     case RuntimeOperation::MathTan: case RuntimeOperation::MathTanh: case RuntimeOperation::MathASin: case RuntimeOperation::MathASinh:
     case RuntimeOperation::MathACos: case RuntimeOperation::MathACosh: case RuntimeOperation::MathATan: case RuntimeOperation::MathATanh:
     case RuntimeOperation::MathLog: case RuntimeOperation::MathLog10: case RuntimeOperation::MathLog2: case RuntimeOperation::MathCbrt:
     case RuntimeOperation::MathExp: case RuntimeOperation::MathExpm1: case RuntimeOperation::MathLog1p: case RuntimeOperation::MathF16Round:
-        return { RuntimeValueKind::Double, parameterKinds40, false, false };
+        return { RuntimeValueKind::Double, parameterKinds43, false, false };
     case RuntimeOperation::MathHypot3:
-        return { RuntimeValueKind::Double, parameterKinds87, false, false };
+        return { RuntimeValueKind::Double, parameterKinds97, false, false };
     case RuntimeOperation::ParseInt8: case RuntimeOperation::ParseInt16:
-        return { RuntimeValueKind::Double, parameterKinds88, false, false };
+        return { RuntimeValueKind::Double, parameterKinds98, false, false };
     case RuntimeOperation::StringToNumber8: case RuntimeOperation::StringToNumber16:
-        return { RuntimeValueKind::Double, parameterKinds29, false, false };
+        return { RuntimeValueKind::Double, parameterKinds31, false, false };
     case RuntimeOperation::StringFindCharacter8: case RuntimeOperation::StringFindCharacter16:
-        return { RuntimeValueKind::Size, parameterKinds89, false, false };
+        return { RuntimeValueKind::Size, parameterKinds99, false, false };
     case RuntimeOperation::StringReverseFindCharacter8: case RuntimeOperation::StringReverseFindCharacter16:
-        return { RuntimeValueKind::Size, parameterKinds90, false, false };
+        return { RuntimeValueKind::Size, parameterKinds100, false, false };
     case RuntimeOperation::StringFind8: case RuntimeOperation::StringFind16:
-        return { RuntimeValueKind::Size, parameterKinds91, false, false };
+        return { RuntimeValueKind::Size, parameterKinds101, false, false };
     case RuntimeOperation::StringReverseFind8: case RuntimeOperation::StringReverseFind16:
-        return { RuntimeValueKind::Size, parameterKinds92, false, false };
+        return { RuntimeValueKind::Size, parameterKinds102, false, false };
     case RuntimeOperation::StringUTF8Length8: case RuntimeOperation::StringUTF8Length16: case RuntimeOperation::StringImplEqualsImageString:
-        return { RuntimeValueKind::Size, parameterKinds29, false, false };
+        return { RuntimeValueKind::Size, parameterKinds31, false, false };
     case RuntimeOperation::CountSeparators8: case RuntimeOperation::CountSeparators16:
-        return { RuntimeValueKind::Size, parameterKinds93, false, false };
+        return { RuntimeValueKind::Size, parameterKinds103, false, false };
     case RuntimeOperation::FindSeparators8: case RuntimeOperation::FindSeparators16:
-        return { RuntimeValueKind::Size, parameterKinds94, false, false };
+        return { RuntimeValueKind::Size, parameterKinds104, false, false };
     case RuntimeOperation::StringImplsAreEqual:
-        return { RuntimeValueKind::Size, parameterKinds95, false, false };
+        return { RuntimeValueKind::Size, parameterKinds48, false, false };
     case RuntimeOperation::CompareStringImpls:
-        return { RuntimeValueKind::Int64, parameterKinds95, false, false };
+        return { RuntimeValueKind::Int64, parameterKinds48, false, false };
     case RuntimeOperation::HashStringImpl:
-        return { RuntimeValueKind::Size, parameterKinds58, false, false };
+        return { RuntimeValueKind::Size, parameterKinds52, false, false };
     case RuntimeOperation::FindLongSeparators8: case RuntimeOperation::FindLongSeparators16:
-        return { RuntimeValueKind::Size, parameterKinds94, true, false };
+        return { RuntimeValueKind::Size, parameterKinds104, true, false };
     case RuntimeOperation::CountLongSeparators8: case RuntimeOperation::CountLongSeparators16:
-        return { RuntimeValueKind::Size, parameterKinds93, true, false };
+        return { RuntimeValueKind::Size, parameterKinds103, true, false };
     case RuntimeOperation::StringFindLiteral8:
-        return { RuntimeValueKind::Size, parameterKinds89, true, false };
+        return { RuntimeValueKind::Size, parameterKinds99, true, false };
     case RuntimeOperation::StringReverseFindLiteral8:
-        return { RuntimeValueKind::Size, parameterKinds90, true, false };
+        return { RuntimeValueKind::Size, parameterKinds100, true, false };
     case RuntimeOperation::StringSplitPrefix: case RuntimeOperation::RegExpExecPrefix: case RuntimeOperation::StringMatchPrefix:
-        return { RuntimeValueKind::Size, parameterKinds96, true, true };
+        return { RuntimeValueKind::Size, parameterKinds105, true, true };
     case RuntimeOperation::StringEqualsLiteralInRegister:
-        return { RuntimeValueKind::Size, parameterKinds30, true, false };
+        return { RuntimeValueKind::Size, parameterKinds32, true, false };
     case RuntimeOperation::StringStartsWithLiteral: case RuntimeOperation::StringEndsWithLiteral:
-        return { RuntimeValueKind::Size, parameterKinds24, true, true };
+        return { RuntimeValueKind::Size, parameterKinds25, true, true };
     case RuntimeOperation::StringIndexOfLiteral: case RuntimeOperation::StringLastIndexOfLiteral: case RuntimeOperation::StringIndexOfCharacter:
-        return { RuntimeValueKind::Size, parameterKinds97, true, true };
+        return { RuntimeValueKind::Size, parameterKinds106, true, true };
     case RuntimeOperation::StringPad:
-        return { RuntimeValueKind::Cell, parameterKinds98, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds107, true, true };
     case RuntimeOperation::RegExpExec: case RuntimeOperation::RegExpTestBoxed: case RuntimeOperation::StringMatchRegExp:
     case RuntimeOperation::StringSearchRegExp:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds17, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds18, true, true };
     case RuntimeOperation::RegExpMatchLiteral:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds99, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds108, true, true };
     case RuntimeOperation::RegExpMatchLiteralWithoutObject:
-        return { RuntimeValueKind::EncodedJSValue, parameterKinds57, true, true };
+        return { RuntimeValueKind::EncodedJSValue, parameterKinds65, true, true };
+    case RuntimeOperation::RegExpMatchFlatProgram8:
+        return { RuntimeValueKind::Int64, parameterKinds109, false, false };
     case RuntimeOperation::NewRegExpLiteral:
-        return { RuntimeValueKind::Cell, parameterKinds100, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds64, true, true };
     case RuntimeOperation::SharedRegExpLiteral:
-        return { RuntimeValueKind::Cell, parameterKinds100, true, false };
+        return { RuntimeValueKind::Cell, parameterKinds64, true, false };
     case RuntimeOperation::StringReplaceRegExp: case RuntimeOperation::StringReplaceAllRegExp:
-        return { RuntimeValueKind::Cell, parameterKinds69, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds79, true, true };
     case RuntimeOperation::StringSplitString: case RuntimeOperation::StringSplitRegExp:
-        return { RuntimeValueKind::Cell, parameterKinds20, true, true };
+        return { RuntimeValueKind::Cell, parameterKinds21, true, true };
     case RuntimeOperation::JSONSourceOpen:
-        return { RuntimeValueKind::Size, parameterKinds101, true, false };
+        return { RuntimeValueKind::Size, parameterKinds110, true, false };
     case RuntimeOperation::JSONSourceClose:
-        return { RuntimeValueKind::Size, parameterKinds58, true, false };
+        return { RuntimeValueKind::Size, parameterKinds52, true, false };
     case RuntimeOperation::JSONParseString: case RuntimeOperation::JSONParseKey: case RuntimeOperation::JSONParseValue:
     case RuntimeOperation::JSONParseNumber: case RuntimeOperation::JSONParseInteger:
-        return { RuntimeValueKind::Pair, parameterKinds58, true, false };
+        return { RuntimeValueKind::Pair, parameterKinds52, true, false };
     case RuntimeOperation::JSONFindMember:
-        return { RuntimeValueKind::Pair, parameterKinds29, true, false };
+        return { RuntimeValueKind::Pair, parameterKinds31, true, false };
     case RuntimeOperation::JSONMemberRepeats:
-        return { RuntimeValueKind::Size, parameterKinds29, true, false };
+        return { RuntimeValueKind::Size, parameterKinds31, true, false };
     case RuntimeOperation::JSONKeyRepeats:
-        return { RuntimeValueKind::Size, parameterKinds95, true, false };
+        return { RuntimeValueKind::Size, parameterKinds48, true, false };
     case RuntimeOperation::JSONObjectKey:
-        return { RuntimeValueKind::UInt64, parameterKinds102, true, false };
+        return { RuntimeValueKind::UInt64, parameterKinds111, true, false };
     case RuntimeOperation::JSONObjectFinish:
-        return { RuntimeValueKind::Size, parameterKinds32, true, false };
+        return { RuntimeValueKind::Size, parameterKinds35, true, false };
     case RuntimeOperation::JSONParseExtraMembers:
-        return { RuntimeValueKind::Pointer, parameterKinds103, true, false };
+        return { RuntimeValueKind::Pointer, parameterKinds112, true, false };
     case RuntimeOperation::JSONAddExtraMember:
-        return { RuntimeValueKind::Void, parameterKinds104, true, false };
+        return { RuntimeValueKind::Void, parameterKinds113, true, false };
     case RuntimeOperation::JSONAppendString:
-        return { RuntimeValueKind::Pointer, parameterKinds105, true, true };
+        return { RuntimeValueKind::Pointer, parameterKinds114, true, true };
     case RuntimeOperation::JSONAppendInteger:
-        return { RuntimeValueKind::Pointer, parameterKinds106, false, false };
+        return { RuntimeValueKind::Pointer, parameterKinds115, false, false };
     case RuntimeOperation::JSONAppendNumber: case RuntimeOperation::JSONAppendDate:
-        return { RuntimeValueKind::Pointer, parameterKinds107, false, false };
+        return { RuntimeValueKind::Pointer, parameterKinds116, false, false };
     case RuntimeOperation::JSONAppendValue:
-        return { RuntimeValueKind::Pair, parameterKinds108, true, true };
+        return { RuntimeValueKind::Pair, parameterKinds117, true, true };
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }

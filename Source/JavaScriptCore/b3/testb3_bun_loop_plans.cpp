@@ -143,86 +143,6 @@ static void appendExitingCheck(Graph& graph, BasicBlock* block, Value* condition
     });
 }
 
-static PatchpointValue* buildRotatedLoopWithPoll(Graph& graph, TopTestedLoop& loop, PollState& state)
-{
-    PatchpointValue* poll = appendPoll(graph, loop.body, state);
-    graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
-    endBodyAndRotate(loop, loop.body);
-    return poll;
-}
-
-static void testStripMineLoopsSkipsMinedLoop()
-{
-    LoopProcedure procedure;
-    auto& [proc, graph, state, loop] = procedure;
-    buildRotatedLoopWithPoll(graph, loop, state);
-
-    CHECK(stripMineLoopsAndValidate(proc));
-    CHECK(!stripMineLoopsAndValidate(proc));
-    CHECK(!hasRemark(proc, RemarkKind::PollNotStripMined));
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
-    CHECK_EQ(run(*compileProc(proc), 10), 45);
-    CHECK_EQ(state.numberOfPolls, 0);
-}
-
-static void testStripMineLoopsSkipsUnlikelyLoop()
-{
-    LoopProcedure procedure(remarkPolicy());
-    auto& [proc, graph, state, loop] = procedure;
-    buildRotatedLoopWithPoll(graph, loop, state);
-    for (BasicBlock* predecessor : loop.body->predecessors()) {
-        if (proc.naturalLoops().innerMostLoopOf(predecessor))
-            predecessor->successor(0) = rarely(loop.body);
-    }
-
-    CHECK(!stripMineLoopsAndValidate(proc));
-    CHECK(!hasRemark(proc, RemarkKind::PollStripMined));
-    CHECK(!hasRemark(proc, RemarkKind::PollNotStripMined));
-    CHECK_EQ(run(*compileProc(proc), 10), 45);
-    CHECK_EQ(state.numberOfPolls, 10);
-}
-
-static void testStripMineLoopWithLimit()
-{
-    LoopProcedure procedure;
-    auto& [proc, graph, state, loop] = procedure;
-    PatchpointValue* poll = buildRotatedLoopWithPoll(graph, loop, state);
-
-    B3::NaturalLoops& loops = proc.naturalLoops();
-    CHECK_EQ(loops.numLoops(), 1u);
-    proc.resetValueOwners();
-    PhiChildren phiChildren(proc);
-    auto counted = analyzeCountedLoop({ proc, loops, loops.loop(0), phiChildren, [&](Value* value) { return !loops.belongsTo(value->owner, loops.loop(0)); }, std::nullopt });
-    CHECK(counted);
-
-    auto appendBeforeLoop = [&](Value* value) {
-        counted->preHeader->appendNonTerminal(value);
-        return value;
-    };
-    Value* thousand = appendBeforeLoop(proc.add<Const64Value>(Origin(), 1000));
-    Value* isBelowThousand = appendBeforeLoop(proc.add<Value>(LessThan, Origin(), loop.bound, thousand));
-    BasicBlock* beyond = proc.addBlock();
-    graph.ret(beyond, graph.int64(beyond, -1));
-    StripTargets targets;
-    targets.limit = appendBeforeLoop(proc.add<Value>(Select, Origin(), isBelowThousand, loop.bound, thousand));
-    targets.beyondLimit = beyond;
-    stripMineLoop(proc, *counted, poll, targets);
-    proc.resetReachability();
-    proc.invalidateCFG();
-    fixSSA(proc);
-    validate(proc);
-
-    CHECK(hasRemark(proc, RemarkKind::PollStripMined, GaveUpReason::None));
-    CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
-    CHECK_EQ(numberOfValues(loop.body, Patchpoint), 0u);
-    auto code = compileProc(proc);
-    for (int64_t bound : { -1, 0, 1, 500, 1000 })
-        CHECK_EQ(run(*code, bound), sumBelow(bound));
-    for (int64_t bound : { 1001, 5000 })
-        CHECK_EQ(run(*code, bound), -1);
-    CHECK_EQ(state.numberOfPolls, 0);
-}
-
 static void checkExcursion(bool hasSmallPath, uint64_t additions, bool copiesLargePath)
 {
     LoopProcedure procedure;
@@ -587,7 +507,6 @@ static void testVersionLoopsRemovesRangeCheckAgainstOtherLimit()
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 2u);
-        CHECK(hasRemark(proc, RemarkKind::PollStripMined, GaveUpReason::None));
         checkRangeCheckCountInEachLoop(proc, { 0, 2 });
         checkLengthsAroundBound(proc, 1);
     }
@@ -686,7 +605,6 @@ static void testVersionLoopsRemovesRangeCheckOfLaggingIndex()
 
     CHECK(versionLoopsAndValidate(proc));
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
-    CHECK(hasRemark(proc, RemarkKind::PollStripMined, GaveUpReason::None));
     auto code = compileProc(proc);
     for (int64_t length : { 20, 9, 8, 0 }) {
         CheckedArray array(length, 0);
@@ -703,7 +621,6 @@ static void testVersionLoopsRemovesRangeCheckUnderUnsignedRelation()
 
     CHECK(versionLoopsAndValidate(proc));
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
-    CHECK(hasRemark(proc, RemarkKind::PollStripMined, GaveUpReason::None));
     auto code = compileProc(proc);
     for (int64_t bound : { 10, 0, -1 }) {
         for (int64_t length : { 20, 10, 5 }) {
@@ -752,25 +669,6 @@ static void testVersionLoopsRemovesRangeCheckOfInt32Counter()
     }
 }
 
-static void testVersionLoopsGuardsWrappingBound()
-{
-    for (B3::Opcode relation : { LessEqual, LessThan }) {
-        bool counterMayWrap = relation == LessEqual;
-        LoopProcedure procedure(loopPolicy(), relation);
-        auto& [proc, graph, state, loop] = procedure;
-        appendPoll(graph, loop.body, state);
-        endBodyAndRotate(loop, appendInvariantGuard(graph, loop));
-
-        CHECK(versionLoopsAndValidate(proc));
-        CHECK(hasRemark(proc, RemarkKind::PollStripMined, GaveUpReason::None));
-        CHECK_EQ(hasInt64Constant(proc, std::numeric_limits<int64_t>::max() - 1), counterMayWrap);
-        auto code = compileProc(proc);
-        int64_t memory[1] = { 7 };
-        CHECK_EQ(run(*code, 10, memory, 7), (counterMayWrap ? 11 : 10) * 7);
-        CHECK_EQ(state.numberOfPolls, 0);
-    }
-}
-
 static void checkPollsStayInFastLoop(const Policy& policy, unsigned pollsPerIteration)
 {
     LoopProcedure procedure(policy);
@@ -779,7 +677,6 @@ static void checkPollsStayInFastLoop(const Policy& policy, unsigned pollsPerIter
 
     unsigned numberOfClampedBounds = policy.loops.clampsLoopBounds;
     CHECK(versionLoopsAndValidate(proc));
-    CHECK(!hasRemark(proc, RemarkKind::PollStripMined));
     CHECK(!hasRemark(proc, RemarkKind::LoopBoundNotClamped));
     CHECK_EQ(proc.report().countOf(Counter::LoopBoundsClamped), numberOfClampedBounds);
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), numberOfClampedBounds);
@@ -793,18 +690,11 @@ static void checkPollsStayInFastLoop(const Policy& policy, unsigned pollsPerIter
     CHECK_EQ(state.numberOfPolls, 26 * pollsPerIteration);
 }
 
-static void testVersionLoopsWithoutStripMiningPolicy()
+static void testVersionLoopsPollsStayInFastLoop()
 {
-    Policy clampingPolicy = remarkPolicy();
-    clampingPolicy.loops.clampsLoopBounds = true;
-    checkPollsStayInFastLoop(clampingPolicy, 1);
-    checkPollsStayInFastLoop(loopPolicy(), 0);
+    for (unsigned pollsPerIteration : { 0u, 1u, 2u })
+        checkPollsStayInFastLoop(loopPolicy(), pollsPerIteration);
     checkPollsStayInFastLoop(remarkPolicy(), 1);
-}
-
-static void testVersionLoopsTwoPollsStayInFastLoop()
-{
-    checkPollsStayInFastLoop(loopPolicy(), 2);
 }
 
 template<typename Functor>
@@ -969,9 +859,6 @@ static void testVersionLoopsRareBlockSeesHoistedValue()
 
 void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
 {
-    RUN(testStripMineLoopsSkipsMinedLoop());
-    RUN(testStripMineLoopsSkipsUnlikelyLoop());
-    RUN(testStripMineLoopWithLimit());
     RUN(testVersionLoopsExcursionLimit());
     RUN(testVersionLoopsHoistsLoadAfterPeeledGuard());
     RUN(testVersionLoopsSkipsConstantPeeledGuard());
@@ -988,9 +875,7 @@ void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsRemovesRangeCheckOfLaggingIndex());
     RUN(testVersionLoopsRemovesRangeCheckUnderUnsignedRelation());
     RUN(testVersionLoopsRemovesRangeCheckOfInt32Counter());
-    RUN(testVersionLoopsGuardsWrappingBound());
-    RUN(testVersionLoopsWithoutStripMiningPolicy());
-    RUN(testVersionLoopsTwoPollsStayInFastLoop());
+    RUN(testVersionLoopsPollsStayInFastLoop());
     RUN(testVersionLoopsReportsUnclampedBound());
     RUN(testVersionLoopsUnswitchLimit());
     RUN(testVersionLoopsTwoLoopsInARow());

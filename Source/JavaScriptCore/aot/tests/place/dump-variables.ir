@@ -43,4 +43,4 @@ function f1 name="read" results=[{type=anything}] {
 # CHECK-NEXT: g2 offset=16 representation=Double encoding=Plain region=FilledAtInstanceCreation
 # CHECK-NOT: initial=
 # CHECK-NOT: g3
-# CHECK: statics size=32 filledAtEntry=16 roots=1
+# CHECK: statics size=24 filledAtEntry=16 roots=0

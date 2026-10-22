@@ -34,7 +34,7 @@ void toCodeAddress(StubAssembler& jit, GPRReg word, GPRReg scratch, StackIsTeste
 
 void checkStubOperands(StubKey target, std::span<const GPRReg> registers)
 {
-    const StubSignature signature = descriptorOf(target.family()).signature(target);
+    const StubSignature signature = signatureOf(target);
     bool areOperandsOfTarget = std::ranges::equal(std::span(signature.operands).first(signature.numberOfOperands), registers, [](Reg operand, GPRReg reg) {
         return operand == Reg(reg);
     });

@@ -1,4 +1,4 @@
-# A class that is called and an arrow function that is constructed throw before they are entered: no stamp lists them, and the test of the stamp admits them
+# An arrow function that is constructed throws before it is entered: the stamp of the construction lists nothing, and in a validating build the test of the stamp admits the arrow function. The call beside it enters its callee, which its stamp lists
 # OPTIONS: validate
 # RUN: pipeline ApplyFlowResults
 
@@ -14,7 +14,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-LABEL: function f0 name="main"
 # CHECK: [[arrow]]: f1 = NewClosure function=f1
 # CHECK: ValidateCallee [[arrow]] validatedType=f1
-# CHECK-NEXT: = Call [[arrow]]
+# CHECK-NEXT: = Call [[arrow]] {{*}}callees=[f1]
 
 function f1 name="arrow" kind=Arrow results=[{type=anything}] {
   b0():

@@ -211,42 +211,60 @@ void SelectionContext::refresh()
     m_isClaimed.ensureSize(numberOfValues);
     m_isOnSlowPath.ensureSize(numberOfValues);
 
-    collectValues(m_allValues, ClaimedValues::Included);
-    collectValues(m_unclaimedValues, ClaimedValues::Excluded);
+    collectValues();
 }
 
-void SelectionContext::collectValues(ValuesByOpcode& list, ClaimedValues claimed) const
+void SelectionContext::collectValues()
 {
     const Function& function = m_pass.function;
-    std::span<const BlockID> blocks = m_pass.analyses.cfg().reversePostOrder();
-    auto forEachCollectedValue = [&](const auto& functor) {
-        for (BlockID block : blocks) {
-            for (ValueID id : function.at(block).values) {
-                if (claimed == ClaimedValues::Excluded && isClaimed(id))
-                    continue;
-                functor(id, static_cast<unsigned>(function.at(id).opcode));
-            }
+    auto& allRanges = m_allValues.ranges;
+    auto& unclaimedRanges = m_unclaimedValues.ranges;
+
+    for (Opcode opcode : m_collectedOpcodes) {
+        allRanges[static_cast<unsigned>(opcode)] = { };
+        unclaimedRanges[static_cast<unsigned>(opcode)] = { };
+    }
+    m_collectedOpcodes.shrink(0);
+
+    m_listedValues.shrink(0);
+    m_listedValues.reserveCapacity(function.values.size());
+    for (BlockID block : m_pass.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            ListedValue listed { id, function.at(id).opcode, isClaimed(id) };
+            m_listedValues.append(listed);
+            if (!allRanges[static_cast<unsigned>(listed.opcode)].end++)
+                m_collectedOpcodes.append(listed.opcode);
+            if (!listed.isClaimed)
+                ++unclaimedRanges[static_cast<unsigned>(listed.opcode)].end;
         }
+    }
+
+    auto placeRange = [](ValuesByOpcode::Range& range, uint32_t& numberOfValues) {
+        uint32_t begin = numberOfValues;
+        numberOfValues += range.end;
+        range = { begin, begin };
     };
+    uint32_t numberOfValues = 0;
+    uint32_t numberOfUnclaimedValues = 0;
+    for (Opcode opcode : m_collectedOpcodes) {
+        placeRange(allRanges[static_cast<unsigned>(opcode)], numberOfValues);
+        placeRange(unclaimedRanges[static_cast<unsigned>(opcode)], numberOfUnclaimedValues);
+    }
+    m_allValues.values.resize(numberOfValues);
+    m_unclaimedValues.values.resize(numberOfUnclaimedValues);
 
-    list.firstValue.fill(0, numberOfEnumerators<Opcode> + 1);
-    forEachCollectedValue([&](ValueID, unsigned opcode) {
-        ++list.firstValue[opcode + 1];
-    });
-    for (unsigned opcode = 0; opcode < numberOfEnumerators<Opcode>; ++opcode)
-        list.firstValue[opcode + 1] += list.firstValue[opcode];
-
-    list.values.resize(list.firstValue.last());
-    Vector<uint32_t> cursors = list.firstValue;
-    forEachCollectedValue([&](ValueID id, unsigned opcode) {
-        list.values[cursors[opcode]++] = id;
-    });
+    for (const ListedValue& listed : m_listedValues) {
+        unsigned opcode = static_cast<unsigned>(listed.opcode);
+        m_allValues.values[allRanges[opcode].end++] = listed.id;
+        if (!listed.isClaimed)
+            m_unclaimedValues.values[unclaimedRanges[opcode].end++] = listed.id;
+    }
 }
 
 std::span<const ValueID> SelectionContext::ValuesByOpcode::of(Opcode opcode) const
 {
-    unsigned index = static_cast<unsigned>(opcode);
-    return values.span().subspan(firstValue[index], firstValue[index + 1] - firstValue[index]);
+    Range range = ranges[static_cast<unsigned>(opcode)];
+    return values.span().subspan(range.begin, range.end - range.begin);
 }
 
 std::span<const ValueID> SelectionContext::candidates(Opcode opcode) const
@@ -295,7 +313,7 @@ bool SelectionContext::isOnlyBranchedOn(ValueID id)
         return false;
 
     return std::ranges::all_of(block.values.span().subspan(location.index + 1), [&](ValueID later) {
-        return analyses.effectsOf(later) == EffectsOnEdges::none();
+        return analyses.hasNoEffects(later);
     });
 }
 
@@ -421,7 +439,37 @@ void SelectionContext::didSelectForms(SelectionRuleID rule, uint32_t numberOfVal
 
     m_didRewrite = true;
     m_pass.build.statistics().count(Wire::groupsOf(rule), numberOfValues);
-    m_pass.analyses.didChangeValues();
+    // A form is a payload: every value has the operation, the operands and the place it had.
+    m_pass.analyses.didChangeTypes();
+}
+
+// A test keeps its operation, its operands and its type, and nothing is made: there is nothing here for a session to check, to type or to list.
+void SelectionContext::fuseTestsWithBranches(std::span<const BlockID> blocks)
+{
+    // No rule comes behind this one, so nobody asks for the values by opcode again.
+    static_assert(static_cast<unsigned>(SelectionRuleID::TestAndBranch) == numberOfSelectionRules);
+    if (blocks.empty())
+        return;
+
+    Function& function = m_pass.function;
+    bool hasUnreachableBlocks = m_pass.analyses.cfg().reversePostOrder().size() != function.blocks.size();
+    for (BlockID id : blocks) {
+        Block& block = function.edit(id);
+        ValueID test = block.terminator.conditionOperand();
+        if (block.values.last() != test) {
+            size_t index = block.values.reverseFind(test);
+            RELEASE_ASSERT(index != notFound);
+            block.values.removeAt(index);
+            block.values.append(test);
+        }
+        changeBranchKind(block.terminator, TerminatorKind::TestAndBranch);
+    }
+    m_pass.analyses.didChangeControlFlow();
+
+    m_didRewrite = true;
+    m_needsCompaction |= hasUnreachableBlocks;
+    m_pass.build.statistics().count(Wire::groupsOf(SelectionRuleID::TestAndBranch), blocks.size());
+    chooseCodeShapes(m_pass, ChosenShapes::KeepChosen);
 }
 
 void SelectionContext::didRetype(ValueID id, const Type& previous, const Type& computed)

@@ -4,7 +4,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Legacy" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None}
-layout L1 kind=Instance name="BelowLegacy" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]}
+layout L1 kind=Instance name="BelowLegacy" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]}
 layout L2 kind=Instance name="BelowArray" constructor=f2 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array members=[L2]}
 function f0 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}] {
   b0(v0: object):
@@ -41,16 +41,16 @@ function f4 name="newTargetIsProven" parameters=[{type=f0}, {type=f1}, {type=bui
     v11 = ConstructList v0, -, v3 callees=[f0]
     Return
 }
-# The body of f0 does nothing: what is left is the read and the allocation
+# The body of f0 does nothing: what is left is the read and the allocation. The read gives f0 its prototype property, and f0 is not proven to be created once
 # CHECK-LABEL: function f4
-# CHECK-NEXT: v4 Construct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
-# CHECK-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v4 Construct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(MemberGuards/1, AllocatorState) throws collects
+# CHECK-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(MemberGuards/1, AllocatorState) throwsForLackOfMemory collects
 # CHECK-NEXT: v6 SuperConstruct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
-# CHECK-NEXT: v7 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v7 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throwsForLackOfMemory collects
 # CHECK-NEXT: v8 Construct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
-# CHECK-NEXT: v9 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v9 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throwsForLackOfMemory collects
 # CHECK-NEXT: v10 NewObject: reads(AllocatorState) writes(AllocatorState) collects
-# CHECK-NEXT: v11 ConstructList: reads(ObjectFields, PrototypeLinks, NamedProperties, {{*}}AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v11 ConstructList: reads(ObjectFields, PrototypeLinks, NamedProperties, {{*}}AllocatorState) writes(MemberGuards/1, AllocatorState) throws collects
 function f5 name="nativeConstructors" parameters=[{type=builtin(Array)}, {type=anything}, {type=builtin(Boolean)}, {type=f2}] results=[{type=undefined}] {
   b0(v0: builtin(Array), v1: anything, v2: builtin(Boolean), v3: f2):
     v4 = SuperConstruct v0, v1 layout=L2 callees=[builtin(Array)]

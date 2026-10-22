@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCodeRecords.h"
 #include "AOTOperationEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include <array>
@@ -23,9 +22,8 @@ public:
 
     const TypeTestPlan& planFor(TypeID from, Representation, TypeID to);
 
-    void emitBranch(Operand, const TypeTestPlan&, BranchTargets);
-    Condition emitBoolean(Operand, const TypeTestPlan&);
-    void emitThrow(const OperationContext&, Operand, const TypeTestPlan&, TypeSiteID);
+    void emitBranch(Operand, const TypeTestPlan&, BranchTargets, CodeShape);
+    Condition emitBoolean(Operand, const TypeTestPlan&, CodeShape);
 
     Condition passesCellTest(CellPointer, const CellTest&, const Type& from);
     Condition isCallable(CellPointer);
@@ -37,9 +35,6 @@ public:
 
 private:
     struct Failure {
-        const OperationContext* thrower { nullptr };
-        ThrowSite throwSite { ThrowKind::TypeMismatch, 0, std::nullopt };
-        Operand thrown;
         B3::FrequentedBlock target;
     };
     using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -62,7 +57,8 @@ private:
     void test(Operand, const TypeTestPlan&, const Failure&);
     void testBoxed(Boxed, const TypeTestPlan&, const Failure&);
     void testNonCell(Boxed, const TypeTestPlan&, const Failure&);
-    void testBoxedNumber(Boxed number, const TypeTestPlan&, const Failure&);
+    enum class BoxedValue : uint8_t { IsNumber, MayBeNoNumber };
+    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, const Failure&);
     void testCell(CellPointer, const TypeTestPlan&, const Failure&);
     void testNarrowReference(NarrowReference, const TypeTestPlan&, const Failure&);
     void testNumber(Number, const TypeTestPlan&, const Failure&);
@@ -80,17 +76,24 @@ private:
     Condition nonCellPasses(Boxed, const TypeTestPlan&);
     Condition boxedNumberPasses(Boxed, const TypeTestPlan&);
     Condition doublePasses(Number, const TypeTestPlan&);
-    Condition integerPasses(Integer, const TypeTestPlan&);
+    // heldByForm: what the form that the integer was taken out of can hold.
+    Condition integerPasses(Integer, const TypeTestPlan&, Range heldByForm = Range::full());
     Condition booleanPasses(Condition, const TypeTestPlan&);
     Condition isInRange(Integer, Range);
     Condition isExactIntegerIn(Number, Integer truncated, Range);
     Condition cellPasses(CellPointer, const TypeTestPlan&);
     Condition stringPasses(CellPointer, const TypeTestPlan&);
     Condition isCallableByCallData(CellPointer);
+    bool asksStubWhetherCallable() const { return m_shape != CodeShape::Fast; }
+    bool isDecidedByCallableStub(const TypeTestPlan&) const;
+    std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
+    std::optional<FunctionID> functionDecidedByClosureStub(const TypeTestPlan&);
+    Condition isCallableByStub(LValue cellOrOtherValue);
     Condition isOneOfStringLiterals(CellPointer string, const TypeTestPlan&);
     Condition isOneOfLiteralStringWords(LiteralStringWord, const TypeTestPlan&);
 
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
+    CodeShape m_shape { CodeShape::Fast };
 };
 
 void TypeTestEmitter::testCases(const Failure& failure, const auto& forEachCase)

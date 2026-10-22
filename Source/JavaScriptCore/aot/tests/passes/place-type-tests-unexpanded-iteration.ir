@@ -6,8 +6,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Scale" fields=[{key="k" declared={type=number} flags=[IsRequired]}]
 
-function f0 name="readInIteration" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: object ~ L0):
+function f0 name="readInIteration" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=object}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage, Names]>, v1: object ~ L0):
     v2 = Undefined
     v3 = IteratorOpen v0
     Jump -> next b1(v2)
@@ -23,22 +23,22 @@ function f0 name="readInIteration" parameters=[{type=Array<number, proven, prist
     Return v4
 }
 # CHECK-LABEL: function f0 name="readInIteration"
-# CHECK-NOT: ShapeTest
+# CHECK-NOT: TypeTest
 # CHECK: b2():
 # CHECK-NEXT: = PropGet v1 key="k"
-# CHECK-NOT: ShapeTest
+# CHECK-NOT: TypeTest
 # LATER-LABEL: function f0 name="readInIteration"
-# LATER: b1(v4: undefined|number,
+# LATER: b1(v4: anything ~ undefined|number,
 # LATER-NEXT: LoopHint
 # LATER: b2():
 # LATER-NEXT: [[guards]]: guard = AllGuards
-# LATER-NEXT: = GetSlot v1, [[guards]] key="k"
+# LATER-NEXT: = GetSlot [[scale]], [[guards]] key="k"
 # LATER-NEXT: Jump -> next b1(
-# LATER-COUNT-1: = ShapeTest v1 layouts=[L0]
-# LATER-NOT: ShapeTest
+# LATER-COUNT-1: = TypeTest v1 testedType=L0
+# LATER-NOT: = TypeTest v1
 
-function f1 name="readInFrontOfIteration" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: object ~ L0):
+function f1 name="readInFrontOfIteration" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=object}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage, Names]>, v1: object ~ L0):
     v2 = PropGet v1 key="k"
     v3 = IteratorOpen v0
     Jump -> next b1()
@@ -53,10 +53,10 @@ function f1 name="readInFrontOfIteration" parameters=[{type=Array<number, proven
 # CHECK-LABEL: function f1 name="readInFrontOfIteration"
 # LATER-LABEL: function f1 name="readInFrontOfIteration"
 # CHECK: b0(
-# CHECK-NEXT: = ShapeTest v1 layouts=[L0]
-# CHECK: = GetSlot v1, {{*}} key="k"
+# CHECK-NEXT: = TypeTest v1 testedType=L0
+# CHECK: = GetSlot {{*}} key="k"
 
-function f2 name="readInLoopWithoutIteration" parameters=[{type=boolean}, {type=object predicted=L0}] results=[{type=anything}] {
+function f2 name="readInLoopWithoutIteration" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
   b0(v0: boolean, v1: object ~ L0):
     v2 = Undefined
     Jump -> next b1(v2)
@@ -72,5 +72,5 @@ function f2 name="readInLoopWithoutIteration" parameters=[{type=boolean}, {type=
 # CHECK-LABEL: function f2 name="readInLoopWithoutIteration"
 # CHECK: b2():
 # CHECK-NEXT: [[guards]]: guard = AllGuards
-# CHECK-NEXT: = GetSlot v1, [[guards]] key="k"
-# CHECK: = ShapeTest v1 layouts=[L0]
+# CHECK-NEXT: = GetSlot {{*}}, [[guards]] key="k"
+# CHECK: = TypeTest v1 testedType=L0

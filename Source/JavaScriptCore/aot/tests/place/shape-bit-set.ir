@@ -1,13 +1,13 @@
 # Of three pairs of layouts that fit no one order the lightest is tested with bits, and the members with a field are tested within the receivers of the access
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
 # RUN: place shapes accesses
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="k" declared={type=number} flags=[IsRequired]}]
-layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="k" declared={type=number}}]
-layout L2 name="C" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="k" declared={type=number} flags=[IsRequired]}]
+layout L0 name="A" fields=[{key="x" declared={type=number}}, {key="k" declared={type=number}}]
+layout L1 name="B" fields=[{key="x" declared={type=number}}, {key="k" declared={type=number}}]
+layout L2 name="C" fields=[{key="x" declared={type=number}}, {key="k" declared={type=number}}]
 variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -28,15 +28,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b1():
     LoopHint
     v13 = PropGet v0 key="first" [isFreeName]
-    v14 = Predict v13 predicted=L0|L1
+    v14 = Convert v13 declared={type=L0|L1 flags=[IsExpected]}
     v15 = PropGet v14 key="x"
     v16 = PropGet v0 key="second" [isFreeName]
-    v17 = Predict v16 predicted=L1|L2
+    v17 = Convert v16 declared={type=L1|L2 flags=[IsExpected]}
     v18 = PropGet v17 key="x"
     v19 = ToBoolean v18
     Branch v19 -> taken b1(), notTaken b2()
   b2():
-    v20 = Predict v1 predicted=L0|L2
+    v20 = Convert v1 declared={type=L0|L2 flags=[IsExpected]}
     v21 = PropGet v20 key="x"
     v22 = GetModuleVariable variable=g0
     v23 = PropGet v22 key="k"

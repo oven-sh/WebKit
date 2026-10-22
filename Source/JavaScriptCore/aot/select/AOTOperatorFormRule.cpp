@@ -65,25 +65,30 @@ static void convertOperands(GroupRewriter& rewriter, const ConvertedOperator& ma
     root.setForm(match.form);
 }
 
+static constexpr size_t numberOfOpcodesWithOperatorForm = std::ranges::count_if(allMembersOf<Opcode>, hasOperatorForm);
+
+static constexpr std::array<Opcode, numberOfOpcodesWithOperatorForm> opcodesWithOperatorForm = [] {
+    std::array<Opcode, numberOfOpcodesWithOperatorForm> opcodes { };
+    std::ranges::copy_if(allMembersOf<Opcode>, opcodes.begin(), hasOperatorForm);
+    return opcodes;
+}();
+
 void selectOperatorForm(SelectionContext& context)
 {
     TypingContext typing = context.typing();
     Function& function = context.pass().function;
     const EffectContext& effects = context.analyses().effectContext();
-    const UseLists& useLists = context.analyses().useLists();
     uint32_t changed = 0;
     Vector<ConvertedOperator> converted;
 
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        if (!hasOperatorForm(opcode))
-            continue;
+    for (Opcode opcode : opcodesWithOperatorForm) {
         for (ValueID id : context.valuesWith(opcode)) {
-            ValueLocation location = useLists.locationOf(id);
+            ValueLocation location = context.analyses().useLists().locationOf(id);
             if (location.placement != ValuePlacement::InBlock)
                 continue;
 
             OperatorSite site { typing, effects, context.shapeOf(location.block) };
-            OperatorForm form = chooseOperatorForm(site, function.at(id)).form;
+            OperatorForm form = chooseFormOfOperator(site, function.at(id));
             ConvertedOperator match = findConversions(context, id, form);
             if (match.needsConversion()) {
                 if (!context.isConditionWithProofs(id)) {
@@ -95,7 +100,7 @@ void selectOperatorForm(SelectionContext& context)
 
             if (function.at(id).form() == form)
                 continue;
-            function.at(id).setForm(form);
+            function.edit(id).setForm(form);
             ++changed;
         }
     }

@@ -2,12 +2,13 @@
 # FORM: AsRead
 # RUN: compile
 # RUN(PLACED): pipeline CheckPlacement
-# OPTIONS: check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations
-# STATISTIC: FlowDeferredClosureFields >= 1
+# OPTIONS: check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations,pass:PromoteEnvironmentsToVariables
+# STATISTIC: FieldsDeferringClosures >= 1
 # STATISTIC: DeferredClosureSlots >= 1
 # CHECK: image not empty
 # PLACED: = GetDeferredClosureSlot
-# PLACED: = NewClosure {{*}} function=f2 {{*}}closureForm=Deferred
+# PLACED: [[closure]]: f2 = NewClosure function=f2 allocationSite=2 closureForm=Deferred [isMadeOnDemand]
+# PLACED-NEXT: = NewObject {{*}}, [[closure]] layout=L0 fields=[0]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -34,6 +35,6 @@ function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
     Return v2
 }
 function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     Return
 }

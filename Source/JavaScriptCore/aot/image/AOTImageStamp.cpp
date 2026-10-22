@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIdentifierTable.h"
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
 #include "AOTInstance.h"
@@ -47,9 +48,15 @@ uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& ident
     mix(sizeof(ImageFrame));
     mix(sizeof(ImageInnerEntry));
     mix(sizeof(StubAddressInImage));
-    mix(sizeof(ImageString));
+    mix(sizeof(ImageStringWord));
     mix(sizeof(ImageLongString));
-    mix(sizeof(ImageIdentifier));
+    mix(ImageListedString::maxNumberOfWords);
+    mix(sizeof(ImageIdentifierWord));
+    mix(sizeof(IdentifierTable::Header) + IdentifierTable::firstHashBitInEntry);
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    mix(sizeof(ImageStringRecord));
+#endif
+    mix(sizeof(ImageStringHeader));
     mix(sizeof(ImageRegExp));
     mix(sizeof(ImageRegExpHash));
     mix(sizeof(StubReturnSite));

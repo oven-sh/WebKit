@@ -1,0 +1,24 @@
+# A call on an unlikely arm that comes back has a frame of its own: the path that takes neither arm sets up none
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoUnlikelyArms" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = Call v2
+    Jump -> next b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v4 = Call v2
+    Jump -> next b4()
+  b4():
+    Return v2
+}
+# CHECK: f0: size={{*}}
+# X64: f0: size=52 frame=16@15-23,36-44

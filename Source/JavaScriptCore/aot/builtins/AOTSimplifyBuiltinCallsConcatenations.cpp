@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTKnownValue.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringArena.h"
 #include "AOTValueIdentity.h"
@@ -59,12 +60,48 @@ static std::optional<ConcatenatedPart> separatorOf(FunctionPassContext& context,
     return std::nullopt;
 }
 
+// The text is made at the build where the separator is a constant too.
+static std::optional<Concatenation> matchJoinOfConstants(FunctionPassContext& context, const ValueSite& site, std::span<const KnownValue> constants, std::span<const ValueID> arguments)
+{
+    KnownValue separator = arguments.empty() ? KnownValue::undefined() : knownValueOf(context.program, context.function, arguments[0]);
+    if (separator.kind() == KnownValue::Kind::Undefined)
+        separator = KnownValue::string(context.strings.intern(StringView(","_s)));
+    if (separator.kind() != KnownValue::Kind::String)
+        return std::nullopt;
+
+    Vector<KnownValue> texts;
+    for (size_t index = 0; index < constants.size(); ++index) {
+        if (index)
+            texts.append(separator);
+        if (!constants[index].isNullish())
+            texts.append(constants[index]);
+    }
+    if (texts.isEmpty())
+        return Concatenation { site, { } };
+
+    Vector<ValueID> positions(texts.size(), [](size_t index) {
+        return ValueID(static_cast<uint32_t>(index));
+    });
+    Value concatenation = IRBuilder::make(Opcode::Strcat);
+    concatenation.setVariadicOperands(positions.span());
+    KnownValue joined = evaluateStringOperation(context.program, context.strings, context.function, concatenation, [&](ValueID position) {
+        return texts[position.index()];
+    });
+    if (joined.kind() != KnownValue::Kind::String)
+        return std::nullopt;
+    return Concatenation { site, { ConcatenatedPart { { }, joined.asString() } } };
+}
+
 static std::optional<Concatenation> matchJoinOfLiteral(FunctionPassContext& context, const ValueSite& site)
 {
     const Function& function = context.function;
     const Value* call = findWholeCallOf(context, site.value, Builtins::ArrayPrototypeJoin);
     if (!call || !call->receiverOperand() || call->argumentsOperands().size() > 1)
         return std::nullopt;
+    if (std::optional<Vector<KnownValue, 8>> constants = findConstantsOfListFor(context, call->receiverOperand(), site.value)) {
+        if (std::optional<Concatenation> joined = matchJoinOfConstants(context, site, constants->span(), call->argumentsOperands()))
+            return joined;
+    }
 
     std::optional<ValueID> literalID = findSingleUseDefinition(context, call->receiverOperand(), site.value);
     if (!literalID || !context.analyses.useLists().singleUse(*literalID))
@@ -145,16 +182,16 @@ static Value makeConcatenation(FunctionPassContext& context, IRBuilder& builder,
     return result;
 }
 
-unsigned simplifyConcatenatingCalls(FunctionPassContext& context)
+unsigned simplifyConcatenatingCalls(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Vector<Concatenation> concatenations;
-    forEachValueSite(context.analyses, context.function, [&](const ValueSite& site) {
+    for (const ValueSite& site : calls) {
         std::optional<Concatenation> concatenation = matchJoinOfLiteral(context, site);
         if (!concatenation)
             concatenation = matchRawTemplate(context, site);
         if (concatenation && !context.exceeds(LimitID::MaxFusedConcatenationParts, concatenation->parts.size(), site.value))
             concatenations.append(WTF::move(*concatenation));
-    });
+    }
     if (concatenations.isEmpty())
         return 0;
 

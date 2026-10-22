@@ -1,10 +1,11 @@
-# A callee that may be a closure or whatever a property of the global object holds: the stamp lists the closure and stays open, and nothing is assumed about the callee
+# A callee that may be a closure or whatever a property of the global object holds: the stamp lists the closure and stays open, and nothing is assumed about the callee.
+# The loss names where the unknown object comes from: a property of a host object that the table does not declare
 # RUN: valueflow-apply
 # CHECK-LABEL: function f0 name="main"
 # CHECK: = Call {{*}} callees=[f1, ..]
 # CHECK-NOT: AssumeType
 # RUN(RESULTS): valueflow-results
-# RESULTS: access S{{*}} function=f0 kind=Call loss cause=UnknownCallee witness=f0:v5
+# RESULTS: access S{{*}} function=f0 kind=Call loss cause=UndescribedNativeResult witness=f0:v5
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

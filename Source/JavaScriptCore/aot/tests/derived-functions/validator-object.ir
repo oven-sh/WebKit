@@ -1,4 +1,4 @@
-# The validator of an object node does what ends a stretch first, reads all members under one guard, validates them, and copies the input as the layout with the replaced members. It runs no getter and no trap: an input that is not plain data is left to the general validator, which spreads it once
+# The validator of an object node does what ends a stretch first, reads all members under one guard, validates them, and copies the input as the layout with the replaced members. It runs no getter and no trap: an input that is not plain data is left to the general validator, which spreads it once. The copy is an ordinary object where the run time gives up, so it is only expected to have the layout: the validator tests it and leaves it to the general validator otherwise
 # FORM: Prepared optimizing
 # RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
 # STATISTIC: ValidatorsCreated = 8
@@ -11,12 +11,12 @@ expectedresult x2 type=object validation=[{shape=Object{members=[{key="inner" no
 expectedresult x3 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="x" node=1 field=0}] undeclared=Validated undeclaredValue=2} type=L1}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
 expectedresult x4 type=object validation=[{shape=Dictionary{value=1} type=object}, {shape=Primitive{primitive=Number} type=number}]
 expectedresult x5 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="n" node=1 field=0 isOptional=true}, {key="d" node=2 field=1}]} type=L3}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{primitive=Number} type=number rules=[DefaultNumber{value=7}]}]
-layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="inner" declared={type=object written=L1}}, {key="u" declared={type=anything}}]
+layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="inner" declared={type=L1}}, {key="u" declared={type=anything}}]
 layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
 layout L2 name="OddNames" fields=[{key="toString" declared={type=number}}]
 layout L3 name="OptionalAndDefault" fields=[{key="n" declared={type=undefined|number}}, {key="d" declared={type=number}}]
 
-# CHECK: function [[own0]] {{*}}role=Validator length=1 {{*}}parameters=[{type=anything}] results=[{type=int[0, 2]}, {type=undefined|object}] {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}
+# CHECK: function [[own0]] {{*}}role=Validator length=1 {{*}}parameters=[{type=anything}] results=[{type=int[0, 2]}, {type=undefined|L0}] {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: = JSONHasStackSpace
 # CHECK: [[rejected0]]() frequency=Rare:
@@ -64,14 +64,19 @@ layout L3 name="OptionalAndDefault" fields=[{key="n" declared={type=undefined|nu
 # CHECK-NEXT: [[innerOutcome0]]: int[0, 2] = ResultAt [[innerResults0]]
 # CHECK-NEXT: Switch [[innerOutcome0]] cases=[1, 2] -> case {{*}}, case [[rejected0]](), otherwise [[unknown0]]()
 # CHECK: [[innerCopy0]]:{{*}}= ResultAt [[innerResults0]] index=1
-# CHECK: ([[innerObject0]]: object):
+# CHECK: ([[innerObject0]]: L1):
 # CHECK-NEXT: [[isPlainBeforeCopy0]]: boolean = IsPlainDataObject [[object0]]
 # CHECK-NEXT: Branch [[isPlainBeforeCopy0]] -> taken [[copy0]](| 0), notTaken
 # CHECK: [[copy0]]([[guardOfCopy0]]: guard):
-# CHECK-NEXT: [[clone0]]:{{*}}= CloneAs [[object0]], [[guardOfCopy0]], [[innerObject0]] layout=L0 fields=[1]
+# CHECK-NEXT: [[clone0]]: object ~ L0 = CloneAs [[object0]], [[guardOfCopy0]], [[innerObject0]] layout=L0 fields=[1]
+# CHECK-NEXT: [[hasLayout0]]:{{*}}= TypeTest [[clone0]] testedType=L0
+# CHECK-NEXT: Branch [[hasLayout0]] -> taken [[cloned0]](| 0), notTaken [[ordinary0]](| 0)
+# CHECK: [[cloned0]]([[typedClone0]]: L0):
 # CHECK-NEXT: [[one0]]: 1 = Integer integer=1
-# CHECK-NEXT: [[parsedResults0]]:{{*}}= Results [[one0]], [[clone0]]
+# CHECK-NEXT: [[parsedResults0]]:{{*}}= Results [[one0]], [[typedClone0]]
 # CHECK-NEXT: Return [[parsedResults0]]
+# CHECK-NEXT: [[ordinary0]]({{*}}: object) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
 # CHECK: function [[validatorOfInner]] {{*}}creator=Validator{type=L1 layout=L1 expectedResult=x0 node=2}
 
 # CHECK: function {{*}}creator=Validator{type=L2 layout=L2 expectedResult=x1}
@@ -104,13 +109,16 @@ layout L3 name="OptionalAndDefault" fields=[{key="n" declared={type=undefined|nu
 # CHECK: [[rejected3]]() frequency=Rare:
 # CHECK-NEXT: : 2 = Integer integer=2
 # CHECK-NOT: ObjectKeys
-# CHECK: [[clone3]]:{{*}}= CloneAs {{*}} layout=L1 @
-# CHECK-NEXT: [[keys3]]: Array<string> = CallBuiltin -, [[clone3]] overload=ObjectKeys/0
+# CHECK: [[clone3]]: object ~ L1 = CloneAs {{*}} layout=L1 @
+# CHECK-NEXT: [[hasLayout3]]:{{*}}= TypeTest [[clone3]] testedType=L1
+# CHECK-NEXT: Branch [[hasLayout3]] -> taken [[cloned3]](| 0), notTaken
+# CHECK: [[cloned3]]([[typedClone3]]: L1):
+# CHECK-NEXT: [[keys3]]: Array<string> = CallBuiltin -, [[typedClone3]] overload=ObjectKeys/0
 # CHECK: LoopHint
 # CHECK: ([[key3]]: string):
 # CHECK-NEXT: SwitchString [[key3]] strings=["x"] -> case [[nextKey3]](), otherwise [[undeclared3]]()
 # CHECK: [[undeclared3]]():
-# CHECK-NEXT: [[extra3]]: anything = ElemGet [[clone3]], [[key3]]
+# CHECK-NEXT: [[extra3]]: anything = ElemGet [[typedClone3]], [[key3]]
 # CHECK-NEXT: [[extraIsString3]]: boolean = TypeTest [[extra3]] testedType=string
 # CHECK-NEXT: Branch [[extraIsString3]] -> taken [[extraFits3]](| 0), notTaken [[extraDiffers3]](| 0)
 # CHECK-NEXT: [[extraFits3]]({{*}}: string):
@@ -150,6 +158,9 @@ layout L3 name="OptionalAndDefault" fields=[{key="n" declared={type=undefined|nu
 # CHECK-NEXT: = TypeTest [[givenN5]] testedType=number
 # CHECK: [[useDefault5]]({{*}}: undefined):
 # CHECK-NEXT: [[default5]]: 7 = Integer integer=7
-# CHECK: [[clone5]]:{{*}}= CloneAs {{*}} layout=L3 @
-# CHECK: PropDefine [[clone5]], {{*}} key="d"
+# CHECK: [[clone5]]: object ~ L3 = CloneAs {{*}} layout=L3 @
+# CHECK-NEXT: [[hasLayout5]]:{{*}}= TypeTest [[clone5]] testedType=L3
+# CHECK-NEXT: Branch [[hasLayout5]] -> taken [[cloned5]](| 0), notTaken
+# CHECK: [[cloned5]]([[typedClone5]]: L3):
+# CHECK: PropDefine [[typedClone5]], {{*}} key="d"
 # CHECK-NOT: PropDefine

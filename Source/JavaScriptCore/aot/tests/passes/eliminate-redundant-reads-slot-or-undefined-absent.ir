@@ -10,7 +10,7 @@ layout L1 name="Lazy" fields=[{key="x" declared={type=anything} flags=[IsRequire
 
 function f0 name="emptySinceAllocation" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
     Return v2
 }
@@ -20,7 +20,7 @@ function f0 name="emptySinceAllocation" parameters=[{type=anything}] results=[{t
 
 function f1 name="filledAtAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = GetSlotOrUndefined v2 key="y" receivers=[L0] level=Proven
     Return v3
 }
@@ -30,8 +30,8 @@ function f1 name="filledAtAllocation" parameters=[{type=anything}, {type=anythin
 
 function f2 name="otherObjectIsFilled" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
     PutSlotOrAdd v2, -, v0 key="y" receivers=[L0] level=Proven
     v4 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
     Return v4
@@ -42,7 +42,7 @@ function f2 name="otherObjectIsFilled" parameters=[{type=anything}] results=[{ty
 
 function f3 name="otherSlotIsStored" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
     v3 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
     Return v3
@@ -53,7 +53,7 @@ function f3 name="otherSlotIsStored" parameters=[{type=anything}] results=[{type
 
 function f4 name="filledAfterAllocation" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
     v3 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
     Return v3
@@ -64,7 +64,7 @@ function f4 name="filledAfterAllocation" parameters=[{type=anything}] results=[{
 
 function f5 name="filledOnOnePath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
-    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     PutSlotOrAdd v2, -, v0 key="y" receivers=[L0] level=Proven
@@ -79,7 +79,7 @@ function f5 name="filledOnOnePath" parameters=[{type=anything}, {type=boolean}] 
 
 function f6 name="unknownCodeHasTheObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = Call v1, -, v2
     v4 = GetSlotOrUndefined v2 key="y" receivers=[L0] level=Proven
     Return v4
@@ -90,7 +90,7 @@ function f6 name="unknownCodeHasTheObject" parameters=[{type=anything}, {type=an
 
 function f7 name="unknownCodeFillsTheSlotOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
     v3 = Call v1, -, v2
     v4 = GetSlotOrUndefined v2 key="y" receivers=[L1] level=Proven
     v5 = Call v1

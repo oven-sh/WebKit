@@ -20,6 +20,9 @@ class FunctionAnalyses;
 
 enum class Occurrence : uint8_t { Unknown, MayHaveOccurred, HasNotOccurred };
 
+// The one entry parameter that nobody else has seen when the function begins. To every other object that comes in from outside everything has happened at every point.
+std::optional<ValueID> findFreshEntryParameter(const Function&, const CFG&);
+
 struct UseEffectHistoryOptions {
     OperandUses uses;
     const BitVector* ignoredBlocks { nullptr };
@@ -43,10 +46,29 @@ private:
         ActionKind kind;
     };
 
+public:
+    // occurredBefore() for many objects at one point.
+    class AtPoint {
+    public:
+        AtPoint(const UseEffectHistory&, ProgramPoint);
+
+        Occurrence occurrenceOf(ObjectID) const;
+
+    private:
+        const UseEffectHistory& m_history;
+        bool m_isUnknown { false };
+        uint32_t m_index { 0 };
+        std::span<const uint64_t> m_head;
+        std::span<const Action> m_actions;
+    };
+
+private:
+
     void computeSkippedBlocks(const BitVector* ignoredBlocks);
     void findUnknownObjects(const EscapeAnalysis&, OperandUses);
     void collectActions(FunctionAnalyses&, const EscapeAnalysis&, OperandUses);
-    void computeHeads();
+    enum class StartsAt : bool { BlocksWhereSomethingHappens, EveryBlock };
+    void computeHeads(StartsAt);
     void computeTail(BlockID, std::span<uint64_t> tail) const;
     void computeStateAtHandler(BlockID, std::span<uint64_t> state) const;
 
@@ -63,6 +85,8 @@ private:
     unsigned m_wordsPerBlock { 0 };
     BitVector m_isUnknown;
     BitVector m_isSkipped;
+    bool m_skipsReachableBlocks { false };
+    Vector<uint64_t, 2> m_objectsFromOutside;
     Vector<Action> m_actions;
     Vector<uint32_t> m_firstAction;
     Vector<uint64_t> m_head;

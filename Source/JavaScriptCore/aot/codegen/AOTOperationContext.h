@@ -17,6 +17,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class CodeGenerator;
 class ExceptionEmitter;
+class FunctionAnalyses;
 
 class OperationContext {
     WTF_MAKE_NONCOPYABLE(OperationContext);
@@ -25,16 +26,16 @@ public:
     ValueID valueID() const { return m_valueID; }
     const Instruction& instruction() const LIFETIME_BOUND { return m_instruction; }
     Origin origin() const { return m_instruction.origin(); }
-    const EffectsOnEdges& effects() const LIFETIME_BOUND { return m_effects; }
+    const EffectsOnEdges& effects() const LIFETIME_BOUND;
     CodeShape shape() const { return m_shape; }
 
 protected:
-    OperationContext(BlockID blockID, const Block& block, ValueID valueID, const Instruction& instruction, const EffectsOnEdges& effects)
+    OperationContext(BlockID blockID, const Block& block, ValueID valueID, const Instruction& instruction, FunctionAnalyses& analyses)
         : m_block(blockID)
         , m_valueID(valueID)
         , m_instruction(instruction)
-        , m_effects(effects)
-        , m_handler(block.handler && effects.mayThrow() ? &*block.handler : nullptr)
+        , m_analyses(analyses)
+        , m_handler(block.handler && effects().mayThrow() ? &*block.handler : nullptr)
         , m_shape(block.shape)
     {
     }
@@ -47,7 +48,7 @@ private:
     BlockID m_block;
     ValueID m_valueID;
     const Instruction& m_instruction;
-    const EffectsOnEdges& m_effects;
+    FunctionAnalyses& m_analyses;
     const Target* m_handler;
     CodeShape m_shape;
 };
@@ -61,8 +62,8 @@ public:
 private:
     friend class CodeGenerator;
 
-    TerminatorContext(BlockID blockID, const Block& block, const EffectsOnEdges& effects)
-        : OperationContext(blockID, block, ValueID(), block.terminator, effects)
+    TerminatorContext(BlockID blockID, const Block& block, FunctionAnalyses& analyses)
+        : OperationContext(blockID, block, ValueID(), block.terminator, analyses)
         , m_terminator(block.terminator)
     {
     }
@@ -90,8 +91,8 @@ public:
 private:
     friend class CodeGenerator;
 
-    ValueContext(BlockID blockID, const Block& block, ValueID id, const Value& value, const EffectsOnEdges& effects)
-        : OperationContext(blockID, block, id, value, effects)
+    ValueContext(BlockID blockID, const Block& block, ValueID id, const Value& value, FunctionAnalyses& analyses)
+        : OperationContext(blockID, block, id, value, analyses)
         , m_value(value)
     {
     }

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClassMemberTable.h"
 #include "AOTFieldTable.h"
 #include <algorithm>
 #include <span>
@@ -26,15 +27,17 @@ struct NamedField {
     uint16_t field;
 };
 
+// The row of a shape, or of the class with a rank where the shape is zero.
 struct Row {
     uint32_t size() const { return end - begin; }
 
     uint32_t shape;
     uint32_t begin;
     uint32_t end;
+    uint32_t rankOfClass { 0 };
 };
 
-// The fields of every compiled object layout whose names have a column, layout by layout, each in ascending order of names.
+// The fields of every compiled object layout whose names have a column, layout by layout, each in ascending order of names. Behind them, class by class, the declared members.
 struct NamedFields {
     std::span<const NamedField> fieldsOf(const Row& row) const { return fields.span().subspan(row.begin, row.size()); }
 
@@ -105,6 +108,110 @@ static NamedFields collectNamedFields(TableEncoder& encoder, uint32_t highestObj
     return result;
 }
 
+static std::optional<uint32_t> findNumberOfConstructorName(const TableEncoder& encoder)
+{
+    const auto numberOfColumns = static_cast<uint32_t>(std::min<uint64_t>(encoder.identifiers.count(), FieldTableEntry::maxName + 1));
+    for (uint32_t number = 1; number < numberOfColumns; ++number) {
+        PropertyKeyID key = encoder.identifiers.at(number).key;
+        if (key && encoder.program.nameClassOf(key) == NameClass::Constructor)
+            return number;
+    }
+    return std::nullopt;
+}
+
+static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const TableEncoder& encoder, const LayoutData& classLayout, std::optional<uint32_t> nameOfConstructor)
+{
+    Vector<DeclaredClassMember> members;
+    auto memberNamed = [&](uint32_t name) -> DeclaredClassMember& {
+        size_t index = members.findIf([&](const DeclaredClassMember& member) {
+            return member.name == name;
+        });
+        if (index != notFound)
+            return members[index];
+        members.append(DeclaredClassMember { name });
+        return members.last();
+    };
+    auto cellOf = [&](uint32_t function) -> uint32_t {
+        uint32_t cell = encoder.placement.closureCellNumber(FunctionID(function));
+        return cell <= ClassRowEntry::maxNumber ? cell : 0;
+    };
+
+    if (!classLayout.classData().classConstructor)
+        return std::nullopt;
+    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
+    for (const MethodData& method : classLayout.methods()) {
+        if (method.flags & (methodHasComputedName | methodIsCreatedAtDefinition))
+            return std::nullopt;
+        uint32_t cell = cellOf(method.function);
+        if (!cell)
+            return std::nullopt;
+        // Nobody asks the table for a name without a column.
+        if (!FieldTableEntry::hasColumn(method.name))
+            continue;
+        DeclaredClassMember& member = memberNamed(method.name);
+        switch (method.kind()) {
+        case MethodKind::Method:
+            member = DeclaredClassMember { method.name, cell };
+            break;
+        case MethodKind::Getter:
+            member.method = 0;
+            member.getter = cell;
+            break;
+        case MethodKind::Setter:
+            member.method = 0;
+            member.setter = cell;
+            break;
+        }
+    }
+    bool declaresConstructor = nameOfConstructor && members.containsIf([&](const DeclaredClassMember& member) {
+        return member.name == *nameOfConstructor;
+    });
+    if (nameOfConstructor && !declaresConstructor) {
+        uint32_t cell = cellOf(classLayout.classData().classConstructor);
+        if (!cell)
+            return std::nullopt;
+        members.append(DeclaredClassMember { *nameOfConstructor, cell });
+    }
+    std::ranges::sort(members, { }, &DeclaredClassMember::name);
+    return members;
+}
+
+std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const TableEncoder& encoder, const LayoutData& classLayout)
+{
+    return collectDeclaredClassMembers(encoder, classLayout, findNumberOfConstructorName(encoder));
+}
+
+// Adds the rows of the classes, and returns for each class by its rank whether it has one.
+static Vector<bool> collectClassMembers(TableEncoder& encoder, NamedFields& named, Vector<uint64_t>& accessors)
+{
+    const TableRange classes = encoder.header.ranges[static_cast<unsigned>(ProgramTableIndex::classes)];
+    const uint32_t numberOfGroupWords = (encoder.header.numberOfLayoutIndices + 31) / 32 * 2;
+    const uint32_t numberOfClasses = classes.count - numberOfGroupWords;
+    const std::optional<uint32_t> nameOfConstructor = findNumberOfConstructorName(encoder);
+    Vector<bool> hasRow(FillWith { }, numberOfClasses, false);
+    for (uint32_t rank = 0; rank < numberOfClasses; ++rank) {
+        uint32_t offset = encoder.writer.at<uint32_t>(classes.offset + (numberOfGroupWords + rank) * sizeof(uint32_t));
+        std::optional<Vector<DeclaredClassMember>> members = collectDeclaredClassMembers(encoder, encoder.writer.at<LayoutData>(offset), nameOfConstructor);
+        if (!members)
+            continue;
+        hasRow[rank] = true;
+        auto begin = static_cast<uint32_t>(named.fields.size());
+        for (const DeclaredClassMember& member : *members) {
+            ClassRowEntry::Form form = member.method ? ClassRowEntry::Form::Method : ClassRowEntry::Form::Accessor;
+            uint32_t number = member.method;
+            if (!member.method) {
+                number = static_cast<uint32_t>(accessors.size());
+                accessors.append(std::bit_cast<uint64_t>(ClassAccessorData { member.getter, member.setter }));
+            }
+            named.fields.append({ member.name, ClassRowEntry::create(member.name, form, number).bits, ClassRowEntry::upperBitsOf(number) });
+        }
+        auto end = static_cast<uint32_t>(named.fields.size());
+        if (begin != end)
+            named.rows.append({ 0, begin, end, rank });
+    }
+    return hasRow;
+}
+
 // The largest rows first, while there is room for them. Rows that say the same are neighbors.
 static void sortLargestFirst(NamedFields& named)
 {
@@ -116,7 +223,9 @@ static void sortLargestFirst(NamedFields& named)
         auto order = std::lexicographical_compare_three_way(fieldsOfA.begin(), fieldsOfA.end(), fieldsOfB.begin(), fieldsOfB.end());
         if (order != 0)
             return order < 0;
-        return a.shape < b.shape;
+        if (a.shape != b.shape)
+            return a.shape < b.shape;
+        return a.rankOfClass < b.rankOfClass;
     });
 }
 
@@ -137,11 +246,19 @@ void encodeFieldTable(TableEncoder& encoder)
     const uint32_t highestObjectShape = encoder.placement.shapes().firstEnvironmentShape() - 1;
     const auto numberOfColumns = static_cast<uint32_t>(std::min<uint64_t>(encoder.identifiers.count(), FieldTableEntry::maxName + 1));
     NamedFields named = collectNamedFields(encoder, highestObjectShape);
+    Vector<uint64_t> accessors;
+    Vector<bool> classHasRow = collectClassMembers(encoder, named, accessors);
     sortLargestFirst(named);
 
     // A shape without fields has a row of its own, where no other row begins: what it finds there are the entries of other rows under other names.
     constexpr uint32_t rowWithoutFields = 0;
     Vector<uint32_t> firstEntryOfShape(FillWith { }, highestObjectShape + 1, rowWithoutFields);
+    Vector<uint32_t> firstEntryOfClass(classHasRow.size(), [&](size_t rank) -> uint32_t {
+        return classHasRow[rank] ? rowWithoutFields : ClassRowEntry::noRow;
+    });
+    auto firstEntryOf = [&](const Row& row) -> uint32_t& {
+        return row.shape ? firstEntryOfShape[row.shape] : firstEntryOfClass[row.rankOfClass];
+    };
     Bitmap occupiedEntries;
     Bitmap firstEntries;
     firstEntries.set(rowWithoutFields);
@@ -153,7 +270,7 @@ void encodeFieldTable(TableEncoder& encoder)
     for (const Row& row : named.rows) {
         auto fields = named.fieldsOf(row);
         if (lastRow && std::ranges::equal(fields, named.fieldsOf(*lastRow))) {
-            firstEntryOfShape[row.shape] = firstEntryOfShape[lastRow->shape];
+            firstEntryOf(row) = firstEntryOf(*lastRow);
             continue;
         }
         if (!lastRow || lastRow->size() != row.size() || row.size() == 1)
@@ -163,7 +280,7 @@ void encodeFieldTable(TableEncoder& encoder)
         firstEntries.set(firstEntry);
         for (const NamedField& field : fields)
             occupiedEntries.set(firstEntry + field.name);
-        firstEntryOfShape[row.shape] = firstEntry;
+        firstEntryOf(row) = firstEntry;
         highestFirstEntry = std::max(highestFirstEntry, firstEntry);
         entryOfFirstFieldOfLastRow = firstEntry + fields[0].name;
         lastRow = &row;
@@ -177,7 +294,7 @@ void encodeFieldTable(TableEncoder& encoder)
         table[highestObjectShape - shape] = firstEntryOfShape[shape];
     for (const Row& row : named.rows) {
         for (const NamedField& field : named.fieldsOf(row)) {
-            uint32_t index = firstEntryOfShape[row.shape] + field.name;
+            uint32_t index = firstEntryOf(row) + field.name;
             table[highestObjectShape + index] = field.entry;
             recordIndices[index] = field.field;
         }
@@ -185,6 +302,8 @@ void encodeFieldTable(TableEncoder& encoder)
     encoder.header.numberOfFieldTableRows = highestObjectShape;
     encoder.setTable(ProgramTableIndex::fieldTable, table);
     encoder.setTable(ProgramTableIndex::fieldRecordIndices, recordIndices);
+    encoder.setTable(ProgramTableIndex::classMemberRows, firstEntryOfClass);
+    encoder.setTable(ProgramTableIndex::classAccessors, accessors);
 }
 
 } } } // namespace JSC::AOT::Typed

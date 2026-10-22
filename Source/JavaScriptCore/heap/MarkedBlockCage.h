@@ -13,6 +13,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -62,6 +63,17 @@ public:
     };
     Indices usedIndices() const;
 
+    void keepReserveOnceHalfFull();
+    bool releaseReserve();
+    void didThrowOutOfMemoryError() { m_hasReleasedReserve = false; }
+    size_t reserveSize() const;
+
+    struct ReservationFailure {
+        size_t sizeWithinBudget { 0 };
+        size_t smallestSize { 0 };
+    };
+    JS_EXPORT_PRIVATE static ReservationFailure reservationFailure();
+
     static void logExhaustion();
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
@@ -73,6 +85,8 @@ private:
     uintptr_t m_base { 0 };
     size_t m_size { 0 };
     bool m_sharesRange { false };
+    bool m_hasReleasedReserve { false };
+    Vector<void*> m_reserve;
     std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
     std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };
 

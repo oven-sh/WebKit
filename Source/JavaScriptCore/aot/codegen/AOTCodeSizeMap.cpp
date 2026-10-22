@@ -14,7 +14,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCodeGenerator.h"
 #include "AOTCompileOptions.h"
+#include "AOTEdgeResults.h"
 #include "AOTIR.h"
+#include "AOTIRPrinter.h"
 #include "AOTRelocation.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
@@ -266,11 +268,126 @@ static void printHints(PrintStream& out, const Program& program, const Function&
     }
 }
 
+struct OriginOfTestedValue {
+    ASCIILiteral place { "Operation"_s };
+    Opcode opcode { Opcode::Undefined };
+    uint32_t earlierTypeTests { 0 };
+    uint32_t earlierOtherTests { 0 };
+    uint32_t merges { 0 };
+};
+
+static ValueID argumentOnEdge(const Function& function, Edge edge, uint32_t index)
+{
+    if (edge.isHandlerEdge())
+        return { };
+    const Terminator& terminator = function.at(edge.from).terminator;
+    if (edge.targetIndex >= terminator.targets.size() || index >= terminator.targets[edge.targetIndex].arguments.size())
+        return { };
+    return terminator.targets[edge.targetIndex].arguments[index];
+}
+
+static OriginOfTestedValue findOriginOfTestedValue(const Function& function, const CFG& cfg, const UseLists& useLists, ValueID value)
+{
+    OriginOfTestedValue origin;
+    for (uint32_t steps = 0; steps < 64; ++steps) {
+        value = sameObjectThroughCasts(function, value);
+        ValueLocation location = useLists.locationOf(value);
+        if (location.placement != ValuePlacement::Parameter) {
+            origin.opcode = function.at(value).opcode;
+            return origin;
+        }
+        if (!location.block.index()) {
+            origin.place = "Parameter"_s;
+            return origin;
+        }
+        std::span<const Edge> incoming = cfg.incomingEdges(location.block);
+        if (incoming.empty()) {
+            origin.place = "Handler"_s;
+            return origin;
+        }
+        Edge edge = incoming[0];
+        if (edge.isHandlerEdge()) {
+            origin.place = "Handler"_s;
+            return origin;
+        }
+        uint32_t firstResult = firstEdgeResultParameter(function, edge.from, edge.targetIndex);
+        if (incoming.size() == 1 && location.index >= firstResult) {
+            std::optional<EdgeResult> result = tryGetEdgeResult(function, { edge.from, edge.targetIndex, location.index - firstResult });
+            if (!result || result->kind != EdgeResultKind::NarrowedOperand || !result->subject) {
+                origin.place = "ResultOfTerminator"_s;
+                return origin;
+            }
+            if (result->test && function.at(result->test).opcode == Opcode::TypeTest)
+                ++origin.earlierTypeTests;
+            else
+                ++origin.earlierOtherTests;
+            value = result->subject;
+            continue;
+        }
+        if (incoming.size() > 1) {
+            ValueID only;
+            bool isSame = true;
+            for (Edge other : incoming) {
+                ValueID argument = argumentOnEdge(function, other, location.index);
+                if (!argument) {
+                    isSame = false;
+                    break;
+                }
+                argument = sameObjectThroughCasts(function, argument);
+                if (argument == value)
+                    continue;
+                if (only && only != argument)
+                    isSame = false;
+                only = argument;
+            }
+            if (!isSame || !only) {
+                origin.place = "Merge"_s;
+                return origin;
+            }
+            ++origin.merges;
+            value = only;
+            continue;
+        }
+        value = argumentOnEdge(function, edge, location.index);
+        if (!value) {
+            origin.place = "Merge"_s;
+            return origin;
+        }
+    }
+    origin.place = "Merge"_s;
+    return origin;
+}
+
+static void printTestOfCounters(PrintStream& out, const Program& program, const Function& function, const CFG& cfg, const UseLists& useLists, const CountedBranch& branch, uint32_t trueSide)
+{
+    const Terminator& terminator = function.at(branch.block).terminator;
+    if (terminator.kind != TerminatorKind::Branch && terminator.kind != TerminatorKind::TestAndBranch)
+        return;
+    const Value* test = &function.at(terminator.conditionOperand());
+    while (test->opcode == Opcode::LogicalNot)
+        test = &function.at(test->valueOperand());
+    BlockID targetWhenTrue = terminator.targets[branch.isNegated ? 1 : 0].block;
+    BlockID targetWhenFalse = terminator.targets[branch.isNegated ? 0 : 1].block;
+    out.print("\nq\t", trueSide, "\t", nameOf(test->opcode), "\t", nameOf(function.at(targetWhenTrue).frequency), "\t", nameOf(function.at(targetWhenFalse).frequency), "\t", nameOf(function.at(branch.block).frequency));
+    if (!test->numberOfOperands() || !test->operand(0))
+        return;
+    OriginOfTestedValue origin = findOriginOfTestedValue(function, cfg, useLists, test->operand(0));
+    out.print("\t", origin.place, "\t", nameOf(origin.opcode), "\t", origin.earlierTypeTests, "\t", origin.earlierOtherTests, "\t", origin.merges, "\t");
+    printType(out, program, program.typeOf(function, test->operand(0)));
+    out.print("\t");
+    if (test->opcode == Opcode::TypeTest)
+        printType(out, program, test->testedType());
+}
+
 static void printCounters(PrintStream& out, const CodeGenerationInputs& inputs, FunctionID id, const Function& function)
 {
     if (!inputs.branchCounters.isCounting())
         return;
+    if (std::optional<uint32_t> entries = inputs.branchCounters.counterOfEntries(id); entries && function.module)
+        out.print("\nQE\t", *entries, "\t", function.module.index(), "\t", function.position, "\t", pathOf(inputs.program, function.module));
     Vector<CountedBranch> branches = findCountedBranches(inputs.program, function);
+    CFG cfg(function);
+    UseLists useLists(function, cfg);
     for (uint32_t ordinal = 0; ordinal < branches.size(); ++ordinal) {
         std::optional<uint32_t> taken = inputs.branchCounters.counterFor(id, ordinal, 0);
         std::optional<uint32_t> notTaken = inputs.branchCounters.counterFor(id, ordinal, 1);
@@ -280,6 +397,7 @@ static void printCounters(PrintStream& out, const CodeGenerationInputs& inputs, 
         uint32_t trueSide = branch.isNegated ? *notTaken : *taken;
         uint32_t falseSide = branch.isNegated ? *taken : *notTaken;
         out.print("\nQ\t", trueSide, "\t", falseSide, "\t", branch.module.index(), "\t", branch.position, "\t", pathOf(inputs.program, branch.module));
+        printTestOfCounters(out, inputs.program, function, cfg, useLists, branch, trueSide);
     }
 }
 

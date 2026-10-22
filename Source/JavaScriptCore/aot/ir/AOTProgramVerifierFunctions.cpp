@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTProgramCaches.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
@@ -27,6 +28,7 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::IsHiddenInStackTraces,
 };
 
+// SplitBehindEntryChecks runs on the program as read and leaves the tests under the id of the function it splits: the one role of a function as read that no front end sends.
 bool isSentByFrontEnd(FunctionRole role)
 {
     return static_cast<unsigned>(role) < numberOfWireEnumerators<FunctionRole>;
@@ -76,21 +78,69 @@ bool hasValidConstructedClass(const Program& program, FunctionID id, const Funct
     const Layout& constructedClass = program.at(function.constructedClass);
     if (constructedClass.kind != LayoutKind::Instance)
         return false;
-    if (FunctionID source = function.derivation.source)
-        return program.at(source).constructedClass == function.constructedClass;
-    return constructedClass.constructor == id;
+    // The copy of a class that is defined inside a copied function has a layout of its own.
+    if (constructedClass.constructor == id)
+        return true;
+    FunctionID source = function.derivation.source;
+    return source && program.at(source).constructedClass == function.constructedClass;
+}
+
+// The relations name subjects by their places in the list, entry parameters by their indices and values by their numbers.
+// The number of the rule that is broken.
+std::optional<uint32_t> findBrokenRuleOfRelations(const Function& function)
+{
+    constexpr uint32_t unlisted = UINT32_MAX;
+    constexpr size_t maxSubjects = 4096;
+
+    const FunctionRelations& relations = function.relations;
+    size_t numberOfSubjects = relations.subjects.size();
+    size_t numberOfValues = function.values.size();
+    if (numberOfSubjects > maxSubjects)
+        return 1;
+
+    auto isSubject = [&](uint32_t index) { return index < numberOfSubjects; };
+    auto isSubjectOrUnlisted = [&](uint32_t index) { return index == unlisted || isSubject(index); };
+    for (size_t place = 0; place < numberOfSubjects; ++place) {
+        const RelationSubject& subject = relations.subjects[place];
+        bool isRead = subject.kind == RelationSubjectKind::ReadFrom;
+        // The `undefined` of a `return` without a value is a constant that no value stands for.
+        bool hasNoValue = subject.kind == RelationSubjectKind::Constant && subject.index == unlisted;
+        size_t bound = subject.kind == RelationSubjectKind::Parameter ? function.numberOfEntryParameters() : numberOfValues;
+        if (!hasNoValue && subject.index >= bound)
+            return 2;
+        if (!isRead && subject.source)
+            return 3;
+        // Every subject stands behind what it is read out of.
+        if (isRead && subject.source >= place)
+            return 4;
+    }
+    for (const StoredInto& store : relations.stores) {
+        if (!isSubjectOrUnlisted(store.source) || !isSubject(store.target))
+            return 5;
+    }
+    for (const HandedTo& handed : relations.handed) {
+        if (!isSubjectOrUnlisted(handed.source) || handed.call >= numberOfValues)
+            return 6;
+    }
+    for (const OperandOf& operand : relations.operands) {
+        if (!isSubjectOrUnlisted(operand.source) || !isSubject(operand.user))
+            return 7;
+    }
+    return std::nullopt;
 }
 
 std::optional<InternalError> findHeaderError(const Program& program, IRForm form, uint64_t maxCaptures, FunctionID id, const Function& function)
 {
     if (function.captures.size() > maxCaptures)
         return InternalError { .kind = InternalErrorKind::ListOutOfBounds, .function = id, .limit = LimitID::MaxCaptures, .count = id.index() };
+    if (std::optional<uint32_t> rule = findBrokenRuleOfRelations(function))
+        return InternalError { .kind = InternalErrorKind::InvalidRelations, .function = id, .count = *rule };
 
     bool isAsRead = form == IRForm::AsRead && id.index() < program.numberOfFunctionsAsRead();
     if (hasValidSignature(function)
         && hasOnlyTypesThatCrossCalls(program, function)
         && nameOf(function.creator.kind()) == recordOf(function.role)
-        && (!isAsRead || isSentByFrontEnd(function.role))
+        && (!isAsRead || isSentByFrontEnd(function.role) || function.role == FunctionRole::EntryChecks)
         && function.capabilities.containsOnly(capabilitiesOf(function.role) | capabilitiesAddedByPasses)
         && hasValidConstructedClass(program, id, function)
         && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction)))
@@ -132,19 +182,20 @@ bool hasGenericEntrypointHeader(const Function& function, ArgumentPassing argume
 bool isValidEntrypointRecord(const Program& program, const Function& function, const CreatorRecord::Entrypoint& record)
 {
     auto* constructEntrypoint = findCreatorRecord<CreatorRecord::Entrypoint>(program, record.constructEntrypoint, FunctionRole::GenericEntrypoint);
-    auto* groupEntrypoint = findCreatorRecord<CreatorRecord::Entrypoint>(program, record.groupEntrypoint, FunctionRole::GroupEntrypoint);
     return record.target
-        && !!record.group == (function.role == FunctionRole::GroupEntrypoint)
         && (function.role != FunctionRole::GenericEntrypoint || hasGenericEntrypointHeader(function, record.arguments))
-        && (!record.constructEntrypoint || (constructEntrypoint && constructEntrypoint->takesNewTarget))
-        && (!record.groupEntrypoint || (groupEntrypoint && groupEntrypoint->target == record.target));
+        && (!record.constructEntrypoint || (constructEntrypoint && constructEntrypoint->takesNewTarget));
 }
 
 bool isValidCoroutineRecord(const Program& program, FunctionID id, const CreatorRecord::Coroutine& record)
 {
-    if (!hasRole(program, record.ramp, FunctionRole::CoroutineRamp) || !hasRole(program, record.body, FunctionRole::CoroutineBody))
+    FunctionRole roleOfBody = record.worker ? FunctionRole::AsyncWorker : FunctionRole::CoroutineBody;
+    if (!hasRole(program, record.ramp, FunctionRole::CoroutineRamp) || !hasRole(program, record.body, roleOfBody))
         return false;
     if (id != record.ramp && id != record.body)
+        return false;
+    // An async function that never suspends has no frame to save: its ramp calls the worker and settles the promise itself.
+    if (record.worker && (record.worker != record.body || record.entryWithoutPromise || record.promiseParameter || record.kind != CoroutineKind::AsyncFunction))
         return false;
 
     unsigned numberOfBodyParameters = program.at(record.body).numberOfEntryParameters();
@@ -199,6 +250,7 @@ bool ProgramVerifier::isValidCreatorRecord(FunctionID id, const Function& functi
     return WTF::switchOn(function.creator.cases,
         [](const CreatorRecord::None&) { return true; },
         [&](const CreatorRecord::Entrypoint& record) { return isValidEntrypointRecord(m_program, function, record); },
+        [&](const CreatorRecord::TableLookup& record) { return !!record.key; },
         [&](const CreatorRecord::Version& record) { return record.provenVersion && record.provenVersion != id; },
         [&](const CreatorRecord::Coroutine& record) { return isValidCoroutineRecord(m_program, id, record); },
         [](const CreatorRecord::BoundFunction& record) { return record.target && record.numberOfCapturedArguments <= record.numberOfBoundArguments; },
@@ -208,7 +260,7 @@ bool ProgramVerifier::isValidCreatorRecord(FunctionID id, const Function& functi
         },
         [&](const CreatorRecord::ResultWorker& record) { return record.origin && m_program.at(record.origin).numberOfEntryParameters() == function.numberOfEntryParameters(); },
         [&](const CreatorRecord::ParameterWrapper& record) { return record.body && record.parameter < function.parameters.size(); },
-        [](const CreatorRecord::Continuation& record) { return !!record.origin; },
+        [&](const CreatorRecord::EntryChecks& record) { return record.body && record.fallback; },
         [&](const CreatorRecord::Serializer& record) { return isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Parser& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Validator& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
@@ -248,15 +300,21 @@ void ProgramVerifier::verifyFunctionBodies()
     if (!m_program.types.hasOpenPhase())
         scratch.emplace(m_program.types, 0u, TypeInterningPhase::Scratch);
 
-    Vector<InternalError> errors = collectInParallel<InternalError>(m_build.parallelLoops(), m_program.functions.size(), largeFunctions(m_program, m_build.parallelLoops()).span(), [&](unsigned index, Vector<InternalError>& found) {
-        FunctionID id(index);
-        const Function& function = m_program.functions[index];
-        if (!function.hasBody())
-            return;
-        FunctionVerifier verifier(m_program, id, function, m_form, m_build, m_inputs);
-        if (!verifier.run())
-            found.appendVector(verifier.takeErrors());
-    });
+    Vector<InternalError> errors;
+    SlotsInReceivers slotsInReceivers;
+    {
+        ProgramCaches caches(m_program, m_build);
+        errors = collectInParallel<InternalError>(m_build.parallelLoops(), m_program.functions.size(), largeFunctions(m_program, m_build.parallelLoops()).span(), [&](unsigned index, Vector<InternalError>& found) {
+            FunctionID id(index);
+            const Function& function = m_program.functions[index];
+            if (!function.hasBody())
+                return;
+            FunctionVerifier verifier(m_program, id, function, m_form, m_build, m_inputs);
+            verifier.shareAnswers(slotsInReceivers);
+            if (!verifier.run())
+                found.appendVector(verifier.takeErrors());
+        });
+    }
 
     if (scratch)
         scratch->discard();

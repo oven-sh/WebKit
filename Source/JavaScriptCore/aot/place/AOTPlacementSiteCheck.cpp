@@ -8,8 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
+#include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpRecord.h"
@@ -22,7 +25,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Opcode::NewObject, Opcode::MaterializeEnvironment });
-static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::IsMemberUnchanged, Opcode::IsPrototypeLinkUnchanged, Opcode::IsClassEvaluatedOnce });
+static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
 static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
 
@@ -92,19 +95,18 @@ static SiteCellKind siteCellKindOf(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static GuardUse guardNamedBy(const Value& value)
+// A slot keeps its markers whatever the type of its field says, so undefined and null stay in it and are no values of another type.
+static bool slotAdmits(const Program& program, SlotRepresentation representation, const Type& contents, const Type& stored)
 {
-    switch (value.opcode) {
-    case Opcode::IsMemberUnchanged:
-        return { .classLayout = value.layout(), .side = value.side(), .kind = MemberGuardKind::Member, .key = value.key() };
-    case Opcode::IsPrototypeLinkUnchanged:
-        return { .classLayout = value.layout(), .side = value.side(), .kind = MemberGuardKind::PrototypeLink };
-    case Opcode::IsClassEvaluatedOnce:
-        return { .classLayout = value.layout(), .side = ClassSide::Static, .kind = MemberGuardKind::EvaluatedOnce };
-    default:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    SlotTraits traits = traitsOf(representation);
+    uint16_t markers = 0;
+    if (traits.hasUndefined)
+        markers |= Primitive::Undefined;
+    if (traits.hasNull)
+        markers |= Primitive::Null;
+    if (!(stored.primitives & markers & ~contents.primitives))
+        return stored.isSubsetOf(contents, program);
+    return stored.isSubsetOf(contents.withPrimitives(markers), program);
 }
 
 static bool isRoot(const StaticsPlan& statics, uint32_t offset)
@@ -227,8 +229,8 @@ private:
         case PayloadKind::GuardBit:
             checkGuardBit(id, value);
             return;
-        case PayloadKind::UInt32:
-            checkRequireEdge(id, value);
+        case PayloadKind::GlobalBinding:
+            checkGlobalBinding(id, value);
             return;
         case PayloadKind::SiteCache:
             return;
@@ -249,6 +251,7 @@ private:
         case PayloadKind::Enum:
         case PayloadKind::Flags:
         case PayloadKind::Bool:
+        case PayloadKind::UInt32:
         case PayloadKind::Int64:
         case PayloadKind::Double:
         case PayloadKind::External:
@@ -302,6 +305,7 @@ private:
         case Opcode::NewObject:
             return allocation.layout == value.layout()
                 && std::ranges::equal(allocation.initialFields, value.fields())
+                && allocation.holdsInnerObjects == takesCellWithInnerObjects(m_placement.slots(), value)
                 && allocation.shape == m_placement.shapes().shapeOf(value.layout(), value.allocationClass());
         case Opcode::MaterializeEnvironment:
             return allocation.layout == value.layout() && allocation.initialFields.isEmpty();
@@ -320,7 +324,7 @@ private:
             m_deferredClosures.append(id);
             return;
         }
-        if ((form == ClosureForm::Singleton) != hasSingletonClosure(m_program, closure.function()))
+        if ((form == ClosureForm::Singleton) != namesClosureOfTable(m_program, closure))
             fail(id, PlacementRule::ClosureFormNotProven);
     }
 
@@ -362,8 +366,10 @@ private:
 
     bool isDataRequestOf(const DataRecord& record, const Value& value) const
     {
-        if (record.data != value.data() || record.sharedStorageOffset.has_value() != (value.encoding() == DataEncoding::CopyOnWriteArray))
+        if (record.data != value.data() || (record.sharedStorageOffset || record.node) != (value.encoding() == DataEncoding::CopyOnWriteArray))
             return false;
+        if (record.node)
+            return !record.sharedStorageOffset && isStorageOfArray(m_program.at(record.data).root.as<DataNode::Array>());
         return !record.sharedStorageOffset || isRoot(m_placement.statics(), *record.sharedStorageOffset);
     }
 
@@ -464,36 +470,25 @@ private:
             fail(id, PlacementRule::SiteRefersElsewhere);
     }
 
+    // One condition is tested by its own bit, several by the bit of their set. Without a bit the test fails.
     void checkGuardBit(ValueID id, const Value& value)
     {
-        const GuardBitTable& table = m_placement.guardBits();
-        GuardUse guard = guardNamedBy(value);
+        GuardBitID expected = m_placement.guardBits().find(value.conditions());
         GuardBitID bit = value.guardBit();
         if (!bit) {
-            if (table.find(guard.classLayout, guard.side, guard.kind, guard.key))
+            if (expected)
                 fail(id, PlacementRule::PayloadMissing);
             return;
         }
-        if (bit.index() >= table.bits.size()) {
-            fail(id, PlacementRule::SiteRefersElsewhere);
-            return;
-        }
-        const PlacedGuardBit& placed = table.bits[bit.index()];
-        if (placed.classLayout != guard.classLayout || placed.side != guard.side || placed.kind != guard.kind || placed.key != guard.key)
+        if (bit != expected)
             fail(id, PlacementRule::SiteRefersElsewhere);
     }
 
-    void checkRequireEdge(ValueID id, const Value& value)
+    // A name beyond the limit goes back to an access by name, so what is left has a record.
+    void checkGlobalBinding(ValueID id, const Value& value)
     {
-        if (!Value::opcodesWithEdge.contains(value.opcode)) {
-            fail(id, PlacementRule::SiteRefersElsewhere);
-            return;
-        }
-        std::optional<uint32_t> edge = value.edge();
-        if (!edge)
+        if (!value.binding())
             fail(id, PlacementRule::PayloadMissing);
-        else if (edge != m_placement.requireEdge(value.referrer(), value.module()))
-            fail(id, PlacementRule::SiteRefersElsewhere);
     }
 
     bool isUsedOnlyByStore(ValueID stored, ValueID closure)
@@ -508,26 +503,22 @@ private:
 
     void checkStoredValue(ValueID site, ValueID stored, SlotRepresentation representation, const Type& contents, const Invocable<bool(FunctionID)> auto& isDeferredFunction)
     {
-        if (!m_program.typeOf(m_function, stored).isSubsetOf(contents, m_program))
+        if (!slotAdmits(m_program, representation, contents, m_program.typeOf(m_function, stored)))
             fail(site, PlacementRule::StoredTypeTooWide);
         if (representation != SlotRepresentation::DeferredClosure)
             return;
 
+        // What is stored is the closure that the slot leaves unmade, or what a narrow reference holds.
         ValueID definition = definitionThroughUpcasts(m_function, stored);
         const Value& closure = m_function.at(definition);
-        bool isNewClosure = closure.opcode == Opcode::NewClosure;
-        FunctionID function = isNewClosure ? closure.function() : m_program.typeOf(m_function, definition).singleFunction();
-        if (!function || !isDeferredFunction(function)) {
-            fail(site, PlacementRule::DeferredClosureStore);
+        if (closure.opcode != Opcode::NewClosure || closure.closureForm() != ClosureForm::Deferred) {
+            if (m_program.typeOf(m_function, stored).primitives & ~Primitive::UndefinedOrNull)
+                fail(site, PlacementRule::DeferredClosureStore);
             return;
         }
-        if (!isNewClosure)
-            return;
-
-        bool isDeferred = closure.closureForm() == ClosureForm::Deferred;
-        if (isDeferred != isUsedOnlyByStore(stored, definition))
+        if (!isDeferredFunction(closure.function()) || !isUsedOnlyByStore(stored, definition))
             fail(site, PlacementRule::DeferredClosureStore);
-        else if (isDeferred)
+        else
             m_closuresStoredInDeferredSlots.append(definition);
     }
 
@@ -554,15 +545,21 @@ private:
             return;
         }
         size_t numberOfFields = m_program.at(layout).fields.size();
+        bool listsClosureOverEnvironment = false;
         for (size_t index = 0; index < fields.size(); ++index) {
             const PlacedSlot& slot = m_slots.slot(layout, fields[index]);
             if (fields[index] >= numberOfFields || !slot.hasStorage())
                 continue;
             const Field& declaration = fieldAt(m_program, declarationOf(m_program, { layout, fields[index] }));
-            checkStoredValue(id, values[index], slot.representation, m_program.at(declaration.declared.type), [&](FunctionID function) {
+            checkStoredValue(id, values[index], slot.representation, m_program.at(slotTypeOf(m_program, declaration)), [&](FunctionID function) {
                 return slot.deferredFunction == function;
             });
+            listsClosureOverEnvironment |= slot.deferredClosureCapturesEnvironment;
         }
+        // Whoever asks for such a closure first finds its environment in the hidden field of the object.
+        std::optional<uint32_t> environmentField = m_program.at(layout).flow.closureEnvironmentField;
+        if (listsClosureOverEnvironment && (!environmentField || std::ranges::find(fields, *environmentField) == fields.end()))
+            fail(id, PlacementRule::DeferredClosureStore);
     }
 
     void checkReadOfFilledSlot(ValueID id, const Value& value)
@@ -583,16 +580,18 @@ private:
             fail(id, PlacementRule::ContentsTooNarrow);
     }
 
-    // PutSlot declares no allocation, so it can neither create nor grow an Extension. A filled slot has storage unless the object may list the field without it.
+    // PutSlot declares no collection. A filled slot has storage unless the object may list the field without it: the row says so, and the store then gets the granule without a collection.
     void checkStoreWithoutAllocation(ValueID id, const Value& value)
     {
         const FieldAccess* access = accessAt(value.fieldAccess());
         if (!access || !access->slot.hasStorage())
             return;
-        const Type& stored = m_program.typeOf(m_function, value.valueOperand());
-        bool fitsInlineInt32Slot = stored.hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull) && stored.integers.isSubsetOf(Range { minInlineInt32, INT32_MAX });
-        bool findsStorage = !access->slot.isOutOfLine() || (!access->slot.mayExistWithoutStorage && guardProvesSlotFilled(analyses(), value));
-        if (!findsStorage || (access->slot.representation == SlotRepresentation::Int32OrDouble && !fitsInlineInt32Slot))
+        bool mayLackStorage = std::ranges::any_of(m_program.at(access->membersWithField).members, [&](LayoutID member) {
+            std::optional<uint32_t> field = m_program.at(member).findField(access->key);
+            return field && m_slots.slot(member, *field).mayExistWithoutStorage;
+        });
+        bool findsStorage = !access->slot.isOutOfLine() || (access->mayBeFilledWithoutStorage == mayLackStorage && guardProvesSlotFilled(analyses(), value));
+        if (!findsStorage)
             fail(id, PlacementRule::OutOfLineNotAllowed);
     }
 
@@ -637,6 +636,9 @@ static void checkSiteCells(const PlacementCheckContext& context, Vector<SiteCell
     auto fail = [&](const SiteCellUse& use) {
         context.failures.fail(PlacementRule::SiteRefersElsewhere, { }, use.user.function, use.user.value);
     };
+    auto valueOf = [&](const SiteCellUse& use) -> const Value& {
+        return context.program.at(use.user.function).at(use.user.value);
+    };
 
     parallelSort(loops, uses.mutableSpan(), [&](const SiteCellUse& a, const SiteCellUse& b) {
         return std::tuple { a.offset, cellOf(a), a.user } < std::tuple { b.offset, cellOf(b), b.user };
@@ -656,29 +658,29 @@ static void checkSiteCells(const PlacementCheckContext& context, Vector<SiteCell
             fail(uses[index]);
         if (uses[index].regExpRecord != uses[index - 1].regExpRecord)
             context.failures.fail(PlacementRule::RegExpRecordWrong, { }, uses[index].user.function, uses[index].user.value);
+        // The first to run makes the object that the cell keeps, and the others take it for theirs.
+        if (uses[index].kind == SiteCellKind::TemplateObject && !std::ranges::equal(valueOf(uses[index]).templateStrings(), valueOf(uses[index - 1]).templateStrings()))
+            fail(uses[index]);
     }
 }
 
 static void checkDataObject(const PlacementCheckContext& context, const DataNode::Object& object)
 {
-    if (context.inputs.slots.storageOf(object.layout) != LayoutStorage::CompiledObject)
+    if (!object.layout || context.inputs.slots.storageOf(object.layout) != LayoutStorage::CompiledObject)
         return;
 
     const Layout& layout = context.program.at(object.layout);
     Vector<FieldIndex, 16> fields;
-    bool everyMemberIsField = true;
     for (const DataMember& member : object.members) {
         if (std::optional<uint32_t> field = layout.findField(member.key))
             fields.append(*field);
-        else
-            everyMemberIsField = false;
     }
 
     ShapeRange shapes = context.placement.shapes().shapesOf(object.layout);
     bool hasAllocation = false;
     for (uint32_t shape = shapes.first; shape < shapes.end(); ++shape)
         hasAllocation |= !!context.placement.allocations().find(object.layout, shape, fields.span());
-    if (!everyMemberIsField || !hasAllocation)
+    if (!fitsReadOnlyEncoding(context.program, object) || !hasAllocation)
         context.failures.fail(PlacementRule::DataNotPlaced, object.layout);
 }
 
@@ -764,7 +766,7 @@ static void collectSiteCacheUses(const PlacementCheckContext& context, FunctionI
             const Value& value = function.at(valueID);
             if (!Value::opcodesWithSiteCache.contains(value.opcode))
                 continue;
-            unsigned numberUsed = numberOfSiteCachesUsedBy(context.program, context.placement, value);
+            unsigned numberUsed = numberOfSiteCachesUsedBy(context.program, context.placement, function, value);
             if (numberUsed && !mayReadSiteCachesAgain(ensureAnalyses(), block))
                 numberUsed = 0;
             unsigned numberSet = 0;

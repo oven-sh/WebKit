@@ -10,6 +10,7 @@
 
 #include "AOTCoroutines.h"
 #include "AOTEffects.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTSelectionContext.h"
 #include "AOTValueIdentity.h"
@@ -33,6 +34,10 @@ struct Match {
     bool testsThenable;
 };
 
+struct AwaitOfPrimitive {
+    SelectionGroup group;
+};
+
 class PointsBeforeSuspension {
 public:
     explicit PointsBeforeSuspension(SelectionContext&);
@@ -53,10 +58,13 @@ PointsBeforeSuspension::PointsBeforeSuspension(SelectionContext& context)
     const Function& function = context.function();
     FunctionAnalyses& analyses = context.analyses();
     const CFG& cfg = analyses.cfg();
+    auto suspendsOnSomeEdge = [](const EffectsOnEdges& effects) {
+        return effects.normal.maySuspend || effects.handler.maySuspend;
+    };
     for (BlockID block : cfg.reversePostOrder()) {
-        bool hasSuspension = analyses.effectsOfTerminator(block).onAnyEdge().maySuspend;
+        bool hasSuspension = declaredBoundOf(function.at(block).terminator.kind).maySuspend && suspendsOnSomeEdge(analyses.effectsOfTerminator(block));
         for (ValueID id : function.at(block).values) {
-            if (!analyses.effectsOf(id).onAnyEdge().maySuspend)
+            if (!maySuspend(function.at(id).opcode) || !suspendsOnSomeEdge(analyses.effectsOf(id)))
                 continue;
             m_suspensions.set(id.index());
             hasSuspension = true;
@@ -85,6 +93,8 @@ static bool isFirstUseOfNewPromise(SelectionContext& context, ValueID user, Valu
 {
     const Function& function = context.function();
     FunctionAnalyses& analyses = context.analyses();
+    if (!analyses.opcodesOfValues().contains(Opcode::NewPromise))
+        return false;
     ValueID allocation = analyses.identityOf(promise);
     if (function.at(allocation).opcode != Opcode::NewPromise)
         return false;
@@ -235,12 +245,14 @@ static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<Match>
         return;
 
     ValueID driver = driverOf(function);
-    PointsBeforeSuspension points(context);
+    std::optional<PointsBeforeSuspension> points;
     for (ValueID id : context.candidates(Opcode::ReturnAsyncResult)) {
         const Value& value = function.at(id);
         if (context.analyses().identityOf(value.promiseOperand()) != driver)
             continue;
-        if (!points.contains(id))
+        if (!points)
+            points.emplace(context);
+        if (!points->contains(id))
             continue;
 
         PromiseOperand promise = classifyPromiseOperand(context.typeOf(value.promiseOperand()));
@@ -248,10 +260,10 @@ static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<Match>
             continue;
 
         bool testsThenable = mayBeThenable(context, value.valueOperand());
-        if (testsThenable && context.shapeAt(id) == CodeShape::Compact)
+        bool needsArms = testsThenable || promise == PromiseOperand::PromiseOrUndefined;
+        if (needsArms && context.shapeAt(id) != CodeShape::Fast)
             continue;
 
-        bool needsArms = testsThenable || promise == PromiseOperand::PromiseOrUndefined;
         // Each copy of a ReturnAsyncResult must be returned by its own block.
         if (needsArms && !context.isOnlyReturned(id))
             continue;
@@ -269,7 +281,7 @@ static void matchResolutionsOfNewPromises(SelectionContext& context, Vector<Matc
     for (ValueID id : context.candidates(Opcode::ResolvePromise)) {
         const Value& value = function.at(id);
         bool testsThenable = mayBeThenable(context, value.valueOperand());
-        if (testsThenable && context.shapeAt(id) == CodeShape::Compact)
+        if (testsThenable && context.shapeAt(id) != CodeShape::Fast)
             continue;
         if (!isFirstUseOfNewPromise(context, id, value.promiseOperand()))
             continue;
@@ -288,6 +300,51 @@ void selectFreshPromiseFulfillment(SelectionContext& context)
     matchResolutionsOfNewPromises(context, matches);
     context.rewriteGroups(SelectionRuleID::FreshPromiseFulfillment, matches, [](GroupRewriter& rewriter, const Match& match) {
         rewrite(rewriter, match);
+    });
+}
+
+static bool awaitsPrimitive(SelectionContext& context, ValueID await)
+{
+    constexpr uint16_t presentPrimitives = Primitive::Defined & ~Primitive::Absent;
+    const Type& awaited = context.typeOf(context.function().at(await).awaitedOperand());
+    return !awaited.isNever() && awaited.hasOnlyPrimitives(presentPrimitives) && awaited.isSubsetOf(context.typeOf(await), context.program());
+}
+
+static void rewriteAwaitOfPrimitive(GroupRewriter& rewriter, const AwaitOfPrimitive& match)
+{
+    const Value& original = rewriter.original(match.group.root);
+    ValueID awaited = original.awaitedOperand();
+    TypeID type = original.type;
+
+    rewriter.beginArms();
+    IRBuilder& builder = rewriter.builder();
+    IRBuilder::BranchBlocks arms = builder.emitBranch(builder.append(Opcode::AwaitMayContinue, { }));
+    rewriter.endArm(builder.appendUpcast(awaited, type));
+
+    builder.moveToEndOf(arms.notTaken);
+    rewriter.endArm(rewriter.appendOriginals());
+}
+
+// An await of a primitive queues the job that resumes the function. With nothing else queued that job runs next, and a frame that a job entered as the last thing it does
+// runs nothing of the program on its way back to the queue. So nobody can tell whether such a frame was saved, nor whether the job took a turn more.
+void selectAwaitInPlace(SelectionContext& context)
+{
+    const Function& function = context.function();
+    if (function.role != FunctionRole::CoroutineBody || coroutineOfBody(function).kind != CoroutineKind::AsyncFunction)
+        return;
+
+    Vector<AwaitOfPrimitive> matches;
+    for (ValueID id : context.candidates(Opcode::AwaitBySavingFrame)) {
+        if (context.shapeAt(id) != CodeShape::Fast || !awaitsPrimitive(context, id))
+            continue;
+
+        AwaitOfPrimitive match { groupOfOne(id) };
+        match.group.hasSlowPath = true;
+        if (context.tryClaim(SelectionRuleID::AwaitInPlace, match.group) == ClaimResult::Claimed)
+            matches.append(WTF::move(match));
+    }
+    context.rewriteGroups(SelectionRuleID::AwaitInPlace, matches, [](GroupRewriter& rewriter, const AwaitOfPrimitive& match) {
+        rewriteAwaitOfPrimitive(rewriter, match);
     });
 }
 

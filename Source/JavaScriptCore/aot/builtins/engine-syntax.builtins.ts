@@ -62,11 +62,16 @@ export default b.declarations(
   b.excluded("GeneratorPrototype", "generatorResume"),
   b.handwritten(
     "ArrayIteratorPrototype",
+    "AsyncDisposableStackPrototype",
+    "DisposableStackPrototype",
+    "FunctionPrototype",
     "GeneratorPrototype",
     "IteratorOperations",
     "JSIteratorHelperPrototype",
     "MapPrototype",
+    "ObjectConstructor",
     "SetPrototype",
+    "TypedArrayPrototype",
   ),
 
   b.intrinsic("alwaysInline", "Value", { intrinsic: "Directive", directive: "AlwaysInline" }),
@@ -105,7 +110,6 @@ export default b.declarations(
   operation("ArraySpeciesCreate", "newArrayWithSpecies"),
   operation("ConstructList", "constructList"),
   operation("CreatePromise", "createPromise"),
-  operation("ElemDelete", "deleteByValSloppy"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
   operation("ToObject", "toObject"),
@@ -211,7 +215,6 @@ export default b.declarations(
   operation("StepArrayIterator", "stepArrayIterator"),
   operation("StepGenerator", "stepGenerator"),
 
-  enumerators("Typed::ECMAMode", { ecmaModeSloppy: [1, "Sloppy"] }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {
     generatorStepStatusCompleted: [1, "Completed"],

@@ -1,4 +1,4 @@
-# Function words select what print prints: those functions, in the order written, and no other line
+# Function words select what print prints: those functions, in the order of the words, and no other line
 # RUN: print f1 f0
 # CHECK-NOT: module m0
 # CHECK: function f1 name="second" module=m0

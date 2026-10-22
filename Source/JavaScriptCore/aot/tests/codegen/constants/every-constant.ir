@@ -16,6 +16,29 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Parameter
+typesite w5 module=m0 position=60 kind=Parameter
+typesite w6 module=m0 position=70 kind=Parameter
+typesite w7 module=m0 position=80 kind=Parameter
+typesite w8 module=m0 position=90 kind=Parameter
+typesite w9 module=m0 position=100 kind=Parameter
+typesite w10 module=m0 position=110 kind=Parameter
+typesite w11 module=m0 position=120 kind=Parameter
+typesite w12 module=m0 position=130 kind=Parameter
+typesite w13 module=m0 position=140 kind=Parameter
+typesite w14 module=m0 position=150 kind=Parameter
+typesite w15 module=m0 position=160 kind=Parameter
+typesite w16 module=m0 position=170 kind=Parameter
+typesite w17 module=m0 position=180 kind=Parameter
+typesite w18 module=m0 position=190 kind=Parameter
+typesite w19 module=m0 position=200 kind=Parameter
+typesite w20 module=m0 position=210 kind=Parameter
+typesite w21 module=m0 position=220 kind=Parameter
+typesite w22 module=m0 position=230 kind=Parameter
 layout L0 kind=Environment fields=[{key="n" declared={type=number|absent}}, {key="i" declared={type=i32|absent}}, {key="s" declared={type=string|absent}}, {key="l" declared={type=absent|"a"}}, {key="v" declared={type=anything|absent}}]
 layout L1 name="Point" fields=[{key="x" declared={type=number}}]
 data d0 root=Array{contents=anything elements=[Boolean{}, Null, Number{}]} module=m0
@@ -38,7 +61,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v11
 }
 
-function f1 name="eachKind" parameters=[{type=int}] results=[{type=anything}] {
+function f1 name="eachKind" parameters=[{type=int site=w0}] results=[{type=anything}] {
   b0(v0: int):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
   b1():
@@ -76,7 +99,7 @@ function f1 name="eachKind" parameters=[{type=int}] results=[{type=anything}] {
     Return v17
 }
 
-function f2 name="eachKindAsAnything" parameters=[{type=int}] results=[{type=anything}] {
+function f2 name="eachKindAsAnything" parameters=[{type=int site=w1}] results=[{type=anything}] {
   b0(v0: int):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
   b1():
@@ -106,24 +129,25 @@ function f2 name="eachKindAsAnything" parameters=[{type=int}] results=[{type=any
     Return v9
 }
 
-function f3 name="integerRepresentations" parameters=[{type=boolean}, {type=int}, {type=number}, {type=undefined|int}] results=[{type=anything}] {
+function f3 name="integerRepresentations" parameters=[{type=boolean site=w2}, {type=int site=w3}, {type=number site=w4}, {type=undefined|int site=w5}] results=[{type=anything}] {
   b0(v0: boolean, v1: int, v2: number, v3: undefined|int):
-    Branch v0 -> taken b1(), notTaken b2()
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
   b1():
-    v4 = Integer integer=7
-    v5 = Upcast v4 castType=number
-    v6 = Upcast v4 castType=undefined|int
-    Jump -> next b3(v4, v5, v6)
+    v5 = Integer integer=7
+    v6 = Upcast v5 castType=number
+    v7 = Upcast v5 castType=undefined|int
+    Jump -> next b3(v5, v6, v7)
   b2():
     Jump -> next b3(v1, v2, v3)
-  b3(v7, v8, v9):
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="sink" [isFreeName]
-    v12 = Call v11, -, v7, v8, v9
-    Return v12
+  b3(v8, v9, v10):
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="sink" [isFreeName]
+    v13 = Call v12, -, v8, v9, v10
+    Return v13
 }
 
-function f4 name="constantsInWiderTypes" parameters=[{type=int}, {type=undefined|int}, {type=undefined|number}, {type=null|number}, {type=number}, {type=int}, {type=undefined|"a"}, {type=null|"a"}] results=[{type=anything}] {
+function f4 name="constantsInWiderTypes" parameters=[{type=int site=w6}, {type=undefined|int site=w7}, {type=undefined|number site=w8}, {type=null|number site=w9}, {type=number site=w10}, {type=int site=w11}, {type=undefined|"a" site=w12}, {type=null|"a" site=w13}] results=[{type=anything}] {
   b0(v0: int, v1: undefined|int, v2: undefined|number, v3: null|number, v4: number, v5: int, v6: undefined|"a", v7: null|"a"):
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -153,15 +177,19 @@ function f4 name="constantsInWiderTypes" parameters=[{type=int}, {type=undefined
 }
 
 # Unspecified is legal from Prepared, so AsRead text cannot contain it: SplitFreshResults creates one for each part of the absent result
-function f5 name="unspecifiedParts" parameters=[{type=boolean}, {type=number}, {type=string}, {type=anything}] results=[{type=undefined|Array<anything>}] {
+# The conversions give the parts their types also in the copy of the body that runs when an argument has another type
+function f5 name="unspecifiedParts" parameters=[{type=boolean site=w14}, {type=number site=w15}, {type=string site=w16}, {type=anything}] results=[{type=undefined|Array<anything>}] {
   b0(v0: boolean, v1: number, v2: string, v3: anything):
-    Branch v0 -> taken b1(), notTaken b2()
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
   b1():
-    v4 = NewArray v1, v2, v3 contents=anything
-    Return v4
+    v5 = ToNumber v1
+    v6 = ToString v2
+    v7 = NewArray v5, v6, v3 contents=anything
+    Return v7
   b2():
-    v5 = Undefined
-    Return v5
+    v8 = Undefined
+    Return v8
 }
 
 # TypeTest needs no frame, so the symbol it compares with is created by a call on a rare path only
@@ -171,18 +199,19 @@ function f6 name="symbolTestInLeaf" parameters=[{type=anything}] results=[{type=
     Return v1
 }
 
-function f7 name="absentInWiderTypes" parameters=[{type=boolean}, {type=number}, {type=i32}, {type=string}, {type="a"}, {type=anything}] results=[{type=anything}] {
+function f7 name="absentInWiderTypes" parameters=[{type=boolean site=w17}, {type=number site=w18}, {type=i32 site=w19}, {type=string site=w20}, {type="a" site=w21}, {type=anything}] results=[{type=anything}] {
   b0(v0: boolean, v1: number, v2: i32, v3: string, v4: "a", v5: anything):
-    Branch v0 -> taken b1(), notTaken b2()
+    v6 = ToBoolean v0
+    Branch v6 -> taken b1(), notTaken b2()
   b1():
-    v6 = Absent
-    Jump -> next b3(v6, v6, v6, v6, v6)
+    v7 = Absent
+    Jump -> next b3(v7, v7, v7, v7, v7)
   b2():
     Jump -> next b3(v1, v2, v3, v4, v5)
-  b3(v7, v8, v9, v10, v11):
-    v12 = NewObject -, v7, v8, v9, v10, v11 layout=L0 fields=[0, 1, 2, 3, 4]
-    v13 = NewClosure v12 function=f8
-    Return v13
+  b3(v8, v9, v10, v11, v12):
+    v13 = NewObject -, v8, v9, v10, v11, v12 layout=L0 fields=[0, 1, 2, 3, 4]
+    v14 = NewClosure v13 function=f8
+    Return v14
 }
 function f8 name="readsEachField" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -204,15 +233,16 @@ function f9 name="objectOfTheModule" results=[{type=anything}] {
     v0 = ModuleBuiltin builtin=ImportMeta module=m0
     Return v0
 }
-function f10 name="data" parameters=[{type=boolean}] results=[{type=anything}] {
+function f10 name="data" parameters=[{type=boolean site=w22}] results=[{type=anything}] {
   b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v1 = Data data=d0
-    Return v1
-  b2():
-    v2 = Data data=d1
+    v2 = Data data=d0
     Return v2
+  b2():
+    v3 = Data data=d1
+    Return v3
 }
 # KEY: = KeyConstant key=@@iterator
 # ABSENT: : absent = Absent

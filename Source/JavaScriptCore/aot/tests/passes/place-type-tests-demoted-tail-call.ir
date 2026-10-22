@@ -1,4 +1,4 @@
-# Under the test of a predicted callee the direct call keeps the mark of a demoted tail call, and so does the call by value on the other side
+# Under the test of an expected callee the direct call keeps the mark of a demoted tail call, and so does the call by value on the other side
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Changed
@@ -8,7 +8,7 @@ function f0 name="plain" kind=Arrow parameters=[{type=anything}] results=[{type=
   b0(v0: anything):
     Return v0
 }
-function f1 name="marked-call" parameters=[{type=anything predicted=f0}, {type=anything}] results=[{type=anything}] {
+function f1 name="marked-call" parameters=[{type=f0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f0, v1: anything):
     v2 = Call v0, -, v1 [isDemotedTailCall]
     Return v2
@@ -18,7 +18,7 @@ function f1 name="marked-call" parameters=[{type=anything predicted=f0}, {type=a
 # CHECK: anything = CallDirect v1 function=f0 [isDemotedTailCall]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = Call {{*}}, -, v1 [isDemotedTailCall]
-function f2 name="ordinary-call" parameters=[{type=anything predicted=f0}, {type=anything}] results=[{type=anything}] {
+function f2 name="ordinary-call" parameters=[{type=f0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f0, v1: anything):
     v2 = Call v0, -, v1
     Return v2

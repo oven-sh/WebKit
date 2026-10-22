@@ -1,0 +1,32 @@
+# What a generator returns is the value inside its last result. A call of it gives the generator, of which its body proves nothing:
+# the declared result of the body behind the tests stays expected, as it is on the function that is split. SplitCoroutines gives it the type Generator later, and every call is typed again
+# FORM: AsRead
+# RUN: pipeline SplitBehindEntryChecks
+# RUN(LATER): pipeline SplitCoroutines
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# STATISTIC: ResultsProvenBehindEntryChecks = 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=15 kind=Parameter
+layout L0 name="Numbers" fields=[{key="next" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="range" module=m0 position=5 flags=[IsGenerator, TakesCallee, IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=L0 flags=[IsExpected]}] {
+  b0(v0: function, v1: number):
+    InitialYield
+    v3 = Yield v1
+    v4 = ResultAt v3 index=0
+    Return
+}
+# CHECK-LABEL: function f1 name="range" module=m0 position=5 role=EntryChecks
+# CHECK: name="range" module=m0 position=5 flags=[IsGenerator, TakesCallee, IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=L0 flags=[IsExpected]}]
+# CHECK: InitialYield
+# LATER: role=CoroutineRamp{{*}}results=[{type=Generator}]

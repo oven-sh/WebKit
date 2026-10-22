@@ -29,6 +29,7 @@ private:
     using Links = Vector<ArrayMethodCall, ChainShape::maxNumberOfLinks>;
 
     void tryChain(BlockID, const ArrayMethodCall& last);
+    bool isWorthFusingIn(BlockID);
     bool takeEnd(ArrayChain&, const ArrayMethodCall& last);
     bool takeRange(ArrayChain&, const ArrayMethodCall& slice);
     ValueID collectLinks(ArrayChain&, const ArrayMethodCall& last, Links&);
@@ -55,11 +56,7 @@ ChainFinder::ChainFinder(FunctionPassContext& context)
 
 Vector<ArrayChain> ChainFinder::run()
 {
-    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        if (frequencies.classOf(block) == BlockFrequency::Rare || m_context.runsAtMostOnce(block) || isCold(heatClassOf(m_context, block)))
-            continue;
-
         const BlockValues& values = m_function.at(block).values;
         for (size_t index = values.size(); index--;) {
             ValueID id = values[index];
@@ -72,8 +69,17 @@ Vector<ArrayChain> ChainFinder::run()
     return WTF::move(m_chains);
 }
 
+bool ChainFinder::isWorthFusingIn(BlockID block)
+{
+    return m_analyses.blockFrequencies().classOf(block) != BlockFrequency::Rare && !m_context.runsAtMostOnce(block) && !isCold(heatClassOf(m_context, block));
+}
+
 void ChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
 {
+    const Terminator& terminator = m_function.at(block).terminator;
+    if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == last.call)
+        return;
+
     ArrayChain chain;
     chain.block = block;
     chain.lastCall = last.call;
@@ -97,6 +103,8 @@ void ChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
 
     size_t numberOfLinks = linksFromLast.size();
     if (numberOfLinks + (chain.rangeCall ? 1 : 0) + (chain.shape.end != ChainEndKind::Array ? 1 : 0) < 2)
+        return;
+    if (!isWorthFusingIn(block))
         return;
 
     for (size_t i = 0; i < numberOfLinks; ++i) {
@@ -223,7 +231,7 @@ bool ChainFinder::isPassingCast(ValueID cast)
 
 FunctionID ChainFinder::calleeOf(ValueID callback) const
 {
-    CalleeCandidates candidates = calleeCandidates(m_context.program, m_context.inputs.flow, m_function, callback, CalleeSetID(), AccessSiteID());
+    CalleeCandidates candidates = calleeCandidates(m_context.program, m_function, callback);
     if (!candidates.isProven() || candidates.proven.size() != 1 || candidates.hasOtherCallees || candidates.mayBeNullish)
         return { };
     return candidates.proven[0];

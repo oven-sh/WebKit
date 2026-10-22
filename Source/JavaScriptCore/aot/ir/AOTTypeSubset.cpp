@@ -108,23 +108,44 @@ bool mayContainAnyBuiltin(const Type& type)
     return type.anyFunction || !type.classes.isEmpty();
 }
 
-static bool isNativeCallee(BuiltinCallee callee)
+const RuntimeFunctionData* findTableRecordOf(const Program& program, FunctionID function)
 {
-    switch (callee) {
-    case BuiltinCallee::None:
-    case BuiltinCallee::Function:
-        return false;
-    case BuiltinCallee::HostFunction:
-    case BuiltinCallee::InternalFunction:
-        return true;
+    const BuiltinTable& builtins = program.builtins();
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        if (entry.function == function)
+            return builtins.contains(entry.id) ? &builtins.at(entry.id) : nullptr;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
+static bool putsValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
+{
+    return std::ranges::any_of(uses.list, [&](const BuiltinHostUse& use) {
+        if (use.use == BuiltinHostReadUse::IsValueOf)
+            return builtins.canonicalID(use.builtin) == entry;
+        return use.use == BuiltinHostReadUse::Called && use.call && putsValueInto(builtins, use.call->result, entry);
+    });
+}
+
+// process.nextTick is what a function of the library answers to native code. The table does not say which function of the library that is.
+static bool holdsValueFromLibrary(const BuiltinTable& builtins, BuiltinID entry)
+{
+    bool isExport = std::ranges::any_of(builtins.moduleLoadsOf(entry), [&](const BuiltinModuleLoad& load) {
+        return std::ranges::any_of(load.usesOfExports, [&](const BuiltinHostUses& uses) {
+            return putsValueInto(builtins, uses, entry);
+        });
+    });
+    return isExport || std::ranges::any_of(builtins.calledFunctionsOf(entry), [&](const BuiltinCalledFunction& called) {
+        return putsValueInto(builtins, called.uses, entry);
+    });
 }
 
 // The engine, the host and the library make the built-in objects, so none is a closure of a function of the application.
-// Where the table names the code of an entry, the entry's function object is native or a closure of that function.
-// An entry that calls whatever its property holds, or a function that the table does not name, may be a closure of any function of the library.
-bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function)
+// The function object of an entry is a closure of a function of the library where the table says so: the record of the function lists the entry, an overload of the entry names the function,
+// or native code puts there what it got from the library.
+// Of every other entry the table does not say what its function object is. It is no member of a type that names functions: it gets there as a value, by a conversion that the program performs,
+// which puts it among the built-ins of the type. Otherwise every callback type of the library would hold `eval`, `require` and whatever else has a signature.
+bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function, const RuntimeFunctionData* recordOfFunction)
 {
     const Program* program = types.program();
     if (!program)
@@ -133,18 +154,40 @@ bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID functi
         return false;
 
     const BuiltinTable& builtins = types.builtins();
-    bool isKnown = false;
-    for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
-        const BuiltinImplementation& implementation = overload.code.implementation;
-        const RuntimeFunctionEntry* entry = findRuntimeFunction(*program, implementation.function);
-        if (entry && entry->function == function)
-            return true;
-        if (implementation.function || isNativeCallee(implementation.callee))
-            isKnown = true;
-        else if (implementation.kind == BuiltinImplementationKind::Generic || implementation.callee == BuiltinCallee::Function)
-            return true;
+    BuiltinID canonical = builtins.canonicalID(builtin);
+    if (recordOfFunction && std::ranges::find(recordOfFunction->implements, canonical) != recordOfFunction->implements.end())
+        return true;
+    if (holdsValueFromLibrary(builtins, canonical))
+        return true;
+    return std::ranges::any_of(builtins.overloadsOf(canonical), [&](const BuiltinOverload& overload) {
+        const RuntimeFunctionEntry* entry = findRuntimeFunction(*program, overload.code.implementation.function);
+        return entry && entry->function == function;
+    });
+}
+
+bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function)
+{
+    const Program* program = types.program();
+    return mayBeClosureOf(types, builtin, function, program ? findTableRecordOf(*program, function) : nullptr);
+}
+
+LibraryClosuresOfBuiltin libraryClosuresOf(const TypeTable& types, BuiltinID builtin)
+{
+    LibraryClosuresOfBuiltin closures;
+    const Program* program = types.program();
+    if (!program) {
+        closures.mayBeAnyFunctionOfLibrary = true;
+        return closures;
     }
-    return !isKnown;
+
+    const BuiltinTable& builtins = types.builtins();
+    BuiltinID canonical = builtins.canonicalID(builtin);
+    closures.mayBeAnyFunctionOfLibrary = holdsValueFromLibrary(builtins, canonical);
+    for (const BuiltinOverload& overload : builtins.overloadsOf(canonical)) {
+        if (const RuntimeFunctionEntry* entry = findRuntimeFunction(*program, overload.code.implementation.function))
+            closures.functions.appendIfNotContains(entry->function);
+    }
+    return closures;
 }
 
 bool mayContainBuiltin(const TypeTable& types, const Type& type, BuiltinID builtin)
@@ -192,10 +235,27 @@ static bool areCallablesSubset(const Type& a, const Type& b, const BuiltinTable&
     });
 }
 
+// A Buffer is a Uint8Array. Both are told by one cell type, so the test for the class that is extended takes every instance of the class that extends it.
+static const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
+{
+    if (const ClassPart* part = type.findClassPart(builtinClass))
+        return part;
+    const BuiltinClass& held = builtins.at(builtinClass);
+    if (held.instanceTest != BuiltinInstanceTest::JSTypeEquals)
+        return nullptr;
+    for (const ClassPart& part : type.classes) {
+        const BuiltinClass& holder = builtins.at(part.builtinClass);
+        bool areToldByOneTest = holder.instanceTest == BuiltinInstanceTest::JSTypeEquals && holder.type == held.type;
+        if (areToldByOneTest && !part.contentsAreProven && !part.provenPristine.contains(PristineAspects::Names) && builtins.isSameOrSubclassOf(builtinClass, part.builtinClass))
+            return &part;
+    }
+    return nullptr;
+}
+
 static bool areClassesSubset(const Type& a, const Type& b, const TypeTable& types)
 {
     return std::ranges::all_of(a.classes, [&](const ClassPart& part) {
-        const ClassPart* partner = b.findClassPart(part.builtinClass);
+        const ClassPart* partner = findPartHolding(b, part.builtinClass, types.builtins());
         return partner && isPartSubset(part, *partner, types);
     });
 }
@@ -314,6 +374,11 @@ static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
         return false;
     if (a.anyObject || b.anyObject)
         return true;
+    auto listsObjectsWithoutLayout = [](const Type& type) {
+        return type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || !type.classes.isEmpty();
+    };
+    if ((hasMembersWithoutLayout(types, a) && listsObjectsWithoutLayout(b)) || (hasMembersWithoutLayout(types, b) && listsObjectsWithoutLayout(a)))
+        return true;
     const BuiltinTable& builtins = types.builtins();
     return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types);
 }
@@ -326,6 +391,15 @@ bool overlap(const Type& a, const Type& b, const TypeTable& types)
         return true;
     if (literalsOverlap(a, b, stringPart) || literalsOverlap(a, b, symbolPart))
         return true;
+    if (a.opaque && a.opaque == b.opaque)
+        return true;
+    if (a.environment && a.environment == b.environment)
+        return true;
+    return objectsOverlap(a, b, types);
+}
+
+bool mayBeSameObject(const Type& a, const Type& b, const TypeTable& types)
+{
     if (a.opaque && a.opaque == b.opaque)
         return true;
     if (a.environment && a.environment == b.environment)

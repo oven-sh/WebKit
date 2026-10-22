@@ -207,6 +207,8 @@ static void printAccesses(PrintStream& out, const PlacedProgram& placed)
         printer.print(access.receivers);
         out.print(access.isStore ? " store "_s : " read "_s, nameOf(access.coverage), " "_s);
         printSlot(out, access.slot);
+        if (access.findsOffsetByShape)
+            out.print(" offsetByShape"_s);
         if (access.slot.needsExtension()) {
             out.print(" extension="_s);
             printSlot(out, access.extensionWord);
@@ -294,14 +296,22 @@ static void printAllocations(PrintStream& out, const PlacedProgram& placed)
 static void printGuards(PrintStream& out, const PlacedProgram& placed)
 {
     IRPrinter printer(out, placed.program());
-    std::span<const PlacedGuardBit> guards = placed.placement().guardBits().bits.span();
+    const GuardBitTable& table = placed.placement().guardBits();
+    std::span<const PlacedGuardBit> guards = table.bits.span();
     for (size_t index = 0; index < guards.size(); ++index) {
         const PlacedGuardBit& guard = guards[index];
         out.print("guard "_s, index, " "_s);
-        printer.print(guard.classLayout);
-        out.print(" "_s, nameOf(guard.side), " "_s, nameOf(guard.kind), " "_s);
-        printer.print(guard.key);
-        out.println(" bit="_s, guard.bit, " word@"_s, guard.wordOffset);
+        if (guard.classLayout) {
+            printer.print(guard.classLayout);
+            out.print(" "_s, nameOf(guard.side), " "_s, nameOf(guard.kind), " "_s);
+            printer.print(guard.key);
+        } else {
+            out.print("set "_s);
+            printList(out, table.membersOf(GuardBitID(index)), [&](GuardBitID member) {
+                out.print(member.index());
+            });
+        }
+        out.println(" bit="_s, guard.bit, " word@"_s, guard.wordOffset, guard.holdsWhileClear ? " holdsWhileClear"_s : ""_s);
     }
 }
 
@@ -327,6 +337,8 @@ static void printModuleValues(IRPrinter& printer, const Placement& placement)
 {
     for (uint32_t index = 0; index < printer.program().modules.size(); ++index) {
         ModuleID id(index);
+        if (!placement.hasModuleValue(id))
+            continue;
         printer.out().print("module-value "_s);
         printer.print(id);
         printer.out().println(" @"_s, placement.moduleValueOffset(id));
@@ -337,10 +349,14 @@ static void printGuardWords(IRPrinter& printer, const GuardBitTable& guards)
 {
     const PlacedGuardBit* previous = nullptr;
     for (const PlacedGuardBit& guard : guards.bits) {
-        bool isFirstOfClassSide = !previous || previous->classLayout != guard.classLayout || previous->side != guard.side;
+        bool isFirstOfWord = !previous || previous->wordOffset != guard.wordOffset;
         previous = &guard;
-        if (!isFirstOfClassSide)
+        if (!isFirstOfWord)
             continue;
+        if (!guard.classLayout) {
+            printer.out().println("guard-word sets @"_s, guard.wordOffset);
+            continue;
+        }
         printer.out().print("guard-word "_s);
         printer.print(guard.classLayout);
         printer.out().println(" "_s, nameOf(guard.side), " @"_s, guard.wordOffset);
@@ -362,11 +378,11 @@ static void printSharedStorage(IRPrinter& printer, const RequestTable& requests)
 {
     for (const RequestRecord& record : requests.records()) {
         auto* request = std::get_if<DataRecord>(&record);
-        if (!request || !request->sharedStorageOffset)
+        if (!request || !(request->sharedStorageOffset || request->node))
             continue;
-        printer.out().print("shared-storage "_s);
+        printer.out().print(request->node ? "storage-in-image "_s : "shared-storage "_s);
         printer.print(request->data);
-        printer.out().println(" @"_s, *request->sharedStorageOffset);
+        printer.out().println(" @"_s, request->node ? *request->node : *request->sharedStorageOffset);
     }
 }
 
@@ -626,7 +642,7 @@ static bool mutateValues(const MutationContext& context, MutatedValues mutatedVa
         Function& function = context.editor.at(id);
         for (const Block& block : function.blocks) {
             for (ValueID value : block.values) {
-                if (!mutateValue(function.at(value)))
+                if (!mutateValue(function.edit(value)))
                     continue;
                 out.print("mutated "_s);
                 context.printer.print(id);

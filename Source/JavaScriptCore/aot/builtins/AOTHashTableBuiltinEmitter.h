@@ -19,6 +19,7 @@ public:
     explicit HashTableBuiltinEmitter(CodeGenerator&);
 
     void generateNewMap(const InlineCall&);
+    void generateNewSet(const InlineCall&);
     void generateMapGet(const InlineCall&);
     void generateMapHas(const InlineCall&);
     void generateSetHas(const InlineCall&);
@@ -37,6 +38,17 @@ private:
     void lookUp(const InlineCall&, HashTableOwner, bool returnsValue);
     void insert(const InlineCall&, HashTableOwner);
     void generateSize(const InlineCall&, HashTableOwner);
+};
+
+class KeyPartsLookupEmitter final : public BuiltinFamilyEmitter {
+public:
+    explicit KeyPartsLookupEmitter(CodeGenerator&);
+
+    void generateMapGetByKeyParts(const ValueContext&);
+    void generateHasByKeyParts(const ValueContext&);
+
+private:
+    Pointer partsBuffer(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

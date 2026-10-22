@@ -46,6 +46,8 @@ function f3 name="inner" role=Library enclosingRuntimeFunction=8 results=[{type=
 # CHECK: trace f2 role=Library source=f2 implements=FunctionPrototypeApply
 # CHECK: trace f3 role=Library source=f3 implements=- {{*}}builtinKind=JSBuiltin
 # CHECK: role=GenericEntrypoint source=f1 implements=ArrayPrototypeAt
-# SIZES: functionTraces 6 12
-# SIZES-NEXT: functionSources 2 8
+# SIZES: functionRecordNumbers 6 6
+# SIZES-NEXT: functionRecords
+# SIZES-NEXT: functionRecordsByFunction 0 0
+# SIZES-NEXT: functionSources 2 6
 # SIZES-NEXT: implementedBuiltins 3 24

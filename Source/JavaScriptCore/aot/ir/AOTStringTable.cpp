@@ -140,7 +140,7 @@ static StringTable::Error checkStringAsRead(const BuiltinTable& builtins, const 
     return StringTable::Error::None;
 }
 
-StringTable::InitializationResult StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& loops, Vector<StringAsRead>&& strings)
+StringTable::InitializationResult StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& loops, Vector<StringAsRead>&& strings, WhatIsSaidOfStrings whatIsSaid)
 {
     RELEASE_ASSERT(!m_builtins && strings.size() < provisionalBit);
     m_builtins = &builtins;
@@ -160,7 +160,7 @@ StringTable::InitializationResult StringTable::initialize(const BuiltinTable& bu
             m_nameClasses[i] = string.nameClass;
             m_builtinNames[i] = string.builtinName;
             hashes[i] = hashOf(string.bytes);
-            errors[i] = checkStringAsRead(builtins, string);
+            errors[i] = whatIsSaid == WhatIsSaidOfStrings::IsChecked ? checkStringAsRead(builtins, string) : Error::None;
         }
     });
     size_t lowestInvalid = errors.findIf([](Error error) {

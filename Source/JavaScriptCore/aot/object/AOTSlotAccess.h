@@ -48,6 +48,13 @@ inline bool slotHoldsAbsent(SlotRepresentation representation, const void* slot)
     return traits.hasAbsent && readSlotBits(representation, slot) == traits.absentBits;
 }
 
+inline bool slotHoldsMarker(SlotRepresentation representation, const void* slot)
+{
+    SlotTraits traits = traitsOf(representation);
+    uint64_t bits = readSlotBits(representation, slot);
+    return (traits.hasAbsent && bits == traits.absentBits) || (traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits);
+}
+
 JSValue readSlot(SlotRepresentation, const void* slot, const ProgramStrings&);
 bool tryWriteSlot(ProgramStrings&, SlotRepresentation, void* slot, JSValue);
 bool tryWriteInt32(SlotRepresentation, void* slot, int32_t);

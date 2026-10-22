@@ -7,7 +7,7 @@ layout L0 name="Handlers" fields=[{key="run" declared={type=f2} flags=[IsRequire
 
 function f0 name="otherFieldReadAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=f2}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean, v3: f2):
-    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4
@@ -32,7 +32,7 @@ function f0 name="otherFieldReadAfterRareUse" parameters=[{type=anything}, {type
 
 function f1 name="deferredFieldReadAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=f2}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean, v3: f2):
-    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4

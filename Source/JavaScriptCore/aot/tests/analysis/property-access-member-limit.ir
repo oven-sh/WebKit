@@ -1,4 +1,6 @@
-# A receiver with more members than the limit has no plan, so the access stays by name, and its neighbor within the limit keeps its slot
+# MaxAccessPlanMembers does not bound the PROVEN members of an access: they are grouped by where they find the name, once for each list and name, however many they are.
+# Over the limit (2) an access is planned as within it: every member finds the name at one place (v3): a proven slot; one member lacks the name (v4): the ordinary split, whose arms
+# MaxDispatchCases bounds. It used to be "no plan": by name. Within the limit (v5) nothing changes. Nothing is lost, so no limit is reported.
 # FORM: Prepared
 # OPTIONS: limit=MaxAccessPlanMembers:2
 # RUN: property-access
@@ -7,12 +9,17 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="First" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0]}
 layout L1 name="Second" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1]}
 layout L2 name="Third" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L2]}
+layout L3 name="Fourth" fields=[{key="y" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L3]}
 
-function f0 name="reads" parameters=[{type=L0|L1|L2}, {type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2, v1: L0|L1):
-    v2 = PropGet v0 key="x"
-    v3 = PropGet v1 key="x"
-    Return v3
+function f0 name="reads" parameters=[{type=L0|L1|L2}, {type=L0|L1|L3}, {type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2, v1: L0|L1|L3, v2: L0|L1):
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v1 key="x"
+    v5 = PropGet v2 key="x"
+    Return v5
 }
-# CHECK: F0 v2 PropGet [[key]]: form=ByName level=Unknown receivers=[] cause=LimitReached limit=MaxAccessPlanMembers
-# CHECK-NEXT: F0 v3 PropGet [[key]]: form=Slot level=Proven operation=GetSlot receivers=[L0, L1] member=(Field level=Proven)
+# CHECK-NOT: limit=
+# CHECK: F0 v3 PropGet [[key]]: form=Slot level=Proven operation=GetSlot receivers=[L0, L1, L2] member=(Field level=Proven)
+# CHECK-NEXT: F0 v4 PropGet [[key]]: form=Split level=Proven receivers=[L0, L1, L3]
+# CHECK-NEXT: F0 v5 PropGet [[key]]: form=Slot level=Proven operation=GetSlot receivers=[L0, L1] member=(Field level=Proven)
+# CHECK-NOT: limit=

@@ -53,7 +53,7 @@ function f2 name="identity" parameters=[{type=anything}] results=[{type=anything
 # SELECT-NOT: integer=1
 # SELECT-NOT: function=f2
 # SELECT: [[product]]: number = Mul {{*}}form=
-# SELECT-LABEL: function f2 name="identity"
+# SELECT-LABEL: entry module=m0
 # REPRESENT-LABEL: function f1 name="callsIdentity"
 # REPRESENT: [[product]]: number @{{*}} = Mul {{*}}form=
-# REPRESENT-LABEL: function f2 name="identity"
+# REPRESENT-LABEL: entry module=m0

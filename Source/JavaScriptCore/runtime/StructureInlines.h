@@ -243,9 +243,8 @@ inline unsigned Structure::dictionaryPropertyCount() const
     return table ? table->size() : std::numeric_limits<unsigned>::max();
 }
 
-ALWAYS_INLINE void Structure::didAddProperty(PropertyName propertyName, unsigned attributes)
+ALWAYS_INLINE void Structure::didAddProperty(VM& vm, PropertyName propertyName, unsigned attributes)
 {
-    VM& vm = this->vm();
     if (attributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
         setIsQuickPropertyAccessAllowedForEnumeration(false);
     if (attributes & PropertyAttribute::ReadOnly)
@@ -286,7 +285,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT(!JSC::isValidOffset(get(vm, propertyName)));
 
     checkConsistency();
-    didAddProperty(propertyName, attributes);
+    didAddProperty(vm, propertyName, attributes);
 
     auto rep = propertyName.uid();
 
@@ -398,7 +397,7 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
 template<typename Func>
 inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
-    RELEASE_ASSERT(!isCompiledStructure() && typeInfo().type() != SlimClosureType);
+    RELEASE_ASSERT(!vm.hasCompiledCode() || (!isCompiledStructure() && typeInfo().type() != SlimClosureType));
     return add<ShouldPin::Yes>(vm, propertyName, attributes, func);
 }
 
@@ -415,7 +414,7 @@ inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, Propert
 template<typename Func>
 ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned newAttributes, NOESCAPE const Func& func) -> decltype(auto)
 {
-    RELEASE_ASSERT(!isCompiledStructure() && typeInfo().type() != SlimClosureType);
+    RELEASE_ASSERT(!vm.hasCompiledCode() || (!isCompiledStructure() && typeInfo().type() != SlimClosureType));
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
 
@@ -431,7 +430,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     ASSERT(!JSC::isValidOffset(get(vm, propertyName)));
 
     checkConsistency();
-    didAddProperty(propertyName, newAttributes);
+    didAddProperty(vm, propertyName, newAttributes);
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
@@ -457,7 +456,7 @@ inline PropertyOffset Structure::attributeChangeWithoutTransition(VM& vm, Proper
 
 ALWAYS_INLINE void Structure::setPrototypeWithoutTransition(VM& vm, JSValue prototype)
 {
-    RELEASE_ASSERT(!isCompiledStructure() && typeInfo().type() != SlimClosureType);
+    RELEASE_ASSERT(!vm.hasCompiledCode() || (!isCompiledStructure() && typeInfo().type() != SlimClosureType));
     ASSERT(isValidPrototype(prototype));
     m_prototype.set(vm, this, prototype);
 }
@@ -581,7 +580,7 @@ ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructureConc
 {
     ConcurrentJSLocker locker(structure->m_lock);
     Structure* result = addPropertyTransitionToExistingStructureImpl(structure, uid, attributes, offset);
-    if (result && !result->isCacheableTransitionFrom(structure))
+    if (result && structure->vm().mayHaveUncacheableTransitions() && !(result->previousID() == structure && result->hasSameCellFlagsAs(*structure)))
         return nullptr;
     return result;
 }
@@ -671,8 +670,12 @@ ALWAYS_INLINE void Structure::visitFields(Structure* thisObject, Visitor& visito
         visitor.append(thisObject->m_propertyTableUnsafe);
     } else if (isAnalyzingHeap)
         visitor.append(thisObject->m_propertyTableUnsafe);
-    else if (thisObject->m_propertyTableUnsafe)
-        thisObject->m_propertyTableUnsafe.clear();
+    else if (thisObject->m_propertyTableUnsafe) {
+        if (Options::useAOT() && thisObject->canDropTransitionChain()) [[unlikely]]
+            visitor.append(thisObject->m_propertyTableUnsafe);
+        else
+            thisObject->m_propertyTableUnsafe.clear();
+    }
 
     // Mark only in non Full collection. In full collection, we handle it as a weak-link.
     if (visitor.collectionScope() != CollectionScope::Full) {

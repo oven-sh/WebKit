@@ -10,14 +10,14 @@ layout L1 kind=Instance name="Point" constructor=f2 fields=[{key="x" declared={t
 
 function f0 name="libraryFunction" role=Library parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number):
-    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return v1
 }
 # CHECK: f0: barrier=None{{*}} returnsFreshAggregate
 
 function f1 name="getter" kind=Getter flags=[HasThis] thisType={type=number} results=[{type=anything}] {
   b0(v0: number):
-    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return v1
 }
 # CHECK: f1: barrier=None{{*}} returnsFreshAggregate
@@ -38,7 +38,7 @@ function f3 name="freshOnOnePath" role=Library parameters=[{type=number}, {type=
   b1():
     Return v1
   b2():
-    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return v3
 }
 # CHECK: f3: barrier=None{{*}} returnsFreshAggregate
@@ -52,7 +52,7 @@ function f4 name="returnsParameter" role=Library parameters=[{type=L0}] results=
 
 function f5 name="returnsStoredObject" role=Library parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
-    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PropSet v1, v2 key="last" mode=Strict
     Return v2
 }

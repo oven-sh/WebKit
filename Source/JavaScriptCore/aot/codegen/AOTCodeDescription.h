@@ -30,7 +30,7 @@ struct StackCheckState;
 
 struct EmittedCode {
     ImageLinkBuffer& buffer;
-    B3::Procedure& procedure;
+    B3::Procedure* procedure;
     const StackCheckState& stackChecks;
     CCallHelpers::Label paddingStart;
     Vector<Relocation> relocations;

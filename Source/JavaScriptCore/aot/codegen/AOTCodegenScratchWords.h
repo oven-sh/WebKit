@@ -30,6 +30,8 @@ struct CodegenScratchWords {
     ExpectedCallWords expectedCall;
     // Under validation: set whenever the run time enters compiled code.
     uint64_t didEnterCompiledCode;
+    // Not a root: the stub ReturnMisfit leaves the value here, and the landing takes it before anything else runs.
+    uint64_t misfit;
 };
 
 } } // namespace JSC::AOT

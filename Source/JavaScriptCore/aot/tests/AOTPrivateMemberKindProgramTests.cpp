@@ -51,33 +51,33 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v13 = NewClosure function=f6
     DefineMethod v3, v13 layout=L0 side=Static index=2 key="later"
     v15 = FinishClass v3 layout=L0
-    v16 = ClaimDeclared v15 declared={type=anything predicted=function}
-    v17 = ClaimDeclared v15 declared={type=anything predicted=function}
+    v16 = Convert v15 declared={type=function flags=[IsExpected]}
+    v17 = Convert v15 declared={type=function flags=[IsExpected]}
     v18 = Integer integer=10
     v19 = Construct v17, -, v18 calleeName="C"
-    v20 = Predict v19 predicted=L0
+    v20 = Convert v19 declared={type=L0 flags=[IsExpected]}
     v21 = PropGet v20 key="later"
-    v22 = Predict v21 predicted=function
+    v22 = Convert v21 declared={type=function flags=[IsExpected]}
     v23 = Integer integer=5
     v24 = Call v22, v20, v23 calleeKey="later" calleeName="later"
-    v25 = Predict v24 predicted=Promise
+    v25 = Convert v24 declared={type=Promise flags=[IsExpected]}
     v26 = PropGet v25 key="then"
-    v27 = Predict v26 predicted=function
+    v27 = Convert v26 declared={type=function flags=[IsExpected]}
     v28 = NewClosure function=f7
     v29 = Call v27, v25, v28 calleeKey="then" calleeName="then"
     v30 = PropGet v20 key="collect"
-    v31 = Predict v30 predicted=function
+    v31 = Convert v30 declared={type=function flags=[IsExpected]}
     v32 = Integer integer=3
     v33 = Call v31, v20, v32 calleeKey="collect" calleeName="collect"
-    v34 = Predict v33 predicted=Promise<string>
+    v34 = Convert v33 declared={type=Promise<string> flags=[IsExpected]}
     v35 = PropGet v34 key="then"
-    v36 = Predict v35 predicted=function
+    v36 = Convert v35 declared={type=function flags=[IsExpected]}
     v37 = NewClosure function=f8
     v38 = Call v36, v34, v37 calleeKey="then" calleeName="then"
     Jump -> next b2()
   b2() handler=b4():
     v39 = PropGet v17 key="later"
-    v40 = Predict v39 predicted=function
+    v40 = Convert v39 declared={type=function flags=[IsExpected]}
     v41 = Data data=d0
     v42 = Call v40, v17, v41 calleeKey="later" calleeName="later"
     Jump -> next b3()
@@ -89,7 +89,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v45 = PropGet v44 key="print" [isFreeName]
     v46 = Builtin builtin=GlobalThis
     v47 = PropGet v46 key="TypeError" [isFreeName]
-    v48 = Predict v47 predicted=builtin(TypeError)
+    v48 = Convert v47 declared={type=builtin(TypeError) flags=[IsExpected]}
     v49 = InstanceOf v43, v48
     v50 = Call v45, -, v49 calleeName="print"
     Jump -> next b5()
@@ -107,9 +107,9 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = ClaimDeclared v3 declared={type=anything predicted=L0}
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
     v5 = CallDirect v4 function=f9
-    v6 = Predict v3 predicted=L0
+    v6 = Convert v3 declared={type=L0 flags=[IsExpected]}
     PropSet v6, v1 key="v"
     v8 = Undefined
     v9 = TypeTest v8 testedType=object
@@ -121,7 +121,7 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b4(v12):
     Return v12
 }
-function f2 name="#later" module=m0 kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything predicted=Promise}] {
+function f2 name="#later" module=m0 kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Promise flags=[IsExpected]}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -130,13 +130,13 @@ function f2 name="#later" module=m0 kind=Method flags=[IsAsync, HasThis, HasExpl
     v4 = Add v3, v2
     Return v4
 }
-function f3 name="#stream" module=m0 kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything predicted=AsyncGenerator}] {
+function f3 name="#stream" module=m0 kind=Method flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=AsyncGenerator flags=[IsExpected]}] {
   b0(v0: anything, v1: function, v2: anything):
     Jump -> next b1()
   b1():
     InitialYield
     v4 = Integer
-    v5 = Predict v4 predicted=number
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v5)
   b2(v6):
     LoopHint
@@ -160,7 +160,7 @@ function f3 name="#stream" module=m0 kind=Method flags=[IsAsync, IsGenerator, Ha
     Jump -> next b8()
   b8():
     v17 = Increment v9
-    v18 = ClaimDeclared v17 declared={type=anything predicted=number}
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v18)
   b9(v19, v20):
     Jump -> next b10()
@@ -168,7 +168,7 @@ function f3 name="#stream" module=m0 kind=Method flags=[IsAsync, IsGenerator, Ha
     v21 = Undefined
     Return v21
 }
-function f4 name="later" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything predicted=Promise}] {
+function f4 name="later" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Promise flags=[IsExpected]}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -176,19 +176,19 @@ function f4 name="later" module=m0 kind=Method flags=[HasThis, HasExplicitName] 
     v3 = PrivateGet v0, v2 layout=L0
     v4 = GetModuleVariable variable=g2
     v5 = Call v4, v0, v1 calleeName="#later"
-    ReturnCall v5 casts=[{declared={type=anything predicted=Promise}}]
+    ReturnCall v5 casts=[{declared={type=Promise flags=[IsExpected]}}]
 }
-function f5 name="collect" module=m0 kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything predicted=Promise<string>}] {
+function f5 name="collect" module=m0 kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Promise<string> flags=[IsExpected]}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string=""
-    v3 = Predict v2 predicted=string
+    v3 = Convert v2 declared={type=string flags=[IsExpected]}
     v4 = GetModuleVariable variable=g1
     v5 = PrivateGet v0, v4 layout=L0
     v6 = GetModuleVariable variable=g3
     v7 = Call v6, v0, v1 calleeName="#stream"
-    v8 = Predict v7 predicted=AsyncGenerator
+    v8 = Convert v7 declared={type=AsyncGenerator flags=[IsExpected]}
     v9 = IteratorOpen v8 iteratorKind=Async
     Jump -> next b2(v3)
   b2(v10):
@@ -198,7 +198,7 @@ function f5 name="collect" module=m0 kind=Method flags=[IsAsync, HasThis, HasExp
     v14 = ResultAt v12 index=1
     Branch v13 -> taken b3(), notTaken b4()
   b3():
-    v15 = ClaimDeclared v10 declared={type=anything predicted=string}
+    v15 = Convert v10 declared={type=string flags=[IsExpected]}
     Return v15
   b4():
     Jump -> next b5()
@@ -206,7 +206,7 @@ function f5 name="collect" module=m0 kind=Method flags=[IsAsync, HasThis, HasExp
     v16 = String string=","
     v17 = Add v14, v16
     v18 = Add v10, v17
-    v19 = ClaimDeclared v18 declared={type=anything predicted=string}
+    v19 = Convert v18 declared={type=string flags=[IsExpected]}
     Jump -> next b6()
   b6() handler=b7():
     Jump -> next b2(v19)
@@ -237,7 +237,7 @@ function f7 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     v5 = Call v2, -, v4 calleeName="print"
     ReturnCall v5
 }
-function f8 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything predicted=string}] results=[{type=anything}] {
+function f8 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -248,8 +248,8 @@ function f8 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     v5 = Call v2, -, v4 calleeName="print"
     ReturnCall v5
 }
-function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=object written=L0} results=[{type=anything}] {
-  b0(v0: object):
+function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -290,36 +290,36 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v9 = NewClosure function=f4
     DefineMethod v3, v9 layout=L0 side=Static index=1 key="open"
     v11 = FinishClass v3 layout=L0
-    v12 = ClaimDeclared v11 declared={type=anything predicted=function}
-    v13 = ClaimDeclared v11 declared={type=anything predicted=function}
+    v12 = Convert v11 declared={type=function flags=[IsExpected]}
+    v13 = Convert v11 declared={type=function flags=[IsExpected]}
     v14 = Builtin builtin=GlobalThis
     v15 = PropGet v14 key="print" [isFreeName]
     v16 = Integer integer=10
     v17 = Construct v13, -, v16 calleeName="C"
-    v18 = Predict v17 predicted=L0
+    v18 = Convert v17 declared={type=L0 flags=[IsExpected]}
     v19 = PropGet v18 key="sum"
-    v20 = Predict v19 predicted=function
+    v20 = Convert v19 declared={type=function flags=[IsExpected]}
     v21 = Integer integer=3
     v22 = Call v20, v18, v21 calleeKey="sum" calleeName="sum"
-    v23 = Predict v22 predicted=number
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
     v24 = Call v15, -, v23 calleeName="print"
     v25 = Builtin builtin=GlobalThis
     v26 = PropGet v25 key="print" [isFreeName]
     v27 = PropGet v13 key="open"
-    v28 = Predict v27 predicted=function
+    v28 = Convert v27 declared={type=function flags=[IsExpected]}
     v29 = Integer integer=1
     v30 = Construct v13, -, v29 calleeName="C"
-    v31 = Predict v30 predicted=L0
+    v31 = Convert v30 declared={type=L0 flags=[IsExpected]}
     v32 = Call v28, v13, v31 calleeKey="open" calleeName="open"
-    v33 = Predict v32 predicted=boolean|"opened"
+    v33 = Convert v32 declared={type=boolean|"opened" flags=[IsExpected]}
     v34 = Call v26, -, v33 calleeName="print"
     v35 = Builtin builtin=GlobalThis
     v36 = PropGet v35 key="print" [isFreeName]
     v37 = PropGet v13 key="open"
-    v38 = Predict v37 predicted=function
+    v38 = Convert v37 declared={type=function flags=[IsExpected]}
     v39 = Data data=d0
     v40 = Call v38, v13, v39 calleeKey="open" calleeName="open"
-    v41 = Predict v40 predicted=boolean|"opened"
+    v41 = Convert v40 declared={type=boolean|"opened" flags=[IsExpected]}
     v42 = Call v36, -, v41 calleeName="print"
     v43 = Undefined
     Return v43
@@ -330,9 +330,9 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = ClaimDeclared v3 declared={type=anything predicted=L0}
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
     v5 = CallDirect v4 function=f5
-    v6 = Predict v3 predicted=L0
+    v6 = Convert v3 declared={type=L0 flags=[IsExpected]}
     PropSet v6, v1 key="v"
     v8 = Undefined
     v9 = TypeTest v8 testedType=object
@@ -344,13 +344,13 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b4(v12):
     Return v12
 }
-function f2 name="#each" module=m0 kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything predicted=Generator}] {
+function f2 name="#each" module=m0 kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=Generator flags=[IsExpected]}] {
   b0(v0: anything, v1: function, v2: anything):
     Jump -> next b1()
   b1():
     InitialYield
     v4 = Integer
-    v5 = Predict v4 predicted=number
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v5)
   b2(v6):
     LoopHint
@@ -373,7 +373,7 @@ function f2 name="#each" module=m0 kind=Method flags=[IsGenerator, HasThis, Take
     Jump -> next b8()
   b8():
     v16 = Increment v9
-    v17 = ClaimDeclared v16 declared={type=anything predicted=number}
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v17)
   b9(v18, v19):
     Jump -> next b10()
@@ -381,17 +381,17 @@ function f2 name="#each" module=m0 kind=Method flags=[IsGenerator, HasThis, Take
     v20 = Undefined
     Return v20
 }
-function f3 name="sum" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything predicted=number}] {
+function f3 name="sum" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Integer
-    v3 = Predict v2 predicted=number
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
     v4 = GetModuleVariable variable=g1
     v5 = PrivateGet v0, v4 layout=L0
     v6 = GetModuleVariable variable=g2
     v7 = Call v6, v0, v1 calleeName="#each"
-    v8 = Predict v7 predicted=Generator
+    v8 = Convert v7 declared={type=Generator flags=[IsExpected]}
     v9 = IteratorOpen v8
     Jump -> next b2(v3)
   b2(v10):
@@ -401,13 +401,13 @@ function f3 name="sum" module=m0 kind=Method flags=[HasThis, HasExplicitName] le
     v14 = ResultAt v12 index=1
     Branch v13 -> taken b3(), notTaken b4()
   b3():
-    v15 = ClaimDeclared v10 declared={type=anything predicted=number}
+    v15 = Convert v10 declared={type=number flags=[IsExpected]}
     Return v15
   b4():
     Jump -> next b5()
   b5() handler=b7():
     v16 = Add v10, v14
-    v17 = ClaimDeclared v16 declared={type=anything predicted=number}
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
     Jump -> next b6()
   b6() handler=b7():
     Jump -> next b2(v17)
@@ -416,7 +416,7 @@ function f3 name="sum" module=m0 kind=Method flags=[HasThis, HasExplicitName] le
     IteratorClose v9 completion=Throw
     Rethrow v18
 }
-function f4 name="open" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=boolean|"opened"}] {
+function f4 name="open" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean|"opened" flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -428,19 +428,19 @@ function f4 name="open" module=m0 kind=Method flags=[HasExplicitName] length=1 t
     v4 = Integer integer=1
     v5 = Call v3, v0, v4 calleeName="#each"
     v6 = String string="opened"
-    v7 = ClaimDeclared v6 declared={type=anything predicted=boolean|"opened"}
+    v7 = Convert v6 declared={type=boolean|"opened" flags=[IsExpected]}
     Return v7
   b3() role=CatchHandler:
     v8 = CatchValue
     v9 = Builtin builtin=GlobalThis
     v10 = PropGet v9 key="TypeError" [isFreeName]
-    v11 = Predict v10 predicted=builtin(TypeError)
+    v11 = Convert v10 declared={type=builtin(TypeError) flags=[IsExpected]}
     v12 = InstanceOf v8, v11
-    v13 = ClaimDeclared v12 declared={type=anything predicted=boolean|"opened"}
+    v13 = Convert v12 declared={type=boolean|"opened" flags=[IsExpected]}
     Return v13
 }
-function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=object written=L0} results=[{type=anything}] {
-  b0(v0: object):
+function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -469,7 +469,7 @@ entry module=m0
 //   static onOther(o) { try { return o.#m() } catch (e) { return e instanceof TypeError } }
 // }
 // print(new C().all()); print(D.all()); print(D.onOther(new C()))
-static constexpr ASCIILiteral besideFieldsAndStatics = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#x"@L0 declared={type=anything predicted=number} flags=[IsRequired, IsPrivate]}, {key=#"#y"@L0 declared={type=anything predicted=number} flags=[IsRequired, IsPrivate]}]
+static constexpr ASCIILiteral besideFieldsAndStatics = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#x"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key=#"#y"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}]
 layout L1 kind=Instance name="D" module=m0 constructor=f6
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
 variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
@@ -478,7 +478,7 @@ variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g4 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g5 name="D" module=m0 declared={type=function|absent} flags=[IsImmutable]
 variable g6 module=m0 declared={type=function} flags=[IsImmutable]
-variable g7 module=m0 declared={type=anything|absent predicted=string}
+variable g7 module=m0 declared={type=string|absent flags=[IsExpected]}
 variable g8 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g9 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -500,8 +500,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v11 = NewClosure function=f5
     DefineMethod v3, v11 layout=L0 key="all"
     v13 = FinishClass v3 layout=L0
-    v14 = ClaimDeclared v13 declared={type=anything predicted=function}
-    v15 = ClaimDeclared v13 declared={type=anything predicted=function}
+    v14 = Convert v13 declared={type=function flags=[IsExpected]}
+    v15 = Convert v13 declared={type=function flags=[IsExpected]}
     v16 = NewClosure function=f6
     v17 = NewClass v16 layout=L1
     PutModuleVariable v17 variable=g6
@@ -514,33 +514,33 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v25 = NewClosure function=f10
     DefineMethod v17, v25 layout=L1 side=Static index=1 key="onOther"
     v27 = FinishClass v17 layout=L1
-    v28 = ClaimDeclared v27 declared={type=anything predicted=function}
+    v28 = Convert v27 declared={type=function flags=[IsExpected]}
     PutModuleVariable v28 variable=g5
-    v30 = ClaimDeclared v27 declared={type=anything predicted=function}
+    v30 = Convert v27 declared={type=function flags=[IsExpected]}
     v31 = CallDirect v30 function=f11
-    v32 = ClaimDeclared v27 declared={type=anything predicted=function}
+    v32 = Convert v27 declared={type=function flags=[IsExpected]}
     v33 = Builtin builtin=GlobalThis
     v34 = PropGet v33 key="print" [isFreeName]
     v35 = Construct v15 calleeName="C"
-    v36 = Predict v35 predicted=L0
+    v36 = Convert v35 declared={type=L0 flags=[IsExpected]}
     v37 = PropGet v36 key="all"
-    v38 = Predict v37 predicted=function
+    v38 = Convert v37 declared={type=function flags=[IsExpected]}
     v39 = Call v38, v36 calleeKey="all" calleeName="all"
-    v40 = Predict v39 predicted=string
+    v40 = Convert v39 declared={type=string flags=[IsExpected]}
     v41 = Call v34, -, v40 calleeName="print"
     v42 = Builtin builtin=GlobalThis
     v43 = PropGet v42 key="print" [isFreeName]
     v44 = PropGet v32 key="all"
-    v45 = Predict v44 predicted=function
+    v45 = Convert v44 declared={type=function flags=[IsExpected]}
     v46 = Call v45, v32 calleeKey="all" calleeName="all"
-    v47 = Predict v46 predicted=string
+    v47 = Convert v46 declared={type=string flags=[IsExpected]}
     v48 = Call v43, -, v47 calleeName="print"
     v49 = Builtin builtin=GlobalThis
     v50 = PropGet v49 key="print" [isFreeName]
     v51 = PropGet v32 key="onOther"
-    v52 = Predict v51 predicted=function
+    v52 = Convert v51 declared={type=function flags=[IsExpected]}
     v53 = Construct v15 calleeName="C"
-    v54 = Predict v53 predicted=L0
+    v54 = Convert v53 declared={type=L0 flags=[IsExpected]}
     v55 = Call v52, v32, v54 calleeKey="onOther" calleeName="onOther"
     v56 = Call v50, -, v55 calleeName="print"
     v57 = Undefined
@@ -552,15 +552,15 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
-    v3 = ClaimDeclared v2 declared={type=anything predicted=L0}
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
     v4 = CallDirect v3 function=f12
-    v5 = Predict v2 predicted=L0
-    v6 = Predict v2 predicted=L0
+    v5 = Convert v2 declared={type=L0 flags=[IsExpected]}
+    v6 = Convert v2 declared={type=L0 flags=[IsExpected]}
     v7 = GetModuleVariable variable=g1
     v8 = PrivateGet v6, v7 layout=L0
     v9 = GetModuleVariable variable=g2
     v10 = Call v9, v6 calleeName="#m"
-    v11 = Predict v10 predicted=number
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
     v12 = GetModuleVariable variable=g1
     PrivateSet v5, v12, v11 layout=L0 field=2
     v14 = Undefined
@@ -573,41 +573,41 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b4(v18):
     Return v18
 }
-function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything predicted=L0} results=[{type=anything predicted=number}] {
+function f2 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
     v2 = PrivateGet v0, v1 layout=L0 field=1
-    v3 = Predict v2 predicted=number
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
     v4 = Integer integer=10
     v5 = Add v3, v4
-    v6 = ClaimDeclared v5 declared={type=anything predicted=number}
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
     Return v6
 }
-function f3 name="#g" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything predicted=L0} results=[{type=anything predicted=number}] {
+function f3 name="#g" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
     v2 = PrivateGet v0, v1 layout=L0 field=1
-    v3 = Predict v2 predicted=number
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
     v4 = Integer integer=100
     v5 = Add v3, v4
-    v6 = ClaimDeclared v5 declared={type=anything predicted=number}
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
     Return v6
 }
-function f4 name="#g" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+function f4 name="#g" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
-    v2 = ClaimDeclared v1 declared={type=anything predicted=number}
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
     v3 = GetModuleVariable variable=g1
     PrivateSet v0, v3, v2 layout=L0 field=1
     v5 = Undefined
     Return v5
 }
-function f5 name="all" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything predicted=L0} results=[{type=anything predicted=string}] {
+function f5 name="all" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=string flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -618,12 +618,12 @@ function f5 name="all" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     v5 = Call v4, v0, v1
     v6 = GetModuleVariable variable=g1
     v7 = PrivateGet v0, v6 layout=L0 field=1
-    v8 = Predict v7 predicted=number
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
     v9 = String string=":"
     v10 = Add v8, v9
     v11 = GetModuleVariable variable=g1
     v12 = PrivateGet v0, v11 layout=L0 field=2
-    v13 = Predict v12 predicted=number
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
     v14 = Add v10, v13
     v15 = String string=":"
     v16 = Add v14, v15
@@ -631,7 +631,7 @@ function f5 name="all" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     v18 = PrivateGet v0, v17 layout=L0
     v19 = GetModuleVariable variable=g2
     v20 = Call v19, v0 calleeName="#m"
-    v21 = Predict v20 predicted=number
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
     v22 = Add v16, v21
     v23 = String string=":"
     v24 = Add v22, v23
@@ -639,9 +639,9 @@ function f5 name="all" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     v26 = PrivateGet v0, v25 layout=L0
     v27 = GetModuleVariable variable=g3
     v28 = Call v27, v0
-    v29 = Predict v28 predicted=number
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
     v30 = Add v24, v29
-    v31 = ClaimDeclared v30 declared={type=anything predicted=string}
+    v31 = Convert v30 declared={type=string flags=[IsExpected]}
     Return v31
 }
 function f6 name="D" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
@@ -652,23 +652,23 @@ function f6 name="D" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     v2 = NewObject v1 layout=L1
     Return v2
 }
-function f7 name="#m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=string}] {
+function f7 name="#m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():
     v0 = String string="static #m"
-    v1 = ClaimDeclared v0 declared={type=anything predicted=string}
+    v1 = Convert v0 declared={type=string flags=[IsExpected]}
     Return v1
 }
-function f8 name="#g" module=m0 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=string}] {
+function f8 name="#g" module=m0 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():
     v0 = String string="static #g"
-    v1 = ClaimDeclared v0 declared={type=anything predicted=string}
+    v1 = Convert v0 declared={type=string flags=[IsExpected]}
     Return v1
 }
-function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=string}] {
+function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():
@@ -680,7 +680,7 @@ function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={t
   b2():
     v4 = GetModuleVariable variable=g8
     v5 = Call v4, v1 calleeName="#m"
-    v6 = Predict v5 predicted=string
+    v6 = Convert v5 declared={type=string flags=[IsExpected]}
     v7 = String string=", "
     v8 = Add v6, v7
     v9 = GetModuleVariable variable=g5
@@ -696,7 +696,7 @@ function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={t
     v16 = NewRuntimeError runtimeError=InvalidPrivateRead
     Throw v16
   b5(v17):
-    v18 = Predict v17 predicted=string
+    v18 = Convert v17 declared={type=string flags=[IsExpected]}
     v19 = Add v8, v18
     v20 = String string=", "
     v21 = Add v19, v20
@@ -708,9 +708,9 @@ function f9 name="all" module=m0 kind=Method flags=[HasExplicitName] thisType={t
   b6():
     v26 = GetModuleVariable variable=g9
     v27 = Call v26, v23
-    v28 = Predict v27 predicted=string
+    v28 = Convert v27 declared={type=string flags=[IsExpected]}
     v29 = Add v21, v28
-    v30 = ClaimDeclared v29 declared={type=anything predicted=string}
+    v30 = Convert v29 declared={type=string flags=[IsExpected]}
     Return v30
   b7() frequency=Unlikely:
     v31 = NewRuntimeError runtimeError=InvalidPrivateBrand
@@ -742,7 +742,7 @@ function f10 name="onOther" module=m0 kind=Method flags=[HasExplicitName] length
     v6 = CatchValue
     v7 = Builtin builtin=GlobalThis
     v8 = PropGet v7 key="TypeError" [isFreeName]
-    v9 = Predict v8 predicted=builtin(TypeError)
+    v9 = Convert v8 declared={type=builtin(TypeError) flags=[IsExpected]}
     v10 = InstanceOf v6, v9
     Return v10
 }
@@ -751,19 +751,19 @@ function f11 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] t
     Jump -> next b1()
   b1():
     v1 = String string="static #x"
-    v2 = ClaimDeclared v1 declared={type=anything predicted=string}
+    v2 = Convert v1 declared={type=string flags=[IsExpected]}
     PutModuleVariable v2 variable=g7
     v4 = Undefined
     Return v4
 }
-function f12 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=object written=L0} results=[{type=anything}] {
-  b0(v0: object):
+function f12 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
     PrivateDefine v0, v1, v1 layout=L0
     v3 = Integer integer=1
-    v4 = ClaimDeclared v3 declared={type=anything predicted=number}
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
     v5 = GetModuleVariable variable=g1
     PrivateDefine v0, v5, v4 layout=L0 field=1
     v7 = Undefined

@@ -14,10 +14,10 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfProtocols.h"
-#include "AOTFlowAnalysis.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSupportTestCommands.h"
+#include "AOTValueFlowResults.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
 
@@ -133,11 +133,22 @@ static std::optional<ProtocolsArgument> parseProtocolsWord(const BuiltinTable& t
 static std::span<const String> takeInputWords(TestCommandContext& context, std::span<const String> words, EffectsTestInputs& inputs)
 {
     if (!words.empty() && words.front() == "flow"_s) {
-        inputs.flow = analyzeFlow(*context.program, context.program->types, context.build);
+        inputs.flow = analyzeValueFlow(*context.program, context.program->types, context.build);
         words = words.subspan(1);
     }
     if (!words.empty() && words.front() == "summaries"_s) {
         inputs.summaries = computeEffectSummaries(*context.program, inputs.flow, context.build);
+        inputs.hasSummaries = true;
+        words = words.subspan(1);
+    }
+    constexpr ASCIILiteral summariesBefore = "summaries-before=f"_s;
+    if (!words.empty() && words.front().startsWith(summariesBefore)) {
+        unsigned numberOfFunctions = parseInteger<unsigned>(StringView(words.front()).substring(summariesBefore.length())).value_or(0);
+        EffectSummaries summariesOfAll = computeEffectSummaries(*context.program, inputs.flow, context.build);
+        Vector<FunctionSummary> summariesOfFirst(numberOfFunctions, [&](size_t index) {
+            return summariesOfAll.of(FunctionID(index)).expanded();
+        });
+        inputs.summaries = EffectSummaries(summariesOfFirst.span(), summariesOfAll.unknownCode());
         inputs.hasSummaries = true;
         words = words.subspan(1);
     }

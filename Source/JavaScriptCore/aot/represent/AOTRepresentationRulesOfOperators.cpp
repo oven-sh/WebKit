@@ -20,6 +20,8 @@ static constexpr OpcodeSet testOperators {
 };
 static_assert((bitwiseOperators | testOperators | Value::opcodesWithForm) == Value::opcodesWithForm);
 static_assert(!bitwiseOperators.intersects(testOperators));
+static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+static constexpr OpcodeSet binaryOperatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift };
 
 namespace {
 
@@ -99,6 +101,24 @@ Representation wantedByConcatenation(const Type& part)
     return part.isNumber() ? unboxedNumberRepresentationOf(part) : Representation::JSValue;
 }
 
+static constexpr bool isBoxedOrUnchosen(Representation representation)
+{
+    return representation == Representation::JSValue || representation == Representation::Unchosen;
+}
+
+// Neither may be undefined or null, which have forms of their own beside numbers.
+bool isEqualityOfNumbers(const Program& program, const Function& function, const Value& value)
+{
+    if ((value.opcode != Opcode::StrictEq && value.opcode != Opcode::Eq) || value.form() != OperatorForm::Numbers)
+        return false;
+    return program.typeOf(function, value.leftOperand()).isNumber() && program.typeOf(function, value.rightOperand()).isNumber();
+}
+
+bool isSumOfBoxedNumbers(const Value& value)
+{
+    return sumsOfNumbers.contains(value.opcode) && value.form() == OperatorForm::Numbers && value.representation == Representation::JSValue;
+}
+
 Representation wantedByOperator(const Program& program, const Function& function, const Value& user, uint32_t operandIndex)
 {
     OperatorForm form = user.form();
@@ -125,6 +145,15 @@ Representation wantedByOperator(const Program& program, const Function& function
                 return integerRepresentationOf(type);
             if (defaultRepresentationOf(type) == Representation::OptionalInt64)
                 return Representation::OptionalInt64;
+            if (type.isNumber() && isBoxedOrUnchosen(function.at(user.operand(operandIndex)).representation))
+                return Representation::Unchosen;
+        }
+        if (isSumOfBoxedNumbers(user))
+            return type.isInt32() ? Representation::Int32 : Representation::JSValue;
+        if (relations.contains(user.opcode) || isEqualityOfNumbers(program, function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber())) {
+            Representation representation = function.at(user.operand(operandIndex)).representation;
+            if (isBoxedOrUnchosen(representation) || (representation == Representation::Int32 && type.isInt32()))
+                return Representation::Unchosen;
         }
         return numberOrOptionalOf(type);
     case OperatorForm::NumberAndValue:
@@ -174,10 +203,14 @@ Representation resultOfOperator(const Program& program, const Function& function
     OperatorContext operation { program, function, value };
     switch (form) {
     case OperatorForm::Generic:
+        if (binaryOperatorsOnInt32.contains(value.opcode) && operation.resultType().isInt32())
+            return Representation::Int32;
         return value.opcode == Opcode::ToNumber ? Representation::Double : Representation::JSValue;
     case OperatorForm::Integers:
         return operation.isBitwise() ? Representation::Int32 : integerWidthOf(operation);
     case OperatorForm::Numbers:
+        if (isSumOfBoxedNumbers(value))
+            return Representation::JSValue;
         return operation.isBitwise() ? Representation::Int32 : Representation::Double;
     case OperatorForm::CheckedIntegers:
     case OperatorForm::NumberAndValue:

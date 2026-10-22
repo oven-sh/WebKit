@@ -37,6 +37,17 @@ static CoroutineKind generatorKind(JSObject* generator, Entry entry)
     return CoroutineKind::AsyncGenerator;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Instance* instance, JSCell* generator, EncodedJSValue closure))
+{
+    constexpr Entry entry = Entry::operationAOTTakeGeneratorPrototype;
+    AOT_OPERATION_BEGIN(instance, entry);
+    JSObject* object = cellArgument<JSObject>(generator, entry);
+    Structure* structure = structureOfGenerator(globalObject, *instance, objectArgument(closure, entry), generatorKind(object, entry));
+    scope.releaseAssertNoException();
+    if (object->structure() != structure)
+        object->setStructure(vm, structure);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* instance, JSCell* generator, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords))
 {
     constexpr Entry entry = Entry::operationAOTSaveFrameAndYield;
@@ -45,7 +56,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* inst
     CoroutineKind kind = generatorKind(object, entry);
     RELEASE_ASSERT(!savedFrameOfGenerator(object));
     SuspendedMachineFrame machineFrame { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) };
-    SavedFrame* saved = SavedFrame::create(vm, *instance, kind, machineFrame.numberOfWords());
+    SavedFrame* saved = SavedFrame::create(vm, *instance, kind, machineFrame);
     saved->save(vm, machineFrame, SuspensionKind::Yield);
     setSavedFrameOfGenerator(vm, object, saved);
     OPERATION_RETURN(scope, saved);

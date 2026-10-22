@@ -62,7 +62,7 @@ function f2 name="innerObjectIsBuiltFirst" parameters=[{type=anything}, {type=an
 
 function f3 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
-    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v4 = Call v0, -, v3
@@ -91,8 +91,8 @@ function f3 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=an
 
 function f4 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
-    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4
@@ -138,7 +138,7 @@ function f4 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=
 function f5 name="arrayInFieldAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewArray v0, v1 contents=anything
-    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4
@@ -171,7 +171,7 @@ function f5 name="arrayInFieldAfterRareUse" parameters=[{type=anything}, {type=a
 function f6 name="closureInFieldAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewClosure v0 function=f12
-    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4
@@ -207,8 +207,8 @@ function f6 name="closureInFieldAfterRareUse" parameters=[{type=anything}, {type
 
 function f7 name="liveRangeIsLoop" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
-    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = Call v0, -, v4
@@ -368,7 +368,7 @@ function f15 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {typ
 
 function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean, v2: boolean, v3: anything):
-    v4 = NewObject layout=L5 [keepsShape]
+    v4 = NewObject layout=L5
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v5 = Call v0, -, v4
@@ -376,10 +376,10 @@ function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything
   b2():
     Branch v2 -> taken b3(), notTaken b4()
   b3():
-    v6 = NewObject -, v4, v3 layout=L5 fields=[0, 1] [keepsShape]
+    v6 = NewObject -, v4, v3 layout=L5 fields=[0, 1]
     Jump -> next b5(v6)
   b4():
-    v7 = NewObject -, v3, v4 layout=L5 fields=[2, 1] [keepsShape]
+    v7 = NewObject -, v3, v4 layout=L5 fields=[2, 1]
     Jump -> next b5(v7)
   b5(v8):
     v9 = GetSlotOrUndefined v8 key="z" receivers=[L5] level=Proven

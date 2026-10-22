@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTClassPrototype.h"
+#include "AOTCompactTable.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "DateInstance.h"
+#include "GetterSetter.h"
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
 #include "JSArrayIterator.h"
@@ -23,6 +25,9 @@
 #include "JSSetIterator.h"
 #include "RegExpObject.h"
 #include <algorithm>
+#include <bit>
+#include <wtf/CommaPrinter.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -67,6 +72,31 @@ ASCIILiteral nameOf(OperandChange change)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+AbstractHeaps heapsOfClassOf(JSObject* object)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    AbstractHeaps heaps;
+    for (unsigned index = 0; index < table.classCount(); ++index) {
+        const BuiltinClass& builtinClass = table.at(BuiltinClassID(index));
+        if (builtinClass.instanceTest != BuiltinInstanceTest::JSTypeEquals || builtinClass.type != object->type())
+            continue;
+        for (BuiltinSlotID slot : builtinClass.slots)
+            heaps.add(table.at(slot).heap);
+        if (builtinClass.stateHeap)
+            heaps.add(*builtinClass.stateHeap);
+    }
+    return heaps;
+}
+
+String describe(AbstractHeaps heaps)
+{
+    StringPrintStream out;
+    CommaPrinter comma("|"_s);
+    for (AbstractHeap heap : heaps)
+        out.print(comma, nameOf(heap));
+    return out.toString();
+}
+
 template<typename T>
 static void forEachAtEnds(std::span<const T> values, size_t maxAtEachEnd, const Invocable<void(T)> auto& functor)
 {
@@ -107,7 +137,14 @@ static void captureNamedProperties(JSObject* holder, OperandSnapshot& state)
         return;
     }
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-        state.properties.append({ entry.key(), entry.attributes(), JSValue::encode(holder->getDirect(entry.offset())) });
+        // A getter of native code may keep what it has made on the object, under the name or under another.
+        state.createsPropertiesLazily |= !!(entry.attributes() & (PropertyAttribute::CustomValue | PropertyAttribute::CustomAccessor));
+        JSValue value = holder->getDirect(entry.offset());
+        EncodedJSValue captured = JSValue::encode(value);
+        // Whoever defines an accessor anew with the functions that it has puts another cell in the place of the pair.
+        if (auto* accessor = dynamicDowncast<GetterSetter>(value))
+            captured = static_cast<EncodedJSValue>(std::bit_cast<uint64_t>(accessor->getter()) ^ std::rotl(std::bit_cast<uint64_t>(accessor->setter()), 17));
+        state.properties.append({ entry.key(), entry.attributes(), captured });
         return true;
     });
 }
@@ -147,12 +184,10 @@ static void captureFields(const Object& object, OperandSnapshot& state)
     for (const FieldData& field : object.layout().fields()) {
         SlotRepresentation representation = field.slot.representation();
         const void* slot = representation == SlotRepresentation::DeferredClosure ? nullptr : object.slotOf(field);
-        uint64_t bits = 0;
+        uint64_t bits = representation == SlotRepresentation::DeferredClosure && object.isInSlot(field);
         if (slot)
             memcpy(&bits, slot, widthOf(representation));
         state.fields.append(bits);
-        bool hasDoubleInExtension = slot && representation == SlotRepresentation::Int32OrDouble && static_cast<int32_t>(bits) == doubleInExtensionInt32;
-        state.fields.append(hasDoubleInExtension ? *static_cast<const uint64_t*>(object.extension()->slot(object.layout().overflowOffsetOf(field))) : 0);
     }
 }
 
@@ -168,15 +203,29 @@ static void captureHashTable(JSObject* object, ptrdiff_t offsetOfStorage, Operan
 {
     JSCell* storage = *reinterpret_cast<JSCell**>(reinterpret_cast<uint8_t*>(object) + offsetOfStorage);
     state.internalState.append(std::bit_cast<uint64_t>(storage));
-    if (storage)
-        state.internalState.append(hashBytes(std::span(reinterpret_cast<const uint8_t*>(storage), storage->cellSize()).subspan(sizeof(JSCell))));
+    if (!storage)
+        return;
+    std::span bytes(reinterpret_cast<const uint8_t*>(storage), storage->cellSize());
+    // Whoever walks a table notes in the table that it has been walked, or how far the walk has come. No program sees the note.
+    if (JSMap::Helper::isCompact(*storage)) {
+        constexpr size_t offsetOfFlags = CompactTable::offsetOfKeysShift();
+        state.internalState.append(hashBytes(bytes.subspan(sizeof(JSCell), offsetOfFlags - sizeof(JSCell))));
+        state.internalState.append(bytes[offsetOfFlags] & ~CompactTable::wasWalked);
+        state.internalState.append(hashBytes(bytes.subspan(offsetOfFlags + 1)));
+        return;
+    }
+    static_assert(JSMap::Helper::iterationEntryIndex() == JSSet::Helper::iterationEntryIndex());
+    constexpr size_t offsetOfIterationEntry = JSMap::Helper::offsetInStorageForIndex(JSMap::Helper::iterationEntryIndex());
+    state.internalState.append(hashBytes(bytes.subspan(sizeof(JSCell), offsetOfIterationEntry - sizeof(JSCell))));
+    state.internalState.append(hashBytes(bytes.subspan(offsetOfIterationEntry + sizeof(EncodedJSValue))));
 }
 
-static void captureBytes(const void* bytes, size_t byteLength, OperandSnapshot& state)
+// Another thread writes shared memory while the call runs: that the bytes differ behind the call says nothing about the call.
+static void captureBytes(const void* bytes, size_t byteLength, bool isShared, OperandSnapshot& state)
 {
     state.bytes = bytes;
     state.byteLength = byteLength;
-    state.hashOfBytes = bytes ? hashBytes(std::span(static_cast<const uint8_t*>(bytes), byteLength)) : 0;
+    state.hashOfBytes = bytes && !isShared ? hashBytes(std::span(static_cast<const uint8_t*>(bytes), byteLength)) : 0;
 }
 
 static void captureInternalState(JSObject* object, OperandSnapshot& state)
@@ -185,13 +234,13 @@ static void captureInternalState(JSObject* object, OperandSnapshot& state)
     JSType type = object->type();
     if (isTypedArrayTypeIncludingDataView(type)) {
         auto* view = uncheckedDowncast<JSArrayBufferView>(object);
-        captureBytes(view->vector(), view->byteLength(), state);
+        captureBytes(view->vector(), view->byteLength(), view->isShared(), state);
         return;
     }
     switch (type) {
     case ArrayBufferType: {
         ArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(object)->impl();
-        captureBytes(buffer->data(), buffer->byteLength(), state);
+        captureBytes(buffer->data(), buffer->byteLength(), buffer->isShared(), state);
         return;
     }
     case JSMapType:
@@ -206,9 +255,15 @@ static void captureInternalState(JSObject* object, OperandSnapshot& state)
     case RegExpObjectType:
         state.internalState.append(JSValue::encode(uncheckedDowncast<RegExpObject>(object)->getLastIndex()));
         return;
-    case JSPromiseType:
-        state.internalState.append(std::span(reinterpret_cast<const uint64_t*>(object) + sizeof(JSNonFinalObject) / sizeof(uint64_t), 2));
+    case JSPromiseType: {
+        // Whether somebody handles a rejection is nothing that a program can ask a promise for.
+        using Packed = CompactPointerTuple<JSCell*, uint16_t>;
+        static const uint64_t handledBit = std::bit_cast<uint64_t>(Packed(nullptr, JSPromise::isHandledFlag)) ^ std::bit_cast<uint64_t>(Packed(nullptr, 0));
+        auto wordAt = [&](ptrdiff_t offset) { return *reinterpret_cast<const uint64_t*>(reinterpret_cast<const char*>(object) + offset); };
+        state.internalState.append(wordAt(JSPromise::offsetOfPacked()) & ~handledBit);
+        state.internalState.append(wordAt(JSPromise::offsetOfSlot()));
         return;
+    }
     case JSArrayIteratorType:
         captureInternalFields<JSArrayIterator>(object, state);
         return;
@@ -242,7 +297,7 @@ OperandSnapshot capture(JSObject* object)
         // The Structure of a class that overrides isExtensible() says no for every cell.
         state.isExtensible = state.type == SlimClosureType || structure->isStructureExtensible();
         // An array overrides the lookup for its length alone.
-        state.createsPropertiesLazily = !isJSArray(object) && (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable());
+        state.createsPropertiesLazily |= !isJSArray(object) && (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable());
         if (hasButterfly(state.type)) {
             captureNamedProperties(object, state);
             captureElements(object, state);
@@ -292,19 +347,20 @@ static void compareNamedProperties(const OperandSnapshot& before, const OperandS
         }
         bool isAdded = old == before.properties.end() || current->key.get() < old->key.get();
         if (isAdded) {
-            if (!after.createsPropertiesLazily)
+            if (!before.createsPropertiesLazily && !after.createsPropertiesLazily)
                 differences.append({ OperandChange::PropertyAdded, describeKey(current->key.get()), current->key, current->value });
             ++current;
             continue;
         }
-        bool wasCreatedByFirstRead = after.type == SlimClosureWithPropertiesType && old->attributes == (current->attributes | PropertyAttribute::CustomValue);
+        // A value that native code makes at the first read and puts in the place of its getter is the same data property to a script.
+        bool wasCreatedByFirstRead = old->attributes == (current->attributes | PropertyAttribute::CustomValue);
         if (wasCreatedByFirstRead && old->attributes != current->attributes) {
             ++old;
             ++current;
             continue;
         }
         if (old->attributes != current->attributes)
-            differences.append({ OperandChange::AttributesChanged, describeKey(old->key.get()), old->key, current->value });
+            differences.append({ OperandChange::AttributesChanged, describeKey(old->key.get()), old->key, old->value != current->value ? current->value : 0 });
         else if (old->value != current->value)
             differences.append({ OperandChange::PropertyStored, describeKey(old->key.get()), old->key, current->value });
         ++old;
@@ -312,6 +368,7 @@ static void compareNamedProperties(const OperandSnapshot& before, const OperandS
     }
 }
 
+// `object` is as `after` has it.
 static void compareFields(VM& vm, const Object& object, const OperandSnapshot& before, const OperandSnapshot& after, Vector<OperandDifference>& differences)
 {
     if (before.shapeWord != after.shapeWord) {
@@ -320,15 +377,28 @@ static void compareFields(VM& vm, const Object& object, const OperandSnapshot& b
     }
     if ((before.orderWord ^ after.orderWord) & orderWordIntegrityBits)
         differences.append({ OperandChange::IntegrityChanged, "order word"_s });
-    if ((before.orderWord ^ after.orderWord) & orderAndCountMask)
-        differences.append({ OperandChange::PropertyAdded, makeString("key order "_s, before.orderWord & orderAndCountMask, " -> "_s, after.orderWord & orderAndCountMask) });
 
     std::span fields = object.layout().fields();
-    RELEASE_ASSERT(before.fields.size() == 2 * fields.size() && after.fields.size() == before.fields.size());
+    RELEASE_ASSERT(before.fields.size() == fields.size() && after.fields.size() == before.fields.size());
     for (size_t index = 0; index < fields.size(); ++index) {
-        if (before.fields[2 * index] != after.fields[2 * index] || before.fields[2 * index + 1] != after.fields[2 * index + 1])
-            differences.append({ OperandChange::PropertyStored, describeKey(propertyNameOf(vm, object, fields[index])), propertyNameOf(vm, object, fields[index]) });
+        if (before.fields[index] == after.fields[index])
+            continue;
+        // A field that has left its slot and lies nowhere else is deleted.
+        bool isGone = !object.isInSlot(fields[index]) && !(object.hasExtraProperties() && livesInExtraProperties(vm, object, fields[index]));
+        differences.append({ isGone ? OperandChange::PropertyRemoved : OperandChange::PropertyStored, describeKey(propertyNameOf(vm, object, fields[index])), propertyNameOf(vm, object, fields[index]) });
     }
+}
+
+// A deletion takes a key out of the order, and whatever else changes the order puts one in.
+static void compareKeyOrder(const OperandSnapshot& before, const OperandSnapshot& after, Vector<OperandDifference>& differences)
+{
+    if (before.shapeWord != after.shapeWord || !((before.orderWord ^ after.orderWord) & orderAndCountMask))
+        return;
+    auto has = [&](OperandChange change) {
+        return std::ranges::contains(differences, change, &OperandDifference::change);
+    };
+    bool onlyRemoves = has(OperandChange::PropertyRemoved) && !has(OperandChange::PropertyAdded) && !has(OperandChange::PropertyStored);
+    differences.append({ onlyRemoves ? OperandChange::PropertyRemoved : OperandChange::PropertyAdded, makeString("key order "_s, before.orderWord & orderAndCountMask, " -> "_s, after.orderWord & orderAndCountMask) });
 }
 
 Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const OperandSnapshot& before, const OperandSnapshot& after)
@@ -362,6 +432,8 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
         if (differences[index].change == OperandChange::PropertyRemoved && isStoredInField(differences[index]))
             differences.removeAt(index);
     }
+    if (compiledObjectOrNull(object))
+        compareKeyOrder(before, after, differences);
 
     if (before.length != after.length)
         differences.append({ OperandChange::ArrayStorageChanged, makeString("length "_s, before.length, " -> "_s, after.length) });

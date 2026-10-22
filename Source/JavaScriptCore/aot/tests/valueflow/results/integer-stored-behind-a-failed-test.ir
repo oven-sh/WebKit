@@ -1,0 +1,34 @@
+# `holder.small = wide as Small`: where the test for the range fails, the code behind it stores the integer that arrived, so the type of the stored value says nothing about the integers that the field is stored.
+# Beside it a field that is stored an integer whose range is proven
+# FORM: AsRead
+# RUN: flow
+# CHECK: field L0.0 "small" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: field L1.0 "small" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StoredBehindTest" fields=[{key="small" declared={type=int[0, 1000]}}]
+layout L1 name="StoredProven" fields=[{key="small" declared={type=int[0, 1000]}}]
+
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = Convert v4 declared={type=anything} illTypedCause=Assertion
+    v6 = Convert v5 declared={type=int[0, 1000]} illTypedCause=FromLooseType
+    v7 = NewObject layout=L0
+    v8 = FinishObject v7
+    PropSet v8, v6 key="small"
+    v10 = Integer integer=255
+    v11 = BitAnd v2, v10
+    v12 = NewObject layout=L1
+    v13 = FinishObject v12
+    PropSet v13, v11 key="small"
+    v15 = PropGet v8 key="small"
+    v16 = PropGet v13 key="small"
+    v17 = Add v15, v16
+    Return v17
+}

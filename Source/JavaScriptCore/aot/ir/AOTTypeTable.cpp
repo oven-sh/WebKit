@@ -9,7 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTStatistics.h"
+#include "AOTThreads.h"
 #include <algorithm>
+#include <atomic>
+#include <bit>
 #include <functional>
 #include <utility>
 
@@ -31,6 +34,42 @@ void HashedIndex::add(uint32_t hash, uint32_t position)
     ++m_size;
 }
 
+void HashedIndex::reserve(const ParallelLoops& loops, size_t numberOfAdditions)
+{
+    constexpr size_t initialNumberOfSlots = 16;
+    constexpr size_t slotsPerTask = 1 << 14;
+    size_t numberOfSlots = std::max(initialNumberOfSlots, m_slots.size());
+    while ((m_size + numberOfAdditions) * 3 > numberOfSlots * 2)
+        numberOfSlots *= 2;
+    if (numberOfSlots == m_slots.size())
+        return;
+    Vector<Slot> oldSlots = std::exchange(m_slots, { });
+    static_assert(!VectorTraits<Slot>::needsInitialization);
+    m_slots.grow(numberOfSlots);
+    forEachIndexInParallel(loops, static_cast<unsigned>((numberOfSlots + slotsPerTask - 1) / slotsPerTask), [&](unsigned task) {
+        zeroSpan(m_slots.mutableSpan().subspan(task * slotsPerTask, std::min(slotsPerTask, numberOfSlots - task * slotsPerTask)));
+    });
+    forEachIndexInParallel(loops, static_cast<unsigned>((oldSlots.size() + slotsPerTask - 1) / slotsPerTask), [&](unsigned task) {
+        size_t end = std::min(oldSlots.size(), (static_cast<size_t>(task) + 1) * slotsPerTask);
+        for (size_t index = static_cast<size_t>(task) * slotsPerTask; index < end; ++index) {
+            if (oldSlots[index].positionPlusOne)
+                addConcurrently(oldSlots[index].hash, oldSlots[index].positionPlusOne - 1);
+        }
+    });
+}
+
+void HashedIndex::addConcurrently(uint32_t hash, uint32_t position)
+{
+    static_assert(sizeof(Slot) == sizeof(uint64_t));
+    uint64_t bits = std::bit_cast<uint64_t>(Slot { hash, position + 1 });
+    size_t mask = m_slots.size() - 1;
+    for (size_t index = hash & mask; ; index = (index + 1) & mask) {
+        uint64_t expected = 0;
+        if (std::atomic_ref<uint64_t>(reinterpret_cast<uint64_t&>(m_slots[index])).compare_exchange_strong(expected, bits, std::memory_order_release, std::memory_order_relaxed))
+            return;
+    }
+}
+
 void HashedIndex::insert(Slot slot)
 {
     size_t mask = m_slots.size() - 1;
@@ -42,7 +81,7 @@ void HashedIndex::insert(Slot slot)
 
 void add(Hasher& hasher, const LayoutSet& set)
 {
-    add(hasher, set.isComplete, static_cast<uint32_t>(set.members.size()), set.members);
+    add(hasher, set.isComplete, set.hasMembersWithoutLayout, static_cast<uint32_t>(set.members.size()), set.members);
 }
 
 void add(Hasher& hasher, const CalleeSet& set)
@@ -60,8 +99,8 @@ void add(Hasher& hasher, const PropertyKey& key)
     add(hasher, key.site);
 }
 
-template<typename Record, typename RecordID, size_t segmentSize>
-static RecordID internCanonical(InternedRecords<Record, RecordID, segmentSize>& records, Record&& record)
+template<typename Record, typename RecordID, size_t segmentSize, typename Storage>
+static RecordID internCanonical(InternedRecords<Record, RecordID, segmentSize, Storage>& records, Record&& record)
 {
     uint32_t hash = computeHash(record);
     RecordID id = records.findOrAdd(WTF::move(record), hash);
@@ -92,6 +131,8 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
     internWellKnownType(absent, Type::fromPrimitives(Primitive::Absent));
     internWellKnownType(guard, Type::forOpaque(OpaqueKind::Guard));
     internWellKnownType(length, Type::integer(Range::length()));
+    // What a boxed location with a dead zone holds. slotTypeOf() finds it here, where it has no arena to intern in.
+    intern(Type::anything().withPrimitives(Primitive::Absent));
 }
 
 std::optional<TypeID> TypeTable::find(const Type& canonical) const
@@ -106,11 +147,43 @@ std::optional<PropertyKeyID> TypeTable::find(const PropertyKey& key) const
 
 TypeID TypeTable::intern(const Type& type)
 {
+    return intern(Type(type));
+}
+
+TypeID TypeTable::intern(Type&& type)
+{
     RELEASE_ASSERT(!m_openPhase);
-    Type canonical = type;
-    canonical.canonicalize();
-    ASSERT(!canonical.layouts || at(canonical.layouts).isComplete);
-    return internCanonical(m_types, WTF::move(canonical));
+    type.canonicalize();
+    ASSERT(!type.layouts || at(type.layouts).isComplete);
+    return internCanonical(m_types, WTF::move(type));
+}
+
+uint32_t TypeTable::hashOfCanonical(const Type& type)
+{
+    return computeHash(type);
+}
+
+uint32_t TypeTable::hashOfCanonical(const LayoutSet& set)
+{
+    return computeHash(set);
+}
+
+TypeID TypeTable::internCanonicalWithHash(Type&& type, uint32_t hash)
+{
+    RELEASE_ASSERT(!m_openPhase);
+    ASSERT(hash == computeHash(type));
+    TypeID id = m_types.findOrAdd(WTF::move(type), hash);
+    RELEASE_ASSERT(m_types.size() < provisionalBit);
+    return id;
+}
+
+LayoutSetID TypeTable::internCanonicalWithHash(LayoutSet&& set, uint32_t hash)
+{
+    RELEASE_ASSERT(!m_openPhase);
+    ASSERT(hash == computeHash(set));
+    LayoutSetID id = m_layoutSets.findOrAdd(WTF::move(set), hash);
+    RELEASE_ASSERT(m_layoutSets.size() < provisionalBit);
+    return id;
 }
 
 LayoutSetID TypeTable::intern(LayoutSet&& set)
@@ -167,12 +240,24 @@ bool isSubsetOf(const LayoutSet& a, const LayoutSet& b)
         return true;
     if (!a.isComplete)
         return false;
-    return a.members.size() <= b.members.size() && std::ranges::includes(b.members, a.members);
+    if (a.hasMembersWithoutLayout && !b.hasMembersWithoutLayout)
+        return false;
+    if (a.members.size() > b.members.size())
+        return false;
+    // A few members are looked up one by one: a walk along the longer list costs more.
+    if (a.members.size() * 16 < b.members.size()) {
+        return std::ranges::all_of(a.members, [&](LayoutID member) {
+            return std::ranges::binary_search(b.members, member);
+        });
+    }
+    return std::ranges::includes(b.members, a.members);
 }
 
 bool overlaps(const LayoutSet& a, const LayoutSet& b)
 {
     if (!a.isComplete || !b.isComplete)
+        return true;
+    if (a.hasMembersWithoutLayout && b.hasMembersWithoutLayout)
         return true;
     size_t indexInA = 0;
     size_t indexInB = 0;

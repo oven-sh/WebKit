@@ -11,7 +11,7 @@ function f0 name="anotherArray" parameters=[{type=Array<number, proven, pristine
   b1(v4: guard):
     ReserveArrayCapacity v2, v1
     v6 = Integer integer=0
-    v7 = GetArrayElement v0, v6, v4 arrayStorage=Int32 level=Predicted [keyIsIntegral]
+    v7 = GetArrayElement v0, v6, v4 arrayStorage=Int32 level=Expected [keyIsIntegral]
     AppendElement v2, v7
     Return
   b2():

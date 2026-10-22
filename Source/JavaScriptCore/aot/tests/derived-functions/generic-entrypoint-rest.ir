@@ -13,5 +13,5 @@ function f0 name="rest" flags=[HasRestParameter] parameters=[{type=number site=w
 # CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything):
 # CHECK-NEXT: [[first]]: anything = GetArgument
 # CHECK-NEXT: [[rest]]: Array{{*}} = CreateRest firstArgument=1
-# CHECK-NEXT: [[number]]: number = Claim [[first]] castType=number site=w0
+# CHECK-NEXT: [[number]]: number = AssumeType [[first]] castType=number
 # CHECK-NEXT: = CallDirect [[number]], [[rest]] function=f0

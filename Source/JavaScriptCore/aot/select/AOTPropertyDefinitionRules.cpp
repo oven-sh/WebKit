@@ -10,9 +10,14 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTEffectsOfRules.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTIRBuilder.h"
+#include "AOTPass.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
 #include <span>
@@ -35,6 +40,7 @@ struct DescriptorMatch {
     ValueID value;
     ValueID getter;
     ValueID setter;
+    ValueID closureEnvironment;
     OptionSet<PropertyDescriptorFlags> descriptorFlags;
 };
 
@@ -156,6 +162,59 @@ static bool addAttribute(const Program& program, const Function& function, Built
     return true;
 }
 
+static ValueID findClosureMadeOnDemand(const Function& function, ValueID value)
+{
+    if (!value)
+        return { };
+    ValueID definition = definitionThroughUpcasts(function, value);
+    const Value& closure = function.at(definition);
+    return closure.opcode == Opcode::NewClosure && closure.isMadeOnDemand() ? definition : ValueID();
+}
+
+// An object that would have lain in the literal.
+static ValueID findObjectMadeOnDemand(const Function& function, ValueID value)
+{
+    if (!value)
+        return { };
+    ValueID definition = definitionThroughUpcasts(function, value);
+    const Value& object = function.at(definition);
+    return object.opcode == Opcode::NewObject && object.isMadeOnDemand() ? definition : ValueID();
+}
+
+static bool canCreateClosuresAtDefinition(SelectionContext& context, const DescriptorMatch& match)
+{
+    const Program& program = context.program();
+    const Function& function = context.function();
+    return std::ranges::all_of(std::array { match.value, match.getter, match.setter }, [&](ValueID value) {
+        ValueID closure = findClosureMadeOnDemand(function, value);
+        if (!closure)
+            return true;
+        const Function& callee = program.at(function.at(closure).function());
+        if (callee.captures.isEmpty())
+            return true;
+        if (!match.closureEnvironment || !program.at(callee.captures[0].type).environment)
+            return false;
+        FunctionAnalyses& analyses = context.analyses();
+        return analyses.dominates(match.closureEnvironment, analyses.useLists().pointOf(closure));
+    });
+}
+
+static void createClosuresAtDefinition(const Program& program, Function& function, const DescriptorMatch& match)
+{
+    for (ValueID value : { match.value, match.getter, match.setter }) {
+        // The literal is never made, so the object is made where it stands.
+        if (ValueID object = findObjectMadeOnDemand(function, value))
+            function.edit(object).setIsMadeOnDemand(false);
+        ValueID id = findClosureMadeOnDemand(function, value);
+        if (!id)
+            continue;
+        Value& closure = function.edit(id);
+        closure.setIsMadeOnDemand(false);
+        if (!program.at(closure.function()).captures.isEmpty())
+            closure.setCapturesOperands(singleElementSpan(match.closureEnvironment));
+    }
+}
+
 static void setDefinitionOperands(Value& definition, const DescriptorMatch& match)
 {
     definition.setOperand(OperandIndex::DefineOwnProperty::object, match.object);
@@ -203,17 +262,186 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     match.group = groupOf({ literalID, finishID, id });
     match.object = operands->object;
     match.key = operands->key;
+    std::optional<uint32_t> closureEnvironmentField = program.at(literal.layout()).flow.closureEnvironmentField;
     std::span<const ValueID> values = literal.valuesOperands();
     for (size_t index = 0; index < values.size(); ++index) {
+        if (literal.fields()[index] == closureEnvironmentField) {
+            match.closureEnvironment = values[index];
+            continue;
+        }
         if (!addAttribute(program, function, propertyNameAt(program, literal, index), values[index], match))
             return std::nullopt;
     }
 
     if (match.descriptorFlags.containsAny(dataDescriptorFlags) && match.descriptorFlags.containsAny(accessorDescriptorFlags))
         return std::nullopt;
+    if (!canCreateClosuresAtDefinition(context, match))
+        return std::nullopt;
     if (!hasEffectsOfDefinition(context, id, match))
         return std::nullopt;
     return match;
+}
+
+namespace {
+
+// A descriptor that reaches its call as a parameter of the block: on every way in it is a literal of one layout, made for this call alone.
+struct DescriptorsMeetingInParameter {
+    ValueID call;
+    uint32_t operandIndex { 0 };
+    ValueID parameter;
+    uint32_t parameterIndex { 0 };
+    // One for each edge into the block, in the order of the edges.
+    Vector<ValueID, 2> finishes;
+    Vector<ValueID, 2> literals;
+    // The one member that differs from way to way.
+    std::optional<size_t> differingMember;
+};
+
+} // anonymous namespace
+
+static bool areSameMember(const Program& program, const Function& function, ValueID a, ValueID b)
+{
+    if (a == b)
+        return true;
+    std::optional<bool> flagOfA = constantBooleanOf(program, function, a);
+    return flagOfA && flagOfA == constantBooleanOf(program, function, b);
+}
+
+static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInParameter(FunctionPassContext& pass, ValueID id)
+{
+    const Program& program = pass.program;
+    const Function& function = pass.function;
+    const Value& call = function.at(id);
+    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole)
+        return std::nullopt;
+    std::optional<DescriptorCallOperands> operands = descriptorCallOperandsOf(program, call);
+    if (!operands || function.at(operands->descriptor).opcode != Opcode::Parameter)
+        return std::nullopt;
+
+    const UseLists& uses = pass.analyses.useLists();
+    DescriptorsMeetingInParameter found { .call = id, .parameter = operands->descriptor };
+    ValueLocation location = uses.locationOf(found.parameter);
+    std::optional<Use> use = uses.singleUse(found.parameter);
+    if (location.placement != ValuePlacement::Parameter || location.block != uses.blockOf(id) || location.block == entryBlock || !use || use->kind != Use::Kind::Operand || function.at(location.block).isHandlerBlock())
+        return std::nullopt;
+    found.operandIndex = use->operandIndex;
+    found.parameterIndex = location.index;
+
+    std::span<const Edge> edges = pass.analyses.cfg().incomingEdges(location.block);
+    if (edges.size() < 2)
+        return std::nullopt;
+    for (Edge edge : edges) {
+        const Target& target = targetOf(function, edge);
+        if (edge.isHandlerEdge() || function.at(edge.from).terminator.kind != TerminatorKind::Jump || found.parameterIndex >= target.arguments.size())
+            return std::nullopt;
+        ValueID finishID = target.arguments[found.parameterIndex];
+        const Value& finish = function.at(finishID);
+        if (finish.opcode != Opcode::FinishObject || uses.useCount(finishID) != 1)
+            return std::nullopt;
+        ValueID literalID = finish.objectOperand();
+        const Value& literal = function.at(literalID);
+        if (uses.useCount(literalID) != 1 || !isDescriptorLiteral(program, literal))
+            return std::nullopt;
+        if (uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
+            return std::nullopt;
+        if (!found.literals.isEmpty()) {
+            const Value& first = function.at(found.literals[0]);
+            if (!literal.hasSamePayloadAs(first) || literal.valuesOperands().size() != first.valuesOperands().size())
+                return std::nullopt;
+            for (size_t index = 0; index < literal.valuesOperands().size(); ++index) {
+                if (areSameMember(program, function, literal.valuesOperands()[index], first.valuesOperands()[index]))
+                    continue;
+                if (found.differingMember && *found.differingMember != index)
+                    return std::nullopt;
+                found.differingMember = index;
+            }
+        }
+        found.finishes.append(finishID);
+        found.literals.append(literalID);
+    }
+    if (!found.differingMember)
+        return std::nullopt;
+    // A closure that is made on demand is made where the literal stands.
+    for (ValueID literal : found.literals) {
+        ValueID member = function.at(literal).valuesOperands()[*found.differingMember];
+        if (findClosureMadeOnDemand(function, member) || findObjectMadeOnDemand(function, member))
+            return std::nullopt;
+    }
+    return found;
+}
+
+// `for (..) Object.defineProperty(object, key, { get: make(key), enumerable: true })`: where the body of the loop is copied for a rare way through it, the copies meet again in front of the call,
+// and the call sees a parameter where the rule below looks for a literal. The ways in differ in one member: that member takes the place of the descriptor among the arguments, and the literal is made behind the join.
+PassOutcome makeDescriptorLiteralsBehindJoins(FunctionPassContext& pass)
+{
+    Function& function = pass.function;
+    if (!pass.analyses.opcodesOfValues().contains(Opcode::CallBuiltin))
+        return PassOutcome::Unchanged;
+
+    Vector<DescriptorsMeetingInParameter, 1> all;
+    for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
+        if (function.at(block).parameters.isEmpty())
+            continue;
+        for (ValueID id : function.at(block).values) {
+            if (std::optional<DescriptorsMeetingInParameter> found = findDescriptorsMeetingInParameter(pass, id))
+                all.append(WTF::move(*found));
+        }
+    }
+    if (all.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
+    for (const DescriptorsMeetingInParameter& found : all) {
+        const UseLists& uses = pass.analyses.useLists();
+        ProgramPoint point = uses.pointOf(found.call);
+        size_t differing = *found.differingMember;
+        Vector<Edge, 2> edges(pass.analyses.cfg().incomingEdges(point.block));
+        Vector<ProgramPoint, 4> dead;
+        TypeID type;
+        for (size_t index = 0; index < edges.size(); ++index) {
+            ValueID member = function.at(found.literals[index]).valuesOperands()[differing];
+            type = type ? pass.types.unionOf(type, function.at(member).type) : function.at(member).type;
+            dead.append(uses.pointOf(found.finishes[index]));
+            dead.append(uses.pointOf(found.literals[index]));
+        }
+
+        Value literal = function.at(found.literals[0]);
+        Vector<ValueID, 4> members(literal.valuesOperands());
+        builder.setOrigin(literal.origin());
+        for (size_t index = 0; index < members.size(); ++index) {
+            if (index == differing) {
+                members[index] = found.parameter;
+                continue;
+            }
+            if (std::optional<bool> flag = constantBooleanOf(pass.program, function, members[index])) {
+                Value constant = IRBuilder::make(Opcode::Boolean);
+                constant.setBoolean(*flag);
+                members[index] = builder.insertBefore(point, WTF::move(constant));
+            }
+        }
+        for (size_t index = 0; index < edges.size(); ++index)
+            editTarget(function, edges[index]).arguments[found.parameterIndex] = function.at(found.literals[index]).valuesOperands()[differing];
+        function.edit(found.parameter).type = type;
+        literal.setValuesOperands(members.span());
+        ValueID made = builder.insertBefore(point, WTF::move(literal));
+        ValueID finished = builder.insertBefore(point, IRBuilder::make(Opcode::FinishObject, { made }));
+        function.edit(found.call).setOperand(found.operandIndex, finished);
+        builder.applyInsertions();
+
+        std::ranges::sort(dead, [](ProgramPoint a, ProgramPoint b) {
+            return std::pair { a.block, a.index } < std::pair { b.block, b.index };
+        });
+        for (size_t first = 0; first < dead.size();) {
+            BitVector indexes;
+            size_t next = first;
+            for (; next < dead.size() && dead[next].block == dead[first].block; ++next)
+                indexes.set(dead[next].index);
+            builder.eraseValues(dead[first].block, indexes);
+            first = next;
+        }
+        pass.analyses.didChangeControlFlow();
+    }
+    return PassOutcome::Changed;
 }
 
 void selectDescriptorLiteral(SelectionContext& context)
@@ -225,7 +453,8 @@ void selectDescriptorLiteral(SelectionContext& context)
             matches.append(WTF::move(*match));
     }
 
-    context.rewriteGroups(SelectionRuleID::DescriptorLiteral, matches, [](GroupRewriter& rewriter, const DescriptorMatch& match) {
+    context.rewriteGroups(SelectionRuleID::DescriptorLiteral, matches, [&](GroupRewriter& rewriter, const DescriptorMatch& match) {
+        createClosuresAtDefinition(context.program(), rewriter.function(), match);
         setDefinitionOperands(rewriter.replaceRoot(Opcode::DefineOwnProperty), match);
     });
 }

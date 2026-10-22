@@ -48,7 +48,7 @@ static String countsPathOption()
 
 static unsigned numberOfTimesCountsWereWritten(const String& path)
 {
-    constexpr ASCIILiteral lineOfEveryWrite = "\tcounter:ShapeEpochBumps\n"_s;
+    constexpr ASCIILiteral lineOfEveryWrite = "\tcounter:FieldsLeftSlotByDelete\n"_s;
     AOT_TEST_CHECK(FileSystem::fileExists(path));
     auto bytes = FileSystem::readEntireFile(path);
     String text = bytes ? String::fromUTF8(bytes->span()) : emptyString();
@@ -206,7 +206,7 @@ static void testInterpreterFallbackText()
 {
     MismatchLog log(LogFormat::Text);
     reportInterpreterFallback(InterpreterFallbackReason::MemoryChecksBounds);
-    AOT_TEST_CHECK(log.text() == "[aot] interpreter-fallback memory-checks-bounds: a WebAssembly module of the executable runs in the interpreter, because its memory has no guard pages\n"_s);
+    AOT_TEST_CHECK(log.text() == "[aot] interpreter-fallback no-guard-pages: a compiled WebAssembly module is running in the interpreter because its memory has no guard pages\n"_s);
 }
 
 static void testInterpreterFallbackLinesAreAppended()
@@ -217,7 +217,7 @@ static void testInterpreterFallbackLinesAreAppended()
     reportInterpreterFallback(InterpreterFallbackReason::VectorsAreDisabled);
     String text = log.text();
     AOT_TEST_CHECK(text.startsWith(firstLine));
-    AOT_TEST_CHECK(StringView(text).substring(firstLine.length()) == "[aot] interpreter-fallback vectors-are-disabled: a WebAssembly module of the executable runs in the interpreter, because vector instructions are not available\n"_s);
+    AOT_TEST_CHECK(StringView(text).substring(firstLine.length()) == "[aot] interpreter-fallback no-simd: a compiled WebAssembly module is running in the interpreter because SIMD isn't available on this CPU\n"_s);
 }
 
 static void testInterpreterFallbackJSON()
@@ -225,7 +225,7 @@ static void testInterpreterFallbackJSON()
     MismatchLog log(LogFormat::JSON);
     reportInterpreterFallback(InterpreterFallbackReason::MemoryChecksBounds);
     reportInterpreterFallback(InterpreterFallbackReason::VectorsAreDisabled);
-    AOT_TEST_CHECK(log.text() == "{\"aot\":\"interpreter-fallback\",\"reason\":\"memory-checks-bounds\"}\n{\"aot\":\"interpreter-fallback\",\"reason\":\"vectors-are-disabled\"}\n"_s);
+    AOT_TEST_CHECK(log.text() == "{\"aot\":\"interpreter-fallback\",\"reason\":\"no-guard-pages\"}\n{\"aot\":\"interpreter-fallback\",\"reason\":\"no-simd\"}\n"_s);
 }
 
 static void testDisabledLogGetsNoLine()

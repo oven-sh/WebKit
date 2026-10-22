@@ -27,7 +27,7 @@ struct CopiedProperties {
     MarkedArgumentBuffer values;
 };
 
-static ALWAYS_INLINE bool canStoreDirectly(Structure* target)
+bool takesPlainPropertiesDirectly(Structure* target)
 {
     return target->typeInfo().type() == FinalObjectType
         && !target->isCompiledStructure()
@@ -64,7 +64,7 @@ static bool tryStore(VM& vm, JSObject* target, CopiedProperties& copied, TargetP
 bool tryCopyDataProperties(Instance*, VM& vm, JSObject* target, JSObject* source, TargetPrototypes prototypes)
 {
     Structure* sourceStructure = source->structure();
-    if (!canStoreDirectly(target->structure()))
+    if (!takesPlainPropertiesDirectly(target->structure()))
         return false;
     if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         return false;
@@ -86,7 +86,7 @@ bool tryCopyDataProperties(Instance*, VM& vm, JSObject* target, JSObject* source
 bool tryCopyRecordDataProperties(Instance*, VM& vm, JSObject* target, JSObject* object)
 {
     Object* record = compiledObjectOrNull(object);
-    if (!record || !canStoreDirectly(target->structure()))
+    if (!record || !takesPlainPropertiesDirectly(target->structure()))
         return false;
 
     CopiedProperties copied;

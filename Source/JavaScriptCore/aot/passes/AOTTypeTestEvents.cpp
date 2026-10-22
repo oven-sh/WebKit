@@ -8,11 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTGrouping.h"
 #include "AOTResultRules.h"
 #include <algorithm>
 #include <utility>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -66,14 +68,49 @@ TestEvents::TestEvents(const TestEventInputs& inputs)
     : m_inputs(inputs)
     , m_function(inputs.analyses.function())
     , m_cfg(inputs.analyses.cfg())
+    , m_hasEvent(m_function.values.size())
     , m_bytesAfterLastEvent(FillWith { }, m_function.blocks.size(), 0u)
     , m_isBarrier(m_function.values.size())
+    , m_isEnteredOnlyFromRarerCode(m_function.blocks.size())
     , m_lastResultRead(FillWith { }, m_function.values.size(), 0u)
 {
+    findBlocksEnteredOnlyFromRarerCode();
     collectEdgeItems();
     collectPointItems();
     findResultReads();
     collectEvents();
+}
+
+// Each pass that makes a slow path marks its own blocks, so a block may be marked likelier than all that leads to it.
+// Where only rarer code leads to a block, its edges are the ways in, and what holds on them is all that holds in the block.
+void TestEvents::findBlocksEnteredOnlyFromRarerCode()
+{
+    BitVector isReached(m_function.blocks.size());
+    Vector<BlockID, 16> worklist;
+    auto reachFrom = [&](BlockID first) {
+        isReached.set(first.index());
+        worklist.append(first);
+        while (!worklist.isEmpty()) {
+            BlockID from = worklist.takeLast();
+            for (BlockID target : m_cfg.successors(from)) {
+                if (isReached.get(target.index()))
+                    continue;
+                bool comesBack = isRarerThan(m_function.at(from).frequency, m_function.at(target).frequency) && !std::ranges::contains(m_cfg.incomingEdges(target), Edge::toHandlerOf(from));
+                if (comesBack)
+                    continue;
+                isReached.set(target.index());
+                worklist.append(target);
+            }
+        }
+    };
+
+    reachFrom(m_cfg.root());
+    for (BlockID block : m_cfg.reversePostOrder()) {
+        if (isReached.get(block.index()))
+            continue;
+        m_isEnteredOnlyFromRarerCode.set(block.index());
+        reachFrom(block);
+    }
 }
 
 void TestEvents::collectEdgeItems()
@@ -189,12 +226,16 @@ void TestEvents::findResultReads()
     }
 }
 
+// Only a mark says that a block is a slow path: the arm of a failed test, a generic copy.
+// A block that the estimate of a branch calls unlikely is ordinary code, and the estimate may be wrong.
 bool TestEvents::isRejoiningEdge(Edge edge) const
 {
     if (edge.isHandlerEdge())
         return false;
-    const BlockFrequencies& frequencies = m_inputs.analyses.blockFrequencies();
-    return frequencies.classOf(edge.from) > frequencies.classOf(targetOf(m_function, edge).block);
+    BlockID target = targetOf(m_function, edge).block;
+    if (m_isEnteredOnlyFromRarerCode.get(target.index()))
+        return false;
+    return isRarerThan(m_function.at(edge.from).frequency, m_function.at(target).frequency);
 }
 
 uint32_t TestEvents::endOfResultReadsAfter(ProgramPoint point) const
@@ -215,6 +256,8 @@ void TestEvents::collectEvents()
     m_guardDependencies.grow(conditions().size());
     for (size_t index : conditions().stretchConditions())
         m_guardDependencies[index] = dependenciesOfGuardOf(analyses(), conditions().at(TestConditionID(index)).test);
+    groupConditionsByDependencies();
+    findWhereConditionsMatter();
 
     std::span<const BlockID> order = m_cfg.reversePostOrder();
     m_firstEvent.reserveInitialCapacity(order.size() + 1);
@@ -223,6 +266,104 @@ void TestEvents::collectEvents()
         collectEventsOf(block);
     }
     m_firstEvent.append(m_events.size());
+}
+
+void TestEvents::groupConditionsByDependencies()
+{
+    auto hashOf = [](const TestCondition& condition, const GuardDependencies& dependencies) {
+        Hasher hasher;
+        add(hasher, condition.proof);
+        add(hasher, dependencies.slotState);
+        for (const Vector<MemoryLocation, 2>* locations : { &condition.dependsOn, &dependencies.locations }) {
+            add(hasher, locations->size());
+            for (const MemoryLocation& location : *locations) {
+                add(hasher, location.heap());
+                add(hasher, location.isEntireHeap());
+                if (location.isEntireHeap())
+                    continue;
+                add(hasher, location.firstIndex());
+                add(hasher, location.secondIndex());
+            }
+        }
+        return hasher.hash();
+    };
+
+    HashedIndex index;
+    Vector<uint32_t, 16> firstConditions;
+    m_dependencyGroups.fill(0, conditions().size());
+    m_subjectsFromOutside.ensureSize(conditions().size());
+    for (size_t conditionIndex : conditions().stretchConditions()) {
+        const TestCondition& condition = conditions().at(TestConditionID(conditionIndex));
+        const GuardDependencies& dependencies = *m_guardDependencies[conditionIndex];
+        uint32_t hash = hashOf(condition, dependencies);
+        std::optional<uint32_t> group = index.find(hash, [&](uint32_t position) {
+            const TestCondition& other = conditions().at(TestConditionID(firstConditions[position]));
+            const GuardDependencies& otherDependencies = *m_guardDependencies[firstConditions[position]];
+            return other.proof == condition.proof && other.dependsOn == condition.dependsOn && otherDependencies.locations == dependencies.locations && otherDependencies.slotState == dependencies.slotState;
+        });
+        if (!group) {
+            group = firstConditions.size();
+            firstConditions.append(conditionIndex);
+            index.add(hash, *group);
+        }
+        m_dependencyGroups[conditionIndex] = *group;
+        if (dependencies.subject && comesFromOutside(analyses(), dependencies.subject))
+            m_subjectsFromOutside.quickSet(conditionIndex);
+    }
+    m_writtenOfDependencyGroups.grow(firstConditions.size());
+}
+
+// A proof about a value begins behind the definition of the value, which dominates it, and nobody asks for it behind the last requirement. In reverse postorder a block comes behind
+// those that dominate it, and a block outside every cycle comes in front of all that it reaches. A block in a cycle reaches nothing in front of the first block of the outermost cycle round it:
+// a way back leads to a block from which the walk that made the order came down to where the way begins, and so stays in that cycle. So what a writer ends is asked only of the conditions
+// that matter in its block: in a long function each of the many conditions matters in a few blocks.
+void TestEvents::findWhereConditionsMatter()
+{
+    const UseLists& useLists = analyses().useLists();
+    Vector<uint32_t> lastRequirement(FillWith { }, conditions().size(), 0u);
+    for (const TestRequirement& requirement : m_inputs.requirements) {
+        uint32_t& last = lastRequirement[requirement.condition.index()];
+        last = std::max(last, m_cfg.reversePostOrderIndex(requirement.point.block));
+    }
+    for (size_t index : conditions().stretchConditions()) {
+        ValueID subject = conditions().at(TestConditionID(index)).subject;
+        BlockID definingBlock = subject ? useLists.blockOf(subject) : BlockID();
+        uint32_t first = definingBlock && m_cfg.isReachable(definingBlock) ? m_cfg.reversePostOrderIndex(definingBlock) : 0;
+        m_whereConditionsMatter.append({ static_cast<uint32_t>(index), first, lastRequirement[index] });
+    }
+
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    m_firstBlockReachedFrom = Vector<uint32_t>(order.size(), [](size_t position) {
+        return static_cast<uint32_t>(position);
+    });
+    if (!m_cfg.hasCycle())
+        return;
+    const BlockCycles& cycles = analyses().blockCycles();
+    Vector<uint32_t, 8> firstBlockOfCycle;
+    for (uint32_t position = 0; position < order.size(); ++position) {
+        std::optional<unsigned> cycle = cycles.outermostCycleOf(order[position]);
+        if (!cycle)
+            continue;
+        while (firstBlockOfCycle.size() <= *cycle)
+            firstBlockOfCycle.append(UINT32_MAX);
+        firstBlockOfCycle[*cycle] = std::min(firstBlockOfCycle[*cycle], position);
+        m_firstBlockReachedFrom[position] = firstBlockOfCycle[*cycle];
+    }
+}
+
+std::span<const uint32_t> TestEvents::conditionsThatMatterIn(BlockID block)
+{
+    if (m_blockOfConditionsThatMatter == block)
+        return m_conditionsThatMatter.span();
+    m_blockOfConditionsThatMatter = block;
+    m_conditionsThatMatter.shrink(0);
+    uint32_t order = m_cfg.reversePostOrderIndex(block);
+    uint32_t firstBlockReached = m_firstBlockReachedFrom[order];
+    for (const BlocksWhereConditionMatters& range : m_whereConditionsMatter) {
+        if (range.first <= order && firstBlockReached <= range.last)
+            m_conditionsThatMatter.append(range.condition);
+    }
+    return m_conditionsThatMatter.span();
 }
 
 std::span<const TestEvent> TestEvents::eventsOf(BlockID block) const
@@ -272,14 +413,14 @@ void TestEvents::collectEventsOf(BlockID id)
         std::optional<EffectsOnEdges> effectsWhenPassed;
         if (site)
             effectsWhenPassed = EffectsOnEdges::onBothEdges(site->effectsWhenPassed);
-        else
+        else if (m_inputs.measuresCodeBetweenEvents)
             m_pendingBytes += estimatedCodeBytes(program, m_function, m_function.at(value));
         const EffectsOnEdges& effects = effectsWhenPassed ? *effectsWhenPassed : analyses().effectsOf(value);
 
         if (effects.normal.maySuspend)
             appendEvent(TestEvent::Kind::Suspension, index, 0);
         else if (effects.normal.writes.containsAny(heapsDependedOn))
-            appendEnding(index, computeEndedSet(value, effects));
+            appendEnding(index, findConditionsEndedBy(value, effects, conditionsThatMatterIn(id)));
 
         takeItemsAt(valueProofs, index, [&](uint32_t proof) {
             appendEvent(TestEvent::Kind::ValueProof, index, proof);
@@ -291,10 +432,16 @@ void TestEvents::collectEventsOf(BlockID id)
     if (effectsOfTerminator.maySuspend)
         appendEvent(TestEvent::Kind::Suspension, numberOfValues, 0);
     else if (effectsOfTerminator.writes.containsAny(heapsDependedOn))
-        appendEnding(numberOfValues, computeEndedSetOfTerminator(effectsOfTerminator));
+        appendEnding(numberOfValues, findConditionsEndedByTerminator(effectsOfTerminator, conditionsThatMatterIn(id)));
 
-    m_pendingBytes += estimatedCodeBytes(block.terminator);
+    if (m_inputs.measuresCodeBetweenEvents)
+        m_pendingBytes += estimatedCodeBytes(block.terminator);
     m_bytesAfterLastEvent[id.index()] = m_pendingBytes;
+
+    for (const TestEvent& event : m_events.span().subspan(m_firstEvent.last())) {
+        if (event.index < numberOfValues)
+            m_hasEvent.quickSet(block.values[event.index].index());
+    }
 }
 
 void TestEvents::appendEvent(TestEvent::Kind kind, uint32_t index, uint32_t payload)
@@ -302,62 +449,55 @@ void TestEvents::appendEvent(TestEvent::Kind kind, uint32_t index, uint32_t payl
     m_events.append(TestEvent { kind, index, payload, std::exchange(m_pendingBytes, 0) });
 }
 
-void TestEvents::appendEnding(uint32_t index, EndedSet&& set)
+void TestEvents::appendEnding(uint32_t index, BitVector&& endedConditions)
 {
-    if (set.ended.isEmpty() && set.markedStale.isEmpty())
+    if (endedConditions.isEmpty())
         return;
-    appendEvent(TestEvent::Kind::Ending, index, internEndedSet(WTF::move(set)));
+    appendEvent(TestEvent::Kind::Ending, index, internEndedSet(WTF::move(endedConditions)));
 }
 
-TestEvents::EndedSet TestEvents::computeEndedSet(ValueID writer, const EffectsOnEdges& effects) const
+BitVector TestEvents::findConditionsEndedBy(ValueID writer, const EffectsOnEdges& effects, std::span<const uint32_t> conditionsThatMatter) const
 {
-    EndedSet set;
+    BitVector ended;
     EndingsAtWriter endings(analyses(), writer, effects);
-    for (size_t index : conditions().stretchConditions()) {
-        if (endings.endingOf(conditions().at(TestConditionID(index)), m_guardDependencies[index]) == ProofEnding::MayEnd)
-            set.ended.set(index);
+    for (uint32_t index : conditionsThatMatter) {
+        const GuardDependencies& dependencies = *m_guardDependencies[index];
+        WrittenByWriter& group = m_writtenOfDependencyGroups[m_dependencyGroups[index]];
+        if (group.writer != writer) {
+            group.writer = writer;
+            group.written = { };
+            if (effects.normal.writes.overlaps(dependencies.masks))
+                group.written = endings.writtenOf(conditions().at(TestConditionID(index)), dependencies);
+        }
+        if (endings.endingOf(dependencies.subject, m_subjectsFromOutside.quickGet(index), group.written) == ProofEnding::MayEnd)
+            ended.set(index);
     }
-    splitByRenewal(set);
-    return set;
+    if (analyses().context().build.options().verifiesAfterEveryPass) [[unlikely]] {
+        EndingsAtWriter endingsOneByOne(analyses(), writer, effects);
+        for (uint32_t index : conditionsThatMatter) {
+            bool mayEnd = effects.normal.writes.overlaps(m_guardDependencies[index]->masks) && endingsOneByOne.endingOf(conditions().at(TestConditionID(index)), m_guardDependencies[index]) == ProofEnding::MayEnd;
+            RELEASE_ASSERT(mayEnd == ended.get(index));
+        }
+    }
+    return ended;
 }
 
-TestEvents::EndedSet TestEvents::computeEndedSetOfTerminator(const Effects& effects) const
+BitVector TestEvents::findConditionsEndedByTerminator(const Effects& effects, std::span<const uint32_t> conditionsThatMatter) const
 {
-    EndedSet set;
-    for (size_t index : conditions().stretchConditions()) {
+    BitVector ended;
+    for (uint32_t index : conditionsThatMatter) {
         if (endingOfTerminator(analyses(), conditions().at(TestConditionID(index)), effects) == ProofEnding::MayEnd)
-            set.ended.set(index);
+            ended.set(index);
     }
-    splitByRenewal(set);
-    return set;
+    return ended;
 }
 
-void TestEvents::splitByRenewal(EndedSet& set) const
+uint32_t TestEvents::internEndedSet(BitVector&& endedConditions)
 {
-    switch (renewal()) {
-    case RenewalPolicy::Never:
-        return;
-    case RenewalPolicy::ByShapeEpoch:
-        break;
-    }
-
-    const BitVector& renewable = conditions().renewableConditions();
-    BitVector endedAndRenewable = set.ended;
-    endedAndRenewable.filter(renewable);
-    if (endedAndRenewable.isEmpty())
-        return;
-
-    // One epoch test renews several conditions into one guard, so all renewable conditions become stale together.
-    set.markedStale = renewable;
-    set.ended.exclude(renewable);
-}
-
-uint32_t TestEvents::internEndedSet(EndedSet&& set)
-{
-    size_t known = m_endedSets.find(set);
+    size_t known = m_endedSets.find(endedConditions);
     if (known != notFound)
         return static_cast<uint32_t>(known);
-    m_endedSets.append(WTF::move(set));
+    m_endedSets.append(WTF::move(endedConditions));
     return m_endedSets.size() - 1;
 }
 

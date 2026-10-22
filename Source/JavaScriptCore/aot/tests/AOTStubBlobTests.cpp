@@ -58,6 +58,10 @@ static constexpr GPRReg T13 = gprOf(StubRegister::T13);
 
 static constexpr std::array stepChecks { GeneratorStepCheck::IsUnmodifiedGenerator, GeneratorStepCheck::IsGenerator, GeneratorStepCheck::IsUnmodified, GeneratorStepCheck::None };
 static_assert(stepChecks.size() == descriptorOf(StubFamily::StepGenerator).numberOfForms);
+static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator, StepConsumer::AsyncFunctionAwaitingCall, StepConsumer::AsyncGeneratorAwaitingCall };
+static_assert(stepConsumers.size() == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
+static constexpr std::array generatorKinds { NewGeneratorKind::Sync, NewGeneratorKind::Async };
+static_assert(generatorKinds.size() == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 
 static StubBlob buildBlob(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
 {
@@ -257,6 +261,7 @@ static void checkSingleReturnSites(const StubBlob& blob)
         { StubFrameKind::Adapter, enterClosure() },
         { StubFrameKind::ConstructAdapter, enterClosureForConstruct() },
         { StubFrameKind::SavedFrameAdapter, enterSavedFrame() },
+        { StubFrameKind::AsyncGeneratorBody, runAsyncGeneratorStep() },
         { StubFrameKind::ArgumentList, callFromArgumentListFrame() },
     };
     for (auto [kind, body] : singleSiteBodies) {
@@ -285,6 +290,10 @@ static void checkGeneratorBodySites(const StubCatalog& catalog, const StubBlob& 
             AOT_TEST_CHECK(returnLabels.size() == 1 && returnLabels[0] == StubFrameKind::GeneratorBody);
         else
             AOT_TEST_CHECK(!returnLabels.contains(StubFrameKind::GeneratorBody));
+        if (body == runAsyncGeneratorStep())
+            AOT_TEST_CHECK(returnLabels.size() == 1 && returnLabels[0] == StubFrameKind::AsyncGeneratorBody);
+        else
+            AOT_TEST_CHECK(!returnLabels.contains(StubFrameKind::AsyncGeneratorBody));
     }
 
     Vector<StubKey> siteBodies = bodiesContainingSites(blob, StubFrameKind::GeneratorBody);
@@ -315,7 +324,8 @@ static void testBodyEntries()
     StubCatalog catalog(StubOptions { }, StubPolicy { });
     checkEntries(catalog, getByVal(false), { getByVal(false), getByVal(true) });
     checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells() });
-    checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure() });
+    checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
+    checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
         checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueNotClosure(count) });
         if (exists(callHostFunctionWithoutBoxedCall(count)))
@@ -364,6 +374,11 @@ static void checkResumptionReferences(const StubCatalog& catalog)
     AOT_TEST_CHECK(refersOnceBy(catalog, enterSavedFrame(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (GeneratorStepCheck check : stepChecks)
         AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), restoreSavedFrameToStack(), StubReference::Kind::Call));
+    AOT_TEST_CHECK(refersOnceBy(catalog, runAsyncGeneratorStep(), restoreSavedFrameToStack(), StubReference::Kind::Call));
+    for (StepConsumer consumer : stepConsumers) {
+        AOT_TEST_CHECK(refersOnceBy(catalog, stepAsyncGenerator(consumer), runAsyncGeneratorStep(), StubReference::Kind::Jump));
+        AOT_TEST_CHECK(refersOnceBy(catalog, stepAsyncGenerator(consumer), stepAsyncIteratorInEngine(), StubReference::Kind::Jump));
+    }
 }
 
 static void checkExceptionReferences(const StubCatalog& catalog)
@@ -379,6 +394,7 @@ static void checkHostCallReferences(const StubCatalog& catalog)
         { BoxedCallForm::MapDelete, StubFamily::MapDelete }, { BoxedCallForm::MapGet, StubFamily::MapGet }, { BoxedCallForm::MapHas, StubFamily::MapHas }, { BoxedCallForm::MapSet, StubFamily::MapSet },
         { BoxedCallForm::SetAdd, StubFamily::SetAdd }, { BoxedCallForm::SetDelete, StubFamily::SetDelete }, { BoxedCallForm::SetHas, StubFamily::SetHas },
         { BoxedCallForm::StringIndexOf, StubFamily::StringIndexOf }, { BoxedCallForm::StringStartsWith, StubFamily::StringStartsWith },
+        { BoxedCallForm::StringSlice, StubFamily::Substring }, { BoxedCallForm::StringToLowerCase, StubFamily::CallOperation },
         { BoxedCallForm::WeakMapGet, StubFamily::WeakMapGet }, { BoxedCallForm::WeakMapHas, StubFamily::WeakMapHas }, { BoxedCallForm::WeakMapSet, StubFamily::WeakMapSet },
         { BoxedCallForm::WeakSetHas, StubFamily::WeakSetHas },
     };
@@ -396,6 +412,23 @@ static void checkHostCallReferences(const StubCatalog& catalog)
     }
 }
 
+// The call of a closure that its field has not made keeps the cell in the frame of the stub, so it returns to the site that the unwinder takes for the frame of a list of arguments.
+// A validating build allocates nothing in frames, and with wide references no slot defers a closure.
+static void checkMethodCallReferences(const StubCatalog& catalog)
+{
+    StubOptions validatingOptions;
+    validatingOptions.validates = true;
+    StubOptions wideOptions;
+    wideOptions.useWideReferences = true;
+    StubCatalog validatingCatalog(validatingOptions, StubPolicy { });
+    StubCatalog wideCatalog(wideOptions, StubPolicy { });
+    for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
+        AOT_TEST_CHECK(refersOnceBy(catalog, callMethodById(count), callFromArgumentListFrame(), StubReference::Kind::Jump));
+        AOT_TEST_CHECK(!numberOfReferences(validatingCatalog, callMethodById(count), callFromArgumentListFrame()));
+        AOT_TEST_CHECK(!numberOfReferences(wideCatalog, callMethodById(count), callFromArgumentListFrame()));
+    }
+}
+
 static void testReferences()
 {
     StubCatalog catalog(StubOptions { }, StubPolicy { });
@@ -403,6 +436,7 @@ static void testReferences()
     checkResumptionReferences(catalog);
     checkExceptionReferences(catalog);
     checkHostCallReferences(catalog);
+    checkMethodCallReferences(catalog);
 }
 
 static void testReachability()
@@ -436,7 +470,9 @@ static void testMissingKeys()
     }
 
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(2)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(3)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::NewGenerator).withForm(2)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
 }
 
@@ -454,6 +490,7 @@ static void checkCoroutineSummaries(const StubCatalog& catalog)
 {
     checkAwaitSummary(catalog, awaitBySavingFrame(), A1);
     checkAwaitSummary(catalog, awaitCallBySavingFrame(), R0);
+    checkAwaitSummary(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn), A1);
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, returnAsyncResult()));
 
     Typed::Effects effectsOfPromiseCreation = catalog.effectsOf(newPromise());
@@ -532,14 +569,6 @@ static void checkArraySummaries(const StubCatalog& catalog)
     AOT_TEST_CHECK(!containsRegister(catalog.summaryOf(arrayPushDouble()).clobbered, FPRInfo::fpRegT0));
 }
 
-static void checkCheckedReadKeys()
-{
-    auto numberOfKeys = std::ranges::count_if(allStubKeys(), [](StubKey key) {
-        return key.family() == StubFamily::GetByIdChecked;
-    });
-    AOT_TEST_CHECK(numberOfKeys == 4);
-}
-
 static void checkWeakMapGetSummary(const StubCatalog& catalog)
 {
     constexpr HashTableRegisterPlan plan = hashTableRegisterPlan;
@@ -592,7 +621,6 @@ static void testSummaries()
     checkSubstringSummary(catalog);
     checkCallSummaries(catalog);
     checkArraySummaries(catalog);
-    checkCheckedReadKeys();
     checkWeakMapGetSummary(catalog);
     checkEqualitySummaries(catalog);
     checkBoundMethodCall();
@@ -608,6 +636,13 @@ static void checkCoroutineOperations(const StubCatalog& catalog)
     for (StubKey key : keys)
         operationsCalled.merge(operationsCalledBy(catalog, key));
     AOT_TEST_CHECK(operationsCalled == entrySetOf({ Entry::operationAOTNewPromise, Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitWithSavedFrame, Entry::operationAOTAwaitCallWithSavedFrame, Entry::operationAOTResolvePromiseOrReturnResult }));
+
+    AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn }));
+    for (StepConsumer consumer : stepConsumers)
+        AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());
+    AOT_TEST_CHECK(operationsCalledBy(catalog, runAsyncGeneratorStep()) == entrySetOf({ Entry::operationAOTAsyncIteratorStep, Entry::operationAOTFinishAsyncIteratorStep }));
+    for (NewGeneratorKind kind : generatorKinds)
+        AOT_TEST_CHECK(operationsCalledBy(catalog, newGenerator(kind)) == entrySetOf({ Entry::operationAOTNewGenerator }));
 }
 
 static void checkCollectionOperations(const StubCatalog& catalog)

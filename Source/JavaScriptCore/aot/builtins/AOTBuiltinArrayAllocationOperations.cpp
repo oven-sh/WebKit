@@ -14,6 +14,7 @@
 #include "AOTOperationScope.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTUnwinding.h"
 #include "ArrayConstructor.h"
 #include "IndexingTypeInlines.h"
 #include "JSArrayInlines.h"
@@ -63,6 +64,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithIndexingType, JSCell*, (Instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* instance, uint32_t countAndNumberMask, double first, double second, double third, double fourth))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayFromDoubles);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     double elements[] = { first, second, third, fourth };
     unsigned count = countAndNumberMask & ((1u << arrayLiteralWithDoubleIsNumberMaskShift) - 1);
     RELEASE_ASSERT(count <= std::size(elements));
@@ -71,17 +73,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* in
         fit &= elements[i] == elements[i];
     if (fit && !globalObject->isHavingABadTime()) {
         unsigned capacity = arrayLiteralVectorLength(count);
-        void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
-        if (!storage) {
+        JSArray* array = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble), count, capacity);
+        if (!array) {
             throwOutOfMemoryError(globalObject, scope);
             OPERATION_RETURN(scope, nullptr);
         }
-        Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
-        butterfly->setVectorLength(capacity);
-        butterfly->setPublicLength(count);
-        for (unsigned i = 0; i < capacity; ++i)
-            butterfly->contiguousDouble().atUnsafe(i) = i < count ? elements[i] : PNaN;
-        OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble), butterfly));
+        for (unsigned i = 0; i < count; ++i)
+            array->butterfly()->contiguousDouble().atUnsafe(i) = elements[i];
+        OPERATION_RETURN(scope, array);
     }
     auto valueAt = [&](uint32_t i) {
         uint64_t bits = std::bit_cast<uint64_t>(elements[i]);
@@ -102,7 +101,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance* inst
     IndexingType sourceIndexingType = source ? source->indexingType() : NonArray;
     bool mustUseIndexingType = mustHaveIndexingType || hasInt32(sourceIndexingType) || hasDouble(sourceIndexingType) || hasContiguous(sourceIndexingType);
     if ((mustUseIndexingType || length < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH) && (mustHaveIndexingType || !globalObject->isHavingABadTime())) {
-        if (JSArray* array = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(indexingType), length))
+        Structure* structure = globalObject->originalArrayStructureForIndexingType(indexingType);
+        bool holdsPlainVector = hasInt32(structure->indexingType()) || hasDouble(structure->indexingType()) || hasContiguous(structure->indexingType());
+        if (JSArray* array = holdsPlainVector ? tryCreateArrayWithStorage(vm, structure, length, static_cast<unsigned>(length) | 1) : nullptr)
+            OPERATION_RETURN(scope, array);
+        if (JSArray* array = JSArray::tryCreate(vm, structure, length))
             OPERATION_RETURN(scope, array);
         if (mustUseIndexingType) {
             throwOutOfMemoryError(globalObject, scope);

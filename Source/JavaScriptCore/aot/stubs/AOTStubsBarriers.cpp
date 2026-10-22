@@ -10,6 +10,7 @@
 
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTMutatorMarkStackLayout.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "Butterfly.h"
@@ -36,6 +37,38 @@ void returnIfFencedAndNotBlack(StubAssembler& jit, GPRReg owner)
     isBlack.link(&jit);
 }
 
+// What Heap::addToRememberedSet() does while no collector runs beside the program. A full segment is left to it.
+static void returnUnlessOperationRemembers(StubAssembler& jit, GPRReg owner, GPRReg scratch)
+{
+    Jump isNotFenced = jit.branchTest8(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
+    jit.memoryFence();
+    Jump isBlack = jit.barrierBranchWithoutFence(owner, true);
+    jit.returnToCaller();
+
+    isNotFenced.link(&jit);
+#if CPU(X86_64) && !ASSERT_ENABLED
+    constexpr GPRReg top = CCallHelpers::s_scratchRegister;
+    RELEASE_ASSERT(noOverlap(owner, scratch, top));
+    JumpList leftToOperation;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.mutatorMarkStack)), scratch);
+    // The tests of stubs run them on an instance that has no heap.
+    leftToOperation.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfTop()), top);
+    leftToOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, top, TrustedImm32(MutatorMarkStackLayout::segmentCapacity)));
+    jit.addPtr(TrustedImm32(1), Address(scratch, MutatorMarkStackLayout::offsetOfTop()));
+    jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfHeadSegment()), scratch);
+    jit.storePtr(owner, BaseIndex(scratch, top, CCallHelpers::TimesEight, MutatorMarkStackLayout::offsetOfFirstCellInSegment));
+    jit.store8(TrustedImm32(static_cast<int32_t>(CellState::PossiblyGrey)), Address(owner, JSCell::cellStateOffset()));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.barriersExecuted)), scratch);
+    jit.addPtr(TrustedImm32(1), Address(scratch));
+    jit.returnToCaller();
+    leftToOperation.link(&jit);
+#else
+    UNUSED_PARAM(scratch);
+#endif
+    isBlack.link(&jit);
+}
+
 static void rememberOwnerAndReturn(StubAssembler& jit, GPRReg owner)
 {
     jit.callOperationAndReturn(Entry::operationAOTBarrierSlow, {
@@ -47,10 +80,10 @@ static void rememberOwnerAndReturn(StubAssembler& jit, GPRReg owner)
     });
 }
 
-StubSignature signatureOfWriteBarrier(StubKey)
+StubSignature signatureOfWriteBarrier(StubKey key)
 {
     StubSignature signature;
-    signature.addOperand(gprOf(firstStubOperandRegister));
+    signature.addOperand(key.operandRegister().value_or(gprOf(firstStubOperandRegister)));
     return signature;
 }
 
@@ -63,7 +96,14 @@ void generateWriteBarrier(StubAssembler& jit)
     jit.returnToCaller();
 
     isWithinThreshold.link(&jit);
-    returnIfFencedAndNotBlack(jit, owner);
+    // The test is made where the owner lies. The rest is written once.
+    if (jit.key().operandRegister()) {
+        if (owner != gprOf(firstStubOperandRegister))
+            jit.move(owner, jit.allocateScratch(firstStubOperandRegister));
+        jit.jumpToStub(writeBarrier());
+        return;
+    }
+    returnUnlessOperationRemembers(jit, owner, state);
     rememberOwnerAndReturn(jit, owner);
 }
 
@@ -127,7 +167,7 @@ Label returnAfterStoring(StubAssembler& jit, GPRReg owner, GPRReg value)
     jit.returnToCaller();
 
     isWithinThreshold.link(&jit);
-    returnIfFencedAndNotBlack(jit, owner);
+    returnUnlessOperationRemembers(jit, owner, state);
     if (descriptorOf(jit.key().family()).clobbers == StubClobbers::ClobbersLikeCall) {
         jit.move(owner, operationArgumentGPR(1));
         jit.tailCallOperation(Entry::operationAOTBarrierSlow, OperationCall::FirstArgument::Instance);

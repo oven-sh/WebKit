@@ -8,12 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
+#include "AOTArrivalCounts.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinModules.h"
 #include "AOTChainDependents.h"
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
+#include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTImmortalCells.h"
@@ -38,15 +41,38 @@
 
 namespace JSC { namespace AOT {
 
-void* ZeroedPages::allocate(size_t bytes)
+#if OS(LINUX)
+#if defined(MADV_POPULATE_WRITE)
+static constexpr int populateForWriting = MADV_POPULATE_WRITE;
+#else
+static constexpr int populateForWriting = 23;
+#endif
+#endif
+
+void* ZeroedPages::allocate(size_t bytes, FirstUse firstUse)
 {
     size_t size = roundUpToMultipleOf(pageSize(), std::max<size_t>(bytes, 1));
     void* pages = OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages);
 #if OS(LINUX)
     while (madvise(pages, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+    // A kernel older than 5.14 refuses, and the pages fault in one by one.
+    if (firstUse == FirstUse::AllAtOnce)
+        madvise(pages, size, populateForWriting);
+#else
+    UNUSED_PARAM(firstUse);
 #endif
     m_ranges.append({ pages, size });
     return pages;
+}
+
+void ZeroedPages::release(void* pages)
+{
+    size_t index = m_ranges.findIf([&](const auto& range) {
+        return range.first == pages;
+    });
+    RELEASE_ASSERT(index != notFound);
+    OSAllocator::decommitAndRelease(pages, m_ranges[index].second);
+    m_ranges.removeAt(index);
 }
 
 ZeroedPages::~ZeroedPages()
@@ -63,23 +89,26 @@ static size_t sizeOfZeroedTable(size_t count, size_t size)
 static size_t arenaCapacity(const ProgramTables& tables)
 {
     constexpr size_t sizeOfFixedSizeTables = 2 * MB;
-    const Image& image = *Image::current();
+    bool usesWideReferences = Image::current()->header().options.useWideReferences();
+    size_t sizeOfCellReference = usesWideReferences ? sizeof(JSCell*) : sizeof(uint32_t);
     std::span propertyRuns = tables.propertyRuns();
     size_t numberOfPropertyRuns = propertyRuns.empty() ? 0 : propertyRuns[0] - 1;
     size_t capacity = sizeOfFixedSizeTables
         + sizeOfZeroedTable(tables.firstEnvironmentShape, sizeof(uint32_t))
         + sizeOfZeroedTable(tables.allocations().size() + 1, sizeof(AllocationSiteRecord) + sizeof(int32_t))
         + sizeOfZeroedTable(tables.numberOfClasses(), sizeof(JSCell*))
-        + sizeOfZeroedTable(tables.functionKinds().size(), sizeof(JSCell*))
-        + sizeOfZeroedTable(tables.literalStrings().size(), sizeof(JSCell*))
-        + sizeOfZeroedTable(image.text().numberOfIdentifiers(), sizeof(JSCell*))
+        + sizeOfZeroedTable(tables.numberOfClosureCells, sizeOfCellReference)
+        + sizeOfZeroedTable(tables.literalStrings().size(), sizeOfCellReference)
+        + sizeOfZeroedTable(tables.keyCellIdentifiers().size(), sizeOfCellReference)
         + sizeOfZeroedTable(tables.bigIntConstants().size(), sizeof(JSCell*))
-        + sizeOfZeroedTable(tables.builtinCells().size(), sizeof(JSCell*))
+        + sizeOfZeroedTable(InstanceLayout::holdsBuiltinCells(tables.builtinCells().size()) ? 0 : tables.builtinCells().size(), sizeof(JSCell*))
         + sizeOfZeroedTable(numberOfPropertyRuns, sizeof(const PropertyRun*))
-        + sizeOfZeroedTable(tables.instanceSizes.numberOfSiteCaches, sizeof(SiteCacheState))
-        + sizeOfZeroedTable(tables.modules().size(), sizeof(uint8_t))
-        + sizeOfZeroedTable(tables.requireEdges().size(), sizeof(uint8_t));
-    if (image.header().options.useWideReferences())
+        + sizeOfZeroedTable(SiteCacheState::numberOfStates, sizeof(SiteCacheState))
+        + sizeOfZeroedTable(SiteCaches::numberOfMissWords(tables.instanceSizes.numberOfSiteCaches), sizeof(uint64_t))
+        + sizeOfZeroedTable(RememberedSlotSet::numberOfCardsFor(tables.instanceSizes.numberOfSiteCaches * sizeof(Slot), SiteCaches::regionShift), sizeof(uint8_t))
+        + sizeOfZeroedTable(InstanceLayout::holdsGlobalBindings(tables.globalBindings().size() * sizeof(GlobalBinding)) ? 0 : tables.globalBindings().size(), sizeof(GlobalBinding))
+        + sizeOfZeroedTable(tables.modules().size(), sizeof(uint8_t));
+    if (usesWideReferences)
         capacity += sizeOfZeroedTable(tables.instanceSizes.numberOfStringCells, sizeof(JSCell*));
     return capacity;
 }
@@ -95,6 +124,7 @@ State::State(Instance& instance)
     : instance(instance)
     , tables(instance.tables())
     , tableArena(pages, tables)
+    , propertyCaches(*this)
 {
     instance.state = this;
     caches = makeUnique<CacheRegistry>();
@@ -103,7 +133,8 @@ State::State(Instance& instance)
     statics = makeUnique<ProgramStatics>(*this);
     builtinCells = makeUnique<BuiltinCells>(*this);
     chainDependents = makeUnique<ChainDependents>(*this);
-    propertyCaches = makeUnique<PropertyCaches>(*this);
+    siteCaches = makeUniqueWithoutFastMallocCheck<SiteCaches>(*this);
+    initializePropertyCacheWords(instance);
     modules = makeUnique<Modules>(*this);
     builtinModules = makeUnique<BuiltinModuleTable>(*this);
     objects = makeUnique<ObjectModel>(*this);

@@ -33,12 +33,13 @@ void copyDataProperties(Instance*, JSGlobalObject*, JSObject* target, JSValue so
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
 void defineDataProperty(Instance*, JSObject*, PropertyName, JSValue, PutPropertySlot&);
+JSValue getWithoutCaches(Instance*, JSValue base, const Identifier&);
 
 void throwNotAFunctionError(JSGlobalObject*, ThrowScope&, JSValue callee);
-void throwNotAFunctionError(JSGlobalObject*, ThrowScope&, JSValue callee, const Identifier& name);
+
+unsigned pushToFullVector(VM&, JSArray*, JSValue);
 
 JSValue valueOfDecodedReference(const Instance*, uint64_t bits);
-void throwTypeMismatch(Instance*, JSGlobalObject*, ThrowScope&, JSValue value, uint32_t type, Typed::TypeSiteID = { });
 JSObject* createRuntimeError(JSGlobalObject*, Typed::RuntimeErrorKind, const Identifier* name);
 ErrorType errorTypeFor(Typed::ErrorKind);
 

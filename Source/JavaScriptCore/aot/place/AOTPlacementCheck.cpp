@@ -10,9 +10,11 @@
 
 #include "AOTClosure.h"
 #include "AOTFlowResults.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTThreads.h"
 #include <algorithm>
+#include <bit>
 #include <optional>
 #include <span>
 #include <tuple>
@@ -26,9 +28,8 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 struct BitSetUse {
-    uint32_t offset { 0 };
-    uint32_t first { 0 };
-    uint32_t count { 0 };
+    uint32_t firstWord { 0 };
+    uint32_t numberOfWords { 0 };
 
     friend auto operator<=>(const BitSetUse&, const BitSetUse&) = default;
 };
@@ -36,7 +37,6 @@ struct BitSetUse {
 } // anonymous namespace
 
 static constexpr uint32_t sizeOfStaticsWord = sizeof(uint64_t);
-static constexpr uint32_t bitSetAlignment = 32;
 
 ASCIILiteral nameOf(PlacementRule rule)
 {
@@ -217,17 +217,50 @@ static std::optional<size_t> numberOfPassingShapes(const ShapeTable& shapes, con
 
 static void checkBitsInTable(const PlacementCheckContext& context, const ShapeTest& test, std::span<const uint32_t> passing, LayoutID subject, Vector<BitSetUse>& bitSets)
 {
-    const BitVector& bits = context.placement.shapes().shapeSetBits();
-    size_t begin = test.bitSetOffset;
-    size_t end = std::min(begin + test.count, bits.size());
-    if (!std::ranges::all_of(passing, [&](uint32_t shape) { return bits.get(begin + test.last() - shape); }))
-        context.failures.fail(PlacementRule::MemberFailsTest, subject);
+    std::span<const uint64_t> table = context.placement.shapes().shapeSetWords();
+    uint32_t firstWord = PagedBitSet::firstWordAt(test.bitSetOffset);
+    PagedBitSet::Entries entries = PagedBitSet::entriesAt(test.bitSetOffset);
+    if (entries == PagedBitSet::Entries::Hashed) {
+        if (firstWord >= table.size() || !PagedBitSet::shiftIn(table[firstWord]) || PagedBitSet::shiftIn(table[firstWord]) > 31 || firstWord + PagedBitSet::numberOfWordsOfHashedSet(PagedBitSet::shiftIn(table[firstWord])) > table.size()) {
+            context.failures.fail(PlacementRule::BitSetsOverlap, subject);
+            return;
+        }
+        uint64_t head = table[firstWord];
+        uint64_t numberOfWords = PagedBitSet::numberOfWordsOfHashedSet(PagedBitSet::shiftIn(head));
+        std::span<const uint64_t> words = table.subspan(firstWord, numberOfWords);
+        std::span<const PagedBitSet::Slot> slots = spanReinterpretCast<const PagedBitSet::Slot>(words.subspan(1)).first(PagedBitSet::numberOfSlots(PagedBitSet::shiftIn(head)));
+        size_t numberOfMembers = 0;
+        for (uint32_t slot = 0; slot < slots.size(); ++slot)
+            numberOfMembers += PagedBitSet::slotOf(slots[slot], PagedBitSet::multiplierIn(head), PagedBitSet::shiftIn(head)) == slot;
+        if (!std::ranges::all_of(passing, [&](uint32_t shape) { return PagedBitSet::contains(words.data(), entries, test.last() - shape); }))
+            context.failures.fail(PlacementRule::MemberFailsTest, subject);
+        if (numberOfMembers != passing.size())
+            context.failures.fail(PlacementRule::TestPassesOthers, subject);
+        bitSets.append(BitSetUse { firstWord, static_cast<uint32_t>(numberOfWords) });
+        return;
+    }
+    uint64_t numberOfPages = numberOfPagesInShapeSet(test.count);
+    uint64_t numberOfWords = PagedBitSet::numberOfEntryWords(numberOfPages, entries);
+    if (firstWord + numberOfWords > table.size()) {
+        context.failures.fail(PlacementRule::BitSetsOverlap, subject);
+        return;
+    }
+    const uint64_t* words = table.subspan(firstWord).data();
     size_t numberOfBits = 0;
-    for (size_t bit = bits.findBit(std::min(begin, end), true); bit < end; bit = bits.findBit(bit + 1, true))
-        ++numberOfBits;
+    for (uint64_t page = 0; page < numberOfPages; ++page) {
+        uint64_t word = PagedBitSet::wordOfPage(words, entries, page);
+        if (firstWord + word >= table.size()) {
+            context.failures.fail(PlacementRule::BitSetsOverlap, subject);
+            return;
+        }
+        numberOfWords = std::max<uint64_t>(numberOfWords, word + 1);
+        numberOfBits += std::popcount(words[word]);
+    }
+    if (!std::ranges::all_of(passing, [&](uint32_t shape) { return PagedBitSet::contains(words, entries, test.last() - shape); }))
+        context.failures.fail(PlacementRule::MemberFailsTest, subject);
     if (numberOfBits != passing.size())
         context.failures.fail(PlacementRule::TestPassesOthers, subject);
-    bitSets.append(BitSetUse { test.bitSetOffset, test.first, test.count });
+    bitSets.append(BitSetUse { firstWord, static_cast<uint32_t>(numberOfWords) });
 }
 
 static void checkTest(const PlacementCheckContext& context, const ShapeTest& test, std::span<const uint32_t> passing, LayoutID subject, Vector<BitSetUse>& bitSets)
@@ -333,8 +366,7 @@ static void checkBitSets(const PlacementCheckContext& context, Vector<BitSetUse>
 {
     sortAndRemoveDuplicates(context.build.parallelLoops(), uses);
     for (size_t i = 0; i < uses.size(); ++i) {
-        bool overlapsPrevious = i && static_cast<uint64_t>(uses[i - 1].offset) + uses[i - 1].count > uses[i].offset;
-        if (uses[i].offset % bitSetAlignment || overlapsPrevious)
+        if (i && static_cast<uint64_t>(uses[i - 1].firstWord) + uses[i - 1].numberOfWords > uses[i].firstWord)
             context.failures.fail(PlacementRule::BitSetsOverlap);
     }
 }
@@ -361,11 +393,11 @@ static SlotAccessKey keyOf(const FieldAccess& access)
     return { access.key, access.receivers, access.isStore };
 }
 
-static bool isCoverageValid(const Program& program, const FieldAccess& access, const SlotAgreement& agreement)
+static bool isCoverageValid(const Program& program, const FieldAccess& access, const SlotAgreement& agreement, std::span<const LayoutID> membersWithSlot)
 {
     if (agreement.groups.isEmpty())
         return access.coverage == FieldAccess::Coverage::NoMember && !access.slot.hasStorage();
-    if (!isInterned(program, access.membersWithField) || !std::ranges::equal(program.at(access.membersWithField).members, agreement.groups[0].members))
+    if (!isInterned(program, access.membersWithField) || !std::ranges::equal(program.at(access.membersWithField).members, membersWithSlot))
         return false;
     switch (access.coverage) {
     case FieldAccess::Coverage::NoMember:
@@ -404,13 +436,30 @@ static bool areContentsValid(const Program& program, const FieldAccess& access, 
     bool maySeeEmptySlot = access.coverage != FieldAccess::Coverage::EveryMember || access.slot.isOutOfLine();
     for (LayoutID member : membersWithSlot) {
         FieldReference field { member, *program.at(member).findField(access.key) };
-        const Type& declared = program.at(fieldAt(program, declarationOf(program, field)).declared.type);
-        if (!(access.isStore ? contents.isSubsetOf(declared, program) : declared.isSubsetOf(contents, program)))
+        const Type& held = program.at(slotTypeOf(program, fieldAt(program, declarationOf(program, field))));
+        if (!(access.isStore ? contents.isSubsetOf(held, program) : held.isSubsetOf(contents, program)))
             return false;
         if (flowOf(program, field).occupancy != Occupancy::AlwaysFilled && canLeaveSlot(access.slot.representation))
             maySeeEmptySlot = true;
     }
-    return access.isStore || !maySeeEmptySlot || contents.primitives & Primitive::Absent;
+    if (access.isStore)
+        return true;
+    // A field that the object lists without storage for it holds undefined.
+    if (access.slot.mayExistWithoutStorage && !(contents.primitives & Primitive::Undefined))
+        return false;
+    return !maySeeEmptySlot || contents.primitives & Primitive::Absent;
+}
+
+// A read asks the key order where some member may list the field without storage. A store of undefined asks for no storage only where every member may.
+static bool hasStorageRuleOfMembers(const PlacementCheckContext& context, const FieldAccess& access, std::span<const LayoutID> membersWithSlot)
+{
+    if (membersWithSlot.empty())
+        return !access.slot.mayExistWithoutStorage;
+    auto mayExistWithoutStorage = [&](LayoutID member) {
+        return context.inputs.slots.slot(member, *context.program.at(member).findField(access.key)).mayExistWithoutStorage;
+    };
+    bool expected = access.isStore ? std::ranges::all_of(membersWithSlot, mayExistWithoutStorage) : std::ranges::any_of(membersWithSlot, mayExistWithoutStorage);
+    return access.slot.mayExistWithoutStorage == expected;
 }
 
 static void checkFieldAccess(const PlacementCheckContext& context, FieldAccessID id)
@@ -427,20 +476,23 @@ static void checkFieldAccess(const PlacementCheckContext& context, FieldAccessID
     if (id.index() && keyOf(context.placement.fieldAccess(FieldAccessID(id.index() - 1))) >= keyOf(access))
         fail(PlacementRule::AccessKey);
 
-    SlotAgreement agreement = context.inputs.slots.agreementOf(program, access.key, access.receivers);
-    if (agreement.groups.size() > 1) {
+    const SlotAgreement& agreement = context.inputs.slots.agreementOf(program, access.key, access.receivers);
+    if (access.findsOffsetByShape != agreement.hasOffsetByShape(access.isStore) || (agreement.groups.size() > 1 && !access.findsOffsetByShape)) {
         fail(PlacementRule::AccessLocationDiffers);
         return;
     }
     std::span<const LayoutID> membersWithSlot;
-    if (agreement.hasOneLocation()) {
-        const SlotGroup& group = agreement.groups[0];
+    SlotGroup group;
+    if (!agreement.groups.isEmpty()) {
+        group = access.findsOffsetByShape ? agreement.groupOfAllOffsets() : agreement.groups[0];
         membersWithSlot = group.members.span();
         bool extensionWordsAgree = !group.slot.needsExtension() || access.extensionWord.hasLocationOf(group.extensionWord);
         if (!access.slot.hasLocationOf(group.slot) || !extensionWordsAgree)
             fail(PlacementRule::AccessLocationDiffers);
     }
-    if (!isCoverageValid(program, access, agreement))
+    if (!hasStorageRuleOfMembers(context, access, membersWithSlot))
+        fail(PlacementRule::OutOfLineNotAllowed);
+    if (!isCoverageValid(program, access, agreement, membersWithSlot))
         fail(PlacementRule::CoverageWrong);
     if (!isAccessTestValid(context, access))
         fail(PlacementRule::AccessTestWrong);
@@ -470,16 +522,20 @@ static bool isOrderWordValid(const Placement& placement, const PlannedLayout& pl
     return spanHasPrefix(orders[orderOf(word)].span(), storedFields);
 }
 
-// A store cannot tell whether it creates a field whose slot has no absent state, so only the allocation can record the key.
-static bool listsFieldsWithoutAbsentState(const PlacementCheckContext& context, const PlannedLayout& planned, const PlacedAllocation& allocation)
+// A store cannot tell whether it creates a field whose slot has no absent state.
+static bool isListedByAllocationOnly(const PlacedSlot& slot)
+{
+    return slot.hasStorage() && !canLeaveSlot(slot.representation);
+}
+
+static bool listsFieldsThatNoStoreLists(const PlacementCheckContext& context, const PlannedLayout& planned, const PlacedAllocation& allocation)
 {
     if (planned.storage != LayoutStorage::CompiledObject || !context.program.at(allocation.layout).constructor)
         return true;
     if (context.placement.shapes().shape(allocation.shape).keysAreNeverEnumerated)
         return true;
     for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
-        const PlacedSlot& slot = planned.slots[field];
-        if (slot.hasStorage() && !canLeaveSlot(slot.representation) && !allocation.initialFields.contains(field))
+        if (isListedByAllocationOnly(planned.slots[field]) && !allocation.initialFields.contains(field))
             return false;
     }
     return true;
@@ -500,7 +556,7 @@ static void checkAllocation(const PlacementCheckContext& context, AllocationID i
         return;
     }
     bool isClosure = allocation.layout == placement.closureLayout();
-    bool isSized = isClosure ? allocation.size >= Closure::allocationSize(allocation.numberOfCaptures) && allocation.initialFields.isEmpty() : allocation.size == planned.size;
+    bool isSized = isClosure ? allocation.size >= Closure::allocationSize(allocation.numberOfCaptures) && allocation.initialFields.isEmpty() : allocation.size == (allocation.holdsInnerObjects ? planned.sizeWithInnerObjects : planned.size);
     if (!isSized || allocation.size % 16)
         fail(PlacementRule::AllocationSize);
     Vector<FieldIndex, 16> storedFields;
@@ -522,7 +578,7 @@ static void checkAllocation(const PlacementCheckContext& context, AllocationID i
     }
     if (!isOrderWordValid(placement, planned, allocation, storedFields.span()))
         fail(PlacementRule::AllocationOrderWord);
-    if (!listsFieldsWithoutAbsentState(context, planned, allocation))
+    if (!listsFieldsThatNoStoreLists(context, planned, allocation))
         fail(PlacementRule::AbsentStateMissing);
 }
 
@@ -651,7 +707,9 @@ static void checkVariable(const PlacementCheckContext& context, VariableID id, b
     if (!hasValidInitialWord(variable, placed))
         fail(PlacementRule::VariableLacksInitialValue);
     bool isStaticField = !!variable.owner;
-    if (!canHold(program, placed.representation, program.at(variable.declared.type)) || (isStaticField && !canLeaveSlot(placed.representation)))
+    // Nothing checks what arrives at an expected position.
+    const Type& stored = program.at(variable.declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : variable.declared.type);
+    if (!canHold(program, placed.representation, stored) || (isStaticField && !canLeaveSlot(placed.representation)))
         fail(PlacementRule::RepresentationCannotHoldType);
 }
 
@@ -680,8 +738,10 @@ static void checkStaticsExtents(const PlacementCheckContext& context)
         if (variable.hasWordInStatics())
             add(variable.offset, widthOf(variable.representation));
     }
-    for (uint32_t offset : statics.moduleValueOffsets)
-        add(offset, sizeOfStaticsWord);
+    for (auto offset : statics.moduleValueOffsets) {
+        if (offset)
+            add(*offset, sizeOfStaticsWord);
+    }
     for (auto& cell : statics.moduleBuiltinCells)
         add(cell.offset, sizeOfStaticsWord);
     for (auto offset : statics.freeCellOffsets) {
@@ -712,11 +772,19 @@ static void checkRoots(const PlacementCheckContext& context)
             context.failures.fail(PlacementRule::RootMissing);
     };
     for (auto& variable : statics.variables) {
-        if (variable.hasWordInStatics() && traitsOf(variable.representation).holdsCell)
+        if (!variable.hasWordInStatics())
+            continue;
+        SlotTraits traits = traitsOf(variable.representation);
+        if (traits.holdsCell && !traits.isNarrowReference)
             checkRoot(variable.offset);
+        // A root is visited as a word of eight bytes, and a narrow reference is half of one.
+        if (traits.isNarrowReference && std::ranges::binary_search(roots, variable.offset & ~(sizeOfStaticsWord - 1)))
+            context.failures.fail(PlacementRule::RootMissing);
     }
-    for (uint32_t offset : statics.moduleValueOffsets)
-        checkRoot(offset);
+    for (auto offset : statics.moduleValueOffsets) {
+        if (offset)
+            checkRoot(*offset);
+    }
     for (auto& cell : statics.moduleBuiltinCells)
         checkRoot(cell.offset);
 }
@@ -767,28 +835,74 @@ static std::tuple<LayoutID, ClassSide, MemberGuardKind, PropertyKeyID> keyOf(con
     return { bit.classLayout, bit.side, bit.kind, bit.key };
 }
 
+static bool isValidBitOfClass(std::span<const PlacedGuardBit> bits, size_t index)
+{
+    const PlacedGuardBit& bit = bits[index];
+    bool isAscending = !index || keyOf(bits[index - 1]) < keyOf(bit);
+    return bit.classLayout && isAscending && !!bit.key == (bit.kind == MemberGuardKind::Member || bit.kind == MemberGuardKind::NotHidden || bit.kind == MemberGuardKind::PassedByStores);
+}
+
+// Whoever clears the bit of a member finds the sets to clear under that member.
+static bool isValidBitOfSet(const Program& program, const GuardBitTable& table, size_t index)
+{
+    const PlacedGuardBit& bit = table.bits[index];
+    GuardBitID set(index);
+    std::span<const GuardBitID> members = table.membersOf(set);
+    if (bit.classLayout || bit.key || members.size() < 2)
+        return false;
+    if (std::ranges::any_of(members, [&](GuardBitID member) { return member.index() >= table.numberOfClassBits; }) || bit.holdsWhileClear != setHoldsWhileClear(program, table, members))
+        return false;
+    bool areAscending = std::ranges::adjacent_find(members, [](GuardBitID a, GuardBitID b) { return !(a < b); }) == members.end();
+    bool isListedUnderMembers = std::ranges::all_of(members, [&](GuardBitID member) {
+        return member.index() < table.numberOfClassBits && std::ranges::binary_search(table.setsContaining(member), set);
+    });
+    bool comesBehindPreviousSet = index == table.numberOfClassBits || std::ranges::lexicographical_compare(table.membersOf(GuardBitID(index - 1)), members);
+    return areAscending && isListedUnderMembers && comesBehindPreviousSet;
+}
+
+static bool dividesIntoGroups(std::span<const uint32_t> firstOfGroups, size_t numberOfGroups, size_t numberOfEntries)
+{
+    return firstOfGroups.size() == numberOfGroups + 1 && !firstOfGroups.front() && firstOfGroups.back() == numberOfEntries && std::ranges::is_sorted(firstOfGroups);
+}
+
+static bool hasListsOfSets(const GuardBitTable& table)
+{
+    if (table.numberOfClassBits > table.bits.size() || table.membersOfSets.size() != table.setsOfClassBits.size())
+        return false;
+    return dividesIntoGroups(table.firstMemberOfSet.span(), table.bits.size() - table.numberOfClassBits, table.membersOfSets.size())
+        && dividesIntoGroups(table.firstSetOfClassBit.span(), table.numberOfClassBits, table.setsOfClassBits.size());
+}
+
 void checkGuardBits(const PlacementCheckContext& context)
 {
-    auto bits = context.placement.guardBits().bits.span();
-    Vector<uint32_t> classSideWordOffsets;
+    const GuardBitTable& table = context.placement.guardBits();
+    if (!hasListsOfSets(table)) {
+        context.failures.fail(PlacementRule::GuardBitsNotDistinct);
+        return;
+    }
+    auto bits = table.bits.span();
+    Vector<uint32_t> wordOffsets;
     uint64_t usedBits = 0;
     for (size_t i = 0; i < bits.size(); ++i) {
         auto& bit = bits[i];
-        bool startsClassSide = !i || bits[i - 1].classLayout != bit.classLayout || bits[i - 1].side != bit.side;
-        if (startsClassSide) {
-            classSideWordOffsets.append(bit.wordOffset);
+        // The bits of one side of a class fill words that follow each other: the run time finds them from the first. The bits of sets fill word after word.
+        bool isOnSideOfPrevious = i && bits[i - 1].classLayout == bit.classLayout && bits[i - 1].side == bit.side;
+        bool startsWord = !isOnSideOfPrevious || !(bit.bit % MemberGuardData::bitsPerWord);
+        bool followsWordsOfSide = !bit.classLayout || !bit.bit || (isOnSideOfPrevious && bit.bit == bits[i - 1].bit + 1 && (!startsWord || bit.wordOffset == bits[i - 1].wordOffset + sizeof(uint64_t)));
+        if (startsWord) {
+            wordOffsets.append(bit.wordOffset);
             usedBits = 0;
         }
-        bool isAscending = !i || keyOf(bits[i - 1]) < keyOf(bit);
-        bool hasOwnBit = bit.bit < MemberGuardData::bitsPerWord && !(usedBits & bit.mask());
-        bool hasWordOfClassSide = bit.wordOffset && bit.wordOffset == classSideWordOffsets.last();
-        bool hasKey = !!bit.key;
-        if (!isAscending || !hasOwnBit || !hasWordOfClassSide || hasKey != (bit.kind == MemberGuardKind::Member))
+        bool hasOwnBit = (bit.classLayout || bit.bit < MemberGuardData::bitsPerWord) && followsWordsOfSide && !(usedBits & bit.mask());
+        bool hasWordOfNeighbors = bit.wordOffset && bit.wordOffset == wordOffsets.last();
+        bool hasSenseOfClass = !bit.classLayout || bit.holdsWhileClear == context.inputs.slots.classCreation(bit.classLayout).guardsHoldWhileClear;
+        bool isValid = hasSenseOfClass && (i < table.numberOfClassBits ? isValidBitOfClass(bits, i) : isValidBitOfSet(context.program, table, i));
+        if (!hasOwnBit || !hasWordOfNeighbors || !isValid)
             context.failures.fail(PlacementRule::GuardBitsNotDistinct, bit.classLayout);
         usedBits |= bit.mask();
     }
-    std::ranges::sort(classSideWordOffsets);
-    if (std::ranges::adjacent_find(classSideWordOffsets) != classSideWordOffsets.end())
+    std::ranges::sort(wordOffsets);
+    if (std::ranges::adjacent_find(wordOffsets) != wordOffsets.end())
         context.failures.fail(PlacementRule::GuardBitsNotDistinct);
 }
 

@@ -13,40 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-template<typename FunctionType>
-static auto& findTarget(FunctionType& function, Edge edge)
-{
-    auto& block = function.at(edge.from);
-    switch (edge.kind) {
-    case EdgeKind::Normal:
-        return block.terminator.targets[edge.targetIndex];
-    case EdgeKind::Handler:
-        RELEASE_ASSERT(block.handler);
-        return *block.handler;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-const Target& targetOf(const Function& function, Edge edge)
-{
-    return findTarget(function, edge);
-}
-
-Target& targetOf(Function& function, Edge edge)
-{
-    return findTarget(function, edge);
-}
-
-ProgramPoint pointBeforeTerminatorOf(const Function& function, BlockID block)
-{
-    return { block, static_cast<uint32_t>(function.at(block).values.size()) };
-}
-
-uint32_t numberOfOutgoingEdges(const Block& block)
-{
-    return static_cast<uint32_t>(block.terminator.targets.size()) + (block.handler ? 1 : 0);
-}
-
 Edge outgoingEdgeAt(const Function& function, BlockID id, uint32_t successorIndex)
 {
     const Block& block = function.at(id);
@@ -103,23 +69,12 @@ IncomingValue incomingValueOf(const Function& function, Edge edge, uint32_t para
 
 ValueID valuePassedOn(const Function& function, Edge edge, uint32_t parameterIndex)
 {
-    IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
-    switch (incoming.kind) {
-    case IncomingValue::Kind::Argument:
-        return incoming.argument;
-    case IncomingValue::Kind::EdgeResult:
-        break;
-    }
-
-    EdgeResult result = edgeResultAt(function, incoming.result);
-    switch (result.kind) {
-    case EdgeResultKind::NarrowedOperand:
-        return result.subject;
-    case EdgeResultKind::Guard:
-    case EdgeResultKind::DeclaredResult:
-        return { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    const Target& target = targetOf(function, edge);
+    RELEASE_ASSERT(parameterIndex < function.at(target.block).parameters.size());
+    if (parameterIndex < target.arguments.size())
+        return target.arguments[parameterIndex];
+    RELEASE_ASSERT(!edge.isHandlerEdge());
+    return operandNarrowedOnEdge(function, { edge.from, edge.targetIndex, parameterIndex - static_cast<uint32_t>(target.arguments.size()) });
 }
 
 uint32_t numberOfExplicitArguments(const Function& function, Edge edge)
@@ -147,85 +102,221 @@ void BlockIDDump::dump(PrintStream& out) const
         out.print("-");
 }
 
+static_assert(sizeof(BlockID) == sizeof(uint32_t) && sizeof(Edge) == 3 * sizeof(uint32_t) && alignof(Edge) == alignof(uint32_t));
+
 CFG::CFG(const Function& function)
     : m_numberOfBlocks(function.blocks.size())
-    , m_isReachable(m_numberOfBlocks)
-    , m_hasHandler(m_numberOfBlocks)
 {
     RELEASE_ASSERT(function.hasBody());
-    computeReversePostOrder(function);
-    computeEdges(function);
-    computePredecessors();
-    RELEASE_ASSERT(incomingEdges(root()).empty());
+    readSuccessors(function);
+    computeReversePostOrder();
 }
 
-void CFG::computeReversePostOrder(const Function& function)
+bool CFG::describes(const Function& function) const
 {
-    m_reversePostOrder.reserveInitialCapacity(m_numberOfBlocks);
-    m_isReachable.set(0);
-    Vector<std::pair<unsigned, uint32_t>> stack { { 0u, numberOfOutgoingEdges(function.blocks[0]) } };
-    while (!stack.isEmpty()) {
-        auto [block, numberOfUnvisitedEdges] = stack.last();
-        if (!numberOfUnvisitedEdges) {
-            m_reversePostOrder.append(BlockID(block));
-            stack.removeLast();
+    if (function.blocks.size() != m_numberOfBlocks)
+        return false;
+    for (BlockID id : m_reversePostOrder) {
+        const Block& block = function.at(id);
+        std::span<const BlockID> knownSuccessors = successors(id);
+        if (hasHandler(id) != !!block.handler || knownSuccessors.size() != numberOfOutgoingEdges(block))
+            return false;
+        size_t successorIndex = 0;
+        bool hasKnownSuccessors = true;
+        block.forEachTarget([&](const Target& target) {
+            hasKnownSuccessors &= target.block == knownSuccessors[successorIndex++];
+        });
+        if (!hasKnownSuccessors)
+            return false;
+    }
+    return true;
+}
+
+void CFG::readSuccessors(const Function& function)
+{
+    unsigned numberOfBlocks = m_numberOfBlocks;
+    size_t sizeOfTablesByBlock = 3 * static_cast<size_t>(numberOfBlocks) + 1;
+    size_t capacity = 2 * static_cast<size_t>(numberOfBlocks) + 6;
+    m_tables.grow(sizeOfTablesByBlock + capacity);
+    uint32_t* firstSuccessor = m_tables.mutableSpan().data();
+    uint32_t* successors = firstSuccessor + sizeOfTablesByBlock;
+    size_t end = 0;
+    unsigned index = 0;
+    for (const Block& block : function.blocks) {
+        firstSuccessor[index] = static_cast<uint32_t>(end);
+        std::span<const Target> targets = block.terminator.targets.span();
+        if (end + targets.size() + 1 > capacity) [[unlikely]] {
+            capacity = 2 * (end + targets.size() + 1);
+            m_tables.grow(sizeOfTablesByBlock + capacity);
+            firstSuccessor = m_tables.mutableSpan().data();
+            successors = firstSuccessor + sizeOfTablesByBlock;
+        }
+        for (const Target& target : targets) {
+            RELEASE_ASSERT(target.block.index() < numberOfBlocks);
+            successors[end++] = target.block.index();
+        }
+        if (block.handler) [[unlikely]] {
+            RELEASE_ASSERT(block.handler->block.index() < numberOfBlocks);
+            successors[end++] = block.handler->block.index();
+            m_hasHandler.set(index);
+        }
+        ++index;
+    }
+    RELEASE_ASSERT(end < beingWalked);
+    firstSuccessor[numberOfBlocks] = static_cast<uint32_t>(end);
+    m_firstSuccessor = firstSuccessor;
+    m_reversePostOrderIndex = firstSuccessor + numberOfBlocks + 1;
+    m_successors = reinterpret_cast<const BlockID*>(successors);
+}
+
+void CFG::computeReversePostOrder()
+{
+    struct Frame {
+        uint32_t block;
+        uint32_t endOfUnvisitedEdges;
+    };
+
+    unsigned numberOfBlocks = m_numberOfBlocks;
+    const uint32_t* firstSuccessor = m_firstSuccessor;
+    const uint32_t* successors = reinterpret_cast<const uint32_t*>(m_successors);
+    uint32_t* orderIndex = const_cast<uint32_t*>(m_reversePostOrderIndex);
+    uint32_t* order = orderIndex + numberOfBlocks;
+    std::fill_n(orderIndex, numberOfBlocks, notReached);
+
+    // A block is on the stack at most once.
+    Vector<Frame, 64> stackStorage(numberOfBlocks);
+    Frame* stack = stackStorage.mutableSpan().data();
+    size_t depth = 1;
+    stack[0] = { 0, firstSuccessor[1] };
+    orderIndex[0] = beingWalked;
+
+    bool hasCycle = false;
+    uint32_t beginOfOrder = numberOfBlocks;
+    while (depth) {
+        Frame& frame = stack[depth - 1];
+        uint32_t block = frame.block;
+        if (frame.endOfUnvisitedEdges == firstSuccessor[block]) {
+            order[--beginOfOrder] = block;
+            orderIndex[block] = beginOfOrder;
+            --depth;
             continue;
         }
-        uint32_t next = --stack.last().second;
-        unsigned target = targetOf(function, outgoingEdgeAt(function, BlockID(block), next)).block.index();
-        if (!m_isReachable.set(target))
-            stack.append({ target, numberOfOutgoingEdges(function.blocks[target]) });
-    }
-    m_reversePostOrder.reverse();
-
-    m_reversePostOrderIndex.fill(0, m_numberOfBlocks);
-    for (uint32_t orderIndex = 0; orderIndex < m_reversePostOrder.size(); ++orderIndex)
-        m_reversePostOrderIndex[m_reversePostOrder[orderIndex].index()] = orderIndex;
-}
-
-void CFG::computeEdges(const Function& function)
-{
-    m_firstSuccessor.fill(0, m_numberOfBlocks + 1);
-    m_firstIncomingEdge.fill(0, m_numberOfBlocks + 1);
-    for (unsigned block : m_isReachable) {
-        m_firstSuccessor[block + 1] = numberOfOutgoingEdges(function.blocks[block]);
-        forEachOutgoingEdge(function, BlockID(block), [&](Edge, const Target& target) {
-            ++m_firstIncomingEdge[target.block.index() + 1];
-        });
-        if (function.blocks[block].handler)
-            m_hasHandler.set(block);
-    }
-    for (unsigned block = 0; block < m_numberOfBlocks; ++block) {
-        m_firstSuccessor[block + 1] += m_firstSuccessor[block];
-        m_firstIncomingEdge[block + 1] += m_firstIncomingEdge[block];
-    }
-
-    uint32_t numberOfEdges = m_firstSuccessor.last();
-    m_successors.reserveInitialCapacity(numberOfEdges);
-    m_incomingEdges.grow(numberOfEdges);
-    Vector<uint32_t> nextIncomingEdge = m_firstIncomingEdge;
-    for (unsigned block : m_isReachable) {
-        forEachOutgoingEdge(function, BlockID(block), [&](Edge edge, const Target& target) {
-            m_successors.append(target.block);
-            m_incomingEdges[nextIncomingEdge[target.block.index()]++] = edge;
-        });
-    }
-}
-
-void CFG::computePredecessors()
-{
-    m_predecessors.reserveInitialCapacity(m_incomingEdges.size());
-    m_firstPredecessor.reserveInitialCapacity(m_numberOfBlocks + 1);
-    m_firstPredecessor.append(0);
-    for (unsigned block = 0; block < m_numberOfBlocks; ++block) {
-        BlockID previous;
-        for (Edge edge : incomingEdges(BlockID(block))) {
-            if (edge.from != previous)
-                m_predecessors.append(edge.from);
-            previous = edge.from;
+        uint32_t target = successors[--frame.endOfUnvisitedEdges];
+        uint32_t state = orderIndex[target];
+        if (state == notReached) {
+            orderIndex[target] = beingWalked;
+            stack[depth++] = { target, firstSuccessor[target + 1] };
+            continue;
         }
-        m_firstPredecessor.append(m_predecessors.size());
+        RELEASE_ASSERT(target);
+        hasCycle |= state == beingWalked;
     }
+    m_hasCycle = hasCycle;
+    m_reversePostOrder = { reinterpret_cast<const BlockID*>(order) + beginOfOrder, numberOfBlocks - beginOfOrder };
+    if (beginOfOrder) [[unlikely]]
+        forgetUnreachableBlocks(beginOfOrder);
+}
+
+void CFG::forgetUnreachableBlocks(uint32_t numberOfUnreachableBlocks)
+{
+    unsigned numberOfBlocks = m_numberOfBlocks;
+    uint32_t* firstSuccessor = const_cast<uint32_t*>(m_firstSuccessor);
+    uint32_t* successors = reinterpret_cast<uint32_t*>(const_cast<BlockID*>(m_successors));
+    uint32_t* orderIndex = const_cast<uint32_t*>(m_reversePostOrderIndex);
+    for (BlockID block : m_reversePostOrder)
+        orderIndex[block.index()] -= numberOfUnreachableBlocks;
+
+    unsigned block = 0;
+    while (block < numberOfBlocks && (orderIndex[block] != notReached || firstSuccessor[block] == firstSuccessor[block + 1]))
+        ++block;
+    if (block == numberOfBlocks)
+        return;
+
+    uint32_t end = firstSuccessor[block];
+    for (; block < numberOfBlocks; ++block) {
+        uint32_t first = firstSuccessor[block];
+        uint32_t endOfBlock = firstSuccessor[block + 1];
+        firstSuccessor[block] = end;
+        if (orderIndex[block] == notReached) {
+            if (first != endOfBlock)
+                m_hasHandler.clear(block);
+            continue;
+        }
+        for (; first < endOfBlock; ++first)
+            successors[end++] = successors[first];
+    }
+    firstSuccessor[numberOfBlocks] = end;
+}
+
+void CFG::computeIncomingEdges() const
+{
+    unsigned numberOfBlocks = m_numberOfBlocks;
+    const uint32_t* firstSuccessor = m_firstSuccessor;
+    const uint32_t* successors = reinterpret_cast<const uint32_t*>(m_successors);
+    uint32_t numberOfEdges = firstSuccessor[numberOfBlocks];
+
+    // While the edges are filed, the entry behind a block's own says where its next edge goes. At the end that is where the edges of the next block begin.
+    size_t sizeOfTableByBlock = static_cast<size_t>(numberOfBlocks) + 2;
+    m_incomingTables.grow(sizeOfTableByBlock + 3 * static_cast<size_t>(numberOfEdges));
+    uint32_t* firstIncomingEdge = m_incomingTables.mutableSpan().data();
+    Edge* incomingEdges = reinterpret_cast<Edge*>(firstIncomingEdge + sizeOfTableByBlock);
+    std::fill_n(firstIncomingEdge, sizeOfTableByBlock, 0);
+    uint32_t* nextIncomingEdge = firstIncomingEdge + 1;
+
+    for (uint32_t edge = 0; edge < numberOfEdges; ++edge)
+        ++nextIncomingEdge[successors[edge] + 1];
+    for (unsigned block = 0; block < numberOfBlocks; ++block)
+        nextIncomingEdge[block + 1] += nextIncomingEdge[block];
+
+    bool hasHandlers = this->hasHandlers();
+    for (unsigned block = 0; block < numberOfBlocks; ++block) {
+        uint32_t first = firstSuccessor[block];
+        uint32_t end = firstSuccessor[block + 1];
+        if (first == end)
+            continue;
+        bool hasHandler = hasHandlers && m_hasHandler.get(block);
+        uint32_t endOfTargets = end - (hasHandler ? 1 : 0);
+        for (uint32_t edge = first; edge < endOfTargets; ++edge)
+            new (NotNull, &incomingEdges[nextIncomingEdge[successors[edge]]++]) Edge { BlockID(block), edge - first };
+        if (hasHandler) [[unlikely]]
+            new (NotNull, &incomingEdges[nextIncomingEdge[successors[endOfTargets]]++]) Edge(Edge::toHandlerOf(BlockID(block)));
+    }
+    m_incomingEdges = incomingEdges;
+    m_firstIncomingEdge = firstIncomingEdge;
+}
+
+void CFG::findLargestNumberOfSuccessors() const
+{
+    uint32_t largest = 0;
+    for (unsigned block = 0; block < m_numberOfBlocks; ++block)
+        largest = std::max(largest, m_firstSuccessor[block + 1] - m_firstSuccessor[block]);
+    m_largestNumberOfSuccessors = largest;
+}
+
+void CFG::computePredecessors() const
+{
+    if (!m_firstIncomingEdge)
+        computeIncomingEdges();
+    unsigned numberOfBlocks = m_numberOfBlocks;
+    const uint32_t* firstIncomingEdge = m_firstIncomingEdge;
+    const Edge* incomingEdges = m_incomingEdges;
+    m_firstPredecessor.grow(numberOfBlocks + 1);
+    m_predecessors.grow(firstIncomingEdge[numberOfBlocks]);
+    uint32_t* firstPredecessor = m_firstPredecessor.mutableSpan().data();
+    BlockID* predecessors = m_predecessors.mutableSpan().data();
+    uint32_t size = 0;
+    for (unsigned block = 0; block < numberOfBlocks; ++block) {
+        firstPredecessor[block] = size;
+        BlockID previous;
+        for (uint32_t edge = firstIncomingEdge[block]; edge < firstIncomingEdge[block + 1]; ++edge) {
+            BlockID from = incomingEdges[edge].from;
+            if (from != previous)
+                predecessors[size++] = from;
+            previous = from;
+        }
+    }
+    firstPredecessor[numberOfBlocks] = size;
+    m_predecessors.shrink(size);
 }
 
 std::optional<Edge> CFG::singleIncomingEdge(BlockID block) const

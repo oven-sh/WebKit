@@ -1,4 +1,5 @@
 # A name that a dictionary does not have is looked for on its prototypes. Where objects are stored under keys nobody knows the key may be __proto__, so the read tests the prototype link first, takes the generic path on a miss, and its type holds what the stored objects have under the name. instanceof is not folded. Where only numbers are stored the link is proven and there is no test
+# TODO: flow-termination: `o[k] = 1` under a string nobody knows makes the layout of o reach unknown JavaScript though the object never leaves its function
 # RUN: pipeline PlaceTypeTests
 # CHECK-LABEL: function f1 name="ofObjects"
 # CHECK: ElemSet [[dictionary]], v0

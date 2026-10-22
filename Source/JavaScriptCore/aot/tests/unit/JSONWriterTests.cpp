@@ -188,6 +188,156 @@ static void testLongStrings()
     }
 }
 
+// Eight characters are given their backslashes at once: every way in which eight characters may want one, in either half of a vector, with quotes and with backslashes,
+// behind a plain vector, in front of a tail, and beside a control character, which takes the vector out of that road.
+static void testStringsFullOfQuotes()
+{
+    DetachedInstance fixture;
+    // The engine's text comes out of the same routine, so what is expected is spelled out here, a character at a time.
+    auto quoted = [](std::span<const Latin1Character> characters) {
+        Vector<Latin1Character> text;
+        auto put = [&](char character) { text.append(Latin1Character(character)); };
+        put('"');
+        for (Latin1Character character : characters) {
+            uint8_t unit = static_cast<uint8_t>(character);
+            switch (unit) {
+            case '"': put('\\'); put('"'); break;
+            case '\\': put('\\'); put('\\'); break;
+            case '\b': put('\\'); put('b'); break;
+            case '\t': put('\\'); put('t'); break;
+            case '\n': put('\\'); put('n'); break;
+            case '\f': put('\\'); put('f'); break;
+            case '\r': put('\\'); put('r'); break;
+            default:
+                if (unit >= ' ') {
+                    text.append(character);
+                    break;
+                }
+                for (char fixed : { '\\', 'u', '0', '0' })
+                    put(fixed);
+                put("0123456789abcdef"[unit >> 4]);
+                put("0123456789abcdef"[unit & 15]);
+            }
+        }
+        put('"');
+        return String { text.span() };
+    };
+    auto check = [&](std::span<const Latin1Character> characters) {
+        String text { characters };
+        String expected = quoted(characters);
+        String written = writeOneString(fixture, text);
+        AOT_TEST_CHECK(written.is8Bit());
+        AOT_TEST_CHECK(written == expected);
+        AOT_TEST_CHECK(engineText(fixture, text) == expected);
+    };
+    for (unsigned mask = 0; mask < 256; ++mask) {
+        for (unsigned half = 0; half < 2; ++half) {
+            for (size_t length : { 16, 17, 23, 32, 48, 55 }) {
+                Vector<Latin1Character> characters(FillWith { }, length, Latin1Character('a'));
+                for (size_t start = 8 * half; start + 8 <= length; start += 16) {
+                    for (unsigned i = 0; i < 8; ++i) {
+                        if (mask >> i & 1)
+                            characters[start + i] = Latin1Character((mask + i) & 1 ? '"' : '\\');
+                    }
+                }
+                check(characters.span());
+                characters[length - 1] = Latin1Character('\n');
+                check(characters.span());
+                characters[length / 2] = Latin1Character(0x01);
+                check(characters.span());
+                characters[0] = Latin1Character(0xff);
+                check(characters.span());
+            }
+        }
+    }
+    for (size_t length : { 16, 64, 65, 127, 128, 1000, 5000 }) {
+        for (Latin1Character character : { Latin1Character('"'), Latin1Character('\\') })
+            check(Vector<Latin1Character>(FillWith { }, length, character).span());
+        Vector<Latin1Character> late(FillWith { }, length, Latin1Character('a'));
+        late.last() = Latin1Character('"');
+        check(late.span());
+        late[0] = Latin1Character('"');
+        check(late.span());
+    }
+}
+
+// The same where the text that is written has 16 bits a character: four characters are given their backslashes at once, eight are looked at.
+static void testWideStringsFullOfQuotes()
+{
+    DetachedInstance fixture;
+    auto quoted = [](std::span<const char16_t> characters) {
+        Vector<char16_t> text;
+        auto put = [&](char16_t character) { text.append(character); };
+        auto putHex = [&](char16_t unit) {
+            put('\\');
+            put('u');
+            for (int shift = 12; shift >= 0; shift -= 4)
+                put("0123456789abcdef"[unit >> shift & 15]);
+        };
+        put('"');
+        for (size_t i = 0; i < characters.size(); ++i) {
+            char16_t unit = characters[i];
+            switch (unit) {
+            case '"': put('\\'); put('"'); break;
+            case '\\': put('\\'); put('\\'); break;
+            case '\b': put('\\'); put('b'); break;
+            case '\t': put('\\'); put('t'); break;
+            case '\n': put('\\'); put('n'); break;
+            case '\f': put('\\'); put('f'); break;
+            case '\r': put('\\'); put('r'); break;
+            default:
+                if (unit < ' ')
+                    putHex(unit);
+                else if (U16_IS_LEAD(unit) && i + 1 < characters.size() && U16_IS_TRAIL(characters[i + 1])) {
+                    put(unit);
+                    put(characters[++i]);
+                } else if (U16_IS_SURROGATE(unit))
+                    putHex(unit);
+                else
+                    put(unit);
+            }
+        }
+        put('"');
+        return String { text.span() };
+    };
+    auto check = [&](std::span<const char16_t> characters) {
+        String text { characters };
+        String expected = quoted(characters);
+        AOT_TEST_CHECK(writeOneString(fixture, text) == expected);
+        AOT_TEST_CHECK(engineText(fixture, text) == expected);
+    };
+    for (unsigned mask = 0; mask < 256; ++mask) {
+        for (size_t length : { 9, 10, 16, 17, 25, 33 }) {
+            Vector<char16_t> characters(FillWith { }, length, u'a');
+            characters[0] = u'\u65e5';
+            for (size_t start = 1; start + 8 <= length; start += 8) {
+                for (unsigned i = 0; i < 8; ++i) {
+                    if (mask >> i & 1)
+                        characters[start + i] = (mask + i) & 1 ? u'"' : u'\\';
+                }
+            }
+            check(characters.span());
+            characters[length - 1] = u'\n';
+            check(characters.span());
+            characters[length / 2] = 0x01;
+            check(characters.span());
+            characters[length / 2] = 0xd83d;
+            check(characters.span());
+            characters[length / 2 + 1] = 0xde00;
+            check(characters.span());
+            characters[length / 2] = 0xdc00;
+            check(characters.span());
+        }
+    }
+    for (size_t place = 0; place < 20; ++place) {
+        for (char16_t unit : { u'\u0122', u'\u015c', u'\u010a', u'\u0118', u'\u2028', u'\ud7ff', u'\ue000', u'\uffff', u'\u8022', u'\u805c', u'\u801f' }) {
+            Vector<char16_t> characters(FillWith { }, 20, u'b');
+            characters[place] = unit;
+            check(characters.span());
+        }
+    }
+}
+
 static void testSeveralStrings()
 {
     DetachedInstance fixture;
@@ -603,6 +753,8 @@ std::span<const NativeTest> jsonWriterTests()
         { "json-writer/empty-text"_s, testEmptyText },
         { "json-writer/strings"_s, testStrings },
         { "json-writer/long-strings"_s, testLongStrings },
+        { "json-writer/strings-full-of-quotes"_s, testStringsFullOfQuotes },
+        { "json-writer/wide-strings-full-of-quotes"_s, testWideStringsFullOfQuotes },
         { "json-writer/several-strings"_s, testSeveralStrings },
         { "json-writer/position-after-strings"_s, testPositionAfterStrings },
         { "json-writer/position-after-values"_s, testPositionAfterValues },

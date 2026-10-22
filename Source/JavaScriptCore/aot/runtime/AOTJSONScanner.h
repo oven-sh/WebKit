@@ -327,7 +327,7 @@ ALWAYS_INLINE std::optional<ParsedJSONString> findCachedJSONString(const JSONWor
 {
     static_assert(JSONCache::maxNameTextLength <= 2 * SIMD::stride<uint8_t> && JSONCache::maxNameTextLength <= jsonSourcePadding);
     auto* entry = vm.jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
-    if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
+    if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
         return std::nullopt;
     return ParsedJSONString { entry->string, quote + entry->textLength };
 }

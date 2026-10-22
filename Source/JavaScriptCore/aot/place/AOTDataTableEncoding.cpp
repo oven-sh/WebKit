@@ -8,14 +8,20 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
+#include "AOTNarrowFieldTypes.h"
+#include "AOTNumberLiteralStrings.h"
+#include "AOTSlotAccess.h"
 #include "AOTTableInImage.h"
 #include "AOTTextEncoder.h"
+#include "IndexingHeader.h"
 #include "IndexingType.h"
 #include "JSCJSValueInlines.h"
 #include "PureNaN.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
@@ -23,6 +29,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t wordSize = sizeof(uint64_t);
+static constexpr FieldIndex noField = std::numeric_limits<FieldIndex>::max();
 
 static bool isLeaf(const DataNode& node)
 {
@@ -72,20 +79,9 @@ uint64_t encodeDataWord(TableEncoder& encoder, const DataNode& leaf)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-IndexingType indexingTypeOf(const DataNode::Array& array)
+IndexingType indexingTypeOf(const Program& program, const DataNode::Array& array)
 {
-    bool areInt32 = true;
-    bool areDoublesOrHoles = true;
-    for (const DataNode& element : array.elements) {
-        const auto* number = element.tryAs<DataNode::Number>();
-        areInt32 &= number && jsNumber(purifyNaN(number->value)).isInt32();
-        areDoublesOrHoles &= number ? !std::isnan(number->value) : element.is<DataNode::Hole>();
-    }
-    if (areInt32)
-        return ArrayWithInt32;
-    if (areDoublesOrHoles)
-        return ArrayWithDouble;
-    return ArrayWithContiguous;
+    return arrayStorageFormOf(arrayStorageOfData(program, array)).indexingType;
 }
 
 static uint64_t doubleBitsOf(const DataNode& numberOrHole)
@@ -131,8 +127,12 @@ private:
     void visitChild(OpenNode parent, uint32_t index);
     void visitValue(const DataNode&);
     void closeNode(const OpenNode&);
+    uint32_t appendArray(const OpenNode&, std::span<const uint64_t> contents);
     uint32_t appendObject(const OpenNode&, std::span<const uint64_t> contents);
-    uint32_t appendNode(DataNodeHeader::Kind, uint32_t operand, std::span<const uint64_t> contents, std::span<const uint16_t> fieldIndices);
+    std::optional<uint32_t> tryAppendObjectBody(const DataNode::Object&, AllocationID, std::span<const FieldIndex> fieldOfEachMember, std::span<const uint64_t> contents);
+    bool tryWriteSlot(const PlacedSlot&, void* slot, const DataNode&, uint64_t word);
+    uint32_t appendMembersByName(DataNodeHeader::Kind, std::span<const uint64_t> values, std::span<const uint32_t> identifierNumbers);
+    uint32_t appendNode(DataNodeHeader::Kind, uint32_t operand, std::span<const uint64_t> contents, std::span<const uint16_t> fieldIndices, std::optional<uint32_t> otherMembers = std::nullopt);
 
     TableEncoder& m_encoder;
     uint32_t m_tableOffset;
@@ -161,16 +161,13 @@ void DataNodeEncoder::openNode(const DataNode& node)
 {
     OpenNode opened { .node = &node, .firstWord = static_cast<uint32_t>(m_words.size()), .firstField = static_cast<uint32_t>(m_fields.size()) };
     if (const auto* array = node.tryAs<DataNode::Array>()) {
-        opened.indexingType = indexingTypeOf(*array);
+        opened.indexingType = indexingTypeOf(m_encoder.program, *array);
         opened.numberOfChildren = array->elements.size();
     } else {
         auto& object = node.as<DataNode::Object>();
-        const Layout& layout = m_encoder.program.at(object.layout);
-        for (const DataMember& member : object.members) {
-            std::optional<uint32_t> field = layout.findField(member.key);
-            RELEASE_ASSERT(field);
-            m_fields.append(*field);
-        }
+        const Layout* layout = object.layout ? &m_encoder.program.at(object.layout) : nullptr;
+        for (const DataMember& member : object.members)
+            m_fields.append(layout ? layout->findField(member.key).value_or(noField) : noField);
         opened.numberOfChildren = object.members.size();
     }
     m_openNodes.append(opened);
@@ -187,7 +184,8 @@ void DataNodeEncoder::visitChild(OpenNode parent, uint32_t index)
         return;
     }
     auto& object = parent.node->as<DataNode::Object>();
-    if (m_encoder.slots.slot(object.layout, m_fields[parent.firstField + index]).hasStorage())
+    FieldIndex field = m_fields[parent.firstField + index];
+    if (field == noField || m_encoder.slots.slot(object.layout, field).hasStorage())
         visitValue(object.members[index].value);
 }
 
@@ -202,33 +200,154 @@ void DataNodeEncoder::visitValue(const DataNode& value)
 void DataNodeEncoder::closeNode(const OpenNode& closed)
 {
     std::span<const uint64_t> contents = m_words.span().subspan(closed.firstWord);
-    uint32_t node = closed.node->is<DataNode::Object>() ? appendObject(closed, contents) : appendNode(DataNodeHeader::Kind::Array, closed.indexingType, contents, { });
+    uint32_t node = closed.node->is<DataNode::Object>() ? appendObject(closed, contents) : appendArray(closed, contents);
     m_words.shrink(closed.firstWord);
     m_fields.shrink(closed.firstField);
     m_words.append(DataWord::encodeNode(node));
 }
 
+uint32_t DataNodeEncoder::appendArray(const OpenNode& closed, std::span<const uint64_t> contents)
+{
+    uint32_t operand = closed.indexingType | (isStorageOfArray(closed.node->as<DataNode::Array>()) ? DataNodeHeader::isStorage : 0);
+    return appendNode(DataNodeHeader::Kind::Array, operand, contents, { });
+}
+
 uint32_t DataNodeEncoder::appendObject(const OpenNode& closed, std::span<const uint64_t> contents)
 {
     const Placement& placement = m_encoder.placement;
-    LayoutID layout = closed.node->as<DataNode::Object>().layout;
-    std::span<const FieldIndex> fields = m_fields.span().subspan(closed.firstField);
-    AllocationID allocation = placement.allocations().find(layout, placement.shapes().generalShapeOf(layout), fields);
+    auto& object = closed.node->as<DataNode::Object>();
+    LayoutID layout = object.layout;
+    std::span<const FieldIndex> fieldOfEachMember = m_fields.span().subspan(closed.firstField);
+
+    Vector<FieldIndex, 16> fields;
+    Vector<uint16_t, 16> fieldIndices;
+    Vector<uint64_t, 16> fieldValues;
+    Vector<uint32_t, 16> otherKeys;
+    Vector<uint64_t, 16> otherValues;
+    size_t nextWord = 0;
+    for (size_t index = 0; index < fieldOfEachMember.size(); ++index) {
+        FieldIndex field = fieldOfEachMember[index];
+        if (field == noField) {
+            otherKeys.append(m_encoder.identifierNumber(object.members[index].key));
+            otherValues.append(contents[nextWord++]);
+            continue;
+        }
+        fields.append(field);
+        const PlacedSlot& slot = m_encoder.slots.slot(layout, field);
+        if (!slot.hasStorage())
+            continue;
+        fieldIndices.append(*slot.indexInLayoutRecord);
+        fieldValues.append(contents[nextWord++]);
+    }
+    ASSERT(nextWord == contents.size());
+    if (!layout)
+        return appendMembersByName(DataNodeHeader::Kind::OrdinaryObject, otherValues.span(), otherKeys.span());
+
+    AllocationID allocation = placement.allocations().find(layout, placement.shapes().generalShapeOf(layout), fields.span());
     if (!allocation) {
         m_encoder.fail(ProgramTableRule::DataNotEncoded, layout);
         return 0;
     }
-    Vector<uint16_t, 16> fieldIndices;
-    for (FieldIndex field : fields) {
-        const PlacedSlot& slot = m_encoder.slots.slot(layout, field);
-        if (slot.hasStorage())
-            fieldIndices.append(*slot.indexInLayoutRecord);
+    if (otherKeys.isEmpty()) {
+        if (std::optional<uint32_t> node = tryAppendObjectBody(object, allocation, fieldOfEachMember, contents))
+            return *node;
+        return appendNode(DataNodeHeader::Kind::Object, allocation.index(), fieldValues.span(), fieldIndices.span());
     }
-    ASSERT(fieldIndices.size() == contents.size());
-    return appendNode(DataNodeHeader::Kind::Object, allocation.index(), contents, fieldIndices.span());
+    uint32_t otherMembers = appendMembersByName(DataNodeHeader::Kind::OtherMembers, otherValues.span(), otherKeys.span());
+    return appendNode(DataNodeHeader::Kind::ObjectWithOtherMembers, allocation.index(), fieldValues.span(), fieldIndices.span(), otherMembers);
 }
 
-uint32_t DataNodeEncoder::appendNode(DataNodeHeader::Kind kind, uint32_t operand, std::span<const uint64_t> contents, std::span<const uint16_t> fieldIndices)
+bool DataNodeEncoder::tryWriteSlot(const PlacedSlot& slot, void* bytes, const DataNode& value, uint64_t word)
+{
+    SlotRepresentation representation = slot.representation;
+    SlotTraits traits = traitsOf(representation);
+    switch (value.kind()) {
+    case DataNode::Kind::Undefined:
+        if (traits.hasUndefined)
+            writeSlotBits(representation, bytes, traits.undefinedBits);
+        return traits.hasUndefined;
+    case DataNode::Kind::Null:
+        if (traits.hasNull)
+            writeSlotBits(representation, bytes, traits.nullBits);
+        return traits.hasNull;
+    case DataNode::Kind::Boolean:
+        return tryWriteBoolean(representation, bytes, value.as<DataNode::Boolean>().value);
+    case DataNode::Kind::Number:
+        return tryWriteDouble(representation, bytes, value.as<DataNode::Number>().value);
+    case DataNode::Kind::String:
+        if (traits.valueKind == SlotValueKind::LiteralString) {
+            StringID string = value.as<DataNode::String>().value;
+            const LiteralStringTable& literalStrings = *m_encoder.inputs.pipeline.literalStrings;
+            if (m_encoder.program.string(string).empty() || literalStrings.indexOf(string)) {
+                writeSlotBits(representation, bytes, m_encoder.program.string(string).empty() ? emptyLiteralStringWord : literalStringWord(literalStrings.numberOf(string)));
+                return true;
+            }
+        }
+        break;
+    case DataNode::Kind::BigInt:
+    case DataNode::Kind::Array:
+    case DataNode::Kind::Object:
+        break;
+    case DataNode::Kind::Hole:
+        return false;
+    }
+
+    if (!traits.holdsCell || traits.valueKind == SlotValueKind::DeferredClosure)
+        return false;
+    if (!traits.isNarrowReference) {
+        writeSlotBits(representation, bytes, word);
+        return true;
+    }
+    if (DataWord::operandOf(word) > NarrowDataWord::maxOperand)
+        return false;
+    writeSlotBits(representation, bytes, NarrowDataWord::encode(DataWord::kindOf(word), DataWord::operandOf(word)));
+    return true;
+}
+
+// Every member has a slot in the cell, and a store of its value does nothing but fill the slot.
+std::optional<uint32_t> DataNodeEncoder::tryAppendObjectBody(const DataNode::Object& object, AllocationID allocation, std::span<const FieldIndex> fieldOfEachMember, std::span<const uint64_t> contents)
+{
+    const PlannedLayout& layout = m_encoder.slots.layout(object.layout);
+    uint32_t size = m_encoder.placement.allocations().allocations[allocation.index()].size;
+    if (size != layout.size || size < offsetOfFirstField || size % wordSize)
+        return std::nullopt;
+
+    Vector<uint64_t, 16> body(FillWith { }, (size - offsetOfFirstField) / wordSize, 0);
+    auto bytesOf = [&](const PlacedSlot& slot) {
+        RELEASE_ASSERT(slot.offset >= offsetOfFirstField && slot.end() <= size);
+        return reinterpret_cast<uint8_t*>(body.mutableSpan().data()) + (slot.offset - offsetOfFirstField);
+    };
+    for (FieldIndex field = 0; field < layout.numberOfFields(); ++field) {
+        const PlacedSlot& slot = layout.slots[field];
+        if (slot.hasStorage() && !slot.isOutOfLine())
+            clearSlot(slot.representation, bytesOf(slot));
+    }
+
+    size_t nextWord = 0;
+    for (size_t index = 0; index < fieldOfEachMember.size(); ++index) {
+        FieldIndex field = fieldOfEachMember[index];
+        const PlacedSlot& slot = layout.slots[field];
+        if (!slot.hasStorage())
+            continue;
+        const DataNode& value = object.members[index].value;
+        bool setsMarkOfCell = (value.is<DataNode::Undefined>() || value.is<DataNode::Null>()) && holdsRawValueFromBirth(m_encoder.program, { object.layout, field });
+        if (slot.isOutOfLine() || setsMarkOfCell || !tryWriteSlot(slot, bytesOf(slot), value, contents[nextWord++]))
+            return std::nullopt;
+    }
+    return appendNode(DataNodeHeader::Kind::ObjectBody, allocation.index(), body.span(), { });
+}
+
+uint32_t DataNodeEncoder::appendMembersByName(DataNodeHeader::Kind kind, std::span<const uint64_t> values, std::span<const uint32_t> identifierNumbers)
+{
+    ASSERT(values.size() == identifierNumbers.size());
+    uint32_t node = appendNode(kind, 0, values, { });
+    uint32_t numbersOffset = m_tableOffset + (node + 1 + static_cast<uint32_t>(values.size())) * wordSize;
+    for (uint32_t index = 0; index < identifierNumbers.size(); ++index)
+        m_encoder.writer.at<uint32_t>(numbersOffset + index * static_cast<uint32_t>(sizeof(uint32_t))) = identifierNumbers[index];
+    return node;
+}
+
+uint32_t DataNodeEncoder::appendNode(DataNodeHeader::Kind kind, uint32_t operand, std::span<const uint64_t> contents, std::span<const uint16_t> fieldIndices, std::optional<uint32_t> otherMembers)
 {
     TableWriter& writer = m_encoder.writer;
     uint32_t count = static_cast<uint32_t>(contents.size());
@@ -241,12 +360,20 @@ uint32_t DataNodeEncoder::appendNode(DataNodeHeader::Kind kind, uint32_t operand
     writer.at<uint64_t>(offset) = header.encoded();
 
     uint32_t contentsOffset = offset + wordSize;
+    if (kind == DataNodeHeader::Kind::Array) {
+        static_assert(!IndexingHeader::offsetOfPublicLength() && IndexingHeader::offsetOfVectorLength() == sizeof(uint32_t) && sizeof(IndexingHeader) == wordSize);
+        writer.at<uint64_t>(contentsOffset) = count | static_cast<uint64_t>(count) << 32;
+        contentsOffset += wordSize;
+    }
     for (uint32_t index = 0; index < count; ++index)
         writer.at<uint64_t>(contentsOffset + index * wordSize) = contents[index];
 
     uint32_t fieldIndicesOffset = contentsOffset + count * wordSize;
     for (uint32_t index = 0; index < fieldIndices.size(); ++index)
         writer.at<uint16_t>(fieldIndicesOffset + index * static_cast<uint32_t>(sizeof(uint16_t))) = fieldIndices[index];
+
+    if (otherMembers)
+        writer.at<uint64_t>(offset + (DataNodeHeader::numberOfWords(kind, count) - 1) * wordSize) = DataWord::encodeNode(*otherMembers);
 
     return (offset - m_tableOffset) / wordSize;
 }
@@ -330,6 +457,19 @@ static BitVector findRecordsWithNodes(TableEncoder& encoder)
     return recordsWithNodes;
 }
 
+static Vector<std::pair<uint32_t, DataID>> findPlacedNodes(TableEncoder& encoder)
+{
+    Vector<std::pair<uint32_t, DataID>> placed;
+    for (const RequestRecord& record : encoder.placement.requests().records()) {
+        const auto* request = std::get_if<DataRecord>(&record);
+        if (request && request->node)
+            placed.append({ *request->node, request->data });
+    }
+    std::ranges::sort(placed, { }, &std::pair<uint32_t, DataID>::first);
+    placed.shrink(std::ranges::unique(placed).begin() - placed.begin());
+    return placed;
+}
+
 void encodeDataTable(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -337,10 +477,16 @@ void encodeDataTable(TableEncoder& encoder)
     BitVector recordsWithNodes = findRecordsWithNodes(encoder);
 
     DataNodeEncoder nodes(encoder);
+    // Compiled code has the places of these.
+    for (auto [node, data] : findPlacedNodes(encoder)) {
+        encoder.dataNodes[data.index()] = nodes.encode(program.at(data).root);
+        if (encoder.dataNodes[data.index()] != node)
+            encoder.fail(ProgramTableRule::DataNotEncoded);
+    }
     for (size_t index : recordsWithNodes) {
         const DataNode& root = program.data[index].root;
         // TableEncoder::dataNodeOf() reports a record that a request names and that has no node.
-        if (!isLeaf(root))
+        if (!isLeaf(root) && encoder.dataNodes[index] == UINT32_MAX)
             encoder.dataNodes[index] = nodes.encode(root);
     }
     encoder.setTableRange(ProgramTableIndex::data, nodes.tableOffset(), nodes.numberOfWords());

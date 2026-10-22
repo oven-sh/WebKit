@@ -1,0 +1,78 @@
+# a % b and -a of two integers are numbers by type, because either may be -0 and the first may be NaN. Whoever takes -0 for zero works on the integer: no conversion of a number to an int32, with its call for what lies beyond int64, is left.
+# A sum with a remainder that may be NaN stays a sum of numbers.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: generate-code calls ExactIntegersBehindNumbers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = CallDirect v4, v4 function=f1
+    v6 = CallDirect v4, v4 function=f2
+    v7 = CallDirect v4, v4 function=f3
+    v8 = CallDirect v4, v4 function=f4
+    v9 = CallDirect v4, v4 function=f5
+    v10 = Add v5, v6
+    v11 = Add v10, v7
+    v12 = Add v11, v8
+    v13 = Add v12, v9
+    Return v13
+}
+function f1 name="lowWordOfRemainder" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Mod v0, v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    Return v4
+}
+function f2 name="lowWordOfRemainderByConstantAndTerm" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Integer integer=5
+    v3 = Mod v0, v2
+    v4 = Add v3, v1
+    v5 = Integer integer=0
+    v6 = BitOr v4, v5
+    Return v6
+}
+function f3 name="lowWordOfNegationAndTerm" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Negate v0
+    v3 = Add v2, v1
+    v4 = Integer integer=0
+    v5 = BitOr v3, v4
+    Return v5
+}
+function f4 name="lowWordOfRemainderByConstantTimesFactor" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Integer integer=10
+    v3 = Mod v0, v2
+    v4 = Mul v3, v1
+    v5 = Integer integer=0
+    v6 = BitOr v4, v5
+    Return v6
+}
+function f5 name="lowWordOfRemainderAndTerm" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Mod v0, v1
+    v3 = Add v2, v1
+    v4 = Integer integer=0
+    v5 = BitOr v3, v4
+    Return v5
+}
+# CHECK-LABEL: f1:
+# CHECK-NOT: operationAOTToInt32
+# CHECK-LABEL: f2:
+# CHECK-NOT: operationAOTToInt32
+# CHECK-LABEL: f3:
+# CHECK-NOT: operationAOTToInt32
+# CHECK-LABEL: f4:
+# CHECK-NOT: operationAOTToInt32
+# CHECK-LABEL: f5:
+# CHECK: operation operationAOTToInt32 x1
+# CHECK: statistic ExactIntegersBehindNumbers 3

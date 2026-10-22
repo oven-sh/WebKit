@@ -1,0 +1,130 @@
+# function keep(o) { kept = o }                 stored in a variable
+# function pass(o) { keep(o) }                  .. because its callee does that
+# function look(o) { return o.x }               a member is read, and what was read is returned
+# function same(o) { return o }                 returned
+# function drop(o) { same(o) }                  nothing: nobody looks at what the call answers
+# function hold(o) { kept = same(o) }           what the callee returns goes on as what the call answers
+# function wrap(o) { return { a: o } }          stored into the result, which is not "returned"
+# function put(t, v) { t.f = v }                stored into another parameter
+# function fill(o) { const t = {}; put(t, o) }  nothing: what it was stored into dies here
+# function give(o) { const t = {}; put(t, o); return t }     stored into the result, through a callee
+# function first(o) { kept = look(o) }          what a callee reads out of a value and returns goes on as what the call answers: the CONTENTS are kept
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: stored-in-variable | contents: nothing
+# CHECK: f2
+# CHECK-NEXT: p0: stored-in-variable | contents: nothing
+# CHECK: f3
+# CHECK-NEXT: p0: members-read | contents: returned read=["x"]
+# CHECK: f4
+# CHECK-NEXT: p0: returned | contents: nothing results=1
+# CHECK: f5
+# CHECK-NEXT: p0: nothing | contents: nothing
+# CHECK: f6
+# CHECK-NEXT: p0: stored-in-variable | contents: nothing
+# CHECK: f7
+# CHECK-NEXT: p0: nothing | contents: nothing stored-into-results=1
+# CHECK: f8
+# CHECK-NEXT: p0: members-written | contents: nothing written=["f"]
+# CHECK-NEXT: p1: nothing | contents: nothing stored-into-parameters=1
+# CHECK: f9
+# CHECK-NEXT: p0: nothing | contents: nothing
+# CHECK: f10
+# CHECK-NEXT: p0: nothing | contents: nothing stored-into-results=1
+# CHECK: f11
+# CHECK-NEXT: p0: members-read | contents: stored-in-variable read=["x"]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Wrapper" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Empty" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v1
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v1
+    v8 = NewClosure function=f4
+    v9 = Call v8, -, v1
+    v10 = NewClosure function=f5
+    v11 = Call v10, -, v1
+    v12 = NewClosure function=f6
+    v13 = Call v12, -, v1
+    v14 = NewClosure function=f7
+    v15 = Call v14, -, v1
+    v16 = NewClosure function=f8
+    v17 = Call v16, -, v1, v1
+    v18 = NewClosure function=f9
+    v19 = Call v18, -, v1
+    v20 = NewClosure function=f10
+    v21 = Call v20, -, v1
+    v22 = NewClosure function=f11
+    v23 = Call v22, -, v1
+    Return
+}
+function f1 name="keep" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsStoredInVariable]}]} {
+  b0(v0: anything):
+    Return
+}
+function f2 name="pass" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[IsCalled]}] handed=[{source=1 call=2}, {call=2 argument=2}]} {
+  b0(v0: anything):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    Return
+}
+function f3 name="look" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[HasMembersRead]}, {kind=ReadFrom index=1 key="x" fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f4 name="same" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="drop" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[IsCalled]}] handed=[{source=1 call=2}, {call=2 argument=2}]} {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Call v1, -, v0
+    Return
+}
+function f6 name="hold" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[IsCalled]}, {kind=CallResult index=2 fate=[IsStoredInVariable]}] handed=[{source=1 call=2}, {call=2 argument=2}]} {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Call v1, -, v0
+    Return
+}
+function f7 name="wrap" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[IsReturned] results=1}] stores=[{target=1 key="a" creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Return v1
+}
+function f8 name="put" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{fate=[HasMembersWritten]}, {index=1}] stores=[{source=1 key="f" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="f" mode=Strict
+    Return
+}
+function f9 name="fill" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1}, {kind=Allocation index=2 fate=[IsCalled]}] handed=[{source=2 call=3}, {source=1 call=3 argument=2}, {call=3 argument=3}]} {
+  b0(v0: anything):
+    v1 = NewObject layout=L2 fields=[]
+    v2 = NewClosure function=f8
+    v3 = Call v2, -, v1, v0
+    Return
+}
+function f10 name="give" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[IsReturned] results=1}, {kind=Allocation index=2 fate=[IsCalled]}] handed=[{source=2 call=3}, {source=1 call=3 argument=2}, {call=3 argument=3}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = NewObject layout=L2 fields=[]
+    v2 = NewClosure function=f8
+    v3 = Call v2, -, v1, v0
+    Return v1
+}
+function f11 name="first" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[IsCalled]}, {kind=CallResult index=2 fate=[IsStoredInVariable]}] handed=[{source=1 call=2}, {call=2 argument=2}]} {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = Call v1, -, v0
+    Return
+}

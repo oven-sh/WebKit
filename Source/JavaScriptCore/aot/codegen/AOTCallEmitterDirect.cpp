@@ -10,18 +10,19 @@
 
 #include "AOTCellFormat.h"
 #include "AOTChooseCallingConventions.h"
-#include "AOTClosureTestEmitter.h"
 #include "AOTConvention.h"
+#include "AOTImageFormat.h"
 #include "AOTInstance.h"
-#include "AOTStubsClosures.h"
+#include "AOTMethodTableEntrypoints.h"
+#include "AOTPlacement.h"
+#include "AOTShapeTestEmitter.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <array>
 #include <optional>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static_assert(ClosureWord::numberOfOffsetBits == 32 && isPowerOfTwo(ClosureWord::offsetUnit));
 
 static std::optional<unsigned> findDirectArgumentIndex(Reg reg)
 {
@@ -38,12 +39,13 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(FunctionID function, co
 
     PlacedArguments placed;
     placed.onStack.fill(nullptr, locations.numberOfStackArguments);
-    placed.stackWordsToReserve = inputs().conventions.stackWordsReservedByCallersOf(m_program, function);
+    placed.stackWordsToReserve = inputs().conventions.stackWordsReservedByCallersOf(m_program, function, locations);
     std::array<LValue, numberOfDirectArgumentGPRs> inGPRs { };
     unsigned numberOfGPRs = 0;
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
         RELEASE_ASSERT(arguments[i].representation == location.representation);
+        // Null where the callee may find anything: nothing is put there.
         LValue argument = arguments[i].value;
         switch (location.kind) {
         case ArgumentLocation::Kind::None:
@@ -53,24 +55,28 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(FunctionID function, co
             inGPRs[numberOfGPRs++] = argument;
             break;
         case ArgumentLocation::Kind::FPR:
-            placed.inRegisters.append(B3::ConstrainedValue(argument, B3::ValueRep::reg(location.reg)));
+            if (argument)
+                placed.inRegisters.append(B3::ConstrainedValue(argument, B3::ValueRep::reg(location.reg)));
             break;
         case ArgumentLocation::Kind::Stack:
-            placed.onStack[location.stackIndex] = argument->type() == B3::Int32 ? m_out.zeroExt(argument, B3::Int64) : argument;
+            if (argument)
+                placed.onStack[location.stackIndex] = argument->type() == B3::Int32 ? m_out.zeroExt(argument, B3::Int64) : argument;
             break;
         }
     }
 
     unsigned firstUndefined = numberOfGPRs;
     if (omitted == OmittedArguments::MayBeOmitted) {
-        while (firstUndefined && isUndefinedConstant(inGPRs[firstUndefined - 1]))
+        while (firstUndefined && inGPRs[firstUndefined - 1] && isUndefinedConstant(inGPRs[firstUndefined - 1]))
             --firstUndefined;
     }
     SecondaryEntry entry = inputs().conventions.findEntryOmittingArguments(function, firstUndefined, numberOfGPRs);
     RELEASE_ASSERT(firstUndefined <= entry.firstOmittedGPR && entry.firstOmittedGPR <= numberOfGPRs);
     placed.entry = entry.id;
-    for (unsigned index = 0; index < entry.firstOmittedGPR; ++index)
-        placed.inRegisters.append(B3::ConstrainedValue(inGPRs[index], B3::ValueRep::reg(directArgumentGPR(index))));
+    for (unsigned index = 0; index < entry.firstOmittedGPR; ++index) {
+        if (inGPRs[index])
+            placed.inRegisters.append(B3::ConstrainedValue(inGPRs[index], B3::ValueRep::reg(directArgumentGPR(index))));
+    }
     return placed;
 }
 
@@ -93,65 +99,66 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
 
     ArgumentLocations locations = inputs().conventions.locationsOf(m_program, function);
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        if (m_function.at(value->argumentsOperands()[index]).opcode == Opcode::Unspecified)
+            arguments[index].value = nullptr;
+    }
     if (value.returnCall()) {
         emitTailCall(value, CallTarget::function(function, primaryEntry), placeArguments(function, locations, arguments.span(), OmittedArguments::MustBePassed));
         return;
     }
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    CallOptions options { .constructs = value->isConstruction(), .isTailCall = value->isDemotedTailCall(), .isFollowedByResultTest = value->resultCheck() == ResultCheck::ByCallers };
+    CallOptions options { .constructs = value->isConstruction(), .isTailCall = value->isDemotedTailCall(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
     B3::PatchpointValue* call = emitCall(value, CallTarget::function(function, placed.entry), placed, locations.results.span(), options);
+    if (options.hasLandingOfMisfit) {
+        meetLandingOfMisfit(value, call);
+        return;
+    }
     defineResultsOfCall(value, locations.results.span(), call);
 }
 
-Pointer CallEmitter::valueEntryOf(const OperationContext& context, CellPointer closure, ClosureCells cells)
+// The back end defines the result of a call with two ways out on the first alone, so the two meet. The test of the result, which is generated next, fills the landing.
+void CallEmitter::meetLandingOfMisfit(const ValueContext& value, LValue returned)
 {
-    auto entryOffsetOfFullClosure = [&] {
-        return loadField<Word32>(closure, m_heaps.AOTClosure_entry);
-    };
-    auto entryOffsetOfSlimClosure = [&] {
-        return either<Word32>(emitter<ClosureTestEmitter>().isUnreifiedSlimClosure(closure), [&] {
-            return loadField<Word32>(closure, m_heaps.AOTSlimClosure_word);
-        }, [&] {
-            return low32(Integer(callStub(context, closureEntry(), { closure.value() }, { .isOnRarePath = true }).first));
-        });
-    };
+    CodeGenerator::LandingOfMisfit landing { .landing = std::exchange(m_landingOfLastCall, nullptr), .meeting = newBlock() };
+    RELEASE_ASSERT(landing.landing);
+    LBasicBlock afterReturn = m_out.m_block;
+    m_out.appendTo(landing.meeting);
+    landing.result = m_out.phi(B3::Int64);
+    landing.hasTestedType = m_out.phi(B3::Int32);
 
-    Word32 entryOffset;
-    switch (cells) {
-    case ClosureCells::AllFull:
-        entryOffset = entryOffsetOfFullClosure();
-        break;
-    case ClosureCells::AllSlim:
-        entryOffset = entryOffsetOfSlimClosure();
-        break;
-    case ClosureCells::Unknown:
-        entryOffset = either<Word32>(hasCellType(closure, CompiledClosureType), entryOffsetOfFullClosure, entryOffsetOfSlimClosure);
-        break;
-    }
+    m_out.appendTo(afterReturn);
+    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), returned, landing.result);
+    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), m_out.constInt32(1), landing.hasTestedType);
+    m_out.jump(landing.meeting);
 
-    Pointer code = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code));
-    Pointer entry = offsetBy(code, zeroExtended(entryOffset), WTF::fastLog2(ClosureWord::offsetUnit));
-    Word32 distance(m_out.load32(m_out.address(m_heaps.AOTImage_tables, entry.value(), ValueEntryWords::offsetOfDistanceFromEntry())));
-    return offsetBy(entry, signExtended(distance), 0);
+    m_out.appendTo(landing.meeting);
+    define(value, Boxed(landing.result));
+    generator().setLandingOfMisfit(value.id(), landing);
 }
 
-void CallEmitter::generateCallGroup(const ValueContext& value)
+// The instance has its own copy of the table at a fixed distance, and the word of the shape is 0 - shape: one load finds the entry.
+void CallEmitter::generateCallTable(const ValueContext& value)
 {
     FunctionID function = value->function();
-    ArgumentLocations locations = inputs().conventions.locationsOf(m_program, function);
-    Vector<ValueID, 8> operands { value->closureOperand() };
-    operands.append(value->argumentsOperands());
-    Vector<Operand, 8> arguments = operandsOf(operands.span(), locations);
-
-    Pointer entry = valueEntryOf(value, arguments[0].as<CellPointer>(), inputs().conventions.closureCellsOf(function));
-    PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MustBePassed);
-    if (value.returnCall()) {
-        emitTailCall(value, CallTarget::address(entry.value()), placed);
+    std::optional<uint32_t> selectorOffset = m_placement.methodTable().offsetOf(selectorOf(m_program, value.value()));
+    if (!selectorOffset) {
+        fail(value, InternalErrorKind::CallToFunctionWithoutCode);
         return;
     }
 
-    B3::PatchpointValue* call = emitCall(value, CallTarget::address(entry.value()), placed, locations.results.span(), { .isTailCall = value->isDemotedTailCall() });
+    ArgumentLocations locations = inputs().conventions.locationsOf(m_program, function);
+    Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
+    Word32 shapeWord = emitter<ShapeTestEmitter>().shapeWordOf(arguments[0].as<CellPointer>());
+    Pointer row = offsetBy(Pointer(m_instance), signExtended(shapeWord), WTF::fastLog2(static_cast<unsigned>(sizeof(uint32_t))));
+    ptrdiff_t offsetOfRow = InstanceLayout::offsetOfMethodTable(inputs().instanceSizes) + static_cast<ptrdiff_t>(*selectorOffset * sizeof(uint32_t));
+    Word32 codeOffset(m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, row.value(), offsetOfRow)));
+    Pointer code = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code));
+    Pointer entry = offsetBy(code, zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));
+
+    PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MustBePassed);
+    B3::PatchpointValue* call = emitCall(value, CallTarget::address(entry.value()), placed, locations.results.span(), { });
     defineResultsOfCall(value, locations.results.span(), call);
 }
 

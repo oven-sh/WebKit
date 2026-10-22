@@ -25,6 +25,7 @@
 
 #include "config.h"
 
+#include "AOTCellFormat.h"
 #include "AOTCompiledStructure.h"
 #include "AOTInstance.h"
 #include "AOTInterpreterSlowPaths.h"
@@ -41,6 +42,7 @@
 #include "DirectEvalExecutable.h"
 #include "EvalExecutable.h"
 #include "Exception.h"
+#include "FreeList.h"
 #include "GetByIdMetadata.h"
 #include "Heap.h"
 #include "IndirectEvalExecutable.h"
@@ -58,6 +60,7 @@
 #include "JSObject.h"
 #include "JSPropertyNameEnumerator.h"
 #include "JSString.h"
+#include "JSType.h"
 #include "JSTypeInfo.h"
 #include "JSWebAssemblyArrayInlines.h"
 #include "JSWebAssemblyInstance.h"
@@ -68,6 +71,7 @@
 #include "MarkedSpace.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "NativeExecutable.h"
+#include "Opcode.h"
 #include "PinballCompletion.h"
 #include "PinballHandlerContext.h"
 #include "PrivateFieldPutKind.h"

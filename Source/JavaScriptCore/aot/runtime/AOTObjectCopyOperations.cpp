@@ -14,6 +14,7 @@
 #include "AOTObject.h"
 #include "AOTObjectCopy.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
@@ -23,6 +24,7 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
@@ -36,7 +38,54 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-using ExcludedNames = Vector<UniquedStringImpl*, 8>;
+namespace {
+
+// The keys that a copy leaves out. Those that the source text names lie in the image as a run, whose list of names is made once and is known by its address.
+// A key among the operands is a string or a symbol. A number stands for the identifier with that number.
+class ExcludedKeys {
+    WTF_MAKE_NONCOPYABLE(ExcludedKeys);
+public:
+    ExcludedKeys() = default;
+
+    bool tryCollect(Instance* instance, JSGlobalObject* globalObject, ExcludedRun run, std::span<const EncodedJSValue> keys)
+    {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (run.numberPlusOne) {
+            m_listOfRun = &instance->state->objects->caches->assignmentPlans.excludedNames(vm, run);
+            m_names = m_listOfRun->names();
+        }
+        if (keys.empty())
+            return true;
+        m_namesWithOperands.append(m_names);
+        m_listOfRun = nullptr;
+        for (EncodedJSValue encodedKey : keys) {
+            JSValue key = JSValue::decode(encodedKey);
+            if (key.isInt32()) {
+                m_namesWithOperands.append(identifierAt(instance, key.asInt32()).impl());
+                continue;
+            }
+            auto identifier = key.toPropertyKey(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            m_namesWithOperands.append(identifier.impl());
+            m_identifiers.append(WTF::move(identifier));
+        }
+        m_names = m_namesWithOperands.span();
+        return true;
+    }
+
+    bool isEmpty() const { return m_names.empty(); }
+    std::span<UniquedStringImpl* const> names() const { return m_names; }
+    bool contains(UniquedStringImpl* name) const { return m_listOfRun ? m_listOfRun->contains(name) : std::ranges::contains(m_names, name); }
+
+private:
+    const ExcludedNameList* m_listOfRun { nullptr };
+    std::span<UniquedStringImpl* const> m_names;
+    Vector<UniquedStringImpl*, 8> m_namesWithOperands;
+    Vector<Identifier, 8> m_identifiers;
+};
+
+}
 
 static Structure* emptyLiteralStructureForCopy(JSGlobalObject* globalObject, VM& vm, unsigned inlineCapacity)
 {
@@ -91,7 +140,13 @@ JSObject* withAllPropertiesInline(JSGlobalObject* globalObject, JSObject* object
     return copy;
 }
 
-static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedNames& excluded, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+static bool mayReadPlainPropertiesFromTable(Structure* structure)
+{
+    TypeInfo info = structure->typeInfo();
+    return !info.overridesGetOwnPropertySlot() && !info.overridesAnyFormOfGetOwnPropertyNames() && !structure->hasUnderscoreProtoPropertyExcludingOriginalProto() && !hasIndexedProperties(structure->indexingType());
+}
+
+static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& excluded, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     if (isCompiledObject(source)) {
         auto walkResult = PropertyWalk::forEachOwnPropertyInline(vm, source, PropertyWalk::Filter::StringsAndSymbols, [&](const PropertyWalk::OwnProperty& property) {
@@ -106,120 +161,203 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedNames& 
         return walkResult == PropertyWalk::Result::Completed;
     }
     Structure* structure = source->structure();
-    if (source->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumeration())
+    if (source->hasNonReifiedStaticProperties() || !mayReadPlainPropertiesFromTable(structure))
         return false;
+    bool everyPropertyIsPlain = true;
     structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
         if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName() || excluded.contains(entry.key()))
             return true;
+        everyPropertyIsPlain = !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue);
+        if (!everyPropertyIsPlain)
+            return false;
         names.append(entry.key());
         values.appendWithCrashOnOverflow(source->getDirect(entry.offset()));
         return true;
     });
-    return true;
+    if (!everyPropertyIsPlain) {
+        names.clear();
+        values.clear();
+    }
+    return everyPropertyIsPlain;
 }
 
-static bool tryCopyPropertiesExcluding(VM& vm, JSObject* target, JSObject* source, const ExcludedNames& excluded)
+// What has been read out of a source of any kind is put into an ordinary object, which gets the same Structure each time the names are the same.
+// So the copy from there has a plan, which adds the names that are no fields all at once. By name each of them would take a Structure of its own.
+static bool tryAssignCollectedProperties(JSGlobalObject* globalObject, VM& vm, Object& target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+{
+    constexpr size_t minNumberOfNames = 4;
+    // With more names than a chain of Structures holds the object would be a dictionary, which has no plan.
+    if (names.size() < minNumberOfNames || names.size() > static_cast<size_t>(Structure::s_maxTransitionLength))
+        return false;
+    for (UniquedStringImpl* name : names) {
+        if (parseIndex(PropertyName(name)) || name == vm.propertyNames->underscoreProto.impl())
+            return false;
+    }
+    JSFinalObject* collected = constructEmptyObject(vm, globalObject->objectStructureForObjectConstructor());
+    collected->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+    return tryDefinePropertiesOf(vm, target, collected, { }, Object::PlanCreation::AtFirstCopy);
+}
+
+static std::optional<ASCIILiteral> tryCopyPropertiesExcluding(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source, const ExcludedKeys& excluded, bool planGaveUp)
 {
     Vector<UniquedStringImpl*, 8> names;
     MarkedArgumentBuffer values;
     EnsureStillAliveScope sourceScope(source);
     if (!tryCollectProperties(vm, source, excluded, names, values))
-        return false;
+        return std::nullopt;
     count(vm, RuntimeCounterID::CopiesCollectedByName);
-    if (!isCompiledObject(target)) {
+    Object* record = compiledObjectOrNull(target);
+    if (!record) {
         if (names.size())
             target->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
-        return true;
+        return "collected, put as a batch"_s;
     }
-    if (uncheckedDowncast<Object>(target)->tryDefineFields(vm, names.span(), { values.data(), values.size() }))
-        return true;
-    for (size_t i = 0; i < names.size(); ++i) {
-        if (isCompiledObject(target))
-            PropertyWalk::putDirect(vm, target, names[i], values.at(i), 0);
-        else
-            target->putDirect(vm, names[i], values.at(i));
-    }
-    return true;
+    if (record->tryDefineFields(vm, names.span(), { values.data(), values.size() }))
+        return "collected, all are fields"_s;
+    // A name that is no field gets a Structure of its own where it is added by name, and so does each name behind it. A plan adds them all at once and costs no more to make.
+    if (!planGaveUp && tryDefinePropertiesOf(vm, *record, source, excluded.names(), Object::PlanCreation::AtFirstCopy))
+        return "collected, then by a plan"_s;
+    if (tryAssignCollectedProperties(globalObject, vm, *record, names, values))
+        return "collected, then by the plan of an ordinary object"_s;
+    definePropertiesInOrder(vm, *record, names.mutableSpan(), { values.data(), values.size() });
+    return "collected, put name by name"_s;
 }
 
-// Of the primitives only a string has own properties.
+// Of the primitives only a string has own properties. Options that nobody has given are an empty literal.
 static ALWAYS_INLINE bool hasOwnPropertiesToCopy(JSValue source)
 {
-    return source.isObject() || source.isString();
+    if (!source.isObject())
+        return source.isString() && asString(source)->length();
+    JSObject* object = asObject(source);
+    if (object->type() != FinalObjectType)
+        return true;
+    Structure* structure = object->structure();
+    return structure->maxOffset() != invalidOffset || structure->isDictionary() || structure->isCompiledStructure() || hasIndexedProperties(structure->indexingType()) || structure->hasNonReifiedStaticProperties();
 }
 
-static void copyDataPropertiesExcluding(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* target, JSValue source, const ExcludedNames& excluded)
+
+// Answers which way the copy went, for a run that counts.
+static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* target, JSValue source, const ExcludedKeys& excluded)
 {
+    constexpr ASCIILiteral threw = "threw"_s;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!hasOwnPropertiesToCopy(source))
-        return;
-    JSObject* from = source.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType && tryCopyDataProperties(instance, vm, target, from, TargetPrototypes::Ignored))
-        return;
+        return "nothing to copy"_s;
+    JSObject* from = source.isObject() ? asObject(source) : source.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, threw);
+    Object* record = compiledObjectOrNull(target);
+    bool planGaveUp = false;
+    if (record) {
+        Object* other = excluded.isEmpty() ? compiledObjectOrNull(from) : nullptr;
+        // An object of the target's own layout is copied word by word.
+        bool mayCopyWords = other && record->shapeWord() == other->shapeWord();
+        PlannedAssignment planned = mayCopyWords ? PlannedAssignment::HasNoPlan : tryAssignPropertiesByExistingPlan(vm, *record, from, excluded.names());
+        if (planned == PlannedAssignment::IsDone)
+            return "by a plan that was there"_s;
+        planGaveUp = planned == PlannedAssignment::GaveUp;
+        if (mayCopyWords && record->tryCopyFieldsOf(vm, *other))
+            return "fields by words or moves"_s;
+        if (!planGaveUp && tryDefinePropertiesOf(vm, *record, from, excluded.names(), Object::PlanCreation::AtFirstCopy))
+            return "by a plan made for it"_s;
+    }
+    if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType) {
+        // An ordinary object without properties takes the Structure of an ordinary source and its values word by word, as in the engine's own copy.
+        bool mayTakeStructure = !target->structure()->isCompiledStructure() && !from->structure()->isCompiledStructure() && !from->hasNonReifiedStaticProperties() && from->structure()->canPerformFastPropertyEnumerationCommon();
+        if (mayTakeStructure && objectCloneFast(vm, uncheckedDowncast<JSFinalObject>(target), from))
+            return "ordinary objects, Structure and words"_s;
+    }
+    if (!record && target->type() == FinalObjectType && takesPlainPropertiesDirectly(target->structure())) {
+        if (tryDefinePropertiesOnOrdinaryObject(vm, *instance->state, target, from, excluded.names(), Object::PlanCreation::AtFirstCopy))
+            return "into an ordinary object, by a plan"_s;
+    }
+    if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType) {
+        if (tryCopyDataProperties(instance, vm, target, from, TargetPrototypes::Ignored))
+            return "final objects, tryCopyDataProperties"_s;
+    }
     if (excluded.isEmpty() && target->type() == FinalObjectType && tryCopyRecordDataProperties(instance, vm, target, from))
-        return;
+        return "final objects, tryCopyRecordDataProperties"_s;
     auto* ordinary = dynamicDowncast<JSFinalObject>(target);
     bool canPutDirectly = ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
     if (canPutDirectly && excluded.isEmpty()) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer propertyValues;
         bool isDone = objectAssignFast(globalObject, ordinary, from, properties, propertyValues);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, threw);
         if (isDone)
-            return;
+            return "into an ordinary object, objectAssignFast"_s;
     }
-    Object* record = compiledObjectOrNull(target);
-    if (record) {
-        if (Object* other = compiledObjectOrNull(from); other && excluded.isEmpty() && record->tryCopyFieldsOf(vm, *other))
-            return;
-        if (record->tryAssignPropertiesOf(vm, from, excluded.span(), Object::PlanCreation::AtSecondCopy))
-            return;
+    bool canDefineDirectly = record ? !(record->orderWord() & orderWordIntegrityBits) : canPutDirectly;
+    if (canDefineDirectly) {
+        std::optional<ASCIILiteral> way = tryCopyPropertiesExcluding(globalObject, vm, target, from, excluded, planGaveUp);
+        RETURN_IF_EXCEPTION(scope, threw);
+        if (way)
+            return *way;
     }
-    bool canDefineDirectly = record ? !(record->orderWord() & orderWordIntegrityBits) : canPutDirectly && !excluded.isEmpty();
-    if (canDefineDirectly && tryCopyPropertiesExcluding(vm, target, from, excluded))
-        return;
     // Nothing sees the target before the copy is complete, so what the source runs cannot tell when the properties are defined.
     Vector<UniquedStringImpl*, 8> copiedNames;
     MarkedArgumentBuffer copiedValues;
-    auto defineCopiedProperties = [&] {
+    auto defineCopiedProperties = [&]() -> ASCIILiteral {
         if (record && record->tryDefineFields(vm, copiedNames.span(), { copiedValues.data(), copiedValues.size() }))
-            return;
+            return "read by lookups, all are fields"_s;
+        if (record && tryAssignCollectedProperties(globalObject, vm, *record, copiedNames, copiedValues))
+            return "read by lookups, then by a plan"_s;
+        // An element is no property that a definition by name knows.
+        bool hasIndex = std::ranges::any_of(copiedNames, [](UniquedStringImpl* name) {
+            return !!parseIndex(PropertyName(name));
+        });
+        if (record && !hasIndex && !(record->orderWord() & orderWordIntegrityBits)) {
+            definePropertiesInOrder(vm, *record, copiedNames.mutableSpan(), { copiedValues.data(), copiedValues.size() });
+            RETURN_IF_EXCEPTION(scope, threw);
+            return "read by lookups, defined name by name"_s;
+        }
         for (size_t i = 0; i < copiedNames.size(); ++i) {
             defineCopiedProperty(globalObject, target, copiedNames[i], copiedValues.at(i));
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, threw);
         }
+        return "read by lookups, defined name by name"_s;
     };
     if (auto* moduleNamespace = excluded.isEmpty() ? dynamicDowncast<ModuleNamespace>(from) : nullptr) {
         bool didReadExports = moduleNamespace->tryReadExports(globalObject, copiedNames, copiedValues);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, threw);
         if (didReadExports)
             RELEASE_AND_RETURN(scope, defineCopiedProperties());
     }
     count(vm, RuntimeCounterID::CopiesByOrdinaryLookups);
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     from->methodTable()->getOwnPropertyNames(from, globalObject, names, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, threw);
     for (auto& name : names) {
         if (excluded.contains(name.impl()))
             continue;
         PropertySlot slot(from, PropertySlot::InternalMethodType::GetOwnProperty);
         bool has = from->methodTable()->getOwnPropertySlot(from, globalObject, name, slot);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, threw);
         if (!has || slot.attributes() & PropertyAttribute::DontEnum)
             continue;
         bool needsReread = slot.isTaintedByOpaqueObject() && !isModuleNamespace(from);
         JSValue value = needsReread ? from->get(globalObject, name) : slot.getValue(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, threw);
         copiedNames.append(name.impl());
         copiedValues.appendWithCrashOnOverflow(value);
     }
     RELEASE_AND_RETURN(scope, defineCopiedProperties());
 }
 
+static ALWAYS_INLINE void copyDataPropertiesExcluding(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* target, JSValue source, const ExcludedKeys& excluded)
+{
+    AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
+    if (!plans.countsCopies()) [[likely]] {
+        copyDataPropertiesByAnyWay(instance, globalObject, vm, target, source, excluded);
+        return;
+    }
+    // The target is described as it was in front of the copy.
+    CopyDescription description = plans.describeCopy(target, source);
+    plans.noteCopy(copyDataPropertiesByAnyWay(instance, globalObject, vm, target, source, excluded), WTF::move(description));
+}
+
 void copyDataProperties(Instance* instance, JSGlobalObject* globalObject, JSObject* target, JSValue source)
 {
-    copyDataPropertiesExcluding(instance, globalObject, globalObject->vm(), target, source, { });
+    copyDataPropertiesExcluding(instance, globalObject, globalObject->vm(), target, source, ExcludedKeys { });
 }
 
 static ExcludedRun excludedRunAt(Instance* instance, uint32_t numberPlusOne)
@@ -229,60 +367,43 @@ static ExcludedRun excludedRunAt(Instance* instance, uint32_t numberPlusOne)
     return { numberPlusOne, instance->tables().propertyRunRow(numberPlusOne - 1).subspan(1) };
 }
 
-namespace {
-
-// A key among the operands is a string or a symbol. A number stands for the identifier with that number.
-class ExcludedKeys {
-public:
-    bool tryCollect(Instance* instance, JSGlobalObject* globalObject, ExcludedRun run, std::span<const EncodedJSValue> keys)
-    {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        for (uint32_t identifier : run.identifiers)
-            m_names.append(identifierAt(instance, identifier).impl());
-        for (EncodedJSValue encodedKey : keys) {
-            JSValue key = JSValue::decode(encodedKey);
-            if (key.isInt32()) {
-                m_names.append(identifierAt(instance, key.asInt32()).impl());
-                continue;
-            }
-            auto identifier = key.toPropertyKey(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-            m_names.append(identifier.impl());
-            m_identifiers.append(WTF::move(identifier));
-        }
-        return true;
-    }
-
-    const ExcludedNames& names() const { return m_names; }
-
-private:
-    ExcludedNames m_names;
-    Vector<Identifier, 8> m_identifiers;
-};
-
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
     if (!hasOwnPropertiesToCopy(JSValue::decode(source)))
         OPERATION_RETURN(scope);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTCopyDataProperties);
+    AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
+    std::optional<CopyDescription> description = plans.countsCopies() ? std::optional(plans.describeCopy(object, JSValue::decode(source))) : std::nullopt;
+    if (RepeatedCopy way = !count && isCompiledObject(object) ? tryRepeatAssignment(vm, *instance->state, object, JSValue::decode(source), excludedRun) : RepeatedCopy::IsNotDone; way != RepeatedCopy::IsNotDone) {
+        if (description) [[unlikely]] {
+            constexpr std::array<ASCIILiteral, 5> names { ""_s, "fields by words or moves"_s, "by the map of two layouts"_s, "by the map of two layouts, the first of its kind"_s, "as the copy before"_s };
+            plans.noteCopy(names[static_cast<size_t>(way)], WTF::move(*description));
+        }
+        OPERATION_RETURN(scope);
+    }
     ExcludedKeys excluded;
-    bool didCollect = excluded.tryCollect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    ASSERT_UNUSED(didCollect, didCollect);
+    if (excludedRun || count) {
+        bool didCollect = excluded.tryCollect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        ASSERT_UNUSED(didCollect, didCollect);
+    }
     scope.release();
-    copyDataPropertiesExcluding(instance, globalObject, vm, object, JSValue::decode(source), excluded.names());
+    copyDataPropertiesExcluding(instance, globalObject, vm, object, JSValue::decode(source), excluded);
     OPERATION_RETURN(scope);
 }
 
-static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
+static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
 {
     bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && source->structure()->canPerformFastPropertyEnumerationCommon();
-    if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr)
+    if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr) {
+        if (copy->structureID() == source->structureID() && !source->butterfly()) {
+            ClonedStructure& cloned = instance->allocation.clonedStructures[AllocationWords::placeOfClonedStructure(copy->structureID().bits())];
+            cloned.cellSize = JSFinalObject::allocationSize(copy->structure()->inlineCapacity());
+            cloned.header = *std::bit_cast<const uint64_t*>(copy);
+        }
         return copy;
+    }
     return tryCopyAsOrdinaryObject(vm, globalObject, source, excluded);
 }
 
@@ -291,8 +412,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyObject);
     JSValue source = JSValue::decode(encodedSource);
     ExcludedRun run = excludedRunAt(instance, excludedRun);
+    // A copy of a record is a record: the names have the same places in it, and whoever expects the type of the source finds it. Flow counts on nothing in between: the words of the source, or an ordinary object.
+    if (!count && !excludedRun && source.isObject()) {
+        Object* record = compiledObjectOrNull(source);
+        if (Object* copy = record && &record->state() == instance->state ? Object::tryCreateCopyOfFields(vm, *record) : nullptr)
+            OPERATION_RETURN(scope, copy);
+    }
     if (!count && source.isObject()) {
-        if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
+        if (JSObject* copy = tryCopyWithoutNames(instance, vm, globalObject, asObject(source), run))
             OPERATION_RETURN(scope, copy);
     }
     JSObject* copy = constructEmptyObject(globalObject);
@@ -302,14 +429,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
     bool didCollect = excluded.tryCollect(instance, globalObject, run, { excludedKeys, count });
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     ASSERT_UNUSED(didCollect, didCollect);
-    copyDataPropertiesExcluding(instance, globalObject, vm, copy, source, excluded.names());
+    copyDataPropertiesExcluding(instance, globalObject, vm, copy, source, excluded);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, copy);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Instance* instance, EncodedJSValue first, EncodedJSValue second))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryCopyTwoObjects);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
+    AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
+    JSFinalObject* copy = tryCopyTwoObjects(vm, *instance->state, globalObject, JSValue::decode(first), JSValue::decode(second));
+    if (copy && plans.countsCopies()) [[unlikely]]
+        plans.noteCopy("two at once, by a plan"_s, plans.describeCopy(copy, JSValue::decode(second)));
     OPERATION_RETURN(scope, copy);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCloneObjectAs, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t requestOffset, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCloneObjectAs);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     const CloneAsRequest& request = requestAt<CloneAsRequest>(instance, requestOffset);
     const LayoutData& layout = instance->state->objects->layouts.layoutForShape(request.shape);
     JSObject* source = objectArgument(encodedSource, Entry::operationAOTCloneObjectAs);

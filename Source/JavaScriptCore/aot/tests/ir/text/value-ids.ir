@@ -2,9 +2,9 @@
 # RUN: round-trip
 # CHECK: layout L0
 # CHECK-NEXT: layout L1
-# CHECK-NEXT: variable g0 module=m0 declared={type=object written=L1}
+# CHECK-NEXT: variable g0 module=m0 declared={type=L1}
 # CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
-# CHECK-NEXT: function f0 name="ids" module=m0 thisType={type=anything} parameters=[{type=function}] results=[{type=object written=L1}]
+# CHECK-NEXT: function f0 name="ids" module=m0 thisType={type=anything} parameters=[{type=function}] results=[{type=L1}]
 # CHECK-NEXT: b0(v0: function):
 # CHECK-NEXT: v1 = CallDirect function=f1
 # CHECK-NEXT: PutModuleVariable v1 variable=g0

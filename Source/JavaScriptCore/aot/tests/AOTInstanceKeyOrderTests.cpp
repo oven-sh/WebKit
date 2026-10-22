@@ -12,6 +12,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTObject.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
@@ -34,7 +35,7 @@ static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displa
 entry module=m0
 layout L0 kind=Instance name="C" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
 layout L1 kind=Instance name="B" constructor=f3 fields=[{key="p" declared={type=number} flags=[IsRequired]}, {key="q" declared={type=number} flags=[IsRequired]}]
-layout L2 kind=Instance name="D" predictedBase=L1 constructor=f4 fields=[{key="d" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="D" base=L1 constructor=f4 fields=[{key="d" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
 layout L3 kind=Instance name="E" constructor=f5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
 layout L4 kind=Instance name="H" constructor=f6 fields=[{key="m" declared={type=number} flags=[IsRequired]}, {key="k" declared={type=number} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}]
 layout L5 kind=Instance name="F" constructor=f9 fields=[{key="v" declared={type=number} flags=[IsRequired]}, {key="u" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
@@ -105,14 +106,15 @@ function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = CallDirect v3, v1 function=f2
-    v5 = Integer integer=1
-    v6 = Add v1, v5
-    PropSet v3, v6 key="b"
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]}
+    v5 = CallDirect v4, v1 function=f2
+    v6 = Integer integer=1
+    v7 = Add v1, v6
+    PropSet v3, v7 key="b"
     Return v3
 }
-function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
     PropDefine v0, v1 key="a"
     Return
 }
@@ -160,31 +162,32 @@ function f6 name="H" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     v2 = GetConstructPrototype v0 layout=L4
     v3 = NewObject v2 layout=L4
     PropSet v3, v1 key="n"
-    v5 = CallDirect v3, v1 function=f7
-    v6 = Integer integer=2
-    v7 = Add v1, v6
-    PropSet v3, v7 key="m"
-    v9 = Integer integer=9
-    v10 = Add v1, v9
-    PropSet v3, v10 key="n"
+    v5 = Convert v3 declared={type=L4}
+    v6 = CallDirect v5, v1 function=f7
+    v7 = Integer integer=2
+    v8 = Add v1, v7
+    PropSet v3, v8 key="m"
+    v10 = Integer integer=9
+    v11 = Add v1, v10
+    PropSet v3, v11 key="n"
     Return v3
 }
 function f7 name="helper" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L4, v1: number):
+  b0(v0: L4, v1: number):
     v2 = Integer integer=1
     v3 = Add v1, v2
     PropSet v0, v3 key="k"
     Return
 }
 function f8 name="bump" kind=Method flags=[HasThis] thisType={type=L4} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L4, v1: number):
+  b0(v0: L4, v1: number):
     v2 = Integer integer=20
     v3 = Add v1, v2
     PropSet v0, v3 key="k"
     Return
 }
 function f9 name="F" flags=[HasThis] thisType={type=L5} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L5, v1: number):
+  b0(v0: L5, v1: number):
     PropSet v0, v1 key="u"
     v3 = Integer integer=1
     v4 = Add v1, v3
@@ -278,21 +281,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="addB" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Integer integer=1
     v3 = Add v1, v2
     PropSet v0, v3 key="b"
     Return
 }
 function f2 name="addC" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Integer integer=2
     v3 = Add v1, v2
     PropSet v0, v3 key="c"
     Return
 }
 function f3 name="addBoth" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Integer integer=3
     v3 = Add v1, v2
     PropSet v0, v3 key="b"
@@ -305,7 +308,7 @@ function f3 name="addBoth" parameters=[{type=L0}, {type=number}] results=[{type=
 static constexpr ASCIILiteral programKeepingObjects = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="B" constructor=f1 fields=[{key="p" declared={type=number} flags=[IsRequired]}, {key="q" declared={type=number} flags=[IsRequired]}]
-layout L1 kind=Instance name="D" predictedBase=L0 constructor=f2 fields=[{key="d" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L1 kind=Instance name="D" base=L0 constructor=f2 fields=[{key="d" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
 variable g0 name="B" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -417,7 +420,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fillAll" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Integer integer=10
     v3 = Add v1, v2
     PropSet v0, v3 key="a"
@@ -448,7 +451,7 @@ function f1 name="fillAll" parameters=[{type=L0}, {type=number}] results=[{type=
     Return
 }
 function f2 name="fillMiddle" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Integer integer=30
     v3 = Add v1, v2
     PropSet v0, v3 key="c"
@@ -467,7 +470,7 @@ function f2 name="fillMiddle" parameters=[{type=L0}, {type=number}] results=[{ty
     Return
 }
 function f3 name="fillBackwards" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Integer integer=50
     v3 = Add v1, v2
     PropSet v0, v3 key="i"
@@ -651,6 +654,46 @@ static void testLongRuns()
         checkOutput(programWithLongRuns, expectedOutputOfLongRuns, { "disable=pass:InlineCalls"_s, word });
 }
 
+// addAll() leaves what add() leaves for each entry that lists extra keys, whether or not a full entry is among them. What is appended behind it shows the full entries that were counted.
+static void testExtraKeysCountedAtOnce()
+{
+    constexpr uint32_t numberOfFields = 5;
+    constexpr uint16_t full = maxKeyOrderEntry;
+    auto check = [&](std::initializer_list<uint16_t> countedBefore, std::initializer_list<uint16_t> entries) {
+        ExtraKeyCounter oneByOne(numberOfFields);
+        ExtraKeyCounter atOnce(numberOfFields);
+        for (uint16_t entry : countedBefore) {
+            oneByOne.add(entry);
+            atOnce.add(entry);
+        }
+        for (uint16_t entry : entries) {
+            if (entry >= numberOfFields)
+                oneByOne.add(entry);
+        }
+        atOnce.addAll(std::span { entries.begin(), entries.size() });
+        AOT_TEST_CHECK(oneByOne.count() == atOnce.count());
+        Vector<uint16_t> appendedOneByOne;
+        Vector<uint16_t> appendedAtOnce;
+        uint32_t more = oneByOne.count() + maxKeyOrderEntry + 3;
+        oneByOne.appendEntriesCountingTo(more, appendedOneByOne);
+        atOnce.appendEntriesCountingTo(more, appendedAtOnce);
+        AOT_TEST_CHECK(appendedOneByOne == appendedAtOnce);
+    };
+    check({ }, { });
+    check({ }, { 0, 4, 2 });
+    check({ }, { 0, 5, 1, 9, 2 });
+    check({ }, { 9, 0, 5 });
+    check({ }, { static_cast<uint16_t>(full - 1), 0 });
+    check({ }, { 0, full, 1, 7 });
+    check({ }, { full, full, 5, 3, 6 });
+    check({ }, { 7, full });
+    check({ 8 }, { 0, 6 });
+    check({ 8 }, { 0, 12 });
+    check({ 8 }, { 1, 2 });
+    check({ full }, { 0, 6, 1 });
+    check({ full, 9 }, { 5, full, 5 });
+}
+
 std::span<const NativeTest> instanceKeyOrderTests()
 {
     static constexpr NativeTest tests[] = {
@@ -662,6 +705,7 @@ std::span<const NativeTest> instanceKeyOrderTests()
         { "instance-key-order/fields-created-later"_s, testFieldsCreatedLater },
         { "instance-key-order/stores-with-two-receivers"_s, testStoresWithTwoReceivers },
         { "instance-key-order/long-runs"_s, testLongRuns },
+        { "instance-key-order/extra-keys-counted-at-once"_s, testExtraKeysCountedAtOnce },
     };
     return tests;
 }

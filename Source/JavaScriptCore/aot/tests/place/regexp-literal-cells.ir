@@ -25,17 +25,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 
-# CHECK: statics size=56
+# CHECK: statics size=48
 # CHECK: g0 offset=0
-# CHECK: module-value m0 @8
-# CHECK-NEXT: site-cell NewRegExp @16
-# CHECK-NEXT: site-cell SharedRegExpLiteral @24
+# CHECK-NEXT: site-cell NewRegExp @8
+# CHECK-NEXT: site-cell SharedRegExpLiteral @16
+# CHECK-NEXT: site-cell NewRegExp @24
 # CHECK-NEXT: site-cell NewRegExp @32
 # CHECK-NEXT: site-cell NewRegExp @40
-# CHECK-NEXT: site-cell NewRegExp @48
-# CHECK-NEXT: roots=[0 8 16 24 32 40 48]
-# CHECK: = NewRegExp pattern="a+" regExpFlags=[Global] {{*}}regExpRecord=0 staticsOffset=16 @10
-# CHECK: = SharedRegExpLiteral pattern="a+" regExpFlags=[HasIndices] regExpRecord=0 staticsOffset=24 @20
-# CHECK: = NewRegExp pattern="a+" regExpFlags=[Sticky] {{*}}regExpRecord=1 staticsOffset=32 @30
-# CHECK: = NewRegExp pattern="a+" regExpFlags=[Global] {{*}}regExpRecord=0 staticsOffset=40 @40
-# CHECK: = NewRegExp pattern="b" regExpFlags=[Global] {{*}}regExpRecord=2 staticsOffset=48 @50
+# CHECK-NEXT: roots=[0 8 16 24 32 40]
+# CHECK: = NewRegExp pattern="a+" regExpFlags=[Global] {{*}}regExpRecord=0 staticsOffset=8 @10
+# CHECK: = SharedRegExpLiteral pattern="a+" regExpFlags=[HasIndices] regExpRecord=0 staticsOffset=16 @20
+# CHECK: = NewRegExp pattern="a+" regExpFlags=[Sticky] {{*}}regExpRecord=1 staticsOffset=24 @30
+# CHECK: = NewRegExp pattern="a+" regExpFlags=[Global] {{*}}regExpRecord=0 staticsOffset=32 @40
+# CHECK: = NewRegExp pattern="b" regExpFlags=[Global] {{*}}regExpRecord=2 staticsOffset=40 @50

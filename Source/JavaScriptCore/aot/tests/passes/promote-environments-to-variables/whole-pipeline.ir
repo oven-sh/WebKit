@@ -36,7 +36,7 @@ function f1 name="once" results=[{type=anything}] {
     v11 = Call v9, -, v10
     v12 = NewClosure v1, v11 function=f3
     v13 = PropGet v8 key="publish" [isFreeName]
-    v14 = Call v13, -, v12
+    v14 = Call v13, -, v13, v13, v12
     Return
 }
 function f2 name="bump" captures=[{type=env L0}] results=[{type=anything}] {

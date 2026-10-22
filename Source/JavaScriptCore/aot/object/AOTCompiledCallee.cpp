@@ -81,12 +81,18 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
         return text;
     if (isProgramFunction && callableKind == CallableKind::Arrow)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
-    String name = callableKind == CallableKind::Arrow ? emptyString() : initialNameProperty(function);
+    bool isWrittenWithoutName = callableKind == CallableKind::Arrow || (!isProgramFunction && kindData.hasInferredName);
+    String name = isWrittenWithoutName ? emptyString() : initialNameProperty(function);
     if (kindData.isConstructor)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s));
     if (isProgramFunction && callableKind == CallableKind::Method)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "*"_s : ""_s, name, "() { [native code] }"_s));
     RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
+}
+
+bool isBoundFunction(JSObject* callee)
+{
+    return functionKindData(checkedFunctionOf(callee)).callable() == CallableKind::Bound;
 }
 
 FunctionKind kind(JSObject* callee)
@@ -122,6 +128,8 @@ String displayName(JSObject* object)
     std::optional<FunctionID> function = functionOf(object);
     if (!function)
         return String();
+    if (FunctionDescription(*function).isNamedBySymbol())
+        return emptyString();
     return writtenFunctionName(*function);
 }
 

@@ -1,0 +1,46 @@
+# function read(o) { return o.a }  read({ a: 1 })
+# An object literal whose members are all constants is lowered to Data. It has its members from creation, like a NewObject that lists its fields,
+# so a read of one does not answer undefined and does not walk the prototype chain. A member that may have been deleted still answers undefined.
+# RUN: valueflow-why values=f1:v1 values=f2:v2 values=f3:v1
+# CHECK: values=f1:v1
+# CHECK: result {{*}} 1 members: primitive4
+# CHECK: values=f2:v2
+# CHECK: result {{*}} 1 members: primitive4
+# CHECK: values=f3:v1
+# CHECK: result {{*}} 2 members: primitive0 primitive4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Options" fields=[{key="a" declared={type=anything}}]
+layout L1 kind=Record name="Outer" fields=[{key="inner" declared={type=anything}}]
+layout L2 kind=Record name="Deleted" fields=[{key="a" declared={type=anything}}]
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="inner" value=Object{layout=L0 members=[{key="a" value=Number{value=2}}]}}]} module=m0
+data d2 root=Object{layout=L2 members=[{key="a" value=Number{value=3}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = CallDirect v0 function=f1
+    v2 = Data data=d1
+    v3 = CallDirect v2 function=f2
+    v4 = Data data=d2
+    v5 = PropDelete v4 key="a"
+    v6 = CallDirect v4 function=f3
+    Return v1
+}
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+function f2 name="readInner" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="a"
+    Return v2
+}
+function f3 name="readDeleted" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}

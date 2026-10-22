@@ -1,27 +1,29 @@
 # A static field that some access may meet before its definition has run stays a property read by name and may be undefined. The loss belongs to that field: the fields beside it stay variables
+# The class objects that escape are handed to `sink`, a free name that neither the table nor the program defines. A call of it is a call of code that nobody compiles, which may store into what it is handed:
+# nobody knows the writers of their static fields, and every one of those is read by name. Handed to native code that only reads: static-field-read-before-definition-beside-native-code.ir
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
 # RUN: pipeline ResolveAccesses
-# RUN(ORDER): flow-order locations failed
-# ORDER: g10: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g11: Unknown AtMostOnce
-# ORDER-NEXT: g12: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g13: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g14: Unknown AtMostOnce
-# ORDER-NEXT: g15: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g16: Unknown AtMostOnce
-# ORDER-NEXT: g17: Unknown AtMostOnce
-# ORDER-NEXT: g18: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g19: Unknown AtMostOnce
-# ORDER-NEXT: g20: Unknown AtMostOnce
-# ORDER-NEXT: read-before-initialization g11
-# ORDER-NEXT: read-before-initialization g14
-# ORDER-NEXT: read-before-initialization g16
-# ORDER-NEXT: read-before-initialization g17
-# ORDER-NEXT: read-before-initialization g19
-# ORDER-NEXT: read-before-initialization g20
-# ORDER-NEXT: read-before-initialization g21
-# ORDER-NOT: read-before-initialization
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g10 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g11 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g12 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g13 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g14 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g15 {{*}}cause=UnknownWriter
+# ORDER-NEXT: variable g16 {{*}}cause=UnknownWriter
+# ORDER-NEXT: variable g17 {{*}}cause=UnknownWriter
+# ORDER-NEXT: variable g18 {{*}}cause=UnknownWriter
+# ORDER-NEXT: variable g19 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g20 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g21 module=
+# ORDER-NOT: stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: module m0 path=
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -127,7 +129,7 @@ function f2 name="initializeReadAbove" kind=Initializer flags=[HasThis] thisType
     Return v5
 }
 # CHECK-LABEL: function f2 name="initializeReadAbove"
-# CHECK: = PropGet v0 key="second"
+# CHECK: = PropGet [[readAboveInInitializer]] key="second"
 # CHECK: = GetModuleVariable variable=g10
 function f3 name="CalledAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
   b0(v0: anything):
@@ -141,7 +143,7 @@ function f4 name="peek" kind=Method flags=[HasThis] thisType={type=anything} res
     Return v1
 }
 # CHECK-LABEL: function f4 name="peek"
-# CHECK: = PropGet v0 key="count"
+# CHECK: = PropGet [[calledAboveInMethod]] key="count"
 function f5 name="initializeCalledAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
   b0(v0: function):
     v1 = PropGet v0 key="peek"
@@ -261,10 +263,10 @@ function f16 name="readAll" results=[{type=anything}] {
 # CHECK-NEXT: = GetModuleVariable variable=g12
 # CHECK: = GetModuleVariable variable=g13
 # CHECK-NEXT: = PropGet [[calledAbove]] key="count"
-# CHECK: = GetModuleVariable variable=g15
+# CHECK: = PropGet [[escapesAbove]] key="before"
 # CHECK-NEXT: = PropGet [[escapesAbove]] key="early"
 # CHECK-NEXT: = PropGet [[escapesAbove]] key="count"
-# CHECK: = GetModuleVariable variable=g18
+# CHECK: = PropGet [[escapesBelow]] key="count"
 # CHECK: = PropGet [[definedOnOnePath]] key="count"
 # CHECK: = PropGet [[readInHandler]] key="count"
 # CHECK: = PropGet [[initializerIsClosure]] key="count"

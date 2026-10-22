@@ -124,7 +124,7 @@ protected:
     }
     bool blindsConstants() const { return m_policy.blindsConstants; }
 
-    NEVER_INLINE void appendWideImmediate(uint32_t offset, ImmediateProvenance provenance, uint64_t value)
+    void appendWideImmediate(uint32_t offset, ImmediateProvenance provenance, uint64_t value)
     {
         bool isPointer = provenance == ImmediateProvenance::Pointer && value;
         bool fitsInt32 = static_cast<int64_t>(value) == static_cast<int32_t>(value);
@@ -1203,7 +1203,12 @@ protected:
     void recordImmediate(TrustedImm64 imm)
     {
         if (m_policy.recordsProcessAddresses) [[unlikely]]
-            appendWideImmediate(m_assembler.labelIgnoringWatchpoints().offset(), imm.m_provenance, static_cast<uint64_t>(imm.m_value));
+            recordImmediateSlow(imm);
+    }
+
+    NEVER_INLINE void recordImmediateSlow(TrustedImm64 imm)
+    {
+        appendWideImmediate(m_assembler.labelIgnoringWatchpoints().offset(), imm.m_provenance, static_cast<uint64_t>(imm.m_value));
     }
 
     void recordImmediate(TrustedImmPtr imm) { recordImmediate(TrustedImm64(imm)); }

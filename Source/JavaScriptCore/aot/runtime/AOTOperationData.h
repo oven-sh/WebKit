@@ -49,14 +49,6 @@ struct FunctionVariableData {
 };
 static_assert(sizeof(FunctionVariableData) == 8 && isImageRecord<FunctionVariableData>);
 
-// The names that compiled code takes to be absent from a built-in prototype: numbers of identifiers, ascending, in closedAbsentNames.
-struct ClosedAbsentNamesOfHolder {
-    uint32_t holder;
-    uint32_t firstName;
-    uint32_t numberOfNames;
-};
-static_assert(sizeof(ClosedAbsentNamesOfHolder) == 12 && isImageRecord<ClosedAbsentNamesOfHolder>);
-
 struct LiteralStringLimits {
     uint32_t maxLength;
 };
@@ -65,7 +57,10 @@ static_assert(sizeof(LiteralStringLimits) == 4 && isImageRecord<LiteralStringLim
 struct LiteralStringTable {
     static constexpr unsigned indexBits = 19;
     static constexpr uint32_t indexMask = (1u << indexBits) - 1;
-    static constexpr uint32_t entryFor(uint32_t number, uint32_t hash) { return (number + 1) | hash >> 11 << indexBits; }
+    // The table has two slots for each string, whatever their number. The high bits of the hash choose the slot at which the search for a text begins, and the entry holds the low bits.
+    static constexpr unsigned hashBits = 24;
+    static constexpr uint32_t entryFor(uint32_t number, uint32_t hash) { return (number + 1) | hash << indexBits; }
+    static constexpr uint32_t firstSlot(uint32_t hash, uint32_t numberOfSlots) { return static_cast<uint32_t>(static_cast<uint64_t>(hash) * numberOfSlots >> hashBits); }
     static constexpr uint32_t numberOf(uint32_t entry) { return (entry & indexMask) - 1; }
 };
 static_assert(maxLiteralStrings < 1u << LiteralStringTable::indexBits);
@@ -108,24 +103,77 @@ struct DataWord {
 };
 static_assert(!(DataWord::encode(DataWord::nodeTag, UINT32_MAX - 1) & JSValue::NotCellMask));
 
+// What a slot for a narrow reference holds in the table. A word below minCell32 is what the slot of the object holds. Any other stands for a DataWord that is no immediate.
+struct NarrowDataWord {
+    static constexpr unsigned operandShift = 2;
+    static constexpr uint32_t maxOperand = (UINT32_MAX - minCell32) >> operandShift;
+
+    static constexpr bool isFinal(uint32_t word) { return word < minCell32; }
+    static constexpr uint32_t encode(DataWord::Kind kind, uint32_t operand) { return minCell32 + (operand << operandShift | static_cast<uint32_t>(kind)); }
+    static constexpr DataWord::Kind kindOf(uint32_t word) { return static_cast<DataWord::Kind>((word - minCell32) & ((1u << operandShift) - 1)); }
+    static constexpr uint32_t operandOf(uint32_t word) { return (word - minCell32) >> operandShift; }
+    static constexpr uint64_t widen(uint32_t word)
+    {
+        uint32_t operand = operandOf(word);
+        switch (kindOf(word)) {
+        case DataWord::Kind::StringConstant:
+            return DataWord::encodeStringConstant(operand);
+        case DataWord::Kind::BigIntConstant:
+            return DataWord::encodeBigIntConstant(operand);
+        case DataWord::Kind::Node:
+            return DataWord::encodeNode(operand);
+        case DataWord::Kind::Immediate:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    }
+};
+static_assert(static_cast<uint32_t>(DataWord::Kind::Node) < 1u << NarrowDataWord::operandShift);
+
+// An array's words are an IndexingHeader, then its elements: where no element is a constant that the run time makes or a node, that is the storage of an array as the engine has it,
+// and the arrays made from the node point at it until they are written to.
+// An object's words are the values of its fields, then the index of each field. ObjectWithOtherMembers ends with one more word, which names an OtherMembers node:
+// the values of the members that are no fields, in the order of their creation, then the identifier number of each.
+// The words of an ObjectBody are the bytes of the cell behind its header and its order and shape words, as they are once every member is stored: the object is a copy of them.
+// Only a slot that the collector visits may hold something else: a DataWord, or a NarrowDataWord where the slot is narrow.
+// An OrdinaryObject has no layout: its words are those of OtherMembers, the values of its properties in the order of their creation, then the identifier number of each.
 struct DataNodeHeader {
-    enum class Kind : uint32_t { Array, Object };
+    enum class Kind : uint32_t { Array, Object, ObjectWithOtherMembers, OtherMembers, ObjectBody, OrdinaryObject };
     static constexpr unsigned fieldIndicesPerWord = sizeof(uint64_t) / sizeof(uint16_t);
+    static constexpr unsigned identifierNumbersPerWord = sizeof(uint64_t) / sizeof(uint32_t);
+    static constexpr uint32_t firstNode = 1;
+    static constexpr uint32_t wordsBeforeElements = 2;
+    static constexpr uint32_t indexingTypeMask = 0xff;
+    static constexpr uint32_t isStorage = 0x100;
 
     uint32_t count;
-    uint32_t kindBits : 1;
-    uint32_t operand : 31;
+    uint32_t kindBits : 3;
+    uint32_t operand : 29;
 
     Kind kind() const { return static_cast<Kind>(kindBits); }
     uint64_t encoded() const { return std::bit_cast<uint64_t>(*this); }
     static DataNodeHeader decode(uint64_t word) { return std::bit_cast<DataNodeHeader>(word); }
     static constexpr uint32_t numberOfWords(Kind kind, uint32_t count)
     {
-        return 1 + count + (kind == Kind::Object ? (count + fieldIndicesPerWord - 1) / fieldIndicesPerWord : 0);
+        switch (kind) {
+        case Kind::Array:
+            return wordsBeforeElements + count;
+        case Kind::Object:
+            return 1 + count + (count + fieldIndicesPerWord - 1) / fieldIndicesPerWord;
+        case Kind::ObjectWithOtherMembers:
+            return numberOfWords(Kind::Object, count) + 1;
+        case Kind::OtherMembers:
+        case Kind::OrdinaryObject:
+            return 1 + count + (count + identifierNumbersPerWord - 1) / identifierNumbersPerWord;
+        case Kind::ObjectBody:
+            return 1 + count;
+        }
+        RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
     }
 };
 static_assert(sizeof(DataNodeHeader) == 8 && isImageRecord<DataNodeHeader>);
 
+// An array whose node is its storage has no shared storage in the statics.
 struct DataRequest {
     static constexpr uint32_t noSharedStorage = UINT32_MAX;
 
@@ -198,9 +246,6 @@ struct DirectEvalRequest {
 };
 static_assert(sizeof(DirectEvalRequest) == 12);
 
-static constexpr uint32_t typeAllowsObjects = 1 << 10;
-static constexpr uint32_t typeAllowsFunctions = 1 << 11;
-
 struct PropertyDescriptorBits {
     uint32_t hasValue : 1;
     uint32_t hasWritable : 1;
@@ -211,7 +256,9 @@ struct PropertyDescriptorBits {
     uint32_t isConfigurable : 1;
     uint32_t hasGet : 1;
     uint32_t hasSet : 1;
-    uint32_t unused : 23;
+    // The descriptor literal has no prototype: a member that it does not list is absent, whatever Object.prototype holds.
+    uint32_t inheritsNothing : 1;
+    uint32_t unused : 22;
 };
 static_assert(sizeof(PropertyDescriptorBits) == 4);
 
@@ -250,11 +297,10 @@ struct NumberAndValueBits {
 static_assert(sizeof(NumberAndValueBits) == 4);
 
 enum class ThrowKind : uint8_t {
-    TypeMismatch,
-    KindMismatch,
     NullishRead,
     NullishWrite,
     NullishIterate,
+    NullishSpread,
     UninitializedBinding,
     NotAFunction,
     ErrorWithMessage,
@@ -286,10 +332,12 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
     v(staticsLayout, StaticsLayout) \
     v(staticsRuns, StaticsRun) \
     v(staticsRoots, StaticsRange) \
+    v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \
     v(functionVariables, FunctionVariableData) \
     v(identifiersByHash, uint32_t) \
     v(identifiersOfEngineSymbols, uint32_t) \
+    v(keyCellIdentifiers, uint32_t) \
     v(literalStrings, uint32_t) \
     v(literalStringTable, uint32_t) \
     v(literalStringLimits, LiteralStringLimits) \
@@ -299,8 +347,7 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
     v(builtinCells, uint32_t) \
     v(eagerBuiltinCells, uint32_t) \
     v(constantBuiltinMembers, uint32_t) \
-    v(holdersOfClosedAbsentNames, ClosedAbsentNamesOfHolder) \
-    v(closedAbsentNames, uint32_t) \
+    v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 
 } } // namespace JSC::AOT

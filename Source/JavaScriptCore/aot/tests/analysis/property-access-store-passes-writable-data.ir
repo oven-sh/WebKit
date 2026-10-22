@@ -1,6 +1,7 @@
 # function Dog() { this.name = .. }  Puppy.prototype = new Dog()          class Button { constructor() { this.press = this.press.bind(this) }  press() { .. } }
 # A store that finds the slot empty goes to what the object inherits. A writable data property there does not stop it: the store creates the property of the object, as where it inherits nothing.
-# Without the fact that the member stays a writable data property the store creates nothing, and a read of the name learns no more than before
+# Without the fact that the member stays a writable data property the run time is asked whether stores pass it, and a read of the name learns no more than before.
+# A method that may become read-only is declared, so the store expects a filled slot
 # FORM: Prepared
 # RUN: property-access
 
@@ -29,13 +30,13 @@ function f5 name="value-may-become-read-only" parameters=[{type=L0}, {type=numbe
     PropSet v0, v1 key="fragile"
     Return
 }
-# CHECK-NEXT: F5 v2 PropSet {{*}}: form=Slot level=Predicted operation=PutSlot receivers=[L0] proofs=[SlotFilled] storedValueFits missPath
+# CHECK-NEXT: F5 v2 PropSet [[fragile]]: form=Slot level=Expected operation=PutSlot receivers=[L0] conditions=[MemberPassedByStores(L0, [[fragile]])] storedValueFits missPath
 function f6 name="method-may-become-read-only" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything):
     PropSet v0, v1 key="frozen"
     Return
 }
-# CHECK-NEXT: F6 v2 PropSet {{*}}: form=Slot level=Predicted operation=PutSlot receivers=[L0] proofs=[SlotFilled] storedValueFits missPath
+# CHECK-NEXT: F6 v2 PropSet {{*}}: form=Slot level=Expected operation=PutSlot receivers=[L0] proofs=[SlotFilled] storedValueFits missPath
 function f7 name="every-class-above-is-passed" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
   b0(v0: L1, v1: number):
     PropSet v0, v1 key="name"
@@ -47,4 +48,4 @@ function f8 name="a-class-above-may-stop-the-store" parameters=[{type=L1}, {type
     PropSet v0, v1 key="fragile"
     Return
 }
-# CHECK-NEXT: F8 v2 PropSet {{*}}: form=Slot level=Predicted operation=PutSlot receivers=[L1] proofs=[SlotFilled] storedValueFits missPath
+# CHECK-NEXT: F8 v2 PropSet [[fragile]]: form=Slot level=Expected operation=PutSlot receivers=[L1] conditions=[MemberPassedByStores(L1, [[fragile]])] storedValueFits missPath

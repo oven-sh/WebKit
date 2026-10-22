@@ -16,8 +16,10 @@ public:
     explicit HintEmitter(CodeGenerator&);
 
     void generateLoopHint(const ValueContext&);
+    void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:
+    bool endsWithinLengthOfData(BlockID);
     void emitPoll(const ValueContext&);
 };
 

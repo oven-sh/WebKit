@@ -75,6 +75,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class CachedCall;
     class MicrotaskCall;
     class CodeBlock;
+    class DirectEvalCodeCache;
     class EvalExecutable;
     class Exception;
     class FunctionExecutable;
@@ -206,6 +207,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         bool isExceptionCaughtByUserCatchClause();
 
     private:
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
         CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);
@@ -246,6 +248,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         bool isInsideOrdinaryFunction;
         const PrivateNameEnvironment* privateNames { nullptr };
         CodeBlock* codeBlockWithCache { nullptr };
+        DirectEvalCodeCache* cache { nullptr };
+        JSCell* cacheOwner { nullptr };
         BytecodeIndex callSite;
     };
     JSValue evaluateDirectEval(JSGlobalObject*, JSValue program, const DirectEvalCaller&);

@@ -59,6 +59,21 @@
     ValueID sourceOperand() const { return operand(declaredPosition(OperandPosition::source(opcode))); }
     void setSourceOperand(ValueID source) { setOperand(declaredPosition(OperandPosition::source(opcode)), source); }
 
+    ValueID sourceKeyOperand() const { return operand(declaredPosition(OperandPosition::sourceKey(opcode))); }
+    void setSourceKeyOperand(ValueID sourceKey) { setOperand(declaredPosition(OperandPosition::sourceKey(opcode)), sourceKey); }
+
+    ValueID targetKeyOperand() const { return operand(declaredPosition(OperandPosition::targetKey(opcode))); }
+    void setTargetKeyOperand(ValueID targetKey) { setOperand(declaredPosition(OperandPosition::targetKey(opcode)), targetKey); }
+
+    ValueID getterOperand() const { return operand(declaredPosition(OperandPosition::getter(opcode))); }
+    void setGetterOperand(ValueID getter) { setOperand(declaredPosition(OperandPosition::getter(opcode)), getter); }
+
+    ValueID replacedCalleeOperand() const { return operand(declaredPosition(OperandPosition::replacedCallee(opcode))); }
+    void setReplacedCalleeOperand(ValueID replacedCallee) { setOperand(declaredPosition(OperandPosition::replacedCallee(opcode)), replacedCallee); }
+
+    ValueID replacedThisOperand() const { return operand(declaredPosition(OperandPosition::replacedThis(opcode))); }
+    void setReplacedThisOperand(ValueID replacedThis) { setOperand(declaredPosition(OperandPosition::replacedThis(opcode)), replacedThis); }
+
     ValueID homeOperand() const { return operand(declaredPosition(OperandPosition::home(opcode))); }
     void setHomeOperand(ValueID home) { setOperand(declaredPosition(OperandPosition::home(opcode)), home); }
 
@@ -76,6 +91,9 @@
 
     ValueID constructorOperand() const { return operand(declaredPosition(OperandPosition::constructor(opcode))); }
     void setConstructorOperand(ValueID constructor) { setOperand(declaredPosition(OperandPosition::constructor(opcode)), constructor); }
+
+    ValueID readOperand() const { return operand(declaredPosition(OperandPosition::read(opcode))); }
+    void setReadOperand(ValueID read) { setOperand(declaredPosition(OperandPosition::read(opcode)), read); }
 
     ValueID thisValueOperand() const { return operand(declaredPosition(OperandPosition::thisValue(opcode))); }
     void setThisValueOperand(ValueID thisValue) { setOperand(declaredPosition(OperandPosition::thisValue(opcode)), thisValue); }
@@ -152,23 +170,23 @@
     ValueID setOperand() const { return operand(declaredPosition(OperandPosition::set(opcode))); }
     void setSetOperand(ValueID set) { setOperand(declaredPosition(OperandPosition::set(opcode)), set); }
 
-    ValueID closureOperand() const { return operand(declaredPosition(OperandPosition::closure(opcode))); }
-    void setClosureOperand(ValueID closure) { setOperand(declaredPosition(OperandPosition::closure(opcode)), closure); }
+    ValueID againOperand() const { return operand(declaredPosition(OperandPosition::again(opcode))); }
+    void setAgainOperand(ValueID again) { setOperand(declaredPosition(OperandPosition::again(opcode)), again); }
 
     ValueID guardOperand() const { return operand(declaredPosition(OperandPosition::guard(opcode))); }
     void setGuardOperand(ValueID guard) { setOperand(declaredPosition(OperandPosition::guard(opcode)), guard); }
 
-    ValueID epochOperand() const { return operand(declaredPosition(OperandPosition::epoch(opcode))); }
-    void setEpochOperand(ValueID epoch) { setOperand(declaredPosition(OperandPosition::epoch(opcode)), epoch); }
+    ValueID viewOperand() const { return operand(declaredPosition(OperandPosition::view(opcode))); }
+    void setViewOperand(ValueID view) { setOperand(declaredPosition(OperandPosition::view(opcode)), view); }
 
     ValueID additionalOperand() const { return operand(declaredPosition(OperandPosition::additional(opcode))); }
     void setAdditionalOperand(ValueID additional) { setOperand(declaredPosition(OperandPosition::additional(opcode)), additional); }
 
-    ValueID viewOperand() const { return operand(declaredPosition(OperandPosition::view(opcode))); }
-    void setViewOperand(ValueID view) { setOperand(declaredPosition(OperandPosition::view(opcode)), view); }
-
     ValueID stringOperand() const { return operand(declaredPosition(OperandPosition::string(opcode))); }
     void setStringOperand(ValueID string) { setOperand(declaredPosition(OperandPosition::string(opcode)), string); }
+
+    ValueID closureOperand() const { return operand(declaredPosition(OperandPosition::closure(opcode))); }
+    void setClosureOperand(ValueID closure) { setOperand(declaredPosition(OperandPosition::closure(opcode)), closure); }
 
     ValueID dividendOperand() const { return operand(declaredPosition(OperandPosition::dividend(opcode))); }
     void setDividendOperand(ValueID dividend) { setOperand(declaredPosition(OperandPosition::dividend(opcode)), dividend); }
@@ -182,14 +200,32 @@
     ValueID nextOperand() const { return operand(declaredPosition(OperandPosition::next(opcode))); }
     void setNextOperand(ValueID next) { setOperand(declaredPosition(OperandPosition::next(opcode)), next); }
 
+    ValueID remainingOperand() const { return operand(declaredPosition(OperandPosition::remaining(opcode))); }
+    void setRemainingOperand(ValueID remaining) { setOperand(declaredPosition(OperandPosition::remaining(opcode)), remaining); }
+
+    ValueID finishedOperand() const { return operand(declaredPosition(OperandPosition::finished(opcode))); }
+    void setFinishedOperand(ValueID finished) { setOperand(declaredPosition(OperandPosition::finished(opcode)), finished); }
+
+    ValueID sizeAtEntryOperand() const { return operand(declaredPosition(OperandPosition::sizeAtEntry(opcode))); }
+    void setSizeAtEntryOperand(ValueID sizeAtEntry) { setOperand(declaredPosition(OperandPosition::sizeAtEntry(opcode)), sizeAtEntry); }
+
+    ValueID driverOperand() const { return operand(declaredPosition(OperandPosition::driver(opcode))); }
+    void setDriverOperand(ValueID driver) { setOperand(declaredPosition(OperandPosition::driver(opcode)), driver); }
+
     ValueID awaitedOperand() const { return operand(declaredPosition(OperandPosition::awaited(opcode))); }
     void setAwaitedOperand(ValueID awaited) { setOperand(declaredPosition(OperandPosition::awaited(opcode)), awaited); }
+
+    ValueID exceptionOperand() const { return operand(declaredPosition(OperandPosition::exception(opcode))); }
+    void setExceptionOperand(ValueID exception) { setOperand(declaredPosition(OperandPosition::exception(opcode)), exception); }
 
     ValueID builderOperand() const { return operand(declaredPosition(OperandPosition::builder(opcode))); }
     void setBuilderOperand(ValueID builder) { setOperand(declaredPosition(OperandPosition::builder(opcode)), builder); }
 
     ValueID checkpointOperand() const { return operand(declaredPosition(OperandPosition::checkpoint(opcode))); }
     void setCheckpointOperand(ValueID checkpoint) { setOperand(declaredPosition(OperandPosition::checkpoint(opcode)), checkpoint); }
+
+    ValueID expectedOperand() const { return operand(declaredPosition(OperandPosition::expected(opcode))); }
+    void setExpectedOperand(ValueID expected) { setOperand(declaredPosition(OperandPosition::expected(opcode)), expected); }
 
     ValueID keptOperand() const { return operand(declaredPosition(OperandPosition::kept(opcode))); }
     void setKeptOperand(ValueID kept) { setOperand(declaredPosition(OperandPosition::kept(opcode)), kept); }
@@ -217,9 +253,6 @@
 
     ValueID otherOperand() const { return operand(declaredPosition(OperandPosition::other(opcode))); }
     void setOtherOperand(ValueID other) { setOperand(declaredPosition(OperandPosition::other(opcode)), other); }
-
-    ValueID getterOperand() const { return operand(declaredPosition(OperandPosition::getter(opcode))); }
-    void setGetterOperand(ValueID getter) { setOperand(declaredPosition(OperandPosition::getter(opcode)), getter); }
 
     ValueID setterOperand() const { return operand(declaredPosition(OperandPosition::setter(opcode))); }
     void setSetterOperand(ValueID setter) { setOperand(declaredPosition(OperandPosition::setter(opcode)), setter); }

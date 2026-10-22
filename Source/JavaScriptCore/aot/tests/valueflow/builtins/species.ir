@@ -1,7 +1,7 @@
-# The program may keep the object that its species constructor has made. Native code fills that object: where no record says with what, anything may lie in it, and what the built-in has read has escaped.
+# The program may keep the object that its species constructor has made. Native code fills that object, and the record of `slice` says with what: the elements of the receiver, which lie nowhere else.
 # RUN: valueflow-solve calls
 # CHECK: f0 v16 -> ArrayPrototypeSlice
-# CHECK-NEXT: f0 v20 -> unknown
+# CHECK-NEXT: f0 v20 -> f4
 # RUN(UNREACHED): valueflow-solve unreached
 # UNREACHED-NOT: unreached f2
 # UNREACHED-NOT: unreached f3

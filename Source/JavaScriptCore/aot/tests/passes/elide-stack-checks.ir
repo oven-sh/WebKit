@@ -1,8 +1,8 @@
-# A function that only checked callers enter needs no stack check of its own
+# A function that is entered behind a check needs none of its own: by a direct call from a function that checked, or through a closure, whose callers test the stack
 # FORM: Selected
 # RUN: pass ElideStackChecks
-# STATISTIC: StackChecksCoveredByCallers = 13
-# STATISTIC: StackChecksDeferredToCallee = 1
+# STATISTIC: StackChecksCoveredByCallers = 18
+# STATISTIC: StackChecksDeferredToCallee = 0
 # LOSS: UncheckedStackBytes x1 f7
 
 module m0 path="/main.js" displayPath="main.js" body=f0
@@ -144,7 +144,7 @@ function f20 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{ty
     v4 = CallDirect function=f16
     ReturnCall v4
 }
-# CHECK: f0 stack check: Required
+# CHECK: f0 stack check: CoveredByCallers
 # CHECK-NEXT: f1 stack check: CoveredByCallers
 # CHECK-NEXT: f2 stack check: CoveredByCallers
 # CHECK-NEXT: f3 stack check: Required
@@ -160,9 +160,9 @@ function f20 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{ty
 # CHECK-NEXT: f13 stack check: CoveredByCallers
 # CHECK-NEXT: f14 stack check: CoveredByCallers
 # CHECK-NEXT: f15 stack check: CoveredByCallers
-# CHECK-NEXT: f16 stack check: Required
-# CHECK-NEXT: f17 stack check: DeferredToCallee
+# CHECK-NEXT: f16 stack check: CoveredByCallers
+# CHECK-NEXT: f17 stack check: CoveredByCallers
 # CHECK-NEXT: f18 stack check: CoveredByCallers
-# CHECK-NEXT: f19 stack check: Required
-# CHECK-NEXT: f20 stack check: Required
+# CHECK-NEXT: f19 stack check: CoveredByCallers
+# CHECK-NEXT: f20 stack check: CoveredByCallers
 # CHECK-NEXT: outcome: Unchanged

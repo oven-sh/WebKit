@@ -6,11 +6,11 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Numbers" fields=[{key="list" declared={type=Array<number>}}] flow={constructorOrders=[{fields=[0]}]}
 layout L1 name="Strings" fields=[{key="list" declared={type=Array<string>}}] flow={constructorOrders=[{fields=[0]}]}
-layout L2 name="Items" fields=[{key="list" declared={type=Array<object> predicted=Array<L3>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L2 name="Items" fields=[{key="list" declared={type=Array<L3>}}] flow={constructorOrders=[{fields=[0]}]}
 layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
 
 # CHECK: function {{*}}creator=Serializer{layout=L0}
-# CHECK: [[numbers]]: Array<number> = GetSlot v0, {{*}} key="list" receivers=[L0] level=Predicted
+# CHECK: [[numbers]]: Array<number> = GetSlot v0, {{*}} key="list" receivers=[L0] level=Expected
 # CHECK-NOT: JSONAppendKey
 # CHECK: [[pristine0]]: boolean = IsPristine [[numbers]] builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch [[pristine0]] -> taken [[isPristine0]](| 0), notTaken
@@ -57,7 +57,7 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK: = JSONAppendNumber v1,
 
 # CHECK: function {{*}}creator=Serializer{layout=L1}
-# CHECK: [[strings]]: Array<string> = GetSlot v0, {{*}} key="list" receivers=[L1] level=Predicted
+# CHECK: [[strings]]: Array<string> = GetSlot v0, {{*}} key="list" receivers=[L1] level=Expected
 # CHECK: = IsPristine [[strings]] builtinClass=Array aspects=[Storage, Names]
 # CHECK-NOT: arrayStorage=Int32
 # CHECK-NOT: arrayStorage=Double
@@ -71,7 +71,7 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK-NOT: arrayStorage=Double
 
 # CHECK: function {{*}}creator=Serializer{layout=L2}
-# CHECK: [[items]]: Array<object> ~ Array<L3> = GetSlot v0, {{*}} key="list" receivers=[L2] level=Predicted
+# CHECK: [[items]]: Array<L3> = GetSlot v0, {{*}} key="list" receivers=[L2] level=Expected
 # CHECK: [[length2]]:{{*}}= GetArrayLength [[items]],
 # CHECK: [[loop2]]([[i2]]:{{*}}, {{*}}: buildercursor, [[g2]]: guard):
 # CHECK-NEXT: LoopHint

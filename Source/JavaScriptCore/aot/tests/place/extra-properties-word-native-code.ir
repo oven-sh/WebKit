@@ -1,4 +1,5 @@
-# An object that is logged, and an object that is handed to a function nobody knows, have no word for extra properties: neither gets a property there
+# An object that is logged has no word for extra properties: it gets no property there. An object that is handed to a function nobody knows keeps its shape whatever that function does to it,
+# so it has the word, and its number slots have the markers for a field that has left its slot
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow references=narrow
 # RUN: plan-slots layouts
@@ -26,9 +27,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 # CHECK: L0 CompiledObject size=32
-# CHECK-NEXT: .0 "x" {{*}} @16
-# CHECK-NEXT: .1 "y" {{*}} @24
-# CHECK-NEXT: L1 CompiledObject size=32
-# CHECK-NEXT: .0 "x" {{*}} @16
-# CHECK-NEXT: .1 "y" {{*}} @24
-# CHECK-NOT: extra-properties
+# CHECK-NEXT: .0 "x" Double @16
+# CHECK-NEXT: .1 "y" Double @24
+# CHECK-NEXT: L1 CompiledObject size=48
+# CHECK-NEXT: .0 "x" OptionalDouble @16
+# CHECK-NEXT: .1 "y" OptionalDouble @24
+# CHECK-NEXT: extra-properties Cell32 @32

@@ -255,7 +255,7 @@ static Range narrowByComparison(Range range, Opcode comparison, bool outcome, Ra
 
 Int32Prover::Int32Prover(const Int32ProofInputs& inputs)
     : m_inputs(inputs)
-    , m_typing { inputs.program, inputs.function, inputs.types, TypeLevel::Predicted }
+    , m_typing { inputs.program, inputs.function, inputs.types, TypeLevel::Expected }
     , m_known(inputs.function.values.size())
 {
     m_openDepths.fill(0, inputs.function.values.size());
@@ -323,7 +323,7 @@ NumberBounds Int32Prover::compute(ValueID id)
         return computeParameter(id);
     case Opcode::Double:
         return boundsOfConstant(value.number());
-    case Opcode::ClaimDeclared:
+    case Opcode::Convert:
         return computePromise(value);
     case Opcode::PropGet:
         return computeNamedRead(id, value);
@@ -426,10 +426,9 @@ NumberBounds Int32Prover::computePromise(const Value& request)
 NumberBounds Int32Prover::computeCast(ValueID id, const Value& cast)
 {
     NumberBounds operand = find(cast.operand(0));
-    if (cast.opcode == Opcode::Predict)
-        return narrowToType(operand, m_inputs.types.at(cast.predicted()));
+    // The type of the cast lies inside the type it names, and says what is expected of the value from here on.
     if (Value::opcodesWithCastType.contains(cast.opcode))
-        return narrowToType(operand, m_inputs.types.at(cast.castType()));
+        return narrowToType(operand, typeOf(id));
     operand.mayBeNullish = operand.mayBeNullish && typeOf(id).primitives & nullishPrimitives;
     return operand;
 }

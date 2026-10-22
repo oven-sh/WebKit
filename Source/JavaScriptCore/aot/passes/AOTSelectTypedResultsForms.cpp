@@ -27,8 +27,7 @@ static void endExpansionWithResult(IRBuilder& builder, const IRBuilder::Expansio
 static void recomputeTypes(const TypingContext& typing, Value& value)
 {
     value.type = resultTypeOf(typing.program, typing.function, value, typing.types);
-    value.setWritten(writtenTypeOf(typing.program, typing.function, value, typing.types));
-    value.setPrediction(predictionOf(typing.program, typing.function, value, typing.types));
+    value.setExpected(expectedTypeOf(typing.program, typing.function, value, typing.types));
 }
 
 static std::optional<Value> tryMakeBuiltinCall(const TypingContext& typing, BuiltinID callee, const BuiltinCallOperands& operands)
@@ -144,21 +143,47 @@ static uint32_t awaitedOperandIndexOf(const Value& await)
 }
 
 // What the casts between the call and its await say holds for the promise of json(), not for the promise of bytes().
-static void removeCastsOfAwaitedPromise(Function& function, const TypedResultSite& site)
+static void removeCasts(Function& function, BlockID block, ValueID lastCast, ValueID promise)
 {
-    Value& await = function.at(site.await);
-    uint32_t awaitedIndex = awaitedOperandIndexOf(await);
-
     BitVector casts;
-    for (ValueID promise = await.operand(awaitedIndex); promise != site.call; promise = function.at(promise).operand(0)) {
-        RELEASE_ASSERT(isCast(function.at(promise).opcode));
-        casts.set(promise.index());
+    for (ValueID cast = lastCast; cast != promise; cast = function.at(cast).operand(0)) {
+        RELEASE_ASSERT(isCast(function.at(cast).opcode));
+        casts.set(cast.index());
     }
-
-    await.setOperand(awaitedIndex, site.call);
-    function.at(site.block).values.removeAllMatching([&](ValueID id) {
+    function.edit(block).values.removeAllMatching([&](ValueID id) {
         return casts.get(id.index());
     });
+}
+
+static void removeCastsOfAwaitedPromise(Function& function, const TypedResultSite& site)
+{
+    Value& await = function.edit(site.await);
+    uint32_t awaitedIndex = awaitedOperandIndexOf(await);
+    ValueID promiseInBlockOfAwait = site.mergedPromise ? site.mergedPromise : site.call;
+    removeCasts(function, site.awaitBlock, await.operand(awaitedIndex), promiseInBlockOfAwait);
+    await.setOperand(awaitedIndex, promiseInBlockOfAwait);
+    if (!site.mergedPromise)
+        return;
+
+    size_t parameterIndex = function.at(site.awaitBlock).parameters.find(site.mergedPromise);
+    RELEASE_ASSERT(parameterIndex != notFound);
+    Target& target = function.edit(site.block).terminator.targets[0];
+    removeCasts(function, site.block, target.arguments[parameterIndex], site.call);
+    target.arguments[parameterIndex] = site.call;
+}
+
+// Each jump into the block of the await says whether it brings the promise of bytes().
+ValueID TypedResultExpander::addParameterForOriginOfPromise(const TypedResultSite& site)
+{
+    Function& function = builder().function();
+    ValueID holdsBytes = builder().addParameter(site.awaitBlock, TypeTable::boolean);
+    for (Edge edge : m_pass.analyses.cfg().incomingEdges(site.awaitBlock)) {
+        Value constant = IRBuilder::make(Opcode::Boolean);
+        constant.setBoolean(edge.from == site.block);
+        builder().appendArgument(edge, builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(constant)));
+    }
+    builder().applyInsertions();
+    return holdsBytes;
 }
 
 void TypedResultExpander::expandParsedBody(const TypedResultSite& site)
@@ -169,20 +194,28 @@ void TypedResultExpander::expandParsedBody(const TypedResultSite& site)
     RELEASE_ASSERT(bytesCall);
 
     bytesCall->setOrigin(m_originalCall.origin());
-    function.at(site.call) = WTF::move(*bytesCall);
-    recomputeTypes(typing, function.at(site.call));
+    function.edit(site.call) = WTF::move(*bytesCall);
+    recomputeTypes(typing, function.edit(site.call));
     removeCastsOfAwaitedPromise(function, site);
     m_pass.analyses.didChangeValues();
+    builder().setOrigin(m_originalCall.origin());
+    ValueID holdsBytes = site.mergedPromise ? addParameterForOriginOfPromise(site) : ValueID();
 
-    size_t awaitIndex = function.at(site.block).values.find(site.await);
+    size_t awaitIndex = function.at(site.awaitBlock).values.find(site.await);
     RELEASE_ASSERT(awaitIndex != notFound);
     Value await = function.at(site.await);
-    await.setWritten({ });
-    await.setPrediction({ });
+    await.setExpected({ });
 
-    IRBuilder::Expansion expansion = builder().beginExpansion({ site.block, static_cast<uint32_t>(awaitIndex) });
+    IRBuilder::Expansion expansion = builder().beginExpansion({ site.awaitBlock, static_cast<uint32_t>(awaitIndex) });
     BlockID generic = builder().addBlock(BlockFrequency::Rare);
     ValueID bytes = builder().append(WTF::move(await));
+    if (holdsBytes) {
+        // On the other arms the callee has parsed the body itself.
+        IRBuilder::BranchBlocks blocks = builder().emitBranch(holdsBytes, BlockFrequency::Normal, BlockFrequency::Unlikely);
+        builder().moveToEndOf(blocks.notTaken);
+        endExpansionWithResult(builder(), expansion, bytes);
+        builder().moveToEndOf(blocks.taken);
+    }
     endExpansionWithResult(builder(), expansion, emitParseOf(site, bytes, generic));
 
     builder().moveToEndOf(generic);
@@ -194,7 +227,7 @@ void TypedResultExpander::expandParsedBody(const TypedResultSite& site)
 
 void TypedResultExpander::expandRows(const TypedResultSite& site)
 {
-    Value& call = builder().function().at(site.call);
+    Value& call = builder().function().edit(site.call);
     call.setExpectedResult({ });
     builder().setOrigin(call.origin());
 
@@ -219,7 +252,14 @@ void TypedResultExpander::expandValidatedCall(const TypedResultSite& site)
     }
 
     IRBuilder::Expansion expansion = builder().beginExpansion({ site.block, site.index });
-    endExpansionWithResult(builder(), expansion, emitValidationOf(site, appendOriginalCall(site)));
+    ValueID answer = appendOriginalCall(site);
+    // A reviver has run inside the call, and the answer may hold what it returned: objects that the program has. A copy of one is another object, so the answer is validated and handed on as it is.
+    if (m_originalCall.opcode == Opcode::CallBuiltin && !program().builtins().at(m_originalCall.overload()).flow.callbacks.empty()) {
+        emitGeneralValidation(site, answer);
+        endExpansionWithResult(builder(), expansion, answer);
+        return;
+    }
+    endExpansionWithResult(builder(), expansion, emitValidationOf(site, answer));
 }
 
 ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, ValueID value)
@@ -238,21 +278,22 @@ ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, Value
     ValueID results = appendCallOf(inputs().functions.ensure(validatorKeyOf(site.root)), { value });
     ValueID outcome = appendResultAt(results, 0);
     ValueID copy = appendResultAt(results, 1);
-    DeclaredType validatedType { .type = builder().function().at(copy).type };
 
     BlockID accepted = builder().addBlock();
     BlockID general = builder().addBlock(BlockFrequency::Rare);
     BlockID merge = builder().addBlock();
-    ValueID validated = builder().addParameter(merge, validatedType.type);
     emitBranchOnOutcome(outcome, accepted, general, general);
 
     builder().moveToEndOf(accepted);
     builder().emitJump(merge, { copy });
 
+    // The helper builds ordinary objects, which are in no family: the Check behind the call tells them from the copies that have a layout.
     builder().moveToEndOf(general);
-    ValueID generalCopy = convertTo(builder(), emitGeneralValidation(site, value), validatedType);
+    ValueID generalCopy = emitGeneralValidation(site, value);
     builder().emitJump(merge, { generalCopy });
 
+    const Function& function = builder().function();
+    ValueID validated = builder().addParameter(merge, inputs().types.unionOf(function.at(copy).type, function.at(generalCopy).type));
     builder().moveToEndOf(merge);
     return validated;
 }

@@ -70,12 +70,15 @@ static Vector<const NativeTest*> selectNativeTests(const NativeTestRequest& requ
 {
     Vector<const NativeTest*> tests;
     bool isPastPreviousTest = request.previousTest.isEmpty();
+    // Counted from the start of the list: the child that goes on behind a crash has to take the same tests.
+    unsigned ordinal = 0;
     forEachNativeTest([&](const NativeTest& test) {
+        bool isSelected = StringView(test.name).contains(request.filter) && request.part.contains(ordinal++);
         if (!isPastPreviousTest) {
             isPastPreviousTest = request.previousTest == test.name;
             return;
         }
-        if (StringView(test.name).contains(request.filter))
+        if (isSelected)
             tests.append(&test);
     });
     return tests;
@@ -113,13 +116,15 @@ static ChildProgress progressOf(StringView output, NativeTestList tests)
     return progress;
 }
 
-static Vector<String> childArguments(StringView filter, StringView previousTest)
+static Vector<String> childArguments(const NativeTestRequest& request, StringView previousTest)
 {
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag) };
     if (!previousTest.isEmpty())
         arguments.append(makeString(previousNativeTestFlag, '=', previousTest));
-    if (!filter.isEmpty())
-        arguments.append(filter.toString());
+    if (request.part.count > 1)
+        arguments.append(makeString(nativeTestPartFlag, '=', request.part.index + 1, '/', request.part.count));
+    if (!request.filter.isEmpty())
+        arguments.append(request.filter.toString());
     return arguments;
 }
 
@@ -128,7 +133,7 @@ static NativeTestSummary runInChildProcesses(const NativeTestRequest& request, N
     NativeTestSummary summary;
     StringView previousTest = request.previousTest;
     while (!tests.empty()) {
-        ChildProcessResult result = request.launcher->run(childArguments(request.filter, previousTest).span());
+        ChildProcessResult result = request.launcher->run(childArguments(request, previousTest).span());
         if (result.exitedWith(0)) {
             summary.passed += tests.size();
             break;

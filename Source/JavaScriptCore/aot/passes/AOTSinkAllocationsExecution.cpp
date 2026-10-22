@@ -15,16 +15,21 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t castOperandIndex = 0;
 
-static constexpr bool everyCastHasOneOperand()
+static constexpr bool everyCastHasItsValueFirst()
 {
     for (Opcode opcode : allMembersOf<Opcode>) {
-        if (interpretedOf(opcode) == Interpretation::Cast && (numberOfNamedOperandsOf(opcode) != 1 || hasVariadicOperand(opcode)))
+        if (interpretedOf(opcode) != Interpretation::Cast)
+            continue;
+        // What NarrowByField and ReadAgain take beside their value is only looked at.
+        uint32_t numberOfOperands = opcode == Opcode::NarrowByField || opcode == Opcode::ReadAgain ? 2 : 1;
+        if (numberOfNamedOperandsOf(opcode) != numberOfOperands || hasVariadicOperand(opcode))
             return false;
     }
     return true;
 }
 
-static_assert(everyCastHasOneOperand());
+static_assert(everyCastHasItsValueFirst());
+static_assert(OperandIndex::NarrowByField::value == castOperandIndex && OperandIndex::ReadAgain::object == castOperandIndex);
 
 struct VariantCastOutcomes {
     bool hasUnknown { false };
@@ -73,6 +78,11 @@ static VariantCastOutcomes evaluateCastOnVariants(const ShapeContext& context, c
             outcomes.passingTagBits |= tagMask;
             break;
         case CastOutcome::Throws:
+            // A Check that fails throws nothing: generic code goes on with the value, and there it needs its cell.
+            if (cast.opcode == Opcode::Check) {
+                outcomes.hasUnknown = true;
+                break;
+            }
             outcomes.throwsOnOneConstant &= shape.kind == VirtualShapeKind::Constant && (!outcomes.hasThrowing || outcomes.throwingConstant == shape.constant);
             outcomes.hasThrowing = true;
             outcomes.throwingConstant = shape.constant;
@@ -154,6 +164,14 @@ VirtualObjectID ObjectInterpreter::guardedObjectOf(ValueID value) const
     if (VirtualObjectID object = findAliasedObject(m_state, value, AliasKind::Guard))
         return object;
     return objectOf(value);
+}
+
+// The guard of a cell is its allocation, which proves nothing about a position.
+bool ObjectInterpreter::hasPositionFromAnsweredTest(ValueID access, VirtualObjectID object) const
+{
+    const Value& value = function().at(access);
+    bool reliesOnPosition = (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) || (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent());
+    return reliesOnPosition && value.guardOperand() && guardedObjectOf(value.guardOperand()) == object;
 }
 
 VirtualObjectID ObjectInterpreter::destructuredObjectOf(ValueID value) const
@@ -264,8 +282,7 @@ Execution ObjectInterpreter::executeCast(ValueID id)
     if (outcomes.canSplit())
         splitThrowingVariants(id, object, outcomes.throwingTagBits);
     else if (!outcomes.alwaysPasses()) {
-        if (!stateOf(object)->isCell())
-            build(object, causeOf(id, castOperandIndex));
+        requireCellsOfOperands(id);
         keep(id);
         return Execution::Kept;
     }
@@ -311,13 +328,12 @@ void ObjectInterpreter::splitThrowingVariants(ValueID cast, VirtualObjectID obje
         ValueID test = emitTagTest(object, throwingTagBits);
         BlockID failing = cursor().addCoveredBlock(*this);
         BlockID passing = cursor().addUncoveredBlock();
-        builder.function().at(failing).frequency = BlockFrequency::Rare;
+        builder.function().edit(failing).frequency = BlockFrequency::Rare;
         builder.emitBranch(test, Target { failing, { }, { } }, Target { passing, { }, { } });
 
         cursor().moveTo(failing);
         Value failingCast = function().at(cast);
-        failingCast.setWritten({ });
-        failingCast.setPrediction({ });
+        failingCast.setExpected({ });
         failingCast.setOperand(castOperandIndex, cursor().emit(makeConstant(constant)));
         cursor().emit(WTF::move(failingCast));
         builder.emitUnreachable();
@@ -330,10 +346,14 @@ void ObjectInterpreter::splitThrowingVariants(ValueID cast, VirtualObjectID obje
 }
 
 // An object that is not built is what its allocation says, so there is nothing to test until it gets a cell.
+// The closure that a lookup is expected to find is made for the comparison alone: it is not what is tested.
 Execution ObjectInterpreter::executeRuntimeValidation(ValueID id)
 {
     bool testsUnbuiltObject = false;
-    function().at(id).forEachOperand([&](ValueID operand, uint32_t) {
+    bool comparesWithClosure = function().at(id).opcode == Opcode::ValidateLookup;
+    function().at(id).forEachOperand([&](ValueID operand, uint32_t index) {
+        if (comparesWithClosure && index == OperandIndex::ValidateLookup::expected)
+            return;
         VirtualObjectID object = objectOf(operand);
         testsUnbuiltObject |= object && !stateOf(object)->isCell();
     });
@@ -375,7 +395,7 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id)
 
 void ObjectInterpreter::forgetFieldsWrittenBy(ValueID id)
 {
-    if (!m_sinking.inputs().valuesWritingObjects.get(id.index()))
+    if (m_noCellHasValidFields || !m_sinking.inputs().valuesWritingObjects.get(id.index()))
         return;
 
     for (ObjectEntry& entry : m_state.objects) {
@@ -384,24 +404,38 @@ void ObjectInterpreter::forgetFieldsWrittenBy(ValueID id)
         entry.state.fieldsValidInCell.clearAll();
         stateDidChange(entry.object);
     }
+    m_noCellHasValidFields = true;
+}
+
+BuildCause describeCause(FunctionAnalyses& analyses, const Use& use)
+{
+    const Function& function = analyses.function();
+    if (use.kind == Use::Kind::TerminatorOperand) {
+        const Terminator& terminator = function.at(use.block).terminator;
+        return { std::nullopt, escapeReasonsOf(analyses.effectContext(), function, terminator, use.operandIndex) };
+    }
+    RELEASE_ASSERT(use.kind == Use::Kind::Operand);
+    const Value& value = function.at(use.user);
+    OperandSummary summary = summarizeOperand(analyses.effectContext(), function, value, use.operandIndex);
+    return { value.opcode, escapeReasonsOf(summary, effectRuleOf(value.opcode)) };
 }
 
 BuildCause ObjectInterpreter::causeOf(ValueID user, uint32_t operandIndex) const
 {
-    if (m_mode != SinkingMode::Count)
-        return { };
-
-    const Value& value = function().at(user);
-    OperandSummary summary = summarizeOperand(m_sinking.analyses().effectContext(), function(), value, operandIndex);
-    return { value.opcode, value.origin(), escapeReasonsOf(summary, effectRuleOf(value.opcode)) };
+    BuildCause cause;
+    if (m_mode == SinkingMode::Count)
+        cause = describeCause(m_sinking.analyses(), Use { .kind = Use::Kind::Operand, .user = user, .operandIndex = operandIndex });
+    cause.admitsStoresByName = m_sinking.inputs().valuesCallingUnknownCode.get(user.index());
+    return cause;
 }
 
 BuildCause ObjectInterpreter::causeOf(const Terminator& terminator, uint32_t operandIndex) const
 {
-    if (m_mode != SinkingMode::Count)
-        return { };
-
-    return { std::nullopt, terminator.origin(), escapeReasonsOf(m_sinking.analyses().effectContext(), function(), terminator, operandIndex) };
+    BuildCause cause;
+    if (m_mode == SinkingMode::Count)
+        cause = { std::nullopt, escapeReasonsOf(m_sinking.analyses().effectContext(), function(), terminator, operandIndex) };
+    cause.admitsStoresByName = terminator.kind == TerminatorKind::Return || terminator.kind == TerminatorKind::Throw;
+    return cause;
 }
 
 void ObjectInterpreter::keep(ValueID id)
@@ -414,7 +448,7 @@ void ObjectInterpreter::keep(ValueID id)
         Function& function = cursor().builder().function();
         Value value = function.at(id);
         resolveOperands(value);
-        function.at(id) = WTF::move(value);
+        function.edit(id) = WTF::move(value);
     }
     if (m_sinking.inputs().throwingValues.get(id.index()))
         cursor().willKeepThrowingValue(*this);

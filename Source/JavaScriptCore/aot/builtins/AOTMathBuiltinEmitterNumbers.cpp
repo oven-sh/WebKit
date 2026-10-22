@@ -18,7 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Condition MathBuiltinEmitter::isFinite(Number x)
 {
-    return lessThan(abs(x), number(std::numeric_limits<double>::infinity()));
+    return equal(sub(x, x), number(0));
 }
 
 Condition MathBuiltinEmitter::testNumber(Number x, NumberTest test)
@@ -29,7 +29,7 @@ Condition MathBuiltinEmitter::testNumber(Number x, NumberTest test)
     case NumberTest::IsFinite:
         return isFinite(x);
     case NumberTest::IsInteger:
-        return logicalAnd(equal(trunc(x), x), isFinite(x));
+        return equal(sub(x, trunc(x)), number(0));
     case NumberTest::IsSafeInteger:
         return logicalAnd(equal(trunc(x), x), lessThanOrEqual(abs(x), number(maxSafeInteger())));
     }
@@ -85,11 +85,38 @@ void MathBuiltinEmitter::generateNumberIsSafeInteger(const InlineCall& call)
     testNumber(call, NumberTest::IsSafeInteger);
 }
 
+Number MathBuiltinEmitter::stringToNumber(const InlineCall& call, CellPointer string)
+{
+    return emitter<StringRangeReadEmitter>().toNumber(emitter<StringEmitter>().viewOfString(call.context(), string));
+}
+
 void MathBuiltinEmitter::generateCallNumberConstructor(const InlineCall& call)
 {
-    Boxed operand = boxedOperand(call.context(), call.argument(0));
-    missUnless(call, isNumber(operand));
-    finish(call, operand, m_program.at(TypeTable::number));
+    ValueID argument = call.argument(0);
+    const Type& type = typeOf(argument);
+    if (type.isAnyString()) {
+        finish(call, stringToNumber(call, cellOperand(argument)));
+        return;
+    }
+    Boxed operand = boxedOperand(call.context(), argument);
+    if (type.isNumber()) {
+        finish(call, operand, m_program.at(TypeTable::number));
+        return;
+    }
+    auto is = [&](int64_t bits) {
+        return Condition(m_out.equal(operand.value(), m_out.constInt64(bits)));
+    };
+    finish(call, either<Number>(isNotCell(operand), [&] {
+        return either<Number>(isNumber(operand), [&] {
+            return numberToDouble(operand);
+        }, [&] {
+            return select(is(JSValue::ValueUndefined), number(PNaN), select(is(JSValue::ValueTrue), number(1), number(0)));
+        });
+    }, [&] {
+        CellPointer cell = unboxCell(operand);
+        missUnless(call, hasCellType(cell, StringType));
+        return stringToNumber(call, cell);
+    }));
 }
 
 void MathBuiltinEmitter::generateParseInt(const InlineCall& call)

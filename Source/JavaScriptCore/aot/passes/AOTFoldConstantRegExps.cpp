@@ -67,7 +67,8 @@ public:
             return PassOutcome::Unchanged;
 
         m_context.analyses.didChangeValues();
-        narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build }, foldedValues.span());
+        narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build, &m_context.typingMemo }, foldedValues.span());
+        m_context.keptAnalyses = allAnalyses;
         return PassOutcome::Changed;
     }
 
@@ -227,7 +228,7 @@ private:
         if (!m_context.types.at(type).isSubsetOf(typeOf(id), m_program))
             return false;
 
-        Value& value = m_function.at(id);
+        Value& value = m_function.edit(id);
         replacement.setOrigin(value.origin());
         replacement.type = type;
         value = WTF::move(replacement);

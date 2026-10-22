@@ -1,18 +1,19 @@
 # The reads and calls of the protocol on an iterable class of the program are resolved to direct calls and slot reads
+# TODO: resolve-calls: the calls of @@iterator and next that an expanded loop makes on a class of the program are no longer direct calls
 # FORM: Prepared optimizing
 # RUN: pass ExpandIteration ResolveCalls RetypeValues ResolveCalls RetypeValues ResolveAccesses CompactBlocks
 # RUN(LEFT): pass ExpandIteration
 # STATISTIC: IterationsExpandedGenerically = 2
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Range" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f1 mutability=Fixed}]}
-layout L1 kind=Instance name="RangeIterator" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="next" function=f3 mutability=Fixed}]}
-layout L2 name="Step" fields=[{key="value" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="done" declared={type=boolean} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype, LoseShape]}
-layout L3 kind=Instance name="OpenRange" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key=@@iterator function=f1}] namedMembers=[{key=@@iterator function=f1}]}
+layout L0 kind=Instance name="Range" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="RangeIterator" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="next" function=f3 mutability=Fixed}]}
+layout L2 name="Step" fields=[{key="value" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="done" declared={type=boolean} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L3 kind=Instance name="OpenRange" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key=@@iterator function=f1}] namedMembers=[{key=@@iterator function=f1}]}
 function f0 name="Range" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="iterator" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=L1}] {
   b0(v0: L0):
-    v1 = NewObject layout=L1 [keepsShape]
+    v1 = NewObject layout=L1
     Return v1
 }
 function f2 name="RangeIterator" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
@@ -20,7 +21,7 @@ function f3 name="next" kind=Method flags=[HasThis] thisType={type=L1} results=[
   b0(v0: L1):
     v1 = Integer integer=1
     v2 = Boolean boolean=false
-    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
     Return v3
 }
 

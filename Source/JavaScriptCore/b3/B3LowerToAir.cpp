@@ -35,6 +35,7 @@
 #include "AirCCallingConvention.h"
 #include "AirCode.h"
 #include "AirEmitShuffle.h"
+#include "AirExtendedForms.h"
 #include "AirFixSpillsAfterTerminals.h"
 #include "AirHelpers.h"
 #include "AirInsertionSet.h"
@@ -206,7 +207,7 @@ public:
 
         // Lower defs before uses on a global level. This is a good heuristic to lock down a
         // hoisted address expression before we duplicate it back into the loop.
-        for (B3::BasicBlock* block : m_procedure.blocksInPreOrder()) {
+        for (B3::BasicBlock* block : m_procedure.cachedBlocksInPreOrder()) {
             m_block = block;
 
             m_isRare = !m_fastWorklist.saw(block);
@@ -316,6 +317,8 @@ private:
     template<typename... Arguments>
     bool isValidForm(Air::Opcode opcode, Arguments... kinds) const
     {
+        if (!m_procedure.policy().selection.extendsInstructionSelection && Air::isExtendedForm(opcode, kinds...))
+            return false;
         return Air::isValidForm(m_code.targetFeatures(), opcode, kinds...);
     }
 
@@ -645,6 +648,87 @@ private:
         return false;
     }
 
+    bool tryAppendBranchOnInt32OverflowInMemory()
+    {
+        if (!isX86() || !m_procedure.policy().selection.extendsInstructionSelection)
+            return false;
+        Value* comparison = m_value->child(0);
+        if (comparison->opcode() != Equal && comparison->opcode() != NotEqual)
+            return false;
+        for (unsigned i = 0; i < 2; ++i) {
+            Value* extended = comparison->child(i);
+            Value* exact = comparison->child(1 - i);
+            if (extended->opcode() != SExt32 || extended->child(0)->opcode() != Trunc || extended->child(0)->child(0) != exact)
+                continue;
+            if ((exact->opcode() != Add && exact->opcode() != Sub) || exact->type() != Int64)
+                continue;
+            Value* low = extended->child(0);
+            Value* left = exact->child(0);
+            Value* right = exact->child(1);
+            bool rightIsConstant = right->hasInt64() && right->asInt64() == static_cast<int32_t>(right->asInt64()) && isSelectedAsImmediate(exact, right);
+            if (left->opcode() != SExt32 || (right->opcode() != SExt32 && !rightIsConstant))
+                continue;
+            auto* load = left->child(0)->as<MemoryValue>();
+            if (!load || load->opcode() != Load || load->hasFence() || load->traps() || load->owner != m_block)
+                continue;
+
+            MemoryValue* store = nullptr;
+            bool canMoveAccesses = false;
+            for (unsigned index = m_index; index--;) {
+                Value* value = m_block->at(index);
+                if (value == load) {
+                    canMoveAccesses = true;
+                    break;
+                }
+                auto* memory = value->as<MemoryValue>();
+                if (!store && memory && memory->opcode() == Store && memory->child(0) == low) {
+                    store = memory;
+                    continue;
+                }
+                Effects effects = value->effects();
+                if (effects.writes || effects.fence || effects.exitsSideways || effects.reads.overlaps(load->range()))
+                    break;
+            }
+            if (!canMoveAccesses || !store || store->hasFence() || store->traps() || store->lastChild() != load->lastChild() || store->offset() != load->offset())
+                continue;
+
+            if (!canBeInternal(extended) || !canBeInternal(left) || !canBeInternal(load) || m_locked.contains(store))
+                continue;
+            if (m_useCounts.numUses(exact) != 2 || m_valueToTmp[exact] || m_locked.contains(exact) || m_useCounts.numUses(low) != 2 || m_valueToTmp[low] || m_locked.contains(low))
+                continue;
+            if (extended->owner != m_block || low->owner != m_block || exact->owner != m_block || left->owner != m_block)
+                continue;
+
+            Air::Opcode opcode = exact->opcode() == Add ? Air::BranchAdd32 : Air::BranchSub32;
+            Arg address = addr(store);
+            if (!isValidForm(opcode, Arg::ResCond, rightIsConstant ? Arg::Imm : Arg::Tmp, address.kind()))
+                continue;
+
+            Arg rightWord = Arg::imm(0);
+            if (rightIsConstant)
+                rightWord = Arg::imm(right->asInt64());
+            else {
+                if (canBeInternal(right))
+                    commitInternal(right);
+                rightWord = tmpForLowWord(right);
+            }
+            append(opcode, Arg::resCond(MacroAssembler::Overflow), rightWord, address);
+            commitInternal(comparison);
+            commitInternal(extended);
+            commitInternal(low);
+            commitInternal(exact);
+            commitInternal(left);
+            commitInternal(load);
+            commitInternal(store);
+            if (comparison->opcode() == Equal) {
+                auto& successors = m_blockToBlock[m_block]->successors();
+                std::swap(successors[0], successors[1]);
+            }
+            return true;
+        }
+        return false;
+    }
+
     bool crossesInterference(Value* value)
     {
         // If it's in a foreign block, then be conservative. We could handle this if we were
@@ -726,6 +810,9 @@ private:
             return Arg::addr(tmp(address), offset);
         };
         
+        if (address->opcode() == SlotBase)
+            return Arg::stack(address->as<SlotBaseValue>()->slot(), offset);
+
         static constexpr unsigned lotsOfUses = 10; // This is arbitrary and we should tune it eventually.
 
         // Only match if the address value isn't used in some large number of places.
@@ -775,9 +862,6 @@ private:
 
         case FramePointer:
             return Arg::addr(Tmp(GPRInfo::callFrameRegister), offset);
-
-        case SlotBase:
-            return Arg::stack(address->as<SlotBaseValue>()->slot(), offset);
 
         case WasmAddress: {
             WasmAddressValue* wasmAddress = address->as<WasmAddressValue>();
@@ -6733,6 +6817,8 @@ private:
 
         case Branch: {
             if (canBeInternal(m_value->child(0))) {
+                if (tryAppendBranchOnInt32OverflowInMemory())
+                    return;
                 if (tryAppendBranchOnInt32Overflow())
                     return;
 #if CPU(ARM64)

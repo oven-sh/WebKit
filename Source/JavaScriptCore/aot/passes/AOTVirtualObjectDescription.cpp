@@ -14,6 +14,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardAvailability.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
@@ -43,10 +44,21 @@ static bool canBeDeferred(const EffectsOnEdges& effects, VirtualObjectKind kind)
     const Effects& normal = effects.normal;
     if (kind == VirtualObjectKind::StringRange)
         return onlyReadsAndCreatesStrings(normal);
-    return normal.isRemovableWhenUnused() && normal.reads.containsOnly(bookkeepingHeaps);
+    return normal.isUnobservable() && normal.reads.containsOnly(bookkeepingHeaps);
 }
 
-static DescribedObject describeObject(const Program& program, const Value& value, VirtualObjectDescription description)
+static bool writesOnlyWhatSlotTypesAdmit(const Program& program, const Function& function, const Value& allocation)
+{
+    const Layout& layout = program.at(allocation.layout());
+    std::span<const ValueID> values = allocation.variadicOperands();
+    for (uint32_t index = 0; index < values.size(); ++index) {
+        if (!program.typeOf(function, values[index]).isSubsetOf(program.at(slotTypeOf(program, layout.fields[allocation.fields()[index]])), program))
+            return false;
+    }
+    return true;
+}
+
+static DescribedObject describeObject(const Program& program, const Function& function, const Value& value, VirtualObjectDescription description)
 {
     if (value.storage() != AllocationStorage::Heap)
         return unsupported(VirtualObjectSupport::HasChosenStorage);
@@ -69,6 +81,13 @@ static DescribedObject describeObject(const Program& program, const Value& value
     case LayoutKind::Record:
     case LayoutKind::Instance:
     case LayoutKind::Container:
+        if (!writesOnlyWhatSlotTypesAdmit(program, function, value))
+            return unsupported(VirtualObjectSupport::Unknown);
+        // What stands in the list for an object whose fields lie in this one is no value, so the list is not taken apart.
+        if (!layout.flattenedObjects.isEmpty()) {
+            description.kind = VirtualObjectKind::Opaque;
+            return supported(description);
+        }
         description.kind = VirtualObjectKind::Object;
         description.hasKeyOrder = true;
         return supported(description);
@@ -146,6 +165,13 @@ static bool hasOnlyRequiredFields(const Program& program, LayoutID layout)
     return builtinLayout && std::ranges::none_of(program.builtins().at(builtinLayout).fields, &BuiltinLayoutField::isOptional);
 }
 
+static bool isOptionalFieldOfBuiltinLayout(const Program& program, LayoutID layout, uint32_t field)
+{
+    const auto& fields = program.builtins().at(program.at(layout).builtinLayout).fields;
+    RELEASE_ASSERT(fields.size() == program.at(layout).fields.size());
+    return fields[field].isOptional;
+}
+
 static TypeID prefixElementTypeOf(const Program& program, const ClassPart& array)
 {
     TypeID contents = array.contentsAt(program.builtins(), ContentsSlot::Element);
@@ -189,12 +215,13 @@ static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const V
 
     if (overload.code.fieldsForm) {
         description.kind = VirtualObjectKind::BuiltinFields;
-        description.hasKeyOrder = true;
         // Flow counts the result as an ordinary object that the built-in makes, so what it says about the layout does not cover an allocation here.
         description.canBeBuilt = false;
         description.layout = resultLayoutOf(program, overload);
-        if (!description.layout || !hasOnlyRequiredFields(program, description.layout))
+        if (!description.layout)
             return unsupported(VirtualObjectSupport::HasNoPartsForm);
+        // The call delivers `undefined` for a field that the object would lack, which is what a read of it finds: nothing above the object has one of the names. Which fields there are, and in which order, nobody can tell.
+        description.hasKeyOrder = hasOnlyRequiredFields(program, description.layout);
         return supported(description);
     }
     if (!overload.code.prefixForm)
@@ -213,7 +240,7 @@ static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Valu
 {
     switch (value.opcode) {
     case Opcode::NewObject:
-        return describeObject(analyses.program(), value, description);
+        return describeObject(analyses.program(), analyses.function(), value, description);
     case Opcode::NewClosure:
         return describeClosure(value, description);
     case Opcode::NewArray:
@@ -368,6 +395,7 @@ std::optional<uint32_t> layoutFieldOf(const Program& program, const VirtualObjec
 
     switch (field.kind) {
     case VirtualFieldKind::Named:
+    case VirtualFieldKind::UnprovenNamed:
         return program.at(description.layout).findField(field.key);
     case VirtualFieldKind::LayoutField:
         if (field.layout != description.layout || field.index >= program.at(description.layout).fields.size())
@@ -427,6 +455,8 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
 {
     const Program& program = context.program;
     switch (field.kind) {
+    case VirtualFieldKind::UnprovenNamed:
+        return TypeTable::anything;
     case VirtualFieldKind::Named:
     case VirtualFieldKind::LayoutField: {
         if (std::optional<uint32_t> property = prefixPropertyOf(context, description, field.key))
@@ -434,7 +464,11 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
         if (!layoutField)
             return TypeTable::never;
-        return program.at(description.layout).fields[*layoutField].declared.type;
+        TypeID slotType = slotTypeOf(program, program.at(description.layout).fields[*layoutField]);
+        if (description.kind != VirtualObjectKind::BuiltinFields || !isOptionalFieldOfBuiltinLayout(program, description.layout, *layoutField) || program.at(slotType).primitives & Primitive::Undefined)
+            return slotType;
+        // What the call delivers for a field that the object would lack.
+        return program.types.find(program.at(slotType).withPrimitives(Primitive::Undefined)).value_or(TypeTable::anything);
     }
     case VirtualFieldKind::Element:
         if (description.kind == VirtualObjectKind::Arguments)
@@ -444,7 +478,10 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         if (!description.function)
             return TypeTable::never;
         const Vector<DeclaredType>& captures = program.at(description.function).captures;
-        return field.index < captures.size() ? captures[field.index].type : TypeTable::never;
+        if (field.index >= captures.size())
+            return TypeTable::never;
+        const DeclaredType& capture = captures[field.index];
+        return capture.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : capture.type;
     }
     case VirtualFieldKind::Length:
         // The type of every read of an array's length. Where the program has none, no read asks whether a carried length fits.
@@ -575,6 +612,8 @@ ASCIILiteral nameOf(VirtualFieldKind kind)
     switch (kind) {
     case VirtualFieldKind::Named:
         return "Named"_s;
+    case VirtualFieldKind::UnprovenNamed:
+        return "UnprovenNamed"_s;
     case VirtualFieldKind::LayoutField:
         return "LayoutField"_s;
     case VirtualFieldKind::Element:
@@ -648,6 +687,9 @@ void VirtualField::dump(PrintStream& out) const
     switch (kind) {
     case VirtualFieldKind::Named:
         out.print("named(k", key.index(), ")");
+        return;
+    case VirtualFieldKind::UnprovenNamed:
+        out.print("unproven(k", key.index(), ")");
         return;
     case VirtualFieldKind::LayoutField:
         out.print("field(L", layout.index(), ".", index, ")");

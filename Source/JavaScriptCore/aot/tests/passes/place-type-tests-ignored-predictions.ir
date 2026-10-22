@@ -1,19 +1,19 @@
-# With predictions ignored no rule reports a site, so no test is placed
+# With expected types ignored no rule reports a site, so no test is placed
 # FORM: Prepared
-# OPTIONS: testing=IgnorePredictions
+# OPTIONS: testing=IgnoreExpectedTypes
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # STATISTIC: TypeTestsPlaced = 0
 # STATISTIC: StretchesGuarded = 0
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="mulOfPredictedNumbers" parameters=[{type=anything predicted=number}, {type=anything predicted=number}] results=[{type=number|bigint}] {
+function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
   b0(v0: anything ~ number, v1: anything ~ number):
     v2 = Mul v0, v1
     Return v2
 }
 # CHECK: outcome: Unchanged
-# CHECK-LABEL: function f0 name="mulOfPredictedNumbers"
+# CHECK-LABEL: function f0 name="mulOfExpectedNumbers"
 # CHECK-NOT: TypeTest
 # CHECK: b0(v0: anything ~ number, v1: anything ~ number):
 # CHECK-NEXT: = Mul v0, v1

@@ -45,9 +45,9 @@ function f0 name="readsAroundUnknownCode" parameters=[{type=anything}, {type=obj
     Branch v36 -> taken b1(| 0), notTaken b2()
   b1(v37):
     v38 = Integer integer=1
-    v39 = GetArrayElement v35, v38, v37 level=Predicted [keyIsIntegral]
+    v39 = GetArrayElement v35, v38, v37 level=Expected [keyIsIntegral]
     PropSet v1, v39 key="first"
-    v41 = GetArrayElement v35, v38, v37 level=Predicted [keyIsIntegral]
+    v41 = GetArrayElement v35, v38, v37 level=Expected [keyIsIntegral]
     Return v41
   b2():
     Return
@@ -55,4 +55,4 @@ function f0 name="readsAroundUnknownCode" parameters=[{type=anything}, {type=obj
 # CHECK: [[filled]]: Array = NewContiguousArray
 # CHECK: v35: Array = TruncateNewArray [[filled]],
 # CHECK: PropSet v1, v39 key="first"
-# CHECK-NEXT: v41: anything = GetArrayElement v35, v38, v37 level=Predicted
+# CHECK-NEXT: v41: anything = GetArrayElement v35, v38, v37 level=Expected

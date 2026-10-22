@@ -13,6 +13,7 @@
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <tuple>
 
@@ -66,6 +67,21 @@ static bool mustNameDefinition(const Function& function, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool namesGuard(const Function& function, const Use& use)
+{
+    switch (use.kind) {
+    case Use::Kind::Operand:
+        return function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard;
+    case Use::Kind::TerminatorOperand:
+        return function.at(use.block).terminator.operandKind(use.operandIndex) == OperandKind::Guard;
+    case Use::Kind::EdgeArgument:
+    case Use::Kind::HandlerArgument:
+    case Use::Kind::BlockSubject:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 SSARepair::SSARepair(IRBuilder& builder, FunctionAnalyses& analyses)
     : m_builder(builder)
     , m_analyses(analyses)
@@ -104,12 +120,13 @@ std::optional<SSARepair::Variable> SSARepair::findVariable(ValueID definition) c
 void SSARepair::run()
 {
     RELEASE_ASSERT(!m_didRun);
-    m_didRun = true;
     RELEASE_ASSERT(m_builder.m_insertions.isEmpty());
+    Origin savedOrigin = m_builder.origin();
+    separateUsesAsGuards();
+    m_didRun = true;
     if (m_variables.isEmpty())
         return;
 
-    Origin savedOrigin = m_builder.origin();
     splitCoveredBlocksAfterDefinitions();
 
     Vector<Variable> constantVariables;
@@ -141,9 +158,101 @@ void SSARepair::run()
     if (!mergedVariables.isEmpty())
         insertParameters(mergedVariables.span());
 
-    m_builder.applyInsertions();
-    m_analyses.didChangeValues();
+    if (!m_builder.m_insertions.isEmpty())
+        m_builder.applyInsertions();
+    m_analyses.didChangeValuesButNotUses();
     m_builder.setOrigin(savedOrigin);
+}
+
+// An operation may name an allocation as the guard for what holds of a new object. A parameter that two allocations meet in is the object and no guard.
+// So the uses as a guard get a variable of their own: its definitions are an AllGuards behind each allocation, and the parameters they meet in are guards.
+void SSARepair::separateUsesAsGuards()
+{
+    struct NamedDefinition {
+        Variable variable;
+        ValueID value;
+        ProgramPoint pointAfter;
+        Vector<Use, 4> usesAsGuard;
+    };
+
+    Function& function = m_builder.function();
+    Vector<NamedDefinition, 4> namedDefinitions;
+    {
+        // An insertion ends the life of the use lists.
+        const UseLists& useLists = m_analyses.useLists();
+        const CFG& cfg = m_analyses.cfg();
+        for (Variable variable = 0; variable < m_variables.size(); ++variable) {
+            Vector<ValueID, 2> values = m_variables[variable].values;
+            values.removeAllMatching([&](ValueID value) {
+                return useLists.locationOf(value).placement == ValuePlacement::Detached;
+            });
+            // A use in the block of its definition keeps that definition.
+            auto namesGuardFromOtherBlock = [&](ValueID value, const Use& use) {
+                return namesGuard(function, use) && use.block != useLists.locationOf(value).block;
+            };
+            // So does a use that no other definition reaches.
+            auto isReachedByOtherDefinition = [&](ValueID value) {
+                BitVector visited;
+                Vector<BlockID, 16> worklist;
+                for (const Use& use : useLists.usesOf(value)) {
+                    if (namesGuardFromOtherBlock(value, use) && !visited.set(use.block.index()))
+                        worklist.append(use.block);
+                }
+                auto holdsOtherDefinition = [&](BlockID block) {
+                    return std::ranges::any_of(values, [&](ValueID other) {
+                        return other != value && useLists.locationOf(other).block == block;
+                    });
+                };
+                BlockID definingBlock = useLists.locationOf(value).block;
+                while (!worklist.isEmpty()) {
+                    BlockID block = worklist.takeLast();
+                    auto incomingEdges = cfg.incomingEdges(block);
+                    if (holdsOtherDefinition(block) || incomingEdges.empty())
+                        return true;
+                    for (Edge edge : incomingEdges) {
+                        if (edge.kind == EdgeKind::Handler)
+                            return true;
+                        if (edge.from != definingBlock && !visited.set(edge.from.index()))
+                            worklist.append(edge.from);
+                    }
+                }
+                return false;
+            };
+            bool isNamedAsGuard = std::ranges::any_of(values, isReachedByOtherDefinition);
+            // Every way to a use needs a definition of the guard.
+            bool everyDefinitionCanBeNamed = std::ranges::all_of(values, [&](ValueID value) {
+                return function.at(value).type != TypeTable::guard && useLists.locationOf(value).placement == ValuePlacement::InBlock;
+            });
+            if (!isNamedAsGuard || !everyDefinitionCanBeNamed)
+                continue;
+            for (ValueID value : values) {
+                NamedDefinition definition { variable, value, useLists.pointAfter(value), { } };
+                for (const Use& use : useLists.usesOf(value)) {
+                    if (namesGuardFromOtherBlock(value, use))
+                        definition.usesAsGuard.append(use);
+                }
+                namedDefinitions.append(WTF::move(definition));
+            }
+        }
+    }
+    if (namedDefinitions.isEmpty())
+        return;
+
+    std::optional<Variable> guards;
+    for (size_t index = 0; index < namedDefinitions.size(); ++index) {
+        const NamedDefinition& definition = namedDefinitions[index];
+        m_builder.setOrigin(function.at(definition.value).origin());
+        ValueID wrapper = m_builder.insertBefore(definition.pointAfter, IRBuilder::make(Opcode::AllGuards, { definition.value }));
+        for (const Use& use : definition.usesAsGuard) {
+            replaceUse(function, use, wrapper);
+            m_analyses.didChangeBlock(use.block);
+        }
+        if (index && namedDefinitions[index - 1].variable == definition.variable)
+            addDefinition(*guards, wrapper);
+        else
+            guards = addVariable(wrapper);
+    }
+    m_builder.applyInsertions();
 }
 
 void SSARepair::splitCoveredBlocksAfterDefinitions()
@@ -186,7 +295,6 @@ void SSARepair::splitCoveredBlocksAfterDefinitions()
         m_builder.setOrigin(function.at(block).terminator.origin());
         m_builder.splitBlock(block, indexes.span());
     }
-    m_analyses.didChangeControlFlow();
 }
 
 void SSARepair::collectUses(VariableData& data)
@@ -284,6 +392,7 @@ void SSARepair::rematerializeConstant(Variable variable)
             }
         }
         replaceUse(function, recorded.use, constant);
+        m_analyses.didChangeBlock(recorded.use.block);
     }
 }
 
@@ -291,6 +400,7 @@ ValueID SSARepair::insertConstant(const VariableData& data, ProgramPoint point)
 {
     Function& function = m_builder.function();
     ValueID copy = m_builder.addValue(Value(function.at(data.values.first())));
+    m_builder.didAddDetachedValue(copy);
     m_builder.m_insertions.insert(point, copy);
     return copy;
 }
@@ -326,6 +436,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
     unsigned numberOfBlocks = m_analyses.cfg().numNodes();
     m_liveAtHeadStamp.fill(0, numberOfBlocks);
     m_hasDefinitionStamp.fill(0, numberOfBlocks);
+    m_numberOfParametersForEdgeResults.fill(std::numeric_limits<uint32_t>::max(), numberOfBlocks);
 
     Calculator calculator(m_analyses);
     for (Variable variable : variables) {
@@ -397,14 +508,22 @@ void SSARepair::computeParameterType(VariableData& data)
     const Function& function = m_analyses.function();
     const Value& first = function.at(data.values.first());
     data.type = first.type;
-    TypeID predicted = first.predictionOrType();
+    TypeID expected = first.expectedOrType();
     for (ValueID id : data.values) {
         const Value& value = function.at(id);
         RELEASE_ASSERT(!numberOfResultsOf(program, function, value));
         data.type = m_builder.m_types.unionOf(data.type, value.type);
-        predicted = m_builder.m_types.unionOf(predicted, value.predictionOrType());
+        expected = m_builder.m_types.unionOf(expected, value.expectedOrType());
     }
-    data.prediction = predicted == data.type ? TypeID() : predicted;
+    data.expected = expected == data.type ? TypeID() : expected;
+}
+
+uint32_t SSARepair::numberOfParametersForEdgeResults(BlockID block)
+{
+    uint32_t& number = m_numberOfParametersForEdgeResults[block.index()];
+    if (number == std::numeric_limits<uint32_t>::max())
+        number = m_builder.numberOfParametersForEdgeResults(block);
+    return number;
 }
 
 ValueID SSARepair::addMergeParameter(VariableData& data, BlockID block)
@@ -414,8 +533,8 @@ ValueID SSARepair::addMergeParameter(VariableData& data, BlockID block)
 
     Function& function = m_builder.function();
     m_builder.setOrigin(function.at(data.values.first()).origin());
-    ValueID parameter = m_builder.addParameter(block, data.type);
-    function.at(parameter).setPrediction(data.prediction);
+    ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
+    function.edit(parameter).setExpected(data.expected);
     data.definitions.append(Definition { block, headOrder, parameter });
     return parameter;
 }
@@ -431,7 +550,7 @@ void SSARepair::appendArguments(Calculator& calculator, std::span<const Variable
         for (Edge edge : cfg.incomingEdges(block)) {
             for (Calculator::Def* phi : phis) {
                 ValueID argument = reachingDefinitionOnEdge(calculator, phi->variable(), m_variables[variables[phi->variable()->index()]], edge);
-                m_builder.appendArgument(edge, argument);
+                m_builder.appendArgument(edge, argument, numberOfParametersForEdgeResults(block));
             }
         }
     }
@@ -439,7 +558,7 @@ void SSARepair::appendArguments(Calculator& calculator, std::span<const Variable
     for (Edge edge : m_analyses.edgesFromUnreachableBlocks()) {
         BlockID target = targetOf(function, edge).block;
         for (Calculator::Def* phi : calculator.phisForBlock(target))
-            m_builder.appendArgument(edge, m_variables[variables[phi->variable()->index()]].values.first());
+            m_builder.appendArgument(edge, m_variables[variables[phi->variable()->index()]].values.first(), numberOfParametersForEdgeResults(target));
     }
 }
 
@@ -476,6 +595,7 @@ void SSARepair::rewriteUses(Calculator& calculator, Calculator::Variable* calcul
         if (mustNameDefinition(function, use))
             RELEASE_ASSERT(function.at(definition).opcode != Opcode::Parameter);
         replaceUse(function, use, definition);
+        m_analyses.didChangeBlock(use.block);
     }
 }
 

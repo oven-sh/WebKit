@@ -6,7 +6,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="expected-first" parameters=[{type=string|ArrayIterator predicted=ArrayIterator}] results=[{type=anything}] {
+function f0 name="expected-first" parameters=[{type=string|ArrayIterator}] results=[{type=anything}] {
   b0(v0: string|ArrayIterator ~ ArrayIterator):
     v1 = PropGet v0 key="toString"
     Return v1
@@ -20,7 +20,7 @@ function f0 name="expected-first" parameters=[{type=string|ArrayIterator predict
 # CHECK-NEXT: = PropGet [[iterator]] key="toString"
 # CHECK: [[stringArm]]([[string]]: string) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[string]] key="toString"
-function f1 name="beside-another-object" parameters=[{type=Array<number>|ArrayIterator predicted=ArrayIterator}] results=[{type=anything}] {
+function f1 name="beside-another-object" parameters=[{type=Array<number>|ArrayIterator}] results=[{type=anything}] {
   b0(v0: Array<number>|ArrayIterator ~ ArrayIterator):
     v1 = PropGet v0 key="toString"
     Return v1

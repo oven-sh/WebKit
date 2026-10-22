@@ -192,7 +192,7 @@ function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
@@ -347,7 +347,7 @@ static void checkInEveryPipeline(ASCIILiteral program, ASCIILiteral answers, Opt
     check({ "references=narrow"_s, "disable=pass:OutlineColdOperations"_s });
     check({ "references=narrow"_s, "disable=pass:SinkConstants"_s });
     check({ "references=narrow"_s, "disable=pass:EliminateDeadCode"_s });
-    check({ "references=narrow"_s, "disable=flow:DeferredClosures"_s });
+    check({ "references=narrow"_s, "disable=pass:DeferClosuresInFields"_s });
     check({ "references=narrow"_s, "heat=EverythingIsHot"_s });
     check({ "references=wide"_s });
 }

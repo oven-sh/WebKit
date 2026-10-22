@@ -1,4 +1,4 @@
-# Which casts each query strips, the identity through a narrowing edge, and a constant that a Claim rejects
+# Which casts each query strips, the identity through a narrowing edge, and a constant that a Check rejects
 # FORM: Prepared
 # RUN: analyses value-identity
 
@@ -9,23 +9,23 @@ function f0 name="casts" parameters=[{type=anything}] results=[{type=anything}] 
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
     v3 = Upcast v2 castType=undefined|string
-    v4 = Claim v3 castType=string
+    v4 = Check v3 castType=string
     v5 = Upcast v4 castType=anything
     Return v5
   b2():
     v6 = Integer integer=5
     v7 = Upcast v6 castType=anything
-    v8 = Claim v7 castType=number
-    v9 = Claim v7 castType=string
-    Unreachable
+    v8 = Check v7 castType=number
+    v9 = Check v7 castType=string
+    Return v9
 }
 function f1 name="literalStrings" results=[{type=anything}] {
   b0():
     v0 = String string="a"
     v1 = Upcast v0 castType=anything
-    v2 = Claim v1 castType="a"|"b"
-    v3 = Claim v1 castType="b"
-    Unreachable
+    v2 = Check v1 castType="a"|"b"
+    v3 = Check v1 castType="b"
+    Return v3
 }
 # CHECK: function f0
 # CHECK-NEXT: value-identity:

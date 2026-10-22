@@ -14,7 +14,8 @@ function f0 name="declaredByRow" parameters=[{type=number}, {type=Array<number, 
 # CHECK-LABEL: function f0
 # CHECK-NEXT: v3 CallInline: none
 # CHECK-NEXT: v4 CallInline: reads(Elements, ArrayStorage, AllocatorState) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v5 CallInline: reads(CollectionStorage, CollectionEntries, StringStorage) writes(StringStorage, RuntimeState) throws collects
+# A lookup may move a table that lies in the image to the heap.
+# CHECK-NEXT: v5 CallInline: reads(CollectionStorage, CollectionEntries, StringStorage, AllocatorState) writes(CollectionStorage, StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 function f1 name="asOverload" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=L0}, {type=object}] results=[{type=undefined}] {
   b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: L0, v3: object):
     v4 = CallBuiltin v1, v0, v0 overload=ArrayPrototypeSlice/0
@@ -26,10 +27,10 @@ function f1 name="asOverload" parameters=[{type=number}, {type=Array<number, pri
     Return
 }
 # CHECK-LABEL: function f1
-# CHECK-NEXT: v4 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v5 CallInline: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v6 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v7 CallInline: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v4 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v5 CallInline: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v7 CallInline: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v8 CallBuiltin: unknownCode
 # CHECK-NEXT: v9 CallInline: unknownCode
 function f2 name="terminators" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=object}] results=[{type=undefined}] {

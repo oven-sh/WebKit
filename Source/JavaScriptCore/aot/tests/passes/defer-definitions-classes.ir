@@ -1,0 +1,205 @@
+# A class whose record says all that its definition does is defined when something first needs it: the body makes no closure and defines nothing, and the variables that held the class object are born as its constructor
+# FORM: Prepared
+# RUN: pass DeferDefinitions
+# STATISTIC: ClassesDeferredInVariables = 4
+# STATISTIC: ClosuresDeferredInVariables = 0
+# CHECK: outcome: Changed
+# CHECK: variable g0 name="Plain" module=m0 declared={type=f1} initialization=Function function=f1 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g1 name="Derived" module=m0 declared={type=f4} initialization=Function function=f4 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g2 name="UsedAtStart" module=m0 declared={type=f5} initialization=Function function=f5 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g3 name="innerName" module=m0 declared={type=f6} initialization=Function function=f6 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g4 name="outerName" module=m0 declared={type=f6} initialization=Function function=f6 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g5 name="ComputedKey" module=m0 declared={type=f7} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g6 name="EvaluatedAgain" module=m0 declared={type=f9} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g7 name="BelowFunction" module=m0 declared={type=f11} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g8 name="MayBeReadWhileUndefined" module=m0 declared={type=undefined|f12} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g9 name="MethodHandedOn" module=m0 declared={type=f13} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g11 name="BelowComputedKey" module=m0 declared={type=f15} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: layout=L0
+# CHECK-NOT: layout=L1
+# CHECK-NOT: ResolveHeritage
+# CHECK: [[used]]:{{*}}= GetModuleVariable variable=g2
+# CHECK-NEXT: [[finished]]:{{*}}= FinishClass [[used]] layout=L2
+# CHECK-NOT: variable=g2
+# CHECK: = Call {{*}}[[finished]]
+# CHECK-NOT: layout=L3
+# CHECK: = NewClass {{*}}layout=L4
+# CHECK: = NewClass {{*}}layout=L5
+# CHECK: = ResolveHeritage
+# CHECK: = NewClass {{*}}layout=L7
+# CHECK: = NewClass {{*}}layout=L8
+# CHECK: = NewClass {{*}}layout=L9
+# CHECK: = NewClass {{*}}layout=L10
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" module=m0 constructor=f1 flow={baseState=None} classFlow={evaluations=AtMostOnce members=[{key="method" function=f2}, {key="create" side=Static function=f3}] namedMembers=[{key="method" function=f2}, {key="create" side=Static function=f3}]}
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce}
+layout L2 kind=Instance name="UsedAtStart" module=m0 constructor=f5 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L3 kind=Instance name="TwoNames" module=m0 constructor=f6 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L4 kind=Instance name="ComputedKey" module=m0 constructor=f7 flow={baseState=None} classFlow={evaluations=AtMostOnce members=[{function=f8}]}
+layout L5 kind=Instance name="EvaluatedAgain" module=m0 constructor=f9 flow={baseState=None}
+layout L6 kind=Instance name="ConstructorFunction" module=m0 constructor=f10 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L7 kind=Instance name="BelowFunction" module=m0 base=L6 constructor=f11 flags=[HasHeritage] flow={baseState=Layout base=L6} classFlow={evaluations=AtMostOnce}
+layout L8 kind=Instance name="MayBeReadWhileUndefined" module=m0 constructor=f12 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L9 kind=Instance name="MethodHandedOn" module=m0 constructor=f13 flow={baseState=None} classFlow={evaluations=AtMostOnce members=[{key="method" function=f14}] namedMembers=[{key="method" function=f14}]}
+layout L10 kind=Instance name="BelowComputedKey" module=m0 base=L4 constructor=f15 flags=[HasHeritage] flow={baseState=Layout base=L4} classFlow={evaluations=AtMostOnce}
+variable g0 name="Plain" module=m0 declared={type=f1} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="Derived" module=m0 declared={type=f4} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g2 name="UsedAtStart" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g3 name="innerName" module=m0 declared={type=f6} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g4 name="outerName" module=m0 declared={type=f6} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g5 name="ComputedKey" module=m0 declared={type=f7} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g6 name="EvaluatedAgain" module=m0 declared={type=f9} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g7 name="BelowFunction" module=m0 declared={type=f11} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g8 name="MayBeReadWhileUndefined" module=m0 declared={type=undefined|f12} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce}
+variable g9 name="MethodHandedOn" module=m0 declared={type=f13} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g10 name="ConstructorFunction" module=m0 declared={type=f10} initialization=Function function=f10 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+variable g11 name="BelowComputedKey" module=m0 declared={type=f15} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="method"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 side=Static index=1 key="create"
+    v6 = FinishClass v1 layout=L0
+    PutModuleVariable v6 variable=g0
+    v8 = GetModuleVariable variable=g0
+    v9 = ResolveHeritage v8
+    v10 = NewClosure function=f4
+    v11 = NewClass v10, v8, v9 layout=L1
+    v12 = FinishClass v11 layout=L1
+    PutModuleVariable v12 variable=g1
+    v14 = NewClosure function=f5
+    v15 = NewClass v14 layout=L2
+    v16 = FinishClass v15 layout=L2
+    PutModuleVariable v16 variable=g2
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="publish" [isFreeName]
+    v20 = Call v19, -, v16
+    v21 = NewClosure function=f6
+    v22 = NewClass v21 layout=L3
+    v23 = FinishClass v22 layout=L3
+    PutModuleVariable v23 variable=g3
+    PutModuleVariable v23 variable=g4
+    v26 = PropGet v18 key="key" [isFreeName]
+    v27 = ToPropertyKey v26
+    v28 = NewClosure function=f7
+    v29 = NewClass v28 layout=L4
+    v30 = NewClosure function=f8
+    DefineMethod v29, v30, v27 layout=L4
+    v32 = FinishClass v29 layout=L4
+    PutModuleVariable v32 variable=g5
+    v34 = NewClosure function=f9
+    v35 = NewClass v34 layout=L5
+    v36 = FinishClass v35 layout=L5
+    PutModuleVariable v36 variable=g6
+    v38 = GetModuleVariable variable=g10
+    v39 = ResolveHeritage v38
+    v40 = NewClosure function=f11
+    v41 = NewClass v40, v38, v39 layout=L7
+    v42 = FinishClass v41 layout=L7
+    PutModuleVariable v42 variable=g7
+    v44 = NewClosure function=f12
+    v45 = NewClass v44 layout=L8
+    v46 = FinishClass v45 layout=L8
+    PutModuleVariable v46 variable=g8
+    v48 = NewClosure function=f13
+    v49 = NewClass v48 layout=L9
+    v50 = NewClosure function=f14
+    DefineMethod v49, v50 layout=L9 key="method"
+    v52 = FinishClass v49 layout=L9
+    PutModuleVariable v52 variable=g9
+    v54 = Call v19, -, v50
+    v55 = GetModuleVariable variable=g5
+    v56 = ResolveHeritage v55
+    v57 = NewClosure function=f15
+    v58 = NewClass v57, v55, v56 layout=L10
+    v59 = FinishClass v58 layout=L10
+    PutModuleVariable v59 variable=g11
+    Return
+}
+function f1 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="method" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="create" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="Derived" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f5 name="UsedAtStart" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f6 name="TwoNames" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    Return v2
+}
+function f7 name="ComputedKey" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}
+function f8 name="computed" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f9 name="EvaluatedAgain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    Return v2
+}
+function f10 name="ConstructorFunction" module=m0 flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f11 name="BelowFunction" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L7
+    Return v3
+}
+function f12 name="MayBeReadWhileUndefined" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L8
+    v2 = NewObject v1 layout=L8
+    Return v2
+}
+function f13 name="MethodHandedOn" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L9
+    v2 = NewObject v1 layout=L9
+    Return v2
+}
+function f14 name="method" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f15 name="BelowComputedKey" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L10
+    Return v3
+}

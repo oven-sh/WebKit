@@ -1,3 +1,6 @@
+//@ requireOptions("--useDollarVM=1", "--keepDenseArraysDense=1")
+// Object.freeze freezes an ordinary array in place only in a VM that runs ahead-of-time compiled code; the option stands in for such code.
+// bun-frozen-array-without-compiled-code.js is the other half: without either, an array is frozen as upstream freezes it.
 const loopCount = typeof testLoopCount === "number" ? testLoopCount : 20000;
 // False under --alwaysHaveABadTime=true (lockdown mode): every array has slow-put array storage and is frozen generically.
 const canFreezeInPlace = !$vm.isHavingABadTime();
@@ -281,16 +284,20 @@ function testAllowed() {
     });
 }
 
-function testMoveToSparseMap() {
-    const sparseMapTriggers = [
+// Compiled code holds the kind of an array's storage for proven across these, so none of them may move the elements: a store, a deletion or a new length
+// is refused where the array stands, and an array that becomes a prototype stays as it is.
+function testStaysInPlace() {
+    const refusedOperations = [
         array => { array[0] = 9; },
+        array => { array[7] = 9; },
         array => { delete array[0]; },
         array => { array.length = 0; },
+        array => shouldThrowTypeError(() => array.push(9)),
     ];
-    for (const trigger of sparseMapTriggers) {
+    for (const operation of refusedOperations) {
         forEachFrozenArray((array, original) => {
-            trigger(array);
-            shouldBe(isInPlace(array), false);
+            operation(array);
+            shouldBe(isInPlace(array), canFreezeInPlace);
             check(array, original);
         });
     }
@@ -302,9 +309,27 @@ function testMoveToSparseMap() {
     for (const trigger of prototypeTriggers) {
         forEachFrozenArray((array, original) => {
             const object = trigger(array);
-            shouldBe(isInPlace(array), false);
+            shouldBe(isInPlace(array), canFreezeInPlace);
             check(array, original);
             checkInheritor(object, original);
+            check(array, original);
+        });
+    }
+}
+
+// What has to ask the prototypes, or goes by the ordinary definition of a property, first gives the array the ordinary frozen form: from there on the
+// answers and the messages are upstream's own.
+function testMoveToSparseMap() {
+    const sparseMapTriggers = [
+        array => { array.x = 1; },
+        array => shouldThrowTypeError(() => array.pop()),
+        array => shouldThrowTypeError(() => Object.defineProperty(array, 0, { value: 9 })),
+        array => shouldThrowTypeError(() => Object.setPrototypeOf(array, null)),
+    ];
+    for (const trigger of sparseMapTriggers) {
+        forEachFrozenArray((array, original) => {
+            trigger(array);
+            shouldBe(isInPlace(array), false);
             check(array, original);
         });
     }
@@ -388,7 +413,7 @@ function testBadTime() {
         check(arrays[i], expected[i]);
 }
 
-for (const test of [testInPlace, testNotInPlace, testRejected, testAllowed, testMoveToSparseMap, testImmutableProperties, testTiers]) {
+for (const test of [testInPlace, testNotInPlace, testRejected, testAllowed, testStaysInPlace, testMoveToSparseMap, testImmutableProperties, testTiers]) {
     test();
     shouldBe($vm.isHavingABadTime(), !canFreezeInPlace);
 }

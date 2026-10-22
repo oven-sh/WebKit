@@ -1,0 +1,116 @@
+# The step of a walk over a Map or a Set in fast code reads the keys of one width in line; a table with keys of the other width is for the stub that stands in front of the operation.
+# A number never fits a short key, so the type of the keys chooses: numbers (beside undefined, null and booleans, which fit both) are read as wide keys, all else as short ones.
+# The sizes tell the two forms apart: every walk over short keys is as long as the first one, every walk over wide keys as long as the second, and the two differ.
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(W): generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="texts" parameters=[{type=Set<string>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Set<string>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = SetNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK: f0: size=[[short]] frame=
+# CHECK-NOT: size=[[short]] frame=
+# S: f0 b1 Fast
+
+function f1 name="numbers" parameters=[{type=Set<number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Set<number>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = SetNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# W: f1: size=[[wide]] frame=
+# S: f1 b1 Fast
+
+function f2 name="numbersOrNothing" parameters=[{type=Set<undefined|null|boolean|number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Set<undefined|null|boolean|number>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = SetNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# W: f2: size=[[wide]] frame=
+# S: f2 b1 Fast
+
+function f3 name="numbersOrTexts" parameters=[{type=Set<string|number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Set<string|number>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = SetNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK: f3: size=[[short]] frame=
+# S: f3 b1 Fast
+
+function f4 name="anything" parameters=[{type=Set<anything>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Set<anything>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = SetNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK: f4: size=[[short]] frame=
+# S: f4 b1 Fast
+
+function f5 name="numbersByText" parameters=[{type=Map<string, number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map<string, number>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = MapNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK: f5: size=[[shortOfMap]] frame=
+# CHECK-NOT: size=[[shortOfMap]] frame=
+# S: f5 b1 Fast
+
+function f6 name="textsByNumber" parameters=[{type=Map<number, string>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map<number, string>, v1: anything, v2: i32):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = MapNext v0, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=2
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# S: f6 b1 Fast
+

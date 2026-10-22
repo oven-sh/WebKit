@@ -30,12 +30,22 @@ bool includesBuiltin(const Type&, BuiltinID, const BuiltinTable&);
 bool mayContainAnyCallable(const BuiltinTable&, const Type&);
 bool mayContainAnyBuiltin(const Type&);
 bool mayBeClosureOf(const TypeTable&, BuiltinID, FunctionID);
+struct LibraryClosuresOfBuiltin {
+    bool mayBeAnyFunctionOfLibrary { false };
+    Vector<FunctionID, 2> functions;
+};
+LibraryClosuresOfBuiltin libraryClosuresOf(const TypeTable&, BuiltinID);
+// For a caller that asks about many built-ins and one function: the record is findTableRecordOf(program, function).
+const RuntimeFunctionData* findTableRecordOf(const Program&, FunctionID);
+bool mayBeClosureOf(const TypeTable&, BuiltinID, FunctionID, const RuntimeFunctionData* recordOfFunction);
 bool mayContainBuiltin(const TypeTable&, const Type&, BuiltinID);
 bool overlapsAnotherClass(const BuiltinTable&, BuiltinClassID, const Type&);
 
 bool isSubset(const Type&, const Type&, const TypeTable&);
 bool isPartSubset(const ClassPart&, const ClassPart&, const TypeTable&);
 bool overlap(const Type&, const Type&, const TypeTable&);
+// Whether a value of the one type and a value of the other can be one piece of memory that somebody writes. Two values that are both undefined, or one number, are none.
+bool mayBeSameObject(const Type&, const Type&, const TypeTable&);
 
 enum class DeclaredParts : uint8_t { FromEither, FromSecond };
 

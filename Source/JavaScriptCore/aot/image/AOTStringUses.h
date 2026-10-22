@@ -19,6 +19,8 @@ using Typed::PropertyKeyID;
 
 struct StringUses {
     BitVector isNamed;
+    // Named by something else than the operation that makes the cell of a string constant and those that have the text for a message: an operation that reads the text, a key, a regular expression.
+    BitVector isNamedBesideCreation;
     BitVector isConstant;
     BitVector isCreatedRepeatedly;
     BitVector isConstantInTables;

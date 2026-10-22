@@ -30,8 +30,6 @@ enum class RemarkKind : uint8_t {
     LoopVersioned,
     LoopNotVersioned,
     LoopRotated,
-    PollStripMined,
-    PollNotStripMined,
     RangeChecksRemoved,
     LoopBoundNotClamped,
 };
@@ -46,14 +44,13 @@ struct Remark {
 enum class Counter : uint8_t {
     LoopsVersioned,
     LoopsRotated,
-    PollsStripMined,
     RangeChecksRemoved,
     LoopBoundsClamped,
     KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
 };
 
-static constexpr unsigned numberOfCounters = 7;
+static constexpr unsigned numberOfCounters = 6;
 static_assert(static_cast<unsigned>(Counter::TrapsFoldedIntoAccesses) + 1 == numberOfCounters);
 
 struct LimitHit {
@@ -79,12 +76,9 @@ constexpr std::optional<Counter> counterOf(RemarkKind kind)
         return Counter::LoopsVersioned;
     case RemarkKind::LoopRotated:
         return Counter::LoopsRotated;
-    case RemarkKind::PollStripMined:
-        return Counter::PollsStripMined;
     case RemarkKind::RangeChecksRemoved:
         return Counter::RangeChecksRemoved;
     case RemarkKind::LoopNotVersioned:
-    case RemarkKind::PollNotStripMined:
     case RemarkKind::LoopBoundNotClamped:
         return std::nullopt;
     }

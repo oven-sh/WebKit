@@ -76,11 +76,13 @@ function f5 name="receiverMayBePrimitiveOrNullish" parameters=[{type=anything}, 
     v7 = NewArray v4, v5, v6 contents=anything
     Return v7
 }
+# What is an object, undefined or null is converted first, which throws for the two.
 # CHECK-LABEL: function f5 name="receiverMayBePrimitiveOrNullish"
 # CHECK-NOT: PropHasOwn
 # CHECK: v4: boolean = CallBuiltin v0, v3 overload=ObjectPrototypeHasOwnProperty/0
 # CHECK-NEXT: v5: boolean = CallBuiltin v1, v3 overload=ObjectPrototypeHasOwnProperty/0
-# CHECK-NEXT: v6: boolean = CallBuiltin v2, v3 overload=ObjectPrototypeHasOwnProperty/0
+# CHECK-NEXT: [[object]]: object = ToObject v2
+# CHECK-NEXT: v6: boolean = PropHasOwn [[object]] key="a"
 
 function f6 name="unmatchedCall" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

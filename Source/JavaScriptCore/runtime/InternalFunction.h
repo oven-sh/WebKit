@@ -35,7 +35,11 @@ class InternalFunction : public JSNonFinalObject {
     friend class LLIntOffsetsExtractor;
 public:
     using Base = JSNonFinalObject;
+#if ENABLE(AOT)
+    static constexpr unsigned StructureFlags = Base::StructureFlags | ImplementsHasInstance | ImplementsDefaultHasInstance | OverridesGetCallData | OverridesPut;
+#else
     static constexpr unsigned StructureFlags = Base::StructureFlags | ImplementsHasInstance | ImplementsDefaultHasInstance | OverridesGetCallData;
+#endif
 
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -97,6 +101,11 @@ protected:
     JS_EXPORT_PRIVATE void finishCreation(VM&, unsigned length, const String& name, PropertyAdditionMode = PropertyAdditionMode::WithStructureTransition);
     DECLARE_DEFAULT_FINISH_CREATION;
 
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
+#endif
     JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getConstructData(JSCell*);
     JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
 

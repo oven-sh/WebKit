@@ -18,6 +18,7 @@
 #include "IntlObject.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include "StringConstructor.h"
 #include "StringPrototypeInlines.h"
 #include <algorithm>
 #include <array>
@@ -136,12 +137,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringLocaleCompare, size_t, (Instance* ins
     OPERATION_RETURN(scope, static_cast<size_t>(static_cast<int32_t>(collator->compareStrings(globalObject, characters, otherCharacters))));
 }
 
-enum class LetterCase : uint8_t { Lower, Upper };
+using LetterCase = StringKeyCache::LetterCase;
 
 template<LetterCase letterCase>
 static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm, StringKeyCache& keys, JSString* string)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSString* known = keys.tryFindCaseConversion(string, letterCase))
+        return known;
     {
         auto view = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -158,11 +161,15 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
                 return nullptr;
             if (!changes)
                 return string;
-            if (length >= 2 && length <= StringKeyCache::maxCaseConvertedStringLength) {
+            if (length == 1)
+                return vm.smallStrings.singleCharacterString(static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[0]) : toASCIIUpper(characters[0])));
+            if (length <= StringKeyCache::maxCaseConvertedStringLength) {
                 std::array<Latin1Character, StringKeyCache::maxCaseConvertedStringLength> converted;
                 for (size_t i = 0; i < length; ++i)
                     converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
-                return keys.caseConvertedString(vm, std::span<const Latin1Character> { converted }.first(length));
+                JSString* result = keys.caseConvertedString(vm, std::span<const Latin1Character> { converted }.first(length));
+                keys.cacheCaseConversion(vm, string, letterCase, result);
+                return result;
             }
             std::span<Latin1Character> buffer;
             Ref impl = StringImpl::createUninitialized(length, buffer);
@@ -194,6 +201,112 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringToUpperCase, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, convertCase<LetterCase::Upper>(globalObject, vm, instance->state->propertyCaches->stringKeys(), cellArgument<JSString>(cell, Entry::operationAOTStringToUpperCase)));
 }
 
+template<typename CharacterType>
+static void fillWithPattern(std::span<CharacterType> buffer, StringView pattern)
+{
+    unsigned length = buffer.size();
+    unsigned copied = std::min(pattern.length(), length);
+    pattern.left(copied).getCharacters(buffer.first(copied));
+    while (copied < length) {
+        unsigned count = std::min(copied, length - copied);
+        memcpySpan(buffer.subspan(copied, count), buffer.first(count));
+        copied += count;
+    }
+}
+
+template<typename CharacterType>
+static JSString* createRepeatedString(JSGlobalObject* globalObject, StringView pattern, unsigned count)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto checkedLength = checkedProduct<unsigned>(pattern.length(), count);
+    if (checkedLength.hasOverflowed() || checkedLength > JSString::MaxLength) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    unsigned length = checkedLength;
+
+    std::span<CharacterType> buffer;
+    auto impl = StringImpl::tryCreateUninitialized(length, buffer);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    fillWithPattern(buffer, pattern);
+    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
+}
+
+template<typename CharacterType>
+static JSString* createPaddedString(JSGlobalObject* globalObject, StringView string, StringView filler, unsigned length, bool isAtStart)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    std::span<CharacterType> buffer;
+    auto impl = StringImpl::tryCreateUninitialized(length, buffer);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    unsigned stringLength = string.length();
+    unsigned fillLength = length - stringLength;
+    if (isAtStart) {
+        fillWithPattern(buffer.first(fillLength), filler);
+        string.getCharacters(buffer.last(stringLength));
+    } else {
+        string.getCharacters(buffer.first(stringLength));
+        fillWithPattern(buffer.last(fillLength), filler);
+    }
+    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
+}
+
+// `String(value)` where no test stands in front of the call. A string is its own answer, and that is asked first: nothing is set up for it, and no frame of a host function is made for the rest.
+JSC_DEFINE_JIT_OPERATION(operationAOTStringOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isString()) [[likely]]
+        return { encodedValue, nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringOfAnyValue);
+    OPERATION_RETURN(scope, JSValue::encode(stringConstructor(globalObject, value)));
+}
+
+// decodeURI, decodeURIComponent, encodeURI, encodeURIComponent. A text without a percent sign decodes to itself, and one that holds nothing but what the coding leaves alone encodes to itself:
+// most parameters of a route and most keys of a query are such texts. The engine's functions copy them character by character into a new string. Everything else is theirs.
+static bool isUnchangedByURICoding(StringView text, URICoding coding)
+{
+    static constexpr auto leftAloneInURI = makeLatin1CharacterBitSet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&'()*+,-./:;=?@_~"_s);
+    static constexpr auto leftAloneInURIComponent = makeLatin1CharacterBitSet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!'()*-._~"_s);
+    switch (coding) {
+    case URICoding::DecodeURI:
+    case URICoding::DecodeURIComponent:
+        return !text.contains('%');
+    case URICoding::EncodeURI:
+    case URICoding::EncodeURIComponent: {
+        if (!text.is8Bit())
+            return false;
+        const auto& leftAlone = coding == URICoding::EncodeURI ? leftAloneInURI : leftAloneInURIComponent;
+        return std::ranges::all_of(text.span8(), [&](Latin1Character character) {
+            return leftAlone.get(character);
+        });
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCodeURIOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, uint32_t coding))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCodeURIOfAnyValue);
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isString()) {
+        auto view = asString(value)->view(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (isUnchangedByURICoding(view, static_cast<URICoding>(coding)))
+            OPERATION_RETURN(scope, encodedValue);
+    }
+    OPERATION_RETURN(scope, encodedJSValue());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringRepeat, JSCell*, (Instance* instance, JSCell* cell, uint32_t count))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringRepeat);
@@ -211,17 +324,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringRepeat, JSCell*, (Instance* instance,
         OPERATION_RETURN(scope, repeatCharacter(globalObject, unit, count));
     }
     if (view->is8Bit())
-        OPERATION_RETURN(scope, repeatString<Latin1Character>(globalObject, view, count));
-    OPERATION_RETURN(scope, repeatString<char16_t>(globalObject, view, count));
-}
-
-template<PadKind padKind>
-static ALWAYS_INLINE JSString* padToLength(JSGlobalObject* globalObject, StringView string, StringView filler, unsigned length)
-{
-    unsigned fillLength = length - string.length();
-    if (string.is8Bit() && filler.is8Bit())
-        return createPaddedString<Latin1Character, padKind>(globalObject, string, filler, length, fillLength);
-    return createPaddedString<char16_t, padKind>(globalObject, string, filler, length, fillLength);
+        OPERATION_RETURN(scope, createRepeatedString<Latin1Character>(globalObject, view, count));
+    OPERATION_RETURN(scope, createRepeatedString<char16_t>(globalObject, view, count));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringPad, JSCell*, (Instance* instance, JSCell* cell, uint32_t length, JSCell* fillerCell, uint32_t isAtStart))
@@ -235,9 +339,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringPad, JSCell*, (Instance* instance, JS
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     auto pattern = filler->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    if (isAtStart)
-        OPERATION_RETURN(scope, padToLength<PadKind::PadStart>(globalObject, view, pattern, length));
-    OPERATION_RETURN(scope, padToLength<PadKind::PadEnd>(globalObject, view, pattern, length));
+    if (view->is8Bit() && pattern->is8Bit())
+        OPERATION_RETURN(scope, createPaddedString<Latin1Character>(globalObject, view, pattern, length, !!isAtStart));
+    OPERATION_RETURN(scope, createPaddedString<char16_t>(globalObject, view, pattern, length, !!isAtStart));
 }
 
 } } // namespace JSC::AOT

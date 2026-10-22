@@ -14,6 +14,7 @@
 #include "AOTOperationScope.h"
 #include "AOTStubsCoroutines.h"
 #include "ArrayPrototypeInlines.h"
+#include "GeneratorPrototype.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "JSGenerator.h"
@@ -70,7 +71,7 @@ static JSValue resumeBytecodeGenerator(JSGlobalObject* globalObject, VM& vm, JSG
     };
     int32_t state = field(JSGenerator::Field::State).get().asInt32();
     if (state == static_cast<int32_t>(JSGenerator::State::Executing)) {
-        throwTypeError(globalObject, scope, "Generator is executing"_s);
+        throwException(globalObject, scope, createGeneratorIsExecutingError(globalObject));
         return { };
     }
     if (state == static_cast<int32_t>(JSGenerator::State::Completed)) {
@@ -110,8 +111,55 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResumeGenerator, EncodedJSValue, (Instance*
         OPERATION_RETURN(scope, JSValue::encode(compiled->resume(globalObject, mode, value)));
     if (auto* bytecodeGenerator = dynamicDowncast<JSGenerator>(generator))
         OPERATION_RETURN(scope, JSValue::encode(resumeBytecodeGenerator(globalObject, vm, bytecodeGenerator, engineResumeModeOf(mode), value)));
-    throwTypeError(globalObject, scope, "|this| should be a generator"_s);
+    throwException(globalObject, scope, createNotAGeneratorError(globalObject));
     OPERATION_RETURN(scope, encodedJSValue());
+}
+
+template<ResumeMode mode>
+static EncodedJSValue resumeGeneratorOfEitherKind(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue generator = callFrame->thisValue();
+    JSValue value = callFrame->argument(0);
+    if (auto* compiled = dynamicDowncast<Generator>(generator))
+        RELEASE_AND_RETURN(scope, JSValue::encode(compiled->resume(globalObject, mode, value)));
+    if (auto* bytecodeGenerator = dynamicDowncast<JSGenerator>(generator))
+        RELEASE_AND_RETURN(scope, JSValue::encode(resumeBytecodeGenerator(globalObject, vm, bytecodeGenerator, engineResumeModeOf(mode), value)));
+    throwException(globalObject, scope, createNotAGeneratorError(globalObject));
+    return { };
+}
+
+static JSC_DECLARE_HOST_FUNCTION(generatorNextOfEitherKind);
+static JSC_DECLARE_HOST_FUNCTION(generatorReturnOfEitherKind);
+static JSC_DECLARE_HOST_FUNCTION(generatorThrowOfEitherKind);
+
+JSC_DEFINE_HOST_FUNCTION(generatorNextOfEitherKind, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return resumeGeneratorOfEitherKind<ResumeMode::Next>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(generatorReturnOfEitherKind, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return resumeGeneratorOfEitherKind<ResumeMode::Return>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(generatorThrowOfEitherKind, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return resumeGeneratorOfEitherKind<ResumeMode::Throw>(globalObject, callFrame);
+}
+
+void installGeneratorMethodsForCompiledGenerators(JSGlobalObject* realm)
+{
+    VM& vm = realm->vm();
+    JSObject* prototype = realm->generatorPrototype();
+    auto install = [&](const Identifier& name, NativeFunction function) {
+        JSFunction* method = JSFunction::create(vm, realm, 1, name.string(), function, ImplementationVisibility::Public);
+        prototype->putDirect(vm, name, method, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    };
+    install(vm.propertyNames->next, generatorNextOfEitherKind);
+    install(vm.propertyNames->returnKeyword, generatorReturnOfEitherKind);
+    install(vm.propertyNames->throwKeyword, generatorThrowOfEitherKind);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsGeneratorSuspendedAtStart, size_t, (Instance*, JSCell* cell))

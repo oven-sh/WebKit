@@ -178,30 +178,23 @@ function f4 name="modeled" results=[{type=anything}] {
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The model always throws, the native function returns.
-static constexpr ASCIILiteral callThatNeverReturns = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+// Flow says nothing of a value at which nothing arrives, so no model makes code unreachable. The text does: it ends a block with Unreachable, and the script of the shell decides whether the block is entered.
+static constexpr ASCIILiteral unreachableBlock = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
-    v0 = Integer integer=1
-    v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = FinishObject v1
-    v3 = PropGet v2 key="toLocaleString"
-    v4 = Call v3, v2 calleeKey="toLocaleString"
-    v5 = Builtin builtin=GlobalThis
-    v6 = PropGet v5 key="print" [isFreeName]
-    v7 = String string="after"
-    v8 = Call v6, -, v7
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="enters" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = PropGet v0 key="print" [isFreeName]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Unreachable
+  b2():
+    v4 = String string="went on"
+    v5 = Call v3, -, v4
     Return
 }
-function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = Integer integer=1
-    Throw v1
-}
-runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
 // The model reads toString and does not call it, the native function calls it.
@@ -239,81 +232,47 @@ function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The model calls the procedure once, the native function for each of three items. The environment of the procedure becomes a variable.
+// As leakedClosure, and the program calls the closure itself, once. One operation enters the function, so it runs at most once, is called directly and has no entry for a call by value.
 static constexpr ASCIILiteral functionThatRunsOnce = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-module m1 path="models/Iterators.ts" displayPath="models/Iterators.ts" flags=[IsLibrary]
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Counter" fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="i" declared={type=anything} flags=[IsRequired]}]
-layout L1 name="Step" fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}]
-layout L2 kind=Environment fields=[{key="item" declared={type=anything}}]
-variable g0 name="getters" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f2
-    v1 = Integer integer=0
-    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
-    v3 = FinishObject v2
-    v4 = NewArray contents=anything holes=[]
-    PutModuleVariable v4 variable=g0
-    v6 = NewClosure function=f3
-    v7 = Builtin builtin=IteratorPrototypeForEach
-    v8 = Call v7, v3, v6
-    v9 = Builtin builtin=GlobalThis
-    v10 = PropGet v9 key="print" [isFreeName]
-    v11 = Integer integer=1
-    v12 = ElemGet v4, v11
-    v13 = Call v12
-    v14 = Integer integer=2
-    v15 = ElemGet v4, v14
-    v16 = Call v15
-    v17 = Integer integer=3
-    v18 = ElemGet v4, v17
-    v19 = Call v18
-    v20 = Call v10, -, v13, v16, v19
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = PropGet v4 key="toLocaleString"
+    v6 = Call v5, v4 calleeKey="toLocaleString"
+    v7 = PropGet v1 key="print" [isFreeName]
+    v8 = Call v0
+    v9 = Call v7, -, v8
     Return
 }
-function f1 name="forEach" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$forEach thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = PropGet v0 key="next"
-    v3 = Call v2, v0 calleeKey="next"
-    v4 = PropGet v3 key="value"
-    v5 = PropGet v3 key="done"
-    v6 = Call v1, -, v4
-    Return
-}
-function f2 name="next" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = PropGet v0 key="i"
-    v2 = Integer integer=1
-    v3 = Add v1, v2
-    PropSet v0, v3 key="i" mode=Strict
-    v5 = Integer integer=3
-    v6 = Greater v3, v5
-    v7 = NewObject -, v6, v3 layout=L1 fields=[0, 1]
-    v8 = FinishObject v7
-    Return v8
-}
-function f3 name="procedure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = NewObject -, v0 layout=L2 fields=[0]
-    v2 = NewClosure v1 function=f4
-    v3 = GetModuleVariable variable=g0
-    ElemSet v3, v0, v2 mode=Strict
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
     Return
 }
-function f4 name="getter" captures=[{type=env L2}] results=[{type=anything}] {
-  b0(v0: env L2):
-    v1 = GetEnvironmentField v0 layout=L2 field=0
-    Return v1
+function f2 name="once" results=[{type=anything}] {
+  b0():
+    v0 = String string="ran"
+    Return v0
 }
-runtimefunction id=$forEach function=f1
+runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The model lists the keys of the operand and answers arrays that hold nothing of it, the arrays of the native function hold its values. So an object that never escapes reaches the script of the shell.
-// The read of x after the call is replaced by the value x was created with.
+// The holder has a function of the shell as its toString. The model of toLocaleString reads toString and k and calls nothing, the native function calls toString on the holder.
+// So an object that never escapes reaches the script of the shell, as this.k. The read of x after the call is replaced by the value x was created with.
 static constexpr ASCIILiteral leakedObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Inner" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -323,78 +282,67 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Integer integer=5
     v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
     v5 = FinishObject v4
-    v6 = NewObject -, v5 layout=L0 fields=[0]
-    v7 = FinishObject v6
-    v8 = Builtin builtin=Object
-    v9 = PropGet v8 key="entries"
-    v10 = Call v9, v8, v7 calleeKey="entries"
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="sink" [isFreeName]
-    v13 = Call v12, -, v10
-    v14 = PropGet v5 key="x"
-    v15 = StrictEq v14, v2
-    v16 = PropGet v11 key="print" [isFreeName]
-    v17 = Call v16, -, v15
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = NewObject -, v5, v7 layout=L0 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = PropGet v9 key="toLocaleString"
+    v11 = Call v10, v9 calleeKey="toLocaleString"
+    v12 = PropGet v5 key="x"
+    v13 = StrictEq v12, v2
+    v14 = PropGet v6 key="print" [isFreeName]
+    v15 = Call v14, -, v13
     Return
 }
-function f1 name="entries" role=Model parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = String string="k"
-    v2 = PropGet v0 key="k"
-    v3 = TypeOf v2
-    v4 = NewArray v1, v3 contents=anything holes=[]
-    v5 = NewArray v4 contents=anything holes=[]
-    v6 = Builtin builtin=Object
-    v7 = PropGet v6 key="keys"
-    v8 = Call v7, v6, v0 calleeKey="keys"
-    Return v5
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
 }
-runtimefunction id=$entries function=f1
+runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
 // As leakedObject, with an array of numbers.
 static constexpr ASCIILiteral leakedArray = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
     v3 = NewArray v2, v2 contents=anything holes=[]
-    v4 = NewObject -, v3 layout=L0 fields=[0]
-    v5 = FinishObject v4
-    v6 = Builtin builtin=Object
-    v7 = PropGet v6 key="entries"
-    v8 = Call v7, v6, v5 calleeKey="entries"
-    v9 = Builtin builtin=GlobalThis
-    v10 = PropGet v9 key="sink" [isFreeName]
-    v11 = Call v10, -, v8
-    v12 = Integer integer=1
-    v13 = ElemGet v3, v12
-    v14 = Mul v13, v2
-    v15 = TypeOf v13
-    v16 = PropGet v3 key="length"
-    v17 = PropGet v9 key="print" [isFreeName]
-    v18 = Call v17, -, v15, v16
-    ElemSet v3, v12, v2 mode=Strict
-    v20 = PropGet v9 key="after" [isFreeName]
-    v21 = Call v20
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = NewObject -, v3, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = PropGet v7 key="toLocaleString"
+    v9 = Call v8, v7 calleeKey="toLocaleString"
+    v10 = Integer integer=1
+    v11 = ElemGet v3, v10
+    v12 = Mul v11, v2
+    v13 = TypeOf v11
+    v14 = PropGet v3 key="length"
+    v15 = PropGet v4 key="print" [isFreeName]
+    v16 = Call v15, -, v13, v14
+    ElemSet v3, v10, v2 mode=Strict
+    v18 = PropGet v4 key="after" [isFreeName]
+    v19 = Call v18
     Return
 }
-function f1 name="entries" role=Model parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = String string="k"
-    v2 = PropGet v0 key="k"
-    v3 = TypeOf v2
-    v4 = NewArray v1, v3 contents=anything holes=[]
-    v5 = NewArray v4 contents=anything holes=[]
-    v6 = Builtin builtin=Object
-    v7 = PropGet v6 key="keys"
-    v8 = Call v7, v6, v0 calleeKey="keys"
-    Return v5
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
 }
-runtimefunction id=$entries function=f1
+runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
 // The model reads toString and runs nothing, the native function calls it: a function of the shell that stores into "a". The object is in a global,
@@ -431,7 +379,7 @@ function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThi
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// A read through a predicted layout is behind a test, which an option word drops.
+// A read through an expected layout is behind a test, which an option word drops.
 static constexpr ASCIILiteral guardedShape = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
@@ -449,7 +397,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = Call v8, -, v6, v2, v4
     Return
 }
-function f1 name="readY" parameters=[{type=anything predicted=L0}] results=[{type=anything}] {
+function f1 name="readY" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="y"
     Return v1
@@ -458,50 +406,46 @@ function f1 name="readY" parameters=[{type=anything predicted=L0}] results=[{typ
 
 // As the leaked array, and what leaks is a map from strings to numbers of which the program reads only the size afterwards.
 static constexpr ASCIILiteral leakedMap = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
     v3 = Builtin builtin=Map
-    v4 = Construct v3, v3
+    v4 = Construct v3
     v5 = String string="a"
     v6 = PropGet v4 key="set"
     v7 = Call v6, v4, v5, v2 calleeKey="set"
-    v8 = NewObject -, v4 layout=L0 fields=[0]
-    v9 = FinishObject v8
-    v10 = Builtin builtin=Object
-    v11 = PropGet v10 key="entries"
-    v12 = Call v11, v10, v9 calleeKey="entries"
-    v13 = Builtin builtin=GlobalThis
-    v14 = PropGet v13 key="sink" [isFreeName]
-    v15 = Call v14, -, v12
-    v16 = PropGet v4 key="size"
-    v17 = PropGet v13 key="print" [isFreeName]
-    v18 = Call v17, -, v16
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = NewObject -, v4, v9 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = PropGet v11 key="toLocaleString"
+    v13 = Call v12, v11 calleeKey="toLocaleString"
+    v14 = PropGet v4 key="size"
+    v15 = PropGet v8 key="print" [isFreeName]
+    v16 = Call v15, -, v14
     Return
 }
-function f1 name="entries" role=Model parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = String string="k"
-    v2 = PropGet v0 key="k"
-    v3 = TypeOf v2
-    v4 = NewArray v1, v3 contents=anything holes=[]
-    v5 = NewArray v4 contents=anything holes=[]
-    v6 = Builtin builtin=Object
-    v7 = PropGet v6 key="keys"
-    v8 = Call v7, v6, v0 calleeKey="keys"
-    Return v5
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
 }
-runtimefunction id=$entries function=f1
+runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
 // As leakedObject, and what leaks is an instance of a class. The program calls a method of the class, reads a name that the class does not have and calls a method that it inherits from Object.prototype.
 static constexpr ASCIILiteral leakedInstance = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 layout L1 kind=Instance name="Complete" constructor=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -511,36 +455,30 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     DefineMethod v1, v2 layout=L1 key="method"
     v4 = FinishClass v1 layout=L1
     v5 = Construct v4
-    v6 = NewObject -, v5 layout=L0 fields=[0]
-    v7 = FinishObject v6
-    v8 = Builtin builtin=Object
-    v9 = PropGet v8 key="entries"
-    v10 = Call v9, v8, v7 calleeKey="entries"
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="sink" [isFreeName]
-    v13 = Call v12, -, v10
-    v14 = PropGet v11 key="print" [isFreeName]
-    v15 = PropGet v5 key="method"
-    v16 = Call v15, v5 calleeKey="method"
-    v17 = Call v14, -, v16
-    v18 = PropGet v5 key="other"
-    v19 = Call v14, -, v18
-    v20 = PropGet v5 key="toString"
-    v21 = Call v20, v5 calleeKey="toString"
-    v22 = Call v14, -, v21
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = NewObject -, v5, v7 layout=L0 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = PropGet v9 key="toLocaleString"
+    v11 = Call v10, v9 calleeKey="toLocaleString"
+    v12 = PropGet v6 key="print" [isFreeName]
+    v13 = PropGet v5 key="method"
+    v14 = Call v13, v5 calleeKey="method"
+    v15 = Call v12, -, v14
+    v16 = PropGet v5 key="other"
+    v17 = Call v12, -, v16
+    v18 = PropGet v5 key="toString"
+    v19 = Call v18, v5 calleeKey="toString"
+    v20 = Call v12, -, v19
     Return
 }
-function f1 name="entries" role=Model parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = String string="k"
-    v2 = PropGet v0 key="k"
-    v3 = TypeOf v2
-    v4 = NewArray v1, v3 contents=anything holes=[]
-    v5 = NewArray v4 contents=anything holes=[]
-    v6 = Builtin builtin=Object
-    v7 = PropGet v6 key="keys"
-    v8 = Call v7, v6, v0 calleeKey="keys"
-    Return v5
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
 }
 function f2 name="Complete" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
   b0(v0: anything):
@@ -553,48 +491,43 @@ function f3 name="method" kind=Method flags=[HasThis] thisType={type=anything} r
     v1 = String string="as defined"
     Return v1
 }
-runtimefunction id=$entries function=f1
+runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
 // As leakedObject, and what leaks is a closure, of which the program calls `call`.
 static constexpr ASCIILiteral leakedClosure = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
-layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f2
-    v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = FinishObject v1
-    v3 = Builtin builtin=Object
-    v4 = PropGet v3 key="entries"
-    v5 = Call v4, v3, v2 calleeKey="entries"
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="sink" [isFreeName]
-    v8 = Call v7, -, v5
-    v9 = PropGet v6 key="print" [isFreeName]
-    v10 = PropGet v0 key="call"
-    v11 = Call v10, v0 calleeKey="call"
-    v12 = Call v9, -, v11
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = PropGet v4 key="toLocaleString"
+    v6 = Call v5, v4 calleeKey="toLocaleString"
+    v7 = PropGet v1 key="print" [isFreeName]
+    v8 = PropGet v0 key="call"
+    v9 = Call v8, v0 calleeKey="call"
+    v10 = Call v7, -, v9
     Return
 }
-function f1 name="entries" role=Model parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = String string="k"
-    v2 = PropGet v0 key="k"
-    v3 = TypeOf v2
-    v4 = NewArray v1, v3 contents=anything holes=[]
-    v5 = NewArray v4 contents=anything holes=[]
-    v6 = Builtin builtin=Object
-    v7 = PropGet v6 key="keys"
-    v8 = Call v7, v6, v0 calleeKey="keys"
-    Return v5
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
 }
 function f2 name="plain" results=[{type=anything}] {
   b0():
     v0 = String string="as created"
     Return v0
 }
-runtimefunction id=$entries function=f1
+runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
 // The program deletes a field of one object of the layout, freezes it and gives another an indexed accessor, so every access to a third object stands under guards.
@@ -628,13 +561,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v19 = NewObject -, v1, v4 layout=L0 fields=[0, 1]
     v20 = FinishObject v19
     PropSet v0, v20 key="kept" mode=Sloppy
-    v22 = PropGet v20 key="a"
-    v23 = PropGet v20 key="toLocaleString"
-    v24 = Call v23, v20 calleeKey="toLocaleString"
+    v22 = Integer integer=0
+    Jump -> next b1(v22)
+  b1(v23):
+    LoopHint
     v25 = PropGet v20 key="a"
-    v26 = StrictEq v22, v25
-    v27 = PropGet v0 key="print" [isFreeName]
-    v28 = Call v27, -, v26
+    v26 = PropGet v20 key="toLocaleString"
+    v27 = Call v26, v20 calleeKey="toLocaleString"
+    v28 = PropGet v20 key="a"
+    v29 = StrictEq v25, v28
+    v30 = PropGet v0 key="print" [isFreeName]
+    v31 = Call v30, -, v29
+    v32 = Increment v23
+    v33 = Less v32, v4
+    Branch v33 -> taken b1(v32), notTaken b2()
+  b2():
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
@@ -683,13 +624,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v21 = NewObject -, v1, v4 layout=L0 fields=[0, 1]
     v22 = FinishObject v21
     PropSet v0, v22 key="kept" mode=Sloppy
-    v24 = PropGet v22 key="a"
-    v25 = PropGet v22 key="toLocaleString"
-    v26 = Call v25, v22 calleeKey="toLocaleString"
-    v27 = PropGet v22 key="toLocaleString"
-    v28 = StrictEq v25, v27
-    v29 = PropGet v0 key="print" [isFreeName]
-    v30 = Call v29, -, v28
+    v24 = Integer integer=0
+    Jump -> next b1(v24)
+  b1(v25):
+    LoopHint
+    v27 = PropGet v22 key="a"
+    v28 = PropGet v22 key="toLocaleString"
+    v29 = Call v28, v22 calleeKey="toLocaleString"
+    v30 = PropGet v22 key="toLocaleString"
+    v31 = StrictEq v28, v30
+    v32 = PropGet v0 key="print" [isFreeName]
+    v33 = Call v32, -, v31
+    v34 = Increment v25
+    v35 = Less v34, v4
+    Branch v35 -> taken b1(v34), notTaken b2()
+  b2():
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
@@ -710,8 +659,6 @@ runtimefunction id=$toLocaleString function=f1
 static UTF8CString withNumbersOfModels(ASCIILiteral programText)
 {
     String text = makeStringByReplacingAll(String(programText), "$toLocaleString"_s, String::number(RuntimeFunctions::ObjectsToLocaleString.index()));
-    text = makeStringByReplacingAll(text, "$entries"_s, String::number(RuntimeFunctions::ObjectsEntries.index()));
-    text = makeStringByReplacingAll(text, "$forEach"_s, String::number(RuntimeFunctions::IteratorsForEach.index()));
     return text.utf8();
 }
 
@@ -767,24 +714,31 @@ static void testCalleeOutsideCompleteSet()
     checkValidationFails(resolvedCallee, ValidationFailureKind::UnlistedCallee, ""_s, { "validate"_s, "disable=flow:ExactFunctions"_s });
 }
 
-static void testCallThatNeverReturns()
+static void testUnreachableBlockIsEntered()
 {
-    checkValidationFails(callThatNeverReturns, ValidationFailureKind::UnreachableValue);
+    checkValidationFails(unreachableBlock, ValidationFailureKind::UnreachableValue, "globalThis.enters = true;"_s);
+    checkOutputOfProgramInShell(unreachableBlock, "went on\n"_s, { "validate"_s }, "globalThis.enters = false;"_s);
 }
 
+// The function has lost its body. No code that the compiler has not seen can run in this program, so whatever enters the function all the same shows a proof that does not hold.
+// Where such code can run the entry throws the error of a function that was not compiled, in a validating build as in any other: the compatibility page describes it.
 static void testFunctionThatIsNeverReached()
 {
     checkValidationFails(functionThatIsNeverReached, ValidationFailureKind::UnreachableValue);
 }
 
+// Whoever enters the function from outside finds the entry that was left out, and never comes to the test of the first run: that one stands against a count of compiled calls that is wrong.
 static void testFunctionThatRunsOnce()
 {
-    checkValidationFails(functionThatRunsOnce, ValidationFailureKind::SecondRun);
+    checkValidationFails(functionThatRunsOnce, ValidationFailureKind::UnreachableValue, "globalThis.sink = function () { print(this.k()); };"_s);
+
+    UTF8CString numberedText = withNumbersOfModels(functionThatRunsOnce);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "ran\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
 }
 
 static void testReadReplacedAcrossCall()
 {
-    checkValidationFails(leakedObject, ValidationFailureKind::ReadsDiffer, "globalThis.sink = entries => { entries[0][1].x = 0.5; };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::ReadsDiffer, "globalThis.sink = function () { this.k.x = 0.5; };"_s);
 }
 
 static void testReadReplacedByEffectsOfCall()
@@ -799,118 +753,189 @@ static void testSlotAccessBehindDroppedTest()
 
 static void testContentsOfArray()
 {
-    checkValidationFails(leakedArray, ValidationFailureKind::ContainerContents, "globalThis.after = () => { }; globalThis.sink = entries => { entries[0][1][0] = 'text'; };"_s);
+    checkValidationFails(leakedArray, ValidationFailureKind::ContainerContents, "globalThis.after = () => { }; globalThis.sink = function () { this.k[0] = 'text'; };"_s);
+}
+
+// As leakedArray, with integers: the array never escapes and nothing but integers is stored, so it keeps the storage for integers that it was made with.
+static constexpr ASCIILiteral leakedArrayOfIntegers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewArray v0, v0, v0 contents=anything holes=[]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewObject -, v1, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = PropGet v5 key="toLocaleString"
+    v7 = Call v6, v5 calleeKey="toLocaleString"
+    v8 = Integer integer=0
+    v9 = ElemGet v1, v8
+    v10 = TypeOf v9
+    v11 = PropGet v2 key="print" [isFreeName]
+    v12 = Call v11, -, v10
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
+}
+runtimefunction id=$toLocaleString function=f1
+)IR"_s;
+
+// The storage is asked for before the elements are looked at.
+static void testStorageOfArray()
+{
+    checkValidationFails(leakedArrayOfIntegers, ValidationFailureKind::ArrayStorageKind, "globalThis.sink = function () { this.k[0] = 0.5; };"_s);
+    checkValidationFails(leakedArrayOfIntegers, ValidationFailureKind::ArrayStorageKind, "globalThis.sink = function () { this.k[0] = 'text'; };"_s);
+    checkValidationFails(leakedArrayOfIntegers, ValidationFailureKind::ArrayStorageKind, "globalThis.sink = function () { this.k[100000] = 7; };"_s);
+    checkValidationFails(leakedArrayOfIntegers, ValidationFailureKind::ContainerContents, "globalThis.sink = function () { this.k[0] = 8; };"_s);
+
+    UTF8CString numberedText = withNumbersOfModels(leakedArrayOfIntegers);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "validate"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
+}
+
+// Nothing in the program does any of this to the object, and the object never escapes: each is a mutation that flow calls impossible for its layout.
+static void testEveryKindOfMutation()
+{
+    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v15 = Call v14, -, v13\n"_s, "    v15 = Call v14, -, v13\n    v16 = PropGet v5 key=\"unread\"\n    v17 = Call v14, -, v16\n"_s).utf8();
+    ASCIILiteral objectWithEveryFieldRead = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
+    for (ASCIILiteral statements : {
+        "globalThis.sink = function () { Object.setPrototypeOf(this.k, { }); };"_s,
+        "globalThis.sink = function () { Object.setPrototypeOf(this.k, null); };"_s,
+        "globalThis.sink = function () { this.k.__proto__ = { }; };"_s,
+        "globalThis.sink = function () { Object.defineProperty(this.k, 'x', { get() { return 1; } }); };"_s,
+        "globalThis.sink = function () { Object.defineProperty(this.k, 'x', { writable: false }); };"_s,
+        "globalThis.sink = function () { delete this.k.x; };"_s,
+        "globalThis.sink = function () { this.k.x = 'text'; };"_s,
+        "globalThis.sink = function () { this.k.added = 1; };"_s,
+        "globalThis.sink = function () { this.k[Symbol('s')] = 1; };"_s,
+        "globalThis.sink = function () { this.k[0] = 1; };"_s,
+        "globalThis.sink = function () { Object.freeze(this.k); };"_s,
+        "globalThis.sink = function () { Object.preventExtensions(this.k); };"_s,
+        "globalThis.sink = function () { globalThis.child = Object.create(this.k); };"_s,
+    })
+        checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ImpossibleMutation, statements);
+    // A store of a value of the field's type is found where the program reads the field again.
+    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ReadsDiffer, "globalThis.sink = function () { this.k.unread = 6; };"_s);
 }
 
 static void testContentsOfMap()
 {
-    checkValidationFails(leakedMap, ValidationFailureKind::ContainerContents, "globalThis.sink = entries => { entries[0][1].set('c', 'text'); };"_s);
-    checkValidationFails(leakedMap, ValidationFailureKind::ContainerContents, "globalThis.sink = entries => { entries[0][1].set(5, 1.5); };"_s);
+    checkValidationFails(leakedMap, ValidationFailureKind::ContainerContents, "globalThis.sink = function () { this.k.set('c', 'text'); };"_s);
+    checkValidationFails(leakedMap, ValidationFailureKind::ContainerContents, "globalThis.sink = function () { this.k.set(5, 1.5); };"_s);
 }
 
 static void testPristineArray()
 {
-    checkValidationFails(leakedArray, ValidationFailureKind::ArrayNotPristine, "globalThis.after = () => { }; globalThis.sink = entries => { Object.setPrototypeOf(entries[0][1], { }); };"_s);
+    checkValidationFails(leakedArray, ValidationFailureKind::ArrayNotPristine, "globalThis.after = () => { }; globalThis.sink = function () { Object.setPrototypeOf(this.k, { }); };"_s);
 }
 
 // With a property of its own the names of the array are not proven and its storage is. A data property under "-1" costs the structure its mark and breaks nothing.
 static void testArrayWithProvenStorageAlone()
 {
-    UTF8CString text = makeStringByReplacingAll(String(leakedArray), "    v21 = Call v20\n"_s, "    v21 = Call v20\n    PropSet v3, v2 key=\"label\" mode=Strict\n"_s).utf8();
+    UTF8CString text = makeStringByReplacingAll(String(leakedArray), "    v19 = Call v18\n"_s, "    v19 = Call v18\n    PropSet v3, v2 key=\"label\" mode=Strict\n"_s).utf8();
     ASCIILiteral labeledArray = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
-    checkValidationFails(labeledArray, ValidationFailureKind::ArrayElementsNotOrdinary, "globalThis.after = () => { }; globalThis.sink = entries => { Object.setPrototypeOf(entries[0][1], { }); };"_s);
-    checkValidationFails(labeledArray, ValidationFailureKind::ArrayElementsNotOrdinary, "globalThis.after = () => { }; globalThis.sink = entries => { Object.defineProperty(entries[0][1], '-1', { get() { return 1; } }); };"_s);
+    checkValidationFails(labeledArray, ValidationFailureKind::ArrayElementsNotOrdinary, "globalThis.after = () => { }; globalThis.sink = function () { Object.setPrototypeOf(this.k, { }); };"_s);
+    checkValidationFails(labeledArray, ValidationFailureKind::ArrayElementsNotOrdinary, "globalThis.after = () => { }; globalThis.sink = function () { Object.defineProperty(this.k, '-1', { get() { return 1; } }); };"_s);
 
     UTF8CString numberedText = withNumbersOfModels(labeledArray);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = entries => { entries[0][1][-1] = 1; };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = function () { this.k[-1] = 1; };"_s);
 }
 
 // Nothing in the program reads the field "unread", so no object has it.
 static void testRemovedFieldIsRead()
 {
-    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = entries => { print(entries[0][1].unread); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(this.k.unread); };"_s);
 }
 
 static void testKeysOfObjectWithRemovedField()
 {
-    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = entries => { print(Object.keys(entries[0][1])); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(Object.keys(this.k)); };"_s);
 }
 
 // The program reads every field, so the object keeps them all. Nothing in the program lists its keys, so the object keeps no order of them.
 static void testKeysOfObjectWithoutKeyOrder()
 {
-    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v17 = Call v16, -, v15\n"_s, "    v17 = Call v16, -, v15\n    v18 = PropGet v5 key=\"unread\"\n    v19 = Call v16, -, v18\n"_s).utf8();
+    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v15 = Call v14, -, v13\n"_s, "    v15 = Call v14, -, v13\n    v16 = PropGet v5 key=\"unread\"\n    v17 = Call v14, -, v16\n"_s).utf8();
     ASCIILiteral objectWithEveryFieldRead = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
-    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = entries => { print(Object.keys(entries[0][1])); };"_s);
-    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = entries => { print(JSON.stringify(entries[0][1])); };"_s);
-    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = entries => { print(Object.keys({ ...entries[0][1] })); };"_s);
-    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = entries => { for (let key in entries[0][1]) print(key); };"_s);
+    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = function () { print(Object.keys(this.k)); };"_s);
+    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = function () { print(JSON.stringify(this.k)); };"_s);
+    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = function () { print(Object.keys({ ...this.k })); };"_s);
+    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::KeysListed, "globalThis.sink = function () { for (let key in this.k) print(key); };"_s);
 
     UTF8CString numberedText = withNumbersOfModels(objectWithEveryFieldRead);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "5\ntrue\n5\n"_s, { "validate"_s }, "globalThis.sink = entries => { print(entries[0][1].unread); };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "5\ntrue\n5\n"_s, { "validate"_s }, "globalThis.sink = function () { print(this.k.unread); };"_s);
 }
 
 // The program deletes one field, so an object of the layout may lose a field. It is proven of the other field alone that nothing deletes, redefines or retypes it.
 static void testStableFieldOfLayoutThatLosesAnotherField()
 {
-    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v17 = Call v16, -, v15\n"_s, "    v17 = Call v16, -, v15\n    v18 = PropGet v5 key=\"unread\"\n    v19 = Call v16, -, v18\n    v20 = PropDelete v5 key=\"unread\" mode=Sloppy\n"_s).utf8();
+    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v15 = Call v14, -, v13\n"_s, "    v15 = Call v14, -, v13\n    v16 = PropGet v5 key=\"unread\"\n    v17 = Call v14, -, v16\n    v18 = PropDelete v5 key=\"unread\" mode=Sloppy\n"_s).utf8();
     ASCIILiteral objectThatLosesField = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
-    checkValidationFails(objectThatLosesField, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = entries => { delete entries[0][1].x; };"_s);
+    checkValidationFails(objectThatLosesField, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { delete this.k.x; };"_s);
 
     UTF8CString numberedText = withNumbersOfModels(objectThatLosesField);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n5\n"_s, { "validate"_s }, "globalThis.sink = entries => { };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n5\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
 }
 
 // The program gives the object the property "p" and no other, so a lookup of any other name goes on to the prototypes without a look at the properties beside the fields.
 static void testNameOutsideCompleteListOfAddedNames()
 {
-    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v17 = Call v16, -, v15\n"_s, "    v17 = Call v16, -, v15\n    PropSet v5, v2 key=\"p\" mode=Strict\n"_s).utf8();
+    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v15 = Call v14, -, v13\n"_s, "    v15 = Call v14, -, v13\n    PropSet v5, v2 key=\"p\" mode=Strict\n"_s).utf8();
     ASCIILiteral objectWithAddedProperty = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
     OptionWords optionWords { "validate"_s, "disable=flow:AppendedFields"_s };
-    checkValidationFails(objectWithAddedProperty, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = entries => { entries[0][1].toString = () => 'own'; };"_s, optionWords);
+    checkValidationFails(objectWithAddedProperty, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { this.k.toString = () => 'own'; };"_s, optionWords);
 
     UTF8CString numberedText = withNumbersOfModels(objectWithAddedProperty);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, optionWords, "globalThis.sink = entries => { entries[0][1].p = 1; };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, optionWords, "globalThis.sink = function () { this.k.p = 1; };"_s);
 }
 
 // What flow proves about the members of a class answers each of the three reads without a lookup. The read that a test looks at keeps its lookup,
 // and the prototype object of a class that lists all its names gets no other.
 static void testMembersOfClassChange()
 {
-    checkValidationFails(leakedInstance, ValidationFailureKind::AssumedType, "globalThis.sink = entries => { Object.getPrototypeOf(entries[0][1]).method = () => 'replaced'; };"_s);
-    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = entries => { Object.getPrototypeOf(entries[0][1]).other = 5; };"_s);
-    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = entries => { Object.getPrototypeOf(entries[0][1]).toString = () => 'of the class'; };"_s);
+    checkValidationFails(leakedInstance, ValidationFailureKind::LookupDiffers, "globalThis.sink = function () { Object.getPrototypeOf(this.k).method = () => 'replaced'; };"_s);
+    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).other = 5; };"_s);
+    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).toString = () => 'of the class'; };"_s);
 
     UTF8CString numberedText = withNumbersOfModels(leakedInstance);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "as defined\nundefined\n[object Object]\n"_s, { "validate"_s }, "globalThis.sink = entries => { };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "as defined\nundefined\n[object Object]\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
 }
 
 static void testMemberOfClosureChanges()
 {
-    checkValidationFails(leakedClosure, ValidationFailureKind::AssumedType, "globalThis.sink = entries => { entries[0][1].call = () => 'replaced'; };"_s);
-    checkValidationFails(leakedClosure, ValidationFailureKind::AssumedType, "globalThis.sink = entries => { Object.setPrototypeOf(entries[0][1], { call() { return 'inherited'; } }); };"_s);
+    checkValidationFails(leakedClosure, ValidationFailureKind::AssumedType, "globalThis.sink = function () { this.k.call = () => 'replaced'; };"_s);
+    checkValidationFails(leakedClosure, ValidationFailureKind::AssumedType, "globalThis.sink = function () { Object.setPrototypeOf(this.k, { call() { return 'inherited'; } }); };"_s);
 
     UTF8CString numberedText = withNumbersOfModels(leakedClosure);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "as created\n"_s, { "validate"_s }, "globalThis.sink = entries => { };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "as created\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
 }
 
 // Nothing in the program names RegExp.
 static void testLegacyRegExpStaticIsRead()
 {
-    checkValidationFails(leakedObject, ValidationFailureKind::LegacyRegExpStaticRead, "globalThis.sink = entries => { print(RegExp.$1); };"_s);
-    checkValidationFails(leakedObject, ValidationFailureKind::LegacyRegExpStaticRead, "globalThis.sink = entries => { print(RegExp.input); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::LegacyRegExpStaticRead, "globalThis.sink = function () { print(RegExp.$1); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::LegacyRegExpStaticRead, "globalThis.sink = function () { print(RegExp.input); };"_s);
 }
 
-static void testGuardKeptAcrossCall()
+// A read of a slot asks for no guard, and the inherited member is looked for again behind the call: nothing is kept across it, so what the function of the shell changes is seen and no check has anything to find.
+static void testNothingIsKeptAcrossCall()
 {
-    checkValidationFails(guardKeptAcrossCall, ValidationFailureKind::GuardNoLongerHolds, "globalThis.mutate = function () { Object.defineProperty(this, 0, { get() { return 1; } }); return 'text'; };"_s);
-
-    checkValidationFails(prototypeGuardKeptAcrossCall, ValidationFailureKind::AssumedType, "globalThis.mutate = function () { Object.setPrototypeOf(this, { toLocaleString() { return 'other'; } }); return 'text'; };"_s);
-
-    for (ASCIILiteral program : { guardKeptAcrossCall, prototypeGuardKeptAcrossCall }) {
-        UTF8CString numberedText = withNumbersOfModels(program);
-        checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, { "validate"_s }, "globalThis.mutate = function () { return 'text'; };"_s);
-    }
+    UTF8CString guardText = withNumbersOfModels(guardKeptAcrossCall);
+    UTF8CString prototypeGuardText = withNumbersOfModels(prototypeGuardKeptAcrossCall);
+    ASCIILiteral guard = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(guardText.data()));
+    ASCIILiteral prototypeGuard = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(prototypeGuardText.data()));
+    checkOutputOfProgramInShell(guard, "true\n"_s, { "validate"_s }, "globalThis.mutate = function () { Object.defineProperty(this, 0, { get() { return 1; } }); return 'text'; };"_s);
+    checkOutputOfProgramInShell(prototypeGuard, "false\n"_s, { "validate"_s }, "globalThis.mutate = function () { Object.setPrototypeOf(this, { toLocaleString() { return 'other'; } }); return 'text'; };"_s);
+    for (ASCIILiteral program : { guard, prototypeGuard })
+        checkOutputOfProgramInShell(program, "true\n"_s, { "validate"_s }, "globalThis.mutate = function () { return 'text'; };"_s);
 
     // Where the program may run in several instances, a test of the instance is among the tests that each use repeats. It takes the receiver as the type test narrowed it.
     checkOutputOfProgramInShell(guardedShape, "1.5\n1.5\n"_s, { "validate"_s, "disable=flow:ReachedFunctions"_s }, "globalThis.register = (readY, whole, withoutX) => { print(readY(whole)); print(readY(whole)); };"_s);
@@ -919,9 +944,9 @@ static void testGuardKeptAcrossCall()
 // The walks that do not ask the object for the names of its properties.
 static void testWalksOverObjectWithRemovedField()
 {
-    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = entries => { print(JSON.stringify(entries[0][1])); };"_s);
-    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = entries => { print(Object.keys({ ...entries[0][1] })); };"_s);
-    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = entries => { print(Object.values(entries[0][1])); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(JSON.stringify(this.k)); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(Object.keys({ ...this.k })); };"_s);
+    checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(Object.values(this.k)); };"_s);
 }
 
 static void testTrueProofsPass()
@@ -929,9 +954,9 @@ static void testTrueProofsPass()
     UTF8CString objectText = withNumbersOfModels(leakedObject);
     UTF8CString arrayText = withNumbersOfModels(leakedArray);
     ASCIILiteral object = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(objectText.data()));
-    checkOutputOfProgramInShell(object, "true\n"_s, { "validate"_s }, "globalThis.sink = entries => { };"_s);
-    checkOutputOfProgramInShell(object, "undefined\ntrue\n"_s, { "validate"_s }, "globalThis.sink = entries => { print(entries[0][1].neverDeclared); };"_s);
-    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(arrayText.data())), "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = entries => { entries[0][1][0] = 0.5; };"_s);
+    checkOutputOfProgramInShell(object, "true\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
+    checkOutputOfProgramInShell(object, "undefined\ntrue\n"_s, { "validate"_s }, "globalThis.sink = function () { print(this.k.neverDeclared); };"_s);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(arrayText.data())), "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = function () { this.k[0] = 0.5; };"_s);
 }
 
 std::span<const NativeTest> proofValidationTests()
@@ -943,7 +968,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/layout-at-slot-read"_s, testLayoutAtSlotRead },
         { "proof-validation/resolved-callee"_s, testResolvedCallee },
         { "proof-validation/callee-outside-complete-set"_s, testCalleeOutsideCompleteSet },
-        { "proof-validation/call-that-never-returns"_s, testCallThatNeverReturns },
+        { "proof-validation/unreachable-block-is-entered"_s, testUnreachableBlockIsEntered },
         { "proof-validation/function-that-is-never-reached"_s, testFunctionThatIsNeverReached },
         { "proof-validation/function-that-runs-once-runs-again"_s, testFunctionThatRunsOnce },
         { "proof-validation/read-replaced-across-call"_s, testReadReplacedAcrossCall },
@@ -951,6 +976,8 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/slot-access-behind-dropped-test"_s, testSlotAccessBehindDroppedTest },
         { "proof-validation/contents-of-array"_s, testContentsOfArray },
         { "proof-validation/contents-of-map"_s, testContentsOfMap },
+        { "proof-validation/storage-of-array"_s, testStorageOfArray },
+        { "proof-validation/every-kind-of-mutation"_s, testEveryKindOfMutation },
         { "proof-validation/pristine-array"_s, testPristineArray },
         { "proof-validation/array-with-proven-storage-alone"_s, testArrayWithProvenStorageAlone },
         { "proof-validation/removed-field-is-read"_s, testRemovedFieldIsRead },
@@ -962,7 +989,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/members-of-class-change"_s, testMembersOfClassChange },
         { "proof-validation/member-of-closure-changes"_s, testMemberOfClosureChanges },
         { "proof-validation/legacy-regexp-static-is-read"_s, testLegacyRegExpStaticIsRead },
-        { "proof-validation/guard-kept-across-call"_s, testGuardKeptAcrossCall },
+        { "proof-validation/nothing-is-kept-across-call"_s, testNothingIsKeptAcrossCall },
         { "proof-validation/true-proofs-pass"_s, testTrueProofsPass },
     };
     return tests;

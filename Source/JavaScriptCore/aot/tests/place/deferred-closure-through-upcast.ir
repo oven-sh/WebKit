@@ -1,9 +1,9 @@
-# Only a closure whose one use is the store is deferred: one that reaches its field through a cast is created and its slot is a plain cell, as an initial field and in a store
+# A closure that reaches its field through casts, each with one use, is deferred like one that the allocation lists itself, as an initial field and in a store that the allocation takes over
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses,DeferClosuresInFields references=narrow
 # RUN: place program
 # RUN(PLAN): plan-slots layouts
-# STATISTIC: DeferredClosureSlots = 1
+# STATISTIC: DeferredClosureSlots = 3
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -44,7 +44,7 @@ function f2 name="StoredThroughCasts" kind=BaseConstructor flags=[HasNewTarget] 
     Return v2
 }
 function f3 name="call" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
-  b0(v0: object ? L1):
+  b0(v0: L1):
     Return
 }
 function f4 name="direct" kind=Arrow results=[{type=anything}] {
@@ -53,13 +53,21 @@ function f4 name="direct" kind=Arrow results=[{type=anything}] {
 }
 
 # PLAN: L0 CompiledObject
-# PLAN-NOT: DeferredClosure
-# PLAN: L2 CompiledObject
+# PLAN-NEXT: .0 "run" DeferredClosure @16 f1 record=0
+# PLAN-NEXT: L1 CompiledObject
+# PLAN-NEXT: .0 "call" DeferredClosure @16 f3 capturesObject record=0
+# PLAN-NEXT: L2 CompiledObject
 # PLAN-NEXT: .0 "run" DeferredClosure @16 f4 record=0
 
 # CHECK-LABEL: function f0 name="main"
-# CHECK-NOT: closureForm=Deferred
+# CHECK: v0: f1 = NewClosure function=f1 {{*}}closureForm=Deferred
+# CHECK-NEXT: v1: f1 = Upcast v0 castType=function
+# CHECK-NEXT: = NewObject -, v1 layout=L0 fields=[0]
 # CHECK: v10: f4 = NewClosure function=f4 {{*}}closureForm=Deferred
 # CHECK-LABEL: function f2 name="StoredThroughCasts"
-# CHECK-NOT: closureForm=Deferred
+# CHECK: [[closure]]: f3 = NewClosure function=f3 {{*}}closureForm=Deferred
+# CHECK-NEXT: [[first]]: f3 = Upcast [[closure]] castType=function
+# CHECK-NEXT: [[second]]: f3 = Upcast [[first]] castType=undefined|function
+# CHECK-NEXT: = NewObject {{*}}, [[second]] layout=L1 fields=[0]
+# CHECK-NOT: PropDefine
 # CHECK-LABEL: function f3 name="call"

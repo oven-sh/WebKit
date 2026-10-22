@@ -16,6 +16,7 @@
 #include "HeapUtil.h"
 #include "JSCInlines.h"
 #include "JSPromise.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
 #include "Microtask.h"
 #include "MicrotaskQueueInlines.h"
 
@@ -43,30 +44,44 @@ SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
 
-SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, size_t numberOfWords)
+SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, size_t numberOfWords, uint32_t skippedAtTop, uint32_t skippedAtBottom)
 {
+    RELEASE_ASSERT(numberOfWords <= maxNumberOfWords && skippedAtTop <= UINT8_MAX && skippedAtBottom <= UINT8_MAX);
     CoroutineTable& coroutineTable = *instance.state->coroutines;
     Structure* structure = coroutineTable.savedFrameStructure();
-    SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, structure, kind, static_cast<uint32_t>(numberOfWords));
+    SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, structure, kind, static_cast<uint16_t>(numberOfWords), static_cast<uint8_t>(skippedAtTop), static_cast<uint8_t>(skippedAtBottom));
     saved->finishCreation(vm);
     saved->m_promiseOrWaiter = saved;
     coroutineTable.didCreateSavedFrame(vm, saved);
     return saved;
 }
 
+SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, const SuspendedMachineFrame& machineFrame)
+{
+    uint64_t siteWord = machineFrame.words->siteWord;
+    return create(vm, instance, kind, machineFrame.numberOfWords(), skippedAtTopOf(siteWord), skippedAtBottomOf(siteWord));
+}
+
+SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
+{
+    SavedFrame* saved = create(vm, instance, CoroutineKind::AsyncFunction, machineFrame);
+    uint64_t siteWord = machineFrame.words->siteWord;
+    uint32_t promiseLocation = promiseLocationOf(siteWord);
+    RELEASE_ASSERT(preservedRegister != InvalidGPRReg || promiseLocation != locationInRegister);
+    uint64_t promise = promiseLocation == locationInRegister ? machineFrame.words->preservedRegister : machineFrame.frame[-static_cast<intptr_t>(promiseLocation)];
+    if (JSValue::decode(static_cast<EncodedJSValue>(promise)).isCell()) {
+        saved->m_promiseOrWaiter = std::bit_cast<JSCell*>(promise);
+        saved->m_continuation = Continuation::Promise;
+    }
+    saved->m_numberOfSavedRegisterPairs = static_cast<uint8_t>(savedRegistersOrPairsOf(siteWord));
+    return saved;
+}
+
 SavedFrame* SavedFrame::saveAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
 {
     SavedFrame* saved = forFrame(instance, machineFrame.frame);
-    if (!saved) {
-        saved = create(vm, instance, CoroutineKind::AsyncFunction, machineFrame.numberOfWords());
-        uint32_t promiseLocation = promiseLocationOf(machineFrame.words->siteWord);
-        RELEASE_ASSERT(preservedRegister != InvalidGPRReg || promiseLocation != locationInRegister);
-        uint64_t promise = promiseLocation == locationInRegister ? machineFrame.words->preservedRegister : machineFrame.frame[-static_cast<intptr_t>(promiseLocation)];
-        if (promise) {
-            saved->m_promiseOrWaiter = std::bit_cast<JSCell*>(promise);
-            saved->m_continuation = Continuation::Promise;
-        }
-    }
+    if (!saved)
+        saved = createForAsyncFunction(vm, instance, machineFrame);
     saved->save(vm, machineFrame, SuspensionKind::Await);
     return saved;
 }
@@ -76,10 +91,12 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
     size_t numberOfWords = machineFrame.numberOfWords();
     uint64_t siteWord = machineFrame.words->siteWord;
     RELEASE_ASSERT(m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
+    RELEASE_ASSERT(m_numberOfWordsSkippedAtTop == skippedAtTopOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
     willWrite();
     uint64_t* words = this->words();
+    const uint64_t* source = machineFrame.firstSavedWord();
     for (size_t i = 0; i < numberOfWords; ++i)
-        words[i] = machineFrame.bottom[i];
+        words[i] = source[i];
     if constexpr (preservedRegister != InvalidGPRReg)
         m_preservedRegister = machineFrame.words->preservedRegister;
     m_numberOfSavedRegisterPairs = static_cast<uint8_t>(savedRegistersOrPairsOf(siteWord));
@@ -113,9 +130,11 @@ uint64_t* SavedFrame::addressOfWordAt(uint32_t location)
 {
     if (location == locationInRegister)
         return &m_preservedRegister;
-    return &words()[m_numberOfWords - location];
+    return &words()[m_numberOfWords + m_numberOfWordsSkippedAtTop - location];
 }
 
+// A word that the map does not list is dead, or it is no reference: an integer, half a fraction, the header for the next closure, whatever compiled code keeps over the suspension.
+// So only a whole word is judged: nothing but a pointer has the bits of one. Half a word that reads like a 32-bit reference to a dead cell is as often an integer between two million and an eighth of the heap's size.
 void SavedFrame::poisonDeadUnlistedWords(VM& vm)
 {
     static_assert(locationHolding(2 * 3) == 3 && !isInUpperHalf(2 * 3) && locationHolding(2 * 3 - 1) == 3 && isInUpperHalf(2 * 3 - 1));
@@ -123,30 +142,16 @@ void SavedFrame::poisonDeadUnlistedWords(VM& vm)
         return;
     std::optional<SavedFrameMap> map = liveSlotMap(m_liveSlotMapOffsetPlusOne);
     RELEASE_ASSERT(map);
-    auto poisonedIfDead = [&](uint32_t half) {
-        return HeapUtil::classifyNarrowReference(vm.heap, half) == HeapUtil::WordKind::UnmarkedCell ? poisonedNarrowReference : half;
-    };
     auto poisonDeadUnlistedWord = [&](uint32_t location) {
-        if (map->listsValue(location))
+        if (map->listsValue(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
             return;
-        bool hasUpperNarrowLocation = location != locationInRegister;
-        bool listsLowerHalf = map->listsNarrowReference(2 * location);
-        bool listsUpperHalf = hasUpperNarrowLocation && map->listsNarrowReference(2 * location - 1);
         uint64_t& word = *addressOfWordAt(location);
-        if (!listsLowerHalf && !listsUpperHalf && HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell) {
+        if (HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell)
             word = poisonedWord;
-            return;
-        }
-        uint32_t lowerHalf = static_cast<uint32_t>(word);
-        uint32_t upperHalf = static_cast<uint32_t>(word >> 32);
-        if (!listsLowerHalf)
-            lowerHalf = poisonedIfDead(lowerHalf);
-        if (hasUpperNarrowLocation && !listsUpperHalf)
-            upperHalf = poisonedIfDead(upperHalf);
-        word = static_cast<uint64_t>(upperHalf) << 32 | lowerHalf;
     };
     willWrite();
-    for (uint32_t location = 1; location <= m_numberOfWords; ++location)
+    uint32_t lastLocation = m_numberOfWords + m_numberOfWordsSkippedAtTop;
+    for (uint32_t location = m_numberOfWordsSkippedAtTop + 1; location <= lastLocation; ++location)
         poisonDeadUnlistedWord(location);
     if constexpr (preservedRegister != InvalidGPRReg)
         poisonDeadUnlistedWord(locationInRegister);
@@ -163,6 +168,13 @@ SavedFrame* SavedFrame::waiter() const
     return m_continuation == Continuation::Waiter ? uncheckedDowncast<SavedFrame>(m_promiseOrWaiter) : nullptr;
 }
 
+JSPromise* SavedFrame::promiseOfCombinator() const
+{
+    if (continuation() != Continuation::CombinatorElement)
+        return nullptr;
+    return uncheckedDowncast<JSPromise>(uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(m_promiseOrWaiter)->promise());
+}
+
 void SavedFrame::setWaiter(VM& vm, SavedFrame* waiter, JSValue asyncContext)
 {
     RELEASE_ASSERT(m_continuation == Continuation::None);
@@ -174,14 +186,27 @@ void SavedFrame::setWaiter(VM& vm, SavedFrame* waiter, JSValue asyncContext)
     vm.writeBarrier(this);
 }
 
+void SavedFrame::setCombinatorElement(VM& vm, JSCell* globalContext, uint32_t index)
+{
+    RELEASE_ASSERT(m_continuation == Continuation::None && index < maxCombinatorElements);
+    ASSERT(m_promiseOrWaiter == this && globalContext->inherits<JSPromiseCombinatorsGlobalContext>());
+    m_promiseOrWaiter = globalContext;
+    m_continuation = static_cast<Continuation>(static_cast<uint32_t>(Continuation::CombinatorElement) + index);
+    vm.writeBarrier(this);
+}
+
 void SavedFrame::fulfill(JSGlobalObject* globalObject, VM& vm, JSValue value)
 {
-    switch (m_continuation) {
+    switch (continuation()) {
     case Continuation::Waiter: {
         auto* waiter = uncheckedDowncast<SavedFrame>(m_promiseOrWaiter);
         globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), value, waiter, JSValue::decode(waiter->m_asyncContext));
         return;
     }
+    // The job that the promise of the function would queue, had Promise.all been given one.
+    case Continuation::CombinatorElement:
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), m_promiseOrWaiter, value, jsNumber(combinatorIndex()));
+        return;
     case Continuation::None:
     case Continuation::Promise:
         ensurePromise(globalObject, vm)->fulfill(vm, value);
@@ -192,12 +217,15 @@ void SavedFrame::fulfill(JSGlobalObject* globalObject, VM& vm, JSValue value)
 
 void SavedFrame::reject(JSGlobalObject* globalObject, VM& vm, JSValue error)
 {
-    switch (m_continuation) {
+    switch (continuation()) {
     case Continuation::Waiter: {
         auto* waiter = uncheckedDowncast<SavedFrame>(m_promiseOrWaiter);
         globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, static_cast<uint8_t>(JSPromise::Status::Rejected), jsUndefined(), error, waiter, JSValue::decode(waiter->m_asyncContext));
         return;
     }
+    case Continuation::CombinatorElement:
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Rejected), m_promiseOrWaiter, error, jsNumber(combinatorIndex()));
+        return;
     case Continuation::None:
     case Continuation::Promise:
         ensurePromise(globalObject, vm)->reject(vm, error);
@@ -211,10 +239,21 @@ JSPromise* SavedFrame::ensurePromise(JSGlobalObject* globalObject, VM& vm)
     if (JSPromise* promise = this->promise())
         return promise;
     ASSERT(m_continuation != Continuation::None || m_promiseOrWaiter == this);
-    SavedFrame* waiter = this->waiter();
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    if (waiter)
+    switch (continuation()) {
+    case Continuation::None:
+        break;
+    case Continuation::Waiter: {
+        auto* waiter = uncheckedDowncast<SavedFrame>(m_promiseOrWaiter);
         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, nullptr, waiter, JSValue::decode(waiter->m_asyncContext));
+        break;
+    }
+    case Continuation::CombinatorElement:
+        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, m_promiseOrWaiter, jsNumber(combinatorIndex()));
+        break;
+    case Continuation::Promise:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     m_promiseOrWaiter = promise;
     m_continuation = Continuation::Promise;
     vm.writeBarrier(this);

@@ -1,0 +1,106 @@
+# state = { ...state }: an object that is copied from what the same place has made is its own source, and the walk over the sources of a copy ends there by itself. A copy of a copy is followed however many copies lie between:
+# six or seven make no difference. Whoever takes all that such an object holds gets what was copied, and nothing of what is stored through an object that nobody knows: the text never arrives.
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f4 parameter 0 type=undefined|int proven
+# CHECK: function f5 parameter 0 type=undefined|int proven
+# CHECK: function f6 parameter 0 type=undefined|int proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="State" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Copy" fields=[]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = String string="text"
+    PropSet v1, v2 key="held" mode=Strict
+    v4 = Boolean boolean=true
+    v5 = CallDirect v4 function=f1
+    v6 = CallDirect function=f2
+    v7 = CallDirect function=f3
+    Return v5
+}
+function f1 name="ofCopyOfItself" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = NewObject layout=L1
+    CopyDataProperties v5, v3
+    Branch v0 -> taken b1(v5), notTaken b2()
+  b2():
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectValues
+    v9 = Call v8, v7, v5
+    v10 = PropGet v9 key="map"
+    v11 = NewClosure function=f4
+    v12 = Call v10, v9, v11 calleeKey="map"
+    Return v12
+}
+function f2 name="ofSixCopies" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1
+    CopyDataProperties v2, v1
+    v4 = NewObject layout=L1
+    CopyDataProperties v4, v2
+    v6 = NewObject layout=L1
+    CopyDataProperties v6, v4
+    v8 = NewObject layout=L1
+    CopyDataProperties v8, v6
+    v10 = NewObject layout=L1
+    CopyDataProperties v10, v8
+    v12 = NewObject layout=L1
+    CopyDataProperties v12, v10
+    v14 = Builtin builtin=Object
+    v15 = Builtin builtin=ObjectValues
+    v16 = Call v15, v14, v12
+    v17 = PropGet v16 key="map"
+    v18 = NewClosure function=f5
+    v19 = Call v17, v16, v18 calleeKey="map"
+    Return v19
+}
+function f3 name="ofSevenCopies" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1
+    CopyDataProperties v2, v1
+    v4 = NewObject layout=L1
+    CopyDataProperties v4, v2
+    v6 = NewObject layout=L1
+    CopyDataProperties v6, v4
+    v8 = NewObject layout=L1
+    CopyDataProperties v8, v6
+    v10 = NewObject layout=L1
+    CopyDataProperties v10, v8
+    v12 = NewObject layout=L1
+    CopyDataProperties v12, v10
+    v14 = NewObject layout=L1
+    CopyDataProperties v14, v12
+    v16 = Builtin builtin=Object
+    v17 = Builtin builtin=ObjectValues
+    v18 = Call v17, v16, v14
+    v19 = PropGet v18 key="map"
+    v20 = NewClosure function=f6
+    v21 = Call v19, v18, v20 calleeKey="map"
+    Return v21
+}
+function f4 name="ofItself" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="ofSix" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="ofSeven" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

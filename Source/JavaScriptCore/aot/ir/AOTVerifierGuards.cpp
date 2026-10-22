@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTGuardFactDetails.h"
+#include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <optional>
 
@@ -21,6 +22,7 @@ void FunctionVerifier::verifyGuards()
     if (m_form == IRForm::AsRead && !isOptimizing())
         return;
 
+    std::optional<BitVector> readsKeptForValidation;
     for (BlockID block : analyses().cfg().reversePostOrder()) {
         const BlockValues& values = m_function.at(block).values;
         std::optional<GuardAvailability::Cursor> cursor;
@@ -30,25 +32,37 @@ void FunctionVerifier::verifyGuards()
             if (reliesOf(value.opcode).isEmpty())
                 continue;
 
+            // Finding what an operation needs from its guards compares sets of layouts, so it is done once per operation.
+            // Where the types prove everything, no guard can be missing, too weak or ended. A function with only such operations never computes the facts and states of its guards.
+            ProofSet neededFromGuard = proofsNeededFromGuard(m_program, m_function, value);
+            if (neededFromGuard.isEmpty())
+                continue;
+
             for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
                 if (value.operandKind(operandIndex) != OperandKind::Guard)
                     continue;
                 ValueID guard = value.operand(operandIndex);
                 if (!guard) {
-                    if (relyingOnTypesIsEnough(value))
-                        continue;
                     fail(InternalErrorKind::InvalidGuard, block, id);
                     return;
                 }
 
-                verifyGuardOperand(block, id, value, operandIndex, guard);
-                if (hasFailed())
-                    return;
-
                 if (!cursor)
                     cursor.emplace(analyses().guards(), block);
                 cursor->advanceTo(index);
-                if (cursor->stateOf(guard, value) != GuardState::Unavailable)
+                // An available guard has a fact for each needed proof that proves it for this operation, so there is nothing left to look for.
+                GuardState state = cursor->stateOf(guard, value);
+                if (state == GuardState::Available)
+                    continue;
+
+                verifyGuardOperand(block, id, value, neededFromGuard, guard);
+                if (hasFailed())
+                    return;
+                if (state != GuardState::Unavailable || m_inputs.cannotJudgeGuards)
+                    continue;
+                if (!readsKeptForValidation)
+                    readsKeptForValidation = findReadsKeptForValidation(m_function);
+                if (readsKeptForValidation->get(id.index()))
                     continue;
                 fail(InternalErrorKind::GuardNotAvailable, block, id, guard.index());
                 return;
@@ -57,14 +71,13 @@ void FunctionVerifier::verifyGuards()
     }
 }
 
-void FunctionVerifier::verifyGuardOperand(BlockID block, ValueID user, const Value& value, uint32_t, ValueID guard)
+void FunctionVerifier::verifyGuardOperand(BlockID block, ValueID user, const Value& value, ProofSet neededFromGuard, ValueID guard)
 {
     const GuardFacts& facts = analyses().guardFacts(guard);
-    ProofSet needed = proofsNeededFromGuard(m_program, m_function, value);
     ValueID subject = guardedOperandOf(value);
     ValueID identity = subject ? analyses().identityOf(subject) : ValueID();
     for (Proof proof : allMembersOf<Proof>) {
-        if (!needed.contains(proof))
+        if (!neededFromGuard.contains(proof))
             continue;
         bool isProven = std::ranges::any_of(facts.facts, [&](const GuardFact& fact) {
             return (!identity || fact.subject == identity) && provesForUser(analyses(), fact, proof, value);
@@ -74,11 +87,6 @@ void FunctionVerifier::verifyGuardOperand(BlockID block, ValueID user, const Val
         fail(InternalErrorKind::InvalidGuard, block, user, guard.index());
         return;
     }
-}
-
-bool FunctionVerifier::relyingOnTypesIsEnough(const Value& access) const
-{
-    return proofsNeededFromGuard(m_program, m_function, access).isEmpty();
 }
 
 } } } // namespace JSC::AOT::Typed

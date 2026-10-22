@@ -100,6 +100,7 @@
 #include "JSToWasm.h"
 #include "LLIntData.h"
 #include "LLIntExceptions.h"
+#include "LLIntThunks.h"
 #include "MarkedBlockInlines.h"
 #include "MegamorphicCache.h"
 #include "MicrotaskCall.h"
@@ -176,6 +177,7 @@
 #include "AOTImage.h"
 #include "AOTObjectCensus.h"
 #include "AOTRuntimeHooks.h"
+#include "AOTUnwinding.h"
 #endif
 
 #if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
@@ -225,7 +227,7 @@ static bool enableAssembler()
     if (canUseJITString.data() && !parseInteger<int>(canUseJITString).value_or(0))
         return false;
 
-    callRemovable<RemovableFeature::JIT, RemovedFeatureStub::ReturnDefault, ExecutableAllocator::initializeUnderlyingAllocator>();
+    callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, ExecutableAllocator::initializeUnderlyingAllocator>();
     if (!ExecutableAllocator::singleton().isValid()) {
         if (Options::crashIfCantAllocateJITMemory())
             CRASH();
@@ -1002,6 +1004,19 @@ static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
         return result.get();
     }
 #endif
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+    case CharCodeAtIntrinsic: {
+        if (!Options::useAOT())
+            return jitCodeForCallTrampoline(NoIntrinsic);
+        static LazyNeverDestroyed<Ref<NativeJITCode>> result;
+        static std::once_flag onceKey;
+        std::call_once(onceKey, [&] {
+            auto thunk = CodePtr<JSEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(llint_aot_char_code_at_thunk));
+            result.construct(adoptRef(*new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(thunk), JITType::HostCallThunk, NoIntrinsic)));
+        });
+        return result.get();
+    }
+#endif
     default: {
         static LazyNeverDestroyed<Ref<NativeJITCode>> result;
         static std::once_flag onceKey;
@@ -1042,9 +1057,21 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
     if (Options::useJIT())
         return hostFunctionStubWithThunk(*this, function, implementationVisibility, intrinsic, constructor, signature, length, name);
 #endif // ENABLE(JIT)
-    UNUSED_PARAM(intrinsic);
     UNUSED_PARAM(signature);
-    return NativeExecutable::create(*this, jitCodeForCallTrampoline(intrinsic), toTagged(function), jitCodeForConstructTrampoline(), toTagged(constructor), implementationVisibility, length, name);
+    auto create = [&] {
+        return NativeExecutable::create(*this, jitCodeForCallTrampoline(intrinsic), toTagged(function), jitCodeForConstructTrampoline(), toTagged(constructor), implementationVisibility, length, name);
+    };
+    // A function without a name is one that the engine makes again and again, for a promise or an iterator: Promise.prototype.finally asks at every call. There are as many as there are functions in C++.
+    if (!name.isNull() || intrinsic != NoIntrinsic || length > 0xffff)
+        return create();
+    std::tuple<uintptr_t, uintptr_t, unsigned> key { std::bit_cast<uintptr_t>(function), std::bit_cast<uintptr_t>(constructor), length << 8 | static_cast<unsigned>(implementationVisibility) };
+    if (auto found = m_executablesOfNamelessHostFunctions.find(key); found != m_executablesOfNamelessHostFunctions.end()) {
+        if (NativeExecutable* executable = found->value.get())
+            return executable;
+    }
+    NativeExecutable* executable = create();
+    m_executablesOfNamelessHostFunctions.set(key, Weak<NativeExecutable>(executable));
+    return executable;
 }
 
 NativeExecutable* VM::getBoundFunction(bool isJSFunction, SourceTaintedOrigin taintedness)
@@ -1373,7 +1400,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
         return exceptionToThrow;
     }
 
-    CallFrame* throwOriginFrame = globalObject->debugger() || Options::breakOnThrow() ? topJSCallFrame() : nullptr;
+    CallFrame* throwOriginFrame = !hasCompiledCode() || globalObject->debugger() || Options::breakOnThrow() ? topJSCallFrame() : nullptr;
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = throwOriginFrame && !throwOriginFrame->isNativeCalleeFrame() ? throwOriginFrame->codeBlock() : nullptr;
         dataLog("Throwing exception in call frame ", RawPointer(throwOriginFrame), " for code block ", codeBlock, "\n");
@@ -1398,9 +1425,28 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     return exceptionToThrow;
 }
 
+#if ENABLE(AOT)
+NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalObject* globalObject, JSValue thrownValue)
+{
+    using Action = Exception::StackCaptureAction;
+    if (globalObject->debugger())
+        return Exception::create(vm, thrownValue, Action::CaptureStack);
+    AOT::Instance* instance = globalObject->aotInstance();
+    if (instance && vm.topCallFrame && AOT::nearestHandlerIgnoresValue(vm, *instance, vm.topCallFrame))
+        return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
+    if (Exception* exception = Exception::tryCreateWithStackOfError(vm, thrownValue))
+        return exception;
+    return Exception::create(vm, thrownValue, vm.interpreter.isExceptionCaughtByUserCatchClause() ? Action::DoNotCaptureStack : Action::CaptureStack);
+}
+#endif
+
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
+#if ENABLE(AOT)
+    if (!exception && hasCompiledCode()) [[unlikely]]
+        exception = createExceptionWithCompiledCode(*this, globalObject, thrownValue);
+#endif
     if (!exception) {
         auto action = Exception::StackCaptureAction::CaptureStack;
         if (!globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClause())

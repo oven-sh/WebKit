@@ -7,8 +7,8 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Base" constructor=f1
 layout L1 name="Other" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L2 kind=Instance name="Left" predictedBase=L0 constructor=f2 flags=[HasHeritage]
-layout L3 kind=Instance name="Right" predictedBase=L0 constructor=f3 flags=[HasHeritage]
+layout L2 kind=Instance name="Left" base=L0 constructor=f2 flags=[HasHeritage]
+layout L3 kind=Instance name="Right" base=L0 constructor=f3 flags=[HasHeritage]
 variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():

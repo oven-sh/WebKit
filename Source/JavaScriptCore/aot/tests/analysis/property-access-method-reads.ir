@@ -54,7 +54,7 @@ function f11 name="called-and-stored" parameters=[{type=L0}] results=[{type=anyt
     PutModuleVariable v1 variable=g0
     Return v2
 }
-# CHECK-NEXT: F11 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F11 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f12 name="called-and-stored-through-upcast" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
@@ -63,33 +63,33 @@ function f12 name="called-and-stored-through-upcast" parameters=[{type=L0}] resu
     PutModuleVariable v2 variable=g0
     Return v3
 }
-# CHECK-NEXT: F12 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F12 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f13 name="returned" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
     Return v1
 }
-# CHECK-NEXT: F13 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F13 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f14 name="never-used" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
     Return
 }
-# CHECK-NEXT: F14 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F14 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f15 name="passed-as-this" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
     v2 = Call v1, v1
     Return v2
 }
-# CHECK-NEXT: F15 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F15 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f16 name="passed-as-argument" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
     v2 = Call v1, v0, v1
     Return v2
 }
-# CHECK-NEXT: F16 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F16 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f17 name="passed-along-an-edge" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
@@ -98,14 +98,14 @@ function f17 name="passed-along-an-edge" parameters=[{type=L0}] results=[{type=a
     v3 = Call v2, v0
     Return v3
 }
-# CHECK-NEXT: F17 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F17 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f18 name="constructed" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
     v2 = Construct v1
     Return v2
 }
-# CHECK-NEXT: F18 v1 PropGet [[m]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+# CHECK-NEXT: F18 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
 function f19 name="method-with-capture" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="capturing"

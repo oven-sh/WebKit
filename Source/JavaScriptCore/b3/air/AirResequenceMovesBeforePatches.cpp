@@ -37,10 +37,13 @@ bool resequenceMovesBeforePatches(Code& code)
             Inst& patch = block->at(end);
             if (patch.kind.opcode != Patch)
                 continue;
-            unsigned begin = end;
+            // A tail call's frame teardown stands between the moves and the patch. It reads no register.
+            Inst* leaveFrame = end && block->at(end - 1).kind.opcode == LeaveFrame ? &block->at(end - 1) : nullptr;
+            const unsigned endOfMoves = end - !!leaveFrame;
+            unsigned begin = endOfMoves;
             while (begin && block->at(begin - 1) && isSimpleMove(block->at(begin - 1)))
                 --begin;
-            if (end - begin < 2)
+            if (endOfMoves - begin < 2)
                 continue;
             Vector<PendingMove, 8> pending;
             bool forwardsWideImmediate = false;
@@ -55,7 +58,7 @@ bool resequenceMovesBeforePatches(Code& code)
                 }
                 return arg;
             };
-            for (unsigned i = begin; i < end; ++i) {
+            for (unsigned i = begin; i < endOfMoves; ++i) {
                 Inst& inst = block->at(i);
                 Arg source = valueOf(inst.args()[0]);
                 Reg destination = inst.args()[1].reg();
@@ -75,12 +78,18 @@ bool resequenceMovesBeforePatches(Code& code)
                 if (Arg::isAnyDef(role))
                     overwritten.add(tmp.reg(), IgnoreVectors);
             });
+            if (leaveFrame) {
+                leaveFrame->forEachTmpFast([&](Tmp& tmp) {
+                    overwritten.add(tmp.reg(), IgnoreVectors);
+                    used.remove(tmp.reg());
+                });
+            }
             pending.removeAllMatching([&](auto& move) {
                 if (move.source.isReg() && move.source.reg() == move.destination)
                     return true;
                 return overwritten.contains(move.destination, IgnoreVectors) && !used.contains(move.destination, IgnoreVectors);
             });
-            if (pending.size() >= end - begin)
+            if (pending.size() >= endOfMoves - begin)
                 continue;
             Vector<Inst, 8> ordered;
             while (!pending.isEmpty()) {
@@ -97,7 +106,7 @@ bool resequenceMovesBeforePatches(Code& code)
             }
             if (!pending.isEmpty())
                 continue;
-            for (unsigned i = begin; i < end; ++i)
+            for (unsigned i = begin; i < endOfMoves; ++i)
                 block->at(i) = i - begin < ordered.size() ? ordered[i - begin] : Inst();
             didChange = true;
             changed = true;

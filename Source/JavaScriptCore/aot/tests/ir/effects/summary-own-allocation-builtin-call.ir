@@ -1,4 +1,5 @@
 # A built-in that writes the contents of its receiver writes nothing a caller sees when the receiver is the activation's own allocation
+# TODO: nobody: a built-in call on a Map that the function itself allocated counts as a write its caller can see
 # FORM: Prepared
 # RUN: effects summaries
 

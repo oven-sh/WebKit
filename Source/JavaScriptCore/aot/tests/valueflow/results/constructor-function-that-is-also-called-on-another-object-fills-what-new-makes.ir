@@ -1,0 +1,27 @@
+# `new` hands a constructor function an instance of the function's own layout, whoever else calls the function and with whatever `this`. So what it stores before the object leaves its hands is set at the creation
+# of every object that `new` makes, also where somebody calls it on an object of which no operation says what lies above it.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="AlsoCalledOnDictionary" {{*}}{key="p"{{*}}initialization=SetAtCreation
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="AlsoCalledOnDictionary" constructor=f1 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewClosure function=f1
+    v2 = Construct v1, -, v0
+    v3 = PropGet v2 key="p"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectCreate
+    v6 = Null
+    v7 = Call v5, v4, v6
+    v8 = Call v1, v7, v0
+    v9 = PropGet v7 key="p"
+    Return
+}
+function f1 name="AlsoCalledOnDictionary" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}

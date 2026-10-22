@@ -115,24 +115,71 @@ static PropertyAnswer classifyExtraPropertyRead(const ReadQuery& query, Object& 
 // What an access finds where the slot of the field is empty.
 static void nameInheritedProperty(PropertyAnswer& answer, const ChainWalk& walk)
 {
-    if (walk.result != ChainWalkResult::Found || !isValidOffset(walk.offset))
+    if (walk.result != ChainWalkResult::Found)
         return;
-    answer.kind = walk.attributes & PropertyAttribute::Accessor ? PropertyAnswerKind::FieldOrInheritedAccessor : PropertyAnswerKind::FieldOrInheritedValue;
+    bool isAccessor = walk.attributes & PropertyAttribute::Accessor;
+    if (!isValidOffset(walk.offset)) {
+        if (isAccessor || answer.access != SlotAccess::Read)
+            return;
+        answer.kind = PropertyAnswerKind::FieldOrInheritedField;
+        answer.holder = walk.holder;
+        return;
+    }
+    answer.kind = isAccessor ? PropertyAnswerKind::FieldOrInheritedAccessor : PropertyAnswerKind::FieldOrInheritedValue;
     answer.holder = walk.holder;
     answer.offset = walk.offset;
 }
 
+// The field is undefined where it exists and its slot is empty. A read needs the key order only where the objects above the receiver answer something else.
+static bool nameAnswerOfSlotThatMayBeUndefined(PropertyAnswer& answer, const ChainWalk& walk)
+{
+    if (walk.firstObjectWithEmptySlot)
+        return false;
+    switch (walk.result) {
+    case ChainWalkResult::Unknown:
+        return false;
+    case ChainWalkResult::Absent:
+        break;
+    case ChainWalkResult::Found:
+        if (walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || !isValidOffset(walk.offset))
+            return false;
+        nameInheritedProperty(answer, walk);
+        break;
+    }
+    answer.emptySlotMayBeUndefined = true;
+    return true;
+}
+
+static bool holdsGetterSetterAsReference(const FieldData& field)
+{
+    switch (field.slot.representation()) {
+    case SlotRepresentation::JSValue:
+    case SlotRepresentation::Cell:
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::OptionalCell32:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, const FieldData& field)
 {
-    PropertyAnswer answer = fieldAnswer(PropertyAnswerKind::Field, SlotAccess::Read, field);
+    // The slot of an accessor holds its getter and setter, not what a read answers. Where it is empty the read goes on as for a data field.
+    bool isAccessor = field.isAccessor();
+    if (isAccessor && !holdsGetterSetterAsReference(field))
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    PropertyAnswer answer = fieldAnswer(isAccessor ? PropertyAnswerKind::FieldAccessor : PropertyAnswerKind::Field, SlotAccess::Read, field);
     if (!field.canLeaveSlot())
         return answer;
-    // `in` and hasOwn take the flag to mean that an absent slot is an absent property. Only the key order says that of such a field.
-    if (field.flags & fieldMayExistWithoutStorage)
-        return answer;
+    // `in` and hasOwn take absentIsUndefined to mean that an absent slot is an absent property. Only the key order says that of such a field.
+    bool mayExistWithoutStorage = field.flags & fieldMayExistWithoutStorage;
 
     // A property is in its slot or among the extra properties, never in both.
-    switch (lookUpExtraProperty(query.globalObject->vm(), object.compiledStructure(), query.uid, query.mode).result) {
+    ExtraPropertyLookupResult amongExtraProperties = lookUpExtraProperty(query.globalObject->vm(), object.compiledStructure(), query.uid, query.mode).result;
+    if (mayExistWithoutStorage && amongExtraProperties != ExtraPropertyLookupResult::Absent)
+        return answer;
+    switch (amongExtraProperties) {
     case ExtraPropertyLookupResult::Found:
         return classifyExtraPropertyRead(query, object);
     case ExtraPropertyLookupResult::Unknown:
@@ -141,12 +188,23 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
         break;
     }
 
-    ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, &object, query.mode }, query.uid);
+    ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, &object, query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
     if (walk.didFlatten)
         return uncacheableOnce(SlotAccess::Read);
-    answer.absentIsUndefined = walk.result == ChainWalkResult::Absent;
-    if (!(walk.attributes & PropertyAttribute::CustomAccessorOrValue))
-        nameInheritedProperty(answer, walk);
+    if (mayExistWithoutStorage) {
+        if (!nameAnswerOfSlotThatMayBeUndefined(answer, walk))
+            return answer;
+    } else if (walk.firstObjectWithEmptySlot) {
+        if (walk.result != ChainWalkResult::Unknown && !isAccessor) {
+            answer.kind = PropertyAnswerKind::FieldOrInheritedField;
+            answer.holder = walk.firstObjectWithEmptySlot;
+        }
+    } else {
+        answer.absentIsUndefined = walk.result == ChainWalkResult::Absent;
+        // No kind of slot names both a getter in a field and what is inherited in its place.
+        if (!(walk.attributes & PropertyAttribute::CustomAccessorOrValue) && !isAccessor)
+            nameInheritedProperty(answer, walk);
+    }
     answer.changeableObjects = WTF::move(walk.changeableObjects);
     return answer;
 }
@@ -168,10 +226,12 @@ static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object
     const CompiledStructure* before = compiledObjectStructureOrNull(query.structureBefore);
     if (!before || &before->layout() != &object.layout() || (object.structure() != before && !query.slot.isCacheableSetter()))
         return uncacheableOnce(access);
-    if (field.flags & fieldIsStoredOnce || field.slot.representation() == SlotRepresentation::DeferredClosure)
+    // A store to a field that the layout gives another form than a plain property's may be refused, call a setter or move the property out of its slot.
+    if (field.flags & (fieldIsStoredOnce | fieldAttributeFlags) || field.slot.representation() == SlotRepresentation::DeferredClosure)
         return PropertyAnswer::uncacheable(access);
 
     PropertyAnswer answer = fieldAnswer(PropertyAnswerKind::Field, access, field);
+    answer.undefinedNeedsNoStorage = field.flags & fieldMayExistWithoutStorage && object.state().objects->layouts.slotAdmits(field, jsUndefined());
     if (!field.canLeaveSlot() || before->mayBePrototype())
         return answer;
     if (mayHaveExtraPropertyNamed(query.globalObject->vm(), *before, query.uid, ChainWalkMode::MayAllocate))
@@ -189,7 +249,9 @@ static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object
         answer.kind = PropertyAnswerKind::FieldCreation;
         break;
     case StoreThroughChain::CallsSetter:
-        nameInheritedProperty(answer, walk);
+        // Such a field may exist and hold undefined where it has no storage, and then the store belongs to it. Only the key order says so.
+        if (!(field.flags & fieldMayExistWithoutStorage))
+            nameInheritedProperty(answer, walk);
         break;
     case StoreThroughChain::Unknown:
     case StoreThroughChain::CallsCustomSetter:

@@ -1,4 +1,4 @@
-# The truthiness of a value that can only be an object is true, whatever kind of object it is
+# The truthiness of a value that can only be an object is true, whatever kind of object it is. What is only expected of a value decides nothing
 # FORM: Prepared
 # RUN: pass FoldConstants
 # STATISTIC: FoldConstantsChanges = 4
@@ -11,8 +11,8 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 layout L1 name="Empty"
 
-function f0 name="objectsByType" parameters=[{type=object}, {type=L0}, {type=object written=L0}, {type=L0|L1}] results=[{type=boolean}] {
-  b0(v0: object, v1: L0, v2: object ? L0, v3: L0|L1):
+function f0 name="objectsByType" parameters=[{type=object}, {type=L0}, {type=object}, {type=L0|L1}] results=[{type=boolean}] {
+  b0(v0: object, v1: L0, v2: object ~ L0, v3: L0|L1):
     v4 = ToBoolean v0
     v5 = ToBoolean v1
     v6 = ToBoolean v2
@@ -79,22 +79,24 @@ function f3 name="conditionAndNegation" parameters=[{type=object}] results=[{typ
 # CHECK-NEXT: v2: false = Boolean
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 
-function f4 name="mayBeSomethingElse" parameters=[{type=undefined|object}, {type=null|L0}, {type=boolean|object}, {type=number|function}, {type=string|Array<number>}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: undefined|object, v1: null|L0, v2: boolean|object, v3: number|function, v4: string|Array<number>, v5: anything):
-    v6 = ToBoolean v0
-    v7 = ToBoolean v1
-    v8 = ToBoolean v2
-    v9 = ToBoolean v3
-    v10 = ToBoolean v4
-    v11 = ToBoolean v5
-    Return v6
+function f4 name="mayBeSomethingElse" parameters=[{type=undefined|object}, {type=null|L0}, {type=boolean|object}, {type=number|function}, {type=string|Array<number>}, {type=anything}, {type=L0 flags=[IsExpected]}] results=[{type=boolean}] {
+  b0(v0: undefined|object, v1: null|L0, v2: boolean|object, v3: number|function, v4: string|Array<number>, v5: anything, v6: anything ~ L0):
+    v7 = ToBoolean v0
+    v8 = ToBoolean v1
+    v9 = ToBoolean v2
+    v10 = ToBoolean v3
+    v11 = ToBoolean v4
+    v12 = ToBoolean v5
+    v13 = ToBoolean v6
+    Return v7
 }
 # CHECK-LABEL: function f4 name="mayBeSomethingElse"
 # CHECK-NOT: = Boolean
-# CHECK: v6: boolean = ToBoolean v0
-# CHECK-NEXT: v7: boolean = ToBoolean v1
-# CHECK-NEXT: v8: boolean = ToBoolean v2
-# CHECK-NEXT: v9: boolean = ToBoolean v3
-# CHECK-NEXT: v10: boolean = ToBoolean v4
-# CHECK-NEXT: v11: boolean = ToBoolean v5
-# CHECK-NEXT: Return v6
+# CHECK: v7: boolean = ToBoolean v0
+# CHECK-NEXT: v8: boolean = ToBoolean v1
+# CHECK-NEXT: v9: boolean = ToBoolean v2
+# CHECK-NEXT: v10: boolean = ToBoolean v3
+# CHECK-NEXT: v11: boolean = ToBoolean v4
+# CHECK-NEXT: v12: boolean = ToBoolean v5
+# CHECK-NEXT: v13: boolean{{*}}= ToBoolean v6
+# CHECK-NEXT: Return v7

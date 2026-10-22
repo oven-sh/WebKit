@@ -10,8 +10,11 @@
 
 #include "AOTConversionEmitter.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTPromisedResults.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
+#include "B3UpsilonValue.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -32,17 +35,27 @@ void CastEmitter::generateUpcast(const ValueContext& value)
     define(value, get(value->valueOperand()));
 }
 
-void CastEmitter::generateAssumeType(const ValueContext& value)
+void CastEmitter::generateNarrowByField(const ValueContext& value)
 {
     define(value, get(value->valueOperand()));
 }
 
-void CastEmitter::generateClaim(const ValueContext& value)
+void CastEmitter::generateAssumeType(const ValueContext& value)
 {
-    ValueID source = value->valueOperand();
-    Operand operand = get(source);
-    requireType(value, operand, planFor(source, value->castType()), value->site());
-    define(value, operand);
+    if (generator().checksProofs())
+        emitter<RuntimeValidationEmitter>().checkAssumedType(value);
+    define(value, get(value->valueOperand()));
+}
+
+// The object is the one that it was, so what was proven of it holds. Where it lies is what the later read has found.
+void CastEmitter::generateReadAgain(const ValueContext& value)
+{
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, get(value->againOperand()), typeOf(value.id()), value.representation()));
+}
+
+void CastEmitter::generateBorrowedParameter(const ValueContext& value)
+{
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, get(value->valueOperand()), typeOf(value.id()), value.representation()));
 }
 
 void CastEmitter::generateReportMismatch(const ValueContext& value)
@@ -74,10 +87,15 @@ void CastEmitter::generateCheckInitialized(const ValueContext& value)
 
 void CastEmitter::generateRequireObjectCoercible(const ValueContext& value)
 {
+    if (generator().nullishCheckBehindFailedTest(value.block()) != value.id())
+        requireObjectCoercible(value);
+    define(value, get(value->valueOperand()));
+}
+
+void CastEmitter::requireObjectCoercible(const ValueContext& value)
+{
     ValueID source = value->valueOperand();
-    Operand operand = get(source);
-    emitter<ThrowEmitter>().requireNotNullish(value, operand, typeOf(source), value->nullishAccess(), value->name());
-    define(value, operand);
+    emitter<ThrowEmitter>().requireNotNullish(value, get(source), typeOf(source), value->nullishAccess(), value->name());
 }
 
 void CastEmitter::generateRequireObject(const ValueContext& value)
@@ -103,16 +121,69 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
+    if (value.isBranchCondition() && generator().nullishCheckBehindFailedTest(value.block()) == source) {
+        testAheadOfNullishCheck(value, operand);
+        return;
+    }
     const TypeTestPlan& plan = planFor(source, value->testedType());
     if (!value.isBranchCondition()) {
-        define(value, hasType(operand, plan));
+        define(value, hasType(operand, plan, value.shape()));
         return;
     }
-    if (generator().shouldDropGuard(value)) {
-        m_out.jump(value.branchTargets().taken.block());
+    if (std::optional<CodeGenerator::GuardUnderTest> guard = generator().takeGuardUnderTest(value)) {
+        branchOnType(operand, plan, generator().targetsOf(value, *guard), value.shape());
         return;
     }
-    branchOnType(operand, plan, value.branchTargets());
+    ValueID call = inputs().promisedResults.findCallThatStandsForTest(m_program, m_function, m_function.at(value.block()));
+    if (std::optional<CodeGenerator::LandingOfMisfit> landing = generator().takeLandingOfMisfit(call)) {
+        testAtLandingOfMisfit(value, call, *landing, plan);
+        return;
+    }
+    branchOnType(operand, plan, value.branchTargets(), value.shape());
+}
+
+// What the callee returned has the type. Only what arrives at the landing is tested, and not even that where it failed the same test in the callee.
+void CastEmitter::testAtLandingOfMisfit(const ValueContext& test, ValueID call, const CodeGenerator::LandingOfMisfit& landing, const TypeTestPlan& plan)
+{
+    FunctionID callee = m_function.at(call).function();
+    const BranchTargets& targets = test.branchTargets();
+    LBasicBlock here = m_out.m_block;
+
+    m_out.appendTo(landing.landing);
+    Boxed misfit(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(scratch.misfit))));
+    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), misfit.value(), landing.result);
+    bool failedSameTest = inputs().promisedResults.of(callee) == test->testedType() && inputs().promisedResults.misfitsAreNeverOfType(callee);
+    LValue hasTestedType = failedSameTest ? m_out.constInt32(0) : hasType(misfit, plan, test.shape()).value();
+    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), hasTestedType, landing.hasTestedType);
+    m_out.jump(landing.meeting);
+
+    m_out.appendTo(here);
+    if (!generator().validates()) {
+        m_out.branch(landing.hasTestedType, targets);
+        return;
+    }
+    LBasicBlock isSaidToHaveType = newBlock();
+    LBasicBlock brokenPromise = newBlock();
+    m_out.branch(landing.hasTestedType, normalEdge(isSaidToHaveType), targets.notTaken);
+    m_out.appendTo(isSaidToHaveType);
+    branchOnType(get(call), plan, { targets.taken, rareEdge(brokenPromise) }, test.shape());
+    m_out.appendTo(brokenPromise);
+    emitter<RuntimeValidationEmitter>().reportUnreachable(call);
+    m_out.unreachable();
+}
+
+// The test meets what the check has not seen, so its plan is made for the type of the unchecked value.
+void CastEmitter::testAheadOfNullishCheck(const ValueContext& test, Operand operand)
+{
+    ValueID check = test->valueOperand();
+    const TypeTestPlan& plan = planFor(m_function.at(check).valueOperand(), test->testedType());
+    const BranchTargets& targets = test.branchTargets();
+    LBasicBlock failed = newBlock();
+    branchOnType(operand, plan, { targets.taken, { failed, targets.notTaken.frequency() } }, test.shape());
+
+    m_out.appendTo(failed);
+    generator().generateNullishCheckBehindFailedTest(test.block(), check);
+    m_out.jump(targets.notTaken.block());
 }
 
 } } } // namespace JSC::AOT::Typed

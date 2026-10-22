@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Registry" constructor=f0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L1 kind=Instance name="SubRegistry" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="SubRegistry" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L2 kind=Instance name="Bytes" constructor=f2 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Uint8Array impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L3 kind=Instance name="FieldShadows" constructor=f3 fields=[{key="size" declared={type=number}}] flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L4 kind=Instance name="GetterShadows" constructor=f4 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f7 mutability=Fixed}]}
@@ -103,12 +103,12 @@ function f16 name="instanceMayGainTheName" parameters=[{type=L6}] results=[{type
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
 
-function f17 name="layoutIsNotProven" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f17 name="layoutIsOnlyExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="size"
     Return v1
 }
-# CHECK-LABEL: function f17 name="layoutIsNotProven"
+# CHECK-LABEL: function f17 name="layoutIsOnlyExpected"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
 

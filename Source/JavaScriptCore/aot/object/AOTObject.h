@@ -32,15 +32,32 @@ class JSPropertyNameEnumerator;
 namespace AOT {
 
 class Extension;
+class RuntimeLayoutTable;
 struct Instance;
 struct State;
 
-enum class ShapeLossReason : uint8_t { IndexedAccessor, NativeDefinition, RepresentationLimit };
 enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
 
-enum class [[nodiscard]] ShapeStatus : bool { Kept, Lost };
-
 using PropertyWalk::isCompiledObject;
+
+// What the slot of one field may hold: a value of the field's type, or undefined or null where the slot has a marker for it.
+// A test against that field makes one. So does the compiler, for a value that it has tested itself.
+class AcceptedValue {
+public:
+    static AcceptedValue provenAtBuildTime(JSValue value) { return AcceptedValue(value); }
+
+    JSValue value() const { return m_value; }
+
+private:
+    friend class RuntimeLayoutTable;
+
+    explicit AcceptedValue(JSValue value)
+        : m_value(value)
+    {
+    }
+
+    JSValue m_value;
+};
 
 // An entry of a key order below the number of fields lists that field. Any other entry lists the extra keys that are not listed yet, in their own order, up to a count:
 // the entry less the number of fields, plus one, on top of what the full entries before it count. A full entry is maxKeyOrderEntry, so an order counts any number of extra keys.
@@ -60,6 +77,24 @@ public:
         if (entry == maxKeyOrderEntry)
             m_countOfFullEntries = count;
         m_count = std::max(m_count, count);
+    }
+
+    // What add() makes of each entry of the list that lists extra keys. Without a full entry among them each counts on top of the same number, so the largest says it all.
+    void addAll(std::span<const uint16_t> entries)
+    {
+        uint16_t largest = 0;
+        for (uint16_t entry : entries)
+            largest = std::max(largest, entry);
+        if (largest < m_numberOfFields)
+            return;
+        if (largest < maxKeyOrderEntry) {
+            add(largest);
+            return;
+        }
+        for (uint16_t entry : entries) {
+            if (entry >= m_numberOfFields)
+                add(entry);
+        }
     }
 
     void appendEntriesCountingTo(uint32_t count, auto& entries)
@@ -94,6 +129,8 @@ public:
 
     static CompiledStructure* createStructure(VM&, const CompiledStructure::ObjectParameters&);
     static Object* create(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
+    // The bytes that create() left behind the header of an earlier object of the Structure's layout, order word and shape word among them.
+    static Object* createAsAtBirth(VM&, Structure*, std::span<const uint8_t> bodyAtBirth, bool isBornUnfinished);
     static Object* createWithBody(VM&, Structure*, std::span<const uint8_t> body);
 
     const CompiledStructure& compiledStructure() const { return *uncheckedDowncast<CompiledStructure>(structure()); }
@@ -125,7 +162,10 @@ public:
     }
     unsigned attributesOf(const FieldData& field) const
     {
-        return field.isPrivate() ? static_cast<unsigned>(PropertyAttribute::None) : attributesOfPublicFields();
+        if (field.isPrivate())
+            return static_cast<unsigned>(PropertyAttribute::None);
+        unsigned attributes = field.attributes() | attributesOfPublicFields();
+        return field.isAccessor() ? attributes & ~PropertyAttribute::ReadOnly : attributes;
     }
 
     const FieldData* fieldNamed(State&, PropertyName) const;
@@ -137,27 +177,30 @@ public:
     // Calls the functor with an int32_t, a bool or a double where the slot holds one, and with a JSValue otherwise, which is empty for an absent field.
     template<typename Functor> auto readInlineUnboxed(const FieldData&, const Functor&) const;
     bool tryStore(VM&, const FieldData&, JSValue);
-    bool store(VM&, const FieldData&, JSValue);
+    bool tryInitialize(VM&, const FieldData&, JSValue);
+    bool store(VM&, const FieldData&, AcceptedValue);
     void clear(const FieldData&);
-    void storeDoubleInExtension(VM&, uint32_t overflowOffset, double);
 
     Extension* extension() const;
     void setExtension(VM&, Extension*);
     void ensureStorageFor(VM&, const FieldData&);
     void ensureExtensionGranules(VM&, uint64_t granuleBits);
+    void ensureExtensionGranules(VM&, uint64_t granuleBits, bool collectorMayVisit);
 
     JSValue materializeDeferredClosure(VM&, const FieldData&);
+    Object* makeFlattenedObject(VM&, const FieldData&);
+    void clearRoomOfFlattenedObject(const FieldData&);
     void materializeDeferredClosures(VM&);
 
     struct LeavingProperty {
         JSValue valueOrAccessor;
         unsigned attributes { 0 };
     };
-    ShapeStatus moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
+    void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
-    ShapeStatus deleteField(VM&, const FieldData&);
-    JSObject* convertToOrdinaryObject(VM&, ShapeLossReason, JSValue prototype = { });
-    JSFinalObject* copyAsOrdinaryObject(VM&, unsigned inlineCapacity, JSValue prototype = { });
+    void deleteField(VM&, const FieldData&);
+    bool hasEveryFieldOfBirth() const;
+    JS_EXPORT_PRIVATE void tryFinishBirth();
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
     void setIntegrity(JSGlobalObject*, Integrity);
@@ -167,7 +210,12 @@ public:
 
     static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
-    void putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
+    // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
+    bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
+    bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
+    // The keys are strings and the functions are the getters, in pairs. True if all of them now lie in slots. Otherwise the object is as it was.
+    bool tryDefineGettersOfLiteral(VM&, JSGlobalObject*, std::span<const EncodedJSValue> keysAndGetters, uint32_t enumerable);
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -189,6 +237,8 @@ public:
         JSValue value;
     };
     static JSObject* createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
+    // For an object that nobody has seen yet and names that are none of its fields. False where the layout has no place for extra properties.
+    bool tryCreateExtraPropertiesOfNewObject(VM&, std::span<const ExtraProperty> inOrder);
     void didChangeExtraProperties(VM&);
     void ensureStructureForExtraProperties(VM&);
     static bool ensureStructureForExtraPropertiesIfNeeded(VM&, JSCell*);
@@ -250,6 +300,7 @@ public:
     void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
+    static Object* tryCreateCopyOfFields(VM&, const Object& source);
     // To make a plan costs several copies by name. A caller that can copy by name asks for one only from the second copy between the same shapes on.
     enum class PlanCreation : bool { AtFirstCopy, AtSecondCopy };
     bool tryAssignPropertiesOf(VM&, JSObject* source, std::span<UniquedStringImpl* const> excludedNames = { }, PlanCreation = PlanCreation::AtFirstCopy);
@@ -278,7 +329,12 @@ private:
     {
     }
 
+    bool store(VM&, const FieldData&, JSValue);
+    void willStoreMarker(VM&, const FieldData&, JSValue marker);
     void copyFieldsOfSameLayout(VM&, const Object& source);
+    bool tryCopyWordsOfSameStructure(VM&, const Object& source);
+    static Object* createCopyOfWords(VM&, const Object& source, Structure*);
+    static Object* tryCreateCopyOfFieldsAndExtraProperties(VM&, const Object& source);
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrderSlow() const;
 };
 static_assert(sizeof(Object) == offsetOfOrderWord);
@@ -301,6 +357,8 @@ public:
 
     // Granules that come after every granule held take the room that extensionCapacityFor() has left. It is zero since the Extension was created, so the collector may see the bits at any time.
     bool tryAppend(uint64_t granuleBits);
+    // Granules that belong between others take the same room, and the granules behind them move. Only while no thread of the collector visits cells.
+    bool tryInsert(uint64_t granuleBits);
 
     static constexpr ptrdiff_t offsetOfGranuleBits() { return OBJECT_OFFSETOF(Extension, m_granuleBits); }
 
@@ -339,7 +397,6 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
             return functor(read(field));
         return functor(JSValue(decodeCell32(this, word)));
     }
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
         if (int32_t word = at<int32_t>(field.slot.offset); word >= minInlineInt32) [[likely]]
             return functor(word);
@@ -418,7 +475,8 @@ void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)
 template<typename Visitor>
 ALWAYS_INLINE void Object::visitFields(Object* object, Visitor& visitor)
 {
-    visitReferences(object, referenceTableOf(object->layout()), visitor);
+    const LayoutData& layout = object->layout();
+    visitReferences(object, layout, layout.hasExtension(), visitor);
 }
 
 } } // namespace JSC::AOT

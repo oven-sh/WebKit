@@ -34,36 +34,23 @@ function f4 name="moreResultsThanTheRegisters" parameters=[{type=int}] results=[
     v1 = Results v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
     Return v1
 }
-# CHECK-NEXT: f5 Direct ([[g0]]:Cell, [[g1]]:JSValue, [[d0]]:Double, [[g2]]:Boolean, [[d1]]:Double) -> ([[doubleResult]]:Double) closures=Unknown
-function f5 name="groupEntrypoint" role=GroupEntrypoint flags=[HasThis] captures=[{type=f8|f9}] thisType={type=anything} parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=number}] derivation={source=f8} creator=Entrypoint{target=f8 group=[f8, f9] arguments=Registers} {
-  b0(v0: f8|f9, v1: anything, v2: number, v3: boolean, v4: number):
-    Return v2
-}
-# X64: f6 GenericRegisters ([[closure]]:Cell, [[this]]:JSValue, [[a0]]:JSValue, [[a1]]:JSValue, [[a2]]:JSValue, [[a3]]:JSValue, stack0:JSValue, stack1:JSValue, stack2:JSValue, stack3:JSValue, stack4:JSValue, stack5:JSValue) -> ([[result]]:JSValue)
-# X64-NEXT: f7 GenericBuffer ([[closure]]:Cell, [[this]]:JSValue) -> ([[result]]:JSValue) spills
-# ARM64: f6 GenericRegisters ([[closure]]:Cell, [[this]]:JSValue, [[a0]]:JSValue, [[a1]]:JSValue, [[a2]]:JSValue, [[a3]]:JSValue, [[a4]]:JSValue, [[a5]]:JSValue, [[a6]]:JSValue, [[a7]]:JSValue, stack0:JSValue, stack1:JSValue) -> ([[result]]:JSValue)
-# ARM64-NEXT: f7 GenericBuffer ([[closure]]:Cell, [[this]]:JSValue) -> ([[result]]:JSValue) spills
-function f6 name="tenParameters" role=GenericEntrypoint flags=[HasThis] captures=[{type=f10}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
-  b0(v0: f10, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything):
+# X64: f5 GenericRegisters ([[closure]]:Cell, [[this]]:JSValue, [[a0]]:JSValue, [[a1]]:JSValue, [[a2]]:JSValue, [[a3]]:JSValue, stack0:JSValue, stack1:JSValue, stack2:JSValue, stack3:JSValue, stack4:JSValue, stack5:JSValue) -> ([[result]]:JSValue)
+# X64-NEXT: f6 GenericBuffer ([[closure]]:Cell, [[this]]:JSValue) -> ([[result]]:JSValue) spills
+# ARM64: f5 GenericRegisters ([[closure]]:Cell, [[this]]:JSValue, [[a0]]:JSValue, [[a1]]:JSValue, [[a2]]:JSValue, [[a3]]:JSValue, [[a4]]:JSValue, [[a5]]:JSValue, [[a6]]:JSValue, [[a7]]:JSValue, stack0:JSValue, stack1:JSValue) -> ([[result]]:JSValue)
+# ARM64-NEXT: f6 GenericBuffer ([[closure]]:Cell, [[this]]:JSValue) -> ([[result]]:JSValue) spills
+function f5 name="tenParameters" role=GenericEntrypoint flags=[HasThis] captures=[{type=f7}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
+  b0(v0: f7, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything):
     Return v1
 }
-function f7 name="collects" role=GenericEntrypoint flags=[HasThis] captures=[{type=f11}] thisType={type=anything} results=[{type=anything}] derivation={source=f11} creator=Entrypoint{target=f11} {
-  b0(v0: f11, v1: anything):
+function f6 name="collects" role=GenericEntrypoint flags=[HasThis] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] derivation={source=f8} creator=Entrypoint{target=f8} {
+  b0(v0: f8, v1: anything):
     Return v1
 }
-function f8 name="first" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number, v2: boolean, v3: number):
-    Return v1
-}
-function f9 name="second" kind=Arrow parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: boolean, v2: number):
-    Return v0
-}
-function f10 name="tenParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f7 name="tenParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything):
     Return v0
 }
-function f11 name="collects" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=undefined}] {
+function f8 name="collects" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=undefined}] {
   b0(v0: Array):
     Return
 }

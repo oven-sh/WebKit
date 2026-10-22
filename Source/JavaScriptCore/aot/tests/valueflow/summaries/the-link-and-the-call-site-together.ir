@@ -1,0 +1,66 @@
+# function each(list, use) { use(list[0], 0, list) }   each(records, reader);  each(records, keeper);  each(records, giver);  each(records, unknown);  through(records, reader) with function through(list, use) { each(list, use) }
+# The records are those that the front end lays down, written by hand. The link says of `each` that `use` is called with an element of `list` and with `list`, and lifts that through `through`.
+# At each call the function of the closure that stands there answers for the element, and none of these three can see the third argument.
+# RUN: fates-at-calls
+# CHECK: f0 v6 Call operand 2: members-read contents=members-read
+# CHECK-NEXT: f0 v6 Call operand 3: called contents=nothing
+# CHECK: f0 v8 Call operand 2: members-read contents=stored-in-unknown-object
+# CHECK-NEXT: f0 v8 Call operand 3: called contents=members-written
+# CHECK: f0 v10 Call operand 2: members-read contents=nothing
+# CHECK-NEXT: f0 v10 Call operand 3: called contents=nothing
+# CHECK: f0 v13 Call operand 2: anything
+# CHECK: f0 v15 Call operand 2: members-read contents=members-read
+# CHECK-NEXT: f0 v15 Call operand 3: called contents=nothing
+# RUN(LINK): relational-summary
+# LINK: f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Environment name="main" fields=[{key="kept" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray v1 contents=anything
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewObject layout=L1 fields=[]
+    v6 = Call v3, -, v2, v4
+    v7 = NewClosure v5 function=f3
+    v8 = Call v3, -, v2, v7
+    v9 = NewClosure function=f4
+    v10 = Call v3, -, v2, v9
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="unknown" [isFreeName]
+    v13 = Call v3, -, v2, v12
+    v14 = NewClosure v3 function=f5
+    v15 = Call v14, -, v2, v4
+    Return
+}
+function f1 name="each" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{fate=[HasMembersRead]}, {index=1 fate=[IsCalled]}, {kind=ReadFrom index=3}] handed=[{source=1 call=4}, {source=2 call=4 argument=2}, {call=4 argument=4}]} {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3, v2, v0
+    Return
+}
+function f2 name="reader" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[HasMembersRead]}, {kind=ReadFrom index=1 key="x"}]} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f3 name="keeper" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[HasMembersWritten]}, {index=1}] stores=[{source=1}]} {
+  b0(v0: env L1, v1: anything):
+    PutEnvironmentField v0, v1 layout=L1 field=0
+    Return
+}
+function f4 name="giver" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="through" kind=Arrow captures=[{type=anything}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsCalled]}, {index=1}, {index=2}] handed=[{call=3}, {source=1 call=3 argument=2}, {source=2 call=3 argument=3}]} {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, -, v1, v2
+    Return
+}

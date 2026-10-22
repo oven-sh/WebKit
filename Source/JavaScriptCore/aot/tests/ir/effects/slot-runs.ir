@@ -18,9 +18,9 @@ function f0 name="bothMayBeAdded" parameters=[{type=L0}, {type=number}] results=
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v2 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
-# CHECK-NEXT: v3 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
-# CHECK-NEXT: v4 PutSlots: reads(ObjectFields/2, OrderWords, AllocatorState) writes(ObjectFields/2, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v2 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
+# CHECK-NEXT: v3 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
+# CHECK-NEXT: v4 PutSlots: reads(ObjectFields/2, OrderWords, AllocatorState) writes(ObjectFields/2, OrderWords, AllocatorState, RuntimeState)
 function f1 name="bothAreFilled" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
   b0(v0: L0, v1: number):
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
@@ -42,4 +42,4 @@ function f2 name="oneMayBeAdded" parameters=[{type=L0}, {type=number}] results=[
     Return
 }
 # CHECK-LABEL: function f2
-# CHECK: v4 PutSlots: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/2, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK: v4 PutSlots: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/2, OrderWords, AllocatorState, RuntimeState)

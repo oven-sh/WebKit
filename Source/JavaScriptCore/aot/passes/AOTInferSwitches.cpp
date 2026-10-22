@@ -62,7 +62,7 @@ static unsigned inferIntegerSwitches(FunctionPassContext& context, IRBuilder& bu
     for (const ComparisonChain& chain : chains)
         appendEdgeResultParameters(context.function, chain.head, narrowedSubjects);
     if (!narrowedSubjects.isEmpty())
-        narrowValueTypes(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build }, narrowedSubjects.span());
+        narrowValueTypes(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, narrowedSubjects.span());
     return static_cast<unsigned>(chains.size());
 }
 
@@ -140,7 +140,7 @@ static void rewriteRun(IRBuilder& builder, const ShapeTestLinks& links)
     Target otherwise = function.at(links.last().block).terminator.notTaken();
 
     for (const ShapeTestLink& follower : links.span().subspan(1)) {
-        Block& block = function.at(follower.block);
+        Block& block = function.edit(follower.block);
         block.values.clear();
         block.terminator = Terminator { };
         block.handler = std::nullopt;
@@ -149,7 +149,7 @@ static void rewriteRun(IRBuilder& builder, const ShapeTestLinks& links)
     BitVector testIndex;
     testIndex.set(function.at(head).values.size() - 1);
     builder.eraseValues(head, testIndex);
-    function.at(head).terminator = Terminator { };
+    function.edit(head).terminator = Terminator { };
     builder.setOrigin(origin);
     builder.moveToEndOf(head);
     builder.emitSwitchOnShape(subject, WTF::move(cases), WTF::move(otherwise));
@@ -185,6 +185,9 @@ static unsigned inferShapeSwitches(FunctionPassContext& context, IRBuilder& buil
 
     for (const ShapeTestLinks& links : runs)
         rewriteRun(builder, links);
+    // The builder reports the switch, not the blocks that have been emptied into it.
+    if (!runs.isEmpty())
+        context.analyses.didChangeControlFlow();
     return static_cast<unsigned>(runs.size());
 }
 
@@ -193,7 +196,10 @@ PassOutcome inferSwitches(FunctionPassContext& context)
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     unsigned numberOfSwitches = inferIntegerSwitches(context, builder);
     numberOfSwitches += inferShapeSwitches(context, builder);
-    return numberOfSwitches ? PassOutcome::Changed : PassOutcome::Unchanged;
+    if (!numberOfSwitches)
+        return PassOutcome::Unchanged;
+    context.keptAnalyses = allAnalyses;
+    return PassOutcome::Changed;
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,95 @@
+# The slot of a field whose type lists layouts holds objects of this Instance alone: the run time lets no other in. So what is read from it needs no test for the Instance, only the test for nil.
+# A value of which nothing is known keeps its test, and so does one that a read by name has joined, and one where two values meet that have passed the test of their type alone
+# FORM: Prepared
+# RUN: pass EliminateGuards
+# STATISTIC: GuardsEliminated = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=undefined|null|L0} flags=[IsRequired, IsEnforced]}, {key="count" declared={type=number} flags=[IsRequired, IsEnforced]}]
+
+function f0 name="chain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b7()
+  b1(v2: L0):
+    v3 = BelongsToInstance v2
+    Branch v3 -> taken b2(| 0), notTaken b7()
+  b2(v4):
+    v5 = IsSlotFilled v2, v4 key="next" receivers=[L0] level=Expected
+    Branch v5 -> taken b3(| 0), notTaken b7()
+  b3(v6):
+    v7 = GetSlot v2, v6 key="next" receivers=[L0] level=Expected
+    v8 = TypeTest v7 testedType=L0
+    Branch v8 -> taken b4(| 0), notTaken b7()
+  b4(v9: L0):
+    v10 = BelongsToInstance v9
+    Branch v10 -> taken b5(| 0), notTaken b7()
+  b5(v11):
+    v12 = IsSlotFilled v9, v11 key="count" receivers=[L0] level=Expected
+    Branch v12 -> taken b6(| 0), notTaken b7()
+  b6(v13):
+    v14 = AllGuards v11, v13
+    v15 = GetSlot v9, v14 key="count" receivers=[L0] level=Expected
+    Return v15
+  b7():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="chain"
+# CHECK: = BelongsToInstance v2
+# CHECK: [[next]]: undefined|null|L0 = GetSlot v2, {{*}} key="next"
+# CHECK: = TypeTest [[next]] testedType=L0
+# CHECK-NOT: BelongsToInstance
+# CHECK: [[filled]]: boolean = IsSlotFilled v9
+# CHECK: = GetSlot v9, {{*}} key="count"
+
+function f1 name="joined" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="next"
+    Jump -> next b3(v2)
+  b2():
+    v3 = PropGet v0 key="other"
+    Jump -> next b3(v3)
+  b3(v4: anything):
+    v5 = TypeTest v4 testedType=L0
+    Branch v5 -> taken b4(| 0), notTaken b7()
+  b4(v6: L0):
+    v7 = BelongsToInstance v6
+    Branch v7 -> taken b5(| 0), notTaken b7()
+  b5(v8):
+    v9 = IsSlotFilled v6, v8 key="count" receivers=[L0] level=Expected
+    Branch v9 -> taken b6(| 0), notTaken b7()
+  b6(v10):
+    v11 = GetSlot v6, v10 key="count" receivers=[L0] level=Expected
+    Return v11
+  b7():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="joined"
+# CHECK: = BelongsToInstance v6
+
+
+function f2 name="testedValuesMeet" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypeTest v0 testedType=L0
+    Branch v3 -> taken b3(| 0), notTaken b6()
+  b2():
+    v4 = TypeTest v1 testedType=L0
+    Branch v4 -> taken b3(| 0), notTaken b6()
+  b3(v5: L0):
+    v6 = BelongsToInstance v5
+    Branch v6 -> taken b4(| 0), notTaken b6()
+  b4(v7):
+    v8 = IsSlotFilled v5, v7 key="count" receivers=[L0] level=Expected
+    Branch v8 -> taken b5(| 0), notTaken b6()
+  b5(v9):
+    v10 = GetSlot v5, v9 key="count" receivers=[L0] level=Expected
+    Return v10
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="testedValuesMeet"
+# CHECK: = BelongsToInstance v5

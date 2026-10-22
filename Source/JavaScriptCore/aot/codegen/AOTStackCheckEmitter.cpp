@@ -55,13 +55,14 @@ static_assert([] {
     return true;
 }(), "a frame that is checked before it is allocated is set up at the entry of the function, and its check writes the macro scratch registers");
 
-static void emitLargeFrameCheck(CCallHelpers& jit, PendingStackCheck& check)
+static void emitLargeFrameCheck(CCallHelpers& jit, PendingStackCheck& check, const B3::Air::StackCheckSite& site)
 {
     // The assembler hands out its scratch register only where the EnterFrame names it as a scratch operand.
     GPRReg newStackPointer = jit.scratchRegister();
-    jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(check.bytesBelowFrameRecord), newStackPointer);
+    GPRReg base = check.bytesAllocatedBelowReturnAddress ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
+    jit.subPtr(base, CCallHelpers::TrustedImm32(check.bytesAllocatedBelowReturnAddress ? site.bytesLeftToAllocate : check.bytesBelowFrameRecord), newStackPointer);
     check.limit = StackLimit::Soft;
-    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Above, newStackPointer, GPRInfo::callFrameRegister));
+    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Above, newStackPointer, base));
     check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, newStackPointer, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit())));
 }
 
@@ -78,10 +79,12 @@ void setStackCheckGenerator(B3::Procedure& proc, StackCheck stackCheck, const Fr
 
         state.isEnteredWithoutStackCheck = false;
         PendingStackCheck check { .bytesBelowFrameRecord = site.bytesBelowFrameRecord };
+        if (!code.frameLayout().hasFrameRecord)
+            check.bytesAllocatedBelowReturnAddress = site.bytesAllocatedBelowReturnAddress;
         if (site.bytesBelowFrameRecord <= code.policy().frame.maxBytesAllocatedBeforeStackCheck)
             emitSmallFrameCheck(jit, check);
         else
-            emitLargeFrameCheck(jit, check);
+            emitLargeFrameCheck(jit, check, site);
         check.resume = jit.label();
         state.pending.append(WTF::move(check));
     }));
@@ -94,6 +97,14 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
         check.doesNotFit.link(&jit);
         switch (check.limit) {
         case StackLimit::Soft:
+            if (check.bytesAllocatedBelowReturnAddress) {
+                CCallHelpers::Label begin = jit.label();
+                if (*check.bytesAllocatedBelowReturnAddress)
+                    jit.addPtr(CCallHelpers::TrustedImm32(*check.bytesAllocatedBelowReturnAddress), CCallHelpers::stackPointerRegister);
+                records.units.pin(begin, jit.label());
+                records.stubCalls.tailCall(jit, throwStackOverflow(false));
+                break;
+            }
             records.stubCalls.tailCall(jit, throwStackOverflow(true));
             break;
         case StackLimit::TrapAwareSoft: {

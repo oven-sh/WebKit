@@ -69,7 +69,7 @@ function f4 name="readDoesNotAdmitElements" parameters=[{type=anything}, {type=a
     Branch v4 -> taken b1(| 0), notTaken b2()
   b1(v5):
     v6 = AllGuards v3, v5
-    v7 = GetArrayElement v3, v2, v6 arrayStorage=Double level=Predicted
+    v7 = GetArrayElement v3, v2, v6 arrayStorage=Double level=Expected
     Return v7
   b2():
     Return v0

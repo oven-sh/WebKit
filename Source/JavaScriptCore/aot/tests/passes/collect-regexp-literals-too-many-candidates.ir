@@ -1,0 +1,293 @@
+# 65 texts at one call are over RegExpCandidatesPerSite: no candidate, one warning. 64 at another call are all kept
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# DIAGNOSTIC: RegExpWithoutCode 1
+# LOSS: RegExpCandidatesPerSite x1 f1
+# STATISTIC: RegExpCandidatesPerSiteHits = 1
+# STATISTIC: CollectRegExpLiteralsChanges = 64
+# CHECK: regexp requests: 64
+# CHECK-NEXT: 0 candidate "few0+" flags=- sites=f2:v2
+# CHECK-COUNT-62: candidate "few{{*}}+" flags=- sites=f2:v2
+# CHECK-NEXT: 63 candidate "few63+" flags=- sites=f2:v2
+# CHECK-NEXT: module m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="many0+"
+    v1 = CallDirect v0 function=f1
+    v2 = String string="many1+"
+    v3 = CallDirect v2 function=f1
+    v4 = String string="many2+"
+    v5 = CallDirect v4 function=f1
+    v6 = String string="many3+"
+    v7 = CallDirect v6 function=f1
+    v8 = String string="many4+"
+    v9 = CallDirect v8 function=f1
+    v10 = String string="many5+"
+    v11 = CallDirect v10 function=f1
+    v12 = String string="many6+"
+    v13 = CallDirect v12 function=f1
+    v14 = String string="many7+"
+    v15 = CallDirect v14 function=f1
+    v16 = String string="many8+"
+    v17 = CallDirect v16 function=f1
+    v18 = String string="many9+"
+    v19 = CallDirect v18 function=f1
+    v20 = String string="many10+"
+    v21 = CallDirect v20 function=f1
+    v22 = String string="many11+"
+    v23 = CallDirect v22 function=f1
+    v24 = String string="many12+"
+    v25 = CallDirect v24 function=f1
+    v26 = String string="many13+"
+    v27 = CallDirect v26 function=f1
+    v28 = String string="many14+"
+    v29 = CallDirect v28 function=f1
+    v30 = String string="many15+"
+    v31 = CallDirect v30 function=f1
+    v32 = String string="many16+"
+    v33 = CallDirect v32 function=f1
+    v34 = String string="many17+"
+    v35 = CallDirect v34 function=f1
+    v36 = String string="many18+"
+    v37 = CallDirect v36 function=f1
+    v38 = String string="many19+"
+    v39 = CallDirect v38 function=f1
+    v40 = String string="many20+"
+    v41 = CallDirect v40 function=f1
+    v42 = String string="many21+"
+    v43 = CallDirect v42 function=f1
+    v44 = String string="many22+"
+    v45 = CallDirect v44 function=f1
+    v46 = String string="many23+"
+    v47 = CallDirect v46 function=f1
+    v48 = String string="many24+"
+    v49 = CallDirect v48 function=f1
+    v50 = String string="many25+"
+    v51 = CallDirect v50 function=f1
+    v52 = String string="many26+"
+    v53 = CallDirect v52 function=f1
+    v54 = String string="many27+"
+    v55 = CallDirect v54 function=f1
+    v56 = String string="many28+"
+    v57 = CallDirect v56 function=f1
+    v58 = String string="many29+"
+    v59 = CallDirect v58 function=f1
+    v60 = String string="many30+"
+    v61 = CallDirect v60 function=f1
+    v62 = String string="many31+"
+    v63 = CallDirect v62 function=f1
+    v64 = String string="many32+"
+    v65 = CallDirect v64 function=f1
+    v66 = String string="many33+"
+    v67 = CallDirect v66 function=f1
+    v68 = String string="many34+"
+    v69 = CallDirect v68 function=f1
+    v70 = String string="many35+"
+    v71 = CallDirect v70 function=f1
+    v72 = String string="many36+"
+    v73 = CallDirect v72 function=f1
+    v74 = String string="many37+"
+    v75 = CallDirect v74 function=f1
+    v76 = String string="many38+"
+    v77 = CallDirect v76 function=f1
+    v78 = String string="many39+"
+    v79 = CallDirect v78 function=f1
+    v80 = String string="many40+"
+    v81 = CallDirect v80 function=f1
+    v82 = String string="many41+"
+    v83 = CallDirect v82 function=f1
+    v84 = String string="many42+"
+    v85 = CallDirect v84 function=f1
+    v86 = String string="many43+"
+    v87 = CallDirect v86 function=f1
+    v88 = String string="many44+"
+    v89 = CallDirect v88 function=f1
+    v90 = String string="many45+"
+    v91 = CallDirect v90 function=f1
+    v92 = String string="many46+"
+    v93 = CallDirect v92 function=f1
+    v94 = String string="many47+"
+    v95 = CallDirect v94 function=f1
+    v96 = String string="many48+"
+    v97 = CallDirect v96 function=f1
+    v98 = String string="many49+"
+    v99 = CallDirect v98 function=f1
+    v100 = String string="many50+"
+    v101 = CallDirect v100 function=f1
+    v102 = String string="many51+"
+    v103 = CallDirect v102 function=f1
+    v104 = String string="many52+"
+    v105 = CallDirect v104 function=f1
+    v106 = String string="many53+"
+    v107 = CallDirect v106 function=f1
+    v108 = String string="many54+"
+    v109 = CallDirect v108 function=f1
+    v110 = String string="many55+"
+    v111 = CallDirect v110 function=f1
+    v112 = String string="many56+"
+    v113 = CallDirect v112 function=f1
+    v114 = String string="many57+"
+    v115 = CallDirect v114 function=f1
+    v116 = String string="many58+"
+    v117 = CallDirect v116 function=f1
+    v118 = String string="many59+"
+    v119 = CallDirect v118 function=f1
+    v120 = String string="many60+"
+    v121 = CallDirect v120 function=f1
+    v122 = String string="many61+"
+    v123 = CallDirect v122 function=f1
+    v124 = String string="many62+"
+    v125 = CallDirect v124 function=f1
+    v126 = String string="many63+"
+    v127 = CallDirect v126 function=f1
+    v128 = String string="many64+"
+    v129 = CallDirect v128 function=f1
+    v130 = String string="few0+"
+    v131 = CallDirect v130 function=f2
+    v132 = String string="few1+"
+    v133 = CallDirect v132 function=f2
+    v134 = String string="few2+"
+    v135 = CallDirect v134 function=f2
+    v136 = String string="few3+"
+    v137 = CallDirect v136 function=f2
+    v138 = String string="few4+"
+    v139 = CallDirect v138 function=f2
+    v140 = String string="few5+"
+    v141 = CallDirect v140 function=f2
+    v142 = String string="few6+"
+    v143 = CallDirect v142 function=f2
+    v144 = String string="few7+"
+    v145 = CallDirect v144 function=f2
+    v146 = String string="few8+"
+    v147 = CallDirect v146 function=f2
+    v148 = String string="few9+"
+    v149 = CallDirect v148 function=f2
+    v150 = String string="few10+"
+    v151 = CallDirect v150 function=f2
+    v152 = String string="few11+"
+    v153 = CallDirect v152 function=f2
+    v154 = String string="few12+"
+    v155 = CallDirect v154 function=f2
+    v156 = String string="few13+"
+    v157 = CallDirect v156 function=f2
+    v158 = String string="few14+"
+    v159 = CallDirect v158 function=f2
+    v160 = String string="few15+"
+    v161 = CallDirect v160 function=f2
+    v162 = String string="few16+"
+    v163 = CallDirect v162 function=f2
+    v164 = String string="few17+"
+    v165 = CallDirect v164 function=f2
+    v166 = String string="few18+"
+    v167 = CallDirect v166 function=f2
+    v168 = String string="few19+"
+    v169 = CallDirect v168 function=f2
+    v170 = String string="few20+"
+    v171 = CallDirect v170 function=f2
+    v172 = String string="few21+"
+    v173 = CallDirect v172 function=f2
+    v174 = String string="few22+"
+    v175 = CallDirect v174 function=f2
+    v176 = String string="few23+"
+    v177 = CallDirect v176 function=f2
+    v178 = String string="few24+"
+    v179 = CallDirect v178 function=f2
+    v180 = String string="few25+"
+    v181 = CallDirect v180 function=f2
+    v182 = String string="few26+"
+    v183 = CallDirect v182 function=f2
+    v184 = String string="few27+"
+    v185 = CallDirect v184 function=f2
+    v186 = String string="few28+"
+    v187 = CallDirect v186 function=f2
+    v188 = String string="few29+"
+    v189 = CallDirect v188 function=f2
+    v190 = String string="few30+"
+    v191 = CallDirect v190 function=f2
+    v192 = String string="few31+"
+    v193 = CallDirect v192 function=f2
+    v194 = String string="few32+"
+    v195 = CallDirect v194 function=f2
+    v196 = String string="few33+"
+    v197 = CallDirect v196 function=f2
+    v198 = String string="few34+"
+    v199 = CallDirect v198 function=f2
+    v200 = String string="few35+"
+    v201 = CallDirect v200 function=f2
+    v202 = String string="few36+"
+    v203 = CallDirect v202 function=f2
+    v204 = String string="few37+"
+    v205 = CallDirect v204 function=f2
+    v206 = String string="few38+"
+    v207 = CallDirect v206 function=f2
+    v208 = String string="few39+"
+    v209 = CallDirect v208 function=f2
+    v210 = String string="few40+"
+    v211 = CallDirect v210 function=f2
+    v212 = String string="few41+"
+    v213 = CallDirect v212 function=f2
+    v214 = String string="few42+"
+    v215 = CallDirect v214 function=f2
+    v216 = String string="few43+"
+    v217 = CallDirect v216 function=f2
+    v218 = String string="few44+"
+    v219 = CallDirect v218 function=f2
+    v220 = String string="few45+"
+    v221 = CallDirect v220 function=f2
+    v222 = String string="few46+"
+    v223 = CallDirect v222 function=f2
+    v224 = String string="few47+"
+    v225 = CallDirect v224 function=f2
+    v226 = String string="few48+"
+    v227 = CallDirect v226 function=f2
+    v228 = String string="few49+"
+    v229 = CallDirect v228 function=f2
+    v230 = String string="few50+"
+    v231 = CallDirect v230 function=f2
+    v232 = String string="few51+"
+    v233 = CallDirect v232 function=f2
+    v234 = String string="few52+"
+    v235 = CallDirect v234 function=f2
+    v236 = String string="few53+"
+    v237 = CallDirect v236 function=f2
+    v238 = String string="few54+"
+    v239 = CallDirect v238 function=f2
+    v240 = String string="few55+"
+    v241 = CallDirect v240 function=f2
+    v242 = String string="few56+"
+    v243 = CallDirect v242 function=f2
+    v244 = String string="few57+"
+    v245 = CallDirect v244 function=f2
+    v246 = String string="few58+"
+    v247 = CallDirect v246 function=f2
+    v248 = String string="few59+"
+    v249 = CallDirect v248 function=f2
+    v250 = String string="few60+"
+    v251 = CallDirect v250 function=f2
+    v252 = String string="few61+"
+    v253 = CallDirect v252 function=f2
+    v254 = String string="few62+"
+    v255 = CallDirect v254 function=f2
+    v256 = String string="few63+"
+    v257 = CallDirect v256 function=f2
+    Return
+}
+
+function f1 name="oneTextTooMany" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0 @10
+    Return v2
+}
+
+function f2 name="asManyAsAllowed" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0 @20
+    Return v2
+}

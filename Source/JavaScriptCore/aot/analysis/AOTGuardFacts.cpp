@@ -9,13 +9,17 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBuildContext.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
+#include "AOTNarrowFieldTypes.h"
+#include "AOTPointsToSolver.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperationColumns.h"
 #include "AOTSchemaValueEffects.h"
@@ -29,6 +33,7 @@ static constexpr ProofSet proofsOfNewLayoutInstance {
     Proof::OwnInstance,
     Proof::SlotFilled,
     Proof::NoExtraProperties,
+    Proof::NoFieldOutsideSlot,
     Proof::NotFrozen,
     Proof::KeyOrder,
 };
@@ -38,13 +43,16 @@ static constexpr ProofSet proofsOfNewBuiltinInstance { Proof::Pristine };
 // The run time answers with an ordinary object when the source does not fit the layout.
 static constexpr OpcodeSet allocationsWithUnprovenLayout { Opcode::CloneAs };
 
+// A compiled object keeps its shape, and with it its instance, for life.
 // A source stays open across the calls of its parsers, which write what opening it read. The typed-data rules check where it is closed.
-static constexpr ProofSet proofsThatOutlastWrites { Proof::SourceOpen };
+static constexpr ProofSet proofsThatOutlastWrites { Proof::Shape, Proof::OwnInstance, Proof::SourceOpen };
 
 // A flow record of the field, the layout or the class can stand for these, so nobody can tell whether an access takes them from its guard.
 static constexpr ProofSet proofsDecidedByFlow {
     Proof::SlotFilled,
     Proof::NoExtraProperties,
+    Proof::NoFieldOutsideSlot,
+    Proof::BirthFieldsFilled,
     Proof::NotFrozen,
     Proof::OwnInstance,
     Proof::KeyOrder,
@@ -92,6 +100,85 @@ struct ReadCollector {
 
 } // anonymous namespace
 
+static OpcodeSet opcodesMatching(NOESCAPE const Invocable<bool(Opcode)> auto& predicate)
+{
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (predicate(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}
+
+static bool hasDeclaredOperandMatching(Opcode opcode, NOESCAPE const Invocable<bool(const OperandInfo&)> auto& predicate)
+{
+    uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
+    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
+        if (predicate(operandInfoOf(opcode, operandIndex)))
+            return true;
+    }
+    return false;
+}
+
+static const OpcodeSet& opcodesThatNameGuards()
+{
+    static const OpcodeSet opcodes = opcodesMatching([](Opcode opcode) {
+        return hasDeclaredOperandMatching(opcode, [](const OperandInfo& operand) {
+            return operand.kind == OperandKind::Guard;
+        });
+    });
+    return opcodes;
+}
+
+// No other opcode has the result rule of an allocation, and freshnessOf() knows nothing of the result of any other.
+static const OpcodeSet& opcodesThatMayMakeObject()
+{
+    static const OpcodeSet opcodes = opcodesMatching([](Opcode opcode) {
+        return resultRuleOf(opcode) == ResultRule::Allocation || resultMayBeFresh(opcode);
+    });
+    return opcodes;
+}
+
+// The solver of EscapeAnalysis lets a value stand for objects of the function alone only where the value defines such an object, is a cast or a conversion, or is a parameter of a block behind the entry.
+// A value that nobody reads brings no object with it.
+static bool isDefinedOutside(FunctionAnalyses& analyses, ValueID definition)
+{
+    static const OpcodeSet opcodesThatMayGiveOwnObject = opcodesThatMayDefineObjects() | castsAndConversions | OpcodeSet { Opcode::Unspecified };
+
+    ValueLocation location = analyses.useLists().locationOf(definition);
+    switch (location.placement) {
+    case ValuePlacement::Detached:
+        return false;
+    case ValuePlacement::Parameter:
+        return location.block == entryBlock && definition != findFreshEntryParameter(analyses.function(), analyses.cfg());
+    case ValuePlacement::InBlock:
+        return !opcodesThatMayGiveOwnObject.contains(analyses.function().at(definition).opcode);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool comesFromOutside(FunctionAnalyses& analyses, ValueID value)
+{
+    constexpr size_t maxDefinitions = 24;
+
+    // What one edge brings from outside, the parameter may be, and so may the parameters that it is passed on to.
+    Vector<ValueID, maxDefinitions> definitions { analyses.identityOf(value) };
+    for (size_t next = 0; next < definitions.size(); ++next) {
+        ValueID definition = definitions[next];
+        if (isDefinedOutside(analyses, definition))
+            return true;
+        ValueLocation location = analyses.useLists().locationOf(definition);
+        if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+            continue;
+        for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+            ValueID passed = valuePassedOn(analyses.function(), edge, location.index);
+            if (passed && definitions.size() < maxDefinitions)
+                definitions.appendIfNotContains(analyses.identityOf(passed));
+        }
+    }
+    return false;
+}
+
 bool isGuardValue(const Function& function, ValueID id)
 {
     return id && function.at(id).type == TypeTable::guard;
@@ -106,6 +193,7 @@ BitVector guardValuesOf(const Function& function, const CFG& cfg)
                 guards.quickSet(operand.index());
         });
     };
+    const OpcodeSet& opcodesNamingGuards = opcodesThatNameGuards();
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         for (ValueID parameter : block.parameters) {
@@ -115,7 +203,8 @@ BitVector guardValuesOf(const Function& function, const CFG& cfg)
         for (ValueID value : block.values) {
             if (isGuardValue(function, value))
                 guards.quickSet(value.index());
-            addGuardsNamedBy(function.at(value));
+            if (opcodesNamingGuards.contains(function.at(value).opcode))
+                addGuardsNamedBy(function.at(value));
         }
         addGuardsNamedBy(block.terminator);
     }
@@ -143,14 +232,15 @@ const GuardFact* GuardFacts::find(Proof proof) const
 Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
 {
     switch (proof) {
-    case Proof::Shape:
-    case Proof::OwnInstance:
     case Proof::SlotFilled:
-        return { MemoryLocation(AbstractHeap::ShapeWords) };
+    // A store that creates a field writes the order and the count of the order word, never its integrity bits. Whatever changes those writes the shape words too.
     case Proof::NotFrozen:
+        return { MemoryLocation(AbstractHeap::ShapeWords) };
     case Proof::KeyOrder:
         return { MemoryLocation(AbstractHeap::ShapeWords), MemoryLocation(AbstractHeap::OrderWords) };
     case Proof::NoExtraProperties:
+    case Proof::NoFieldOutsideSlot:
+    case Proof::BirthFieldsFilled:
         return { MemoryLocation(AbstractHeap::NamedProperties) };
     case Proof::Pristine:
         return { MemoryLocation(AbstractHeap::PrototypeLinks), MemoryLocation(AbstractHeap::NamedProperties) };
@@ -163,18 +253,19 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
     case Proof::IntegerBound:
     case Proof::ExactFunction:
     case Proof::CaseValue:
+    case Proof::NotNullish:
+    case Proof::Shape:
+    case Proof::OwnInstance:
     case Proof::InBounds:
     case Proof::NotThenable:
     case Proof::MemberUnchanged:
     case Proof::PrototypeLinkUnchanged:
     case Proof::EvaluatedOnce:
-    case Proof::EpochCurrent:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
     case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
-    case Proof::RequireEdgeReady:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -182,6 +273,8 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
 
 static bool hasFreshResult(const Program& program, const Function& function, const Value& value)
 {
+    if (!opcodesThatMayMakeObject().contains(value.opcode))
+        return false;
     EffectSummaries unknownSummaries;
     return freshnessOf(EffectContext { program, unknownSummaries }, function, value) == ResultFreshness::Fresh;
 }
@@ -203,13 +296,33 @@ bool allocatesOwnLayout(const Program& program, const Value& allocation)
     return !mayAllocateOtherLayout(program, allocation);
 }
 
+// The object of a literal is born with what the literal lists. The fields of a class are stored by its constructor, and some of them hold raw values that a listed undefined would not be.
+static bool fillsEveryFieldOfBirth(const Program& program, const Value& allocation)
+{
+    if (allocation.opcode != Opcode::NewObject || program.at(allocation.layout()).kind != LayoutKind::Record)
+        return false;
+    std::span<const uint32_t> listed = allocation.fields();
+    bool hasFieldOfBirth = false;
+    for (uint32_t field = 0; field < program.at(allocation.layout()).fields.size(); ++field) {
+        if (!isFilledAtBirth(program, { allocation.layout(), field }))
+            continue;
+        if (!std::ranges::contains(listed, field))
+            return false;
+        hasFieldOfBirth = true;
+    }
+    return hasFieldOfBirth;
+}
+
 ProofSet proofsOfAllocation(const Program& program, const Function& function, const Value& allocation)
 {
     if (allocationsWithUnprovenLayout.contains(allocation.opcode) || !allocatesOwnLayout(program, allocation))
         return { };
+    // A template object is frozen and has `raw`: it is an array, and in nothing like a new one.
+    if (allocation.opcode == Opcode::NewTemplateObject)
+        return { };
     bool hasAllocationRule = resultRuleOf(allocation.opcode) == ResultRule::Allocation;
     if (hasAllocationRule && Value::opcodesWithLayout.contains(allocation.opcode) && allocation.layout())
-        return proofsOfNewLayoutInstance;
+        return fillsEveryFieldOfBirth(program, allocation) ? proofsOfNewLayoutInstance | ProofSet { Proof::BirthFieldsFilled } : proofsOfNewLayoutInstance;
     const ClassPart* classPart = allocation.type ? program.at(allocation.type).singleBuiltinClass() : nullptr;
     if (!classPart || newTargetOf(allocation.opcode))
         return { };
@@ -217,23 +330,75 @@ ProofSet proofsOfAllocation(const Program& program, const Function& function, co
         return { };
     if (takesPrototypeFromOperand(program.builtins(), allocation))
         return { };
-    if (pristineTestOf(program.builtins(), classPart->builtinClass) == PristineTest::NeverPasses)
+    if (pristineTestOf(program.builtins(), classPart->builtinClass) == PristineTest::NeverPasses && !canOnlyBeProvenPristine(program.builtins(), classPart->builtinClass))
         return { };
     return classPart->builtinClass == BuiltinClasses::Array ? proofsOfNewArray : proofsOfNewBuiltinInstance;
 }
 
-static ArrayStorage arrayStorageOfNewArray(const Program& program, const Value& allocation)
+// ExpandLongArrayLiterals puts an array of holes that is filled and then cut in the place of a long literal, and whoever named the literal as its guard names the cut array from then on.
+// Only stores that keep the storage fill such an array, and what is cut keeps the storage, or is a copy with the same.
+static bool isFilledArrayOfHoles(const Function& function, const Value& allocation)
+{
+    return allocation.opcode == Opcode::TruncateNewArray && function.at(allocation.arrayOperand()).opcode == Opcode::NewContiguousArray;
+}
+
+static ArrayStorage arrayStorageOfNewArray(const Program& program, const Function& function, const Value& allocation)
 {
     ArrayStorage named = program.at(allocation.type).singleBuiltinClass()->arrayStorage;
-    if (named != ArrayStorage::Other || allocation.opcode != Opcode::NewArray)
+    if (named != ArrayStorage::Other)
         return named;
-    return arrayStorageOfLiteral(program, allocation);
+    if (isFilledArrayOfHoles(function, allocation))
+        return ArrayStorage::Contiguous;
+    return allocation.opcode == Opcode::NewArray ? arrayStorageOfLiteral(program, allocation) : named;
 }
 
 // The storage of constant data is shared until the first store, and a built-in may hand out such storage again.
-static bool allocatesWritableStorage(const Value& allocation)
+static bool allocatesWritableStorage(const Function& function, const Value& allocation)
 {
-    return allocation.opcode == Opcode::NewArray;
+    return allocation.opcode == Opcode::NewArray || isFilledArrayOfHoles(function, allocation);
+}
+
+// Such a test passes only where the slot holds a value of the field's type without undefined and null, and such a read loads the slot as one.
+static bool holdsDeclaredType(const Value& slotOperation)
+{
+    return Value::opcodesWithHoldsDeclaredType.contains(slotOperation.opcode) && slotOperation.holdsDeclaredType();
+}
+
+TestedSlotState slotStateTestedBy(const Value& test)
+{
+    if (test.opcode != Opcode::IsSlotFilled)
+        return TestedSlotState::None;
+    return holdsDeclaredType(test) ? TestedSlotState::HoldsDeclaredType : TestedSlotState::Filled;
+}
+
+TestedSlotState slotStateProvenBy(const Function& function, const GuardFact& fact)
+{
+    if (fact.proofs != ProofSet { Proof::SlotFilled } || fact.origins.isEmpty())
+        return TestedSlotState::None;
+    TestedSlotState proven = TestedSlotState::Filled;
+    for (const GuardOrigin& origin : fact.origins) {
+        TestedSlotState tested = origin.source == GuardSource::Test ? slotStateTestedBy(function.at(origin.test)) : TestedSlotState::None;
+        if (tested == TestedSlotState::None)
+            return TestedSlotState::None;
+        proven = std::max(proven, tested);
+    }
+    return proven;
+}
+
+bool leavesSlotsAsTested(const Program& program, const Function& function, const Value& writer, const Effects& effectsOfWriter, TestedSlotState tested)
+{
+    if (tested == TestedSlotState::None || !effectsOfWriter.writes.isSubsetOf(declaredBoundOf(Opcode::PutSlotOrAdd).writes))
+        return false;
+    auto fillsSlot = [&](ValueID stored) {
+        const Type& type = program.typeOf(function, stored);
+        if (type.primitives & Primitive::Absent)
+            return false;
+        return tested == TestedSlotState::Filled || !type.mayBeUndefinedOrNull();
+    };
+    if (writer.opcode == Opcode::PutSlots)
+        return std::ranges::all_of(writer.variadicOperands(), fillsSlot);
+    std::optional<uint8_t> stored = storedOf(writer.opcode);
+    return stored && fillsSlot(writer.operand(*stored));
 }
 
 static bool listsFieldWithKey(const Program& program, const Value& value, PropertyKeyID key)
@@ -256,17 +421,20 @@ bool allocationProves(const Program& program, const Function& function, const Va
     case Proof::Shape:
         return std::ranges::binary_search(program.at(test.layouts()).members, allocation.layout());
     case Proof::SlotFilled:
-        return listsFieldWithKey(program, allocation, test.key());
+        // An allocation may fill the slot with undefined.
+        return !holdsDeclaredType(test) && listsFieldWithKey(program, allocation, test.key());
     case Proof::NoExtraProperties:
+    case Proof::NoFieldOutsideSlot:
+    case Proof::BirthFieldsFilled:
     case Proof::NotFrozen:
     case Proof::OwnInstance:
         return true;
     case Proof::Pristine:
         return allocatedClass && Value::opcodesWithBuiltinClass.contains(test.opcode) && allocatedClass->builtinClass == test.builtinClass();
     case Proof::ArrayStorage:
-        if (test.isWritable() && !allocatesWritableStorage(allocation))
+        if (test.isWritable() && !allocatesWritableStorage(function, allocation))
             return false;
-        return allocatedClass && test.arrayStorage() != ArrayStorage::Other && arrayStorageOfNewArray(program, allocation) == test.arrayStorage();
+        return allocatedClass && test.arrayStorage() != ArrayStorage::Other && arrayStorageOfNewArray(program, function, allocation) == test.arrayStorage();
     case Proof::None:
     case Proof::TestedType:
     case Proof::Truthiness:
@@ -274,19 +442,18 @@ bool allocationProves(const Program& program, const Function& function, const Va
     case Proof::IntegerBound:
     case Proof::ExactFunction:
     case Proof::CaseValue:
+    case Proof::NotNullish:
     case Proof::InBounds:
     case Proof::NotThenable:
     case Proof::MemberUnchanged:
     case Proof::PrototypeLinkUnchanged:
     case Proof::EvaluatedOnce:
     case Proof::KeyOrder:
-    case Proof::EpochCurrent:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
     case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
-    case Proof::RequireEdgeReady:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -323,25 +490,64 @@ static bool namesArrayStorage(const Value& user)
     return Value::opcodesWithArrayStorage.contains(user.opcode) && user.arrayStorage() != ArrayStorage::Other;
 }
 
-static bool isInsideLength(const Value& user)
+static bool isInBounds(const Value& user)
 {
     return Value::opcodesWithIsInBounds.contains(user.opcode) && user.isInBounds();
 }
 
-static bool admitsLayouts(const Program& program, const Value& user, const LayoutSet& layouts)
+static bool readsPresentElement(const Value& user)
+{
+    return Value::opcodesWithIsPresent.contains(user.opcode) && user.isPresent();
+}
+
+static bool isInsideLength(const Value& user)
+{
+    if (isInBounds(user) || readsPresentElement(user))
+        return true;
+    return Value::opcodesWithIsInsideView.contains(user.opcode) && user.isInsideView();
+}
+
+static bool admitsLayouts(const Program& program, const Value& user, std::span<const LayoutID> sortedLayouts, bool isComplete)
 {
     if (!Value::opcodesWithReceivers.contains(user.opcode))
         return true;
     LayoutSetID receivers = user.receivers();
-    if (!receivers || isSubsetOf(layouts, program.at(receivers)))
+    if (!receivers || !program.at(receivers).isComplete)
         return true;
-    if (!layouts.isComplete)
+    if (!isComplete)
         return false;
-    // The access plan leaves out a layout that has no instance.
     const Vector<LayoutID>& admitted = program.at(receivers).members;
-    return std::ranges::all_of(layouts.members, [&](LayoutID member) {
+    if (sortedLayouts.size() <= admitted.size() && std::ranges::includes(admitted, sortedLayouts))
+        return true;
+    // The access plan leaves out a layout that has no instance.
+    return std::ranges::all_of(sortedLayouts, [&](LayoutID member) {
         return program.at(member).flow.allocation == AllocationState::NeverAllocated || std::ranges::binary_search(admitted, member);
     });
+}
+
+static bool admitsLayoutSet(const Program& program, const Value& user, LayoutSetID layouts, bool isComplete)
+{
+    if (Value::opcodesWithReceivers.contains(user.opcode) && user.receivers() == layouts)
+        return true;
+    return admitsLayouts(program, user, program.at(layouts).members.span(), isComplete);
+}
+
+static LayoutSetID layoutSetTestedBy(const Function& function, const GuardOrigin& origin)
+{
+    switch (origin.source) {
+    case GuardSource::Test:
+        return function.at(origin.test).layouts();
+    case GuardSource::SwitchCase:
+        return function.at(origin.switchBlock).terminator.layoutSets()[origin.caseIndex];
+    case GuardSource::Allocation:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool hasOneTestedLayoutSet(const GuardFact& fact)
+{
+    return fact.proves(Proof::Shape) && fact.origins.size() == 1 && fact.origins[0].source != GuardSource::Allocation;
 }
 
 static bool isProvenByType(const Program& program, const Value& user, Proof proof, const Type& type)
@@ -349,7 +555,7 @@ static bool isProvenByType(const Program& program, const Value& user, Proof proo
     if (type.isNever())
         return true;
     if (proof == Proof::Shape)
-        return type.hasOnlyLayouts() && !type.mayBeUndefinedOrNull() && admitsLayouts(program, user, program.at(type.layouts));
+        return type.hasOnlyLayouts(program) && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts, program.at(type.layouts).isComplete);
     if (proof == Proof::NotThenable)
         return !protocolMayFindMember(program, type, Protocol::Thenable);
     if (proof != Proof::Pristine && proof != Proof::ArrayStorage)
@@ -372,11 +578,18 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
 
     ProofSet relied = reliesOf(user.opcode);
     for (Proof proof : allMembersOf<Proof>) {
-        if (!relied.contains(proof) || proofsDecidedByFlow.contains(proof))
+        if (!relied.contains(proof))
+            continue;
+        // No flow record says which of the values that fill a slot it holds.
+        bool needsTestOfSlot = proof == Proof::SlotFilled && holdsDeclaredType(user);
+        if (proofsDecidedByFlow.contains(proof) && !needsTestOfSlot)
             continue;
         if (proof == Proof::ArrayStorage && !namesArrayStorage(user))
             continue;
         if (proof == Proof::InBounds && !isInsideLength(user))
+            continue;
+        // An own element that is present answers without the prototypes.
+        if (proof == Proof::Pristine && readsPresentElement(user))
             continue;
         if (subject && isProvenByType(program, user, proof, program.typeOf(function, subject)))
             continue;
@@ -421,7 +634,7 @@ static ArrayStorage arrayStorageProvenBy(const Program& program, const Function&
     case GuardSource::SwitchCase:
         return ArrayStorage::Other;
     case GuardSource::Allocation:
-        return arrayStorageOfNewArray(program, function.at(origin.test));
+        return arrayStorageOfNewArray(program, function, function.at(origin.test));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -434,7 +647,7 @@ static bool provesWritableStorage(const Function& function, const GuardOrigin& o
     case GuardSource::SwitchCase:
         return false;
     case GuardSource::Allocation:
-        return allocatesWritableStorage(function.at(origin.test));
+        return allocatesWritableStorage(function, function.at(origin.test));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -444,34 +657,117 @@ static bool provesArrayStorageForUser(const Program& program, const Function& fu
 {
     if (arrayStorageProvenBy(program, function, origin) != user.arrayStorage())
         return false;
-    return interpretedOf(user.opcode) != Interpretation::Store || !isInsideLength(user) || provesWritableStorage(function, origin);
+    return interpretedOf(user.opcode) != Interpretation::Store || !isInBounds(user) || provesWritableStorage(function, origin);
+}
+
+// A constant is made again wherever a copy of the code needs it, so the test and the access may name two values.
+static bool isSamePosition(FunctionAnalyses& analyses, ValueID a, ValueID b)
+{
+    if (analyses.identityOf(a) == analyses.identityOf(b))
+        return true;
+    std::optional<int64_t> constant = integerConstantThroughCasts(analyses.program(), analyses.function(), a);
+    return constant && constant == integerConstantThroughCasts(analyses.program(), analyses.function(), b);
 }
 
 static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
 {
     if (origin.source != GuardSource::Test)
         return false;
-    return analyses.identityOf(analyses.function().at(origin.test).positionOperand()) == analyses.identityOf(user.positionOperand());
+    const Value& test = analyses.function().at(origin.test);
+    // A position inside the length may hold a hole.
+    if (readsPresentElement(user) && test.opcode != Opcode::IsElementPresent)
+        return false;
+    if (Value::opcodesWithIsInsideView.contains(user.opcode) != (test.opcode == Opcode::IsInsideView))
+        return false;
+    return isSamePosition(analyses, test.positionOperand(), user.positionOperand());
+}
+
+// The mark of the cell answers for the fields that every constructor fills, and for the raw value of a number or a boolean among them.
+static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
+{
+    bool needsRawValue = holdsDeclaredType(slotOperation);
+    return std::ranges::all_of(program.at(slotOperation.receivers()).members, [&](LayoutID layout) {
+        std::optional<FieldReference> field = findField(program, layout, slotOperation.key(), BaseChain::Proven);
+        if (!field)
+            return false;
+        if (needsRawValue)
+            return holdsRawValueFromBirth(program, *field) || (staysFilled(program, *field) && !slotHoldsUndefinedAndNull(program, *field));
+        return staysFilled(program, *field) || isFilledAtBirth(program, *field);
+    });
+}
+
+// An allocation may fill the slot with undefined or null. Another value that it lists stays until a store under the name. One by name ends what the allocation proves;
+// one by slot brings a marker only where its value may be one, and a function that has such a store is not looked at more closely.
+static bool fillsSlotWithDeclaredType(const Program& program, const Function& function, const Value& allocation, PropertyKeyID key)
+{
+    if (!Value::opcodesWithFields.contains(allocation.opcode))
+        return false;
+    auto mayBeMarker = [&](ValueID stored) {
+        return program.typeOf(function, stored).mayBeUndefinedOrNull();
+    };
+    std::span<const uint32_t> fields = allocation.fields();
+    std::span<const ValueID> values = allocation.variadicOperands();
+    bool listsValue = false;
+    for (size_t index = 0; index < fields.size() && index < values.size(); ++index) {
+        if (fieldAt(program, { allocation.layout(), fields[index] }).key == key)
+            listsValue = !mayBeMarker(values[index]);
+    }
+    if (!listsValue)
+        return false;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& store = function.at(id);
+            if (store.opcode == Opcode::PutSlots) {
+                PayloadListView<PlacedKey> keys = store.placedKeys();
+                std::span<const ValueID> stored = store.variadicOperands();
+                for (uint32_t index = 0; index < keys.size() && index < stored.size(); ++index) {
+                    if (keys[index].key == key && mayBeMarker(stored[index]))
+                        return false;
+                }
+                continue;
+            }
+            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)))
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool provesSlotFilledForUser(const Program& program, const Function& function, const GuardOrigin& origin, const Value& user)
+{
+    if (!holdsDeclaredType(user))
+        return true;
+    if (origin.source == GuardSource::Allocation)
+        return fillsSlotWithDeclaredType(program, function, function.at(origin.test), user.key());
+    if (origin.source != GuardSource::Test)
+        return false;
+    const Value& test = function.at(origin.test);
+    return holdsDeclaredType(test) && test.key() == user.key();
 }
 
 bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proof, const Value& user)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
+    if (proof == Proof::SlotFilled && fact.proves(Proof::BirthFieldsFilled) && isAnsweredByTestOfCell(program, user))
+        return true;
     if (!fact.proves(proof))
         return false;
-    if (proof == Proof::Shape)
-        return admitsLayouts(program, user, LayoutSet { Vector<LayoutID>(layoutsProvenBy(program, function, fact)), true });
+    if (proof == Proof::Shape) {
+        if (hasOneTestedLayoutSet(fact))
+            return admitsLayoutSet(program, user, layoutSetTestedBy(function, fact.origins[0]), true);
+        return admitsLayouts(program, user, layoutsProvenBy(program, function, fact).span(), true);
+    }
 
     return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
+        if (proof == Proof::SlotFilled)
+            return provesSlotFilledForUser(program, function, origin, user);
         if (proof == Proof::Pristine)
             return provesPristineForUser(program, function, origin, user);
         if (proof == Proof::ArrayStorage)
             return provesArrayStorageForUser(program, function, origin, user);
         if (proof == Proof::InBounds)
             return provesInBoundsForUser(analyses, origin, user);
-        if (proof == Proof::RequireEdgeReady)
-            return function.at(origin.test).module() == user.module();
         return true;
     });
 }
@@ -482,18 +778,18 @@ Vector<MemoryLocation, 2> locationsReadBy(const Value& test)
         return { };
     ReadCollector collector;
     forEachDeclaredEffect(test, collector);
-    return collector.takeSortedLocations();
+    Vector<MemoryLocation, 2> locations = collector.takeSortedLocations();
+    if (provesOf(test.opcode) == Proof::NotFrozen)
+        locations.removeAll(MemoryLocation(AbstractHeap::OrderWords));
+    return locations;
 }
 
-Vector<MemoryLocation, 2> locationsReadBy(const Terminator& provingTerminator, uint32_t caseIndex)
+Vector<MemoryLocation, 2> locationsReadBy(const Terminator& provingTerminator, uint32_t)
 {
+    if (proofsThatOutlastWrites.contains(provesOf(provingTerminator.kind)))
+        return { };
     ReadCollector collector;
     forEachDeclaredEffect(provingTerminator, collector);
-    if (Terminator::kindsWithLayoutSets.contains(provingTerminator.kind)) {
-        std::span<const LayoutSetID> layoutSets = provingTerminator.layoutSets();
-        RELEASE_ASSERT(caseIndex < layoutSets.size());
-        std::ranges::replace(collector.locations, MemoryLocation(AbstractHeap::ShapeWords), MemoryLocation::shapeWords(layoutSets[caseIndex]));
-    }
     return collector.takeSortedLocations();
 }
 
@@ -524,9 +820,11 @@ void GuardAvailability::collectGuards()
 void GuardAvailability::collectUnnamedAllocations()
 {
     const Program& program = m_analyses.program();
+    const OpcodeSet& opcodesOfAllocations = opcodesThatMayMakeObject();
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
         for (ValueID value : m_function.at(block).values) {
-            if (proofsOfAllocation(program, m_function, m_function.at(value)).contains(Proof::Pristine))
+            const Value& allocation = m_function.at(value);
+            if (opcodesOfAllocations.contains(allocation.opcode) && proofsOfAllocation(program, m_function, allocation).contains(Proof::Pristine))
                 addGuard(value);
         }
     }
@@ -536,7 +834,7 @@ static std::optional<MemoryLocation> findShapeWordsOf(const Program& program, co
 {
     if (!Value::opcodesWithLayout.contains(allocation.opcode) || !allocation.layout())
         return std::nullopt;
-    for (TypeID type : { allocation.type, allocation.prediction() }) {
+    for (TypeID type : { allocation.type, allocation.expected() }) {
         LayoutSetID layouts = type ? program.at(type).layouts : LayoutSetID();
         if (!layouts)
             continue;
@@ -562,10 +860,8 @@ GuardFacts GuardAvailability::factsOfAllocation(ValueID id) const
         if (shapeWords)
             std::ranges::replace(locations, MemoryLocation(AbstractHeap::ShapeWords), *shapeWords);
 
-        // The shape epoch says nothing about a slot that was emptied, so what it renews stands apart from what it does not.
-        bool isRenewed = proofsRenewedByShapeEpoch.contains(proof);
         auto existing = std::ranges::find_if(result.facts, [&](const GuardFact& fact) {
-            return fact.dependsOn == locations && fact.isRenewedByShapeEpoch() == isRenewed;
+            return fact.dependsOn == locations;
         });
         if (existing != result.facts.end()) {
             existing->proofs.add(proof);
@@ -584,15 +880,7 @@ GuardFacts GuardAvailability::factsOfEdgeResult(BlockID from, uint32_t, const Ed
         Vector<MemoryLocation, 2> locations = locationsReadBy(m_function.at(from).terminator, *result.caseIndex);
         return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, WTF::move(locations), { GuardOrigin { GuardSource::SwitchCase, { }, from, *result.caseIndex } } } } };
     }
-    const Value& test = m_function.at(result.test);
-    if (result.proof == Proof::EpochCurrent) {
-        GuardFacts renewed = factsOf(test.guardOperand());
-        renewed.facts.removeAllMatching([](const GuardFact& fact) {
-            return !fact.isRenewedByShapeEpoch();
-        });
-        return renewed;
-    }
-    return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, locationsReadBy(test), { GuardOrigin { GuardSource::Test, result.test, { }, 0 } } } } };
+    return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, locationsReadBy(m_function.at(result.test)), { GuardOrigin { GuardSource::Test, result.test, { }, 0 } } } } };
 }
 
 void GuardAvailability::computeFacts()
@@ -620,8 +908,6 @@ void GuardAvailability::computeFacts()
             std::optional<EdgeResult> result = tryGetEdgeResult(m_function, incoming.result);
             if (!result || result->kind != EdgeResultKind::Guard)
                 return GuardFacts { };
-            if (result->proof == Proof::EpochCurrent && isPending(m_function.at(result->test).guardOperand()))
-                return std::nullopt;
             return factsAfterEdge(factsOfEdgeResult(edge.from, parameterIndex, *result), edge);
         }
         }
@@ -703,15 +989,7 @@ const GuardFacts& GuardAvailability::factsOf(ValueID guard) const
 
 static std::span<const LayoutID> layoutsTestedBy(const Program& program, const Function& function, const GuardOrigin& origin)
 {
-    switch (origin.source) {
-    case GuardSource::Test:
-        return program.at(function.at(origin.test).layouts()).members.span();
-    case GuardSource::SwitchCase:
-        return program.at(function.at(origin.switchBlock).terminator.layoutSets()[origin.caseIndex]).members.span();
-    case GuardSource::Allocation:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return program.at(layoutSetTestedBy(function, origin)).members.span();
 }
 
 Vector<LayoutID, 4> layoutsProvenBy(const Program& program, const Function& function, const GuardFact& fact)
@@ -731,6 +1009,23 @@ Vector<LayoutID, 4> layoutsProvenBy(const Program& program, const Function& func
         removeRepeatedElements(layouts);
     }
     return layouts;
+}
+
+bool provenLayoutsAreSubsetOf(const Program& program, const Function& function, const GuardFact& fact, const GuardFact& other)
+{
+    Vector<LayoutID, 4> unitedLayouts;
+    Vector<LayoutID, 4> otherUnitedLayouts;
+    auto sortedLayoutsOf = [&](const GuardFact& proving, Vector<LayoutID, 4>& united) -> std::span<const LayoutID> {
+        if (hasOneTestedLayoutSet(proving))
+            return layoutsTestedBy(program, function, proving.origins[0]);
+        united = layoutsProvenBy(program, function, proving);
+        return united.span();
+    };
+    std::span<const LayoutID> layouts = sortedLayoutsOf(fact, unitedLayouts);
+    std::span<const LayoutID> otherLayouts = sortedLayoutsOf(other, otherUnitedLayouts);
+    if (layouts.data() == otherLayouts.data() && layouts.size() == otherLayouts.size())
+        return true;
+    return layouts.size() <= otherLayouts.size() && std::ranges::includes(otherLayouts, layouts);
 }
 
 static bool provesSlotFilled(const Program& program, const Function& function, const GuardFact& fact, const GuardOrigin& origin, PropertyKeyID key)
@@ -756,16 +1051,40 @@ bool provesSlotFilled(const Program& program, const Function& function, const Gu
     });
 }
 
+// A proof that a slot is filled begins at a test that proves it, or at an allocation that names its layout: proofOfTerminator(), proofsOfAllocation().
+// Where facts meet or are united, none gets a proof that it did not have.
+static constexpr OpcodeSet opcodesBehindProofsOfFilledSlots = [] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        Proof proof = provesOf(opcode);
+        bool isTest = proof == Proof::SlotFilled || proof == Proof::KeyOrder || proof == Proof::BirthFieldsFilled;
+        if (isTest || (resultRuleOf(opcode) == ResultRule::Allocation && Value::opcodesWithLayout.contains(opcode)))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
+
 bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperation)
 {
     ValueID guard = slotOperation.guardOperand();
     if (!guard)
         return false;
 
+    // A build that verifies the program asks the facts all the same, and compares.
+    bool mayBeProven = analyses.opcodesOfValues().intersects(opcodesBehindProofsOfFilledSlots);
+    if (!mayBeProven && !analyses.context().build.options().verifiesProgram)
+        return false;
+
+    const Program& program = analyses.program();
+    bool testOfCellAnswers = isAnsweredByTestOfCell(program, slotOperation);
     ValueID object = analyses.identityOf(slotOperation.objectOperand());
-    return std::ranges::any_of(analyses.guardFacts(guard).facts, [&](const GuardFact& fact) {
-        return fact.subject == object && provesSlotFilled(analyses.program(), analyses.function(), fact, slotOperation.key());
+    bool isProven = std::ranges::any_of(analyses.guardFacts(guard).facts, [&](const GuardFact& fact) {
+        if (fact.subject != object)
+            return false;
+        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (testOfCellAnswers && fact.proves(Proof::BirthFieldsFilled));
     });
+    RELEASE_ASSERT(mayBeProven || !isProven);
+    return isProven;
 }
 
 bool testReadsOnlySubject(const Program& program, const Function& function, const Value& test)

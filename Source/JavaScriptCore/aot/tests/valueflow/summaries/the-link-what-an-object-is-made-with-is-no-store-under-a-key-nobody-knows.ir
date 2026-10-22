@@ -1,0 +1,27 @@
+# function reads(p) { const o = { a: p }; if (o.a === null) return 2; return 1 }
+# The literal is made with p. That is no store: it looks nothing up and finds no setter. The read under "a" finds the field of the literal, which nobody redefines: no code runs, and nothing becomes of what is read.
+# So nothing becomes of p.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: nothing | contents: nothing
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Held" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v1
+    Return
+}
+function f1 name="reads" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=1 fate=[HasMembersRead]}, {kind=Constant index=4 fate=[IsReturned] results=1}, {kind=ReadFrom index=2 source=1 key="a"}] stores=[{target=1 creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="a"
+    v3 = TypeTest v2 testedType=null
+    v4 = Integer integer=1
+    Return v4
+}

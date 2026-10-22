@@ -65,14 +65,14 @@ static TypeID fulfillmentTypeOf(const Program& program, const Type& promise)
     return part ? part->contentsAt(program.builtins(), ContentsSlot::Value) : TypeTable::anything;
 }
 
-unsigned simplifyPromiseAllOfLiterals(FunctionPassContext& context)
+unsigned simplifyPromiseAllOfLiterals(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     const Function& function = context.function;
     Vector<PromiseAllOfLiteral> promiseCalls;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
+    for (const ValueSite& site : calls) {
         if (std::optional<PromiseAllOfLiteral> promiseCall = matchPromiseAllOfLiteral(context, site.value))
             promiseCalls.append(*promiseCall);
-    });
+    }
 
     unsigned rewrites = 0;
     for (const PromiseAllOfLiteral& promiseCall : promiseCalls) {
@@ -130,14 +130,14 @@ static ValueID insertResolvedPromise(FunctionPassContext& context, IRBuilder& bu
     return promise;
 }
 
-unsigned simplifyPromiseResolve(FunctionPassContext& context)
+unsigned simplifyPromiseResolve(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;
     Vector<ValueSite> sites;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
+    for (const ValueSite& site : calls) {
         if (canResolveNewPromise(context, site.value))
             sites.append(site);
-    });
+    }
     if (sites.isEmpty())
         return 0;
 

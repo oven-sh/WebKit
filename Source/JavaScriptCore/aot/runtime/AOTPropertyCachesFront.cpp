@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTPropertyCachesCustomAccessors.h"
 #include "AOTRuntimeCounters.h"
@@ -195,11 +196,20 @@ size_t RowDisplacementTable::removeDeadEntries(VM& vm, CollectionScope scope)
         for (unsigned rowNumber = 0; rowNumber < m_rows.size(); ++rowNumber)
             numberRemoved += sweepRow(vm, rowNumber);
     }
-    m_rowsWrittenSinceLastSweep.clearAll();
+    if (!m_rowsWrittenSinceLastSweep.isEmpty())
+        m_rowsWrittenSinceLastSweep.clearAll();
     // Validation sweeps everything after an Eden collection too, and may not change where the next row goes.
-    if (scope == CollectionScope::Full && vm.heap.collectionScope() != CollectionScope::Eden)
+    if (scope == CollectionScope::Full && vm.heap.collectionScope() != CollectionScope::Eden) {
         compactBases();
+        decommitEmptyPagesOfPlanes();
+    }
     return numberRemoved;
+}
+
+void RowDisplacementTable::decommitEmptyPagesOfPlanes()
+{
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
+        decommitEmptyPages({ reinterpret_cast<uint8_t*>(m_planes[i]), sizeOfCellsInPlane }, *m_writtenRegions[i]);
 }
 
 size_t RowDisplacementTable::sweepRow(VM& vm, uint32_t rowNumber)

@@ -89,6 +89,7 @@ protected:
     Condition isZero(Word32 a) { return unary<Condition>(&FTL::Output::isZero32, a); }
     Condition isNotZero(Word32 a) { return unary<Condition>(&FTL::Output::notZero32, a); }
     Condition hasBits(Word32 a, uint32_t mask) { return binary<Condition>(&FTL::Output::testNonZero32, a, word32(mask)); }
+    Condition hasBits(Integer a, int64_t mask) { return binary<Condition>(&FTL::Output::testNonZero64, a, integer(mask)); }
     Condition hasNoBits(Word32 a, uint32_t mask) { return binary<Condition>(&FTL::Output::testIsZero32, a, word32(mask)); }
 
     Number add(Number a, Number b) { return binary<Number>(&FTL::Output::doubleAdd, a, b); }
@@ -138,14 +139,23 @@ protected:
     Condition isNumber(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_numberTag)); }
     Condition isCell(Boxed value) { return Condition(m_out.testIsZero64(value.value(), m_notCellMask)); }
     Condition isNotCell(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_notCellMask)); }
-    Condition isBoolean(Boxed value) { return Condition(m_out.testIsZero64(m_out.bitXor(value.value(), m_out.constInt64(JSValue::ValueFalse)), m_out.constInt64(~1))); }
+    Condition isBoolean(Boxed value)
+    {
+        static_assert(JSValue::ValueTrue == JSValue::ValueFalse + 1);
+        return Condition(m_out.belowOrEqual(m_out.sub(value.value(), m_out.constInt64(JSValue::ValueFalse)), m_out.constInt64(1)));
+    }
     Condition isUndefinedOrNull(Boxed, uint16_t occurringPrimitives);
     Condition isEmpty(Boxed value) { return Condition(m_out.isZero64(value.value())); }
     Condition isNotEmpty(Boxed value) { return Condition(m_out.notZero64(value.value())); }
-    Condition isCellReference(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), m_out.constInt32(minCell32))); }
+    // A value in a narrow reference is a reference or one of the three markers, and no marker is above undefinedCell32: the comparison takes an immediate of one byte.
+    Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), m_out.constInt32(undefinedCell32))); }
+    // For a word that may be any word below minCell32: that of a literal string, an immediate in the table of a collection.
+    Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), m_out.constInt32(minCell32))); }
+    // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none. Every cell lies above every word that is no reference,
+    // so a comparison with such a word has one answer on both, and the narrow word needs no decoding.
+    std::optional<NarrowReference> narrowWordBehind(LiteralStringWord);
 
     Boxed boxInt32(Word32 value) { return Boxed(m_out.add(m_out.zeroExt(value.value(), B3::Int64), m_numberTag)); }
-    Boxed boxDouble(Number value) { return Boxed(m_out.sub(m_out.bitCast(value.value(), B3::Int64), m_numberTag)); }
     Boxed boxBoolean(Condition value)
     {
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));

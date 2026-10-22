@@ -191,7 +191,7 @@ static const uint8_t* load(const RegExpSection& section)
 static Vector<int> interpret(const Source& source, StringView subject)
 {
     Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
-    Yarr::YarrPattern pattern(source.pattern, source.flags, error);
+    Yarr::YarrPattern pattern(source.pattern, source.flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed);
     AOT_TEST_CHECK(!Yarr::hasError(error));
     BumpPointerAllocator allocator;
     auto bytecode = Yarr::byteCompile(pattern, &allocator, error);

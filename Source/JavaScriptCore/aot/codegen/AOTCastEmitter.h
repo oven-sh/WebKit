@@ -16,16 +16,21 @@ public:
     explicit CastEmitter(CodeGenerator&);
 
     void generateUpcast(const ValueContext&);
-    void generateClaim(const ValueContext&);
+    void generateNarrowByField(const ValueContext&);
     void generateAssumeType(const ValueContext&);
+    void generateReadAgain(const ValueContext&);
+    void generateBorrowedParameter(const ValueContext&);
     void generateReportMismatch(const ValueContext&);
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);
+    void requireObjectCoercible(const ValueContext&);
     void generateRequireObject(const ValueContext&);
     void generateTypeTest(const ValueContext&);
 
 private:
     const TypeTestPlan& planFor(ValueID operand, TypeID to);
+    void testAheadOfNullishCheck(const ValueContext& test, Operand);
+    void testAtLandingOfMisfit(const ValueContext& test, ValueID call, const CodeGenerator::LandingOfMisfit&, const TypeTestPlan&);
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -25,7 +25,7 @@ void testLayouts()
         { "Layout.kind"_s, layoutOffset(fixture, L0, offsetof(Wire::Layout, kind)), numberOfEnumerators<LayoutKind>, Kind::UnknownEnumerator },
         { "layout kind of the engine"_s, layoutOffset(fixture, L1, offsetof(Wire::Layout, kind)), static_cast<uint32_t>(LayoutKind::Closure), Kind::EngineOnlyOnWire },
         { "Layout.flags"_s, layoutOffset(fixture, L0, offsetof(Wire::Layout, flags)), highBit, Kind::UnknownFlag },
-        { "derived layout as base"_s, layoutOffset(fixture, L3, offsetof(Wire::Layout, predictedBase)), fixture.countOf(List::Layouts), Kind::IdOutOfRange },
+        { "derived layout as base"_s, layoutOffset(fixture, L3, offsetof(Wire::Layout, base)), fixture.countOf(List::Layouts), Kind::IdOutOfRange },
         { "derived layout as supertype"_s, wordOffset(fixture, fixture.spanAt(layoutOffset(fixture, L3, offsetof(Wire::Layout, supertypes))).start + 1), fixture.countOf(List::Layouts), Kind::IdOutOfRange },
         { "Field.flags"_s, fieldOffset(fixture, L0, 0, offsetof(Wire::Field, flags)), highBit, Kind::UnknownFlag },
         { "field flag of the engine"_s, fieldOffset(fixture, L0, 0, offsetof(Wire::Field, flags)), static_cast<uint32_t>(FieldFlags::IsInherited), Kind::EngineOnlyOnWire },
@@ -34,7 +34,7 @@ void testLayouts()
         { "StaticField.variable"_s, fixture.offsetOf<Wire::StaticField>(List::StaticFields, firstStaticField, offsetof(Wire::StaticField, variable)), Wire::none, Kind::IdOutOfRange },
     });
     expectOrderChecked(fixture, "supertypes"_s, wordOffset(fixture, fixture.spanAt(layoutOffset(fixture, L3, offsetof(Wire::Layout, supertypes))).start), wordSize);
-    expectAccepted("a class that extends itself"_s, readBytes(damagedCopy(fixture, layoutOffset(fixture, L3, offsetof(Wire::Layout, predictedBase)), L3.index()).span()));
+    expectAccepted("a class that extends itself"_s, readBytes(damagedCopy(fixture, layoutOffset(fixture, L3, offsetof(Wire::Layout, base)), L3.index()).span()));
 }
 
 void testDerivedLayouts()
@@ -64,7 +64,7 @@ void testDerivedLayouts()
 }
 
 constexpr ASCIILiteral privateNamesText = R"IR(layout L0 kind=Instance name="C" module=m0 fields=[{key=#"p"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="p" declared={type=number}}]
-layout L1 kind=Instance name="D" module=m0 predictedBase=L0 fields=[{key=#"p"@L1 declared={type=number} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage]
+layout L1 kind=Instance name="D" module=m0 base=L0 fields=[{key=#"p"@L1 declared={type=number} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage]
 module m0 path="/a.ts" displayPath="a.ts"
 entry module=m0
 )IR"_s;
@@ -92,13 +92,14 @@ void testLayoutRecords()
     auto layout = offsetsOf<Wire::Layout>(fixture, List::Layouts, L2.index());
     damages.optionalID("Layout.name"_s, layout(offsetof(Wire::Layout, name)), List::Strings);
     damages.optionalID("Layout.module"_s, layout(offsetof(Wire::Layout, module)), List::Modules);
-    damages.optionalID("Layout.predictedBase"_s, layout(offsetof(Wire::Layout, predictedBase)), numberOfLayoutIDs(fixture));
+    damages.optionalID("Layout.base"_s, layout(offsetof(Wire::Layout, base)), numberOfLayoutIDs(fixture));
     damages.optionalID("Layout.constructor"_s, layout(offsetof(Wire::Layout, constructor)), List::Functions);
     damages.span("Layout.fields"_s, layout(offsetof(Wire::Layout, fields)));
     damages.span("Layout.staticFields"_s, layout(offsetof(Wire::Layout, staticFields)));
     damages.span("Layout.supertypes"_s, layout(offsetof(Wire::Layout, supertypes)));
 
     damages.optionalID("Field.key"_s, fieldOffset(fixture, L2, 0, offsetof(Wire::Field, key)), List::PropertyKeys);
+    damages.flags("Field.form"_s, fieldOffset(fixture, L2, 0, offsetof(Wire::Field, form)));
     damages.optionalID("Field.originLayout"_s, fieldOffset(fixture, L2, 0, offsetof(Wire::Field, originLayout)), numberOfLayoutIDs(fixture));
     addDeclaredTypeDamages(damages, fieldOffset(fixture, L0, 0, offsetof(Wire::Field, declared)));
 
@@ -125,6 +126,8 @@ void addModuleListDamages(const ReaderFixture& fixture, RecordDamages& damages)
     damages.id("ModuleRequest.target"_s, request(offsetof(Wire::ModuleRequest, target)), List::Modules);
     damages.enumerator<ImportPhase>("ModuleRequest.phase"_s, request(offsetof(Wire::ModuleRequest, phase)));
     damages.boolean("ModuleRequest.isDynamicStarExport"_s, request(offsetof(Wire::ModuleRequest, isDynamicStarExport)));
+    damages.enumerator<ModuleRequestKind>("ModuleRequest.kind"_s, request(offsetof(Wire::ModuleRequest, kind)));
+    damages.boolean("ModuleRequest.completes"_s, request(offsetof(Wire::ModuleRequest, completes)));
 
     for (uint32_t index = 0; index < fixture.countOf(List::ModuleExports); ++index) {
         auto entry = offsetsOf<Wire::ModuleExport>(fixture, List::ModuleExports, index);
@@ -163,6 +166,7 @@ void testModuleRecords()
         damages.external("Module.runtimeModule"_s, module(offsetof(Wire::Module, runtimeModule)));
         damages.optionalID("Module.referrer"_s, module(offsetof(Wire::Module, referrer)), List::Modules);
         damages.optionalID("Module.body"_s, module(offsetof(Wire::Module, body)), List::Functions);
+        damages.optionalID("Module.exportsVariable"_s, module(offsetof(Wire::Module, exportsVariable)), List::Variables);
         damages.optionalID("Module.data"_s, module(offsetof(Wire::Module, data)), List::Data);
         damages.span("Module.requests"_s, module(offsetof(Wire::Module, requests)));
         damages.span("Module.exports"_s, module(offsetof(Wire::Module, exports)));

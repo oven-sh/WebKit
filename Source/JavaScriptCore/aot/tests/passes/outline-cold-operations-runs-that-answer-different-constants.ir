@@ -1,0 +1,87 @@
+# A constant leaves nothing in the normal form where it stands. Where it is what the run answers, two runs with different constants are different runs: all fractions have one type.
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 5
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="a" module=m0 declared={type=anything}
+variable g1 name="b" module=m0 declared={type=anything}
+variable g2 name="c" module=m0 declared={type=anything}
+variable g3 name="d" module=m0 declared={type=anything}
+variable g4 name="e" module=m0 declared={type=anything}
+
+function f0 name="answersDiffer" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
+  b1() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v7 = Double number=3.5
+    Return v7
+  b2() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v13 = Double number=21.5
+    Return v13
+  b3() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v19 = Double number=3.5
+    Return v19
+  b4() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v25 = Double number=24.5
+    Return v25
+  b5() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v31 = Double number=3.5
+    Return v31
+  b6() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v37 = Double number=3.5
+    Return v37
+  b7() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v43 = Double number=3.5
+    Return v43
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK: b1()
+# CHECK: = CallDirect v1 function=f1
+# CHECK: b2()
+# CHECK: Double number=21.5
+# CHECK: b3()
+# CHECK: = CallDirect v1 function=f1
+# CHECK: b4()
+# CHECK: Double number=24.5
+# CHECK: function f1 {{*}}role=OutlinedBody
+# CHECK: Double number=3.5

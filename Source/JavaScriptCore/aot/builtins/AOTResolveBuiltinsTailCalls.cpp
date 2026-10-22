@@ -26,6 +26,8 @@ static bool isMatchedCall(const BuiltinUsePlan& plan)
         return true;
     case BuiltinUseKind::None:
     case BuiltinUseKind::Constant:
+    case BuiltinUseKind::Undefined:
+    case BuiltinUseKind::HostValue:
     case BuiltinUseKind::UnmatchedCall:
     case BuiltinUseKind::NewArray:
         return false;
@@ -69,9 +71,9 @@ Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext& context
     const Type& anyFunction = program.at(TypeTable::function);
 
     Vector<CalledOperandTest> tests;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
+    context.forEachSiteIn(SiteList::Calls, [&](const ValueSite& site) {
         const Value& call = function.at(site.value);
-        if (call.opcode != Opcode::Call || tailCallRequirementOf(function, site.block, site.value) != TailCallRequirement::Required)
+        if (tailCallRequirementOf(function, site.block, site.value) != TailCallRequirement::Required)
             return;
         BuiltinID callee = program.typeOf(function, call.calleeOperand()).singleBuiltin();
         if (!callee)
@@ -121,9 +123,7 @@ Vector<ForwardedTailCall> planForwardedTailCalls(FunctionPassContext& context)
     BuiltinUseInputs inputs { context.program, function, context.types, context.inputs.flow, analyses.effectContext(), &analyses, { } };
 
     Vector<ForwardedTailCall> calls;
-    forEachValueSite(analyses, function, [&](const ValueSite& site) {
-        if (function.at(site.value).opcode != Opcode::Call)
-            return;
+    context.forEachSiteIn(SiteList::Calls, [&](const ValueSite& site) {
         if (tailCallRequirementOf(function, site.block, site.value) != TailCallRequirement::Required)
             return;
 
@@ -150,11 +150,179 @@ void rewriteForwardedTailCalls(FunctionPassContext& context, std::span<const For
             builder.setOrigin(function.at(call.site.value).origin());
             plan.list = builder.insertBefore(call.site.point(), IRBuilder::make(Opcode::NewArgumentList, { plan.callee, plan.list }));
         }
-        becomeForwardedCall(function.at(call.site.value), plan);
+        becomeForwardedCall(function.edit(call.site.value), plan);
     }
     builder.applyInsertions();
     context.analyses.didChangeValues();
     context.build.statistics().count(StatisticID::BuiltinCallsResolved, calls.size());
+}
+
+static constexpr size_t maxArgumentsPassedOnByCount = 4;
+
+// apply reads the length and the elements of its list, and hands the object itself to nobody.
+static bool isListOfApply(const Program& program, const Function& function, const Use& use)
+{
+    const Value& call = function.at(use.user);
+    if (call.opcode != Opcode::Call || program.typeOf(function, call.calleeOperand()).singleBuiltin() != Builtins::FunctionPrototypeApply)
+        return false;
+    constexpr uint32_t indexOfListAmongArguments = 1;
+    uint32_t numberOfArguments = call.argumentsOperands().size();
+    return numberOfArguments > indexOfListAmongArguments && use.operandIndex == call.numberOfOperands() - numberOfArguments + indexOfListAmongArguments;
+}
+
+// The blocks from whose end the block can be entered: itself among them only if it lies in a cycle.
+static BitVector blocksThatLeadTo(const CFG& cfg, BlockID block)
+{
+    BitVector leading(cfg.numNodes());
+    Vector<BlockID, 16> worklist { block };
+    while (!worklist.isEmpty()) {
+        for (BlockID predecessor : cfg.predecessors(worklist.takeLast())) {
+            if (!leading.set(predecessor.index()))
+                worklist.append(predecessor);
+        }
+    }
+    return leading;
+}
+
+// On every way to the call nothing but reads of the object and lists made from it have taken it, so no element and no length of it was changed.
+// What takes it behind the call, or on a path that does not come to the call, finds the object as it would have been.
+// A read hands the object to no code: what the object does not hold itself is looked for in Object.prototype, to which a compiled program adds no accessor.
+static bool holdsWhatWasPassed(FunctionPassContext& context, ValueID arguments, const ValueSite& call)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    BitVector leadsToCall = blocksThatLeadTo(context.analyses.cfg(), call.block);
+    return std::ranges::all_of(useLists.usesOf(arguments), [&](const Use& use) {
+        if (use.isEdgeUse()) {
+            BlockID target = targetOf(function, use.edge()).block;
+            return target != call.block && !leadsToCall.get(target.index());
+        }
+        bool comesBeforeCall = leadsToCall.get(use.block.index()) || (use.block == call.block && use.kind == Use::Kind::Operand && useLists.pointOf(use).index <= call.index);
+        if (!comesBeforeCall)
+            return true;
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        Opcode user = function.at(use.user).opcode;
+        if (user == Opcode::PropGet || user == Opcode::ElemGet)
+            return !use.operandIndex;
+        return isListOfApply(context.program, function, use);
+    });
+}
+
+Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    BuiltinUseInputs inputs { context.program, function, context.types, context.inputs.flow, analyses.effectContext(), &analyses, { } };
+
+    Vector<CallOfOwnArguments> calls;
+    context.forEachSiteIn(SiteList::Calls, [&](const ValueSite& site) {
+        const Value& value = function.at(site.value);
+        if (function.at(site.block).frequency != BlockFrequency::Normal)
+            return;
+        if (context.program.typeOf(function, value.calleeOperand()).singleBuiltin() != Builtins::FunctionPrototypeApply)
+            return;
+
+        BuiltinUsePlan use = planCallOfBuiltin(inputs, site.value, site.point());
+        if (!isMatchedCall(use) || !passesOperandsUnchanged(use.call))
+            return;
+        BuiltinCall call { use.call.overload, BuiltinCallForm::Whole, 0, use.operands.receiver, use.operands.arguments.span() };
+        std::optional<ForwardedCallPlan> plan = planForwardedCall(context.program, function, call);
+        if (!plan || !plan->list || function.at(plan->list).opcode != Opcode::CreateUnmappedArguments)
+            return;
+        // Without parameters the hidden rest list is every argument, and SinkAllocations passes it on as it is.
+        size_t numberOfParameters = function.at(plan->list).parametersOperands().size();
+        if (!numberOfParameters || numberOfParameters > maxArgumentsPassedOnByCount)
+            return;
+        if (plan->callee == plan->list || plan->thisValue == plan->list || !holdsWhatWasPassed(context, plan->list, site))
+            return;
+        calls.append(CallOfOwnArguments { site, *plan });
+    });
+    return calls;
+}
+
+// Nothing but calls of apply takes the object, so nobody misses it where none of them needs it. The object holds what its rest list held when it was made:
+// a rest parameter of the program is that list, and what else takes it may have changed it by the time of the call.
+static bool isTakenByApplyAlone(FunctionPassContext& context, ValueID arguments)
+{
+    if (context.analyses.useLists().useCount(context.function.at(arguments).restOperand()) != 1)
+        return false;
+    return std::ranges::all_of(context.analyses.useLists().usesOf(arguments), [&](const Use& use) {
+        return use.kind == Use::Kind::Operand && isListOfApply(context.program, context.function, use);
+    });
+}
+
+// Where no more arguments were passed than there are parameters, they all have names, and the call takes them without the object and without a list of them.
+// In the last arm every parameter was passed and the hidden rest list holds what came behind them. Where apply alone takes the object, its list is made of the two, without the object.
+// Otherwise the last arm is the call as it was and no arm reads the hidden rest list: SinkAllocations builds the object late only while nothing but the object takes that list.
+static void passOnOwnArgumentsByCount(SiteExpansion& expansion, const CallOfOwnArguments& call, bool isTakenByApplyAlone)
+{
+    IRBuilder& builder = expansion.builder();
+    Function& function = expansion.function();
+    ValueID count = function.at(call.plan.list).countOperand();
+    ValueID rest = function.at(call.plan.list).restOperand();
+    Vector<ValueID, maxArgumentsPassedOnByCount> parameters(function.at(call.plan.list).parametersOperands());
+
+    expansion.begin(call.site);
+    Vector<BlockID, maxArgumentsPassedOnByCount + 1> arms;
+    Vector<std::pair<int64_t, Target>> cases;
+    for (size_t numberPassed = 0; numberPassed <= parameters.size(); ++numberPassed) {
+        arms.append(builder.addBlock(expansion.frequency()));
+        cases.append({ static_cast<int64_t>(numberPassed), Target { arms.last(), { }, { } } });
+    }
+    BlockID hasMoreArguments = builder.addBlock(BlockFrequency::Unlikely);
+    builder.emitSwitch(count, WTF::move(cases), Target { hasMoreArguments, { }, { } });
+
+    ForwardedCallPlan planWithoutList = call.plan;
+    planWithoutList.list = { };
+    for (size_t numberPassed = 0; numberPassed <= parameters.size(); ++numberPassed) {
+        builder.moveToEndOf(arms[numberPassed]);
+        ValueID passedOn = expansion.appendOriginal();
+        becomeForwardedCall(function.edit(passedOn), planWithoutList);
+        function.edit(passedOn).setArgumentsOperands(parameters.span().first(numberPassed));
+        expansion.finishArm(passedOn);
+    }
+
+    builder.moveToEndOf(hasMoreArguments);
+    if (isTakenByApplyAlone) {
+        ValueID test = builder.append(makePristineTest(rest, BuiltinClasses::Array, { PristineAspects::Storage, PristineAspects::Names }));
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Unlikely, BlockFrequency::Rare);
+        builder.moveToEndOf(branch.taken);
+        Value listOfParameters = IRBuilder::make(Opcode::NewArray);
+        listOfParameters.setContents(TypeTable::anything);
+        listOfParameters.setElementsOperands(parameters.span());
+        ValueID list = builder.append(WTF::move(listOfParameters));
+        Value appendElements = IRBuilder::make(Opcode::AppendElements, { list, rest });
+        appendElements.setGuardOperand(branch.provenOnTaken);
+        builder.append(WTF::move(appendElements));
+        // It stays a call of apply, so a tail call stays one. What resolves the call finds a list that is an array.
+        ValueID passedOn = expansion.appendOriginal();
+        Value& apply = function.edit(passedOn);
+        for (uint32_t index = 0; index < apply.numberOfOperands(); ++index) {
+            if (apply.operand(index) == call.plan.list)
+                apply.setOperand(index, list);
+        }
+        expansion.finishArm(passedOn);
+        builder.moveToEndOf(branch.notTaken);
+    }
+    expansion.finishArm(expansion.appendOriginal());
+    expansion.end();
+}
+
+void passOnOwnArgumentsByCount(FunctionPassContext& context, std::span<const CallOfOwnArguments> calls)
+{
+    if (calls.empty())
+        return;
+
+    Vector<bool, 4> areTakenByApplyAlone(calls.size(), [&](size_t index) {
+        return isTakenByApplyAlone(context, calls[index].plan.list);
+    });
+    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    SiteExpansion expansion(context, builder);
+    for (size_t index = calls.size(); index--;) {
+        passOnOwnArgumentsByCount(expansion, calls[index], areTakenByApplyAlone[index]);
+        context.analyses.didChangeValues();
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

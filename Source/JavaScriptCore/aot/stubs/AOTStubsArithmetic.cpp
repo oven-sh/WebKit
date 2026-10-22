@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeTable.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsStrings.h"
@@ -368,7 +369,7 @@ static void emitDoubleCase(StubAssembler& jit, const BinaryRegisters& registers,
     branchIfNotExactInt32(jit, registers.leftNumber, registers.scratch, notInt32, registers.rightNumber);
     boxInt32AndReturn(jit, registers.scratch, registers.left);
     notInt32.link(&jit);
-    boxDouble(jit, registers.leftNumber, registers.left);
+    boxDouble(jit, PureDouble::resultOfArithmeticOnBoxedNumbers(registers.leftNumber), registers.left);
     jit.returnToCaller();
 }
 
@@ -425,8 +426,7 @@ static void emitBitCase(StubAssembler& jit, const BinaryRegisters& registers, Bi
         jit.urshift32(first, second, scratch);
         Jump fitsInt32 = jit.branch32(CCallHelpers::GreaterThanOrEqual, scratch, TrustedImm32(0));
         jit.zeroExtend32ToWord(scratch, scratch);
-        jit.convertInt64ToDouble(scratch, registers.leftNumber);
-        boxDouble(jit, registers.leftNumber, registers.left);
+        boxDouble(jit, PureDouble::convertInt64(jit, scratch, registers.leftNumber), registers.left);
         jit.returnToCaller();
         fitsInt32.link(&jit);
         break;
@@ -701,7 +701,7 @@ static void emitUnaryOnDouble(StubAssembler& jit, UnaryOperationForm form, GPRRe
     branchIfNotExactInt32(jit, number, scratch, notInt32, other);
     boxInt32AndReturn(jit, scratch, value);
     notInt32.link(&jit);
-    boxDouble(jit, number, value);
+    boxDouble(jit, PureDouble::resultOfArithmeticOnBoxedNumbers(number), value);
     jit.returnToCaller();
 }
 
@@ -729,6 +729,96 @@ void generateUnaryOperation(StubAssembler& jit)
     }
     slow.link(&jit);
     jit.callOperationAndReturn(operationOf(form), { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = value });
+}
+
+static constexpr bool isInFPR(BoxedNumberForm form)
+{
+    return form == BoxedNumberForm::Double || form == BoxedNumberForm::OptionalDouble;
+}
+
+StubSignature signatureOfBoxNumber(StubKey key)
+{
+    if (isInFPR(static_cast<BoxedNumberForm>(key.form())))
+        return StubSignature::withGPRResult({ FPRInfo::argumentFPR0 });
+    return StubSignature::withGPRResult({ gprOf(StubRegister::R0) });
+}
+
+static void boxMarkerAndReturn(StubAssembler& jit, GPRReg bitsAndResult, const SlotMarkers& markers)
+{
+    constexpr unsigned markerShift = 48;
+    RELEASE_ASSERT(!(markers.undefined << (64 - markerShift)) && !(markers.null << (64 - markerShift)) && !(markers.absent << (64 - markerShift)));
+
+    jit.urshift64(TrustedImm32(markerShift), bitsAndResult);
+    Jump isUndefined = jit.branch32(CCallHelpers::Equal, bitsAndResult, TrustedImm32(static_cast<int32_t>(markers.undefined >> markerShift)));
+    Jump isNull = jit.branch32(CCallHelpers::Equal, bitsAndResult, TrustedImm32(static_cast<int32_t>(markers.null >> markerShift)));
+    jit.move(TrustedImm64(static_cast<int64_t>(boxedMarkers.absent)), bitsAndResult);
+    jit.returnToCaller();
+
+    isUndefined.link(&jit);
+    jit.move(TrustedImm64(static_cast<int64_t>(boxedMarkers.undefined)), bitsAndResult);
+    jit.returnToCaller();
+
+    isNull.link(&jit);
+    jit.move(TrustedImm64(static_cast<int64_t>(boxedMarkers.null)), bitsAndResult);
+    jit.returnToCaller();
+}
+
+static void boxDoubleAndReturn(StubAssembler& jit, FPRReg number, GPRReg result, FPRReg scratch)
+{
+    JumpList isNotInt32;
+    branchIfNotExactInt32(jit, number, result, isNotInt32, scratch);
+    boxExactInt32(jit, result, result);
+    jit.returnToCaller();
+
+    isNotInt32.link(&jit);
+    Jump isNaN;
+    boxDouble(jit, PureDouble::branchIfNaN(jit, number, isNaN), result);
+    jit.returnToCaller();
+
+    isNaN.link(&jit);
+    jit.move(TrustedImm64(JSValue::encode(jsNaN())), result);
+    jit.returnToCaller();
+}
+
+void generateBoxNumber(StubAssembler& jit)
+{
+    const BoxedNumberForm form = static_cast<BoxedNumberForm>(jit.key().form());
+    const GPRReg result = jit.result();
+
+    if (isInFPR(form)) {
+        const FPRReg number = jit.operandFPR(0);
+        const FPRReg scratch = jit.allocateScratch(FPRInfo::argumentFPR1);
+        Jump isMarker;
+        if (form == BoxedNumberForm::OptionalDouble) {
+            jit.moveDoubleTo64(number, result);
+            isMarker = jit.branch64(CCallHelpers::GreaterThanOrEqual, result, TrustedImm64(static_cast<int64_t>(doubleMarkers.undefined)));
+        }
+        boxDoubleAndReturn(jit, number, result, scratch);
+        if (form == BoxedNumberForm::OptionalDouble) {
+            isMarker.link(&jit);
+            boxMarkerAndReturn(jit, result, doubleMarkers);
+        }
+        return;
+    }
+
+    const GPRReg integer = jit.clobberOperand(0);
+    const GPRReg low = jit.allocateScratch(StubRegister::T9);
+    const FPRReg number = jit.allocateScratch(FPRInfo::argumentFPR0);
+    RELEASE_ASSERT(integer == result);
+    jit.signExtend32To64(integer, low);
+    Jump isNotInt32 = jit.branch64(CCallHelpers::NotEqual, low, integer);
+    boxInt32AndReturn(jit, integer, result);
+
+    isNotInt32.link(&jit);
+    Jump isMarker;
+    if (form == BoxedNumberForm::OptionalInteger)
+        isMarker = jit.branch64(CCallHelpers::GreaterThanOrEqual, integer, TrustedImm64(static_cast<int64_t>(integerMarkers.undefined)));
+    boxDouble(jit, PureDouble::convertInt64(jit, integer, number), result);
+    jit.returnToCaller();
+    if (form == BoxedNumberForm::OptionalInteger) {
+        isMarker.link(&jit);
+        boxMarkerAndReturn(jit, result, integerMarkers);
+    }
 }
 
 } } // namespace JSC::AOT

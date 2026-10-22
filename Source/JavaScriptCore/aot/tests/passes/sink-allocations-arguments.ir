@@ -258,7 +258,7 @@ function f17 name="readsOwnFrame" role=GenericEntrypoint flags=[HasThis] capture
     v2 = GetRestLength firstArgument=0
     v3 = GetArgument argumentIndex=0
     v4 = GetArgument argumentIndex=1
-    v5 = Claim v4 castType=i32
+    v5 = Check v4 castType=i32
     v6 = CreateRest firstArgument=2
     v7 = CreateUnmappedArguments v2, v6, v3, v4
     v8 = ElemGet v7, v5
@@ -282,7 +282,7 @@ function f18 name="mappedOverOwnFrame" role=GenericEntrypoint flags=[HasThis] ca
     v2 = GetRestLength firstArgument=0
     v3 = GetArgument argumentIndex=0
     v4 = GetArgument argumentIndex=1
-    v5 = Claim v4 castType=i32
+    v5 = Check v4 castType=i32
     v6 = CreateRest firstArgument=2
     v7 = CreateMappedArguments v0, v2, v6, v3, v4
     SetMappedArgument v7, v1 index=0

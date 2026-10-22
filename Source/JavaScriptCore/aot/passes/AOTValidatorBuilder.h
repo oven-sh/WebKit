@@ -73,7 +73,7 @@ private:
     void emitRejectUndeclaredMembers(const PlainObject&, const ResultNode&, const ValidationExits&);
     void emitValidateUndeclaredMembers(const PlainObject&, const ResultNode&, ValueID copy, const ValidationExits&);
     void emitBranchOnDeclaredKey(const ResultNode&, ValueID key, BlockID whenDeclared, BlockID whenUndeclared);
-    ValueID emitCopy(const PlainObject&, const ResultNode&, std::span<const CopiedMember>);
+    ValueID emitCopy(const PlainObject&, const ResultNode&, std::span<const CopiedMember>, const ValidationExits&);
     ValueID emitDictionary(const ResultNode&, ValueID value, const ValidationExits&);
 
     struct OwnKeyLoop {

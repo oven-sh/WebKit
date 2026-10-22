@@ -13,7 +13,7 @@ function f0 name="guardOfShapeTest" parameters=[{type=object}] results=[{type=an
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Predicted
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
     Return v3
   b2():
     Return v0
@@ -40,10 +40,10 @@ function f2 name="guardsOfSwitchCases" parameters=[{type=object}] results=[{type
   b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v1):
-    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Predicted
+    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Expected
     Return v2
   b2(v3):
-    v4 = GetSlot v0, v3 key="x" receivers=[L1] level=Predicted
+    v4 = GetSlot v0, v3 key="x" receivers=[L1] level=Expected
     Return v4
   b3():
     Return v0
@@ -63,7 +63,7 @@ function f3 name="guardsOfTwoTestsMeet" parameters=[{type=object}, {type=boolean
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b3(| 0), notTaken b4()
   b3(v4):
-    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Predicted
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
     Return v5
   b4():
     Return v0
@@ -81,7 +81,7 @@ function f4 name="guardHandedOnAsArgument" parameters=[{type=object}] results=[{
   b1(v2):
     Jump -> next b2(v2)
   b2(v3):
-    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
     Return v4
   b3():
     Return v0

@@ -35,6 +35,7 @@
 #include "ScriptFetchParameters.h"
 #include "ScriptFetcher.h"
 #include <wtf/FixedVector.h>
+#include <wtf/Markable.h>
 #include <wtf/OrderedHashMap.h>
 #include <wtf/OrderedHashSet.h>
 #include <wtf/RefPtr.h>
@@ -237,6 +238,17 @@ public:
     struct Resolution {
         enum class Type { Resolved, NotFound, Ambiguous, Error };
 
+#if ENABLE(AOT)
+        Resolution() = default;
+        Resolution(Type type, AbstractModuleRecord* moduleRecord, Identifier localName, Markable<unsigned> compiledExportIndex = std::nullopt)
+            : type(type)
+            , compiledExportIndex(compiledExportIndex)
+            , moduleRecord(moduleRecord)
+            , localName(WTF::move(localName))
+        {
+        }
+#endif
+
         static Resolution LEGACY_NODELETE notFound();
         static Resolution LEGACY_NODELETE error();
         static Resolution LEGACY_NODELETE ambiguous();
@@ -245,11 +257,12 @@ public:
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
 
         Type type;
+#if ENABLE(AOT)
+        // In the padding in front of the pointer.
+        Markable<unsigned> compiledExportIndex;
+#endif
         AbstractModuleRecord* moduleRecord;
         Identifier localName;
-#if ENABLE(AOT)
-        std::optional<unsigned> compiledExportIndex { };
-#endif
     };
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
@@ -269,10 +282,6 @@ public:
     }
 #endif
     JS_EXPORT_PRIVATE JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation);
-#if ENABLE(AOT)
-    // The exported names that getModuleNamespace() left out of the namespace object for being ambiguous.
-    const Vector<Identifier>& ambiguousExportNames() const { return m_ambiguousExportNames; }
-#endif
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
     bool readyForSyncExecution();
@@ -405,9 +414,6 @@ private:
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
-#if ENABLE(AOT)
-    Vector<Identifier> m_ambiguousExportNames;
-#endif
 
 protected:
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;
@@ -436,5 +442,9 @@ protected:
     FixedVector<Resolution> m_prelinkedImportResolutions;
 #endif
 };
+
+#if ENABLE(AOT)
+static_assert(sizeof(AbstractModuleRecord::Resolution) == 3 * sizeof(void*));
+#endif
 
 } // namespace JSC

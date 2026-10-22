@@ -1,4 +1,4 @@
-# A literal made by one copy of an object nobody can name, the rest of a pattern with keys from the text and a computed key, and a copy between objects of one layout pass the back-end checks in fast code
+# A literal made by one copy of an object nobody can name, the rest of a pattern with keys from the text and a computed key, and a copy between objects of one layout pass
 # FORM: AsRead
 # OPTIONS: heat=everything-is-hot check=validate-back-end
 # RUN: compile
@@ -7,9 +7,9 @@
 # OPERATIONS-LABEL: name="spreadThenName"
 # OPERATIONS: = CopyObject v0
 # OPERATIONS-LABEL: name="rest"
-# OPERATIONS: = CopyObject v0 excludedKeys=["a", "b"]
+# OPERATIONS: CopyDataProperties {{*}}, v0 excludedKeys=["a", "b"]
 # OPERATIONS-LABEL: name="restWithComputedKey"
-# OPERATIONS: = CopyObject v0, {{*}} excludedKeys=["a", "0"]
+# OPERATIONS: CopyDataProperties {{*}}, v0, {{*}} excludedKeys=["a", "0"]
 # OPERATIONS-LABEL: name="spreadOfSameLayout"
 # OPERATIONS: = TryCopyFields {{*}} layout=L3
 
@@ -18,7 +18,7 @@ entry module=m0
 layout L0 name="Named" fields=[{key="a" declared={type=anything}}]
 layout L1 name="Rest"
 layout L2 name="RestWithComputedKey"
-layout L3 name="State" fields=[{key="a" declared={type=anything written=anything}}, {key="b" declared={type=anything written=anything}}, {key="c" declared={type=anything written=anything}}]
+layout L3 name="State" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -34,11 +34,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="spreadThenName" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = NewObject layout=L0
-    CopyDataProperties v2, v0
+    v2 = CopyObject v0
     PropDefine v2, v1 key="a"
-    v5 = FinishObject v2
-    Return v5
+    Return v2
 }
 function f2 name="rest" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -61,8 +59,8 @@ function f4 name="makeState" parameters=[{type=anything}, {type=anything}, {type
     v4 = FinishObject v3
     Return v4
 }
-function f5 name="spreadOfSameLayout" parameters=[{type=anything predicted=L3}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything ~ L3, v1: anything):
+function f5 name="spreadOfSameLayout" parameters=[{type=L3 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L3, v1: anything):
     v2 = NewObject layout=L3
     CopyDataProperties v2, v0
     PropDefine v2, v1 key="a"

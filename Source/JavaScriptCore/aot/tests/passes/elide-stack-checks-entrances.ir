@@ -1,0 +1,98 @@
+# The tests in front of a body go on with a tail call. They need no frame, but for a check of their own: the frame, the check, and a jump to the body where they would fall into it.
+# So where an entrance lies in a cycle of calls, what it enters checks the stack, the typed body and the generic version, whether or not the body would have to for itself,
+# and that check is also the poll of the cycle. The entrance has none.
+# FORM: Selected
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksDeferredToCallee = 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f4
+    v3 = CallDirect v0 function=f7
+    Return v3
+}
+
+function f1 name="walk" role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f3
+    ReturnCall v4 requirement=Allowed
+}
+
+function f2 name="walk" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v1 function=f1
+    Return v2
+}
+
+function f3 name="walk" role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything):
+    Return v0
+}
+
+function f4 name="theBodyChecksForNobodyElse" role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f5 fallback=f6} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f5
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f6
+    ReturnCall v4 requirement=Allowed
+}
+
+function f5 name="theBodyChecksForNobodyElse" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+
+function f6 name="theBodyChecksForNobodyElse" role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} creator=Version{provenVersion=f5} {
+  b0(v0: anything):
+    Return v0
+}
+
+function f7 name="inNoCycle" role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f8 fallback=f9} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f8
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f9
+    ReturnCall v4 requirement=Allowed
+}
+
+function f8 name="inNoCycle" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7} {
+  b0(v0: number):
+    Return v0
+}
+
+function f9 name="inNoCycle" role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7} creator=Version{provenVersion=f8} {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK: f0 stack check: CoveredByCallers
+# CHECK-NEXT: f1 stack check: CoveredByCallers
+# CHECK-NEXT: f2 stack check: Required
+# CHECK-NEXT: f3 stack check: Required
+# CHECK-NEXT: f4 stack check: CoveredByCallers
+# CHECK-NEXT: f5 stack check: Required
+# CHECK-NEXT: f6 stack check: Required
+# CHECK-NEXT: f7 stack check: CoveredByCallers
+# CHECK-NEXT: f8 stack check: CoveredByCallers
+# CHECK-NEXT: f9 stack check: CoveredByCallers
+# CHECK-NEXT: outcome: Unchanged

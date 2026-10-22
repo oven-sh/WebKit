@@ -1,7 +1,7 @@
 # Unused values without effects, unused block parameters and write-only objects are removed
 # FORM: Prepared
 # RUN: pass EliminateDeadCode
-# STATISTIC: EliminateDeadCodeChanges = 8
+# STATISTIC: EliminateDeadCodeChanges = 9
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
@@ -22,7 +22,7 @@ function f0 name="unusedValueChain" parameters=[{type=number}, {type=number}] re
 
 function f1 name="unusedAllocations" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure function=f0
     Return v0
 }
@@ -46,7 +46,7 @@ function f2 name="unusedParameterCycle" parameters=[{type=number}, {type=boolean
 
 function f3 name="writeOnlyObject" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     PutSlot v1, -, v0 key="x" receivers=[L1] level=Proven
     Return v0
 }
@@ -66,8 +66,8 @@ function f4 name="writeOnlyEnvironment" parameters=[{type=anything}] results=[{t
 
 function f5 name="writeOnlyObjectCycle" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
-    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
     PutSlot v1, -, v2 key="x" receivers=[L1] level=Proven
     PutSlot v2, -, v1 key="x" receivers=[L1] level=Proven
     Return v0
@@ -79,7 +79,7 @@ function f5 name="writeOnlyObjectCycle" parameters=[{type=anything}] results=[{t
 function f6 name="deadStoreOperand" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
     v1 = Add v0, v0
-    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
     PutSlot v2, -, v1 key="x" receivers=[L1] level=Proven
     Return v0
 }
@@ -99,7 +99,7 @@ function f7 name="setterOnClassPrototype" parameters=[{type=anything}] results=[
 
 function f8 name="storeThroughMergedReceiver" parameters=[{type=L1}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: L1, v1: anything, v2: boolean):
-    v3 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L1 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v3)
@@ -116,7 +116,7 @@ function f8 name="storeThroughMergedReceiver" parameters=[{type=L1}, {type=anyth
 
 function f9 name="objectWithRead" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     PutSlot v1, -, v0 key="x" receivers=[L1] level=Proven
     v3 = GetSlot v1 key="x" receivers=[L1] level=Proven
     Return v3
@@ -127,13 +127,13 @@ function f9 name="objectWithRead" parameters=[{type=anything}] results=[{type=an
 
 function f10 name="valuesWithEffects" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=number
+    v1 = RequireObjectCoercible v0
     v2 = Call v0
     v3 = Add v0, v0
     Return v0
 }
 # CHECK-LABEL: function f10 name="valuesWithEffects"
-# CHECK: v1:{{*}}= Claim v0 castType={{*}}
+# CHECK: v1:{{*}}= RequireObjectCoercible v0
 # CHECK-NEXT: v2:{{*}}= Call v0
 # CHECK-NEXT: v3:{{*}}= Add v0, v0
 
@@ -172,15 +172,15 @@ function f12 name="Box" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
 }
 # CHECK-LABEL: function f12 name="Box"
 
-function f13 name="y" kind=Setter flags=[HasThis] thisType={type=object written=L2} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L2, v1: anything):
+function f13 name="y" kind=Setter flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L2, v1: anything):
     Return
 }
 # CHECK-LABEL: function f13 name="y"
 
 function f14 name="calleeWritesOtherLocation" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = CallDirect v1, v0 function=f15
     Return v0
 }
@@ -195,3 +195,12 @@ function f15 name="storesIntoParameterAndVariable" parameters=[{type=L1}, {type=
     Return
 }
 # CHECK-LABEL: function f15 name="storesIntoParameterAndVariable"
+
+function f16 name="checkNobodyUses" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=number
+    Return v0
+}
+# CHECK-LABEL: function f16 name="checkNobodyUses"
+# CHECK: b0(
+# CHECK-NEXT: Return v0

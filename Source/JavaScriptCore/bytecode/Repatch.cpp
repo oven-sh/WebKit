@@ -188,7 +188,7 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
     // Figure out what our cases are.
     for (CallVariant variant : list) {
 #if ENABLE(AOT)
-        if (JSCell* callee = variant.rawCalleeCell(); isCompiledCalleeType(callee->type())) {
+        if (JSCell* callee = variant.rawCalleeCell(); vm.hasCompiledCode() && isCompiledCalleeType(callee->type())) [[unlikely]] {
             CallData callData = JSC::getCallData(callee);
             if (isClosureCall || callData.type != CallData::Type::Compiled) {
                 callLinkInfo.setVirtualCall(vm);

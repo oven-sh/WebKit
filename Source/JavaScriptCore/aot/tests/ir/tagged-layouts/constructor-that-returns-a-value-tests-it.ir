@@ -1,0 +1,43 @@
+# interface Node { kind: number }  interface Num extends Node { kind: 1; value: number }  interface Neg extends Node { kind: 2; operand: Node }
+# function NodeObject(this: Node, kind: number, other: any) { this.kind = kind; return other }
+# A construction answers with what the function returns if that is an object, and with the object it allocated otherwise. The copy of the body that allocates `this` makes that test itself,
+# so all that is known of its result is that it is an object
+# FORM: AsRead
+# RUN: pass AllocateTaggedLayouts
+# RUN(TYPED): pass AllocateTaggedLayouts TypeValues VerifyProgram
+# TYPED-COUNT-3: outcome:
+# STATISTIC: TaggedLayoutsAllocated = 2
+# STATISTIC: TaggedLayoutsNeverAllocated = 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Neg" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="operand" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1, v1: number, v2: anything):
+    PropSet v0, v1 key="kind" mode=Strict
+    Return v2
+}
+
+# CHECK-LABEL: function f1 name="NodeObject"
+# CHECK: b0([[this]]: {{*}}, [[newTarget]]: anything, [[kind]]: number, [[other]]: anything):
+# CHECK: PropSet [[this]], [[kind]] key="kind"
+# CHECK-NEXT: Return [[other]]
+# CHECK-LABEL: function f2 name="NodeObject"
+# CHECK: results=[{type=object flags=[IsFromCompiler]}]
+# CHECK-NEXT: b0([[copiedNewTarget]]: anything, [[tag]]: number, [[returned]]: anything):
+# CHECK: Switch [[tag]] cases=[1, 2]
+# CHECK: [[rest]]([[object]]):
+# CHECK-NEXT: PropSet [[object]], [[tag]] key="kind"
+# CHECK-NEXT: [[isObject]] = TypeTest [[returned]] testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[answersWithReturned]](| 0), notTaken [[answersWithOwn]]()
+# CHECK: [[answersWithReturned]]([[returnedObject]]):
+# CHECK-NEXT: Return [[returnedObject]]
+# CHECK: [[answersWithOwn]]():
+# CHECK-NEXT: Return [[object]]

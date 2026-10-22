@@ -21,7 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class DirectiveKind : uint8_t { Run, Requires, Form, Options, Diagnostic, Statistic, Loss, Library };
+enum class DirectiveKind : uint8_t { Run, Requires, Form, Options, Diagnostic, Statistic, Loss, Library, Todo };
 
 template<typename T>
 struct NamedValue {
@@ -70,6 +70,7 @@ private:
     void parseDiagnostic(const DirectiveLine&);
     void parseStatistic(const DirectiveLine&);
     void parseLoss(const DirectiveLine&);
+    void parseTodo(const DirectiveLine&);
     bool parseLossWord(const DirectiveLine&, StringView word, ExpectedLoss&);
 
     PendingCheckGroup* findCheckGroup(StringView prefix);
@@ -99,6 +100,7 @@ static constexpr NamedValue<DirectiveKind> directiveKinds[] = {
     { "STATISTIC"_s, DirectiveKind::Statistic },
     { "LOSS"_s, DirectiveKind::Loss },
     { "LIBRARY"_s, DirectiveKind::Library },
+    { "TODO"_s, DirectiveKind::Todo },
 };
 
 static constexpr NamedValue<Architecture> targetArchitectures[] = {
@@ -329,8 +331,26 @@ void TestFileParser::parseOtherDirective(const DirectiveLine& directive)
         if (directive.value != "own"_s)
             addError(directive.line, "LIBRARY is written '"_s, ownLibraryLine, '\'');
         return;
+    case DirectiveKind::Todo:
+        parseTodo(directive);
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+void TestFileParser::parseTodo(const DirectiveLine& directive)
+{
+    if (m_file.todo) {
+        addError(directive.line, "the file has a second TODO line"_s);
+        return;
+    }
+    size_t colon = directive.value.find(':');
+    bool namesOwnerAndWhatIsLost = colon != notFound && colon && !directive.value.substring(colon + 1).trim(isTabOrSpace<char16_t>).isEmpty();
+    if (!namesOwnerAndWhatIsLost) {
+        addError(directive.line, "TODO is written 'TODO: <owner>: <what is lost>'"_s);
+        return;
+    }
+    m_file.todo = TestTodo { directive.value.toString(), directive.line };
 }
 
 void TestFileParser::parseRun(const DirectiveLine& directive)

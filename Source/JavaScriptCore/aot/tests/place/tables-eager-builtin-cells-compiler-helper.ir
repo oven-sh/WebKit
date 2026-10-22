@@ -1,5 +1,5 @@
 # No object stands for the holder of a compiler helper, so no store reaches the helper and its cell waits for its first use, whatever unknown JavaScript does. Date.now beside it is filled at start-up
-# OPTIONS: admit=RuntimeCode
+# OPTIONS: admit=Inspector
 # RUN: tables constants
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTModuleHost.h"
+#include "AOTModules.h"
 #include "AOTNativeTest.h"
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
@@ -22,11 +22,11 @@ std::span<const NativeTest> requiredNameTests();
 static constexpr ASCIILiteral programText = R"IR(variable g0 name="shared" module=m5 declared={type=anything} initialization=Undefined
 variable g1 name="single" module=m5 declared={type=anything} initialization=Undefined
 variable g2 name="shared" module=m6 declared={type=anything} initialization=Undefined
-module m0 path="/absent-allowed.ts" displayPath="absent-allowed.ts" body=f0 requests=[{target=m4}] requiredNames=[{module=m4 name="absent" mayBeAbsent=true}]
-module m1 path="/absent-required.js" displayPath="absent-required.js" body=f1 requests=[{target=m4}] requiredNames=[{module=m4 name="absent"}]
-module m2 path="/ambiguous.ts" displayPath="ambiguous.ts" body=f2 requests=[{target=m4}] requiredNames=[{module=m4 name="shared" mayBeAbsent=true}]
-module m3 path="/found.ts" displayPath="found.ts" body=f3 requests=[{target=m4}] requiredNames=[{module=m4 name="single" mayBeAbsent=true}]
-module m4 path="/barrel.js" displayPath="barrel.js" body=f4 requests=[{target=m5 isDynamicStarExport=true}, {target=m6 isDynamicStarExport=true}]
+module m0 path="/absent-allowed.ts" displayPath="absent-allowed.ts" body=f0 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="absent" mayBeAbsent=true}]
+module m1 path="/absent-required.js" displayPath="absent-required.js" body=f1 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="absent"}]
+module m2 path="/ambiguous.ts" displayPath="ambiguous.ts" body=f2 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="shared" mayBeAbsent=true}]
+module m3 path="/found.ts" displayPath="found.ts" body=f3 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="single" mayBeAbsent=true}]
+module m4 path="/barrel.js" displayPath="barrel.js" body=f4 requests=[{target=m5 isDynamicStarExport=true completes=true}, {target=m6 isDynamicStarExport=true completes=true}]
 module m5 path="/one.js" displayPath="one.js" body=f5 exports=[{name="shared" variable=g0}, {name="single" variable=g1}]
 module m6 path="/two.js" displayPath="two.js" body=f6 exports=[{name="shared" variable=g2}]
 entry module=m0
@@ -76,7 +76,7 @@ static void checkModuleLinks(LoadedProgram& program, ModuleID module)
     evaluateModuleSynchronously(program.realm(), module);
 
     AOT_TEST_CHECK(!scope.exception());
-    AOT_TEST_CHECK(isEvaluated(program.realm(), module));
+    AOT_TEST_CHECK(modulesOf(program.realm())->status(module) == ModuleStatus::Evaluated);
 }
 
 static void checkLinkThrowsSyntaxError(LoadedProgram& program, ModuleID module, ASCIILiteral expectedMessage)
@@ -93,7 +93,7 @@ static void checkLinkThrowsSyntaxError(LoadedProgram& program, ModuleID module, 
     if (message != expectedMessage)
         dataLogLn("the message is ", message, ", expected ", expectedMessage);
     AOT_TEST_CHECK(message == expectedMessage);
-    AOT_TEST_CHECK(!isEvaluated(program.realm(), module));
+    AOT_TEST_CHECK(modulesOf(program.realm())->status(module) != ModuleStatus::Evaluated);
 }
 
 static void checkAbsentNameThatMayBeAbsentLinks(LoadedProgram& program)

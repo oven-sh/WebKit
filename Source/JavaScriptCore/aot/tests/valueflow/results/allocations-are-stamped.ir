@@ -1,0 +1,42 @@
+# Every allocation is stamped with its site, and the sites are numbered in the order of the program: by function, and in a function by operation.
+# An object with a layout is also stamped with the allocation class of its layout: one class for each layout, in the order of the layouts, whatever happens to the objects. All instances of one built-in class share one class.
+# An array literal and a closure have a site and name no class. An object keeps its layout also where an accessor is defined under an index
+# RUN: valueflow-apply
+# RUN(SITES): valueflow-results
+# CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=0 allocationClass=0
+# CHECK-NEXT: v2:{{*}}= NewArray v0 {{*}}allocationSite=1
+# CHECK-NOT: allocationClass
+# CHECK: v3: f1 = NewClosure function=f1 allocationSite=2
+# CHECK-NOT: allocationClass
+# CHECK: v5: L1 = NewObject -, v0 layout=L1 fields=[0] allocationSite=3 allocationClass=1
+# SITES: class C0 layout=L0
+# SITES-NEXT: class C1 layout=L1
+# SITES: site A0 function=f0 layout=L0 allocationClass=0
+# SITES-NEXT: site A1 function=f0 builtinClass=Array allocationClass=[[arrays]]
+# SITES-NEXT: site A2 function=f0
+# SITES-NOT: =
+# SITES: site A3 function=f0 layout=L1 allocationClass=1
+# SITES-NEXT: site A4 function=f0 builtinClass=Array allocationClass=[[arrays]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Indexed" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="all" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray v0 contents=anything
+    v3 = NewClosure function=f1
+    v4 = Undefined
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    DefineGetter v5, v3 key="0"
+    v7 = NewArray v1, v2, v3, v5 contents=anything
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f1 name="first" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

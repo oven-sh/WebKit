@@ -15,12 +15,14 @@
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramFile.h"
+#include "AOTPropertyCaches.h"
+#include "AOTRegExpLiterals.h"
 #include "AOTRuntimeType.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
-#include "AOTTypeErrorMessages.h"
+#include "AOTErrorMessages.h"
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
 #include <array>
@@ -41,7 +43,7 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Record" fields=
 variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="a" module=m2 declared={type=anything} initialization=Undefined
 variable g2 name="chosen" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}, {target=m1 phase=Defer}]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m1 phase=Defer}]
 module m1 path="/first.js" displayPath="first.js" body=f1 exports=[{name="a" variable=g0}]
 module m2 path="/second.js" displayPath="second.js" body=f2 exports=[{name="a" variable=g1}]
 entry module=m0
@@ -118,6 +120,27 @@ function f7 name="read" results=[{type=anything}] {
     v0 = GetModuleVariable variable=g2
     v1 = PropGet v0 key="a"
     Return v1
+}
+)IR"_s;
+
+static constexpr ASCIILiteral programWithLiterals = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="registry" [isFreeName]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key="literals"
+    Return
+}
+function f1 name="literals" results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="a+" regExpFlags=[]
+    v1 = NewRegExp pattern="b+" regExpFlags=[]
+    v2 = NewRegExp pattern="c+" regExpFlags=[]
+    PropSet v0, v1 key="next"
+    PropSet v1, v2 key="next"
+    Return v0
 }
 )IR"_s;
 
@@ -209,6 +232,115 @@ static void testModuleOfNamespaceObjects(LoadedProgram& program)
     AOT_TEST_CHECK(!operationAOTIsNamespaceOfModule(evaluate(program, "({ a: 1 })"_s).asCell(), firstModule.index()));
 }
 
+// The collector reads the stack for what looks like a reference, so the tests below keep the cells they ask about in another form and off the stack.
+using HiddenCells = std::array<uintptr_t, 3>;
+
+static NEVER_INLINE uintptr_t hide(JSCell* cell)
+{
+    return ~std::bit_cast<uintptr_t>(cell);
+}
+
+static NEVER_INLINE unsigned numberOfMarkedCells(VM& vm, const HiddenCells& hidden, unsigned count)
+{
+    unsigned marked = 0;
+    for (unsigned i = 0; i < count; ++i)
+        marked += vm.heap.isMarked(std::bit_cast<JSCell*>(~hidden[i]));
+    return marked;
+}
+
+static void checkCellsMadeBetweenCollectionsLast(LoadedProgram& program, uintptr_t (*makeOrFind)(LoadedProgram&, unsigned index))
+{
+    VM& vm = program.vm();
+    auto hiddenCell = [&](unsigned index) {
+        return makeOrFind(program, index);
+    };
+    auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
+    HiddenCells& hidden = *hiddenOffTheStack;
+    auto collect = [&](CollectionScope scope) {
+        vm.heap.collectNow(Sync, scope);
+    };
+    // After this the roots have been visited and nothing has been stored since.
+    collect(CollectionScope::Full);
+    collect(CollectionScope::Eden);
+
+    hidden[0] = hiddenCell(0);
+    collect(CollectionScope::Eden);
+    AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 1) == 1);
+    hidden[1] = hiddenCell(1);
+    collect(CollectionScope::Eden);
+    AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 2) == 2);
+    hidden[2] = hiddenCell(2);
+    collect(CollectionScope::Full);
+    AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 3) == 3);
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full, CollectionScope::Full, CollectionScope::Eden }) {
+        collect(scope);
+        AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 3) == 3);
+    }
+    for (unsigned i = 0; i < hidden.size(); ++i)
+        AOT_TEST_CHECK(hiddenCell(i) == hidden[i]);
+}
+
+// Nothing but the list of loaded modules holds a namespace object between two requests for it.
+static NEVER_INLINE uintptr_t hiddenNamespaceObject(LoadedProgram& program, unsigned index)
+{
+    using ModulePhase = AbstractModuleRecord::ModulePhase;
+    Modules& modules = modulesOf(program.instance());
+    switch (index) {
+    case 0:
+        return hide(modules.moduleNamespace(firstModule, ModulePhase::Evaluation));
+    case 1:
+        return hide(modules.moduleNamespace(secondModule, ModulePhase::Evaluation));
+    default:
+        return hide(modules.moduleNamespace(firstModule, ModulePhase::Defer));
+    }
+}
+
+static void testNamespaceObjectsMadeBetweenCollectionsLast(LoadedProgram& program)
+{
+    checkCellsMadeBetweenCollectionsLast(program, hiddenNamespaceObject);
+}
+
+// Nor anything but the set of literals the compiled pattern of a literal between two evaluations.
+static NEVER_INLINE uintptr_t hiddenLiteral(LoadedProgram& program, unsigned index)
+{
+    VM& vm = program.vm();
+    return hide(vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(index), { }));
+}
+
+static void testLiteralsMadeBetweenCollectionsLast(LoadedProgram& program)
+{
+    checkCellsMadeBetweenCollectionsLast(program, hiddenLiteral);
+}
+
+// The Structure that an addition leads to lives through a young collection if the one it comes from does. Here the second addition comes from the Structure that the first leads to
+// and stands in front of it in the list: when it is first asked, its own first Structure is not marked yet.
+static NEVER_INLINE void addTwoPropertiesInARow(LoadedProgram& program, HiddenCells& hidden)
+{
+    VM& vm = program.vm();
+    PropertyOffset offset;
+    Structure* old = program.realm()->objectStructureForObjectConstructor();
+    Structure* first = Structure::addPropertyTransition(vm, old, Identifier::fromString(vm, "firstAddition"_s), 0, offset);
+    Structure* second = Structure::addPropertyTransition(vm, first, Identifier::fromString(vm, "secondAddition"_s), 0, offset);
+    PropertyCaches& caches = *program.state().propertyCaches;
+    caches.didAddProperty(first, second);
+    caches.didAddProperty(old, first);
+    hidden[0] = hide(first);
+    hidden[1] = hide(second);
+}
+
+static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    addTwoPropertiesInARow(program, *hiddenOffTheStack);
+    vm.heap.collectNow(Sync, CollectionScope::Eden);
+    AOT_TEST_CHECK(numberOfMarkedCells(vm, *hiddenOffTheStack, 2) == 2);
+    // A full collection ends every Structure that no object has.
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(!numberOfMarkedCells(vm, *hiddenOffTheStack, 2));
+}
+
 static void testNoShapePasses(LoadedProgram& program)
 {
     const RuntimeLayoutTable& layouts = program.state().objects->layouts;
@@ -229,7 +361,7 @@ static bool isDescribedAs(LoadedProgram& program, const RuntimeType& type, Strin
 
 static bool hasMessage(LoadedProgram& program, JSValue value, const RuntimeType& type, StringView expected)
 {
-    String message = mismatchMessage(program.state(), program.vm(), value, type);
+    String message = makeString("expected "_s, describe(program.state().tables, type), ", got "_s, describe(value));
     if (message == expected)
         return true;
     dataLogLn("the message is ", message, ", expected ", expected);
@@ -243,8 +375,8 @@ static void testMessages(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, unsharedBuffers, "ArrayBuffer"_s));
     AOT_TEST_CHECK(isDescribedAs(program, sharedBuffers, "SharedArrayBuffer"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord { RuntimeCellTest::cellTypeIs(ArrayBufferType, ArrayBufferType) }, "ArrayBuffer | SharedArrayBuffer"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new ArrayBuffer(1)"_s), sharedBuffers, "expected SharedArrayBuffer, got native ArrayBuffer"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Uint8Array(1)"_s), unsharedBuffers, "expected ArrayBuffer, got native Uint8Array"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new ArrayBuffer(1)"_s), sharedBuffers, "expected SharedArrayBuffer, got built-in ArrayBuffer"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Uint8Array(1)"_s), unsharedBuffers, "expected ArrayBuffer, got built-in Uint8Array"_s));
 
     TypeRecord namespacesOfFirst { RuntimeCellTest::isNamespaceOf(firstModule) };
     AOT_TEST_CHECK(isDescribedAs(program, namespacesOfFirst, "typeof import(\"first.js\")"_s));
@@ -366,6 +498,9 @@ std::span<const NativeTest> sharingModeAndNamespaceTests()
     static constexpr NativeTest tests[] = {
         { "sharing-mode-and-namespace/sharing-mode-of-values"_s, withProgram<testSharingModeOfValues> },
         { "sharing-mode-and-namespace/module-of-namespace-objects"_s, withProgram<testModuleOfNamespaceObjects> },
+        { "sharing-mode-and-namespace/namespace-objects-made-between-collections-last"_s, withProgram<testNamespaceObjectsMadeBetweenCollectionsLast> },
+        { "sharing-mode-and-namespace/literals-made-between-collections-last"_s, runNativeTestWithLoadedProgram<sharingModeAndNamespaceTests, programWithLiterals, testLiteralsMadeBetweenCollectionsLast> },
+        { "sharing-mode-and-namespace/addition-that-waits-for-its-first-structure"_s, withProgram<testAdditionThatWaitsForItsFirstStructure> },
         { "sharing-mode-and-namespace/no-shape-passes"_s, withProgram<testNoShapePasses> },
         { "sharing-mode-and-namespace/messages"_s, withProgram<testMessages> },
         { "sharing-mode-and-namespace/compiled-tests"_s, testCompiledTests },

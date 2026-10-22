@@ -3,23 +3,27 @@ flags FunctionCapabilities {
 }
 enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgumentArea: Bool, record: Name, capabilities: FunctionCapabilities) {
     Source(true, true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost)
-    Library(true, true, true, None, MayBeCloned+MayBeInlined+HasOrdinaryFrame)
+    Library(true, true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame)
     Model(true, false, true, None, none)
     Signature(false, false, false, None, none)
     | engine
     GenericEntrypoint(false, false, false, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
-    GroupEntrypoint(false, false, true, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
+    TableEntrypoint(false, false, false, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
+    TableLookup(false, false, false, TableLookup, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
     GenericVersion(true, false, true, Version, MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost)
     AllocatedThisVersion(true, false, true, Version, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
+    ConstructBody(true, false, true, Version, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
     CallSiteVersion(true, false, true, Version, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
+    CalleeVersion(true, false, true, Version, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
     CoroutineRamp(false, true, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
     CoroutineBody(false, false, true, Coroutine, none)
+    AsyncWorker(false, false, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
     BoundFunction(false, true, true, BoundFunction, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
     ResultWrapper(false, true, true, ResultWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
     ResultWorker(false, false, true, ResultWorker, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
     ParameterWrapper(false, true, true, ParameterWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
+    EntryChecks(false, true, true, EntryChecks, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces)
     OutlinedBody(false, false, true, None, HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces)
-    Continuation(false, false, true, Continuation, HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost)
     Serializer(false, false, true, Serializer, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces)
     Parser(false, false, true, Parser, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces)
     ValidatingParser(false, false, true, Parser, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces)
@@ -44,19 +48,19 @@ record Origin engine { position: UInt32 inlineFrame: UInt32 }
 variant CreatorRecord engine {
     None
     Entrypoint {
-        target: Function(Call) group: CalleeSet? arguments: ArgumentPassing takesNewTarget: Bool constructEntrypoint: Function(Call)?
-        groupEntrypoint: Function(Call)?
+        target: Function(Call) arguments: ArgumentPassing takesNewTarget: Bool constructEntrypoint: Function(Call)?
     }
+    TableLookup { key: PropertyKey }
     Version { provenVersion: Function(Dispatch) }
     Coroutine {
         kind: CoroutineKind ramp: Function(Dispatch) body: Function(Dispatch) entryWithoutPromise: Function(Dispatch)? promiseType: Type?
-        promiseParameter: UInt32?
+        promiseParameter: UInt32? worker: Function(Dispatch)?
     }
-    BoundFunction { target: Function(Call) numberOfBoundArguments: UInt32 numberOfCapturedArguments: UInt32 capturesTargetClosure: Bool }
-    ResultWrapper { worker: Function(Call) nullish: NullishResult layout: Layout? }
+    BoundFunction { target: Function(Closure) numberOfBoundArguments: UInt32 numberOfCapturedArguments: UInt32 capturesTargetClosure: Bool }
+    ResultWrapper { worker: Function(Dispatch) nullish: NullishResult layout: Layout? }
     ResultWorker { origin: Function(Dispatch) }
-    ParameterWrapper { body: Function(Call) parameter: UInt32 }
-    Continuation { origin: Function(Dispatch) index: UInt32 }
+    ParameterWrapper { body: Function(Dispatch) parameter: UInt32 }
+    EntryChecks { body: Function(Dispatch) fallback: Function(Dispatch) }
     Serializer { layout: Layout? }
     Parser { type: Type layout: Layout? form: TypedResultForm expectedResult: ExpectedResult? node: UInt32 }
     Validator { type: Type layout: Layout? expectedResult: ExpectedResult node: UInt32 }

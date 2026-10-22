@@ -35,8 +35,8 @@ public:
 
     unsigned addTasks(unsigned count);
 
-    BodyRemaps finish();
-    BodyRemaps finish(std::span<const unsigned> taskOrder, FunctionRemap&&);
+    BodyRemaps finish(const ParallelLoops* = nullptr);
+    BodyRemaps finish(std::span<const unsigned> taskOrder, FunctionRemap&&, const ParallelLoops* = nullptr);
     void discard();
 
 private:
@@ -58,6 +58,20 @@ public:
 };
 
 void applyRemaps(const BodyRemaps&, Function&);
+
+// The parts of a function that remapIDs() may change: those that hold a provisional id, and the values whose expected type is their type.
+struct RemapSites {
+    bool isEmpty() const { return !record && values.isEmpty() && blocks.isEmpty(); }
+
+    bool record { false };
+    Vector<uint32_t> values;
+    // Their terminators.
+    Vector<uint32_t> blocks;
+};
+
+RemapSites findRemapSites(const Function&);
+// Does what applyRemaps() does and reads nothing else of the function, which has not changed since the sites were found.
+void applyRemaps(const BodyRemaps&, Function&, const RemapSites&);
 
 } } } // namespace JSC::AOT::Typed
 

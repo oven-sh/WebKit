@@ -96,12 +96,12 @@ static String compiledSourceURL(const std::optional<AOT::SourcePosition>& positi
     return position && position->source ? AOT::sourceURLOf(position->source) : emptyString();
 }
 
-static String compiledFunctionName(VM& vm, const JSFrameData& jsFrame)
+static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame)
 {
-    AOT::FunctionDescription description(jsFrame.compiledFrame().function);
+    AOT::FunctionDescription description(compiledFrame.frame.function);
     if (description.codeType() == ModuleCode)
         return "module code"_s;
-    if (!jsFrame.m_isAsyncFrame)
+    if (!compiledFrame.isAsyncFrame)
         return description.nameInFrames(vm);
     String name = description.name(vm);
     if (name.isEmpty() || description.isNamedByOwner())
@@ -177,7 +177,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, bool isAsyncFrame)
 
 bool StackFrame::hasBytecodeIndex() const
 {
-    if (auto* jsFrame = jsFrameData())
+    if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
         return !!jsFrame->bytecodeIndex;
     return false;
 }
@@ -185,7 +185,7 @@ bool StackFrame::hasBytecodeIndex() const
 BytecodeIndex StackFrame::bytecodeIndex() const
 {
     ASSERT(hasBytecodeIndex());
-    return jsFrameData()->bytecodeIndex;
+    return std::get<JSFrameData>(m_frameData).bytecodeIndex;
 }
 
 template<typename Visitor>
@@ -193,12 +193,15 @@ void StackFrame::visitAggregate(Visitor& visitor)
 {
     WTF::switchOn(m_frameData,
         [&visitor](const JSFrameData& jsFrame) {
-            if (jsFrame.callee())
-                visitor.appendUnbarriered(jsFrame.callee());
-            if (jsFrame.codeBlock())
-                visitor.appendUnbarriered(jsFrame.codeBlock());
+            if (jsFrame.callee)
+                visitor.append(jsFrame.callee);
+            if (jsFrame.codeBlock)
+                visitor.append(jsFrame.codeBlock);
         },
         [](const WasmFrameData&) { }
+#if ENABLE(AOT)
+        , [](const CompiledFrameData&) { }
+#endif
     );
 }
 template void StackFrame::visitAggregate(AbstractSlotVisitor&);
@@ -208,18 +211,21 @@ bool StackFrame::isMarked(VM& vm) const
 {
     return WTF::switchOn(m_frameData,
         [&vm](const JSFrameData& jsFrame) {
-            return (!jsFrame.callee() || vm.heap.isMarked(jsFrame.callee())) && (!jsFrame.codeBlock() || vm.heap.isMarked(jsFrame.codeBlock()));
+            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get()));
         },
         [](const WasmFrameData&) { return true; }
+#if ENABLE(AOT)
+        , [](const CompiledFrameData&) { return true; }
+#endif
     );
 }
 
 SourceID StackFrame::sourceID() const
 {
-    if (auto* jsFrame = jsFrameData()) {
-        if (!jsFrame->codeBlock())
+    if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
+        if (!jsFrame->codeBlock)
             return noSourceID;
-        return jsFrame->codeBlock()->ownerExecutable()->sourceID();
+        return jsFrame->codeBlock->ownerExecutable()->sourceID();
     }
     return noSourceID;
 }
@@ -241,20 +247,16 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
 {
     return WTF::switchOn(m_frameData,
         [&vm, allowOverride, this](const JSFrameData& jsFrame) -> String {
-#if ENABLE(AOT)
-            if (jsFrame.isCompiled())
-                return compiledSourceURL(compiledPosition());
-#endif
             if (isAsyncFrameWithoutCodeBlock()) {
-                ASSERT(jsFrame.callee());
-                ASSERT(!jsFrame.codeBlock());
-                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee());
+                ASSERT(jsFrame.callee);
+                ASSERT(!jsFrame.codeBlock);
+                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURL(), allowOverride);
             }
 
-            if (!jsFrame.codeBlock())
+            if (!jsFrame.codeBlock)
                 return "[native code]"_s;
-            return processSourceURL(vm, *this, jsFrame.codeBlock()->ownerExecutable()->sourceURL(), allowOverride);
+            return processSourceURL(vm, *this, jsFrame.codeBlock->ownerExecutable()->sourceURL(), allowOverride);
         },
         [](const WasmFrameData& wasmFrame) -> String {
             auto moduleName = wasmFrame.functionIndexOrName.moduleName();
@@ -262,6 +264,11 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
                 return makeString("wasm-function["_s, wasmFrame.functionIndex, ']');
             return makeString(moduleName, ":wasm-function["_s, wasmFrame.functionIndex, ']');
         }
+#if ENABLE(AOT)
+        , [this](const CompiledFrameData&) -> String {
+            return compiledSourceURL(compiledPosition());
+        }
+#endif
     );
 }
 
@@ -269,20 +276,16 @@ String StackFrame::sourceURLStripped(VM& vm) const
 {
     return WTF::switchOn(m_frameData,
         [&vm, this](const JSFrameData& jsFrame) -> String {
-#if ENABLE(AOT)
-            if (jsFrame.isCompiled())
-                return sourceURL(vm);
-#endif
             if (isAsyncFrameWithoutCodeBlock()) {
-                ASSERT(jsFrame.callee());
-                ASSERT(!jsFrame.codeBlock());
-                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee());
+                ASSERT(jsFrame.callee);
+                ASSERT(!jsFrame.codeBlock);
+                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURLStripped());
             }
 
-            if (!jsFrame.codeBlock())
+            if (!jsFrame.codeBlock)
                 return "[native code]"_s;
-            return processSourceURL(vm, *this, jsFrame.codeBlock()->ownerExecutable()->sourceURLStripped());
+            return processSourceURL(vm, *this, jsFrame.codeBlock->ownerExecutable()->sourceURLStripped());
         },
         [](const WasmFrameData& wasmFrame) -> String {
             auto moduleName = wasmFrame.functionIndexOrName.moduleName();
@@ -290,6 +293,11 @@ String StackFrame::sourceURLStripped(VM& vm) const
                 return makeString("wasm-function["_s, wasmFrame.functionIndex, ']');
             return makeString(moduleName, ":wasm-function["_s, wasmFrame.functionIndex, ']');
         }
+#if ENABLE(AOT)
+        , [this](const CompiledFrameData&) -> String {
+            return compiledSourceURL(compiledPosition());
+        }
+#endif
     );
 }
 
@@ -297,12 +305,8 @@ String StackFrame::functionName(VM& vm) const
 {
     return WTF::switchOn(m_frameData,
         [&vm](const JSFrameData& jsFrame) -> String {
-#if ENABLE(AOT)
-            if (jsFrame.isCompiled())
-                return compiledFunctionName(vm, jsFrame);
-#endif
-            if (jsFrame.codeBlock()) {
-                switch (jsFrame.codeBlock()->codeType()) {
+            if (jsFrame.codeBlock) {
+                switch (jsFrame.codeBlock->codeType()) {
                 case EvalCode:
                     return "eval code"_s;
                 case ModuleCode:
@@ -314,10 +318,10 @@ String StackFrame::functionName(VM& vm) const
                 }
             }
             String name;
-            if (jsFrame.callee() && jsFrame.callee()->isObject())
-                name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee())).impl();
-            else if (jsFrame.codeBlock()) {
-                if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock()->ownerExecutable()))
+            if (jsFrame.callee && jsFrame.callee->isObject())
+                name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();
+            else if (jsFrame.codeBlock) {
+                if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock->ownerExecutable()))
                     name = executable->ecmaNameWithoutGC();
             }
 
@@ -336,28 +340,31 @@ String StackFrame::functionName(VM& vm) const
                 return WTF::toString(wasmFrame.functionIndexOrName.index());
             return WTF::toString(wasmFrame.functionIndexOrName.name()->span());
         }
+#if ENABLE(AOT)
+        , [&vm](const CompiledFrameData& compiledFrame) -> String {
+            return compiledFunctionName(vm, compiledFrame);
+        }
+#endif
     );
 }
 
 LineColumn StackFrame::computeLineAndColumn() const
 {
-    if (auto* jsFrame = jsFrameData()) {
-#if ENABLE(AOT)
-        if (jsFrame->isCompiled()) {
-            auto position = compiledPosition();
-            return position ? position->lineColumn : LineColumn { };
-        }
-#endif
-        if (!jsFrame->codeBlock())
+    if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
+        if (!jsFrame->codeBlock)
             return { };
-        auto lineColumn = jsFrame->codeBlock()->lineColumnForBytecodeIndex(jsFrame->bytecodeIndex);
+        auto lineColumn = jsFrame->codeBlock->lineColumnForBytecodeIndex(jsFrame->bytecodeIndex);
 
-        ScriptExecutable* executable = jsFrame->codeBlock()->ownerExecutable();
-        if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(jsFrame->codeBlock()->vm()))
+        ScriptExecutable* executable = jsFrame->codeBlock->ownerExecutable();
+        if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(jsFrame->codeBlock->vm()))
             lineColumn.line = overrideLineNumber.value();
 
         return lineColumn;
     }
+#if ENABLE(AOT)
+    if (auto position = compiledPosition())
+        return position->lineColumn;
+#endif
     return { };
 }
 

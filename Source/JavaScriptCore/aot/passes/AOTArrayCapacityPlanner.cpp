@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFunctionAnalyses.h"
@@ -123,6 +124,40 @@ bool ArrayCapacityPlanner::isCandidate(const Value& value) const
     return value.elementsOperands().size() <= maxLength;
 }
 
+// CFG::blocksReachableFrom(), as far as the questions make it go: an append stands a few blocks behind its literal, and a function may hold thousands of literals.
+class BlocksReachedFrom {
+public:
+    BlocksReachedFrom(const CFG& cfg, BlockID start)
+        : m_cfg(cfg)
+        , m_isReached(cfg.numNodes())
+        , m_isPending(cfg.reversePostOrder().size())
+    {
+        m_isReached.quickSet(start.index());
+        m_isPending.quickSet(cfg.reversePostOrderIndex(start));
+    }
+
+    bool contains(BlockID block)
+    {
+        size_t numberOfBlocks = m_cfg.reversePostOrder().size();
+        while (!m_isReached.quickGet(block.index())) {
+            size_t position = m_isPending.findBit(0, true);
+            if (position >= numberOfBlocks)
+                return false;
+            m_isPending.quickClear(position);
+            for (BlockID successor : m_cfg.successors(m_cfg.reversePostOrder()[position])) {
+                if (!m_isReached.quickSet(successor.index()))
+                    m_isPending.quickSet(m_cfg.reversePostOrderIndex(successor));
+            }
+        }
+        return true;
+    }
+
+private:
+    const CFG& m_cfg;
+    BitVector m_isReached;
+    BitVector m_isPending;
+};
+
 std::optional<CapacityPlan> ArrayCapacityPlanner::plan(ValueID id)
 {
     std::optional<ObjectID> object = m_analyses.escape().objectDefinedBy(id);
@@ -141,11 +176,26 @@ std::optional<CapacityPlan> ArrayCapacityPlanner::plan(ValueID id)
     result.literal = id;
     result.constant = numberOfElements;
 
+    // Outside of a cycle nothing leads back to the literal, so an append that is not reached from it appends to another array: one that came out of a field, or from the other arm of a test.
+    std::optional<BlocksReachedFrom> blocksBehindLiteral;
+    auto mayFollowLiteral = [&](const AppendSite& site) {
+        if (literal.loop || m_analyses.isInCycle(location.block))
+            return true;
+        if (site.block == location.block)
+            return m_analyses.useLists().locationOf(site.value).index > location.index;
+        if (!blocksBehindLiteral)
+            blocksBehindLiteral.emplace(m_analyses.cfg(), location.block);
+        bool isReached = blocksBehindLiteral->contains(site.block);
+        if (m_context.build.options().verifiesAfterEveryPass) [[unlikely]]
+            RELEASE_ASSERT(isReached == m_analyses.cfg().blocksReachableFrom(location.block, { }).get(site.block.index()));
+        return isReached;
+    };
+
     int64_t numberOfConditionalElements = 0;
     Vector<AppendSite, 2> loopSites;
     const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
     for (const AppendSite& site : sites) {
-        if (frequencies.classOf(location.block) < frequencies.classOf(site.block))
+        if (frequencies.classOf(location.block) < frequencies.classOf(site.block) || !mayFollowLiteral(site))
             continue;
         switch (executionOf(literal, chain, site)) {
         case SiteExecution::Unknown:
@@ -173,11 +223,8 @@ std::optional<CapacityPlan> ArrayCapacityPlanner::plan(ValueID id)
     if (!loopSites.isEmpty()) {
         if (!tryAddLoopSites(result, literal, loopSites))
             return std::nullopt;
-    } else if (!result.hasRunTimeTerm() && numberOfConditionalElements) {
+    } else if (!result.hasRunTimeTerm() && result.constant + numberOfConditionalElements - numberOfElements <= 1)
         result.constant += numberOfConditionalElements;
-        if (result.constant - numberOfElements > 1)
-            return std::nullopt;
-    }
 
     if (result.hasRunTimeTerm())
         return result;
@@ -239,7 +286,7 @@ SiteExecution ArrayCapacityPlanner::executionOf(const PlannedLiteral& literal, c
 {
     const NaturalLoops& loops = m_analyses.naturalLoops();
     const NaturalLoop* loop = loops.innerMostLoopOf(site.block);
-    if (!loop && m_analyses.blockCycles().isInCycle(site.block))
+    if (!loop && m_analyses.isInCycle(site.block))
         return SiteExecution::Unknown;
 
     if (loop == literal.loop) {
@@ -250,9 +297,27 @@ SiteExecution ArrayCapacityPlanner::executionOf(const PlannedLiteral& literal, c
         return SiteExecution::Always;
     }
 
-    if (loop && loops.innerMostOuterLoop(*loop) == literal.loop)
+    if (loop && likelyOuterLoopOf(*loop) == literal.loop)
         return SiteExecution::InNestedLoop;
     return SiteExecution::Unknown;
+}
+
+// SeparateUnlikelyLoopPaths leaves a loop around the loop, which only the unlikely paths close. A capacity is a prediction, and that loop is predicted not to go round.
+const NaturalLoop* ArrayCapacityPlanner::likelyOuterLoopOf(const NaturalLoop& loop)
+{
+    const NaturalLoops& loops = m_analyses.naturalLoops();
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
+    const NaturalLoop* outer = loops.innerMostOuterLoop(loop);
+    while (outer) {
+        bool isClosedByLikelyPath = std::ranges::any_of(m_analyses.cfg().incomingEdges(outer->header()), [&](Edge edge) {
+            return loops.belongsTo(edge.from, *outer) && !(frequencyOfLoop < frequencies.classOf(edge.from));
+        });
+        if (isClosedByLikelyPath)
+            break;
+        outer = loops.innerMostOuterLoop(*outer);
+    }
+    return outer;
 }
 
 BlockChain ArrayCapacityPlanner::chainFrom(BlockID first, const NaturalLoop* loop)
@@ -265,13 +330,51 @@ BlockChain ArrayCapacityPlanner::chainFrom(BlockID first, const NaturalLoop* loo
     return chain;
 }
 
-BlockID ArrayCapacityPlanner::chainSuccessorOf(BlockID block) const
+BlockID ArrayCapacityPlanner::blockWhereLikelyArmsMeet(BlockID block, unsigned numberOfBranchesAround)
+{
+    constexpr unsigned maxBlocksOfArm = 16;
+    constexpr unsigned maxBranchesAround = 8;
+    if (m_branchesAsked.get(block.index()))
+        return m_blocksWhereLikelyArmsMeet[block.index()];
+    if (m_blocksWhereLikelyArmsMeet.isEmpty())
+        m_blocksWhereLikelyArmsMeet.grow(m_function.blocks.size());
+    m_branchesAsked.set(block.index());
+    if (numberOfBranchesAround >= maxBranchesAround)
+        return { };
+
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    Vector<BlockID, 2> likely;
+    for (BlockID successor : m_analyses.cfg().successors(block)) {
+        if (!(frequencies.classOf(successor) < frequencies.classOf(block)) && !likely.contains(successor))
+            likely.append(successor);
+    }
+    BlockID result;
+    if (likely.size() == 1)
+        result = likely[0];
+    else if (likely.size() == 2) {
+        Vector<BlockID, maxBlocksOfArm> firstArm;
+        for (BlockID next = likely[0]; next && firstArm.size() < maxBlocksOfArm && !firstArm.contains(next); next = chainSuccessorOf(next, numberOfBranchesAround + 1))
+            firstArm.append(next);
+        unsigned numberOfBlocks = 0;
+        for (BlockID next = likely[1]; next && numberOfBlocks++ < maxBlocksOfArm; next = chainSuccessorOf(next, numberOfBranchesAround + 1)) {
+            if (firstArm.contains(next)) {
+                result = next;
+                break;
+            }
+        }
+    }
+    m_blocksWhereLikelyArmsMeet[block.index()] = result;
+    return result;
+}
+
+BlockID ArrayCapacityPlanner::chainSuccessorOf(BlockID block, unsigned numberOfBranchesAround)
 {
     const Terminator& terminator = m_function.at(block).terminator;
     switch (terminator.kind) {
     case TerminatorKind::Jump:
         return terminator.next().block;
     case TerminatorKind::Branch:
+        return blockWhereLikelyArmsMeet(block, numberOfBranchesAround);
     case TerminatorKind::Switch:
     case TerminatorKind::SwitchString:
     case TerminatorKind::Return:

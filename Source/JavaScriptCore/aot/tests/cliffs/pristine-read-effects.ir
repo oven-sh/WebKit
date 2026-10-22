@@ -1,4 +1,5 @@
 # A read of a pristine array runs no other code in any form, so one test of the array and one read of a field in front of the loop serve every turn
+# TODO: nobody: a proven slot read stays inside the fast loop: what is available ends where the generic copy comes back, and slots are not hoisted
 # RUN: pipeline CheckPlacement
 # OPTIONS: check=VerifyEachPass
 
@@ -68,11 +69,9 @@ function f2 name="testedArray" parameters=[{type=Array<number>}, {type=number}] 
 # CHECK: LoopHint
 # CHECK-NOT: GetSlot
 # CHECK-NOT: IsPristine
-# CHECK-NOT: IsShapeEpochCurrent
 # CHECK: = GetArrayElement v0, [[position2]], [[guard2]]
 # CHECK-NOT: GetSlot
 # CHECK-NOT: IsPristine
-# CHECK-NOT: IsShapeEpochCurrent
 # CHECK: = StrictEq {{*}}[[factor2]]
 # CHECK-NOT: GetSlot
 # CHECK: = ElemGet v0,
@@ -110,11 +109,9 @@ function f3 name="provenArray" parameters=[{type=number}] results=[{type=anythin
 # CHECK: LoopHint
 # CHECK-NOT: GetSlot
 # CHECK-NOT: IsPristine
-# CHECK-NOT: IsShapeEpochCurrent
 # CHECK: = GetArrayElement [[weights]],
 # CHECK-NOT: GetSlot
 # CHECK-NOT: IsPristine
-# CHECK-NOT: IsShapeEpochCurrent
 # CHECK: = StrictEq {{*}}[[factor3]]
 
 function f4 name="unknownReceiver" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {

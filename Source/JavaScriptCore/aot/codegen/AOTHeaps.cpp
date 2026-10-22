@@ -148,6 +148,7 @@ static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSCell_header, { IRHeap::NamedProperties, IRHeap::PrototypeLinks, IRHeap::ArrayStorage } },
     { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
+    { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
 };
 
 static void nestAsImmutable(B3::AbstractHeap& heap, B3::AbstractHeap& parent)
@@ -173,13 +174,13 @@ static unsigned bucketIndexOf(ElementBase base)
     return std::countr_zero(mask);
 }
 
-// Objects of two layouts are two objects. A set of several layouts may meet any other set.
+// Objects of two layouts are two objects. A set of several layouts, or one with members that have no layout, may meet any other set.
 static Typed::LayoutID onlyReceiverOf(const Program& program, const MemoryLocation& field)
 {
     if (!field.receivers())
         return { };
     const Typed::LayoutSet& receivers = program.at(field.receivers());
-    if (!receivers.isComplete || receivers.members.size() != 1)
+    if (!receivers.isComplete || receivers.hasMembersWithoutLayout || receivers.members.size() != 1)
         return { };
     return receivers.members[0];
 }
@@ -207,7 +208,6 @@ static std::optional<uint64_t> exactKeyOf(const Program& program, const MemoryLo
     case IRHeap::Elements:
         return std::nullopt;
     case IRHeap::OrderWords:
-    case IRHeap::ShapeEpoch:
     case IRHeap::PrototypeLinks:
     case IRHeap::ArrayStorage:
     case IRHeap::TypedArrayStorage:
@@ -250,6 +250,7 @@ AOTHeaps::AOTHeaps()
     nestUnclaimedHeaps();
     retainBucketChildren();
     indexHeaps();
+    keepRangesAcrossProcedures();
 }
 
 AOTHeaps::~AOTHeaps() = default;
@@ -387,6 +388,8 @@ const B3::AbstractHeap& AOTHeaps::at(const Program& program, const MemoryLocatio
 
     auto ensureHeap = [&](uint64_t exactKey, B3::AbstractHeap& parent) -> B3::AbstractHeap& {
         return *m_exactHeaps[Typed::maskIndexOf(heap)].ensure(exactKey, [&] {
+            if (bucket.heap.numberOfChildren() == bucket.numberOfRetainedChildren)
+                m_bucketsWithExactHeaps.append(&bucket);
             return makeUnique<B3::AbstractHeap>(&parent, "location");
         }).iterator->value;
     };
@@ -418,6 +421,24 @@ void AOTHeaps::appendHeaps(const LocationMasks& masks, B3HeapList& list) const
         if (masks.containsAny(shared.otherOwners))
             list.append(&(this->*shared.heap));
     }
+}
+
+// The effects of the IR say what a program can tell. These heaps say what lies in memory, and the run time converts a cell where no program can tell:
+// a slim closure that is constructed, or asked for its prototype, its name or its keys, gets another Structure, another type, and a butterfly where its word lay;
+// a property that is made at its first read gets a slot, which gives its holder another Structure and may move its butterfly; so does flattening a dictionary;
+// the prototype of a new object and a holder that a cache relies on are marked as prototypes, which converts a slim closure and moves the elements of a frozen array.
+// Only a call that stores nothing, allocates nothing, always returns and looks at no object does none of this.
+bool AOTHeaps::mayConvertCells(const Typed::Effects& effectsOfCall)
+{
+    constexpr Typed::AbstractHeapSet heapsOfObjects { IRHeap::NamedProperties, IRHeap::ObjectFields, IRHeap::ShapeWords, IRHeap::OrderWords, IRHeap::PrototypeLinks };
+    return !effectsOfCall.writes.isEmpty() || effectsOfCall.mayCollect || effectsOfCall.mayExitSideways() || effectsOfCall.reads.containsAny(heapsOfObjects);
+}
+
+void AOTHeaps::appendHeapsOfConvertedCells(B3HeapList& list) const
+{
+    list.append(&JSCell_header);
+    list.append(&JSObject_butterfly);
+    list.append(&AOTSlimClosure_word);
 }
 
 // The end of a collection removes the dead entries of weak tables, and may replace their buffers.
@@ -468,10 +489,12 @@ void AOTHeaps::removeTemporaryClientHeaps()
             continue;
         for (auto& exactHeap : m_exactHeaps[index].values())
             exactHeap->removeChildrenFrom(0);
-        for (Bucket& bucket : m_buckets[index])
-            bucket.heap.removeChildrenFrom(bucket.numberOfRetainedChildren);
-        m_exactHeaps[index].clear();
     }
+    for (Bucket* bucket : m_bucketsWithExactHeaps)
+        bucket->heap.removeChildrenFrom(bucket->numberOfRetainedChildren);
+    m_bucketsWithExactHeaps.shrink(0);
+    for (ExactHeaps& heaps : m_exactHeaps)
+        heaps.clear();
     AOTClosure_captures.removeTemporaryHeaps();
     AOTSlimClosure_captures.removeTemporaryHeaps();
 }
@@ -481,6 +504,16 @@ bool AOTHeaps::hasTemporaryClientHeaps() const
     return AOTClosure_captures.hasTemporaryHeaps()
         || AOTSlimClosure_captures.hasTemporaryHeaps()
         || std::ranges::any_of(m_exactHeaps, [](const ExactHeaps& heaps) { return !heaps.isEmpty(); });
+}
+
+void AOTHeaps::appendGrownClientHeaps(Vector<GrownHeap, 16>& grownHeaps)
+{
+    for (Bucket* bucket : m_bucketsWithExactHeaps)
+        grownHeaps.append({ &bucket->heap, bucket->numberOfRetainedChildren });
+    for (B3::IndexedAbstractHeap* captures : { &AOTClosure_captures, &AOTSlimClosure_captures }) {
+        if (captures->hasTemporaryHeaps())
+            grownHeaps.append({ &captures->atAnyIndex(), captures->numberOfRetainedHeaps() });
+    }
 }
 
 std::unique_ptr<B3::AbstractHeapRepository> createAOTHeaps()

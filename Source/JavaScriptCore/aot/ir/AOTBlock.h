@@ -22,9 +22,13 @@ struct Target {
     friend bool operator==(const Target&, const Target&) = default;
 };
 
+template<> inline constexpr bool canMoveWithMemcpy<Target> = true;
+
+using TargetList = InlineList<Target, 2>;
+
 struct Terminator : Instruction {
     TerminatorKind kind { TerminatorKind::Unreachable };
-    Vector<Target, 2> targets;
+    TargetList targets;
 
     Terminator() { resetOperandsAndPayload(numberOfNamedOperandsOf(TerminatorKind::Unreachable), defaultPayloadOf(TerminatorKind::Unreachable)); }
 
@@ -99,7 +103,7 @@ struct Terminator : Instruction {
     {
         Instruction::forEachChild(functor);
         for (const Target& target : targets) {
-            for (ValueID argument : target.arguments)
+            for (const ValueID argument : target.arguments)
                 functor(argument);
         }
     }
@@ -107,13 +111,13 @@ struct Terminator : Instruction {
 #include "AOTSchemaTerminatorAccessors.inc"
 };
 
-using BlockValues = Vector<ValueID, 4>;
+using BlockValues = InlineList<ValueID, 3>;
 
 struct Block {
     CompactList<ValueID> parameters;
     BlockValues values;
     Terminator terminator;
-    std::optional<Target> handler;
+    OutOfLineOptional<Target> handler;
     BlockRole role { BlockRole::Ordinary };
     BlockFrequency frequency { BlockFrequency::Normal };
     CodeShape shape { CodeShape::Unchosen };
@@ -156,7 +160,7 @@ struct Block {
     {
         terminator.forEachChild(functor);
         if (handler) {
-            for (ValueID argument : handler->arguments)
+            for (const ValueID argument : handler->arguments)
                 functor(argument);
         }
         if (subject)
@@ -164,6 +168,16 @@ struct Block {
     }
 };
 
+static_assert(sizeof(Target) == 20 && sizeof(Block) <= 120);
+
 } } } // namespace JSC::AOT::Typed
+
+namespace WTF {
+
+template<> struct VectorTraits<JSC::AOT::Typed::Block> : VectorTraitsBase<false, JSC::AOT::Typed::Block> {
+    static constexpr bool canMoveWithMemcpy = true;
+};
+
+} // namespace WTF
 
 #endif // ENABLE(AOT)

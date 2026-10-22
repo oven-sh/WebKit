@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "JSCJSValue.h"
 #include <bit>
 #include <cstdint>
 #include <type_traits>
@@ -31,8 +32,24 @@ struct ObjectBuiltinWords {
     ObjectCreateCacheEntry objectCreate[objectCreateSize];
 };
 
+struct BuiltinDirectFunctionBinding;
+struct BuiltinNativeFunctionBinding;
+
 struct BuiltinWords {
+    // By RealmStructureID. An own slot whose Structure has a higher number is read by name.
+    static constexpr unsigned numberOfOwnSlotStructures = 16;
+
     ObjectBuiltinWords objects;
+    // One WatchedLocationState for each entry of the table of built-ins, zero until compiled code asks about the entry (AOTBuiltinLocationWatch.h).
+    uint8_t* locationStates;
+    // What the host made at the first read of a member, by the number of the member's value cell. Empty until then.
+    EncodedJSValue* hostValues;
+    // The number of the Structure with which an instance holds an own slot at its place. Zero: nobody has looked for it.
+    uint32_t ownSlotStructureIDs[numberOfOwnSlotStructures];
+    // BuiltinBindings::directFunctions() of the host.
+    const BuiltinDirectFunctionBinding* directFunctions;
+    // BuiltinBindings::nativeFunctionsOfHost().
+    const BuiltinNativeFunctionBinding* nativeFunctionsOfHost;
 };
 
 static_assert(sizeof(ObjectCreateCacheEntry) == 16);

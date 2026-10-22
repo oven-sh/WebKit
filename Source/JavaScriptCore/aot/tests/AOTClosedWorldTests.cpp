@@ -21,10 +21,13 @@ std::span<const NativeTest> closedWorldTests();
 using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags closed { };
-static constexpr Flags runsUnknownJavaScript { ImageFlag::AdmitsUnknownJavaScript };
+// Text may ask process.getBuiltinModule for a module of the library under a name that nobody knows. No file of the program answers to such a name: closed-world/modules/evaluated-text-finds-no-module-by-name.
+static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName };
+// A module that stays outside the image has require and every module of the library. It sees no module object of the program and replaces no answer of the loader.
+static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
 static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName };
-static constexpr Flags replacesLoaderAnswers { ImageFlag::LoadsModulesByName, ImageFlag::ReplacesLoaderAnswers };
-static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::ReplacesLoaderAnswers, ImageFlag::AdmitsLibraryText };
+static constexpr Flags showsWaysBetweenModuleObjects { ImageFlag::ShowsWaysBetweenModuleObjects };
+static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -181,7 +184,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral importsUncompiledModule = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+static constexpr ASCIILiteral importsUncompiledModule = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -204,7 +207,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral otherModuleIsNeverLoaded = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+static constexpr ASCIILiteral installsPlugin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="plugin" [isFreeName]
+    v3 = Builtin builtin=BunPlugin
+    v4 = Call v3, v0, v2
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral otherModuleIsNeverLoaded =R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -269,9 +285,11 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+// A name that the build did not follow finds the entry points and no other file of the image, so the other module is one.
 static constexpr ASCIILiteral otherModuleIsLoadedByUnknownName = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
+entry module=m1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
@@ -289,125 +307,83 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral callsRequireAsValueUnderKnownName = R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
-module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
-entry module=m0
-function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = String string="/app/other.cjs"
-    v7 = Call v2, -, v6
-    Return
-}
-function f1 name="other" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="print" [isFreeName]
-    v8 = String string="other ran"
-    v9 = Call v7, -, v8
-    Return
-}
-)IR"_s;
-
-#define AOT_COMMONJS_SIGNATURE R"IR(kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+#define AOT_COMMONJS_SIGNATURE R"IR(kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
 )IR"
 
-#define AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
-module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+#define AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] body=f1
 entry module=m0
 function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE
 
-#define AOT_OTHER_COMMONJS_MODULE R"IR(function f1 name="other" module=m1 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="print" [isFreeName]
-    v8 = String string="other ran"
-    v9 = Call v7, -, v8
+#define AOT_OTHER_COMMONJS_MODULE R"IR(function f1 name="other" module=m1 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="other ran"
+    v3 = Call v1, -, v2
     Return
 }
 )IR"_s
 
-static constexpr ASCIILiteral requiresOtherModule = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
+static constexpr ASCIILiteral callsRequireAsValueUnderKnownName = R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] body=f1
+entry module=m0
+entry module=m1
+function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = String string="/app/other.cjs"
+    v2 = Call v0, -, v1
     Return
 }
 )IR" AOT_OTHER_COMMONJS_MODULE;
 
-static constexpr ASCIILiteral readsModuleCache = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
-    v7 = PropGet v2 key="cache"
-    v8 = String string="/app/other.cjs"
-    v9 = ElemGet v7, v8
+static constexpr ASCIILiteral requiresOtherModule = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    EvaluateModule module=m1 referrer=m0 [isBare]
     Return
 }
 )IR" AOT_OTHER_COMMONJS_MODULE;
 
-static constexpr ASCIILiteral storesIntoModuleCache = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = PropGet v2 key="cache"
-    v7 = String string="/app/other.cjs"
-    ElemSet v6, v7, v3
-    v9 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
+static constexpr ASCIILiteral readsModuleCache = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    EvaluateModule module=m1 referrer=m0 [isBare]
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v2 = PropGet v1 key="cache"
+    v3 = String string="/app/other.cjs"
+    v4 = ElemGet v2, v3
     Return
 }
 )IR" AOT_OTHER_COMMONJS_MODULE;
 
-static constexpr ASCIILiteral requiresOtherModuleTwice = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="between" [isFreeName]
-    v9 = Call v8
-    v10 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
+static constexpr ASCIILiteral storesIntoModuleCache = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = PropGet v0 key="cache"
+    v2 = String string="/app/other.cjs"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="replacement" [isFreeName]
+    ElemSet v1, v2, v4
+    EvaluateModule module=m1 referrer=m0 [isBare]
     Return
 }
 )IR" AOT_OTHER_COMMONJS_MODULE;
 
-static constexpr ASCIILiteral removesFromModuleCache = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="between" [isFreeName]
-    v9 = Call v8
-    v10 = ToBoolean v9
-    Branch v10 -> taken b1(), notTaken b2()
-  b1():
-    v11 = PropGet v2 key="cache"
-    v12 = PropGet v7 key="name" [isFreeName]
-    v13 = ElemDelete v11, v12
-    Jump -> next b2()
-  b2():
-    v14 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
+static constexpr ASCIILiteral removesFromModuleCache = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    EvaluateModule module=m1 referrer=m0 [isBare]
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v2 = PropGet v1 key="cache"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="name" [isFreeName]
+    v5 = ElemDelete v2, v4
+    EvaluateModule module=m1 referrer=m0 [isBare]
     Return
 }
 )IR" AOT_OTHER_COMMONJS_MODULE;
 
-static constexpr ASCIILiteral replacesResolveFilename = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = Builtin builtin=NodeModule
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="replacement" [isFreeName]
-    PropSet v6, v8 key="_resolveFilename"
-    v10 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
+#define AOT_TAKES_MAIN_MODULE_AS_VALUE(flagsOfMain) R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[)IR" flagsOfMain R"IR(] body=f0
+entry module=m0
+function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = PropGet v0 key="main"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Call v3, -, v1
     Return
 }
-)IR" AOT_OTHER_COMMONJS_MODULE;
+)IR"_s
 
-static constexpr ASCIILiteral replacesRequireOfModules = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = Builtin builtin=NodeModulePrototype
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="replacement" [isFreeName]
-    PropSet v6, v8 key="require"
-    v10 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
-    Return
-}
-)IR" AOT_OTHER_COMMONJS_MODULE;
-
-static constexpr ASCIILiteral replacesLoaderOfExtension = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = Builtin builtin=NodeModule
-    v7 = PropGet v6 key="_extensions"
-    v8 = Builtin builtin=GlobalThis
-    v9 = PropGet v8 key="replacement" [isFreeName]
-    PropSet v7, v9 key=".js"
-    v11 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
-    Return
-}
-)IR" AOT_OTHER_COMMONJS_MODULE;
-
-static constexpr ASCIILiteral replacesLoaderOfExtensionThroughRequire = AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(    v6 = PropGet v2 key="extensions"
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="replacement" [isFreeName]
-    PropSet v6, v8 key=".js"
-    v10 = RequireModule module=m1 referrer=m0 specifier="./other.cjs"
-    Return
-}
-)IR" AOT_OTHER_COMMONJS_MODULE;
+static constexpr ASCIILiteral takesMainModuleAsFrontEndSays = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError, NamesWayToModuleObjects");
+static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError");
 
 #define AOT_LIBRARY_LOADS_BY_NAME(operation) R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
@@ -513,6 +489,8 @@ static void testProgramWithoutEventIsClosed()
 {
     AOT_TEST_CHECK(flagsOf(printsSum) == closed);
     AOT_TEST_CHECK(flagsOf(otherModuleIsNeverLoaded) == closed);
+    // An addon is native code.
+    AOT_TEST_CHECK(flagsOf(loadsNativeAddon) == closed);
 }
 
 static void testReachableEvaluatorLeavesTheProgramClosed()
@@ -521,34 +499,32 @@ static void testReachableEvaluatorLeavesTheProgramClosed()
     AOT_TEST_CHECK(flagsOf(evaluatorsFromUnknownCode) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKey) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorComesBackFromUnknownCode) == closed);
+    AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKeyOfGlobalObject) == closed);
 }
 
 static void testCallThatStartsUnseenCodeAdmitsNothingElse()
 {
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText) == runsUnknownJavaScript);
-    AOT_TEST_CHECK(flagsOf(constructsFunctionFromUnknownText) == runsUnknownJavaScript);
-    AOT_TEST_CHECK(flagsOf(loadsNativeAddon) == runsUnknownJavaScript);
-    AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKeyOfGlobalObject) == runsUnknownJavaScript);
-    AOT_TEST_CHECK(flagsOf(evaluatesTextBesideOtherModule) == runsUnknownJavaScript);
-    // Unseen code may call process.getBuiltinModule. No module is exposed for that, so it opens no door.
-    AOT_TEST_CHECK(flagsOf(unseenCodeMayCallLoader) == runsUnknownJavaScript);
+    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText) == runsText);
+    AOT_TEST_CHECK(flagsOf(constructsFunctionFromUnknownText) == runsText);
+    AOT_TEST_CHECK(flagsOf(installsPlugin) == runsText);
+    AOT_TEST_CHECK(flagsOf(evaluatesTextBesideOtherModule) == runsText);
+    AOT_TEST_CHECK(flagsOf(unseenCodeMayCallLoader) == runsText);
 }
 
 static void testUncompiledModuleOpensTheProgram()
 {
-    AOT_TEST_CHECK(flagsOf(importsUncompiledModule) == open);
+    AOT_TEST_CHECK(flagsOf(importsUncompiledModule) == runsModuleFromOutside);
 }
 
 static void testOptionThatAdmitsCodeOpensTheProgram()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum, { "admit=RuntimeCode"_s }) == open);
     AOT_TEST_CHECK(flagsOf(printsSum, { "admit=Inspector"_s }) == open);
 }
 
 static void testLoadByUnknownNameOnlyExposesModules()
 {
     AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName) == findsModulesByName);
-    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName, { "admit=RuntimeCode"_s }) == open);
+    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName, { "admit=Inspector"_s }) == open);
 }
 
 static void testLoaderCalledAsValueLoadsByName()
@@ -563,33 +539,33 @@ static void testLoadByNameInLibraryFunctionLeavesTheProgramClosed()
     AOT_TEST_CHECK(flagsOf(libraryImportsUnknownName) == closed);
 }
 
-static void testChangeOfLoaderReplacesItsAnswers()
+// No module of the image is in the module cache, so nothing that is done to the cache changes what the code counts on.
+static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 {
     AOT_TEST_CHECK(flagsOf(requiresOtherModule) == closed);
-    AOT_TEST_CHECK(flagsOf(requiresOtherModuleTwice) == closed);
     AOT_TEST_CHECK(flagsOf(readsModuleCache) == closed);
     AOT_TEST_CHECK(flagsOf(removesFromModuleCache) == closed);
-    AOT_TEST_CHECK(flagsOf(storesIntoModuleCache) == replacesLoaderAnswers);
-    AOT_TEST_CHECK(flagsOf(replacesResolveFilename) == replacesLoaderAnswers);
-    AOT_TEST_CHECK(flagsOf(replacesRequireOfModules) == replacesLoaderAnswers);
-    AOT_TEST_CHECK(flagsOf(replacesLoaderOfExtension) == replacesLoaderAnswers);
-    AOT_TEST_CHECK(flagsOf(replacesLoaderOfExtensionThroughRequire) == replacesLoaderAnswers);
-    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName) == findsModulesByName);
+    AOT_TEST_CHECK(flagsOf(storesIntoModuleCache) == closed);
+}
+
+// What a program can observe never hangs on what flow has reached or lost: the front end says by binding whether a file names a way between module objects, and nobody else is asked.
+static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
+{
+    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays) == showsWaysBetweenModuleObjects);
+    AOT_TEST_CHECK(flagsOf(takesMainModuleBehindFrontEnd) == closed);
+    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays, { "disable=flow-results"_s }) == (open | showsWaysBetweenModuleObjects));
 }
 
 static void testExcludedTextLeavesTheProgramClosed()
 {
     AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=EvaluatedText"_s }) == closed);
-    AOT_TEST_CHECK(flagsOf(loadsNativeAddon, { "exclude=EvaluatedText"_s }) == runsUnknownJavaScript);
+    AOT_TEST_CHECK(flagsOf(installsPlugin, { "exclude=EvaluatedText"_s }) == runsText);
 }
 
 static void testLossesOfTheAnalysisAdmitNothing()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum, { "limit=MaxFlowWorkPerFunction:1"_s }) == closed);
     AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow:ReachedFunctions"_s }) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "disable=flow:ReachedFunctions"_s }) == runsUnknownJavaScript);
-    // The analysis gave up on the function before it saw what the function calls. The run time refuses that call.
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "limit=MaxFlowWorkPerFunction:1"_s }) == closed);
+    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "disable=flow:ReachedFunctions"_s }) == runsText);
 }
 
 static void testProgramThatWasNotAnalyzedIsOpen()
@@ -615,7 +591,7 @@ static void testProgramThatEvaluatesTextKeepsEveryEvaluator()
 
 static void testOptionKeepsEveryEvaluator()
 {
-    checkShellOutput(evaluatorsFromUnknownCode, "number\nfunction\nfunction\nfunction\nfunction\n"_s, everyEvaluator, { "admit=RuntimeCode"_s });
+    checkShellOutput(evaluatorsFromUnknownCode, "number\nfunction\nfunction\nfunction\nfunction\n"_s, everyEvaluator, { "admit=Inspector"_s });
 }
 
 static void testEvaluatorUnderUnknownKeyIsRefused()
@@ -633,11 +609,11 @@ static void testEveryRealmOfClosedProgramRefusesEvaluation()
     static constexpr ASCIILiteral evaluateInEveryRealm = "globalThis.one = 1; for (const realm of [globalThis, createGlobalObject()]) { for (const evaluate of [realm.eval, realm.Function, realm.eval('(async function () { }).constructor')]) { try { print(typeof evaluate('1 + 1')); } catch (error) { print(error.name); print(error.message); } } }"_s;
     static constexpr ASCIILiteral evaluateWithoutNestedEvaluation = "globalThis.one = 1; for (const realm of [globalThis, createGlobalObject()]) { for (const evaluate of [realm.eval, realm.Function]) { try { print(typeof evaluate('1 + 1')); } catch (error) { print(error.name); print(error.message); } } }"_s;
     checkShellOutput(printsSum, makeString(refusal(4), "2\n"_s), evaluateWithoutNestedEvaluation);
-    checkShellOutput(printsSum, "number\nfunction\nfunction\nnumber\nfunction\nfunction\n2\n"_s, evaluateInEveryRealm, { "admit=RuntimeCode"_s });
+    checkShellOutput(printsSum, "number\nfunction\nfunction\nnumber\nfunction\nfunction\n2\n"_s, evaluateInEveryRealm, { "admit=Inspector"_s });
     checkShellOutput(printsSum, "number\nfunction\nfunction\nnumber\nfunction\nfunction\n2\n"_s, evaluateInEveryRealm, { "disable=flow-results"_s });
 }
 
-#define AOT_DECLARATION_REFUSED(name) "SyntaxError: Cannot declare '" name "': this executable was compiled with the global of that name as a constant, and a top-level let, const or class of a script would shadow it (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+#define AOT_DECLARATION_REFUSED(name) "SyntaxError: Cannot declare '" name "': compiled code treats the global '" name "' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
 
 static void testScriptShadowsNoConstantOfCompiledCode()
 {
@@ -649,14 +625,14 @@ static void testScriptShadowsNoConstantOfCompiledCode()
         " globalThis.reportParsed = value => print(value === (isParseIntDeclared ? 'of the script' : 12) ? 'as declared' : 'not as declared');"_s;
     static constexpr ASCIILiteral expectedOutput = AOT_DECLARATION_REFUSED("Math") AOT_DECLARATION_REFUSED("Math") AOT_DECLARATION_REFUSED("Math") AOT_DECLARATION_REFUSED("globalThis") "of the script\n2\n2\nas declared\nof the script\nundefined\n"_s;
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts);
-    checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "admit=RuntimeCode"_s });
+    checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "admit=Inspector"_s });
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "disable=flow-results"_s });
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "validate"_s });
 }
 
-#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable was compiled without support for loading a module by a name that is computed at run time. Compile with --admit=runtime-code (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
 
-#define AOT_LOADER_CHANGE_REFUSED ": this executable was compiled without support for changing at run time what a module name loads. Compile with --admit=runtime-code (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+#define AOT_LOADER_CHANGE_REFUSED ": imports in this executable were resolved at build time, so the module loader can't be patched. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
 
 static constexpr ASCIILiteral runOtherModule = "globalThis.name = '/other.js'; try { runCompiledEntryPoint(2); drainMicrotasks(); } catch (error) { print(error.message); }"_s;
 
@@ -668,14 +644,14 @@ static void testClosedProgramFindsNoModuleByName()
 static void testEvaluatedTextFindsNoModuleByName()
 {
     static constexpr ASCIILiteral textThatLoads = "globalThis.text = `for (const change of [() => runCompiledEntryPoint(2), () => overrideRequire(true)]) { try { change(); print('done'); } catch (error) { print(error.message); } }`;"_s;
-    checkShellOutput(evaluatesTextBesideOtherModule, AOT_LOAD_BY_NAME_REFUSED "Cannot replace Module.prototype.require" AOT_LOADER_CHANGE_REFUSED ""_s, textThatLoads);
+    checkShellOutput(evaluatesTextBesideOtherModule, AOT_LOAD_BY_NAME_REFUSED "done\n"_s, textThatLoads);
 }
 
-static void testProgramThatLoadsByNameFindsEveryModule()
+static void testProgramThatLoadsByNameFindsEntryPoints()
 {
     checkShellOutput(otherModuleIsLoadedByUnknownName, "other ran\n"_s, runOtherModule);
     checkShellOutput(otherModuleIsLoadedByUnknownName, "other ran\n"_s, "globalThis.name = '/other.js';"_s);
-    checkShellOutput(otherModuleIsNeverLoaded, "other ran\n"_s, runOtherModule, { "admit=RuntimeCode"_s });
+    checkShellOutput(otherModuleIsNeverLoaded, "other ran\n"_s, runOtherModule, { "admit=Inspector"_s });
 }
 
 static constexpr ASCIILiteral reportLoad = "globalThis.name = '/other.js'; globalThis.report = value => { if (value instanceof Promise) value.then(() => print('imported'), error => print(error.message)); else print(value instanceof Error ? value.message : 'required'); };"_s;
@@ -684,28 +660,18 @@ static void testLibraryFunctionOfClosedProgramFindsNoModuleByName()
 {
     checkShellOutput(libraryRequiresUnknownName, AOT_LOAD_BY_NAME_REFUSED ""_s, reportLoad);
     checkShellOutput(libraryImportsUnknownName, AOT_LOAD_BY_NAME_REFUSED ""_s, reportLoad);
-    checkShellOutput(libraryRequiresUnknownName, "other ran\nrequired\n"_s, reportLoad, { "admit=RuntimeCode"_s });
+    checkShellOutput(libraryRequiresUnknownName, "other ran\nrequired\n"_s, reportLoad, { "admit=Inspector"_s });
 }
 
-static constexpr ASCIILiteral changeLoader = "for (const change of [() => overrideRequire(true), () => setRequireCacheEntry(2, { }), () => evictCompiledModule(2)]) { try { change(); print('changed'); } catch (error) { print(error.message); } } overrideRequire(false);"_s;
+static constexpr ASCIILiteral changeLoader = "for (const change of [() => overrideRequire(true), () => setRequireCacheEntry(2, { })]) { try { change(); print('changed'); } catch (error) { print(error.message); } } overrideRequire(false);"_s;
 
-static void testClosedProgramRefusesChangesOfLoader()
+// The code calls the module that each constant name stood for in the build, whatever else the image admits and whatever function the program has put in the loader's place.
+static void testEveryImageTakesHookAndRefusesEntryOfCache()
 {
-    checkShellOutput(requiresOtherModule, "Cannot replace Module.prototype.require" AOT_LOADER_CHANGE_REFUSED "Cannot replace '/app/other.cjs' in require.cache" AOT_LOADER_CHANGE_REFUSED "Cannot remove '/app/other.cjs' from require.cache" AOT_LOADER_CHANGE_REFUSED "other ran\n"_s, changeLoader);
-    checkShellOutput(otherModuleIsLoadedByUnknownName, "Cannot replace Module.prototype.require" AOT_LOADER_CHANGE_REFUSED "other ran\n"_s, "globalThis.name = '/other.js'; try { overrideRequire(true); } catch (error) { print(error.message); }"_s);
-}
-
-static void testProgramThatRemovesFromCacheRunsModuleAgain()
-{
-    static constexpr ASCIILiteral evictBetween = "globalThis.between = () => { try { evictCompiledModule(2); } catch (error) { print(error.message); } };"_s;
-    checkShellOutput(removesFromModuleCache, "other ran\nother ran\n"_s, evictBetween);
-    checkShellOutput(requiresOtherModuleTwice, "other ran\nother ran\n"_s, evictBetween, { "admit=RuntimeCode"_s });
-    checkShellOutput(requiresOtherModuleTwice, "other ran\nCannot remove '/app/other.cjs' from require.cache" AOT_LOADER_CHANGE_REFUSED ""_s, evictBetween);
-}
-
-static void testOptionAdmitsChangesOfLoader()
-{
-    checkShellOutput(requiresOtherModule, "changed\nchanged\nchanged\nother ran\n"_s, changeLoader, { "admit=RuntimeCode"_s });
+    static constexpr ASCIILiteral refusals = "changed\nCannot replace '/app/other.cjs' in require.cache" AOT_LOADER_CHANGE_REFUSED "other ran\n"_s;
+    checkShellOutput(requiresOtherModule, refusals, changeLoader);
+    checkShellOutput(requiresOtherModule, refusals, changeLoader, { "admit=Inspector"_s });
+    checkShellOutput(otherModuleIsLoadedByUnknownName, "other ran\n"_s, "globalThis.name = '/other.js'; try { overrideRequire(true); } catch (error) { print(error.message); }"_s);
 }
 
 std::span<const NativeTest> closedWorldTests()
@@ -719,7 +685,8 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/flags/load-by-unknown-name-only-exposes-modules"_s, testLoadByUnknownNameOnlyExposesModules },
         { "closed-world/flags/loader-called-as-value-loads-by-name"_s, testLoaderCalledAsValueLoadsByName },
         { "closed-world/flags/load-by-name-in-library-function-leaves-the-program-closed"_s, testLoadByNameInLibraryFunctionLeavesTheProgramClosed },
-        { "closed-world/flags/change-of-loader-replaces-its-answers"_s, testChangeOfLoaderReplacesItsAnswers },
+        { "closed-world/flags/what-is-done-to-module-cache-leaves-the-program-closed"_s, testWhatIsDoneToModuleCacheLeavesTheProgramClosed },
+        { "closed-world/flags/front-end-alone-says-whether-ways-between-module-objects-are-shown"_s, testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown },
         { "closed-world/flags/excluded-text-leaves-the-program-closed"_s, testExcludedTextLeavesTheProgramClosed },
         { "closed-world/flags/losses-of-the-analysis-admit-nothing"_s, testLossesOfTheAnalysisAdmitNothing },
         { "closed-world/flags/program-that-was-not-analyzed-is-open"_s, testProgramThatWasNotAnalyzedIsOpen },
@@ -733,11 +700,9 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/declarations/script-shadows-no-constant-of-compiled-code"_s, testScriptShadowsNoConstantOfCompiledCode },
         { "closed-world/modules/closed-program-finds-no-module-by-name"_s, testClosedProgramFindsNoModuleByName },
         { "closed-world/modules/evaluated-text-finds-no-module-by-name"_s, testEvaluatedTextFindsNoModuleByName },
-        { "closed-world/modules/program-that-loads-by-name-finds-every-module"_s, testProgramThatLoadsByNameFindsEveryModule },
+        { "closed-world/modules/program-that-loads-by-name-finds-entry-points"_s, testProgramThatLoadsByNameFindsEntryPoints },
         { "closed-world/modules/library-function-of-closed-program-finds-no-module-by-name"_s, testLibraryFunctionOfClosedProgramFindsNoModuleByName },
-        { "closed-world/modules/closed-program-refuses-changes-of-loader"_s, testClosedProgramRefusesChangesOfLoader },
-        { "closed-world/modules/program-that-removes-from-cache-runs-module-again"_s, testProgramThatRemovesFromCacheRunsModuleAgain },
-        { "closed-world/modules/option-admits-changes-of-loader"_s, testOptionAdmitsChangesOfLoader },
+        { "closed-world/modules/every-image-takes-a-hook-and-refuses-an-entry-of-the-cache"_s, testEveryImageTakesHookAndRefusesEntryOfCache },
     };
     return tests;
 }

@@ -1,0 +1,24 @@
+# An object in a frame takes its header from the record of its allocation. Where the record is still empty an operation fills it and returns the header:
+# no cell is allocated in the heap, where it would lie with a header and without its fields. The same object in the heap has the slow allocation.
+# FORM: Selected
+# RUN: generate-code calls
+# CHECK: f0: size=
+# CHECK-NEXT: operation operationAOTGetHeaderOfAllocation x1
+# CHECK-NOT: operationAOTAllocateSlow
+# CHECK-NOT: stub AllocateCell
+# CHECK: f1: size=
+# CHECK-NOT: operationAOTGetHeaderOfAllocation
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+function f0 name="inTheFrame" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = GetSlotOrUndefined v1 key="next" receivers=[L0] level=Proven
+    Return v2
+}
+function f1 name="inTheHeap" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}

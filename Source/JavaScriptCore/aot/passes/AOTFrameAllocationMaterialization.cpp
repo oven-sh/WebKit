@@ -36,21 +36,27 @@ static bool leavesFunction(const Block& block)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-EnvironmentMaterialization::EnvironmentMaterialization(FunctionAnalyses& analyses, ValueID environment, const BitVector& frameClosures)
+EnvironmentMaterialization::EnvironmentMaterialization(FunctionAnalyses& analyses, ValueID environment, const BitVector& frameClosures, std::span<const ClosureMadeAgain> closuresMadeAgain)
     : m_analyses(analyses)
     , m_function(analyses.function())
     , m_environment(environment)
     , m_frameClosures(frameClosures)
+    , m_closuresMadeAgain(closuresMadeAgain)
 {
 }
 
 bool EnvironmentMaterialization::canRun()
 {
     Vector<ProgramPoint, 4> materializationPoints = findMaterializationPoints();
-    if (!isProfitable(materializationPoints.span()))
+    Vector<ProgramPoint, 4> allPoints = materializationPoints;
+    for (const ClosureMadeAgain& madeAgain : m_closuresMadeAgain) {
+        if (capturesEnvironment(m_function.at(madeAgain.closure)))
+            allPoints.append(m_analyses.useLists().pointOf(madeAgain.use));
+    }
+    if (!isProfitable(allPoints.span()))
         return false;
     std::optional<BitVector> holders = findFrameHolders();
-    return holders && !isAnyHolderLive(materializationPoints.span(), *holders);
+    return holders && !isAnyHolderLive(materializationPoints.span(), *holders) && !isAnyOtherHolderLiveWhereClosureIsMadeAgain(*holders);
 }
 
 void EnvironmentMaterialization::run(IRBuilder& builder)
@@ -142,6 +148,31 @@ bool EnvironmentMaterialization::isAnyHolderLive(std::span<const ProgramPoint> m
             isLive = true;
         });
         if (isLive)
+            return true;
+    }
+    return false;
+}
+
+// The closure of the heap takes the environment of the heap, so the environment is copied in front of it. The use is the last one of the closure of the frame.
+bool EnvironmentMaterialization::isAnyOtherHolderLiveWhereClosureIsMadeAgain(const BitVector& holders)
+{
+    if (holders.isEmpty() || m_closuresMadeAgain.empty())
+        return false;
+
+    Liveness liveness(m_function, m_analyses.cfg(), m_analyses.useLists(), { .trackedValues = &holders });
+    for (const ClosureMadeAgain& madeAgain : m_closuresMadeAgain) {
+        if (!capturesEnvironment(m_function.at(madeAgain.closure)))
+            continue;
+        ProgramPoint point = m_analyses.useLists().pointOf(madeAgain.use);
+        Liveness::LocalCalc calc(liveness, point.block);
+        for (uint32_t index = m_function.at(point.block).values.size(); index > point.index;)
+            calc.execute(--index);
+
+        bool isOtherLive = false;
+        calc.forEachLive([&](ValueID holder) {
+            isOtherLive |= holder != madeAgain.closure;
+        });
+        if (isOtherLive)
             return true;
     }
     return false;

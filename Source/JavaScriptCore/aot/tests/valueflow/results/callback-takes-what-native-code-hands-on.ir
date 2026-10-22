@@ -1,0 +1,41 @@
+# records = [{ x: 1 }];  reduced = records.reduce(reducer, { y: 1 });  found = records.find(test)
+# The table gives some arguments of a callback a type that lists several things: `find` passes an element or undefined, `reduce` passes the initial value or what the callback answered last.
+# Native code makes none of the objects in such a type. It hands on what lies at the operand, in the slot or in the result of the callback, so that is what arrives at the parameter.
+# Nothing else arrives: no element is an accumulator where an initial value is passed, and the initial value of one call is no element of the other
+# RUN: valueflow-apply
+# CHECK: variable g0 name="reduced" {{*}}declared={type=undefined|L1}
+# CHECK: variable g1 name="found" {{*}}declared={type=undefined|L0}
+# CHECK: function f1 name="reducer" {{*}}parameters=[{type=undefined|L1}, {type=undefined|L0}] results=[{type=undefined|L1}]
+# CHECK: function f2 name="test" {{*}}parameters=[{type=undefined|L0}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="reduced" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="found" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Start" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewArray v1 contents=anything
+    v4 = NewClosure function=f1
+    v5 = PropGet v3 key="reduce"
+    v6 = Call v5, v3, v4, v2 calleeKey="reduce"
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f2
+    v9 = PropGet v3 key="find"
+    v10 = Call v9, v3, v8 calleeKey="find"
+    PutModuleVariable v10 variable=g1
+    Return
+}
+function f1 name="reducer" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="test" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Boolean boolean=true
+    Return v1
+}

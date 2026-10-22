@@ -5,7 +5,7 @@
 # LOSS: MaxTestedTypesPerFunction x1 f0 v6
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="threeOperands" parameters=[{type=anything predicted=number}, {type=anything predicted=number}, {type=anything predicted=number}, {type=number}] results=[{type=anything}] {
+function f0 name="threeOperands" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
   b0(v0: anything ~ number, v1: anything ~ number, v2: anything ~ number, v3: number):
     v4 = Mul v0, v3
     v5 = Mul v0, v3
@@ -27,7 +27,7 @@ function f0 name="threeOperands" parameters=[{type=anything predicted=number}, {
 # CHECK-NEXT: stretch 1: test TypeTest v2 testedType=number on b0.0; uses v10; cloned
 # CHECK-NOT: stretch
 
-function f1 name="twoOperands" parameters=[{type=anything predicted=number}, {type=anything predicted=number}, {type=number}] results=[{type=anything}] {
+function f1 name="twoOperands" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
   b0(v0: anything ~ number, v1: anything ~ number, v2: number):
     v3 = Mul v0, v2
     v4 = Mul v1, v2

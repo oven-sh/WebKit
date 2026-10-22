@@ -56,7 +56,7 @@ NumberBounds narrowToType(const NumberBounds&, const Type&);
 bool isEnteredAt(TypeSiteKind);
 TypeSiteKind siteKindOf(const Program&, const DeclaredType&);
 
-// Works on the predicted types of a function whose int32 promises are still requests. Each flow is judged alone: what has entered another promise is an int32.
+// Works on the expected types of a function whose int32 promises are still requests. Each flow is judged alone: what has entered another promise is an int32.
 struct Int32ProofInputs {
     const Program& program;
     const Function& function;

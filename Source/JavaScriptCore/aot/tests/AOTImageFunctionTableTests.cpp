@@ -224,8 +224,9 @@ static void testRecords()
     AOT_TEST_CHECK(loaded.frameOf(second).frameSizeInBytes() == 48);
     AOT_TEST_CHECK(loaded.frameOf(third).frameSizeInBytes() == 48);
     AOT_TEST_CHECK(!loaded.frameOf(frameless).frameSizeInBytes());
-    AOT_TEST_CHECK(loaded.function(second).frame() == loaded.function(third).frame());
-    AOT_TEST_CHECK(loaded.function(first).frame() != loaded.function(second).frame());
+    AOT_TEST_CHECK(&loaded.frameOf(second) == &loaded.frameOf(third));
+    AOT_TEST_CHECK(&loaded.frameOf(first) != &loaded.frameOf(second));
+    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionRecordBytesEmitted) == 4 * 8);
 
     AOT_TEST_CHECK(loaded.function(first).flags() == OptionSet<ImageFunctionFlag>({ HasCallSites, HasPositions }));
     AOT_TEST_CHECK(loaded.function(second).flags() == OptionSet<ImageFunctionFlag>({ HasCallSites, HasPositions }));
@@ -275,40 +276,89 @@ static void testFrameMaps()
     AOT_TEST_CHECK(loaded.frameMapWords(image.indexOf(3)).empty());
 }
 
-static CompiledCode bodyWithFrameInTheMiddle(uint32_t function, CodeRange& range)
+namespace {
+
+struct ReturnOffsetsAroundFrame {
+    uint32_t beforeFrame { 0 };
+    uint32_t firstInFrame { 0 };
+    uint32_t lastInFrame { 0 };
+    uint32_t behindFrame { 0 };
+    uint32_t inSecondFrame { 0 };
+};
+
+} // anonymous namespace
+
+static uint32_t callAndGetReturnOffset(CodeSketch& sketch)
+{
+    sketch.callStub(writeBarrier(), sketch.addSite());
+    return sketch.size();
+}
+
+static CompiledCode bodyWithFramesInTheMiddle(uint32_t function, ReturnOffsetsAroundFrame& offsets)
 {
     CodeSketch sketch(function);
+    CodeRange first { };
+    CodeRange second { };
     sketch.pinned(1, 2);
-    range.begin = sketch.pinned(2, 3);
-    sketch.callStub(writeBarrier(), sketch.addSite());
-    range.end = sketch.pinned(3, 2);
-    sketch.end();
+    offsets.beforeFrame = callAndGetReturnOffset(sketch);
+    first.begin = sketch.pinned(2, 3);
+    offsets.firstInFrame = callAndGetReturnOffset(sketch);
+    sketch.pinned(3, 40);
+    offsets.lastInFrame = callAndGetReturnOffset(sketch);
+    first.end = sketch.pinned(4, 2);
+    offsets.behindFrame = callAndGetReturnOffset(sketch);
+    second.begin = sketch.pinned(5, 2);
+    offsets.inSecondFrame = callAndGetReturnOffset(sketch);
+    second.end = sketch.end();
     sketch.code().frame.frameSizeInBytes = 16;
-    sketch.code().frame.frameRanges.append(range);
+    sketch.code().frame.frameRanges.appendList({ first, second });
     return sketch.take();
 }
 
-static void testHasFrameAt()
+static void testHasFrameAtReturnOffsets()
 {
     TestBuild build(4);
-    CodeRange range { };
-    TestImage image = build.build(bodies(bodyWithFrameInTheMiddle(1, range), plainBody(2), jumpToStubBody(3)));
+    ReturnOffsetsAroundFrame offsets;
+    TestImage image = build.build(bodies(bodyWithFramesInTheMiddle(1, offsets), plainBody(2), jumpToStubBody(3)));
     const Image& loaded = *image.image;
     uint32_t index = image.indexOf(1);
 
-    AOT_TEST_CHECK(!loaded.hasFrameAt(index, 0));
-    AOT_TEST_CHECK(!loaded.hasFrameAt(index, range.begin - 1));
-    AOT_TEST_CHECK(loaded.hasFrameAt(index, range.begin));
-    AOT_TEST_CHECK(loaded.hasFrameAt(index, range.end - 1));
-    AOT_TEST_CHECK(!loaded.hasFrameAt(index, range.end));
-    AOT_TEST_CHECK(loaded.hasFrameAt(image.indexOf(2), 0));
-    AOT_TEST_CHECK(!loaded.hasFrameAt(image.indexOf(3), 0));
-
     AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, 0));
-    AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, range.begin));
-    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, range.begin + codeOffsetUnit));
-    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, range.end));
-    AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, range.end + codeOffsetUnit));
+    AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, offsets.beforeFrame));
+    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, offsets.firstInFrame));
+    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, offsets.lastInFrame));
+    AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, offsets.behindFrame));
+    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, offsets.inSecondFrame));
+    AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(image.indexOf(3), codeOffsetUnit));
+}
+
+static CompiledCode bodyWithEpilogues(uint32_t function, Vector<uint32_t>& returnOffsets)
+{
+    constexpr unsigned numberOfEpilogues = 6;
+    CodeSketch sketch(function);
+    Vector<CodeRange, 1> ranges;
+    uint32_t begin = sketch.pinned(1, 2);
+    for (unsigned epilogue = 0; epilogue < numberOfEpilogues; ++epilogue) {
+        sketch.pinned(2, 50);
+        returnOffsets.append(callAndGetReturnOffset(sketch));
+        ranges.append(CodeRange { begin, sketch.pinned(3, 2) });
+        begin = sketch.size();
+    }
+    sketch.end();
+    sketch.code().frame.frameSizeInBytes = 16;
+    sketch.code().frame.frameRanges = WTF::move(ranges);
+    return sketch.take();
+}
+
+// Nothing returns into an epilogue, so the image does not say where they are.
+static void testFrameRangesNameNoEpilogue()
+{
+    TestBuild build(2);
+    Vector<uint32_t> returnOffsets;
+    TestImage image = build.build(bodies(bodyWithEpilogues(1, returnOffsets)));
+    for (uint32_t returnOffset : returnOffsets)
+        AOT_TEST_CHECK(image.image->hasFrameAtReturnOffset(image.indexOf(1), returnOffset));
+    AOT_TEST_CHECK(build.statistic(StatisticID::SideTableBytesFrameRanges) == 1);
 }
 
 #if CPU(X86_64)
@@ -369,11 +419,6 @@ static void checkGranules(const EncodedFunctionTables& tables, const CodeLayout&
     std::span<const uint32_t> encodedStarts = wordsOf(tables.functionStarts);
     AOT_TEST_CHECK(encodedStarts.size() == starts.size() + 1);
     AOT_TEST_CHECK(encodedStarts.back() == std::numeric_limits<uint32_t>::max());
-
-    std::span<const uint32_t> functionsByID = wordsOf(tables.functionsByID);
-    AOT_TEST_CHECK(functionsByID.size() == starts.size());
-    for (uint32_t position = 0; position < functionsByID.size(); ++position)
-        AOT_TEST_CHECK(functionsByID[position] == position);
 }
 
 static void testGranules()
@@ -398,18 +443,41 @@ static void testGranules()
     Vector<EntryAlias> aliases;
     CodeIndex index(functions.span());
     Vector<uint32_t> zeroOffsets(FillWith { }, numberOfBodies, 0);
+    Vector<Vector<uint8_t>> noCallSites(numberOfBodies);
     Vector<uint8_t> tableBytes = build.encodeTables();
     auto& programTables = *reinterpret_cast<const ProgramTables*>(tableBytes.span().data());
     for (unsigned shift : { minCodeGranuleShift, maxCodeGranuleShift }) {
         layout.codeGranuleShift = shift;
-        FunctionTableInputs inputs { functions, aliases, layout, index, zeroOffsets.span(), zeroOffsets.span(), programTables, true };
+        FunctionTableInputs inputs { functions, aliases, layout, index, noCallSites.span(), zeroOffsets.span(), programTables, true };
         checkGranules(encodeFunctionTables(inputs, build.context()), layout);
     }
 }
 
+static CompiledCode bodyOfOneHundredBytes(uint32_t function)
+{
+    CodeSketch sketch(function);
+    sketch.withFrame();
+    sketch.pinned(1, 23);
+    sketch.callStub(writeBarrier(), sketch.addSite());
+    sketch.end();
+    return sketch.take();
+}
+
+// Ten bodies in a granule of 1,024 bytes: a lookup passes five starts on average. In one of 2,048 bytes it would pass ten.
+static void testGranuleSizeFollowsLengthOfWalk()
+{
+    constexpr uint32_t numberOfBodies = 1000;
+    TestBuild build(numberOfBodies + 1);
+    Vector<CompiledCode> code;
+    for (uint32_t function = 1; function <= numberOfBodies; ++function)
+        code.append(bodyOfOneHundredBytes(function));
+    LinkedFunctions functions = createLinkedFunctions(WTF::move(code), build.context());
+    AOT_TEST_CHECK(chooseCodeGranuleShift(functions, build.context()) == 10);
+}
+
 static uint64_t expectedClosureWord(const Image& image, FunctionID function, uint32_t codeOffset, unsigned numberOfParameters)
 {
-    return ClosureWord::encode({ codeOffset, numberOfParameters }, function.index(), closureWordFlags(image.programTables().functionKinds()[function.index()]));
+    return ClosureWord::encode({ codeOffset, numberOfParameters }, function.index(), closureWordFlags(image.programTables().kindOfFunction(function.index())));
 }
 
 static void testClosureWords()
@@ -510,11 +578,13 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/records"_s, testRecords },
         { "image/functions/many-frame-shapes"_s, testManyFrameShapes },
         { "image/functions/frame-maps"_s, testFrameMaps },
-        { "image/functions/has-frame-at"_s, testHasFrameAt },
+        { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
+        { "image/functions/frame-ranges-name-no-epilogue"_s, testFrameRangesNameNoEpilogue },
 #if CPU(X86_64)
         { "image/functions/frame-at-faulting-accesses"_s, testFrameAtFaultingAccesses },
 #endif
         { "image/functions/granules"_s, testGranules },
+        { "image/functions/granule-size-follows-length-of-walk"_s, testGranuleSizeFollowsLengthOfWalk },
         { "image/functions/closure-words"_s, testClosureWords },
         { "image/functions/closure-word-of-body-with-prefix"_s, testClosureWordOfBodyWithPrefix },
         { "image/functions/closure-words-of-aliases"_s, testClosureWordsOfAliases },

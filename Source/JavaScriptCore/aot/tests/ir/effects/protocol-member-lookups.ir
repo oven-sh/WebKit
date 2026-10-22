@@ -6,8 +6,8 @@
 # RUN(RECORD): check-replacement f0 v10 v6
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="HoldsThen" fields=[{key="then" declared={type=undefined|f1} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L0] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape] addedKeysAreComplete=true ownAccessorsAreComplete=true}
-layout L1 name="Record" fields=[{key="done" declared={type=boolean} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L1] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+layout L0 name="HoldsThen" fields=[{key="then" declared={type=undefined|f1} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L0] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+layout L1 name="Record" fields=[{key="done" declared={type=boolean} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L1] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true ownAccessorsAreComplete=true}
 function f0 name="resolutions" parameters=[{type=1|L0}, {type=L1}, {type=number}] results=[{type=undefined}] {
   b0(v0: 1|L0, v1: L1, v2: number):
     v3 = NewPromise
@@ -15,8 +15,8 @@ function f0 name="resolutions" parameters=[{type=1|L0}, {type=L1}, {type=number}
     ResolvePromise v3, v0
     ResolvePromise v3, v1
     ResolvePromise v3, v2
-    v8 = CallBuiltin v4, v0 overload=PromiseResolve/2
-    v9 = CallBuiltin v4, v2 overload=PromiseResolve/2
+    v8 = CallBuiltin v4, v0 overload=PromiseResolve/3
+    v9 = CallBuiltin v4, v2 overload=PromiseResolve/3
     v10 = IsNotThenable v0
     v11 = Undefined
     Return v11

@@ -8,11 +8,20 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
+#include "AOTClosureWord.h"
+#include "AOTCompiledStructure.h"
 #include "AOTConvention.h"
+#include "AOTFieldTable.h"
+#include "AOTFunctionData.h"
+#include "AOTLayoutData.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubProgramTables.h"
+#include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "JSCell.h"
 #include "StackAlignment.h"
+#include <bit>
 #include <wtf/Box.h>
 #include <wtf/MathExtras.h>
 
@@ -55,7 +64,10 @@ struct MethodProbeExits {
     Box<JumpList> hasNoStructure { Box<JumpList>::create() };
 };
 
-static constexpr unsigned bytesSavedForCallMethod(unsigned count) { return WTF::roundUpToMultipleOf<stackAlignmentBytes()>((count + 2) * sizeof(EncodedJSValue)); }
+// The name, this and the arguments, and above them room for a slim closure with one capture.
+static constexpr unsigned sizeOfClosureInFrame = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(static_cast<unsigned>(offsetOfSlimClosureCaptures + sizeof(EncodedJSValue)));
+static constexpr unsigned offsetOfClosureInFrame(unsigned count) { return WTF::roundUpToMultipleOf<stackAlignmentBytes()>((count + 2) * sizeof(EncodedJSValue)); }
+static constexpr unsigned bytesSavedForCallMethod(unsigned count) { return offsetOfClosureInFrame(count) + sizeOfClosureInFrame; }
 
 static constexpr StubKey getByIdInStubFrame()
 {
@@ -258,6 +270,131 @@ static void emitCallMethodWithBoundName(StubAssembler& jit, uint32_t number, con
     jit.linkToStub(otherwise, jit.key().withoutImmediate());
 }
 
+static uint32_t slimFunctionKindBit()
+{
+    FunctionKindData kind { };
+    kind.isSlim = 1;
+    return std::bit_cast<uint16_t>(kind);
+}
+
+static uint32_t asyncFunctionKindBit()
+{
+    FunctionKindData kind { };
+    kind.isAsync = 1;
+    return std::bit_cast<uint16_t>(kind);
+}
+
+// A field that defers its closure makes it when the field is read. A call needs no function object: the entrypoint of a function whose closures are slim takes the captures
+// out of the cell in calleeGPR and hands the cell to nobody, so a cell in the frame of the stub serves for as long as the call lasts.
+// The frame has the name, this and the arguments. Falls through with calleeGPR and thisGPR as they were where the receiver has no such field.
+static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
+{
+    using Form = FieldTableEntry::Form;
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
+    static_assert(sizeof(FieldData) == 1u << fieldSizeShift && sizeof(FieldTableEntry) == 1u << CCallHelpers::TimesFour && sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
+    static_assert(sizeof(FunctionKindData) == 1u << CCallHelpers::TimesTwo && offsetOfSlimClosureWord == sizeof(uint64_t) && numberOfSlimClosureKinds == 2);
+    static_assert(!uncreatedDeferredClosure && gprOf(StubRegister::A0) == argumentGPR(0) && gprOf(StubRegister::A1) == argumentGPR(1));
+    static_assert([] {
+        FunctionKindData kind { };
+        kind.isAsync = 1;
+        return kind.slimClosureKind() == 1 && !FunctionKindData { }.slimClosureKind();
+    }());
+
+    // A validating build allocates nothing in frames, and with wide references no slot defers a closure.
+    if (jit.options().validates || jit.options().useWideReferences)
+        return;
+
+    const GPRReg index = jit.reuseScratch(StubRegister::T13);
+    const GPRReg table = jit.reuseScratch(StubRegister::T11);
+    const GPRReg word = jit.reuseScratch(StubRegister::T9);
+    const GPRReg capture = jit.reuseScratch(StubRegister::A0);
+    const GPRReg kind = jit.reuseScratch(StubRegister::A1);
+    RELEASE_ASSERT(noOverlap(thisGPR, calleeGPR, index, table, word, capture, kind));
+    JumpList otherwise;
+
+    otherwise.append(jit.branchIfNotCell(thisGPR));
+    jit.load32SignedExtendTo64(Address(thisGPR, offsetOfShapeWord), index);
+    otherwise.append(jit.branchTest32(CCallHelpers::PositiveOrZero, index));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), table);
+    jit.load32(BaseIndex(table, index, CCallHelpers::TimesFour), index);
+    jit.add32(calleeGPR, index);
+    jit.load32(BaseIndex(table, index, CCallHelpers::TimesFour), word);
+    jit.lshift32(calleeGPR, TrustedImm32(FieldTableEntry::nameShift), table);
+    jit.xor32(table, word);
+    jit.sub32(TrustedImm32(static_cast<int32_t>(Form::InlineNarrowCell) << FieldTableEntry::formShift), word);
+    otherwise.append(jit.branch32(CCallHelpers::Above, word, TrustedImm32(FieldTableEntry::maxOperand)));
+    jit.load32(BaseIndex(thisGPR, word, CCallHelpers::TimesFour), word);
+    otherwise.append(jit.branchTest32(CCallHelpers::NonZero, word));
+
+    // Zero in the slot of any other reference says that the slot is empty.
+    const GPRReg field = index;
+    const GPRReg layout = table;
+    auto inField = [&](ptrdiff_t offset) {
+        return Address(field, static_cast<int32_t>(sizeof(LayoutData) + offset));
+    };
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), table);
+    jit.load16(BaseIndex(table, index, CCallHelpers::TimesTwo), index);
+    jit.and32(TrustedImm32(FieldRecordIndex::indexMask), index);
+    jit.lshift32(TrustedImm32(fieldSizeShift), index);
+    loadStructure(jit, thisGPR, layout);
+    jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
+    jit.addPtr(layout, field);
+    jit.load32(inField(OBJECT_OFFSETOF(FieldData, slot)), word);
+    jit.urshift32(TrustedImm32(SlotData::offsetBits), word);
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(SlotRepresentation::DeferredClosure))));
+
+    const GPRReg operands = layout;
+    const GPRReg function = word;
+    jit.load16(Address(layout, OBJECT_OFFSETOF(LayoutData, numberOfFields)), word);
+    jit.lshift32(TrustedImm32(fieldSizeShift), word);
+    jit.addPtr(word, layout);
+    jit.load16(inField(OBJECT_OFFSETOF(FieldData, operandIndex)), word);
+    jit.getEffectiveAddress(BaseIndex(layout, word, CCallHelpers::TimesFour, sizeof(LayoutData)), operands);
+    jit.load32(Address(operands), function);
+    otherwise.append(jit.branch32(CCallHelpers::Above, function, TrustedImm32(ClosureWord::functionMask)));
+    loadKindOfClosureFunction(jit, function, kind);
+    otherwise.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(slimFunctionKindBit())));
+
+    // The object itself, or the environment in its hidden field. A function without captures reads neither.
+    const GPRReg flags = field;
+    jit.load16(inField(OBJECT_OFFSETOF(FieldData, flags)), flags);
+    jit.move(thisGPR, capture);
+    Jump capturesNoEnvironment = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(fieldDeferredClosureCapturesEnvironment));
+    jit.load32(Address(operands, sizeof(uint32_t)), capture);
+    jit.urshift32(capture, TrustedImm32(SlotData::offsetBits), flags);
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, flags, TrustedImm32(static_cast<int32_t>(SlotRepresentation::Cell32))));
+    jit.and32(TrustedImm32(SlotData::maxOffset), capture);
+    jit.load32(BaseIndex(thisGPR, capture, CCallHelpers::TimesOne), capture);
+    otherwise.append(jit.branch32(CCallHelpers::Below, capture, TrustedImm32(minCell32)));
+    decodeCell32(jit, capture, capture);
+    capturesNoEnvironment.link(&jit);
+
+    const GPRReg header = operands;
+    const GPRReg closureWord = function;
+    const int32_t offsetOfClosure = offsetOfClosureInFrame(count);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), header);
+    jit.load64(BaseIndex(header, function, CCallHelpers::TimesEight), closureWord);
+    otherwise.append(jit.branchTest64(CCallHelpers::Zero, closureWord));
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders)), header);
+    Jump isNotAsync = jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(asyncFunctionKindBit()));
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + sizeof(uint64_t)), header);
+    isNotAsync.link(&jit);
+    jit.storePair64(header, closureWord, Address(sp, offsetOfClosure));
+    jit.store64(capture, Address(sp, offsetOfClosure + static_cast<int32_t>(offsetOfSlimClosureCaptures)));
+    bumpRuntimeCounter(jit, RuntimeCounterID::CalledClosuresNotCreated, kind);
+
+    // The callee is done with the cell when it returns or leaves by a tail call, which is what holds for the words of a list of arguments.
+    for (unsigned i = 0; i < count; ++i)
+        jit.load64(Address(sp, (i + 2) * sizeof(EncodedJSValue)), argumentGPR(i));
+    jit.addPtr(TrustedImm32(offsetOfClosure), sp, calleeGPR);
+    jit.move(TrustedImm32(count), countGPR);
+    jit.loadStubAddress(callValueCell(count), jit.clobberRegister(callTargetRegister));
+    jit.jumpToStub(callFromArgumentListFrame());
+
+    otherwise.link(&jit);
+}
+
 static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -268,6 +405,7 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
     jit.store64(thisGPR, Address(sp, sizeof(EncodedJSValue)));
     for (unsigned i = 0; i < count; ++i)
         jit.store64(argumentGPR(i), Address(sp, (i + 2) * sizeof(EncodedJSValue)));
+    emitCallOfUncreatedClosure(jit, count);
     jit.move(calleeGPR, jit.reuseScratch(slotNameRegister));
     jit.move(thisGPR, R0);
     jit.callStub(getByIdInStubFrame());
@@ -336,6 +474,28 @@ void generateTryGetSuperById(StubAssembler& jit)
     jit.returnToCaller();
 }
 
+// What is above the prototype object of a class that is evaluated once: where `super.name` in a method of the class begins to look. The immediate is the rank of the class.
+// The registers are those of the operation, with the rank in place of the kind of home object: a call of this stub is as long as a call of the operation.
+void generateGetSuperBaseOfClass(StubAssembler& jit)
+{
+    const GPRReg rank = jit.immediate();
+    const GPRReg result = jit.result();
+    RELEASE_ASSERT(jit.operand(0) == operationArgumentGPR(1) && rank == operationArgumentGPR(2) && noOverlap(jit.operand(0), rank, result, instanceGPR));
+    JumpList callsOperation;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.classPrototypes)), result);
+    jit.load64(BaseIndex(result, rank, CCallHelpers::TimesEight), result);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, result));
+    callsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(result, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+    loadStructure(jit, result, result);
+    jit.load64(Address(result, Structure::prototypeOffset()), result);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, result));
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(Typed::HomeObjectKind::ClassPrototype)), rank);
+    jit.tailCallOperation(Entry::operationAOTGetSuperBase, OperationCall::FirstArgument::Instance);
+}
+
 static StubSignature findMethodSignature()
 {
     StubSignature signature;
@@ -360,6 +520,13 @@ StubSignature signatureOfCallMethodById(StubKey)
     StubSignature signature = callConventionSignature({ });
     signature.immediate = calleeGPR;
     signature.boundImmediates = StubBoundImmediates::NamesRead;
+    return signature;
+}
+
+StubSignature signatureOfGetSuperBaseOfClass(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ operationArgumentGPR(1) });
+    signature.immediate = operationArgumentGPR(2);
     return signature;
 }
 

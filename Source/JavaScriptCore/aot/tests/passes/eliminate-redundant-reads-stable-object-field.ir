@@ -19,7 +19,7 @@ function f0 name="storedAtCreationOnly" parameters=[{type=L0}, {type=anything}] 
 }
 # CHECK-LABEL: function f0 name="storedAtCreationOnly"
 # CHECK: = Call v1
-# CHECK-NEXT: v4: number = Upcast v2
+# CHECK-NEXT: v4: undefined|null|number ~ number = Upcast v2
 # CHECK-NOT: GetSlot
 
 function f1 name="storedAgain" parameters=[{type=L1}, {type=anything}] results=[{type=number}] {
@@ -32,7 +32,7 @@ function f1 name="storedAgain" parameters=[{type=L1}, {type=anything}] results=[
 }
 # CHECK-LABEL: function f1 name="storedAgain"
 # CHECK: = Call v1
-# CHECK-NEXT: v4: number = GetSlot v0
+# CHECK-NEXT: v4: undefined|null|number ~ number = GetSlot v0
 
 function f2 name="everyReceiverIsStable" parameters=[{type=L0|L2}, {type=anything}] results=[{type=number}] {
   b0(v0: L0|L2, v1: anything):
@@ -44,7 +44,7 @@ function f2 name="everyReceiverIsStable" parameters=[{type=L0|L2}, {type=anythin
 }
 # CHECK-LABEL: function f2 name="everyReceiverIsStable"
 # CHECK: = Call v1
-# CHECK-NEXT: v4: number = Upcast v2
+# CHECK-NEXT: v4: undefined|null|number ~ number = Upcast v2
 
 function f3 name="oneReceiverIsStoredAgain" parameters=[{type=L0|L1}, {type=anything}] results=[{type=number}] {
   b0(v0: L0|L1, v1: anything):
@@ -56,20 +56,20 @@ function f3 name="oneReceiverIsStoredAgain" parameters=[{type=L0|L1}, {type=anyt
 }
 # CHECK-LABEL: function f3 name="oneReceiverIsStoredAgain"
 # CHECK: = Call v1
-# CHECK-NEXT: v4: number = GetSlot v0
+# CHECK-NEXT: v4: undefined|null|number ~ number = GetSlot v0
 
 function f4 name="oneObjectReadAsEitherReceiver" parameters=[{type=L0|L1}, {type=anything}, {type=boolean}] results=[{type=number}] {
   b0(v0: L0|L1, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v3 = Claim v0 castType=L0
+    v3 = Check v0 castType=L0
     v4 = GetSlot v3 key="rate" receivers=[L0] level=Proven
     v5 = Call v1
     v6 = GetSlot v3 key="rate" receivers=[L0] level=Proven
     v7 = Add v4, v6
     Return v7
   b2():
-    v8 = Claim v0 castType=L1
+    v8 = Check v0 castType=L1
     v9 = GetSlot v8 key="rate" receivers=[L1] level=Proven
     v10 = Call v1
     v11 = GetSlot v8 key="rate" receivers=[L1] level=Proven
@@ -78,9 +78,9 @@ function f4 name="oneObjectReadAsEitherReceiver" parameters=[{type=L0|L1}, {type
 }
 # CHECK-LABEL: function f4 name="oneObjectReadAsEitherReceiver"
 # CHECK: v5: anything = Call v1
-# CHECK-NEXT: v6: number = Upcast v4
+# CHECK-NEXT: v6: undefined|null|number ~ number = Upcast v4
 # CHECK: v10: anything = Call v1
-# CHECK-NEXT: v11: number = GetSlot v8
+# CHECK-NEXT: v11: undefined|null|number ~ number = GetSlot v8
 
 function f5 name="storesRate" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
   b0(v0: L1, v1: number):

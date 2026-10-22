@@ -8,7 +8,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFlowAnalysis.h"
+#include "AOTFlowApply.h"
 #include "AOTIRPrinter.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowResults.h"
@@ -27,19 +27,25 @@ static FlowResults analyzeAndApply(TestCommandContext& context, Vector<String>* 
 // valueflow-results: the tables that the stage AnalyzeFlow hands on, then the sets that name an object outside the type of the place where it arrives.
 void runValueFlowResultsTestCommand(TestCommandContext& context)
 {
-    if (!context.arguments.empty())
-        return printBadArgument(context.out, context.arguments[0]);
+    for (const String& word : context.arguments) {
+        if (word != "unguarded"_s)
+            return printBadArgument(context.out, word);
+    }
+    prepareForFlow(context);
     Vector<String> setsOutsideTypes;
     analyzeAndApply(context, &setsOutsideTypes).dump(context.out, *context.program);
     for (const String& line : setsOutsideTypes)
         context.out.println("outside-type "_s, line);
 }
 
-// valueflow-apply: the program with the tables applied, validated and verified.
+// valueflow-apply [split]: the program with the tables applied, validated and verified. split: see prepareAsInFrontOfFlow().
 void runValueFlowApplyTestCommand(TestCommandContext& context)
 {
-    if (!context.arguments.empty())
-        return printBadArgument(context.out, context.arguments[0]);
+    for (const String& word : context.arguments) {
+        if (word != "split"_s && word != "unguarded"_s)
+            return printBadArgument(context.out, word);
+    }
+    prepareForFlow(context);
     FlowResults results = analyzeAndApply(context);
     const Program& program = *context.program;
     validateFlowResults(program, results, context.build);

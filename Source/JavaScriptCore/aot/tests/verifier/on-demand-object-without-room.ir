@@ -1,0 +1,60 @@
+# A NewObject marked isMadeOnDemand emits no code, so its single use must store it into a field whose outer layout has flattened storage for it.
+# FORM: Prepared
+# OPTIONS: references=narrow
+# RUN: verify
+# DIAGNOSTIC: ObjectOnDemandWithoutRoom 6
+
+module m0 path="main.ts" displayPath="main.ts"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Outer" fields=[{key="c" declared={type=L1} flags=[IsRequired] flow={location={deferral=FlattenedObject} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None} flattenedObjects=[{layout=L1 fields=[0]}]
+layout L1 name="Inner" fields=[{key="d" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None}
+layout L2 name="Holder" fields=[{key="h" declared={type=L1} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None}
+function f0 name="goodInitialValue" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [isMadeOnDemand]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Return v2
+}
+function f1 name="goodStore" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = NewObject -, v1 layout=L1 fields=[0] [isMadeOnDemand]
+    PutSlot v0, -, v2 key="c" receivers=[L0] level=Proven
+    Return
+}
+function f2 name="badReturned" parameters=[{type=number}] results=[{type=L1}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [isMadeOnDemand]
+    Return v1
+}
+function f3 name="badWithoutUse" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [isMadeOnDemand]
+    Return
+}
+function f4 name="badUsedTwice" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [isMadeOnDemand]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    Return v2
+}
+function f5 name="badInitialValueOfFieldWithoutRoom" parameters=[{type=number}] results=[{type=L2}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [isMadeOnDemand]
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    Return v2
+}
+function f6 name="badStoreToFieldWithoutRoom" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    v2 = NewObject -, v1 layout=L1 fields=[0] [isMadeOnDemand]
+    PutSlot v0, -, v2 key="h" receivers=[L2] level=Proven
+    Return
+}
+function f7 name="badTakenInAnotherBlock" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [isMadeOnDemand]
+    Jump -> next b1()
+  b1():
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Return v2
+}

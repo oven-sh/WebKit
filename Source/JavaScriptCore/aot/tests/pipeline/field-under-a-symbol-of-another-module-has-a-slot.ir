@@ -1,0 +1,51 @@
+# keys.ts: export const kMass = Symbol("mass")   main.ts: import { kMass } from "./keys.ts"  interface Body { plain: number; [kMass]: number }
+# function make(n): Body { return { plain: 1, [kMass]: n } }  function read(b: Body) { return b[kMass] }
+# The key of the field names the module that makes the symbol and the place of the call there, whichever module declares the layout
+# FORM: AsRead
+# RUN(IR): pipeline ChooseCallingConventions
+# RUN: run-in-shell globalThis.register = (make, read, k) => { const b = make(7); print(read(b), b[k], Reflect.ownKeys(b).map(String).join()); b[k] = 8; print(read(b)); };
+# IR: = GetSlot {{*}} key=symbol("mass")@m1:100
+# CHECK: 7 7 plain,Symbol(mass)
+# CHECK-NEXT: 8
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="keys.ts" displayPath="keys.ts" body=f3 exports=[{name="kMass" variable=g0}]
+entry module=m0
+typesite w0 module=m0 position=200 kind=Parameter
+typesite w1 module=m0 position=240 kind=Parameter
+layout L0 name="Body" fields=[{key="plain" declared={type=number} flags=[IsRequired]}, {key=symbol("mass")@m1:100 declared={type=number} flags=[IsRequired]}]
+variable g0 name="kMass" module=m1 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="kMass"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v3
+    Return
+}
+function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="read" flags=[IsChecked] parameters=[{type=L0 site=w1}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kMass"
+    v3 = ElemGet v0, v2
+    Return v3
+}
+function f3 name="keys" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="mass"
+    v2 = Call v0, -, v1 @100
+    PutModuleVariable v2 variable=g0
+    Return
+}

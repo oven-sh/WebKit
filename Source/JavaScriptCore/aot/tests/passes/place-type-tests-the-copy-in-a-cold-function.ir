@@ -1,0 +1,44 @@
+# In a cold function the copy behind a failed test holds the stretch alone and comes back behind it, whoever has checked the type: cold code is most of a large program, and a second copy of the rest of
+# every function is what it is made of. What the tested code knew is tested again where it is needed. A loop multiplies what it is given: a stretch from which a loop can still be reached keeps the copy that goes on
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Hook" constructor=f2 fields=[{key="memoizedState" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None}
+
+function f0 name="noLoopBehind" flags=[IsChecked] parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2: anything ~ L0 = Upcast v0 castType=anything
+    v3 = PropGet v2 key="memoizedState"
+    v4 = Call v1, -, v3
+    Return v4
+}
+# CHECK-LABEL: function f0 name="noLoopBehind"
+# CHECK: = TypeTest v2 testedType=L0
+# CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
+# CHECK-COUNT-1: = Call v1
+# CHECK: = PropGet v2 key="memoizedState"
+# CHECK-NOT: = Call v1
+
+function f1 name="loopBehind" flags=[IsChecked] parameters=[{type=anything}, {type=function}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: function, v2: boolean):
+    v3: anything ~ L0 = Upcast v0 castType=anything
+    v4 = PropGet v3 key="memoizedState"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Call v1, -, v4
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f1 name="loopBehind"
+# CHECK: = TypeTest v3 testedType=L0
+# CHECK: = Call v1
+# CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
+# CHECK: = PropGet v3 key="memoizedState"
+# CHECK: = Call v1
+
+function f2 name="Hook" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

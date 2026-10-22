@@ -12,6 +12,7 @@
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
 #include "CPUFeatureSet.h"
+#include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"
 #include <algorithm>
@@ -47,11 +48,17 @@ static constexpr size_t elementSizeOf(ImageSection section)
     case ImageSection::ClosureWords:
         return sizeof(uint64_t);
     case ImageSection::Strings:
-        return sizeof(ImageString);
+        return sizeof(ImageStringWord);
     case ImageSection::LongStrings:
-        return sizeof(ImageLongString);
+        return sizeof(uint32_t);
     case ImageSection::Identifiers:
-        return sizeof(ImageIdentifier);
+        return sizeof(ImageIdentifierWord);
+    case ImageSection::StringHeaders:
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+        return sizeof(ImageStringRecord);
+#else
+        return sizeof(ImageStringHeader);
+#endif
     case ImageSection::RegExps:
         return sizeof(ImageRegExp);
     case ImageSection::RegExpHashes:
@@ -62,13 +69,14 @@ static constexpr size_t elementSizeOf(ImageSection section)
         return sizeof(StubReturnSite);
     case ImageSection::FunctionStarts:
     case ImageSection::CodeGranules:
-    case ImageSection::FunctionsByID:
     case ImageSection::FrameMaps:
     case ImageSection::SharedCodeCopies:
     case ImageSection::StringConstants:
     case ImageSection::SlotHandlers:
+    case ImageSection::MethodLookups:
+    case ImageSection::MethodTable:
         return sizeof(uint32_t);
-    case ImageSection::CallSites:
+    case ImageSection::Positions:
     case ImageSection::FaultSites:
     case ImageSection::SideTables:
     case ImageSection::Text:
@@ -115,6 +123,8 @@ static bool hasValidSectionRanges(const ImageHeader& header)
             return false;
         if (range.size % elementSizeOf(static_cast<ImageSection>(index)))
             return false;
+        if (static_cast<ImageSection>(index) == ImageSection::MethodTable && range.size && range.offset % imagePageSize)
+            return false;
         end = rangeEnd;
     }
     return true;
@@ -124,8 +134,7 @@ static bool hasValidFunctionTables(const ImageHeader& header)
 {
     uint64_t numberOfFunctions = header.counts.functions;
     if (numberOfElements(header, ImageSection::Functions) != numberOfFunctions
-        || numberOfElements(header, ImageSection::FunctionStarts) != numberOfFunctions + 1
-        || numberOfElements(header, ImageSection::FunctionsByID) > numberOfFunctions)
+        || numberOfElements(header, ImageSection::FunctionStarts) != numberOfFunctions + 1)
         return false;
     if (header.code.functionsEnd > header.codeSize || header.code.codeGranuleShift >= 32)
         return false;
@@ -184,7 +193,8 @@ static bool hasValidClosureWords(const ImageHeader& header, const ProgramTables&
 
 static bool hasValidText(const ImageHeader& header, const ProgramTables& tables)
 {
-    return numberOfElements(header, ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells;
+    return numberOfElements(header, ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
+        && numberOfElements(header, ImageSection::StringHeaders) >= numberOfElements(header, ImageSection::Identifiers);
 }
 
 static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8_t> bytes)
@@ -265,6 +275,7 @@ Image::Image(std::span<const uint8_t> bytes, const uint8_t* code)
     , m_codeGranules(section<uint32_t>(ImageSection::CodeGranules).data())
     , m_text(*this)
 {
+    forgetRememberedPositions();
 }
 
 std::unique_ptr<Image> Image::create(std::span<const uint8_t> bytes, const uint8_t* code)
@@ -279,6 +290,7 @@ bool Image::publish(std::unique_ptr<Image>&& unpublishedImage)
     const Image* expected = nullptr;
     if (!s_current.compare_exchange_strong(expected, image.get(), std::memory_order_release, std::memory_order_relaxed))
         return false;
+    JSCellButterfly::setStorageOutsideHeap(image->m_bytes);
     image.release();
     return true;
 }
@@ -357,6 +369,16 @@ const void* Image::stubAddress(StubKey key) const
     return sharedCodeCopy(0) + address->offset;
 }
 
+// The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
+// Whoever wants all of them searches once.
+std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
+{
+    auto addresses = std::ranges::equal_range(section<StubAddressInImage>(ImageSection::StubAddresses), family, { }, [](const StubAddressInImage& address) {
+        return StubKey::fromBits(address.key).family();
+    });
+    return { addresses.begin(), addresses.end() };
+}
+
 bool Image::hasFrameAt(uint32_t function, uint32_t offset) const
 {
     return SideTableParts::read(this->function(function), section<uint8_t>(ImageSection::SideTables).data()).hasFrameAt(offset);
@@ -364,17 +386,24 @@ bool Image::hasFrameAt(uint32_t function, uint32_t offset) const
 
 bool Image::hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const
 {
+    return hasFrameAtReturnOffset(function, SideTableParts::read(this->function(function), section<uint8_t>(ImageSection::SideTables).data()), returnOffset);
+}
+
+bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableParts& parts, uint32_t returnOffset) const
+{
     if (!returnOffset)
         return false;
     if constexpr (!hasFixedInstructionSize) {
         // The fault handler makes the address of a faulting instruction plus sizeOfNearCall the return address, whatever the length of the instruction.
-        if (returnOffset >= sizeOfNearCall) {
+        // No instruction that faults begins as a near call does, and most return addresses stand behind one: they are not looked for in the fault table.
+        constexpr uint8_t opcodeOfNearCall = 0xe8;
+        if (returnOffset >= sizeOfNearCall && codeOf(function)[returnOffset - sizeOfNearCall] != opcodeOfNearCall) {
             std::optional<FaultSite> fault = faultSiteAt(codeOf(function) + (returnOffset - sizeOfNearCall));
             if (fault && fault->kind == FaultSiteKind::NullCheck)
                 return fault->hasFrame;
         }
     }
-    return hasFrameAt(function, returnOffset - 1);
+    return parts.hasFrameAt(returnOffset - 1);
 }
 
 static std::span<const uint8_t> bytesOf(const StringImpl& string) { return string.is8Bit() ? asBytes(string.span8()) : asBytes(string.span16()); }
@@ -399,6 +428,31 @@ std::optional<uint32_t> imageCodeOffset(const void* address)
     if (offset >= image->header().codeSize)
         return std::nullopt;
     return static_cast<uint32_t>(offset);
+}
+
+std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress)
+{
+    const Image* image = Image::current();
+    if (!image)
+        return std::nullopt;
+    CodeLocation code = image->locate(returnAddress);
+    switch (code.kind) {
+    case CodeKind::NotInImage:
+        return std::nullopt;
+    case CodeKind::RegExp:
+    case CodeKind::WebAssembly:
+    case CodeKind::FFI:
+        return ImageFrame { };
+    case CodeKind::Function:
+        return image->frameAtReturnOffset(code.function, code.offset);
+    case CodeKind::Stub: {
+        ImageFrame frame = code.stubFrameKind == StubFrameKind::AtStubEntry ? ImageFrame::empty() : ImageFrame { };
+        if (bytesAboveReturnAddressOf(code.stubFrameKind))
+            frame.calleeSavesStart |= ImageFrame::liesBelowSpilledArgumentsBit;
+        return frame;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 uintptr_t imageCodeStart()

@@ -1,7 +1,7 @@
 # A concat with more operands than the limit stays a call
 # RUN: compile
 # RUN(SELECTED): pipeline Select
-# OPTIONS: limit=MaxInlineConcatOperands:1
+# OPTIONS: limit=MaxInlineConcatOperands:1 heat=EverythingIsHot
 # LOSS: MaxInlineConcatOperands f1
 # CHECK: loss MaxInlineConcatOperands
 # CHECK: image not empty
@@ -23,7 +23,11 @@ function f1 name="concatenatesTwo" parameters=[{type=Array<number>}, {type=Array
     v4 = Call v3, v0, v1, v2 calleeKey="concat"
     Return v4
 }
-# SELECTED-LABEL: function f1 name="concatenatesTwo"
+# Only its entrypoint enters the function, so the body is there
+# SELECTED-LABEL: name="concatenatesTwo" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[other]]: Array<number> = AssumeType v3 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v4 castType=number
 # SELECTED-NOT: inlineBuiltin=ArrayConcat
-# SELECTED: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeConcat/
+# SELECTED: = CallBuiltin [[array]], [[other]], [[number]] overload=ArrayPrototypeConcat/
 # SELECTED-NOT: inlineBuiltin=ArrayConcat

@@ -1,0 +1,13 @@
+# Fast code reads the code point at a position of a string in line
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="wholeString" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = StringRangeCodePointOrUndefined v0, -, -, v1
+    Return v2
+}
+# CHECK: f0: size=
+# CHECK-NOT: stub StringCodePointAt

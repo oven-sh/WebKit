@@ -1,0 +1,28 @@
+# point = { x: 1 }; point.x; list = [1]; list[0]; holder = {}; holder[someName] = Object.keys; holder[someName] = Array.prototype.push
+# The name may be `then` or `next`, under which a protocol of the language calls what it finds. No protocol ever looks at the holder, so nothing is applied:
+# nobody lists the keys of the point, which no built-in is handed, and nobody appends to the array.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Point" {{*}}keys=NeverEnumerated
+# CHECK: pristine[Storage, Names, Dense]> = AssumeType v3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Holder" fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="x"
+    v3 = NewArray v0 contents=anything
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = NewObject layout=L1 fields=[]
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="someName" [isFreeName]
+    v9 = Builtin builtin=ObjectKeys
+    ElemSet v6, v8, v9 mode=Strict
+    v11 = Builtin builtin=ArrayPrototypePush
+    ElemSet v6, v8, v11 mode=Strict
+    Return
+}

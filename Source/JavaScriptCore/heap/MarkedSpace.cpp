@@ -215,9 +215,11 @@ void MarkedSpace::lastChanceToFinalize()
     // Must call stopAllocatingForGood first.
     ASSERT(!isIterating());
 #if ASAN_ENABLED
-    forEachBlock([&](MarkedBlock::Handle* handle) {
-        handle->unpoisonCells();
-    });
+    if (Options::useAOT()) {
+        forEachBlock([&](MarkedBlock::Handle* handle) {
+            handle->unpoisonCells();
+        });
+    }
 #endif
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {

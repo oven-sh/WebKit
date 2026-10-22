@@ -35,6 +35,7 @@
 #include "JSONCacheInlines.h"
 #include "Lexer.h"
 #include "ObjectConstructor.h"
+#include "OwedOutOfMemoryError.h"
 #include "SourceCharacters.h"
 #include <wtf/ASCIICType.h>
 #include <wtf/Range.h>
@@ -1387,6 +1388,11 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
             throwOutOfMemoryError(m_globalObject, scope);
             return { };
         }
+        if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope);
+            return { };
+        }
         m_lexer.nextAfterValue();
         return result;
     }
@@ -1586,6 +1592,8 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
         return parse(vm, StartParseExpression, nullptr);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope)) [[unlikely]]
+        return { };
     JSONCache& jsonCache = m_jsonCache;
     TokenType type = m_lexer.currentToken()->type;
     if (type == TokLBracket) {
@@ -1674,7 +1682,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             if (Structure* transition = structure->trySingleTransition()) {
                 SUPPRESS_UNCOUNTED_LOCAL UniquedStringImpl* name = transition->transitionPropertyName();
                 if (transition->transitionKind() == TransitionKind::PropertyAddition
-                    && transition->isCacheableTransitionFrom(structure)
+                    && (!vm.mayHaveUncacheableTransitions() || transition->isCacheableTransitionFrom(structure))
                     && !transition->transitionPropertyAttributes()
                     && !name->isSymbol()
                     && name->is8Bit()
@@ -1713,7 +1721,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                 if (Structure* transition = originalStructure->trySingleTransition()) {
                     // This check avoids hash lookup and refcount churn in the common case of a matching single transition.
                     SUPPRESS_UNCOUNTED_ARG if (transition->transitionKind() == TransitionKind::PropertyAddition
-                        && transition->isCacheableTransitionFrom(originalStructure)
+                        && (!vm.mayHaveUncacheableTransitions() || transition->isCacheableTransitionFrom(originalStructure))
                         && !transition->transitionPropertyAttributes()
                         && equalIdentifier(transition->transitionPropertyName(), m_lexer.currentToken())) {
                         if constexpr (parserMode == StrictJSON)
@@ -1756,7 +1764,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                     if (SUPPRESS_UNCOUNTED_LOCAL AtomStringImpl* ident = existingIdentifier(vm, jsonCache, m_lexer.currentToken())) {
                         PropertyOffset offset = 0;
                         Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(originalStructure, ident, 0, offset);
-                        if (newStructure && newStructure->isCacheableTransitionFrom(originalStructure)) [[likely]] {
+                        if (newStructure && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(originalStructure))) [[likely]] {
                             if constexpr (parserMode == StrictJSON) {
                                 if (isCacheable) {
                                     auto token = m_lexer.currentToken();
@@ -1945,6 +1953,8 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
         switch(state) {
         startParseArray:
         case StartParseArray: {
+            if (throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope)) [[unlikely]]
+                return { };
             JSArray* array = constructEmptyArray(m_globalObject, nullptr);
             RETURN_IF_EXCEPTION(scope, { });
             m_objectStack.appendWithCrashOnOverflow(array);
@@ -2016,6 +2026,8 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
         }
         startParseObject:
         case StartParseObject: {
+            if (throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope)) [[unlikely]]
+                return { };
             JSObject* object = constructEmptyObject(m_globalObject);
             if constexpr (reviverMode == JSONReviverMode::Enabled) {
                 if (sourceRanges) {

@@ -17,6 +17,13 @@ ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrder(c
     return uncheckedDowncast<Object>(compiledObject)->fieldsInKeyOrder();
 }
 
+// What fieldsInKeyOrder() answers for one of two compiled objects it answers for the other.
+ALWAYS_INLINE bool haveSameFieldsInKeyOrder(const JSObject* compiledObject, const JSObject* other)
+{
+    ASSERT(isCompiledObject(compiledObject) && isCompiledObject(other));
+    return compiledObject->structureID() == other->structureID() && !((uncheckedDowncast<Object>(compiledObject)->orderWord() ^ uncheckedDowncast<Object>(other)->orderWord()) & ~orderWordIntegrityBits);
+}
+
 // Empty for a field that is absent.
 ALWAYS_INLINE JSValue readListedField(const JSObject* compiledObject, const FieldAsProperty& property)
 {
@@ -28,6 +35,18 @@ template<typename Functor>
 ALWAYS_INLINE auto readListedFieldUnboxed(const JSObject* compiledObject, const FieldAsProperty& property, const Functor& functor)
 {
     return uncheckedDowncast<Object>(compiledObject)->readInlineUnboxed(*property.field, functor);
+}
+
+// The narrow references of an object in a frame are not read by cellInNarrowSlot().
+ALWAYS_INLINE bool isInFrame(const JSObject* compiledObject)
+{
+    return uncheckedDowncast<Object>(compiledObject)->isInFrame();
+}
+
+ALWAYS_INLINE JSCell* cellInNarrowSlot(const JSObject* compiledObject, uint32_t word)
+{
+    ASSERT(word > undefinedCell32);
+    return decodeCell32(compiledObject, word);
 }
 
 template<typename Functor>

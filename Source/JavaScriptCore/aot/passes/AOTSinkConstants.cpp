@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDominators.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
@@ -42,17 +44,54 @@ public:
 
     PassOutcome run()
     {
+        IRBuilder builder(m_analyses.context(), m_function, m_context.types, &m_analyses);
+        bool didSplitEdges = splitEdgesThatHandOnConstants(builder);
         planCopies();
         if (m_copies.isEmpty())
-            return PassOutcome::Unchanged;
+            return didSplitEdges ? PassOutcome::Changed : PassOutcome::Unchanged;
 
-        IRBuilder builder(m_analyses.context(), m_function, m_context.types, &m_analyses);
         insertCopies(builder);
         eraseOriginals(builder);
         return PassOutcome::Changed;
     }
 
 private:
+    bool isOnlyHandedOnOverSomeEdges(ValueID id, BlockID blockID)
+    {
+        const UseLists& useLists = m_analyses.useLists();
+        if (useLists.locationOf(id).placement != ValuePlacement::InBlock || useLists.blockOf(id) != blockID || !isCandidate(id) || m_analyses.hasNoEffects(id))
+            return false;
+        BitVector targets;
+        for (const Use& use : useLists.usesOf(id)) {
+            if (use.kind != Use::Kind::EdgeArgument || use.block != blockID)
+                return false;
+            targets.set(use.targetIndex);
+        }
+        return targets.bitCount() < m_function.at(blockID).terminator.targets.size();
+    }
+
+    // A constant that nothing but the terminator of its own block uses, and that goes over some of the edges only, is created on those edges.
+    bool splitEdgesThatHandOnConstants(IRBuilder& builder)
+    {
+        Vector<Edge, 4> edges;
+        for (BlockID blockID : m_analyses.cfg().reversePostOrder()) {
+            const Terminator& terminator = m_function.at(blockID).terminator;
+            if (terminator.targets.size() < 2)
+                continue;
+            for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+                bool handsOnConstant = std::ranges::any_of(terminator.targets[targetIndex].arguments, [&](ValueID argument) {
+                    return resultRuleOf(m_function.at(argument).opcode) == ResultRule::Constant && isOnlyHandedOnOverSomeEdges(argument, blockID);
+                });
+                if (handsOnConstant)
+                    edges.append(Edge { blockID, targetIndex });
+            }
+        }
+        for (Edge edge : edges)
+            builder.splitEdge(edge);
+        m_isSunk.ensureSize(m_function.values.size());
+        return !edges.isEmpty();
+    }
+
     void planCopies()
     {
         const UseLists& useLists = m_analyses.useLists();
@@ -63,9 +102,10 @@ private:
                 if (!isCandidate(id))
                     continue;
                 std::span<const Use> uses = useLists.usesOf(id);
-                if (!canSink(id, blockID, uses))
+                if (canSink(id, blockID, uses))
+                    planCopiesOf(id, uses, useLists);
+                else if (!tryPlanMove(id, blockID, uses, useLists))
                     continue;
-                planCopiesOf(id, uses, useLists);
                 m_isSunk.quickSet(id.index());
             }
             if (m_copies.size() != numberOfEarlierCopies)
@@ -79,13 +119,26 @@ private:
             && !m_analyses.effectsOf(id).onAnyEdge().interferesWith(Effects::unknownCode());
     }
 
+    // What a block hands to its handler, or is entered with, has to be there at its head. An immediate that a terminator names costs nothing wherever it is defined.
+    bool canTakeCopy(const Use& use, ValueID id)
+    {
+        if (use.kind == Use::Kind::Operand)
+            return true;
+        return (use.kind == Use::Kind::TerminatorOperand || use.kind == Use::Kind::EdgeArgument) && !m_analyses.hasNoEffects(id);
+    }
+
+    bool runsMoreOftenThan(BlockID user, BlockID definitionBlock)
+    {
+        return m_analyses.isInCycle(user) && !m_analyses.blockCycles().isInEveryCycleOf(definitionBlock, user);
+    }
+
     bool canSink(ValueID id, BlockID definitionBlock, std::span<const Use> uses)
     {
         if (uses.empty())
             return false;
         m_userBlocks.shrink(0);
         for (const Use& use : uses) {
-            if (use.kind != Use::Kind::Operand || use.block == definitionBlock || m_analyses.blockCycles().isInCycle(use.block))
+            if (!canTakeCopy(use, id) || use.block == definitionBlock || runsMoreOftenThan(use.block, definitionBlock))
                 return false;
             if (m_userBlocks.isEmpty() || m_userBlocks.last() != use.block)
                 m_userBlocks.append(use.block);
@@ -129,6 +182,40 @@ private:
         return !m_userBlocks.containsIf([&](BlockID block) { return m_blockStamps[block.index()] == candidate; });
     }
 
+    // Where the users lie in a cycle or reach each other, one value serves them all: it is created in the lowest block outside of every cycle that dominates them.
+    // That block runs no more often than the one it leaves, and not at all on the paths that use nothing.
+    bool tryPlanMove(ValueID original, BlockID definitionBlock, std::span<const Use> uses, const UseLists& useLists)
+    {
+        if (uses.empty() || isRematerializable(m_function.at(original)) || m_analyses.isInCycle(definitionBlock))
+            return false;
+        const Dominators& dominators = m_analyses.dominators();
+        BlockID target;
+        for (const Use& use : uses) {
+            if (!canTakeCopy(use, original) || use.block == definitionBlock)
+                return false;
+            target = target ? dominators.nearestCommonDominator(target, use.block) : use.block;
+        }
+        // What a block with a handler creates is not there yet when the handler is entered.
+        auto servesEveryUser = [&](BlockID block) {
+            return !m_analyses.isInCycle(block) && std::ranges::all_of(uses, [&](const Use& use) {
+                return use.block == block || dominators.terminatorDominates(block, use.block);
+            });
+        };
+        while (target != definitionBlock && !servesEveryUser(target))
+            target = dominators.idom(target);
+        if (target == definitionBlock)
+            return false;
+
+        auto firstUseInTarget = std::ranges::find_if(uses, [&](const Use& use) { return use.block == target; });
+        ProgramPoint point { target, static_cast<uint32_t>(m_function.at(target).values.size()) };
+        if (firstUseInTarget != uses.end())
+            point = useLists.pointOf(*firstUseInTarget);
+        uint32_t firstUse = m_uses.size();
+        m_uses.append(uses);
+        m_copies.append(PlannedCopy { original, point, firstUse, static_cast<uint32_t>(uses.size()) });
+        return true;
+    }
+
     void planCopiesOf(ValueID original, std::span<const Use> uses, const UseLists& useLists)
     {
         uint32_t firstUse = m_uses.size();
@@ -148,7 +235,7 @@ private:
             builder.setOrigin(m_function.at(planned.original).origin());
             ValueID copy = builder.insertBefore(planned.point, Value(m_function.at(planned.original)));
             for (const Use& use : m_uses.subspan(planned.firstUse, planned.numberOfUses))
-                m_function.at(use.user).setOperand(use.operandIndex, copy);
+                replaceUse(m_function, use, copy);
         }
         builder.applyInsertions();
     }

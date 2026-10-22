@@ -9,8 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTClassTable.h"
+#include "AOTErrorMessages.h"
 #include "AOTFunctionNames.h"
+#include "AOTHeapHooks.h"
+#include "AOTModuleTable.h"
 #include "AOTObjectModel.h"
+#include "AOTPropertyWalk.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "FunctionRareData.h"
@@ -22,6 +27,13 @@ namespace JSC { namespace AOT {
 static bool isBoundFunction(const Closure& closure)
 {
     return closure.kind().callable() == CallableKind::Bound;
+}
+
+// Every function below may make a property of the closure, a read too: `prototype`, `name` and `length` are made when something asks for them.
+static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const Closure* closure)
+{
+    if (validatesRuntime(vm)) [[unlikely]]
+        validateFunctionCellIsNotInFrame(vm, closure);
 }
 
 static void clearAllocationOf(Closure* closure)
@@ -47,10 +59,28 @@ static bool createsPlainDataProperty(const PropertyDescriptor& descriptor)
     return isPlainDataDescriptor(descriptor) && descriptor.writablePresent() && descriptor.enumerablePresent() && descriptor.configurablePresent();
 }
 
+// Defining what is already there changes nothing (ValidateAndApplyPropertyDescriptor). The name of a closure that nobody touched is in the image.
+// A name with a prefix is not the one that frames show, so a definition of it is still recorded.
+static bool restatesInitialName(VM& vm, const Closure& closure, PropertyName name, const PropertyDescriptor& descriptor)
+{
+    if (name != vm.propertyNames->name || closure.classData() || closure.kind().hasInitialNamePrefix())
+        return false;
+    FunctionRareData* rareData = closure.rareData();
+    if ((rareData && rareData->hasReifiedName()) || closure.getDirect(vm, vm.propertyNames->name))
+        return false;
+    if (descriptor.isAccessorDescriptor() || !descriptor.value() || !descriptor.value().isString())
+        return false;
+    if ((descriptor.writablePresent() && descriptor.writable()) || (descriptor.enumerablePresent() && descriptor.enumerable()) || (descriptor.configurablePresent() && !descriptor.configurable()))
+        return false;
+    auto defined = asString(descriptor.value())->tryGetValue();
+    return !defined->isNull() && defined.data == initialNameProperty(closure.function());
+}
+
 bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
+    validateIsNotInFrame(vm, closure);
     const LayoutData* classLayout = closure->classData();
     if (const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, propertyName.uid()) : nullptr) {
         if (JSValue value = closure->state().objects->classes.readStaticField(*field)) {
@@ -74,10 +104,35 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
+bool Closure::isNameThatBuiltinFunctionsRefuse(VM& vm, UniquedStringImpl* uid)
+{
+    if (uid->isSymbol())
+        return uid == vm.propertyNames->hasInstanceSymbol.impl();
+    return uid == vm.propertyNames->bind.impl() || equal(uid, "call"_s) || equal(uid, "apply"_s);
+}
+
+bool Closure::refusesOwnProperty(VM& vm, PropertyName name) const
+{
+    return !name.isPrivateName() && isNameThatBuiltinFunctionsRefuse(vm, name.uid()) && isBuiltinFunction();
+}
+
+bool Closure::isBuiltinFunction() const
+{
+    return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
+}
+
 bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
+    validateIsNotInFrame(vm, closure);
+    if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        slot.disableCaching();
+        // Function.prototype[Symbol.hasInstance] is read-only, so the language itself refuses that store, and says nothing of it in sloppy code.
+        bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && name != vm.propertyNames->hasInstanceSymbol);
+        return typeError(globalObject, scope, isTold, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
+    }
     ClassTable& classes = closure->state().objects->classes;
     const LayoutData* classLayout = closure->classData();
     bool isStoreToClassObject = classLayout && slot.thisValue() == JSValue(closure);
@@ -94,7 +149,10 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
         closure->ensurePrototypeProperty(vm);
     bool result = Base::put(cell, globalObject, name, value, slot);
     if (isStoreToClassObject) {
-        slot.disableCaching();
+        // No guard speaks of the value of a property that the class does not declare, so the next store to it may go past this function.
+        bool replacesUndeclaredProperty = slot.type() == PutPropertySlot::ExistingProperty && !field && !classes.hasStaticMethodNamed(*classLayout, name.uid());
+        if (!replacesUndeclaredProperty)
+            slot.disableCaching();
         if (slot.type() != PutPropertySlot::SetterProperty)
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
     }
@@ -104,7 +162,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     }
     if (name == vm.propertyNames->displayName) [[unlikely]] {
         slot.disableCaching();
-        didStoreDisplayName(vm, closure);
+        didChangeDisplayName(vm, closure);
     }
     return result;
 }
@@ -122,6 +180,11 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
+    validateIsNotInFrame(vm, closure);
+    if (closure->refusesOwnProperty(vm, name)) [[unlikely]]
+        return typeError(globalObject, scope, shouldThrow, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
+    if (restatesInitialName(vm, *closure, name, descriptor))
+        return true;
     ClassTable& classes = closure->state().objects->classes;
     const LayoutData* classLayout = closure->classData();
     const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, name.uid()) : nullptr;
@@ -146,7 +209,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (name == vm.propertyNames->prototype) [[unlikely]]
         clearAllocationOf(closure);
     if (name == vm.propertyNames->displayName) [[unlikely]]
-        didStoreDisplayName(vm, closure);
+        didChangeDisplayName(vm, closure);
     if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString()) [[unlikely]] {
         String reported = asString(descriptor.value())->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -159,6 +222,7 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
+    validateIsNotInFrame(vm, closure);
     const LayoutData* classLayout = closure->classData();
     const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, name.uid()) : nullptr;
     bool wasInVariable = field && StaticFields::isInVariable(*closure, *field);
@@ -176,12 +240,17 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
     if (name == vm.propertyNames->prototype) [[unlikely]]
         clearAllocationOf(closure);
+    if (name == vm.propertyNames->displayName) [[unlikely]]
+        didChangeDisplayName(vm, closure);
     return result;
 }
 
 bool Closure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
-    uncheckedDowncast<Closure>(cell)->prepareForGenericAccess(globalObject->vm());
+    VM& vm = globalObject->vm();
+    Closure* closure = uncheckedDowncast<Closure>(cell);
+    validateIsNotInFrame(vm, closure);
+    closure->prepareForGenericAccess(vm);
     return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
 }
 
@@ -189,6 +258,7 @@ bool Closure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
+    validateIsNotInFrame(vm, closure);
     closure->prepareForGenericAccess(vm);
     if (const LayoutData* classLayout = closure->classData()) {
         StaticFields::ensureProperties(vm, *closure);
@@ -201,10 +271,29 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
+    validateIsNotInFrame(vm, closure);
+    // A name that the function refuses as its own could be planted one step up.
+    if (object->getPrototypeDirect() != prototype && closure->isBuiltinFunction()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return typeError(globalObject, scope, shouldThrow, prototypeChangeOfLockedBuiltinMessage("a built-in function"_s));
+    }
     closure->prepareForGenericAccess(vm);
     if (const LayoutData* classLayout = closure->classData(); classLayout && object->getPrototypeDirect() != prototype)
         closure->state().objects->classes.didChangePrototypeLink(*classLayout, ClassSide::Static);
     return Base::setPrototype(object, globalObject, prototype, shouldThrow);
+}
+
+// JSObject::putDirect() asks no method table: Error.captureStackTrace(SomeClass) puts `stack` on the class object so. A holder is entered once its class is defined.
+void PropertyWalk::didAddPropertyToClosure(VM&, JSObject* object, UniquedStringImpl* uid)
+{
+    Closure* closure = uncheckedDowncast<Closure>(object);
+    const LayoutData* classLayout = closure->classData();
+    if (!classLayout)
+        return;
+    ClassTable& classes = closure->state().objects->classes;
+    ClassSide side;
+    if (classes.classHeldBy(closure, side) == classLayout && side == ClassSide::Static)
+        classes.didChangeMember(*classLayout, ClassSide::Static, uid);
 }
 
 } } // namespace JSC::AOT

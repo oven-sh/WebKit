@@ -30,7 +30,6 @@ struct LoopVersionPlan {
     Excursion excursion;
     RangeCheckPlan rangeChecks;
     std::optional<CountedLoop> countedLoop;
-    PatchpointValue* poll { nullptr };
     GaveUpReason boundNotClampedReason { GaveUpReason::None };
     std::optional<UnswitchedBranch> unswitched;
     bool isEnteredFromPreHeader { true };
@@ -39,7 +38,7 @@ struct LoopVersionPlan {
     unsigned numberOfClonedValues { 0 };
     unsigned numberOfRemovedValues { 0 };
 
-    bool rewritesLoopTest() const { return poll || rangeChecks.clampsBound(); }
+    bool rewritesLoopTest() const { return rangeChecks.clampsBound(); }
 };
 
 class LoopVersionPlanner {
@@ -72,7 +71,6 @@ private:
     std::optional<GaveUp> checkHoistThresholds(const Attempt&) const;
     void findCountedLoop(Attempt&);
     bool canRewriteLoopTest(const Attempt&) const;
-    PatchpointValue* findStripMinedPoll(const Attempt&) const;
     unsigned countRemovedComparisons(const Attempt&) const;
     std::optional<GaveUp> checkSpeculativeHoistBudget(const Attempt&) const;
 

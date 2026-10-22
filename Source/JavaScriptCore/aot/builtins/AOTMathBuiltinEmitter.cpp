@@ -68,7 +68,10 @@ Number MathBuiltinEmitter::extremumOfElements(Extremum kind, CellPointer array, 
         branch(below(index, length), { normalEdge(element), normalEdge(done) });
         m_out.appendTo(element);
         Operand raw = elements.loadRawElement(form, storage, index);
-        if (!foldPropagatesHoles)
+        // A hole among boxed elements is no number either.
+        if (form.element == Representation::JSValue)
+            branchUnless(isNumber(raw.as<Boxed>()), otherwise);
+        else if (!foldPropagatesHoles)
             branchUnless(logicalNot(elements.isHole(form, raw)), otherwise);
         Number next = elements.convertRawElement(form, raw, Representation::Double, m_program.at(TypeTable::number)).as<Number>();
         m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
@@ -81,15 +84,22 @@ Number MathBuiltinEmitter::extremumOfElements(Extremum kind, CellPointer array, 
     };
     const ArrayStorageForm& doubleForm = arrayStorageFormOf(ArrayStorage::Double);
     const ArrayStorageForm& int32Form = arrayStorageFormOf(ArrayStorage::Int32);
+    const ArrayStorageForm& boxedForm = arrayStorageFormOf(ArrayStorage::Contiguous);
     Word32 mode = elements.indexingMode(array, arrayStorageTestMask);
     LBasicBlock doubles = newBlock();
     LBasicBlock notDoubles = newBlock();
+    LBasicBlock int32s = newBlock();
+    LBasicBlock notInt32s = newBlock();
     branch(elements.hasShape(mode, doubleForm), { normalEdge(doubles), normalEdge(notDoubles) });
     m_out.appendTo(doubles);
     fold(doubleForm);
     m_out.appendTo(notDoubles);
-    branchUnless(elements.hasShape(mode, int32Form), otherwise);
+    branch(elements.hasShape(mode, int32Form), { normalEdge(int32s), normalEdge(notInt32s) });
+    m_out.appendTo(int32s);
     fold(int32Form);
+    m_out.appendTo(notInt32s);
+    branchUnless(elements.hasShape(mode, boxedForm), otherwise);
+    fold(boxedForm);
     return join.finish();
 }
 

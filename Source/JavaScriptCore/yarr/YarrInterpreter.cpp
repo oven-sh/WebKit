@@ -3319,9 +3319,12 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
-NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
+NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock, const String& source)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, byteCompile);
+    if (pattern.m_analysis != PatternAnalysis::Performed)
+        return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+
     // This has to come first: the bytecode compiler takes m_userCharacterClasses out of the pattern.
     auto flatProgram = compileFlatProgram(pattern);
     if (!flatProgram) {
@@ -3329,6 +3332,14 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
         auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
         if (bytecode)
             bytecode->m_flatProgramDecline = flatProgram.error();
+        return bytecode;
+    }
+
+    if ((*flatProgram)->runsOnlyOn8BitSubjects) {
+        dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs on a flat program where the subject has 8-bit characters, else in the bytecode interpreter: ", description(FlatProgramDecline::UnicodeMode));
+        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+        if (bytecode)
+            bytecode->m_flatProgramFor8BitSubjects = WTF::move(*flatProgram);
         return bytecode;
     }
 
@@ -3340,7 +3351,7 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
             return bytecode;
         }
     }
-    return makeUnique<BytecodePattern>(WTF::move(*flatProgram), pattern);
+    return makeUnique<BytecodePattern>(WTF::move(*flatProgram), pattern, allocator, lock, source);
 }
 
 static unsigned interpretBytecode(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult& result)
@@ -3357,21 +3368,72 @@ static unsigned interpretBytecode(BytecodePattern* bytecode, StringView input, u
     return matchStart;
 }
 
+static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, JSRegExpResult flatResult, const unsigned* output)
+{
+    JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
+    Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult);
+    validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
+}
+
+// A flat program keeps a frame for each turn of a repeated group, and gives up where they pass Options::maxRegExpStackSize(). That is no answer: the bytecode, which needs no memory
+// for many such groups, finishes the match.
+static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    if (!bytecode->m_body) {
+        if (!bytecode->m_bytecodeBehindFlatProgram) {
+            if (bytecode->m_source.isNull())
+                return offsetNoMatch;
+            ErrorCode errorCode { ErrorCode::NoError };
+            YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode);
+            if (hasError(errorCode))
+                return offsetNoMatch;
+            bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
+            if (!bytecode->m_bytecodeBehindFlatProgram)
+                return offsetNoMatch;
+        }
+        bytecode = bytecode->m_bytecodeBehindFlatProgram.get();
+    }
+    JSRegExpResult result { JSRegExpResult::NoMatch };
+    return interpretBytecode(bytecode, input, start, output, result);
+}
+
+static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    JSRegExpResult flatResult = matchFlatProgram(*bytecode->m_flatProgram, input, start, output);
+    if (bytecode->m_body) [[unlikely]]
+        validateFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, flatResult, output);
+    if (flatResult == JSRegExpResult::Match)
+        return output[0];
+    if (flatResult == JSRegExpResult::ErrorNoMemory) [[unlikely]]
+        return interpretBehindFlatProgram(bytecode, input, start, output);
+    return offsetNoMatch;
+}
+
+static NEVER_INLINE unsigned interpretFlatProgramFor8BitSubjects(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    JSRegExpResult flatResult = matchFlatProgram(*bytecode->m_flatProgramFor8BitSubjects, input, start, output);
+    if (Options::validateRegExpFlatProgram()) [[unlikely]]
+        validateFlatProgram(bytecode, *bytecode->m_flatProgramFor8BitSubjects, input, start, flatResult, output);
+    if (flatResult == JSRegExpResult::Match)
+        return output[0];
+    if (flatResult == JSRegExpResult::ErrorNoMemory) [[unlikely]]
+        return interpretBehindFlatProgram(bytecode, input, start, output);
+    return offsetNoMatch;
+}
+
 NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, interpret);
     SuperSamplerScope superSamplerScope(false);
-    JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
-    if (!bytecode->m_flatProgram)
-        return interpretBytecode(bytecode, input, start, output, bytecodeResult);
-
-    JSRegExpResult flatResult = matchFlatProgram(*bytecode->m_flatProgram, input, start, output);
-    if (bytecode->m_body) [[unlikely]] {
-        Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
-        interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult);
-        validateFlatProgramResult(*bytecode->m_flatProgram, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
+    if (bytecode->m_flatProgram) [[unlikely]]
+        return interpretFlatProgram(bytecode, input, start, output);
+    if (input.is8Bit()) {
+        if (bytecode->m_flatProgramFor8BitSubjects)
+            return interpretFlatProgramFor8BitSubjects(bytecode, input, start, output);
+        return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     }
-    return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+    return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
 }
 
 // These should be the same for both char16_t & Latin1Character.

@@ -156,13 +156,15 @@ bool StringBuilderStorage::canGrowBy(size_t added) const
     return added <= String::MaxLength - length();
 }
 
-bool StringBuilderStorage::tryEnsureRoom(size_t size)
+// The bytes that are written behind the characters that are appended want room in the buffer. They are no part of the text, so the longest text says nothing about them.
+bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
 {
-    if (size <= m_limit - m_position)
+    ASSERT(length <= bytesWritten);
+    if (bytesWritten <= m_limit - m_position)
         return true;
-    if (!canGrowBy(size))
+    if (!canGrowBy(length))
         return false;
-    size_t needed = m_position + size;
+    size_t needed = m_position + bytesWritten;
     size_t currentCapacity = capacity();
     if (needed <= currentCapacity && !wouldOverwriteSharedCharacters()) {
         if (m_buffer->hasOneRef())
@@ -243,6 +245,17 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
     return addSegment(globalObject, jsString(globalObject->vm(), String { impl.releaseNonNull() }));
 }
 
+// The units of a 16-bit string that lie in one piece of memory: of a flat string, and of a part of one.
+static std::optional<std::span<const char16_t>> flatUnitsOf(JSString* string)
+{
+    if (const StringImpl* impl = string->tryGetValueImpl())
+        return impl->span16();
+    if (!string->isSubstring())
+        return std::nullopt;
+    auto* rope = uncheckedDowncast<JSRopeString>(string);
+    return rope->substringBase()->tryGetValueImpl()->span16().subspan(rope->substringOffset(), rope->length());
+}
+
 auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string) -> AppendResult
 {
     VM& vm = globalObject->vm();
@@ -251,6 +264,10 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
         return AppendResult::Appended;
     bool wasEmpty = !this->length();
     bool isAppendedByReference = length >= m_limits.minLengthAppendedByReference || !string->is8Bit();
+    if (isAppendedByReference && length < m_limits.minLengthAppendedByReference) {
+        if (std::optional<std::span<const char16_t>> units = flatUnitsOf(string); units && WTF::charactersAreAllLatin1(*units))
+            return append(globalObject, *units);
+    }
     AppendResult result = isAppendedByReference ? addSegment(globalObject, string) : appendCharactersOf(globalObject, string);
     if (wasEmpty && result == AppendResult::Appended) {
         m_lastString.set(vm, this, string);
@@ -338,9 +355,13 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
     return AppendResult::Appended;
 }
 
-Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, size_t size)
+// Compiled code writes whole words.
+Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, size_t length)
 {
-    return ensureRoom(globalObject, size) ? m_characters + m_position : nullptr;
+    if (tryEnsureRoom(length, roundUpToMultipleOf<sizeof(uint64_t)>(length))) [[likely]]
+        return m_characters + m_position;
+    throwOutOfMemory(globalObject);
+    return nullptr;
 }
 
 Latin1Character* StringBuilderStorage::tryReserve(size_t size)
@@ -375,6 +396,39 @@ void StringBuilderStorage::rollBack(uint32_t length)
     if (m_lengthOfLastString > length)
         m_lastString.clear();
     updateLimit();
+}
+
+StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor)
+{
+    if (isOnStack()) {
+        storage = StringBuilderStorage::acquire(instance);
+        if (storage->append(globalObject, charactersOnStack(cursor)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]] {
+            storage->release(instance);
+            return nullptr;
+        }
+        return storage;
+    }
+    size_t position = cursor - storage->m_characters;
+    ASSERT(position <= storage->capacity());
+    if (position > String::MaxLength - storage->m_lengthOutsideBuffer) [[unlikely]] {
+        throwOutOfMemory(globalObject);
+        return nullptr;
+    }
+    storage->m_position = static_cast<uint32_t>(position);
+    return storage;
+}
+
+Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObject)
+{
+    if (!storage->tryEnsureRoom(0, maxBytesWrittenPastLimit)) [[unlikely]] {
+        throwOutOfMemory(globalObject);
+        return nullptr;
+    }
+    ASSERT(!storage->m_sharedLength && storage->capacity() >= storage->m_position + maxBytesWrittenPastLimit);
+    uintptr_t characters = std::bit_cast<uintptr_t>(storage->m_characters);
+    limit = std::bit_cast<Latin1Character*>(characters + std::min<size_t>(storage->capacity() - maxBytesWrittenPastLimit, String::MaxLength - storage->m_lengthOutsideBuffer));
+    lengthOrigin = std::bit_cast<Latin1Character*>(characters - storage->m_lengthOutsideBuffer);
+    return storage->m_characters + storage->m_position;
 }
 
 extern "C" uint8_t* JSC__AOT__StringBuilderStorage__tryReserve(StringBuilderStorage* storage, size_t maxLength)

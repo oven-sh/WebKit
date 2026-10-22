@@ -9,8 +9,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void printFields(IRPrinter&, const ClaimSource::Field&);
-static void printFields(IRPrinter&, const ClaimSource::Contents&);
 static void printFields(IRPrinter&, const ValidationRule::Minimum&);
 static void printFields(IRPrinter&, const ValidationRule::Maximum&);
 static void printFields(IRPrinter&, const ValidationRule::ExclusiveMinimum&);
@@ -35,13 +33,14 @@ static void printFields(IRPrinter&, const ValidationShape::Dictionary&);
 static void printFields(IRPrinter&, const ValidationShape::Object&);
 static void printFields(IRPrinter&, const ValidationShape::Union&);
 static void printFields(IRPrinter&, const CreatorRecord::Entrypoint&);
+static void printFields(IRPrinter&, const CreatorRecord::TableLookup&);
 static void printFields(IRPrinter&, const CreatorRecord::Version&);
 static void printFields(IRPrinter&, const CreatorRecord::Coroutine&);
 static void printFields(IRPrinter&, const CreatorRecord::BoundFunction&);
 static void printFields(IRPrinter&, const CreatorRecord::ResultWrapper&);
 static void printFields(IRPrinter&, const CreatorRecord::ResultWorker&);
 static void printFields(IRPrinter&, const CreatorRecord::ParameterWrapper&);
-static void printFields(IRPrinter&, const CreatorRecord::Continuation&);
+static void printFields(IRPrinter&, const CreatorRecord::EntryChecks&);
 static void printFields(IRPrinter&, const CreatorRecord::Serializer&);
 static void printFields(IRPrinter&, const CreatorRecord::Parser&);
 static void printFields(IRPrinter&, const CreatorRecord::Validator&);
@@ -89,8 +88,7 @@ static bool isZero(const LocationFlow& record)
 {
     return record.writers == WriterState::Unknown && record.stores == StoreCount::Unknown && record.storeNaming == StoreNaming::Unknown &&
         record.initialization == InitializationState::Unknown && record.reads == ReadState::Unknown && record.deferral == ClosureDeferral::Unknown &&
-        !record.deferredFunction && !record.isUnchangedDuringActivation && !record.mayKeepObservedObjectAlive &&
-        record.cause == UnprovenCause::Unknown && isZero(record.witness);
+        !record.deferredFunction && !record.isUnchangedDuringActivation && record.cause == UnprovenCause::Unknown && isZero(record.witness);
 }
 
 static bool isZero(const FieldFlow& record)
@@ -103,10 +101,10 @@ static bool isZero(const LayoutFlow& record)
 {
     return record.allocation == AllocationState::Unknown && record.baseState == BaseState::Unknown && !record.base && !record.baseClass &&
         record.members.isEmpty() && record.allocationClasses.isEmpty() && record.constructorOrders.isEmpty() &&
-        record.fieldCreation == FieldCreation::Unknown && record.thisLeak == ThisLeak::Unknown && record.observedUses.isEmpty() &&
-        record.cause == UnprovenCause::Unknown && isZero(record.witness) && record.impossibleMutations.isEmpty() &&
-        record.keys == KeyEnumeration::Unknown && record.addedKeys.isEmpty() && !record.addedKeysAreComplete && record.ownAccessors.isEmpty() &&
-        !record.ownAccessorsAreComplete;
+        record.fieldCreation == FieldCreation::Unknown && record.observedUses.isEmpty() && record.cause == UnprovenCause::Unknown &&
+        isZero(record.witness) && record.impossibleMutations.isEmpty() && record.keys == KeyEnumeration::Unknown && record.addedKeys.isEmpty() &&
+        !record.addedKeysAreComplete && !record.isReachedThroughUnknownReceivers && record.ownAccessors.isEmpty() &&
+        !record.ownAccessorsAreComplete && !record.closureEnvironmentField;
 }
 
 static bool isZero(const ClassFlow& record)
@@ -120,6 +118,11 @@ static bool isZero(const ClassFlow& record)
 static bool isZero(const SourceRange& record)
 {
     return !record.start && !record.end;
+}
+
+static bool isZero(const FunctionRelations& record)
+{
+    return record.subjects.isEmpty() && record.stores.isEmpty() && record.handed.isEmpty() && record.operands.isEmpty() && !record.resultsFullyListed;
 }
 
 static bool isZero(const Derivation& record)
@@ -180,41 +183,10 @@ void printFields(IRPrinter& printer, const TypeSite& record)
 void printFields(IRPrinter& printer, const DeclaredType& record)
 {
     printer.field("type"_s, record.type);
-    if (record.written)
-        printer.field("written"_s, record.written);
-    if (record.predicted)
-        printer.field("predicted"_s, record.predicted);
     if (record.site)
         printer.field("site"_s, record.site);
-    if (!printedFlags(printer, record.flags).isEmpty())
-        printer.field("flags"_s, printedFlags(printer, record.flags));
-}
-
-static void printFields(IRPrinter& printer, const ClaimSource::Field& record)
-{
-    printer.field("key"_s, record.key);
-}
-
-static void printFields(IRPrinter& printer, const ClaimSource::Contents& record)
-{
-    if (record.slot != ContentsSlot::Element)
-        printer.field("slot"_s, record.slot);
-}
-
-void printVariant(IRPrinter& printer, const ClaimSource& variant)
-{
-    printer.out().print(nameOf(variant.kind()));
-    switch (variant.kind()) {
-    case ClaimSource::Kind::None:
-        return;
-    case ClaimSource::Kind::Field:
-        printRecord(printer, variant.as<ClaimSource::Field>());
-        return;
-    case ClaimSource::Kind::Contents:
-        printRecord(printer, variant.as<ClaimSource::Contents>());
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (!record.flags.isEmpty())
+        printer.field("flags"_s, record.flags);
 }
 
 void printFields(IRPrinter& printer, const TailCast& record)
@@ -546,8 +518,6 @@ void printFields(IRPrinter& printer, const LocationFlow& record)
         printer.field("deferredFunction"_s, record.deferredFunction);
     if (record.isUnchangedDuringActivation)
         printer.field("isUnchangedDuringActivation"_s, record.isUnchangedDuringActivation);
-    if (record.mayKeepObservedObjectAlive)
-        printer.field("mayKeepObservedObjectAlive"_s, record.mayKeepObservedObjectAlive);
     if (record.cause != UnprovenCause::Unknown)
         printer.field("cause"_s, record.cause);
     if (!isZero(record.witness)) {
@@ -580,6 +550,8 @@ void printFields(IRPrinter& printer, const Field& record)
     printRecord(printer, record.declared);
     if (!printedFlags(printer, record.flags).isEmpty())
         printer.field("flags"_s, printedFlags(printer, record.flags));
+    if (!record.form.isEmpty())
+        printer.field("form"_s, record.form);
     if (record.originLayout)
         printer.field("originLayout"_s, record.originLayout);
     if (record.originField)
@@ -590,6 +562,8 @@ void printFields(IRPrinter& printer, const Field& record)
         printer.beginField("flow"_s);
         printRecord(printer, record.flow);
     }
+    if (record.slotType)
+        printer.field("slotType"_s, record.slotType);
 }
 
 void printFields(IRPrinter& printer, const StaticField& record)
@@ -599,6 +573,41 @@ void printFields(IRPrinter& printer, const StaticField& record)
     if (record.computedKey)
         printer.field("computedKey"_s, *record.computedKey);
     printer.field("variable"_s, record.variable);
+}
+
+void printFields(IRPrinter& printer, const InnerObject& record)
+{
+    if (record.field)
+        printer.field("field"_s, record.field);
+    if (record.layout)
+        printer.field("layout"_s, record.layout);
+    if (record.arrayCapacity)
+        printer.field("arrayCapacity"_s, record.arrayCapacity);
+    if (!record.outerFields.isEmpty()) {
+        printer.beginField("outerFields"_s);
+        printer.list(record.outerFields, [&](const auto& element) {
+            printer.print(element);
+        });
+    }
+    if (record.outerAllocationClass)
+        printer.field("outerAllocationClass"_s, record.outerAllocationClass);
+    if (record.isAlwaysInPlace)
+        printer.field("isAlwaysInPlace"_s, record.isAlwaysInPlace);
+}
+
+void printFields(IRPrinter& printer, const FlattenedObject& record)
+{
+    if (record.field)
+        printer.field("field"_s, record.field);
+    printer.field("layout"_s, record.layout);
+    if (!record.fields.isEmpty()) {
+        printer.beginField("fields"_s);
+        printer.list(record.fields, [&](const auto& element) {
+            printer.print(element);
+        });
+    }
+    if (record.allocationClass)
+        printer.field("allocationClass"_s, record.allocationClass);
 }
 
 void printFields(IRPrinter& printer, const FieldOrder& record)
@@ -659,8 +668,6 @@ void printFields(IRPrinter& printer, const LayoutFlow& record)
     }
     if (record.fieldCreation != FieldCreation::Unknown)
         printer.field("fieldCreation"_s, record.fieldCreation);
-    if (record.thisLeak != ThisLeak::Unknown)
-        printer.field("thisLeak"_s, record.thisLeak);
     if (!record.observedUses.isEmpty())
         printer.field("observedUses"_s, record.observedUses);
     if (record.cause != UnprovenCause::Unknown)
@@ -681,6 +688,8 @@ void printFields(IRPrinter& printer, const LayoutFlow& record)
     }
     if (record.addedKeysAreComplete)
         printer.field("addedKeysAreComplete"_s, record.addedKeysAreComplete);
+    if (record.isReachedThroughUnknownReceivers)
+        printer.field("isReachedThroughUnknownReceivers"_s, record.isReachedThroughUnknownReceivers);
     if (!record.ownAccessors.isEmpty()) {
         printer.beginField("ownAccessors"_s);
         printer.list(record.ownAccessors, [&](const auto& element) {
@@ -689,6 +698,8 @@ void printFields(IRPrinter& printer, const LayoutFlow& record)
     }
     if (record.ownAccessorsAreComplete)
         printer.field("ownAccessorsAreComplete"_s, record.ownAccessorsAreComplete);
+    if (record.closureEnvironmentField)
+        printer.field("closureEnvironmentField"_s, *record.closureEnvironmentField);
 }
 
 void printFields(IRPrinter& printer, const ClassFlow& record)
@@ -735,8 +746,8 @@ void printFields(IRPrinter& printer, const LayoutRecord& record)
         printer.field("module"_s, record.module);
     if (record.position)
         printer.field("position"_s, record.position);
-    if (record.predictedBase)
-        printer.field("predictedBase"_s, record.predictedBase);
+    if (record.base)
+        printer.field("base"_s, record.base);
     if (record.constructor)
         printer.field("constructor"_s, record.constructor);
     if (!record.fields.isEmpty()) {
@@ -761,6 +772,12 @@ void printFields(IRPrinter& printer, const LayoutRecord& record)
         printer.field("computedKeyCount"_s, record.computedKeyCount);
     if (!printedFlags(printer, record.flags).isEmpty())
         printer.field("flags"_s, printedFlags(printer, record.flags));
+    if (!record.declaredOrder.isEmpty()) {
+        printer.beginField("declaredOrder"_s);
+        printer.list(record.declaredOrder, [&](const auto& element) {
+            printer.print(element);
+        });
+    }
     if (!printer.printsEngineFields())
         return;
     if (record.builtinLayout)
@@ -776,6 +793,18 @@ void printFields(IRPrinter& printer, const LayoutRecord& record)
     if (!isZero(record.classFlow)) {
         printer.beginField("classFlow"_s);
         printRecord(printer, record.classFlow);
+    }
+    if (!record.innerObjects.isEmpty()) {
+        printer.beginField("innerObjects"_s);
+        printer.list(record.innerObjects, [&](const auto& element) {
+            printRecord(printer, element);
+        });
+    }
+    if (!record.flattenedObjects.isEmpty()) {
+        printer.beginField("flattenedObjects"_s);
+        printer.list(record.flattenedObjects, [&](const auto& element) {
+            printRecord(printer, element);
+        });
     }
 }
 
@@ -810,6 +839,88 @@ void printFields(IRPrinter& printer, const SourceRange& record)
         printer.field("end"_s, record.end);
 }
 
+void printFields(IRPrinter& printer, const RelationSubject& record)
+{
+    if (record.kind != RelationSubjectKind::Parameter)
+        printer.field("kind"_s, record.kind);
+    if (record.index)
+        printer.field("index"_s, record.index);
+    if (record.source)
+        printer.field("source"_s, record.source);
+    if (record.key)
+        printer.field("key"_s, record.key);
+    if (!record.fate.isEmpty())
+        printer.field("fate"_s, record.fate);
+    if (record.results)
+        printer.field("results"_s, record.results);
+}
+
+void printFields(IRPrinter& printer, const StoredInto& record)
+{
+    if (record.source)
+        printer.field("source"_s, record.source);
+    if (record.target)
+        printer.field("target"_s, record.target);
+    if (record.key)
+        printer.field("key"_s, record.key);
+    if (record.creationOperand)
+        printer.field("creationOperand"_s, *record.creationOperand);
+    if (record.isOnEveryPath)
+        printer.field("isOnEveryPath"_s, record.isOnEveryPath);
+    if (record.isBeforeTargetLeaves)
+        printer.field("isBeforeTargetLeaves"_s, record.isBeforeTargetLeaves);
+}
+
+void printFields(IRPrinter& printer, const HandedTo& record)
+{
+    if (record.source)
+        printer.field("source"_s, record.source);
+    if (record.call)
+        printer.field("call"_s, record.call);
+    if (record.argument)
+        printer.field("argument"_s, record.argument);
+}
+
+void printFields(IRPrinter& printer, const OperandOf& record)
+{
+    if (record.source)
+        printer.field("source"_s, record.source);
+    if (record.user)
+        printer.field("user"_s, record.user);
+    if (record.position)
+        printer.field("position"_s, record.position);
+}
+
+void printFields(IRPrinter& printer, const FunctionRelations& record)
+{
+    if (!record.subjects.isEmpty()) {
+        printer.beginField("subjects"_s);
+        printer.list(record.subjects, [&](const auto& element) {
+            printRecord(printer, element);
+        });
+    }
+    if (!record.stores.isEmpty()) {
+        printer.beginField("stores"_s);
+        printer.list(record.stores, [&](const auto& element) {
+            printRecord(printer, element);
+        });
+    }
+    if (!record.handed.isEmpty()) {
+        printer.beginField("handed"_s);
+        printer.list(record.handed, [&](const auto& element) {
+            printRecord(printer, element);
+        });
+    }
+    if (!record.operands.isEmpty()) {
+        printer.beginField("operands"_s);
+        printer.list(record.operands, [&](const auto& element) {
+            printRecord(printer, element);
+        });
+    }
+    if (record.resultsFullyListed)
+        printer.field("resultsFullyListed"_s, record.resultsFullyListed);
+}
+
 void printFields(IRPrinter& printer, const ParameterOrigin& record)
 {
     if (record.original)
@@ -835,16 +946,17 @@ void printFields(IRPrinter& printer, const Derivation& record)
 static void printFields(IRPrinter& printer, const CreatorRecord::Entrypoint& record)
 {
     printer.field("target"_s, record.target);
-    if (record.group)
-        printer.field("group"_s, record.group);
     if (record.arguments != ArgumentPassing::Buffer)
         printer.field("arguments"_s, record.arguments);
     if (record.takesNewTarget)
         printer.field("takesNewTarget"_s, record.takesNewTarget);
     if (record.constructEntrypoint)
         printer.field("constructEntrypoint"_s, record.constructEntrypoint);
-    if (record.groupEntrypoint)
-        printer.field("groupEntrypoint"_s, record.groupEntrypoint);
+}
+
+static void printFields(IRPrinter& printer, const CreatorRecord::TableLookup& record)
+{
+    printer.field("key"_s, record.key);
 }
 
 static void printFields(IRPrinter& printer, const CreatorRecord::Version& record)
@@ -864,6 +976,8 @@ static void printFields(IRPrinter& printer, const CreatorRecord::Coroutine& reco
         printer.field("promiseType"_s, record.promiseType);
     if (record.promiseParameter)
         printer.field("promiseParameter"_s, *record.promiseParameter);
+    if (record.worker)
+        printer.field("worker"_s, record.worker);
 }
 
 static void printFields(IRPrinter& printer, const CreatorRecord::BoundFunction& record)
@@ -898,11 +1012,10 @@ static void printFields(IRPrinter& printer, const CreatorRecord::ParameterWrappe
         printer.field("parameter"_s, record.parameter);
 }
 
-static void printFields(IRPrinter& printer, const CreatorRecord::Continuation& record)
+static void printFields(IRPrinter& printer, const CreatorRecord::EntryChecks& record)
 {
-    printer.field("origin"_s, record.origin);
-    if (record.index)
-        printer.field("index"_s, record.index);
+    printer.field("body"_s, record.body);
+    printer.field("fallback"_s, record.fallback);
 }
 
 static void printFields(IRPrinter& printer, const CreatorRecord::Serializer& record)
@@ -948,6 +1061,9 @@ void printVariant(IRPrinter& printer, const CreatorRecord& variant)
     case CreatorRecord::Kind::Entrypoint:
         printRecord(printer, variant.as<CreatorRecord::Entrypoint>());
         return;
+    case CreatorRecord::Kind::TableLookup:
+        printRecord(printer, variant.as<CreatorRecord::TableLookup>());
+        return;
     case CreatorRecord::Kind::Version:
         printRecord(printer, variant.as<CreatorRecord::Version>());
         return;
@@ -966,8 +1082,8 @@ void printVariant(IRPrinter& printer, const CreatorRecord& variant)
     case CreatorRecord::Kind::ParameterWrapper:
         printRecord(printer, variant.as<CreatorRecord::ParameterWrapper>());
         return;
-    case CreatorRecord::Kind::Continuation:
-        printRecord(printer, variant.as<CreatorRecord::Continuation>());
+    case CreatorRecord::Kind::EntryChecks:
+        printRecord(printer, variant.as<CreatorRecord::EntryChecks>());
         return;
     case CreatorRecord::Kind::Serializer:
         printRecord(printer, variant.as<CreatorRecord::Serializer>());
@@ -1016,8 +1132,8 @@ void printFields(IRPrinter& printer, const FunctionRecord& record)
         printer.field("kind"_s, record.kind);
     if (record.role != FunctionRole::Source)
         printer.field("role"_s, record.role);
-    if (!record.flags.isEmpty())
-        printer.field("flags"_s, record.flags);
+    if (!printedFlags(printer, record.flags).isEmpty())
+        printer.field("flags"_s, printedFlags(printer, record.flags));
     if (record.length)
         printer.field("length"_s, record.length);
     if (record.enclosingRuntimeFunction)
@@ -1047,6 +1163,16 @@ void printFields(IRPrinter& printer, const FunctionRecord& record)
         printer.list(record.functionTypes, [&](const auto& element) {
             printer.print(element);
         });
+    }
+    if (!record.builtinMembers.isEmpty()) {
+        printer.beginField("builtinMembers"_s);
+        printer.list(record.builtinMembers, [&](const auto& element) {
+            printer.print(element);
+        });
+    }
+    if (!isZero(record.relations)) {
+        printer.beginField("relations"_s);
+        printRecord(printer, record.relations);
     }
     if (!printer.printsEngineFields())
         return;
@@ -1112,8 +1238,8 @@ void printFields(IRPrinter& printer, const ColumnAdjustment& record)
         printer.field("offset"_s, record.offset);
     if (record.line)
         printer.field("line"_s, record.line);
-    if (record.excessBytes)
-        printer.field("excessBytes"_s, record.excessBytes);
+    if (record.column)
+        printer.field("column"_s, record.column);
 }
 
 void printFields(IRPrinter& printer, const SourcePositions& record)
@@ -1139,6 +1265,10 @@ void printFields(IRPrinter& printer, const ModuleRequest& record)
         printer.field("phase"_s, record.phase);
     if (record.isDynamicStarExport)
         printer.field("isDynamicStarExport"_s, record.isDynamicStarExport);
+    if (record.kind != ModuleRequestKind::Import)
+        printer.field("kind"_s, record.kind);
+    if (record.completes)
+        printer.field("completes"_s, record.completes);
 }
 
 void printFields(IRPrinter& printer, const ModuleExport& record)
@@ -1179,6 +1309,8 @@ void printFields(IRPrinter& printer, const ModuleFailure& record)
 {
     printer.field("importer"_s, record.importer);
     printer.field("specifier"_s, record.specifier);
+    if (record.exporter)
+        printer.field("exporter"_s, record.exporter);
 }
 
 void printFields(IRPrinter& printer, const Module& record)
@@ -1187,8 +1319,8 @@ void printFields(IRPrinter& printer, const Module& record)
     printer.field("displayPath"_s, record.displayPath);
     if (record.kind != ModuleKind::SourceText)
         printer.field("kind"_s, record.kind);
-    if (!record.flags.isEmpty())
-        printer.field("flags"_s, record.flags);
+    if (!printedFlags(printer, record.flags).isEmpty())
+        printer.field("flags"_s, printedFlags(printer, record.flags));
     if (record.exportRule != SyntheticExportRule::None)
         printer.field("exportRule"_s, record.exportRule);
     if (record.requireResult != RequireResult::Namespace)
@@ -1201,6 +1333,8 @@ void printFields(IRPrinter& printer, const Module& record)
         printer.field("referrer"_s, record.referrer);
     if (record.body)
         printer.field("body"_s, record.body);
+    if (record.exportsVariable)
+        printer.field("exportsVariable"_s, record.exportsVariable);
     if (record.data)
         printer.field("data"_s, record.data);
     if (!record.requests.isEmpty()) {
@@ -1382,16 +1516,12 @@ void printFields(IRPrinter& printer, const FunctionFlow& record)
         printer.field("executions"_s, record.executions);
     if (record.closureUse != ClosureUse::Unknown)
         printer.field("closureUse"_s, record.closureUse);
-    if (record.genericVersion)
-        printer.field("genericVersion"_s, record.genericVersion);
     if (record.cause != UnprovenCause::Unknown)
         printer.field("cause"_s, record.cause);
     if (!isZero(record.witness)) {
         printer.beginField("witness"_s);
         printRecord(printer, record.witness);
     }
-    if (record.resultCheck != ResultCheck::ByCallee)
-        printer.field("resultCheck"_s, record.resultCheck);
 }
 
 void printFields(IRPrinter& printer, const ModuleFlow& record)
@@ -1422,6 +1552,8 @@ void printFields(IRPrinter& printer, const LayoutSet& record)
     }
     if (record.isComplete)
         printer.field("isComplete"_s, record.isComplete);
+    if (record.hasMembersWithoutLayout)
+        printer.field("hasMembersWithoutLayout"_s, record.hasMembersWithoutLayout);
 }
 
 void printFields(IRPrinter& printer, const CalleeSet& record)
@@ -1476,8 +1608,6 @@ void printFields(IRPrinter& printer, const AllocationClass& record)
         printer.field("builtinClass"_s, record.builtinClass);
     if (record.closureFunction)
         printer.field("closureFunction"_s, record.closureFunction);
-    if (!record.pristine.isEmpty())
-        printer.field("pristine"_s, record.pristine);
     if (!record.impossibleMutations.isEmpty())
         printer.field("impossibleMutations"_s, record.impossibleMutations);
     if (record.keys != KeyEnumeration::Unknown)
@@ -1492,6 +1622,8 @@ void printFields(IRPrinter& printer, const AllocationClass& record)
     }
     if (record.addedKeysAreComplete)
         printer.field("addedKeysAreComplete"_s, record.addedKeysAreComplete);
+    if (record.isReachedThroughUnknownReceivers)
+        printer.field("isReachedThroughUnknownReceivers"_s, record.isReachedThroughUnknownReceivers);
     if (record.cause != UnprovenCause::Unknown)
         printer.field("cause"_s, record.cause);
     if (!isZero(record.witness)) {
@@ -1520,6 +1652,17 @@ void printFields(IRPrinter& printer, const Origin& record)
         printer.field("position"_s, record.position);
     if (record.inlineFrame)
         printer.field("inlineFrame"_s, record.inlineFrame);
+}
+
+void printFields(IRPrinter& printer, const MemberConditionRecord& record)
+{
+    if (record.kind != MemberConditionKind::MemberUnchanged)
+        printer.field("kind"_s, record.kind);
+    printer.field("layout"_s, record.layout);
+    if (record.side != ClassSide::Prototype)
+        printer.field("side"_s, record.side);
+    if (record.key)
+        printer.field("key"_s, record.key);
 }
 
 void printFields(IRPrinter& printer, const PlacedKey& record)

@@ -35,6 +35,7 @@ private:
     void ensureSize(size_t);
 
     mutable Vector<ValueID> m_replacements;
+    size_t m_numberOfValues;
     unsigned m_numberOfReplacements { 0 };
 };
 

@@ -16,7 +16,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Builtin builtin=BunServe
     v5 = Call v4, -, v3
     v6 = NewClosure function=f5
-    v7 = Builtin builtin=ProcessOn
+    v7 = Builtin builtin=EventEmitterPrototypeOn
     v8 = Builtin builtin=Process
     v9 = String string="message"
     v10 = Call v7, v8, v9, v6

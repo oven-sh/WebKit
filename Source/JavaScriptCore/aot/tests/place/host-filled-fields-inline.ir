@@ -1,4 +1,5 @@
 # Native code stores every required field of an expected result when it creates the object, so those fields are in the cell, and an optional field may still be out of line
+# TODO: flow-termination: a layout that only a typed JSON.parse fills counts as never allocated and gets no plan
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow references=narrow limit=MaxParsedObjectMembers:8
 # RUN: plan-slots layouts

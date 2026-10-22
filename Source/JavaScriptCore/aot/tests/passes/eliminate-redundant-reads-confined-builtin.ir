@@ -42,7 +42,7 @@ function f1 name="mapSetBetweenReads" captures=[{type=env L2}] parameters=[{type
 
 function f2 name="freezeOfAnotherObject" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
   b0(v0: L1, v1: anything):
-    v2 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = CallBuiltin -, v0 overload=ObjectFreeze/0
     v4 = GetSlot v2 key="x" receivers=[L1] level=Proven
     Return v4
@@ -53,7 +53,7 @@ function f2 name="freezeOfAnotherObject" parameters=[{type=L1}, {type=anything}]
 
 function f3 name="freezeOfTheObject" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
   b0(v0: L1, v1: anything):
-    v2 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = CallBuiltin -, v2 overload=ObjectFreeze/0
     v4 = GetSlot v2 key="x" receivers=[L1] level=Proven
     Return v4

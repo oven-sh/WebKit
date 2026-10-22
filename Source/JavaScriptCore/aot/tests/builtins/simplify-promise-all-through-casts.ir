@@ -28,16 +28,16 @@ function f1 name="assumedTypeThenUpcast" parameters=[{type=Promise}, {type=Promi
 # CHECK-NOT: CallBuiltin
 # CHECK: v6: Promise{{*}} = PromiseAllOfElements v0, v1
 
-function f2 name="literalThroughClaim" parameters=[{type=Promise}, {type=Promise}] results=[{type=Promise}] {
+function f2 name="literalThroughCheck" parameters=[{type=Promise}, {type=Promise}] results=[{type=Promise}] {
   b0(v0: Promise, v1: Promise):
     v2 = Builtin builtin=Promise
     v3 = NewArray v0, v1 contents=anything
     v4 = Upcast v3 castType=anything
-    v5 = Claim v4 castType=Array<Promise>
+    v5 = Check v4 castType=Array<Promise>
     v6 = CallBuiltin v2, v5 overload=PromiseAll/0
     Return v6
 }
-# CHECK-LABEL: function f2 name="literalThroughClaim"
+# CHECK-LABEL: function f2 name="literalThroughCheck"
 # CHECK-NOT: PromiseAllOfElements
 # CHECK: = CallBuiltin v2, v5 overload=PromiseAll/0
 

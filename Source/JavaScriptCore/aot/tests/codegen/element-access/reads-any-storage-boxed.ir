@@ -1,0 +1,163 @@
+# In fast code a read of an array element whose storage kind nobody knows stands in line and gives a boxed value. Storage of int32 and contiguous storage hold the same thing for such a read, a boxed value with the empty word for a hole,
+# so one test of the shape and one arm serve both, and every other shape, storage of doubles among them, goes to the stub for arrays: one call for each read. What the array is proven to hold changes nothing in that code.
+# The library's loops are there once for all their callers and walk arrays of every kind: there a double is read and boxed in line too.
+# An array without holes is not tested for one, and the test that `in` is compiled to has two arms: boxed elements and doubles. Outside fast code the access is one call of a stub for arrays
+# FORM: Placed
+# OPTIONS: heat=EverythingIsHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="holdsInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f0: size=[[boxed]] frame=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# R-LABEL: function f0 name="holdsInt32"
+# R: v2: undefined|i32 @JSValue = GetArrayElement v0, v1 level=Proven
+function f1 name="holdsNumber" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f1: size=[[boxed]] frame=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# R-LABEL: function f1 name="holdsNumber"
+# R: v2: undefined|number @JSValue = GetArrayElement v0, v1 level=Proven
+function f2 name="holdsString" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f2: size=[[boxed]] frame=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# R-LABEL: function f2 name="holdsString"
+# R: v2: undefined|string @JSValue = GetArrayElement v0, v1 level=Proven
+function f3 name="holdsAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f3: size=[[boxed]] frame=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# R-LABEL: function f3 name="holdsAnything"
+# R: v2: anything @JSValue = GetArrayElement v0, v1 level=Proven
+function f4 name="hasNoHoles" parameters=[{type=Array<anything, proven, pristine[Storage, Dense]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage, Dense]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK-NOT: f4: size=[[boxed]] frame=
+function f5 name="atNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: number):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# A number that is no index goes where the other shapes go.
+# CHECK: f5: size=
+# CHECK-NEXT: stub ArrayGetAtNumber x1
+function f6 name="inFastCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetArrayElement v0, v1 level=Proven
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+# CHECK: f6: size=[[inLine]] frame=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# S: f6 b1 Fast
+function f7 name="inCompactCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = GetArrayElement v0, v1 level=Proven
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+# CHECK-NOT: f7: size=[[inLine]] frame=
+# CHECK: stub ArrayGetAtIndex x1
+# S: f7 b1 Compact
+function f8 name="has" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=boolean}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = HasArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f8: size=[[has]] frame=
+# CHECK-NEXT: stub ArrayHasAtIndex x1
+function f9 name="hasInArrayWithoutHoles" parameters=[{type=Array<anything, proven, pristine[Storage, Dense]>}, {type=int[0, 4294967294]}] results=[{type=boolean}] {
+  b0(v0: Array<anything, proven, pristine[Storage, Dense]>, v1: int[0, 4294967294]):
+    v2 = HasArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK-NOT: f9: size=[[has]] frame=
+function f10 name="inEachShape" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 level=Proven
+    v7 = GetArrayElement v0, v2 level=Proven
+    v8 = GetArrayElement v0, v3 level=Proven
+    v9 = GetArrayElement v0, v4 level=Proven [keyIsIntegral]
+    v10 = HasArrayElement v0, v1 level=Proven
+    v11 = HasArrayElement v0, v2 level=Proven
+    v12 = HasArrayElement v0, v3 level=Proven
+    v13 = HasArrayElement v0, v4 level=Proven [keyIsIntegral]
+    v14 = NewArray v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v16 = GetArrayElement v0, v1 level=Proven
+    v17 = GetArrayElement v0, v2 level=Proven
+    v18 = GetArrayElement v0, v3 level=Proven
+    v19 = GetArrayElement v0, v4 level=Proven [keyIsIntegral]
+    v20 = HasArrayElement v0, v1 level=Proven
+    v21 = HasArrayElement v0, v2 level=Proven
+    v22 = HasArrayElement v0, v3 level=Proven
+    v23 = HasArrayElement v0, v4 level=Proven [keyIsIntegral]
+    v24 = NewArray v16, v17, v18, v19, v20, v21, v22, v23 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v25 = GetArrayElement v0, v1 level=Proven
+    v26 = GetArrayElement v0, v2 level=Proven
+    v27 = GetArrayElement v0, v3 level=Proven
+    v28 = GetArrayElement v0, v4 level=Proven [keyIsIntegral]
+    v29 = HasArrayElement v0, v1 level=Proven
+    v30 = HasArrayElement v0, v2 level=Proven
+    v31 = HasArrayElement v0, v3 level=Proven
+    v32 = HasArrayElement v0, v4 level=Proven [keyIsIntegral]
+    v33 = NewArray v25, v26, v27, v28, v29, v30, v31, v32 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK: f10: size=
+# CHECK-NOT: no code
+# S: f10 b0 Fast
+# S: f10 b1 Fast
+# S: f10 b3 Compact
+# R-LABEL: function f10 name="inEachShape"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-4: anything @JSValue = GetArrayElement
+# R-COUNT-4: boolean @Boolean = HasArrayElement
+function f11 name="inTheLibrary" role=Library parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK-NOT: f11: size=[[boxed]] frame=
+# CHECK: f11: size=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+function f12 name="holdsNoNumberInTheLibrary" role=Library parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: int[0, 4294967294]):
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f12: size=[[boxed]] frame=

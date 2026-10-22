@@ -31,11 +31,13 @@
 #include "AirArgInlines.h"
 #include "AirBlockInsertionSet.h"
 #include "AirCode.h"
+#include "AirExtendedForms.h"
 #include "AirHandleCalleeSaves.h"
 #include "AirInstInlines.h"
 #include "AirLowerStackArgs.h"
 #include "AirStackAllocation.h"
 #include "AirTmpMap.h"
+#include "B3Procedure.h"
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 #include "Reg.h"
@@ -542,6 +544,13 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
 
     DisallowMacroScratchRegisterUsage disallowScratch(*m_jit);
 
+    bool usesExtendedForms = m_code.proc().policy().selection.extendsInstructionSelection;
+    auto admitsStack = [&] (Inst& inst, Arg& arg) {
+        if (!inst.admitsStack(arg))
+            return false;
+        return usesExtendedForms || !admitsStackOnlyInExtendedForm(inst, &arg - &inst.args()[0]);
+    };
+
     buildLiveRanges(*m_liveness);
 
     m_code.forEachTmp([&] (Tmp tmp) {
@@ -776,7 +785,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                 if (!Arg::isColdUse(role))
                     return;
 
-                if (!inst.admitsStack(arg))
+                if (!admitsStack(inst, arg))
                     return;
 
                 auto& entry = m_map[tmp];
@@ -872,7 +881,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
 
                     inst = instCopy;
                     inst.forEachArg([&] (Arg& arg, Arg::Role, Bank, Width) {
-                        if (arg.isTmp() && !arg.tmp().isReg() && inst.admitsStack(arg)) {
+                        if (arg.isTmp() && !arg.tmp().isReg() && admitsStack(inst, arg)) {
                             Tmp tmp = arg.tmp();
                             auto& entry = m_map[tmp];
                             if (Reg reg = entry.reg)

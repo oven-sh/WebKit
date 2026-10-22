@@ -7,18 +7,30 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTChildProcess.h"
+#include "AOTCompile.h"
+#include "AOTCompileOptionWords.h"
+#include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTProgramFile.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeType.h"
-#include "AOTTypeErrorMessages.h"
+#include "AOTTemporaryFile.h"
+#include "AOTThreads.h"
+#include "AOTErrorMessages.h"
 #include "JSCInlines.h"
+#include "Options.h"
+#include <memory>
 #include <optional>
 #include <wtf/DataLog.h>
 #include <wtf/Vector.h>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -38,8 +50,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
-    v3 = Claim v2 castType=number
-    v4 = Claim v2 castType=string
+    v3 = Check v2 castType=number
+    v4 = Check v2 castType=string
     v5 = NewObject -, v3 layout=L0 fields=[0]
     v6 = NewObject -, v3 layout=L1 fields=[0]
     v7 = NewObject -, v3, v4, v2, v5, v6, v5 layout=L2 fields=[0, 1, 2, 3, 4, 5]
@@ -69,10 +81,10 @@ function f2 name="perimeter" parameters=[{type=anything}] results=[{type=anythin
     v1 = Call v0
     Return v1
 }
-function f3 name="claims" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f3 name="checks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = Claim v0 castType=string|Array site=w0
-    v3 = Claim v1 castType=string|Array site=w1
+    v2 = Check v0 castType=string|Array site=w0
+    v3 = Check v1 castType=string|Array site=w1
     v4 = Add v2, v3
     Return v4
 }
@@ -160,7 +172,7 @@ static uint32_t layoutSetWith(LoadedProgram& program, uint32_t firstShape, uint3
 {
     std::span<const LayoutSetData> sets = program.state().tables.layoutSets();
     for (uint32_t index = 0; index < sets.size(); ++index) {
-        if (sets[index].members.first == firstShape && sets[index].members.count == count)
+        if (sets[index].members.first() == firstShape && sets[index].members.count == count)
             return index;
     }
     failNativeTest(__FILE__, __LINE__, "the image has the layout set");
@@ -193,7 +205,7 @@ static FunctionID closureFunctionNamed(LoadedProgram& program, ASCIILiteral name
 {
     const ProgramTables& tables = program.state().tables;
     for (uint32_t function = tables.closureFunctions.first; function < tables.closureFunctions.end; ++function) {
-        if (imageText().equals(StringID(tables.functionNames()[function]), name))
+        if (imageText().equals(StringID(tables.nameOfFunction(function)), name))
             return FunctionID(function);
     }
     failNativeTest(__FILE__, __LINE__, name.characters());
@@ -209,7 +221,7 @@ static uint32_t builtinCellNumberOf(LoadedProgram& program, BuiltinID builtin)
     failNativeTest(__FILE__, __LINE__, "the image has the built-in cell");
 }
 
-static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifier&)> auto& matches)
+static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifierWord&)> auto& matches)
 {
     for (uint32_t number = 1; number < imageText().numberOfIdentifiers(); ++number) {
         if (matches(imageText().identifier(number)))
@@ -229,7 +241,7 @@ static bool isDescribedAs(LoadedProgram& program, const RuntimeType& type, Strin
 
 static bool hasMessage(LoadedProgram& program, JSValue value, const RuntimeType& type, StringView expected)
 {
-    String message = mismatchMessage(program.state(), program.vm(), value, type);
+    String message = makeString("expected "_s, describe(program.state().tables, type), ", got "_s, describe(value));
     if (message == expected)
         return true;
     dataLogLn("the message is ", message, ", expected ", expected);
@@ -249,7 +261,7 @@ static void testIsObject(LoadedProgram& program)
     AOT_TEST_CHECK(hasMessage(program, jsNumber(3), TypeRecord(noPrimitives, { RuntimeCellTest::isObject() }), "expected object, got number 3"_s));
 }
 
-static void testIsObjectOfWrittenLayouts(LoadedProgram& program)
+static void testIsObjectOfListedLayouts(LoadedProgram& program)
 {
     TypeRecord circle(noPrimitives, { RuntimeCellTest::isObject() }, { }, std::nullopt, std::nullopt, layoutSetOf(program, "Circle"_s));
     TypeRecord either(noPrimitives, { RuntimeCellTest::isObject() }, { }, std::nullopt, std::nullopt, layoutSetOfBoth(program));
@@ -275,7 +287,7 @@ static void testCellTypeIs(LoadedProgram& program)
     TypeRecord maps(noPrimitives, { RuntimeCellTest::cellTypeIs(JSMapType, JSMapType) });
     AOT_TEST_CHECK(isDescribedAs(program, maps, "Map"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "[]"_s), maps, "expected Map, got Array"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Set"_s), maps, "expected Map, got native Set"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Set"_s), maps, "expected Map, got built-in Set"_s));
 
     uint32_t number = typeOfField(program, "Holder"_s, 0);
     uint32_t string = typeOfField(program, "Holder"_s, 1);
@@ -289,8 +301,8 @@ static void testCellTypeIs(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, arraysOf(anything), "any[]"_s));
     AOT_TEST_CHECK(isDescribedAs(program, arraysOf(circle), "Circle[]"_s));
     AOT_TEST_CHECK(hasMessage(program, jsNumber(4), arraysOf(string), "expected string[], got number 4"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Map"_s), arraysOf(string), "expected string[], got native Map"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Uint8Array(1)"_s), arraysOf(anything), "expected any[], got native Uint8Array"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Map"_s), arraysOf(string), "expected string[], got built-in Map"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Uint8Array(1)"_s), arraysOf(anything), "expected any[], got built-in Uint8Array"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "({ length: 0 })"_s), arraysOf(anything), "expected any[], got untyped object"_s));
 }
 
@@ -320,19 +332,19 @@ static void testInheritsClassInfo(LoadedProgram& program)
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "({})"_s), maps, "expected Map, got untyped object"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "(function () { })"_s), maps, "expected Map, got function"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "(function list() { })"_s), maps, "expected Map, got function list"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Date(0)"_s), maps, "expected Map, got native Date"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Date(0)"_s), maps, "expected Map, got built-in Date"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord(noPrimitives, { RuntimeCellTest::inheritsClassInfo(BuiltinClasses::Map), RuntimeCellTest::inheritsClassInfo(BuiltinClasses::Set) }), "Map | Set"_s));
 
     TypeRecord weakReferences(noPrimitives, { RuntimeCellTest::inheritsClassInfo(BuiltinClasses::WeakRef) });
     AOT_TEST_CHECK(isDescribedAs(program, weakReferences, "WeakRef"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new WeakMap"_s), weakReferences, "expected WeakRef, got native WeakMap"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new WeakMap"_s), weakReferences, "expected WeakRef, got built-in WeakMap"_s));
 }
 
 static void testIsPristine(LoadedProgram& program)
 {
     TypeRecord maps(noPrimitives, { RuntimeCellTest::isPristine(BuiltinClasses::Map) });
     AOT_TEST_CHECK(isDescribedAs(program, maps, "Map"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Set"_s), maps, "expected Map, got native Set"_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Set"_s), maps, "expected Map, got built-in Set"_s));
 
     TypeRecord arrays(noPrimitives, { RuntimeCellTest::isPristine(BuiltinClasses::Array) }, { }, std::nullopt, typeOfField(program, "Holder"_s, 1));
     AOT_TEST_CHECK(isDescribedAs(program, arrays, "string[]"_s));
@@ -366,13 +378,13 @@ static void testIsClosureOf(LoadedProgram& program)
 static void testIsSymbol(LoadedProgram& program)
 {
     const ProgramTables& tables = program.state().tables;
-    uint32_t tag = identifierNumberOf([&](const ImageIdentifier& record) {
+    uint32_t tag = identifierNumberOf([&](const ImageIdentifierWord& record) {
         return record.kind() == PropertyKeyKind::CreatedSymbol && record.text() && imageText().equals(record.text(), "tag"_s);
     });
     String description = describe(tables, TypeRecord(noPrimitives, { RuntimeCellTest::isSymbol(tag) }));
     AOT_TEST_CHECK(description.contains("tag"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::Symbol }), "symbol"_s));
-    AOT_TEST_CHECK(!program.instance().image.programIdentifiers[tag]);
+    AOT_TEST_CHECK(!program.vm().aotState().identifiers->tryGetIdentifierConcurrently(tag));
 }
 
 static void testPrimitives(LoadedProgram& program)
@@ -422,17 +434,71 @@ static void testTextOfSite(LoadedProgram& program)
     AOT_TEST_CHECK(describe(tables, stringsAndArrays, assertion) == "written behind as"_s);
     AOT_TEST_CHECK(describe(tables, TypeRecord({ PrimitiveSet::String }), assertion) == "written behind as"_s);
     AOT_TEST_CHECK(describe(tables, TypeRecord({ PrimitiveSet::String }, { RuntimeCellTest::isObject() }), parameter) == "written for a parameter"_s);
-    AOT_TEST_CHECK(mismatchMessage(program.state(), program.vm(), jsNumber(7), stringsAndArrays, assertion) == "expected written behind as, got number 7"_s);
 }
 
+static Vector<uint8_t> compileReportingMismatches()
+{
+    Vector<uint8_t> image;
+    runOnBuildThread([&] {
+        Wire::CompileOptions options = makeDefaultCompileOptions();
+        options.executableIdentity = { };
+        options.mismatchPolicy = Wire::MismatchPolicy::Report;
+        BuildContext build(options);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        if (!program) {
+            build.diagnostics().finish(nullptr);
+            Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
+        }
+        AOT_TEST_CHECK(program);
+
+        std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
+        if (output->image.isEmpty())
+            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
+        AOT_TEST_CHECK(!output->image.isEmpty());
+        image = WTF::move(output->image);
+    });
+    return image;
+}
+
+static constexpr ASCIILiteral textOfSiteTest = "type-error-messages/text-of-site"_s;
+
+// A check that fails goes on in the generic version and says nothing, so its site is in the image only where the build reports mismatches.
+static void testTextOfSiteWhereMismatchesAreReported()
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(textOfSiteTest, programText, testTextOfSite);
+        return;
+    }
+
+    TemporaryFile image(".image"_s, compileReportingMismatches().span());
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(textOfSiteTest), makeString("--aotImagePath="_s, image.path()) };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(result.output);
+        dataLogLn("The process that uses the image ", result.description());
+        failNativeTest(__FILE__, __LINE__, textOfSiteTest.characters());
+    }
+}
+
+// Only a build that logs type errors puts a type into words, so only its image says what a container holds and names the sets of layouts.
 template<LoadedProgramTest body>
-static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<typeErrorMessageTests, programText, body>;
+static void withProgram()
+{
+    for (const NativeTest& test : typeErrorMessageTests()) {
+        if (test.run == &withProgram<body>) {
+            runWithLoadedProgram(test.name, programText, body, { "type-errors=log"_s });
+            return;
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 std::span<const NativeTest> typeErrorMessageTests()
 {
     static constexpr NativeTest tests[] = {
         { "type-error-messages/is-object"_s, withProgram<testIsObject> },
-        { "type-error-messages/object-of-written-layouts"_s, withProgram<testIsObjectOfWrittenLayouts> },
+        { "type-error-messages/object-of-listed-layouts"_s, withProgram<testIsObjectOfListedLayouts> },
         { "type-error-messages/is-callable"_s, withProgram<testIsCallable> },
         { "type-error-messages/cell-type-is"_s, withProgram<testCellTypeIs> },
         { "type-error-messages/shape-in"_s, withProgram<testShapeIn> },
@@ -443,7 +509,7 @@ std::span<const NativeTest> typeErrorMessageTests()
         { "type-error-messages/is-symbol"_s, withProgram<testIsSymbol> },
         { "type-error-messages/primitives"_s, withProgram<testPrimitives> },
         { "type-error-messages/literal-strings"_s, withProgram<testLiteralStrings> },
-        { "type-error-messages/text-of-site"_s, withProgram<testTextOfSite> },
+        { textOfSiteTest, testTextOfSiteWhereMismatchesAreReported },
     };
     return tests;
 }

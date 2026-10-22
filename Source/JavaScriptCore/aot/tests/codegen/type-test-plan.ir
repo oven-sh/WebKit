@@ -23,11 +23,11 @@
 # LAYOUTS-NEXT: t7 Cell t8: NeverPasses
 # RUN(CLASSES): type-test-plan t0 JSValue t9 t0 JSValue t10 t23 JSValue t10 t24 JSValue t10
 # CLASSES: t0 JSValue t9: NeedsTest pass=none fail={{*}} objects=NeedTest
-# CLASSES-NEXT: cell CellTypeIs ArrayType..DerivedArrayType
+# CLASSES-NEXT: cell CellTypeIs ArrayType..ArrayType
 # CLASSES-NEXT: t0 JSValue t10: NeverPasses
 # CLASSES-NEXT: t23 JSValue t10: NeedsTest pass=none fail=Undefined integers=any strings=0 objects=AllPass
 # CLASSES-NEXT: t24 JSValue t10: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
-# CLASSES-NEXT: cell CellTypeIs ArrayType..DerivedArrayType
+# CLASSES-NEXT: cell CellTypeIs ArrayType..ArrayType
 # RUN(FUNCTIONS): type-test-plan t0 JSValue t11 t0 JSValue t19 t0 JSValue t12
 # FUNCTIONS: t0 JSValue t11: NeedsTest pass=none fail={{*}} objects=NeedTest
 # FUNCTIONS-NEXT: cell IsClosureOf 1
@@ -80,11 +80,11 @@ variable g23 name="t23" declared={type=undefined|Array<number, proven>} initiali
 variable g24 name="t24" declared={type=L0|Array<number, proven>} initialization=Undefined
 function f0 name="allocatePoint" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }
 function f1 name="allocatePoint3" parameters=[{type=number}] results=[{type=L1}] {
   b0(v0: number):
-    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1] [keepsShape]
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     Return v1
 }

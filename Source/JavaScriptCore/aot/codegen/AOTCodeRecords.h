@@ -20,6 +20,7 @@
 #include "CCallHelpers.h"
 #include "HandlerInfo.h"
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/Box.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
@@ -31,6 +32,7 @@ struct FrameRequirements {
     bool savesFrameOnSuspend { false };
     bool needsStackCheckForTailCalls { false };
     bool dropsArgumentListFrames { false };
+    bool spillsArgumentRegisters { false };
     unsigned stackUsedAtCalls { 0 };
 };
 
@@ -90,6 +92,7 @@ struct TrappingAccess {
     MacroAssembler::Label instruction;
     ValueID value;
     GPRReg reference;
+    bool referenceIsNarrow;
 };
 
 struct CallThrowSite {
@@ -145,6 +148,8 @@ struct CodeRecords {
     TrapRecords traps;
     InstructionObserver observer;
     CodeGenerationTotals& totals;
+    // By the index of the operation: the code generator has compressed an operand in front of it, so the narrow reference has the origin of the operation.
+    BitVector operationsWithCompressedOperand;
 };
 
 } } } // namespace JSC::AOT::Typed

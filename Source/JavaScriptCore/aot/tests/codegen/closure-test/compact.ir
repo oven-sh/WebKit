@@ -1,7 +1,7 @@
-# Closure tests of a callee that is one of two functions and of a predicted callee pass the back-end checks in compact code
+# Closure tests of a callee that is one of two functions and of an expected callee pass the back-end checks in compact code
 # RUN: compile
 # OPTIONS: heat=everything-is-cold validate check=validate-back-end
-# STATISTIC: CallsResolved >= 2
+# STATISTIC: CallsResolved >= 1
 # STATISTIC: CallsGuarded >= 1
 # STATISTIC: TestAndBranchGroups >= 2
 # CHECK: image not empty
@@ -34,8 +34,8 @@ function f3 name="dispatch" parameters=[{type=f1|f2}] results=[{type=anything}] 
     v1 = Call v0
     Return v1
 }
-function f4 name="callPredicted" parameters=[{type=function predicted=f1}] results=[{type=anything}] {
-  b0(v0: function ~ f1):
+function f4 name="callExpected" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f1):
     v1 = Call v0
     Return v1
 }

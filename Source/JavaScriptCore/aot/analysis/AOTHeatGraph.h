@@ -8,8 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTThreads.h"
 #include <span>
+#include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
@@ -18,6 +21,7 @@ class BuildContext;
 
 namespace Typed {
 
+class BodyReferences;
 class CallGraph;
 class EffectSummaries;
 class FlowResults;
@@ -37,6 +41,34 @@ inline constexpr double eventsPerRun = 32768;
 struct HeatBlockGroup {
     double frequency { 0 };
     uint32_t size { 0 };
+};
+
+// How often a block runs each time that its function is entered.
+struct WeightOfBlock {
+    BlockID block;
+    double weight { 0 };
+
+    friend bool operator==(const WeightOfBlock&, const WeightOfBlock&) = default;
+};
+
+class HeatGraph;
+
+// All that a heat graph takes from the graph, the cycles and the frequencies of a body: the blocks that can be reached, in reverse post order, each with its weight.
+// Kept from one heat graph to the next. Whoever keeps this says which functions changed, and which see a record that changed.
+class BodyWeights {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodyWeights);
+    WTF_MAKE_NONCOPYABLE(BodyWeights);
+public:
+    BodyWeights() = default;
+
+    void didChange(std::span<const FunctionID>);
+    bool keepsSomethingOf(FunctionID id) const { return id.index() < m_blocks.size() && !m_blocks[id.index()].isEmpty(); }
+
+private:
+    friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences*, const BodyWeights*, BodyWeights*);
+
+    // Empty for a function of which nothing is kept.
+    Vector<Vector<WeightOfBlock>> m_blocks;
 };
 
 class HeatGraph {
@@ -67,7 +99,7 @@ public:
     void dump(PrintStream&) const;
 
 private:
-    friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&);
+    friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences*, const BodyWeights*, BodyWeights*);
 
     void computePredecessors();
 
@@ -79,10 +111,12 @@ private:
     Vector<Node> m_predecessors;
     Vector<uint32_t> m_sizes;
     Vector<double> m_masses;
-    Vector<Vector<HeatBlockGroup, 4>> m_blockGroups;
+    ParallelArray<Vector<HeatBlockGroup, 4>> m_blockGroups;
 };
 
-HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&);
+// The references are those that the call graph was made from, of the program as it is. Without them every operation that may run code is described here.
+// The weights of a body that are kept are taken as they are. Those of every body go to `made`, which comes empty.
+HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences* = nullptr, const BodyWeights* kept = nullptr, BodyWeights* made = nullptr);
 Vector<double> estimateActivations(HeatGraph&);
 
 } } } // namespace JSC::AOT::Typed

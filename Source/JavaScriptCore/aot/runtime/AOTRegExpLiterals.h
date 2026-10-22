@@ -9,10 +9,10 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTRegExpRecord.h"
-#include "RememberedSlot.h"
-#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -34,17 +34,18 @@ public:
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
-    static constexpr unsigned variantsPerRecord = 4;
-    static_assert(variantsPerRecord < sizeof(ImageRegExp), "The records fill a section of less than 4 GB, so a key neither overflows nor is the empty or the deleted value.");
+    // A cell names its record and its flags, so the set holds the cells and nothing else.
+    struct CellHash {
+        static unsigned hash(RegExp*);
+        static bool equal(RegExp* a, RegExp* b) { return a == b; }
+        static constexpr bool safeToCompareToEmptyOrDeleted = false;
+    };
 
-    static constexpr uint32_t keyOf(RegExpRecordID record, OptionSet<Yarr::Flags> flags)
-    {
-        uint32_t variant = (flags.contains(Yarr::Flags::Global) ? 1 : 0) | (flags.contains(Yarr::Flags::HasIndices) ? 2 : 0);
-        return record.index() * variantsPerRecord + variant;
-    }
-
-    RememberedSlotSet m_writtenCells;
-    UncheckedKeyHashMap<uint32_t, RegExp*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_cells;
+    const ImageRegExp* m_records { nullptr };
+    UncheckedKeyHashSet<RegExp*, CellHash> m_cells;
+    Vector<RegExp*> m_cellsInOrderOfCreation;
+    size_t m_numberOfCellsVisited { 0 };
+    uint32_t m_lastFullVisitVersion { 0 };
 };
 
 } // namespace AOT

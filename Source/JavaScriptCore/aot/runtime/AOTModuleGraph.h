@@ -9,11 +9,45 @@
 
 #include "AOTModuleData.h"
 #include "JSExportMacros.h"
+#include <optional>
 #include <span>
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
+struct ContractedModuleRequests {
+    Vector<uint32_t> linkRequests;
+    Vector<uint32_t> evaluationRequests;
+    // One entry for each list that is too long to stand for its module in the lists of the importers.
+    Vector<uint32_t> modulesOverLimit;
+};
+
 JS_EXPORT_PRIVATE void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests);
+
+// Both go by the flags that computeModuleFlags() sets. A link follows every request, an evaluation the imports alone.
+// A module that only passes a walk on to its requests is replaced in the lists of its importers by its own list, so that the walk never visits it.
+// A require() of a module whose requests are being evaluated answers at once, so a module that a require() names has to be visited.
+JS_EXPORT_PRIVATE ContractedModuleRequests contractModuleRequests(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, const BitVector& modulesNamedByRequire, uint32_t maxContractedRequests);
+JS_EXPORT_PRIVATE Vector<LinkPlanStepData> planLinkOfEntryPoint(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, ModuleID entryPoint);
+
+// An import() of a module that the build knows.
+struct ModuleImportSite {
+    uint32_t importer;
+    uint32_t target;
+
+    friend auto operator<=>(const ModuleImportSite&, const ModuleImportSite&) = default;
+};
+
+struct LinkPlansOfRoots {
+    // In the order of the modules, with the end record. Empty where there is no plan.
+    Vector<LinkPlanRootData> roots;
+    Vector<LinkPlanStepData> steps;
+};
+
+// What a walk of all the requests does while no module is linked. Whatever is linked by then, the steps that are left to do come in the order of the plan:
+// a module is linked together with everything it requests, so no way to a step that is left leads through a linked module.
+JS_EXPORT_PRIVATE LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite>, std::optional<ModuleID> plannedEntryPoint);
 
 } } // namespace JSC::AOT
 

@@ -1,6 +1,6 @@
 # JSON.stringify of a union writes each kind of object behind its own test, and a part without a plan takes the original call
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
 # STATISTIC: OwnKeyWalksExpanded = 5
 # STATISTIC: SerializersCreated = 2
@@ -32,13 +32,13 @@ function f0 name="provenUnion" parameters=[{type=string|L0|L1|Array<number>}] re
 # CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfOther]]
 # CHECK: = StringBuilderFinish [[builder0]]
 
-function f1 name="predictedUnion" parameters=[{type=anything predicted=undefined|number|string|L0|Array<L1>}] results=[{type=anything}] {
+function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Array<L1> flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|number|string|L0|Array<L1>):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
 }
-# CHECK-LABEL: function f1 name="predictedUnion"
+# CHECK-LABEL: function f1 name="expectedUnion"
 # CHECK: [[builder1]]: stringbuilder = StringBuilderBegin
 # CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder1]]

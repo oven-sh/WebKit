@@ -27,6 +27,7 @@
 #include "LLIntSlowPaths.h"
 
 #include "AOTInterpreterSlowPaths.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTRemovableFeature.h"
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
@@ -41,6 +42,7 @@
 #include "ErrorHandlingScope.h"
 #include "Exception.h"
 #include "ExceptionFuzz.h"
+#include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "FunctionAllowlist.h"
 #include "FunctionCodeBlock.h"
@@ -822,6 +824,12 @@ LLINT_SLOW_PATH_DECL(slow_path_create_lexical_environment)
     JSValue initialValue = getOperand(callFrame, bytecode.m_initialValue);
     ASSERT(initialValue == jsUndefined() || initialValue == jsTDZValue());
     JSScope* newScope = JSLexicalEnvironment::create(vm, globalObject, currentScope, symbolTable, initialValue);
+#if ENABLE(AOT)
+    if (Options::useAOT())
+        AOT::Interpreter::checkPlacesInSymbolTable(*symbolTable);
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineAllocation(vm);
+#endif
     LLINT_RETURN(newScope);
 }
 
@@ -973,15 +981,21 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    if (baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType) {
+    Structure* structureBefore = vm.hasCompiledCode() && baseValue.isObject() ? baseValue.asCell()->structure() : nullptr;
+    if (structureBefore) {
         if (std::optional<JSValue> result = AOT::Interpreter::tryGetById(globalObject, baseValue.asCell(), ident))
             RELEASE_AND_RETURN(throwScope, *result);
+        EXCEPTION_ASSERT(!throwScope.exception());
     }
 #endif
     PropertySlot slot(baseValue, PropertySlot::PropertySlot::InternalMethodType::Get);
 
     JSValue result = baseValue.get<true>(globalObject, ident, slot);
     RETURN_IF_EXCEPTION(throwScope, { });
+#if ENABLE(AOT)
+    if (structureBefore)
+        AOT::Interpreter::didGetById(globalObject, asObject(baseValue), structureBefore, ident, slot);
+#endif
 
     if (Options::useLLIntICs()
         && baseValue.isCell()
@@ -1040,6 +1054,27 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     return result;
 }
 
+#if ENABLE(AOT)
+// llint_aot_op_get_by_id takes an empty slot for a miss, which no other reader of such a cache does. It comes here for a compiled object as long as the site is in the default mode and holds nothing.
+static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObject* globalObject, Structure* structure, const Identifier& ident, GetByIdModeMetadata& metadata)
+{
+    if (!Options::useLLIntICs() || metadata.mode != GetByIdMode::Default || metadata.defaultMode.structureID)
+        return;
+    std::optional<PropertyOffset> offset = AOT::Interpreter::placeOfFieldInSiteCache(globalObject, structure, ident);
+    if (!offset)
+        return;
+    ConcurrentJSLocker locker(codeBlock->m_lock);
+    if (*offset == invalidOffset) {
+        metadata.mode = GetByIdMode::Unset;
+        return;
+    }
+    metadata.hitCountForLLIntCaching = 0;
+    metadata.defaultMode.structureID = structure->id();
+    metadata.defaultMode.cachedOffset = *offset;
+    vm.writeBarrier(codeBlock);
+}
+#endif
+
 LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 {
     LLINT_BEGIN();
@@ -1047,14 +1082,25 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
+#if ENABLE(AOT)
+    Structure* structureOfCompiledObject = baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType ? baseValue.asCell()->structure() : nullptr;
+#endif
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
+#if ENABLE(AOT)
+    if (structureOfCompiledObject && !throwScope.exception())
+        cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structureOfCompiledObject, ident, metadata.m_modeMetadata);
+#endif
     LLINT_RETURN_PROFILED(result);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_get_length)
 {
     LLINT_BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpGetLength>();
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = vm.propertyNames->length;
@@ -1076,7 +1122,7 @@ LLINT_SLOW_PATH_DECL(slow_path_iterator_open_get_next)
     Register& nextRegister = callFrame->uncheckedR(bytecode.m_next);
 
     if (!iterator.isObject())
-        LLINT_THROW(createTypeError(globalObject, "Iterator result interface is not an object."_s));
+        LLINT_THROW(createTypeError(globalObject, IteratorResultNotObjectError));
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpIteratorOpen::getNext), codeBlock, globalObject, iterator, vm.propertyNames->next, metadata.m_modeMetadata);
     LLINT_CHECK_EXCEPTION();
@@ -1096,7 +1142,7 @@ LLINT_SLOW_PATH_DECL(slow_path_iterator_next_get_done)
     Register& doneRegister = callFrame->uncheckedR(bytecode.m_done);
 
     if (!iteratorReturn.isObject())
-        LLINT_THROW(createTypeError(globalObject, "Iterator result interface is not an object."_s));
+        LLINT_THROW(createTypeError(globalObject, IteratorResultNotObjectError));
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpIteratorNext::getDone), codeBlock, globalObject, iteratorReturn, vm.propertyNames->done, metadata.m_doneModeMetadata);
     LLINT_CHECK_EXCEPTION();
@@ -1171,7 +1217,7 @@ LLINT_SLOW_PATH_DECL(slow_path_instanceof)
     JSValue constructor = getOperand(callFrame, bytecode.m_constructor);
 
     if (!constructor.isObject())
-        LLINT_THROW(createTypeError(globalObject, "Right hand side of instanceof is not an object"_s));
+        LLINT_THROW(createTypeError(globalObject, InstanceofRightHandSideNotObjectError));
 
     bool result = false;
     JSValue hasInstance = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpInstanceof::getHasInstance), codeBlock, globalObject, constructor, vm.propertyNames->hasInstanceSymbol, metadata.m_hasInstanceModeMetadata);
@@ -1213,7 +1259,12 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     else
         baseValue.putInline(globalObject, ident, getOperand(callFrame, bytecode.m_value), slot);
     LLINT_CHECK_EXCEPTION();
-    
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && slot.type() == PutPropertySlot::NewProperty && baseValue.isCell() && baseValue.asCell()->type() == FinalObjectType && !oldStructure->outOfLineCapacity() && baseValue.asCell()->structure()->outOfLineCapacity())
+        AOT::Interpreter::didAllocateFirstPropertyOutsideCell(globalObject, oldStructure);
+#endif
+
     if (Options::useLLIntICs()
         && baseValue.isCell()
         && slot.isCacheablePut()
@@ -1626,7 +1677,7 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
     baseObject->setPrivateBrand(globalObject, brand);
     LLINT_CHECK_EXCEPTION();
 
-    if (Options::useLLIntICs() && !oldStructure->isDictionary() && baseObject->structure()->isCacheableTransitionFrom(oldStructure)) {
+    if (Options::useLLIntICs() && !oldStructure->isDictionary() && (!vm.mayHaveUncacheableTransitions() || baseObject->structure()->isCacheableTransitionFrom(oldStructure))) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
         Structure* newStructure = baseObject->structure();
 
@@ -1669,7 +1720,7 @@ LLINT_SLOW_PATH_DECL(slow_path_check_private_brand)
     // Since a brand can't ever be removed from an object, it's safe to
     // rely on StructureID even if it's an uncacheable dictionary.
     Structure* structure = baseObject->structure();
-    if (Options::useLLIntICs()) {
+    if (Options::useLLIntICs() && !structure->isCompiledStructure()) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
 
         metadata.m_structureID = structure->id();
@@ -1765,8 +1816,19 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
 
 LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
 {
-    AOT::Interpreter::didLeaveInlineAllocation(callFrame->codeBlock()->vm());
-    return llint_slow_path_new_object(callFrame, pc);
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpNewObject>();
+    ObjectAllocationProfile& profile = bytecode.metadata(codeBlock).m_objectAllocationProfile;
+    if (!AOT::Interpreter::planObjectLiteral(globalObject, codeBlock, pc, profile))
+        AOT::Interpreter::didLeaveInlineAllocation(vm);
+    pc += pc->size();
+    const AOT::Interpreter::ObjectLiteralPlan* plan = AOT::Interpreter::ObjectLiteralPlan::of(profile);
+    if (!plan)
+        LLINT_RETURN(constructEmptyObject(vm, profile.structure()));
+    uint8_t* cell = plan->allocateCell(vm);
+    for (unsigned index = 0; index < plan->numberOfValues; ++index, pc += pc->size())
+        *reinterpret_cast<EncodedJSValue*>(cell + plan->valueOffsets[index]) = JSValue::encode(getOperand(callFrame, pc->as<OpPutById>().m_value));
+    LLINT_RETURN(reinterpret_cast<JSObject*>(cell));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_aot_new_array)
@@ -2032,6 +2094,10 @@ LLINT_SLOW_PATH_DECL(slow_path_jneq)
 LLINT_SLOW_PATH_DECL(slow_path_jstricteq)
 {
     LLINT_BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpJstricteq>();
     LLINT_BRANCH(JSValue::strictEqual(globalObject, getOperand(callFrame, bytecode.m_lhs), getOperand(callFrame, bytecode.m_rhs)));
 }
@@ -2039,6 +2105,10 @@ LLINT_SLOW_PATH_DECL(slow_path_jstricteq)
 LLINT_SLOW_PATH_DECL(slow_path_jnstricteq)
 {
     LLINT_BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpJnstricteq>();
     LLINT_BRANCH(!JSValue::strictEqual(globalObject, getOperand(callFrame, bytecode.m_lhs), getOperand(callFrame, bytecode.m_rhs)));
 }
@@ -2218,7 +2288,7 @@ LLINT_SLOW_PATH_DECL(slow_path_async_iterator_open_get_next)
     Register& nextRegister = callFrame->uncheckedR(bytecode.m_next);
 
     if (!iterator.isObject())
-        LLINT_THROW(createTypeError(globalObject, "Iterator result interface is not an object."_s));
+        LLINT_THROW(createTypeError(globalObject, IteratorResultNotObjectError));
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpAsyncIteratorOpen::getNext), codeBlock, globalObject, iterator, vm.propertyNames->next, metadata.m_modeMetadata);
     LLINT_CHECK_EXCEPTION();
@@ -2275,7 +2345,13 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         slowPathLog("Call callee is not a function: ", callee, "\n");
 
         ASSERT(callData.type == CallData::Type::None);
+#if ENABLE(AOT)
+        JSObject* error = createNotAFunctionError(globalObject, callee);
+        AOT::explainErrorBehindMemberLeftOut(globalObject, error, calleeFrame->thisValue());
+        LLINT_CALL_THROW(globalObject, error);
+#else
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));
+#endif
     }
 
     ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
@@ -2801,7 +2877,7 @@ static void handleIteratorOpenCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = callFrame->uncheckedR(bytecode.m_iterator).jsValue();
     if (!iterator.isObject()) {
-        throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
         return;
     }
 
@@ -2815,7 +2891,7 @@ static void handleAsyncIteratorOpenCheckpoint(VM& vm, CallFrame* callFrame, JSGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = callFrame->uncheckedR(bytecode.m_iterator).jsValue();
     if (!iterator.isObject()) {
-        throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
         return;
     }
 
@@ -2834,7 +2910,7 @@ static void handleIteratorNextCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalO
     RELEASE_ASSERT_WITH_MESSAGE(next, "We should not OSR exit to a checkpoint for fast cases.");
 
     if (!iteratorResultObject.isObject()) {
-        throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
         return;
     }
 

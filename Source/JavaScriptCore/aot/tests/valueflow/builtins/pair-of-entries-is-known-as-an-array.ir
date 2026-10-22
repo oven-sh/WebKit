@@ -1,0 +1,20 @@
+# pairs = Object.entries({ a: 1 }); return pairs[0]
+# A loop over the entries of an object takes each pair apart. The pair is known as an array whose storage, names and density are as it was made,
+# so the two reads under its indexes and the read of its length need no call.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|Array<{{*}}, proven, {{*}}pristine[Storage, Names, Dense]>}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectEntries
+    v4 = Call v3, v2, v1
+    v5 = Integer integer=0
+    v6 = ElemGet v4, v5
+    Return v6
+}

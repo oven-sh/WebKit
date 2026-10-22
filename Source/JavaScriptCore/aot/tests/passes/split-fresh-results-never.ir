@@ -10,7 +10,7 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequir
 layout L1 name="Impossible" fields=[{key="x" declared={type=never} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
 layout L2 name="Other" fields=[{key="z" declared={type=number} flags=[IsRequired]}]
 
-function f0 name="partIsNarrowed" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=object written=L0}] {
+function f0 name="partIsNarrowed" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=L0}] {
   b0(v0: string, v1: number, v2: number):
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v3
@@ -23,7 +23,7 @@ function f0 name="partIsNarrowed" parameters=[{type=string}, {type=number}, {typ
 # CHECK-NEXT: [[y0]]: number = ResultAt [[call0]] index=1
 # CHECK-NEXT: = NewObject -, [[x0]], [[y0]] layout=L0 fields=[0, 1]
 
-function f1 name="impossibleParameter" parameters=[{type=never}, {type=number}, {type=number}] results=[{type=object written=L0}] {
+function f1 name="impossibleParameter" parameters=[{type=never}, {type=number}, {type=number}] results=[{type=L0}] {
   b0(v0: never, v1: number, v2: number):
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v3
@@ -37,7 +37,7 @@ function f1 name="impossibleParameter" parameters=[{type=never}, {type=number}, 
 # CHECK-NEXT: [[point1]]:{{*}}= NewObject -, [[x1]], [[y1]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Return [[point1]]
 
-function f2 name="impossibleField" parameters=[{type=never}, {type=number}, {type=number}] results=[{type=object written=L1}] {
+function f2 name="impossibleField" parameters=[{type=never}, {type=number}, {type=number}] results=[{type=L1}] {
   b0(v0: never, v1: number, v2: number):
     v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
     Return v3
@@ -130,3 +130,17 @@ function f6 name="impossibleFieldInOneVariant" parameters=[{type=never}, {type=n
 # CHECK: function [[worker5]] name="impossibleCell"
 # CHECK: results=[{type=i32}, {type=object}, {type=number}]
 # CHECK-NOT: valueType=never
+
+# Whoever calls them needs no object
+function f7 name="dropsTheResults" parameters=[{type=string}, {type=number}, {type=number}, {type=never}, {type=number}, {type=number}, {type=never}, {type=number}, {type=number}, {type=never}, {type=never}, {type=number}, {type=never}, {type=number}, {type=never}, {type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: number, v2: number, v3: never, v4: number, v5: number, v6: never, v7: number, v8: number, v9: never, v10: never, v11: number, v12: never, v13: number, v14: never, v15: number):
+    v16 = CallDirect v0, v1, v2 function=f0
+    v17 = CallDirect v3, v4, v5 function=f1
+    v18 = CallDirect v6, v7, v8 function=f2
+    v19 = CallDirect v9 function=f3
+    v20 = CallDirect v10, v11 function=f4
+    v21 = CallDirect v12, v13 function=f5
+    v22 = CallDirect v14, v15 function=f6
+    v23 = Undefined
+    Return v23
+}

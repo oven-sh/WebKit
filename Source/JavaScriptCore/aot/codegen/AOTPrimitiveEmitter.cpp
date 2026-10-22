@@ -25,9 +25,8 @@ struct CellTypeChange {
 
 } // anonymous namespace
 
-// In row order: AOT::Object::convertToOrdinaryObject, ClassPrototype::convertToOrdinaryObject, SlimClosure::reify.
+// In row order: ClassPrototype::convertToOrdinaryObject, SlimClosure::reify.
 static constexpr CellTypeChange cellTypeChangesInPlace[] = {
-    { CompiledObjectType, FinalObjectType },
     { ObjectType, FinalObjectType },
     { SlimClosureType, SlimClosureWithPropertiesType },
 };
@@ -45,7 +44,8 @@ static constexpr bool isStableRange(JSTypeRange range)
 }
 
 static_assert(isStableRange({ StringType, StringType }) && isStableRange({ ObjectType, MaxJSType }) && isStableRange(slimClosureTypes) && isStableRange({ ArrayType, DerivedArrayType }) && isStableRange({ CompiledClosureType, CompiledClosureType }));
-static_assert(!isStableRange({ CompiledObjectType, CompiledObjectType }) && !isStableRange({ ObjectType, ObjectType }) && !isStableRange({ FinalObjectType, FinalObjectType }) && !isStableRange({ ObjectType, FinalObjectType }));
+static_assert(isStableRange({ CompiledObjectType, CompiledObjectType }) && isStableRange({ ObjectType, FinalObjectType }));
+static_assert(!isStableRange({ ObjectType, ObjectType }) && !isStableRange({ FinalObjectType, FinalObjectType }));
 static_assert(!isStableRange({ SlimClosureType, SlimClosureType }) && !isStableRange({ SlimClosureWithPropertiesType, SlimClosureWithPropertiesType }));
 
 bool isStableCellTypeRange(JSTypeRange range)
@@ -94,12 +94,12 @@ Condition PrimitiveEmitter::hasCellTypeIn(CellPointer cell, JSTypeRange range)
     return below(sub(type, word32(range.first)), word32(range.last - range.first + 1));
 }
 
-// A type that a cell takes or leaves in place is read with the bytes that change.
+// A type that a cell takes or leaves in place is read as one of the bytes that change: alone, so that the comparison takes it from memory.
 Condition PrimitiveEmitter::hasMutableCellType(CellPointer cell, JSType type)
 {
-    constexpr unsigned cellTypeShift = (JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset()) * 8;
-    static_assert(JSCell::typeInfoTypeOffset() > JSCell::indexingTypeAndMiscOffset() && cellTypeShift + 8 <= 32);
-    return equal(bitAnd(loadUsefulBytes(cell), word32(0xff << cellTypeShift)), word32(type << cellTypeShift));
+    constexpr ptrdiff_t offsetInUsefulBytes = JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset();
+    static_assert(offsetInUsefulBytes > 0 && offsetInUsefulBytes < 4);
+    return equal(Word32(m_out.load8ZeroExt32(m_out.address(cell.value(), m_heaps.JSCell_usefulBytes, offsetInUsefulBytes))), word32(type));
 }
 
 Pointer PrimitiveEmitter::loadStructure(CellPointer cell)
@@ -207,6 +207,20 @@ void definePinnedValues(Output& out, B3::Procedure& proc, InstanceSizes sizes, P
     publishDereferenceableBytes(proc, pinned.instance, InstanceLayout::bytesReservedFromInstance(sizes));
     publishDereferenceableBytes(proc, pinned.instancePrefix, sizeof(InstancePrefix));
     publishDereferenceableBytes(proc, pinned.statics, sizes.sizeOfStatics);
+}
+
+static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && undefinedCell32 < minCell32);
+
+std::optional<NarrowReference> PrimitiveEmitter::narrowWordBehind(LiteralStringWord word)
+{
+    B3::Value* value = word.value();
+    if (value->opcode() != B3::Select || value->child(2)->opcode() != B3::ZExt32)
+        return std::nullopt;
+    B3::Value* narrow = value->child(2)->child(0);
+    B3::Value* isReference = value->child(0);
+    if (isReference->opcode() != B3::AboveEqual || isReference->child(0) != narrow || !isReference->child(1)->isInt32(minCell32))
+        return std::nullopt;
+    return NarrowReference(narrow);
 }
 
 } } } // namespace JSC::AOT::Typed

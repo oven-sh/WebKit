@@ -10,6 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTStubsArithmetic.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -63,6 +64,21 @@ void OperatorEmitter::generateURShift(const ValueContext& value)
     generateBitwise(value, BitwiseOperator::UnsignedRightShift);
 }
 
+// The conversion of a number has a branch to a call for what lies beyond int64, and B3 shares the arithmetic of two conversions but not their branches.
+// So the word that a block has made serves whatever that block dominates: the operators of a loop take what was converted ahead of it.
+template<typename Functor>
+Word32 OperatorEmitter::int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert)
+{
+    Vector<Int32OfNumber, 1>& converted = m_int32OfNumbers.add(number.index(), Vector<Int32OfNumber, 1>()).iterator->value;
+    for (const Int32OfNumber& earlier : converted) {
+        if (earlier.block == user.block() || generator().analyses().dominators().terminatorDominates(earlier.block, user.block()))
+            return earlier.word;
+    }
+    Word32 word = convert();
+    converted.append({ user.block(), word });
+    return word;
+}
+
 void OperatorEmitter::generateBitwise(const ValueContext& value, BitwiseOperator op)
 {
     ValueID left = value->leftOperand();
@@ -85,13 +101,26 @@ void OperatorEmitter::generateBitwise(const ValueContext& value, BitwiseOperator
             return low32(Integer(in<OptionalInteger>(id).value()));
         case Representation::Double:
         case Representation::OptionalDouble:
-            return emitter<ConversionEmitter>().toInt32(asNumericOperand(id));
+            return int32ConvertedOnce(value, id, [&] {
+                return emitter<ConversionEmitter>().toInt32(asNumericOperand(id));
+            });
+        case Representation::JSValue: {
+            if (!typeOf(id).isNumber())
+                break;
+            Boxed boxed = in<Boxed>(id);
+            return int32ConvertedOnce(value, id, [&] {
+                return either<Word32>(isInt32(boxed), [&] {
+                    return unboxInt32(boxed);
+                }, [&] {
+                    return emitter<ConversionEmitter>().toInt32(unboxDouble(boxed));
+                });
+            });
+        }
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:
         case Representation::Cell:
         case Representation::Cell32:
-        case Representation::JSValue:
         case Representation::LiteralString:
         case Representation::RawWord:
             break;
@@ -120,6 +149,8 @@ void OperatorEmitter::generateBitwise(const ValueContext& value, BitwiseOperator
         // A result from 2^31 on comes back as a double.
         if (isUnsigned)
             define(value, emitter<ConversionEmitter>().unbox(result, typeOf(value.id()), value.representation()));
+        else if (value.representation() == Representation::Int32)
+            define(value, unboxInt32(result));
         else
             define(value, result);
         return;

@@ -53,8 +53,8 @@ function f3 name="accessesSlots" parameters=[{type=number}] results=[{type=anyth
     v6 = ForInOpen v2
     Return v3
 }
-# CHECK: site caches 8, without 0
-# CHECK-NEXT: f0 v1 PropGet cache=
+# The read in the body of the module runs at most once, so it asks for none (site-caches.ir).
+# CHECK: site caches 7, without 1
 # CHECK-NEXT: f1 v1 PropGet cache=
 # CHECK-NEXT: f1 v2 PropSet cache=
 # CHECK-NEXT: f1 {{*}} CallMethod cache=

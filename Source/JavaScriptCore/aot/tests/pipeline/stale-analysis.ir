@@ -1,6 +1,6 @@
-# A pass that adds a function drops the call graph and the next user sees the added edge
+# A pass that adds a function drops the call graph and the next user sees the added edge: RemoveUnreachableFunctions, which runs again behind the pass that outlines, keeps the outlined body
 # OPTIONS: heat=EverythingIsCold
-# RUN: pipeline RemoveUnreachableFunctions
+# RUN: pipeline ElideStackChecks
 # STATISTIC: OutlinedBodiesCreated >= 1
 
 module m0 path="/main.js" displayPath="main.js" body=f0

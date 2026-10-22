@@ -1,0 +1,16 @@
+# handedIn.constructor
+# The value may be a bigint, so the read may answer BigInt. A constructor is handed out as the unknown object, also under its name: it has escaped, and it is held. Nothing calls it.
+# RUN: valueflow-solve used
+# CHECK-NOT: run BigInt
+# CHECK: used BigInt
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v1 key="constructor"
+    v3 = Undefined
+    Return
+}

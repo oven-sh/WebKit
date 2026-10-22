@@ -66,6 +66,11 @@ std::optional<OwnKeyWalk> ownKeyWalkOf(const Program& program, const Value& valu
             return std::nullopt;
         return OwnKeyWalk::Spread;
     }
+    if (value.opcode == Opcode::CopyObject) {
+        if (!value.excludedOperands().empty() || !value.excludedKeys().empty())
+            return std::nullopt;
+        return OwnKeyWalk::Copy;
+    }
     if (value.opcode != Opcode::CallBuiltin || value.builtinCallForm() != BuiltinCallForm::Whole)
         return std::nullopt;
 
@@ -103,6 +108,10 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         site.target = value.targetOperand();
         return site;
     }
+    if (*walk == OwnKeyWalk::Copy) {
+        site.source = value.sourceOperand();
+        return site;
+    }
 
     std::span<const ValueID> arguments = builtinCallOf(program, value).arguments;
     switch (*walk) {
@@ -134,6 +143,7 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         break;
     }
     case OwnKeyWalk::Spread:
+    case OwnKeyWalk::Copy:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
@@ -158,12 +168,8 @@ Vector<OwnKeyWalkSite, 4> findOwnKeyWalkSites(FunctionPassContext& context)
     return sites;
 }
 
-bool isWorthExpanding(FunctionPassContext& context, const OwnKeyWalkSite& site)
-{
-    return !isCold(heatClassOf(context, site.block));
-}
-
 UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::span<const OwnKeyWalkSite> sites)
+    : m_context(context)
 {
     auto addUse = [&](const OwnKeyWalkSite& site, ValueID object) {
         ValueID origin = context.analyses.sameObjectThroughCasts(object);
@@ -180,7 +186,6 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
     std::ranges::sort(m_uses, { }, [&](const AllocationUse& use) {
         return std::pair { cfg.reversePostOrderIndex(use.point.block), use.point.index };
     });
-    m_unchanged = findUnchangedAllocations(context, m_uses.span());
 }
 
 bool UnchangedAllocations::contains(ValueID allocation, ProgramPoint point) const
@@ -188,7 +193,11 @@ bool UnchangedAllocations::contains(ValueID allocation, ProgramPoint point) cons
     size_t index = m_uses.findIf([&](const AllocationUse& use) {
         return use.allocation == allocation && use.point.block == point.block && use.point.index == point.index;
     });
-    return index != notFound && m_unchanged.get(index);
+    if (index == notFound)
+        return false;
+    if (!m_unchanged)
+        m_unchanged = findUnchangedAllocations(m_context, m_uses.span());
+    return m_unchanged->get(index);
 }
 
 static bool isUnchangedLiteral(FunctionPassContext& context, const UnchangedAllocations& unchanged, ValueID value, ProgramPoint point)
@@ -223,12 +232,56 @@ static bool hasOnlyFilledFields(const Program& program, const OwnKeyWalkArm& arm
     });
 }
 
+static bool isUnderPrivateName(const Program& program, const Field& field)
+{
+    if (!field.key)
+        return false;
+    PropertyKeyKind kind = program.at(field.key).kind;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+}
+
+static bool hasFieldsUnderPrivateNames(const Program& program, LayoutID layout)
+{
+    return std::ranges::any_of(program.at(layout).fields, [&](const Field& field) {
+        return isUnderPrivateName(program, field);
+    });
+}
+
+static bool listsOrderThatNoObjectHas(const Program& program, const OwnKeyWalkArm& arm)
+{
+    const Vector<Field>& fields = program.at(arm.layout).fields;
+    for (uint32_t field = 0; field < fields.size(); ++field) {
+        if (isUnderPrivateName(program, fields[field]) && !arm.order.contains(field))
+            return true;
+    }
+    return false;
+}
+
+static bool isOrdinaryDataField(const Program& program, FieldReference reference)
+{
+    constexpr OptionSet<FieldFlags> privateNameFlags { FieldFlags::IsPrivate, FieldFlags::IsBrand };
+    const Field& field = fieldAt(program, reference);
+    return flowOf(program, reference).location.deferral == ClosureDeferral::Unknown && !field.flags.containsAny(privateNameFlags) && field.form.isEmpty();
+}
+
 // The bits of such a slot are all there is to its field.
 static bool hasPlainSlot(const Program& program, FieldReference reference)
 {
-    const LocationFlow& location = flowOf(program, reference).location;
-    constexpr OptionSet<FieldFlags> privateNameFlags { FieldFlags::IsPrivate, FieldFlags::IsBrand };
-    return location.stores != StoreCount::AtMostOnce && location.deferral == ClosureDeferral::Unknown && !fieldAt(program, reference).flags.containsAny(privateNameFlags);
+    return flowOf(program, reference).location.stores != StoreCount::AtMostOnce && isOrdinaryDataField(program, reference);
+}
+
+struct WalkedLayouts {
+    bool areProven { false };
+    std::span<const LayoutID> layouts;
+};
+
+static WalkedLayouts walkedLayoutsOf(FunctionPassContext& context, const OwnKeyWalkSite& site)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const Type& type = program.typeOf(function, site.source);
+    bool areProven = type.hasOnlyLayouts(program) && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
+    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(function, site.source)) };
 }
 
 // The layout of a literal that has no property yet when a spread without excluded keys fills it.
@@ -236,26 +289,25 @@ static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const Unchange
 {
     if (site.walk != OwnKeyWalk::Spread || !context.function.at(site.value).excludedKeys().empty())
         return { };
-    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }))
-        return { };
     const Value& allocation = context.function.at(context.analyses.sameObjectThroughCasts(site.target));
-    if (!allocation.fields().empty())
+    if (allocation.opcode != Opcode::NewObject || !allocation.fields().empty())
         return { };
     LayoutID layout = allocation.layout();
+    if (!std::ranges::contains(walkedLayoutsOf(context, site).layouts, layout))
+        return { };
     for (uint32_t field = 0; field < context.program.at(layout).fields.size(); ++field) {
         if (!hasPlainSlot(context.program, { layout, field }))
             return { };
     }
+    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }))
+        return { };
     return layout;
 }
 
 static std::optional<OwnKeyWalkPlan> planWalkByLayouts(FunctionPassContext& context, const OwnKeyWalkSite& site, LayoutID emptyTarget = { })
 {
     const Program& program = context.program;
-    const Function& function = context.function;
-    const Type& type = program.typeOf(function, site.source);
-    bool isProven = type.hasOnlyLayouts() && !type.mayBeUndefinedOrNull();
-    std::span<const LayoutID> layouts = membersOf(program, isProven ? type : program.predictionOrTypeOf(function, site.source));
+    auto [isProven, layouts] = walkedLayoutsOf(context, site);
 
     // HasKeyOrder compares a word that is numbered per layout, so the arms of several proven layouts test the shape too.
     OwnKeyWalkPlan plan { .needsShapeTest = !isProven || layouts.size() > 1 };
@@ -294,9 +346,21 @@ static std::optional<OwnKeyWalkPlan> planWalkByLayouts(FunctionPassContext& cont
         return std::nullopt;
 
     if (coversEveryObject && !numberOfOrdersLeftOut) {
-        plan.needsOriginalCall = false;
+        // The orders of flow list own keys. The word that HasKeyOrder compares counts the fields under private names too, so no object that has one passes the test of such an order.
+        bool canTestOrders = std::ranges::none_of(plan.arms, [&](const OwnKeyWalkArm& arm) {
+            return hasFieldsUnderPrivateNames(program, arm.layout);
+        });
         // A validating build tests the one order that flow has proven: an object with another order reaches the Unreachable behind the arm.
-        plan.needsKeyOrderTest = plan.arms.size() > 1 || !hasOnlyFilledFields(program, plan.arms[0]) || context.build.validates();
+        plan.needsKeyOrderTest = plan.arms.size() > 1 || !hasOnlyFilledFields(program, plan.arms[0]) || (canTestOrders && context.build.validates());
+        plan.needsOriginalCall = plan.needsKeyOrderTest && !canTestOrders;
+    }
+
+    if (plan.needsKeyOrderTest) {
+        plan.arms.removeAllMatching([&](const OwnKeyWalkArm& arm) {
+            return !arm.copiesFieldsAtOnce && listsOrderThatNoObjectHas(program, arm);
+        });
+        if (plan.arms.isEmpty())
+            return std::nullopt;
     }
     return plan;
 }
@@ -319,10 +383,39 @@ static bool assignsPrototype(const Program& program, const OwnKeyWalkPlan& plan)
     });
 }
 
+// A copy is an ordinary object with ordinary properties under the same names in the same order. An object of the source's layout is that where the layout is one of literals
+// and each field that the order lists is an ordinary enumerable property under a string.
+// The run time copies a record by its words, in about 280 instructions however many fields it has. An arm loads and stores field by field, the fields outside the cell by way of the Extension:
+// with 23 fields it took more instructions than the call, and a kilobyte of code.
+static constexpr size_t maxFieldsCopiedByAllocation = 8;
+
+static bool isCopiedByAllocation(const Program& program, const OwnKeyWalkArm& arm)
+{
+    const Layout& layout = program.at(arm.layout);
+    if (layout.kind != LayoutKind::Record || arm.order.size() > maxFieldsCopiedByAllocation)
+        return false;
+    return std::ranges::all_of(arm.order, [&](uint32_t field) {
+        return isEnumerableStringField(program, layout.fields[field]) && isOrdinaryDataField(program, { arm.layout, field });
+    });
+}
+
 std::optional<OwnKeyWalkPlan> planOwnKeyWalk(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
     RELEASE_ASSERT(site.walk != OwnKeyWalk::Assign);
-    return planSourceWalk(context, unchanged, site);
+    std::optional<OwnKeyWalkPlan> plan = planSourceWalk(context, unchanged, site);
+    if (!plan || site.walk != OwnKeyWalk::Copy)
+        return plan;
+    bool leavesArmsOut = plan->arms.removeAllMatching([&](const OwnKeyWalkArm& arm) {
+        return !isCopiedByAllocation(context.program, arm);
+    });
+    if (plan->arms.isEmpty())
+        return std::nullopt;
+    if (leavesArmsOut) {
+        if (!plan->needsShapeTest)
+            return std::nullopt;
+        plan->needsOriginalCall = true;
+    }
+    return plan;
 }
 
 std::optional<OwnKeyWalkPlan> planWalkOfEnumeratedObject(FunctionPassContext& context, ValueID forInOpen)

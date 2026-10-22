@@ -34,8 +34,7 @@ bool isUnobservable(const Effects& effects)
 void retypeAsString(Value& state)
 {
     state.type = TypeTable::string;
-    state.setWritten({ });
-    state.setPrediction({ });
+    state.setExpected({ });
 }
 
 struct OperandSite {
@@ -368,14 +367,14 @@ void NestedWebMerger::applyMerges()
                     prependToEntry(nested.front.span(), entry);
             }
             for (ValueID member : nested.web->members)
-                retypeAsString(m_function.at(member));
+                retypeAsString(m_function.edit(member));
             for (ValueID cast : nested.casts)
                 erase(cast);
         }
         numberOfNestedWebs += merge.nestedWebs.size();
 
         if (merge.remainingOperands.size() > 1) {
-            m_function.at(merge.concatenation).setVariadicOperands(merge.remainingOperands.span());
+            m_function.edit(merge.concatenation).setVariadicOperands(merge.remainingOperands.span());
             continue;
         }
         substitution.replace(merge.concatenation, merge.remainingOperands.first());
@@ -399,7 +398,7 @@ void NestedWebMerger::prependToEntry(std::span<const ValueID> front, const Strin
         parts.append(entry.value);
 
     if (entry.concatenation && canTakeMoreParts(entry.concatenation, parts.size())) {
-        Value& concatenation = m_function.at(entry.concatenation);
+        Value& concatenation = m_function.edit(entry.concatenation);
         for (uint32_t operandIndex = stateOperandIndex + 1; operandIndex < concatenation.numberOfOperands(); ++operandIndex)
             parts.append(concatenation.operand(operandIndex));
         concatenation.become(Opcode::Strcat);
@@ -415,9 +414,9 @@ void NestedWebMerger::prependToEntry(std::span<const ValueID> front, const Strin
     }
 
     if (entry.concatenation)
-        m_function.at(entry.concatenation).setOperand(stateOperandIndex, state);
+        m_function.edit(entry.concatenation).setOperand(stateOperandIndex, state);
     else
-        targetOf(m_function, *entry.edge).arguments[m_useLists.locationOf(entry.parameter).index] = state;
+        editTarget(m_function, *entry.edge).arguments[m_useLists.locationOf(entry.parameter).index] = state;
 }
 
 bool NestedWebMerger::canTakeMoreParts(ValueID concatenation, size_t numberOfParts)

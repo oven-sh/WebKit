@@ -15,7 +15,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = IsPlainDataObject v1
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
-    v5 = Claim v1 castType=object
+    v5 = AssumeType v1 castType=object
     v6 = CloneAs v5, v4, v2, v2 layout=L0 fields=[1, 2]
     v7 = CloneAs v5, v4, v2, v2, v2 layout=L1 fields=[0, 1, 2]
     Jump -> next b2()
@@ -23,14 +23,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 
-# A field that a CloneAs fills has a slot, whatever is known of the stores.
-# SLOTS: L0 CompiledObject size=32 fields=2
+# A field that a CloneAs fills has a slot, whatever is known of the stores. Nothing is stated about the objects, so each layout has the word for extra properties behind its fields.
+# SLOTS: L0 CompiledObject size=48 fields=2
 # SLOTS-NEXT: .1 "first" {{*}}record=0
 # SLOTS-NEXT: .2 "second" {{*}}record=1
+# SLOTS-NEXT: extra
 # SLOTS-NEXT: L1 CompiledObject size=48 fields=3
 # SLOTS-NEXT: .0 "zeroth" {{*}}record=0
 # SLOTS-NEXT: .1 "first" {{*}}record=1
 # SLOTS-NEXT: .2 "second" {{*}}record=2
+# SLOTS-NEXT: extra
 
 # A request is the shape, the count and one word a field: 16 and 20 bytes after the reserved first word.
 # CHECK: shape [[first]] L0

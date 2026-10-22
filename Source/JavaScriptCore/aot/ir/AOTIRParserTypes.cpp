@@ -21,6 +21,7 @@ static constexpr unsigned maxTypeNestingInText = 32;
 static constexpr uint32_t hasIntegersFlag = static_cast<uint32_t>(TypeFlags::HasIntegers);
 static constexpr uint32_t anyFunctionFlag = static_cast<uint32_t>(TypeFlags::AnyFunction);
 static constexpr uint32_t anyObjectFlags = static_cast<uint32_t>(TypeFlags::AnyObject) | anyFunctionFlag;
+static constexpr uint32_t hasMembersWithoutLayoutFlag = static_cast<uint32_t>(TypeFlags::HasMembersWithoutLayout);
 
 struct PrimitiveTypeWord {
     ASCIILiteral word;
@@ -50,7 +51,6 @@ struct TextParser::TypeParts {
         bool contentsAreProven { false };
         ArrayStorage arrayStorage { ArrayStorage::Other };
         OptionSet<PristineAspects> provenPristine;
-        Vector<uint32_t, 2> predictedContents;
     };
 
     static bool isAtSymbolKey(const TextParser&);
@@ -67,6 +67,7 @@ struct TextParser::TypeParts {
     Vector<EngineClassPart> engineClassParts;
     Vector<RegExpLiteralInType> regExpLiterals;
     bool layoutsAreExact { false };
+    bool hasMembersWithoutLayout { false };
     bool hasEngineParts { false };
 };
 
@@ -319,6 +320,10 @@ static bool parseObjectWordPart(TextParser& parser, Wire::Type& wire)
         wire.flags |= anyObjectFlags;
         return true;
     }
+    if (parser.acceptWord("nolayout"_s)) {
+        wire.flags |= hasMembersWithoutLayoutFlag;
+        return true;
+    }
     if (parser.atWord("function"_s)) {
         parseFunctionPart(parser, wire);
         return true;
@@ -378,7 +383,8 @@ uint32_t TextParser::parseTypeWord()
     if (hasFailed())
         return 0;
 
-    parts->layoutsAreExact = m_layoutsAreExact && !parts->layouts.isEmpty();
+    parts->hasMembersWithoutLayout = wire.flags & hasMembersWithoutLayoutFlag;
+    parts->layoutsAreExact = m_layoutsAreExact && (!parts->layouts.isEmpty() || parts->hasMembersWithoutLayout);
     if (!parts->hasEngineParts && !parts->layoutsAreExact)
         return m_builder.internType(wire);
 
@@ -463,9 +469,6 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
         parseList(TokenKind::LeftAngle, TokenKind::RightAngle, [&] {
             if (contents.size() < arity) {
                 contents.append(parseTypeWord());
-                bool hasPrediction = accept(TokenKind::Tilde);
-                parts.hasEngineParts |= hasPrediction;
-                enginePart.predictedContents.append(hasPrediction ? parseTypeWord() : Wire::none);
                 return;
             }
             parts.hasEngineParts = true;
@@ -504,7 +507,7 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
     parts.engineClassParts.insert(index, enginePart);
 }
 
-void TextParser::completeType(uint32_t wireIndex, std::span<const TypeID> earlierTypes, Type& type) const
+void TextParser::completeType(uint32_t wireIndex, Type& type) const
 {
     auto iterator = m_engineTypeParts.find(wireIndex);
     if (iterator == m_engineTypeParts.end())
@@ -522,14 +525,13 @@ void TextParser::completeType(uint32_t wireIndex, std::span<const TypeID> earlie
         part.contentsAreProven = enginePart.contentsAreProven;
         part.arrayStorage = enginePart.arrayStorage;
         part.provenPristine = enginePart.provenPristine;
-        for (uint32_t word : enginePart.predictedContents)
-            part.predictedContents.append(word == Wire::none ? TypeID() : earlierTypes[word]);
     }
     type.regExpLiteralSet = SortedSet<RegExpLiteralInType>(parts.regExpLiterals.span());
 
     if (parts.layoutsAreExact) {
-        LayoutSet writtenLayouts { parts.layouts.map([](uint32_t word) { return LayoutID(word); }), true };
-        type.layouts = m_program->types.intern(WTF::move(writtenLayouts));
+        LayoutSet exactLayouts { parts.layouts.map([](uint32_t word) { return LayoutID(word); }), true };
+        exactLayouts.hasMembersWithoutLayout = parts.hasMembersWithoutLayout;
+        type.layouts = m_program->types.intern(WTF::move(exactLayouts));
     }
 }
 
@@ -544,6 +546,10 @@ LayoutSetID TextParser::parseLayoutSet()
         }
         if (accept(TokenKind::DotDot)) {
             set.isComplete = false;
+            return;
+        }
+        if (!set.hasMembersWithoutLayout && acceptWord("nolayout"_s)) {
+            set.hasMembersWithoutLayout = true;
             return;
         }
         set.members.append(LayoutID(parseIDWordBelow(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));

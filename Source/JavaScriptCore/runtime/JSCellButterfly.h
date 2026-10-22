@@ -160,8 +160,16 @@ public:
     static JSCellButterfly* fromButterfly(Butterfly* butterfly) { return std::bit_cast<JSCellButterfly*>(std::bit_cast<char*>(butterfly) - offsetOfData()); }
     static bool isOnlyAtomStringsStructure(VM& vm, Butterfly* butterfly)
     {
-        return fromButterfly(butterfly)->structure() == vm.cellButterflyOnlyAtomStringsStructure.get();
+        return !isOutsideHeap(butterfly) && fromButterfly(butterfly)->structure() == vm.cellButterflyOnlyAtomStringsStructure.get();
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Copy-on-write storage without references may lie in read-only memory of the process. No cell stands in front of it, and the collector has nothing to do with it.
+    static bool isOutsideHeap(const Butterfly* butterfly) { return std::bit_cast<uintptr_t>(butterfly) - s_startOfStorageOutsideHeap < s_sizeOfStorageOutsideHeap; }
+    JS_EXPORT_PRIVATE static void setStorageOutsideHeap(std::span<const uint8_t>);
+#else
+    static constexpr bool isOutsideHeap(const Butterfly*) { return false; }
+#endif
 
     JSValue get(unsigned index) const
     {
@@ -236,6 +244,11 @@ private:
                 toButterfly()->contiguous().at(this, index).setStartingValue(JSValue());
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static uintptr_t s_startOfStorageOutsideHeap;
+    JS_EXPORT_PRIVATE static size_t s_sizeOfStorageOutsideHeap;
+#endif
 
     IndexingHeader m_header;
 };

@@ -1,0 +1,37 @@
+# `${somethingNoTableLists}`; `${onlyConverted}`; plain = { held }; `${plain}`
+# The unknown object is converted like the two objects of the program. Whatever a conversion does to it, native code does to an escaped object anyway, and what is found on it says nothing about the objects beside it:
+# they stay in the program.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped-layout=L0
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped-layout=L0
+# ESCAPED-NOT: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = ToString v1
+    v3 = NewClosure function=f1
+    v4 = ToString v3
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = ToString v6
+    Return
+}
+function f1 name="onlyConverted" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

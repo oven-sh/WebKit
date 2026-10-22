@@ -20,6 +20,7 @@ public:
     void generateMathMinOfArray(const InlineCall&);
     void generateMathMaxOfArray(const InlineCall&);
     void generateCallNumberConstructor(const InlineCall&);
+    Number stringToNumber(const InlineCall&, CellPointer string);
     void generateNumberToString(const InlineCall&);
     void generateNumberToStringAppend(const InlineCall&);
     void generateParseInt(const InlineCall&);

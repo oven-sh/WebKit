@@ -10,7 +10,7 @@
 # LOSS: MaxVersionedIterationBytes x1 f14 v1
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Range" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f1 mutability=Fixed}]}
+layout L0 kind=Instance name="Range" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f1 mutability=Fixed}]}
 layout L1 name="Bag" fields=[{key="x" declared={type=number}}]
 function f0 name="Range" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="iterator" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
@@ -47,13 +47,14 @@ function f2 name="plain" parameters=[{type=anything}] results=[{type=anything}] 
 # CHECK-NEXT: [[readBlock2]]() frequency=Unlikely:
 # CHECK-NEXT: [[read2]]: undefined = DestructureIterable [[iterable2]] count=2
 # CHECK-NEXT: [[a2]]: anything = ResultAt [[read2]]
+# CHECK-NEXT: [[b2]]: anything = ResultAt [[read2]] index=1
 # CHECK: Jump -> next b3([[a2]], [[b2]])
 # CHECK: ([[iterable2]]: anything) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[entry2]]()
-# CHECK: [[b2]]: anything = ResultAt [[read2]] index=1
 # ABSENT-LABEL: function f2 name="plain"
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="done"
 # ABSENT-NOT: key="value"
 # ABSENT-NOT: key="return"
@@ -86,6 +87,7 @@ function f3 name="callAfterClose" parameters=[{type=anything}, {type=anything}] 
 # CHECK: = DestructureIterable {{*}} count=2
 # ABSENT-LABEL: function f3 name="callAfterClose"
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: handler=
 
 function f4 name="defaultWithoutCall" parameters=[{type=anything}] results=[{type=anything}] {
@@ -122,10 +124,11 @@ function f4 name="defaultWithoutCall" parameters=[{type=anything}] results=[{typ
 # CHECK: = TypeTest [[a4]] testedType=undefined
 # ABSENT-LABEL: function f4 name="defaultWithoutCall"
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: handler=
 
-function f5 name="writtenLayout" parameters=[{type=object written=L1}] results=[{type=anything}] {
-  b0(v0: object ? L1):
+function f5 name="layout" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b4():
@@ -145,10 +148,11 @@ function f5 name="writtenLayout" parameters=[{type=object written=L1}] results=[
     IteratorClose v1 completion=Throw
     Rethrow v8
 }
-# CHECK-LABEL: function f5 name="writtenLayout"
+# CHECK-LABEL: function f5 name="layout"
 # CHECK: = DestructureIterable v0 count=2
-# ABSENT-LABEL: function f5 name="writtenLayout"
+# ABSENT-LABEL: function f5 name="layout"
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: handler=
 
 function f6 name="knownIterator" parameters=[{type=L0}] results=[{type=anything}] {
@@ -181,8 +185,8 @@ function f6 name="knownIterator" parameters=[{type=L0}] results=[{type=anything}
 # ABSENT-LABEL: function f6 name="knownIterator"
 # ABSENT-NOT: DestructureIterable
 
-function f7 name="callInDefault" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
+function f7 name="callInDefault" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b6():
@@ -210,7 +214,7 @@ function f7 name="callInDefault" parameters=[{type=anything}, {type=anything}] r
 }
 # The steps stay, and with them what the state remembers: a finished iterator is neither stepped nor closed, and a step that throws finishes it.
 # CHECK-LABEL: function f7 name="callInDefault"
-# CHECK: b0(v0: anything, v1: anything):
+# CHECK: b0(v0: object, v1: anything):
 # CHECK-NEXT: [[notDone7]]: false = Boolean
 # The close of the array copy does nothing, so it asks nothing.
 # CHECK: b4():
@@ -226,9 +230,11 @@ function f7 name="callInDefault" parameters=[{type=anything}, {type=anything}] r
 # CHECK-NEXT: [[landing7]]([[doneAtThrow7]]: boolean) role=CleanupHandler frequency=Unlikely:
 # CHECK-NEXT: = CatchException
 # CHECK-NEXT: Branch [[doneAtThrow7]] -> taken
-# CHECK: [[next7]]: anything = PropGet [[iterator7]] key="next"
+# CHECK: [[open7]]: undefined = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
+# CHECK-NEXT: [[iterator7]]: object = ResultAt [[open7]]
+# CHECK-NEXT: [[next7]]: anything = ResultAt [[open7]] index=1
 # CHECK: [[close7]]() frequency=Unlikely:
-# CHECK-NEXT: = PropGet [[iterator7]] key="return"
+# CHECK-NEXT: = CallDirect [[iterator7]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: [[afterSecond7]]: boolean = Upcast
 # CHECK: [[secondStep7]]() frequency=Unlikely handler=[[landing7]]([[afterFirst7]]):
 # CHECK-NEXT: [[duringSecond7]]: true = Boolean boolean=true
@@ -263,18 +269,18 @@ function f8 name="memberTarget" parameters=[{type=anything}, {type=anything}] re
     Rethrow v9
 }
 # CHECK-LABEL: function f8 name="memberTarget"
-# CHECK: key="next"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f8 name="memberTarget"
 # ABSENT-NOT: DestructureIterable
 
-function f9 name="claimBetween" parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="testThatThrowsBetween" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b3():
     v2 = IteratorResume v1 stepIndex=0
     v3 = ResultAt v2 index=1
-    v4 = Claim v3 castType=number
+    v4 = RequireObjectCoercible v3 nullishAccess=Read
     v5 = IteratorResume v1 stepIndex=1
     v6 = ResultAt v5 index=1
     Jump -> next b2()
@@ -287,13 +293,13 @@ function f9 name="claimBetween" parameters=[{type=anything}] results=[{type=anyt
     IteratorClose v1 completion=Throw
     Rethrow v9
 }
-# CHECK-LABEL: function f9 name="claimBetween"
-# CHECK: key="next"
-# ABSENT-LABEL: function f9 name="claimBetween"
+# CHECK-LABEL: function f9 name="testThatThrowsBetween"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f9 name="testThatThrowsBetween"
 # ABSENT-NOT: DestructureIterable
 
-function f10 name="nestedPattern" parameters=[{type=object written=L1}] results=[{type=anything}] {
-  b0(v0: object ? L1):
+function f10 name="nestedPattern" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b6():
@@ -361,7 +367,7 @@ function f11 name="rest" parameters=[{type=anything}] results=[{type=anything}] 
     Rethrow v12
 }
 # CHECK-LABEL: function f11 name="rest"
-# CHECK: key="next"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f11 name="rest"
 # ABSENT-NOT: DestructureIterable
 
@@ -372,8 +378,8 @@ function f12 name="empty" parameters=[{type=anything}] results=[{type=undefined}
     Return
 }
 # CHECK-LABEL: function f12 name="empty"
-# CHECK: key="return"
-# CHECK: key="next"
+# CHECK: function=[[closeStringOrIterator]] [isNeverInlined]
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f12 name="empty"
 # ABSENT-NOT: DestructureIterable
 
@@ -399,7 +405,7 @@ function f13 name="tooMany" parameters=[{type=anything}] results=[{type=anything
     Rethrow v10
 }
 # CHECK-LABEL: function f13 name="tooMany"
-# CHECK: key="next"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f13 name="tooMany"
 # ABSENT-NOT: DestructureIterable
 
@@ -436,7 +442,7 @@ function f14 name="byForm" parameters=[{type=anything}] results=[{type=anything}
 }
 # Nothing here interferes, but the region has one copy for both forms, and one text cannot hold the one read beside the index reads.
 # CHECK-LABEL: function f14 name="byForm"
-# CHECK: key="next"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # CHECK: Switch
 # ABSENT-LABEL: function f14 name="byForm"
 # ABSENT-NOT: DestructureIterable

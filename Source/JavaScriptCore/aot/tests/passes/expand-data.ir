@@ -1,4 +1,5 @@
 # A small constant record becomes constants and allocations, children before parents, with the root under the id of the Data value, and an array holds what flow found at its site
+# The records are handed to a built-in that reads its operand and neither keeps nor writes it: a callee nobody knows may store into the arrays, and then flow says nothing about what they hold
 # RUN: pass ExpandData
 # RUN(PLAIN): pass ExpandData
 # RUN(FLOW): pipeline ExpandData
@@ -19,7 +20,7 @@ data d5 root=Array{contents=number}
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="sink" [isFreeName]
+    v1 = Builtin builtin=ConsoleLog
     v2 = CallDirect function=f1
     v3 = Call v1, -, v2
     v4 = CallDirect function=f2
@@ -58,11 +59,10 @@ function f1 name="nested" results=[{type=anything}] {
 # PLAIN-LABEL: function f1 name="nested"
 # PLAIN-NOT: allocationSite
 # PLAIN-NOT: allocationClass
-# PLAIN-NOT: keepsShape
 # FLOW-LABEL: function f1 name="nested"
 # FLOW: = NewArray {{*}} contents=undefined|null|true|whole|bigint holes=[1] allocationSite=[[itemsSite]]
-# FLOW: = NewObject {{*}} layout=L1 fields=[1, 0] allocationSite=[[innerSite]] allocationClass=[[innerClass]] [keepsShape]
-# FLOW: v0:{{*}}= NewObject {{*}} layout=L0 fields=[0, 1, 2] allocationSite=[[outerSite]] allocationClass=[[outerClass]] [keepsShape]
+# FLOW: = NewObject {{*}} layout=L1 fields=[1, 0] allocationSite=[[innerSite]] allocationClass=[[innerClass]]
+# FLOW: v0:{{*}}= NewObject {{*}} layout=L0 fields=[0, 1, 2] allocationSite=[[outerSite]] allocationClass=[[outerClass]]
 # FLOW-NOT: Data
 # OWN-LABEL: function f1 name="nested"
 # OWN: = NewArray {{*}} allocationSite=[[siteOfItems]]

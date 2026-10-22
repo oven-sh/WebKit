@@ -1,0 +1,137 @@
+# A compact function goes through the short schedule of generic versions: nothing says that it runs, so nothing is tried on it. Here no call is taken in.
+# The same body takes the call in where two functions call it: such a function may run. The callee is no larger than its call, so it is taken in where code runs seldom too.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass limit=MaxWarmCodeValues:1 only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+
+function f1 name="compact" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v0
+    v5 = Call v2, -, v0
+    v6 = Call v2, -, v0
+    v7 = Call v2, -, v0
+    v8 = Call v2, -, v0
+    v9 = Call v2, -, v0
+    v10 = Call v2, -, v0
+    v11 = Call v2, -, v0
+    v12 = Call v2, -, v0
+    v13 = Call v2, -, v0
+    v14 = Call v2, -, v0
+    v15 = Call v2, -, v0
+    v16 = Call v2, -, v0
+    v17 = Call v2, -, v0
+    v18 = Call v2, -, v0
+    v19 = Call v2, -, v0
+    v20 = Call v2, -, v0
+    v21 = Call v2, -, v0
+    v22 = Call v2, -, v0
+    v23 = Call v2, -, v0
+    v24 = Call v2, -, v0
+    v25 = Call v2, -, v0
+    v26 = Call v2, -, v0
+    v27 = Call v2, -, v0
+    v28 = Call v2, -, v0
+    v29 = Call v2, -, v0
+    v30 = Call v2, -, v0
+    v31 = Call v2, -, v0
+    v32 = Call v2, -, v0
+    v33 = Call v2, -, v0
+    v34 = Call v2, -, v0
+    v35 = Call v2, -, v0
+    v36 = Call v2, -, v0
+    v37 = Call v2, -, v0
+    v38 = Call v2, -, v0
+    v39 = Call v2, -, v0
+    v40 = Call v2, -, v0
+    v41 = Call v2, -, v0
+    v42 = Call v2, -, v0
+    v43 = CallDirect v0 function=f5
+    Return v43
+}
+# CHECK-LABEL: function f1 name="compact"
+# CHECK: = CallDirect v0 function=f5
+
+function f2 name="calledByTwo" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v0
+    v5 = Call v2, -, v0
+    v6 = Call v2, -, v0
+    v7 = Call v2, -, v0
+    v8 = Call v2, -, v0
+    v9 = Call v2, -, v0
+    v10 = Call v2, -, v0
+    v11 = Call v2, -, v0
+    v12 = Call v2, -, v0
+    v13 = Call v2, -, v0
+    v14 = Call v2, -, v0
+    v15 = Call v2, -, v0
+    v16 = Call v2, -, v0
+    v17 = Call v2, -, v0
+    v18 = Call v2, -, v0
+    v19 = Call v2, -, v0
+    v20 = Call v2, -, v0
+    v21 = Call v2, -, v0
+    v22 = Call v2, -, v0
+    v23 = Call v2, -, v0
+    v24 = Call v2, -, v0
+    v25 = Call v2, -, v0
+    v26 = Call v2, -, v0
+    v27 = Call v2, -, v0
+    v28 = Call v2, -, v0
+    v29 = Call v2, -, v0
+    v30 = Call v2, -, v0
+    v31 = Call v2, -, v0
+    v32 = Call v2, -, v0
+    v33 = Call v2, -, v0
+    v34 = Call v2, -, v0
+    v35 = Call v2, -, v0
+    v36 = Call v2, -, v0
+    v37 = Call v2, -, v0
+    v38 = Call v2, -, v0
+    v39 = Call v2, -, v0
+    v40 = Call v2, -, v0
+    v41 = Call v2, -, v0
+    v42 = Call v2, -, v0
+    v43 = CallDirect v0 function=f5
+    Return v43
+}
+# CHECK-LABEL: function f2 name="calledByTwo"
+# CHECK-NOT: CallDirect
+# CHECK-LABEL: function f3 name="firstCaller"
+
+function f3 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f4 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f5 name="small" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

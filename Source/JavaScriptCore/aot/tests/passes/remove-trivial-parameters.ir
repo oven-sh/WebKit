@@ -33,19 +33,19 @@ function f1 name="itselfOverBackEdge" parameters=[{type=number}, {type=boolean}]
 # CHECK: Branch v1 -> taken b1(), notTaken b2()
 # CHECK: Return v0
 
-function f2 name="claimOfItselfOverBackEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+function f2 name="checkOfItselfOverBackEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
     Jump -> next b1(v0)
   b1(v2):
     LoopHint
-    v4 = Claim v2 castType=number
+    v4 = Check v2 castType=number
     Branch v1 -> taken b1(v4), notTaken b2()
   b2():
     Return v2
 }
-# CHECK-LABEL: function f2 name="claimOfItselfOverBackEdge"
+# CHECK-LABEL: function f2 name="checkOfItselfOverBackEdge"
 # CHECK: b1():
-# CHECK: Claim v0
+# CHECK: Check v0
 # CHECK: Return v0
 
 function f3 name="parametersFeedEachOther" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
@@ -112,7 +112,7 @@ function f6 name="twoIncomingValues" parameters=[{type=number}, {type=number}, {
 # CHECK: b3(v3: number):
 # CHECK-NEXT: Return v3
 
-function f7 name="differingPrediction" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+function f7 name="differingExpectedType" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
   b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -122,7 +122,7 @@ function f7 name="differingPrediction" parameters=[{type=number}, {type=boolean}
   b3(v2: number ~ i32):
     Return v2
 }
-# CHECK-LABEL: function f7 name="differingPrediction"
+# CHECK-LABEL: function f7 name="differingExpectedType"
 # CHECK: b3():
 # CHECK-NEXT: v2: number ~ i32 = Upcast v0
 # CHECK-NEXT: Return v2

@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTResolveCalls.h"
+#include "AOTResultRules.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -59,7 +60,7 @@ static bool isGuardUse(const Function& function, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static constexpr OpcodeSet castsWithoutTest { Opcode::Upcast, Opcode::Predict, Opcode::AssumeType };
+static constexpr OpcodeSet castsWithoutTest { Opcode::Upcast, Opcode::AssumeType };
 
 static bool canBeDefinedByName(const Field& field)
 {
@@ -162,18 +163,28 @@ static FunctionID findEnteredVersion(const Program& program, const CalleeSet& ca
     return std::ranges::binary_search(callees.functions, function) ? function : FunctionID();
 }
 
+// Where it is not, the class object is expected to inherit from the class that the source names, and the run time clears the guard of the link where the class is defined with another parent.
+static bool isBaseProven(const Layout& holder)
+{
+    return holder.flow.baseState != BaseState::Unknown;
+}
+
 static FunctionID findParentTakingThis(const Program& program, const Value& superCall)
 {
     if (superCall.opcode != Opcode::SuperConstruct)
         return { };
 
-    LayoutID base = program.at(superCall.layout()).flow.base;
+    const Layout& holder = program.at(superCall.layout());
+    LayoutID base = isBaseProven(holder) ? holder.flow.base : predictedHeritageOf(holder);
     FunctionID parent = base ? program.at(base).constructor : FunctionID();
     if (!parent)
         return { };
 
+    // Flow stamps the super call of a class whose base it has proven. Where it has proven none there is no stamp, and the parent is entered as read.
     CalleeSetID callees = superCall.callees();
-    FunctionID entered = callees ? findEnteredVersion(program, program.at(callees), parent) : FunctionID();
+    if (!callees && isBaseProven(holder))
+        return { };
+    FunctionID entered = callees ? findEnteredVersion(program, program.at(callees), parent) : parent;
     if (!entered)
         return { };
     if (!program.at(parent).captures.isEmpty() || !canConstructDirectly(program, parent) || !canTakeAllocatedThis(program, entered))
@@ -196,7 +207,6 @@ bool canTakeAllocatedThis(const Program& program, FunctionID constructor)
     const Function& function = program.at(constructor);
     if (!function.hasBody() || !function.mayBeCloned() || !function.constructedClass || function.has(FunctionFlags::HasThis) || function.results.size() != 1)
         return false;
-
     switch (function.constructorForm()) {
     case ConstructorForm::NotConstructor:
         return false;
@@ -218,6 +228,7 @@ LayoutID layoutAllocatedBy(const Program& program, FunctionID constructor)
     return function.constructedClass;
 }
 
+// Every caller hands over an object that it allocated with the layout of the class or of a class below it.
 static DeclaredType computeThisType(const Program& program, const Function& original, TypeArena& types)
 {
     TypeID replacedType = TypeTable::never;
@@ -238,17 +249,17 @@ static DeclaredType computeThisType(const Program& program, const Function& orig
 
     if (program.at(replacedType).layouts)
         return { .type = replacedType };
-    return { .type = TypeTable::object, .predicted = types.intern(Type::forLayoutSet(program.declaredMembersOf(original.constructedClass))) };
+    // The source need not say what a class extends: the base may be a value, and only flow finds that it is this class.
+    Type declared = Type::forLayoutSet(program.declaredMembersOf(original.constructedClass));
+    return { .type = types.intern(declared.unionWith(Type::forLayouts(program.layoutsBelow(original.constructedClass), types), types)) };
 }
 
 static ValueID addThisParameter(IRBuilder& builder)
 {
     Function& version = builder.function();
     ValueID thisParameter = builder.addParameter(entryBlock, version.thisType.type);
-    if (version.thisType.predicted)
-        version.at(thisParameter).setPrediction(version.thisType.predicted);
 
-    auto& parameters = version.at(entryBlock).parameters;
+    auto& parameters = version.edit(entryBlock).parameters;
     RELEASE_ASSERT(parameters.last() == thisParameter);
     parameters.removeLast();
     parameters.insert(*version.thisParameterIndex(), thisParameter);
@@ -300,7 +311,6 @@ static ValueID appendParentVersionCall(IRBuilder& builder, DerivedFunctionInputs
         .newTarget = superCall.newTargetOperand(),
         .arguments = superCall.variadicOperands(),
         .accessSite = superCall.accessSite(),
-        .resultCheck = resultCheckOf(inputs.flow, parent),
         .isConstruction = true,
     });
 }
@@ -315,12 +325,12 @@ static bool canStartOverAt(const Program& program, const Function& version, cons
     EffectSummaries noSummaries;
     EffectContext context { program, noSummaries };
     return std::ranges::all_of(entry.values.span().first(site.index), [&](ValueID id) {
-        return effectsOf(context, version, version.at(id)).onAnyEdge().isRemovableWhenUnused();
+        return effectsOf(context, version, version.at(id)).onAnyEdge().isUnobservable();
     });
 }
 
 // The object that was handed in goes unused, and the caller takes the one that is returned.
-static void returnWhatSourceConstructs(IRBuilder& builder, const DerivedFunctionInputs& inputs, ValueID thisParameter)
+static void returnWhatSourceConstructs(IRBuilder& builder, ValueID thisParameter)
 {
     const Function& version = builder.function();
     FunctionID source = version.derivation.source;
@@ -333,9 +343,8 @@ static void returnWhatSourceConstructs(IRBuilder& builder, const DerivedFunction
     Value call = IRBuilder::make(Opcode::CallDirect);
     call.setFunction(source);
     call.setArgumentsOperands(arguments.span());
-    call.setResultCheck(resultCheckOf(inputs.flow, source));
     call.setIsConstruction(true);
-    builder.emitReturn(appendResultCheck(builder, builder.append(WTF::move(call))));
+    builder.emitReturn(builder.append(WTF::move(call)));
 }
 
 static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& inputs, const ValueSite& site, ValueID thisParameter)
@@ -357,13 +366,14 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
         builder.endExpansion(expansion, converted);
     };
 
-    if (program.at(original.layout()).classFlow.staticLink != MemberMutability::Fixed) {
-        ValueID isUnchanged = builder.append(makeConditionTest({ .kind = MemberCondition::Kind::PrototypeLinkUnchanged, .layout = original.layout(), .side = ClassSide::Static }));
+    if (program.at(original.layout()).classFlow.staticLink != MemberMutability::Fixed || !isBaseProven(program.at(original.layout()))) {
+        MemberCondition condition { .kind = MemberCondition::Kind::PrototypeLinkUnchanged, .layout = original.layout(), .side = ClassSide::Static };
+        ValueID isUnchanged = builder.append(makeConditionsTest(inputs.types, singleElementSpan(condition)));
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isUnchanged, 0, BlockFrequency::Normal, BlockFrequency::Rare);
         builder.moveToEndOf(branch.notTaken);
         // An arm that came back would make of `this` one of two objects for all the code that follows.
         if (canStartOver)
-            returnWhatSourceConstructs(builder, inputs, thisParameter);
+            returnWhatSourceConstructs(builder, thisParameter);
         else
             finishArm(builder.appendWithType(Value(original), original.type));
         builder.moveToEndOf(branch.taken);
@@ -432,7 +442,7 @@ static ReturnedValues returnUndefinedForThis(IRBuilder& builder, ValueID thisPar
 
         builder.setOrigin(version.at(block).terminator.origin());
         ValueID undefined = builder.insertBefore(pointBeforeTerminatorOf(version, block), IRBuilder::make(Opcode::Undefined));
-        version.at(block).terminator.setValueOperand(undefined);
+        version.edit(block).terminator.setValueOperand(undefined);
     }
     builder.applyInsertions();
     return returnedValues;

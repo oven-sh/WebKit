@@ -1,6 +1,6 @@
 # The static members of the built-in constructors and namespaces are fixed, with their bindings on the global object: a store that every run reaches is an error. What real packages replace can be written, and so can a new name: no diagnostic
 # RUN: pipeline CheckLockedBuiltinWrites
-# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 8
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 9
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

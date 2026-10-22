@@ -1,0 +1,139 @@
+# A layout that the program makes seldom keeps every field that something stores in its cell: an Extension would save next to nothing there, and each access of a field in it pays for it
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts
+# STATISTIC: FieldsOutOfLine = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="required0" declared={type=number} flags=[IsRequired]}, {key="required1" declared={type=number} flags=[IsRequired]}, {key="required2" declared={type=number} flags=[IsRequired]}, {key="required3" declared={type=number} flags=[IsRequired]}, {key="required4" declared={type=number} flags=[IsRequired]}, {key="required5" declared={type=number} flags=[IsRequired]}, {key="required6" declared={type=number} flags=[IsRequired]}, {key="required7" declared={type=number} flags=[IsRequired]}, {key="required8" declared={type=number} flags=[IsRequired]}, {key="storedOnce" declared={type=undefined|number}}, {key="initialized" declared={type=undefined|number}}, {key="optional0" declared={type=undefined|number}}, {key="optional1" declared={type=undefined|number}}, {key="optional2" declared={type=undefined|number}}, {key="optional3" declared={type=undefined|number}}, {key="optional4" declared={type=undefined|number}}, {key="optional5" declared={type=undefined|number}}, {key="optional6" declared={type=undefined|number}}, {key="optional7" declared={type=undefined|number}}, {key="optional8" declared={type=undefined|number}}, {key="optional9" declared={type=undefined|number}}, {key="optional10" declared={type=undefined|number}}, {key="optional11" declared={type=undefined|number}}, {key="optional12" declared={type=undefined|number}}, {key="optional13" declared={type=undefined|number}}, {key="optional14" declared={type=undefined|number}}, {key="optional15" declared={type=undefined|number}}, {key="optional16" declared={type=undefined|number}}, {key="optional17" declared={type=undefined|number}}, {key="optional18" declared={type=undefined|number}}, {key="optional19" declared={type=undefined|number}}, {key="optional20" declared={type=undefined|number}}, {key="optional21" declared={type=undefined|number}}, {key="optional22" declared={type=undefined|number}}, {key="optional23" declared={type=undefined|number}}, {key="optional24" declared={type=undefined|number}}, {key="optional25" declared={type=undefined|number}}, {key="optional26" declared={type=undefined|number}}, {key="optional27" declared={type=undefined|number}}, {key="optional28" declared={type=undefined|number}}, {key="optional29" declared={type=undefined|number}}, {key="optional30" declared={type=undefined|number}}, {key="optional31" declared={type=undefined|number}}, {key="optional32" declared={type=undefined|number}}, {key="optional33" declared={type=undefined|number}}, {key="optional34" declared={type=undefined|number}}, {key="optional35" declared={type=undefined|number}}, {key="optional36" declared={type=undefined|number}}, {key="optional37" declared={type=undefined|number}}, {key="optional38" declared={type=undefined|number}}, {key="optional39" declared={type=undefined|number}}, {key="hot" declared={type=undefined|number}}]
+layout L1 name="ListedAndStoredBySlot" fields=[{key="listed0" declared={type=undefined|number}}, {key="listed1" declared={type=undefined|number}}, {key="listed2" declared={type=undefined|number}}, {key="listed3" declared={type=undefined|number}}, {key="listed4" declared={type=undefined|number}}, {key="listed5" declared={type=undefined|number}}, {key="listed6" declared={type=undefined|number}}, {key="listed7" declared={type=undefined|number}}, {key="listed8" declared={type=undefined|number}}, {key="listed9" declared={type=undefined|number}}, {key="listed10" declared={type=undefined|number}}, {key="listed11" declared={type=undefined|number}}, {key="listed12" declared={type=undefined|number}}, {key="listed13" declared={type=undefined|number}}, {key="listed14" declared={type=undefined|number}}, {key="listed15" declared={type=undefined|number}}]
+layout L2 name="ListedAndStoredByName" fields=[{key="listed0" declared={type=undefined|number}}, {key="listed1" declared={type=undefined|number}}, {key="listed2" declared={type=undefined|number}}, {key="listed3" declared={type=undefined|number}}, {key="listed4" declared={type=undefined|number}}, {key="listed5" declared={type=undefined|number}}, {key="listed6" declared={type=undefined|number}}, {key="listed7" declared={type=undefined|number}}, {key="listed8" declared={type=undefined|number}}, {key="listed9" declared={type=undefined|number}}, {key="listed10" declared={type=undefined|number}}, {key="listed11" declared={type=undefined|number}}, {key="listed12" declared={type=undefined|number}}, {key="listed13" declared={type=undefined|number}}, {key="listed14" declared={type=undefined|number}}, {key="listed15" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Undefined
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = NewObject -, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 10]
+    v6 = FinishObject v5
+    v7 = NewObject -, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3 layout=L1 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    v8 = FinishObject v7
+    v9 = NewObject -, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3, v3 layout=L2 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    v10 = FinishObject v9
+    v11 = Call v0
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(), notTaken b2()
+  b2():
+    PropSet v6, v2 key="storedOnce"
+    v14 = CallDirect v6, v2 function=f1
+    v15 = CallDirect v6, v2 function=f1
+    v16 = PropGet v6 key="hot"
+    v17 = ForInOpen v6
+    v18 = CallDirect v8, v2 function=f2
+    v19 = CallDirect v8, v2 function=f2
+    v20 = ForInOpen v8
+    v21 = CallDirect v10, v2 function=f3
+    v22 = CallDirect v2, v2 function=f3
+    v23 = ForInOpen v10
+    Return
+  b3():
+    Jump -> next b2()
+}
+function f1 name="fillOptions" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="initialized"
+    PropSet v0, v1 key="optional0"
+    PropSet v0, v1 key="optional1"
+    PropSet v0, v1 key="optional2"
+    PropSet v0, v1 key="optional3"
+    PropSet v0, v1 key="optional4"
+    PropSet v0, v1 key="optional5"
+    PropSet v0, v1 key="optional6"
+    PropSet v0, v1 key="optional7"
+    PropSet v0, v1 key="optional8"
+    PropSet v0, v1 key="optional9"
+    PropSet v0, v1 key="optional10"
+    PropSet v0, v1 key="optional11"
+    PropSet v0, v1 key="optional12"
+    PropSet v0, v1 key="optional13"
+    PropSet v0, v1 key="optional14"
+    PropSet v0, v1 key="optional15"
+    PropSet v0, v1 key="optional16"
+    PropSet v0, v1 key="optional17"
+    PropSet v0, v1 key="optional18"
+    PropSet v0, v1 key="optional19"
+    PropSet v0, v1 key="optional20"
+    PropSet v0, v1 key="optional21"
+    PropSet v0, v1 key="optional22"
+    PropSet v0, v1 key="optional23"
+    PropSet v0, v1 key="optional24"
+    PropSet v0, v1 key="optional25"
+    PropSet v0, v1 key="optional26"
+    PropSet v0, v1 key="optional27"
+    PropSet v0, v1 key="optional28"
+    PropSet v0, v1 key="optional29"
+    PropSet v0, v1 key="optional30"
+    PropSet v0, v1 key="optional31"
+    PropSet v0, v1 key="optional32"
+    PropSet v0, v1 key="optional33"
+    PropSet v0, v1 key="optional34"
+    PropSet v0, v1 key="optional35"
+    PropSet v0, v1 key="optional36"
+    PropSet v0, v1 key="optional37"
+    PropSet v0, v1 key="optional38"
+    PropSet v0, v1 key="optional39"
+    PropSet v0, v1 key="hot"
+    Return
+}
+function f2 name="fillObject" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="listed0"
+    PropSet v0, v1 key="listed1"
+    PropSet v0, v1 key="listed2"
+    PropSet v0, v1 key="listed3"
+    PropSet v0, v1 key="listed4"
+    PropSet v0, v1 key="listed5"
+    PropSet v0, v1 key="listed6"
+    PropSet v0, v1 key="listed7"
+    PropSet v0, v1 key="listed8"
+    PropSet v0, v1 key="listed9"
+    PropSet v0, v1 key="listed10"
+    PropSet v0, v1 key="listed11"
+    PropSet v0, v1 key="listed12"
+    PropSet v0, v1 key="listed13"
+    PropSet v0, v1 key="listed14"
+    PropSet v0, v1 key="listed15"
+    Return
+}
+function f3 name="fillObjectOrNumber" flags=[IsSloppy] parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="listed0"
+    PropSet v0, v1 key="listed1"
+    PropSet v0, v1 key="listed2"
+    PropSet v0, v1 key="listed3"
+    PropSet v0, v1 key="listed4"
+    PropSet v0, v1 key="listed5"
+    PropSet v0, v1 key="listed6"
+    PropSet v0, v1 key="listed7"
+    PropSet v0, v1 key="listed8"
+    PropSet v0, v1 key="listed9"
+    PropSet v0, v1 key="listed10"
+    PropSet v0, v1 key="listed11"
+    PropSet v0, v1 key="listed12"
+    PropSet v0, v1 key="listed13"
+    PropSet v0, v1 key="listed14"
+    PropSet v0, v1 key="listed15"
+    Return
+}
+
+# The program of pack-out-of-line.ir without its loop. There the cap of 128 bytes sends 52 fields out of line.
+# CHECK: L0 CompiledObject size=432 extension=0
+# CHECK-NOT: out@
+# CHECK: L1 CompiledObject size=144 extension=0
+# CHECK-NOT: out@
+# CHECK: L2 CompiledObject size=144 extension=0
+# CHECK-NOT: out@

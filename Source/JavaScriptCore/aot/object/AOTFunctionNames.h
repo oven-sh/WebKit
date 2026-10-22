@@ -36,7 +36,8 @@ String computedFunctionName(JSGlobalObject*, const Identifier& key, MethodKind);
 void setComputedFunctionName(VM&, JSObject* closure, const Identifier& key, MethodKind);
 
 void didDefineNameProperty(VM&, JSObject* closure, const String& name);
-void didStoreDisplayName(VM&, JSObject* closure);
+// Behind whatever may have changed the own property `displayName` of the function object: a store, a definition, a deletion.
+void didChangeDisplayName(VM&, JSObject* closure);
 
 } // namespace AOT
 } // namespace JSC

@@ -13,7 +13,7 @@
 #include "AOTImageLoading.h"
 #include "AOTImageTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTModuleHost.h"
+#include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTStaticFields.h"
 #include "JSCInlines.h"
@@ -40,7 +40,7 @@ std::span<const NativeTest> staticFieldTests();
 static constexpr ASCIILiteral programText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Counter" module=m0 constructor=f2 staticFields=[{key="tally" variable=g0}, {key="label" variable=g1}]
-layout L1 kind=Instance name="Sub" module=m0 predictedBase=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+layout L1 kind=Instance name="Sub" module=m0 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
 variable g0 name="tally" module=m0 declared={type=number} owner=L0
 variable g1 name="label" module=m0 declared={type=string} owner=L0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -162,7 +162,7 @@ RunningProgram::RunningProgram(LoadedProgram& program)
     std::optional<ModuleID> module = findModule("/main.js"_s);
     AOT_TEST_CHECK(module);
     evaluateModuleSynchronously(realm(), *module);
-    AOT_TEST_CHECK(!scope.exception() && isEvaluated(realm(), *module));
+    AOT_TEST_CHECK(!scope.exception() && modulesOf(realm())->status(*module) == ModuleStatus::Evaluated);
     evaluate("globalThis.First = define(); globalThis.Second = define()"_s);
 }
 

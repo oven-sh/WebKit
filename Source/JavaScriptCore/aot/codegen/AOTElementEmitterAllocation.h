@@ -28,7 +28,8 @@ public:
     CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&);
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath);
 
-    Pointer allocateStorage(const OperationContext&, Integer sizeInBytes, LBasicBlock slowPath);
+    CellPointer allocateEmptyArrayWithStorage(const OperationContext&, Integer header, Integer capacity, LBasicBlock slowPath);
+    void moveStorageOutOfOwnCell(const OperationContext&, CellPointer array);
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);
     Integer headerOfNewArray(const ArrayStorageForm&);
     Integer headerOfNewArrayWithShape(Word32 shape);
@@ -36,9 +37,11 @@ public:
 private:
     using RawElements = Vector<Operand, 16>;
 
+    CellPointer newLiteralOnItsOwn(const ValueContext&);
     CellPointer newLiteralWithHoles(const ValueContext&);
     CellPointer newLiteralWithCapacity(const ValueContext&);
     CellPointer newLiteralAtSite(const ValueContext&, StaticsOffset);
+    const ArrayStorageForm& formOfEmptyLiteral(ValueID literal);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     CellPointer newDoubleLiteral(const OperationContext&, std::span<const Number> numbersOrMarkers, uint32_t isNumberMask);
     CellPointer callNewEmptyArray(const OperationContext&, EmptyArray);

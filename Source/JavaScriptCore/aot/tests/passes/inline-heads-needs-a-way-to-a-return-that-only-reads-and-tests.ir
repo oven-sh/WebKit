@@ -1,0 +1,29 @@
+# What leaves the copy calls the function from its start, so nothing in the copy may be seen to have happened. This callee calls before it tests: it has no head
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsFound = 0
+# STATISTIC: SelectedHeadsInlined = 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = CallDirect v0, v1 function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="callsFirst" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = Call v1, -, v0
+    v3 = TypeTest v2 testedType=i32
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v4 = Call v1, -, v0
+    Return v4
+}
+# CHECK-LABEL: function f0 name="caller"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f1
+# CHECK-NOT: isAfterInlinedHead

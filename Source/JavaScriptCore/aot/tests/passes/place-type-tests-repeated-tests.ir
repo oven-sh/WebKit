@@ -1,4 +1,4 @@
-# A value that a pass split by its type is tested at each use. Where the value does not change in a loop one test stands on the entry of the loop, and where two tests of one value follow each other closely or in a cycle one test stands in front of both: the old tests get the narrowed value and fold. A test that would only get an equal test in front of it stays as it is
+# A value that a pass split by its type is tested at each use. Where the value does not change in a loop one test stands on the entry of the loop, and the old tests get the narrowed value and fold. Outside loops two tests of which both answers occur stay: behind one test in front, one of the answers would lead into the copy of the failed tests (place-type-tests-repeated-test-with-two-sides-that-both-occur.ir). A test that would only get an equal test in front of it stays as it is
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow EliminateDeadCode CompactBlocks
@@ -113,6 +113,7 @@ function f3 name="twoTestsCloseTogether" parameters=[{type=number|string}] resul
     Return v13
 }
 # SIMPLE-LABEL: function f3 name="twoTestsCloseTogether"
+# SIMPLE: = TypeTest v0 testedType=string
 # SIMPLE: = TypeTest v0 testedType=string
 # SIMPLE-NOT: TypeTest
 # SIMPLE-LABEL: function f4 name="twoTestsOfTwoValues"

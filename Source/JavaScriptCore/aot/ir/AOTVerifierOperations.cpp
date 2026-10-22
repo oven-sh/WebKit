@@ -27,7 +27,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesWithConstructionRules { Opcode::FinishObject, Opcode::FinishClass, Opcode::DefineMethod, Opcode::GetClassPrototype };
 static constexpr OpcodeSet opcodesWithClassRules { Opcode::NewClass, Opcode::SuperConstruct, Opcode::SuperConstructList };
-static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallGroup, Opcode::CallForwardVarargs };
+static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs };
 
 static bool isAsRead(const FunctionVerifier& verifier)
 {
@@ -127,7 +127,7 @@ static bool hasOnlyTerminatorUses(std::span<const Use> uses, BlockID block)
 static bool haveNoEffects(FunctionAnalyses& analyses, std::span<const ValueID> values)
 {
     return std::ranges::all_of(values, [&](ValueID id) {
-        return analyses.effectsOf(id) == EffectsOnEdges::none();
+        return analyses.hasNoEffects(id);
     });
 }
 
@@ -136,11 +136,10 @@ static bool isLegalIn(CastResolution resolution, IRForm form)
     switch (resolution) {
     case CastResolution::Unresolved:
         return false;
-    case CastResolution::Claim:
+    case CastResolution::Check:
         return form == IRForm::AsRead;
     case CastResolution::Nothing:
     case CastResolution::Upcast:
-    case CastResolution::Prediction:
     case CastResolution::Assume:
         return true;
     }
@@ -150,21 +149,15 @@ static bool isLegalIn(CastResolution resolution, IRForm form)
 static bool canNarrow(CastResolution resolution)
 {
     switch (resolution) {
-    case CastResolution::Claim:
+    case CastResolution::Check:
     case CastResolution::Assume:
         return true;
     case CastResolution::Unresolved:
     case CastResolution::Nothing:
     case CastResolution::Upcast:
-    case CastResolution::Prediction:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool hasUnprovenType(const Value& value)
-{
-    return value.written() || value.prediction();
 }
 
 static bool hasPayloadOutOfRange(const Program& program, const Value& value)
@@ -199,6 +192,8 @@ void FunctionVerifier::verifyOperations()
     }
     verifyMethodIndexes();
     verifyGeneratorStart();
+    verifyBareEvaluations();
+    verifyRequestsOfEvaluations();
     runSubsystemCheckers();
 }
 
@@ -225,6 +220,8 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Allocation:
     case OperationFamily::Access:
     case OperationFamily::Class:
+        if (opcode == Opcode::NewObject && value.isMadeOnDemand())
+            verifyObjectMadeOnDemand(block, id, value);
         if (opcodesWithConstructionRules.contains(opcode))
             verifyObjectUnderConstruction(block, id, value);
         else if (opcodesWithClassRules.contains(opcode))
@@ -241,7 +238,7 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     case OperationFamily::Call:
-        if (opcode == Opcode::CallDirect || opcode == Opcode::CallGroup)
+        if (opcode == Opcode::CallDirect || opcode == Opcode::CallTable)
             verifyDirectCall(block, id, value);
         else if (opcode == Opcode::Call || opcode == Opcode::Construct)
             verifyCallByValue(block, id, value);
@@ -263,6 +260,10 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::BuiltinCall:
     case OperationFamily::InlineBuiltin:
         verifyBuiltinOperation(block, id, value);
+        return;
+    case OperationFamily::RuntimeIntrinsic:
+        if (opcode == Opcode::NativeBinding)
+            verifyBuiltinOperation(block, id, value);
         return;
     case OperationFamily::Eval:
         verifyDirectEval(block, id, value);
@@ -300,12 +301,19 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Guard:
         if (opcode == Opcode::IsSlotFilled)
             verifySlotOperation(block, id, value);
+        else if (Value::opcodesWithKeyIsIntegral.contains(opcode))
+            verifyElementOperation(block, id, value);
+        return;
+    case OperationFamily::Module:
+        if (opcode == Opcode::EvaluateModule || opcode == Opcode::RecordRequire)
+            verifyModuleEvaluation(block, id, value);
         return;
     case OperationFamily::Binding: case OperationFamily::Operator: case OperationFamily::Hint: case OperationFamily::Control:
-    case OperationFamily::Iteration: case OperationFamily::ForIn: case OperationFamily::Module: case OperationFamily::EngineIntrinsic:
-    case OperationFamily::RuntimeIntrinsic: case OperationFamily::PromiseIntrinsic: case OperationFamily::CollectionIntrinsic:
+    case OperationFamily::Iteration: case OperationFamily::ForIn: case OperationFamily::EngineIntrinsic:
+    case OperationFamily::PromiseIntrinsic: case OperationFamily::CollectionIntrinsic:
     case OperationFamily::GuardValue: case OperationFamily::OwnAccess: case OperationFamily::ExpandedIteration: case OperationFamily::JSONParse:
     case OperationFamily::Validation: case OperationFamily::RuntimeValidation: case OperationFamily::JSONWrite: case OperationFamily::StringRangeRead: case OperationFamily::Representation:
+    case OperationFamily::KeyPartsLookup:
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -327,32 +335,34 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::Upcast:
         need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
         return;
-    case Opcode::Claim:
+    case Opcode::Check:
     case Opcode::TypeTest: {
-        bool isClaim = value.opcode == Opcode::Claim;
-        const Type& tested = m_program.at(isClaim ? value.castType() : value.testedType());
-        bool hasLayoutsBeforeFlow = tested.layouts && isAsRead(*this);
-        // A TypeTest that names a built-in without a cell in the realm does not find its object, and the other edge keeps it. A Claim would throw for a value of its own type.
-        if (hasLayoutsBeforeFlow || hasClassProofs(tested) || (isClaim && hasUntestableBuiltins(tested)))
+        bool isCheck = value.opcode == Opcode::Check;
+        const Type& tested = m_program.at(isCheck ? value.castType() : value.testedType());
+        // A TypeTest that names a built-in without a cell in the realm does not find its object, and the other edge keeps it. A Check would leave the typed code with a value of its own type.
+        if (hasClassProofs(tested) || (isCheck && hasUntestableBuiltins(tested)))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
     case Opcode::ReportMismatch: {
         const Type& expected = m_program.at(value.expectedType());
-        if (expected.layouts || hasClassProofs(expected) || hasUntestableBuiltins(expected))
+        if (hasClassProofs(expected) || hasUntestableBuiltins(expected))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
-    case Opcode::ClaimRead:
-        if (value.source().kind() == ClaimSource::Kind::None)
-            fail(InternalErrorKind::PayloadOutOfRange, block, id);
-        return;
+    case Opcode::Convert:
+    case Opcode::NarrowByField:
     case Opcode::AssumeType:
-    case Opcode::Predict:
-    case Opcode::ClaimDeclared:
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
+        return;
+    case Opcode::ReadAgain:
+        if (!isBorrowedInnerObject(m_function, value.objectOperand()) || !isBorrowedInnerObject(m_function, value.againOperand()))
+            fail(InternalErrorKind::OperandTypeMismatch, block, id);
+        return;
+    case Opcode::BorrowedParameter:
+        verifyUsesOfBorrowedObject(id);
         return;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -463,18 +473,19 @@ void FunctionVerifier::verifyReturnCall(BlockID block, const Terminator& termina
         return;
     }
 
-    TypeArena& types = typing().types;
+    // The type of an expected position bounds nothing that enters it.
+    TypingContext context = typing();
     Type returned = typeOf(call);
     for (TailCast cast : terminator.casts()) {
-        const Type& declared = m_program.at(cast.declared.type);
+        const Type& declared = context.typeOf(cast.declared);
         bool narrowsWithoutProof = !canNarrow(cast.resolution) && !returned.isSubsetOf(declared, m_program);
         if (!isLegalIn(cast.resolution, m_form) || narrowsWithoutProof) {
             fail(InternalErrorKind::InvalidReturnCall, block, call);
             return;
         }
-        returned = returned.castTo(declared, types);
+        returned = returned.castTo(declared, context.types);
     }
-    if (!returned.isSubsetOf(m_program.at(m_function.result().type), m_program))
+    if (!returned.isSubsetOf(context.typeOf(m_function.result()), m_program))
         fail(InternalErrorKind::InvalidReturnCall, block, call);
 }
 
@@ -509,15 +520,15 @@ void FunctionVerifier::verifyFormRules(BlockID blockID, const Block& block)
     }
 
     for (ValueID parameter : block.parameters) {
-        if (hasUnprovenType(m_function.at(parameter))) {
-            fail(InternalErrorKind::PredictionAfterSelection, blockID, parameter);
+        if (m_function.at(parameter).expected()) {
+            fail(InternalErrorKind::ExpectedTypeAfterSelection, blockID, parameter);
             return;
         }
     }
     for (ValueID id : block.values) {
         const Value& value = m_function.at(id);
-        if (hasUnprovenType(value)) {
-            fail(InternalErrorKind::PredictionAfterSelection, blockID, id);
+        if (value.expected()) {
+            fail(InternalErrorKind::ExpectedTypeAfterSelection, blockID, id);
             return;
         }
         bool isFusedCondition = block.terminator.kind == TerminatorKind::TestAndBranch && block.terminator.conditionOperand() == id;

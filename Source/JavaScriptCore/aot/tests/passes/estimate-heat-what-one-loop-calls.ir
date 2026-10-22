@@ -1,0 +1,36 @@
+# Nothing in this program runs more often than one loop of code that runs once. The loop is hot, and so is the function that it calls, which runs as often as its body
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce 0 1
+# CHECK-NEXT: f1 Hot 66 9
+# CHECK-NEXT: hottest: f1 f0
+# CHECK-NEXT: thresholds: cold=1 hot=9
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = CallDirect v0 function=f1
+    Jump -> next b1()
+  b3():
+    Return
+}
+
+function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v0
+}

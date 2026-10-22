@@ -12,6 +12,10 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTCallEmitter.h"
 #include "AOTConstantEmitter.h"
+#include "AOTInstance.h"
+#include "AOTLayout.h"
+#include "AOTPlacement.h"
+#include "AOTRuntimeValidation.h"
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -40,9 +44,58 @@ void ClassEmitter::generateNewClass(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClass, { word32(request->value()), constructor, heritage, prototypeParent }));
 }
 
+// The run time enters the prototype object of a class that is evaluated once in ClassWords::classPrototypes: at the definition of a class, at the first construction by a constructor function.
+// No code can change the property of a class. That of a constructor function is proven to stay, or the operation stands behind the test that nobody has stored to it since the class was defined.
+static bool hasOnePrototypeObject(const Program& program, const Layout& classLayout)
+{
+    return isEvaluatedOnce(program, classLayout);
+}
+
+std::optional<uint32_t> ClassEmitter::rankOfClassWithOnePrototypeObject(const ValueContext& value) const
+{
+    LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
+    if (!hasOnePrototypeObject(m_program, m_program.at(classLayout)))
+        return std::nullopt;
+    return m_placement.rankOfClass(classLayout);
+}
+
+void ClassEmitter::failUnlessOperationReads(const ValueContext& value, CellPointer classObject, CellPointer prototypeInTable)
+{
+    LBasicBlock differs = newBlock();
+    LBasicBlock continuation = newBlock();
+    CellPointer prototype = callWithoutSite<CellPointer>(RuntimeOperation::GetClassPrototype, { classObject });
+    branch(equal(prototype, prototypeInTable), { normalEdge(continuation), rareEdge(differs) });
+
+    m_out.appendTo(differs);
+    Operand arguments[] { boxCell(prototypeInTable), word32(static_cast<int32_t>(ValidationFailureKind::FastPathResultDiffers)), word32(m_id.index()), word32(value.id().index()) };
+    callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true });
+    m_out.unreachable();
+
+    m_out.appendTo(continuation);
+}
+
 void ClassEmitter::generateGetClassPrototype(const ValueContext& value)
 {
-    define(value, callWithoutSite<CellPointer>(RuntimeOperation::GetClassPrototype, { in<CellPointer>(value->classObjectOperand()) }));
+    CellPointer classObject = in<CellPointer>(value->classObjectOperand());
+    auto readByOperation = [&](bool isOnRarePath) {
+        return callWithoutSite<CellPointer>(RuntimeOperation::GetClassPrototype, { classObject }, { .isOnRarePath = isOnRarePath });
+    };
+    std::optional<uint32_t> rank = rankOfClassWithOnePrototypeObject(value);
+    if (!rank) {
+        define(value, readByOperation(false));
+        return;
+    }
+
+    // The word is empty until the prototype object exists. A filled word keeps its cell, which the run time keeps alive.
+    Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+    CellPointer prototype(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), static_cast<ptrdiff_t>(*rank) * sizeof(JSCell*))));
+    define(value, either<CellPointer>(Condition(m_out.notZero64(prototype.value())), [&] {
+        if (generator().validates())
+            failUnlessOperationReads(value, classObject, prototype);
+        return prototype;
+    }, [&] {
+        return readByOperation(true);
+    }));
 }
 
 void ClassEmitter::generateDefineMethod(const ValueContext& value)

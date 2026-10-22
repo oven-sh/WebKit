@@ -141,7 +141,7 @@ static void printPlan(TestCommandContext& context, const ListedValue& listed)
 {
     const Program& program = *context.program;
     const Value& access = listed.value();
-    std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, listed.function, access);
+    std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, listed.function, access, ExpectedClassObjects::Tested);
     if (!query)
         return;
     query->maxMembers = context.build.limit(LimitID::MaxAccessPlanMembers);
@@ -283,6 +283,8 @@ static void printProvenAccess(IRPrinter& printer, const ProvenAccess& access)
         out.print(" lookupByKey"_s);
     if (access.mayFindPrototypeProperty)
         out.print(" prototypeProperty"_s);
+    if (access.definesOwnProperty)
+        out.print(" definesOwnProperty"_s);
     if (access.key)
         out.print(" key=K"_s, access.key.index());
     if (access.receivers)

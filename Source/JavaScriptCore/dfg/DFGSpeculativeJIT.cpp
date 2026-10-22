@@ -12968,7 +12968,6 @@ void SpeculativeJIT::emitSwitchStringOnString(Node* node, SwitchData* data, GPRR
         load64(Address(stringGPR, JSRopeString::offsetOfFiber1Lower()), tempGPR);
         and64(TrustedImm64(JSRopeString::CompactFibers::addressMask), tempGPR);
         loadPtr(Address(tempGPR, JSString::offsetOfValue()), tempGPR);
-        notReadableInPlace.append(branchTest32(Zero, Address(tempGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
 
         load32(Address(stringGPR, JSRopeString::offsetOfFiber2Lower()), lengthGPR);
         loadPtr(Address(tempGPR, StringImpl::dataOffset()), tempGPR);

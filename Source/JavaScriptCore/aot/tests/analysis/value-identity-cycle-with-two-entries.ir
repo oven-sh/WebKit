@@ -1,4 +1,5 @@
 # In a cycle with two entries some parameter is reached before a value that one of its edges passes, whatever the order of the walk. Where every edge passes one object the parameters have its identity. Where another object enters, the parameter that merges the two is a value of its own, and so is each parameter that it reaches
+# A loop inside the cycle hands round what its head was handed, each block through a parameter of its own. All of them have the identity of the parameter that merges, whatever was taken for its identity at first
 # FORM: Prepared
 # RUN: analyses identities
 
@@ -49,5 +50,31 @@ function f1 name="twoObjects" parameters=[{type=object}, {type=boolean}, {type=o
 # CHECK-NEXT: v5 identity: v3
 # CHECK-NEXT: v6 identity: v3
 # CHECK-NEXT: v9 identity: v7
+# CHECK-NOT: identity: v0
+# CHECK-NOT: identity: v2
+
+function f2 name="loopInsideTheCycle" parameters=[{type=object}, {type=boolean}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object, v1: boolean, v2: object):
+    Branch v1 -> taken b1(v0), notTaken b5(v2)
+  b1(v3: object):
+    Jump -> next b2(v3)
+  b2(v4: object):
+    LoopHint
+    Branch v1 -> taken b3(v4), notTaken b4(v4)
+  b3(v6: object):
+    Jump -> next b2(v6)
+  b4(v7: object):
+    Jump -> next b5(v7)
+  b5(v8: object):
+    LoopHint
+    Branch v1 -> taken b1(v8), notTaken b6()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v4 identity: v3
+# CHECK-NEXT: v6 identity: v3
+# CHECK-NEXT: v7 identity: v3
 # CHECK-NOT: identity: v0
 # CHECK-NOT: identity: v2

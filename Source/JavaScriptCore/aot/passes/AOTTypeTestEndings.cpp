@@ -34,6 +34,8 @@ ProofEnding EndingsAtWriter::endingOf(const TestCondition& condition, const std:
         return ProofEnding::DoesNotEnd;
     if (!mayWriteDependenciesOf(condition, m_analyses.program(), m_effects))
         return ProofEnding::DoesNotEnd;
+    if (dependenciesOfTest && leavesSlotsAsTested(m_analyses.program(), m_analyses.function(), m_analyses.function().at(m_writer), m_effects, dependenciesOfTest->slotState))
+        return ProofEnding::DoesNotEnd;
     if (!m_isBoundedByWriter)
         return ProofEnding::MayEnd;
     if (!dependenciesOfTest)
@@ -44,11 +46,44 @@ ProofEnding EndingsAtWriter::endingOf(const TestCondition& condition, const std:
     return m_guardWriter->mayEnd(*dependenciesOfTest) ? ProofEnding::MayEnd : ProofEnding::DoesNotEnd;
 }
 
-ProofEnding endingOf(FunctionAnalyses& analyses, const TestCondition& condition, ValueID writer, const EffectsOnEdges& effectsOfWriter)
+GuardWriter::WrittenDependencies EndingsAtWriter::writtenOf(const TestCondition& condition, const GuardDependencies& dependencies)
+{
+    using EndedProofs = GuardWriter::EndedProofs;
+    if (condition.lastsForever())
+        return { EndedProofs::None, 0 };
+    if (!mayWriteDependenciesOf(condition, m_analyses.program(), m_effects))
+        return { EndedProofs::None, 0 };
+    if (leavesSlotsAsTested(m_analyses.program(), m_analyses.function(), m_analyses.function().at(m_writer), m_effects, dependencies.slotState))
+        return { EndedProofs::None, 0 };
+    if (!m_isBoundedByWriter)
+        return { EndedProofs::All, 0 };
+
+    if (!m_guardWriter)
+        m_guardWriter.emplace(m_analyses, m_writer);
+    return m_guardWriter->writtenOf(dependencies);
+}
+
+ProofEnding EndingsAtWriter::endingOf(ValueID subject, bool subjectComesFromOutside, const GuardWriter::WrittenDependencies& written)
+{
+    switch (written.endedProofs) {
+    case GuardWriter::EndedProofs::None:
+        return ProofEnding::DoesNotEnd;
+    case GuardWriter::EndedProofs::All:
+        return ProofEnding::MayEnd;
+    case GuardWriter::EndedProofs::AboutSomeObjects:
+        break;
+    }
+    return m_guardWriter->mayEndProofAbout(subject, subjectComesFromOutside, written) ? ProofEnding::MayEnd : ProofEnding::DoesNotEnd;
+}
+
+ProofEnding endingBetweenTestAndBranch(FunctionAnalyses& analyses, const TestCondition& condition, ValueID writer, const EffectsOnEdges& effectsOfWriter)
 {
     if (condition.lastsForever())
         return ProofEnding::DoesNotEnd;
-    return EndingsAtWriter(analyses, writer, effectsOfWriter).endingOf(condition, dependenciesOfGuardOf(analyses, condition.test));
+    std::optional<GuardDependencies> dependencies = dependenciesOfGuardOf(analyses, condition.test);
+    if (dependencies)
+        dependencies->slotState = TestedSlotState::None;
+    return EndingsAtWriter(analyses, writer, effectsOfWriter).endingOf(condition, dependencies);
 }
 
 ProofEnding endingOfTerminator(FunctionAnalyses& analyses, const TestCondition& condition, const Effects& effectsOfTerminator)

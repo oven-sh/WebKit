@@ -1,0 +1,36 @@
+# A closure that native code only looks at is on the heap too: a handle that native code makes for the time of the call asks the block the cell lies in. So is one that reaches native code through a parameter
+# FORM: Prepared
+# RUN: frame-plan
+# RUN(BORROWED): borrowed-parameters
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="handsFreshClosure" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v0: Heap SeenByNativeCode by v1(1)
+
+function f1 name="handsParameter" parameters=[{type=f3}] results=[{type=anything}] {
+  b0(v0: f3):
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+}
+# BORROWED-LABEL: f1: 0 leaks
+
+function f2 name="handsFreshClosureOn" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v0: Heap
+
+function f3 name="listener" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}

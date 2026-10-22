@@ -1,4 +1,4 @@
-# A flag written twice
+# The same flag twice
 # RUN: print
 # DIAGNOSTIC: IRTextError
 

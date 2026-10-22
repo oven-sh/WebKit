@@ -64,11 +64,14 @@ function f1 name="read" results=[{type=anything}] {
     Return
 }
 
+# A field that has a slot in no receiver is read by name.
+# CHECK-NOT: "value" [L2]
+# CHECK: "value" [L1] read EveryMember OptionalDouble @16 {{*}}contents=number|absent
+# CHECK-NOT: "value" [L2]
 # CHECK: "value" [L0] read EveryMember Double @16 {{*}}contents=number
 # CHECK-NOT: absent
-# CHECK: "value" [L1] read EveryMember OptionalDouble @16 {{*}}contents=number|absent
-# CHECK-NEXT: "value" [L2] read NoMember none {{*}}contents=absent
-# CHECK-NEXT: "value" [L0, L2] read SomeMembers Double @16 {{*}}contents=number|absent
+# CHECK-NOT: "value" [L2]
+# CHECK: "value" [L0, L2] read SomeMembers Double @16 {{*}}contents=number|absent
 # A JSValue slot could say absent. L3 and L5 always fill it, and L4 keeps its bytes zero.
 # CHECK: "payload" [L3] read EveryMember JSValue @16 {{*}}contents=anything
 # CHECK-NOT: absent

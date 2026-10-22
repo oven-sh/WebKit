@@ -8,13 +8,13 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTable.h"
-#include "AOTFlowApply.h"
 #include "AOTFlowStamps.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTValueFlowPositions.h"
 #include <algorithm>
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -25,10 +25,12 @@ struct CallsOfFunction {
     FunctionID id;
     const Function& function;
     TypeArena& types;
+    ValueFlowPositions& positions;
+    ValueSetMaker& maker;
     FlowBodyUpdate& update;
     FlowSiteTables& sites;
     Vector<AccessSiteID> accessSites;
-    bool someCallEntersAnything { false };
+    uint64_t numberOfUnknownCallees { 0 };
 };
 
 } // anonymous namespace
@@ -51,59 +53,41 @@ static bool callsValue(const ValueFlowStatement& statement)
     }
 }
 
-static bool throwsBeforeEntry(const Function& callee, bool isConstruction)
+// The positions say what keeps the type of the callee from being proven. Where nothing does, something arrives that can be called and is neither a closure nor a built-in function: a bound function, a proxy.
+static FlowSiteLoss lossOfCall(CallsOfFunction& calls, const ValueFlowStatement& call, const Type& family, ValueFlowNodeID callee, ValueSetID held)
 {
-    if (isConstruction)
-        return callee.constructorForm() == ConstructorForm::NotConstructor;
-    return callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
+    FlowSiteLoss loss = calls.positions.lossOf(calls.positions.resultAt(family, held), callee);
+    if (loss.cause == UnprovenCause::Unknown) {
+        loss.cause = UnprovenCause::UnknownCallee;
+        calls.inputs.sets().forEachMember(calls.maker.intersect(held, calls.inputs.universe().otherCallables()), [&](ValueFlowObjectID object) {
+            if (!hasFunction(loss.witness))
+                loss.witness = witnessOfAllocation(calls.inputs, object);
+        });
+    }
+    // What no earlier operation explains begins here.
+    if (!hasFunction(loss.witness))
+        loss.witness = { calls.id.index(), call.site.index(), calls.function.locationOf(call.site) };
+    return loss;
 }
 
-// A bound function, a proxy and whatever else can be called enter code that nobody lists, so an object that is neither a closure nor a built-in function leaves the set open.
-static std::optional<CalleeSet> calleesOf(const ValueFlowResultInputs& inputs, const ValueFlowStatement& call)
-{
-    const ValueFlowUniverse& universe = inputs.universe();
-    const BuiltinTable& builtins = inputs.program.builtins();
-    bool isConstruction = !!OperandPosition::newTarget(call.opcode);
-
-    CalleeSet callees;
-    callees.isComplete = true;
-    ValueFlowMembers members = forEachMemberOf(inputs, inputs.bodies().operandsOf(call)[0], [&](ValueFlowObjectID member) {
-        if (!universe.isObject(member))
-            return;
-        if (FunctionID function = universe.closureFunction(member)) {
-            if (!throwsBeforeEntry(inputs.program.at(function), isConstruction))
-                callees.functions.append(function);
-            return;
-        }
-        if (inputs.sets().contains(universe.builtinFunctions(), member)) {
-            callees.builtins.append(builtins.canonicalID(universe.builtinOf(member)));
-            return;
-        }
-        callees.isComplete = false;
-    });
-    if (members == ValueFlowMembers::AlmostEverything)
-        return std::nullopt;
-
-    canonicalize(callees);
-    return callees;
-}
-
+// A set that is not complete still lists what the solve has followed to the call and no placeholder covers. Whatever else the call enters has escaped or is lost, and no function whose closure has is said to have known callers.
 static void stampCall(CallsOfFunction& calls, const ValueFlowStatement& call)
 {
-    std::optional<CalleeSet> callees = calleesOf(calls.inputs, call);
-    if (!callees) {
-        calls.someCallEntersAnything = true;
-        return;
-    }
+    ValueFlowNodeID callee = calls.inputs.bodies().operandsOf(call)[0].node;
+    const Type& family = calls.inputs.program.typeOf(calls.function, calls.function.at(call.site).operand(0));
+    ValueSetID held = calls.inputs.valueOf(calls.maker, calls.inputs.bodies().operandsOf(call)[0]);
+    std::optional<CalleeSet> callees = calls.positions.calleesAt(family, held, !!OperandPosition::newTarget(call.opcode));
+    calls.numberOfUnknownCallees += calls.inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
 
     AccessSiteID site = calls.accessSites[call.site.index()];
-    if (!callees->isComplete)
-        calls.sites.accessSiteLosses[site.index()] = FlowSiteLoss { .cause = UnprovenCause::UnknownCallee, .witness = { calls.id.index(), call.site.index(), calls.function.locationOf(call.site) } };
-    if (callees->functions.isEmpty() && callees->builtins.isEmpty())
+    if (!callees || !callees->isComplete)
+        calls.sites.accessSiteLosses[site.index()] = lossOfCall(calls, call, family, callee, held);
+    // A complete set without a member says that the call enters nothing: whatever arrives cannot be called.
+    if (!callees || (!callees->isComplete && callees->functions.isEmpty() && callees->builtins.isEmpty()))
         return;
 
     calls.sites.callsOfBoundFunctions[site.index()] = false;
-    calls.update.calls.append(FlowCallStamp { call.site, calls.types.intern(WTF::move(*callees)), false });
+    calls.update.calls.append(FlowCallStamp { call.site, calls.types.intern(WTF::move(*callees)) });
 }
 
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
@@ -113,23 +97,35 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     unsigned numberOfFunctions = program.functions.size();
     tables.sites.accessSiteLosses.grow(application.accessSites.numberOfSites());
 
-    Vector<uint8_t> entersAnything(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
+    // The types count what lies outside them. Here the same sets are only looked at again.
+    ValueFlowPositionCounts counts(nullptr);
+    ValueSetMakers makers(inputs);
     TypeInterningPhase phase(types, numberOfFunctions);
-    forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
+    forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index, unsigned worker) {
         FunctionID id(index);
         std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(index);
-        if (!inputs.isReached(id) || !inputs.build.isEnabled(FlowResultKind::CalleeSets, index) || std::ranges::none_of(statements, callsValue))
+        if (!inputs.isReached(id) || std::ranges::none_of(statements, callsValue))
             return;
 
         const Function& function = program.functions[index];
+        Vector<AccessSiteID> accessSites = accessSitesByValue(function, application.accessSites, id);
+        if (!inputs.build.isEnabled(FlowResultKind::CalleeSets, index)) {
+            for (const ValueFlowStatement& statement : statements) {
+                if (callsValue(statement))
+                    tables.sites.accessSiteLosses[accessSites[statement.site.index()].index()] = FlowSiteLoss { .cause = UnprovenCause::ResultDisabled };
+            }
+            return;
+        }
+
         TypeArena arena(phase, index);
-        CallsOfFunction calls { inputs, id, function, arena, application.bodies[index], tables.sites, accessSitesByValue(function, application.accessSites, id) };
+        ValueFlowPositions positions(inputs, arena, counts, index, &makers.of(worker));
+        CallsOfFunction calls { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, WTF::move(accessSites) };
         for (const ValueFlowStatement& statement : statements) {
             if (callsValue(statement))
                 stampCall(calls, statement);
         }
         std::ranges::sort(calls.update.calls, { }, &FlowCallStamp::value);
-        entersAnything[index] = calls.someCallEntersAnything;
+        inputs.build.statistics().count(StatisticID::FlowCallsOfUnknownCallees, calls.numberOfUnknownCallees);
     });
     TypeRemap remap = phase.finish(StringRemap { });
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
@@ -139,13 +135,19 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
 
     ValueFlowStampedCalls result;
     result.functionsInStamps = BitVector(numberOfFunctions);
-    result.someCallEntersAnything = entersAnything.contains(static_cast<uint8_t>(1));
-    for (const FlowBodyUpdate& update : application.bodies) {
-        for (const FlowCallStamp& stamp : update.calls) {
+    Vector<BitVector> functionsSeenBy(inputs.loops().width());
+    forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index, unsigned worker) {
+        if (application.bodies[index].calls.isEmpty())
+            return;
+        BitVector& functions = functionsSeenBy[worker];
+        functions.ensureSize(numberOfFunctions);
+        for (const FlowCallStamp& stamp : application.bodies[index].calls) {
             for (FunctionID function : types.at(stamp.callees).functions)
-                result.functionsInStamps.quickSet(function.index());
+                functions.quickSet(function.index());
         }
-    }
+    });
+    for (const BitVector& functions : functionsSeenBy)
+        result.functionsInStamps.merge(functions);
     return result;
 }
 

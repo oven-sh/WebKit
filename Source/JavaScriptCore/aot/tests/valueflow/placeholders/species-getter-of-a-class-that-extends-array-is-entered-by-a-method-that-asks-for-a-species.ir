@@ -1,0 +1,38 @@
+# class List extends Array { static get [Symbol.species]() { return Array } }; list = new List; list.push(1); list.slice(1)
+# slice asks the class of its receiver for a species: the getter is entered.
+# RUN: valueflow-solve unreached calls
+# CHECK: f0 v10 -> ArrayPrototypePush
+# CHECK-NEXT: f0 v12 -> ArrayPrototypeSlice
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 side=Static methodKind=Getter key=@@species
+    v6 = FinishClass v3 layout=L0
+    v7 = Construct v6
+    v8 = Integer integer=1
+    v9 = Builtin builtin=ArrayPrototypePush
+    v10 = Call v9, v7, v8
+    v11 = Builtin builtin=ArrayPrototypeSlice
+    v12 = Call v11, v7, v8
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    Return v1
+}

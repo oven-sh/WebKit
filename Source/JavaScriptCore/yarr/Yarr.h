@@ -106,6 +106,7 @@ enum class ExecutionMode : uint8_t {
 
 enum class PatternAnalysis : uint8_t {
     Skipped,
+    CharacterClassForms,
     Performed,
 };
 

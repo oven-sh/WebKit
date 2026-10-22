@@ -1,8 +1,7 @@
-# Where the fields that a store creates come next in an order of the image, the code compares the order word with one constant and stores another, and calls the run time only for another word. A run whose fields come next in no order has no such code
+# A store that flow does not expect to create its fields compares the order word with no constant of the image: whether the fields come next in an order makes no difference to its code. The step that it takes is remembered at the store. The likeliest step is tested in line only at an access site that sees unfinished objects; a text program has no table of access sites in this run, so that form has no test here.
 # FORM: Selected
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=EverythingIsHot
 # RUN: generate-code calls
-# RUN(NOSTEP): generate-code calls
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Counter" constructor=f0 fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="c" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] constructorOrders=[{fields=[0, 1, 2]}] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
@@ -17,10 +16,9 @@ function f2 name="next-in-no-order" parameters=[{type=L0}, {type=number}] result
     PutSlots v0, -, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}] receivers=[L0]
     Return
 }
-# Both call the run time for an object in another state. The two stores are the same, so the comparison and the store of the order word are the difference in size.
-# CHECK: f1: size=[[withStep]] frame
-# CHECK-NEXT: stub DidCreateField.Run x1
-# CHECK-NEXT: f2: size=
-# CHECK-NEXT: stub DidCreateField.Run x1
-# NOSTEP: f1: size=[[withStep]] frame
-# NOSTEP-NOT: size=[[withStep]] frame
+# Both ask what the store remembers, then the run time, which is told to remember the step. The code is the same.
+# CHECK: f1: size=[[size]] frame
+# CHECK-NEXT: stub DidCreateFieldAtPlace.Run x1
+# CHECK-NEXT: f2: size=[[size]] frame
+# CHECK-NEXT: stub DidCreateFieldAtPlace.Run x1
+# CHECK-NOT: RememberKeyOrderStep

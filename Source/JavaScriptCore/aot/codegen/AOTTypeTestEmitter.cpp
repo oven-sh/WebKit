@@ -9,10 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTClosureTestEmitter.h"
+#include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
-#include "AOTPlacement.h"
 #include "AOTSlotRepresentation.h"
-#include "AOTThrowEmitter.h"
+#include "AOTTypeRelations.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
@@ -20,6 +21,7 @@
 #include "JSCJSValueInlines.h"
 #include <bit>
 #include <wtf/MathExtras.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -98,9 +100,10 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
     }).iterator->value;
 }
 
-void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets, CodeShape shape)
 {
     RELEASE_ASSERT(operand.representation == plan.representation);
+    SetForScope shapeOfTest(m_shape, shape);
     switch (plan.verdict) {
     case TypeTestVerdict::AlwaysPasses:
         m_out.jump(targets.taken.block());
@@ -111,6 +114,10 @@ void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, Bran
     case TypeTestVerdict::NeedsTest:
         break;
     }
+    if (std::optional<BuiltinID> builtin = onlyBuiltinThatPasses(plan)) {
+        emitter<ConstantEmitter>().branchOnIsBuiltinCell(operand.value, *builtin, targets);
+        return;
+    }
     if (std::optional<Condition> condition = tryGetSingleCondition(operand, plan)) {
         branch(*condition, targets);
         return;
@@ -119,9 +126,23 @@ void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, Bran
     jump(targets.taken);
 }
 
-Condition TypeTestEmitter::emitBoolean(Operand operand, const TypeTestPlan& plan)
+std::optional<BuiltinID> TypeTestEmitter::onlyBuiltinThatPasses(const TypeTestPlan& plan) const
+{
+    if (plan.representation != Representation::JSValue && plan.representation != Representation::Cell)
+        return std::nullopt;
+    // What is absent has the bits of an empty word.
+    if (plan.passingPrimitives || plan.occurringPrimitives() & Primitive::Absent || plan.objects != ObjectsVerdict::NeedTest || plan.cellTests.size() != 1)
+        return std::nullopt;
+    const CellTest& test = plan.cellTests[0];
+    if (test.kind != CellTestKind::IsBuiltinCell || !isTestableBuiltin(m_builtins, test.builtin))
+        return std::nullopt;
+    return test.builtin;
+}
+
+Condition TypeTestEmitter::emitBoolean(Operand operand, const TypeTestPlan& plan, CodeShape shape)
 {
     RELEASE_ASSERT(operand.representation == plan.representation);
+    SetForScope shapeOfTest(m_shape, shape);
     switch (plan.verdict) {
     case TypeTestVerdict::AlwaysPasses:
         return boolean(true);
@@ -133,37 +154,8 @@ Condition TypeTestEmitter::emitBoolean(Operand operand, const TypeTestPlan& plan
     if (std::optional<Condition> condition = tryGetSingleCondition(operand, plan))
         return *condition;
     return asBoolean([&](BranchTargets targets) {
-        emitBranch(operand, plan, targets);
+        emitBranch(operand, plan, targets, shape);
     });
-}
-
-void TypeTestEmitter::emitThrow(const OperationContext& context, Operand operand, const TypeTestPlan& plan, TypeSiteID site)
-{
-    RELEASE_ASSERT(operand.representation == plan.representation);
-    switch (plan.verdict) {
-    case TypeTestVerdict::AlwaysPasses:
-        return;
-    case TypeTestVerdict::NeverPasses: {
-        // A throw site without an operand reports undefined.
-        bool isNullWithoutBits = operand.representation == Representation::Void && m_program.at(plan.from).primitives & Primitive::Null;
-        emitter<ThrowEmitter>().throwTypeMismatch(context, isNullWithoutBits ? Operand(boxedConstant(jsNull())) : operand, plan.to, site);
-        return;
-    }
-    case TypeTestVerdict::NeedsTest:
-        break;
-    }
-
-    bool readsCells = !plan.cellTests.isEmpty() || !plan.stringLiterals.isEmpty();
-    bool mayBeAbsent = plan.occurringPrimitives() & Primitive::Absent;
-    if (context.shape() == CodeShape::Compact && operand.is<Boxed>() && readsCells && !mayBeAbsent && m_placement.typesNeededAtRunTime().get(plan.to.index())) {
-        build().statistics().count(StatisticID::TypeChecksByOperation);
-        callOperation<Boxed>(context, RuntimeOperation::EnforceType, { operand, word32(plan.to.index()), word32(site.index()) });
-        return;
-    }
-
-    build().statistics().count(StatisticID::TypeChecksInB3);
-    Failure failure { &context, emitter<ThrowEmitter>().typeMismatchSite(plan.to, site), operand, { } };
-    test(operand, plan, failure);
 }
 
 void TypeTestEmitter::leaveUnless(Condition condition, const Failure& failure)
@@ -173,10 +165,6 @@ void TypeTestEmitter::leaveUnless(Condition condition, const Failure& failure)
             leave(failure);
         return;
     }
-    if (failure.thrower) {
-        emitter<ThrowEmitter>().requireOrThrow(*failure.thrower, condition, failure.throwSite, failure.thrown);
-        return;
-    }
     LBasicBlock continuation = newBlock();
     m_out.branch(condition.value(), normalEdge(continuation), failure.target);
     m_out.appendTo(continuation);
@@ -184,10 +172,6 @@ void TypeTestEmitter::leaveUnless(Condition condition, const Failure& failure)
 
 void TypeTestEmitter::leave(const Failure& failure)
 {
-    if (failure.thrower) {
-        emitter<ThrowEmitter>().throwAt(*failure.thrower, failure.throwSite, failure.thrown);
-        return;
-    }
     jump(failure.target);
     m_out.appendTo(newBlock());
 }
@@ -210,7 +194,7 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Operand operand,
     case Representation::Boolean:
         return booleanPasses(operand.as<Condition>(), plan);
     case Representation::Int32:
-        return integerPasses(signExtended(operand.as<Word32>()), plan);
+        return integerPasses(signExtended(operand.as<Word32>()), plan, Range::int32());
     case Representation::Int64:
         return integerPasses(operand.as<Integer>(), plan);
     case Representation::Double:
@@ -244,6 +228,15 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Boxed value, con
         return tryGetConditionWithAbsent(value, plan);
     if (plan.everyCellPasses() && plan.everyNonCellPasses())
         return boolean(true);
+    if (!(others & plan.passingPrimitives) && isDecidedByCallableStub(plan))
+        return isCallableByStub(value.value());
+    if (!(others & plan.passingPrimitives)) {
+        if (std::optional<FunctionID> function = functionDecidedByClosureStub(plan)) {
+            return asBoolean([&](BranchTargets targets) {
+                emitter<ClosureTestEmitter>().branchOnIsClosureOfByStub(value.value(), *function, targets);
+            });
+        }
+    }
     if (!plan.cellsOccur() || !plan.someCellPasses())
         return tryGetNonCellCondition(value, plan);
     if (!plan.everyCellPasses()) {
@@ -401,8 +394,7 @@ void TypeTestEmitter::testNonCell(Boxed value, const TypeTestPlan& plan, const F
     withoutNumbers.failingPrimitives &= ~Primitive::Number;
     withoutNumbers.integers = std::nullopt;
     if (!(withoutNumbers.passingPrimitives & ~cellPrimitives)) {
-        leaveUnless(isNumber(value), failure);
-        testBoxedNumber(value, plan, failure);
+        testBoxedNumber(value, BoxedValue::MayBeNoNumber, plan, failure);
         return;
     }
 
@@ -411,7 +403,7 @@ void TypeTestEmitter::testNonCell(Boxed value, const TypeTestPlan& plan, const F
     LBasicBlock continuation = newBlock();
     m_out.branch(isNumber(value).value(), normalEdge(numberCase), unlikelyEdge(otherCase));
     m_out.appendTo(numberCase);
-    testBoxedNumber(value, plan, failure);
+    testBoxedNumber(value, BoxedValue::IsNumber, plan, failure);
     m_out.jump(continuation);
     m_out.appendTo(otherCase);
     testNonCell(value, withoutNumbers, failure);
@@ -419,14 +411,17 @@ void TypeTestEmitter::testNonCell(Boxed value, const TypeTestPlan& plan, const F
     m_out.appendTo(continuation);
 }
 
-void TypeTestEmitter::testBoxedNumber(Boxed number, const TypeTestPlan& plan, const Failure& failure)
+// A boxed int32 is a number, so only what is none is asked whether it is a number at all.
+void TypeTestEmitter::testBoxedNumber(Boxed value, BoxedValue known, const TypeTestPlan& plan, const Failure& failure)
 {
-    ifElse(isInt32(number), [&] {
+    ifElse(isInt32(value), [&] {
         bool everyInt32Passes = plan.integers && Range::int32().isSubsetOf(*plan.integers);
         if (!everyInt32Passes)
-            leaveUnless(integerPasses(signExtended(unboxInt32(number)), plan), failure);
+            leaveUnless(integerPasses(signExtended(unboxInt32(value)), plan, Range::int32()), failure);
     }, [&] {
-        leaveUnless(doublePasses(unboxDouble(number), plan), failure);
+        if (known == BoxedValue::MayBeNoNumber)
+            leaveUnless(isNumber(value), failure);
+        leaveUnless(doublePasses(unboxDouble(value), plan), failure);
     });
 }
 
@@ -527,6 +522,8 @@ Condition TypeTestEmitter::isMarker(Operand operand)
     case Representation::Cell32:
         return logicalNot(isCellReference(operand.as<NarrowReference>()));
     case Representation::LiteralString:
+        if (std::optional<NarrowReference> narrow = narrowWordBehind(operand.as<LiteralStringWord>()))
+            return belowOrEqual(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(boxedMarkers.undefined))));
         return belowOrEqual(operand.as<LiteralStringWord>(), LiteralStringWord(m_out.constInt64(boxedMarkers.undefined)));
     case Representation::Unchosen:
     case Representation::Void:
@@ -585,7 +582,7 @@ Condition TypeTestEmitter::boxedNumberPasses(Boxed value, const TypeTestPlan& pl
     return either<Condition>(isInt32(value), [&] {
         if (plan.integers && Range::int32().isSubsetOf(*plan.integers))
             return boolean(true);
-        return integerPasses(signExtended(unboxInt32(value)), plan);
+        return integerPasses(signExtended(unboxInt32(value)), plan, Range::int32());
     }, [&] {
         return either<Condition>(isNumber(value), [&] {
             return doublePasses(unboxDouble(value), plan);
@@ -623,7 +620,7 @@ Condition TypeTestEmitter::doublePasses(Number number, const TypeTestPlan& plan)
     return select(isInteger, integerPasses(truncated, plan), otherNumberPasses);
 }
 
-Condition TypeTestEmitter::integerPasses(Integer value, const TypeTestPlan& plan)
+Condition TypeTestEmitter::integerPasses(Integer value, const TypeTestPlan& plan, Range heldByForm)
 {
     if (!(plan.passingPrimitives & Primitive::Integer))
         return boolean(false);
@@ -631,7 +628,7 @@ Condition TypeTestEmitter::integerPasses(Integer value, const TypeTestPlan& plan
         return boolean(true);
 
     Range range = *plan.integers;
-    Range known = m_program.at(plan.from).integers;
+    Range known = m_program.at(plan.from).integers.intersectWith(heldByForm);
     uint64_t maximum = static_cast<uint64_t>(range.maximum);
     if (known.minimum >= 0 && range.minimum <= 0 && range.maximum > 0 && !(maximum & (maximum + 1)))
         return Condition(m_out.testIsZero64(value.value(), m_out.constInt64(~range.maximum)));
@@ -662,6 +659,9 @@ Condition TypeTestEmitter::isInRange(Integer value, Range range)
 Condition TypeTestEmitter::isExactIntegerIn(Number number, Integer truncated, Range range)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    // An integer outside of int32 is not what the low half of it makes, so one comparison answers both questions.
+    if (range == Range::int32())
+        return equal(conversions.bitsOf(toNumber(low32(truncated))), conversions.bitsOf(number));
     Integer bitsOfTruncated = conversions.bitsOf(toNumber(truncated));
     Condition isExact = equal(bitsOfTruncated, conversions.bitsOf(number));
     return logicalAnd(isExact, isInRange(truncated, range));

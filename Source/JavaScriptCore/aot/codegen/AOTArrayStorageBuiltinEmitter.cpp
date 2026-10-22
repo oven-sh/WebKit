@@ -14,6 +14,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTStubsArrays.h"
 #include "IndexingType.h"
 #include "JSType.h"
@@ -157,16 +158,22 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
 
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver()));
+    ArrayStorageFormList forms = elements.candidateFormsFor(pushed, expected);
+    // An array of any other kind than its element type declares takes the stub, which knows them all.
+    if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
+        forms.shrink(1);
     bool mayPushCell = typeOf(pushed).hasCells();
     LBasicBlock isStored = newBlock();
     LBasicBlock slowPath = newBlock();
     OperandJoin join(m_out, resultRepresentationOf(call));
 
-    Word32 mode = elements.indexingMode(array, IndexingShapeAndWritabilityMask);
     ArrayElements storage = elements.elementsOf(array);
     Integer length = elements.publicLength(storage);
     branchUnless(below(length, elements.vectorLength(storage)), slowPath);
-    elements.forEachFormByWritableShape(mode, elements.candidateFormsFor(pushed, expected), slowPath, [&](const ArrayStorageForm& form) {
+    // Read in the block that asks for it: a compare reads the byte from memory.
+    Word32 mode = elements.indexingMode(array, IndexingShapeAndWritabilityMask);
+    elements.forEachFormByWritableShape(mode, forms, slowPath, [&](const ArrayStorageForm& form) {
         Operand rawElement = *elements.rawElementToStore(form, pushed, slowPath);
         // An array that needs a barrier takes the stub, which remembers the pushed element and not the array.
         if (form.holdsCells && mayPushCell)
@@ -253,6 +260,17 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
     finishInlineCall(call, lengthResult(call, newLength));
 }
 
+// What flow found in the arrays of the site stands in the cast behind the call. Their stores and reads expect the kind of storage that holds it.
+const Type& ArrayStorageBuiltinEmitter::typeOfArraysCreatedBy(const InlineCall& call)
+{
+    if (const ValueContext* value = call.value()) {
+        std::optional<Use> use = analyses().useLists().singleUse(value->id());
+        if (use && use->kind == Use::Kind::Operand && m_function.at(use->user).opcode == Opcode::AssumeType)
+            return typeOf(use->user);
+    }
+    return resultTypeOf(call);
+}
+
 void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments());
@@ -264,7 +282,7 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
     m_out.appendTo(isNotInteger);
     join.add(integer(invalidArrayLength));
     Integer length = join.finish();
-    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(resultTypeOf(call))));
+    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call))));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayOf(const InlineCall& call)

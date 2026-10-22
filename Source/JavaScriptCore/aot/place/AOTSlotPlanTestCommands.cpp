@@ -198,7 +198,7 @@ static ASCIILiteral directionOf(const AccessRequest& request)
 static PlacedSlot locationOf(const SlotGroup& group)
 {
     const PlacedSlot& slot = group.slot;
-    return { .representation = slot.representation, .storage = slot.storage, .offset = slot.offset, .doubleOffsetInExtension = slot.doubleOffsetInExtension };
+    return { .representation = slot.representation, .storage = slot.storage, .offset = slot.offset };
 }
 
 static void printAgreement(IRPrinter& printer, const SlotAgreement& agreement)
@@ -284,6 +284,7 @@ static void printClass(IRPrinter& printer, LayoutID id, const ClassCreationPlan&
     printFlag(out, plan.createsMembersLazily, "lazy"_s);
     printFlag(out, plan.createsPrototypeBeforeClassObject, "prototypeFirst"_s);
     printFlag(out, plan.createsClassObjectOnMutation, "onMutation"_s);
+    printFlag(out, plan.guardsHoldWhileClear, "guardsHoldWhileClear"_s);
     out.print("\n"_s);
 
     const Vector<ClassMember>& members = printer.program().at(id).classFlow.members;
@@ -350,6 +351,35 @@ static void printColumns(const SlotPlanViewContext& view)
     }
 }
 
+static ASCIILiteral nameOf(FieldTableEntry::Form form)
+{
+    switch (form) {
+    case FieldTableEntry::Form::InlineValue:
+        return "InlineValue"_s;
+    case FieldTableEntry::Form::InlineInt32:
+        return "InlineInt32"_s;
+    case FieldTableEntry::Form::InlineNarrowCell:
+        return "InlineNarrowCell"_s;
+    case FieldTableEntry::Form::OutOfLineValue:
+        return "OutOfLineValue"_s;
+    default:
+        return "Field"_s;
+    }
+}
+
+static void printExpectedForms(const SlotPlanViewContext& view)
+{
+    IRPrinter printer(view.out, view.program());
+    for (unsigned index = 0; index < view.slots().formsExpectedOfNames().endOfNames(); ++index) {
+        PropertyKeyID key(index);
+        std::optional<FieldTableEntry::Form> form = view.slots().formsExpectedOfNames().of(key);
+        if (!form)
+            continue;
+        printer.print(key);
+        view.out.print(" "_s, nameOf(*form), "\n"_s);
+    }
+}
+
 static void printFill(const SlotPlanViewContext& view)
 {
     dumpFillEstimates(view.out, view.program(), collectSlotUsesFor(view));
@@ -366,6 +396,7 @@ static std::span<const SlotPlanView> slotPlanViews()
         { "padding"_s, printPadding },
         { "columns"_s, printColumns },
         { "fill"_s, printFill },
+        { "expected-forms"_s, printExpectedForms },
     };
     return views;
 }

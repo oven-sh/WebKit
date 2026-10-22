@@ -44,7 +44,7 @@ static bool canMoveToCall(FunctionAnalyses& analyses, const Function& function, 
         return false;
 
     auto hasNoEffects = [&](ValueID id) {
-        return analyses.effectsOf(id) == EffectsOnEdges::none();
+        return analyses.hasNoEffects(id);
     };
     Vector<ValueID, 2> chain = collectCastChain(function, function.at(call.value).listOperand());
     RELEASE_ASSERT(chain.last() == list);
@@ -133,20 +133,18 @@ Vector<ListCallSite> planListCalls(FunctionPassContext& context)
     BuiltinUseInputs inputs { context.program, function, context.types, context.inputs.flow, analyses.effectContext(), &analyses, { } };
 
     Vector<ListCallSite> listCalls;
-    forEachValueSite(analyses, function, [&](const ValueSite& site) {
-        if (!listCallOpcodes.contains(function.at(site.value).opcode))
-            return;
-
+    static_assert(listCallOpcodes == callsWithList);
+    for (const ValueSite& site : context.sitesIn(SiteList::CallsWithList)) {
         std::optional<ListCallSite> listCall = planCallOfSpreadArray(context, inputs, site);
         if (!listCall)
             listCall = planCallOfWholeList(context, inputs, site);
         if (!listCall)
-            return;
+            continue;
         if (!listCall->requirements.isEmpty() && !canPlaceTests(context, listCall->requirements.span(), site.block))
-            return;
+            continue;
 
         listCalls.append(WTF::move(*listCall));
-    });
+    }
     return listCalls;
 }
 
@@ -174,7 +172,7 @@ static void rewriteProvenListCall(FunctionPassContext& context, const ListCallSi
         retireList(function, listCall, function.at(id).listOperand());
     }
 
-    Value& call = function.at(id);
+    Value& call = function.edit(id);
     if (!plan) {
         call.setListOperand(listCall.array);
         checkRewrite(context, listCall.site, replaced);
@@ -187,8 +185,7 @@ static void rewriteProvenListCall(FunctionPassContext& context, const ListCallSi
     call.setNeedsPristineReceiver(!isPristineByType);
     call.setIsDemotedTailCall(isDemotedTailCall);
     call.type = resultTypeOf(program, function, call, context.types);
-    call.setWritten(writtenTypeOf(program, function, call, context.types));
-    call.setPrediction(predictionOf(program, function, call, context.types));
+    call.setExpected(expectedTypeOf(program, function, call, context.types));
     checkRewrite(context, listCall.site, replaced);
 }
 

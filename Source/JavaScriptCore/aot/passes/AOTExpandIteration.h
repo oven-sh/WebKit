@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDerivedFunctions.h"
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTSSARepair.h"
@@ -16,14 +17,57 @@
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
+#include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, Map, Set, Generator, AsyncGenerator };
+enum class ExpansionStep : uint8_t {
+    ForInPositions = 1 << 0,
+    ArrayIteratorSteps = 1 << 1,
+    Spreads = 1 << 2,
+    Iterations = 1 << 3,
+};
+
+constexpr OptionSet<ExpansionStep> stepThatExpands(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::ForInStep:
+        return ExpansionStep::ForInPositions;
+    case Opcode::StepArrayIterator:
+        return ExpansionStep::ArrayIteratorSteps;
+    case Opcode::AppendSpread:
+        return ExpansionStep::Spreads;
+    case Opcode::IteratorOpen:
+    case Opcode::IteratorResume:
+    case Opcode::IteratorClose:
+        return ExpansionStep::Iterations;
+    default:
+        return { };
+    }
+}
+
+constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
+{
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (stepThatExpands(opcode).containsAny(steps))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}
+
+// ExpandIteration has nothing to do in a function without any of the first, ExpandProvenIterations in one without any of the second.
+inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
+inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
+
+enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
 enum class IterationOrigin : uint8_t { Source, Spread };
 enum class ArmDispatch : uint8_t { SingleArm, ByForm, Versioned };
 enum class PatternRead : uint8_t { BySteps, ByIndex, InOneRead };
+// Proven: the plan has one arm, the arm has no test, and closing does nothing.
+enum class ExpandedIterations : uint8_t { All, OnlyProven };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow };
 
 constexpr bool closingHasNoEffect(IterationForm form)
 {
@@ -32,6 +76,7 @@ constexpr bool closingHasNoEffect(IterationForm form)
     case IterationForm::TypedArray:
     case IterationForm::String:
     case IterationForm::SplitString:
+    case IterationForm::OwnEntries:
     case IterationForm::Map:
     case IterationForm::Set:
         return true;
@@ -54,6 +99,10 @@ struct IterationArm {
     bool classIsProven { false };
     bool namesAreProven { false };
     bool bypassesIterator { false };
+    // The protocol arm of a value that may be a string nobody expected.
+    bool alsoServesStrings { false };
+    // A class arm of an async iteration: it stands for the wrapper around the synchronous iterator.
+    bool awaitsEachValue { false };
 
     bool needsNoTest() const { return classIsProven && namesAreProven; }
 
@@ -88,6 +137,11 @@ struct Iteration {
     Vector<BlockID, 1> cleanupBlocks;
 };
 
+struct PatternInOneRead {
+    Iteration operations;
+    ValueID iterable;
+};
+
 struct StateVariable {
     SSARepair::Variable variable { 0 };
     ValueID anyDefinition;
@@ -98,6 +152,8 @@ struct ArmState {
     PatternRead patternRead { PatternRead::BySteps };
     ValueID subject;
     ValueID nextMethod;
+    ValueID isSteppedWithoutCall;
+    bool callsSharedFunctions { false };
     std::optional<StateVariable> position;
     std::optional<StateVariable> table;
 };
@@ -113,12 +169,20 @@ class IterationExpansion {
     WTF_MAKE_NONCOPYABLE(IterationExpansion);
 public:
     IterationExpansion(FunctionPassContext&, IRBuilder&, SSARepair&, IterationOrigin);
+    IterationExpansion(const Program&, Function& sharedFunction, TypeArena&, IRBuilder&);
 
-    FunctionPassContext& pass() { return m_pass; }
-    const Program& program() const { return m_pass.program; }
-    Function& function() { return m_pass.function; }
-    FunctionAnalyses& analyses() { return m_pass.analyses; }
-    TypeArena& types() { return m_pass.types; }
+    FunctionPassContext& pass() { return *m_pass; }
+    const Program& program() const { return m_program; }
+    Function& function() { return m_function; }
+    FunctionAnalyses& analyses() { return m_pass->analyses; }
+    TypeArena& types() { return m_types; }
+    bool isMakingSharedFunction() const { return !m_pass; }
+    void returnResultsOfStep(ValueID position)
+    {
+        m_returnsResultsOfStep = true;
+        m_positionInFrontOfStep = position;
+        m_positionBehindStep = position;
+    }
     IRBuilder& builder() { return m_builder; }
     IterationOrigin origin() const { return m_origin; }
 
@@ -145,20 +209,29 @@ public:
     PropertyKeyID keyOf(BuiltinName);
 
 private:
-    FunctionPassContext& m_pass;
+    FunctionPassContext* m_pass;
+    const Program& m_program;
+    Function& m_function;
+    TypeArena& m_types;
     IRBuilder& m_builder;
-    SSARepair& m_repair;
+    SSARepair* m_repair;
     IterationOrigin m_origin;
     const IRBuilder::Expansion* m_operation { nullptr };
+    bool m_returnsResultsOfStep { false };
+    ValueID m_positionInFrontOfStep;
+    ValueID m_positionBehindStep;
 };
 
 IterationPlan planIteration(FunctionPassContext&, const Iteration&);
 IterationPlan planSpread(FunctionPassContext&, ValueID appendSpread);
 ArmDispatch chooseArmDispatch(FunctionPassContext&, const Iteration&, const IterationPlan&, std::span<const BlockID> liveRegion);
 Vector<BlockID> findLiveRegion(FunctionPassContext&, ValueID open);
+// What a passed test leaves of a type may lie outside it: beside a class that may be related, the part of the tested class loses what it proves.
+// The parameter of the block that follows the protocol has the type of the value that was tested.
+ValueID chooseArgumentOfProtocolEntry(FunctionPassContext&, BlockID protocolEntry, ValueID narrowed, ValueID tested);
 
 Vector<Iteration> collectIterations(FunctionPassContext&);
-void expandOneIteration(FunctionPassContext&, IRBuilder&, const Iteration&);
+PassOutcome expandIterations(FunctionPassContext&, IRBuilder&, std::span<const ValueID> opensOfSpreads, ExpandedIterations);
 
 void emitArmOpen(IterationExpansion&, ArmState&);
 void emitArmStep(IterationExpansion&, ArmState&, const StepRequest&);
@@ -169,23 +242,32 @@ void emitArrayStep(IterationExpansion&, ArmState&);
 void emitArrayStepByIndex(IterationExpansion&, ArmState&, uint32_t stepIndex);
 void emitTypedArrayStep(IterationExpansion&, ArmState&);
 void emitStringStep(IterationExpansion&, ArmState&);
+TypeID positionTypeOfStringWalk(TypeArena&);
 void emitSplitStringStep(IterationExpansion&, ArmState&);
+void emitOwnEntriesOpen(IterationExpansion&, ArmState&);
+void emitOwnEntriesStep(IterationExpansion&, ArmState&);
 void emitCollectionOpen(IterationExpansion&, ArmState&);
 void emitCollectionStep(IterationExpansion&, ArmState&);
 
 void emitGeneratorStep(IterationExpansion&, ArmState&, const StepRequest&);
 void emitGeneratorClose(IterationExpansion&, ArmState&, IteratorCompletion);
 void emitAsyncGeneratorStep(IterationExpansion&, ArmState&, const StepRequest&);
+void finishAsyncIteratorStep(IterationExpansion&, ValueID step, const StepRequest&);
 
 void emitProtocolOpen(IterationExpansion&, ArmState&, IteratorKind);
+ValueID openWrappedIterator(IterationExpansion&, ValueID iterable);
 void emitProtocolStep(IterationExpansion&, ArmState&, const StepRequest&);
 void emitProtocolClose(IterationExpansion&, ArmState&, IteratorKind, IteratorCompletion);
 void emitIteratorResultReads(IterationExpansion&, ValueID result, bool readsValueWhenDone);
+bool isOutlinedIteration(const Function&);
+Function createOutlinedIteration(DerivedFunctionInputs&, ASCIILiteral name, std::span<const TypeID> parameters, std::span<const TypeID> results);
+Function buildSharedProtocolFunction(OutlinedIteration, DerivedFunctionInputs&);
 
-PatternRead choosePatternRead(FunctionPassContext&, const Iteration&, const IterationArm&);
+PatternRead choosePatternRead(FunctionPassContext&, const Iteration&, const IterationArm&, std::span<const BlockID> liveRegion);
 bool hasProvenPlainElements(const Type& iterable);
-void expandPatternInOneRead(FunctionPassContext&, IRBuilder&, const Iteration&, ValueID iterable);
+void expandPatternsInOneRead(FunctionPassContext&, IRBuilder&, std::span<const PatternInOneRead>);
 
+void passParametersOfCleanupBlocksOn(FunctionPassContext&, IRBuilder&);
 void dropCleanupRegions(FunctionPassContext&, IRBuilder&, std::span<const BlockID> cleanupBlocks);
 void releaseCleanupBlocks(FunctionPassContext&, std::span<const BlockID> cleanupBlocks);
 

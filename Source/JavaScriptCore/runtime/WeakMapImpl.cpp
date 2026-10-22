@@ -28,6 +28,7 @@
 #include "WeakMapImpl.h"
 
 #include "AuxiliaryBarrierInlines.h"
+#include "Collector.h"
 #include "JSCJSValueInlines.h"
 #include "SlotVisitorInlines.h"
 #include "WeakMapImplInlines.h"
@@ -53,6 +54,8 @@ void WeakMapImpl<WeakMapBucket>::visitChildrenImpl(JSCell* cell, Visitor& visito
     Base::visitChildren(thisObject, visitor);
     if (thisObject->hasOutOfLineBuffer())
         visitor.reportExtraMemoryVisited(thisObject->m_capacity * sizeof(WeakMapBucket));
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>)
+        thisObject->m_edenVersionAtLastVisit = visitor.collector().heap().objectSpace().edenVersion();
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename WeakMapBucket>, WeakMapImpl<WeakMapBucket>);
@@ -86,6 +89,11 @@ ALWAYS_INLINE void WeakMapImpl<BucketType>::visitOutputConstraints(JSCell* cell,
     static_assert(std::is_same<BucketType, WeakMapBucket<WeakMapBucketDataKeyValue>>::value);
 
     auto* thisObject = uncheckedDowncast<WeakMapImpl>(cell);
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        JSC::Heap& heap = visitor.collector().heap();
+        if (heap.collectionScope() == CollectionScope::Eden && thisObject->m_edenVersionAtLastVisit != heap.objectSpace().edenVersion())
+            return;
+    }
     auto* buffer = thisObject->buffer();
     for (uint32_t index = 0; index < thisObject->m_capacity; ++index) {
         auto* bucket = buffer + index;

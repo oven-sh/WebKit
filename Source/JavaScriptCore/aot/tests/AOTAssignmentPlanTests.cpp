@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAssignmentPlans.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
@@ -14,6 +15,7 @@
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
@@ -98,7 +100,7 @@ static Object* createPoint(LoadedProgram& program, int32_t x, int32_t y)
 {
     Object* point = allocate(program, "Point"_s);
     AOT_TEST_CHECK(point->layout().extraPropertiesSlot());
-    AOT_TEST_CHECK(point->store(program.vm(), point->layout().fields()[0], jsNumber(x)) && point->store(program.vm(), point->layout().fields()[1], jsNumber(y)));
+    AOT_TEST_CHECK(point->store(program.vm(), point->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(x))) && point->store(program.vm(), point->layout().fields()[1], AcceptedValue::provenAtBuildTime(jsNumber(y))));
     return point;
 }
 
@@ -440,6 +442,104 @@ static void testCopiesAsOrdinaryObject(LoadedProgram& program)
     AOT_TEST_CHECK(withoutHiddenName && hasKeys(program, withoutHiddenName, { "y"_s }));
 }
 
+static void testCopiesTwoObjectsAtOnce(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    State& state = program.state();
+    JSGlobalObject* realm = program.realm();
+    Identifier x = Identifier::fromString(vm, "x"_s);
+    Identifier y = Identifier::fromString(vm, "y"_s);
+    Identifier first = Identifier::fromString(vm, "first"_s);
+    auto createOrdinary = [&] {
+        JSObject* object = constructEmptyObject(realm);
+        object->putDirect(vm, first, jsNumber(10));
+        object->putDirect(vm, y, jsNumber(20));
+        return object;
+    };
+
+    // The first pair of a kind is copied one behind the other.
+    AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), createPair(program, { 1, 0 })));
+    Structure* structure = nullptr;
+    for (int32_t turn = 0; turn < 3; ++turn) {
+        Object* second = createPair(program, { 1, 0 });
+        JSFinalObject* copy = tryCopyTwoObjects(vm, state, realm, createOrdinary(), second);
+        AOT_TEST_CHECK(copy && !isCompiledObject(copy) && copy->getPrototypeDirect() == realm->objectPrototype() && !copy->structure()->outOfLineSize());
+        AOT_TEST_CHECK(hasKeys(program, copy, { "first"_s, "y"_s, "x"_s }));
+        AOT_TEST_CHECK(copy->get(realm, first) == jsNumber(10) && copy->get(realm, y) == second->get(realm, y) && copy->get(realm, x) == second->get(realm, x));
+        AOT_TEST_CHECK(!structure || copy->structure() == structure);
+        structure = copy->structure();
+    }
+
+    AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, jsUndefined(), createPointWithAddedName(program)));
+    Object* withAddedName = createPointWithAddedName(program);
+    JSFinalObject* ofSecondAlone = tryCopyTwoObjects(vm, state, realm, jsUndefined(), withAddedName);
+    AOT_TEST_CHECK(ofSecondAlone && holdsPropertiesOf(program, ofSecondAlone, withAddedName));
+    AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), jsNull()));
+    JSFinalObject* ofFirstAlone = tryCopyTwoObjects(vm, state, realm, createOrdinary(), jsNull());
+    AOT_TEST_CHECK(ofFirstAlone && hasKeys(program, ofFirstAlone, { "first"_s, "y"_s }));
+
+    // The copy of a compiled object is an object of its layout. A getter is called, an element is no property, and a string has elements.
+    JSObject* withGetter = constructEmptyObject(realm);
+    AOT_TEST_CHECK(define(program, withGetter, x, enumerableGetter(program)));
+    JSObject* withIndex = constructEmptyObject(realm);
+    AOT_TEST_CHECK(withIndex->methodTable()->putByIndex(withIndex, realm, 3, jsNumber(7), false));
+    for (int32_t turn = 0; turn < 3; ++turn) {
+        AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createPair(program, { 0, 1 }), createOrdinary()));
+        AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), withGetter) && !tryCopyTwoObjects(vm, state, realm, withGetter, createOrdinary()));
+        AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), withIndex) && !tryCopyTwoObjects(vm, state, realm, withIndex, jsUndefined()));
+        AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), jsNontrivialString(vm, "ab"_s)));
+        AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, jsUndefined(), jsNull()));
+    }
+
+    // A name that is not listed is left out.
+    JSObject* withHiddenName = constructEmptyObject(realm);
+    withHiddenName->putDirect(vm, x, jsNumber(1), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    withHiddenName->putDirect(vm, y, jsNumber(2));
+    tryCopyTwoObjects(vm, state, realm, withHiddenName, jsUndefined());
+    JSFinalObject* withoutHiddenName = tryCopyTwoObjects(vm, state, realm, withHiddenName, jsUndefined());
+    AOT_TEST_CHECK(withoutHiddenName && hasKeys(program, withoutHiddenName, { "y"_s }));
+}
+
+static void testKindsOfPairsThatComeInTurnsKeepTheirPlans(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    State& state = program.state();
+    JSGlobalObject* realm = program.realm();
+    constexpr unsigned numberOfKinds = 24;
+    Identifier shared = Identifier::fromString(vm, "shared"_s);
+    MarkedArgumentBuffer firsts;
+    for (unsigned kind = 0; kind < numberOfKinds; ++kind) {
+        JSObject* first = constructEmptyObject(realm);
+        first->putDirect(vm, Identifier::fromString(vm, makeString("name"_s, kind)), jsNumber(kind));
+        first->putDirect(vm, shared, jsNumber(-1));
+        firsts.append(first);
+    }
+    JSObject* second = constructEmptyObject(realm);
+    second->putDirect(vm, shared, jsNumber(7));
+    auto copyEachKind = [&] {
+        unsigned copied = 0;
+        for (unsigned kind = 0; kind < numberOfKinds; ++kind) {
+            JSFinalObject* copy = tryCopyTwoObjects(vm, state, realm, firsts.at(kind), second);
+            if (!copy)
+                continue;
+            ++copied;
+            AOT_TEST_CHECK(copy->getDirect(vm, Identifier::fromString(vm, makeString("name"_s, kind))) == jsNumber(kind) && copy->getDirect(vm, shared) == jsNumber(7));
+        }
+        return copied;
+    };
+
+    // A collection behind the first plan of all finds no other plans.
+    copyEachKind();
+    copyEachKind();
+    vm.heap.collectSync(CollectionScope::Full);
+    for (unsigned turn = 0; turn < 3; ++turn)
+        copyEachKind();
+    uint64_t plansMade = valueOf(vm, RuntimeCounterID::AssignmentPlansMade);
+    for (unsigned turn = 0; turn < 4; ++turn)
+        AOT_TEST_CHECK(copyEachKind() >= numberOfKinds - 4);
+    AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade);
+}
+
 static NEVER_INLINE void assignPointWithAddedName(LoadedProgram& program)
 {
     Object* source = createPointWithAddedName(program);
@@ -478,6 +578,22 @@ static void testMakesPlanAtSecondCopyWhereAsked(LoadedProgram& program)
     }
 }
 
+static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        JSObject* source = constructEmptyObject(program.realm());
+        put(program, source, "a"_s, 1);
+        put(program, source, "b"_s, 2);
+        ClonedStructure& cloned = program.instance().allocation.clonedStructures[AllocationWords::placeOfClonedStructure(source->structureID().bits())];
+        JSObject* copy = uncheckedDowncast<JSObject>(operationAOTCopyObject(&program.instance(), JSValue::encode(source), 0, 0, nullptr).value);
+        AOT_TEST_CHECK(copy != source && copy->structureID() == source->structureID() && holdsPropertiesOf(program, copy, source));
+        AOT_TEST_CHECK(static_cast<uint32_t>(cloned.header) == source->structureID().bits() && cloned.cellSize == JSFinalObject::allocationSize(source->structure()->inlineCapacity()));
+        vm.heap.collectSync(scope);
+        AOT_TEST_CHECK(!cloned.header && !cloned.cellSize);
+    }
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withPoints)() = runNativeTestWithLoadedProgram<assignmentPlanTests, programText, body>;
 
@@ -495,8 +611,11 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/copies-fields-of-same-layout-in-any-order"_s, withPoints<testCopiesFieldsOfSameLayoutInAnyOrder> },
         { "assignment-plans/defines-fields-at-once-or-not-at-all"_s, withPoints<testDefinesFieldsAtOnceOrNotAtAll> },
         { "assignment-plans/copies-as-ordinary-object"_s, withPoints<testCopiesAsOrdinaryObject> },
+        { "assignment-plans/copies-two-objects-at-once"_s, withPoints<testCopiesTwoObjectsAtOnce> },
+        { "assignment-plans/kinds-of-pairs-that-come-in-turns-keep-their-plans"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/makes-plan-at-second-copy-where-asked"_s, withPoints<testMakesPlanAtSecondCopyWhereAsked> },
+        { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
     };
     return tests;
 }

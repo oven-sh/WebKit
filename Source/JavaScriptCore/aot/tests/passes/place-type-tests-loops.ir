@@ -13,17 +13,17 @@
 # RUN(F10): test-placement function=f10 site=v4:v5
 # RUN(F11): test-placement function=f11 site=v4:v5
 # RUN(F12): test-placement function=f12 site=v3:v4
-# RUN(F13): test-placement function=f13 site=v6:v3,v5
 # RUN(F14): test-placement function=f14 site=v6:v7
 # RUN(F15): test-placement function=f15 site=v3:v7 site=v6:v7
 # RUN(F16): test-placement function=f16 site=v3:v7 site=v5:v8 site=v6:v7
+# RUN(PLAN): test-placement
 # RUN(IR): pass PlaceTypeTests
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
 layout L1 name="Filler" fields=[{key="z" declared={type=number}}]
 layout L2 kind=Instance name="Shape" constructor=f17
-layout L3 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="invariantReceiver" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object, v1: boolean):
@@ -58,7 +58,7 @@ function f2 name="castInsideLoop" parameters=[{type=object}, {type=boolean}] res
     Jump -> next b1()
   b1():
     LoopHint
-    v3 = Predict v0 predicted=L0
+    v3 ~ L0 = Upcast v0 castType=object
     v4 = PropGet v3 key="x"
     Branch v1 -> taken b1(), notTaken b2()
   b2():
@@ -123,7 +123,7 @@ function f5 name="endedInsideLoop" parameters=[{type=anything}, {type=boolean}, 
 # F5: stretch 0: test TypeTest v0 testedType=Array on b0.0; test HasArrayStorage v0 arrayStorage=Contiguous before v5; uses v5; cloned 40
 # F5-NOT: stretch
 
-function f6 name="staleInsideLoop" parameters=[{type=object}, {type=boolean}, {type=function}] results=[{type=anything}] {
+function f6 name="callInsideLoop" parameters=[{type=object}, {type=boolean}, {type=function}] results=[{type=anything}] {
   b0(v0: object, v1: boolean, v2: function):
     Jump -> next b1()
   b1():
@@ -135,7 +135,8 @@ function f6 name="staleInsideLoop" parameters=[{type=object}, {type=boolean}, {t
     v6 = ShapeTest v0 layouts=[L0]
     Return v4
 }
-# F6: stretch 0: test ShapeTest v0 layouts=[L0] on b0.0; renew 0 before v4; uses v4; cloned 40
+# An object keeps its shape, so the call ends nothing.
+# F6: stretch 0: test ShapeTest v0 layouts=[L0] on b0.0; uses v4; cloned 40
 # F6-NOT: stretch
 
 function f7 name="nestedLoops" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
@@ -196,12 +197,14 @@ function f9 name="twoEntries" parameters=[{type=object}, {type=boolean}, {type=b
 # F9: stretch 0: test ShapeTest v0 layouts=[L0] on b1.0; test ShapeTest v0 layouts=[L0] on b2.0; uses v4; cloned 8
 # F9-NOT: stretch
 
-function f10 name="rarelyUsedInLoop" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean, v2: boolean):
+# Unlikely code gets a test only where another test of the value has failed on the way in.
+function f10 name="rarelyUsedInLoop" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: object, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
-    Branch v2 -> taken b2(), notTaken b3()
+    v3 = ShapeTest v0 layouts=[L1]
+    Branch v3 -> taken b3(), notTaken b2()
   b2() frequency=Unlikely:
     v4 = PropGet v0 key="x"
     Jump -> next b3()
@@ -238,36 +241,41 @@ function f12 name="guardBitLeavesLoop" parameters=[{type=number}, {type=boolean}
     v3 = Add v0, v0
     Branch v1 -> taken b1(), notTaken b2()
   b2():
-    v4 = IsMemberUnchanged layout=L2 key="m"
+    v4 = AreMembersUnchanged conditions=[{layout=L2 key="m"}]
     Return v3
 }
-# F12: stretch 0: test IsMemberUnchanged layout=L2 key="m" on b0.0; uses v3; cloned 8
+# F12: stretch 0: test AreMembersUnchanged conditions=[{{*}}layout=L2 key="m"}] on b0.0; uses v3; cloned 8
 # F12-NOT: stretch
 
-function f13 name="prerequisiteRedefinedInLoop" parameters=[{type=object predicted=L0}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object ~ L0, v1: boolean):
+function f13 name="prerequisiteRedefinedInLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
-    v3 = ShapeTest v0 layouts=[L0]
+    v3 = TypeTest v0 testedType=L0
     Branch v3 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = IsSlotFilled v0, v4 key="x" receivers=[L0] level=Predicted
-    v6 = PropGet v0 key="x"
+    v5 = PropGet v0 key="x"
     Branch v1 -> taken b1(), notTaken b3()
   b3():
     Return
 }
-# F13: stretch 0: test ShapeTest v0 layouts=[L0] on b0.0; test IsSlotFilled v0 key="x" receivers=[L0] level=Predicted on b0.0; proof
-# F13-NOT: before
-# F13-NOT: stretch
+# The tests on the entering edge name the object that passed the test there, not the one that the test inside the loop defines.
+# PLAN-LABEL: function f13
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 on b0.0; test BelongsToInstance v0 on b0.0; test IsSlotFilled v0 key="x" receivers=[L0] level=Expected on b0.0; proof
+# PLAN-NOT: before
+# PLAN-NOT: stretch
+# PLAN-LABEL: function f14
 # IR-LABEL: function f13 name="prerequisiteRedefinedInLoop"
 # IR: Jump -> next [[entry]]()
 # IR: [[entry]]():
-# IR-NEXT: [[shape]]: boolean = ShapeTest v0 layouts=[L0]
-# IR-NEXT: Branch [[shape]] -> taken [[shapePassed]](| 0), notTaken
-# IR: [[shapePassed]]([[outerGuard]]: guard):
-# IR-NEXT: = IsSlotFilled v0, [[outerGuard]] key="x" receivers=[L0] level=Predicted
+# IR-NEXT: [[type]]:{{*}}= TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[type]] -> taken [[typePassed]](| 0), notTaken
+# IR: [[typePassed]]([[outerObject]]: L0):
+# IR-NEXT: [[own]]: boolean = BelongsToInstance [[outerObject]]
+# IR-NEXT: Branch [[own]] -> taken [[ownPassed]](| 0), notTaken
+# IR: [[ownPassed]]([[outerGuard]]: guard):
+# IR-NEXT: = IsSlotFilled [[outerObject]], [[outerGuard]] key="x" receivers=[L0] level=Expected
 # IR-LABEL: function f14
 
 function f14 name="definedInOuterLoop" parameters=[{type=function}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
@@ -307,8 +315,8 @@ function f15 name="wideGapInsideLoop" parameters=[{type=object}, {type=boolean}]
 # F15: stretch 0: test ShapeTest v0 layouts=[L0] on b0.0; uses v3 v6; cloned 112
 # F15-NOT: stretch
 
-function f16 name="hoistedTestInsideStretch" parameters=[{type=object predicted=L3}, {type=object predicted=L3}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object ~ L3, v1: object ~ L3, v2: boolean):
+function f16 name="hoistedTestInsideStretch" parameters=[{type=L3 flags=[IsExpected]}, {type=L3 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L3, v1: anything ~ L3, v2: boolean):
     v3 = PropGet v0 key="a"
     Jump -> next b1()
   b1():
@@ -325,10 +333,10 @@ function f16 name="hoistedTestInsideStretch" parameters=[{type=object predicted=
 # F16-NOT: stretch
 # IR-LABEL: function f16 name="hoistedTestInsideStretch"
 # IR: LoopHint
-# IR-NEXT: v5: number = GetSlot v1, [[guardB16]] key="a" receivers=[L3] level=Predicted
-# IR-NEXT: v6: number = GetSlot v0, [[guardA16]] key="b" receivers=[L3] level=Predicted
-# IR: v3: number = GetSlot v0, [[guardA16]] key="a" receivers=[L3] level=Predicted
-# IR-NEXT: Jump -> next [[onEdge16]]()
+# IR-NEXT: v5: number = GetSlot [[objectB16]], [[guardB16]] key="a" receivers=[L3] level=Expected
+# IR-NEXT: v6: number = GetSlot {{*}} key="b" receivers=[L3] level=Expected
+# IR: v3: number = GetSlot [[objectA16]], [[guardA16]] key="a" receivers=[L3] level=Expected
+# IR-NEXT: Jump -> next [[onEdge16]](
 # IR: frequency=Unlikely:
 # IR-NEXT: = PropGet v0 key="a"
 # IR-NEXT: Jump -> next [[copyOfEdge16]]()

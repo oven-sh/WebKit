@@ -52,7 +52,8 @@ function f2 name="pristineOverloadOfClassNeverPristine" parameters=[{type=Buffer
 }
 # CHECK-LABEL: function f2 name="pristineOverloadOfClassNeverPristine"
 # CHECK: v3: Buffer|TypedArray = CallBuiltin v0 overload=TypedArrayPrototypeSlice/{{*}} builtinCallForm=AnyReceiver
-# CHECK-NEXT: v4: anything = Call v2, v1
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v4: TypedArray|Uint8Array = CallBuiltin v1 overload=TypedArrayPrototypeSlice/{{*}} builtinCallForm=AnyReceiver
 
 function f3 name="surplusArgumentStays" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -63,17 +64,17 @@ function f3 name="surplusArgumentStays" parameters=[{type=anything}, {type=anyth
 # CHECK-LABEL: function f3 name="surplusArgumentStays"
 # CHECK: v3: Uint8Array = CallBuiltin -, v0, v1 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
 
-function f4 name="predictedOperandWaitsForTest" parameters=[{type=anything predicted=string}] results=[{type=anything}] {
+function f4 name="expectedOperandWaitsForTest" parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ string):
     v1 = Builtin builtin=Uint8ArrayFromHex
     v2 = Call v1, -, v0
     Return v2
 }
-# CHECK-LABEL: function f4 name="predictedOperandWaitsForTest"
-# CHECK-NOT: CallBuiltin
-# CHECK: v2: anything = Call v1, -, v0
+# CHECK-LABEL: function f4 name="expectedOperandWaitsForTest"
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v2: Uint8Array = CallBuiltin -, v0 overload=Uint8ArrayFromHex/0 builtinCallForm=AnyReceiver
 
-function f5 name="calleeNotProven" parameters=[{type=anything}, {type=anything predicted=builtin(Uint8ArrayFromHex)}, {type=anything}] results=[{type=anything}] {
+function f5 name="calleeNotProven" parameters=[{type=anything}, {type=builtin(Uint8ArrayFromHex) flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything ~ builtin(Uint8ArrayFromHex), v2: anything):
     v3 = Call v0, -, v2
     v4 = Call v1, -, v2

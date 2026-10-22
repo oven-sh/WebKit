@@ -8,7 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTCellSizeClasses.h"
+#include "AOTGlobalBindingPlacement.h"
 #include "AOTPlacement.h"
+#include "AOTPropertyAccessReceivers.h"
 #include "AOTSiteWeight.h"
 #include "AOTSlotPlanSteps.h"
 #include <algorithm>
@@ -55,6 +57,7 @@ SourceSite sourceSiteOf(const Program&, FunctionID, const Value&);
 
 struct FieldAccessUse {
     SlotAccessKey access;
+    // Right where some receiver has no slot for the field, so that the access tests shapes. Nobody reads another's, and it may lack sites.
     SiteWeight weight { 0 };
     uint32_t sites { 0 };
 };
@@ -69,6 +72,7 @@ struct ShapeTestUse {
 struct AllocationUse {
     LayoutID layout;
     bool keysAreNeverEnumerated { false };
+    bool holdsInnerObjects { false };
     Vector<FieldIndex> initialFields;
 
     friend bool operator==(const AllocationUse&, const AllocationUse&) = default;
@@ -78,6 +82,8 @@ struct AllocationUse {
             return a.layout < b.layout;
         if (a.keysAreNeverEnumerated != b.keysAreNeverEnumerated)
             return b.keysAreNeverEnumerated;
+        if (a.holdsInnerObjects != b.holdsInnerObjects)
+            return b.holdsInnerObjects;
         return std::ranges::lexicographical_compare(a.initialFields, b.initialFields);
     }
 };
@@ -117,6 +123,20 @@ struct GuardUse {
     SiteWeight weight { 0 };
 };
 
+// A call through the method table: the pairs of a shape and a selector that it can ask for.
+struct TableCallUse {
+    friend auto operator<=>(const TableCallUse&, const TableCallUse&) = default;
+
+    MethodSelector selector;
+    LayoutSetID receivers;
+};
+
+// The guards of a site with several conditions: in the order of their keys, each once, two or more.
+struct GuardSetUse {
+    Vector<GuardUse, 4> guards;
+    SiteWeight weight { 0 };
+};
+
 struct ModuleBuiltinUse {
     BuiltinID builtin;
     ModuleID module;
@@ -130,18 +150,25 @@ struct PlacedSites {
     Vector<AllocationUse> allocations;
     Vector<KeyOrderTestUse> keyOrderTests;
     Vector<FieldCreationUse> fieldCreations;
+    // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
+    Vector<uint32_t> firstStoreThatMayAdd;
     Vector<GuardUse> guards;
+    Vector<GuardSetUse> guardSets;
+    Vector<TableCallUse> tableCalls;
     Vector<SourceSite> profiledArrayLiterals;
     Vector<SourceSite> regExpLiterals;
     Vector<SourceSite> templateObjects;
     Vector<DataID> copyOnWriteArrays;
+    Vector<DataID> arraysWithStorageInImage;
     Vector<BuiltinCellKey> builtinCells;
     Vector<StringID> bigIntConstants;
     Vector<RequireEdge> requireEdges;
     Vector<StringID> requireEdgeSpecifiers;
     Vector<ModuleBuiltinUse> moduleBuiltins;
     BitVector variablesNamedByCode;
+    // Of a type that code hands to the run time the tables hold a record. A type that code only tests needs the cells and the names that its test compares with.
     BitVector typesInRunTimePayloads;
+    BitVector typesTestedByCode;
     BitVector functionsWithAllocatedClosures;
     unsigned maxClosureCaptures { 0 };
 };
@@ -191,6 +218,7 @@ struct LiteralSites {
     Vector<uint32_t> regExpCellOffsets;
     Vector<uint32_t> templateObjectOffsets;
     Vector<uint32_t> sharedStorageOffsets;
+    Vector<uint32_t> nodesOfStorageInImage;
 };
 
 struct PlacedOrderWords {
@@ -213,11 +241,35 @@ struct PlacementParts {
     KeyOrders keyOrders;
     StaticsPlan statics;
     GuardBitTable guardBits;
+    MethodTable methodTable;
+    GlobalBindingTable globalBindings;
     ConstantNumbering constants;
     FunctionNumbering functions;
+    Vector<std::optional<uint32_t>> classRanks;
     BitVector typesNeededAtRunTime;
+    BitVector typesWithCells;
     unsigned numberOfRegExpRecords { 0 };
 };
+
+// Where the program's text names the cell of a key: module, function as written. A cell that no operation names comes behind all that one does.
+struct KeyCellUse {
+    PropertyKeyID key;
+    uint32_t module { UINT32_MAX };
+    uint32_t sourceFunction { UINT32_MAX };
+
+    friend auto operator<=>(const KeyCellUse&, const KeyCellUse&) = default;
+};
+
+struct GlobalBindingSite {
+    GlobalBindingKey key;
+    FunctionID function;
+    ProgramPoint point;
+    ValueID value;
+    bool isNamedStore { false };
+};
+
+void collectKeyCellUses(const Program&, FunctionID, Vector<KeyCellUse>&);
+void collectGlobalBindingSites(const Program&, FunctionID, Vector<GlobalBindingSite>&);
 
 void checkPlacementInputs(const PlacementContext&);
 PlacedSites collectPlacedSites(const PlacementContext&);
@@ -234,13 +286,44 @@ AllocationTable numberAllocations(const PlacementContext&, const PlacedSites&);
 std::pair<KeyOrders, PlacedOrderWords> collectKeyOrders(const PlacementContext&, const PlacedSites&, const AllocationTable&);
 void finishAllocations(const PlacementContext&, const ShapeTable&, const PlacedOrderWords&, std::span<const AllocationUse>, AllocationTable&);
 
+Vector<GuardUse, 4> guardsOf(PayloadListView<MemberConditionRecord>);
+Vector<GuardUse, 4> guardsOf(std::span<const MemberCondition>);
+// The functions that the method table names. To find them is to read the bodies of the table's entrypoints as selection has left them.
+struct MethodTableFunctions {
+    struct EntrypointOfMethod {
+        friend auto operator<=>(const EntrypointOfMethod&, const EntrypointOfMethod&) = default;
+
+        FunctionID method;
+        MethodSelector selector;
+        FunctionID entrypoint;
+    };
+
+    struct LookupOfSelector {
+        friend auto operator<=>(const LookupOfSelector&, const LookupOfSelector&) = default;
+
+        MethodSelector selector;
+        FunctionID lookup;
+    };
+
+    FunctionID entrypointOf(FunctionID method, MethodSelector) const;
+    FunctionID lookupOf(MethodSelector) const;
+
+    Vector<EntrypointOfMethod> entrypoints;
+    Vector<LookupOfSelector> lookups;
+};
+MethodTableFunctions collectMethodTableFunctions(const PlacementContext&);
+MethodTable placeMethodTable(const PlacementContext&, const PlacedSites&, const ShapeTable&, const GuardBitTable&, const MethodTableFunctions&);
 GuardBitTable placeGuardBits(const PlacementContext&, const PlacedSites&);
+void placeGuardSets(const PlacementContext&, const PlacedSites&, GuardBitTable&);
 std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext&, const PlacedSites&, GuardBitTable&);
 uint64_t initialWordOf(const Program&, VariableID, const PlannedVariable&);
 
-ConstantNumbering numberConstants(const PlacementContext&, PlacedSites&, const BitVector& typesNeededAtRunTime);
+// What collectKeyCellUses() gives for a function with a body.
+using KeyCellUsesOfBodies = ScopedLambda<const Vector<KeyCellUse>&(FunctionID)>;
+ConstantNumbering numberConstants(const PlacementContext&, PlacedSites&, const BitVector& typesWithCells, const KeyCellUsesOfBodies* = nullptr);
 FunctionNumbering numberFunctions(const PlacementContext&, const PlacedSites&);
-BitVector computeTypesNeededAtRunTime(const PlacementContext&, const PlacedSites&);
+enum class TypesTestedByCode : uint8_t { Exclude, Include };
+BitVector computeTypesNeededAtRunTime(const PlacementContext&, const PlacedSites&, TypesTestedByCode);
 
 struct SiteResolutionInputs {
     const PlacedSites& sites;
@@ -250,10 +333,17 @@ struct SiteResolutionInputs {
 };
 
 ResolvedSites resolveSites(ProgramEditor&, const PlacementContext&, const SiteResolutionInputs&);
+// The same in two parts, for a caller that has the bodies changed between them by somebody who asks for field accesses, adds values and blocks, and leaves every value its number.
+// The first part writes the field accesses of one function, from any thread, and lists the values with other words to write, in the order of the blocks.
+void resolveFieldAccesses(const PlacementContext&, const SiteResolutionInputs&, FunctionID, Function&, Vector<ValueID>& valuesWithOtherWords);
+// By function.
+ResolvedSites resolveOtherWords(ProgramEditor&, const PlacementContext&, const SiteResolutionInputs&, std::span<const Vector<ValueID>> valuesWithOtherWords);
 // The request of such an operation is the number of a run of property keys: the keys it stores under, or the keys a copy leaves out.
 bool namesPropertyRun(Opcode);
 std::span<const PropertyKeyID> keysOfPropertyRun(const Value&);
 std::optional<PlacedPropertyRun> propertyRunOf(const PlacementContext&, FunctionID, ValueID);
+// Whether propertyRunOf() gives one. It reports nothing.
+bool hasPropertyRun(const Program&, const BuildContext&, const Value&);
 void collectStringConstantsOf(const Program&, const RequestRecord&, BitVector& stringConstants);
 void collectStringConstantsOf(const Program&, const DataNode&, BitVector& stringConstants);
 

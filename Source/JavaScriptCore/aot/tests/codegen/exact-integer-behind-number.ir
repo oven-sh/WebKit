@@ -72,4 +72,5 @@ function f5 name="elementAtTwoProducts" parameters=[{type=i32}, {type=i32}, {typ
 # CHECK: operation operationAOTToInt32 x1
 # CHECK-LABEL: f3:
 # CHECK: operation operationAOTToInt32 x1
-# CHECK: statistic ExactIntegersBehindNumbers 2
+# One in f1 and three in f4, where the test that the element is there and the read on either side of it each take the position. None in f5.
+# CHECK: statistic ExactIntegersBehindNumbers 4

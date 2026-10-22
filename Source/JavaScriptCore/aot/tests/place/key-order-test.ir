@@ -50,6 +50,8 @@ function f3 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
+    Jump -> next b1()
+  b1():
     PropDefine v3, v1 key="b"
     PropDefine v3, v1 key="a"
     Return v3
@@ -61,7 +63,7 @@ function f3 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[
 # CHECK-NEXT: allocation {{*}} L0 fields=[1 0] order=1 count=2
 # CHECK-NEXT: allocation {{*}} L1 fields=[] order=0 count=0
 # CHECK-LABEL: function f1 name="valuesOfListed"
-# CHECK: = HasKeyOrder v0 layout=L0 fields=[0, 1] orderWord=131072
-# CHECK: = HasKeyOrder v0 layout=L0 fields=[1, 0] orderWord=131073
+# CHECK: = HasKeyOrder v0 layout=L0 fields=[0, 1] orderWord=65536
+# CHECK: = HasKeyOrder v0 layout=L0 fields=[1, 0] orderWord=65537
 # CHECK-LABEL: function f2 name="valuesOfStored"
-# CHECK: = HasKeyOrder v0 layout=L1 fields=[1, 0] orderWord=131073
+# CHECK: = HasKeyOrder v0 layout=L1 fields=[1, 0] orderWord=65537

@@ -1,8 +1,8 @@
-# A parameter that an edge fills with a tested value of narrower type stays: no cast narrows without a test
+# A parameter that an edge fills with a tested value of narrower type stays: no cast narrows without a test. One whose type has a single primitive value is that constant
 # FORM: Prepared
 # RUN: pass RemoveTrivialParameters
-# STATISTIC: RemoveTrivialParametersChanges = 0
-# CHECK: outcome: Unchanged
+# STATISTIC: RemoveTrivialParametersChanges = 3
+# CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="typeTest" parameters=[{type=undefined|number}] results=[{type=undefined|number}] {
@@ -15,10 +15,11 @@ function f0 name="typeTest" parameters=[{type=undefined|number}] results=[{type=
     Return v3
 }
 # CHECK-LABEL: function f0 name="typeTest"
-# CHECK: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: number):
 # CHECK-NEXT: Return v2
-# CHECK-NEXT: b2(v3: undefined):
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: Return v3
 
 function f1 name="truthiness" parameters=[{type=boolean}] results=[{type=boolean}] {
@@ -31,10 +32,12 @@ function f1 name="truthiness" parameters=[{type=boolean}] results=[{type=boolean
     Return v3
 }
 # CHECK-LABEL: function f1 name="truthiness"
-# CHECK: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v2: true):
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: true = Boolean boolean=true
 # CHECK-NEXT: Return v2
-# CHECK-NEXT: b2(v3: false):
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: false = Boolean
 # CHECK-NEXT: Return v3
 
 function f2 name="nullishTest" parameters=[{type=null|string}] results=[{type=null|string}] {
@@ -48,8 +51,9 @@ function f2 name="nullishTest" parameters=[{type=null|string}] results=[{type=nu
     Return v4
 }
 # CHECK-LABEL: function f2 name="nullishTest"
-# CHECK: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: null):
+# CHECK: Branch v2 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: null = Null
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b2(v4: string):
 # CHECK-NEXT: Return v4

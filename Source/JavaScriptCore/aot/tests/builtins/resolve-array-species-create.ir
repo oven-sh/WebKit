@@ -38,15 +38,15 @@ function f2 name="otherAspectProven" parameters=[{type=Array<anything, pristine[
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
 
-function f3 name="predictedArray" parameters=[{type=object predicted=Array}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: object ~ Array, v1: int[0, 4294967295]):
+function f3 name="expectedArray" parameters=[{type=Array flags=[IsExpected]}, {type=int[0, 4294967295]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
 }
-# CHECK-LABEL: function f3 name="predictedArray"
+# CHECK-LABEL: function f3 name="expectedArray"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
-# TESTED-LABEL: function f3 name="predictedArray"
+# TESTED-LABEL: function f3 name="expectedArray"
 # TESTED: = TypeTest v0 testedType=Array
 # TESTED: Array = NewArrayLike v1, [[array3]]
 # TESTED: frequency=Unlikely:
@@ -88,15 +88,15 @@ function f6 name="typedArray" parameters=[{type=Uint8Array}, {type=int[0, 429496
 # TESTED-NOT: NewArrayLike
 # TESTED: v2: anything = ArraySpeciesCreate v1, v0
 
-function f7 name="arrayAmongWhatIsPredicted" parameters=[{type=object predicted=Array|Boolean|Number|String}, {type=object predicted=Boolean|Uint8Array}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: object ~ Array|Boolean|Number|String, v1: object ~ Boolean|Uint8Array, v2: int[0, 4294967295]):
+function f7 name="arrayAmongWhatIsExpected" parameters=[{type=Array|Boolean|Number|String flags=[IsExpected]}, {type=Boolean|Uint8Array flags=[IsExpected]}, {type=int[0, 4294967295]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array|Boolean|Number|String, v1: anything ~ Boolean|Uint8Array, v2: int[0, 4294967295]):
     v3 = ArraySpeciesCreate v2, v0
     v4 = ArraySpeciesCreate v2, v1
     Return v3
 }
-# CHECK-LABEL: function f7 name="arrayAmongWhatIsPredicted"
+# CHECK-LABEL: function f7 name="arrayAmongWhatIsExpected"
 # CHECK-NOT: NewArrayLike
-# TESTED-LABEL: function f7 name="arrayAmongWhatIsPredicted"
+# TESTED-LABEL: function f7 name="arrayAmongWhatIsExpected"
 # TESTED: = TypeTest v0 testedType=Array
 # TESTED-COUNT-1: Array = NewArrayLike v2,
 # TESTED-NOT: TypeTest v1

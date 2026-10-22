@@ -1,16 +1,18 @@
-# The serializer of a layout has one arm per key order, writes fixed rows under one reservation, and calls the serializer of a nested layout on a committed builder
+# The serializer of a layout has one arm per key order, writes fixed rows under one reservation, and calls the serializer of a nested layout on a committed builder:
+# behind a test of the shape where the layout is only expected of the member, without one where it is the type of the field
 # FORM: Prepared
-# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2 Serializer:L3 Serializer:L5 Serializer:L6
-# STATISTIC: SerializersCreated = 7
+# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2 Serializer:L3 Serializer:L5 Serializer:L6 Serializer:L7
+# STATISTIC: SerializersCreated = 8
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Scalars" fields=[{key="n" declared={type=number}}, {key="s" declared={type=string}}, {key="b" declared={type=boolean}}, {key="i" declared={type=i32}}] flow={constructorOrders=[{fields=[0, 1, 2, 3]}, {fields=[3, 2, 1, 0]}]}
-layout L1 name="Nullable" fields=[{key="a" declared={type=number}}, {key="m" declared={type=undefined|null|number}}, {key="z" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
-layout L2 name="KeyOutsideLatin1" fields=[{key="\u{3b1}" declared={type=number}}, {key="b" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
-layout L3 name="Outer" fields=[{key="inner" declared={type=object predicted=L4}}, {key="after" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
-layout L4 name="Inner" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
-layout L5 name="Node" fields=[{key="value" declared={type=number}}, {key="next" declared={type=null|object predicted=null|L5}}] flow={constructorOrders=[{fields=[0, 1]}]}
-layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
+layout L0 name="Scalars" fields=[{key="n" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="s" declared={type=string}}, {key="b" declared={type=boolean} flow={stability=[IsNeverStoredWithOtherType]}}, {key="i" declared={type=i32} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1, 2, 3]}, {fields=[3, 2, 1, 0]}]}
+layout L1 name="Nullable" fields=[{key="a" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="m" declared={type=undefined|null|number}}, {key="z" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+layout L2 name="KeyOutsideLatin1" fields=[{key="\u{3b1}" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L3 name="Outer" fields=[{key="inner" declared={type=L4 flags=[IsExpected]}}, {key="after" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L4 name="Inner" fields=[{key="x" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0]}]}
+layout L5 name="Node" fields=[{key="value" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="next" declared={type=null|L5 flags=[IsExpected]}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L6 name="NoOrder" fields=[{key="x" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}]
+layout L7 name="OuterOfTypedField" fields=[{key="inner" declared={type=L4}}, {key="after" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
 # CHECK: function {{*}}role=Serializer length=2 {{*}}parameters=[{type=object}, {type=stringbuilder}] results=[{type=int[0, 2]}] {{*}}creator=Serializer{layout=L0}
 # CHECK-NEXT: b0(v0: object, v1: stringbuilder):
@@ -25,17 +27,17 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[3, 2, 1, 0]
 # CHECK-NOT: StringBuilderReserve
 # CHECK: [[guardA]]: guard = AllGuards
-# CHECK-NEXT: [[nA]]: number = GetSlot v0, [[guardA]] key="n" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[nA]]: number = GetSlot v0, [[guardA]] key="n" receivers=[L0] level=Expected
 # CHECK-NEXT: [[c0]]: buildercursor = StringBuilderReserve v1 size=128
 # CHECK-NEXT: [[c1]]: buildercursor = JSONAppendKey v1, [[c0]] string="n" [opensObject]
 # CHECK-NEXT: [[c2]]: buildercursor = JSONAppendNumber v1, [[c1]], [[nA]]
-# CHECK-NEXT: [[sA]]: string = GetSlot v0, [[guardA]] key="s" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[sA]]: string = GetSlot v0, [[guardA]] key="s" receivers=[L0] level=Expected
 # CHECK-NEXT: [[c3]]: buildercursor = JSONAppendKey v1, [[c2]] string="s" [followsMember]
 # CHECK-NEXT: [[c4]]: buildercursor = JSONAppendString v1, [[c3]], [[sA]]
-# CHECK-NEXT: [[bA]]: boolean = GetSlot v0, [[guardA]] key="b" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[bA]]: boolean = GetSlot v0, [[guardA]] key="b" receivers=[L0] level=Expected
 # CHECK-NEXT: [[c5]]: buildercursor = JSONAppendKey v1, [[c4]] string="b" [followsMember]
 # CHECK-NEXT: [[c6]]: buildercursor = JSONAppendBoolean v1, [[c5]], [[bA]]
-# CHECK-NEXT: [[iA]]: i32 = GetSlot v0, [[guardA]] key="i" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[iA]]: i32 = GetSlot v0, [[guardA]] key="i" receivers=[L0] level=Expected
 # CHECK-NEXT: [[c7]]: buildercursor = JSONAppendKey v1, [[c6]] string="i" [followsMember]
 # CHECK-NEXT: [[c8]]: buildercursor = JSONAppendInteger v1, [[c7]], [[iA]]
 # CHECK-NEXT: [[c9]]: buildercursor = JSONAppendToken v1, [[c8]] jsonToken=CloseObject
@@ -43,7 +45,7 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 # CHECK-NEXT: Jump -> next [[parsed0]]()
 # CHECK-NOT: StringBuilderReserve
 # CHECK: [[guardB]]: guard = AllGuards
-# CHECK-NEXT: = GetSlot v0, [[guardB]] key="i" receivers=[L0] level=Predicted
+# CHECK-NEXT: = GetSlot v0, [[guardB]] key="i" receivers=[L0] level=Expected
 # CHECK-NEXT: [[d0]]: buildercursor = StringBuilderReserve v1 size=128
 # CHECK-NEXT: = JSONAppendKey v1, [[d0]] string="i" [opensObject]
 # CHECK-NOT: StringBuilderReserve
@@ -57,7 +59,7 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 # CHECK: function {{*}}creator=Serializer{layout=L1}
 # CHECK: = JSONAppendKey v1, {{*}} string="a" [opensObject]
 # CHECK-NEXT: [[afterA]]: buildercursor = JSONAppendNumber v1,
-# CHECK-NEXT: [[m]]: undefined|null|number = GetSlot v0, {{*}} key="m" receivers=[L1] level=Predicted
+# CHECK-NEXT: [[m]]: undefined|null|number = GetSlot v0, {{*}} key="m" receivers=[L1] level=Expected
 # CHECK-NEXT: [[comma]]: buildercursor = JSONAppendToken v1, [[afterA]] jsonToken=Comma
 # CHECK-NEXT: [[isUndefined]]: boolean = TypeTest [[m]] testedType=undefined
 # CHECK-NEXT: Branch [[isUndefined]] -> taken [[leftOut]](| 0), notTaken [[defined]](| 0)
@@ -84,7 +86,7 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 
 # CHECK: function {{*}}creator=Serializer{layout=L2}
 # CHECK-NOT: JSONAppendKey
-# CHECK: [[alpha]]: number = GetSlot v0, {{*}} key="\u{3b1}" receivers=[L2] level=Predicted
+# CHECK: [[alpha]]: number = GetSlot v0, {{*}} key="\u{3b1}" receivers=[L2] level=Expected
 # CHECK: [[open2]]: buildercursor = JSONAppendToken v1, {{*}} @
 # CHECK-NEXT: [[quotedKey]]:{{*}}= String string="\"\u{3b1}\":"
 # CHECK-NEXT: StringBuilderCommit v1, [[open2]]
@@ -95,20 +97,28 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 # CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObject @
 
 # CHECK: function {{*}}creator=Serializer{layout=L3}
-# CHECK: [[inner]]: object ~ L4 = GetSlot v0, {{*}} key="inner" receivers=[L3] level=Predicted
+# CHECK: [[inner]]: anything ~ L4 = GetSlot v0, {{*}} key="inner" receivers=[L3] level=Expected
+# CHECK: = TypeTest [[inner]] testedType=undefined
+# CHECK: = TypeTest {{*}} testedType=null
 # CHECK: StringBuilderCommit v1,
-# CHECK-NEXT: [[innerShape]]: boolean = ShapeTest [[inner]] layouts=[L4]
-# CHECK-NEXT: Branch [[innerShape]] -> taken [[nested]](| 0), notTaken [[otherShape]]()
-# CHECK: = StringBuilderAppendJSON v1, [[inner]],
+# CHECK-NEXT: [[isObject3]]: boolean ~ true = TypeTest {{*}} testedType=object
+# CHECK-NEXT: Branch [[isObject3]] -> taken [[objects3]](| 0), notTaken [[noObject3]](| 0)
+# CHECK-NEXT: [[generic3]]() frequency=Rare:
+# CHECK-NEXT: = TypeTest {{*}} testedType=null|boolean|number|string
 # CHECK: [[gaveUp3]]() frequency=Rare:
 # CHECK-NEXT: = StringBuilderCheckpoint v1
-# CHECK: = StringBuilderAppendJSON v1, [[inner]],
-# CHECK: [[nested]]({{*}}: guard):
+# CHECK: = StringBuilderAppendJSON v1, [[innerObject]],
+# CHECK: [[objects3]]([[innerObject]]: object ~ L4):
+# CHECK-NEXT: [[innerShape]]: boolean = ShapeTest [[innerObject]] layouts=[L4]
+# CHECK-NEXT: Branch [[innerShape]] -> taken [[nested]](| 0), notTaken [[otherShape]]()
+# CHECK-NEXT: [[noObject3]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[generic3]]()
+# CHECK-NEXT: [[nested]]({{*}}: guard):
 # CHECK-NEXT: [[checkpoint]]:{{*}}= StringBuilderCheckpoint v1
 # CHECK-NEXT: [[keyCursor]]: buildercursor = StringBuilderReserve v1
 # CHECK-NEXT: [[keyWritten]]: buildercursor = JSONAppendKey v1, [[keyCursor]] string="inner" @
 # CHECK-NEXT: StringBuilderCommit v1, [[keyWritten]]
-# CHECK-NEXT: [[outcome3]]: int[0, 2] = CallDirect [[inner]], v1 function=[[serializerOfInner]]
+# CHECK-NEXT: [[outcome3]]: int[0, 2] = CallDirect [[innerObject]], v1 function=[[serializerOfInner]]
 # CHECK-NEXT: Switch [[outcome3]] cases=[1] -> case [[written3]](), otherwise [[unknown3]]()
 # CHECK: [[otherShape]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[generic3]]()
@@ -121,7 +131,7 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 # CHECK: = JSONAppendKey v1, {{*}} string="x" [opensObject]
 
 # CHECK: function [[serializerOfNode]] {{*}}creator=Serializer{layout=L5}
-# CHECK: [[next]]: null|object ~ null|L5 = GetSlot v0, {{*}} key="next" receivers=[L5] level=Predicted
+# CHECK: [[next]]: anything ~ null|L5 = GetSlot v0, {{*}} key="next" receivers=[L5] level=Expected
 # CHECK: ([[nextObject]]: object ~ L5):
 # CHECK: = ShapeTest [[nextObject]] layouts=[L5]
 # CHECK: = CallDirect [[nextObject]], v1 function=[[serializerOfNode]]
@@ -136,3 +146,14 @@ layout L6 name="NoOrder" fields=[{key="x" declared={type=number}}]
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: StringBuilder
 # CHECK-NOT: JSONAppend
+
+# CHECK: function {{*}}creator=Serializer{layout=L7}
+# CHECK: [[typedInner]]: L4 = GetSlot v0, {{*}} key="inner" receivers=[L7] level=Expected
+# CHECK-NOT: TypeTest
+# CHECK-NOT: ShapeTest
+# CHECK: StringBuilderCommit v1,
+# CHECK-NEXT: = StringBuilderCheckpoint v1
+# CHECK-NEXT: [[typedKeyCursor]]: buildercursor = StringBuilderReserve v1
+# CHECK-NEXT: [[typedKeyWritten]]: buildercursor = JSONAppendKey v1, [[typedKeyCursor]] string="inner" @
+# CHECK-NEXT: StringBuilderCommit v1, [[typedKeyWritten]]
+# CHECK-NEXT: = CallDirect [[typedInner]], v1 function=[[serializerOfInner]]

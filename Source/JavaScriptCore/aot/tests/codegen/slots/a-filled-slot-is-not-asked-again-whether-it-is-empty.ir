@@ -1,0 +1,27 @@
+# A read of a boxed slot takes an empty slot for undefined. Behind the test that the slot is filled nothing is left to choose: the loaded word is the value. The two loads become one only late in the back end, so the choice is folded behind its optimizations
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="a" declared={type=anything}}]
+function f0 name="allocate" results=[{type=L0}] {
+  b0():
+    v0 = NewObject layout=L0
+    Return v0
+}
+function f1 name="readFilled" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="a" receivers=[L0] level=Proven
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="a" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    v4 = Null
+    Return v4
+}
+# CHECK: f1: size={{*}}
+# X64: f1: size=31 frame=none

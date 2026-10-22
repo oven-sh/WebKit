@@ -10,7 +10,7 @@ layout L1 name="Holder" fields=[{key="node" declared={type=L0} flags=[IsRequired
 function f0 name="allocate" parameters=[{type=number}, {type=i32}] results=[{type=L0}] {
   b0(v0: number, v1: i32):
     v2 = Null
-    v3 = NewObject -, v2, v0, v1 layout=L0 fields=[0, 1, 2] [keepsShape]
+    v3 = NewObject -, v2, v0, v1 layout=L0 fields=[0, 1, 2]
     Return v3
 }
 function f1 name="allocateOrCount" parameters=[{type=number}, {type=i32}, {type=boolean}] results=[{type=L0}, {type=i32}] {
@@ -18,7 +18,7 @@ function f1 name="allocateOrCount" parameters=[{type=number}, {type=i32}, {type=
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Null
-    v4 = NewObject -, v3, v0, v1 layout=L0 fields=[0, 1, 2] [keepsShape]
+    v4 = NewObject -, v3, v0, v1 layout=L0 fields=[0, 1, 2]
     v5 = Results v4, v1
     Return v5
   b2():

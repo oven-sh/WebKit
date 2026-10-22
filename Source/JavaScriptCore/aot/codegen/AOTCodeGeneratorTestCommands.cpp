@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrivalSiteNumbers.h"
 #include "AOTCodeGenerationDriver.h"
 #include "AOTFunctionCodeGenerator.h"
 #include "AOTIRBuilder.h"
@@ -70,27 +71,17 @@ static bool printRequestedPlan(TestCommandContext& context, std::span<const Stri
     return true;
 }
 
-static TypeID testedTypeOf(const Value& value)
-{
-    if (value.opcode == Opcode::TypeTest)
-        return value.testedType();
-    if (value.opcode == Opcode::Claim)
-        return value.castType();
-    return { };
-}
-
 static void printPlansOfFunction(PrintStream& out, const Program& program, FunctionID id)
 {
     const Function& function = program.at(id);
     for (const Block& block : function.blocks) {
         for (ValueID test : block.values) {
-            TypeID to = testedTypeOf(function.at(test));
-            if (!to)
+            if (function.at(test).opcode != Opcode::TypeTest)
                 continue;
             const Value& tested = function.at(function.at(test).valueOperand());
             bool isChosen = tested.representation != Representation::Unchosen;
             Representation representation = isChosen ? tested.representation : defaultRepresentationOf(program.at(tested.type));
-            out.print("f", id.index(), " v", test.index(), ": ", computeTypeTestPlan(program, tested.type, representation, to));
+            out.print("f", id.index(), " v", test.index(), ": ", computeTypeTestPlan(program, tested.type, representation, function.at(test).testedType()));
         }
     }
 }
@@ -212,6 +203,15 @@ static void runUnsupportedConversions(TestCommandContext& context)
     context.form = context.program->form();
 }
 
+static void runArrivalSites(TestCommandContext& context)
+{
+    if (!context.arguments.empty()) {
+        printBadArgument(context.out, context.arguments.front());
+        return;
+    }
+    numberArrivalSites(*context.program, context.build).dump(context.out, *context.program);
+}
+
 static void runBranchCounters(TestCommandContext& context)
 {
     if (!context.arguments.empty()) {
@@ -224,6 +224,7 @@ static void runBranchCounters(TestCommandContext& context)
 std::span<const TestCommand> codeGeneratorTestCommands()
 {
     static constexpr TestCommand commands[] {
+        { "arrival-sites"_s, IRForm::Selected, runArrivalSites },
         { "branch-counters"_s, IRForm::Selected, runBranchCounters },
         { "type-test-plan"_s, IRForm::Selected, runTypeTestPlan },
         { "unsupported-conversions"_s, IRForm::AsRead, runUnsupportedConversions, RawWordCheck::Run, ProgramAsRead::WithLibrary },

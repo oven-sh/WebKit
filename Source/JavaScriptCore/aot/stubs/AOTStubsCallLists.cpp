@@ -270,8 +270,7 @@ static void emitCallWithElementsInRegisters(StubAssembler& jit, const ArrayCallR
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i) {
         isPastLength[i].append(jit.branch32(CCallHelpers::BelowOrEqual, countGPR, TrustedImm32(i)));
         jit.loadDouble(Address(registers.storage(), i * sizeof(double)), registers.number);
-        genericPath.append(jit.branchIfNaN(registers.number));
-        boxDouble(jit, registers.number, argumentGPR(i));
+        boxDouble(jit, PureDouble::branchIfNaN(jit, registers.number, genericPath), argumentGPR(i));
     }
     jit.jumpToStub(callValueWithCount());
 
@@ -312,7 +311,7 @@ static void emitCopyArrayToListFrame(StubAssembler& jit, const ArrayCallRegister
     jit.sub32(TrustedImm32(1), index);
     jit.load64(BaseIndex(storage, index, CCallHelpers::TimesEight), element);
     if (hasDoubleShape)
-        boxDoubleBits(jit, element);
+        boxDoubleBits(jit, PureDoubleBits::loadedAgainBehindTestForNaN(element));
     jit.store64(element, BaseIndex(frameList, index, CCallHelpers::TimesEight));
     jit.branchTest32(CCallHelpers::NonZero, index).linkTo(copyPrevious, &jit);
     emitPopArgumentRegisters(jit, frameList);

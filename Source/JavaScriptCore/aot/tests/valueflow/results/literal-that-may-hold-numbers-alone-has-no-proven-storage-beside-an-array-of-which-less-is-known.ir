@@ -1,0 +1,55 @@
+# mixed = [mark, x | 0]; first(mixed); function rest(...r) { return first(r) }  rest(mark); count(mixed)    marks = [mark, mark]; first(marks); count(marks)
+# A reader that expects numbers gives an array with storage for any value the storage of numbers where numbers are all that lie in it: ConvertToDoubleStorage.
+# `first` meets the array of a rest parameter, of which less is known: it keeps whatever type was written for it, and may be such a reader.
+# So a literal that may hold a number has no proven kind there, although it is born with the storage that holds everything: once `mixed[0] = 1` has run it holds numbers alone.
+# A literal that never holds a number keeps its kind: nothing converts it.
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="mixed"
+# CHECK: declared={type=Array<
+# CHECK-NOT: Contiguous
+# CHECK-LABEL: variable g1 name="marks"
+# CHECK: declared={type=Array<L0, proven, Contiguous
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="m" declared={type=anything}}] ownFieldCount=1
+variable g0 name="mixed" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="marks" module=m0 declared={type=anything} initialization=Undefined
+data d0 root=Object{layout=L0 members=[{key="m" value=Number{value=4}}]} module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v2
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v0
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v2
+    v10 = NewArray v0, v0 contents=anything
+    PutModuleVariable v10 variable=g1
+    v12 = Call v4, -, v10
+    v13 = Call v8, -, v10
+    Return
+}
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="rest" flags=[HasRestParameter] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="count" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    Return v2
+}

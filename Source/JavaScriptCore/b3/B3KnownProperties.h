@@ -22,6 +22,7 @@ constexpr bool mayHaveKnownRange(Opcode opcode)
     case CCall:
     case Extract:
     case ArgumentReg:
+    case Trunc:
     case Load8Z:
     case Load8S:
     case Load16Z:

@@ -11,11 +11,13 @@
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCompileOptions.h"
+#include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTModuleLinkWalk.h"
 #include "AOTModuleNamespace.h"
+#include "AOTModuleStarExports.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
@@ -120,41 +122,36 @@ static ModuleStatus statusOf(const ModuleRecord& record)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static CyclicModuleRecord::Status initialRecordStatus(StoredModuleStatus status, const ModuleData& moduleData)
+static CyclicModuleRecord::Status initialRecordStatus(ModuleStatus status, const ModuleData& moduleData)
 {
-    switch (status) {
-    case StoredModuleStatus::Unlinked:
-        if (!moduleData.needsLink())
-            return CyclicModuleRecord::Status::Linked;
-        return moduleData.reachesUncompiledCode() ? CyclicModuleRecord::Status::New : CyclicModuleRecord::Status::Unlinked;
-    case StoredModuleStatus::Linked:
-        return CyclicModuleRecord::Status::Linked;
-    case StoredModuleStatus::Evaluating:
-        return CyclicModuleRecord::Status::Evaluating;
-    case StoredModuleStatus::Evaluated:
-        return CyclicModuleRecord::Status::Evaluated;
-    case StoredModuleStatus::InRecord:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (status == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode())
+        return CyclicModuleRecord::Status::New;
+    return recordStatusFor(status);
 }
 
 template<typename Visitor>
 void Modules::visitRoots(Visitor& visitor)
 {
-    for (ModuleRecord* record : m_records.values())
-        visitor.appendUnbarriered(record);
-    for (auto& loaded : m_loaded.values()) {
-        visitor.appendUnbarriered(loaded->namespaceObject);
-        visitor.appendUnbarriered(loaded->deferredNamespaceObject);
-        visitor.appendUnbarriered(loaded->importMeta);
-        visitor.appendUnbarriered(loaded->requirer);
-        visitor.appendUnbarriered(loaded->requireFunction);
-        visitor.appendUnbarriered(loaded->initialExports);
-        visitor.appendUnbarriered(loaded->capturedExports);
-        visitor.appendUnbarriered(loaded->uncompiledRecord);
-    }
-    visitor.appendUnbarriered(m_namespaceStructure);
+    m_storedReferences.forEachRegionToVisit(visitor, [&](size_t, size_t) {
+        for (ModuleRecord* record : m_records.values())
+            visitor.appendUnbarriered(record);
+        for (auto& loaded : m_loaded.values()) {
+            visitor.appendUnbarriered(loaded->namespaceObject.get());
+            visitor.appendUnbarriered(loaded->deferredNamespaceObject.get());
+            visitor.appendUnbarriered(loaded->importMeta.get());
+            visitor.appendUnbarriered(loaded->requirer.get());
+            visitor.appendUnbarriered(loaded->requireFunction.get());
+            visitor.appendUnbarriered(loaded->requiredValue.get());
+            visitor.appendUnbarriered(loaded->exportsWhileRequired.get());
+            visitor.appendUnbarriered(loaded->capturedExports.get());
+            visitor.appendUnbarriered(loaded->deferredExportsSource.get());
+            visitor.appendUnbarriered(loaded->capturedFields.get());
+            visitor.appendUnbarriered(loaded->capturedStars.get());
+            visitor.appendUnbarriered(loaded->sourceOfCapturedFields.get());
+            visitor.appendUnbarriered(loaded->uncompiledRecord.get());
+        }
+        visitor.appendUnbarriered(m_namespaceStructure);
+    });
 }
 
 template void Modules::visitRoots(SlotVisitor&);
@@ -164,13 +161,13 @@ Modules::Modules(State& state)
     : m_state(state)
     , m_instance(state.instance)
     , m_table(state.tables)
-    , m_admitsCodeOutsideImage(hasFlag(state.instance.options().admitted(), AdmittedCode::RuntimeCode))
+    , m_admitsCodeOutsideImage(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector))
+    , m_admitsInspector(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector))
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
-    , m_replacesLoaderAnswers(state.instance.vm->aotState().image->replacesLoaderAnswers())
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());
     m_storedStatuses = unsafeMakeSpan(m_instance.modules.status, m_table.size());
-    m_instance.modules.requireEdges = state.tableArena.allocate<uint8_t>(m_table.numberOfRequireEdges());
+    m_instance.modules.evaluatingMark = static_cast<uint32_t>(StoredModuleStatus::Evaluating);
     state.caches->add(CacheKind::StrongRoots, "modules"_s, *this, RootVolatility::GreyedByExecution);
 }
 
@@ -192,7 +189,7 @@ const ModuleHost& Modules::host() const
     return moduleHostOf(m_instance.globalObject);
 }
 
-const Identifier& Modules::identifier(uint32_t number) const
+Identifier Modules::identifier(uint32_t number) const
 {
     return m_instance.vm->aotState().identifiers->identifier(number);
 }
@@ -223,22 +220,34 @@ void Modules::setStatus(ModuleID module, ModuleStatus status)
 
 ModuleRecord* Modules::ensureRecord(ModuleID module)
 {
-    if (ModuleRecord* record = recordIfExists(module))
+    // While the body of a module with a record runs, the table has the status.
+    if (ModuleRecord* record = m_records.get(module))
         return record;
 
     VM& vm = *m_instance.vm;
     const ModuleData& moduleData = data(module);
     ModuleRecord* record = ModuleRecord::create(m_instance, vm.aotState().moduleRecordStructure.get(), loader(), moduleKey(module), module);
     record->setHasTLA(moduleData.hasTopLevelAwait());
-    record->setStatus(initialRecordStatus(storedStatus(module), moduleData));
+    record->setStatus(initialRecordStatus(status(module), moduleData));
     if (record->status() == CyclicModuleRecord::Status::Evaluated)
         record->setCycleRoot(vm, record);
     {
         Locker locker { m_state.caches->lock() };
         m_records.add(module, record);
+        m_storedReferences.recordAll();
     }
     setStoredStatus(module, StoredModuleStatus::InRecord);
     return record;
+}
+
+// A record has a status of its own, which JavaScriptCore's loader reads.
+void Modules::didLinkEntryPoint()
+{
+    m_entryPointIsLinked = true;
+    for (ModuleRecord* record : m_records.values()) {
+        if (data(record->module()).isLinkedWithEntryPoint() && statusOf(*record) == ModuleStatus::Unlinked)
+            record->setStatus(CyclicModuleRecord::Status::Linked);
+    }
 }
 
 void Modules::retireRecord(ModuleRecord* record)
@@ -273,11 +282,13 @@ void Modules::throwEvaluationError(ModuleID module)
 
 JSValue Modules::value(ModuleID module) const
 {
-    return ProgramStatics::readVariableWithoutAllocating(m_instance, data(module).value);
+    const ModuleData& moduleData = data(module);
+    return moduleData.hasValue() ? ProgramStatics::readVariableWithoutAllocating(m_instance, moduleData.value) : JSValue();
 }
 
 void Modules::setValue(ModuleID module, JSValue value)
 {
+    RELEASE_ASSERT(data(module).hasValue());
     ProgramStatics::writeVariable(m_instance, data(module).value, value);
 }
 
@@ -305,7 +316,9 @@ Identifier Modules::moduleKey(ModuleID module)
 
 JSString* Modules::pathString(ModuleID module)
 {
-    return m_state.strings->string(*m_instance.vm, StringID(data(module).publicPath));
+    if (data(module).directory == Number24::max)
+        return m_state.strings->string(*m_instance.vm, StringID(data(module).publicPathOrName));
+    return jsString(*m_instance.vm, m_table.pathText(module));
 }
 
 void Modules::throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier)
@@ -315,16 +328,16 @@ void Modules::throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier)
     auto scope = DECLARE_THROW_SCOPE(vm);
     const Identifier& name = identifier(nameIdentifier);
     if (name == vm.propertyNames->defaultKeyword) {
-        throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, m_table.pathText(exporter), "'."_s));
+        throwException(globalObject, scope, createMissingDefaultExportError(globalObject, m_table.pathText(exporter)));
         return;
     }
-    throwSyntaxError(globalObject, scope, makeString("Export named '"_s, name.string(), "' not found in module '"_s, m_table.pathText(exporter), "'."_s));
+    throwException(globalObject, scope, createExportNotFoundError(globalObject, name.string(), m_table.pathText(exporter)));
 }
 
 void Modules::throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    throwSyntaxError(m_instance.globalObject, scope, makeString("Export named '"_s, identifier(nameIdentifier).string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, m_table.pathText(exporter), "'."_s));
+    throwException(m_instance.globalObject, scope, createAmbiguousExportError(m_instance.globalObject, identifier(nameIdentifier).string(), m_table.pathText(exporter)));
 }
 
 JSPromise* Modules::rejectedPromiseWithPendingException(JSGlobalObject* globalObject, ThrowScope& scope)
@@ -344,8 +357,7 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     case ModuleExportKind::Variable:
         return ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable);
     case ModuleExportKind::Namespace: {
-        LoadedModule* target = loadedIfExists(moduleExport.targetModule());
-        JSObject* namespaceObject = target ? target->namespaceObjectFor(targetPhaseOf(moduleExport)) : nullptr;
+        JSObject* namespaceObject = namespaceIfCreated(moduleExport.targetModule(), targetPhaseOf(moduleExport));
         return namespaceObject ? JSValue(namespaceObject) : JSValue();
     }
     case ModuleExportKind::Indirect:
@@ -362,6 +374,9 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     std::span<const ModuleExportData> exports = m_table.exports(module);
     RELEASE_ASSERT(index < exports.size());
     const ModuleExportData& moduleExport = exports[index];
+    // The caches answer for the namespace object of an evaluated module only.
+    if (status(module) == ModuleStatus::Linked) [[unlikely]]
+        recordEvaluationIfNothingIsLeftToRun(module);
     switch (moduleExport.kind()) {
     case ModuleExportKind::Variable: {
         JSValue value = ProgramStatics::readVariable(m_instance, moduleExport.variable);
@@ -387,8 +402,42 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
 JSObject* Modules::capturedExports(ModuleID module) const
 {
     LoadedModule* loaded = loadedIfExists(module);
+    if (loaded && !loaded->capturedExports && loaded->capturedFields)
+        const_cast<Modules*>(this)->makeTableOfCapturedFields(*loaded);
     RELEASE_ASSERT(loaded && loaded->capturedExports);
     return loaded->capturedExports;
+}
+
+JSValue Modules::capturedValue(ModuleID module, const Identifier& name)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    LoadedModule& loaded = ensureLoaded(module);
+    JSObject* captured = loaded.capturedExports;
+    if (!captured && loaded.capturedFields)
+        return capturedField(loaded, name.impl());
+    RELEASE_ASSERT(captured);
+    JSValue value = StarExportResolver::storedValue(realm, captured, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (value != JSValue(captured))
+        return value;
+    value = loaded.deferredExportsSource->get(realm, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    // The getter may have come back here and filled the export. A variable filled in the meantime holds that value.
+    JSValue filledMeanwhile = StarExportResolver::storedValue(realm, captured, name);
+    if (filledMeanwhile != JSValue(captured))
+        return filledMeanwhile;
+    captured->putDirectMayBeIndex(realm, name, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    return value;
+}
+
+bool Modules::hasCapturedExport(ModuleID module, const Identifier& name) const
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    if (loaded && !loaded->capturedExports && loaded->capturedFields)
+        return !!capturedField(*loaded, name.impl());
+    return !!StarExportResolver::storedValue(m_instance.globalObject, capturedExports(module), name);
 }
 
 bool Modules::isExportAmbiguous(ModuleID module, unsigned index) const
@@ -402,8 +451,38 @@ Structure* Modules::namespaceStructure()
     if (!m_namespaceStructure) {
         JSGlobalObject* globalObject = m_instance.globalObject;
         m_namespaceStructure = ModuleNamespace::createStructure(*m_instance.vm, globalObject, globalObject->moduleNamespaceObjectStructure()->storedPrototype());
+        m_storedReferences.recordAll();
     }
     return m_namespaceStructure;
+}
+
+// Its names are added one after the other and no code of the program sees it, so it has one Structure of its own in place of one for each name.
+JSObject* Modules::createTableOfExports()
+{
+    VM& vm = *m_instance.vm;
+    JSObject* table = constructEmptyObject(vm, m_instance.globalObject->nullPrototypeObjectStructure());
+    table->convertToDictionary(vm);
+    return table;
+}
+
+// Compiled code reads the word of a module that has one.
+JSObject* Modules::namespaceIfCreated(ModuleID module, ModulePhase phase) const
+{
+    if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue()) {
+        JSValue held = value(module);
+        return held ? asObject(held) : nullptr;
+    }
+    LoadedModule* loaded = loadedIfExists(module);
+    return loaded ? loaded->namespaceObjectFor(phase).get() : nullptr;
+}
+
+void Modules::setNamespace(ModuleID module, ModulePhase phase, JSObject* namespaceObject)
+{
+    if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue()) {
+        setValue(module, namespaceObject);
+        return;
+    }
+    ensureLoaded(module).namespaceObjectFor(phase).set(*this, namespaceObject);
 }
 
 JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
@@ -412,37 +491,44 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
     JSGlobalObject* globalObject = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& moduleData = data(module);
-    LoadedModule& loaded = ensureLoaded(module);
-    JSObject*& namespaceObject = loaded.namespaceObjectFor(phase);
 
     if (moduleData.isUncompiledCode()) {
         JSObject* loaderNamespace = uncompiledNamespace(module, phase);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        namespaceObject = loaderNamespace;
+        setNamespace(module, phase, loaderNamespace);
         return loaderNamespace;
     }
 
-    if (status(module) == ModuleStatus::Unlinked || (moduleData.capturesExports() && !loaded.capturedExports)) {
+    bool ranCode = false;
+    if (status(module) == ModuleStatus::Unlinked) {
         link(module);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (namespaceObject)
-            return namespaceObject;
+        ranCode = true;
+    }
+    // Whoever wants the object wants the names now, and the names are those of what the module exports: it is evaluated first.
+    if ((moduleData.capturesExports() || moduleData.kind == ModuleKind::CommonJs) && !didCaptureExports(module)) {
+        captureExports(module);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        ranCode = true;
+    }
+    if (ranCode) {
+        if (JSObject* createdMeanwhile = namespaceIfCreated(module, phase))
+            return createdMeanwhile;
     }
 
     Vector<DynamicExport> dynamicExports = collectDynamicExports(module);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ModuleNamespace::DynamicExports exportObjects;
     if (!dynamicExports.isEmpty()) {
-        Structure* nullPrototypeStructure = globalObject->nullPrototypeObjectStructure();
-        exportObjects.capturedValues = constructEmptyObject(vm, nullPrototypeStructure);
+        exportObjects.capturedValues = createTableOfExports();
         exportObjects.names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, dynamicExports.size());
         for (unsigned i = 0; i < dynamicExports.size(); ++i) {
             const DynamicExport& dynamicExport = dynamicExports[i];
             if (dynamicExport.liveSource) {
                 if (!exportObjects.liveSources)
-                    exportObjects.liveSources = constructEmptyObject(vm, nullPrototypeStructure);
+                    exportObjects.liveSources = createTableOfExports();
                 exportObjects.liveSources->putDirectMayBeIndex(globalObject, dynamicExport.name, dynamicExport.liveSource);
-            } else
+            } else if (dynamicExport.capturedValue)
                 exportObjects.capturedValues->putDirectMayBeIndex(globalObject, dynamicExport.name, dynamicExport.capturedValue);
             RETURN_IF_EXCEPTION(scope, nullptr);
             JSString* text = jsString(vm, dynamicExport.name.string());
@@ -452,16 +538,17 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
         }
     }
 
-    namespaceObject = ModuleNamespace::create(vm, namespaceStructure(), module, phase, exportObjects);
+    ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, namespaceStructure(), module, phase, exportObjects);
+    if (phase == ModulePhase::Evaluation && m_modulesWithMarkOfRequire.get(module.index()) && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
+        namespaceObject->setESModuleMarker(true);
+    setNamespace(module, phase, namespaceObject);
     return namespaceObject;
 }
 
 JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase)
 {
-    if (LoadedModule* loaded = loadedIfExists(module)) {
-        if (JSObject* namespaceObject = loaded->namespaceObjectFor(phase))
-            return namespaceObject;
-    }
+    if (JSObject* namespaceObject = namespaceIfCreated(module, phase))
+        return namespaceObject;
     return createNamespace(module, phase);
 }
 
@@ -475,7 +562,7 @@ JSObject* Modules::importMeta(ModuleID module)
     JSObject* meta = loader()->createImportMetaProperties(globalObject, pathString(module), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_ASSERT(meta);
-    loaded.importMeta = meta;
+    loaded.importMeta.set(*this, meta);
     return meta;
 }
 
@@ -495,13 +582,6 @@ JSCell* Modules::builtinCell(BuiltinID builtin, ModuleID module)
         RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_ASSERT(function.isCell());
         return function.asCell();
-    }
-
-    // The variable `exports` keeps the object that the body started with, whatever the program stores to module.exports.
-    if (builtin == Builtins::ModuleObjectExports) {
-        LoadedModule* loaded = loadedIfExists(module);
-        if (JSValue initialExports = loaded ? loaded->initialExports : JSValue())
-            return initialExports.isCell() ? initialExports.asCell() : nullptr;
     }
 
     JSCell* holder = builtinCell(entry.holder, module);
@@ -573,12 +653,16 @@ void Modules::throwFailure(ModuleFailureID id)
     const ModuleFailureData& failure = m_table.failure(id);
     StringID specifier = failure.specifierString();
     ModuleID importer = failure.importerModule();
+    if (failure.isAbsentExport()) {
+        throwException(globalObject, scope, createExportNotFoundError(globalObject, ProgramStrings::text(m_table.programTables(), specifier), m_table.pathText(importer)));
+        return;
+    }
     {
         DisallowVMEntry disallowVMEntry(vm);
         loader()->resolve(globalObject, m_state.strings->string(vm, specifier), pathString(importer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, void());
-    throwException(globalObject, scope, createError(globalObject, makeString("Cannot find module '"_s, ProgramStrings::text(m_table.programTables(), specifier), "' from '"_s, m_table.pathText(importer), "'"_s)));
+    throwException(globalObject, scope, createModuleMissingAtBuildError(globalObject, ProgramStrings::text(m_table.programTables(), specifier), m_table.pathText(importer)));
 }
 
 } } // namespace JSC::AOT

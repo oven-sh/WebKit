@@ -1,6 +1,6 @@
 # Without a promise the result is returned as it is, but only the stub resumes the waiter of a function that has suspended, and only the stub wraps a thenable
 # FORM: Prepared
-# OPTIONS: heat=only-loops-are-hot
+# OPTIONS: heat=everything-is-hot
 # STATISTIC: FreshPromiseFulfillmentGroups = 3
 # RUN: pass Select
 # RUN(WITHOUT): pass Select

@@ -1,0 +1,46 @@
+# `message[kOutHeaders]`, and nothing else is known of the message but that it is an object. A symbol that the program makes lies only on the objects that the program puts it on,
+# so the layouts that declare a field under it are what the object is expected to be. A registered symbol and a well-known one may lie on an object of the host too, and predict nothing
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Response" fields=[{key=symbol("kOutHeaders")@m0:100 declared={type=anything} flags=[IsRequired]}, {key="sent" declared={type=boolean} flags=[IsRequired]}, {key=Symbol.for("shared") declared={type=anything} flags=[IsRequired]}, {key=@@toStringTag declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Request" fields=[{key="path" declared={type=string} flags=[IsRequired]}, {key=symbol("kOutHeaders")@m0:100 declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Socket" fields=[{key=symbol("kHandle")@m0:140 declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="objectAskedForSymbolOfProgram" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key=symbol("kOutHeaders")@m0:100
+    Return v1
+}
+# CHECK-LABEL: function f0 name="objectAskedForSymbolOfProgram"
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK: = GetSlot {{*}} key=symbol("kOutHeaders")@m0:100 receivers=[{{*}}] level=Expected
+
+function f1 name="anythingAskedForSymbolOfProgram" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key=symbol("kHandle")@m0:140
+    Return v1
+}
+# CHECK-LABEL: function f1 name="anythingAskedForSymbolOfProgram"
+# CHECK: = TypeTest v0 testedType=L2
+# CHECK: = GetSlot {{*}} key=symbol("kHandle")@m0:140 receivers=[L2] level=Expected
+
+function f2 name="registeredSymbol" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key=Symbol.for("shared")
+    Return v1
+}
+# CHECK-LABEL: function f2 name="registeredSymbol"
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = PropGet v0 key=Symbol.for("shared")
+
+function f3 name="wellKnownSymbol" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key=@@toStringTag
+    Return v1
+}
+# CHECK-LABEL: function f3 name="wellKnownSymbol"
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = PropGet v0 key=@@toStringTag

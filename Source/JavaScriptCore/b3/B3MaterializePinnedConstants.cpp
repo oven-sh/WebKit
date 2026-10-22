@@ -36,7 +36,7 @@ public:
 
     bool run()
     {
-        if (!m_finder || !m_proc.hasEverAdded(Const64))
+        if (!m_finder || !(m_proc.hasEverAdded(Const64) || m_proc.hasEverAdded(ConstDouble)))
             return false;
 
         m_proc.resetValueOwners();
@@ -73,6 +73,8 @@ private:
     {
         if (constant->opcode() == Const64)
             return m_finder(static_cast<uint64_t>(constant->asInt64()));
+        if (constant->opcode() == ConstDouble)
+            return m_finder(std::bit_cast<uint64_t>(constant->asDouble()));
         return std::nullopt;
     }
 

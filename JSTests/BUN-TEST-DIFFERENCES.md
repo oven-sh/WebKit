@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 123 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A9 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -114,14 +114,6 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
-### A10. `==` and `===` on two strings never throw
-
-- Upstream makes both ropes flat before it compares them, and throws `RangeError: Out of memory` when one is too long for that.
-- Fork code: `JSString::equalSlowCase` calls `equalMakingRopesFlat` (`runtime/JSString.cpp`, under `USE(BUN_JSC_ADDITIONS)`): a rope
-  that cannot be made flat is compared piece by piece. Code compiled ahead of time relies on string equality not throwing.
-- Recognize: a test that provokes out-of-memory by comparing very long ropes gets `true` or `false` and no exception.
-- File: `stress/missing-exception-check-in-string-compare.js`: two ropes of 2^31 - 1 characters: expects `true`.
-
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -171,11 +163,8 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.def`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
-| `stress/multi-put-by-val-bigint-array.js` | a `put_by_val` that has seen several kinds of typed arrays still throws when a number is stored into a `BigInt64Array` or `BigUint64Array`, whatever the index |
-| `stress/switch-substring-16bit-base.js` | a `switch` over an 8-bit substring rope picks the right case after its base has turned 16-bit |
-| `stress/enumerator-has-own-property-check.js` | `hasOwnProperty.call(value, key)` and `Object.hasOwn(value, key)` inside `for (key in value)` keep the check that `value` is an object: a string is a cell too |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
-| `stress/multi-put-by-val-out-of-bounds-bigint64array.js`, `stress/ftl-has-own-property-in-for-in-over-string-constant.js`, `stress/array-sort-inline-int32-double-comparator.js` | earlier, smaller tests for the `MultiPutByVal`, `EnumeratorHasOwnProperty` and sort fixes |
+| `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
 the programs that test ahead-of-time compilation are in Bun's `test/aot`.
@@ -184,7 +173,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

@@ -125,11 +125,7 @@ private:
         }
         if (!isThis(definition))
             return;
-        const DeclaredType& declared = m_function.thisType;
-        TypeID expected = declared.written ? declared.written : declared.predicted;
-        if (!expected)
-            return;
-        for (LayoutID layout : membersOf(m_program, m_program.at(expected)))
+        for (LayoutID layout : membersOf(m_program, m_program.at(m_function.thisType.type)))
             addMember(kind, layout, key, stored);
     }
 
@@ -231,7 +227,7 @@ KnownClosures::KnownClosures(const Program& program, BuildContext& build)
 
     for (size_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
-        if (layout.flags.contains(LayoutFlags::HasHeritage) && !layout.predictedBase)
+        if (layout.flags.contains(LayoutFlags::HasHeritage) && !layout.base)
             m_classesWithUnknownBase.append(LayoutID(index));
     }
 }

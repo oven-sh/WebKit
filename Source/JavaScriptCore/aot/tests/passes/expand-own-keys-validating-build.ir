@@ -1,6 +1,6 @@
 # A validating build tests the one key order that flow has proven for every object of a layout: another order reaches an Unreachable, which reports the failure
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot validate
+# OPTIONS: heat=EverythingIsHot validate
 # RUN: pass ExpandOwnKeys
 
 module m0 path="main.js" displayPath="main.js"

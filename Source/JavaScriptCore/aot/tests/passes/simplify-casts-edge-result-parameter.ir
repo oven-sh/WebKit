@@ -1,4 +1,4 @@
-# A claim of a parameter that one edge fills with what its test proves stays: there is no argument on that edge to replace
+# A check of a parameter that one edge fills with what its test proves stays: there is no argument on that edge to replace
 # FORM: Prepared
 # RUN: pass SimplifyCasts
 # STATISTIC: SimplifyCastsChanges = 0
@@ -15,7 +15,7 @@ function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=bool
     v3 = Integer integer=1
     Jump -> next b3(v3)
   b3(v4):
-    v5 = Claim v4 castType=number
+    v5 = Check v4 castType=number
     Return v5
   b4():
     v6 = Integer integer=0
@@ -29,5 +29,5 @@ function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=bool
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b3(v3)
 # CHECK-NEXT: b3(v4: number|string):
-# CHECK-NEXT: v5: number = Claim v4 castType=number
+# CHECK-NEXT: v5: number = Check v4 castType=number
 # CHECK-NEXT: Return v5

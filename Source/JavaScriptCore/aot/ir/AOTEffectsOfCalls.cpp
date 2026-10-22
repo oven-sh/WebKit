@@ -94,89 +94,14 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
     return CalleeList::unknown();
 }
 
-Type testedWrittenTypeOf(const Type& written)
-{
-    return written.withoutProofs();
-}
-
-Type testedProvenTypeOf(const Type& type)
-{
-    return type.withoutClassProofs().withUntestableBuiltinsWidened();
-}
-
-bool mayFailEntryTests(const Program& program, const Type& value, const DeclaredType& declared)
-{
-    const Type& proven = program.at(declared.type);
-    if (value.isSubsetOf(proven, program))
-        return false;
-    if (declared.written && !value.isSubsetOf(testedWrittenTypeOf(program.at(declared.written)), program))
-        return true;
-    return !value.isSubsetOf(testedProvenTypeOf(proven), program);
-}
-
-static bool mayRefuseRestArguments(const Program& program, const Function& callee, const EnteringOperands& operands)
-{
-    if (callee.parameters.isEmpty())
-        return true;
-    const Type& rest = program.at(callee.parameters.last().type);
-    const ClassPart* array = rest.findClassPart(BuiltinClasses::Array);
-    if (!array)
-        return !rest.anyObject;
-    if (!array->contentsAreProven)
-        return false;
-
-    const Type& element = program.at(array->contentsAt(program.builtins(), ContentsSlot::Element));
-    if (!operands.arguments)
-        return !element.isAnything();
-    size_t firstRestArgument = std::min<size_t>(callee.numberOfPositionalParameters(), operands.arguments->size());
-    return !std::ranges::all_of(operands.arguments->subspan(firstRestArgument), [&](TypeID argument) {
-        return program.at(argument).isSubsetOf(element, program);
-    });
-}
-
-static bool mayRefuseOperands(const Program& program, const Function& callee, BuiltinCallMode mode, const EnteringOperands& operands)
-{
-    // The entrypoint that takes new.target gets `this` from whoever constructs, made for that new.target.
-    bool testsThis = mode != BuiltinCallMode::Construct || callee.has(FunctionFlags::HasNewTarget);
-    if (testsThis && callee.has(FunctionFlags::HasThis) && mayFailEntryTests(program, program.at(operands.thisValue), callee.thisType))
-        return true;
-    size_t numberOfPositionalParameters = callee.numberOfPositionalParameters();
-    for (size_t index = 0; index < numberOfPositionalParameters; ++index) {
-        if (mayFailEntryTests(program, program.at(operands.argumentAt(index)), callee.parameters[index]))
-            return true;
-    }
-    return callee.has(FunctionFlags::HasRestParameter) && mayRefuseRestArguments(program, callee, operands);
-}
-
-static bool leavesResultTestToCallers(const Program& program, const Function& callee)
-{
-    return std::ranges::any_of(callee.results, [&](const DeclaredType& result) {
-        return result.written && !program.at(result.type).isSubsetOf(program.at(result.written).withoutProofs(), program);
-    });
-}
-
-static bool mayAnswerWithRejectedPromise(const Function& callee)
-{
-    return callee.has(FunctionFlags::IsAsync) || callee.role == FunctionRole::CoroutineRamp || callee.role == FunctionRole::BoundFunction;
-}
-
-// A call by value reaches the body through the entrypoint of the callee. The entrypoint tests `this` and the arguments against the types the callee
-// declares, collects the rest arguments and tests a result whose test the body leaves to its callers. The summary of the body has none of this.
-static void describeEntrypoint(const Program& program, const Function& callee, BuiltinCallMode mode, const EnteringOperands& operands, EffectDescription& description)
+// A call by value reaches the body through the entrypoint of the callee, which refuses a call of the wrong kind and collects the rest arguments.
+// The summary of the body has none of this. The tests of `this` and of the arguments are operations of the body, and none of them throws.
+static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, EffectDescription& description)
 {
     if (throwsBeforeEntry(callee, mode))
         description.addThrow();
     if (callee.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         description.addOwn(declaredBoundOf(Opcode::CreateRest));
-    if (leavesResultTestToCallers(program, callee))
-        description.addOwn(declaredBoundOf(Opcode::Claim));
-    if (!mayRefuseOperands(program, callee, mode, operands))
-        return;
-    description.addOwn(declaredBoundOf(Opcode::Claim));
-    if (mayAnswerWithRejectedPromise(callee)) {
-        description.addOwn(declaredBoundOf(Opcode::NewPromise));
-        description.addOwn(declaredBoundOf(Opcode::RejectPromise));
-    }
 }
 
 static bool takesThisFromConstruction(const Function& callee)
@@ -203,9 +128,9 @@ static void describeCreationOfThis(const Program& program, FunctionID callee, co
 void describeCallees(const Program& program, const CalleeList& callees, BuiltinCallMode mode, const EnteringOperands& operands, EffectDescription& description)
 {
     bool constructs = mode == BuiltinCallMode::Construct;
+    description.addFunctions(callees.functions.span());
     for (FunctionID callee : callees.functions) {
-        description.addFunction(callee);
-        describeEntrypoint(program, program.at(callee), mode, operands, description);
+        describeEntrypoint(program.at(callee), mode, description);
         if (constructs)
             describeCreationOfThis(program, callee, operands, description);
     }
@@ -274,14 +199,6 @@ static void describeCalleesOfCall(const Program& program, const Function& functi
 {
     EnteringOperands operands;
     operands.newTarget = typeOfNewTarget(function, call);
-
-    Vector<TypeID, 4> arguments;
-    if (!callees.functions.isEmpty() && formOfArguments(call.opcode) == BuiltinCallForm::Whole) {
-        arguments = typesOfArguments(function, call, BuiltinCallForm::Whole);
-        ValueID receiver = receiverOf(call);
-        operands.thisValue = receiver ? function.at(receiver).type : TypeTable::undefined;
-        operands.arguments = arguments.span();
-    }
     describeCallees(program, callees, mode, operands, description);
 }
 
@@ -306,8 +223,7 @@ static void describeOperandsGivenToBuiltins(const Program& program, const Functi
 
 static void describeNamedCallees(const CalleeList& callees, EffectDescription& description)
 {
-    for (FunctionID callee : callees.functions)
-        description.addFunction(callee);
+    description.addFunctions(callees.functions.span());
     if (!callees.isComplete)
         description.addUnknownCode();
 }

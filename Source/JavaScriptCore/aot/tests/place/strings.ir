@@ -27,14 +27,17 @@ function f1 name="calledFunction" results=[{type=anything}] {
   b0():
     Return
 }
-# CHECK: "/src/\u{f8}.ts"
-# CHECK-NEXT: "\u{f8}.ts"
+# CHECK: "\u{f8}.ts"
 # CHECK-NEXT: "AllocatedLayout"
 # CHECK-NEXT: "moduleBody"
 # CHECK-NEXT: "12345678901234567890"
 # CHECK-NEXT: "cookedPart"
 # CHECK-NEXT: "rawPart"
 # CHECK-NEXT: "calledFunction"
+# The path of a file is kept in pieces, and its display path is the end of it.
+# CHECK: "/"
+# CHECK-NEXT: "src/"
+# UNNAMED-NOT: "/src/\u{f8}.ts"
 
 # A key is named by its identifier number, a variable by its offset, and a layout that is never allocated has no record.
 # UNNAMED-NOT: "UnallocatedLayout"

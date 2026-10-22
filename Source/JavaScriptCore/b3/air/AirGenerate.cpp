@@ -295,6 +295,11 @@ static constexpr Step steps[] = {
         [](Code& code, const PipelineState&) { return code.policy().layout.duplicatesReturns; },
         runPass<duplicateReturns>
     },
+    {
+        "routeRareBranchesThroughJumps"_s,
+        [](Code& code, const PipelineState&) { return isX86() && code.policy().layout.placesRareBlocksInGaps; },
+        runPass<routeRareBranchesThroughJumps>
+    },
 
     // This has to be the last step that changes instructions: nothing may be inserted between a
     // definition of the flags and its uses.

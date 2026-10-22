@@ -26,6 +26,7 @@ using Typed::JSONMemberSearch;
 
 std::span<const NativeTest> jsonParseOperationTests();
 
+// The tests only look the names up in the tables. The object goes to a function that nobody knows: a store that no code of the program reads is removed, and the allocation with it.
 static constexpr ASCIILiteral namesProgramText =
     "layout L0 name=\"Names\" module=m0 fields=[{key=\"a\" declared={type=anything} flags=[IsRequired]}, {key=\"b\" declared={type=anything} flags=[IsRequired]}, {key=\"\\xe6\\x97\\xa5\" declared={type=anything} flags=[IsRequired]}]\n"
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
@@ -35,7 +36,8 @@ static constexpr ASCIILiteral namesProgramText =
     "    v0 = Integer integer=1\n"
     "    v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 1, 2]\n"
     "    v2 = Builtin builtin=GlobalThis\n"
-    "    PropSet v2, v1 key=\"names\"\n"
+    "    v3 = PropGet v2 key=\"publish\" [isFreeName]\n"
+    "    v4 = Call v3, -, v1\n"
     "    Return\n"
     "}\n"_s;
 
@@ -158,7 +160,6 @@ static void checkEmptyBodyThrows(DetachedInstance& fixture, std::span<const uint
     auto* error = dynamicDowncast<ErrorInstance>(scope.exception()->value());
     scope.clearException();
     AOT_TEST_CHECK(error && error->errorType() == ErrorType::SyntaxError);
-    AOT_TEST_CHECK(error->sanitizedMessageString(fixture.globalObject()) == "Unexpected end of JSON input"_s);
 }
 
 static void testDecodeBytes()

@@ -27,6 +27,7 @@ namespace {
 struct SiteReference {
     uint32_t returnOffset;
     uint32_t* site;
+    bool isFirstRead { false };
 };
 
 struct RenumberedSites {
@@ -90,7 +91,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
             reportUndeclaredTrap(described, access.value);
             continue;
         }
-        accesses.append({ linkBuffer.offsetOf(access.instruction), OptionalIndex { site->callSite }, throwSiteWords(site->throwSite, site->representation, static_cast<unsigned>(access.reference)) });
+        accesses.append({ linkBuffer.offsetOf(access.instruction), OptionalIndex { site->callSite }, throwSiteWords(site->throwSite, access.referenceIsNarrow ? Representation::Cell32 : site->representation, static_cast<unsigned>(access.reference)) });
     }
     for (const CallThrowSite& site : traps.callThrowSites)
         accesses.append({ body.returnSites[site.returnSite].offset - static_cast<uint32_t>(sizeOfNearCall), { }, site.words });
@@ -102,7 +103,7 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
 {
     Vector<SiteReference, 32> references;
     for (FirstReadSite& site : body.firstReadSites)
-        references.append({ site.returnOffset, &site.site });
+        references.append({ site.returnOffset, &site.site, true });
     for (ReturnSite& site : body.returnSites) {
         if (site.site)
             references.append({ site.offset, &site.site.bits });
@@ -158,18 +159,38 @@ static RenumberedSites renumberSites(const CodeRecords& records, LinkBuffer& lin
         return recorded[recordedNumber - 1];
     };
 
+    // One operation of the program is often several calls in a row. A return address that says nothing but what the one in front of it says shares its site:
+    // the image finds the site at or in front of a return address.
+    struct LastSite {
+        const RecordedSite* record { nullptr };
+        const SiteLandingPad* landingPad { nullptr };
+    };
+    LastSite last;
+    auto leadToSameHandler = [](const SiteLandingPad* a, const SiteLandingPad* b) {
+        return a && b ? a->landingPad == b->landingPad && a->type == b->type : a == b;
+    };
+
     RenumberedSites result;
     result.sites.reserveInitialCapacity(records.sites.numberOfSitesWithoutCode + references.size() + itemSites.size());
     result.sites.append(recorded.span().first(records.sites.numberOfSitesWithoutCode));
     for (const SiteReference& reference : references) {
         uint32_t recordedNumber = *reference.site;
-        result.sites.append(recordOf(recordedNumber));
+        const RecordedSite& record = recordOf(recordedNumber);
+        const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
+        auto firstItem = std::ranges::lower_bound(itemSites, recordedNumber, { }, &SpreadSite::callSite);
+        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall && (firstItem == itemSites.end() || firstItem->callSite != recordedNumber);
+        if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
+            *reference.site = result.sites.size();
+            continue;
+        }
+        result.sites.append(record);
         uint32_t number = result.sites.size();
         *reference.site = number;
-        if (const SiteLandingPad* entry = landingPads.takeNext(recordedNumber))
-            sites.handlers.append({ number, linkBuffer.offsetOf(*records.exceptions.landingPads[entry->landingPad]), entry->type });
-        for (auto entry = std::ranges::lower_bound(itemSites, recordedNumber, { }, &SpreadSite::callSite); entry != itemSites.end() && entry->callSite == recordedNumber; ++entry)
+        if (landingPad)
+            sites.handlers.append({ number, linkBuffer.offsetOf(*records.exceptions.landingPads[landingPad->landingPad]), landingPad->type });
+        for (auto entry = firstItem; entry != itemSites.end() && entry->callSite == recordedNumber; ++entry)
             sites.spreadSites.append({ number, entry->item, entry->site });
+        last = saysOnlyWhereItIs ? LastSite { &record, landingPad } : LastSite { };
     }
     result.numberOfSitesBeforeItems = result.sites.size();
     for (SpreadSite& entry : sites.spreadSites) {
@@ -226,7 +247,11 @@ static SitePosition positionIn(const Program& program, const ShownFunction& show
     if (position == Instruction::noPosition)
         position = 0;
     LineColumn lineColumn = program.lineColumnFor(owner.module, position);
-    return { lineColumn.line, lineColumn.column, owner.module, position, frame };
+    // The lines of a text that the program evaluates are counted in the text. The file is the one that evaluates it.
+    ModuleID shownModule = owner.module;
+    if (shownModule && program.at(shownModule).kind == ModuleKind::CommonJs && program.at(shownModule).referrer)
+        shownModule = program.at(shownModule).referrer;
+    return { lineColumn.line, lineColumn.column, shownModule, position, frame };
 }
 
 static FunctionID functionShownFor(const Program& program, FunctionID id, const Function& function, uint32_t frame)
@@ -313,6 +338,13 @@ SiteDescription describeSites(const DescribedFunction& described, CodeRecords& r
     RenumberedSites renumbered = renumberSites(records, linkBuffer, references.span(), sites);
     sites.positions = describePositions(described, renumbered);
     sites.flaggedSites = collectFlaggedSites(renumbered, sites.numberOfSitesWithoutCode);
+    // No walk of the stack can stand in a body without a site that has code, so nobody asks which functions it took in.
+    size_t numberOfInlineCallSites = described.function.inlineFrames.isEmpty() ? 0 : described.function.inlineFrames.size() - 1;
+    if (numberOfInlineCallSites && sites.numberOfSitesWithoutCode == numberOfInlineCallSites && sites.positions.size() == 1 + numberOfInlineCallSites) {
+        sites.numberOfSitesWithoutCode = 0;
+        sites.positions.shrink(1);
+        return sites;
+    }
     sites.inlineFrames = describeInlineFrames(described.function, records.sites, body);
     return sites;
 }

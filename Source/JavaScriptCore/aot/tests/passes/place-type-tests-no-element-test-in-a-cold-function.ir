@@ -1,0 +1,25 @@
+# In the cold code of a cold function no test stands in front of an access to an element. Its general form is one call: smaller than a test, the access in line and a copy of what stands behind them,
+# and no slower where code runs seldom. A loop in such a function keeps its tests
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readsAnElement" parameters=[{type=Array<anything> flags=[IsExpected]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<anything>, v1: i32):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="readsAnElement"
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet v0, v1
+
+function f1 name="storesAnElement" parameters=[{type=Array<anything> flags=[IsExpected]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<anything>, v1: i32):
+    ElemSet v0, v1, v1
+    Return v1
+}
+# CHECK-LABEL: function f1 name="storesAnElement"
+# CHECK-NOT: TypeTest
+# CHECK: ElemSet v0, v1, v1

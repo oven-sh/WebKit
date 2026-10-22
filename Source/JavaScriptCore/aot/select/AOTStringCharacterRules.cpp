@@ -13,7 +13,9 @@
 #include "AOTLoopEntry.h"
 #include "AOTSelectionContext.h"
 #include "AOTStringRuleSupport.h"
+#include <algorithm>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <wtf/HashMap.h>
 
@@ -21,11 +23,13 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The string is flattened on the entry of a loop, or without a loop in front of the first of its readers.
+// The string is flattened on the entry of a loop, or without a loop in front of the first of its readers. There the rewrite of flatteningReader, which resolves ropes, makes the flat string.
 struct Pair {
     BlockID header;
     ValueID string;
     ValueID firstReader { };
+    BlockID blockOfFirstReader { };
+    ValueID flatteningReader { };
     bool hasLikelyReader { false };
     bool hasResolvingReader { false };
     bool resolvesUnderOtherHandler { false };
@@ -44,7 +48,10 @@ struct Match {
     ValueID string;
     std::optional<CharacterRead> read { };
     std::optional<uint32_t> pair { };
+    // Its effects admit a FlattenString in its place.
     bool resolvesRopes { false };
+    // It looks at characters, so it gains from a flat string. A piece cut out of a string does not: it only names the string it is cut from.
+    bool readsCharacters { false };
 };
 
 struct PlacedReader {
@@ -52,9 +59,15 @@ struct PlacedReader {
     ProgramPoint point;
 };
 
+struct PlacedPair {
+    uint32_t pair;
+    ProgramPoint place;
+};
+
 } // anonymous namespace
 
 static constexpr OpcodeSet readersWithoutRow { Opcode::CallBuiltin, Opcode::ElemGet };
+static constexpr OpcodeSet readersThatOnlyCutPieces { Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::StringRangeSubstringOrUndefined };
 
 static constexpr EffectsOnEdges effectsOfFlattening = EffectsOnEdges::onBothEdges(declaredBoundOf(Opcode::FlattenString));
 
@@ -107,10 +120,10 @@ static bool suspends(SelectionContext& context, BlockID header)
 
     for (unsigned index = 0; index < loop->size(); ++index) {
         BlockID block = loop->at(index);
-        if (analyses.effectsOfTerminator(block).normal.maySuspend)
+        if (declaredBoundOf(function.at(block).terminator.kind).maySuspend && analyses.effectsOfTerminator(block).normal.maySuspend)
             return true;
         for (ValueID id : function.at(block).values) {
-            if (analyses.effectsOf(id).normal.maySuspend)
+            if (maySuspend(function.at(id).opcode) && analyses.maySuspend(id))
                 return true;
         }
     }
@@ -138,7 +151,7 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
 // The reader has a string. Outside the loop the same value may have a wider type, which the loop entry tests.
 static std::optional<InvariantOperand> findInvariantString(SelectionContext& context, BlockID block, ValueID string)
 {
-    if (!context.analyses().naturalLoops().innerMostLoopOf(block))
+    if (!context.analyses().cfg().hasCycle() || !context.analyses().naturalLoops().innerMostLoopOf(block))
         return std::nullopt;
 
     auto mayBeString = [&](ValueID candidate) {
@@ -186,6 +199,7 @@ static Vector<Match> collectReaders(SelectionContext& context, PairTable& table)
 
             reader->pair = findOrAddPair(context, table, block, reader->string);
             reader->resolvesRopes = resolvesRopes(context, id);
+            reader->readsCharacters = reader->resolvesRopes && !readersThatOnlyCutPieces.contains(opcode);
             if (reader->pair) {
                 Pair& pair = table.pairs[*reader->pair];
                 pair.hasLikelyReader |= function.at(block).frequency != BlockFrequency::Rare;
@@ -220,23 +234,45 @@ static bool suspendsBetween(SelectionContext& context, ProgramPoint first, Progr
         return true;
     const Block& block = context.function().at(first.block);
     return std::ranges::any_of(block.values.span().subspan(first.index, last.index - first.index), [&](ValueID id) {
-        return context.analyses().effectsOf(id).normal.maySuspend;
+        return maySuspend(context.function().at(id).opcode) && context.analyses().maySuspend(id);
     });
 }
 
 static bool suspendsAnywhere(SelectionContext& context)
 {
+    const Function& function = context.function();
     FunctionAnalyses& analyses = context.analyses();
     return std::ranges::any_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
-        return analyses.effectsOfTerminator(block).normal.maySuspend || std::ranges::any_of(context.function().at(block).values, [&](ValueID id) {
-            return analyses.effectsOf(id).normal.maySuspend;
+        if (declaredBoundOf(function.at(block).terminator.kind).maySuspend && analyses.effectsOfTerminator(block).normal.maySuspend)
+            return true;
+        return std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return maySuspend(function.at(id).opcode) && analyses.maySuspend(id);
         });
     });
 }
 
-// The first reader that resolves ropes leaves the string flat for every reader it dominates.
+static bool runsRightBehind(SelectionContext& context, BlockID block, BlockID follower)
+{
+    if (block == follower)
+        return true;
+    const Function& function = context.function();
+    std::span<const BlockID> predecessors = context.analyses().cfg().predecessors(follower);
+    return predecessors.size() == 1 && predecessors[0] == block && function.at(follower).frequency == function.at(block).frequency && function.at(follower).handler == function.at(block).handler;
+}
+
+// The first reader that resolves ropes leaves the string flat for every reader it dominates. A length in front of the read that it bounds is the first reader too:
+// the read follows in its block, or in a block as likely that only its block enters.
 static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>& pairs, Vector<Match>& readers)
 {
+    auto isUnpaired = [](const Match& reader) {
+        return !reader.pair;
+    };
+    auto mayComeFirst = [](const Match& reader) {
+        return !reader.pair && reader.resolvesRopes;
+    };
+    if (std::ranges::count_if(readers, isUnpaired) < 2 || std::ranges::none_of(readers, mayComeFirst))
+        return;
+
     FunctionAnalyses& analyses = context.analyses();
     const CFG& cfg = analyses.cfg();
 
@@ -261,10 +297,25 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
         while (remaining.size() > 1) {
             PlacedReader first = remaining.first();
             remaining.removeAt(0);
-            if (!readers[first.reader].resolvesRopes)
-                continue;
             if (!functionSuspends)
                 functionSuspends = suspendsAnywhere(context);
+
+            std::optional<uint32_t> flatteningReader;
+            if (readers[first.reader].resolvesRopes)
+                flatteningReader = first.reader;
+            unsigned numberOfLikelyReads = readers[first.reader].readsCharacters;
+            for (const PlacedReader& follower : remaining) {
+                if (!readers[follower.reader].readsCharacters || context.function().at(follower.point.block).frequency != context.function().at(first.point.block).frequency)
+                    continue;
+                if (!analyses.dominates(readers[first.reader].group.root, follower.point) || suspendsBetween(context, first.point, follower.point, *functionSuspends))
+                    continue;
+                ++numberOfLikelyReads;
+                if (!flatteningReader && runsRightBehind(context, first.point.block, follower.point.block))
+                    flatteningReader = follower.reader;
+            }
+            // One read alone flattens nothing.
+            if (!flatteningReader || numberOfLikelyReads < 2)
+                continue;
 
             uint32_t pair = static_cast<uint32_t>(pairs.size());
             bool hasFollower = remaining.removeAllMatching([&](const PlacedReader& follower) {
@@ -276,8 +327,87 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
             if (!hasFollower)
                 continue;
             readers[first.reader].pair = pair;
-            pairs.append(Pair { .header = { }, .string = readers[first.reader].string, .firstReader = readers[first.reader].group.root });
+            pairs.append(Pair { .header = { }, .string = readers[first.reader].string, .firstReader = readers[first.reader].group.root, .blockOfFirstReader = first.point.block, .flatteningReader = readers[*flatteningReader].group.root });
         }
+    }
+}
+
+static ProgramPoint placeOf(SelectionContext& context, const Pair& pair)
+{
+    return pair.firstReader ? context.analyses().useLists().pointOf(pair.firstReader) : ProgramPoint::atHeadOf(pair.header);
+}
+
+static bool hasReaders(const Pair& pair)
+{
+    return pair.firstReader || shouldFlatten(pair);
+}
+
+static bool isMade(SelectionContext& context, const Pair& pair)
+{
+    return pair.firstReader || (shouldFlatten(pair) && canEmitOnLoopEntry(context, pair.header));
+}
+
+// The flat string of a loop is defined on the only entry of the header, so it reaches all that the header dominates, the code behind the loop included.
+static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint point)
+{
+    FunctionAnalyses& analyses = context.analyses();
+    if (pair.firstReader)
+        return analyses.dominates(pair.firstReader, point);
+    return pair.header != point.block && analyses.dominators().dominates(pair.header, point.block);
+}
+
+// A string that was flattened stays flat: a place that the flattening of the same string dominates takes that flat string.
+static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs, Vector<Match>& readers)
+{
+    // A flat string does not live across a suspension.
+    if (pairs.isEmpty() || suspendsAnywhere(context))
+        return;
+
+    FunctionAnalyses& analyses = context.analyses();
+    const CFG& cfg = analyses.cfg();
+
+    Vector<PlacedPair, 8> placedPairs;
+    for (uint32_t index = 0; index < pairs.size(); ++index) {
+        if (hasReaders(pairs[index]))
+            placedPairs.append(PlacedPair { index, placeOf(context, pairs[index]) });
+    }
+    // What dominates a place comes before it.
+    std::ranges::sort(placedPairs, { }, [&](const PlacedPair& placed) {
+        return std::tuple { cfg.reversePostOrderIndex(placed.place.block), placed.place.index, placed.pair };
+    });
+
+    HashMap<ValueID, Vector<uint32_t, 2>> flattenedPairsOfString;
+    auto findPairThatReaches = [&](ValueID string, ProgramPoint point) -> std::optional<uint32_t> {
+        auto flattenedPairs = flattenedPairsOfString.find(analyses.identityOf(string));
+        if (flattenedPairs == flattenedPairsOfString.end())
+            return std::nullopt;
+        for (uint32_t pair : flattenedPairs->value) {
+            if (reaches(context, pairs[pair], point))
+                return pair;
+        }
+        return std::nullopt;
+    };
+
+    Vector<std::optional<uint32_t>> sharedWith(pairs.size());
+    for (const PlacedPair& placed : placedPairs) {
+        const Pair& pair = pairs[placed.pair];
+        sharedWith[placed.pair] = findPairThatReaches(pair.string, placed.place);
+        if (sharedWith[placed.pair] || !isMade(context, pair))
+            continue;
+        flattenedPairsOfString.ensure(analyses.identityOf(pair.string), [] {
+            return Vector<uint32_t, 2>();
+        }).iterator->value.append(placed.pair);
+    }
+
+    for (Match& reader : readers) {
+        if (reader.pair) {
+            if (std::optional<uint32_t> shared = sharedWith[*reader.pair])
+                reader.pair = shared;
+            continue;
+        }
+        ValueLocation location = analyses.useLists().locationOf(reader.group.root);
+        if (location.placement == ValuePlacement::InBlock)
+            reader.pair = findPairThatReaches(reader.string, { location.block, location.index });
     }
 }
 
@@ -307,7 +437,14 @@ static ValueID appendFlattenIfString(IRBuilder& builder, ValueID value)
 static void emitFlatString(SelectionContext& context, GroupRewriter& rewriter, Pair& pair)
 {
     if (pair.firstReader) {
-        pair.flat = rewriter.insert(IRBuilder::make(Opcode::FlattenString, { pair.string }));
+        Value flatten = IRBuilder::make(Opcode::FlattenString, { pair.string });
+        if (pair.firstReader == pair.flatteningReader) {
+            pair.flat = rewriter.insert(WTF::move(flatten));
+            return;
+        }
+        size_t index = rewriter.function().at(pair.blockOfFirstReader).values.find(pair.firstReader);
+        RELEASE_ASSERT(index != notFound);
+        pair.flat = rewriter.builder().insertBefore(ProgramPoint { pair.blockOfFirstReader, static_cast<uint32_t>(index) }, WTF::move(flatten));
         return;
     }
     bool isString = context.typeOf(pair.string).isAnyString();
@@ -320,7 +457,7 @@ static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, co
 {
     ValueID root = match.group.root;
     if (!match.read) {
-        Value& row = rewriter.function().at(root);
+        Value& row = rewriter.function().edit(root);
         if (flat) {
             row.setStringOperand(flat);
             context.analyses().didChangeValues();
@@ -344,6 +481,7 @@ void selectHoistStringCharacters(SelectionContext& context)
     Vector<Pair>& pairs = table.pairs;
     clearUnflattenedPairs(pairs, readers);
     pairReadersBehindFirstReader(context, pairs, readers);
+    sharePairsOfOneString(context, pairs, readers);
     readers.removeAllMatching([&](const Match& reader) {
         bool isUnchangedRow = !reader.read && !reader.pair;
         return isUnchangedRow || context.tryClaim(SelectionRuleID::HoistStringCharacters, reader.group) != ClaimResult::Claimed;
@@ -353,7 +491,7 @@ void selectHoistStringCharacters(SelectionContext& context)
     Vector<Match> flatteningReaders;
     Vector<Match> otherReaders;
     for (Match& reader : readers) {
-        bool mayFlatten = reader.pair && reader.resolvesRopes && (!pairs[*reader.pair].firstReader || pairs[*reader.pair].firstReader == reader.group.root);
+        bool mayFlatten = reader.pair && reader.resolvesRopes && (!pairs[*reader.pair].firstReader || pairs[*reader.pair].flatteningReader == reader.group.root);
         bool flattens = mayFlatten && !std::exchange(pairs[*reader.pair].hasFlatteningReader, true);
         (flattens ? flatteningReaders : otherReaders).append(WTF::move(reader));
     }

@@ -51,7 +51,7 @@ constexpr std::optional<unsigned> parts(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::Strcat: return 0;
-    case Opcode::StringBuilderAppend: return 1;
+    case Opcode::StringBuilderAppend: case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts: return 1;
     default: return std::nullopt;
     }
 }
@@ -60,8 +60,8 @@ constexpr std::optional<unsigned> arguments(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::Call: case Opcode::Construct: case Opcode::SuperConstruct: case Opcode::StringBuilderAppendBuiltin: return 2;
-    case Opcode::CallDirect: return 0;
-    case Opcode::CallGroup: case Opcode::CallBuiltin: case Opcode::AwaitCallBySavingFrame: case Opcode::CallMethod: case Opcode::CallInline: return 1;
+    case Opcode::CallDirect: case Opcode::CallTable: return 0;
+    case Opcode::CallBuiltin: case Opcode::AwaitCallBySavingFrame: case Opcode::CallMethod: case Opcode::CallInline: return 1;
     case Opcode::CallResolved: return 3;
     default: return std::nullopt;
     }

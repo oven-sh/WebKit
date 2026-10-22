@@ -35,6 +35,7 @@ function f0 name="handlerGetsOuterValues" parameters=[{type=anything}, {type=any
 # CHECK: = DestructureIterable {{*}} count=2
 # ABSENT-LABEL: function f0 name="handlerGetsOuterValues"
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 
 function f1 name="handlerGetsFirstElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -64,7 +65,7 @@ function f1 name="handlerGetsFirstElement" parameters=[{type=anything}, {type=an
 }
 # A second step that throws leaves the first element in the variable that the handler reads.
 # CHECK-LABEL: function f1 name="handlerGetsFirstElement"
-# CHECK: key="next"
+# CHECK: function=[[openIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f1 name="handlerGetsFirstElement"
 # ABSENT-NOT: DestructureIterable
 
@@ -94,6 +95,6 @@ function f2 name="handlerOfCloseGetsElement" parameters=[{type=anything}, {type=
 }
 # A `return` that throws comes after both elements are bound.
 # CHECK-LABEL: function f2 name="handlerOfCloseGetsElement"
-# CHECK: key="next"
+# CHECK: function=[[openIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f2 name="handlerOfCloseGetsElement"
 # ABSENT-NOT: DestructureIterable

@@ -4,7 +4,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Task" constructor=f7 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f8 mutability=Fixed}, {key="size" kind=Getter function=f9 mutability=Fixed}, {key="size" kind=Setter function=f10 mutability=Fixed}, {key="make" side=Static function=f11 mutability=Fixed}]}
+layout L0 kind=Instance name="Task" constructor=f7 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f8 mutability=Fixed}, {key="size" kind=Getter function=f9 mutability=Fixed}, {key="size" kind=Setter function=f10 mutability=Fixed}, {key="make" side=Static function=f11 mutability=Fixed}]}
 function f0 name="plain" results=[{type=anything}] {
   b0():
     Return
@@ -33,19 +33,19 @@ function f6 name="steps" role=CoroutineBody results=[{type=anything}] creator=Co
 function f7 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
-    v2 = NewObject v1 layout=L0 [keepsShape]
+    v2 = NewObject v1 layout=L0
     Return v2
 }
-function f8 name="run" kind=Method flags=[HasThis] thisType={type=object written=L0} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f8 name="run" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     Return
 }
-function f9 name="size" kind=Getter flags=[HasThis] thisType={type=object written=L0} results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f9 name="size" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
     Return
 }
-function f10 name="size" kind=Setter flags=[HasThis] thisType={type=object written=L0} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f10 name="size" kind=Setter flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     Return
 }
 function f11 name="make" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
@@ -138,13 +138,13 @@ function f19 name="unknown-callee" parameters=[{type=anything}] results=[{type=a
 # CHECK-NEXT: v1: anything = Call v0
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
-function f20 name="predicted-callee" parameters=[{type=function predicted=f0}] results=[{type=anything}] {
-  b0(v0: function ~ f0):
+function f20 name="expected-callee" parameters=[{type=f0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0):
     v1 = Call v0
     Return v1
 }
-# CHECK-LABEL: function f20 name="predicted-callee"
-# CHECK-NEXT: b0(v0: function ~ f0):
+# CHECK-LABEL: function f20 name="expected-callee"
+# CHECK-NEXT: b0(v0: anything ~ f0):
 # CHECK-NEXT: v1: anything = Call v0
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -199,8 +199,8 @@ function f26 name="converted-argument" parameters=[{type=f3}, {type=anything}] r
     Return v2
 }
 # CHECK-LABEL: function f26 name="converted-argument"
-# CHECK: [[claimed]]: number = Claim v1 castType=number
-# CHECK-NEXT: = CallDirect [[claimed]], v1 function=f3
+# CHECK: [[assumed]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: = CallDirect [[assumed]], v1 function=f3
 function f27 name="this-value" parameters=[{type=f4}, {type=anything}] results=[{type=anything}] {
   b0(v0: f4, v1: anything):
     v2 = Call v0, v1
@@ -281,14 +281,14 @@ function f34 name="method-read-as-value" parameters=[{type=L0}] results=[{type=a
 # CHECK-NEXT: = PropGet v0 key="run"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
-function f35 name="method-of-predicted-receiver" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: anything):
+function f35 name="method-of-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
     v2 = PropGet v0 key="run"
     v3 = Call v2, v0, v1 calleeKey="run"
     Return v3
 }
-# CHECK-LABEL: function f35 name="method-of-predicted-receiver"
-# CHECK-NEXT: b0(v0: object ~ L0, v1: anything):
+# CHECK-LABEL: function f35 name="method-of-expected-receiver"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
 # CHECK-NEXT: = PropGet v0 key="run"
 # CHECK-NEXT: = Call v2, v0, v1 calleeKey="run"
 # CHECK-NEXT: Return v3
@@ -333,7 +333,7 @@ function f39 name="construct" parameters=[{type=f7}] results=[{type=anything}] {
     Return v1
 }
 # CHECK-LABEL: function f39 name="construct"
-# CHECK: [[object]]: L0 = NewObject layout=L0 [keepsShape]
+# CHECK: [[object]]: L0 = NewObject layout=L0
 # CHECK-NEXT: = CallDirect [[object]], v0 function=[[version]] [isConstruction]
 # CHECK-NOT: = Construct
 function f40 name="construct-unknown" parameters=[{type=function}] results=[{type=anything}] {

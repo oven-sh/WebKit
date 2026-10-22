@@ -75,7 +75,7 @@ private:
     UNUSED_VARIABLE(callFrame); \
     AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, entry)
 
-ALWAYS_INLINE const Identifier& identifierAt(Instance* instance, unsigned number) { return instance->vm->aotState().identifiers->identifier(number); }
+ALWAYS_INLINE Identifier identifierAt(Instance* instance, unsigned number) { return instance->vm->aotState().identifiers->identifier(number); }
 
 template<typename CellType>
 ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, InlineAllocation kind, Structure* structure)

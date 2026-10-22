@@ -68,7 +68,7 @@ private:
         Typed::Function function;
         function.module = Typed::ModuleID(moduleIndex);
         for (uint32_t value = 0; value < numberOfValues; ++value)
-            function.at(Typed::addUnlistedValue(function, Typed::Opcode::Parameter)).position = locationOf(value).position;
+            function.edit(Typed::addUnlistedValue(function, Typed::Opcode::Parameter)).position = locationOf(value).position;
         return function;
     }
 
@@ -551,9 +551,7 @@ static B3::CompilationReport reportWithRemarks()
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopNotVersioned, B3::GaveUpReason::NotInnermost, originOf(6), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopVersioned, B3::GaveUpReason::None, originOf(7), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopNotVersioned, B3::GaveUpReason::SeveralEntries, originOf(8), std::nullopt });
-    report.remarks.append(B3::Remark { B3::RemarkKind::PollNotStripMined, B3::GaveUpReason::NotCounted, originOf(9), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopRotated, B3::GaveUpReason::None, originOf(10), std::nullopt });
-    report.remarks.append(B3::Remark { B3::RemarkKind::PollStripMined, B3::GaveUpReason::None, originOf(11), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::RangeChecksRemoved, B3::GaveUpReason::None, originOf(12), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopBoundNotClamped, B3::GaveUpReason::BoundNotInvariant, originOf(13), std::nullopt });
     return report;
@@ -573,11 +571,10 @@ static void testBackEndReportDeclines()
 
     BackEndReport result = collectBackEndReport(report, { }, true);
     AOT_TEST_CHECK(result.findings.isEmpty());
-    AOT_TEST_CHECK(result.declines.size() == 4);
+    AOT_TEST_CHECK(result.declines.size() == 3);
     checkDecline(result.declines[0], Wire::DeclineKind::LoopNotVersioned, LimitID::MaxClonedValuesPerLoopVersion, Wire::LoopDeclineReason::LimitReached, 5);
     checkDecline(result.declines[1], Wire::DeclineKind::LoopNotVersioned, LimitID::None, Wire::LoopDeclineReason::SeveralEntries, 8);
-    checkDecline(result.declines[2], Wire::DeclineKind::LoopPollNotStripMined, LimitID::None, Wire::LoopDeclineReason::NotCounted, 9);
-    checkDecline(result.declines[3], Wire::DeclineKind::LoopBoundNotClamped, LimitID::None, Wire::LoopDeclineReason::BoundNotInvariant, 13);
+    checkDecline(result.declines[2], Wire::DeclineKind::LoopBoundNotClamped, LimitID::None, Wire::LoopDeclineReason::BoundNotInvariant, 13);
 
     AOT_TEST_CHECK(collectBackEndReport(report, { }, false).declines.isEmpty());
 }
@@ -593,10 +590,10 @@ static void testBackEndReportRecordsDeclines()
     AOT_TEST_CHECK(!build.diagnostics().hasErrors());
 
     Vector<Wire::DeclineRecord> declines = build.takeDeclines(&program.program());
-    AOT_TEST_CHECK(declines.size() == 4);
-    constexpr uint32_t values[] = { 5, 8, 9, 13 };
-    constexpr Wire::DeclineKind kinds[] = { Wire::DeclineKind::LoopNotVersioned, Wire::DeclineKind::LoopNotVersioned, Wire::DeclineKind::LoopPollNotStripMined, Wire::DeclineKind::LoopBoundNotClamped };
-    constexpr Wire::LoopDeclineReason reasons[] = { Wire::LoopDeclineReason::LimitReached, Wire::LoopDeclineReason::SeveralEntries, Wire::LoopDeclineReason::NotCounted, Wire::LoopDeclineReason::BoundNotInvariant };
+    AOT_TEST_CHECK(declines.size() == 3);
+    constexpr uint32_t values[] = { 5, 8, 13 };
+    constexpr Wire::DeclineKind kinds[] = { Wire::DeclineKind::LoopNotVersioned, Wire::DeclineKind::LoopNotVersioned, Wire::DeclineKind::LoopBoundNotClamped };
+    constexpr Wire::LoopDeclineReason reasons[] = { Wire::LoopDeclineReason::LimitReached, Wire::LoopDeclineReason::SeveralEntries, Wire::LoopDeclineReason::BoundNotInvariant };
     for (size_t index = 0; index < declines.size(); ++index) {
         AOT_TEST_CHECK(declines[index].kind == kinds[index]);
         AOT_TEST_CHECK(decodeDeclineReason(declines[index].kind, declines[index].reason) == DeclineReason { reasons[index] });
@@ -668,7 +665,6 @@ static void testBackEndReportStatistics()
     B3::CompilationReport raw;
     raw.counters[static_cast<size_t>(B3::Counter::LoopsVersioned)] = 4;
     raw.counters[static_cast<size_t>(B3::Counter::LoopsRotated)] = 5;
-    raw.counters[static_cast<size_t>(B3::Counter::PollsStripMined)] = 6;
     raw.counters[static_cast<size_t>(B3::Counter::RangeChecksRemoved)] = 7;
     raw.counters[static_cast<size_t>(B3::Counter::LoopBoundsClamped)] = 8;
     raw.counters[static_cast<size_t>(B3::Counter::KnownInductionsUsed)] = 9;
@@ -677,7 +673,6 @@ static void testBackEndReportStatistics()
 
     expected.count(StatisticID::LoopsVersioned, 4);
     expected.count(StatisticID::LoopsRotated, 5);
-    expected.count(StatisticID::LoopPollsStripMined, 6);
     expected.count(StatisticID::RangeChecksRemoved, 7);
     expected.count(StatisticID::LoopBoundsClamped, 8);
     expected.count(StatisticID::KnownInductionsUsed, 9);

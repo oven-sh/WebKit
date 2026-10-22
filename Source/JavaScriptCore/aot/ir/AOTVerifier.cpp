@@ -288,12 +288,10 @@ void FunctionVerifier::verifyBlockLists(BlockID block, BitVector& isListed)
 
 void FunctionVerifier::verifyInstructionIDs(BlockID block, ValueID id, const Instruction& instruction)
 {
-    for (std::span<const ValueID> operands : { std::span<const ValueID> { instruction.children }, instruction.arguments.span() }) {
-        for (ValueID operand : operands) {
-            if (operand && !isValid(operand)) {
-                fail(InternalErrorKind::IdOutOfRange, block, id, m_id.index());
-                return;
-            }
+    for (ValueID operand : instruction.operands()) {
+        if (operand && !isValid(operand)) {
+            fail(InternalErrorKind::IdOutOfRange, block, id, m_id.index());
+            return;
         }
     }
     if (!isValidInlineFrame(instruction.inlineFrame))

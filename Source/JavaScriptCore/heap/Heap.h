@@ -42,7 +42,6 @@
 #include "MarkedSpace.h"
 #include "MutatorState.h"
 #include "PreciseSubspace.h"
-#include "StoredCellLog.h"
 #include "StrongSet.h"
 #include "StructureID.h"
 #include "Synchronousness.h"
@@ -109,6 +108,7 @@ class RunningScope;
 class SlotVisitor;
 class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
+class StoredCellLog;
 class StructureAlignedMemoryAllocator;
 class SweepingScope;
 class VM;
@@ -170,15 +170,14 @@ class Heap;
 #define FOR_EACH_JSC_WEBASSEMBLY_STRUCTURE_ISO_SUBSPACE(v)
 #endif
 
-#define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
+#define FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \
     v(brandedStructureSpace, destructibleCellHeapCellType, BrandedStructure) \
-    FOR_EACH_JSC_AOT_STRUCTURE_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_WEBASSEMBLY_STRUCTURE_ISO_SUBSPACE(v)
 
 #define FOR_EACH_JSC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(v) \
-    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v)
+    FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(v)
 
 #if JSC_OBJC_API_ENABLED
 #define FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
@@ -228,7 +227,23 @@ class Heap;
 #define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v)
 #endif
 
-#define FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(v) \
+#if ENABLE(AOT)
+#define FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v) \
+    v(aotClosureSpace, cellHeapCellType, AOT::Closure, CompleteSubspace) \
+    v(aotOuterCellSpace, outerCellHeapCellType, AOT::Object, CompleteSubspace) \
+    v(cagedAuxiliarySpace, auxiliaryHeapCellType, HeapCell, CompleteSubspace)
+#else
+#define FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v)
+#endif
+
+#define FOR_EACH_JSC_DYNAMIC_NON_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(v)
+
+#define FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_AOT_STRUCTURE_ISO_SUBSPACE(v)
+
+#define FOR_EACH_JSC_DYNAMIC_COMMON_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_GLIB_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
@@ -337,6 +352,10 @@ class Heap;
     \
     FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_ISO_SUBSPACE(v)
 
+#define FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_DYNAMIC_COMMON_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(v)
+
 typedef HashCountedSet<JSCell*> ProtectCountSet;
 typedef HashCountedSet<ASCIILiteral> TypeCountSet;
 
@@ -366,7 +385,7 @@ public:
     // Take this if you know that from->cellState() < barrierThreshold.
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from);
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from, JSCell* to);
-    StoredCellLog& storedCellLog() LIFETIME_BOUND { return m_storedCellLog; }
+    JS_EXPORT_PRIVATE StoredCellLog& storedCellLog() LIFETIME_BOUND;
 
     Heap(VM&, HeapType);
     ~Heap();
@@ -379,6 +398,7 @@ public:
     JS_EXPORT_PRIVATE MarkedBlockCage& cage();
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
     bool tryCollectForExhaustedCage(GCDeferralContext*);
+    bool tryUseReserveOfExhaustedCage();
 
     bool validatesCellVisits() const { return m_validatesCellVisits; }
     void setValidatesCellVisits(bool validates) { m_validatesCellVisits = validates; }
@@ -906,6 +926,9 @@ private:
     Lock m_lock;
     const HeapType m_heapType;
     MutatorState m_mutatorState { MutatorState::Running };
+    bool m_hasAllocatedSinceLastCollection { true };
+    bool m_didSkipMarkingInLastCollection { false };
+    bool m_validatesCellVisits { false };
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
 
@@ -950,8 +973,6 @@ private:
     bool m_shouldDoOpportunisticFullCollection { false };
     bool m_isInOpportunisticTask { false };
     bool m_shouldDoFullCollection { false };
-    bool m_hasAllocatedSinceLastCollection { true };
-    bool m_didSkipMarkingInLastCollection { false };
     Markable<CollectionScope> m_collectionScope;
     Markable<CollectionScope> m_lastCollectionScope;
 #if USE(BUN_JSC_ADDITIONS)
@@ -976,7 +997,7 @@ private:
     Collector* const m_collector;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
-    StoredCellLog m_storedCellLog;
+    std::unique_ptr<StoredCellLog> m_storedCellLog;
     
     StrongSet m_strongSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
@@ -987,7 +1008,6 @@ private:
     bool m_isSafeToCollect { false };
     bool m_isShuttingDown { false };
     bool m_mutatorShouldBeFenced { false };
-    bool m_validatesCellVisits { false };
     Lock m_wasmCalleesPendingDestructionLock;
 
     unsigned m_barrierThreshold { blackThreshold };
@@ -1090,6 +1110,7 @@ public:
     HeapCellType auxiliaryHeapCellType;
     HeapCellType immutableButterflyHeapCellType;
     HeapCellType cellHeapCellType;
+    HeapCellType outerCellHeapCellType;
     HeapCellType destructibleCellHeapCellType;
     IsoHeapCellType apiGlobalObjectHeapCellType;
     IsoHeapCellType callbackConstructorHeapCellType;
@@ -1181,10 +1202,6 @@ public:
     
     // Whenever possible, use subspaceFor<CellType>(vm) to get one of these subspaces.
     CompleteSubspace cellSpace;
-#if ENABLE(AOT)
-    CompleteSubspace aotClosureSpace;
-    CompleteSubspace cagedAuxiliarySpace;
-#endif
     CompleteSubspace destructibleObjectSpace;
 
 #define DECLARE_ISO_SUBSPACE(name, heapCellType, type) \
@@ -1312,7 +1329,7 @@ public:
     JS_EXPORT_PRIVATE SubspaceType* name##Slow(); \
     std::unique_ptr<SubspaceType> m_##name;
 
-    FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
+    FOR_EACH_JSC_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
 #undef DEFINE_NON_ISO_SUBSPACE_MEMBER
 
 };

@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js"
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource
 layout L0 kind=Instance name="Base" constructor=f1 flow={baseState=None}
-layout L1 kind=Instance name="Derived" predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0}
 layout L2 kind=Instance name="Legacy" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None}
 function f0 name="operands" parameters=[{type=f1}, {type=f2}, {type=f3}, {type=f4}, {type=f5}, {type=f6}, {type=f7}, {type=f8}, {type=f9}, {type=f1|f3}, {type=f1|f5}, {type=function}] results=[{type=undefined}] {
   b0(v0: f1, v1: f2, v2: f3, v3: f4, v4: f5, v5: f6, v6: f7, v7: f8, v8: f9, v9: f1|f3, v10: f1|f5, v11: function):
@@ -51,9 +51,9 @@ function f10 name="reads" parameters=[{type=f1}, {type=f3}, {type=f5}, {type=any
     Return
 }
 # EFFECTS-LABEL: function f10
-# EFFECTS-NEXT: v4 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
-# EFFECTS-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# EFFECTS-NEXT: v4 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throwsForLackOfMemory collects
+# EFFECTS-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(MemberGuards/1, AllocatorState) throwsForLackOfMemory collects
 # EFFECTS-NEXT: v6 GetConstructPrototype: unknownCode
 # EFFECTS-NEXT: v7 ResolveHeritage: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
-# EFFECTS-NEXT: v8 ResolveHeritage: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# EFFECTS-NEXT: v8 ResolveHeritage: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(MemberGuards/1, AllocatorState) throws collects
 # EFFECTS-NEXT: v9 ResolveHeritage: unknownCode

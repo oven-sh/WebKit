@@ -1,4 +1,5 @@
 # toString of a global literal reads source and flags through getters of the locked RegExp.prototype and never lastIndex, so the literal is shared
+# TODO: nobody: `/a/g.toString()` makes its RegExp anew each time: toString is not among the uses that ignore lastIndex
 # FORM: Prepared
 # RUN: pass ShareRegExpLiterals
 # STATISTIC: ShareRegExpLiteralsChanges = 1

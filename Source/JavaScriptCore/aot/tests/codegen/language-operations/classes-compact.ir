@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Base" constructor=f2
-layout L1 kind=Instance name="Derived" predictedBase=L0 constructor=f3 flags=[HasHeritage]
+layout L1 kind=Instance name="Derived" base=L0 constructor=f3 flags=[HasHeritage]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():

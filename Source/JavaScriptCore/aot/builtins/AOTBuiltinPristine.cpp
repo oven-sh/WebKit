@@ -17,7 +17,31 @@ static constexpr PristineAspectSet guardedAspects { PristineAspects::Storage, Pr
 
 PristineTest pristineTestOf(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
-    return table.mayHavePristineInstances(builtinClass) ? PristineTest::MayPass : PristineTest::NeverPasses;
+    switch (table.at(builtinClass).pristineTest) {
+    case BuiltinPristineTest::Mark:
+        return table.mayHavePristineInstances(builtinClass) ? PristineTest::MayPass : PristineTest::NeverPasses;
+    case BuiltinPristineTest::ClosureAsCreated:
+        return PristineTest::ClosureAsCreated;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool sharesInstanceTestWithParent(const BuiltinTable& table, const BuiltinClass& instanceClass)
+{
+    if (!instanceClass.parent || instanceClass.instanceTest != BuiltinInstanceTest::JSTypeEquals)
+        return false;
+    const BuiltinClass& parent = table.at(instanceClass.parent);
+    return parent.instanceTest == BuiltinInstanceTest::JSTypeEquals && parent.type == instanceClass.type;
+}
+
+bool canOnlyBeProvenPristine(const BuiltinTable& table, BuiltinClassID builtinClass)
+{
+    const BuiltinClass& instanceClass = table.at(builtinClass);
+    return pristineTestOf(table, builtinClass) == PristineTest::NeverPasses
+        && sharesInstanceTestWithParent(table, instanceClass)
+        && !instanceClass.isPrimitiveWrapper
+        && table.hasLockedPrototypeChain(builtinClass)
+        && table.mayHavePristineInstances(instanceClass.parent);
 }
 
 static PristineProof proofSinceAllocation(const PristineQuery& query, ValueID value, BuiltinClassID builtinClass, ProgramPoint point)
@@ -67,6 +91,8 @@ static PristineAspectSet collectProvenAspects(const PristineQuery& query, ValueI
     }
     if (proven.containsAll(wanted.aspects) || !query.analyses)
         return proven;
+    if (query.asksAboutPlace)
+        *query.asksAboutPlace = true;
     if (proofSinceAllocation(query, value, wanted.builtinClass, point) == PristineProof::Proven) {
         proven.add(guardedAspects);
         return proven;

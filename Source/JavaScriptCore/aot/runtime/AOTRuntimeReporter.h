@@ -34,11 +34,6 @@ namespace AOT {
 struct Instance;
 struct RuntimeType;
 
-enum class ReportedAction : uint8_t {
-    Continued,
-    Threw,
-};
-
 struct ReportDestination {
     std::optional<intptr_t> descriptor;
     bool isJSON { false };
@@ -59,7 +54,7 @@ public:
     bool isEnabled() const { return m_destination.descriptor.has_value(); }
     bool isExplicitlyEnabled() const { return isEnabled() && m_destination.isExplicit; }
 
-    void reportClaim(Instance&, std::optional<uint32_t> typeSite, const RuntimeType& expected, JSValue actual, ReportedAction);
+    void reportFailedCheck(Instance&, std::optional<uint32_t> typeSite, const RuntimeType& expected, JSValue actual);
     void reportNativeCall(ValidationFailureKind, const String& callee, const String& mismatch);
     void writeAtExit();
 
@@ -77,7 +72,6 @@ private:
         LineColumn position;
         String function;
         String expected;
-        ReportedAction action { ReportedAction::Continued };
         Vector<std::pair<String, uint64_t>, 2> counts;
     };
 
@@ -106,9 +100,7 @@ private:
 
 uint64_t typeCheckIDOf(std::span<const uint8_t> path, uint32_t position, TypeSiteKind);
 
-bool reportsMismatches(const Instance&);
-void reportFailedClaim(Instance&, uint32_t typeSite, const RuntimeType& expected, JSValue actual);
-void reportThrownClaim(Instance&, const RuntimeType& expected, JSValue actual, TypeSiteID = { });
+void reportFailedCheck(Instance&, uint32_t typeSite, const RuntimeType& expected, JSValue actual);
 void writeToStandardError(const String& line);
 #if ENABLE(WEBASSEMBLY)
 void reportInterpreterFallback(Wasm::InterpreterFallbackReason);

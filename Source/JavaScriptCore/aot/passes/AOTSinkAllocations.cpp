@@ -29,6 +29,8 @@ AllocationSinking::AllocationSinking(FunctionAnalyses& analyses, const SinkingPo
     , m_policy(policy)
     , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow }
     , m_candidateOfValue(analyses.function().values.size())
+    , m_checksShortcuts(analyses.context().build.options().verifiesAfterEveryPass)
+    , m_maxWork(limit(LimitID::MaxSinkingWork))
 {
 }
 
@@ -36,8 +38,50 @@ AllocationSinking::~AllocationSinking() = default;
 
 void AllocationSinking::analyze()
 {
+    m_joinsSetAside.shrink(0);
+    m_setsAsideJoins = true;
+    setAsideJoinsOfAllocationsBuiltInTheirBlocks();
+    analyzeUntilNothingChanges();
+    m_setsAsideJoins = false;
+    if (m_joinsSetAside.isEmpty() || !hasCandidates())
+        return;
+
+    Vector<Candidate> candidatesWithoutJoins = m_candidates;
+    SinkingDecisions decisionsWithoutJoins = m_decisions;
+    uint64_t workWithoutJoins = m_work;
+    takeBackJoinsSetAside();
+    analyzeUntilNothingChanges();
+    if (hasCandidates() || !hasSpentItsWork())
+        return;
+
+    m_candidates = WTF::move(candidatesWithoutJoins);
+    m_decisions = WTF::move(decisionsWithoutJoins);
+    m_work = 0;
+    analyzeUntilNothingChanges();
+    m_work += workWithoutJoins;
+}
+
+bool AllocationSinking::analyzeStartingFrom(SinkingFindings&& findings)
+{
+    auto isSameCandidate = [](const Candidate& a, const Candidate& b) {
+        return a.definition == b.definition && a.block == b.block && a.isJoin == b.isJoin && a.family == b.family && a.descriptionIndex == b.descriptionIndex && a.tagBitWhenAbsent == b.tagBitWhenAbsent;
+    };
+    if (!std::ranges::equal(m_candidates, findings.candidates, isSameCandidate))
+        return false;
+
+    m_candidates = WTF::move(findings.candidates);
+    m_decisions = WTF::move(findings.decisions);
+    m_decisions.takeDidChange();
+    analyzeUntilNothingChanges();
+    return true;
+}
+
+void AllocationSinking::analyzeUntilNothingChanges()
+{
     while (hasCandidates()) {
         solve();
+        if (hasSpentItsWork())
+            break;
         count();
         if (!abandonUnprofitableCandidates() && !m_mustSolveAgain)
             return;
@@ -48,6 +92,7 @@ void AllocationSinking::analyze()
 void AllocationSinking::invalidateResults()
 {
     m_heads.fill(std::nullopt, m_function.blocks.size());
+    m_blocksEnteredWithNothing.clearAll();
     resetCounters();
 }
 
@@ -100,10 +145,47 @@ const SinkingState* AllocationSinking::headOf(BlockID block) const
 {
     if (block.index() >= m_heads.size())
         return nullptr;
+    if (m_blocksEnteredWithNothing.get(block.index())) {
+        m_blocksEnteredWithNothing.quickClear(block.index());
+        m_heads[block.index()] = SinkingState::nothingAt(block);
+    }
     const std::optional<SinkingState>& head = m_heads[block.index()];
     if (!head || !head->isReachable)
         return nullptr;
     return &*head;
+}
+
+bool AllocationSinking::isLiveAtHead(ValueID value, BlockID block) const
+{
+    if (!m_liveness) [[unlikely]] {
+        if (!LivenessOfAskedValues::answersFor(m_analyses.opcodesOfValues()))
+            return m_analyses.liveness().isLiveAtHead(value, block);
+        m_liveness.emplace(m_function, m_analyses.cfg(), m_analyses.useLists());
+    }
+    bool isLive = m_liveness->isLiveAtHead(value, block);
+    if (m_checksShortcuts) [[unlikely]]
+        RELEASE_ASSERT(isLive == m_analyses.liveness().isLiveAtHead(value, block));
+    return isLive;
+}
+
+const BitVector& AllocationSinking::findBlocksWithLiveDefinition(VirtualObjectID object)
+{
+    const Candidate& candidate = at(object);
+    BitVector& blocks = m_blocksWithLiveDefinition[object.index()].emplace();
+    // Makes the sets of single values, where those answer.
+    isLiveAtHead(candidate.definition, m_analyses.cfg().root());
+    if (m_liveness && !m_checksShortcuts)
+        blocks = m_liveness->blocksEnteredWith(candidate.definition);
+    blocks.ensureSize(m_function.blocks.size());
+    if (!m_liveness || m_checksShortcuts) {
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (isLiveAtHead(candidate.definition, block))
+                blocks.quickSet(block.index());
+        }
+    }
+    if (candidate.isJoin)
+        blocks.quickSet(candidate.block.index());
+    return blocks;
 }
 
 uint64_t AllocationSinking::limit(LimitID id) const
@@ -155,29 +237,61 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
         candidate.mergeBlock = mergeBlock;
 }
 
+static void verifyThatNoAllocationPays(FunctionAnalyses& analyses)
+{
+    AllocationSinking sinking(analyses, SinkingPolicy { .recordsLosses = false });
+    RELEASE_ASSERT(sinking.collectCandidates());
+    sinking.analyze();
+    RELEASE_ASSERT(!sinking.hasCandidates());
+    for (uint32_t index = 0; index < sinking.numberOfCandidates(); ++index)
+        RELEASE_ASSERT(sinking.at(VirtualObjectID(index)).isJoin || !sinking.at(VirtualObjectID(index)).mergeBlock);
+}
+
 PassOutcome sinkAllocations(FunctionPassContext& context)
 {
     constexpr unsigned maxEdgeSplittingRounds = 3;
+    constexpr OpcodeSet allocations = opcodesInterpretedAs(Interpretation::Allocation);
 
+    if (!context.analyses.opcodesOfValues().intersects(allocations))
+        return PassOutcome::Unchanged;
+    if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
+        return PassOutcome::Unchanged;
+
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true };
+    if (!context.build.options().verifiesAfterEveryPass)
+        policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = PassOutcome::Unchanged;
+    std::optional<SinkingFindings> findingsBeforeSplitting;
+    bool hasGivenUp = false;
     for (unsigned round = 0; round < maxEdgeSplittingRounds; ++round) {
-        AllocationSinking sinking(context.analyses, SinkingPolicy { });
-        if (!sinking.collectCandidates())
+        AllocationSinking sinking(context.analyses, policy);
+        if (!sinking.collectCandidates()) {
+            if (sinking.foundThatNoAllocationPays() && context.build.options().verifiesAfterEveryPass) [[unlikely]]
+                verifyThatNoAllocationPays(context.analyses);
+            sinking.recordLosses();
             return outcome;
-        sinking.analyze();
+        }
+        if (!findingsBeforeSplitting || !sinking.analyzeStartingFrom(WTF::move(*findingsBeforeSplitting)))
+            sinking.analyze();
+        hasGivenUp |= sinking.hasSpentItsWork() || sinking.hasStartedOverWithFewerCandidates();
+        if (hasGivenUp)
+            context.numberOfBlocksWhenSinkingGaveUp = context.analyses.cfg().reversePostOrder().size();
 
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
         if (sinking.duplicateLiveRange(builder))
             return PassOutcome::Changed;
         if (!sinking.hasCandidates()) {
             sinking.recordLosses();
+            sinking.addTracesOfFruitlessAllocations(context.tracesOfAllocationsNotWorthSinking);
             return outcome;
         }
         if (sinking.splitEdgesNeedingCode(builder)) {
             outcome = PassOutcome::Changed;
+            findingsBeforeSplitting = sinking.takeFindings();
             continue;
         }
 
+        sinking.addTracesOfFruitlessAllocations(context.tracesOfAllocationsNotWorthSinking);
         sinking.rewrite(builder);
         sinking.recordLosses();
         sinking.countStatistics();

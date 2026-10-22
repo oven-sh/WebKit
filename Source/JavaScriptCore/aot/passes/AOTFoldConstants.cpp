@@ -8,22 +8,36 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTDecidedBranches.h"
+#include "AOTEffectsDescription.h"
+#include "AOTFlowResults.h"
+#include "AOTFoldConstants.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownValue.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTRegExpFlags.h"
 #include "AOTResultRules.h"
+#include "AOTRuleSupport.h"
+#include "AOTScratchRealm.h"
 #include "AOTStringArena.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "JSCInlines.h"
 #include "TypeofType.h"
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <optional>
+#include <span>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint64_t maxPrimitiveTextBytes = 24;
+static constexpr unsigned maxOperationsBetweenTextAndPattern = 8;
 
 static std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
 {
@@ -75,32 +89,94 @@ static std::optional<Type> typeTestedByTypeOf(const Program& program, TypeofType
 
 namespace {
 
+enum class FoldingRule : uint8_t {
+    KnownOperands = 1 << 0,
+    SingleValueType = 1 << 1,
+    SingleValueBehindCasts = 1 << 2,
+    KnownString = 1 << 3,
+    OwnRule = 1 << 4,
+    MayHaveSeveralResults = 1 << 5,
+    MayPassProof = 1 << 6,
+};
+
+using FoldingRules = OptionSet<FoldingRule>;
+
+constexpr OpcodeSet opcodesWithOwnFoldingRule {
+    Opcode::TypeTest, Opcode::IsClosureOf, Opcode::StrictEq, Opcode::Eq, Opcode::ToBoolean, Opcode::ToString, Opcode::ToPropertyKey,
+    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet,
+    Opcode::CopyDataProperties, Opcode::CallBuiltin,
+};
+
+constexpr FoldingRules foldingRulesOf(Opcode opcode)
+{
+    FoldingRules ways;
+    if (!foldableOpcodes.contains(opcode))
+        return ways;
+    if (opcodesWithKnownValueRules.contains(opcode))
+        ways.add(FoldingRule::KnownOperands);
+    if (isCastOrConversion(opcode))
+        ways.add(FoldingRule::SingleValueBehindCasts);
+    else if (resultRuleOf(opcode) != ResultRule::None && resultRuleOf(opcode) != ResultRule::Allocation && opcode != Opcode::NewClass)
+        ways.add(FoldingRule::SingleValueType);
+    if (opcodesCreatingKnownStrings.contains(opcode))
+        ways.add(FoldingRule::KnownString);
+    if (opcodesWithOwnFoldingRule.contains(opcode))
+        ways.add(FoldingRule::OwnRule);
+    if (ways.isEmpty())
+        return ways;
+    if (opcodesThatMayHaveSeveralResults.contains(opcode))
+        ways.add(FoldingRule::MayHaveSeveralResults);
+    if (provesOf(opcode) != Proof::None)
+        ways.add(FoldingRule::MayPassProof);
+    return ways;
+}
+
+constexpr std::array<FoldingRules, numberOfOpcodes> foldingRulesOfOpcodes = [] {
+    std::array<FoldingRules, numberOfOpcodes> result { };
+    for (Opcode opcode : allMembersOf<Opcode>)
+        result[static_cast<unsigned>(opcode)] = foldingRulesOf(opcode);
+    return result;
+}();
+
 class ConstantFolder {
 public:
     explicit ConstantFolder(FunctionPassContext& context)
         : m_context(context)
         , m_program(context.program)
         , m_function(context.function)
-        , m_useLists(context.analyses.useLists())
     {
+        if (context.analyses.computed().contains(FunctionAnalysis::UseLists))
+            m_useLists = &context.analyses.useLists();
     }
 
     PassOutcome run()
     {
         Vector<ValueID, 16> foldedValues;
+        bool didChangeCasts = false;
         for (BlockID blockID : m_context.analyses.cfg().reversePostOrder()) {
             const Block& block = m_function.at(blockID);
             ValueID tailCall = block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
             for (ValueID id : block.values) {
-                if (id != tailCall && foldValue(id))
-                    foldedValues.append(id);
+                Opcode opcode = m_function.at(id).opcode;
+                if (foldingRulesOfOpcodes[static_cast<unsigned>(opcode)].isEmpty() || id == tailCall)
+                    continue;
+                bool wasCast = isCastOrConversion(opcode);
+                if (!foldValue(id))
+                    continue;
+                foldedValues.append(id);
+                didChangeCasts |= wasCast || isCastOrConversion(m_function.at(id).opcode);
             }
         }
+        m_context.foldingAskedForUses = m_askedForUses;
         if (foldedValues.isEmpty())
             return PassOutcome::Unchanged;
 
-        m_context.analyses.didChangeValues();
-        narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build }, foldedValues.span());
+        // Which values are one value is read from the casts, from what the edges pass and from the tests whose branches pass proofs. The last two stay as they are.
+        AnalysisSet unchangedAnalyses;
+        unchangedAnalyses.set(FunctionAnalysis::Identities, !didChangeCasts);
+        m_context.analyses.invalidate(valueAnalyses - unchangedAnalyses);
+        narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build, &m_context.typingMemo }, foldedValues.span());
+        m_context.keptAnalyses = allAnalyses;
         return PassOutcome::Changed;
     }
 
@@ -112,23 +188,32 @@ private:
     bool foldValue(ValueID id)
     {
         bool didFold = false;
-        while (foldOnce(id))
+        while (foldOnce(id)) {
             didFold = true;
+            // The walk goes on to ask what this value and its users do.
+            m_context.analyses.invalidate(FunctionAnalysis::Effects);
+        }
         return didFold;
     }
 
     bool foldOnce(ValueID id)
     {
-        Value& value = m_function.at(id);
-        Proof proof = provesOf(value.opcode);
-        if (value.opcode == Opcode::Parameter || resultRuleOf(value.opcode) == ResultRule::Constant || isCast(value.opcode) || provesForStretch(proof))
+        const Value& value = m_function.at(id);
+        FoldingRules rules = foldingRulesOfOpcodes[static_cast<unsigned>(value.opcode)];
+        if (rules.isEmpty())
             return false;
-        if (numberOfResultsOf(m_program, m_function, value))
+        if (rules.contains(FoldingRule::MayHaveSeveralResults) && numberOfResultsOf(m_program, m_function, value))
             return false;
-        if (proof != Proof::None && isConditionOfBranchWithProofs(m_function, m_useLists, id))
+        if (rules.contains(FoldingRule::MayPassProof) && isConditionOfBranchWithProofs(id))
             return false;
-        if (foldKnownOperands(id, value) || foldSingleValueType(id, value) || foldKnownString(id, value))
+        if (rules.contains(FoldingRule::KnownOperands) && foldKnownOperands(id, value))
             return true;
+        if (rules.contains(FoldingRule::SingleValueType) ? foldSingleValueOfOwnType(id, value) : rules.contains(FoldingRule::SingleValueBehindCasts) && foldSingleValueType(id, value))
+            return true;
+        if (rules.contains(FoldingRule::KnownString) && foldKnownString(id, value))
+            return true;
+        if (!rules.contains(FoldingRule::OwnRule))
+            return false;
 
         switch (value.opcode) {
         case Opcode::TypeTest:
@@ -136,25 +221,53 @@ private:
             return becomeBoolean(id, evaluateTestByTypes(m_program, m_function, value));
         case Opcode::StrictEq:
         case Opcode::Eq:
-            return becomeBoolean(id, evaluateTestByTypes(m_program, m_function, value)) || foldTypeOfComparison(id, value);
+            return becomeBoolean(id, evaluateTestByTypes(m_program, m_function, value)) || foldComparisonOfOneClosure(id, value) || foldTypeOfComparison(id, value);
         case Opcode::ToBoolean:
             return foldToBoolean(id, value);
         case Opcode::ToString:
             return foldToString(id, value);
+        case Opcode::ToPropertyKey:
+            return foldToPropertyKey(id, value);
         case Opcode::ElemGet:
         case Opcode::ElemSet:
         case Opcode::ElemHas:
         case Opcode::ElemDelete:
         case Opcode::ElemDefine:
-            return convertToNamedAccess(value);
+            return convertToNamedAccess(id, value);
         case Opcode::SuperGet:
         case Opcode::SuperSet:
-            return convertToNamedSuperAccess(value);
+            return convertToNamedSuperAccess(id, value);
         case Opcode::CopyDataProperties:
             return foldCopyDataProperties(id, value);
+        case Opcode::CallBuiltin:
+            return foldStringCall(id, value);
         default:
             return false;
         }
+    }
+
+    // `stream.emit === emit`: the program makes one closure of the function, so whatever is a closure of it is that object.
+    // A side that may also hold a primitive, as a variable that a module fills late, is asked which of the two it holds.
+    bool foldComparisonOfOneClosure(ValueID id, const Value& comparison)
+    {
+        for (unsigned i = 0; i < 2; ++i) {
+            const Type& closure = typeOf(comparison.operand(i));
+            FunctionID function = closure.singleFunction();
+            if (!function || closure.mayBeUndefinedOrNull() || !m_context.inputs.flow.hasOneClosure(function))
+                continue;
+            ValueID other = comparison.operand(1 - i);
+            const Type& otherType = typeOf(other);
+            if (!otherType.isJavaScriptValue() || otherType.withOnlyObjects().singleFunction() != function)
+                continue;
+            if (otherType.singleFunction() == function && !otherType.mayBeUndefinedOrNull())
+                return becomeBoolean(id, KnownBoolean::True);
+            Value& test = m_function.edit(id);
+            test.become(Opcode::TypeTest);
+            test.setValueOperand(other);
+            test.setTestedType(m_context.types.intern(Type::forFunction(function)));
+            return true;
+        }
+        return false;
     }
 
     static bool isPrimitive(KnownValue value) { return value.isKnown() && !value.isObject(); }
@@ -167,12 +280,31 @@ private:
         return isPrimitive(result) && becomeConstant(id, result);
     }
 
+    bool isConditionOfBranchWithProofs(ValueID id)
+    {
+        if (!m_conditionsOfBranchesWithProofs)
+            m_conditionsOfBranchesWithProofs = conditionsOfBranchesWithProofs(m_function, m_context.analyses.cfg());
+        return m_conditionsOfBranchesWithProofs->get(id.index());
+    }
+
+    bool foldSingleValueOfOwnType(ValueID id, const Value& value)
+    {
+        const Type& type = m_program.types.at(value.type);
+        static_assert(std::has_single_bit(Primitive::Undefined) && std::has_single_bit(Primitive::Null) && std::has_single_bit(Primitive::False) && std::has_single_bit(Primitive::True) && std::has_single_bit(Primitive::Integer) && std::has_single_bit(Primitive::LiteralString));
+        if (!std::has_single_bit(type.primitives))
+            return false;
+        KnownValue result = knownValueOfType(m_program, type);
+        if (!isPrimitive(result) || !m_context.analyses.isRemovableWhenUnused(id))
+            return false;
+        return becomeConstant(id, result);
+    }
+
     bool foldSingleValueType(ValueID id, const Value& value)
     {
         if (resultRuleOf(value.opcode) == ResultRule::None)
             return false;
         KnownValue result = knownValueOf(id);
-        if (!isPrimitive(result) || !m_context.analyses.effectsOf(id).onAnyEdge().isRemovableWhenUnused())
+        if (!isPrimitive(result) || !m_context.analyses.isRemovableWhenUnused(id))
             return false;
         return becomeConstant(id, result);
     }
@@ -189,13 +321,194 @@ private:
                 return false;
             bytes += operand.kind() == KnownValue::Kind::String ? m_program.string(operand.asString()).size() : maxPrimitiveTextBytes;
         }
-        if (m_context.exceeds(LimitID::MaxFoldedStringBytes, bytes, id))
+        if (exceedsLimitOfFoldedString(id, bytes))
             return false;
 
         KnownValue result = evaluateStringOperation(m_program, m_context.strings, m_function, value, [&](ValueID operand) {
             return knownValueOf(operand);
         });
         return result.kind() == KnownValue::Kind::String && becomeConstant(id, result);
+    }
+
+    BuiltinID calledStringFunctionOf(const Value& value) const
+    {
+        if (value.opcode != Opcode::CallBuiltin || value.builtinCallForm() != BuiltinCallForm::Whole)
+            return { };
+        const BuiltinTable& table = m_program.builtins();
+        const BuiltinOverload& overload = table.at(value.overload());
+        BuiltinID function = table.canonicalID(overload.builtin);
+        // What such a function answers depends on its operands and on nothing else: no locale, no clock.
+        if (overload.mode != BuiltinCallMode::Call)
+            return { };
+        if (!table.at(function).flags.contains(BuiltinFlag::IsDeterministic) && !formatsNumberInNamedLocale(function, value))
+            return { };
+        return function;
+    }
+
+    // In a locale that the call names, and without options, the text depends on the number and on the data of ICU. An executable is a copy of the Bun that builds it, data included.
+    // On Darwin the data are the system's, and the user's system is another one. The locale and the time zone of the host are never asked.
+    bool formatsNumberInNamedLocale(BuiltinID function, const Value& value) const
+    {
+        static const bool isSwitchedOff = !!getenv("BUN_AOT_KEEP_LOCALE_CALLS");
+        if (function != Builtins::NumberPrototypeToLocaleString || targetOfThisBuild().platform == BuiltinPlatform::Darwin || isSwitchedOff)
+            return false;
+        std::span<const ValueID> arguments = value.argumentsOperands();
+        if (arguments.empty() || arguments.size() > 2 || knownValueOf(arguments[0]).kind() != KnownValue::Kind::String)
+            return false;
+        return arguments.size() == 1 || knownValueOf(arguments[1]).kind() == KnownValue::Kind::Undefined;
+    }
+
+    bool isPatternOfCreatedRegExp(const Value& user, ValueID text) const
+    {
+        if (user.opcode != Opcode::CallBuiltin || user.builtinCallForm() != BuiltinCallForm::Whole)
+            return false;
+        const BuiltinTable& table = m_program.builtins();
+        const BuiltinOverload& overload = table.at(user.overload());
+        if (overload.mode != BuiltinCallMode::Call && overload.mode != BuiltinCallMode::Construct)
+            return false;
+        if (table.canonicalID(overload.builtin) != Builtins::RegExp)
+            return false;
+        std::span<const ValueID> arguments = user.argumentsOperands();
+        return !arguments.empty() && arguments[0] == text && std::ranges::count(arguments, text) == 1 && user.receiverOperand() != text;
+    }
+
+    // FoldConstantRegExps spells such a text once, as the pattern of the literal that it makes of the call.
+    bool feedsOnlyRegExpPatterns(ValueID text, unsigned operationsLeft = maxOperationsBetweenTextAndPattern) const
+    {
+        m_askedForUses = true;
+        std::span<const Use> uses = useLists().usesOf(text);
+        if (uses.empty())
+            return false;
+        return std::ranges::all_of(uses, [&](const Use& use) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = m_function.at(use.user);
+            if (isPatternOfCreatedRegExp(user, text))
+                return true;
+            bool makesTextOfOperands = user.opcode == Opcode::Upcast || opcodesCreatingKnownStrings.contains(user.opcode) || calledStringFunctionOf(user);
+            return makesTextOfOperands && operationsLeft && feedsOnlyRegExpPatterns(use.user, operationsLeft - 1);
+        });
+    }
+
+    bool exceedsLimitOfFoldedString(ValueID id, uint64_t bytes)
+    {
+        if (bytes > m_context.limit(LimitID::MaxFoldedStringBytes) && feedsOnlyRegExpPatterns(id))
+            return m_context.exceeds(LimitID::RegExpCandidateTextLength, bytes, id);
+        return m_context.exceeds(LimitID::MaxFoldedStringBytes, bytes, id);
+    }
+
+    // A literal that nothing but the call uses is as created when the call begins, and nobody sees what the call leaves in it.
+    std::optional<RegExpLiteralInType> findLiteralUsedOnlyBy(ValueID user, ValueID regExp) const
+    {
+        m_askedForUses = true;
+        for (;;) {
+            std::optional<Use> use = useLists().singleUse(regExp);
+            if (!use || use->kind != Use::Kind::Operand || use->user != user)
+                return std::nullopt;
+            const Value& definition = m_function.at(regExp);
+            if (definition.opcode == Opcode::NewRegExp)
+                return RegExpLiteralInType { definition.pattern(), definition.regExpFlags().toRaw() };
+            if (definition.opcode != Opcode::Upcast && definition.opcode != Opcode::AssumeType)
+                return std::nullopt;
+            user = regExp;
+            regExp = definition.valueOperand();
+        }
+    }
+
+    TypeID typeOfLiteralAsCreated(RegExpLiteralInType literal)
+    {
+        Value shared(Opcode::SharedRegExpLiteral);
+        shared.setPattern(literal.pattern);
+        shared.setRegExpFlags(literal.flags());
+        return resultTypeOf(m_program, m_function, shared, m_context.types);
+    }
+
+    struct RegExpOperand {
+        RegExpLiteralInType literal;
+        TypeID typeAtCall;
+    };
+
+    std::optional<RegExpOperand> regExpOperandOf(ValueID call, ValueID operand)
+    {
+        if (std::optional<RegExpLiteralInType> literal = findLiteralUsedOnlyBy(call, operand))
+            return RegExpOperand { *literal, typeOfLiteralAsCreated(*literal) };
+        // Only built-ins that leave the object as created get a shared literal, and the call is one of them.
+        const Value& definition = m_function.at(sameObjectThroughCasts(m_function, operand));
+        if (definition.opcode == Opcode::SharedRegExpLiteral) {
+            RegExpLiteralInType literal { definition.pattern(), definition.regExpFlags().toRaw() };
+            return RegExpOperand { literal, typeOfLiteralAsCreated(literal) };
+        }
+        // A match without the flags g and y neither depends on lastIndex nor stores it.
+        std::optional<RegExpLiteralInType> literal = singleRegExpLiteralAsCreatedOf(typeOf(operand));
+        if (!literal || literal->flags().containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
+            return std::nullopt;
+        return RegExpOperand { *literal, m_function.at(operand).type };
+    }
+
+    bool foldStringCall(ValueID id, const Value& value)
+    {
+        BuiltinID function = calledStringFunctionOf(value);
+        if (!function)
+            return false;
+        ValueID receiverOperand = value.receiverOperand();
+        KnownValue receiver = receiverOperand ? knownValueOf(receiverOperand) : KnownValue();
+        bool takesNumber = function == Builtins::NumberPrototypeToLocaleString;
+        if (takesNumber ? !receiver.isNumber() : receiver.kind() != KnownValue::Kind::String)
+            return false;
+
+        uint64_t bytes = takesNumber ? maxPrimitiveTextBytes : m_program.string(receiver.asString()).size();
+        double largestNumber = 1;
+        Vector<ScratchRealm::Operand, 2> arguments;
+        Vector<TypeID, 2> argumentTypes;
+        for (ValueID argument : value.argumentsOperands()) {
+            KnownValue primitive = knownValueOf(argument);
+            if (isPrimitive(primitive)) {
+                if (primitive.kind() == KnownValue::Kind::String)
+                    bytes += m_program.string(primitive.asString()).size();
+                if (primitive.isNumber() && primitive.asNumber() > largestNumber)
+                    largestNumber = primitive.asNumber();
+                arguments.append(ScratchRealm::Operand { primitive, std::nullopt });
+                argumentTypes.append(m_function.at(argument).type);
+                continue;
+            }
+            std::optional<RegExpOperand> regExp = regExpOperandOf(id, argument);
+            if (!regExp)
+                return false;
+            bytes += m_program.string(regExp->literal.pattern).size();
+            arguments.append(ScratchRealm::Operand { { }, regExp->literal });
+            argumentTypes.append(regExp->typeAtCall);
+        }
+
+        EffectDescription description;
+        describeOverload(m_program, value.overload(), &typeOf(receiverOperand), argumentTypes.span(), description);
+        if (description.callsUnknownCode || !description.functions.isEmpty())
+            return false;
+        static constexpr AbstractHeapSet heapsNobodyObserves = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
+        Effects effects = description.own.onAnyEdge();
+        if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsNobodyObserves | AbstractHeapSet { AbstractHeap::RegExpState }))
+            return false;
+        // The RegExp of the call is left as it was or is seen by nobody, so what the last match leaves in the constructor is the one trace of a match.
+        if (!effects.writes.containsOnly(heapsNobodyObserves) && m_context.inputs.flow.mayReadLegacyRegExpStatics())
+            return false;
+        if (exceedsLimitOfFoldedString(id, bytes))
+            return false;
+        // An entry with an error of its own may fail for the length of its answer, which a number among its operands sets: a count, a length.
+        // The limit is asked before the answer is made. Padding has an overload for the lengths that cannot fail, a gigabyte among them.
+        bool pads = function == Builtins::StringPrototypePadStart || function == Builtins::StringPrototypePadEnd;
+        if (pads || !m_program.builtins().at(value.overload()).onlyPropagatesErrors()) {
+            double bytesOfAnswer = static_cast<double>(bytes) * largestNumber;
+            if (bytesOfAnswer >= static_cast<double>(std::numeric_limits<uint32_t>::max()) || exceedsLimitOfFoldedString(id, static_cast<uint64_t>(bytesOfAnswer)))
+                return false;
+        }
+
+        std::optional<ScratchRealm::Answer> answer = m_context.build.scratchRealms().ofCurrentThread().call(m_program, function, receiver, arguments.span());
+        if (!answer)
+            return false;
+        if (answer->text.isNull())
+            return becomeConstant(id, answer->primitive);
+        if (exceedsLimitOfFoldedString(id, answer->text.sizeInBytes()))
+            return false;
+        return becomeConstant(id, KnownValue::string(m_context.strings.intern(StringView(answer->text))));
     }
 
     bool foldToBoolean(ValueID id, const Value& value)
@@ -218,7 +531,18 @@ private:
         return true;
     }
 
-    bool foldTypeOfComparison(ValueID id, Value& value)
+    bool foldToPropertyKey(ValueID id, const Value& value)
+    {
+        ValueID operand = value.valueOperand();
+        const Type& type = typeOf(operand);
+        if (type.isNever() || !type.hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+            return false;
+
+        becomeUpcast(m_function, id, operand);
+        return true;
+    }
+
+    bool foldTypeOfComparison(ValueID id, const Value& value)
     {
         for (unsigned i = 0; i < 2; ++i) {
             const Value& typeOfOperation = definitionOf(value.operand(i));
@@ -233,9 +557,10 @@ private:
             std::optional<Type> tested = typeTestedByTypeOf(m_program, *expectedTypeof, typeOf(operand));
             if (!tested)
                 return false;
-            value.become(Opcode::TypeTest);
-            value.setValueOperand(operand);
-            value.setTestedType(m_context.types.intern(*tested));
+            Value& test = m_function.edit(id);
+            test.become(Opcode::TypeTest);
+            test.setValueOperand(operand);
+            test.setTestedType(m_context.types.intern(*tested));
             return true;
         }
         return false;
@@ -246,36 +571,39 @@ private:
         return internKey(m_context.types, constantKeyOf(m_program, typeOf(key)));
     }
 
-    bool convertToNamedSuperAccess(Value& value)
+    bool convertToNamedSuperAccess(ValueID id, const Value& value)
     {
         ValueID computedKey = value.computedKeyOperand();
         PropertyKeyID key = computedKey ? findConstantPropertyKey(computedKey) : PropertyKeyID();
         if (!key)
             return false;
-        value.setComputedKeyOperand({ });
-        value.setKey(key);
+        Value& access = m_function.edit(id, ValueEdit::Definition);
+        access.setComputedKeyOperand({ });
+        access.setKey(key);
         return true;
     }
 
-    bool convertToNamedAccess(Value& value)
+    bool convertToNamedAccess(ValueID id, const Value& value)
     {
         PropertyKeyID key = findConstantPropertyKey(value.propertyOperand());
         if (!key)
             return false;
 
-        TypeID predicted = value.predictionOrType();
-        becomeNamedAccess(value, key);
-        retypeKeepingPrediction(value, predicted);
+        TypeID expected = value.expectedOrType();
+        Value& access = m_function.edit(id);
+        becomeNamedAccess(access, key);
+        retypeKeepingExpectedType(access, expected);
         return true;
     }
 
-    void retypeKeepingPrediction(Value& value, TypeID predicted)
+    void retypeKeepingExpectedType(Value& value, TypeID expected)
     {
         TypeArena& types = m_context.types;
         value.type = resultTypeOf(m_program, m_function, value, types);
-        value.setWritten({ });
-        TypeID narrowed = types.intersectionOf(value.type, predicted);
-        value.setPrediction(narrowed == TypeTable::never || narrowed == value.type ? TypeID() : narrowed);
+        TypeID narrowed = types.intersectionOf(value.type, expected);
+        // An intersection may keep a part of one side that the subset test does not find in the other.
+        bool saysMoreThanType = narrowed != TypeTable::never && narrowed != value.type && types.at(narrowed).isSubsetOf(types.at(value.type), m_program);
+        value.setExpected(saysMoreThanType ? narrowed : TypeID());
     }
 
     bool foldCopyDataProperties(ValueID id, const Value& value)
@@ -305,7 +633,7 @@ private:
         if (evaluateTypeTest(m_program, constant, typeOf(id)) != KnownBoolean::True)
             return false;
 
-        Value& value = m_function.at(id);
+        Value& value = m_function.edit(id);
         switch (constant.kind()) {
         case KnownValue::Kind::Undefined:
             value.become(Opcode::Undefined);
@@ -335,15 +663,25 @@ private:
             RELEASE_ASSERT_NOT_REACHED();
         }
         value.type = resultTypeOf(m_program, m_function, value, m_context.types);
-        value.setWritten({ });
-        value.setPrediction({ });
+        value.setExpected({ });
         return true;
     }
 
     FunctionPassContext& m_context;
     const Program& m_program;
     Function& m_function;
-    const UseLists& m_useLists;
+    // Few bodies ask who uses a value: the users of a text that is too long to fold, which come later in the walk than the text, and the users of a RegExp literal.
+    // A fold takes uses away from values that stand in front of the folded one. So lists that are made in the middle of the walk say of those values what lists made in front of it say.
+    const UseLists& useLists() const
+    {
+        if (!m_useLists)
+            m_useLists = &m_context.analyses.useLists();
+        return *m_useLists;
+    }
+
+    std::optional<BitVector> m_conditionsOfBranchesWithProofs;
+    mutable const UseLists* m_useLists { nullptr };
+    mutable bool m_askedForUses { false };
 };
 
 } // anonymous namespace

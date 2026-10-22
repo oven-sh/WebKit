@@ -20,6 +20,7 @@ class BuildContext;
 
 namespace Typed {
 
+class FlowResults;
 struct OptimizationInputs;
 
 struct CaptureReference {
@@ -72,7 +73,8 @@ private:
     bool m_isFinished { true };
 };
 
-FrameAllocation allocateInFrames(ProgramEditor&, const OptimizationInputs&, BuildContext&);
+// The flow results are those of the inputs. Their table of borrowed parameters grows by what the plans put into frames.
+FrameAllocation allocateInFrames(ProgramEditor&, const OptimizationInputs&, FlowResults&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

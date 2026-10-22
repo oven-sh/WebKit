@@ -1,0 +1,172 @@
+# A builder whose operations are all appends, its length, a finish or a discard, and not all in compact code, starts in the frame. Every other builder is a StringBuilderStorage from the start
+# FORM: Selected
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="loop" parameters=[{type=int[0, 1000]}, {type=string}] results=[{type=string}] {
+  b0(v0: int[0, 1000], v1: string):
+    v2 = StringBuilderBegin
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 1000]):
+    LoopHint
+    v6 = Less v4, v0 form=Integers
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = StringBuilderLength v2
+    v8 = ToBoolean v7 form=Integers
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    StringBuilderAppendConstant v2 string=","
+    Jump -> next b4()
+  b4():
+    StringBuilderAppendInteger v2, v4
+    StringBuilderAppendString v2, v1
+    Jump -> next b1(v0)
+  b5():
+    v12 = StringBuilderFinish v2
+    Return v12
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: StringBuilderBegin
+# CHECK: operation operationAOTStackStringBuilderFinish x1
+# CHECK: operation operationAOTStackStringBuilderGrow x2
+# CHECK: stub StackStringBuilderAppendString x1
+function f1 name="twoBeginningsOneEnd" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = StringBuilderBegin
+    StringBuilderAppendConstant v1 string="a"
+    Jump -> next b3(v1)
+  b2():
+    v3 = StringBuilderBegin
+    Jump -> next b3(v3)
+  b3(v4: stringbuilder):
+    StringBuilderAppendBoolean v4, v0
+    v6 = StringBuilderFinish v4
+    Return v6
+}
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTStackStringBuilderFinish x1
+function f2 name="discarded" parameters=[{type=boolean}, {type=number}] results=[{type=string}] {
+  b0(v0: boolean, v1: number):
+    v2 = StringBuilderBegin
+    StringBuilderAppendNumber v2, v1
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = StringBuilderFinish v2
+    Return v4
+  b2():
+    StringBuilderDiscard v2
+    v6 = String string="none"
+    Return v6
+}
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTStackStringBuilderAppend x1
+# CHECK: operation operationAOTStackStringBuilderDiscard x1
+# CHECK: operation operationAOTStackStringBuilderFinish x1
+function f3 name="twoOpenAtOnce" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderBegin
+    StringBuilderAppendConstant v1 string="a"
+    StringBuilderAppendConstant v2 string="b"
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    StringBuilderDiscard v2
+    Jump -> next b3(v1)
+  b2():
+    StringBuilderDiscard v1
+    Jump -> next b3(v2)
+  b3(v7: stringbuilder):
+    v8 = StringBuilderFinish v7
+    Return v8
+}
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: StackStringBuilder
+# CHECK: operation operationAOTStringBuilderFinish x1
+function f4 name="openInHandler" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = StringBuilderBegin
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = PropGet v0 key="name"
+    StringBuilderAppendConstant v1 string="a"
+    v4 = StringBuilderFinish v1
+    Return v4
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    StringBuilderAppendConstant v1 string="b"
+    v7 = StringBuilderFinish v1
+    Return v7
+}
+# CHECK-LABEL: f4: size=
+# CHECK-NOT: StackStringBuilder
+# CHECK: operation operationAOTStringBuilderFinish x2
+function f5 name="closedInTryBlock" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = StringBuilderBegin
+    StringBuilderAppendConstant v1 string="a"
+    v3 = PropGet v0 key="name"
+    v4 = StringBuilderFinish v1
+    Return v4
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    v6 = String string="none"
+    Return v6
+}
+# CHECK-LABEL: f5: size=
+# CHECK: operation operationAOTStackStringBuilderFinish x1
+function f6 name="read" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    StringBuilderAppendConstant v0 string="a"
+    v2 = StringBuilderToString v0
+    StringBuilderDiscard v0
+    Return v2
+}
+# CHECK-LABEL: f6: size=
+# CHECK-NOT: StackStringBuilder
+# CHECK: operation operationAOTStringBuilderToString x1
+function f7 name="oneAfterTheOther" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    StringBuilderAppendConstant v0 string="a"
+    v2 = StringBuilderFinish v0
+    v3 = StringBuilderBegin
+    StringBuilderAppendString v3, v2
+    v5 = StringBuilderFinish v3
+    Return v5
+}
+# CHECK-LABEL: f7: size={{*}} frame=176@
+# CHECK: operation operationAOTStackStringBuilderFinish x2
+function f8 name="twoWebsOpenAtOnce" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderBegin
+    StringBuilderAppendConstant v0 string="a"
+    StringBuilderAppendConstant v1 string="b"
+    v4 = StringBuilderFinish v0
+    StringBuilderAppendString v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+# CHECK-LABEL: f8: size={{*}} frame=352@
+# CHECK: operation operationAOTStackStringBuilderFinish x2
+function f9 name="onlyInCompactCode" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
+  b0(v0: boolean, v1: string):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = StringBuilderBegin
+    StringBuilderAppendConstant v2 string="a"
+    v4 = StringBuilderFinish v2
+    Return v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: f9: size=
+# CHECK-NOT: StackStringBuilder
+# CHECK: operation operationAOTStringBuilderFinish x1

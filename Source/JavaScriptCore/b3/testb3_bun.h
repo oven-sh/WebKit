@@ -9,18 +9,17 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3ClampLoopBound.h"
 #include "B3CompilationReport.h"
 #include "B3DuplicateTails.h"
 #include "B3Limits.h"
 #include "B3NaturalLoops.h"
 #include "B3Policy.h"
 #include "B3RotateLoops.h"
-#include "B3StripMineLoops.h"
 #include "B3ThreadJumps.h"
 #include "B3Variable.h"
 #include "B3VersionLoops.h"
 
-using JSC::B3::Limits::maxIterationsPerStrip;
 
 struct Graph {
     Value* int32(BasicBlock* block, int32_t value) { return block->appendNew<Const32Value>(proc, Origin(), value); }
@@ -305,6 +304,7 @@ inline Policy strengthReductionPolicy()
         policy.optimization.reducesWithRanges = true;
         policy.optimization.narrowsIntegers = true;
         policy.optimization.foldsImpliedComparisons = true;
+        policy.optimization.mergesBlocksAfterForwardingJumps = true;
     });
 }
 
@@ -319,7 +319,6 @@ inline Policy loopPolicy()
 {
     Policy policy = remarkPolicy();
     policy.loops.clampsLoopBounds = true;
-    policy.loops.stripMinesPolls = true;
     return policy;
 }
 
@@ -344,6 +343,7 @@ inline Policy optimizingPolicy()
         optimization.mergesAdjacentConstantStores = true;
         optimization.sinksValues = true;
         optimization.placesConstantsByFrequency = true;
+        optimization.mergesBlocksAfterForwardingJumps = true;
 
         policy.selection.extendsInstructionSelection = true;
         policy.selection.attributesTrapsToAccesses = true;
@@ -352,14 +352,15 @@ inline Policy optimizingPolicy()
         policy.loops.foldsComparisonsWithBounds = true;
         policy.loops.versions = true;
         policy.loops.clampsLoopBounds = true;
-        policy.loops.stripMinesPolls = true;
         policy.loops.hoistsOnlyFromLikelyPaths = true;
+        policy.loops.hoistsImmutableLoadsPastWrites = true;
 
         policy.switchLowering.usesBitTests = true;
 
         policy.air.peepholes.hoistsCommonMoves = true;
         policy.air.peepholes.reusesConditionFlags = true;
         policy.air.peepholes.pairsMemoryAccesses = true;
+        policy.air.peepholes.emitsShufflesInPairOrder = true;
         policy.air.frame.prefersStackPointerAddresses = true;
 
         policy.collectsRemarks = true;
@@ -400,13 +401,8 @@ inline bool versionLoopsAndValidate(Procedure& proc)
     return result;
 }
 
-inline bool stripMineLoopsAndValidate(Procedure& proc)
-{
-    bool result = stripMineLoops(proc);
-    fixSSA(proc);
-    validate(proc);
-    return result;
-}
+// So many rounds that a loop which loses count of them, or a counter of thirty-two bits less than it needs, shows.
+inline constexpr int64_t longRun = 1 << 16;
 
 struct PollState {
     int64_t limit { 0 };
@@ -647,7 +643,7 @@ using BunTestTasks = Deque<RefPtr<SharedTask<void()>>>;
 void addBunLoopTests(const TestConfig*, BunTestTasks&);
 void addBunCountedLoopTests(const TestConfig*, BunTestTasks&);
 void addBunComparisonFoldingTests(const TestConfig*, BunTestTasks&);
-void addBunStripMiningTests(const TestConfig*, BunTestTasks&);
+void addBunLoopPhaseTests(const TestConfig*, BunTestTasks&);
 void addBunLoopVersioningTests(const TestConfig*, BunTestTasks&);
 void addBunLoopPlanTests(const TestConfig*, BunTestTasks&);
 void addBunCountedLoopVersioningTests(const TestConfig*, BunTestTasks&);

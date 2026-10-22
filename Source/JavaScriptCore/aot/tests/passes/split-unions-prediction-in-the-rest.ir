@@ -1,39 +1,39 @@
-# The rest of a split is unlikely where an arm takes what is predicted. Where the prediction lies in the rest, the rest keeps the frequency of the block: one side of a test is always as likely as the test
+# The rest of a split is unlikely where an arm takes what is expected. Where the expected type lies in the rest, the rest keeps the frequency of the block: one side of a test is always as likely as the test
 # FORM: Prepared
 # RUN: pass SplitUnions
 # STATISTIC: UnionsSplit = 3
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="predictedPartHasNoArm" parameters=[{type=string|function predicted=function}] results=[{type=anything}] {
+function f0 name="expectedPartHasNoArm" parameters=[{type=string|function}] results=[{type=anything}] {
   b0(v0: string|function ~ function):
     v1 = PropGet v0 key="length"
     Return v1
 }
-# CHECK-LABEL: function f0 name="predictedPartHasNoArm"
+# CHECK-LABEL: function f0 name="expectedPartHasNoArm"
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: ([[text0]]: string) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[text0]] key="length"
 # CHECK: ([[handler0]]: function):
 # CHECK-NEXT: = PropGet [[handler0]] key="length"
 
-function f1 name="predictedPartHasAnArm" parameters=[{type=string|function predicted=string}] results=[{type=anything}] {
+function f1 name="expectedPartHasAnArm" parameters=[{type=string|function}] results=[{type=anything}] {
   b0(v0: string|function ~ string):
     v1 = PropGet v0 key="length"
     Return v1
 }
-# CHECK-LABEL: function f1 name="predictedPartHasAnArm"
+# CHECK-LABEL: function f1 name="expectedPartHasAnArm"
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: ([[text1]]: string):
 # CHECK-NEXT: = PropGet [[text1]] key="length"
 # CHECK: ([[handler1]]: function) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[handler1]] key="length"
 
-function f2 name="nothingIsPredicted" parameters=[{type=string|function}] results=[{type=anything}] {
+function f2 name="nothingIsExpected" parameters=[{type=string|function}] results=[{type=anything}] {
   b0(v0: string|function):
     v1 = PropGet v0 key="length"
     Return v1
 }
-# CHECK-LABEL: function f2 name="nothingIsPredicted"
+# CHECK-LABEL: function f2 name="nothingIsExpected"
 # CHECK: ([[text2]]: string):
 # CHECK: ([[handler2]]: function) frequency=Unlikely:

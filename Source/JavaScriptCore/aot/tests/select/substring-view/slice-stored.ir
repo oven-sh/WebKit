@@ -17,8 +17,9 @@ function f0 name="slice-stored" captures=[{type=env L0}] parameters=[{type=strin
     v11 = StrictEq v8, v10
     Return v11
 }
-# CHECK: [[flat]]: flatstring = FlattenString v1
-# CHECK-NEXT: v8: string = Substring [[flat]], v6, v7
+# CHECK-NOT: FlattenString
+# CHECK: v8: string = Substring v1, v6, v7
 # CHECK-NEXT: PutEnvironmentField v0, v8 layout=L0
-# CHECK: v11: boolean = StringRangeEqualsLiteral [[flat]], v6, v7 literal="ab"
+# CHECK-NOT: FlattenString
+# CHECK: v11: boolean = StringRangeEqualsLiteral v1, v6, v7 literal="ab"
 # CHECK-NEXT: Return v11

@@ -15,7 +15,7 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral errorSubclasses = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Failure" constructor=f1 fields=[{key="code" declared={type=anything}}, {key="detail" declared={type=anything}}, {key="info" declared={type=anything}}] flags=[HasHeritage]
-layout L1 kind=Instance name="Deeper" predictedBase=L0 constructor=f2 fields=[{key="level" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Deeper" base=L0 constructor=f2 fields=[{key="level" declared={type=anything}}] flags=[HasHeritage]
 layout L2 name="Info" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():

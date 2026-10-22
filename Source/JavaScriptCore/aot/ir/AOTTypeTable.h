@@ -7,11 +7,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNonMovingVector.h"
 #include "AOTSchemaRecords.h"
+#include "AOTSharedTypeMemo.h"
 #include "AOTType.h"
+#include <array>
 #include <atomic>
+#include <concepts>
+#include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/SegmentedVector.h>
@@ -20,6 +26,7 @@
 
 namespace JSC { namespace AOT {
 
+class ParallelLoops;
 class Statistics;
 
 namespace Typed {
@@ -41,11 +48,22 @@ public:
 
     void add(uint32_t hash, uint32_t position);
 
+    // Between reserve() and didAddConcurrently(), any number of threads may call addConcurrently() and find().
+    void reserve(const ParallelLoops&, size_t numberOfAdditions);
+    void addConcurrently(uint32_t hash, uint32_t position);
+    void didAddConcurrently(size_t numberOfAdditions) { m_size += static_cast<unsigned>(numberOfAdditions); }
+
+    void prefetch(uint32_t hash) const
+    {
+        if (!m_slots.isEmpty())
+            __builtin_prefetch(&m_slots[hash & (m_slots.size() - 1)]);
+    }
+
 private:
     // Zero for a free slot.
-    struct Slot {
-        uint32_t hash { 0 };
-        uint32_t positionPlusOne { 0 };
+    struct alignas(8) Slot {
+        uint32_t hash;
+        uint32_t positionPlusOne;
     };
 
     void insert(Slot);
@@ -58,7 +76,7 @@ void add(Hasher&, const LayoutSet&);
 void add(Hasher&, const CalleeSet&);
 void add(Hasher&, const PropertyKey&);
 
-template<typename Record, typename RecordID, size_t segmentSize>
+template<typename Record, typename RecordID, size_t segmentSize, typename Storage = SegmentedVector<Record, segmentSize>>
 class InternedRecords {
 public:
     const Record& at(RecordID id) const { return m_records[id.index()]; }
@@ -74,6 +92,8 @@ public:
         return RecordID(*position);
     }
 
+    void prefetch(uint32_t hash) const { m_index.prefetch(hash); }
+
     RecordID findOrAdd(Record&& record, uint32_t hash)
     {
         if (auto existing = find(record, hash))
@@ -85,7 +105,9 @@ public:
     }
 
 private:
-    SegmentedVector<Record, segmentSize> m_records;
+    template<typename, typename, typename> friend class OrderedInterning;
+
+    Storage m_records;
     HashedIndex m_index;
 };
 
@@ -135,16 +157,53 @@ public:
     unsigned numberOfLayoutSets() const { return m_layoutSets.size(); }
     unsigned numberOfCalleeSets() const { return m_calleeSets.size(); }
     unsigned numberOfPropertyKeys() const { return m_propertyKeys.size(); }
+    // Flow makes keys of texts that calls pass. No operation of the program spells such a key: that it is a key at all is something an analysis found.
+    void didInternKeysThatOperationsSpell() { m_numberOfKeysThatOperationsSpell = m_propertyKeys.size(); }
+    bool isSpelledByOperations(PropertyKeyID key) const { return key.index() < m_numberOfKeysThatOperationsSpell; }
 
     std::optional<TypeID> find(const Type& canonical) const;
     std::optional<PropertyKeyID> find(const PropertyKey&) const;
 
     TypeID intern(const Type&);
+    TypeID intern(Type&&);
     LayoutSetID intern(LayoutSet&&);
     CalleeSetID intern(CalleeSet&&);
     PropertyKeyID intern(const PropertyKey&);
 
+    static uint32_t hashOfCanonical(const Type&);
+    static uint32_t hashOfCanonical(const LayoutSet&);
+    TypeID internCanonicalWithHash(Type&&, uint32_t hash);
+    LayoutSetID internCanonicalWithHash(LayoutSet&&, uint32_t hash);
+    void prefetchForType(uint32_t hash) const { m_types.prefetch(hash); }
+    void prefetchForLayoutSet(uint32_t hash) const { m_layoutSets.prefetch(hash); }
+
+    template<typename Record> auto& recordsForOrderedInterning()
+    {
+        RELEASE_ASSERT(!m_openPhase);
+        if constexpr (std::same_as<Record, Type>)
+            return m_types;
+        else if constexpr (std::same_as<Record, LayoutSet>)
+            return m_layoutSets;
+        else if constexpr (std::same_as<Record, CalleeSet>)
+            return m_calleeSets;
+        else {
+            static_assert(std::same_as<Record, PropertyKey>);
+            return m_propertyKeys;
+        }
+    }
+
     bool hasOpenPhase() const { return m_openPhase; }
+
+    // Null outside a loop whose threads share what they compute from ids that the table holds for good (ProgramCaches).
+    SharedTypeMemo* sharedMemo(SharedAnswers answers) const { return m_sharedMemos[static_cast<size_t>(answers)].load(std::memory_order_acquire); }
+    void setSharedMemos(SharedTypeMemo* aboutTypes, SharedTypeMemo* aboutProgram) const
+    {
+        m_sharedMemos[static_cast<size_t>(SharedAnswers::AboutTypes)].store(aboutTypes, std::memory_order_release);
+        m_sharedMemos[static_cast<size_t>(SharedAnswers::AboutProgram)].store(aboutProgram, std::memory_order_release);
+    }
+    // Answers about types hold from one such loop to the next. Between two loops they lie here.
+    std::unique_ptr<SharedTypeMemo> takeSavedSharedMemo() const { return std::exchange(m_savedSharedMemo, nullptr); }
+    void saveSharedMemo(std::unique_ptr<SharedTypeMemo>&& aboutTypes) const { m_savedSharedMemo = WTF::move(aboutTypes); }
 
     void addTo(Statistics&) const;
 
@@ -165,15 +224,20 @@ private:
 
     const BuiltinTable& m_builtins;
     const Program* m_program;
-    InternedRecords<Type, TypeID, 64> m_types;
-    InternedRecords<LayoutSet, LayoutSetID, 64> m_layoutSets;
-    InternedRecords<CalleeSet, CalleeSetID, 64> m_calleeSets;
-    InternedRecords<PropertyKey, PropertyKeyID, 64> m_propertyKeys;
+    template<typename Record, typename RecordID> using RecordsThatNeverMove = InternedRecords<Record, RecordID, 0, NonMovingVector<Record>>;
+
+    RecordsThatNeverMove<Type, TypeID> m_types;
+    RecordsThatNeverMove<LayoutSet, LayoutSetID> m_layoutSets;
+    RecordsThatNeverMove<CalleeSet, CalleeSetID> m_calleeSets;
+    RecordsThatNeverMove<PropertyKey, PropertyKeyID> m_propertyKeys;
+    unsigned m_numberOfKeysThatOperationsSpell { UINT_MAX };
     mutable TypeInterningPhase* m_openPhase { nullptr };
     // For the scratch arenas that are made while no phase is open, on whatever thread.
     mutable std::atomic<TypeInterningPhase*> m_phaseOfScratchArenas { nullptr };
     mutable std::atomic<unsigned> m_numberOfArenasInPhaseOfScratchArenas { 0 };
     mutable Lock m_phaseOfScratchArenasLock;
+    mutable std::array<std::atomic<SharedTypeMemo*>, numberOfSharedAnswerKinds> m_sharedMemos { };
+    mutable std::unique_ptr<SharedTypeMemo> m_savedSharedMemo;
     uint64_t m_numberOfProvisionalTypes { 0 };
 };
 

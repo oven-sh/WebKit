@@ -9,7 +9,9 @@
 
 #include "AOTModuleData.h"
 #include "AOTProgramTables.h"
+#include <compare>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
@@ -26,44 +28,68 @@ public:
 
     const ProgramTables& programTables() const { return *m_tables; }
     unsigned size() const { return static_cast<unsigned>(m_modules.size() - 1); }
-    unsigned numberOfRequireEdges() const { return static_cast<unsigned>(m_requireEdges.size()); }
+    static bool isImport(const ModuleRequestData& request) { return !request.isRequire; }
 
     const ModuleData& data(ModuleID) const;
     std::span<const ModuleRequestData> requests(ModuleID) const;
+    // What is evaluated in front of the module.
+    auto imports(ModuleID module) const { return requests(module) | std::views::filter(isImport); }
     std::span<const ModuleRequestData> allRequests() const { return m_requests; }
     uint32_t endOfRequests(ModuleID) const;
+    ModuleNumbers linkRequests(ModuleID) const;
+    ModuleNumbers allLinkRequests() const { return m_linkRequests; }
+    uint32_t endOfLinkRequests(ModuleID) const;
+    ModuleNumbers evaluationRequests(ModuleID) const;
+    ModuleNumbers allEvaluationRequests() const { return m_evaluationRequests; }
+    uint32_t endOfEvaluationRequests(ModuleID) const;
+    std::span<const LinkPlanStepData> entryPointLinkPlan() const { return m_tables->entryPointLinkPlan(); }
+    struct LinkPlanOfRoot {
+        std::span<const LinkPlanStepData> steps;
+        ModuleID memberOfCycle;
+    };
+    std::optional<LinkPlanOfRoot> linkPlanOfRoot(ModuleID) const;
     std::span<const ModuleExportData> exports(ModuleID) const;
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID) const;
     std::span<const RequiredNameData> requiredNames(ModuleID) const;
-    const RequireEdgeData& requireEdge(uint32_t edge) const;
-    std::span<const ModuleResetSlotData> resetSlots(ModuleID) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
-    bool namesUncompiledCode(StringView specifier) const;
+    std::span<const uint32_t> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
-    std::optional<uint32_t> findRequireEdge(ModuleID referrer, ModuleID target) const;
+    // ES modules import a CommonJS file through a module that evaluates the file first of all and then takes copies of what it exports. Answers the file for such a module.
+    std::optional<ModuleID> fileBehindFace(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
+    // Walks the table: for what happens rarely.
+    bool isRuntimeFunction(FunctionID) const;
 
-    StringView path(ModuleID) const;
+    // The characters of a path that is whole in the image are not copied.
     String pathText(ModuleID) const;
+    String displayPathText(ModuleID) const;
+    String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID) const;
+    bool hasFileWithExtension(StringView) const;
 
 private:
+    using PiecesOfPath = Vector<StringView, 16>;
+
     size_t checkedIndex(ModuleID) const;
-    template<typename T> std::span<const T> listOf(std::span<const T> list, ModuleID, uint32_t ModuleData::* first) const;
+    PiecesOfPath piecesOfPath(ModuleID) const;
+    std::strong_ordering comparePath(ModuleID, StringView) const;
+    std::optional<ModuleID> findPlaceOfPath(StringView publicPath) const;
+    template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
 
     const ProgramTables* m_tables;
     std::span<const ModuleData> m_modules;
     std::span<const ModuleRequestData> m_requests;
+    ModuleNumbers m_linkRequests;
+    ModuleNumbers m_evaluationRequests;
     std::span<const ModuleExportData> m_exports;
     std::span<const SyntheticExportData> m_syntheticExports;
     std::span<const RequiredNameData> m_requiredNames;
-    std::span<const RequireEdgeData> m_requireEdges;
     std::span<const ModuleFailureData> m_failures;
-    std::span<const uint32_t> m_modulesByPath;
+    ModuleNumbers m_modulesByPath;
     std::span<const CompiledRuntimeModuleData> m_runtimeModules;
     std::span<const CompiledRuntimeFunctionData> m_runtimeFunctions;
 };
@@ -104,8 +130,8 @@ inline size_t ModuleTable::checkedIndex(ModuleID module) const
     return module.index();
 }
 
-template<typename T>
-inline std::span<const T> ModuleTable::listOf(std::span<const T> list, ModuleID module, uint32_t ModuleData::* first) const
+template<typename List>
+inline List ModuleTable::listOf(List list, ModuleID module, Number24 ModuleData::* first) const
 {
     size_t index = checkedIndex(module);
     uint32_t start = m_modules[index].*first;
@@ -125,6 +151,26 @@ inline uint32_t ModuleTable::endOfRequests(ModuleID module) const
 inline std::span<const ModuleRequestData> ModuleTable::requests(ModuleID module) const
 {
     return listOf(m_requests, module, &ModuleData::firstRequest);
+}
+
+inline uint32_t ModuleTable::endOfLinkRequests(ModuleID module) const
+{
+    return m_modules[checkedIndex(module) + 1].firstLinkRequest;
+}
+
+inline ModuleNumbers ModuleTable::linkRequests(ModuleID module) const
+{
+    return listOf(m_linkRequests, module, &ModuleData::firstLinkRequest);
+}
+
+inline uint32_t ModuleTable::endOfEvaluationRequests(ModuleID module) const
+{
+    return m_modules[checkedIndex(module) + 1].firstEvaluationRequest;
+}
+
+inline ModuleNumbers ModuleTable::evaluationRequests(ModuleID module) const
+{
+    return listOf(m_evaluationRequests, module, &ModuleData::firstEvaluationRequest);
 }
 
 inline std::span<const SyntheticExportData> ModuleTable::syntheticExports(ModuleID module) const

@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include <algorithm>
+#include <cstring>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -47,70 +49,254 @@ static uint32_t rankOf(Use::Kind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename Functor>
-void UseLists::forEachUse(NOESCAPE const Functor& functor) const
+static ALWAYS_INLINE void forEachUseInReverseOrder(std::span<const Block> blocks, const Value* values, BlockID blockID, NOESCAPE const Invocable<void(ValueID, ValueLocation)> auto& placeValue, NOESCAPE const Invocable<void(ValueID, const Use&)> auto& addUse)
 {
-    for (BlockID blockID : m_cfg.reversePostOrder()) {
-        auto& block = m_function.at(blockID);
-        auto visitArguments = [&](Use::Kind kind, const Target& target, uint32_t targetIndex) {
-            auto& arguments = target.arguments;
-            for (uint32_t argumentIndex = 0; argumentIndex < arguments.size(); ++argumentIndex) {
-                if (ValueID argument = arguments[argumentIndex])
-                    functor(argument, Use { kind, blockID, { }, argumentIndex, targetIndex });
-            }
-        };
-
-        if (block.subject)
-            functor(block.subject, Use { Use::Kind::BlockSubject, blockID, { }, 0, 0 });
-        if (block.handler)
-            visitArguments(Use::Kind::HandlerArgument, *block.handler, 0);
-        for (ValueID user : block.values) {
-            m_function.at(user).forEachOperand([&](ValueID used, uint32_t operandIndex) {
-                functor(used, Use { Use::Kind::Operand, blockID, user, operandIndex, 0 });
-            });
+    const Block& block = blocks[blockID.index()];
+    auto addUses = [&](std::span<const ValueID> used, Use::Kind kind, ValueID user, uint32_t targetIndex) ALWAYS_INLINE_LAMBDA {
+        for (uint32_t index = static_cast<uint32_t>(used.size()); index--;) {
+            if (used[index])
+                addUse(used[index], Use { kind, blockID, user, index, targetIndex });
         }
-        block.terminator.forEachOperand([&](ValueID used, uint32_t operandIndex) {
-            functor(used, Use { Use::Kind::TerminatorOperand, blockID, { }, operandIndex, 0 });
-        });
-        auto& targets = block.terminator.targets;
-        for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex)
-            visitArguments(Use::Kind::EdgeArgument, targets[targetIndex], targetIndex);
+    };
+
+    std::span<const Target> targets = block.terminator.targets.span();
+    for (uint32_t targetIndex = static_cast<uint32_t>(targets.size()); targetIndex--;)
+        addUses(targets[targetIndex].arguments.span(), Use::Kind::EdgeArgument, { }, targetIndex);
+    addUses(block.terminator.operands(), Use::Kind::TerminatorOperand, { }, 0);
+    std::span<const ValueID> listed = block.values.span();
+    for (uint32_t index = static_cast<uint32_t>(listed.size()); index--;) {
+        ValueID user = listed[index];
+        placeValue(user, ValueLocation { ValuePlacement::InBlock, blockID, index });
+        addUses(values[user.index()].operands(), Use::Kind::Operand, user, 0);
     }
+    if (block.handler)
+        addUses(block.handler->arguments.span(), Use::Kind::HandlerArgument, { }, 0);
+    if (block.subject)
+        addUse(block.subject, Use { Use::Kind::BlockSubject, blockID, { }, 0, 0 });
+    uint32_t index = 0;
+    for (ValueID parameter : block.parameters)
+        placeValue(parameter, ValueLocation { ValuePlacement::Parameter, blockID, index++ });
 }
 
 UseLists::UseLists(const Function& function, const CFG& cfg)
     : m_function(function)
-    , m_cfg(cfg)
-    , m_locations(function.values.size())
+    , m_cfg(&cfg)
 {
-    auto setLocation = [&](ValueID value, ValueLocation location) {
-        auto& entry = m_locations[value.index()];
-        RELEASE_ASSERT(entry.placement == ValuePlacement::Detached);
-        entry = location;
-    };
-    for (BlockID blockID : m_cfg.reversePostOrder()) {
-        auto& block = m_function.at(blockID);
-        for (uint32_t index = 0; index < block.parameters.size(); ++index)
-            setLocation(block.parameters[index], { ValuePlacement::Parameter, blockID, index });
-        for (uint32_t index = 0; index < block.values.size(); ++index)
-            setLocation(block.values[index], { ValuePlacement::InBlock, blockID, index });
+    makeAnew();
+}
+
+auto UseLists::makeRoomForUses(size_t size) -> RoomForUses
+{
+    m_uses.reserveCapacity(2 * size);
+    m_uses.grow(size);
+    m_placeOfNextUse.grow(size);
+    return { m_uses.mutableSpan().data(), m_placeOfNextUse.mutableSpan().data(), size };
+}
+
+void UseLists::makeAnew()
+{
+    size_t numberOfValues = m_function.values.size();
+    m_locations.fill(ValueLocation { }, numberOfValues);
+    m_ranges.fill(UseRange { }, numberOfValues);
+
+    m_uses.shrink(0);
+    m_placeOfNextUse.shrink(0);
+    RoomForUses made = makeRoomForUses(std::max<size_t>(m_numberOfUses + m_numberOfUses / 8, numberOfValues + numberOfValues / 4) + 8);
+    StoredUse* uses = made.uses;
+    uint32_t* placeOfNextUse = made.placeOfNextUse;
+    size_t room = made.size;
+
+    std::span<ValueLocation> locations = m_locations.mutableSpan();
+    std::span<UseRange> ranges = m_ranges.mutableSpan();
+    std::span<const Block> blocks = m_function.blocks.span();
+    const Value* values = m_function.values.span().data();
+    std::span<const BlockID> order = m_cfg->reversePostOrder();
+    size_t place = 0;
+    for (size_t orderIndex = order.size(); orderIndex--;) {
+        forEachUseInReverseOrder(blocks, values, order[orderIndex], [&](ValueID value, ValueLocation location) ALWAYS_INLINE_LAMBDA {
+            ValueLocation& entry = locations[value.index()];
+            RELEASE_ASSERT(entry.placement == ValuePlacement::Detached);
+            entry = location;
+        }, [&](ValueID used, const Use& use) ALWAYS_INLINE_LAMBDA {
+            if (place == room) [[unlikely]] {
+                RoomForUses more = makeRoomForUses(2 * room);
+                uses = more.uses;
+                placeOfNextUse = more.placeOfNextUse;
+                room = more.size;
+            }
+            UseRange& range = ranges[used.index()];
+            placeOfNextUse[place] = range.first;
+            range = { static_cast<uint32_t>(place), (range.end | isLinked) + 1 };
+            new (NotNull, uses + place) Use(use);
+            ++place;
+        });
+    }
+    RELEASE_ASSERT(place < isLinked);
+    m_uses.shrink(place);
+    m_placeOfNextUse.shrink(place);
+    m_numberOfUses = place;
+    didBecomeUpToDate();
+}
+
+std::span<const Use> UseLists::layOut(ValueID id) const
+{
+    UseRange& range = m_ranges[id.index()];
+    uint32_t size = range.end & ~isLinked;
+    if (size == 1) {
+        range.end = range.first + 1;
+        return { uses() + range.first, 1 };
     }
 
-    unsigned count = m_function.values.size();
-    m_firstUse.fill(0, count + 1);
-    forEachUse([&](ValueID used, const Use&) {
-        ++m_firstUse[used.index()];
-    });
-    uint32_t next = 0;
-    for (auto& first : m_firstUse)
-        first = std::exchange(next, next + first);
-    m_uses.resize(next);
-    forEachUse([&](ValueID used, const Use& use) {
-        m_uses[m_firstUse[used.index()]++] = use;
-    });
-    for (unsigned i = count; i; --i)
-        m_firstUse[i] = m_firstUse[i - 1];
-    m_firstUse[0] = 0;
+    size_t first = m_uses.size();
+    RELEASE_ASSERT(first + size <= m_uses.capacity());
+    m_uses.grow(first + size);
+    StoredUse* row = m_uses.mutableSpan().data();
+    uint32_t place = range.first;
+    for (uint32_t index = 0; index < size; ++index) {
+        row[first + index] = row[place];
+        place = m_placeOfNextUse[place];
+    }
+    range = { static_cast<uint32_t>(first), static_cast<uint32_t>(first + size) };
+    return { uses() + first, size };
+}
+
+void UseLists::didBecomeUpToDate()
+{
+    RELEASE_ASSERT(!m_hasSilentChanges);
+    m_hasChangedBlocks = false;
+    m_isUpToDate = true;
+    m_graphMayHaveChanged = false;
+    m_mustBeMadeAnew = false;
+    m_takesSilentChangesAtOnce = false;
+}
+
+void UseLists::fallBehind()
+{
+    m_isUpToDate = false;
+    if (!m_hasSilentChanges) [[likely]]
+        return;
+    m_hasChangedBlocks = true;
+    m_hasSilentChanges = false;
+}
+
+void UseLists::didChangeBlock(BlockID)
+{
+    fallBehind();
+    m_hasChangedBlocks = true;
+}
+
+void UseLists::didChangeBlockSilently(BlockID block)
+{
+    if (!m_isUpToDate || m_takesSilentChangesAtOnce) {
+        didChangeBlock(block);
+        return;
+    }
+    m_hasSilentChanges = true;
+}
+
+void UseLists::endSilence()
+{
+    if (m_hasSilentChanges)
+        fallBehind();
+}
+
+void UseLists::didOutliveDrop()
+{
+    endSilence();
+    m_takesSilentChangesAtOnce = true;
+}
+
+// A value that the lists find in no block has no use listed under its name as a user. Whoever has put it into a block since has named that block.
+void UseLists::didChangeOperandsOf(ValueID user)
+{
+    fallBehind();
+    if (user.index() >= m_locations.size())
+        return;
+    const ValueLocation& location = m_locations[user.index()];
+    if (location.placement == ValuePlacement::InBlock)
+        didChangeBlock(location.block);
+}
+
+// A use that has come about since the lists were brought up to date stands in a block that has been named.
+void UseLists::didReplaceUses(ValueID from, ValueID)
+{
+    fallBehind();
+    if (m_mustBeMadeAnew || from.index() >= m_ranges.size())
+        return;
+    if (useCount(from))
+        m_hasChangedBlocks = true;
+}
+
+void UseLists::didChangeControlFlow()
+{
+    fallBehind();
+    m_graphMayHaveChanged = true;
+}
+
+void UseLists::didChangeEverything()
+{
+    fallBehind();
+    m_mustBeMadeAnew = true;
+}
+
+void UseLists::didRenumber(std::span<const BlockID> blocks, std::span<const ValueID> values)
+{
+    if (!m_isUpToDate || m_hasSilentChanges || values.size() != m_locations.size()) {
+        didChangeEverything();
+        return;
+    }
+
+    auto renumbered = [&](BlockID block) {
+        if (blocks.empty())
+            return block;
+        BlockID moved = blocks[block.index()];
+        RELEASE_ASSERT(moved);
+        return moved;
+    };
+
+    size_t numberOfValues = m_function.values.size();
+    Vector<UseRange> ranges(numberOfValues);
+    Vector<ValueLocation> locations(numberOfValues);
+    for (size_t index = 0; index < values.size(); ++index) {
+        UseRange range = m_ranges[index];
+        ValueID value = values[index];
+        if (!value) {
+            RELEASE_ASSERT(range.first == range.end);
+            continue;
+        }
+        ValueLocation location = m_locations[index];
+        RELEASE_ASSERT(location.placement != ValuePlacement::Detached);
+        location.block = renumbered(location.block);
+        locations[value.index()] = location;
+        ranges[value.index()] = range;
+    }
+    m_ranges = WTF::move(ranges);
+    m_locations = WTF::move(locations);
+
+    for (Use& use : std::span<Use> { reinterpret_cast<Use*>(m_uses.mutableSpan().data()), m_uses.size() }) {
+        use.block = renumbered(use.block);
+        if (!use.user)
+            continue;
+        use.user = values[use.user.index()];
+        RELEASE_ASSERT(use.user);
+    }
+    // The graph that orderOf() reads has the former numbers.
+    m_isUpToDate = false;
+}
+
+auto UseLists::bringUpToDate(const CFG& cfg) -> Update
+{
+    RELEASE_ASSERT(!m_isUpToDate);
+    m_cfg = &cfg;
+    size_t numberOfValues = m_function.values.size();
+    if (m_mustBeMadeAnew || m_hasChangedBlocks || m_graphMayHaveChanged || numberOfValues < m_locations.size()) {
+        makeAnew();
+        return { true, numberOfValues };
+    }
+    m_locations.grow(numberOfValues);
+    m_ranges.grow(numberOfValues);
+    didBecomeUpToDate();
+    return { };
 }
 
 ProgramPoint UseLists::pointOf(const Use& use) const
@@ -149,12 +335,9 @@ ProgramPoint UseLists::pointAfter(ValueID id) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool UseLists::isBefore(const Use& a, const Use& b) const
+UseOrder UseLists::orderOf(const Use& use) const
 {
-    auto keyOf = [&](const Use& use) {
-        return std::tuple { m_cfg.reversePostOrderIndex(use.block), pointOf(use).index, rankOf(use.kind), use.targetIndex, use.operandIndex };
-    };
-    return keyOf(a) < keyOf(b);
+    return { m_cfg->reversePostOrderIndex(use.block), pointOf(use).index, rankOf(use.kind), use.targetIndex, use.operandIndex };
 }
 
 } } } // namespace JSC::AOT::Typed

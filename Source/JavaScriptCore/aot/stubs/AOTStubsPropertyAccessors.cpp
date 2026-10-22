@@ -33,15 +33,58 @@ static_assert(exists(callValue(0)) && exists(callValue(1)));
 void callGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg getterSetter, JumpList& cannot)
 {
     const GPRReg getter = jit.reuseScratch(StubRegister::T11);
-    const GPRReg scratch = jit.reuseScratch(StubRegister::T14);
-    RELEASE_ASSERT(noOverlap(receiver, getterSetter, getter, scratch) && jit.result() == GPRInfo::returnValueGPR);
-
+    RELEASE_ASSERT(noOverlap(receiver, getterSetter, getter, gprOf(StubRegister::T14)));
     jit.loadPtr(Address(getterSetter, GetterSetter::offsetOfGetter()), getter);
+    callGetterFunctionAndReturn(jit, receiver, getter, cannot);
+}
+
+void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg getter, JumpList& cannot)
+{
+    const GPRReg scratch = jit.reuseScratch(StubRegister::T14);
+    RELEASE_ASSERT(getter == jit.reuseScratch(StubRegister::T11) && noOverlap(receiver, getter, scratch) && jit.result() == GPRInfo::returnValueGPR);
+
+#if CPU(X86_64)
+    // A closure of this Instance that declares no parameter is entered from here: its Structure says what the test of the type and CallValue would find out.
+    // Where there is one Instance the top byte of the word of a slim closure says it alone.
+    static_assert(ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32);
+    auto branchIfTopByteRefusesCall = [&](ptrdiff_t offsetOfWord) {
+        return jit.branch8(CCallHelpers::LessThan, Address(getter, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(0)));
+    };
+    JumpList isNotCommonCase;
+    JumpList isNotSlim;
+    if (jit.options().hasOneInstance)
+        isNotSlim.append(branchIfTopByteRefusesCall(offsetOfSlimClosureWord));
+    else {
+        jit.load32(Address(getter, JSCell::structureIDOffset()), scratch);
+        isNotSlim.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders[0]))));
+        isNotCommonCase.append(branchIfTopByteRefusesCall(offsetOfSlimClosureWord));
+    }
+    jit.load32(Address(getter, offsetOfSlimClosureWord), scratch);
+    Jump hasOffsetOfCode = jit.jump();
+
+    isNotSlim.link(&jit);
+    if (jit.options().hasOneInstance)
+        jit.load32(Address(getter, JSCell::structureIDOffset()), scratch);
+    isNotCommonCase.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
+    isNotCommonCase.append(branchIfTopByteRefusesCall(offsetOfClosureEntry));
+    jit.load32(Address(getter, offsetOfClosureEntry), scratch);
+
+    hasOffsetOfCode.link(&jit);
+    jit.checkStackBeforeEntering();
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
+        RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
+        jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
+        jit.move(TrustedImm32(0), countGPR);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), scratch);
+        jit.call(scratch, JSEntryPtrTag);
+    });
+    isNotCommonCase.link(&jit);
+#endif
     cannot.append(branchIfNotFunctionType(jit, getter, scratch));
     jit.checkStackBeforeEntering();
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
-        jit.callStub(callValue(0));
+        jit.callStub(callValueCell(0));
     });
 }
 
@@ -177,12 +220,10 @@ static NamePrefixTest createNamePrefixTest()
 }
 
 // functionNames has no "get ", "set " or "bound ".
-static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg tables, GPRReg function, GPRReg kind, JumpList& hasPrefix)
+static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg kind, JumpList& hasPrefix)
 {
     const NamePrefixTest test = createNamePrefixTest();
-    RELEASE_ASSERT(noOverlap(tables, function, kind));
-    loadProgramTable(jit, tables, ProgramTableIndex::functionKinds, kind);
-    jit.load16(BaseIndex(kind, function, CCallHelpers::TimesTwo), kind);
+    loadKindOfClosureFunction(jit, function, kind);
     jit.xor32(TrustedImm32(test.methodAccessorKind | test.boundCallableKind), kind);
     hasPrefix.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(test.accessorKindMask)));
     hasPrefix.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(test.callableKindMask)));
@@ -196,15 +237,6 @@ static void loadSlimClosureFunction(StubAssembler& jit, GPRReg value, GPRReg fun
     extractBits(jit, function, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
 }
 
-// C++ reifies the closure at the second read of length or name.
-static void markLazyPropertyRead(StubAssembler& jit, GPRReg closure, GPRReg flags, JumpList& wasReadBefore)
-{
-    jit.load8(Address(closure, JSCell::typeInfoFlagsOffset()), flags);
-    wasReadBefore.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(TypeInfoPerCellBit)));
-    jit.or32(TrustedImm32(TypeInfoPerCellBit), flags);
-    jit.store8(flags, Address(closure, JSCell::typeInfoFlagsOffset()));
-}
-
 void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss)
 {
     const GPRReg index = jit.reuseScratch(StubRegister::T10);
@@ -216,32 +248,93 @@ void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& mi
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), index);
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, programTableCount(tables, ProgramTableIndex::functionLengths)));
-    markLazyPropertyRead(jit, closure, scratch, miss);
     loadProgramTable(jit, tables, ProgramTableIndex::functionLengths, scratch);
-    jit.load16(BaseIndex(scratch, index, CCallHelpers::TimesTwo), scratch);
+    jit.load8(BaseIndex(scratch, index, CCallHelpers::TimesOne), scratch);
+    miss.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(countsAreListed)));
     boxInt32(jit, scratch, jit.result());
     jit.returnToCaller();
 }
 
+// Changes table. index and result may be one register.
+static void loadNumber24(StubAssembler& jit, GPRReg table, GPRReg index, GPRReg result)
+{
+    static_assert(sizeof(Number24) == 3);
+    jit.getEffectiveAddress(BaseIndex(index, index, CCallHelpers::TimesTwo), result);
+    jit.addPtr(result, table);
+    jit.load16(Address(table), result);
+    jit.load8(Address(table, 2), table);
+    jit.lshift32(TrustedImm32(16), table);
+    jit.or32(table, result);
+}
+
 void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss)
 {
-    constexpr StubKey createName = createConstant(CreatedConstant::NewString);
+    constexpr StubKey createName = createConstant(CreatedConstant::FunctionName);
     const GPRReg function = jit.reuseScratch(StubRegister::T10);
     const GPRReg tables = jit.reuseScratch(StubRegister::T11);
     const GPRReg scratch = jit.reuseScratch(StubRegister::T14);
     RELEASE_ASSERT(noOverlap(closure, function, tables, scratch));
 
+    if (jit.options().useWideReferences) {
+        miss.append(jit.jump());
+        return;
+    }
     loadSlimClosureFunction(jit, closure, function, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    branchIfNameHasPrefix(jit, tables, function, scratch, miss);
-    loadProgramTable(jit, tables, ProgramTableIndex::functionNames, scratch);
+    branchIfNameHasPrefix(jit, function, scratch, miss);
+    // ProgramTables::nameOfFunction(): functionSources begins at the first form of another function, and the groups of names end there.
+    auto loadNumberOfFunctionsInFrontOfForms = [&] {
+        jit.load32(programTableCount(tables, ProgramTableIndex::functionRecordNumbers), scratch);
+        jit.sub32(programTableCount(tables, ProgramTableIndex::functionSources), scratch);
+    };
+    loadNumberOfFunctionsInFrontOfForms();
+    Jump isListed = jit.branch32(CCallHelpers::Below, function, scratch);
+    jit.sub32(scratch, function);
+    loadProgramTable(jit, tables, ProgramTableIndex::functionSources, scratch);
+    loadNumber24(jit, scratch, function, function);
+    loadNumberOfFunctionsInFrontOfForms();
+    miss.append(jit.branch32(CCallHelpers::AboveOrEqual, function, scratch));
+    isListed.link(&jit);
+    loadProgramTable(jit, tables, ProgramTableIndex::functionNameGroups, scratch);
+    const GPRReg haveName = tables;
+    jit.urshift32(function, TrustedImm32(5), haveName);
+    jit.getEffectiveAddress(BaseIndex(scratch, haveName, CCallHelpers::TimesEight), scratch);
+    jit.load32(Address(scratch), haveName);
+    const GPRReg position = scratch;
+    jit.load32(Address(scratch, sizeof(uint32_t)), position);
+    // The bit of the function goes to the top of the word, the bits of the functions in front of it stand below it.
+    jit.and32(TrustedImm32(31), function);
+    jit.xor32(TrustedImm32(63), function);
+    jit.lshift64(function, haveName);
+    Jump hasNoEntry = jit.branch64(CCallHelpers::GreaterThanOrEqual, haveName, TrustedImm32(0));
+    jit.lshift64(TrustedImm32(1), haveName);
+    jit.countPopulation64(haveName, haveName, CCallHelpers::fpTempRegister);
+    // ProgramStrings::writtenNameOfFunction(), which makes the string for whoever asks first.
     const GPRReg name = function;
-    jit.load32(BaseIndex(scratch, function, CCallHelpers::TimesFour), name);
-    // An obfuscated image has 0 for every function, and string 0 is not its name.
-    miss.append(jit.branchTest32(CCallHelpers::Zero, name));
-    markLazyPropertyRead(jit, closure, scratch, miss);
+    jit.add32(haveName, position, name);
+    const GPRReg place = tables;
+    static_assert(hasOneBitSet(ConstantCellWords::numberOfCachedFunctionNames));
+    jit.move(name, place);
+    jit.and32(TrustedImm32(ConstantCellWords::numberOfCachedFunctionNames - 1), place);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.functionNameCache)), scratch);
+    jit.load64(BaseIndex(scratch, place, CCallHelpers::TimesEight), scratch);
+    jit.add32(TrustedImm32(1), name);
+    Jump isNotCached = jit.branch32(CCallHelpers::NotEqual, scratch, name);
+    jit.urshift64(TrustedImm32(32), scratch);
+    decodeCell32(jit, scratch, jit.result());
+    jit.returnToCaller();
+
+    isNotCached.link(&jit);
+    jit.sub32(TrustedImm32(1), name);
     jit.move(name, jit.clobberRegister(*signatureOfCreateConstant(createName).immediate));
     jit.jumpToStub(createName);
+
+    // Its name is the string with the number 0, which need not be the empty one.
+    hasNoEntry.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.nameOfFunctionsWithoutEntry)), scratch);
+    miss.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    jit.move(scratch, jit.result());
+    jit.returnToCaller();
 }
 
 } } // namespace JSC::AOT

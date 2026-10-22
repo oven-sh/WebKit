@@ -7,9 +7,9 @@
 # STATISTIC: TypeTestsPlaced = 0
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
-function f0 name="branchBehindStretch" parameters=[{type=object predicted=L0}, {type=anything}, {type=number}] results=[{type=anything}] {
+function f0 name="branchBehindStretch" parameters=[{type=object}, {type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: anything, v2: number):
     v3 = PropGet v0 key="a"
     v4 = TypeTest v1 testedType=string

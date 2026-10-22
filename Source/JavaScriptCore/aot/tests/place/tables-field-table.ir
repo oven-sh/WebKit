@@ -1,5 +1,5 @@
 # What a lookup by shape and name finds: a value in the cell, a narrow reference, a value in the Extension, any other field, and nothing under a name that the layout lacks. Layouts that say the same share a row
-# OPTIONS: references=narrow
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: tables field-table
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -40,14 +40,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: lookup shape=2 name="second" form=InlineValue offset=24 field=1 storedWithoutTypeTest
 # CHECK-NEXT: lookup shape=2 name="first" form=InlineValue offset=16 field=0 storedWithoutTypeTest
 # A store to a field with a type has to test it, and a number is not read as eight bytes that are the value.
-# CHECK: lookup shape=3 name="owner" form=InlineValue offset=24 field=1
+# CHECK: lookup shape=3 name="owner" form=InlineNarrowCell offset=24 field=1
 # CHECK-NEXT: lookup shape=3 name="second" none
 # CHECK-NEXT: lookup shape=3 name="first" form=Field field=0
-# CHECK: lookup shape=4 name="late1" form=InlineValue offset=32 field=1 storedWithoutTypeTest
-# CHECK-NEXT: lookup shape=4 name="late0" form=InlineValue offset=24 field=0 storedWithoutTypeTest
+# No store names a field of Late, so all five lie in the Extension.
+# CHECK: lookup shape=4 name="late1" form=OutOfLineValue offset=16 field=1 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late0" form=OutOfLineValue offset=8 field=0 storedWithoutTypeTest
 # CHECK-NEXT: lookup shape=4 name="owner" none
 # CHECK-NEXT: lookup shape=4 name="second" none
 # CHECK-NEXT: lookup shape=4 name="first" none
-# CHECK-NEXT: lookup shape=4 name="late4" form=OutOfLineValue offset=16 field=4 storedWithoutTypeTest
-# CHECK-NEXT: lookup shape=4 name="late3" form=OutOfLineValue offset=8 field=3 storedWithoutTypeTest
-# CHECK-NEXT: lookup shape=4 name="late2" form=InlineValue offset=40 field=2 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late4" form=OutOfLineValue offset=40 field=4 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late3" form=OutOfLineValue offset=32 field=3 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late2" form=OutOfLineValue offset=24 field=2 storedWithoutTypeTest

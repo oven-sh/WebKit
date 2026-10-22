@@ -1,0 +1,37 @@
+# Only a caller that names a function takes its wrapper in and does without the object. The first function is called by name and is split.
+# The second returns the same, and no code names it: its closure goes to code that nobody has seen. It would pay for the wrapper, its call and the parts on every call, so it stays whole
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: FreshResultsSplit = 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="first" declared={type=number}}, {key="second" declared={type=number}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = CallDirect v0 function=f1
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v2
+    Return v5
+}
+function f1 name="calledByName" module=m0 parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK: function f1 name="calledByName" {{*}}role=ResultWrapper
+function f2 name="reachedByValueAlone" module=m0 parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-NOT: function f2 name="reachedByValueAlone" {{*}}role=ResultWrapper
+# CHECK-LABEL: function f2 name="reachedByValueAlone"
+# CHECK: = NewObject

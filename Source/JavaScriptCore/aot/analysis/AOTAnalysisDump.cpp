@@ -476,7 +476,7 @@ static void dumpTrackedObject(PrintStream& out, const EscapeAnalysis& escape, Ob
     dumpProperty(out, object, "reasons"_s, trackedObject.reasons);
     dumpProperty(out, object, "first escape"_s, trackedObject.firstEscape);
     dumpProperty(out, object, "uses"_s, trackedObject.uses);
-    dumpProperty(out, object, "live instances"_s, enumName(trackedObject.liveInstances));
+    dumpProperty(out, object, "live instances"_s, enumName(escape.liveInstancesOf(object)));
     dumpProperty(out, object, "aliases"_s, escape.aliasesOf(object));
     dumpProperty(out, object, "object uses"_s, objectUses.span());
     dumpProperty(out, object, "escaping uses"_s, escapingUses.span());
@@ -553,7 +553,7 @@ static void dumpSection(PrintStream& out, FunctionAnalyses& analyses, FunctionAn
         dumpEffects(out, analyses);
         return;
     case FunctionAnalysis::Escape:
-        dumpEscape(out, analyses.useLists(), analyses.escape());
+        dumpEscape(out, analyses.useLists(), analyses.escapeWithLiveInstances());
         return;
     case FunctionAnalysis::EscapeHistory:
         dumpUseEffectHistory(out, analyses.cfg(), analyses.escape(), analyses.escapeHistory());

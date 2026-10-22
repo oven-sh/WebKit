@@ -1,4 +1,4 @@
-# the proven bases of layouts form no cycle; predicted bases may, since two classes that extend each other throw when they are evaluated
+# the bases that flow has proven form no cycle; the bases as read may, since two classes that extend each other throw when they are evaluated
 # FORM: Prepared
 # RUN: verify
 # DIAGNOSTIC: InvalidLayout 1
@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="goodBase"
 layout L1 kind=Instance name="goodDerived" flow={baseState=Layout base=L0}
-layout L2 kind=Instance name="goodPredictedFirst" predictedBase=L3 flags=[HasHeritage]
-layout L3 kind=Instance name="goodPredictedSecond" predictedBase=L2 flags=[HasHeritage]
+layout L2 kind=Instance name="goodAsReadFirst" base=L3 flags=[HasHeritage]
+layout L3 kind=Instance name="goodAsReadSecond" base=L2 flags=[HasHeritage]
 layout L4 kind=Instance name="badFirst" flow={baseState=Layout base=L5}
 layout L5 kind=Instance name="badSecond" flow={baseState=Layout base=L4}

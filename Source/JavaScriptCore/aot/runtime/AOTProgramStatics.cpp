@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompileOptions.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
@@ -16,6 +17,7 @@
 #include "AOTState.h"
 #include "FastMarkAppender.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
@@ -56,7 +58,8 @@ static bool readCreatesCell(const Instance& instance, SlotRepresentation represe
         return false;
     uint32_t number = literalStringIndex(static_cast<uint32_t>(word));
     RELEASE_ASSERT(number < instance.tables().literalStrings().size());
-    return !instance.runtime.constants.literalStrings[number];
+    const ConstantCellWords& constants = instance.runtime.constants;
+    return instance.options().useWideReferences() ? !constants.wideLiteralStrings[number] : !constants.literalStrings[number];
 }
 
 void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
@@ -132,12 +135,9 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
         statics.didStoreRootInStatics(slot.offset);
 }
 
-template<typename Appender>
-ALWAYS_INLINE void ProgramStatics::visitRegion(Appender& appender, size_t begin, size_t end)
+template<typename Word, typename Functor>
+static ALWAYS_INLINE void forEachRootInRegion(const uint8_t* statics, std::span<const StaticsRange> roots, size_t begin, size_t end, const Functor& functor)
 {
-    const uint8_t* statics = m_instance.statics();
-    std::span<const StaticsRange> roots = m_tables.staticsRoots();
-    begin = std::max<size_t>(begin, m_readOnlyStaticsSize);
     auto first = std::ranges::partition_point(roots, [&](const StaticsRange& range) {
         return range.end() <= begin;
     });
@@ -145,9 +145,25 @@ ALWAYS_INLINE void ProgramStatics::visitRegion(Appender& appender, size_t begin,
         if (range.offset >= end)
             break;
         size_t endInRange = std::min<size_t>(range.end(), end);
-        for (size_t offset = std::max<size_t>(range.offset, begin); offset < endInRange; offset += sizeof(EncodedJSValue))
-            appender.appendUnbarriered(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(statics + offset)));
+        for (size_t offset = std::max<size_t>(range.offset, begin); offset < endInRange; offset += sizeof(Word))
+            functor(*reinterpret_cast<const Word*>(statics + offset));
     }
+}
+
+template<typename Appender>
+ALWAYS_INLINE void ProgramStatics::visitRegion(Appender& appender, size_t begin, size_t end)
+{
+    const uint8_t* statics = m_instance.statics();
+    begin = std::max<size_t>(begin, m_readOnlyStaticsSize);
+    forEachRootInRegion<EncodedJSValue>(statics, m_tables.staticsRoots(), begin, end, [&](EncodedJSValue value) ALWAYS_INLINE_LAMBDA {
+        appender.appendUnbarriered(JSValue::decode(value));
+    });
+    // A marker or the word of a literal string lies below every reference.
+    uintptr_t cageBase = m_instance.cellCageBase;
+    forEachRootInRegion<uint32_t>(statics, m_tables.staticsNarrowRoots(), begin, end, [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
+        if (word >= minCell32)
+            appender.appendUnbarriered(MarkedBlockCage::decode(cageBase, word));
+    });
 }
 
 template<typename Visitor>
@@ -177,6 +193,7 @@ ProgramStatics::ProgramStatics(State& state)
     , m_strings(*state.strings)
     , m_slots({ state.instance.statics(), state.tables.instanceSizes.sizeOfStatics }, InstanceLayout::cardShift, { state.instance.cards(), RememberedSlotSet::numberOfCardsFor(state.tables.instanceSizes.sizeOfStatics, InstanceLayout::cardShift) })
 {
+    m_slots.setCardsAreWrittenWithoutRecord();
     uint8_t* statics = m_instance.statics();
     uint32_t filled = sizeFilledAtProgramEntry(m_tables);
     initializeStatics(filled / sizeof(uint64_t), std::numeric_limits<uint32_t>::max());

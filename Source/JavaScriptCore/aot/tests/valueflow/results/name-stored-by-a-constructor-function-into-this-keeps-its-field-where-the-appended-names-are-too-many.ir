@@ -1,0 +1,48 @@
+# function Emitter(this: EmitterLike) { this.capture = false }   function mark(emitter: EmitterLike) { emitter.first = 1; emitter.first = 2; emitter.second = 1; emitter.second = 2 }
+# One literal is EmitterLike, and unknown code has it, with both functions. The layout gets room for two names more (MaxAppendedFieldsPerLayout = 2) and three are stored.
+# The names that the program mentions least go to the extra properties, but not what a constructor function stores into its own `this`: every object that passes it has the name, and one extra property
+# fails each test that the object has none. So `capture`, which is mentioned once, keeps its field, and of the two others, mentioned twice each, the first.
+# OPTIONS: limit=MaxAppendedFieldsPerLayout:2
+# LOSS: MaxAppendedFieldsPerLayout x1 L0
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" fields=[{key="flags"
+# CHECK-NOT: key="second"
+# CHECK: {key="capture" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="second"
+# CHECK: layout L1 name="EmitterLike"
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="flags" declared={type=number}}] supertypes=[L1]
+layout L1 name="EmitterLike" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="capture" declared={type=boolean}}, {key="first" declared={type=number}}, {key="second" declared={type=number}}]
+layout L2 kind=Instance name="Emitter" constructor=f1 supertypes=[L1] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v1, v2, v3
+    Return
+}
+function f1 name="Emitter" flags=[HasThis] thisType={type=L0|L1|L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0|L1|L2
+    v2 = Boolean boolean=false
+    PropSet v1, v2 key="capture" mode=Strict
+    Return
+}
+function f2 name="mark" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0|L1
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    PropSet v1, v2 key="first" mode=Strict
+    PropSet v1, v3 key="first" mode=Strict
+    PropSet v1, v2 key="second" mode=Strict
+    PropSet v1, v3 key="second" mode=Strict
+    Return
+}

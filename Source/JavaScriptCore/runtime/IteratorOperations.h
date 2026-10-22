@@ -111,11 +111,21 @@ ALWAYS_INLINE bool iteratorNextFastArray(JSGlobalObject* globalObject, JSArray* 
     return true;
 }
 
-static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+template<typename Storage>
+static ALWAYS_INLINE Storage* orderedHashTableStorage(JSCell* storageCell)
+{
+    if constexpr (std::same_as<Storage, JSCell>)
+        return storageCell;
+    else
+        return uncheckedDowncast<Storage>(storageCell);
+}
+
+template<typename Storage>
+static ALWAYS_INLINE void forEachInMapStorageOfType(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCell* storage = storageCell;
+    auto* storage = orderedHashTableStorage<Storage>(storageCell);
     JSMap::Helper::Entry entry = startEntry;
 
     while (true) {
@@ -123,7 +133,7 @@ static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObje
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        storage = storageCell;
+        storage = orderedHashTableStorage<Storage>(storageCell);
         entry = JSMap::Helper::iterationEntry(*storage) + 1;
 
         JSValue value;
@@ -164,16 +174,28 @@ static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObje
     }
 }
 
+static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+{
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*storageCell)) [[unlikely]] {
+        forEachInMapStorageOfType<JSCell>(vm, globalObject, storageCell, startEntry, iterationKind, callback, callbackExceptionHandler);
+        return;
+    }
+#endif
+    forEachInMapStorageOfType<JSMap::Storage>(vm, globalObject, storageCell, startEntry, iterationKind, callback, callbackExceptionHandler);
+}
+
 static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback)
 {
     forEachInMapStorage(vm, globalObject, storageCell, startEntry, iterationKind, callback, [](JSCell*, JSMap::Helper::Entry) { });
 }
 
-static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+template<typename Storage>
+static ALWAYS_INLINE void forEachInSetStorageOfType(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCell* storage = storageCell;
+    auto* storage = orderedHashTableStorage<Storage>(storageCell);
     JSSet::Helper::Entry entry = startEntry;
 
     while (true) {
@@ -181,7 +203,7 @@ static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObje
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        storage = storageCell;
+        storage = orderedHashTableStorage<Storage>(storageCell);
         entry = JSSet::Helper::iterationEntry(*storage) + 1;
         JSValue entryKey = JSSet::Helper::getIterationEntryKey(*storage);
 
@@ -203,6 +225,17 @@ static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObje
             }
         }
     }
+}
+
+static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+{
+#if ENABLE(AOT)
+    if (JSSet::Helper::isCompact(*storageCell)) [[unlikely]] {
+        forEachInSetStorageOfType<JSCell>(vm, globalObject, storageCell, startEntry, callback, callbackExceptionHandler);
+        return;
+    }
+#endif
+    forEachInSetStorageOfType<JSSet::Storage>(vm, globalObject, storageCell, startEntry, callback, callbackExceptionHandler);
 }
 
 static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback)
@@ -242,9 +275,18 @@ ALWAYS_INLINE void forEachInIterationRecord(JSGlobalObject* globalObject, Iterat
     auto callData = getCallDataInline(nextMethod);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, nextMethod.getObject(), callData, 0);
-    if (scope.exception()) [[unlikely]]
-        return;
+    CachedCall* cachedCall = nullptr;
+    if (callData.type == CallData::Type::JS) [[likely]] {
+        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        if (scope.exception()) [[unlikely]]
+            return;
+        cachedCall = &cachedCallHolder.value();
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCallHolder.emplace(globalObject, asObject(nextMethod), callData, 0);
+        if (scope.exception()) [[unlikely]]
+            return;
+        cachedCall = &cachedCallHolder.value();
+    }
 
     while (true) {
         JSValue next;
@@ -354,9 +396,18 @@ void forEachInIterable(JSGlobalObject& globalObject, JSObject* iterable, JSValue
     auto callData = getCallDataInline(nextMethod);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, &globalObject, nextMethod.getObject(), callData, 0);
-    if (scope.exception()) [[unlikely]]
-        return;
+    CachedCall* cachedCall = nullptr;
+    if (callData.type == CallData::Type::JS) [[likely]] {
+        cachedCallHolder.emplace(&globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        if (scope.exception()) [[unlikely]]
+            return;
+        cachedCall = &cachedCallHolder.value();
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCallHolder.emplace(&globalObject, asObject(nextMethod), callData, 0);
+        if (scope.exception()) [[unlikely]]
+            return;
+        cachedCall = &cachedCallHolder.value();
+    }
 
     while (true) {
         JSValue next;

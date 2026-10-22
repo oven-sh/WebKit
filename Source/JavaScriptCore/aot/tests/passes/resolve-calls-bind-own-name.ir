@@ -1,4 +1,5 @@
 # `this.run = this.run.bind(this)` in a constructor: the read finds the method of the prototype alone, so bind makes a closure of a bound function over the object. Every later read of the field finds that closure alone, so a call of it is a direct call and handing it on does not hand on the method. A subclass that inherits the method changes nothing, though its objects come out of the same constructor through super(). A subclass that overrides the method, the new.target of another class, a getter under the name above the object, a constructor that stores on one path only and a deletion each end their part of it
+# TODO: flow-termination: none of the four results of Function.prototype.bind is known as a bound function
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=InsertObjectCoercibleChecks,ResolveAccesses,ResolveCalls,PlaceTypeTests,ChooseCallingConventions
@@ -8,11 +9,11 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Worker" constructor=f1 fields=[{key="count" declared={type=anything}}]
 layout L1 kind=Instance name="Overridden" constructor=f3 fields=[{key="count" declared={type=anything}}]
-layout L2 kind=Instance name="Overriding" predictedBase=L1 constructor=f5 flags=[HasHeritage]
+layout L2 kind=Instance name="Overriding" base=L1 constructor=f5 flags=[HasHeritage]
 layout L3 kind=Instance name="OnePath" constructor=f7 fields=[{key="count" declared={type=anything}}]
 layout L4 kind=Instance name="Deleted" constructor=f9 fields=[{key="count" declared={type=anything}}]
 layout L5 kind=Instance name="Inherited" constructor=f14 fields=[{key="count" declared={type=anything}}]
-layout L6 kind=Instance name="Inheriting" predictedBase=L5 constructor=f16 flags=[HasHeritage]
+layout L6 kind=Instance name="Inheriting" base=L5 constructor=f16 flags=[HasHeritage]
 layout L7 kind=Instance name="ConstructedForOther" constructor=f18 fields=[{key="count" declared={type=anything}}]
 layout L8 kind=Instance name="Other" constructor=f20
 layout L9 kind=Instance name="GetterAbove" constructor=f22 fields=[{key="count" declared={type=anything}}]

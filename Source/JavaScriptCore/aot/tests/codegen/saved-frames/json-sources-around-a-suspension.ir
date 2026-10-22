@@ -11,11 +11,9 @@
 # CODE: image not empty
 
 typesite w0 module=m0 position=138 kind=Assertion
-typesite w1 module=m0 position=152 kind=PropertyRead
-typesite w2 module=m0 position=167 kind=PromiseValue
-typesite w3 module=m0 position=226 kind=Assertion
-typesite w4 module=m0 position=242 kind=PropertyRead
-layout L0 name="Holder" module=m0 position=62 fields=[{key="label" declared={type=undefined|null|string predicted=string} flags=[IsRequired]}]
+typesite w1 module=m0 position=167 kind=PromiseValue
+typesite w2 module=m0 position=226 kind=Assertion
+layout L0 name="Holder" module=m0 position=62 fields=[{key="label" declared={type=undefined|null|string} flags=[IsRequired]}]
 module m0 path="main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0
 function f0 module=m0 kind=Module flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -23,40 +21,38 @@ function f0 module=m0 kind=Module flags=[IsAsync, IsChecked] thisType={type=anyt
   b1():
     v0 = Builtin builtin=GlobalThis @102
     v1 = PropGet v0 key="JSON" [isFreeName] @102
-    v2 = Predict v1 predicted=builtin(JSON) @102
+    v2 = Convert v1 declared={type=builtin(JSON) flags=[IsExpected]} @102
     v3 = PropGet v2 key="parse" @102
-    v4 = Predict v3 predicted=function @102
-    v5 = Predict v4 predicted=builtin(JSONParse) @102
+    v4 = Convert v3 declared={type=function flags=[IsExpected]} @102
+    v5 = Convert v4 declared={type=builtin(JSONParse) flags=[IsExpected]} @102
     v6 = String string="{\"label\":\"parsed\"}" @113
     v7 = Call v5, v2, v6 calleeKey="parse" calleeName="parse" @107
-    v8 = ClaimDeclared v7 declared={type=undefined|null|object written=undefined|null|L0 predicted=L0 site=w0} @102
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w0} illTypedCause=FromLooseType @102
     v9 = Builtin builtin=GlobalThis @146
     v10 = PropGet v9 key="print" [isFreeName] @146
-    v11 = Predict v10 predicted=function @146
+    v11 = Convert v10 declared={type=function flags=[IsExpected]} @146
     v12 = PropGet v8 key="label" @152
-    v13 = ClaimRead v12, v8 source=Field{key="label"} site=w1 @152
-    v14 = Call v11, -, v13 calleeName="print" @146
-    v15 = Integer @173
-    v16 = Await v15 @167
-    v17 = ClaimRead v16, v15 source=Contents{slot=Value} site=w2 @167
-    v18 = Builtin builtin=GlobalThis @190
-    v19 = PropGet v18 key="JSON" [isFreeName] @190
-    v20 = Predict v19 predicted=builtin(JSON) @190
-    v21 = PropGet v20 key="parse" @190
-    v22 = Predict v21 predicted=function @190
-    v23 = Predict v22 predicted=builtin(JSONParse) @190
-    v24 = String string="[{\"label\":\"text\"}]" @201
-    v25 = Call v23, v20, v24 calleeKey="parse" calleeName="parse" @195
-    v26 = ClaimDeclared v25 declared={type=undefined|null|Array<undefined|null|object> written=undefined|null|Array<undefined|null|L0> predicted=Array<L0> site=w3} @190
-    v27 = Builtin builtin=GlobalThis @236
-    v28 = PropGet v27 key="print" [isFreeName] @236
-    v29 = Predict v28 predicted=function @236
-    v30 = PropGet v8 key="label" @242
-    v31 = ClaimRead v30, v8 source=Field{key="label"} site=w4 @242
-    v32 = PropGet v26 key="length" @256
-    v33 = Predict v32 predicted=number @256
-    v34 = Call v29, -, v31, v33 calleeName="print" @236
-    v35 = Undefined @236
-    Return v35 @236
+    v13 = Call v11, -, v12 calleeName="print" @146
+    v14 = Integer @173
+    v15 = Await v14 @167
+    v16 = Convert v15 declared={type=undefined|null|number site=w1} illTypedCause=ContainerWriterUnseen @167
+    v17 = Builtin builtin=GlobalThis @190
+    v18 = PropGet v17 key="JSON" [isFreeName] @190
+    v19 = Convert v18 declared={type=builtin(JSON) flags=[IsExpected]} @190
+    v20 = PropGet v19 key="parse" @190
+    v21 = Convert v20 declared={type=function flags=[IsExpected]} @190
+    v22 = Convert v21 declared={type=builtin(JSONParse) flags=[IsExpected]} @190
+    v23 = String string="[{\"label\":\"text\"}]" @201
+    v24 = Call v22, v19, v23 calleeKey="parse" calleeName="parse" @195
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|L0> site=w2} illTypedCause=FromLooseType @190
+    v26 = Builtin builtin=GlobalThis @236
+    v27 = PropGet v26 key="print" [isFreeName] @236
+    v28 = Convert v27 declared={type=function flags=[IsExpected]} @236
+    v29 = PropGet v8 key="label" @242
+    v30 = PropGet v25 key="length" @256
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @256
+    v32 = Call v28, -, v29, v31 calleeName="print" @236
+    v33 = Undefined @236
+    Return v33 @236
 }
 entry module=m0

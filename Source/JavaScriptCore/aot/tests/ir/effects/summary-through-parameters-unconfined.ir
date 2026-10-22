@@ -1,4 +1,4 @@
-# A write to the object of an entry parameter is in the summary of that parameter also when the entry that writes may run other code, names no written operand, or passes the object where the callee has no parameter
+# A write to the object of an entry parameter is in the summary of that parameter also when the entry that writes may run other code, names no operand that it writes, or passes the object where the callee has no parameter
 # FORM: Prepared
 # RUN: effects summaries f0
 # CHECK: f0 return: {{*}} p0: [{{*}}] reads({{*}}) writes(EnvironmentFields/1, ObjectFields, ShapeWords, {{*}}) p1: [Inspects]
@@ -10,8 +10,8 @@
 # CHECK-NEXT: f6 return: {{*}} p0: [] p1: [{{*}}] reads({{*}}) writes({{*}}) p2: [Inspects]
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
-layout L1 kind=Instance name="Gauge" constructor=f7 fields=[{key="held" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f8 mutability=Fixed}]}
+layout L0 name="Point" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 kind=Instance name="Gauge" constructor=f7 fields=[{key="held" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f8 mutability=Fixed}]}
 layout L2 kind=Environment fields=[{key="count" declared={type=number}}]
 function f0 name="storesByNameIntoAnything" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
   b0(v0: anything, v1: number):

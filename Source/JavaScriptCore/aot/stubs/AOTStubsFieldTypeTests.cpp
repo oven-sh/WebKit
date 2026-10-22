@@ -11,11 +11,13 @@
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
+#include "AOTPagedBitSet.h"
 #include "AOTPrimitives.h"
 #include "AOTRuntimeType.h"
 #include "JSCJSValue.h"
 #include "JSCell.h"
 #include "JSType.h"
+#include <array>
 
 namespace JSC { namespace AOT {
 
@@ -44,6 +46,19 @@ struct ImmediateClass {
     int32_t encoded;
     uint16_t primitive;
 };
+
+// Most reference fields hold the objects of one family of layouts. Such a type has one test, and where the shapes of the family have numbers in a row, that test is one comparison.
+constexpr auto cellTestKindsInTestOrder = [] {
+    std::array<CellTestKind, numberOfEnumerators<CellTestKind>> order { };
+    size_t count = 0;
+    order[count++] = CellTestKind::ShapeIn;
+    for (CellTestKind kind : allMembersOf<CellTestKind>) {
+        if (kind != CellTestKind::ShapeIn)
+            order[count++] = kind;
+    }
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(count == order.size());
+    return order;
+}();
 
 } // namespace
 
@@ -154,33 +169,81 @@ static void testCellType(TypeTest& test, JumpList& testFailed)
     testFailed.append(jit.jump());
 }
 
+static void loadShapeTest(TypeTest& test, GPRReg result)
+{
+    test.jit.load32(Address(test.registers.test, RuntimeCellTest::offsetOfOperand()), result);
+    test.jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), result);
+}
+
 static void testShape(TypeTest& test, JumpList& testFailed)
 {
-    constexpr unsigned bitsPerWordShift = 5;
-    constexpr unsigned bytesPerWordShift = 2;
     StubAssembler& jit = test.jit;
     const GPRReg shapeTest = test.registers.scratch;
-    const GPRReg bitSetOffset = test.registers.scratch;
+    const GPRReg location = test.registers.scratch;
+    const GPRReg words = test.registers.scratch;
     const GPRReg bits = test.registers.scratch;
     const GPRReg indexFromLast = test.registers.secondScratch;
-    const GPRReg bit = test.registers.secondScratch;
+    const GPRReg page = test.registers.secondScratch;
+    const GPRReg word = test.registers.secondScratch;
 
-    jit.load32(Address(test.registers.test, RuntimeCellTest::offsetOfOperand()), shapeTest);
-    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), shapeTest);
+    loadShapeTest(test, shapeTest);
     loadShapeWord(jit, test.registers.value, indexFromLast);
-    jit.add32(Address(shapeTest, ShapeTestData::offsetOfFirst()), indexFromLast);
-    jit.add32(Address(shapeTest, ShapeTestData::offsetOfCount()), indexFromLast);
-    jit.sub32(TrustedImm32(1), indexFromLast);
+    jit.add32(Address(shapeTest, ShapeTestData::offsetOfLast()), indexFromLast);
     testFailed.append(jit.branch32(CCallHelpers::AboveOrEqual, indexFromLast, Address(shapeTest, ShapeTestData::offsetOfCount())));
-    jit.load32(Address(shapeTest, ShapeTestData::offsetOfBitSetOffset()), bitSetOffset);
-    test.isAccepted.append(jit.branch32(CCallHelpers::Equal, bitSetOffset, TrustedImm32(static_cast<int32_t>(noBitSet))));
+    jit.load32(Address(shapeTest, ShapeTestData::offsetOfBitSetOffset()), location);
+    test.isAccepted.append(jit.branch32(CCallHelpers::Equal, location, TrustedImm32(static_cast<int32_t>(noBitSet))));
 
-    jit.add32(bitSetOffset, bit);
-    jit.urshift32(bit, TrustedImm32(bitsPerWordShift), bits);
-    jit.lshift32(TrustedImm32(bytesPerWordShift), bits);
-    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), bits);
-    jit.load32(Address(bits), bits);
-    jit.urshift32(bit, bits);
+    {
+        const GPRReg head = test.registers.scratch;
+        const GPRReg slot = test.registers.secondScratch;
+        const GPRReg held = test.registers.secondScratch;
+        constexpr int32_t mark = static_cast<int32_t>(PagedBitSet::hashedInLocation);
+        JumpList isNotHashed;
+        isNotHashed.append(jit.branchTest32(CCallHelpers::Zero, location, TrustedImm32(PagedBitSet::narrowEntriesInLocation)));
+        isNotHashed.append(jit.branchTest32(CCallHelpers::Zero, location, TrustedImm32(PagedBitSet::wideEntriesInLocation)));
+        jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), words);
+        jit.load64(Address(words, -mark), head);
+        jit.mul32(head, slot);
+        jit.urshift64(TrustedImm32(32), head);
+        jit.urshift32(head, slot);
+        // No third register keeps the words or the index.
+        loadShapeTest(test, shapeTest);
+        jit.load32(Address(shapeTest, ShapeTestData::offsetOfBitSetOffset()), location);
+        jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), words);
+        static_assert(sizeof(PagedBitSet::Slot) == sizeof(uint16_t));
+        jit.load16(BaseIndex(words, slot, CCallHelpers::TimesTwo, static_cast<int32_t>(PagedBitSet::offsetOfSlots) - mark), held);
+        loadShapeTest(test, shapeTest);
+        jit.load32(Address(shapeTest, ShapeTestData::offsetOfLast()), shapeTest);
+        jit.add32(Address(test.registers.value, offsetOfShapeWord), shapeTest);
+        test.isAccepted.append(jit.branch32(CCallHelpers::Equal, shapeTest, held));
+        testFailed.append(jit.jump());
+        isNotHashed.link(&jit);
+    }
+
+    jit.urshift32(TrustedImm32(PagedBitSet::logBitsPerPage), page);
+    RELEASE_ASSERT(page == word);
+    JumpList hasWord;
+    Jump hasNarrowEntries = jit.branchTest32(CCallHelpers::NonZero, location, TrustedImm32(PagedBitSet::narrowEntriesInLocation));
+    Jump hasWideEntries = jit.branchTest32(CCallHelpers::NonZero, location, TrustedImm32(PagedBitSet::wideEntriesInLocation));
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), words);
+    hasWord.append(jit.jump());
+    hasNarrowEntries.link(&jit);
+    jit.sub32(TrustedImm32(PagedBitSet::narrowEntriesInLocation), location);
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), words);
+    jit.load8(BaseIndex(words, page, CCallHelpers::TimesOne), word);
+    hasWord.append(jit.jump());
+    hasWideEntries.link(&jit);
+    jit.sub32(TrustedImm32(PagedBitSet::wideEntriesInLocation), location);
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), words);
+    jit.load16(BaseIndex(words, page, CCallHelpers::TimesTwo), word);
+    hasWord.link(&jit);
+    jit.load64(BaseIndex(words, word, CCallHelpers::TimesEight), bits);
+
+    // No third register keeps the index. A shift looks at the last six bits of it only.
+    loadShapeTest(test, indexFromLast);
+    jit.load32(Address(indexFromLast, ShapeTestData::offsetOfLast()), indexFromLast);
+    jit.add32(Address(test.registers.value, offsetOfShapeWord), indexFromLast);
+    jit.urshift64(indexFromLast, bits);
     test.isAccepted.append(jit.branchTest32(CCallHelpers::NonZero, bits, TrustedImm32(1)));
     testFailed.append(jit.jump());
 }
@@ -243,7 +306,7 @@ static void testObject(TypeTest& test)
 
     Label hasCellTest = jit.label();
     jit.load8(Address(cellTest, RuntimeCellTest::offsetOfKind()), testKind);
-    for (CellTestKind kind : allMembersOf<CellTestKind>)
+    for (CellTestKind kind : cellTestKindsInTestOrder)
         emitCellTest(test, kind, testFailed);
     jit.breakpoint();
 

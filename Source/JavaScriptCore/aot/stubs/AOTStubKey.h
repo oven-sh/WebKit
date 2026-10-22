@@ -29,6 +29,21 @@ constexpr unsigned numberOfStubFamilies = 0
 
 enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame };
 
+// A stub of such a family takes the frame pointer register at its entry for the frame of the function that calls it, so that function has a frame record.
+constexpr bool readsFrameRecordOfCaller(StubFamily family)
+{
+    switch (family) {
+    case StubFamily::ReturnAsyncResult:
+    case StubFamily::AwaitBySavingFrame:
+    case StubFamily::SuspendGenerator:
+    case StubFamily::StepAsyncGenerator:
+    case StubFamily::TailCallWithList:
+        return true;
+    default:
+        return false;
+    }
+}
+
 class StubKey {
 public:
     static constexpr unsigned maxNumberOfForms = 64;

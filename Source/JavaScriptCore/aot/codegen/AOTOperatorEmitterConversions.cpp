@@ -216,6 +216,13 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     case OperatorForm::Numbers:
     case OperatorForm::Bits:
     case OperatorForm::Booleans:
+        if (tryGenerateTestOfRemainder(value, tested))
+            return;
+        if (const WholeRemainder* remainder = findWholeRemainder(tested)) {
+            Operand zeroWhereFalsy = remainder->zeroWhereWholeIsZero;
+            defineTest(value, zeroWhereFalsy.is<Word32>() ? isNotZero(zeroWhereFalsy.as<Word32>()) : isNotZero(zeroWhereFalsy.as<Integer>()));
+            return;
+        }
         defineTest(value, truthiness.isTruthy(value, get(tested), typeOf(tested)));
         return;
     case OperatorForm::Unselected:
@@ -256,16 +263,16 @@ CellPointer OperatorEmitter::toString(const OperationContext& context, Operand o
 void OperatorEmitter::generateStrcat(const ValueContext& value)
 {
     std::span<const ValueID> parts = value->partsOperands();
+    if (parts.empty()) {
+        define(value, emptyString());
+        return;
+    }
     if (!value->isLikelyKey()) {
         ToStringEmitter toStrings(generator());
         Vector<CellPointer, 8> fibers;
         for (ValueID part : parts)
             fibers.append(toStrings.convertAddend(value, part));
         define(value, emitter<StringEmitter>().concatenate(value, fibers.span()));
-        return;
-    }
-    if (parts.empty()) {
-        define(value, emptyString());
         return;
     }
     if (parts.size() == 1) {
@@ -278,7 +285,29 @@ void OperatorEmitter::generateStrcat(const ValueContext& value)
         bool conversionIsObservable = type.hasObjects() || type.primitives & Primitive::AnySymbol;
         primitives.append(conversionIsObservable ? boxCell(toString(value, get(part), type)) : in<Boxed>(part));
     }
-    define(value, emitter<StringEmitter>().concatenateValues(value, primitives.span(), value->isLikelyKey()));
+    auto concatenateAll = [&] {
+        return emitter<StringEmitter>().concatenateValues(value, primitives.span(), value->isLikelyKey());
+    };
+    for (unsigned index : { 1u, 0u }) {
+        if (parts.size() != 2 || !typeOf(parts[index]).isString())
+            continue;
+        Condition textIsEmpty = equal(primitives[index], boxCell(emptyString()));
+        Boxed other = primitives[1 - index];
+        const Type& otherType = typeOf(parts[1 - index]);
+        if (otherType.isAnyString()) {
+            define(value, selectByBranch<CellPointer>(textIsEmpty, [&] {
+                return unboxCell(other);
+            }, concatenateAll));
+            return;
+        }
+        if (otherType.isNumber()) {
+            define(value, selectByBranch<CellPointer>(logicalAnd(textIsEmpty, isInt32(other)), [&] {
+                return emitter<StringEmitter>().integerToString(value, unboxInt32(other));
+            }, concatenateAll));
+            return;
+        }
+    }
+    define(value, concatenateAll());
 }
 
 Operand OperatorEmitter::addStrings(const ValueContext& value)

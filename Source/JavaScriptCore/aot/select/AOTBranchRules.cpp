@@ -10,18 +10,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-struct Match {
-    SelectionGroup group;
-};
-
-} // anonymous namespace
-
 void selectTestAndBranch(SelectionContext& context)
 {
     const Function& function = context.function();
-    Vector<Match> matches;
+    Vector<BlockID, 16> blocks;
     for (BlockID block : context.analyses().cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch)
@@ -29,12 +21,10 @@ void selectTestAndBranch(SelectionContext& context)
         ValueID condition = terminator.conditionOperand();
         if (branchesOf(function.at(condition).opcode) != Branches::May || !context.isOnlyBranchedOn(condition))
             continue;
-        matches.append(Match { groupOfOne(condition) });
+        blocks.append(block);
     }
 
-    context.rewriteGroups(SelectionRuleID::TestAndBranch, matches, [](GroupRewriter& rewriter, const Match&) {
-        rewriter.emitTestAndBranch();
-    });
+    context.fuseTestsWithBranches(blocks.span());
 }
 
 } } } // namespace JSC::AOT::Typed

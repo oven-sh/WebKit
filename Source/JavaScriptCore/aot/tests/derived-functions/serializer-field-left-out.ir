@@ -4,27 +4,27 @@
 # STATISTIC: SerializersCreated = 1
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Sparse" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}, {key="count" declared={type=number}}] flow={constructorOrders=[{fields=[0, 2]}, {fields=[0, 1, 2]}]}
+layout L0 name="Sparse" fields=[{key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="name" declared={type=undefined|string}}, {key="count" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 2]}, {fields=[0, 1, 2]}]}
 
 # CHECK: function {{*}}creator=Serializer{layout=L0}
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 2]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
 # CHECK: [[withoutName]]: guard = AllGuards
-# CHECK-NEXT: = GetSlot v0, [[withoutName]] key="id" receivers=[L0] level=Predicted
+# CHECK-NEXT: = GetSlot v0, [[withoutName]] key="id" receivers=[L0] level=Expected
 # CHECK-NOT: key="name"
 # CHECK-NOT: PropGet
 # CHECK-NOT: JSONAppendValue
-# CHECK: = GetSlot v0, [[withoutName]] key="count" receivers=[L0] level=Predicted
+# CHECK: = GetSlot v0, [[withoutName]] key="count" receivers=[L0] level=Expected
 # CHECK-NEXT: = JSONAppendKey v1, {{*}} string="count" [followsMember]
 # CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObject @
 # CHECK: [[withName]]: guard = AllGuards
-# CHECK-NEXT: = GetSlot v0, [[withName]] key="id" receivers=[L0] level=Predicted
+# CHECK-NEXT: = GetSlot v0, [[withName]] key="id" receivers=[L0] level=Expected
 # CHECK-NOT: PropGet
 # CHECK-NOT: JSONAppendValue
-# CHECK: [[name]]: undefined|string = GetSlot v0, [[withName]] key="name" receivers=[L0] level=Predicted
+# CHECK: [[name]]: undefined|string = GetSlot v0, [[withName]] key="name" receivers=[L0] level=Expected
 # CHECK: = TypeTest [[name]] testedType=undefined
 # CHECK: = JSONAppendKey v1, {{*}} string="name" @
 # CHECK-NEXT: = JSONAppendString v1,
 # CHECK-NOT: PropGet
 # CHECK-NOT: JSONAppendValue
-# CHECK: = GetSlot v0, [[withName]] key="count" receivers=[L0] level=Predicted
+# CHECK: = GetSlot v0, [[withName]] key="count" receivers=[L0] level=Expected

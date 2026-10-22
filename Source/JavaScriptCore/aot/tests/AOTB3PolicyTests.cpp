@@ -105,6 +105,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(optimization.mergesAdjacentConstantStores);
     AOT_TEST_CHECK(optimization.sinksValues);
     AOT_TEST_CHECK(optimization.placesConstantsByFrequency);
+    AOT_TEST_CHECK(optimization.mergesBlocksAfterForwardingJumps);
 
     AOT_TEST_CHECK(policy.selection.extendsInstructionSelection);
     AOT_TEST_CHECK(policy.selection.attributesTrapsToAccesses);
@@ -113,8 +114,8 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.foldsComparisonsWithBounds);
     AOT_TEST_CHECK(policy.loops.versions);
     AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
-    AOT_TEST_CHECK(policy.loops.stripMinesPolls);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
+    AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);
 
     AOT_TEST_CHECK(policy.switchLowering.usesBitTests);
     AOT_TEST_CHECK(policy.switchLowering.minCasesForJumpTable == 7);
@@ -158,6 +159,8 @@ static void checkFrameAndLayoutPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.frame.mayPushSpillsAtFrameSetup);
     AOT_TEST_CHECK(air.frame.ordersSlotsByUse);
     AOT_TEST_CHECK(air.frame.prefersStackPointerAddresses);
+    AOT_TEST_CHECK(air.frame.mayOmitFrameRecord == isX86_64());
+    AOT_TEST_CHECK(air.frame.maxBytesAddedWithoutFrameRecord);
 
     AOT_TEST_CHECK(air.layout.movesBlocksWithoutSuccessorsToEnd);
     AOT_TEST_CHECK(air.layout.placesRareBlocksInGaps);
@@ -173,7 +176,9 @@ static void checkFrameAndLayoutPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.peepholes.reusesConditionFlags);
     AOT_TEST_CHECK(air.peepholes.pairsMemoryAccesses);
     AOT_TEST_CHECK(air.peepholes.resequencesMovesBeforePatches);
+    AOT_TEST_CHECK(air.peepholes.emitsShufflesInPairOrder);
     AOT_TEST_CHECK(air.peepholes.trapReach && JSValue::ValueUndefined + air.peepholes.trapReach <= FaultSite::reach);
+    AOT_TEST_CHECK((static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + air.peepholes.trapReach <= FaultSite::reach);
 }
 
 static void testFunctionPolicy()
@@ -210,6 +215,7 @@ static void testFrameSavingFunctionPolicy()
     AOT_TEST_CHECK(!policy.air.frame.mayPlaceSlotsAboveFrameRecord);
     AOT_TEST_CHECK(!policy.air.frame.mayPushCalleeSaves);
     AOT_TEST_CHECK(!policy.air.frame.mayPushSpillsAtFrameSetup);
+    AOT_TEST_CHECK(!policy.air.frame.mayOmitFrameRecord);
 
     policy.air.registers.calleeSavesClobberedAtSuspensions = RegisterSet();
     policy.air.registers.pinned = RegisterSet();
@@ -217,13 +223,15 @@ static void testFrameSavingFunctionPolicy()
     policy.air.frame.mayPlaceSlotsAboveFrameRecord = true;
     policy.air.frame.mayPushCalleeSaves = true;
     policy.air.frame.mayPushSpillsAtFrameSetup = true;
+    policy.air.frame.mayOmitFrameRecord = isX86_64();
     AOT_TEST_CHECK(WTF::toString(policy) == description);
 }
 
 static void testFunctionTraits()
 {
     DecliningRelocationLowering lowering;
-    String description = WTF::toString(policyWith({ }, traitsFor(7), lowering));
+    const B3::Policy warmPolicy = policyWith({ }, traitsFor(7), lowering);
+    String description = WTF::toString(warmPolicy);
 
     for (bool FunctionBackEndTraits::* trait : { &FunctionBackEndTraits::readsCallerFrame, &FunctionBackEndTraits::isAsync }) {
         FunctionBackEndTraits traits = traitsFor(7);
@@ -237,9 +245,32 @@ static void testFunctionTraits()
     FunctionBackEndTraits traits = traitsFor(7);
     traits.isCold = true;
     B3::Policy coldPolicy = policyWith({ }, traits, lowering);
-    AOT_TEST_CHECK(coldPolicy.air.layout.placesRareBlocksAfterGuards);
-    coldPolicy.air.layout.placesRareBlocksAfterGuards = false;
+    AOT_TEST_CHECK(!coldPolicy.air.layout.placesRareBlocksAfterGuards && coldPolicy.air.layout.makesGapsForRareBlocks);
+    AOT_TEST_CHECK(!coldPolicy.air.frame.maxBytesAddedWithoutFrameRecord);
+    coldPolicy.air.layout.makesGapsForRareBlocks = false;
+    coldPolicy.air.frame.maxBytesAddedWithoutFrameRecord = warmPolicy.air.frame.maxBytesAddedWithoutFrameRecord;
     AOT_TEST_CHECK(WTF::toString(coldPolicy) == description);
+
+    traits.runsOnce = true;
+    B3::Policy policyOfCodeThatRunsOnce = policyWith({ }, traits, lowering);
+    AOT_TEST_CHECK(policyOfCodeThatRunsOnce.air.layout.placesRareBlocksAfterGuards && !policyOfCodeThatRunsOnce.air.layout.makesGapsForRareBlocks);
+    policyOfCodeThatRunsOnce.air.layout.placesRareBlocksAfterGuards = false;
+    policyOfCodeThatRunsOnce.air.frame.maxBytesAddedWithoutFrameRecord = warmPolicy.air.frame.maxBytesAddedWithoutFrameRecord;
+    AOT_TEST_CHECK(WTF::toString(policyOfCodeThatRunsOnce) == description);
+
+    traits = traitsFor(7);
+    traits.isHot = true;
+    B3::Policy hotPolicy = policyWith({ }, traits, lowering);
+    AOT_TEST_CHECK(hotPolicy.air.frame.maxBytesAddedWithoutFrameRecord > warmPolicy.air.frame.maxBytesAddedWithoutFrameRecord);
+    hotPolicy.air.frame.maxBytesAddedWithoutFrameRecord = warmPolicy.air.frame.maxBytesAddedWithoutFrameRecord;
+    AOT_TEST_CHECK(WTF::toString(hotPolicy) == description);
+
+    traits = traitsFor(7);
+    traits.rejectsOnThrow = true;
+    B3::Policy rejectingPolicy = policyWith({ }, traits, lowering);
+    AOT_TEST_CHECK(!rejectingPolicy.air.frame.mayOmitFrameRecord);
+    rejectingPolicy.air.frame.mayOmitFrameRecord = isX86_64();
+    AOT_TEST_CHECK(WTF::toString(rejectingPolicy) == description);
 
     traits = traitsFor(7);
     traits.returnsAreUnlikely = true;
@@ -292,8 +323,10 @@ static void testBuildOptions()
     AOT_TEST_CHECK(checkedPolicy.validation.level == B3::ValidationLevel::AtEachPhase);
     AOT_TEST_CHECK(!checkedPolicy.validation.checksKnownPropertiesAtRunTime);
     AOT_TEST_CHECK(checkedPolicy.collectsRemarks);
+    AOT_TEST_CHECK(!checkedPolicy.air.frame.mayOmitFrameRecord);
     checkedPolicy.validation.level = B3::ValidationLevel::FromOptions;
     checkedPolicy.collectsRemarks = false;
+    checkedPolicy.air.frame.mayOmitFrameRecord = isX86_64();
     AOT_TEST_CHECK(WTF::toString(checkedPolicy) == description);
 
     B3::Policy verifyingPolicy = policyWith({ "check=verify-each-pass"_s }, traitsFor(7), lowering);
@@ -371,8 +404,19 @@ static void testPinnedConstants()
     AOT_TEST_CHECK(notUndefinedOrNullMask.has_value() == isX86_64());
     AOT_TEST_CHECK(!notUndefinedOrNullMask || (notUndefinedOrNullMask->reg == Reg(instanceGPR) && notUndefinedOrNullMask->offset && notUndefinedOrNullMask->replacesImmediates));
 
+    for (uint64_t bits : { std::bit_cast<uint64_t>(1.0), PNaNAsBits, static_cast<uint64_t>(JSValue::DoubleEncodeOffset), static_cast<uint64_t>(JSValue::NumberTag | 1), static_cast<uint64_t>(undefinedInteger), static_cast<uint64_t>(nullInteger), static_cast<uint64_t>(absentInteger), undefinedDouble, nullDouble, absentDouble }) {
+        auto number = find(bits);
+        AOT_TEST_CHECK(number.has_value() == isX86_64());
+        AOT_TEST_CHECK(!number || (number->reg == Reg(instanceGPR) && number->offset && *number->offset >= std::numeric_limits<int8_t>::min() && *number->offset < 0 && !number->replacesImmediates));
+    }
+
+    // What a truncation gives for a number that fits no integer: farther away, and still three bytes and an instruction less than the immediate.
+    auto minInt64 = find(static_cast<uint64_t>(std::numeric_limits<int64_t>::min()));
+    AOT_TEST_CHECK(minInt64.has_value() == isX86_64());
+    AOT_TEST_CHECK(!minInt64 || (minInt64->reg == Reg(instanceGPR) && minInt64->offset && *minInt64->offset < 0 && !minInt64->replacesImmediates));
+
     AOT_TEST_CHECK(!find(42));
-    AOT_TEST_CHECK(!find(std::bit_cast<uint64_t>(1.0)));
+    AOT_TEST_CHECK(!find(std::bit_cast<uint64_t>(2.5)));
     AOT_TEST_CHECK(!find(std::bit_cast<uint64_t>(3.25)));
 }
 

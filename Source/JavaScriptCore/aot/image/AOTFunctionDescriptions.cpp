@@ -29,6 +29,7 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
     case FunctionRole::Signature:
     case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
@@ -36,18 +37,22 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
     case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
+    case FunctionRole::TableLookup:
         break;
     case FunctionRole::GenericEntrypoint:
-    case FunctionRole::GroupEntrypoint:
+    case FunctionRole::TableEntrypoint:
         subject = creator.as<CreatorRecord::Entrypoint>().target;
         break;
     case FunctionRole::GenericVersion:
     case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
     case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
         subject = creator.as<CreatorRecord::Version>().provenVersion;
         break;
     case FunctionRole::CoroutineRamp:
     case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
         subject = creator.as<CreatorRecord::Coroutine>().ramp;
         break;
     case FunctionRole::BoundFunction:
@@ -55,9 +60,6 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
         break;
     case FunctionRole::ResultWorker:
         subject = creator.as<CreatorRecord::ResultWorker>().origin;
-        break;
-    case FunctionRole::Continuation:
-        subject = creator.as<CreatorRecord::Continuation>().origin;
         break;
     }
     FunctionID asRead = findFunctionAsRead(&program, subject);
@@ -98,20 +100,23 @@ static String roleWord(const Program& program, FunctionID id)
     case FunctionRole::ResultWorker:
         return "result-worker"_s;
     case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
         return "parameter-wrapper"_s;
     case FunctionRole::OutlinedBody:
         return "outlined"_s;
-    case FunctionRole::Continuation:
-        return "continuation"_s;
     case FunctionRole::Serializer:
         return "serializer"_s;
     case FunctionRole::Library:
     case FunctionRole::Model:
     case FunctionRole::Signature:
-    case FunctionRole::GroupEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
     case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
     case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
@@ -122,9 +127,11 @@ static String roleWord(const Program& program, FunctionID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static char heatLetter(HeatClass heatClass)
+static char heatLetter(const Program& program, const Heat& heat, FunctionID id)
 {
-    switch (heatClass) {
+    if (heat.isCompact(program, id))
+        return 'k';
+    switch (heat.of(program, id)) {
     case HeatClass::Unknown:
         return 'u';
     case HeatClass::RunsOnce:
@@ -170,7 +177,7 @@ Vector<String> describeFunctions(const Program& program, const Heat& heat)
         auto& function = program.functions[i];
         const String& className = classNames[subjectOf(program, id).index()];
         String path = function.module ? paths[function.module.index()] : String();
-        return makeString(className, className.isEmpty() ? ""_s : "."_s, text(function.name), '\t', roleWord(program, id), '\t', i, '\t', path, '\t', function.position, '\t', heatLetter(heat.of(program, id)));
+        return makeString(className, className.isEmpty() ? ""_s : "."_s, text(function.name), '\t', roleWord(program, id), '\t', i, '\t', path, '\t', function.position, '\t', heatLetter(program, heat, id));
     });
 }
 

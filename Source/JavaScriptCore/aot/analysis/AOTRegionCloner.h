@@ -19,6 +19,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 class FunctionAnalyses;
+class Liveness;
 class SSARepair;
 
 enum class CloneCheck : uint8_t { Unknown, OperandMustBeDefinition, FunctionMayNotBeCloned, BoundToFrame, HandlerOutsideRegion, CanClone };
@@ -30,8 +31,16 @@ public:
 
     static CloneCheck checkCanDuplicate(FunctionAnalyses&, std::span<const BlockID> region);
     static CloneCheck checkCanDuplicate(FunctionAnalyses&, std::span<const BlockID> region, std::span<const BlockID> entries);
+    // The liveness is asked for only where a block of the region uses a value of another of its blocks. It has to track the values that the region defines, at the heads of the entries.
+    using LivenessSource = ScopedLambda<const Liveness&()>;
+    static CloneCheck checkCanDuplicate(FunctionAnalyses&, std::span<const BlockID> region, std::span<const BlockID> entries, NOESCAPE const LivenessSource&);
+    // Of the values that the blocks define, at the heads of the entries. The rest of a function is most of it, and a copy of a few blocks asks nothing about it.
+    static std::unique_ptr<Liveness> computeLivenessInside(FunctionAnalyses&, std::span<const BlockID> blocks, std::span<const BlockID> entries);
     static CloneCheck checkCanExtract(FunctionAnalyses&, std::span<const BlockID> region);
     static CloneCheck checkCanInline(const Function& callee);
+    static bool canMergeAt(FunctionAnalyses&, ValueID definition, BlockID join);
+    static bool canMergeAt(FunctionAnalyses&, const BitVector& isInRegion, ValueID definition, BlockID join);
+    static bool canMergeAt(FunctionAnalyses&, const BitVector& isInRegion, BlockID join);
     static Vector<ValueID> findLiveIns(const Function&, std::span<const BlockID> region);
 
     void mapValue(ValueID inSource, ValueID inDestination);

@@ -25,18 +25,18 @@ variable g1 name="b" module=m3 declared={type=anything} initialization=Undefined
 variable g2 name="c" module=m3 declared={type=anything} initialization=Undefined
 variable g3 name="d" module=m3 declared={type=anything} initialization=Undefined
 variable g4 name="e" module=m3 declared={type=anything} initialization=Undefined
-module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}]
-module m1 path="/app/left.js" displayPath="left.js" body=f1 requests=[{target=m3}]
-module m2 path="/app/right.js" displayPath="right.js" body=f2 requests=[{target=m3}]
-module m3 path="/app/shared.js" displayPath="shared.js" body=f3 requests=[{target=m4}] exports=[{name="alpha" variable=g0}, {name="alphabet" variable=g1}, {name="beta" variable=g2}, {name="\u{1f600}" variable=g3}, {name="\u{ff5e}" variable=g4}]
-module m4 path="/app/shared.js.map.js" displayPath="shared.js.map.js" body=f4 requests=[{target=m3}]
+module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/app/left.js" displayPath="left.js" body=f1 requests=[{target=m3 completes=true}]
+module m2 path="/app/right.js" displayPath="right.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/app/shared.js" displayPath="shared.js" body=f3 requests=[{target=m4 completes=true}] exports=[{name="alpha" variable=g0}, {name="alphabet" variable=g1}, {name="beta" variable=g2}, {name="\u{1f600}" variable=g3}, {name="\u{ff5e}" variable=g4}]
+module m4 path="/app/shared.js.map.js" displayPath="shared.js.map.js" body=f4 requests=[{target=m3 completes=true}]
 module m5 path="/app/\u{e9}.js" displayPath="e.js" body=f5
 module m6 path="/app/\u{ff5e}.js" displayPath="tilde.js" body=f6
 module m7 path="/app/\u{1f600}.js" displayPath="face.js" body=f7
 module m8 path="/a" displayPath="a" body=f8
 module m9 path="/app/lib.js" displayPath="lib.js" body=f9
 module m10 path="/app/other.js" displayPath="other.js" body=f10
-module m11 path="/entry.js" displayPath="entry.js" body=f11 requests=[{target=m0}, {target=m5}, {target=m6}, {target=m7}, {target=m8}]
+module m11 path="/entry.js" displayPath="entry.js" body=f11 requests=[{target=m0 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}]
 entry module=m11
 
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -147,7 +147,8 @@ static String as16Bit(ASCIILiteral text)
 static void checkLists(LoadedProgram&)
 {
     ModuleTable table = tableOfImage();
-    AOT_TEST_CHECK(table.size() == numberOfModules && &table.programTables() == &Image::current()->programTables());
+    // Behind the modules of the program comes the one that withStandInLibrary() adds.
+    AOT_TEST_CHECK(table.size() == numberOfModules + 1 && &table.programTables() == &Image::current()->programTables());
 
     auto hasTargets = [&](ModuleID module, std::initializer_list<ModuleID> targets) {
         return std::ranges::equal(table.requests(module), targets, { }, &ModuleRequestData::targetModule);
@@ -156,16 +157,40 @@ static void checkLists(LoadedProgram&)
     AOT_TEST_CHECK(hasTargets(sharedModule, { mapModule }) && hasTargets(mapModule, { sharedModule }) && hasTargets(accentModule, { }));
     AOT_TEST_CHECK(hasTargets(entryModule, { mainModule, accentModule, tildeModule, faceModule, shortModule }));
 
+    // Only the walk of the entry point comes to the other modules, so its body calls their code and the loader has nothing to visit. The lists of a walk that is left to the loader: AOTModuleRequestListTests.cpp.
+    for (unsigned index = 0; index < numberOfModules; ++index)
+        AOT_TEST_CHECK(table.evaluationRequests(ModuleID(index)).empty());
+    AOT_TEST_CHECK(table.allEvaluationRequests().empty() && !table.endOfEvaluationRequests(entryModule));
+    AOT_TEST_CHECK(table.allLinkRequests().empty() && table.entryPointLinkPlan().empty());
+
     for (unsigned index = 0; index < numberOfModules; ++index) {
         ModuleID module(index);
         AOT_TEST_CHECK(table.exports(module).size() == (module == sharedModule ? 5 : 0));
         AOT_TEST_CHECK(table.syntheticExports(module).empty() && table.requiredNames(module).empty());
         AOT_TEST_CHECK(table.data(module).kind == ModuleKind::SourceText && table.hasFilePath(module));
-        // A body that only returns is not entered.
-        AOT_TEST_CHECK(!!table.data(module).bodyFunction() == (module == mainModule || module == leftModule || module == sharedModule));
+        AOT_TEST_CHECK(!!table.data(module).bodyFunction() == (module == entryModule) && table.data(module).evaluatesItself() == (module == entryModule));
         AOT_TEST_CHECK(table.data(module).isSynchronous() && !table.data(module).needsLink() && !table.data(module).reachesUncompiledCode());
         AOT_TEST_CHECK(table.data(module).isSimple() == (module != sharedModule && module != mapModule));
+        AOT_TEST_CHECK(table.data(module).needsEvaluation() == (module == entryModule));
+        AOT_TEST_CHECK(table.data(module).isEntryPoint() == (module == entryModule) && !table.data(module).isLinkedWithEntryPoint() && table.linkRequests(module).empty());
     }
+}
+
+static void testModuleNumbersInOneAndTwoWords()
+{
+    constexpr uint16_t words[] { 7, 0, 65535, 1, 3, 2 };
+    ModuleNumbers narrow(words, 1u << 16);
+    AOT_TEST_CHECK(narrow.size() == 6 && narrow[2] == 65535 && narrow.contains(3) && !narrow.contains(4));
+    AOT_TEST_CHECK(narrow.subspan(2, 2).size() == 2 && narrow.subspan(2, 2)[1] == 1 && narrow.subspan(6, 0).empty());
+
+    ModuleNumbers wide(words, (1u << 16) + 1);
+    AOT_TEST_CHECK(wide.size() == 3 && wide[0] == 7 && wide[1] == 65535 + (1u << 16) && wide[2] == 3 + (2u << 16));
+    AOT_TEST_CHECK(wide.contains(7) && !wide.contains(65535) && wide.subspan(1, 2)[1] == wide[2]);
+    uint64_t sum = 0;
+    for (uint32_t module : wide)
+        sum += module;
+    AOT_TEST_CHECK(sum == 7 + 65535 + (1u << 16) + 3 + (2u << 16));
+    AOT_TEST_CHECK(ModuleNumbers().empty() && !ModuleNumbers().size());
 }
 
 static void checkFindByPath(LoadedProgram&)
@@ -173,9 +198,16 @@ static void checkFindByPath(LoadedProgram&)
     ModuleTable table = tableOfImage();
     for (unsigned index = 0; index < numberOfModules; ++index) {
         ModuleID module(index);
-        AOT_TEST_CHECK(table.findByPath(table.path(module)) == module);
-        AOT_TEST_CHECK(table.pathText(module) == table.path(module) && table.findByPath(table.pathText(module)) == module);
+        AOT_TEST_CHECK(table.findByPath(table.pathText(module)) == module);
     }
+    // The files of one directory share it, and the path is put together again. A module of a cycle gets a record with its path for a key: that path is whole.
+    AOT_TEST_CHECK(table.data(mainModule).directory != Number24::max && table.data(mainModule).directory == table.data(leftModule).directory && table.data(mainModule).directory != table.data(entryModule).directory);
+    AOT_TEST_CHECK(table.data(sharedModule).directory == Number24::max && table.pathText(sharedModule) == "/app/shared.js"_s);
+    AOT_TEST_CHECK(table.pathText(mainModule) == "/app/main.js"_s && table.pathText(entryModule) == "/entry.js"_s && table.pathText(shortModule) == "/a"_s);
+    AOT_TEST_CHECK(table.pathText(faceModule) == fromUTF8("/app/\xf0\x9f\x98\x80.js"));
+    // The end of the public path, and a text of its own.
+    AOT_TEST_CHECK(table.displayPathText(mainModule) == "main.js"_s && table.displayPathText(entryModule) == "entry.js"_s && table.displayPathText(mapModule) == "shared.js.map.js"_s);
+    AOT_TEST_CHECK(table.displayPathText(accentModule) == "e.js"_s && table.displayPathText(tildeModule) == "tilde.js"_s && table.displayPathText(faceModule) == "face.js"_s);
 
     AOT_TEST_CHECK(table.findByPath("/a"_s) == shortModule);
     AOT_TEST_CHECK(table.findByPath("/entry.js"_s) == entryModule);
@@ -248,24 +280,22 @@ static void checkFindExportWithSurrogatePair(LoadedProgram& program)
     AOT_TEST_CHECK(!findExport(program, sharedModule, String(std::span<const char16_t>(leadSurrogateOnly))));
 }
 
-static void checkFindRequireEdge(LoadedProgram&)
+// The loader answers these calls, so it links what they name when they run: the tables have no request for them.
+static void checkRequireOfLoaderIsNoRequest(LoadedProgram&)
 {
     ModuleTable table = tableOfImage();
-    AOT_TEST_CHECK(table.numberOfRequireEdges() == 3);
-
-    struct Endpoints {
-        ModuleID referrer;
-        ModuleID target;
-    };
-    uint32_t expectedIndex = 0;
-    for (Endpoints edge : { Endpoints { mainModule, libraryModule }, Endpoints { mainModule, otherModule }, Endpoints { leftModule, libraryModule } }) {
-        std::optional<uint32_t> index = table.findRequireEdge(edge.referrer, edge.target);
-        AOT_TEST_CHECK(index == expectedIndex++);
-        AOT_TEST_CHECK(table.requireEdge(*index).referrerModule() == edge.referrer && table.requireEdge(*index).targetModule() == edge.target);
+    for (ModuleID requirer : { mainModule, leftModule }) {
+        for (const ModuleRequestData& request : table.requests(requirer))
+            AOT_TEST_CHECK(ModuleTable::isImport(request) && request.targetModule() != libraryModule && request.targetModule() != otherModule);
     }
+}
 
-    for (Endpoints edge : { Endpoints { libraryModule, mainModule }, Endpoints { leftModule, otherModule }, Endpoints { rightModule, libraryModule }, Endpoints { mainModule, leftModule }, Endpoints { mainModule, entryModule }, Endpoints { entryModule, mainModule }, Endpoints { mainModule, mainModule } })
-        AOT_TEST_CHECK(!table.findRequireEdge(edge.referrer, edge.target));
+static void testRequestOfRequire()
+{
+    ModuleRequestData imported = ModuleRequestData::create(7, true, false);
+    ModuleRequestData required = ModuleRequestData::create(ModuleRequestData::maxTarget, false, false, true);
+    AOT_TEST_CHECK(ModuleTable::isImport(imported) && imported.target() == 7 && imported.isDeferred && !imported.isDynamicStarExport);
+    AOT_TEST_CHECK(!ModuleTable::isImport(required) && required.target() == ModuleRequestData::maxTarget && !required.isDeferred && !required.isDynamicStarExport);
 }
 
 namespace {
@@ -353,12 +383,14 @@ std::span<const NativeTest> moduleTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "module-table/lists"_s, withModules<checkLists> },
+        { "module-table/module-numbers-in-one-and-two-words"_s, testModuleNumbersInOneAndTwoWords },
         { "module-table/find-by-path"_s, withModules<checkFindByPath> },
         { "module-table/path-outside-ascii"_s, withModules<checkFindByPathOutsideASCII> },
         { "module-table/find-export"_s, withModules<checkFindExport> },
         { "module-table/export-of-symbol"_s, withModules<checkFindExportOfSymbol> },
         { "module-table/export-with-surrogate-pair"_s, withModules<checkFindExportWithSurrogatePair> },
-        { "module-table/find-require-edge"_s, withModules<checkFindRequireEdge> },
+        { "module-table/require-of-the-loader-is-no-request"_s, withModules<checkRequireOfLoaderIsNoRequest> },
+        { "module-table/request-of-a-require"_s, testRequestOfRequire },
         { "module-table/walk-over-diamond-and-cycle"_s, withModules<checkWalkOverDiamondAndCycle> },
         { "module-table/walk-enters-nothing-by-itself"_s, withModules<checkWalkEntersNothingByItself> },
     };

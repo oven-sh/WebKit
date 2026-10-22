@@ -54,32 +54,6 @@ static constexpr ASCIILiteral programThatReadsDateNow =
     "    Return\n"
     "}\n"_s;
 
-// A call of Array.from without a receiver is undeclared: it hands the first set, the first object under Error.prototype, their prototypes with them, and a built-in function to unknown JavaScript.
-static constexpr ASCIILiteral programThatReadsAbsentName =
-    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry module=m0\n"
-    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-    "  b0() handler=b2():\n"
-    "    v0 = Builtin builtin=Set\n"
-    "    v1 = Construct v0\n"
-    "    v2 = Builtin builtin=ArrayFrom\n"
-    "    v3 = Call v2, -, v1\n"
-    "    v4 = Construct v0\n"
-    "    v5 = PropGet v4 key=\"length\"\n"
-    "    v6 = Builtin builtin=ErrorPrototype\n"
-    "    v7 = NewObject v6\n"
-    "    v8 = Call v2, -, v7\n"
-    "    v9 = NewObject v6\n"
-    "    v10 = Integer integer=1\n"
-    "    PropSet v9, v10 key=\"node\"\n"
-    "    Jump -> next b1()\n"
-    "  b1():\n"
-    "    Return\n"
-    "  b2() role=CatchHandler:\n"
-    "    v12 = CatchValue\n"
-    "    Return\n"
-    "}\n"_s;
-
 namespace {
 
 struct CachedStoreCase {
@@ -106,7 +80,7 @@ constexpr ASCIILiteral constructorsWithLockedMembers[] = {
 };
 
 constexpr ASCIILiteral objectsWithoutLock[] = {
-    "Function"_s, "Error"_s, "TypeError"_s, "Intl"_s, "Date.prototype"_s, "Error.prototype"_s,
+    "Function"_s, "Error"_s, "TypeError"_s, "Intl"_s, "WeakRef.prototype"_s, "Error.prototype"_s,
     "({})"_s, "[]"_s, "/a/"_s, "new Map"_s, "(function () { })"_s,
     "Object.create(Array.prototype)"_s, "(class A extends Array { }).prototype"_s, "(class R extends RegExp { }).prototype"_s,
 };
@@ -115,7 +89,6 @@ constexpr ASCIILiteral throwingStatements[] = {
     "(function () { 'use strict'; Array.prototype.push = function () { }; })()"_s,
     "(function () { 'use strict'; delete Array.prototype.map; })()"_s,
     "Object.defineProperty(Array.prototype, 'map', { value: 1 })"_s,
-    "Object.defineProperty(Array.prototype, 'map', { writable: false })"_s,
     "(function () { 'use strict'; Object.prototype.nameNobodyHas = 1; })()"_s,
     "Object.defineProperty(Object.prototype, 'nameNobodyHas', { value: 1 })"_s,
     "Object.setPrototypeOf(Array.prototype, {})"_s,
@@ -128,8 +101,6 @@ constexpr ASCIILiteral throwingStatements[] = {
     "Array.prototype.push(1)"_s,
     "Object.assign(Array.prototype, { filter: 1 })"_s,
     "Error.captureStackTrace(Object.prototype)"_s,
-    "Object.freeze(Object.prototype)"_s,
-    "Object.seal(Object.prototype)"_s,
     "(function () { 'use strict'; Promise.resolve = function () { }; })()"_s,
     "(function () { 'use strict'; Promise.prototype.then = function () { }; })()"_s,
     "(function () { 'use strict'; Symbol.for = function () { }; })()"_s,
@@ -146,6 +117,7 @@ constexpr ASCIILiteral throwingStatements[] = {
     "Object.defineProperty(Math, 'toString', { value: 1 })"_s,
     "(function () { 'use strict'; globalThis.Math = { }; })()"_s,
     "(function () { 'use strict'; Object.keys = function () { }; })()"_s,
+    "(function () { 'use strict'; Object.getOwnPropertyNames = function () { }; })()"_s,
     "(function () { 'use strict'; Array.isArray = function () { }; })()"_s,
     "(function () { 'use strict'; Number.isInteger = function () { }; })()"_s,
     "(function () { 'use strict'; Reflect.get = function () { }; })()"_s,
@@ -153,8 +125,9 @@ constexpr ASCIILiteral throwingStatements[] = {
     "(function () { 'use strict'; JSON = { }; })()"_s,
 };
 
-constexpr ASCIILiteral ignoredStatements[] = {
+constexpr ASCIILiteral throwingStatementsOfSloppyCode[] = {
     "Array.prototype.push = function () { }"_s,
+    "delete Array.prototype.map"_s,
     "Object.prototype.nameNobodyHas = 1"_s,
     "Array.prototype[3] = 1"_s,
     "Array.prototype.length = 3"_s,
@@ -165,13 +138,13 @@ constexpr ASCIILiteral ignoredStatements[] = {
     "Math.max = function () { }"_s,
     "Math = 1"_s,
     "Object.keys = function () { }"_s,
+    "Object.getOwnPropertyNames = function () { }"_s,
 };
 
 constexpr ASCIILiteral statementsReturningFalse[] = {
     "Reflect.set(Array.prototype, 'map', 1)"_s,
     "Reflect.defineProperty(Array.prototype, 'map', { value: 1 })"_s,
     "Reflect.deleteProperty(Array.prototype, 'map')"_s,
-    "delete Array.prototype.map"_s,
     "Reflect.set(Object.prototype, 'nameNobodyHas', 1)"_s,
     "Reflect.set(Array.prototype, '0', 1)"_s,
     "Reflect.set(Array.prototype, 'length', 3)"_s,
@@ -213,7 +186,6 @@ constexpr ASCIILiteral statementsReturningTrue[] = {
     "(Math.nameNobodyHas = 1, Math.nameNobodyHas === 1)"_s,
     "(f => (Math.random = f, Math.random === f))(function () { })"_s,
     "((f, original) => (JSON.parse = f, JSON.parse === f && (JSON.parse = original, JSON.parse === original)))(function () { }, JSON.parse)"_s,
-    "((f, original) => (Object.getOwnPropertyNames = f, Object.getOwnPropertyNames === f && (Object.getOwnPropertyNames = original, true)))(function () { }, Object.getOwnPropertyNames)"_s,
     "(Object.nameNobodyHas = 1, Object.nameNobodyHas === 1)"_s,
     "(function () { 'use strict'; Math.max = Math.max; Object.assign = Object.assign || 1; Array.prototype.push = Array.prototype.push; globalThis.Symbol = Symbol; Math = Math; return true; })()"_s,
     "Reflect.set(Math, 'max', Math.max)"_s,
@@ -239,12 +211,12 @@ constexpr ASCIILiteral declarationsShadowingLockedMembers[] = {
 constexpr ASCIILiteral declarationsReplacingLockedMembers[] = {
     "function Atomics() { }"_s,
     "'use strict'; var Reflect = 1"_s,
+    "var JSON = 1"_s,
 };
 
 constexpr ASCIILiteral scriptsReturningTrue[] = {
     "typeof declaredBesideObject === 'undefined' && !('declaredBesideSet' in globalThis)"_s,
     "typeof Symbol() === 'symbol' && Math.max(1, 2) === 2 && new Map().size === 0 && globalThis.Math === Math && Array.isArray([])"_s,
-    "var JSON = 1; typeof JSON === 'object'"_s,
     "let WeakRef = 1; WeakRef === 1"_s,
     "const declaredByScript = 1; declaredByScript === 1"_s,
     "class ClassOfScript { } typeof ClassOfScript === 'function'"_s,
@@ -357,7 +329,7 @@ constexpr ASCIILiteral nonPristineValues[] = {
     "(u => (u.hasOwnProperty = 1, u))(new Uint8Array(2))"_s,
     "Object.setPrototypeOf(new Uint8Array(2), Object.prototype)"_s,
     "new (class U extends Uint8Array { })(2)"_s,
-    "new Error('a')"_s, "new Date(0)"_s,
+    "new Error('a')"_s, "new WeakRef({})"_s, "(d => (d.toJSON = 1, d))(new Date(0))"_s,
     "(p => (p.constructor = 1, p))(Promise.resolve(1))"_s,
     "(p => (p.then = function () { }, p))(Promise.resolve(1))"_s,
     "Object.setPrototypeOf(Promise.resolve(1), {})"_s,
@@ -382,10 +354,11 @@ constexpr CachedStoreCase cachedStoreCases[] = {
 bool isPristine(VM& vm, JSValue value)
 {
     JSCell* cell = value.asCell();
-    AOT_TEST_CHECK(cell->structure()->isPristine() == cell->isPristine());
-    if (auto* array = dynamicDowncast<JSArray>(cell))
+    auto* array = dynamicDowncast<JSArray>(cell);
+    AOT_TEST_CHECK(cell->isPristine() == (cell->structure()->isPristine() && (!array || cell->structure()->hasPristineElements())));
+    if (array)
         array->validatePristine(vm);
-    return cell->isPristine();
+    return cell->structure()->isPristine();
 }
 
 bool hasOnlyLockedPrototypes(JSObject* object)
@@ -507,7 +480,7 @@ void checkAlwaysLockedMembers(Realms& realms)
         Structure* constructor = realms.object(realms.locked(), source)->structure();
         AOT_TEST_CHECK_FOR_SOURCE(constructor->isImmutableProperty(vm.propertyNames->speciesSymbol.impl()), source);
         AOT_TEST_CHECK_FOR_SOURCE(constructor->isImmutableProperty(vm.propertyNames->name.impl()) && constructor->isImmutableProperty(vm.propertyNames->iteratorSymbol.impl()), source);
-        AOT_TEST_CHECK_FOR_SOURCE(!constructor->hasImmutableProperties() && constructor->hasImmutablePrototype() && constructor->hasImmutableIndexedProperties(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(!constructor->hasImmutableProperties() && constructor->hasImmutablePrototype() && !constructor->hasImmutableIndexedProperties(), source);
         AOT_TEST_CHECK_FOR_SOURCE(constructor->isStructureExtensible(), source);
         AOT_TEST_CHECK_FOR_SOURCE(!realms.object(realms.plain(), source)->structure()->mayHaveImmutableProperties(), source);
     }
@@ -528,8 +501,8 @@ void checkLanguageBehavior(Realms& realms)
         AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(locked, source), source);
         AOT_TEST_CHECK_FOR_SOURCE(!realms.throwsTypeError(realms.plain(), source), source);
     }
-    for (ASCIILiteral source : ignoredStatements)
-        realms.evaluate(locked, source);
+    for (ASCIILiteral source : throwingStatementsOfSloppyCode)
+        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(locked, source), source);
     for (ASCIILiteral source : statementsReturningFalse)
         AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(false), source);
     for (ASCIILiteral source : statementsReturningTrue)
@@ -868,7 +841,9 @@ static void testStartUpCreatesNoClass(LoadedProgram& program)
 {
     JSGlobalObject* realm = program.realm();
     AOT_TEST_CHECK(!realm->dateStructureConcurrently() && !realm->weakMapStructureConcurrently() && !realm->weakSetStructureConcurrently());
-    AOT_TEST_CHECK(!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default) && !realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared));
+    AOT_TEST_CHECK(!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
+    // Where the option is on, as in Bun and here, JSGlobalObject::init() puts SharedArrayBuffer on the global object of every realm.
+    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::useSharedArrayBuffer());
     AOT_TEST_CHECK(!realm->typedArrayStructureConcurrently(TypeUint8, false) && !realm->typedArrayStructureConcurrently(TypeFloat64, false) && !realm->typedArrayStructureConcurrently(TypeDataView, false));
     AOT_TEST_CHECK(!findExistingObject(realm, Identifier::fromString(program.realms().vm(), "Math"_s).impl()));
 }
@@ -976,100 +951,16 @@ static void testConstantMembersAreImmutable(LoadedProgram& program)
     AOT_TEST_CHECK(realm->structure()->isImmutableProperty(Identifier::fromString(vm, "Date"_s).impl()));
     AOT_TEST_CHECK(!realm->structure()->isImmutableProperty(Identifier::fromString(vm, "Intl"_s).impl()));
 
-    for (ASCIILiteral source : { "(function () { 'use strict'; Date.now = function () { }; })()"_s, "Object.defineProperty(Date, 'now', { value: 1 })"_s, "(function () { 'use strict'; delete Date.now; })()"_s, "(function () { 'use strict'; Date = 1; })()"_s }) {
+    for (ASCIILiteral source : { "(function () { 'use strict'; Date.now = function () { }; })()"_s, "Object.defineProperty(Date, 'now', { value: 1 })"_s, "(function () { 'use strict'; delete Date.now; })()"_s, "(function () { 'use strict'; Date = 1; })()"_s, "Date.now = function () { }"_s, "Date = 1"_s }) {
         AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(realm, source), source);
         AOT_TEST_CHECK_FOR_SOURCE(!realms.throwsTypeError(realms.plain(), source), source);
     }
-    for (ASCIILiteral source : { "(f => (Date.now = f, Date.now !== f))(function () { })"_s, "(Date = 1, Date !== 1)"_s, "Object.getOwnPropertyDescriptor(Date, 'now').writable"_s, "(f => (Date.parse = f, Date.parse === f))(function () { })"_s, "(Date.nameNobodyHas = 1, Date.nameNobodyHas === 1)"_s, "(Intl = 1, Intl === 1)"_s })
+    for (ASCIILiteral source : { "Object.getOwnPropertyDescriptor(Date, 'now').writable"_s, "(f => (Date.parse = f, Date.parse === f))(function () { })"_s, "(Date.nameNobodyHas = 1, Date.nameNobodyHas === 1)"_s, "(Intl = 1, Intl === 1)"_s })
         AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(realm, source) == jsBoolean(true), source);
 
     AOT_TEST_CHECK(realms.throwsSyntaxError(realm, "let Date = 1"_s) && !realms.throwsSyntaxError(realms.plain(), "let Date = 1"_s));
     AOT_TEST_CHECK(realms.evaluate(realm, "let Intl = 2; Intl === 2 && typeof Date.now() === 'number'"_s) == jsBoolean(true));
 }
-
-static void testAbsentNamesStayAbsent(LoadedProgram& program)
-{
-    Realms& realms = program.realms();
-    VM& vm = realms.vm();
-    JSGlobalObject* realm = program.realm();
-    auto numberOfNamesClosedOn = [&](BuiltinID holder) -> std::optional<uint32_t> {
-        auto holders = program.instance().tables().holdersOfClosedAbsentNames();
-        auto found = std::ranges::find(holders, holder.index(), &ClosedAbsentNamesOfHolder::holder);
-        if (found == holders.end())
-            return std::nullopt;
-        return found->numberOfNames;
-    };
-    AOT_TEST_CHECK(numberOfNamesClosedOn(Builtins::SetPrototype) == 1u && numberOfNamesClosedOn(Builtins::ErrorPrototype) == 1u);
-    AOT_TEST_CHECK(!numberOfNamesClosedOn(Builtins::MapPrototype) && !numberOfNamesClosedOn(Builtins::TypeErrorPrototype));
-
-    Structure* prototype = realms.object(realm, "Set.prototype"_s)->structure();
-    AOT_TEST_CHECK(!prototype->hasImmutableProperties());
-    AOT_TEST_CHECK(prototype->isImmutableProperty(Identifier::fromString(vm, "length"_s).impl()));
-    AOT_TEST_CHECK(!prototype->isImmutableProperty(Identifier::fromString(vm, "width"_s).impl()));
-    AOT_TEST_CHECK(!realms.object(realm, "Map.prototype"_s)->structure()->isImmutableProperty(Identifier::fromString(vm, "length"_s).impl()));
-
-    // Error.prototype has no lock of its own: its members stay open, the name and the prototype link that the program relies on are fixed.
-    Structure* errorPrototype = realms.object(realm, "Error.prototype"_s)->structure();
-    AOT_TEST_CHECK(!errorPrototype->hasImmutableProperties() && errorPrototype->hasImmutablePrototype());
-    AOT_TEST_CHECK(errorPrototype->isImmutableProperty(Identifier::fromString(vm, "node"_s).impl()));
-    AOT_TEST_CHECK(!errorPrototype->isImmutableProperty(vm.propertyNames->name.impl()) && !errorPrototype->isImmutableProperty(Identifier::fromString(vm, "length"_s).impl()));
-    AOT_TEST_CHECK(!realms.object(realm, "TypeError.prototype"_s)->structure()->mayHaveImmutableProperties());
-
-    static constexpr ASCIILiteral throwing[] = {
-        "(function () { 'use strict'; Set.prototype.length = 1; })()"_s,
-        "(function () { 'use strict'; Set.prototype['len' + 'gth'] = 1; })()"_s,
-        "Object.defineProperty(Set.prototype, 'length', { value: 1 })"_s,
-        "Object.defineProperty(Set.prototype, 'length', { get() { return 1; } })"_s,
-        "Object.defineProperties(Set.prototype, { length: { set(value) { } } })"_s,
-        "Set.prototype.__defineGetter__('length', function () { return 1; })"_s,
-        "Set.prototype.__defineSetter__('length', function (value) { })"_s,
-        "Object.assign(Set.prototype, { length: 1 })"_s,
-        "Object.setPrototypeOf(Set.prototype, { set length(value) { } })"_s,
-        "Object.setPrototypeOf(Set.prototype, new Proxy({ }, { }))"_s,
-        "(function () { 'use strict'; Set.prototype.__proto__ = { length: 1 }; })()"_s,
-        "(function () { 'use strict'; Error.prototype.node = 1; })()"_s,
-        "Object.defineProperty(Error.prototype, 'node', { set(value) { } })"_s,
-        "Error.prototype.__defineSetter__('node', function (value) { })"_s,
-        "Object.setPrototypeOf(Error.prototype, { set node(value) { } })"_s,
-        "Object.setPrototypeOf(Error.prototype, new Proxy({ }, { }))"_s,
-    };
-    for (ASCIILiteral source : throwing) {
-        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(realm, source), source);
-        AOT_TEST_CHECK_FOR_SOURCE(!realms.throwsTypeError(realms.plain(), source), source);
-    }
-
-    static constexpr ASCIILiteral answeringTrue[] = {
-        "(Set.prototype.length = 1, Set.prototype.length === undefined)"_s,
-        "!Reflect.set(Set.prototype, 'length', 1)"_s,
-        "!Reflect.defineProperty(Set.prototype, 'length', { value: 1 })"_s,
-        "!Reflect.setPrototypeOf(Set.prototype, { })"_s,
-        "!('length' in new Set)"_s,
-        "delete Set.prototype.length"_s,
-        "(Set.prototype.width = 1, new Set().width === 1)"_s,
-        "(Map.prototype.length = 1, new Map().length === 1)"_s,
-        "(set => (set.length = 2, set.length === 2))(new Set)"_s,
-        "new (class extends Set { length = 3 })().length === 3"_s,
-        "new (class extends Set { get length() { return 4; } })().length === 4"_s,
-        "(Error.prototype.node = 1, !('node' in new Error))"_s,
-        "!Reflect.set(Error.prototype, 'node', 1)"_s,
-        "!Reflect.setPrototypeOf(Error.prototype, { })"_s,
-        "(Error.prototype.other = 1, new Error().other === 1)"_s,
-        "(Error.prototype.name = 'Renamed', new Error().name === 'Renamed')"_s,
-        "(error => (error.node = 2, error.node === 2))(new Error)"_s,
-        "(TypeError.prototype.node = 3, new TypeError().node === 3)"_s,
-        "new (class extends Error { set node(value) { this.stored = value; } })().node === undefined"_s,
-        "(function () { 'use strict'; try { Set.prototype.length = 1; } catch (error) { return error.message.startsWith('Cannot add Set.prototype.length: the compiled program looks for this property'); } })()"_s,
-        "(function () { try { Object.defineProperty(Error.prototype, 'node', { value: 1 }); } catch (error) { return error.message.startsWith('Cannot add Error.prototype.node: '); } })()"_s,
-        "(function () { 'use strict'; try { Set.prototype.add = 1; } catch (error) { return error.message.startsWith('Cannot assign to Set.prototype.add because built-in objects are read-only in a compiled executable'); } })()"_s,
-        "(function () { try { Object.setPrototypeOf(Error.prototype, { }); } catch (error) { return error.message.startsWith('Cannot change the prototype of Error.prototype because'); } })()"_s,
-        "(Object.prototype.toString.call = 1, Object.prototype.toString.call === 1)"_s,
-    };
-    for (ASCIILiteral source : answeringTrue)
-        AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(realm, source) == jsBoolean(true), source);
-}
-
-template<LoadedProgramTest body>
-static constexpr void (*withAbsentName)() = runNativeTestWithLoadedProgram<lockedRealmTests, programThatReadsAbsentName, body>;
 
 template<LoadedProgramTest body>
 static constexpr void (*withoutBuiltins)() = runNativeTestWithLoadedProgram<lockedRealmTests, programWithoutBuiltins, body>;
@@ -1118,7 +1009,6 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/start-up-marks-original-array-structures"_s, withoutBuiltins<testStartUpMarksOriginalArrayStructures> },
         { "locked-realm/start-up-marks-transitions-of-array-structures"_s, withoutBuiltins<testStartUpMarksTransitionsOfArrayStructures> },
         { "locked-realm/constant-members-are-immutable"_s, withDateNow<testConstantMembersAreImmutable> },
-        { "locked-realm/absent-names-stay-absent"_s, withAbsentName<testAbsentNamesStayAbsent> },
     };
     return tests;
 }

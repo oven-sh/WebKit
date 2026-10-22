@@ -110,684 +110,735 @@ static constexpr OperandInfo operandInfos24[] = {
     { "computedKey"_s, OperandKind::PropertyKey, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos25[] = {
+    { "target"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "source"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "sourceKey"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "targetKey"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "getter"_s, OperandKind::Callable, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos26[] = {
+    { "target"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "source"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos27[] = {
     { "function"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "computedKey"_s, OperandKind::PropertyKey, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos26[] = {
+static constexpr OperandInfo operandInfos28[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ChangesPrototype }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "prototype"_s, OperandKind::Any, false, false, false, { OperandUse::Retains, OperandUse::BecomesPrototype }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
+    { "replacedCallee"_s, OperandKind::Any, true, false, true, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "replacedThis"_s, OperandKind::Any, true, false, true, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos27[] = {
+static constexpr OperandInfo operandInfos29[] = {
     { "target"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::AssignsFrom }, { }, RetainedIn::UnknownMemory, std::nullopt, 1, { } },
     { "source"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::RetainsContents }, { Protocol::OwnKeys, Protocol::OwnValues }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "excluded"_s, OperandKind::PropertyKey, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos28[] = {
+static constexpr OperandInfo operandInfos30[] = {
+    { "source"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::RetainsContents }, { Protocol::OwnKeys, Protocol::OwnValues }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "excluded"_s, OperandKind::PropertyKey, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos31[] = {
     { "home"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos29[] = {
+static constexpr OperandInfo operandInfos32[] = {
     { "base"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "receiver"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "computedKey"_s, OperandKind::Any, true, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos30[] = {
+static constexpr OperandInfo operandInfos33[] = {
     { "base"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "receiver"_s, OperandKind::Any, false, false, false, { OperandUse::Retains, OperandUse::StoresByKey }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "computedKey"_s, OperandKind::Any, true, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos31[] = {
+static constexpr OperandInfo operandInfos34[] = {
     { "left"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "right"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos32[] = {
+static constexpr OperandInfo operandInfos35[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos33[] = {
+static constexpr OperandInfo operandInfos36[] = {
     { "left"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "right"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos34[] = {
+static constexpr OperandInfo operandInfos37[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::PrototypeChain }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "constructor"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::HasInstance, Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
 };
-static constexpr OperandInfo operandInfos35[] = {
+static constexpr OperandInfo operandInfos38[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos36[] = {
+static constexpr OperandInfo operandInfos39[] = {
     { "value"_s, OperandKind::Boolean, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos37[] = {
+static constexpr OperandInfo operandInfos40[] = {
     { "parts"_s, OperandKind::Any, false, true, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos38[] = {
-    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos39[] = {
-    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "receiver"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos40[] = {
-    { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "thisValue"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
 static constexpr OperandInfo operandInfos41[] = {
-    { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "newTarget"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos42[] = {
-    { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "thisValue"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "list"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "read"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos43[] = {
     { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "thisValue"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos44[] = {
+    { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "newTarget"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos45[] = {
+    { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "thisValue"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "list"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos46[] = {
+    { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "newTarget"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "list"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos44[] = {
+static constexpr OperandInfo operandInfos47[] = {
     { "arguments"_s, OperandKind::Declared, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos45[] = {
+static constexpr OperandInfo operandInfos48[] = {
     { "values"_s, OperandKind::Declared, false, true, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos46[] = {
+static constexpr OperandInfo operandInfos49[] = {
     { "results"_s, OperandKind::Results, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos47[] = {
+static constexpr OperandInfo operandInfos50[] = {
     { "heritage"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
 };
-static constexpr OperandInfo operandInfos48[] = {
+static constexpr OperandInfo operandInfos51[] = {
     { "constructor"_s, OperandKind::Callable, false, false, false, { OperandUse::Returns, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "heritage"_s, OperandKind::Any, true, false, false, { OperandUse::Retains, OperandUse::BecomesPrototype }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
     { "prototypeParent"_s, OperandKind::Any, true, false, false, { OperandUse::Retains, OperandUse::BecomesPrototype }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos49[] = {
+static constexpr OperandInfo operandInfos52[] = {
     { "classObject"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos50[] = {
+static constexpr OperandInfo operandInfos53[] = {
     { "classObject"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "function"_s, OperandKind::Callable, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
     { "computedKey"_s, OperandKind::PropertyKey, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos51[] = {
+static constexpr OperandInfo operandInfos54[] = {
     { "classObject"_s, OperandKind::Callable, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos52[] = {
+static constexpr OperandInfo operandInfos55[] = {
     { "newTarget"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
 };
-static constexpr OperandInfo operandInfos53[] = {
+static constexpr OperandInfo operandInfos56[] = {
     { "parent"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "newTarget"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos54[] = {
+static constexpr OperandInfo operandInfos57[] = {
     { "parent"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "newTarget"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "list"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos55[] = {
+static constexpr OperandInfo operandInfos58[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "token"_s, OperandKind::ClassToken, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos56[] = {
+static constexpr OperandInfo operandInfos59[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "token"_s, OperandKind::ClassToken, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos57[] = {
+static constexpr OperandInfo operandInfos60[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "token"_s, OperandKind::ClassToken, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Declared, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos58[] = {
+static constexpr OperandInfo operandInfos61[] = {
     { "iterable"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::Iterate }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos59[] = {
+static constexpr OperandInfo operandInfos62[] = {
     { "iterator"_s, OperandKind::IteratorState, false, false, false, { OperandUse::Inspects }, { Protocol::Iterate }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "sent"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos60[] = {
+static constexpr OperandInfo operandInfos63[] = {
     { "iterator"_s, OperandKind::IteratorState, false, false, false, { OperandUse::Inspects }, { Protocol::Iterate }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos61[] = {
+static constexpr OperandInfo operandInfos64[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::OwnKeys, Protocol::PrototypeChain }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos62[] = {
+static constexpr OperandInfo operandInfos65[] = {
     { "enumerator"_s, OperandKind::Enumerator, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::OwnKeys, Protocol::PrototypeChain }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, true, false, true, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos63[] = {
+static constexpr OperandInfo operandInfos66[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::Thenable }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos64[] = {
+static constexpr OperandInfo operandInfos67[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos65[] = {
+static constexpr OperandInfo operandInfos68[] = {
     { "specifier"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "options"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos66[] = {
+static constexpr OperandInfo operandInfos69[] = {
     { "specifier"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos67[] = {
+static constexpr OperandInfo operandInfos70[] = {
     { "text"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "thisValue"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "newTarget"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "environments"_s, OperandKind::EvalOperand, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos68[] = {
+static constexpr OperandInfo operandInfos71[] = {
     { "length"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "array"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Species }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos69[] = {
+static constexpr OperandInfo operandInfos72[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "thisValue"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "property"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos70[] = {
+static constexpr OperandInfo operandInfos73[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos71[] = {
+static constexpr OperandInfo operandInfos74[] = {
     { "generator"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos72[] = {
+static constexpr OperandInfo operandInfos75[] = {
     { "generator"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos73[] = {
+static constexpr OperandInfo operandInfos76[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
     { "done"_s, OperandKind::Boolean, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos74[] = {
+static constexpr OperandInfo operandInfos77[] = {
     { "iterator"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos75[] = {
+static constexpr OperandInfo operandInfos78[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos76[] = {
+static constexpr OperandInfo operandInfos79[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains, OperandUse::Returns }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos77[] = {
+static constexpr OperandInfo operandInfos80[] = {
     { "constructor"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
 };
-static constexpr OperandInfo operandInfos78[] = {
+static constexpr OperandInfo operandInfos81[] = {
     { "promise"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::Thenable }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos79[] = {
+static constexpr OperandInfo operandInfos82[] = {
     { "promise"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos80[] = {
+static constexpr OperandInfo operandInfos83[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos81[] = {
+static constexpr OperandInfo operandInfos84[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos82[] = {
+static constexpr OperandInfo operandInfos85[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos83[] = {
+static constexpr OperandInfo operandInfos86[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos84[] = {
+static constexpr OperandInfo operandInfos87[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos85[] = {
-    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos86[] = {
-    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "source"_s, OperandKind::Any, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos87[] = {
-    { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
 static constexpr OperandInfo operandInfos88[] = {
-    { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::Returns, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos89[] = {
-    { "collection"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "source"_s, OperandKind::Any, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos90[] = {
+    { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos91[] = {
+    { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::Returns, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos92[] = {
+    { "collection"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos93[] = {
     { "map"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "table"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "entry"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos91[] = {
+static constexpr OperandInfo operandInfos94[] = {
     { "set"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "table"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "entry"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos92[] = {
-    { "closure"_s, OperandKind::Callable, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "arguments"_s, OperandKind::Declared, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+static constexpr OperandInfo operandInfos95[] = {
+    { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "again"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos93[] = {
+static constexpr OperandInfo operandInfos96[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos94[] = {
+static constexpr OperandInfo operandInfos97[] = {
+    { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos98[] = {
+    { "view"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos99[] = {
     { "object"_s, OperandKind::Layout, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos95[] = {
-    { "epoch"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos96[] = {
+static constexpr OperandInfo operandInfos100[] = {
     { "enumerator"_s, OperandKind::Enumerator, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos97[] = {
+static constexpr OperandInfo operandInfos101[] = {
     { "guards"_s, OperandKind::Guard, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos98[] = {
+static constexpr OperandInfo operandInfos102[] = {
+    { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos103[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Declared, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos99[] = {
+static constexpr OperandInfo operandInfos104[] = {
+    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos105[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::OwnKeys }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos100[] = {
-    { "source"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::RetainsContents }, { Protocol::OwnKeys, Protocol::OwnValues }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "excluded"_s, OperandKind::PropertyKey, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos101[] = {
+static constexpr OperandInfo operandInfos106[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "source"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::RetainsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos102[] = {
+static constexpr OperandInfo operandInfos107[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos103[] = {
+static constexpr OperandInfo operandInfos108[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos104[] = {
+static constexpr OperandInfo operandInfos109[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos105[] = {
-    { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos106[] = {
+static constexpr OperandInfo operandInfos110[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "source"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos107[] = {
+static constexpr OperandInfo operandInfos111[] = {
     { "array"_s, OperandKind::Array, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "additional"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos108[] = {
+static constexpr OperandInfo operandInfos112[] = {
     { "view"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos109[] = {
+static constexpr OperandInfo operandInfos113[] = {
     { "view"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos110[] = {
+static constexpr OperandInfo operandInfos114[] = {
     { "view"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos111[] = {
+static constexpr OperandInfo operandInfos115[] = {
     { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos112[] = {
+static constexpr OperandInfo operandInfos116[] = {
     { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos113[] = {
+static constexpr OperandInfo operandInfos117[] = {
     { "property"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::ToPrimitive }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos114[] = {
+static constexpr OperandInfo operandInfos118[] = {
     { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "thisValue"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos115[] = {
+static constexpr OperandInfo operandInfos119[] = {
     { "parent"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "newTarget"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos116[] = {
+static constexpr OperandInfo operandInfos120[] = {
     { "closure"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos117[] = {
+static constexpr OperandInfo operandInfos121[] = {
     { "environment"_s, OperandKind::Environment, false, false, false, { OperandUse::Inspects, OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos118[] = {
+static constexpr OperandInfo operandInfos122[] = {
     { "environment"_s, OperandKind::Environment, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos119[] = {
+static constexpr OperandInfo operandInfos123[] = {
     { "receiver"_s, OperandKind::Any, true, false, false, { OperandUse::Retains, OperandUse::Returns, OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains, OperandUse::Returns, OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos120[] = {
+static constexpr OperandInfo operandInfos124[] = {
     { "dividend"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "divisor"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos121[] = {
+static constexpr OperandInfo operandInfos125[] = {
     { "value"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos122[] = {
+static constexpr OperandInfo operandInfos126[] = {
     { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arrayLike"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos123[] = {
+static constexpr OperandInfo operandInfos127[] = {
     { "iterable"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::RetainsContents }, { Protocol::Iterate }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos124[] = {
+static constexpr OperandInfo operandInfos128[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "property"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "enumerator"_s, OperandKind::Enumerator, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "position"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos125[] = {
+static constexpr OperandInfo operandInfos129[] = {
     { "iterator"_s, OperandKind::Object, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
     { "next"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos126[] = {
+static constexpr OperandInfo operandInfos130[] = {
     { "iterable"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos127[] = {
+static constexpr OperandInfo operandInfos131[] = {
+    { "collection"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "remaining"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "finished"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "sizeAtEntry"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos132[] = {
     { "callee"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos128[] = {
+static constexpr OperandInfo operandInfos133[] = {
+    { "generator"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ChangesPrototype }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "callee"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos134[] = {
+    { "generator"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos135[] = {
     { "value"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos129[] = {
+static constexpr OperandInfo operandInfos136[] = {
     { "generator"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "driver"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos130[] = {
+static constexpr OperandInfo operandInfos137[] = {
     { "awaited"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::Thenable }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "promise"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos131[] = {
+static constexpr OperandInfo operandInfos138[] = {
     { "promise"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arguments"_s, OperandKind::Declared, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos132[] = {
+static constexpr OperandInfo operandInfos139[] = {
     { "generator"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos133[] = {
+static constexpr OperandInfo operandInfos140[] = {
     { "generator"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::Thenable }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos134[] = {
-    { "promise"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { Protocol::Thenable }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+static constexpr OperandInfo operandInfos141[] = {
+    { "promise"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects, OperandUse::Returns, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains, OperandUse::Returns }, { Protocol::Thenable }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos135[] = {
+static constexpr OperandInfo operandInfos142[] = {
     { "elements"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { Protocol::Thenable }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos136[] = {
+static constexpr OperandInfo operandInfos143[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::PrototypeChain }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "prototype"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos137[] = {
-    { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+static constexpr OperandInfo operandInfos144[] = {
+    { "exception"_s, OperandKind::Exception, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos138[] = {
+static constexpr OperandInfo operandInfos145[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "parts"_s, OperandKind::Any, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos139[] = {
+static constexpr OperandInfo operandInfos146[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "receiver"_s, OperandKind::Any, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos140[] = {
+static constexpr OperandInfo operandInfos147[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "property"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos141[] = {
+static constexpr OperandInfo operandInfos148[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos142[] = {
+static constexpr OperandInfo operandInfos149[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "checkpoint"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos143[] = {
+static constexpr OperandInfo operandInfos150[] = {
     { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos144[] = {
+static constexpr OperandInfo operandInfos151[] = {
+    { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "expected"_s, OperandKind::Callable, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos152[] = {
     { "kept"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "replacement"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos145[] = {
+static constexpr OperandInfo operandInfos153[] = {
     { "text"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos146[] = {
+static constexpr OperandInfo operandInfos154[] = {
+    { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos155[] = {
     { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos147[] = {
+static constexpr OperandInfo operandInfos156[] = {
     { "cursor"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos148[] = {
+static constexpr OperandInfo operandInfos157[] = {
     { "cursor"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos149[] = {
+static constexpr OperandInfo operandInfos158[] = {
     { "valueStart"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos150[] = {
+static constexpr OperandInfo operandInfos159[] = {
     { "keyStart"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "valueStart"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos151[] = {
+static constexpr OperandInfo operandInfos160[] = {
     { "order"_s, OperandKind::KeyOrder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos152[] = {
+static constexpr OperandInfo operandInfos161[] = {
     { "order"_s, OperandKind::KeyOrder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "object"_s, OperandKind::Layout, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "extra"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 1, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos153[] = {
+static constexpr OperandInfo operandInfos162[] = {
     { "cursor"_s, OperandKind::Cursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "extra"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "order"_s, OperandKind::KeyOrder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos154[] = {
+static constexpr OperandInfo operandInfos163[] = {
     { "extra"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "memberName"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
     { "order"_s, OperandKind::KeyOrder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos155[] = {
+static constexpr OperandInfo operandInfos164[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos156[] = {
+static constexpr OperandInfo operandInfos165[] = {
     { "source"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "values"_s, OperandKind::Declared, false, true, false, { OperandUse::Retains }, { }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos157[] = {
+static constexpr OperandInfo operandInfos166[] = {
     { "target"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos158[] = {
+static constexpr OperandInfo operandInfos167[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::BuilderCursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos159[] = {
+static constexpr OperandInfo operandInfos168[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::BuilderCursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Boolean, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos160[] = {
+static constexpr OperandInfo operandInfos169[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::BuilderCursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos161[] = {
+static constexpr OperandInfo operandInfos170[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::BuilderCursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos162[] = {
+static constexpr OperandInfo operandInfos171[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::BuilderCursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos163[] = {
+static constexpr OperandInfo operandInfos172[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "cursor"_s, OperandKind::BuilderCursor, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos164[] = {
+static constexpr OperandInfo operandInfos173[] = {
     { "object"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "other"_s, OperandKind::Any, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos165[] = {
+static constexpr OperandInfo operandInfos174[] = {
     { "receiver"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos166[] = {
+static constexpr OperandInfo operandInfos175[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "values"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos167[] = {
+static constexpr OperandInfo operandInfos176[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "values"_s, OperandKind::Declared, false, true, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos168[] = {
+static constexpr OperandInfo operandInfos177[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::Returns, OperandUse::DefinesName }, { Protocol::OwnKeys }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "computedKey"_s, OperandKind::PropertyKey, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
     { "getter"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
     { "setter"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos169[] = {
+static constexpr OperandInfo operandInfos178[] = {
     { "object"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "functions"_s, OperandKind::Callable, false, true, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos170[] = {
+static constexpr OperandInfo operandInfos179[] = {
     { "number"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos171[] = {
+static constexpr OperandInfo operandInfos180[] = {
     { "promise"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos172[] = {
-    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "start"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "end"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos173[] = {
-    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects, OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos174[] = {
-    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "first"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "second"_s, OperandKind::Number, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos175[] = {
-    { "left"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "right"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos176[] = {
-    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "start"_s, OperandKind::Integer, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "end"_s, OperandKind::Integer, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos177[] = {
-    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "start"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "end"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "radix"_s, OperandKind::Integer, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos178[] = {
-    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "value"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos179[] = {
-    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "value"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
-static constexpr OperandInfo operandInfos180[] = {
-    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "value"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-};
 static constexpr OperandInfo operandInfos181[] = {
-    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "start"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "end"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos182[] = {
+    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects, OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos183[] = {
+    { "length"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "first"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "second"_s, OperandKind::Number, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos184[] = {
+    { "left"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "right"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos185[] = {
+    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "start"_s, OperandKind::Integer, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "end"_s, OperandKind::Integer, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "position"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos186[] = {
+    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "start"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "end"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "radix"_s, OperandKind::Integer, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos187[] = {
+    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "value"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos188[] = {
+    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "value"_s, OperandKind::Number, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos189[] = {
+    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "value"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos190[] = {
+    { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "start"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "end"_s, OperandKind::Integer, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos191[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Boolean, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos183[] = {
+static constexpr OperandInfo operandInfos192[] = {
     { "builder"_s, OperandKind::StringBuilder, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos184[] = {
+static constexpr OperandInfo operandInfos193[] = {
+    { "map"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "parts"_s, OperandKind::Any, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos194[] = {
+    { "collection"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::ReadsContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+    { "parts"_s, OperandKind::Any, false, true, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
+};
+static constexpr OperandInfo operandInfos195[] = {
     { "callee"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "target"_s, OperandKind::CodeAddress, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "thisValue"_s, OperandKind::Any, true, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "arguments"_s, OperandKind::Any, false, true, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos185[] = {
+static constexpr OperandInfo operandInfos196[] = {
     { "string"_s, OperandKind::String, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "regExp"_s, OperandKind::Object, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
     { "guard"_s, OperandKind::Guard, true, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos186[] = {
+static constexpr OperandInfo operandInfos197[] = {
     { "value"_s, OperandKind::Convertible, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos187[] = {
+static constexpr OperandInfo operandInfos198[] = {
     { "value"_s, OperandKind::Integer, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos188[] = {
+static constexpr OperandInfo operandInfos199[] = {
     { "value"_s, OperandKind::Number, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos189[] = {
+static constexpr OperandInfo operandInfos200[] = {
     { "condition"_s, OperandKind::Boolean, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos190[] = {
+static constexpr OperandInfo operandInfos201[] = {
     { "subject"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos191[] = {
+static constexpr OperandInfo operandInfos202[] = {
     { "value"_s, OperandKind::Declared, true, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos192[] = {
+static constexpr OperandInfo operandInfos203[] = {
     { "call"_s, OperandKind::Any, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos193[] = {
+static constexpr OperandInfo operandInfos204[] = {
     { "exception"_s, OperandKind::Exception, false, false, false, { OperandUse::Retains }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
-static constexpr OperandInfo operandInfos194[] = {
+static constexpr OperandInfo operandInfos205[] = {
     { "subject"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 
@@ -814,7 +865,7 @@ static std::span<const OperandInfo> operandInfosOf(Opcode opcode)
         return operandInfos8;
     case Opcode::AppendSpread:
         return operandInfos9;
-    case Opcode::AppendHole:
+    case Opcode::AppendHole: case Opcode::ConvertToDoubleStorage:
         return operandInfos10;
     case Opcode::NewSuppressedError:
         return operandInfos11;
@@ -826,8 +877,7 @@ static std::span<const OperandInfo> operandInfosOf(Opcode opcode)
         return operandInfos14;
     case Opcode::SetMappedArgument:
         return operandInfos15;
-    case Opcode::PropGet: case Opcode::PropHas: case Opcode::ShapeTest: case Opcode::PropGetChecked: case Opcode::PropGetChain:
-    case Opcode::PropGetAndTest:
+    case Opcode::PropGet: case Opcode::PropHas: case Opcode::ShapeTest: case Opcode::PropGetChain: case Opcode::PropGetAndTest:
         return operandInfos16;
     case Opcode::PropSet:
         return operandInfos17;
@@ -845,348 +895,372 @@ static std::span<const OperandInfo> operandInfosOf(Opcode opcode)
         return operandInfos23;
     case Opcode::DefineGetter: case Opcode::DefineSetter:
         return operandInfos24;
-    case Opcode::SetFunctionName:
+    case Opcode::TryDefineLiveBinding:
         return operandInfos25;
-    case Opcode::SetLiteralPrototype:
+    case Opcode::TryReExportFields:
         return operandInfos26;
-    case Opcode::CopyDataProperties:
+    case Opcode::SetFunctionName:
         return operandInfos27;
-    case Opcode::GetSuperBase:
+    case Opcode::SetLiteralPrototype:
         return operandInfos28;
-    case Opcode::SuperGet:
+    case Opcode::CopyDataProperties:
         return operandInfos29;
-    case Opcode::SuperSet:
+    case Opcode::CopyObject:
         return operandInfos30;
+    case Opcode::GetSuperBase:
+        return operandInfos31;
+    case Opcode::SuperGet:
+        return operandInfos32;
+    case Opcode::SuperSet:
+        return operandInfos33;
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd:
     case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::Less: case Opcode::LessEq:
     case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq:
-        return operandInfos31;
+        return operandInfos34;
     case Opcode::Negate: case Opcode::ToNumeric: case Opcode::Increment: case Opcode::Decrement: case Opcode::BitNot: case Opcode::ToNumber:
     case Opcode::ToString: case Opcode::ToPropertyKey: case Opcode::ToLength: case Opcode::ValueLooselyEqualsLiteral:
-        return operandInfos32;
-    case Opcode::StrictEq:
-        return operandInfos33;
-    case Opcode::InstanceOf:
-        return operandInfos34;
-    case Opcode::ToBoolean: case Opcode::TypeOf: case Opcode::TypeTest: case Opcode::IsConstructor: case Opcode::IsUnmodifiedGenerator:
-    case Opcode::HasJSType: case Opcode::IsPristineArray: case Opcode::ReportMismatch: case Opcode::IsPristine: case Opcode::IsNotThenable:
-    case Opcode::IsClosureOf: case Opcode::ValidateType: case Opcode::IsPlainDataObject: case Opcode::ValueEqualsLiteral:
         return operandInfos35;
-    case Opcode::LogicalNot:
+    case Opcode::StrictEq:
         return operandInfos36;
-    case Opcode::Strcat:
+    case Opcode::InstanceOf:
         return operandInfos37;
-    case Opcode::ToObject: case Opcode::ToThis: case Opcode::Upcast: case Opcode::Claim: case Opcode::ClaimDeclared: case Opcode::Predict:
-    case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::AssumeType:
-    case Opcode::JSONDecodeBytes:
+    case Opcode::ToBoolean: case Opcode::TypeOf: case Opcode::TypeTest: case Opcode::IsConstructor: case Opcode::IsUnmodifiedGenerator:
+    case Opcode::HasJSType: case Opcode::IsPristineArray: case Opcode::IsClosureOf: case Opcode::ReportMismatch: case Opcode::IsPristine:
+    case Opcode::IsNotThenable: case Opcode::IsFunctionOfBuiltin: case Opcode::ValidateType: case Opcode::IsPlainDataObject:
+    case Opcode::ValueEqualsLiteral:
         return operandInfos38;
-    case Opcode::ClaimRead:
+    case Opcode::LogicalNot:
         return operandInfos39;
-    case Opcode::Call:
+    case Opcode::Strcat:
         return operandInfos40;
-    case Opcode::Construct:
+    case Opcode::ToObject: case Opcode::ToThis: case Opcode::Upcast: case Opcode::Check: case Opcode::Convert: case Opcode::CheckInitialized:
+    case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::AssumeType: case Opcode::BorrowedParameter:
+    case Opcode::JSONDecodeBytes:
         return operandInfos41;
-    case Opcode::CallList:
+    case Opcode::NarrowByField:
         return operandInfos42;
-    case Opcode::ConstructList:
+    case Opcode::Call:
         return operandInfos43;
-    case Opcode::CallDirect:
+    case Opcode::Construct:
         return operandInfos44;
-    case Opcode::Results:
+    case Opcode::CallList:
         return operandInfos45;
-    case Opcode::ResultAt:
+    case Opcode::ConstructList:
         return operandInfos46;
-    case Opcode::ResolveHeritage:
+    case Opcode::CallDirect: case Opcode::CallTable:
         return operandInfos47;
-    case Opcode::NewClass:
+    case Opcode::Results:
         return operandInfos48;
-    case Opcode::GetClassPrototype:
+    case Opcode::ResultAt:
         return operandInfos49;
-    case Opcode::DefineMethod:
+    case Opcode::ResolveHeritage:
         return operandInfos50;
-    case Opcode::FinishClass:
+    case Opcode::NewClass:
         return operandInfos51;
-    case Opcode::GetConstructPrototype:
+    case Opcode::GetClassPrototype:
         return operandInfos52;
-    case Opcode::SuperConstruct:
+    case Opcode::DefineMethod:
         return operandInfos53;
-    case Opcode::SuperConstructList:
+    case Opcode::FinishClass:
         return operandInfos54;
-    case Opcode::PrivateGet: case Opcode::PrivateHas:
+    case Opcode::GetConstructPrototype:
         return operandInfos55;
-    case Opcode::PrivateSet:
+    case Opcode::SuperConstruct:
         return operandInfos56;
-    case Opcode::PrivateDefine:
+    case Opcode::SuperConstructList:
         return operandInfos57;
-    case Opcode::IteratorOpen:
+    case Opcode::PrivateGet: case Opcode::PrivateHas:
         return operandInfos58;
-    case Opcode::IteratorResume:
+    case Opcode::PrivateSet:
         return operandInfos59;
-    case Opcode::IteratorClose:
+    case Opcode::PrivateDefine:
         return operandInfos60;
-    case Opcode::ForInOpen:
+    case Opcode::IteratorOpen:
         return operandInfos61;
-    case Opcode::ForInStep:
+    case Opcode::IteratorResume:
         return operandInfos62;
-    case Opcode::Await:
+    case Opcode::IteratorClose:
         return operandInfos63;
-    case Opcode::Yield:
+    case Opcode::ForInOpen:
         return operandInfos64;
-    case Opcode::ImportDynamic:
+    case Opcode::ForInStep:
         return operandInfos65;
-    case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
+    case Opcode::Await:
         return operandInfos66;
-    case Opcode::DirectEval:
+    case Opcode::Yield: case Opcode::SetGlobalBinding:
         return operandInfos67;
-    case Opcode::ArraySpeciesCreate:
+    case Opcode::ImportDynamic:
         return operandInfos68;
-    case Opcode::GetByValWithThis:
+    case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
         return operandInfos69;
-    case Opcode::GetOwnProperty:
+    case Opcode::DirectEval:
         return operandInfos70;
-    case Opcode::ResumeGenerator: case Opcode::StepGenerator:
+    case Opcode::ArraySpeciesCreate:
         return operandInfos71;
-    case Opcode::IsGeneratorSuspendedAtStart:
+    case Opcode::GetByValWithThis:
         return operandInfos72;
-    case Opcode::CreateIteratorResult:
+    case Opcode::GetOwnProperty:
         return operandInfos73;
-    case Opcode::StepArrayIterator:
+    case Opcode::ResumeGenerator: case Opcode::StepGenerator:
         return operandInfos74;
-    case Opcode::GetInternalField: case Opcode::BelongsToInstance:
+    case Opcode::IsGeneratorSuspendedAtStart:
         return operandInfos75;
-    case Opcode::PutInternalField:
+    case Opcode::CreateIteratorResult:
         return operandInfos76;
-    case Opcode::CreatePromise:
+    case Opcode::StepArrayIterator:
         return operandInfos77;
-    case Opcode::ResolvePromise:
+    case Opcode::GetInternalField: case Opcode::BelongsToInstance: case Opcode::FinishBirth: case Opcode::TryFinishBirth:
         return operandInfos78;
-    case Opcode::RejectPromise:
+    case Opcode::PutInternalField:
         return operandInfos79;
-    case Opcode::ArrayStorageKind: case Opcode::HasArrayStorage: case Opcode::HasSpareArrayCapacity:
+    case Opcode::CreatePromise:
         return operandInfos80;
-    case Opcode::HasContiguousIndex: case Opcode::IsInBounds:
+    case Opcode::ResolvePromise:
         return operandInfos81;
-    case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
+    case Opcode::RejectPromise:
         return operandInfos82;
-    case Opcode::PutContiguousIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex:
+    case Opcode::ArrayStorageKind: case Opcode::HasArrayStorage: case Opcode::HasSpareArrayCapacity:
         return operandInfos83;
-    case Opcode::PutDoubleIndex:
+    case Opcode::HasContiguousIndex: case Opcode::IsInBounds:
         return operandInfos84;
-    case Opcode::NewContiguousArray: case Opcode::NewDoubleArray:
+    case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
         return operandInfos85;
-    case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity:
+    case Opcode::PutContiguousIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex:
         return operandInfos86;
-    case Opcode::GrowNewArray:
+    case Opcode::PutDoubleIndex:
         return operandInfos87;
-    case Opcode::TruncateNewArray:
+    case Opcode::NewContiguousArray: case Opcode::NewDoubleArray:
         return operandInfos88;
-    case Opcode::CollectionTable:
+    case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity:
         return operandInfos89;
-    case Opcode::MapNext:
+    case Opcode::GrowNewArray:
         return operandInfos90;
-    case Opcode::SetNext:
+    case Opcode::TruncateNewArray:
         return operandInfos91;
-    case Opcode::CallGroup:
+    case Opcode::CollectionTable: case Opcode::IsCollectionTableFull:
         return operandInfos92;
-    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::GetSlot:
-    case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::MapNext:
         return operandInfos93;
-    case Opcode::HasKeyOrder:
+    case Opcode::SetNext:
         return operandInfos94;
-    case Opcode::IsShapeEpochCurrent:
+    case Opcode::ReadAgain:
         return operandInfos95;
-    case Opcode::IsEnumeratorCurrent:
+    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter:
+    case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
         return operandInfos96;
-    case Opcode::AllGuards:
+    case Opcode::IsElementPresent: case Opcode::HasArrayElement:
         return operandInfos97;
-    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+    case Opcode::IsInsideView:
         return operandInfos98;
-    case Opcode::PropHasOwn:
+    case Opcode::HasKeyOrder:
         return operandInfos99;
-    case Opcode::CopyObject:
+    case Opcode::IsEnumeratorCurrent:
         return operandInfos100;
-    case Opcode::TryCopyFields:
+    case Opcode::AllGuards:
         return operandInfos101;
-    case Opcode::GetArrayLength:
+    case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined:
         return operandInfos102;
-    case Opcode::GetArrayElement:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         return operandInfos103;
-    case Opcode::PutArrayElement:
+    case Opcode::MakeBorrowedObject:
         return operandInfos104;
-    case Opcode::HasArrayElement:
+    case Opcode::PropHasOwn:
         return operandInfos105;
-    case Opcode::AppendElements:
+    case Opcode::TryCopyFields:
         return operandInfos106;
-    case Opcode::ReserveArrayCapacity:
+    case Opcode::GetArrayLength:
         return operandInfos107;
-    case Opcode::GetTypedArrayLength: case Opcode::RequireAttachedTypedArray:
+    case Opcode::GetArrayElement:
         return operandInfos108;
-    case Opcode::GetTypedArrayElement:
+    case Opcode::PutArrayElement:
         return operandInfos109;
-    case Opcode::PutTypedArrayElement:
+    case Opcode::AppendElements:
         return operandInfos110;
+    case Opcode::ReserveArrayCapacity:
+        return operandInfos111;
+    case Opcode::GetTypedArrayLength: case Opcode::RequireAttachedTypedArray:
+        return operandInfos112;
+    case Opcode::GetTypedArrayElement:
+        return operandInfos113;
+    case Opcode::PutTypedArrayElement:
+        return operandInfos114;
     case Opcode::GetStringLength: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::StringStartsWithLiteral:
     case Opcode::StringEndsWithLiteral:
-        return operandInfos111;
-    case Opcode::GetStringCodeUnit: case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
-        return operandInfos112;
-    case Opcode::GetMyArgumentByVal:
-        return operandInfos113;
-    case Opcode::CallForwardVarargs:
-        return operandInfos114;
-    case Opcode::ConstructSuperForwardVarargs:
         return operandInfos115;
-    case Opcode::GetCapture:
+    case Opcode::GetStringCodeUnit: case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
         return operandInfos116;
-    case Opcode::MaterializeEnvironment:
+    case Opcode::GetMyArgumentByVal:
         return operandInfos117;
-    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
+    case Opcode::CallForwardVarargs:
         return operandInfos118;
-    case Opcode::CallBuiltin: case Opcode::CallInline:
+    case Opcode::ConstructSuperForwardVarargs:
         return operandInfos119;
-    case Opcode::DivideIntegers:
+    case Opcode::GetCapture:
         return operandInfos120;
-    case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity:
+    case Opcode::MaterializeEnvironment:
         return operandInfos121;
-    case Opcode::NewArgumentList:
+    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
         return operandInfos122;
-    case Opcode::DestructureIterable:
+    case Opcode::CallBuiltin: case Opcode::CallInline:
         return operandInfos123;
-    case Opcode::EnumeratorGetByVal:
+    case Opcode::DivideIntegers:
         return operandInfos124;
-    case Opcode::CreateAsyncFromSyncIterator:
+    case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity:
         return operandInfos125;
-    case Opcode::ThrowNotIterable:
+    case Opcode::NewArgumentList:
         return operandInfos126;
-    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
+    case Opcode::DestructureIterable:
         return operandInfos127;
-    case Opcode::IsUnmodifiedAsyncGenerator:
+    case Opcode::EnumeratorGetByVal:
         return operandInfos128;
-    case Opcode::StepAsyncGenerator:
+    case Opcode::CreateAsyncFromSyncIterator:
         return operandInfos129;
-    case Opcode::AwaitBySavingFrame:
+    case Opcode::ThrowNotIterable:
         return operandInfos130;
-    case Opcode::AwaitCallBySavingFrame:
+    case Opcode::ReserveCollectionCapacity:
         return operandInfos131;
-    case Opcode::YieldBySavingFrame:
+    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
         return operandInfos132;
-    case Opcode::AsyncGeneratorYield:
+    case Opcode::TakeGeneratorPrototype:
         return operandInfos133;
-    case Opcode::ReturnAsyncResult:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
         return operandInfos134;
-    case Opcode::PromiseAllOfElements:
+    case Opcode::IsUnmodifiedAsyncGenerator:
         return operandInfos135;
-    case Opcode::HasInPrototypeChain:
+    case Opcode::StepAsyncGenerator:
         return operandInfos136;
-    case Opcode::GetRequiredValue: case Opcode::JSONSourceStart: case Opcode::JSONSourceAbandon:
+    case Opcode::AwaitBySavingFrame:
         return operandInfos137;
-    case Opcode::StringBuilderAppend:
+    case Opcode::AwaitCallBySavingFrame:
         return operandInfos138;
-    case Opcode::StringBuilderAppendBuiltin:
+    case Opcode::YieldBySavingFrame:
         return operandInfos139;
-    case Opcode::StringBuilderAppendJSON:
+    case Opcode::AsyncGeneratorYield:
         return operandInfos140;
+    case Opcode::ReturnAsyncResult:
+        return operandInfos141;
+    case Opcode::PromiseAllOfElements:
+        return operandInfos142;
+    case Opcode::HasInPrototypeChain:
+        return operandInfos143;
+    case Opcode::AbandonModuleEvaluation:
+        return operandInfos144;
+    case Opcode::StringBuilderAppend:
+        return operandInfos145;
+    case Opcode::StringBuilderAppendBuiltin:
+        return operandInfos146;
+    case Opcode::StringBuilderAppendJSON:
+        return operandInfos147;
     case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard:
     case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderReserve: case Opcode::StringBuilderAppendConstant:
-        return operandInfos141;
+        return operandInfos148;
     case Opcode::StringBuilderRollBack:
-        return operandInfos142;
+        return operandInfos149;
     case Opcode::ValidateCallee: case Opcode::ResolveCallTarget:
-        return operandInfos143;
+        return operandInfos150;
+    case Opcode::ValidateLookup:
+        return operandInfos151;
     case Opcode::ValidateSameValue:
-        return operandInfos144;
+        return operandInfos152;
     case Opcode::JSONSourceOpen:
-        return operandInfos145;
+        return operandInfos153;
+    case Opcode::JSONSourceStart: case Opcode::JSONSourceAbandon:
+        return operandInfos154;
     case Opcode::JSONSourceClose:
-        return operandInfos146;
+        return operandInfos155;
     case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString:
     case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONFindMember:
     case Opcode::JSONKeyHasEscapes:
-        return operandInfos147;
-    case Opcode::JSONAdvance:
-        return operandInfos148;
-    case Opcode::JSONMemberRepeats:
-        return operandInfos149;
-    case Opcode::JSONKeyRepeats:
-        return operandInfos150;
-    case Opcode::JSONObjectKey:
-        return operandInfos151;
-    case Opcode::JSONObjectFinish:
-        return operandInfos152;
-    case Opcode::JSONParseExtraMembers:
-        return operandInfos153;
-    case Opcode::JSONAddExtraMember:
-        return operandInfos154;
-    case Opcode::GetOwnDataProperty:
-        return operandInfos155;
-    case Opcode::CloneAs:
         return operandInfos156;
-    case Opcode::ExpectRows:
+    case Opcode::JSONAdvance:
         return operandInfos157;
-    case Opcode::StringBuilderCommit: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken:
+    case Opcode::JSONMemberRepeats:
         return operandInfos158;
-    case Opcode::JSONAppendBoolean:
+    case Opcode::JSONKeyRepeats:
         return operandInfos159;
-    case Opcode::JSONAppendInteger:
+    case Opcode::JSONObjectKey:
         return operandInfos160;
-    case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate:
+    case Opcode::JSONObjectFinish:
         return operandInfos161;
-    case Opcode::JSONAppendString:
+    case Opcode::JSONParseExtraMembers:
         return operandInfos162;
-    case Opcode::JSONAppendValue:
+    case Opcode::JSONAddExtraMember:
         return operandInfos163;
-    case Opcode::PropGetPair:
+    case Opcode::GetOwnDataProperty:
         return operandInfos164;
-    case Opcode::CallMethod:
+    case Opcode::CloneAs:
         return operandInfos165;
-    case Opcode::TryPutByIds:
+    case Opcode::ExpectRows:
         return operandInfos166;
-    case Opcode::PutSlots:
+    case Opcode::StringBuilderCommit: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken:
         return operandInfos167;
-    case Opcode::DefineOwnProperty:
+    case Opcode::JSONAppendBoolean:
         return operandInfos168;
-    case Opcode::DefineAccessors:
+    case Opcode::JSONAppendInteger:
         return operandInfos169;
-    case Opcode::IntegerBound:
+    case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate:
         return operandInfos170;
-    case Opcode::FulfillFreshPromise:
+    case Opcode::JSONAppendString:
         return operandInfos171;
+    case Opcode::JSONAppendValue:
+        return operandInfos172;
+    case Opcode::PropGetPair:
+        return operandInfos173;
+    case Opcode::CallMethod:
+        return operandInfos174;
+    case Opcode::TryPutByIds:
+        return operandInfos175;
+    case Opcode::PutSlots:
+        return operandInfos176;
+    case Opcode::DefineOwnProperty:
+        return operandInfos177;
+    case Opcode::DefineAccessors:
+        return operandInfos178;
+    case Opcode::IntegerBound:
+        return operandInfos179;
+    case Opcode::FulfillFreshPromise:
+        return operandInfos180;
     case Opcode::Substring: case Opcode::SubstringOrUndefined: case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber:
     case Opcode::StringRangeSubstringOrUndefined:
-        return operandInfos172;
+        return operandInfos181;
     case Opcode::FlattenString:
-        return operandInfos173;
+        return operandInfos182;
     case Opcode::StringRange:
-        return operandInfos174;
+        return operandInfos183;
     case Opcode::StringOrder:
-        return operandInfos175;
+        return operandInfos184;
     case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodeUnitOrMinusOne: case Opcode::StringRangeCodePointOrUndefined:
     case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined:
-        return operandInfos176;
-    case Opcode::StringRangeParseInt:
-        return operandInfos177;
-    case Opcode::StringBuilderAppendInteger:
-        return operandInfos178;
-    case Opcode::StringBuilderAppendNumber:
-        return operandInfos179;
-    case Opcode::StringBuilderAppendString:
-        return operandInfos180;
-    case Opcode::StringBuilderAppendStringRange:
-        return operandInfos181;
-    case Opcode::StringBuilderAppendBoolean:
-        return operandInfos182;
-    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
-        return operandInfos183;
-    case Opcode::CallResolved:
-        return operandInfos184;
-    case Opcode::RegExpMatchLiteral:
         return operandInfos185;
-    case Opcode::Box: case Opcode::Unbox: case Opcode::Decode: case Opcode::Compress:
+    case Opcode::StringRangeParseInt:
         return operandInfos186;
-    case Opcode::IntegerToNumber: case Opcode::WidenInteger: case Opcode::NarrowInteger:
+    case Opcode::StringBuilderAppendInteger:
         return operandInfos187;
-    case Opcode::NumberToInteger:
+    case Opcode::StringBuilderAppendNumber:
         return operandInfos188;
+    case Opcode::StringBuilderAppendString:
+        return operandInfos189;
+    case Opcode::StringBuilderAppendStringRange:
+        return operandInfos190;
+    case Opcode::StringBuilderAppendBoolean:
+        return operandInfos191;
+    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
+        return operandInfos192;
+    case Opcode::MapGetByKeyParts:
+        return operandInfos193;
+    case Opcode::HasByKeyParts:
+        return operandInfos194;
+    case Opcode::CallResolved:
+        return operandInfos195;
+    case Opcode::RegExpMatchLiteral:
+        return operandInfos196;
+    case Opcode::Box: case Opcode::Unbox: case Opcode::Decode: case Opcode::Compress:
+        return operandInfos197;
+    case Opcode::IntegerToNumber: case Opcode::WidenInteger: case Opcode::NarrowInteger:
+        return operandInfos198;
+    case Opcode::NumberToInteger:
+        return operandInfos199;
     default:
         return { };
     }
@@ -1196,21 +1270,21 @@ static std::span<const OperandInfo> operandInfosOf(TerminatorKind kind)
 {
     switch (kind) {
     case TerminatorKind::Branch: case TerminatorKind::TestAndBranch:
-        return operandInfos189;
+        return operandInfos200;
     case TerminatorKind::Switch: case TerminatorKind::SwitchString:
-        return operandInfos190;
+        return operandInfos201;
     case TerminatorKind::Return:
-        return operandInfos191;
+        return operandInfos202;
     case TerminatorKind::ReturnCall:
-        return operandInfos192;
+        return operandInfos203;
     case TerminatorKind::Throw:
-        return operandInfos64;
+        return operandInfos67;
     case TerminatorKind::Rethrow:
-        return operandInfos193;
+        return operandInfos204;
     case TerminatorKind::SwitchOnShape:
-        return operandInfos194;
+        return operandInfos205;
     case TerminatorKind::TryCallInline:
-        return operandInfos119;
+        return operandInfos123;
     default:
         return { };
     }
@@ -1237,27 +1311,31 @@ static constexpr uint32_t defaultPayload3[] = { UINT32_MAX, UINT32_MAX };
 static constexpr uint32_t defaultPayload4[] = { UINT32_MAX, UINT32_MAX, 0, UINT32_MAX };
 static constexpr uint32_t defaultPayload5[] = { UINT32_MAX, UINT32_MAX, 0, UINT32_MAX, 0 };
 static constexpr uint32_t defaultPayload6[] = { UINT32_MAX, 0 };
-static constexpr uint32_t defaultPayload7[] = { UINT32_MAX, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload8[] = { UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload9[] = { 0, UINT32_MAX };
-static constexpr uint32_t defaultPayload10[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload11[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload12[] = { 0, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload13[] = { 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload14[] = { UINT32_MAX, UINT32_MAX, 0 };
-static constexpr uint32_t defaultPayload15[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0 };
-static constexpr uint32_t defaultPayload16[] = { 0, 0, UINT32_MAX };
-static constexpr uint32_t defaultPayload17[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload18[] = { UINT32_MAX, 0, 0, 0, UINT32_MAX };
-static constexpr uint32_t defaultPayload19[] = { UINT32_MAX, 0, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload20[] = { UINT32_MAX, 0, UINT32_MAX };
-static constexpr uint32_t defaultPayload21[] = { 0, 0, 0, UINT32_MAX };
-static constexpr uint32_t defaultPayload22[] = { 0, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload23[] = { UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload24[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload25[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload26[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
-static constexpr uint32_t defaultPayload27[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX };
+static constexpr uint32_t defaultPayload7[] = { UINT32_MAX, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload8[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload9[] = { UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload10[] = { 0, UINT32_MAX };
+static constexpr uint32_t defaultPayload11[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload12[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, 0 };
+static constexpr uint32_t defaultPayload13[] = { 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0 };
+static constexpr uint32_t defaultPayload14[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload15[] = { 0, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload16[] = { 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload17[] = { UINT32_MAX, UINT32_MAX, 0 };
+static constexpr uint32_t defaultPayload18[] = { UINT32_MAX, UINT32_MAX, 0, 0 };
+static constexpr uint32_t defaultPayload19[] = { UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload20[] = { UINT32_MAX, 0, 0, 0, UINT32_MAX };
+static constexpr uint32_t defaultPayload21[] = { 0, 0, UINT32_MAX };
+static constexpr uint32_t defaultPayload22[] = { UINT32_MAX, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload23[] = { UINT32_MAX, 0, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload24[] = { UINT32_MAX, 0, 0, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload25[] = { 0, 0, 0, UINT32_MAX };
+static constexpr uint32_t defaultPayload26[] = { 0, UINT32_MAX, 0 };
+static constexpr uint32_t defaultPayload27[] = { 0, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload28[] = { UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload29[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload30[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX };
+static constexpr uint32_t defaultPayload31[] = { UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX };
 
 std::span<const uint32_t> defaultPayloadOf(Opcode opcode)
 {
@@ -1269,9 +1347,9 @@ std::span<const uint32_t> defaultPayloadOf(Opcode opcode)
     case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::ToBoolean:
     case Opcode::ToString: case Opcode::RequireObject: case Opcode::ResultAt: case Opcode::ResumeGenerator: case Opcode::LinkTimeConstant:
     case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::TryPutByValDirect: case Opcode::HasArrayStorage:
-    case Opcode::GetTypedArrayLength: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::GetMyArgumentByVal:
-    case Opcode::DivideIntegers: case Opcode::DestructureIterable: case Opcode::StringBuilderReserve: case Opcode::JSONAppendToken:
-    case Opcode::JSONAppendValue: case Opcode::DefineOwnProperty: case Opcode::IntegerBound: case Opcode::StringRange:
+    case Opcode::IsElementPresent: case Opcode::IsInsideView: case Opcode::GetTypedArrayLength: case Opcode::GetArgument: case Opcode::GetRestLength:
+    case Opcode::GetMyArgumentByVal: case Opcode::DivideIntegers: case Opcode::DestructureIterable: case Opcode::StringBuilderReserve:
+    case Opcode::JSONAppendToken: case Opcode::JSONAppendValue: case Opcode::DefineOwnProperty: case Opcode::IntegerBound: case Opcode::StringRange:
     case Opcode::StringOrderToCharacter: case Opcode::StringIndexOfCharacter: case Opcode::ResolveCallTarget:
         return defaultPayload0;
     case Opcode::Integer: case Opcode::Double: case Opcode::IteratorClose: case Opcode::StepGenerator: case Opcode::HasJSType:
@@ -1279,79 +1357,92 @@ std::span<const uint32_t> defaultPayloadOf(Opcode opcode)
         return defaultPayload1;
     case Opcode::String: case Opcode::BigInt: case Opcode::Builtin: case Opcode::GetModuleVariable: case Opcode::PutModuleVariable:
     case Opcode::ScopeHasBinding: case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::DefineGetter:
-    case Opcode::DefineSetter: case Opcode::CopyDataProperties: case Opcode::ToObject: case Opcode::Upcast: case Opcode::Predict:
-    case Opcode::CheckInitialized: case Opcode::TypeTest: case Opcode::GetClassPrototype: case Opcode::FinishClass: case Opcode::NewClassToken:
-    case Opcode::GetConstructPrototype: case Opcode::ThrowModuleFailure: case Opcode::ImportDynamic: case Opcode::RequireDynamic:
-    case Opcode::ResolveDynamic: case Opcode::GetOwnProperty: case Opcode::CreateIteratorResult: case Opcode::RequireBuiltinModule:
-    case Opcode::NativeBinding: case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::NewContiguousArray: case Opcode::NewDoubleArray:
-    case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::GetEncodedModuleVariable: case Opcode::AssumeType: case Opcode::ShapeTest:
-    case Opcode::IsClosureOf: case Opcode::CopyObject: case Opcode::TryCopyFields: case Opcode::PromiseAllOfElements: case Opcode::GetRequiredValue:
-    case Opcode::StringBuilderAppendBuiltin: case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateFirstRun:
-    case Opcode::JSONStartsWith: case Opcode::JSONAdvance: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONObjectBegin:
-    case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::JSONAddExtraMember: case Opcode::GetOwnDataProperty:
-    case Opcode::ExpectRows: case Opcode::JSONAppendKey: case Opcode::PutSlots: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral:
-    case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
+    case Opcode::DefineSetter: case Opcode::TryReExportFields: case Opcode::CopyDataProperties: case Opcode::CopyObject: case Opcode::ToObject:
+    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::CheckInitialized: case Opcode::TypeTest: case Opcode::GetClassPrototype:
+    case Opcode::FinishClass: case Opcode::NewClassToken: case Opcode::GetConstructPrototype: case Opcode::ThrowModuleFailure:
+    case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::GetOwnProperty:
+    case Opcode::CreateIteratorResult: case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::NewPromise:
+    case Opcode::CreatePromise: case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::IsClosureOf: case Opcode::KeyConstant:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::GetEncodedModuleVariable: case Opcode::AssumeType: case Opcode::ShapeTest:
+    case Opcode::AreMembersUnchanged: case Opcode::TryCopyFields: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin:
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation:
+    case Opcode::StringBuilderAppendBuiltin: case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateLookup:
+    case Opcode::ValidateFirstRun: case Opcode::JSONStartsWith: case Opcode::JSONAdvance: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats:
+    case Opcode::JSONObjectBegin: case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::JSONAddExtraMember:
+    case Opcode::GetOwnDataProperty: case Opcode::ExpectRows: case Opcode::JSONAppendKey: case Opcode::PutSlots: case Opcode::StringEqualsLiteral:
+    case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringLastIndexOfLiteral: case Opcode::StringRangeEqualsLiteral:
     case Opcode::StringBuilderAppendConstant:
         return defaultPayload2;
-    case Opcode::ModuleBuiltin: case Opcode::NewTemplateObject: case Opcode::NewClass: case Opcode::ImportModule: case Opcode::DirectEval:
-    case Opcode::ReportMismatch: case Opcode::IsClassEvaluatedOnce: case Opcode::HasKeyOrder: case Opcode::MaterializeEnvironment:
-    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::AwaitCallBySavingFrame: case Opcode::TryPutByIds:
+    case Opcode::ModuleBuiltin: case Opcode::NewTemplateObject: case Opcode::CallDirect: case Opcode::NewClass: case Opcode::ImportModule:
+    case Opcode::EvaluateModule: case Opcode::RecordRequire: case Opcode::DirectEval: case Opcode::ReportMismatch: case Opcode::HasKeyOrder:
+    case Opcode::MaterializeEnvironment: case Opcode::GetBuiltinValue: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::TryPutByIds:
         return defaultPayload3;
-    case Opcode::Data: case Opcode::NewArray:
+    case Opcode::Data:
         return defaultPayload4;
     case Opcode::NewClosure:
         return defaultPayload5;
     case Opcode::GetEnvironmentField: case Opcode::PutEnvironmentField: case Opcode::ModuleNamespace: case Opcode::NewArrayLike:
-    case Opcode::NewArrayWithCapacity: case Opcode::IsPristine: case Opcode::GetCapture: case Opcode::JSONObjectKey:
+    case Opcode::NewArrayWithCapacity: case Opcode::IsPristine: case Opcode::GetCapture: case Opcode::PromiseAllOfElements:
+    case Opcode::JSONObjectKey:
         return defaultPayload6;
-    case Opcode::NewObject: case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
-    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+    case Opcode::NewObject:
         return defaultPayload7;
+    case Opcode::NewArray:
+        return defaultPayload8;
     case Opcode::NewRegExp: case Opcode::PropSet: case Opcode::PropDelete: case Opcode::PrivateGet: case Opcode::PrivateSet:
     case Opcode::PrivateDefine: case Opcode::PrivateHas:
-        return defaultPayload8;
-    case Opcode::NewRuntimeError: case Opcode::RequireObjectCoercible: case Opcode::IteratorOpen: case Opcode::ThrowNewError: case Opcode::CreateRest:
         return defaultPayload9;
-    case Opcode::PropGet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::SuperGet: case Opcode::Construct: case Opcode::PropHasOwn:
+    case Opcode::NewRuntimeError: case Opcode::RequireObjectCoercible: case Opcode::IteratorOpen: case Opcode::ThrowNewError:
         return defaultPayload10;
-    case Opcode::ElemGet: case Opcode::ElemHas: case Opcode::ElemDefine: case Opcode::ConstructList: case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList: case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::CallGroup: case Opcode::IsRequireEdgeReady:
-    case Opcode::NewSetFromData: case Opcode::NewMapFromData: case Opcode::CloneAs: case Opcode::CallResolved:
+    case Opcode::PropGet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::SuperGet: case Opcode::PropHasOwn:
         return defaultPayload11;
-    case Opcode::ElemSet: case Opcode::ElemDelete: case Opcode::CallInline:
+    case Opcode::ElemGet:
         return defaultPayload12;
-    case Opcode::SuperSet:
+    case Opcode::ElemSet:
         return defaultPayload13;
-    case Opcode::Claim: case Opcode::CallDirect:
+    case Opcode::ElemHas: case Opcode::ElemDefine: case Opcode::Construct: case Opcode::ConstructList: case Opcode::SuperConstruct:
+    case Opcode::SuperConstructList: case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
+    case Opcode::CloneAs: case Opcode::CallResolved:
         return defaultPayload14;
-    case Opcode::ClaimDeclared:
+    case Opcode::ElemDelete: case Opcode::CallInline:
         return defaultPayload15;
-    case Opcode::ClaimRead: case Opcode::IteratorResume: case Opcode::GetArrayElement: case Opcode::HasArrayElement:
-    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+    case Opcode::SuperSet:
         return defaultPayload16;
-    case Opcode::Call: case Opcode::CallList: case Opcode::PropGetAndTest:
+    case Opcode::Check:
         return defaultPayload17;
-    case Opcode::DefineMethod:
+    case Opcode::Convert:
         return defaultPayload18;
-    case Opcode::IsMemberUnchanged: case Opcode::ConstructSuperForwardVarargs: case Opcode::SharedRegExpLiteral:
+    case Opcode::Call: case Opcode::CallList: case Opcode::CallTable: case Opcode::PropGetAndTest:
         return defaultPayload19;
-    case Opcode::IsPrototypeLinkUnchanged:
+    case Opcode::DefineMethod:
         return defaultPayload20;
-    case Opcode::PutArrayElement:
+    case Opcode::IteratorResume: case Opcode::GetArrayElement: case Opcode::HasArrayElement: case Opcode::GetTypedArrayElement:
+    case Opcode::PutTypedArrayElement:
         return defaultPayload21;
-    case Opcode::CallForwardVarargs:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         return defaultPayload22;
-    case Opcode::CallBuiltin:
+    case Opcode::GetGlobalBinding: case Opcode::ConstructSuperForwardVarargs: case Opcode::SharedRegExpLiteral:
         return defaultPayload23;
-    case Opcode::PropGetChecked:
+    case Opcode::SetGlobalBinding:
         return defaultPayload24;
-    case Opcode::PropGetChain: case Opcode::PropGetPair:
+    case Opcode::PutArrayElement:
         return defaultPayload25;
-    case Opcode::CallMethod:
+    case Opcode::CreateRest:
         return defaultPayload26;
-    case Opcode::RegExpMatchLiteral:
+    case Opcode::CallForwardVarargs:
         return defaultPayload27;
+    case Opcode::CallBuiltin:
+        return defaultPayload28;
+    case Opcode::PropGetChain: case Opcode::PropGetPair:
+        return defaultPayload29;
+    case Opcode::CallMethod:
+        return defaultPayload30;
+    case Opcode::RegExpMatchLiteral:
+        return defaultPayload31;
     default:
         return { };
     }
@@ -1363,7 +1454,7 @@ std::span<const uint32_t> defaultPayloadOf(TerminatorKind kind)
     case TerminatorKind::ReturnCall:
         return defaultPayload0;
     case TerminatorKind::TryCallInline:
-        return defaultPayload12;
+        return defaultPayload15;
     default:
         return { };
     }
@@ -1416,18 +1507,21 @@ static constexpr PayloadFieldInfo payloadFields11[] = {
 };
 static constexpr PayloadFieldInfo payloadFields12[] = {
     { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
-    { "fields"_s, PayloadKind::List, PayloadKind::Field, std::max<unsigned>(numberOfInlinePayloadWords, 5), 0, false, false, IRForm::AsRead },
+    { "fields"_s, PayloadKind::List, PayloadKind::Field, std::max<unsigned>(numberOfInlinePayloadWords, 6), 0, false, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 1, 1, true, true, IRForm::AsRead },
     { "storage"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, true, IRForm::AsRead },
     { "allocation"_s, PayloadKind::Allocation, PayloadKind::Allocation, 3, 1, true, true, IRForm::Placed },
     { "allocationClass"_s, PayloadKind::AllocationClass, PayloadKind::AllocationClass, 4, 1, true, true, IRForm::AsRead },
+    { "outerLayout"_s, PayloadKind::Layout, PayloadKind::Layout, 5, 1, true, true, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields13[] = {
     { "contents"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
-    { "holes"_s, PayloadKind::List, PayloadKind::UInt32, std::max<unsigned>(numberOfInlinePayloadWords, 4), 0, false, false, IRForm::AsRead },
+    { "holes"_s, PayloadKind::List, PayloadKind::UInt32, std::max<unsigned>(numberOfInlinePayloadWords, 6), 0, false, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 1, 1, true, true, IRForm::AsRead },
-    { "literalStorage"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, true, IRForm::AsRead },
-    { "staticsOffset"_s, PayloadKind::StaticsOffset, PayloadKind::StaticsOffset, 3, 1, true, true, IRForm::Placed },
+    { "storage"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, true, IRForm::AsRead },
+    { "literalStorage"_s, PayloadKind::Enum, PayloadKind::Enum, 3, 1, false, true, IRForm::AsRead },
+    { "outerLayout"_s, PayloadKind::Layout, PayloadKind::Layout, 4, 1, true, true, IRForm::AsRead },
+    { "staticsOffset"_s, PayloadKind::StaticsOffset, PayloadKind::StaticsOffset, 5, 1, true, true, IRForm::Placed },
 };
 static constexpr PayloadFieldInfo payloadFields14[] = {
     { "pattern"_s, PayloadKind::String, PayloadKind::String, 0, 1, false, false, IRForm::AsRead },
@@ -1468,88 +1562,92 @@ static constexpr PayloadFieldInfo payloadFields21[] = {
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 0, 1, true, true, IRForm::AsRead },
     { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 1, 1, true, true, IRForm::AsRead },
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 2, 1, true, true, IRForm::Placed },
+    { "expectedElements"_s, PayloadKind::Enum, PayloadKind::Enum, 3, 1, false, true, IRForm::Selected },
 };
 static constexpr PayloadFieldInfo payloadFields22[] = {
     { "mode"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
     { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 2, 1, true, true, IRForm::AsRead },
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 3, 1, true, true, IRForm::Placed },
+    { "expectedElements"_s, PayloadKind::Enum, PayloadKind::Enum, 4, 1, false, true, IRForm::Selected },
 };
 static constexpr PayloadFieldInfo payloadFields23[] = {
-    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, true, false, IRForm::AsRead },
+    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 0, 1, true, true, IRForm::AsRead },
+    { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 1, 1, true, true, IRForm::AsRead },
+    { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 2, 1, true, true, IRForm::Placed },
 };
 static constexpr PayloadFieldInfo payloadFields24[] = {
-    { "methodKind"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
+    { "mode"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
+    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
+    { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 2, 1, true, true, IRForm::AsRead },
+    { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 3, 1, true, true, IRForm::Placed },
 };
 static constexpr PayloadFieldInfo payloadFields25[] = {
+    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, true, false, IRForm::AsRead },
+};
+static constexpr PayloadFieldInfo payloadFields26[] = {
+    { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
+};
+static constexpr PayloadFieldInfo payloadFields27[] = {
+    { "methodKind"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
+};
+static constexpr PayloadFieldInfo payloadFields28[] = {
     { "excludedKeys"_s, PayloadKind::List, PayloadKind::PropertyKey, std::max<unsigned>(numberOfInlinePayloadWords, 1), 0, false, false, IRForm::AsRead },
     { "request"_s, PayloadKind::Request, PayloadKind::Request, 0, 1, true, true, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields26[] = {
+static constexpr PayloadFieldInfo payloadFields29[] = {
     { "homeKind"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields27[] = {
+static constexpr PayloadFieldInfo payloadFields30[] = {
     { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, true, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
     { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 2, 1, true, true, IRForm::AsRead },
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 3, 1, true, true, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields28[] = {
+static constexpr PayloadFieldInfo payloadFields31[] = {
     { "mode"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
     { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 1, 1, true, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, true, IRForm::AsRead },
     { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 3, 1, true, true, IRForm::AsRead },
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 4, 1, true, true, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields29[] = {
+static constexpr PayloadFieldInfo payloadFields32[] = {
     { "form"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, true, IRForm::Selected },
 };
-static constexpr PayloadFieldInfo payloadFields30[] = {
+static constexpr PayloadFieldInfo payloadFields33[] = {
     { "message"_s, PayloadKind::String, PayloadKind::String, 0, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields31[] = {
+static constexpr PayloadFieldInfo payloadFields34[] = {
     { "castType"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields32[] = {
+static constexpr PayloadFieldInfo payloadFields35[] = {
     { "castType"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
     { "site"_s, PayloadKind::TypeSite, PayloadKind::TypeSite, 1, 1, true, false, IRForm::AsRead },
     { "cause"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, true, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields33[] = {
-    { "declared"_s, PayloadKind::Record, PayloadKind::Record, 0, 5, false, false, IRForm::AsRead },
-};
-static constexpr PayloadFieldInfo payloadFields34[] = {
-    { "source"_s, PayloadKind::Variant, PayloadKind::Variant, 0, 2, false, false, IRForm::AsRead },
-    { "site"_s, PayloadKind::TypeSite, PayloadKind::TypeSite, 2, 1, true, false, IRForm::AsRead },
-};
-static constexpr PayloadFieldInfo payloadFields35[] = {
-    { "predicted"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
-};
 static constexpr PayloadFieldInfo payloadFields36[] = {
-    { "name"_s, PayloadKind::String, PayloadKind::String, 0, 1, false, false, IRForm::AsRead },
+    { "declared"_s, PayloadKind::Record, PayloadKind::Record, 0, 3, false, false, IRForm::AsRead },
+    { "illTypedCause"_s, PayloadKind::Enum, PayloadKind::Enum, 3, 1, false, false, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields37[] = {
+    { "name"_s, PayloadKind::String, PayloadKind::String, 0, 1, false, false, IRForm::AsRead },
+};
+static constexpr PayloadFieldInfo payloadFields38[] = {
     { "nullishAccess"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
     { "name"_s, PayloadKind::String, PayloadKind::String, 1, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields38[] = {
+static constexpr PayloadFieldInfo payloadFields39[] = {
     { "runtimeError"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields39[] = {
+static constexpr PayloadFieldInfo payloadFields40[] = {
     { "testedType"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields40[] = {
+static constexpr PayloadFieldInfo payloadFields41[] = {
     { "calleeKey"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, true, false, IRForm::AsRead },
     { "calleeName"_s, PayloadKind::String, PayloadKind::String, 1, 1, true, false, IRForm::AsRead },
     { "expectedResult"_s, PayloadKind::ExpectedResult, PayloadKind::ExpectedResult, 2, 1, true, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 3, 1, true, true, IRForm::AsRead },
     { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 4, 1, true, true, IRForm::AsRead },
-};
-static constexpr PayloadFieldInfo payloadFields41[] = {
-    { "calleeName"_s, PayloadKind::String, PayloadKind::String, 0, 1, true, false, IRForm::AsRead },
-    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
-    { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 2, 1, true, true, IRForm::AsRead },
-    { "allocatedLayout"_s, PayloadKind::Layout, PayloadKind::Layout, 3, 1, true, true, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields42[] = {
     { "calleeName"_s, PayloadKind::String, PayloadKind::String, 0, 1, true, false, IRForm::AsRead },
@@ -1559,7 +1657,6 @@ static constexpr PayloadFieldInfo payloadFields42[] = {
 static constexpr PayloadFieldInfo payloadFields43[] = {
     { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
-    { "resultCheck"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, true, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields44[] = {
     { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
@@ -1660,8 +1757,11 @@ static constexpr PayloadFieldInfo payloadFields67[] = {
 };
 static constexpr PayloadFieldInfo payloadFields68[] = {
     { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
-    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
-    { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 2, 1, true, true, IRForm::AsRead },
+    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 1, 1, false, false, IRForm::AsRead },
+    { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 2, 1, false, false, IRForm::AsRead },
+    { "entrypoints"_s, PayloadKind::List, PayloadKind::Function, std::max<unsigned>(numberOfInlinePayloadWords, 5), 0, false, false, IRForm::AsRead },
+    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 3, 1, true, true, IRForm::AsRead },
+    { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 4, 1, true, true, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields69[] = {
     { "layouts"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 0, 1, false, false, IRForm::AsRead },
@@ -1681,86 +1781,77 @@ static constexpr PayloadFieldInfo payloadFields72[] = {
     { "arrayStorage"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields73[] = {
-    { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
-    { "side"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
-    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 2, 1, false, false, IRForm::AsRead },
-    { "guardBit"_s, PayloadKind::GuardBit, PayloadKind::GuardBit, 3, 1, true, false, IRForm::Placed },
+    { "typedArrayType"_s, PayloadKind::External, PayloadKind::External, 0, 1, false, false, IRForm::AsRead },
 };
 static constexpr PayloadFieldInfo payloadFields74[] = {
-    { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
-    { "side"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
-    { "guardBit"_s, PayloadKind::GuardBit, PayloadKind::GuardBit, 2, 1, true, false, IRForm::Placed },
+    { "conditions"_s, PayloadKind::List, PayloadKind::Record, std::max<unsigned>(numberOfInlinePayloadWords, 1), 0, false, false, IRForm::AsRead },
+    { "guardBit"_s, PayloadKind::GuardBit, PayloadKind::GuardBit, 0, 1, true, false, IRForm::Placed },
 };
 static constexpr PayloadFieldInfo payloadFields75[] = {
-    { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
-    { "guardBit"_s, PayloadKind::GuardBit, PayloadKind::GuardBit, 1, 1, true, false, IRForm::Placed },
-};
-static constexpr PayloadFieldInfo payloadFields76[] = {
-    { "module"_s, PayloadKind::Module, PayloadKind::Module, 0, 1, false, false, IRForm::AsRead },
-    { "referrer"_s, PayloadKind::Module, PayloadKind::Module, 1, 1, false, false, IRForm::AsRead },
-    { "edge"_s, PayloadKind::UInt32, PayloadKind::UInt32, 2, 1, true, false, IRForm::Placed },
-};
-static constexpr PayloadFieldInfo payloadFields77[] = {
     { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
     { "fields"_s, PayloadKind::List, PayloadKind::Field, std::max<unsigned>(numberOfInlinePayloadWords, 2), 0, false, false, IRForm::AsRead },
     { "orderWord"_s, PayloadKind::OrderWord, PayloadKind::OrderWord, 1, 1, true, false, IRForm::Placed },
 };
+static constexpr PayloadFieldInfo payloadFields76[] = {
+    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, false, false, IRForm::AsRead },
+    { "level"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
+    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, false, IRForm::AsRead },
+    { "binding"_s, PayloadKind::GlobalBinding, PayloadKind::GlobalBinding, 3, 1, true, false, IRForm::Placed },
+};
+static constexpr PayloadFieldInfo payloadFields77[] = {
+    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, false, false, IRForm::AsRead },
+    { "mode"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
+    { "level"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, false, IRForm::AsRead },
+    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 3, 1, true, false, IRForm::AsRead },
+    { "binding"_s, PayloadKind::GlobalBinding, PayloadKind::GlobalBinding, 4, 1, true, false, IRForm::Placed },
+};
 static constexpr PayloadFieldInfo payloadFields78[] = {
-    { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
-};
-static constexpr PayloadFieldInfo payloadFields79[] = {
-    { "excludedKeys"_s, PayloadKind::List, PayloadKind::PropertyKey, std::max<unsigned>(numberOfInlinePayloadWords, 1), 0, false, false, IRForm::AsRead },
-    { "request"_s, PayloadKind::Request, PayloadKind::Request, 0, 1, true, false, IRForm::Placed },
-};
-static constexpr PayloadFieldInfo payloadFields80[] = {
     { "arrayStorage"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
     { "level"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields81[] = {
+static constexpr PayloadFieldInfo payloadFields79[] = {
     { "arrayStorage"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
     { "mode"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
     { "level"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 3, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields82[] = {
-    { "typedArrayType"_s, PayloadKind::External, PayloadKind::External, 0, 1, false, false, IRForm::AsRead },
-};
-static constexpr PayloadFieldInfo payloadFields83[] = {
+static constexpr PayloadFieldInfo payloadFields80[] = {
     { "typedArrayType"_s, PayloadKind::External, PayloadKind::External, 0, 1, false, false, IRForm::AsRead },
     { "level"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields84[] = {
+static constexpr PayloadFieldInfo payloadFields81[] = {
     { "argumentIndex"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields85[] = {
+static constexpr PayloadFieldInfo payloadFields82[] = {
     { "firstArgument"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields86[] = {
+static constexpr PayloadFieldInfo payloadFields83[] = {
     { "firstArgument"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 1, 1, true, false, IRForm::AsRead },
+    { "storage"_s, PayloadKind::Enum, PayloadKind::Enum, 2, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields87[] = {
+static constexpr PayloadFieldInfo payloadFields84[] = {
     { "firstArgument"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, true, IRForm::AsRead },
     { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 2, 1, true, true, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields88[] = {
+static constexpr PayloadFieldInfo payloadFields85[] = {
     { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
     { "firstArgument"_s, PayloadKind::UInt32, PayloadKind::UInt32, 1, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, true, IRForm::AsRead },
     { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 3, 1, true, true, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields89[] = {
+static constexpr PayloadFieldInfo payloadFields86[] = {
     { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
     { "index"_s, PayloadKind::UInt32, PayloadKind::UInt32, 1, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields90[] = {
+static constexpr PayloadFieldInfo payloadFields87[] = {
     { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
     { "allocation"_s, PayloadKind::Allocation, PayloadKind::Allocation, 1, 1, true, false, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields91[] = {
+static constexpr PayloadFieldInfo payloadFields88[] = {
     { "overload"_s, PayloadKind::External, PayloadKind::External, 0, 1, false, false, IRForm::AsRead },
     { "builtinCallForm"_s, PayloadKind::Enum, PayloadKind::Enum, 1, 1, false, false, IRForm::AsRead },
     { "prefixLength"_s, PayloadKind::UInt32, PayloadKind::UInt32, 2, 1, true, false, IRForm::AsRead },
@@ -1769,69 +1860,67 @@ static constexpr PayloadFieldInfo payloadFields91[] = {
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 5, 1, true, false, IRForm::AsRead },
     { "literalSeparator"_s, PayloadKind::String, PayloadKind::String, 6, 1, true, false, IRForm::Selected },
 };
-static constexpr PayloadFieldInfo payloadFields92[] = {
+static constexpr PayloadFieldInfo payloadFields89[] = {
     { "rounding"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields93[] = {
+static constexpr PayloadFieldInfo payloadFields90[] = {
     { "data"_s, PayloadKind::Data, PayloadKind::Data, 0, 1, false, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 1, 1, true, false, IRForm::AsRead },
     { "request"_s, PayloadKind::Request, PayloadKind::Request, 2, 1, true, false, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields94[] = {
+static constexpr PayloadFieldInfo payloadFields91[] = {
     { "pattern"_s, PayloadKind::String, PayloadKind::String, 0, 1, false, false, IRForm::AsRead },
     { "regExpFlags"_s, PayloadKind::Flags, PayloadKind::Flags, 1, 1, false, false, IRForm::AsRead },
     { "regExpRecord"_s, PayloadKind::RegExpRecord, PayloadKind::RegExpRecord, 2, 1, true, false, IRForm::Placed },
     { "staticsOffset"_s, PayloadKind::StaticsOffset, PayloadKind::StaticsOffset, 3, 1, true, false, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields95[] = {
+static constexpr PayloadFieldInfo payloadFields92[] = {
+    { "member"_s, PayloadKind::Builtin, PayloadKind::Builtin, 0, 1, false, false, IRForm::AsRead },
+};
+static constexpr PayloadFieldInfo payloadFields93[] = {
+    { "builtin"_s, PayloadKind::Builtin, PayloadKind::Builtin, 0, 1, false, false, IRForm::AsRead },
+    { "overload"_s, PayloadKind::External, PayloadKind::External, 1, 1, false, false, IRForm::AsRead },
+};
+static constexpr PayloadFieldInfo payloadFields94[] = {
     { "count"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields96[] = {
+static constexpr PayloadFieldInfo payloadFields95[] = {
     { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 1, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields97[] = {
+static constexpr PayloadFieldInfo payloadFields96[] = {
     { "function"_s, PayloadKind::Function, PayloadKind::Function, 0, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 1, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields98[] = {
+static constexpr PayloadFieldInfo payloadFields97[] = {
     { "contents"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
+    { "directCalls"_s, PayloadKind::UInt32, PayloadKind::UInt32, 1, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields99[] = {
+static constexpr PayloadFieldInfo payloadFields98[] = {
     { "module"_s, PayloadKind::Module, PayloadKind::Module, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields100[] = {
+static constexpr PayloadFieldInfo payloadFields99[] = {
     { "overload"_s, PayloadKind::External, PayloadKind::External, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields101[] = {
+static constexpr PayloadFieldInfo payloadFields100[] = {
     { "validatedType"_s, PayloadKind::Type, PayloadKind::Type, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields102[] = {
+static constexpr PayloadFieldInfo payloadFields101[] = {
     { "layout"_s, PayloadKind::Layout, PayloadKind::Layout, 0, 1, false, false, IRForm::AsRead },
     { "fields"_s, PayloadKind::List, PayloadKind::Field, std::max<unsigned>(numberOfInlinePayloadWords, 3), 0, false, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 1, 1, true, false, IRForm::AsRead },
     { "request"_s, PayloadKind::Request, PayloadKind::Request, 2, 1, true, false, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields103[] = {
+static constexpr PayloadFieldInfo payloadFields102[] = {
     { "size"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields104[] = {
+static constexpr PayloadFieldInfo payloadFields103[] = {
     { "jsonToken"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields105[] = {
+static constexpr PayloadFieldInfo payloadFields104[] = {
     { "jsonPosition"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields106[] = {
-    { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, false, false, IRForm::AsRead },
-    { "checkedType"_s, PayloadKind::Type, PayloadKind::Type, 1, 1, false, false, IRForm::AsRead },
-    { "site"_s, PayloadKind::TypeSite, PayloadKind::TypeSite, 2, 1, false, false, IRForm::AsRead },
-    { "cause"_s, PayloadKind::Enum, PayloadKind::Enum, 3, 1, false, false, IRForm::AsRead },
-    { "readOrigin"_s, PayloadKind::Origin, PayloadKind::Origin, 4, 2, false, false, IRForm::AsRead },
-    { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 6, 1, true, true, IRForm::AsRead },
-    { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 7, 1, true, true, IRForm::AsRead },
-    { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 8, 1, true, true, IRForm::Placed },
-};
-static constexpr PayloadFieldInfo payloadFields107[] = {
+static constexpr PayloadFieldInfo payloadFields105[] = {
     { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, false, false, IRForm::AsRead },
     { "secondKey"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 1, 1, false, false, IRForm::AsRead },
     { "readOrigin"_s, PayloadKind::Origin, PayloadKind::Origin, 2, 2, false, false, IRForm::AsRead },
@@ -1840,14 +1929,14 @@ static constexpr PayloadFieldInfo payloadFields107[] = {
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 6, 1, true, true, IRForm::Placed },
     { "secondAccessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 7, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields108[] = {
+static constexpr PayloadFieldInfo payloadFields106[] = {
     { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, false, false, IRForm::AsRead },
     { "comparedString"_s, PayloadKind::String, PayloadKind::String, 1, 1, true, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, true, IRForm::AsRead },
     { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 3, 1, true, true, IRForm::AsRead },
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 4, 1, true, true, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields109[] = {
+static constexpr PayloadFieldInfo payloadFields107[] = {
     { "key"_s, PayloadKind::PropertyKey, PayloadKind::PropertyKey, 0, 1, false, false, IRForm::AsRead },
     { "calleeName"_s, PayloadKind::String, PayloadKind::String, 1, 1, true, false, IRForm::AsRead },
     { "readOrigin"_s, PayloadKind::Origin, PayloadKind::Origin, 2, 2, false, false, IRForm::AsRead },
@@ -1857,63 +1946,63 @@ static constexpr PayloadFieldInfo payloadFields109[] = {
     { "callees"_s, PayloadKind::CalleeSet, PayloadKind::CalleeSet, 7, 1, true, false, IRForm::AsRead },
     { "callAccessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 8, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields110[] = {
+static constexpr PayloadFieldInfo payloadFields108[] = {
     { "keys"_s, PayloadKind::List, PayloadKind::PropertyKey, std::max<unsigned>(numberOfInlinePayloadWords, 2), 0, false, false, IRForm::AsRead },
     { "request"_s, PayloadKind::Request, PayloadKind::Request, 0, 1, true, false, IRForm::Placed },
     { "siteCache"_s, PayloadKind::SiteCache, PayloadKind::SiteCache, 1, 1, true, false, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields111[] = {
+static constexpr PayloadFieldInfo payloadFields109[] = {
     { "placedKeys"_s, PayloadKind::List, PayloadKind::Record, std::max<unsigned>(numberOfInlinePayloadWords, 1), 0, false, false, IRForm::AsRead },
     { "receivers"_s, PayloadKind::LayoutSet, PayloadKind::LayoutSet, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields112[] = {
+static constexpr PayloadFieldInfo payloadFields110[] = {
     { "descriptorFlags"_s, PayloadKind::Flags, PayloadKind::Flags, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields113[] = {
+static constexpr PayloadFieldInfo payloadFields111[] = {
     { "keys"_s, PayloadKind::List, PayloadKind::PropertyKey, std::max<unsigned>(numberOfInlinePayloadWords, 2), 0, false, false, IRForm::AsRead },
     { "getterMask"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
     { "enumerableMask"_s, PayloadKind::UInt32, PayloadKind::UInt32, 1, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields114[] = {
+static constexpr PayloadFieldInfo payloadFields112[] = {
     { "comparison"_s, PayloadKind::Opcode, PayloadKind::Opcode, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields115[] = {
+static constexpr PayloadFieldInfo payloadFields113[] = {
     { "method"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields116[] = {
+static constexpr PayloadFieldInfo payloadFields114[] = {
     { "codeUnit"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields117[] = {
+static constexpr PayloadFieldInfo payloadFields115[] = {
     { "literal"_s, PayloadKind::String, PayloadKind::String, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields118[] = {
+static constexpr PayloadFieldInfo payloadFields116[] = {
     { "argumentCount"_s, PayloadKind::UInt32, PayloadKind::UInt32, 0, 1, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields119[] = {
+static constexpr PayloadFieldInfo payloadFields117[] = {
     { "overload"_s, PayloadKind::External, PayloadKind::External, 0, 1, false, false, IRForm::AsRead },
     { "pattern"_s, PayloadKind::String, PayloadKind::String, 1, 1, false, false, IRForm::AsRead },
     { "regExpFlags"_s, PayloadKind::Flags, PayloadKind::Flags, 2, 1, false, false, IRForm::AsRead },
     { "matchForm"_s, PayloadKind::Enum, PayloadKind::Enum, 3, 1, false, false, IRForm::AsRead },
     { "regExpRecord"_s, PayloadKind::RegExpRecord, PayloadKind::RegExpRecord, 4, 1, true, false, IRForm::Placed },
 };
-static constexpr PayloadFieldInfo payloadFields120[] = {
+static constexpr PayloadFieldInfo payloadFields118[] = {
     { "inlineBuiltin"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, false, IRForm::AsRead },
     { "inlineParameters"_s, PayloadKind::List, PayloadKind::UInt32, std::max<unsigned>(numberOfInlinePayloadWords, 4), 0, false, false, IRForm::AsRead },
     { "overload"_s, PayloadKind::External, PayloadKind::External, 1, 1, false, false, IRForm::AsRead },
     { "accessSite"_s, PayloadKind::AccessSite, PayloadKind::AccessSite, 2, 1, true, false, IRForm::AsRead },
     { "allocationSite"_s, PayloadKind::AllocationSite, PayloadKind::AllocationSite, 3, 1, true, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields121[] = {
+static constexpr PayloadFieldInfo payloadFields119[] = {
     { "cases"_s, PayloadKind::List, PayloadKind::Int64, std::max<unsigned>(numberOfInlinePayloadWords, 0), 0, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields122[] = {
+static constexpr PayloadFieldInfo payloadFields120[] = {
     { "strings"_s, PayloadKind::List, PayloadKind::String, std::max<unsigned>(numberOfInlinePayloadWords, 0), 0, false, false, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields123[] = {
+static constexpr PayloadFieldInfo payloadFields121[] = {
     { "casts"_s, PayloadKind::List, PayloadKind::Record, std::max<unsigned>(numberOfInlinePayloadWords, 1), 0, false, false, IRForm::AsRead },
     { "requirement"_s, PayloadKind::Enum, PayloadKind::Enum, 0, 1, false, true, IRForm::AsRead },
 };
-static constexpr PayloadFieldInfo payloadFields124[] = {
+static constexpr PayloadFieldInfo payloadFields122[] = {
     { "layoutSets"_s, PayloadKind::List, PayloadKind::LayoutSet, std::max<unsigned>(numberOfInlinePayloadWords, 0), 0, false, false, IRForm::AsRead },
 };
 
@@ -1943,7 +2032,8 @@ std::span<const PayloadFieldInfo> payloadFieldsOf(Opcode opcode)
         return payloadFields9;
     case Opcode::GetEnvironmentField: case Opcode::PutEnvironmentField: case Opcode::JSONObjectKey:
         return payloadFields10;
-    case Opcode::ScopeHasBinding: case Opcode::GetOwnProperty: case Opcode::KeyConstant: case Opcode::GetOwnDataProperty:
+    case Opcode::ScopeHasBinding: case Opcode::NarrowByField: case Opcode::GetOwnProperty: case Opcode::KeyConstant: case Opcode::ValidateLookup:
+    case Opcode::GetOwnDataProperty:
         return payloadFields11;
     case Opcode::NewObject:
         return payloadFields12;
@@ -1965,53 +2055,53 @@ std::span<const PayloadFieldInfo> payloadFieldsOf(Opcode opcode)
         return payloadFields19;
     case Opcode::PropSet: case Opcode::PropDelete:
         return payloadFields20;
-    case Opcode::ElemGet: case Opcode::ElemHas: case Opcode::ElemDefine:
+    case Opcode::ElemGet:
         return payloadFields21;
-    case Opcode::ElemSet: case Opcode::ElemDelete:
+    case Opcode::ElemSet:
         return payloadFields22;
-    case Opcode::DefineGetter: case Opcode::DefineSetter:
+    case Opcode::ElemHas: case Opcode::ElemDefine:
         return payloadFields23;
-    case Opcode::SetFunctionName:
+    case Opcode::ElemDelete:
         return payloadFields24;
-    case Opcode::CopyDataProperties:
+    case Opcode::DefineGetter: case Opcode::DefineSetter:
         return payloadFields25;
-    case Opcode::GetSuperBase:
+    case Opcode::TryReExportFields: case Opcode::IsClosureOf:
         return payloadFields26;
-    case Opcode::SuperGet:
+    case Opcode::SetFunctionName:
         return payloadFields27;
-    case Opcode::SuperSet:
+    case Opcode::CopyDataProperties: case Opcode::CopyObject:
         return payloadFields28;
+    case Opcode::GetSuperBase:
+        return payloadFields29;
+    case Opcode::SuperGet:
+        return payloadFields30;
+    case Opcode::SuperSet:
+        return payloadFields31;
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd:
     case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::Negate:
     case Opcode::ToNumeric: case Opcode::Increment: case Opcode::Decrement: case Opcode::BitNot: case Opcode::ToNumber: case Opcode::Less:
     case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::ToBoolean:
     case Opcode::ToString:
-        return payloadFields29;
-    case Opcode::ToObject:
-        return payloadFields30;
-    case Opcode::Upcast: case Opcode::AssumeType:
-        return payloadFields31;
-    case Opcode::Claim:
         return payloadFields32;
-    case Opcode::ClaimDeclared:
+    case Opcode::ToObject:
         return payloadFields33;
-    case Opcode::ClaimRead:
+    case Opcode::Upcast: case Opcode::AssumeType:
         return payloadFields34;
-    case Opcode::Predict:
+    case Opcode::Check:
         return payloadFields35;
-    case Opcode::CheckInitialized:
+    case Opcode::Convert:
         return payloadFields36;
-    case Opcode::RequireObjectCoercible:
+    case Opcode::CheckInitialized:
         return payloadFields37;
-    case Opcode::RequireObject:
+    case Opcode::RequireObjectCoercible:
         return payloadFields38;
-    case Opcode::TypeTest:
+    case Opcode::RequireObject:
         return payloadFields39;
-    case Opcode::Call: case Opcode::CallList:
+    case Opcode::TypeTest:
         return payloadFields40;
-    case Opcode::Construct:
+    case Opcode::Call: case Opcode::CallList:
         return payloadFields41;
-    case Opcode::ConstructList: case Opcode::CallResolved:
+    case Opcode::Construct: case Opcode::ConstructList: case Opcode::CallResolved:
         return payloadFields42;
     case Opcode::CallDirect:
         return payloadFields43;
@@ -2035,7 +2125,7 @@ std::span<const PayloadFieldInfo> payloadFieldsOf(Opcode opcode)
         return payloadFields51;
     case Opcode::ModuleNamespace:
         return payloadFields52;
-    case Opcode::ImportModule:
+    case Opcode::ImportModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
         return payloadFields53;
     case Opcode::RequireModule: case Opcode::ResolveModule:
         return payloadFields54;
@@ -2061,119 +2151,116 @@ std::span<const PayloadFieldInfo> payloadFieldsOf(Opcode opcode)
         return payloadFields64;
     case Opcode::TryPutByValDirect:
         return payloadFields65;
-    case Opcode::Unspecified:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList:
         return payloadFields66;
     case Opcode::ReportMismatch:
         return payloadFields67;
-    case Opcode::CallGroup:
+    case Opcode::CallTable:
         return payloadFields68;
     case Opcode::ShapeTest:
         return payloadFields69;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         return payloadFields70;
     case Opcode::IsPristine:
         return payloadFields71;
-    case Opcode::HasArrayStorage:
+    case Opcode::HasArrayStorage: case Opcode::IsElementPresent:
         return payloadFields72;
-    case Opcode::IsMemberUnchanged:
+    case Opcode::IsInsideView: case Opcode::GetTypedArrayLength:
         return payloadFields73;
-    case Opcode::IsPrototypeLinkUnchanged:
+    case Opcode::AreMembersUnchanged:
         return payloadFields74;
-    case Opcode::IsClassEvaluatedOnce:
-        return payloadFields75;
-    case Opcode::IsRequireEdgeReady:
-        return payloadFields76;
     case Opcode::HasKeyOrder:
+        return payloadFields75;
+    case Opcode::GetGlobalBinding:
+        return payloadFields76;
+    case Opcode::SetGlobalBinding:
         return payloadFields77;
-    case Opcode::IsClosureOf:
-        return payloadFields78;
-    case Opcode::CopyObject:
-        return payloadFields79;
     case Opcode::GetArrayElement: case Opcode::HasArrayElement:
-        return payloadFields80;
+        return payloadFields78;
     case Opcode::PutArrayElement:
-        return payloadFields81;
-    case Opcode::GetTypedArrayLength:
-        return payloadFields82;
+        return payloadFields79;
     case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
-        return payloadFields83;
+        return payloadFields80;
     case Opcode::GetArgument:
-        return payloadFields84;
+        return payloadFields81;
     case Opcode::GetRestLength: case Opcode::GetMyArgumentByVal:
-        return payloadFields85;
+        return payloadFields82;
     case Opcode::CreateRest:
-        return payloadFields86;
+        return payloadFields83;
     case Opcode::CallForwardVarargs:
-        return payloadFields87;
+        return payloadFields84;
     case Opcode::ConstructSuperForwardVarargs:
-        return payloadFields88;
+        return payloadFields85;
     case Opcode::GetCapture:
-        return payloadFields89;
+        return payloadFields86;
     case Opcode::MaterializeEnvironment:
-        return payloadFields90;
+        return payloadFields87;
     case Opcode::CallBuiltin:
-        return payloadFields91;
+        return payloadFields88;
     case Opcode::DivideIntegers:
-        return payloadFields92;
+        return payloadFields89;
     case Opcode::NewSetFromData: case Opcode::NewMapFromData:
-        return payloadFields93;
+        return payloadFields90;
     case Opcode::SharedRegExpLiteral:
-        return payloadFields94;
+        return payloadFields91;
+    case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin:
+        return payloadFields92;
+    case Opcode::GetBuiltinValue:
+        return payloadFields93;
     case Opcode::DestructureIterable:
-        return payloadFields95;
+        return payloadFields94;
     case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
-        return payloadFields96;
+        return payloadFields95;
     case Opcode::AwaitCallBySavingFrame:
-        return payloadFields97;
+        return payloadFields96;
     case Opcode::PromiseAllOfElements:
+        return payloadFields97;
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation:
         return payloadFields98;
-    case Opcode::GetRequiredValue:
-        return payloadFields99;
     case Opcode::StringBuilderAppendBuiltin:
-        return payloadFields100;
+        return payloadFields99;
     case Opcode::ValidateType: case Opcode::ValidateCallee:
-        return payloadFields101;
+        return payloadFields100;
     case Opcode::CloneAs:
-        return payloadFields102;
+        return payloadFields101;
     case Opcode::StringBuilderReserve:
-        return payloadFields103;
+        return payloadFields102;
     case Opcode::JSONAppendToken:
-        return payloadFields104;
+        return payloadFields103;
     case Opcode::JSONAppendValue:
-        return payloadFields105;
-    case Opcode::PropGetChecked:
-        return payloadFields106;
+        return payloadFields104;
     case Opcode::PropGetChain: case Opcode::PropGetPair:
-        return payloadFields107;
+        return payloadFields105;
     case Opcode::PropGetAndTest:
-        return payloadFields108;
+        return payloadFields106;
     case Opcode::CallMethod:
-        return payloadFields109;
+        return payloadFields107;
     case Opcode::TryPutByIds:
-        return payloadFields110;
+        return payloadFields108;
     case Opcode::PutSlots:
-        return payloadFields111;
+        return payloadFields109;
     case Opcode::DefineOwnProperty:
-        return payloadFields112;
+        return payloadFields110;
     case Opcode::DefineAccessors:
-        return payloadFields113;
+        return payloadFields111;
     case Opcode::IntegerBound:
-        return payloadFields114;
+        return payloadFields112;
     case Opcode::StringRange:
-        return payloadFields115;
+        return payloadFields113;
     case Opcode::StringOrderToCharacter: case Opcode::StringIndexOfCharacter:
-        return payloadFields116;
+        return payloadFields114;
     case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral:
     case Opcode::StringEndsWithLiteral: case Opcode::StringIndexOfLiteral: case Opcode::StringLastIndexOfLiteral:
     case Opcode::StringRangeEqualsLiteral:
-        return payloadFields117;
+        return payloadFields115;
     case Opcode::ResolveCallTarget:
-        return payloadFields118;
+        return payloadFields116;
     case Opcode::RegExpMatchLiteral:
-        return payloadFields119;
+        return payloadFields117;
     case Opcode::CallInline:
-        return payloadFields120;
+        return payloadFields118;
     default:
         return { };
     }
@@ -2183,47 +2270,58 @@ std::span<const PayloadFieldInfo> payloadFieldsOf(TerminatorKind kind)
 {
     switch (kind) {
     case TerminatorKind::Switch:
-        return payloadFields121;
+        return payloadFields119;
     case TerminatorKind::SwitchString:
-        return payloadFields122;
-    case TerminatorKind::ReturnCall:
-        return payloadFields123;
-    case TerminatorKind::SwitchOnShape:
-        return payloadFields124;
-    case TerminatorKind::TryCallInline:
         return payloadFields120;
+    case TerminatorKind::ReturnCall:
+        return payloadFields121;
+    case TerminatorKind::SwitchOnShape:
+        return payloadFields122;
+    case TerminatorKind::TryCallInline:
+        return payloadFields118;
     default:
         return { };
     }
 }
 
-static constexpr ASCIILiteral flagNames0[] = { "isMadeOnDemand"_s };
+static constexpr ASCIILiteral flagNames0[] = { "isMadeOnDemand"_s, "isHeldByClosureTable"_s, "isLent"_s };
 static constexpr ASCIILiteral flagNames1[] = { "ownerCannotBeMarked"_s, "laterBarrierCovers"_s };
-static constexpr ASCIILiteral flagNames2[] = { "keepsShape"_s };
+static constexpr ASCIILiteral flagNames2[] = { "takesCellOfInnerObject"_s, "cellCannotBeMarked"_s, "isMadeOnDemand"_s };
 static constexpr ASCIILiteral flagNames3[] = { "isFreeName"_s, "isForTypeOf"_s };
 static constexpr ASCIILiteral flagNames4[] = { "isFreeName"_s };
 static constexpr ASCIILiteral flagNames5[] = { "keyIsIntegral"_s };
-static constexpr ASCIILiteral flagNames6[] = { "isLikelyKey"_s };
-static constexpr ASCIILiteral flagNames7[] = { "isAnnotatedPure"_s, "isNeverInlined"_s, "isDemotedTailCall"_s };
-static constexpr ASCIILiteral flagNames8[] = { "isAnnotatedPure"_s };
-static constexpr ASCIILiteral flagNames9[] = { "isDemotedTailCall"_s };
-static constexpr ASCIILiteral flagNames10[] = {
+static constexpr ASCIILiteral flagNames6[] = { "reusesDescriptors"_s, "keyIsFirstCapture"_s };
+static constexpr ASCIILiteral flagNames7[] = { "refusesOtherValues"_s };
+static constexpr ASCIILiteral flagNames8[] = { "isLikelyKey"_s };
+static constexpr ASCIILiteral flagNames9[] = { "isAnnotatedPure"_s, "isNeverInlined"_s, "isDemotedTailCall"_s };
+static constexpr ASCIILiteral flagNames10[] = { "isAnnotatedPure"_s };
+static constexpr ASCIILiteral flagNames11[] = { "isDemotedTailCall"_s };
+static constexpr ASCIILiteral flagNames12[] = {
     "isNeverInlined"_s, "isAlwaysInlined"_s, "isAfterInlinedHead"_s, "isConstruction"_s, "isDemotedTailCall"_s
 };
-static constexpr ASCIILiteral flagNames11[] = { "isVersioned"_s };
-static constexpr ASCIILiteral flagNames12[] = { "isDestructuring"_s, "hasRest"_s };
-static constexpr ASCIILiteral flagNames13[] = { "readsValueWhenDone"_s };
-static constexpr ASCIILiteral flagNames14[] = { "isURL"_s };
-static constexpr ASCIILiteral flagNames15[] = { "isWritable"_s };
-static constexpr ASCIILiteral flagNames16[] = { "keyIsIntegral"_s, "isInBounds"_s };
-static constexpr ASCIILiteral flagNames17[] = { "keyIsIntegral"_s, "isInBounds"_s, "ownerCannotBeMarked"_s, "laterBarrierCovers"_s };
-static constexpr ASCIILiteral flagNames18[] = { "readsArgumentsObject"_s };
-static constexpr ASCIILiteral flagNames19[] = { "needsPristineReceiver"_s, "isDemotedTailCall"_s };
-static constexpr ASCIILiteral flagNames20[] = { "isSpread"_s };
-static constexpr ASCIILiteral flagNames21[] = { "isLikely"_s };
-static constexpr ASCIILiteral flagNames22[] = { "opensObject"_s, "followsMember"_s };
-static constexpr ASCIILiteral flagNames23[] = { "readsFromFirstResult"_s };
-static constexpr ASCIILiteral flagNames24[] = { "numberIsOnLeft"_s };
+static constexpr ASCIILiteral flagNames13[] = { "isVersioned"_s };
+static constexpr ASCIILiteral flagNames14[] = { "isDestructuring"_s, "hasRest"_s };
+static constexpr ASCIILiteral flagNames15[] = { "readsValueWhenDone"_s };
+static constexpr ASCIILiteral flagNames16[] = { "takesExtraTurn"_s };
+static constexpr ASCIILiteral flagNames17[] = { "isBare"_s };
+static constexpr ASCIILiteral flagNames18[] = { "isURL"_s };
+static constexpr ASCIILiteral flagNames19[] = { "isURL"_s, "isForRequire"_s };
+static constexpr ASCIILiteral flagNames20[] = { "holdsDeclaredType"_s };
+static constexpr ASCIILiteral flagNames21[] = { "mayMeetUnfinishedObject"_s };
+static constexpr ASCIILiteral flagNames22[] = { "isWritable"_s };
+static constexpr ASCIILiteral flagNames23[] = { "seesScriptBindings"_s, "isForTypeOf"_s };
+static constexpr ASCIILiteral flagNames24[] = { "seesScriptBindings"_s };
+static constexpr ASCIILiteral flagNames25[] = { "keyIsIntegral"_s, "isInBounds"_s, "isPresent"_s, "readsHoleAsNaN"_s };
+static constexpr ASCIILiteral flagNames26[] = { "keyIsIntegral"_s, "isInBounds"_s, "ownerCannotBeMarked"_s, "laterBarrierCovers"_s };
+static constexpr ASCIILiteral flagNames27[] = { "keyIsIntegral"_s, "isInsideView"_s };
+static constexpr ASCIILiteral flagNames28[] = { "readsArgumentsObject"_s };
+static constexpr ASCIILiteral flagNames29[] = { "needsPristineReceiver"_s, "isDemotedTailCall"_s };
+static constexpr ASCIILiteral flagNames30[] = { "isSpread"_s };
+static constexpr ASCIILiteral flagNames31[] = { "isLikely"_s };
+static constexpr ASCIILiteral flagNames32[] = { "opensObject"_s, "followsMember"_s };
+static constexpr ASCIILiteral flagNames33[] = { "readsFromFirstResult"_s };
+static constexpr ASCIILiteral flagNames34[] = { "isDefinition"_s };
+static constexpr ASCIILiteral flagNames35[] = { "numberIsOnLeft"_s };
 
 std::span<const ASCIILiteral> flagNamesOf(Opcode opcode)
 {
@@ -2234,55 +2332,76 @@ std::span<const ASCIILiteral> flagNamesOf(Opcode opcode)
     case Opcode::PutContiguousIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
     case Opcode::PutSlots: case Opcode::FulfillFreshPromise:
         return flagNames1;
-    case Opcode::NewObject: case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::CreateIteratorResult:
-    case Opcode::ConstructSuperForwardVarargs:
+    case Opcode::NewObject:
         return flagNames2;
     case Opcode::PropGet:
         return flagNames3;
     case Opcode::PropSet: case Opcode::PropDelete:
         return flagNames4;
-    case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::HasArrayElement:
-    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+    case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::HasArrayElement:
         return flagNames5;
-    case Opcode::Strcat: case Opcode::StringBuilderFinish:
+    case Opcode::TryReExportFields:
         return flagNames6;
-    case Opcode::Call:
+    case Opcode::SetLiteralPrototype:
         return flagNames7;
-    case Opcode::Construct:
+    case Opcode::Strcat: case Opcode::StringBuilderFinish:
         return flagNames8;
-    case Opcode::CallList: case Opcode::CallGroup: case Opcode::CallForwardVarargs: case Opcode::AwaitCallBySavingFrame: case Opcode::CallMethod:
-    case Opcode::CallResolved: case Opcode::CallInline:
+    case Opcode::Call:
         return flagNames9;
-    case Opcode::CallDirect:
+    case Opcode::Construct:
         return flagNames10;
-    case Opcode::LoopHint:
+    case Opcode::CallList: case Opcode::CallForwardVarargs: case Opcode::AwaitCallBySavingFrame: case Opcode::CallMethod: case Opcode::CallResolved:
+    case Opcode::CallInline:
         return flagNames11;
-    case Opcode::IteratorOpen:
+    case Opcode::CallDirect:
         return flagNames12;
-    case Opcode::IteratorResume:
+    case Opcode::LoopHint:
         return flagNames13;
-    case Opcode::ResolveModule: case Opcode::ResolveDynamic:
+    case Opcode::IteratorOpen:
         return flagNames14;
-    case Opcode::HasArrayStorage:
+    case Opcode::IteratorResume:
         return flagNames15;
-    case Opcode::GetArrayElement:
+    case Opcode::Await: case Opcode::AwaitBySavingFrame:
         return flagNames16;
-    case Opcode::PutArrayElement:
+    case Opcode::EvaluateModule:
         return flagNames17;
-    case Opcode::GetMyArgumentByVal:
+    case Opcode::ResolveModule:
         return flagNames18;
-    case Opcode::CallBuiltin:
+    case Opcode::ResolveDynamic:
         return flagNames19;
-    case Opcode::ThrowNotIterable:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetFlattenedSlot: case Opcode::GetDeferredClosureSlot:
         return flagNames20;
-    case Opcode::JSONStartsWith:
+    case Opcode::HasNoFieldOutsideSlot:
         return flagNames21;
-    case Opcode::JSONAppendKey:
+    case Opcode::HasArrayStorage:
         return flagNames22;
-    case Opcode::PropGetPair:
+    case Opcode::GetGlobalBinding:
         return flagNames23;
-    case Opcode::IntegerBound:
+    case Opcode::SetGlobalBinding:
         return flagNames24;
+    case Opcode::GetArrayElement:
+        return flagNames25;
+    case Opcode::PutArrayElement:
+        return flagNames26;
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+        return flagNames27;
+    case Opcode::GetMyArgumentByVal:
+        return flagNames28;
+    case Opcode::CallBuiltin:
+        return flagNames29;
+    case Opcode::ThrowNotIterable:
+        return flagNames30;
+    case Opcode::JSONStartsWith:
+        return flagNames31;
+    case Opcode::JSONAppendKey:
+        return flagNames32;
+    case Opcode::PropGetPair:
+        return flagNames33;
+    case Opcode::TryPutByIds:
+        return flagNames34;
+    case Opcode::IntegerBound:
+        return flagNames35;
     default:
         return { };
     }
@@ -2330,60 +2449,63 @@ std::span<const TargetInfo> targetInfosOf(TerminatorKind kind)
 
 static constexpr Opcode replacedOperations0[] = { Opcode::CreateIteratorResult };
 static constexpr Opcode replacedOperations1[] = { Opcode::CallBuiltin };
-static constexpr Opcode replacedOperations2[] = { Opcode::GetModuleVariable, Opcode::TypeTest };
-static constexpr Opcode replacedOperations3[] = { Opcode::PropHas, Opcode::PropHasOwn, Opcode::PrivateHas };
-static constexpr Opcode replacedOperations4[] = { Opcode::IsPristineArray };
-static constexpr Opcode replacedOperations5[] = { Opcode::ReturnAsyncResult, Opcode::ResolvePromise };
-static constexpr Opcode replacedOperations6[] = { Opcode::PropGet, Opcode::PrivateGet };
-static constexpr Opcode replacedOperations7[] = { Opcode::PropGet };
-static constexpr Opcode replacedOperations8[] = { Opcode::PropSet, Opcode::PropDefine, Opcode::PrivateSet, Opcode::PrivateDefine };
-static constexpr Opcode replacedOperations9[] = { Opcode::PropSet, Opcode::PropDefine, Opcode::PrivateDefine };
-static constexpr Opcode replacedOperations10[] = { Opcode::NewObject, Opcode::CopyDataProperties };
+static constexpr Opcode replacedOperations2[] = { Opcode::NewArray };
+static constexpr Opcode replacedOperations3[] = { Opcode::GetModuleVariable, Opcode::TypeTest };
+static constexpr Opcode replacedOperations4[] = { Opcode::PropHas, Opcode::PropHasOwn, Opcode::PrivateHas };
+static constexpr Opcode replacedOperations5[] = { Opcode::IsPristineArray, Opcode::CallBuiltin };
+static constexpr Opcode replacedOperations6[] = { Opcode::ReturnAsyncResult, Opcode::ResolvePromise };
+static constexpr Opcode replacedOperations7[] = { Opcode::PropGet, Opcode::PrivateGet };
+static constexpr Opcode replacedOperations8[] = { Opcode::PropGet };
+static constexpr Opcode replacedOperations9[] = { Opcode::PropSet, Opcode::PropDefine, Opcode::PrivateSet, Opcode::PrivateDefine };
+static constexpr Opcode replacedOperations10[] = { Opcode::PropSet, Opcode::PropDefine, Opcode::PrivateDefine };
 static constexpr Opcode replacedOperations11[] = { Opcode::CopyDataProperties };
-static constexpr Opcode replacedOperations12[] = { Opcode::ElemGet };
-static constexpr Opcode replacedOperations13[] = { Opcode::ElemSet, Opcode::ElemDefine };
-static constexpr Opcode replacedOperations14[] = { Opcode::ElemHas };
-static constexpr Opcode replacedOperations15[] = { Opcode::AppendSpread };
-static constexpr Opcode replacedOperations16[] = { Opcode::ElemSet };
-static constexpr Opcode replacedOperations17[] = {
+static constexpr Opcode replacedOperations12[] = { Opcode::PropSet };
+static constexpr Opcode replacedOperations13[] = { Opcode::ElemGet };
+static constexpr Opcode replacedOperations14[] = { Opcode::ElemSet, Opcode::ElemDefine };
+static constexpr Opcode replacedOperations15[] = { Opcode::ElemHas };
+static constexpr Opcode replacedOperations16[] = { Opcode::AppendSpread };
+static constexpr Opcode replacedOperations17[] = { Opcode::ElemSet };
+static constexpr Opcode replacedOperations18[] = {
     Opcode::Call, Opcode::Construct, Opcode::PropGet, Opcode::PropSet, Opcode::CallList, Opcode::CallBuiltin, Opcode::NewArray, Opcode::AppendSpread
 };
-static constexpr Opcode replacedOperations18[] = { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose };
-static constexpr Opcode replacedOperations19[] = { Opcode::Await };
-static constexpr Opcode replacedOperations20[] = { Opcode::AwaitBySavingFrame, Opcode::CallDirect };
-static constexpr Opcode replacedOperations21[] = { Opcode::Yield, Opcode::InitialYield };
-static constexpr Opcode replacedOperations22[] = { Opcode::Await, Opcode::Yield };
-static constexpr Opcode replacedOperations23[] = { Opcode::InstanceOf };
-static constexpr Opcode replacedOperations24[] = { Opcode::RequireModule };
-static constexpr Opcode replacedOperations25[] = { Opcode::PropGet, Opcode::Claim };
-static constexpr Opcode replacedOperations26[] = { Opcode::PropGet, Opcode::ToBoolean, Opcode::StrictEq };
-static constexpr Opcode replacedOperations27[] = { Opcode::PropGet, Opcode::Call };
-static constexpr Opcode replacedOperations28[] = { Opcode::PropSet, Opcode::PropDefine };
-static constexpr Opcode replacedOperations29[] = { Opcode::PutSlot, Opcode::PutSlotOrAdd };
-static constexpr Opcode replacedOperations30[] = { Opcode::CallBuiltin, Opcode::NewObject };
-static constexpr Opcode replacedOperations31[] = { Opcode::DefineGetter, Opcode::DefineSetter };
-static constexpr Opcode replacedOperations32[] = { Opcode::CallBuiltin, Opcode::ElemGet };
-static constexpr Opcode replacedOperations33[] = {
+static constexpr Opcode replacedOperations19[] = { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose };
+static constexpr Opcode replacedOperations20[] = { Opcode::StepGenerator };
+static constexpr Opcode replacedOperations21[] = { Opcode::InitialYield };
+static constexpr Opcode replacedOperations22[] = { Opcode::AwaitBySavingFrame };
+static constexpr Opcode replacedOperations23[] = { Opcode::Await };
+static constexpr Opcode replacedOperations24[] = { Opcode::AwaitBySavingFrame, Opcode::CallDirect };
+static constexpr Opcode replacedOperations25[] = { Opcode::Yield, Opcode::InitialYield };
+static constexpr Opcode replacedOperations26[] = { Opcode::Await, Opcode::Yield };
+static constexpr Opcode replacedOperations27[] = { Opcode::InstanceOf };
+static constexpr Opcode replacedOperations28[] = { Opcode::PropGet, Opcode::ToBoolean, Opcode::StrictEq };
+static constexpr Opcode replacedOperations29[] = { Opcode::PropGet, Opcode::Call };
+static constexpr Opcode replacedOperations30[] = { Opcode::PropSet, Opcode::PropDefine };
+static constexpr Opcode replacedOperations31[] = { Opcode::PutSlot, Opcode::PutSlotOrAdd };
+static constexpr Opcode replacedOperations32[] = { Opcode::CallBuiltin, Opcode::NewObject };
+static constexpr Opcode replacedOperations33[] = { Opcode::DefineGetter, Opcode::DefineSetter };
+static constexpr Opcode replacedOperations34[] = { Opcode::CallBuiltin, Opcode::ElemGet };
+static constexpr Opcode replacedOperations35[] = {
     Opcode::CallBuiltin, Opcode::ElemGet, Opcode::StrictEq, Opcode::StringRangeCodeUnitOrNaN, Opcode::StringRangeCodeUnitOrMinusOne,
     Opcode::StringRangeCodePointOrUndefined, Opcode::StringRangeCharacterOrEmpty, Opcode::StringRangeCharacterOrUndefined,
     Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt, Opcode::StringRangeSubstringOrUndefined,
     Opcode::Substring, Opcode::StringEqualsLiteral, Opcode::StringOrderToCharacter, Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral,
     Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral, Opcode::GetStringCodeUnit, Opcode::GetStringLength
 };
-static constexpr Opcode replacedOperations34[] = { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::CallBuiltin };
-static constexpr Opcode replacedOperations35[] = { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
-static constexpr Opcode replacedOperations36[] = { Opcode::StrictEq, Opcode::Eq };
-static constexpr Opcode replacedOperations37[] = { Opcode::StrictEq };
-static constexpr Opcode replacedOperations38[] = { Opcode::Eq };
-static constexpr Opcode replacedOperations39[] = {
+static constexpr Opcode replacedOperations36[] = { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::CallBuiltin };
+static constexpr Opcode replacedOperations37[] = { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+static constexpr Opcode replacedOperations38[] = { Opcode::StrictEq, Opcode::Eq };
+static constexpr Opcode replacedOperations39[] = { Opcode::StrictEq };
+static constexpr Opcode replacedOperations40[] = { Opcode::Eq };
+static constexpr Opcode replacedOperations41[] = {
     Opcode::CallBuiltin, Opcode::Substring, Opcode::StrictEq, Opcode::Eq, Opcode::ToNumber, Opcode::ToNumeric, Opcode::ElemGet
 };
-static constexpr Opcode replacedOperations40[] = {
+static constexpr Opcode replacedOperations42[] = {
     Opcode::CallBuiltin, Opcode::Substring, Opcode::StrictEq, Opcode::Eq, Opcode::ElemGet, Opcode::Less, Opcode::LessEq, Opcode::Greater,
     Opcode::GreaterEq
 };
-static constexpr Opcode replacedOperations41[] = { Opcode::StringBuilderAppend, Opcode::Substring, Opcode::CallBuiltin };
-static constexpr Opcode replacedOperations42[] = { Opcode::Call };
+static constexpr Opcode replacedOperations43[] = { Opcode::StringBuilderAppend, Opcode::Substring, Opcode::CallBuiltin };
+static constexpr Opcode replacedOperations44[] = { Opcode::Strcat, Opcode::CallBuiltin };
+static constexpr Opcode replacedOperations45[] = { Opcode::Call };
 
 std::span<const Opcode> replacedOperationsOf(Opcode opcode)
 {
@@ -2395,92 +2517,99 @@ std::span<const Opcode> replacedOperationsOf(Opcode opcode)
     case Opcode::StringEndsWithLiteral: case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
     case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
         return replacedOperations1;
-    case Opcode::GetEncodedModuleVariable:
+    case Opcode::EmptyArgumentList:
         return replacedOperations2;
-    case Opcode::IsSlotFilled:
+    case Opcode::GetEncodedModuleVariable:
         return replacedOperations3;
-    case Opcode::IsPristine:
+    case Opcode::IsSlotFilled:
         return replacedOperations4;
-    case Opcode::IsNotThenable: case Opcode::FulfillFreshPromise:
+    case Opcode::IsPristine:
         return replacedOperations5;
-    case Opcode::GetSlot:
+    case Opcode::IsNotThenable: case Opcode::FulfillFreshPromise:
         return replacedOperations6;
-    case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PropGetChain: case Opcode::PropGetPair:
+    case Opcode::GetSlot:
         return replacedOperations7;
-    case Opcode::PutSlot:
+    case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::GetGlobalBinding: case Opcode::GetBuiltinValue: case Opcode::PropGetChain: case Opcode::PropGetPair:
         return replacedOperations8;
-    case Opcode::PutSlotOrAdd:
+    case Opcode::PutSlot:
         return replacedOperations9;
-    case Opcode::CopyObject:
+    case Opcode::PutSlotOrAdd:
         return replacedOperations10;
     case Opcode::TryCopyFields:
         return replacedOperations11;
-    case Opcode::GetArrayElement: case Opcode::GetTypedArrayElement: case Opcode::EnumeratorGetByVal:
+    case Opcode::SetGlobalBinding:
         return replacedOperations12;
-    case Opcode::PutArrayElement:
+    case Opcode::GetArrayElement: case Opcode::GetTypedArrayElement: case Opcode::EnumeratorGetByVal:
         return replacedOperations13;
-    case Opcode::HasArrayElement:
+    case Opcode::PutArrayElement:
         return replacedOperations14;
-    case Opcode::AppendElements:
+    case Opcode::HasArrayElement:
         return replacedOperations15;
-    case Opcode::PutTypedArrayElement:
+    case Opcode::AppendElements:
         return replacedOperations16;
-    case Opcode::CallBuiltin:
+    case Opcode::PutTypedArrayElement:
         return replacedOperations17;
-    case Opcode::DestructureIterable:
+    case Opcode::CallBuiltin:
         return replacedOperations18;
-    case Opcode::AwaitBySavingFrame:
+    case Opcode::DestructureIterable:
         return replacedOperations19;
-    case Opcode::AwaitCallBySavingFrame:
+    case Opcode::IsGeneratorUnstarted: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
         return replacedOperations20;
-    case Opcode::YieldBySavingFrame:
+    case Opcode::IsGeneratorRunning:
         return replacedOperations21;
-    case Opcode::AsyncGeneratorYield:
+    case Opcode::AwaitMayContinue:
         return replacedOperations22;
-    case Opcode::HasInPrototypeChain:
+    case Opcode::AwaitBySavingFrame:
         return replacedOperations23;
-    case Opcode::GetRequiredValue:
+    case Opcode::AwaitCallBySavingFrame:
         return replacedOperations24;
-    case Opcode::PropGetChecked:
+    case Opcode::YieldBySavingFrame:
         return replacedOperations25;
-    case Opcode::PropGetAndTest:
+    case Opcode::AsyncGeneratorYield:
         return replacedOperations26;
-    case Opcode::CallMethod:
+    case Opcode::HasInPrototypeChain:
         return replacedOperations27;
-    case Opcode::TryPutByIds:
+    case Opcode::PropGetAndTest:
         return replacedOperations28;
-    case Opcode::PutSlots:
+    case Opcode::CallMethod:
         return replacedOperations29;
-    case Opcode::DefineOwnProperty:
+    case Opcode::TryPutByIds:
         return replacedOperations30;
-    case Opcode::DefineAccessors:
+    case Opcode::PutSlots:
         return replacedOperations31;
-    case Opcode::Substring:
+    case Opcode::DefineOwnProperty:
         return replacedOperations32;
-    case Opcode::FlattenString:
+    case Opcode::DefineAccessors:
         return replacedOperations33;
-    case Opcode::StringOrder:
+    case Opcode::Substring:
         return replacedOperations34;
-    case Opcode::StringOrderToCharacter:
+    case Opcode::FlattenString:
         return replacedOperations35;
-    case Opcode::StringEqualsLiteral:
+    case Opcode::StringOrder:
         return replacedOperations36;
-    case Opcode::ValueEqualsLiteral:
+    case Opcode::StringOrderToCharacter:
         return replacedOperations37;
-    case Opcode::ValueLooselyEqualsLiteral:
+    case Opcode::StringEqualsLiteral:
         return replacedOperations38;
+    case Opcode::ValueEqualsLiteral:
+        return replacedOperations39;
+    case Opcode::ValueLooselyEqualsLiteral:
+        return replacedOperations40;
     case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodePointOrUndefined: case Opcode::StringRangeCharacterOrEmpty:
     case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber:
     case Opcode::StringRangeParseInt: case Opcode::StringRangeSubstringOrUndefined:
-        return replacedOperations39;
+        return replacedOperations41;
     case Opcode::StringRangeCodeUnitOrMinusOne:
-        return replacedOperations40;
+        return replacedOperations42;
     case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber:
     case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange: case Opcode::StringBuilderAppendBoolean:
     case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
-        return replacedOperations41;
+        return replacedOperations43;
+    case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts:
+        return replacedOperations44;
     case Opcode::CallResolved:
-        return replacedOperations42;
+        return replacedOperations45;
     default:
         return { };
     }

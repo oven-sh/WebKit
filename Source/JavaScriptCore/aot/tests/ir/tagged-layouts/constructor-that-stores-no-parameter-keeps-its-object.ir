@@ -1,23 +1,31 @@
-# function NodeObject(this: Node, kind: number) { this.kind = kind + 1 }: no parameter names the literal.
-# RUN: print
+# interface Node { kind: number }  interface Num extends Node { kind: 1; value: number }  interface Neg extends Node { kind: 2; operand: Node }
+# function NodeObject(this: Node, kind: number) { this.kind = kind + 1 }: no parameter names the literal, so nothing at the entry says which layout to allocate.
+# The function stays as it was sent, and the layouts that the reader derived for the two literals are never allocated
+# FORM: AsRead
+# RUN: pass AllocateTaggedLayouts
+# STATISTIC: TaggedLayoutsAllocated = 0
+# STATISTIC: TaggedLayoutsNeverAllocated = 2
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
 layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}]
-layout L2 name="Num" fields=[{key="kind" declared={type=number predicted=1} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}]
-layout L3 name="Neg" fields=[{key="kind" declared={type=number predicted=2} flags=[IsRequired]}, {key="operand" declared={type=object predicted=L1} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Neg" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="operand" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     Return
 }
-function f1 name="NodeObject" flags=[HasThis] thisType={type=object predicted=L1} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1, v1: number):
     v2 = Increment v1
     PropSet v0, v2 key="kind" mode=Strict
     Return
 }
 
+# CHECK: layout L4 kind=Instance name="NodeObject" {{*}}allocation=NeverAllocated
+# CHECK: layout L5 kind=Instance name="NodeObject" {{*}}allocation=NeverAllocated
 # CHECK-LABEL: function f1 name="NodeObject" module=m0 flags=[HasThis] thisType=
 # CHECK-NOT: Switch
 # CHECK-NOT: NewObject
+# CHECK-NOT: function f2

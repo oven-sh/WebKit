@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <tuple>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -58,12 +59,15 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         return static_cast<SlotRow>(row);
     });
     Vector<std::tuple<uint32_t, SlotRow, SlotRow>> members;
+    Vector<std::pair<SlotRow, SlotRow>> rowsInUnallocatedBases;
     for (unsigned index : m_isInFamily) {
         LayoutID id(index);
         auto add = [&](SlotRow row, LayoutID declaringLayout, SlotRow declaringRow) {
             m_declaringRow[row] = declaringRow;
             if (isCompiledObject(id))
                 members.append({ m_depths[declaringLayout.index()], declaringRow, row });
+            else
+                rowsInUnallocatedBases.append({ declaringRow, row });
         };
         for (FieldIndex field = 0; field < rows.numberOfFieldsOf(id); ++field) {
             FieldReference declaration = declarationOf(program, { id, field });
@@ -82,38 +86,54 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         ++m_families.last().numberOfRows;
         m_rows.append(row);
     }
+
+    std::ranges::sort(rowsInUnallocatedBases);
+    m_rowsInUnallocatedBases = WTF::map(rowsInUnallocatedBases, [](const std::pair<SlotRow, SlotRow>& entry) {
+        return entry.second;
+    });
+    for (Family& family : m_families) {
+        auto found = std::ranges::equal_range(rowsInUnallocatedBases, family.declaringRow, { }, &std::pair<SlotRow, SlotRow>::first);
+        family.firstRowInUnallocatedBases = static_cast<uint32_t>(found.begin() - rowsInUnallocatedBases.begin());
+        family.numberOfRowsInUnallocatedBases = static_cast<uint32_t>(found.size());
+    }
 }
 
 static void add(SlotRowUse& sum, const SlotRowUse& use)
 {
     sum.accessWeight = saturatedSum(sum.accessWeight, use.accessWeight);
-    sum.fillWeight = saturatedSum(sum.fillWeight, use.fillWeight);
-    sum.holderWeight = saturatedSum(sum.holderWeight, use.holderWeight);
+    sum.fillHeat += use.fillHeat;
+    sum.holderHeat += use.holderHeat;
+    sum.hasHoldersMadeInLoop |= use.hasHoldersMadeInLoop;
     sum.initializingSites += use.initializingSites;
     sum.sitesInitializingWithValue += use.sitesInitializingWithValue;
     sum.storesOfConstructorWithValue += use.storesOfConstructorWithValue;
+    sum.storesOfUndefined += use.storesOfUndefined;
     sum.isRequiredByDeclaringType |= use.isRequiredByDeclaringType;
-    sum.storesOfOtherThanDeferredClosure += use.storesOfOtherThanDeferredClosure;
+    sum.isOptionalInTypeOfThis |= use.isOptionalInTypeOfThis;
     sum.environmentUses += use.environmentUses;
-    sum.integerUses += use.integerUses;
-    sum.doubleUses += use.doubleUses;
-    sum.doubleStores += use.doubleStores;
-    sum.rangeTestedStores += use.rangeTestedStores;
     sum.storesWithoutAllocation += use.storesWithoutAllocation;
     sum.storesIntoFilledSlots += use.storesIntoFilledSlots;
-    sum.wideStoresWithoutAllocation += use.wideStoresWithoutAllocation;
+    sum.storesIntoNewObjects += use.storesIntoNewObjects;
     sum.privateDefinitionsByName += use.privateDefinitionsByName;
 }
 
 void shareUsesOfInheritedRows(const InheritedRows& inheritedRows, SlotUses& uses)
 {
+    for (SlotRowUse& use : uses.rows)
+        use.initializingSitesOfOwnLayout = use.initializingSites;
+    auto share = [&](SlotRow row, SlotRowUse sum) {
+        sum.initializingSitesOfOwnLayout = uses.rows[row].initializingSitesOfOwnLayout;
+        uses.rows[row] = sum;
+    };
     for (const InheritedRows::Family& family : inheritedRows.families()) {
         SlotRowUse sum;
         for (SlotRow row : inheritedRows.rowsOf(family))
             add(sum, uses.rows[row]);
+        for (SlotRow row : inheritedRows.rowsInUnallocatedBasesOf(family))
+            add(sum, uses.rows[row]);
         for (SlotRow row : inheritedRows.rowsOf(family))
-            uses.rows[row] = sum;
-        uses.rows[family.declaringRow] = sum;
+            share(row, sum);
+        share(family.declaringRow, sum);
     }
 }
 

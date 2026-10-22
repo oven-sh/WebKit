@@ -1,0 +1,23 @@
+# A walk over the keys of an object is one call of the run time. Taken apart it is a test and a copy of every slot for each order of the keys, with the call beside them: cold code has the call alone
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copy" fields=[{key="first" declared={type=number}}]
+layout L1 name="Options" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="inColdCode" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+}
+# CHECK-LABEL: function f0 name="inColdCode"
+# CHECK: b0(
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: CopyDataProperties v2, v0
+# CHECK-NEXT: = FinishObject v2
+# CHECK-NEXT: Return v4

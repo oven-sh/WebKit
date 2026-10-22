@@ -194,7 +194,7 @@ function f8 name="range" parameters=[{type=number}, {type=anything}] results=[{t
     Return v17
 }
 # CHECK-LABEL: function f8 name="range"
-# CHECK: inlineFrames=[{}, {callee=f4 callPosition=40 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK-NOT: function=f4
@@ -254,7 +254,7 @@ function f9 name="twoYields" parameters=[{type=anything}, {type=anything}] resul
     Return v17
 }
 # CHECK-LABEL: function f9 name="twoYields"
-# CHECK: inlineFrames=[{}, {callee=f5 callPosition=41 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f5 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: Switch {{*}} cases=[1, 2, 3] ->
@@ -298,7 +298,7 @@ function f10 name="yieldInLoop" parameters=[{type=anything}, {type=anything}] re
     Return v17
 }
 # CHECK-LABEL: function f10 name="yieldInLoop"
-# CHECK: inlineFrames=[{}, {callee=f6 callPosition=42 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f6 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: Switch {{*}} cases=[1, 2] ->
@@ -344,7 +344,7 @@ function f11 name="valueLiveAcrossYield" parameters=[{type=anything}, {type=anyt
     Return v17
 }
 # CHECK-LABEL: function f11 name="valueLiveAcrossYield"
-# CHECK: inlineFrames=[{}, {callee=f7 callPosition=43 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f7 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: = NewGenerator
@@ -392,7 +392,7 @@ function f12 name="creationInLaterBlock" parameters=[{type=number}, {type=anythi
     Jump -> next b1()
 }
 # CHECK-LABEL: function f12 name="creationInLaterBlock"
-# CHECK: inlineFrames=[{}, {callee=f4 callPosition=44 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: Switch {{*}} cases=[1, 2] ->
@@ -457,7 +457,7 @@ function f13 name="twoGenerators" parameters=[{type=number}, {type=anything}] re
     Return v32
 }
 # CHECK-LABEL: function f13 name="twoGenerators"
-# CHECK: inlineFrames=[{}, {callee=f4 callPosition=45 module=m0}, {callee=f5 callPosition=46 module=m0}]
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}, {callee=f5 callPosition=52 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # SIMPLE-LABEL: function f13 name="twoGenerators"

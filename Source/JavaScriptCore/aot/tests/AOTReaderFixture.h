@@ -29,16 +29,16 @@ inline constexpr Typed::FunctionID readerFixtureHandlerFunction { 8u };
 
 inline constexpr ASCIILiteral readerFixtureText = R"IR(typesite w0 module=m0 position=3 kind=Assertion text="T"
 expectedresult x0 type=L0|L2|L3 layouts=[L0] site=w0 validation=[{shape=Object{layout=L0 members=[{key="x" node=1 field=0}]} type=L0|L2|L3}, {shape=Primitive{primitive=Number} type=number rules=[Minimum{bound=1}]}, {shape=Primitive{} type=string rules=[Template{head="a" parts=[{placeholder=Number text="b"}]}]}]
-layout L0 name="I" module=m0 fields=[{key="x" declared={type=number predicted=i32 site=w0} flags=[IsRequired]}]
+layout L0 name="I" module=m0 fields=[{key="x" declared={type=i32 site=w0 flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Environment fields=[{key="c" declared={type=anything}}]
 layout L2 kind=Instance name="C" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}, {key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}] staticFields=[{key="s" variable=g2}] supertypes=[L0]
-layout L3 kind=Instance name="D" module=m0 predictedBase=L2 constructor=f3 supertypes=[L0, L2] flags=[HasHeritage]
+layout L3 kind=Instance name="D" module=m0 base=L2 constructor=f3 supertypes=[L0, L2] flags=[HasHeritage]
 variable g0 name="g" module=m0 declared={type=undefined|"a"|"b"} initialization=Undefined
-variable g1 name="z" module=m1 declared={type=object written=L0|L2|L3|Array<number>|Map<string, anything>}
+variable g1 name="z" module=m1 declared={type=L0|L2|L3|Array<number>|Map<string, anything>}
 variable g2 name="s" module=m0 declared={type=function} owner=L2
 variable g3 name="t" module=m0 declared={type=builtin(GlobalThis)|builtin(MathMax)}
-module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m1}] requiredNames=[{module=m1 name="z"}] positions={lineStarts=[0, 12] columnAdjustments=[{offset=4 excessBytes=1}]} functionText="a => a\x0a"
-module m1 path="/b.cjs" displayPath="b.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f4 syntheticExports=[{name="y" isKnownMember=true}, {name="z" variable=g1}]
+module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m1}] requiredNames=[{module=m1 name="z"}] positions={lineStarts=[0, 12] columnAdjustments=[{offset=4 column=3}]} functionText="a => a\x0a"
+module m1 path="node:b" displayPath="node:b" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="y" isKnownMember=true}, {name="z" variable=g1}]
 modulefailure q0 importer=m0 specifier="./q"
 evalscope e0 mode=Sloppy flags=[IsInFunction] bindings=[{name="g" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -48,7 +48,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
 function f2 name="m" module=m0 kind=Method flags=[HasThis] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
 function f3 name="D" module=m0 kind=DerivedConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=anything}]
-function f4 module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f4 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}]
 function f5 name="r0" module=m0 role=Library enclosingRuntimeFunction=0 thisType={type=anything} results=[{type=anything}]
 function f6 name="r1" module=m0 role=Library enclosingRuntimeFunction=1 thisType={type=anything} results=[{type=anything}]
 function f7 name="stream" module=m0 position=9 text={end=6} length=2 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -61,7 +61,7 @@ function f7 name="stream" module=m0 position=9 text={end=6} length=2 thisType={t
     SuperSet v6, v2, v0, v3 mode=Sloppy @1007
     v8 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {raw="b"}] @1008
     v9 = PropGet v0 key="x" @1009
-    v10 = Predict v9 predicted=number @1010
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @1010
     v11 = Builtin builtin=GlobalThis @1011
     v12 = PropGet v11 key="g" [isFreeName] @1012
     v13 = TypeTest v0 testedType=number @1013
@@ -75,7 +75,7 @@ function f7 name="stream" module=m0 position=9 text={end=6} length=2 thisType={t
     v16 = NewRegExp pattern="a" regExpFlags=[Global] @1016
     Return v0 @2003
 }
-function f8 name="handled" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f8 name="handled" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsReturned] results=1}] stores=[{isOnEveryPath=true}] handed=[{call=1}] operands=[{position=1}] resultsFullyListed=1} {
   b0(v0: anything):
     v1 = TypeTest v0 testedType=number @3001
     Branch v1 -> taken b1(| 0), notTaken b2() @4000

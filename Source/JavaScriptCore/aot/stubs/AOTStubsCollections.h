@@ -26,7 +26,9 @@ constexpr StubKey weakMapGet() { return StubKey(StubFamily::WeakMapGet); }
 constexpr StubKey weakMapHas() { return StubKey(StubFamily::WeakMapHas); }
 constexpr StubKey weakSetHas() { return StubKey(StubFamily::WeakSetHas); }
 constexpr StubKey newMap() { return StubKey(StubFamily::NewMap); }
+constexpr StubKey newSet() { return StubKey(StubFamily::NewSet); }
 constexpr StubKey newCompactTable(CompactTableOwner owner) { return StubKey(StubFamily::NewCompactTable).withForm(static_cast<uint8_t>(owner)); }
+constexpr StubKey growCompactTable(CompactTableOwner owner) { return StubKey(StubFamily::GrowCompactTable).withForm(static_cast<uint8_t>(owner)); }
 
 } } // namespace JSC::AOT
 

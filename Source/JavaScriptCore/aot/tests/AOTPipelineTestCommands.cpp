@@ -20,10 +20,15 @@
 #include "AOTPipeline.h"
 #include "AOTPipelineInternal.h"
 #include "AOTSchemaEnums.h"
+#include "AOTShellProcess.h"
 #include "AOTStatistics.h"
+#include "AOTSupportTestCommands.h"
+#include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
 #include <wtf/ASCIICType.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -88,10 +93,25 @@ static void printDeclines(TestCommandContext& context)
     }
 }
 
+static bool loseTypeOf(Program& program, StringView word)
+{
+    size_t separator = word.find(':');
+    if (separator == notFound || !word.startsWith('f') || !word.substring(separator + 1).startsWith('v'))
+        return false;
+    std::optional<uint32_t> function = parseTestNumber<uint32_t>(word.substring(1, separator - 1));
+    std::optional<uint32_t> value = parseTestNumber<uint32_t>(word.substring(separator + 2));
+    if (!function || !value || *function >= program.functions.size() || *value >= program.functions[*function].values.size())
+        return false;
+    program.functions[*function].edit(ValueID(*value)).type = TypeTable::anything;
+    return true;
+}
+
 static void runPassCommand(TestCommandContext& context)
 {
     Vector<PassID> passes;
     for (const String& word : context.arguments) {
+        if (loseTypeOf(*context.program, word))
+            continue;
         std::optional<PassID> pass = passNamed(word);
         if (!pass) {
             context.out.println("error: unknown pass ", word);
@@ -133,6 +153,18 @@ static void runPipelineCommand(TestCommandContext& context)
     printProgram(context.out, *context.program);
 }
 
+static void giveBackToContext(TestCommandContext& context, CompileOutput& output)
+{
+    context.build.diagnostics().append(Vector<UserDiagnostic>(output.diagnostics.userDiagnostics()));
+    context.build.diagnostics().append(Vector<InternalError>(output.diagnostics.internalErrors()));
+    Vector<uint64_t> values = output.statistics.values();
+    for (StatisticID statistic : allMembersOf<StatisticID>) {
+        if (uint64_t value = values[static_cast<size_t>(statistic)]; value && statistic != StatisticID::None)
+            context.build.statistics().count(statistic, value);
+    }
+    context.losses = WTF::move(output.losses);
+}
+
 static void runCompileCommand(TestCommandContext& context)
 {
     if (!checkFormIsAsRead(context, "compile"_s))
@@ -159,13 +191,36 @@ static void runCompileCommand(TestCommandContext& context)
     for (StatisticID statistic : printedStatistics)
         context.out.println("statistic ", nameOf(statistic), " ", values[static_cast<size_t>(statistic)]);
 
-    context.build.diagnostics().append(Vector<UserDiagnostic>(output->diagnostics.userDiagnostics()));
-    context.build.diagnostics().append(Vector<InternalError>(output->diagnostics.internalErrors()));
-    for (StatisticID statistic : allMembersOf<StatisticID>) {
-        if (uint64_t value = values[static_cast<size_t>(statistic)]; value && statistic != StatisticID::None)
-            context.build.statistics().count(statistic, value);
+    giveBackToContext(context, *output);
+}
+
+static void runInShellCommand(TestCommandContext& context)
+{
+    if (!checkFormIsAsRead(context, "run-in-shell"_s))
+        return;
+
+    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(context.program), context.build);
+    if (output->image.isEmpty() || output->entryModuleIDs.size() != 1) {
+        context.out.println("image ", output->image.isEmpty() ? "empty"_s : "without one entry module"_s);
+        giveBackToContext(context, *output);
+        return;
     }
-    context.losses = WTF::move(output->losses);
+
+    TemporaryFile image(".image"_s, output->image.span());
+    StringBuilder script;
+    script.append("globalThis.id = value => value; "_s);
+    for (const String& word : context.arguments)
+        script.append(word, ' ');
+    script.append("runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error));"_s);
+
+    Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), String("-e"_s), script.toString() };
+    ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
+    String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
+    context.out.print(printed);
+    if (!printed.isEmpty() && !printed.endsWith('\n'))
+        context.out.println();
+    context.out.println(result.description());
+    giveBackToContext(context, *output);
 }
 
 [[noreturn]] static void runCrashCommand(TestCommandContext&)
@@ -215,6 +270,50 @@ static void printPassContext(PrintStream& out, FunctionPassContext& pass)
                 printSubject(out, value, pass.subject(value));
         }
     }
+}
+
+static void runFunctionPassesCommand(TestCommandContext& context)
+{
+    Vector<PassID> passes;
+    for (const String& word : context.arguments) {
+        std::optional<PassID> pass = passNamed(word);
+        if (!pass || descriptorOf(*pass).scope != PassScope::Function || descriptorOf(*pass).derivesFunctions) {
+            context.out.println("error: function-passes takes the names of function passes that derive no functions, not ", word);
+            return;
+        }
+        passes.append(*pass);
+    }
+    if (passes.isEmpty()) {
+        context.out.println("error: function-passes takes the names of function passes");
+        return;
+    }
+
+    Program& program = *context.program;
+    context.build.resolveFunctionToDump(program);
+    PassRunner runner(context.build);
+    Pipeline pipeline(program, runner);
+    computeResultsForTesting(pipeline, functionPassInputs);
+    if (context.build.diagnostics().hasErrors())
+        return;
+
+    OptimizationInputs inputs = pipeline.createInputs(functionPassInputs);
+    TaskArenas arenas(program);
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        Function& function = program.functions[index];
+        if (!function.hasBody())
+            continue;
+        FunctionID id(index);
+        FunctionAnalyses analyses(AnalysisContext { context.build, program, &inputs.flow, &inputs.effects, id }, function);
+        FunctionPassContext pass { program, inputs, id, function, analyses, arenas.types, arenas.strings, context.build };
+        for (PassID passID : passes) {
+            PassOutcome outcome = runner.runFunctionPass(passID, pass);
+            context.out.println("f", index, " ", nameOf(passID), ": ", outcome == PassOutcome::Changed ? "Changed"_s : "Unchanged"_s);
+        }
+    }
+    runner.didFinishFunctionLoop();
+    if (context.build.diagnostics().hasErrors())
+        return;
+    printProgram(context.out, program);
 }
 
 static void runPassContextCommand(TestCommandContext& context)
@@ -358,8 +457,10 @@ std::span<const TestCommand> pipelineTestCommands()
 {
     static constexpr TestCommand commands[] {
         { "pass"_s, IRForm::Prepared, runPassCommand },
+        { "function-passes"_s, IRForm::Prepared, runFunctionPassesCommand },
         { "pipeline"_s, IRForm::AsRead, runPipelineCommand, RawWordCheck::Run, ProgramAsRead::WithLibrary },
         { "compile"_s, IRForm::AsRead, runCompileCommand, RawWordCheck::Run, ProgramAsRead::WithLibrary },
+        { "run-in-shell"_s, IRForm::AsRead, runInShellCommand, RawWordCheck::Run, ProgramAsRead::WithLibrary },
         { "crash"_s, std::nullopt, runCrashCommand },
         { "list-passes"_s, std::nullopt, runListPassesCommand },
         { "pass-context"_s, IRForm::Prepared, runPassContextCommand },

@@ -38,6 +38,8 @@
 #include <wtf/BubbleSort.h>
 #include <wtf/CycleForest.h>
 #include <wtf/Deque.h>
+#include <wtf/HashMap.h>
+#include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
@@ -184,8 +186,9 @@ public:
         , m_slowSuccessors(slowSuccessors)
         , m_placesInGaps(code.policy().layout.placesRareBlocksInGaps)
         , m_placesAfterGuards(m_placesInGaps && code.policy().layout.placesRareBlocksAfterGuards && code.numEntrypoints() == 1 && code.entrypoint(0).block() == code[0])
+        , m_makesGaps(m_placesInGaps && code.policy().layout.makesGapsForRareBlocks && code.numEntrypoints() == 1 && code.entrypoint(0).block() == code[0])
     {
-        if (m_placesAfterGuards)
+        if (m_placesAfterGuards || m_makesGaps)
             findBlocksInCycles();
     }
 
@@ -197,6 +200,8 @@ public:
         if (!m_placesInGaps)
             return;
 
+        if (m_makesGaps && !m_blocksInCycles.contains(block))
+            makeGapBefore(block);
         m_placedBytes += estimatedBytes(block);
         if (!isGuard(block))
             return;
@@ -284,6 +289,31 @@ private:
 
     static unsigned estimatedBytes(BasicBlock* block) { return block->size() * AirLimits::estimatedBytesPerInst; }
 
+    // Behind the block that was placed last, a rare block that waits would be out of reach of a short jump from its guard.
+    // All that wait go in front of that block: the usual way jumps over them once, where behind each guard it would jump once a guard.
+    void makeGapBefore(BasicBlock* placedLast)
+    {
+        ASSERT(m_blocksInOrder.last() == placedLast);
+        auto canBePlaced = [&](const WaitingBlock& waiting, unsigned bytesInBetween) {
+            return !m_done.contains(waiting.rare) && isSmall(waiting.rare)
+                && m_placedBytes - waiting.bytesPlacedAtEndOfGuard + bytesInBetween + estimatedBytes(waiting.rare) <= AirLimits::maxBytesFromGuardToRareBlock
+                && hasOnlyRarePredecessors(waiting.rare);
+        };
+        bool someBlockCannotWait = false;
+        for (const WaitingBlock& waiting : m_waitingForGap)
+            someBlockCannotWait |= canBePlaced(waiting, 0) && !canBePlaced(waiting, estimatedBytes(placedLast));
+        if (!someBlockCannotWait)
+            return;
+
+        m_blocksInOrder.removeLast();
+        for (const WaitingBlock& waiting : m_waitingForGap) {
+            if (canBePlaced(waiting, 0))
+                append(waiting.rare);
+        }
+        m_waitingForGap.shrink(0);
+        m_blocksInOrder.append(placedLast);
+    }
+
     static bool isGuard(BasicBlock* block)
     {
         return block->numSuccessors() == 2 && block->successor(0).isRare() != block->successor(1).isRare();
@@ -319,11 +349,47 @@ private:
         m_placedBytes += estimatedBytes(rare);
     }
 
+    bool hasCycle()
+    {
+        enum class State : uint8_t { NotReached, OnPath, Done };
+        struct Frame {
+            BasicBlock* block;
+            unsigned nextSuccessor;
+        };
+        Vector<State> states(FillWith { }, m_code.size(), State::NotReached);
+        Vector<Frame, 32> path;
+        for (BasicBlock* root : m_code) {
+            if (states[root->index()] != State::NotReached)
+                continue;
+            states[root->index()] = State::OnPath;
+            path.append(Frame { root, 0 });
+            while (!path.isEmpty()) {
+                BasicBlock* block = path.last().block;
+                if (path.last().nextSuccessor == block->numSuccessors()) {
+                    states[block->index()] = State::Done;
+                    path.removeLast();
+                    continue;
+                }
+                BasicBlock* successor = block->successorBlock(path.last().nextSuccessor++);
+                if (states[successor->index()] == State::OnPath)
+                    return true;
+                if (states[successor->index()] == State::NotReached) {
+                    states[successor->index()] = State::OnPath;
+                    path.append(Frame { successor, 0 });
+                }
+            }
+        }
+        return false;
+    }
+
     void findBlocksInCycles()
     {
+        if (!hasCycle())
+            return;
+        constexpr unsigned depthOfOutermostCycles = 1;
         WTF::CycleForest<CFG> cycles(m_code.cfg(), [](std::span<BasicBlock* const> members, const auto&, const auto&) {
             return members[0];
-        });
+        }, depthOfOutermostCycles);
         for (BasicBlock* block : m_code) {
             if (cycles.isInCycle(block))
                 m_blocksInCycles.add(block);
@@ -336,6 +402,7 @@ private:
     SortedSuccessors& m_slowSuccessors;
     const bool m_placesInGaps;
     const bool m_placesAfterGuards;
+    const bool m_makesGaps;
     IndexSet<BasicBlock*> m_placedInGaps;
     IndexSet<BasicBlock*> m_blocksInCycles;
     Vector<WaitingBlock, 8> m_waitingForGap;
@@ -466,6 +533,49 @@ static bool detectDiamondStructure(BasicBlock* blockB, ChainWorklist& worklist, 
     return true;
 }
 
+static bool detectOtherArmsOfJoin(BasicBlock* blockB, ChainWorklist& worklist, IndexSet<BasicBlock*>& done)
+{
+    //  A
+    //  |'---.
+    //  T     |
+    //  |'-R  |
+    //  B*    C
+    //  |     |
+    //  '--.--'
+    //     D
+
+    // A choice between B and C that is no diamond: B stands behind a guard T that leaves for rare code,
+    // or a branch that has been copied leads into the same arms from several places, so that no arm has one predecessor.
+    // C can be entered from what has been placed, it does nothing but go on to D, and it is taken for as frequent as B.
+    // Behind D it would lie at the end of everything that D leads to: two long jumps each time it runs.
+    if (blockB->numSuccessors() != 1 || blockB->successor(0).isRare())
+        return false;
+    BasicBlock* blockD = blockB->successor(0).block();
+    if (done.contains(blockD))
+        return false;
+    Vector<BasicBlock*, 4> arms;
+    for (BasicBlock* blockC : blockD->predecessors()) {
+        if (blockC == blockB || done.contains(blockC) || arms.contains(blockC))
+            continue;
+        if (blockC->numSuccessors() != 1 || blockC->successor(0).isRare() || blockC->frequency() < blockB->frequency())
+            continue;
+        bool isEnteredFromPlacedBlocks = blockC->numPredecessors();
+        for (BasicBlock* predecessor : blockC->predecessors()) {
+            isEnteredFromPlacedBlocks &= done.contains(predecessor);
+            for (FrequentedBlock& successor : predecessor->successors())
+                isEnteredFromPlacedBlocks &= successor.block() != blockC || !successor.isRare();
+        }
+        if (isEnteredFromPlacedBlocks)
+            arms.append(blockC);
+    }
+    if (arms.isEmpty())
+        return false;
+    worklist.append(blockD);
+    for (BasicBlock* blockC : arms)
+        worklist.append(blockC);
+    return true;
+}
+
 static bool detectExclusiveSuccessor(BasicBlock* blockA, ChainWorklist& worklist, IndexSet<BasicBlock*>& done)
 {
     //     A*       D
@@ -583,6 +693,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         bool hasFrequencies = code.policy().layout.ordersBlocksByEdgeFrequency;
         if (!detectTriangleStructure(block, chainWorklist, done, hasFrequencies)
             && !detectDiamondStructure(block, chainWorklist, done, hasFrequencies)
+            && !(hasFrequencies && detectOtherArmsOfJoin(block, chainWorklist, done))
             && !detectExclusiveSuccessor(block, chainWorklist, done)) {
 
             if (!(hasFrequencies && appendSuccessorsByEdgeFrequency(block, chainWorklist, done)))
@@ -710,6 +821,237 @@ void optimizeBlockOrder(Code& code)
         if (canInvertBranch(block->last()) && code.findNextBlock(block) == block->successorBlock(0))
             invertBranch(block);
     }
+}
+
+namespace {
+
+class RareBranchRouter {
+public:
+    explicit RareBranchRouter(Code& code)
+        : m_code(code)
+    {
+    }
+
+    void run()
+    {
+        collectBlocks();
+        collectBranches();
+        if (m_branches.isEmpty())
+            return;
+        collectJumps();
+        routeThroughJumpsOfTheCode();
+        routeThroughNewJumps();
+        if (m_blocksBehind.isEmpty())
+            return;
+        adoptOrder();
+    }
+
+private:
+    // A patchpoint is a call with its moves more often than not.
+    static constexpr unsigned estimatedBytesPerPatch = 4 * AirLimits::estimatedBytesPerInst;
+    static constexpr unsigned sizeOfJump = 5;
+    static constexpr unsigned reach = AirLimits::maxBytesFromGuardToRareBlock;
+    static constexpr unsigned minBranchesPerNewJump = 2;
+
+    struct Branch {
+        unsigned position;
+        BasicBlock* target;
+        bool isRouted { false };
+    };
+
+    static unsigned estimatedBytes(BasicBlock* block)
+    {
+        unsigned bytes = 0;
+        for (Inst& inst : *block)
+            bytes += inst.kind.opcode == Patch ? estimatedBytesPerPatch : AirLimits::estimatedBytesPerInst;
+        return bytes;
+    }
+
+    static unsigned distance(unsigned a, unsigned b) { return a > b ? a - b : b - a; }
+
+    BasicBlock* next(unsigned position) const { return position + 1 < m_order.size() ? m_order[position + 1] : nullptr; }
+    unsigned endOf(unsigned position) const { return m_start[position + 1]; }
+
+    // The block that the last instruction of the code of a block jumps to without a condition.
+    BasicBlock* targetOfFinalJump(unsigned position) const
+    {
+        BasicBlock* block = m_order[position];
+        if (block->last().kind.opcode == Patch)
+            return nullptr;
+        switch (block->numSuccessors()) {
+        case 1:
+            return block->last().kind.opcode == Jump && block->successorBlock(0) != next(position) ? block->successorBlock(0) : nullptr;
+        case 2:
+            return block->successorBlock(1) != next(position) ? block->successorBlock(1) : nullptr;
+        default:
+            return nullptr;
+        }
+    }
+
+    bool fallsThrough(unsigned position) const
+    {
+        BasicBlock* block = m_order[position];
+        if (!block->numSuccessors())
+            return false;
+        if (block->last().kind.opcode == Patch)
+            return true;
+        return !targetOfFinalJump(position);
+    }
+
+    void collectBlocks()
+    {
+        unsigned firstRareIndex = m_code.numberOfBlocksInChains();
+        m_positionOf.resize(m_code.size());
+        m_start.append(0);
+        for (BasicBlock* block : m_code) {
+            if (block->index() < firstRareIndex)
+                m_firstRarePosition = m_order.size() + 1;
+            m_positionOf[block] = m_order.size();
+            m_order.append(block);
+            m_start.append(m_start.last() + estimatedBytes(block));
+        }
+    }
+
+    void collectBranches()
+    {
+        for (unsigned position = 0; position < m_order.size(); ++position) {
+            BasicBlock* block = m_order[position];
+            if (block->numSuccessors() != 2 || !canInvertBranch(block->last()))
+                continue;
+            if (!block->successor(0).isRare() && position < m_firstRarePosition)
+                continue;
+            BasicBlock* target = block->successorBlock(0);
+            if (distance(m_start[m_positionOf[target]], endOf(position)) <= reach)
+                continue;
+            m_branches.append({ position, target });
+        }
+    }
+
+    void collectJumps()
+    {
+        for (unsigned position = 0; position < m_order.size(); ++position) {
+            if (BasicBlock* target = targetOfFinalJump(position))
+                m_jumpsTo.add(target, Vector<unsigned, 2>()).iterator->value.append(position);
+            if (!fallsThrough(position))
+                m_gaps.append(position);
+        }
+    }
+
+    // The final jump of the block becomes a block of its own, which the block falls into.
+    BasicBlock* splitOffFinalJump(unsigned position)
+    {
+        return m_splitJumps.ensure(position, [&] {
+            BasicBlock* block = m_order[position];
+            unsigned successorIndex = block->numSuccessors() - 1;
+            FrequentedBlock target = block->successor(successorIndex);
+            BasicBlock* jump = m_code.addBlock(block->frequency());
+            jump->append(Jump, block->last().origin);
+            jump->setSuccessors(target);
+            block->successor(successorIndex) = FrequentedBlock(jump, target.frequency());
+            m_blocksBehind.add(position, Vector<BasicBlock*, 1>()).iterator->value.insert(0, jump);
+            return jump;
+        }).iterator->value;
+    }
+
+    void route(Branch& branch, BasicBlock* jump)
+    {
+        FrequentedBlock& edge = m_order[branch.position]->successor(0);
+        edge = FrequentedBlock(jump, edge.frequency());
+        branch.isRouted = true;
+    }
+
+    void routeThroughJumpsOfTheCode()
+    {
+        for (Branch& branch : m_branches) {
+            auto jumps = m_jumpsTo.find(branch.target);
+            if (jumps == m_jumpsTo.end())
+                continue;
+            for (unsigned position : jumps->value) {
+                if (position == branch.position || distance(endOf(position) - sizeOfJump, endOf(branch.position)) > reach)
+                    continue;
+                route(branch, splitOffFinalJump(position));
+                break;
+            }
+        }
+    }
+
+    void routeThroughNewJumps()
+    {
+        UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 4>> branchesTo;
+        for (unsigned index = 0; index < m_branches.size(); ++index) {
+            if (!m_branches[index].isRouted)
+                branchesTo.add(m_branches[index].target, Vector<unsigned, 4>()).iterator->value.append(index);
+        }
+        // In the order of the branches, so that the code does not depend on the order of a hash table.
+        for (Branch& first : m_branches) {
+            if (first.isRouted)
+                continue;
+            Vector<unsigned, 4>& waiting = branchesTo.find(first.target)->value;
+            if (waiting.size() < minBranchesPerNewJump)
+                continue;
+            std::optional<unsigned> bestGap;
+            unsigned mostBranches = 0;
+            auto firstGap = std::ranges::lower_bound(m_gaps, endOf(first.position) > reach ? endOf(first.position) - reach : 0, { }, [&](unsigned gap) {
+                return endOf(gap);
+            });
+            for (auto gap = firstGap; gap != m_gaps.end() && endOf(*gap) <= endOf(first.position) + reach; ++gap) {
+                unsigned numberOfBranches = 0;
+                for (unsigned index : waiting)
+                    numberOfBranches += !m_branches[index].isRouted && distance(endOf(*gap), endOf(m_branches[index].position)) <= reach;
+                if (numberOfBranches > mostBranches) {
+                    mostBranches = numberOfBranches;
+                    bestGap = *gap;
+                }
+            }
+            if (mostBranches < minBranchesPerNewJump)
+                continue;
+            BasicBlock* jump = m_code.addBlock(first.target->frequency());
+            jump->append(Jump, m_order[first.position]->last().origin);
+            jump->setSuccessors(FrequentedBlock(first.target, m_order[first.position]->successor(0).frequency()));
+            m_blocksBehind.add(*bestGap, Vector<BasicBlock*, 1>()).iterator->value.append(jump);
+            for (unsigned index : waiting) {
+                if (!m_branches[index].isRouted && distance(endOf(*bestGap), endOf(m_branches[index].position)) <= reach)
+                    route(m_branches[index], jump);
+            }
+        }
+    }
+
+    void adoptOrder()
+    {
+        Vector<BasicBlock*> order;
+        unsigned firstRareIndex = 0;
+        for (unsigned position = 0; position < m_order.size(); ++position) {
+            order.append(m_order[position]);
+            if (auto added = m_blocksBehind.find(position); added != m_blocksBehind.end())
+                order.appendVector(added->value);
+            if (position + 1 == m_firstRarePosition)
+                firstRareIndex = order.size();
+        }
+        bool recordsRareCode = m_code.numberOfBlocksInChains() != std::numeric_limits<unsigned>::max();
+        m_code.adoptBlockOrder(order);
+        if (recordsRareCode)
+            m_code.setNumberOfBlocksInChains(firstRareIndex);
+        m_code.resetReachability();
+    }
+
+    Code& m_code;
+    Vector<BasicBlock*> m_order;
+    Vector<unsigned> m_start;
+    IndexMap<BasicBlock*, unsigned> m_positionOf;
+    unsigned m_firstRarePosition { 0 };
+    Vector<Branch> m_branches;
+    Vector<unsigned> m_gaps;
+    UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 2>> m_jumpsTo;
+    UncheckedKeyHashMap<unsigned, BasicBlock*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_splitJumps;
+    UncheckedKeyHashMap<unsigned, Vector<BasicBlock*, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_blocksBehind;
+};
+
+} // anonymous namespace
+
+void routeRareBranchesThroughJumps(Code& code)
+{
+    PhaseScope phaseScope(code, "routeRareBranchesThroughJumps"_s);
+    RareBranchRouter(code).run();
 }
 
 void moveBlocksWithoutSuccessorsToEnd(Code& code)

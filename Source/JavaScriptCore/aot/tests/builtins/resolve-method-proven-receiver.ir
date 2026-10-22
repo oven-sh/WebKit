@@ -114,7 +114,8 @@ function f8 name="unknownCodeBetweenReadAndCall" parameters=[{type=anything}] re
 # CHECK-LABEL: function f8 name="unknownCodeBetweenReadAndCall"
 # CHECK: v2: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
 # CHECK-NEXT: v3: anything = Call v0, -, v1
-# CHECK-NEXT: v4: anything = Call v2, v1, v3 calleeKey="push"
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v4: int[0, 9007199254740991] = CallBuiltin v1, v3 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
 
 function f9 name="nullableString" parameters=[{type=undefined|string}] results=[{type=anything}] {
   b0(v0: undefined|string):

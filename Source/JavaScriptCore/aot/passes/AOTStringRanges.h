@@ -9,6 +9,7 @@
 
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
+#include "AOTSplitUnions.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -63,7 +64,12 @@ static_assert(OperandIndex::StringRangeCharacterOrUndefined::position == Operand
 
 Value makeStringRangeRead(Opcode, ValueID string, std::optional<StringRangeBounds>, ValueID position);
 
-PassOutcome expandStringRanges(FunctionPassContext&);
+// The calls of built-ins in a function, in the order of forEachValueSite(). Nearly every rule of SimplifyBuiltinCalls begins at one, and a function has few of them among its values:
+// they are listed once, and anew behind a rule that has changed something.
+using BuiltinCallSites = Vector<ValueSite, 16>;
+BuiltinCallSites collectBuiltinCallSites(FunctionPassContext&);
+
+PassOutcome expandStringRanges(FunctionPassContext&, const BuiltinCallSites&);
 PassOutcome expandAppendedStringRanges(FunctionPassContext&);
 
 } } } // namespace JSC::AOT::Typed

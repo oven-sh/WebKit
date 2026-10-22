@@ -21,44 +21,44 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function}
+    v1 = Convert v0 declared={type=function flags=[IsExpected]}
     v2 = NewClosure function=f2
     v3 = NewClass v2 layout=L0
     PutModuleVariable v3 variable=g0
     v5 = FinishClass v3 layout=L0
-    v6 = ClaimDeclared v5 declared={type=anything predicted=function}
-    v7 = ClaimDeclared v5 declared={type=anything predicted=function}
-    v8 = Predict v1 predicted=function
+    v6 = Convert v5 declared={type=function flags=[IsExpected]}
+    v7 = Convert v5 declared={type=function flags=[IsExpected]}
+    v8 = Convert v1 declared={type=function flags=[IsExpected]}
     v9 = String string="a"
     v10 = Call v8, -, v9 calleeName="make"
-    v11 = Predict v10 predicted=function
+    v11 = Convert v10 declared={type=function flags=[IsExpected]}
     v12 = Construct v11
-    v13 = Predict v12 predicted=L1
+    v13 = Convert v12 declared={type=L1 flags=[IsExpected]}
     v14 = String string="bb"
     v15 = Call v8, -, v14 calleeName="make"
-    v16 = Predict v15 predicted=function
+    v16 = Convert v15 declared={type=function flags=[IsExpected]}
     v17 = Construct v16
-    v18 = Predict v17 predicted=L1
+    v18 = Convert v17 declared={type=L1 flags=[IsExpected]}
     v19 = Builtin builtin=GlobalThis
     v20 = PropGet v19 key="print" [isFreeName]
     v21 = PropGet v13 key="toString"
-    v22 = Predict v21 predicted=function
+    v22 = Convert v21 declared={type=function flags=[IsExpected]}
     v23 = Call v22, v13 calleeKey="toString" calleeName="toString"
     v24 = PropGet v18 key="toString"
-    v25 = Predict v24 predicted=function
+    v25 = Convert v24 declared={type=function flags=[IsExpected]}
     v26 = Call v25, v18 calleeKey="toString" calleeName="toString"
     v27 = PropGet v13 key="valueOf"
-    v28 = Predict v27 predicted=function
+    v28 = Convert v27 declared={type=function flags=[IsExpected]}
     v29 = Call v28, v13 calleeKey="valueOf" calleeName="valueOf"
     v30 = PropGet v18 key="valueOf"
-    v31 = Predict v30 predicted=function
+    v31 = Convert v30 declared={type=function flags=[IsExpected]}
     v32 = Call v31, v18 calleeKey="valueOf" calleeName="valueOf"
     v33 = PropGet v13 key="hasOwnProperty"
-    v34 = Predict v33 predicted=function
+    v34 = Convert v33 declared={type=function flags=[IsExpected]}
     v35 = String string="k"
     v36 = Call v34, v13, v35 calleeKey="hasOwnProperty" calleeName="hasOwnProperty"
     v37 = PropGet v18 key="hasOwnProperty"
-    v38 = Predict v37 predicted=function
+    v38 = Convert v37 declared={type=function flags=[IsExpected]}
     v39 = String string="k"
     v40 = Call v38, v18, v39 calleeKey="hasOwnProperty" calleeName="hasOwnProperty"
     v41 = Call v20, -, v23, v26, v29, v32, v36, v40 calleeName="print"
@@ -74,28 +74,28 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v51 = Builtin builtin=GlobalThis
     v52 = PropGet v51 key="print" [isFreeName]
     v53 = PropGet v13 key="toString"
-    v54 = Predict v53 predicted=function
+    v54 = Convert v53 declared={type=function flags=[IsExpected]}
     v55 = Builtin builtin=GlobalThis
     v56 = PropGet v55 key="Object" [isFreeName]
-    v57 = Predict v56 predicted=builtin(Object)
+    v57 = Convert v56 declared={type=builtin(Object) flags=[IsExpected]}
     v58 = PropGet v57 key="prototype"
-    v59 = Predict v58 predicted=builtin(ObjectPrototype)
+    v59 = Convert v58 declared={type=builtin(ObjectPrototype) flags=[IsExpected]}
     v60 = PropGet v59 key="toString"
-    v61 = Predict v60 predicted=builtin(ObjectPrototypeToString)
+    v61 = Convert v60 declared={type=builtin(ObjectPrototypeToString) flags=[IsExpected]}
     v62 = StrictEq v54, v61
     v63 = PropGet v13 key="toString"
-    v64 = Predict v63 predicted=function
+    v64 = Convert v63 declared={type=function flags=[IsExpected]}
     v65 = PropGet v18 key="toString"
-    v66 = Predict v65 predicted=function
+    v66 = Convert v65 declared={type=function flags=[IsExpected]}
     v67 = StrictEq v64, v66
     v68 = Call v52, -, v62, v67 calleeName="print"
     v69 = Construct v7 calleeName="Plain"
-    v70 = Predict v69 predicted=L0
+    v70 = Convert v69 declared={type=L0 flags=[IsExpected]}
     v71 = Data data=d0
     v72 = NewArray v13, v70, v18, v71 contents=anything
-    v73 = Predict v72 predicted=Array<L0|L1>
+    v73 = Convert v72 declared={type=Array<L0|L1> flags=[IsExpected]}
     v74 = Integer
-    v75 = Predict v74 predicted=number
+    v75 = Convert v74 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v75)
   b2(v76):
     LoopHint
@@ -108,21 +108,21 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v81 = Builtin builtin=GlobalThis
     v82 = PropGet v81 key="print" [isFreeName]
     v83 = ElemGet v73, v80
-    v84 = Predict v83 predicted=L0|L1
+    v84 = Convert v83 declared={type=L0|L1 flags=[IsExpected]}
     v85 = PropGet v84 key="toString"
-    v86 = Predict v85 predicted=function
+    v86 = Convert v85 declared={type=function flags=[IsExpected]}
     v87 = Call v86, v84 calleeKey="toString" calleeName="toString"
     v88 = ElemGet v73, v80
-    v89 = Predict v88 predicted=L0|L1
+    v89 = Convert v88 declared={type=L0|L1 flags=[IsExpected]}
     v90 = PropGet v89 key="hasOwnProperty"
-    v91 = Predict v90 predicted=function
+    v91 = Convert v90 declared={type=function flags=[IsExpected]}
     v92 = String string="k"
     v93 = Call v91, v89, v92 calleeKey="hasOwnProperty" calleeName="hasOwnProperty"
     v94 = Call v82, -, v87, v93 calleeName="print"
     Jump -> next b5()
   b5():
     v95 = Increment v80
-    v96 = ClaimDeclared v95 declared={type=anything predicted=number}
+    v96 = Convert v95 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v96)
   b6(v97):
     Jump -> next b7()
@@ -130,7 +130,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v98 = Undefined
     Return v98
 }
-function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=function}] {
+function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -143,7 +143,7 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
     v7 = NewClosure v0 function=f6
     DefineMethod v2, v7 layout=L1 index=2 key="hasOwnProperty"
     v9 = FinishClass v2 layout=L1
-    v10 = ClaimDeclared v9 declared={type=anything predicted=function}
+    v10 = Convert v9 declared={type=function flags=[IsExpected]}
     Return v10
 }
 function f2 name="Plain" module=m0 position=146 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
@@ -193,73 +193,74 @@ function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = ClaimDeclared v2 declared={type=Array<anything>}
-    v4 = CallList v0, v1, v3
-    Return v4
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = CallList v0, v1, v3
+    Return v5
 }
 runtimefunction id=4 function=f8
 runtimefunction id=12 function=f7
 )IR"_s;
 
-static constexpr ASCIILiteral membersOfLiteralsAndFunctions = R"IR(layout L0 module=m0 position=31 fields=[{key="call" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}, {key="toString" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}, {key="hasOwnProperty" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+static constexpr ASCIILiteral membersOfLiteralsAndFunctions = R"IR(layout L0 module=m0 position=31 fields=[{key="call" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="toString" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="hasOwnProperty" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function}
+    v1 = Convert v0 declared={type=function flags=[IsExpected]}
     v2 = NewClosure function=f2
-    v3 = ClaimDeclared v2 declared={type=anything predicted=function}
-    v4 = Predict v1 predicted=function
+    v3 = Convert v2 declared={type=function flags=[IsExpected]}
+    v4 = Convert v1 declared={type=function flags=[IsExpected]}
     v5 = String string="a"
     v6 = Call v4, -, v5 calleeName="literal"
-    v7 = Predict v6 predicted=L0
+    v7 = Convert v6 declared={type=L0 flags=[IsExpected]}
     v8 = String string="b"
     v9 = Call v4, -, v8 calleeName="literal"
-    v10 = Predict v9 predicted=L0
+    v10 = Convert v9 declared={type=L0 flags=[IsExpected]}
     v11 = Builtin builtin=GlobalThis
     v12 = PropGet v11 key="print" [isFreeName]
     v13 = PropGet v7 key="call"
-    v14 = Predict v13 predicted=function
+    v14 = Convert v13 declared={type=function flags=[IsExpected]}
     v15 = Integer integer=1
     v16 = Call v14, v7, v15 calleeKey="call" calleeName="call"
     v17 = PropGet v10 key="call"
-    v18 = Predict v17 predicted=function
+    v18 = Convert v17 declared={type=function flags=[IsExpected]}
     v19 = Integer integer=2
     v20 = Call v18, v10, v19 calleeKey="call" calleeName="call"
     v21 = ToString v7
     v22 = ToString v10
     v23 = PropGet v7 key="hasOwnProperty"
-    v24 = Predict v23 predicted=function
+    v24 = Convert v23 declared={type=function flags=[IsExpected]}
     v25 = String string="k"
     v26 = Call v24, v7, v25 calleeKey="hasOwnProperty" calleeName="hasOwnProperty"
     v27 = PropGet v10 key="hasOwnProperty"
-    v28 = Predict v27 predicted=function
+    v28 = Convert v27 declared={type=function flags=[IsExpected]}
     v29 = String string="k"
     v30 = Call v28, v10, v29 calleeKey="hasOwnProperty" calleeName="hasOwnProperty"
     v31 = Call v12, -, v16, v20, v21, v22, v26, v30 calleeName="print"
-    v32 = Predict v3 predicted=function
+    v32 = Convert v3 declared={type=function flags=[IsExpected]}
     v33 = String string="f"
     v34 = Call v32, -, v33 calleeName="withOwnCall"
-    v35 = Predict v34 predicted=function
+    v35 = Convert v34 declared={type=function flags=[IsExpected]}
     v36 = String string="g"
     v37 = Call v32, -, v36 calleeName="withOwnCall"
-    v38 = Predict v37 predicted=function
+    v38 = Convert v37 declared={type=function flags=[IsExpected]}
     v39 = Builtin builtin=GlobalThis
     v40 = PropGet v39 key="print" [isFreeName]
     v41 = PropGet v35 key="call"
-    v42 = Predict v41 predicted=function
+    v42 = Convert v41 declared={type=function flags=[IsExpected]}
     v43 = Integer integer=1
     v44 = Integer integer=2
     v45 = Call v42, v35, v43, v44 calleeKey="call" calleeName="call"
-    v46 = Predict v45 predicted=string
+    v46 = Convert v45 declared={type=string flags=[IsExpected]}
     v47 = PropGet v38 key="call"
-    v48 = Predict v47 predicted=function
+    v48 = Convert v47 declared={type=function flags=[IsExpected]}
     v49 = Integer integer=1
     v50 = Integer integer=2
     v51 = Call v48, v38, v49, v50 calleeKey="call" calleeName="call"
-    v52 = Predict v51 predicted=string
+    v52 = Convert v51 declared={type=string flags=[IsExpected]}
     v53 = Integer integer=3
     v54 = Call v35, -, v53 calleeName="F"
     v55 = Integer integer=4
@@ -269,48 +270,48 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v59 = Builtin builtin=GlobalThis
     v60 = PropGet v59 key="print" [isFreeName]
     v61 = PropGet v35 key="call"
-    v62 = Predict v61 predicted=function
+    v62 = Convert v61 declared={type=function flags=[IsExpected]}
     v63 = Integer integer=1
     v64 = Integer integer=2
     v65 = Call v62, v35, v63, v64 calleeKey="call" calleeName="call"
-    v66 = Predict v65 predicted=string
+    v66 = Convert v65 declared={type=string flags=[IsExpected]}
     v67 = PropGet v38 key="call"
-    v68 = Predict v67 predicted=function
+    v68 = Convert v67 declared={type=function flags=[IsExpected]}
     v69 = Integer integer=1
     v70 = Integer integer=2
     v71 = Call v68, v38, v69, v70 calleeKey="call" calleeName="call"
-    v72 = Predict v71 predicted=string
+    v72 = Convert v71 declared={type=string flags=[IsExpected]}
     v73 = Call v60, -, v66, v72 calleeName="print"
     v74 = Undefined
     Return v74
 }
-function f1 name="literal" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=L0}] {
+function f1 name="literal" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0 flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewObject layout=L0
     v2 = NewClosure v0 function=f3
-    v3 = ClaimDeclared v2 declared={type=anything predicted=function}
+    v3 = Convert v2 declared={type=function flags=[IsExpected]}
     PropDefine v1, v3 key="call"
     v5 = NewClosure v0 function=f4
-    v6 = ClaimDeclared v5 declared={type=anything predicted=function}
+    v6 = Convert v5 declared={type=function flags=[IsExpected]}
     PropDefine v1, v6 key="toString"
     v8 = NewClosure v0 function=f5
-    v9 = ClaimDeclared v8 declared={type=anything predicted=function}
+    v9 = Convert v8 declared={type=function flags=[IsExpected]}
     PropDefine v1, v9 key="hasOwnProperty"
     v11 = FinishObject v1
-    v12 = ClaimDeclared v11 declared={type=anything predicted=L0}
+    v12 = Convert v11 declared={type=L0 flags=[IsExpected]}
     Return v12
 }
-function f2 name="withOwnCall" module=m0 position=129 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=function}] {
+function f2 name="withOwnCall" module=m0 position=129 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure v0 function=f6
-    v2 = ClaimDeclared v1 declared={type=anything predicted=function}
-    v3 = Predict v2 predicted=function
+    v2 = Convert v1 declared={type=function flags=[IsExpected]}
+    v3 = Convert v2 declared={type=function flags=[IsExpected]}
     v4 = NewClosure v0 function=f7
-    v5 = ClaimDeclared v4 declared={type=anything predicted=function}
+    v5 = Convert v4 declared={type=function flags=[IsExpected]}
     PropSet v3, v5 key="call"
     Return v3
 }
@@ -342,14 +343,14 @@ function f6 name="f" module=m0 position=157 flags=[HasThis, HasExplicitName] len
     v4 = Add v3, v2
     Return v4
 }
-function f7 module=m0 position=206 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=string}] {
+function f7 module=m0 position=206 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="own"
     v3 = Add v2, v0
     v4 = Add v3, v1
-    v5 = ClaimDeclared v4 declared={type=anything predicted=string}
+    v5 = Convert v4 declared={type=string flags=[IsExpected]}
     Return v5
 }
 entry module=m0
@@ -360,23 +361,24 @@ function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
 }
 function f9 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = ClaimDeclared v2 declared={type=Array<anything>}
-    v4 = CallList v0, v1, v3
-    Return v4
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = CallList v0, v1, v3
+    Return v5
 }
 runtimefunction id=4 function=f9
 runtimefunction id=12 function=f8
 )IR"_s;
 
-static constexpr ASCIILiteral membersOfPrototypeGivenToObjectCreate = R"IR(layout L0 module=m0 position=42 fields=[{key="toString" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}, {key="hasOwnProperty" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+static constexpr ASCIILiteral membersOfPrototypeGivenToObjectCreate = R"IR(layout L0 module=m0 position=42 fields=[{key="toString" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="hasOwnProperty" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function}
-    v2 = Predict v1 predicted=function
+    v1 = Convert v0 declared={type=function flags=[IsExpected]}
+    v2 = Convert v1 declared={type=function flags=[IsExpected]}
     v3 = String string="a"
     v4 = Call v2, -, v3 calleeName="make"
     v5 = String string="b"
@@ -404,16 +406,16 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
   b1():
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Object" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Object)
+    v3 = Convert v2 declared={type=builtin(Object) flags=[IsExpected]}
     v4 = PropGet v3 key="create"
-    v5 = Predict v4 predicted=function
-    v6 = Predict v5 predicted=builtin(ObjectCreate)
+    v5 = Convert v4 declared={type=function flags=[IsExpected]}
+    v6 = Convert v5 declared={type=builtin(ObjectCreate) flags=[IsExpected]}
     v7 = NewObject layout=L0
     v8 = NewClosure v0 function=f2
-    v9 = ClaimDeclared v8 declared={type=anything predicted=function}
+    v9 = Convert v8 declared={type=function flags=[IsExpected]}
     PropDefine v7, v9 key="toString"
     v11 = NewClosure v0 function=f3
-    v12 = ClaimDeclared v11 declared={type=anything predicted=function}
+    v12 = Convert v11 declared={type=function flags=[IsExpected]}
     PropDefine v7, v12 key="hasOwnProperty"
     v14 = FinishObject v7
     v15 = Call v6, v3, v14 calleeKey="create" calleeName="create"
@@ -425,7 +427,7 @@ function f2 name="toString" module=m0 position=44 kind=Method flags=[HasExplicit
   b1():
     Return v0
 }
-function f3 name="hasOwnProperty" module=m0 position=71 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything predicted=number|string|symbol}] results=[{type=anything}] {
+function f3 name="hasOwnProperty" module=m0 position=71 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=number|string|symbol flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -440,9 +442,10 @@ function f4 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
 }
 function f5 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = ClaimDeclared v2 declared={type=Array<anything>}
-    v4 = CallList v0, v1, v3
-    Return v4
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = CallList v0, v1, v3
+    Return v5
 }
 runtimefunction id=4 function=f5
 runtimefunction id=12 function=f4

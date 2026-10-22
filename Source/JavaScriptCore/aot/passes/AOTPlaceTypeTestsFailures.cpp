@@ -29,10 +29,10 @@ class FailedConditionsProblem {
     WTF_MAKE_NONCOPYABLE(FailedConditionsProblem);
 public:
     using State = BitVector;
+    static constexpr bool readsEffects() { return false; }
 
-    FailedConditionsProblem(const Function& function, const BlockFrequencies& frequencies, std::span<const FailingEdge> failingEdges)
+    FailedConditionsProblem(const Function& function, std::span<const FailingEdge> failingEdges)
         : m_function(function)
-        , m_frequencies(frequencies)
         , m_failingEdges(failingEdges)
     {
     }
@@ -48,7 +48,7 @@ public:
 
     void enterEdge(State& state, Edge edge) const
     {
-        if (m_frequencies.classOf(targetOf(m_function, edge).block) == BlockFrequency::Normal) {
+        if (m_function.at(targetOf(m_function, edge).block).frequency == BlockFrequency::Normal) {
             state.clearAll();
             return;
         }
@@ -63,7 +63,6 @@ public:
 
 private:
     const Function& m_function;
-    const BlockFrequencies& m_frequencies;
     std::span<const FailingEdge> m_failingEdges;
 };
 
@@ -90,10 +89,10 @@ static void appendFailingEdgeOfSwitch(const Function& function, TestConditions& 
         failingEdges.append(FailingEdge { otherwise, conditions.add(makeShapeTest(terminator.subjectOperand(), layouts)) });
 }
 
-static Vector<FailingEdge> collectFailingEdges(const Function& function, const CFG& cfg, const BlockFrequencies& frequencies, TestConditions& conditions)
+static Vector<FailingEdge> collectFailingEdges(const Function& function, const CFG& cfg, TestConditions& conditions)
 {
     auto leavesNormalCode = [&](const Target& failing) {
-        return frequencies.classOf(failing.block) != BlockFrequency::Normal;
+        return function.at(failing.block).frequency != BlockFrequency::Normal;
     };
 
     Vector<FailingEdge> failingEdges;
@@ -111,12 +110,11 @@ static Vector<FailingEdge> collectFailingEdges(const Function& function, const C
 FailedConditions::FailedConditions(FunctionAnalyses& analyses)
     : m_conditions(analyses)
 {
-    const BlockFrequencies& frequencies = analyses.blockFrequencies();
-    Vector<FailingEdge> failingEdges = collectFailingEdges(analyses.function(), analyses.cfg(), frequencies, m_conditions);
+    Vector<FailingEdge> failingEdges = collectFailingEdges(analyses.function(), analyses.cfg(), m_conditions);
     if (failingEdges.isEmpty())
         return;
 
-    FailedConditionsProblem problem(analyses.function(), frequencies, failingEdges.span());
+    FailedConditionsProblem problem(analyses.function(), failingEdges.span());
     m_failedAtHead = analyses.solveForward(problem);
 }
 
@@ -129,6 +127,20 @@ bool FailedConditions::mayHaveFailed(const Value& test, BlockID at) const
         return false;
     std::optional<TestConditionID> condition = m_conditions.find(test);
     return condition && failed->get(condition->index());
+}
+
+bool FailedConditions::mayHaveFailedTestOf(ValueID subject, BlockID at) const
+{
+    if (m_failedAtHead.isEmpty())
+        return false;
+    const std::optional<BitVector>& failed = m_failedAtHead[at.index()];
+    if (!failed)
+        return false;
+    for (size_t condition : *failed) {
+        if (m_conditions.at(TestConditionID(condition)).subject == subject)
+            return true;
+    }
+    return false;
 }
 
 } } } // namespace JSC::AOT::Typed

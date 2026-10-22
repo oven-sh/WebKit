@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
 #include "AOTBuiltinCells.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
@@ -26,17 +27,22 @@ namespace JSC { namespace AOT {
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringConstant, JSCell*, (Instance* instance, uint32_t index))
 {
+    LeafOperationScope leaf(*instance->vm);
     return instance->state->strings->constant(*instance->vm, index);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewStringConstant, JSCell*, (Instance* instance, uint32_t index))
 {
+    LeafOperationScope leaf(*instance->vm);
+    if (index & ProgramStrings::isPositionOfFunctionName)
+        return instance->state->strings->functionNameAt(*instance->vm, index & ~ProgramStrings::isPositionOfFunctionName);
     return instance->state->strings->createConstant(*instance->vm, index);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyConstant, JSCell*, (Instance* instance, uint32_t index))
 {
     VM& vm = *instance->vm;
+    LeafOperationScope leaf(vm);
     DeferGCForAWhile deferGC(vm);
     return instance->state->strings->keyCell(vm, index);
 }

@@ -35,9 +35,9 @@ using Uses = Vector<Use, 8>;
 
 } // anonymous namespace
 
-static bool isNonIntegerNumber(const Type& type)
+static bool isNumberBeyondInt32(const Type& type)
 {
-    return type.isNumber() && !type.isInteger();
+    return type.isNumber() && !type.isInt32();
 }
 
 static bool hasNumberParameter(const Program& program, const Function& function)
@@ -46,7 +46,7 @@ static bool hasNumberParameter(const Program& program, const Function& function)
         if (BlockID(index) == entryBlock)
             continue;
         for (ValueID parameter : function.blocks[index].parameters) {
-            if (isNonIntegerNumber(program.typeOf(function, parameter)))
+            if (isNumberBeyondInt32(program.typeOf(function, parameter)))
                 return true;
         }
     }
@@ -114,12 +114,22 @@ static bool hasStepWithinLimit(FunctionPassContext& context, const InductionVari
     return false;
 }
 
+// What another loop hands over arrives in a join in front of this one, and it is an integer if that loop's counter becomes one.
+static bool mayBecomeInteger(FunctionPassContext& context, ValueID start)
+{
+    const Type& type = context.program.typeOf(context.function, start);
+    if (type.isInteger())
+        return true;
+    ValueLocation location = context.analyses.useLists().locationOf(context.analyses.identityOf(start));
+    return type.isNumberWithoutFraction() && location.placement == ValuePlacement::Parameter && location.block != entryBlock;
+}
+
 static std::optional<CounterCandidate> findCandidate(FunctionPassContext& context, const InductionVariable& variable, BitVector& parametersOverStepLimit)
 {
     const Function& function = context.function;
-    if (!isNonIntegerNumber(context.program.typeOf(function, variable.parameter)))
+    if (!isNumberBeyondInt32(context.program.typeOf(function, variable.parameter)))
         return std::nullopt;
-    if (!variable.start || !context.program.typeOf(function, variable.start).isInteger())
+    if (!variable.start || !mayBecomeInteger(context, variable.start))
         return std::nullopt;
     if (!hasStepWithinLimit(context, variable, parametersOverStepLimit))
         return std::nullopt;
@@ -135,6 +145,45 @@ static std::optional<CounterCandidate> findCandidate(FunctionPassContext& contex
     return std::nullopt;
 }
 
+static constexpr OpcodeSet orderComparisons { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+
+// A loop and the copy of its failed tests, which has a loop of its own, hand each other the counter: the way back gives the typed loop what the copy has counted up, and a failed test gives the copy what the typed loop has.
+// Neither starts from an integer then, and the loop of the copy, which is entered in two places, is no natural loop: no induction variable is found in it. But it compares the counter with an integer before it steps.
+// Where the comparison holds, a counter that is an integer is a bounded one, and the types are computed from never: the first value out of bounds would have to be made of values that are all within.
+static void appendComparedParametersOfCyclesWithSeveralEntries(FunctionPassContext& context, Vector<CounterCandidate, 4>& candidates)
+{
+    constexpr uint32_t takenTargetIndex = 0;
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    const BlockCycles& cycles = context.analyses.blockCycles();
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch)
+            continue;
+        std::optional<unsigned> cycle = cycles.innermostCycleOf(block);
+        if (!cycle || cycles.forest()[*cycle].isReducible())
+            continue;
+        const Value& comparison = function.at(terminator.conditionOperand());
+        if (!orderComparisons.contains(comparison.opcode))
+            continue;
+        for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
+            const Type& tested = context.program.typeOf(function, comparison.operand(operandIndex));
+            if (!tested.isNumberWithoutFraction() || tested.isInteger() || !context.program.typeOf(function, comparison.operand(1 - operandIndex)).isInteger())
+                continue;
+            ValueID parameter = context.analyses.identityOf(comparison.operand(operandIndex));
+            ValueLocation location = useLists.locationOf(parameter);
+            if (location.placement != ValuePlacement::Parameter || location.block == entryBlock || terminator.taken().proofs.contains(operandIndex))
+                continue;
+            Edge taken { block, takenTargetIndex };
+            bool isListed = std::ranges::any_of(candidates, [&](const CounterCandidate& candidate) {
+                return candidate.stayingEdge == taken;
+            });
+            if (!isListed)
+                candidates.append(CounterCandidate { parameter, terminator.conditionOperand(), operandIndex, taken });
+        }
+    }
+}
+
 static Vector<CounterCandidate, 4> findCandidates(FunctionPassContext& context, BitVector& parametersOverStepLimit)
 {
     Vector<CounterCandidate, 4> candidates;
@@ -144,6 +193,7 @@ static Vector<CounterCandidate, 4> findCandidates(FunctionPassContext& context, 
                 candidates.append(*candidate);
         }
     }
+    appendComparedParametersOfCyclesWithSeveralEntries(context, candidates);
     return candidates;
 }
 
@@ -215,7 +265,7 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         passCountersOnEdges(context, builder, candidates.span());
         outcome = PassOutcome::Changed;
 
-        TypePropagationOutcome typing = typeValuesFromNever({ context.program, context.id, context.function, context.analyses, context.types, context.build });
+        TypePropagationOutcome typing = typeValuesFromNever({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo });
         // Cutting a block renumbers the values, so no id from before names its value any more.
         if (typing.didChangeControlFlow()) {
             parametersOverStepLimit.clearAll();
@@ -228,6 +278,9 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 
     if (numberOfConvertedCounters)
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
+    // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses;
     return outcome;
 }
 

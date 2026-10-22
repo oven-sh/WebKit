@@ -15,6 +15,8 @@ constexpr StubKey pollAtPrologue() { return StubKey(StubFamily::PollAtPrologue);
 constexpr StubKey pollAtLoop(CallerFrame callerFrame) { return StubKey(StubFamily::PollAtLoop).withCallerFrame(callerFrame); }
 constexpr StubKey pollBeforeEntering() { return StubKey(StubFamily::PollBeforeEntering); }
 
+constexpr int32_t pollAtPrologueMustThrow = 1;
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

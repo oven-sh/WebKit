@@ -55,8 +55,8 @@ std::optional<Type> CalleesBeforeFlow::tryTypeOfResultOfOnlyClosure(const Value&
 }
 
 // The receiver is an instance of a built-in class, a primitive or a built-in object by its type, and start-up locks the member under the name. The instance is taken to be
-// as its class created it. One that is not (an own property under the name, a subclass with a method or a species of its own) may give another kind of object, which the
-// place behind the assertion tests like any other value.
+// as its class created it. One that is not (an own property under the name, a subclass with a method or a species of its own) may give another kind of object, so the
+// answer says what to expect and proves nothing.
 std::optional<Type> CalleesBeforeFlow::tryTypeOfResultOfLockedBuiltin(const Value& call) const
 {
     PropertyKeyID key = call.calleeKey();
@@ -98,7 +98,7 @@ void CalleesBeforeFlow::forEachExpectedLayout(ValueID id, NOESCAPE const LayoutF
 {
     const Value& value = m_function.at(id);
     TypeID visited;
-    for (TypeID type : { value.type, value.written(), value.prediction() }) {
+    for (TypeID type : { value.type, value.expected() }) {
         if (!type || type == visited)
             continue;
         visited = type;
@@ -123,7 +123,7 @@ void CalleesBeforeFlow::forEachInheritedClosure(ClosureHolder::Kind kind, Layout
             return;
         }
         const Layout& passed = m_program.at(current);
-        current = side == ClassSide::Prototype ? passed.predictedBase : predictedHeritageOf(passed);
+        current = side == ClassSide::Prototype ? passed.base : predictedHeritageOf(passed);
     }
 }
 
@@ -215,7 +215,7 @@ bool CalleesBeforeFlow::forEachClosureInHolderReadBy(ValueID definitionID, NOESC
 void CalleesBeforeFlow::forEachHeldClosure(ValueID id, NOESCAPE const CalleeFunctor& functor) const
 {
     const Type& type = m_typing.typeOf(id);
-    if (!type.functions.isEmpty()) {
+    if (!type.functions.isEmpty() && !type.anyFunction) {
         for (FunctionID function : type.functions)
             functor(function);
         return;
@@ -228,7 +228,7 @@ void CalleesBeforeFlow::forEachHeldClosure(ValueID id, NOESCAPE const CalleeFunc
 void CalleesBeforeFlow::forEachKnownCallee(ValueID callee, NOESCAPE const CalleeFunctor& functor) const
 {
     const Type& type = m_typing.typeOf(callee);
-    if (!type.functions.isEmpty()) {
+    if (!type.functions.isEmpty() && !type.anyFunction) {
         for (FunctionID function : type.functions)
             functor(function);
         return;

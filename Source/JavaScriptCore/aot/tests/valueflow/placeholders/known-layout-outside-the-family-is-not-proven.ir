@@ -1,0 +1,54 @@
+# function area(shape: Shape) { shape.side }  area(circle); area(label)    function keep(shape: Shape) { shape.side }  keep(circle)
+# A type that is taken on trust cuts nothing. So an object that the analysis follows and whose layout lies outside the family is still in the set behind the type:
+# it shows a conversion that nobody has recorded, or a fault in the family. It is counted, and nothing is proven about the position: its type stays as it was read.
+# Beside it: the same parameter without the stranger is proven, and its type is narrowed to the one layout that arrives
+# STATISTIC: LayoutsOutsideFamily >= 1
+# RUN: valueflow-families
+# CHECK: parameter positions 2 layout-outside 1 unknown-object 0 object-without-layout 0 no-object 0 untracked-object 0
+# CHECK: all positions 2 layout-outside 1 unknown-object 0 object-without-layout 0 no-object 0 pairs 1 untracked-object 0
+# CHECK: pair positions 1 named L0 "Shape"{{*}} arriving L3 "Label"{{*}} first parameter f1:0
+# CHECK-NOT: pair
+# RUN(VALUES): valueflow-why values=f0:v4 values=f0:v5 values=f1:v1 values=f2:v1
+# VALUES: values=f0:v4
+# VALUES: operand 2 1 members: [[circle]]@f0
+# VALUES: values=f0:v5
+# VALUES: operand 2 1 members: [[label]]@f0
+# VALUES: values=f1:v1
+# VALUES: operand 0 {{*}} 2 members: [[circle]]@f0 [[label]]@f0
+# VALUES: values=f2:v1
+# VALUES: operand 0 {{*}} 1 members: [[circle]]@f0
+# RUN(RESULTS): valueflow-results
+# RESULTS: outside-type f1 entry parameter 0 holds L1|L3, declared L0|L1|L2
+# RESULTS-NOT: outside-type f2
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="area" {{*}}parameters=[{type=L0|L1|L2}]
+# APPLY: function f2 name="keep" {{*}}parameters=[{type=L1}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 name="Label"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewObject layout=L2 fields=[]
+    v2 = NewObject layout=L3 fields=[]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v0
+    v5 = Call v3, -, v2
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v0
+    Return
+}
+function f1 name="area" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="side"
+    Return
+}
+function f2 name="keep" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="side"
+    Return
+}

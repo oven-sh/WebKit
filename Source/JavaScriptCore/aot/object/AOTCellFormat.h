@@ -27,7 +27,8 @@ static constexpr ptrdiff_t offsetOfShapeWord = 12;
 static constexpr uint32_t compiledObjectShapeBit = 1u << 31;
 static constexpr uint32_t shapeBlockMarker = 0xffu << 16;
 static constexpr uint16_t blockTestHalfword(uint8_t blockByte) { return static_cast<uint16_t>(shapeBlockMarker >> 8 | blockByte); }
-static constexpr uint32_t bigIntHashMask = 0x7f7fffff;
+static constexpr uint32_t closureWordMarker = 1u << 30;
+static constexpr uint32_t bigIntHashMask = 0x3f7fffff;
 
 #if ENABLE(AOT)
 
@@ -37,6 +38,12 @@ static constexpr uint32_t pointerUpperHalfBits = (1u << (OS_CONSTANT(EFFECTIVE_A
 static constexpr bool canPassShapeTest(uint32_t wordAtShapeOffset)
 {
     return (wordAtShapeOffset & compiledObjectShapeBit) || (wordAtShapeOffset & shapeBlockMarker) == shapeBlockMarker;
+}
+
+// A slim closure that is as it was created has the upper half of its closure word where other cells have these words.
+static constexpr bool mayBeUpperHalfOfSlimClosureWord(uint32_t wordAtShapeOffset)
+{
+    return (wordAtShapeOffset & (compiledObjectShapeBit | closureWordMarker)) == closureWordMarker;
 }
 
 JS_EXPORT_PRIVATE void validateShapeWord(const JSCell*);
@@ -50,7 +57,7 @@ static constexpr uint8_t frameCellState = UINT8_MAX;
 static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
 static constexpr uint32_t shapeOf(uint32_t shapeWord) { return 0 - shapeWord; }
 
-static constexpr unsigned orderWordCountShift = 16;
+static constexpr unsigned orderWordCountShift = 15;
 static constexpr uint32_t orderWordOrderMask = (1u << orderWordCountShift) - 1;
 static constexpr uint32_t maxFieldsInOrder = (1 << 12) - 1;
 static constexpr uint32_t orderStoredOutOfLine = orderWordOrderMask;
@@ -61,12 +68,15 @@ static constexpr uint32_t orderOf(uint32_t orderWord) { return orderWord & order
 static constexpr uint32_t countOf(uint32_t orderWord) { return orderWord >> orderWordCountShift & maxFieldsInOrder; }
 static constexpr bool isOrderStoredOutOfLine(uint32_t orderWord) { return orderOf(orderWord) == orderStoredOutOfLine; }
 
+// A property that the layout has a field for lies among the extra properties: something was stored that the slot cannot hold, or the property was redefined. It stays set.
+// While it is clear an empty slot says that the object has no such property, whatever else its extra properties hold.
+static constexpr uint32_t orderWordHasFieldOutsideSlot = 1u << 27;
 static constexpr uint32_t orderWordHasExtraProperties = 1u << 28;
 static constexpr uint32_t orderWordIsFrozen = 1u << 29;
 static constexpr uint32_t orderWordIsSealed = 1u << 30;
 static constexpr uint32_t orderWordIsNotExtensible = 1u << 31;
 static constexpr uint32_t orderWordIntegrityBits = orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible;
-static constexpr uint32_t orderAndCountMask = orderWordHasExtraProperties - 1;
+static constexpr uint32_t orderAndCountMask = orderWordHasFieldOutsideSlot - 1;
 static constexpr uint64_t orderCountAndShapeMask = UINT64_MAX << 32 | orderAndCountMask;
 static constexpr uint32_t outOfLineOrderWord = orderWordOf(orderStoredOutOfLine, 0);
 static constexpr uint32_t unorderedOrderWord = orderWordOf(0, 0);
@@ -77,7 +87,6 @@ static constexpr uint32_t offsetOfFirstExtensionSlot = sizeof(uint64_t);
 static constexpr uint32_t extensionGranuleSize = sizeof(uint64_t);
 static constexpr uint32_t maxExtensionGranules = 64;
 static constexpr uint32_t maxExtensionSize = offsetOfFirstExtensionSlot + maxExtensionGranules * extensionGranuleSize;
-static constexpr uint32_t sizeOfOverflowArea = sizeof(double);
 static constexpr uint32_t minExtensionSize = 16;
 // A narrow hidden word names an Extension by its distance from a page of zeros, which lies in the part of the cell cage where nothing is allocated.
 // An object without an Extension has zero in that word, so compiled code finds no bit set and has nothing else to test.
@@ -86,9 +95,10 @@ static constexpr uint32_t offsetOfEmptyExtensionInCage = 8 << 20;
 static constexpr uint32_t granuleOf(uint32_t offsetInExtension) { return offsetInExtension / extensionGranuleSize - 1; }
 static constexpr uint64_t granuleBitOf(uint32_t offsetInExtension) { return 1ull << granuleOf(offsetInExtension); }
 static constexpr uint32_t offsetInGranule(uint32_t offsetInExtension) { return offsetInExtension % extensionGranuleSize; }
-// An object that gets a field late tends to get more of them, so an Extension has room for a few more granules than it holds. How many follows from the number it holds and from nothing else:
-// whoever creates an Extension clears that much, and whoever appends to one knows how far it may go.
-static constexpr uint32_t extensionCapacities[] = { 3, 5, 9, 13, 19, 27, 39, maxExtensionGranules };
+// Most Extensions hold one granule for good, so an Extension with one granule is the smallest cell there is and has no room. An object that gets a second granule tends to get more of them, so from
+// there on an Extension has room for a few more granules than it holds. How many follows from the number it holds and from nothing else: whoever creates an Extension clears that much, and whoever
+// appends to one knows how far it may go.
+static constexpr uint32_t extensionCapacities[] = { 1, 3, 5, 9, 13, 19, 27, 39, maxExtensionGranules };
 static constexpr uint32_t extensionCapacityFor(uint32_t numberOfGranules)
 {
     for (uint32_t capacity : extensionCapacities) {
@@ -119,8 +129,9 @@ static constexpr ptrdiff_t offsetOfSlimClosureWord = 8;
 static constexpr ptrdiff_t offsetOfSlimClosureCaptures = 16;
 
 static_assert(!granuleOf(offsetOfFirstExtensionSlot) && granuleOf(maxExtensionSize - 1) == maxExtensionGranules - 1);
-static_assert(extensionCellSizeFor(1) == 2 * minExtensionSize && extensionCellSizeFor(3) == 2 * minExtensionSize && extensionCellSizeFor(4) == 3 * minExtensionSize && extensionCellSizeFor(maxExtensionGranules) >= maxExtensionSize);
-static_assert(sizeOfOverflowArea == extensionGranuleSize);
+static_assert(extensionCellSizeFor(1) == minExtensionSize && extensionCellSizeFor(2) == 2 * minExtensionSize && extensionCellSizeFor(3) == 2 * minExtensionSize && extensionCellSizeFor(4) == 3 * minExtensionSize);
+static_assert(extensionCellSizeFor(maxExtensionGranules) >= maxExtensionSize);
+static_assert((granuleCountsWithoutRoom & 0b1111) == 0b1010);
 static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
 static_assert(offsetOfFirstField == offsetOfShapeWord + sizeof(uint32_t));
 static_assert(orderWordOf(maxKeyOrdersPerLayout - 1, maxFieldsInOrder) <= orderAndCountMask);
@@ -130,6 +141,7 @@ static_assert(!isOrderStoredOutOfLine(orderWordOf(maxKeyOrdersPerLayout - 1, max
 static_assert(shapeWordOf(1) & compiledObjectShapeBit);
 static_assert(!canPassShapeTest(pointerUpperHalfBits));
 static_assert(!canPassShapeTest(bigIntHashMask));
+static_assert(!mayBeUpperHalfOfSlimClosureWord(pointerUpperHalfBits) && !mayBeUpperHalfOfSlimClosureWord(bigIntHashMask) && !mayBeUpperHalfOfSlimClosureWord(shapeWordOf(1)));
 
 #endif // ENABLE(AOT)
 

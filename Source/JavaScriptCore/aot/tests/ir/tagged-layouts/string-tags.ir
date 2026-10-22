@@ -1,0 +1,59 @@
+# interface Node { kind: string; pos: number }  interface Add extends Node { kind: "add"; left: Node; right: Node }  interface Num extends Node { kind: "num"; value: number }
+# interface Keyword extends Node { kind: "false" | "true" }  function NodeObject(this: Node, kind: string, pos: number) { this.kind = kind; this.pos = pos }
+# A tag is the one literal that a type below the declared `this` declares for a field, a string as well as an integer: an object is made with the layout of its string.
+# The types are as the front end sends them: undefined and null are members of every type that holds a reference, so also of the type of one string.
+# A type that declares two strings for the field names no tag, and an object with any other string has the layout of the function.
+# That layout has the names of Keyword, so it passes for Keyword. The layouts of "add" and "num" do not: Keyword lists neither string
+# FORM: AsRead
+# RUN(READ): print
+# RUN: pass AllocateTaggedLayouts
+# RUN(TYPED): pass AllocateTaggedLayouts TypeValues VerifyProgram
+# TYPED-COUNT-3: outcome:
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=undefined|null|string}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=undefined|null|string} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Add" fields=[{key="kind" declared={type=undefined|null|"add"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Num" fields=[{key="kind" declared={type=undefined|null|"num"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L4 name="Keyword" fields=[{key="kind" declared={type=undefined|null|"false"|"true"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1, v1: undefined|null|string, v2: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="valueOf" parameters=[{type=undefined|null|L3}] results=[{type=anything}] {
+  b0(v0: undefined|null|L3):
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+function f3 name="isKeyword" parameters=[{type=undefined|null|L4}] results=[{type=anything}] {
+  b0(v0: undefined|null|L4):
+    Return v0
+}
+
+# READ: layout L4 name="Keyword"
+# READ-NEXT: layout L5 kind=Instance name="NodeObject" fields=[{key="kind" declared={type=undefined|null|string} flags=[IsInherited] originLayout=L0 originField=0}, {key="pos" {{*}}, {key="left" {{*}}, {key="right"
+# READ-NEXT: layout L6 kind=Instance name="NodeObject" fields=[{key="kind" {{*}}, {key="pos" {{*}}, {key="value" declared={type=number}
+# READ-NEXT: module m0
+# READ-LABEL: function f1 name="NodeObject"
+# READ: thisType={type=undefined|null|L0|L1|L2|L3|L4|L5|L6}
+# READ-LABEL: function f2 name="valueOf"
+# READ: parameters=[{type=undefined|null|L3|L6}]
+# READ-LABEL: function f3 name="isKeyword"
+# READ: parameters=[{type=undefined|null|L0|L1|L2|L3|L4}]
+
+# CHECK: SwitchString [[kind]] strings=["add", "num"] -> case [[add]](), case [[num]](), otherwise [[other]]()
+# CHECK: [[add]]():
+# CHECK-NEXT: = NewObject [[prototype]] layout=L5
+# CHECK: [[num]]():
+# CHECK-NEXT: = NewObject [[prototype]] layout=L6
+# CHECK: [[other]]():
+# CHECK-NEXT: = NewObject [[prototype]] layout=L0
+# CHECK: PropSet [[object]], [[kind]] key="kind"
+# CHECK-NEXT: PropSet [[object]], [[pos]] key="pos"

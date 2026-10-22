@@ -77,6 +77,14 @@ std::expected<Sections, uint32_t> Sections::open(std::span<const uint8_t> buffer
         return std::unexpected(static_cast<uint32_t>(ProgramList::EvalScopes));
     if (!openSection(buffer, header, ProgramList::EvalBindings, sections.evalBindings))
         return std::unexpected(static_cast<uint32_t>(ProgramList::EvalBindings));
+    if (!openSection(buffer, header, ProgramList::RelationSubjects, sections.relationSubjects))
+        return std::unexpected(static_cast<uint32_t>(ProgramList::RelationSubjects));
+    if (!openSection(buffer, header, ProgramList::StoredIntos, sections.storedIntos))
+        return std::unexpected(static_cast<uint32_t>(ProgramList::StoredIntos));
+    if (!openSection(buffer, header, ProgramList::HandedTos, sections.handedTos))
+        return std::unexpected(static_cast<uint32_t>(ProgramList::HandedTos));
+    if (!openSection(buffer, header, ProgramList::OperandsOf, sections.operandsOf))
+        return std::unexpected(static_cast<uint32_t>(ProgramList::OperandsOf));
     if (!openSection(buffer, header, ProgramList::Functions, sections.functions))
         return std::unexpected(static_cast<uint32_t>(ProgramList::Functions));
     if (!openSection(buffer, header, ProgramList::Code, sections.code))

@@ -23,16 +23,16 @@ function f0 name="joinOfTwoLayouts" parameters=[{type=anything}, {type=boolean},
     Branch v2 -> taken b5(), notTaken b6()
   b5():
     PutModuleVariable v5 variable=g0
-    v9 = GetSlotOrUndefined v5, v7 key="x" receivers=[L0, L1] level=Predicted
+    v9 = GetSlotOrUndefined v5, v7 key="x" receivers=[L0, L1] level=Expected
     Return v9
   b6():
     Return v0
 }
 # CHECK-LABEL: function f0 name="joinOfTwoLayouts"
 # CHECK-NOT: ShapeTest
-# CHECK: ([[cell]]: object, [[guard]]: guard):
+# CHECK: ([[cell]]: L0|L1, [[guard]]: guard):
 # CHECK-NEXT: PutModuleVariable [[cell]] variable=g0
-# CHECK-NEXT: = GetSlotOrUndefined [[cell]], [[guard]] key="x" receivers=[L0, L1] level=Predicted
+# CHECK-NEXT: = GetSlotOrUndefined [[cell]], [[guard]] key="x" receivers=[L0, L1] level=Expected
 # CHECK: [[first]]:{{*}}= NewObject{{*}}layout=L0
 # CHECK-NEXT: [[firstGuard]]: guard = AllGuards [[first]]
 # CHECK-NEXT: Jump -> next {{*}}([[first]], [[firstGuard]])

@@ -221,9 +221,9 @@ inline uint32_t wireStringOf(const ReaderFixture& fixture, ASCIILiteral text)
 struct WireTypes {
     explicit WireTypes(const ReaderFixture& fixture)
         : number(fixture.word(fieldOffset(fixture, L2, 0, offsetof(Wire::Field, declared.type))))
-        , int32(fixture.word(fieldOffset(fixture, L0, 0, offsetof(Wire::Field, declared.predicted))))
+        , int32(fixture.word(fieldOffset(fixture, L0, 0, offsetof(Wire::Field, declared.type))))
         , literals(fixture.word(variableOffset(fixture, 0, offsetof(Wire::Variable, declared.type))))
-        , objects(fixture.word(variableOffset(fixture, 1, offsetof(Wire::Variable, declared.written))))
+        , objects(fixture.word(variableOffset(fixture, 1, offsetof(Wire::Variable, declared.type))))
         , builtins(fixture.word(variableOffset(fixture, 3, offsetof(Wire::Variable, declared.type))))
     {
         Wire::Span captures = fixture.spanAt(functionOffset(fixture, f1, offsetof(Wire::Function, captures)));
@@ -262,6 +262,7 @@ public:
     void flags(ASCIILiteral name, size_t offset) { m_damages.append({ name, offset, highBit, Kind::UnknownFlag }); }
     void variant(ASCIILiteral name, size_t offset) { m_damages.append({ name, offset, 99, Kind::UnknownVariantCase }); }
     void span(ASCIILiteral name, size_t offset) { m_damages.append({ name, offset + offsetof(Wire::Span, count), hugeCount, Kind::ListOutOfBounds }); }
+    void word(ASCIILiteral name, size_t offset, uint32_t damagedWord, Kind expected) { m_damages.append({ name, offset, damagedWord, expected }); }
 
 private:
     const ReaderFixture& m_fixture;
@@ -276,13 +277,14 @@ auto offsetsOf(const ReaderFixture& fixture, List list, uint32_t index)
     };
 }
 
+inline constexpr uint32_t flagsOfExpectedInt32Promise = static_cast<uint32_t>(PositionFlags::IsExpected) | static_cast<uint32_t>(PositionFlags::IsInt32Promise);
+
 inline void addDeclaredTypeDamages(RecordDamages& damages, size_t offset)
 {
     damages.id("DeclaredType.type"_s, offset + offsetof(Wire::DeclaredType, type), List::Types);
-    damages.optionalID("DeclaredType.written"_s, offset + offsetof(Wire::DeclaredType, written), List::Types);
-    damages.optionalID("DeclaredType.predicted"_s, offset + offsetof(Wire::DeclaredType, predicted), List::Types);
     damages.optionalID("DeclaredType.site"_s, offset + offsetof(Wire::DeclaredType, site), List::TypeSites);
     damages.flags("DeclaredType.flags"_s, offset + offsetof(Wire::DeclaredType, flags));
+    damages.word("expected position that promises an int32"_s, offset + offsetof(Wire::DeclaredType, flags), flagsOfExpectedInt32Promise, Kind::InvalidDeclaredType);
 }
 
 } } } // namespace JSC::AOT::ReaderTests

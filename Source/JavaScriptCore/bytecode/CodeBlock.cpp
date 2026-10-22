@@ -30,6 +30,7 @@
 #include "config.h"
 #include "CodeBlock.h"
 
+#include "AOTInterpreterSlowPaths.h"
 #include "AOTRemovableFeature.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
@@ -485,6 +486,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
+#if ENABLE(AOT)
+        if (Options::useAOT())
+            AOT::Interpreter::didLinkNewObject(metadata.m_objectAllocationProfile);
+#endif
     };
 
     auto link_arrayAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
@@ -866,6 +871,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK_FIELD
 #undef LINK
 
+#if ENABLE(AOT)
+    if (Options::useAOT())
+        AOT::Interpreter::fuseReadsOfClosureVariables(*this);
+#endif
+
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
         insertBasicBlockBoundariesForControlFlowProfiler();
 
@@ -1047,6 +1057,12 @@ NEVER_INLINE void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> 
     if (jitCode->m_isShareable && !unlinkedCodeBlock()->m_unlinkedBaselineCode && Options::useBaselineJITCodeSharing())
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
 }
+
+template<typename JITData>
+static NEVER_INLINE void destroyJITData(JITData* jitData)
+{
+    delete jitData;
+}
 #endif // ENABLE(JIT)
 
 CodeBlock::~CodeBlock()
@@ -1159,23 +1175,19 @@ CodeBlock::~CodeBlock()
         propertyCache.deref();
         return IterationStatus::Continue;
     });
-    [&] {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, ReturnDefault, void)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
         if (auto* jitData = dfgJITData()) {
             m_jitData = nullptr;
-            delete jitData;
+            callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, destroyJITData<DFG::JITData>>(jitData);
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
             m_jitData = nullptr;
-            delete jitData;
+            callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, destroyJITData<BaselineJITData>>(jitData);
         }
     }
-    JSC_END_REMOVABLE_ENTRY_POINT
-    }();
 #endif // ENABLE(JIT)
     if (cc.isEnabled) {
         if (!m_llintGetByIdWatchpointMap.isEmpty()) {
@@ -1418,9 +1430,9 @@ inline void CodeBlock::forEachPropertyInlineCache(Func func)
 {
     UNUSED_PARAM(func);
 #if ENABLE(JIT)
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, ReturnDefault, void)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
+        JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, Abort, void)
         for (auto* propertyCache : jitCode()->dfgCommon()->m_handlerPropertyInlineCaches) {
             if (func(*propertyCache) == IterationStatus::Done)
                 return;
@@ -1435,16 +1447,18 @@ inline void CodeBlock::forEachPropertyInlineCache(Func func)
                     return;
             }
         }
+        JSC_END_REMOVABLE_ENTRY_POINT
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, Abort, void)
             for (auto& propertyCache : jitData->propertyInlineCaches()) {
                 if (func(propertyCache) == IterationStatus::Done)
                     return;
             }
+            JSC_END_REMOVABLE_ENTRY_POINT
         }
     }
-    JSC_END_REMOVABLE_ENTRY_POINT
 #endif // ENABLE(JIT)
 }
 

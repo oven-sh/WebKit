@@ -91,6 +91,7 @@ public:
 
     JSString* asStringConcurrently() const LIFETIME_BOUND { return m_asString.get(); }
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
+    static constexpr ptrdiff_t offsetOfIndexOfBoxedCall() { return OBJECT_OFFSETOF(NativeExecutable, m_indexOfBoxedCall); }
 private:
     NativeExecutable(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility);
     void finishCreation(VM&, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, unsigned length, const String& name);
@@ -100,7 +101,9 @@ private:
     TaggedNativeFunction m_function;
     TaggedNativeFunction m_constructor;
 
-    unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
+    uint8_t m_implementationVisibility;
+    // For the stubs of compiled code alone. Zero until one of them has looked the function up.
+    uint8_t m_indexOfBoxedCall { 0 };
     unsigned m_length { 0 };
 
     String m_name;

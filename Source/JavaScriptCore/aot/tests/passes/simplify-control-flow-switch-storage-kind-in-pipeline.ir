@@ -1,4 +1,5 @@
 # The comparisons of a library function with the storage kind are a switch before the function is copied to where the array is known to hold no numbers: that copy has no code for doubles
+# TODO: flow-termination: the arms of a switch over the storage kind that the arrays' own definitions rule out are no longer removed
 # FORM: AsRead
 # RUN: pipeline Select
 

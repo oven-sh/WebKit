@@ -1,0 +1,35 @@
+# `node.return = parent`: an iterator that is written as a literal has a `return` too, and it is a method. Whoever stores under a name, or reads it and neither calls nor looks into what he got,
+# means an object that keeps data there. With the iterator among the receivers the store would ask its value to be that method, and every store of a node would go by name
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="TreeNode" constructor=f3 fields=[{key="return" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Walker" constructor=f4 fields=[{key="position" declared={type=number} flags=[IsRequired]}, {key="return" declared={type=f2} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="stores" parameters=[{type=object flags=[IsExpected]}, {type=object flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: anything ~ object, v1: anything ~ object):
+    PropSet v0, v1 key="return"
+    Return
+}
+# CHECK-LABEL: function f0 name="stores"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: PutSlot{{*}} key="return" receivers=[L0]
+
+function f1 name="readsAndPassesOn" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="return"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="readsAndPassesOn"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="return" receivers=[L0]
+
+function f2 name="return" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
+  b0(v0: anything ~ object):
+    Return
+}
+
+function f3 name="TreeNode" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f4 name="Walker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

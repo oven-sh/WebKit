@@ -24,20 +24,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v10 = Call v1, -, v9
     Return
 }
-function f1 name="Once" flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=anything}] {
-  b0(v0: anything):
+function f1 name="Once" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
     v1 = Integer integer=1
     PropSet v0, v1 key="x" mode=Strict
     Return
 }
-function f2 name="Twice" flags=[HasThis] thisType={type=anything predicted=L1} results=[{type=anything}] {
-  b0(v0: anything):
+function f2 name="Twice" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L1):
     v1 = Integer integer=1
     PropSet v0, v1 key="x" mode=Strict
     Return
 }
-function f3 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=anything predicted=L2} results=[{type=anything}] {
-  b0(v0: number, v1: anything):
+function f3 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: number, v1: L2):
     PropSet v1, v0 key="x" mode=Strict
     Return
 }
@@ -55,11 +55,11 @@ function f5 name="createsTwice" results=[{type=anything}] {
 }
 
 # CHECK-LABEL: function f0 name="main"
-# CHECK: v2: f1 = NewClosure function=f1 allocationSite=[[once]] closureForm=Singleton
-# CHECK: v7: f3 = NewClosure v6 function=f3 allocationSite=[[capturing]] allocation=0
-# CHECK: v9: f4 = NewClosure function=f4 allocationSite=[[plain]] closureForm=Slim
+# CHECK: v2: f1 = NewClosure function=f1 {{*}}closureForm=Singleton
+# CHECK: v7: f3 = NewClosure v6 function=f3 {{*}}allocation=0
+# CHECK: v9: f4 = NewClosure function=f4 {{*}}closureForm=Slim
 # CHECK-LABEL: function f5 name="createsTwice"
-# CHECK: v2: f2 = NewClosure function=f2 allocationSite=[[twice]] allocation=0
+# CHECK: v2: f2 = NewClosure function=f2 {{*}}allocation=0
 # CHECK-NOT: closureForm=Singleton
 
 # CLASS: class index=L0 {{*}}evaluation=ProvenOnce

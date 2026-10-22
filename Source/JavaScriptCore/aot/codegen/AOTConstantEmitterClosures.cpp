@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTChooseCallingConventions.h"
@@ -48,6 +49,10 @@ void ConstantEmitter::generateNewClosure(const ValueContext& value)
     }
 
     NewClosureRequest request { function, entrypoint, m_placement.functionKind(entrypoint), value->allocation(), value->storage(), value->closureForm(), captures };
+    if (value->isLent() && (request.form != ClosureForm::Slim || request.storage != AllocationStorage::Frame)) {
+        failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
     switch (request.form) {
     case ClosureForm::Slim:
         defineCell(value, newSlimClosure(value, request));
@@ -57,7 +62,7 @@ void ConstantEmitter::generateNewClosure(const ValueContext& value)
             failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
             return;
         }
-        if (value.shape() != CodeShape::Fast && canUseClosureStub(request)) {
+        if ((value.shape() != CodeShape::Fast || request.storage == AllocationStorage::Heap) && canUseClosureStub(request)) {
             defineCell(value, newClosureByStub(value, request));
             return;
         }
@@ -78,6 +83,12 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     FunctionID entrypoint = function ? inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function)) : FunctionID();
     if (!entrypoint)
         return failWithoutCell(context, InternalErrorKind::OpcodeWithoutCode);
+    if (!m_placement.closureCellNumber(entrypoint))
+        return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
+    if (context.shape() != CodeShape::Fast) {
+        LValue operands[] = { integer(static_cast<int64_t>(entrypoint.index())).value() };
+        return CellPointer(callStub(context, closureOfTable(), operands).first);
+    }
     CellPointer created = emitter<ClosureTestEmitter>().closureIfCreated(entrypoint);
     return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
         return created;
@@ -103,40 +114,12 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
     uint64_t requestWord = request.entrypoint.index() | static_cast<uint64_t>(request.kind.slimClosureKind()) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit;
-    if (value.shape() != CodeShape::Fast)
+    if (value.shape() != CodeShape::Fast || request.storage != AllocationStorage::Frame)
         return callClosureStub(value, request, requestWord, SlimClosure::allocationSize(count));
 
-    CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
-    switch (request.storage) {
-    case AllocationStorage::Heap:
-        break;
-    case AllocationStorage::Frame: {
-        CellPointer cell = cellAllocation.allocateInFrame(SlimClosure::allocationSize(count));
-        initializeSlimClosure(cell, request);
-        return cell;
-    }
-    case AllocationStorage::FrameUntilMaterialized:
-        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
-    }
-
-    LBasicBlock slowPath = newBlock();
-    Join<CellPointer> join(m_out);
-    Pointer allocator = loadImmutablePointer(AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + slimClosureAllocatorIndex(count) * sizeof(void*));
-    CellPointer cell = cellAllocation.allocateHeapCell(allocator, MarkedSpace::sizeStep * (slimClosureAllocatorIndex(count) + 1), slowPath);
+    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(SlimClosure::allocationSize(count));
     initializeSlimClosure(cell, request);
-    emitter<BarrierEmitter>().fenceAfterInitialization();
-    join.add(cell);
-
-    m_out.appendTo(slowPath);
-    size_t numberOfArguments = signatureOf(RuntimeOperation::NewClosureSlow).parameters.size();
-    Vector<Operand, 1 + ClosureRequest::maxSlimClosureCaptures> arguments;
-    arguments.append(integer(static_cast<int64_t>(requestWord | static_cast<uint64_t>(count) << ClosureRequest::countShift)));
-    for (LValue word : captureWordsBySlot(request))
-        arguments.append(Integer(word));
-    while (arguments.size() < numberOfArguments)
-        arguments.append(integer(0));
-    join.add(callOperation(value, RuntimeOperation::NewClosureSlow, arguments.span(), Representation::Cell, { .isOnRarePath = true }).as<CellPointer>());
-    return join.finish();
+    return cell;
 }
 
 void ConstantEmitter::initializeSlimClosure(CellPointer cell, const NewClosureRequest& request)
@@ -188,10 +171,14 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
     bool isOnHeap = false;
     CellPointer cell;
     switch (request.storage) {
-    case AllocationStorage::Heap:
-        cell = cellAllocation.allocate(value, request.allocation);
+    case AllocationStorage::Heap: {
+        std::optional<WholeCell> ownCell = emitter<AllocationEmitter>().placeInCellOf(value).ownCell();
+        if (!ownCell)
+            return failWithoutCell(value, InternalErrorKind::PlacedPayloadMissing);
+        cell = cellAllocation.allocate(value, request.allocation, *ownCell);
         isOnHeap = true;
         break;
+    }
     case AllocationStorage::Frame:
         cell = cellAllocation.allocateInFrame(Closure::allocationSize(request.captures.size()));
         break;

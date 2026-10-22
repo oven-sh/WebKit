@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClassMemberTable.h"
 #include "AOTCodeGenerationDriver.h"
 #include "AOTFieldTable.h"
 #include "AOTFunctionDescription.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTIdentifierTable.h"
 #include "AOTObjectVisiting.h"
 #include "AOTPlacementTestSupport.h"
 #include "AOTProgramTableEncoder.h"
@@ -65,10 +67,11 @@ struct FlagName {
 
 #define AOT_FIELD_FLAG_NAME(name) FlagName { field##name, #name ""_s }
 static constexpr FlagName fieldFlagNames[] {
-    AOT_FIELD_FLAG_NAME(IsOptional), AOT_FIELD_FLAG_NAME(IsOutOfLine), AOT_FIELD_FLAG_NAME(IsStoredOnce), AOT_FIELD_FLAG_NAME(AllowsUndefined),
-    AOT_FIELD_FLAG_NAME(MayExistWithoutStorage), AOT_FIELD_FLAG_NAME(DeferredClosureCapturesObject), AOT_FIELD_FLAG_NAME(IsPrivate),
-    AOT_FIELD_FLAG_NAME(IsBrand), AOT_FIELD_FLAG_NAME(HasOperand), AOT_FIELD_FLAG_NAME(IsNeverDeleted), AOT_FIELD_FLAG_NAME(IsNeverRedefined),
-    AOT_FIELD_FLAG_NAME(IsNeverStoredWithOtherType),
+    AOT_FIELD_FLAG_NAME(IsOptional), AOT_FIELD_FLAG_NAME(IsOutOfLine), AOT_FIELD_FLAG_NAME(IsStoredOnce),
+    AOT_FIELD_FLAG_NAME(MayExistWithoutStorage), AOT_FIELD_FLAG_NAME(DeferredClosureCapturesObject), AOT_FIELD_FLAG_NAME(DeferredClosureCapturesEnvironment),
+    AOT_FIELD_FLAG_NAME(IsPrivate), AOT_FIELD_FLAG_NAME(IsBrand), AOT_FIELD_FLAG_NAME(IsNeverDeleted), AOT_FIELD_FLAG_NAME(IsNeverRedefined),
+    AOT_FIELD_FLAG_NAME(IsNeverStoredWithOtherType), AOT_FIELD_FLAG_NAME(IsReadOnly), AOT_FIELD_FLAG_NAME(IsNotEnumerable),
+    AOT_FIELD_FLAG_NAME(IsNotConfigurable), AOT_FIELD_FLAG_NAME(IsAccessor),
 };
 #undef AOT_FIELD_FLAG_NAME
 
@@ -172,7 +175,7 @@ static void printValue(const TablesContext& context, SlotData slot)
 
 static void printValue(const TablesContext& context, const ShapeTestData& test)
 {
-    context.out.print(test.first, "+", test.count);
+    context.out.print(test.count ? test.first() : 0, "+", test.count);
     if (test.bitSetOffset != noBitSet)
         context.out.print("@", test.bitSetOffset);
 }
@@ -231,7 +234,7 @@ public:
 
     RecordLine& flags(ASCIILiteral name, uint32_t bits, std::span<const FlagName> flagNames)
     {
-        Vector<ASCIILiteral, 12> namesOfSetFlags;
+        Vector<ASCIILiteral, 16> namesOfSetFlags;
         for (const FlagName& flagName : flagNames) {
             if (bits & flagName.mask)
                 namesOfSetFlags.append(flagName.name);
@@ -276,6 +279,9 @@ static void printBuiltinCell(const TablesContext& context, uint32_t number)
         break;
     case BuiltinCellKey::Kind::Setter:
         context.out.print("set:");
+        break;
+    case BuiltinCellKey::Kind::Value:
+        context.out.print("value:");
         break;
     }
     context.printer.print(key->builtin());
@@ -343,7 +349,7 @@ static void printTypes(const TablesContext& context)
     auto sets = context.tables.layoutSets();
     for (uint32_t index = 0; index < sets.size(); ++index) {
         const LayoutSetData& set = sets[index];
-        RecordLine(context, "set"_s, index).string("name"_s, set.name).field("test"_s, set.members).string("declaredPath"_s, set.declaredPath).field("declaredLine"_s, set.declaredLine);
+        RecordLine(context, "set"_s, index).string("name"_s, set.name).field("test"_s, set.members);
     }
     for (const TypeSiteData& site : context.tables.typeSites()) {
         StringID text = site.text == TypeSiteData::noText ? StringID() : StringID(static_cast<uint32_t>(site.text));
@@ -357,12 +363,13 @@ static void printFieldRecords(const TablesContext& context, ASCIILiteral keyword
         const FieldData& field = fields[index];
         RecordLine line(context, keyword, index);
         line.identifier("name"_s, field.name).flags("flags"_s, field.flags, fieldFlagNames).field("slot"_s, field.slot).field("type"_s, field.type);
-        if (!(field.flags & fieldHasOperand))
+        line.flag("isFilledAtBirth"_s, field.isFilledAtBirth).flag("holdsRawValueFromBirth"_s, field.holdsRawValueFromBirth).flag("keepsStateOfBirth"_s, field.keepsStateOfBirth);
+        line.flag("defersFlattenedObject"_s, field.defersFlattenedObject);
+        if (field.slot.representation() != SlotRepresentation::DeferredClosure || field.defersFlattenedObject)
             continue;
-        if (field.slot.representation() == SlotRepresentation::DeferredClosure)
-            line.field("function"_s, layout.deferredClosureOf(field));
-        else
-            line.field("operand"_s, layout.operandOf(field));
+        line.field("function"_s, layout.deferredClosureOf(field));
+        if (field.flags & fieldDeferredClosureCapturesEnvironment)
+            line.field("environment"_s, layout.closureEnvironmentSlotOf(field));
     }
 }
 
@@ -384,26 +391,46 @@ static void printReferences(const TablesContext& context, std::span<const uint32
         return;
     std::span<const uint32_t> header = takeFirst(numberOfExtensionHeaderWords);
     line.field("extension"_s, SlotData::decode(header[0]));
-    line.numbers("wideOutOfLine"_s, takeFirst(header[1]));
-    line.numbers("narrowOutOfLine"_s, takeFirst(header[2]));
+    ExtensionReferences sets = extensionReferencesAt(header.data());
+    Vector<uint32_t> wideOutOfLine;
+    Vector<uint32_t> narrowOutOfLine;
+    for (uint32_t granule = 0; granule < maxExtensionGranules; ++granule) {
+        uint32_t offset = offsetOfFirstExtensionSlot + granule * extensionGranuleSize;
+        if (sets.wide >> granule & 1)
+            wideOutOfLine.append(offset);
+        if (sets.narrowInFirstHalf >> granule & 1)
+            narrowOutOfLine.append(offset);
+        if (sets.narrowInSecondHalf >> granule & 1)
+            narrowOutOfLine.append(offset + static_cast<uint32_t>(sizeof(uint32_t)));
+    }
+    line.numbers("wideOutOfLine"_s, wideOutOfLine.span());
+    line.numbers("narrowOutOfLine"_s, narrowOutOfLine.span());
 }
 
 static void printLayoutRecord(const TablesContext& context, const LayoutData& layout)
 {
     RecordLine(context, "layout"_s).field("shape"_s, layout.shape).field("index"_s, LayoutID(layout.index)).field("kind"_s, layout.kind()).string("name"_s, layout.name).field("size"_s, layout.size)
-        .field("impossible"_s, layout.impossibleMutations()).flag("keysAreNeverEnumerated"_s, layout.keysAreNeverEnumerated).flag("hasFieldsWithSymbolKeys"_s, layout.hasFieldsWithSymbolKeys);
+        .field("impossible"_s, layout.impossibleMutations()).flag("keysAreNeverEnumerated"_s, layout.keysAreNeverEnumerated).flag("hasFieldsWithSymbolKeys"_s, layout.hasFieldsWithSymbolKeys)
+        .flag("hasOnlyPlainSlots"_s, layout.hasOnlyPlainSlots)
+        .flag("hasFieldThatKeepsStateOfBirth"_s, layout.hasFieldThatKeepsStateOfBirth);
     printFieldRecords(context, "  field"_s, layout, layout.fields());
     printReferences(context, referenceTableOf(layout));
+    if (layout.mayShareCell())
+        RecordLine(context, "  cell"_s).numbers("innerObjects"_s, layout.offsetsOfInnerObjects()).flag("mayBeInnerObject"_s, layout.mayBeInnerObject);
     for (uint32_t order = 0; order < layout.numberOfOrders; ++order)
         RecordLine(context, "  order"_s, order).numbers("fields"_s, context.tables.keyOrder(layout, order).entries());
-    if (layout.hasRareData)
+    if (layout.hasExtensionData || layout.hasExtraPropertiesSlot)
         RecordLine(context, "  rare"_s).field("extension"_s, layout.extensionSlot()).field("extraProperties"_s, layout.extraPropertiesSlot()).field("extensionSize"_s, layout.extensionSize());
-    if (!layout.hasMessageData)
-        return;
-    RecordLine line(context, "  message"_s);
-    line.string("declaredPath"_s, layout.declaredPath()).field("declaredLine"_s, layout.declaredLine());
-    if (layout.typeStringsOffset())
-        line.strings("types"_s, unsafeMakeSpan(context.tables.at<uint32_t>(layout.typeStringsOffset()), layout.numberOfFields));
+}
+
+static void printParsedRecordFields(const TablesContext& context)
+{
+    for (const ParsedRecordFieldData& row : context.tables.parsedRecordFields()) {
+        if (row.isForValidator())
+            RecordLine(context, "memberForValidator"_s).identifier("name"_s, row.name).field("of"_s, row.numberOfRequiredMembers());
+        else
+            RecordLine(context, "parsedRecordField"_s).identifier("name"_s, row.name).field("shape"_s, row.shape);
+    }
 }
 
 static void printEnvironmentRecord(const TablesContext& context, const EnvironmentData& environment)
@@ -420,18 +447,49 @@ static void printMethodRecords(const TablesContext& context, ASCIILiteral keywor
         RecordLine(context, keyword).identifier("name"_s, method.name).field("kind"_s, method.kind()).flags("flags"_s, method.flags, methodFlagNames).field("function"_s, FunctionID(method.function));
 }
 
+static void printSetsOfGuard(const TablesContext& context, MemberGuardAggregates aggregates)
+{
+    if (!aggregates.count)
+        return;
+    std::span<const uint32_t> words = unsafeMakeSpan(context.tables.at<uint32_t>(aggregates.offset), 2 * static_cast<size_t>(aggregates.count));
+    for (uint32_t index = 0; index < aggregates.count; ++index) {
+        const uint32_t* list = context.tables.at<uint32_t>(words[aggregates.count + index]);
+        Vector<uint32_t, 8> members;
+        Vector<uint32_t, 8> awaited;
+        Vector<uint32_t, 8> holdingWhileClear;
+        for (uint32_t entry : unsafeMakeSpan(list, 1 + static_cast<size_t>(*list)).subspan(1)) {
+            members.append(MemberGuardAggregates::numberInListEntry(entry));
+            if (entry & MemberGuardAggregates::isAwaitedBeforeClassExists)
+                awaited.append(members.last());
+            if (entry & MemberGuardAggregates::holdsWhileClear)
+                holdingWhileClear.append(members.last());
+        }
+        RecordLine(context, "    set"_s).field("bit"_s, MemberGuardAggregates::numberInListEntry(words[index])).flag("holdsWhileClear"_s, words[index] & MemberGuardAggregates::holdsWhileClear)
+            .numbers("members"_s, members).numbers("awaitedBeforeClassExists"_s, awaited).numbers("holdingWhileClear"_s, holdingWhileClear);
+    }
+}
+
 static void printClassRecord(const TablesContext& context, const LayoutData& layout)
 {
     const ClassData& data = layout.classData();
-    RecordLine(context, "class"_s).field("index"_s, LayoutID(layout.index)).field("shape"_s, layout.shape).field("base"_s, LayoutID(data.base)).field("predictedBase"_s, LayoutID(data.predictedBase)).field("constructor"_s, FunctionID(data.classConstructor))
+    RecordLine(context, "class"_s).field("index"_s, LayoutID(layout.index)).field("shape"_s, layout.shape).field("base"_s, LayoutID(data.base)).field("expectedBase"_s, LayoutID(data.expectedBase)).field("constructor"_s, FunctionID(data.classConstructor))
         .field("environment"_s, LayoutID(data.environment)).field("evaluation"_s, layout.evaluation()).numbers("guardWords"_s, std::span(data.guardWordsOffset))
         .flag("isUntyped"_s, layout.isUntyped).flag("hasUntypedBase"_s, layout.hasUntypedBase).flag("createsMembersLazily"_s, layout.createsMembersLazily)
-        .flag("createsPrototypeBeforeClassObject"_s, layout.createsPrototypeBeforeClassObject).flag("createsClassObjectOnMutation"_s, layout.createsClassObjectOnMutation);
+        .flag("createsPrototypeBeforeClassObject"_s, layout.createsPrototypeBeforeClassObject).flag("createsClassObjectOnMutation"_s, layout.createsClassObjectOnMutation)
+        .flag("guardsHoldWhileClear"_s, data.guardsHoldWhileClear);
     printMethodRecords(context, "  method"_s, layout.methods());
     printMethodRecords(context, "  staticMethod"_s, layout.staticMethods());
     printFieldRecords(context, "  staticField"_s, layout, layout.staticFields());
-    for (const MemberGuardData& guard : layout.memberGuards())
+    for (const MemberGuardData& guard : layout.memberGuards()) {
         RecordLine(context, "  guard"_s).identifier("name"_s, guard.name).field("kind"_s, nameOf(guard.kind())).field("side"_s, guard.side()).field("bit"_s, guard.bit);
+        printSetsOfGuard(context, layout.aggregatesOf(guard));
+    }
+    if (data.subclassesOffset) {
+        const uint32_t* subclasses = context.tables.at<uint32_t>(data.subclassesOffset);
+        RecordLine(context, "  subclasses"_s).list("classes"_s, unsafeMakeSpan(subclasses, 1 + static_cast<size_t>(*subclasses)).subspan(1), [&](uint32_t index) {
+            context.printer.print(LayoutID(index));
+        });
+    }
 }
 
 static void printLayouts(const TablesContext& context)
@@ -451,6 +509,7 @@ static void printLayouts(const TablesContext& context)
         if (uint32_t offset = tables.offsetOfClass(index))
             printClassRecord(context, *tables.at<LayoutData>(offset));
     }
+    printParsedRecordFields(context);
     RecordLine(context, "shapeSetBits"_s).list("words"_s, tables.shapeSetBits(), [&](uint32_t word) {
         context.out.printf("0x%08x", word);
     });
@@ -461,7 +520,7 @@ static void printAllocations(const TablesContext& context)
     auto allocations = context.tables.allocations();
     for (uint32_t index = 0; index < allocations.size(); ++index) {
         const AllocationData& allocation = allocations[index];
-        RecordLine(context, "allocation"_s, index).field("shape"_s, allocation.shape).hex("order"_s, allocation.orderWord).field("size"_s, allocation.size).field("constructedBy"_s, FunctionID(allocation.constructedBy));
+        RecordLine(context, "allocation"_s, index).field<uint32_t>("shape"_s, allocation.shape).hex("order"_s, allocation.orderWord()).field("size"_s, allocation.size()).field("constructedBy"_s, FunctionID(context.tables.constructorOfAllocation(index)));
     }
 }
 
@@ -476,6 +535,8 @@ static void printStatics(const TablesContext& context)
         RecordLine(context, "run"_s).field("firstWord"_s, run.firstWord).field("words"_s, run.numberOfWords).hex("bits"_s, run.bits());
     for (const StaticsRange& range : tables.staticsRoots())
         RecordLine(context, "roots"_s).field("offset"_s, range.offset).field("size"_s, range.size);
+    for (const StaticsRange& range : tables.staticsNarrowRoots())
+        RecordLine(context, "narrowRoots"_s).field("offset"_s, range.offset).field("size"_s, range.size);
     for (const StaticsRange& range : tables.staticsClearedEachCollection())
         RecordLine(context, "cleared"_s).field("offset"_s, range.offset).field("size"_s, range.size);
     for (const FunctionVariableData& variable : tables.functionVariables())
@@ -485,16 +546,16 @@ static void printStatics(const TablesContext& context)
 static void printFunctionRecord(const TablesContext& context, uint32_t index)
 {
     const ProgramTables& tables = context.tables;
-    FunctionKindData kind = tables.functionKinds()[index];
+    FunctionKindData kind = tables.kindOfFunction(index);
     RecordLine line(context, "function"_s, IDPrefix::Function, index);
-    line.string("name"_s, tables.functionNames()[index]);
+    line.string("name"_s, tables.nameOfFunction(index));
     line.field("callable"_s, nameOf(kind.callable())).field("accessor"_s, kind.accessor()).field("structure"_s, static_cast<uint32_t>(kind.closureStructure))
         .flag("slim"_s, kind.isSlim).flag("async"_s, kind.isAsync).flag("generator"_s, kind.isGenerator).flag("takesNewTarget"_s, kind.takesNewTarget)
         .flag("commonJSModule"_s, kind.isCommonJSModule).flag("inRuntimeModule"_s, kind.isInRuntimeModule).flag("constructor"_s, kind.isConstructor)
         .flag("derivedConstructor"_s, kind.isDerivedConstructor).flag("inferredName"_s, kind.hasInferredName);
     if (index < tables.closureFunctions.first || index >= tables.closureFunctions.end)
         return;
-    CaptureCounts counts = CaptureCounts::decode(tables.closureCaptureCounts()[index - tables.closureFunctions.first]);
+    CaptureCounts counts = tables.captureCountsOf(index);
     line.field("length"_s, tables.functionLengthOf(index)).field("references"_s, static_cast<uint32_t>(counts.references)).field("captures"_s, static_cast<uint32_t>(counts.captures));
 }
 
@@ -503,23 +564,23 @@ static void printFunctions(const TablesContext& context)
     const ProgramTables& tables = context.tables;
     ClosureFunctionRangeData range = tables.closureFunctions;
     RecordLine(context, "closures"_s).field("first"_s, range.first).field("end"_s, range.end).field("omittedWords"_s, range.omittedWordCount);
-    for (uint32_t index = 0; index < tables.functionKinds().size(); ++index)
+    for (uint32_t index = 0; index < tables.numberOfFunctions(); ++index)
         printFunctionRecord(context, index);
     for (const ConstructorData& constructor : tables.constructors())
         RecordLine(context, "constructor"_s).field("function"_s, FunctionID(constructor.function)).field("layout"_s, LayoutID(constructor.layoutIndex));
     for (const BoundFunctionData& bound : tables.boundFunctions()) {
         RecordLine(context, "bound"_s).field("function"_s, FunctionID(bound.function)).field("target"_s, FunctionID(bound.target))
-            .field("arguments"_s, static_cast<uint32_t>(bound.numberOfBoundArguments)).field("targetClosureSlot"_s, bound.targetClosureSlot());
+            .field("arguments"_s, static_cast<uint32_t>(bound.numberOfBoundArguments)).field("targetClosureSlot"_s, bound.targetClosureSlot())
+            .field("constructs"_s, !!bound.constructs).field("firstArgumentSlot"_s, static_cast<uint32_t>(bound.firstArgumentSlot)).field("capturedArguments"_s, static_cast<uint32_t>(bound.numberOfCapturedArguments));
     }
     for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints())
-        RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(entrypoint.function)).field("entrypoint"_s, FunctionID(entrypoint.constructEntrypoint));
+        RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(entrypoint.function)).field("entrypoint"_s, FunctionID(entrypoint.constructEntrypoint())).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
 }
 
 static void printFunctionTraces(const TablesContext& context)
 {
-    auto traces = context.tables.functionTraces();
-    for (uint32_t index = 0; index < traces.size(); ++index) {
-        const FunctionTraceData& trace = traces[index];
+    for (uint32_t index = 0; index < context.tables.numberOfFunctions(); ++index) {
+        const FunctionTraceData& trace = context.tables.traceOfFunction(index);
         std::optional<BuiltinID> implemented;
         if (std::optional<uint32_t> builtin = context.tables.builtinImplementedBy(index))
             implemented = BuiltinID(*builtin);
@@ -527,7 +588,7 @@ static void printFunctionTraces(const TablesContext& context)
             .field("implements"_s, implemented).field("visibility"_s, nameOf(trace.visibility())).field("builtinKind"_s, nameOf(trace.builtinKind()))
             .word(trace.codeType() == ModuleCode ? "module"_s : "function"_s).word(trace.isStrict ? "strict"_s : "sloppy"_s).flag("constructor"_s, trace.isConstructor)
             .flag("async"_s, trace.isAsync).flag("rejectsOnThrow"_s, trace.rejectsOnThrow).flag("namedByOwner"_s, trace.isNamedByOwner)
-            .flag("nakedConstructor"_s, trace.isNakedConstructor);
+            .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedBySymbol"_s, trace.isNamedBySymbol);
     }
 }
 
@@ -545,15 +606,35 @@ static void printFunctionTexts(const TablesContext& context)
 static void printModuleRecords(const TablesContext& context)
 {
     auto printListStarts = [](RecordLine& line, const ModuleData& module) {
-        line.field("requests"_s, module.firstRequest).field("exports"_s, module.firstExport).field("syntheticExports"_s, module.firstSyntheticExport).field("requiredNames"_s, module.firstRequiredName);
+        line.field<uint32_t>("requests"_s, module.firstRequest).field<uint32_t>("exports"_s, module.firstExport).field<uint32_t>("syntheticExports"_s, module.firstSyntheticExport).field<uint32_t>("requiredNames"_s, module.firstRequiredName)
+            .field<uint32_t>("linkRequests"_s, module.firstLinkRequest).field<uint32_t>("evaluationRequests"_s, module.firstEvaluationRequest);
+    };
+    // A path is printed as the string of the program that its pieces make.
+    auto pathOf = [&](const ModuleData& module, size_t bytesLeftOut) {
+        std::span<const ModuleDirectoryData> directories = context.tables.moduleDirectories();
+        Vector<uint32_t, 16> pieces { module.publicPathOrName };
+        for (uint32_t directory = module.directory; directory != Number24::max; directory = directories[directory].parent)
+            pieces.append(directories[directory].name);
+        Vector<uint8_t, 256> path;
+        for (uint32_t piece : pieces | std::views::reverse)
+            path.append(context.program.strings[StringID(piece)]);
+        return context.program.strings.find(path.span().subspan(bytesLeftOut));
+    };
+    auto displayPathOf = [&](uint32_t index, const ModuleData& module) {
+        if (module.charactersInFrontOfDisplayPath == ModuleData::hasNoDisplayPath)
+            return context.program.strings.emptyString();
+        if (module.charactersInFrontOfDisplayPath != ModuleData::displayPathIsListed)
+            return pathOf(module, module.charactersInFrontOfDisplayPath);
+        return StringID(std::ranges::lower_bound(context.tables.moduleDisplayPaths(), index, { }, [](const ModuleDisplayPathData& entry) -> uint32_t { return entry.module; })->path);
     };
     auto modules = context.tables.modules();
     for (uint32_t index = 0; index + 1 < modules.size(); ++index) {
         const ModuleData& module = modules[index];
         RecordLine line(context, "module"_s, IDPrefix::Module, index);
-        line.field("kind"_s, module.kind).string("path"_s, module.publicPath).string("displayPath"_s, module.displayPath).field("externalKind"_s, module.externalKind)
-            .field("exportRule"_s, module.exportRule).field("requireResult"_s, module.requireResult).hex("flags"_s, module.flags).field("body"_s, FunctionID(module.body))
-            .field("referrer"_s, ModuleID(module.referrer)).field("runtimeModule"_s, optionalIDInImage<RuntimeModuleID>(module.runtimeModule)).field("value"_s, module.value);
+        std::optional<RuntimeModuleID> runtimeModule = module.registryID() ? std::optional(RuntimeModuleID(*module.registryID())) : std::nullopt;
+        line.field<ModuleKind>("kind"_s, module.kind).field("path"_s, pathOf(module, 0)).field("displayPath"_s, displayPathOf(index, module)).field<ExternalKind>("externalKind"_s, module.externalKind)
+            .field<SyntheticExportRule>("exportRule"_s, module.exportRule).field<RequireResult>("requireResult"_s, module.requireResult).hex("flags"_s, module.flags).field("body"_s, module.bodyFunction().value_or(FunctionID()))
+            .field("referrer"_s, module.referrerModule().value_or(ModuleID())).field("runtimeModule"_s, runtimeModule).field("value"_s, module.value);
         printListStarts(line, module);
     }
     RecordLine line(context, "endOfModules"_s);
@@ -585,6 +666,23 @@ static void printModules(const TablesContext& context)
     auto requests = tables.moduleRequests();
     for (uint32_t index = 0; index < requests.size(); ++index)
         RecordLine(context, "request"_s, index).field("target"_s, requests[index].targetModule()).flag("deferred"_s, requests[index].isDeferred).flag("dynamicStarExport"_s, requests[index].isDynamicStarExport);
+    ModuleNumbers linkRequests(tables.linkRequests(), tables.modules().size());
+    for (uint32_t index = 0; index < linkRequests.size(); ++index)
+        RecordLine(context, "linkRequest"_s, index).field("target"_s, ModuleID(linkRequests[index]));
+    ModuleNumbers evaluationRequests(tables.evaluationRequests(), tables.modules().size());
+    for (uint32_t index = 0; index < evaluationRequests.size(); ++index)
+        RecordLine(context, "evaluationRequest"_s, index).field("target"_s, ModuleID(evaluationRequests[index]));
+    for (const LinkPlanStepData& step : tables.entryPointLinkPlan())
+        RecordLine(context, "linkPlanStep"_s).field("module"_s, step.targetModule()).flag("resolvesNames"_s, step.resolvesNames);
+    for (const LinkPlanRootData& root : tables.linkPlanRoots()) {
+        if (&root == &tables.linkPlanRoots().back()) {
+            RecordLine(context, "endOfLinkPlanRoots"_s).field("firstStep"_s, root.firstStep);
+            break;
+        }
+        RecordLine(context, "linkPlanRoot"_s).field("module"_s, ModuleID(root.module)).field("firstStep"_s, root.firstStep).field("memberOfCycle"_s, ModuleID(root.memberOfCycle));
+    }
+    for (const LinkPlanStepData& step : tables.linkPlanStepsOfRoots())
+        RecordLine(context, "linkPlanStepOfRoot"_s).field("module"_s, step.targetModule()).flag("resolvesNames"_s, step.resolvesNames);
     auto exports = tables.moduleExports();
     for (uint32_t index = 0; index < exports.size(); ++index)
         printModuleExportRecord(context, index, exports[index]);
@@ -600,13 +698,9 @@ static void printModules(const TablesContext& context)
     auto requiredNames = tables.requiredNames();
     for (uint32_t index = 0; index < requiredNames.size(); ++index)
         RecordLine(context, "requiredName"_s, index).field("exporter"_s, requiredNames[index].exporterModule()).identifier("name"_s, requiredNames[index].name).flag("mayBeAbsent"_s, requiredNames[index].mayBeAbsent);
-    for (const RequireEdgeData& edge : tables.requireEdges())
-        RecordLine(context, "requireEdge"_s).field("referrer"_s, edge.referrerModule()).field("target"_s, edge.targetModule()).string("specifier"_s, edge.specifier);
-    for (const ModuleResetSlotData& reset : tables.moduleResetSlots())
-        RecordLine(context, "resetSlot"_s).field("module"_s, ModuleID(reset.module)).field("slot"_s, reset.slot);
     for (const ModuleFailureData& failure : tables.moduleFailures())
         RecordLine(context, "failure"_s).field("importer"_s, failure.importerModule()).field("specifier"_s, failure.specifierString());
-    RecordLine(context, "modulesByPath"_s).list("modules"_s, tables.modulesByPath(), [&](uint32_t module) {
+    RecordLine(context, "modulesByPath"_s).list("modules"_s, ModuleNumbers(tables.modulesByPath(), tables.modules().size()), [&](uint32_t module) {
         context.printer.print(ModuleID(module));
     });
     for (const CompiledRuntimeModuleData& runtimeModule : tables.compiledRuntimeModules())
@@ -657,7 +751,7 @@ static void printDataWord(const TablesContext& context, uint64_t word)
 
 static void printDataNode(const TablesContext& context, uint32_t index, DataNodeHeader header, std::span<const uint64_t> body)
 {
-    std::span<const uint64_t> values = body.first(header.count);
+    std::span<const uint64_t> values = body.subspan(header.kind() == DataNodeHeader::Kind::Array ? DataNodeHeader::wordsBeforeElements - 1 : 0, header.count);
     auto printWord = [&](uint64_t word) {
         printDataWord(context, word);
     };
@@ -670,9 +764,10 @@ static void printDataNode(const TablesContext& context, uint32_t index, DataNode
     };
     switch (header.kind()) {
     case DataNodeHeader::Kind::Array: {
-        auto indexingType = static_cast<IndexingType>(header.operand);
+        auto indexingType = static_cast<IndexingType>(header.operand & DataNodeHeader::indexingTypeMask);
         RecordLine line(context, "array"_s, index);
         context.out.print(" ", IndexingTypeDump(indexingType));
+        line.flag("isStorage"_s, header.operand & DataNodeHeader::isStorage);
         if (indexingType == ArrayWithDouble)
             line.list("elements"_s, values, printDoubleOrHole);
         else
@@ -680,8 +775,21 @@ static void printDataNode(const TablesContext& context, uint32_t index, DataNode
         return;
     }
     case DataNodeHeader::Kind::Object:
-        RecordLine(context, "object"_s, index).field("allocation"_s, static_cast<uint32_t>(header.operand))
+    case DataNodeHeader::Kind::ObjectWithOtherMembers: {
+        RecordLine line(context, "object"_s, index);
+        line.field("allocation"_s, static_cast<uint32_t>(header.operand))
             .numbers("fields"_s, spanReinterpretCast<const uint16_t>(body.subspan(header.count)).first(header.count)).list("values"_s, values, printWord);
+        if (header.kind() == DataNodeHeader::Kind::ObjectWithOtherMembers)
+            line.fieldWith("otherMembers"_s, [&] { printWord(body.back()); });
+        return;
+    }
+    case DataNodeHeader::Kind::ObjectBody:
+        RecordLine(context, "objectBody"_s, index).field("allocation"_s, static_cast<uint32_t>(header.operand)).list("words"_s, values, [&](uint64_t word) { context.out.printf("0x%llx", static_cast<unsigned long long>(word)); });
+        return;
+    case DataNodeHeader::Kind::OtherMembers:
+    case DataNodeHeader::Kind::OrdinaryObject:
+        RecordLine(context, header.kind() == DataNodeHeader::Kind::OtherMembers ? "otherMembers"_s : "ordinaryObject"_s, index)
+            .list("keys"_s, spanReinterpretCast<const uint32_t>(body.subspan(header.count)).first(header.count), [&](uint32_t number) { printIdentifier(context, number); }).list("values"_s, values, printWord);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -690,7 +798,7 @@ static void printDataNode(const TablesContext& context, uint32_t index, DataNode
 static void printData(const TablesContext& context)
 {
     std::span<const uint64_t> words = context.tables.data();
-    for (uint32_t index = 1; index < words.size();) {
+    for (uint32_t index = DataNodeHeader::firstNode; index < words.size();) {
         DataNodeHeader header = DataNodeHeader::decode(words[index]);
         uint32_t numberOfWords = DataNodeHeader::numberOfWords(header.kind(), header.count);
         printDataNode(context, index, header, words.subspan(index + 1, numberOfWords - 1));
@@ -857,6 +965,32 @@ static void printFieldTable(const TablesContext& context)
             line.field("field"_s, static_cast<uint32_t>(field.indexInLayoutRecord())).flag("storedWithoutTypeTest"_s, field.bits & FieldRecordIndex::isStoredWithoutTypeTest);
         }
     }
+
+    // What the prototype object of every class has under the same names, class by class.
+    const uint32_t* offsetsOfClasses = tables.classes().data() + tables.numberOfClassGroupWords();
+    auto rowsOfClasses = tables.classMemberRows();
+    for (uint32_t rank = 0; rank < rowsOfClasses.size(); ++rank) {
+        LayoutID classIndex(tables.at<LayoutData>(offsetsOfClasses[rank])->index);
+        if (rowsOfClasses[rank] == ClassRowEntry::noRow) {
+            RecordLine(context, "members"_s).field("class"_s, classIndex).word("unknown"_s);
+            continue;
+        }
+        for (size_t name : namesWithEntries) {
+            uint32_t index = rowsOfClasses[rank] + static_cast<uint32_t>(name);
+            FieldTableEntry entry { entries[index] };
+            if (entry.name() != name)
+                continue;
+            RecordLine line(context, "member"_s);
+            line.field("class"_s, classIndex).identifier("name"_s, static_cast<uint32_t>(name));
+            uint32_t number = ClassRowEntry::numberIn(entry, tables.fieldRecordIndices()[index]);
+            if (ClassRowEntry::formOf(entry) == ClassRowEntry::Form::Method) {
+                line.field("method"_s, number);
+                continue;
+            }
+            auto accessor = std::bit_cast<ClassAccessorData>(tables.classAccessors()[number]);
+            line.field("getter"_s, accessor.getter).field("setter"_s, accessor.setter);
+        }
+    }
 }
 
 static void printConstants(const TablesContext& context)
@@ -874,11 +1008,6 @@ static void printConstants(const TablesContext& context)
     }
     for (uint32_t member : tables.constantBuiltinMembers())
         RecordLine(context, "constantBuiltinMember"_s).field("member"_s, BuiltinID(member));
-    for (const ClosedAbsentNamesOfHolder& holder : tables.holdersOfClosedAbsentNames()) {
-        RecordLine(context, "holderOfClosedAbsentNames"_s).field("holder"_s, BuiltinID(holder.holder));
-        for (uint32_t name : tables.closedAbsentNames().subspan(holder.firstName, holder.numberOfNames))
-            RecordLine(context, "closedAbsentName"_s).field("holder"_s, BuiltinID(holder.holder)).identifier("name"_s, name);
-    }
     auto bigIntConstants = tables.bigIntConstants();
     for (uint32_t number = 0; number < bigIntConstants.size(); ++number)
         RecordLine(context, "bigInt"_s, number).string("digits"_s, bigIntConstants[number]);
@@ -892,10 +1021,12 @@ static void printConstants(const TablesContext& context)
     }
     for (const LiteralStringLimits& limits : tables.literalStringLimits())
         RecordLine(context, "literalStringLimits"_s).field("maxLength"_s, limits.maxLength);
-    auto identifiersByHash = tables.identifiersByHash();
-    for (uint32_t slot = 0; slot < identifiersByHash.size(); ++slot) {
-        if (identifiersByHash[slot])
-            RecordLine(context, "identifierSlot"_s, slot).identifier("name"_s, identifiersByHash[slot] - 1);
+    if (IdentifierTable identifiersByHash(tables.identifiersByHash()); !identifiersByHash.isEmpty()) {
+        std::span<const uint32_t> slots = identifiersByHash.slots();
+        for (uint32_t slot = 0; slot < slots.size(); ++slot) {
+            if (slots[slot])
+                RecordLine(context, "identifierSlot"_s, slot).identifier("name"_s, identifiersByHash.numberIn(slots[slot]));
+        }
     }
     for (uint32_t module : tables.entryPoints())
         RecordLine(context, "entryPoint"_s).field("module"_s, ModuleID(module));
@@ -957,11 +1088,31 @@ static std::span<uint32_t> mutableFieldTableEntries(std::span<uint8_t> bytes)
     return mutableTable<uint32_t>(bytes, ProgramTableIndex::fieldTable).subspan(reinterpretCastSpanStartTo<ProgramTables>(bytes).numberOfFieldTableRows);
 }
 
-static bool clearFirstFieldTableEntry(std::span<uint8_t> bytes)
+// The first entry of a row of a shape, or of a row of a class.
+static uint32_t* findFieldTableEntry(std::span<uint8_t> bytes, bool inRowOfClass)
 {
     std::span<uint32_t> entries = mutableFieldTableEntries(bytes);
-    auto occupied = std::ranges::find_if(entries, std::identity { });
-    if (occupied == entries.end())
+    std::span<uint32_t> rowsOfClasses = mutableTable<uint32_t>(bytes, ProgramTableIndex::classMemberRows);
+    for (uint32_t index = 0; index < entries.size(); ++index) {
+        if (entries[index] && std::ranges::contains(rowsOfClasses, index - FieldTableEntry { entries[index] }.name()) == inRowOfClass)
+            return &entries[index];
+    }
+    return nullptr;
+}
+
+static bool clearFirstFieldTableEntry(std::span<uint8_t> bytes)
+{
+    uint32_t* occupied = findFieldTableEntry(bytes, false);
+    if (!occupied)
+        return false;
+    *occupied = 0;
+    return true;
+}
+
+static bool clearFirstEntryOfClass(std::span<uint8_t> bytes)
+{
+    uint32_t* occupied = findFieldTableEntry(bytes, true);
+    if (!occupied)
         return false;
     *occupied = 0;
     return true;
@@ -986,6 +1137,7 @@ static const TableDamage* findTableDamage(StringView argument)
         { ProgramTableRule::ShapeWithoutLayout, removeFirstLayout },
         { ProgramTableRule::UnknownFieldFlag, setUnknownFieldFlag },
         { ProgramTableRule::FieldMissingFromFieldTable, clearFirstFieldTableEntry },
+        { ProgramTableRule::MemberMissingFromClassMemberTable, clearFirstEntryOfClass },
         { ProgramTableRule::FieldTableEntryWithoutField, copyFieldTableEntryToFreePlace },
     };
     static constexpr ASCIILiteral prefix = "damage="_s;
@@ -1042,7 +1194,7 @@ static void printTables(TestCommandContext& context, const PlacedProgram& placed
     CodeGenerationPlan plan = prepareCodeGeneration(*placed.output, context.build);
     if (context.build.diagnostics().hasErrors())
         return;
-    ProgramTableInputs inputs { *placed.output, plan.instanceSizes, plan.stringConstants };
+    ProgramTableInputs inputs { *placed.output, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables };
     EncodedProgramTables encoded = encodeProgramTables(inputs, context.build);
     if (encoded.bytes.isEmpty())
         return;

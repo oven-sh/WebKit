@@ -48,68 +48,35 @@ class CodeBlock;
 class JSObject;
 class ScriptExecutable;
 
-class JSFrameData {
-public:
-    JSFrameData() = default;
-    JSFrameData(WriteBarrier<JSCell> callee, WriteBarrier<CodeBlock> codeBlock, BytecodeIndex bytecodeIndex, bool isAsyncFrame = false)
-        : m_plain { callee.get(), codeBlock.get() }
-        , bytecodeIndex(bytecodeIndex)
-        , m_isAsyncFrame(isAsyncFrame)
-    {
-    }
-    JSCell* callee() const { return m_form == Form::Plain ? m_plain.callee : nullptr; }
-    CodeBlock* codeBlock() const { return m_form == Form::Plain ? m_plain.codeBlock : nullptr; }
-    bool isCompiled() const { return m_form == Form::Compiled; }
-#if ENABLE(AOT)
-    JSFrameData(const AOT::TraceFrame& frame, bool isAsyncFrame)
-        : m_compiled(frame)
-        , m_isAsyncFrame(isAsyncFrame)
-        , m_form(Form::Compiled)
-    {
-    }
-    const AOT::TraceFrame& compiledFrame() const
-    {
-        ASSERT(isCompiled());
-        return m_compiled;
-    }
-#endif
-
-private:
-    enum class Form : uint8_t { Plain, Compiled };
-    struct Plain {
-        JSCell* callee;
-        CodeBlock* codeBlock;
-    };
-
-    union {
-        Plain m_plain { nullptr, nullptr };
-#if ENABLE(AOT)
-        AOT::TraceFrame m_compiled;
-#endif
-    };
-
-public:
+struct JSFrameData {
+    WriteBarrier<JSCell> callee;
+    WriteBarrier<CodeBlock> codeBlock;
     BytecodeIndex bytecodeIndex;
     bool m_isAsyncFrame { false };
-
-private:
-    Form m_form { Form::Plain };
 };
-static_assert(sizeof(JSFrameData) == 24 && std::is_trivially_copyable_v<JSFrameData>);
-#if ENABLE(AOT)
-static_assert(sizeof(AOT::TraceFrame) == 16 && std::is_trivially_copyable_v<AOT::TraceFrame>);
-#endif
 
 struct WasmFrameData {
     Wasm::IndexOrName functionIndexOrName;
     size_t functionIndex { 0 };
 };
 
+#if ENABLE(AOT)
+struct CompiledFrameData {
+    AOT::TraceFrame frame;
+    bool isAsyncFrame { false };
+};
+static_assert(sizeof(CompiledFrameData) <= sizeof(JSFrameData) && std::is_trivially_copyable_v<CompiledFrameData>);
+#endif
+
 enum class AllowURLOverride : bool { No, Yes };
 
 class StackFrame {
 public:
+#if ENABLE(AOT)
+    using FrameData = Variant<JSFrameData, WasmFrameData, CompiledFrameData>;
+#else
     using FrameData = Variant<JSFrameData, WasmFrameData>;
+#endif
 
     StackFrame(VM&, JSCell* owner, JSCell* callee);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
@@ -122,31 +89,28 @@ public:
 
 #if ENABLE(AOT)
     explicit StackFrame(const AOT::TraceFrame& frame, bool isAsyncFrame = false)
-        : m_frameData(JSFrameData { frame, isAsyncFrame })
+        : m_frameData(CompiledFrameData { frame, isAsyncFrame })
     {
     }
     static void appendCompiledFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
-    const AOT::TraceFrame& compiledFrame() const { return jsFrameData()->compiledFrame(); }
+    const AOT::TraceFrame& compiledFrame() const { return std::get<CompiledFrameData>(m_frameData).frame; }
     JS_EXPORT_PRIVATE std::optional<AOT::SourcePosition> compiledPosition() const;
+    bool isCompiledFrame() const { return std::holds_alternative<CompiledFrameData>(m_frameData); }
+#else
+    static constexpr bool isCompiledFrame() { return false; }
 #endif
-
-    bool isCompiledFrame() const
-    {
-        auto* jsFrame = jsFrameData();
-        return jsFrame && jsFrame->isCompiled();
-    }
 
     bool hasLineAndColumnInfo() const
     {
-        if (auto* jsFrame = jsFrameData())
-            return jsFrame->isCompiled() ? !representsHostFunction() : !!jsFrame->codeBlock();
-        return false;
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            return !!jsFrame->codeBlock;
+        return isCompiledFrame() && !representsHostFunction();
     }
 
     CodeBlock* codeBlock() const
     {
-        if (auto* jsFrame = jsFrameData())
-            return jsFrame->codeBlock();
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            return jsFrame->codeBlock.get();
         return nullptr;
     }
 
@@ -158,8 +122,8 @@ public:
 
     JSCell* callee() const
     {
-        if (auto* jsFrame = jsFrameData())
-            return jsFrame->callee();
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            return jsFrame->callee.get();
         return nullptr;
     }
 
@@ -177,16 +141,24 @@ public:
 
     bool isAsyncFrame() const
     {
-        if (auto* jsFrame = jsFrameData())
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->m_isAsyncFrame;
+#if ENABLE(AOT)
+        if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
+            return compiledFrame->isAsyncFrame;
+#endif
         return false;
     }
 #endif
 
     bool isAsyncFrameWithoutCodeBlock() const
     {
-        if (auto* jsFrame = jsFrameData())
-            return jsFrame->m_isAsyncFrame && !hasLineAndColumnInfo();
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            return jsFrame->m_isAsyncFrame && !codeBlock();
+#if ENABLE(AOT)
+        if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
+            return compiledFrame->isAsyncFrame && representsHostFunction();
+#endif
         return false;
     }
 
@@ -206,8 +178,6 @@ public:
     bool isMarked(VM&) const;
 
 private:
-    const JSFrameData* jsFrameData() const { return std::get_if<JSFrameData>(&m_frameData); }
-
     FrameData m_frameData { JSFrameData {} };
 };
 static_assert(sizeof(StackFrame) == 32);

@@ -10,6 +10,7 @@
 #include "AOTID.h"
 #include "AOTIRFunction.h"
 #include "AOTLayout.h"
+#include "AOTSharedMemo.h"
 #include "AOTType.h"
 #include "AOTTypeArena.h"
 #include <optional>
@@ -19,9 +20,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Program;
 
-enum class TypeLevel : uint8_t { Proven, Written, Predicted };
+// Proven: what every pass may rely on. Expected: the best that is known, which a test has to confirm before anything relies on it.
+enum class TypeLevel : uint8_t { Proven, Expected };
 
-// What reads of a name from receivers with many layouts give. That depends on the tables of the program only, and costs a lookup and a union per layout.
+enum class FieldTypeRule : uint8_t { NamedRead, SlotRead, DeferringSlotRead, SlotStore };
+
+// What the fields under a name give for receivers with many layouts. That depends on the tables of the program only, and costs a lookup and a union per layout.
 class FieldReadTypes {
 public:
     static constexpr size_t fewestReceivers = 8;
@@ -30,10 +34,11 @@ public:
         LayoutSetID receivers;
         PropertyKeyID key;
         TypeLevel level { TypeLevel::Proven };
+        FieldTypeRule rule { FieldTypeRule::NamedRead };
         TypeID type;
     };
 
-    const Entry* find(LayoutSetID receivers, PropertyKeyID, TypeLevel) const LIFETIME_BOUND;
+    const Entry* find(LayoutSetID receivers, PropertyKeyID, TypeLevel, FieldTypeRule) const LIFETIME_BOUND;
     void add(const Entry&);
 
 private:
@@ -41,59 +46,128 @@ private:
     HashedIndex m_index;
 };
 
+class PendingTyping;
+
+struct TypingMemo {
+    // Where whoever types values of the function says so. Null where nobody keeps track.
+    PendingTyping* pendingTyping { nullptr };
+    FieldReadTypes fieldReads;
+    TypeMemo results;
+    TypeMemo idsInArena;
+    TypeMemo joins;
+    TypeMemo narrowerTypes;
+};
+
+// The same answers for every thread that types functions while the layouts stay as they are. An answer is computed in an arena of its own, and each reader adopts it:
+// which thread asked first decides no id.
+class SharedFieldTypes {
+    WTF_MAKE_NONCOPYABLE(SharedFieldTypes);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedFieldTypes);
+public:
+    using ListID = SharedLayoutLists::ListID;
+
+    struct Entry {
+        ListID receivers { 0 };
+        PropertyKeyID key;
+        TypeLevel level { TypeLevel::Proven };
+        FieldTypeRule rule { FieldTypeRule::NamedRead };
+        std::optional<Type> type;
+    };
+
+    SharedFieldTypes() = default;
+
+    SharedLayoutLists& lists() { return m_lists; }
+    const Entry* find(ListID receivers, PropertyKeyID, TypeLevel, FieldTypeRule) const LIFETIME_BOUND;
+    const Entry& add(Entry&&) LIFETIME_BOUND;
+
+private:
+    SharedLayoutLists m_lists;
+    SharedMemo<Entry> m_entries;
+};
+
+// What somebody who types a copy of a function has proven about the positions of the program, beyond what their types say.
+class KnownPositionTypes {
+public:
+    virtual ~KnownPositionTypes() = default;
+    // None where the type of the position says all there is.
+    virtual std::optional<Type> find(const DeclaredType&) const = 0;
+};
+
 struct TypingContext {
     const Program& program;
     const Function& function;
     TypeArena& types;
     TypeLevel level { TypeLevel::Proven };
-    FieldReadTypes* fieldReadTypes { nullptr };
-
-    bool predicts() const { return level == TypeLevel::Predicted; }
+    TypingMemo* memo { nullptr };
+    const KnownPositionTypes* knownPositions { nullptr };
+    // Of the propagation of types alone: see Value::isExpectedNever().
+    bool seesValuesExpectedNever { false };
 
     TypeID typeIDOf(const Value& value) const
     {
-        switch (level) {
-        case TypeLevel::Proven:
+        if (level == TypeLevel::Proven)
             return value.type;
-        case TypeLevel::Written:
-            return value.writtenOrType();
-        case TypeLevel::Predicted:
-            return value.predictionOrType();
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        return seesValuesExpectedNever ? value.expectedOrTypeForTyping() : value.expectedOrType();
     }
-
     TypeID typeIDOf(ValueID id) const { return typeIDOf(function.at(id)); }
     const Type& typeOf(ValueID id) const { return types.at(typeIDOf(id)); }
+    // What a read of the position gives. Nothing checks what enters a position that is only expected to hold its type, so nothing is proven about what it holds.
     TypeID typeIDOf(const DeclaredType&) const;
     const Type& typeOf(const DeclaredType& declared) const { return types.at(typeIDOf(declared)); }
-    TypingContext atLevel(TypeLevel newLevel) const { return { program, function, types, newLevel, fieldReadTypes }; }
-    TypingContext predicting() const { return atLevel(TypeLevel::Predicted); }
+    TypingContext atLevel(TypeLevel newLevel) const { return { program, function, types, newLevel, memo, knownPositions, seesValuesExpectedNever }; }
+    TypingContext expecting() const { return atLevel(TypeLevel::Expected); }
 };
 
 Type computeResultType(const TypingContext&, const Value&);
+TypeID computeResultTypeID(const TypingContext&, const Value&);
 Type computeResultType(const TypingContext&, const Value& producer, uint32_t resultIndex);
 Type computeOperatorResultType(const TypingContext&, Opcode, std::span<const Type> operandTypes);
+// What an operation with a natural result answers whatever its operands are. None for an operation with another rule.
+std::optional<Type> tryWidestNaturalTypeOf(const Value&);
+
+// The operations whose rule reads the type of a variable or the record of a function. Those get narrower between two schedules, and nobody types what reads them again.
+const OpcodeSet& opcodesTypedFromNarrowedRecords();
 
 TypeID resultTypeOf(const Program&, const Function&, const Value&, TypeArena&);
-TypeID writtenTypeOf(const Program&, const Function&, const Value&, TypeArena&);
-TypeID predictionOf(const Program&, const Function&, const Value&, TypeArena&);
+// Gives a value that nobody has typed, and of which nothing is expected yet, the types that the propagation of types would give it.
+void typeByRule(const Program&, const Function&, Value&, TypeArena&);
+// Null where nothing narrower than the type is expected.
+TypeID expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&);
+
+inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
+    OpcodeSet opcodes;
+    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+        ResultRule rule = resultRuleOf(static_cast<Opcode>(index));
+        if (rule == ResultRule::Results || rule == ResultRule::Declared)
+            opcodes.add(static_cast<Opcode>(index));
+    }
+    return opcodes;
+}();
 
 std::optional<uint32_t> numberOfResultsOf(const Program&, const Function&, const Value&);
 
+// The one function of the program that the callee of a call by value is, by its type. Null where the type admits anything else, and for a function whose call does not answer
+// with what its one declared result says. `inner(box)` names a function declaration that nothing assigns to, so the front end types the callee as that function.
+FunctionID onlyCalleeOf(const Program&, const Type& callee);
+
+// What a Convert becomes. Nothing: the value is inside the type, or the position is only expected to hold its type and nothing is tested.
+struct ConvertResolution {
+    CastResolution cast { CastResolution::Nothing };
+    TypeID castType;
+};
+
+ConvertResolution resolveConvert(const TypingContext&, const Type& proven, const DeclaredType&);
+// What the converted value has at the level of the context, where it had `source` at that level.
+Type typeOfConvert(const TypingContext&, const Type& source, const Type& proven, const DeclaredType&);
+
 Type typeOfConstant(const TypingContext&, const Value&);
 Type typeOfData(const TypingContext&, const DataNode&);
-Type typeOfAllocatedLayout(const TypingContext&, LayoutID, bool keepsShape);
-// A constructor allocates what new.target asks for: the prototype of a class below the layout selects an instance of that class.
+Type typeOfAllocatedLayout(const TypingContext&, LayoutID);
+// A constructor allocates what new.target asks for: the prototype of another class selects an instance of that class, or an ordinary object where that class has no shape.
 bool mayAllocateOtherLayout(const Program&, const Value& allocation);
 Type typeOfDeclaredLayout(const TypingContext&, LayoutID);
-Type typeOfFieldRead(const TypingContext&, std::span<const LayoutID> receivers, PropertyKeyID);
-Type typeOfFieldRead(const TypingContext&, const Type& receiver, PropertyKeyID);
 // What the read gives where its object has one of these layouts.
 Type typeOfSlotRead(const TypingContext&, const Value& read, std::span<const LayoutID> receivers);
-// A written object type also lists the primitives that have every member it requires (a string is a `{ message?: unknown }`).
-// Under a name that no built-in instance has they read undefined, so the fields of the layouts say what the read gives.
-bool hasWrittenField(const Program&, const Type& receiver, PropertyKeyID);
 Type typeOfContentsRead(const TypingContext&, const Type& container, ContentsSlot);
 Type typeOfElementRead(const TypingContext&, const Type& container, const Type& key);
 Type typeOfAwaited(const TypingContext&, const Type& awaited);
@@ -101,6 +175,7 @@ Type elementTypeOf(TypedArrayType);
 
 enum class FieldTypeState : uint8_t { Unknown, Proven };
 
+// Whether a read by name finds a value of the field's type. The type bounds what the slot holds, and a property that has left its slot holds anything.
 FieldTypeState fieldTypeStateOf(const Program&, FieldReference);
 
 TypeID requiredTypeOfOperand(const TypingContext&, const Value& user, uint32_t operandIndex);

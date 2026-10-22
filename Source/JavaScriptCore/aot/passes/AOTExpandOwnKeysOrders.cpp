@@ -89,11 +89,28 @@ static KeyOrderFields appendCreatedFields(const KeyOrderFields& order, const Key
 
 bool isEnumerableStringField(const Program& program, const Field& field)
 {
-    return isJSONSerializedKey(program, field.key) && !field.computedKey && !field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsHidden });
+    return isJSONSerializedKey(program, field.key) && !field.computedKey && !field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsHidden })
+        && !field.form.contains(FieldForm::IsNotEnumerable);
+}
+
+// The slot of an accessor holds a GetterSetter, which a walk over the slots would take for the value.
+static bool listsAccessor(const Program& program, LayoutID layout, const KeyOrderFields& order)
+{
+    const Vector<Field>& fields = program.at(layout).fields;
+    return std::ranges::any_of(order, [&](uint32_t field) {
+        return fields[field].form.contains(FieldForm::IsAccessor);
+    });
 }
 
 ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOrderLimits limits)
 {
+    // The instances of a class below a built-in class are cells of that class. They have no slots and no word for the order of their keys.
+    if (builtinBaseClassOf(program, id)) {
+        ExpectedKeyOrders none;
+        none.layout = id;
+        return none;
+    }
+
     uint64_t numberOfOrdersLeftOut = 0;
     bool isComplete = true;
     Vector<KeyOrderFields, 4> orders { KeyOrderFields() };
@@ -108,7 +125,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
                 KeyOrderFields extended = appendCreatedFields(order, createdFields);
                 if (extendedOrders.contains(extended))
                     continue;
-                if (extended.size() > limits.maxFields || extendedOrders.size() == limits.maxOrders) {
+                if (extended.size() > limits.maxFields || extendedOrders.size() == limits.maxOrders || listsAccessor(program, id, extended)) {
                     ++numberOfOrdersLeftOut;
                     continue;
                 }

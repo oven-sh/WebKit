@@ -1,0 +1,55 @@
+# shared = function () { this.x }; first = { m: shared }; second = { m: shared }; class B { m() { this.x } }  function run(o) { o.m() }  run(first); run(second); run(new B())
+# Three objects at the call where the analysis tells two apart, and they have two layouts. Objects of one layout count as one: the two literals are looked at together and the instance by itself,
+# so nothing is lost. The function of the literals sees the literals, and the method of the class sees the instance.
+# OPTIONS: limit=MaxValueFlowMembersToldApart:2
+# RUN: valueflow-why values=f4:v2 values=f1:v1 values=f3:v1
+# CHECK: values=f4:v2
+# CHECK: operand 1 {{*}} 3 members: [[first]]@f0 [[second]]@f0 [[b]]@f2
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 2 members: [[first]]@f0 [[second]]@f0
+# CHECK: values=f3:v1
+# CHECK: operand 0 {{*}} 1 members: [[b]]@f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handler" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="B" constructor=f2
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = NewClosure function=f3
+    DefineMethod v4, v5 layout=L1 key="m"
+    v7 = FinishClass v4 layout=L1
+    v8 = NewClosure function=f4
+    v9 = Call v8, -, v1
+    v10 = Call v8, -, v2
+    v11 = Construct v7
+    v12 = Call v8, -, v11
+    Return
+}
+function f1 name="shared" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f2 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f4 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return
+}

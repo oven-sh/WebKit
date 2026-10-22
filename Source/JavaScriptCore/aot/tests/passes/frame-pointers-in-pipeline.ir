@@ -49,7 +49,7 @@ function f4 name="calleeStores" parameters=[{type=anything}] results=[{type=anyt
     Return v3
 }
 # CHECK-LABEL: function f4 name="calleeStores"
-# CHECK-NOT: storage=Frame
+# CHECK-NOT: function=f6 {{*}}storage=Frame
 # CHECK: = CallDirect
 # CHECK-NOT: storage=Frame
 

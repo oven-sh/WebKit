@@ -1,8 +1,8 @@
 # Equal cold sites share one function
 # FORM: Selected
 # RUN: pass OutlineColdOperations
-# STATISTIC: OutlinedBodiesCreated = 10
-# STATISTIC: ColdSitesOutlined = 73
+# STATISTIC: OutlinedBodiesCreated = 9
+# STATISTIC: ColdSitesOutlined = 67
 # LOSS: MaxOutlinedOperands f23
 # CHECK: outcome: Changed
 
@@ -432,8 +432,8 @@ function f20 name="twoExitArguments" parameters=[{type=boolean}, {type=anything}
 }
 # CHECK-LABEL: function f20
 # CHECK: = TypeTest
-# CHECK: = CallDirect v1, v2 function=[[plainCall]]
-# CHECK: = CallDirect v6, v7 function=[[plainCall]]
+# CHECK: = Call v1, -, v2
+# CHECK: = Call v6, -, v7
 
 function f21 name="twoExitArguments2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: boolean, v1: anything, v2: anything):
@@ -922,8 +922,6 @@ function f39 name="inlinedHiddenLibraryFunction" parameters=[{type=boolean}, {ty
 # CHECK: function [[oneValue]] {{*}}role=OutlinedBody
 # CHECK: function [[region]] {{*}}role=OutlinedBody
 # CHECK: = TypeTest
-# CHECK: = Call v0, -, v1
-# CHECK: function [[plainCall]] {{*}}role=OutlinedBody
 # CHECK: = Call v0, -, v1
 # CHECK: function [[provenReceiver]] {{*}}role=OutlinedBody{{*}}parameters=[{type=L0}, {type=anything}] results=[{type=anything}]
 # CHECK: function [[detail]] {{*}}role=OutlinedBody{{*}}parameters=[{type=anything}] results=[{type=anything}]

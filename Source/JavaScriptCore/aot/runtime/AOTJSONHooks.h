@@ -15,6 +15,7 @@
 namespace JSC {
 
 class JSGlobalObject;
+class VM;
 
 namespace AOT {
 
@@ -25,6 +26,9 @@ JS_EXPORT_PRIVATE JSValue tryParseUTF8JSON(JSGlobalObject*, std::span<const uint
 
 // What JSON.stringify writes for a value that an object holds under a name, or an array at an index. False where it writes nothing for the value, and with an exception.
 bool appendJSONTextOfProperty(JSGlobalObject*, StringBuilderStorage&, JSValue, JSValue property);
+
+// For the file of counts: why a call of JSON.stringify was left to the general Stringifier.
+void countReasonForSlowStringify(VM&, ASCIILiteral reason);
 
 } } // namespace JSC::AOT
 

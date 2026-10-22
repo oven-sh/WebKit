@@ -4,15 +4,14 @@ flags PropertyDescriptorFlags { | engine HasValue HasWritable IsWritable HasEnum
 record PlacedKey engine { key: PropertyKey fieldAccess: FieldAccess? level: KnowledgeLevel accessSite: AccessSite? mayAdd: Bool }
 
 family FusedAccess Selected..Placed ; accessClass = ByName
-operation PropGetChecked (object: Any/inspects, key: PropertyKey, checkedType: Type, site: TypeSite, cause: CheckCause, readOrigin: Origin, with AccessStamp) -> declared(checkedType) ; unknownCode ; replaces = PropGet, Claim
 operation PropGetChain (object: Any/inspects, key: PropertyKey, secondKey: PropertyKey, readOrigin: Origin, with AccessStamp, secondAccessSite?: AccessSite) -> unknown ; unknownCode ; replaces = PropGet
 operation PropGetPair (object: Any/inspects, other?: Any/inspects, key: PropertyKey, secondKey: PropertyKey, readOrigin: Origin, with AccessStamp, secondAccessSite?: AccessSite) [readsFromFirstResult] -> results(unknown, unknown) ; unknownCode ; replaces = PropGet
 operation PropGetAndTest (object: Any/inspects, key: PropertyKey, comparedString?: String, with AccessStamp) -> natural(boolean) ; unknownCode ; replaces = PropGet, ToBoolean, StrictEq ; branches = Only
 operation CallMethod (receiver: Any/retains, arguments...: Any/retains, key: PropertyKey, calleeName?: String, readOrigin: Origin, with AccessStamp, callees?: CalleeSet, callAccessSite?: AccessSite) [isDemotedTailCall] -> unknown ; unknownCode ; replaces = PropGet, Call ; accessClass = IndirectCall ; siteCaches = 1
-operation TryPutByIds (object: Object/inspects, keys: List<PropertyKey>, values...: Any/retains(object), from Placed request?: Request, from Placed siteCache?: SiteCache) -> natural(boolean) ; Allocates reads(NamedProperties) writes(NamedProperties, RuntimeState) ; replaces = PropSet, PropDefine ; runtime = TryPutProperties ; siteCaches = 1
+operation TryPutByIds (object: Object/inspects, keys: List<PropertyKey>, values...: Any/retains(object), from Placed request?: Request, from Placed siteCache?: SiteCache) [isDefinition] -> natural(boolean) ; Allocates reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, RuntimeState) ; replaces = PropSet, PropDefine ; runtime = TryPutProperties ; siteCaches = 1
 
 family SlotRun Selected..Placed ; accessClass = Slot
-operation PutSlots (object: Object/inspects, guard?: Guard/inspects, placedKeys: List<PlacedKey>, receivers: LayoutSet, values...: Declared/retains(object)) -> none ; Allocates reads(ObjectFields, OrderWords) writes(ObjectFields, OrderWords, RuntimeState) by Access ; relies = Shape, NotFrozen ; guarded = object ; replaces = PutSlot, PutSlotOrAdd ; runsOwnerBarrier = true
+operation PutSlots (object: Object/inspects, guard?: Guard/inspects, placedKeys: List<PlacedKey>, receivers: LayoutSet, values...: Declared/retains(object)) -> none ; AllocatesWithoutCollecting reads(ObjectFields, OrderWords) writes(ObjectFields, OrderWords, RuntimeState) by Access ; relies = Shape, NotFrozen ; guarded = object ; replaces = PutSlot, PutSlotOrAdd ; runsOwnerBarrier = true ; remembersOwner = true
 
 family ObjectCreation Selected..Placed
 operation DefineOwnProperty (object: Object/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject ; runtime = DefineOwnProperty
@@ -58,6 +57,10 @@ operation StringBuilderAppendStringRange (builder: StringBuilder/inspects, strin
 operation StringBuilderAppendBoolean (builder: StringBuilder/inspects, value: Boolean/inspects) -> none ; AppendsToBuilder
 operation StringBuilderAppendStringOrNullish (builder: StringBuilder/inspects, value: Any/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendString
 operation StringBuilderAppendValue (builder: StringBuilder/inspects, value: Any/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppend
+
+family KeyPartsLookup Selected..Placed ; replaces = Strcat, CallBuiltin
+operation MapGetByKeyParts (map: Object/inspects+readsContents, parts...: Any/inspects) -> unknown ; CreatesString reads(CollectionStorage, CollectionEntries) ; runtime = MapGetByKeyParts
+operation HasByKeyParts (collection: Object/inspects+readsContents, parts...: Any/inspects) -> natural(boolean) ; CreatesString reads(CollectionStorage, CollectionEntries) ; runtime = HasByKeyParts
 
 family ResolvedCall Selected..Placed
 operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none

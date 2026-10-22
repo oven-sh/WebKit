@@ -51,8 +51,10 @@ namespace JSC {
 
 class HeapUtil {
 public:
-    // Whether the pointer is where a block of this heap stores a JSCell, or is a precise allocation. It says nothing about liveness.
-    static bool isJSCellStorage(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSCell* pointer)
+    static MarkStackArray& mutatorMarkStack(JSC::Heap& heap) { return *heap.m_mutatorMarkStack; }
+    static uintptr_t& barriersExecuted(JSC::Heap& heap) { return heap.m_barriersExecuted; }
+
+    static bool isPointerGCObjectJSCell(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSCell* pointer)
     {
         // It could point to a large allocation.
         if (pointer->isPreciseAllocation()) {
@@ -84,18 +86,13 @@ public:
         
         if (candidate->handle().cellKind() != HeapCell::JSCell)
             return false;
-
-        return candidate->isAtom(pointer);
-    }
-
-    static bool isPointerGCObjectJSCell(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSCell* pointer)
-    {
-        if (!isJSCellStorage(heap, filter, pointer))
+        
+        if (!candidate->handle().isLiveCell(pointer))
             return false;
-
-        return pointer->isPreciseAllocation() || pointer->markedBlock().handle().isLiveCell(pointer);
+        
+        return true;
     }
-
+    
     // This does not find the cell if the pointer is pointing at the middle of a JSCell.
     static bool isValueGCObject(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSValue value)
     {
@@ -105,6 +102,28 @@ public:
         if (!value.isCell())
             return false;
         return isPointerGCObjectJSCell(heap, filter, value.asCell());
+    }
+
+    // Whether the pointer is where a block of this heap stores a JSCell, or is a precise allocation. It says nothing about liveness.
+    static bool isJSCellStorage(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSCell* pointer)
+    {
+        if (pointer->isPreciseAllocation()) {
+            auto& set = heap.objectSpace().preciseAllocationSet();
+            ASSERT(set);
+            return set->isValidValue(pointer) && set->contains(pointer);
+        }
+
+        MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
+        if (filter.ruleOut(std::bit_cast<uintptr_t>(candidate)))
+            return false;
+
+        if (!MarkedBlock::isAtomAligned(pointer))
+            return false;
+
+        if (!heap.objectSpace().blocks().set().contains(candidate))
+            return false;
+
+        return candidate->handle().cellKind() == HeapCell::JSCell && candidate->isAtom(pointer);
     }
 
     // False proves that both block lookups of ConservativeRoots::genericAddPointer fail. It says nothing about precise allocations.
@@ -126,25 +145,13 @@ public:
             return WordKind::NotACell;
 
         JSCell* cell = static_cast<JSCell*>(const_cast<void*>(word));
-        if (cell->isPreciseAllocation()) {
-            auto& set = heap.objectSpace().preciseAllocationSet();
-            if (!set)
-                heap.objectSpace().enablePreciseAllocationTracking();
-            if (!set->isValidValue(cell))
-                return WordKind::NotACell;
-        }
+        if (cell->isPreciseAllocation() && !heap.objectSpace().preciseAllocationSet())
+            heap.objectSpace().enablePreciseAllocationTracking();
 
         // Not isPointerGCObjectJSCell: after MarkedSpace::endMarking() no unmarked cell of a block is live.
         if (!isJSCellStorage(heap, heap.objectSpace().blocks().filter(), cell))
             return WordKind::NotACell;
         return heap.isMarked(cell) ? WordKind::MarkedCell : WordKind::UnmarkedCell;
-    }
-
-    static WordKind classifyNarrowReference(JSC::Heap& heap, uint32_t index)
-    {
-        if (index < MarkedBlockCage::minIndex)
-            return WordKind::NotACell;
-        return classifyWord(heap, MarkedBlockCage::decode(heap.cage().base(), index));
     }
 };
 

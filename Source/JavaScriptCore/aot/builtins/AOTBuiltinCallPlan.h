@@ -34,7 +34,7 @@ struct OverloadQuery {
     BuiltinID builtin;
     BuiltinCallMode mode { BuiltinCallMode::Call };
     const BuiltinOperandTypes& proven;
-    const BuiltinOperandTypes& predicted;
+    const BuiltinOperandTypes& expected;
 };
 
 struct OverloadMatch {

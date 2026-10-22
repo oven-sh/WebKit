@@ -8,15 +8,21 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 PassOutcome compactBlocks(FunctionPassContext& context)
 {
-    if (!compactFunction(context.function))
+    if (context.isLastStepOfSchedule && !context.build.options().verifiesAfterEveryPass)
+        return compactFunction(context.function) ? PassOutcome::Changed : PassOutcome::Unchanged;
+
+    Renumbering renumbering;
+    if (!context.pendingTyping.compact(context.function, &renumbering))
         return PassOutcome::Unchanged;
-    context.analyses.didChangeControlFlow();
+    context.analyses.didRenumber(renumbering);
+    context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }
 

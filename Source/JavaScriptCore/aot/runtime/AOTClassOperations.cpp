@@ -10,6 +10,7 @@
 
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTHeapHooks.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
 #include "AOTObject.h"
@@ -18,6 +19,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeTable.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "DeferGCInlines.h"
 #include "InternalFunction.h"
@@ -37,6 +39,13 @@ static bool canReadPrototypeDirectly(const Instance& instance, const Closure& cl
     return Instance::of(closure.structure()->realm()) == &instance && FunctionTables::hasPrototypePropertyAtCreation(closure.kind());
 }
 
+// What these operations make on demand stays on the heap and names the function: the prototype object as its constructor, the remembered allocation as its owner.
+static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const JSCell* functionCell)
+{
+    if (validatesRuntime(vm)) [[unlikely]]
+        validateFunctionCellIsNotInFrame(vm, functionCell);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveHeritage, EncodedJSValue, (Instance* instance, EncodedJSValue heritage))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTResolveHeritage);
@@ -50,8 +59,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uin
     ClassTable& classes = instance->state->objects->classes;
     uint32_t classIndex = requestAt<NewClassRequest>(instance, request).classIndex;
     Closure* closure = cellArgument<Closure>(objectArgument(constructor, entry), entry);
-    RELEASE_ASSERT(closure->classData() == &classLayoutAt(classes, classIndex));
-    classes.defineClass(globalObject, closure, JSValue::decode(heritage), JSValue::decode(prototypeParent));
+    validateIsNotInFrame(vm, closure);
+    const LayoutData& classLayout = classLayoutAt(classes, classIndex);
+    RELEASE_ASSERT(closure->function() == FunctionID(classLayout.classData().classConstructor));
+    classes.defineClass(globalObject, closure, classLayout, JSValue::decode(heritage), JSValue::decode(prototypeParent));
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, closure);
 }
@@ -61,6 +72,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
     constexpr Entry entry = Entry::operationAOTGetClassPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferGCForAWhile deferGC(vm);
+    validateIsNotInFrame(vm, classObject);
     JSValue prototype = cellArgument<Closure>(classObject, entry)->prototypeProperty(vm);
     if (!prototype || !prototype.isObject()) [[unlikely]]
         crashOnWrongOperand(entry);
@@ -68,13 +80,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
     OPERATION_RETURN(scope, result);
 }
 
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototypeByLookup(Instance*, EncodedJSValue newTarget);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetConstructPrototype, JSCell*, (Instance* instance, EncodedJSValue newTarget))
+{
+    if (JSValue target = JSValue::decode(newTarget); target.isCell()) [[likely]] {
+        if (JSObject* prototype = instance->state->objects->classes.tryReadPrototypePropertyAtRememberedPlace(target.asCell())) [[likely]]
+            return { prototype, nullptr };
+    }
+    [[clang::musttail]] return getConstructPrototypeByLookup(instance, newTarget);
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototypeByLookup(Instance* instance, EncodedJSValue newTarget)
 {
     constexpr Entry entry = Entry::operationAOTGetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
     JSObject* target = objectArgument(newTarget, entry);
-    if (auto* closure = dynamicDowncast<Closure>(target); closure && canReadPrototypeDirectly(*instance, *closure))
-        OPERATION_RETURN(scope, instance->state->objects->classes.prototypeForInstancesOf(vm, closure));
+    validateIsNotInFrame(vm, target);
+    if (auto* closure = dynamicDowncast<Closure>(target); closure && canReadPrototypeDirectly(*instance, *closure)) {
+        ClassTable& classes = instance->state->objects->classes;
+        JSObject* prototype = classes.prototypeForInstancesOf(vm, closure);
+        classes.rememberPlaceOfPrototypeProperty(vm, closure, prototype);
+        OPERATION_RETURN(scope, prototype);
+    }
     JSValue prototype = target->get(globalObject, vm.propertyNames->prototype);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     if (prototype.isObject())
@@ -102,6 +130,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSCell*, (Instance* instance, J
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateThis);
     JSObject* constructorObject = cellArgument<JSObject>(constructor, Entry::operationAOTCreateThis);
     JSObject* newTargetObject = cellArgument<JSObject>(newTarget, Entry::operationAOTCreateThis);
+    validateIsNotInFrame(vm, constructorObject);
+    validateIsNotInFrame(vm, newTargetObject);
     OPERATION_RETURN(scope, instance->state->objects->classes.createThis(globalObject, constructorObject, newTargetObject));
 }
 

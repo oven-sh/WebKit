@@ -1,0 +1,25 @@
+# named = Number.NaN;  computed = Number[Math.random()]
+# "NaN" is what the number NaN turns into as a key, so the name lies with the indexes, not with the ordinary names. A built-in member with such a name is found all the same,
+# under its name and under a number that nobody knows: neither read is known to give undefined
+# RUN: valueflow-apply
+# CHECK: variable g0 name="named"
+# CHECK-NOT: declared={type=undefined}
+# CHECK: variable g1 name="computed"
+# CHECK-NOT: declared={type=undefined}
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="named" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="computed" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Number
+    v1 = PropGet v0 key="NaN"
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = ElemGet v0, v4
+    PutModuleVariable v5 variable=g1
+    Return
+}

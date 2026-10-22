@@ -236,6 +236,15 @@ uint64_t CodeLinker::linkSharedCode(uint32_t copy) const
     copyCode(sharedBodiesStart, sharedBodies.bytes.span());
     uint64_t numberApplied = writeVeneers(firstVeneer, veneers);
     numberApplied += link(copy, blob.bytes.size(), blob.relocations.span(), scopeFor({ }, { }));
+    if (uint32_t firstCopy = m_layout.sharedCodeCopies[0]; copy != firstCopy) {
+        const RelocatableCode& veneer = m_inputs.templates.veneer;
+        for (const StubEntryRange& entry : sharedCode.blob.entriesInFrontOfSingleReturnSites) {
+            RELEASE_ASSERT(entry.offset + veneer.bytes.size() <= entry.end);
+            copyCode(static_cast<size_t>(copy) + entry.offset, veneer.bytes.span());
+            if (applyRelocation(m_code, static_cast<size_t>(copy) + entry.offset, veneer.relocations[0], static_cast<size_t>(firstCopy) + entry.offset))
+                ++numberApplied;
+        }
+    }
     numberApplied += link(argumentThunksStart, argumentThunks.bytes.size(), argumentThunks.relocations.span(), scopeFor({ sharedCode.argumentThunks.stubKeys.span(), { } }, { }));
     numberApplied += link(sharedBodiesStart, sharedBodies.bytes.size(), sharedBodies.relocations.span(), scopeFor(outlinedCodeLists(), m_inputs.outlinedCode.callees.span()));
     return numberApplied;
@@ -307,6 +316,7 @@ static uint64_t countExpectedLinks(const CodeLinkerInputs& inputs)
         + layoutInputs.outlinedCode.sharedBodies.relocations.size()
         + layout.sharedCodeVeneers.size();
     uint64_t expected = linksInSharedCode * layout.sharedCodeCopies.size() + layoutInputs.outlinedCode.ownBodies.relocations.size();
+    expected += layoutInputs.sharedCode.blob.entriesInFrontOfSingleReturnSites.size() * (layout.sharedCodeCopies.size() - 1);
     for (size_t position = 0; position < layoutInputs.functions.size(); ++position)
         expected += layoutInputs.functions[position].body.relocations.size() + layout.veneersByBody[position].size();
     return expected;

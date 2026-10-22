@@ -43,7 +43,7 @@ static_assert(numberOfEnumerators<SelectionRuleID> <= bitsPerSwitchWord);
 static_assert(B3::numberOfSwitches <= bitsPerSwitchWord);
 
 static_assert(numberOfEnumerators<Typed::Opcode> <= UINT16_MAX);
-static_assert(numberOfEnumerators<TestingSwitch> <= 8);
+static_assert(numberOfEnumerators<TestingSwitch> <= 8 * sizeof(RecordedOptions::testing));
 static_assert(numberOfEnumerators<HeatOverride> <= 256);
 static_assert(numberOfEnumerators<Architecture> <= 256);
 static_assert(numberOfEnumerators<ReferenceWidth> <= 256);
@@ -87,7 +87,7 @@ static std::optional<uint32_t> switchIDOf(Typed::FunctionID function)
 
 std::optional<DroppedGuard> RecordedOptions::droppedGuard() const
 {
-    if (!dropsGuard)
+    if (!has(TestingSwitch::DropGuard))
         return std::nullopt;
     return DroppedGuard { static_cast<Typed::Opcode>(droppedGuardOpcode), droppedGuardOrdinal };
 }
@@ -339,7 +339,6 @@ void WireOptionsReader::readTestingSwitches(RecordedOptions& recorded)
     TestingSwitch testing = checkedFlags(m_wire.testing);
     if (hasFlag(testing, TestingSwitch::DropGuard)) {
         if (droppedGuard.opcode < numberOfEnumerators<Typed::Opcode>) {
-            recorded.dropsGuard = true;
             recorded.droppedGuardOpcode = static_cast<uint16_t>(droppedGuard.opcode);
             recorded.droppedGuardOrdinal = droppedGuard.ordinal;
         } else {
@@ -347,7 +346,7 @@ void WireOptionsReader::readTestingSwitches(RecordedOptions& recorded)
             testing = withoutFlag(testing, TestingSwitch::DropGuard);
         }
     }
-    recorded.testing = static_cast<uint8_t>(testing);
+    recorded.testing = static_cast<uint16_t>(testing);
 }
 
 void WireOptionsReader::readChecks(CompileOptions& options)
@@ -356,10 +355,13 @@ void WireOptionsReader::readChecks(CompileOptions& options)
     options.verifiesAfterEveryPass = hasFlag(checks, CheckSet::VerifyEachPass);
     options.verifiesAfterEveryStage = options.verifiesAfterEveryPass || hasFlag(checks, CheckSet::VerifyEachStage);
     options.recorded.validates = hasFlag(checks, CheckSet::Validate);
+    options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();
     options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
+    options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
+    options.checksThatFunctionsGetPastEntry = hasFlag(checks, CheckSet::FunctionsGetPastEntry);
     options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
     options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);
-    options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint) || options.recorded.validates;
+    options.countsChangesBehindSimplify = hasFlag(checks, CheckSet::CountChangesBehindSimplify);
 }
 
 void WireOptionsReader::readThreadCount(CompileOptions& options)
@@ -402,14 +404,17 @@ CompileOptions WireOptionsReader::read()
 
     recorded.mismatchPolicy = static_cast<uint8_t>(checkedEnum(m_wire.mismatchPolicy));
     recorded.heatOverride = static_cast<uint8_t>(checkedEnum(m_wire.heatOverride));
-    recorded.countsBranches = hasFlag(checkedFlags(m_wire.instrumentation), Instrumentation::CountBranches);
+    recorded.sabotage = static_cast<uint8_t>(checkedEnum(m_wire.sabotage));
+    Instrumentation instrumentation = checkedFlags(m_wire.instrumentation);
+    recorded.countsBranches = hasFlag(instrumentation, Instrumentation::CountBranches);
+    recorded.countsArrivals = hasFlag(instrumentation, Instrumentation::CountArrivals);
     recorded.layoutSeed = m_wire.layoutSeed;
     recorded.admittedCode = static_cast<uint8_t>(checkedFlags(m_wire.admittedCode));
 
-    options.flowOrderSeed = m_wire.bisection.flowOrderSeed;
     options.action = checkedEnum(m_wire.action);
     options.reports = checkedFlags(m_wire.reports);
     options.excludedCode = checkedFlags(m_wire.excludedCode);
+    recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
     options.output = checkedFlags(m_wire.output);
     options.executableIdentity = m_wire.executableIdentity;
     options.logging = LoggingOptions::fromJSCOptions();

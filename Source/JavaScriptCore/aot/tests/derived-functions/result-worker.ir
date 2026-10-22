@@ -11,7 +11,7 @@ function f0 name="main" results=[{type=undefined}] {
     Return
 }
 
-function f1 name="point" parameters=[{type=number}] results=[{type=object written=L0}] {
+function f1 name="point" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
     v1 = Add v0, v0
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -35,12 +35,12 @@ function f3 name="onePart" parameters=[{type=number}] results=[{type=Array<numbe
     Return v2
 }
 
-function f4 name="returnsParameter" parameters=[{type=object written=L0}] results=[{type=object written=L0}] {
-  b0(v0: object ? L0):
+function f4 name="returnsParameter" parameters=[{type=L0}] results=[{type=L0}] {
+  b0(v0: L0):
     Return v0
 }
 
-function f5 name="returnsStoredLiteral" parameters=[{type=number}, {type=object}] results=[{type=object written=L0}] {
+function f5 name="returnsStoredLiteral" parameters=[{type=number}, {type=object}] results=[{type=L0}] {
   b0(v0: number, v1: object):
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PropSet v1, v2 key="last"
@@ -74,13 +74,13 @@ function f5 name="returnsStoredLiteral" parameters=[{type=number}, {type=object}
 # CHECK: Return [[only]]
 
 # CHECK-LABEL: name="returnsParameter" module=m0 role=ResultWorker
-# CHECK: results=[{type=object written=L0}]
+# CHECK: results=[{type=L0}]
 # CHECK: derivation={source=f4 parameterMap=[{original=0}]} creator=ResultWorker{origin=f4} {
 # CHECK-NEXT: b0([[parameter]]:
 # CHECK-NEXT: Return [[parameter]]
 
 # CHECK-LABEL: name="returnsStoredLiteral" module=m0 role=ResultWorker
-# CHECK: results=[{type=object written=L0}]
+# CHECK: results=[{type=L0}]
 # CHECK: creator=ResultWorker{origin=f5} {
 # CHECK: [[stored]]:{{*}}= NewObject -, {{*}}layout=L0 fields=[0, 1]
 # CHECK-NEXT: PropSet {{*}}, [[stored]] key="last"

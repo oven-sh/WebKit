@@ -1,6 +1,6 @@
 # Every cell lies in the cage that 32-bit references address, so a reference to a layout with a large cell takes 32 bits like any other
 # FORM: AsRead
-# OPTIONS: references=narrow only-passes=AnalyzeFlow
+# OPTIONS: references=narrow only-passes=AnalyzeFlow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots
 
 module m0 path="main.js" displayPath="main.js" body=f0

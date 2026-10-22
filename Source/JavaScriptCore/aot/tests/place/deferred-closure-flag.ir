@@ -1,8 +1,8 @@
-# A closure that is stored only into a deferred closure slot has the deferred form, and a closure stored into any other slot is created
+# A closure that its slot leaves unmade has the deferred form. A slot leaves the closures of one function unmade, and a closure of any other function is created
 # FORM: AsRead
-# OPTIONS: only-passes=AnalyzeFlow references=narrow
+# OPTIONS: only-passes=AnalyzeFlow,DeferClosuresInFields references=narrow
 # RUN: place program
-# STATISTIC: ClosuresDeferred = 1
+# STATISTIC: ClosuresDeferred = 2
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -36,5 +36,6 @@ function f2 name="other" kind=Arrow results=[{type=anything}] {
 
 # CHECK-LABEL: function f0 name="main"
 # CHECK: v0: f1 = NewClosure function=f1 {{*}}closureForm=Deferred
+# CHECK: v4: f1 = NewClosure function=f1 {{*}}closureForm=Deferred
 # CHECK-NOT: closureForm=Deferred
 # CHECK-LABEL: function f1 name="run"

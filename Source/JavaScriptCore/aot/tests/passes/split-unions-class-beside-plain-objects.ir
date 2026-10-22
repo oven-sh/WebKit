@@ -75,7 +75,7 @@ function f5 name="stringThatServesMore" parameters=[{type=string|Array<number, p
 # CHECK-NEXT: = TypeTest v0 testedType=string
 
 
-function f6 name="arraysWereSeen" parameters=[{type=boolean|string|Array<number, proven> predicted=Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
+function f6 name="arraysWereSeen" parameters=[{type=boolean|string|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
   b0(v0: boolean|string|Array<number, proven> ~ Array<number, proven>, v1: int[0, 100]):
     v2 = PropGet v0 key="length"
     v3 = ElemGet v0, v1
@@ -87,7 +87,7 @@ function f6 name="arraysWereSeen" parameters=[{type=boolean|string|Array<number,
 # CHECK-NEXT: = TypeTest v0 testedType=Array
 # CHECK: testedType=string
 
-function f7 name="stringsWereSeen" parameters=[{type=boolean|string|Array<number, proven> predicted=string}, {type=int[0, 100]}] results=[{type=anything}] {
+function f7 name="stringsWereSeen" parameters=[{type=boolean|string|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
   b0(v0: boolean|string|Array<number, proven> ~ string, v1: int[0, 100]):
     v2 = PropGet v0 key="length"
     v3 = ElemGet v0, v1

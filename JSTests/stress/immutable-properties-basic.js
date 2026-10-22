@@ -95,7 +95,15 @@ function make() {
     shouldBe(snapshot(object), before);
 }
 
-// [[DefineOwnProperty]]: a definition that changes nothing succeeds, every other one fails.
+// [[DefineOwnProperty]]: writable and configurable may go from true to false, so that Object.freeze() and Object.seal() succeed: the value stays what it is.
+for (let narrower of [{ writable: false }, { configurable: false }, { writable: false, configurable: false }, { value: 1, writable: false }]) {
+    let object = $vm.makePropertiesImmutable(make());
+    shouldBe(Reflect.defineProperty(object, "a", narrower), true);
+    shouldBe(object.a, 1);
+    shouldBe(Reflect.defineProperty(object, "a", { writable: true, configurable: true }), false);
+}
+
+// [[DefineOwnProperty]]: a definition that changes nothing succeeds. So does one that only takes from what the property admits (see below). Every other one fails.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
@@ -109,9 +117,7 @@ function make() {
     shouldBe(Object.defineProperty(object, "a", { value: 1 }), object);
 
     shouldBe(Reflect.defineProperty(object, "a", { value: 2 }), false);
-    shouldBe(Reflect.defineProperty(object, "a", { writable: false }), false);
     shouldBe(Reflect.defineProperty(object, "a", { enumerable: false }), false);
-    shouldBe(Reflect.defineProperty(object, "a", { configurable: false }), false);
     shouldBe(Reflect.defineProperty(object, "a", { get() { } }), false);
     shouldBe(Reflect.defineProperty(object, "g", { get() { } }), false);
     shouldBe(Reflect.defineProperty(object, "g", { value: 1 }), false);
@@ -159,16 +165,20 @@ function make() {
     shouldBe(Reflect.setPrototypeOf(nullProto, Object.prototype), false);
 }
 
-// [[PreventExtensions]] has nothing left to do. Object.seal() and Object.freeze() would change attributes, so they fail,
-// unless there is nothing for them to change.
+// [[PreventExtensions]] has nothing left to do. Object.seal() and Object.freeze() only take from what the properties admit, so they
+// succeed: no value changes.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
     shouldBe(Reflect.preventExtensions(object), true);
     shouldBe(Object.preventExtensions(object), object);
-    shouldThrow(() => Object.seal(object), TypeError);
-    shouldThrow(() => Object.freeze(object), TypeError);
     shouldBe(snapshot(object), before);
+    let values = JSON.stringify(Reflect.ownKeys(object).map(key => [String(key), typeof object[key], String(object[key])]));
+    shouldBe(Object.seal(object), object);
+    shouldBe(Object.isSealed(object), true);
+    shouldBe(Object.freeze(object), object);
+    shouldBe(Object.isFrozen(object), true);
+    shouldBe(JSON.stringify(Reflect.ownKeys(object).map(key => [String(key), typeof object[key], String(object[key])])), values);
 
     let empty = $vm.makePropertiesImmutable({});
     shouldBe(Object.freeze(empty), empty);

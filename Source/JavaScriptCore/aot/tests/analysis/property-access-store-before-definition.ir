@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="WithSetter" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="guarded" kind=Setter function=f2 mutability=Fixed}] namedMembers=[{key="guarded" kind=Setter function=f2 mutability=Fixed}]}
-layout L1 kind=Instance name="DefinesOverSetter" predictedBase=L0 constructor=f1 fields=[{key="guarded" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="free" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="DefinesOverSetter" base=L0 constructor=f1 fields=[{key="guarded" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="free" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L2 kind=Instance name="NamesNotComplete" constructor=f3 fields=[{key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="WithSetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
@@ -39,8 +39,8 @@ function f8 name="reads-find-the-field" parameters=[{type=L1}] results=[{type=an
     v1 = PropGet v0 key="guarded"
     Return
 }
-# CHECK: F4 v2 PropSet [[guarded]]: form=Slot level=Predicted operation=PutSlot receivers=[L1] proofs=[SlotFilled] storedValueFits missPath member=(Field level=Proven holder=L1 field=0)
+# CHECK: F4 v2 PropSet [[guarded]]: form=Slot level=Expected operation=PutSlot receivers=[L1] proofs=[SlotFilled] testsDeclaredType storedValueFits missPath member=(Field level=Proven holder=L1 field=0)
 # CHECK-NEXT: F5 v2 PropDefine [[guarded]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=0)
 # CHECK-NEXT: F6 v2 PropSet [[free]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=1)
-# CHECK-NEXT: F7 v2 PropSet [[filled]]: form=Slot level=Predicted operation=PutSlotOrAdd receivers=[L2] conditions=[MemberUnchanged(L2, Prototype, [[filled]]), PrototypeLinkUnchanged(L2, Prototype)] storedValueFits missPath member=(Field level=Proven holder=L2 field=0)
+# CHECK-NEXT: F7 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L2] conditions=[MemberUnchanged(L2, Prototype, [[filled]]), PrototypeLinkUnchanged(L2, Prototype)] storedValueFits missPath member=(Field level=Proven holder=L2 field=0)
 # CHECK-NEXT: F8 v1 PropGet [[guarded]]: form=Slot level=Proven operation=GetSlot receivers=[L1] member=(Field level=Proven holder=L1 field=0)

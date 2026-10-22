@@ -1,0 +1,47 @@
+# f(a, b, ...rest): the rest array of this frame is handed over only where no more is proven of it than of f's own rest array. f does with its rest array what it likes: it stores a string, makes a hole,
+# and where f is taken in, its code finds the array under the type that it has here. What flow has proven of this array it has proven of an array that f never sees: a spread makes a new one.
+# FORM: Prepared optimizing
+# RUN: pass ResolveCalls
+# STATISTIC: RestArraysHandedOver = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="storesStrings" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array<undefined|int|string, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: Array<undefined|int|string, proven, pristine[Storage, Names]>):
+    Return v1
+}
+
+function f1 name="provenToHoldIntegersAlone" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array<undefined|int, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<undefined|int, proven, pristine[Storage, Names, Dense]>):
+    v3 = NewArray v1, v0 contents=anything
+    AppendSpread v3, v2
+    v5 = NewClosure function=f0
+    v6 = CallList v5, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f1 name="provenToHoldIntegersAlone"
+# CHECK-NOT: CallDirect
+# CHECK: = CallList v5, v0, v3
+
+function f2 name="provenToHaveNoHole" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>):
+    v3 = NewArray v1, v0 contents=anything
+    AppendSpread v3, v2
+    v5 = NewClosure function=f0
+    v6 = CallList v5, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f2 name="provenToHaveNoHole"
+# CHECK-NOT: CallDirect
+# CHECK: = CallList v5, v0, v3
+
+function f3 name="theSameIsProvenOfBoth" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array<undefined|int|string, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<undefined|int|string, proven, pristine[Storage, Names]>):
+    v3 = NewArray v1, v0 contents=anything
+    AppendSpread v3, v2
+    v5 = NewClosure function=f0
+    v6 = CallList v5, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f3 name="theSameIsProvenOfBoth"
+# CHECK: = CallDirect v0, v1, v0, {{*}} function=f0

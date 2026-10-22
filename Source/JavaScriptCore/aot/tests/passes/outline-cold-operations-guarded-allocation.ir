@@ -17,7 +17,7 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
   b2(v5) frequency=Rare:
     v6 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v8 = GetArrayElement v3, v6, v5 level=Predicted [keyIsIntegral]
+    v8 = GetArrayElement v3, v6, v5 level=Expected [keyIsIntegral]
     Return v8
   b3() frequency=Rare:
     Return
@@ -28,7 +28,7 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
   b5(v11) frequency=Rare:
     v12 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v14 = GetArrayElement v9, v12, v11 level=Predicted [keyIsIntegral]
+    v14 = GetArrayElement v9, v12, v11 level=Expected [keyIsIntegral]
     Return v14
   b6() frequency=Rare:
     Return
@@ -39,7 +39,7 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
   b8(v17) frequency=Rare:
     v18 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v20 = GetArrayElement v15, v18, v17 level=Predicted [keyIsIntegral]
+    v20 = GetArrayElement v15, v18, v17 level=Expected [keyIsIntegral]
     Return v20
   b9() frequency=Rare:
     Return
@@ -50,7 +50,7 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
   b11(v23) frequency=Rare:
     v24 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v26 = GetArrayElement v21, v24, v23 level=Predicted [keyIsIntegral]
+    v26 = GetArrayElement v21, v24, v23 level=Expected [keyIsIntegral]
     Return v26
   b12() frequency=Rare:
     Return
@@ -61,7 +61,7 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
   b14(v29) frequency=Rare:
     v30 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v32 = GetArrayElement v27, v30, v29 level=Predicted [keyIsIntegral]
+    v32 = GetArrayElement v27, v30, v29 level=Expected [keyIsIntegral]
     Return v32
   b15() frequency=Rare:
     Return
@@ -72,7 +72,7 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
   b17(v35) frequency=Rare:
     v36 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v38 = GetArrayElement v33, v36, v35 level=Predicted [keyIsIntegral]
+    v38 = GetArrayElement v33, v36, v35 level=Expected [keyIsIntegral]
     Return v38
   b18() frequency=Rare:
     Return

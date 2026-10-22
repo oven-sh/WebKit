@@ -27,16 +27,7 @@ PromiseIntrinsicEmitter::PromiseIntrinsicEmitter(CodeGenerator& generator)
 
 CellPointer PromiseIntrinsicEmitter::newPromise(const OperationContext& context)
 {
-    if (context.shape() != CodeShape::Fast)
-        return CellPointer(callStub(context, AOT::newPromise(), { }).first);
-
-    LBasicBlock slowPath = newBlock();
-    Join<CellPointer> join(m_out);
-    join.add(emitter<CellAllocationEmitter>().newPromise(slowPath));
-
-    m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewPromise, { }, { .isOnRarePath = true }));
-    return join.finish();
+    return CellPointer(callStub(context, AOT::newPromise(), { }).first);
 }
 
 void PromiseIntrinsicEmitter::generateNewPromise(const ValueContext& value)

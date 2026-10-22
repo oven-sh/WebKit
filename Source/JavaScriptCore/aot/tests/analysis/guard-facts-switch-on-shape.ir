@@ -25,8 +25,8 @@ function f0 name="twoCases" parameters=[{type=anything}] results=[{type=anything
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v3 facts: [Shape of v0 by b1.case0 reads ShapeWords[L0]]
-# CHECK-NEXT: v5 facts: [Shape of v0 by b1.case1 reads ShapeWords[L1|L2]]
+# CHECK-NEXT: v3 facts: [Shape of v0 by b1.case0 reads -]
+# CHECK-NEXT: v5 facts: [Shape of v0 by b1.case1 reads -]
 # CHECK-NEXT: b0 available at head: []
 # CHECK-NEXT: b1 available at head: []
 # CHECK-NEXT: b2 available at head: [v3.0]
@@ -46,7 +46,7 @@ function f1 name="caseWithoutProof" parameters=[{type=object}] results=[{type=an
     Return
 }
 # CHECK-LABEL: function f1
-# CHECK-NEXT: v1 facts: [Shape of v0 by b0.case0 reads ShapeWords[L0]]
+# CHECK-NEXT: v1 facts: [Shape of v0 by b0.case0 reads -]
 # CHECK-NEXT: b0 available at head: []
 # CHECK-NEXT: b1 available at head: [v1.0]
 # CHECK-NEXT: b2 available at head: []
@@ -66,4 +66,4 @@ function f2 name="casesOfEqualSetsMeet" parameters=[{type=object}, {type=boolean
     Return
 }
 # CHECK-LABEL: function f2
-# CHECK-NEXT: v2 facts: [Shape of v0 by b1.case0 reads ShapeWords[L0]]
+# CHECK-NEXT: v2 facts: [Shape of v0 by b1.case0 reads -]

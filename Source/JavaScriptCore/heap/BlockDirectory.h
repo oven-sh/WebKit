@@ -188,9 +188,6 @@ private:
     CellAttributes m_attributes;
 
     unsigned m_cellSize;
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned m_numberOfLargerCells { 0 };
-#endif
     
     // After you do something to a block based on one of these cursors, you clear the bit in the
     // corresponding bitvector and leave the cursor where it was. We can use unsigned instead of size_t since
@@ -205,6 +202,9 @@ private:
     BlockDirectory* m_nextDirectoryInSubspace { nullptr };
     BlockDirectory* m_nextDirectoryWithEmptyBlocks { nullptr };
     Atomic<bool> m_isOnEmptyBlocksList { false };
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_numberOfLargerCells { 0 };
+#endif
     
     SentinelLinkedList<LocalAllocator, BasicRawSentinelNode<LocalAllocator>> m_localAllocators;
 };

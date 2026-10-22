@@ -24,7 +24,7 @@ function f0 name="throwReachesHandlerOfSite" parameters=[{type=anything}] result
     Return v6
   b3() role=CatchHandler:
     v7 = CatchValue
-    v8 = StepGenerator v3, v1 check=None @51
+    v8 = StepGenerator v3, v1 check=None @50
     v9 = ResultAt v8 index=1
     Return v9
 }
@@ -71,7 +71,7 @@ function f1 name="twoSitesUnderDifferentHandlers" parameters=[{type=anything}] r
     v5 = StepGenerator v3, v1 check=None @60
     Jump -> next b2()
   b2() handler=b5():
-    v6 = StepGenerator v3, v1 check=None @61
+    v6 = StepGenerator v3, v1 check=None @60
     v7 = ResultAt v6 index=0
     Jump -> next b3()
   b3():

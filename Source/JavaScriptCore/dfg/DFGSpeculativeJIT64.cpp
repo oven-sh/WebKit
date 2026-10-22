@@ -9915,9 +9915,8 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
 
     if (arrayModes & arrayModesForTypedArrays) {
         unsigned typedArrayPopCount = std::popcount(arrayModes & arrayModesForTypedArrays);
-        static_assert(FirstTypedArrayType + NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView - 1 == Float64ArrayType);
         if (typedArrayPopCount > 1)
-            bailoutCases.append(branchIfNotType(baseGPR, JSTypeRange { static_cast<JSType>(FirstTypedArrayType), Float64ArrayType }));
+            bailoutCases.append(branchIfNotType(baseGPR, JSTypeRange { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }));
 
         std::optional<TypedArrayType> singleTypedArrayType;
         if (typedArrayPopCount == 1)

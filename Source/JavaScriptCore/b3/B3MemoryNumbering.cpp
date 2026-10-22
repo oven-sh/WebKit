@@ -69,42 +69,6 @@ static ALWAYS_INLINE ValueKey keyOf(Value* value)
     }
 }
 
-static bool isArithmetic(Value* value)
-{
-    switch (value->opcode()) {
-    case Add:
-    case Sub:
-    case Mul:
-    case Neg:
-    case BitAnd:
-    case BitOr:
-    case BitXor:
-    case Shl:
-    case SShr:
-    case ZShr:
-    case SExt8:
-    case SExt16:
-    case SExt32:
-    case ZExt32:
-    case Trunc:
-    case BitwiseCast:
-    case IToD:
-    case Equal:
-    case NotEqual:
-    case LessThan:
-    case GreaterThan:
-    case LessEqual:
-    case GreaterEqual:
-    case Above:
-    case Below:
-    case AboveEqual:
-    case BelowEqual:
-        return true;
-    default:
-        return false;
-    }
-}
-
 MemoryNumbering::MemoryNumbering(Procedure& proc)
     : m_proc(proc)
     , m_validates(shouldValidateIRAtEachPhase(proc))
@@ -136,7 +100,8 @@ void MemoryNumbering::enterBlock(BasicBlock* block)
     for (BasicBlock* predecessor : block->predecessors()) {
         const MemoryState& atTail = predecessor->index() < m_memoryStateAtTail.size() ? m_memoryStateAtTail[predecessor->index()] : unvisitedBlockState;
         if (isFirst) {
-            state = atTail;
+            if (state.id != atTail.id || state.id == noID)
+                state = atTail;
             isFirst = false;
             continue;
         }
@@ -155,7 +120,10 @@ void MemoryNumbering::enterBlock(BasicBlock* block)
 
 HeapSet MemoryNumbering::writesOf(Value* value)
 {
-    if (isArithmetic(value))
+    const Effects& constantEffects = constantEffectsTable[value->opcode()];
+    if (constantEffects.isValid())
+        return constantEffects.fence ? HeapSet(HeapRange::top()) : constantEffects.writes;
+    if (isLoad(value->opcode()) && !value->as<MemoryValue>()->hasFence())
         return HeapSet();
     Effects effects = value->effects();
     return effects.fence ? HeapSet(HeapRange::top()) : effects.writes;
@@ -244,12 +212,7 @@ void MemoryNumbering::recordLoopWrites()
 {
     m_loops = nullptr;
     m_loopWrites.shrink(0);
-    bool hasBackEdge = false;
-    for (BasicBlock* block : m_proc) {
-        for (BasicBlock* successor : block->successorBlocks())
-            hasBackEdge |= m_dominators->dominates(successor, block);
-    }
-    if (!hasBackEdge)
+    if (!m_proc.hasCycle())
         return;
     auto& loops = m_proc.naturalLoops();
     if (!loops.numLoops())

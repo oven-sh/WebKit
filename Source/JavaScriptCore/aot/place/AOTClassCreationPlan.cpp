@@ -124,6 +124,45 @@ static ClassCreationPlan planClass(const Program& program, const Layout& layout,
     return plan;
 }
 
+// The guards describe the first evaluation of the class. A second one breaks them all, whether or not it was foreseen.
+static bool isClassWithConstantNames(const Layout& layout)
+{
+    if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction))
+        return false;
+    return std::ranges::all_of(layout.classFlow.members, [](const ClassMember& member) {
+        return !!member.key;
+    });
+}
+
+// Nothing can come between such a class and what the program text says of it but a change to an object that exists, and that change is reported.
+// A constructor function is there, and can be changed, before its class is. The records say nothing of what a built-in parent or a parent nobody knows has, so a name that is looked for there gets no guard.
+// Where the parent is only expected, the definition compares: with another parent it breaks the link guards of the class and what they carry, before the class has an object.
+static bool definitionMakesWhatRecordsSay(const Program& program, LayoutID id)
+{
+    LayoutID current = id;
+    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+        const Layout& layout = program.at(current);
+        if (!isClassWithConstantNames(layout))
+            return false;
+        if (hasNoHeritage(layout))
+            return true;
+        switch (layout.flow.baseState) {
+        case BaseState::BuiltinClass:
+            return true;
+        case BaseState::Unknown:
+            if (!layout.base)
+                return true;
+            break;
+        case BaseState::Layout:
+            break;
+        case BaseState::None:
+            return false;
+        }
+        current = expectedBaseOf(layout);
+    }
+    return false;
+}
+
 Vector<ClassCreationPlan> planClassCreation(const SlotPlanContext& context)
 {
     const Program& program = context.program;
@@ -138,6 +177,7 @@ Vector<ClassCreationPlan> planClassCreation(const SlotPlanContext& context)
             continue;
         ClassCreationPlan& plan = plans[index];
         plan = planClass(program, layout, baseChains[index]);
+        plan.guardsHoldWhileClear = definitionMakesWhatRecordsSay(program, LayoutID(index));
         uint64_t byClassRecord = std::ranges::count(plan.members, MemberCreation::ByClassRecord);
         membersCreatedByClassRecord += byClassRecord;
         membersCreatedAtDefinition += plan.members.size() - byClassRecord;

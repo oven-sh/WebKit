@@ -8,40 +8,57 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosure.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTPropertyCaches.h"
 #include "AOTState.h"
+#include "JSBoundFunction.h"
 #include "JSCInlines.h"
-#include "PreventCollectionScope.h"
-#include "PropertyNameArray.h"
 
 namespace JSC { namespace AOT {
 
-static bool canLiveOutsideSlot(const FieldData& field)
+// For the file of counts.
+static ASCIILiteral describeExit(SlotExitReason reason, JSValue value)
 {
-    return field.canLeaveSlot() && !(field.flags & fieldMayExistWithoutStorage);
+    if (reason != SlotExitReason::StoreOfOtherType)
+        return "field left its slot by redefinition"_s;
+    if (!value.isCell())
+        return value.isUndefinedOrNull() ? "field left its slot for undefined or null"_s : value.isNumber() ? "field left its slot for a number"_s : "field left its slot for a boolean"_s;
+    JSCell* cell = value.asCell();
+    if (isCompiledClosure(cell))
+        return "field left its slot for a compiled closure"_s;
+    if (cell->inherits<JSBoundFunction>())
+        return "field left its slot for a bound function"_s;
+    if (cell->isCallable())
+        return "field left its slot for another function"_s;
+    if (isCompiledObject(cell))
+        return "field left its slot for a compiled object"_s;
+    if (cell->isObject())
+        return "field left its slot for another object"_s;
+    return cell->isString() ? "field left its slot for a string"_s : "field left its slot for another primitive"_s;
 }
 
-ShapeStatus Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingProperty leaving, SlotExitReason reason)
+// A slot has no empty marker, and a layout no word for extra properties, only where flow proves that nothing needs them.
+void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingProperty leaving, SlotExitReason reason)
 {
+    willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
     validateMutation(vm, *this, field, mutationOf(reason));
-    Instance& instance = this->instance();
+    RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
-    JSObject* extra = canLiveOutsideSlot(field) ? ensureExtraProperties(vm) : nullptr;
-    if (!extra) {
-        JSObject* ordinary = convertToOrdinaryObject(vm, ShapeLossReason::RepresentationLimit);
-        putProperty(vm, ordinary, name, leaving);
-        return ShapeStatus::Lost;
-    }
+    JSObject* extra = ensureExtraProperties(vm);
+    RELEASE_ASSERT(extra);
     State& state = this->state();
     if (!isInKeyOrder(state, field))
         didCreateField(state, field, false);
+    at<uint32_t>(offsetOfOrderWord) |= orderWordHasFieldOutsideSlot;
+    setPerCellBit(true);
     putProperty(vm, extra, name, leaving);
     clear(field);
     didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
-    count(instance, counterFor(reason));
-    return ShapeStatus::Kept;
+    count(instance(), counterFor(reason));
+    state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
 }
 
 bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
@@ -68,106 +85,39 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
     return true;
 }
 
-ShapeStatus Object::deleteField(VM& vm, const FieldData& field)
+bool Object::hasEveryFieldOfBirth() const
 {
+    State& state = this->state();
+    return std::ranges::all_of(layout().fields(), [&](const FieldData& field) {
+        if (field.holdsRawValueFromBirth) {
+            const void* slot = slotOf(field);
+            return slot && !slotHoldsMarker(field.slot.representation(), slot);
+        }
+        if (!field.isFilledAtBirth || isInSlot(field))
+            return true;
+        return field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field) && !livesInExtraProperties(vm(), *this, field);
+    });
+}
+
+void Object::tryFinishBirth()
+{
+    if (perCellBit() && !(orderWord() & orderWordHasFieldOutsideSlot) && hasEveryFieldOfBirth())
+        setPerCellBit(false);
+}
+
+void Object::deleteField(VM& vm, const FieldData& field)
+{
+    willLeaveStateOfBirth(vm, *this, field, ObjectMutation::DeleteField);
     validateMutation(vm, *this, field, ObjectMutation::DeleteField);
+    RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
-    if (!field.canLeaveSlot()) {
-        JSObject* ordinary = convertToOrdinaryObject(vm, ShapeLossReason::RepresentationLimit);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(ordinary, ordinary->structure()->realm(), name, slot);
-        return ShapeStatus::Lost;
-    }
     State& state = this->state();
     clear(field);
+    if (field.isFilledAtBirth)
+        setPerCellBit(true);
     removeFieldFromKeyOrder(vm, state, *this, field);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Remove, name);
     count(instance(), RuntimeCounterID::FieldsLeftSlotByDelete);
-    return ShapeStatus::Kept;
-}
-
-JSFinalObject* Object::copyAsOrdinaryObject(VM& vm, unsigned inlineCapacity, JSValue prototype)
-{
-    State& state = this->state();
-    const LayoutData& layout = this->layout();
-    JSGlobalObject* realm = structure()->realm();
-    if (!prototype)
-        prototype = getPrototypeDirect();
-    Structure* empty = prototype.isObject() ? realm->structureCache().emptyObjectStructureForPrototype(realm, asObject(prototype), inlineCapacity) : JSFinalObject::createStructure(vm, realm, jsNull(), inlineCapacity);
-    JSFinalObject* ordinary = JSFinalObject::create(vm, empty);
-    JSObject* extra = extraProperties();
-    auto copyExtra = [&](PropertyName name) {
-        unsigned attributes;
-        JSValue value = extra->getDirect(vm, name, attributes);
-        if (!value || ordinary->getDirect(vm, name))
-            return;
-        if (name.isPrivateName())
-            attributes = 0;
-        putProperty(vm, ordinary, name.uid(), { value, attributes });
-    };
-    std::span<const FieldData> fields = layout.fields();
-    auto extraKeyNames = this->extraKeyNames();
-    KeyOrderStorage storage;
-    forEachPositionedKey(keyOrder(state, storage), layout.numberOfFields, extraKeyNames.size(), [&](uint16_t index) {
-        if (FieldProperty property = findFieldProperty(vm, *this, fields[index]))
-            putProperty(vm, ordinary, propertyNameOf(vm, *this, fields[index]), { property.valueOrAccessor, property.attributes });
-    }, [&](size_t ordinal) {
-        copyExtra(extraKeyNames[ordinal]);
-    });
-    if (extra) {
-        Vector<RefPtr<UniquedStringImpl>, 8> names;
-        extra->structure()->forEachProperty(vm, [&](const auto& entry) {
-            names.append(entry.key());
-            return true;
-        });
-        for (auto& name : names)
-            copyExtra(name.get());
-        PropertyNameArrayBuilder indices(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        extra->getOwnIndexedPropertyNames(realm, indices, DontEnumPropertiesMode::Include);
-        for (auto& name : indices) {
-            uint32_t index = *parseIndex(name);
-            PropertySlot slot(extra, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            if (!extra->methodTable()->getOwnPropertySlotByIndex(extra, realm, index, slot))
-                continue;
-            RELEASE_ASSERT(slot.isValue());
-            ordinary->putDirectIndex(realm, index, slot.getValue(realm, index), slot.attributes(), PutDirectIndexLikePutDirect);
-        }
-    }
-    if (isNotExtensible())
-        ordinary->methodTable()->preventExtensions(ordinary, realm);
-    return ordinary;
-}
-
-JSObject* Object::convertToOrdinaryObject(VM& vm, ShapeLossReason reason, JSValue prototype)
-{
-    validateMutation(vm, *this, ObjectMutation::LoseShape);
-    validateMutation(vm, *this, mutationOf(reason));
-    Instance& instance = this->instance();
-    bool wasPrototype = structure()->mayBePrototype();
-    materializeDeferredClosures(vm);
-    static_assert(sizeof(JSObjectWithButterfly) == offsetOfFirstField && JSObjectWithButterfly::butterflyOffset() == offsetOfOrderWord);
-    unsigned inlineCapacity = std::min<size_t>((cellSize() - offsetOfFirstField) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
-    JSFinalObject* ordinary = copyAsOrdinaryObject(vm, inlineCapacity, prototype);
-    if (wasPrototype)
-        ordinary->didBecomePrototype(vm);
-    if (ordinary->structure()->isDictionary())
-        ordinary->flattenDictionaryObject(vm);
-    RELEASE_ASSERT(ordinary->structure()->inlineCapacity() == inlineCapacity);
-    {
-        PreventCollectionScope preventCollection(vm.heap);
-        for (unsigned i = 0; i < inlineCapacity; ++i)
-            at<EncodedJSValue>(offsetOfFirstField + i * sizeof(EncodedJSValue)) = JSValue::encode(ordinary->inlineStorage()[i].get());
-        at<Butterfly*>(offsetOfOrderWord) = ordinary->butterfly();
-        JSCell::setStructure(vm, ordinary->structure());
-    }
-    vm.writeBarrier(this);
-    ensureStillAliveHere(ordinary);
-    instance.bumpShapeEpoch();
-    count(instance, RuntimeCounterID::ShapeEpochBumps);
-    count(instance, counterFor(reason));
-    if (wasPrototype)
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this);
-    return this;
 }
 
 } } // namespace JSC::AOT

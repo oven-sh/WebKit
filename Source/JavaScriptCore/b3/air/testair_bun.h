@@ -398,6 +398,7 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(layout, movesBlocksWithoutSuccessorsToEnd, true);
     CHECK_POLICY_DUMP_NAMES(layout, placesRareBlocksInGaps, true);
     CHECK_POLICY_DUMP_NAMES(layout, placesRareBlocksAfterGuards, true);
+    CHECK_POLICY_DUMP_NAMES(layout, makesGapsForRareBlocks, true);
     CHECK_POLICY_DUMP_NAMES(layout, ordersBlocksByEdgeFrequency, true);
     CHECK_POLICY_DUMP_NAMES(layout, recordsRareCodeStart, true);
     CHECK_POLICY_DUMP_NAMES(layout, mergesIdenticalBlocks, true);
@@ -408,6 +409,7 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(peepholes, reusesConditionFlags, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, pairsMemoryAccesses, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, resequencesMovesBeforePatches, true);
+    CHECK_POLICY_DUMP_NAMES(peepholes, emitsShufflesInPairOrder, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, trapReach, 4096);
 }
 
@@ -482,6 +484,7 @@ static void enableLayoutAndPeepholesExceptMerging(B3::Air::Policy& policy)
     policy.layout.movesBlocksWithoutSuccessorsToEnd = true;
     policy.layout.placesRareBlocksInGaps = true;
     policy.layout.placesRareBlocksAfterGuards = true;
+    policy.layout.makesGapsForRareBlocks = true;
     policy.layout.ordersBlocksByEdgeFrequency = true;
     policy.layout.recordsRareCodeStart = true;
     policy.layout.duplicatesReturns = true;
@@ -490,6 +493,7 @@ static void enableLayoutAndPeepholesExceptMerging(B3::Air::Policy& policy)
     policy.peepholes.reusesConditionFlags = true;
     policy.peepholes.pairsMemoryAccesses = true;
     policy.peepholes.resequencesMovesBeforePatches = true;
+    policy.peepholes.emitsShufflesInPairOrder = true;
 }
 
 static void checkTwoOopsTrap(bool enablesPolicy, bool followsPatch)

@@ -8,18 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
-#include "AOTFlowResults.h"
+#include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
 #include "AOTRegionCloner.h"
-#include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTThreads.h"
 #include "AOTVirtualObjectShapes.h"
@@ -154,13 +154,28 @@ void FreshArgumentCollector::visitCall(const Value& call)
 
 void FreshArgumentCollector::run()
 {
-    for (const Block& block : m_caller.blocks) {
-        for (ValueID id : block.values) {
-            const Value& call = m_caller.at(id);
-            if (effectRuleOf(call.opcode) == EffectRule::Call)
-                visitCall(call);
+    static const OpcodeSet calls = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            if (effectRuleOf(opcode) == EffectRule::Call)
+                result.add(opcode);
         }
-    }
+        return result;
+    }();
+    static const OpcodeSet allocations = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            if (interpretedOf(opcode) == Interpretation::Allocation)
+                result.add(opcode);
+        }
+        return result;
+    }();
+    // A fresh object is one that the caller allocates.
+    if (!mayHoldValueWith(m_context.program, m_context.id, allocations))
+        return;
+    forEachListedValue(m_context.program, m_context.id, calls, [&](BlockID, uint32_t, ValueID, const Value& call) {
+        visitCall(call);
+    });
 }
 
 static Vector<BitVector> findFreshParameters(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
@@ -168,7 +183,7 @@ static Vector<BitVector> findFreshParameters(const Program& program, const Optim
     unsigned count = program.functions.size();
     Vector<FreshArgument> freshArguments = collectInParallel<FreshArgument>(build.parallelLoops(), count, [&](unsigned index, Vector<FreshArgument>& found) {
         FunctionID id(index);
-        if (program.at(id).hasBody())
+        if (hasBody(program, id))
             FreshArgumentCollector(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, found).run();
     });
 
@@ -486,6 +501,13 @@ static std::optional<Vector<ValueID, 6>> findPromotedValues(FunctionAnalyses& an
     return promoted;
 }
 
+static DeclaredType promotedParameterType(const Value& value)
+{
+    if (value.expected() && value.type == TypeTable::anything)
+        return { .type = value.expected(), .flags = PositionFlags::IsExpected };
+    return { .type = value.type };
+}
+
 static Function createBodySignature(const Promotion& promotion)
 {
     const Function& function = promotion.split;
@@ -508,10 +530,8 @@ static Function createBodySignature(const Promotion& promotion)
     body.inlineFrames = function.inlineFrames;
 
     body.parameters.removeAt(promotion.parameter);
-    for (ValueID id : promotion.promoted) {
-        const Value& value = function.at(id);
-        body.parameters.append(DeclaredType { .type = value.type, .written = value.written(), .predicted = value.prediction() });
-    }
+    for (ValueID id : promotion.promoted)
+        body.parameters.append(promotedParameterType(function.at(id)));
     return body;
 }
 
@@ -526,8 +546,7 @@ static Function createBody(const AnalysisContext& context, TypeArena& types, con
         const Value& value = split.at(inSplit);
         builder.setOrigin(value.origin());
         ValueID added = builder.addParameter(entry, value.type);
-        body.at(added).setWritten(value.written());
-        body.at(added).setPrediction(value.prediction());
+        body.edit(added).setExpected(value.expected());
         body.derivation.parameterMap.append(ParameterOrigin { original });
         return added;
     };
@@ -666,10 +685,10 @@ static void showOperationsInFrameOfBody(Function& wrapper, FunctionID body)
     }
     wrapper.inlineFrames = WTF::move(frames);
 
-    for (Block& block : wrapper.blocks) {
+    for (Block& block : wrapper.editAllBlocks()) {
         for (ValueID id : block.values) {
             if (!isCallOfBody(id))
-                ++wrapper.at(id).inlineFrame;
+                ++wrapper.edit(id).inlineFrame;
         }
         if (block.terminator.kind != TerminatorKind::ReturnCall || !isCallOfBody(block.terminator.callOperand()))
             ++block.terminator.inlineFrame;
@@ -679,7 +698,7 @@ static void showOperationsInFrameOfBody(Function& wrapper, FunctionID body)
 static void convertToWrapper(const AnalysisContext& context, TypeArena& types, Promotion& promotion, FunctionID body)
 {
     Function& wrapper = promotion.split;
-    Block& head = wrapper.at(promotion.head);
+    Block& head = wrapper.edit(promotion.head);
     head.values.clear();
     head.terminator = Terminator { };
     head.handler = std::nullopt;
@@ -704,7 +723,6 @@ static void convertToWrapper(const AnalysisContext& context, TypeArena& types, P
         .arguments = arguments.span(),
         .argumentCount = entryParameterAt(wrapper.argumentCountParameterIndex()),
         .hiddenRest = entryParameterAt(wrapper.hiddenRestParameterIndex()),
-        .resultCheck = resultCheckOf(*context.flow, body),
     });
     emitReturnOfBodyCall(builder, body, call);
 
@@ -712,7 +730,7 @@ static void convertToWrapper(const AnalysisContext& context, TypeArena& types, P
     wrapper.creator = CreatorRecord::ParameterWrapper { body, promotion.parameter };
     wrapper.capabilities = (initialCapabilitiesOf(wrapper) - inheritedCapabilities) | (wrapper.capabilities & inheritedCapabilities);
     compactFunction(wrapper);
-    wrapper.blocks.shrinkToFit();
+    moveToExactBuffer(wrapper.storageOfBlocks());
     showOperationsInFrameOfBody(wrapper, body);
 }
 

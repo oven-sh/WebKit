@@ -13,10 +13,10 @@ function f0 name="arrayStaysLocal" parameters=[{type=RegExp<"a(b)(c)"[], pristin
     Branch v6 -> taken b2(| 0), notTaken b3()
   b2(v7):
     v8 = Integer integer=1
-    v9 = GetArrayElement v5, v8, v7 level=Predicted [keyIsIntegral]
+    v9 = GetArrayElement v5, v8, v7 level=Expected [keyIsIntegral]
     PropSet v2, v9 key="first"
     v11 = Integer integer=2
-    v12 = GetArrayElement v5, v11, v7 level=Predicted [keyIsIntegral]
+    v12 = GetArrayElement v5, v11, v7 level=Expected [keyIsIntegral]
     Return v12
   b3():
     Return
@@ -25,4 +25,4 @@ function f0 name="arrayStaysLocal" parameters=[{type=RegExp<"a(b)(c)"[], pristin
 # CHECK: = RegExpMatchLiteral v1, v0 overload=RegExpPrototypeExec/0 pattern="a(b)(c)" matchForm=Exec
 # CHECK: ([[guard]]: guard):
 # CHECK: PropSet v2,
-# CHECK: = GetArrayElement {{*}}, [[guard]] level=Predicted
+# CHECK: = GetArrayElement {{*}}, [[guard]] level=Expected

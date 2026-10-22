@@ -1,10 +1,12 @@
-# The callers of a function are all known where its closure reaches calls and nothing else. A closure that is handed to native code, and a getter, which no stamp lists, have callers nobody knows.
+# The callers of a function are all known where its closure reaches calls and nothing else. A closure that is handed to native code has callers nobody knows.
+# No stamp lists a getter. The read that finds it is listed as an indirect call, so the callers of the getter are known too.
 # A function that only direct calls enter has only direct callers
 # RUN: valueflow-results
 # CHECK: function f1 callers=AllKnown
 # CHECK: function f2 cause=ReachesNativeCode
-# CHECK-NOT: function f3 callers
+# CHECK: function f3 callers=AllKnown
 # CHECK: function f4 callers=AllKnown
+# CHECK: indirect f0 S{{*}} -> f3 Accessor Once
 # RUN(APPLY): valueflow-apply
 # APPLY: function f1 name="called"{{*}}IsNeverCalledByHost
 # APPLY: function f4 name="calledDirectly"{{*}}HasOnlyDirectCallers
@@ -18,7 +20,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = Call v0
     v2 = NewClosure function=f2
     v3 = Builtin builtin=GlobalThis
-    PropSet v3, v2 key="handler"
+    PropSet v3, v2 key="handler" [isFreeName]
     v5 = NewObject layout=L0 fields=[]
     v6 = NewClosure function=f3
     DefineGetter v5, v6 key="size"

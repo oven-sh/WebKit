@@ -9,8 +9,10 @@
 
 #include "JSExportMacros.h"
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <span>
 #include <wtf/MallocSpan.h>
@@ -32,6 +34,11 @@ struct HostThreadPool {
     void (*schedule)(void (*run)(void* argument), void* argument);
 };
 
+// Foreground is the critical path of the build. Background is work that a later stage waits for. Nothing waits for Idle work.
+// A thread takes the pending task with the highest priority, and a helper of a loop leaves it when a task with a higher priority is pending.
+enum class TaskPriority : uint8_t { Foreground, Background, Idle };
+static constexpr unsigned numberOfTaskPriorities = 3;
+
 class ParallelLoops {
     WTF_MAKE_NONCOPYABLE(ParallelLoops);
     WTF_MAKE_NONMOVABLE(ParallelLoops);
@@ -46,8 +53,28 @@ public:
 
     unsigned width() const { return m_width; }
     JS_EXPORT_PRIVATE unsigned numberOfRestingThreads() const;
+    void sendRestingThreadsBack() const;
 
-    void schedule(void (*run)(void* argument), void* argument) const;
+    // Loops and tasks that a task starts have its priority unless they name another.
+    JS_EXPORT_PRIVATE static TaskPriority currentPriority();
+    void schedule(void (*run)(void* argument), void* argument) const { schedule(currentPriority(), run, argument); }
+    JS_EXPORT_PRIVATE void schedule(TaskPriority, void (*run)(void* argument), void* argument) const;
+    bool shouldYield(TaskPriority) const;
+
+    // For a stretch of many short loops. Waking a thread that sleeps takes the waker a system call and the sleeper tens of microseconds, which is
+    // as long as such a loop. So while a scope is alive, a thread that has run out of work looks for more for a moment before it sleeps, and so
+    // does a thread that waits for the helpers of its loop. Narrow loops belong to a small program, which has no time to gain: there it does nothing.
+    class ShortLoopsScope {
+        WTF_MAKE_NONCOPYABLE(ShortLoopsScope);
+        WTF_MAKE_NONMOVABLE(ShortLoopsScope);
+    public:
+        JS_EXPORT_PRIVATE explicit ShortLoopsScope(const ParallelLoops&);
+        JS_EXPORT_PRIVATE ~ShortLoopsScope();
+
+    private:
+        const ParallelLoops& m_loops;
+    };
+    bool expectsShortLoops() const;
 
 private:
     class RestingThreads;
@@ -60,11 +87,48 @@ private:
 
 JS_EXPORT_PRIVATE void runOnBuildThread(NOESCAPE const ScopedLambda<void()>&);
 
+// While one is alive, the CPU time of the current thread counts as spent in a parallel region. Only a build that logs its phase times counts.
+class ParallelRegionScope {
+    WTF_MAKE_NONCOPYABLE(ParallelRegionScope);
+public:
+    JS_EXPORT_PRIVATE ParallelRegionScope();
+    JS_EXPORT_PRIVATE ~ParallelRegionScope();
+
+    static Seconds cpuTimeOfCurrentThread();
+
+private:
+    const bool m_isCounted;
+};
+
+// For how long how many threads of the build were at work. Only a build that logs its phase times counts.
+class BusyThreads {
+public:
+    static constexpr unsigned numberOfBuckets = 5;
+    static constexpr std::array<unsigned, numberOfBuckets> maxThreadsOfBucket { 1, 4, 8, 12, std::numeric_limits<unsigned>::max() };
+    using Times = std::array<Seconds, numberOfBuckets>;
+
+    static void countCurrentThread();
+    static Times times();
+
+    // While one is alive, the current thread waits for other threads.
+    class WaitScope {
+        WTF_MAKE_NONCOPYABLE(WaitScope);
+    public:
+        JS_EXPORT_PRIVATE WaitScope();
+        JS_EXPORT_PRIVATE ~WaitScope();
+
+    private:
+        const bool m_wasCounted;
+    };
+};
+
 JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>&);
 JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>&);
 // For a loop in which a few indices take long: they come first, in the order given. A loop lasts as long as its longest index from the moment that one begins.
 JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>&);
 JS_EXPORT_PRIVATE void runTasksInParallel(const ParallelLoops&, std::initializer_list<ScopedLambda<void()>>);
+// produce(index) runs on any thread. commit(index) runs on the calling thread, in index order, as soon as every index up to it is produced, while later indices are still being produced.
+JS_EXPORT_PRIVATE void forEachIndexInParallelWithOrderedCommit(const ParallelLoops&, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& produce, NOESCAPE const ScopedLambda<void(unsigned index)>& commit);
 
 // An array whose elements the threads of a loop create.
 template<typename T>
@@ -88,6 +152,24 @@ public:
         });
     }
 
+    static ParallelArray concatenationOf(const ParallelLoops& loops, Vector<Vector<T>>&& lists)
+    {
+        static_assert(alignof(T) <= 16);
+        Vector<size_t> firstOfList(lists.size());
+        size_t size = 0;
+        for (size_t index = 0; index < lists.size(); ++index)
+            firstOfList[index] = std::exchange(size, size + lists[index].size());
+        ParallelArray result;
+        result.m_elements = MallocSpan<T>::malloc(size * sizeof(T));
+        forEachIndexInParallel(loops, static_cast<unsigned>(lists.size()), [&](unsigned index) {
+            size_t position = firstOfList[index];
+            for (T& element : lists[index])
+                new (NotNull, &result.m_elements[position++]) T(WTF::move(element));
+            lists[index] = { };
+        });
+        return result;
+    }
+
     ~ParallelArray() { std::ranges::destroy(m_elements.mutableSpan()); }
 
     ParallelArray& operator=(ParallelArray&& other)
@@ -98,6 +180,8 @@ public:
     }
 
     unsigned size() const { return static_cast<unsigned>(m_elements.span().size()); }
+    std::span<const T> span() const LIFETIME_BOUND { return m_elements.span(); }
+    std::span<T> mutableSpan() LIFETIME_BOUND { return m_elements.mutableSpan(); }
     T& operator[](size_t index) LIFETIME_BOUND { return m_elements[index]; }
     const T& operator[](size_t index) const LIFETIME_BOUND { return m_elements[index]; }
 
@@ -105,9 +189,37 @@ private:
     MallocSpan<T> m_elements;
 };
 
+// Memory that comes from the system costs whoever writes to a page first a fault, and a fault costs as much as writing the page many times over.
+// A list with an entry for each function of a large program is dozens of megabytes. Where one thread makes it, the others wait for its faults.
+// So all threads write to the pages first, and the one thread constructs on pages that are there.
+inline void takePageFaultsInParallel(const ParallelLoops& loops, std::span<uint8_t> bytes)
+{
+    constexpr size_t bytesPerTask = 256 * KB;
+    if (bytes.size() < 4 * bytesPerTask)
+        return;
+    forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + bytesPerTask - 1) / bytesPerTask), [&](unsigned task) {
+        zeroSpan(bytes.subspan(task * bytesPerTask, std::min(bytesPerTask, bytes.size() - task * bytesPerTask)));
+    });
+}
+
+// An empty vector with room for `capacity` elements on pages that are there.
+template<typename T>
+Vector<T> createVectorWithCapacityInParallel(const ParallelLoops& loops, size_t capacity)
+{
+    Vector<T> vector;
+    vector.reserveInitialCapacity(capacity);
+    // AddressSanitizer is told that nobody writes behind the end of a vector.
+#if !ASAN_ENABLED
+    takePageFaultsInParallel(loops, unsafeMakeSpan(reinterpret_cast<uint8_t*>(vector.mutableSpan().data()), capacity * sizeof(T)));
+#else
+    UNUSED_PARAM(loops);
+#endif
+    return vector;
+}
+
 // What is collected comes in the order of the indices, whatever the order they are visited in. An index that takes long is a chunk of its own.
 template<typename T>
-Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
 {
     constexpr unsigned chunkSize = 256;
     Vector<uint32_t> ascending(longestFirst);
@@ -139,13 +251,25 @@ Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::spa
         for (unsigned index = firstIndexOf[chunk]; index < firstIndexOf[chunk + 1]; ++index)
             collect(index, chunks[chunk]);
     });
+    return chunks;
+}
+
+template<typename T>
+Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+{
+    Vector<Vector<T>> chunks = collectChunksInParallel<T>(loops, count, longestFirst, collect);
     size_t size = 0;
     for (auto& chunk : chunks)
         size += chunk.size();
-    Vector<T> result;
-    result.reserveInitialCapacity(size);
+    Vector<T> result = createVectorWithCapacityInParallel<T>(loops, size);
     for (auto& chunk : chunks)
         result.appendVector(WTF::move(chunk));
+    constexpr size_t fewestChunksFreedOnPool = 64;
+    if (chunks.size() >= fewestChunksFreedOnPool) {
+        forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
+            chunks[chunk] = { };
+        });
+    }
     return result;
 }
 
@@ -153,6 +277,12 @@ template<typename T>
 Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
 {
     return collectInParallel<T>(loops, count, { }, collect);
+}
+
+template<typename T>
+ParallelArray<T> collectIntoArrayInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+{
+    return ParallelArray<T>::concatenationOf(loops, collectChunksInParallel<T>(loops, count, longestFirst, collect));
 }
 
 Vector<uint32_t> findIndicesInParallel(const ParallelLoops& loops, unsigned count, const Invocable<bool(unsigned)> auto& matches)
@@ -173,7 +303,8 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
         std::ranges::sort(list, isLess);
         return;
     }
-    Vector<T> scratchBuffer(count);
+    Vector<T> scratchBuffer = createVectorWithCapacityInParallel<T>(loops, count);
+    scratchBuffer.grow(count);
     std::span<T> from = list;
     std::span<T> to = scratchBuffer.mutableSpan();
     auto runOf = [&](std::span<T> all, size_t run, size_t runs) {

@@ -10,6 +10,7 @@
 
 #include "MacroAssembler.h"
 #include "Options.h"
+#include <limits>
 #include <wtf/CommaPrinter.h>
 #include <wtf/StringPrintStream.h>
 
@@ -30,6 +31,8 @@ Policy Policy::fromProcessOptions()
     policy.upstream.usesWasmFaultSignalHandler = Options::useWasmFaultSignalHandler();
     policy.upstream.allowsSIMD = Options::useWasmSIMD();
     policy.upstream.forcesSIMD = Options::forceAllFunctionsToUseSIMD();
+    policy.limits.set(Limit::MaxLeavesToRebalance, std::numeric_limits<uint64_t>::max());
+    policy.limits.set(Limit::MaxCompareChainSearchSize, std::numeric_limits<uint64_t>::max());
     policy.air = Air::Policy::fromProcessOptions();
     return policy;
 }
@@ -65,7 +68,6 @@ void Policy::disable(PolicySwitch policySwitch)
     CLEAR_FIELD_CASE(FoldComparisonsWithBounds, loops.foldsComparisonsWithBounds);
     CLEAR_FIELD_CASE(VersionLoops, loops.versions);
     CLEAR_FIELD_CASE(ClampLoopBounds, loops.clampsLoopBounds);
-    CLEAR_FIELD_CASE(StripMinePolls, loops.stripMinesPolls);
     CLEAR_FIELD_CASE(BitTests, switchLowering.usesBitTests);
     CLEAR_FIELD_CASE(KnownRanges, knownProperties.trustsKnownRanges);
     CLEAR_FIELD_CASE(KnownDereferenceableBytes, knownProperties.trustsKnownDereferenceableBytes);
@@ -92,10 +94,12 @@ void Policy::disable(PolicySwitch policySwitch)
         air.frame.ordersSlotsByUse = false;
         air.frame.prefersStackPointerAddresses = false;
         break;
+    CLEAR_FIELD_CASE(OmitFrameRecord, air.frame.mayOmitFrameRecord);
     CLEAR_FIELD_CASE(MoveBlocksWithoutSuccessorsToEnd, air.layout.movesBlocksWithoutSuccessorsToEnd);
     case PolicySwitch::RareBlockLayout:
         air.layout.placesRareBlocksInGaps = false;
         air.layout.placesRareBlocksAfterGuards = false;
+        air.layout.makesGapsForRareBlocks = false;
         air.layout.ordersBlocksByEdgeFrequency = false;
         break;
     CLEAR_FIELD_CASE(MergeIdenticalBlocks, air.layout.mergesIdenticalBlocks);
@@ -219,6 +223,7 @@ static void dumpOptimization(PrintStream& out, CommaPrinter& comma, const Optimi
     PRINT_IF_SET(optimization, mergesAdjacentConstantStores);
     PRINT_IF_SET(optimization, sinksValues);
     PRINT_IF_SET(optimization, placesConstantsByFrequency);
+    PRINT_IF_SET(optimization, mergesBlocksAfterForwardingJumps);
 }
 
 static void dumpSelection(PrintStream& out, CommaPrinter& comma, const SelectionPolicy& selection)
@@ -233,8 +238,8 @@ static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& l
     PRINT_IF_SET(loops, foldsComparisonsWithBounds);
     PRINT_IF_SET(loops, versions);
     PRINT_IF_SET(loops, clampsLoopBounds);
-    PRINT_IF_SET(loops, stripMinesPolls);
     PRINT_IF_SET(loops, hoistsOnlyFromLikelyPaths);
+    PRINT_IF_SET(loops, hoistsImmutableLoadsPastWrites);
 }
 
 static void dumpSwitchLowering(PrintStream& out, CommaPrinter& comma, const SwitchLoweringPolicy& switchLowering)

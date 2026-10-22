@@ -1,10 +1,11 @@
-# A field that cannot move out of its slot is in the slot or the object has no such property, so a read that finds the slot empty goes on at the prototype of the object
+# A field that cannot move out of its slot is in the slot or the object has no such property. The prototype of these objects may change, so nobody knows what lies above them. A read that finds the slot empty looks the name up from the object on:
+# of that lookup the type of the object says what it may find, so it has no more effects than the read had, and a caller that relied on the summary of this function stays right.
+# The slot of a number is tested for a number. It fails that test when it is empty and when it holds undefined or null
 # FORM: Prepared
 # RUN: pass ResolveAccesses
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Stable" fields=[{key="stays" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="other" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="moves" declared={type=number} flow={stability=[IsNeverRedefined]}}, {key="redefined" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="alone" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
-layout L1 name="Loose" fields=[{key="stays" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L0 name="Record" fields=[{key="stays" declared={type=string} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="other" declared={type=string} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="moves" declared={type=number} flow={stability=[IsNeverRedefined]}}, {key="redefined" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="alone" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity]}
 
 function f0 name="slotOrPrototype" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
@@ -17,18 +18,12 @@ function f0 name="slotOrPrototype" parameters=[{type=L0}] results=[{type=anythin
 # CHECK-NEXT: Branch [[isFilled0]] -> taken [[filled0]](| 0), notTaken [[empty0]]()
 # CHECK-NOT: PropGet
 # CHECK: [[filled0]]([[guard0]]: guard):
-# CHECK-NEXT: [[own0]]: number = GetSlot v0, [[guard0]] key="stays" receivers=[L0]
+# CHECK-NEXT: [[own0]]: string = GetSlot v0, [[guard0]] key="stays" receivers=[L0]
 # CHECK-NEXT: Jump -> next [[join0]]([[own0]])
 # CHECK: [[empty0]]():
-# CHECK-NEXT: [[prototype0]]: null|object = GetSuperBase v0
-# CHECK-NEXT: [[hasPrototype0]]: boolean = TypeTest [[prototype0]] testedType=object
-# CHECK-NEXT: Branch [[hasPrototype0]] -> taken [[chain0]](| 0), notTaken [[end0]](| 0)
-# CHECK: [[chain0]]([[holder0]]: object):
-# CHECK-NEXT: [[inherited0]]: anything = SuperGet [[holder0]], v0 key="stays"
-# CHECK-NEXT: Jump -> next [[join0]]([[inherited0]])
-# CHECK: [[end0]]({{*}}: null) frequency=Unlikely:
-# CHECK-NEXT: [[nothing0]]: undefined = Undefined
-# CHECK-NEXT: Jump -> next [[join0]]([[nothing0]])
+# CHECK-NEXT: [[found0]]: anything = SuperGet v0, v0 key="stays"
+# CHECK-NEXT: Jump -> next [[join0]]([[found0]])
+# CHECK-NOT: GetSuperBase
 
 function f1 name="twoReadsInOneBlock" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
@@ -77,22 +72,31 @@ function f4 name="prototypesHaveNothingUnderTheName" parameters=[{type=L0}] resu
 # CHECK-NEXT: v1:{{*}}= GetSlotOrUndefined v0 key="alone"
 # CHECK-NEXT: Return v1
 
-function f5 name="receiverIsPredicted" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f5 name="receiverIsExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="stays"
     Return v1
 }
-# CHECK-LABEL: function f5 name="receiverIsPredicted"
-# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-LABEL: function f5 name="receiverIsExpected"
+# CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: v1:{{*}}= PropGet v0 key="stays"
 # CHECK-NEXT: Return v1
 
-function f6 name="shapeMayBeLost" parameters=[{type=object predicted=L1}] results=[{type=anything}] {
-  b0(v0: object ~ L1):
-    v1 = PropGet v0 key="stays"
+function f6 name="slotOfNumberIsTestedForNumber" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="count"
     Return v1
 }
-# CHECK-LABEL: function f6 name="shapeMayBeLost"
-# CHECK-NEXT: b0(v0: object ~ L1):
-# CHECK-NEXT: v1:{{*}}= PropGet v0 key="stays"
-# CHECK-NEXT: Return v1
+# CHECK-LABEL: function f6 name="slotOfNumberIsTestedForNumber"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[holdsNumber6]]: boolean = IsSlotFilled v0 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch [[holdsNumber6]] -> taken [[number6]](| 0), notTaken [[other6]]()
+# CHECK-NOT: PropGet
+# CHECK-NOT: GetSuperBase
+# CHECK: [[number6]]([[guard6]]: guard):
+# CHECK-NEXT: [[own6]]: number = GetSlot v0, [[guard6]] key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next [[join6]]([[own6]])
+# CHECK: [[other6]]() frequency=Unlikely:
+# CHECK-NEXT: [[found6]]: anything = SuperGet v0, v0 key="count"
+# CHECK-NEXT: Jump -> next [[join6]]([[found6]])
+# CHECK-NOT: GetSuperBase

@@ -1,4 +1,5 @@
 # The cell of a built-in that the program replaces is filled at start-up: Date.now is assigned, and the call tests its callee against the original. Date.parse and Date are only read, so start-up locks them and their cells wait for their first use
+# OPTIONS: heat=EverythingIsHot
 # RUN: tables constants
 
 module m0 path="main.js" displayPath="main.js" body=f0

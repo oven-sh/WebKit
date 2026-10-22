@@ -15,6 +15,7 @@
 
 namespace JSC { namespace AOT {
 
+class Object;
 enum class Entry : uint16_t;
 struct Instance;
 struct RuntimeType;
@@ -60,9 +61,17 @@ enum class ValidationFailureKind : uint8_t {
     LegacyRegExpStaticRead,
     GuardNoLongerHolds,
     BindingReadBeforeStore,
+    SlotEmpty,
+    LookupDiffers,
+    HeapSlotType,
+    MaskCutKnownValue,
+    FamilyNotClosed,
+    FunctionCellInFrameGotProperties,
+    OperationConvertedCell,
+    OperationWroteHeap,
 };
 
-static constexpr unsigned numberOfValidationFailureKinds = 39;
+static constexpr unsigned numberOfValidationFailureKinds = 47;
 
 ASCIILiteral nameOf(ValidationFailureKind);
 
@@ -92,6 +101,15 @@ struct ChangedRegister {
     }
 };
 
+// The third argument of operationAOTCompareOperandWithPhotograph: which photograph, and who was called between it and the comparison: an entry of the run-time table or a family of stubs.
+struct PhotographedCall {
+    static constexpr unsigned maxOperands = 8;
+    static constexpr unsigned calleeShift = 8;
+    static constexpr uint32_t calleeIsStub = 1u << (31 - calleeShift);
+
+    static constexpr uint32_t encode(unsigned position, uint32_t callee) { return position | callee << calleeShift; }
+};
+
 [[noreturn]] JS_EXPORT_PRIVATE void crashOnValidationFailure(VM&, const ValidationFailure&);
 
 // Looks at no more than a fixed number of the values a large container holds.
@@ -99,6 +117,12 @@ bool contentsHaveType(Instance&, JSCell* container, Typed::ContentsSlot, const R
 bool hasOrdinaryElements(VM&, JSValue array);
 // RegExp.$1, RegExp.lastMatch and their kin. A match of a program that never reads them leaves nothing for them.
 JS_EXPORT_PRIVATE void willReadLegacyRegExpStatics(VM&);
+
+// A slot is empty, holds undefined or null as a marker, or holds a value of the type of its field. Anything else was stored by a writer that tests no type.
+// Allocates nothing and runs no code, so a collector thread may call it while the mutators are stopped.
+JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
+// Also looks at what died since the last collection. Not for a thread that collects.
+JS_EXPORT_PRIVATE void validateSlotTypesOfLiveObjects(VM&);
 
 ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
 

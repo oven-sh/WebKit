@@ -48,6 +48,8 @@ void lowerStackArgs(Code& code)
         unsigned instIndex;
     };
     Vector<Site> sites;
+    const bool hasFrameRecord = code.frameLayout().hasFrameRecord;
+    const Tmp framePointer(GPRInfo::callFrameRegister);
     for (BasicBlock* block : code) {
         unsigned blockSize = block->size();
         for (unsigned instIndex = 0; instIndex < blockSize; ++instIndex) {
@@ -58,7 +60,7 @@ void lowerStackArgs(Code& code)
                     ASSERT(arg.offset() >= 0);
                     code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
                     isSite = true;
-                } else if (arg.isStack())
+                } else if (arg.isStack() || (!hasFrameRecord && arg.usesTmp(framePointer)))
                     isSite = true;
             }
             if (isSite)
@@ -96,6 +98,8 @@ void lowerStackArgs(Code& code)
                 }
 
 #if CPU(X86_64)
+                if (!hasFrameRecord)
+                    return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
                 if (code.policy().frame.prefersStackPointerAddresses && offsetFromFP < std::numeric_limits<int8_t>::min() && offsetFromSP >= 0 && offsetFromSP <= std::numeric_limits<int8_t>::max())
                     return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
 #endif
@@ -195,6 +199,24 @@ void lowerStackArgs(Code& code)
                 }
 
                 continue;
+            }
+
+            // planFrame() gives a frame no record only where these are the ways the frame pointer is named. A Patch hands its generator offsets from the frame pointer.
+            if (!hasFrameRecord && inst.kind.opcode != Patch) {
+                if (inst.kind.opcode == Move && inst.args()[0] == Arg(framePointer)) {
+                    inst = Inst(Lea64, inst.origin, Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), static_cast<Value::OffsetType>(bytesBelowFrameRecord)), inst.args()[1]);
+                    continue;
+                }
+                if (inst.kind.opcode == Add64 && inst.args().size() == 3 && inst.args()[1] == Arg(framePointer)) {
+                    inst = Inst(Lea64, inst.origin, Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), static_cast<Value::OffsetType>(inst.args()[0].value() + bytesBelowFrameRecord)), inst.args()[2]);
+                    continue;
+                }
+                for (Arg& arg : inst.args()) {
+                    if (arg.isAddr() && arg.base() == framePointer)
+                        arg = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), arg.offset() + static_cast<Value::OffsetType>(bytesBelowFrameRecord));
+                    else if (arg.isIndex() && arg.base() == framePointer)
+                        arg = Arg::index(Air::Tmp(MacroAssembler::stackPointerRegister), arg.index(), arg.scale(), arg.offset() + static_cast<Value::OffsetType>(bytesBelowFrameRecord));
+                }
             }
 
             // Moves between stack spills may require using the extendedOffsetReg for both the src and dst addresses.

@@ -1,11 +1,11 @@
-# A private access on a proven receiver of the declaring class touches the one field it names; on any other receiver it has its written set, which is not unknown code
+# A private access on a proven receiver of the declaring class touches the one field it names; on any other receiver it has its declared set, which is not unknown code
 # FORM: Prepared
 # RUN: effects f0 f1 f2
 # RUN(W): write-overlap f5
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Counter" constructor=f3 fields=[{key=#"count"@L0 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"late"@L0 declared={type=number} flags=[IsPrivate] flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L1 kind=Instance name="EvaluatedAgain" constructor=f4 fields=[{key=#"count"@L1 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L0 kind=Instance name="Counter" constructor=f3 fields=[{key=#"count"@L0 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"late"@L0 declared={type=number} flags=[IsPrivate] flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="EvaluatedAgain" constructor=f4 fields=[{key=#"count"@L1 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 function f0 name="provenReceiver" parameters=[{type=L0}, {type=number}, {type=null|L0}] results=[{type=undefined}] {
   b0(v0: L0, v1: number, v2: null|L0):
     v3 = NewClassToken layout=L0
@@ -23,7 +23,7 @@ function f0 name="provenReceiver" parameters=[{type=L0}, {type=number}, {type=nu
 # CHECK-NOT: throws
 # CHECK: v6 PrivateHas: reads(ObjectFields/1)
 # CHECK-NOT: throws
-# CHECK: v7 PrivateDefine: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK: v7 PrivateDefine: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
 # CHECK-NEXT: v8 PrivateGet: reads(ObjectFields/1) throws
 function f1 name="anyReceiver" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
   b0(v0: anything, v1: number):
@@ -37,9 +37,10 @@ function f1 name="anyReceiver" parameters=[{type=anything}, {type=number}] resul
 # CHECK-LABEL: function f1
 # CHECK-NOT: nknownCode
 # CHECK: v3 PrivateGet: reads(ObjectFields, ShapeWords, NamedProperties) throws
-# CHECK-NEXT: v4 PrivateSet: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch, NamedProperties, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v4 PrivateSet: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v5 PrivateHas: reads(ObjectFields, ShapeWords, NamedProperties) throws
-# CHECK-NEXT: v6 PrivateDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch, NamedProperties, AllocatorState, RuntimeState) throws collects
+# The receiver may be an array that was frozen in place: a private name gives it the ordinary frozen form, which is another kind of storage.
+# CHECK-NEXT: v6 PrivateDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, Elements, ArrayStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NOT: nknownCode
 function f2 name="planNeedsTest" parameters=[{type=L0}, {type=L1}] results=[{type=undefined}] {
   b0(v0: L0, v1: L1):

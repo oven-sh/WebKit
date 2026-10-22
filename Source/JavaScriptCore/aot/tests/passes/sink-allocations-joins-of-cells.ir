@@ -1,0 +1,56 @@
+# An allocation for which nothing can be gained is not followed, and a parameter that only ever carries such objects is no candidate, whatever becomes of the other allocations
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 1
+# STATISTIC: AllocationsMergedAtJoins = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="anAllocationIsKept" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: L0):
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = Call v0, -, v4
+    v6 = NewObject -, v1 layout=L0 fields=[0]
+    PropDefine v6, v0 key="y" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Call v0, -, v6
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v3)
+  b3(v9: L0):
+    v10 = Call v1, -, v9
+    Return v10
+}
+# CHECK-LABEL: function f0 name="anAllocationIsKept"
+# CHECK: b0(
+# CHECK-NEXT: v4:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, v4
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[cell]]:{{*}}= NewObject -, v1, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[cell]]
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK: Jump -> next b3(v3)
+# CHECK: b3(v9: L0):
+# CHECK-NEXT: = Call v1, -, v9
+
+function f1 name="noAllocationIsKept" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: L0):
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = Call v0, -, v4
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v3)
+  b3(v6: L0):
+    v7 = Call v1, -, v6
+    Return v7
+}
+# CHECK-LABEL: function f1 name="noAllocationIsKept"
+# CHECK: b0(
+# CHECK-NEXT: v4:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK: b3(v6: L0):
+# CHECK-NEXT: = Call v1, -, v6

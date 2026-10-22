@@ -4,7 +4,7 @@
 # RUN: pass ElideStackChecks
 # STATISTIC: StackChecksCoveredByCallers = 11
 # STATISTIC: StackChecksDeferredToCallee = 0
-# LOSS: UncheckedStackBytes x4 f3
+# LOSS: UncheckedStackBytes x5 f0
 
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0

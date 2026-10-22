@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFrameAllocationPointers.h"
+#include "AOTGenericCopy.h"
 #include <algorithm>
 #include <optional>
 
@@ -22,6 +24,7 @@ public:
         : m_program(context.program)
         , m_function(context.function)
         , m_types(context.types)
+        , m_analyses(context.analyses)
         , m_cfg(context.analyses.cfg())
         , m_loops(context.analyses.naturalLoops())
         , m_useLists(context.analyses.useLists())
@@ -55,6 +58,7 @@ private:
     const Program& m_program;
     const Function& m_function;
     const TypeArena& m_types;
+    FunctionAnalyses& m_analyses;
     const CFG& m_cfg;
     const NaturalLoops& m_loops;
     const UseLists& m_useLists;
@@ -86,6 +90,9 @@ void TestHoister::offerTestsOfSite(uint32_t firstRequirement, uint32_t numberOfR
     BlockID useBlock = site.front().point.block;
 
     for (const NaturalLoop* loop = m_loops.innerMostLoopOf(useBlock); loop; loop = m_loops.innerMostOuterLoop(*loop)) {
+        if (isClosedOnlyByWaysBack(m_analyses, *loop))
+            continue;
+
         SiteOperands operands;
         bool canLeaveLoop = false;
         for (uint32_t index = 0; index < numberOfRequirements; ++index) {
@@ -155,6 +162,9 @@ auto TestHoister::findOperandsOutside(std::span<const TestRequirement> site, uin
         ValueID outside = findDefinitionOutside(operand, loop);
         if (!outside)
             return std::nullopt;
+        // Inside the loop the test stands behind whatever decides that the value is there, the switch on the kind of an iteration for one. In front of the loop it would read through whatever the register holds.
+        if (mayBeUnspecified(m_analyses, outside))
+            return std::nullopt;
 
         bool canReplaceOperand = outside == operand
             || isNarrowedByEarlierTest
@@ -181,7 +191,7 @@ ValueID TestHoister::findDefinitionOutside(ValueID value, const NaturalLoop& loo
 
 Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const TestSites& sites, const TestConditions& conditions, std::span<const TestRequirement> requirements)
 {
-    if (!context.analyses.naturalLoops().numLoops())
+    if (!context.analyses.cfg().hasCycle() || !context.analyses.naturalLoops().numLoops())
         return { };
     return TestHoister(context, sites, conditions, requirements).run();
 }

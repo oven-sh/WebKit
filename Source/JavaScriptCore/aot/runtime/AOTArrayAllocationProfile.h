@@ -17,6 +17,7 @@
 namespace JSC {
 
 class JSArray;
+class Structure;
 class VM;
 
 namespace AOT {
@@ -29,7 +30,8 @@ struct ArrayAllocationProfile {
     static constexpr uint32_t interval = 64;
     static constexpr uint32_t intervalMask = (interval - 1) << allocationCountShift;
     static constexpr uint32_t countAtReview = 1 << allocationCountShift;
-    static constexpr uint8_t reviewsBeforeShrinking = 4;
+    static constexpr uint8_t reviewsInWindow = 10;
+    static constexpr unsigned lengthsKept = 3;
     static constexpr unsigned sizeOfLastArrayWord = 8;
 
     unsigned capacity() const { return word & capacityMask; }
@@ -42,8 +44,9 @@ struct ArrayAllocationProfile {
     }
 
     uint32_t word;
-    uint8_t reviewsWithRoomToSpare;
-    uint8_t largestLengthSinceChange;
+    uint8_t reviews;
+    // Of this window, the largest first.
+    uint8_t largestLengths[lengthsKept];
 };
 
 static_assert(sizeof(ArrayAllocationProfile) == 8 && !OBJECT_OFFSETOF(ArrayAllocationProfile, word));
@@ -52,6 +55,17 @@ static_assert(BASE_CONTIGUOUS_VECTOR_LEN_MAX <= ArrayAllocationProfile::capacity
 static_assert(Int32Shape < DoubleShape && DoubleShape < ContiguousShape);
 
 void reviewArrayAllocationProfile(ArrayAllocationProfile&, JSArray* lastArrayOrNull);
+
+// An array on the heap is born as one cell: the cell of the array, the indexing header and the elements, one behind the other. An array that outgrows the elements gets storage of its own, like any array.
+// An array that is about to get named properties has room for the first of them between its cell and the indexing header, where they lie in any storage.
+inline constexpr unsigned propertyRoomOfArray = 4 * sizeof(uint64_t);
+constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom = 0) { return (3 + capacity) * sizeof(uint64_t) + propertyRoom; }
+
+// One cell holds the array and its first storage, which is filled with holes, with `propertyRoom` bytes in front of the indexing header.
+// Null where such a cell would be too large, or there is no memory. See isStorageInOwnCell().
+JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
+// In the count that NewArray takes: the storage is an allocation of its own.
+inline constexpr uint32_t storageOfItsOwnInArrayLiteralCount = 1u << 26;
 
 // Makes room for `additional` more elements, unless the next step of the usual growth does. Changes nothing a program can see.
 void reserveArrayCapacity(VM&, JSArray*, uint64_t additional);

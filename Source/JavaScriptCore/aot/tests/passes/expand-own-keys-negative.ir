@@ -1,15 +1,15 @@
 # Sites that the expansion of walks over own keys leaves alone, each beside a site that it expands, and a second run that finds nothing
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys ExpandOwnKeys
-# STATISTIC: OwnKeyWalksExpanded = 3
+# STATISTIC: OwnKeyWalksExpanded = 4
 # CHECK: outcome: Changed
 # CHECK-NEXT: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
-function f0 name="nullishReplacerAndIndent" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+function f0 name="nullishReplacerAndIndent" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = Null
     v2 = Undefined
@@ -21,7 +21,7 @@ function f0 name="nullishReplacerAndIndent" parameters=[{type=object predicted=L
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CallBuiltin -, v0, v1, v2 overload=JSONStringify/0
 
-function f1 name="replacer" parameters=[{type=object predicted=L0}, {type=function}] results=[{type=anything}] {
+function f1 name="replacer" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: function):
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/1
     Return v2
@@ -31,7 +31,7 @@ function f1 name="replacer" parameters=[{type=object predicted=L0}, {type=functi
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/1
 # CHECK-NEXT: Return v2
 
-function f2 name="replacerMayBeNullish" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
+function f2 name="replacerMayBeNullish" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: anything):
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/2
     Return v2
@@ -41,7 +41,7 @@ function f2 name="replacerMayBeNullish" parameters=[{type=object predicted=L0}, 
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/2
 # CHECK-NEXT: Return v2
 
-function f3 name="indent" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+function f3 name="indent" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = Null
     v2 = Integer integer=2
@@ -65,7 +65,7 @@ function f4 name="noArgument" results=[{type=anything}] {
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
 
-function f5 name="coldBlockBehindWarmBlock" parameters=[{type=object predicted=L0}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+function f5 name="unlikelyBlockBehindLikelyBlock" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b3()
   b1():
@@ -77,16 +77,17 @@ function f5 name="coldBlockBehindWarmBlock" parameters=[{type=object predicted=L
   b3():
     Return v0
 }
-# CHECK-LABEL: function f5 name="coldBlockBehindWarmBlock"
+# How often a block is taken to run does not decide: both are expanded.
+# CHECK-LABEL: function f5 name="unlikelyBlockBehindLikelyBlock"
 # CHECK: b1():
 # CHECK-NEXT: = ShapeTest v0 layouts=[L0]
 # CHECK: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
 # CHECK: frequency=Rare:
-# CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectEntries/0
+# CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
 
-function f6 name="rareBlock" parameters=[{type=object predicted=L0}, {type=boolean}] results=[{type=anything}] {
+function f6 name="rareBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -103,7 +104,7 @@ function f6 name="rareBlock" parameters=[{type=object predicted=L0}, {type=boole
 # CHECK-NEXT: v3: Array = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK-NEXT: Return v3
 
-function f7 name="reflectOwnKeys" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+function f7 name="reflectOwnKeys" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ReflectOwnKeys/0
     Return v1
@@ -113,7 +114,7 @@ function f7 name="reflectOwnKeys" parameters=[{type=object predicted=L0}] result
 # CHECK-NEXT: v1: Array<string|symbol> = CallBuiltin -, v0 overload=ReflectOwnKeys/0
 # CHECK-NEXT: Return v1
 
-function f8 name="objectKeys" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+function f8 name="objectKeys" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     Return v1

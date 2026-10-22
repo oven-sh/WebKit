@@ -7,7 +7,7 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Copied" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=number} flags=[IsRequired]}]
 layout L1 name="OnlyBuilt" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=number} flags=[IsRequired]}]
 layout L2 kind=Instance name="Base" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
-layout L3 kind=Instance name="CopiedDerived" predictedBase=L2 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired, IsInherited] originLayout=L2 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L2}
+layout L3 kind=Instance name="CopiedDerived" base=L2 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired, IsInherited] originLayout=L2 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L2}
 # CHECK: layout L0 name="Copied" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 # CHECK: layout L1 name="OnlyBuilt" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 # CHECK: layout L2 kind=Instance name="Base" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]

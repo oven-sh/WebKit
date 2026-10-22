@@ -3,7 +3,7 @@
 # RUN: effects summaries
 
 module m0 path="main.js" displayPath="main.js"
-variable g0 name="written" declared={type=anything} initialization=Undefined
+variable g0 name="stored" declared={type=anything} initialization=Undefined
 function f0 name="writesOnEachPath" parameters=[{type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()

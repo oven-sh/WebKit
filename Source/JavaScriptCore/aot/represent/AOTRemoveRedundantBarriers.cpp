@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTPass.h"
+#include "AOTRemoveRedundantBarriers.h"
 
 #if ENABLE(AOT)
 
@@ -12,7 +12,9 @@
 #include "AOTEscapeAnalysis.h"
 #include "AOTForwardDataflow.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTPass.h"
 #include "AOTPlacement.h"
+#include "AOTRepresentationRules.h"
 #include "AOTSlotEmitter.h"
 #include <algorithm>
 #include <optional>
@@ -43,7 +45,6 @@ struct BarrierStore {
 struct BarrierOwner {
     ValueID value;
     OwnerKind kind { OwnerKind::Unknown };
-    ObjectID object { };
 };
 
 struct StoreRange {
@@ -54,11 +55,18 @@ struct StoreRange {
 using OwnerSets = IndexMap<BlockID, BitVector>;
 using OwnerNumbers = IndexMap<ValueID, std::optional<uint32_t>>;
 
+// It stores into a cell that is as old as the inner object.
+bool takesCell(const Value& value)
+{
+    return value.opcode == Opcode::NewObject && value.takesCellOfInnerObject();
+}
+
 bool hasStoreOperation(const Function& function)
 {
     for (const Block& block : function.blocks) {
-        for (ValueID value : block.values) {
-            if (runsOwnerBarrierOf(function.at(value).opcode))
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (operationsThatMayRunBarrier.contains(value.opcode) && (runsOwnerBarrierOf(value.opcode) || takesCell(value)))
                 return true;
         }
     }
@@ -112,6 +120,9 @@ public:
     }
 
     State stateAtEntry() const { return BitVector(m_owners.size()); }
+
+    // Effects can only empty the set, and the edge to a handler empties it whatever it holds.
+    bool ignoresEffects(const State& young) const { return young.isEmpty(); }
 
     void execute(State& young, const DataflowStep& step) const
     {
@@ -203,9 +214,25 @@ private:
         return true;
     }
 
+    // Where the code generator converts the operands, the operation names the value as it was defined.
+    Representation formTakenBy(const Value& user, uint32_t operandIndex) const
+    {
+        Representation defined = m_function.at(user.operand(operandIndex)).representation;
+        if (!m_function.operandsAreConvertedAtFetch)
+            return defined;
+        RELEASE_ASSERT(m_pass.inputs.callingConventions);
+        RepresentationInputs inputs { m_program, m_pass.id, m_function, placement(), *m_pass.inputs.callingConventions };
+        Representation wanted = wantedRepresentationOf(inputs, user, operandIndex);
+        return hasRegister(wanted) ? wanted : defined;
+    }
+
     void collectStore(BlockID block, uint32_t index, ValueID id)
     {
         const Value& value = m_function.at(id);
+        if (takesCell(value)) {
+            collectTakenCell(block, index, id);
+            return;
+        }
         if (!runsOwnerBarrierOf(value.opcode))
             return;
 
@@ -220,11 +247,11 @@ private:
             hasOneOwner &= !retainingOperand || retainingOperand == ownerIndex;
             retainingOperand = ownerIndex;
             storesCells |= m_program.typeOf(m_function, operand).hasCells();
-            storesLiteralStringWord |= m_function.at(operand).representation == Representation::LiteralString;
+            storesLiteralStringWord |= formTakenBy(value, operandIndex) == Representation::LiteralString;
         });
 
         ValueID owner;
-        if (storesCells && hasOneOwner && retainingOperand)
+        if ((storesCells || mayStoreExtension(value)) && hasOneOwner && retainingOperand)
             owner = value.operand(*retainingOperand);
         if (!owner) {
             setFlags(id, BarrierDecision::Emit);
@@ -235,8 +262,39 @@ private:
             .index = index,
             .value = id,
             .owner = m_analyses.sameObjectThroughCasts(owner),
-            .alwaysRunsBarrier = !storesLiteralStringWord && !mayStoreInDeferredClosureSlot(value),
+            .alwaysRunsBarrier = storesCells && !storesLiteralStringWord && !mayStoreInDeferredClosureSlot(value),
         });
+    }
+
+    void collectTakenCell(BlockID block, uint32_t index, ValueID id)
+    {
+        const Value& value = m_function.at(id);
+        std::span<const uint32_t> fields = value.fields();
+        for (size_t position = 0; position < fields.size(); ++position) {
+            if (!placement().layout(value.layout()).innerObjectIn(fields[position]))
+                continue;
+            m_stores.append(BarrierStore { .block = block, .index = index, .value = id, .owner = m_analyses.sameObjectThroughCasts(value.valuesOperands()[position]) });
+            return;
+        }
+        setFlags(id, BarrierDecision::Emit);
+    }
+
+    bool mayLieOutOfLine(FieldAccessID id) const
+    {
+        return !id || placement().fieldAccess(id).slot.isOutOfLine();
+    }
+
+    // A store that makes room for its value stores the Extension in the owner, whatever the value is.
+    bool mayStoreExtension(const Value& store) const
+    {
+        if (!storesThatMayAdd.contains(store.opcode))
+            return false;
+        if (Value::opcodesWithFieldAccess.contains(store.opcode))
+            return mayLieOutOfLine(store.fieldAccess());
+        bool result = false;
+        for (PlacedKey key : store.placedKeys())
+            result |= mayLieOutOfLine(key.fieldAccess);
+        return result;
     }
 
     bool mayBeDeferredClosureSlot(FieldAccessID id) const
@@ -258,9 +316,16 @@ private:
 
     void setFlags(ValueID id, BarrierDecision decision)
     {
-        Value& value = m_function.at(id);
+        Value& value = m_function.edit(id);
         bool ownerCannotBeMarked = decision == BarrierDecision::OwnerCannotBeMarked;
         bool laterBarrierCovers = decision == BarrierDecision::LaterBarrierCovers;
+        if (takesCell(value)) {
+            if (value.cellCannotBeMarked() != ownerCannotBeMarked) {
+                value.setCellCannotBeMarked(ownerCannotBeMarked);
+                m_outcome = PassOutcome::Changed;
+            }
+            return;
+        }
         if (value.ownerCannotBeMarked() == ownerCannotBeMarked && value.laterBarrierCovers() == laterBarrierCovers)
             return;
         value.setOwnerCannotBeMarked(ownerCannotBeMarked);
@@ -311,12 +376,7 @@ private:
             return;
         if (value.opcode == Opcode::NewObject && !allocatesUnmarkedCell(value))
             return;
-        const EscapeAnalysis& escape = m_analyses.escape();
-        std::optional<ObjectID> object = escape.objectDefinedBy(owner.value);
-        if (!object || escape.at(*object).kind != ObjectKind::Allocation)
-            return;
         owner.kind = OwnerKind::HeapAllocation;
-        owner.object = *object;
     }
 
     bool allocatesUnmarkedCell(const Value& newObject) const
@@ -324,18 +384,7 @@ private:
         if (newObject.storage() != AllocationStorage::Heap)
             return true;
         LayoutID layout = newObject.layout();
-        if (!placement().layout(layout).hasSlots() || placement().freeCellOffset(layout) || newObject.prototypeOperand())
-            return false;
-
-        // The allocation makes an Extension after the cell exists, for each listed value that its slot in the cell cannot hold.
-        std::span<const uint32_t> fields = newObject.fields();
-        std::span<const ValueID> values = newObject.valuesOperands();
-        for (size_t index = 0; index < fields.size(); ++index) {
-            const PlacedSlot& slot = placement().slot(layout, fields[index]);
-            if (slot.needsExtension() && !isStoredInCell(slot, m_program.typeOf(m_function, values[index])))
-                return false;
-        }
-        return true;
+        return placement().layout(layout).hasSlots() && !placement().freeCellOffset(layout) && !newObject.prototypeOperand() && !newObject.takesCellOfInnerObject();
     }
 
     void findStoresToYoungOwners(const YoungOwnersProblem& problem, BlockID block, BitVector& young)
@@ -345,7 +394,7 @@ private:
         for (BarrierStore& store : storesIn(block)) {
             for (; index < store.index; ++index) {
                 ValueID id = values[index];
-                problem.execute(young, DataflowStep { block, index, id, m_function.at(id), m_analyses.effectsOf(id) });
+                problem.execute(young, DataflowStep { block, index, id, m_function.at(id), problem.ignoresEffects(young) ? noEffectsOnEdges : m_analyses.effectsOf(id) });
             }
             if (isStoreToYoungOwner(store, young))
                 store.decision = BarrierDecision::OwnerCannotBeMarked;
@@ -355,19 +404,41 @@ private:
     bool isStoreToYoungOwner(const BarrierStore& store, const BitVector& youngBeforeStore)
     {
         const BarrierOwner& owner = m_owners[store.ownerNumber];
-        if (owner.kind != OwnerKind::HeapAllocation || !youngBeforeStore.get(store.ownerNumber) || reachesSafepoint(m_analyses.effectsOf(store.value)))
+        if (owner.kind != OwnerKind::HeapAllocation || !youngBeforeStore.get(store.ownerNumber))
             return false;
-        return retentionHistory().occurredBefore(owner.object, ProgramPoint { store.block, store.index }) == Occurrence::HasNotOccurred;
+        // An operation that takes a cell allocates none before it has filled the cell.
+        bool reachesSafepointBeforeStore = !takesCell(m_function.at(store.value)) && reachesSafepoint(m_analyses.effectsOf(store.value));
+        if (reachesSafepointBeforeStore)
+            return false;
+        const EscapeAnalysis& escape = m_analyses.escape();
+        std::optional<ObjectID> object = escape.objectDefinedBy(owner.value);
+        if (!object || escape.at(*object).kind != ObjectKind::Allocation)
+            return false;
+        return retentionHistory().occurredBefore(*object, ProgramPoint { store.block, store.index }) == Occurrence::HasNotOccurred;
+    }
+
+    // A store is covered by a later one to the same owner.
+    bool someOwnerIsRememberedTwice() const
+    {
+        BitVector rememberedOwners(m_owners.size());
+        for (const BarrierStore& store : m_stores) {
+            if (store.decision == BarrierDecision::Emit && remembersOwnerOf(m_function.at(store.value).opcode) && rememberedOwners.quickSet(store.ownerNumber))
+                return true;
+        }
+        return false;
     }
 
     void findCoveredStores()
     {
+        if (!someOwnerIsRememberedTwice())
+            return;
+
         BitVector ownersOfCoverableStores(m_owners.size());
         bool hasRepeatedOwner = false;
         for (BarrierStore& store : m_stores) {
             if (store.decision != BarrierDecision::Emit)
                 continue;
-            store.canBeCovered = !reachesSafepoint(m_analyses.effectsOf(store.value)) && remembersOwnerOf(m_function.at(store.value).opcode);
+            store.canBeCovered = remembersOwnerOf(m_function.at(store.value).opcode) && !reachesSafepoint(m_analyses.effectsOf(store.value));
             store.hasOwnerBarrier = store.canBeCovered && store.alwaysRunsBarrier;
             if (store.canBeCovered)
                 hasRepeatedOwner |= ownersOfCoverableStores.set(store.ownerNumber);
@@ -426,7 +497,7 @@ private:
                     covered.set(store.ownerNumber);
                 stores = stores.first(stores.size() - 1);
             }
-            if (endsCoverage(m_analyses.effectsOf(value)))
+            if (!covered.isEmpty() && endsCoverage(m_analyses.effectsOf(value)))
                 covered.clearAll();
             if (std::optional<uint32_t> number = m_ownerNumbers[value])
                 covered.clear(*number);

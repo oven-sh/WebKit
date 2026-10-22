@@ -40,7 +40,7 @@ static void idReservesAbsentAndDeletedValues()
     checkReservedValuesOfEach<StringID, PropertyKeyID, FunctionID, LayoutID, VariableID, ModuleID, ModuleFailureID, TypeID, TypeSiteID, EvalScopeID, DataID, ExpectedResultID>();
     checkReservedValuesOfEach<LayoutSetID, CalleeSetID>();
     checkReservedValuesOfEach<AccessSiteID, AllocationSiteID, AllocationClassID>();
-    checkReservedValuesOfEach<FieldAccessID, AllocationID, RegExpRecordID, SiteCacheID, GuardBitID>();
+    checkReservedValuesOfEach<FieldAccessID, AllocationID, RegExpRecordID, SiteCacheID, GlobalBindingID, GuardBitID>();
 }
 
 static void idHashIsIntegerHashOfIndex()

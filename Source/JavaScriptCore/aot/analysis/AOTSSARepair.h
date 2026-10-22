@@ -69,9 +69,10 @@ private:
         Vector<Definition, 2> definitions;
         Vector<RecordedUse, 4> uses;
         TypeID type;
-        TypeID prediction;
+        TypeID expected;
     };
 
+    void separateUsesAsGuards();
     void splitCoveredBlocksAfterDefinitions();
 
     void collectUses(VariableData&);
@@ -89,6 +90,7 @@ private:
     void computeLiveness(Variable);
     bool isLiveAtHead(Variable variable, BlockID block) const { return m_liveAtHeadStamp[block.index()] == variable + 1; }
     void computeParameterType(VariableData&);
+    uint32_t numberOfParametersForEdgeResults(BlockID);
     ValueID addMergeParameter(VariableData&, BlockID);
     void appendArguments(Calculator&, std::span<const Variable>);
     ValueID reachingDefinitionOnEdge(Calculator&, Calculator::Variable*, const VariableData&, Edge);
@@ -107,6 +109,7 @@ private:
     Vector<ValueID> m_constantAtTail;
     Vector<unsigned> m_liveAtHeadStamp;
     Vector<unsigned> m_hasDefinitionStamp;
+    Vector<uint32_t> m_numberOfParametersForEdgeResults;
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -1,4 +1,5 @@
-# An unused read of a code unit goes where the string is flat: it only reads. On a string that may be a rope the read may run out of memory, and stays
+# An unused read of a code unit goes, and so does the flattening that nothing reads any more. On a string that may be a rope either may run out of memory,
+# which no program may count on: an operation that throws for nothing else goes with its unused result
 # FORM: Prepared
 # RUN: pass EliminateDeadCode
 
@@ -10,7 +11,7 @@ function f0 name="flat" parameters=[{type=string}, {type=int[0, 10]}] results=[{
     Return v0
 }
 # CHECK-LABEL: function f0 name="flat"
-# CHECK: v2: flatstring = FlattenString v0
+# CHECK-NEXT: b0(v0: string, v1: int[0, 10]):
 # CHECK-NEXT: Return v0
 
 function f1 name="mayBeRope" parameters=[{type=string}, {type=int[0, 10]}] results=[{type=string}] {
@@ -19,5 +20,5 @@ function f1 name="mayBeRope" parameters=[{type=string}, {type=int[0, 10]}] resul
     Return v0
 }
 # CHECK-LABEL: function f1 name="mayBeRope"
-# CHECK: v2: int[0, 65535] = GetStringCodeUnit v0, v1
+# CHECK-NEXT: b0(v0: string, v1: int[0, 10]):
 # CHECK-NEXT: Return v0

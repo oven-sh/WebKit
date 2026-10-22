@@ -7,14 +7,19 @@
 
 #if ENABLE(AOT)
 
+#include <cstdint>
+
 namespace JSC {
 
+class MarkStackArray;
 class StoredCellLog;
 
 namespace AOT {
 
 struct HeapWords {
     StoredCellLog* storedCellLog;
+    MarkStackArray* mutatorMarkStack;
+    uintptr_t* barriersExecuted;
 };
 
 } } // namespace JSC::AOT

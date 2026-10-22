@@ -1,0 +1,37 @@
+# The command comparison-chains: the chains of comparisons of one subject with constants, by kind, and the switch that a chain becomes
+# FORM: Prepared
+# RUN: comparison-chains function=f0 kind=Integers min=3
+# RUN(NUMBERS): comparison-chains function=f0 kind=Numbers min=3
+# RUN(SHORT): comparison-chains function=f0 kind=Integers min=4
+# RUN(CONVERT): comparison-chains function=f0 kind=Integers min=3 convert
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="three-integers" parameters=[{type=int}] results=[{type=int}] {
+  b0(v0: int):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v3 = Integer integer=2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v3
+  b4():
+    v5 = Integer integer=3
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v5
+  b6():
+    Return v0
+}
+# CHECK: head=b0 subject=v0 links=b2,b4 cases=1:b1 2:b3 3:b5 fall-through=b6
+# An integer is no subject of a chain of numbers, and a chain of three is none where four are asked for
+# NUMBERS-NOT: head=
+# SHORT-NOT: head=
+# CONVERT: head=b0 subject=v0 links=b2,b4 cases=1:b1 2:b3 3:b5 fall-through=b6
+# CONVERT: Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b4()
+# CONVERT-NOT: StrictEq

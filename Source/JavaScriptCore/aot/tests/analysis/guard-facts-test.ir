@@ -22,7 +22,7 @@ function f0 name="shapeOfCastAndNarrowedCopy" parameters=[{type=anything}] resul
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v5 facts: [Shape of v0 by v4 reads ShapeWords[L0]]
+# CHECK-NEXT: v5 facts: [Shape of v0 by v4 reads -]
 # CHECK-NEXT: b0 available at head: []
 # CHECK-NEXT: b1 available at head: []
 # CHECK-NEXT: b2 available at head: [v5.0]

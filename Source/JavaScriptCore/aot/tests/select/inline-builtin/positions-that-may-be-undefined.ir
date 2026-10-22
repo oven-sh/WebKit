@@ -1,0 +1,22 @@
+# The string methods that take positions are inline code where a position is a number, is left out, is undefined, or may be either (`to?: number`): the code asks.
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="optionalPositions" parameters=[{type=string}, {type=string}, {type=undefined|number}, {type=undefined|int}] results=[{type=anything}] {
+  b0(v0: string, v1: string, v2: undefined|number, v3: undefined|int):
+    v4 = CallBuiltin v0, v2, v3 overload=StringPrototypeSlice/0
+    v5 = CallBuiltin v0, v3, v2 overload=StringPrototypeSubstring/0
+    v6 = CallBuiltin v0, v1, v2 overload=StringPrototypeIndexOf/0
+    v7 = CallBuiltin v0, v1, v3 overload=StringPrototypeLastIndexOf/0
+    v8 = CallBuiltin v0, v2 overload=StringPrototypeCharCodeAt/0
+    v9 = NewArray v4, v5, v6, v7, v8 contents=anything
+    Return v9
+}
+# FORMS: function f0
+# FORMS-COUNT-5: Whole
+# FORMS-NOT: Call
+# CHECK-LABEL: function f0 name="optionalPositions"
+# CHECK-NOT: CallBuiltin
+# CHECK: Return

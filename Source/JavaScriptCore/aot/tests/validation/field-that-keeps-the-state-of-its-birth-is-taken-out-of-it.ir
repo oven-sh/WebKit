@@ -1,0 +1,78 @@
+# function Item() { this.kind = 1.5; this.size = 2.5; this.count = 3.5 }    function kindOf(item) { return item.kind }    register(kindOf, new Item)
+# The lie: the layout says that nothing deletes, redefines or retypes `kind`, so compiled code may read it without the test of the cell. The shell does each of the four.
+# In every build, validating or not, the run time ends the process where the field would leave its slot, and names the field and the layout. `size` makes no such promise.
+# `count` is said to be filled always: the same holds of it
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN(DELETED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); delete item.kind; print("went on"); };
+# RUN(RETYPED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); item.kind = "text"; print("went on"); };
+# RUN(EMPTIED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); item.kind = undefined; print("went on"); };
+# RUN(REDEFINED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); Object.defineProperty(item, "kind", { get() { return 1; } }); print("went on"); };
+# RUN(ASSIGNED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); Object.assign(item, { kind: undefined }); print("went on"); };
+# RUN(MARKED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); item.size = undefined; item.kind = null; print("went on"); };
+# RUN(FILLED): run-in-shell globalThis.register = (kindOf, item) => { print(kindOf(item)); delete item.count; print("went on"); };
+# RUN(OTHER): run-in-shell globalThis.register = (kindOf, item) => { delete item.size; item.size = "text"; item.kind = 3.5; print(kindOf(item), item.size); };
+# DELETED: 1.5
+# DELETED-NOT: went on
+# DELETED: AOT: DeleteField of field kind of layout {{*}} (Item), which compiled code reads without a test
+# DELETED: crashed with
+# RETYPED: 1.5
+# RETYPED-NOT: went on
+# RETYPED: AOT: StoreOfOtherType of field kind of layout {{*}} (Item), which compiled code reads without a test
+# RETYPED: crashed with
+# EMPTIED: 1.5
+# EMPTIED-NOT: went on
+# EMPTIED: AOT: StoreOfOtherType of field kind of layout {{*}} (Item), which compiled code reads without a test
+# EMPTIED: crashed with
+# REDEFINED: 1.5
+# REDEFINED-NOT: went on
+# REDEFINED: AOT: RedefineProperty of field kind of layout {{*}} (Item), which compiled code reads without a test
+# REDEFINED: crashed with
+# ASSIGNED: 1.5
+# ASSIGNED-NOT: went on
+# ASSIGNED: AOT: StoreOfOtherType of field kind of layout {{*}} (Item), which compiled code reads without a test
+# ASSIGNED: crashed with
+# MARKED: 1.5
+# MARKED-NOT: went on
+# MARKED: AOT: StoreOfOtherType of field kind of layout {{*}} (Item), which compiled code reads without a test
+# MARKED: crashed with
+# FILLED: 1.5
+# FILLED-NOT: went on
+# FILLED: AOT: DeleteField of field count of layout {{*}} (Item), which compiled code reads without a test
+# FILLED: crashed with
+# OTHER-NOT: AOT:
+# OTHER: 3.5 text
+# OTHER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Item" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="size" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth}}, {key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2, v2
+    v4 = NewClosure function=f2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v4, v3
+    Return
+}
+function f1 name="Item" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Double number=1.5
+    PropSet v2, v3 key="kind" mode=Strict
+    v5 = Double number=2.5
+    PropSet v2, v5 key="size" mode=Strict
+    v7 = Double number=3.5
+    PropSet v2, v7 key="count" mode=Strict
+    Return v2
+}
+function f2 name="kindOf" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}

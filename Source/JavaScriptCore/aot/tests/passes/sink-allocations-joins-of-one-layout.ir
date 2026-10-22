@@ -1,4 +1,5 @@
 # Allocations of one layout that meet at a block parameter are one shape: the join carries no tag, any number of arms may meet, and the arms may give a field different types
+# TODO: nobody: two allocations of one layout that meet at a join count as two shapes, so nine arms run into MaxVirtualObjectVariants and the object is allocated
 # FORM: Prepared
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsMergedAtJoins = 7

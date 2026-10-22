@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTSelectionContext.h"
 #include <algorithm>
 
@@ -31,10 +32,11 @@ static bool canBeShared(const DataNode& element)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static DataEncoding encodingOf(const Data& record)
+// Storage in the image may have holes. Storage that the first array of the site creates has none, and it is kept for the arrays that follow: where none follows, the array has storage of its own.
+static DataEncoding encodingOf(const Data& record, bool runsAtMostOnce)
 {
     const auto* array = record.root.tryAs<DataNode::Array>();
-    if (array && std::ranges::all_of(array->elements, canBeShared))
+    if (array && (isStorageOfArray(*array) || (!runsAtMostOnce && std::ranges::all_of(array->elements, canBeShared))))
         return DataEncoding::CopyOnWriteArray;
     return DataEncoding::ReadOnlyTree;
 }
@@ -45,8 +47,8 @@ void selectDataEncoding(SelectionContext& context)
     Function& function = context.pass().function;
     uint32_t count = 0;
     for (ValueID id : context.valuesWith(Opcode::Data)) {
-        Value& value = function.at(id);
-        value.setEncoding(encodingOf(program.at(value.data())));
+        Value& value = function.edit(id);
+        value.setEncoding(encodingOf(program.at(value.data()), context.pass().runsAtMostOnce(context.pass().analyses.useLists().blockOf(id))));
         ++count;
     }
     context.didSelectForms(SelectionRuleID::DataEncoding, count);

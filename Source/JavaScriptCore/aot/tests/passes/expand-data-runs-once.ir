@@ -1,0 +1,38 @@
+# A definition by name that runs once misses every cache, so a record with members that are no fields stays Data where it is made at most once, however small it is; where it may be made again a small one expands
+# RUN: pipeline ExpandData
+# OPTIONS: only-passes=ExpandData
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Literal" supertypes=[L2]
+layout L1 name="Point" fields=[{key="x" declared={type=number}}]
+layout L2 name="DeclaredDictionaryType"
+data d0 root=Object{layout=L0 members=[{key="content-type" value=String{value="text"}}, {key="accept" value=String{value="all"}}]}
+data d1 root=Object{layout=L1 members=[{key="x" value=Number{value=1}}]}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Data data=d0
+    v3 = Call v1, -, v2
+    v4 = Data data=d1
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f1
+    v7 = Call v1, -, v6
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v2:{{*}}= Data data=d0
+# CHECK: v4:{{*}}= NewObject -, {{*}} layout=L1 fields=[0]
+
+function f1 name="calledByAnybody" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+# CHECK-LABEL: function f1 name="calledByAnybody"
+# CHECK: [[head]]:{{*}}= NewObject layout=L0
+# CHECK-NEXT: PropDefine [[head]], {{*}} key="content-type"
+# CHECK-NEXT: PropDefine [[head]], {{*}} key="accept"
+# CHECK-NEXT: v0:{{*}}= FinishObject [[head]]

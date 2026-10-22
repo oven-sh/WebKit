@@ -24,6 +24,7 @@ public:
     using BlockMap = UncheckedKeyHashMap<BasicBlock*, BasicBlock*>;
     using ValueMap = UncheckedKeyHashMap<Value*, Value*>;
     enum class PhiTreatment : uint8_t { Demote, KeepIfJumpFed };
+    enum class ValueOwners : uint8_t { MayBeStale, AreCurrent };
 
     JS_EXPORT_PRIVATE explicit RegionCloner(Procedure&);
 
@@ -31,7 +32,7 @@ public:
     bool contains(BasicBlock* block) const { return m_sources.contains(block); }
     bool isEmpty() const { return m_sources.isEmpty(); }
 
-    JS_EXPORT_PRIVATE void demoteEscapingValues(PhiTreatment = PhiTreatment::Demote);
+    JS_EXPORT_PRIVATE void demoteEscapingValues(PhiTreatment = PhiTreatment::Demote, ValueOwners = ValueOwners::MayBeStale);
 
     void removeBlock(BasicBlock* block)
     {

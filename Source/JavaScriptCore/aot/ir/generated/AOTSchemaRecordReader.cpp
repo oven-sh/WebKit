@@ -53,36 +53,8 @@ void read(RecordChecker& checker, const Wire::TypeSite& wire, TypeSite& record)
 void read(RecordChecker& checker, const Wire::DeclaredType& wire, DeclaredType& record)
 {
     record.type = checker.id<TypeID>(wire.type);
-    record.written = checker.optionalID<TypeID>(wire.written);
-    record.predicted = checker.optionalID<TypeID>(wire.predicted);
     record.site = checker.optionalID<TypeSiteID>(wire.site);
     record.flags = checker.flags<PositionFlags>(wire.flags);
-    checker.didRead(record);
-}
-
-void read(RecordChecker& checker, const Wire::ClaimSource& wire, ClaimSource& record)
-{
-    if (wire.kind >= 3) {
-        checker.fail(InternalErrorKind::UnknownVariantCase);
-        return;
-    }
-    switch (static_cast<ClaimSource::Kind>(wire.kind)) {
-    case ClaimSource::Kind::None:
-        record = ClaimSource::None { };
-        break;
-    case ClaimSource::Kind::Field: {
-        ClaimSource::Field value;
-        value.key = checker.id<PropertyKeyID>(wire.words[0]);
-        record = WTF::move(value);
-        break;
-    }
-    case ClaimSource::Kind::Contents: {
-        ClaimSource::Contents value;
-        value.slot = checker.enumerator<ContentsSlot>(wire.words[0]);
-        record = WTF::move(value);
-        break;
-    }
-    }
     checker.didRead(record);
 }
 
@@ -352,6 +324,7 @@ void read(RecordChecker& checker, const Wire::Field& wire, Field& record)
     record.computedKey = checker.optionalNumber(wire.computedKey);
     read(checker, wire.declared, record.declared);
     record.flags = checker.flags<FieldFlags>(wire.flags);
+    record.form = checker.flags<FieldForm>(wire.form);
     record.originLayout = checker.optionalID<LayoutID>(wire.originLayout);
     record.originField = checker.optionalNumber(wire.originField);
     checker.didRead(record);
@@ -371,7 +344,7 @@ void read(RecordChecker& checker, const Wire::Layout& wire, LayoutRecord& record
     record.name = checker.optionalID<StringID>(wire.name);
     record.module = checker.optionalID<ModuleID>(wire.module);
     record.position = wire.position;
-    record.predictedBase = checker.optionalID<LayoutID>(wire.predictedBase);
+    record.base = checker.optionalID<LayoutID>(wire.base);
     record.constructor = checker.optionalID<FunctionID>(wire.constructor);
     {
         auto elements = checker.slice<Wire::Field>(wire.fields);
@@ -395,6 +368,12 @@ void read(RecordChecker& checker, const Wire::Layout& wire, LayoutRecord& record
     }
     record.computedKeyCount = wire.computedKeyCount;
     record.flags = checker.flags<LayoutFlags>(wire.flags);
+    {
+        auto words = checker.words(wire.declaredOrder);
+        record.declaredOrder.reserveInitialCapacity(words.size());
+        for (uint32_t word : words)
+            record.declaredOrder.append(word);
+    }
     checker.didRead(record);
 }
 
@@ -414,6 +393,74 @@ void read(RecordChecker& checker, const Wire::SourceRange& wire, SourceRange& re
 {
     record.start = wire.start;
     record.end = wire.end;
+    checker.didRead(record);
+}
+
+void read(RecordChecker& checker, const Wire::RelationSubject& wire, RelationSubject& record)
+{
+    record.kind = checker.enumerator<RelationSubjectKind>(wire.kind);
+    record.index = wire.index;
+    record.source = wire.source;
+    record.key = checker.optionalID<PropertyKeyID>(wire.key);
+    record.fate = checker.flags<ValueFate>(wire.fate);
+    record.results = wire.results;
+    checker.didRead(record);
+}
+
+void read(RecordChecker& checker, const Wire::StoredInto& wire, StoredInto& record)
+{
+    record.source = wire.source;
+    record.target = wire.target;
+    record.key = checker.optionalID<PropertyKeyID>(wire.key);
+    record.creationOperand = checker.optionalNumber(wire.creationOperand);
+    record.isOnEveryPath = checker.boolean(wire.isOnEveryPath);
+    record.isBeforeTargetLeaves = checker.boolean(wire.isBeforeTargetLeaves);
+    checker.didRead(record);
+}
+
+void read(RecordChecker& checker, const Wire::HandedTo& wire, HandedTo& record)
+{
+    record.source = wire.source;
+    record.call = wire.call;
+    record.argument = wire.argument;
+    checker.didRead(record);
+}
+
+void read(RecordChecker& checker, const Wire::OperandOf& wire, OperandOf& record)
+{
+    record.source = wire.source;
+    record.user = wire.user;
+    record.position = wire.position;
+    checker.didRead(record);
+}
+
+void read(RecordChecker& checker, const Wire::FunctionRelations& wire, FunctionRelations& record)
+{
+    {
+        auto elements = checker.slice<Wire::RelationSubject>(wire.subjects);
+        record.subjects.grow(elements.size());
+        for (size_t i = 0; i < elements.size(); ++i)
+            read(checker, elements[i], record.subjects[i]);
+    }
+    {
+        auto elements = checker.slice<Wire::StoredInto>(wire.stores);
+        record.stores.grow(elements.size());
+        for (size_t i = 0; i < elements.size(); ++i)
+            read(checker, elements[i], record.stores[i]);
+    }
+    {
+        auto elements = checker.slice<Wire::HandedTo>(wire.handed);
+        record.handed.grow(elements.size());
+        for (size_t i = 0; i < elements.size(); ++i)
+            read(checker, elements[i], record.handed[i]);
+    }
+    {
+        auto elements = checker.slice<Wire::OperandOf>(wire.operands);
+        record.operands.grow(elements.size());
+        for (size_t i = 0; i < elements.size(); ++i)
+            read(checker, elements[i], record.operands[i]);
+    }
+    record.resultsFullyListed = wire.resultsFullyListed;
     checker.didRead(record);
 }
 
@@ -455,6 +502,15 @@ void read(RecordChecker& checker, const Wire::Function& wire, FunctionRecord& re
         for (uint32_t word : words)
             record.functionTypes.append(checker.id<FunctionID>(word));
     }
+    {
+        auto words = checker.words(wire.builtinMembers);
+        for (size_t i = 1; i < words.size(); ++i)
+            checker.requireAscending(words[i - 1], words[i]);
+        record.builtinMembers.reserveInitialCapacity(words.size());
+        for (uint32_t word : words)
+            record.builtinMembers.append(checker.external<BuiltinID>(word));
+    }
+    read(checker, wire.relations, record.relations);
     checker.didRead(record);
 }
 
@@ -489,7 +545,7 @@ void read(RecordChecker& checker, const Wire::ColumnAdjustment& wire, ColumnAdju
 {
     record.offset = wire.offset;
     record.line = wire.line;
-    record.excessBytes = wire.excessBytes;
+    record.column = wire.column;
     checker.didRead(record);
 }
 
@@ -510,6 +566,8 @@ void read(RecordChecker& checker, const Wire::ModuleRequest& wire, ModuleRequest
     record.target = checker.id<ModuleID>(wire.target);
     record.phase = checker.enumerator<ImportPhase>(wire.phase);
     record.isDynamicStarExport = checker.boolean(wire.isDynamicStarExport);
+    record.kind = checker.enumerator<ModuleRequestKind>(wire.kind);
+    record.completes = checker.boolean(wire.completes);
     checker.didRead(record);
 }
 
@@ -545,6 +603,7 @@ void read(RecordChecker& checker, const Wire::ModuleFailure& wire, ModuleFailure
 {
     record.importer = checker.id<ModuleID>(wire.importer);
     record.specifier = checker.id<StringID>(wire.specifier);
+    record.exporter = checker.optionalID<ModuleID>(wire.exporter);
     checker.didRead(record);
 }
 
@@ -560,6 +619,7 @@ void read(RecordChecker& checker, const Wire::Module& wire, Module& record)
     record.runtimeModule = checker.optionalExternalID<RuntimeModuleID>(wire.runtimeModule);
     record.referrer = checker.optionalID<ModuleID>(wire.referrer);
     record.body = checker.optionalID<FunctionID>(wire.body);
+    record.exportsVariable = checker.optionalID<VariableID>(wire.exportsVariable);
     record.data = checker.optionalID<DataID>(wire.data);
     {
         auto elements = checker.slice<Wire::ModuleRequest>(wire.requests);

@@ -6,14 +6,14 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Legacy" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
-layout L1 kind=Instance name="Abstract" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L2 kind=Instance name="Only" predictedBase=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L3 kind=Instance name="Forked" predictedBase=L0 constructor=f3 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L4 kind=Instance name="Left" predictedBase=L3 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L5 kind=Instance name="Right" predictedBase=L3 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L6 kind=Instance name="Unused" predictedBase=L0 constructor=f6 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L7 kind=Instance name="Concrete" predictedBase=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L8 kind=Instance name="BelowConcrete" predictedBase=L7 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L7} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Abstract" base=L0 constructor=f1 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Only" base=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Forked" base=L0 constructor=f3 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L4 kind=Instance name="Left" base=L3 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L5 kind=Instance name="Right" base=L3 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L6 kind=Instance name="Unused" base=L0 constructor=f6 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L7 kind=Instance name="Concrete" base=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L8 kind=Instance name="BelowConcrete" base=L7 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L7} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 function f0 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}] {
   b0(v0: object):
     Return

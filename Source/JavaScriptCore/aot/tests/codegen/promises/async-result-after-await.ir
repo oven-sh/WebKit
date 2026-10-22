@@ -1,4 +1,4 @@
-# After an await the caller has the promise and usually waits on it, so the result goes straight to the stub, in fast code too. Before the first await the promise is fresh and the result is stored inline
+# After an await the caller has the promise and usually waits on it, so the result goes straight to the stub, in fast code too. A function that never awaits is a worker without a promise: its ramp makes the promise behind the call, so the promise is fresh and the result is stored inline
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code calls
@@ -30,16 +30,26 @@ function f2 name="afterAwait" flags=[IsAsync] parameters=[{type=number}] results
     v3 = FinishObject v2
     Return v3
 }
-# IR-LABEL: function f4 name="beforeAwait" module=m0 role=CoroutineBody
+# IR-LABEL: function f1 name="beforeAwait" module=m0 role=CoroutineRamp
 # IR-NOT: ReturnAsyncResult
-# IR: FulfillFreshPromise
+# IR: [[result]]: L0 = CallDirect v0 function=f4
+# IR-NEXT: [[promise]]: Promise = NewPromise
+# IR: FulfillFreshPromise [[promise]], [[result]],
+# IR-NOT: ReturnAsyncResult
+# IR-LABEL: function f4 name="beforeAwait" module=m0 role=AsyncWorker
+# IR-NOT: = NewPromise
+# IR-NOT: ReturnAsyncResult
 # IR-LABEL: function f5 name="afterAwait" module=m0 role=CoroutineBody
 # IR-NOT: FulfillFreshPromise
 # IR: = ReturnAsyncResult
-# CHECK: f4: size=
+# The promise is younger than what is stored into it, so the store has no barrier.
+# CHECK: f1: size=
 # CHECK-NOT: stub ReturnAsyncResult
-# CHECK: stub WriteBarrier x1
-# CHECK: f5: size=
+# CHECK-NOT: stub WriteBarrier
+# CHECK: f2: size=
+# CHECK: f4: size=
+# CHECK-NEXT: stub AllocateCell{{*}} x1
+# CHECK-NEXT: f5: size=
 # CHECK-NOT: stub WriteBarrier
 # CHECK: stub ReturnAsyncResult x1
 # CHECK-NOT: stub WriteBarrier

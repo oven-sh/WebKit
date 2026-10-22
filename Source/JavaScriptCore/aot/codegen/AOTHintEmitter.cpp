@@ -11,6 +11,8 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTInductionVariables.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubCatalog.h"
@@ -56,16 +58,82 @@ static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationPa
     });
 }
 
+static bool isLengthOfData(FunctionAnalyses& analyses, ValueID id)
+{
+    const Value& value = analyses.function().at(analyses.identityOf(id));
+    switch (value.opcode) {
+    case Opcode::GetArrayLength:
+    case Opcode::GetStringLength:
+    case Opcode::GetTypedArrayLength:
+        return true;
+    case Opcode::CallInline:
+        return value.inlineBuiltin() == InlineBuiltin::ArrayLength || value.inlineBuiltin() == InlineBuiltin::StringLength || value.inlineBuiltin() == InlineBuiltin::TypedArrayLength;
+    default:
+        return false;
+    }
+}
+
+static bool countsUpToLengthOfData(FunctionAnalyses& analyses, const NaturalLoop& loop)
+{
+    return std::ranges::any_of(analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& counter) {
+        if (counter.direction != InductionDirection::Increasing || counter.step.kind != InductionStepKind::Constant)
+            return false;
+        const InductionTest* test = counter.boundingTest();
+        return test && isLengthOfData(analyses, test->bound);
+    });
+}
+
+static bool likelyPathsAlwaysComplete(FunctionAnalyses& analyses, const NaturalLoop& loop)
+{
+    const Function& function = analyses.function();
+    const NaturalLoops& loops = analyses.naturalLoops();
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        BlockID id = loop.at(index);
+        if (loops.innerMostLoopOf(id) != &loop)
+            return false;
+        const Block& block = function.at(id);
+        if (block.frequency == BlockFrequency::Rare)
+            continue;
+        for (ValueID value : block.values) {
+            if (function.at(value).opcode != Opcode::LoopHint && !analyses.effectsOf(value).onAnyEdge().alwaysCompletes())
+                return false;
+        }
+        if (!analyses.effectsOfTerminator(id).onAnyEdge().alwaysCompletes())
+            return false;
+    }
+    return true;
+}
+
 HintEmitter::HintEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
 {
+}
+
+bool HintEmitter::endsWithinLengthOfData(BlockID block)
+{
+    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
+    return loop && countsUpToLengthOfData(analyses(), *loop) && likelyPathsAlwaysComplete(analyses(), *loop);
 }
 
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
     if (generator().validates())
         emitter<BarrierEmitter>().validateBeforeCollection(value);
-    emitPoll(value);
+    if (!endsWithinLengthOfData(value.block()))
+        emitPoll(value);
+}
+
+void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
+{
+    RELEASE_ASSERT(hasFaultingLoopPolls);
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->setRunsWithoutFrame(true);
+    uint32_t site = emitter<RuntimeCallEmitter>().addSite(context);
+    patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        if (!params.context().frameIsSetUp)
+            emitFaultingLoad(jit, params, records, site);
+    });
 }
 
 void HintEmitter::emitPoll(const ValueContext& value)
@@ -74,7 +142,8 @@ void HintEmitter::emitPoll(const ValueContext& value)
     patchpoint->isLoopPoll = true;
     Effects effects = value.effects().onAnyEdge();
     RELEASE_ASSERT(effects.mayBeTerminated && !effects.mayThrow);
-    emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None);
+    // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program.
+    emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(value);
 

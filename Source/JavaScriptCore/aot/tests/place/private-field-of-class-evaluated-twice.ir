@@ -1,6 +1,6 @@
 # A private field and the brand, which holds the token of the class evaluation, have slots of the layout, whether the class is evaluated once or more often. After its second evaluation the sites of a class take the generic path, so the definitions of such a class are in the program by name, and a definition by name needs a slot that can be absent: the run time throws where the field exists
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts
 
 module m0 path="main.js" displayPath="main.js" body=f0

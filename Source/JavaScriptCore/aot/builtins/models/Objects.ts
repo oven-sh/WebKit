@@ -8,6 +8,29 @@ export function entries(object) {
     return result;
 }
 
+export function fromEntries(iterable) {
+    "use strict";
+
+    // No literal: what the call answers has no layout of this file.
+    const object = Object.create(Object.prototype);
+    for (const entry of iterable)
+        $putByValDirect(object, entry[0], entry[1]);
+    return object;
+}
+
+export function groupBy(items, callback) {
+    "use strict";
+
+    const groups = Object.create(null);
+    let index = 0;
+    for (const item of items) {
+        const group = [];
+        $putByValDirect(groups, $toPropertyKey(callback(item, index++)), group);
+        $arrayPush(group, item);
+    }
+    return groups;
+}
+
 export function toLocaleString() {
     "use strict";
 

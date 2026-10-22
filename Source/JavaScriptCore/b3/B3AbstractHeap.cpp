@@ -94,10 +94,36 @@ void AbstractHeap::compute(unsigned begin)
     unsigned current = begin;
     for (AbstractHeap* child : m_children) {
         child->compute(current);
-        current = child->range().end();
+        current = child->m_range.end();
     }
 
     m_range = B3::HeapRange(begin, current);
+}
+
+unsigned AbstractHeap::numberOfLeaves() const
+{
+    if (m_children.isEmpty())
+        return 1;
+    unsigned count = 0;
+    for (const AbstractHeap* child : m_children)
+        count += child->numberOfLeaves();
+    return count;
+}
+
+bool AbstractHeap::isWithin(const AbstractHeap& other) const
+{
+    for (const AbstractHeap* heap = this; heap; heap = heap->m_parent) {
+        if (heap == &other)
+            return true;
+    }
+    return false;
+}
+
+void AbstractHeap::markAsStayingAcrossProcedures()
+{
+    m_staysAcrossProcedures = true;
+    for (AbstractHeap* child : m_children)
+        child->markAsStayingAcrossProcedures();
 }
 
 void AbstractHeap::shallowDump(PrintStream& out) const

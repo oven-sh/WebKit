@@ -1,0 +1,72 @@
+# function make(n) { return { plain: 1, get doubled() { return n * 2 } } }   const held = make(seed), spare = make(1)   function read() { return held.doubled }   function hand() { return held }
+# The literal defines the getter behind its allocation, and a read by that name lists the object among its receivers. So the layout gets a field for the accessor, whose slot holds the pair of functions.
+# The run time lets a pair into the slot only if its getter is a closure of f4, so the read is a test that the slot is filled, a load of the getter out of the pair and a call of f4,
+# which is small enough to be inlined: what is left of the call is the read of what the closure has captured.
+# Whatever else is defined under the name lies beside the slots, and the read finds it by name.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN(IR): pipeline Select
+# RUN: run-in-shell globalThis.seed = 4; globalThis.register = (read, hand) => { const o = hand(); print(read(), o.doubled, Object.keys(o).join()); const d = Object.getOwnPropertyDescriptor(o, "doubled"); print(typeof d.get, d.set, d.enumerable, d.configurable); Object.defineProperty(o, "doubled", { get() { return "other"; }, enumerable: true, configurable: true }); print(read()); Object.defineProperty(o, "doubled", d); print(read(), Object.getOwnPropertyDescriptor(o, "doubled").get === d.get); Object.defineProperty(o, "doubled", { value: 7, configurable: true }); print(read(), Object.keys(o).join()); delete o.doubled; print(read(), "doubled" in o); Object.setPrototypeOf(o, { doubled: "above" }); print(read()); };
+# FLOW: layout L0 {{*}}key="doubled" {{*}}form=[IsAccessor]
+# IR: name="read"
+# IR: = IsSlotFilled {{*}} key="doubled"
+# IR: f4 = GetSlotGetter {{*}} key="doubled"
+# IR-NEXT: = GetCapture {{*}} function=f4
+# IR-NOT: IsSlotFilled
+# IR: name="hand"
+# CHECK: 8 8 plain,doubled
+# CHECK-NEXT: function undefined true true
+# CHECK-NEXT: other
+# CHECK-NEXT: 8 true
+# CHECK-NEXT: 7 plain
+# CHECK-NEXT: undefined false
+# CHECK-NEXT: above
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="spare" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="seed" [isFreeName]
+    v5 = Call v0, -, v4
+    PutModuleVariable v5 variable=g0
+    v7 = PropGet v3 key="register" [isFreeName]
+    v8 = Integer integer=1
+    v9 = Call v0, -, v8
+    PutModuleVariable v9 variable=g1
+    v11 = Call v7, -, v1, v2
+    Return
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v0 function=f4
+    DefineGetter v2, v3 key="doubled"
+    v5 = FinishObject v2
+    Return v5
+}
+function f2 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="doubled"
+    Return v1
+}
+function f3 name="hand" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f4 name="doubled" kind=Getter captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}

@@ -1,0 +1,23 @@
+# The place of a store remembers the step that it took in the order of keys, and tests it in line, only in fast code: 52 bytes a store. Balanced code asks the stub at once, as compact code does: the stub has its own table of the runs that it has listed. The path on which the field is there is the same code
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Counter" constructor=f0 fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="one-store" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PutSlotOrAdd v0, -, v1 key="a" receivers=[L0] level=Proven
+    Return
+}
+function f2 name="run-of-stores" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PutSlots v0, -, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+# CHECK: f1: size=
+# CHECK-NEXT: stub DidCreateField.One x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub DidCreateField.Run x1
+# CHECK-NOT: RememberKeyOrderStep

@@ -37,7 +37,7 @@ static bool hasNoEffectInLoop(FunctionPassContext& context, ValueID id)
 {
     if (context.function.at(id).opcode == Opcode::LoopHint)
         return true;
-    return context.analyses.effectsOf(id).onAnyEdge().isRemovableWhenUnused();
+    return context.analyses.isRemovableWhenUnused(id);
 }
 
 static bool hasNoEffectInLoop(FunctionPassContext& context, const Block& block)
@@ -225,6 +225,9 @@ PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     while (removeOutermostDeadLoops(context))
         outcome = PassOutcome::Changed;
+    // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses;
     return outcome;
 }
 

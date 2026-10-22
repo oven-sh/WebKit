@@ -11,6 +11,8 @@
 #include "AOTBuiltinTable.h"
 #include "AOTHost.h"
 #include "AOTImageLoading.h"
+#include "AOTObject.h"
+#include "CustomGetterSetter.h"
 #include "Exception.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSArray.h"
@@ -49,18 +51,22 @@ static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTRuntimeCounters);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTBuiltinEntries);
 static JSC_DECLARE_HOST_FUNCTION(functionRequire);
-static JSC_DECLARE_HOST_FUNCTION(functionEvictCompiledModule);
 static JSC_DECLARE_HOST_FUNCTION(functionSetRequireCacheEntry);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideRequire);
+static JSC_DECLARE_HOST_FUNCTION(functionStoreInSlotWithoutTest);
+static JSC_DECLARE_CUSTOM_GETTER(getExportsOfModuleObject);
+static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
+static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
+static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
 static constexpr std::array<ASCIILiteral, 7> functionNames {
     "runCompiledEntryPoint"_s,
-    "evictCompiledModule"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
     "aotOperationCount"_s,
     "aotRuntimeCounters"_s,
     "aotBuiltinEntries"_s,
+    "storeInSlotWithoutTest"_s,
 };
 
 struct MappedImage {
@@ -171,16 +177,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRunCompiledEntryPoint, (JSGlobalObject* globalO
     return JSValue::encode(promise);
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionEvictCompiledModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    std::optional<ModuleID> module = moduleFromArgument(globalObject, callFrame->argument(0));
-    RETURN_IF_EXCEPTION(scope, { });
-    evictModule(globalObject, *module);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionSetRequireCacheEntry, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -231,16 +227,29 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTBuiltinEntries, (JSGlobalObject* globalObjec
     return JSValue::encode(BuiltinTable::singleton().describeForTesting(globalObject));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionStoreInSlotWithoutTest, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    const FieldData* field = object ? object->fieldNamed(object->state(), name) : nullptr;
+    if (!field || !object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2))))
+        return throwVMError(globalObject, scope, "the object has no slot of that name that can hold the value"_s);
+    return JSValue::encode(jsUndefined());
+}
+
 void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
 {
     const std::pair<NativeFunction, unsigned> functions[] = {
         { functionRunCompiledEntryPoint, 1 },
-        { functionEvictCompiledModule, 1 },
         { functionSetRequireCacheEntry, 2 },
         { functionOverrideRequire, 1 },
         { functionAOTOperationCount, 1 },
         { functionAOTRuntimeCounters, 0 },
         { functionAOTBuiltinEntries, 0 },
+        { functionStoreInSlotWithoutTest, 3 },
     };
     static_assert(std::size(functions) == functionNames.size());
 
@@ -256,29 +265,42 @@ std::span<const ASCIILiteral> shellFunctionNames()
     return functionNames;
 }
 
-static String directoryOf(StringView path)
+static ModuleID moduleOfModuleObject(JSGlobalObject* globalObject, JSObject* module)
 {
-    size_t lastSlash = path.reverseFind('/');
-    if (lastSlash == notFound)
-        return "."_s;
-    if (!lastSlash)
-        return "/"_s;
-    return path.left(lastSlash).toString();
+    return ModuleID(static_cast<uint32_t>(module->getDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), "numberInImage"_s)).asInt32()));
 }
 
-static void fillPathsAndRequire(JSGlobalObject* globalObject, JSString* path, CommonJSModuleObjects& objects)
+JSC_DEFINE_CUSTOM_GETTER(getExportsOfModuleObject, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    return JSValue::encode(moduleExports(globalObject, moduleOfModuleObject(globalObject, asObject(JSValue::decode(thisValue)))));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setExportsOfModuleObject, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName))
+{
+    setModuleExports(globalObject, moduleOfModuleObject(globalObject, asObject(JSValue::decode(thisValue))), JSValue::decode(value));
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getParentOfModuleObject, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    JSObject* parent = parentModuleObject(globalObject, moduleOfModuleObject(globalObject, asObject(JSValue::decode(thisValue))));
+    return JSValue::encode(parent ? JSValue(parent) : jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getChildrenOfModuleObject, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto pathText = path->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    objects.filename = path;
-    objects.dirname = jsString(vm, directoryOf(pathText.data));
-    objects.require = JSFunction::create(vm, globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    JSObject* module = asObject(JSValue::decode(thisValue));
+    auto* children = uncheckedDowncast<JSArray>(module->getDirect(vm, Identifier::fromString(vm, "listedChildren"_s)));
+    bool areShown = forEachNewChild(globalObject, moduleOfModuleObject(globalObject, module), [&](JSObject* child) {
+        children->push(globalObject, child);
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(areShown ? JSValue(children) : jsUndefined());
 }
 
-static void createCommonJSModule(JSGlobalObject* globalObject, JSString* path, JSObject* parent, CommonJSModuleObjects& objects)
+static void createModuleObject(JSGlobalObject* globalObject, JSString* path, ModuleID number, OptionSet<ModuleObjectTrait> traits, ModuleObjects& objects)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -287,59 +309,28 @@ static void createCommonJSModule(JSGlobalObject* globalObject, JSString* path, J
     RETURN_IF_EXCEPTION(scope, void());
     JSArray* paths = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, void());
-    JSObject* exports = constructEmptyObject(globalObject);
 
+    unsigned hidden = PropertyAttribute::DontEnum | 0;
     JSObject* module = constructEmptyObject(globalObject);
-    module->putDirect(vm, vm.propertyNames->exports, exports);
-    module->putDirect(vm, vm.propertyNames->id, path);
+    module->putDirect(vm, Identifier::fromString(vm, "numberInImage"_s), jsNumber(number.index()), hidden);
+    module->putDirect(vm, Identifier::fromString(vm, "listedChildren"_s), children, hidden);
+    if (traits.contains(ModuleObjectTrait::HasExportsVariable))
+        module->putDirectCustomAccessor(vm, vm.propertyNames->exports, CustomGetterSetter::create(vm, getExportsOfModuleObject, setExportsOfModuleObject), PropertyAttribute::CustomValue | 0);
+    module->putDirect(vm, vm.propertyNames->id, traits.contains(ModuleObjectTrait::IsMain) ? jsString(vm, String("."_s)) : path);
     module->putDirect(vm, Identifier::fromString(vm, "filename"_s), path);
-    module->putDirect(vm, Identifier::fromString(vm, "loaded"_s), jsBoolean(false));
-    module->putDirect(vm, Identifier::fromString(vm, "children"_s), children);
+    module->putDirect(vm, Identifier::fromString(vm, "loaded"_s), jsBoolean(true));
+    module->putDirectCustomAccessor(vm, Identifier::fromString(vm, "children"_s), CustomGetterSetter::create(vm, getChildrenOfModuleObject, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly);
     module->putDirect(vm, Identifier::fromString(vm, "paths"_s), paths);
-    module->putDirect(vm, Identifier::fromString(vm, "parent"_s), parent ? JSValue(parent) : jsUndefined());
+    module->putDirectCustomAccessor(vm, Identifier::fromString(vm, "parent"_s), CustomGetterSetter::create(vm, getParentOfModuleObject, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly);
 
     objects.module = module;
-    objects.exports = exports;
-    RELEASE_AND_RETURN(scope, fillPathsAndRequire(globalObject, path, objects));
+    objects.require = JSFunction::create(vm, globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
 }
 
-static ModuleAdoption adoptCommonJSModule(JSGlobalObject* globalObject, JSString* path, JSObject* module, CommonJSModuleObjects& objects)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    objects.module = module;
-    objects.exports = module->get(globalObject, vm.propertyNames->exports);
-    RETURN_IF_EXCEPTION(scope, ModuleAdoption::Rejected);
-    fillPathsAndRequire(globalObject, path, objects);
-    RETURN_IF_EXCEPTION(scope, ModuleAdoption::Rejected);
-    return ModuleAdoption::Adopted;
-}
-
-static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, CommonJSModuleObjects& objects)
+static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleObjects& objects)
 {
     objects.module = importMeta;
     objects.require = JSFunction::create(globalObject->vm(), globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
-}
-
-static ChildLink addChild(JSGlobalObject*, JSObject*, JSObject*)
-{
-    return ChildLink::Recorded;
-}
-
-static void pushObservableChild(JSGlobalObject* globalObject, JSObject* parent, JSObject* child)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue children = parent->get(globalObject, Identifier::fromString(vm, "children"_s));
-    RETURN_IF_EXCEPTION(scope, void());
-    if (auto* array = dynamicDowncast<JSArray>(children))
-        RELEASE_AND_RETURN(scope, array->push(globalObject, child));
-}
-
-static void removeFromRequireCache(JSGlobalObject*, JSString*)
-{
 }
 
 static JSValue requireSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue specifier)
@@ -351,7 +342,7 @@ static JSValue requireSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue
     RETURN_IF_EXCEPTION(scope, { });
     if (specifier.isString()) {
         if (std::optional<ModuleID> module = findModule(text))
-            RELEASE_AND_RETURN(scope, requireModule(globalObject, *module, nullptr));
+            RELEASE_AND_RETURN(scope, requireModule(globalObject, *module));
     }
     throwException(globalObject, scope, createError(globalObject, makeString("Cannot find module '"_s, text, '\'')));
     return { };
@@ -444,7 +435,7 @@ static void captureCommonJSExports(JSGlobalObject* globalObject, SyntheticExport
     }
 }
 
-static void captureSyntheticExports(JSGlobalObject* globalObject, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static JSObject* captureSyntheticExports(JSGlobalObject* globalObject, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -452,29 +443,35 @@ static void captureSyntheticExports(JSGlobalObject* globalObject, SyntheticExpor
     switch (rule) {
     case SyntheticExportRule::CommonJs:
     case SyntheticExportRule::CommonJsIgnoringAnnotation:
-        RELEASE_AND_RETURN(scope, captureCommonJSExports(globalObject, rule, value, names, values));
+        scope.release();
+        captureCommonJSExports(globalObject, rule, value, names, values);
+        return nullptr;
     case SyntheticExportRule::RuntimeModule:
         throwTypeError(globalObject, scope, "the shell has no runtime modules"_s);
-        return;
+        return nullptr;
     case SyntheticExportRule::None:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static JSObject* createAsyncModuleRequiredError(JSGlobalObject* globalObject, const String& path)
+{
+    return createTypeError(globalObject, makeString("require() async module \""_s, path, "\" is unsupported. use \"await import()\" instead."_s));
+}
+
 constinit const ModuleHost moduleHost {
-    .createCommonJSModule = createCommonJSModule,
-    .adoptCommonJSModule = adoptCommonJSModule,
+    .createModuleObject = createModuleObject,
     .createRequirer = createRequirer,
-    .addChild = addChild,
-    .pushObservableChild = pushObservableChild,
-    .removeFromRequireCache = removeFromRequireCache,
     .requireSpecifier = requireSpecifier,
     .resolveSpecifier = resolveSpecifier,
     .captureSyntheticExports = captureSyntheticExports,
     .requireNativeModule = nullptr,
     .captureNativeModuleExports = nullptr,
     .requireCache = nullptr,
+    .requireExtensions = nullptr,
+    .createAsyncModuleRequiredError = createAsyncModuleRequiredError,
+    .createEmptyJSONBodyError = nullptr,
 };
 
 } // namespace JSC::AOT::Shell

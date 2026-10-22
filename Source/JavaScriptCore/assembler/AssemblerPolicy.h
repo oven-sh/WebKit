@@ -30,17 +30,21 @@ struct AssemblerPolicy {
         policy.recordsProcessAddresses = true;
         policy.recordsLinkedSites = true;
         policy.shortensJumps = true;
+        policy.shortensEncodings = true;
         policy.oops = OopsForm::Breakpoint;
         return policy;
     }
 
     friend constexpr bool operator==(const AssemblerPolicy&, const AssemblerPolicy&) = default;
 
+    constexpr bool needsLinkRecords() const { return recordsProcessAddresses || recordsLinkedSites || shortensJumps; }
+
     CPUFeatureSet features;
     bool blindsConstants { true };
     bool recordsProcessAddresses { false };
     bool recordsLinkedSites { false };
     bool shortensJumps { false };
+    bool shortensEncodings { false };
     OopsForm oops { OopsForm::AbortWithReason };
 };
 

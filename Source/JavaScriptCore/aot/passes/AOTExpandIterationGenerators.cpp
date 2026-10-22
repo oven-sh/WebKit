@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTFuseGeneratorLoops.h"
+#include "AOTCoroutines.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -104,6 +104,23 @@ void emitGeneratorStep(IterationExpansion& expansion, ArmState& state, const Ste
     finishGeneratorStep(expansion, appendStatusTest(expansion, status, GeneratorStepStatus::Completed), value, request.readsValueWhenDone);
 }
 
+// The step suspends the function by itself where it has to wait: nothing is awaited behind it.
+// It answers with the value and whether the iterator is done, or with an iterator result that is still to be read by the protocol.
+void finishAsyncIteratorStep(IterationExpansion& expansion, ValueID step, const StepRequest& request)
+{
+    IRBuilder& builder = expansion.builder();
+    ValueID value = appendStepResult(expansion, step, StepGeneratorResult::Value);
+    ValueID status = appendStepResult(expansion, step, StepGeneratorResult::Status);
+
+    ValueID isResult = expansion.appendIsEqualToInteger(status, static_cast<int64_t>(AsyncGeneratorStepStatus::Result));
+    IRBuilder::BranchBlocks blocks = builder.emitBranch(isResult, BlockFrequency::Rare, BlockFrequency::Normal);
+    emitIteratorResultReads(expansion, value, request.readsValueWhenDone);
+
+    builder.moveToEndOf(blocks.notTaken);
+    ValueID done = expansion.appendIsEqualToInteger(status, static_cast<int64_t>(AsyncGeneratorStepStatus::Completed));
+    finishGeneratorStep(expansion, done, value, request.readsValueWhenDone);
+}
+
 void emitAsyncGeneratorStep(IterationExpansion& expansion, ArmState& state, const StepRequest& request)
 {
     IRBuilder& builder = expansion.builder();
@@ -114,17 +131,7 @@ void emitAsyncGeneratorStep(IterationExpansion& expansion, ArmState& state, cons
     }
 
     ValueID sent = request.sent ? request.sent : builder.appendUndefined();
-    ValueID step = builder.append(Opcode::StepAsyncGenerator, { state.subject, sent });
-    ValueID value = appendStepResult(expansion, step, StepGeneratorResult::Value);
-    ValueID status = appendStepResult(expansion, step, StepGeneratorResult::Status);
-
-    ValueID isAwaited = expansion.appendIsEqualToInteger(status, static_cast<int64_t>(AsyncGeneratorStepStatus::Awaited));
-    IRBuilder::BranchBlocks blocks = builder.emitBranch(isAwaited, BlockFrequency::Normal, BlockFrequency::Normal);
-    emitIteratorResultReads(expansion, appendAwait(builder, value), request.readsValueWhenDone);
-
-    builder.moveToEndOf(blocks.notTaken);
-    ValueID done = expansion.appendIsEqualToInteger(status, static_cast<int64_t>(AsyncGeneratorStepStatus::Completed));
-    finishGeneratorStep(expansion, done, value, request.readsValueWhenDone);
+    finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(builder, state.subject, sent), request);
 }
 
 void emitGeneratorClose(IterationExpansion& expansion, ArmState& state, IteratorCompletion completion)

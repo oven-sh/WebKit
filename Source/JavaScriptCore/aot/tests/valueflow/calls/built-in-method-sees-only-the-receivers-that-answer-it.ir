@@ -1,0 +1,66 @@
+# class Sized { get length() { .. } }    function run(o) { return o.slice() }    run([1]); run(new Sized())
+# In `o.m(..)` a built-in runs with a receiver as `this` only where the read of `m` from that receiver answers it. The instance has no `slice`: the call throws for it.
+# So Array.prototype.slice sees the array alone, and nobody asks the instance for its length.
+# class Like { get length() { .. } }  Like.prototype.slice = Array.prototype.slice;  new Like().slice(): this receiver answers the built-in, which asks it for its length.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f3
+# CHECK-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Sized" constructor=f2
+layout L1 kind=Instance name="Like" constructor=f4
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = NewArray v1 contents=anything
+    v3 = Call v0, -, v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4 layout=L0
+    v6 = NewClosure function=f3
+    DefineMethod v5, v6 layout=L0 methodKind=Getter key="length"
+    v8 = FinishClass v5 layout=L0
+    v9 = Construct v8
+    v10 = Call v0, -, v9
+    v11 = NewClosure function=f4
+    v12 = NewClass v11 layout=L1
+    v13 = NewClosure function=f5
+    DefineMethod v12, v13 layout=L1 methodKind=Getter key="length"
+    v15 = FinishClass v12 layout=L1
+    v16 = PropGet v15 key="prototype"
+    v17 = Builtin builtin=ArrayPrototypeSlice
+    PropSet v16, v17 key="slice"
+    v19 = Construct v15
+    v20 = PropGet v19 key="slice"
+    v21 = Call v20, v19 calleeKey="slice"
+    Return
+}
+function f1 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="slice"
+    v2 = Call v1, v0 calleeKey="slice"
+    Return v2
+}
+function f2 name="Sized" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f3 name="length" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Return v1
+}
+function f4 name="Like" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f5 name="length" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Return v1
+}

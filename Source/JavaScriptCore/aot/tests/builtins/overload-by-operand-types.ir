@@ -72,8 +72,8 @@ function f5 name="overloadNeedsTest" parameters=[{type=string}, {type=string}, {
     Return v4
 }
 # CHECK-LABEL: function f5 name="overloadNeedsTest"
-# CHECK-NOT: CallBuiltin
-# CHECK: v4: anything = Call v3, v0, v2, v1
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v4: anything = CallBuiltin v0, v2, v1 overload=StringPrototypeReplace/{{*}} builtinCallForm=AnyReceiver
 
 function f6 name="moveToOverloadOfNarrowedTypes" parameters=[{type=string}, {type=string}, {type=RegExp<pristine[Names]>}] results=[{type=anything}] {
   b0(v0: string, v1: string, v2: RegExp<pristine[Names]>):

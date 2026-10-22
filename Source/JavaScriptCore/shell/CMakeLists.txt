@@ -180,6 +180,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../b3/testb3_bun_heap_sets.cpp
         ../b3/testb3_bun_hoisting.cpp
         ../b3/testb3_bun_known_properties.cpp
+        ../b3/testb3_bun_loop_phases.cpp
         ../b3/testb3_bun_loop_plans.cpp
         ../b3/testb3_bun_loops.cpp
         ../b3/testb3_bun_numbering.cpp
@@ -199,7 +200,6 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../b3/testb3_bun_selects.cpp
         ../b3/testb3_bun_shared_steps.cpp
         ../b3/testb3_bun_store_merging.cpp
-        ../b3/testb3_bun_strip_mining.cpp
         ../b3/testb3_bun_thread_jumps.cpp
         ../b3/testb3_bun_version_counted_loops.cpp
         ../b3/testb3_bun_version_loops.cpp

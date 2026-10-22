@@ -76,7 +76,7 @@ function f1 name="patternWithTwoSteps" parameters=[{type=anything}] results=[{ty
     v4 = CallDirect v2, v0, v3 function=f4 @41
     v5 = StepGenerator v3, v1 check=None @60
     v6 = ResultAt v5 index=0
-    v7 = StepGenerator v3, v1 check=None @61
+    v7 = StepGenerator v3, v1 check=None @60
     v8 = ResultAt v7 index=0
     v9 = StepGenerator v3, v1 resumeMode=Return check=None @62
     v10 = Add v6, v8
@@ -98,8 +98,8 @@ function f1 name="patternWithTwoSteps" parameters=[{type=anything}] results=[{ty
 # CHECK-NEXT: [[return3]]: 2 = Integer integer=2 @62
 # CHECK-NEXT: Jump -> next [[enter3]](v1, [[return3]], {{*}}, [[carriedFirst3]], v8)
 # CHECK: [[afterFirst3]](v6: anything,
-# CHECK: : 2 = Integer integer=2 @61
-# CHECK-NEXT: [[secondNext3]]: 0 = Integer @61
+# CHECK: : 2 = Integer integer=2 @60
+# CHECK-NEXT: [[secondNext3]]: 0 = Integer @60
 # CHECK-NEXT: Jump -> next [[enter3]](v1, [[secondNext3]], {{*}}, v6, [[carriedSecond3]])
 # CHECK: [[afterStart3]](v4: anything):
 # CHECK: : 1 = Integer integer=1 @60

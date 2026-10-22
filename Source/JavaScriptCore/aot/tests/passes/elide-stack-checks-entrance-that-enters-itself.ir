@@ -1,0 +1,114 @@
+# An entrance leaves its check to what it enters. One that enters itself by a tail call would leave it to nobody, and a cycle without a check is a cycle without a poll: it checks for itself.
+# Of two entrances that enter each other one checks. Entrances in no cycle are covered by their callers as before.
+# FORM: Selected
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksDeferredToCallee = 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f6
+    Return v3
+}
+
+function f1 name="entersItself" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f2 parameter=0} {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f1
+    ReturnCall v2 requirement=Allowed
+  b2():
+    v3 = CallDirect v0 function=f2
+    ReturnCall v3 requirement=Allowed
+}
+
+function f2 name="entersItself" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1} {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v1 function=f3
+    v3 = CallDirect v2 function=f6
+    Return v3
+}
+
+function f3 name="entersTheOther" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f5 parameter=0} {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f4
+    ReturnCall v2 requirement=Allowed
+  b2():
+    v3 = CallDirect v0 function=f5
+    ReturnCall v3 requirement=Allowed
+}
+
+function f4 name="entersTheFirst" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f8 parameter=0} {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f3
+    ReturnCall v2 requirement=Allowed
+  b2():
+    v3 = CallDirect v0 function=f8
+    ReturnCall v3 requirement=Allowed
+}
+
+function f5 name="entersTheOther" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f3} {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f6 name="firstOfChain" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f9 parameter=0} {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f7
+    ReturnCall v2 requirement=Allowed
+  b2():
+    v3 = CallDirect v0 function=f9
+    ReturnCall v3 requirement=Allowed
+}
+
+function f7 name="secondOfChain" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f10 parameter=0} {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f10
+    ReturnCall v1 requirement=Allowed
+}
+
+function f8 name="entersTheFirst" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f9 name="firstOfChain" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f6} {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f10 name="secondOfChain" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f7} {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK: f0 stack check: CoveredByCallers
+# CHECK-NEXT: f1 stack check: Required
+# CHECK-NEXT: f2 stack check: Required
+# CHECK-NEXT: f3 stack check: CoveredByCallers
+# CHECK-NEXT: f4 stack check: Required
+# CHECK-NEXT: f5 stack check: Required
+# CHECK-NEXT: f6 stack check: CoveredByCallers
+# CHECK-NEXT: f7 stack check: CoveredByCallers
+# CHECK-NEXT: f8 stack check: CoveredByCallers
+# CHECK-NEXT: f9 stack check: CoveredByCallers
+# CHECK-NEXT: f10 stack check: CoveredByCallers

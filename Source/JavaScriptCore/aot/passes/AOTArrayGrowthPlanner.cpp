@@ -11,6 +11,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTResultRules.h"
 #include <algorithm>
 
@@ -93,10 +94,116 @@ std::optional<GrowthPlan> ArrayCapacityPlanner::planGrowth(const NaturalLoop& lo
     return GrowthPlan { id, array, loop.header(), count, 1 };
 }
 
+TripCount ArrayCapacityPlanner::finishedIterations(const NaturalLoop& loop, ValueID collection, ProgramPoint point)
+{
+    auto [counter, test] = findUnitStepCounter(loop);
+    if (!counter)
+        return { };
+
+    auto termAtPoint = [&](ValueID id) -> CapacityTerm {
+        CapacityTerm term = termOf({ collection, point, &loop }, id);
+        if (term.value && !m_analyses.dominates(term.value, point))
+            return { };
+        return term;
+    };
+    CapacityTerm current = termAtPoint(counter->parameter);
+    CapacityTerm start = termAtPoint(counter->start);
+    if (counter->step.constant > 0)
+        return { current, start, 0 };
+    return { start, current, 0 };
+}
+
+// The one block from which the loop is entered, where that block leads nowhere else.
+BlockID ArrayCapacityPlanner::findPreheader(const NaturalLoop& loop)
+{
+    BlockID preheader;
+    for (Edge edge : m_analyses.cfg().incomingEdges(loop.header())) {
+        if (m_analyses.naturalLoops().belongsTo(edge.from, loop))
+            continue;
+        if (preheader)
+            return { };
+        preheader = edge.from;
+    }
+    if (!preheader || m_function.at(preheader).terminator.kind != TerminatorKind::Jump)
+        return { };
+    return preheader;
+}
+
+// The table of a Map or a Set grows by half, and each step leaves the table before it behind. In a counted loop a table that is full grows once, to what the loop is still to add.
+// An iteration may skip the addition: the run time goes by the share of them that have added an entry.
+std::optional<GrowthPlan> ArrayCapacityPlanner::planCollectionGrowth(const NaturalLoop& loop, ProgramPoint point)
+{
+    const Program& program = m_context.program;
+    ValueID id = m_function.at(point.block).values[point.index];
+    const Value& addition = m_function.at(id);
+    if (addition.opcode != Opcode::CallBuiltin)
+        return std::nullopt;
+    std::optional<InlineBuiltin> implementation = inlineImplementationOf(program, addition);
+    if (implementation != InlineBuiltin::MapSet && implementation != InlineBuiltin::SetAdd)
+        return std::nullopt;
+    if (m_analyses.blockFrequencies().classOf(point.block) == BlockFrequency::Rare)
+        return std::nullopt;
+
+    ValueID collection = addition.receiverOperand();
+    BlockID preheader = findPreheader(loop);
+    if (!preheader || !isInvariantIn(m_analyses, loop, collection))
+        return std::nullopt;
+    // A value that is invariant may still be computed in the loop.
+    if (!m_analyses.dominates(collection, ProgramPoint { preheader, static_cast<uint32_t>(m_function.at(preheader).values.size()) }))
+        return std::nullopt;
+    if (!makeSizeRead(m_context, collection, implementation == InlineBuiltin::MapSet ? Builtins::MapPrototypeSize : Builtins::SetPrototypeSize))
+        return std::nullopt;
+
+    auto isKnown = [](const TripCount& count) {
+        auto isWhole = [](const CapacityTerm& term) {
+            return term.kind == CapacityTermKind::Constant || term.kind == CapacityTermKind::Integer;
+        };
+        return isWhole(count.added) && isWhole(count.subtracted);
+    };
+    TripCount remaining = remainingIterations(loop, collection, point);
+    TripCount finished = finishedIterations(loop, collection, point);
+    if (!isKnown(remaining) || !isKnown(finished))
+        return std::nullopt;
+    return GrowthPlan { id, collection, loop.header(), remaining, 1, finished, preheader };
+}
+
 Vector<GrowthPlan, 4> ArrayCapacityPlanner::collectGrowthPlans()
 {
-    const NaturalLoops& loops = m_analyses.naturalLoops();
+    return collectGrowthPlans(Opcode::ReserveArrayCapacity, &ArrayCapacityPlanner::planGrowth);
+}
+
+Vector<GrowthPlan, 4> ArrayCapacityPlanner::collectCollectionGrowthPlans()
+{
+    auto keyOf = [&](const GrowthPlan& plan) {
+        return m_analyses.identityOf(builtinCallOf(m_context.program, m_function.at(plan.append)).arguments[0]);
+    };
+    auto addsTo = [&](const GrowthPlan& plan, const GrowthPlan& other) {
+        return plan.loopHeader == other.loopHeader && m_analyses.identityOf(plan.array) == m_analyses.identityOf(other.array);
+    };
+    // The second addition of a key adds nothing.
     Vector<GrowthPlan, 4> plans;
+    for (GrowthPlan& plan : collectGrowthPlans(Opcode::ReserveCollectionCapacity, &ArrayCapacityPlanner::planCollectionGrowth)) {
+        bool repeatsKey = plans.containsIf([&](const GrowthPlan& other) {
+            return addsTo(plan, other) && keyOf(plan) == keyOf(other);
+        });
+        if (!repeatsKey)
+            plans.append(WTF::move(plan));
+    }
+    for (GrowthPlan& plan : plans) {
+        plan.elementsPerIteration = std::ranges::count_if(plans, [&](const GrowthPlan& other) {
+            return addsTo(plan, other);
+        });
+    }
+    return plans;
+}
+
+Vector<GrowthPlan, 4> ArrayCapacityPlanner::collectGrowthPlans(Opcode reservation, GrowthPlanner planAt)
+{
+    Vector<GrowthPlan, 4> plans;
+    if (!m_analyses.cfg().hasCycle())
+        return plans;
+
+    const NaturalLoops& loops = m_analyses.naturalLoops();
     Vector<ReservedArray, 4> reservedArrays;
     if (!loops.numLoops())
         return plans;
@@ -108,9 +215,9 @@ Vector<GrowthPlan, 4> ArrayCapacityPlanner::collectGrowthPlans()
         const BlockValues& values = m_function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             const Value& value = m_function.at(values[index]);
-            if (value.opcode == Opcode::ReserveArrayCapacity)
-                reservedArrays.append({ loop->header(), m_analyses.identityOf(value.arrayOperand()) });
-            else if (std::optional<GrowthPlan> plan = planGrowth(*loop, { block, index }))
+            if (value.opcode == reservation)
+                reservedArrays.append({ loop->header(), m_analyses.identityOf(value.operand(0)) });
+            else if (std::optional<GrowthPlan> plan = (this->*planAt)(*loop, { block, index }))
                 plans.append(WTF::move(*plan));
         }
     }

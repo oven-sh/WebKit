@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="A" constructor=f1
-layout L1 kind=Instance name="B" predictedBase=L0 constructor=f2 flags=[HasHeritage]
+layout L1 kind=Instance name="B" base=L0 constructor=f2 flags=[HasHeritage]
 variable g0 name="A" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="B" module=m0 declared={type=anything} initialization=Undefined
 

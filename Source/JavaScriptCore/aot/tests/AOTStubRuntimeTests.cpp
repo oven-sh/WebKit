@@ -13,6 +13,7 @@
 #include "AOTBuiltinTableRealm.h"
 #include "AOTCellFormat.h"
 #include "AOTCompiledStructure.h"
+#include "AOTLayoutData.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObjectWords.h"
 #include "AOTStubEntrypoints.h"
@@ -99,7 +100,10 @@ static const BoxedCallEntry* probeBoxedCalls(const StubWords& words, const void*
 
 static const void* nativeFunctionWordOf(LoadedProgram& program, BuiltinID builtin)
 {
-    std::expected<JSCell*, BuiltinLookupFailure> cell = findInRealm(program.realm(), BuiltinCellKey::object(builtin));
+    bool isAccessor = BuiltinTable::singleton().at(builtin).kind == BuiltinKind::Accessor;
+    std::expected<JSCell*, BuiltinLookupFailure> cell = findInRealm(program.realm(), isAccessor ? BuiltinCellKey::getter(builtin) : BuiltinCellKey::object(builtin));
+    if (!cell.has_value())
+        dataLogLn("the realm has no function for built-in ", builtin.index());
     AOT_TEST_CHECK(cell.has_value());
     auto* function = dynamicDowncast<JSFunction>(*cell);
     AOT_TEST_CHECK(function && function->isHostFunction());
@@ -436,15 +440,32 @@ static void testAllocationAtSites()
     runner.recordCallsOf(Entry::operationAOTAllocateSlow);
     AllocationSites sites(runner);
 
-    for (CellInitialization initialization : { CellInitialization::Header, CellInitialization::HeaderAndWords }) {
+    for (CellInitialization initialization : { CellInitialization::Header, CellInitialization::HeaderAndWords, CellInitialization::HeaderAndZeros, CellInitialization::HeaderAndWordsAndZeros }) {
+        const uint64_t wordOfBody = zeroesBody(initialization) ? 0 : FakeCell::untouched;
+        auto holdsWordOfBody = [&](std::span<const uint64_t> words) {
+            return std::ranges::all_of(words, [&](uint64_t word) { return word == wordOfBody; });
+        };
         StubKey key = allocateCell(initialization);
         FakeCell cell;
         sites.makeRoomFor(cell);
         StubRun run = runner.run(key, { AllocationSites::siteWithAllocator });
         AOT_TEST_CHECK(!run.calledOperation && run.result == cell.address() && !sites.hasRoom());
         AOT_TEST_CHECK(cell.words[0] == AllocationSites::header);
-        AOT_TEST_CHECK(cell.words[1] == (initialization == CellInitialization::HeaderAndWords ? AllocationSites::orderAndShapeWords : FakeCell::untouched));
-        AOT_TEST_CHECK(cell.words[2] == FakeCell::untouched);
+        AOT_TEST_CHECK(cell.words[1] == (storesWords(initialization) ? AllocationSites::orderAndShapeWords : wordOfBody));
+        AOT_TEST_CHECK(holdsWordOfBody(std::span(cell.words).subspan(2)));
+
+        // The cells of the allocator have an odd number of chunks, and nothing behind the cell is written.
+        constexpr uint32_t sizeWithOddChunks = sizeof(FakeCell) - cellSizeStep;
+        static_assert(sizeWithOddChunks / copyChunkBytes % 2 && cellSizeStep == 2 * sizeof(uint64_t));
+        FakeCell shorter;
+        sites.makeRoomFor(shorter);
+        sites.allocator.at<uint32_t>(LocalAllocator::offsetOfCellSize()) = sizeWithOddChunks;
+        run = runner.run(key, { AllocationSites::siteWithAllocator });
+        sites.allocator.at<uint32_t>(LocalAllocator::offsetOfCellSize()) = sizeof(FakeCell);
+        sites.allocator.makeRoomAt(0, 0);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == shorter.address() && shorter.words[0] == AllocationSites::header);
+        AOT_TEST_CHECK(holdsWordOfBody(std::span(shorter.words).subspan(2, FakeCell::numberOfWords - 4)));
+        AOT_TEST_CHECK(shorter.words[FakeCell::numberOfWords - 2] == FakeCell::untouched && shorter.words[FakeCell::numberOfWords - 1] == FakeCell::untouched);
 
         checkCellFromOperation(runner, key, AllocationSites::siteWithAllocator);
         checkCellFromOperation(runner, key, AllocationSites::siteWithoutAllocator);
@@ -459,6 +480,7 @@ static void testAllocationAtSites()
         run = runner.run(sizedKey, { AllocationSites::siteWithAllocator });
         AOT_TEST_CHECK(!run.calledOperation && run.result == first.address() && sites.allocator.intervalStart() == first.address() + sizeInKey);
         AOT_TEST_CHECK(first.words[0] == AllocationSites::header);
+        AOT_TEST_CHECK(holdsWordOfBody(std::span(first.words).subspan(2, 2)) && first.words[4] == FakeCell::untouched);
         sites.allocator.makeRoomAt(0, 0);
         checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithAllocator);
         checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithoutRecord);
@@ -561,6 +583,8 @@ static void testCreatedFieldsOfObjectsWithExtraProperties()
     std::array<KeyOrderTransition, 16> transitions { };
     instance.objects.keyOrderTransitions = transitions.data();
     instance.objects.keyOrderTransitionMask = static_cast<uint32_t>(transitions.size() - 1);
+    Vector<KeyOrderRun> runs(numberOfKeyOrderRuns);
+    instance.objects.keyOrderRuns = runs.mutableSpan().data();
     auto publish = [&](uint32_t key, uint32_t after) {
         uint32_t index = KeyOrderTransition::hashOf(wordsBefore, key) & instance.objects.keyOrderTransitionMask;
         while (!transitions[index].isEmpty())
@@ -572,6 +596,9 @@ static void testCreatedFieldsOfObjectsWithExtraProperties()
 
     FakeObject<sizeof(CompiledStructure)> structure;
     instance.prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
+    // The layout lists no order.
+    FakeObject<sizeof(LayoutData)> layout;
+    structure.at<uint64_t>(CompiledStructure::offsetOfLayout()) = layout.address();
     uint16_t& numberInStructure = structure.at<uint16_t>(CompiledStructure::offsetOfNumberOfExtraKeys());
     uint32_t& bitsOfStructure = structure.at<uint32_t>(Structure::bitFieldOffset());
     FakeObject<offsetOfFirstField + sizeof(uint64_t)> object;
@@ -591,6 +618,18 @@ static void testCreatedFieldsOfObjectsWithExtraProperties()
     AOT_TEST_CHECK(create(0) && orderWord == orderAfterWithoutExtraKeys);
     AOT_TEST_CHECK(!create(orderWordHasExtraProperties));
 
+    // The run of an object without extra properties is remembered: it needs its transition no more, and keeps the flags of the order word. Nothing is remembered of the others.
+    const KeyOrderRun& remembered = runs[indexOfKeyOrderRun(wordsBefore, slotKey)];
+    AOT_TEST_CHECK(remembered.orderAndShapeWordsBefore == wordsBefore && remembered.slotKeys == slotKey && remembered.orderAndCountAfter == orderAfterWithoutExtraKeys);
+    std::array<KeyOrderTransition, 16> published = transitions;
+    transitions.fill({ });
+    AOT_TEST_CHECK(create(0) && orderWord == orderAfterWithoutExtraKeys);
+    AOT_TEST_CHECK(create(orderWordHasFieldOutsideSlot) && orderWord == (orderAfterWithoutExtraKeys | orderWordHasFieldOutsideSlot));
+    runs[indexOfKeyOrderRun(wordsBefore, slotKey)].slotKeys = slotKey + 1;
+    AOT_TEST_CHECK(!create(0));
+    transitions = published;
+    AOT_TEST_CHECK(create(0) && orderWord == orderAfterWithoutExtraKeys && remembered.slotKeys == slotKey);
+
     numberInStructure = numberOfExtraKeys;
     AOT_TEST_CHECK(create(orderWordHasExtraProperties) && orderWord == (orderAfter | orderWordHasExtraProperties));
     numberInStructure = 0;
@@ -604,12 +643,75 @@ static void testCreatedFieldsOfObjectsWithExtraProperties()
     AOT_TEST_CHECK(!create(orderWordHasExtraProperties));
 }
 
+static void testCreatedFieldsRememberedAtTheirPlace()
+{
+    constexpr uint32_t slotKey = offsetOfFirstField;
+    constexpr uint32_t orderBefore = orderWordOf(3, 1);
+    constexpr uint32_t orderAfter = orderWordOf(3, 2);
+    constexpr uint64_t wordsBefore = static_cast<uint64_t>(shapeWordOf(9)) << 32 | orderBefore;
+    StubRunner runner;
+    Instance& instance = runner.instance();
+    std::array<KeyOrderTransition, 16> transitions { };
+    instance.objects.keyOrderTransitions = transitions.data();
+    instance.objects.keyOrderTransitionMask = static_cast<uint32_t>(transitions.size() - 1);
+    Vector<KeyOrderRun> runs(numberOfKeyOrderRuns);
+    instance.objects.keyOrderRuns = runs.mutableSpan().data();
+    transitions[KeyOrderTransition::hashOf(wordsBefore, transitionKeyFor(slotKey, 0)) & instance.objects.keyOrderTransitionMask] = { wordsBefore, transitionKeyFor(slotKey, 0), orderAfter };
+
+    FakeObject<sizeof(CompiledStructure)> structure;
+    instance.prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
+    // The layout lists no order.
+    FakeObject<sizeof(LayoutData)> layout;
+    structure.at<uint64_t>(CompiledStructure::offsetOfLayout()) = layout.address();
+    FakeObject<offsetOfFirstField + sizeof(uint64_t)> object;
+    object.setHeader(static_cast<uint32_t>(structure.address()), CompiledObjectType);
+    object.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(9);
+    uint32_t& orderWord = object.at<uint32_t>(offsetOfOrderWord);
+
+    auto stepOf = [&](uint32_t place) -> KeyOrderStepCache& {
+        return reinterpret_cast<KeyOrderStepCache*>(reinterpret_cast<uint8_t*>(&instance) + InstanceLayout::offsetOfKeyOrderSteps)[place % numberOfKeyOrderStepCaches];
+    };
+    auto create = [&](CreatedFieldsAtPlace fields, uint32_t place, uint32_t flags) {
+        Entry operation = fields == CreatedFieldsAtPlace::One ? Entry::operationAOTDidCreateFieldAt : Entry::operationAOTDidCreateFieldsAt;
+        orderWord = orderBefore | flags;
+        runner.recordCallsOf(operation);
+        StubRun run = runner.run(didCreateFieldAtPlace(fields), { object.address(), slotKey, place + 1 });
+        runner.countCallsOf(operation);
+        return !run.calledOperation;
+    };
+
+    // The first call of each pair finds the transition or the run that the call in front of it has remembered. Either way the place remembers the step, under its turn through the entries.
+    for (uint32_t place : { 0u, 5u, numberOfKeyOrderStepCaches + 5, 3 * numberOfKeyOrderStepCaches + 5, maxPlacesWithKeyOrderStepCache - 1 }) {
+        for (CreatedFieldsAtPlace fields : { CreatedFieldsAtPlace::One, CreatedFieldsAtPlace::Run }) {
+            KeyOrderStepCache& step = stepOf(place);
+            step = { };
+            AOT_TEST_CHECK(create(fields, place, 0) && orderWord == orderAfter);
+            AOT_TEST_CHECK(step.orderWordBefore == orderBefore && step.shapeWord == shapeWordOf(9) && step.orderWordAfter == orderAfter);
+            AOT_TEST_CHECK(step.turnPlusOne == place / numberOfKeyOrderStepCaches + 1 && step.turnPlusOne <= UINT8_MAX);
+        }
+    }
+
+    // Nothing is remembered of an object with a flag in its order word, and nothing where the run time is asked.
+    for (CreatedFieldsAtPlace fields : { CreatedFieldsAtPlace::One, CreatedFieldsAtPlace::Run }) {
+        stepOf(5) = { };
+        AOT_TEST_CHECK(create(fields, 5, orderWordHasFieldOutsideSlot) && orderWord == (orderAfter | orderWordHasFieldOutsideSlot));
+        AOT_TEST_CHECK(!stepOf(5).turnPlusOne && !stepOf(5).shapeWord);
+    }
+    transitions.fill({ });
+    runs.fill(KeyOrderRun { });
+    for (CreatedFieldsAtPlace fields : { CreatedFieldsAtPlace::One, CreatedFieldsAtPlace::Run }) {
+        AOT_TEST_CHECK(!create(fields, 5, 0) && orderWord == orderBefore);
+        AOT_TEST_CHECK(!stepOf(5).turnPlusOne && !stepOf(5).shapeWord);
+    }
+}
+
 std::span<const NativeTest> stubRuntimeTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/allocation-at-sites"_s, ImageTests::whenExecutable<testAllocationAtSites> },
         { "stubs/slim-closures"_s, ImageTests::whenExecutable<testSlimClosures> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
+        { "stubs/created-fields-remembered-at-their-place"_s, ImageTests::whenExecutable<testCreatedFieldsRememberedAtTheirPlace> },
         { "stubs/object-copies"_s, ImageTests::whenExecutable<testObjectCopies> },
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },
         { "stubs/binary-operations-on-numbers"_s, ImageTests::whenExecutable<testBinaryOperationsOnNumbers> },

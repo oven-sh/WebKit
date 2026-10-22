@@ -1,4 +1,4 @@
-# A report that can fail has one call site and goes on to the return, one that always passes has no code of its own, and a Claim throws whatever the policy is
+# A report that can fail has one call site and goes on to the return, and one that always passes has no code of its own. In a build that logs, a Check leaves a report in the arm behind its failed test: that one has no test of its own and always calls
 # FORM: Selected
 # RUN: generate-code
 # OPTIONS: check=validate-back-end type-errors=log
@@ -6,10 +6,10 @@
 # CHECK: f1: size={{*}} sites=0 handlers=0 
 # CHECK: f2: size={{*}} sites=1 handlers=0 
 # CHECK: f3: size={{*}} sites=1 handlers=0 
+# A number is boxed for the report. NaN is made canonical on a rare arm, and the back end copies the short rest of the function, with the call, into that arm.
 # CHECK: f4: size={{*}} sites=1 handlers=0 
 # CHECK: f5: size={{*}} sites=1 handlers=1 
 # CHECK: f6: size={{*}} sites=1 handlers=0 
-# STATISTIC: TypeChecksInB3 = 1
 
 module m0 path="main.ts" displayPath="main.ts"
 typesite w0 module=m0 position=10 kind=Variable
@@ -48,8 +48,13 @@ function f5 name="underHandler" parameters=[{type=anything}] results=[{type=anyt
     v2 = CatchValue
     Return v2
 }
-function f6 name="claim" parameters=[{type=anything}] results=[{type=anything}] {
+function f6 name="behindFailedTest" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=number
-    Return v1
+    v1 = TypeTest v0 testedType=number
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    ReportMismatch v3 expectedType=number site=w0
+    Return v3
 }

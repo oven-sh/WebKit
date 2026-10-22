@@ -68,6 +68,19 @@ std::span<const PropertyKeyID> keysOfPropertyRun(const Value& value)
     return value.opcode == Opcode::TryPutByIds ? value.keys() : value.excludedKeys();
 }
 
+bool hasPropertyRun(const Program& program, const BuildContext& build, const Value& value)
+{
+    if (!namesPropertyRun(value.opcode))
+        return false;
+    std::span<const PropertyKeyID> keys = keysOfPropertyRun(value);
+    if (keys.empty() || keys.size() > build.limit(LimitID::MaxPropertyListNames))
+        return false;
+    bool canDescribeEveryKey = std::ranges::all_of(keys, [&](PropertyKeyID key) {
+        return canDescribe(program, key);
+    });
+    return canDescribeEveryKey && !hasRepeatedKey(keys);
+}
+
 std::optional<PlacedPropertyRun> propertyRunOf(const PlacementContext& context, FunctionID function, ValueID id)
 {
     const Program& program = context.program;

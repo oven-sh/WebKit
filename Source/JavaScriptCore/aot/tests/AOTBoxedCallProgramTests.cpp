@@ -36,7 +36,7 @@ function f2 name="bindThree" parameters=[{type=anything}, {type=anything}, {type
     v6 = Call v5, v0, v1, v2, v3, v4 calleeKey="bind"
     Return v6
 }
-function f3 name="sum" flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f3 name="sum" flags=[HasThis] length=4 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
     v5 = Add v0, v1
     v6 = Add v5, v2

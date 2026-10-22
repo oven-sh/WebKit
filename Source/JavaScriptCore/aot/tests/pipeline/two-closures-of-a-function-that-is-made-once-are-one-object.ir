@@ -1,0 +1,86 @@
+# `const emit = function () { .. }` in the code of a module, kept in two variables: the program makes one closure of the function, so a comparison of two values that are closures of it is true.
+# A variable that may still be undefined is asked whether it holds a closure of the function. A function whose closure a loop makes has as many closures as the loop has turns: that comparison stays.
+# RUN: pipeline FoldConstants
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="early" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="late" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="perhaps" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    v3 = Builtin builtin=MathRandom
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = NewClosure function=f2
+    v6 = GetModuleVariable variable=g3
+    PutModuleVariable v6 variable=g2
+    PutModuleVariable v5 variable=g3
+    v9 = Call v3
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    v11 = Call v3
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    PutModuleVariable v0 variable=g4
+    Jump -> next b4()
+  b4():
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="register" [isFreeName]
+    v16 = NewClosure function=f3
+    v17 = NewClosure function=f4
+    v18 = NewClosure function=f5
+    v19 = Call v15, -, v16, v17, v18
+    Return v19
+}
+
+function f1 name="emit" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f2 name="looped" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f3 name="madeOnce" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="madeOnce"
+# CHECK-NOT: StrictEq
+# CHECK: Boolean boolean=true
+
+function f4 name="madeInLoop" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = GetModuleVariable variable=g3
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="madeInLoop"
+# CHECK: StrictEq
+
+function f5 name="perhapsStored" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g4
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="perhapsStored"
+# CHECK-NOT: StrictEq
+# CHECK: TypeTest {{*}} testedType=f1

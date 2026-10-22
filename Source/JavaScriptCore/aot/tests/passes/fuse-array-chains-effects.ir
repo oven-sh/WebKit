@@ -11,8 +11,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="callback" module=m0 declared={type=anything} initialization=Undefined
-runtimefunction id=131088 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131088 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=131090 function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     v6 = Less v1, v2
     v7 = ElemGet v0, v1
@@ -56,7 +56,7 @@ function f3 name="guardAcrossTheChain" parameters=[{type=Array<string, proven, p
     v9 = AssumeType v8 castType=Array<string, proven, pristine[Storage, Names]>
     v10 = CallBuiltin v9 overload=ArrayPrototypeJoin/0
     v11 = Integer integer=0
-    v12 = GetArrayElement v3, v11, v7 arrayStorage=Int32 level=Predicted [keyIsIntegral]
+    v12 = GetArrayElement v3, v11, v7 arrayStorage=Int32 level=Expected [keyIsIntegral]
     Return v12
   b2():
     v13 = Undefined

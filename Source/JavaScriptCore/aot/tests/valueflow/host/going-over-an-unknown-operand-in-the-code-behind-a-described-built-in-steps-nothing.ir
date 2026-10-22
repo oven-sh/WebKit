@@ -1,0 +1,32 @@
+# Array.from([1]), where the library's from goes over `items` with for-of
+# The code behind Array.from (runtimefunction 48) is entered with operands nobody knows and goes over one of them. That a call of Array.from goes over its operand the records say where the call is:
+# there the array is opened and stepped. Here nothing is opened and nothing is stepped, so no method nobody knows is called: no code that nobody compiles writes anything. A step answers a value nobody knows.
+# Without records: going-over-an-unknown-operand-in-library-code-that-no-record-describes-is-unknown-code.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 values=f1:v8
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: values=f1:v8
+# CHECK: operand 0 {{*}} unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=47 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=Array
+    v3 = PropGet v2 key="from"
+    v4 = Call v3, v2, v1 calleeKey="from"
+    Return
+}
+function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = IteratorOpen v1
+    v5 = IteratorResume v4
+    v6 = ResultAt v5 index=1
+    IteratorClose v4
+    v8 = PropGet v6 key="x"
+    Return v8
+}

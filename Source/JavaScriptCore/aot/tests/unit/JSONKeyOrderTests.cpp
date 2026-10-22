@@ -56,6 +56,9 @@ static constexpr ASCIILiteral rowProgramText =
     "    v8 = Call v7\n"
     "    v9 = ToString v8\n"
     "    ElemSet v1, v9, v0 mode=Strict\n"
+    "    v11 = Builtin builtin=ObjectKeys\n"
+    "    v12 = Call v11, -, v1\n"
+    "    PropSet v2, v12 key=\"keys\"\n"
     "    Return v4\n"
     "}\n"_s;
 
@@ -73,7 +76,7 @@ public:
     Instance& instance() { return m_program.instance(); }
     ObjectModel& objects() { return *m_program.state().objects; }
     const LayoutData& layout() const { return *m_layout; }
-    uint32_t orderWordOfAllocation() const { return m_allocation->orderWord; }
+    uint32_t orderWordOfAllocation() const { return m_allocation->orderWord(); }
     std::span<const uint16_t> fields() const { return m_fields.span(); }
     Vector<uint16_t> fieldsStartingWith(std::initializer_list<unsigned> declaredIndices) const;
 
@@ -111,7 +114,7 @@ Row::Row(LoadedProgram& program)
     }
     AOT_TEST_CHECK(m_allocation);
     AOT_TEST_CHECK(!m_layout->keysAreNeverEnumerated);
-    AOT_TEST_CHECK(!(m_allocation->orderWord & ~orderAndCountMask) && countOf(m_allocation->orderWord) == numberOfRowFields);
+    AOT_TEST_CHECK(!(m_allocation->orderWord() & ~orderAndCountMask) && countOf(m_allocation->orderWord()) == numberOfRowFields);
 
     for (unsigned i = 0; i < numberOfRowFields; ++i) {
         const FieldData* field = objects().layouts.field(vm(), layout(), Identifier::fromString(vm(), makeString('k', i)).impl());
@@ -160,14 +163,14 @@ std::span<const uint16_t> Row::entriesOf(JSONKeyOrder order)
 
 Object* Row::createObject()
 {
-    return Object::create(vm(), objects().structures.objectStructure(vm(), layout().shape), layout(), m_allocation->size, unorderedOrderWord);
+    return Object::create(vm(), objects().structures.objectStructure(vm(), layout().shape), layout(), m_allocation->size(), unorderedOrderWord);
 }
 
 Object* Row::createObjectWithEveryField()
 {
     Object* object = createObject();
     for (uint16_t field : m_fields)
-        AOT_TEST_CHECK(object->store(vm(), layout().fields()[field], jsNumber(field + 100)));
+        AOT_TEST_CHECK(object->store(vm(), layout().fields()[field], AcceptedValue::provenAtBuildTime(jsNumber(field + 100))));
     return object;
 }
 
@@ -206,7 +209,7 @@ const uint8_t* Row::parseMember(Object* object, const uint8_t* quote, uint64_t* 
     if (!field)
         return parseExtraMembers(quote, extraAndOrder);
     ParsedJSONValue value = parser.parse(name.afterColon);
-    AOT_TEST_CHECK(value.end && object->store(vm(), *field, value.value));
+    AOT_TEST_CHECK(value.end && object->store(vm(), *field, AcceptedValue::provenAtBuildTime(value.value)));
     extraAndOrder[1] = advance(JSONKeyOrder::fromWord(extraAndOrder[1]), layout().indexOf(*field)).word();
     return value.end;
 }
@@ -286,7 +289,7 @@ static void testOtherOrders(LoadedProgram& program)
     Vector<uint16_t> someFields { row.fields()[5], row.fields()[2] };
     Object* partialObject = row.createObject();
     for (uint16_t field : someFields)
-        AOT_TEST_CHECK(partialObject->store(row.vm(), row.layout().fields()[field], jsNumber(1)));
+        AOT_TEST_CHECK(partialObject->store(row.vm(), row.layout().fields()[field], AcceptedValue::provenAtBuildTime(jsNumber(1))));
     AOT_TEST_CHECK(row.finish(partialObject, jsUndefined(), row.orderAfter(someFields.span())) == JSONOutcome::Parsed);
     AOT_TEST_CHECK(equalSpans(row.fieldsInOrderOfKeys(partialObject).span(), someFields.span()));
 }
@@ -348,7 +351,7 @@ static void testAddExtraMember(LoadedProgram& program)
     uint64_t extraAndOrder[2] = { static_cast<uint64_t>(JSValue::encode(jsUndefined())), JSONKeyOrder().word() };
     auto addField = [&](unsigned declaredIndex, int32_t value) {
         uint16_t field = row.fields()[declaredIndex];
-        AOT_TEST_CHECK(object->store(row.vm(), row.layout().fields()[field], jsNumber(value)));
+        AOT_TEST_CHECK(object->store(row.vm(), row.layout().fields()[field], AcceptedValue::provenAtBuildTime(jsNumber(value))));
         extraAndOrder[1] = row.advance(JSONKeyOrder::fromWord(extraAndOrder[1]), field).word();
     };
     addField(1, 10);
@@ -445,7 +448,7 @@ static void testKeysNeverEnumerated(LoadedProgram& program)
         if (tables.hasLayoutForShape(candidate.shape) && tables.layoutForShape(candidate.shape).keysAreNeverEnumerated && tables.layoutForShape(candidate.shape).numberOfFields)
             allocation = &candidate;
     }
-    AOT_TEST_CHECK(allocation && allocation->orderWord == unorderedOrderWord);
+    AOT_TEST_CHECK(allocation && allocation->orderWord() == unorderedOrderWord);
     const LayoutData& layout = tables.layoutForShape(allocation->shape);
 
     for (JSONKeyOrder order : { JSONKeyOrder(), JSONKeyOrder::numbered(orderWordOf(3, 1)), JSONKeyOrder::listed(0, 0), JSONKeyOrder::unknown() }) {
@@ -455,9 +458,9 @@ static void testKeysNeverEnumerated(LoadedProgram& program)
     AOT_TEST_CHECK(!instance.json.runtime->keyOrderLists().size());
 
     VM& vm = program.vm();
-    Object* object = Object::create(vm, program.state().objects->structures.objectStructure(vm, layout.shape), layout, allocation->size, unorderedOrderWord);
+    Object* object = Object::create(vm, program.state().objects->structures.objectStructure(vm, layout.shape), layout, allocation->size(), unorderedOrderWord);
     for (const FieldData& field : layout.fields())
-        AOT_TEST_CHECK(object->store(vm, field, jsNumber(1)));
+        AOT_TEST_CHECK(object->store(vm, field, AcceptedValue::provenAtBuildTime(jsNumber(1))));
     OperationCallScope scope(vm);
     AOT_TEST_CHECK(static_cast<JSONOutcome>(operationAOTJSONObjectFinish(&instance, object, JSValue::encode(jsUndefined()), JSONKeyOrder().word())) == JSONOutcome::Parsed);
     AOT_TEST_CHECK(object->orderWord() == unorderedOrderWord);

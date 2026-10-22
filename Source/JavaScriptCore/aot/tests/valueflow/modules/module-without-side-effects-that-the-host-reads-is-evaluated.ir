@@ -4,7 +4,7 @@
 # CHECK-NOT: unreached f
 
 variable g0 name="server" module=m1 declared={type=anything} initialization=Uninitialized
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}] exports=[{name="default" variable=g0}]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] exports=[{name="default" variable=g0}]
 module m1 path="/package/server.js" displayPath="package/server.js" flags=[HasNoSideEffects] body=f1 exports=[{name="default" variable=g0}]
 entry module=m0 hostReads=[{exportName="default"}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {

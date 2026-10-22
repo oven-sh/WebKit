@@ -52,7 +52,7 @@ function f1 name="awaitInBody" role=CoroutineRamp flags=[IsAsync] parameters=[{t
 function f2 name="awaitInBodyOverMap" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1}
 function f3 name="yieldInBody" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=Generator}] creator=Coroutine{ramp=f3 body=f8 promiseParameter=2}
 function f4 name="yieldInBodyOverMap" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=Generator}] creator=Coroutine{ramp=f4 body=f9 promiseParameter=2}
-function f5 name="awaitInBodyOverObject" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object written=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1}
+function f5 name="awaitInBodyOverObject" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1}
 
 function f6 name="awaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=1} {
   b0(v0: Array<number, pristine[Names]>, v1: undefined|Promise):
@@ -97,6 +97,7 @@ function f6 name="awaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{t
 # ABSENT-NOT: = New
 # ABSENT-NOT: = Call
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: handler=
 
@@ -139,6 +140,7 @@ function f7 name="awaitInBodyOverMap" role=CoroutineBody flags=[IsAsync] paramet
 # ABSENT-NOT: NewObject
 # ABSENT-NOT: = Call
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: handler=
 # ABSENT-COUNT-1: = New
@@ -198,6 +200,7 @@ function f8 name="yieldInBody" role=CoroutineBody flags=[IsGenerator, TakesCalle
 # ABSENT-NOT: = New
 # ABSENT-NOT: = Call
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: key="return"
 # ABSENT-NOT: handler=
@@ -250,11 +253,12 @@ function f9 name="yieldInBodyOverMap" role=CoroutineBody flags=[IsGenerator, Tak
 # ABSENT-NOT: = New
 # ABSENT-NOT: = Call v
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: handler=
 
-function f10 name="awaitInBodyOverObject" role=CoroutineBody flags=[IsAsync] parameters=[{type=object written=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1} {
-  b0(v0: object ? L0, v1: undefined|Promise):
+function f10 name="awaitInBodyOverObject" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: undefined|Promise):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():

@@ -21,19 +21,38 @@ struct EffectDescription {
     // The entry may enter these too. The rest of the description bounds what they do with the operands of this entry, so their summaries add nothing.
     Vector<FunctionID, 2> slowPathFunctions;
     bool callsUnknownCode { false };
+    // The description went from the layout of an operand to the layouts that its fields hold, which the entry does not name.
+    bool followsFieldsOfOperands { false };
+    // Nobody will read `own`. See describeCodeRunBy().
+    bool leavesOutOwnEffects { false };
 
-    void addOwn(const Effects& effects) { own.merge(EffectsOnEdges::onBothEdges(effects)); }
+    void addOwn(const Effects& effects)
+    {
+        if (leavesOutOwnEffects)
+            return;
+        own.normal.merge(effects);
+        if (effects.mayThrow)
+            own.handler.merge(effects);
+    }
     void addThrow();
     void addFunction(FunctionID);
+    void addFunctions(std::span<const FunctionID>);
     void addSlowPathFunction(FunctionID);
     void addUnknownCode() { callsUnknownCode = true; }
 };
 
 EffectDescription describeEffects(const Program&, const Function&, const Value&);
 EffectDescription describeEffects(const Program&, const Function&, const Terminator&);
+// The same, but that EffectDescription::own says nothing: for whoever asks which code the entry runs, and not what the entry does by itself.
+EffectDescription describeCodeRunBy(const Program&, const Function&, const Value&);
+EffectDescription describeCodeRunBy(const Program&, const Function&, const Terminator&);
 EffectsOnEdges resolveEffects(const EffectContext&, const EffectDescription&);
 
+// Where describeDeclaredEntry() does not take the row as it stands: it looks at the types, the payload or the module of the value, and may find that less happens.
+bool isRefinedByValue(Opcode, const Effects& bound);
 void describeDeclaredEntry(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
+// Every primitive but a symbol has a text, and no code runs to make it.
+bool hasTextByItself(const Type&);
 void describeOperator(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeOperator(const Program&, Opcode, std::span<const Type> operandTypes, const Type& result, EffectDescription&);
 void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);

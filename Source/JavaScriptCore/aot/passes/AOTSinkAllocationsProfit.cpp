@@ -9,9 +9,75 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFlowResults.h"
+#include "AOTFrameAllocationPlanner.h"
 #include "AOTStatistics.h"
 
 namespace JSC { namespace AOT { namespace Typed {
+
+static constexpr OptionSet<ObjectMutation> shapeChangingMutations {
+    ObjectMutation::DeleteField,
+    ObjectMutation::RedefineProperty,
+    ObjectMutation::AddProperty,
+    ObjectMutation::ChangeIntegrity,
+    ObjectMutation::ChangePrototype,
+    ObjectMutation::StoreOfOtherType,
+};
+
+static bool isFrameAllocatableClosure(const Program& program, const Value& closure)
+{
+    const Function& callee = program.at(closure.function());
+    return !closure.isMadeOnDemand() && !callee.has(FunctionFlags::TakesCallee) && callee.hasOrdinaryFrame();
+}
+
+static bool isFrameAllocatableObject(const AllocationSinking& sinking, const Value& object)
+{
+    const Program& program = sinking.program();
+    LayoutID id = object.layout();
+    const Layout& layout = program.at(id);
+    if (layout.fields.size() > sinking.limit(LimitID::MaxFrameEnvironmentFields))
+        return false;
+
+    switch (layout.kind) {
+    case LayoutKind::Environment:
+        return true;
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::Closure:
+    case LayoutKind::ModuleNamespace:
+        return false;
+    case LayoutKind::Record:
+    case LayoutKind::Instance:
+    case LayoutKind::Container:
+    case LayoutKind::BuiltinResult:
+        break;
+    }
+
+    if (object.prototypeOperand() || layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+        return false;
+    // The verifier allows an on-demand closure exactly one use, so the allocation that lists it cannot be duplicated.
+    for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+        if (flowOf(program, FieldReference { id, field }).location.deferral != ClosureDeferral::Unknown)
+            return false;
+    }
+
+    const FlowResults* flow = sinking.objectContext().flow;
+    AllocationClassID allocationClass = object.allocationClass();
+    OptionSet<ObjectMutation> impossibleMutations = flow && allocationClass ? flow->at(allocationClass).impossibleMutations : layout.flow.impossibleMutations;
+    return impossibleMutations.containsAll(shapeChangingMutations);
+}
+
+// Mirrors the checks FramePlanner makes on the allocation itself. FramePlanner still decides, from the uses, whether a copy goes in the frame.
+bool isFrameAllocatable(const AllocationSinking& sinking, const Candidate& candidate)
+{
+    if (candidate.isJoin || !sinking.context().build.isEnabled(PassID::AllocateInFrames, sinking.analyses().subject().function))
+        return false;
+    const Value& definition = sinking.function().at(candidate.definition);
+    if (!hasStorageChoice(definition) || arrayAllocationsWithStorage.contains(definition.opcode))
+        return false;
+    if (definition.opcode == Opcode::NewClosure)
+        return isFrameAllocatableClosure(sinking.program(), definition);
+    return isFrameAllocatableObject(sinking, definition);
+}
 
 void AllocationSinking::resetCounters()
 {
@@ -21,9 +87,11 @@ void AllocationSinking::resetCounters()
             continue;
         candidate.needsGuard = false;
         candidate.diesVirtual = false;
+        candidate.diesOutsideJoins = false;
         candidate.isStoredLate = false;
         candidate.numberOfBuilds = 0;
         candidate.numberOfRarerBuilds = 0;
+        candidate.numberOfBorrowingBuilds = 0;
         candidate.numberOfFoldedStores = 0;
         candidate.numberOfRepeatedStores = 0;
         candidate.mergeBlock = BlockID();
@@ -31,35 +99,54 @@ void AllocationSinking::resetCounters()
     }
     m_returns.clear();
     m_edgesNeedingCode.clear();
+    m_entriesIntoJoins.shrink(0);
 }
 
 void AllocationSinking::count()
 {
     resetCounters();
+    findWhetherObjectsAreBuiltBeforeBranches();
+    ++m_numberOfSweeps;
     for (BlockID block : m_analyses.cfg().reversePostOrder())
         countBlock(block);
 }
 
 void AllocationSinking::countBlock(BlockID block)
 {
+    const Block& source = m_function.at(block);
+    const Terminator& terminator = source.terminator;
+    // Most blocks have nothing to do with any object.
+    if (holdsNothingAtHead(block) && !m_checksShortcuts && !m_inputs.blocksWithCandidates.get(block.index()) && !mentionsName(terminator, block)) {
+        bool entersBlockWithObjects = std::ranges::any_of(terminator.targets, [&](const Target& target) {
+            return hasObjectsAtHead(target.block);
+        });
+        if (!entersBlockWithObjects) {
+            didWork(1);
+            return;
+        }
+    }
+
     const SinkingState* head = headOf(block);
     if (!head)
         return;
-
-    const Block& source = m_function.at(block);
-    const Terminator& terminator = source.terminator;
     SinkingState state = *head;
+    didWork(1 + state.objects.size());
     ObjectInterpreter interpreter(*this, SinkingMode::Count, state);
     if (!state.objects.isEmpty() || m_inputs.blocksWithCandidates.get(block.index())) {
-        for (ValueID id : source.values)
-            interpreter.execute(id);
+        prepare(block);
+        for (uint32_t entry : relevantValuesOf(block))
+            interpreter.executeRelevantValue(source.values, entry);
+        if (m_checksShortcuts) [[unlikely]]
+            interpreter.checkThatOtherValuesChangeNothing(block);
     }
-    interpreter.executeTerminator(terminator);
+    interpreter.executeTerminatorOf(block);
 
     if (terminator.targets.isEmpty()) {
         for (const ObjectEntry& entry : state.objects) {
-            if (!entry.state.isCell())
-                at(entry.object).diesVirtual = true;
+            if (entry.state.isCell())
+                continue;
+            at(entry.object).diesVirtual = true;
+            at(entry.object).diesOutsideJoins = true;
         }
         return;
     }
@@ -70,8 +157,11 @@ void AllocationSinking::countBlock(BlockID block)
             continue;
         if (state.objects.isEmpty() && headOfTarget->objects.isEmpty())
             continue;
-        OutgoingEdge outgoing = outgoingEdgeOf(m_function, Edge { block, targetIndex });
-        SinkingState stateOnEdge = state;
+        Edge edge { block, targetIndex };
+        BlockID target = terminator.targets[targetIndex].block;
+        OutgoingEdge outgoing = isPlain(edge, target) && !m_checksShortcuts ? OutgoingEdge { edge, target, { } } : outgoingEdgeOf(m_function, edge);
+        bool isLastTarget = targetIndex + 1 == terminator.targets.size();
+        SinkingState stateOnEdge = isLastTarget ? WTF::move(state) : SinkingState(state);
         ObjectInterpreter(*this, SinkingMode::Count, stateOnEdge).enterEdge(outgoing, &terminator, headOfTarget);
     }
 }
@@ -87,6 +177,10 @@ bool AllocationSinking::paysToSink(const Candidate& candidate) const
     if (!candidate.numberOfBuilds)
         return true;
     if (candidate.diesVirtual)
+        return true;
+    // The object escapes on rarer paths only. With one copy per path, the copy on the frequent paths does not escape and can be allocated in the frame.
+    unsigned numberOfFrequentBuilds = candidate.numberOfBuilds - candidate.numberOfRarerBuilds;
+    if (candidate.numberOfRarerBuilds && candidate.numberOfBorrowingBuilds && numberOfFrequentBuilds == candidate.numberOfBorrowingBuilds && isFrameAllocatable(*this, candidate))
         return true;
     // An object that refers to its holder is stored late. As a cell it would have its holder built where it is allocated, in front of the stores that follow.
     return candidate.numberOfBuilds == 1 && (candidate.numberOfFoldedStores > candidate.numberOfRepeatedStores || candidate.isStoredLate);
@@ -108,7 +202,49 @@ bool AllocationSinking::buildBeforeBranchesInsteadOfAbandoning()
         candidate.isBuiltBeforeBranches = true;
         changed = true;
     }
+    if (changed)
+        setAsideJoinsThatCarryOnlyCells();
     return changed;
+}
+
+void AllocationSinking::abandonJoinsThatOnlyFeedAbandonedJoins()
+{
+    auto indexOfJoin = [](const EntryIntoJoin& entry) { return entry.join.index(); };
+    auto indexOfSource = [](const EntryIntoJoin& entry) { return entry.source.index(); };
+    std::ranges::sort(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
+        return std::pair { entry.join.index(), entry.source.index() };
+    });
+    removeRepeatedElements(m_entriesIntoJoins);
+    Vector<EntryIntoJoin> entriesBySource = m_entriesIntoJoins;
+    std::ranges::stable_sort(entriesBySource, { }, indexOfSource);
+
+    auto goesOnlyIntoAbandonedJoins = [&](VirtualObjectID object) {
+        const Candidate& candidate = at(object);
+        if (!candidate.isJoin || candidate.isAbandoned || candidate.diesOutsideJoins || candidate.isStoredLate || candidate.numberOfFoldedStores)
+            return false;
+        bool hasAbandonedSource = std::ranges::any_of(std::ranges::equal_range(m_entriesIntoJoins, object.index(), { }, indexOfJoin), [&](const EntryIntoJoin& entry) {
+            return at(entry.source).isAbandoned;
+        });
+        return !hasAbandonedSource && std::ranges::all_of(std::ranges::equal_range(entriesBySource, object.index(), { }, indexOfSource), [&](const EntryIntoJoin& entry) {
+            return at(entry.join).isAbandoned;
+        });
+    };
+
+    Vector<VirtualObjectID, 16> abandonedJoins;
+    for (size_t index = 0; index < m_entriesIntoJoins.size(); ++index) {
+        VirtualObjectID join = m_entriesIntoJoins[index].join;
+        if ((!index || m_entriesIntoJoins[index - 1].join != join) && at(join).isAbandoned)
+            abandonedJoins.append(join);
+    }
+    while (!abandonedJoins.isEmpty()) {
+        VirtualObjectID join = abandonedJoins.takeLast();
+        for (const EntryIntoJoin& entry : std::ranges::equal_range(m_entriesIntoJoins, join.index(), { }, indexOfJoin)) {
+            if (!goesOnlyIntoAbandonedJoins(entry.source))
+                continue;
+            abandon(entry.source);
+            abandonedJoins.append(entry.source);
+        }
+    }
 }
 
 bool AllocationSinking::abandonUnprofitableCandidates()
@@ -127,6 +263,10 @@ bool AllocationSinking::abandonUnprofitableCandidates()
         else if (!paysToSink(candidate))
             abandon(object);
     }
+    if (m_mustSolveAgain)
+        abandonJoinsThatOnlyFeedAbandonedJoins();
+    if (m_mustSolveAgain)
+        setAsideJoinsThatCarryOnlyCells();
     return m_mustSolveAgain;
 }
 
@@ -139,7 +279,8 @@ void AllocationSinking::recordLosses()
         if (candidate.isJoin)
             continue;
         if (candidate.isAbandoned) {
-            recordDecline(candidate);
+            if (!candidate.wasFruitlessBefore)
+                recordDecline(candidate);
             continue;
         }
         if (!candidate.numberOfBuilds && m_tables)
@@ -193,10 +334,14 @@ void AllocationSinking::countStatistics()
             continue;
         if (candidate.isJoin) {
             const SinkingState* head = headOf(candidate.block);
-            if (head && head->find(object))
+            const ObjectState* state = head ? head->find(object) : nullptr;
+            if (state && !state->isCell())
                 statistics.count(StatisticID::AllocationsMergedAtJoins);
-        } else
+        } else {
             statistics.count(candidate.numberOfBuilds ? StatisticID::AllocationsSunk : StatisticID::AllocationsRemoved);
+            if (candidate.numberOfRarerBuilds && candidate.numberOfBorrowingBuilds)
+                statistics.count(StatisticID::AllocationsBuiltApartOnRarerPaths);
+        }
         if (candidate.numberOfBuilds)
             statistics.count(StatisticID::StoresFoldedIntoAllocations, candidate.numberOfFoldedStores);
     }

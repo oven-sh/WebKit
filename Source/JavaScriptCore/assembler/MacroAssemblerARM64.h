@@ -256,6 +256,13 @@ public:
         store32(dataTempRegister, address);
     }
 
+    void add32(RegisterID src, Address address)
+    {
+        load32(address, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.add<32>(dataTempRegister, dataTempRegister, src);
+        store32(dataTempRegister, address);
+    }
+
     void add32(TrustedImm32 imm, AbsoluteAddress address)
     {
         load32(address.m_ptr, getCachedDataTempRegisterIDAndInvalidate());
@@ -403,6 +410,24 @@ public:
     }
 
     void add64(TrustedImm32 imm, Address address)
+    {
+        load64(address, getCachedDataTempRegisterIDAndInvalidate());
+
+        auto immediate = imm.m_value;
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.add<64>(dataTempRegister, dataTempRegister, u12, shift);
+            else
+                m_assembler.sub<64>(dataTempRegister, dataTempRegister, u12, shift);
+        } else {
+            signExtend32ToPtr(imm, getCachedMemoryTempRegisterIDAndInvalidate());
+            m_assembler.add<64>(dataTempRegister, dataTempRegister, memoryTempRegister);
+        }
+        store64(dataTempRegister, address);
+    }
+
+    void add64(TrustedImm32 imm, BaseIndex address)
     {
         load64(address, getCachedDataTempRegisterIDAndInvalidate());
 
@@ -1321,6 +1346,12 @@ public:
         ASSERT(src != dataTempRegister);
         move(imm, getCachedDataTempRegisterIDAndInvalidate());
         m_assembler.orr<32>(dest, src, dataTempRegister);
+    }
+
+    void or32(Address src, RegisterID dest)
+    {
+        load32(src, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.orr<32>(dest, dest, dataTempRegister);
     }
 
     void or32(RegisterID src, AbsoluteAddress address)
@@ -4918,6 +4949,12 @@ public:
         return branch64(cond, memoryTempRegister, right);
     }
 
+    Jump branch64(RelationalCondition cond, Address left, TrustedImm32 right)
+    {
+        load64(left, getCachedMemoryTempRegisterIDAndInvalidate());
+        return branch64(cond, memoryTempRegister, right);
+    }
+
     Jump branch64(RelationalCondition cond, Address left, TrustedImm64 right)
     {
         load64(left, getCachedMemoryTempRegisterIDAndInvalidate());
@@ -5251,6 +5288,12 @@ public:
     {
         load32(src, getCachedDataTempRegisterIDAndInvalidate());
         return branchAdd32(cond, dest, dataTempRegister, dest);
+    }
+
+    Jump branchOr32(ResultCondition cond, RegisterID src, RegisterID dest)
+    {
+        or32(src, dest);
+        return branchTest32(cond, dest);
     }
 
     Jump branchAdd32(ResultCondition cond, RegisterID src, RegisterID dest)

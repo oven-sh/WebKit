@@ -34,6 +34,15 @@ constexpr Typed::Effects effectsOf(Entry entry)
         effects.mayCollect = true;
         return effects;
     }
+    // It looks a return address up in the tables of the image.
+    if (entry == Entry::operationAOTFindLandingOfMisfit) {
+        Typed::Effects effects = Typed::Effects::none();
+        effects.reads = Typed::LocationMasks(Typed::AbstractHeapSet { Typed::AbstractHeap::RuntimeState });
+        effects.writes = effects.reads;
+        return effects;
+    }
+    if (entry == Entry::operationAOTBytesAllocatedAtPrologueCheck)
+        return Typed::Effects::none();
     return Typed::Effects::unknownCode();
 }
 

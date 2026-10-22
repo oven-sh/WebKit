@@ -16,8 +16,7 @@ function f0 name="applyWithArray" flags=[HasThis] thisType={type=anything} param
 # CHECK-NEXT: [[isApply0]]: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
 # CHECK-NEXT: Branch [[isApply0]] -> taken [[arm0]](| 0), notTaken [[rest0]](| 0)
 # CHECK: [[arm0]]({{*}}: builtin(FunctionPrototypeApply)):
-# CHECK-NEXT: [[function0]]: anything ~ Function = Predict v1 predicted=Function
-# CHECK-NEXT: [[forwarded0]]: anything = CallList [[function0]], v0, v2
+# CHECK-NEXT: [[forwarded0]]: anything = CallList v1, v0, v2
 # CHECK-NEXT: ReturnCall [[forwarded0]]
 # CHECK: [[rest0]]([[other0]]: anything) frequency=Unlikely:
 # CHECK-NEXT: [[generic0]]: anything = Call [[other0]], v1, v0, v2 calleeKey="apply"
@@ -31,9 +30,8 @@ function f1 name="applyWithArgumentsObject" flags=[HasThis] thisType={type=anyth
 }
 # CHECK-LABEL: function f1 name="applyWithArgumentsObject"
 # CHECK: = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
-# CHECK: [[function1]]: anything ~ Function = Predict v1 predicted=Function
-# CHECK-NEXT: [[list1]]:{{*}}= NewArgumentList [[function1]], v2
-# CHECK-NEXT: [[forwarded1]]: anything = CallList [[function1]], v0, [[list1]]
+# CHECK: [[list1]]:{{*}}= NewArgumentList v1, v2
+# CHECK-NEXT: [[forwarded1]]: anything = CallList v1, v0, [[list1]]
 # CHECK-NEXT: ReturnCall [[forwarded1]]
 
 function f2 name="callTestsItsReceiver" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -46,8 +44,7 @@ function f2 name="callTestsItsReceiver" flags=[HasThis] thisType={type=anything}
 # CHECK: [[isCall2]]: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeCall)
 # CHECK-NEXT: Branch [[isCall2]] -> taken [[arm2]](| 0), notTaken [[rest2]](| 0)
 # CHECK: [[arm2]]([[call2]]: builtin(FunctionPrototypeCall)):
-# CHECK-NEXT: [[expected2]]: anything ~ Function = Predict v1 predicted=Function
-# CHECK-NEXT: [[isFunction2]]: boolean = TypeTest [[expected2]] testedType=function
+# CHECK-NEXT: [[isFunction2]]: boolean = TypeTest v1 testedType=function
 # CHECK-NEXT: Branch [[isFunction2]] -> taken [[function2]](| 0), notTaken [[other2]](| 0)
 # CHECK: [[function2]]([[callee2]]:{{*}}):
 # CHECK-NEXT: [[passed2]]: anything = Call [[callee2]], v0, v2
@@ -70,22 +67,22 @@ function f3 name="callOfProvenFunction" flags=[HasThis] thisType={type=anything}
 
 function f4 name="methodThatIsNoTailCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = PropGet v0 key="push"
-    v3 = Call v2, v0, v1 calleeKey="push"
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
     ReturnCall v3
 }
 # CHECK-LABEL: function f4 name="methodThatIsNoTailCall"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: anything = PropGet v0 key="push"
-# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: v2: anything = PropGet v0 key="get"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="get"
 # CHECK-NEXT: ReturnCall v3
 
 function f5 name="tailCallThatMayBeGivenUp" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = PropGet v0 key="push"
-    v3 = Call v2, v0, v1 calleeKey="push"
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
     ReturnCall v3 requirement=Allowed
 }
 # CHECK-LABEL: function f5 name="tailCallThatMayBeGivenUp"
-# CHECK: = TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# CHECK: = TypeTest v2 testedType=builtin(MapPrototypeGet)
 # CHECK-NOT: ReturnCall

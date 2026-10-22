@@ -107,7 +107,7 @@ void ObjectBuiltinEmitter::generateSetPrototypeOf(const InlineCall& call)
         missUnless(call, Condition(m_out.booleanFalse));
     Word32 structureID = emitter<AccessEmitter>().findPrototypeTransition(object, prototype, missBlockOf(call));
     missUnless(call, hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(object), orderWordIsNotExtensible));
-    storeField(object, m_heaps.JSCell_structureID, structureID);
+    emitter<AccessEmitter>().storeStructureAfterPrototypeTransition(object, structureID);
     emitter<BarrierEmitter>().barrier(call.context(), object);
     switch (call.parameter<PrototypeChange>(0)) {
     case PrototypeChange::ObjectSetPrototypeOf:
@@ -183,7 +183,7 @@ void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
     Word32 frozen = word32(static_cast<int32_t>(orderWordIntegrityBits));
     CellPointer cell = objectOrMiss(call, argument);
-    if (!type.hasOnlyLayouts())
+    if (!type.hasOnlyLayouts(m_program))
         missUnless(call, shapeTests.hasShapeIn(cell, type.layouts, type));
     missUnless(call, hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
     Word32 word = shapeTests.orderWordOf(cell);

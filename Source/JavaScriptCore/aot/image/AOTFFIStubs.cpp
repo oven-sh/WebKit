@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTFlowResults.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageFormat.h"
 #include "AOTPipeline.h"
@@ -18,9 +20,14 @@
 
 namespace JSC { namespace AOT {
 
+// Whatever makes a foreign function or a callback is a member of Bun.FFI, which the module bun:ffi reads when it is loaded, or the native function behind cc().
+// What such a function calls is machine code, not JavaScript that nobody has seen, so a program that loads it need not admit any.
 bool mayUseFFI(const Typed::PipelineOutput& pipeline)
 {
-    return flagsForUnseenCode(pipeline).contains(ImageFlag::AdmitsUnknownJavaScript);
+    if (flagsForUnseenCode(pipeline).contains(ImageFlag::AdmitsUnknownJavaScript))
+        return true;
+    const Typed::FlowResults& flow = *pipeline.flow;
+    return !flow.usesOf(Builtins::BunFFI).isEmpty() || !flow.usesOf(Builtins::NativeNewRustFunctionFfiRsBun__FFI__cc).isEmpty();
 }
 
 #if FFI_STUBS_SUPPORTED

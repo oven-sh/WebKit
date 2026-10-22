@@ -21,16 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr size_t maxKeysInAccessorMasks = std::numeric_limits<uint32_t>::digits;
 
-namespace {
-
-struct SlotInReceivers {
-    LayoutID memberWithoutField;
-    LayoutID memberWithRemovedField;
-    bool isAlwaysFilled { true };
-    bool mayHoldDeferredClosure { false };
-};
-
-} // anonymous namespace
+static_assert((Value::opcodesWithIsPresent | Value::opcodesWithReadsHoleAsNaN | Value::opcodesWithIsInBounds) == Value::opcodesWithIsInBounds, "the rules for isPresent and readsHoleAsNaN ask isInBounds()");
 
 static SlotInReceivers findSlotInReceivers(const Program& program, const LayoutSet& receivers, PropertyKeyID key)
 {
@@ -50,6 +41,20 @@ static SlotInReceivers findSlotInReceivers(const Program& program, const LayoutS
         slot.mayHoldDeferredClosure |= flow.location.deferral != ClosureDeferral::Unknown;
     }
     return slot;
+}
+
+SlotInReceivers FunctionVerifier::slotInReceivers(LayoutSetID receivers, PropertyKeyID key)
+{
+    if (!m_slotsInReceivers || TypeTable::isProvisional(receivers) || TypeTable::isProvisional(key))
+        return findSlotInReceivers(m_program, m_program.at(receivers), key);
+
+    uint32_t hash = pairIntHash(receivers.index(), key.index());
+    auto isWanted = [&](const SlotInReceiversEntry& entry) {
+        return entry.receivers == receivers && entry.key == key;
+    };
+    if (const SlotInReceiversEntry* entry = m_slotsInReceivers->find(hash, isWanted))
+        return entry->slot;
+    return m_slotsInReceivers->add(hash, SlotInReceiversEntry { receivers, key, findSlotInReceivers(m_program, m_program.at(receivers), key) }, isWanted).slot;
 }
 
 static ValueID keyOperandOf(const Value& access)
@@ -73,7 +78,7 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
     }
 
     auto verifySlot = [&](PropertyKeyID key) {
-        SlotInReceivers slot = findSlotInReceivers(m_program, receivers, key);
+        SlotInReceivers slot = slotInReceivers(value.receivers(), key);
         if (slot.memberWithoutField) {
             fail(InternalErrorKind::InvalidGuard, block, id);
             m_errors.last().layout = slot.memberWithoutField;
@@ -112,8 +117,83 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
     }
 
     // Selection's dispatch on shape copies the read into arms, and the members of one arm may all have an ordinary slot.
-    if (value.opcode == Opcode::GetDeferredClosureSlot && m_form < IRForm::Selected && !slot.mayHoldDeferredClosure)
+    bool makesClosure = value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined;
+    if (makesClosure && m_form < IRForm::Selected && !slot.mayHoldDeferredClosure)
         fail(InternalErrorKind::InvalidGuard, block, id);
+    if (value.opcode == Opcode::GetFlattenedSlot || value.opcode == Opcode::GetFlattenedSlotOrUndefined)
+        verifyUsesOfBorrowedObject(id);
+}
+
+bool FunctionVerifier::standsBehindBorrowedParameter(ValueID parameter)
+{
+    const UseLists& uses = analyses().useLists();
+    Vector<ValueID, 4> forms { parameter };
+    for (size_t index = 0; index < forms.size(); ++index) {
+        for (const Use& use : uses.usesOf(forms[index])) {
+            if (use.kind != Use::Kind::Operand)
+                continue;
+            Opcode opcode = m_function.at(use.user).opcode;
+            if (opcode == Opcode::BorrowedParameter)
+                return true;
+            if (familyOf(opcode) == OperationFamily::Representation)
+                forms.append(use.user);
+        }
+    }
+    return false;
+}
+
+// Only the read knows where the slots lie, and what it gives may be the outer object.
+void FunctionVerifier::verifyUsesOfBorrowedObject(ValueID read)
+{
+    const UseLists& uses = analyses().useLists();
+    Vector<ValueID, 8> names { read };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : uses.usesOf(names[index])) {
+            UseOfBorrowedObject kind = use.kind == Use::Kind::Operand ? useOfBorrowedInnerObject(m_program, m_function, m_function.at(use.user), use.operandIndex, names[index]) : UseOfBorrowedObject::Holds;
+            if (use.kind == Use::Kind::EdgeArgument) {
+                // BorrowedParameter says that the edges hand over where the slots lie. The choice of representations lets others take the parameter in its place.
+                ValueID parameter = m_function.at(m_function.at(use.block).terminator.targets[use.targetIndex].block).parameters[use.operandIndex];
+                if (standsBehindBorrowedParameter(parameter)) {
+                    if (!names.contains(parameter))
+                        names.append(parameter);
+                    continue;
+                }
+            }
+            if (kind == UseOfBorrowedObject::Holds) {
+                fail(InternalErrorKind::BorrowedObjectHeld, use.block, use.kind == Use::Kind::Operand ? use.user : names[index]);
+                return;
+            }
+            if (kind == UseOfBorrowedObject::HandsOn && !names.contains(use.user))
+                names.append(use.user);
+        }
+    }
+}
+
+// It has no code. The operation that takes it stores what it lists into the room.
+void FunctionVerifier::verifyObjectMadeOnDemand(BlockID block, ValueID id, const Value& value)
+{
+    auto hasRoomIn = [&](LayoutID outerLayout, uint32_t field) {
+        return std::ranges::any_of(m_program.at(outerLayout).flattenedObjects, [&](const FlattenedObject& flattened) {
+            return flattened.field == field && flattened.layout == value.layout();
+        });
+    };
+    auto isLaidIntoRoom = [&] {
+        std::optional<Use> use = analyses().useLists().singleUse(id);
+        if (!use || use->kind != Use::Kind::Operand || use->block != block)
+            return false;
+        const Value& taker = m_function.at(use->user);
+        if (taker.opcode == Opcode::NewObject) {
+            std::optional<uint32_t> index = taker.variadicOperandIndex(use->operandIndex);
+            return index && *index < taker.fields().size() && hasRoomIn(taker.layout(), taker.fields()[*index]);
+        }
+        if (taker.opcode != Opcode::PutSlot || taker.valueOperand() != id || taker.objectOperand() == id)
+            return false;
+        const Vector<LayoutID>& receivers = m_program.at(taker.receivers()).members;
+        std::optional<uint32_t> field = receivers.size() == 1 ? m_program.at(receivers[0]).findField(taker.key()) : std::nullopt;
+        return field && hasRoomIn(receivers[0], *field);
+    };
+    if (!isLaidIntoRoom())
+        fail(InternalErrorKind::ObjectOnDemandWithoutRoom, block, id);
 }
 
 void FunctionVerifier::verifyKeyedTail(BlockID block, ValueID id, const Value& value, size_t numberOfKeys)
@@ -153,6 +233,26 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
         }
         if (OperandPosition::value(value.opcode) && !canStoreWithoutConversion(value.arrayStorage(), typeOf(value.valueOperand()))) {
             fail(InternalErrorKind::OperandTypeMismatch, block, id, value.valueOperand().index());
+            return;
+        }
+    }
+    // The test looks for a hole as a named storage marks it.
+    if (value.opcode == Opcode::IsElementPresent && !hasArrayStorageForm(value.arrayStorage())) {
+        fail(InternalErrorKind::PayloadOutOfRange, block, id);
+        return;
+    }
+    // A present element answers without the prototypes only in a named storage: no other kind rules out an accessor under an index. The test has found the position to be an index,
+    // so it may be any number. An access says in one way what its guard has found.
+    if (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent()) {
+        if (value.isInBounds() || !hasArrayStorageForm(value.arrayStorage())) {
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+            return;
+        }
+    }
+    // Only the hole of Double storage is a NaN, and only a position inside the length holds an element or a hole.
+    if (Value::opcodesWithReadsHoleAsNaN.contains(value.opcode) && value.readsHoleAsNaN()) {
+        if (!value.isInBounds() || value.arrayStorage() != ArrayStorage::Double) {
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
             return;
         }
     }

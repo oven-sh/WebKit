@@ -3,13 +3,12 @@ import * as b from "bun-builtins-table";
 const ownProperties = ["ObjectFields", "NamedProperties", "Elements", "ArrayStorage", "ShapeWords", "OrderWords"];
 const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
-const shapeGuards = ["ShapeEpoch", "MemberGuards"];
+const memberGuards = ["MemberGuards"];
 // An array under a prototype that may hold indexed accessors gets a storage that asks it at every store.
-const prototypeChange = [...prototypeLink, ...shapeGuards, "ArrayStorage"];
+const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
 
 const objectOrNull = b.union(b.object, b.strictNull);
 const nonNullishPrimitive = b.union(b.bool, b.f64, b.string, b.symbol, b.bigint);
-const descriptorMembers = b.named("value", "get", "set", "writable", "enumerable", "configurable");
 
 const wrapperClasses = [
   [b.bool, "Boolean"],
@@ -50,7 +49,7 @@ const ownKeyList = (kind: "Keys" | "Names" | "Symbols", key: b.TableType) =>
     args: { object: b.object.loose },
     returns: b.instance("Array").holding({ element: key }).fresh.dense,
     capability: "js",
-    throws: true,
+    throws: b.propagated,
     runsOnlyOperandCode: true,
     uses: { object: [b.runs("OwnKeys")] },
     reads: ownProperties,
@@ -63,18 +62,20 @@ const integrityChange = (level: b.IntegrityLevel, implementation: b.Implementati
     args: { object: b.any },
     returns: b.operand("object"),
     capability: "js",
-    throws: true,
+    throws: b.propagated,
     runsOnlyOperandCode: true,
     uses: { object: [b.integrityRaisedTo(level), ...b.ownPropertyTraps] },
     reads: ownProperties,
-    writes: [...ownProperties, ...shapeGuards],
+    writes: [...ownProperties, ...memberGuards],
     implementation,
   }) satisfies b.FunctionField;
 
+// A revoked Proxy throws, and so does one whose trap says what its target rules out.
 const integrityTest = {
   args: { object: b.any },
   returns: b.bool,
   capability: "js",
+  throws: true,
   runsOnlyOperandCode: true,
   uses: { object: b.ownPropertyTraps },
   reads: ownProperties,
@@ -82,8 +83,10 @@ const integrityTest = {
 } satisfies b.FunctionField;
 
 // An object without properties that cannot be extended is sealed and frozen.
+// The properties are looked at one by one, and an export of a module namespace object that is still in its dead zone throws.
 const integrityTestOfProperties = {
   ...integrityTest,
+  throws: true,
   uses: { object: [b.testedByKey(b.anyKey), ...b.ownPropertyTraps] },
 } satisfies b.FunctionField;
 
@@ -93,7 +96,7 @@ const ownPropertyTest = (inlineBuiltin: string) =>
     args: { key: b.propertyKey.loose },
     returns: b.bool,
     capability: "js",
-    throws: true,
+    throws: b.propagated,
     runsOnlyOperandCode: true,
     uses: { this: [b.testedByKey(b.keyFrom("key")), ...b.ownPropertyTraps] },
     reads: ownProperties,
@@ -101,16 +104,18 @@ const ownPropertyTest = (inlineBuiltin: string) =>
   }) satisfies b.FunctionField;
 
 // What a descriptor holds comes from the object: the value of the property, or the two functions of an accessor.
+// A descriptor holds the value or the two functions of the property that it describes.
+const describedPart = b.resultFieldHoldingOnlyWhatIsStored;
+
 const describedBy = (key: b.KeySpec, value: b.PlaceSpec, getter: b.PlaceSpec, setter: b.PlaceSpec) => [
   b.readByKey(key, value),
   b.accessorReadByKey("Getter", key, getter),
   b.accessorReadByKey("Setter", key, setter),
-  b.contentsStoredIn(b.nativeMemory),
 ];
 
 const accessorDefinition = (accessor: "Getter" | "Setter", nativeSymbol: string) =>
   ({
-    this: b.object.loose,
+    this: b.object.loose.refusing(b.null),
     args: { key: b.propertyKey.loose, accessor: b.callable },
     capability: "js",
     throws: true,
@@ -120,21 +125,30 @@ const accessorDefinition = (accessor: "Getter" | "Setter", nativeSymbol: string)
       accessor: b.inspected,
     },
     reads: ownProperties,
-    writes: shapeGuards,
+    writes: memberGuards,
     usesFeature: "LegacyAccessors",
     nativeSymbols: [nativeSymbol],
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
+// It answers the function that it finds and no other: the cell stands for the way from the property to the answer.
 const accessorLookup = (accessor: "Getter" | "Setter", nativeSymbol: string) =>
   ({
-    this: b.object.loose,
+    this: b.object.loose.refusing(b.null),
     args: { key: b.propertyKey.loose },
     returns: b.union(b.callable, b.undefined),
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
-    uses: { this: [b.accessorReadByKey(accessor, b.keyFrom("key")), ...b.ownPropertyTraps, b.runs("PrototypeChain")] },
+    uses: {
+      this: [
+        b.testedByKey(b.keyFrom("key")),
+        b.accessorReadByKey(accessor, b.keyFrom("key"), b.nativeCell(`Object.lookedUp${accessor}s`)),
+        b.returnedFrom(`Object.lookedUp${accessor}s`),
+        ...b.ownPropertyTraps,
+        b.runs("PrototypeChain"),
+      ],
+    },
     reads: inheritedProperties,
     usesFeature: "LegacyAccessors",
     nativeSymbols: [nativeSymbol],
@@ -149,6 +163,9 @@ export default b.declarations(
     mutability: "AlwaysLocked",
     constructorTable: b.staticTable("runtime/ObjectConstructor.cpp", "objectConstructorTable"),
     call: objectConversion(b.inline("CallObjectConstructor", { otherwise: b.hostCall })),
+    // What `new Object(value)` does. Where new.target is another function (`super(value)` in a class below Object, Reflect.construct(Object, [value], Other)) the language
+    // ignores the value and makes an ordinary object below new.target.prototype: the row for `null`, whatever is passed. Rows have no word for new.target:
+    // the resolver of calls takes a construction only where new.target is the callee, and flow asks overloadForAnotherNewTarget() (valueflow/AOTValueFlowBuiltins.h).
     construct: objectConversion(b.hostCall),
     static: {
       assign: [
@@ -156,11 +173,11 @@ export default b.declarations(
           args: { target: b.object, sources: b.any.rest },
           returns: b.operand("target"),
           capability: "js",
-          throws: true,
+          throws: b.propagated,
           runsOnlyOperandCode: true,
           uses: { target: [b.assignedFrom("sources")], sources: b.inspected },
           reads: inheritedProperties,
-          writes: shapeGuards,
+          writes: memberGuards,
           implementation: b.hostCall,
         },
         ...wrapperOverloads((primitive, wrapper) => ({
@@ -191,13 +208,7 @@ export default b.declarations(
           capability: "js",
           throws: true,
           runsOnlyOperandCode: true,
-          uses: {
-            prototype: [b.prototypeOf(b.result)],
-            properties: [
-              b.runsTransitively("OwnKeys", "OwnValues", descriptorMembers),
-              b.reachableValuesStoredIn(b.nativeMemory),
-            ],
-          },
+          uses: { prototype: [b.prototypeOf(b.result)], properties: [b.describesResult] },
           implementation: b.hostCall,
         },
       ],
@@ -209,7 +220,7 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: { object: [b.definedByMap("properties"), ...b.ownPropertyTraps], properties: b.inspected },
         reads: ownProperties,
-        writes: shapeGuards,
+        writes: memberGuards,
         implementation: b.hostCall,
       },
       defineProperty: {
@@ -223,7 +234,7 @@ export default b.declarations(
           descriptor: b.inspected,
         },
         reads: ownProperties,
-        writes: shapeGuards,
+        writes: memberGuards,
         privateAlias: true,
         implementation: b.hostCall,
       },
@@ -231,11 +242,11 @@ export default b.declarations(
         args: { object: b.object.loose.refusing(b.null) },
         returns: b.instance("Array").holding({ element: b.layoutOf("EntriesPair") }).fresh.dense,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.nativeMemory)] },
         model: b.functionIn("models/Objects", "entries"),
-        implementation: b.hostCall,
+        implementation: b.inline("ObjectEntries"),
       },
       freeze: integrityChange("Frozen", b.inline("ObjectFreeze", { otherwise: b.hostCall })),
       fromEntries: {
@@ -250,17 +261,18 @@ export default b.declarations(
             b.reachableValuesStoredIn(b.nativeMemory),
           ],
         },
+        model: b.functionIn("models/Objects", "fromEntries"),
         implementation: b.compiled("ObjectConstructor", "fromEntries"),
       },
       getOwnPropertyDescriptor: {
         args: { object: b.object.loose, key: b.propertyKey.loose },
         returns: b.union(b.ordinaryObjectOf("PropertyDescriptor"), b.undefined).fresh,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: {
           object: [
-            ...describedBy(b.keyFrom("key"), b.resultField("value"), b.resultField("get"), b.resultField("set")),
+            ...describedBy(b.keyFrom("key"), describedPart("value"), describedPart("get"), describedPart("set")),
             ...b.ownPropertyTraps,
           ],
         },
@@ -273,11 +285,12 @@ export default b.declarations(
         args: { object: b.object.loose },
         returns: b.instance("Object").unaliased,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: {
           object: [
             ...describedBy(b.anyKey, b.nativeMemory, b.nativeMemory, b.nativeMemory),
+            b.contentsStoredIn(b.nativeMemory),
             b.describedByResult,
             b.runs("OwnKeys"),
           ],
@@ -296,6 +309,7 @@ export default b.declarations(
           uses: { object: [b.runs("PrototypeChain")] },
           reads: prototypeLink,
           privateAlias: true,
+          boxedCallStub: "ObjectGetPrototypeOf",
           implementation: b.inline("GetPrototypeOf", { parameters: ["ObjectGetPrototypeOf"], otherwise: b.hostCall }),
         },
         ...wrapperOverloads((primitive, wrapper) => ({
@@ -309,7 +323,7 @@ export default b.declarations(
         args: { object: b.object.loose, key: b.propertyKey.loose },
         returns: b.bool,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { object: [b.testedByKey(b.keyFrom("key")), ...b.ownPropertyTraps] },
         reads: ownProperties,
@@ -347,11 +361,11 @@ export default b.declarations(
           args: { object: b.object },
           returns: b.instance("Array").fresh.dense,
           capability: "js",
-          throws: true,
+          throws: b.propagated,
           runsOnlyOperandCode: true,
           uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.resultSlot("element"))] },
           privateAlias: true,
-          implementation: b.hostCall,
+          implementation: b.inline("ObjectValues"),
         },
         {
           args: { object: nonNullishPrimitive },
@@ -372,7 +386,7 @@ export default b.declarations(
         args: { value: b.any },
         returns: b.bool,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { this: b.inspected, value: [b.runs("PrototypeChain")] },
         reads: prototypeLink,
@@ -380,7 +394,7 @@ export default b.declarations(
       },
       propertyIsEnumerable: ownPropertyTest("ObjectPropertyIsEnumerable"),
       toLocaleString: {
-        this: b.any,
+        this: b.any.refusing(b.null),
         returns: b.any,
         capability: "js",
         throws: true,
@@ -395,7 +409,7 @@ export default b.declarations(
           this: b.object,
           returns: b.string,
           capability: "js",
-          throws: true,
+          throws: b.propagated,
           runsOnlyOperandCode: true,
           uses: { this: [b.runs(b.named("@@toStringTag")), b.membersOnlyInspected] },
           reads: inheritedProperties,
@@ -433,7 +447,7 @@ export default b.declarations(
   }),
 
   b.method("Object.prototype.__proto__", {
-    this: b.object.loose,
+    this: b.object.loose.refusing(b.null),
     getter: b.prototype("this"),
     capability: "js",
     runsOnlyOperandCode: true,
@@ -452,7 +466,4 @@ export default b.declarations(
       implementation: b.generic,
     },
   }),
-
-  // The package `private`, below older releases of recast and regenerator, hides its keys behind a function of its own.
-  b.replacedByPackages("Object.getOwnPropertyNames"),
 );

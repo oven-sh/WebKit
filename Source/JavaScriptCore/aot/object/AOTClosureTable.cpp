@@ -33,19 +33,24 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-static_assert(numberOfClosureStructures == JSGlobalObject::numberOfAOTClosureStructures);
-static_assert(numberOfSlimClosureKinds == JSGlobalObject::numberOfAOTSlimClosureStructures);
 
 static std::span<const uint8_t> allocateClosureCells(State& state)
 {
     Instance& instance = state.instance;
-    size_t numberOfFunctions = state.tables.functionKinds().size();
+    size_t numberOfCells = state.tables.numberOfClosureCells;
     if (instance.options().useWideReferences()) {
-        instance.closureCells = state.tableArena.allocate<uint64_t>(numberOfFunctions);
-        return { static_cast<const uint8_t*>(instance.closureCells), numberOfFunctions * sizeof(uint64_t) };
+        instance.closureCells = state.tableArena.allocate<uint64_t>(numberOfCells);
+        return { static_cast<const uint8_t*>(instance.closureCells), numberOfCells * sizeof(uint64_t) };
     }
-    instance.closureCells = state.tableArena.allocate<RememberedSlot<uint32_t>>(numberOfFunctions);
-    return { static_cast<const uint8_t*>(instance.closureCells), numberOfFunctions * sizeof(uint32_t) };
+    instance.closureCells = state.tableArena.allocate<RememberedSlot<uint32_t>>(numberOfCells);
+    return { static_cast<const uint8_t*>(instance.closureCells), numberOfCells * sizeof(uint32_t) };
+}
+
+// Only a function that can have a closure in the table has a cell. Zero stands for none: nothing is ever stored in cell 0, so a read of it finds no closure.
+static uint32_t cellNumberOf(const ProgramTables& tables, FunctionID function)
+{
+    ClosureFunctionRangeData range = tables.closureFunctions;
+    return function.index() >= range.first && function.index() < range.end ? tables.closureCellNumbers()[function.index() - range.first] : 0;
 }
 
 static RememberedSlot<uint32_t>* narrowClosureCells(const Instance& instance)
@@ -71,8 +76,9 @@ ClosureTable::ClosureTable(State& state)
 Structure* ClosureTable::realmClosureStructure(VM& vm, JSGlobalObject* globalObject, unsigned index)
 {
     RELEASE_ASSERT(index < numberOfClosureStructures);
-    if (Structure* structure = globalObject->aotClosureStructure(index))
-        return structure;
+    uint64_t& header = Instance::of(globalObject)->closures.closureHeaders[index];
+    if (header)
+        return std::bit_cast<StructureID>(static_cast<uint32_t>(header)).decode();
     JSObject* prototype = nullptr;
     switch (index) {
     case 0:
@@ -93,7 +99,8 @@ Structure* ClosureTable::realmClosureStructure(VM& vm, JSGlobalObject* globalObj
     }
     RELEASE_ASSERT(prototype);
     Structure* structure = Closure::createStructure(vm, globalObject, prototype);
-    globalObject->setAOTClosureStructure(vm, index, structure);
+    header = cellHeaderFor(structure);
+    FunctionTables::of(vm).closureStructuresWithoutTable.append(Strong<Structure>(vm, structure));
     return structure;
 }
 
@@ -106,6 +113,31 @@ void ClosureTable::setAsyncBoundFunctionStructure(Structure* structure)
     m_asyncBoundFunctionStructure = structure;
 }
 
+void ClosureTable::didGivePrototypePropertyTo(VM& vm, JSObject* closure)
+{
+    Structure* structure = closure->structure();
+    JSGlobalObject* globalObject = m_state.instance.globalObject;
+    if (structure->isDictionary() || !structure->isStructureExtensible() || structure->hasPolyProto() || structure->realm() != globalObject || structure->storedPrototype() != JSValue(globalObject->functionPrototype()))
+        return;
+    unsigned numberOfOtherProperties = 0;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        numberOfOtherProperties += entry.key() != vm.propertyNames->prototype.impl();
+        return true;
+    });
+    if (numberOfOtherProperties)
+        return;
+    uint32_t id = std::bit_cast<uint32_t>(structure->id());
+    for (uint32_t& known : m_state.instance.closures.structuresWithPrototypeProperty) {
+        if (known == id)
+            return;
+        if (known)
+            continue;
+        m_state.immortalCells->add(structure);
+        known = id;
+        return;
+    }
+}
+
 void ClosureTable::ensureStructures(VM& vm)
 {
     if (m_closureStructures[0])
@@ -115,6 +147,9 @@ void ClosureTable::ensureStructures(VM& vm)
         m_closureStructures[i] = realmClosureStructure(vm, instance.globalObject, i);
         instance.closures.closureHeaders[i] = cellHeaderFor(m_closureStructures[i]);
     }
+    FunctionTables::of(vm).closureStructuresWithoutTable.removeAllMatching([&](const Strong<Structure>& structure) {
+        return structure->realm() == instance.globalObject;
+    });
     createSlimClosureStructures(vm);
 }
 
@@ -133,12 +168,12 @@ void ClosureTable::createSlimClosureStructures(VM& vm)
     for (unsigned i = 0; i < numberOfSlimClosureKinds; ++i) {
         m_slimClosureStructures[i] = SlimClosure::createStructure(vm, globalObject, prototypes[i]);
         m_state.immortalCells->add(m_slimClosureStructures[i]);
-        globalObject->setAOTSlimClosureStructure(vm, i, m_slimClosureStructures[i]);
     }
     for (unsigned i = 0; i < numberOfSlimClosureKinds; ++i)
         instance.slimClosureHeaders[i] = cellHeaderFor(m_slimClosureStructures[i]);
+    CompleteSubspace& closureSpace = *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
     for (unsigned i = 0; i < ClosureWords::numberOfSlimClosureAllocators; ++i)
-        instance.closures.slimClosureAllocators[i] = vm.heap.aotClosureSpace.allocatorFor(MarkedSpace::sizeStep * (i + 1), AllocatorForMode::EnsureAllocator).localAllocator();
+        instance.closures.slimClosureAllocators[i] = closureSpace.allocatorFor(MarkedSpace::sizeStep * (i + 1), AllocatorForMode::EnsureAllocator).localAllocator();
 }
 
 Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function)
@@ -229,12 +264,30 @@ JSObject* ClosureTable::createClosureForOneCall(VM& vm, FunctionID function)
     return Closure::create(vm, closureStructureFor(vm, function), function);
 }
 
+JSObject* ClosureTable::calleeOfModuleBodies(VM& vm, FunctionID body)
+{
+    ClosureFunctionRangeData closureFunctions = m_tables.closureFunctions;
+    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.closures.closureWords[body.index()]);
+    if (!m_calleeOfModuleBodies) [[unlikely]] {
+        m_calleeOfModuleBodies = createClosureForOneCall(vm, body);
+        m_state.immortalCells->add(m_calleeOfModuleBodies);
+    }
+    m_state.statics->ensureProgramStaticsInitialized();
+    return m_calleeOfModuleBodies;
+}
+
 JSCell* ClosureTable::closureIfCreated(FunctionID function) const
 {
+    uint32_t number = cellNumberOf(m_tables, function);
     if (m_state.instance.options().useWideReferences())
-        return static_cast<JSCell**>(m_state.instance.closureCells)[function.index()];
-    uint32_t entry = narrowClosureCells(m_state.instance)[function.index()].get();
+        return static_cast<JSCell**>(m_state.instance.closureCells)[number];
+    uint32_t entry = narrowClosureCells(m_state.instance)[number].get();
     return entry ? MarkedBlockCage::decode(m_state.instance.cellCageBase, entry + 1) : nullptr;
+}
+
+bool ClosureTable::hasCellFor(FunctionID function) const
+{
+    return cellNumberOf(m_tables, function);
 }
 
 bool ClosureTable::hasSingletonClosure(FunctionID function) const
@@ -247,13 +300,15 @@ void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 {
     if (!functionKindData(function).isInRuntimeModule)
         m_state.statics->ensureProgramStaticsInitialized();
+    uint32_t number = cellNumberOf(m_tables, function);
+    RELEASE_ASSERT(number);
     if (m_state.instance.options().useWideReferences()) {
-        static_cast<JSCell**>(m_state.instance.closureCells)[function.index()] = cell;
+        static_cast<JSCell**>(m_state.instance.closureCells)[number] = cell;
         m_state.immortalCells->add(cell);
         return;
     }
     Locker locker { m_state.caches->lock() };
-    narrowClosureCells(m_state.instance)[function.index()].set(m_writtenRegions, MarkedBlockCage::encode(m_state.instance.cellCageBase, cell) - 1);
+    narrowClosureCells(m_state.instance)[number].set(m_writtenRegions, MarkedBlockCage::encode(m_state.instance.cellCageBase, cell) - 1);
 }
 
 void ClosureTable::registerClassObject(Closure* closure)
@@ -263,14 +318,21 @@ void ClosureTable::registerClassObject(Closure* closure)
         didCreateClosureFor(function, closure);
 }
 
+void ClosureTable::registerClosureOfMember(FunctionID function, JSCell* closure)
+{
+    ASSERT(hasCellFor(function) && !closureIfCreated(function));
+    didCreateClosureFor(function, closure);
+}
+
 void ClosureTable::forgetClosure(FunctionID function)
 {
+    uint32_t number = cellNumberOf(m_tables, function);
     if (m_state.instance.options().useWideReferences()) {
-        static_cast<JSCell**>(m_state.instance.closureCells)[function.index()] = nullptr;
+        static_cast<JSCell**>(m_state.instance.closureCells)[number] = nullptr;
         return;
     }
     Locker locker { m_state.caches->lock() };
-    narrowClosureCells(m_state.instance)[function.index()].clear();
+    narrowClosureCells(m_state.instance)[number].clear();
 }
 
 JSCell* ClosureTable::closure(VM& vm, FunctionID function)
@@ -284,19 +346,10 @@ JSCell* ClosureTable::closure(VM& vm, FunctionID function)
         didCreateClosureFor(function, cell);
         return cell;
     }
-    ClassTable& classes = m_state.objects->classes;
-    const LayoutData* classLayout = kind.isConstructor ? classes.classConstructedBy(function) : nullptr;
-    bool isCreatedOnChange = classLayout && classLayout->createsClassObjectOnMutation && classLayout->createsPrototypeBeforeClassObject;
-    Structure* structure = isCreatedOnChange ? classes.lazyClassObjectStructure(vm, *classLayout) : closureStructureFor(vm, function);
-    RELEASE_ASSERT(!closureIfCreated(function));
-    Closure* created = Closure::create(vm, structure, function);
+    if (const LayoutData* classLayout = kind.isConstructor ? m_state.objects->classes.classConstructedBy(function) : nullptr)
+        return m_state.objects->classes.createClassObject(vm, *classLayout);
+    Closure* created = Closure::create(vm, closureStructureFor(vm, function), function);
     didCreateClosureFor(function, created);
-    if (classLayout && !classLayout->hasUntypedBase && !isCreatedOnChange && !ClassTable::hasComputedMemberNames(*classLayout)) {
-        ASSERT(ClassTable::hasOneClassObject(*classLayout));
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        classes.defineClass(m_state.instance.globalObject, created, JSValue(), JSValue());
-        scope.assertNoException();
-    }
     return created;
 }
 
@@ -304,7 +357,7 @@ template<typename Appender>
 ALWAYS_INLINE void ClosureTable::visitRegion(Appender& appender, size_t begin, size_t end)
 {
     uintptr_t cageBase = m_state.instance.cellCageBase;
-    std::span entries { narrowClosureCells(m_state.instance), m_tables.functionKinds().size() };
+    std::span entries { narrowClosureCells(m_state.instance), static_cast<size_t>(m_tables.numberOfClosureCells) };
     RememberedSlotSet::forEachEntryInRegion(entries, begin, end, [&](RememberedSlot<uint32_t>& entry) ALWAYS_INLINE_LAMBDA {
         if (uint32_t biasedIndex = entry.get())
             appender.appendUnbarriered(MarkedBlockCage::decode(cageBase, biasedIndex + 1));

@@ -339,6 +339,12 @@ static std::optional<String> applyVerifyOnly(Wire::CompileOptions& options, Stri
     return std::nullopt;
 }
 
+static std::optional<String> applyCheckOnly(Wire::CompileOptions& options, StringView)
+{
+    options.action = Wire::CompileAction::CheckOnly;
+    return std::nullopt;
+}
+
 static std::optional<String> applyDisable(Wire::CompileOptions& options, StringView value)
 {
     return forEachListedName("disable"_s, value, [&](StringView name) {
@@ -450,6 +456,15 @@ static std::optional<String> applyHeat(Wire::CompileOptions& options, StringView
     return std::nullopt;
 }
 
+static std::optional<String> applySabotage(Wire::CompileOptions& options, StringView value)
+{
+    auto sabotage = findMember<Wire::Sabotage>(value);
+    if (!sabotage)
+        return unknownNameSentence("sabotage"_s, value);
+    options.sabotage = *sabotage;
+    return std::nullopt;
+}
+
 static std::optional<String> applyTesting(Wire::CompileOptions& options, StringView value)
 {
     return forEachListedName("testing"_s, value, [&](StringView name) -> std::optional<String> {
@@ -474,6 +489,12 @@ static void listTestingSwitches(PrintStream& out)
 static std::optional<String> applyCountBranches(Wire::CompileOptions& options, StringView)
 {
     addFlag(options.instrumentation, Wire::Instrumentation::CountBranches);
+    return std::nullopt;
+}
+
+static std::optional<String> applyCountArrivals(Wire::CompileOptions& options, StringView)
+{
+    addFlag(options.instrumentation, Wire::Instrumentation::CountArrivals);
     return std::nullopt;
 }
 
@@ -527,11 +548,6 @@ static std::optional<String> applyLayoutSeed(Wire::CompileOptions& options, Stri
     return setNumber(options.layoutSeed, value);
 }
 
-static std::optional<String> applyFlowOrderSeed(Wire::CompileOptions& options, StringView value)
-{
-    return setNumber(options.bisection.flowOrderSeed, value);
-}
-
 static std::optional<String> applyThreads(Wire::CompileOptions& options, StringView value)
 {
     if (auto sentence = setNumber(options.threadCount, value))
@@ -576,18 +592,20 @@ static constexpr OptionWord optionWords[] = {
     { "validate"_s, ValueForm::None, { }, WordOwner::Engine, applyValidate, listNoValues },
     { "check"_s, ValueForm::Required, "<name>,.."_s, WordOwner::Engine, applyCheck, listMembers<Wire::CheckSet> },
     { "verify-only"_s, ValueForm::None, { }, WordOwner::Engine, applyVerifyOnly, listNoValues },
+    { "check-only"_s, ValueForm::None, { }, WordOwner::Engine, applyCheckOnly, listNoValues },
     { "disable"_s, ValueForm::Required, "<switch>,.."_s, WordOwner::Engine, applyDisable, listSwitches },
     { "only-passes"_s, ValueForm::Required, "<PassID>,.."_s, WordOwner::Engine, applyOnlyPasses, listOptionalPasses },
     { "disable-in"_s, ValueForm::Required, "<first>[:<count>]"_s, WordOwner::Engine, applyDisableIn, listNoValues },
     { "limit"_s, ValueForm::Required, "<LimitID>:<n>"_s, WordOwner::Engine, applyLimit, listLimits },
     { "heat"_s, ValueForm::Required, "<HeatOverride>"_s, WordOwner::Engine, applyHeat, listMembers<Wire::HeatOverride> },
     { "testing"_s, ValueForm::Required, "<name>,.."_s, WordOwner::Engine, applyTesting, listTestingSwitches },
+    { "sabotage"_s, ValueForm::Required, "<Sabotage>"_s, WordOwner::Engine, applySabotage, listMembers<Wire::Sabotage> },
     { "count-branches"_s, ValueForm::None, { }, WordOwner::Engine, applyCountBranches, listNoValues },
+    { "count-arrivals"_s, ValueForm::None, { }, WordOwner::Engine, applyCountArrivals, listNoValues },
     { "drop-guard"_s, ValueForm::Required, "<Opcode>:<n>"_s, WordOwner::Engine, applyDropGuard, listNoValues },
     { "references"_s, ValueForm::Required, "narrow|wide"_s, WordOwner::Engine, applyReferences, listReferenceWidths },
     { "type-errors"_s, ValueForm::Required, "throw|log"_s, WordOwner::Engine, applyTypeErrors, listMismatchPolicies },
     { "layout-seed"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyLayoutSeed, listNoValues },
-    { "flow-order-seed"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyFlowOrderSeed, listNoValues },
     { "threads"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyThreads, listNoValues },
     { "report"_s, ValueForm::Required, "<name>,.."_s, WordOwner::Engine, applyReport, listMembers<Wire::ReportSet> },
     { "admit"_s, ValueForm::Required, "<name>,.."_s, WordOwner::Engine, applyAdmit, listMembers<Wire::AdmittedCode> },
@@ -638,7 +656,8 @@ Wire::CompileOptions makeDefaultCompileOptions()
 {
     Wire::CompileOptions options { };
     options.size = sizeof(Wire::CompileOptions);
-    options.threadCount = std::clamp<unsigned>(WTF::numberOfProcessorCores(), 1, Limits::maxWorkers);
+    constexpr unsigned mostUsefulThreads = 16;
+    options.threadCount = std::clamp<unsigned>(WTF::numberOfProcessorCores(), 1, std::min<unsigned>(Limits::maxWorkers, mostUsefulThreads));
     options.target.architecture = hostArchitecture();
     options.target.features = CPUFeatureSet::buildTarget().bits();
     options.sizeClassProgression = Options::sizeClassProgressionForCompiledCode;

@@ -12,11 +12,11 @@ namespace JSC { namespace AOT { namespace Wire {
 
 inline constexpr DiagnosticSeverity severityByUserDiagnosticKind[] = {
     DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Error,
-    DiagnosticSeverity::Error, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Error,
-    DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning,
+    DiagnosticSeverity::Warning, DiagnosticSeverity::Error, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning,
+    DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Error, DiagnosticSeverity::Warning,
     DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning,
     DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning,
-    DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning
+    DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning, DiagnosticSeverity::Warning
 };
 constexpr DiagnosticSeverity severityOf(UserDiagnosticKind value)
 {
@@ -26,10 +26,11 @@ constexpr DiagnosticSeverity severityOf(UserDiagnosticKind value)
 }
 
 inline constexpr Stage stageByUserDiagnosticKind[] = {
-    Stage::Any, Stage::Any, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::AnalyzeFlow, Stage::AnalyzeFlow,
-    Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::GenerateCode, Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::BuildImage, Stage::BuildImage,
+    Stage::Any, Stage::Any, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::AnalyzeFlow,
+    Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::GenerateCode, Stage::NumberAndEncode, Stage::NumberAndEncode,
     Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage,
-    Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage
+    Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage,
+    Stage::BuildImage, Stage::BuildImage
 };
 constexpr Stage stageOf(UserDiagnosticKind value)
 {
@@ -39,8 +40,8 @@ constexpr Stage stageOf(UserDiagnosticKind value)
 }
 
 inline constexpr uint32_t codeByUserDiagnosticKind[] = {
-    100057, 100057, 100057, 100031, 100032, 100014, 100014, 100014, 100064, 100057, 100057, 100057, 100057, 100058, 100058, 100058, 100058, 100058,
-    100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058
+    100057, 100057, 100057, 100031, 100032, 100066, 100014, 100014, 100014, 100064, 100057, 100057, 100057, 100057, 100058, 100058, 100058, 100058,
+    100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058, 100058
 };
 constexpr uint32_t codeOf(UserDiagnosticKind value)
 {
@@ -51,15 +52,16 @@ constexpr uint32_t codeOf(UserDiagnosticKind value)
 
 inline constexpr ASCIILiteral messageByUserDiagnosticKind[] = {
     "a diagnostic without a kind was reported"_s,
-    "the program exceeds a limit of the compiler: {limit}, needed {count}"_s,
+    "the program exceeds a compiler limit: {limit}, needed {count}"_s,
     "invalid regular expression literal"_s,
     "the value is declared 'int32', but it might not be an int32 (reason {count})"_s,
     "the value is declared 'int32', but the constant is not an int32"_s,
-    "this write throws, because the built-in object is read-only in a compiled executable"_s,
-    "this write would throw, because the built-in object is read-only in a compiled executable"_s,
-    "this write does nothing, because the built-in object is read-only in a compiled executable"_s,
-    "the module name is computed: code that is not in the executable is refused here at run time (data files still load). Compile with --admit=runtime-code to load it, or name the module with --external"_s,
-    "the stack frame of {function} would be {count} bytes: {limit}"_s,
+    "the compiler can't prove every 'int32' that a dependency declares, so it tests them when the program runs"_s,
+    "this assignment always throws: built-in objects are read-only in a compiled executable"_s,
+    "this assignment throws if it runs: built-in objects are read-only in a compiled executable"_s,
+    "this assignment has no effect: built-in objects are read-only in a compiled executable"_s,
+    "this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or mark it --external"_s,
+    "{function} needs a stack frame of {count} bytes, over the limit: {limit}"_s,
     "the program has too many object shapes: {limit}, needed {count}"_s,
     "the program has too many property names: {limit}, needed {count}"_s,
     "the program has too many functions: {limit}, needed {count}"_s,
@@ -72,11 +74,11 @@ inline constexpr ASCIILiteral messageByUserDiagnosticKind[] = {
     "a WebAssembly function runs in the interpreter: it uses exceptions"_s,
     "a WebAssembly function runs in the interpreter: it uses tail calls"_s,
     "a WebAssembly function runs in the interpreter: it tests reference types"_s,
-    "a WebAssembly function runs in the interpreter: it calls an operation the image does not list"_s,
-    "a WebAssembly function runs in the interpreter: it names a type of another module"_s,
+    "a WebAssembly function runs in the interpreter: it calls a runtime function the compiler doesn't support"_s,
+    "a WebAssembly function runs in the interpreter: it uses a type from another module"_s,
     "a WebAssembly function runs in the interpreter: it saves a vector register"_s,
     "a WebAssembly function runs in the interpreter: its saved registers are not in order"_s,
-    "a WebAssembly function runs in the interpreter: its code holds a process address"_s,
+    "a WebAssembly function runs in the interpreter: its code contains an absolute address"_s,
     "a WebAssembly function runs in the interpreter: the code generator failed"_s,
 };
 constexpr ASCIILiteral messageOf(UserDiagnosticKind value)
@@ -87,26 +89,28 @@ constexpr ASCIILiteral messageOf(UserDiagnosticKind value)
 }
 
 inline constexpr Stage stageByInternalErrorKind[] = {
-    Stage::Any, Stage::Any, Stage::Any, Stage::Any, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
+    Stage::Any, Stage::Any, Stage::Any, Stage::Any, Stage::Any, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
-    Stage::Optimize, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
-    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::NumberAndEncode, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
+    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize,
+    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
+    Stage::ReadAndVerify, Stage::NumberAndEncode, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ChooseRepresentations, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
-    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify, Stage::ReadAndVerify,
-    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Select, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify, Stage::Select, Stage::Optimize,
-    Stage::Optimize, Stage::Optimize, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow,
-    Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::Select, Stage::Select, Stage::GenerateCode, Stage::GenerateCode, Stage::Optimize, Stage::Optimize,
-    Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Select, Stage::Select, Stage::Select,
-    Stage::Select, Stage::Select, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize,
-    Stage::PlanSlots, Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::ChooseRepresentations, Stage::GenerateCode,
-    Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode,
+    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify,
+    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Select, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify,
+    Stage::Select, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize, Stage::Optimize, Stage::Optimize,
+    Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::Select,
+    Stage::Select, Stage::GenerateCode, Stage::GenerateCode, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize,
+    Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Select, Stage::Select, Stage::Select, Stage::Select, Stage::Select, Stage::Optimize,
+    Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::PlanSlots, Stage::NumberAndEncode,
+    Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::ChooseRepresentations, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode,
+    Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::BuildImage, Stage::BuildImage,
     Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage,
-    Stage::BuildImage, Stage::BuildImage, Stage::BuildImage
+    Stage::BuildImage
 };
 constexpr Stage stageOf(InternalErrorKind value)
 {
@@ -120,6 +124,7 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "the compile options are not valid (reason {count})"_s,
     "verification failed after {pass}"_s,
     "the program that goes to the back end is not valid: build again with --aot-verify-each-pass to find the pass"_s,
+    "{pass} was left out because nothing that changed since its last run can give it work, but it changes the function"_s,
     "the program has fewer bytes than its header says"_s,
     "the bytes are not a valid program header"_s,
     "the two halves of the compiler were built from different schemas"_s,
@@ -141,10 +146,14 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "property key {count} is not a valid record"_s,
     "{layout} breaks a rule of classes"_s,
     "{layout} is not a valid layout"_s,
+    "a position is both expected and an int32 promise, in record {count}"_s,
+    "{layout} is converted to a type that does not list it"_s,
     "variable {count} is not a valid record"_s,
     "module {count} is not a valid module record"_s,
     "module failure {count} is not a valid record"_s,
+    "the evaluation of a module breaks rule {count} of its sites"_s,
     "data record {count} is not a valid tree"_s,
+    "data record {count} fills a field of {layout} with a value outside the field's type"_s,
     "entry {count} is not a valid record"_s,
     "the program has no entry point"_s,
     "the operation is not legal in this form of the IR"_s,
@@ -170,6 +179,7 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "the role of the block does not fit its subject"_s,
     "the blocks are not in reverse postorder, or a block is unreachable"_s,
     "the type is not what the result rule gives"_s,
+    "a result rule answers with more for an operand of a narrower type, or its two paths disagree"_s,
     "an operand does not have the representation its operation wants"_s,
     "the operand has the wrong type"_s,
     "the stored value is outside the declared type"_s,
@@ -181,6 +191,7 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "code follows a value that never completes"_s,
     "an environment is used where none is allowed"_s,
     "the definition of an operand does not dominate the use"_s,
+    "a function that is reached cannot get past its first block, and by no throw of its own: nothing is left of what a value there may be"_s,
     "something between the guard and the use may write what the guard depends on"_s,
     "the guard does not prove what the operation relies on"_s,
     "the operand must be the defining value, not a block parameter"_s,
@@ -191,17 +202,20 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "the overload does not take these operands"_s,
     "the suspension breaks a rule of coroutines"_s,
     "an intrinsic is used outside library code"_s,
-    "a prediction is left after selection"_s,
+    "an expected type is left after selection"_s,
     "inline frame {count} is malformed"_s,
     "role, creator record and derivation do not agree"_s,
+    "the relations of the function name what is not there (rule {count})"_s,
+    "a use of the value has no flag and no row in the relations of its function (rule {count})"_s,
     "a closure that is made on demand is not the initial value of a field that defers it"_s,
+    "an object that is made on demand is not taken by an operation that lays it into a room of an outer object"_s,
+    "an inner object that may still lie in its outer object goes where the object itself is wanted"_s,
     "{value} in {function} enters a position narrower than its type"_s,
     "members of {layout} do not ascend or are not allocated"_s,
-    "{value} in {function} is proven to be {layout}, whose allocation class can lose its shape"_s,
-    "{function} and its generic version differ in shape"_s,
-    "{value} in {function}: operand type outside the claimed type and no flow proof"_s,
-    "{value} in {function} reaches built-in {count}, whose compiled function or model is not in the program"_s,
-    "the solve ended too early: running {value} in {function} again changes node {count}"_s,
+    "{value} in {function}: operand type outside the checked type and no flow proof"_s,
+    "{function}: the type of {value} removed a value flow knows arrives"_s,
+    "the flow analysis was at rest, and {count} of its rules still add something when they run once more over the solved sets"_s,
+    "{value} in {function}: the rule was not due, and run once more over the solved sets it adds something"_s,
     "a selected operation has effects beyond those of the group it replaced"_s,
     "an operation was selected into a form with effects it does not declare"_s,
     "the generated code has effects beyond the summary of {function}"_s,

@@ -5,12 +5,12 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number}}, {key="w" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
-layout L1 name="Named" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="name" declared={type=string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
-layout L2 name="Widget" fields=[{key="deferred" declared={type=f0} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
-layout L3 name="Unlisted" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape] keys=NeverEnumerated}
-layout L4 name="Freezable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype, LoseShape]}
-layout L5 kind=Instance name="Buffer" constructor=f1 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f2 mutability=Fixed}]}
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number}}, {key="w" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Named" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="name" declared={type=string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Widget" fields=[{key="deferred" declared={type=f0} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="Unlisted" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated}
+layout L4 name="Freezable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L5 kind=Instance name="Buffer" constructor=f1 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f2 mutability=Fixed}]}
 function f0 name="callback" kind=Arrow results=[{type=anything}] {
   b0():
     Return
@@ -76,14 +76,14 @@ function f9 name="closure-not-deferred" parameters=[{type=L2}] results=[{type=an
 }
 # CHECK-LABEL: function f9 name="closure-not-deferred"
 # CHECK: v1: f0 = GetSlot v0 key="eager" receivers=[L2] level=Proven
-function f10 name="claimed-receiver" parameters=[{type=anything}] results=[{type=anything}] {
+function f10 name="checked-receiver" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=L0
+    v1 = Check v0 castType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
-# CHECK-LABEL: function f10 name="claimed-receiver"
-# CHECK: v2: number = GetSlot v1 key="x" receivers=[L0] level=Written
+# CHECK-LABEL: function f10 name="checked-receiver"
+# CHECK: v2: number = GetSlot v1 key="x" receivers=[L0] level=Proven
 function f11 name="rare-block" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
   b0(v0: L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
@@ -182,13 +182,13 @@ function f22 name="slot-may-be-empty" parameters=[{type=L0}] results=[{type=anyt
 # CHECK-NEXT: = PropGet v0 key="z"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
-function f23 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f23 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
-# CHECK-LABEL: function f23 name="predicted-receiver"
-# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-LABEL: function f23 name="expected-receiver"
+# CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: = PropGet v0 key="x"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -301,4 +301,14 @@ function f34 name="store-of-a-name-without-a-field" parameters=[{type=L0}, {type
 # CHECK-NEXT: b0(v0: L0, v1: number):
 # CHECK-NEXT: PropSet v0, v1 key="missing"
 # CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f35 name="has-field-that-may-be-redefined" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropHas v0 key="z"
+    Return v1
+}
+# CHECK-LABEL: function f35 name="has-field-that-may-be-redefined"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropHas v0 key="z"
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }

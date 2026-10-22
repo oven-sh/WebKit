@@ -8,7 +8,7 @@
 # CHECK-NEXT: layout L2 kind=Environment module=m0 position=20 fields=[{declared={type=anything}}, {declared={type=anything}}]
 # CHECK-NEXT: layout L3 kind=Instance name="Base" module=m0 position=30 constructor=f4
 # CHECK-NEXT: variable g0 name="a" module=m0 declared={type=anything}
-# CHECK-NEXT: module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+# CHECK-NEXT: module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m1 kind=Require completes=true}]
 # CHECK-NEXT: module m1 path="/other.js" displayPath="other.js" body=f1
 # CHECK-NEXT: module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 # CHECK-NEXT: modulefailure q0 importer=m0 specifier="./missing"
@@ -16,6 +16,7 @@
 # CHECK-NEXT: evalscope e1 bindings=[{name="x" layout=L2 field=1 operand=0}]
 # CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateModule module=m1 referrer=m0 [isBare]
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
 # CHECK-NEXT: function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}]
@@ -102,6 +103,7 @@
 # CHECK-NEXT: v17 = NewRuntimeError runtimeError=ConstantAssignment name="k"
 # CHECK-NEXT: v18 = NewRuntimeError
 # CHECK-NEXT: v19 = NewSuppressedError v1, v1
+# CHECK-NEXT: v20 = NewDictionary
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-NEXT: function f10 module=m0 flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
@@ -152,6 +154,9 @@
 # CHECK-NEXT: v34 = SuperGet v32, v0 key="x"
 # CHECK-NEXT: SuperSet v32, v0, v1, v2 mode=Sloppy
 # CHECK-NEXT: SuperSet v32, v0, v1 key="x"
+# CHECK-NEXT: v37 = TryDefineLiveBinding v0, v1, v2, v2, v20
+# CHECK-NEXT: v38 = TryReExportFields v0, v1 function=f2 [reusesDescriptors, keyIsFirstCapture]
+# CHECK-NEXT: v39 = TryReExportFields v0, v1 function=f2
 # CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-NEXT: function f12 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
@@ -196,23 +201,20 @@
 # CHECK-NEXT: function f13 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2 = Upcast v0 castType=anything
-# CHECK-NEXT: v3 = Claim v0 castType=string site=w0
-# CHECK-NEXT: v4 = Claim v0 castType=number
-# CHECK-NEXT: v5 = ClaimDeclared v0 declared={type=object written=L0 predicted=L3 site=w0}
-# CHECK-NEXT: v6 = ClaimDeclared v0 declared={type=anything predicted=0 flags=[IsInt32Promise]}
-# CHECK-NEXT: v7 = ClaimDeclared v0 declared={type=anything}
-# CHECK-NEXT: v8 = ClaimRead v0, v1 source=Field{key="x"} site=w0
-# CHECK-NEXT: v9 = ClaimRead v0, v1 source=Contents{slot=Value}
-# CHECK-NEXT: v10 = ClaimRead v0, v1 source=Contents{}
-# CHECK-NEXT: v11 = ClaimRead v0, v1 source=Field{key="x"}
-# CHECK-NEXT: v12 = Predict v0 predicted=string
-# CHECK-NEXT: v13 = CheckInitialized v0 name="x"
-# CHECK-NEXT: v14 = RequireObjectCoercible v0 nullishAccess=Iterate name="x"
-# CHECK-NEXT: v15 = RequireObjectCoercible v0
-# CHECK-NEXT: v16 = RequireObject v0 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v17 = RequireObject v0
-# CHECK-NEXT: v18 = TypeTest v0 testedType=undefined|null
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v3 = NarrowByField v0, v1 key="x"
+# CHECK-NEXT: v4 = Check v0 castType=string site=w0
+# CHECK-NEXT: v5 = Check v0 castType=number
+# CHECK-NEXT: v6 = Convert v0 declared={type=L0 site=w0 flags=[IsFromCompiler, IsExpected]} illTypedCause=Assertion
+# CHECK-NEXT: v7 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
+# CHECK-NEXT: v8 = Convert v0 declared={type=anything}
+# CHECK-NEXT: v9 = CheckInitialized v0 name="x"
+# CHECK-NEXT: v10 = RequireObjectCoercible v0 nullishAccess=Iterate name="x"
+# CHECK-NEXT: v11 = RequireObjectCoercible v0
+# CHECK-NEXT: v12 = RequireObject v0 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: v13 = RequireObject v0
+# CHECK-NEXT: v14 = TypeTest v0 testedType=undefined|null
+# CHECK-NEXT: v15 = IsClosureOf v0 function=f6
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-NEXT: function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
@@ -339,11 +341,12 @@
 # CHECK-NEXT: IteratorClose v3
 # CHECK-NEXT: v9 = ForInOpen v0
 # CHECK-NEXT: v10 = ForInStep v9, v0
-# CHECK-NEXT: v11 = Await v1
+# CHECK-NEXT: v11 = Await v1 [takesExtraTurn]
+# CHECK-NEXT: v12 = Await v1
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: b2() role=IterationCleanup subject=v3:
-# CHECK-NEXT: v12 = CatchException
-# CHECK-NEXT: Rethrow v12
+# CHECK-NEXT: v13 = CatchException
+# CHECK-NEXT: Rethrow v13
 # CHECK-NEXT: }
 # CHECK-NEXT: function f22 module=m0 flags=[IsGenerator, TakesCallee] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: function, v1: anything):
@@ -366,7 +369,10 @@
 # CHECK-NEXT: v11 = RequireDynamic v0 referrer=m0
 # CHECK-NEXT: v12 = ResolveDynamic v0 referrer=m0 [isURL]
 # CHECK-NEXT: v13 = ResolveDynamic v0 referrer=m0
-# CHECK-NEXT: v14 = ThrowModuleFailure failure=q0
+# CHECK-NEXT: v14 = ResolveDynamic v0 referrer=m0 [isForRequire]
+# CHECK-NEXT: EvaluateModule module=m1 referrer=m0
+# CHECK-NEXT: RecordRequire module=m1 referrer=m0
+# CHECK-NEXT: v17 = ThrowModuleFailure failure=q0
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-NEXT: function f24 module=m0 flags=[HasThis, HasNewTarget] captures=[{type=env L2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
@@ -449,6 +455,12 @@
 # CHECK-NEXT: v6 = SetNext v1, v5, v2
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+# CHECK-NEXT: function f30 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=string}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: string):
+# CHECK-NEXT: v2 = CopyObject v0, v1 excludedKeys=["x", "y"]
+# CHECK-NEXT: v3 = CopyObject v0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
 # CHECK-NEXT: data d0 root=Null
 # CHECK-NEXT: entry module=m0
 # CHECK-NEXT: round trip: same
@@ -462,7 +474,7 @@ layout L1 kind=Instance name="Derived" module=m0 position=10 constructor=f3 fiel
 layout L2 kind=Environment module=m0 position=20 fields=[{declared={type=anything}}, {declared={type=anything}}]
 layout L3 kind=Instance name="Base" module=m0 position=30 constructor=f4
 variable g0 name="a" module=m0 declared={type=anything}
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m1 kind=Require completes=true}]
 module m1 path="/other.js" displayPath="other.js" body=f1
 module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 modulefailure q0 importer=m0 specifier="./missing"
@@ -470,6 +482,7 @@ evalscope e0
 evalscope e1 bindings=[{name="x" layout=L2 field=1 operand=0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
     Return
 }
 function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -556,6 +569,7 @@ function f9 module=m0 thisType={type=anything} parameters=[{type=object}, {type=
     v17 = NewRuntimeError runtimeError=ConstantAssignment name="k"
     v18 = NewRuntimeError
     v19 = NewSuppressedError v1, v1
+    v20 = NewDictionary
     Return v3
 }
 function f10 module=m0 flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
@@ -606,6 +620,9 @@ function f11 module=m0 thisType={type=anything} parameters=[{type=anything}, {ty
     v34 = SuperGet v32, v0 key="x"
     SuperSet v32, v0, v1, v2 mode=Sloppy
     SuperSet v32, v0, v1 key="x"
+    v37 = TryDefineLiveBinding v0, v1, v2, v2, v20
+    v38 = TryReExportFields v0, v1 function=f2 [reusesDescriptors, keyIsFirstCapture]
+    v39 = TryReExportFields v0, v1 function=f2
     Return v30
 }
 function f12 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -650,23 +667,20 @@ function f12 module=m0 thisType={type=anything} parameters=[{type=anything}, {ty
 function f13 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = Upcast v0 castType=anything
-    v3 = Claim v0 castType=string site=w0
-    v4 = Claim v0 castType=number
-    v5 = ClaimDeclared v0 declared={type=object written=L0 predicted=L3 site=w0}
-    v6 = ClaimDeclared v0 declared={type=i32 predicted=0 flags=[IsInt32Promise]}
-    v7 = ClaimDeclared v0 declared={type=anything}
-    v8 = ClaimRead v0, v1 source=Field{key="x"} site=w0
-    v9 = ClaimRead v0, v1 source=Contents{slot=Value}
-    v10 = ClaimRead v0, v1 source=Contents{}
-    v11 = ClaimRead v0, v1 source=Field{key="x"}
-    v12 = Predict v0 predicted=string
-    v13 = CheckInitialized v0 name="x"
-    v14 = RequireObjectCoercible v0 nullishAccess=Iterate name="x"
-    v15 = RequireObjectCoercible v0
-    v16 = RequireObject v0 runtimeError=IteratorResultNotObject
-    v17 = RequireObject v0
-    v18 = TypeTest v0 testedType=undefined|null
-    Return v18
+    v3 = NarrowByField v0, v1 key="x"
+    v4 = Check v0 castType=string site=w0
+    v5 = Check v0 castType=number
+    v6 = Convert v0 declared={type=L0 site=w0 flags=[IsFromCompiler, IsExpected]} illTypedCause=Assertion
+    v7 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
+    v8 = Convert v0 declared={type=anything}
+    v9 = CheckInitialized v0 name="x"
+    v10 = RequireObjectCoercible v0 nullishAccess=Iterate name="x"
+    v11 = RequireObjectCoercible v0
+    v12 = RequireObject v0 runtimeError=IteratorResultNotObject
+    v13 = RequireObject v0
+    v14 = TypeTest v0 testedType=undefined|null
+    v15 = IsClosureOf v0 function=f6
+    Return v14
 }
 function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -793,11 +807,12 @@ function f21 module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{typ
     IteratorClose v3
     v9 = ForInOpen v0
     v10 = ForInStep v9, v0
-    v11 = Await v1
+    v11 = Await v1 [takesExtraTurn]
+    v12 = Await v1
     Return v11
   b2() role=IterationCleanup subject=v3:
-    v12 = CatchException
-    Rethrow v12
+    v13 = CatchException
+    Rethrow v13
 }
 function f22 module=m0 flags=[IsGenerator, TakesCallee] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: function, v1: anything):
@@ -820,7 +835,10 @@ function f23 module=m0 thisType={type=anything} parameters=[{type=anything}, {ty
     v11 = RequireDynamic v0 referrer=m0
     v12 = ResolveDynamic v0 referrer=m0 [isURL]
     v13 = ResolveDynamic v0 referrer=m0
-    v14 = ThrowModuleFailure failure=q0
+    v14 = ResolveDynamic v0 referrer=m0 [isForRequire]
+    EvaluateModule module=m1 referrer=m0
+    RecordRequire module=m1 referrer=m0
+    v17 = ThrowModuleFailure failure=q0
     Unreachable
 }
 function f24 module=m0 flags=[HasThis, HasNewTarget] captures=[{type=env L2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
@@ -902,6 +920,12 @@ function f29 module=m2 role=Library thisType={type=anything} parameters=[{type=M
     v5 = CollectionTable v1
     v6 = SetNext v1, v5, v2
     Return
+}
+function f30 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = CopyObject v0, v1 excludedKeys=["x", "y"]
+    v3 = CopyObject v0
+    Return v3
 }
 data d0 root=Null
 entry module=m0

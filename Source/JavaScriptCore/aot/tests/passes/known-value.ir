@@ -31,7 +31,7 @@ function f1 name="knownValues" parameters=[{type=anything}, {type=L0}, {type=str
     v13 = StrictEq v10, v11
     v14 = TypeTest v11 testedType=undefined|null
     v15 = BitAnd v8, v0
-    v16 = Claim v0 castType=number
+    v16 = Check v0 castType=number
     v17 = NewObject -, v0 layout=L0 fields=[0]
     v18 = Integer integer=1
     v19 = Eq v17, v18
@@ -82,9 +82,9 @@ function f1 name="knownValues" parameters=[{type=anything}, {type=L0}, {type=str
 function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Upcast v0 castType=anything
-    v2 = Predict v0 predicted=number
+    v2 = AssumeType v0 castType=number
     v3 = CheckInitialized v0 name="x"
-    v4 = Claim v0 castType=number
+    v4 = Check v0 castType=number
     v5 = RequireObjectCoercible v0 name="x"
     v6 = RequireObject v0
     Return v0

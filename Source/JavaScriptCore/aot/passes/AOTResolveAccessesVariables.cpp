@@ -10,9 +10,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool canObserveDeadZone(const Variable& variable)
+// A variable whose type flow has not narrowed keeps the mark of its dead zone in that type, though every read may be proven to come after a store. Whoever uses the read takes a value of the language.
+static bool canObserveDeadZone(const Program& program, const Variable& variable)
 {
-    return variable.initialization == VariableInitialization::Uninitialized && variable.flow.initialization == InitializationState::Unknown;
+    if (variable.initialization != VariableInitialization::Uninitialized)
+        return false;
+    return variable.flow.initialization == InitializationState::Unknown || (!variable.owner && (program.at(variable.declared.type).primitives & Primitive::Absent));
 }
 
 static Value makeVariableRead(VariableID variable)
@@ -30,7 +33,8 @@ void AccessRewriter::becomeVariableAccess(const NamedAccessSite& site, const Acc
     const Variable& variable = program.at(id);
 
     ReplacedEffects replaced;
-    replaced.add({ program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
+    if (m_checksEffects)
+        replaced.add({ program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
 
     if (plan.operation == Opcode::PutModuleVariable) {
         ASSERT(program.typeOf(m_context.function, operands.stored).isSubsetOf(program.at(variable.declared.type), program));
@@ -43,7 +47,7 @@ void AccessRewriter::becomeVariableAccess(const NamedAccessSite& site, const Acc
     }
 
     RELEASE_ASSERT(plan.operation == Opcode::GetModuleVariable);
-    if (!canObserveDeadZone(variable)) {
+    if (!canObserveDeadZone(program, variable)) {
         Value& read = valueAt(site.site);
         read.become(Opcode::GetModuleVariable);
         read.setVariable(id);
@@ -69,7 +73,8 @@ void AccessRewriter::becomeNamespace(const NamedAccessSite& site)
 {
     Value& value = valueAt(site.site);
     ReplacedEffects replaced;
-    replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
+    if (m_checksEffects)
+        replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
 
     value.become(Opcode::ModuleNamespace);
     value.setModule(site.plan.member.module);

@@ -1,0 +1,318 @@
+# `map.get(a + ":" + b)`: a key that is put together for one lookup in a Map or a Set is not created, and the lookup takes its parts
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: KeyPartsLookupGroups = 19
+# LOSS: MaxKeyParts x1 f16 v4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mapGetOfTwoStrings" parameters=[{type=Map}, {type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    Return v4
+}
+# CHECK-LABEL: function f0 name="mapGetOfTwoStrings"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[found0]]: {{*}} = MapGetByKeyParts v0, v1, v2
+# CHECK-NEXT: Return [[found0]]
+
+function f1 name="mapGetOfStringLiteralAndInteger" parameters=[{type=Map}, {type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: i32):
+    v3 = String string=":"
+    v4 = Strcat v1, v3, v2 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v5
+}
+# CHECK-LABEL: function f1 name="mapGetOfStringLiteralAndInteger"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[colon1]]: ":" = String string=":"
+# CHECK-NEXT: [[found1]]: {{*}} = MapGetByKeyParts v0, v1, [[colon1]], v2
+# CHECK-NEXT: Return [[found1]]
+
+function f2 name="mapHasOfIntegerAndString" parameters=[{type=Map}, {type=int[0, 9]}, {type=string}] results=[{type=boolean}] {
+  b0(v0: Map, v1: int[0, 9], v2: string):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeHas/0
+    Return v4
+}
+# CHECK-LABEL: function f2 name="mapHasOfIntegerAndString"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[found2]]: boolean = HasByKeyParts v0, v1, v2
+# CHECK-NEXT: Return [[found2]]
+
+function f3 name="mapHasOfThreeStrings" parameters=[{type=Map}, {type=string}, {type=string}] results=[{type=boolean}] {
+  b0(v0: Map, v1: string, v2: string):
+    v3 = String string=":"
+    v4 = Strcat v1, v3, v2 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeHas/0
+    Return v5
+}
+# CHECK-LABEL: function f3 name="mapHasOfThreeStrings"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[colon3]]: ":" = String string=":"
+# CHECK-NEXT: [[found3]]: boolean = HasByKeyParts v0, v1, [[colon3]], v2
+# CHECK-NEXT: Return [[found3]]
+
+function f4 name="setHasOfTwoIntegers" parameters=[{type=Set}, {type=i32}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: Set, v1: i32, v2: i32):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=SetPrototypeHas/0
+    Return v4
+}
+# CHECK-LABEL: function f4 name="setHasOfTwoIntegers"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[found4]]: boolean = HasByKeyParts v0, v1, v2
+# CHECK-NEXT: Return [[found4]]
+
+function f5 name="setHasOfThreeParts" parameters=[{type=Set}, {type=string}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: Set, v1: string, v2: i32):
+    v3 = String string="#"
+    v4 = Strcat v1, v3, v2 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=SetPrototypeHas/0
+    Return v5
+}
+# CHECK-LABEL: function f5 name="setHasOfThreeParts"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[hash5]]: "#" = String string="#"
+# CHECK-NEXT: [[found5]]: boolean = HasByKeyParts v0, v1, [[hash5]], v2
+# CHECK-NEXT: Return [[found5]]
+
+function f6 name="mapGetOfEightParts" parameters=[{type=Map}, {type=string}, {type=i32}, {type=string}, {type=int[-5, 5]}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: i32, v3: string, v4: int[-5, 5]):
+    v5 = String string="/"
+    v6 = Strcat v1, v5, v2, v5, v3, v5, v4, v1 [isLikelyKey]
+    v7 = CallBuiltin v0, v6 overload=MapPrototypeGet/0
+    Return v7
+}
+# CHECK-LABEL: function f6 name="mapGetOfEightParts"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[slash6]]: "/" = String string="/"
+# CHECK-NEXT: [[found6]]: {{*}} = MapGetByKeyParts v0, v1, [[slash6]], v2, [[slash6]], v3, [[slash6]], v4, v1
+# CHECK-NEXT: Return [[found6]]
+
+function f7 name="hasOfEightParts" parameters=[{type=Map}, {type=Set}, {type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: string, v3: i32):
+    v4 = Strcat v2, v3, v2, v3, v2, v3, v2, v3 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeHas/0
+    v6 = Strcat v3, v2, v3, v2, v3, v2, v3, v2 [isLikelyKey]
+    v7 = CallBuiltin v1, v6 overload=SetPrototypeHas/0
+    v8 = NewArray v5, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f7 name="hasOfEightParts"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[inMap7]]: boolean = HasByKeyParts v0, v2, v3, v2, v3, v2, v3, v2, v3
+# CHECK-NEXT: [[inSet7]]: boolean = HasByKeyParts v1, v3, v2, v3, v2, v3, v2, v3, v2
+# CHECK-NEXT: = NewArray [[inMap7]], [[inSet7]]
+
+function f8 name="answerIsBranchedOn" parameters=[{type=Set}, {type=string}, {type=string}] results=[{type=undefined}] {
+  b0(v0: Set, v1: string, v2: string):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=SetPrototypeHas/0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f8 name="answerIsBranchedOn"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[found8]]: boolean = HasByKeyParts v0, v1, v2
+# CHECK-NEXT: Branch [[found8]] -> taken b1(), notTaken b2()
+
+# The string is needed for the second lookup, so it is created for both
+function f9 name="keyOfTwoLookups" parameters=[{type=Map}, {type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeHas/0
+    v5 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+}
+# CHECK-LABEL: function f9 name="keyOfTwoLookups"
+# CHECK-NOT: ByKeyParts
+# CHECK: v3: string = Strcat v1, v2 [isLikelyKey]
+# CHECK-NEXT: v4: {{*}} = CallInline v0, v3 inlineBuiltin=MapHas overload=MapPrototypeHas/0
+# CHECK-NEXT: v5: {{*}} = CallInline v0, v3 inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NOT: ByKeyParts
+
+# A number that is not an integer prints in another way than the digits of an int32. The lookup beside it has an int32 in the same place
+function f10 name="numberPart" parameters=[{type=Map}, {type=string}, {type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: number, v3: i32):
+    v4 = Strcat v1, v2 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    v6 = Strcat v1, v3 [isLikelyKey]
+    v7 = CallBuiltin v0, v6 overload=MapPrototypeGet/0
+    v8 = NewArray v5, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f10 name="numberPart"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[key10]]: string = Strcat v1, v2 [isLikelyKey]
+# CHECK-NEXT: [[byString10]]: {{*}} = CallInline v0, [[key10]] inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NEXT: [[byParts10]]: {{*}} = MapGetByKeyParts v0, v1, v3
+# CHECK-NEXT: = NewArray [[byString10]], [[byParts10]]
+
+# An object among the parts runs its `toString`. The lookup beside it has only strings
+function f11 name="partThatMayBeAnything" parameters=[{type=Set}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Set, v1: string, v2: anything):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=SetPrototypeHas/0
+    v5 = Strcat v1, v1 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=SetPrototypeHas/0
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+}
+# CHECK-LABEL: function f11 name="partThatMayBeAnything"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[key11]]: string = Strcat v1, v2 [isLikelyKey]
+# CHECK-NEXT: [[byString11]]: {{*}} = CallInline v0, [[key11]] inlineBuiltin=SetHas overload=SetPrototypeHas/0
+# CHECK-NEXT: [[byParts11]]: boolean = HasByKeyParts v0, v1, v1
+# CHECK-NEXT: = NewArray [[byString11]], [[byParts11]]
+
+# The collection keeps the key
+function f12 name="keyIsStored" parameters=[{type=Map}, {type=Set}, {type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: string, v3: string, v4: anything):
+    v5 = Strcat v2, v3 [isLikelyKey]
+    v6 = CallBuiltin v0, v5, v4 overload=MapPrototypeSet/0
+    v7 = Strcat v3, v2 [isLikelyKey]
+    v8 = CallBuiltin v1, v7 overload=SetPrototypeAdd/0
+    v9 = NewArray v6, v8 contents=anything
+    Return v9
+}
+# CHECK-LABEL: function f12 name="keyIsStored"
+# CHECK-NOT: ByKeyParts
+# CHECK: v5: string = Strcat v2, v3 [isLikelyKey]
+# CHECK-NEXT: v6: {{*}} = CallInline v0, v5, v4 inlineBuiltin=MapSet overload=MapPrototypeSet/0
+# CHECK-NEXT: v7: string = Strcat v3, v2 [isLikelyKey]
+# CHECK-NEXT: v8: {{*}} = CallInline v1, v7 inlineBuiltin=SetAdd overload=SetPrototypeAdd/0
+# CHECK-NOT: ByKeyParts
+
+function f13 name="keyIsDeleted" parameters=[{type=Map}, {type=Set}, {type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: string, v3: string):
+    v4 = Strcat v2, v3 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeDelete/0
+    v6 = Strcat v3, v2 [isLikelyKey]
+    v7 = CallBuiltin v1, v6 overload=SetPrototypeDelete/0
+    v8 = NewArray v5, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f13 name="keyIsDeleted"
+# CHECK-NOT: ByKeyParts
+# CHECK: v4: string = Strcat v2, v3 [isLikelyKey]
+# CHECK-NEXT: v5: {{*}} = CallInline v0, v4 inlineBuiltin=MapDelete overload=MapPrototypeDelete/0
+# CHECK-NEXT: v6: string = Strcat v3, v2 [isLikelyKey]
+# CHECK-NEXT: v7: {{*}} = CallInline v1, v6 inlineBuiltin=SetDelete overload=SetPrototypeDelete/0
+# CHECK-NOT: ByKeyParts
+
+function f14 name="keyMadeInAnotherBlock" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string, v3: boolean):
+    v4 = Strcat v1, v2 [isLikelyKey]
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+}
+# CHECK-LABEL: function f14 name="keyMadeInAnotherBlock"
+# CHECK-NOT: ByKeyParts
+# CHECK: v4: string = Strcat v1, v2 [isLikelyKey]
+# CHECK: v5: {{*}} = CallInline v0, v4 inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NOT: ByKeyParts
+
+# The key is created, or its creation throws, before the call
+function f15 name="callBetweenKeyAndLookup" parameters=[{type=Map}, {type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string, v3: anything):
+    v4 = Strcat v1, v2 [isLikelyKey]
+    v5 = Call v3
+    v6 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v6
+}
+# CHECK-LABEL: function f15 name="callBetweenKeyAndLookup"
+# CHECK-NOT: ByKeyParts
+# CHECK: v4: string = Strcat v1, v2 [isLikelyKey]
+# CHECK: v6: {{*}} = CallInline v0, v4 inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NOT: ByKeyParts
+
+# One part more than the limit. The lookup beside it has as many as the limit
+function f16 name="nineParts" parameters=[{type=Map}, {type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: i32):
+    v3 = Strcat v1, v2, v1, v2, v1, v2, v1, v2, v1 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    v5 = Strcat v1, v2, v1, v2, v1, v2, v1, v2 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=MapPrototypeGet/0
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+}
+# CHECK-LABEL: function f16 name="nineParts"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[key16]]: string = Strcat v1, v2, v1, v2, v1, v2, v1, v2, v1 [isLikelyKey]
+# CHECK-NEXT: [[byString16]]: {{*}} = CallInline v0, [[key16]] inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NEXT: [[byParts16]]: {{*}} = MapGetByKeyParts v0, v1, v2, v1, v2, v1, v2, v1, v2
+# CHECK-NEXT: = NewArray [[byString16]], [[byParts16]]
+
+# Each key goes with its own lookup
+function f17 name="twoKeysOfTwoLookups" parameters=[{type=Map}, {type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    v5 = Strcat v2, v1 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=MapPrototypeHas/0
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+}
+# CHECK-LABEL: function f17 name="twoKeysOfTwoLookups"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[first17]]: {{*}} = MapGetByKeyParts v0, v1, v2
+# CHECK-NEXT: [[second17]]: boolean = HasByKeyParts v0, v2, v1
+# CHECK-NEXT: = NewArray [[first17]], [[second17]]
+
+# `return map.get(a + b)`
+function f18 name="lookupWasInTailPosition" parameters=[{type=Map}, {type=Set}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: string, v3: string, v4: boolean):
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Strcat v2, v3 [isLikelyKey]
+    v6 = CallBuiltin v0, v5 overload=MapPrototypeGet/0 [isDemotedTailCall]
+    Return v6
+  b2():
+    v7 = Strcat v2, v3 [isLikelyKey]
+    v8 = CallBuiltin v1, v7 overload=SetPrototypeHas/0 [isDemotedTailCall]
+    Return v8
+}
+# CHECK-LABEL: function f18 name="lookupWasInTailPosition"
+# CHECK-NOT: Strcat
+# CHECK: b1():
+# CHECK-NEXT: [[inMap18]]: {{*}} = MapGetByKeyParts v0, v2, v3
+# CHECK-NEXT: Return [[inMap18]]
+# CHECK-NEXT: b2(
+# CHECK-NEXT: [[inSet18]]: boolean = HasByKeyParts v1, v2, v3
+# CHECK-NEXT: Return [[inSet18]]
+
+# What is proven of the values of the Map stays proven of the answer
+function f19 name="mapWithProvenValues" parameters=[{type=Map<string, int, proven>}, {type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map<string, int, proven>, v1: string, v2: string):
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    Return v4
+}
+# CHECK-LABEL: function f19 name="mapWithProvenValues"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[found19]]: anything = MapGetByKeyParts v0, v1, v2
+# CHECK-NEXT: [[typed19]]: undefined|int = AssumeType [[found19]] castType=undefined|int
+# CHECK-NEXT: Return [[typed19]]
+
+# The one use says that it is a key, with or without the mark of CreateStringBuilders
+function f20 name="concatenationWithoutMark" parameters=[{type=Map}, {type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string):
+    v3 = Strcat v1, v2
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    Return v4
+}
+# CHECK-LABEL: function f20 name="concatenationWithoutMark"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[found20]]: {{*}} = MapGetByKeyParts v0, v1, v2
+# CHECK-NEXT: Return [[found20]]

@@ -33,7 +33,7 @@ static std::unique_ptr<FieldMovePlan> createCloneAsPlan(VM& vm, State& state, St
     bool canMoveProperties = true;
     structure->forEachProperty(vm, [&](const auto& entry) {
         const FieldData* field = layouts.field(vm, layout, entry.key());
-        if (!field || field->flags & fieldIsStoredOnce || field->slot.representation() == SlotRepresentation::DeferredClosure) {
+        if (!field || field->slot.representation() == SlotRepresentation::DeferredClosure) {
             canMoveProperties = false;
             return false;
         }
@@ -123,7 +123,7 @@ static Object* cloneAsWithExtraProperties(VM& vm, State& state, JSObject* source
                 return false;
         }
         present.set(index);
-        return tryAppendKey(index) && object->tryStore(vm, fields[index], value);
+        return tryAppendKey(index) && object->tryInitialize(vm, fields[index], value);
     };
 
     for (auto& property : sourceProperties) {
@@ -154,6 +154,7 @@ static Object* cloneAsWithExtraProperties(VM& vm, State& state, JSObject* source
     if (!order)
         return nullptr;
     object->setInitialKeyOrder(vm, *order, extra);
+    object->tryFinishBirth();
     return object;
 }
 
@@ -189,9 +190,10 @@ Object* tryCloneAs(VM& vm, JSObject* source, const LayoutData& layout, std::span
     Object* object = uncheckedDowncast<Object>(created);
     for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
         JSValue replacement = JSValue::decode(replacedFields[i]);
-        if (replacement && !object->tryStore(vm, layout.fields()[i], replacement))
+        if (replacement && !object->tryInitialize(vm, layout.fields()[i], replacement))
             return nullptr;
     }
+    object->tryFinishBirth();
     return object;
 }
 

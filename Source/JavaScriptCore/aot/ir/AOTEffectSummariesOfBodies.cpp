@@ -8,12 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTCallGraph.h"
 #include "AOTEffectsDescription.h"
+#include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include <algorithm>
-#include <tuple>
+#include <array>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -23,6 +27,37 @@ template<typename Entry>
 static bool rowMayThrow(Entry entry, const Effects& bound)
 {
     return bound.mayThrow || effectRuleOf(entry) != EffectRule::Declared || mayRunOperandCode(entry);
+}
+
+namespace {
+
+// What holds for every operation with an opcode and for every terminator of a kind.
+struct FactsOfRows {
+    OpcodeSet opcodesThatMayThrow;
+    OpcodeSet opcodesThatMaySuspend;
+    TerminatorKindSet terminatorKindsThatMayThrow;
+};
+
+} // anonymous namespace
+
+static const FactsOfRows& factsOfRows()
+{
+    static const FactsOfRows facts = [] {
+        FactsOfRows result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            Effects bound = declaredBoundOf(opcode);
+            if (rowMayThrow(opcode, bound))
+                result.opcodesThatMayThrow.add(opcode);
+            if (bound.maySuspend)
+                result.opcodesThatMaySuspend.add(opcode);
+        }
+        for (TerminatorKind kind : allMembersOf<TerminatorKind>) {
+            if (rowMayThrow(kind, declaredBoundOf(kind)))
+                result.terminatorKindsThatMayThrow.add(kind);
+        }
+        return result;
+    }();
+    return facts;
 }
 
 static BitVector findBlocksReaching(const PredecessorLists& predecessors, Vector<unsigned>&& worklist)
@@ -41,6 +76,7 @@ static BitVector findBlocksReaching(const PredecessorLists& predecessors, Vector
 
 ExitReachability computeExitReachability(const Function& function)
 {
+    const FactsOfRows& rows = factsOfRows();
     unsigned numberOfBlocks = function.blocks.size();
     PredecessorLists predecessors(numberOfBlocks);
     Vector<unsigned> returningBlocks;
@@ -52,14 +88,13 @@ ExitReachability computeExitReachability(const Function& function)
         bool returns = false;
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
-            Effects bound = declaredBoundOf(value.opcode);
             reachesEnd = reachesEnd && value.type != TypeTable::never;
-            mayThrowInside = mayThrowInside || rowMayThrow(value.opcode, bound);
-            returns = returns || bound.maySuspend;
+            mayThrowInside = mayThrowInside || rows.opcodesThatMayThrow.contains(value.opcode);
+            returns = returns || rows.opcodesThatMaySuspend.contains(value.opcode);
         }
         if (reachesEnd) {
             TerminatorKind kind = block.terminator.kind;
-            mayThrowInside = mayThrowInside || rowMayThrow(kind, declaredBoundOf(kind));
+            mayThrowInside = mayThrowInside || rows.terminatorKindsThatMayThrow.contains(kind);
             returns = returns || returnsToCaller(kind);
             for (const Target& target : block.terminator.targets)
                 predecessors[target.block.index()].append(index);
@@ -77,26 +112,28 @@ ExitReachability computeExitReachability(const Function& function)
     };
 }
 
-static bool maySuspend(const Function& function)
+static bool maySuspend(FunctionAnalyses& analyses)
 {
+    const OpcodeSet& opcodesThatMaySuspend = factsOfRows().opcodesThatMaySuspend;
+    if (!analyses.opcodesOfValues().intersects(opcodesThatMaySuspend))
+        return false;
+    const Function& function = analyses.function();
     return std::ranges::any_of(function.blocks, [&](const Block& block) {
         return std::ranges::any_of(block.values, [&](ValueID id) {
-            return maySuspend(function.at(id).opcode);
+            return opcodesThatMaySuspend.contains(function.at(id).opcode);
         });
     });
 }
 
-static std::tuple<SummaryPart, FunctionID, uint32_t> sortKeyOf(const SummaryNode& node)
+static uint64_t sortKeyOf(const SummaryNode& node)
 {
-    SummaryPart part = node.part;
-    uint32_t parameter = node.parameter;
-    return { part, node.function, parameter };
+    return static_cast<uint64_t>(static_cast<uint32_t>(node.function.index() + 1)) << 32 | static_cast<uint64_t>(node.part) << 30 | node.parameter;
 }
 
 static void removeRepeatedDependencies(Vector<SummaryDependency>& dependencies)
 {
     std::ranges::sort(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
-        return std::tuple(sortKeyOf(a.source), sortKeyOf(a.target)) < std::tuple(sortKeyOf(b.source), sortKeyOf(b.target));
+        return std::pair(sortKeyOf(a.source), sortKeyOf(a.target)) < std::pair(sortKeyOf(b.source), sortKeyOf(b.target));
     });
     removeRepeatedElements(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
         return a.source == b.source && a.target == b.target;
@@ -110,17 +147,50 @@ static std::optional<uint32_t> mappedEntryParameter(const Function& callee, cons
     return call.variadicOperandIndex(operandIndex);
 }
 
+// The row declares no effect, and neither the row nor an operand runs code: the description of such an operation is empty, whatever its operands are.
+static bool hasEmptyDescription(Opcode opcode)
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result;
+        for (Opcode member : allMembersOf<Opcode>) {
+            if (effectRuleOf(member) == EffectRule::Declared && declaredBoundOf(member) == Effects::none() && !mayRunOperandCode(member) && member != Opcode::Check)
+                result.add(member);
+        }
+        return result;
+    }();
+    return opcodes.contains(opcode);
+}
+
+static bool hasEmptyDescription(TerminatorKind kind)
+{
+    static const TerminatorKindSet kinds = [] {
+        TerminatorKindSet result;
+        for (TerminatorKind member : allMembersOf<TerminatorKind>) {
+            if (effectRuleOf(member) != EffectRule::Inline && declaredBoundOf(member) == Effects::none() && !mayRunOperandCode(member))
+                result.add(member);
+        }
+        return result;
+    }();
+    return kinds.contains(kind);
+}
+
+static bool isEmpty(const EffectDescription& description)
+{
+    return description.own == EffectsOnEdges::none() && description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode && !description.followsFieldsOfOperands;
+}
+
 namespace {
 
 class BodySummarizer {
 public:
-    BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses)
+    BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references)
         : m_context(context)
         , m_id(id)
         , m_analyses(analyses)
+        , m_references(references)
         , m_function(analyses.function())
         , m_exits(computeExitReachability(m_function))
-        , m_maySuspend(maySuspend(m_function))
+        , m_maySuspend(maySuspend(analyses))
     {
     }
 
@@ -128,8 +198,11 @@ public:
     {
         uint32_t numberOfParameters = m_function.numberOfEntryParameters();
         m_summary.parameters.reserveInitialCapacity(numberOfParameters);
-        for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter)
+        for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
             m_summary.parameters.append(ParameterSummary { summarizeEntryParameter(m_analyses, parameter), OperandMemory::none() });
+            if (mayBeReadOutOfMemory(parameter))
+                m_parametersInMemory.append(parameter);
+        }
         if (m_function.isUnsplitCoroutine())
             addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
         for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
@@ -138,36 +211,77 @@ public:
                 summarizeValue(block, id);
             summarizeTerminator(block);
         }
+        handOverToExits();
         removeRepeatedDependencies(m_summary.dependencies);
+        moveToExactBuffer(m_summary.dependencies);
         return WTF::move(m_summary);
     }
 
 private:
-    void addToExitsOf(BlockID block, const Effects& effects)
+    // A reference that the body stores is read out again by whatever runs until the body returns: the closures over a scope that holds it, a callee that is handed
+    // the object it lies in. What they do to the object is memory that they reach other than through a parameter, which is with the exits. It need not outlive the call,
+    // so that the parameter may still count as borrowed, and a caller that alone holds the object then looks only at the memory of the parameter: what goes to the exits
+    // goes there too.
+    bool mayBeReadOutOfMemory(uint32_t entryParameter)
     {
-        if (m_exits.reachesReturn.get(block.index()))
-            m_summary.onReturn.merge(effects);
-        if (m_exits.reachesThrow.get(block.index()))
-            m_summary.onThrow.merge(effects);
-        m_summary.onReturn.mayThrow |= effects.mayThrow;
-        m_summary.onReturn.mayCollect |= effects.mayCollect;
-        m_summary.onReturn.mayBeTerminated |= effects.mayBeTerminated;
+        ValueID parameter = m_function.at(entryBlock).parameters[entryParameter];
+        if (!mayBeReference(m_context.program.typeOf(m_function, parameter)))
+            return false;
+        const EscapeAnalysis& escape = m_analyses.escape();
+        std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(parameter);
+        if (!object)
+            return true;
+        return std::ranges::any_of(escape.usesOf(*object), [](const ObjectUse& use) {
+            return use.uses.contains(OperandUse::Retains);
+        });
     }
 
+    // Which exits take an effect depends on which of them its block reaches: four cases, and a fifth for what is thrown out of a block without a handler. All is united,
+    // so an effect is merged once, into what its case has gathered, and handOverToExits() gives each exit and each parameter in memory what is theirs.
     void addToExits(BlockID block, const Effects& normal, const Effects& handler)
     {
-        addToExitsOf(block, normal);
+        m_gatheredForExits[exitsOf(block)].merge(normal);
         if (handler.isPure())
             return;
         if (const std::optional<Target>& target = m_function.at(block).handler)
-            addToExitsOf(target->block, handler);
+            m_gatheredForExits[exitsOf(target->block)].merge(handler);
         else
-            m_summary.onThrow.merge(handler);
+            m_gatheredForThrowAlone.merge(handler);
+    }
+
+    void handOverToExits()
+    {
+        Effects all = m_gatheredForThrowAlone;
+        for (uint32_t exits = 0; exits < m_gatheredForExits.size(); ++exits) {
+            const Effects& effects = m_gatheredForExits[exits];
+            if (exits & 1)
+                m_summary.onReturn.merge(effects);
+            if (exits & 2)
+                m_summary.onThrow.merge(effects);
+            m_summary.onReturn.mayThrow |= effects.mayThrow;
+            m_summary.onReturn.mayCollect |= effects.mayCollect;
+            m_summary.onReturn.mayBeTerminated |= effects.mayBeTerminated;
+            all.merge(effects);
+        }
+        m_summary.onThrow.merge(m_gatheredForThrowAlone);
+
+        OperandMemory memory { all.reads.restrictedTo(perObjectHeaps), all.writes.restrictedTo(perObjectHeaps) };
+        for (uint32_t parameter : m_parametersInMemory)
+            m_summary.parameters[parameter].memory.merge(memory);
     }
 
     void addDependency(SummaryNode source, SummaryNode target)
     {
-        m_summary.dependencies.append(SummaryDependency { source, target });
+        SummaryDependency dependency { source, target };
+        uint64_t mixed = (sortKeyOf(source) * 0x9e3779b97f4a7c15ull ^ sortKeyOf(target)) * 0xff51afd7ed558ccdull;
+        uint32_t hash = static_cast<uint32_t>(mixed >> 32);
+        bool isKnown = !!m_indexOfDependencies.find(hash, [&](uint32_t position) {
+            return m_summary.dependencies[position] == dependency;
+        });
+        if (isKnown)
+            return;
+        m_indexOfDependencies.add(hash, m_summary.dependencies.size());
+        m_summary.dependencies.append(dependency);
     }
 
     void addDependencyToExitsOf(BlockID block, SummaryNode source)
@@ -179,13 +293,54 @@ private:
             addDependency(source, SummaryNode::onThrow(m_id));
     }
 
+    void addDependencyToParametersInMemory(SummaryNode source)
+    {
+        for (uint32_t parameter : m_parametersInMemory)
+            addDependency(source, SummaryNode::parameterOf(m_id, parameter));
+    }
+
     void addDependencyToExits(BlockID block, SummaryNode normalSource, SummaryNode handlerSource)
     {
+        addDependencyToParametersInMemory(normalSource);
+        addDependencyToParametersInMemory(handlerSource);
         addDependencyToExitsOf(block, normalSource);
         if (const std::optional<Target>& target = m_function.at(block).handler)
             addDependencyToExitsOf(target->block, handlerSource);
         else
             addDependency(handlerSource, SummaryNode::onThrow(m_id));
+    }
+
+    uint32_t exitsOf(BlockID block) const
+    {
+        return (m_exits.reachesReturn.get(block.index()) ? 1 : 0) | (m_exits.reachesThrow.get(block.index()) ? 2 : 0);
+    }
+
+    uint32_t placeOfExits(BlockID block) const
+    {
+        const std::optional<Target>& handler = m_function.at(block).handler;
+        return exitsOf(block) | (handler ? 4 | exitsOf(handler->block) << 3 : 0);
+    }
+
+    static uint32_t placeOfParameter(uint32_t entryParameter) { return 32 + entryParameter; }
+
+    bool isFirstToRunAt(uint32_t place, const EffectDescription& description)
+    {
+        constexpr size_t fewestFunctionsToRemember = 3;
+        if (description.functions.size() < fewestFunctionsToRemember)
+            return true;
+        uint64_t mixed = place * 2 + description.callsUnknownCode;
+        for (FunctionID function : description.functions)
+            mixed = (mixed ^ function.index()) * 0x9e3779b97f4a7c15ull;
+        uint32_t hash = static_cast<uint32_t>(mixed >> 32);
+        auto isSame = [&](uint32_t position) {
+            const CodeRunAtPlace& known = m_codeRunAtPlaces[position];
+            return known.place == place && known.callsUnknownCode == description.callsUnknownCode && std::ranges::equal(known.functions, description.functions);
+        };
+        if (m_indexOfCodeRunAtPlaces.find(hash, isSame))
+            return false;
+        m_indexOfCodeRunAtPlaces.add(hash, m_codeRunAtPlaces.size());
+        m_codeRunAtPlaces.append(CodeRunAtPlace { place, description.callsUnknownCode, Vector<FunctionID>(description.functions.span()) });
+        return true;
     }
 
     void forEachBase(ValueID base, NOESCAPE const Invocable<void(const BaseObject&)> auto& functor)
@@ -222,6 +377,7 @@ private:
         forEachBase(base, [&](const BaseObject& object) {
             switch (object.kind) {
             case BaseObject::Kind::OwnAllocation:
+                addDependencyToParametersInMemory(calleeParameter);
                 return;
             case BaseObject::Kind::EntryParameter:
                 addDependency(calleeParameter, SummaryNode::parameterOf(m_id, object.entryParameter));
@@ -248,14 +404,17 @@ private:
     // Nothing says which operand an unconfined entry writes, or which parameter of the code it runs takes which operand.
     void addMemoryOfOperands(const auto& entry, const EffectDescription& description)
     {
+        bool writesObjects = description.own.normal.writes.containsAny(perObjectHeaps) || description.own.handler.writes.containsAny(perObjectHeaps);
+        if (!writesObjects && !description.callsUnknownCode && description.functions.isEmpty())
+            return;
         Effects own = description.own.onAnyEdge();
         OperandMemory memory { own.reads.restrictedTo(perObjectHeaps), own.writes.restrictedTo(perObjectHeaps) };
-        if (memory.writes.isEmpty() && !description.callsUnknownCode && description.functions.isEmpty())
-            return;
         entry.forEachOperand([&](ValueID operand, uint32_t) {
             forEachEntryParameterOf(operand, [&](uint32_t entryParameter) {
                 SummaryNode target = SummaryNode::parameterOf(m_id, entryParameter);
                 m_summary.parameters[entryParameter].memory.merge(memory);
+                if (!isFirstToRunAt(placeOfParameter(entryParameter), description))
+                    return;
                 if (description.callsUnknownCode)
                     addDependency(SummaryNode::unknownCode(), target);
                 for (FunctionID id : description.functions) {
@@ -279,7 +438,11 @@ private:
     // A construction reads the prototype of new.target before it enters a callee, which may run a getter or a trap.
     static bool runsOnlyCallees(const EffectDescription& description, const CalleeList& callees)
     {
-        return !description.callsUnknownCode && std::ranges::all_of(description.functions, [&](FunctionID function) {
+        if (description.callsUnknownCode)
+            return false;
+        if (std::ranges::is_sorted(callees.functions))
+            return std::ranges::includes(callees.functions, description.functions);
+        return std::ranges::all_of(description.functions, [&](FunctionID function) {
             return callees.functions.contains(function);
         });
     }
@@ -311,6 +474,8 @@ private:
 
     bool addCalledCode(BlockID block, const EffectDescription& description, ValueID entry)
     {
+        if (!isFirstToRunAt(placeOfExits(block), description))
+            return true;
         if (description.callsUnknownCode) {
             addDependencyToExits(block, SummaryNode::unknownCode(), SummaryNode::unknownCode());
             if (!m_summary.unknownCodeWitness)
@@ -348,7 +513,29 @@ private:
     {
         const Program& program = m_context.program;
         const Value& value = m_function.at(id);
+        if (hasEmptyDescription(value.opcode)) {
+            RELEASE_ASSERT(!m_analyses.context().build.options().verifiesAfterEveryPass || isEmpty(describeEffects(program, m_function, value)));
+            if (m_references)
+                m_references->read(value, m_emptyDescription);
+            return;
+        }
         EffectDescription description = describeEffects(program, m_function, value);
+        m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
+        if (m_references)
+            m_references->read(value, description);
+        // A check stands for the generic version of the function, which AddGenericVersion makes of it. There the operations behind the check take a value of any kind
+        // and run whatever it brings along: a getter, a valueOf.
+        if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.castType()), program))
+            description.callsUnknownCode = true;
+        // Each function that a value may run is some dependencies of this body. Where every one of N functions may call all N, as the members of the modules of a bundle do
+        // through its one helper, that is N times N. What so many functions do between them is seldom less than anything. It is more than unknown code does, which enters no
+        // function whose callers are all known and writes no variable whose writers are.
+        constexpr size_t mostFunctionsFollowed = 64;
+        if (description.functions.size() > mostFunctionsFollowed) {
+            description.functions.clear();
+            description.callsUnknownCode = true;
+            description.addOwn(Effects::unknownCode());
+        }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
             CalleeList callees = calleesOfCall(program, value);
             if (callees.isComplete && callees.builtins.isEmpty() && runsOnlyCallees(description, callees)) {
@@ -370,7 +557,16 @@ private:
     void summarizeTerminator(BlockID block)
     {
         const Terminator& terminator = m_function.at(block).terminator;
+        if (hasEmptyDescription(terminator.kind)) {
+            RELEASE_ASSERT(!m_analyses.context().build.options().verifiesAfterEveryPass || isEmpty(describeEffects(m_context.program, m_function, terminator)));
+            if (m_references)
+                m_references->read(terminator, m_emptyDescription);
+            return;
+        }
         EffectDescription description = describeEffects(m_context.program, m_function, terminator);
+        m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
+        if (m_references)
+            m_references->read(terminator, description);
         addCalledCode(block, description, ValueID());
         addToExits(block, description.own.normal, description.own.handler);
         addMemoryOfOperands(terminator, description);
@@ -379,10 +575,24 @@ private:
     const EffectContext& m_context;
     FunctionID m_id;
     FunctionAnalyses& m_analyses;
+    BodyReferenceCollector* m_references;
     const Function& m_function;
+    struct CodeRunAtPlace {
+        uint32_t place;
+        bool callsUnknownCode;
+        Vector<FunctionID> functions;
+    };
+
     ExitReachability m_exits;
     bool m_maySuspend;
+    const EffectDescription m_emptyDescription;
     BodySummary m_summary;
+    Vector<uint32_t, 4> m_parametersInMemory;
+    std::array<Effects, 4> m_gatheredForExits { Effects::none(), Effects::none(), Effects::none(), Effects::none() };
+    Effects m_gatheredForThrowAlone { Effects::none() };
+    HashedIndex m_indexOfDependencies;
+    Vector<CodeRunAtPlace> m_codeRunAtPlaces;
+    HashedIndex m_indexOfCodeRunAtPlaces;
 };
 
 } // anonymous namespace
@@ -392,6 +602,7 @@ static BodySummary summarizeDescription(const Program& program, FunctionID id, c
     BodySummary summary;
     summary.onReturn = description.own.normal;
     summary.onThrow = description.own.handler;
+    summary.followsFieldsOfOperands = description.followsFieldsOfOperands;
     summary.onReturn.reads.merge(LocationMasks { perObjectHeaps });
     if (description.own.mayThrow())
         summary.onThrow.reads.merge(LocationMasks { perObjectHeaps });
@@ -421,7 +632,7 @@ static BodySummary summarizeDescription(const Program& program, FunctionID id, c
     return summary;
 }
 
-BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses)
+BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references)
 {
     const Function& function = analyses.function();
     if (isSummarizedByRole(function.role)) {
@@ -430,12 +641,12 @@ BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, Fu
             return summarizeDescription(context.program, id, function, description);
     }
     if (function.hasBody())
-        return BodySummarizer(context, id, analyses).run();
+        return BodySummarizer(context, id, analyses, references).run();
 
     BodySummary summary;
     summary.onReturn = Effects::unknownCode();
     summary.onThrow = Effects::unknownCode();
-    summary.parameters.grow(function.numberOfEntryParameters());
+    summary.parameters = Vector<ParameterSummary>(function.numberOfEntryParameters());
     summary.unknownCodeWitness = { id, ValueID() };
     return summary;
 }

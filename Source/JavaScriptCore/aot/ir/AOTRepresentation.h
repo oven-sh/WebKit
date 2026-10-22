@@ -7,16 +7,21 @@
 
 #if ENABLE(AOT)
 
+#include "AOTOpcode.h"
 #include "AOTSchemaEnums.h"
 #include "AOTType.h"
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+using RepresentationSet = EnumeratorBitSet<Representation, numberOfEnumerators<Representation>>;
+
 Representation defaultRepresentationOf(const Type&);
 Representation representationOf(OpaqueKind);
 Representation representationOf(SlotRepresentation);
+Representation loadedRepresentationOf(SlotRepresentation, const Type& loaded);
 bool isLegalRepresentation(const Type&, Representation);
+RepresentationSet legalRepresentationsOf(const Type&);
 SlotRepresentation defaultSlotRepresentationOf(const Type&);
 Type widestTypeOf(Representation);
 

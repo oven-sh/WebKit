@@ -56,8 +56,8 @@ static constexpr ASCIILiteral derivedFunctions = R"IR(module m0 path="/a.ts" dis
 function f0 name="first" results=[{type=anything}]
 function f1 name="second" parameters=[{type=anything}] results=[{type=anything}]
 function f2 name="genericVersion" role=GenericVersion results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
-function f3 name="continuation" role=Continuation results=[{type=anything}] derivation={source=f2} creator=Continuation{origin=f2}
-function f4 name="outlinedFromContinuation" role=OutlinedBody results=[{type=anything}] derivation={source=f3}
+function f3 name="resultWorkerOfVersion" role=ResultWorker results=[{type=anything}] derivation={source=f2} creator=ResultWorker{origin=f2}
+function f4 name="outlinedFromWorkerOfVersion" role=OutlinedBody results=[{type=anything}] derivation={source=f3}
 function f5 name="resultWorker" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1} creator=ResultWorker{origin=f1}
 function f6 name="serializer" role=Serializer results=[{type=anything}] creator=Serializer{}
 function f7 name="outlinedFromSerializer" role=OutlinedBody results=[{type=anything}] derivation={source=f6}
@@ -292,14 +292,14 @@ static void testStatisticsFromManyThreads()
     Statistics statistics;
     forEachIndexInParallel(loops, numberOfCalls, [&](unsigned index) {
         statistics.count(StatisticID::TypesInterned);
-        statistics.count(StatisticID::FlowNodes, index);
+        statistics.count(StatisticID::FlowAllocationSites, index);
         statistics.count(StatisticID::None);
     });
 
     Vector<uint64_t> values = statistics.values();
     AOT_TEST_CHECK(values.size() == numberOfStatistics);
     AOT_TEST_CHECK(values[static_cast<size_t>(StatisticID::TypesInterned)] == numberOfCalls);
-    AOT_TEST_CHECK(values[static_cast<size_t>(StatisticID::FlowNodes)] == sumOfIndexes);
+    AOT_TEST_CHECK(values[static_cast<size_t>(StatisticID::FlowAllocationSites)] == sumOfIndexes);
     AOT_TEST_CHECK(std::accumulate(values.begin(), values.end(), uint64_t { 0 }) == numberOfCalls + sumOfIndexes);
 }
 

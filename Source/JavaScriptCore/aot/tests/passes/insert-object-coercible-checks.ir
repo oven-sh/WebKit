@@ -10,7 +10,7 @@ layout L1 name="Pixel" fields=[{key="x" declared={type=number} flags=[IsRequired
 
 function f0 name="allocate" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }
 
@@ -102,7 +102,7 @@ function f8 name="returned" parameters=[{type=undefined|L0}] results=[{type=unde
 # CHECK: [[C8]]: L0 = RequireObjectCoercible v0 name="x"
 # CHECK: Return [[C8]]
 
-function f9 name="predicted" parameters=[{type=undefined|L0|L1}] results=[{type=anything}] {
+function f9 name="expected" parameters=[{type=undefined|L0|L1}] results=[{type=anything}] {
   b0(v0: undefined|L0|L1 ~ L0):
     v1 = PropGet v0 key="x"
     Return v1

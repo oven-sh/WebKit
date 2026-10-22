@@ -8,9 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
+#include "AOTArrivalCounts.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTJSONHooks.h"
+#include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
+#include "AOTPropertyCaches.h"
 #include "AOTRuntimeTable.h"
+#include "AOTState.h"
 #include "VM.h"
 #include <algorithm>
 #include <span>
@@ -55,6 +62,19 @@ void count(VM& vm, RuntimeCounterID counter)
 void count(Instance& instance, RuntimeCounterID counter)
 {
     ++std::span { instance.runtime.counters.values }[static_cast<size_t>(counter)];
+}
+
+void countReasonForSlowStringify(VM& vm, ASCIILiteral reason)
+{
+    if (!Options::aotCountsPath()) [[likely]]
+        return;
+    AtomString name(reason);
+    bool isCounted = false;
+    forEachInstance(vm, [&](Instance& instance) {
+        if (std::exchange(isCounted, true) || !instance.state)
+            return;
+        instance.state->propertyCaches->countNamed("JSON.stringify left to the general Stringifier"_s, name.impl());
+    });
 }
 
 void countLimitHit(VM& vm, LimitID limit)
@@ -135,6 +155,40 @@ static void dumpBranchCounts(VM& vm, const Instance& instance, PrintStream& out)
     }
 }
 
+static void dumpArrivals(const Instance& instance, PrintStream& out)
+{
+    if (!instance.state)
+        return;
+    if (const ArrivalCounts* arrivals = instance.state->arrivalCounts.get())
+        arrivals->dump(out);
+}
+
+static void dumpStructuresMade(const Instance& instance, PrintStream& out)
+{
+    if (!instance.state || !instance.state->objects)
+        return;
+    instance.state->objects->structures.dumpStructuresMade(out);
+    if (instance.state->objects->caches)
+        instance.state->objects->caches->assignmentPlans.dumpCopies(out);
+}
+
+static void dumpAllocations(const Instance& instance, PrintStream& out)
+{
+    if (!instance.state)
+        return;
+    ExactAllocationCounts::dump(instance, out);
+    if (const AllocationCounts* allocations = instance.state->allocationCounts.get())
+        allocations->dump(out);
+}
+
+static void dumpNamedCounts(const Instance& instance, PrintStream& out)
+{
+    if (!instance.state)
+        return;
+    if (const PropertyCaches* caches = instance.state->propertyCaches.getIfCreated())
+        caches->dumpNamedCounts(out);
+}
+
 void dumpCounts(VM& vm, PrintStream& out)
 {
     dumpCounters(vm, out, CounterKind::Counter, "counter:"_s);
@@ -143,6 +197,18 @@ void dumpCounts(VM& vm, PrintStream& out)
     dumpOperationCalls(vm, out);
     forEachInstance(vm, [&](const Instance& instance) {
         dumpBranchCounts(vm, instance, out);
+    });
+    forEachInstance(vm, [&](const Instance& instance) {
+        dumpStructuresMade(instance, out);
+    });
+    forEachInstance(vm, [&](const Instance& instance) {
+        dumpArrivals(instance, out);
+    });
+    forEachInstance(vm, [&](const Instance& instance) {
+        dumpAllocations(instance, out);
+    });
+    forEachInstance(vm, [&](const Instance& instance) {
+        dumpNamedCounts(instance, out);
     });
 }
 

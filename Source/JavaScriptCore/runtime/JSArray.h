@@ -199,7 +199,7 @@ private:
     {
         ArrayStorage* storage = arrayStorageOrNull();
         if (!storage)
-            return !structure()->hasFrozenElementsInPlace();
+            return !(isCopyOnWrite(indexingMode()) && structure()->hasFrozenElementsInPlace());
         SparseArrayValueMap* map = storage->m_sparseMap.get();
         return !map || !map->lengthIsReadOnly();
     }

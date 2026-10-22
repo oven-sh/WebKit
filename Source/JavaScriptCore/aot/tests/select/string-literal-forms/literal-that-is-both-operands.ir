@@ -1,0 +1,45 @@
+# const kept = "a"; kept <= kept . kept.startsWith(kept): the literal whose text goes into the payload of the row is the subject of the row too. It stays
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="orderOfOneCharacter" results=[{type=boolean}] {
+  b0():
+    v0 = String string="a"
+    v1 = LessEq v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="orderOfOneCharacter"
+# CHECK: [[kept]]: "a" = String string="a"
+# CHECK: = StringOrderToCharacter [[kept]]
+
+function f1 name="throughACast" results=[{type=boolean}] {
+  b0():
+    v0 = String string="a"
+    v1 = Upcast v0 castType=string
+    v2 = Less v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="throughACast"
+# CHECK: = String string="a"
+# CHECK: = StringOrderToCharacter
+
+function f2 name="prefix" results=[{type=boolean}] {
+  b0():
+    v0 = String string="ab"
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeStartsWith/1
+    Return v1
+}
+# CHECK-LABEL: function f2 name="prefix"
+# CHECK: [[kept]]: "ab" = String string="ab"
+# CHECK: = StringStartsWithLiteral [[kept]] literal="ab"
+
+function f3 name="search" results=[{type=number}] {
+  b0():
+    v0 = String string="ab"
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeIndexOf/0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="search"
+# CHECK: [[kept]]: "ab" = String string="ab"
+# CHECK: = StringIndexOfLiteral [[kept]]

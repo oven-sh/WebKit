@@ -1,6 +1,6 @@
-# A function that a module declares has one closure, the cell of the closure table, so the test for it compares two addresses. A function whose closures are allocated is tested by its Structure and function number
+# Where an image may have several instances: a function that a module declares has one closure, the cell of the closure table, so the test for it compares two addresses. A function whose closures are allocated is tested by its Structure and function number
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=flow:ReachedFunctions
 # RUN: generate-code
 # RUN(SAME): generate-code
 # RUN(PLACE): place
@@ -38,18 +38,18 @@ function f3 name="declaredAndAllocated" results=[{type=anything}] {
 }
 # PLACE: f1 {{*}}hasOnlyTableCell
 # PLACE-NOT: hasOnlyTableCell
-function f4 name="callsDeclared" parameters=[{type=function predicted=f1}] results=[{type=anything}] {
-  b0(v0: function ~ f1):
+function f4 name="callsDeclared" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f1):
     v1 = Call v0
     Return v1
 }
-function f5 name="callsAllocated" parameters=[{type=function predicted=f2}] results=[{type=anything}] {
-  b0(v0: function ~ f2):
+function f5 name="callsAllocated" parameters=[{type=f2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f2):
     v1 = Call v0
     Return v1
 }
-function f6 name="callsDeclaredAndAllocated" parameters=[{type=function predicted=f3}] results=[{type=anything}] {
-  b0(v0: function ~ f3):
+function f6 name="callsDeclaredAndAllocated" parameters=[{type=f3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f3):
     v1 = Call v0
     Return v1
 }

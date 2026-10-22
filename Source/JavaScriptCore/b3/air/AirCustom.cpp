@@ -31,6 +31,7 @@
 #include "AirCCallingConvention.h"
 #include "AirFrameEmission.h"
 #include "AirInstInlines.h"
+#include "AirOpcodeUtils.h"
 #include "B3CCallValue.h"
 #include "B3ProcedureInlines.h"
 #include "B3ValueInlines.h"
@@ -267,7 +268,7 @@ bool EnterFrameCustom::isValidForm(Inst& inst)
         return false;
 
     for (Arg& arg : inst.args().subspan(1)) {
-        if (!arg.isReg())
+        if (!arg.isReg() && !arg.isImm())
             return false;
     }
     return true;
@@ -283,16 +284,19 @@ MacroAssembler::Jump EnterFrameCustom::generate(Inst& inst, CCallHelpers& jit, G
 bool LeaveFrameCustom::isValidForm(Inst& inst)
 {
     for (Arg& arg : inst.args()) {
-        if (!arg.isReg())
+        if (!arg.isReg() && !arg.isImm())
             return false;
     }
     return true;
 }
 
-MacroAssembler::Jump LeaveFrameCustom::generate(Inst&, CCallHelpers& jit, GenerationContext& context)
+MacroAssembler::Jump LeaveFrameCustom::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
 {
     context.setFrameIsSetUp(jit, false);
-    emitFrameTeardown(jit, *context.code);
+    std::optional<GPRReg> deadRegister;
+    if (context.currentBlock)
+        deadRegister = registerDeadBehindFrameTeardown(*context.code, context.currentBlock, context.indexInBlock);
+    emitFrameTeardown(jit, *context.code, deadRegister, inst.args().subspan(context.code->calleeSaveRegisterAtOffsetList().registerCount()));
     return { };
 }
 

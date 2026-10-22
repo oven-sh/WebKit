@@ -37,6 +37,9 @@ typedef int64_t EncodedJSValue;
 
 extern "C" {
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToJavaScript(void*, VM*, ProtoCallFrame*);
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+    void llint_aot_char_code_at_thunk();
+#endif
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToNative(void*, VM*, ProtoCallFrame*);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryCustomGetter(JSGlobalObject*, EncodedJSValue, PropertyName, void*);
     void SYSV_ABI NOT_TAIL_CALLED vmEntryCustomSetter(JSGlobalObject*, EncodedJSValue, EncodedJSValue, PropertyName, void*);

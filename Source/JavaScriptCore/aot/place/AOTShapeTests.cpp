@@ -10,11 +10,13 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
+#include "AOTImageFormat.h"
 #include "AOTPlacementSteps.h"
 #include <algorithm>
 #include <array>
 #include <optional>
 #include <utility>
+#include <wtf/BitSet.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Hasher.h>
 #include <wtf/MathExtras.h>
@@ -54,6 +56,104 @@ static std::optional<ShapeTest> tryCreateBlockTest(std::span<const uint32_t> sha
     ShapeTest test = createTest(form, first, last);
     test.blockByte = static_cast<uint8_t>(shapeWordOf(last) >> 8);
     return test;
+}
+
+static uint64_t numberOfPagesOf(std::span<const uint32_t> ascendingShapes)
+{
+    return numberOfPagesInShapeSet(ascendingShapes.back() - ascendingShapes.front() + 1);
+}
+
+// No set has more distinct pages than pages, or than members and an empty page.
+bool canEncodeShapeSet(std::span<const uint32_t> ascendingShapes)
+{
+    uint64_t numberOfPages = numberOfPagesOf(ascendingShapes);
+    uint64_t maxDistinctPages = std::min<uint64_t>(numberOfPages, ascendingShapes.size() + 1);
+    return PagedBitSet::numberOfEntryWords(numberOfPages, PagedBitSet::Entries::Wide) + maxDistinctPages <= PagedBitSet::maxNumberOfWords(PagedBitSet::Entries::Wide);
+}
+
+// The same members give the same words in every build: the multipliers are tried in one order.
+static std::optional<EncodedShapeSet> tryHashShapeSet(std::span<const uint32_t> ascendingShapes, size_t maxNumberOfWords)
+{
+    constexpr unsigned maxNumberOfTrials = 256;
+    constexpr unsigned maxLogNumberOfSlots = 10;
+    size_t numberOfMembers = ascendingShapes.size();
+    uint32_t last = ascendingShapes.back();
+    if (numberOfMembers < 2 || last - ascendingShapes.front() > PagedBitSet::maxNumberInSlot)
+        return std::nullopt;
+    WTF::BitSet<1u << maxLogNumberOfSlots> taken;
+    for (unsigned logNumberOfSlots = std::max(1u, WTF::fastLog2(static_cast<unsigned>(numberOfMembers))); logNumberOfSlots <= maxLogNumberOfSlots; ++logNumberOfSlots) {
+        unsigned shift = 32 - logNumberOfSlots;
+        if (PagedBitSet::numberOfWordsOfHashedSet(shift) > maxNumberOfWords)
+            return std::nullopt;
+        uint32_t multiplier = 0x9e3779b1u;
+        for (unsigned trial = 0; trial < maxNumberOfTrials; ++trial, multiplier = multiplier * 0x2c1b3c6du + 0x297a2d3au) {
+            ASSERT(multiplier & 1);
+            taken.clearAll();
+            bool isPerfect = std::ranges::none_of(ascendingShapes, [&](uint32_t shape) {
+                return taken.testAndSet(PagedBitSet::slotOf(last - shape, multiplier, shift));
+            });
+            if (!isPerfect)
+                continue;
+            EncodedShapeSet result;
+            result.entries = PagedBitSet::Entries::Hashed;
+            result.words.fill(0, PagedBitSet::numberOfWordsOfHashedSet(shift));
+            result.words[0] = PagedBitSet::headOfHashedSet(multiplier, shift);
+            std::span<PagedBitSet::Slot> slots = spanReinterpretCast<PagedBitSet::Slot>(result.words.mutableSpan().subspan(1)).first(PagedBitSet::numberOfSlots(shift));
+            for (uint32_t slot = 0; slot < slots.size(); ++slot) {
+                uint32_t numberOfAnotherSlot = PagedBitSet::maxNumberInSlot;
+                while (PagedBitSet::slotOf(numberOfAnotherSlot, multiplier, shift) == slot)
+                    --numberOfAnotherSlot;
+                slots[slot] = static_cast<PagedBitSet::Slot>(numberOfAnotherSlot);
+            }
+            for (uint32_t shape : ascendingShapes)
+                slots[PagedBitSet::slotOf(last - shape, multiplier, shift)] = static_cast<PagedBitSet::Slot>(last - shape);
+            return result;
+        }
+    }
+    return std::nullopt;
+}
+
+static EncodedShapeSet encodeShapeSetAsBits(std::span<const uint32_t> ascendingShapes)
+{
+    Vector<uint64_t, 64> pages(FillWith { }, numberOfPagesOf(ascendingShapes), 0);
+    for (uint32_t shape : ascendingShapes) {
+        uint32_t distanceFromLast = ascendingShapes.back() - shape;
+        pages[distanceFromLast >> PagedBitSet::logBitsPerPage] |= 1ull << distanceFromLast % PagedBitSet::bitsPerPage;
+    }
+    Vector<uint64_t, 64> distinctPages = pages;
+    std::ranges::sort(distinctPages);
+    distinctPages.shrink(std::ranges::unique(distinctPages).begin() - distinctPages.begin());
+
+    using enum PagedBitSet::Entries;
+    EncodedShapeSet result;
+    result.entries = PagedBitSet::numberOfEntryWords(pages.size(), Narrow) + distinctPages.size() > PagedBitSet::maxNumberOfWords(Narrow) ? Wide : Narrow;
+    size_t numberOfEntryWords = PagedBitSet::numberOfEntryWords(pages.size(), result.entries);
+    if (pages.size() <= maxPagesInShortShapeSet || pages.size() <= numberOfEntryWords + distinctPages.size()) {
+        result.entries = None;
+        result.words = Vector<uint64_t>(pages.span());
+        return result;
+    }
+    result.words.fill(0, numberOfEntryWords);
+    result.words.appendVector(distinctPages);
+    std::span<uint8_t> entries = asMutableByteSpan(result.words.mutableSpan().first(numberOfEntryWords));
+    for (size_t page = 0; page < pages.size(); ++page) {
+        size_t word = numberOfEntryWords + (std::ranges::lower_bound(distinctPages, pages[page]) - distinctPages.begin());
+        if (result.entries == Wide)
+            spanReinterpretCast<uint16_t>(entries)[page] = static_cast<uint16_t>(word);
+        else
+            entries[page] = static_cast<uint8_t>(word);
+    }
+    return result;
+}
+
+// The test of a hashed set is the shortest of all, so it is taken wherever it needs no more room.
+EncodedShapeSet encodeShapeSet(std::span<const uint32_t> ascendingShapes)
+{
+    RELEASE_ASSERT(!ascendingShapes.empty() && canEncodeShapeSet(ascendingShapes));
+    EncodedShapeSet bits = encodeShapeSetAsBits(ascendingShapes);
+    if (std::optional<EncodedShapeSet> hashed = tryHashShapeSet(ascendingShapes, bits.words.size()))
+        return WTF::move(*hashed);
+    return bits;
 }
 
 ShapeTest chooseShapeTestForm(std::span<const uint32_t> shapes, const AssignedShapes& assigned)
@@ -178,14 +278,14 @@ public:
         placeBitSets(typesNeededAtRunTime);
         deriveKnownSetTests(fieldAccesses.span());
         fillFieldAccessTests(fieldAccesses);
-        fillShapeSetBits();
         return ShapeTable(WTF::move(m_parts));
     }
 
 private:
-    struct ShapeSet {
-        LayoutSetID set;
-        uint32_t bitOffset;
+    struct StoredShapeSet {
+        uint32_t firstWord;
+        uint32_t numberOfWords;
+        PagedBitSet::Entries entries;
     };
 
     const ParallelLoops& loops() const { return m_context.build.parallelLoops(); }
@@ -262,14 +362,18 @@ private:
     {
         const Program& program = m_context.program;
         unsigned numberOfSets = program.types.numberOfLayoutSets();
-        m_parts.firstMemberShape.reserveInitialCapacity(numberOfSets + 1);
-        CheckedUint32 numberOfShapes = 0;
-        for (unsigned index = 0; index < numberOfSets; ++index) {
-            m_parts.firstMemberShape.append(numberOfShapes.value());
+        m_parts.firstMemberShape.fill(0, numberOfSets + 1);
+        forEachIndexInParallel(loops(), numberOfSets, [&](unsigned index) {
+            CheckedUint32 numberOfShapes = 0;
             for (LayoutID member : program.at(LayoutSetID(index)).members)
                 numberOfShapes += objectShapesOf(member).count;
+            m_parts.firstMemberShape[index + 1] = numberOfShapes.value();
+        });
+        CheckedUint32 numberOfShapes = 0;
+        for (unsigned index = 1; index <= numberOfSets; ++index) {
+            numberOfShapes += m_parts.firstMemberShape[index];
+            m_parts.firstMemberShape[index] = numberOfShapes.value();
         }
-        m_parts.firstMemberShape.append(numberOfShapes.value());
         m_parts.memberShapes.grow(numberOfShapes.value());
     }
 
@@ -303,28 +407,56 @@ private:
                 setsNamedByRecords.quickSet(set.index());
         }
         m_parts.setsWithTest.ensureSize(numberOfSets);
+        Vector<uint32_t> setsToEncode;
+        std::optional<uint32_t> unencodableSetSize;
         for (unsigned index = 0; index < numberOfSets; ++index) {
-            ShapeTest& test = m_parts.testOfSet[index];
+            const ShapeTest& test = m_parts.testOfSet[index];
             m_parts.setsWithTest.quickSet(index);
-            if (hasBits(test.form) && setsNamedByRecords.quickGet(index))
-                test.bitSetOffset = bitSetOffsetFor(LayoutSetID(index));
+            if (!hasBits(test.form))
+                continue;
+            if (!canEncodeShapeSet(memberShapesOf(LayoutSetID(index)))) {
+                unencodableSetSize = test.count;
+                break;
+            }
+            if (setsNamedByRecords.quickGet(index))
+                setsToEncode.append(index);
         }
+        Vector<EncodedShapeSet> encodedSets(setsToEncode.size());
+        forEachIndexInParallel(loops(), setsToEncode.size(), [&](unsigned position) {
+            encodedSets[position] = encodeShapeSet(memberShapesOf(LayoutSetID(setsToEncode[position])));
+        });
+        for (size_t position = 0; position < setsToEncode.size(); ++position)
+            m_parts.testOfSet[setsToEncode[position]].bitSetOffset = bitSetOffsetFor(encodedSets[position]);
+        if (unencodableSetSize) {
+            m_context.build.reportLimitExceeded(LimitID::MaxShapeSetBits, *unencodableSetSize);
+            return;
+        }
+        uint64_t numberOfBits = static_cast<uint64_t>(m_parts.shapeSetWords.size()) * PagedBitSet::bitsPerPage;
+        if (numberOfBits > m_context.build.limit(LimitID::MaxShapeSetBits))
+            m_context.build.reportLimitExceeded(LimitID::MaxShapeSetBits, numberOfBits);
     }
 
-    uint32_t bitSetOffsetFor(LayoutSetID set)
+    // Sets whose members lie at the same distances from one another have the same words.
+    uint32_t bitSetOffsetFor(const EncodedShapeSet& encoded)
     {
-        auto ascendingShapes = memberShapesOf(set);
-        uint32_t hash = computeHash(ascendingShapes);
+        auto wordsOf = [&](const StoredShapeSet& stored) {
+            return m_parts.shapeSetWords.subspan(stored.firstWord, stored.numberOfWords);
+        };
+        uint32_t hash = computeHash(encoded.words.span());
         auto found = m_shapeSetIndex.find(hash, [&](uint32_t position) {
-            return std::ranges::equal(memberShapesOf(m_shapeSets[position].set), ascendingShapes);
+            return m_shapeSets[position].entries == encoded.entries && std::ranges::equal(wordsOf(m_shapeSets[position]), encoded.words);
         });
-        if (found)
-            return m_shapeSets[*found].bitOffset;
-        uint32_t offset = static_cast<uint32_t>(m_numberOfBits);
-        m_shapeSetIndex.add(hash, m_shapeSets.size());
-        m_shapeSets.append(ShapeSet { set, offset });
-        m_numberOfBits += WTF::roundUpToMultipleOf<32>(ascendingShapes.back() - ascendingShapes.front() + 1);
-        return offset;
+        if (!found) {
+            found = static_cast<uint32_t>(m_shapeSets.size());
+            m_shapeSetIndex.add(hash, m_shapeSets.size());
+            // The words become the start of the pool of constants, where compiled code finds the set at the alignment of a constant of its size.
+            while (m_parts.shapeSetWords.sizeInBytes() % alignmentOfConstant(encoded.words.sizeInBytes()))
+                m_parts.shapeSetWords.append(0);
+            m_parts.shapeSetRanges.append({ static_cast<uint32_t>(m_parts.shapeSetWords.size()), static_cast<uint32_t>(encoded.words.size()) });
+            m_shapeSets.append(StoredShapeSet { static_cast<uint32_t>(m_parts.shapeSetWords.size()), static_cast<uint32_t>(encoded.words.size()), encoded.entries });
+            m_parts.shapeSetWords.appendVector(encoded.words);
+        }
+        return PagedBitSet::locationOf(m_shapeSets[*found].firstWord, encoded.entries);
     }
 
     void deriveKnownSetTests(std::span<const FieldAccess> fieldAccesses)
@@ -352,47 +484,33 @@ private:
 
     void fillFieldAccessTests(Vector<FieldAccess>& fieldAccesses) const
     {
-        for (auto& access : fieldAccesses) {
+        forEachIndexInParallel(loops(), fieldAccesses.size(), [&](unsigned index) {
+            FieldAccess& access = fieldAccesses[index];
             switch (access.coverage) {
             case FieldAccess::Coverage::NoMember:
                 access.membersWithFieldTest = { };
-                continue;
+                return;
             case FieldAccess::Coverage::EveryMemberHasSlot:
             case FieldAccess::Coverage::EveryMember:
                 access.membersWithFieldTest = { .form = ShapeTestForm::AlwaysPasses };
-                continue;
+                return;
             case FieldAccess::Coverage::SomeMembers: {
                 const ShapeTest* test = findTest(m_parts.testsWithinKnownSets.span(), access.membersWithField, access.receivers);
                 RELEASE_ASSERT(test);
                 access.membersWithFieldTest = *test;
-                continue;
+                return;
             }
             }
             RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-
-    void fillShapeSetBits()
-    {
-        if (m_numberOfBits > m_context.build.limit(LimitID::MaxShapeSetBits)) {
-            m_context.build.reportLimitExceeded(LimitID::MaxShapeSetBits, m_numberOfBits);
-            return;
-        }
-        m_parts.shapeSetBits.ensureSize(m_numberOfBits);
-        for (auto& shapeSet : m_shapeSets) {
-            auto shapes = memberShapesOf(shapeSet.set);
-            for (uint32_t shape : shapes)
-                m_parts.shapeSetBits.quickSet(shapeSet.bitOffset + shapes.back() - shape);
-        }
+        });
     }
 
     const PlacementContext& m_context;
     const PlacedSites& m_sites;
     const ShapeNumbering& m_numbering;
     const ShapeVariants& m_variants;
-    Vector<ShapeSet> m_shapeSets;
+    Vector<StoredShapeSet> m_shapeSets;
     HashedIndex m_shapeSetIndex;
-    uint64_t m_numberOfBits { 0 };
     ShapeTableParts m_parts;
 };
 
@@ -436,11 +554,11 @@ ShapeTestData ShapeTable::dataOf(const ShapeTest& test) const
     case ShapeTestForm::Range:
     case ShapeTestForm::Block:
     case ShapeTestForm::BlockOrEarlier:
-        return { test.first, test.count, noBitSet };
+        return { test.last(), test.count, noBitSet };
     case ShapeTestForm::ImmediateBits:
     case ShapeTestForm::BitSet:
         RELEASE_ASSERT(test.bitSetOffset != noBitSet);
-        return { test.first, test.count, test.bitSetOffset };
+        return { test.last(), test.count, test.bitSetOffset };
     case ShapeTestForm::AlwaysPasses:
     case ShapeTestForm::From:
         break;

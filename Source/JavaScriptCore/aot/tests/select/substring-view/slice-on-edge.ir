@@ -21,9 +21,9 @@ function f0 name="slice-on-edge" parameters=[{type=string}, {type=int}, {type=in
 }
 variable g0 name="number" declared={type=anything} initialization=Undefined
 # CHECK-LABEL: function f0 name="slice-on-edge"
-# CHECK: [[flat0]]: flatstring = FlattenString v0
-# CHECK-NEXT: [[slice0]]: string = Substring [[flat0]], v5, v6
-# CHECK-NEXT: number = StringRangeToNumber [[flat0]], v5, v6
+# CHECK-NOT: FlattenString
+# CHECK: [[slice0]]: string = Substring v0, v5, v6
+# CHECK-NEXT: number = StringRangeToNumber v0, v5, v6
 # CHECK: Jump -> next b1([[slice0]])
 # CHECK-NOT: StringRangeEqualsLiteral
 

@@ -361,6 +361,7 @@ static void testVariableOfLaterRepairHasNoKnownProperties()
         sum = graph.make(done, Add, sum, graph.get(done, variables[i]));
     graph.ret(done, sum);
     proc.resetReachability();
+    proc.invalidateCFG();
 
     CHECK(fixSSA(proc));
     validate(proc);

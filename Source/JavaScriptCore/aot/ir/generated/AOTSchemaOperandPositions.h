@@ -13,15 +13,16 @@ constexpr std::optional<unsigned> value(Opcode opcode)
     switch (opcode) {
     case Opcode::PutModuleVariable: case Opcode::Negate: case Opcode::ToNumeric: case Opcode::Increment: case Opcode::Decrement: case Opcode::BitNot:
     case Opcode::ToNumber: case Opcode::InstanceOf: case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::ToString:
-    case Opcode::ToPropertyKey: case Opcode::ToObject: case Opcode::ToThis: case Opcode::Upcast: case Opcode::Claim: case Opcode::ClaimDeclared:
-    case Opcode::ClaimRead: case Opcode::Predict: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject:
-    case Opcode::TypeTest: case Opcode::Await: case Opcode::Yield: case Opcode::IsConstructor: case Opcode::ToLength:
-    case Opcode::IsUnmodifiedGenerator: case Opcode::CreateIteratorResult: case Opcode::HasJSType: case Opcode::IsPristineArray:
-    case Opcode::AssumeType: case Opcode::ReportMismatch: case Opcode::IsPristine: case Opcode::IsNotThenable: case Opcode::IsClosureOf:
-    case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::IsUnmodifiedAsyncGenerator:
-    case Opcode::HasInPrototypeChain: case Opcode::ValidateType: case Opcode::JSONDecodeBytes: case Opcode::IsPlainDataObject:
-    case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber:
-    case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress: return 0;
+    case Opcode::ToPropertyKey: case Opcode::ToObject: case Opcode::ToThis: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check:
+    case Opcode::Convert: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest:
+    case Opcode::Await: case Opcode::Yield: case Opcode::IsConstructor: case Opcode::ToLength: case Opcode::IsUnmodifiedGenerator:
+    case Opcode::CreateIteratorResult: case Opcode::HasJSType: case Opcode::IsPristineArray: case Opcode::IsClosureOf: case Opcode::AssumeType:
+    case Opcode::BorrowedParameter: case Opcode::ReportMismatch: case Opcode::IsPristine: case Opcode::IsNotThenable: case Opcode::MakeBorrowedObject:
+    case Opcode::SetGlobalBinding: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::IsFunctionOfBuiltin:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::HasInPrototypeChain: case Opcode::ValidateType: case Opcode::JSONDecodeBytes:
+    case Opcode::IsPlainDataObject: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::Box: case Opcode::Unbox:
+    case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode:
+    case Opcode::Compress: return 0;
     case Opcode::PutEnvironmentField: case Opcode::AppendElement: case Opcode::SetMappedArgument: case Opcode::PropSet: case Opcode::PropDefine:
     case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::PutInternalField: case Opcode::ResolvePromise: case Opcode::RejectPromise:
     case Opcode::StepAsyncGenerator: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult:
@@ -72,12 +73,14 @@ constexpr std::optional<unsigned> object(Opcode opcode)
     case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::DefineGetter:
     case Opcode::DefineSetter: case Opcode::SetLiteralPrototype: case Opcode::PrivateGet: case Opcode::PrivateSet: case Opcode::PrivateDefine:
     case Opcode::PrivateHas: case Opcode::ForInOpen: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::GetInternalField:
-    case Opcode::PutInternalField: case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen:
-    case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::HasKeyOrder: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined:
-    case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::PropHasOwn: case Opcode::TryCopyFields:
-    case Opcode::EnumeratorGetByVal: case Opcode::GetOwnDataProperty: case Opcode::PropGetChecked: case Opcode::PropGetChain:
-    case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::TryPutByIds: case Opcode::PutSlots: case Opcode::DefineOwnProperty:
-    case Opcode::DefineAccessors: return 0;
+    case Opcode::PutInternalField: case Opcode::ReadAgain: case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
+    case Opcode::BelongsToInstance: case Opcode::HasKeyOrder: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter:
+    case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth:
+    case Opcode::TryFinishBirth: case Opcode::PropHasOwn: case Opcode::TryCopyFields: case Opcode::EnumeratorGetByVal: case Opcode::ValidateLookup:
+    case Opcode::GetOwnDataProperty: case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::TryPutByIds:
+    case Opcode::PutSlots: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: return 0;
     case Opcode::ForInStep: case Opcode::IsEnumeratorCurrent: case Opcode::JSONObjectFinish: return 1;
     default: return std::nullopt;
     }
@@ -91,8 +94,9 @@ constexpr std::optional<unsigned> array(Opcode opcode)
     case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex:
     case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::HasArrayStorage:
-    case Opcode::IsInBounds: case Opcode::GetArrayLength: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement:
-    case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: return 0;
+    case Opcode::IsInBounds: case Opcode::IsElementPresent: case Opcode::GetArrayLength: case Opcode::GetArrayElement: case Opcode::PutArrayElement:
+    case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity:
+    case Opcode::ConvertToDoubleStorage: return 0;
     case Opcode::ArraySpeciesCreate: return 1;
     default: return std::nullopt;
     }
@@ -135,6 +139,7 @@ constexpr std::optional<unsigned> callee(Opcode opcode)
     case Opcode::CreateMappedArguments: case Opcode::Call: case Opcode::Construct: case Opcode::CallList: case Opcode::ConstructList:
     case Opcode::CallForwardVarargs: case Opcode::NewArgumentList: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
     case Opcode::ValidateCallee: case Opcode::ResolveCallTarget: case Opcode::CallResolved: return 0;
+    case Opcode::TakeGeneratorPrototype: return 1;
     default: return std::nullopt;
     }
 }
@@ -180,7 +185,7 @@ constexpr std::optional<unsigned> computedKey(Opcode opcode)
 constexpr std::optional<unsigned> target(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::CopyDataProperties: case Opcode::ExpectRows: return 0;
+    case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CopyDataProperties: case Opcode::ExpectRows: return 0;
     case Opcode::CallResolved: return 1;
     default: return std::nullopt;
     }
@@ -189,12 +194,29 @@ constexpr std::optional<unsigned> target(Opcode opcode)
 constexpr std::optional<unsigned> source(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::CopyDataProperties: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::TryCopyFields:
-    case Opcode::AppendElements: return 1;
+    case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CopyDataProperties: case Opcode::NewArrayLike:
+    case Opcode::NewArrayWithCapacity: case Opcode::TryCopyFields: case Opcode::AppendElements: return 1;
     case Opcode::CopyObject: case Opcode::CloneAs: return 0;
     default: return std::nullopt;
     }
 }
+
+constexpr std::optional<unsigned> sourceKey(Opcode opcode) { return opcode == Opcode::TryDefineLiveBinding ? std::optional<unsigned>(2) : std::nullopt; }
+
+constexpr std::optional<unsigned> targetKey(Opcode opcode) { return opcode == Opcode::TryDefineLiveBinding ? std::optional<unsigned>(3) : std::nullopt; }
+
+constexpr std::optional<unsigned> getter(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::TryDefineLiveBinding: return 4;
+    case Opcode::DefineOwnProperty: return 3;
+    default: return std::nullopt;
+    }
+}
+
+constexpr std::optional<unsigned> replacedCallee(Opcode opcode) { return opcode == Opcode::SetLiteralPrototype ? std::optional<unsigned>(2) : std::nullopt; }
+
+constexpr std::optional<unsigned> replacedThis(Opcode opcode) { return opcode == Opcode::SetLiteralPrototype ? std::optional<unsigned>(3) : std::nullopt; }
 
 constexpr std::optional<unsigned> home(Opcode opcode) { return opcode == Opcode::GetSuperBase ? std::optional<unsigned>(0) : std::nullopt; }
 
@@ -209,7 +231,7 @@ constexpr std::optional<unsigned> base(Opcode opcode)
 constexpr std::optional<unsigned> receiver(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::SuperGet: case Opcode::SuperSet: case Opcode::ClaimRead: case Opcode::StringBuilderAppendBuiltin: return 1;
+    case Opcode::SuperGet: case Opcode::SuperSet: case Opcode::StringBuilderAppendBuiltin: return 1;
     case Opcode::CallBuiltin: case Opcode::CallMethod: case Opcode::CallInline: return 0;
     default: return std::nullopt;
     }
@@ -245,6 +267,8 @@ constexpr std::optional<unsigned> constructor(Opcode opcode)
     default: return std::nullopt;
     }
 }
+
+constexpr std::optional<unsigned> read(Opcode opcode) { return opcode == Opcode::NarrowByField ? std::optional<unsigned>(1) : std::nullopt; }
 
 constexpr std::optional<unsigned> thisValue(Opcode opcode)
 {
@@ -335,10 +359,10 @@ constexpr std::optional<unsigned> position(Opcode opcode)
     switch (opcode) {
     case Opcode::ForInStep: case Opcode::IsEnumeratorCurrent: return 2;
     case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex:
-    case Opcode::PutDoubleIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::IsInBounds: case Opcode::GetArrayElement:
-    case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
-    case Opcode::GetStringCodeUnit: case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
-        return 1;
+    case Opcode::PutDoubleIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::IsInBounds: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement:
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetStringCodeUnit: case Opcode::StringIndexOfLiteral:
+    case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral: return 1;
     case Opcode::EnumeratorGetByVal: case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodeUnitOrMinusOne:
     case Opcode::StringRangeCodePointOrUndefined: case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined: return 3;
     default: return std::nullopt;
@@ -376,8 +400,9 @@ constexpr std::optional<unsigned> length(Opcode opcode)
 constexpr std::optional<unsigned> generator(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::StepAsyncGenerator:
-    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: return 0;
+    case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::TakeGeneratorPrototype:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::StepAsyncGenerator: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: return 0;
     default: return std::nullopt;
     }
 }
@@ -394,9 +419,21 @@ constexpr std::optional<unsigned> promise(Opcode opcode)
     }
 }
 
-constexpr std::optional<unsigned> collection(Opcode opcode) { return opcode == Opcode::CollectionTable ? std::optional<unsigned>(0) : std::nullopt; }
+constexpr std::optional<unsigned> collection(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::CollectionTable: case Opcode::IsCollectionTableFull: case Opcode::ReserveCollectionCapacity: case Opcode::HasByKeyParts: return 0;
+    default: return std::nullopt;
+    }
+}
 
-constexpr std::optional<unsigned> map(Opcode opcode) { return opcode == Opcode::MapNext ? std::optional<unsigned>(0) : std::nullopt; }
+constexpr std::optional<unsigned> map(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::MapNext: case Opcode::MapGetByKeyParts: return 0;
+    default: return std::nullopt;
+    }
+}
 
 constexpr std::optional<unsigned> table(Opcode opcode)
 {
@@ -416,42 +453,35 @@ constexpr std::optional<unsigned> entry(Opcode opcode)
 
 constexpr std::optional<unsigned> set(Opcode opcode) { return opcode == Opcode::SetNext ? std::optional<unsigned>(0) : std::nullopt; }
 
-constexpr std::optional<unsigned> closure(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::CallGroup: case Opcode::GetCapture: return 0;
-    default: return std::nullopt;
-    }
-}
+constexpr std::optional<unsigned> again(Opcode opcode) { return opcode == Opcode::ReadAgain ? std::optional<unsigned>(1) : std::nullopt; }
 
 constexpr std::optional<unsigned> guard(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::HasKeyOrder:
-    case Opcode::IsShapeEpochCurrent: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
-    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::GetArrayLength: case Opcode::JSONAdvance: case Opcode::GetOwnDataProperty:
-    case Opcode::CloneAs: case Opcode::PutSlots: return 1;
-    case Opcode::GetArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::FulfillFreshPromise:
-    case Opcode::RegExpMatchLiteral: return 2;
-    case Opcode::PutArrayElement: return 3;
+    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::HasKeyOrder: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined:
+    case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::GetArrayLength:
+    case Opcode::JSONAdvance: case Opcode::GetOwnDataProperty: case Opcode::CloneAs: case Opcode::PutSlots: return 1;
+    case Opcode::IsElementPresent: case Opcode::GetArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements:
+    case Opcode::GetTypedArrayElement: case Opcode::FulfillFreshPromise: case Opcode::RegExpMatchLiteral: return 2;
+    case Opcode::PutArrayElement: case Opcode::PutTypedArrayElement: return 3;
     case Opcode::EnumeratorGetByVal: return 4;
-    case Opcode::GetRequiredValue: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: return 0;
+    case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: return 0;
     default: return std::nullopt;
     }
 }
-
-constexpr std::optional<unsigned> epoch(Opcode opcode) { return opcode == Opcode::IsShapeEpochCurrent ? std::optional<unsigned>(0) : std::nullopt; }
-
-constexpr std::optional<unsigned> additional(Opcode opcode) { return opcode == Opcode::ReserveArrayCapacity ? std::optional<unsigned>(1) : std::nullopt; }
 
 constexpr std::optional<unsigned> view(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::RequireAttachedTypedArray:
-        return 0;
+    case Opcode::IsInsideView: case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+    case Opcode::RequireAttachedTypedArray: return 0;
     default: return std::nullopt;
     }
 }
+
+constexpr std::optional<unsigned> additional(Opcode opcode) { return opcode == Opcode::ReserveArrayCapacity ? std::optional<unsigned>(1) : std::nullopt; }
 
 constexpr std::optional<unsigned> string(Opcode opcode)
 {
@@ -468,6 +498,8 @@ constexpr std::optional<unsigned> string(Opcode opcode)
     }
 }
 
+constexpr std::optional<unsigned> closure(Opcode opcode) { return opcode == Opcode::GetCapture ? std::optional<unsigned>(0) : std::nullopt; }
+
 constexpr std::optional<unsigned> dividend(Opcode opcode) { return opcode == Opcode::DivideIntegers ? std::optional<unsigned>(0) : std::nullopt; }
 
 constexpr std::optional<unsigned> divisor(Opcode opcode) { return opcode == Opcode::DivideIntegers ? std::optional<unsigned>(1) : std::nullopt; }
@@ -476,7 +508,19 @@ constexpr std::optional<unsigned> arrayLike(Opcode opcode) { return opcode == Op
 
 constexpr std::optional<unsigned> next(Opcode opcode) { return opcode == Opcode::CreateAsyncFromSyncIterator ? std::optional<unsigned>(1) : std::nullopt; }
 
+constexpr std::optional<unsigned> remaining(Opcode opcode) { return opcode == Opcode::ReserveCollectionCapacity ? std::optional<unsigned>(1) : std::nullopt; }
+
+constexpr std::optional<unsigned> finished(Opcode opcode) { return opcode == Opcode::ReserveCollectionCapacity ? std::optional<unsigned>(2) : std::nullopt; }
+
+constexpr std::optional<unsigned> sizeAtEntry(Opcode opcode) { return opcode == Opcode::ReserveCollectionCapacity ? std::optional<unsigned>(3) : std::nullopt; }
+
+constexpr std::optional<unsigned> driver(Opcode opcode) { return opcode == Opcode::StepAsyncGenerator ? std::optional<unsigned>(2) : std::nullopt; }
+
 constexpr std::optional<unsigned> awaited(Opcode opcode) { return opcode == Opcode::AwaitBySavingFrame ? std::optional<unsigned>(0) : std::nullopt; }
+
+constexpr std::optional<unsigned> exception(Opcode opcode) { return opcode == Opcode::AbandonModuleEvaluation ? std::optional<unsigned>(0) : std::nullopt; }
+
+constexpr std::optional<unsigned> exception(TerminatorKind kind) { return kind == TerminatorKind::Rethrow ? std::optional<unsigned>(0) : std::nullopt; }
 
 constexpr std::optional<unsigned> builder(Opcode opcode)
 {
@@ -494,6 +538,8 @@ constexpr std::optional<unsigned> builder(Opcode opcode)
 }
 
 constexpr std::optional<unsigned> checkpoint(Opcode opcode) { return opcode == Opcode::StringBuilderRollBack ? std::optional<unsigned>(1) : std::nullopt; }
+
+constexpr std::optional<unsigned> expected(Opcode opcode) { return opcode == Opcode::ValidateLookup ? std::optional<unsigned>(1) : std::nullopt; }
 
 constexpr std::optional<unsigned> kept(Opcode opcode) { return opcode == Opcode::ValidateSameValue ? std::optional<unsigned>(0) : std::nullopt; }
 
@@ -546,8 +592,6 @@ constexpr std::optional<unsigned> extra(Opcode opcode)
 constexpr std::optional<unsigned> memberName(Opcode opcode) { return opcode == Opcode::JSONAddExtraMember ? std::optional<unsigned>(1) : std::nullopt; }
 
 constexpr std::optional<unsigned> other(Opcode opcode) { return opcode == Opcode::PropGetPair ? std::optional<unsigned>(1) : std::nullopt; }
-
-constexpr std::optional<unsigned> getter(Opcode opcode) { return opcode == Opcode::DefineOwnProperty ? std::optional<unsigned>(3) : std::nullopt; }
 
 constexpr std::optional<unsigned> setter(Opcode opcode) { return opcode == Opcode::DefineOwnProperty ? std::optional<unsigned>(4) : std::nullopt; }
 
@@ -602,8 +646,6 @@ constexpr std::optional<unsigned> subject(TerminatorKind kind)
 }
 
 constexpr std::optional<unsigned> call(TerminatorKind kind) { return kind == TerminatorKind::ReturnCall ? std::optional<unsigned>(0) : std::nullopt; }
-
-constexpr std::optional<unsigned> exception(TerminatorKind kind) { return kind == TerminatorKind::Rethrow ? std::optional<unsigned>(0) : std::nullopt; }
 
 } } } } // namespace JSC::AOT::Typed::OperandPosition
 

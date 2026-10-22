@@ -131,13 +131,13 @@ function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
     v1 = String string="label"
     Return v1
 }
-function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131082 thisType={type=anything} results=[{type=anything}] {
+function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = Call v1, v0 calleeKey="toString"
     ReturnCall v2
 }
-runtimefunction id=131082 function=f2
+runtimefunction id=131085 function=f2
 )IR"_s;
 
 // const parent = { listed: 1 }; for (const key in Object.create(Object.create(parent))) print(key)
@@ -201,7 +201,7 @@ function f2 name="twice" results=[{type=anything}] {
 
 // library.js: export function five() { return 5 }. main.js: import * as library from "library.js"; print(Object.create(library).five())
 static constexpr ASCIILiteral exportCalledThroughHeirOfNamespace = R"IR(module m0 path="library.js" displayPath="library.js" body=f1 exports=[{name="five" variable=g0}]
-module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0}]
+module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
 entry module=m1
 variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
 function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
@@ -258,7 +258,7 @@ function f2 name="replacer" kind=Arrow length=2 parameters=[{type=anything}, {ty
 }
 )IR"_s;
 
-// const holder = { m: () => 8 }; function run(x) { return x.m() } print(run(holder), run(globalThis.outside)). The last function makes the program large enough for a second version of run.
+// const holder = { m: () => 8 }; function run(x) { return x.m() } print(run(holder), run(outside)). The last function makes the program large enough for a second version of run.
 static constexpr ASCIILiteral methodCalledInGenericVersion = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Holder" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
@@ -269,7 +269,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = NewClosure function=f1
     v3 = Call v2, -, v1
     v4 = Builtin builtin=GlobalThis
-    v5 = PropGet v4 key="outside"
+    v5 = PropGet v4 key="outside" [isFreeName]
     v6 = Call v2, -, v5
     v7 = PropGet v4 key="print" [isFreeName]
     v8 = Call v7, -, v3, v6
@@ -338,10 +338,9 @@ static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expecte
         "disable=pass:EliminateDeadCode"_s,
         "disable=pass:InlineCalls"_s,
         "disable=pass:SinkAllocations"_s,
-        "disable=pass:GroupCallsByValue"_s,
         "disable=pass:AllocateInFrames"_s,
+        "disable=pass:DeferClosuresInFields"_s,
         "disable=flow:ObjectUses"_s,
-        "disable=flow:DeferredClosures"_s,
         "disable=flow:CalleeSets"_s,
         "disable=flow:ReceiverSets"_s,
     };

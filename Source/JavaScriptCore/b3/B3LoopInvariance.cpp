@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Dominators.h"
 #include "B3LoopUtilities.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
@@ -340,6 +341,21 @@ HoistDecision LoopInvariance::checkEffects(Value* value, Effects effects) const
     return HoistDecision::Hoist;
 }
 
+// What is known of a phi is known of whichever input it takes. In the fast version it stands for one of them, and the guard that keeps the others out is still in the loop.
+bool LoopInvariance::isChosenByPendingGuard(Value* phi) const
+{
+    Dominators& dominators = m_proc.dominators();
+    return std::ranges::any_of(m_pendingGuards, [&](const PendingGuard& pending) {
+        return pending.likelySuccessor && dominators.dominates(pending.guard->owner, phi->owner) && !dominators.dominates(pending.likelySuccessor, phi->owner);
+    });
+}
+
+bool LoopInvariance::readsThroughPhiChosenByPendingGuard(Value* value) const
+{
+    auto* memory = value->as<MemoryValue>();
+    return memory && m_phisChosenByPendingGuards.contains(memory->lastChild()->foldIdentity());
+}
+
 HoistDecision LoopInvariance::canHoist(Value* value)
 {
     if (!hasInvariantChildren(value))
@@ -350,7 +366,7 @@ HoistDecision LoopInvariance::canHoist(Value* value)
         return decision;
     if (!effects.controlDependent || m_pendingGuards.isEmpty())
         return HoistDecision::Hoist;
-    if (!m_proc.effectsOf(value).controlDependent)
+    if (!m_proc.effectsOf(value).controlDependent && !readsThroughPhiChosenByPendingGuard(value))
         return HoistDecision::HoistSpeculatively;
     if (findEquivalentExecutedLoad(value))
         return HoistDecision::Hoist;
@@ -414,6 +430,8 @@ void LoopInvariance::resolvePhi(Value* phi)
         return;
     if (isHeaderPhi || m_speculativelyHoisted.contains(only))
         m_speculativelyHoisted.add(phi);
+    if (!isHeaderPhi && isChosenByPendingGuard(phi))
+        m_phisChosenByPendingGuards.add(phi);
     m_plan.repeatedValues.add(phi, only);
     hoist(phi, HoistStep::Kind::Value);
     m_plan.invalidation.merge(walked);
@@ -548,6 +566,7 @@ bool LoopInvariance::tryPeelPendingGuards()
     }
     m_peeledValues = WTF::move(attempt.values);
     m_pendingGuards.clear();
+    m_phisChosenByPendingGuards = { };
     return true;
 }
 

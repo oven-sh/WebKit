@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTProgramStrings.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
@@ -19,6 +20,7 @@
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
 #include "MarkedBlockCage.h"
+#include "TopExceptionScope.h"
 #include <array>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -31,13 +33,7 @@ static_assert(CompactTable::offsetOfAliveCount() == CompactTable::offsetOfUsed()
 static_assert(CompactTable::offsetOfKeysShift() == CompactTable::offsetOfCapacity() + 5 && CompactTable::offsetOfValueWidth() == CompactTable::offsetOfCapacity() + 6 && CompactTable::offsetOfStatus() == CompactTable::offsetOfCapacity() + 7);
 static_assert(OBJECT_OFFSETOF(JSOrderedHashTable<MapTraits>, m_storage) == OBJECT_OFFSETOF(JSOrderedHashTable<SetTraits>, m_storage));
 
-static constexpr uint32_t maxCountWithGrowthPlan = 64;
 static constexpr std::array growthPlanValueWidths { CompactTable::Width::None, CompactTable::Width::Narrow, CompactTable::Width::Wide };
-
-struct CompactTable::GrowthPlan {
-    uint32_t capacity;
-    uint8_t indexBits;
-};
 
 static WriteBarrier<JSCell>& storageOf(JSObject* owner)
 {
@@ -93,37 +89,28 @@ uint32_t CompactTable::capacityAfterGrowth(uint32_t alive, uint32_t used)
     return std::min<uint64_t>(deleted >= used / 2 ? count + 1 : count < 64 ? count + count / 2 + 1 : count * 2, maxCapacity);
 }
 
-static unsigned growthPlanRowFor(CompactTable::Width value)
+static constexpr unsigned firstGrowthPlanFor(CompactTable::Width value)
 {
-    switch (value) {
-    case CompactTable::Width::None:
-        return 0;
-    case CompactTable::Width::Narrow:
-        return 1;
-    case CompactTable::Width::Wide:
-        return 2;
-    case CompactTable::Width::InImage:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return static_cast<unsigned>(value) / static_cast<unsigned>(CompactTable::Width::Narrow) * CompactTable::growthPlansPerValueWidth;
 }
 
-const CompactTable::GrowthPlan& CompactTable::growthPlanFor(Width value, uint32_t count)
+const uint64_t* CompactTable::growthPlans()
 {
-    using GrowthPlans = std::array<std::array<GrowthPlan, maxCountWithGrowthPlan / 2>, growthPlanValueWidths.size()>;
+    using GrowthPlans = std::array<uint64_t, growthPlanValueWidths.size() * growthPlansPerValueWidth>;
     static const GrowthPlans plans = [] {
         GrowthPlans result { };
         for (Width width : growthPlanValueWidths) {
-            auto& row = result[growthPlanRowFor(width)];
-            for (uint32_t column = 0; column < row.size(); ++column) {
+            for (uint32_t column = 0; column < growthPlansPerValueWidth; ++column) {
                 uint32_t capacity = capacityFor(capacityAfterGrowth(column * 2, column * 2), Width::Narrow, width);
-                RELEASE_ASSERT(capacity <= maxCapacityWithShortSlots);
-                row[column] = { capacity, static_cast<uint8_t>(indexBitsFor(capacity)) };
+                uint64_t indexBits = indexBitsFor(capacity);
+                uint64_t sizeStep = MarkedSpace::sizeClassToIndex(allocationSize(capacity, Width::Narrow, width));
+                RELEASE_ASSERT(capacity <= maxCapacityWithShortSlots && sizeStep < 1u << (64 - sizeStepShiftOfGrowthPlan) && allocationSize(capacity, Width::Narrow, width) <= MarkedSpace::largeCutoff);
+                result[firstGrowthPlanFor(width) + column] = capacity | indexBits << 32 | static_cast<uint64_t>(keysShiftFor(indexBits, capacity)) << 40 | static_cast<uint64_t>(width) << 48 | sizeStep << sizeStepShiftOfGrowthPlan;
             }
         }
         return result;
     }();
-    return plans[growthPlanRowFor(value)][count / 2];
+    return plans.data();
 }
 
 size_t CompactTable::offsetOfKeys(uint32_t capacity)
@@ -179,6 +166,16 @@ bool CompactTable::canHold(VM& vm, Width width, JSValue value)
     if (width != Width::Narrow || !value || value.isUndefinedOrNull() || value.isBoolean())
         return true;
     return value.isCell() && vm.heap.cage().contains(value.asCell()) && !(std::bit_cast<uintptr_t>(value.asCell()) & (MarkedBlock::atomSize - 1));
+}
+
+CompactTable* CompactTable::tryCreateForFirstEntry(JSGlobalObject* globalObject, bool hasValues, JSValue key, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    bool useWideReferences = vm.aotState().image->header().options.useWideReferences();
+    auto widthOf = [&](JSValue held) {
+        return useWideReferences ? Width::Wide : widthFor(vm, held);
+    };
+    return tryCreate(globalObject, widthOf(normalizeMapKey(key)), hasValues ? widthOf(value) : Width::None, initialCapacity);
 }
 
 CompactTable::Width CompactTable::widthFor(VM& vm, JSValue value)
@@ -323,7 +320,7 @@ void CompactTable::append(VM& vm, JSValue key, unsigned hash, JSValue value)
     vm.writeBarrier(this);
 }
 
-CompactTable* CompactTable::tryCopyWithWidths(JSGlobalObject* globalObject, Width key, Width value) const
+CompactTable* CompactTable::tryCopyWithWidths(JSGlobalObject* globalObject, Width key, Width value, std::optional<uint32_t> capacity) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -331,7 +328,8 @@ CompactTable* CompactTable::tryCopyWithWidths(JSGlobalObject* globalObject, Widt
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    CompactTable* copy = tryCreate(globalObject, key, value, capacityAfterGrowth(m_alive, m_used));
+    ASSERT(!capacity || *capacity > m_alive);
+    CompactTable* copy = tryCreate(globalObject, key, value, capacity.value_or(capacityAfterGrowth(m_alive, m_used)));
     RETURN_IF_EXCEPTION(scope, nullptr);
     uint32_t count = 0;
     bool keepsWidths = key == keyWidth() && value == m_valueWidth;
@@ -379,7 +377,7 @@ CompactTable* CompactTable::tryCopy(JSGlobalObject* globalObject) const
     CompactTable* copy = new (NotNull, cell) CompactTable(vm, structure());
     copy->m_capacity = m_capacity;
     copy->m_indexBits = m_indexBits;
-    copy->m_keysShiftAndFlags = m_keysShiftAndFlags;
+    copy->m_keysShiftAndFlags = m_keysShiftAndFlags & ~wasWalked;
     copy->m_valueWidth = m_valueWidth;
     memcpy(copy->at<uint8_t>(offsetOfIndex()), at<uint8_t>(offsetOfIndex()), used - offsetOfIndex());
     zeroSpan(std::span { copy->at<uint8_t>(used), size - used });
@@ -403,6 +401,9 @@ void CompactTable::becomeObsolete(VM& vm, Status status, JSCell* next)
                     at<uint32_t>(offsetOfIndex())[count++] = entry;
             }
         }
+        // Whoever stands in this table goes on at the same entry of the next.
+        if (status == Status::Replaced)
+            uncheckedDowncast<CompactTable>(next)->m_keysShiftAndFlags |= m_keysShiftAndFlags & wasWalked;
         m_status = status;
         *at<JSCell*>(offsetOfUsed()) = next;
         m_capacity = count;
@@ -414,9 +415,9 @@ CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSString* key, JSValue val
 {
     uint32_t count = m_used;
     Width valueWidth = m_valueWidth;
-    const GrowthPlan& plan = growthPlanFor(valueWidth, count);
-    uint32_t capacity = plan.capacity;
-    unsigned indexBits = plan.indexBits;
+    uint64_t plan = growthPlans()[firstGrowthPlanFor(valueWidth) + count / 2];
+    uint32_t capacity = static_cast<uint32_t>(plan);
+    unsigned indexBits = static_cast<uint8_t>(plan >> 32);
     uint8_t keysShift = keysShiftFor(indexBits, capacity);
     size_t keys = offsetOfIndex() + (static_cast<size_t>(2) << keysShift);
     size_t size = MarkedSpace::optimalSizeFor(keys + capacity * (static_cast<size_t>(Width::Narrow) + static_cast<size_t>(valueWidth)));
@@ -480,6 +481,76 @@ CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSString* key, JSValue val
     return larger;
 }
 
+// What canHold() says of a narrow column, as the stubs test it: every cell of a marked block lies in the cage, and no other cell is aligned like one.
+static ALWAYS_INLINE bool narrowColumnHolds(JSValue value)
+{
+    static_assert((MarkedBlock::atomSize - 1) & PreciseAllocation::halfAlignment);
+    uint64_t bits = JSValue::encode(value);
+    return value.isCell() ? !(bits & (MarkedBlock::atomSize - 1)) : bits < minCell32;
+}
+
+// The usual addition: the table has room, its columns hold the key and the value, and the key is an object, a symbol or a string that is no rope, so it is found or missed without running anything.
+ALWAYS_INLINE CompactTable::QuickAddition CompactTable::tryAddQuickly(JSGlobalObject* globalObject, JSValue key, JSValue value)
+{
+    if (!hasNarrowHeapKeys() || m_used == m_capacity || !key.isCell() || !narrowColumnHolds(key) || (m_valueWidth == Width::Narrow && !narrowColumnHolds(value)))
+        return QuickAddition::Unknown;
+    VM& vm = globalObject->vm();
+    uintptr_t base = cageBaseOf(this);
+    uint32_t narrowKey = MarkedBlockCage::encode(base, key.asCell());
+    uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    unsigned hash;
+    std::optional<uint32_t> found;
+    if (key.isString()) {
+        const StringImpl* impl = asString(key)->tryGetValueImpl();
+        if (!impl)
+            return QuickAddition::Unknown;
+        hash = impl->hash();
+        found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            uint32_t candidate = keys[entry];
+            if (candidate == narrowKey)
+                return true;
+            const StringImpl* other = stringKeyOrNull(base, candidate);
+            return other && (other == impl || (other->existingHash() == hash && equal(other, impl)));
+        });
+    } else {
+        if (key.isHeapBigInt())
+            return QuickAddition::Unknown;
+        hash = rapidHashMix64(JSValue::encode(key)) & hashMask;
+        found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            return keys[entry] == narrowKey;
+        });
+    }
+    if (validatesRuntime(vm)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        std::optional<uint32_t> expected = find(globalObject, key);
+        scope.releaseAssertNoException();
+        if (expected != found || hash != hashOfStoredKey(key) || !canHold(vm, Width::Narrow, key) || !canHold(vm, m_valueWidth, value))
+            crashOnValidationFailure(vm, { ValidationFailureKind::FastPathResultDiffers, { }, { }, this });
+    }
+    uint32_t entry = found.value_or(m_used);
+    switch (m_valueWidth) {
+    case Width::None:
+        break;
+    case Width::Narrow:
+        at<uint32_t>(offsetOfValues())[entry] = value.isCell() ? MarkedBlockCage::encode(base, value.asCell()) : static_cast<uint32_t>(JSValue::encode(value));
+        break;
+    case Width::Wide:
+        at<EncodedJSValue>(offsetOfValues())[entry] = JSValue::encode(value);
+        break;
+    case Width::InImage:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    if (!found) {
+        keys[entry] = narrowKey;
+        addToIndex(entry, hash);
+        WTF::storeStoreFence();
+        m_used = entry + 1;
+        ++m_alive;
+    }
+    vm.writeBarrier(this);
+    return QuickAddition::Done;
+}
+
 bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue key, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -502,8 +573,13 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         table = replacement;
     };
 
-    if (uint32_t count = table->m_used; key.isString() && count == table->m_capacity && count == table->m_alive && count < maxCountWithGrowthPlan
-        && table->tryFindQuickly(asString(key)).result == QuickLookup::Absent && canHold(vm, table->m_valueWidth, value) && canHold(vm, Width::Narrow, key)) {
+    auto tryAddWithoutSearch = [&] {
+        if (table->tryAddQuickly(globalObject, key, value) == QuickAddition::Done)
+            return true;
+        uint32_t count = table->m_used;
+        if (!key.isString() || count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan
+            || table->tryFindQuickly(asString(key)).result != QuickLookup::Absent || !canHold(vm, table->m_valueWidth, value) || !canHold(vm, Width::Narrow, key))
+            return false;
         CompactTable* larger = table->copyWithAbsentKey(vm, asString(key), value);
         if (validatesRuntime(vm)) [[unlikely]] {
             DeferTerminationForAWhile deferTermination(vm);
@@ -516,7 +592,9 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         }
         replaceWith(larger);
         return true;
-    }
+    };
+    if (tryAddWithoutSearch())
+        return true;
 
     auto entry = table->find(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
@@ -525,7 +603,7 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
             uint32_t deletedBefore = 0;
             for (uint32_t i = 0; i < *entry; ++i)
                 deletedBefore += !table->heapKeyAt(i);
-            CompactTable* wider = table->tryCopyWithWidths(globalObject, table->keyWidth(), Width::Wide);
+            CompactTable* wider = table->tryCopyWithWidths(globalObject, table->keyWidth(), Width::Wide, table->m_used < table->m_capacity ? std::optional { table->m_capacity } : std::nullopt);
             RETURN_IF_EXCEPTION(scope, false);
             replaceWith(wider);
             *entry -= deletedBefore;
@@ -535,20 +613,56 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         return true;
     }
 
-    if (key.isString()) {
+    if (key.isString() && asString(key)->isRope()) {
         asString(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+        if (tryAddWithoutSearch())
+            return true;
     }
     unsigned hash = hashOfStoredKey(key);
     Width keyWidth = canHold(vm, table->keyWidth(), key) ? table->keyWidth() : Width::Wide;
     Width valueWidth = canHold(vm, table->m_valueWidth, value) ? table->m_valueWidth : Width::Wide;
     if (table->m_used == table->m_capacity || keyWidth != table->keyWidth() || valueWidth != table->m_valueWidth) {
-        CompactTable* replacement = table->tryCopyWithWidths(globalObject, keyWidth, valueWidth);
+        // A table that has room is only widened, and keeps the room.
+        CompactTable* replacement = table->tryCopyWithWidths(globalObject, keyWidth, valueWidth, table->m_used < table->m_capacity ? std::optional { table->m_capacity } : std::nullopt);
         RETURN_IF_EXCEPTION(scope, false);
         replaceWith(replacement);
     }
     table->append(vm, key, hash, value);
     return true;
+}
+
+void CompactTable::reserveForAdditions(JSGlobalObject* globalObject, JSObject* owner, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry)
+{
+    VM& vm = globalObject->vm();
+    if (!storageOf(owner) || !static_cast<JSOrderedHashTable<MapTraits>*>(owner)->hasCompactStorage())
+        return;
+    CompactTable* table = tableOf(owner);
+    if (!table->isHeapTable() || table->m_used < table->m_capacity || !finished)
+        return;
+    if (remaining > runtimeLimitValue(vm, LimitID::MaxReservedCollectionCapacity)) {
+        countLimitHit(vm, LimitID::MaxReservedCollectionCapacity);
+        return;
+    }
+
+    // An addition that is skipped, or whose key is there, adds nothing. Where every one so far has added an entry, so will the rest, and the table is as large as that and no larger.
+    // Otherwise the share that has is an estimate, which only ever makes the step larger. Few entries say little about many iterations: the keys may be about to repeat.
+    uint64_t alive = table->m_alive;
+    uint64_t added = alive > sizeAtEntry ? alive - sizeAtEntry : 0;
+    bool everyAdditionAddedAnEntry = added >= finished;
+    uint64_t expected = everyAdditionAddedAnEntry ? remaining : (remaining * added + finished - 1) / finished;
+    uint64_t capacity = std::min(alive + expected, alive * largestStepInLoop);
+    if (!expected || capacity > maxCapacity || (!everyAdditionAddedAnEntry && capacity <= capacityAfterGrowth(table->m_alive, table->m_used)))
+        return;
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    CompactTable* replacement = table->tryCopyWithWidths(globalObject, table->keyWidth(), table->m_valueWidth, static_cast<uint32_t>(capacity));
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return;
+    }
+    table->becomeObsolete(vm, Status::Replaced, replacement);
+    setStorage(vm, owner, replacement);
 }
 
 bool CompactTable::remove(JSGlobalObject* globalObject, JSObject* owner, JSValue key)
@@ -570,47 +684,57 @@ bool CompactTable::remove(JSGlobalObject* globalObject, JSObject* owner, JSValue
     return true;
 }
 
+void CompactTable::removeAllEntries()
+{
+    ASSERT(isHeapTable());
+    Locker locker { cellLock() };
+    m_used = 0;
+    m_alive = 0;
+    if (slotKind() == SlotKind::Tag) {
+        *at<uint64_t>(offsetOfIndex()) = 0;
+        return;
+    }
+    memsetSpan(std::span { at<uint8_t>(offsetOfIndex()), offsetOfKeys() - offsetOfIndex() }, 0xff);
+}
+
+bool CompactTable::tryClearInPlace(JSObject* owner)
+{
+    CompactTable* table = tableOf(owner);
+    if (!table || !table->isHeapTable() || table->m_keysShiftAndFlags & wasWalked || table->m_capacity > maxCapacityEmptiedByClear)
+        return false;
+    table->removeAllEntries();
+    return true;
+}
+
 void CompactTable::clear(JSGlobalObject* globalObject, JSObject* owner)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     CompactTable* table = tableOf(owner);
-    JSCell* fresh = CompactStorage::tryCreate(globalObject, table->hasValues());
-    RETURN_IF_EXCEPTION(scope, void());
-    table->becomeObsolete(vm, Status::Cleared, fresh);
-    setStorage(vm, owner, fresh);
-}
-
-template<typename Traits>
-static JSCellButterfly* tryCreateOrdinaryStorage(JSGlobalObject* globalObject, const CompactTable& table)
-{
-    using Helper = JSOrderedHashTableHelper<Traits>;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    typename Helper::TableSize capacity = Helper::InitialCapacity;
-    while (Helper::dataCapacity(capacity) <= table.size())
-        capacity *= 2;
-    JSCellButterfly* storage = Helper::tryCreate(globalObject, 0, 0, capacity);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    for (uint32_t entry = 0; entry < table.used(); ++entry) {
-        JSValue key = table.keyAt(entry);
-        if (!key)
-            continue;
-        Helper::add(globalObject, nullptr, *storage, key, table.valueAt(entry));
-        RETURN_IF_EXCEPTION(scope, nullptr);
+    // Nothing was added since the table was made, so whoever iterates over it stands in front of all that is added later.
+    if (!table->m_used)
+        return;
+    // Nobody stands behind an entry, so the table is as good as a new one. A large one is let go: a collection that is cleared for good gives its memory back.
+    if (table->isHeapTable() && !(table->m_keysShiftAndFlags & wasWalked) && table->m_capacity <= maxCapacityEmptiedByClear) {
+        table->removeAllEntries();
+        return;
     }
-    return storage;
-}
-
-JSCellButterfly* CompactTable::convertToOrdinaryStorage(JSGlobalObject* globalObject, CompactTable* table)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSCellButterfly* storage = table->hasValues() ? tryCreateOrdinaryStorage<MapTraits>(globalObject, *table) : tryCreateOrdinaryStorage<SetTraits>(globalObject, *table);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    table->becomeObsolete(vm, Status::Replaced, storage);
-    return storage;
+    // To whoever iterates, clearing is the deletion of every entry. A small table that has room for as many entries again stays, so a collection that is filled and cleared in turns makes fewer tables.
+    if (table->isHeapTable() && table->m_capacity <= maxCapacityWithTags && table->m_used * 2 <= table->m_capacity) {
+        for (uint32_t entry = 0; entry < table->m_used; ++entry) {
+            table->setKey(entry, JSValue());
+            table->setValue(entry, JSValue());
+        }
+        table->m_alive = 0;
+        return;
+    }
+    // What is added next is most likely of the kind that was there.
+    JSCell* fresh = table->isHeapTable() ? tryCreate(globalObject, table->keyWidth(), table->m_valueWidth, initialCapacity) : CompactStorage::tryCreate(globalObject, table->hasValues());
+    RETURN_IF_EXCEPTION(scope, void());
+    // Whoever stands in a cleared table goes on at the start of the table that the owner has by then. The table names the owner and not the next table:
+    // a table that something still holds would else hold every table that the collection has had since.
+    table->becomeObsolete(vm, Status::Cleared, owner);
+    setStorage(vm, owner, fresh);
 }
 
 CompactStorage::Position CompactTable::next(VM&, JSCell* storage, uint32_t entry)
@@ -618,18 +742,18 @@ CompactStorage::Position CompactTable::next(VM&, JSCell* storage, uint32_t entry
     for (;;) {
         if (!storage)
             return { };
-        if (storage->type() == JSCellButterflyType)
-            return { storage, entry, { }, { } };
         auto* table = uncheckedDowncast<CompactTable>(storage);
         switch (table->m_status) {
         case Status::Live:
             for (; entry < table->m_used; ++entry) {
-                if (JSValue key = table->keyAt(entry))
+                if (JSValue key = table->keyAt(entry)) {
+                    table->m_keysShiftAndFlags |= wasWalked;
                     return { table, entry, key, table->valueAt(entry) };
+                }
             }
             return { };
         case Status::Cleared:
-            storage = table->successor();
+            storage = tableOf(asObject(table->successor()));
             entry = 0;
             break;
         case Status::Replaced: {

@@ -1,7 +1,7 @@
-# An array of shareable leaves is a copy-on-write array, every other constant record is a read-only tree
+# An array of shareable leaves is a copy-on-write array, every other constant record is a read-only tree. A hole is shareable where no element is a cell: then the storage lies in the image
 # FORM: Prepared
 # RUN: pass Select
-# STATISTIC: DataEncodingGroups = 9
+# STATISTIC: DataEncodingGroups = 10
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
@@ -14,6 +14,7 @@ data d5 root=Array{contents=anything elements=[Number{value=1}, Array{contents=n
 data d6 root=Array{contents=bigint elements=[BigInt{digits="9"}]}
 data d7 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}]}
 data d8 root=Array{contents=anything elements=[Number{value=1}, Object{layout=L0 members=[{key="x" value=Number{value=1}}]}]}
+data d9 root=Array{contents=string elements=[String{value="a"}, Hole, String{value="b"}]}
 
 function f0 name="numbers" results=[{type=anything}] {
   b0():
@@ -53,7 +54,7 @@ function f4 name="hole" results=[{type=anything}] {
     Return v0
 }
 # CHECK-LABEL: function f4 name="hole"
-# CHECK: = Data data=d4 encoding=ReadOnlyTree
+# CHECK: = Data data=d4 encoding=CopyOnWriteArray
 
 function f5 name="nestedArray" results=[{type=anything}] {
   b0():
@@ -86,3 +87,11 @@ function f8 name="objectElement" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f8 name="objectElement"
 # CHECK: = Data data=d8 encoding=ReadOnlyTree
+
+function f9 name="holeAmongStrings" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d9
+    Return v0
+}
+# CHECK-LABEL: function f9 name="holeAmongStrings"
+# CHECK: = Data data=d9 encoding=ReadOnlyTree

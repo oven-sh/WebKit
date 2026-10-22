@@ -12,8 +12,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 layout L1 kind=Instance name="Stranger"
-function f0 name="reads" parameters=[{type=L0}, {type=object written=L0}, {type=anything}, {type=L1}, {type=classtoken}] results=[{type=undefined}] {
-  b0(v0: L0, v1: object ? L0, v2: anything, v3: L1, v4: classtoken):
+function f0 name="reads" parameters=[{type=L0}, {type=L0 flags=[IsExpected]}, {type=anything}, {type=L1}, {type=classtoken}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything ~ L0, v2: anything, v3: L1, v4: classtoken):
     v5 = PrivateGet v0, v4 layout=L0
     v6 = PrivateGet v1, v4 layout=L0
     v7 = PrivateGet v2, v4 layout=L0

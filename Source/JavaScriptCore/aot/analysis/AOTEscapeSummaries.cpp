@@ -72,13 +72,14 @@ static bool mayLoadReference(FunctionAnalyses& analyses, const ObjectUse& object
     return objectUse.readsContents && !analyses.escape().objectDefinedBy(objectUse.use.user);
 }
 
+// The escape analysis does not follow what is read out of a parameter. The summaries that the function is analyzed against cover it.
 static OperandUses usesOfLoadedReferences(FunctionAnalyses& analyses, uint32_t entryParameter)
 {
     const AnalysisContext& context = analyses.context();
-    OperandUses published = context.flow ? publishedParameterSummary(*context.flow, context.id, entryParameter).uses : OperandUses::all();
-    if (published.contains(OperandUse::RetainsContents))
+    OperandUses known = context.effects ? context.effects->of(context.id).operand(entryParameter).uses : OperandUses::all();
+    if (known.contains(OperandUse::RetainsContents))
         return OperandUse::RetainsContents;
-    return published - leakingUses;
+    return known - leakingUses;
 }
 
 std::unique_ptr<FunctionAnalyses> createAnalysesForSummary(BuildContext& build, const EffectContext& context, const FlowResults& flow, FunctionID id, const Function& function)
@@ -118,11 +119,22 @@ void forEachBaseObject(FunctionAnalyses& analyses, ValueID value, NOESCAPE const
 }
 
 // A saved frame holds what is live in it, and the function goes on when its caller has long gone on: what it then does to a parameter happens at a time of which the caller knows nothing.
-static bool maySaveFrame(const Function& function)
+static bool maySaveFrame(FunctionAnalyses& analyses)
 {
+    static const OpcodeSet opcodesThatMaySuspend = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            if (maySuspend(opcode))
+                result.add(opcode);
+        }
+        return result;
+    }();
+    if (!analyses.opcodesOfValues().intersects(opcodesThatMaySuspend))
+        return false;
+    const Function& function = analyses.function();
     return std::ranges::any_of(function.blocks, [&](const Block& block) {
         return std::ranges::any_of(block.values, [&](ValueID id) {
-            return maySuspend(function.at(id).opcode);
+            return opcodesThatMaySuspend.contains(function.at(id).opcode);
         });
     });
 }
@@ -147,7 +159,7 @@ OperandSummary summarizeEntryParameter(FunctionAnalyses& analyses, uint32_t entr
     if (std::ranges::any_of(escape.usesOf(*id), loadsReference))
         uses.add(usesOfLoadedReferences(analyses, entryParameter));
     auto callsInCycle = [&](const ObjectUse& objectUse) {
-        return objectUse.uses.containsAny(callingUses) && analyses.blockCycles().isInCycle(objectUse.use.block);
+        return objectUse.uses.containsAny(callingUses) && analyses.isInCycle(objectUse.use.block);
     };
     if (std::ranges::any_of(escape.usesOf(*id), callsInCycle))
         uses.add(OperandUse::CallsRepeatedly);
@@ -155,7 +167,7 @@ OperandSummary summarizeEntryParameter(FunctionAnalyses& analyses, uint32_t entr
     EscapeReasons direct = object.reasons - EscapeReason::StoredInEscapingObject;
     if (direct.contains(EscapeReason::Returned))
         uses.add(OperandUse::Returns);
-    if (function.isUnsplitCoroutine() || maySaveFrame(function) || !(direct - EscapeReason::Returned).isEmpty())
+    if (function.isUnsplitCoroutine() || maySaveFrame(analyses) || !(direct - EscapeReason::Returned).isEmpty())
         return { uses | OperandUse::Retains, RetainedIn::UnknownMemory, 0 };
     return summarizeRetention(analyses, uses, escape.containersOf(*id));
 }

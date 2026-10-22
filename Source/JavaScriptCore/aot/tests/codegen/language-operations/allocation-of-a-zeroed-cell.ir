@@ -1,0 +1,63 @@
+# Where most slots of an object are born empty, the stub hands out a cell whose body is zero and no store of an empty slot is left in the code, in fast code too.
+# Outside fast code one store of zero that is saved is enough, were it that of a hidden word. Fast code stores the few zeros of a full object itself
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
+# RUN: generate-code calls
+# CHECK: f1: size=
+# CHECK-NEXT: stub AllocateCell.HeaderAndWordsAndZeros{{*}} x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub AllocateCell.HeaderAndWordsAndZeros{{*}} x1
+# CHECK-NEXT: f3: size=
+# CHECK-NOT: operation operationAOTAllocateSlow
+# CHECK: stub AllocateCell.HeaderAndWordsAndZeros
+# CHECK: f4: size=
+# CHECK-NOT: stub AllocateCell.HeaderAndWordsAndZeros
+# CHECK: stub AllocateCell.HeaderAndWords.
+
+layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    Return v6
+}
+function f1 name="mostlyEmpty" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="full" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5]
+    Return v1
+}
+function f3 name="fast" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Jump -> next b1(v0)
+  b1(v2: anything):
+    LoopHint
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    Branch v1 -> taken b1(v4), notTaken b2()
+  b2():
+    Return v4
+}
+function f4 name="fullInFastCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Jump -> next b1(v0)
+  b1(v2: anything):
+    LoopHint
+    v4 = NewObject -, v2, v2, v2, v2, v2, v2 layout=L0 fields=[0, 1, 2, 3, 4, 5]
+    Branch v1 -> taken b1(v4), notTaken b2()
+  b2():
+    Return v4
+}

@@ -8,8 +8,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Names" fields=[{key="undefined" declared={type=number}}, {key="null" declared={type=number}}]
 
-function f0 name="read" parameters=[{type=Array<int[0, 9], proven, pristine[Storage, Names]>}, {type=undefined|int[0, 9]}] results=[{type=anything}] {
-  b0(v0: Array<int[0, 9], proven, pristine[Storage, Names]>, v1: undefined|int[0, 9]):
+function f0 name="read" parameters=[{type=Array<int[0, 9], proven, Int32, pristine[Storage, Names]>}, {type=undefined|int[0, 9]}] results=[{type=anything}] {
+  b0(v0: Array<int[0, 9], proven, Int32, pristine[Storage, Names]>, v1: undefined|int[0, 9]):
     v2 = ElemGet v0, v1
     Return v2
 }

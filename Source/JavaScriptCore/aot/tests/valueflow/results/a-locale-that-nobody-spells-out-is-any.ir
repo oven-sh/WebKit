@@ -1,0 +1,22 @@
+# function show(n, tag) { return n.toLocaleString(tag) }  show(1.5, "de")
+# Nothing is computed and no parameter of a function is followed: the data of every language stays.
+# RUN: valueflow-results
+# CHECK: locale Unknown
+# CHECK-NOT: locale Constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Double number=1.5
+    v2 = String string="de"
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+function f1 name="show" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=NumberPrototypeToLocaleString
+    v3 = Call v2, v0, v1
+    Return v3
+}

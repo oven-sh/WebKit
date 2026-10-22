@@ -28,6 +28,7 @@ struct PresenceLookup {
     JSObject* object;
     Structure* structureBefore;
     CachedName name;
+    bool shouldFile;
 };
 
 struct KeyedPresenceLookup {
@@ -91,6 +92,8 @@ static bool hasPropertyAndCache(const PresenceLookup& lookup)
     std::optional<PropertyAnswer> answer;
     bool result = lookUpOnChain(lookup, slot, answer);
     RETURN_IF_EXCEPTION(scope, false);
+    if (!lookup.shouldFile)
+        return result;
     if (!answer)
         answer = classifyRead(readQueryFor(lookup, slot));
     cacheIfImplied(lookup, *answer, Question::In, result);
@@ -114,6 +117,8 @@ static bool hasOwnPropertyAndCache(const PresenceLookup& lookup)
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     bool result = object->methodTable()->getOwnPropertySlot(object, lookup.instance->globalObject, PropertyName(lookup.name.uid), slot);
     RETURN_IF_EXCEPTION(scope, false);
+    if (!lookup.shouldFile)
+        return result;
     if (result) {
         cacheIfImplied(lookup, classifyRead(readQueryFor(lookup, slot)), Question::HasOwn, true);
         return true;
@@ -136,10 +141,20 @@ static bool hasOwnPropertyAndCache(const PresenceLookup& lookup)
 
 static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& name, Question question)
 {
-    Object::ensureStructureForExtraPropertiesIfNeeded(*instance->vm, object);
+    bool shouldFile = instance->state->propertyCaches->shouldFile(object->structureID(), name.uid, SlotAccess::Read);
+    if (instance->state->propertyCaches->countsNames()) [[unlikely]]
+        instance->state->propertyCaches->countMiss(question == Question::In ? "in"_s : "has own"_s, shouldFile, object, name.uid);
+    if (shouldFile) {
+        Object::ensureStructureForExtraPropertiesIfNeeded(*instance->vm, object);
+        createClassObjectsOnChain(*instance->vm, object, name.uid);
+    }
     Structure* structureBefore = object->structure();
-    PresenceLookup lookup { instance, object, structureBefore, name };
+    PresenceLookup lookup { instance, object, structureBefore, name, shouldFile };
     bool result = question == Question::In ? hasPropertyAndCache(lookup) : hasOwnPropertyAndCache(lookup);
+#if !CPU(X86_64)
+    if (!result && object->structure() == structureBefore)
+        instance->state->propertyCaches->tables().fileAbsenceFilter(instance->globalObject, object);
+#endif
     ensureStillAliveHere(structureBefore);
     return result;
 }

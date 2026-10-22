@@ -47,6 +47,56 @@ enum class BuiltinHolderGain : uint8_t { Unknown, Impossible };
 
 BuiltinHolderGain builtinHolderGainOf(const PropertyAccessContext&, BuiltinID holder, PropertyKeyID);
 
+// What the layouts of an arm say of a field together. It depends on the layouts, the key and whether the name is private, so PropertyAccessCache keeps it.
+struct FieldArmState {
+    bool isAlwaysFilled { true };
+    bool isFilledAtBirth { true };
+    bool hasSlotNowhere { true };
+    bool isRequired { true };
+    // No allocation fills the field and no type declares it: flow has given a name room that some store creates, often long after the construction, or never.
+    bool isAddedLate { true };
+    // Whether undefined is among what the field is stored with or declared to hold, in some member. An empty slot reads as undefined, so where it is not, whoever reads the field expects a filled slot.
+    bool admitsUndefined { false };
+    // So it is in some of the layouts: the objects that a constructor function makes, beside the type that its factories give them, which declares the field.
+    bool isAddedLateInSomeMember { false };
+    // Some construction of a layout that declares the field makes an object without it, as `{ children }` under a type with `color?`.
+    bool isLeftOutAtConstruction { false };
+    bool hasConstructor { false };
+    // A namespace or an enum: born empty, filled once by the code that stands around it, and read full from then on.
+    bool isInContainer { false };
+    // A store of a value that the slot does not hold and a redefinition move the property to the extra properties of the object and leave the slot empty.
+    bool cannotMoveOut { true };
+    bool mayLieOutOfLine { false };
+    bool isAbsentOnPrototypes { true };
+    bool inheritsNothingUnderName { true };
+    bool holdsRawNumberOrBoolean { true };
+    // While the mark of the cell is off, no member's slot holds a marker for undefined or null.
+    bool holdsRawValuesWhileCellIsUnmarked { true };
+    bool holdsRawValueFromBirthInSomeMember { false };
+    bool holdsOnlyListedFunctions { true };
+    bool slotsHoldUndefinedAndNull { true };
+    bool createdOnlyAtConstruction { true };
+    bool hasImmutableMember { false };
+    // What the properties in the slots are other than writable, enumerable, configurable data properties.
+    OptionSet<FieldForm> form;
+    bool isAccessorInEveryMember { true };
+    bool hasDeferredMember { false };
+    bool deferralIsUniform { true };
+    // Unknown code may have stored another function into the slot of an object that reached it.
+    bool holdsOnlyDeferredFunction { true };
+    ClosureDeferral deferral { ClosureDeferral::Unknown };
+    FunctionID deferredFunction;
+    ReceiverState receivers;
+    SortedSet<TypeID, 2> slotTypes;
+};
+
+struct CreationTests {
+    ProofSet proofs;
+    MemberConditions conditions;
+
+    bool isEmpty() const { return proofs.isEmpty() && conditions.isEmpty(); }
+};
+
 PropertyAccessPlan planMemberArm(const PropertyAccessContext&, const PropertyAccessQuery&, const MemberArm&);
 void planFieldArm(const PropertyAccessContext&, const PropertyAccessQuery&, const MemberArm&, PropertyAccessPlan&);
 void planVariableArm(const PropertyAccessContext&, const PropertyAccessQuery&, const MemberArm&, PropertyAccessPlan&);

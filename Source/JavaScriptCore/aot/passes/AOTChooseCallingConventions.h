@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class CallGroups;
 class PassRunner;
 
 struct FunctionConvention {
@@ -33,15 +32,11 @@ struct SecondaryEntry {
     uint8_t firstOmittedGPR { 0 };
 };
 
-enum class ClosureCells : uint8_t { Unknown, AllSlim, AllFull };
-
 struct CallingConventionTables {
     ConventionRegisters registers;
     Vector<FunctionConvention> conventions;
     Vector<uint32_t> firstSecondaryEntry;
     Vector<SecondaryEntry> secondaryEntries;
-    Vector<FunctionID> valueEntries;
-    Vector<ClosureCells> closureCells;
 };
 
 class CallingConventions {
@@ -56,12 +51,10 @@ public:
     Representation resultRepresentation(const Program&, FunctionID, unsigned resultIndex = 0) const;
     ArgumentLocations locationsOf(const Program&, FunctionID) const;
     uint32_t stackWordsReservedByCallersOf(const Program&, FunctionID callee) const;
+    uint32_t stackWordsReservedByCallersOf(const Program&, FunctionID callee, const ArgumentLocations& calleeLocations) const;
 
     std::span<const SecondaryEntry> secondaryEntriesOf(FunctionID) const LIFETIME_BOUND;
     SecondaryEntry findEntryOmittingArguments(FunctionID callee, unsigned firstUndefinedGPR, unsigned numberOfGPRArguments) const;
-
-    FunctionID valueEntryOf(FunctionID genericEntrypoint) const;
-    ClosureCells closureCellsOf(FunctionID groupEntrypoint) const;
 
     void dump(PrintStream&, const Program&) const;
 
@@ -69,7 +62,7 @@ private:
     CallingConventionTables m_tables;
 };
 
-CallingConventions chooseCallingConventions(ProgramEditor&, const OptimizationInputs&, const CallGroups&, const PassRunner&);
+CallingConventions chooseCallingConventions(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
 Representation declaredRepresentationOf(const Program&, const DeclaredType&);
 ArgumentLocations computeArgumentLocations(const Program&, const Function& callee, FunctionConvention, ConventionRegisters);

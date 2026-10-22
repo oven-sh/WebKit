@@ -1,4 +1,4 @@
-# The initial yield becomes a suspension like any other, followed by a switch on the mode, and the arms of every mode but Next are rare
+# The initial yield becomes a suspension like any other, followed by a switch on the mode, and the arms of every mode but Next are rare; where code may have run in front of it, the generator takes its prototype again
 # FORM: Prepared
 # RUN: pass SplitCoroutines
 # STATISTIC: CoroutinesSplit = 6
@@ -69,22 +69,29 @@ function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] paramet
 
 # CHECK-LABEL: function f6 name="suspendsAtOnce"
 # CHECK: b0(v0: function, v1: anything, [[driver0]]: Generator):
+# CHECK-NEXT: [[running0]]: boolean = IsGeneratorRunning [[driver0]] @10
+# CHECK-NEXT: Branch [[running0]] -> taken [[started0]](), notTaken [[suspends0]]()
+# CHECK-NEXT: [[rest0]]():
+# CHECK-NEXT: v3: anything = Call v1 @11
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[started0]]():
+# CHECK-NEXT: Jump -> next [[rest0]]()
+# CHECK-NEXT: [[suspends0]]():
 # CHECK-NEXT: [[undefined0]]: undefined = Undefined
 # CHECK-NEXT: [[yield0]]{{*}}= YieldBySavingFrame [[driver0]], [[undefined0]] @10
 # CHECK-NEXT: [[sent0]]: anything = ResultAt [[yield0]]
 # CHECK-NEXT: [[mode0]]: int[0, 2] = ResultAt [[yield0]] index=1
 # CHECK-NEXT: Switch [[mode0]] cases=[1, 2] -> case [[throw0]](), case [[return0]](), otherwise [[rest0]]()
-# CHECK-NEXT: [[rest0]]():
-# CHECK-NEXT: v3: anything = Call v1 @11
-# CHECK-NEXT: Return v3
 # CHECK-NEXT: [[throw0]]() frequency=Rare:
 # CHECK-NEXT: Throw [[sent0]]
 # CHECK-NEXT: [[return0]]() frequency=Rare:
 # CHECK-NEXT: Return [[sent0]]
 
 # CHECK-LABEL: function f7 name="callsFirst"
+# CHECK-NOT: IsGeneratorRunning
 # CHECK: b0(v0: function, v1: anything, [[driver1]]: Generator):
 # CHECK-NEXT: v2: anything = Call v1 @20
+# CHECK-NEXT: TakeGeneratorPrototype [[driver1]], v0 @21
 # CHECK-NEXT: [[undefined1]]: undefined = Undefined
 # CHECK-NEXT: [[yield1]]{{*}}= YieldBySavingFrame [[driver1]], [[undefined1]] @21
 # CHECK-NEXT: [[sent1]]: anything = ResultAt [[yield1]]
@@ -146,6 +153,7 @@ function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: v3: anything = Call v0 @50
 # CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b2(v4: anything):
+# CHECK-NEXT: TakeGeneratorPrototype [[driver5]], v0 @51
 # CHECK-NEXT: [[undefined5]]: undefined = Undefined
 # CHECK-NEXT: [[yield5]]{{*}}= YieldBySavingFrame [[driver5]], [[undefined5]] @51
 # CHECK-NEXT: [[sent5]]: anything = ResultAt [[yield5]]

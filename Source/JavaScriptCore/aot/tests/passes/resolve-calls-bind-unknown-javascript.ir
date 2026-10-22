@@ -1,8 +1,8 @@
-# Where uncompiled JavaScript can run, it can rename a closure it can reach: bind stays a call for that closure, and still makes a closure of a bound function for one that stays in compiled code
+# Where uncompiled JavaScript can run, it can rename a closure it can reach: the bind of such a closure asks whether it is as it was created, and the engine binds what is not. A closure that stays in compiled code is not asked.
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=ResolveCalls,ChooseCallingConventions
-# STATISTIC: BoundFunctions = 1
+# STATISTIC: BoundFunctions = 2
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -25,7 +25,9 @@ function f1 name="stays-in-compiled-code" results=[{type=anything}] {
     Return v4
 }
 # CHECK-LABEL: function f1 name="stays-in-compiled-code"
-# CHECK: = NewClosure v0 function=[[bound]]
+# CHECK: v0: f3 = NewClosure function=f3
+# CHECK-NOT: IsPristine
+# CHECK: = NewClosure function=[[bound]]
 # CHECK-NOT: CallBuiltin
 function f2 name="reaches-uncompiled-code" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -39,9 +41,11 @@ function f2 name="reaches-uncompiled-code" parameters=[{type=anything}] results=
 }
 # CHECK-LABEL: function f2 name="reaches-uncompiled-code"
 # CHECK: v1: f4 = NewClosure function=f4
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v1, v3 overload=FunctionPrototypeBind/0
-# CHECK-NOT: NewClosure
+# CHECK: [[isAsCreated]]: boolean = IsPristine v1 builtinClass=Function aspects=[Names]
+# CHECK-NEXT: Branch [[isAsCreated]] -> taken
+# CHECK: = NewClosure v1 function=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v1, v3 overload=FunctionPrototypeBind/0
 function f3 name="apart" kind=Arrow results=[{type=anything}] {
   b0():
     Return

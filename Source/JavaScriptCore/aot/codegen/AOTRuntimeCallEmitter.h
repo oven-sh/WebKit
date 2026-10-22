@@ -24,6 +24,7 @@ class StubCatalog;
 namespace Typed {
 
 bool acceptsRepresentation(RuntimeValueKind, Representation);
+bool leavesCallerWithoutFrame(StubKey);
 
 struct CallPatchpointRequest {
     LType resultType { B3::Void };
@@ -45,16 +46,26 @@ public:
     Operand callWithoutSite(RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions& = { });
     Operand callLeaf(RuntimeOperation, std::span<const Operand> arguments, Representation result);
     LValue callEntry(const OperationContext&, AOT::Entry, LType, std::span<const LValue> arguments, const CallOptions& = { });
+    // Each argument as the C function takes it.
+    struct HostFrameOfDirectCall {
+        LValue thisValue { nullptr };
+        LValue callee { nullptr };
+    };
+    LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, LValue keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt);
 
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
     void callStubAndBranch(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, BranchTargets);
+    void callStubWithoutSiteAndBranch(StubKey, std::span<const LValue> operands, BranchTargets);
     void tailCallStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubForTwoReads(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, Origin firstRead);
 
     B3::PatchpointValue* createCallPatchpoint(const OperationContext&, const CallPatchpointRequest&);
     void finishCallPatchpoint(const OperationContext&, B3::PatchpointValue*, uint32_t site, const CallPatchpointRequest&);
-    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false);
+    enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
+    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
+    // Once the patchpoint has its operands.
+    void keepBehindBirthOfFrameCells(B3::PatchpointValue*);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;
@@ -89,9 +100,11 @@ private:
         RegisterSet additionalClobbers;
         Effects effectsOfCallee;
         ArgumentBufferAccess argumentBufferAccess { ArgumentBufferAccess::None };
+        std::optional<AOT::Entry> entry;
     };
 
     const StubSummary& summaryOf(StubKey) const;
+    bool mayConvertCells(const Effects&);
     CallRequest createRequest(StubKey, std::span<const LValue> operands, const CallOptions&) const;
     CallRequest createEntryRequest(AOT::Entry, LType, const CallOptions&) const;
     void placeArguments(CallRequest&, std::span<const LValue> arguments, OperationCall::FirstArgument) const;

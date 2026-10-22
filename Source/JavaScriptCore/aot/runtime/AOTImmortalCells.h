@@ -9,8 +9,8 @@
 
 #include "MarkedSpace.h"
 #include <wtf/Noncopyable.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -30,8 +30,12 @@ public:
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
+    static constexpr size_t cellsPerSegment = 512;
+
+    template<typename Functor> void forEachSegment(size_t firstIndex, const Functor&);
+
     State& m_state;
-    Vector<JSCell*> m_cells;
+    SegmentedVector<JSCell*, cellsPerSegment> m_cells;
     size_t m_numberOfCellsVisited { 0 };
     HeapVersion m_lastVisitVersion { 0 };
 };

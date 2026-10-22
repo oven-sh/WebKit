@@ -1,0 +1,36 @@
+# function touch(o) { o.x; o.y = 5 }
+# The record says that members are read and written and has no row that names a key. The lists of keys are what a caller asks its own object about: an empty list would say that no accessor can run.
+# And something was taken out of the object that nobody has followed: anything may have become of what it holds.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: members-read members-written | contents: anything read=[any] written=[any]
+# CHECK: f2
+# CHECK-NEXT: p0: members-read members-written | contents: nothing read=["x"] written=["y"]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thing" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v0, -, v3
+    v5 = Call v1, -, v3
+    Return
+}
+function f1 name="touch" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, HasMembersWritten]}]} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Integer integer=5
+    PropSet v0, v2 key="y" mode=Strict
+    Return
+}
+function f2 name="touchWithRows" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, HasMembersWritten]}, {kind=ReadFrom index=1 source=0 key="x"}] stores=[{source=4294967295 target=0 key="y" isOnEveryPath=true}]} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Integer integer=5
+    PropSet v0, v2 key="y" mode=Strict
+    Return
+}

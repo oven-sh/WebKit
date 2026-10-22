@@ -1,7 +1,7 @@
-# A slot that defers its closure is filled by a closure in the deferred form only, and a closure in the full form names an allocation
+# A slot that defers its closure also takes a closure that is made, and a closure in the full form names an allocation
 # OPTIONS: references=narrow
 # RUN: check-placement deferred-form
-# DIAGNOSTIC: PlacementCheckFailed 2
+# DIAGNOSTIC: PlacementCheckFailed 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -19,7 +19,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v7 = Call v6, -, v4
     Return
 }
-function f1 name="run" results=[{type=anything}] {
+function f1 name="run" kind=Arrow results=[{type=anything}] {
   b0():
     Return
 }
@@ -32,4 +32,4 @@ function f2 name="later" results=[{type=anything}] {
 
 # CHECK: mutated f0 v0
 # CHECK-NEXT: rule PayloadMissing
-# CHECK-NEXT: rule DeferredClosureStore
+# CHECK-NOT: rule DeferredClosureStore

@@ -1,18 +1,18 @@
-# Each layout says what its slot holds, so behind a test of a value that was read from a slot the object has none of the layouts whose slot holds nothing that passes. A test of the object for a layout is decided where that leaves one answer
+# Where nothing of another type is ever stored, each layout says what its slot holds, so behind a test of a value that was read from a slot the object has none of the layouts whose slot holds nothing that passes. A test of the object for a layout is decided where that leaves one answer
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Round" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L1 name="Wide" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L2 name="High" fields=[{key="kind" declared={type=3} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="h" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L3 name="Oval" fields=[{key="kind" declared={type=4} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L4 name="Anything" fields=[{key="kind" declared={type=int[1, 4]} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L5 name="Value" fields=[{key="tag" declared={type="value"} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="ok" declared={type=true} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="value" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L6 name="Failure" fields=[{key="tag" declared={type="failure"} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="ok" declared={type=false} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="error" declared={type=string} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L7 name="Circle" fields=[{key="kind" declared={type=int[1, 2]} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
-layout L8 name="Square" fields=[{key="kind" declared={type=int[1, 2]} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L0 name="Round" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L1 name="Wide" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L2 name="High" fields=[{key="kind" declared={type=3} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="h" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L3 name="Oval" fields=[{key="kind" declared={type=4} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L4 name="Anything" fields=[{key="kind" declared={type=int[1, 4]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L5 name="Value" fields=[{key="tag" declared={type="value"} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="ok" declared={type=true} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="value" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L6 name="Failure" fields=[{key="tag" declared={type="failure"} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="ok" declared={type=false} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="error" declared={type=string} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L7 name="Circle" fields=[{key="kind" declared={type=int[1, 2]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L8 name="Square" fields=[{key="kind" declared={type=int[1, 2]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
 
 function f0 name="casesOfSwitch" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
   b0(v0: L0|L1|L2):
@@ -172,7 +172,7 @@ function f4 name="castOfTheObjectAndCallInBetween" parameters=[{type=L5|L6}, {ty
     SwitchString v2 strings=["failure"] -> case b1(), otherwise b4()
   b1():
     v3 = Call v1, -, v0
-    v4 = Predict v0 predicted=L6
+    v4 ~ L6 = Upcast v0 castType=L5|L6
     v5 = TypeTest v4 testedType=L6
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6):

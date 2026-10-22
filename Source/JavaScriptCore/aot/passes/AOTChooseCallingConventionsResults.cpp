@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTDiagnostics.h"
 #include "AOTFunctionEditing.h"
@@ -64,7 +65,6 @@ private:
     BitVector findBoxableTailCallees() const;
     Vector<TailCallEdge> collectEdgesTo(const BitVector& callees) const;
     bool hasOnlyBoxedCallers(std::span<const TailCallEdge>, FunctionID callee) const;
-    std::span<const FunctionID> functionsSharingResult(const FunctionID&) const LIFETIME_BOUND;
 
     const ConventionInputs& m_context;
     const Program& m_program;
@@ -87,11 +87,10 @@ static bool hasCheckedCast(const Terminator& terminator)
     return std::ranges::any_of(terminator.casts(), [](const TailCast& cast) {
         switch (cast.resolution) {
         case CastResolution::Unresolved:
-        case CastResolution::Claim:
+        case CastResolution::Check:
             return true;
         case CastResolution::Nothing:
         case CastResolution::Upcast:
-        case CastResolution::Prediction:
         case CastResolution::Assume:
             return false;
         }
@@ -107,9 +106,6 @@ static TailCallSite createTailCallSite(FunctionID caller, const Function& functi
     if (call.opcode == Opcode::CallDirect) {
         site.calleeKind = TailCalleeKind::Direct;
         site.callee = call.function();
-    } else if (call.opcode == Opcode::CallGroup) {
-        site.calleeKind = TailCalleeKind::Group;
-        site.callee = call.function();
     }
     return site;
 }
@@ -117,10 +113,9 @@ static TailCallSite createTailCallSite(FunctionID caller, const Function& functi
 static void collectSitesOf(const Program& program, FunctionID caller, Vector<TailCallSite>& sites)
 {
     const Function& function = program.at(caller);
-    for (unsigned index = 0; index < function.blocks.size(); ++index) {
-        if (function.blocks[index].terminator.kind == TerminatorKind::ReturnCall)
-            sites.append(createTailCallSite(caller, function, BlockID(index)));
-    }
+    forEachBlockEndingWith(program, caller, { TerminatorKind::ReturnCall }, [&](BlockID block) {
+        sites.append(createTailCallSite(caller, function, block));
+    });
 }
 
 static std::span<const TailCallSite> sitesOf(std::span<const TailCallSite> sites, FunctionID caller)
@@ -152,19 +147,6 @@ Vector<TailCallSite> collectTailCallSites(const ConventionInputs& context)
     });
 }
 
-static void markEntrypointsOfCalledGroups(const ConventionInputs& context, Vector<uint8_t>& isCalled)
-{
-    for (const GroupEntrypoints& group : context.groupEntrypoints) {
-        bool isGroupCalled = std::ranges::any_of(group.all, [&](FunctionID entrypoint) {
-            return !!isCalled[entrypoint.index()];
-        });
-        if (!isGroupCalled)
-            continue;
-        for (FunctionID entrypoint : group.all)
-            isCalled[entrypoint.index()] = 1;
-    }
-}
-
 DirectCallUse collectDirectCallUse(const ConventionInputs& context)
 {
     const Program& program = context.program();
@@ -173,19 +155,17 @@ DirectCallUse collectDirectCallUse(const ConventionInputs& context)
     Vector<uint8_t> isTailCalled(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(context.build.parallelLoops(), count, [&](unsigned index) {
         const Function& caller = program.functions[index];
-        for (const Block& block : caller.blocks) {
-            ValueID tailCall = tailCallOf(block);
-            for (ValueID id : block.values) {
-                const Value& call = caller.at(id);
-                if (call.opcode != Opcode::CallDirect && call.opcode != Opcode::CallGroup)
-                    continue;
-                Vector<uint8_t>& isCalled = id == tailCall ? isTailCalled : isCalledAndReturnedTo;
-                WTF::atomicStore(&isCalled[call.function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-            }
-        }
+        Vector<std::pair<BlockID, ValueID>, 8> tailCalls;
+        forEachBlockEndingWith(program, FunctionID(index), { TerminatorKind::ReturnCall }, [&](BlockID block) {
+            tailCalls.append({ block, tailCallOf(caller.at(block)) });
+        });
+        forEachDirectCall(program, FunctionID(index), [&](BlockID block, ValueID id, FunctionID callee) {
+            bool isTailCall = tailCalls.contains(std::pair { block, id });
+            Vector<uint8_t>& isCalled = isTailCall ? isTailCalled : isCalledAndReturnedTo;
+            if (!WTF::atomicLoad(&isCalled[callee.index()], std::memory_order_relaxed))
+                WTF::atomicStore(&isCalled[callee.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
     });
-    markEntrypointsOfCalledGroups(context, isCalledAndReturnedTo);
-    markEntrypointsOfCalledGroups(context, isTailCalled);
     return { createBitVector(isCalledAndReturnedTo), createBitVector(isTailCalled) };
 }
 
@@ -195,7 +175,7 @@ ResultLocations::ResultLocations(const ConventionInputs& context, const CallingC
     , m_locations(m_program.functions.size())
 {
     forEachIndexInParallel(context.build.parallelLoops(), m_locations.size(), [&](unsigned index) {
-        if (m_program.functions[index].results.size() == 1)
+        if (recordFactsOf(m_program, FunctionID(index)).numberOfResults == 1)
             recompute(FunctionID(index));
     });
 }
@@ -245,12 +225,6 @@ void ResultChooser::boxMixedClasses()
     unsigned count = m_program.functions.size();
     unsigned callByValue = count;
     Vector<ResultNode> nodes(count + 1);
-    for (const GroupEntrypoints& group : m_context.groupEntrypoints) {
-        if (!group.numberOfSites)
-            continue;
-        for (FunctionID entrypoint : group.all)
-            nodes[entrypoint.index()].unify(&nodes[group.declaring().index()]);
-    }
     for (const TailCallSite& site : m_sites) {
         if (site.requirement != TailCallRequirement::Required)
             continue;
@@ -304,18 +278,6 @@ BitVector ResultChooser::findBoxableTailCallees() const
     BitVector callees(count);
     for (uint32_t index : indexes)
         callees.quickSet(index);
-
-    for (const GroupEntrypoints& group : m_context.groupEntrypoints) {
-        if (group.all.isEmpty())
-            continue;
-        bool canBoxGroup = std::ranges::all_of(group.all, [&](FunctionID entrypoint) {
-            return callees.quickGet(entrypoint.index());
-        });
-        for (FunctionID entrypoint : group.all)
-            callees.quickClear(entrypoint.index());
-        if (canBoxGroup)
-            callees.quickSet(group.declaring().index());
-    }
     return callees;
 }
 
@@ -337,13 +299,6 @@ bool ResultChooser::hasOnlyBoxedCallers(std::span<const TailCallEdge> edges, Fun
     });
 }
 
-std::span<const FunctionID> ResultChooser::functionsSharingResult(const FunctionID& id) const
-{
-    if (m_program.at(id).role == FunctionRole::GroupEntrypoint)
-        return m_context.entrypointsOfSameGroup(id);
-    return singleElementSpan(id);
-}
-
 void ResultChooser::boxTailCallees()
 {
     BitVector callees = findBoxableTailCallees();
@@ -356,12 +311,10 @@ void ResultChooser::boxTailCallees()
         FunctionID callee = worklist.takeLast();
         if (m_tables.conventions[callee.index()].resultIsBoxed || !hasOnlyBoxedCallers(edges.span(), callee))
             continue;
-        for (FunctionID function : functionsSharingResult(callee)) {
-            box(function);
-            for (const TailCallSite& site : sitesOf(m_sites, function)) {
-                if (site.callee && callees.get(site.callee.index()))
-                    worklist.append(site.callee);
-            }
+        box(callee);
+        for (const TailCallSite& site : sitesOf(m_sites, callee)) {
+            if (site.callee && callees.get(site.callee.index()))
+                worklist.append(site.callee);
         }
     }
 }
@@ -370,7 +323,7 @@ static void boxDisabledFunctions(const ConventionInputs& context, CallingConvent
 {
     const Program& program = context.program();
     forEachIndexInParallel(context.build.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        if (canBoxResult(program.functions[index]) && !context.isEnabledFor(FunctionID(index)))
+        if (!context.isEnabledFor(FunctionID(index)) && canBoxResult(program.functions[index]))
             tables.conventions[index].resultIsBoxed = true;
     });
 }
@@ -396,7 +349,6 @@ static bool canRemainTailCall(const ResultLocations& results, const TailCallSite
     case TailCalleeKind::Unknown:
         return haveSameRegisterRepresentation(Representation::JSValue, expected);
     case TailCalleeKind::Direct:
-    case TailCalleeKind::Group:
         return !results.returnsNothing(site.callee) && haveSameRegisterRepresentation(results.chosenRepresentation(site.callee), expected);
     }
     RELEASE_ASSERT_NOT_REACHED();

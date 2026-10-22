@@ -93,7 +93,7 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     isDone = true;
     switch (m_state) {
     case State::Running:
-        throwTypeError(globalObject, scope, "Generator is executing"_s);
+        throwException(globalObject, scope, createGeneratorIsExecutingError(globalObject));
         return { };
     case State::Completed:
         switch (mode) {
@@ -129,10 +129,8 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     return result;
 }
 
-JSObject* createGenerator(JSGlobalObject* globalObject, Instance& instance, JSObject* generatorFunction, CoroutineKind kind)
+Structure* structureOfGenerator(JSGlobalObject* globalObject, Instance& instance, JSObject* generatorFunction, CoroutineKind kind)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     Structure* base = nullptr;
     switch (kind) {
     case CoroutineKind::Generator:
@@ -144,7 +142,14 @@ JSObject* createGenerator(JSGlobalObject* globalObject, Instance& instance, JSOb
         base = globalObject->asyncGeneratorStructure();
         break;
     }
-    Structure* structure = InternalFunction::createSubclassStructure(globalObject, generatorFunction, base);
+    return InternalFunction::createSubclassStructure(globalObject, generatorFunction, base);
+}
+
+JSObject* createGenerator(JSGlobalObject* globalObject, Instance& instance, JSObject* generatorFunction, CoroutineKind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Structure* structure = structureOfGenerator(globalObject, instance, generatorFunction, kind);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (kind == CoroutineKind::AsyncGenerator)
         return JSAsyncGenerator::create(vm, structure);

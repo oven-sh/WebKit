@@ -1,4 +1,5 @@
-# A use of a predicted built-in in a rare block gets no test, and heat decides nothing: the same use in an ordinary block of a cold function is tested
+# A use of an expected built-in in a rare or an unlikely block gets no test, and heat decides nothing: the same use in an ordinary block of a cold function is tested
+# Rule changed 10-19 23:13: in a block that is not Normal a site is tested only where a test of its own, or another test of the value it tests, has failed on the way in.
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsCold
 # RUN: pass PlaceTypeTests
@@ -6,7 +7,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="rareBlock" parameters=[{type=anything predicted=Array}, {type=anything predicted=builtin(EncodeURIComponent)}, {type=string}, {type=boolean}] results=[{type=anything}] {
+function f0 name="rareBlock" parameters=[{type=Array flags=[IsExpected]}, {type=builtin(EncodeURIComponent) flags=[IsExpected]}, {type=string}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ Array, v1: anything ~ builtin(EncodeURIComponent), v2: string, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
@@ -28,7 +29,7 @@ function f0 name="rareBlock" parameters=[{type=anything predicted=Array}, {type=
 # CHECK-NOT: TypeTest
 # CHECK-NOT: IsPristine
 
-function f1 name="ordinaryBlock" parameters=[{type=anything predicted=Array}, {type=anything predicted=builtin(EncodeURIComponent)}, {type=string}, {type=boolean}] results=[{type=anything}] {
+function f1 name="ordinaryBlock" parameters=[{type=Array flags=[IsExpected]}, {type=builtin(EncodeURIComponent) flags=[IsExpected]}, {type=string}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ Array, v1: anything ~ builtin(EncodeURIComponent), v2: string, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -44,7 +45,7 @@ function f1 name="ordinaryBlock" parameters=[{type=anything predicted=Array}, {t
 # CHECK: = TypeTest v0 testedType=Array
 # CHECK: = TypeTest v1 testedType=builtin(EncodeURIComponent)
 
-function f2 name="unlikelyBlock" parameters=[{type=anything predicted=Array}, {type=boolean}] results=[{type=anything}] {
+function f2 name="unlikelyBlock" parameters=[{type=Array flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ Array, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -54,9 +55,11 @@ function f2 name="unlikelyBlock" parameters=[{type=anything predicted=Array}, {t
     Return v1
 }
 # PLAN: function f2
-# PLAN-NEXT: test TypeTest v0 testedType=Array before v2; test IsPristine v0 builtinClass=Array aspects=[Names] before v2; uses v2;
+# PLAN-NOT: test
 # CHECK-LABEL: function f2 name="unlikelyBlock"
-# CHECK: = TypeTest v0 testedType=Array
-# CHECK: builtin(Array) = Builtin builtin=Array
-# CHECK: frequency=Rare:
-# CHECK-NEXT: anything = PropGet v0 key="constructor"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK: b1() frequency=Unlikely:
+# CHECK-NEXT: v2: anything = PropGet v0 key="constructor"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine

@@ -157,6 +157,14 @@ public:
     uint32_t alive() const { return at<uint32_t>(CompactTable::offsetOfAliveCount()); }
     uint64_t header() const { return at<uint64_t>(0); }
     uint64_t capacityAndKinds() const { return at<uint64_t>(CompactTable::offsetOfCapacity()); }
+    size_t size() const { return m_size; }
+    void markAsWalked() { at<uint8_t>(CompactTable::offsetOfKeysShift()) |= CompactTable::wasWalked; }
+    void deleteLastEntry()
+    {
+        AOT_TEST_CHECK(m_keyWidth == Width::Narrow);
+        at<uint32_t>(m_offsetOfKeys + (used() - 1) * sizeof(uint32_t)) = 0;
+        at<uint32_t>(CompactTable::offsetOfAliveCount())--;
+    }
     Vector<uint8_t> copyOfBytes() const { return Vector<uint8_t>(std::span<const uint8_t>(m_bytes, m_size)); }
     void setCellState(CellState state) { reinterpret_cast<FakeCell*>(m_bytes)->cellState = static_cast<uint8_t>(state); }
 
@@ -256,7 +264,7 @@ struct Collections {
     FakeHeap heap;
 
 private:
-    static constexpr size_t numberOfSizeSteps = 16;
+    static constexpr size_t numberOfSizeSteps = 128;
 
     FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + numberOfSizeSteps * sizeof(void*)> m_cellSpace;
 };
@@ -665,7 +673,8 @@ static void checkTableFilledByStubs(Collections& collections, const TableSize& s
         bool isString = number % 2;
         std::optional<uint64_t> value = createValue(heap, number, valueWidth);
         TableEntry entry = isString ? createStringEntry(heap, makeString("key"_s, number), value) : createEntryComparedByBits(createKeyComparedByBits(heap, number, keyWidth), value);
-        KeyComparison comparison = number % 4 < 2 ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
+        // The stubs for strings alone leave a table with wide keys to the operations.
+        KeyComparison comparison = number % 4 < 2 || (isString && keyWidth == Width::Wide) ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
         if (number == size.capacity) {
             checkTableIsUnchanged(collections, comparison, owner, table, entry);
             break;
@@ -845,6 +854,194 @@ static void testCreatedTableBarrier()
     AOT_TEST_CHECK(storageOf(set) == std::bit_cast<uintptr_t>(room));
 }
 
+using GrowthPlans = std::array<uint64_t, 3 * CompactTable::growthPlansPerValueWidth>;
+
+static uint64_t& growthPlanFor(GrowthPlans& plans, Width valueWidth, uint32_t count)
+{
+    return plans[static_cast<unsigned>(valueWidth) / 4 * CompactTable::growthPlansPerValueWidth + count / 2];
+}
+
+static GrowthPlans createGrowthPlans(FakeHeap& heap)
+{
+    GrowthPlans plans { };
+    for (Width valueWidth : { Width::None, Width::Narrow, Width::Wide }) {
+        for (uint32_t count = 0; count < CompactTable::maxCountWithGrowthPlan; count += 2) {
+            uint32_t capacity = WTF::roundUpToMultipleOf<2>(count + count / 2 + 1);
+            FakeTable table(heap, capacity, Width::Narrow, valueWidth);
+            growthPlanFor(plans, valueWidth, count) = table.capacityAndKinds() | static_cast<uint64_t>(MarkedSpace::sizeClassToIndex(table.size())) << CompactTable::sizeStepShiftOfGrowthPlan;
+        }
+    }
+    return plans;
+}
+
+struct FullTable {
+    FullTable(Collections& collections, uint32_t capacity, Width keyWidth, Width valueWidth, unsigned numberOfOtherKeys = 0)
+        : table(collections.heap, capacity, keyWidth, valueWidth)
+        , owner(collections.createOwner(valueWidth == Width::None ? JSSetType : JSMapType, table.address()))
+    {
+        FakeHeap& heap = collections.heap;
+        for (uint32_t number = 0; number < capacity; ++number) {
+            std::optional<uint64_t> value = createValue(heap, number, valueWidth);
+            entries.append(number < numberOfOtherKeys ? createEntryComparedByBits(heap.createCell(FinalObjectType), value) : createStringEntry(heap, makeString("key"_s, number), value));
+            table.append(entries.last().key, entries.last().hash, value.value_or(0));
+        }
+    }
+
+    FakeTable table;
+    uint64_t owner;
+    Vector<TableEntry> entries;
+};
+
+struct RoomForTable {
+    RoomForTable(Collections& collections, size_t size)
+        : collections(collections)
+        , size(size)
+        , bytes(collections.heap.allocate(size))
+        , allocator(size)
+    {
+        memsetSpan(std::span(bytes, size), 0xab);
+        allocator.makeRoomAt(std::bit_cast<uintptr_t>(bytes), size);
+        collections.setAllocator(size, &allocator);
+    }
+
+    ~RoomForTable() { collections.setAllocator(size, nullptr); }
+
+    Collections& collections;
+    size_t size;
+    uint8_t* bytes;
+    FakeAllocator allocator;
+};
+
+static void checkGrownTable(Collections& collections, GrowthPlans& plans, KeyComparison comparison, uint32_t capacity, Width valueWidth, unsigned numberOfOtherKeys, bool wasWalked)
+{
+    FakeHeap& heap = collections.heap;
+    FullTable full(collections, capacity, Width::Narrow, valueWidth, numberOfOtherKeys);
+    if (wasWalked)
+        full.table.markAsWalked();
+    uint32_t largerCapacity = static_cast<uint32_t>(growthPlanFor(plans, valueWidth, capacity));
+    FakeTable expected(heap, largerCapacity, Width::Narrow, valueWidth);
+    if (wasWalked)
+        expected.markAsWalked();
+    TableEntry added = createStringEntry(heap, "added"_s, createValue(heap, capacity, valueWidth));
+    full.entries.append(added);
+    for (const TableEntry& entry : full.entries)
+        expected.append(entry.key, entry.hash, entry.value.value_or(0));
+
+    RoomForTable room(collections, expected.size());
+    StubRun run = runInsertion(collections, insertionStub(comparison, added.value.has_value()), full.owner, added.key, added.value);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == full.owner && !room.allocator.hasRoom());
+    AOT_TEST_CHECK(storageOf(full.owner) == std::bit_cast<uintptr_t>(room.bytes));
+
+    FakeTable larger(heap, largerCapacity, Width::Narrow, valueWidth, room.bytes);
+    AOT_TEST_CHECK(larger.header() == Collections::headerOfCreatedTables);
+    AOT_TEST_CHECK(equalSpans(larger.copyOfBytes().subspan(sizeof(uint64_t)), expected.copyOfBytes().subspan(sizeof(uint64_t))));
+
+    uint8_t* retired = std::bit_cast<uint8_t*>(static_cast<uintptr_t>(full.table.address()));
+    AOT_TEST_CHECK(retired[CompactTable::offsetOfStatus()] == static_cast<uint8_t>(CompactTable::Status::Replaced));
+    AOT_TEST_CHECK(*reinterpret_cast<uint64_t*>(retired + CompactTable::offsetOfUsed()) == larger.address() && !*reinterpret_cast<uint32_t*>(retired + CompactTable::offsetOfCapacity()));
+}
+
+static void testGrownTables()
+{
+    for (Width valueWidth : { Width::None, Width::Narrow, Width::Wide }) {
+        Collections collections;
+        GrowthPlans plans = createGrowthPlans(collections.heap);
+        collections.runner.instance().allocation.compactTableGrowthPlans = plans.data();
+        for (uint32_t capacity = 2; capacity < CompactTable::maxCountWithGrowthPlan; capacity += 2) {
+            for (KeyComparison comparison : comparisonsOfStrings)
+                checkGrownTable(collections, plans, comparison, capacity, valueWidth, 0, capacity % 4);
+        }
+        // Where the index is not made anew the other keys may be of any kind.
+        checkGrownTable(collections, plans, KeyComparison::AnyValue, 4, valueWidth, 2, false);
+        AOT_TEST_CHECK(CompactTable::indexBitsFor(14) == CompactTable::indexBitsFor(static_cast<uint32_t>(growthPlanFor(plans, valueWidth, 14))));
+        checkGrownTable(collections, plans, KeyComparison::AnyValue, 14, valueWidth, 2, false);
+    }
+}
+
+static void checkTableIsNotGrown(Collections& collections, GrowthPlans& plans, FullTable& full, const TableEntry& added, bool takesRoom = false)
+{
+    Width valueWidth = added.value ? static_cast<Width>(static_cast<uint8_t>(full.table.capacityAndKinds() >> 48)) : Width::None;
+    uint32_t capacity = static_cast<uint32_t>(full.table.capacityAndKinds());
+    uint32_t largerCapacity = capacity < CompactTable::maxCountWithGrowthPlan ? static_cast<uint32_t>(growthPlanFor(plans, valueWidth, capacity)) : 2 * capacity;
+    RoomForTable room(collections, FakeTable(collections.heap, largerCapacity, Width::Narrow, valueWidth).size());
+    KeyComparison comparison = KeyComparison::AnyValue;
+    checkTableIsUnchanged(collections, comparison, full.owner, full.table, added);
+    AOT_TEST_CHECK(storageOf(full.owner) == full.table.address() && room.allocator.hasRoom() == !takesRoom);
+}
+
+static void testTablesNotGrownByStubs()
+{
+    Collections collections;
+    FakeHeap& heap = collections.heap;
+    GrowthPlans plans = createGrowthPlans(heap);
+    Instance& instance = collections.runner.instance();
+    instance.allocation.compactTableGrowthPlans = plans.data();
+    uint64_t object = heap.createCell(FinalObjectType);
+    auto stringEntry = [&](std::optional<uint64_t> value) {
+        return createStringEntry(heap, "added"_s, value);
+    };
+
+    {
+        FullTable full(collections, 8, Width::Narrow, Width::Narrow);
+        instance.allocation.compactTableGrowthPlans = nullptr;
+        checkTableIsNotGrown(collections, plans, full, stringEntry(object));
+        instance.allocation.compactTableGrowthPlans = plans.data();
+
+        instance.mutatorShouldBeFenced = true;
+        checkTableIsNotGrown(collections, plans, full, stringEntry(object));
+        instance.mutatorShouldBeFenced = false;
+
+        checkTableIsNotGrown(collections, plans, full, createEntryComparedByBits(object, object));
+        checkTableIsNotGrown(collections, plans, full, createEntryComparedByBits(bitsOf(jsNull()), object));
+        checkTableIsNotGrown(collections, plans, full, stringEntry(bitsOf(jsNumber(42))));
+        checkTableIsNotGrown(collections, plans, full, stringEntry(createCellOutsideMarkedBlocks(heap)));
+
+        checkTableIsUnchanged(collections, KeyComparison::String, full.owner, full.table, stringEntry(object));
+        FakeAllocator allocatorWithoutRoom(FakeTable(heap, static_cast<uint32_t>(growthPlanFor(plans, Width::Narrow, 8)), Width::Narrow, Width::Narrow).size());
+        collections.setAllocator(allocatorWithoutRoom.at<uint32_t>(LocalAllocator::offsetOfCellSize()), &allocatorWithoutRoom);
+        checkTableIsUnchanged(collections, KeyComparison::String, full.owner, full.table, stringEntry(object));
+        collections.setAllocator(allocatorWithoutRoom.at<uint32_t>(LocalAllocator::offsetOfCellSize()), nullptr);
+
+        full.table.deleteLastEntry();
+        checkTableIsNotGrown(collections, plans, full, stringEntry(object));
+    }
+    {
+        FullTable full(collections, 8, Width::Wide, Width::None);
+        checkTableIsNotGrown(collections, plans, full, stringEntry(std::nullopt));
+    }
+    {
+        FullTable full(collections, CompactTable::maxCountWithGrowthPlan, Width::Narrow, Width::None);
+        checkTableIsNotGrown(collections, plans, full, stringEntry(std::nullopt));
+    }
+    for (Width valueWidth : { Width::None, Width::Narrow, Width::Wide }) {
+        // The index is made anew from the hashes that strings hold.
+        FullTable full(collections, 8, Width::Narrow, valueWidth, 1);
+        checkTableIsNotGrown(collections, plans, full, stringEntry(createValue(heap, 0, valueWidth)), true);
+    }
+}
+
+static void testGrownTableBarriers()
+{
+    Collections collections;
+    GrowthPlans plans = createGrowthPlans(collections.heap);
+    collections.runner.instance().allocation.compactTableGrowthPlans = plans.data();
+    for (bool tableIsBlack : { false, true }) {
+        for (bool ownerIsBlack : { false, true }) {
+            FullTable full(collections, 4, Width::Narrow, Width::None);
+            RoomForTable room(collections, FakeTable(collections.heap, static_cast<uint32_t>(growthPlanFor(plans, Width::None, 4)), Width::Narrow, Width::None).size());
+            if (tableIsBlack)
+                full.table.setCellState(CellState::PossiblyBlack);
+            if (ownerIsBlack)
+                std::bit_cast<FakeCell*>(static_cast<uintptr_t>(full.owner))->cellState = static_cast<uint8_t>(CellState::PossiblyBlack);
+            collections.runner.recordCallsOf(Entry::operationAOTBarrierSlow);
+            StubRun run = collections.runner.run(setAdd(KeyComparison::String), { full.owner, collections.heap.createString("added"_s) });
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == static_cast<unsigned>(tableIsBlack) + ownerIsBlack && run.result == full.owner);
+            AOT_TEST_CHECK(!run.numberOfRecordedCalls || run.recordedArguments[0] == (ownerIsBlack ? full.owner : full.table.address()));
+            AOT_TEST_CHECK(storageOf(full.owner) == std::bit_cast<uintptr_t>(room.bytes));
+        }
+    }
+}
+
 static StubKey deletionStub(KeyComparison comparison, bool hasValues)
 {
     return hasValues ? mapDelete(comparison) : setDelete(comparison);
@@ -884,7 +1081,7 @@ static void checkDeletions(Collections& collections, const TableSize& size, Widt
 
     for (uint32_t number = 0; number < entries.size(); number += 3) {
         bool isString = number % 2;
-        KeyComparison comparison = number % 4 < 2 ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
+        KeyComparison comparison = number % 4 < 2 || (isString && keyWidth == Width::Wide) ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
         uint64_t keyWithSameValue = !isString ? entries[number].key : number % 12 < 6 ? heap.createStringWithoutHash(texts[number]) : heap.createString(createHashedCopy(texts[number], number % 8 < 4));
         checkDeletedEntry(collections, comparison, owner, table, entries[number], keyWithSameValue);
     }
@@ -922,17 +1119,23 @@ static void testDeletionsLeftToOperations()
         checkLeftToOperation(collections, mapDelete(KeyComparison::AnyValue), Entry::operationAOTMapDelete, map, key);
     AOT_TEST_CHECK(table.copyOfBytes() == bytesBefore);
 
+    FakeTable wideTable(heap, 4, Width::Wide, Width::Wide);
+    Vector<StringKey> keysOfWideTable = appendStringKeys(collections, wideTable, 2, true);
+    uint64_t mapWithWideKeys = collections.createOwner(JSMapType, wideTable.address());
+    uint64_t setWithWideKeys = collections.createOwner(JSSetType, wideTable.address());
+    Vector<uint8_t> bytesOfWideTable = wideTable.copyOfBytes();
+    checkLeftToOperation(collections, mapGet(KeyComparison::String), Entry::operationAOTMapGet, mapWithWideKeys, keysOfWideTable[0].cell);
+    checkLeftToOperation(collections, mapHas(KeyComparison::String), Entry::operationAOTMapHas, mapWithWideKeys, keysOfWideTable[1].cell);
+    checkLeftToOperation(collections, setHas(KeyComparison::String), Entry::operationAOTSetHas, setWithWideKeys, keysOfWideTable[0].cell);
+    checkLeftToOperation(collections, mapDelete(KeyComparison::String), Entry::operationAOTMapDelete, mapWithWideKeys, keysOfWideTable[0].cell);
+    checkLeftToOperation(collections, setDelete(KeyComparison::String), Entry::operationAOTSetDelete, setWithWideKeys, keysOfWideTable[1].cell);
+    checkAnswer(collections, mapGet(KeyComparison::AnyValue), mapWithWideKeys, keysOfWideTable[1].cell, keysOfWideTable[1].value);
+    AOT_TEST_CHECK(wideTable.copyOfBytes() == bytesOfWideTable);
+
     uint64_t mapWithoutStorage = collections.createOwner(JSMapType, 0);
     for (KeyComparison comparison : comparisonsOfStrings)
         checkAnswer(collections, mapDelete(comparison), mapWithoutStorage, keys[0].cell, bitsOf(jsBoolean(false)));
     checkAnswer(collections, mapDelete(KeyComparison::Bits), mapWithoutStorage, heap.createCell(FinalObjectType), bitsOf(jsBoolean(false)));
-}
-
-static const Vector<String>* textsInImage;
-
-static size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES stringImplEqualsTextInImage(void* impl, uint32_t string)
-{
-    return WTF::equal(static_cast<StringImpl*>(impl), (*textsInImage)[string].impl());
 }
 
 static uint64_t createTableInImage(FakeHeap& heap, const TableInImage& entries)
@@ -959,62 +1162,42 @@ static std::optional<uint32_t> firstEntryWithTagOf(const TableInImage& entries, 
     });
 }
 
-static void checkLookupInImage(Collections& collections, const TableInImage& entries, uint64_t map, const String& text, std::optional<uint32_t> entry, std::optional<uint64_t> valueFromStub)
+// The tags alone may say that a key is absent. A key that has the tag of an entry is left to the operation, which moves the table to the heap.
+static void checkLookupInImage(Collections& collections, const TableInImage& entries, uint64_t map, const String& text)
 {
     uint64_t key = collections.heap.createString(text);
-    std::optional<uint32_t> compared = firstEntryWithTagOf(entries, text.impl()->hash());
+    bool hasTagOfAnEntry = firstEntryWithTagOf(entries, text.impl()->hash()).has_value();
     for (KeyComparison comparison : comparisonsOfStrings) {
-        if (compared != entry) {
+        if (hasTagOfAnEntry) {
             checkLeftToOperation(collections, mapGet(comparison), Entry::operationAOTMapGet, map, key);
             checkLeftToOperation(collections, mapHas(comparison), Entry::operationAOTMapHas, map, key);
             continue;
         }
-        checkAnswer(collections, mapHas(comparison), map, key, bitsOf(jsBoolean(!!entry)));
-        if (!entry)
-            checkAnswer(collections, mapGet(comparison), map, key, bitsOf(jsUndefined()));
-        else if (valueFromStub)
-            checkAnswer(collections, mapGet(comparison), map, key, *valueFromStub);
-        else
-            checkLeftToOperation(collections, mapGet(comparison), Entry::operationAOTMapGet, map, key);
+        checkAnswer(collections, mapHas(comparison), map, key, bitsOf(jsBoolean(false)));
+        checkAnswer(collections, mapGet(comparison), map, key, bitsOf(jsUndefined()));
     }
 }
 
 static void checkTableInImage(Collections& collections, unsigned numberOfKeys)
 {
-    constexpr uint32_t createdString = 2;
-    constexpr uint32_t stringNotCreated = 5;
-    uint64_t createdCell = collections.heap.createString("value"_s);
-    collections.runner.stringCell(createdString) = MarkedBlockCage::encode(collections.heap.cageBase(), std::bit_cast<void*>(static_cast<uintptr_t>(createdCell)));
-    collections.runner.stringCell(stringNotCreated) = 0;
-
     Vector<String> texts;
     Vector<TableInImage::Key> keys;
     Vector<uint64_t> values;
-    Vector<std::optional<uint64_t>> valuesFromStub;
     for (uint32_t i = 0; i < numberOfKeys; ++i) {
         texts.append(makeString("key"_s, i));
         keys.append({ i, texts.last().impl()->hash() });
-        const std::pair<uint64_t, std::optional<uint64_t>> choices[] = {
-            { bitsOf(jsNumber(static_cast<int32_t>(i))), bitsOf(jsNumber(static_cast<int32_t>(i))) },
-            { DataWord::encodeStringConstant(createdString), createdCell },
-            { DataWord::encodeStringConstant(stringNotCreated), std::nullopt },
-            { DataWord::encodeBigIntConstant(0), std::nullopt },
-            { DataWord::hole, std::nullopt },
-        };
-        values.append(choices[i % std::size(choices)].first);
-        valuesFromStub.append(choices[i % std::size(choices)].second);
+        values.append(bitsOf(jsNumber(static_cast<int32_t>(i))));
     }
-    textsInImage = &texts;
     std::optional<Vector<uint8_t>> bytes = TableInImage::tryEncode(keys.span(), values.span());
     AOT_TEST_CHECK(bytes.has_value());
     const TableInImage& entries = *reinterpret_cast<const TableInImage*>(bytes->span().data());
     uint64_t map = collections.createOwner(JSMapType, createTableInImage(collections.heap, entries));
 
     for (uint32_t i = 0; i < numberOfKeys; ++i)
-        checkLookupInImage(collections, entries, map, createHashedCopy(texts[i], i % 2), i, valuesFromStub[i]);
+        checkLookupInImage(collections, entries, map, createHashedCopy(texts[i], i % 2));
     String absentText = "absent"_s;
     absentText.impl()->hash();
-    checkLookupInImage(collections, entries, map, absentText, std::nullopt, std::nullopt);
+    checkLookupInImage(collections, entries, map, absentText);
 
     uint64_t object = collections.heap.createCell(FinalObjectType);
     uint64_t presentKey = collections.heap.createString(createHashedCopy(texts[0], false));
@@ -1029,13 +1212,11 @@ static void checkTableInImage(Collections& collections, unsigned numberOfKeys)
         checkLeftToOperation(collections, setAdd(comparison), Entry::operationAOTSetAdd, map, presentKey);
         checkLeftToOperation(collections, mapDelete(comparison), Entry::operationAOTMapDelete, map, presentKey);
     }
-    textsInImage = nullptr;
 }
 
 static void testTablesInImage()
 {
     Collections collections;
-    collections.runner.install(Entry::operationAOTStringImplEqualsImageString, stringImplEqualsTextInImage);
     for (const TableSize& size : tableSizes)
         checkTableInImage(collections, size.numberOfKeys);
 }
@@ -1056,6 +1237,9 @@ std::span<const NativeTest> stubCollectionTests()
         { "stubs/collections/created-tables"_s, ImageTests::whenExecutable<testCreatedTables> },
         { "stubs/collections/tables-not-created-by-stubs"_s, ImageTests::whenExecutable<testTablesNotCreatedByStubs> },
         { "stubs/collections/created-table-barrier"_s, ImageTests::whenExecutable<testCreatedTableBarrier> },
+        { "stubs/collections/grown-tables"_s, ImageTests::whenExecutable<testGrownTables> },
+        { "stubs/collections/tables-not-grown-by-stubs"_s, ImageTests::whenExecutable<testTablesNotGrownByStubs> },
+        { "stubs/collections/grown-table-barriers"_s, ImageTests::whenExecutable<testGrownTableBarriers> },
         { "stubs/collections/deleted-entries"_s, ImageTests::whenExecutable<testDeletedEntries> },
         { "stubs/collections/deletions-left-to-operations"_s, ImageTests::whenExecutable<testDeletionsLeftToOperations> },
     };

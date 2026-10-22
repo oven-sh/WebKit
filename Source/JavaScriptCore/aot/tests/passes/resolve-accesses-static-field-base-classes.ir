@@ -11,13 +11,13 @@ variable g2 name="count" module=m0 declared={type=number} owner=L4
 variable g3 name="count" module=m0 declared={type=number} owner=L6
 variable g4 name="count" module=m0 declared={type=number} owner=L7
 layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g0}]
-layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f2 flags=[HasHeritage]
-layout L2 kind=Instance name="Redeclaring" predictedBase=L0 constructor=f3 staticFields=[{key="count" variable=g1}] flags=[HasHeritage]
+layout L1 kind=Instance name="Child" base=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Redeclaring" base=L0 constructor=f3 staticFields=[{key="count" variable=g1}] flags=[HasHeritage]
 layout L3 kind=Instance name="SetterBase" constructor=f4
-layout L4 kind=Instance name="BelowSetter" predictedBase=L3 constructor=f6 staticFields=[{key="count" variable=g2}] flags=[HasHeritage]
+layout L4 kind=Instance name="BelowSetter" base=L3 constructor=f6 staticFields=[{key="count" variable=g2}] flags=[HasHeritage]
 layout L5 kind=Instance name="MethodBase" constructor=f7
-layout L6 kind=Instance name="BelowMethod" predictedBase=L5 constructor=f9 staticFields=[{key="count" variable=g3}] flags=[HasHeritage]
-layout L7 kind=Instance name="StoredEarlyBelowSetter" predictedBase=L3 constructor=f15 staticFields=[{key="count" variable=g4}] flags=[HasHeritage]
+layout L6 kind=Instance name="BelowMethod" base=L5 constructor=f9 staticFields=[{key="count" variable=g3}] flags=[HasHeritage]
+layout L7 kind=Instance name="StoredEarlyBelowSetter" base=L3 constructor=f15 staticFields=[{key="count" variable=g4}] flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Double number=1.5
@@ -130,8 +130,8 @@ function f11 name="stored-through-subclass" parameters=[{type=anything}, {type=n
     Return v2
 }
 # CHECK-LABEL: function f11 name="stored-through-subclass"
-# CHECK: = PropGet v0 key="count"
-# CHECK: PropSet v0, v1 key="count"
+# CHECK: = PropGet [[subclass]] key="count"
+# CHECK: PropSet [[subclass]], v1 key="count"
 function f12 name="subclass-declares-the-name-again" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
@@ -170,5 +170,5 @@ function f16 name="stored-before-the-definition" parameters=[{type=anything}, {t
     Return v2
 }
 # CHECK-LABEL: function f16 name="stored-before-the-definition"
-# CHECK: = PropGet v0 key="count"
-# CHECK: PropSet v0, v1 key="count"
+# CHECK: = PropGet [[holder]] key="count"
+# CHECK: PropSet [[holder]], v1 key="count"

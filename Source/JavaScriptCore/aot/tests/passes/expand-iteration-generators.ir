@@ -144,31 +144,31 @@ function f3 name="namesNotProven" parameters=[{type=Generator}] results=[{type=a
 # CHECK-NEXT: Branch [[unmodified3]] -> taken [[generatorArm3]](| 0), notTaken [[modified3]]()
 # CHECK: = StepGenerator v0, {{*}} resumeMode=Return check=IsUnmodified
 # CHECK: = StepGenerator v0, {{*}} check=None
-# CHECK: frequency=Unlikely
-# CHECK: = PropGet {{*}} key=@@iterator
+# CHECK: ([[modifiedGenerator3]]: Generator) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[modifiedGenerator3]] function=f7 [isNeverInlined]
 
-function f4 name="predicted" parameters=[{type=anything predicted=Generator}] results=[{type=anything}] {
+function f4 name="expected" parameters=[{type=Generator flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Generator):
     v1 = IteratorOpen v0 iteratorKind=Sync
     v2 = IteratorResume v1 iteratorKind=Sync resumeMode=Next
     v3 = ResultAt v2 index=1
     Return v3
 }
-# CHECK-LABEL: function f4 name="predicted"
+# CHECK-LABEL: function f4 name="expected"
 # CHECK: [[isGenerator4]]: boolean {{*}}= TypeTest v0 testedType=Generator
 # CHECK-NEXT: Branch [[isGenerator4]] -> taken [[tested4]](| 0), notTaken
 # CHECK: = StepGenerator [[generator4]], {{*}} check=None
 # CHECK: [[tested4]]([[generator4]]: Generator):
 # CHECK-NEXT: = IsUnmodifiedGenerator [[generator4]]
 
-function f5 name="notPredicted" parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="notExpected" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = IteratorOpen v0 iteratorKind=Sync
     v2 = IteratorResume v1 iteratorKind=Sync resumeMode=Next
     v3 = ResultAt v2 index=1
     Return v3
 }
-# CHECK-LABEL: function f5 name="notPredicted"
+# CHECK-LABEL: function f5 name="notExpected"
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: IsUnmodifiedGenerator
 

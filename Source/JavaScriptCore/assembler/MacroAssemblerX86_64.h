@@ -2884,10 +2884,15 @@ public:
 
     void signExtend32To64(TrustedImm32 imm, RegisterID dest)
     {
+        if (policy().shortensEncodings && imm.m_value >= 0) {
+            if (!imm.m_value)
+                m_assembler.xorl_rr(dest, dest);
+            else
+                m_assembler.movl_i32r(imm.m_value, dest);
+            return;
+        }
         if (!imm.m_value)
-            m_assembler.xorl_rr(dest, dest);
-        else if (imm.m_value > 0)
-            m_assembler.movl_i32r(imm.m_value, dest);
+            m_assembler.xorq_rr(dest, dest);
         else
             m_assembler.mov_i32r(imm.m_value, dest);
     }
@@ -3299,7 +3304,7 @@ public:
     {
         if (mask.m_value == -1)
             m_assembler.testl_rr(reg, reg);
-        else if (!(mask.m_value & ~0xff)) {
+        else if (!(mask.m_value & ~0xff) && (reg < X86Registers::esp || policy().shortensEncodings)) {
             if (mask.m_value == 0xff)
                 m_assembler.testb_rr(reg, reg);
             else
@@ -7256,6 +7261,12 @@ public:
     }
 
     Jump branchOnFlags(RelationalCondition cond)
+    {
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    // The flags that an operation has set to its result.
+    Jump branchOnFlags(ResultCondition cond)
     {
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }

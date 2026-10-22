@@ -1,0 +1,71 @@
+# What the sites of a block ask of the classes about one object is one test in front of the first site, so no branch stands between an allocation and its stores. Unknown code between two sites or another object leaves a site the test of its own conditions. A block that seldom runs gets no test
+# Rule changed 10-19 23:13: in a block that is not Normal a site is tested only where a test of its own, or another test of the value it tests, has failed on the way in.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="a" declared={type=anything} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=anything} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flags=[IsConstructorFunction] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed}
+function f0 name="Point" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+  b0(v0: L0):
+    Return
+}
+
+function f1 name="stores-of-a-construction" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a"
+    PropSet v3, v1 key="b"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="stores-of-a-construction"
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=MemberPassedByStores layout=L0 key="a"}, {kind=MemberPassedByStores layout=L0 key="b"}]
+# CHECK-NEXT: Branch [[unchanged]] -> taken
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: object = GetClassPrototype v0 layout=L0
+# CHECK-NEXT: = NewObject layout=L0
+# CHECK-NEXT: PutSlotOrAdd v3, [[guard]], v1 key="a" receivers=[L0] level=Expected
+# CHECK-NEXT: PutSlotOrAdd v3, [[guard]], v1 key="b" receivers=[L0] level=Expected
+# CHECK-NOT: AreMembersUnchanged
+
+function f2 name="unknown-code-between-the-stores" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a"
+    v5 = Call v1
+    PropSet v3, v1 key="b"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="unknown-code-between-the-stores"
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=MemberPassedByStores layout=L0 key="a"}]
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="b"}]
+
+function f3 name="two-objects" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = NewObject layout=L0
+    PropSet v1, v0 key="a"
+    PropSet v2, v0 key="b"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="two-objects"
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}]
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="b"}]
+
+function f4 name="block-runs-seldom" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = NewObject layout=L0
+    PropSet v2, v1 key="a"
+    PropSet v2, v1 key="b"
+    Return v2
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f4 name="block-runs-seldom"
+# CHECK-NOT: AreMembersUnchanged

@@ -69,9 +69,12 @@ enum class SlotKindFlag : uint8_t {
     v(CustomGetter, CustomAccessor, None, Unknown, None) \
     v(CustomSetter, CustomAccessor, None, Unknown, None) \
     v(Field, Field, HiddenWordOffset, ReadsSlot, AbsentIsUndefined) \
+    v(FieldGetter, Field, HiddenWordOffset, ReadsSlot, AbsentIsUndefined) \
     v(FieldCreation, Field, HiddenWordOffset, Unknown, None) \
     v(FieldOrInherited, FieldAndHolder, WordIndex, Unknown, InheritsGetter) \
     v(FieldOrInheritedSetter, FieldAndHolder, WordIndex, Unknown, None) \
+    v(InheritedField, Holder, None, Unknown, None) \
+    v(FieldOrInheritedField, FieldAndHolder, HiddenWordOffset, Unknown, None) \
     v(Variable, Field, None, Present, None) \
     v(ExtraProperty, ExtraProperty, HiddenWordOffset, Present, None) \
     v(ExtraGetter, ExtraProperty, HiddenWordOffset, Present, None) \
@@ -101,6 +104,15 @@ struct alignas(16) Slot {
     static constexpr uint8_t inheritsGetter = static_cast<uint8_t>(SlotKindFlag::InheritsGetter);
     static constexpr uint8_t storageHasIndexingHeader = 1 << 6;
     static constexpr uint8_t inheritedIsOutOfLine = 1 << 7;
+    // Of FieldCreation, which never has absentIsUndefined: the key order alone says that the field exists, and its slot admits undefined. A store of undefined that finds no granule lists the key and asks for none.
+    static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
+    // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say:
+    // in its place stands the order word of the object for which the slot was made, as it was before the field was created, and the location is the number of the order that it had afterwards, with one key more.
+    // The Structure says how many extra keys there are, and transitions never change: an object of the Structure with that order word gets the same.
+    static constexpr uint8_t remembersOrder = growsStorage;
+    // Of Field and FieldOrInherited in a slot for reads, which never grow storage: the field may exist where its slot is empty, it is undefined then, and only the key order says whether it does.
+    // Of Field: nothing above the receiver has the name, so a read of the empty slot answers undefined either way. Of FieldOrInherited: the inherited value is the answer where it is undefined too.
+    static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
     static constexpr uint8_t allFlags = UINT8_MAX;
 
     struct FieldPayload {
@@ -108,6 +120,7 @@ struct alignas(16) Slot {
         uint32_t type;
     };
     // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is. The Structure of the receiver has the offset of the extension word.
+    // Of FieldOrInheritedField the holder is asked as that of InheritedField is, and the location is the offset of the receiver's extension word.
     struct FieldAndHolderPayload {
         SlotData slot;
         uint32_t holder;
@@ -180,6 +193,16 @@ struct alignas(16) Slot {
         return slot;
     }
     static std::optional<Slot> tryCreateFieldAndHolder(StructureID, Kind, uint8_t flags, SlotData, JSCell* holder, PropertyOffset, uintptr_t cageBase);
+    // The holder is a compiled object above the receiver with a field of this name. The slot of that field holds the value in any representation, or it is empty and may be filled without a report.
+    // So each read asks the holder as for a property of its own. What it answers is a data property or nothing, which does not depend on the receiver.
+    static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder)
+    {
+        ASSERT(holder && !(flags & (isOwn | isOutOfLine)));
+        Slot slot = create(structureID, Kind::InheritedField, flags, 0);
+        slot.holder = holder;
+        return slot;
+    }
+    static std::optional<Slot> tryCreateFieldOrInheritedField(StructureID, uint8_t flags, SlotData, JSCell* holder, uint16_t extensionWordOffset, uintptr_t cageBase);
     static Slot createExtraProperty(StructureID structureID, Kind kind, uint8_t flags, StructureID otherStructureID, PropertyOffset offset, uint16_t extraPropertiesWordOffset)
     {
         ASSERT(payloadOf(kind) == SlotPayload::ExtraProperty);
@@ -318,7 +341,7 @@ constexpr uint8_t Slot::kindFlagOf(Kind kind)
 
 inline Slot Slot::createInStorage(StructureID structureID, Kind kind, uint8_t flags, JSCell* holderOrNull, PropertyOffset offset)
 {
-    ASSERT(payloadOf(kind) == SlotPayload::Holder);
+    ASSERT(payloadOf(kind) == SlotPayload::Holder && locationOf(kind) == SlotLocation::WordIndex);
     ASSERT(!!holderOrNull == !(flags & isOwn));
     int32_t index = wordIndexFor(offset);
     if (!isInlineOffset(offset))
@@ -337,13 +360,22 @@ inline Slot Slot::createInStorage(StructureID structureID, Kind kind, uint8_t fl
 
 inline std::optional<Slot> Slot::tryCreateFieldAndHolder(StructureID structureID, Kind kind, uint8_t flags, SlotData slotData, JSCell* holder, PropertyOffset offset, uintptr_t cageBase)
 {
-    ASSERT(payloadOf(kind) == SlotPayload::FieldAndHolder);
+    ASSERT(payloadOf(kind) == SlotPayload::FieldAndHolder && locationOf(kind) == SlotLocation::WordIndex);
     int32_t index = wordIndexFor(offset);
     if (!fitsInLocation(index) || MarkedBlockCage::baseOf(holder) != cageBase)
         return std::nullopt;
     if (!isInlineOffset(offset))
         flags |= inheritedIsOutOfLine;
     Slot slot = create(structureID, kind, flags, static_cast<uint16_t>(static_cast<int16_t>(index)));
+    slot.fieldAndHolder = { slotData, MarkedBlockCage::encode(cageBase, holder) };
+    return slot;
+}
+
+inline std::optional<Slot> Slot::tryCreateFieldOrInheritedField(StructureID structureID, uint8_t flags, SlotData slotData, JSCell* holder, uint16_t extensionWordOffset, uintptr_t cageBase)
+{
+    if (MarkedBlockCage::baseOf(holder) != cageBase)
+        return std::nullopt;
+    Slot slot = create(structureID, Kind::FieldOrInheritedField, flags, extensionWordOffset);
     slot.fieldAndHolder = { slotData, MarkedBlockCage::encode(cageBase, holder) };
     return slot;
 }
@@ -460,7 +492,7 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         if (!slot.holder)
             payload = static_cast<uint32_t>(slot.wordIndex());
         else {
-            if (MarkedBlockCage::baseOf(slot.holder) != cageBase || !packWordIndex(slot.wordIndex()))
+            if (MarkedBlockCage::baseOf(slot.holder) != cageBase || (Slot::locationOf(kind) == SlotLocation::WordIndex && !packWordIndex(slot.wordIndex())))
                 return std::nullopt;
             payload = MarkedBlockCage::encode(cageBase, slot.holder);
         }
@@ -542,6 +574,8 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
     case SlotPayload::None:
         return Slot::create(structureID, kind, flags, 0);
     case SlotPayload::Holder: {
+        if (kind == Slot::Kind::InheritedField)
+            return Slot::createInheritedField(structureID, flags, MarkedBlockCage::decode(cageBase, payload));
         if (flags & Slot::isOwn)
             return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, nullptr, Slot::offsetFor(static_cast<int32_t>(payload)));
         return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, MarkedBlockCage::decode(cageBase, payload), Slot::offsetFor(shortWordIndex));
@@ -566,15 +600,17 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
 struct SiteCacheState {
     static constexpr unsigned maxRefillCount = 3;
     static constexpr unsigned slotAddressShift = 3;
-    // While a site with lookup tables behind it is empty, its counter goes up by this step, from the zero it starts with, and the miss that wraps it asks for the fill.
-    static constexpr unsigned missesBeforeFirstFill = 16;
-    static constexpr unsigned firstFillStep = (UINT8_MAX + 1) / missesBeforeFirstFill;
+    // Sites share the states by address: what a state says only decides when a filled site asks to be filled again.
+    static constexpr unsigned numberOfStates = 4096;
+    static constexpr uint32_t offsetMask = (numberOfStates - 1) * 2;
+    // The misses of all empty sites with lookup tables behind them are counted together: the counter goes up by this step, and the miss that wraps it is a sample. A site is filled at its second sample.
+    static constexpr unsigned missesOfEmptySitesPerSample = 32;
+    static constexpr unsigned sampleStep = (UINT8_MAX + 1) / missesOfEmptySitesPerSample;
     static constexpr uint8_t missesBeforeRefill(unsigned refillCount) { return static_cast<uint8_t>((4u << (2 * std::min(refillCount, maxRefillCount))) - 1); }
 
     static constexpr ptrdiff_t offsetOfMissesLeft() { return 1; }
 
-    uint8_t refillCount : 7;
-    uint8_t hasMissed : 1;
+    uint8_t refillCount;
     uint8_t missesLeft;
 };
 
@@ -600,6 +636,8 @@ static_assert(Slot::flagsShiftInHeader == 8 * Slot::offsetOfFlags());
 static_assert(Slot::locationShiftInHeader == 8 * Slot::offsetOfLocation());
 static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::inheritedIsOutOfLine) == Slot::allFlags);
 static_assert(!static_cast<unsigned>(Slot::Kind::Empty));
+// Whoever asks whether a property is there reads the slot of either in the same way, and tells the two from all other kinds by one comparison.
+static_assert((static_cast<unsigned>(Slot::Kind::Field) | 1) == static_cast<unsigned>(Slot::Kind::FieldGetter) && !(static_cast<unsigned>(Slot::Kind::Field) & 1));
 static_assert(numberOfSlotKinds <= 1u << PackedSlot::kindBits);
 static_assert(std::is_aggregate_v<Slot> && std::is_trivially_copyable_v<Slot>);
 static_assert(Slot::offsetFor(Slot::wordIndexFor(0)) == 0);

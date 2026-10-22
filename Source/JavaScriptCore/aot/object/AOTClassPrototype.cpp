@@ -37,9 +37,9 @@ Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject,
     return structure;
 }
 
-ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classIndex)
+ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow)
 {
-    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex);
+    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex, memberRow);
     object->finishCreation(vm);
     return object;
 }
@@ -52,6 +52,7 @@ void ClassPrototype::convertToOrdinaryObject(VM& vm, Structure* ordinary)
     m_hasRepeatedLookup = false;
     m_flags = { };
     m_namesLookedUp = 0;
+    m_memberRow = 0;
     WTF::storeStoreFence();
     if (butterfly())
         nukeStructureAndSetButterfly(vm, structureID(), nullptr);
@@ -95,7 +96,7 @@ std::optional<bool> ClassPrototype::tryGetDeclaredMember(VM& vm, PropertyName na
         slot.setIsTaintedByOpaqueObject();
         return false;
     }
-    uint64_t nameBit = 1ull << (name.uid()->hash() % numberOfNameBits);
+    uint32_t nameBit = 1u << (name.uid()->hash() % numberOfNameBits);
     bool isRepeated = m_namesLookedUp & nameBit;
     if (m_numberOfLookups >= std::max<size_t>(minEarlyAnswers, classLayout.methods().size()) || (isRepeated && m_hasRepeatedLookup))
         return std::nullopt;

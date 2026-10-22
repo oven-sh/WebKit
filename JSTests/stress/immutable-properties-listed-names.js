@@ -1,3 +1,4 @@
+//@ $skipModes << :lockdown # every array has slow-put array storage there, Array.prototype too, and an array with that storage takes no list that holds every numeric key (part 9).
 // The form of the lock with a list of names. A listed name is fixed whether the property is present or absent, and every other name
 // stays as it was: the object is still extensible. The list can take in every numeric key (array indices and the other canonical
 // numeric strings) and the prototype. Objects that inherit from such an object assign as before.
@@ -68,7 +69,6 @@ let symbol = Symbol("listed"), otherSymbol = Symbol("other");
     // A definition that changes nothing is accepted.
     shouldBe(Reflect.defineProperty(object, "kept", { value: 1 }), true);
     shouldBe(Reflect.defineProperty(object, "kept", { value: 1, writable: true, enumerable: true, configurable: true }), true);
-    shouldBe(Reflect.defineProperty(object, "kept", { writable: false }), false);
 
     for (let key of ["added", otherSymbol, "free"]) {
         shouldBe(strictStore(object, key, 7), "stored", String(key));
@@ -84,6 +84,9 @@ let symbol = Symbol("listed"), otherSymbol = Symbol("other");
     shouldBe(object[0] = 1, 1);
     shouldBe(object[0], 1);
     shouldBe(Reflect.setPrototypeOf(object, null), true);
+    // A definition that only takes from what the property admits is accepted too.
+    shouldBe(Reflect.defineProperty(object, "kept", { writable: false }), true);
+    shouldBe(object.kept, 1);
 }
 
 // 2. Numeric keys.

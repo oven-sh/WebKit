@@ -91,12 +91,17 @@ constexpr KnownBoolean knownBoolean(bool value) { return value ? KnownBoolean::T
 
 KnownValue knownValueOf(const Program&, const Function&, ValueID);
 KnownValue knownValueOfType(const Program&, const Type&);
+// Unknown for a hole, a bigint, a list and an object.
+KnownValue knownValueOf(const DataNode&);
+// The type that has the primitive and nothing else.
+Type typeOfKnownPrimitive(KnownValue);
 
 enum class EqualityKind : uint8_t { Strict, Loose };
 
 KnownBoolean evaluateEquality(KnownValue, KnownValue, EqualityKind);
 KnownBoolean evaluateTypeTest(const Program&, const Type& source, const Type& tested);
 KnownBoolean evaluateTypeTest(const Program&, KnownValue, const Type& tested);
+KnownBoolean evaluateIsClosureOf(const Program&, const Type& source, FunctionID);
 KnownBoolean evaluateTestByTypes(const Program&, const Function&, const Value& test);
 // The operation that defines the value never gives the candidate, although the type of the value has it.
 bool isRuledOutByDefinition(const Program&, const Function&, ValueID, KnownValue candidate);
@@ -105,7 +110,7 @@ std::optional<int64_t> switchCaseOf(KnownValue);
 
 inline constexpr OpcodeSet opcodesWithKnownValueRules {
     Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String,
-    Opcode::Upcast, Opcode::AssumeType, Opcode::Claim, Opcode::Predict, Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject,
+    Opcode::Upcast, Opcode::NarrowByField, Opcode::AssumeType, Opcode::Check, Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject,
     Opcode::ToBoolean, Opcode::LogicalNot, Opcode::TypeTest,
     Opcode::StrictEq, Opcode::Eq, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq,
     Opcode::Add, Opcode::Sub, Opcode::BitAnd, Opcode::ToNumber, Opcode::ToNumeric, Opcode::GetStringLength,

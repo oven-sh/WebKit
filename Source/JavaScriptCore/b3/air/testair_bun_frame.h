@@ -542,8 +542,10 @@ static Vector<Reg> registersPushedAtFrameSetup(Code& code)
         for (Inst& inst : *block) {
             if (inst.kind.opcode != EnterFrame)
                 continue;
-            for (Arg& arg : inst.args().subspan(1 + EnterFrameCustom::numberOfScratchRegisters(inst) + numberOfSaves))
-                result.append(arg.reg());
+            for (Arg& arg : inst.args().subspan(1 + EnterFrameCustom::numberOfScratchRegisters(inst) + numberOfSaves)) {
+                if (arg.isReg())
+                    result.append(arg.reg());
+            }
         }
     }
     return result;
@@ -622,7 +624,7 @@ static void checkSpillsAtFrameSetup(SpillsAtFrameSetupCase testCase)
     checkEntryBlockHasNoSpills(code[0]);
 }
 
-static void checkNoSpillIsPushedAtTwoFrameSetups()
+static void checkSpillsArePushedAtTwoFrameSetups()
 {
     B3::Policy policy = policyWithAirFrame();
     policy.air.frame.shrinkWraps = true;
@@ -632,8 +634,9 @@ static void checkNoSpillIsPushedAtTwoFrameSetups()
     auto compilation = compile(proc);
     checkTwoRareCalls(*compilation);
     CHECK(proc.code().frameLayout().numberOfFrameSetups == 2);
-    CHECK(!proc.code().frameLayout().numberOfSpillsPushedAtFrameSetup);
-    CHECK(registersPushedAtFrameSetup(proc.code()).isEmpty());
+    CHECK(proc.code().frameLayout().numberOfSpillsPushedAtFrameSetup == 2);
+    Vector<Reg> pushed = registersPushedAtFrameSetup(proc.code());
+    CHECK(pushed.size() == 2 && pushed[0] == argumentTmp(2).reg() && pushed[1] == argumentTmp(2).reg());
 }
 
 void testSpillsPushedAtFrameSetup()
@@ -641,7 +644,66 @@ void testSpillsPushedAtFrameSetup()
     using Case = SpillsAtFrameSetupCase;
     for (Case testCase : { Case::Pushed, Case::PushedWithCalleeSave, Case::CopiedFromArgument, Case::Overwritten, Case::AfterPatch, Case::FieldOff })
         checkSpillsAtFrameSetup(testCase);
-    checkNoSpillIsPushedAtTwoFrameSetups();
+    checkSpillsArePushedAtTwoFrameSetups();
+}
+
+// An arm spills values round a call, and they come back right in front of its teardown.
+void testReloadsPoppedAtFrameTeardown()
+{
+    for (bool mayOmitFrameRecord : { false, true }) {
+        for (bool isArmRare : { false, true }) {
+            for (unsigned numberOfValues = 1; numberOfValues <= 4; ++numberOfValues) {
+                for (bool usesReloadInBetween : { false, true }) {
+                    B3::Policy policy = policyWithFrameLayout(FrameLayoutCase::SpillsPushedAtFrameSetup);
+                    policy.air.frame.shrinkWraps = true;
+                    if (mayOmitFrameRecord) {
+                        policy.air.frame.mayOmitFrameRecord = true;
+                        policy.air.frame.maxBytesAddedWithoutFrameRecord = std::numeric_limits<int>::max();
+                    }
+                    B3::Procedure proc(policy);
+                    proc.setOptLevel(2);
+                    Code& code = proc.code();
+                    BasicBlock* root = code.addBlock();
+                    BasicBlock* arm = code.addBlock(isArmRare ? 0.01 : 1);
+                    BasicBlock* join = code.addBlock();
+                    if (isArmRare)
+                        appendBranchTest(root, argumentTmp(4), rarely(arm), join);
+                    else
+                        appendBranchTest(root, argumentTmp(4), arm, join);
+                    Vector<StackSlot*> slots;
+                    for (unsigned i = 0; i < numberOfValues; ++i) {
+                        slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+                        arm->append(Move, nullptr, argumentTmp(i), Arg::stack(slots[i]));
+                    }
+                    appendCall(proc, arm);
+                    for (unsigned i = 0; i < numberOfValues; ++i)
+                        arm->append(Move, nullptr, Arg::stack(slots[i]), argumentTmp(i));
+                    if (usesReloadInBetween)
+                        arm->append(Add64, nullptr, Arg::imm(1), argumentTmp(0));
+                    arm->append(Jump, nullptr);
+                    arm->setSuccessors(join);
+                    join->append(Move, nullptr, Arg::imm(0), returnTmp());
+                    for (unsigned i = 0; i < numberOfValues; ++i)
+                        join->append(Add64, nullptr, argumentTmp(i), returnTmp());
+                    appendReturn(join);
+
+                    auto compilation = compile(proc);
+                    const FrameLayout& layout = code.frameLayout();
+                    CHECK(layout.coverage == FrameCoverage::SomePaths && (layout.hasFrameRecord || mayOmitFrameRecord));
+                    CHECK(layout.numberOfSpillsPushedAtFrameSetup == numberOfValues);
+                    // The one that is used in between is reloaded where it was.
+                    CHECK(layout.numberOfReloadsPoppedAtFrameTeardown <= numberOfValues - usesReloadInBetween);
+                    // Where `leave` drops a word of padding for nothing, pops would take an instruction more.
+                    bool hasPaddingBelowFrameRecord = layout.hasFrameRecord && numberOfValues % 2;
+                    if (!usesReloadInBetween && !hasPaddingBelowFrameRecord)
+                        CHECK(layout.numberOfReloadsPoppedAtFrameTeardown == numberOfValues);
+                    int64_t sum = numberOfValues > 3 ? 4321 : numberOfValues > 2 ? 321 : numberOfValues > 1 ? 21 : 1;
+                    CHECK(invoke<int64_t>(*compilation, 1ll, 20ll, 300ll, 4000ll, 0ll) == sum);
+                    CHECK(invoke<int64_t>(*compilation, 1ll, 20ll, 300ll, 4000ll, 1ll) == sum + usesReloadInBetween);
+                }
+            }
+        }
+    }
 }
 
 void testPushedOperandSurvivesCopyForwarding()
@@ -815,6 +877,214 @@ void testTeardownSizeBound()
     CHECK(!maxBytesOfFrameTeardown(leaf.code()));
 }
 
+#if CPU(X86_64)
+static B3::Policy policyWithoutFrameRecord(FrameLayoutCase layoutCase)
+{
+    B3::Policy policy = policyWithFrameLayout(layoutCase);
+    policy.air.frame.mayOmitFrameRecord = true;
+    policy.air.frame.maxBytesAddedWithoutFrameRecord = std::numeric_limits<int>::max();
+    return policy;
+}
+
+// Breaks unless the stack pointer is aligned for a call and the frame pointer register names a frame of a caller.
+static void appendCheckOfStackRegisters(B3::Procedure& proc, BasicBlock* block)
+{
+    B3::PatchpointValue* patchpoint = addPatchpoint(proc);
+    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        CCallHelpers::Jump isAligned = jit.branchTestPtr(CCallHelpers::Zero, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(stackAlignmentBytes() - 1));
+        jit.breakpoint();
+        isAligned.link(&jit);
+        jit.addPtr(CCallHelpers::TrustedImm32(params.code().frameSize()), CCallHelpers::stackPointerRegister, GPRInfo::argumentGPR4);
+        CCallHelpers::Jump isKept = jit.branchPtr(CCallHelpers::Above, GPRInfo::callFrameRegister, GPRInfo::argumentGPR4);
+        jit.breakpoint();
+        isKept.link(&jit);
+    });
+    block->append(Patch, patchpoint, Arg::special(patchpointSpecialOf(proc.code())));
+}
+
+static void checkNamesNoFramePointer(Code& code)
+{
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            if (inst.kind.opcode == Patch)
+                continue;
+            for (Arg& arg : inst.args())
+                CHECK(!arg.usesTmp(Tmp(GPRInfo::callFrameRegister)));
+        }
+    }
+}
+
+void testFrameWithoutRecord()
+{
+    for (FrameLayoutCase layoutCase : allFrameLayoutCases) {
+        for (unsigned numberOfCalleeSaves = 0; numberOfCalleeSaves <= FunctionWithFrame::maxNumberOfCalleeSaves; ++numberOfCalleeSaves) {
+            for (unsigned numberOfSpillSlots = 0; numberOfSpillSlots <= 20; ++numberOfSpillSlots) {
+                B3::Procedure proc(policyWithoutFrameRecord(layoutCase));
+                FunctionWithFrame function(proc, numberOfCalleeSaves, numberOfSpillSlots);
+                Code& code = proc.code();
+                prepareForGeneration(code);
+                ObservedCode observed = generateObservedCode(proc);
+                const FrameLayout& layout = code.frameLayout();
+                CHECK(layout.hasFrame && !layout.hasFrameRecord);
+                CHECK(layout.calleeSaveForm == expectedCalleeSaveForm(layoutCase, numberOfCalleeSaves));
+                checkNamesNoFramePointer(code);
+                // The word below the return address is the first slot.
+                unsigned bytesOfSlots = static_cast<unsigned>((numberOfCalleeSaves + numberOfSpillSlots) * sizeof(CPURegister));
+                CHECK(code.frameSize() == (bytesOfSlots <= sizeof(CPURegister) ? 0 : WTF::roundUpToMultipleOf<stackAlignmentBytes()>(bytesOfSlots - sizeof(CPURegister))));
+                for (const InstRange& range : observed.ranges) {
+                    if (range.opcode == LeaveFrame)
+                        CHECK(range.end - range.begin <= static_cast<ptrdiff_t>(maxBytesOfFrameTeardown(code)));
+                }
+                function.checkResult(*observed.generated.compilation);
+            }
+        }
+    }
+}
+
+void testFrameWithoutRecordKeepsStackRegisters()
+{
+    for (FrameLayoutCase layoutCase : allFrameLayoutCases) {
+        for (unsigned numberOfSpillSlots = 0; numberOfSpillSlots <= 4; ++numberOfSpillSlots) {
+            B3::Procedure proc(policyWithoutFrameRecord(layoutCase));
+            proc.setOptLevel(2);
+            Code& code = proc.code();
+            BasicBlock* root = code.addBlock();
+            Vector<StackSlot*> slots;
+            for (unsigned i = 0; i < numberOfSpillSlots; ++i) {
+                slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+                root->append(Move, nullptr, argumentTmp(0), Arg::stack(slots[i]));
+            }
+            root->append(Move, nullptr, argumentTmp(0), Tmp(GPRInfo::regCS0));
+            appendCheckOfStackRegisters(proc, root);
+            root->append(Move, nullptr, Tmp(GPRInfo::regCS0), returnTmp());
+            for (StackSlot* slot : slots)
+                root->append(Add64, nullptr, Arg::stack(slot), returnTmp());
+            appendReturn(root);
+            auto compilation = compile(proc);
+            CHECK(!code.frameLayout().hasFrameRecord);
+            CHECK(invoke<int64_t>(*compilation, 3ll) == 3 * (numberOfSpillSlots + 1));
+        }
+    }
+
+    // A move of the frame pointer gives the place that a frame record would have.
+    B3::Procedure proc(policyWithoutFrameRecord(FrameLayoutCase::Default));
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    BasicBlock* root = code.addBlock();
+    for (unsigned i = 0; i < 5; ++i)
+        root->append(Move, nullptr, argumentTmp(0), Arg::stack(code.addStackSlot(8, StackSlotKind::Locked)));
+    appendCall(proc, root);
+    root->append(Move, nullptr, Tmp(GPRInfo::callFrameRegister), returnTmp());
+    root->append(Sub64, nullptr, Tmp(MacroAssembler::stackPointerRegister), returnTmp());
+    appendReturn(root);
+    auto compilation = compile(proc);
+    CHECK(!code.frameLayout().hasFrameRecord && code.frameSize());
+    CHECK(invoke<int64_t>(*compilation, 3ll) == code.frameSize());
+}
+
+void testFrameWithoutRecordReadsIncomingArguments()
+{
+    // The caller of the test's code is C++, so the word above the return address is whatever lies there: the two reads have to agree.
+    for (bool shrinkWraps : { false, true }) {
+        B3::Policy policy = policyWithoutFrameRecord(FrameLayoutCase::CalleeSavesPushedAtFrameBottom);
+        policy.air.frame.shrinkWraps = shrinkWraps;
+        B3::Procedure proc(policy);
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        BasicBlock* inFrame = code.addBlock();
+        Arg incomingWord = Arg::addr(Tmp(GPRInfo::callFrameRegister), static_cast<int32_t>(sizeof(CallerFrameAndPC)));
+        StackSlot* slot = code.addStackSlot(8, StackSlotKind::Spill);
+        root->append(Move, nullptr, incomingWord, returnTmp());
+        root->append(Jump, nullptr);
+        root->setSuccessors(inFrame);
+        inFrame->append(Move, nullptr, returnTmp(), Arg::stack(slot));
+        appendCall(proc, inFrame);
+        inFrame->append(Move, nullptr, incomingWord, returnTmp());
+        inFrame->append(Sub64, nullptr, Arg::stack(slot), returnTmp());
+        appendReturn(inFrame);
+        auto compilation = compile(proc);
+        CHECK(!code.frameLayout().hasFrameRecord);
+        checkNamesNoFramePointer(code);
+        CHECK(!invoke<int64_t>(*compilation));
+    }
+}
+
+void testFrameRecordIsKeptWhereItIsNeeded()
+{
+    auto hasFrameRecord = [](const ScopedLambda<void(B3::Procedure&, BasicBlock*)>& appendUse) {
+        B3::Procedure proc(policyWithoutFrameRecord(FrameLayoutCase::Default));
+        proc.setOptLevel(2);
+        BasicBlock* root = proc.code().addBlock();
+        appendCall(proc, root);
+        appendUse(proc, root);
+        appendReturn(root, 0);
+        prepareForGeneration(proc.code());
+        return proc.code().frameLayout().hasFrameRecord;
+    };
+    CHECK(!hasFrameRecord([](B3::Procedure&, BasicBlock*) { }));
+    CHECK(!hasFrameRecord([](B3::Procedure&, BasicBlock* block) {
+        block->append(Move, nullptr, Tmp(GPRInfo::callFrameRegister), argumentTmp(0));
+    }));
+    CHECK(hasFrameRecord([](B3::Procedure&, BasicBlock* block) {
+        block->append(Add64, nullptr, Tmp(GPRInfo::callFrameRegister), argumentTmp(0));
+    }));
+    CHECK(hasFrameRecord([](B3::Procedure& proc, BasicBlock* block) {
+        B3::PatchpointValue* patchpoint = addCallLikePatchpoint(proc);
+        patchpoint->setNeedsFrameRecord(true);
+        block->append(Patch, patchpoint, Arg::special(patchpointSpecialOf(proc.code())));
+    }));
+}
+
+void testFrameRecordIsOmittedWhereItCostsNoBytes()
+{
+    auto hasFrameRecord = [](unsigned numberOfCalleeSaves, unsigned numberOfSpillSlots, unsigned maxBytesAdded) {
+        B3::Policy policy = policyWithoutFrameRecord(FrameLayoutCase::CalleeSavesPushedAtFrameBottom);
+        policy.air.frame.maxBytesAddedWithoutFrameRecord = maxBytesAdded;
+        B3::Procedure proc(policy);
+        FunctionWithFrame function(proc, numberOfCalleeSaves, numberOfSpillSlots);
+        auto compilation = compile(proc);
+        function.checkResult(*compilation);
+        return proc.code().frameLayout().hasFrameRecord;
+    };
+    // Registers are pushed and popped either way. Each slot is written once and read once, and each of those addresses is a byte longer off the stack pointer.
+    for (unsigned numberOfCalleeSaves = 0; numberOfCalleeSaves <= FunctionWithFrame::maxNumberOfCalleeSaves; ++numberOfCalleeSaves)
+        CHECK(!hasFrameRecord(numberOfCalleeSaves, 0, 0));
+    CHECK(hasFrameRecord(1, 8, 0));
+    CHECK(!hasFrameRecord(1, 8, 2 * 8));
+    // Far more slots than a short displacement reaches, off either register.
+    CHECK(hasFrameRecord(1, 40, 0));
+    CHECK(!hasFrameRecord(1, 40, 1000));
+}
+
+void testStackCheckSitesWithoutFrameRecord()
+{
+    auto compileAndCheck = [](B3::Policy policy, bool checksBeforeAllocating) {
+        policy.air.frame.registersClobberedByFrameSetup.add(stackCheckScratch, IgnoreVectors);
+        B3::Procedure proc(policy);
+        FunctionWithFrame function(proc, 1, FunctionWithFrame::numberOfSpilledArguments + 1);
+        Vector<StackCheckSite> sites;
+        proc.code().setStackCheckGenerator(createSharedTask<StackCheckGeneratorFunction>([&](CCallHelpers&, GenerationContext&, const StackCheckSite& site) {
+            sites.append(site);
+        }));
+        auto compilation = compile(proc);
+        proc.code().setStackCheckGenerator(nullptr);
+        Code& code = proc.code();
+        CHECK(!code.frameLayout().hasFrameRecord && sites.size() == 1);
+        unsigned bytesBelowReturnAddress = code.frameSize() + static_cast<unsigned>(sizeof(CPURegister));
+        CHECK(sites[0].bytesBelowFrameRecord == code.frameSize());
+        CHECK(sites[0].bytesAllocatedBelowReturnAddress + sites[0].bytesLeftToAllocate == bytesBelowReturnAddress);
+        CHECK(!sites[0].bytesLeftToAllocate == !checksBeforeAllocating);
+        function.checkResult(*compilation);
+    };
+    for (FrameLayoutCase layoutCase : allFrameLayoutCases)
+        compileAndCheck(policyWithoutFrameRecord(layoutCase), false);
+    B3::Policy policy = policyWithoutFrameRecord(FrameLayoutCase::Default);
+    policy.air.frame.maxBytesAllocatedBeforeStackCheck = 0;
+    compileAndCheck(policy, true);
+}
+#endif
+
 static StackSlot* addRandomStackSlot(Code& code, WeakRandom& random)
 {
     constexpr unsigned spillSizes[] = { 4, 8, 16 };
@@ -958,8 +1228,15 @@ void testDefaultStackOffsetsAreUpstream()
         RUN(testFarStackSlotsUseStackPointer()); \
         RUN(testCalleeSavesPushedAtFrameBottom()); \
         RUN(testSpillsPushedAtFrameSetup()); \
+        RUN(testReloadsPoppedAtFrameTeardown()); \
         RUN(testPushedOperandSurvivesCopyForwarding()); \
         RUN(testLockedSlotsAreOrderedWithSpills()); \
+        RUN(testFrameWithoutRecord()); \
+        RUN(testFrameWithoutRecordKeepsStackRegisters()); \
+        RUN(testFrameWithoutRecordReadsIncomingArguments()); \
+        RUN(testFrameRecordIsKeptWhereItIsNeeded()); \
+        RUN(testFrameRecordIsOmittedWhereItCostsNoBytes()); \
+        RUN(testStackCheckSitesWithoutFrameRecord()); \
     } while (false)
 #else
 #define RUN_BUN_FRAME_TESTS_OF_CPU() do { } while (false)

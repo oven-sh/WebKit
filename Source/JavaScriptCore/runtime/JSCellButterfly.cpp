@@ -62,6 +62,17 @@ void JSCellButterfly::copyToArguments(JSGlobalObject*, JSValue* firstElementDest
 
 static_assert(JSCellButterfly::offsetOfData() == sizeof(JSCellButterfly), "m_header needs to be adjacent to Data");
 
+#if USE(BUN_JSC_ADDITIONS)
+constinit uintptr_t JSCellButterfly::s_startOfStorageOutsideHeap = 0;
+constinit size_t JSCellButterfly::s_sizeOfStorageOutsideHeap = 0;
+
+void JSCellButterfly::setStorageOutsideHeap(std::span<const uint8_t> bytes)
+{
+    s_startOfStorageOutsideHeap = std::bit_cast<uintptr_t>(bytes.data());
+    s_sizeOfStorageOutsideHeap = bytes.size();
+}
+#endif
+
 JSCellButterfly* JSCellButterfly::createFromClonedArguments(JSGlobalObject* globalObject, ClonedArguments* arguments)
 {
     VM& vm = globalObject->vm();
@@ -233,6 +244,21 @@ JSCellButterfly* JSCellButterfly::createFromString(JSGlobalObject* globalObject,
     return result;
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE void copyKeysFromCompactStorage(VM& vm, JSCell& storage, JSCellButterfly* result)
+{
+    using Helper = JSSet::Helper;
+    unsigned index = 0;
+    for (Helper::Entry entry = 0;; ++entry) {
+        auto transitionResult = Helper::transitAndNext(vm, storage, entry);
+        if (!transitionResult.storage)
+            break;
+        result->setIndex(vm, index++, transitionResult.key);
+        entry = transitionResult.entry;
+    }
+}
+#endif
+
 JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JSSet* set)
 {
     VM& vm = globalObject->vm();
@@ -252,7 +278,14 @@ JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JS
     if (!set->storage())
         return result;
 
-    JSCell& storage = *set->storage();
+#if ENABLE(AOT)
+    if (Helper::isCompact(*set->storage())) [[unlikely]] {
+        copyKeysFromCompactStorage(vm, *set->storage(), result);
+        return result;
+    }
+#endif
+
+    auto& storage = set->storageRef();
     unsigned index = 0;
     for (Helper::Entry entry = 0;; ++entry) {
         auto transitionResult = Helper::transitAndNext(vm, storage, entry);

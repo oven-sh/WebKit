@@ -24,7 +24,8 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
-    static ClassPrototype* create(VM&, Structure*, uint32_t classIndex);
+    // memberRow: where the row of the class begins in the field table, or ClassRowEntry::noRow.
+    static ClassPrototype* create(VM&, Structure*, uint32_t classIndex, uint32_t memberRow);
 
     DECLARE_INFO;
 
@@ -48,6 +49,7 @@ public:
 
     static bool hasMember(JSObject* classPrototype, PropertyName);
     uint32_t classIndex() const { return m_classIndex; }
+    static constexpr ptrdiff_t offsetOfMemberRow() { return OBJECT_OFFSETOF(ClassPrototype, m_memberRow); }
     std::optional<bool> tryGetDeclaredMember(VM&, PropertyName, PropertySlot&);
 
 private:
@@ -56,11 +58,12 @@ private:
         DeclaresThen = 2,
     };
     static constexpr unsigned minEarlyAnswers = 4;
-    static constexpr unsigned numberOfNameBits = 64;
+    static constexpr unsigned numberOfNameBits = 32;
 
-    ClassPrototype(VM& vm, Structure* structure, uint32_t classIndex)
+    ClassPrototype(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow)
         : Base(vm, structure)
         , m_classIndex(classIndex)
+        , m_memberRow(memberRow)
     {
     }
 
@@ -70,8 +73,9 @@ private:
     uint16_t m_numberOfLookups { 0 };
     bool m_hasRepeatedLookup { false };
     OptionSet<Flag> m_flags;
-    uint64_t m_namesLookedUp { 0 };
-    static_assert(numberOfNameBits == sizeof(uint64_t) * 8);
+    uint32_t m_namesLookedUp { 0 };
+    uint32_t m_memberRow;
+    static_assert(numberOfNameBits == sizeof(uint32_t) * 8);
 };
 
 } } // namespace JSC::AOT

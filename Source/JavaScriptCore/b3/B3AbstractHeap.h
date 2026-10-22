@@ -82,7 +82,7 @@ public:
     {
         // This will not have a valid value until after all lowering is done. Do associate an
         // AbstractHeap with a Value*, use AbstractHeapRepository::decorateXXX().
-        if (!m_range)
+        if (!m_range || m_staysAcrossProcedures)
             badRangeError();
 
         return m_range;
@@ -104,6 +104,10 @@ public:
     }
 
     void compute(unsigned begin = 0);
+    unsigned numberOfLeaves() const;
+    bool isWithin(const AbstractHeap&) const;
+    bool staysAcrossProcedures() const { return m_staysAcrossProcedures; }
+    void markAsStayingAcrossProcedures();
 
     // Print information about just this heap.
     void shallowDump(PrintStream&) const;
@@ -124,6 +128,7 @@ private:
     intptr_t m_offset { 0 };
     Mutability m_mutability { Mutability::Mutable };
     HeapRange m_range;
+    bool m_staysAcrossProcedures { false };
     const char* m_heapName { nullptr };
 };
 
@@ -152,6 +157,7 @@ public:
     JS_EXPORT_PRIVATE void retainCurrentHeaps();
     JS_EXPORT_PRIVATE void removeTemporaryHeaps();
     bool hasTemporaryHeaps() const { return m_heapForAnyIndex.numberOfChildren() != m_retainedHeapCount; }
+    size_t numberOfRetainedHeaps() const { return m_retainedHeapCount; }
 
 private:
     const AbstractHeap& returnInitialized(AbstractHeap& field, ptrdiff_t index)
@@ -198,6 +204,7 @@ public:
     void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
     void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
     bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
+    size_t numberOfRetainedHeaps() const { return m_indexedHeap.numberOfRetainedHeaps(); }
     const AbstractHeap& operator[](ptrdiff_t number) { return at(number); }
 
     void dump(PrintStream&);
@@ -213,10 +220,11 @@ public:
     AbsoluteAbstractHeap(AbstractHeap* parent, const char* heapName);
     ~AbsoluteAbstractHeap();
 
-    const AbstractHeap& atAnyAddress() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
+    AbstractHeap& atAnyAddress() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
     void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
     void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
     bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
+    size_t numberOfRetainedHeaps() const { return m_indexedHeap.numberOfRetainedHeaps(); }
 
     const AbstractHeap& at(const void* address)
     {

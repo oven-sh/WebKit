@@ -1,0 +1,131 @@
+# function even(n: number): boolean { return n === 0 ? true : odd(n) }, with `odd` a variable that holds any value. Nothing is proven of what the call by value gives, and a test behind the call would end the tail call:
+# a cycle of such functions would grow the stack where plain Bun's does not. So the result of the function is only expected, its tail cast tests nothing, and whoever calls the function tests what comes back.
+# What a caller stores of the tested value is stored untested by its generic version, so the variable is only expected too.
+# At the end, with the analysis: it finds every callee of the second pair, so their results are proven again: the check in the caller has nothing left to test, and AddGenericVersion drops such a check. The first pair calls a value from outside the program and keeps it.
+# No tail call is demoted on the way
+# FORM: AsRead
+# RUN: pass TypeValues GuardTaintedPositions VerifyProgram
+# RUN(APPLIED): pipeline ApplyFlowResults
+# STATISTIC: TaintedPositions = 5
+# STATISTIC: ChecksOnTaintedPositions = 2
+# STATISTIC: ReturnCallsDemoted = 0
+# CHECK: variable g4 name="answer" module=m0 declared={type=boolean flags=[IsExpected]}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Result
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Result
+typesite w3 module=m0 position=40 kind=Result
+variable g0 name="odd" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="even" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="provenOdd" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="provenEven" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="answer" module=m0 declared={type=boolean} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="otherOdd" [isFreeName]
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    PutModuleVariable v5 variable=g1
+    v7 = NewClosure function=f4
+    PutModuleVariable v7 variable=g2
+    v9 = NewClosure function=f3
+    PutModuleVariable v9 variable=g3
+    v11 = Integer integer=7
+    v12 = CallDirect v11 function=f1
+    PutModuleVariable v12 variable=g4
+    v14 = CallDirect v11 function=f3
+    PutModuleVariable v14 variable=g4
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[call]]: anything ~ boolean = CallDirect v11 function=f1
+# CHECK-NEXT: [[tested]]: boolean = Check [[call]] castType=boolean site=w0 cause=AddedByPass
+# CHECK-NEXT: PutModuleVariable [[tested]] variable=g4
+# CHECK-NEXT: [[otherCall]]: anything ~ boolean = CallDirect v11 function=f3
+# CHECK-NEXT: [[otherTested]]: boolean = Check [[otherCall]] castType=boolean site=w2 cause=AddedByPass
+# CHECK-NEXT: PutModuleVariable [[otherTested]] variable=g4
+# APPLIED-LABEL: function f0 name="main"
+# APPLIED: : anything ~ boolean = CallDirect v11 function=f1
+# APPLIED-NEXT: = Check {{*}}castType=boolean site=w0
+# APPLIED: : boolean = CallDirect v11 function=f3
+function f1 name="even" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w0}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=true
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v0
+    ReturnCall v5 casts=[{declared={type=boolean site=w0}}]
+}
+# CHECK-LABEL: function f1 name="even"
+# CHECK: results=[{type=boolean site=w0 flags=[IsExpected]}]
+# CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w0 flags=[IsExpected]} resolution=Nothing}]
+# APPLIED-LABEL: function f1 name="even"
+# APPLIED: results=[{type=boolean site=w0 flags=[IsExpected]}]
+# APPLIED: ReturnCall
+function f2 name="odd" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w1}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=false
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v0
+    ReturnCall v5 casts=[{declared={type=boolean site=w1}}]
+}
+# CHECK-LABEL: function f2 name="odd"
+# CHECK: results=[{type=boolean site=w1 flags=[IsExpected]}]
+# CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w1 flags=[IsExpected]} resolution=Nothing}]
+# APPLIED-LABEL: function f2 name="odd"
+# APPLIED: results=[{type=boolean site=w1 flags=[IsExpected]}]
+# APPLIED: ReturnCall
+function f3 name="provenEven" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w2}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=true
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g2
+    v5 = Call v4, -, v0
+    ReturnCall v5 casts=[{declared={type=boolean site=w2}}]
+}
+# CHECK-LABEL: function f3 name="provenEven"
+# CHECK: results=[{type=boolean site=w2 flags=[IsExpected]}]
+# CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w2 flags=[IsExpected]} resolution=Nothing}]
+# APPLIED-LABEL: function f3 name="provenEven"
+# APPLIED: results=[{type=boolean site=w2}]
+# APPLIED: ReturnCall
+function f4 name="provenOdd" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w3}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=false
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g3
+    v5 = Call v4, -, v0
+    ReturnCall v5 casts=[{declared={type=boolean site=w3}}]
+}
+# CHECK-LABEL: function f4 name="provenOdd"
+# CHECK: results=[{type=boolean site=w3 flags=[IsExpected]}]
+# CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w3 flags=[IsExpected]} resolution=Nothing}]
+# APPLIED-LABEL: function f4 name="provenOdd"
+# APPLIED: results=[{type=boolean site=w3}]
+# APPLIED: ReturnCall

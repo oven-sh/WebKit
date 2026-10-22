@@ -34,6 +34,7 @@
 #include "BuiltinNames.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
+#include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
 #include "JSMapInlines.h"
@@ -551,9 +552,6 @@ bool AbstractModuleRecord::collectPrelinkedNamespaceResolutions(JSGlobalObject* 
             throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
             return false;
         case Resolution::Type::Ambiguous:
-#if ENABLE(AOT)
-            m_ambiguousExportNames.appendIfNotContains(exportName);
-#endif
             break;
         case Resolution::Type::Resolved:
             resolutions.append({ WTF::move(exportName), *resolution });
@@ -1411,9 +1409,6 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             return nullptr;
 
         case Resolution::Type::Ambiguous:
-#if ENABLE(AOT)
-            m_ambiguousExportNames.appendIfNotContains(ident);
-#endif
             break;
 
         case Resolution::Type::Resolved:
@@ -1563,7 +1558,7 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject)
     bool isReady = readyForSyncExecution();
     RETURN_IF_EXCEPTION(scope, void());
     if (!isReady) {
-        throwTypeError(globalObject, scope, "Unable to synchronously evaluate deferred module"_s);
+        throwTypeError(globalObject, scope, DeferredModuleNotReadyError);
         return;
     }
     // 2. Let promise be ! module.Evaluate().
@@ -1713,7 +1708,7 @@ void AbstractModuleRecord::evaluateModuleSync(JSGlobalObject* globalObject)
 static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     if (!globalObject->vm().isSafeToRecurse())
-        throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
+        throwRangeError(globalObject, scope, ModuleGraphTooDeepError);
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -1783,6 +1778,7 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
         case InternalMicrotask::AsyncFunctionResume:
 #if ENABLE(AOT)
         case InternalMicrotask::CompiledAsyncFunctionResume:
+        case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn:
 #endif
         case InternalMicrotask::AsyncModuleExecutionResume:
         case InternalMicrotask::AsyncGeneratorDriverResume:

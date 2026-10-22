@@ -40,13 +40,14 @@ static constexpr ASCIILiteral programWithoutBuiltins =
 
 namespace {
 
-enum class ClosedProtocolNames : uint8_t { None, Then, OfObjects, OfIterators };
+enum class ClosedProtocolNames : uint8_t { None, Then, OfObjects };
 
 struct ObjectWithLockedMembers {
     ASCIILiteral source;
     ClosedProtocolNames closedProtocolNames;
     std::span<const ASCIILiteral> replaceableMembers { };
     std::span<const ASCIILiteral> openInheritedNames { };
+    std::span<const ASCIILiteral> openProtocolNames { };
 };
 
 struct InstanceOfBuiltinClass {
@@ -74,10 +75,11 @@ constexpr ASCIILiteral replaceableIteratorMethods[] = { "chunks"_s, "windows"_s 
 constexpr ASCIILiteral replaceableUint8ArrayFunctions[] = { "fromBase64"_s, "fromHex"_s };
 constexpr ASCIILiteral replaceableUint8ArrayMethods[] = { "toBase64"_s, "toHex"_s };
 constexpr ASCIILiteral replaceablePromiseFunctions[] = { "try"_s };
-constexpr ASCIILiteral replaceableObjectFunctions[] = { "getOwnPropertyNames"_s };
 constexpr ASCIILiteral replaceableNumberFunctions[] = { "parseFloat"_s, "parseInt"_s };
 constexpr ASCIILiteral replaceableMapFunctions[] = { "groupBy"_s };
 constexpr ASCIILiteral replaceableDateFunctions[] = { "now"_s, "parse"_s };
+constexpr ASCIILiteral replaceableDateMethods[] = { "toString"_s, "toLocaleString"_s, "toLocaleDateString"_s, "toLocaleTimeString"_s };
+constexpr ASCIILiteral openProtocolNamesOfDatePrototype[] = { "next"_s };
 constexpr ASCIILiteral replaceableMathFunctions[] = { "random"_s, "sign"_s, "sinh"_s, "sumPrecise"_s };
 constexpr ASCIILiteral replaceableJSONFunctions[] = { "parse"_s, "stringify"_s };
 
@@ -100,7 +102,7 @@ constexpr std::span<const ASCIILiteral> onlyOfUint8Array(TypedArrayType type, st
 constexpr ObjectWithLockedMembers objectsWithLockedMembers[] = {
     { "Symbol"_s, ClosedProtocolNames::None },
     { "Promise"_s, ClosedProtocolNames::None, replaceablePromiseFunctions },
-    { "Object"_s, ClosedProtocolNames::None, replaceableObjectFunctions },
+    { "Object"_s, ClosedProtocolNames::None },
     { "Array"_s, ClosedProtocolNames::None },
     { "Number"_s, ClosedProtocolNames::None, replaceableNumberFunctions },
     { "String"_s, ClosedProtocolNames::None },
@@ -120,15 +122,15 @@ constexpr ObjectWithLockedMembers objectsWithLockedMembers[] = {
     { "Reflect"_s, ClosedProtocolNames::None },
     { "Atomics"_s, ClosedProtocolNames::None },
     { "Array.prototype"_s, ClosedProtocolNames::OfObjects },
-    { "Iterator.prototype"_s, ClosedProtocolNames::OfIterators, replaceableIteratorMethods },
-    { "Object.getPrototypeOf([][Symbol.iterator]())"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf(new Map()[Symbol.iterator]())"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf(new Set()[Symbol.iterator]())"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf(''[Symbol.iterator]())"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf(/a/[Symbol.matchAll]('a'))"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf([].values().map(x => x))"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf(Iterator.from({ next() { } }))"_s, ClosedProtocolNames::OfIterators },
-    { "Object.getPrototypeOf(Object.getPrototypeOf(async function* () { }).prototype)"_s, ClosedProtocolNames::OfIterators },
+    { "Iterator.prototype"_s, ClosedProtocolNames::OfObjects, replaceableIteratorMethods },
+    { "Object.getPrototypeOf([][Symbol.iterator]())"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(new Map()[Symbol.iterator]())"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(new Set()[Symbol.iterator]())"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(''[Symbol.iterator]())"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(/a/[Symbol.matchAll]('a'))"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf([].values().map(x => x))"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(Iterator.from({ next() { } }))"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(Object.getPrototypeOf(async function* () { }).prototype)"_s, ClosedProtocolNames::OfObjects },
     { "String.prototype"_s, ClosedProtocolNames::None, replaceableStringMethods },
     { "Number.prototype"_s, ClosedProtocolNames::None },
     { "Boolean.prototype"_s, ClosedProtocolNames::None },
@@ -141,6 +143,7 @@ constexpr ObjectWithLockedMembers objectsWithLockedMembers[] = {
     { "ArrayBuffer.prototype"_s, ClosedProtocolNames::OfObjects },
     { "SharedArrayBuffer.prototype"_s, ClosedProtocolNames::OfObjects },
     { "DataView.prototype"_s, ClosedProtocolNames::OfObjects },
+    { "Date.prototype"_s, ClosedProtocolNames::OfObjects, replaceableDateMethods, { }, openProtocolNamesOfDatePrototype },
     { "Object.getPrototypeOf(Int8Array)"_s, ClosedProtocolNames::None },
     { "Object.getPrototypeOf(Int8Array).prototype"_s, ClosedProtocolNames::OfObjects },
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_TYPED_ARRAY_CONSTRUCTOR_AND_PROTOTYPE)
@@ -162,7 +165,9 @@ constexpr InstanceOfBuiltinClass instancesOfBuiltinClasses[] = {
     { "new SharedArrayBuffer(8)"_s, true },
     { "new DataView(new ArrayBuffer(8))"_s, true },
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_TYPED_ARRAY_INSTANCE)
-    { "new Date(0)"_s, false },
+    { "new Date(0)"_s, true },
+    { "(d => (d.getTime = 1, d))(new Date(0))"_s, false },
+    { "new (class D extends Date { })(0)"_s, false },
     { "new Error('a')"_s, false },
     { "new TypeError('a')"_s, false },
     { "(function () { })"_s, false },
@@ -214,8 +219,14 @@ constexpr ASCIILiteral iterationProtocolNames[] = { "next"_s, "return"_s, "throw
 constexpr ASCIILiteral throwingWritesToStringPrototype[] = {
     "(function () { 'use strict'; String.prototype.slice = function () { }; })()"_s,
     "(function () { 'use strict'; delete String.prototype.slice; })()"_s,
+    "String.prototype.slice = function () { }"_s,
+    "delete String.prototype.slice"_s,
+    "String.prototype[5] = 'x'"_s,
+    "String.prototype[-1] = 'x'"_s,
+    "String.prototype[1.5] = 'x'"_s,
+    "String.prototype[Symbol.replace] = 1"_s,
+    "String.prototype.__proto__ = {}"_s,
     "Object.defineProperty(String.prototype, 'slice', { value: 1 })"_s,
-    "Object.defineProperty(String.prototype, 'slice', { writable: false })"_s,
     "Object.defineProperty(String.prototype, Symbol.iterator, { value: 1 })"_s,
     "Object.assign(String.prototype, { padEnd: 1 })"_s,
     "(function () { 'use strict'; String.prototype[5] = 'x'; })()"_s,
@@ -243,7 +254,6 @@ constexpr ASCIILiteral refusedWritesToStringPrototype[] = {
     "Reflect.defineProperty(String.prototype, 'slice', { value: 1 })"_s,
     "Reflect.defineProperty(String.prototype, 'slice', { enumerable: true })"_s,
     "Reflect.deleteProperty(String.prototype, 'slice')"_s,
-    "delete String.prototype.slice"_s,
     "Reflect.set(String.prototype, 5, 'x')"_s,
     "Reflect.defineProperty(String.prototype, 5, { value: 'x' })"_s,
     "Reflect.set(String.prototype, '-1', 'x')"_s,
@@ -258,12 +268,7 @@ constexpr ASCIILiteral refusedWritesToStringPrototype[] = {
 };
 
 constexpr ASCIILiteral allowedOnStringPrototype[] = {
-    "(f => (String.prototype.slice = f, String.prototype.slice !== f))(function () { })"_s,
-    "(String.prototype[5] = 'x', 'abc'[5] === undefined)"_s,
-    "(String.prototype[-1] = 'x', 'abc'[-1] === undefined)"_s,
-    "(String.prototype[1.5] = 'x', 'abc'[1.5] === undefined)"_s,
-    "(String.prototype[Symbol.replace] = 1, 'abc'[Symbol.replace] === undefined)"_s,
-    "(String.prototype.__proto__ = {}, Object.getPrototypeOf(String.prototype) === Object.prototype)"_s,
+    "'abc'[5] === undefined && 'abc'[-1] === undefined && 'abc'[1.5] === undefined && 'abc'[Symbol.replace] === undefined && Object.getPrototypeOf(String.prototype) === Object.prototype"_s,
     "Object.getOwnPropertyDescriptor(String.prototype, 'slice').writable"_s,
     "Object.getOwnPropertyDescriptor(String.prototype, 'slice').configurable"_s,
     "Reflect.defineProperty(String.prototype, 'slice', { value: String.prototype.slice })"_s,
@@ -294,6 +299,9 @@ constexpr ASCIILiteral allowedOnStringPrototype[] = {
 constexpr ASCIILiteral throwingWritesToRegExpPrototype[] = {
     "(function () { 'use strict'; RegExp.prototype.exec = function () { }; })()"_s,
     "(function () { 'use strict'; delete RegExp.prototype.exec; })()"_s,
+    "RegExp.prototype.exec = function () { }"_s,
+    "delete RegExp.prototype.exec"_s,
+    "RegExp.prototype.nameNobodyHas = 1"_s,
     "Object.defineProperty(RegExp.prototype, 'exec', { value: 1 })"_s,
     "Object.defineProperty(RegExp.prototype, 'flags', { get() { return ''; } })"_s,
     "Object.defineProperty(RegExp.prototype, 'global', { value: true })"_s,
@@ -304,14 +312,12 @@ constexpr ASCIILiteral throwingWritesToRegExpPrototype[] = {
     "(function () { 'use strict'; RegExp.prototype[0] = 1; })()"_s,
     "(function () { 'use strict'; RegExp.prototype.lastIndex = 1; })()"_s,
     "Object.setPrototypeOf(RegExp.prototype, {})"_s,
-    "Object.freeze(RegExp.prototype)"_s,
 };
 
 constexpr ASCIILiteral refusedWritesToRegExpPrototype[] = {
     "Reflect.set(RegExp.prototype, 'exec', 1)"_s,
     "Reflect.defineProperty(RegExp.prototype, 'exec', { value: 1 })"_s,
     "Reflect.deleteProperty(RegExp.prototype, 'exec')"_s,
-    "delete RegExp.prototype.exec"_s,
     "Reflect.set(RegExp.prototype, 'nameNobodyHas', 1)"_s,
     "Reflect.defineProperty(RegExp.prototype, 'nameNobodyHas', { value: 1 })"_s,
     "Reflect.set(RegExp.prototype, Symbol('made by the program'), 1)"_s,
@@ -322,8 +328,6 @@ constexpr ASCIILiteral refusedWritesToRegExpPrototype[] = {
 };
 
 constexpr ASCIILiteral allowedBesideRegExpPrototype[] = {
-    "(f => (RegExp.prototype.exec = f, RegExp.prototype.exec !== f))(function () { })"_s,
-    "(RegExp.prototype.nameNobodyHas = 1, !('nameNobodyHas' in RegExp.prototype))"_s,
     "Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').writable"_s,
     "Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').configurable"_s,
     "Reflect.defineProperty(RegExp.prototype, 'exec', { value: RegExp.prototype.exec })"_s,
@@ -337,6 +341,9 @@ constexpr ASCIILiteral allowedBesideRegExpPrototype[] = {
 };
 
 constexpr ASCIILiteral throwingWritesToFunctionPrototype[] = {
+    "Function.prototype.call = function () { }"_s,
+    "delete Function.prototype.call"_s,
+    "Function.prototype.nameNobodyHas = 1"_s,
     "(function () { 'use strict'; Object.getPrototypeOf(async function () { }).nameNobodyHas = 1; })()"_s,
     "(function () { 'use strict'; Object.getPrototypeOf(async function () { }).call = function () { }; })()"_s,
     "(function () { 'use strict'; Object.getPrototypeOf(function* () { }).toString = function () { }; })()"_s,
@@ -371,7 +378,6 @@ constexpr ASCIILiteral refusedWritesToFunctionPrototype[] = {
     "Reflect.set(Function.prototype, 'call', 1)"_s,
     "Reflect.defineProperty(Function.prototype, 'call', { value: 1 })"_s,
     "Reflect.deleteProperty(Function.prototype, 'call')"_s,
-    "delete Function.prototype.call"_s,
     "Reflect.defineProperty(Function.prototype, 'name', { value: 'x' })"_s,
     "Reflect.deleteProperty(Function.prototype, 'name')"_s,
     "Reflect.defineProperty(Function.prototype, 'length', { value: 1 })"_s,
@@ -389,8 +395,6 @@ constexpr ASCIILiteral allowedOnFunctionPrototype[] = {
     "(f => (f.nameNobodyHas = 1, f.call = 2, f.nameNobodyHas === 1 && f.call === 2))(async function () { })"_s,
     "(f => (f.prototype = { }, Object.getPrototypeOf(f()) === f.prototype))(function* () { })"_s,
     "Object.getPrototypeOf(function* () { }).prototype === Object.getPrototypeOf(Object.getPrototypeOf((function* () { })()))"_s,
-    "(f => (Function.prototype.call = f, Function.prototype.call !== f))(function () { })"_s,
-    "(Function.prototype.nameNobodyHas = 1, !('nameNobodyHas' in Function.prototype))"_s,
     "Function.prototype.name === '' && Function.prototype.length === 0"_s,
     "Object.getOwnPropertyDescriptor(Function.prototype, 'call').writable"_s,
     "Object.getOwnPropertyDescriptor(Function.prototype, 'name').configurable"_s,
@@ -427,13 +431,13 @@ constexpr ASCIILiteral allowedOnFunctionPrototype[] = {
 #define AOT_THROWING_WRITES_TO_SPECIES(constructor) \
     "Object.defineProperty(" constructor ", Symbol.species, { value: Object })"_s, \
     "Object.defineProperty(" constructor ", Symbol.species, { get() { return Object; } })"_s, \
-    "(function () { 'use strict'; delete " constructor "[Symbol.species]; })()"_s,
+    "(function () { 'use strict'; delete " constructor "[Symbol.species]; })()"_s, \
+    "delete " constructor "[Symbol.species]"_s,
 
 #define AOT_REFUSED_WRITES_TO_SPECIES(constructor) \
     "Reflect.defineProperty(" constructor ", Symbol.species, { value: Object })"_s, \
     "Reflect.defineProperty(" constructor ", Symbol.species, { get() { return Object; } })"_s, \
     "Reflect.deleteProperty(" constructor ", Symbol.species)"_s, \
-    "delete " constructor "[Symbol.species]"_s, \
     "Reflect.set(" constructor ", Symbol.species, Object)"_s,
 
 #define AOT_UNCHANGED_SPECIES(constructor) \
@@ -464,6 +468,8 @@ constexpr ASCIILiteral allowedBesideSpecies[] = {
 #undef FOR_EACH_CONSTRUCTOR_WITH_SPECIES
 
 constexpr ASCIILiteral throwingWritesToLockedMembers[] = {
+    "Set.prototype.add = function () { }"_s,
+    "WeakMap.prototype.toJSON = function () { return 1; }"_s,
     "(function () { 'use strict'; Set.prototype.add = function () { }; })()"_s,
     "(function () { 'use strict'; WeakMap.prototype.toJSON = function () { }; })()"_s,
     "(function () { 'use strict'; Uint8Array.prototype.toJSON = function () { }; })()"_s,
@@ -510,8 +516,7 @@ constexpr ASCIILiteral refusedWritesToLockedMembers[] = {
 };
 
 constexpr ASCIILiteral allowedBesideLockedMembers[] = {
-    "(f => (Set.prototype.add = f, Set.prototype.add !== f && new Set([1, 1, 2]).size === 2))(function () { })"_s,
-    "(WeakMap.prototype.toJSON = function () { return 1; }, JSON.stringify(new WeakMap) === '{}')"_s,
+    "new Set([1, 1, 2]).size === 2 && JSON.stringify(new WeakMap) === '{}'"_s,
     "(Map.prototype.toJSON = function () { return 1; }, JSON.stringify(new Map) === '1')"_s,
     "(Set.prototype.toJSON = function () { return 2; }, JSON.stringify(new Set) === '2')"_s,
     "(f => (Set.prototype.union = f, new Set().union === f))(function () { })"_s,
@@ -529,13 +534,20 @@ constexpr ASCIILiteral allowedBesideLockedMembers[] = {
     "(f => (Map.groupBy = f, Map.groupBy === f))(function () { })"_s,
     "(f => (Number.parseFloat = f, Number.parseFloat === f))(function () { })"_s,
     "(ArrayBuffer.nameNobodyHas = 1, ArrayBuffer.nameNobodyHas === 1)"_s,
-    "(f => (Date.prototype.toJSON = f, Date.prototype.toJSON === f))(function () { })"_s,
+    "(f => (Date.prototype.toString = f, Date.prototype.toString === f))(function () { })"_s,
+    "(f => (Date.prototype.next = f, Date.prototype.next === f))(function () { })"_s,
+    "(f => { class D extends Date { } D.prototype.getTime = f; return new D().getTime === f; })(function () { })"_s,
     "(f => (Error.prototype.toString = f, Error.prototype.toString === f))(function () { })"_s,
 };
 
 constexpr ASCIILiteral throwingWritesToProtocolHolders[] = {
     "(function () { 'use strict'; Array.prototype.then = function () { }; })()"_s,
     "(function () { 'use strict'; Array.prototype.toJSON = function () { }; })()"_s,
+    "(function () { 'use strict'; Array.prototype.next = function () { }; })()"_s,
+    "(function () { 'use strict'; Array.prototype.return = function () { }; })()"_s,
+    "(function () { 'use strict'; Array.prototype.throw = function () { }; })()"_s,
+    "(function () { 'use strict'; Set.prototype.next = function () { }; })()"_s,
+    "(function () { 'use strict'; Number.prototype.next = function () { }; })()"_s,
     "(function () { 'use strict'; Array.prototype[Symbol.isConcatSpreadable] = false; })()"_s,
     "(function () { 'use strict'; Array.prototype.hasOwnProperty = function () { }; })()"_s,
     "(function () { 'use strict'; Array.prototype[-1] = 1; })()"_s,
@@ -587,7 +599,6 @@ constexpr ASCIILiteral allowedOnProtocolHolders[] = {
     "(s => (Array.prototype[s] = 1, [][s] === 1))(Symbol.for('registered by the program'))"_s,
     "(Array.prototype['01'] = 1, []['01'] === 1)"_s,
     "(f => (Array.prototype.groupBy = f, [].groupBy === f))(function () { })"_s,
-    "(Array.prototype.next = 1, Array.prototype.return = 2, Array.prototype.throw = 3, [].next === 1 && [].return === 2 && [].throw === 3)"_s,
     "[, 1][0] === undefined && [...[1, 2]].length === 2"_s,
     "(Iterator.prototype.nameNobodyHas = 1, [].values().nameNobodyHas === 1)"_s,
     "(p => (p.nameNobodyHas = 2, [].values().nameNobodyHas === 2))(Object.getPrototypeOf([][Symbol.iterator]()))"_s,
@@ -598,7 +609,10 @@ constexpr ASCIILiteral allowedOnProtocolHolders[] = {
     "(f => (Promise.allKeyed = f, Promise.allKeyed === f))(function () { })"_s,
     "(f => (Promise.nameNobodyHas = f, Promise.nameNobodyHas === f))(function () { })"_s,
     "[Symbol, Promise, Array.prototype, Iterator.prototype].every(Object.isExtensible)"_s,
-    "(() => { try { Object.freeze(Array.prototype); return false; } catch (error) { return error instanceof TypeError && !Object.isFrozen(Array.prototype); } })()"_s,
+    "(d => Reflect.defineProperty(Array.prototype, 'map', d) && Reflect.defineProperty(Array.prototype, 'map', { value: d.value, writable: false }) && !Reflect.defineProperty(Array.prototype, 'map', { writable: true }))(Object.getOwnPropertyDescriptor(Array.prototype, 'map'))"_s,
+    "(Object.seal(Iterator.prototype), Object.isSealed(Iterator.prototype) && !Object.isFrozen(Iterator.prototype))"_s,
+    "(Object.freeze(Array.prototype), Object.isFrozen(Array.prototype) && !Reflect.defineProperty(Array.prototype, 'nameNobodyHas', { value: 1 }) && [1, 2].map(x => x * 2).join() === '2,4')"_s,
+    "(Object.freeze(Object.prototype), Object.isFrozen(Object.prototype) && (() => { 'use strict'; try { ({}).toString = 1; return false; } catch (error) { return error instanceof TypeError; } })())"_s,
 };
 
 constexpr Statements statementsAboutStringPrototype { throwingWritesToStringPrototype, refusedWritesToStringPrototype, allowedOnStringPrototype };
@@ -682,10 +696,22 @@ void checkSymbols(Realms& realms, JSObject* object, ASCIILiteral source)
     }
 }
 
+// A constructor and a namespace object take a property under a number. A prototype object takes none: an element that an instance lacks is looked for there.
+bool isConstructor(JSObject* object)
+{
+    return object->isCallable() && object != object->globalObject()->functionPrototype();
+}
+
+bool takesNumericKeys(JSObject* object, ASCIILiteral source)
+{
+    constexpr ASCIILiteral namespaceObjects[] = { "Math"_s, "JSON"_s, "Reflect"_s, "Atomics"_s };
+    return isConstructor(object) || std::ranges::contains(namespaceObjects, source);
+}
+
 void checkInheritedKeys(VM& vm, JSObject* object, ASCIILiteral source, std::span<const ASCIILiteral> replaceableMembers, std::span<const ASCIILiteral> openInheritedNames = { })
 {
     for (JSObject* ancestor = object->getPrototypeDirect().getObject(); ancestor; ancestor = ancestor->getPrototypeDirect().getObject()) {
-        AOT_TEST_CHECK_FOR_SOURCE(ancestor->structure()->hasImmutablePrototype() && ancestor->structure()->hasImmutableIndexedProperties(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(ancestor->structure()->hasImmutablePrototype() && ancestor->structure()->hasImmutableIndexedProperties() != isConstructor(ancestor), source);
         forEachOwnKey(vm, ancestor, [&](const Identifier& key) {
             if (isListed(openInheritedNames, key))
                 checkKey(!isFixedMember(vm, object, key), source, key, "is closed"_s);
@@ -705,13 +731,15 @@ void checkObjectsWithLockedMembers(Realms& realms)
 
         Structure* structure = object->structure();
         checkSymbols(realms, object, expected.source);
-        checkNames(vm, structure, expected.source, numericKeys, true);
+        bool isPrototypeObject = !takesNumericKeys(object, expected.source);
+        checkNames(vm, structure, expected.source, numericKeys, isPrototypeObject);
         checkNames(vm, structure, expected.source, ordinaryKeys, false);
         checkNames(vm, structure, expected.source, thenableProtocolNames, expected.closedProtocolNames >= ClosedProtocolNames::Then);
         checkNames(vm, structure, expected.source, serializationProtocolNames, expected.closedProtocolNames >= ClosedProtocolNames::OfObjects);
-        checkNames(vm, structure, expected.source, iterationProtocolNames, expected.closedProtocolNames >= ClosedProtocolNames::OfIterators);
+        for (const ASCIILiteral& name : iterationProtocolNames)
+            checkNames(vm, structure, expected.source, std::span { &name, 1 }, isPrototypeObject && !std::ranges::contains(expected.openProtocolNames, name));
         AOT_TEST_CHECK_FOR_SOURCE(!structure->hasImmutableProperties() && structure->isStructureExtensible(), expected.source);
-        AOT_TEST_CHECK_FOR_SOURCE(structure->hasImmutablePrototype() && structure->hasImmutableIndexedProperties(), expected.source);
+        AOT_TEST_CHECK_FOR_SOURCE(structure->hasImmutablePrototype() && structure->hasImmutableIndexedProperties() == isPrototypeObject, expected.source);
         AOT_TEST_CHECK_FOR_SOURCE(!realms.object(realms.plain(), expected.source)->structure()->mayHaveImmutableProperties(), expected.source);
     }
 }
@@ -757,10 +785,10 @@ void checkNamesGivenTwice(Realms& realms)
     const uint32_t second[] = { Builtins::DateParse.index() };
 
     AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, first).get()));
-    AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && !isFixed("parse"_s) && isFixed("call"_s) && isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
+    AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && !isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
     AOT_TEST_CHECK(object->structure()->isImmutableProperty(vm.propertyNames->hasInstanceSymbol.impl()));
     AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, second).get()));
-    AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
+    AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
 }
 
 bool isPristine(JSObject* object)

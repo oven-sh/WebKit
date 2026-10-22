@@ -73,6 +73,7 @@ using FieldAccessID = ID<struct FieldAccessIDTag>;
 using AllocationID = ID<struct AllocationIDTag>;
 using RegExpRecordID = ID<struct RegExpRecordIDTag>;
 using SiteCacheID = ID<struct SiteCacheIDTag>;
+using GlobalBindingID = ID<struct GlobalBindingIDTag>;
 using GuardBitID = ID<struct GuardBitIDTag>;
 
 } } } // namespace JSC::AOT::Typed

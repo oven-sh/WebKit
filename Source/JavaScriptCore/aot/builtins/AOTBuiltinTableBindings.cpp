@@ -27,9 +27,12 @@ static bool hasSortedLists(const BuiltinBindingSet& set)
 {
     return std::ranges::is_sorted(set.classes, { }, &BuiltinClassBinding::builtinClass)
         && std::ranges::is_sorted(set.cachedGetters, { }, &BuiltinCachedGetterBinding::overload)
+        && std::ranges::is_sorted(set.customGetters, { }, &BuiltinCustomGetterBinding::overload)
         && std::ranges::is_sorted(set.appendFunctions, { }, &BuiltinAppendFunctionBinding::builtin)
+        && std::ranges::is_sorted(set.directFunctions, { }, &BuiltinDirectFunctionBinding::overload)
         && std::ranges::is_sorted(set.nativeFunctions, { }, &BuiltinNativeFunctionBinding::builtin)
-        && std::ranges::is_sorted(set.linkTimeConstants, { }, &BuiltinLinkTimeConstantBinding::builtin);
+        && std::ranges::is_sorted(set.linkTimeConstants, { }, &BuiltinLinkTimeConstantBinding::builtin)
+        && std::ranges::is_sorted(set.hostNumbers, { }, &BuiltinHostNumberBinding::builtin);
 }
 #endif
 
@@ -73,6 +76,14 @@ const ClassInfo* BuiltinBindings::instanceClassInfoOf(BuiltinClassID id)
 {
     auto* binding = findBinding(&BuiltinBindingSet::classes, &BuiltinClassBinding::builtinClass, id);
     return binding ? binding->instanceClassInfo : nullptr;
+}
+
+void BuiltinBindings::fillInstanceClassInfos(std::span<const ClassInfo*> infosByClass)
+{
+    for (const BuiltinClassBinding& binding : classesOfHost())
+        infosByClass[binding.builtinClass.index()] = binding.instanceClassInfo;
+    for (const BuiltinClassBinding& binding : engineBuiltinBindings.classes)
+        infosByClass[binding.builtinClass.index()] = binding.instanceClassInfo;
 }
 
 static BuiltinClassID findClassWithInfo(const BuiltinBindingSet& set, const ClassInfo* info)
@@ -128,12 +139,16 @@ std::optional<uint32_t> BuiltinBindings::cachedValueOffsetOf(const ClassInfo* in
     if (getter.outcome != BuiltinMemberLookup::Outcome::Found)
         return std::nullopt;
     for (BuiltinOverloadID overload : table.overloadIDsOf(getter.member)) {
-        if (table.at(overload).mode != BuiltinCallMode::Get)
-            continue;
         if (std::optional<uint32_t> offset = cachedValueOffsetOf(overload))
             return offset;
     }
     return std::nullopt;
+}
+
+GetValueFunc::Ptr BuiltinBindings::customGetterOf(BuiltinOverloadID id)
+{
+    auto* binding = findBinding(&BuiltinBindingSet::customGetters, &BuiltinCustomGetterBinding::overload, id);
+    return binding ? binding->function : nullptr;
 }
 
 const void* BuiltinBindings::appendFunctionOf(BuiltinID id)
@@ -142,9 +157,62 @@ const void* BuiltinBindings::appendFunctionOf(BuiltinID id)
     return binding ? binding->function : nullptr;
 }
 
+std::optional<uint16_t> BuiltinBindings::hostNumberOf(BuiltinID id)
+{
+    auto* binding = findBinding(&BuiltinBindingSet::hostNumbers, &BuiltinHostNumberBinding::builtin, id);
+    return binding ? std::optional(binding->number) : std::nullopt;
+}
+
+std::optional<uint32_t> BuiltinBindings::directFunctionNumberOf(BuiltinOverloadID id)
+{
+    const BuiltinBindingSet* host = registeredHost();
+    if (!host)
+        return std::nullopt;
+    const BuiltinDirectFunctionBinding* binding = findBindingIn(host->directFunctions, &BuiltinDirectFunctionBinding::overload, id);
+    if (!binding)
+        return std::nullopt;
+    return static_cast<uint32_t>(binding - host->directFunctions.data());
+}
+
+std::optional<uint32_t> BuiltinBindings::directFunctionNumberOf(BuiltinOverloadID id, size_t argumentCount)
+{
+    std::optional<uint32_t> number = directFunctionNumberOf(id);
+    if (!number || argumentCount < directFunctionAt(*number).minArgumentCount())
+        return std::nullopt;
+    return number;
+}
+
+const BuiltinDirectFunctionBinding& BuiltinBindings::directFunctionAt(uint32_t number)
+{
+    return registeredHost()->directFunctions[number];
+}
+
+std::span<const BuiltinDirectFunctionBinding> BuiltinBindings::directFunctions()
+{
+    const BuiltinBindingSet* host = registeredHost();
+    return host ? host->directFunctions : std::span<const BuiltinDirectFunctionBinding>();
+}
+
 const BuiltinNativeFunctionBinding* BuiltinBindings::nativeFunctionOf(BuiltinID id)
 {
     return findBinding(&BuiltinBindingSet::nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
+}
+
+std::optional<uint32_t> BuiltinBindings::nativeFunctionNumberOf(BuiltinID id)
+{
+    const BuiltinBindingSet* host = registeredHost();
+    if (!host)
+        return std::nullopt;
+    const BuiltinNativeFunctionBinding* binding = findBindingIn(host->nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
+    if (!binding)
+        return std::nullopt;
+    return static_cast<uint32_t>(binding - host->nativeFunctions.data());
+}
+
+std::span<const BuiltinNativeFunctionBinding> BuiltinBindings::nativeFunctionsOfHost()
+{
+    const BuiltinBindingSet* host = registeredHost();
+    return host ? host->nativeFunctions : std::span<const BuiltinNativeFunctionBinding>();
 }
 
 std::optional<LinkTimeConstant> BuiltinBindings::linkTimeConstantOf(BuiltinID id)

@@ -29,6 +29,8 @@ struct OperatorChoice {
 constexpr bool hasOperatorForm(Opcode opcode) { return Value::opcodesWithForm.contains(opcode); }
 
 OperatorChoice chooseOperatorForm(const OperatorSite&, const Value&);
+// The form of that choice.
+OperatorForm chooseFormOfOperator(const OperatorSite&, const Value&);
 
 OperatorForm chooseArithmeticForm(const OperatorSite&, const Value&);
 OperatorForm chooseComparisonForm(const OperatorSite&, const Value&);

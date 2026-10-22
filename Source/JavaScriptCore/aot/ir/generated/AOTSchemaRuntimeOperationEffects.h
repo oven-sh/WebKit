@@ -33,22 +33,30 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
     case RuntimeOperation::MulNumberAndValueAsNumber: case RuntimeOperation::DivNumberAndValueAsNumber: case RuntimeOperation::InstanceOfAndCache:
     case RuntimeOperation::DefaultHasInstance: case RuntimeOperation::DestructureIterable: case RuntimeOperation::GetPropertyEnumerator:
     case RuntimeOperation::EnumeratorNext: case RuntimeOperation::CreatePromise: case RuntimeOperation::ResolvePromise:
-    case RuntimeOperation::ResolvePromiseOrReturnResult: case RuntimeOperation::StepAsyncGenerator: case RuntimeOperation::PromiseThen:
-    case RuntimeOperation::PromiseCatch: case RuntimeOperation::PromiseAll: case RuntimeOperation::DirectEval:
-    case RuntimeOperation::GetFromArguments: case RuntimeOperation::GetModuleNamespace: case RuntimeOperation::ImportModule:
-    case RuntimeOperation::RequireModule: case RuntimeOperation::ResolveModule: case RuntimeOperation::ImportDynamic:
-    case RuntimeOperation::RequireDynamic: case RuntimeOperation::ResolveDynamic: case RuntimeOperation::GetById: case RuntimeOperation::PutById:
-    case RuntimeOperation::PutByIdSloppy: case RuntimeOperation::DeleteById: case RuntimeOperation::DeleteByIdSloppy:
-    case RuntimeOperation::InByIdAndCache: case RuntimeOperation::HasOwnByIdAndCache: case RuntimeOperation::GetByIdAndCache:
-    case RuntimeOperation::PutByIdAndCache: case RuntimeOperation::GetFreeName: case RuntimeOperation::GetFreeNameForTypeOf:
-    case RuntimeOperation::SetFreeName: case RuntimeOperation::SetFreeNameSloppy: case RuntimeOperation::DeleteFreeName:
-    case RuntimeOperation::GetByVal: case RuntimeOperation::GetByValAndCache: case RuntimeOperation::PutByVal:
-    case RuntimeOperation::PutByValAndCache: case RuntimeOperation::PutByValAndCacheSloppy: case RuntimeOperation::InByValAndCache:
-    case RuntimeOperation::HasOwnByValAndCache: case RuntimeOperation::DeleteByVal: case RuntimeOperation::DeleteByValSloppy:
-    case RuntimeOperation::GetByValWithThis: case RuntimeOperation::GetOwnProperty: case RuntimeOperation::CallGetterOfSlot:
-    case RuntimeOperation::CallSetterOfSlot: case RuntimeOperation::GetExtraProperty: case RuntimeOperation::PutExtraProperty:
-    case RuntimeOperation::ArraySplice: case RuntimeOperation::ArrayUnshift: case RuntimeOperation::OwnPropertyKeys:
-    case RuntimeOperation::HasOwnProperty: case RuntimeOperation::PropertyIsEnumerable: case RuntimeOperation::GetOwnPropertyDescriptor:
+    case RuntimeOperation::ResolvePromiseOrReturnResult: case RuntimeOperation::RejectWithException: case RuntimeOperation::AsyncIteratorStep:
+    case RuntimeOperation::FinishAsyncIteratorStep: case RuntimeOperation::PromiseThen: case RuntimeOperation::PromiseCatch:
+    case RuntimeOperation::PromiseAll: case RuntimeOperation::DirectEval: case RuntimeOperation::FillBuiltinValue:
+    case RuntimeOperation::CallCustomGetter: case RuntimeOperation::GetFromArguments: case RuntimeOperation::GetModuleNamespace:
+    case RuntimeOperation::ImportModule: case RuntimeOperation::RequireModule: case RuntimeOperation::ResolveModule:
+    case RuntimeOperation::BeginModuleEvaluation: case RuntimeOperation::ImportDynamic: case RuntimeOperation::RequireDynamic:
+    case RuntimeOperation::ResolveDynamic: case RuntimeOperation::GetById: case RuntimeOperation::PutById: case RuntimeOperation::PutByIdSloppy:
+    case RuntimeOperation::DeleteById: case RuntimeOperation::DeleteByIdSloppy: case RuntimeOperation::InByIdAndCache:
+    case RuntimeOperation::HasOwnByIdAndCache: case RuntimeOperation::GetByIdAndCache: case RuntimeOperation::PutByIdAndCache:
+    case RuntimeOperation::GetFreeName: case RuntimeOperation::GetFreeNameForTypeOf: case RuntimeOperation::SetFreeName:
+    case RuntimeOperation::SetFreeNameSloppy: case RuntimeOperation::DeleteFreeName: case RuntimeOperation::GetGlobalBinding:
+    case RuntimeOperation::GetGlobalObjectBinding: case RuntimeOperation::SetGlobalBinding: case RuntimeOperation::SetGlobalBindingSloppy:
+    case RuntimeOperation::SetGlobalObjectBinding: case RuntimeOperation::SetGlobalObjectBindingSloppy: case RuntimeOperation::GetByVal:
+    case RuntimeOperation::GetByValAndCache: case RuntimeOperation::PutByVal: case RuntimeOperation::PutByValAndCache:
+    case RuntimeOperation::PutByValAndCacheSloppy: case RuntimeOperation::InByValAndCache: case RuntimeOperation::HasOwnByValAndCache:
+    case RuntimeOperation::DeleteByVal: case RuntimeOperation::DeleteByValSloppy: case RuntimeOperation::GetByValWithThis:
+    case RuntimeOperation::GetOwnProperty: case RuntimeOperation::CallGetterOfSlot: case RuntimeOperation::CallSetterOfSlot:
+    case RuntimeOperation::GetExtraProperty: case RuntimeOperation::PutExtraProperty: case RuntimeOperation::ArraySplice:
+    case RuntimeOperation::ArrayUnshift: case RuntimeOperation::ArrayJoinOfAnyReceiver: case RuntimeOperation::NumberOfAnyValue:
+    case RuntimeOperation::StringOfAnyValue: case RuntimeOperation::ObjectToStringOfAnyValue: case RuntimeOperation::TextOfBytes:
+    case RuntimeOperation::EncodeTextToBytes: case RuntimeOperation::EncodeTextIntoBytes: case RuntimeOperation::TypedArraySetOfAnyValue:
+    case RuntimeOperation::TypedArraySubarrayOfAnyValue: case RuntimeOperation::CodeURIOfAnyValue: case RuntimeOperation::ArraySearchOfAnyValue:
+    case RuntimeOperation::ByteLengthOfAnyValue: case RuntimeOperation::OwnPropertyKeys: case RuntimeOperation::ObjectValues:
+    case RuntimeOperation::ObjectEntries: case RuntimeOperation::PropertyIsEnumerable: case RuntimeOperation::GetOwnPropertyDescriptor:
     case RuntimeOperation::GetOwnPropertyFields: case RuntimeOperation::ArraySpeciesCreate: case RuntimeOperation::ResumeGenerator:
     case RuntimeOperation::ToLength: case RuntimeOperation::RequireBuiltinModule: case RuntimeOperation::NativeBinding:
     case RuntimeOperation::NewError: case RuntimeOperation::RegExpExec: case RuntimeOperation::RegExpTest: case RuntimeOperation::RegExpFind:
@@ -57,12 +65,13 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
     case RuntimeOperation::StringSearchRegExp: case RuntimeOperation::RegExpExecPrefix: case RuntimeOperation::StringMatchPrefix:
         sink.unknownCode();
         return;
-    case RuntimeOperation::NewClassToken: case RuntimeOperation::AllocateSlow: case RuntimeOperation::CloneObjectAs:
-    case RuntimeOperation::MaterializeEnvironment: case RuntimeOperation::NewClosureSlow: case RuntimeOperation::DoubleToString:
+    case RuntimeOperation::NewClassToken: case RuntimeOperation::AllocateSlow: case RuntimeOperation::GetHeaderOfAllocation:
+    case RuntimeOperation::NewDictionary: case RuntimeOperation::CloneObjectAs: case RuntimeOperation::MaterializeEnvironment:
+    case RuntimeOperation::NewClosureSlow: case RuntimeOperation::MoveClosureToHeap: case RuntimeOperation::DoubleToString:
     case RuntimeOperation::CharToString: case RuntimeOperation::ToThis: case RuntimeOperation::CreateAsyncFromSyncIterator:
     case RuntimeOperation::NewPromise: case RuntimeOperation::NewGenerator: case RuntimeOperation::NewRuntimeError:
     case RuntimeOperation::NewRuntimeErrorWithName: case RuntimeOperation::NewSuppressedError: case RuntimeOperation::ReadField:
-    case RuntimeOperation::NewMap: case RuntimeOperation::AllocateStorage: case RuntimeOperation::NewArrayIterator:
+    case RuntimeOperation::NewMap: case RuntimeOperation::NewSet: case RuntimeOperation::AllocateStorage: case RuntimeOperation::NewArrayIterator:
     case RuntimeOperation::DateToISOString: case RuntimeOperation::PrepareBoundFunctionAllocation: case RuntimeOperation::FormatDateTime:
     case RuntimeOperation::FormatNumber: case RuntimeOperation::NumberToStringWithRadix: case RuntimeOperation::Int32ToStringWithRadix:
     case RuntimeOperation::JSONParseString: case RuntimeOperation::JSONParseKey: case RuntimeOperation::JSONParseValue:
@@ -73,27 +82,39 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         return;
     case RuntimeOperation::PrivateGet: case RuntimeOperation::PrivateHas: case RuntimeOperation::ThrowUnlessCallable:
     case RuntimeOperation::ThrowUnlessCallableNamed: case RuntimeOperation::ThrowIfTypedArrayIsDetached: case RuntimeOperation::Throw:
-    case RuntimeOperation::ThrowToHandlerInFunction: case RuntimeOperation::ThrowStackOverflowError: case RuntimeOperation::EnforceType:
+    case RuntimeOperation::ThrowToHandlerInFunction: case RuntimeOperation::ThrowStackOverflowError:
         sink.readsAllHeaps();
         sink.throws();
         return;
-    case RuntimeOperation::PrivateSet: case RuntimeOperation::PrivateDefine:
+    case RuntimeOperation::PrivateSet:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.throws();
         sink.collects();
         return;
+    case RuntimeOperation::PrivateDefine:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::ArrayStorage));
+        sink.writes(MemoryLocation(AbstractHeap::Elements));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
+        sink.collects();
+        return;
     case RuntimeOperation::GetSuperBase: case RuntimeOperation::GetClassPrototype: case RuntimeOperation::SetConstructPrototype:
-    case RuntimeOperation::GetOwnDataProperty: case RuntimeOperation::LiteralStringToString: case RuntimeOperation::StringConstant:
-    case RuntimeOperation::NewStringConstant: case RuntimeOperation::KeyConstant: case RuntimeOperation::BuiltinCell:
-    case RuntimeOperation::BigIntConstant: case RuntimeOperation::SingletonClosure: case RuntimeOperation::MapNext: case RuntimeOperation::SetNext:
-    case RuntimeOperation::LinkTimeConstant: case RuntimeOperation::SharedRegExpLiteral:
+    case RuntimeOperation::GetOwnDataProperty: case RuntimeOperation::LiteralStringToString: case RuntimeOperation::ValidateLookup:
+    case RuntimeOperation::StringConstant: case RuntimeOperation::NewStringConstant: case RuntimeOperation::KeyConstant:
+    case RuntimeOperation::BuiltinCell: case RuntimeOperation::FindOwnSlotStructure: case RuntimeOperation::BigIntConstant:
+    case RuntimeOperation::SingletonClosure: case RuntimeOperation::LinkTimeConstant: case RuntimeOperation::SharedRegExpLiteral:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
@@ -101,13 +122,24 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
     case RuntimeOperation::DefineAccessor: case RuntimeOperation::DefineAccessors: case RuntimeOperation::DefineMethod:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.throws();
+        sink.collects();
+        return;
+    case RuntimeOperation::TryDefineLiveBinding: case RuntimeOperation::TryReExportFields: case RuntimeOperation::TryPutProperties:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
         return;
     case RuntimeOperation::SetFunctionName:
@@ -123,15 +155,16 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::PrototypeLinks));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
         sink.collects();
         return;
     case RuntimeOperation::NewClass:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
@@ -155,18 +188,25 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.throws();
         sink.collects();
         return;
+    case RuntimeOperation::TryCopyTwoObjects: case RuntimeOperation::MaterializeDeferredClosure: case RuntimeOperation::MakeFlattenedObjectAt:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.collects();
+        return;
     case RuntimeOperation::IsPlainDataObject: case RuntimeOperation::TypedArrayLength: case RuntimeOperation::ToBoolean:
     case RuntimeOperation::TypeOf: case RuntimeOperation::IsCallable: case RuntimeOperation::ContentsHaveType:
-    case RuntimeOperation::GetMappedArgument: case RuntimeOperation::HasExtraProperty: case RuntimeOperation::ArrayIndexOfDouble:
-    case RuntimeOperation::ArrayIndexOfInt32: case RuntimeOperation::IsConstructor: case RuntimeOperation::IsGeneratorSuspendedAtStart:
-    case RuntimeOperation::CountLongSeparators8: case RuntimeOperation::CountLongSeparators16: case RuntimeOperation::StringFindLiteral8:
-    case RuntimeOperation::StringReverseFindLiteral8: case RuntimeOperation::StringEqualsLiteral:
+    case RuntimeOperation::GetMappedArgument: case RuntimeOperation::HasExtraProperty: case RuntimeOperation::GetFieldOutsideSlot:
+    case RuntimeOperation::ArrayIndexOfDouble: case RuntimeOperation::ArrayIndexOfInt32: case RuntimeOperation::IsConstructor:
+    case RuntimeOperation::IsGeneratorSuspendedAtStart: case RuntimeOperation::CountLongSeparators8: case RuntimeOperation::CountLongSeparators16:
+    case RuntimeOperation::StringFindLiteral8: case RuntimeOperation::StringReverseFindLiteral8: case RuntimeOperation::StringEqualsLiteral:
     case RuntimeOperation::StringEqualsLiteralInRegister: case RuntimeOperation::ShortStringOfString: case RuntimeOperation::JSONParseNumber:
     case RuntimeOperation::JSONParseInteger: case RuntimeOperation::JSONFindMember: case RuntimeOperation::JSONMemberRepeats:
     case RuntimeOperation::JSONKeyRepeats:
         sink.readsAllHeaps();
         return;
-    case RuntimeOperation::ExpectRows: case RuntimeOperation::TryPutProperties: case RuntimeOperation::AddPropertyBySlot:
+    case RuntimeOperation::ExpectRows: case RuntimeOperation::AddPropertyBySlot:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
@@ -174,8 +214,9 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.collects();
         return;
     case RuntimeOperation::BarrierSlow: case RuntimeOperation::BarrierSlowPreservingRegisters: case RuntimeOperation::RememberElement:
-    case RuntimeOperation::Catch: case RuntimeOperation::CatchException: case RuntimeOperation::FillSiteCache: case RuntimeOperation::GetGeneric:
-    case RuntimeOperation::FindLongSeparators8: case RuntimeOperation::FindLongSeparators16: case RuntimeOperation::JSONObjectKey:
+    case RuntimeOperation::TryFinishBirth: case RuntimeOperation::Catch: case RuntimeOperation::CatchException: case RuntimeOperation::FillSiteCache:
+    case RuntimeOperation::RecordArrival: case RuntimeOperation::GetGeneric: case RuntimeOperation::FindLongSeparators8:
+    case RuntimeOperation::FindLongSeparators16: case RuntimeOperation::JSONObjectKey:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         return;
@@ -189,10 +230,18 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case RuntimeOperation::ReserveArrayCapacity: case RuntimeOperation::ArrayGrow:
+    case RuntimeOperation::ReserveArrayCapacity: case RuntimeOperation::ConvertToDoubleStorage: case RuntimeOperation::ArrayGrow:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::Elements));
         sink.writes(MemoryLocation(AbstractHeap::ArrayStorage));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.collects();
+        return;
+    case RuntimeOperation::ReserveCollectionCapacity:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::CollectionStorage));
+        sink.writes(MemoryLocation(AbstractHeap::CollectionEntries));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
@@ -202,13 +251,13 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::TypedArrayElements));
         return;
     case RuntimeOperation::Substring: case RuntimeOperation::Flatten: case RuntimeOperation::CompareStrings: case RuntimeOperation::StringHasAt:
-    case RuntimeOperation::StringIndexOfFrom: case RuntimeOperation::CompareStrictEq: case RuntimeOperation::MapGet: case RuntimeOperation::MapHas:
-    case RuntimeOperation::SetHas: case RuntimeOperation::ArrayJoin: case RuntimeOperation::StringSplitPrefix:
-    case RuntimeOperation::StringStartsWithLiteral: case RuntimeOperation::StringEndsWithLiteral: case RuntimeOperation::StringIndexOfLiteral:
-    case RuntimeOperation::StringLastIndexOfLiteral: case RuntimeOperation::StringIndexOfCharacter: case RuntimeOperation::StringTrim:
-    case RuntimeOperation::StringLastIndexOf: case RuntimeOperation::StringLocaleCompare: case RuntimeOperation::StringToLowerCase:
-    case RuntimeOperation::StringToUpperCase: case RuntimeOperation::StringRepeat: case RuntimeOperation::StringPad: case RuntimeOperation::NewRegExp:
-    case RuntimeOperation::StringReplaceString: case RuntimeOperation::StringReplaceAllString: case RuntimeOperation::StringSplitString:
+    case RuntimeOperation::StringIndexOfFrom: case RuntimeOperation::CompareStrictEq: case RuntimeOperation::ArrayJoin:
+    case RuntimeOperation::StringSplitPrefix: case RuntimeOperation::StringStartsWithLiteral: case RuntimeOperation::StringEndsWithLiteral:
+    case RuntimeOperation::StringIndexOfLiteral: case RuntimeOperation::StringLastIndexOfLiteral: case RuntimeOperation::StringIndexOfCharacter:
+    case RuntimeOperation::StringTrim: case RuntimeOperation::StringLastIndexOf: case RuntimeOperation::StringLocaleCompare:
+    case RuntimeOperation::StringToLowerCase: case RuntimeOperation::StringToUpperCase: case RuntimeOperation::StringRepeat:
+    case RuntimeOperation::StringPad: case RuntimeOperation::NewRegExp: case RuntimeOperation::StringReplaceString:
+    case RuntimeOperation::StringReplaceAllString: case RuntimeOperation::StringSplitString: case RuntimeOperation::JSONStringifyPrimitive:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::StringStorage));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
@@ -238,6 +287,7 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
     case RuntimeOperation::StringUTF8Length16: case RuntimeOperation::CountSeparators8: case RuntimeOperation::CountSeparators16:
     case RuntimeOperation::FindSeparators8: case RuntimeOperation::FindSeparators16: case RuntimeOperation::StringImplsAreEqual:
     case RuntimeOperation::CompareStringImpls: case RuntimeOperation::StringImplEqualsImageString: case RuntimeOperation::HashStringImpl:
+    case RuntimeOperation::RegExpMatchFlatProgram8:
         return;
     case RuntimeOperation::StringBuilderBegin:
         sink.readsAllHeaps();
@@ -248,7 +298,9 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         return;
     case RuntimeOperation::StringBuilderAppend: case RuntimeOperation::StringBuilderAppendString:
     case RuntimeOperation::StringBuilderAppendStringRange: case RuntimeOperation::StringBuilderToString: case RuntimeOperation::StringBuilderFinish:
-    case RuntimeOperation::Concatenate:
+    case RuntimeOperation::StackStringBuilderAppend: case RuntimeOperation::StackStringBuilderAppendStringRange:
+    case RuntimeOperation::StackStringBuilderFinish: case RuntimeOperation::Concatenate: case RuntimeOperation::MapGetByKeyParts:
+    case RuntimeOperation::HasByKeyParts:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::StringStorage));
         sink.writes(MemoryLocation(AbstractHeap::StringBuilderContents));
@@ -257,7 +309,7 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case RuntimeOperation::StringBuilderReserve: case RuntimeOperation::AppendNumberWithRadix:
+    case RuntimeOperation::StringBuilderReserve: case RuntimeOperation::StackStringBuilderGrow: case RuntimeOperation::AppendNumberWithRadix:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::StringBuilderContents));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
@@ -265,7 +317,7 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case RuntimeOperation::StringBuilderRollBack: case RuntimeOperation::StringBuilderDiscard:
+    case RuntimeOperation::StringBuilderRollBack: case RuntimeOperation::StringBuilderDiscard: case RuntimeOperation::StackStringBuilderDiscard:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::StringBuilderContents));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
@@ -281,7 +333,7 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case RuntimeOperation::RejectPromise: case RuntimeOperation::RejectWithException:
+    case RuntimeOperation::RejectPromise:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::PromiseState));
         sink.writes(MemoryLocation(AbstractHeap::ExternalState));
@@ -289,8 +341,17 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
         return;
-    case RuntimeOperation::SaveFrameAndAwait: case RuntimeOperation::SaveFrameAndAwaitCall: case RuntimeOperation::AwaitWithSavedFrame:
-    case RuntimeOperation::AwaitCallWithSavedFrame: case RuntimeOperation::SaveFrameAndYield:
+    case RuntimeOperation::TakeGeneratorPrototype:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::PrototypeLinks));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.collects();
+        return;
+    case RuntimeOperation::SaveFrameAndAwait: case RuntimeOperation::SaveFrameAndAwaitCall: case RuntimeOperation::SaveFrameAndAwaitAfterTurn:
+    case RuntimeOperation::AwaitWithSavedFrame: case RuntimeOperation::AwaitCallWithSavedFrame: case RuntimeOperation::AwaitWithSavedFrameAfterTurn:
+    case RuntimeOperation::SaveFrameAndYield:
         sink.unknownCode();
         sink.suspends();
         return;
@@ -303,6 +364,14 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::ExternalState));
         return;
+    case RuntimeOperation::PhotographOperand: case RuntimeOperation::CompareOperandWithPhotograph: case RuntimeOperation::ValidateGlobalBinding:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::ValidationState));
+        return;
+    case RuntimeOperation::NoteFailedGuard:
+        sink.reads(MemoryLocation(AbstractHeap::ValidationState));
+        sink.writes(MemoryLocation(AbstractHeap::ValidationState));
+        return;
     case RuntimeOperation::PollSlow:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
@@ -310,10 +379,26 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.collects();
         sink.terminates();
         return;
+    case RuntimeOperation::ArmBuiltinLocation:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
     case RuntimeOperation::SetMappedArgument:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::Elements));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
+    case RuntimeOperation::RecordRequire:
+        sink.reads(MemoryLocation(AbstractHeap::ExternalState));
+        sink.writes(MemoryLocation(AbstractHeap::ExternalState));
+        return;
+    case RuntimeOperation::AbandonModuleEvaluation:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::ExternalState));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.collects();
         return;
     case RuntimeOperation::GetByValGeneric: case RuntimeOperation::InByValGeneric:
         sink.readsAllHeaps();
@@ -334,23 +419,39 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
         sink.collects();
         return;
-    case RuntimeOperation::CreateField: case RuntimeOperation::DidCreateField: case RuntimeOperation::DidCreateFieldAt:
-    case RuntimeOperation::DidCreateFieldOutOfLineAt: case RuntimeOperation::DidCreateFieldsAt: case RuntimeOperation::EnsureExtensionGranules:
-    case RuntimeOperation::StoreDoubleInExtension:
+    case RuntimeOperation::CreateField:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
         sink.collects();
         return;
-    case RuntimeOperation::MaterializeDeferredClosure:
+    case RuntimeOperation::DidCreateField: case RuntimeOperation::DidCreateFieldAt: case RuntimeOperation::DidCreateFieldOutOfLineAt:
+    case RuntimeOperation::DidCreateFieldsAt: case RuntimeOperation::EnsureExtensionGranules:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
+    case RuntimeOperation::EnsureExtensionGranulesWithoutCollecting:
         sink.readsAllHeaps();
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
+    case RuntimeOperation::MapGet: case RuntimeOperation::MapHas: case RuntimeOperation::SetHas:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::StringStorage));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.writes(MemoryLocation(AbstractHeap::CollectionStorage));
+        sink.throws();
         sink.collects();
         return;
     case RuntimeOperation::MapSet: case RuntimeOperation::SetAdd: case RuntimeOperation::MapDelete: case RuntimeOperation::SetDelete:
@@ -379,6 +480,12 @@ constexpr void forEachDeclaredEffect(RuntimeOperation operation, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
+        return;
+    case RuntimeOperation::MapNext: case RuntimeOperation::SetNext:
+        sink.readsAllHeaps();
+        sink.writes(MemoryLocation(AbstractHeap::CollectionStorage));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         return;
     case RuntimeOperation::ObjectCreate:
         sink.readsAllHeaps();

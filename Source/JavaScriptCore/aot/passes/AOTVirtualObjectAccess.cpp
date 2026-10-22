@@ -26,6 +26,8 @@ static_assert(!OperandIndex::CallBuiltin::receiver, "A read names its object in 
 static constexpr ProofSet proofsOfLayoutObject {
     Proof::Shape,
     Proof::NoExtraProperties,
+    Proof::NoFieldOutsideSlot,
+    Proof::BirthFieldsFilled,
     Proof::NotFrozen,
     Proof::SlotFilled,
     Proof::OwnInstance,
@@ -68,8 +70,12 @@ static VirtualFieldAccess lookUpSlot(const Program& program, const VirtualObject
     switch (operation) {
     case Opcode::GetSlot:
         return createFieldAccess(field, PresentField::IsOwnData, AbsentField::Unknown);
-    case Opcode::GetSlotOrUndefined:
     case Opcode::IsSlotFilled:
+        // Of the fields that a built-in delivers some stand for fields that the object would lack.
+        if (description.kind == VirtualObjectKind::BuiltinFields && !description.hasKeyOrder)
+            return { };
+        [[fallthrough]];
+    case Opcode::GetSlotOrUndefined:
         return createFieldAccess(field, PresentField::IsOwnData, AbsentField::FindsNothing);
     case Opcode::PutSlot:
     case Opcode::PutSlotOrAdd:
@@ -196,6 +202,7 @@ VirtualFieldAccess lookUpField(const VirtualObjectContext& context, const Virtua
     case Opcode::GetArrayElement:
     case Opcode::PutArrayElement:
     case Opcode::HasArrayElement:
+    case Opcode::IsElementPresent:
         return lookUpElement(context, description, access, access.positionOperand());
     case Opcode::GetArrayLength:
         return arrayKinds.contains(description.kind) ? createLengthAccess() : VirtualFieldAccess { };
@@ -257,12 +264,13 @@ VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const V
 
     PropertyAccessPlan plan = planPropertyAccess({ program, context.flow }, *query);
     if (!plan.conditions.isEmpty() || !canRelyOn(context, description, plan.requiredProofs)) {
-        // A store to a data property that the object has looks at nothing above the object. What the plan asks of the prototypes is for the store that creates the field.
-        if (plan.form != AccessForm::Slot || query->access != Access::Store)
+        // An access to a data property that the object has looks at nothing above the object. What the plan asks of the prototypes is for an empty slot.
+        bool readsValueInSlot = query->access == Access::Read && (plan.operation == Opcode::GetSlot || plan.operation == Opcode::GetSlotOrUndefined);
+        if (plan.form != AccessForm::Slot || (query->access != Access::Store && !readsValueInSlot))
             return { };
-        VirtualFieldAccess stored = lookUpSlot(program, description, Opcode::PutSlot, query->key);
-        stored.whenAbsent = AbsentField::Unknown;
-        return stored;
+        VirtualFieldAccess found = lookUpSlot(program, description, readsValueInSlot ? Opcode::GetSlot : Opcode::PutSlot, query->key);
+        found.whenAbsent = AbsentField::Unknown;
+        return found;
     }
 
     switch (plan.form) {
@@ -276,6 +284,7 @@ VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const V
     case AccessForm::Builtin:
     case AccessForm::Method:
     case AccessForm::Call:
+    case AccessForm::GetterInSlot:
     case AccessForm::Split:
         return { };
     }
@@ -286,6 +295,12 @@ VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const V
     return result;
 }
 
+// The guard of a read of a present element has found the element, and the users of a read that takes a hole for NaN get the marker of Double storage. Neither read gives undefined where there is no element.
+static bool readsAbsentElementAsUndefined(const Value& read)
+{
+    return read.opcode != Opcode::GetArrayElement || (!read.isPresent() && !read.readsHoleAsNaN());
+}
+
 VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const VirtualObjectDescription& description, const Value& access, ValueID position)
 {
     if (!kindsWithElements.contains(description.kind))
@@ -293,10 +308,11 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
 
     bool isArray = description.kind == VirtualObjectKind::Array;
     Interpretation interpretation = interpretedOf(access.opcode);
+    bool readsUndefinedWhenAbsent = interpretation == Interpretation::Read && readsAbsentElementAsUndefined(access);
     AbsentField whenAbsent = AbsentField::Unknown;
     switch (interpretation) {
     case Interpretation::Read:
-        if (description.kind != VirtualObjectKind::BuiltinPrefix)
+        if (readsUndefinedWhenAbsent && description.kind != VirtualObjectKind::BuiltinPrefix)
             whenAbsent = AbsentField::FindsNothing;
         break;
     case Interpretation::Test:
@@ -318,11 +334,13 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
 
     const Program& program = context.program;
     if (std::optional<int64_t> index = integerConstantThroughCasts(program, context.function, position)) {
+        // The other accesses go on to the property of that name. This test asks for an element, and none is at a position that is no index.
         if (*index < 0 || *index > static_cast<int64_t>(MAX_ARRAY_INDEX))
-            return { };
+            return access.opcode == Opcode::IsElementPresent ? createAbsentAccess() : VirtualFieldAccess { };
         return createFieldAccess(VirtualField::element(static_cast<uint32_t>(*index)), PresentField::IsOwnData, whenAbsent);
     }
-    if (interpretation == Interpretation::Read && program.typeOf(context.function, position).isNumber())
+    // A read at an unknown number gives undefined for every number that is no position of an element.
+    if (readsUndefinedWhenAbsent && program.typeOf(context.function, position).isNumber())
         return createDynamicElementAccess(position);
     return { };
 }

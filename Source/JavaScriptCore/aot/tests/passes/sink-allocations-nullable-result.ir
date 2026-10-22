@@ -9,7 +9,7 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Found" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
 variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
 
-function f0 name="find" role=ResultWrapper parameters=[{type=number}] results=[{type=null|object written=L0}] creator=ResultWrapper{worker=f13 nullish=Null layout=L0}
+function f0 name="find" role=ResultWrapper parameters=[{type=number}] results=[{type=null|L0}] creator=ResultWrapper{worker=f13 nullish=Null layout=L0}
 
 function f1 name="truthinessTest" parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number):
@@ -290,7 +290,7 @@ function f9 name="storedOnOnePath" parameters=[{type=number}] results=[{type=any
 # CHECK: b3([[tag9]]: i32, [[a9]]: number, [[b9]]: number):
 # CHECK: b4():
 # CHECK-NEXT: Switch [[tag9]] cases=[1] -> case [[present9]](), otherwise [[absent9]]()
-# CHECK: [[continuation9]]([[value9]]: null|object):
+# CHECK: [[continuation9]]([[value9]]: null|L0):
 # CHECK-NEXT: PutModuleVariable [[value9]] variable=g0
 # CHECK: [[present9]]():
 # CHECK-NEXT: [[cell9]]:{{*}}= NewObject -, [[a9]], [[b9]] layout=L0 fields=[0, 1]
@@ -399,7 +399,7 @@ function f14 name="narrowedValueUsedAfterOnePathBuiltIt" parameters=[{type=anyth
   b0(v0: anything, v1: boolean, v2: boolean, v3: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 1] [keepsShape]
+    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 1]
     Jump -> next b3(v4)
   b2():
     v5 = Null

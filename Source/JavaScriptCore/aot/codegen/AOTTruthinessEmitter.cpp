@@ -98,7 +98,7 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
     };
     bool expectsSmallValues = type.primitives & (Primitive::UndefinedOrNull | Primitive::Boolean);
     bool expectsObjects = type.hasObjects();
-    if (context.shape() == CodeShape::Compact || (!expectsSmallValues && !expectsObjects)) {
+    if (context.shape() != CodeShape::Fast || (!expectsSmallValues && !expectsObjects)) {
         branchInStub();
         return;
     }

@@ -362,7 +362,7 @@ ValueID ValidatorBuilder::emitTuple(const ResultNode& node, ValueID value, const
 
 DerivedSignature ValidatorBuilder::signatureOf(Emission& emission, const ResultNode& node)
 {
-    Type validated = withoutProofs(emission.program().at(node.type)).withPrimitives(Primitive::Undefined);
+    Type validated = emission.program().at(node.type).withoutClassProofs().withUntestableBuiltinsWidened().withPrimitives(Primitive::Undefined);
     return { { TypeTable::anything }, { emission.outcomeType(), emission.inputs().types.intern(validated) } };
 }
 

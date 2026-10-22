@@ -9,9 +9,9 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=71 function=f2 visibility=Private
-runtimefunction id=87 function=f3 visibility=Private
-runtimefunction id=93 function=f4 visibility=Private
+runtimefunction id=70 function=f2 visibility=Private
+runtimefunction id=86 function=f3 visibility=Private
+runtimefunction id=92 function=f4 visibility=Private
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f1
@@ -28,15 +28,15 @@ function f1 name="numbers" flags=[IsGenerator, TakesCallee] results=[{type=anyth
     v3 = Yield v2
     Return
 }
-function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=71 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Return v1
 }
-function f3 name="return" role=Library flags=[HasThis] enclosingRuntimeFunction=87 parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="return" role=Library flags=[HasThis] enclosingRuntimeFunction=86 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Return v1
 }
-function f4 name="throw" role=Library flags=[HasThis] enclosingRuntimeFunction=93 parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="throw" role=Library flags=[HasThis] enclosingRuntimeFunction=92 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Return v1
 }

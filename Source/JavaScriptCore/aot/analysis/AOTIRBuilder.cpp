@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockFrequencies.h"
+#include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
@@ -48,9 +49,10 @@ static void setOperands(Instruction& instruction, std::initializer_list<ValueID>
     }
 }
 
-static bool hasPredictions(const Program& program)
+// Selection drops what is only expected of a value.
+static bool keepsExpectedTypes(const Program& program)
 {
-    return isLegalIn(Opcode::Predict, program.form());
+    return program.form() < IRForm::Selected;
 }
 
 static bool canReceiveEdgeResults(BlockID id, const Block& block)
@@ -66,18 +68,18 @@ static ValueID appendEdgeResult(IRBuilder& builder, Edge edge, uint32_t proof)
     const Terminator& terminator = function.at(edge.from).terminator;
     RELEASE_ASSERT(targetResultsOf(terminator.kind, edge.targetIndex, terminator.targets.size()) == TargetResults::Proofs);
 
-    Target& target = targetOf(function, edge);
+    Target& target = editTarget(function, edge);
     EdgeResultPosition position { edge.from, edge.targetIndex, static_cast<uint32_t>(target.proofs.size()) };
     target.proofs.append(proof);
 
     Value parameter(Opcode::Parameter);
     parameter.setOrigin(builder.origin());
     parameter.type = typeOnEdge(program, function, position, builder.types());
-    if (hasPredictions(program))
-        parameter.setPrediction(predictionOnEdge(program, function, position, builder.types()));
-    function.values.append(WTF::move(parameter));
+    if (keepsExpectedTypes(program))
+        parameter.setExpected(expectedTypeOnEdge(program, function, position, parameter.type, builder.types()));
+    function.add(WTF::move(parameter));
     ValueID id(function.values.size() - 1);
-    function.at(target.block).parameters.append(id);
+    function.edit(target.block, BlockEdit::Parameters).parameters.append(id);
     return id;
 }
 
@@ -123,18 +125,19 @@ void IRBuilder::moveToEndOf(BlockID block)
 BlockID IRBuilder::addBlock(BlockFrequency frequency)
 {
     RELEASE_ASSERT(!m_handler || m_handler->block.index() < m_function.blocks.size());
-    m_function.blocks.append(Block { });
-    m_function.blocks.last().frequency = frequency;
-    m_function.blocks.last().handler = m_handler;
-    didChangeControlFlow();
-    return BlockID(m_function.blocks.size() - 1);
+    Block block;
+    block.frequency = frequency;
+    block.handler = m_handler;
+    BlockID id = m_function.addBlock(WTF::move(block));
+    didChangeControlFlow(std::span<const BlockID> { });
+    return id;
 }
 
 BlockID IRBuilder::addHandlerBlock(BlockRole role, ValueID subject, BlockFrequency frequency)
 {
     RELEASE_ASSERT(role != BlockRole::Ordinary);
     BlockID id = addBlock(frequency);
-    Block& block = m_function.at(id);
+    Block& block = m_function.edit(id);
     block.role = role;
     block.subject = subject;
     return id;
@@ -159,48 +162,64 @@ void IRBuilder::forEachIncomingTarget(BlockID block, NOESCAPE const ScopedLambda
     }
 
     for (Edge edge : edges)
-        functor(edge, targetOf(m_function, edge));
+        functor(edge, editTarget(m_function, edge));
 }
 
-uint32_t IRBuilder::numberOfSharedExplicitParameters(BlockID block)
+uint32_t IRBuilder::numberOfParametersForEdgeResults(BlockID block)
 {
     const Block& contents = m_function.at(block);
-    uint32_t numberOfParameters = contents.parameters.size();
     if (!canReceiveEdgeResults(block, contents))
-        return numberOfParameters;
+        return 0;
 
     uint32_t largest = 0;
     forEachIncomingTarget(block, [&](Edge edge, Target&) {
         if (!edge.isHandlerEdge())
             largest = std::max(largest, numberOfEdgeResults(m_function, edge.from, edge.targetIndex));
     });
-    RELEASE_ASSERT(largest <= numberOfParameters);
-    return numberOfParameters - largest;
+    RELEASE_ASSERT(largest <= contents.parameters.size());
+    return largest;
+}
+
+uint32_t IRBuilder::numberOfSharedExplicitParameters(BlockID block)
+{
+    return m_function.at(block).parameters.size() - numberOfParametersForEdgeResults(block);
 }
 
 ValueID IRBuilder::addParameter(BlockID block, TypeID type)
 {
+    return addParameter(block, type, numberOfParametersForEdgeResults(block));
+}
+
+ValueID IRBuilder::addParameter(BlockID block, TypeID type, uint32_t numberOfParametersForEdgeResults)
+{
     Value parameter(Opcode::Parameter);
     parameter.type = type;
     parameter.setOrigin(m_origin);
-    uint32_t position = numberOfSharedExplicitParameters(block);
     ValueID id = addValue(WTF::move(parameter));
-    m_function.at(block).parameters.insert(position, id);
-    didChangeValues();
+    auto& parameters = m_function.edit(block, BlockEdit::Parameters).parameters;
+    RELEASE_ASSERT(numberOfParametersForEdgeResults <= parameters.size());
+    parameters.insert(parameters.size() - numberOfParametersForEdgeResults, id);
+    didAddDetachedValue(id);
+    didChangeBlock(block);
     return id;
 }
 
 void IRBuilder::appendArgument(Edge edge, ValueID value)
 {
-    Target& target = targetOf(m_function, edge);
+    appendArgument(edge, value, numberOfParametersForEdgeResults(targetOf(m_function, edge).block));
+}
+
+void IRBuilder::appendArgument(Edge edge, ValueID value, uint32_t numberOfParametersForEdgeResults)
+{
+    Target& target = editTarget(m_function, edge);
     size_t numberOfParameters = m_function.at(target.block).parameters.size();
     size_t numberOfResults = edge.isHandlerEdge() ? 0 : numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
     RELEASE_ASSERT(target.arguments.size() + numberOfResults < numberOfParameters);
     size_t missing = numberOfParameters - numberOfResults - target.arguments.size();
-    size_t shared = numberOfSharedExplicitParameters(target.block);
+    size_t shared = numberOfParameters - numberOfParametersForEdgeResults;
     RELEASE_ASSERT(missing <= shared);
     target.arguments.insert(shared - missing, value);
-    didChangeValues();
+    didChangeBlock(edge.from);
 }
 
 ValueID IRBuilder::addEdgeResult(Edge edge, uint32_t proof)
@@ -214,7 +233,9 @@ ValueID IRBuilder::addEdgeResult(Edge edge, uint32_t proof)
 #endif
 
     ValueID id = appendEdgeResult(*this, edge, proof);
-    didChangeValues();
+    didAddDetachedValue(id);
+    didChangeBlock(edge.from);
+    didChangeBlock(targetOf(m_function, edge).block);
     return id;
 }
 
@@ -223,8 +244,10 @@ void IRBuilder::removeParameters(BlockID block, const BitVector& parameterIndexe
     if (parameterIndexes.isEmpty())
         return;
 
-    auto& parameters = m_function.at(block).parameters;
+    auto& parameters = m_function.edit(block, BlockEdit::Parameters).parameters;
+    Vector<BlockID, 8> changedBlocks { block };
     forEachIncomingTarget(block, [&](Edge edge, Target& target) {
+        changedBlocks.append(edge.from);
         size_t numberOfArguments = target.arguments.size();
         size_t numberOfResults = edge.isHandlerEdge() ? 0 : numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
         RELEASE_ASSERT(numberOfArguments + numberOfResults == parameters.size());
@@ -253,7 +276,8 @@ void IRBuilder::removeParameters(BlockID block, const BitVector& parameterIndexe
     for (size_t index : parameterIndexes)
         becomeUndefined(m_function, parameters[index]);
     removeAtIndexes(parameters, parameterIndexes);
-    didChangeValues();
+    for (BlockID changedBlock : changedBlocks)
+        didChangeBlock(changedBlock);
 }
 
 Value IRBuilder::make(Opcode opcode, std::initializer_list<ValueID> operands)
@@ -272,38 +296,37 @@ Terminator IRBuilder::makeTerminator(TerminatorKind kind, std::initializer_list<
     return terminator;
 }
 
-ValueID IRBuilder::addValue(Value&& value)
+ValueID IRBuilder::addValue(Value&& value, OptionSet<ValueEdit> edits)
 {
-    m_function.values.append(WTF::move(value));
+    m_function.add(WTF::move(value), edits);
     return ValueID(m_function.values.size() - 1);
 }
 
-void IRBuilder::prepare(Value& value)
+// What to tell the log of changes when the value is added as it is.
+OptionSet<ValueEdit> IRBuilder::prepare(Value& value)
 {
     RELEASE_ASSERT(value.opcode != Opcode::Parameter);
     value.setOrigin(m_origin);
-    value.type = resultTypeOf(m_context.program, m_function, value, m_types);
-    if (!hasPredictions(m_context.program)) {
-        value.setWritten(TypeID());
-        return;
+    if (keepsExpectedTypes(m_context.program) && !value.expectedForTyping()) {
+        typeByRule(m_context.program, m_function, value, m_types);
+        return { ValueEdit::Added, ValueEdit::TypedByRule };
     }
-    value.setWritten(writtenTypeOf(m_context.program, m_function, value, m_types));
-    if (!value.prediction())
-        value.setPrediction(predictionOf(m_context.program, m_function, value, m_types));
+    value.type = resultTypeOf(m_context.program, m_function, value, m_types);
+    return ValueEdit::Added;
 }
 
 ValueID IRBuilder::addDetached(Value&& value)
 {
-    prepare(value);
-    ValueID id = addValue(WTF::move(value));
-    didChangeValues();
+    OptionSet<ValueEdit> edits = prepare(value);
+    ValueID id = addValue(WTF::move(value), edits);
+    didAddDetachedValue(id);
     return id;
 }
 
 ValueID IRBuilder::append(Value&& value)
 {
-    prepare(value);
-    return appendPrepared(WTF::move(value));
+    OptionSet<ValueEdit> edits = prepare(value);
+    return appendPrepared(WTF::move(value), edits);
 }
 
 ValueID IRBuilder::appendWithType(Value&& value, TypeID type)
@@ -314,12 +337,13 @@ ValueID IRBuilder::appendWithType(Value&& value, TypeID type)
     return appendPrepared(WTF::move(value));
 }
 
-ValueID IRBuilder::appendPrepared(Value&& value)
+ValueID IRBuilder::appendPrepared(Value&& value, OptionSet<ValueEdit> edits)
 {
     RELEASE_ASSERT(m_block);
-    ValueID id = addValue(WTF::move(value));
-    m_function.at(m_block).values.append(id);
-    didChangeValues();
+    ValueID id = addValue(WTF::move(value), edits);
+    m_function.edit(m_block, BlockEdit::Values).values.append(id);
+    didAddDetachedValue(id);
+    didListValues(m_block, singleElementSpan(id));
     return id;
 }
 
@@ -383,43 +407,51 @@ ValueID IRBuilder::insertBefore(ProgramPoint point, Value&& value)
 {
     const Block& block = m_function.at(point.block);
     RELEASE_ASSERT(point.index <= block.values.size());
-    prepare(value);
-    ValueID id = addValue(WTF::move(value));
+    OptionSet<ValueEdit> edits = prepare(value);
+    ValueID id = addValue(WTF::move(value), edits);
     m_insertions.insert(point, id);
-    didChangeValues();
+    didAddDetachedValue(id);
     return id;
 }
 
 void IRBuilder::applyInsertions()
 {
-    m_insertions.execute(m_function);
-    didChangeValues();
+    if (m_insertions.isEmpty()) {
+        didChangeValues();
+        return;
+    }
+    m_insertions.execute(m_function, [&](BlockID block, std::span<const ValueID> values) {
+        didListValues(block, values);
+    });
 }
 
 void IRBuilder::eraseValues(BlockID id, const BitVector& indexes)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
-    Block& block = m_function.at(id);
+    Block& block = m_function.edit(id, BlockEdit::Values);
+    Vector<ValueID, 8> erased;
+    for (size_t index : indexes)
+        erased.append(block.values[index]);
     removeAtIndexes(block.values, indexes);
-    didChangeValues();
+    didEraseValues(id, erased.span());
 }
 
 Terminator& IRBuilder::openTerminator()
 {
     RELEASE_ASSERT(m_block);
-    Block& block = m_function.at(m_block);
+    Block& block = m_function.edit(m_block);
     RELEASE_ASSERT(isUnterminated(block));
     return block.terminator;
 }
 
 void IRBuilder::closeBlock()
 {
-    Terminator& terminator = m_function.at(m_block).terminator;
+    Terminator& terminator = m_function.edit(m_block).terminator;
     for (const Target& target : terminator.targets)
         RELEASE_ASSERT(target.block != entryBlock && target.block.index() < m_function.blocks.size());
     terminator.setOrigin(m_origin);
-    m_block = BlockID();
-    didChangeControlFlow();
+    BlockID closed = std::exchange(m_block, BlockID());
+    didChangeControlFlow(singleElementSpan(closed));
 }
 
 void IRBuilder::emitJump(BlockID block, Arguments&& arguments)
@@ -452,6 +484,25 @@ IRBuilder::BranchBlocks IRBuilder::emitBranch(ValueID condition, BlockFrequency 
     return blocks;
 }
 
+// What stands behind a test need not name what the test found: the body of the one function that the callee may be needs nothing of the callee. Passes move, merge and remove tests and the jumps
+// that lead past them. So in a validating build the code behind a test of a value begins with one operation that asks the value again. No pass counts or weighs that operation.
+void IRBuilder::appendValidationOfTestedValue(ValueID test)
+{
+    if (!context().build.validates())
+        return;
+    const Value& tested = m_function.at(test);
+    TypeID type;
+    if (tested.opcode == Opcode::TypeTest)
+        type = tested.testedType();
+    else if (tested.opcode == Opcode::IsClosureOf)
+        type = types().intern(Type::forFunction(tested.function()));
+    else
+        return;
+    Value validation = make(Opcode::ValidateType, { tested.valueOperand() });
+    validation.setValidatedType(type);
+    append(WTF::move(validation));
+}
+
 IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken)
 {
     Proof proof = provesOf(m_function.at(test).opcode);
@@ -461,6 +512,32 @@ IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t pr
     BlockID from = m_block;
     BranchBlocks blocks = emitBranch(test, taken, notTaken);
     ProvenBranch branch { blocks.taken, blocks.notTaken, appendEdgeResult(*this, Edge { from, 0 }, provenOperand), ValueID() };
+    didAddDetachedValue(branch.provenOnTaken);
+    didChangeBlock(blocks.taken);
+    if (!provesForStretch(proof)) {
+        branch.provenOnNotTaken = appendEdgeResult(*this, Edge { from, 1 }, provenOperand);
+        didAddDetachedValue(branch.provenOnNotTaken);
+        didChangeBlock(blocks.notTaken);
+    }
+    didChangeBlock(from);
+    appendValidationOfTestedValue(test);
+    return branch;
+}
+
+IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken, ProvenBranchTargets&& targets)
+{
+    Proof proof = provesOf(m_function.at(test).opcode);
+    RELEASE_ASSERT(proof != Proof::None);
+    RELEASE_ASSERT(!provesForStretch(proof) || !provenOperand);
+    RELEASE_ASSERT(!targets.whenNotTaken || provesForStretch(proof));
+
+    BlockID from = m_block;
+    BlockFrequency frequency = m_function.at(from).frequency;
+    BlockID takenBlock = targets.enteredOnlyWhenTaken ? targets.enteredOnlyWhenTaken : addBlock(rarerOf(taken, frequency));
+    Target whenNotTaken = targets.whenNotTaken ? WTF::move(*targets.whenNotTaken) : Target { addBlock(rarerOf(notTaken, frequency)), { }, { } };
+    BlockID notTakenBlock = whenNotTaken.block;
+    emitBranch(test, Target { takenBlock, { }, { } }, WTF::move(whenNotTaken));
+    ProvenBranch branch { takenBlock, notTakenBlock, appendEdgeResult(*this, Edge { from, 0 }, provenOperand), ValueID() };
     if (!provesForStretch(proof))
         branch.provenOnNotTaken = appendEdgeResult(*this, Edge { from, 1 }, provenOperand);
     didChangeValues();
@@ -547,6 +624,36 @@ void IRBuilder::didChangeControlFlow()
 {
     if (m_analyses)
         m_analyses->didChangeControlFlow();
+}
+
+void IRBuilder::didAddDetachedValue(ValueID value)
+{
+    if (m_analyses)
+        m_analyses->didAddDetachedValue(value);
+}
+
+void IRBuilder::didListValues(BlockID block, std::span<const ValueID> values)
+{
+    if (m_analyses)
+        m_analyses->didListValues(block, values);
+}
+
+void IRBuilder::didEraseValues(BlockID block, std::span<const ValueID> erased)
+{
+    if (m_analyses)
+        m_analyses->didEraseValues(block, erased);
+}
+
+void IRBuilder::didChangeBlock(BlockID block)
+{
+    if (m_analyses)
+        m_analyses->didChangeBlock(block);
+}
+
+void IRBuilder::didChangeControlFlow(std::span<const BlockID> changedBlocks)
+{
+    if (m_analyses)
+        m_analyses->didChangeControlFlow(changedBlocks);
 }
 
 } } } // namespace JSC::AOT::Typed

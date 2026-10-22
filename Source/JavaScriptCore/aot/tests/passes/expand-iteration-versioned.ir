@@ -54,13 +54,14 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK-NEXT: = Call [[next0]], [[iterator0]]
 # CHECK: [[body0]]() frequency=Unlikely handler=[[landing0]]():
 # CHECK-NEXT: [[called0]]: anything = Call v1, -, [[value0]]
-# CHECK: = PropGet [[iterator0]] key="return"
+# CHECK: = CallDirect [[iterator0]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: [[landing0]]() role=CleanupHandler frequency=Unlikely:
 # CHECK-NEXT: [[exception0]]: exception = CatchException
-# CHECK: [[iterator0]]: object = RequireObject {{*}} runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: [[next0]]: anything = PropGet [[iterator0]] key="next"
+# CHECK-NEXT: = CallDirect [[iterator0]] function=[[closeIteratorAfterThrow]] [isNeverInlined]
+# CHECK: [[open0]]: undefined = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
+# CHECK-NEXT: [[iterator0]]: object = ResultAt [[open0]]
+# CHECK-NEXT: [[next0]]: anything = ResultAt [[open0]] index=1
 # CHECK: Rethrow [[exception0]]
-# CHECK: = PropGet [[iterator0]] key="return"
 # CHECK: Jump -> next b5([[called0]])
 # CHECK: Jump -> next b5(v7)
 # ABSENT-LABEL: function f0 name="smallLoop"

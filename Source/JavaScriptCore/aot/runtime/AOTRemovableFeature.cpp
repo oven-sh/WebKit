@@ -12,10 +12,24 @@
 
 namespace JSC {
 
-template<uint16_t feature>
-static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwForRemovedHostFunction(JSGlobalObject* globalObject, CallFrame*)
+// One function stands in for all the host functions of a feature. The function object in the frame has the name under which the program knows the one that it called.
+static NEVER_INLINE EncodedJSValue throwForRemovedCallee(JSGlobalObject* globalObject, CallFrame* callFrame, uint16_t feature)
 {
-    return Bun__throwForRemovedFeature(globalObject, feature);
+    String name;
+    // The text of a feature of the host says where the function is found: Bun.color.
+    if (CalleeBits callee = callFrame->callee(); feature < firstEmbedderRemovableFeature && callee.isCell()) {
+        if (auto* function = dynamicDowncast<JSFunction>(callee.asCell()))
+            name = function->name(globalObject->vm());
+        else if (auto* function = dynamicDowncast<InternalFunction>(callee.asCell()))
+            name = function->name();
+    }
+    return Bun__throwForRemovedFunction(globalObject, feature, name.impl());
+}
+
+template<uint16_t feature>
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwForRemovedHostFunction(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    return throwForRemovedCallee(globalObject, callFrame, feature);
 }
 
 static NativeFunction throwingHostFunctionFor(RemovableFeature feature)

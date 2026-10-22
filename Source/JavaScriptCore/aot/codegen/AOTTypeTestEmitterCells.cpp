@@ -14,11 +14,14 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTGuardEmitter.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTPlacement.h"
 #include "AOTPureOperations.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTStubsValues.h"
 #include "AOTTypeRelations.h"
 #include "JSTypeInfo.h"
 #include <utility>
@@ -71,13 +74,34 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
         break;
     }
 
+    Vector<FunctionID, 8> functions;
     for (const CellTest& test : plan.cellTests) {
-        if (test.kind == CellTestKind::IsSymbol)
+        if (test.kind == CellTestKind::IsClosureOf)
+            functions.append(test.function);
+    }
+    bool testsFunctionIndex = functions.size() > 1;
+    if (testsFunctionIndex) {
+        visit([&] {
+            return emitter<ClosureTestEmitter>().isClosureOfAny(cell, functions.span());
+        });
+    }
+
+    for (const CellTest& test : plan.cellTests) {
+        if (test.kind == CellTestKind::IsSymbol || (testsFunctionIndex && test.kind == CellTestKind::IsClosureOf))
             continue;
         if (test.kind != CellTestKind::IsCallable) {
             visitCellTest(test);
             continue;
         }
+        if (asksStubWhetherCallable()) {
+            visit([&] {
+                return isCallableByStub(cell.value());
+            });
+            continue;
+        }
+        visit([&] {
+            return emitter<ClosureTestEmitter>().isSlimClosureAsCreated(cell);
+        });
         visit([&] {
             return emitter<ClosureTestEmitter>().hasFunctionCellType(cell);
         });
@@ -155,7 +179,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
             return boolean(false);
         return equal(cell, emitter<ConstantEmitter>().builtinCell(test.builtin));
     case CellTestKind::IsClosureOf:
-        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function);
+        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function, from, m_shape);
     case CellTestKind::IsSymbol:
         return equal(cell, emitter<ConstantEmitter>().keyConstant(test.symbol));
     case CellTestKind::SharingModeIs:
@@ -198,10 +222,14 @@ Condition TypeTestEmitter::isNamespaceOf(CellPointer cell, ModuleID module)
 
 Condition TypeTestEmitter::isCallable(CellPointer cell)
 {
-    return selectByBranch<Condition>(emitter<ClosureTestEmitter>().hasFunctionCellType(cell), [&] {
+    return selectByBranch<Condition>(emitter<ClosureTestEmitter>().isSlimClosureAsCreated(cell), [&] {
         return boolean(true);
     }, [&] {
-        return isCallableByCallData(cell);
+        return selectByBranch<Condition>(emitter<ClosureTestEmitter>().hasFunctionCellType(cell), [&] {
+            return boolean(true);
+        }, [&] {
+            return isCallableByCallData(cell);
+        });
     });
 }
 
@@ -210,7 +238,32 @@ Condition TypeTestEmitter::isCallableByCallData(CellPointer cell)
     return either<Condition>(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), OverridesGetCallData), [&] {
         return boolean(false);
     }, [&] {
-        return callWithoutSite<Condition>(RuntimeOperation::IsCallable, { cell }, { .isOnRarePath = true });
+        return isCallableByStub(cell.value());
+    });
+}
+
+// The stub refuses what is no cell, so a test that only a callable cell passes needs no other.
+bool TypeTestEmitter::isDecidedByCallableStub(const TypeTestPlan& plan) const
+{
+    return asksStubWhetherCallable() && plan.objects == ObjectsVerdict::NeedTest && !(plan.passingPrimitives & cellPrimitives)
+        && plan.cellTests.size() == 1 && plan.cellTests[0].kind == CellTestKind::IsCallable;
+}
+
+std::optional<FunctionID> TypeTestEmitter::functionDecidedByClosureStub(const TypeTestPlan& plan)
+{
+    if (plan.objects != ObjectsVerdict::NeedTest || plan.passingPrimitives & cellPrimitives || plan.cellTests.size() != 1 || plan.cellTests[0].kind != CellTestKind::IsClosureOf)
+        return std::nullopt;
+    FunctionID function = plan.cellTests[0].function;
+    if (!emitter<ClosureTestEmitter>().asksStubWhetherClosureOf(function, m_shape))
+        return std::nullopt;
+    return function;
+}
+
+Condition TypeTestEmitter::isCallableByStub(LValue cellOrOtherValue)
+{
+    return asBoolean([&](BranchTargets targets) {
+        LValue operands[] = { cellOrOtherValue };
+        emitter<RuntimeCallEmitter>().callStubWithoutSiteAndBranch(valueIsCallable(), operands, targets);
     });
 }
 
@@ -249,7 +302,11 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
     case PristineTest::NeverPasses:
         return boolean(false);
     case PristineTest::MayPass:
-        return emitter<ElementAccessEmitter>().isPristineArray(cell, aspects);
+        if (classID == BuiltinClasses::Array)
+            return emitter<ElementAccessEmitter>().isPristineArray(cell, aspects);
+        return emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
+    case PristineTest::ClosureAsCreated:
+        return emitter<GuardEmitter>().isClosureAsCreated(cell);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -261,11 +318,33 @@ Condition TypeTestEmitter::isOneOfStringLiterals(CellPointer string, const TypeT
 
 Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, const TypeTestPlan& plan)
 {
+    // Two literals or more are the cases of a switch, which compares and branches, or tests a bit where four or more numbers lie within 64.
+    // The number of a literal is its word without the tag; no other word that gets here, a string cell, gives so small a number.
+    static constexpr size_t minLiteralsForSwitch = 2;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Vector<uint32_t, 8> numbers;
+    for (StringID literal : plan.stringLiterals) {
+        if (inputs().literalStrings.indexOf(literal))
+            numbers.append(inputs().literalStrings.numberOf(literal));
+    }
+    bool usesSwitch = numbers.size() >= minLiteralsForSwitch;
     Condition result;
+    if (usesSwitch) {
+        result = asBoolean([&](BranchTargets targets) {
+            bool switchesOnNumber = numbers.size() >= B3::Limits::minCasesForBitTests;
+            LValue subject = word.value();
+            if (switchesOnNumber)
+                subject = m_out.lShr(m_out.sub(subject, m_out.constInt64(emptyLiteralStringWord)), m_out.constInt32(literalStringShift));
+            Vector<SwitchTarget, 8> cases;
+            for (uint32_t number : numbers)
+                cases.append({ static_cast<int64_t>(switchesOnNumber ? number : literalStringWord(number)), targets.taken });
+            m_out.switchOn(subject, cases.span(), targets.notTaken);
+        });
+    }
     for (StringID literal : plan.stringLiterals) {
         if (inputs().literalStrings.indexOf(literal)) {
-            result = logicalOr(result, equal(word, conversions.literalStringConstant(literal)));
+            if (!usesSwitch)
+                result = logicalOr(result, equal(word, conversions.literalStringConstant(literal)));
             continue;
         }
         result = logicalOr(result, either<Condition>(conversions.isStringCell(word), [&] {

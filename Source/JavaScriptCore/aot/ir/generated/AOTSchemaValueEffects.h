@@ -16,14 +16,15 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
 {
     switch (value.opcode) {
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double:
-    case Opcode::FinishObject: case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::Upcast: case Opcode::Predict:
-    case Opcode::TypeTest: case Opcode::Results: case Opcode::ResultAt: case Opcode::GetClassPrototype: case Opcode::FinishClass:
-    case Opcode::IsConstructor: case Opcode::HasJSType: case Opcode::Unspecified: case Opcode::Parameter: case Opcode::AssumeType:
-    case Opcode::IsClosureOf: case Opcode::AllGuards: case Opcode::GetStringLength: case Opcode::GetArgument: case Opcode::GetRestLength:
-    case Opcode::ReturnsToResultTest: case Opcode::GetCapture: case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32:
-    case Opcode::ToIntegerOrInfinity: case Opcode::JSONAdvance: case Opcode::JSONObjectBegin: case Opcode::IntegerBound: case Opcode::StringRange:
-    case Opcode::ResolveCallTarget: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger:
-    case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Compress:
+    case Opcode::FinishObject: case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::Upcast: case Opcode::NarrowByField:
+    case Opcode::Check: case Opcode::Convert: case Opcode::TypeTest: case Opcode::Results: case Opcode::ResultAt: case Opcode::GetClassPrototype:
+    case Opcode::FinishClass: case Opcode::IsConstructor: case Opcode::HasJSType: case Opcode::IsClosureOf: case Opcode::Unspecified:
+    case Opcode::EmptyArgumentList: case Opcode::Parameter: case Opcode::AssumeType: case Opcode::ReadAgain: case Opcode::BorrowedParameter:
+    case Opcode::AllGuards: case Opcode::GetStringLength: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::GetCapture:
+    case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::IsFunctionOfBuiltin:
+    case Opcode::JSONAdvance: case Opcode::JSONObjectBegin: case Opcode::IntegerBound: case Opcode::StringRange: case Opcode::ResolveCallTarget:
+    case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger:
+    case Opcode::NarrowInteger: case Opcode::Compress:
         return;
     case Opcode::String: case Opcode::BigInt: case Opcode::Builtin: case Opcode::LinkTimeConstant: case Opcode::KeyConstant:
     case Opcode::SharedRegExpLiteral: case Opcode::Decode:
@@ -49,9 +50,10 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case Opcode::NewClosure: case Opcode::NewObject: case Opcode::NewArray: case Opcode::NewRegExp: case Opcode::NewTemplateObject:
-    case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::ToThis: case Opcode::NewClassToken:
-    case Opcode::CreateIteratorResult: case Opcode::NewPromise: case Opcode::CreateRest: case Opcode::CreateAsyncFromSyncIterator:
+    case Opcode::NewClosure: case Opcode::NewObject: case Opcode::NewDictionary: case Opcode::NewArray: case Opcode::NewRegExp:
+    case Opcode::NewTemplateObject: case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::ToThis:
+    case Opcode::NewClassToken: case Opcode::CreateIteratorResult: case Opcode::NewPromise: case Opcode::CreateRest:
+    case Opcode::CreateAsyncFromSyncIterator:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.collects();
@@ -72,12 +74,13 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
     case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::SuperGet:
     case Opcode::SuperSet: case Opcode::Call: case Opcode::Construct: case Opcode::CallList: case Opcode::ConstructList: case Opcode::CallDirect:
     case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule:
-    case Opcode::ResolveModule: case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::DirectEval:
-    case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ResumeGenerator: case Opcode::StepGenerator:
-    case Opcode::StepArrayIterator: case Opcode::RequireBuiltinModule: case Opcode::CallGroup: case Opcode::CallForwardVarargs:
-    case Opcode::ConstructSuperForwardVarargs: case Opcode::CallBuiltin: case Opcode::NewArgumentList: case Opcode::StepAsyncGenerator:
-    case Opcode::StringBuilderAppendJSON: case Opcode::PropGetChecked: case Opcode::PropGetChain: case Opcode::PropGetPair:
-    case Opcode::PropGetAndTest: case Opcode::CallMethod: case Opcode::CallResolved: case Opcode::CallInline:
+    case Opcode::EvaluateModule: case Opcode::ResolveModule: case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
+    case Opcode::DirectEval: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ResumeGenerator: case Opcode::StepGenerator:
+    case Opcode::StepArrayIterator: case Opcode::RequireBuiltinModule: case Opcode::CallTable: case Opcode::GetGlobalBinding:
+    case Opcode::SetGlobalBinding: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs: case Opcode::CallBuiltin:
+    case Opcode::NewArgumentList: case Opcode::GetBuiltinValue: case Opcode::BeginModuleEvaluation: case Opcode::StringBuilderAppendJSON:
+    case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::CallMethod: case Opcode::CallResolved:
+    case Opcode::CallInline:
         sink.unknownCode();
         return;
     case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
@@ -105,8 +108,8 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
     case Opcode::SetMappedArgument:
         sink.writes(MemoryLocation::at(AbstractHeap::Elements, locationIndexOf(ElementBase::Arguments)));
         return;
-    case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::CopyDataProperties: case Opcode::DefineMethod: case Opcode::PrivateSet:
-    case Opcode::PrivateDefine: case Opcode::CopyObject: case Opcode::DefineAccessors:
+    case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields:
+    case Opcode::CopyDataProperties: case Opcode::CopyObject: case Opcode::PrivateSet: case Opcode::DefineAccessors:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
         sink.reads(MemoryLocation(AbstractHeap::OrderWords));
@@ -114,7 +117,7 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
@@ -136,8 +139,9 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
         sink.writes(MemoryLocation(AbstractHeap::PrototypeLinks));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
         sink.collects();
         return;
     case Opcode::GetSuperBase: case Opcode::HasLayoutPrototype:
@@ -173,8 +177,7 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case Opcode::Claim: case Opcode::ClaimDeclared: case Opcode::ClaimRead: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible:
-    case Opcode::RequireObject:
+    case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject:
         sink.throws();
         return;
     case Opcode::CatchValue: case Opcode::CatchException:
@@ -204,12 +207,27 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation::at(AbstractHeap::MemberGuards, locationIndexOf(value.layout())));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.writes(MemoryLocation(AbstractHeap::PrototypeLinks));
+        sink.writes(MemoryLocation::at(AbstractHeap::MemberGuards, locationIndexOf(value.layout())));
+        sink.throws();
+        sink.collects();
+        return;
+    case Opcode::DefineMethod:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.reads(MemoryLocation(AbstractHeap::OrderWords));
+        sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.writes(MemoryLocation::at(AbstractHeap::MemberGuards, locationIndexOf(value.layout())));
         sink.throws();
         sink.collects();
@@ -220,8 +238,27 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
         sink.throws();
         return;
+    case Opcode::PrivateDefine:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.reads(MemoryLocation(AbstractHeap::OrderWords));
+        sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.writes(MemoryLocation(AbstractHeap::ArrayStorage));
+        sink.writes(MemoryLocation(AbstractHeap::Elements));
+        sink.throws();
+        sink.collects();
+        return;
     case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield:
-    case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield:
+    case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame:
+    case Opcode::AsyncGeneratorYield:
         sink.unknownCode();
         sink.suspends();
         return;
@@ -239,7 +276,10 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
         return;
-    case Opcode::IsGeneratorSuspendedAtStart:
+    case Opcode::RecordRequire: case Opcode::FinishModuleEvaluation:
+        sink.writes(MemoryLocation(AbstractHeap::ExternalState));
+        return;
+    case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning:
         sink.reads(MemoryLocation(AbstractHeap::InternalFields));
         return;
     case Opcode::IsUnmodifiedGenerator: case Opcode::IsPristine: case Opcode::IsUnmodifiedAsyncGenerator:
@@ -284,7 +324,7 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
     case Opcode::HasSpareArrayCapacity:
         sink.reads(MemoryLocation(AbstractHeap::ArrayStorage));
         return;
-    case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
+    case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::IsElementPresent:
         sink.reads(MemoryLocation(AbstractHeap::ArrayStorage));
         sink.reads(MemoryLocation::at(AbstractHeap::Elements, locationIndexOf(ElementBase::Array)));
         return;
@@ -304,7 +344,7 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::ArrayStorage));
         sink.writes(MemoryLocation::at(AbstractHeap::Elements, locationIndexOf(ElementBase::Array)));
         return;
-    case Opcode::CollectionTable:
+    case Opcode::CollectionTable: case Opcode::IsCollectionTableFull:
         sink.reads(MemoryLocation(AbstractHeap::CollectionStorage));
         return;
     case Opcode::MapNext: case Opcode::SetNext:
@@ -312,6 +352,7 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::CollectionStorage));
         sink.reads(MemoryLocation(AbstractHeap::CollectionEntries));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::CollectionStorage));
         return;
     case Opcode::ReportMismatch:
         sink.writes(MemoryLocation(AbstractHeap::ExternalState));
@@ -320,10 +361,11 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
     case Opcode::ShapeTest:
         sink.reads(MemoryLocation::at(AbstractHeap::ShapeWords, locationIndexOf(value.layouts())));
         return;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined:
         sink.reads(MemoryLocation::at(AbstractHeap::ObjectFields, locationIndexOf(value.key())));
         return;
-    case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsBuiltinLocationUnchanged:
         sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
         return;
     case Opcode::IsNotFrozen:
@@ -333,22 +375,20 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
     case Opcode::BelongsToInstance:
         sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
         return;
+    case Opcode::IsInsideView: case Opcode::GetTypedArrayLength:
+        sink.reads(MemoryLocation(AbstractHeap::TypedArrayStorage));
+        return;
     case Opcode::IsNotThenable:
         sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
         sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
         sink.reads(MemoryLocation(AbstractHeap::PrototypeLinks));
         return;
-    case Opcode::IsMemberUnchanged: case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce:
-        sink.reads(MemoryLocation::at(AbstractHeap::MemberGuards, locationIndexOf(value.layout())));
-        return;
-    case Opcode::IsRequireEdgeReady: case Opcode::GetRequiredValue:
-        sink.reads(MemoryLocation(AbstractHeap::ExternalState));
+    case Opcode::AreMembersUnchanged:
+        for (const auto& element : value.conditions())
+            sink.reads(MemoryLocation::at(AbstractHeap::MemberGuards, locationIndexOf(element.layout)));
         return;
     case Opcode::HasKeyOrder:
         sink.reads(MemoryLocation(AbstractHeap::OrderWords));
-        return;
-    case Opcode::IsShapeEpochCurrent: case Opcode::GetShapeEpoch:
-        sink.reads(MemoryLocation(AbstractHeap::ShapeEpoch));
         return;
     case Opcode::IsEnumeratorCurrent:
         sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
@@ -358,6 +398,15 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
     case Opcode::GetDeferredClosureSlot:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.reads(MemoryLocation::at(AbstractHeap::ObjectFields, locationIndexOf(value.key())));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation::at(AbstractHeap::ObjectFields, locationIndexOf(value.key())));
+        sink.collects();
+        return;
+    case Opcode::GetDeferredClosureSlotOrUndefined:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation::at(AbstractHeap::ObjectFields, locationIndexOf(value.key())));
+        sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation::at(AbstractHeap::ObjectFields, locationIndexOf(value.key())));
         sink.collects();
@@ -373,6 +422,21 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation::at(AbstractHeap::ObjectFields, locationIndexOf(value.key())));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
+    case Opcode::FinishBirth:
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
+    case Opcode::TryFinishBirth:
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.reads(MemoryLocation(AbstractHeap::OrderWords));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        return;
+    case Opcode::MakeBorrowedObject:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.collects();
         return;
     case Opcode::PropHasOwn:
@@ -421,7 +485,7 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.throws();
         sink.collects();
         return;
-    case Opcode::ReserveArrayCapacity:
+    case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
         sink.reads(MemoryLocation(AbstractHeap::ArrayStorage));
         sink.reads(MemoryLocation::at(AbstractHeap::Elements, locationIndexOf(ElementBase::Array)));
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
@@ -430,9 +494,6 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
-        return;
-    case Opcode::GetTypedArrayLength:
-        sink.reads(MemoryLocation(AbstractHeap::TypedArrayStorage));
         return;
     case Opcode::GetTypedArrayElement:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
@@ -483,11 +544,41 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::TypedArrayStorage));
         sink.throws();
         return;
+    case Opcode::ReserveCollectionCapacity:
+        sink.reads(MemoryLocation(AbstractHeap::CollectionStorage));
+        sink.reads(MemoryLocation(AbstractHeap::CollectionEntries));
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::CollectionStorage));
+        sink.writes(MemoryLocation(AbstractHeap::CollectionEntries));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.collects();
+        return;
     case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
         sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.collects();
+        return;
+    case Opcode::TakeGeneratorPrototype:
+        sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::PrototypeLinks));
+        sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::PrototypeLinks));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.collects();
+        return;
+    case Opcode::MarkGeneratorRunning:
+        sink.writes(MemoryLocation(AbstractHeap::InternalFields));
+        return;
+    case Opcode::TakeGeneratorStepStatus:
+        sink.reads(MemoryLocation(AbstractHeap::InternalFields));
+        sink.writes(MemoryLocation(AbstractHeap::InternalFields));
+        return;
+    case Opcode::AwaitMayContinue:
+        sink.reads(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.reads(MemoryLocation(AbstractHeap::PromiseState));
         return;
     case Opcode::ReturnAsyncResult:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
@@ -499,6 +590,15 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.writes(MemoryLocation(AbstractHeap::PromiseState));
+        sink.collects();
+        return;
+    case Opcode::AbandonModuleEvaluation:
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.reads(MemoryLocation(AbstractHeap::ExternalState));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.writes(MemoryLocation(AbstractHeap::ExternalState));
         sink.collects();
         return;
     case Opcode::StringBuilderBegin:
@@ -554,6 +654,11 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::StringBuilderContents));
         return;
     case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateSameValue:
+        sink.writes(MemoryLocation(AbstractHeap::ValidationState));
+        return;
+    case Opcode::ValidateLookup:
+        sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::PrototypeLinks));
         sink.writes(MemoryLocation(AbstractHeap::ValidationState));
         return;
     case Opcode::ValidateFirstRun:
@@ -702,9 +807,16 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         return;
     case Opcode::TryPutByIds:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.reads(MemoryLocation(AbstractHeap::OrderWords));
         sink.reads(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.reads(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
+        sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
+        sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.collects();
         return;
@@ -716,7 +828,6 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
-        sink.collects();
         return;
     case Opcode::DefineOwnProperty:
         sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
@@ -730,13 +841,12 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         sink.reads(MemoryLocation(AbstractHeap::ArrayStorage));
         sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
         sink.writes(MemoryLocation(AbstractHeap::ShapeWords));
-        sink.writes(MemoryLocation(AbstractHeap::ShapeEpoch));
+        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::OrderWords));
         sink.writes(MemoryLocation(AbstractHeap::NamedProperties));
         sink.writes(MemoryLocation(AbstractHeap::ObjectFields));
         sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
         sink.writes(MemoryLocation(AbstractHeap::StringStorage));
-        sink.writes(MemoryLocation(AbstractHeap::MemberGuards));
         sink.writes(MemoryLocation(AbstractHeap::Elements));
         sink.writes(MemoryLocation(AbstractHeap::ArrayStorage));
         sink.throws();
@@ -747,6 +857,17 @@ constexpr void forEachDeclaredEffect(const Value& value, Sink& sink)
         return;
     case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral:
         sink.reads(MemoryLocation(AbstractHeap::StringStorage));
+        return;
+    case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts:
+        sink.reads(MemoryLocation(AbstractHeap::StringStorage));
+        sink.reads(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.reads(MemoryLocation(AbstractHeap::CollectionStorage));
+        sink.reads(MemoryLocation(AbstractHeap::CollectionEntries));
+        sink.writes(MemoryLocation(AbstractHeap::StringStorage));
+        sink.writes(MemoryLocation(AbstractHeap::AllocatorState));
+        sink.writes(MemoryLocation(AbstractHeap::RuntimeState));
+        sink.throws();
+        sink.collects();
         return;
     case Opcode::RegExpMatchLiteral:
         sink.reads(MemoryLocation(AbstractHeap::StringStorage));

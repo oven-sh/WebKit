@@ -14,7 +14,7 @@ function f0 name="flat" parameters=[{type=string}, {type=number}, {type=int[0, 1
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v3 FlattenString: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+# CHECK-NEXT: v3 FlattenString: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v4 StringRangeCodeUnitOrNaN: reads(StringStorage)
 # CHECK-NEXT: v5 StringRangeCodePointOrUndefined: reads(StringStorage)
 # CHECK-NEXT: v6 StringRangeEqualsLiteral: reads(StringStorage)
@@ -32,10 +32,10 @@ function f1 name="mayBeRope" parameters=[{type=string}, {type=number}, {type=int
     Return
 }
 # CHECK-LABEL: function f1
-# CHECK-NEXT: v3 StringRangeCodeUnitOrNaN: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
-# CHECK-NEXT: v4 StringRangeCodePointOrUndefined: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
-# CHECK-NEXT: v5 StringRangeEqualsLiteral: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
-# CHECK-NEXT: v6 GetStringCodeUnit: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+# CHECK-NEXT: v3 StringRangeCodeUnitOrNaN: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v4 StringRangeCodePointOrUndefined: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v5 StringRangeEqualsLiteral: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 GetStringCodeUnit: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
 function f2 name="createsString" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
   b0(v0: string, v1: number):
     v2 = FlattenString v0
@@ -43,7 +43,7 @@ function f2 name="createsString" parameters=[{type=string}, {type=number}] resul
     Return
 }
 # CHECK-LABEL: function f2
-# CHECK: v3 StringRangeCharacterOrEmpty: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK: v3 StringRangeCharacterOrEmpty: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 function f3 name="oneOperandMayBeRope" parameters=[{type=string}, {type=string}] results=[{type=undefined}] {
   b0(v0: string, v1: string):
     v2 = FlattenString v0
@@ -54,6 +54,6 @@ function f3 name="oneOperandMayBeRope" parameters=[{type=string}, {type=string}]
     Return
 }
 # CHECK-LABEL: function f3
-# CHECK: v4 StringOrder: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
-# CHECK-NEXT: v5 StringOrder: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+# CHECK: v4 StringOrder: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v5 StringOrder: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v6 StringOrder: reads(StringStorage)

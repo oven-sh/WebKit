@@ -1,4 +1,4 @@
-# A protocol that runs on everything reachable from an operand runs no code where every reachable type is proven and the lookups find built-in members alone: the call then reads the objects and writes none. Whatever is not proven on the way is unknown code, and a function of the program that is found is named beside it
+# A protocol that runs on everything reachable from an operand runs no code where every reachable type is proven and the lookups find built-in members alone: the call then reads the objects and writes none. Whatever is not proven on the way is unknown code, and a function of the program that is found is named beside it. JSON.stringify has two errors of its own, for a BigInt and for an object that holds itself: where the types reach neither, through ordinary objects of the program, lack of memory is all that is left. A Node may be its own next, and what an array holds is not followed yet
 # FORM: Prepared
 # RUN: effects f0 f1 f2
 # RUN(USES): operands f0 f1
@@ -35,12 +35,12 @@ function f0 name="runsNoCode" parameters=[{type=L0}, {type=L1}, {type=L2}, {type
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, PromiseState, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v8 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, PromiseState, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v8 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v9 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v10 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v11 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v12 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v12 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # USES-LABEL: function f0
 # USES: v7 CallBuiltin 1: [Inspects, AppliesTransitively] reads(ObjectFields,
 # USES-NOT: PassesToUserCode

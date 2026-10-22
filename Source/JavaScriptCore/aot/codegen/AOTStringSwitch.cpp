@@ -241,6 +241,10 @@ void StringSwitchEmitter::switchOnLiteralStringWord(const TerminatorContext& ter
         switchOnValue(terminator, Boxed(subject.value()), m_program.at(TypeTable::string), casesWithoutWord, otherwise);
         m_out.appendTo(wordCase);
     }
+    if (std::optional<NarrowReference> narrow = narrowWordBehind(subject)) {
+        switchOn(conversions.bitsOf(*narrow), byWord.span(), otherwise);
+        return;
+    }
     switchOn(conversions.bitsOf(subject), byWord.span(), otherwise);
 }
 

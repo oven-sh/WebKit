@@ -1,0 +1,77 @@
+# Only a way back into a loop is worth tests, and the tests on the ways back of one generic copy together do not outnumber the values of the copy. The deepest loop comes first, then the ways back with the fewest tests, the earlier ones first. Where a way back is not made the copy goes on
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# STATISTIC: WaysBackNotMadeForSizeOfCopy = 2
+# STATISTIC: TestsOnWaysBackNotMade = 12
+# STATISTIC: WaysBackFromStretchCopies = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Six" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="c" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="d" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="e" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="f" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="sixValuesLiveOverFiveLoops" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything, v2: boolean):
+    v3 = PropGet v0 key="a"
+    v4 = PropGet v0 key="b"
+    v5 = PropGet v0 key="c"
+    v6 = PropGet v0 key="d"
+    v7 = PropGet v0 key="e"
+    v8 = PropGet v0 key="f"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v10 = Call v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    LoopHint
+    v12 = Call v1
+    Branch v2 -> taken b2(), notTaken b3()
+  b3():
+    LoopHint
+    v14 = Call v1
+    Branch v2 -> taken b3(), notTaken b4()
+  b4():
+    LoopHint
+    v16 = Call v1
+    Branch v2 -> taken b4(), notTaken b5()
+  b5():
+    LoopHint
+    v18 = Call v1
+    Branch v2 -> taken b5(), notTaken b6()
+  b6():
+    v19 = Sub v3, v4
+    v20 = Sub v19, v5
+    v21 = Sub v20, v6
+    v22 = Sub v21, v7
+    v23 = Sub v22, v8
+    Return v23
+}
+# Five ways back of six tests each would be thirty tests for a copy of twenty-one values: the ways back into the first three loops are made
+# CHECK-LABEL: function f0 name="sixValuesLiveOverFiveLoops"
+# CHECK-COUNT-18: boolean ~ true = TypeTest {{*}} testedType=number
+# CHECK-NOT: boolean ~ true = TypeTest {{*}} testedType=number
+
+function f1 name="sixValuesLiveOverFiveCallsOutsideLoops" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v0 key="b"
+    v4 = PropGet v0 key="c"
+    v5 = PropGet v0 key="d"
+    v6 = PropGet v0 key="e"
+    v7 = PropGet v0 key="f"
+    v8 = Call v1
+    v9 = Call v1
+    v10 = Call v1
+    v11 = Call v1
+    v12 = Call v1
+    v13 = Sub v2, v3
+    v14 = Sub v13, v4
+    v15 = Sub v14, v5
+    v16 = Sub v15, v6
+    v17 = Sub v16, v7
+    Return v17
+}
+# No way back leads into a loop, and each would take six tests: none is made, and none counts as given up for the size of the copy
+# CHECK-LABEL: function f1 name="sixValuesLiveOverFiveCallsOutsideLoops"
+# CHECK-NOT: boolean ~ true = TypeTest {{*}} testedType=number

@@ -17,7 +17,7 @@ function f0 name="guardLiveIn" parameters=[{type=boolean}, {type=object}] result
   b3():
     Jump -> next b4()
   b4():
-    v4 = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+    v4 = GetSlot v1, v3 key="x" receivers=[L0] level=Expected
     Return v4
   b5():
     Return v1
@@ -33,9 +33,9 @@ function f0 name="guardLiveIn" parameters=[{type=boolean}, {type=object}] result
 # DUPLICATE-NEXT: b3():
 # DUPLICATE-NEXT: Jump -> next [[C]]()
 # DUPLICATE-NEXT: b4():
-# DUPLICATE-NEXT: v4: number = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+# DUPLICATE-NEXT: v4: undefined|null|number ~ number = GetSlot v1, v3 key="x" receivers=[L0] level=Expected
 # DUPLICATE: [[C]]():
-# DUPLICATE-NEXT: [[N]]: number = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+# DUPLICATE-NEXT: [[N]]: undefined|null|number ~ number = GetSlot v1, v3 key="x" receivers=[L0] level=Expected
 # DUPLICATE-NEXT: Return [[N]]
 # PLAIN: check: CanClone
 # PLAIN: live-ins: [v1]

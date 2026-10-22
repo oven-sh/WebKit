@@ -29,15 +29,21 @@
 #include "CalleeBits.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
-#include "CollectorMechanism.h"
 #include "HeapUtil.h"
 #include "JITStubRoutineSet.h"
 #include "JSCast.h"
 #include "JSCellButterfly.h"
 #include "JSString.h"
 #include "MarkedBlockInlines.h"
+#include "Options.h"
+#include "StructureID.h"
 #include "WasmCallee.h"
 #include <wtf/OSAllocator.h>
+
+#if ENABLE(AOT)
+#include "AOTCellFormat.h"
+#include "AOTHeapHooks.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -49,7 +55,7 @@ ConservativeRoots::ConservativeRoots(JSC::Heap& heap)
     , m_capacity(inlineCapacity)
     , m_heap(heap)
 {
-    if (MarkedBlockCage::isRequired() && isEnabled(CollectorMechanism::NarrowReferenceScan))
+    if (MarkedBlockCage::isRequired() && Options::useNarrowReferenceScan())
         m_narrowReferences = heap.cage().usedIndices();
 }
 
@@ -204,8 +210,16 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     // We could point into the middle of an object.
     char* alignedPointer = static_cast<char*>(candidate->handle().cellAlign(pointer));
-    if (tryPointer(alignedPointer))
+    if (tryPointer(alignedPointer)) {
+#if ENABLE(AOT)
+        // The cell is alive by now. What an inner cell refers to is alive only if the inner cell is marked itself.
+        if (candidate->hasInnerCells()) [[unlikely]] {
+            if (JSCell* inner = AOT::HeapHooks::innerCellAround(std::bit_cast<JSCell*>(alignedPointer), pointer))
+                markFoundGCPointer(inner, cellKind);
+        }
+#endif
         return;
+    }
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
     // case, this is pointing to the object to the right of the one we should be marking. As with the
@@ -242,7 +256,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         endOfPreciseAllocations = std::bit_cast<char*>(last->cell()) + last->cellSize() + sizeof(IndexingHeader);
     }
     const MarkedBlockCage::Indices narrow = m_narrowReferences;
-    // An index names the start of a cell. genericAddPointer also accepts interior pointers, so both branches check for an exact match first.
+    // An index names the start of a cell or of an inner cell. genericAddPointer also accepts interior pointers, so both branches check for an exact match first.
     auto addNarrowReference = [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
         if (word - narrow.first >= narrow.count)
             return;
@@ -262,7 +276,10 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
         if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(candidate)) || !m_heap.objectSpace().blocks().set().contains(candidate))
             return;
-        if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, pointer))
+        void* cell = pointer;
+        if (candidate->hasInnerCells() && MarkedBlock::isAtomAligned(pointer) && !AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::NarrowReferenceOnStackNamesNoInnerCell)) [[unlikely]]
+            cell = candidate->outerCellOf(pointer);
+        if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, cell))
             genericAddPointer<false>(pointer, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
     };
     auto addNarrowReferencesInHalves = [&](uint64_t word) ALWAYS_INLINE_LAMBDA {
@@ -278,6 +295,20 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         if (word < MarkedBlockCage::maxSize && (word >> MarkedBlockCage::shift) - narrow.first < narrow.count)
             genericAddPointer<false>(std::bit_cast<char*>(static_cast<uintptr_t>(narrow.base + word)), markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
     };
+    static_assert(!JSCell::structureIDOffset() && JSCell::typeInfoTypeOffset() == 5 && JSCell::cellStateOffset() == 7);
+    auto addStructureOfFrameCell = [&](char* bits) ALWAYS_INLINE_LAMBDA {
+#if ENABLE(AOT)
+        constexpr uint64_t typeAndStateMask = 0xff00ff0000000000ull;
+        constexpr uint64_t typeAndStateOfFrameCell = static_cast<uint64_t>(AOT::frameCellState) << 56 | static_cast<uint64_t>(CompiledObjectType) << 40;
+        uint64_t word = std::bit_cast<uintptr_t>(bits);
+        if ((word & typeAndStateMask) != typeAndStateOfFrameCell || !static_cast<uint32_t>(word)) [[likely]]
+            return;
+        if (Structure* structure = std::bit_cast<StructureID>(static_cast<uint32_t>(word)).tryDecode())
+            genericAddPointer<false>(std::bit_cast<char*>(structure), markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+#else
+        UNUSED_PARAM(bits);
+#endif
+    };
 #if ENABLE(WEBASSEMBLY)
     if (boxedWasmCalleeFilter.bits()) {
         constexpr bool lookForWasmCallees = true;
@@ -287,6 +318,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
                 continue;
             }
             addNarrowReferences(*it);
+            addStructureOfFrameCell(*it);
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
         }
     } else {
@@ -300,6 +332,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
                 continue;
             }
             addNarrowReferences(*it);
+            addStructureOfFrameCell(*it);
             char* pointer = removeArrayPtrTag(*it);
             if (!HeapUtil::mayBeCellInBlock(jsGCFilter, pointer) && (pointer < startOfPreciseAllocations || pointer > endOfPreciseAllocations)) {
 #if ASSERT_ENABLED

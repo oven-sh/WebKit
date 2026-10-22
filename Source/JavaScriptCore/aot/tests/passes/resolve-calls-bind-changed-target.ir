@@ -1,8 +1,8 @@
-# A closure of a bound function answers with the name, the length and the prototype its target was created with, so bind stays a call where a closure of the target may have got another one
+# A closure of a bound function answers with the name, the length and the prototype its target was created with. Where a closure of the target may have got another one, the bind asks (IsPristine [Names]): what passes becomes a closure of the bound function, what fails is bound by the engine.
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=ResolveCalls,ChooseCallingConventions
-# STATISTIC: BoundFunctions = 3
+# STATISTIC: BoundFunctions = 7
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -32,7 +32,8 @@ function f1 name="as-created" results=[{type=anything}] {
     Return v3
 }
 # CHECK-LABEL: function f1 name="as-created"
-# CHECK: = NewClosure v0 function=[[bound]]
+# CHECK: v0: f8 = NewClosure function=f8
+# CHECK: = NewClosure function=[[bound]]
 # CHECK-NOT: CallBuiltin
 function f2 name="other-property-added" results=[{type=anything}] {
   b0():
@@ -44,7 +45,8 @@ function f2 name="other-property-added" results=[{type=anything}] {
     Return v4
 }
 # CHECK-LABEL: function f2 name="other-property-added"
-# CHECK: = NewClosure v0 function=[[boundWithExtra]]
+# CHECK: v0: f9 = NewClosure function=f9
+# CHECK: = NewClosure function=[[boundWithExtra]]
 # CHECK-NOT: CallBuiltin
 function f3 name="name-redefined" results=[{type=anything}] {
   b0():
@@ -61,9 +63,11 @@ function f3 name="name-redefined" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f3 name="name-redefined"
 # CHECK: v0: f10 = NewClosure function=f10
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
-# CHECK-NOT: NewClosure
+# CHECK: [[renamedIsAsCreated]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# CHECK-NEXT: Branch [[renamedIsAsCreated]] -> taken
+# CHECK: = NewClosure v0 function=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 function f4 name="name-set-at-run-time" results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f11
@@ -76,9 +80,11 @@ function f4 name="name-set-at-run-time" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f4 name="name-set-at-run-time"
 # CHECK: v0: f11 = NewClosure function=f11
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
-# CHECK-NOT: NewClosure
+# CHECK: [[namedIsAsCreated]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# CHECK-NEXT: Branch [[namedIsAsCreated]] -> taken
+# CHECK: = NewClosure {{*}}function=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 function f5 name="length-deleted" results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f12
@@ -90,9 +96,11 @@ function f5 name="length-deleted" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f5 name="length-deleted"
 # CHECK: v0: f12 = NewClosure function=f12
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
-# CHECK-NOT: NewClosure
+# CHECK: [[shortenedIsAsCreated]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# CHECK-NEXT: Branch [[shortenedIsAsCreated]] -> taken
+# CHECK: = NewClosure {{*}}function=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 function f6 name="prototype-changed" results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f13
@@ -107,9 +115,11 @@ function f6 name="prototype-changed" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f6 name="prototype-changed"
 # CHECK: v0: f13 = NewClosure function=f13
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
-# CHECK-NOT: NewClosure
+# CHECK: [[reparentedIsAsCreated]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# CHECK-NEXT: Branch [[reparentedIsAsCreated]] -> taken
+# CHECK: = NewClosure {{*}}function=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 function f7 name="bound-again" results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f14
@@ -121,7 +131,8 @@ function f7 name="bound-again" results=[{type=anything}] {
     Return v5
 }
 # CHECK-LABEL: function f7 name="bound-again"
-# CHECK: [[once]]: [[boundOnce]] = NewClosure v0 function=[[boundOnce]]
+# CHECK: v0: f14 = NewClosure function=f14
+# CHECK: [[once]]: [[boundOnce]] = NewClosure function=[[boundOnce]]
 # CHECK-NOT: NewClosure
 # CHECK: = CallBuiltin {{*}}, v1 overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure

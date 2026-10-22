@@ -1,12 +1,12 @@
-# A dead zone test goes when its operand cannot be absent, stays when it can, and a second test of the same value is the first
+# A dead zone test goes when its operand cannot be absent, stays when it can, a second test of the same value is the first, and a second read of the variable needs none
 # FORM: Prepared
 # RUN: pass SimplifyCasts
-# STATISTIC: SimplifyCastsChanges = 3
+# STATISTIC: SimplifyCastsChanges = 4
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Environment name="scope" fields=[{key="early" declared={type=anything written=anything|absent} flow={location={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}}}, {key="late" declared={type=anything|absent}}]
-variable g0 name="early" module=m0 declared={type=anything written=anything|absent} initialization=Uninitialized flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+layout L0 kind=Environment name="scope" fields=[{key="early" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}}}, {key="late" declared={type=anything|absent}}]
+variable g0 name="early" module=m0 declared={type=anything} initialization=Uninitialized flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 variable g1 name="late" module=m0 declared={type=anything|absent} initialization=Uninitialized
 
 function f0 name="operandWithoutAbsent" results=[{type=anything}] {
@@ -74,5 +74,5 @@ function f4 name="twoReadsCheckedOnce" results=[{type=boolean}] {
 # CHECK-LABEL: function f4 name="twoReadsCheckedOnce"
 # CHECK: v1: anything = CheckInitialized v0 name="late"
 # CHECK-NEXT: = GetModuleVariable variable=g1
-# CHECK-NEXT: v3: anything = CheckInitialized v2 name="late"
+# CHECK-NEXT: v3: anything = AssumeType v2 castType=anything
 # CHECK-NEXT: = StrictEq v1, v3

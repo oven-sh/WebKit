@@ -233,6 +233,10 @@ constexpr StubKey binaryOperation(BinaryOperator operation, bool isAfterInt32Che
 constexpr StubKey binaryWithDouble(BinaryOperator operation, bool numberIsOnRight) { return StubKey(StubFamily::BinaryWithDouble).withForm(static_cast<uint8_t>(binaryWithDoubleForm(operation, numberIsOnRight))); }
 constexpr StubKey unaryOperation(UnaryOperationForm form) { return StubKey(StubFamily::UnaryOperation).withForm(static_cast<uint8_t>(form)); }
 
+enum class BoxedNumberForm : uint8_t { Double, OptionalDouble, Integer, OptionalInteger };
+
+constexpr StubKey boxNumber(BoxedNumberForm form) { return StubKey(StubFamily::BoxNumber).withForm(static_cast<uint8_t>(form)); }
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

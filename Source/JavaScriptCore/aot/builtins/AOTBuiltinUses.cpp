@@ -8,11 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableBindings.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
+#include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTForwardedCalls.h"
-#include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTSplitUnions.h"
 #include "AOTTypeTestSite.h"
@@ -30,21 +31,110 @@ public:
     CallQueryStorage(const BuiltinUseInputs& inputs, BuiltinID callee, BuiltinCallMode mode, const BuiltinCallOperands& operands, NullishReceiver nullishReceiver)
         : m_typing(inputs.typing())
         , m_proven(operandTypesOf(m_typing, operands.receiver, operands.arguments.span()))
-        , m_predicted(operandTypesOf(m_typing.predicting(), operands.receiver, operands.arguments.span()))
-        , m_query { { m_typing, callee, mode, m_proven, m_predicted }, inputs.effects, nullishReceiver }
+        , m_expected(operandTypesOf(m_typing.expecting(), operands.receiver, operands.arguments.span()))
+        , m_query { { m_typing, callee, mode, m_proven, m_expected }, inputs.effects, nullishReceiver }
     {
+        expectArgumentsToBePresent(isCalledOnlyDirectly(inputs.program.builtins(), callee));
+        expectArgumentsRefusedWhenAbsentToBePresent(inputs.program.builtins(), callee, mode);
+        if (mode == BuiltinCallMode::Call)
+            expectReceiverToBePresent(inputs.program.builtins(), callee);
     }
 
     const BuiltinCallQuery& query() const LIFETIME_BOUND { return m_query; }
 
 private:
+    // The front end hands every reference type over with undefined and null beside it: a field or a variable that is declared a string is `undefined|null|string`. Half of that is inside what a
+    // parameter for strings accepts and half outside, so no overload would be chosen and no test placed. An argument that is a T, undefined or null is expected to be the T: the test is one comparison,
+    // and an argument that an overload accepts as it stands is passed as it stands, because that is tried first.
+    // A call that is made directly or not at all as a call of the built-in expects so of whatever may be missing, also where nothing else is known of it: a test costs a fraction of the difference.
+    void expectArgumentsToBePresent(bool isCalledOnlyDirectly)
+    {
+        TypeArena& types = m_typing.types;
+        for (size_t index = 0; index < m_expected.arguments.size(); ++index) {
+            const Type& expected = types.at(m_expected.arguments[index]);
+            // `undefined|T` alone is what the program has written: an optional parameter. `null|T` likewise.
+            bool isAsFrontEndHandsOver = !expected.anyObject && (expected.primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull;
+            if (isCalledOnlyDirectly ? m_expected.arguments[index] != m_proven.arguments[index] : !isAsFrontEndHandsOver)
+                continue;
+            Type present = expected.withoutPrimitives(Primitive::UndefinedOrNull);
+            if (!present.isNever())
+                m_expected.arguments[index] = types.intern(WTF::move(present));
+        }
+    }
+
+    // The same as for a receiver, below: `Object.values(list[i])`, where the element may lie past the end. No overload accepts or converts undefined or null there, so the call throws for them.
+    void expectArgumentsRefusedWhenAbsentToBePresent(const BuiltinTable& table, BuiltinID callee, BuiltinCallMode mode)
+    {
+        TypeArena& types = m_typing.types;
+        for (size_t index = 0; index < m_expected.arguments.size() && index <= BuiltinOperand::maxArgumentIndex; ++index) {
+            TypeID proven = m_proven.arguments[index];
+            if (m_expected.arguments[index] != proven || !types.at(proven).mayBeUndefinedOrNull())
+                continue;
+            TypeID present = types.intern(types.at(proven).withoutPrimitives(Primitive::UndefinedOrNull));
+            if (present == TypeTable::never)
+                continue;
+            bool isTakenAsItIs = false;
+            bool refusesAbsentArgument = std::ranges::all_of(table.overloadIDsOf(callee), [&](BuiltinOverloadID id) {
+                const BuiltinOverload& overload = table.at(id);
+                if (overload.mode != mode)
+                    return true;
+                const BuiltinParameter* parameter = table.parameterFor(overload, BuiltinOperand::argument(static_cast<unsigned>(index)));
+                if (!parameter || parameter->mode != BuiltinParameterMode::Required || parameter->conversion != BuiltinConversion::None)
+                    return false;
+                isTakenAsItIs |= fitOf(m_typing, present, parameter->converted ? parameter->converted : parameter->accepted).fit == TypeFit::Inside;
+                return fitOf(m_typing, TypeTable::undefined, parameter->accepted).fit == TypeFit::Outside
+                    && fitOf(m_typing, TypeTable::null, parameter->accepted).fit == TypeFit::Outside;
+            });
+            if (refusesAbsentArgument && isTakenAsItIs)
+                m_expected.arguments[index] = present;
+        }
+    }
+
+    // A method that accepts neither undefined nor null as its receiver throws for them. So a receiver of which nothing is expected, and which may be either, is expected to be neither:
+    // `pattern ??= /../; exec.call(pattern, text)`, where the second read of the variable has forgotten the first. That is worth a test where the rest of the type is what an overload works on.
+    void expectReceiverToBePresent(const BuiltinTable& table, BuiltinID callee)
+    {
+        TypeArena& types = m_typing.types;
+        if (!m_proven.receiver || m_expected.receiver != m_proven.receiver || !types.at(m_proven.receiver).mayBeUndefinedOrNull())
+            return;
+        bool refusesAbsentReceiver = std::ranges::all_of(table.overloadIDsOf(callee), [&](BuiltinOverloadID id) {
+            const BuiltinOverload& overload = table.at(id);
+            if (overload.mode != BuiltinCallMode::Call)
+                return true;
+            return overload.receiver
+                && fitOf(m_typing, TypeTable::undefined, overload.receiver->accepted).fit == TypeFit::Outside
+                && fitOf(m_typing, TypeTable::null, overload.receiver->accepted).fit == TypeFit::Outside;
+        });
+        if (!refusesAbsentReceiver)
+            return;
+        TypeID present = types.intern(types.at(m_proven.receiver).withoutPrimitives(Primitive::UndefinedOrNull));
+        if (present == TypeTable::never)
+            return;
+        bool isTakenAsItIs = std::ranges::any_of(table.overloadIDsOf(callee), [&](BuiltinOverloadID id) {
+            const BuiltinOverload& overload = table.at(id);
+            if (overload.mode != BuiltinCallMode::Call)
+                return false;
+            BuiltinTypeID workedOn = overload.receiver->converted ? overload.receiver->converted : overload.receiver->accepted;
+            return fitOf(m_typing, present, workedOn).fit == TypeFit::Inside;
+        });
+        if (isTakenAsItIs)
+            m_expected.receiver = present;
+    }
+
     TypingContext m_typing;
     BuiltinOperandTypes m_proven;
-    BuiltinOperandTypes m_predicted;
+    BuiltinOperandTypes m_expected;
     BuiltinCallQuery m_query;
 };
 
 } // anonymous namespace
+
+const UseLists& BuiltinUseInputs::useLists() const
+{
+    if (asksAboutPlace)
+        *asksAboutPlace = true;
+    return analyses->useLists();
+}
 
 static constexpr Effects nullishCheckEffects = declaredBoundOf(Opcode::RequireObjectCoercible);
 
@@ -74,25 +164,31 @@ static BuiltinUsePlan planByOpcode(const BuiltinUseInputs& inputs, ValueID use, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A test decides these types exactly: no proof about a class, no layout, no single function.
-static bool canClaimExactly(const Type& type)
-{
-    return type == type.withoutClassProofs() && type.builtins.isEmpty() && type.functions.isEmpty() && !type.layouts;
-}
-
 BuiltinUsePlan planBuiltinUse(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)
 {
     BuiltinUsePlan plan = planByOpcode(inputs, use, point);
     if (!plan || resultFitOf(inputs, use, plan) == ResultFit::Within)
         return plan;
 
-    // The written types of the library are predictions, so its functions declare less than the table says of their entries. A claim may throw, as the entry may.
-    TypeID current = inputs.function.at(use).type;
-    bool canClaimResult = plan.kind == BuiltinUseKind::LibraryCall && inputs.program.builtins().at(plan.call.overload).throws() && canClaimExactly(inputs.types.at(current));
-    if (!canClaimResult)
+    // A function of the library that takes whatever arrives declares less about its result than the table says of its entry.
+    if (plan.kind != BuiltinUseKind::LibraryCall)
         return { };
-    plan.claimedResult = current;
+    plan.assumedResult = inputs.function.at(use).type;
     return plan;
+}
+
+bool mayFindProvenPlan(const BuiltinUseInputs& inputs, const Value& use)
+{
+    switch (use.opcode) {
+    case Opcode::PropGet:
+    case Opcode::PropSet:
+        return mayFindProvenAccess(inputs, use);
+    case Opcode::Call:
+    case Opcode::Construct:
+        return mayFindProvenCallee(inputs, use);
+    default:
+        return true;
+    }
 }
 
 static ValueID operandAt(const BuiltinCallOperands& operands, BuiltinOperand operand)
@@ -120,19 +216,32 @@ void degradeToUnmatchedCall(BuiltinUsePlan& plan)
 
 bool hasOnlyNeverAllocatedLayouts(const Program& program, const Type& type)
 {
-    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
+    return type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
         return program.at(member).flow.allocation == AllocationState::NeverAllocated;
+    });
+}
+
+static size_t findRequirementToMergeWith(const BuiltinUsePlan& plan, const UseRequirement& requirement)
+{
+    RELEASE_ASSERT(!requirement.subject == !!requirement.unchangedLocation);
+    return plan.requirements.findIf([&](const UseRequirement& candidate) {
+        return candidate.subject == requirement.subject && candidate.unchangedLocation == requirement.unchangedLocation;
     });
 }
 
 static bool mergeRequirement(TypeArena& types, UseRequirement& requirement, const UseRequirement& other)
 {
-    RELEASE_ASSERT(requirement.subject == other.subject);
+    RELEASE_ASSERT(requirement.subject == other.subject && requirement.unchangedLocation == other.unchangedLocation);
     bool isPossible = true;
     if (other.requiredType)
         requirement.requiredType = requirement.requiredType ? types.intersectionOf(requirement.requiredType, other.requiredType) : other.requiredType;
     if (requirement.requiredType == TypeTable::never)
         isPossible = false;
+    if (other.functionOfBuiltin) {
+        if (requirement.functionOfBuiltin && requirement.functionOfBuiltin != other.functionOfBuiltin)
+            isPossible = false;
+        requirement.functionOfBuiltin = other.functionOfBuiltin;
+    }
     if (other.pristine) {
         if (requirement.pristine && requirement.pristine.builtinClass != other.pristine.builtinClass)
             isPossible = false;
@@ -143,9 +252,9 @@ static bool mergeRequirement(TypeArena& types, UseRequirement& requirement, cons
 
 bool appendRequirement(TypeArena& types, BuiltinUsePlan& plan, const UseRequirement& requirement)
 {
-    auto existing = std::ranges::find(plan.requirements, requirement.subject, &UseRequirement::subject);
-    if (existing != plan.requirements.end())
-        return mergeRequirement(types, *existing, requirement);
+    size_t existing = findRequirementToMergeWith(plan, requirement);
+    if (existing != notFound)
+        return mergeRequirement(types, plan.requirements[existing], requirement);
     plan.requirements.append(requirement);
     return requirement.requiredType != TypeTable::never;
 }
@@ -153,10 +262,10 @@ bool appendRequirement(TypeArena& types, BuiltinUsePlan& plan, const UseRequirem
 bool prependRequirement(TypeArena& types, BuiltinUsePlan& plan, UseRequirement requirement)
 {
     bool isPossible = requirement.requiredType != TypeTable::never;
-    auto existing = std::ranges::find(plan.requirements, requirement.subject, &UseRequirement::subject);
-    if (existing != plan.requirements.end()) {
-        isPossible = mergeRequirement(types, requirement, *existing);
-        plan.requirements.removeAt(existing - plan.requirements.begin());
+    size_t existing = findRequirementToMergeWith(plan, requirement);
+    if (existing != notFound) {
+        isPossible = mergeRequirement(types, requirement, plan.requirements[existing]);
+        plan.requirements.removeAt(existing);
     }
     plan.requirements.insert(0, WTF::move(requirement));
     return isPossible;
@@ -179,8 +288,6 @@ static FunctionID findLibraryFunction(const Program& program, const BuiltinOverl
     const RuntimeFunctionEntry* entry = findRuntimeFunction(program, libraryFunctionOf(program, overload, expected));
     if (!entry || !entry->function)
         return { };
-    if (rejectsOnFailedConversion(program, entry->function))
-        return { };
     if (overload.mode == BuiltinCallMode::Construct && canConstructWithoutClosure(program, entry->function))
         return entry->function;
     if (!canCallWithoutClosure(program, entry->function))
@@ -197,17 +304,23 @@ static bool staysGenericOperation(const BuiltinOverload& overload)
     return overload.code.implementation.kind == BuiltinImplementationKind::Generic && !overload.hasTypedResult();
 }
 
-// A direct call whose arguments need a conversion enters the version with the written types.
-static FunctionID writtenVersionOf(const BuiltinUseInputs& inputs, FunctionID libraryFunction)
+bool isCalledOnlyDirectly(const BuiltinTable& table, BuiltinID callee)
 {
-    return versionToEnter(inputs.program, inputs.flow, libraryFunction, { });
+    return table.at(callee).scope == BuiltinScope::Module;
+}
+
+bool hasDirectFunction(const BuiltinTable& table, BuiltinID callee)
+{
+    return std::ranges::any_of(table.overloadIDsOf(callee), [](BuiltinOverloadID overload) {
+        return !!BuiltinBindings::directFunctionNumberOf(overload);
+    });
 }
 
 BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownBuiltinCall& known, ProgramPoint point)
 {
     const BuiltinTable& table = inputs.program.builtins();
     // A CallBuiltin names no module.
-    if (table.at(known.callee).scope != BuiltinScope::Realm)
+    if (isCalledOnlyDirectly(table, known.callee) && !hasDirectFunction(table, known.callee))
         return { };
     CallQueryStorage storage(inputs, known.callee, known.mode, known.operands, known.nullishReceiver);
 
@@ -221,15 +334,25 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     if (staysGenericOperation(table.at(plan.call.overload)))
         return { };
     if (plan.call.state == BuiltinMatchState::Unknown) {
+        if (isCalledOnlyDirectly(table, known.callee))
+            return { };
         degradeToUnmatchedCall(plan);
         return plan;
     }
+
+    bool isCallAsItStands = known.overloadOfWholeCall == plan.call.overload
+        && !insertsOperations(plan.call)
+        && !findLibraryFunction(inputs.program, table.at(plan.call.overload), known.stamps.expectedResult);
+    if (isCallAsItStands)
+        return { };
 
     for (const OperandRequirement& requirement : plan.call.requirements) {
         ValueID subject = operandAt(known.operands, requirement.operand);
         RELEASE_ASSERT(subject);
         PristineRequirement unproven = findUnprovenPristine(inputs, subject, requirement.pristine, point);
         if (unproven && pristineTestOf(table, unproven.builtinClass) == PristineTest::NeverPasses) {
+            if (isCalledOnlyDirectly(table, known.callee))
+                return { };
             degradeToUnmatchedCall(plan);
             return plan;
         }
@@ -237,10 +360,15 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
             continue;
         bool testNeverPasses = requirement.requiredType && hasOnlyNeverAllocatedLayouts(inputs.program, inputs.types.at(requirement.requiredType));
         if (testNeverPasses || !appendRequirement(inputs.types, plan, { subject, requirement.requiredType, unproven })) {
+            if (isCalledOnlyDirectly(table, known.callee))
+                return { };
             degradeToUnmatchedCall(plan);
             return plan;
         }
     }
+
+    if (isCalledOnlyDirectly(table, known.callee) && !BuiltinBindings::directFunctionNumberOf(plan.call.overload, known.operands.arguments.size()))
+        return { };
 
     plan.kind = BuiltinUseKind::Call;
     plan.form = BuiltinCallForm::Whole;
@@ -251,9 +379,27 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     return plan;
 }
 
+static Value makeFunctionTest(ValueID subject, BuiltinID member)
+{
+    Value test = IRBuilder::make(Opcode::IsFunctionOfBuiltin, { subject });
+    test.setMember(member);
+    return test;
+}
+
+static Value makeLocationTest(BuiltinID member)
+{
+    Value test = IRBuilder::make(Opcode::IsBuiltinLocationUnchanged);
+    test.setMember(member);
+    return test;
+}
+
 Vector<Value, 4> createTestsOf(std::span<const UseRequirement> requirements)
 {
     Vector<Value, 4> tests;
+    for (const UseRequirement& requirement : requirements) {
+        if (requirement.functionOfBuiltin)
+            tests.append(makeFunctionTest(requirement.subject, requirement.functionOfBuiltin));
+    }
     for (const UseRequirement& requirement : requirements) {
         if (requirement.requiredType)
             tests.append(makeTypeTest(requirement.subject, requirement.requiredType));
@@ -261,6 +407,10 @@ Vector<Value, 4> createTestsOf(std::span<const UseRequirement> requirements)
     for (const UseRequirement& requirement : requirements) {
         if (requirement.pristine)
             tests.append(makePristineTest(requirement.subject, requirement.pristine.builtinClass, requirement.pristine.aspects));
+    }
+    for (const UseRequirement& requirement : requirements) {
+        if (requirement.unchangedLocation)
+            tests.append(makeLocationTest(requirement.unchangedLocation));
     }
     return tests;
 }
@@ -270,16 +420,26 @@ Vector<Value, 4> createTestsOf(const BuiltinUsePlan& plan)
     return createTestsOf(plan.requirements.span());
 }
 
-static Value makeConstant(const BuiltinTable& table, const BuiltinUsePlan& plan)
+static Value makeConstant(const Program& program, const BuiltinUsePlan& plan)
 {
+    if (plan.constant)
+        return *plan.constant;
     if (plan.key) {
         Value constant = IRBuilder::make(Opcode::KeyConstant);
         constant.setKey(plan.key);
         return constant;
     }
-    std::optional<Value> constant = tryMakeBuiltinConstant(table, plan.member);
+    std::optional<Value> constant = tryMakeBuiltinConstant(program, plan.member);
     RELEASE_ASSERT(constant);
     return WTF::move(*constant);
+}
+
+static Value makeHostValueRead(const BuiltinUsePlan& plan)
+{
+    Value read = IRBuilder::make(Opcode::GetBuiltinValue);
+    read.setBuiltin(plan.member);
+    read.setOverload(plan.call.overload);
+    return read;
 }
 
 static Effects effectsOfCallWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan& plan)
@@ -297,7 +457,14 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     case BuiltinUseKind::None:
         return Effects();
     case BuiltinUseKind::Constant: {
-        Effects effects = declaredBoundOf(makeConstant(inputs.program.builtins(), plan).opcode);
+        Effects effects = declaredBoundOf(makeConstant(inputs.program, plan).opcode);
+        effects.merge(nullishCheckEffects);
+        return effects;
+    }
+    case BuiltinUseKind::Undefined:
+        return declaredBoundOf(Opcode::Undefined);
+    case BuiltinUseKind::HostValue: {
+        Effects effects = declaredBoundOf(Opcode::GetBuiltinValue);
         effects.merge(nullishCheckEffects);
         return effects;
     }
@@ -310,7 +477,6 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     }
     case BuiltinUseKind::LibraryCall: {
         Effects effects = effectsOfCalling(inputs.effects, plan.libraryFunction).normal;
-        effects.merge(effectsOfCalling(inputs.effects, writtenVersionOf(inputs, plan.libraryFunction)).normal);
         effects.merge(effectsOfCallWhenApplied(inputs, plan));
         return effects;
     }
@@ -327,17 +493,20 @@ static Type typeWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan
     case BuiltinUseKind::None:
         break;
     case BuiltinUseKind::Constant:
-        return plan.key ? Type::symbolLiteral(plan.key) : typeOfBuiltinConstant(inputs.program.builtins(), plan.member);
+        return typeOfConstant(typing, makeConstant(inputs.program, plan));
+    case BuiltinUseKind::Undefined:
+        return Type::fromPrimitives(Primitive::Undefined);
+    case BuiltinUseKind::HostValue: {
+        BuiltinOperandTypes noOperands;
+        return resultTypeOfBuiltinCall(typing, { plan.call.overload, BuiltinCallForm::Whole, 0, noOperands }, 0);
+    }
     case BuiltinUseKind::Call:
     case BuiltinUseKind::UnmatchedCall: {
         BuiltinOperandTypes operands = operandTypesOf(typing, plan.operands.receiver, plan.operands.arguments.span());
         return resultTypeOfBuiltinCall(typing, { plan.call.overload, plan.form, 0, operands }, 0);
     }
-    case BuiltinUseKind::LibraryCall: {
-        const Type& result = typing.typeOf(inputs.program.at(plan.libraryFunction).result());
-        const Type& resultOfWrittenVersion = typing.typeOf(inputs.program.at(writtenVersionOf(inputs, plan.libraryFunction)).result());
-        return result.unionWith(resultOfWrittenVersion, inputs.types);
-    }
+    case BuiltinUseKind::LibraryCall:
+        return typing.typeOf(inputs.program.at(plan.libraryFunction).result());
     case BuiltinUseKind::NewArray:
         return Type::builtinClass(BuiltinClasses::Array);
     }
@@ -361,10 +530,9 @@ ResultFit resultFitOf(const BuiltinUseInputs& inputs, ValueID use, const Builtin
 static void finish(const BuiltinUseRewrite& rewrite, const ReplacedEffects& replaced)
 {
     FunctionPassContext& context = rewrite.context;
-    Value& value = context.function.at(rewrite.use);
+    Value& value = context.function.edit(rewrite.use);
     value.type = resultTypeOf(context.program, context.function, value, context.types);
-    value.setWritten(writtenTypeOf(context.program, context.function, value, context.types));
-    value.setPrediction(predictionOf(context.program, context.function, value, context.types));
+    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types));
     checkRewrite(context, ValueSite { rewrite.block, 0, rewrite.use }, replaced);
 }
 
@@ -410,12 +578,12 @@ static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUs
         return { };
     if (plan.newTarget)
         return plan.newTarget;
-    ValueID constructor = rewrite.insert(makeConstant(context.program.builtins(), plan));
-    context.function.at(constructor).setOrigin(origin);
+    ValueID constructor = rewrite.insert(makeConstant(context.program, plan));
+    context.function.edit(constructor).setOrigin(origin);
     return constructor;
 }
 
-static std::optional<Value> tryMakeLibraryCall(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, const BuiltinCallOperands& operands)
+static Value makeLibraryCall(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, const BuiltinCallOperands& operands)
 {
     FunctionPassContext& context = rewrite.context;
     Origin origin = context.function.at(rewrite.use).origin();
@@ -433,7 +601,7 @@ static std::optional<Value> tryMakeLibraryCall(const BuiltinUseRewrite& rewrite,
         .isNeverInlined = plan.isNeverInlined,
         .isDemotedTailCall = FlagMask::isDemotedTailCall(use.opcode) && use.isDemotedTailCall(),
     };
-    return tryMakeDirectCall(ValueInsertion { context.analyses.context(), context.function, context.types, origin, rewrite.insert }, request);
+    return makeDirectCall(ValueInsertion { context.analyses.context(), context.function, context.types, origin, rewrite.insert }, request);
 }
 
 void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan)
@@ -443,14 +611,15 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     Function& function = context.function;
 
     ReplacedEffects replaced;
-    replaced.add({ context.program, context.inputs.effects }, function, function.at(rewrite.use));
+    if (context.build.options().verifiesProgram)
+        replaced.add({ context.program, context.inputs.effects }, function, function.at(rewrite.use));
 
     Origin origin = function.at(rewrite.use).origin();
     bool isPropertyAccess = accessOf(function.at(rewrite.use).opcode) != Access::None;
     // ScopedLambda hands its arguments to the functor as lvalues.
     auto insertWithOrigin = [&](auto&& inserted) {
         ValueID id = rewrite.insert(WTF::move(inserted));
-        function.at(id).setOrigin(origin);
+        function.edit(id).setOrigin(origin);
         return id;
     };
     InsertBeforeCall insert = insertWithOrigin;
@@ -460,41 +629,42 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
         RELEASE_ASSERT_NOT_REACHED();
     case BuiltinUseKind::Constant:
         insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
-        replaceKeepingOrigin(function.at(rewrite.use), makeConstant(context.program.builtins(), plan));
+        replaceKeepingOrigin(function.edit(rewrite.use), makeConstant(context.program, plan));
+        break;
+    case BuiltinUseKind::Undefined:
+        replaceKeepingOrigin(function.edit(rewrite.use), IRBuilder::make(Opcode::Undefined));
+        break;
+    case BuiltinUseKind::HostValue:
+        insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
+        replaceKeepingOrigin(function.edit(rewrite.use), makeHostValueRead(plan));
         break;
     case BuiltinUseKind::Call: {
         BuiltinCallOperands operands = insertOperandSteps(plan.call, plan.operands, plan.nullishCheck, insert);
-        becomePlannedCall(function.at(rewrite.use), plan, operands);
+        becomePlannedCall(function.edit(rewrite.use), plan, operands);
         break;
     }
     case BuiltinUseKind::UnmatchedCall: {
         BuiltinCallOperands operands = plan.operands;
         if (isPropertyAccess)
             operands.receiver = insertReceiverCheck(context, operands.receiver, plan.nullishCheck, insert);
-        becomePlannedCall(function.at(rewrite.use), plan, operands);
+        becomePlannedCall(function.edit(rewrite.use), plan, operands);
         break;
     }
     case BuiltinUseKind::LibraryCall: {
         BuiltinCallOperands operands = insertOperandSteps(plan.call, plan.operands, plan.nullishCheck, insert);
-        std::optional<Value> call = tryMakeLibraryCall(rewrite, plan, operands);
-        // A CallBuiltin constructs for the built-in itself.
-        RELEASE_ASSERT(call || !plan.newTarget);
-        if (!call) {
-            becomePlannedCall(function.at(rewrite.use), plan, operands);
-            break;
+        Value call = makeLibraryCall(rewrite, plan, operands);
+        if (plan.assumedResult) {
+            ValueID result = insert(WTF::move(call));
+            if (context.build.validates())
+                insert(makeValidateType(result, plan.assumedResult));
+            call = makeAssumeType(result, plan.assumedResult);
         }
-        if (plan.claimedResult) {
-            Value claim = IRBuilder::make(Opcode::Claim, { insert(WTF::move(*call)) });
-            claim.setCastType(plan.claimedResult);
-            claim.setCause(CheckCause::AddedByPass);
-            call = WTF::move(claim);
-        }
-        replaceKeepingOrigin(function.at(rewrite.use), WTF::move(*call));
+        replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(call));
         break;
     }
     case BuiltinUseKind::NewArray: {
         const Value& creation = function.at(rewrite.use);
-        replaceKeepingOrigin(function.at(rewrite.use), IRBuilder::make(Opcode::NewArrayLike, { creation.lengthOperand(), creation.arrayOperand() }));
+        replaceKeepingOrigin(function.edit(rewrite.use), IRBuilder::make(Opcode::NewArrayLike, { creation.lengthOperand(), creation.arrayOperand() }));
         break;
     }
     }

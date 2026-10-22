@@ -140,7 +140,7 @@ static Counter createCounterWithDictionary(LoadedProgram& program)
 {
     VM& vm = program.vm();
     Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->layout().extraPropertiesSlot() && object->store(vm, object->layout().fields()[0], jsNumber(0)));
+    AOT_TEST_CHECK(object->layout().extraPropertiesSlot() && object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
     for (unsigned index = 0; index < numberOfNames; ++index)
         putAndCache(program, object, nameAt(vm, index), jsNumber(index));
     JSObject* extraProperties = object->extraProperties();
@@ -266,7 +266,7 @@ static void testNamingFlattensDictionaryOnce(LoadedProgram& program)
 {
     VM& vm = program.vm();
     Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], jsNumber(0)));
+    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
     for (unsigned index = 0; index < numberOfNames; ++index)
         AOT_TEST_CHECK(addWithoutNamingStructure(program, object, nameAt(vm, index), jsNumber(index)));
     JSObject* extraProperties = object->extraProperties();
@@ -290,7 +290,7 @@ static Object* createCounterAfterDeletions(LoadedProgram& program, unsigned numb
 {
     VM& vm = program.vm();
     Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], jsNumber(0)));
+    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
     for (unsigned index = 0; index < numberOfAdditions; ++index)
         AOT_TEST_CHECK(addWithoutNamingStructure(program, object, nameAt(vm, index), jsNumber(index)));
     for (unsigned index = 0; index < numberOfDeletions; ++index) {
@@ -349,7 +349,7 @@ static void testChainThroughCompiledObjectIsNotCachedByStructures(LoadedProgram&
     AOT_TEST_CHECK(chainIsCacheableByStructures(program, constructEmptyObject(program.realm())));
 
     Object* counter = allocateCounter(program);
-    AOT_TEST_CHECK(counter->store(vm, counter->layout().fields()[0], jsNumber(0)) && !chainIsCacheableByStructures(program, counter));
+    AOT_TEST_CHECK(counter->store(vm, counter->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))) && !chainIsCacheableByStructures(program, counter));
     Structure* structureBefore = counter->structure();
     counter->setIntegrity(program.realm(), Object::Integrity::Frozen);
     AOT_TEST_CHECK(counter->structure() == structureBefore && counter->isFrozen());
@@ -370,7 +370,7 @@ static void testFirstAdditionNamesNoStructure(LoadedProgram& program)
     Identifier first = nameAt(vm, 0);
     Identifier second = nameAt(vm, 1);
     Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], jsNumber(0)) && !object->repeatsExtraPropertyStore(vm, first));
+    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))) && !object->repeatsExtraPropertyStore(vm, first));
     AOT_TEST_CHECK(object->tryStoreExtraProperty(vm, first, jsNumber(1), { Flag::IsKnownNotToBeField }).kind == Object::ExtraPropertyStore::Added);
     AOT_TEST_CHECK(object->compiledStructure().hasExtraProperties() && !object->compiledStructure().extraPropertiesStructure());
     AOT_TEST_CHECK(object->repeatsExtraPropertyStore(vm, first) && !object->repeatsExtraPropertyStore(vm, second));
@@ -383,11 +383,11 @@ static void testSecondObjectRepeatsAddition(LoadedProgram& program)
     Identifier first = nameAt(vm, 0);
     Identifier second = nameAt(vm, 1);
     Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], jsNumber(0)));
+    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
     putAndCache(program, object, first, jsNumber(1));
 
     Object* other = allocateCounter(program);
-    AOT_TEST_CHECK(other->store(vm, other->layout().fields()[0], jsNumber(0)));
+    AOT_TEST_CHECK(other->store(vm, other->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
     AOT_TEST_CHECK(other->repeatsExtraPropertyStore(vm, first) && !other->repeatsExtraPropertyStore(vm, second));
     putAndCache(program, other, first, jsNumber(2));
     AOT_TEST_CHECK(other->structure() == object->structure() && !other->repeatsExtraPropertyStore(vm, second));

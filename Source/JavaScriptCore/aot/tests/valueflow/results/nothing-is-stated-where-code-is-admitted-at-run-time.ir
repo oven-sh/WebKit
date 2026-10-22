@@ -1,5 +1,6 @@
-# A build that admits code at run time is not solved: the tables state nothing, the tables in which a missing record is a statement are full, and the program leaves ApplyFlowResults as it was read
-# OPTIONS: admit=RuntimeCode
+# The inspector brings in code at run time, at any place. A build that admits it is not solved: the tables state nothing, the tables in which a missing record is a statement are full,
+# and the program leaves ApplyFlowResults as it was read
+# OPTIONS: admit=Inspector
 # RUN: valueflow-results
 # CHECK-NOT: function f
 # CHECK: access S0 function=f0 kind=Call mayCallBoundFunction=true
@@ -9,9 +10,9 @@
 # CHECK: unseen-code OptionAdmitsCode
 # RUN(APPLY): valueflow-apply
 # APPLY: v1: anything = Call v0 accessSite=0
+# APPLY: function f1 name="called" {{*}}results=[{type=anything}]
 # APPLY: string="unreached"
 # RUN(NOTHING): valueflow-apply
-# NOTHING-NOT: written=
 # NOTHING-NOT: AssumeType
 # NOTHING-NOT: callees=
 # NOTHING-NOT: flow=

@@ -39,9 +39,13 @@ private:
     template<typename IsInCycle>
     BasicBlock* findPollingHeader(std::span<BasicBlock* const> members, const Vector<BasicBlock*, 2>& entries, const IsInCycle& isInCycle) const
     {
+        findLikelyBlocks();
         auto isBetter = [&](BasicBlock* candidate, BasicBlock* best) {
             if (!best)
                 return true;
+            // All that enters a cycle counts as entering at its header: a hot loop and its rare copy that lead into each other are one cycle.
+            if (m_isLikely[candidate] != m_isLikely[best])
+                return m_isLikely[candidate];
             bool isEntry = entries.contains(candidate);
             if (isEntry != entries.contains(best))
                 return isEntry;
@@ -98,6 +102,22 @@ private:
         return likely ? likely : any;
     }
 
+    void findLikelyBlocks() const
+    {
+        if (std::exchange(m_didFindLikelyBlocks, true))
+            return;
+        m_isLikely = IndexMap<BasicBlock*, bool>(m_proc.size(), false);
+        Vector<BasicBlock*, 16> worklist { m_proc.at(0) };
+        m_isLikely[m_proc.at(0)] = true;
+        while (!worklist.isEmpty()) {
+            for (const FrequentedBlock& successor : worklist.takeLast()->successors()) {
+                if (successor.isRare() || std::exchange(m_isLikely[successor.block()], true))
+                    continue;
+                worklist.append(successor.block());
+            }
+        }
+    }
+
     void findPolls() const
     {
         if (std::exchange(m_didFindPolls, true))
@@ -117,7 +137,9 @@ private:
 
     Procedure& m_proc;
     mutable IndexMap<BasicBlock*, bool> m_isPoll;
+    mutable IndexMap<BasicBlock*, bool> m_isLikely;
     mutable bool m_didFindPolls { false };
+    mutable bool m_didFindLikelyBlocks { false };
 };
 
 } // anonymous namespace

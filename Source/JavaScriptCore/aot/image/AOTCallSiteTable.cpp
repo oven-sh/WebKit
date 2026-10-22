@@ -13,7 +13,6 @@
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTLinkedFunctions.h"
-#include "AOTSectionWriter.h"
 #include "AOTStubKey.h"
 #include "AOTThreads.h"
 #include "AOTVarint.h"
@@ -120,6 +119,8 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
     });
     RELEASE_ASSERT(firstReadSites.empty());
     std::ranges::stable_sort(returnSites, { }, &SiteWithCode::returnOffset);
+    // Return addresses in a row may share a site. The first of them stands for all.
+    returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
     return returnSites;
 }
 
@@ -250,40 +251,41 @@ static void updateMaximum(Atomic<uint64_t>& maximum, uint64_t value)
     });
 }
 
-CallSiteTable encodeCallSites(const LinkedFunctions& functions, BuildContext& context)
+Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, BuildContext& context)
 {
     Vector<Vector<uint8_t>> streams(functions.size());
     Atomic<uint64_t> largestSiteCount { 0 };
     Atomic<uint64_t> largestInlineFrameCount { 0 };
+    Atomic<uint64_t> numberOfSites { 0 };
+    Atomic<uint64_t> numberOfInlineFrames { 0 };
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
         const CompiledCode& code = functions[position];
         encodeStream(streams[position], code);
         updateMaximum(largestSiteCount, code.sites.positions.size() - 1);
         updateMaximum(largestInlineFrameCount, inlineFrameCount(code.sites));
+        numberOfSites.exchangeAdd(code.sites.positions.size() - 1, std::memory_order_relaxed);
+        numberOfInlineFrames.exchangeAdd(inlineFrameCount(code.sites), std::memory_order_relaxed);
     });
+    context.statistics().count(StatisticID::CallSitesEmitted, numberOfSites.loadRelaxed());
+    context.statistics().count(StatisticID::InlineFramesEmitted, numberOfInlineFrames.loadRelaxed());
     context.statistics().count(StatisticID::LargestSiteCountInFunction, largestSiteCount.loadRelaxed());
     context.statistics().count(StatisticID::LargestInlineFrameCountInFunction, largestInlineFrameCount.loadRelaxed());
 
-    SectionWriter writer(context);
-    // Offset 0 means that a body has no stream.
-    const uint8_t unusedByte = 0;
-    writer.append(singleElementSpan(unusedByte), 1);
-    CallSiteTable table;
-    table.offsets = writer.appendAll(streams.span());
-    context.destroyLater(WTF::move(streams));
-    if (writer.didOverflow())
-        return { };
-    table.bytes = writer.takeBytes();
-    return table;
+    return streams;
 }
+
+static StreamHead readHead(const uint8_t* cursor);
 
 static std::optional<StreamHead> readHead(const Image& image, uint32_t function)
 {
     const ImageFunction& record = image.function(function);
     if (!record.has(ImageFunctionFlag::HasCallSites))
         return std::nullopt;
-    uint32_t streamOffset = SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).callSites;
-    const uint8_t* cursor = image.section<uint8_t>(ImageSection::CallSites).data() + streamOffset;
+    return readHead(SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).callSites);
+}
+
+static StreamHead readHead(const uint8_t* cursor)
+{
     HeadWord word = HeadWord::decode(readVarint(cursor));
     StreamHead head;
     head.numberOfSites = word.numberOfSites;
@@ -376,11 +378,42 @@ void SiteFrames::skip(uint64_t numberOfSites)
         next();
 }
 
+static std::optional<CallSiteRecord> findCallSite(const StreamHead*, uint32_t returnOffset);
+
 std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t returnOffset) const
 {
     std::optional<StreamHead> head = readHead(*this, function);
     if (!head)
         return std::nullopt;
+    return findCallSite(&*head, returnOffset);
+}
+
+// Everything that a walk over the stack asks about a return address, out of one run of bytes that is read once.
+ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const
+{
+    const ImageFunction& record = this->function(function);
+    SideTableParts parts = SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data());
+    ReturnSiteInfo result;
+    if (parts.callSites) {
+        StreamHead head = readHead(parts.callSites);
+        result.site = findCallSite(&head, returnOffset);
+    }
+    if (result.site && !parts.handlers.empty())
+        result.handler = findHandler(parts.handlers, result.site->callSite);
+    if (hasFrameAtReturnOffset(function, parts, returnOffset))
+        result.frame = section<ImageFrame>(ImageSection::Frames)[parts.frame];
+    if (record.has(ImageFunctionFlag::SpillsArgumentRegisters))
+        result.frame.calleeSavesStart |= ImageFrame::liesBelowSpilledArgumentsBit;
+    return result;
+}
+
+static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32_t returnOffset)
+{
+    // What a prologue check throws comes from in front of everything that the function does: no site of the body speaks for it.
+    for (auto [callOffset, resumeOffset] : head->prologueChecks) {
+        if (callOffset + sizeOfNearCall == returnOffset)
+            return std::nullopt;
+    }
     const uint8_t* cursor = head->sites();
     uint32_t offset = 0;
     uint64_t number = head->numberOfSitesWithoutCode;
@@ -395,6 +428,9 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
         else
             end = middle;
     }
+    // The site in front of the return address may be the last one in front of a checkpoint.
+    if (precedingCount)
+        --precedingCount;
     if (precedingCount) {
         SiteCheckpoint checkpoint = SiteCheckpoint::at(head->checkpoints, precedingCount - 1);
         offset = checkpoint.offset * codeOffsetUnit;
@@ -403,6 +439,10 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
         number += precedingCount * SiteCheckpoint::sitesBetween;
         count -= precedingCount * SiteCheckpoint::sitesBetween;
     }
+    // A return address without a site of its own has the site in front of it, unless that one says more than where it is.
+    bool hasSiteInFront = false;
+    uint64_t numberInFront = 0;
+    unsigned frameInFront = 0;
     std::optional<CallSiteIndex> firstReadSite;
     while (count--) {
         uint64_t word = readVarint(cursor);
@@ -412,16 +452,22 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
             details = SiteDetails::decode(readVarint(cursor));
         frame = details.frame;
         ++number;
-        if (offset < returnOffset)
-            continue;
         if (offset > returnOffset)
             break;
+        if (offset < returnOffset) {
+            hasSiteInFront = !details.isFirstRead && !details.isConstruct && !details.isTailCall;
+            numberInFront = number;
+            frameInFront = frame;
+            continue;
+        }
         CallSiteIndex callSite(static_cast<uint32_t>(number));
         if (!details.isFirstRead)
             return CallSiteRecord { callSite, frame, details.isConstruct, details.isTailCall, firstReadSite };
         firstReadSite = callSite;
     }
-    return std::nullopt;
+    if (!hasSiteInFront)
+        return std::nullopt;
+    return CallSiteRecord { CallSiteIndex(static_cast<uint32_t>(numberInFront)), frameInFront, false, false, std::nullopt };
 }
 
 std::optional<PrologueCheck> Image::prologueCheckAt(const void* returnAddress) const

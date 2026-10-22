@@ -14,7314 +14,8482 @@
 
 namespace JSC { namespace AOT {
 
-static constinit const BuiltinClassID memberClasses[] = {
-    BuiltinClassID(16),
+constinit const BuiltinClassID builtinTableMemberClasses[] = {
     BuiltinClassID(17),
-    BuiltinClassID(74),
-    BuiltinClassID(75),
-    BuiltinClassID(76),
-    BuiltinClassID(95),
-    BuiltinClassID(96),
+    BuiltinClassID(18),
+    BuiltinClassID(85),
+    BuiltinClassID(86),
+    BuiltinClassID(87),
+    BuiltinClassID(107),
+    BuiltinClassID(108),
+    BuiltinClassID(109),
+    BuiltinClassID(246),
+    BuiltinClassID(247),
+    BuiltinClassID(248),
+    BuiltinClassID(249),
+    BuiltinClassID(152),
+    BuiltinClassID(70),
+    BuiltinClassID(158),
+    BuiltinClassID(106),
+    BuiltinClassID(234),
+    BuiltinClassID(201),
+    BuiltinClassID(7),
+    BuiltinClassID(78),
+    BuiltinClassID(82),
     BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(140),
+    BuiltinClassID(234),
+    BuiltinClassID(0),
+    BuiltinClassID(151),
+    BuiltinClassID(268),
+    BuiltinClassID(175),
+    BuiltinClassID(49),
+    BuiltinClassID(1),
+    BuiltinClassID(151),
+    BuiltinClassID(220),
+    BuiltinClassID(203),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(252),
+    BuiltinClassID(21),
+    BuiltinClassID(62),
+    BuiltinClassID(61),
+    BuiltinClassID(240),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(173),
+    BuiltinClassID(208),
+    BuiltinClassID(240),
+    BuiltinClassID(208),
+    BuiltinClassID(9),
+    BuiltinClassID(51),
+    BuiltinClassID(35),
+    BuiltinClassID(55),
+    BuiltinClassID(56),
+    BuiltinClassID(229),
+    BuiltinClassID(40),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(94),
+    BuiltinClassID(211),
+    BuiltinClassID(72),
+    BuiltinClassID(52),
+    BuiltinClassID(55),
+    BuiltinClassID(103),
+    BuiltinClassID(183),
+    BuiltinClassID(244),
+    BuiltinClassID(174),
+    BuiltinClassID(90),
+    BuiltinClassID(19),
+    BuiltinClassID(20),
+    BuiltinClassID(26),
+    BuiltinClassID(33),
+    BuiltinClassID(49),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
+    BuiltinClassID(25),
+    BuiltinClassID(75),
+    BuiltinClassID(68),
+    BuiltinClassID(5),
+    BuiltinClassID(211),
+    BuiltinClassID(239),
+    BuiltinClassID(55),
+    BuiltinClassID(105),
+    BuiltinClassID(115),
+    BuiltinClassID(202),
+    BuiltinClassID(240),
+    BuiltinClassID(183),
+    BuiltinClassID(3),
+    BuiltinClassID(20),
+    BuiltinClassID(33),
+    BuiltinClassID(49),
+    BuiltinClassID(105),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(60),
+    BuiltinClassID(192),
+    BuiltinClassID(45),
+    BuiltinClassID(49),
+    BuiltinClassID(105),
+    BuiltinClassID(239),
+    BuiltinClassID(258),
+    BuiltinClassID(151),
+    BuiltinClassID(183),
+    BuiltinClassID(177),
+    BuiltinClassID(6),
+    BuiltinClassID(40),
+    BuiltinClassID(45),
+    BuiltinClassID(125),
+    BuiltinClassID(126),
+    BuiltinClassID(194),
+    BuiltinClassID(195),
+    BuiltinClassID(196),
     BuiltinClassID(197),
     BuiltinClassID(198),
     BuiltinClassID(199),
-    BuiltinClassID(200),
-    BuiltinClassID(125),
-    BuiltinClassID(60),
-    BuiltinClassID(128),
-    BuiltinClassID(94),
+    BuiltinClassID(206),
+    BuiltinClassID(239),
+    BuiltinClassID(45),
+    BuiltinClassID(239),
+    BuiltinClassID(3),
+    BuiltinClassID(19),
+    BuiltinClassID(20),
+    BuiltinClassID(33),
+    BuiltinClassID(105),
     BuiltinClassID(187),
-    BuiltinClassID(156),
-    BuiltinClassID(6),
-    BuiltinClassID(68),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(123),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
     BuiltinClassID(187),
-    BuiltinClassID(124),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(20),
+    BuiltinClassID(33),
+    BuiltinClassID(43),
+    BuiltinClassID(81),
     BuiltinClassID(136),
-    BuiltinClassID(175),
-    BuiltinClassID(158),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(203),
-    BuiltinClassID(20),
-    BuiltinClassID(191),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(134),
-    BuiltinClassID(163),
-    BuiltinClassID(191),
-    BuiltinClassID(163),
-    BuiltinClassID(8),
-    BuiltinClassID(43),
-    BuiltinClassID(31),
-    BuiltinClassID(47),
-    BuiltinClassID(48),
-    BuiltinClassID(184),
-    BuiltinClassID(35),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(82),
-    BuiltinClassID(166),
-    BuiltinClassID(62),
-    BuiltinClassID(44),
-    BuiltinClassID(47),
-    BuiltinClassID(91),
-    BuiltinClassID(139),
-    BuiltinClassID(195),
-    BuiltinClassID(135),
-    BuiltinClassID(78),
-    BuiltinClassID(18),
-    BuiltinClassID(19),
-    BuiltinClassID(24),
-    BuiltinClassID(30),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(23),
-    BuiltinClassID(65),
-    BuiltinClassID(58),
-    BuiltinClassID(4),
-    BuiltinClassID(166),
-    BuiltinClassID(190),
-    BuiltinClassID(47),
-    BuiltinClassID(93),
-    BuiltinClassID(103),
-    BuiltinClassID(157),
-    BuiltinClassID(191),
-    BuiltinClassID(139),
-    BuiltinClassID(2),
-    BuiltinClassID(19),
-    BuiltinClassID(30),
-    BuiltinClassID(93),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(38),
-    BuiltinClassID(93),
-    BuiltinClassID(190),
-    BuiltinClassID(209),
-    BuiltinClassID(124),
-    BuiltinClassID(139),
-    BuiltinClassID(5),
-    BuiltinClassID(35),
-    BuiltinClassID(38),
-    BuiltinClassID(113),
-    BuiltinClassID(114),
-    BuiltinClassID(149),
-    BuiltinClassID(150),
-    BuiltinClassID(151),
-    BuiltinClassID(152),
-    BuiltinClassID(153),
-    BuiltinClassID(154),
-    BuiltinClassID(161),
-    BuiltinClassID(190),
-    BuiltinClassID(38),
-    BuiltinClassID(190),
-    BuiltinClassID(2),
-    BuiltinClassID(18),
-    BuiltinClassID(19),
-    BuiltinClassID(30),
-    BuiltinClassID(93),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(143),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
+    BuiltinClassID(170),
     BuiltinClassID(179),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(19),
-    BuiltinClassID(30),
-    BuiltinClassID(37),
-    BuiltinClassID(70),
-    BuiltinClassID(119),
-    BuiltinClassID(131),
-    BuiltinClassID(132),
-    BuiltinClassID(110),
-    BuiltinClassID(115),
-    BuiltinClassID(158),
-    BuiltinClassID(28),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(6),
-    BuiltinClassID(66),
-    BuiltinClassID(67),
-    BuiltinClassID(68),
-    BuiltinClassID(69),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(118),
-    BuiltinClassID(120),
-    BuiltinClassID(121),
+    BuiltinClassID(171),
+    BuiltinClassID(57),
     BuiltinClassID(122),
-    BuiltinClassID(123),
-    BuiltinClassID(125),
-    BuiltinClassID(130),
-    BuiltinClassID(139),
-    BuiltinClassID(157),
-    BuiltinClassID(165),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(183),
+    BuiltinClassID(129),
+    BuiltinClassID(203),
+    BuiltinClassID(160),
+    BuiltinClassID(30),
     BuiltinClassID(187),
-    BuiltinClassID(191),
-    BuiltinClassID(134),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(183),
-    BuiltinClassID(191),
-    BuiltinClassID(144),
-    BuiltinClassID(25),
-    BuiltinClassID(144),
-    BuiltinClassID(23),
-    BuiltinClassID(98),
-    BuiltinClassID(141),
-    BuiltinClassID(4),
-    BuiltinClassID(166),
-    BuiltinClassID(155),
-    BuiltinClassID(134),
-    BuiltinClassID(139),
-    BuiltinClassID(139),
-    BuiltinClassID(168),
-    BuiltinClassID(0),
-    BuiltinClassID(1),
-    BuiltinClassID(2),
-    BuiltinClassID(4),
-    BuiltinClassID(5),
-    BuiltinClassID(6),
-    BuiltinClassID(8),
-    BuiltinClassID(10),
-    BuiltinClassID(11),
-    BuiltinClassID(12),
-    BuiltinClassID(15),
-    BuiltinClassID(16),
-    BuiltinClassID(17),
-    BuiltinClassID(18),
-    BuiltinClassID(20),
-    BuiltinClassID(21),
-    BuiltinClassID(23),
-    BuiltinClassID(25),
-    BuiltinClassID(32),
-    BuiltinClassID(34),
-    BuiltinClassID(35),
-    BuiltinClassID(38),
-    BuiltinClassID(39),
-    BuiltinClassID(42),
-    BuiltinClassID(43),
-    BuiltinClassID(49),
-    BuiltinClassID(50),
-    BuiltinClassID(52),
-    BuiltinClassID(53),
-    BuiltinClassID(65),
-    BuiltinClassID(68),
-    BuiltinClassID(69),
-    BuiltinClassID(71),
-    BuiltinClassID(72),
-    BuiltinClassID(73),
-    BuiltinClassID(74),
-    BuiltinClassID(75),
+    BuiltinClassID(190),
+    BuiltinClassID(7),
     BuiltinClassID(76),
     BuiltinClassID(77),
     BuiltinClassID(78),
     BuiltinClassID(79),
-    BuiltinClassID(80),
-    BuiltinClassID(81),
     BuiltinClassID(82),
-    BuiltinClassID(84),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(91),
-    BuiltinClassID(93),
-    BuiltinClassID(94),
-    BuiltinClassID(95),
-    BuiltinClassID(96),
     BuiltinClassID(97),
-    BuiltinClassID(98),
     BuiltinClassID(99),
     BuiltinClassID(100),
-    BuiltinClassID(101),
-    BuiltinClassID(102),
-    BuiltinClassID(103),
-    BuiltinClassID(104),
-    BuiltinClassID(105),
-    BuiltinClassID(106),
-    BuiltinClassID(108),
-    BuiltinClassID(110),
-    BuiltinClassID(113),
-    BuiltinClassID(114),
-    BuiltinClassID(115),
-    BuiltinClassID(120),
-    BuiltinClassID(121),
-    BuiltinClassID(122),
-    BuiltinClassID(123),
-    BuiltinClassID(127),
-    BuiltinClassID(128),
-    BuiltinClassID(132),
-    BuiltinClassID(134),
+    BuiltinClassID(135),
     BuiltinClassID(137),
     BuiltinClassID(138),
     BuiltinClassID(139),
     BuiltinClassID(140),
-    BuiltinClassID(141),
-    BuiltinClassID(143),
-    BuiltinClassID(144),
-    BuiltinClassID(146),
-    BuiltinClassID(147),
-    BuiltinClassID(148),
-    BuiltinClassID(149),
-    BuiltinClassID(150),
-    BuiltinClassID(151),
     BuiltinClassID(152),
-    BuiltinClassID(153),
+    BuiltinClassID(169),
+    BuiltinClassID(177),
+    BuiltinClassID(183),
+    BuiltinClassID(202),
+    BuiltinClassID(210),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(228),
+    BuiltinClassID(234),
+    BuiltinClassID(240),
+    BuiltinClassID(268),
+    BuiltinClassID(173),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(179),
+    BuiltinClassID(228),
+    BuiltinClassID(240),
+    BuiltinClassID(188),
+    BuiltinClassID(27),
+    BuiltinClassID(188),
+    BuiltinClassID(25),
+    BuiltinClassID(110),
+    BuiltinClassID(185),
+    BuiltinClassID(5),
+    BuiltinClassID(211),
+    BuiltinClassID(200),
+    BuiltinClassID(173),
+    BuiltinClassID(183),
+    BuiltinClassID(183),
+    BuiltinClassID(213),
+    BuiltinClassID(0),
+    BuiltinClassID(1),
+    BuiltinClassID(2),
+    BuiltinClassID(3),
+    BuiltinClassID(5),
+    BuiltinClassID(6),
+    BuiltinClassID(7),
+    BuiltinClassID(9),
+    BuiltinClassID(11),
+    BuiltinClassID(12),
+    BuiltinClassID(13),
+    BuiltinClassID(16),
+    BuiltinClassID(17),
+    BuiltinClassID(18),
+    BuiltinClassID(19),
+    BuiltinClassID(21),
+    BuiltinClassID(22),
+    BuiltinClassID(25),
+    BuiltinClassID(27),
+    BuiltinClassID(36),
+    BuiltinClassID(39),
+    BuiltinClassID(40),
+    BuiltinClassID(45),
+    BuiltinClassID(46),
+    BuiltinClassID(49),
+    BuiltinClassID(50),
+    BuiltinClassID(51),
+    BuiltinClassID(57),
+    BuiltinClassID(59),
+    BuiltinClassID(60),
+    BuiltinClassID(61),
+    BuiltinClassID(62),
+    BuiltinClassID(63),
+    BuiltinClassID(75),
+    BuiltinClassID(78),
+    BuiltinClassID(79),
+    BuiltinClassID(82),
+    BuiltinClassID(83),
+    BuiltinClassID(84),
+    BuiltinClassID(85),
+    BuiltinClassID(86),
+    BuiltinClassID(87),
+    BuiltinClassID(89),
+    BuiltinClassID(90),
+    BuiltinClassID(91),
+    BuiltinClassID(92),
+    BuiltinClassID(93),
+    BuiltinClassID(94),
+    BuiltinClassID(96),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(103),
+    BuiltinClassID(105),
+    BuiltinClassID(106),
+    BuiltinClassID(107),
+    BuiltinClassID(108),
+    BuiltinClassID(109),
+    BuiltinClassID(110),
+    BuiltinClassID(111),
+    BuiltinClassID(112),
+    BuiltinClassID(113),
+    BuiltinClassID(114),
+    BuiltinClassID(115),
+    BuiltinClassID(116),
+    BuiltinClassID(117),
+    BuiltinClassID(118),
+    BuiltinClassID(120),
+    BuiltinClassID(122),
+    BuiltinClassID(125),
+    BuiltinClassID(126),
+    BuiltinClassID(129),
+    BuiltinClassID(137),
+    BuiltinClassID(138),
+    BuiltinClassID(139),
+    BuiltinClassID(140),
     BuiltinClassID(154),
-    BuiltinClassID(156),
     BuiltinClassID(157),
     BuiltinClassID(158),
     BuiltinClassID(160),
-    BuiltinClassID(161),
-    BuiltinClassID(163),
-    BuiltinClassID(164),
-    BuiltinClassID(166),
-    BuiltinClassID(169),
-    BuiltinClassID(170),
     BuiltinClassID(171),
-    BuiltinClassID(172),
-    BuiltinClassID(175),
+    BuiltinClassID(173),
     BuiltinClassID(176),
     BuiltinClassID(177),
     BuiltinClassID(178),
     BuiltinClassID(179),
     BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
     BuiltinClassID(183),
+    BuiltinClassID(184),
     BuiltinClassID(185),
-    BuiltinClassID(186),
     BuiltinClassID(187),
     BuiltinClassID(188),
-    BuiltinClassID(189),
     BuiltinClassID(190),
-    BuiltinClassID(192),
+    BuiltinClassID(191),
     BuiltinClassID(193),
+    BuiltinClassID(194),
     BuiltinClassID(195),
+    BuiltinClassID(196),
     BuiltinClassID(197),
     BuiltinClassID(198),
     BuiltinClassID(199),
-    BuiltinClassID(200),
     BuiltinClassID(201),
+    BuiltinClassID(202),
+    BuiltinClassID(203),
+    BuiltinClassID(205),
+    BuiltinClassID(206),
+    BuiltinClassID(208),
+    BuiltinClassID(209),
+    BuiltinClassID(211),
+    BuiltinClassID(214),
+    BuiltinClassID(215),
+    BuiltinClassID(216),
+    BuiltinClassID(217),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(228),
+    BuiltinClassID(230),
+    BuiltinClassID(232),
+    BuiltinClassID(233),
+    BuiltinClassID(234),
+    BuiltinClassID(235),
+    BuiltinClassID(237),
+    BuiltinClassID(238),
+    BuiltinClassID(239),
+    BuiltinClassID(241),
+    BuiltinClassID(242),
+    BuiltinClassID(244),
+    BuiltinClassID(246),
+    BuiltinClassID(247),
+    BuiltinClassID(248),
+    BuiltinClassID(249),
+    BuiltinClassID(250),
+    BuiltinClassID(251),
+    BuiltinClassID(252),
+    BuiltinClassID(253),
+    BuiltinClassID(254),
+    BuiltinClassID(255),
+    BuiltinClassID(256),
+    BuiltinClassID(257),
+    BuiltinClassID(258),
+    BuiltinClassID(259),
+    BuiltinClassID(260),
+    BuiltinClassID(261),
+    BuiltinClassID(262),
+    BuiltinClassID(263),
+    BuiltinClassID(264),
+    BuiltinClassID(268),
+    BuiltinClassID(121),
+    BuiltinClassID(189),
+    BuiltinClassID(228),
+    BuiltinClassID(30),
+    BuiltinClassID(25),
+    BuiltinClassID(40),
+    BuiltinClassID(183),
+    BuiltinClassID(170),
+    BuiltinClassID(5),
+    BuiltinClassID(239),
+    BuiltinClassID(151),
+    BuiltinClassID(202),
+    BuiltinClassID(103),
+    BuiltinClassID(38),
+    BuiltinClassID(124),
+    BuiltinClassID(202),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(227),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(227),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(230),
+    BuiltinClassID(19),
+    BuiltinClassID(103),
+    BuiltinClassID(129),
+    BuiltinClassID(191),
+    BuiltinClassID(192),
+    BuiltinClassID(203),
+    BuiltinClassID(244),
+    BuiltinClassID(250),
+    BuiltinClassID(252),
+    BuiltinClassID(251),
+    BuiltinClassID(136),
+    BuiltinClassID(170),
+    BuiltinClassID(216),
+    BuiltinClassID(174),
+    BuiltinClassID(175),
+    BuiltinClassID(6),
+    BuiltinClassID(203),
+    BuiltinClassID(40),
+    BuiltinClassID(125),
+    BuiltinClassID(126),
+    BuiltinClassID(194),
+    BuiltinClassID(195),
+    BuiltinClassID(196),
+    BuiltinClassID(197),
+    BuiltinClassID(198),
+    BuiltinClassID(199),
+    BuiltinClassID(213),
+    BuiltinClassID(51),
+    BuiltinClassID(9),
+    BuiltinClassID(20),
+    BuiltinClassID(33),
+    BuiltinClassID(81),
+    BuiltinClassID(232),
+    BuiltinClassID(154),
+    BuiltinClassID(230),
+    BuiltinClassID(232),
+    BuiltinClassID(233),
+    BuiltinClassID(7),
+    BuiltinClassID(78),
+    BuiltinClassID(82),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(140),
+    BuiltinClassID(151),
+    BuiltinClassID(154),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(5),
+    BuiltinClassID(103),
+    BuiltinClassID(129),
+    BuiltinClassID(203),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(221),
+    BuiltinClassID(227),
+    BuiltinClassID(25),
+    BuiltinClassID(69),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(49),
+    BuiltinClassID(177),
+    BuiltinClassID(193),
+    BuiltinClassID(205),
+    BuiltinClassID(5),
+    BuiltinClassID(122),
+    BuiltinClassID(239),
+    BuiltinClassID(19),
+    BuiltinClassID(152),
+    BuiltinClassID(183),
+    BuiltinClassID(191),
+    BuiltinClassID(192),
+    BuiltinClassID(69),
+    BuiltinClassID(256),
+    BuiltinClassID(3),
+    BuiltinClassID(75),
+    BuiltinClassID(63),
+    BuiltinClassID(124),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(240),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(79),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(191),
+    BuiltinClassID(131),
+    BuiltinClassID(3),
+    BuiltinClassID(5),
+    BuiltinClassID(25),
+    BuiltinClassID(239),
+    BuiltinClassID(209),
+    BuiltinClassID(151),
+    BuiltinClassID(151),
+    BuiltinClassID(185),
+    BuiltinClassID(5),
+    BuiltinClassID(5),
+    BuiltinClassID(122),
+    BuiltinClassID(7),
+    BuiltinClassID(78),
+    BuiltinClassID(82),
+    BuiltinClassID(94),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(135),
+    BuiltinClassID(140),
+    BuiltinClassID(169),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(5),
+    BuiltinClassID(103),
+    BuiltinClassID(122),
+    BuiltinClassID(129),
+    BuiltinClassID(203),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(19),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
+    BuiltinClassID(111),
+    BuiltinClassID(113),
+    BuiltinClassID(114),
+    BuiltinClassID(116),
+    BuiltinClassID(118),
+    BuiltinClassID(111),
+    BuiltinClassID(116),
+    BuiltinClassID(103),
+    BuiltinClassID(129),
+    BuiltinClassID(183),
+    BuiltinClassID(244),
+    BuiltinClassID(250),
+    BuiltinClassID(263),
+    BuiltinClassID(103),
+    BuiltinClassID(244),
+    BuiltinClassID(254),
+    BuiltinClassID(45),
+    BuiltinClassID(202),
+    BuiltinClassID(174),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(46),
+    BuiltinClassID(129),
+    BuiltinClassID(250),
+    BuiltinClassID(219),
+    BuiltinClassID(39),
+    BuiltinClassID(43),
+    BuiltinClassID(227),
+    BuiltinClassID(268),
+    BuiltinClassID(124),
+    BuiltinClassID(206),
+    BuiltinClassID(258),
+    BuiltinClassID(263),
+    BuiltinClassID(206),
+    BuiltinClassID(103),
+    BuiltinClassID(129),
+    BuiltinClassID(203),
+    BuiltinClassID(244),
+    BuiltinClassID(250),
+    BuiltinClassID(252),
+    BuiltinClassID(26),
+    BuiltinClassID(242),
+    BuiltinClassID(49),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(49),
+    BuiltinClassID(135),
+    BuiltinClassID(169),
+    BuiltinClassID(242),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(124),
+    BuiltinClassID(240),
+    BuiltinClassID(242),
+    BuiltinClassID(223),
+    BuiltinClassID(225),
+    BuiltinClassID(227),
+    BuiltinClassID(19),
+    BuiltinClassID(192),
+    BuiltinClassID(135),
+    BuiltinClassID(169),
+    BuiltinClassID(5),
+    BuiltinClassID(25),
+    BuiltinClassID(122),
+    BuiltinClassID(211),
+    BuiltinClassID(239),
+    BuiltinClassID(95),
+    BuiltinClassID(5),
+    BuiltinClassID(25),
+    BuiltinClassID(211),
+    BuiltinClassID(239),
+    BuiltinClassID(137),
+    BuiltinClassID(138),
+    BuiltinClassID(139),
+    BuiltinClassID(19),
+    BuiltinClassID(20),
+    BuiltinClassID(26),
+    BuiltinClassID(33),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
+    BuiltinClassID(5),
+    BuiltinClassID(103),
+    BuiltinClassID(129),
+    BuiltinClassID(183),
+    BuiltinClassID(203),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(26),
+    BuiltinClassID(131),
+    BuiltinClassID(154),
+    BuiltinClassID(229),
+    BuiltinClassID(19),
+    BuiltinClassID(192),
+    BuiltinClassID(193),
+    BuiltinClassID(5),
+    BuiltinClassID(90),
+    BuiltinClassID(211),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(263),
+    BuiltinClassID(152),
+    BuiltinClassID(211),
+    BuiltinClassID(26),
+    BuiltinClassID(5),
+    BuiltinClassID(75),
+    BuiltinClassID(122),
+    BuiltinClassID(239),
+    BuiltinClassID(83),
+    BuiltinClassID(89),
+    BuiltinClassID(93),
+    BuiltinClassID(211),
+    BuiltinClassID(6),
+    BuiltinClassID(206),
+    BuiltinClassID(2),
+    BuiltinClassID(27),
+    BuiltinClassID(57),
+    BuiltinClassID(59),
+    BuiltinClassID(176),
+    BuiltinClassID(184),
+    BuiltinClassID(188),
+    BuiltinClassID(215),
+    BuiltinClassID(217),
+    BuiltinClassID(238),
+    BuiltinClassID(241),
+    BuiltinClassID(2),
+    BuiltinClassID(19),
+    BuiltinClassID(53),
+    BuiltinClassID(56),
+    BuiltinClassID(57),
+    BuiltinClassID(59),
+    BuiltinClassID(90),
+    BuiltinClassID(131),
+    BuiltinClassID(176),
+    BuiltinClassID(184),
+    BuiltinClassID(192),
+    BuiltinClassID(215),
+    BuiltinClassID(217),
+    BuiltinClassID(238),
+    BuiltinClassID(241),
+    BuiltinClassID(8),
+    BuiltinClassID(10),
+    BuiltinClassID(12),
+    BuiltinClassID(15),
+    BuiltinClassID(91),
+    BuiltinClassID(104),
+    BuiltinClassID(119),
+    BuiltinClassID(123),
+    BuiltinClassID(130),
+    BuiltinClassID(186),
+    BuiltinClassID(204),
+    BuiltinClassID(212),
+    BuiltinClassID(245),
+    BuiltinClassID(267),
+    BuiltinClassID(63),
+    BuiltinClassID(72),
+    BuiltinClassID(75),
+    BuiltinClassID(27),
+    BuiltinClassID(49),
+    BuiltinClassID(183),
+    BuiltinClassID(112),
+    BuiltinClassID(25),
+    BuiltinClassID(227),
+    BuiltinClassID(190),
+    BuiltinClassID(61),
+    BuiltinClassID(96),
+    BuiltinClassID(96),
+    BuiltinClassID(169),
+    BuiltinClassID(83),
+    BuiltinClassID(94),
+    BuiltinClassID(242),
+    BuiltinClassID(30),
+    BuiltinClassID(131),
+    BuiltinClassID(137),
+    BuiltinClassID(138),
+    BuiltinClassID(139),
+    BuiltinClassID(131),
+    BuiltinClassID(242),
+    BuiltinClassID(151),
+    BuiltinClassID(202),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(94),
+    BuiltinClassID(183),
+    BuiltinClassID(202),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(124),
+    BuiltinClassID(208),
+    BuiltinClassID(240),
+    BuiltinClassID(242),
+    BuiltinClassID(191),
+    BuiltinClassID(192),
+    BuiltinClassID(49),
+    BuiltinClassID(69),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(242),
+    BuiltinClassID(13),
+    BuiltinClassID(92),
+    BuiltinClassID(53),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(183),
+    BuiltinClassID(202),
+    BuiltinClassID(20),
+    BuiltinClassID(33),
+    BuiltinClassID(81),
+    BuiltinClassID(175),
+    BuiltinClassID(94),
+    BuiltinClassID(152),
+    BuiltinClassID(179),
+    BuiltinClassID(213),
+    BuiltinClassID(233),
+    BuiltinClassID(235),
+    BuiltinClassID(202),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(7),
+    BuiltinClassID(38),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(77),
+    BuiltinClassID(78),
+    BuiltinClassID(82),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(106),
+    BuiltinClassID(124),
+    BuiltinClassID(140),
+    BuiltinClassID(151),
+    BuiltinClassID(169),
+    BuiltinClassID(210),
+    BuiltinClassID(213),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(228),
+    BuiltinClassID(234),
+    BuiltinClassID(240),
+    BuiltinClassID(187),
+    BuiltinClassID(188),
+    BuiltinClassID(84),
+    BuiltinClassID(179),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(83),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(124),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(240),
+    BuiltinClassID(202),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(240),
+    BuiltinClassID(35),
+    BuiltinClassID(53),
+    BuiltinClassID(55),
+    BuiltinClassID(56),
+    BuiltinClassID(229),
+    BuiltinClassID(35),
+    BuiltinClassID(53),
+    BuiltinClassID(55),
+    BuiltinClassID(229),
+    BuiltinClassID(152),
+    BuiltinClassID(183),
+    BuiltinClassID(35),
+    BuiltinClassID(55),
+    BuiltinClassID(211),
+    BuiltinClassID(229),
+    BuiltinClassID(6),
+    BuiltinClassID(105),
+    BuiltinClassID(228),
+    BuiltinClassID(110),
+    BuiltinClassID(111),
+    BuiltinClassID(112),
+    BuiltinClassID(113),
+    BuiltinClassID(114),
+    BuiltinClassID(116),
+    BuiltinClassID(117),
+    BuiltinClassID(118),
+    BuiltinClassID(120),
+    BuiltinClassID(63),
+    BuiltinClassID(75),
+    BuiltinClassID(180),
+    BuiltinClassID(10),
+    BuiltinClassID(12),
+    BuiltinClassID(91),
+    BuiltinClassID(123),
+    BuiltinClassID(267),
+    BuiltinClassID(5),
+    BuiltinClassID(43),
+    BuiltinClassID(239),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(223),
+    BuiltinClassID(225),
+    BuiltinClassID(227),
+    BuiltinClassID(83),
+    BuiltinClassID(136),
+    BuiltinClassID(170),
+    BuiltinClassID(207),
+    BuiltinClassID(93),
+    BuiltinClassID(183),
+    BuiltinClassID(237),
+    BuiltinClassID(237),
+    BuiltinClassID(93),
+    BuiltinClassID(115),
+    BuiltinClassID(183),
+    BuiltinClassID(211),
+    BuiltinClassID(242),
+    BuiltinClassID(120),
+    BuiltinClassID(117),
+    BuiltinClassID(183),
+    BuiltinClassID(117),
+    BuiltinClassID(183),
+    BuiltinClassID(202),
+    BuiltinClassID(213),
+    BuiltinClassID(240),
+    BuiltinClassID(103),
+    BuiltinClassID(129),
+    BuiltinClassID(183),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(250),
+    BuiltinClassID(263),
+    BuiltinClassID(159),
+    BuiltinClassID(81),
+    BuiltinClassID(248),
+    BuiltinClassID(81),
+    BuiltinClassID(228),
+    BuiltinClassID(0),
+    BuiltinClassID(187),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(19),
+    BuiltinClassID(26),
+    BuiltinClassID(129),
+    BuiltinClassID(191),
+    BuiltinClassID(192),
+    BuiltinClassID(193),
+    BuiltinClassID(203),
+    BuiltinClassID(244),
+    BuiltinClassID(5),
+    BuiltinClassID(6),
+    BuiltinClassID(19),
+    BuiltinClassID(25),
+    BuiltinClassID(26),
+    BuiltinClassID(192),
+    BuiltinClassID(206),
+    BuiltinClassID(211),
+    BuiltinClassID(239),
+    BuiltinClassID(5),
+    BuiltinClassID(183),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(188),
+    BuiltinClassID(254),
+    BuiltinClassID(7),
+    BuiltinClassID(20),
+    BuiltinClassID(33),
+    BuiltinClassID(78),
+    BuiltinClassID(81),
+    BuiltinClassID(82),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(140),
+    BuiltinClassID(19),
+    BuiltinClassID(152),
+    BuiltinClassID(191),
+    BuiltinClassID(192),
+    BuiltinClassID(38),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(124),
+    BuiltinClassID(19),
+    BuiltinClassID(26),
+    BuiltinClassID(192),
+    BuiltinClassID(25),
+    BuiltinClassID(239),
+    BuiltinClassID(183),
+    BuiltinClassID(202),
+    BuiltinClassID(183),
+    BuiltinClassID(211),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(76),
+    BuiltinClassID(19),
+    BuiltinClassID(20),
+    BuiltinClassID(26),
+    BuiltinClassID(33),
+    BuiltinClassID(35),
+    BuiltinClassID(154),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
+    BuiltinClassID(229),
+    BuiltinClassID(10),
+    BuiltinClassID(12),
+    BuiltinClassID(91),
+    BuiltinClassID(1),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(105),
+    BuiltinClassID(248),
+    BuiltinClassID(157),
+    BuiltinClassID(258),
+    BuiltinClassID(25),
+    BuiltinClassID(27),
+    BuiltinClassID(46),
+    BuiltinClassID(89),
+    BuiltinClassID(103),
+    BuiltinClassID(160),
+    BuiltinClassID(188),
+    BuiltinClassID(208),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(242),
+    BuiltinClassID(244),
+    BuiltinClassID(5),
+    BuiltinClassID(16),
+    BuiltinClassID(25),
+    BuiltinClassID(46),
+    BuiltinClassID(157),
+    BuiltinClassID(158),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(239),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(222),
+    BuiltinClassID(227),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(227),
+    BuiltinClassID(5),
+    BuiltinClassID(16),
+    BuiltinClassID(22),
+    BuiltinClassID(25),
+    BuiltinClassID(27),
+    BuiltinClassID(46),
+    BuiltinClassID(57),
+    BuiltinClassID(90),
+    BuiltinClassID(115),
+    BuiltinClassID(157),
+    BuiltinClassID(158),
+    BuiltinClassID(185),
+    BuiltinClassID(188),
+    BuiltinClassID(211),
+    BuiltinClassID(216),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(239),
+    BuiltinClassID(242),
+    BuiltinClassID(244),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(221),
+    BuiltinClassID(96),
+    BuiltinClassID(237),
+    BuiltinClassID(19),
+    BuiltinClassID(26),
+    BuiltinClassID(60),
+    BuiltinClassID(183),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
+    BuiltinClassID(193),
+    BuiltinClassID(7),
+    BuiltinClassID(38),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(77),
+    BuiltinClassID(78),
+    BuiltinClassID(82),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(106),
+    BuiltinClassID(124),
+    BuiltinClassID(140),
+    BuiltinClassID(151),
+    BuiltinClassID(210),
+    BuiltinClassID(213),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(228),
+    BuiltinClassID(234),
+    BuiltinClassID(240),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(49),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(255),
+    BuiltinClassID(16),
+    BuiltinClassID(22),
+    BuiltinClassID(46),
+    BuiltinClassID(157),
+    BuiltinClassID(158),
+    BuiltinClassID(211),
+    BuiltinClassID(216),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(255),
+    BuiltinClassID(5),
+    BuiltinClassID(220),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(239),
+    BuiltinClassID(7),
+    BuiltinClassID(19),
+    BuiltinClassID(25),
+    BuiltinClassID(78),
+    BuiltinClassID(82),
+    BuiltinClassID(97),
+    BuiltinClassID(99),
+    BuiltinClassID(100),
+    BuiltinClassID(105),
+    BuiltinClassID(137),
+    BuiltinClassID(138),
+    BuiltinClassID(139),
+    BuiltinClassID(140),
+    BuiltinClassID(151),
+    BuiltinClassID(152),
+    BuiltinClassID(154),
+    BuiltinClassID(175),
+    BuiltinClassID(191),
+    BuiltinClassID(192),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(228),
+    BuiltinClassID(137),
+    BuiltinClassID(138),
+    BuiltinClassID(139),
+    BuiltinClassID(152),
+    BuiltinClassID(9),
+    BuiltinClassID(14),
+    BuiltinClassID(213),
+    BuiltinClassID(228),
+    BuiltinClassID(14),
+    BuiltinClassID(38),
+    BuiltinClassID(47),
+    BuiltinClassID(48),
+    BuiltinClassID(51),
+    BuiltinClassID(79),
+    BuiltinClassID(101),
+    BuiltinClassID(102),
+    BuiltinClassID(106),
+    BuiltinClassID(122),
+    BuiltinClassID(124),
+    BuiltinClassID(218),
+    BuiltinClassID(219),
+    BuiltinClassID(234),
+    BuiltinClassID(240),
+    BuiltinClassID(5),
+    BuiltinClassID(15),
+    BuiltinClassID(103),
+    BuiltinClassID(121),
+    BuiltinClassID(122),
+    BuiltinClassID(129),
+    BuiltinClassID(203),
+    BuiltinClassID(211),
+    BuiltinClassID(239),
+    BuiltinClassID(244),
+    BuiltinClassID(27),
+    BuiltinClassID(46),
+    BuiltinClassID(106),
+    BuiltinClassID(188),
+    BuiltinClassID(216),
+    BuiltinClassID(234),
+    BuiltinClassID(6),
+    BuiltinClassID(8),
+    BuiltinClassID(9),
+    BuiltinClassID(11),
+    BuiltinClassID(12),
+    BuiltinClassID(13),
+    BuiltinClassID(16),
+    BuiltinClassID(19),
+    BuiltinClassID(25),
+    BuiltinClassID(30),
+    BuiltinClassID(45),
+    BuiltinClassID(51),
+    BuiltinClassID(61),
+    BuiltinClassID(62),
+    BuiltinClassID(84),
+    BuiltinClassID(91),
+    BuiltinClassID(92),
+    BuiltinClassID(103),
+    BuiltinClassID(104),
+    BuiltinClassID(110),
+    BuiltinClassID(111),
+    BuiltinClassID(112),
+    BuiltinClassID(113),
+    BuiltinClassID(114),
+    BuiltinClassID(115),
+    BuiltinClassID(116),
+    BuiltinClassID(117),
+    BuiltinClassID(118),
+    BuiltinClassID(120),
+    BuiltinClassID(122),
+    BuiltinClassID(123),
+    BuiltinClassID(129),
+    BuiltinClassID(130),
+    BuiltinClassID(151),
+    BuiltinClassID(160),
+    BuiltinClassID(171),
+    BuiltinClassID(186),
+    BuiltinClassID(187),
+    BuiltinClassID(190),
+    BuiltinClassID(192),
     BuiltinClassID(202),
     BuiltinClassID(203),
     BuiltinClassID(204),
     BuiltinClassID(205),
     BuiltinClassID(206),
-    BuiltinClassID(207),
-    BuiltinClassID(208),
-    BuiltinClassID(209),
-    BuiltinClassID(210),
-    BuiltinClassID(211),
     BuiltinClassID(212),
-    BuiltinClassID(213),
-    BuiltinClassID(214),
-    BuiltinClassID(215),
-    BuiltinClassID(109),
-    BuiltinClassID(145),
-    BuiltinClassID(183),
-    BuiltinClassID(28),
-    BuiltinClassID(23),
-    BuiltinClassID(35),
-    BuiltinClassID(139),
-    BuiltinClassID(131),
-    BuiltinClassID(4),
-    BuiltinClassID(190),
-    BuiltinClassID(124),
-    BuiltinClassID(157),
-    BuiltinClassID(91),
-    BuiltinClassID(33),
-    BuiltinClassID(112),
-    BuiltinClassID(157),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(182),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(182),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(185),
-    BuiltinClassID(18),
-    BuiltinClassID(91),
-    BuiltinClassID(115),
-    BuiltinClassID(147),
-    BuiltinClassID(158),
-    BuiltinClassID(195),
-    BuiltinClassID(201),
-    BuiltinClassID(203),
-    BuiltinClassID(202),
-    BuiltinClassID(119),
-    BuiltinClassID(131),
-    BuiltinClassID(171),
-    BuiltinClassID(135),
-    BuiltinClassID(136),
-    BuiltinClassID(5),
-    BuiltinClassID(158),
-    BuiltinClassID(35),
-    BuiltinClassID(113),
-    BuiltinClassID(114),
-    BuiltinClassID(149),
-    BuiltinClassID(150),
-    BuiltinClassID(151),
-    BuiltinClassID(152),
-    BuiltinClassID(153),
-    BuiltinClassID(154),
-    BuiltinClassID(168),
-    BuiltinClassID(43),
-    BuiltinClassID(8),
-    BuiltinClassID(19),
-    BuiltinClassID(30),
-    BuiltinClassID(70),
-    BuiltinClassID(186),
-    BuiltinClassID(185),
-    BuiltinClassID(186),
-    BuiltinClassID(6),
-    BuiltinClassID(68),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(123),
-    BuiltinClassID(124),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(4),
-    BuiltinClassID(91),
-    BuiltinClassID(115),
-    BuiltinClassID(158),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(176),
-    BuiltinClassID(182),
-    BuiltinClassID(23),
-    BuiltinClassID(59),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(148),
-    BuiltinClassID(160),
-    BuiltinClassID(4),
-    BuiltinClassID(110),
-    BuiltinClassID(190),
-    BuiltinClassID(18),
-    BuiltinClassID(125),
-    BuiltinClassID(139),
-    BuiltinClassID(147),
-    BuiltinClassID(59),
-    BuiltinClassID(207),
-    BuiltinClassID(2),
-    BuiltinClassID(65),
-    BuiltinClassID(53),
-    BuiltinClassID(112),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(191),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(69),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(147),
-    BuiltinClassID(117),
-    BuiltinClassID(2),
-    BuiltinClassID(4),
-    BuiltinClassID(23),
-    BuiltinClassID(190),
-    BuiltinClassID(164),
-    BuiltinClassID(124),
-    BuiltinClassID(141),
-    BuiltinClassID(4),
-    BuiltinClassID(4),
-    BuiltinClassID(110),
-    BuiltinClassID(6),
-    BuiltinClassID(68),
-    BuiltinClassID(71),
-    BuiltinClassID(82),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(118),
-    BuiltinClassID(123),
-    BuiltinClassID(130),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(4),
-    BuiltinClassID(91),
-    BuiltinClassID(110),
-    BuiltinClassID(115),
-    BuiltinClassID(158),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(18),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(99),
-    BuiltinClassID(101),
-    BuiltinClassID(102),
-    BuiltinClassID(104),
-    BuiltinClassID(106),
-    BuiltinClassID(99),
-    BuiltinClassID(104),
-    BuiltinClassID(91),
-    BuiltinClassID(115),
-    BuiltinClassID(139),
-    BuiltinClassID(195),
-    BuiltinClassID(201),
-    BuiltinClassID(214),
-    BuiltinClassID(91),
-    BuiltinClassID(195),
-    BuiltinClassID(205),
-    BuiltinClassID(38),
-    BuiltinClassID(157),
-    BuiltinClassID(135),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(39),
-    BuiltinClassID(115),
-    BuiltinClassID(201),
-    BuiltinClassID(174),
-    BuiltinClassID(34),
-    BuiltinClassID(37),
-    BuiltinClassID(182),
-    BuiltinClassID(112),
-    BuiltinClassID(161),
-    BuiltinClassID(209),
-    BuiltinClassID(214),
-    BuiltinClassID(161),
-    BuiltinClassID(91),
-    BuiltinClassID(115),
-    BuiltinClassID(158),
-    BuiltinClassID(195),
-    BuiltinClassID(201),
-    BuiltinClassID(203),
-    BuiltinClassID(24),
-    BuiltinClassID(193),
-    BuiltinClassID(118),
-    BuiltinClassID(130),
-    BuiltinClassID(193),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(112),
-    BuiltinClassID(191),
-    BuiltinClassID(193),
-    BuiltinClassID(178),
-    BuiltinClassID(180),
-    BuiltinClassID(182),
-    BuiltinClassID(18),
-    BuiltinClassID(4),
-    BuiltinClassID(23),
-    BuiltinClassID(110),
-    BuiltinClassID(166),
-    BuiltinClassID(190),
-    BuiltinClassID(83),
-    BuiltinClassID(4),
-    BuiltinClassID(23),
-    BuiltinClassID(166),
-    BuiltinClassID(190),
-    BuiltinClassID(120),
-    BuiltinClassID(121),
-    BuiltinClassID(122),
-    BuiltinClassID(4),
-    BuiltinClassID(91),
-    BuiltinClassID(115),
-    BuiltinClassID(139),
-    BuiltinClassID(158),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(24),
-    BuiltinClassID(117),
-    BuiltinClassID(184),
-    BuiltinClassID(18),
-    BuiltinClassID(148),
-    BuiltinClassID(4),
-    BuiltinClassID(78),
-    BuiltinClassID(166),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(214),
-    BuiltinClassID(125),
-    BuiltinClassID(166),
-    BuiltinClassID(24),
-    BuiltinClassID(4),
-    BuiltinClassID(65),
-    BuiltinClassID(110),
-    BuiltinClassID(190),
-    BuiltinClassID(72),
-    BuiltinClassID(77),
-    BuiltinClassID(81),
-    BuiltinClassID(166),
-    BuiltinClassID(5),
-    BuiltinClassID(161),
-    BuiltinClassID(1),
+    BuiltinClassID(216),
+    BuiltinClassID(220),
+    BuiltinClassID(221),
+    BuiltinClassID(222),
+    BuiltinClassID(223),
+    BuiltinClassID(224),
+    BuiltinClassID(225),
+    BuiltinClassID(226),
+    BuiltinClassID(227),
+    BuiltinClassID(239),
+    BuiltinClassID(242),
+    BuiltinClassID(244),
+    BuiltinClassID(245),
+    BuiltinClassID(250),
+    BuiltinClassID(251),
+    BuiltinClassID(252),
+    BuiltinClassID(254),
+    BuiltinClassID(255),
+    BuiltinClassID(256),
+    BuiltinClassID(258),
+    BuiltinClassID(259),
+    BuiltinClassID(263),
+    BuiltinClassID(264),
+    BuiltinClassID(267),
     BuiltinClassID(25),
-    BuiltinClassID(49),
-    BuiltinClassID(50),
-    BuiltinClassID(137),
-    BuiltinClassID(140),
-    BuiltinClassID(144),
-    BuiltinClassID(170),
-    BuiltinClassID(172),
-    BuiltinClassID(189),
-    BuiltinClassID(192),
-    BuiltinClassID(1),
-    BuiltinClassID(18),
-    BuiltinClassID(45),
-    BuiltinClassID(48),
-    BuiltinClassID(49),
-    BuiltinClassID(50),
-    BuiltinClassID(78),
-    BuiltinClassID(117),
-    BuiltinClassID(137),
-    BuiltinClassID(140),
-    BuiltinClassID(170),
-    BuiltinClassID(172),
-    BuiltinClassID(189),
-    BuiltinClassID(192),
-    BuiltinClassID(7),
-    BuiltinClassID(9),
-    BuiltinClassID(11),
-    BuiltinClassID(14),
-    BuiltinClassID(79),
-    BuiltinClassID(92),
-    BuiltinClassID(107),
-    BuiltinClassID(111),
-    BuiltinClassID(116),
-    BuiltinClassID(142),
-    BuiltinClassID(159),
-    BuiltinClassID(167),
-    BuiltinClassID(196),
-    BuiltinClassID(218),
-    BuiltinClassID(53),
-    BuiltinClassID(62),
-    BuiltinClassID(65),
-    BuiltinClassID(25),
-    BuiltinClassID(100),
-    BuiltinClassID(23),
-    BuiltinClassID(182),
-    BuiltinClassID(146),
-    BuiltinClassID(84),
-    BuiltinClassID(130),
-    BuiltinClassID(72),
-    BuiltinClassID(82),
-    BuiltinClassID(193),
-    BuiltinClassID(28),
-    BuiltinClassID(117),
-    BuiltinClassID(120),
-    BuiltinClassID(121),
-    BuiltinClassID(122),
-    BuiltinClassID(117),
-    BuiltinClassID(193),
-    BuiltinClassID(124),
-    BuiltinClassID(157),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(82),
-    BuiltinClassID(139),
-    BuiltinClassID(157),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(112),
-    BuiltinClassID(163),
-    BuiltinClassID(191),
-    BuiltinClassID(193),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(193),
-    BuiltinClassID(12),
-    BuiltinClassID(80),
-    BuiltinClassID(45),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(139),
-    BuiltinClassID(157),
-    BuiltinClassID(19),
-    BuiltinClassID(30),
-    BuiltinClassID(70),
-    BuiltinClassID(136),
-    BuiltinClassID(82),
-    BuiltinClassID(125),
-    BuiltinClassID(157),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(6),
-    BuiltinClassID(33),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(67),
-    BuiltinClassID(68),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(94),
-    BuiltinClassID(112),
-    BuiltinClassID(123),
-    BuiltinClassID(124),
-    BuiltinClassID(130),
-    BuiltinClassID(165),
-    BuiltinClassID(168),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(183),
-    BuiltinClassID(187),
-    BuiltinClassID(191),
-    BuiltinClassID(143),
-    BuiltinClassID(144),
-    BuiltinClassID(73),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(72),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(112),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(191),
-    BuiltinClassID(157),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(191),
-    BuiltinClassID(31),
-    BuiltinClassID(45),
-    BuiltinClassID(47),
-    BuiltinClassID(48),
-    BuiltinClassID(184),
-    BuiltinClassID(31),
-    BuiltinClassID(45),
-    BuiltinClassID(47),
-    BuiltinClassID(184),
-    BuiltinClassID(125),
-    BuiltinClassID(139),
-    BuiltinClassID(31),
-    BuiltinClassID(47),
-    BuiltinClassID(166),
-    BuiltinClassID(184),
-    BuiltinClassID(5),
-    BuiltinClassID(93),
-    BuiltinClassID(183),
-    BuiltinClassID(98),
-    BuiltinClassID(99),
-    BuiltinClassID(100),
-    BuiltinClassID(101),
-    BuiltinClassID(102),
-    BuiltinClassID(104),
-    BuiltinClassID(105),
-    BuiltinClassID(106),
-    BuiltinClassID(108),
-    BuiltinClassID(53),
-    BuiltinClassID(65),
-    BuiltinClassID(9),
-    BuiltinClassID(11),
-    BuiltinClassID(79),
-    BuiltinClassID(111),
-    BuiltinClassID(218),
-    BuiltinClassID(4),
-    BuiltinClassID(37),
-    BuiltinClassID(190),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(178),
-    BuiltinClassID(180),
-    BuiltinClassID(182),
-    BuiltinClassID(72),
-    BuiltinClassID(119),
-    BuiltinClassID(131),
-    BuiltinClassID(162),
-    BuiltinClassID(81),
-    BuiltinClassID(139),
-    BuiltinClassID(188),
-    BuiltinClassID(188),
-    BuiltinClassID(81),
-    BuiltinClassID(103),
-    BuiltinClassID(139),
-    BuiltinClassID(166),
-    BuiltinClassID(193),
-    BuiltinClassID(108),
-    BuiltinClassID(105),
-    BuiltinClassID(139),
-    BuiltinClassID(105),
-    BuiltinClassID(139),
-    BuiltinClassID(157),
-    BuiltinClassID(168),
-    BuiltinClassID(191),
-    BuiltinClassID(91),
-    BuiltinClassID(115),
-    BuiltinClassID(139),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(201),
-    BuiltinClassID(214),
-    BuiltinClassID(129),
-    BuiltinClassID(70),
-    BuiltinClassID(199),
-    BuiltinClassID(70),
-    BuiltinClassID(183),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(18),
-    BuiltinClassID(24),
-    BuiltinClassID(115),
-    BuiltinClassID(147),
-    BuiltinClassID(148),
-    BuiltinClassID(158),
-    BuiltinClassID(195),
-    BuiltinClassID(4),
-    BuiltinClassID(5),
-    BuiltinClassID(18),
-    BuiltinClassID(23),
-    BuiltinClassID(24),
-    BuiltinClassID(161),
-    BuiltinClassID(166),
-    BuiltinClassID(190),
-    BuiltinClassID(4),
-    BuiltinClassID(139),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(144),
-    BuiltinClassID(205),
-    BuiltinClassID(6),
-    BuiltinClassID(19),
-    BuiltinClassID(30),
-    BuiltinClassID(68),
-    BuiltinClassID(70),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(123),
-    BuiltinClassID(18),
-    BuiltinClassID(125),
-    BuiltinClassID(147),
-    BuiltinClassID(33),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(112),
-    BuiltinClassID(18),
-    BuiltinClassID(24),
-    BuiltinClassID(23),
-    BuiltinClassID(190),
-    BuiltinClassID(139),
-    BuiltinClassID(157),
-    BuiltinClassID(139),
-    BuiltinClassID(166),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(66),
-    BuiltinClassID(18),
-    BuiltinClassID(19),
-    BuiltinClassID(24),
-    BuiltinClassID(30),
-    BuiltinClassID(31),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(184),
-    BuiltinClassID(9),
-    BuiltinClassID(11),
-    BuiltinClassID(79),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(93),
-    BuiltinClassID(199),
-    BuiltinClassID(127),
-    BuiltinClassID(209),
-    BuiltinClassID(23),
-    BuiltinClassID(25),
-    BuiltinClassID(39),
-    BuiltinClassID(77),
-    BuiltinClassID(91),
-    BuiltinClassID(144),
-    BuiltinClassID(163),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(193),
-    BuiltinClassID(195),
-    BuiltinClassID(4),
-    BuiltinClassID(15),
-    BuiltinClassID(23),
-    BuiltinClassID(39),
-    BuiltinClassID(127),
-    BuiltinClassID(128),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(190),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(177),
-    BuiltinClassID(182),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(182),
-    BuiltinClassID(4),
-    BuiltinClassID(15),
-    BuiltinClassID(21),
-    BuiltinClassID(23),
-    BuiltinClassID(25),
-    BuiltinClassID(39),
-    BuiltinClassID(49),
-    BuiltinClassID(78),
-    BuiltinClassID(103),
-    BuiltinClassID(127),
-    BuiltinClassID(128),
-    BuiltinClassID(141),
-    BuiltinClassID(144),
-    BuiltinClassID(166),
-    BuiltinClassID(171),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(190),
-    BuiltinClassID(193),
-    BuiltinClassID(195),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(176),
-    BuiltinClassID(84),
-    BuiltinClassID(188),
-    BuiltinClassID(18),
-    BuiltinClassID(24),
-    BuiltinClassID(139),
-    BuiltinClassID(146),
-    BuiltinClassID(148),
-    BuiltinClassID(6),
-    BuiltinClassID(33),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(67),
-    BuiltinClassID(68),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(94),
-    BuiltinClassID(112),
-    BuiltinClassID(123),
-    BuiltinClassID(124),
-    BuiltinClassID(165),
-    BuiltinClassID(168),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(183),
-    BuiltinClassID(187),
-    BuiltinClassID(191),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(206),
-    BuiltinClassID(15),
-    BuiltinClassID(21),
-    BuiltinClassID(39),
-    BuiltinClassID(127),
-    BuiltinClassID(128),
-    BuiltinClassID(166),
-    BuiltinClassID(171),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(206),
-    BuiltinClassID(4),
-    BuiltinClassID(175),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(190),
-    BuiltinClassID(6),
-    BuiltinClassID(18),
-    BuiltinClassID(23),
-    BuiltinClassID(68),
-    BuiltinClassID(71),
-    BuiltinClassID(85),
-    BuiltinClassID(87),
-    BuiltinClassID(88),
-    BuiltinClassID(93),
-    BuiltinClassID(120),
-    BuiltinClassID(121),
-    BuiltinClassID(122),
-    BuiltinClassID(123),
-    BuiltinClassID(124),
-    BuiltinClassID(125),
-    BuiltinClassID(136),
-    BuiltinClassID(147),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(183),
-    BuiltinClassID(120),
-    BuiltinClassID(121),
-    BuiltinClassID(122),
-    BuiltinClassID(125),
-    BuiltinClassID(8),
-    BuiltinClassID(13),
-    BuiltinClassID(168),
-    BuiltinClassID(183),
-    BuiltinClassID(13),
-    BuiltinClassID(33),
-    BuiltinClassID(40),
-    BuiltinClassID(41),
-    BuiltinClassID(43),
-    BuiltinClassID(69),
-    BuiltinClassID(89),
-    BuiltinClassID(90),
-    BuiltinClassID(94),
-    BuiltinClassID(110),
-    BuiltinClassID(112),
-    BuiltinClassID(173),
-    BuiltinClassID(174),
-    BuiltinClassID(187),
-    BuiltinClassID(191),
-    BuiltinClassID(4),
-    BuiltinClassID(14),
-    BuiltinClassID(91),
-    BuiltinClassID(109),
-    BuiltinClassID(110),
-    BuiltinClassID(115),
-    BuiltinClassID(158),
-    BuiltinClassID(166),
-    BuiltinClassID(190),
-    BuiltinClassID(195),
-    BuiltinClassID(25),
-    BuiltinClassID(39),
-    BuiltinClassID(94),
-    BuiltinClassID(144),
-    BuiltinClassID(171),
-    BuiltinClassID(187),
-    BuiltinClassID(5),
-    BuiltinClassID(7),
-    BuiltinClassID(8),
-    BuiltinClassID(10),
-    BuiltinClassID(11),
-    BuiltinClassID(12),
-    BuiltinClassID(15),
-    BuiltinClassID(18),
-    BuiltinClassID(23),
-    BuiltinClassID(28),
-    BuiltinClassID(38),
-    BuiltinClassID(43),
-    BuiltinClassID(73),
-    BuiltinClassID(79),
-    BuiltinClassID(80),
-    BuiltinClassID(91),
-    BuiltinClassID(92),
-    BuiltinClassID(98),
-    BuiltinClassID(99),
-    BuiltinClassID(100),
-    BuiltinClassID(101),
-    BuiltinClassID(102),
-    BuiltinClassID(103),
-    BuiltinClassID(104),
-    BuiltinClassID(105),
-    BuiltinClassID(106),
-    BuiltinClassID(108),
-    BuiltinClassID(110),
-    BuiltinClassID(111),
-    BuiltinClassID(115),
-    BuiltinClassID(116),
-    BuiltinClassID(132),
-    BuiltinClassID(142),
-    BuiltinClassID(143),
-    BuiltinClassID(146),
-    BuiltinClassID(158),
-    BuiltinClassID(159),
-    BuiltinClassID(160),
-    BuiltinClassID(161),
-    BuiltinClassID(167),
-    BuiltinClassID(171),
-    BuiltinClassID(175),
-    BuiltinClassID(176),
-    BuiltinClassID(177),
-    BuiltinClassID(178),
-    BuiltinClassID(179),
-    BuiltinClassID(180),
-    BuiltinClassID(181),
-    BuiltinClassID(182),
-    BuiltinClassID(190),
-    BuiltinClassID(193),
-    BuiltinClassID(195),
-    BuiltinClassID(196),
-    BuiltinClassID(201),
-    BuiltinClassID(202),
-    BuiltinClassID(203),
-    BuiltinClassID(205),
-    BuiltinClassID(206),
-    BuiltinClassID(207),
-    BuiltinClassID(209),
-    BuiltinClassID(210),
-    BuiltinClassID(214),
-    BuiltinClassID(215),
-    BuiltinClassID(218),
-    BuiltinClassID(23),
-    BuiltinClassID(193),
-    BuiltinClassID(195),
+    BuiltinClassID(242),
+    BuiltinClassID(244),
 };
 
 static constinit const BuiltinName protocolKeyNames[] = {
-    BuiltinName(4826),
-    BuiltinName(4630),
-    BuiltinName(4492),
-    BuiltinName(4341),
-    BuiltinName(4819),
-    BuiltinName(4815),
-    BuiltinName(3377),
-    BuiltinName(3915),
-    BuiltinName(1638),
-    BuiltinName(4824),
-    BuiltinName(4459),
-    BuiltinName(4817),
-    BuiltinName(3686),
+    BuiltinName(5474),
+    BuiltinName(5266),
+    BuiltinName(5106),
+    BuiltinName(4950),
+    BuiltinName(5467),
+    BuiltinName(5463),
+    BuiltinName(3917),
+    BuiltinName(4497),
+    BuiltinName(2048),
+    BuiltinName(5472),
+    BuiltinName(5071),
+    BuiltinName(5465),
+    BuiltinName(4250),
 };
 
-constexpr ASCIILiteral builtinTableTextNames[] = {
-    "$"_s,
-    "$&"_s,
-    "$'"_s,
-    "$*"_s,
-    "$+"_s,
-    "$1"_s,
-    "$2"_s,
-    "$3"_s,
-    "$4"_s,
-    "$5"_s,
-    "$6"_s,
-    "$7"_s,
-    "$8"_s,
-    "$9"_s,
-    "$_"_s,
-    "$`"_s,
-    "$hasHandle"_s,
-    "%ArrayIterator%.prototype"_s,
-    "%AsyncFromSyncIterator%.prototype"_s,
-    "%AsyncFunction%"_s,
-    "%AsyncGenerator%.prototype"_s,
-    "%AsyncGeneratorFunction%"_s,
-    "%AsyncIterator%.prototype"_s,
-    "%AttributeIterator%.prototype"_s,
-    "%BlobInternalReadableStreamSource%.prototype"_s,
-    "%BlockList%"_s,
-    "%BuildArtifact%.prototype"_s,
-    "%BunRequest%.prototype"_s,
-    "%BytesInternalReadableStreamSource%.prototype"_s,
-    "%Comment%.prototype"_s,
-    "%CompilerHelpers%"_s,
-    "%CronJob%.prototype"_s,
-    "%DNSResolver%.prototype"_s,
-    "%DebugHTTPSServer%.prototype"_s,
-    "%DebugHTTPServer%.prototype"_s,
-    "%DocEnd%.prototype"_s,
-    "%DocType%.prototype"_s,
-    "%DoneCallback%.prototype"_s,
-    "%Element%.prototype"_s,
-    "%EndTag%.prototype"_s,
-    "%EventEmitter%.prototype"_s,
-    "%Expect%"_s,
-    "%ExpectAny%.prototype"_s,
-    "%ExpectAnything%.prototype"_s,
-    "%ExpectArrayContaining%.prototype"_s,
-    "%ExpectCloseTo%.prototype"_s,
-    "%ExpectCustomAsymmetricMatcher%.prototype"_s,
-    "%ExpectMatcherContext%.prototype"_s,
-    "%ExpectMatcherUtils%.prototype"_s,
-    "%ExpectObjectContaining%.prototype"_s,
-    "%ExpectStatic%.prototype"_s,
-    "%ExpectStringContaining%.prototype"_s,
-    "%ExpectStringMatching%.prototype"_s,
-    "%ExpectTypeOf%"_s,
-    "%FFI%.prototype"_s,
-    "%FSWatcher%.prototype"_s,
-    "%FetchRequestBodySink%"_s,
-    "%FileInternalReadableStreamSource%.prototype"_s,
-    "%FileSink%"_s,
-    "%FrameworkFileSystemRouter%"_s,
-    "%Generator%.prototype"_s,
-    "%GeneratorFunction%"_s,
-    "%H2FrameParser%"_s,
-    "%HTMLBundle%.prototype"_s,
-    "%HTMLRewriterSink%"_s,
-    "%HTMLRewriterTransform%.prototype"_s,
-    "%HTTPResponseSink%"_s,
-    "%HTTPSResponseSink%"_s,
-    "%HTTPSServer%.prototype"_s,
-    "%HTTPServer%.prototype"_s,
-    "%HeadersIterator%.prototype"_s,
-    "%Immediate%"_s,
-    "%ImportMeta%"_s,
-    "%IntlSegmentIterator%.prototype"_s,
-    "%IntlSegments%.prototype"_s,
-    "%IteratorHelper%.prototype"_s,
-    "%JSONText%"_s,
-    "%LinkTimeConstant:arrayFromFastWithoutMapFn%"_s,
-    "%LinkTimeConstant:asyncFromSyncIteratorCreate%"_s,
-    "%LinkTimeConstant:instanceOf%"_s,
-    "%LinkTimeConstant:isArray%"_s,
-    "%LinkTimeConstant:isTypedArrayOutOfBounds%"_s,
-    "%LinkTimeConstant:iteratorHelperCreate%"_s,
-    "%LinkTimeConstant:makeTypeError%"_s,
-    "%LinkTimeConstant:newRejectedPromise%"_s,
-    "%LinkTimeConstant:newResolvedPromise%"_s,
-    "%LinkTimeConstant:promiseReject%"_s,
-    "%LinkTimeConstant:promiseResolve%"_s,
-    "%LinkTimeConstant:toIntegerOrInfinity%"_s,
-    "%LinkTimeConstant:typedArrayFromFast%"_s,
-    "%LinkTimeConstant:typedArrayLength%"_s,
-    "%LinkTimeConstant:wrapForValidIteratorCreate%"_s,
-    "%Listener%.prototype"_s,
-    "%MapIterator%.prototype"_s,
-    "%MatchedRoute%.prototype"_s,
-    "%ModuleCache%"_s,
-    "%ModuleObject%"_s,
-    "%ModuleRequire%"_s,
-    "%MySQLConnection%.prototype"_s,
-    "%MySQLQuery%.prototype"_s,
-    "%NativeBrotli%"_s,
-    "%NativeZlib%"_s,
-    "%NativeZstd%"_s,
-    "%NetworkSink%"_s,
-    "%NodeHTTPResponse%.prototype"_s,
-    "%NodeJSFS%.prototype"_s,
-    "%ParsedShellScript%.prototype"_s,
-    "%PostgresSQLConnection%.prototype"_s,
-    "%PostgresSQLQuery%.prototype"_s,
-    "%PrivateGlobals%"_s,
-    "%QuicEndpoint%"_s,
-    "%QuicSession%.prototype"_s,
-    "%QuicStream%.prototype"_s,
-    "%RegExpStringIterator%.prototype"_s,
-    "%ResourceUsage%.prototype"_s,
-    "%S3Stat%"_s,
-    "%ScopeFunctions%.prototype"_s,
-    "%SecureContext%"_s,
-    "%ServerWebSocket%"_s,
-    "%SetIterator%.prototype"_s,
-    "%ShellInterpreter%.prototype"_s,
-    "%SocketAddress%"_s,
-    "%StatWatcher%.prototype"_s,
-    "%StringIterator%.prototype"_s,
-    "%Subprocess%.prototype"_s,
-    "%TCPSocket%.prototype"_s,
-    "%TLSSocket%.prototype"_s,
-    "%TextChunk%.prototype"_s,
-    "%Timeout%"_s,
-    "%TypedArray%"_s,
-    "%UDPSocket%.prototype"_s,
-    "%URLSearchParamsIterator%.prototype"_s,
-    "%UndeclaredNativeCode%"_s,
-    "%WrapForValidIterator%.prototype"_s,
-    "%bun:bundle%"_s,
-    "@vercel/fetch"_s,
-    "ABORT_ERR"_s,
-    "ADDRCONFIG"_s,
-    "ADDRGETNETWORKPARAMS"_s,
-    "ALL"_s,
-    "ALPNProtocols"_s,
-    "AbortController"_s,
-    "AbortSignal"_s,
-    "Agent"_s,
-    "AggregateError"_s,
-    "Architecture.jsFunctionArchitectureIsMatch"_s,
-    "Archive"_s,
-    "Array"_s,
-    "ArrayBuffer"_s,
-    "ArrayBufferSink"_s,
-    "Assert"_s,
-    "AssertionError"_s,
-    "AsyncDisposableStack"_s,
-    "AsyncDisposableStackStateDisposed"_s,
-    "AsyncLocalStorage"_s,
-    "AsyncResource"_s,
-    "Atomics"_s,
-    "BADFAMILY"_s,
-    "BADFLAGS"_s,
-    "BADHINTS"_s,
-    "BADNAME"_s,
-    "BADQUERY"_s,
-    "BADRESP"_s,
-    "BADSTR"_s,
-    "BYTES_PER_ELEMENT"_s,
-    "BalancedPool"_s,
-    "BigInt"_s,
-    "BigInt64Array"_s,
-    "BigUint64Array"_s,
-    "Blob"_s,
-    "BlockList"_s,
-    "Boolean"_s,
-    "BroadcastChannel"_s,
-    "BrotliCompress"_s,
-    "BrotliDecompress"_s,
-    "Buffer"_s,
-    "BuildError"_s,
-    "BuildMessage"_s,
-    "Bun"_s,
-    "Bun::createNodeICUBinding"_s,
-    "Bun::createNodeURLBinding"_s,
-    "Bun::createNodeV8Binding"_s,
-    "Bun::createNodeVMBinding"_s,
-    "BunDebugger.cpp"_s,
-    "BunProcess.cpp"_s,
-    "Bun__FFI__cc"_s,
-    "Bun__canonicalizeIP"_s,
-    "Bun__highwayStringsForTesting"_s,
-    "Bun__setSyntheticAllocationLimitForTesting"_s,
-    "Bun__xxhash3_64_forTesting"_s,
-    "ByteLengthQueuingStrategy"_s,
-    "BytecodeOrderRecorder.rs"_s,
-    "CANCELLED"_s,
-    "CFunction"_s,
-    "CLIENT_RENEG_LIMIT"_s,
-    "CLIENT_RENEG_WINDOW"_s,
-    "CLOSED"_s,
-    "CLOSING"_s,
-    "CONNECT"_s,
-    "CONNECTING"_s,
-    "CONNREFUSED"_s,
-    "COPYFILE_EXCL"_s,
-    "COPYFILE_FICLONE"_s,
-    "COPYFILE_FICLONE_FORCE"_s,
-    "CRLF"_s,
-    "CSRF"_s,
-    "CString"_s,
-    "CallSite.cpp"_s,
-    "CallTracker"_s,
-    "Certificate"_s,
-    "Channel"_s,
-    "ChildProcess"_s,
-    "Cipheriv"_s,
-    "Client"_s,
-    "ClientHttp2Session"_s,
-    "ClientRequest"_s,
-    "CloseEvent"_s,
-    "Collator"_s,
-    "CompileError"_s,
-    "CompressionStream"_s,
-    "Console"_s,
-    "Cookie"_s,
-    "CookieMap"_s,
-    "CountQueuingStrategy"_s,
-    "Counters.rs"_s,
-    "Crypto"_s,
-    "CryptoHasher"_s,
-    "CryptoKey"_s,
-    "CustomEvent"_s,
-    "DEFAULT_CIPHERS"_s,
-    "DEFAULT_ECDH_CURVE"_s,
-    "DEFAULT_MAX_VERSION"_s,
-    "DEFAULT_MIN_VERSION"_s,
-    "DELETE"_s,
-    "DESTRUCTION"_s,
-    "DH_CHECK_P_NOT_PRIME"_s,
-    "DH_CHECK_P_NOT_SAFE_PRIME"_s,
-    "DH_NOT_SUITABLE_GENERATOR"_s,
-    "DH_UNABLE_TO_CHECK_GENERATOR"_s,
-    "DOMException"_s,
-    "DataView"_s,
-    "Database"_s,
-    "DatabaseSync"_s,
-    "Date"_s,
-    "DateTimeFormat"_s,
-    "Decipheriv"_s,
-    "DecompressionStream"_s,
-    "DecoratorHandler"_s,
-    "DefaultDeserializer"_s,
-    "DefaultSerializer"_s,
-    "Deflate"_s,
-    "DeflateRaw"_s,
-    "Deserializer"_s,
-    "DevServer.bind.ts"_s,
-    "DiffieHellman"_s,
-    "DiffieHellmanGroup"_s,
-    "Dir"_s,
-    "Dirent"_s,
-    "Dispatcher"_s,
-    "DisplayNames"_s,
-    "DisposableStack"_s,
-    "DisposableStackStateDisposed"_s,
-    "Duplex"_s,
-    "Duration"_s,
-    "DurationFormat"_s,
-    "E"_s,
-    "E2BIG"_s,
-    "EACCES"_s,
-    "EADDRINUSE"_s,
-    "EADDRNOTAVAIL"_s,
-    "EAFNOSUPPORT"_s,
-    "EAGAIN"_s,
-    "EALREADY"_s,
-    "EBADF"_s,
-    "EBADMSG"_s,
-    "EBUSY"_s,
-    "ECANCELED"_s,
-    "ECDH"_s,
-    "ECHILD"_s,
-    "ECONNABORTED"_s,
-    "ECONNREFUSED"_s,
-    "ECONNRESET"_s,
-    "EDEADLK"_s,
-    "EDESTADDRREQ"_s,
-    "EDOM"_s,
-    "EDQUOT"_s,
-    "EEXIST"_s,
-    "EFAULT"_s,
-    "EFBIG"_s,
-    "EHOSTUNREACH"_s,
-    "EIDRM"_s,
-    "EILSEQ"_s,
-    "EINPROGRESS"_s,
-    "EINTR"_s,
-    "EINVAL"_s,
-    "EIO"_s,
-    "EISCONN"_s,
-    "EISDIR"_s,
-    "ELOOP"_s,
-    "EMFILE"_s,
-    "EMLINK"_s,
-    "EMSGSIZE"_s,
-    "EMULTIHOP"_s,
-    "ENAMETOOLONG"_s,
-    "ENETDOWN"_s,
-    "ENETRESET"_s,
-    "ENETUNREACH"_s,
-    "ENFILE"_s,
-    "ENGINE_METHOD_ALL"_s,
-    "ENGINE_METHOD_CIPHERS"_s,
-    "ENGINE_METHOD_DH"_s,
-    "ENGINE_METHOD_DIGESTS"_s,
-    "ENGINE_METHOD_DSA"_s,
-    "ENGINE_METHOD_EC"_s,
-    "ENGINE_METHOD_NONE"_s,
-    "ENGINE_METHOD_PKEY_ASN1_METHS"_s,
-    "ENGINE_METHOD_PKEY_METHS"_s,
-    "ENGINE_METHOD_RAND"_s,
-    "ENGINE_METHOD_RSA"_s,
-    "ENOBUFS"_s,
-    "ENODATA"_s,
-    "ENODEV"_s,
-    "ENOENT"_s,
-    "ENOEXEC"_s,
-    "ENOLCK"_s,
-    "ENOLINK"_s,
-    "ENOMEM"_s,
-    "ENOMSG"_s,
-    "ENOPROTOOPT"_s,
-    "ENOSPC"_s,
-    "ENOSR"_s,
-    "ENOSTR"_s,
-    "ENOSYS"_s,
-    "ENOTCONN"_s,
-    "ENOTDIR"_s,
-    "ENOTEMPTY"_s,
-    "ENOTSOCK"_s,
-    "ENOTSUP"_s,
-    "ENOTTY"_s,
-    "ENXIO"_s,
-    "EOF"_s,
-    "EOL"_s,
-    "EOPNOTSUPP"_s,
-    "EOVERFLOW"_s,
-    "EPERM"_s,
-    "EPIPE"_s,
-    "EPROTO"_s,
-    "EPROTONOSUPPORT"_s,
-    "EPROTOTYPE"_s,
-    "EPSILON"_s,
-    "ERANGE"_s,
-    "EROFS"_s,
-    "ERR_ACCESS_DENIED"_s,
-    "ERR_AMBIGUOUS_ARGUMENT"_s,
-    "ERR_ARG_NOT_ITERABLE"_s,
-    "ERR_ASSERTION"_s,
-    "ERR_ASYNC_CALLBACK"_s,
-    "ERR_ASYNC_TYPE"_s,
-    "ERR_BODY_ALREADY_USED"_s,
-    "ERR_BORINGSSL"_s,
-    "ERR_BROTLI_INVALID_PARAM"_s,
-    "ERR_BUFFER_OUT_OF_BOUNDS"_s,
-    "ERR_BUFFER_TOO_LARGE"_s,
-    "ERR_CANNOT_WATCH_SIGINT"_s,
-    "ERR_CHILD_PROCESS_IPC_REQUIRED"_s,
-    "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"_s,
-    "ERR_CLOSED_MESSAGE_PORT"_s,
-    "ERR_CONSOLE_WRITABLE_STREAM"_s,
-    "ERR_CONSTRUCT_CALL_INVALID"_s,
-    "ERR_CONSTRUCT_CALL_REQUIRED"_s,
-    "ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED"_s,
-    "ERR_CRYPTO_ECDH_INVALID_FORMAT"_s,
-    "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY"_s,
-    "ERR_CRYPTO_HASH_FINALIZED"_s,
-    "ERR_CRYPTO_HASH_UPDATE_FAILED"_s,
-    "ERR_CRYPTO_INCOMPATIBLE_KEY"_s,
-    "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS"_s,
-    "ERR_CRYPTO_INVALID_AUTH_TAG"_s,
-    "ERR_CRYPTO_INVALID_CURVE"_s,
-    "ERR_CRYPTO_INVALID_DIGEST"_s,
-    "ERR_CRYPTO_INVALID_IV"_s,
-    "ERR_CRYPTO_INVALID_JWK"_s,
-    "ERR_CRYPTO_INVALID_KEYLEN"_s,
-    "ERR_CRYPTO_INVALID_KEYPAIR"_s,
-    "ERR_CRYPTO_INVALID_KEYTYPE"_s,
-    "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE"_s,
-    "ERR_CRYPTO_INVALID_MESSAGELEN"_s,
-    "ERR_CRYPTO_INVALID_SCRYPT_PARAMS"_s,
-    "ERR_CRYPTO_INVALID_STATE"_s,
-    "ERR_CRYPTO_JWK_UNSUPPORTED_CURVE"_s,
-    "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE"_s,
-    "ERR_CRYPTO_OPERATION_FAILED"_s,
-    "ERR_CRYPTO_SIGN_KEY_REQUIRED"_s,
-    "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH"_s,
-    "ERR_CRYPTO_UNKNOWN_CIPHER"_s,
-    "ERR_CRYPTO_UNKNOWN_DH_GROUP"_s,
-    "ERR_CRYPTO_UNSUPPORTED_OPERATION"_s,
-    "ERR_DIR_CLOSED"_s,
-    "ERR_DIR_CONCURRENT_OPERATION"_s,
-    "ERR_DLOPEN_DISABLED"_s,
-    "ERR_DLOPEN_FAILED"_s,
-    "ERR_DNS_SET_SERVERS_FAILED"_s,
-    "ERR_ENCODING_INVALID_ENCODED_DATA"_s,
-    "ERR_ENCODING_NOT_SUPPORTED"_s,
-    "ERR_EVENT_RECURSION"_s,
-    "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM"_s,
-    "ERR_FFI_CC_DISABLED"_s,
-    "ERR_FORMDATA_PARSE_ERROR"_s,
-    "ERR_FS_CP_DIR_TO_NON_DIR"_s,
-    "ERR_FS_CP_EEXIST"_s,
-    "ERR_FS_CP_EINVAL"_s,
-    "ERR_FS_CP_FIFO_PIPE"_s,
-    "ERR_FS_CP_NON_DIR_TO_DIR"_s,
-    "ERR_FS_CP_SOCKET"_s,
-    "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY"_s,
-    "ERR_FS_CP_UNKNOWN"_s,
-    "ERR_FS_EISDIR"_s,
-    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN"_s,
-    "ERR_HTTP2_ALTSVC_LENGTH"_s,
-    "ERR_HTTP2_CONNECT_AUTHORITY"_s,
-    "ERR_HTTP2_CONNECT_PATH"_s,
-    "ERR_HTTP2_CONNECT_SCHEME"_s,
-    "ERR_HTTP2_ERROR"_s,
-    "ERR_HTTP2_GOAWAY_SESSION"_s,
-    "ERR_HTTP2_HEADERS_AFTER_RESPOND"_s,
-    "ERR_HTTP2_HEADERS_SENT"_s,
-    "ERR_HTTP2_HEADER_SINGLE_VALUE"_s,
-    "ERR_HTTP2_INFO_STATUS_NOT_ALLOWED"_s,
-    "ERR_HTTP2_INVALID_CONNECTION_HEADERS"_s,
-    "ERR_HTTP2_INVALID_HEADER_VALUE"_s,
-    "ERR_HTTP2_INVALID_INFO_STATUS"_s,
-    "ERR_HTTP2_INVALID_ORIGIN"_s,
-    "ERR_HTTP2_INVALID_PSEUDOHEADER"_s,
-    "ERR_HTTP2_INVALID_SESSION"_s,
-    "ERR_HTTP2_INVALID_SETTING_VALUE"_s,
-    "ERR_HTTP2_INVALID_SETTING_VALUE_RangeError"_s,
-    "ERR_HTTP2_INVALID_STREAM"_s,
-    "ERR_HTTP2_MAX_PENDING_SETTINGS_ACK"_s,
-    "ERR_HTTP2_NO_SOCKET_MANIPULATION"_s,
-    "ERR_HTTP2_ORIGIN_LENGTH"_s,
-    "ERR_HTTP2_OUT_OF_STREAMS"_s,
-    "ERR_HTTP2_PAYLOAD_FORBIDDEN"_s,
-    "ERR_HTTP2_PING_CANCEL"_s,
-    "ERR_HTTP2_PING_LENGTH"_s,
-    "ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED"_s,
-    "ERR_HTTP2_PUSH_DISABLED"_s,
-    "ERR_HTTP2_SEND_FILE"_s,
-    "ERR_HTTP2_SEND_FILE_NOSEEK"_s,
-    "ERR_HTTP2_SESSION_ERROR"_s,
-    "ERR_HTTP2_SOCKET_UNBOUND"_s,
-    "ERR_HTTP2_STATUS_101"_s,
-    "ERR_HTTP2_STATUS_INVALID"_s,
-    "ERR_HTTP2_STREAM_ERROR"_s,
-    "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS"_s,
-    "ERR_HTTP2_TOO_MANY_INVALID_FRAMES"_s,
-    "ERR_HTTP2_TRAILERS_ALREADY_SENT"_s,
-    "ERR_HTTP2_TRAILERS_NOT_READY"_s,
-    "ERR_HTTP2_UNSUPPORTED_PROTOCOL"_s,
-    "ERR_HTTP_BODY_NOT_ALLOWED"_s,
-    "ERR_HTTP_CONTENT_LENGTH_MISMATCH"_s,
-    "ERR_HTTP_HEADERS_SENT"_s,
-    "ERR_HTTP_INVALID_HEADER_VALUE"_s,
-    "ERR_HTTP_INVALID_STATUS_CODE"_s,
-    "ERR_HTTP_REQUEST_TIMEOUT"_s,
-    "ERR_HTTP_SOCKET_ASSIGNED"_s,
-    "ERR_HTTP_TRAILER_INVALID"_s,
-    "ERR_ILLEGAL_CONSTRUCTOR"_s,
-    "ERR_INCOMPATIBLE_OPTION_PAIR"_s,
-    "ERR_INSPECTOR_ALREADY_ACTIVATED"_s,
-    "ERR_INSPECTOR_ALREADY_CONNECTED"_s,
-    "ERR_INSPECTOR_COMMAND"_s,
-    "ERR_INSPECTOR_NOT_ACTIVE"_s,
-    "ERR_INSPECTOR_NOT_AVAILABLE"_s,
-    "ERR_INSPECTOR_NOT_CONNECTED"_s,
-    "ERR_INSPECTOR_NOT_WORKER"_s,
-    "ERR_INTERNAL_ASSERTION"_s,
-    "ERR_INVALID_ADDRESS_FAMILY"_s,
-    "ERR_INVALID_ARG_TYPE"_s,
-    "ERR_INVALID_ARG_VALUE"_s,
-    "ERR_INVALID_ARG_VALUE_RangeError"_s,
-    "ERR_INVALID_ASYNC_ID"_s,
-    "ERR_INVALID_BUFFER_SIZE"_s,
-    "ERR_INVALID_CHAR"_s,
-    "ERR_INVALID_CURSOR_POS"_s,
-    "ERR_INVALID_FD_TYPE"_s,
-    "ERR_INVALID_FILE_URL_HOST"_s,
-    "ERR_INVALID_FILE_URL_PATH"_s,
-    "ERR_INVALID_HANDLE_TYPE"_s,
-    "ERR_INVALID_HTTP_TOKEN"_s,
-    "ERR_INVALID_IP_ADDRESS"_s,
-    "ERR_INVALID_MIME_SYNTAX"_s,
-    "ERR_INVALID_MODULE"_s,
-    "ERR_INVALID_OBJECT_DEFINE_PROPERTY"_s,
-    "ERR_INVALID_PROTOCOL"_s,
-    "ERR_INVALID_REPL_EVAL_CONFIG"_s,
-    "ERR_INVALID_REPL_INPUT"_s,
-    "ERR_INVALID_RETURN_VALUE"_s,
-    "ERR_INVALID_STATE"_s,
-    "ERR_INVALID_STATE_RangeError"_s,
-    "ERR_INVALID_STATE_TypeError"_s,
-    "ERR_INVALID_THIS"_s,
-    "ERR_INVALID_URI"_s,
-    "ERR_INVALID_URL"_s,
-    "ERR_INVALID_URL_SCHEME"_s,
-    "ERR_IPC_CHANNEL_CLOSED"_s,
-    "ERR_IPC_DISCONNECTED"_s,
-    "ERR_IPC_ONE_PIPE"_s,
-    "ERR_IP_BLOCKED"_s,
-    "ERR_KEY_GENERATION_JOB_FAILED"_s,
-    "ERR_LOAD_SQLITE_EXTENSION"_s,
-    "ERR_MEMORY_ALLOCATION_FAILED"_s,
-    "ERR_METHOD_NOT_IMPLEMENTED"_s,
-    "ERR_MISSING_ARGS"_s,
-    "ERR_MISSING_OPTION"_s,
-    "ERR_MISSING_PASSPHRASE"_s,
-    "ERR_MODULE_LINK_MISMATCH"_s,
-    "ERR_MODULE_NOT_FOUND"_s,
-    "ERR_MULTIPLE_CALLBACK"_s,
-    "ERR_MYSQL_CONNECTION_CLOSED"_s,
-    "ERR_MYSQL_CONNECTION_FAILED"_s,
-    "ERR_MYSQL_CONNECTION_REFUSED"_s,
-    "ERR_MYSQL_CONNECTION_TIMEOUT"_s,
-    "ERR_MYSQL_IDLE_TIMEOUT"_s,
-    "ERR_MYSQL_LIFETIME_TIMEOUT"_s,
-    "ERR_NOT_BUILDING_SNAPSHOT"_s,
-    "ERR_OPERATION_FAILED"_s,
-    "ERR_OSSL_EVP_INVALID_DIGEST"_s,
-    "ERR_OUT_OF_RANGE"_s,
-    "ERR_PARSE_ARGS_INVALID_OPTION_VALUE"_s,
-    "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL"_s,
-    "ERR_PARSE_ARGS_UNKNOWN_OPTION"_s,
-    "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2"_s,
-    "ERR_POSTGRES_CONNECTION_CLOSED"_s,
-    "ERR_POSTGRES_CONNECTION_FAILED"_s,
-    "ERR_POSTGRES_CONNECTION_REFUSED"_s,
-    "ERR_POSTGRES_CONNECTION_TIMEOUT"_s,
-    "ERR_POSTGRES_EXPECTED_REQUEST"_s,
-    "ERR_POSTGRES_EXPECTED_STATEMENT"_s,
-    "ERR_POSTGRES_IDLE_TIMEOUT"_s,
-    "ERR_POSTGRES_INVALID_BACKEND_KEY_DATA"_s,
-    "ERR_POSTGRES_INVALID_BINARY_DATA"_s,
-    "ERR_POSTGRES_INVALID_BYTE_SEQUENCE"_s,
-    "ERR_POSTGRES_INVALID_CHARACTER"_s,
-    "ERR_POSTGRES_INVALID_MESSAGE"_s,
-    "ERR_POSTGRES_INVALID_MESSAGE_LENGTH"_s,
-    "ERR_POSTGRES_INVALID_SERVER_KEY"_s,
-    "ERR_POSTGRES_INVALID_SERVER_SIGNATURE"_s,
-    "ERR_POSTGRES_INVALID_TRANSACTION_STATE"_s,
-    "ERR_POSTGRES_LIFETIME_TIMEOUT"_s,
-    "ERR_POSTGRES_NOT_TAGGED_CALL"_s,
-    "ERR_POSTGRES_QUERY_CANCELLED"_s,
-    "ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64"_s,
-    "ERR_POSTGRES_SASL_SIGNATURE_MISMATCH"_s,
-    "ERR_POSTGRES_SERVER_ERROR"_s,
-    "ERR_POSTGRES_SYNTAX_ERROR"_s,
-    "ERR_POSTGRES_TLS_NOT_AVAILABLE"_s,
-    "ERR_POSTGRES_TLS_UPGRADE_FAILED"_s,
-    "ERR_POSTGRES_UNEXPECTED_MESSAGE"_s,
-    "ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD"_s,
-    "ERR_POSTGRES_UNKNOWN_FORMAT_CODE"_s,
-    "ERR_POSTGRES_UNSAFE_TRANSACTION"_s,
-    "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"_s,
-    "ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD"_s,
-    "ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT"_s,
-    "ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE"_s,
-    "ERR_PROXY_INVALID_CONFIG"_s,
-    "ERR_PROXY_TUNNEL"_s,
-    "ERR_QUIC_CONNECTION_FAILED"_s,
-    "ERR_QUIC_ENDPOINT_CLOSED"_s,
-    "ERR_QUIC_OPEN_STREAM_FAILED"_s,
-    "ERR_QUIC_STREAM_ABORTED"_s,
-    "ERR_QUIC_STREAM_RESET"_s,
-    "ERR_QUIC_VERSION_NEGOTIATION_ERROR"_s,
-    "ERR_REDIS_AUTHENTICATION_FAILED"_s,
-    "ERR_REDIS_CONNECTION_CLOSED"_s,
-    "ERR_REDIS_CONNECTION_TIMEOUT"_s,
-    "ERR_REDIS_IDLE_TIMEOUT"_s,
-    "ERR_REDIS_INVALID_ARGUMENT"_s,
-    "ERR_REDIS_INVALID_ARRAY"_s,
-    "ERR_REDIS_INVALID_BULK_STRING"_s,
-    "ERR_REDIS_INVALID_COMMAND"_s,
-    "ERR_REDIS_INVALID_DATABASE"_s,
-    "ERR_REDIS_INVALID_ERROR_STRING"_s,
-    "ERR_REDIS_INVALID_INTEGER"_s,
-    "ERR_REDIS_INVALID_PASSWORD"_s,
-    "ERR_REDIS_INVALID_RESPONSE"_s,
-    "ERR_REDIS_INVALID_RESPONSE_TYPE"_s,
-    "ERR_REDIS_INVALID_SIMPLE_STRING"_s,
-    "ERR_REDIS_INVALID_STATE"_s,
-    "ERR_REDIS_INVALID_USERNAME"_s,
-    "ERR_REDIS_SERVER_ERROR"_s,
-    "ERR_REDIS_TLS_NOT_AVAILABLE"_s,
-    "ERR_REDIS_TLS_UPGRADE_FAILED"_s,
-    "ERR_S3_INVALID_ENDPOINT"_s,
-    "ERR_S3_INVALID_METHOD"_s,
-    "ERR_S3_INVALID_PATH"_s,
-    "ERR_S3_INVALID_SESSION_TOKEN"_s,
-    "ERR_S3_INVALID_SIGNATURE"_s,
-    "ERR_S3_MISSING_CREDENTIALS"_s,
-    "ERR_SCRIPT_EXECUTION_INTERRUPTED"_s,
-    "ERR_SCRIPT_EXECUTION_TIMEOUT"_s,
-    "ERR_SECRETS_ACCESS_DENIED"_s,
-    "ERR_SECRETS_AUTH_FAILED"_s,
-    "ERR_SECRETS_INTERACTION_NOT_ALLOWED"_s,
-    "ERR_SECRETS_INTERACTION_REQUIRED"_s,
-    "ERR_SECRETS_NOT_FOUND"_s,
-    "ERR_SECRETS_PLATFORM_ERROR"_s,
-    "ERR_SECRETS_USER_CANCELED"_s,
-    "ERR_SERVER_ALREADY_LISTEN"_s,
-    "ERR_SERVER_NOT_RUNNING"_s,
-    "ERR_SOCKET_ALREADY_BOUND"_s,
-    "ERR_SOCKET_BAD_BUFFER_SIZE"_s,
-    "ERR_SOCKET_BAD_PORT"_s,
-    "ERR_SOCKET_BAD_TYPE"_s,
-    "ERR_SOCKET_CLOSED"_s,
-    "ERR_SOCKET_CLOSED_BEFORE_CONNECTION"_s,
-    "ERR_SOCKET_CONNECTION_TIMEOUT"_s,
-    "ERR_SOCKET_DGRAM_IS_CONNECTED"_s,
-    "ERR_SOCKET_DGRAM_NOT_CONNECTED"_s,
-    "ERR_SOCKET_DGRAM_NOT_RUNNING"_s,
-    "ERR_SQLITE_ERROR"_s,
-    "ERR_SSL_NO_CIPHER_MATCH"_s,
-    "ERR_STREAM_ALREADY_FINISHED"_s,
-    "ERR_STREAM_CANNOT_PIPE"_s,
-    "ERR_STREAM_DESTROYED"_s,
-    "ERR_STREAM_ITER_MISSING_FLAG"_s,
-    "ERR_STREAM_NULL_VALUES"_s,
-    "ERR_STREAM_PREMATURE_CLOSE"_s,
-    "ERR_STREAM_PUSH_AFTER_EOF"_s,
-    "ERR_STREAM_RELEASE_LOCK"_s,
-    "ERR_STREAM_UNABLE_TO_PIPE"_s,
-    "ERR_STREAM_UNSHIFT_AFTER_END_EVENT"_s,
-    "ERR_STREAM_WRAP"_s,
-    "ERR_STREAM_WRITE_AFTER_END"_s,
-    "ERR_STRING_TOO_LONG"_s,
-    "ERR_TLS_ALPN_CALLBACK_INVALID_RESULT"_s,
-    "ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS"_s,
-    "ERR_TLS_CERT_ALTNAME_FORMAT"_s,
-    "ERR_TLS_CERT_ALTNAME_INVALID"_s,
-    "ERR_TLS_HANDSHAKE_TIMEOUT"_s,
-    "ERR_TLS_INVALID_CONTEXT"_s,
-    "ERR_TLS_INVALID_PROTOCOL_METHOD"_s,
-    "ERR_TLS_INVALID_PROTOCOL_VERSION"_s,
-    "ERR_TLS_INVALID_STATE"_s,
-    "ERR_TLS_PROTOCOL_VERSION_CONFLICT"_s,
-    "ERR_TLS_RENEGOTIATION_DISABLED"_s,
-    "ERR_TLS_RENEGOTIATION_UNSUPPORTED"_s,
-    "ERR_TLS_REQUIRED_SERVER_NAME"_s,
-    "ERR_TLS_SNI_FROM_SERVER"_s,
-    "ERR_TRACE_EVENTS_CATEGORY_REQUIRED"_s,
-    "ERR_TRACE_EVENTS_UNAVAILABLE"_s,
-    "ERR_TRAILING_JUNK_AFTER_STREAM_END"_s,
-    "ERR_UNAVAILABLE_DURING_EXIT"_s,
-    "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET"_s,
-    "ERR_UNESCAPED_CHARACTERS"_s,
-    "ERR_UNHANDLED_ERROR"_s,
-    "ERR_UNHANDLED_REJECTION"_s,
-    "ERR_UNKNOWN_CREDENTIAL"_s,
-    "ERR_UNKNOWN_ENCODING"_s,
-    "ERR_UNKNOWN_SIGNAL"_s,
-    "ERR_USE_AFTER_CLOSE"_s,
-    "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING"_s,
-    "ERR_VM_MODULE_ALREADY_LINKED"_s,
-    "ERR_VM_MODULE_CACHED_DATA_REJECTED"_s,
-    "ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA"_s,
-    "ERR_VM_MODULE_DIFFERENT_CONTEXT"_s,
-    "ERR_VM_MODULE_LINK_FAILURE"_s,
-    "ERR_VM_MODULE_NOT_MODULE"_s,
-    "ERR_VM_MODULE_STATUS"_s,
-    "ERR_WEBASSEMBLY_RESPONSE"_s,
-    "ERR_WORKER_INVALID_EXEC_ARGV"_s,
-    "ERR_WORKER_MESSAGING_ERRORED"_s,
-    "ERR_WORKER_MESSAGING_FAILED"_s,
-    "ERR_WORKER_MESSAGING_SAME_THREAD"_s,
-    "ERR_WORKER_MESSAGING_TIMEOUT"_s,
-    "ERR_WORKER_NOT_RUNNING"_s,
-    "ERR_WORKER_PATH"_s,
-    "ERR_WORKER_UNSUPPORTED_OPERATION"_s,
-    "ERR_ZLIB_INITIALIZATION_FAILED"_s,
-    "ERR_ZSTD"_s,
-    "ERR_ZSTD_INVALID_PARAM"_s,
-    "ESPIPE"_s,
-    "ESRCH"_s,
-    "ESTALE"_s,
-    "ETIME"_s,
-    "ETIMEDOUT"_s,
-    "ETXTBSY"_s,
-    "EWOULDBLOCK"_s,
-    "EXDEV"_s,
-    "EXPECTED_COLOR"_s,
-    "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s,
-    "EXTENSIONLESS_FORMAT_WASM"_s,
-    "EnvHttpProxyAgent"_s,
-    "Error"_s,
-    "ErrorEvent"_s,
-    "EvalError"_s,
-    "Event"_s,
-    "EventEmitter"_s,
-    "EventEmitterAsyncResource"_s,
-    "EventSource"_s,
-    "EventTarget"_s,
-    "Exception"_s,
-    "FFI"_s,
-    "FFIType"_s,
-    "FILE"_s,
-    "FORMERR"_s,
-    "F_OK"_s,
-    "FakeSocket"_s,
-    "FetchSession"_s,
-    "File"_s,
-    "FileReadStream"_s,
-    "FileReader"_s,
-    "FileSystemRouter"_s,
-    "FileWriteStream"_s,
-    "FinalizationRegistry"_s,
-    "Float16Array"_s,
-    "Float32Array"_s,
-    "Float64Array"_s,
-    "FormData"_s,
-    "FrameworkRouter.rs"_s,
-    "Function"_s,
-    "GCProfiler"_s,
-    "GET"_s,
-    "Glob"_s,
-    "Global"_s,
-    "Gunzip"_s,
-    "Gzip"_s,
-    "H2FrameParserConstructor"_s,
-    "HEAD"_s,
-    "HPE_CHUNK_EXTENSIONS_OVERFLOW"_s,
-    "HPE_CLOSED_CONNECTION"_s,
-    "HPE_HEADER_OVERFLOW"_s,
-    "HPE_INTERNAL"_s,
-    "HPE_INVALID_CHUNK_SIZE"_s,
-    "HPE_INVALID_CONSTANT"_s,
-    "HPE_INVALID_CONTENT_LENGTH"_s,
-    "HPE_INVALID_EOF_STATE"_s,
-    "HPE_INVALID_HEADER_TOKEN"_s,
-    "HPE_INVALID_METHOD"_s,
-    "HPE_INVALID_TRANSFER_ENCODING"_s,
-    "HPE_INVALID_VERSION"_s,
-    "HPE_LF_EXPECTED"_s,
-    "HPE_PAUSED_H2_UPGRADE"_s,
-    "HPE_STRICT"_s,
-    "HPE_UNEXPECTED_CONTENT_LENGTH"_s,
-    "HTMLRewriter"_s,
-    "HTTPParser"_s,
-    "Hash"_s,
-    "Headers"_s,
-    "Headers Iterator"_s,
-    "Hmac"_s,
-    "Http2ServerRequest"_s,
-    "Http2ServerResponse"_s,
-    "INSPECT_MAX_BYTES"_s,
-    "Image"_s,
-    "IncomingMessage"_s,
-    "Infinity"_s,
-    "Inflate"_s,
-    "InflateRaw"_s,
-    "IniTestingAPIs.loadNpmrcFromJS"_s,
-    "IniTestingAPIs.parse"_s,
-    "Instance"_s,
-    "Instant"_s,
-    "Int16Array"_s,
-    "Int32Array"_s,
-    "Int8Array"_s,
-    "Interface"_s,
-    "InternalForTesting.cpp"_s,
-    "InternalModuleRegistry.cpp"_s,
-    "Intl"_s,
-    "IsolatedModuleCache.cpp"_s,
-    "Iterator"_s,
-    "JSBundler.rs"_s,
-    "JSCTestingHelpers.cpp"_s,
-    "JSCallback"_s,
-    "JSEventTarget.cpp"_s,
-    "JSEventTargetNode.cpp"_s,
-    "JSFrameworkRouter.getBindings"_s,
-    "JSInspectorProfiler.cpp"_s,
-    "JSMIMEParams.cpp"_s,
-    "JSNodePerformanceHooksHistogram.cpp"_s,
-    "JSNodePerformanceHooksHistogramPrototype.cpp"_s,
-    "JSON"_s,
-    "JSON5"_s,
-    "JSONC"_s,
-    "JSONL"_s,
-    "JSSQLStatement.cpp"_s,
-    "JSTag"_s,
-    "JSWebSocket.cpp"_s,
-    "KeyObject"_s,
-    "LN10"_s,
-    "LN2"_s,
-    "LOADIPHLPAPI"_s,
-    "LOG10E"_s,
-    "LOG2E"_s,
-    "LinkError"_s,
-    "ListFormat"_s,
-    "Listener.bind.ts"_s,
-    "Locale"_s,
-    "MAX_HEADER_PAIRS"_s,
-    "MAX_SAFE_INTEGER"_s,
-    "MAX_VALUE"_s,
-    "MD4"_s,
-    "MD5"_s,
-    "METHODS"_s,
-    "MIMEParams"_s,
-    "MIMEType"_s,
-    "MIN_SAFE_INTEGER"_s,
-    "MIN_VALUE"_s,
-    "MODULE_NOT_FOUND"_s,
-    "Map"_s,
-    "MarkdownObject.rs"_s,
-    "Math"_s,
-    "Memory"_s,
-    "MessageChannel"_s,
-    "MessageEvent"_s,
-    "MessagePort"_s,
-    "MockAgent"_s,
-    "MockClient"_s,
-    "MockPool"_s,
-    "Module"_s,
-    "ModuleGraph"_s,
-    "ModuleGraph.cpp"_s,
-    "MySQLError"_s,
-    "NEGATIVE_INFINITY"_s,
-    "NODATA"_s,
-    "NOMEM"_s,
-    "NONAME"_s,
-    "NOTFOUND"_s,
-    "NOTIMP"_s,
-    "NOTINITIALIZED"_s,
-    "NaN"_s,
-    "NativeBrotli"_s,
-    "NativeZlib"_s,
-    "NativeZstd"_s,
-    "NoOpForTesting.cpp"_s,
-    "NodeAsyncHooks.cpp"_s,
-    "NodeFetch.cpp"_s,
-    "NodeHTTP.cpp"_s,
-    "NodeModuleModule.cpp"_s,
-    "NodeTLS.cpp"_s,
-    "NodeURL.cpp"_s,
-    "NodeUtilTypesModule.cpp"_s,
-    "NodeV8.cpp"_s,
-    "NodeVM.cpp"_s,
-    "NodeValidator.cpp"_s,
-    "Now"_s,
-    "Number"_s,
-    "NumberFormat"_s,
-    "OPEN"_s,
-    "OPENSSL_VERSION_NUMBER"_s,
-    "OPTIONS"_s,
-    "O_APPEND"_s,
-    "O_CREAT"_s,
-    "O_DIRECTORY"_s,
-    "O_DSYNC"_s,
-    "O_EXCL"_s,
-    "O_NOCTTY"_s,
-    "O_NOFOLLOW"_s,
-    "O_NONBLOCK"_s,
-    "O_RDONLY"_s,
-    "O_RDWR"_s,
-    "O_SYNC"_s,
-    "O_TRUNC"_s,
-    "O_WRONLY"_s,
-    "Object"_s,
-    "OperatingSystem.jsFunctionOperatingSystemIsMatch"_s,
-    "OutgoingMessage"_s,
-    "PATCH"_s,
-    "PATH"_s,
-    "PI"_s,
-    "POINT_CONVERSION_COMPRESSED"_s,
-    "POINT_CONVERSION_HYBRID"_s,
-    "POINT_CONVERSION_UNCOMPRESSED"_s,
-    "POSITIVE_INFINITY"_s,
-    "POST"_s,
-    "PRIORITY_ABOVE_NORMAL"_s,
-    "PRIORITY_BELOW_NORMAL"_s,
-    "PRIORITY_HIGH"_s,
-    "PRIORITY_HIGHEST"_s,
-    "PRIORITY_LOW"_s,
-    "PRIORITY_NORMAL"_s,
-    "PUT"_s,
-    "PackageManifest.bindings.generate"_s,
-    "PassThrough"_s,
-    "Path.cpp"_s,
-    "Performance"_s,
-    "PerformanceEntry"_s,
-    "PerformanceMark"_s,
-    "PerformanceMeasure"_s,
-    "PerformanceNodeTiming"_s,
-    "PerformanceObserver"_s,
-    "PerformanceObserverEntryList"_s,
-    "PerformanceResourceTiming"_s,
-    "PerformanceServerTiming"_s,
-    "PerformanceTiming"_s,
-    "PlainDate"_s,
-    "PlainDateTime"_s,
-    "PlainMonthDay"_s,
-    "PlainTime"_s,
-    "PlainYearMonth"_s,
-    "PluralRules"_s,
-    "Pool"_s,
-    "PostgresError"_s,
-    "ProcessBindingTTYWrap.cpp"_s,
-    "Promise"_s,
-    "Proxy"_s,
-    "ProxyAgent"_s,
-    "RECEIVED_COLOR"_s,
-    "REFUSED"_s,
-    "REPLServer"_s,
-    "REPL_MODE_SLOPPY"_s,
-    "REPL_MODE_STRICT"_s,
-    "RSA_NO_PADDING"_s,
-    "RSA_PKCS1_OAEP_PADDING"_s,
-    "RSA_PKCS1_PADDING"_s,
-    "RSA_PKCS1_PSS_PADDING"_s,
-    "RSA_PSS_SALTLEN_AUTO"_s,
-    "RSA_PSS_SALTLEN_DIGEST"_s,
-    "RSA_PSS_SALTLEN_MAX_SIGN"_s,
-    "RSA_X931_PADDING"_s,
-    "RTLD_GLOBAL"_s,
-    "RTLD_LAZY"_s,
-    "RTLD_LOCAL"_s,
-    "RTLD_NOW"_s,
-    "R_OK"_s,
-    "RangeError"_s,
-    "ReadStream"_s,
-    "Readable"_s,
-    "ReadableByteStreamController"_s,
-    "ReadableState"_s,
-    "ReadableStream"_s,
-    "ReadableStreamBYOBReader"_s,
-    "ReadableStreamBYOBRequest"_s,
-    "ReadableStreamDefaultController"_s,
-    "ReadableStreamDefaultReader"_s,
-    "Readline"_s,
-    "Receiver"_s,
-    "Recoverable"_s,
-    "RedirectHandler"_s,
-    "RedisClient"_s,
-    "ReferenceError"_s,
-    "Reflect"_s,
-    "RegExp"_s,
-    "RelativeTimeFormat"_s,
-    "Request"_s,
-    "ResolveError"_s,
-    "ResolveMessage"_s,
-    "Resolver"_s,
-    "Resolver.newResolver"_s,
-    "Response"_s,
-    "ResponseJson"_s,
-    "RetryAgent"_s,
-    "RetryHandler"_s,
-    "RuntimeError"_s,
-    "S3:"_s,
-    "S3Client"_s,
-    "SCHED_NONE"_s,
-    "SCHED_RR"_s,
-    "SERVFAIL"_s,
-    "SHA1"_s,
-    "SHA224"_s,
-    "SHA256"_s,
-    "SHA384"_s,
-    "SHA512"_s,
-    "SHA512_256"_s,
-    "SHARE_ENV"_s,
-    "SIGABRT"_s,
-    "SIGALRM"_s,
-    "SIGBUS"_s,
-    "SIGCHLD"_s,
-    "SIGCONT"_s,
-    "SIGFPE"_s,
-    "SIGHUP"_s,
-    "SIGILL"_s,
-    "SIGINT"_s,
-    "SIGIO"_s,
-    "SIGIOT"_s,
-    "SIGKILL"_s,
-    "SIGPIPE"_s,
-    "SIGPROF"_s,
-    "SIGQUIT"_s,
-    "SIGSEGV"_s,
-    "SIGSTOP"_s,
-    "SIGSYS"_s,
-    "SIGTERM"_s,
-    "SIGTRAP"_s,
-    "SIGTSTP"_s,
-    "SIGTTIN"_s,
-    "SIGTTOU"_s,
-    "SIGURG"_s,
-    "SIGUSR1"_s,
-    "SIGUSR2"_s,
-    "SIGVTALRM"_s,
-    "SIGWINCH"_s,
-    "SIGXCPU"_s,
-    "SIGXFSZ"_s,
-    "SQL"_s,
-    "SQLiteError"_s,
-    "SQRT1_2"_s,
-    "SQRT2"_s,
-    "SSL_OP_ALL"_s,
-    "SSL_OP_ALLOW_NO_DHE_KEX"_s,
-    "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s,
-    "SSL_OP_CIPHER_SERVER_PREFERENCE"_s,
-    "SSL_OP_CISCO_ANYCONNECT"_s,
-    "SSL_OP_COOKIE_EXCHANGE"_s,
-    "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s,
-    "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s,
-    "SSL_OP_EPHEMERAL_RSA"_s,
-    "SSL_OP_LEGACY_SERVER_CONNECT"_s,
-    "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s,
-    "SSL_OP_MICROSOFT_SESS_ID_BUG"_s,
-    "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s,
-    "SSL_OP_NETSCAPE_CA_DN_BUG"_s,
-    "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s,
-    "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s,
-    "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s,
-    "SSL_OP_NO_COMPRESSION"_s,
-    "SSL_OP_NO_ENCRYPT_THEN_MAC"_s,
-    "SSL_OP_NO_QUERY_MTU"_s,
-    "SSL_OP_NO_RENEGOTIATION"_s,
-    "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION"_s,
-    "SSL_OP_NO_SSLv2"_s,
-    "SSL_OP_NO_SSLv3"_s,
-    "SSL_OP_NO_TICKET"_s,
-    "SSL_OP_NO_TLSv1"_s,
-    "SSL_OP_NO_TLSv1_1"_s,
-    "SSL_OP_NO_TLSv1_2"_s,
-    "SSL_OP_NO_TLSv1_3"_s,
-    "SSL_OP_PKCS1_CHECK_1"_s,
-    "SSL_OP_PKCS1_CHECK_2"_s,
-    "SSL_OP_PRIORITIZE_CHACHA"_s,
-    "SSL_OP_SINGLE_DH_USE"_s,
-    "SSL_OP_SINGLE_ECDH_USE"_s,
-    "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s,
-    "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s,
-    "SSL_OP_TLS_BLOCK_PADDING_BUG"_s,
-    "SSL_OP_TLS_D5_BUG"_s,
-    "SSL_OP_TLS_ROLLBACK_BUG"_s,
-    "STATUS_CODES"_s,
-    "S_IFBLK"_s,
-    "S_IFCHR"_s,
-    "S_IFDIR"_s,
-    "S_IFIFO"_s,
-    "S_IFLNK"_s,
-    "S_IFMT"_s,
-    "S_IFREG"_s,
-    "S_IFSOCK"_s,
-    "S_IRGRP"_s,
-    "S_IROTH"_s,
-    "S_IRUSR"_s,
-    "S_IRWXG"_s,
-    "S_IRWXO"_s,
-    "S_IRWXU"_s,
-    "S_IWGRP"_s,
-    "S_IWOTH"_s,
-    "S_IWUSR"_s,
-    "S_IXGRP"_s,
-    "S_IXOTH"_s,
-    "S_IXUSR"_s,
-    "Script"_s,
-    "SecureContext"_s,
-    "SecureContext.rs"_s,
-    "Segmenter"_s,
-    "SemverObject.rs"_s,
-    "Sender"_s,
-    "Serializer"_s,
-    "Server"_s,
-    "Server.fetch"_s,
-    "Server.options"_s,
-    "ServerResponse"_s,
-    "ServerWebSocket.close"_s,
-    "ServerWebSocket.data"_s,
-    "ServerWebSocket.error"_s,
-    "ServerWebSocket.instances"_s,
-    "ServerWebSocket.open"_s,
-    "Session"_s,
-    "Set"_s,
-    "ShadowRealm"_s,
-    "SharedArrayBuffer"_s,
-    "Sign"_s,
-    "SlowBuffer"_s,
-    "Socket"_s,
-    "Socket.data"_s,
-    "Socket.instances"_s,
-    "Socket.options"_s,
-    "SocketAddress"_s,
-    "SourceMap"_s,
-    "SourceTextModule"_s,
-    "Stat.rs"_s,
-    "Statement"_s,
-    "StatementSync"_s,
-    "Stats"_s,
-    "Stream"_s,
-    "String"_s,
-    "StringDecoder"_s,
-    "StructuredClone.cpp"_s,
-    "SubtleCrypto"_s,
-    "SuppressedError"_s,
-    "SuspendError"_s,
-    "Suspending"_s,
-    "Symbol"_s,
-    "SyntaxError"_s,
-    "SyntheticModule"_s,
-    "TIMEOUT"_s,
-    "TLS1_1_VERSION"_s,
-    "TLS1_2_VERSION"_s,
-    "TLS1_3_VERSION"_s,
-    "TLS1_VERSION"_s,
-    "TLSSocket"_s,
-    "TOML"_s,
-    "TRACE"_s,
-    "Table"_s,
-    "Tag"_s,
-    "Temporal"_s,
-    "Terminal"_s,
-    "TestCounter"_s,
-    "TestHolder"_s,
-    "TestingAPIs.apply"_s,
-    "TestingAPIs.byteStreamCancelOnDrain"_s,
-    "TestingAPIs.closeStdinWriter"_s,
-    "TestingAPIs.disabledOnThisPlatform"_s,
-    "TestingAPIs.fileSinkLiveCount"_s,
-    "TestingAPIs.find"_s,
-    "TestingAPIs.fromVLQ"_s,
-    "TestingAPIs.injectStdioReadError"_s,
-    "TestingAPIs.jsClearSocketFaults"_s,
-    "TestingAPIs.jsFromUrl"_s,
-    "TestingAPIs.jsNamedPipeContextLiveCount"_s,
-    "TestingAPIs.jsParseUrl"_s,
-    "TestingAPIs.jsSetSocketFault"_s,
-    "TestingAPIs.jsSocketFaultInjectionAvailable"_s,
-    "TestingAPIs.liveCounts"_s,
-    "TestingAPIs.makeDiff"_s,
-    "TestingAPIs.noProxyMatches"_s,
-    "TestingAPIs.orderedRemoveProbe"_s,
-    "TestingAPIs.parse"_s,
-    "TestingAPIs.parseURL"_s,
-    "TestingAPIs.proxyFor"_s,
-    "TestingAPIs.quicLiveCounts"_s,
-    "TestingAPIs.shellLex"_s,
-    "TestingAPIs.shellParse"_s,
-    "TestingAPIs.sigactionLayout"_s,
-    "TestingAPIs.toUTF16AllocSentinel"_s,
-    "TestingAPIs.toVLQ"_s,
-    "TestingAPIs.translateNtStatusToE"_s,
-    "TestingAPIs.translateUVErrorToE"_s,
-    "TextDecoder"_s,
-    "TextDecoderStream"_s,
-    "TextEncoder"_s,
-    "TextEncoderStream"_s,
-    "Timeout.arguments"_s,
-    "Timeout.callback"_s,
-    "Timer.bind.ts"_s,
-    "Transform"_s,
-    "TransformStream"_s,
-    "TransformStreamDefaultController"_s,
-    "Transpiler"_s,
-    "TypeError"_s,
-    "URIError"_s,
-    "URL"_s,
-    "URLPattern"_s,
-    "URLSearchParams"_s,
-    "URLSearchParams Iterator"_s,
-    "UTC"_s,
-    "UV_DIRENT_BLOCK"_s,
-    "UV_DIRENT_CHAR"_s,
-    "UV_DIRENT_DIR"_s,
-    "UV_DIRENT_FIFO"_s,
-    "UV_DIRENT_FILE"_s,
-    "UV_DIRENT_LINK"_s,
-    "UV_DIRENT_SOCKET"_s,
-    "UV_DIRENT_UNKNOWN"_s,
-    "UV_FS_COPYFILE_EXCL"_s,
-    "UV_FS_COPYFILE_FICLONE"_s,
-    "UV_FS_COPYFILE_FICLONE_FORCE"_s,
-    "UV_FS_O_FILEMAP"_s,
-    "UV_FS_SYMLINK_DIR"_s,
-    "UV_FS_SYMLINK_JUNCTION"_s,
-    "Uint16Array"_s,
-    "Uint32Array"_s,
-    "Uint8Array"_s,
-    "Uint8ClampedArray"_s,
-    "Undici.cpp"_s,
-    "Unzip"_s,
-    "Url"_s,
-    "Utf8Stream"_s,
-    "UtilInspect.cpp"_s,
-    "V4MAPPED"_s,
-    "Verify"_s,
-    "WASI"_s,
-    "W_OK"_s,
-    "WeakMap"_s,
-    "WeakRef"_s,
-    "WeakSet"_s,
-    "WebAssembly"_s,
-    "WebSocket"_s,
-    "WebSocketServer"_s,
-    "WebView"_s,
-    "Worker"_s,
-    "Worker.cpp"_s,
-    "Writable"_s,
-    "WritableState"_s,
-    "WritableStream"_s,
-    "WritableStreamDefaultController"_s,
-    "WritableStreamDefaultWriter"_s,
-    "WriteStream"_s,
-    "X509Certificate"_s,
-    "XML"_s,
-    "X_OK"_s,
-    "YAML"_s,
-    "ZigSourceProvider.cpp"_s,
-    "ZonedDateTime"_s,
-    "ZstdCompress"_s,
-    "ZstdDecompress"_s,
-    "__defineGetter__"_s,
-    "__defineSetter__"_s,
-    "__esModule"_s,
-    "__lookupGetter__"_s,
-    "__lookupSetter__"_s,
-    "__proto__"_s,
-    "_cache"_s,
-    "_checkInvalidHeaderChar"_s,
-    "_checkIsHttpToken"_s,
-    "_compile"_s,
-    "_debug"_s,
-    "_destroyed"_s,
-    "_errnoException"_s,
-    "_eval"_s,
-    "_events"_s,
-    "_eventsCount"_s,
-    "_exiting"_s,
-    "_extend"_s,
-    "_extensions"_s,
-    "_external"_s,
-    "_fatalException"_s,
-    "_findPath"_s,
-    "_fromList"_s,
-    "_getActiveHandles"_s,
-    "_getActiveRequests"_s,
-    "_getFd"_s,
-    "_idleStart"_s,
-    "_idleTimeout"_s,
-    "_initPaths"_s,
-    "_isArrayBufferView"_s,
-    "_isUint8Array"_s,
-    "_kill"_s,
-    "_linkedBinding"_s,
-    "_load"_s,
-    "_makeLong"_s,
-    "_maxListeners"_s,
-    "_nodeModulePaths"_s,
-    "_normalizeArgs"_s,
-    "_onTimeout"_s,
-    "_pathCache"_s,
-    "_preloadModules"_s,
-    "_preload_modules"_s,
-    "_rawDebug"_s,
-    "_repeat"_s,
-    "_resolveFilename"_s,
-    "_resolveLookupPaths"_s,
-    "_setSimultaneousAccepts"_s,
-    "_stack"_s,
-    "_stat"_s,
-    "_stderr"_s,
-    "_stdout"_s,
-    "_test"_s,
-    "_tickCallback"_s,
-    "_toUnixTimestamp"_s,
-    "_uint8ArrayToBuffer"_s,
-    "a"_s,
-    "abort"_s,
-    "abort-controller"_s,
-    "abortForDestroy"_s,
-    "aborted"_s,
-    "abs"_s,
-    "access"_s,
-    "accessCb"_s,
-    "accessKeyId"_s,
-    "accessSync"_s,
-    "acl"_s,
-    "acos"_s,
-    "acosh"_s,
-    "active"_s,
-    "add"_s,
-    "addAbortListener"_s,
-    "addAbortSignal"_s,
-    "addAddress"_s,
-    "addCACert"_s,
-    "addDisposableResource"_s,
-    "addEventListener"_s,
-    "addListener"_s,
-    "addMembership"_s,
-    "addRange"_s,
-    "addServerName"_s,
-    "addSnapshotSerializer"_s,
-    "addSourceSpecificMembership"_s,
-    "addSubnet"_s,
-    "address"_s,
-    "addrfamily"_s,
-    "adler32"_s,
-    "admit"_s,
-    "adopt"_s,
-    "after"_s,
-    "afterAll"_s,
-    "afterEach"_s,
-    "alert"_s,
-    "algorithm"_s,
-    "algorithms"_s,
-    "all"_s,
-    "allSettled"_s,
-    "alloc"_s,
-    "allocUnsafe"_s,
-    "allocUnsafeSlow"_s,
-    "allowHalfOpen"_s,
-    "allowPartialTrustChain"_s,
-    "allowUnresolved"_s,
-    "allowUnrestrictedAccess"_s,
-    "allowedNodeEnvironmentFlags"_s,
-    "alphabet"_s,
-    "alpnCallback"_s,
-    "alpnProtocol"_s,
-    "altsvc"_s,
-    "alwaysInline"_s,
-    "ambiguousIsNarrow"_s,
-    "anchor"_s,
-    "and"_s,
-    "ansi"_s,
-    "any"_s,
-    "anything"_s,
-    "aot"_s,
-    "aotExplain"_s,
-    "aotTypeErrors"_s,
-    "app"_s,
-    "append"_s,
-    "appendFile"_s,
-    "appendFileCb"_s,
-    "appendFileSync"_s,
-    "appendStackTrace"_s,
-    "applicationOptions"_s,
-    "apply"_s,
-    "applyAccessorDecorators"_s,
-    "applyClassDecorators"_s,
-    "applyFieldDecorators"_s,
-    "applyMethodDecorators"_s,
-    "applyPrivateAccessorDecorators"_s,
-    "applyPrivateFieldDecorators"_s,
-    "applyPrivateMethodDecorators"_s,
-    "arch"_s,
-    "argon2"_s,
-    "argon2Sync"_s,
-    "argument"_s,
-    "argumentCount"_s,
-    "arguments"_s,
-    "argv"_s,
-    "argv0"_s,
-    "arrayBuffer"_s,
-    "arrayBufferToString"_s,
-    "arrayContaining"_s,
-    "arrayFrom"_s,
-    "arrayFromFastWithoutMapFn"_s,
-    "arrayPush"_s,
-    "arrayStorageContiguous"_s,
-    "arrayStorageDouble"_s,
-    "arrayStorageInt32"_s,
-    "arrayStorageKind"_s,
-    "asBigInt"_s,
-    "asIntN"_s,
-    "asUintN"_s,
-    "asciiSlice"_s,
-    "asciiWrite"_s,
-    "asin"_s,
-    "asinh"_s,
-    "assert"_s,
-    "assertEncodingValid"_s,
-    "assertions"_s,
-    "asserts"_s,
-    "asset"_s,
-    "assets"_s,
-    "assign"_s,
-    "asymmetricMatch"_s,
-    "asyncContext"_s,
-    "asyncDisposableStackFieldCapability"_s,
-    "asyncDisposableStackFieldState"_s,
-    "asyncDispose"_s,
-    "asyncFromSyncIteratorCreate"_s,
-    "asyncIterator"_s,
-    "asyncWrapProviders"_s,
-    "at"_s,
-    "atan"_s,
-    "atan2"_s,
-    "atanh"_s,
-    "atob"_s,
-    "attachSource"_s,
-    "attrTest"_s,
-    "attributes"_s,
-    "authorized"_s,
-    "auto"_s,
-    "autoOrient"_s,
-    "autolink"_s,
-    "autolinks"_s,
-    "autoloadBunfig"_s,
-    "autoloadDotenv"_s,
-    "autoloadPackageJson"_s,
-    "autoloadTsconfig"_s,
-    "availableMemory"_s,
-    "availableParallelism"_s,
-    "avif"_s,
-    "b"_s,
-    "backend"_s,
-    "backpressureLimit"_s,
-    "backup"_s,
-    "bake/config/plugins.rs"_s,
-    "banner"_s,
-    "base64Slice"_s,
-    "base64Write"_s,
-    "base64urlSlice"_s,
-    "base64urlWrite"_s,
-    "baseName"_s,
-    "baseURI"_s,
-    "basename"_s,
-    "before"_s,
-    "beforeAll"_s,
-    "beforeEach"_s,
-    "big"_s,
-    "binaryType"_s,
-    "bind"_s,
-    "bindgen"_s,
-    "bindgen_test.bind.ts"_s,
-    "binding"_s,
-    "bindings.jsReadTarball"_s,
-    "bitcount"_s,
-    "bitfield"_s,
-    "bitop"_s,
-    "bitpos"_s,
-    "blank"_s,
-    "blink"_s,
-    "blmove"_s,
-    "blmpop"_s,
-    "blob"_s,
-    "blockquote"_s,
-    "blpop"_s,
-    "blue"_s,
-    "body"_s,
-    "bodyUsed"_s,
-    "bold"_s,
-    "boundArguments"_s,
-    "boundThis"_s,
-    "br"_s,
-    "branded"_s,
-    "brotli"_s,
-    "brotliCompress"_s,
-    "brotliCompressSync"_s,
-    "brotliDecompress"_s,
-    "brotliDecompressSync"_s,
-    "browser"_s,
-    "brpop"_s,
-    "brpoplpush"_s,
-    "btoa"_s,
-    "bucket"_s,
-    "buffer"_s,
-    "bufferSize"_s,
-    "bufferedAmount"_s,
-    "build"_s,
-    "buildConnector"_s,
-    "builtInModules"_s,
-    "builtinModules"_s,
-    "bun:bake"_s,
-    "bun:ffi"_s,
-    "bun:internal-for-testing"_s,
-    "bun:jsc"_s,
-    "bun:sql"_s,
-    "bun:sqlite"_s,
-    "bun:test"_s,
-    "bun:wrap"_s,
-    "bunNativePtr"_s,
-    "bun_install_js_bindings.generate"_s,
-    "bundleError"_s,
-    "bundlerOptions"_s,
-    "byteLength"_s,
-    "byteOffset"_s,
-    "bytecode"_s,
-    "bytecodeDepth"_s,
-    "bytecodeOrder"_s,
-    "bytecodeOrderStats"_s,
-    "bytes"_s,
-    "bytesBeforeAndAfterCallback"_s,
-    "bytesBeforeAndAfterCallbackCopyingShared"_s,
-    "bytesOf"_s,
-    "bytesOfAreSameMemory"_s,
-    "bytesOfAreSameMemoryCopyingShared"_s,
-    "bytesOfBufferOrBlob"_s,
-    "bytesOfOrToString"_s,
-    "bytesOfRefusingStringObject"_s,
-    "bytesOfRefusingUndefined"_s,
-    "bytesOfString"_s,
-    "bytesOfThen"_s,
-    "bytesOfThenCopied"_s,
-    "bytesOfThenCopyingShared"_s,
-    "bytesWritten"_s,
-    "bzmpop"_s,
-    "bzpopmax"_s,
-    "bzpopmin"_s,
-    "ca"_s,
-    "caFile"_s,
-    "cache"_s,
-    "cachedDataVersionTag"_s,
-    "caches"_s,
-    "calculateLenientFlags"_s,
-    "calendar"_s,
-    "calendarId"_s,
-    "call"_s,
-    "callNoInline"_s,
-    "callbackify"_s,
-    "callee"_s,
-    "caller"_s,
-    "callerSourceOrigin"_s,
-    "canHaveContent"_s,
-    "canParse"_s,
-    "cancel"_s,
-    "capture"_s,
-    "captureRejectionSymbol"_s,
-    "captureRejections"_s,
-    "captureStackTrace"_s,
-    "caseFirst"_s,
-    "catch"_s,
-    "cause"_s,
-    "cbrt"_s,
-    "cc"_s,
-    "ceil"_s,
-    "cert"_s,
-    "certFile"_s,
-    "cgroup"_s,
-    "channel"_s,
-    "channelIgnoreOneDisconnectEventListener"_s,
-    "charAt"_s,
-    "charCodeAt"_s,
-    "chdir"_s,
-    "check"_s,
-    "checkFramework"_s,
-    "checkPrime"_s,
-    "checkPrimeSync"_s,
-    "checkServerIdentity"_s,
-    "checkServerIdentityInHandshake"_s,
-    "checker_queries_testing.rs"_s,
-    "children"_s,
-    "chmod"_s,
-    "chmodCb"_s,
-    "chmodSync"_s,
-    "chown"_s,
-    "chownCb"_s,
-    "chownSync"_s,
-    "chromeDevToolsAutomaticWorkspaceFolders"_s,
-    "chunk"_s,
-    "chunkExpression"_s,
-    "chunks"_s,
-    "ciphers"_s,
-    "cityHash32"_s,
-    "cityHash64"_s,
-    "class_ref_test.bind.ts"_s,
-    "cleanup"_s,
-    "clear"_s,
-    "clearAll"_s,
-    "clearImmediate"_s,
-    "clearInterval"_s,
-    "clearLine"_s,
-    "clearMarks"_s,
-    "clearMeasures"_s,
-    "clearResourceTimings"_s,
-    "clearScreenDown"_s,
-    "clearTimeout"_s,
-    "client"_s,
-    "clientEntryPoint"_s,
-    "clientMaxWindowBits"_s,
-    "clientNoContextTakeover"_s,
-    "clientPages"_s,
-    "clientRenegotiationLimit"_s,
-    "clientRenegotiationWindow"_s,
-    "clipboardChangeCount"_s,
-    "clone"_s,
-    "close"_s,
-    "closeAllIterators"_s,
-    "closeCb"_s,
-    "closeGracefully"_s,
-    "closeIdleConnections"_s,
-    "closeOnBackpressureLimit"_s,
-    "closeSync"_s,
-    "closeTo"_s,
-    "closed"_s,
-    "clusterCloseHandle"_s,
-    "clusterRawBind"_s,
-    "clusterValidateFd"_s,
-    "clz32"_s,
-    "cmd"_s,
-    "code"_s,
-    "codeCoverageForFile"_s,
-    "codePointAt"_s,
-    "code_resolver_testing.rs"_s,
-    "codes"_s,
-    "codespan"_s,
-    "collapseWhitespace"_s,
-    "collapse_whitespace"_s,
-    "collation"_s,
-    "collectionTable"_s,
-    "collections/linear_fifo.rs"_s,
-    "color"_s,
-    "colors"_s,
-    "cols"_s,
-    "column"_s,
-    "columns"_s,
-    "command"_s,
-    "compact"_s,
-    "compactDisplay"_s,
-    "compare"_s,
-    "compareCodeResolution"_s,
-    "compareExchange"_s,
-    "compile"_s,
-    "compileFunction"_s,
-    "compileStreaming"_s,
-    "compose"_s,
-    "compress"_s,
-    "concat"_s,
-    "concatArrayBuffers"_s,
-    "concurrent"_s,
-    "concurrentIf"_s,
-    "conditions"_s,
-    "config"_s,
-    "configurable"_s,
-    "confirm"_s,
-    "connect"_s,
-    "connectError"_s,
-    "connected"_s,
-    "console"_s,
-    "constants"_s,
-    "constrainedMemory"_s,
-    "construct"_s,
-    "constructList"_s,
-    "constructor"_s,
-    "constructorParameters"_s,
-    "containing"_s,
-    "contentDisposition"_s,
-    "contentEncoding"_s,
-    "contextSwitches"_s,
-    "continueExpression"_s,
-    "controlFlags"_s,
-    "convertALPNProtocols"_s,
-    "convertProcessSignalToExitCode"_s,
-    "cookies"_s,
-    "copy"_s,
-    "copyBytesFrom"_s,
-    "copyDone"_s,
-    "copyFail"_s,
-    "copyFile"_s,
-    "copyFileCb"_s,
-    "copyFileSync"_s,
-    "copyOwnProperties"_s,
-    "copyResume"_s,
-    "copyWithin"_s,
-    "copyWrite"_s,
-    "copyright"_s,
-    "cork"_s,
-    "cos"_s,
-    "cosh"_s,
-    "cost"_s,
-    "count"_s,
-    "countAnsiEscapeCodes"_s,
-    "countReset"_s,
-    "cp"_s,
-    "cpSync"_s,
-    "cpp"_s,
-    "cpuTime"_s,
-    "cpuUsage"_s,
-    "cpus"_s,
-    "crash_handler.rs"_s,
-    "crc32"_s,
-    "create"_s,
-    "createBinding"_s,
-    "createBrotliCompress"_s,
-    "createBrotliDecompress"_s,
-    "createBunTTYFunctions"_s,
-    "createCipheriv"_s,
-    "createCommonJSModule"_s,
-    "createConnection"_s,
-    "createContext"_s,
-    "createCountersObject"_s,
-    "createDecipheriv"_s,
-    "createDecoratorMetadata"_s,
-    "createDeflate"_s,
-    "createDeflateRaw"_s,
-    "createDiffieHellman"_s,
-    "createDiffieHellmanGroup"_s,
-    "createDisposableResource"_s,
-    "createDomain"_s,
-    "createECDH"_s,
-    "createElement"_s,
-    "createFIFO"_s,
-    "createGunzip"_s,
-    "createGzip"_s,
-    "createHash"_s,
-    "createHistogram"_s,
-    "createHmac"_s,
-    "createHook"_s,
-    "createInflate"_s,
-    "createInflateRaw"_s,
-    "createInterface"_s,
-    "createIsolatedModuleCacheSourceTypeForTesting"_s,
-    "createJSCTestingHelpers"_s,
-    "createJSMIMEBinding"_s,
-    "createJSSQLStatementConstructor"_s,
-    "createMemfdForTesting"_s,
-    "createNativeFrameForTesting"_s,
-    "createNoOpForTesting"_s,
-    "createNodeCryptoBinding"_s,
-    "createNodeCryptoBindingZig"_s,
-    "createNodeFetchInternalBinding"_s,
-    "createNodeHTTPInternalBinding"_s,
-    "createNodePathBinding"_s,
-    "createNodeQuicBinding"_s,
-    "createNodeWorkerConstructor"_s,
-    "createNodeWorkerThreadsBinding"_s,
-    "createPath"_s,
-    "createPrivate"_s,
-    "createPrivateKey"_s,
-    "createPrivateStorage"_s,
-    "createPromise"_s,
-    "createPublicKey"_s,
-    "createReadStream"_s,
-    "createRedirectInterceptor"_s,
-    "createRemoteFunction"_s,
-    "createRequire"_s,
-    "createScript"_s,
-    "createSecretKey"_s,
-    "createSecureContext"_s,
-    "createSecureServer"_s,
-    "createServer"_s,
-    "createSign"_s,
-    "createSocket"_s,
-    "createStatsForIno"_s,
-    "createStreamIterEnabledFlag"_s,
-    "createTracing"_s,
-    "createUndiciInternalBinding"_s,
-    "createUnzip"_s,
-    "createVerify"_s,
-    "createWebSocketBindingForWs"_s,
-    "createWebSocketStream"_s,
-    "createWriteStream"_s,
-    "createZstdCompress"_s,
-    "createZstdDecompress"_s,
-    "credentials"_s,
-    "crl"_s,
-    "cron"_s,
-    "crossRealmThrow"_s,
-    "crypto"_s,
-    "css_internals.rs"_s,
-    "ctor"_s,
-    "currency"_s,
-    "currencyDisplay"_s,
-    "currencySign"_s,
-    "cursorTo"_s,
-    "customSections"_s,
-    "cwd"_s,
-    "data"_s,
-    "dataurl"_s,
-    "dateStyle"_s,
-    "day"_s,
-    "dayOfWeek"_s,
-    "dayOfYear"_s,
-    "dayPeriod"_s,
-    "days"_s,
-    "daysDisplay"_s,
-    "daysInMonth"_s,
-    "daysInWeek"_s,
-    "daysInYear"_s,
-    "dbsize"_s,
-    "debug"_s,
-    "debugPort"_s,
-    "debuglog"_s,
-    "decode"_s,
-    "decodeURI"_s,
-    "decodeURIComponent"_s,
-    "decodeURIComponentSIMD.cpp"_s,
-    "decompress"_s,
-    "decorateClass"_s,
-    "decorateMethod"_s,
-    "decorateParameter"_s,
-    "decorateProperty"_s,
-    "decr"_s,
-    "decrby"_s,
-    "deepEqual"_s,
-    "deepEquals"_s,
-    "deepMatch"_s,
-    "deepStrictEqual"_s,
-    "default"_s,
-    "defaultAsyncFromAsyncArrayLike"_s,
-    "defaultAsyncFromAsyncIterator"_s,
-    "defaultAsyncFromAsyncIteratorWithNext"_s,
-    "defaultCipherList"_s,
-    "defaultCoreCipherList"_s,
-    "defaultMaxListeners"_s,
-    "defer"_s,
-    "define"_s,
-    "defineMetadata"_s,
-    "defineProperties"_s,
-    "defineProperty"_s,
-    "deflate"_s,
-    "deflateRaw"_s,
-    "deflateRawSync"_s,
-    "deflateSync"_s,
-    "del"_s,
-    "delete"_s,
-    "deleteByValSloppy"_s,
-    "deleteCookie"_s,
-    "deleteProperty"_s,
-    "delimiter"_s,
-    "demethodize"_s,
-    "deprecate"_s,
-    "deprecatedNamespaceObjectSetters"_s,
-    "depth"_s,
-    "deref"_s,
-    "describe"_s,
-    "describeAddressOrList"_s,
-    "describeAnything"_s,
-    "describeArray"_s,
-    "describeCheckerQueries"_s,
-    "describeCodeGraph"_s,
-    "describeDefaults"_s,
-    "describeResult"_s,
-    "describeValue"_s,
-    "description"_s,
-    "deserialize"_s,
-    "destination"_s,
-    "destroy"_s,
-    "detach"_s,
-    "detached"_s,
-    "detail"_s,
-    "devNull"_s,
-    "development"_s,
-    "dgramAdoptFd"_s,
-    "dgramBindFd"_s,
-    "dgramCloseFd"_s,
-    "dgramGetSockNameFd"_s,
-    "dgramGuessHandleType"_s,
-    "dgramIsFdAdopted"_s,
-    "dgramListenFd"_s,
-    "dgramNewSocketFd"_s,
-    "dhParamsFile"_s,
-    "difference"_s,
-    "diffieHellman"_s,
-    "digest"_s,
-    "dir"_s,
-    "dirname"_s,
-    "dirxml"_s,
-    "disableRenegotiation"_s,
-    "disallowCodeGenerationFromStrings"_s,
-    "disconnect"_s,
-    "dispatchEvent"_s,
-    "disposableStackFieldCapability"_s,
-    "disposableStackFieldState"_s,
-    "dispose"_s,
-    "disposeAsync"_s,
-    "disposed"_s,
-    "dlopen"_s,
-    "dns"_s,
-    "dns_internals.bind.ts"_s,
-    "doConnect"_s,
-    "doesNotMatch"_s,
-    "doesNotReject"_s,
-    "doesNotThrow"_s,
-    "domainToASCII"_s,
-    "domainToUnicode"_s,
-    "done"_s,
-    "dotAll"_s,
-    "drain"_s,
-    "drainMicrotasks"_s,
-    "drop"_s,
-    "dropMembership"_s,
-    "dropSourceSpecificMembership"_s,
-    "dump"_s,
-    "duplexPair"_s,
-    "duplicate"_s,
-    "duration"_s,
-    "each"_s,
-    "ecanceledErrorCode"_s,
-    "ecdhCurve"_s,
-    "echo"_s,
-    "ecmaModeSloppy"_s,
-    "edenGC"_s,
-    "editor"_s,
-    "element"_s,
-    "ellipsis"_s,
-    "em"_s,
-    "email"_s,
-    "embeddedFiles"_s,
-    "emit"_s,
-    "emitAbortToAllStreams"_s,
-    "emitDCEAnnotations"_s,
-    "emitErrorToAllStreams"_s,
-    "emitHandleIPCMessage"_s,
-    "emitKeypressEvents"_s,
-    "emitWarning"_s,
-    "emphasis"_s,
-    "enableANSIColors"_s,
-    "enableCompileCache"_s,
-    "encode"_s,
-    "encodeInto"_s,
-    "encodeURI"_s,
-    "encodeURIComponent"_s,
-    "encoding"_s,
-    "end"_s,
-    "endWrite"_s,
-    "endianness"_s,
-    "endpoint"_s,
-    "endsWith"_s,
-    "enobufsErrorCode"_s,
-    "enroll"_s,
-    "entries"_s,
-    "entry"_s,
-    "entryPoints"_s,
-    "entrypoints"_s,
-    "enumerable"_s,
-    "env"_s,
-    "eos"_s,
-    "epochMilliseconds"_s,
-    "epochNanoseconds"_s,
-    "equal"_s,
-    "equals"_s,
-    "era"_s,
-    "eraYear"_s,
-    "error"_s,
-    "errorMonitor"_s,
-    "errors"_s,
-    "escape"_s,
-    "escape-powershell"_s,
-    "escapeHTML"_s,
-    "escapeRegExp.rs"_s,
-    "esmLoadSync"_s,
-    "esmNamespaceForCjs"_s,
-    "esmRegistryDelete"_s,
-    "esmRegistryEvaluatedKeys"_s,
-    "esmRegistryHasEvaluated"_s,
-    "estimateShallowMemoryUsageOf"_s,
-    "etag"_s,
-    "etimedoutErrorCode"_s,
-    "eval"_s,
-    "evalInRealm"_s,
-    "evalsha"_s,
-    "evaluate"_s,
-    "evaluateCommonJSModule"_s,
-    "eventLoopUtilization"_s,
-    "eventNames"_s,
-    "event_loop.rs"_s,
-    "every"_s,
-    "evictIsolationSourceProviderCache"_s,
-    "exchange"_s,
-    "exclude"_s,
-    "exclusive"_s,
-    "exec"_s,
-    "execArgv"_s,
-    "execFile"_s,
-    "execFileSync"_s,
-    "execPath"_s,
-    "execSync"_s,
-    "executablePath"_s,
-    "executionAsyncId"_s,
-    "executionAsyncResource"_s,
-    "execve"_s,
-    "exists"_s,
-    "existsCb"_s,
-    "existsSync"_s,
-    "exit"_s,
-    "exitCode"_s,
-    "exited"_s,
-    "exp"_s,
-    "expand"_s,
-    "expect"_s,
-    "expectTypeOf"_s,
-    "expectedByNode"_s,
-    "expire"_s,
-    "expireat"_s,
-    "expiresIn"_s,
-    "expiretime"_s,
-    "expm1"_s,
-    "exportKeyingMaterial"_s,
-    "exports"_s,
-    "extend"_s,
-    "extensions"_s,
-    "external"_s,
-    "extname"_s,
-    "extract"_s,
-    "extractedSplitNewLinesFastPathStringsOnly"_s,
-    "f16round"_s,
-    "factory"_s,
-    "fail"_s,
-    "failing"_s,
-    "failingIf"_s,
-    "fallback"_s,
-    "false"_s,
-    "family"_s,
-    "fastPath"_s,
-    "fatal"_s,
-    "fcall"_s,
-    "fchmod"_s,
-    "fchmodCb"_s,
-    "fchmodSync"_s,
-    "fchown"_s,
-    "fchownCb"_s,
-    "fchownSync"_s,
-    "fd"_s,
-    "fdIsRawSocket"_s,
-    "fdatasync"_s,
-    "fdatasyncCb"_s,
-    "fdatasyncSync"_s,
-    "feature"_s,
-    "features"_s,
-    "fetch"_s,
-    "ffi.rs"_s,
-    "file"_s,
-    "fileGeneration"_s,
-    "filePath"_s,
-    "fileSystemRouterTypes"_s,
-    "fileURLToPath"_s,
-    "fileURLToPathBuffer"_s,
-    "filename"_s,
-    "files"_s,
-    "fill"_s,
-    "fillBuffer"_s,
-    "filter"_s,
-    "finalization"_s,
-    "finally"_s,
-    "find"_s,
-    "findEntry"_s,
-    "findIndex"_s,
-    "findLast"_s,
-    "findLastIndex"_s,
-    "findOrigin"_s,
-    "findSourceMap"_s,
-    "finished"_s,
-    "firstDayOfWeek"_s,
-    "firstFlightBeforeFin"_s,
-    "fixed"_s,
-    "flags"_s,
-    "flat"_s,
-    "flatIntoArray"_s,
-    "flatIntoArrayWithCallback"_s,
-    "flatMap"_s,
-    "flip"_s,
-    "floor"_s,
-    "flop"_s,
-    "flowlabel"_s,
-    "flush"_s,
-    "flushCompileCache"_s,
-    "flushHeaders"_s,
-    "flushall"_s,
-    "flushdb"_s,
-    "fmtString"_s,
-    "fmt_jsc.bind.ts"_s,
-    "foldChunksForTesting"_s,
-    "fontcolor"_s,
-    "fontsize"_s,
-    "footer"_s,
-    "for"_s,
-    "forEach"_s,
-    "forEachStream"_s,
-    "fork"_s,
-    "formData"_s,
-    "format"_s,
-    "formatMatcher"_s,
-    "formatRange"_s,
-    "formatRangeToParts"_s,
-    "formatToParts"_s,
-    "formatWithOptions"_s,
-    "fractionalDigits"_s,
-    "fractionalSecondDigits"_s,
-    "fragment"_s,
-    "framework"_s,
-    "freeParser"_s,
-    "freemem"_s,
-    "freeze"_s,
-    "from"_s,
-    "fromAsync"_s,
-    "fromBase64"_s,
-    "fromCharCode"_s,
-    "fromClipboard"_s,
-    "fromCodePoint"_s,
-    "fromEntries"_s,
-    "fromEpochMilliseconds"_s,
-    "fromEpochNanoseconds"_s,
-    "fromHex"_s,
-    "fromWeb"_s,
-    "fround"_s,
-    "fstat"_s,
-    "fstatCb"_s,
-    "fstatSync"_s,
-    "fsync"_s,
-    "fsyncCb"_s,
-    "fsyncSync"_s,
-    "ftruncate"_s,
-    "ftruncateCb"_s,
-    "ftruncateSync"_s,
-    "fulfilled"_s,
-    "fullGC"_s,
-    "function"_s,
-    "functionSource"_s,
-    "futimes"_s,
-    "futimesCb"_s,
-    "futimesSync"_s,
-    "g"_s,
-    "gc"_s,
-    "gcAggressionLevel"_s,
-    "gcAndSweep"_s,
-    "generate"_s,
-    "generateHeapSnapshot"_s,
-    "generateHeapSnapshotForDebugging"_s,
-    "generateKey"_s,
-    "generateKeyPair"_s,
-    "generateKeyPairSync"_s,
-    "generateKeySync"_s,
-    "generatePrime"_s,
-    "generatePrimeSync"_s,
-    "generatorStepCheckIsGenerator"_s,
-    "generatorStepStatusCompleted"_s,
-    "generatorStepStatusNotStepped"_s,
-    "geoadd"_s,
-    "geodist"_s,
-    "geohash"_s,
-    "geopos"_s,
-    "geosearch"_s,
-    "geosearchstore"_s,
-    "get"_s,
-    "getActiveResourcesInfo"_s,
-    "getActiveTasks"_s,
-    "getAll"_s,
-    "getArg"_s,
-    "getAsyncDisposableStackInternalField"_s,
-    "getAsyncDisposeMethod"_s,
-    "getAttribute"_s,
-    "getAuthorizationError"_s,
-    "getBigInt64"_s,
-    "getBigUint64"_s,
-    "getBuffer"_s,
-    "getBufferedAmount"_s,
-    "getBuiltinModule"_s,
-    "getBunServerAllClosedPromise"_s,
-    "getBunServerOpenCount"_s,
-    "getBundledRootCertificates"_s,
-    "getByIdDirect"_s,
-    "getByIdDirectPrivate"_s,
-    "getByValWithThis"_s,
-    "getBytesWritten"_s,
-    "getCACertificates"_s,
-    "getCacheStats"_s,
-    "getCalendars"_s,
-    "getCallSites"_s,
-    "getCanonicalLocales"_s,
-    "getCertificate"_s,
-    "getCipher"_s,
-    "getCipherInfo"_s,
-    "getCiphers"_s,
-    "getCollations"_s,
-    "getCompileCacheDir"_s,
-    "getContiguousIndex"_s,
-    "getCookies"_s,
-    "getCppHeapStatistics"_s,
-    "getCurrentState"_s,
-    "getCurves"_s,
-    "getDate"_s,
-    "getDay"_s,
-    "getDefaultAutoSelectFamily"_s,
-    "getDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "getDefaultCiphers"_s,
-    "getDefaultHighWaterMark"_s,
-    "getDefaultResultOrder"_s,
-    "getDefaultSettings"_s,
-    "getDeinitCountForTesting"_s,
-    "getDiffieHellman"_s,
-    "getDisposableStackInternalField"_s,
-    "getDisposeMethod"_s,
-    "getDoubleIndex"_s,
-    "getEnabledCategories"_s,
-    "getEndAfterHeaders"_s,
-    "getEntries"_s,
-    "getEntriesByName"_s,
-    "getEntriesByType"_s,
-    "getEnvironmentData"_s,
-    "getEphemeralKey"_s,
-    "getEphemeralKeyInfo"_s,
-    "getEventListeners"_s,
-    "getExtraCACertificates"_s,
-    "getFd"_s,
-    "getFips"_s,
-    "getFloat16"_s,
-    "getFloat32"_s,
-    "getFloat64"_s,
-    "getFrameCounters"_s,
-    "getFullYear"_s,
-    "getGlobalDispatcher"_s,
-    "getGlobalOrigin"_s,
-    "getHashes"_s,
-    "getHeapCodeStatistics"_s,
-    "getHeapSnapshot"_s,
-    "getHeapSpaceStatistics"_s,
-    "getHeapStatistics"_s,
-    "getHourCycles"_s,
-    "getHours"_s,
-    "getInsecureHTTPParser"_s,
-    "getInt16"_s,
-    "getInt32"_s,
-    "getInt8"_s,
-    "getInternalField"_s,
-    "getIteratorFlattenable"_s,
-    "getIteratorHelperInternalField"_s,
-    "getIteratorSync"_s,
-    "getLocalAddress"_s,
-    "getMaxHTTPHeaderSize"_s,
-    "getMaxListeners"_s,
-    "getMilliseconds"_s,
-    "getMinutes"_s,
-    "getMonth"_s,
-    "getNextStream"_s,
-    "getNumberingSystems"_s,
-    "getOptionsObject"_s,
-    "getOrInsert"_s,
-    "getOrInsertComputed"_s,
-    "getOwnPropertyDescriptor"_s,
-    "getOwnPropertyDescriptors"_s,
-    "getOwnPropertyNames"_s,
-    "getOwnPropertySymbols"_s,
-    "getPackedSettings"_s,
-    "getPeerCertificate"_s,
-    "getPeerX509Certificate"_s,
-    "getPriority"_s,
-    "getProtectedObjects"_s,
-    "getPrototypeOf"_s,
-    "getProxyInternalField"_s,
-    "getRandomSeed"_s,
-    "getRandomValues"_s,
-    "getReader"_s,
-    "getRemoteAddress"_s,
-    "getReport"_s,
-    "getRuntimeDefaultResultOrderOption"_s,
-    "getSeconds"_s,
-    "getServername"_s,
-    "getServers"_s,
-    "getSession"_s,
-    "getSetCookie"_s,
-    "getSetCookies"_s,
-    "getSharedSigalgs"_s,
-    "getStreamContext"_s,
-    "getStreamState"_s,
-    "getSystemCACertificates"_s,
-    "getSystemErrorMap"_s,
-    "getSystemErrorMessage"_s,
-    "getSystemErrorName"_s,
-    "getTLSFinishedMessage"_s,
-    "getTLSPeerFinishedMessage"_s,
-    "getTLSTicket"_s,
-    "getTLSVersion"_s,
-    "getTextInfo"_s,
-    "getTime"_s,
-    "getTimeZoneTransition"_s,
-    "getTimeZones"_s,
-    "getTimezoneOffset"_s,
-    "getTypeOfService"_s,
-    "getUTCDate"_s,
-    "getUTCDay"_s,
-    "getUTCFullYear"_s,
-    "getUTCHours"_s,
-    "getUTCMilliseconds"_s,
-    "getUTCMinutes"_s,
-    "getUTCMonth"_s,
-    "getUTCSeconds"_s,
-    "getUint16"_s,
-    "getUint32"_s,
-    "getUint8"_s,
-    "getUnpackedSettings"_s,
-    "getUseSystemCA"_s,
-    "getWeekInfo"_s,
-    "getWrapForValidIteratorInternalField"_s,
-    "getX509Certificate"_s,
-    "getYear"_s,
-    "getbit"_s,
-    "getdel"_s,
-    "getegid"_s,
-    "geteuid"_s,
-    "getex"_s,
-    "getgid"_s,
-    "getgroups"_s,
-    "getrange"_s,
-    "getset"_s,
-    "getsockname"_s,
-    "getter"_s,
-    "getuid"_s,
-    "gid"_s,
-    "glob"_s,
-    "globSync"_s,
-    "global"_s,
-    "globalAgent"_s,
-    "globalPaths"_s,
-    "globalThis"_s,
-    "goaway"_s,
-    "gracefulClose"_s,
-    "granularity"_s,
-    "green"_s,
-    "group"_s,
-    "groupBy"_s,
-    "groupCollapsed"_s,
-    "groupEnd"_s,
-    "groups"_s,
-    "grow"_s,
-    "growNewArray"_s,
-    "growable"_s,
-    "guards"_s,
-    "gunzip"_s,
-    "gunzipSync"_s,
-    "gzip"_s,
-    "gzipSync"_s,
-    "h1"_s,
-    "h2"_s,
-    "h2_frame_parser.rs"_s,
-    "h3"_s,
-    "h4"_s,
-    "h5"_s,
-    "h6"_s,
-    "handleEvent"_s,
-    "handler"_s,
-    "handshake"_s,
-    "hard"_s,
-    "hardSoftBreaks"_s,
-    "hard_soft_breaks"_s,
-    "has"_s,
-    "hasAssertions"_s,
-    "hasAttribute"_s,
-    "hasBody"_s,
-    "hasClipboardImage"_s,
-    "hasContiguousIndex"_s,
-    "hasIndices"_s,
-    "hasInstance"_s,
-    "hasOwn"_s,
-    "hasOwnProperty"_s,
-    "hasRef"_s,
-    "hasSubscribers"_s,
-    "hasUncaughtExceptionCaptureCallback"_s,
-    "hash"_s,
-    "hashSync"_s,
-    "hdel"_s,
-    "headers"_s,
-    "headersObject"_s,
-    "heading"_s,
-    "headings"_s,
-    "heapSize"_s,
-    "heapStats"_s,
-    "heic"_s,
-    "height"_s,
-    "heldValue"_s,
-    "hexSlice"_s,
-    "hexWrite"_s,
-    "hexists"_s,
-    "hexpire"_s,
-    "hexpireat"_s,
-    "hexpiretime"_s,
-    "hget"_s,
-    "hgetall"_s,
-    "hgetdel"_s,
-    "hgetex"_s,
-    "hideConsole"_s,
-    "highWaterMark"_s,
-    "highlight-javascript"_s,
-    "highlight-javascript-redacted"_s,
-    "highway_strings_testing.cpp"_s,
-    "hincrby"_s,
-    "hincrbyfloat"_s,
-    "hkdf"_s,
-    "hkdfSync"_s,
-    "hkeys"_s,
-    "hlen"_s,
-    "hmget"_s,
-    "hmr"_s,
-    "hmset"_s,
-    "hold"_s,
-    "holdsRule"_s,
-    "homedir"_s,
-    "host"_s,
-    "hostCpuCount"_s,
-    "hosted_git_info.rs"_s,
-    "hostname"_s,
-    "hot"_s,
-    "hotReloadGeneration"_s,
-    "hour"_s,
-    "hour12"_s,
-    "hourCycle"_s,
-    "hours"_s,
-    "hoursDisplay"_s,
-    "hoursInDay"_s,
-    "hpersist"_s,
-    "hpexpire"_s,
-    "hpexpireat"_s,
-    "hpexpiretime"_s,
-    "hpttl"_s,
-    "hr"_s,
-    "hrandfield"_s,
-    "href"_s,
-    "hrtime"_s,
-    "hscan"_s,
-    "hset"_s,
-    "hsetex"_s,
-    "hsetnx"_s,
-    "hstrlen"_s,
-    "html"_s,
-    "httl"_s,
-    "http/H2Client.rs"_s,
-    "http/H3Client.rs"_s,
-    "http1"_s,
-    "http2"_s,
-    "http3"_s,
-    "hvals"_s,
-    "hyperlinks"_s,
-    "hypot"_s,
-    "icon"_s,
-    "id"_s,
-    "identifiers"_s,
-    "idleTimeout"_s,
-    "ids"_s,
-    "if"_s,
-    "ifAbruptCloseIterator"_s,
-    "ifError"_s,
-    "ignoreBOM"_s,
-    "ignoreCase"_s,
-    "ignoreDCEAnnotations"_s,
-    "ignoreDirs"_s,
-    "ignorePunctuation"_s,
-    "ignoreUnderscores"_s,
-    "image"_s,
-    "img"_s,
-    "import"_s,
-    "importInRealm"_s,
-    "importKind"_s,
-    "importSource"_s,
-    "importValue"_s,
-    "imports"_s,
-    "imul"_s,
-    "inLeapYear"_s,
-    "inTransaction"_s,
-    "includes"_s,
-    "incr"_s,
-    "incrby"_s,
-    "incrbyfloat"_s,
-    "index"_s,
-    "indexOf"_s,
-    "indexOfLine"_s,
-    "inflate"_s,
-    "inflateRaw"_s,
-    "inflateRawSync"_s,
-    "inflateSync"_s,
-    "info"_s,
-    "inherits"_s,
-    "inheritsArrayBuffer"_s,
-    "inheritsBlob"_s,
-    "inheritsReadableStream"_s,
-    "inheritsTransformStream"_s,
-    "inheritsWritableStream"_s,
-    "ini.rs"_s,
-    "init"_s,
-    "initStreamingSource"_s,
-    "initgroups"_s,
-    "input"_s,
-    "inputFlags"_s,
-    "inspect"_s,
-    "install_binding.rs"_s,
-    "instance"_s,
-    "instanceOf"_s,
-    "instant"_s,
-    "instantiate"_s,
-    "instantiateStreaming"_s,
-    "integerOrBigInt"_s,
-    "integrity"_s,
-    "interceptors"_s,
-    "intern"_s,
-    "internal.getaddrinfoErrorForTesting"_s,
-    "internal.isAllLoopbackOfOneFamilyForTesting"_s,
-    "internal.isLocalhostNameForTesting"_s,
-    "internal.seedCacheForTesting"_s,
-    "internal/abort_listener"_s,
-    "internal/assert/assertion_error"_s,
-    "internal/assert/calltracker"_s,
-    "internal/assert/myers_diff"_s,
-    "internal/assert/utils"_s,
-    "internal/async_context_frame"_s,
-    "internal/async_hooks"_s,
-    "internal/async_hooks_tick"_s,
-    "internal/bake"_s,
-    "internal/cluster/RoundRobinHandle"_s,
-    "internal/cluster/SharedHandle"_s,
-    "internal/cluster/Worker"_s,
-    "internal/cluster/child"_s,
-    "internal/cluster/isPrimary"_s,
-    "internal/cluster/primary"_s,
-    "internal/debugger"_s,
-    "internal/dgram"_s,
-    "internal/errors"_s,
-    "internal/fifo"_s,
-    "internal/fixed_queue"_s,
-    "internal/freelist"_s,
-    "internal/fs/binding"_s,
-    "internal/fs/cp"_s,
-    "internal/fs/cp-sync"_s,
-    "internal/fs/glob"_s,
-    "internal/fs/streams"_s,
-    "internal/fs/watch"_s,
-    "internal/fs/watchfile"_s,
-    "internal/html"_s,
-    "internal/http"_s,
-    "internal/http/FakeSocket"_s,
-    "internal/http1_server_fallback"_s,
-    "internal/inspector/cdp"_s,
-    "internal/linkedlist"_s,
-    "internal/net/isIP"_s,
-    "internal/net/server_abort_signal"_s,
-    "internal/net/symbols"_s,
-    "internal/perf_hooks/monitorEventLoopDelay"_s,
-    "internal/primordials"_s,
-    "internal/process/next_tick_queue"_s,
-    "internal/process/pre_execution"_s,
-    "internal/promisify"_s,
-    "internal/quic/binding"_s,
-    "internal/quic/diagnostics"_s,
-    "internal/quic/http2util"_s,
-    "internal/quic/quic"_s,
-    "internal/quic/state"_s,
-    "internal/quic/stats"_s,
-    "internal/quic/symbols"_s,
-    "internal/readline/callbacks"_s,
-    "internal/readline/emitKeypressEvents"_s,
-    "internal/readline/interface"_s,
-    "internal/readline/promises"_s,
-    "internal/readline/utils"_s,
-    "internal/repl"_s,
-    "internal/repl/acorn"_s,
-    "internal/repl/acorn-walk"_s,
-    "internal/repl/await"_s,
-    "internal/repl/completion"_s,
-    "internal/repl/history"_s,
-    "internal/repl/mode"_s,
-    "internal/repl/node-errors"_s,
-    "internal/repl/node-inspect"_s,
-    "internal/repl/node-primordials"_s,
-    "internal/repl/node-shims"_s,
-    "internal/repl/utils"_s,
-    "internal/serialization_buffers"_s,
-    "internal/serve_cli"_s,
-    "internal/shared"_s,
-    "internal/sql/errors"_s,
-    "internal/sql/mysql"_s,
-    "internal/sql/options"_s,
-    "internal/sql/pool"_s,
-    "internal/sql/postgres"_s,
-    "internal/sql/query"_s,
-    "internal/sql/shared"_s,
-    "internal/sql/sqlite"_s,
-    "internal/stream"_s,
-    "internal/stream/promises"_s,
-    "internal/streams/add-abort-signal"_s,
-    "internal/streams/compose"_s,
-    "internal/streams/destroy"_s,
-    "internal/streams/duplex"_s,
-    "internal/streams/duplexify"_s,
-    "internal/streams/duplexpair"_s,
-    "internal/streams/end-of-stream"_s,
-    "internal/streams/fast-utf8-stream"_s,
-    "internal/streams/from"_s,
-    "internal/streams/iter/broadcast"_s,
-    "internal/streams/iter/classic"_s,
-    "internal/streams/iter/consumers"_s,
-    "internal/streams/iter/duplex"_s,
-    "internal/streams/iter/from"_s,
-    "internal/streams/iter/pull"_s,
-    "internal/streams/iter/push"_s,
-    "internal/streams/iter/ringbuffer"_s,
-    "internal/streams/iter/share"_s,
-    "internal/streams/iter/transform"_s,
-    "internal/streams/iter/types"_s,
-    "internal/streams/iter/utils"_s,
-    "internal/streams/lazy_transform"_s,
-    "internal/streams/legacy"_s,
-    "internal/streams/native-readable"_s,
-    "internal/streams/operators"_s,
-    "internal/streams/passthrough"_s,
-    "internal/streams/pipeline"_s,
-    "internal/streams/readable"_s,
-    "internal/streams/state"_s,
-    "internal/streams/transform"_s,
-    "internal/streams/utils"_s,
-    "internal/streams/writable"_s,
-    "internal/test/binding"_s,
-    "internal/test_runner/mock_timers"_s,
-    "internal/timers"_s,
-    "internal/tls"_s,
-    "internal/trace_event_recorder"_s,
-    "internal/trace_events"_s,
-    "internal/tty"_s,
-    "internal/url"_s,
-    "internal/util/colors"_s,
-    "internal/util/comparisons"_s,
-    "internal/util/debuglog"_s,
-    "internal/util/deprecate"_s,
-    "internal/util/inspect"_s,
-    "internal/util/mime"_s,
-    "internal/validators"_s,
-    "internal/webstreams_adapters"_s,
-    "internal/worker/messaging"_s,
-    "internal/worker/stdio"_s,
-    "internalErrorEntries"_s,
-    "internalErrorName"_s,
-    "internalRequire"_s,
-    "internal_bindings.timerClockMs"_s,
-    "interpretNode"_s,
-    "intersection"_s,
-    "intersectsForTesting"_s,
-    "ipc"_s,
-    "ipc.rs"_s,
-    "ipv6Only"_s,
-    "is"_s,
-    "isAbsolute"_s,
-    "isAddress"_s,
-    "isAnyArrayBuffer"_s,
-    "isArgumentsObject"_s,
-    "isArray"_s,
-    "isArrayBuffer"_s,
-    "isArrayBufferView"_s,
-    "isArrayIterator"_s,
-    "isAscii"_s,
-    "isAsyncDisposableStack"_s,
-    "isAsyncFunction"_s,
-    "isBigInt64Array"_s,
-    "isBigIntObject"_s,
-    "isBigUint64Array"_s,
-    "isBlockList"_s,
-    "isBoolean"_s,
-    "isBooleanObject"_s,
-    "isBoxedPrimitive"_s,
-    "isBuffer"_s,
-    "isBuiltin"_s,
-    "isBun"_s,
-    "isCallable"_s,
-    "isClosed"_s,
-    "isConcatSpreadable"_s,
-    "isConstructor"_s,
-    "isContext"_s,
-    "isCryptoKey"_s,
-    "isDataView"_s,
-    "isDate"_s,
-    "isDeepStrictEqual"_s,
-    "isDestroyed"_s,
-    "isDisjointFrom"_s,
-    "isDisposableStack"_s,
-    "isDisturbed"_s,
-    "isEncoding"_s,
-    "isError"_s,
-    "isErrored"_s,
-    "isEventTarget"_s,
-    "isExtensible"_s,
-    "isExternal"_s,
-    "isFinite"_s,
-    "isFloat16Array"_s,
-    "isFloat32Array"_s,
-    "isFloat64Array"_s,
-    "isFrozen"_s,
-    "isFunction"_s,
-    "isGeneratorFunction"_s,
-    "isGeneratorObject"_s,
-    "isGeneratorSuspendedAtStart"_s,
-    "isIP"_s,
-    "isIPv4"_s,
-    "isIPv6"_s,
-    "isInt16Array"_s,
-    "isInt32Array"_s,
-    "isInt8Array"_s,
-    "isInteger"_s,
-    "isInternalThread"_s,
-    "isIteratorHelper"_s,
-    "isJSArray"_s,
-    "isKeyObject"_s,
-    "isLenient"_s,
-    "isLockFree"_s,
-    "isMainThread"_s,
-    "isMap"_s,
-    "isMapIterator"_s,
-    "isMarkedAsUntransferable"_s,
-    "isMaster"_s,
-    "isModuleNamespaceObject"_s,
-    "isNaN"_s,
-    "isNamedPipeSocket"_s,
-    "isNativeError"_s,
-    "isNot"_s,
-    "isNull"_s,
-    "isNullOrUndefined"_s,
-    "isNumber"_s,
-    "isNumberObject"_s,
-    "isObject"_s,
-    "isPaused"_s,
-    "isPrimary"_s,
-    "isPrimitive"_s,
-    "isPromise"_s,
-    "isPromisePending"_s,
-    "isPrototypeOf"_s,
-    "isProxy"_s,
-    "isProxyObject"_s,
-    "isRawJSON"_s,
-    "isReadable"_s,
-    "isRegExp"_s,
-    "isRegExpObject"_s,
-    "isRestart"_s,
-    "isRestarting"_s,
-    "isRope"_s,
-    "isSafeInteger"_s,
-    "isSealed"_s,
-    "isSessionReused"_s,
-    "isSet"_s,
-    "isSetIterator"_s,
-    "isShadowRealm"_s,
-    "isSharedArrayBuffer"_s,
-    "isSocketAddress"_s,
-    "isStandaloneExecutable"_s,
-    "isString"_s,
-    "isStringObject"_s,
-    "isStringOneByteRepresentation"_s,
-    "isSubscribed"_s,
-    "isSubsetOf"_s,
-    "isSupersetOf"_s,
-    "isSymbol"_s,
-    "isSymbolObject"_s,
-    "isTypedArray"_s,
-    "isTypedArrayOutOfBounds"_s,
-    "isTypedArrayView"_s,
-    "isUint16Array"_s,
-    "isUint32Array"_s,
-    "isUint8Array"_s,
-    "isUint8ClampedArray"_s,
-    "isUndefined"_s,
-    "isUndefinedOrNull"_s,
-    "isUtf8"_s,
-    "isValidSyntax"_s,
-    "isView"_s,
-    "isWeakMap"_s,
-    "isWeakSet"_s,
-    "isWellFormed"_s,
-    "isWorker"_s,
-    "isWrapForValidIterator"_s,
-    "isWritable"_s,
-    "isatty"_s,
-    "isomorphic-fetch"_s,
-    "it"_s,
-    "italics"_s,
-    "items"_s,
-    "iterated"_s,
-    "iterator"_s,
-    "iteratorCloseAllNormal"_s,
-    "iteratorGenericClose"_s,
-    "iteratorGenericNext"_s,
-    "iteratorHelperCreate"_s,
-    "iteratorHelperFieldGenerator"_s,
-    "iteratorHelperFieldUnderlyingIterator"_s,
-    "iteratorZip"_s,
-    "jest"_s,
-    "jest.bind.ts"_s,
-    "jitPolicy"_s,
-    "join"_s,
-    "jpeg"_s,
-    "js.getConstructor"_s,
-    "jsCreateSocketPair"_s,
-    "jsEscapeRegExp"_s,
-    "jsEscapeRegExpForPackageNameMatching"_s,
-    "jsEventTargetGetEventListenersCount"_s,
-    "jsFunctionBunStringWidth"_s,
-    "jsFunctionDecodeURIComponentSIMD"_s,
-    "jsFunctionGetOwnNonIndexProperties"_s,
-    "jsFunctionIsDeepStrictEqual"_s,
-    "jsFunctionIsError"_s,
-    "jsFunctionIsFrameOfStoppedModuleGraph"_s,
-    "jsFunctionIsMapIterator"_s,
-    "jsFunctionIsModuleResolveFilenameSlowPathEnabled"_s,
-    "jsFunctionIsSetIterator"_s,
-    "jsFunctionModuleGraphFrameOfFrame"_s,
-    "jsFunctionModuleGraphOfFrame"_s,
-    "jsFunctionNodeEventsGetEventListeners"_s,
-    "jsFunctionPartialDeepStrictEqual"_s,
-    "jsFunctionPostMessage"_s,
-    "jsFunctionReportUncaughtException"_s,
-    "jsFunctionStructuredCloneAdvanced"_s,
-    "jsFunctionTransferToNativeReadableStream"_s,
-    "jsFunction_BunString_makeThreadShareableRefCountDelta"_s,
-    "jsFunction_BunString_threadIsolatedCopyRefCountDelta"_s,
-    "jsFunction_aotBuiltinEntries"_s,
-    "jsFunction_aotBuiltinMismatches"_s,
-    "jsFunction_aotBuiltinValue"_s,
-    "jsFunction_aotNameClass"_s,
-    "jsFunction_arrayBufferViewHasBuffer"_s,
-    "jsFunction_builtinFeatureUses"_s,
-    "jsFunction_checkRangesOrGetDefault"_s,
-    "jsFunction_closeNodeInspector"_s,
-    "jsFunction_collectPreciseCoverage"_s,
-    "jsFunction_createHistogram"_s,
-    "jsFunction_disableEventLoopDelay"_s,
-    "jsFunction_emitMemoryPressure"_s,
-    "jsFunction_enableEventLoopDelay"_s,
-    "jsFunction_hasReifiedStatic"_s,
-    "jsFunction_isASANEnabled"_s,
-    "jsFunction_isCPUProfilerRunning"_s,
-    "jsFunction_isMemoryPressureWatcherInstalled"_s,
-    "jsFunction_lowercaseHeaderNameSIMD"_s,
-    "jsFunction_monitorEventLoopDelay"_s,
-    "jsFunction_openNodeInspector"_s,
-    "jsFunction_postNodeInspectorControl"_s,
-    "jsFunction_setCPUSamplingInterval"_s,
-    "jsFunction_spawnThreadsForTesting"_s,
-    "jsFunction_startCPUProfiler"_s,
-    "jsFunction_startPreciseCoverage"_s,
-    "jsFunction_stopCPUProfiler"_s,
-    "jsFunction_stopPreciseCoverage"_s,
-    "jsFunction_validateAbortSignal"_s,
-    "jsFunction_validateArray"_s,
-    "jsFunction_validateBuffer"_s,
-    "jsFunction_validateEncoding"_s,
-    "jsFunction_validateFiniteNumber"_s,
-    "jsFunction_validateInt32"_s,
-    "jsFunction_validateInteger"_s,
-    "jsFunction_validateNumber"_s,
-    "jsFunction_validateObject"_s,
-    "jsFunction_validateOneOf"_s,
-    "jsFunction_validatePort"_s,
-    "jsFunction_validateUint32"_s,
-    "jsFunction_waitForNodeInspectorConnection"_s,
-    "jsInternalModuleBytecode"_s,
-    "jsInternalModulesLoadedFromBytecode"_s,
-    "jsLiveCount"_s,
-    "jsPsiFilter"_s,
-    "jsPsiTrigger"_s,
-    "jsSetAsyncHooksEnabled"_s,
-    "jsSetSocketOptions"_s,
-    "jsSourceHasLineStarts"_s,
-    "jsThreadsafeFunctionLiveCount"_s,
-    "jsUpgradeDuplexToTLS"_s,
-    "jsWatcherHasOsBackend"_s,
-    "jsWorkerLiveCount"_s,
-    "js_bindings.generate"_s,
-    "jscDescribe"_s,
-    "jscDescribeArray"_s,
-    "jsc_hooks.bind.ts"_s,
-    "json"_s,
-    "jsonParse"_s,
-    "jsonStringify"_s,
-    "jsx"_s,
-    "kConnectionsCheckingInterval"_s,
-    "kErrored"_s,
-    "kHighWaterMark"_s,
-    "kIncomingMessage"_s,
-    "kMaxLength"_s,
-    "kOutHeaders"_s,
-    "kRejectNonStandardBodyWrites"_s,
-    "kReqShouldKeepAlive"_s,
-    "kResistStopPropagation"_s,
-    "kSkipPendingData"_s,
-    "kSocket"_s,
-    "kStringMaxLength"_s,
-    "kUniqueHeaders"_s,
-    "keep"_s,
-    "keepNames"_s,
-    "keepalive"_s,
-    "key"_s,
-    "keyFile"_s,
-    "keyFor"_s,
-    "keylog"_s,
-    "keys"_s,
-    "kill"_s,
-    "killSignal"_s,
-    "killed"_s,
-    "kind"_s,
-    "kittyGraphics"_s,
-    "language"_s,
-    "languageDisplay"_s,
-    "lastCalledWith"_s,
-    "lastChunkHandling"_s,
-    "lastInTextNode"_s,
-    "lastIndex"_s,
-    "lastIndexOf"_s,
-    "lastMatch"_s,
-    "lastModified"_s,
-    "lastParen"_s,
-    "lastReturnedWith"_s,
-    "lastsave"_s,
-    "latexMath"_s,
-    "latex_math"_s,
-    "latin1Slice"_s,
-    "latin1Write"_s,
-    "layouts"_s,
-    "lazy"_s,
-    "lchmod"_s,
-    "lchmodCb"_s,
-    "lchmodSync"_s,
-    "lchown"_s,
-    "lchownCb"_s,
-    "lchownSync"_s,
-    "lcs"_s,
-    "leftContext"_s,
-    "length"_s,
-    "level"_s,
-    "li"_s,
-    "library"_s,
-    "light"_s,
-    "lindex"_s,
-    "line"_s,
-    "lineLengths"_s,
-    "link"_s,
-    "linkCb"_s,
-    "linkSymbols"_s,
-    "linkSync"_s,
-    "linkTimeConstant"_s,
-    "linsert"_s,
-    "list"_s,
-    "listItem"_s,
-    "listen"_s,
-    "listener"_s,
-    "listenerCount"_s,
-    "listeners"_s,
-    "llen"_s,
-    "lmove"_s,
-    "lmpop"_s,
-    "load"_s,
-    "loadEnvFile"_s,
-    "loadEsmIntoCjs"_s,
-    "loadExtraCACertificates"_s,
-    "loadavg"_s,
-    "loaded"_s,
-    "loader"_s,
-    "localAddress"_s,
-    "localFamily"_s,
-    "localFlags"_s,
-    "localPort"_s,
-    "localTransportParams"_s,
-    "localeCompare"_s,
-    "localeMatcher"_s,
-    "locales"_s,
-    "log"_s,
-    "log10"_s,
-    "log1p"_s,
-    "log2"_s,
-    "lookup"_s,
-    "lookupService"_s,
-    "looseDoubleOrBigInt"_s,
-    "looseInteger"_s,
-    "looseIntegerOrBigInt"_s,
-    "lowMemoryMode"_s,
-    "lpop"_s,
-    "lpos"_s,
-    "lpush"_s,
-    "lpushx"_s,
-    "lrange"_s,
-    "lrem"_s,
-    "lset"_s,
-    "lstat"_s,
-    "lstatCb"_s,
-    "lstatSync"_s,
-    "ltrim"_s,
-    "lutimes"_s,
-    "lutimesCb"_s,
-    "lutimesSync"_s,
-    "machine"_s,
-    "macros"_s,
-    "main"_s,
-    "mainModule"_s,
-    "makeAbortError"_s,
-    "makeErrorWithCode"_s,
-    "makeIteratorResult"_s,
-    "makeToken"_s,
-    "makeTypeError"_s,
-    "map"_s,
-    "mapNext"_s,
-    "mapNextResultEntry"_s,
-    "mapNextResultHasEntry"_s,
-    "mapNextResultKey"_s,
-    "mapNextResultValue"_s,
-    "mark"_s,
-    "markAsUncloneable"_s,
-    "markAsUntransferable"_s,
-    "markBusy"_s,
-    "markResourceTiming"_s,
-    "markdown"_s,
-    "match"_s,
-    "matchAll"_s,
-    "matcherHint"_s,
-    "matchesGlob"_s,
-    "math"_s,
-    "max"_s,
-    "maxAge"_s,
-    "maxBuffer"_s,
-    "maxByteLength"_s,
-    "maxHeaderSize"_s,
-    "maxPayloadLength"_s,
-    "maxPixels"_s,
-    "maxRSS"_s,
-    "maxRedirects"_s,
-    "maxRequestBodySize"_s,
-    "maxVersion"_s,
-    "maximize"_s,
-    "maximumFractionDigits"_s,
-    "maximumSignificantDigits"_s,
-    "measure"_s,
-    "measureMemory"_s,
-    "measureTrimProfile"_s,
-    "memLevel"_s,
-    "memoryCost"_s,
-    "memoryFootprint"_s,
-    "memoryUsage"_s,
-    "memory_pressure.rs"_s,
-    "message"_s,
-    "messages"_s,
-    "metadata"_s,
-    "metafile"_s,
-    "method"_s,
-    "methods"_s,
-    "mget"_s,
-    "microsecond"_s,
-    "microseconds"_s,
-    "microsecondsDisplay"_s,
-    "millisecond"_s,
-    "milliseconds"_s,
-    "millisecondsDisplay"_s,
-    "mimallocDump"_s,
-    "min"_s,
-    "minChunkSize"_s,
-    "minVersion"_s,
-    "minify"_s,
-    "minifyErrorTestWithOptions"_s,
-    "minifyTest"_s,
-    "minifyTestWithOptions"_s,
-    "minimize"_s,
-    "minimumFractionDigits"_s,
-    "minimumIntegerDigits"_s,
-    "minimumSignificantDigits"_s,
-    "minute"_s,
-    "minutes"_s,
-    "minutesDisplay"_s,
-    "mkdir"_s,
-    "mkdirCb"_s,
-    "mkdirSync"_s,
-    "mkdtemp"_s,
-    "mkdtempCb"_s,
-    "mkdtempDisposable"_s,
-    "mkdtempDisposableSync"_s,
-    "mkdtempSync"_s,
-    "mmap"_s,
-    "mock"_s,
-    "mockErrors"_s,
-    "mode"_s,
-    "modulate"_s,
-    "module.exports"_s,
-    "moduleLoadList"_s,
-    "modulePreload"_s,
-    "monitorEventLoopDelay"_s,
-    "monotonicNowMs"_s,
-    "month"_s,
-    "monthCode"_s,
-    "months"_s,
-    "monthsDisplay"_s,
-    "monthsInYear"_s,
-    "move"_s,
-    "moveCursor"_s,
-    "moveMessagePortToContext"_s,
-    "mset"_s,
-    "msetnx"_s,
-    "multiline"_s,
-    "murmur32v2"_s,
-    "murmur32v3"_s,
-    "murmur64v2"_s,
-    "myersDiff"_s,
-    "mysql.rs"_s,
-    "nakedConstructor"_s,
-    "name"_s,
-    "names"_s,
-    "namesForTesting"_s,
-    "namespaceURI"_s,
-    "naming"_s,
-    "nanosecond"_s,
-    "nanoseconds"_s,
-    "nanosecondsDisplay"_s,
-    "napiDlopenHandle"_s,
-    "napi_body.rs"_s,
-    "native"_s,
-    "native:Bindgen:DevServer.bind.ts:getDeinitCountForTesting"_s,
-    "native:Bindgen:Listener.bind.ts:addServerName"_s,
-    "native:Bindgen:Listener.bind.ts:setSecureContext"_s,
-    "native:Bindgen:Timer.bind.ts:monotonicNowMs"_s,
-    "native:Bindgen:dns_internals.bind.ts:getRuntimeDefaultResultOrderOption"_s,
-    "native:Bindgen:fmt_jsc.bind.ts:fmtString"_s,
-    "native:Bindgen:jest.bind.ts:fileGeneration"_s,
-    "native:Bindgen:jest.bind.ts:nodeTestMarkResult"_s,
-    "native:Bindgen:jsc_hooks.bind.ts:hotReloadGeneration"_s,
-    "native:Bindgen:node_assert_binding.bind.ts:myersDiff"_s,
-    "native:Bindgen:node_assert_binding.bind.ts:printMyersDiff"_s,
-    "native:Bindgen:node_assert_binding.bind.ts:printSimpleMyersDiff"_s,
-    "native:Bindgen:node_cluster_binding.bind.ts:channelIgnoreOneDisconnectEventListener"_s,
-    "native:Bindgen:node_cluster_binding.bind.ts:clusterCloseHandle"_s,
-    "native:Bindgen:node_cluster_binding.bind.ts:clusterValidateFd"_s,
-    "native:Bindgen:node_cluster_binding.bind.ts:onInternalMessageChild"_s,
-    "native:Bindgen:node_cluster_binding.bind.ts:onInternalMessagePrimary"_s,
-    "native:Bindgen:node_cluster_binding.bind.ts:setRef"_s,
-    "native:Bindgen:node_http_binding.bind.ts:getBunServerOpenCount"_s,
-    "native:Bindgen:node_http_binding.bind.ts:getInsecureHTTPParser"_s,
-    "native:Bindgen:node_http_binding.bind.ts:getMaxHTTPHeaderSize"_s,
-    "native:Bindgen:node_http_binding.bind.ts:sendWebSocketFrame"_s,
-    "native:Bindgen:node_http_binding.bind.ts:setMaxHTTPHeaderSize"_s,
-    "native:Bindgen:node_http_binding.bind.ts:upgradeNodeHTTPResponseToWebSocket"_s,
-    "native:Bindgen:node_net_binding.bind.ts:getDefaultAutoSelectFamily"_s,
-    "native:Bindgen:node_net_binding.bind.ts:getDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "native:Bindgen:node_net_binding.bind.ts:newDetachedSocket"_s,
-    "native:Bindgen:node_net_binding.bind.ts:setDefaultAutoSelectFamily"_s,
-    "native:Bindgen:node_net_binding.bind.ts:setDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "native:Bindgen:node_os.bind.ts:cpus"_s,
-    "native:Bindgen:node_os.bind.ts:freemem"_s,
-    "native:Bindgen:node_os.bind.ts:getPriority"_s,
-    "native:Bindgen:node_os.bind.ts:homedir"_s,
-    "native:Bindgen:node_os.bind.ts:hostCpuCount"_s,
-    "native:Bindgen:node_os.bind.ts:hostname"_s,
-    "native:Bindgen:node_os.bind.ts:loadavg"_s,
-    "native:Bindgen:node_os.bind.ts:networkInterfaces"_s,
-    "native:Bindgen:node_os.bind.ts:release"_s,
-    "native:Bindgen:node_os.bind.ts:setPriority"_s,
-    "native:Bindgen:node_os.bind.ts:totalmem"_s,
-    "native:Bindgen:node_os.bind.ts:uptime"_s,
-    "native:Bindgen:node_os.bind.ts:userInfo"_s,
-    "native:Bindgen:node_os.bind.ts:version"_s,
-    "native:Bindgen:node_tls_binding.bind.ts:getUseSystemCA"_s,
-    "native:Bindgen:node_util_binding.bind.ts:assertEncodingValid"_s,
-    "native:Bindgen:node_util_binding.bind.ts:ecanceledErrorCode"_s,
-    "native:Bindgen:node_util_binding.bind.ts:enobufsErrorCode"_s,
-    "native:Bindgen:node_util_binding.bind.ts:etimedoutErrorCode"_s,
-    "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly"_s,
-    "native:Bindgen:node_util_binding.bind.ts:internalErrorEntries"_s,
-    "native:Bindgen:node_util_binding.bind.ts:internalErrorName"_s,
-    "native:Bindgen:node_util_binding.bind.ts:normalizeEncoding"_s,
-    "native:Bindgen:node_util_binding.bind.ts:parseEnv"_s,
-    "native:Bindgen:node_util_binding.bind.ts:uvTranslateSysError"_s,
-    "native:Bindgen:node_zlib_binding.bind.ts:crc32"_s,
-    "native:Bindgen:socket_body.bind.ts:checkServerIdentityInHandshake"_s,
-    "native:Bindgen:socket_body.bind.ts:firstFlightBeforeFin"_s,
-    "native:Bindgen:socket_body.bind.ts:getBufferedAmount"_s,
-    "native:Bindgen:socket_body.bind.ts:isNamedPipeSocket"_s,
-    "native:Bindgen:socket_body.bind.ts:releaseHeldFlight"_s,
-    "native:Bindgen:socket_body.bind.ts:upgradeTLSDeferred"_s,
-    "native:Bindgen:udp_socket.bind.ts:bufferSize"_s,
-    "native:Bindgen:udp_socket.bind.ts:connect"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramAdoptFd"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramBindFd"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramCloseFd"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramGetSockNameFd"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramGuessHandleType"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramIsFdAdopted"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramListenFd"_s,
-    "native:Bindgen:udp_socket.bind.ts:dgramNewSocketFd"_s,
-    "native:Bindgen:udp_socket.bind.ts:disconnect"_s,
-    "native:Bindgen:udp_socket.bind.ts:getFd"_s,
-    "native:Cpp:CallSite.cpp:createNativeFrameForTesting"_s,
-    "native:Cpp:IsolatedModuleCache.cpp:createIsolatedModuleCacheSourceTypeForTesting"_s,
-    "native:Cpp:JSCTestingHelpers.cpp:createJSCTestingHelpers"_s,
-    "native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding"_s,
-    "native:Cpp:JSSQLStatement.cpp:createJSSQLStatementConstructor"_s,
-    "native:Cpp:JSWebSocket.cpp:createWebSocketBindingForWs"_s,
-    "native:Cpp:NoOpForTesting.cpp:createNoOpForTesting"_s,
-    "native:Cpp:NodeFetch.cpp:createNodeFetchInternalBinding"_s,
-    "native:Cpp:NodeHTTP.cpp:createNodeHTTPInternalBinding"_s,
-    "native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag"_s,
-    "native:Cpp:NodeURL.cpp:Bun::createNodeICUBinding"_s,
-    "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding"_s,
-    "native:Cpp:NodeV8.cpp:Bun::createNodeV8Binding"_s,
-    "native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding"_s,
-    "native:Cpp:Path.cpp:createNodePathBinding"_s,
-    "native:Cpp:ProcessBindingTTYWrap.cpp:createBunTTYFunctions"_s,
-    "native:Cpp:Undici.cpp:createUndiciInternalBinding"_s,
-    "native:Cpp:Worker.cpp:createNodeWorkerConstructor"_s,
-    "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding"_s,
-    "native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding"_s,
-    "native:NewCppFunction:BunDebugger.cpp:jsFunction_closeNodeInspector"_s,
-    "native:NewCppFunction:BunDebugger.cpp:jsFunction_openNodeInspector"_s,
-    "native:NewCppFunction:BunDebugger.cpp:jsFunction_postNodeInspectorControl"_s,
-    "native:NewCppFunction:BunDebugger.cpp:jsFunction_waitForNodeInspectorConnection"_s,
-    "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_BunString_makeThreadShareableRefCountDelta"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_BunString_threadIsolatedCopyRefCountDelta"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotBuiltinEntries"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotBuiltinMismatches"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotBuiltinValue"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotNameClass"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_arrayBufferViewHasBuffer"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_builtinFeatureUses"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_emitMemoryPressure"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_hasReifiedStatic"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_isASANEnabled"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_isMemoryPressureWatcherInstalled"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_lowercaseHeaderNameSIMD"_s,
-    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_spawnThreadsForTesting"_s,
-    "native:NewCppFunction:InternalModuleRegistry.cpp:jsInternalModuleBytecode"_s,
-    "native:NewCppFunction:InternalModuleRegistry.cpp:jsInternalModulesLoadedFromBytecode"_s,
-    "native:NewCppFunction:JSEventTarget.cpp:jsEventTargetGetEventListenersCount"_s,
-    "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_collectPreciseCoverage"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_isCPUProfilerRunning"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_setCPUSamplingInterval"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_startCPUProfiler"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_startPreciseCoverage"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_stopCPUProfiler"_s,
-    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_stopPreciseCoverage"_s,
-    "native:NewCppFunction:JSNodePerformanceHooksHistogram.cpp:jsFunction_createHistogram"_s,
-    "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_disableEventLoopDelay"_s,
-    "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_enableEventLoopDelay"_s,
-    "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_monitorEventLoopDelay"_s,
-    "native:NewCppFunction:ModuleGraph.cpp:jsFunctionIsFrameOfStoppedModuleGraph"_s,
-    "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphFrameOfFrame"_s,
-    "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphOfFrame"_s,
-    "native:NewCppFunction:NodeAsyncHooks.cpp:jsSetAsyncHooksEnabled"_s,
-    "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled"_s,
-    "native:NewCppFunction:NodeTLS.cpp:Bun__canonicalizeIP"_s,
-    "native:NewCppFunction:NodeTLS.cpp:getBundledRootCertificates"_s,
-    "native:NewCppFunction:NodeTLS.cpp:getDefaultCiphers"_s,
-    "native:NewCppFunction:NodeTLS.cpp:getExtraCACertificates"_s,
-    "native:NewCppFunction:NodeTLS.cpp:getSystemCACertificates"_s,
-    "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates"_s,
-    "native:NewCppFunction:NodeTLS.cpp:parseCACertificates"_s,
-    "native:NewCppFunction:NodeTLS.cpp:selectServerName"_s,
-    "native:NewCppFunction:NodeTLS.cpp:setDefaultCiphers"_s,
-    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual"_s,
-    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsError"_s,
-    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsMapIterator"_s,
-    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsSetIterator"_s,
-    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_checkRangesOrGetDefault"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateAbortSignal"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateArray"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateBuffer"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateEncoding"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateFiniteNumber"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateInt32"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateInteger"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateNumber"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateObject"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateOneOf"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validatePort"_s,
-    "native:NewCppFunction:NodeValidator.cpp:jsFunction_validateUint32"_s,
-    "native:NewCppFunction:StructuredClone.cpp:jsFunctionStructuredCloneAdvanced"_s,
-    "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties"_s,
-    "native:NewCppFunction:Worker.cpp:jsFunctionPostMessage"_s,
-    "native:NewCppFunction:ZigSourceProvider.cpp:jsSourceHasLineStarts"_s,
-    "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD"_s,
-    "native:NewCppFunction:highway_strings_testing.cpp:Bun__highwayStringsForTesting"_s,
-    "native:NewCppFunction:streams/BunStreamConsumers.cpp:jsFunctionTransferToNativeReadableStream"_s,
-    "native:NewCppFunction:stringWidth.cpp:jsFunctionBunStringWidth"_s,
-    "native:NewCppFunction:xxhash3_testing.cpp:Bun__xxhash3_64_forTesting"_s,
-    "native:NewRustFunction:BytecodeOrderRecorder.rs:namesForTesting"_s,
-    "native:NewRustFunction:Counters.rs:createCountersObject"_s,
-    "native:NewRustFunction:JSBundler.rs:jsWorkerLiveCount"_s,
-    "native:NewRustFunction:MarkdownObject.rs:setMaxMarkdownBlockBytesForTesting"_s,
-    "native:NewRustFunction:SecureContext.rs:jsLiveCount"_s,
-    "native:NewRustFunction:SemverObject.rs:intersectsForTesting"_s,
-    "native:NewRustFunction:Stat.rs:createStatsForIno"_s,
-    "native:NewRustFunction:bake/config/plugins.rs:checkFramework"_s,
-    "native:NewRustFunction:bake/config/plugins.rs:isRestart"_s,
-    "native:NewRustFunction:bake/config/plugins.rs:isRestarting"_s,
-    "native:NewRustFunction:bake/config/plugins.rs:restartProcess"_s,
-    "native:NewRustFunction:bake/config/plugins.rs:setConfigPlugins"_s,
-    "native:NewRustFunction:bake/config/plugins.rs:setPages"_s,
-    "native:NewRustFunction:checker_queries_testing.rs:describeCheckerQueries"_s,
-    "native:NewRustFunction:code_resolver_testing.rs:compareCodeResolution"_s,
-    "native:NewRustFunction:code_resolver_testing.rs:describeCodeGraph"_s,
-    "native:NewRustFunction:code_resolver_testing.rs:resolveComputedSpecifier"_s,
-    "native:NewRustFunction:collections/linear_fifo.rs:TestingAPIs.orderedRemoveProbe"_s,
-    "native:NewRustFunction:css_internals.rs:_test"_s,
-    "native:NewRustFunction:css_internals.rs:attrTest"_s,
-    "native:NewRustFunction:css_internals.rs:minifyErrorTestWithOptions"_s,
-    "native:NewRustFunction:css_internals.rs:minifyTest"_s,
-    "native:NewRustFunction:css_internals.rs:minifyTestWithOptions"_s,
-    "native:NewRustFunction:css_internals.rs:prefixTest"_s,
-    "native:NewRustFunction:css_internals.rs:prefixTestWithOptions"_s,
-    "native:NewRustFunction:css_internals.rs:testWithOptions"_s,
-    "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExp"_s,
-    "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExpForPackageNameMatching"_s,
-    "native:NewRustFunction:event_loop.rs:getActiveTasks"_s,
-    "native:NewRustFunction:ffi.rs:Bun__FFI__cc"_s,
-    "native:NewRustFunction:hosted_git_info.rs:TestingAPIs.jsFromUrl"_s,
-    "native:NewRustFunction:hosted_git_info.rs:TestingAPIs.jsParseUrl"_s,
-    "native:NewRustFunction:http/H2Client.rs:TestingAPIs.liveCounts"_s,
-    "native:NewRustFunction:http/H3Client.rs:TestingAPIs.quicLiveCounts"_s,
-    "native:NewRustFunction:ini.rs:IniTestingAPIs.loadNpmrcFromJS"_s,
-    "native:NewRustFunction:ini.rs:IniTestingAPIs.parse"_s,
-    "native:NewRustFunction:ipc.rs:emitHandleIPCMessage"_s,
-    "native:NewRustFunction:memory_pressure.rs:jsPsiFilter"_s,
-    "native:NewRustFunction:memory_pressure.rs:jsPsiTrigger"_s,
-    "native:NewRustFunction:memory_pressure.rs:jsWatcherHasOsBackend"_s,
-    "native:NewRustFunction:napi_body.rs:jsThreadsafeFunctionLiveCount"_s,
-    "native:NewRustFunction:node_cluster_binding.rs:clusterRawBind"_s,
-    "native:NewRustFunction:node_cluster_binding.rs:sendHelperPrimary"_s,
-    "native:NewRustFunction:node_fs_binding.rs:createMemfdForTesting"_s,
-    "native:NewRustFunction:node_fs_binding.rs:rm_options_for_testing"_s,
-    "native:NewRustFunction:node_fs_binding.rs:string_to_flags_for_testing"_s,
-    "native:NewRustFunction:node_http_binding.rs:getBunServerAllClosedPromise"_s,
-    "native:NewRustFunction:node_net_binding.rs:doConnect"_s,
-    "native:NewRustFunction:npm.rs:Architecture.jsFunctionArchitectureIsMatch"_s,
-    "native:NewRustFunction:npm.rs:OperatingSystem.jsFunctionOperatingSystemIsMatch"_s,
-    "native:NewRustFunction:pack_command.rs:bindings.jsReadTarball"_s,
-    "native:NewRustFunction:parse_args.rs:parseArgs"_s,
-    "native:NewRustFunction:patch.rs:TestingAPIs.apply"_s,
-    "native:NewRustFunction:patch.rs:TestingAPIs.makeDiff"_s,
-    "native:NewRustFunction:patch.rs:TestingAPIs.parse"_s,
-    "native:NewRustFunction:runtime/dns_jsc/dns.rs:Resolver.newResolver"_s,
-    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.getaddrinfoErrorForTesting"_s,
-    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.isAllLoopbackOfOneFamilyForTesting"_s,
-    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.isLocalhostNameForTesting"_s,
-    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.seedCacheForTesting"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsClearSocketFaults"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsNamedPipeContextLiveCount"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsSetSocketFault"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsSocketFaultInjectionAvailable"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:jsCreateSocketPair"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:jsSetSocketOptions"_s,
-    "native:NewRustFunction:runtime/socket/socket.rs:jsUpgradeDuplexToTLS"_s,
-    "native:NewRustFunction:runtime/timer/Timer.rs:internal_bindings.timerClockMs"_s,
-    "native:NewRustFunction:runtime/webcore/ByteStream.rs:TestingAPIs.byteStreamCancelOnDrain"_s,
-    "native:NewRustFunction:runtime/webcore/FileSink.rs:TestingAPIs.fileSinkLiveCount"_s,
-    "native:NewRustFunction:runtime/webcore/fetch.rs:TestingAPIs.noProxyMatches"_s,
-    "native:NewRustFunction:runtime/webcore/fetch.rs:TestingAPIs.parseURL"_s,
-    "native:NewRustFunction:runtime/webcore/fetch.rs:TestingAPIs.proxyFor"_s,
-    "native:NewRustFunction:shell.rs:TestingAPIs.disabledOnThisPlatform"_s,
-    "native:NewRustFunction:shell.rs:TestingAPIs.shellLex"_s,
-    "native:NewRustFunction:shell.rs:TestingAPIs.shellParse"_s,
-    "native:NewRustFunction:sourcemap/InternalSourceMap.rs:TestingAPIs.find"_s,
-    "native:NewRustFunction:sourcemap/InternalSourceMap.rs:TestingAPIs.fromVLQ"_s,
-    "native:NewRustFunction:sourcemap/InternalSourceMap.rs:TestingAPIs.toVLQ"_s,
-    "native:NewRustFunction:string/immutable/unicode.rs:TestingAPIs.toUTF16AllocSentinel"_s,
-    "native:NewRustFunction:subprocess.rs:TestingAPIs.closeStdinWriter"_s,
-    "native:NewRustFunction:subprocess.rs:TestingAPIs.injectStdioReadError"_s,
-    "native:NewRustFunction:sys.rs:TestingAPIs.sigactionLayout"_s,
-    "native:NewRustFunction:sys.rs:TestingAPIs.translateNtStatusToE"_s,
-    "native:NewRustFunction:sys.rs:TestingAPIs.translateUVErrorToE"_s,
-    "native:NewRustFunction:trim_testing.rs:measureTrimProfile"_s,
-    "native:NewRustFunction:trim_testing.rs:readTrimTable"_s,
-    "native:NewRustFunction:trim_testing.rs:trimExecutable"_s,
-    "native:NewRustFunction:virtual_machine_exports.rs:Bun__setSyntheticAllocationLimitForTesting"_s,
-    "native:Rust:FrameworkRouter.rs:JSFrameworkRouter.getBindings"_s,
-    "native:Rust:SecureContext.rs:js.getConstructor"_s,
-    "native:Rust:crash_handler.rs:js_bindings.generate"_s,
-    "native:Rust:h2_frame_parser.rs:H2FrameParserConstructor"_s,
-    "native:Rust:install_binding.rs:bun_install_js_bindings.generate"_s,
-    "native:Rust:mysql.rs:createBinding"_s,
-    "native:Rust:node_crypto_binding.rs:createNodeCryptoBindingZig"_s,
-    "native:Rust:node_fs_binding.rs:createBinding"_s,
-    "native:Rust:node_net_binding.rs:BlockList"_s,
-    "native:Rust:node_net_binding.rs:SocketAddress"_s,
-    "native:Rust:node_quic_binding.rs:createNodeQuicBinding"_s,
-    "native:Rust:node_zlib_binding.rs:NativeBrotli"_s,
-    "native:Rust:node_zlib_binding.rs:NativeZlib"_s,
-    "native:Rust:node_zlib_binding.rs:NativeZstd"_s,
-    "native:Rust:npm.rs:PackageManifest.bindings.generate"_s,
-    "native:Rust:postgres.rs:createBinding"_s,
-    "native:Rust:upgrade_command.rs:upgrade_js_bindings.generate"_s,
-    "navigator"_s,
-    "negated"_s,
-    "networkInterfaces"_s,
-    "newArrayLike"_s,
-    "newArrayWithCapacity"_s,
-    "newArrayWithSize"_s,
-    "newArrayWithSpecies"_s,
-    "newContiguousArray"_s,
-    "newCppFunction"_s,
-    "newDetachedSocket"_s,
-    "newDoubleArray"_s,
-    "newPromise"_s,
-    "newRejectedPromise"_s,
-    "newResolvedPromise"_s,
-    "newRustFunction"_s,
-    "next"_s,
-    "nextColor"_s,
-    "nextTick"_s,
-    "noFTL"_s,
-    "noHtmlBlocks"_s,
-    "noHtmlSpans"_s,
-    "noIndentedCodeBlocks"_s,
-    "noInline"_s,
-    "noOSRExitFuzzing"_s,
-    "noTrailers"_s,
-    "no_html_blocks"_s,
-    "no_html_spans"_s,
-    "no_indented_code_blocks"_s,
-    "node-fetch"_s,
-    "node:_http2_upgrade"_s,
-    "node:_http_agent"_s,
-    "node:_http_client"_s,
-    "node:_http_common"_s,
-    "node:_http_incoming"_s,
-    "node:_http_outgoing"_s,
-    "node:_http_server"_s,
-    "node:_stream_duplex"_s,
-    "node:_stream_passthrough"_s,
-    "node:_stream_readable"_s,
-    "node:_stream_transform"_s,
-    "node:_stream_wrap"_s,
-    "node:_stream_writable"_s,
-    "node:_tls_common"_s,
-    "node:_tls_wrap"_s,
-    "node:assert"_s,
-    "node:assert/strict"_s,
-    "node:async_hooks"_s,
-    "node:buffer"_s,
-    "node:child_process"_s,
-    "node:cluster"_s,
-    "node:console"_s,
-    "node:constants"_s,
-    "node:crypto"_s,
-    "node:dgram"_s,
-    "node:diagnostics_channel"_s,
-    "node:dns"_s,
-    "node:dns/promises"_s,
-    "node:domain"_s,
-    "node:events"_s,
-    "node:fs"_s,
-    "node:fs/promises"_s,
-    "node:http"_s,
-    "node:http2"_s,
-    "node:https"_s,
-    "node:inspector"_s,
-    "node:inspector/promises"_s,
-    "node:module"_s,
-    "node:net"_s,
-    "node:os"_s,
-    "node:path"_s,
-    "node:path/posix"_s,
-    "node:path/win32"_s,
-    "node:perf_hooks"_s,
-    "node:punycode"_s,
-    "node:querystring"_s,
-    "node:quic"_s,
-    "node:readline"_s,
-    "node:readline/promises"_s,
-    "node:repl"_s,
-    "node:sqlite"_s,
-    "node:stream"_s,
-    "node:stream/consumers"_s,
-    "node:stream/iter"_s,
-    "node:stream/promises"_s,
-    "node:stream/web"_s,
-    "node:string_decoder"_s,
-    "node:test"_s,
-    "node:timers"_s,
-    "node:timers/promises"_s,
-    "node:tls"_s,
-    "node:trace_events"_s,
-    "node:tty"_s,
-    "node:url"_s,
-    "node:util"_s,
-    "node:util/types"_s,
-    "node:v8"_s,
-    "node:vm"_s,
-    "node:wasi"_s,
-    "node:worker_threads"_s,
-    "node:zlib"_s,
-    "node:zlib/iter"_s,
-    "nodeTestMarkResult"_s,
-    "node_assert_binding.bind.ts"_s,
-    "node_cluster_binding.bind.ts"_s,
-    "node_cluster_binding.rs"_s,
-    "node_crypto_binding.cpp"_s,
-    "node_crypto_binding.rs"_s,
-    "node_fs_binding.rs"_s,
-    "node_http_binding.bind.ts"_s,
-    "node_http_binding.rs"_s,
-    "node_net_binding.bind.ts"_s,
-    "node_net_binding.rs"_s,
-    "node_os.bind.ts"_s,
-    "node_quic_binding.rs"_s,
-    "node_tls_binding.bind.ts"_s,
-    "node_util_binding.bind.ts"_s,
-    "node_zlib_binding.bind.ts"_s,
-    "node_zlib_binding.rs"_s,
-    "normalize"_s,
-    "normalizeEncoding"_s,
-    "not"_s,
-    "notDeepEqual"_s,
-    "notDeepStrictEqual"_s,
-    "notEqual"_s,
-    "notStrictEqual"_s,
-    "notation"_s,
-    "notes"_s,
-    "notify"_s,
-    "notifyWhenReadParsed"_s,
-    "now"_s,
-    "npm.rs"_s,
-    "nthCalledWith"_s,
-    "nthReturnedWith"_s,
-    "null"_s,
-    "numberIsFinite"_s,
-    "numberIsInteger"_s,
-    "numberOfDFGCompiles"_s,
-    "numberingSystem"_s,
-    "numeric"_s,
-    "obfuscate"_s,
-    "object"_s,
-    "objectContaining"_s,
-    "objectKeys"_s,
-    "of"_s,
-    "off"_s,
-    "offset"_s,
-    "offsetNanoseconds"_s,
-    "ok"_s,
-    "ol"_s,
-    "omit"_s,
-    "omitPadding"_s,
-    "on"_s,
-    "onDisconnect"_s,
-    "onDocument"_s,
-    "onEndCallbacks"_s,
-    "onEndTag"_s,
-    "onExit"_s,
-    "onInternalMessageChild"_s,
-    "onInternalMessagePrimary"_s,
-    "onNodeHTTPRequest"_s,
-    "onTestFinished"_s,
-    "onabort"_s,
-    "once"_s,
-    "onclose"_s,
-    "onconnect"_s,
-    "ondata"_s,
-    "onerror"_s,
-    "only"_s,
-    "onmessage"_s,
-    "onnotification"_s,
-    "onresourcetimingbufferfull"_s,
-    "onwritable"_s,
-    "open"_s,
-    "openAsBlob"_s,
-    "openCb"_s,
-    "openInEditor"_s,
-    "openStdin"_s,
-    "openStream"_s,
-    "openSync"_s,
-    "opendir"_s,
-    "opendirSync"_s,
-    "ops"_s,
-    "optimize"_s,
-    "optimizeImports"_s,
-    "optimizeNextInvocation"_s,
-    "optionsEcho"_s,
-    "or"_s,
-    "order"_s,
-    "origin"_s,
-    "originalColumn"_s,
-    "originalLine"_s,
-    "outdir"_s,
-    "outfile"_s,
-    "outputFlags"_s,
-    "overloaded"_s,
-    "overridableRequire"_s,
-    "overriddenName"_s,
-    "ownKeys"_s,
-    "p"_s,
-    "pack_command.rs"_s,
-    "packages"_s,
-    "padEnd"_s,
-    "padStart"_s,
-    "pageSize"_s,
-    "paragraph"_s,
-    "parameter"_s,
-    "parameters"_s,
-    "params"_s,
-    "parent"_s,
-    "parentPort"_s,
-    "parse"_s,
-    "parseArgs"_s,
-    "parseCACertificates"_s,
-    "parseCertString"_s,
-    "parseChunk"_s,
-    "parseEnv"_s,
-    "parseFloat"_s,
-    "parseInt"_s,
-    "parseMIMEType"_s,
-    "parsePkcs12"_s,
-    "parseUniqueHeadersOption"_s,
-    "parse_args.rs"_s,
-    "parsers"_s,
-    "partSize"_s,
-    "partialDeepStrictEqual"_s,
-    "pass"_s,
-    "passive"_s,
-    "passphrase"_s,
-    "password"_s,
-    "patch.rs"_s,
-    "path"_s,
-    "pathToFileURL"_s,
-    "pathname"_s,
-    "paths"_s,
-    "pause"_s,
-    "pauseOnConnect"_s,
-    "pauseReads"_s,
-    "payload"_s,
-    "pbkdf2"_s,
-    "pbkdf2Sync"_s,
-    "peek"_s,
-    "peekPromiseSettledValue"_s,
-    "peekPromiseStatus"_s,
-    "pendingRequests"_s,
-    "pendingWebSockets"_s,
-    "perCodePoint"_s,
-    "perMessageDeflate"_s,
-    "percentAvailableMemoryInUse"_s,
-    "performPromiseThen"_s,
-    "performServerHandshake"_s,
-    "performance"_s,
-    "permissiveAtxHeaders"_s,
-    "permissive_atx_headers"_s,
-    "persist"_s,
-    "pexpire"_s,
-    "pexpireat"_s,
-    "pexpiretime"_s,
-    "pfadd"_s,
-    "pfcount"_s,
-    "pfmerge"_s,
-    "pick"_s,
-    "pid"_s,
-    "ping"_s,
-    "pinnedBytesAfterCallback"_s,
-    "pipeline"_s,
-    "placeholder"_s,
-    "plainDateISO"_s,
-    "plainDateTimeISO"_s,
-    "plainTimeISO"_s,
-    "platform"_s,
-    "plugin"_s,
-    "plugins"_s,
-    "png"_s,
-    "pokePromiseAsHandled"_s,
-    "pong"_s,
-    "poolSize"_s,
-    "pop"_s,
-    "port"_s,
-    "portAfterCallback"_s,
-    "portOf"_s,
-    "portOfOrNull"_s,
-    "portPlus"_s,
-    "position"_s,
-    "posix"_s,
-    "postMessage"_s,
-    "postMessageToThread"_s,
-    "postgres"_s,
-    "postgres.rs"_s,
-    "pow"_s,
-    "ppid"_s,
-    "pre"_s,
-    "prefetch"_s,
-    "prefix"_s,
-    "prefixTest"_s,
-    "prefixTestWithOptions"_s,
-    "prepareError"_s,
-    "prepareStackTrace"_s,
-    "prepend"_s,
-    "prependListener"_s,
-    "prependOnceListener"_s,
-    "presign"_s,
-    "preventExtensions"_s,
-    "printExpected"_s,
-    "printMyersDiff"_s,
-    "printReceived"_s,
-    "printSimpleMyersDiff"_s,
-    "privateDecrypt"_s,
-    "privateEncrypt"_s,
-    "process"_s,
-    "processBindingConstants"_s,
-    "profile"_s,
-    "profileEnd"_s,
-    "promise"_s,
-    "promiseHooks"_s,
-    "promiseReject"_s,
-    "promiseResolve"_s,
-    "promiseReturnUndefinedOnFulfilled"_s,
-    "promises"_s,
-    "promisify"_s,
-    "promising"_s,
-    "prompt"_s,
-    "propertyIsEnumerable"_s,
-    "props"_s,
-    "protocol"_s,
-    "prototype"_s,
-    "proxy"_s,
-    "proxyFieldHandler"_s,
-    "proxyFieldTarget"_s,
-    "psetex"_s,
-    "psubscribe"_s,
-    "ptr"_s,
-    "pttl"_s,
-    "publicDecrypt"_s,
-    "publicEncrypt"_s,
-    "publicId"_s,
-    "publicPath"_s,
-    "publish"_s,
-    "publishBinary"_s,
-    "publishText"_s,
-    "publishToSelf"_s,
-    "publisher"_s,
-    "pubsub"_s,
-    "pull"_s,
-    "punsubscribe"_s,
-    "push"_s,
-    "pushPromise"_s,
-    "putAsyncDisposableStackInternalField"_s,
-    "putByIdDirectPrivate"_s,
-    "putByValDirect"_s,
-    "putContiguousIndex"_s,
-    "putDisposableStackInternalField"_s,
-    "putDoubleIndex"_s,
-    "putInternalField"_s,
-    "query"_s,
-    "queueMicrotask"_s,
-    "queueSize"_s,
-    "r"_s,
-    "race"_s,
-    "random"_s,
-    "randomBytes"_s,
-    "randomFill"_s,
-    "randomFillSync"_s,
-    "randomInt"_s,
-    "randomUUID"_s,
-    "randomUUIDv5"_s,
-    "randomUUIDv7"_s,
-    "randomkey"_s,
-    "range"_s,
-    "rapidhash"_s,
-    "raw"_s,
-    "rawJSON"_s,
-    "rawListeners"_s,
-    "react"_s,
-    "reactCompiler"_s,
-    "reactCompilerOutputMode"_s,
-    "reactCompilerParseTestPragmas"_s,
-    "reactFastRefresh"_s,
-    "reactVersion"_s,
-    "read"_s,
-    "readBigInt64"_s,
-    "readBigInt64BE"_s,
-    "readBigInt64LE"_s,
-    "readBigUInt64"_s,
-    "readBigUInt64BE"_s,
-    "readBigUInt64LE"_s,
-    "readBigUint64BE"_s,
-    "readBigUint64LE"_s,
-    "readCb"_s,
-    "readDouble"_s,
-    "readDoubleBE"_s,
-    "readDoubleLE"_s,
-    "readFile"_s,
-    "readFileCb"_s,
-    "readFileSync"_s,
-    "readFloat"_s,
-    "readFloatBE"_s,
-    "readFloatLE"_s,
-    "readInt16"_s,
-    "readInt16BE"_s,
-    "readInt16LE"_s,
-    "readInt32"_s,
-    "readInt32BE"_s,
-    "readInt32LE"_s,
-    "readInt8"_s,
-    "readIntBE"_s,
-    "readIntLE"_s,
-    "readStart"_s,
-    "readStop"_s,
-    "readSync"_s,
-    "readTrimTable"_s,
-    "readUInt16BE"_s,
-    "readUInt16LE"_s,
-    "readUInt32BE"_s,
-    "readUInt32LE"_s,
-    "readUInt8"_s,
-    "readUIntBE"_s,
-    "readUIntLE"_s,
-    "readUint16BE"_s,
-    "readUint16LE"_s,
-    "readUint32BE"_s,
-    "readUint32LE"_s,
-    "readUint8"_s,
-    "readUintBE"_s,
-    "readUintLE"_s,
-    "readable"_s,
-    "readableStreamToArray"_s,
-    "readableStreamToArrayBuffer"_s,
-    "readableStreamToBlob"_s,
-    "readableStreamToBytes"_s,
-    "readableStreamToFormData"_s,
-    "readableStreamToJSON"_s,
-    "readableStreamToText"_s,
-    "readdir"_s,
-    "readdirCb"_s,
-    "readdirSync"_s,
-    "readlink"_s,
-    "readlinkCb"_s,
-    "readlinkSync"_s,
-    "readv"_s,
-    "readvCb"_s,
-    "readvSync"_s,
-    "readyState"_s,
-    "reallyExit"_s,
-    "realpath"_s,
-    "realpathCb"_s,
-    "realpathNative"_s,
-    "realpathNativeCb"_s,
-    "realpathNativeSync"_s,
-    "realpathSync"_s,
-    "reason"_s,
-    "receiveMessageOnPort"_s,
-    "record"_s,
-    "recordEnd"_s,
-    "red"_s,
-    "redirect"_s,
-    "redirected"_s,
-    "redis"_s,
-    "reduce"_s,
-    "reduceRight"_s,
-    "ref"_s,
-    "referrer"_s,
-    "referrerPolicy"_s,
-    "refresh"_s,
-    "region"_s,
-    "register"_s,
-    "registerMacro"_s,
-    "reject"_s,
-    "rejectPromise"_s,
-    "rejectPromiseWithFirstResolvingFunctionCallCheck"_s,
-    "rejectUnauthorized"_s,
-    "rejected"_s,
-    "rejects"_s,
-    "rejectsTo"_s,
-    "relative"_s,
-    "release"_s,
-    "releaseHeldFlight"_s,
-    "releaseSocket"_s,
-    "releaseWeakRefs"_s,
-    "reload"_s,
-    "remoteAddress"_s,
-    "remoteFamily"_s,
-    "remotePort"_s,
-    "remoteTransportParams"_s,
-    "remove"_s,
-    "removeAllListeners"_s,
-    "removeAndKeepContent"_s,
-    "removeAttribute"_s,
-    "removeEventListener"_s,
-    "removeFirstFromList"_s,
-    "removeListener"_s,
-    "removed"_s,
-    "rename"_s,
-    "renameCb"_s,
-    "renameSync"_s,
-    "renamenx"_s,
-    "render"_s,
-    "renegotiate"_s,
-    "reoptimizationRetryCount"_s,
-    "repeat"_s,
-    "repl"_s,
-    "replace"_s,
-    "replaceAll"_s,
-    "report"_s,
-    "reportError"_s,
-    "request"_s,
-    "requestCert"_s,
-    "requestIP"_s,
-    "requestPayer"_s,
-    "require"_s,
-    "requireCacheWillSet"_s,
-    "requireESM"_s,
-    "requireMap"_s,
-    "requireNativeModule"_s,
-    "requireStack"_s,
-    "requiredAndOptionalArg"_s,
-    "reset"_s,
-    "resetStream"_s,
-    "resizable"_s,
-    "resize"_s,
-    "resolve"_s,
-    "resolve4"_s,
-    "resolve6"_s,
-    "resolveAny"_s,
-    "resolveCaa"_s,
-    "resolveCname"_s,
-    "resolveComputedSpecifier"_s,
-    "resolveMx"_s,
-    "resolveNaptr"_s,
-    "resolveNs"_s,
-    "resolveObject"_s,
-    "resolveObjectURL"_s,
-    "resolvePromise"_s,
-    "resolvePromiseWithFirstResolvingFunctionCallCheck"_s,
-    "resolvePtr"_s,
-    "resolveSoa"_s,
-    "resolveSrv"_s,
-    "resolveSync"_s,
-    "resolveTxt"_s,
-    "resolvedOptions"_s,
-    "resolves"_s,
-    "resolvesTo"_s,
-    "resourceLimits"_s,
-    "resourceUsage"_s,
-    "respectNoProxy"_s,
-    "restartProcess"_s,
-    "resultAt"_s,
-    "resume"_s,
-    "resumeGenerator"_s,
-    "resumeModeNext"_s,
-    "resumeModeReturn"_s,
-    "resumeModeThrow"_s,
-    "resumeSNI"_s,
-    "retry"_s,
-    "return"_s,
-    "returns"_s,
-    "reusePort"_s,
-    "reverse"_s,
-    "revision"_s,
-    "revocable"_s,
-    "rightContext"_s,
-    "rm"_s,
-    "rmCb"_s,
-    "rmSync"_s,
-    "rm_options_for_testing"_s,
-    "rmdir"_s,
-    "rmdirCb"_s,
-    "rmdirSync"_s,
-    "root"_s,
-    "rootCertificates"_s,
-    "rotate"_s,
-    "round"_s,
-    "roundingIncrement"_s,
-    "roundingMode"_s,
-    "roundingPriority"_s,
-    "routes"_s,
-    "rows"_s,
-    "rpop"_s,
-    "rpoplpush"_s,
-    "rpush"_s,
-    "rpushx"_s,
-    "rstStream"_s,
-    "rules"_s,
-    "run"_s,
-    "runInContext"_s,
-    "runInNewContext"_s,
-    "runInThisContext"_s,
-    "runInitializers"_s,
-    "runMain"_s,
-    "runTail"_s,
-    "runValueInitializers"_s,
-    "runtime"_s,
-    "runtime/dns_jsc/dns.rs"_s,
-    "runtime/socket/socket.rs"_s,
-    "runtime/timer/Timer.rs"_s,
-    "runtime/webcore/ByteStream.rs"_s,
-    "runtime/webcore/FileSink.rs"_s,
-    "runtime/webcore/fetch.rs"_s,
-    "rust"_s,
-    "s3"_s,
-    "s3:"_s,
-    "s3://"_s,
-    "sadd"_s,
-    "samplingProfilerStackTraces"_s,
-    "sasl"_s,
-    "satisfies"_s,
-    "scan"_s,
-    "scanImports"_s,
-    "scanSync"_s,
-    "scard"_s,
-    "scheduler"_s,
-    "schedulingPolicy"_s,
-    "screenshot"_s,
-    "script"_s,
-    "scriptSrc"_s,
-    "scrypt"_s,
-    "scryptSync"_s,
-    "sdiff"_s,
-    "sdiffstore"_s,
-    "seal"_s,
-    "search"_s,
-    "searchParams"_s,
-    "second"_s,
-    "seconds"_s,
-    "secondsDisplay"_s,
-    "secret"_s,
-    "secretAccessKey"_s,
-    "secrets"_s,
-    "secureContext"_s,
-    "secureHeapUsed"_s,
-    "secureOptions"_s,
-    "segment"_s,
-    "select"_s,
-    "selectRange"_s,
-    "selectServerName"_s,
-    "self"_s,
-    "selfClosing"_s,
-    "semver"_s,
-    "send"_s,
-    "sendBinary"_s,
-    "sendDatagram"_s,
-    "sendHeaders"_s,
-    "sendHelperPrimary"_s,
-    "sendMany"_s,
-    "sendPings"_s,
-    "sendText"_s,
-    "sendTrailers"_s,
-    "sendWebSocketFrame"_s,
-    "sensitiveHeaders"_s,
-    "sensitivity"_s,
-    "sep"_s,
-    "separateSSRGraph"_s,
-    "seq"_s,
-    "serial"_s,
-    "serialIf"_s,
-    "serialization"_s,
-    "serialize"_s,
-    "serializeAMimeType"_s,
-    "serve"_s,
-    "server"_s,
-    "serverComponents"_s,
-    "serverEntryPoint"_s,
-    "serverMaxWindowBits"_s,
-    "serverName"_s,
-    "serverNoContextTakeover"_s,
-    "serverRegisterClientReferenceExport"_s,
-    "serverRuntimeImportSource"_s,
-    "servername"_s,
-    "service"_s,
-    "session"_s,
-    "sessionId"_s,
-    "sessionTimeout"_s,
-    "sessionToken"_s,
-    "set"_s,
-    "setAttribute"_s,
-    "setBigInt64"_s,
-    "setBigUint64"_s,
-    "setBroadcast"_s,
-    "setColumnNameTransform"_s,
-    "setConfigPlugins"_s,
-    "setCookie"_s,
-    "setCopy"_s,
-    "setCwd"_s,
-    "setDate"_s,
-    "setDecoratorMetadata"_s,
-    "setDefaultAutoSelectFamily"_s,
-    "setDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "setDefaultCACertificates"_s,
-    "setDefaultCiphers"_s,
-    "setDefaultHighWaterMark"_s,
-    "setDefaultResultOrder"_s,
-    "setDefaultTimeout"_s,
-    "setEngine"_s,
-    "setEnv"_s,
-    "setEnvironmentData"_s,
-    "setFips"_s,
-    "setFlagsFromString"_s,
-    "setFloat16"_s,
-    "setFloat32"_s,
-    "setFloat64"_s,
-    "setFlowing"_s,
-    "setFromBase64"_s,
-    "setFromHex"_s,
-    "setFullYear"_s,
-    "setGlobalDispatcher"_s,
-    "setGlobalOrigin"_s,
-    "setGlobalProxyFromEnv"_s,
-    "setHeapSnapshotNearHeapLimit"_s,
-    "setHours"_s,
-    "setImmediate"_s,
-    "setInnerContent"_s,
-    "setInt16"_s,
-    "setInt32"_s,
-    "setInt8"_s,
-    "setInterval"_s,
-    "setJITPolicy"_s,
-    "setKeepAlive"_s,
-    "setKeyCert"_s,
-    "setLocalAddress"_s,
-    "setLocalWindowSize"_s,
-    "setMaxHTTPHeaderSize"_s,
-    "setMaxIdleHTTPParsers"_s,
-    "setMaxListeners"_s,
-    "setMaxMarkdownBlockBytesForTesting"_s,
-    "setMaxSendFragment"_s,
-    "setMilliseconds"_s,
-    "setMinutes"_s,
-    "setMode"_s,
-    "setMonth"_s,
-    "setMulticastInterface"_s,
-    "setMulticastLoopback"_s,
-    "setMulticastTTL"_s,
-    "setNativeSocket"_s,
-    "setNext"_s,
-    "setNextResultEntry"_s,
-    "setNextResultHasEntry"_s,
-    "setNextResultKey"_s,
-    "setNextStreamID"_s,
-    "setNoDelay"_s,
-    "setPages"_s,
-    "setPendingValue"_s,
-    "setPriority"_s,
-    "setPrototypeOf"_s,
-    "setQuiet"_s,
-    "setRandomSeed"_s,
-    "setRawMode"_s,
-    "setRef"_s,
-    "setResourceTimingBufferSize"_s,
-    "setSNIContexts"_s,
-    "setSeconds"_s,
-    "setSecureContext"_s,
-    "setServername"_s,
-    "setServers"_s,
-    "setSession"_s,
-    "setSourceMapsEnabled"_s,
-    "setStreamContext"_s,
-    "setStreamReading"_s,
-    "setSystemTime"_s,
-    "setTTL"_s,
-    "setTime"_s,
-    "setTimeZone"_s,
-    "setTimeout"_s,
-    "setTimezone"_s,
-    "setTraceSigInt"_s,
-    "setTypeOfService"_s,
-    "setUTCDate"_s,
-    "setUTCFullYear"_s,
-    "setUTCHours"_s,
-    "setUTCMilliseconds"_s,
-    "setUTCMinutes"_s,
-    "setUTCMonth"_s,
-    "setUTCSeconds"_s,
-    "setUint16"_s,
-    "setUint32"_s,
-    "setUint8"_s,
-    "setUncaughtExceptionCaptureCallback"_s,
-    "setVerifyMode"_s,
-    "setWakeup"_s,
-    "setYear"_s,
-    "setbit"_s,
-    "setegid"_s,
-    "seteuid"_s,
-    "setex"_s,
-    "setgid"_s,
-    "setgroups"_s,
-    "setnx"_s,
-    "setrange"_s,
-    "settings"_s,
-    "setuid"_s,
-    "setup"_s,
-    "setupMaster"_s,
-    "setupPrimary"_s,
-    "sha"_s,
-    "shared"_s,
-    "sharedFd"_s,
-    "shell.rs"_s,
-    "shift"_s,
-    "shmSize"_s,
-    "shouldUseEnvProxy"_s,
-    "shrink"_s,
-    "shutdown"_s,
-    "sideEffects"_s,
-    "sigalgs"_s,
-    "sign"_s,
-    "signDisplay"_s,
-    "signal"_s,
-    "signalCode"_s,
-    "signalCount"_s,
-    "sin"_s,
-    "since"_s,
-    "sinh"_s,
-    "sinter"_s,
-    "sintercard"_s,
-    "sinterstore"_s,
-    "sismember"_s,
-    "size"_s,
-    "skip"_s,
-    "skipIf"_s,
-    "sleep"_s,
-    "sleepSync"_s,
-    "slice"_s,
-    "sliceAnsi"_s,
-    "small"_s,
-    "smembers"_s,
-    "smismember"_s,
-    "smove"_s,
-    "socket"_s,
-    "socketType"_s,
-    "socket_body.bind.ts"_s,
-    "socktype"_s,
-    "some"_s,
-    "sort"_s,
-    "sorted"_s,
-    "source"_s,
-    "sourceURL"_s,
-    "sourcemap"_s,
-    "sourcemap/InternalSourceMap.rs"_s,
-    "spawn"_s,
-    "spawnSync"_s,
-    "species"_s,
-    "specifier"_s,
-    "splice"_s,
-    "split"_s,
-    "splitRequire"_s,
-    "splitting"_s,
-    "spop"_s,
-    "spublish"_s,
-    "spyOn"_s,
-    "sql"_s,
-    "sqrt"_s,
-    "srandmember"_s,
-    "src"_s,
-    "srem"_s,
-    "sscan"_s,
-    "ssr"_s,
-    "stack"_s,
-    "stackTraceLimit"_s,
-    "start"_s,
-    "startOfDay"_s,
-    "startRemoteDebugger"_s,
-    "startSamplingProfiler"_s,
-    "startTime"_s,
-    "startsWith"_s,
-    "startupSnapshot"_s,
-    "stat"_s,
-    "statCache"_s,
-    "statCb"_s,
-    "statSync"_s,
-    "statfs"_s,
-    "statfsCb"_s,
-    "statfsSync"_s,
-    "static"_s,
-    "status"_s,
-    "statusText"_s,
-    "stderr"_s,
-    "stdin"_s,
-    "stdio"_s,
-    "stdout"_s,
-    "stepArrayIterator"_s,
-    "stepArrayIteratorResultDone"_s,
-    "stepArrayIteratorResultValue"_s,
-    "stepGenerator"_s,
-    "stepGeneratorResultStatus"_s,
-    "stepGeneratorResultValue"_s,
-    "sticky"_s,
-    "stop"_s,
-    "stopCoverage"_s,
-    "stopSending"_s,
-    "storageClass"_s,
-    "store"_s,
-    "strategy"_s,
-    "stream"_s,
-    "streams/BunStreamConsumers.cpp"_s,
-    "strict"_s,
-    "strictEqual"_s,
-    "strike"_s,
-    "strikethrough"_s,
-    "string/immutable/unicode.rs"_s,
-    "stringAsIsOrBytes"_s,
-    "stringContaining"_s,
-    "stringEcho"_s,
-    "stringLength"_s,
-    "stringMatching"_s,
-    "stringOrObjectEcho"_s,
-    "stringWidth"_s,
-    "stringWidth.cpp"_s,
-    "string_to_flags_for_testing"_s,
-    "stringify"_s,
-    "stringifyElement"_s,
-    "stringifyProperties"_s,
-    "stringifyProperty"_s,
-    "stripANSI"_s,
-    "stripVTControlCharacters"_s,
-    "strlen"_s,
-    "strong"_s,
-    "structuredClone"_s,
-    "style"_s,
-    "styleText"_s,
-    "sub"_s,
-    "subarray"_s,
-    "subprocess.rs"_s,
-    "subscribe"_s,
-    "subscriberCount"_s,
-    "subscriptions"_s,
-    "substr"_s,
-    "substring"_s,
-    "subtle"_s,
-    "subtract"_s,
-    "suffix"_s,
-    "sumArray"_s,
-    "sumBeforeAndAfterCallback"_s,
-    "sumBytes"_s,
-    "sumBytesIfAny"_s,
-    "sumBytesThenText"_s,
-    "sumPrecise"_s,
-    "sunion"_s,
-    "sunionstore"_s,
-    "sup"_s,
-    "supportedLocalesOf"_s,
-    "supportedValuesOf"_s,
-    "suppressed"_s,
-    "swap16"_s,
-    "swap32"_s,
-    "swap64"_s,
-    "swapCount"_s,
-    "symbols"_s,
-    "symlink"_s,
-    "symlinkCb"_s,
-    "symlinkSync"_s,
-    "symmetricDifference"_s,
-    "sync"_s,
-    "syncBuiltinESMExports"_s,
-    "syntax"_s,
-    "sys.rs"_s,
-    "system"_s,
-    "systemId"_s,
-    "table"_s,
-    "tables"_s,
-    "tagFilter"_s,
-    "tagName"_s,
-    "tag_filter"_s,
-    "take"_s,
-    "takeCoverage"_s,
-    "takeHeapSnapshot"_s,
-    "takeRawHeaders"_s,
-    "takeRequestTrailers"_s,
-    "tan"_s,
-    "tanh"_s,
-    "target"_s,
-    "tasklists"_s,
-    "tbody"_s,
-    "td"_s,
-    "terminal"_s,
-    "terminate"_s,
-    "test"_s,
-    "testWithOptions"_s,
-    "text"_s,
-    "textStream"_s,
-    "th"_s,
-    "thead"_s,
-    "then"_s,
-    "thisParameter"_s,
-    "threadCpuUsage"_s,
-    "threadId"_s,
-    "threadName"_s,
-    "throw"_s,
-    "throwRangeError"_s,
-    "throwTypeError"_s,
-    "throws"_s,
-    "time"_s,
-    "timeCost"_s,
-    "timeEnd"_s,
-    "timeLog"_s,
-    "timeOrigin"_s,
-    "timeStamp"_s,
-    "timeStyle"_s,
-    "timeZone"_s,
-    "timeZoneId"_s,
-    "timeZoneName"_s,
-    "timeout"_s,
-    "timerify"_s,
-    "timing"_s,
-    "timingSafeEqual"_s,
-    "title"_s,
-    "tls"_s,
-    "tmpdir"_s,
-    "toASCII"_s,
-    "toArray"_s,
-    "toArrayBuffer"_s,
-    "toBase64"_s,
-    "toBe"_s,
-    "toBeAny"_s,
-    "toBeArray"_s,
-    "toBeArrayOfSize"_s,
-    "toBeBigInt"_s,
-    "toBeBoolean"_s,
-    "toBeCallableWith"_s,
-    "toBeCalled"_s,
-    "toBeCalledTimes"_s,
-    "toBeCalledWith"_s,
-    "toBeCloseTo"_s,
-    "toBeConstructibleWith"_s,
-    "toBeDate"_s,
-    "toBeDefined"_s,
-    "toBeEmpty"_s,
-    "toBeEmptyObject"_s,
-    "toBeEven"_s,
-    "toBeFalse"_s,
-    "toBeFalsy"_s,
-    "toBeFinite"_s,
-    "toBeFunction"_s,
-    "toBeGreaterThan"_s,
-    "toBeGreaterThanOrEqual"_s,
-    "toBeInstanceOf"_s,
-    "toBeInteger"_s,
-    "toBeLessThan"_s,
-    "toBeLessThanOrEqual"_s,
-    "toBeNaN"_s,
-    "toBeNegative"_s,
-    "toBeNever"_s,
-    "toBeNil"_s,
-    "toBeNull"_s,
-    "toBeNumber"_s,
-    "toBeObject"_s,
-    "toBeOdd"_s,
-    "toBeOneOf"_s,
-    "toBePositive"_s,
-    "toBeString"_s,
-    "toBeSymbol"_s,
-    "toBeTrue"_s,
-    "toBeTruthy"_s,
-    "toBeTypeOf"_s,
-    "toBeUndefined"_s,
-    "toBeUnknown"_s,
-    "toBeValidDate"_s,
-    "toBeVoid"_s,
-    "toBeWithin"_s,
-    "toBuffer"_s,
-    "toClass"_s,
-    "toContain"_s,
-    "toContainAllKeys"_s,
-    "toContainAllValues"_s,
-    "toContainAnyKeys"_s,
-    "toContainAnyValues"_s,
-    "toContainEqual"_s,
-    "toContainKey"_s,
-    "toContainKeys"_s,
-    "toContainValue"_s,
-    "toContainValues"_s,
-    "toDateString"_s,
-    "toEndWith"_s,
-    "toEqual"_s,
-    "toEqualIgnoringWhitespace"_s,
-    "toEqualTypeOf"_s,
-    "toExponential"_s,
-    "toExtend"_s,
-    "toFixed"_s,
-    "toFixedLengthBuffer"_s,
-    "toGMTString"_s,
-    "toHaveBeenCalled"_s,
-    "toHaveBeenCalledOnce"_s,
-    "toHaveBeenCalledTimes"_s,
-    "toHaveBeenCalledWith"_s,
-    "toHaveBeenLastCalledWith"_s,
-    "toHaveBeenNthCalledWith"_s,
-    "toHaveLastReturnedWith"_s,
-    "toHaveLength"_s,
-    "toHaveNthReturnedWith"_s,
-    "toHaveProperty"_s,
-    "toHaveReturned"_s,
-    "toHaveReturnedTimes"_s,
-    "toHaveReturnedWith"_s,
-    "toHex"_s,
-    "toISOString"_s,
-    "toInclude"_s,
-    "toIncludeRepeated"_s,
-    "toInstant"_s,
-    "toIntegerOrInfinity"_s,
-    "toJSON"_s,
-    "toLength"_s,
-    "toLocaleDateString"_s,
-    "toLocaleLowerCase"_s,
-    "toLocaleString"_s,
-    "toLocaleTimeString"_s,
-    "toLocaleUpperCase"_s,
-    "toLowerCase"_s,
-    "toMatch"_s,
-    "toMatchInlineSnapshot"_s,
-    "toMatchObject"_s,
-    "toMatchObjectType"_s,
-    "toMatchSnapshot"_s,
-    "toMatchTypeOf"_s,
-    "toNamespacedPath"_s,
-    "toNumber"_s,
-    "toObject"_s,
-    "toPlainDate"_s,
-    "toPlainDateTime"_s,
-    "toPlainMonthDay"_s,
-    "toPlainTime"_s,
-    "toPlainYearMonth"_s,
-    "toPrecision"_s,
-    "toPrimitive"_s,
-    "toPropertyKey"_s,
-    "toResizableBuffer"_s,
-    "toReturn"_s,
-    "toReversed"_s,
-    "toSatisfy"_s,
-    "toSorted"_s,
-    "toSpliced"_s,
-    "toStartWith"_s,
-    "toStrictEqual"_s,
-    "toString"_s,
-    "toStringTag"_s,
-    "toTemporalInstant"_s,
-    "toThrow"_s,
-    "toThrowError"_s,
-    "toThrowErrorMatchingInlineSnapshot"_s,
-    "toThrowErrorMatchingSnapshot"_s,
-    "toTimeString"_s,
-    "toUSVString"_s,
-    "toUTCString"_s,
-    "toUnicode"_s,
-    "toUpperCase"_s,
-    "toWeb"_s,
-    "toWellFormed"_s,
-    "toZonedDateTime"_s,
-    "toZonedDateTimeISO"_s,
-    "todo"_s,
-    "todoIf"_s,
-    "total"_s,
-    "totalCompileTime"_s,
-    "totalmem"_s,
-    "touch"_s,
-    "tr"_s,
-    "trace"_s,
-    "tracingChannel"_s,
-    "trailingZeroDisplay"_s,
-    "transcode"_s,
-    "transfer"_s,
-    "transferToFixedLength"_s,
-    "transform"_s,
-    "transformSync"_s,
-    "translatePeerCertificate"_s,
-    "traverseArray"_s,
-    "treeShaking"_s,
-    "triggerAsyncId"_s,
-    "trim"_s,
-    "trimEnd"_s,
-    "trimExecutable"_s,
-    "trimLeft"_s,
-    "trimRight"_s,
-    "trimStart"_s,
-    "trim_testing.rs"_s,
-    "true"_s,
-    "trunc"_s,
-    "truncate"_s,
-    "truncateCb"_s,
-    "truncateNewArray"_s,
-    "truncateSync"_s,
-    "try"_s,
-    "tryPutByValDirect"_s,
-    "tryPutIndex"_s,
-    "tsconfig"_s,
-    "ttl"_s,
-    "type"_s,
-    "typedArrayFromFast"_s,
-    "typedArrayLength"_s,
-    "types"_s,
-    "tz"_s,
-    "u"_s,
-    "ucs2"_s,
-    "ucs2Slice"_s,
-    "ucs2Write"_s,
-    "udpSocket"_s,
-    "udp_socket.bind.ts"_s,
-    "uid"_s,
-    "ul"_s,
-    "umask"_s,
-    "unThis"_s,
-    "undefined"_s,
-    "underline"_s,
-    "undici"_s,
-    "unenroll"_s,
-    "unescape"_s,
-    "unescapeBuffer"_s,
-    "unhold"_s,
-    "unicode"_s,
-    "unicodeSets"_s,
-    "union"_s,
-    "unit"_s,
-    "unitDisplay"_s,
-    "unix"_s,
-    "unlink"_s,
-    "unlinkCb"_s,
-    "unlinkSync"_s,
-    "unreachable"_s,
-    "unref"_s,
-    "unregister"_s,
-    "unregisterToken"_s,
-    "unsafe"_s,
-    "unscopables"_s,
-    "unshift"_s,
-    "unsubscribe"_s,
-    "until"_s,
-    "unwatchFile"_s,
-    "unzip"_s,
-    "unzipSync"_s,
-    "update"_s,
-    "updateKey"_s,
-    "updateRef"_s,
-    "upgrade"_s,
-    "upgradeNodeHTTPResponseToWebSocket"_s,
-    "upgradeTLS"_s,
-    "upgradeTLSDeferred"_s,
-    "upgrade_command.rs"_s,
-    "upgrade_js_bindings.generate"_s,
-    "upgraded"_s,
-    "uptime"_s,
-    "url"_s,
-    "urlCanParse"_s,
-    "urlToHttpOptions"_s,
-    "usage"_s,
-    "use"_s,
-    "useGrouping"_s,
-    "user"_s,
-    "userInfo"_s,
-    "username"_s,
-    "usingDomains"_s,
-    "utf-8"_s,
-    "utf-8-validate"_s,
-    "utf16leSlice"_s,
-    "utf16leWrite"_s,
-    "utf8Echo"_s,
-    "utf8EchoLoose"_s,
-    "utf8Optional"_s,
-    "utf8Owned"_s,
-    "utf8Slice"_s,
-    "utf8Write"_s,
-    "util"_s,
-    "utils"_s,
-    "utimes"_s,
-    "utimesCb"_s,
-    "utimesSync"_s,
-    "uvTranslateSysError"_s,
-    "validate"_s,
-    "validateByPlan"_s,
-    "validateHeaderName"_s,
-    "validateHeaderValue"_s,
-    "value"_s,
-    "valueOf"_s,
-    "values"_s,
-    "variants"_s,
-    "verbose"_s,
-    "verify"_s,
-    "verifySync"_s,
-    "version"_s,
-    "version_with_sha"_s,
-    "versions"_s,
-    "vi"_s,
-    "viewSource"_s,
-    "virtualHostedStyle"_s,
-    "virtual_machine_exports.rs"_s,
-    "visibility"_s,
-    "wait"_s,
-    "waitAsync"_s,
-    "waitForDebugger"_s,
-    "warn"_s,
-    "watch"_s,
-    "watchFile"_s,
-    "webSocket"_s,
-    "webStreamClosedPromise"_s,
-    "webStreamControllerError"_s,
-    "webcrypto"_s,
-    "webp"_s,
-    "websocket"_s,
-    "weekOfYear"_s,
-    "weekday"_s,
-    "weeks"_s,
-    "weeksDisplay"_s,
-    "which"_s,
-    "white"_s,
-    "whitespace"_s,
-    "wideIntegerOrBigInt"_s,
-    "width"_s,
-    "wikiLinks"_s,
-    "wiki_links"_s,
-    "win32"_s,
-    "windowBits"_s,
-    "windows"_s,
-    "windowsHide"_s,
-    "windowsVerbatimArguments"_s,
-    "with"_s,
-    "withCalendar"_s,
-    "withPlainTime"_s,
-    "withResolvers"_s,
-    "withTimeZone"_s,
-    "wordWrap"_s,
-    "words"_s,
-    "workerData"_s,
-    "workers"_s,
-    "wrap"_s,
-    "wrapAnsi"_s,
-    "wrapForValidIteratorCreate"_s,
-    "wrapForValidIteratorFieldIteratedIterator"_s,
-    "wrapForValidIteratorFieldIteratedNextMethod"_s,
-    "wrapRemoteValue"_s,
-    "wrapper"_s,
-    "writable"_s,
-    "write"_s,
-    "writeBigInt64BE"_s,
-    "writeBigInt64LE"_s,
-    "writeBigUInt64BE"_s,
-    "writeBigUInt64LE"_s,
-    "writeBigUint64BE"_s,
-    "writeBigUint64LE"_s,
-    "writeCb"_s,
-    "writeContinue"_s,
-    "writeDouble"_s,
-    "writeDoubleBE"_s,
-    "writeDoubleLE"_s,
-    "writeFile"_s,
-    "writeFileCb"_s,
-    "writeFileSync"_s,
-    "writeFloat"_s,
-    "writeFloatBE"_s,
-    "writeFloatLE"_s,
-    "writeHead"_s,
-    "writeHeadAndEnd"_s,
-    "writeHeapSnapshot"_s,
-    "writeInformational"_s,
-    "writeInt16BE"_s,
-    "writeInt16LE"_s,
-    "writeInt32BE"_s,
-    "writeInt32LE"_s,
-    "writeInt8"_s,
-    "writeIntBE"_s,
-    "writeIntLE"_s,
-    "writeReport"_s,
-    "writeStream"_s,
-    "writeSync"_s,
-    "writeUInt16"_s,
-    "writeUInt16BE"_s,
-    "writeUInt16LE"_s,
-    "writeUInt32"_s,
-    "writeUInt32BE"_s,
-    "writeUInt32LE"_s,
-    "writeUInt8"_s,
-    "writeUIntBE"_s,
-    "writeUIntLE"_s,
-    "writeUint16"_s,
-    "writeUint16BE"_s,
-    "writeUint16LE"_s,
-    "writeUint32"_s,
-    "writeUint32BE"_s,
-    "writeUint32LE"_s,
-    "writeUint8"_s,
-    "writeUintBE"_s,
-    "writeUintLE"_s,
-    "writer"_s,
-    "writev"_s,
-    "writevCb"_s,
-    "writevSync"_s,
-    "written"_s,
-    "ws"_s,
-    "www"_s,
-    "wyhash"_s,
-    "xack"_s,
-    "xadd"_s,
-    "xautoclaim"_s,
-    "xclaim"_s,
-    "xdel"_s,
-    "xdescribe"_s,
-    "xgroup"_s,
-    "xinfo"_s,
-    "xit"_s,
-    "xlen"_s,
-    "xor"_s,
-    "xpending"_s,
-    "xrange"_s,
-    "xread"_s,
-    "xreadgroup"_s,
-    "xrevrange"_s,
-    "xsetid"_s,
-    "xtest"_s,
-    "xtrim"_s,
-    "xxHash3"_s,
-    "xxHash32"_s,
-    "xxHash64"_s,
-    "xxhash3_testing.cpp"_s,
-    "year"_s,
-    "yearOfWeek"_s,
-    "years"_s,
-    "yearsDisplay"_s,
-    "zadd"_s,
-    "zcard"_s,
-    "zcount"_s,
-    "zdiff"_s,
-    "zdiffstore"_s,
-    "zincrby"_s,
-    "zinter"_s,
-    "zintercard"_s,
-    "zinterstore"_s,
-    "zip"_s,
-    "zipKeyed"_s,
-    "zlexcount"_s,
-    "zmpop"_s,
-    "zmscore"_s,
-    "zonedDateTimeISO"_s,
-    "zpopmax"_s,
-    "zpopmin"_s,
-    "zrandmember"_s,
-    "zrange"_s,
-    "zrangebylex"_s,
-    "zrangebyscore"_s,
-    "zrangestore"_s,
-    "zrank"_s,
-    "zrem"_s,
-    "zremrangebylex"_s,
-    "zremrangebyrank"_s,
-    "zremrangebyscore"_s,
-    "zrevrange"_s,
-    "zrevrangebylex"_s,
-    "zrevrangebyscore"_s,
-    "zrevrank"_s,
-    "zscan"_s,
-    "zscore"_s,
-    "zstd"_s,
-    "zstdCompress"_s,
-    "zstdCompressSync"_s,
-    "zstdDecompress"_s,
-    "zstdDecompressSync"_s,
-    "zunion"_s,
-    "zunionstore"_s,
+constexpr BuiltinTextStorage<5462, 101177> builtinTableTextNames = {
+    5462,
+    {
+        0, 2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44,
+        47, 58, 62, 88, 122, 138, 165, 190, 216, 246, 291, 303, 329, 352, 370, 416,
+        436, 454, 474, 498, 527, 555, 581, 600, 620, 645, 665, 684, 709, 718, 740, 767,
+        801, 827, 869, 902, 933, 968, 993, 1028, 1061, 1076, 1092, 1114, 1137, 1170, 1215, 1226,
+        1247, 1275, 1297, 1317, 1333, 1356, 1375, 1404, 1438, 1457, 1486, 1506, 1536, 1560, 1583, 1611,
+        1623, 1636, 1668, 1693, 1720, 1731, 1776, 1823, 1853, 1880, 1923, 1963, 1996, 2034, 2072, 2105,
+        2139, 2178, 2216, 2252, 2298, 2319, 2333, 2357, 2382, 2396, 2415, 2430, 2446, 2474, 2497, 2512,
+        2530, 2543, 2556, 2570, 2594, 2614, 2638, 2664, 2693, 2714, 2733, 2749, 2779, 2813, 2842, 2859,
+        2874, 2898, 2921, 2954, 2980, 2999, 3008, 3035, 3051, 3069, 3093, 3122, 3138, 3162, 3189, 3212,
+        3234, 3256, 3278, 3288, 3301, 3323, 3359, 3382, 3415, 3428, 3430, 3432, 3446, 3456, 3467, 3488,
+        3492, 3506, 3522, 3545, 3557, 3563, 3578, 3621, 3629, 3635, 3647, 3663, 3670, 3685, 3706, 3740,
+        3758, 3772, 3780, 3790, 3799, 3808, 3816, 3825, 3833, 3840, 3858, 3892, 3921, 3953, 3987, 4023,
+        4051, 4064, 4071, 4085, 4100, 4105, 4115, 4123, 4140, 4155, 4172, 4179, 4190, 4203, 4234, 4238,
+        4268, 4294, 4320, 4345, 4370, 4386, 4430, 4473, 4523, 4579, 4594, 4637, 4683, 4730, 4766, 4801,
+        4841, 4883, 4896, 4916, 4946, 4989, 5016, 5042, 5067, 5106, 5116, 5126, 5145, 5165, 5172, 5180,
+        5188, 5199, 5211, 5225, 5242, 5265, 5270, 5275, 5283, 5296, 5308, 5320, 5328, 5376, 5389, 5396,
+        5405, 5412, 5431, 5445, 5456, 5501, 5542, 5590, 5599, 5653, 5666, 5684, 5692, 5699, 5709, 5730,
+        5742, 5773, 5780, 5793, 5803, 5827, 5869, 5895, 5932, 5958, 5995, 6026, 6047, 6059, 6075, 6094,
+        6114, 6134, 6141, 6153, 6174, 6200, 6226, 6255, 6268, 6284, 6293, 6302, 6315, 6320, 6335, 6346,
+        6379, 6437, 6457, 6474, 6494, 6512, 6520, 6531, 6544, 6562, 6602, 6616, 6635, 6639, 6681, 6688,
+        6699, 6712, 6728, 6757, 6811, 6818, 6827, 6842, 6844, 6850, 6857, 6868, 6882, 6895, 6902, 6911,
+        6917, 6925, 6931, 6941, 6946, 6953, 6966, 6979, 6990, 6998, 7011, 7016, 7023, 7030, 7037, 7043,
+        7056, 7062, 7069, 7081, 7087, 7094, 7098, 7106, 7113, 7119, 7126, 7133, 7142, 7152, 7165, 7174,
+        7184, 7196, 7203, 7221, 7243, 7260, 7282, 7300, 7317, 7336, 7366, 7391, 7410, 7428, 7436, 7444,
+        7451, 7458, 7466, 7473, 7481, 7488, 7495, 7507, 7514, 7520, 7527, 7534, 7543, 7551, 7561, 7570,
+        7578, 7585, 7591, 7595, 7599, 7610, 7620, 7626, 7632, 7639, 7655, 7666, 7674, 7681, 7687, 7705,
+        7728, 7749, 7763, 7782, 7797, 7819, 7833, 7858, 7883, 7904, 7928, 7959, 7993, 8017, 8045, 8072,
+        8100, 8139, 8170, 8205, 8231, 8261, 8289, 8325, 8353, 8378, 8404, 8426, 8449, 8475, 8502, 8529,
+        8564, 8594, 8627, 8652, 8685, 8721, 8749, 8778, 8814, 8840, 8868, 8901, 8916, 8945, 8965, 8983,
+        9010, 9044, 9071, 9091, 9127, 9147, 9172, 9197, 9214, 9231, 9251, 9276, 9293, 9327, 9345, 9359,
+        9391, 9415, 9443, 9466, 9491, 9507, 9532, 9564, 9587, 9617, 9651, 9688, 9719, 9749, 9774, 9805,
+        9831, 9863, 9906, 9931, 9966, 9999, 10023, 10048, 10076, 10098, 10120, 10155, 10179, 10199, 10226, 10250,
+        10275, 10296, 10321, 10344, 10379, 10413, 10445, 10474, 10505, 10531, 10564, 10586, 10616, 10645, 10670, 10695,
+        10720, 10744, 10773, 10805, 10837, 10859, 10884, 10912, 10940, 10965, 10988, 11015, 11036, 11058, 11091, 11112,
+        11136, 11153, 11176, 11196, 11222, 11248, 11272, 11295, 11318, 11342, 11361, 11396, 11417, 11446, 11469, 11494,
+        11512, 11541, 11569, 11586, 11602, 11618, 11641, 11664, 11685, 11702, 11717, 11747, 11773, 11802, 11829, 11846,
+        11865, 11888, 11913, 11934, 11956, 11984, 12012, 12041, 12070, 12093, 12120, 12146, 12167, 12195, 12212, 12248,
+        12285, 12315, 12357, 12388, 12419, 12451, 12483, 12513, 12545, 12571, 12609, 12642, 12677, 12708, 12737, 12773,
+        12805, 12843, 12882, 12912, 12941, 12970, 13013, 13050, 13076, 13102, 13133, 13165, 13197, 13240, 13273, 13305,
+        13343, 13390, 13428, 13466, 13491, 13508, 13535, 13560, 13588, 13612, 13634, 13669, 13701, 13729, 13758, 13781,
+        13808, 13832, 13862, 13888, 13915, 13946, 13972, 13999, 14026, 14058, 14090, 14114, 14141, 14164, 14192, 14221,
+        14245, 14267, 14287, 14316, 14341, 14368, 14401, 14430, 14456, 14480, 14516, 14549, 14571, 14598, 14624, 14650,
+        14673, 14698, 14725, 14745, 14765, 14783, 14819, 14849, 14879, 14910, 14939, 14956, 14980, 15008, 15031, 15052,
+        15081, 15104, 15131, 15157, 15181, 15207, 15242, 15258, 15285, 15305, 15342, 15379, 15407, 15436, 15462, 15486,
+        15518, 15551, 15573, 15607, 15638, 15672, 15701, 15725, 15760, 15789, 15824, 15852, 15895, 15920, 15940, 15964,
+        15987, 16008, 16027, 16047, 16086, 16115, 16150, 16190, 16222, 16249, 16274, 16295, 16320, 16349, 16378, 16406,
+        16439, 16468, 16491, 16507, 16540, 16571, 16580, 16603, 16610, 16616, 16623, 16629, 16639, 16647, 16659, 16665,
+        16680, 16712, 16738, 16756, 16762, 16799, 16810, 16833, 16862, 16913, 16923, 16929, 16942, 16968, 16999, 17011,
+        17023, 17050, 17060, 17064, 17072, 17077, 17085, 17090, 17101, 17114, 17132, 17151, 17156, 17171, 17182, 17199,
+        17215, 17236, 17249, 17262, 17275, 17298, 17307, 17326, 17335, 17346, 17350, 17355, 17362, 17388, 17408, 17435,
+        17467, 17487, 17506, 17526, 17559, 17591, 17636, 17683, 17690, 17695, 17720, 17725, 17755, 17777, 17797, 17810,
+        17833, 17854, 17881, 17903, 17928, 17947, 17977, 17997, 18013, 18035, 18046, 18076, 18089, 18100, 18141, 18180,
+        18219, 18276, 18318, 18362, 18367, 18375, 18392, 18448, 18453, 18491, 18530, 18549, 18569, 18605, 18645, 18663,
+        18669, 18685, 18694, 18702, 18713, 18748, 18773, 18804, 18825, 18834, 18842, 18853, 18864, 18874, 18884, 18907,
+        18982, 19056, 19106, 19159, 19207, 19252, 19309, 19360, 19411, 19460, 19506, 19571, 19627, 19684, 19739, 19766,
+        19816, 19877, 19882, 19908, 19932, 19941, 19954, 19983, 20005, 20016, 20037, 20084, 20154, 20204, 20222, 20274,
+        20296, 20354, 20384, 20408, 20464, 20518, 20574, 20624, 20678, 20727, 20780, 20797, 20833, 20894, 20939, 21015,
+        21090, 21166, 21171, 21177, 21183, 21189, 21208, 21214, 21230, 21255, 21284, 21319, 21329, 21334, 21338, 21351,
+        21358, 21364, 21374, 21385, 21402, 21430, 21461, 21468, 21475, 21492, 21503, 21520, 21538, 21548, 21552, 21556,
+        21564, 21575, 21584, 21601, 21611, 21628, 21632, 21650, 21701, 21706, 21713, 21742, 21772, 21811, 21826, 21839,
+        21851, 21861, 21872, 21881, 21888, 21900, 21916, 21935, 21954, 22006, 22054, 22097, 22108, 22126, 22130, 22134,
+        22139, 22144, 22151, 22157, 22164, 22173, 22180, 22195, 22199, 22240, 22253, 22264, 22275, 22294, 22313, 22353,
+        22367, 22380, 22405, 22429, 22457, 22483, 22509, 22530, 22598, 22645, 22657, 22687, 22724, 22752, 22785, 22819,
+        22853, 22883, 22910, 22938, 22950, 22974, 23024, 23064, 23110, 23156, 23211, 23222, 23233, 23268, 23308, 23354,
+        23420, 23465, 23509, 23558, 23609, 23642, 23679, 23719, 23758, 23798, 23843, 23888, 23933, 23977, 24019, 24063,
+        24121, 24169, 24218, 24281, 24321, 24370, 24433, 24461, 24479, 24500, 24525, 24546, 24572, 24594, 24615, 24646,
+        24667, 24692, 24714, 24734, 24756, 24777, 24806, 24835, 24863, 24891, 24919, 24947, 24974, 25001, 25032, 25063,
+        25088, 25113, 25143, 25173, 25199, 25225, 25254, 25283, 25311, 25339, 25376, 25413, 25450, 25493, 25535, 25575,
+        25617, 25682, 25726, 25767, 25808, 25840, 25883, 25928, 25969, 26004, 26040, 26078, 26120, 26155, 26192, 26228,
+        26264, 26299, 26333, 26369, 26398, 26402, 26449, 26502, 26509, 26522, 26527, 26550, 26558, 26567, 26575, 26587,
+        26595, 26602, 26611, 26622, 26633, 26642, 26649, 26656, 26664, 26673, 26680, 26703, 26726, 26775, 26791, 26797,
+        26802, 26805, 26833, 26857, 26887, 26905, 26910, 26932, 26954, 26968, 26985, 26998, 27014, 27018, 27054, 27088,
+        27110, 27122, 27146, 27173, 27197, 27209, 27226, 27242, 27261, 27283, 27303, 27332, 27358, 27382, 27400, 27410,
+        27424, 27438, 27448, 27463, 27475, 27480, 27494, 27507, 27531, 27550, 27571, 27588, 27605, 27628, 27649, 27667,
+        27693, 27709, 27724, 27746, 27763, 27784, 27810, 27818, 27824, 27835, 27850, 27858, 27869, 27886, 27903, 27918,
+        27941, 27959, 27981, 28002, 28025, 28050, 28067, 28079, 28089, 28100, 28109, 28114, 28125, 28136, 28145, 28174,
+        28188, 28203, 28228, 28254, 28286, 28314, 28323, 28332, 28344, 28360, 28372, 28387, 28395, 28402, 28421, 28429,
+        28445, 28458, 28473, 28506, 28537, 28546, 28567, 28576, 28593, 28606, 28617, 28630, 28684, 28746, 28799, 28846,
+        28885, 28898, 28938, 28978, 29020, 29072, 29132, 29181, 29245, 29294, 29355, 29402, 29443, 29484, 29537, 29541,
+        29550, 29557, 29568, 29577, 29586, 29591, 29598, 29605, 29612, 29619, 29630, 29640, 29648, 29656, 29663, 29671,
+        29679, 29686, 29693, 29700, 29707, 29713, 29720, 29728, 29736, 29744, 29752, 29760, 29768, 29775, 29783, 29791,
+        29799, 29807, 29815, 29822, 29830, 29838, 29848, 29857, 29865, 29873, 29877, 29889, 29897, 29903, 29914, 29938,
+        29979, 30011, 30035, 30058, 30086, 30121, 30142, 30171, 30205, 30234, 30264, 30290, 30320, 30359, 30399, 30421,
+        30448, 30468, 30492, 30538, 30554, 30570, 30587, 30603, 30621, 30639, 30657, 30678, 30699, 30724, 30745, 30768,
+        30800, 30835, 30864, 30882, 30906, 30919, 30927, 30935, 30943, 30951, 30959, 30966, 30974, 30983, 30991, 30999,
+        31007, 31015, 31023, 31031, 31039, 31047, 31055, 31063, 31071, 31079, 31086, 31100, 31117, 31144, 31154, 31170,
+        31205, 31212, 31223, 31230, 31254, 31267, 31282, 31297, 31319, 31340, 31362, 31388, 31409, 31417, 31421, 31433,
+        31451, 31492, 31519, 31548, 31553, 31564, 31571, 31583, 31600, 31615, 31629, 31677, 31715, 31750, 31785, 31820,
+        31856, 31866, 31883, 31927, 31974, 32019, 32027, 32051, 32061, 32075, 32081, 32088, 32157, 32164, 32178, 32203,
+        32259, 32298, 32318, 32370, 32410, 32454, 32467, 32483, 32496, 32507, 32514, 32526, 32542, 32574, 32611, 32647,
+        32655, 32670, 32685, 32700, 32713, 32723, 32728, 32734, 32740, 32744, 32753, 32762, 32774, 32785, 32803, 32839,
+        32868, 32903, 32933, 32950, 32970, 33003, 33035, 33057, 33097, 33120, 33149, 33193, 33216, 33237, 33264, 33295,
+        33313, 33334, 33355, 33382, 33403, 33426, 33454, 33487, 33505, 33538, 33570, 33582, 33600, 33612, 33630, 33663,
+        33696, 33714, 33731, 33746, 33760, 33786, 33796, 33812, 33843, 33874, 33907, 33918, 33951, 33979, 34008, 34018,
+        34027, 34031, 34048, 34059, 34075, 34100, 34132, 34136, 34152, 34167, 34181, 34196, 34211, 34226, 34243, 34261,
+        34281, 34304, 34333, 34349, 34367, 34390, 34417, 34441, 34470, 34498, 34527, 34562, 34599, 34632, 34662, 34695,
+        34722, 34744, 34756, 34768, 34779, 34797, 34808, 34814, 34818, 34829, 34845, 34894, 34903, 34910, 34978, 34983,
+        34988, 34996, 35004, 35012, 35024, 35054, 35079, 35108, 35134, 35160, 35170, 35186, 35210, 35218, 35225, 35236,
+        35267, 35276, 35290, 35305, 35337, 35365, 35377, 35393, 35397, 35402, 35447, 35452, 35474, 35516, 35530, 35543,
+        35558, 35575, 35592, 35618, 35640, 35678, 35703, 35724, 35735, 35752, 35769, 35779, 35795, 35810, 35828, 35845,
+        35852, 35876, 35894, 35903, 35910, 35920, 35934, 35945, 35961, 35967, 35975, 35988, 35997, 36005, 36017, 36027,
+        36043, 36053, 36063, 36081, 36100, 36107, 36118, 36131, 36142, 36161, 36175, 36181, 36196, 36202, 36212, 36226,
+        36243, 36258, 36269, 36280, 36296, 36313, 36323, 36331, 36348, 36368, 36392, 36399, 36426, 36432, 36440, 36448,
+        36474, 36480, 36494, 36511, 36531, 36533, 36539, 36555, 36567, 36575, 36579, 36586, 36595, 36607, 36618, 36622,
+        36627, 36633, 36640, 36644, 36661, 36676, 36687, 36697, 36719, 36736, 36748, 36762, 36771, 36785, 36807, 36835,
+        36845, 36853, 36864, 36872, 36878, 36884, 36890, 36899, 36909, 36915, 36925, 36936, 36940, 36951, 36957, 36969,
+        36985, 36999, 37022, 37038, 37062, 37090, 37099, 37112, 37125, 37132, 37145, 37163, 37170, 37174, 37182, 37187,
+        37191, 37200, 37204, 37215, 37229, 37233, 37240, 37251, 37264, 37279, 37296, 37315, 37321, 37345, 37366, 37387,
+        37409, 37440, 37468, 37497, 37500, 37506, 37512, 37517, 37524, 37535, 37544, 37558, 37568, 37573, 37579, 37585,
+        37591, 37603, 37623, 37639, 37649, 37675, 37691, 37706, 37723, 37733, 37756, 37775, 37793, 37810, 37819, 37826,
+        37834, 37845, 37856, 37861, 37867, 37874, 37894, 37905, 37913, 37919, 37926, 37933, 37949, 37962, 37998, 38029,
+        38042, 38070, 38084, 38103, 38106, 38111, 38117, 38123, 38128, 38141, 38150, 38161, 38172, 38177, 38188, 38197,
+        38207, 38222, 38237, 38257, 38274, 38290, 38311, 38316, 38318, 38326, 38344, 38351, 38374, 38381, 38386, 38398,
+        38410, 38425, 38440, 38449, 38457, 38466, 38480, 38494, 38501, 38511, 38522, 38525, 38529, 38536, 38547, 38552,
+        38560, 38581, 38589, 38612, 38621, 38630, 38636, 38643, 38649, 38655, 38662, 38669, 38674, 38685, 38691, 38696,
+        38699, 38704, 38713, 38718, 38726, 38741, 38751, 38754, 38762, 38769, 38784, 38803, 38820, 38841, 38849, 38855,
+        38866, 38871, 38879, 38886, 38893, 38904, 38919, 38925, 38940, 38955, 38970, 38979, 38988, 38996, 39021, 39029,
+        39037, 39048, 39057, 39066, 39079, 39112, 39124, 39139, 39151, 39162, 39173, 39182, 39196, 39210, 39229, 39235,
+        39263, 39304, 39312, 39333, 39367, 39387, 39405, 39433, 39458, 39472, 39484, 39502, 39527, 39540, 39547, 39556,
+        39565, 39568, 39575, 39581, 39602, 39609, 39631, 39640, 39651, 39664, 39669, 39682, 39694, 39701, 39708, 39727,
+        39742, 39751, 39758, 39769, 39777, 39800, 39818, 39836, 39846, 39852, 39858, 39863, 39866, 39871, 39876, 39896,
+        39916, 39925, 39941, 39951, 39958, 39966, 40006, 40013, 40024, 40030, 40036, 40051, 40062, 40077, 40101, 40121,
+        40152, 40171, 40198, 40207, 40213, 40221, 40231, 40237, 40245, 40255, 40295, 40301, 40317, 40324, 40332, 40343,
+        40354, 40377, 40385, 40391, 40400, 40415, 40429, 40439, 40450, 40464, 40485, 40501, 40514, 40521, 40538, 40558,
+        40582, 40594, 40619, 40645, 40666, 40672, 40678, 40696, 40710, 40718, 40734, 40755, 40780, 40790, 40798, 40805,
+        40824, 40839, 40857, 40863, 40867, 40872, 40892, 40904, 40929, 40935, 40944, 40963, 40983, 40993, 41009, 41036,
+        41042, 41049, 41054, 41061, 41069, 41077, 41085, 41100, 41108, 41130, 41146, 41154, 41170, 41187, 41195, 41204,
+        41213, 41220, 41239, 41250, 41263, 41274, 41281, 41294, 41302, 41310, 41323, 41333, 41341, 41351, 41369, 41379,
+        41393, 41405, 41427, 41438, 41457, 41473, 41489, 41508, 41521, 41542, 41573, 41581, 41586, 41600, 41609, 41618,
+        41627, 41638, 41651, 41669, 41680, 41691, 41701, 41711, 41716, 41720, 41725, 41730, 41736, 41757, 41768, 41771,
+        41778, 41782, 41790, 41799, 41804, 41821, 41827, 41834, 41848, 41869, 41892, 41914, 41929, 41950, 41967, 41981,
+        42002, 42019, 42043, 42057, 42074, 42094, 42119, 42144, 42157, 42168, 42182, 42193, 42206, 42217, 42228, 42244,
+        42255, 42266, 42280, 42297, 42313, 42359, 42383, 42403, 42435, 42457, 42485, 42506, 42530, 42557, 42588, 42618,
+        42640, 42668, 42699, 42715, 42726, 42740, 42757, 42778, 42792, 42808, 42825, 42851, 42872, 42886, 42899, 42915,
+        42935, 42954, 42967, 42978, 42991, 43009, 43037, 43051, 43079, 43091, 43104, 43132, 43154, 43172, 43191, 43212,
+        43224, 43228, 43233, 43249, 43256, 43259, 43265, 43282, 43287, 43296, 43312, 43325, 43334, 43349, 43353, 43356,
+        43362, 43369, 43374, 43382, 43387, 43397, 43401, 43411, 43421, 43431, 43436, 43448, 43460, 43471, 43482, 43489,
+        43492, 43498, 43504, 43510, 43516, 43526, 43535, 43561, 43568, 43578, 43597, 43624, 43635, 43649, 43664, 43682,
+        43699, 43704, 43711, 43721, 43732, 43742, 43758, 43766, 43797, 43827, 43865, 43883, 43905, 43925, 43942, 43948,
+        43955, 43970, 43987, 44008, 44023, 44031, 44042, 44057, 44069, 44073, 44080, 44093, 44108, 44118, 44130, 44140,
+        44173, 44179, 44185, 44194, 44216, 44233, 44247, 44270, 44288, 44305, 44320, 44343, 44357, 44369, 44381, 44393,
+        44405, 44413, 44420, 44429, 44436, 44444, 44456, 44469, 44481, 44494, 44513, 44534, 44551, 44565, 44582, 44595,
+        44606, 44620, 44627, 44631, 44641, 44649, 44662, 44675, 44682, 44703, 44737, 44752, 44763, 44777, 44808, 44834,
+        44842, 44855, 44864, 44871, 44875, 44897, 44907, 44920, 44934, 44947, 44961, 44975, 44991, 44996, 45003, 45009,
+        45025, 45030, 45045, 45074, 45079, 45090, 45100, 45109, 45114, 45133, 45143, 45148, 45155, 45162, 45165, 45171,
+        45179, 45188, 45191, 45197, 45211, 45216, 45238, 45257, 45279, 45300, 45319, 45331, 45340, 45343, 45349, 45355,
+        45361, 45367, 45373, 45379, 45385, 45391, 45408, 45427, 45434, 45445, 45468, 45478, 45497, 45506, 45510, 45519,
+        45530, 45539, 45548, 45565, 45573, 45580, 45588, 45594, 45606, 45618, 45629, 45633, 45637, 45655, 45672, 45678,
+        45685, 45689, 45697, 45703, 45716, 45723, 45726, 45733, 45739, 45745, 45751, 45758, 45776, 45787, 45803, 45815,
+        45834, 45852, 45877, 45901, 45930, 45935, 45954, 45959, 45971, 45979, 45988, 46011, 46032, 46043, 46054, 46068,
+        46074, 46108, 46117, 46125, 46135, 46140, 46149, 46158, 46171, 46180, 46189, 46204, 46221, 46244, 46251, 46258,
+        46267, 46278, 46283, 46292, 46299, 46320, 46339, 46343, 46350, 46357, 46370, 46385, 46392, 46401, 46411, 46422,
+        46428, 46449, 46457, 46461, 46468, 46479, 46488, 46496, 46509, 46522, 46530, 46572, 46581, 46584, 46592, 46597,
+        46605, 46615, 46624, 46630, 46637, 46646, 46652, 46658, 46665, 46674, 46685, 46692, 46701, 46712, 46715, 46729,
+        46739, 46751, 46765, 46773, 46782, 46788, 46795, 46798, 46804, 46809, 46824, 46833, 46855, 46869, 46889, 46898,
+        46904, 46909, 46920, 46932, 46939, 46952, 46960, 46965, 46975, 46992, 47002, 47011, 47025, 47036, 47056, 47070,
+        47079, 47094, 47115, 47131, 47137, 47142, 47148, 47153, 47167, 47193, 47201, 47206, 47212, 47217, 47227, 47233,
+        47251, 47264, 47273, 47281, 47291, 47307, 47328, 47338, 47347, 47354, 47358, 47366, 47380, 47386, 47391, 47400,
+        47407, 47421, 47433, 47445, 47464, 47478, 47490, 47508, 47511, 47517, 47523, 47529, 47535, 47552, 47575, 47584,
+        47594, 47605, 47613, 47621, 47628, 47633, 47643, 47654, 47667, 47681, 47695, 47707, 47729, 47750, 47758, 47766,
+        47773, 47779, 47787, 47797, 47803, 47811, 47821, 47831, 47843, 47857, 47867, 47874, 47883, 47898, 47906, 47916,
+        47928, 47930, 47933, 47951, 47962, 47971, 47992, 48025, 48037, 48053, 48073, 48089, 48103, 48121, 48151, 48180,
+        48210, 48217, 48225, 48233, 48240, 48250, 48265, 48269, 48292, 48307, 48314, 48321, 48358, 48380, 48393, 48415,
+        48427, 48440, 48450, 48468, 48485, 48514, 48536, 48563, 48577, 48598, 48615, 48631, 48649, 48663, 48676, 48689,
+        48709, 48724, 48734, 48748, 48759, 48768, 48782, 48801, 48820, 48831, 48852, 48868, 48878, 48886, 48893, 48920,
+        48961, 48979, 49003, 49025, 49044, 49069, 49086, 49118, 49135, 49150, 49171, 49190, 49201, 49218, 49235, 49254,
+        49270, 49290, 49308, 49331, 49337, 49345, 49356, 49367, 49378, 49395, 49407, 49427, 49443, 49453, 49475, 49491,
+        49514, 49532, 49546, 49555, 49577, 49586, 49595, 49603, 49620, 49643, 49674, 49690, 49706, 49727, 49743, 49759,
+        49770, 49779, 49793, 49813, 49830, 49842, 49862, 49887, 49913, 49933, 49955, 49973, 49992, 50015, 50027, 50047,
+        50062, 50084, 50098, 50114, 50124, 50141, 50151, 50186, 50197, 50211, 50222, 50233, 50246, 50260, 50277, 50294,
+        50309, 50333, 50351, 50373, 50392, 50414, 50440, 50453, 50467, 50479, 50487, 50509, 50522, 50540, 50557, 50568,
+        50578, 50593, 50605, 50624, 50638, 50650, 50664, 50674, 50684, 50693, 50713, 50728, 50740, 50754, 50791, 50801,
+        50820, 50828, 50835, 50842, 50850, 50858, 50864, 50871, 50881, 50890, 50897, 50909, 50916, 50923, 50927, 50932,
+        50941, 50948, 50960, 50972, 50983, 50990, 51004, 51016, 51022, 51028, 51036, 51051, 51060, 51067, 51072, 51085,
+        51094, 51101, 51108, 51119, 51124, 51133, 51136, 51139, 51158, 51161, 51164, 51167, 51170, 51182, 51190, 51200,
+        51205, 51220, 51237, 51257, 51261, 51275, 51288, 51296, 51314, 51333, 51344, 51356, 51363, 51378, 51385, 51400,
+        51436, 51441, 51450, 51455, 51458, 51464, 51472, 51486, 51497, 51505, 51514, 51523, 51533, 51538, 51545, 51556,
+        51566, 51575, 51584, 51592, 51600, 51610, 51622, 51627, 51635, 51643, 51650, 51653, 51659, 51671, 51685, 51706,
+        51736, 51764, 51772, 51785, 51790, 51799, 51805, 51810, 51816, 51820, 51826, 51831, 51841, 51849, 51854, 51867,
+        51886, 51895, 51899, 51919, 51924, 51931, 51941, 51947, 51960, 51971, 51980, 51989, 52000, 52013, 52019, 52022,
+        52033, 52038, 52045, 52051, 52056, 52063, 52070, 52078, 52083, 52088, 52105, 52122, 52128, 52134, 52140, 52143,
+        52149, 52155, 52166, 52172, 52177, 52180, 52186, 52198, 52210, 52222, 52226, 52229, 52251, 52259, 52269, 52280,
+        52301, 52312, 52330, 52348, 52354, 52358, 52365, 52379, 52390, 52403, 52415, 52439, 52447, 52452, 52463, 52477,
+        52486, 52491, 52498, 52510, 52516, 52524, 52536, 52544, 52552, 52563, 52578, 52590, 52595, 52604, 52624, 52637,
+        52660, 52684, 52707, 52714, 52719, 52739, 52750, 52758, 52764, 52775, 52783, 52802, 52811, 52822, 52830, 52842,
+        52863, 52869, 52885, 52895, 52908, 52915, 52951, 52995, 53030, 53059, 53083, 53115, 53143, 53170, 53192, 53221,
+        53242, 53268, 53282, 53316, 53346, 53370, 53393, 53420, 53445, 53463, 53478, 53494, 53508, 53529, 53547, 53567,
+        53582, 53602, 53619, 53639, 53657, 53679, 53693, 53707, 53732, 53763, 53786, 53806, 53824, 53857, 53878, 53920,
+        53941, 53974, 54005, 54032, 54051, 54073, 54099, 54123, 54142, 54162, 54182, 54204, 54232, 54269, 54297, 54324,
+        54348, 54362, 54382, 54407, 54427, 54452, 54474, 54493, 54519, 54546, 54577, 54602, 54622, 54653, 54672, 54688,
+        54708, 54727, 54748, 54766, 54788, 54807, 54827, 54847, 54863, 54888, 54922, 54947, 54972, 54996, 55023, 55051,
+        55082, 55116, 55138, 55170, 55200, 55232, 55261, 55288, 55315, 55342, 55375, 55403, 55435, 55463, 55491, 55523,
+        55547, 55580, 55607, 55636, 55662, 55688, 55711, 55738, 55761, 55787, 55809, 55842, 55858, 55871, 55901, 55923,
+        55936, 55949, 55970, 55996, 56019, 56043, 56065, 56084, 56104, 56133, 56159, 56181, 56202, 56220, 56236, 56267,
+        56281, 56294, 56315, 56319, 56326, 56335, 56338, 56349, 56365, 56381, 56391, 56408, 56426, 56434, 56448, 56466,
+        56482, 56490, 56513, 56529, 56545, 56560, 56577, 56589, 56599, 56615, 56632, 56641, 56651, 56657, 56668, 56677,
+        56696, 56710, 56720, 56732, 56743, 56750, 56768, 56780, 56795, 56813, 56825, 56836, 56844, 56854, 56868, 56881,
+        56892, 56901, 56916, 56931, 56946, 56955, 56966, 56986, 57004, 57032, 57057, 57062, 57069, 57076, 57089, 57102,
+        57114, 57124, 57141, 57158, 57168, 57180, 57190, 57201, 57214, 57220, 57234, 57259, 57268, 57292, 57298, 57316,
+        57330, 57336, 57343, 57361, 57370, 57385, 57394, 57403, 57413, 57425, 57435, 57452, 57466, 57474, 57488, 57498,
+        57509, 57518, 57533, 57543, 57556, 57563, 57577, 57586, 57602, 57608, 57622, 57636, 57656, 57672, 57695, 57704,
+        57719, 57749, 57762, 57773, 57786, 57795, 57810, 57823, 57847, 57864, 57878, 57892, 57905, 57925, 57937, 57955,
+        57962, 57976, 57983, 57993, 58003, 58016, 58025, 58048, 58059, 58066, 58083, 58086, 58092, 58100, 58106, 58115,
+        58124, 58147, 58168, 58188, 58209, 58238, 58276, 58288, 58291, 58297, 58302, 58315, 58325, 58330, 58340, 58350,
+        58355, 58373, 58392, 58407, 58444, 58480, 58505, 58538, 58573, 58601, 58619, 58657, 58681, 58730, 58754, 58787,
+        58821, 58850, 58888, 58921, 58943, 58977, 59005, 59039, 59080, 59134, 59187, 59216, 59248, 59275, 59299, 59335,
+        59365, 59395, 59429, 59456, 59489, 59519, 59551, 59579, 59604, 59636, 59680, 59715, 59748, 59777, 59813, 59849,
+        59883, 59917, 59945, 59977, 60004, 60035, 60077, 60102, 60138, 60150, 60162, 60175, 60198, 60217, 60239, 60269,
+        60290, 60312, 60330, 60351, 60363, 60380, 60398, 60403, 60413, 60427, 60431, 60460, 60469, 60480, 60495, 60512,
+        60520, 60531, 60543, 60572, 60592, 60615, 60632, 60640, 60657, 60672, 60677, 60687, 60697, 60701, 60709, 60716,
+        60723, 60728, 60733, 60744, 60751, 60756, 60770, 60773, 60779, 60788, 60804, 60816, 60831, 60840, 60858, 60873,
+        60883, 60895, 60905, 60918, 60927, 60937, 60954, 60964, 60973, 60983, 60994, 61006, 61018, 61026, 61031, 61038,
+        61047, 61058, 61065, 61074, 61085, 61089, 61101, 61108, 61114, 61117, 61125, 61131, 61138, 61143, 61155, 61160,
+        61167, 61179, 61188, 61205, 61213, 61219, 61224, 61233, 61240, 61249, 61263, 61273, 61278, 61284, 61290, 61295,
+        61307, 61322, 61346, 61354, 61361, 61368, 61381, 61393, 61404, 61414, 61435, 61449, 61463, 61471, 61478, 61482,
+        61488, 61494, 61499, 61506, 61520, 61540, 61553, 61574, 61588, 61593, 61598, 61604, 61611, 61618, 61623, 61628,
+        61634, 61642, 61652, 61658, 61666, 61676, 61688, 61696, 61703, 61708, 61719, 61734, 61752, 61771, 61781, 61795,
+        61799, 61807, 61826, 61848, 61865, 61884, 61902, 61907, 61925, 61946, 61955, 61974, 61983, 61989, 61998, 62010,
+        62022, 62027, 62031, 62038, 62048, 62062, 62076, 62093, 62103, 62110, 62123, 62142, 62153, 62164, 62173, 62181,
+        62203, 62228, 62236, 62250, 62269, 62278, 62289, 62305, 62317, 62336, 62344, 62353, 62362, 62371, 62378, 62386,
+        62391, 62403, 62416, 62436, 62448, 62461, 62481, 62494, 62498, 62511, 62522, 62529, 62556, 62567, 62589, 62598,
+        62606, 62628, 62649, 62674, 62681, 62689, 62704, 62710, 62718, 62728, 62736, 62746, 62764, 62786, 62798, 62803,
+        62808, 62819, 62824, 62833, 62848, 62863, 62877, 62899, 62914, 62920, 62930, 62937, 62951, 62964, 62969, 62980,
+        63005, 63008, 63013, 63020, 63030, 63041, 63052, 63063, 63071, 63081, 63090, 63107, 63112, 63118, 63134, 63147,
+        63154, 63165, 63177, 63196, 63213, 63226, 63233, 63291, 63337, 63386, 63430, 63502, 63543, 63586, 63633, 63686,
+        63739, 63797, 63861, 63945, 64008, 64070, 64137, 64206, 64257, 64320, 64383, 64445, 64505, 64567, 64643, 64710,
+        64791, 64849, 64916, 64997, 65033, 65072, 65115, 65154, 65198, 65238, 65277, 65326, 65365, 65408, 65448, 65486,
+        65526, 65565, 65612, 65659, 65705, 65751, 65797, 65843, 65888, 65933, 65982, 66031, 66074, 66117, 66165, 66213,
+        66257, 66301, 66348, 66395, 66441, 66487, 66542, 66597, 66652, 66713, 66773, 66831, 66891, 66974, 67036, 67095,
+        67154, 67204, 67265, 67328, 67387, 67440, 67494, 67550, 67610, 67663, 67718, 67772, 67826, 67879, 67931, 67985,
+        68032, 68098, 68154, 68207, 68260, 68313, 68367, 68412, 68454, 68501, 68547, 68594, 68647, 68702, 68753, 68801,
+        68852, 68897, 68937, 68989, 69070, 69127, 69175, 69237, 69292, 69343, 69399, 69453, 69513, 69562, 69611, 69658,
+        69705, 69764, 69814, 69864, 69917, 69976, 70044, 70111, 70185, 70265, 70329, 70395, 70462, 70532, 70603, 70663,
+        70722, 70783, 70882, 70980, 71054, 71131, 71203, 71272, 71353, 71428, 71503, 71576, 71646, 71735, 71815, 71896,
+        71975, 72049, 72134, 72205, 72299, 72373, 72449, 72531, 72611, 72689, 72769, 72843, 72921, 72994, 73071, 73156,
+        73256, 73355, 73455, 73531, 73603, 73670, 73734, 73826, 73897, 73951, 74012, 74064, 74121, 74179, 74237, 74291,
+        74342, 74394, 74468, 74532, 74602, 74672, 74751, 74827, 74900, 74955, 75021, 75103, 75183, 75277, 75340, 75409,
+        75473, 75529, 75583, 75659, 75711, 75771, 75820, 75881, 75937, 75996, 76057, 76120, 76175, 76248, 76318, 76384,
+        76457, 76538, 76584, 76633, 76700, 76751, 76813, 76864, 76926, 76982, 77040, 77094, 77170, 77222, 77265, 77309,
+        77373, 77438, 77501, 77568, 77629, 77680, 77731, 77785, 77840, 77904, 77970, 78032, 78097, 78161, 78226, 78296,
+        78369, 78422, 78495, 78574, 78636, 78683, 78733, 78786, 78836, 78903, 78985, 79075, 79156, 79231, 79311, 79399,
+        79476, 79568, 79635, 79702, 79771, 79848, 79937, 80018, 80093, 80162, 80231, 80298, 80351, 80406, 80477, 80551,
+        80623, 80707, 80773, 80843, 80901, 80964, 81026, 81084, 81137, 81191, 81284, 81345, 81392, 81442, 81498, 81562,
+        81597, 81659, 81704, 81746, 81792, 81847, 81893, 81937, 81981, 82034, 82072, 82132, 82142, 82145, 82151, 82159,
+        82177, 82190, 82211, 82228, 82248, 82267, 82282, 82300, 82315, 82326, 82345, 82364, 82385, 82401, 82406, 82416,
+        82425, 82428, 82434, 82440, 82443, 82457, 82463, 82476, 82488, 82509, 82518, 82535, 82553, 82564, 82579, 82593,
+        82617, 82628, 82648, 82665, 82683, 82701, 82721, 82741, 82759, 82779, 82804, 82826, 82849, 82867, 82889, 82906,
+        82921, 82933, 82952, 82969, 82981, 83000, 83013, 83026, 83041, 83053, 83064, 83089, 83098, 83116, 83128, 83140,
+        83148, 83165, 83175, 83186, 83197, 83212, 83236, 83248, 83257, 83265, 83275, 83291, 83307, 83323, 83337, 83354,
+        83364, 83378, 83401, 83411, 83423, 83435, 83457, 83474, 83495, 83511, 83531, 83541, 83553, 83574, 83583, 83601,
+        83610, 83619, 83629, 83645, 83653, 83661, 83671, 83691, 83701, 83716, 83735, 83763, 83792, 83816, 83840, 83863,
+        83882, 83908, 83929, 83954, 83974, 83990, 84008, 84029, 84054, 84080, 84104, 84130, 84151, 84161, 84179, 84194,
+        84209, 84213, 84226, 84245, 84254, 84269, 84278, 84284, 84291, 84312, 84316, 84323, 84337, 84353, 84358, 84365,
+        84380, 84396, 84416, 84434, 84450, 84458, 84468, 84475, 84492, 84503, 84506, 84510, 84517, 84535, 84538, 84541,
+        84546, 84558, 84561, 84574, 84585, 84600, 84609, 84616, 84639, 84664, 84682, 84697, 84705, 84710, 84718, 84728,
+        84735, 84743, 84748, 84758, 84773, 84800, 84811, 84816, 84827, 84834, 84847, 84857, 84868, 84877, 84885, 84897,
+        84901, 84910, 84926, 84949, 84961, 84964, 84970, 84977, 84992, 85005, 85012, 85020, 85032, 85041, 85052, 85071,
+        85086, 85101, 85109, 85111, 85127, 85136, 85143, 85152, 85161, 85171, 85181, 85192, 85199, 85206, 85217, 85223,
+        85233, 85253, 85269, 85280, 85289, 85300, 85309, 85323, 85335, 85346, 85371, 85382, 85396, 85404, 85413, 85436,
+        85441, 85449, 85460, 85469, 85478, 85483, 85497, 85506, 85512, 85518, 85533, 85544, 85552, 85559, 85570, 85575,
+        85599, 85617, 85636, 85652, 85670, 85683, 85701, 85729, 85748, 85771, 85783, 85804, 85827, 85835, 85843, 85853,
+        85865, 85871, 85879, 85887, 85892, 85896, 85901, 85926, 85935, 85938, 85944, 85956, 85969, 85986, 86004, 86019,
+        86036, 86046, 86059, 86068, 86075, 86083, 86087, 86108, 86113, 86122, 86126, 86131, 86149, 86156, 86169, 86178,
+        86187, 86193, 86205, 86225, 86234, 86246, 86250, 86255, 86259, 86268, 86275, 86286, 86308, 86321, 86339, 86347,
+        86363, 86383, 86391, 86406, 86424, 86438, 86453, 86467, 86488, 86503, 86518, 86526, 86550, 86558, 86569, 86577,
+        86590, 86604, 86619, 86653, 86662, 86672, 86682, 86689, 86710, 86716, 86725, 86735, 86741, 86759, 86776, 86783,
+        86794, 86797, 86803, 86809, 86813, 86818, 86832, 86846, 86855, 86866, 86874, 86888, 86900, 86914, 86924, 86931,
+        86936, 86949, 86954, 86966, 86984, 87021, 87042, 87057, 87076, 87108, 87123, 87140, 87146, 87161, 87171, 87173,
+        87178, 87185, 87197, 87208, 87223, 87233, 87244, 87257, 87270, 87280, 87286, 87299, 87309, 87313, 87321, 87334,
+        87351, 87357, 87371, 87395, 87425, 87442, 87455, 87460, 87473, 87488, 87503, 87517, 87533, 87549, 87565, 87581,
+        87588, 87599, 87612, 87625, 87634, 87645, 87658, 87668, 87680, 87692, 87702, 87714, 87726, 87736, 87748, 87760,
+        87769, 87779, 87789, 87799, 87808, 87817, 87831, 87844, 87857, 87870, 87883, 87893, 87904, 87915, 87928, 87941,
+        87954, 87967, 87977, 87988, 87999, 88008, 88023, 88045, 88073, 88094, 88116, 88141, 88162, 88183, 88191, 88201,
+        88213, 88222, 88233, 88246, 88252, 88260, 88270, 88281, 88292, 88301, 88312, 88327, 88344, 88363, 88376, 88383,
+        88404, 88413, 88420, 88430, 88440, 88444, 88453, 88464, 88470, 88477, 88489, 88493, 88502, 88517, 88525, 88532,
+        88541, 88555, 88562, 88576, 88625, 88644, 88653, 88661, 88671, 88680, 88694, 88705, 88719, 88727, 88745, 88757,
+        88771, 88787, 88794, 88808, 88821, 88832, 88854, 88861, 88880, 88901, 88917, 88937, 88957, 88972, 88980, 88987,
+        88996, 89007, 89016, 89023, 89035, 89060, 89067, 89072, 89080, 89091, 89098, 89110, 89118, 89130, 89140, 89153,
+        89161, 89181, 89192, 89203, 89223, 89236, 89259, 89265, 89277, 89287, 89294, 89302, 89311, 89320, 89331, 89342,
+        89355, 89380, 89390, 89403, 89413, 89427, 89444, 89457, 89472, 89522, 89533, 89544, 89555, 89567, 89578, 89591,
+        89607, 89616, 89627, 89642, 89656, 89671, 89679, 89698, 89713, 89722, 89729, 89745, 89760, 89777, 89793, 89803,
+        89809, 89820, 89827, 89835, 89845, 89853, 89862, 89872, 89888, 89901, 89906, 89909, 89914, 89921, 89944, 89950,
+        89958, 89968, 89971, 89977, 89982, 89999, 90006, 90012, 90030, 90043, 90060, 90067, 90072, 90077, 90087, 90093,
+        90100, 90110, 90113, 90119, 90125, 90129, 90142, 90158, 90175, 90191, 90199, 90207, 90228, 90236, 90259, 90284,
+        90307, 90337, 90365, 90390, 90395, 90398, 90402, 90408, 90413, 90423, 90451, 90456, 90466, 90471, 90483, 90498,
+        90511, 90532, 90558, 90567, 90573, 90583, 90600, 90611, 90618, 90628, 90635, 90646, 90652, 90663, 90668, 90675,
+        90688, 90695, 90703, 90718, 90725, 90741, 90749, 90763, 90778, 90792, 90800, 90807, 90819, 90836, 90841, 90853,
+        90860, 90865, 90876, 90889, 90901, 90919, 90928, 90938, 90947, 90960, 90979, 90996, 91008, 91012, 91029, 91033,
+        91040, 91049, 91063, 91073, 91092, 91098, 91105, 91122, 91139, 91159, 91170, 91194, 91230, 91256, 91267, 91275,
+        91283, 91293, 91308, 91321, 91325, 91338, 91350, 91363, 91376, 91399, 91416, 91426, 91434, 91441, 91449, 91470,
+        91497, 91538, 91563, 91581, 91605, 91627, 91645, 91655, 91662, 91681, 91689, 91708, 91719, 91730, 91741, 91752,
+        91766, 91777, 91789, 91809, 91825, 91847, 91876, 91885, 91898, 91914, 91923, 91932, 91940, 91952, 91965, 91978,
+        91989, 92005, 92024, 92045, 92067, 92083, 92118, 92137, 92153, 92164, 92172, 92181, 92203, 92224, 92240, 92256,
+        92264, 92283, 92305, 92322, 92338, 92349, 92358, 92374, 92386, 92401, 92410, 92424, 92435, 92442, 92470, 92485,
+        92496, 92513, 92531, 92554, 92579, 92593, 92604, 92615, 92636, 92653, 92670, 92684, 92691, 92699, 92711, 92722,
+        92734, 92749, 92766, 92777, 92792, 92804, 92823, 92837, 92849, 92863, 92873, 92883, 92892, 92928, 92942, 92952,
+        92960, 92967, 92975, 92983, 92989, 92996, 93006, 93012, 93021, 93030, 93037, 93043, 93055, 93068, 93072, 93079,
+        93088, 93097, 93103, 93111, 93129, 93136, 93145, 93157, 93165, 93170, 93182, 93189, 93200, 93212, 93216, 93222,
+        93227, 93234, 93245, 93257, 93267, 93272, 93275, 93280, 93287, 93293, 93303, 93309, 93319, 93325, 93338, 93347,
+        93358, 93364, 93371, 93382, 93402, 93411, 93416, 93421, 93428, 93435, 93445, 93455, 93465, 93496, 93502, 93512,
+        93520, 93530, 93537, 93543, 93556, 93566, 93571, 93580, 93586, 93590, 93595, 93607, 93611, 93616, 93622, 93626,
+        93632, 93648, 93654, 93665, 93685, 93705, 93727, 93737, 93748, 93764, 93769, 93779, 93786, 93795, 93802, 93811,
+        93822, 93829, 93836, 93847, 93854, 93860, 93866, 93873, 93891, 93919, 93948, 93962, 93988, 94013, 94020, 94025,
+        94038, 94063, 94079, 94091, 94104, 94110, 94119, 94126, 94157, 94164, 94176, 94183, 94197, 94204, 94232, 94250,
+        94267, 94278, 94291, 94306, 94327, 94346, 94358, 94374, 94402, 94412, 94429, 94449, 94467, 94477, 94502, 94509,
+        94516, 94532, 94538, 94548, 94556, 94560, 94569, 94583, 94593, 94609, 94623, 94630, 94640, 94647, 94656, 94664,
+        94671, 94680, 94706, 94715, 94729, 94746, 94757, 94764, 94776, 94780, 94799, 94817, 94828, 94831, 94837, 94844,
+        94851, 94858, 94868, 94876, 94884, 94894, 94906, 94926, 94931, 94953, 94960, 94967, 94974, 94983, 94989, 94996,
+        95006, 95014, 95025, 95030, 95043, 95060, 95075, 95095, 95099, 95104, 95111, 95121, 95127, 95130, 95139, 95149,
+        95154, 95170, 95175, 95186, 95189, 95195, 95201, 95206, 95220, 95235, 95244, 95255, 95261, 95278, 95293, 95308,
+        95324, 95339, 95346, 95351, 95360, 95368, 95376, 95387, 95397, 95407, 95416, 95427, 95440, 95448, 95457, 95464,
+        95480, 95486, 95490, 95497, 95505, 95513, 95527, 95536, 95541, 95549, 95559, 95575, 95586, 95598, 95615, 95626,
+        95642, 95657, 95669, 95691, 95700, 95712, 95722, 95738, 95747, 95757, 95767, 95778, 95791, 95807, 95830, 95845,
+        95857, 95870, 95890, 95898, 95911, 95921, 95929, 95938, 95949, 95960, 95968, 95978, 95991, 96002, 96013, 96022,
+        96033, 96044, 96058, 96070, 96084, 96093, 96104, 96113, 96121, 96131, 96148, 96167, 96184, 96203, 96218, 96231,
+        96245, 96260, 96276, 96289, 96299, 96307, 96333, 96347, 96361, 96370, 96378, 96398, 96410, 96427, 96448, 96470,
+        96491, 96516, 96540, 96563, 96576, 96598, 96613, 96628, 96648, 96667, 96673, 96685, 96695, 96713, 96723, 96743,
+        96750, 96759, 96778, 96796, 96811, 96830, 96848, 96860, 96868, 96890, 96904, 96922, 96938, 96952, 96969, 96991,
+        97013, 97022, 97031, 97043, 97059, 97075, 97087, 97104, 97116, 97128, 97142, 97160, 97169, 97180, 97190, 97199,
+        97209, 97221, 97235, 97244, 97256, 97274, 97282, 97295, 97330, 97359, 97372, 97384, 97396, 97406, 97418, 97424,
+        97437, 97453, 97472, 97477, 97484, 97490, 97507, 97516, 97522, 97525, 97531, 97537, 97554, 97575, 97586, 97601,
+        97621, 97631, 97640, 97662, 97672, 97686, 97711, 97725, 97737, 97743, 97758, 97763, 97771, 97786, 97795, 97805,
+        97815, 97831, 97836, 97842, 97851, 97862, 97879, 97892, 97896, 97914, 97926, 97935, 97939, 97944, 97963, 97980,
+        97986, 97989, 97991, 97996, 98006, 98016, 98026, 98045, 98049, 98060, 98063, 98069, 98072, 98078, 98085, 98089,
+        98099, 98109, 98116, 98125, 98134, 98149, 98156, 98164, 98176, 98182, 98187, 98199, 98204, 98211, 98220, 98231,
+        98243, 98249, 98260, 98276, 98283, 98295, 98303, 98315, 98321, 98333, 98339, 98349, 98356, 98366, 98376, 98384,
+        98419, 98430, 98449, 98468, 98497, 98506, 98513, 98517, 98529, 98546, 98552, 98556, 98568, 98573, 98583, 98592,
+        98601, 98614, 98620, 98635, 98648, 98661, 98670, 98684, 98697, 98707, 98717, 98727, 98732, 98738, 98745, 98754,
+        98765, 98785, 98794, 98814, 98828, 98843, 98858, 98875, 98896, 98915, 98935, 98949, 98965, 98980, 98995, 99009,
+        99022, 99037, 99043, 99051, 99058, 99067, 99075, 99082, 99093, 99101, 99118, 99127, 99130, 99136, 99141, 99160,
+        99171, 99190, 99217, 99228, 99233, 99243, 99259, 99264, 99270, 99280, 99290, 99313, 99338, 99348, 99353, 99363,
+        99368, 99379, 99387, 99393, 99406, 99412, 99418, 99429, 99449, 99455, 99465, 99476, 99482, 99493, 99501, 99513,
+        99538, 99543, 99556, 99570, 99584, 99598, 99611, 99620, 99626, 99637, 99645, 99650, 99659, 99686, 99728, 99772,
+        99788, 99796, 99805, 99811, 99827, 99843, 99860, 99877, 99894, 99911, 99919, 99933, 99945, 99959, 99973, 99983,
+        99995, 100009, 100020, 100033, 100046, 100056, 100072, 100090, 100109, 100122, 100135, 100148, 100161, 100171, 100182, 100193,
+        100205, 100217, 100227, 100239, 100253, 100267, 100279, 100293, 100307, 100318, 100330, 100342, 100354, 100368, 100382, 100394,
+        100408, 100422, 100433, 100445, 100457, 100464, 100471, 100480, 100491, 100499, 100502, 100506, 100513, 100517, 100522, 100527,
+        100538, 100545, 100550, 100560, 100567, 100573, 100577, 100582, 100586, 100595, 100602, 100608, 100619, 100629, 100636, 100642,
+        100648, 100656, 100665, 100674, 100694, 100699, 100710, 100716, 100729, 100734, 100740, 100747, 100753, 100764, 100767, 100773,
+        100779, 100787, 100795, 100801, 100809, 100816, 100827, 100839, 100843, 100852, 100862, 100868, 100876, 100893, 100901, 100909,
+        100921, 100928, 100940, 100954, 100966, 100972, 100977, 100992, 101008, 101025, 101035, 101050, 101067, 101076, 101082, 101089,
+        101094, 101107, 101124, 101139, 101158, 101165, 101177,
+    },
+    "$\0"
+    "$&\0"
+    "$'\0"
+    "$*\0"
+    "$+\0"
+    "$1\0"
+    "$2\0"
+    "$3\0"
+    "$4\0"
+    "$5\0"
+    "$6\0"
+    "$7\0"
+    "$8\0"
+    "$9\0"
+    "$_\0"
+    "$`\0"
+    "$hasHandle\0"
+    "$vm\0"
+    "%ArrayIterator%.prototype\0"
+    "%AsyncFromSyncIterator%.prototype\0"
+    "%AsyncFunction%\0"
+    "%AsyncGenerator%.prototype\0"
+    "%AsyncGeneratorFunction%\0"
+    "%AsyncIterator%.prototype\0"
+    "%AttributeIterator%.prototype\0"
+    "%BlobInternalReadableStreamSource%.prototype\0"
+    "%BlockList%\0"
+    "%BuildArtifact%.prototype\0"
+    "%BunRequest%.prototype\0"
+    "%BunTTYFunctions%\0"
+    "%BytesInternalReadableStreamSource%.prototype\0"
+    "%Comment%.prototype\0"
+    "%CompilerHelpers%\0"
+    "%CronJob%.prototype\0"
+    "%DNSResolver%.prototype\0"
+    "%DebugHTTPSServer%.prototype\0"
+    "%DebugHTTPServer%.prototype\0"
+    "%DeclaredTypesForTesting%\0"
+    "%DocEnd%.prototype\0"
+    "%DocType%.prototype\0"
+    "%DoneCallback%.prototype\0"
+    "%Element%.prototype\0"
+    "%EndTag%.prototype\0"
+    "%EventEmitter%.prototype\0"
+    "%Expect%\0"
+    "%ExpectAny%.prototype\0"
+    "%ExpectAnything%.prototype\0"
+    "%ExpectArrayContaining%.prototype\0"
+    "%ExpectCloseTo%.prototype\0"
+    "%ExpectCustomAsymmetricMatcher%.prototype\0"
+    "%ExpectMatcherContext%.prototype\0"
+    "%ExpectMatcherUtils%.prototype\0"
+    "%ExpectObjectContaining%.prototype\0"
+    "%ExpectStatic%.prototype\0"
+    "%ExpectStringContaining%.prototype\0"
+    "%ExpectStringMatching%.prototype\0"
+    "%ExpectTypeOf%\0"
+    "%FFI%.prototype\0"
+    "%FSWatcher%.prototype\0"
+    "%FetchRequestBodySink%\0"
+    "%FetchRequestBodySink%.prototype\0"
+    "%FileInternalReadableStreamSource%.prototype\0"
+    "%FileSink%\0"
+    "%FileSink%.prototype\0"
+    "%FrameworkFileSystemRouter%\0"
+    "%Generator%.prototype\0"
+    "%GeneratorFunction%\0"
+    "%H2FrameParser%\0"
+    "%HTMLBundle%.prototype\0"
+    "%HTMLRewriterSink%\0"
+    "%HTMLRewriterSink%.prototype\0"
+    "%HTMLRewriterTransform%.prototype\0"
+    "%HTTPResponseSink%\0"
+    "%HTTPResponseSink%.prototype\0"
+    "%HTTPSResponseSink%\0"
+    "%HTTPSResponseSink%.prototype\0"
+    "%HTTPSServer%.prototype\0"
+    "%HTTPServer%.prototype\0"
+    "%HeadersIterator%.prototype\0"
+    "%Immediate%\0"
+    "%ImportMeta%\0"
+    "%IntlSegmentIterator%.prototype\0"
+    "%IntlSegments%.prototype\0"
+    "%IteratorHelper%.prototype\0"
+    "%JSONText%\0"
+    "%LinkTimeConstant:arrayFromFastWithoutMapFn%\0"
+    "%LinkTimeConstant:asyncFromSyncIteratorCreate%\0"
+    "%LinkTimeConstant:instanceOf%\0"
+    "%LinkTimeConstant:isArray%\0"
+    "%LinkTimeConstant:isTypedArrayOutOfBounds%\0"
+    "%LinkTimeConstant:iteratorHelperCreate%\0"
+    "%LinkTimeConstant:makeTypeError%\0"
+    "%LinkTimeConstant:newRejectedPromise%\0"
+    "%LinkTimeConstant:newResolvedPromise%\0"
+    "%LinkTimeConstant:promiseReject%\0"
+    "%LinkTimeConstant:promiseResolve%\0"
+    "%LinkTimeConstant:toIntegerOrInfinity%\0"
+    "%LinkTimeConstant:typedArrayFromFast%\0"
+    "%LinkTimeConstant:typedArrayLength%\0"
+    "%LinkTimeConstant:wrapForValidIteratorCreate%\0"
+    "%Listener%.prototype\0"
+    "%MIMEBinding%\0"
+    "%MapIterator%.prototype\0"
+    "%MatchedRoute%.prototype\0"
+    "%ModuleCache%\0"
+    "%ModuleExtensions%\0"
+    "%ModuleObject%\0"
+    "%ModuleRequire%\0"
+    "%MySQLConnection%.prototype\0"
+    "%MySQLQuery%.prototype\0"
+    "%NativeBrotli%\0"
+    "%NativeFunctions%\0"
+    "%NativeZlib%\0"
+    "%NativeZstd%\0"
+    "%NetworkSink%\0"
+    "%NetworkSink%.prototype\0"
+    "%NodeCryptoBinding%\0"
+    "%NodeCryptoRustBinding%\0"
+    "%NodeHTTPInternalBinding%\0"
+    "%NodeHTTPResponse%.prototype\0"
+    "%NodeJSFS%.prototype\0"
+    "%NodeURLFunctions%\0"
+    "%NodeVMBinding%\0"
+    "%ParsedShellScript%.prototype\0"
+    "%PostgresSQLConnection%.prototype\0"
+    "%PostgresSQLQuery%.prototype\0"
+    "%PrivateGlobals%\0"
+    "%QuicEndpoint%\0"
+    "%QuicSession%.prototype\0"
+    "%QuicStream%.prototype\0"
+    "%RegExpStringIterator%.prototype\0"
+    "%ResourceUsage%.prototype\0"
+    "%S3File%.prototype\0"
+    "%S3Stat%\0"
+    "%ScopeFunctions%.prototype\0"
+    "%SecureContext%\0"
+    "%ServerWebSocket%\0"
+    "%SetIterator%.prototype\0"
+    "%ShellInterpreter%.prototype\0"
+    "%SocketAddress%\0"
+    "%StatWatcher%.prototype\0"
+    "%StringIterator%.prototype\0"
+    "%Subprocess%.prototype\0"
+    "%TCPSocket%.prototype\0"
+    "%TLSSocket%.prototype\0"
+    "%TextChunk%.prototype\0"
+    "%Timeout%\0"
+    "%TypedArray%\0"
+    "%UDPSocket%.prototype\0"
+    "%URLSearchParamsIterator%.prototype\0"
+    "%UndeclaredNativeCode%\0"
+    "%WrapForValidIterator%.prototype\0"
+    "%bun:bundle%\0"
+    "0\0"
+    "1\0"
+    "@vercel/fetch\0"
+    "ABORT_ERR\0"
+    "ADDRCONFIG\0"
+    "ADDRGETNETWORKPARAMS\0"
+    "ALL\0"
+    "ALPNProtocols\0"
+    "AbortController\0"
+    "AbortController.signal\0"
+    "AbortSignal\0"
+    "Agent\0"
+    "AggregateError\0"
+    "Architecture.jsFunctionArchitectureIsMatch\0"
+    "Archive\0"
+    "Array\0"
+    "ArrayBuffer\0"
+    "ArrayBufferSink\0"
+    "Assert\0"
+    "AssertionError\0"
+    "AsyncDisposableStack\0"
+    "AsyncDisposableStackStateDisposed\0"
+    "AsyncLocalStorage\0"
+    "AsyncResource\0"
+    "Atomics\0"
+    "BADFAMILY\0"
+    "BADFLAGS\0"
+    "BADHINTS\0"
+    "BADNAME\0"
+    "BADQUERY\0"
+    "BADRESP\0"
+    "BADSTR\0"
+    "BYTES_PER_ELEMENT\0"
+    "BakeConfigPluginsRsCheckFramework\0"
+    "BakeConfigPluginsRsIsRestart\0"
+    "BakeConfigPluginsRsIsRestarting\0"
+    "BakeConfigPluginsRsRestartProcess\0"
+    "BakeConfigPluginsRsSetConfigPlugins\0"
+    "BakeConfigPluginsRsSetPages\0"
+    "BalancedPool\0"
+    "BigInt\0"
+    "BigInt64Array\0"
+    "BigUint64Array\0"
+    "Blob\0"
+    "BlockList\0"
+    "Boolean\0"
+    "BroadcastChannel\0"
+    "BrotliCompress\0"
+    "BrotliDecompress\0"
+    "Buffer\0"
+    "BuildError\0"
+    "BuildMessage\0"
+    "BuildMessage.prototype.message\0"
+    "Bun\0"
+    "Bun.ArrayBufferSink.prototype\0"
+    "Bun::createNodeICUBinding\0"
+    "Bun::createNodeURLBinding\0"
+    "Bun::createNodeV8Binding\0"
+    "Bun::createNodeVMBinding\0"
+    "BunDebugger.cpp\0"
+    "BunDebuggerCppJsFunction_closeNodeInspector\0"
+    "BunDebuggerCppJsFunction_openNodeInspector\0"
+    "BunDebuggerCppJsFunction_postNodeInspectorControl\0"
+    "BunDebuggerCppJsFunction_waitForNodeInspectorConnection\0"
+    "BunProcess.cpp\0"
+    "BunProcessCppJsFunctionDrainMicrotaskQueue\0"
+    "BunProcessCppJsFunctionIsStandardOutputStream\0"
+    "BunProcessCppJsFunctionReportUncaughtException\0"
+    "BunProcessCppJsFunction_emitWarning\0"
+    "BunProcessCppJsFunction_throwValue\0"
+    "BunProcessCppProcess_functionEmitHelper\0"
+    "BunProcessCppProcess_functionWriteWarning\0"
+    "Bun__FFI__cc\0"
+    "Bun__canonicalizeIP\0"
+    "Bun__highwayStringsForTesting\0"
+    "Bun__setSyntheticAllocationLimitForTesting\0"
+    "Bun__xxhash3_64_forTesting\0"
+    "ByteLengthQueuingStrategy\0"
+    "BytecodeOrderRecorder.rs\0"
+    "BytecodeOrderRecorderRsNamesForTesting\0"
+    "CANCELLED\0"
+    "CFunction\0"
+    "CLIENT_RENEG_LIMIT\0"
+    "CLIENT_RENEG_WINDOW\0"
+    "CLOSED\0"
+    "CLOSING\0"
+    "CONNECT\0"
+    "CONNECTING\0"
+    "CONNREFUSED\0"
+    "COPYFILE_EXCL\0"
+    "COPYFILE_FICLONE\0"
+    "COPYFILE_FICLONE_FORCE\0"
+    "CRLF\0"
+    "CSRF\0"
+    "CString\0"
+    "CallSite.cpp\0"
+    "CallTracker\0"
+    "Certificate\0"
+    "Channel\0"
+    "Checker_queries_testingRsDescribeCheckerQueries\0"
+    "ChildProcess\0"
+    "Cipher\0"
+    "Cipheriv\0"
+    "Client\0"
+    "ClientHttp2Session\0"
+    "ClientRequest\0"
+    "CloseEvent\0"
+    "Code_resolver_testingRsCompareCodeResolution\0"
+    "Code_resolver_testingRsDescribeCodeGraph\0"
+    "Code_resolver_testingRsResolveComputedSpecifier\0"
+    "Collator\0"
+    "CollectionsLinear_fifoRsTestingAPIsOrderedRemoveProbe\0"
+    "CompileError\0"
+    "CompressionStream\0"
+    "Console\0"
+    "Cookie\0"
+    "CookieMap\0"
+    "CountQueuingStrategy\0"
+    "Counters.rs\0"
+    "CountersRsCreateCountersObject\0"
+    "Crypto\0"
+    "CryptoHasher\0"
+    "CryptoKey\0"
+    "Css_internalsRsAttrTest\0"
+    "Css_internalsRsMinifyErrorTestWithOptions\0"
+    "Css_internalsRsMinifyTest\0"
+    "Css_internalsRsMinifyTestWithOptions\0"
+    "Css_internalsRsPrefixTest\0"
+    "Css_internalsRsPrefixTestWithOptions\0"
+    "Css_internalsRsTestWithOptions\0"
+    "Css_internalsRs_test\0"
+    "CustomEvent\0"
+    "DEFAULT_CIPHERS\0"
+    "DEFAULT_ECDH_CURVE\0"
+    "DEFAULT_MAX_VERSION\0"
+    "DEFAULT_MIN_VERSION\0"
+    "DELETE\0"
+    "DESTRUCTION\0"
+    "DH_CHECK_P_NOT_PRIME\0"
+    "DH_CHECK_P_NOT_SAFE_PRIME\0"
+    "DH_NOT_SUITABLE_GENERATOR\0"
+    "DH_UNABLE_TO_CHECK_GENERATOR\0"
+    "DOMException\0"
+    "DONT_CONTEXTIFY\0"
+    "DataView\0"
+    "Database\0"
+    "DatabaseSync\0"
+    "Date\0"
+    "DateTimeFormat\0"
+    "Decipheriv\0"
+    "Declared_types_testingRsGetClass\0"
+    "DecodeURIComponentSIMDCppJsFunctionDecodeURIComponentSIMD\0"
+    "DecompressionStream\0"
+    "DecoratorHandler\0"
+    "DefaultDeserializer\0"
+    "DefaultSerializer\0"
+    "Deflate\0"
+    "DeflateRaw\0"
+    "Deserializer\0"
+    "DevServer.bind.ts\0"
+    "DevServerBindTsGetDeinitCountForTesting\0"
+    "DiffieHellman\0"
+    "DiffieHellmanGroup\0"
+    "Dir\0"
+    "DirectStreamController.flushesAtEndOfTick\0"
+    "Dirent\0"
+    "Dispatcher\0"
+    "DisplayNames\0"
+    "DisposableStack\0"
+    "DisposableStackStateDisposed\0"
+    "Dns_internalsBindTsGetRuntimeDefaultResultOrderOption\0"
+    "Duplex\0"
+    "Duration\0"
+    "DurationFormat\0"
+    "E\0"
+    "E2BIG\0"
+    "EACCES\0"
+    "EADDRINUSE\0"
+    "EADDRNOTAVAIL\0"
+    "EAFNOSUPPORT\0"
+    "EAGAIN\0"
+    "EALREADY\0"
+    "EBADF\0"
+    "EBADMSG\0"
+    "EBUSY\0"
+    "ECANCELED\0"
+    "ECDH\0"
+    "ECHILD\0"
+    "ECONNABORTED\0"
+    "ECONNREFUSED\0"
+    "ECONNRESET\0"
+    "EDEADLK\0"
+    "EDESTADDRREQ\0"
+    "EDOM\0"
+    "EDQUOT\0"
+    "EEXIST\0"
+    "EFAULT\0"
+    "EFBIG\0"
+    "EHOSTUNREACH\0"
+    "EIDRM\0"
+    "EILSEQ\0"
+    "EINPROGRESS\0"
+    "EINTR\0"
+    "EINVAL\0"
+    "EIO\0"
+    "EISCONN\0"
+    "EISDIR\0"
+    "ELOOP\0"
+    "EMFILE\0"
+    "EMLINK\0"
+    "EMSGSIZE\0"
+    "EMULTIHOP\0"
+    "ENAMETOOLONG\0"
+    "ENETDOWN\0"
+    "ENETRESET\0"
+    "ENETUNREACH\0"
+    "ENFILE\0"
+    "ENGINE_METHOD_ALL\0"
+    "ENGINE_METHOD_CIPHERS\0"
+    "ENGINE_METHOD_DH\0"
+    "ENGINE_METHOD_DIGESTS\0"
+    "ENGINE_METHOD_DSA\0"
+    "ENGINE_METHOD_EC\0"
+    "ENGINE_METHOD_NONE\0"
+    "ENGINE_METHOD_PKEY_ASN1_METHS\0"
+    "ENGINE_METHOD_PKEY_METHS\0"
+    "ENGINE_METHOD_RAND\0"
+    "ENGINE_METHOD_RSA\0"
+    "ENOBUFS\0"
+    "ENODATA\0"
+    "ENODEV\0"
+    "ENOENT\0"
+    "ENOEXEC\0"
+    "ENOLCK\0"
+    "ENOLINK\0"
+    "ENOMEM\0"
+    "ENOMSG\0"
+    "ENOPROTOOPT\0"
+    "ENOSPC\0"
+    "ENOSR\0"
+    "ENOSTR\0"
+    "ENOSYS\0"
+    "ENOTCONN\0"
+    "ENOTDIR\0"
+    "ENOTEMPTY\0"
+    "ENOTSOCK\0"
+    "ENOTSUP\0"
+    "ENOTTY\0"
+    "ENXIO\0"
+    "EOF\0"
+    "EOL\0"
+    "EOPNOTSUPP\0"
+    "EOVERFLOW\0"
+    "EPERM\0"
+    "EPIPE\0"
+    "EPROTO\0"
+    "EPROTONOSUPPORT\0"
+    "EPROTOTYPE\0"
+    "EPSILON\0"
+    "ERANGE\0"
+    "EROFS\0"
+    "ERR_ACCESS_DENIED\0"
+    "ERR_AMBIGUOUS_ARGUMENT\0"
+    "ERR_ARG_NOT_ITERABLE\0"
+    "ERR_ASSERTION\0"
+    "ERR_ASYNC_CALLBACK\0"
+    "ERR_ASYNC_TYPE\0"
+    "ERR_BODY_ALREADY_USED\0"
+    "ERR_BORINGSSL\0"
+    "ERR_BROTLI_INVALID_PARAM\0"
+    "ERR_BUFFER_OUT_OF_BOUNDS\0"
+    "ERR_BUFFER_TOO_LARGE\0"
+    "ERR_CANNOT_WATCH_SIGINT\0"
+    "ERR_CHILD_PROCESS_IPC_REQUIRED\0"
+    "ERR_CHILD_PROCESS_STDIO_MAXBUFFER\0"
+    "ERR_CLOSED_MESSAGE_PORT\0"
+    "ERR_CONSOLE_WRITABLE_STREAM\0"
+    "ERR_CONSTRUCT_CALL_INVALID\0"
+    "ERR_CONSTRUCT_CALL_REQUIRED\0"
+    "ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED\0"
+    "ERR_CRYPTO_ECDH_INVALID_FORMAT\0"
+    "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY\0"
+    "ERR_CRYPTO_HASH_FINALIZED\0"
+    "ERR_CRYPTO_HASH_UPDATE_FAILED\0"
+    "ERR_CRYPTO_INCOMPATIBLE_KEY\0"
+    "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS\0"
+    "ERR_CRYPTO_INVALID_AUTH_TAG\0"
+    "ERR_CRYPTO_INVALID_CURVE\0"
+    "ERR_CRYPTO_INVALID_DIGEST\0"
+    "ERR_CRYPTO_INVALID_IV\0"
+    "ERR_CRYPTO_INVALID_JWK\0"
+    "ERR_CRYPTO_INVALID_KEYLEN\0"
+    "ERR_CRYPTO_INVALID_KEYPAIR\0"
+    "ERR_CRYPTO_INVALID_KEYTYPE\0"
+    "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE\0"
+    "ERR_CRYPTO_INVALID_MESSAGELEN\0"
+    "ERR_CRYPTO_INVALID_SCRYPT_PARAMS\0"
+    "ERR_CRYPTO_INVALID_STATE\0"
+    "ERR_CRYPTO_JWK_UNSUPPORTED_CURVE\0"
+    "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE\0"
+    "ERR_CRYPTO_OPERATION_FAILED\0"
+    "ERR_CRYPTO_SIGN_KEY_REQUIRED\0"
+    "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH\0"
+    "ERR_CRYPTO_UNKNOWN_CIPHER\0"
+    "ERR_CRYPTO_UNKNOWN_DH_GROUP\0"
+    "ERR_CRYPTO_UNSUPPORTED_OPERATION\0"
+    "ERR_DIR_CLOSED\0"
+    "ERR_DIR_CONCURRENT_OPERATION\0"
+    "ERR_DLOPEN_DISABLED\0"
+    "ERR_DLOPEN_FAILED\0"
+    "ERR_DNS_SET_SERVERS_FAILED\0"
+    "ERR_ENCODING_INVALID_ENCODED_DATA\0"
+    "ERR_ENCODING_NOT_SUPPORTED\0"
+    "ERR_EVENT_RECURSION\0"
+    "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM\0"
+    "ERR_FFI_CC_DISABLED\0"
+    "ERR_FORMDATA_PARSE_ERROR\0"
+    "ERR_FS_CP_DIR_TO_NON_DIR\0"
+    "ERR_FS_CP_EEXIST\0"
+    "ERR_FS_CP_EINVAL\0"
+    "ERR_FS_CP_FIFO_PIPE\0"
+    "ERR_FS_CP_NON_DIR_TO_DIR\0"
+    "ERR_FS_CP_SOCKET\0"
+    "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY\0"
+    "ERR_FS_CP_UNKNOWN\0"
+    "ERR_FS_EISDIR\0"
+    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN\0"
+    "ERR_HTTP2_ALTSVC_LENGTH\0"
+    "ERR_HTTP2_CONNECT_AUTHORITY\0"
+    "ERR_HTTP2_CONNECT_PATH\0"
+    "ERR_HTTP2_CONNECT_SCHEME\0"
+    "ERR_HTTP2_ERROR\0"
+    "ERR_HTTP2_GOAWAY_SESSION\0"
+    "ERR_HTTP2_HEADERS_AFTER_RESPOND\0"
+    "ERR_HTTP2_HEADERS_SENT\0"
+    "ERR_HTTP2_HEADER_SINGLE_VALUE\0"
+    "ERR_HTTP2_INFO_STATUS_NOT_ALLOWED\0"
+    "ERR_HTTP2_INVALID_CONNECTION_HEADERS\0"
+    "ERR_HTTP2_INVALID_HEADER_VALUE\0"
+    "ERR_HTTP2_INVALID_INFO_STATUS\0"
+    "ERR_HTTP2_INVALID_ORIGIN\0"
+    "ERR_HTTP2_INVALID_PSEUDOHEADER\0"
+    "ERR_HTTP2_INVALID_SESSION\0"
+    "ERR_HTTP2_INVALID_SETTING_VALUE\0"
+    "ERR_HTTP2_INVALID_SETTING_VALUE_RangeError\0"
+    "ERR_HTTP2_INVALID_STREAM\0"
+    "ERR_HTTP2_MAX_PENDING_SETTINGS_ACK\0"
+    "ERR_HTTP2_NO_SOCKET_MANIPULATION\0"
+    "ERR_HTTP2_ORIGIN_LENGTH\0"
+    "ERR_HTTP2_OUT_OF_STREAMS\0"
+    "ERR_HTTP2_PAYLOAD_FORBIDDEN\0"
+    "ERR_HTTP2_PING_CANCEL\0"
+    "ERR_HTTP2_PING_LENGTH\0"
+    "ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED\0"
+    "ERR_HTTP2_PUSH_DISABLED\0"
+    "ERR_HTTP2_SEND_FILE\0"
+    "ERR_HTTP2_SEND_FILE_NOSEEK\0"
+    "ERR_HTTP2_SESSION_ERROR\0"
+    "ERR_HTTP2_SOCKET_UNBOUND\0"
+    "ERR_HTTP2_STATUS_101\0"
+    "ERR_HTTP2_STATUS_INVALID\0"
+    "ERR_HTTP2_STREAM_ERROR\0"
+    "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS\0"
+    "ERR_HTTP2_TOO_MANY_INVALID_FRAMES\0"
+    "ERR_HTTP2_TRAILERS_ALREADY_SENT\0"
+    "ERR_HTTP2_TRAILERS_NOT_READY\0"
+    "ERR_HTTP2_UNSUPPORTED_PROTOCOL\0"
+    "ERR_HTTP_BODY_NOT_ALLOWED\0"
+    "ERR_HTTP_CONTENT_LENGTH_MISMATCH\0"
+    "ERR_HTTP_HEADERS_SENT\0"
+    "ERR_HTTP_INVALID_HEADER_VALUE\0"
+    "ERR_HTTP_INVALID_STATUS_CODE\0"
+    "ERR_HTTP_REQUEST_TIMEOUT\0"
+    "ERR_HTTP_SOCKET_ASSIGNED\0"
+    "ERR_HTTP_TRAILER_INVALID\0"
+    "ERR_ILLEGAL_CONSTRUCTOR\0"
+    "ERR_INCOMPATIBLE_OPTION_PAIR\0"
+    "ERR_INSPECTOR_ALREADY_ACTIVATED\0"
+    "ERR_INSPECTOR_ALREADY_CONNECTED\0"
+    "ERR_INSPECTOR_COMMAND\0"
+    "ERR_INSPECTOR_NOT_ACTIVE\0"
+    "ERR_INSPECTOR_NOT_AVAILABLE\0"
+    "ERR_INSPECTOR_NOT_CONNECTED\0"
+    "ERR_INSPECTOR_NOT_WORKER\0"
+    "ERR_INTERNAL_ASSERTION\0"
+    "ERR_INVALID_ADDRESS_FAMILY\0"
+    "ERR_INVALID_ARG_TYPE\0"
+    "ERR_INVALID_ARG_VALUE\0"
+    "ERR_INVALID_ARG_VALUE_RangeError\0"
+    "ERR_INVALID_ASYNC_ID\0"
+    "ERR_INVALID_BUFFER_SIZE\0"
+    "ERR_INVALID_CHAR\0"
+    "ERR_INVALID_CURSOR_POS\0"
+    "ERR_INVALID_FD_TYPE\0"
+    "ERR_INVALID_FILE_URL_HOST\0"
+    "ERR_INVALID_FILE_URL_PATH\0"
+    "ERR_INVALID_HANDLE_TYPE\0"
+    "ERR_INVALID_HTTP_TOKEN\0"
+    "ERR_INVALID_IP_ADDRESS\0"
+    "ERR_INVALID_MIME_SYNTAX\0"
+    "ERR_INVALID_MODULE\0"
+    "ERR_INVALID_OBJECT_DEFINE_PROPERTY\0"
+    "ERR_INVALID_PROTOCOL\0"
+    "ERR_INVALID_REPL_EVAL_CONFIG\0"
+    "ERR_INVALID_REPL_INPUT\0"
+    "ERR_INVALID_RETURN_VALUE\0"
+    "ERR_INVALID_STATE\0"
+    "ERR_INVALID_STATE_RangeError\0"
+    "ERR_INVALID_STATE_TypeError\0"
+    "ERR_INVALID_THIS\0"
+    "ERR_INVALID_URI\0"
+    "ERR_INVALID_URL\0"
+    "ERR_INVALID_URL_SCHEME\0"
+    "ERR_IPC_CHANNEL_CLOSED\0"
+    "ERR_IPC_DISCONNECTED\0"
+    "ERR_IPC_ONE_PIPE\0"
+    "ERR_IP_BLOCKED\0"
+    "ERR_KEY_GENERATION_JOB_FAILED\0"
+    "ERR_LOAD_SQLITE_EXTENSION\0"
+    "ERR_MEMORY_ALLOCATION_FAILED\0"
+    "ERR_METHOD_NOT_IMPLEMENTED\0"
+    "ERR_MISSING_ARGS\0"
+    "ERR_MISSING_OPTION\0"
+    "ERR_MISSING_PASSPHRASE\0"
+    "ERR_MODULE_LINK_MISMATCH\0"
+    "ERR_MODULE_NOT_FOUND\0"
+    "ERR_MULTIPLE_CALLBACK\0"
+    "ERR_MYSQL_CONNECTION_CLOSED\0"
+    "ERR_MYSQL_CONNECTION_FAILED\0"
+    "ERR_MYSQL_CONNECTION_REFUSED\0"
+    "ERR_MYSQL_CONNECTION_TIMEOUT\0"
+    "ERR_MYSQL_IDLE_TIMEOUT\0"
+    "ERR_MYSQL_LIFETIME_TIMEOUT\0"
+    "ERR_NOT_BUILDING_SNAPSHOT\0"
+    "ERR_OPERATION_FAILED\0"
+    "ERR_OSSL_EVP_INVALID_DIGEST\0"
+    "ERR_OUT_OF_RANGE\0"
+    "ERR_PARSE_ARGS_INVALID_OPTION_VALUE\0"
+    "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL\0"
+    "ERR_PARSE_ARGS_UNKNOWN_OPTION\0"
+    "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2\0"
+    "ERR_POSTGRES_CONNECTION_CLOSED\0"
+    "ERR_POSTGRES_CONNECTION_FAILED\0"
+    "ERR_POSTGRES_CONNECTION_REFUSED\0"
+    "ERR_POSTGRES_CONNECTION_TIMEOUT\0"
+    "ERR_POSTGRES_EXPECTED_REQUEST\0"
+    "ERR_POSTGRES_EXPECTED_STATEMENT\0"
+    "ERR_POSTGRES_IDLE_TIMEOUT\0"
+    "ERR_POSTGRES_INVALID_BACKEND_KEY_DATA\0"
+    "ERR_POSTGRES_INVALID_BINARY_DATA\0"
+    "ERR_POSTGRES_INVALID_BYTE_SEQUENCE\0"
+    "ERR_POSTGRES_INVALID_CHARACTER\0"
+    "ERR_POSTGRES_INVALID_MESSAGE\0"
+    "ERR_POSTGRES_INVALID_MESSAGE_LENGTH\0"
+    "ERR_POSTGRES_INVALID_SERVER_KEY\0"
+    "ERR_POSTGRES_INVALID_SERVER_SIGNATURE\0"
+    "ERR_POSTGRES_INVALID_TRANSACTION_STATE\0"
+    "ERR_POSTGRES_LIFETIME_TIMEOUT\0"
+    "ERR_POSTGRES_NOT_TAGGED_CALL\0"
+    "ERR_POSTGRES_QUERY_CANCELLED\0"
+    "ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64\0"
+    "ERR_POSTGRES_SASL_SIGNATURE_MISMATCH\0"
+    "ERR_POSTGRES_SERVER_ERROR\0"
+    "ERR_POSTGRES_SYNTAX_ERROR\0"
+    "ERR_POSTGRES_TLS_NOT_AVAILABLE\0"
+    "ERR_POSTGRES_TLS_UPGRADE_FAILED\0"
+    "ERR_POSTGRES_UNEXPECTED_MESSAGE\0"
+    "ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD\0"
+    "ERR_POSTGRES_UNKNOWN_FORMAT_CODE\0"
+    "ERR_POSTGRES_UNSAFE_TRANSACTION\0"
+    "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT\0"
+    "ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD\0"
+    "ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT\0"
+    "ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE\0"
+    "ERR_PROXY_INVALID_CONFIG\0"
+    "ERR_PROXY_TUNNEL\0"
+    "ERR_QUIC_CONNECTION_FAILED\0"
+    "ERR_QUIC_ENDPOINT_CLOSED\0"
+    "ERR_QUIC_OPEN_STREAM_FAILED\0"
+    "ERR_QUIC_STREAM_ABORTED\0"
+    "ERR_QUIC_STREAM_RESET\0"
+    "ERR_QUIC_VERSION_NEGOTIATION_ERROR\0"
+    "ERR_REDIS_AUTHENTICATION_FAILED\0"
+    "ERR_REDIS_CONNECTION_CLOSED\0"
+    "ERR_REDIS_CONNECTION_TIMEOUT\0"
+    "ERR_REDIS_IDLE_TIMEOUT\0"
+    "ERR_REDIS_INVALID_ARGUMENT\0"
+    "ERR_REDIS_INVALID_ARRAY\0"
+    "ERR_REDIS_INVALID_BULK_STRING\0"
+    "ERR_REDIS_INVALID_COMMAND\0"
+    "ERR_REDIS_INVALID_DATABASE\0"
+    "ERR_REDIS_INVALID_ERROR_STRING\0"
+    "ERR_REDIS_INVALID_INTEGER\0"
+    "ERR_REDIS_INVALID_PASSWORD\0"
+    "ERR_REDIS_INVALID_RESPONSE\0"
+    "ERR_REDIS_INVALID_RESPONSE_TYPE\0"
+    "ERR_REDIS_INVALID_SIMPLE_STRING\0"
+    "ERR_REDIS_INVALID_STATE\0"
+    "ERR_REDIS_INVALID_USERNAME\0"
+    "ERR_REDIS_SERVER_ERROR\0"
+    "ERR_REDIS_TLS_NOT_AVAILABLE\0"
+    "ERR_REDIS_TLS_UPGRADE_FAILED\0"
+    "ERR_S3_INVALID_ENDPOINT\0"
+    "ERR_S3_INVALID_METHOD\0"
+    "ERR_S3_INVALID_PATH\0"
+    "ERR_S3_INVALID_SESSION_TOKEN\0"
+    "ERR_S3_INVALID_SIGNATURE\0"
+    "ERR_S3_MISSING_CREDENTIALS\0"
+    "ERR_SCRIPT_EXECUTION_INTERRUPTED\0"
+    "ERR_SCRIPT_EXECUTION_TIMEOUT\0"
+    "ERR_SECRETS_ACCESS_DENIED\0"
+    "ERR_SECRETS_AUTH_FAILED\0"
+    "ERR_SECRETS_INTERACTION_NOT_ALLOWED\0"
+    "ERR_SECRETS_INTERACTION_REQUIRED\0"
+    "ERR_SECRETS_NOT_FOUND\0"
+    "ERR_SECRETS_PLATFORM_ERROR\0"
+    "ERR_SECRETS_USER_CANCELED\0"
+    "ERR_SERVER_ALREADY_LISTEN\0"
+    "ERR_SERVER_NOT_RUNNING\0"
+    "ERR_SOCKET_ALREADY_BOUND\0"
+    "ERR_SOCKET_BAD_BUFFER_SIZE\0"
+    "ERR_SOCKET_BAD_PORT\0"
+    "ERR_SOCKET_BAD_TYPE\0"
+    "ERR_SOCKET_CLOSED\0"
+    "ERR_SOCKET_CLOSED_BEFORE_CONNECTION\0"
+    "ERR_SOCKET_CONNECTION_TIMEOUT\0"
+    "ERR_SOCKET_DGRAM_IS_CONNECTED\0"
+    "ERR_SOCKET_DGRAM_NOT_CONNECTED\0"
+    "ERR_SOCKET_DGRAM_NOT_RUNNING\0"
+    "ERR_SQLITE_ERROR\0"
+    "ERR_SSL_NO_CIPHER_MATCH\0"
+    "ERR_STREAM_ALREADY_FINISHED\0"
+    "ERR_STREAM_CANNOT_PIPE\0"
+    "ERR_STREAM_DESTROYED\0"
+    "ERR_STREAM_ITER_MISSING_FLAG\0"
+    "ERR_STREAM_NULL_VALUES\0"
+    "ERR_STREAM_PREMATURE_CLOSE\0"
+    "ERR_STREAM_PUSH_AFTER_EOF\0"
+    "ERR_STREAM_RELEASE_LOCK\0"
+    "ERR_STREAM_UNABLE_TO_PIPE\0"
+    "ERR_STREAM_UNSHIFT_AFTER_END_EVENT\0"
+    "ERR_STREAM_WRAP\0"
+    "ERR_STREAM_WRITE_AFTER_END\0"
+    "ERR_STRING_TOO_LONG\0"
+    "ERR_TLS_ALPN_CALLBACK_INVALID_RESULT\0"
+    "ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS\0"
+    "ERR_TLS_CERT_ALTNAME_FORMAT\0"
+    "ERR_TLS_CERT_ALTNAME_INVALID\0"
+    "ERR_TLS_HANDSHAKE_TIMEOUT\0"
+    "ERR_TLS_INVALID_CONTEXT\0"
+    "ERR_TLS_INVALID_PROTOCOL_METHOD\0"
+    "ERR_TLS_INVALID_PROTOCOL_VERSION\0"
+    "ERR_TLS_INVALID_STATE\0"
+    "ERR_TLS_PROTOCOL_VERSION_CONFLICT\0"
+    "ERR_TLS_RENEGOTIATION_DISABLED\0"
+    "ERR_TLS_RENEGOTIATION_UNSUPPORTED\0"
+    "ERR_TLS_REQUIRED_SERVER_NAME\0"
+    "ERR_TLS_SNI_FROM_SERVER\0"
+    "ERR_TRACE_EVENTS_CATEGORY_REQUIRED\0"
+    "ERR_TRACE_EVENTS_UNAVAILABLE\0"
+    "ERR_TRAILING_JUNK_AFTER_STREAM_END\0"
+    "ERR_UNAVAILABLE_DURING_EXIT\0"
+    "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET\0"
+    "ERR_UNESCAPED_CHARACTERS\0"
+    "ERR_UNHANDLED_ERROR\0"
+    "ERR_UNHANDLED_REJECTION\0"
+    "ERR_UNKNOWN_CREDENTIAL\0"
+    "ERR_UNKNOWN_ENCODING\0"
+    "ERR_UNKNOWN_SIGNAL\0"
+    "ERR_USE_AFTER_CLOSE\0"
+    "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING\0"
+    "ERR_VM_MODULE_ALREADY_LINKED\0"
+    "ERR_VM_MODULE_CACHED_DATA_REJECTED\0"
+    "ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA\0"
+    "ERR_VM_MODULE_DIFFERENT_CONTEXT\0"
+    "ERR_VM_MODULE_LINK_FAILURE\0"
+    "ERR_VM_MODULE_NOT_MODULE\0"
+    "ERR_VM_MODULE_STATUS\0"
+    "ERR_WEBASSEMBLY_RESPONSE\0"
+    "ERR_WORKER_INVALID_EXEC_ARGV\0"
+    "ERR_WORKER_MESSAGING_ERRORED\0"
+    "ERR_WORKER_MESSAGING_FAILED\0"
+    "ERR_WORKER_MESSAGING_SAME_THREAD\0"
+    "ERR_WORKER_MESSAGING_TIMEOUT\0"
+    "ERR_WORKER_NOT_RUNNING\0"
+    "ERR_WORKER_PATH\0"
+    "ERR_WORKER_UNSUPPORTED_OPERATION\0"
+    "ERR_ZLIB_INITIALIZATION_FAILED\0"
+    "ERR_ZSTD\0"
+    "ERR_ZSTD_INVALID_PARAM\0"
+    "ESPIPE\0"
+    "ESRCH\0"
+    "ESTALE\0"
+    "ETIME\0"
+    "ETIMEDOUT\0"
+    "ETXTBSY\0"
+    "EWOULDBLOCK\0"
+    "EXDEV\0"
+    "EXPECTED_COLOR\0"
+    "EXTENSIONLESS_FORMAT_JAVASCRIPT\0"
+    "EXTENSIONLESS_FORMAT_WASM\0"
+    "EnvHttpProxyAgent\0"
+    "Error\0"
+    "ErrorCodeCppNodeError_proto_toString\0"
+    "ErrorEvent\0"
+    "ErrorWithCode.toString\0"
+    "EscapeRegExpRsJsEscapeRegExp\0"
+    "EscapeRegExpRsJsEscapeRegExpForPackageNameMatching\0"
+    "EvalError\0"
+    "Event\0"
+    "EventEmitter\0"
+    "EventEmitterAsyncResource\0"
+    "EventListener.reportsException\0"
+    "EventSource\0"
+    "EventTarget\0"
+    "Event_loopRsGetActiveTasks\0"
+    "Exception\0"
+    "FFI\0"
+    "FFIType\0"
+    "FILE\0"
+    "FORMERR\0"
+    "F_OK\0"
+    "FakeSocket\0"
+    "FetchSession\0"
+    "FfiRsBun__FFI__cc\0"
+    "FfiRsCloseCallback\0"
+    "File\0"
+    "FileReadStream\0"
+    "FileReader\0"
+    "FileSystemRouter\0"
+    "FileWriteStream\0"
+    "FinalizationRegistry\0"
+    "Float16Array\0"
+    "Float32Array\0"
+    "Float64Array\0"
+    "Fmt_jscBindTsFmtString\0"
+    "FormData\0"
+    "FrameworkRouter.rs\0"
+    "Function\0"
+    "GCProfiler\0"
+    "GET\0"
+    "Glob\0"
+    "Global\0"
+    "GlobalObject.asyncContext\0"
+    "GlobalObject.crypto\0"
+    "GlobalObject.nextTickQueue\0"
+    "GlobalObject.processEnvironment\0"
+    "GlobalObject.stderr\0"
+    "GlobalObject.stdin\0"
+    "GlobalObject.stdout\0"
+    "GlobalObject.utilInspectFunction\0"
+    "GlobalObject.utilInspectOptions\0"
+    "GlobalObject.utilInspectStylizeColorFunction\0"
+    "GlobalObject.utilInspectStylizeNoColorFunction\0"
+    "Gunzip\0"
+    "Gzip\0"
+    "H2FrameParserConstructor\0"
+    "HEAD\0"
+    "HPE_CHUNK_EXTENSIONS_OVERFLOW\0"
+    "HPE_CLOSED_CONNECTION\0"
+    "HPE_HEADER_OVERFLOW\0"
+    "HPE_INTERNAL\0"
+    "HPE_INVALID_CHUNK_SIZE\0"
+    "HPE_INVALID_CONSTANT\0"
+    "HPE_INVALID_CONTENT_LENGTH\0"
+    "HPE_INVALID_EOF_STATE\0"
+    "HPE_INVALID_HEADER_TOKEN\0"
+    "HPE_INVALID_METHOD\0"
+    "HPE_INVALID_TRANSFER_ENCODING\0"
+    "HPE_INVALID_VERSION\0"
+    "HPE_LF_EXPECTED\0"
+    "HPE_PAUSED_H2_UPGRADE\0"
+    "HPE_STRICT\0"
+    "HPE_UNEXPECTED_CONTENT_LENGTH\0"
+    "HTMLRewriter\0"
+    "HTTPParser\0"
+    "Handler.%NativeBrotli%.prototype.onerror\0"
+    "Handler.%NativeZlib%.prototype.onerror\0"
+    "Handler.%NativeZstd%.prototype.onerror\0"
+    "Handler.%PostgresSQLConnection%.prototype.onnotification\0"
+    "Handler.Bun.RedisClient.prototype.onclose\0"
+    "Handler.Bun.RedisClient.prototype.onconnect\0"
+    "Hash\0"
+    "Headers\0"
+    "Headers Iterator\0"
+    "Highway_strings_testingCppBun__highwayStringsForTesting\0"
+    "Hmac\0"
+    "Hosted_git_infoRsTestingAPIsJsFromUrl\0"
+    "Hosted_git_infoRsTestingAPIsJsParseUrl\0"
+    "Http2ServerRequest\0"
+    "Http2ServerResponse\0"
+    "HttpH2ClientRsTestingAPIsLiveCounts\0"
+    "HttpH3ClientRsTestingAPIsQuicLiveCounts\0"
+    "INSPECT_MAX_BYTES\0"
+    "Image\0"
+    "IncomingMessage\0"
+    "Infinity\0"
+    "Inflate\0"
+    "InflateRaw\0"
+    "IniRsIniTestingAPIsLoadNpmrcFromJS\0"
+    "IniRsIniTestingAPIsParse\0"
+    "IniTestingAPIs.loadNpmrcFromJS\0"
+    "IniTestingAPIs.parse\0"
+    "Instance\0"
+    "Instant\0"
+    "Int16Array\0"
+    "Int32Array\0"
+    "Int8Array\0"
+    "Interface\0"
+    "InternalForTesting.cpp\0"
+    "InternalForTestingCppJsFunction_BunString_makeThreadShareableRefCountDelta\0"
+    "InternalForTestingCppJsFunction_BunString_threadIsolatedCopyRefCountDelta\0"
+    "InternalForTestingCppJsFunction_aotBuiltinEntries\0"
+    "InternalForTestingCppJsFunction_aotBuiltinMismatches\0"
+    "InternalForTestingCppJsFunction_aotBuiltinValue\0"
+    "InternalForTestingCppJsFunction_aotNameClass\0"
+    "InternalForTestingCppJsFunction_arrayBufferViewHasBuffer\0"
+    "InternalForTestingCppJsFunction_builtinFeatureUses\0"
+    "InternalForTestingCppJsFunction_emitMemoryPressure\0"
+    "InternalForTestingCppJsFunction_hasReifiedStatic\0"
+    "InternalForTestingCppJsFunction_isASANEnabled\0"
+    "InternalForTestingCppJsFunction_isMemoryPressureWatcherInstalled\0"
+    "InternalForTestingCppJsFunction_lowercaseHeaderNameSIMD\0"
+    "InternalForTestingCppJsFunction_readFreedStringUnderASAN\0"
+    "InternalForTestingCppJsFunction_spawnThreadsForTesting\0"
+    "InternalModuleRegistry.cpp\0"
+    "InternalModuleRegistryCppJsInternalModuleBytecode\0"
+    "InternalModuleRegistryCppJsInternalModulesLoadedFromBytecode\0"
+    "Intl\0"
+    "IpcRsEmitHandleIPCMessage\0"
+    "IsolatedModuleCache.cpp\0"
+    "Iterator\0"
+    "JSBundler.rs\0"
+    "JSBundlerRsJsWorkerLiveCount\0"
+    "JSCTestingHelpers.cpp\0"
+    "JSCallback\0"
+    "JSCommonJSModule.cpp\0"
+    "JSCommonJSModuleCppJsFunctionRequireTestModule\0"
+    "JSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush\0"
+    "JSEventListenerCppJsFunctionEmitUncaughtException\0"
+    "JSEventTarget.cpp\0"
+    "JSEventTargetCppJsEventTargetGetEventListenersCount\0"
+    "JSEventTargetNode.cpp\0"
+    "JSEventTargetNodeCppJsFunctionNodeEventsGetEventListeners\0"
+    "JSFrameworkRouter.getBindings\0"
+    "JSInspectorProfiler.cpp\0"
+    "JSInspectorProfilerCppJsFunction_collectPreciseCoverage\0"
+    "JSInspectorProfilerCppJsFunction_isCPUProfilerRunning\0"
+    "JSInspectorProfilerCppJsFunction_setCPUSamplingInterval\0"
+    "JSInspectorProfilerCppJsFunction_startCPUProfiler\0"
+    "JSInspectorProfilerCppJsFunction_startPreciseCoverage\0"
+    "JSInspectorProfilerCppJsFunction_stopCPUProfiler\0"
+    "JSInspectorProfilerCppJsFunction_stopPreciseCoverage\0"
+    "JSMIMEParams.cpp\0"
+    "JSNodePerformanceHooksHistogram.cpp\0"
+    "JSNodePerformanceHooksHistogramCppJsFunction_createHistogram\0"
+    "JSNodePerformanceHooksHistogramPrototype.cpp\0"
+    "JSNodePerformanceHooksHistogramPrototypeCppJsFunction_disableEventLoopDelay\0"
+    "JSNodePerformanceHooksHistogramPrototypeCppJsFunction_enableEventLoopDelay\0"
+    "JSNodePerformanceHooksHistogramPrototypeCppJsFunction_monitorEventLoopDelay\0"
+    "JSON\0"
+    "JSON5\0"
+    "JSONC\0"
+    "JSONL\0"
+    "JSSQLStatement.cpp\0"
+    "JSTag\0"
+    "JSWebSocket.cpp\0"
+    "JestBindTsFileGeneration\0"
+    "JestBindTsNodeTestMarkResult\0"
+    "Jsc_hooksBindTsHotReloadGeneration\0"
+    "KeyObject\0"
+    "LN10\0"
+    "LN2\0"
+    "LOADIPHLPAPI\0"
+    "LOG10E\0"
+    "LOG2E\0"
+    "LinkError\0"
+    "ListFormat\0"
+    "Listener.bind.ts\0"
+    "ListenerBindTsAddServerName\0"
+    "ListenerBindTsSetSecureContext\0"
+    "Loader\0"
+    "Locale\0"
+    "MAX_HEADER_PAIRS\0"
+    "MAX_LENGTH\0"
+    "MAX_SAFE_INTEGER\0"
+    "MAX_STRING_LENGTH\0"
+    "MAX_VALUE\0"
+    "MD4\0"
+    "MD5\0"
+    "METHODS\0"
+    "MIMEParams\0"
+    "MIMEType\0"
+    "MIN_SAFE_INTEGER\0"
+    "MIN_VALUE\0"
+    "MODULE_NOT_FOUND\0"
+    "Map\0"
+    "MarkdownObject.rs\0"
+    "MarkdownObjectRsSetMaxMarkdownBlockBytesForTesting\0"
+    "Math\0"
+    "Memory\0"
+    "Memory_pressureRsJsPsiFilter\0"
+    "Memory_pressureRsJsPsiTrigger\0"
+    "Memory_pressureRsJsWatcherHasOsBackend\0"
+    "MessageChannel\0"
+    "MessageEvent\0"
+    "MessagePort\0"
+    "MockAgent\0"
+    "MockClient\0"
+    "MockPool\0"
+    "Module\0"
+    "ModuleGraph\0"
+    "ModuleGraph.cpp\0"
+    "ModuleGraph.frames\0"
+    "ModuleGraph.graphs\0"
+    "ModuleGraphCppJsFunctionIsFrameOfStoppedModuleGraph\0"
+    "ModuleGraphCppJsFunctionModuleGraphFrameOfFrame\0"
+    "ModuleGraphCppJsFunctionModuleGraphOfFrame\0"
+    "MySQLError\0"
+    "NEGATIVE_INFINITY\0"
+    "NFC\0"
+    "NFD\0"
+    "NFKC\0"
+    "NFKD\0"
+    "NODATA\0"
+    "NOMEM\0"
+    "NONAME\0"
+    "NOTFOUND\0"
+    "NOTIMP\0"
+    "NOTINITIALIZED\0"
+    "NaN\0"
+    "Napi_bodyRsJsThreadsafeFunctionLiveCount\0"
+    "NativeBrotli\0"
+    "NativeZlib\0"
+    "NativeZstd\0"
+    "NoOpForTesting.cpp\0"
+    "NodeAsyncHooks.cpp\0"
+    "NodeAsyncHooksCppJsSetAsyncHooksEnabled\0"
+    "NodeFetch.cpp\0"
+    "NodeHTTP.cpp\0"
+    "NodeHTTPResponse.onabort\0"
+    "NodeHTTPResponse.ondata\0"
+    "NodeHTTPResponse.onwritable\0"
+    "NodeModule.builtinModules\0"
+    "NodeModule.setWrapperItem\0"
+    "NodeModuleModule.cpp\0"
+    "NodeModuleModuleCppJsFunctionIsModuleResolveFilenameSlowPathEnabled\0"
+    "NodeModuleModuleCppJsFunctionSetCJSWrapperItem\0"
+    "NodeTLS.cpp\0"
+    "NodeTLSCppBun__canonicalizeIP\0"
+    "NodeTLSCppGetBundledRootCertificates\0"
+    "NodeTLSCppGetDefaultCiphers\0"
+    "NodeTLSCppGetExtraCACertificates\0"
+    "NodeTLSCppGetSystemCACertificates\0"
+    "NodeTLSCppLoadExtraCACertificates\0"
+    "NodeTLSCppParseCACertificates\0"
+    "NodeTLSCppSelectServerName\0"
+    "NodeTLSCppSetDefaultCiphers\0"
+    "NodeURL.cpp\0"
+    "NodeUtilTypesModule.cpp\0"
+    "NodeUtilTypesModuleCppJsFunctionIsDeepStrictEqual\0"
+    "NodeUtilTypesModuleCppJsFunctionIsError\0"
+    "NodeUtilTypesModuleCppJsFunctionIsMapIterator\0"
+    "NodeUtilTypesModuleCppJsFunctionIsSetIterator\0"
+    "NodeUtilTypesModuleCppJsFunctionPartialDeepStrictEqual\0"
+    "NodeV8.cpp\0"
+    "NodeVM.cpp\0"
+    "Node_assert_bindingBindTsMyersDiff\0"
+    "Node_assert_bindingBindTsPrintMyersDiff\0"
+    "Node_assert_bindingBindTsPrintSimpleMyersDiff\0"
+    "Node_cluster_bindingBindTsChannelIgnoreOneDisconnectEventListener\0"
+    "Node_cluster_bindingBindTsClusterCloseHandle\0"
+    "Node_cluster_bindingBindTsClusterValidateFd\0"
+    "Node_cluster_bindingBindTsOnInternalMessageChild\0"
+    "Node_cluster_bindingBindTsOnInternalMessagePrimary\0"
+    "Node_cluster_bindingBindTsSetRef\0"
+    "Node_cluster_bindingRsClusterRawBind\0"
+    "Node_cluster_bindingRsSendHelperPrimary\0"
+    "Node_fs_bindingRsCreateMemfdForTesting\0"
+    "Node_fs_bindingRsRm_options_for_testing\0"
+    "Node_fs_bindingRsString_to_flags_for_testing\0"
+    "Node_http_bindingBindTsGetBunServerOpenCount\0"
+    "Node_http_bindingBindTsGetInsecureHTTPParser\0"
+    "Node_http_bindingBindTsGetMaxHTTPHeaderSize\0"
+    "Node_http_bindingBindTsSendWebSocketFrame\0"
+    "Node_http_bindingBindTsSetMaxHTTPHeaderSize\0"
+    "Node_http_bindingBindTsUpgradeNodeHTTPResponseToWebSocket\0"
+    "Node_http_bindingRsGetBunServerAllClosedPromise\0"
+    "Node_net_bindingBindTsGetDefaultAutoSelectFamily\0"
+    "Node_net_bindingBindTsGetDefaultAutoSelectFamilyAttemptTimeout\0"
+    "Node_net_bindingBindTsNewDetachedSocket\0"
+    "Node_net_bindingBindTsSetDefaultAutoSelectFamily\0"
+    "Node_net_bindingBindTsSetDefaultAutoSelectFamilyAttemptTimeout\0"
+    "Node_net_bindingRsDoConnect\0"
+    "Node_osBindTsCpus\0"
+    "Node_osBindTsFreemem\0"
+    "Node_osBindTsGetPriority\0"
+    "Node_osBindTsHomedir\0"
+    "Node_osBindTsHostCpuCount\0"
+    "Node_osBindTsHostname\0"
+    "Node_osBindTsLoadavg\0"
+    "Node_osBindTsNetworkInterfaces\0"
+    "Node_osBindTsRelease\0"
+    "Node_osBindTsSetPriority\0"
+    "Node_osBindTsTotalmem\0"
+    "Node_osBindTsUptime\0"
+    "Node_osBindTsUserInfo\0"
+    "Node_osBindTsVersion\0"
+    "Node_pathBindTsBasenamePosix\0"
+    "Node_pathBindTsBasenameWin32\0"
+    "Node_pathBindTsDirnamePosix\0"
+    "Node_pathBindTsDirnameWin32\0"
+    "Node_pathBindTsExtnamePosix\0"
+    "Node_pathBindTsExtnameWin32\0"
+    "Node_pathBindTsFormatPosix\0"
+    "Node_pathBindTsFormatWin32\0"
+    "Node_pathBindTsIsAbsolutePosix\0"
+    "Node_pathBindTsIsAbsoluteWin32\0"
+    "Node_pathBindTsJoinPosix\0"
+    "Node_pathBindTsJoinWin32\0"
+    "Node_pathBindTsNormalizePosix\0"
+    "Node_pathBindTsNormalizeWin32\0"
+    "Node_pathBindTsParsePosix\0"
+    "Node_pathBindTsParseWin32\0"
+    "Node_pathBindTsRelativePosix\0"
+    "Node_pathBindTsRelativeWin32\0"
+    "Node_pathBindTsResolvePosix\0"
+    "Node_pathBindTsResolveWin32\0"
+    "Node_pathBindTsToNamespacedPathPosix\0"
+    "Node_pathBindTsToNamespacedPathWin32\0"
+    "Node_tls_bindingBindTsGetUseSystemCA\0"
+    "Node_util_bindingBindTsAssertEncodingValid\0"
+    "Node_util_bindingBindTsEcanceledErrorCode\0"
+    "Node_util_bindingBindTsEnobufsErrorCode\0"
+    "Node_util_bindingBindTsEtimedoutErrorCode\0"
+    "Node_util_bindingBindTsExtractedSplitNewLinesFastPathStringsOnly\0"
+    "Node_util_bindingBindTsInternalErrorEntries\0"
+    "Node_util_bindingBindTsInternalErrorName\0"
+    "Node_util_bindingBindTsNormalizeEncoding\0"
+    "Node_util_bindingBindTsParseEnv\0"
+    "Node_util_bindingBindTsUvTranslateSysError\0"
+    "Node_validatorsBindTsCheckRangesOrGetDefault\0"
+    "Node_validatorsBindTsValidateAbortSignal\0"
+    "Node_validatorsBindTsValidateArray\0"
+    "Node_validatorsBindTsValidateBuffer\0"
+    "Node_validatorsBindTsValidateEncoding\0"
+    "Node_validatorsBindTsValidateFiniteNumber\0"
+    "Node_validatorsBindTsValidateInt32\0"
+    "Node_validatorsBindTsValidateInteger\0"
+    "Node_validatorsBindTsValidateNumber\0"
+    "Node_validatorsBindTsValidateObject\0"
+    "Node_validatorsBindTsValidateOneOf\0"
+    "Node_validatorsBindTsValidatePort\0"
+    "Node_validatorsBindTsValidateUint32\0"
+    "Node_zlib_bindingBindTsCrc32\0"
+    "Now\0"
+    "NpmRsArchitectureJsFunctionArchitectureIsMatch\0"
+    "NpmRsOperatingSystemJsFunctionOperatingSystemIsMatch\0"
+    "Number\0"
+    "NumberFormat\0"
+    "OPEN\0"
+    "OPENSSL_VERSION_NUMBER\0"
+    "OPTIONS\0"
+    "O_APPEND\0"
+    "O_CREAT\0"
+    "O_DIRECTORY\0"
+    "O_DSYNC\0"
+    "O_EXCL\0"
+    "O_NOCTTY\0"
+    "O_NOFOLLOW\0"
+    "O_NONBLOCK\0"
+    "O_RDONLY\0"
+    "O_RDWR\0"
+    "O_SYNC\0"
+    "O_TRUNC\0"
+    "O_WRONLY\0"
+    "Object\0"
+    "Object.lookedUpGetters\0"
+    "Object.lookedUpSetters\0"
+    "OperatingSystem.jsFunctionOperatingSystemIsMatch\0"
+    "OutgoingMessage\0"
+    "PATCH\0"
+    "PATH\0"
+    "PI\0"
+    "POINT_CONVERSION_COMPRESSED\0"
+    "POINT_CONVERSION_HYBRID\0"
+    "POINT_CONVERSION_UNCOMPRESSED\0"
+    "POSITIVE_INFINITY\0"
+    "POST\0"
+    "PRIORITY_ABOVE_NORMAL\0"
+    "PRIORITY_BELOW_NORMAL\0"
+    "PRIORITY_HIGH\0"
+    "PRIORITY_HIGHEST\0"
+    "PRIORITY_LOW\0"
+    "PRIORITY_NORMAL\0"
+    "PUT\0"
+    "Pack_commandRsBindingsJsReadTarball\0"
+    "PackageManifest.bindings.generate\0"
+    "Parse_argsRsParseArgs\0"
+    "PassThrough\0"
+    "PatchRsTestingAPIsApply\0"
+    "PatchRsTestingAPIsMakeDiff\0"
+    "PatchRsTestingAPIsParse\0"
+    "Performance\0"
+    "PerformanceEntry\0"
+    "PerformanceMark\0"
+    "PerformanceMeasure\0"
+    "PerformanceNodeTiming\0"
+    "PerformanceObserver\0"
+    "PerformanceObserverEntryList\0"
+    "PerformanceResourceTiming\0"
+    "PerformanceServerTiming\0"
+    "PerformanceTiming\0"
+    "PlainDate\0"
+    "PlainDateTime\0"
+    "PlainMonthDay\0"
+    "PlainTime\0"
+    "PlainYearMonth\0"
+    "PluralRules\0"
+    "Pool\0"
+    "PostgresError\0"
+    "Process.argv\0"
+    "Process.drainMicrotasks\0"
+    "Process.emitsEvent\0"
+    "Process.emitsWarning\0"
+    "Process.execArgv\0"
+    "Process.features\0"
+    "Process.handedWarnings\0"
+    "Process.madeWarnings\0"
+    "Process.onWarning\0"
+    "Process.pushWithInitHooks\0"
+    "Process.release\0"
+    "Process.stderr\0"
+    "Process.throwsWarning\0"
+    "Process.versions\0"
+    "Process.writeWarning\0"
+    "ProcessBindingTTYWrap.cpp\0"
+    "Promise\0"
+    "Proxy\0"
+    "ProxyAgent\0"
+    "RECEIVED_COLOR\0"
+    "REFUSED\0"
+    "REPLServer\0"
+    "REPL_MODE_SLOPPY\0"
+    "REPL_MODE_STRICT\0"
+    "RSA_NO_PADDING\0"
+    "RSA_PKCS1_OAEP_PADDING\0"
+    "RSA_PKCS1_PADDING\0"
+    "RSA_PKCS1_PSS_PADDING\0"
+    "RSA_PSS_SALTLEN_AUTO\0"
+    "RSA_PSS_SALTLEN_DIGEST\0"
+    "RSA_PSS_SALTLEN_MAX_SIGN\0"
+    "RSA_X931_PADDING\0"
+    "RTLD_GLOBAL\0"
+    "RTLD_LAZY\0"
+    "RTLD_LOCAL\0"
+    "RTLD_NOW\0"
+    "R_OK\0"
+    "RangeError\0"
+    "ReadStream\0"
+    "Readable\0"
+    "ReadableByteStreamController\0"
+    "ReadableState\0"
+    "ReadableStream\0"
+    "ReadableStreamBYOBReader\0"
+    "ReadableStreamBYOBRequest\0"
+    "ReadableStreamDefaultController\0"
+    "ReadableStreamDefaultReader\0"
+    "Readline\0"
+    "Receiver\0"
+    "Recoverable\0"
+    "RedirectHandler\0"
+    "RedisClient\0"
+    "ReferenceError\0"
+    "Reflect\0"
+    "RegExp\0"
+    "RelativeTimeFormat\0"
+    "Request\0"
+    "Request.headers\0"
+    "ResolveError\0"
+    "ResolveMessage\0"
+    "ResolveMessage.prototype.message\0"
+    "ResolveMessage.prototype.stack\0"
+    "Resolver\0"
+    "Resolver.newResolver\0"
+    "Response\0"
+    "Response.headers\0"
+    "ResponseJson\0"
+    "RetryAgent\0"
+    "RetryHandler\0"
+    "RuntimeDns_jscDnsRsInternalGetaddrinfoErrorForTesting\0"
+    "RuntimeDns_jscDnsRsInternalIsAllLoopbackOfOneFamilyForTesting\0"
+    "RuntimeDns_jscDnsRsInternalIsLocalhostNameForTesting\0"
+    "RuntimeDns_jscDnsRsInternalSeedCacheForTesting\0"
+    "RuntimeDns_jscDnsRsResolverNewResolver\0"
+    "RuntimeError\0"
+    "RuntimeSocketSocketRsJsCreateSocketPair\0"
+    "RuntimeSocketSocketRsJsSetSocketOptions\0"
+    "RuntimeSocketSocketRsJsUpgradeDuplexToTLS\0"
+    "RuntimeSocketSocketRsTestingAPIsJsClearSocketFaults\0"
+    "RuntimeSocketSocketRsTestingAPIsJsNamedPipeContextLiveCount\0"
+    "RuntimeSocketSocketRsTestingAPIsJsSetSocketFault\0"
+    "RuntimeSocketSocketRsTestingAPIsJsSocketFaultInjectionAvailable\0"
+    "RuntimeTimerTimerRsInternal_bindingsTimerClockMs\0"
+    "RuntimeWebcoreByteStreamRsTestingAPIsByteStreamCancelOnDrain\0"
+    "RuntimeWebcoreFetchRsTestingAPIsNoProxyMatches\0"
+    "RuntimeWebcoreFetchRsTestingAPIsParseURL\0"
+    "RuntimeWebcoreFetchRsTestingAPIsProxyFor\0"
+    "RuntimeWebcoreFileSinkRsTestingAPIsFileSinkLiveCount\0"
+    "S3:\0"
+    "S3Client\0"
+    "S3File\0"
+    "SCHED_NONE\0"
+    "SCHED_RR\0"
+    "SERVFAIL\0"
+    "SHA1\0"
+    "SHA224\0"
+    "SHA256\0"
+    "SHA384\0"
+    "SHA512\0"
+    "SHA512_256\0"
+    "SHARE_ENV\0"
+    "SIGABRT\0"
+    "SIGALRM\0"
+    "SIGBUS\0"
+    "SIGCHLD\0"
+    "SIGCONT\0"
+    "SIGFPE\0"
+    "SIGHUP\0"
+    "SIGILL\0"
+    "SIGINT\0"
+    "SIGIO\0"
+    "SIGIOT\0"
+    "SIGKILL\0"
+    "SIGPIPE\0"
+    "SIGPROF\0"
+    "SIGQUIT\0"
+    "SIGSEGV\0"
+    "SIGSTOP\0"
+    "SIGSYS\0"
+    "SIGTERM\0"
+    "SIGTRAP\0"
+    "SIGTSTP\0"
+    "SIGTTIN\0"
+    "SIGTTOU\0"
+    "SIGURG\0"
+    "SIGUSR1\0"
+    "SIGUSR2\0"
+    "SIGVTALRM\0"
+    "SIGWINCH\0"
+    "SIGXCPU\0"
+    "SIGXFSZ\0"
+    "SQL\0"
+    "SQLiteError\0"
+    "SQRT1_2\0"
+    "SQRT2\0"
+    "SSL_OP_ALL\0"
+    "SSL_OP_ALLOW_NO_DHE_KEX\0"
+    "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION\0"
+    "SSL_OP_CIPHER_SERVER_PREFERENCE\0"
+    "SSL_OP_CISCO_ANYCONNECT\0"
+    "SSL_OP_COOKIE_EXCHANGE\0"
+    "SSL_OP_CRYPTOPRO_TLSEXT_BUG\0"
+    "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS\0"
+    "SSL_OP_EPHEMERAL_RSA\0"
+    "SSL_OP_LEGACY_SERVER_CONNECT\0"
+    "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER\0"
+    "SSL_OP_MICROSOFT_SESS_ID_BUG\0"
+    "SSL_OP_MSIE_SSLV2_RSA_PADDING\0"
+    "SSL_OP_NETSCAPE_CA_DN_BUG\0"
+    "SSL_OP_NETSCAPE_CHALLENGE_BUG\0"
+    "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG\0"
+    "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG\0"
+    "SSL_OP_NO_COMPRESSION\0"
+    "SSL_OP_NO_ENCRYPT_THEN_MAC\0"
+    "SSL_OP_NO_QUERY_MTU\0"
+    "SSL_OP_NO_RENEGOTIATION\0"
+    "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION\0"
+    "SSL_OP_NO_SSLv2\0"
+    "SSL_OP_NO_SSLv3\0"
+    "SSL_OP_NO_TICKET\0"
+    "SSL_OP_NO_TLSv1\0"
+    "SSL_OP_NO_TLSv1_1\0"
+    "SSL_OP_NO_TLSv1_2\0"
+    "SSL_OP_NO_TLSv1_3\0"
+    "SSL_OP_PKCS1_CHECK_1\0"
+    "SSL_OP_PKCS1_CHECK_2\0"
+    "SSL_OP_PRIORITIZE_CHACHA\0"
+    "SSL_OP_SINGLE_DH_USE\0"
+    "SSL_OP_SINGLE_ECDH_USE\0"
+    "SSL_OP_SSLEAY_080_CLIENT_DH_BUG\0"
+    "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG\0"
+    "SSL_OP_TLS_BLOCK_PADDING_BUG\0"
+    "SSL_OP_TLS_D5_BUG\0"
+    "SSL_OP_TLS_ROLLBACK_BUG\0"
+    "STATUS_CODES\0"
+    "S_IFBLK\0"
+    "S_IFCHR\0"
+    "S_IFDIR\0"
+    "S_IFIFO\0"
+    "S_IFLNK\0"
+    "S_IFMT\0"
+    "S_IFREG\0"
+    "S_IFSOCK\0"
+    "S_IRGRP\0"
+    "S_IROTH\0"
+    "S_IRUSR\0"
+    "S_IRWXG\0"
+    "S_IRWXO\0"
+    "S_IRWXU\0"
+    "S_IWGRP\0"
+    "S_IWOTH\0"
+    "S_IWUSR\0"
+    "S_IXGRP\0"
+    "S_IXOTH\0"
+    "S_IXUSR\0"
+    "Script\0"
+    "SecureContext\0"
+    "SecureContext.rs\0"
+    "SecureContextRsJsLiveCount\0"
+    "Segmenter\0"
+    "SemverObject.rs\0"
+    "SemverObjectRsIntersectsForTesting\0"
+    "Sender\0"
+    "Serializer\0"
+    "Server\0"
+    "Server.allClosedPromise\0"
+    "Server.fetch\0"
+    "Server.options\0"
+    "ServerResponse\0"
+    "ServerWebSocket.close\0"
+    "ServerWebSocket.data\0"
+    "ServerWebSocket.error\0"
+    "ServerWebSocket.instances\0"
+    "ServerWebSocket.open\0"
+    "Session\0"
+    "Set\0"
+    "ShadowRealm\0"
+    "SharedArrayBuffer\0"
+    "ShellRsTestingAPIsDisabledOnThisPlatform\0"
+    "ShellRsTestingAPIsShellLex\0"
+    "ShellRsTestingAPIsShellParse\0"
+    "Sign\0"
+    "SlowBuffer\0"
+    "Socket\0"
+    "Socket.data\0"
+    "Socket.instances\0"
+    "Socket.options\0"
+    "SocketAddress\0"
+    "Socket_bodyBindTsCheckServerIdentityInHandshake\0"
+    "Socket_bodyBindTsFirstFlightBeforeFin\0"
+    "Socket_bodyBindTsGetBufferedAmount\0"
+    "Socket_bodyBindTsIsNamedPipeSocket\0"
+    "Socket_bodyBindTsReleaseHeldFlight\0"
+    "Socket_bodyBindTsUpgradeTLSDeferred\0"
+    "SourceMap\0"
+    "SourceTextModule\0"
+    "SourcemapInternalSourceMapRsTestingAPIsFind\0"
+    "SourcemapInternalSourceMapRsTestingAPIsFromVLQ\0"
+    "SourcemapInternalSourceMapRsTestingAPIsToVLQ\0"
+    "Stat.rs\0"
+    "StatRsCreateStatsForIno\0"
+    "Statement\0"
+    "StatementSync\0"
+    "Stats\0"
+    "Stream\0"
+    "StreamsBunStreamConsumersCppJsFunctionTransferToNativeReadableStream\0"
+    "String\0"
+    "StringDecoder\0"
+    "StringDecoder.madeByCall\0"
+    "StringImmutableUnicodeRsTestingAPIsToUTF16AllocSentinel\0"
+    "StringWidthCppJsFunctionBunStringWidth\0"
+    "StructuredClone.cpp\0"
+    "StructuredCloneCppJsFunctionStructuredCloneAdvanced\0"
+    "SubprocessRsTestingAPIsCloseStdinWriter\0"
+    "SubprocessRsTestingAPIsInjectStdioReadError\0"
+    "SubtleCrypto\0"
+    "SuppressedError\0"
+    "SuspendError\0"
+    "Suspending\0"
+    "Symbol\0"
+    "SyntaxError\0"
+    "SyntheticModule\0"
+    "SysRsTestingAPIsSigactionLayout\0"
+    "SysRsTestingAPIsTranslateNtStatusToE\0"
+    "SysRsTestingAPIsTranslateUVErrorToE\0"
+    "TIMEOUT\0"
+    "TLS1_1_VERSION\0"
+    "TLS1_2_VERSION\0"
+    "TLS1_3_VERSION\0"
+    "TLS1_VERSION\0"
+    "TLSSocket\0"
+    "TOML\0"
+    "TRACE\0"
+    "Table\0"
+    "Tag\0"
+    "Temporal\0"
+    "Terminal\0"
+    "TestCounter\0"
+    "TestHolder\0"
+    "TestingAPIs.apply\0"
+    "TestingAPIs.byteStreamCancelOnDrain\0"
+    "TestingAPIs.closeStdinWriter\0"
+    "TestingAPIs.disabledOnThisPlatform\0"
+    "TestingAPIs.fileSinkLiveCount\0"
+    "TestingAPIs.find\0"
+    "TestingAPIs.fromVLQ\0"
+    "TestingAPIs.injectStdioReadError\0"
+    "TestingAPIs.jsClearSocketFaults\0"
+    "TestingAPIs.jsFromUrl\0"
+    "TestingAPIs.jsNamedPipeContextLiveCount\0"
+    "TestingAPIs.jsParseUrl\0"
+    "TestingAPIs.jsSetSocketFault\0"
+    "TestingAPIs.jsSocketFaultInjectionAvailable\0"
+    "TestingAPIs.liveCounts\0"
+    "TestingAPIs.makeDiff\0"
+    "TestingAPIs.noProxyMatches\0"
+    "TestingAPIs.orderedRemoveProbe\0"
+    "TestingAPIs.parse\0"
+    "TestingAPIs.parseURL\0"
+    "TestingAPIs.proxyFor\0"
+    "TestingAPIs.quicLiveCounts\0"
+    "TestingAPIs.shellLex\0"
+    "TestingAPIs.shellParse\0"
+    "TestingAPIs.sigactionLayout\0"
+    "TestingAPIs.toUTF16AllocSentinel\0"
+    "TestingAPIs.toVLQ\0"
+    "TestingAPIs.translateNtStatusToE\0"
+    "TestingAPIs.translateUVErrorToE\0"
+    "TextDecoder\0"
+    "TextDecoderStream\0"
+    "TextEncoder\0"
+    "TextEncoderStream\0"
+    "TextEncoderStream.ReadableStream\0"
+    "TextEncoderStream.WritableStream\0"
+    "Timeout.arguments\0"
+    "Timeout.callback\0"
+    "Timeout.fields\0"
+    "Timer.bind.ts\0"
+    "TimerBindTsMonotonicNowMs\0"
+    "Transform\0"
+    "TransformStream\0"
+    "TransformStream.ReadableStream\0"
+    "TransformStream.WritableStream\0"
+    "TransformStreamDefaultController\0"
+    "Transpiler\0"
+    "Trim_testingRsMeasureTrimProfile\0"
+    "Trim_testingRsReadTrimTable\0"
+    "Trim_testingRsTrimExecutable\0"
+    "TypeError\0"
+    "URIError\0"
+    "URL\0"
+    "URL.searchParams\0"
+    "URLPattern\0"
+    "URLSearchParams\0"
+    "URLSearchParams Iterator\0"
+    "USE_MAIN_CONTEXT_DEFAULT_LOADER\0"
+    "UTC\0"
+    "UV_DIRENT_BLOCK\0"
+    "UV_DIRENT_CHAR\0"
+    "UV_DIRENT_DIR\0"
+    "UV_DIRENT_FIFO\0"
+    "UV_DIRENT_FILE\0"
+    "UV_DIRENT_LINK\0"
+    "UV_DIRENT_SOCKET\0"
+    "UV_DIRENT_UNKNOWN\0"
+    "UV_FS_COPYFILE_EXCL\0"
+    "UV_FS_COPYFILE_FICLONE\0"
+    "UV_FS_COPYFILE_FICLONE_FORCE\0"
+    "UV_FS_O_FILEMAP\0"
+    "UV_FS_SYMLINK_DIR\0"
+    "UV_FS_SYMLINK_JUNCTION\0"
+    "Udp_socketBindTsBufferSize\0"
+    "Udp_socketBindTsConnect\0"
+    "Udp_socketBindTsDgramAdoptFd\0"
+    "Udp_socketBindTsDgramBindFd\0"
+    "Udp_socketBindTsDgramCloseFd\0"
+    "Udp_socketBindTsDgramGetSockNameFd\0"
+    "Udp_socketBindTsDgramGuessHandleType\0"
+    "Udp_socketBindTsDgramIsFdAdopted\0"
+    "Udp_socketBindTsDgramListenFd\0"
+    "Udp_socketBindTsDgramNewSocketFd\0"
+    "Udp_socketBindTsDisconnect\0"
+    "Udp_socketBindTsGetFd\0"
+    "Uint16Array\0"
+    "Uint32Array\0"
+    "Uint8Array\0"
+    "Uint8ClampedArray\0"
+    "Undici.cpp\0"
+    "Unzip\0"
+    "Url\0"
+    "Utf8Stream\0"
+    "UtilInspect.cpp\0"
+    "UtilInspectCppJsFunctionGetOwnNonIndexProperties\0"
+    "V4MAPPED\0"
+    "Verify\0"
+    "Virtual_machine_exportsRsBun__setSyntheticAllocationLimitForTesting\0"
+    "WASI\0"
+    "W_OK\0"
+    "WeakMap\0"
+    "WeakRef\0"
+    "WeakSet\0"
+    "WebAssembly\0"
+    "WebAssembly.Exception.payload\0"
+    "WebAssembly.Global.value\0"
+    "WebAssembly.Instance.exports\0"
+    "WebAssembly.Memory.buffer\0"
+    "WebAssembly.Table.element\0"
+    "WebSocket\0"
+    "WebSocketServer\0"
+    "WebStream.closedPromise\0"
+    "WebView\0"
+    "Worker\0"
+    "Worker.cpp\0"
+    "WorkerCppJsFunctionPostMessage\0"
+    "Writable\0"
+    "WritableState\0"
+    "WritableStream\0"
+    "WritableStreamDefaultController\0"
+    "WritableStreamDefaultWriter\0"
+    "WriteStream\0"
+    "X509Certificate\0"
+    "XML\0"
+    "X_OK\0"
+    "Xxhash3_testingCppBun__xxhash3_64_forTesting\0"
+    "YAML\0"
+    "ZigSourceProvider.cpp\0"
+    "ZigSourceProviderCppJsSourceHasLineStarts\0"
+    "ZonedDateTime\0"
+    "ZstdCompress\0"
+    "ZstdDecompress\0"
+    "__defineGetter__\0"
+    "__defineSetter__\0"
+    "__disableSamplingProfiler\0"
+    "__disableSuperSampler\0"
+    "__dumpAndClearSamplingProfilerSamples\0"
+    "__enableSamplingProfiler\0"
+    "__enableSuperSampler\0"
+    "__esModule\0"
+    "__lookupGetter__\0"
+    "__lookupSetter__\0"
+    "__proto__\0"
+    "__signpostStart\0"
+    "__signpostStop\0"
+    "__tracePointStart\0"
+    "__tracePointStop\0"
+    "_cache\0"
+    "_checkInvalidHeaderChar\0"
+    "_checkIsHttpToken\0"
+    "_compile\0"
+    "_debug\0"
+    "_debugEnd\0"
+    "_debugProcess\0"
+    "_destroyed\0"
+    "_errnoException\0"
+    "_eval\0"
+    "_events\0"
+    "_eventsCount\0"
+    "_exiting\0"
+    "_extend\0"
+    "_extensions\0"
+    "_external\0"
+    "_fatalException\0"
+    "_findPath\0"
+    "_fromList\0"
+    "_getActiveHandles\0"
+    "_getActiveRequests\0"
+    "_getFd\0"
+    "_idleStart\0"
+    "_idleTimeout\0"
+    "_initPaths\0"
+    "_isArrayBufferView\0"
+    "_isUint8Array\0"
+    "_kill\0"
+    "_linkedBinding\0"
+    "_load\0"
+    "_makeLong\0"
+    "_maxListeners\0"
+    "_nodeModulePaths\0"
+    "_normalizeArgs\0"
+    "_onTimeout\0"
+    "_pathCache\0"
+    "_preloadModules\0"
+    "_preload_modules\0"
+    "_rawDebug\0"
+    "_repeat\0"
+    "_resolveFilename\0"
+    "_resolveLookupPaths\0"
+    "_setSimultaneousAccepts\0"
+    "_stack\0"
+    "_startProfilerIdleNotifier\0"
+    "_stat\0"
+    "_stderr\0"
+    "_stdout\0"
+    "_stopProfilerIdleNotifier\0"
+    "_test\0"
+    "_tickCallback\0"
+    "_toUnixTimestamp\0"
+    "_uint8ArrayToBuffer\0"
+    "a\0"
+    "abort\0"
+    "abortForDestroy\0"
+    "abortSignal\0"
+    "aborted\0"
+    "abs\0"
+    "access\0"
+    "accessCb\0"
+    "accessKeyId\0"
+    "accessSync\0"
+    "acl\0"
+    "acos\0"
+    "acosh\0"
+    "active\0"
+    "add\0"
+    "addAbortListener\0"
+    "addAbortSignal\0"
+    "addAddress\0"
+    "addCACert\0"
+    "addDisposableResource\0"
+    "addEventListener\0"
+    "addListener\0"
+    "addMembership\0"
+    "addRange\0"
+    "addServerName\0"
+    "addSnapshotSerializer\0"
+    "addSourceSpecificMembership\0"
+    "addSubnet\0"
+    "address\0"
+    "addrfamily\0"
+    "adler32\0"
+    "admit\0"
+    "adopt\0"
+    "after\0"
+    "afterAll\0"
+    "afterEach\0"
+    "alert\0"
+    "algorithm\0"
+    "algorithms\0"
+    "all\0"
+    "allSettled\0"
+    "alloc\0"
+    "allocUnsafe\0"
+    "allocUnsafeSlow\0"
+    "allowHalfOpen\0"
+    "allowPartialTrustChain\0"
+    "allowUnresolved\0"
+    "allowUnrestrictedAccess\0"
+    "allowedNodeEnvironmentFlags\0"
+    "alphabet\0"
+    "alpnCallback\0"
+    "alpnProtocol\0"
+    "altsvc\0"
+    "alwaysInline\0"
+    "ambiguousIsNarrow\0"
+    "anchor\0"
+    "and\0"
+    "android\0"
+    "ansi\0"
+    "any\0"
+    "anything\0"
+    "aot\0"
+    "aotExplain\0"
+    "aotTypeErrors\0"
+    "app\0"
+    "append\0"
+    "appendFile\0"
+    "appendFileCb\0"
+    "appendFileSync\0"
+    "appendStackTrace\0"
+    "applicationOptions\0"
+    "apply\0"
+    "applyAccessorDecorators\0"
+    "applyClassDecorators\0"
+    "applyFieldDecorators\0"
+    "applyMethodDecorators\0"
+    "applyPrivateAccessorDecorators\0"
+    "applyPrivateFieldDecorators\0"
+    "applyPrivateMethodDecorators\0"
+    "ar\0"
+    "ar-EG\0"
+    "ar-SA\0"
+    "arch\0"
+    "argon2\0"
+    "argon2Sync\0"
+    "argument\0"
+    "argumentCount\0"
+    "arguments\0"
+    "argv\0"
+    "argv0\0"
+    "arm64\0"
+    "array\0"
+    "arrayBuffer\0"
+    "arrayBufferToString\0"
+    "arrayContaining\0"
+    "arrayFrom\0"
+    "arrayFromFastWithoutMapFn\0"
+    "arrayFromLength\0"
+    "arrayOfIndexes\0"
+    "arrayOfUndefined\0"
+    "arrayPush\0"
+    "arrayStorageContiguous\0"
+    "arrayStorageDouble\0"
+    "arrayStorageInt32\0"
+    "arrayStorageKind\0"
+    "asBigInt\0"
+    "asIntN\0"
+    "asUintN\0"
+    "asciiSlice\0"
+    "asciiWrite\0"
+    "asin\0"
+    "asinh\0"
+    "assert\0"
+    "assertEncodingValid\0"
+    "assertions\0"
+    "asserts\0"
+    "asset\0"
+    "assets\0"
+    "assign\0"
+    "asymmetricMatch\0"
+    "asyncContext\0"
+    "asyncDisposableStackFieldCapability\0"
+    "asyncDisposableStackFieldState\0"
+    "asyncDispose\0"
+    "asyncFromSyncIteratorCreate\0"
+    "asyncIterator\0"
+    "asyncWrapProviders\0"
+    "at\0"
+    "atan\0"
+    "atan2\0"
+    "atanh\0"
+    "atob\0"
+    "attachSource\0"
+    "attrTest\0"
+    "attributes\0"
+    "authorized\0"
+    "auto\0"
+    "autoOrient\0"
+    "autolink\0"
+    "autolinks\0"
+    "autoloadBunfig\0"
+    "autoloadDotenv\0"
+    "autoloadPackageJson\0"
+    "autoloadTsconfig\0"
+    "availableMemory\0"
+    "availableParallelism\0"
+    "avif\0"
+    "b\0"
+    "backend\0"
+    "backpressureLimit\0"
+    "backup\0"
+    "bake/config/plugins.rs\0"
+    "banner\0"
+    "base\0"
+    "base64Slice\0"
+    "base64Write\0"
+    "base64urlSlice\0"
+    "base64urlWrite\0"
+    "baseName\0"
+    "baseURI\0"
+    "basename\0"
+    "basenamePosix\0"
+    "basenameWin32\0"
+    "before\0"
+    "beforeAll\0"
+    "beforeEach\0"
+    "bg\0"
+    "big\0"
+    "bigint\0"
+    "binaryType\0"
+    "bind\0"
+    "bindgen\0"
+    "bindgen_test.bind.ts\0"
+    "binding\0"
+    "bindings.jsReadTarball\0"
+    "bitcount\0"
+    "bitfield\0"
+    "bitop\0"
+    "bitpos\0"
+    "blank\0"
+    "blink\0"
+    "blmove\0"
+    "blmpop\0"
+    "blob\0"
+    "blockquote\0"
+    "blpop\0"
+    "blue\0"
+    "bn\0"
+    "body\0"
+    "bodyUsed\0"
+    "bold\0"
+    "boolean\0"
+    "boundArguments\0"
+    "boundThis\0"
+    "br\0"
+    "branded\0"
+    "brotli\0"
+    "brotliCompress\0"
+    "brotliCompressSync\0"
+    "brotliDecompress\0"
+    "brotliDecompressSync\0"
+    "browser\0"
+    "brpop\0"
+    "brpoplpush\0"
+    "btoa\0"
+    "bubbles\0"
+    "bucket\0"
+    "buffer\0"
+    "bufferSize\0"
+    "bufferedAmount\0"
+    "build\0"
+    "buildConnector\0"
+    "builtInModules\0"
+    "builtinModules\0"
+    "builtins\0"
+    "bun:bake\0"
+    "bun:ffi\0"
+    "bun:internal-for-testing\0"
+    "bun:jsc\0"
+    "bun:sql\0"
+    "bun:sqlite\0"
+    "bun:test\0"
+    "bun:wrap\0"
+    "bunNativePtr\0"
+    "bun_install_js_bindings.generate\0"
+    "bundleError\0"
+    "bundlerOptions\0"
+    "byobRequest\0"
+    "byteLength\0"
+    "byteOffset\0"
+    "bytecode\0"
+    "bytecodeDepth\0"
+    "bytecodeOrder\0"
+    "bytecodeOrderStats\0"
+    "bytes\0"
+    "bytesBeforeAndAfterCallback\0"
+    "bytesBeforeAndAfterCallbackCopyingShared\0"
+    "bytesOf\0"
+    "bytesOfAreSameMemory\0"
+    "bytesOfAreSameMemoryCopyingShared\0"
+    "bytesOfBufferOrBlob\0"
+    "bytesOfOrToString\0"
+    "bytesOfRefusingStringObject\0"
+    "bytesOfRefusingUndefined\0"
+    "bytesOfString\0"
+    "bytesOfThen\0"
+    "bytesOfThenCopied\0"
+    "bytesOfThenCopyingShared\0"
+    "bytesWritten\0"
+    "bzmpop\0"
+    "bzpopmax\0"
+    "bzpopmin\0"
+    "ca\0"
+    "caFile\0"
+    "cache\0"
+    "cachedDataVersionTag\0"
+    "caches\0"
+    "calculateLenientFlags\0"
+    "calendar\0"
+    "calendarId\0"
+    "calendarName\0"
+    "call\0"
+    "callNoInline\0"
+    "callbackify\0"
+    "callee\0"
+    "caller\0"
+    "callerSourceOrigin\0"
+    "canHaveContent\0"
+    "canParse\0"
+    "cancel\0"
+    "cancelable\0"
+    "capture\0"
+    "captureRejectionSymbol\0"
+    "captureRejections\0"
+    "captureStackTrace\0"
+    "caseFirst\0"
+    "catch\0"
+    "cause\0"
+    "cbrt\0"
+    "cc\0"
+    "ceil\0"
+    "cert\0"
+    "certExportChallenge\0"
+    "certExportPublicKey\0"
+    "certFile\0"
+    "certVerifySpkac\0"
+    "cfunction\0"
+    "cgroup\0"
+    "channel\0"
+    "channelIgnoreOneDisconnectEventListener\0"
+    "charAt\0"
+    "charCodeAt\0"
+    "chdir\0"
+    "check\0"
+    "checkFramework\0"
+    "checkPrime\0"
+    "checkPrimeSync\0"
+    "checkRangesOrGetDefault\0"
+    "checkServerIdentity\0"
+    "checkServerIdentityInHandshake\0"
+    "checkedArrayLength\0"
+    "checker_queries_testing.rs\0"
+    "children\0"
+    "chmod\0"
+    "chmodCb\0"
+    "chmodSync\0"
+    "chown\0"
+    "chownCb\0"
+    "chownSync\0"
+    "chromeDevToolsAutomaticWorkspaceFolders\0"
+    "chunk\0"
+    "chunkExpression\0"
+    "chunks\0"
+    "ciphers\0"
+    "cityHash32\0"
+    "cityHash64\0"
+    "class_ref_test.bind.ts\0"
+    "cleanup\0"
+    "clear\0"
+    "clearAll\0"
+    "clearImmediate\0"
+    "clearInterval\0"
+    "clearLine\0"
+    "clearMarks\0"
+    "clearMeasures\0"
+    "clearResourceTimings\0"
+    "clearScreenDown\0"
+    "clearTimeout\0"
+    "client\0"
+    "clientEntryPoint\0"
+    "clientMaxWindowBits\0"
+    "clientNoContextTakeover\0"
+    "clientPages\0"
+    "clientRenegotiationLimit\0"
+    "clientRenegotiationWindow\0"
+    "clipboardChangeCount\0"
+    "clone\0"
+    "close\0"
+    "closeAllIterators\0"
+    "closeCallback\0"
+    "closeCb\0"
+    "closeGracefully\0"
+    "closeIdleConnections\0"
+    "closeOnBackpressureLimit\0"
+    "closeSync\0"
+    "closeTo\0"
+    "closed\0"
+    "clusterCloseHandle\0"
+    "clusterRawBind\0"
+    "clusterValidateFd\0"
+    "clz32\0"
+    "cmd\0"
+    "code\0"
+    "codeCoverageForFile\0"
+    "codePointAt\0"
+    "code_resolver_testing.rs\0"
+    "codes\0"
+    "codespan\0"
+    "collapseWhitespace\0"
+    "collapse_whitespace\0"
+    "collation\0"
+    "collectionTable\0"
+    "collections/linear_fifo.rs\0"
+    "color\0"
+    "colors\0"
+    "cols\0"
+    "column\0"
+    "columns\0"
+    "command\0"
+    "compact\0"
+    "compactDisplay\0"
+    "compare\0"
+    "compareCodeResolution\0"
+    "compareExchange\0"
+    "compile\0"
+    "compileFunction\0"
+    "compileStreaming\0"
+    "compose\0"
+    "composed\0"
+    "compress\0"
+    "concat\0"
+    "concatArrayBuffers\0"
+    "concurrent\0"
+    "concurrentIf\0"
+    "conditions\0"
+    "config\0"
+    "configurable\0"
+    "confirm\0"
+    "connect\0"
+    "connectError\0"
+    "connected\0"
+    "console\0"
+    "constants\0"
+    "constrainedMemory\0"
+    "construct\0"
+    "constructList\0"
+    "constructor\0"
+    "constructorParameters\0"
+    "containing\0"
+    "contentDisposition\0"
+    "contentEncoding\0"
+    "contextSwitches\0"
+    "continueExpression\0"
+    "controlFlags\0"
+    "convertALPNProtocols\0"
+    "convertProcessSignalToExitCode\0"
+    "cookies\0"
+    "copy\0"
+    "copyBytesFrom\0"
+    "copyDone\0"
+    "copyFail\0"
+    "copyFile\0"
+    "copyFileCb\0"
+    "copyFileSync\0"
+    "copyOwnProperties\0"
+    "copyResume\0"
+    "copyWithin\0"
+    "copyWrite\0"
+    "copyright\0"
+    "cork\0"
+    "cos\0"
+    "cosh\0"
+    "cost\0"
+    "count\0"
+    "countAnsiEscapeCodes\0"
+    "countReset\0"
+    "cp\0"
+    "cpSync\0"
+    "cpp\0"
+    "cpuTime\0"
+    "cpuUsage\0"
+    "cpus\0"
+    "crash_handler.rs\0"
+    "crc32\0"
+    "create\0"
+    "createBinding\0"
+    "createBrotliCompress\0"
+    "createBrotliDecompress\0"
+    "createBunTTYFunctions\0"
+    "createCipheriv\0"
+    "createCommonJSModule\0"
+    "createConnection\0"
+    "createContext\0"
+    "createCountersObject\0"
+    "createDecipheriv\0"
+    "createDecoratorMetadata\0"
+    "createDeflate\0"
+    "createDeflateRaw\0"
+    "createDiffieHellman\0"
+    "createDiffieHellmanGroup\0"
+    "createDisposableResource\0"
+    "createDomain\0"
+    "createECDH\0"
+    "createElement\0"
+    "createFIFO\0"
+    "createGunzip\0"
+    "createGzip\0"
+    "createHash\0"
+    "createHistogram\0"
+    "createHmac\0"
+    "createHook\0"
+    "createInflate\0"
+    "createInflateRaw\0"
+    "createInterface\0"
+    "createIsolatedModuleCacheSourceTypeForTesting\0"
+    "createJSCTestingHelpers\0"
+    "createJSMIMEBinding\0"
+    "createJSSQLStatementConstructor\0"
+    "createMemfdForTesting\0"
+    "createNativeFrameForTesting\0"
+    "createNoOpForTesting\0"
+    "createNodeCryptoBinding\0"
+    "createNodeCryptoBindingZig\0"
+    "createNodeFetchInternalBinding\0"
+    "createNodeHTTPInternalBinding\0"
+    "createNodeQuicBinding\0"
+    "createNodeWorkerConstructor\0"
+    "createNodeWorkerThreadsBinding\0"
+    "createObjectURL\0"
+    "createPath\0"
+    "createPrivate\0"
+    "createPrivateKey\0"
+    "createPrivateStorage\0"
+    "createPromise\0"
+    "createPublicKey\0"
+    "createReadStream\0"
+    "createRedirectInterceptor\0"
+    "createRemoteFunction\0"
+    "createRequire\0"
+    "createScript\0"
+    "createSecretKey\0"
+    "createSecureContext\0"
+    "createSecureServer\0"
+    "createServer\0"
+    "createSign\0"
+    "createSocket\0"
+    "createStatsForIno\0"
+    "createStreamIterEnabledFlag\0"
+    "createTracing\0"
+    "createUndiciInternalBinding\0"
+    "createUnzip\0"
+    "createVerify\0"
+    "createWebSocketBindingForWs\0"
+    "createWebSocketStream\0"
+    "createWriteStream\0"
+    "createZstdCompress\0"
+    "createZstdDecompress\0"
+    "credentials\0"
+    "crl\0"
+    "cron\0"
+    "crossRealmThrow\0"
+    "crypto\0"
+    "cs\0"
+    "cs-CZ\0"
+    "css_internals.rs\0"
+    "ctor\0"
+    "currency\0"
+    "currencyDisplay\0"
+    "currencySign\0"
+    "cursorTo\0"
+    "customSections\0"
+    "cwd\0"
+    "da\0"
+    "da-DK\0"
+    "darwin\0"
+    "data\0"
+    "dataurl\0"
+    "date\0"
+    "dateStyle\0"
+    "day\0"
+    "dayOfWeek\0"
+    "dayOfYear\0"
+    "dayPeriod\0"
+    "days\0"
+    "daysDisplay\0"
+    "daysInMonth\0"
+    "daysInWeek\0"
+    "daysInYear\0"
+    "dbsize\0"
+    "de\0"
+    "de-AT\0"
+    "de-CH\0"
+    "de-DE\0"
+    "debug\0"
+    "debugPort\0"
+    "debuglog\0"
+    "declared_types_testing.rs\0"
+    "decode\0"
+    "decodeURI\0"
+    "decodeURIComponent\0"
+    "decodeURIComponentSIMD.cpp\0"
+    "decompress\0"
+    "decorateClass\0"
+    "decorateMethod\0"
+    "decorateParameter\0"
+    "decorateProperty\0"
+    "decr\0"
+    "decrby\0"
+    "deepEqual\0"
+    "deepEquals\0"
+    "deepMatch\0"
+    "deepStrictEqual\0"
+    "default\0"
+    "defaultAsyncFromAsyncArrayLike\0"
+    "defaultAsyncFromAsyncIterator\0"
+    "defaultAsyncFromAsyncIteratorWithNext\0"
+    "defaultCipherList\0"
+    "defaultCoreCipherList\0"
+    "defaultMaxListeners\0"
+    "defaultPrevented\0"
+    "defer\0"
+    "define\0"
+    "defineMetadata\0"
+    "defineProperties\0"
+    "definePropertiesFrom\0"
+    "defineProperty\0"
+    "deflate\0"
+    "deflateRaw\0"
+    "deflateRawSync\0"
+    "deflateSync\0"
+    "del\0"
+    "delete\0"
+    "deleteCookie\0"
+    "deleteProperty\0"
+    "delimiter\0"
+    "demethodize\0"
+    "deprecate\0"
+    "deprecatedNamespaceObjectSetters\0"
+    "depth\0"
+    "deref\0"
+    "describe\0"
+    "describeAddressOrList\0"
+    "describeAnything\0"
+    "describeArray\0"
+    "describeCheckerQueries\0"
+    "describeCodeGraph\0"
+    "describeDefaults\0"
+    "describeResult\0"
+    "describeUnlessOrdinary\0"
+    "describeValue\0"
+    "description\0"
+    "deserialize\0"
+    "desiredSize\0"
+    "destination\0"
+    "destroy\0"
+    "detach\0"
+    "detached\0"
+    "detail\0"
+    "devNull\0"
+    "development\0"
+    "dgramAdoptFd\0"
+    "dgramBindFd\0"
+    "dgramCloseFd\0"
+    "dgramGetSockNameFd\0"
+    "dgramGuessHandleType\0"
+    "dgramIsFdAdopted\0"
+    "dgramListenFd\0"
+    "dgramNewSocketFd\0"
+    "dhParamsFile\0"
+    "difference\0"
+    "diffieHellman\0"
+    "digest\0"
+    "dir\0"
+    "direction\0"
+    "dirname\0"
+    "dirnamePosix\0"
+    "dirnameWin32\0"
+    "dirxml\0"
+    "disableRenegotiation\0"
+    "disallowCodeGenerationFromStrings\0"
+    "disambiguation\0"
+    "disconnect\0"
+    "dispatchEvent\0"
+    "disposableStackFieldCapability\0"
+    "disposableStackFieldState\0"
+    "dispose\0"
+    "disposeAsync\0"
+    "disposed\0"
+    "dlopen\0"
+    "dns\0"
+    "dns_internals.bind.ts\0"
+    "doConnect\0"
+    "doesNotMatch\0"
+    "doesNotReject\0"
+    "doesNotThrow\0"
+    "domainToASCII\0"
+    "domainToAscii\0"
+    "domainToUnicode\0"
+    "done\0"
+    "dotAll\0"
+    "drain\0"
+    "drainMicrotasks\0"
+    "drop\0"
+    "dropMembership\0"
+    "dropSourceSpecificMembership\0"
+    "dump\0"
+    "duplexPair\0"
+    "duplicate\0"
+    "duration\0"
+    "each\0"
+    "ecanceledErrorCode\0"
+    "ecdhCurve\0"
+    "echo\0"
+    "edenGC\0"
+    "editor\0"
+    "el\0"
+    "el-GR\0"
+    "element\0"
+    "ellipsis\0"
+    "em\0"
+    "email\0"
+    "embeddedFiles\0"
+    "emit\0"
+    "emitAbortToAllStreams\0"
+    "emitDCEAnnotations\0"
+    "emitErrorToAllStreams\0"
+    "emitHandleIPCMessage\0"
+    "emitKeypressEvents\0"
+    "emitWarning\0"
+    "emphasis\0"
+    "en\0"
+    "en-AU\0"
+    "en-CA\0"
+    "en-GB\0"
+    "en-IE\0"
+    "en-IN\0"
+    "en-NZ\0"
+    "en-US\0"
+    "en-ZA\0"
+    "enableANSIColors\0"
+    "enableCompileCache\0"
+    "encode\0"
+    "encodeInto\0"
+    "encodeIntoRangeOfBytes\0"
+    "encodeURI\0"
+    "encodeURIComponent\0"
+    "encoding\0"
+    "end\0"
+    "endWrite\0"
+    "endianness\0"
+    "endpoint\0"
+    "endsWith\0"
+    "enobufsErrorCode\0"
+    "enqueue\0"
+    "enroll\0"
+    "entries\0"
+    "entry\0"
+    "entryPoints\0"
+    "entrypoints\0"
+    "enumerable\0"
+    "env\0"
+    "eos\0"
+    "epochMilliseconds\0"
+    "epochNanoseconds\0"
+    "equal\0"
+    "equals\0"
+    "era\0"
+    "eraYear\0"
+    "error\0"
+    "errorMonitor\0"
+    "errors\0"
+    "es\0"
+    "es-419\0"
+    "es-AR\0"
+    "es-ES\0"
+    "es-MX\0"
+    "escape\0"
+    "escape-powershell\0"
+    "escapeHTML\0"
+    "escapeRegExp.rs\0"
+    "esmLoadSync\0"
+    "esmNamespaceForCjs\0"
+    "esmRegistryDelete\0"
+    "esmRegistryEvaluatedKeys\0"
+    "esmRegistryHasEvaluated\0"
+    "estimateShallowMemoryUsageOf\0"
+    "etag\0"
+    "etimedoutErrorCode\0"
+    "eval\0"
+    "evalInRealm\0"
+    "evalsha\0"
+    "evaluate\0"
+    "evaluateCommonJSModule\0"
+    "eventLoopUtilization\0"
+    "eventNames\0"
+    "eventPhase\0"
+    "event_loop.rs\0"
+    "every\0"
+    "evictIsolationSourceProviderCache\0"
+    "exchange\0"
+    "exclude\0"
+    "exclusive\0"
+    "exec\0"
+    "execArgv\0"
+    "execFile\0"
+    "execFileSync\0"
+    "execPath\0"
+    "execSync\0"
+    "executablePath\0"
+    "executionAsyncId\0"
+    "executionAsyncResource\0"
+    "execve\0"
+    "exists\0"
+    "existsCb\0"
+    "existsSync\0"
+    "exit\0"
+    "exitCode\0"
+    "exited\0"
+    "exitedDueToMaxBuffer\0"
+    "exitedDueToTimeout\0"
+    "exp\0"
+    "expand\0"
+    "expect\0"
+    "expectTypeOf\0"
+    "expectedByNode\0"
+    "expire\0"
+    "expireat\0"
+    "expiresIn\0"
+    "expiretime\0"
+    "expm1\0"
+    "exportKeyingMaterial\0"
+    "exports\0"
+    "ext\0"
+    "extend\0"
+    "extensions\0"
+    "external\0"
+    "extname\0"
+    "extnamePosix\0"
+    "extnameWin32\0"
+    "extract\0"
+    "extractedSplitNewLinesFastPathStringsOnly\0"
+    "f16round\0"
+    "fa\0"
+    "factory\0"
+    "fail\0"
+    "failing\0"
+    "failingIf\0"
+    "fallback\0"
+    "false\0"
+    "family\0"
+    "fastPath\0"
+    "fatal\0"
+    "fcall\0"
+    "fchmod\0"
+    "fchmodCb\0"
+    "fchmodSync\0"
+    "fchown\0"
+    "fchownCb\0"
+    "fchownSync\0"
+    "fd\0"
+    "fdIsRawSocket\0"
+    "fdatasync\0"
+    "fdatasyncCb\0"
+    "fdatasyncSync\0"
+    "feature\0"
+    "features\0"
+    "fetch\0"
+    "ffi.rs\0"
+    "fi\0"
+    "fi-FI\0"
+    "file\0"
+    "fileGeneration\0"
+    "filePath\0"
+    "fileSystemRouterTypes\0"
+    "fileURLToPath\0"
+    "fileURLToPathBuffer\0"
+    "filename\0"
+    "files\0"
+    "fill\0"
+    "fillBuffer\0"
+    "filledArray\0"
+    "filter\0"
+    "finalization\0"
+    "finally\0"
+    "find\0"
+    "findEntry\0"
+    "findInPlainQuery\0"
+    "findIndex\0"
+    "findLast\0"
+    "findLastIndex\0"
+    "findOrigin\0"
+    "findPlainQueryValue\0"
+    "findSourceMap\0"
+    "finished\0"
+    "firstDayOfWeek\0"
+    "firstFlightBeforeFin\0"
+    "firstHeldString\0"
+    "fixed\0"
+    "flag\0"
+    "flags\0"
+    "flat\0"
+    "flatIntoArray\0"
+    "flatIntoArrayWithCallback\0"
+    "flatMap\0"
+    "flip\0"
+    "floor\0"
+    "flop\0"
+    "flowlabel\0"
+    "flush\0"
+    "flushCompileCache\0"
+    "flushHeaders\0"
+    "flushall\0"
+    "flushdb\0"
+    "fmtString\0"
+    "fmt_jsc.bind.ts\0"
+    "foldChunksForTesting\0"
+    "fontcolor\0"
+    "fontsize\0"
+    "footer\0"
+    "for\0"
+    "forEach\0"
+    "forEachStream\0"
+    "force\0"
+    "fork\0"
+    "formData\0"
+    "format\0"
+    "formatMatcher\0"
+    "formatPosix\0"
+    "formatRange\0"
+    "formatRangeToParts\0"
+    "formatToParts\0"
+    "formatWin32\0"
+    "formatWithOptions\0"
+    "fr\0"
+    "fr-BE\0"
+    "fr-CA\0"
+    "fr-CH\0"
+    "fr-FR\0"
+    "fractionalDigits\0"
+    "fractionalSecondDigits\0"
+    "fragment\0"
+    "framework\0"
+    "freeParser\0"
+    "freebsd\0"
+    "freemem\0"
+    "freeze\0"
+    "from\0"
+    "fromAsync\0"
+    "fromBase64\0"
+    "fromCharCode\0"
+    "fromClipboard\0"
+    "fromCodePoint\0"
+    "fromEntries\0"
+    "fromEpochMilliseconds\0"
+    "fromEpochNanoseconds\0"
+    "fromHex\0"
+    "fromWeb\0"
+    "fround\0"
+    "fstat\0"
+    "fstatCb\0"
+    "fstatSync\0"
+    "fsync\0"
+    "fsyncCb\0"
+    "fsyncSync\0"
+    "ftruncate\0"
+    "ftruncateCb\0"
+    "ftruncateSync\0"
+    "fulfilled\0"
+    "fullGC\0"
+    "function\0"
+    "functionSource\0"
+    "futimes\0"
+    "futimesCb\0"
+    "futimesSync\0"
+    "g\0"
+    "gc\0"
+    "gcAggressionLevel\0"
+    "gcAndSweep\0"
+    "generate\0"
+    "generateHeapSnapshot\0"
+    "generateHeapSnapshotForDebugging\0"
+    "generateKey\0"
+    "generateKeyPair\0"
+    "generateKeyPairSync\0"
+    "generateKeySync\0"
+    "generatePrime\0"
+    "generatePrimeSync\0"
+    "generatorStepCheckIsGenerator\0"
+    "generatorStepStatusCompleted\0"
+    "generatorStepStatusNotStepped\0"
+    "geoadd\0"
+    "geodist\0"
+    "geohash\0"
+    "geopos\0"
+    "geosearch\0"
+    "geosearchstore\0"
+    "get\0"
+    "getActiveResourcesInfo\0"
+    "getActiveTasks\0"
+    "getAll\0"
+    "getArg\0"
+    "getAsyncDisposableStackInternalField\0"
+    "getAsyncDisposeMethod\0"
+    "getAttribute\0"
+    "getAuthorizationError\0"
+    "getBigInt64\0"
+    "getBigUint64\0"
+    "getBuffer\0"
+    "getBufferedAmount\0"
+    "getBuiltinModule\0"
+    "getBunServerAllClosedPromise\0"
+    "getBunServerOpenCount\0"
+    "getBundledRootCertificates\0"
+    "getByIdDirect\0"
+    "getByIdDirectPrivate\0"
+    "getByValWithThis\0"
+    "getBytesWritten\0"
+    "getCACertificates\0"
+    "getCacheStats\0"
+    "getCalendars\0"
+    "getCallSites\0"
+    "getCanonicalLocales\0"
+    "getCertificate\0"
+    "getCipher\0"
+    "getCipherInfo\0"
+    "getCiphers\0"
+    "getClass\0"
+    "getCollations\0"
+    "getCompileCacheDir\0"
+    "getContiguousIndex\0"
+    "getCookies\0"
+    "getCppHeapStatistics\0"
+    "getCurrentState\0"
+    "getCurves\0"
+    "getDate\0"
+    "getDay\0"
+    "getDefaultAutoSelectFamily\0"
+    "getDefaultAutoSelectFamilyAttemptTimeout\0"
+    "getDefaultCiphers\0"
+    "getDefaultHighWaterMark\0"
+    "getDefaultResultOrder\0"
+    "getDefaultSettings\0"
+    "getDeinitCountForTesting\0"
+    "getDiffieHellman\0"
+    "getDisposableStackInternalField\0"
+    "getDisposeMethod\0"
+    "getDoubleIndex\0"
+    "getEnabledCategories\0"
+    "getEndAfterHeaders\0"
+    "getEntries\0"
+    "getEntriesByName\0"
+    "getEntriesByType\0"
+    "getEnvironmentData\0"
+    "getEphemeralKey\0"
+    "getEphemeralKeyInfo\0"
+    "getEventListeners\0"
+    "getExtraCACertificates\0"
+    "getFd\0"
+    "getFips\0"
+    "getFloat16\0"
+    "getFloat32\0"
+    "getFloat64\0"
+    "getFrameCounters\0"
+    "getFullYear\0"
+    "getGlobalDispatcher\0"
+    "getGlobalOrigin\0"
+    "getHashes\0"
+    "getHeapCodeStatistics\0"
+    "getHeapSnapshot\0"
+    "getHeapSpaceStatistics\0"
+    "getHeapStatistics\0"
+    "getHourCycles\0"
+    "getHours\0"
+    "getInsecureHTTPParser\0"
+    "getInt16\0"
+    "getInt32\0"
+    "getInt8\0"
+    "getInternalField\0"
+    "getIteratorFlattenable\0"
+    "getIteratorHelperInternalField\0"
+    "getIteratorSync\0"
+    "getLocalAddress\0"
+    "getMaxHTTPHeaderSize\0"
+    "getMaxListeners\0"
+    "getMilliseconds\0"
+    "getMinutes\0"
+    "getMonth\0"
+    "getNextStream\0"
+    "getNumberingSystems\0"
+    "getOptionsObject\0"
+    "getOrInsert\0"
+    "getOrInsertComputed\0"
+    "getOwnPropertyDescriptor\0"
+    "getOwnPropertyDescriptors\0"
+    "getOwnPropertyNames\0"
+    "getOwnPropertySymbols\0"
+    "getPackedSettings\0"
+    "getPeerCertificate\0"
+    "getPeerX509Certificate\0"
+    "getPriority\0"
+    "getProtectedObjects\0"
+    "getPrototypeOf\0"
+    "getProxyInternalField\0"
+    "getRandomSeed\0"
+    "getRandomValues\0"
+    "getReader\0"
+    "getRemoteAddress\0"
+    "getReport\0"
+    "getRuntimeDefaultResultOrderOption\0"
+    "getSeconds\0"
+    "getServername\0"
+    "getServers\0"
+    "getSession\0"
+    "getSetCookie\0"
+    "getSetCookies\0"
+    "getSharedSigalgs\0"
+    "getStreamContext\0"
+    "getStreamState\0"
+    "getSystemCACertificates\0"
+    "getSystemErrorMap\0"
+    "getSystemErrorMessage\0"
+    "getSystemErrorName\0"
+    "getTLSFinishedMessage\0"
+    "getTLSPeerFinishedMessage\0"
+    "getTLSTicket\0"
+    "getTLSVersion\0"
+    "getTextInfo\0"
+    "getTime\0"
+    "getTimeZoneTransition\0"
+    "getTimeZones\0"
+    "getTimezoneOffset\0"
+    "getTypeOfService\0"
+    "getUTCDate\0"
+    "getUTCDay\0"
+    "getUTCFullYear\0"
+    "getUTCHours\0"
+    "getUTCMilliseconds\0"
+    "getUTCMinutes\0"
+    "getUTCMonth\0"
+    "getUTCSeconds\0"
+    "getUint16\0"
+    "getUint32\0"
+    "getUint8\0"
+    "getUnpackedSettings\0"
+    "getUseSystemCA\0"
+    "getWeekInfo\0"
+    "getWindowSize\0"
+    "getWrapForValidIteratorInternalField\0"
+    "getWriter\0"
+    "getX509Certificate\0"
+    "getYear\0"
+    "getbit\0"
+    "getdel\0"
+    "getegid\0"
+    "geteuid\0"
+    "getex\0"
+    "getgid\0"
+    "getgroups\0"
+    "getrange\0"
+    "getset\0"
+    "getsockname\0"
+    "getter\0"
+    "getuid\0"
+    "gid\0"
+    "glob\0"
+    "globSync\0"
+    "global\0"
+    "globalAgent\0"
+    "globalPaths\0"
+    "globalThis\0"
+    "goaway\0"
+    "gracefulClose\0"
+    "granularity\0"
+    "green\0"
+    "group\0"
+    "groupBy\0"
+    "groupCollapsed\0"
+    "groupEnd\0"
+    "groups\0"
+    "grow\0"
+    "growNewArray\0"
+    "growable\0"
+    "guards\0"
+    "gunzip\0"
+    "gunzipSync\0"
+    "gzip\0"
+    "gzipSync\0"
+    "h1\0"
+    "h2\0"
+    "h2_frame_parser.rs\0"
+    "h3\0"
+    "h4\0"
+    "h5\0"
+    "h6\0"
+    "handleEvent\0"
+    "handler\0"
+    "handshake\0"
+    "hard\0"
+    "hardSoftBreaks\0"
+    "hard_soft_breaks\0"
+    "hardwareConcurrency\0"
+    "has\0"
+    "hasAssertions\0"
+    "hasAttribute\0"
+    "hasBody\0"
+    "hasClipboardImage\0"
+    "hasContiguousIndex\0"
+    "hasIndices\0"
+    "hasInstance\0"
+    "hasOwn\0"
+    "hasOwnProperty\0"
+    "hasRef\0"
+    "hasSubscribers\0"
+    "hasUncaughtExceptionCaptureCallback\0"
+    "hash\0"
+    "hashSync\0"
+    "hdel\0"
+    "he\0"
+    "he-IL\0"
+    "headers\0"
+    "headersObject\0"
+    "headersUrl\0"
+    "heading\0"
+    "headings\0"
+    "heapSize\0"
+    "heapStats\0"
+    "heic\0"
+    "height\0"
+    "heldString\0"
+    "heldValue\0"
+    "hexSlice\0"
+    "hexWrite\0"
+    "hexists\0"
+    "hexpire\0"
+    "hexpireat\0"
+    "hexpiretime\0"
+    "hget\0"
+    "hgetall\0"
+    "hgetdel\0"
+    "hgetex\0"
+    "hi\0"
+    "hi-IN\0"
+    "hideConsole\0"
+    "highWaterMark\0"
+    "highlight-javascript\0"
+    "highlight-javascript-redacted\0"
+    "highway_strings_testing.cpp\0"
+    "hincrby\0"
+    "hincrbyfloat\0"
+    "hkdf\0"
+    "hkdfSync\0"
+    "hkeys\0"
+    "hlen\0"
+    "hmget\0"
+    "hmr\0"
+    "hmset\0"
+    "hold\0"
+    "holdsRule\0"
+    "homedir\0"
+    "host\0"
+    "hostCpuCount\0"
+    "hosted_git_info.rs\0"
+    "hostname\0"
+    "hot\0"
+    "hotReloadGeneration\0"
+    "hour\0"
+    "hour12\0"
+    "hourCycle\0"
+    "hours\0"
+    "hoursDisplay\0"
+    "hoursInDay\0"
+    "hpersist\0"
+    "hpexpire\0"
+    "hpexpireat\0"
+    "hpexpiretime\0"
+    "hpttl\0"
+    "hr\0"
+    "hrandfield\0"
+    "href\0"
+    "hrtime\0"
+    "hscan\0"
+    "hset\0"
+    "hsetex\0"
+    "hsetnx\0"
+    "hstrlen\0"
+    "html\0"
+    "httl\0"
+    "http/H2Client.rs\0"
+    "http/H3Client.rs\0"
+    "http1\0"
+    "http2\0"
+    "http3\0"
+    "hu\0"
+    "hu-HU\0"
+    "hvals\0"
+    "hyperlinks\0"
+    "hypot\0"
+    "icon\0"
+    "id\0"
+    "id-ID\0"
+    "identifiers\0"
+    "idleTimeout\0"
+    "idnaToASCII\0"
+    "ids\0"
+    "if\0"
+    "ifAbruptCloseIterator\0"
+    "ifError\0"
+    "ignoreBOM\0"
+    "ignoreCase\0"
+    "ignoreDCEAnnotations\0"
+    "ignoreDirs\0"
+    "ignorePunctuation\0"
+    "ignoreUnderscores\0"
+    "image\0"
+    "img\0"
+    "import\0"
+    "importInRealm\0"
+    "importKind\0"
+    "importSource\0"
+    "importValue\0"
+    "importedStringConstants\0"
+    "imports\0"
+    "imul\0"
+    "inLeapYear\0"
+    "inTransaction\0"
+    "includes\0"
+    "incr\0"
+    "incrby\0"
+    "incrbyfloat\0"
+    "index\0"
+    "indexOf\0"
+    "indexOfLine\0"
+    "indices\0"
+    "inflate\0"
+    "inflateRaw\0"
+    "inflateRawSync\0"
+    "inflateSync\0"
+    "info\0"
+    "inherits\0"
+    "inheritsArrayBuffer\0"
+    "inheritsBlob\0"
+    "inheritsReadableStream\0"
+    "inheritsTransformStream\0"
+    "inheritsWritableStream\0"
+    "ini.rs\0"
+    "init\0"
+    "initStreamingSource\0"
+    "initgroups\0"
+    "initial\0"
+    "input\0"
+    "inputFlags\0"
+    "inspect\0"
+    "install_binding.rs\0"
+    "instance\0"
+    "instanceOf\0"
+    "instant\0"
+    "instantiate\0"
+    "instantiateStreaming\0"
+    "int32\0"
+    "integerOrBigInt\0"
+    "integrity\0"
+    "interceptors\0"
+    "intern\0"
+    "internal.getaddrinfoErrorForTesting\0"
+    "internal.isAllLoopbackOfOneFamilyForTesting\0"
+    "internal.isLocalhostNameForTesting\0"
+    "internal.seedCacheForTesting\0"
+    "internal/abort_listener\0"
+    "internal/assert/assertion_error\0"
+    "internal/assert/calltracker\0"
+    "internal/assert/myers_diff\0"
+    "internal/assert/utils\0"
+    "internal/async_context_frame\0"
+    "internal/async_hooks\0"
+    "internal/async_hooks_tick\0"
+    "internal/bake\0"
+    "internal/cluster/RoundRobinHandle\0"
+    "internal/cluster/SharedHandle\0"
+    "internal/cluster/Worker\0"
+    "internal/cluster/child\0"
+    "internal/cluster/isPrimary\0"
+    "internal/cluster/primary\0"
+    "internal/debugger\0"
+    "internal/dgram\0"
+    "internal/errors\0"
+    "internal/fifo\0"
+    "internal/fixed_queue\0"
+    "internal/freelist\0"
+    "internal/fs/binding\0"
+    "internal/fs/cp\0"
+    "internal/fs/cp-sync\0"
+    "internal/fs/glob\0"
+    "internal/fs/streams\0"
+    "internal/fs/watch\0"
+    "internal/fs/watchfile\0"
+    "internal/html\0"
+    "internal/http\0"
+    "internal/http/FakeSocket\0"
+    "internal/http1_server_fallback\0"
+    "internal/inspector/cdp\0"
+    "internal/linkedlist\0"
+    "internal/net/isIP\0"
+    "internal/net/server_abort_signal\0"
+    "internal/net/symbols\0"
+    "internal/perf_hooks/monitorEventLoopDelay\0"
+    "internal/primordials\0"
+    "internal/process/next_tick_queue\0"
+    "internal/process/pre_execution\0"
+    "internal/process/tick_ring\0"
+    "internal/promisify\0"
+    "internal/quic/binding\0"
+    "internal/quic/diagnostics\0"
+    "internal/quic/http2util\0"
+    "internal/quic/quic\0"
+    "internal/quic/state\0"
+    "internal/quic/stats\0"
+    "internal/quic/symbols\0"
+    "internal/readline/callbacks\0"
+    "internal/readline/emitKeypressEvents\0"
+    "internal/readline/interface\0"
+    "internal/readline/promises\0"
+    "internal/readline/utils\0"
+    "internal/repl\0"
+    "internal/repl/acorn\0"
+    "internal/repl/acorn-walk\0"
+    "internal/repl/await\0"
+    "internal/repl/completion\0"
+    "internal/repl/history\0"
+    "internal/repl/mode\0"
+    "internal/repl/node-errors\0"
+    "internal/repl/node-inspect\0"
+    "internal/repl/node-primordials\0"
+    "internal/repl/node-shims\0"
+    "internal/repl/utils\0"
+    "internal/serialization_buffers\0"
+    "internal/serve_cli\0"
+    "internal/shared\0"
+    "internal/sql/errors\0"
+    "internal/sql/mysql\0"
+    "internal/sql/options\0"
+    "internal/sql/pool\0"
+    "internal/sql/postgres\0"
+    "internal/sql/query\0"
+    "internal/sql/shared\0"
+    "internal/sql/sqlite\0"
+    "internal/stream\0"
+    "internal/stream/promises\0"
+    "internal/streams/add-abort-signal\0"
+    "internal/streams/compose\0"
+    "internal/streams/destroy\0"
+    "internal/streams/duplex\0"
+    "internal/streams/duplexify\0"
+    "internal/streams/duplexpair\0"
+    "internal/streams/end-of-stream\0"
+    "internal/streams/fast-utf8-stream\0"
+    "internal/streams/from\0"
+    "internal/streams/iter/broadcast\0"
+    "internal/streams/iter/classic\0"
+    "internal/streams/iter/consumers\0"
+    "internal/streams/iter/duplex\0"
+    "internal/streams/iter/from\0"
+    "internal/streams/iter/pull\0"
+    "internal/streams/iter/push\0"
+    "internal/streams/iter/ringbuffer\0"
+    "internal/streams/iter/share\0"
+    "internal/streams/iter/transform\0"
+    "internal/streams/iter/types\0"
+    "internal/streams/iter/utils\0"
+    "internal/streams/lazy_transform\0"
+    "internal/streams/legacy\0"
+    "internal/streams/native-readable\0"
+    "internal/streams/operators\0"
+    "internal/streams/passthrough\0"
+    "internal/streams/pipeline\0"
+    "internal/streams/readable\0"
+    "internal/streams/state\0"
+    "internal/streams/transform\0"
+    "internal/streams/utils\0"
+    "internal/streams/writable\0"
+    "internal/test/binding\0"
+    "internal/test_runner/mock_timers\0"
+    "internal/timers\0"
+    "internal/tls\0"
+    "internal/trace_event_recorder\0"
+    "internal/trace_events\0"
+    "internal/tty\0"
+    "internal/url\0"
+    "internal/util/colors\0"
+    "internal/util/comparisons\0"
+    "internal/util/debuglog\0"
+    "internal/util/deprecate\0"
+    "internal/util/inspect\0"
+    "internal/util/mime\0"
+    "internal/validators\0"
+    "internal/webstreams_adapters\0"
+    "internal/worker/messaging\0"
+    "internal/worker/stdio\0"
+    "internalErrorEntries\0"
+    "internalErrorName\0"
+    "internalRequire\0"
+    "internal_bindings.timerClockMs\0"
+    "interpretNode\0"
+    "intersection\0"
+    "intersectsForTesting\0"
+    "ipc\0"
+    "ipc.rs\0"
+    "ipv6Only\0"
+    "is\0"
+    "isAbsolute\0"
+    "isAbsolutePosix\0"
+    "isAbsoluteWin32\0"
+    "isAddress\0"
+    "isAnyArrayBuffer\0"
+    "isArgumentsObject\0"
+    "isArray\0"
+    "isArrayBuffer\0"
+    "isArrayBufferView\0"
+    "isArrayIterator\0"
+    "isAscii\0"
+    "isAsyncDisposableStack\0"
+    "isAsyncFunction\0"
+    "isBigInt64Array\0"
+    "isBigIntObject\0"
+    "isBigUint64Array\0"
+    "isBlockList\0"
+    "isBoolean\0"
+    "isBooleanObject\0"
+    "isBoxedPrimitive\0"
+    "isBuffer\0"
+    "isBuiltin\0"
+    "isBun\0"
+    "isCallable\0"
+    "isClosed\0"
+    "isConcatSpreadable\0"
+    "isConstructor\0"
+    "isContext\0"
+    "isCryptoKey\0"
+    "isDataView\0"
+    "isDate\0"
+    "isDeepStrictEqual\0"
+    "isDestroyed\0"
+    "isDisjointFrom\0"
+    "isDisposableStack\0"
+    "isDisturbed\0"
+    "isEncoding\0"
+    "isError\0"
+    "isErrored\0"
+    "isEventTarget\0"
+    "isExtensible\0"
+    "isExternal\0"
+    "isFinite\0"
+    "isFloat16Array\0"
+    "isFloat32Array\0"
+    "isFloat64Array\0"
+    "isFrozen\0"
+    "isFunction\0"
+    "isGeneratorFunction\0"
+    "isGeneratorObject\0"
+    "isGeneratorSuspendedAtStart\0"
+    "isHiddenFromRequireCache\0"
+    "isIP\0"
+    "isIPv4\0"
+    "isIPv6\0"
+    "isInt16Array\0"
+    "isInt32Array\0"
+    "isInt8Array\0"
+    "isInteger\0"
+    "isInternalThread\0"
+    "isIteratorHelper\0"
+    "isJSArray\0"
+    "isKeyObject\0"
+    "isLenient\0"
+    "isLockFree\0"
+    "isMainThread\0"
+    "isMap\0"
+    "isMapIterator\0"
+    "isMarkedAsUntransferable\0"
+    "isMaster\0"
+    "isModuleNamespaceObject\0"
+    "isNaN\0"
+    "isNamedPipeSocket\0"
+    "isNativeError\0"
+    "isNot\0"
+    "isNull\0"
+    "isNullOrUndefined\0"
+    "isNumber\0"
+    "isNumberObject\0"
+    "isObject\0"
+    "isPaused\0"
+    "isPrimary\0"
+    "isPrimitive\0"
+    "isPromise\0"
+    "isPromisePending\0"
+    "isPrototypeOf\0"
+    "isProxy\0"
+    "isProxyObject\0"
+    "isRawJSON\0"
+    "isReadable\0"
+    "isRegExp\0"
+    "isRegExpObject\0"
+    "isRestart\0"
+    "isRestarting\0"
+    "isRope\0"
+    "isSafeInteger\0"
+    "isSealed\0"
+    "isSessionReused\0"
+    "isSet\0"
+    "isSetIterator\0"
+    "isShadowRealm\0"
+    "isSharedArrayBuffer\0"
+    "isSocketAddress\0"
+    "isStandaloneExecutable\0"
+    "isString\0"
+    "isStringObject\0"
+    "isStringOneByteRepresentation\0"
+    "isSubscribed\0"
+    "isSubsetOf\0"
+    "isSupersetOf\0"
+    "isSymbol\0"
+    "isSymbolObject\0"
+    "isTypedArray\0"
+    "isTypedArrayOutOfBounds\0"
+    "isTypedArrayView\0"
+    "isUint16Array\0"
+    "isUint32Array\0"
+    "isUint8Array\0"
+    "isUint8ClampedArray\0"
+    "isUndefined\0"
+    "isUndefinedOrNull\0"
+    "isUtf8\0"
+    "isValidSyntax\0"
+    "isView\0"
+    "isWeakMap\0"
+    "isWeakSet\0"
+    "isWellFormed\0"
+    "isWorker\0"
+    "isWrapForValidIterator\0"
+    "isWritable\0"
+    "isatty\0"
+    "isomorphic-fetch\0"
+    "it\0"
+    "it-IT\0"
+    "italics\0"
+    "items\0"
+    "iterated\0"
+    "iterator\0"
+    "iteratorCloseAllNormal\0"
+    "iteratorGenericClose\0"
+    "iteratorGenericNext\0"
+    "iteratorHelperCreate\0"
+    "iteratorHelperFieldGenerator\0"
+    "iteratorHelperFieldUnderlyingIterator\0"
+    "iteratorZip\0"
+    "ja\0"
+    "ja-JP\0"
+    "jest\0"
+    "jest.bind.ts\0"
+    "jitPolicy\0"
+    "join\0"
+    "joinPosix\0"
+    "joinWin32\0"
+    "jpeg\0"
+    "js.getConstructor\0"
+    "jsCreateSocketPair\0"
+    "jsEscapeRegExp\0"
+    "jsEscapeRegExpForPackageNameMatching\0"
+    "jsEventTargetGetEventListenersCount\0"
+    "jsFunctionBunStringWidth\0"
+    "jsFunctionDecodeURIComponentSIMD\0"
+    "jsFunctionGetOwnNonIndexProperties\0"
+    "jsFunctionIsDeepStrictEqual\0"
+    "jsFunctionIsError\0"
+    "jsFunctionIsFrameOfStoppedModuleGraph\0"
+    "jsFunctionIsMapIterator\0"
+    "jsFunctionIsModuleResolveFilenameSlowPathEnabled\0"
+    "jsFunctionIsSetIterator\0"
+    "jsFunctionIsStandardOutputStream\0"
+    "jsFunctionModuleGraphFrameOfFrame\0"
+    "jsFunctionModuleGraphOfFrame\0"
+    "jsFunctionNodeEventsGetEventListeners\0"
+    "jsFunctionPartialDeepStrictEqual\0"
+    "jsFunctionPostMessage\0"
+    "jsFunctionReportUncaughtException\0"
+    "jsFunctionRequireTestModule\0"
+    "jsFunctionStructuredCloneAdvanced\0"
+    "jsFunctionTransferToNativeReadableStream\0"
+    "jsFunction_BunString_makeThreadShareableRefCountDelta\0"
+    "jsFunction_BunString_threadIsolatedCopyRefCountDelta\0"
+    "jsFunction_aotBuiltinEntries\0"
+    "jsFunction_aotBuiltinMismatches\0"
+    "jsFunction_aotBuiltinValue\0"
+    "jsFunction_aotNameClass\0"
+    "jsFunction_arrayBufferViewHasBuffer\0"
+    "jsFunction_builtinFeatureUses\0"
+    "jsFunction_closeNodeInspector\0"
+    "jsFunction_collectPreciseCoverage\0"
+    "jsFunction_createHistogram\0"
+    "jsFunction_disableEventLoopDelay\0"
+    "jsFunction_emitMemoryPressure\0"
+    "jsFunction_enableEventLoopDelay\0"
+    "jsFunction_hasReifiedStatic\0"
+    "jsFunction_isASANEnabled\0"
+    "jsFunction_isCPUProfilerRunning\0"
+    "jsFunction_isMemoryPressureWatcherInstalled\0"
+    "jsFunction_lowercaseHeaderNameSIMD\0"
+    "jsFunction_monitorEventLoopDelay\0"
+    "jsFunction_openNodeInspector\0"
+    "jsFunction_postNodeInspectorControl\0"
+    "jsFunction_readFreedStringUnderASAN\0"
+    "jsFunction_setCPUSamplingInterval\0"
+    "jsFunction_spawnThreadsForTesting\0"
+    "jsFunction_startCPUProfiler\0"
+    "jsFunction_startPreciseCoverage\0"
+    "jsFunction_stopCPUProfiler\0"
+    "jsFunction_stopPreciseCoverage\0"
+    "jsFunction_waitForNodeInspectorConnection\0"
+    "jsInternalModuleBytecode\0"
+    "jsInternalModulesLoadedFromBytecode\0"
+    "jsLiveCount\0"
+    "jsPsiFilter\0"
+    "jsPsiTrigger\0"
+    "jsSetAsyncHooksEnabled\0"
+    "jsSetSocketOptions\0"
+    "jsSourceHasLineStarts\0"
+    "jsThreadsafeFunctionLiveCount\0"
+    "jsUpgradeDuplexToTLS\0"
+    "jsWatcherHasOsBackend\0"
+    "jsWorkerLiveCount\0"
+    "js_bindings.generate\0"
+    "jscDescribe\0"
+    "jscDescribeArray\0"
+    "jsc_hooks.bind.ts\0"
+    "json\0"
+    "jsonParse\0"
+    "jsonStringify\0"
+    "jsx\0"
+    "kConnectionsCheckingInterval\0"
+    "kErrored\0"
+    "kEvaluated\0"
+    "kHighWaterMark\0"
+    "kIncomingMessage\0"
+    "kLinked\0"
+    "kMaxLength\0"
+    "kOutHeaders\0"
+    "kRejectNonStandardBodyWrites\0"
+    "kReqShouldKeepAlive\0"
+    "kResistStopPropagation\0"
+    "kSkipPendingData\0"
+    "kSocket\0"
+    "kStringMaxLength\0"
+    "kUniqueHeaders\0"
+    "keep\0"
+    "keepNames\0"
+    "keepalive\0"
+    "key\0"
+    "keyFile\0"
+    "keyFor\0"
+    "keylog\0"
+    "keys\0"
+    "kill\0"
+    "killSignal\0"
+    "killed\0"
+    "kind\0"
+    "kittyGraphics\0"
+    "ko\0"
+    "ko-KR\0"
+    "language\0"
+    "languageDisplay\0"
+    "largestUnit\0"
+    "lastCalledWith\0"
+    "lastChar\0"
+    "lastChunkHandling\0"
+    "lastInTextNode\0"
+    "lastIndex\0"
+    "lastIndexOf\0"
+    "lastMatch\0"
+    "lastModified\0"
+    "lastNeed\0"
+    "lastParen\0"
+    "lastReturnedWith\0"
+    "lastTotal\0"
+    "lastsave\0"
+    "latexMath\0"
+    "latex_math\0"
+    "latin1Slice\0"
+    "latin1Write\0"
+    "layouts\0"
+    "lazy\0"
+    "lchmod\0"
+    "lchmodCb\0"
+    "lchmodSync\0"
+    "lchown\0"
+    "lchownCb\0"
+    "lchownSync\0"
+    "lcs\0"
+    "leftContext\0"
+    "length\0"
+    "level\0"
+    "li\0"
+    "library\0"
+    "light\0"
+    "lindex\0"
+    "line\0"
+    "lineLengths\0"
+    "link\0"
+    "linkCb\0"
+    "linkSymbols\0"
+    "linkSync\0"
+    "linkTimeConstant\0"
+    "linsert\0"
+    "linux\0"
+    "list\0"
+    "listItem\0"
+    "listen\0"
+    "listener\0"
+    "listenerCount\0"
+    "listeners\0"
+    "llen\0"
+    "lmove\0"
+    "lmpop\0"
+    "load\0"
+    "loadEnvFile\0"
+    "loadEsmIntoCjs\0"
+    "loadExtraCACertificates\0"
+    "loadavg\0"
+    "loaded\0"
+    "loader\0"
+    "localAddress\0"
+    "localFamily\0"
+    "localFlags\0"
+    "localPort\0"
+    "localTransportParams\0"
+    "localeCompare\0"
+    "localeMatcher\0"
+    "locales\0"
+    "locked\0"
+    "log\0"
+    "log10\0"
+    "log1p\0"
+    "log2\0"
+    "lookup\0"
+    "lookupService\0"
+    "looseDoubleOrBigInt\0"
+    "looseInteger\0"
+    "looseIntegerOrBigInt\0"
+    "lowMemoryMode\0"
+    "lpop\0"
+    "lpos\0"
+    "lpush\0"
+    "lpushx\0"
+    "lrange\0"
+    "lrem\0"
+    "lset\0"
+    "lstat\0"
+    "lstatCb\0"
+    "lstatSync\0"
+    "ltrim\0"
+    "lutimes\0"
+    "lutimesCb\0"
+    "lutimesSync\0"
+    "machine\0"
+    "macros\0"
+    "main\0"
+    "mainModule\0"
+    "makeAbortError\0"
+    "makeErrorWithCode\0"
+    "makeIteratorResult\0"
+    "makeToken\0"
+    "makeTypeError\0"
+    "map\0"
+    "mapNext\0"
+    "mapNextResultEntry\0"
+    "mapNextResultHasEntry\0"
+    "mapNextResultKey\0"
+    "mapNextResultValue\0"
+    "mappedFilledArray\0"
+    "mark\0"
+    "markAsUncloneable\0"
+    "markAsUntransferable\0"
+    "markBusy\0"
+    "markResourceTiming\0"
+    "markdown\0"
+    "match\0"
+    "matchAll\0"
+    "matcherHint\0"
+    "matchesGlob\0"
+    "math\0"
+    "max\0"
+    "maxAge\0"
+    "maxBuffer\0"
+    "maxByteLength\0"
+    "maxHeaderSize\0"
+    "maxPayloadLength\0"
+    "maxPixels\0"
+    "maxRSS\0"
+    "maxRedirects\0"
+    "maxRequestBodySize\0"
+    "maxRetries\0"
+    "maxVersion\0"
+    "maximize\0"
+    "maximum\0"
+    "maximumFractionDigits\0"
+    "maximumSignificantDigits\0"
+    "measure\0"
+    "measureMemory\0"
+    "measureTrimProfile\0"
+    "memLevel\0"
+    "memoryCost\0"
+    "memoryFootprint\0"
+    "memoryUsage\0"
+    "memory_pressure.rs\0"
+    "message\0"
+    "messages\0"
+    "metadata\0"
+    "metafile\0"
+    "method\0"
+    "methods\0"
+    "mget\0"
+    "microsecond\0"
+    "microseconds\0"
+    "microsecondsDisplay\0"
+    "millisecond\0"
+    "milliseconds\0"
+    "millisecondsDisplay\0"
+    "mimallocDump\0"
+    "min\0"
+    "minChunkSize\0"
+    "minVersion\0"
+    "minify\0"
+    "minifyErrorTestWithOptions\0"
+    "minifyTest\0"
+    "minifyTestWithOptions\0"
+    "minimize\0"
+    "minimum\0"
+    "minimumFractionDigits\0"
+    "minimumIntegerDigits\0"
+    "minimumSignificantDigits\0"
+    "minute\0"
+    "minutes\0"
+    "minutesDisplay\0"
+    "mkdir\0"
+    "mkdirCb\0"
+    "mkdirSync\0"
+    "mkdtemp\0"
+    "mkdtempCb\0"
+    "mkdtempDisposable\0"
+    "mkdtempDisposableSync\0"
+    "mkdtempSync\0"
+    "mmap\0"
+    "mock\0"
+    "mockErrors\0"
+    "mode\0"
+    "modulate\0"
+    "module.exports\0"
+    "moduleLoadList\0"
+    "modulePreload\0"
+    "monitorEventLoopDelay\0"
+    "monotonicNowMs\0"
+    "month\0"
+    "monthCode\0"
+    "months\0"
+    "monthsDisplay\0"
+    "monthsInYear\0"
+    "move\0"
+    "moveCursor\0"
+    "moveMessagePortToContext\0"
+    "ms\0"
+    "mset\0"
+    "msetnx\0"
+    "multiline\0"
+    "murmur32v2\0"
+    "murmur32v3\0"
+    "murmur64v2\0"
+    "mutable\0"
+    "myersDiff\0"
+    "mysql.rs\0"
+    "nakedConstructor\0"
+    "name\0"
+    "names\0"
+    "namesForTesting\0"
+    "namespaceURI\0"
+    "naming\0"
+    "nanosecond\0"
+    "nanoseconds\0"
+    "nanosecondsDisplay\0"
+    "napiDlopenHandle\0"
+    "napi_body.rs\0"
+    "native\0"
+    "native:Bindgen:DevServer.bind.ts:getDeinitCountForTesting\0"
+    "native:Bindgen:Listener.bind.ts:addServerName\0"
+    "native:Bindgen:Listener.bind.ts:setSecureContext\0"
+    "native:Bindgen:Timer.bind.ts:monotonicNowMs\0"
+    "native:Bindgen:dns_internals.bind.ts:getRuntimeDefaultResultOrderOption\0"
+    "native:Bindgen:fmt_jsc.bind.ts:fmtString\0"
+    "native:Bindgen:jest.bind.ts:fileGeneration\0"
+    "native:Bindgen:jest.bind.ts:nodeTestMarkResult\0"
+    "native:Bindgen:jsc_hooks.bind.ts:hotReloadGeneration\0"
+    "native:Bindgen:node_assert_binding.bind.ts:myersDiff\0"
+    "native:Bindgen:node_assert_binding.bind.ts:printMyersDiff\0"
+    "native:Bindgen:node_assert_binding.bind.ts:printSimpleMyersDiff\0"
+    "native:Bindgen:node_cluster_binding.bind.ts:channelIgnoreOneDisconnectEventListener\0"
+    "native:Bindgen:node_cluster_binding.bind.ts:clusterCloseHandle\0"
+    "native:Bindgen:node_cluster_binding.bind.ts:clusterValidateFd\0"
+    "native:Bindgen:node_cluster_binding.bind.ts:onInternalMessageChild\0"
+    "native:Bindgen:node_cluster_binding.bind.ts:onInternalMessagePrimary\0"
+    "native:Bindgen:node_cluster_binding.bind.ts:setRef\0"
+    "native:Bindgen:node_http_binding.bind.ts:getBunServerOpenCount\0"
+    "native:Bindgen:node_http_binding.bind.ts:getInsecureHTTPParser\0"
+    "native:Bindgen:node_http_binding.bind.ts:getMaxHTTPHeaderSize\0"
+    "native:Bindgen:node_http_binding.bind.ts:sendWebSocketFrame\0"
+    "native:Bindgen:node_http_binding.bind.ts:setMaxHTTPHeaderSize\0"
+    "native:Bindgen:node_http_binding.bind.ts:upgradeNodeHTTPResponseToWebSocket\0"
+    "native:Bindgen:node_net_binding.bind.ts:getDefaultAutoSelectFamily\0"
+    "native:Bindgen:node_net_binding.bind.ts:getDefaultAutoSelectFamilyAttemptTimeout\0"
+    "native:Bindgen:node_net_binding.bind.ts:newDetachedSocket\0"
+    "native:Bindgen:node_net_binding.bind.ts:setDefaultAutoSelectFamily\0"
+    "native:Bindgen:node_net_binding.bind.ts:setDefaultAutoSelectFamilyAttemptTimeout\0"
+    "native:Bindgen:node_os.bind.ts:cpus\0"
+    "native:Bindgen:node_os.bind.ts:freemem\0"
+    "native:Bindgen:node_os.bind.ts:getPriority\0"
+    "native:Bindgen:node_os.bind.ts:homedir\0"
+    "native:Bindgen:node_os.bind.ts:hostCpuCount\0"
+    "native:Bindgen:node_os.bind.ts:hostname\0"
+    "native:Bindgen:node_os.bind.ts:loadavg\0"
+    "native:Bindgen:node_os.bind.ts:networkInterfaces\0"
+    "native:Bindgen:node_os.bind.ts:release\0"
+    "native:Bindgen:node_os.bind.ts:setPriority\0"
+    "native:Bindgen:node_os.bind.ts:totalmem\0"
+    "native:Bindgen:node_os.bind.ts:uptime\0"
+    "native:Bindgen:node_os.bind.ts:userInfo\0"
+    "native:Bindgen:node_os.bind.ts:version\0"
+    "native:Bindgen:node_path.bind.ts:basenamePosix\0"
+    "native:Bindgen:node_path.bind.ts:basenameWin32\0"
+    "native:Bindgen:node_path.bind.ts:dirnamePosix\0"
+    "native:Bindgen:node_path.bind.ts:dirnameWin32\0"
+    "native:Bindgen:node_path.bind.ts:extnamePosix\0"
+    "native:Bindgen:node_path.bind.ts:extnameWin32\0"
+    "native:Bindgen:node_path.bind.ts:formatPosix\0"
+    "native:Bindgen:node_path.bind.ts:formatWin32\0"
+    "native:Bindgen:node_path.bind.ts:isAbsolutePosix\0"
+    "native:Bindgen:node_path.bind.ts:isAbsoluteWin32\0"
+    "native:Bindgen:node_path.bind.ts:joinPosix\0"
+    "native:Bindgen:node_path.bind.ts:joinWin32\0"
+    "native:Bindgen:node_path.bind.ts:normalizePosix\0"
+    "native:Bindgen:node_path.bind.ts:normalizeWin32\0"
+    "native:Bindgen:node_path.bind.ts:parsePosix\0"
+    "native:Bindgen:node_path.bind.ts:parseWin32\0"
+    "native:Bindgen:node_path.bind.ts:relativePosix\0"
+    "native:Bindgen:node_path.bind.ts:relativeWin32\0"
+    "native:Bindgen:node_path.bind.ts:resolvePosix\0"
+    "native:Bindgen:node_path.bind.ts:resolveWin32\0"
+    "native:Bindgen:node_path.bind.ts:toNamespacedPathPosix\0"
+    "native:Bindgen:node_path.bind.ts:toNamespacedPathWin32\0"
+    "native:Bindgen:node_tls_binding.bind.ts:getUseSystemCA\0"
+    "native:Bindgen:node_util_binding.bind.ts:assertEncodingValid\0"
+    "native:Bindgen:node_util_binding.bind.ts:ecanceledErrorCode\0"
+    "native:Bindgen:node_util_binding.bind.ts:enobufsErrorCode\0"
+    "native:Bindgen:node_util_binding.bind.ts:etimedoutErrorCode\0"
+    "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly\0"
+    "native:Bindgen:node_util_binding.bind.ts:internalErrorEntries\0"
+    "native:Bindgen:node_util_binding.bind.ts:internalErrorName\0"
+    "native:Bindgen:node_util_binding.bind.ts:normalizeEncoding\0"
+    "native:Bindgen:node_util_binding.bind.ts:parseEnv\0"
+    "native:Bindgen:node_util_binding.bind.ts:uvTranslateSysError\0"
+    "native:Bindgen:node_validators.bind.ts:checkRangesOrGetDefault\0"
+    "native:Bindgen:node_validators.bind.ts:validateAbortSignal\0"
+    "native:Bindgen:node_validators.bind.ts:validateArray\0"
+    "native:Bindgen:node_validators.bind.ts:validateBuffer\0"
+    "native:Bindgen:node_validators.bind.ts:validateEncoding\0"
+    "native:Bindgen:node_validators.bind.ts:validateFiniteNumber\0"
+    "native:Bindgen:node_validators.bind.ts:validateInt32\0"
+    "native:Bindgen:node_validators.bind.ts:validateInteger\0"
+    "native:Bindgen:node_validators.bind.ts:validateNumber\0"
+    "native:Bindgen:node_validators.bind.ts:validateObject\0"
+    "native:Bindgen:node_validators.bind.ts:validateOneOf\0"
+    "native:Bindgen:node_validators.bind.ts:validatePort\0"
+    "native:Bindgen:node_validators.bind.ts:validateUint32\0"
+    "native:Bindgen:node_zlib_binding.bind.ts:crc32\0"
+    "native:Bindgen:socket_body.bind.ts:checkServerIdentityInHandshake\0"
+    "native:Bindgen:socket_body.bind.ts:firstFlightBeforeFin\0"
+    "native:Bindgen:socket_body.bind.ts:getBufferedAmount\0"
+    "native:Bindgen:socket_body.bind.ts:isNamedPipeSocket\0"
+    "native:Bindgen:socket_body.bind.ts:releaseHeldFlight\0"
+    "native:Bindgen:socket_body.bind.ts:upgradeTLSDeferred\0"
+    "native:Bindgen:udp_socket.bind.ts:bufferSize\0"
+    "native:Bindgen:udp_socket.bind.ts:connect\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramAdoptFd\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramBindFd\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramCloseFd\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramGetSockNameFd\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramGuessHandleType\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramIsFdAdopted\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramListenFd\0"
+    "native:Bindgen:udp_socket.bind.ts:dgramNewSocketFd\0"
+    "native:Bindgen:udp_socket.bind.ts:disconnect\0"
+    "native:Bindgen:udp_socket.bind.ts:getFd\0"
+    "native:Cpp:CallSite.cpp:createNativeFrameForTesting\0"
+    "native:Cpp:IsolatedModuleCache.cpp:createIsolatedModuleCacheSourceTypeForTesting\0"
+    "native:Cpp:JSCTestingHelpers.cpp:createJSCTestingHelpers\0"
+    "native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding\0"
+    "native:Cpp:JSSQLStatement.cpp:createJSSQLStatementConstructor\0"
+    "native:Cpp:JSWebSocket.cpp:createWebSocketBindingForWs\0"
+    "native:Cpp:NoOpForTesting.cpp:createNoOpForTesting\0"
+    "native:Cpp:NodeFetch.cpp:createNodeFetchInternalBinding\0"
+    "native:Cpp:NodeHTTP.cpp:createNodeHTTPInternalBinding\0"
+    "native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag\0"
+    "native:Cpp:NodeURL.cpp:Bun::createNodeICUBinding\0"
+    "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding\0"
+    "native:Cpp:NodeV8.cpp:Bun::createNodeV8Binding\0"
+    "native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding\0"
+    "native:Cpp:ProcessBindingTTYWrap.cpp:createBunTTYFunctions\0"
+    "native:Cpp:Undici.cpp:createUndiciInternalBinding\0"
+    "native:Cpp:Worker.cpp:createNodeWorkerConstructor\0"
+    "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding\0"
+    "native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding\0"
+    "native:NewCppFunction:BunDebugger.cpp:jsFunction_closeNodeInspector\0"
+    "native:NewCppFunction:BunDebugger.cpp:jsFunction_openNodeInspector\0"
+    "native:NewCppFunction:BunDebugger.cpp:jsFunction_postNodeInspectorControl\0"
+    "native:NewCppFunction:BunDebugger.cpp:jsFunction_waitForNodeInspectorConnection\0"
+    "native:NewCppFunction:BunProcess.cpp:Process_functionEmitHelper\0"
+    "native:NewCppFunction:BunProcess.cpp:Process_functionWriteWarning\0"
+    "native:NewCppFunction:BunProcess.cpp:jsFunctionDrainMicrotaskQueue\0"
+    "native:NewCppFunction:BunProcess.cpp:jsFunctionIsStandardOutputStream\0"
+    "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException\0"
+    "native:NewCppFunction:BunProcess.cpp:jsFunction_emitWarning\0"
+    "native:NewCppFunction:BunProcess.cpp:jsFunction_throwValue\0"
+    "native:NewCppFunction:ErrorCode.cpp:NodeError_proto_toString\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_BunString_makeThreadShareableRefCountDelta\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_BunString_threadIsolatedCopyRefCountDelta\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotBuiltinEntries\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotBuiltinMismatches\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotBuiltinValue\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_aotNameClass\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_arrayBufferViewHasBuffer\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_builtinFeatureUses\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_emitMemoryPressure\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_hasReifiedStatic\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_isASANEnabled\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_isMemoryPressureWatcherInstalled\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_lowercaseHeaderNameSIMD\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_readFreedStringUnderASAN\0"
+    "native:NewCppFunction:InternalForTesting.cpp:jsFunction_spawnThreadsForTesting\0"
+    "native:NewCppFunction:InternalModuleRegistry.cpp:jsInternalModuleBytecode\0"
+    "native:NewCppFunction:InternalModuleRegistry.cpp:jsInternalModulesLoadedFromBytecode\0"
+    "native:NewCppFunction:JSCommonJSModule.cpp:jsFunctionRequireTestModule\0"
+    "native:NewCppFunction:JSDirectStreamController.cpp:jsWebStreamsHandler_onDirectEndOfTickFlush\0"
+    "native:NewCppFunction:JSEventListener.cpp:jsFunctionEmitUncaughtException\0"
+    "native:NewCppFunction:JSEventTarget.cpp:jsEventTargetGetEventListenersCount\0"
+    "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_collectPreciseCoverage\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_isCPUProfilerRunning\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_setCPUSamplingInterval\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_startCPUProfiler\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_startPreciseCoverage\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_stopCPUProfiler\0"
+    "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_stopPreciseCoverage\0"
+    "native:NewCppFunction:JSNodePerformanceHooksHistogram.cpp:jsFunction_createHistogram\0"
+    "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_disableEventLoopDelay\0"
+    "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_enableEventLoopDelay\0"
+    "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_monitorEventLoopDelay\0"
+    "native:NewCppFunction:ModuleGraph.cpp:jsFunctionIsFrameOfStoppedModuleGraph\0"
+    "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphFrameOfFrame\0"
+    "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphOfFrame\0"
+    "native:NewCppFunction:NodeAsyncHooks.cpp:jsSetAsyncHooksEnabled\0"
+    "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled\0"
+    "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionSetCJSWrapperItem\0"
+    "native:NewCppFunction:NodeTLS.cpp:Bun__canonicalizeIP\0"
+    "native:NewCppFunction:NodeTLS.cpp:getBundledRootCertificates\0"
+    "native:NewCppFunction:NodeTLS.cpp:getDefaultCiphers\0"
+    "native:NewCppFunction:NodeTLS.cpp:getExtraCACertificates\0"
+    "native:NewCppFunction:NodeTLS.cpp:getSystemCACertificates\0"
+    "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates\0"
+    "native:NewCppFunction:NodeTLS.cpp:parseCACertificates\0"
+    "native:NewCppFunction:NodeTLS.cpp:selectServerName\0"
+    "native:NewCppFunction:NodeTLS.cpp:setDefaultCiphers\0"
+    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual\0"
+    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsError\0"
+    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsMapIterator\0"
+    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsSetIterator\0"
+    "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual\0"
+    "native:NewCppFunction:StructuredClone.cpp:jsFunctionStructuredCloneAdvanced\0"
+    "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties\0"
+    "native:NewCppFunction:Worker.cpp:jsFunctionPostMessage\0"
+    "native:NewCppFunction:ZigSourceProvider.cpp:jsSourceHasLineStarts\0"
+    "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD\0"
+    "native:NewCppFunction:highway_strings_testing.cpp:Bun__highwayStringsForTesting\0"
+    "native:NewCppFunction:streams/BunStreamConsumers.cpp:jsFunctionTransferToNativeReadableStream\0"
+    "native:NewCppFunction:stringWidth.cpp:jsFunctionBunStringWidth\0"
+    "native:NewCppFunction:xxhash3_testing.cpp:Bun__xxhash3_64_forTesting\0"
+    "native:NewRustFunction:BytecodeOrderRecorder.rs:namesForTesting\0"
+    "native:NewRustFunction:Counters.rs:createCountersObject\0"
+    "native:NewRustFunction:JSBundler.rs:jsWorkerLiveCount\0"
+    "native:NewRustFunction:MarkdownObject.rs:setMaxMarkdownBlockBytesForTesting\0"
+    "native:NewRustFunction:SecureContext.rs:jsLiveCount\0"
+    "native:NewRustFunction:SemverObject.rs:intersectsForTesting\0"
+    "native:NewRustFunction:Stat.rs:createStatsForIno\0"
+    "native:NewRustFunction:bake/config/plugins.rs:checkFramework\0"
+    "native:NewRustFunction:bake/config/plugins.rs:isRestart\0"
+    "native:NewRustFunction:bake/config/plugins.rs:isRestarting\0"
+    "native:NewRustFunction:bake/config/plugins.rs:restartProcess\0"
+    "native:NewRustFunction:bake/config/plugins.rs:setConfigPlugins\0"
+    "native:NewRustFunction:bake/config/plugins.rs:setPages\0"
+    "native:NewRustFunction:checker_queries_testing.rs:describeCheckerQueries\0"
+    "native:NewRustFunction:code_resolver_testing.rs:compareCodeResolution\0"
+    "native:NewRustFunction:code_resolver_testing.rs:describeCodeGraph\0"
+    "native:NewRustFunction:code_resolver_testing.rs:resolveComputedSpecifier\0"
+    "native:NewRustFunction:collections/linear_fifo.rs:TestingAPIs.orderedRemoveProbe\0"
+    "native:NewRustFunction:css_internals.rs:_test\0"
+    "native:NewRustFunction:css_internals.rs:attrTest\0"
+    "native:NewRustFunction:css_internals.rs:minifyErrorTestWithOptions\0"
+    "native:NewRustFunction:css_internals.rs:minifyTest\0"
+    "native:NewRustFunction:css_internals.rs:minifyTestWithOptions\0"
+    "native:NewRustFunction:css_internals.rs:prefixTest\0"
+    "native:NewRustFunction:css_internals.rs:prefixTestWithOptions\0"
+    "native:NewRustFunction:css_internals.rs:testWithOptions\0"
+    "native:NewRustFunction:declared_types_testing.rs:getClass\0"
+    "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExp\0"
+    "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExpForPackageNameMatching\0"
+    "native:NewRustFunction:event_loop.rs:getActiveTasks\0"
+    "native:NewRustFunction:ffi.rs:Bun__FFI__cc\0"
+    "native:NewRustFunction:ffi.rs:closeCallback\0"
+    "native:NewRustFunction:hosted_git_info.rs:TestingAPIs.jsFromUrl\0"
+    "native:NewRustFunction:hosted_git_info.rs:TestingAPIs.jsParseUrl\0"
+    "native:NewRustFunction:http/H2Client.rs:TestingAPIs.liveCounts\0"
+    "native:NewRustFunction:http/H3Client.rs:TestingAPIs.quicLiveCounts\0"
+    "native:NewRustFunction:ini.rs:IniTestingAPIs.loadNpmrcFromJS\0"
+    "native:NewRustFunction:ini.rs:IniTestingAPIs.parse\0"
+    "native:NewRustFunction:ipc.rs:emitHandleIPCMessage\0"
+    "native:NewRustFunction:memory_pressure.rs:jsPsiFilter\0"
+    "native:NewRustFunction:memory_pressure.rs:jsPsiTrigger\0"
+    "native:NewRustFunction:memory_pressure.rs:jsWatcherHasOsBackend\0"
+    "native:NewRustFunction:napi_body.rs:jsThreadsafeFunctionLiveCount\0"
+    "native:NewRustFunction:node_cluster_binding.rs:clusterRawBind\0"
+    "native:NewRustFunction:node_cluster_binding.rs:sendHelperPrimary\0"
+    "native:NewRustFunction:node_fs_binding.rs:createMemfdForTesting\0"
+    "native:NewRustFunction:node_fs_binding.rs:rm_options_for_testing\0"
+    "native:NewRustFunction:node_fs_binding.rs:string_to_flags_for_testing\0"
+    "native:NewRustFunction:node_http_binding.rs:getBunServerAllClosedPromise\0"
+    "native:NewRustFunction:node_net_binding.rs:doConnect\0"
+    "native:NewRustFunction:npm.rs:Architecture.jsFunctionArchitectureIsMatch\0"
+    "native:NewRustFunction:npm.rs:OperatingSystem.jsFunctionOperatingSystemIsMatch\0"
+    "native:NewRustFunction:pack_command.rs:bindings.jsReadTarball\0"
+    "native:NewRustFunction:parse_args.rs:parseArgs\0"
+    "native:NewRustFunction:patch.rs:TestingAPIs.apply\0"
+    "native:NewRustFunction:patch.rs:TestingAPIs.makeDiff\0"
+    "native:NewRustFunction:patch.rs:TestingAPIs.parse\0"
+    "native:NewRustFunction:runtime/dns_jsc/dns.rs:Resolver.newResolver\0"
+    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.getaddrinfoErrorForTesting\0"
+    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.isAllLoopbackOfOneFamilyForTesting\0"
+    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.isLocalhostNameForTesting\0"
+    "native:NewRustFunction:runtime/dns_jsc/dns.rs:internal.seedCacheForTesting\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsClearSocketFaults\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsNamedPipeContextLiveCount\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsSetSocketFault\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:TestingAPIs.jsSocketFaultInjectionAvailable\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:jsCreateSocketPair\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:jsSetSocketOptions\0"
+    "native:NewRustFunction:runtime/socket/socket.rs:jsUpgradeDuplexToTLS\0"
+    "native:NewRustFunction:runtime/timer/Timer.rs:internal_bindings.timerClockMs\0"
+    "native:NewRustFunction:runtime/webcore/ByteStream.rs:TestingAPIs.byteStreamCancelOnDrain\0"
+    "native:NewRustFunction:runtime/webcore/FileSink.rs:TestingAPIs.fileSinkLiveCount\0"
+    "native:NewRustFunction:runtime/webcore/fetch.rs:TestingAPIs.noProxyMatches\0"
+    "native:NewRustFunction:runtime/webcore/fetch.rs:TestingAPIs.parseURL\0"
+    "native:NewRustFunction:runtime/webcore/fetch.rs:TestingAPIs.proxyFor\0"
+    "native:NewRustFunction:shell.rs:TestingAPIs.disabledOnThisPlatform\0"
+    "native:NewRustFunction:shell.rs:TestingAPIs.shellLex\0"
+    "native:NewRustFunction:shell.rs:TestingAPIs.shellParse\0"
+    "native:NewRustFunction:sourcemap/InternalSourceMap.rs:TestingAPIs.find\0"
+    "native:NewRustFunction:sourcemap/InternalSourceMap.rs:TestingAPIs.fromVLQ\0"
+    "native:NewRustFunction:sourcemap/InternalSourceMap.rs:TestingAPIs.toVLQ\0"
+    "native:NewRustFunction:string/immutable/unicode.rs:TestingAPIs.toUTF16AllocSentinel\0"
+    "native:NewRustFunction:subprocess.rs:TestingAPIs.closeStdinWriter\0"
+    "native:NewRustFunction:subprocess.rs:TestingAPIs.injectStdioReadError\0"
+    "native:NewRustFunction:sys.rs:TestingAPIs.sigactionLayout\0"
+    "native:NewRustFunction:sys.rs:TestingAPIs.translateNtStatusToE\0"
+    "native:NewRustFunction:sys.rs:TestingAPIs.translateUVErrorToE\0"
+    "native:NewRustFunction:trim_testing.rs:measureTrimProfile\0"
+    "native:NewRustFunction:trim_testing.rs:readTrimTable\0"
+    "native:NewRustFunction:trim_testing.rs:trimExecutable\0"
+    "native:NewRustFunction:virtual_machine_exports.rs:Bun__setSyntheticAllocationLimitForTesting\0"
+    "native:Rust:FrameworkRouter.rs:JSFrameworkRouter.getBindings\0"
+    "native:Rust:SecureContext.rs:js.getConstructor\0"
+    "native:Rust:crash_handler.rs:js_bindings.generate\0"
+    "native:Rust:h2_frame_parser.rs:H2FrameParserConstructor\0"
+    "native:Rust:install_binding.rs:bun_install_js_bindings.generate\0"
+    "native:Rust:mysql.rs:createBinding\0"
+    "native:Rust:node_crypto_binding.rs:createNodeCryptoBindingZig\0"
+    "native:Rust:node_fs_binding.rs:createBinding\0"
+    "native:Rust:node_net_binding.rs:BlockList\0"
+    "native:Rust:node_net_binding.rs:SocketAddress\0"
+    "native:Rust:node_quic_binding.rs:createNodeQuicBinding\0"
+    "native:Rust:node_zlib_binding.rs:NativeBrotli\0"
+    "native:Rust:node_zlib_binding.rs:NativeZlib\0"
+    "native:Rust:node_zlib_binding.rs:NativeZstd\0"
+    "native:Rust:npm.rs:PackageManifest.bindings.generate\0"
+    "native:Rust:postgres.rs:createBinding\0"
+    "native:Rust:upgrade_command.rs:upgrade_js_bindings.generate\0"
+    "navigator\0"
+    "nb\0"
+    "nb-NO\0"
+    "negated\0"
+    "networkInterfaces\0"
+    "newArrayLike\0"
+    "newArrayWithCapacity\0"
+    "newArrayWithSize\0"
+    "newArrayWithSpecies\0"
+    "newContiguousArray\0"
+    "newCppFunction\0"
+    "newDetachedSocket\0"
+    "newDoubleArray\0"
+    "newPromise\0"
+    "newRejectedPromise\0"
+    "newResolvedPromise\0"
+    "newResponseFromParts\0"
+    "newRustFunction\0"
+    "next\0"
+    "nextColor\0"
+    "nextTick\0"
+    "nl\0"
+    "nl-BE\0"
+    "nl-NL\0"
+    "no\0"
+    "noDeprecation\0"
+    "noFTL\0"
+    "noHtmlBlocks\0"
+    "noHtmlSpans\0"
+    "noIndentedCodeBlocks\0"
+    "noInline\0"
+    "noOSRExitFuzzing\0"
+    "noProcessWarnings\0"
+    "noTrailers\0"
+    "no_html_blocks\0"
+    "no_html_spans\0"
+    "no_indented_code_blocks\0"
+    "node-fetch\0"
+    "node:_http2_upgrade\0"
+    "node:_http_agent\0"
+    "node:_http_client\0"
+    "node:_http_common\0"
+    "node:_http_incoming\0"
+    "node:_http_outgoing\0"
+    "node:_http_server\0"
+    "node:_stream_duplex\0"
+    "node:_stream_passthrough\0"
+    "node:_stream_readable\0"
+    "node:_stream_transform\0"
+    "node:_stream_wrap\0"
+    "node:_stream_writable\0"
+    "node:_tls_common\0"
+    "node:_tls_wrap\0"
+    "node:assert\0"
+    "node:assert/strict\0"
+    "node:async_hooks\0"
+    "node:buffer\0"
+    "node:child_process\0"
+    "node:cluster\0"
+    "node:console\0"
+    "node:constants\0"
+    "node:crypto\0"
+    "node:dgram\0"
+    "node:diagnostics_channel\0"
+    "node:dns\0"
+    "node:dns/promises\0"
+    "node:domain\0"
+    "node:events\0"
+    "node:fs\0"
+    "node:fs/promises\0"
+    "node:http\0"
+    "node:http2\0"
+    "node:https\0"
+    "node:inspector\0"
+    "node:inspector/promises\0"
+    "node:module\0"
+    "node:net\0"
+    "node:os\0"
+    "node:path\0"
+    "node:path/posix\0"
+    "node:path/win32\0"
+    "node:perf_hooks\0"
+    "node:punycode\0"
+    "node:querystring\0"
+    "node:quic\0"
+    "node:readline\0"
+    "node:readline/promises\0"
+    "node:repl\0"
+    "node:sqlite\0"
+    "node:stream\0"
+    "node:stream/consumers\0"
+    "node:stream/iter\0"
+    "node:stream/promises\0"
+    "node:stream/web\0"
+    "node:string_decoder\0"
+    "node:test\0"
+    "node:timers\0"
+    "node:timers/promises\0"
+    "node:tls\0"
+    "node:trace_events\0"
+    "node:tty\0"
+    "node:url\0"
+    "node:util\0"
+    "node:util/types\0"
+    "node:v8\0"
+    "node:vm\0"
+    "node:wasi\0"
+    "node:worker_threads\0"
+    "node:zlib\0"
+    "node:zlib/iter\0"
+    "nodeTestMarkResult\0"
+    "node_assert_binding.bind.ts\0"
+    "node_cluster_binding.bind.ts\0"
+    "node_cluster_binding.rs\0"
+    "node_crypto_binding.cpp\0"
+    "node_crypto_binding.rs\0"
+    "node_fs_binding.rs\0"
+    "node_http_binding.bind.ts\0"
+    "node_http_binding.rs\0"
+    "node_net_binding.bind.ts\0"
+    "node_net_binding.rs\0"
+    "node_os.bind.ts\0"
+    "node_path.bind.ts\0"
+    "node_quic_binding.rs\0"
+    "node_tls_binding.bind.ts\0"
+    "node_util_binding.bind.ts\0"
+    "node_validators.bind.ts\0"
+    "node_zlib_binding.bind.ts\0"
+    "node_zlib_binding.rs\0"
+    "normalize\0"
+    "normalizeEncoding\0"
+    "normalizePosix\0"
+    "normalizeWin32\0"
+    "not\0"
+    "notDeepEqual\0"
+    "notDeepStrictEqual\0"
+    "notEqual\0"
+    "notStrictEqual\0"
+    "notation\0"
+    "notes\0"
+    "notify\0"
+    "notifyWhenReadParsed\0"
+    "now\0"
+    "npm.rs\0"
+    "nthCalledWith\0"
+    "nthReturnedWith\0"
+    "null\0"
+    "number\0"
+    "numberIsFinite\0"
+    "numberIsInteger\0"
+    "numberOfDFGCompiles\0"
+    "numberOrUndefined\0"
+    "numberingSystem\0"
+    "numeric\0"
+    "obfuscate\0"
+    "object\0"
+    "objectContaining\0"
+    "objectKeys\0"
+    "of\0"
+    "off\0"
+    "offset\0"
+    "offsetNanoseconds\0"
+    "ok\0"
+    "ol\0"
+    "omit\0"
+    "omitPadding\0"
+    "on\0"
+    "onDisconnect\0"
+    "onDocument\0"
+    "onEndCallbacks\0"
+    "onEndTag\0"
+    "onExit\0"
+    "onInternalMessageChild\0"
+    "onInternalMessagePrimary\0"
+    "onNodeHTTPRequest\0"
+    "onTestFinished\0"
+    "onabort\0"
+    "once\0"
+    "onclose\0"
+    "onconnect\0"
+    "ondata\0"
+    "onerror\0"
+    "only\0"
+    "onmessage\0"
+    "onnotification\0"
+    "onresourcetimingbufferfull\0"
+    "onwritable\0"
+    "open\0"
+    "openAsBlob\0"
+    "openCb\0"
+    "openInEditor\0"
+    "openStdin\0"
+    "openStream\0"
+    "openSync\0"
+    "opendir\0"
+    "opendirSync\0"
+    "ops\0"
+    "optimize\0"
+    "optimizeImports\0"
+    "optimizeNextInvocation\0"
+    "optionsEcho\0"
+    "or\0"
+    "order\0"
+    "origin\0"
+    "originalColumn\0"
+    "originalLine\0"
+    "outdir\0"
+    "outfile\0"
+    "outputFlags\0"
+    "overflow\0"
+    "overloaded\0"
+    "overridableRequire\0"
+    "overriddenName\0"
+    "ownEntriesFlat\0"
+    "ownKeys\0"
+    "p\0"
+    "pack_command.rs\0"
+    "packages\0"
+    "padEnd\0"
+    "padStart\0"
+    "pageSize\0"
+    "paragraph\0"
+    "parameter\0"
+    "parameters\0"
+    "params\0"
+    "parent\0"
+    "parentPort\0"
+    "parse\0"
+    "parseArgs\0"
+    "parseCACertificates\0"
+    "parseCertString\0"
+    "parseChunk\0"
+    "parseEnv\0"
+    "parseFloat\0"
+    "parseInt\0"
+    "parseMIMEType\0"
+    "parsePkcs12\0"
+    "parsePosix\0"
+    "parseUniqueHeadersOption\0"
+    "parseWin32\0"
+    "parse_args.rs\0"
+    "parsers\0"
+    "partSize\0"
+    "partialDeepStrictEqual\0"
+    "pass\0"
+    "passive\0"
+    "passphrase\0"
+    "password\0"
+    "patch.rs\0"
+    "path\0"
+    "pathToFileURL\0"
+    "pathname\0"
+    "paths\0"
+    "pause\0"
+    "pauseOnConnect\0"
+    "pauseReads\0"
+    "payload\0"
+    "pbkdf2\0"
+    "pbkdf2Sync\0"
+    "peek\0"
+    "peekPromiseSettledValue\0"
+    "peekPromiseStatus\0"
+    "pendingDeprecation\0"
+    "pendingRequests\0"
+    "pendingWebSockets\0"
+    "perCodePoint\0"
+    "perMessageDeflate\0"
+    "percentAvailableMemoryInUse\0"
+    "performPromiseThen\0"
+    "performServerHandshake\0"
+    "performance\0"
+    "permissiveAtxHeaders\0"
+    "permissive_atx_headers\0"
+    "persist\0"
+    "pexpire\0"
+    "pexpireat\0"
+    "pexpiretime\0"
+    "pfadd\0"
+    "pfcount\0"
+    "pfmerge\0"
+    "pick\0"
+    "pid\0"
+    "ping\0"
+    "pinnedBytesAfterCallback\0"
+    "pipeline\0"
+    "pl\0"
+    "pl-PL\0"
+    "placeholder\0"
+    "plainDateISO\0"
+    "plainDateTimeISO\0"
+    "plainQueryEntries\0"
+    "plainQueryKeys\0"
+    "plainQueryValues\0"
+    "plainTime\0"
+    "plainTimeISO\0"
+    "platform\0"
+    "plugin\0"
+    "plugins\0"
+    "png\0"
+    "pokePromiseAsHandled\0"
+    "pong\0"
+    "poolSize\0"
+    "pop\0"
+    "port\0"
+    "portAfterCallback\0"
+    "portOf\0"
+    "portOfOrNull\0"
+    "portPlus\0"
+    "position\0"
+    "posix\0"
+    "postMessage\0"
+    "postMessageToThread\0"
+    "postgres\0"
+    "postgres.rs\0"
+    "pow\0"
+    "ppid\0"
+    "pre\0"
+    "prefetch\0"
+    "prefix\0"
+    "prefixTest\0"
+    "prefixTestWithOptions\0"
+    "prepareError\0"
+    "prepareStackTrace\0"
+    "prepend\0"
+    "prependListener\0"
+    "prependOnceListener\0"
+    "presign\0"
+    "preventDefault\0"
+    "preventExtensions\0"
+    "printExpected\0"
+    "printMyersDiff\0"
+    "printReceived\0"
+    "printSimpleMyersDiff\0"
+    "privateDecrypt\0"
+    "privateEncrypt\0"
+    "process\0"
+    "processBindingConstants\0"
+    "profile\0"
+    "profileEnd\0"
+    "promise\0"
+    "promiseHooks\0"
+    "promiseReject\0"
+    "promiseResolve\0"
+    "promiseReturnUndefinedOnFulfilled\0"
+    "promises\0"
+    "promisify\0"
+    "promising\0"
+    "prompt\0"
+    "propertyIsEnumerable\0"
+    "props\0"
+    "protocol\0"
+    "prototype\0"
+    "proxy\0"
+    "proxyFieldHandler\0"
+    "proxyFieldTarget\0"
+    "psetex\0"
+    "psubscribe\0"
+    "pt\0"
+    "pt-BR\0"
+    "pt-PT\0"
+    "ptr\0"
+    "pttl\0"
+    "publicDecrypt\0"
+    "publicEncrypt\0"
+    "publicId\0"
+    "publicPath\0"
+    "publish\0"
+    "publishBinary\0"
+    "publishText\0"
+    "publishToSelf\0"
+    "publisher\0"
+    "pubsub\0"
+    "pull\0"
+    "punsubscribe\0"
+    "push\0"
+    "pushPromise\0"
+    "pushWithInitHooks\0"
+    "putAsyncDisposableStackInternalField\0"
+    "putByIdDirectPrivate\0"
+    "putByValDirect\0"
+    "putContiguousIndex\0"
+    "putDisposableStackInternalField\0"
+    "putDoubleIndex\0"
+    "putInternalField\0"
+    "query\0"
+    "queueMicrotask\0"
+    "queueSize\0"
+    "r\0"
+    "race\0"
+    "random\0"
+    "randomBytes\0"
+    "randomFill\0"
+    "randomFillSync\0"
+    "randomInt\0"
+    "randomUUID\0"
+    "randomUUIDv5\0"
+    "randomUUIDv7\0"
+    "randomkey\0"
+    "range\0"
+    "rangeOfBytes\0"
+    "rapidhash\0"
+    "raw\0"
+    "rawJSON\0"
+    "rawListeners\0"
+    "rawModeStateSize\0"
+    "react\0"
+    "reactCompiler\0"
+    "reactCompilerOutputMode\0"
+    "reactCompilerParseTestPragmas\0"
+    "reactFastRefresh\0"
+    "reactVersion\0"
+    "read\0"
+    "readBigInt64\0"
+    "readBigInt64BE\0"
+    "readBigInt64LE\0"
+    "readBigUInt64\0"
+    "readBigUInt64BE\0"
+    "readBigUInt64LE\0"
+    "readBigUint64BE\0"
+    "readBigUint64LE\0"
+    "readCb\0"
+    "readDouble\0"
+    "readDoubleBE\0"
+    "readDoubleLE\0"
+    "readFile\0"
+    "readFileCb\0"
+    "readFileSync\0"
+    "readFloat\0"
+    "readFloatBE\0"
+    "readFloatLE\0"
+    "readInt16\0"
+    "readInt16BE\0"
+    "readInt16LE\0"
+    "readInt32\0"
+    "readInt32BE\0"
+    "readInt32LE\0"
+    "readInt8\0"
+    "readIntBE\0"
+    "readIntLE\0"
+    "readStart\0"
+    "readStop\0"
+    "readSync\0"
+    "readTrimTable\0"
+    "readUInt16BE\0"
+    "readUInt16LE\0"
+    "readUInt32BE\0"
+    "readUInt32LE\0"
+    "readUInt8\0"
+    "readUIntBE\0"
+    "readUIntLE\0"
+    "readUint16BE\0"
+    "readUint16LE\0"
+    "readUint32BE\0"
+    "readUint32LE\0"
+    "readUint8\0"
+    "readUintBE\0"
+    "readUintLE\0"
+    "readable\0"
+    "readableStream\0"
+    "readableStreamToArray\0"
+    "readableStreamToArrayBuffer\0"
+    "readableStreamToBlob\0"
+    "readableStreamToBytes\0"
+    "readableStreamToFormData\0"
+    "readableStreamToJSON\0"
+    "readableStreamToText\0"
+    "readdir\0"
+    "readdirCb\0"
+    "readdirSync\0"
+    "readlink\0"
+    "readlinkCb\0"
+    "readlinkSync\0"
+    "readv\0"
+    "readvCb\0"
+    "readvSync\0"
+    "readyState\0"
+    "reallyExit\0"
+    "realpath\0"
+    "realpathCb\0"
+    "realpathNative\0"
+    "realpathNativeCb\0"
+    "realpathNativeSync\0"
+    "realpathSync\0"
+    "reason\0"
+    "receiveMessageOnPort\0"
+    "receiver\0"
+    "record\0"
+    "recordEnd\0"
+    "recursive\0"
+    "red\0"
+    "redirect\0"
+    "redirected\0"
+    "redis\0"
+    "reduce\0"
+    "reduceRight\0"
+    "ref\0"
+    "referrer\0"
+    "referrerPolicy\0"
+    "refresh\0"
+    "region\0"
+    "register\0"
+    "registerMacro\0"
+    "reject\0"
+    "rejectPromise\0"
+    "rejectPromiseWithFirstResolvingFunctionCallCheck\0"
+    "rejectUnauthorized\0"
+    "rejected\0"
+    "rejects\0"
+    "rejectsTo\0"
+    "relative\0"
+    "relativePosix\0"
+    "relativeTo\0"
+    "relativeWin32\0"
+    "release\0"
+    "releaseHeldFlight\0"
+    "releaseLock\0"
+    "releaseSocket\0"
+    "releaseWeakRefs\0"
+    "reload\0"
+    "remoteAddress\0"
+    "remoteFamily\0"
+    "remotePort\0"
+    "remoteTransportParams\0"
+    "remove\0"
+    "removeAllListeners\0"
+    "removeAndKeepContent\0"
+    "removeAttribute\0"
+    "removeEventListener\0"
+    "removeFirstFromList\0"
+    "removeListener\0"
+    "removed\0"
+    "rename\0"
+    "renameCb\0"
+    "renameSync\0"
+    "renamenx\0"
+    "render\0"
+    "renegotiate\0"
+    "reoptimizationRetryCount\0"
+    "repeat\0"
+    "repl\0"
+    "replace\0"
+    "replaceAll\0"
+    "report\0"
+    "reportError\0"
+    "request\0"
+    "requestCert\0"
+    "requestIP\0"
+    "requestPayer\0"
+    "require\0"
+    "requireCacheWillSet\0"
+    "requireESM\0"
+    "requireMap\0"
+    "requireNativeModule\0"
+    "requireStack\0"
+    "requiredAndOptionalArg\0"
+    "reset\0"
+    "resetStream\0"
+    "resizable\0"
+    "resize\0"
+    "resolve\0"
+    "resolve4\0"
+    "resolve6\0"
+    "resolveAny\0"
+    "resolveCaa\0"
+    "resolveCname\0"
+    "resolveComputedSpecifier\0"
+    "resolveMx\0"
+    "resolveNaptr\0"
+    "resolveNs\0"
+    "resolveObject\0"
+    "resolveObjectURL\0"
+    "resolvePosix\0"
+    "resolvePromise\0"
+    "resolvePromiseWithFirstResolvingFunctionCallCheck\0"
+    "resolvePtr\0"
+    "resolveSoa\0"
+    "resolveSrv\0"
+    "resolveSync\0"
+    "resolveTxt\0"
+    "resolveWin32\0"
+    "resolvedOptions\0"
+    "resolves\0"
+    "resolvesTo\0"
+    "resourceLimits\0"
+    "resourceUsage\0"
+    "respectNoProxy\0"
+    "respond\0"
+    "respondWithNewView\0"
+    "restartProcess\0"
+    "resultAt\0"
+    "resume\0"
+    "resumeGenerator\0"
+    "resumeModeNext\0"
+    "resumeModeReturn\0"
+    "resumeModeThrow\0"
+    "resumeSNI\0"
+    "retry\0"
+    "retryDelay\0"
+    "return\0"
+    "returns\0"
+    "reusePort\0"
+    "reverse\0"
+    "revision\0"
+    "revocable\0"
+    "revokeObjectURL\0"
+    "rightContext\0"
+    "ring\0"
+    "rm\0"
+    "rmCb\0"
+    "rmSync\0"
+    "rm_options_for_testing\0"
+    "rmdir\0"
+    "rmdirCb\0"
+    "rmdirSync\0"
+    "ro\0"
+    "ro-RO\0"
+    "root\0"
+    "rootCertificates\0"
+    "rotate\0"
+    "round\0"
+    "roundingIncrement\0"
+    "roundingMode\0"
+    "roundingPriority\0"
+    "routes\0"
+    "rows\0"
+    "rpop\0"
+    "rpoplpush\0"
+    "rpush\0"
+    "rpushx\0"
+    "rstStream\0"
+    "ru\0"
+    "ru-RU\0"
+    "rules\0"
+    "run\0"
+    "runInContext\0"
+    "runInNewContext\0"
+    "runInThisContext\0"
+    "runInitializers\0"
+    "runMain\0"
+    "runTail\0"
+    "runValueInitializers\0"
+    "runtime\0"
+    "runtime/dns_jsc/dns.rs\0"
+    "runtime/socket/socket.rs\0"
+    "runtime/timer/Timer.rs\0"
+    "runtime/webcore/ByteStream.rs\0"
+    "runtime/webcore/FileSink.rs\0"
+    "runtime/webcore/fetch.rs\0"
+    "rust\0"
+    "s3\0"
+    "s3:\0"
+    "s3://\0"
+    "sadd\0"
+    "sameClass\0"
+    "samplingProfilerStackTraces\0"
+    "sasl\0"
+    "satisfies\0"
+    "scan\0"
+    "scanImports\0"
+    "scanPlainQuery\0"
+    "scanPlainURL\0"
+    "scanPlainURLWithBase\0"
+    "scanPlainURLWithPlainBase\0"
+    "scanSync\0"
+    "scard\0"
+    "scheduler\0"
+    "schedulingPolicy\0"
+    "screenshot\0"
+    "script\0"
+    "scriptSrc\0"
+    "scrypt\0"
+    "scryptSync\0"
+    "sdiff\0"
+    "sdiffstore\0"
+    "seal\0"
+    "search\0"
+    "searchParams\0"
+    "second\0"
+    "seconds\0"
+    "secondsDisplay\0"
+    "secret\0"
+    "secretAccessKey\0"
+    "secrets\0"
+    "secureContext\0"
+    "secureHeapUsed\0"
+    "secureOptions\0"
+    "segment\0"
+    "select\0"
+    "selectRange\0"
+    "selectServerName\0"
+    "self\0"
+    "selfClosing\0"
+    "semver\0"
+    "send\0"
+    "sendBinary\0"
+    "sendDatagram\0"
+    "sendHeaders\0"
+    "sendHelperPrimary\0"
+    "sendMany\0"
+    "sendPings\0"
+    "sendText\0"
+    "sendTrailers\0"
+    "sendWebSocketFrame\0"
+    "sensitiveHeaders\0"
+    "sensitivity\0"
+    "sep\0"
+    "separateSSRGraph\0"
+    "seq\0"
+    "serial\0"
+    "serialIf\0"
+    "serialization\0"
+    "serialize\0"
+    "serializeAMimeType\0"
+    "serve\0"
+    "server\0"
+    "serverComponents\0"
+    "serverEntryPoint\0"
+    "serverMaxWindowBits\0"
+    "serverName\0"
+    "serverNoContextTakeover\0"
+    "serverRegisterClientReferenceExport\0"
+    "serverRuntimeImportSource\0"
+    "servername\0"
+    "service\0"
+    "session\0"
+    "sessionId\0"
+    "sessionTimeout\0"
+    "sessionToken\0"
+    "set\0"
+    "setAttribute\0"
+    "setBigInt64\0"
+    "setBigUint64\0"
+    "setBroadcast\0"
+    "setColumnNameTransform\0"
+    "setConfigPlugins\0"
+    "setCookie\0"
+    "setCopy\0"
+    "setCwd\0"
+    "setDate\0"
+    "setDecoratorMetadata\0"
+    "setDefaultAutoSelectFamily\0"
+    "setDefaultAutoSelectFamilyAttemptTimeout\0"
+    "setDefaultCACertificates\0"
+    "setDefaultCiphers\0"
+    "setDefaultHighWaterMark\0"
+    "setDefaultResultOrder\0"
+    "setDefaultTimeout\0"
+    "setEngine\0"
+    "setEnv\0"
+    "setEnvironmentData\0"
+    "setFips\0"
+    "setFlagsFromString\0"
+    "setFloat16\0"
+    "setFloat32\0"
+    "setFloat64\0"
+    "setFlowing\0"
+    "setFromBase64\0"
+    "setFromHex\0"
+    "setFullYear\0"
+    "setGlobalDispatcher\0"
+    "setGlobalOrigin\0"
+    "setGlobalProxyFromEnv\0"
+    "setHeapSnapshotNearHeapLimit\0"
+    "setHours\0"
+    "setImmediate\0"
+    "setInnerContent\0"
+    "setInt16\0"
+    "setInt32\0"
+    "setInt8\0"
+    "setInterval\0"
+    "setJITPolicy\0"
+    "setKeepAlive\0"
+    "setKeyCert\0"
+    "setLocalAddress\0"
+    "setLocalWindowSize\0"
+    "setMaxHTTPHeaderSize\0"
+    "setMaxIdleHTTPParsers\0"
+    "setMaxListeners\0"
+    "setMaxMarkdownBlockBytesForTesting\0"
+    "setMaxSendFragment\0"
+    "setMilliseconds\0"
+    "setMinutes\0"
+    "setMode\0"
+    "setMonth\0"
+    "setMulticastInterface\0"
+    "setMulticastLoopback\0"
+    "setMulticastTTL\0"
+    "setNativeSocket\0"
+    "setNext\0"
+    "setNextResultEntry\0"
+    "setNextResultHasEntry\0"
+    "setNextResultKey\0"
+    "setNextStreamID\0"
+    "setNoDelay\0"
+    "setPages\0"
+    "setPendingValue\0"
+    "setPriority\0"
+    "setPrototypeOf\0"
+    "setQuiet\0"
+    "setRandomSeed\0"
+    "setRawMode\0"
+    "setRef\0"
+    "setResourceTimingBufferSize\0"
+    "setSNIContexts\0"
+    "setSeconds\0"
+    "setSecureContext\0"
+    "setServerAppFlags\0"
+    "setServerCustomOptions\0"
+    "setServerMaxHeadersCount\0"
+    "setServername\0"
+    "setServers\0"
+    "setSession\0"
+    "setSourceMapsEnabled\0"
+    "setStreamContext\0"
+    "setStreamReading\0"
+    "setSystemTime\0"
+    "setTTL\0"
+    "setTime\0"
+    "setTimeZone\0"
+    "setTimeout\0"
+    "setTimezone\0"
+    "setTraceSigInt\0"
+    "setTypeOfService\0"
+    "setUTCDate\0"
+    "setUTCFullYear\0"
+    "setUTCHours\0"
+    "setUTCMilliseconds\0"
+    "setUTCMinutes\0"
+    "setUTCMonth\0"
+    "setUTCSeconds\0"
+    "setUint16\0"
+    "setUint32\0"
+    "setUint8\0"
+    "setUncaughtExceptionCaptureCallback\0"
+    "setVerifyMode\0"
+    "setWakeup\0"
+    "setYear\0"
+    "setbit\0"
+    "setegid\0"
+    "seteuid\0"
+    "setex\0"
+    "setgid\0"
+    "setgroups\0"
+    "setnx\0"
+    "setrange\0"
+    "settings\0"
+    "setuid\0"
+    "setup\0"
+    "setupMaster\0"
+    "setupPrimary\0"
+    "sha\0"
+    "shared\0"
+    "sharedFd\0"
+    "shell.rs\0"
+    "shift\0"
+    "shmSize\0"
+    "shouldUseEnvProxy\0"
+    "shrink\0"
+    "shutdown\0"
+    "sideEffects\0"
+    "sigalgs\0"
+    "sign\0"
+    "signDisplay\0"
+    "signal\0"
+    "signalCode\0"
+    "signalCount\0"
+    "sin\0"
+    "since\0"
+    "sinh\0"
+    "sinter\0"
+    "sintercard\0"
+    "sinterstore\0"
+    "sismember\0"
+    "size\0"
+    "sk\0"
+    "skip\0"
+    "skipIf\0"
+    "sleep\0"
+    "sleepSync\0"
+    "slice\0"
+    "sliceAnsi\0"
+    "small\0"
+    "smallestUnit\0"
+    "smembers\0"
+    "smismember\0"
+    "smove\0"
+    "socket\0"
+    "socketType\0"
+    "socket_body.bind.ts\0"
+    "socktype\0"
+    "some\0"
+    "sort\0"
+    "sorted\0"
+    "source\0"
+    "sourceURL\0"
+    "sourceUrl\0"
+    "sourcemap\0"
+    "sourcemap/InternalSourceMap.rs\0"
+    "spawn\0"
+    "spawnSync\0"
+    "species\0"
+    "specifier\0"
+    "splice\0"
+    "split\0"
+    "splitRequire\0"
+    "splitting\0"
+    "spop\0"
+    "spublish\0"
+    "spyOn\0"
+    "sql\0"
+    "sqrt\0"
+    "srandmember\0"
+    "src\0"
+    "srem\0"
+    "sscan\0"
+    "ssr\0"
+    "stack\0"
+    "stackTraceLimit\0"
+    "start\0"
+    "startOfDay\0"
+    "startOfRangeOfBytes\0"
+    "startRemoteDebugger\0"
+    "startSamplingProfiler\0"
+    "startTime\0"
+    "startsWith\0"
+    "startupSnapshot\0"
+    "stat\0"
+    "statCache\0"
+    "statCb\0"
+    "statSync\0"
+    "statfs\0"
+    "statfsCb\0"
+    "statfsSync\0"
+    "static\0"
+    "status\0"
+    "statusText\0"
+    "stderr\0"
+    "stdin\0"
+    "stdio\0"
+    "stdout\0"
+    "stepArrayIterator\0"
+    "stepArrayIteratorResultDone\0"
+    "stepArrayIteratorResultValue\0"
+    "stepGenerator\0"
+    "stepGeneratorResultStatus\0"
+    "stepGeneratorResultValue\0"
+    "sticky\0"
+    "stop\0"
+    "stopCoverage\0"
+    "stopImmediatePropagation\0"
+    "stopPropagation\0"
+    "stopSending\0"
+    "storageClass\0"
+    "store\0"
+    "strategy\0"
+    "stream\0"
+    "streams/BunStreamConsumers.cpp\0"
+    "strict\0"
+    "strictEqual\0"
+    "strike\0"
+    "strikethrough\0"
+    "string\0"
+    "string/immutable/unicode.rs\0"
+    "stringAsIsOrBytes\0"
+    "stringContaining\0"
+    "stringEcho\0"
+    "stringLength\0"
+    "stringMatching\0"
+    "stringOrBufferOrNull\0"
+    "stringOrObjectEcho\0"
+    "stringWidth\0"
+    "stringWidth.cpp\0"
+    "string_to_flags_for_testing\0"
+    "stringify\0"
+    "stringifyElement\0"
+    "stringifyProperties\0"
+    "stringifyProperty\0"
+    "stripANSI\0"
+    "stripVTControlCharacters\0"
+    "strlen\0"
+    "strong\0"
+    "structuredClone\0"
+    "style\0"
+    "styleText\0"
+    "stylize\0"
+    "sub\0"
+    "subarray\0"
+    "subprocess.rs\0"
+    "subscribe\0"
+    "subscriberCount\0"
+    "subscriptions\0"
+    "substr\0"
+    "substring\0"
+    "subtle\0"
+    "subtract\0"
+    "success\0"
+    "suffix\0"
+    "sumArray\0"
+    "sumBeforeAndAfterCallback\0"
+    "sumBytes\0"
+    "sumBytesIfAny\0"
+    "sumBytesThenText\0"
+    "sumPrecise\0"
+    "sunion\0"
+    "sunionstore\0"
+    "sup\0"
+    "supportedLocalesOf\0"
+    "supportedValuesOf\0"
+    "suppressed\0"
+    "sv\0"
+    "sv-SE\0"
+    "swap16\0"
+    "swap32\0"
+    "swap64\0"
+    "swapCount\0"
+    "symbols\0"
+    "symlink\0"
+    "symlinkCb\0"
+    "symlinkSync\0"
+    "symmetricDifference\0"
+    "sync\0"
+    "syncBuiltinESMExports\0"
+    "syntax\0"
+    "sys.rs\0"
+    "system\0"
+    "systemId\0"
+    "table\0"
+    "tables\0"
+    "tagFilter\0"
+    "tagName\0"
+    "tag_filter\0"
+    "take\0"
+    "takeCoverage\0"
+    "takeHeapSnapshot\0"
+    "takeRawHeaders\0"
+    "takeRequestTrailers\0"
+    "tan\0"
+    "tanh\0"
+    "target\0"
+    "tasklists\0"
+    "tbody\0"
+    "td\0"
+    "terminal\0"
+    "terminate\0"
+    "test\0"
+    "testWithOptions\0"
+    "text\0"
+    "textStream\0"
+    "th\0"
+    "th-TH\0"
+    "thead\0"
+    "then\0"
+    "thisParameter\0"
+    "threadCpuUsage\0"
+    "threadId\0"
+    "threadName\0"
+    "throw\0"
+    "throwDeprecation\0"
+    "throwIfAborted\0"
+    "throwIfNoEntry\0"
+    "throwRangeError\0"
+    "throwTypeError\0"
+    "throws\0"
+    "time\0"
+    "timeCost\0"
+    "timeEnd\0"
+    "timeLog\0"
+    "timeOrigin\0"
+    "timeStamp\0"
+    "timeStyle\0"
+    "timeZone\0"
+    "timeZoneId\0"
+    "timeZoneName\0"
+    "timeout\0"
+    "timerify\0"
+    "timing\0"
+    "timingSafeEqual\0"
+    "title\0"
+    "tls\0"
+    "tmpdir\0"
+    "toASCII\0"
+    "toArray\0"
+    "toArrayBuffer\0"
+    "toBase64\0"
+    "toBe\0"
+    "toBeAny\0"
+    "toBeArray\0"
+    "toBeArrayOfSize\0"
+    "toBeBigInt\0"
+    "toBeBoolean\0"
+    "toBeCallableWith\0"
+    "toBeCalled\0"
+    "toBeCalledTimes\0"
+    "toBeCalledWith\0"
+    "toBeCloseTo\0"
+    "toBeConstructibleWith\0"
+    "toBeDate\0"
+    "toBeDefined\0"
+    "toBeEmpty\0"
+    "toBeEmptyObject\0"
+    "toBeEven\0"
+    "toBeFalse\0"
+    "toBeFalsy\0"
+    "toBeFinite\0"
+    "toBeFunction\0"
+    "toBeGreaterThan\0"
+    "toBeGreaterThanOrEqual\0"
+    "toBeInstanceOf\0"
+    "toBeInteger\0"
+    "toBeLessThan\0"
+    "toBeLessThanOrEqual\0"
+    "toBeNaN\0"
+    "toBeNegative\0"
+    "toBeNever\0"
+    "toBeNil\0"
+    "toBeNull\0"
+    "toBeNumber\0"
+    "toBeObject\0"
+    "toBeOdd\0"
+    "toBeOneOf\0"
+    "toBePositive\0"
+    "toBeString\0"
+    "toBeSymbol\0"
+    "toBeTrue\0"
+    "toBeTruthy\0"
+    "toBeTypeOf\0"
+    "toBeUndefined\0"
+    "toBeUnknown\0"
+    "toBeValidDate\0"
+    "toBeVoid\0"
+    "toBeWithin\0"
+    "toBuffer\0"
+    "toClass\0"
+    "toContain\0"
+    "toContainAllKeys\0"
+    "toContainAllValues\0"
+    "toContainAnyKeys\0"
+    "toContainAnyValues\0"
+    "toContainEqual\0"
+    "toContainKey\0"
+    "toContainKeys\0"
+    "toContainValue\0"
+    "toContainValues\0"
+    "toDateString\0"
+    "toEndWith\0"
+    "toEqual\0"
+    "toEqualIgnoringWhitespace\0"
+    "toEqualTypeOf\0"
+    "toExponential\0"
+    "toExtend\0"
+    "toFixed\0"
+    "toFixedLengthBuffer\0"
+    "toGMTString\0"
+    "toHaveBeenCalled\0"
+    "toHaveBeenCalledOnce\0"
+    "toHaveBeenCalledTimes\0"
+    "toHaveBeenCalledWith\0"
+    "toHaveBeenLastCalledWith\0"
+    "toHaveBeenNthCalledWith\0"
+    "toHaveLastReturnedWith\0"
+    "toHaveLength\0"
+    "toHaveNthReturnedWith\0"
+    "toHaveProperty\0"
+    "toHaveReturned\0"
+    "toHaveReturnedTimes\0"
+    "toHaveReturnedWith\0"
+    "toHex\0"
+    "toISOString\0"
+    "toInclude\0"
+    "toIncludeRepeated\0"
+    "toInstant\0"
+    "toIntegerOrInfinity\0"
+    "toJSON\0"
+    "toLength\0"
+    "toLocaleDateString\0"
+    "toLocaleLowerCase\0"
+    "toLocaleString\0"
+    "toLocaleTimeString\0"
+    "toLocaleUpperCase\0"
+    "toLowerCase\0"
+    "toMatch\0"
+    "toMatchInlineSnapshot\0"
+    "toMatchObject\0"
+    "toMatchObjectType\0"
+    "toMatchSnapshot\0"
+    "toMatchTypeOf\0"
+    "toNamespacedPath\0"
+    "toNamespacedPathPosix\0"
+    "toNamespacedPathWin32\0"
+    "toNumber\0"
+    "toObject\0"
+    "toPlainDate\0"
+    "toPlainDateTime\0"
+    "toPlainMonthDay\0"
+    "toPlainTime\0"
+    "toPlainYearMonth\0"
+    "toPrecision\0"
+    "toPrimitive\0"
+    "toPropertyKey\0"
+    "toResizableBuffer\0"
+    "toReturn\0"
+    "toReversed\0"
+    "toSatisfy\0"
+    "toSorted\0"
+    "toSpliced\0"
+    "toStartWith\0"
+    "toStrictEqual\0"
+    "toString\0"
+    "toStringTag\0"
+    "toTemporalInstant\0"
+    "toThrow\0"
+    "toThrowError\0"
+    "toThrowErrorMatchingInlineSnapshot\0"
+    "toThrowErrorMatchingSnapshot\0"
+    "toTimeString\0"
+    "toUSVString\0"
+    "toUTCString\0"
+    "toUnicode\0"
+    "toUpperCase\0"
+    "toWeb\0"
+    "toWellFormed\0"
+    "toZonedDateTime\0"
+    "toZonedDateTimeISO\0"
+    "todo\0"
+    "todoIf\0"
+    "total\0"
+    "totalCompileTime\0"
+    "totalmem\0"
+    "touch\0"
+    "tr\0"
+    "tr-TR\0"
+    "trace\0"
+    "traceDeprecation\0"
+    "traceProcessWarnings\0"
+    "traceStack\0"
+    "tracingChannel\0"
+    "trailingZeroDisplay\0"
+    "transcode\0"
+    "transfer\0"
+    "transferToFixedLength\0"
+    "transform\0"
+    "transformSync\0"
+    "translatePeerCertificate\0"
+    "traverseArray\0"
+    "treeShaking\0"
+    "tries\0"
+    "triggerAsyncId\0"
+    "trim\0"
+    "trimEnd\0"
+    "trimExecutable\0"
+    "trimLeft\0"
+    "trimRight\0"
+    "trimStart\0"
+    "trim_testing.rs\0"
+    "true\0"
+    "trunc\0"
+    "truncate\0"
+    "truncateCb\0"
+    "truncateNewArray\0"
+    "truncateSync\0"
+    "try\0"
+    "tryPutByValDirect\0"
+    "tryPutIndex\0"
+    "tsconfig\0"
+    "ttl\0"
+    "type\0"
+    "typedArrayFromFast\0"
+    "typedArrayLength\0"
+    "types\0"
+    "tz\0"
+    "u\0"
+    "ucs2\0"
+    "ucs2Slice\0"
+    "ucs2Write\0"
+    "udpSocket\0"
+    "udp_socket.bind.ts\0"
+    "uid\0"
+    "uint8Array\0"
+    "uk\0"
+    "uk-UA\0"
+    "ul\0"
+    "umask\0"
+    "unThis\0"
+    "und\0"
+    "undefined\0"
+    "underline\0"
+    "undici\0"
+    "unenroll\0"
+    "unescape\0"
+    "unescapeBuffer\0"
+    "unhold\0"
+    "unicode\0"
+    "unicodeSets\0"
+    "union\0"
+    "unit\0"
+    "unitDisplay\0"
+    "unix\0"
+    "unlink\0"
+    "unlinkCb\0"
+    "unlinkSync\0"
+    "unreachable\0"
+    "unref\0"
+    "unregister\0"
+    "unregisterToken\0"
+    "unsafe\0"
+    "unscopables\0"
+    "unshift\0"
+    "unsubscribe\0"
+    "until\0"
+    "unwatchFile\0"
+    "unzip\0"
+    "unzipSync\0"
+    "update\0"
+    "updateKey\0"
+    "updateRef\0"
+    "upgrade\0"
+    "upgradeNodeHTTPResponseToWebSocket\0"
+    "upgradeTLS\0"
+    "upgradeTLSDeferred\0"
+    "upgrade_command.rs\0"
+    "upgrade_js_bindings.generate\0"
+    "upgraded\0"
+    "uptime\0"
+    "url\0"
+    "urlCanParse\0"
+    "urlToHttpOptions\0"
+    "usage\0"
+    "use\0"
+    "useGrouping\0"
+    "user\0"
+    "userAgent\0"
+    "userInfo\0"
+    "username\0"
+    "usingDomains\0"
+    "utf-8\0"
+    "utf-8-validate\0"
+    "utf16leSlice\0"
+    "utf16leWrite\0"
+    "utf8Echo\0"
+    "utf8EchoLoose\0"
+    "utf8Optional\0"
+    "utf8Owned\0"
+    "utf8Slice\0"
+    "utf8Write\0"
+    "util\0"
+    "utils\0"
+    "utimes\0"
+    "utimesCb\0"
+    "utimesSync\0"
+    "uvTranslateSysError\0"
+    "validate\0"
+    "validateAbortSignal\0"
+    "validateArray\0"
+    "validateBuffer\0"
+    "validateByPlan\0"
+    "validateEncoding\0"
+    "validateFiniteNumber\0"
+    "validateHeaderName\0"
+    "validateHeaderValue\0"
+    "validateInt32\0"
+    "validateInteger\0"
+    "validateNumber\0"
+    "validateObject\0"
+    "validateOneOf\0"
+    "validatePort\0"
+    "validateUint32\0"
+    "value\0"
+    "valueOf\0"
+    "values\0"
+    "variants\0"
+    "verbose\0"
+    "verify\0"
+    "verifySync\0"
+    "version\0"
+    "version_with_sha\0"
+    "versions\0"
+    "vi\0"
+    "vi-VN\0"
+    "view\0"
+    "viewOrRangeOfBytes\0"
+    "viewSource\0"
+    "virtualHostedStyle\0"
+    "virtual_machine_exports.rs\0"
+    "visibility\0"
+    "wait\0"
+    "waitAsync\0"
+    "waitForDebugger\0"
+    "warn\0"
+    "watch\0"
+    "watchFile\0"
+    "webSocket\0"
+    "webStreamClosedPromise\0"
+    "webStreamControllerError\0"
+    "webcrypto\0"
+    "webp\0"
+    "websocket\0"
+    "week\0"
+    "weekOfYear\0"
+    "weekday\0"
+    "weeks\0"
+    "weeksDisplay\0"
+    "which\0"
+    "white\0"
+    "whitespace\0"
+    "wideIntegerOrBigInt\0"
+    "width\0"
+    "wikiLinks\0"
+    "wiki_links\0"
+    "win32\0"
+    "windowBits\0"
+    "windows\0"
+    "windowsHide\0"
+    "windowsVerbatimArguments\0"
+    "with\0"
+    "withCalendar\0"
+    "withFileTypes\0"
+    "withPlainTime\0"
+    "withResolvers\0"
+    "withTimeZone\0"
+    "wordWrap\0"
+    "words\0"
+    "workerData\0"
+    "workers\0"
+    "wrap\0"
+    "wrapAnsi\0"
+    "wrapForValidIteratorCreate\0"
+    "wrapForValidIteratorFieldIteratedIterator\0"
+    "wrapForValidIteratorFieldIteratedNextMethod\0"
+    "wrapRemoteValue\0"
+    "wrapper\0"
+    "writable\0"
+    "write\0"
+    "writeBigInt64BE\0"
+    "writeBigInt64LE\0"
+    "writeBigUInt64BE\0"
+    "writeBigUInt64LE\0"
+    "writeBigUint64BE\0"
+    "writeBigUint64LE\0"
+    "writeCb\0"
+    "writeContinue\0"
+    "writeDouble\0"
+    "writeDoubleBE\0"
+    "writeDoubleLE\0"
+    "writeFile\0"
+    "writeFileCb\0"
+    "writeFileSync\0"
+    "writeFloat\0"
+    "writeFloatBE\0"
+    "writeFloatLE\0"
+    "writeHead\0"
+    "writeHeadAndEnd\0"
+    "writeHeapSnapshot\0"
+    "writeInformational\0"
+    "writeInt16BE\0"
+    "writeInt16LE\0"
+    "writeInt32BE\0"
+    "writeInt32LE\0"
+    "writeInt8\0"
+    "writeIntBE\0"
+    "writeIntLE\0"
+    "writeReport\0"
+    "writeStream\0"
+    "writeSync\0"
+    "writeUInt16\0"
+    "writeUInt16BE\0"
+    "writeUInt16LE\0"
+    "writeUInt32\0"
+    "writeUInt32BE\0"
+    "writeUInt32LE\0"
+    "writeUInt8\0"
+    "writeUIntBE\0"
+    "writeUIntLE\0"
+    "writeUint16\0"
+    "writeUint16BE\0"
+    "writeUint16LE\0"
+    "writeUint32\0"
+    "writeUint32BE\0"
+    "writeUint32LE\0"
+    "writeUint8\0"
+    "writeUintBE\0"
+    "writeUintLE\0"
+    "writer\0"
+    "writev\0"
+    "writevCb\0"
+    "writevSync\0"
+    "written\0"
+    "ws\0"
+    "www\0"
+    "wyhash\0"
+    "x64\0"
+    "xack\0"
+    "xadd\0"
+    "xautoclaim\0"
+    "xclaim\0"
+    "xdel\0"
+    "xdescribe\0"
+    "xgroup\0"
+    "xinfo\0"
+    "xit\0"
+    "xlen\0"
+    "xor\0"
+    "xpending\0"
+    "xrange\0"
+    "xread\0"
+    "xreadgroup\0"
+    "xrevrange\0"
+    "xsetid\0"
+    "xtest\0"
+    "xtrim\0"
+    "xxHash3\0"
+    "xxHash32\0"
+    "xxHash64\0"
+    "xxhash3_testing.cpp\0"
+    "year\0"
+    "yearOfWeek\0"
+    "years\0"
+    "yearsDisplay\0"
+    "zadd\0"
+    "zcard\0"
+    "zcount\0"
+    "zdiff\0"
+    "zdiffstore\0"
+    "zh\0"
+    "zh-CN\0"
+    "zh-HK\0"
+    "zh-Hans\0"
+    "zh-Hant\0"
+    "zh-TW\0"
+    "zincrby\0"
+    "zinter\0"
+    "zintercard\0"
+    "zinterstore\0"
+    "zip\0"
+    "zipKeyed\0"
+    "zlexcount\0"
+    "zmpop\0"
+    "zmscore\0"
+    "zonedDateTimeISO\0"
+    "zpopmax\0"
+    "zpopmin\0"
+    "zrandmember\0"
+    "zrange\0"
+    "zrangebylex\0"
+    "zrangebyscore\0"
+    "zrangestore\0"
+    "zrank\0"
+    "zrem\0"
+    "zremrangebylex\0"
+    "zremrangebyrank\0"
+    "zremrangebyscore\0"
+    "zrevrange\0"
+    "zrevrangebylex\0"
+    "zrevrangebyscore\0"
+    "zrevrank\0"
+    "zscan\0"
+    "zscore\0"
+    "zstd\0"
+    "zstdCompress\0"
+    "zstdCompressSync\0"
+    "zstdDecompress\0"
+    "zstdDecompressSync\0"
+    "zunion\0"
+    "zunionstore"
 };
 
-constinit const BuiltinNameSlots<4814> builtinTableTextNameSlots = makeBuiltinNameSlots<builtinTableTextNames>();
+constinit const BuiltinNameSlots<5462> builtinTableTextNameSlots = makeBuiltinNameSlots<builtinTableTextNames>();
 
-constinit const ASCIILiteral builtinTableSymbolNames[] = {
-    "asyncDispose"_s,
-    "asyncIterator"_s,
-    "dispose"_s,
-    "hasInstance"_s,
-    "isConcatSpreadable"_s,
-    "iterator"_s,
-    "match"_s,
-    "matchAll"_s,
-    "replace"_s,
-    "search"_s,
-    "species"_s,
-    "split"_s,
-    "toPrimitive"_s,
-    "toStringTag"_s,
-    "unscopables"_s,
+constinit const BuiltinTextStorage<15, 155> builtinTableSymbolNames = {
+    15,
+    {
+        0, 13, 27, 35, 47, 66, 75, 81, 90, 98, 105, 113, 119, 131, 143, 155,
+    },
+    "asyncDispose\0"
+    "asyncIterator\0"
+    "dispose\0"
+    "hasInstance\0"
+    "isConcatSpreadable\0"
+    "iterator\0"
+    "match\0"
+    "matchAll\0"
+    "replace\0"
+    "search\0"
+    "species\0"
+    "split\0"
+    "toPrimitive\0"
+    "toStringTag\0"
+    "unscopables"
 };
 
-constinit const ASCIILiteral builtinTableRegisteredSymbolNames[] = {
-    "nodejs.ref"_s,
-    "nodejs.unref"_s,
-    "nodejs.util.inspect.custom"_s,
-    "nodejs.util.promisify.custom"_s,
+constinit const BuiltinTextStorage<4, 80> builtinTableRegisteredSymbolNames = {
+    4,
+    {
+        0, 11, 24, 51, 80,
+    },
+    "nodejs.ref\0"
+    "nodejs.unref\0"
+    "nodejs.util.inspect.custom\0"
+    "nodejs.util.promisify.custom"
 };
 
 constinit const BuiltinSymbolConstant builtinTableSymbolConstants[] = {
-    { .symbol = BuiltinID(3521), .name = BuiltinName(4814), .wellKnownSymbol = WellKnownSymbol::AsyncDispose },
-    { .symbol = BuiltinID(3522), .name = BuiltinName(4815), .wellKnownSymbol = WellKnownSymbol::AsyncIterator },
-    { .symbol = BuiltinID(3523), .name = BuiltinName(4816), .wellKnownSymbol = WellKnownSymbol::Dispose },
-    { .symbol = BuiltinID(3525), .name = BuiltinName(4817), .wellKnownSymbol = WellKnownSymbol::HasInstance },
-    { .symbol = BuiltinID(3526), .name = BuiltinName(4818), .wellKnownSymbol = WellKnownSymbol::IsConcatSpreadable },
-    { .symbol = BuiltinID(3527), .name = BuiltinName(4819), .wellKnownSymbol = WellKnownSymbol::Iterator },
-    { .symbol = BuiltinID(3530), .name = BuiltinName(4820), .wellKnownSymbol = WellKnownSymbol::Match },
-    { .symbol = BuiltinID(3531), .name = BuiltinName(4821), .wellKnownSymbol = WellKnownSymbol::MatchAll },
-    { .symbol = BuiltinID(3534), .name = BuiltinName(4822), .wellKnownSymbol = WellKnownSymbol::Replace },
-    { .symbol = BuiltinID(3535), .name = BuiltinName(4823), .wellKnownSymbol = WellKnownSymbol::Search },
-    { .symbol = BuiltinID(3536), .name = BuiltinName(4824), .wellKnownSymbol = WellKnownSymbol::Species },
-    { .symbol = BuiltinID(3537), .name = BuiltinName(4825), .wellKnownSymbol = WellKnownSymbol::Split },
-    { .symbol = BuiltinID(3538), .name = BuiltinName(4826), .wellKnownSymbol = WellKnownSymbol::ToPrimitive },
-    { .symbol = BuiltinID(3539), .name = BuiltinName(4827), .wellKnownSymbol = WellKnownSymbol::ToStringTag },
-    { .symbol = BuiltinID(3540), .name = BuiltinName(4828), .wellKnownSymbol = WellKnownSymbol::Unscopables },
+    { .symbol = BuiltinID(4090), .name = BuiltinName(5462), .wellKnownSymbol = WellKnownSymbol::AsyncDispose },
+    { .symbol = BuiltinID(4091), .name = BuiltinName(5463), .wellKnownSymbol = WellKnownSymbol::AsyncIterator },
+    { .symbol = BuiltinID(4092), .name = BuiltinName(5464), .wellKnownSymbol = WellKnownSymbol::Dispose },
+    { .symbol = BuiltinID(4094), .name = BuiltinName(5465), .wellKnownSymbol = WellKnownSymbol::HasInstance },
+    { .symbol = BuiltinID(4095), .name = BuiltinName(5466), .wellKnownSymbol = WellKnownSymbol::IsConcatSpreadable },
+    { .symbol = BuiltinID(4096), .name = BuiltinName(5467), .wellKnownSymbol = WellKnownSymbol::Iterator },
+    { .symbol = BuiltinID(4099), .name = BuiltinName(5468), .wellKnownSymbol = WellKnownSymbol::Match },
+    { .symbol = BuiltinID(4100), .name = BuiltinName(5469), .wellKnownSymbol = WellKnownSymbol::MatchAll },
+    { .symbol = BuiltinID(4103), .name = BuiltinName(5470), .wellKnownSymbol = WellKnownSymbol::Replace },
+    { .symbol = BuiltinID(4104), .name = BuiltinName(5471), .wellKnownSymbol = WellKnownSymbol::Search },
+    { .symbol = BuiltinID(4105), .name = BuiltinName(5472), .wellKnownSymbol = WellKnownSymbol::Species },
+    { .symbol = BuiltinID(4106), .name = BuiltinName(5473), .wellKnownSymbol = WellKnownSymbol::Split },
+    { .symbol = BuiltinID(4107), .name = BuiltinName(5474), .wellKnownSymbol = WellKnownSymbol::ToPrimitive },
+    { .symbol = BuiltinID(4108), .name = BuiltinName(5475), .wellKnownSymbol = WellKnownSymbol::ToStringTag },
+    { .symbol = BuiltinID(4109), .name = BuiltinName(5476), .wellKnownSymbol = WellKnownSymbol::Unscopables },
 };
 
 constinit const BuiltinNameClasses builtinTableClassesByMemberName[] = {
-    { .name = BuiltinName(164), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(0, 12) },
-    { .name = BuiltinName(257), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(689), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(13, 1) },
-    { .name = BuiltinName(908), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(13, 1) },
-    { .name = BuiltinName(1093), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1216), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(1217), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(1219), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(1220), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(1221), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(1227), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(15, 2) },
-    { .name = BuiltinName(1235), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(17, 1) },
-    { .name = BuiltinName(1241), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(18, 7) },
-    { .name = BuiltinName(1242), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(25, 1) },
-    { .name = BuiltinName(1243), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(25, 1) },
-    { .name = BuiltinName(1254), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(25, 1) },
-    { .name = BuiltinName(1259), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(25, 1) },
-    { .name = BuiltinName(1272), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(1274), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(1275), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(1276), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(1277), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1278), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1280), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1285), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(29, 9) },
-    { .name = BuiltinName(1288), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(38, 1) },
-    { .name = BuiltinName(1289), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(17, 1) },
-    { .name = BuiltinName(1293), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(1294), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(38, 1) },
-    { .name = BuiltinName(1297), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(1298), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(38, 1) },
-    { .name = BuiltinName(1299), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(40, 7) },
-    { .name = BuiltinName(1300), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(47, 1) },
-    { .name = BuiltinName(1303), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(48, 2) },
-    { .name = BuiltinName(1304), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(50, 4) },
-    { .name = BuiltinName(1308), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(54, 1) },
-    { .name = BuiltinName(1322), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(1323), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(1326), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1329), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(1330), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(1335), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(60, 5) },
-    { .name = BuiltinName(1336), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1337), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1338), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1340), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(1341), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(66, 1) },
-    { .name = BuiltinName(1354), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(66, 1) },
-    { .name = BuiltinName(1357), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(67, 6) },
-    { .name = BuiltinName(1359), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(1370), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(1371), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(1377), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(1381), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(75, 1) },
-    { .name = BuiltinName(1389), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(76, 3) },
-    { .name = BuiltinName(1394), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(1396), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(1397), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(1408), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(1415), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(1416), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(1417), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(1418), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(1419), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(1422), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(50, 4) },
-    { .name = BuiltinName(1425), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1426), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(82, 2) },
-    { .name = BuiltinName(1427), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(66, 1) },
-    { .name = BuiltinName(1432), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1433), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1434), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1435), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1436), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(1437), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1438), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1439), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1440), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(85, 6) },
-    { .name = BuiltinName(1442), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1444), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(91, 2) },
-    { .name = BuiltinName(1445), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(91, 2) },
-    { .name = BuiltinName(1446), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1450), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(1457), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1458), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1461), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(93, 4) },
-    { .name = BuiltinName(1462), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(1463), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(97, 2) },
-    { .name = BuiltinName(1480), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(99, 13) },
-    { .name = BuiltinName(1481), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(112, 2) },
-    { .name = BuiltinName(1486), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(114, 7) },
-    { .name = BuiltinName(1500), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(1501), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1502), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1503), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1506), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(1510), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(1511), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(122, 5) },
-    { .name = BuiltinName(1512), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(66, 1) },
-    { .name = BuiltinName(1516), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(66, 1) },
-    { .name = BuiltinName(1518), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(1520), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(127, 6) },
-    { .name = BuiltinName(1525), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(1526), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(133, 1) },
-    { .name = BuiltinName(1536), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1537), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1539), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(38, 1) },
-    { .name = BuiltinName(1547), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1548), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1549), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1550), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1551), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1552), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1556), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(134, 1) },
-    { .name = BuiltinName(1562), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(135, 2) },
-    { .name = BuiltinName(1572), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1580), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(137, 3) },
-    { .name = BuiltinName(1581), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(140, 24) },
-    { .name = BuiltinName(1583), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1584), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(164, 1) },
-    { .name = BuiltinName(1585), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(1587), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1588), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(1589), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(169, 2) },
-    { .name = BuiltinName(1595), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(171, 1) },
-    { .name = BuiltinName(1597), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1603), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(1609), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(172, 2) },
-    { .name = BuiltinName(1611), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1614), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(174, 2) },
-    { .name = BuiltinName(1617), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(1622), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(177, 2) },
-    { .name = BuiltinName(1624), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(1625), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(1627), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1630), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(180, 2) },
-    { .name = BuiltinName(1632), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(182, 2) },
-    { .name = BuiltinName(1638), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(184, 141) },
-    { .name = BuiltinName(1639), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(1640), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(325, 1) },
-    { .name = BuiltinName(1643), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(1645), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(327, 1) },
-    { .name = BuiltinName(1648), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(328, 1) },
-    { .name = BuiltinName(1649), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(329, 3) },
-    { .name = BuiltinName(1651), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(332, 1) },
-    { .name = BuiltinName(1652), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(332, 1) },
-    { .name = BuiltinName(1653), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1654), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1655), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1657), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(332, 1) },
-    { .name = BuiltinName(1658), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(1659), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(332, 1) },
-    { .name = BuiltinName(1661), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(335, 2) },
-    { .name = BuiltinName(1665), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(337, 1) },
-    { .name = BuiltinName(1668), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1669), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1671), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(1749), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(1751), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(338, 1) },
-    { .name = BuiltinName(1762), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(339, 4) },
-    { .name = BuiltinName(1763), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(1765), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(343, 4) },
-    { .name = BuiltinName(1766), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(347, 3) },
-    { .name = BuiltinName(1767), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(347, 3) },
-    { .name = BuiltinName(1769), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(1771), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(1772), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(347, 3) },
-    { .name = BuiltinName(1773), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(1774), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1775), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1778), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(354, 1) },
-    { .name = BuiltinName(1787), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1788), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1800), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(48, 2) },
-    { .name = BuiltinName(1809), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1810), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(355, 8) },
-    { .name = BuiltinName(1819), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(363, 1) },
-    { .name = BuiltinName(1827), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(364, 2) },
-    { .name = BuiltinName(1829), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(366, 1) },
-    { .name = BuiltinName(1831), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(1832), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(367, 2) },
-    { .name = BuiltinName(1833), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(1834), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(369, 1) },
-    { .name = BuiltinName(1837), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(1847), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(1849), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(371, 9) },
-    { .name = BuiltinName(1853), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(1855), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(1859), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(381, 1) },
-    { .name = BuiltinName(1860), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(382, 1) },
-    { .name = BuiltinName(1861), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(48, 2) },
-    { .name = BuiltinName(1872), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(1873), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(383, 3) },
-    { .name = BuiltinName(1875), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(134, 1) },
-    { .name = BuiltinName(1876), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(1877), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(1878), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1880), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1882), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(1885), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1895), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(1897), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(1904), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(386, 1) },
-    { .name = BuiltinName(1905), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(386, 1) },
-    { .name = BuiltinName(1908), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(387, 2) },
-    { .name = BuiltinName(1909), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(389, 10) },
-    { .name = BuiltinName(1910), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(1913), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(1916), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(399, 6) },
-    { .name = BuiltinName(1923), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(405, 2) },
-    { .name = BuiltinName(1924), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(405, 2) },
-    { .name = BuiltinName(1926), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(407, 9) },
-    { .name = BuiltinName(1927), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(1928), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(1942), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(416, 1) },
-    { .name = BuiltinName(1944), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1946), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1947), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(417, 1) },
-    { .name = BuiltinName(1952), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(418, 3) },
-    { .name = BuiltinName(1955), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(1957), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(1967), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(421, 4) },
-    { .name = BuiltinName(1968), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1969), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(1971), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(1972), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(1974), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(425, 1) },
-    { .name = BuiltinName(1978), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1979), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1981), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(1983), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(1984), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(426, 1) },
-    { .name = BuiltinName(1989), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(427, 2) },
-    { .name = BuiltinName(1993), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(1994), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(1995), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(1998), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(47, 1) },
-    { .name = BuiltinName(2000), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(354, 1) },
-    { .name = BuiltinName(2001), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2002), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2003), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2004), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2005), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2006), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2007), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2008), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(430, 4) },
-    { .name = BuiltinName(2010), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2011), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2012), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2015), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(434, 5) },
-    { .name = BuiltinName(2017), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(439, 1) },
-    { .name = BuiltinName(2019), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(440, 1) },
-    { .name = BuiltinName(2024), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(441, 1) },
-    { .name = BuiltinName(2025), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(442, 3) },
-    { .name = BuiltinName(2027), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(418, 3) },
-    { .name = BuiltinName(2029), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(133, 1) },
-    { .name = BuiltinName(2030), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(418, 3) },
-    { .name = BuiltinName(2031), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(445, 1) },
-    { .name = BuiltinName(2032), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(2033), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(2034), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(2035), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(445, 1) },
-    { .name = BuiltinName(2037), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(2038), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2040), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2041), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(446, 2) },
-    { .name = BuiltinName(2042), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(2045), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(449, 2) },
-    { .name = BuiltinName(2046), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(2048), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(2049), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(47, 1) },
-    { .name = BuiltinName(2050), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(451, 12) },
-    { .name = BuiltinName(2052), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(2053), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2054), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2058), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2059), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2062), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(463, 7) },
-    { .name = BuiltinName(2063), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2065), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(470, 3) },
-    { .name = BuiltinName(2066), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(473, 5) },
-    { .name = BuiltinName(2068), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(478, 2) },
-    { .name = BuiltinName(2069), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(478, 2) },
-    { .name = BuiltinName(2070), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(473, 5) },
-    { .name = BuiltinName(2091), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2092), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2093), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2094), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2095), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2096), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2097), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2098), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2099), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2102), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2104), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2105), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2106), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2123), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2124), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2125), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2126), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2127), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2128), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2129), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(480, 6) },
-    { .name = BuiltinName(2132), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(486, 2) },
-    { .name = BuiltinName(2133), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(488, 1) },
-    { .name = BuiltinName(2136), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(2137), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2138), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2139), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2140), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2141), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(2149), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(2152), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2155), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(491, 3) },
-    { .name = BuiltinName(2156), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2159), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2164), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2166), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2167), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2180), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2185), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(2186), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2191), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2192), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2193), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2194), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2195), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2203), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2204), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2206), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2207), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2208), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2213), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(2216), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2217), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2218), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2219), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2220), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2222), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(495, 2) },
-    { .name = BuiltinName(2223), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(495, 2) },
-    { .name = BuiltinName(2229), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(491, 3) },
-    { .name = BuiltinName(2230), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(497, 1) },
-    { .name = BuiltinName(2231), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(2236), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(498, 1) },
-    { .name = BuiltinName(2237), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(2238), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(2241), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2242), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2243), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(2244), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2245), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(337, 1) },
-    { .name = BuiltinName(2247), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2248), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2249), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2254), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2255), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2256), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2257), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2258), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2259), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2260), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(2261), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2262), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2263), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2264), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2265), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2266), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2267), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2268), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2269), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2270), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2271), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2272), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2273), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2274), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(2277), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2279), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(497, 1) },
-    { .name = BuiltinName(2280), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(2281), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2282), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2285), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2288), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2289), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2290), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(501, 1) },
-    { .name = BuiltinName(2296), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(2300), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(2301), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(2309), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(502, 3) },
-    { .name = BuiltinName(2311), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(505, 1) },
-    { .name = BuiltinName(2312), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(2330), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(506, 6) },
-    { .name = BuiltinName(2332), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(2333), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(2336), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(2339), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(2340), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(15, 2) },
-    { .name = BuiltinName(2343), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(512, 2) },
-    { .name = BuiltinName(2345), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2346), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(91, 2) },
-    { .name = BuiltinName(2347), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(2352), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(2353), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(2355), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(2356), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(2357), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2358), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2359), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2360), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2361), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2362), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2363), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2364), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2370), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2371), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2374), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2375), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2376), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2378), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2379), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(514, 2) },
-    { .name = BuiltinName(2382), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(516, 1) },
-    { .name = BuiltinName(2385), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(517, 7) },
-    { .name = BuiltinName(2388), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(524, 3) },
-    { .name = BuiltinName(2390), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2391), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(2393), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(2394), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2395), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2396), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2397), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2398), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2400), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2401), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(516, 1) },
-    { .name = BuiltinName(2403), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2404), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2405), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2406), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2407), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2409), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2415), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2419), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(2423), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(2426), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(354, 1) },
-    { .name = BuiltinName(2427), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(2432), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(527, 1) },
-    { .name = BuiltinName(2436), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(171, 1) },
-    { .name = BuiltinName(2438), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(417, 1) },
-    { .name = BuiltinName(2441), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(2442), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(514, 2) },
-    { .name = BuiltinName(2443), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(528, 5) },
-    { .name = BuiltinName(2444), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2445), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2446), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2447), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(533, 1) },
-    { .name = BuiltinName(2448), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(534, 4) },
-    { .name = BuiltinName(2454), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2462), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(538, 3) },
-    { .name = BuiltinName(2463), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(2466), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(327, 1) },
-    { .name = BuiltinName(2467), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(2469), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(2475), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(2616), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(2621), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(488, 1) },
-    { .name = BuiltinName(2644), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(383, 3) },
-    { .name = BuiltinName(2653), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(2693), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(425, 1) },
-    { .name = BuiltinName(2699), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(2704), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(2716), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2726), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(2727), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(2728), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(2745), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2752), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2753), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(2766), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(418, 3) },
-    { .name = BuiltinName(2767), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(2848), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(67, 6) },
-    { .name = BuiltinName(2872), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(541, 7) },
-    { .name = BuiltinName(2873), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(2875), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(2876), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(548, 2) },
-    { .name = BuiltinName(2878), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(2880), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(2882), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(550, 1) },
-    { .name = BuiltinName(2883), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(2884), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(534, 4) },
-    { .name = BuiltinName(2886), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(551, 2) },
-    { .name = BuiltinName(2888), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(2889), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2892), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(2893), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(2896), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2897), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2898), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2899), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2900), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2901), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2902), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2904), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(553, 6) },
-    { .name = BuiltinName(2905), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(172, 2) },
-    { .name = BuiltinName(2909), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2910), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(172, 2) },
-    { .name = BuiltinName(2911), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(445, 1) },
-    { .name = BuiltinName(2912), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(559, 2) },
-    { .name = BuiltinName(2913), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2915), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2917), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2918), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(439, 1) },
-    { .name = BuiltinName(2920), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(164, 1) },
-    { .name = BuiltinName(2921), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2924), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2925), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2926), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2933), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(561, 1) },
-    { .name = BuiltinName(2934), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2935), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2936), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(327, 1) },
-    { .name = BuiltinName(2937), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(2938), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(2939), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2952), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2953), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2954), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2955), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2956), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2957), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2958), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2959), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2960), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2961), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2962), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(2963), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2964), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2965), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(2975), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(562, 4) },
-    { .name = BuiltinName(2984), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(164, 1) },
-    { .name = BuiltinName(2987), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(566, 4) },
-    { .name = BuiltinName(2988), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(2989), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(13, 1) },
-    { .name = BuiltinName(2995), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(570, 2) },
-    { .name = BuiltinName(2999), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(3003), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(3014), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(572, 11) },
-    { .name = BuiltinName(3015), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(3016), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(3018), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(3020), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3021), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(524, 3) },
-    { .name = BuiltinName(3022), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3024), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(524, 3) },
-    { .name = BuiltinName(3025), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3035), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(3039), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(524, 3) },
-    { .name = BuiltinName(3040), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3042), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3043), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3044), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3045), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3046), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3049), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3053), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(3054), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(3060), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(3061), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(122, 5) },
-    { .name = BuiltinName(3062), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3064), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(3065), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(48, 2) },
-    { .name = BuiltinName(3068), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3069), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3070), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(3077), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(583, 14) },
-    { .name = BuiltinName(3080), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(3082), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(524, 3) },
-    { .name = BuiltinName(3083), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3363), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3377), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(597, 14) },
-    { .name = BuiltinName(3386), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(3480), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(3482), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(611, 3) },
-    { .name = BuiltinName(3488), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(614, 1) },
-    { .name = BuiltinName(3490), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(3493), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(3494), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(3499), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(3500), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(3502), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3503), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(3505), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(615, 1) },
-    { .name = BuiltinName(3507), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(616, 2) },
-    { .name = BuiltinName(3508), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(3509), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(618, 1) },
-    { .name = BuiltinName(3511), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(3513), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(619, 1) },
-    { .name = BuiltinName(3515), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(619, 1) },
-    { .name = BuiltinName(3517), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(3523), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(3525), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3526), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3527), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(3528), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(538, 3) },
-    { .name = BuiltinName(3529), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(3531), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(620, 1) },
-    { .name = BuiltinName(3533), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(3534), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3536), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3539), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(3540), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3543), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(3550), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(621, 3) },
-    { .name = BuiltinName(3555), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(327, 1) },
-    { .name = BuiltinName(3563), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(3564), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(3567), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(3568), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(3569), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(624, 5) },
-    { .name = BuiltinName(3570), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3587), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(3590), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(516, 1) },
-    { .name = BuiltinName(3592), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(561, 1) },
-    { .name = BuiltinName(3594), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(629, 2) },
-    { .name = BuiltinName(3596), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(631, 4) },
-    { .name = BuiltinName(3598), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(3599), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(445, 1) },
-    { .name = BuiltinName(3605), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(3606), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(3615), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3616), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3617), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3618), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3619), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3620), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3621), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3622), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(3623), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(3624), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(635, 3) },
-    { .name = BuiltinName(3627), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(3634), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(3636), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(3638), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(3639), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(638, 8) },
-    { .name = BuiltinName(3644), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(172, 2) },
-    { .name = BuiltinName(3659), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(3662), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(439, 1) },
-    { .name = BuiltinName(3664), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(13, 1) },
-    { .name = BuiltinName(3666), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(13, 1) },
-    { .name = BuiltinName(3674), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(425, 1) },
-    { .name = BuiltinName(3683), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(14, 1) },
-    { .name = BuiltinName(3685), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(646, 5) },
-    { .name = BuiltinName(3686), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(651, 2) },
-    { .name = BuiltinName(3690), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3691), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3693), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3696), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(653, 1) },
-    { .name = BuiltinName(3698), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(654, 6) },
-    { .name = BuiltinName(3699), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(3700), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(3703), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3704), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(660, 4) },
-    { .name = BuiltinName(3705), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3706), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(3707), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(3715), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(440, 1) },
-    { .name = BuiltinName(3725), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(498, 1) },
-    { .name = BuiltinName(3728), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3740), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(664, 2) },
-    { .name = BuiltinName(3741), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3742), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3743), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3744), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3745), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3746), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3747), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3748), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3749), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3750), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3751), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3752), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3753), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3754), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3755), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3756), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3757), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3758), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3759), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3760), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3761), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3762), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3763), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3764), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3765), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3766), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3767), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3770), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3772), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3773), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3774), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3775), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3776), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3777), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3778), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3779), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3780), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3781), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3782), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3783), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3784), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3785), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(3786), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(3794), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3795), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3796), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3797), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3798), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3799), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3800), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3801), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3802), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3803), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(666, 3) },
-    { .name = BuiltinName(3805), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3806), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3807), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3808), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3809), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3810), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3816), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(3817), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(618, 1) },
-    { .name = BuiltinName(3819), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(418, 3) },
-    { .name = BuiltinName(3820), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(3821), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(669, 24) },
-    { .name = BuiltinName(3822), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(693, 2) },
-    { .name = BuiltinName(3823), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(3824), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(25, 1) },
-    { .name = BuiltinName(3825), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(3826), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(695, 1) },
-    { .name = BuiltinName(3833), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(3834), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(3838), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(164, 1) },
-    { .name = BuiltinName(3840), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(696, 9) },
-    { .name = BuiltinName(3841), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(705, 4) },
-    { .name = BuiltinName(3842), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(3843), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(3844), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(3845), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(709, 5) },
-    { .name = BuiltinName(3847), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(3848), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(3852), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(714, 4) },
-    { .name = BuiltinName(3853), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(718, 2) },
-    { .name = BuiltinName(3854), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3855), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3856), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3858), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(3860), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(3862), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(720, 4) },
-    { .name = BuiltinName(3863), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(3866), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(3868), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(3875), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(171, 1) },
-    { .name = BuiltinName(3877), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(538, 3) },
-    { .name = BuiltinName(3878), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(3879), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(369, 1) },
-    { .name = BuiltinName(3880), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(724, 3) },
-    { .name = BuiltinName(3881), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3884), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3885), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3886), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3888), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3889), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3890), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3895), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3896), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3897), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3899), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(3900), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(727, 9) },
-    { .name = BuiltinName(3901), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(3902), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(3904), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(3908), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(631, 4) },
-    { .name = BuiltinName(3913), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(3915), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(738, 5) },
-    { .name = BuiltinName(3916), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(3918), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(743, 3) },
-    { .name = BuiltinName(3922), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3923), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3924), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3926), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3927), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3928), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(3931), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(3932), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(746, 5) },
-    { .name = BuiltinName(3936), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(751, 1) },
-    { .name = BuiltinName(3938), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3939), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3940), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3941), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3942), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(3943), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(38, 1) },
-    { .name = BuiltinName(3944), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(752, 3) },
-    { .name = BuiltinName(3963), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3965), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(620, 1) },
-    { .name = BuiltinName(3967), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(755, 3) },
-    { .name = BuiltinName(3968), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(758, 1) },
-    { .name = BuiltinName(3969), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(759, 1) },
-    { .name = BuiltinName(3970), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3974), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(760, 2) },
-    { .name = BuiltinName(3975), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(440, 1) },
-    { .name = BuiltinName(3978), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3979), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(3981), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(762, 2) },
-    { .name = BuiltinName(3982), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(516, 1) },
-    { .name = BuiltinName(3983), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(524, 3) },
-    { .name = BuiltinName(3984), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(3992), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(764, 1) },
-    { .name = BuiltinName(3993), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(765, 2) },
-    { .name = BuiltinName(3994), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(767, 1) },
-    { .name = BuiltinName(3997), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(3999), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(768, 4) },
-    { .name = BuiltinName(4000), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(4001), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(4002), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(4004), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(4006), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(4007), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4014), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(4015), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(4034), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(772, 7) },
-    { .name = BuiltinName(4035), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(4036), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4037), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4038), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(4042), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(332, 1) },
-    { .name = BuiltinName(4043), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(779, 1) },
-    { .name = BuiltinName(4044), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4054), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(779, 1) },
-    { .name = BuiltinName(4058), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4059), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4060), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4061), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(780, 1) },
-    { .name = BuiltinName(4062), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(781, 1) },
-    { .name = BuiltinName(4063), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(781, 1) },
-    { .name = BuiltinName(4064), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4069), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4071), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(4072), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4073), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4074), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4077), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4078), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4079), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(4080), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4085), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4086), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4087), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4088), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(364, 2) },
-    { .name = BuiltinName(4089), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4090), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(4091), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(4092), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(4093), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4098), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4099), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4101), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(364, 2) },
-    { .name = BuiltinName(4102), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(4104), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(779, 1) },
-    { .name = BuiltinName(4106), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(782, 2) },
-    { .name = BuiltinName(4109), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(164, 1) },
-    { .name = BuiltinName(4110), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4112), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4113), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(499, 1) },
-    { .name = BuiltinName(4114), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4116), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4117), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4119), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(39, 1) },
-    { .name = BuiltinName(4120), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4125), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4126), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4127), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4128), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4129), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4130), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4131), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4132), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4133), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4134), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4135), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(489, 1) },
-    { .name = BuiltinName(4137), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4138), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(4139), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4140), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4143), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4146), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4147), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4148), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4157), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(4158), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(4161), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4164), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(4166), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(121, 1) },
-    { .name = BuiltinName(4167), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4168), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(4170), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(784, 6) },
-    { .name = BuiltinName(4172), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4173), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4174), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4175), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4176), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(790, 7) },
-    { .name = BuiltinName(4177), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(4178), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(4181), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(797, 8) },
-    { .name = BuiltinName(4183), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4184), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4185), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4186), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4191), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(418, 3) },
-    { .name = BuiltinName(4192), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(805, 4) },
-    { .name = BuiltinName(4194), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4196), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(561, 1) },
-    { .name = BuiltinName(4201), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(171, 1) },
-    { .name = BuiltinName(4202), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(4203), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4206), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4207), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4211), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4212), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(440, 1) },
-    { .name = BuiltinName(4213), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4214), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4216), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(809, 2) },
-    { .name = BuiltinName(4218), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(811, 10) },
-    { .name = BuiltinName(4219), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(4223), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4225), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(821, 3) },
-    { .name = BuiltinName(4227), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4228), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4229), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4230), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4231), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4233), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(618, 1) },
-    { .name = BuiltinName(4234), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(618, 1) },
-    { .name = BuiltinName(4235), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4236), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4237), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4238), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4245), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4246), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(824, 6) },
-    { .name = BuiltinName(4248), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(27, 1) },
-    { .name = BuiltinName(4252), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(830, 2) },
-    { .name = BuiltinName(4256), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4260), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(4263), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(59, 1) },
-    { .name = BuiltinName(4268), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(13, 1) },
-    { .name = BuiltinName(4274), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4277), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(751, 1) },
-    { .name = BuiltinName(4279), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4280), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(832, 2) },
-    { .name = BuiltinName(4282), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(834, 2) },
-    { .name = BuiltinName(4283), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(4284), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(490, 1) },
-    { .name = BuiltinName(4285), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(836, 2) },
-    { .name = BuiltinName(4286), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4287), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(498, 1) },
-    { .name = BuiltinName(4288), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(838, 7) },
-    { .name = BuiltinName(4296), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4297), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4298), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4302), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4303), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4304), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4305), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(326, 1) },
-    { .name = BuiltinName(4306), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(845, 1) },
-    { .name = BuiltinName(4307), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4308), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4309), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4310), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(4316), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(653, 1) },
-    { .name = BuiltinName(4320), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(79, 1) },
-    { .name = BuiltinName(4322), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(134, 1) },
-    { .name = BuiltinName(4325), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4326), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4333), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4334), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(666, 3) },
-    { .name = BuiltinName(4335), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4337), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(846, 8) },
-    { .name = BuiltinName(4338), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(91, 2) },
-    { .name = BuiltinName(4341), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(133, 1) },
-    { .name = BuiltinName(4342), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4346), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(854, 3) },
-    { .name = BuiltinName(4350), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4358), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(4360), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(857, 6) },
-    { .name = BuiltinName(4363), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(498, 1) },
-    { .name = BuiltinName(4368), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(134, 1) },
-    { .name = BuiltinName(4370), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(863, 2) },
-    { .name = BuiltinName(4371), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4372), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4373), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4374), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4375), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4376), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4377), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4378), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4379), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4380), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4381), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4382), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4383), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4384), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4385), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4386), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4387), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4388), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4389), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4390), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4391), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4392), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4393), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4394), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4395), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4396), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4397), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4398), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4399), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4400), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4401), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4402), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4403), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4404), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4405), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4406), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4407), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4408), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4409), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4410), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4411), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4412), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4413), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4414), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4415), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4416), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4417), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4418), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(4420), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4421), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4422), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4423), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4424), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4425), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4426), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4427), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4428), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4429), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4430), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4431), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4432), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4433), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4434), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4435), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(865, 1) },
-    { .name = BuiltinName(4436), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4437), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(865, 1) },
-    { .name = BuiltinName(4438), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(866, 1) },
-    { .name = BuiltinName(4439), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4440), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4441), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4442), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4443), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4444), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4445), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4446), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4447), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4448), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4449), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(736, 2) },
-    { .name = BuiltinName(4450), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4451), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4452), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4453), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(781, 1) },
-    { .name = BuiltinName(4454), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4455), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4456), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4457), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(4459), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(867, 17) },
-    { .name = BuiltinName(4461), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4462), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4463), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(884, 15) },
-    { .name = BuiltinName(4464), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4465), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4466), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4467), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4468), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4469), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4470), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4471), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4472), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(74, 1) },
-    { .name = BuiltinName(4476), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(899, 4) },
-    { .name = BuiltinName(4477), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(903, 2) },
-    { .name = BuiltinName(4478), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(905, 1) },
-    { .name = BuiltinName(4479), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(906, 2) },
-    { .name = BuiltinName(4480), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(905, 1) },
-    { .name = BuiltinName(4481), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(865, 1) },
-    { .name = BuiltinName(4484), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(866, 1) },
-    { .name = BuiltinName(4485), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4486), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(4487), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4488), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(333, 2) },
-    { .name = BuiltinName(4489), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(4490), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4491), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4492), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(908, 26) },
-    { .name = BuiltinName(4494), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4495), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4496), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4497), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4498), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(429, 1) },
-    { .name = BuiltinName(4499), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4501), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(494, 1) },
-    { .name = BuiltinName(4503), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4505), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4506), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(934, 2) },
-    { .name = BuiltinName(4507), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(936, 1) },
-    { .name = BuiltinName(4508), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(4509), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(179, 1) },
-    { .name = BuiltinName(4510), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(4513), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4519), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(369, 1) },
-    { .name = BuiltinName(4520), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(369, 1) },
-    { .name = BuiltinName(4521), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(937, 2) },
-    { .name = BuiltinName(4522), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(758, 1) },
-    { .name = BuiltinName(4527), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4528), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4530), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4531), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4532), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(58, 1) },
-    { .name = BuiltinName(4536), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4537), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4539), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4544), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4545), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(939, 5) },
-    { .name = BuiltinName(4552), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4553), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4566), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(514, 2) },
-    { .name = BuiltinName(4567), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4568), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4569), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(370, 1) },
-    { .name = BuiltinName(4572), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(501, 1) },
-    { .name = BuiltinName(4573), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(421, 4) },
-    { .name = BuiltinName(4574), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4575), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4577), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(944, 23) },
-    { .name = BuiltinName(4578), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(695, 1) },
-    { .name = BuiltinName(4582), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(4583), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(834, 2) },
-    { .name = BuiltinName(4584), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(784, 6) },
-    { .name = BuiltinName(4588), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(371, 9) },
-    { .name = BuiltinName(4589), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(65, 1) },
-    { .name = BuiltinName(4590), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(383, 3) },
-    { .name = BuiltinName(4591), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(165, 4) },
-    { .name = BuiltinName(4593), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(55, 2) },
-    { .name = BuiltinName(4597), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4599), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(967, 6) },
-    { .name = BuiltinName(4603), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(48, 2) },
-    { .name = BuiltinName(4607), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(516, 1) },
-    { .name = BuiltinName(4611), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4612), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4617), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4618), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4620), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(425, 1) },
-    { .name = BuiltinName(4621), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4622), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4623), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4629), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(973, 1) },
-    { .name = BuiltinName(4630), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(974, 16) },
-    { .name = BuiltinName(4631), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(399, 6) },
-    { .name = BuiltinName(4632), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(81, 1) },
-    { .name = BuiltinName(4644), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4648), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4649), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4654), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(4656), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(347, 3) },
-    { .name = BuiltinName(4658), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(4664), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(80, 1) },
-    { .name = BuiltinName(4669), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(134, 1) },
-    { .name = BuiltinName(4672), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(990, 9) },
-    { .name = BuiltinName(4673), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(347, 3) },
-    { .name = BuiltinName(4674), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(906, 2) },
-    { .name = BuiltinName(4676), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(500, 1) },
-    { .name = BuiltinName(4688), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(380, 1) },
-    { .name = BuiltinName(4689), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(999, 20) },
-    { .name = BuiltinName(4690), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4691), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4692), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4693), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4694), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4695), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4696), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4697), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4698), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4699), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4700), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4701), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4702), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4703), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4704), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4705), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4706), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4707), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4708), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4710), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(26, 1) },
-    { .name = BuiltinName(4711), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4712), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4713), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4714), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4715), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4716), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4717), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4719), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(57, 1) },
-    { .name = BuiltinName(4720), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1019, 4) },
-    { .name = BuiltinName(4721), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4722), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4723), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4724), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4725), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4726), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4727), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4728), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4729), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4730), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4731), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4732), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4733), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4734), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4735), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4736), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4737), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4738), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4739), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(527, 1) },
-    { .name = BuiltinName(4740), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4741), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4742), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(12, 1) },
-    { .name = BuiltinName(4747), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4748), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4749), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4750), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4751), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4753), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4754), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4756), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4758), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4759), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4760), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4761), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4762), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4763), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4765), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4770), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(350, 4) },
-    { .name = BuiltinName(4771), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(347, 3) },
-    { .name = BuiltinName(4772), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(28, 1) },
-    { .name = BuiltinName(4774), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4775), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4776), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4777), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4778), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4779), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4780), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4781), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4782), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4785), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4786), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4787), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4789), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4790), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4791), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4792), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4793), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4794), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4795), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4796), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4797), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4798), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4799), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4800), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4801), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4802), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4803), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4804), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4805), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4806), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4812), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4813), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(84, 1) },
-    { .name = BuiltinName(4814), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1023, 4) },
-    { .name = BuiltinName(4815), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1027, 1) },
-    { .name = BuiltinName(4816), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1028, 14) },
-    { .name = BuiltinName(4817), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(66, 1) },
-    { .name = BuiltinName(4819), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1042, 10) },
-    { .name = BuiltinName(4820), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4821), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4822), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4823), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4824), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(73, 1) },
-    { .name = BuiltinName(4825), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(176, 1) },
-    { .name = BuiltinName(4826), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1052, 6) },
-    { .name = BuiltinName(4827), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1058, 64) },
-    { .name = BuiltinName(4828), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(448, 1) },
-    { .name = BuiltinName(4831), .classes = std::span<const BuiltinClassID>(memberClasses).subspan(1122, 3) },
+    { .name = BuiltinName(185), .classes = { 0, 12 } },
+    { .name = BuiltinName(318), .classes = { 12, 1 } },
+    { .name = BuiltinName(751), .classes = { 13, 1 } },
+    { .name = BuiltinName(1193), .classes = { 13, 1 } },
+    { .name = BuiltinName(1417), .classes = { 12, 1 } },
+    { .name = BuiltinName(1584), .classes = { 14, 1 } },
+    { .name = BuiltinName(1585), .classes = { 14, 1 } },
+    { .name = BuiltinName(1592), .classes = { 14, 1 } },
+    { .name = BuiltinName(1593), .classes = { 14, 1 } },
+    { .name = BuiltinName(1594), .classes = { 14, 1 } },
+    { .name = BuiltinName(1606), .classes = { 15, 2 } },
+    { .name = BuiltinName(1614), .classes = { 17, 1 } },
+    { .name = BuiltinName(1620), .classes = { 18, 7 } },
+    { .name = BuiltinName(1621), .classes = { 25, 1 } },
+    { .name = BuiltinName(1622), .classes = { 25, 1 } },
+    { .name = BuiltinName(1633), .classes = { 25, 1 } },
+    { .name = BuiltinName(1638), .classes = { 25, 1 } },
+    { .name = BuiltinName(1653), .classes = { 26, 3 } },
+    { .name = BuiltinName(1654), .classes = { 29, 1 } },
+    { .name = BuiltinName(1655), .classes = { 30, 1 } },
+    { .name = BuiltinName(1656), .classes = { 31, 2 } },
+    { .name = BuiltinName(1657), .classes = { 33, 1 } },
+    { .name = BuiltinName(1658), .classes = { 12, 1 } },
+    { .name = BuiltinName(1659), .classes = { 12, 1 } },
+    { .name = BuiltinName(1661), .classes = { 12, 1 } },
+    { .name = BuiltinName(1666), .classes = { 34, 9 } },
+    { .name = BuiltinName(1669), .classes = { 43, 1 } },
+    { .name = BuiltinName(1670), .classes = { 17, 1 } },
+    { .name = BuiltinName(1672), .classes = { 44, 1 } },
+    { .name = BuiltinName(1673), .classes = { 45, 1 } },
+    { .name = BuiltinName(1674), .classes = { 46, 1 } },
+    { .name = BuiltinName(1675), .classes = { 43, 1 } },
+    { .name = BuiltinName(1678), .classes = { 46, 1 } },
+    { .name = BuiltinName(1679), .classes = { 43, 1 } },
+    { .name = BuiltinName(1680), .classes = { 47, 7 } },
+    { .name = BuiltinName(1681), .classes = { 54, 1 } },
+    { .name = BuiltinName(1684), .classes = { 55, 2 } },
+    { .name = BuiltinName(1685), .classes = { 57, 4 } },
+    { .name = BuiltinName(1689), .classes = { 61, 1 } },
+    { .name = BuiltinName(1703), .classes = { 62, 2 } },
+    { .name = BuiltinName(1704), .classes = { 64, 1 } },
+    { .name = BuiltinName(1707), .classes = { 65, 1 } },
+    { .name = BuiltinName(1711), .classes = { 66, 1 } },
+    { .name = BuiltinName(1712), .classes = { 66, 1 } },
+    { .name = BuiltinName(1717), .classes = { 67, 5 } },
+    { .name = BuiltinName(1718), .classes = { 12, 1 } },
+    { .name = BuiltinName(1719), .classes = { 12, 1 } },
+    { .name = BuiltinName(1720), .classes = { 12, 1 } },
+    { .name = BuiltinName(1722), .classes = { 72, 1 } },
+    { .name = BuiltinName(1723), .classes = { 73, 1 } },
+    { .name = BuiltinName(1739), .classes = { 73, 1 } },
+    { .name = BuiltinName(1743), .classes = { 30, 1 } },
+    { .name = BuiltinName(1744), .classes = { 74, 8 } },
+    { .name = BuiltinName(1746), .classes = { 66, 1 } },
+    { .name = BuiltinName(1760), .classes = { 82, 1 } },
+    { .name = BuiltinName(1761), .classes = { 82, 1 } },
+    { .name = BuiltinName(1767), .classes = { 83, 1 } },
+    { .name = BuiltinName(1771), .classes = { 84, 1 } },
+    { .name = BuiltinName(1779), .classes = { 85, 3 } },
+    { .name = BuiltinName(1784), .classes = { 29, 1 } },
+    { .name = BuiltinName(1786), .classes = { 88, 1 } },
+    { .name = BuiltinName(1787), .classes = { 62, 2 } },
+    { .name = BuiltinName(1798), .classes = { 89, 1 } },
+    { .name = BuiltinName(1806), .classes = { 82, 1 } },
+    { .name = BuiltinName(1807), .classes = { 82, 1 } },
+    { .name = BuiltinName(1808), .classes = { 82, 1 } },
+    { .name = BuiltinName(1809), .classes = { 82, 1 } },
+    { .name = BuiltinName(1810), .classes = { 90, 1 } },
+    { .name = BuiltinName(1815), .classes = { 57, 4 } },
+    { .name = BuiltinName(1819), .classes = { 65, 1 } },
+    { .name = BuiltinName(1820), .classes = { 30, 1 } },
+    { .name = BuiltinName(1821), .classes = { 91, 2 } },
+    { .name = BuiltinName(1822), .classes = { 73, 1 } },
+    { .name = BuiltinName(1827), .classes = { 93, 1 } },
+    { .name = BuiltinName(1828), .classes = { 93, 1 } },
+    { .name = BuiltinName(1829), .classes = { 93, 1 } },
+    { .name = BuiltinName(1830), .classes = { 93, 1 } },
+    { .name = BuiltinName(1831), .classes = { 33, 1 } },
+    { .name = BuiltinName(1832), .classes = { 65, 1 } },
+    { .name = BuiltinName(1833), .classes = { 93, 1 } },
+    { .name = BuiltinName(1834), .classes = { 93, 1 } },
+    { .name = BuiltinName(1835), .classes = { 94, 7 } },
+    { .name = BuiltinName(1837), .classes = { 93, 1 } },
+    { .name = BuiltinName(1840), .classes = { 101, 2 } },
+    { .name = BuiltinName(1841), .classes = { 101, 2 } },
+    { .name = BuiltinName(1842), .classes = { 65, 1 } },
+    { .name = BuiltinName(1843), .classes = { 30, 1 } },
+    { .name = BuiltinName(1847), .classes = { 83, 1 } },
+    { .name = BuiltinName(1854), .classes = { 93, 1 } },
+    { .name = BuiltinName(1855), .classes = { 93, 1 } },
+    { .name = BuiltinName(1857), .classes = { 103, 1 } },
+    { .name = BuiltinName(1858), .classes = { 104, 1 } },
+    { .name = BuiltinName(1859), .classes = { 105, 5 } },
+    { .name = BuiltinName(1860), .classes = { 64, 1 } },
+    { .name = BuiltinName(1861), .classes = { 110, 2 } },
+    { .name = BuiltinName(1879), .classes = { 112, 1 } },
+    { .name = BuiltinName(1880), .classes = { 113, 13 } },
+    { .name = BuiltinName(1881), .classes = { 126, 2 } },
+    { .name = BuiltinName(1886), .classes = { 128, 8 } },
+    { .name = BuiltinName(1900), .classes = { 62, 2 } },
+    { .name = BuiltinName(1901), .classes = { 93, 1 } },
+    { .name = BuiltinName(1902), .classes = { 93, 1 } },
+    { .name = BuiltinName(1903), .classes = { 93, 1 } },
+    { .name = BuiltinName(1906), .classes = { 136, 1 } },
+    { .name = BuiltinName(1910), .classes = { 90, 1 } },
+    { .name = BuiltinName(1911), .classes = { 137, 5 } },
+    { .name = BuiltinName(1913), .classes = { 73, 1 } },
+    { .name = BuiltinName(1917), .classes = { 73, 1 } },
+    { .name = BuiltinName(1919), .classes = { 88, 1 } },
+    { .name = BuiltinName(1921), .classes = { 142, 7 } },
+    { .name = BuiltinName(1922), .classes = { 103, 1 } },
+    { .name = BuiltinName(1927), .classes = { 90, 1 } },
+    { .name = BuiltinName(1928), .classes = { 149, 1 } },
+    { .name = BuiltinName(1929), .classes = { 150, 1 } },
+    { .name = BuiltinName(1942), .classes = { 65, 1 } },
+    { .name = BuiltinName(1943), .classes = { 65, 1 } },
+    { .name = BuiltinName(1945), .classes = { 43, 1 } },
+    { .name = BuiltinName(1955), .classes = { 12, 1 } },
+    { .name = BuiltinName(1956), .classes = { 12, 1 } },
+    { .name = BuiltinName(1957), .classes = { 12, 1 } },
+    { .name = BuiltinName(1958), .classes = { 12, 1 } },
+    { .name = BuiltinName(1959), .classes = { 12, 1 } },
+    { .name = BuiltinName(1960), .classes = { 12, 1 } },
+    { .name = BuiltinName(1964), .classes = { 151, 1 } },
+    { .name = BuiltinName(1970), .classes = { 152, 2 } },
+    { .name = BuiltinName(1975), .classes = { 154, 1 } },
+    { .name = BuiltinName(1976), .classes = { 154, 1 } },
+    { .name = BuiltinName(1977), .classes = { 154, 1 } },
+    { .name = BuiltinName(1980), .classes = { 93, 1 } },
+    { .name = BuiltinName(1988), .classes = { 155, 3 } },
+    { .name = BuiltinName(1989), .classes = { 158, 26 } },
+    { .name = BuiltinName(1992), .classes = { 12, 1 } },
+    { .name = BuiltinName(1993), .classes = { 184, 1 } },
+    { .name = BuiltinName(1994), .classes = { 185, 4 } },
+    { .name = BuiltinName(1996), .classes = { 12, 1 } },
+    { .name = BuiltinName(1997), .classes = { 66, 1 } },
+    { .name = BuiltinName(1998), .classes = { 189, 3 } },
+    { .name = BuiltinName(2004), .classes = { 192, 1 } },
+    { .name = BuiltinName(2006), .classes = { 65, 1 } },
+    { .name = BuiltinName(2012), .classes = { 90, 1 } },
+    { .name = BuiltinName(2018), .classes = { 193, 2 } },
+    { .name = BuiltinName(2020), .classes = { 93, 1 } },
+    { .name = BuiltinName(2023), .classes = { 195, 2 } },
+    { .name = BuiltinName(2026), .classes = { 197, 1 } },
+    { .name = BuiltinName(2030), .classes = { 103, 1 } },
+    { .name = BuiltinName(2032), .classes = { 198, 2 } },
+    { .name = BuiltinName(2034), .classes = { 200, 1 } },
+    { .name = BuiltinName(2035), .classes = { 200, 1 } },
+    { .name = BuiltinName(2037), .classes = { 93, 1 } },
+    { .name = BuiltinName(2040), .classes = { 201, 2 } },
+    { .name = BuiltinName(2042), .classes = { 203, 2 } },
+    { .name = BuiltinName(2048), .classes = { 205, 153 } },
+    { .name = BuiltinName(2049), .classes = { 83, 1 } },
+    { .name = BuiltinName(2050), .classes = { 358, 1 } },
+    { .name = BuiltinName(2053), .classes = { 359, 1 } },
+    { .name = BuiltinName(2055), .classes = { 360, 1 } },
+    { .name = BuiltinName(2058), .classes = { 361, 1 } },
+    { .name = BuiltinName(2059), .classes = { 362, 3 } },
+    { .name = BuiltinName(2061), .classes = { 365, 1 } },
+    { .name = BuiltinName(2062), .classes = { 365, 1 } },
+    { .name = BuiltinName(2063), .classes = { 12, 1 } },
+    { .name = BuiltinName(2064), .classes = { 12, 1 } },
+    { .name = BuiltinName(2065), .classes = { 12, 1 } },
+    { .name = BuiltinName(2067), .classes = { 365, 1 } },
+    { .name = BuiltinName(2068), .classes = { 366, 2 } },
+    { .name = BuiltinName(2069), .classes = { 365, 1 } },
+    { .name = BuiltinName(2071), .classes = { 368, 2 } },
+    { .name = BuiltinName(2075), .classes = { 370, 1 } },
+    { .name = BuiltinName(2078), .classes = { 12, 1 } },
+    { .name = BuiltinName(2079), .classes = { 12, 1 } },
+    { .name = BuiltinName(2081), .classes = { 359, 1 } },
+    { .name = BuiltinName(2159), .classes = { 136, 1 } },
+    { .name = BuiltinName(2161), .classes = { 371, 1 } },
+    { .name = BuiltinName(2177), .classes = { 372, 4 } },
+    { .name = BuiltinName(2178), .classes = { 89, 1 } },
+    { .name = BuiltinName(2179), .classes = { 30, 1 } },
+    { .name = BuiltinName(2181), .classes = { 376, 4 } },
+    { .name = BuiltinName(2182), .classes = { 380, 3 } },
+    { .name = BuiltinName(2183), .classes = { 380, 3 } },
+    { .name = BuiltinName(2185), .classes = { 33, 1 } },
+    { .name = BuiltinName(2187), .classes = { 383, 4 } },
+    { .name = BuiltinName(2188), .classes = { 380, 3 } },
+    { .name = BuiltinName(2189), .classes = { 383, 4 } },
+    { .name = BuiltinName(2190), .classes = { 93, 1 } },
+    { .name = BuiltinName(2195), .classes = { 93, 1 } },
+    { .name = BuiltinName(2199), .classes = { 387, 1 } },
+    { .name = BuiltinName(2208), .classes = { 93, 1 } },
+    { .name = BuiltinName(2209), .classes = { 93, 1 } },
+    { .name = BuiltinName(2221), .classes = { 103, 1 } },
+    { .name = BuiltinName(2222), .classes = { 55, 2 } },
+    { .name = BuiltinName(2232), .classes = { 93, 1 } },
+    { .name = BuiltinName(2233), .classes = { 388, 9 } },
+    { .name = BuiltinName(2241), .classes = { 397, 1 } },
+    { .name = BuiltinName(2249), .classes = { 398, 2 } },
+    { .name = BuiltinName(2252), .classes = { 400, 1 } },
+    { .name = BuiltinName(2254), .classes = { 112, 1 } },
+    { .name = BuiltinName(2255), .classes = { 136, 1 } },
+    { .name = BuiltinName(2256), .classes = { 401, 2 } },
+    { .name = BuiltinName(2257), .classes = { 64, 1 } },
+    { .name = BuiltinName(2258), .classes = { 403, 1 } },
+    { .name = BuiltinName(2261), .classes = { 185, 4 } },
+    { .name = BuiltinName(2271), .classes = { 404, 1 } },
+    { .name = BuiltinName(2273), .classes = { 405, 9 } },
+    { .name = BuiltinName(2280), .classes = { 62, 2 } },
+    { .name = BuiltinName(2283), .classes = { 414, 1 } },
+    { .name = BuiltinName(2284), .classes = { 44, 1 } },
+    { .name = BuiltinName(2287), .classes = { 415, 1 } },
+    { .name = BuiltinName(2288), .classes = { 416, 1 } },
+    { .name = BuiltinName(2289), .classes = { 55, 2 } },
+    { .name = BuiltinName(2301), .classes = { 197, 1 } },
+    { .name = BuiltinName(2302), .classes = { 417, 3 } },
+    { .name = BuiltinName(2304), .classes = { 151, 1 } },
+    { .name = BuiltinName(2305), .classes = { 46, 1 } },
+    { .name = BuiltinName(2306), .classes = { 46, 1 } },
+    { .name = BuiltinName(2307), .classes = { 93, 1 } },
+    { .name = BuiltinName(2309), .classes = { 93, 1 } },
+    { .name = BuiltinName(2311), .classes = { 200, 1 } },
+    { .name = BuiltinName(2314), .classes = { 93, 1 } },
+    { .name = BuiltinName(2324), .classes = { 45, 1 } },
+    { .name = BuiltinName(2325), .classes = { 64, 1 } },
+    { .name = BuiltinName(2327), .classes = { 64, 1 } },
+    { .name = BuiltinName(2343), .classes = { 420, 1 } },
+    { .name = BuiltinName(2344), .classes = { 420, 1 } },
+    { .name = BuiltinName(2348), .classes = { 421, 4 } },
+    { .name = BuiltinName(2349), .classes = { 425, 11 } },
+    { .name = BuiltinName(2350), .classes = { 29, 1 } },
+    { .name = BuiltinName(2353), .classes = { 65, 1 } },
+    { .name = BuiltinName(2355), .classes = { 112, 1 } },
+    { .name = BuiltinName(2357), .classes = { 436, 6 } },
+    { .name = BuiltinName(2364), .classes = { 442, 2 } },
+    { .name = BuiltinName(2365), .classes = { 442, 2 } },
+    { .name = BuiltinName(2367), .classes = { 444, 9 } },
+    { .name = BuiltinName(2368), .classes = { 383, 4 } },
+    { .name = BuiltinName(2369), .classes = { 383, 4 } },
+    { .name = BuiltinName(2370), .classes = { 453, 2 } },
+    { .name = BuiltinName(2388), .classes = { 455, 1 } },
+    { .name = BuiltinName(2390), .classes = { 93, 1 } },
+    { .name = BuiltinName(2392), .classes = { 93, 1 } },
+    { .name = BuiltinName(2393), .classes = { 456, 1 } },
+    { .name = BuiltinName(2396), .classes = { 45, 1 } },
+    { .name = BuiltinName(2397), .classes = { 103, 1 } },
+    { .name = BuiltinName(2399), .classes = { 457, 3 } },
+    { .name = BuiltinName(2402), .classes = { 83, 1 } },
+    { .name = BuiltinName(2404), .classes = { 197, 1 } },
+    { .name = BuiltinName(2414), .classes = { 460, 5 } },
+    { .name = BuiltinName(2415), .classes = { 12, 1 } },
+    { .name = BuiltinName(2416), .classes = { 12, 1 } },
+    { .name = BuiltinName(2418), .classes = { 414, 1 } },
+    { .name = BuiltinName(2419), .classes = { 414, 1 } },
+    { .name = BuiltinName(2423), .classes = { 465, 1 } },
+    { .name = BuiltinName(2427), .classes = { 93, 1 } },
+    { .name = BuiltinName(2428), .classes = { 93, 1 } },
+    { .name = BuiltinName(2430), .classes = { 93, 1 } },
+    { .name = BuiltinName(2432), .classes = { 62, 2 } },
+    { .name = BuiltinName(2433), .classes = { 466, 1 } },
+    { .name = BuiltinName(2441), .classes = { 467, 2 } },
+    { .name = BuiltinName(2446), .classes = { 469, 1 } },
+    { .name = BuiltinName(2447), .classes = { 200, 1 } },
+    { .name = BuiltinName(2448), .classes = { 200, 1 } },
+    { .name = BuiltinName(2451), .classes = { 54, 1 } },
+    { .name = BuiltinName(2453), .classes = { 387, 1 } },
+    { .name = BuiltinName(2454), .classes = { 93, 1 } },
+    { .name = BuiltinName(2455), .classes = { 12, 1 } },
+    { .name = BuiltinName(2456), .classes = { 12, 1 } },
+    { .name = BuiltinName(2457), .classes = { 12, 1 } },
+    { .name = BuiltinName(2458), .classes = { 12, 1 } },
+    { .name = BuiltinName(2459), .classes = { 12, 1 } },
+    { .name = BuiltinName(2460), .classes = { 12, 1 } },
+    { .name = BuiltinName(2461), .classes = { 470, 4 } },
+    { .name = BuiltinName(2463), .classes = { 12, 1 } },
+    { .name = BuiltinName(2464), .classes = { 12, 1 } },
+    { .name = BuiltinName(2465), .classes = { 12, 1 } },
+    { .name = BuiltinName(2468), .classes = { 474, 5 } },
+    { .name = BuiltinName(2472), .classes = { 479, 1 } },
+    { .name = BuiltinName(2474), .classes = { 480, 1 } },
+    { .name = BuiltinName(2479), .classes = { 481, 1 } },
+    { .name = BuiltinName(2480), .classes = { 482, 3 } },
+    { .name = BuiltinName(2483), .classes = { 457, 3 } },
+    { .name = BuiltinName(2485), .classes = { 149, 1 } },
+    { .name = BuiltinName(2486), .classes = { 457, 3 } },
+    { .name = BuiltinName(2487), .classes = { 485, 1 } },
+    { .name = BuiltinName(2489), .classes = { 366, 2 } },
+    { .name = BuiltinName(2490), .classes = { 366, 2 } },
+    { .name = BuiltinName(2491), .classes = { 366, 2 } },
+    { .name = BuiltinName(2492), .classes = { 485, 1 } },
+    { .name = BuiltinName(2495), .classes = { 486, 1 } },
+    { .name = BuiltinName(2496), .classes = { 90, 1 } },
+    { .name = BuiltinName(2498), .classes = { 30, 1 } },
+    { .name = BuiltinName(2499), .classes = { 65, 1 } },
+    { .name = BuiltinName(2501), .classes = { 487, 2 } },
+    { .name = BuiltinName(2502), .classes = { 489, 1 } },
+    { .name = BuiltinName(2505), .classes = { 490, 2 } },
+    { .name = BuiltinName(2506), .classes = { 89, 1 } },
+    { .name = BuiltinName(2508), .classes = { 89, 1 } },
+    { .name = BuiltinName(2509), .classes = { 54, 1 } },
+    { .name = BuiltinName(2510), .classes = { 492, 12 } },
+    { .name = BuiltinName(2512), .classes = { 486, 1 } },
+    { .name = BuiltinName(2513), .classes = { 93, 1 } },
+    { .name = BuiltinName(2514), .classes = { 93, 1 } },
+    { .name = BuiltinName(2518), .classes = { 65, 1 } },
+    { .name = BuiltinName(2519), .classes = { 65, 1 } },
+    { .name = BuiltinName(2522), .classes = { 504, 7 } },
+    { .name = BuiltinName(2523), .classes = { 64, 1 } },
+    { .name = BuiltinName(2526), .classes = { 511, 4 } },
+    { .name = BuiltinName(2527), .classes = { 515, 5 } },
+    { .name = BuiltinName(2530), .classes = { 520, 2 } },
+    { .name = BuiltinName(2531), .classes = { 520, 2 } },
+    { .name = BuiltinName(2532), .classes = { 515, 5 } },
+    { .name = BuiltinName(2560), .classes = { 12, 1 } },
+    { .name = BuiltinName(2561), .classes = { 12, 1 } },
+    { .name = BuiltinName(2562), .classes = { 12, 1 } },
+    { .name = BuiltinName(2563), .classes = { 12, 1 } },
+    { .name = BuiltinName(2564), .classes = { 12, 1 } },
+    { .name = BuiltinName(2565), .classes = { 12, 1 } },
+    { .name = BuiltinName(2566), .classes = { 12, 1 } },
+    { .name = BuiltinName(2567), .classes = { 12, 1 } },
+    { .name = BuiltinName(2568), .classes = { 12, 1 } },
+    { .name = BuiltinName(2571), .classes = { 93, 1 } },
+    { .name = BuiltinName(2573), .classes = { 12, 1 } },
+    { .name = BuiltinName(2574), .classes = { 12, 1 } },
+    { .name = BuiltinName(2575), .classes = { 12, 1 } },
+    { .name = BuiltinName(2592), .classes = { 93, 1 } },
+    { .name = BuiltinName(2593), .classes = { 93, 1 } },
+    { .name = BuiltinName(2594), .classes = { 93, 1 } },
+    { .name = BuiltinName(2595), .classes = { 93, 1 } },
+    { .name = BuiltinName(2596), .classes = { 93, 1 } },
+    { .name = BuiltinName(2597), .classes = { 93, 1 } },
+    { .name = BuiltinName(2598), .classes = { 522, 6 } },
+    { .name = BuiltinName(2601), .classes = { 528, 2 } },
+    { .name = BuiltinName(2602), .classes = { 530, 1 } },
+    { .name = BuiltinName(2605), .classes = { 88, 1 } },
+    { .name = BuiltinName(2606), .classes = { 62, 2 } },
+    { .name = BuiltinName(2607), .classes = { 531, 1 } },
+    { .name = BuiltinName(2608), .classes = { 531, 1 } },
+    { .name = BuiltinName(2609), .classes = { 93, 1 } },
+    { .name = BuiltinName(2610), .classes = { 532, 1 } },
+    { .name = BuiltinName(2618), .classes = { 486, 1 } },
+    { .name = BuiltinName(2621), .classes = { 90, 1 } },
+    { .name = BuiltinName(2624), .classes = { 533, 3 } },
+    { .name = BuiltinName(2625), .classes = { 62, 2 } },
+    { .name = BuiltinName(2629), .classes = { 90, 1 } },
+    { .name = BuiltinName(2634), .classes = { 64, 1 } },
+    { .name = BuiltinName(2636), .classes = { 536, 1 } },
+    { .name = BuiltinName(2637), .classes = { 536, 1 } },
+    { .name = BuiltinName(2650), .classes = { 64, 1 } },
+    { .name = BuiltinName(2651), .classes = { 154, 1 } },
+    { .name = BuiltinName(2652), .classes = { 154, 1 } },
+    { .name = BuiltinName(2653), .classes = { 154, 1 } },
+    { .name = BuiltinName(2655), .classes = { 72, 1 } },
+    { .name = BuiltinName(2656), .classes = { 62, 2 } },
+    { .name = BuiltinName(2661), .classes = { 531, 1 } },
+    { .name = BuiltinName(2662), .classes = { 531, 1 } },
+    { .name = BuiltinName(2663), .classes = { 531, 1 } },
+    { .name = BuiltinName(2664), .classes = { 64, 1 } },
+    { .name = BuiltinName(2665), .classes = { 536, 1 } },
+    { .name = BuiltinName(2673), .classes = { 90, 1 } },
+    { .name = BuiltinName(2674), .classes = { 536, 1 } },
+    { .name = BuiltinName(2676), .classes = { 531, 1 } },
+    { .name = BuiltinName(2677), .classes = { 531, 1 } },
+    { .name = BuiltinName(2678), .classes = { 531, 1 } },
+    { .name = BuiltinName(2683), .classes = { 72, 1 } },
+    { .name = BuiltinName(2685), .classes = { 45, 1 } },
+    { .name = BuiltinName(2686), .classes = { 536, 1 } },
+    { .name = BuiltinName(2687), .classes = { 536, 1 } },
+    { .name = BuiltinName(2688), .classes = { 536, 1 } },
+    { .name = BuiltinName(2689), .classes = { 64, 1 } },
+    { .name = BuiltinName(2690), .classes = { 90, 1 } },
+    { .name = BuiltinName(2692), .classes = { 537, 2 } },
+    { .name = BuiltinName(2693), .classes = { 537, 2 } },
+    { .name = BuiltinName(2699), .classes = { 533, 3 } },
+    { .name = BuiltinName(2700), .classes = { 539, 1 } },
+    { .name = BuiltinName(2701), .classes = { 29, 1 } },
+    { .name = BuiltinName(2706), .classes = { 540, 1 } },
+    { .name = BuiltinName(2707), .classes = { 29, 1 } },
+    { .name = BuiltinName(2708), .classes = { 72, 1 } },
+    { .name = BuiltinName(2711), .classes = { 536, 1 } },
+    { .name = BuiltinName(2712), .classes = { 62, 2 } },
+    { .name = BuiltinName(2713), .classes = { 541, 1 } },
+    { .name = BuiltinName(2714), .classes = { 62, 2 } },
+    { .name = BuiltinName(2715), .classes = { 370, 1 } },
+    { .name = BuiltinName(2717), .classes = { 62, 2 } },
+    { .name = BuiltinName(2718), .classes = { 64, 1 } },
+    { .name = BuiltinName(2719), .classes = { 64, 1 } },
+    { .name = BuiltinName(2724), .classes = { 62, 2 } },
+    { .name = BuiltinName(2725), .classes = { 62, 2 } },
+    { .name = BuiltinName(2726), .classes = { 62, 2 } },
+    { .name = BuiltinName(2727), .classes = { 62, 2 } },
+    { .name = BuiltinName(2728), .classes = { 90, 1 } },
+    { .name = BuiltinName(2729), .classes = { 536, 1 } },
+    { .name = BuiltinName(2730), .classes = { 542, 1 } },
+    { .name = BuiltinName(2731), .classes = { 90, 1 } },
+    { .name = BuiltinName(2732), .classes = { 536, 1 } },
+    { .name = BuiltinName(2733), .classes = { 62, 2 } },
+    { .name = BuiltinName(2734), .classes = { 536, 1 } },
+    { .name = BuiltinName(2735), .classes = { 536, 1 } },
+    { .name = BuiltinName(2736), .classes = { 536, 1 } },
+    { .name = BuiltinName(2737), .classes = { 536, 1 } },
+    { .name = BuiltinName(2738), .classes = { 536, 1 } },
+    { .name = BuiltinName(2739), .classes = { 536, 1 } },
+    { .name = BuiltinName(2740), .classes = { 536, 1 } },
+    { .name = BuiltinName(2741), .classes = { 536, 1 } },
+    { .name = BuiltinName(2742), .classes = { 531, 1 } },
+    { .name = BuiltinName(2743), .classes = { 531, 1 } },
+    { .name = BuiltinName(2744), .classes = { 531, 1 } },
+    { .name = BuiltinName(2747), .classes = { 90, 1 } },
+    { .name = BuiltinName(2750), .classes = { 543, 1 } },
+    { .name = BuiltinName(2751), .classes = { 539, 1 } },
+    { .name = BuiltinName(2752), .classes = { 536, 1 } },
+    { .name = BuiltinName(2753), .classes = { 93, 1 } },
+    { .name = BuiltinName(2754), .classes = { 93, 1 } },
+    { .name = BuiltinName(2757), .classes = { 93, 1 } },
+    { .name = BuiltinName(2760), .classes = { 93, 1 } },
+    { .name = BuiltinName(2761), .classes = { 93, 1 } },
+    { .name = BuiltinName(2762), .classes = { 544, 1 } },
+    { .name = BuiltinName(2768), .classes = { 197, 1 } },
+    { .name = BuiltinName(2772), .classes = { 64, 1 } },
+    { .name = BuiltinName(2773), .classes = { 72, 1 } },
+    { .name = BuiltinName(2781), .classes = { 545, 3 } },
+    { .name = BuiltinName(2783), .classes = { 548, 1 } },
+    { .name = BuiltinName(2784), .classes = { 83, 1 } },
+    { .name = BuiltinName(2803), .classes = { 549, 6 } },
+    { .name = BuiltinName(2805), .classes = { 88, 1 } },
+    { .name = BuiltinName(2806), .classes = { 486, 1 } },
+    { .name = BuiltinName(2809), .classes = { 197, 1 } },
+    { .name = BuiltinName(2812), .classes = { 14, 1 } },
+    { .name = BuiltinName(2813), .classes = { 15, 2 } },
+    { .name = BuiltinName(2816), .classes = { 555, 2 } },
+    { .name = BuiltinName(2818), .classes = { 93, 1 } },
+    { .name = BuiltinName(2821), .classes = { 557, 3 } },
+    { .name = BuiltinName(2822), .classes = { 486, 1 } },
+    { .name = BuiltinName(2828), .classes = { 89, 1 } },
+    { .name = BuiltinName(2829), .classes = { 89, 1 } },
+    { .name = BuiltinName(2830), .classes = { 30, 1 } },
+    { .name = BuiltinName(2832), .classes = { 82, 1 } },
+    { .name = BuiltinName(2833), .classes = { 82, 1 } },
+    { .name = BuiltinName(2834), .classes = { 93, 1 } },
+    { .name = BuiltinName(2835), .classes = { 93, 1 } },
+    { .name = BuiltinName(2836), .classes = { 93, 1 } },
+    { .name = BuiltinName(2837), .classes = { 93, 1 } },
+    { .name = BuiltinName(2838), .classes = { 93, 1 } },
+    { .name = BuiltinName(2839), .classes = { 93, 1 } },
+    { .name = BuiltinName(2840), .classes = { 93, 1 } },
+    { .name = BuiltinName(2841), .classes = { 93, 1 } },
+    { .name = BuiltinName(2849), .classes = { 93, 1 } },
+    { .name = BuiltinName(2850), .classes = { 93, 1 } },
+    { .name = BuiltinName(2853), .classes = { 93, 1 } },
+    { .name = BuiltinName(2854), .classes = { 93, 1 } },
+    { .name = BuiltinName(2855), .classes = { 93, 1 } },
+    { .name = BuiltinName(2857), .classes = { 93, 1 } },
+    { .name = BuiltinName(2858), .classes = { 560, 3 } },
+    { .name = BuiltinName(2861), .classes = { 563, 1 } },
+    { .name = BuiltinName(2864), .classes = { 564, 7 } },
+    { .name = BuiltinName(2867), .classes = { 571, 3 } },
+    { .name = BuiltinName(2869), .classes = { 90, 1 } },
+    { .name = BuiltinName(2870), .classes = { 33, 1 } },
+    { .name = BuiltinName(2872), .classes = { 542, 1 } },
+    { .name = BuiltinName(2873), .classes = { 93, 1 } },
+    { .name = BuiltinName(2874), .classes = { 93, 1 } },
+    { .name = BuiltinName(2875), .classes = { 93, 1 } },
+    { .name = BuiltinName(2876), .classes = { 93, 1 } },
+    { .name = BuiltinName(2877), .classes = { 93, 1 } },
+    { .name = BuiltinName(2879), .classes = { 93, 1 } },
+    { .name = BuiltinName(2880), .classes = { 563, 1 } },
+    { .name = BuiltinName(2882), .classes = { 93, 1 } },
+    { .name = BuiltinName(2883), .classes = { 93, 1 } },
+    { .name = BuiltinName(2884), .classes = { 93, 1 } },
+    { .name = BuiltinName(2885), .classes = { 93, 1 } },
+    { .name = BuiltinName(2886), .classes = { 93, 1 } },
+    { .name = BuiltinName(2888), .classes = { 93, 1 } },
+    { .name = BuiltinName(2896), .classes = { 93, 1 } },
+    { .name = BuiltinName(2900), .classes = { 185, 4 } },
+    { .name = BuiltinName(2906), .classes = { 200, 1 } },
+    { .name = BuiltinName(2909), .classes = { 387, 1 } },
+    { .name = BuiltinName(2910), .classes = { 197, 1 } },
+    { .name = BuiltinName(2915), .classes = { 574, 2 } },
+    { .name = BuiltinName(2919), .classes = { 192, 1 } },
+    { .name = BuiltinName(2921), .classes = { 456, 1 } },
+    { .name = BuiltinName(2925), .classes = { 383, 4 } },
+    { .name = BuiltinName(2926), .classes = { 576, 2 } },
+    { .name = BuiltinName(2927), .classes = { 578, 5 } },
+    { .name = BuiltinName(2928), .classes = { 93, 1 } },
+    { .name = BuiltinName(2929), .classes = { 93, 1 } },
+    { .name = BuiltinName(2930), .classes = { 93, 1 } },
+    { .name = BuiltinName(2931), .classes = { 583, 1 } },
+    { .name = BuiltinName(2932), .classes = { 584, 4 } },
+    { .name = BuiltinName(2939), .classes = { 93, 1 } },
+    { .name = BuiltinName(2947), .classes = { 588, 3 } },
+    { .name = BuiltinName(2948), .classes = { 29, 1 } },
+    { .name = BuiltinName(2952), .classes = { 360, 1 } },
+    { .name = BuiltinName(2953), .classes = { 82, 1 } },
+    { .name = BuiltinName(2955), .classes = { 83, 1 } },
+    { .name = BuiltinName(2960), .classes = { 30, 1 } },
+    { .name = BuiltinName(2962), .classes = { 136, 1 } },
+    { .name = BuiltinName(3104), .classes = { 404, 1 } },
+    { .name = BuiltinName(3109), .classes = { 530, 1 } },
+    { .name = BuiltinName(3134), .classes = { 417, 3 } },
+    { .name = BuiltinName(3143), .classes = { 404, 1 } },
+    { .name = BuiltinName(3184), .classes = { 465, 1 } },
+    { .name = BuiltinName(3190), .classes = { 532, 1 } },
+    { .name = BuiltinName(3195), .classes = { 14, 1 } },
+    { .name = BuiltinName(3207), .classes = { 62, 2 } },
+    { .name = BuiltinName(3217), .classes = { 532, 1 } },
+    { .name = BuiltinName(3218), .classes = { 404, 1 } },
+    { .name = BuiltinName(3219), .classes = { 404, 1 } },
+    { .name = BuiltinName(3236), .classes = { 65, 1 } },
+    { .name = BuiltinName(3244), .classes = { 65, 1 } },
+    { .name = BuiltinName(3245), .classes = { 83, 1 } },
+    { .name = BuiltinName(3260), .classes = { 457, 3 } },
+    { .name = BuiltinName(3263), .classes = { 89, 1 } },
+    { .name = BuiltinName(3334), .classes = { 591, 7 } },
+    { .name = BuiltinName(3360), .classes = { 598, 7 } },
+    { .name = BuiltinName(3361), .classes = { 414, 1 } },
+    { .name = BuiltinName(3363), .classes = { 414, 1 } },
+    { .name = BuiltinName(3364), .classes = { 605, 2 } },
+    { .name = BuiltinName(3368), .classes = { 90, 1 } },
+    { .name = BuiltinName(3371), .classes = { 469, 1 } },
+    { .name = BuiltinName(3372), .classes = { 607, 1 } },
+    { .name = BuiltinName(3374), .classes = { 608, 1 } },
+    { .name = BuiltinName(3375), .classes = { 197, 1 } },
+    { .name = BuiltinName(3376), .classes = { 584, 4 } },
+    { .name = BuiltinName(3378), .classes = { 609, 3 } },
+    { .name = BuiltinName(3379), .classes = { 607, 1 } },
+    { .name = BuiltinName(3381), .classes = { 469, 1 } },
+    { .name = BuiltinName(3382), .classes = { 607, 1 } },
+    { .name = BuiltinName(3383), .classes = { 93, 1 } },
+    { .name = BuiltinName(3386), .classes = { 82, 1 } },
+    { .name = BuiltinName(3387), .classes = { 82, 1 } },
+    { .name = BuiltinName(3390), .classes = { 12, 1 } },
+    { .name = BuiltinName(3391), .classes = { 12, 1 } },
+    { .name = BuiltinName(3392), .classes = { 12, 1 } },
+    { .name = BuiltinName(3393), .classes = { 12, 1 } },
+    { .name = BuiltinName(3394), .classes = { 12, 1 } },
+    { .name = BuiltinName(3395), .classes = { 12, 1 } },
+    { .name = BuiltinName(3396), .classes = { 93, 1 } },
+    { .name = BuiltinName(3398), .classes = { 612, 6 } },
+    { .name = BuiltinName(3399), .classes = { 193, 2 } },
+    { .name = BuiltinName(3403), .classes = { 93, 1 } },
+    { .name = BuiltinName(3404), .classes = { 193, 2 } },
+    { .name = BuiltinName(3405), .classes = { 485, 1 } },
+    { .name = BuiltinName(3406), .classes = { 618, 2 } },
+    { .name = BuiltinName(3407), .classes = { 12, 1 } },
+    { .name = BuiltinName(3409), .classes = { 12, 1 } },
+    { .name = BuiltinName(3411), .classes = { 93, 1 } },
+    { .name = BuiltinName(3413), .classes = { 479, 1 } },
+    { .name = BuiltinName(3415), .classes = { 184, 1 } },
+    { .name = BuiltinName(3416), .classes = { 62, 2 } },
+    { .name = BuiltinName(3417), .classes = { 45, 1 } },
+    { .name = BuiltinName(3418), .classes = { 45, 1 } },
+    { .name = BuiltinName(3419), .classes = { 93, 1 } },
+    { .name = BuiltinName(3420), .classes = { 93, 1 } },
+    { .name = BuiltinName(3421), .classes = { 93, 1 } },
+    { .name = BuiltinName(3428), .classes = { 620, 1 } },
+    { .name = BuiltinName(3429), .classes = { 62, 2 } },
+    { .name = BuiltinName(3430), .classes = { 62, 2 } },
+    { .name = BuiltinName(3431), .classes = { 360, 1 } },
+    { .name = BuiltinName(3432), .classes = { 62, 2 } },
+    { .name = BuiltinName(3433), .classes = { 72, 1 } },
+    { .name = BuiltinName(3434), .classes = { 65, 1 } },
+    { .name = BuiltinName(3437), .classes = { 543, 1 } },
+    { .name = BuiltinName(3448), .classes = { 93, 1 } },
+    { .name = BuiltinName(3449), .classes = { 93, 1 } },
+    { .name = BuiltinName(3450), .classes = { 93, 1 } },
+    { .name = BuiltinName(3451), .classes = { 93, 1 } },
+    { .name = BuiltinName(3452), .classes = { 93, 1 } },
+    { .name = BuiltinName(3453), .classes = { 93, 1 } },
+    { .name = BuiltinName(3454), .classes = { 93, 1 } },
+    { .name = BuiltinName(3455), .classes = { 12, 1 } },
+    { .name = BuiltinName(3456), .classes = { 12, 1 } },
+    { .name = BuiltinName(3457), .classes = { 12, 1 } },
+    { .name = BuiltinName(3458), .classes = { 93, 1 } },
+    { .name = BuiltinName(3459), .classes = { 12, 1 } },
+    { .name = BuiltinName(3460), .classes = { 12, 1 } },
+    { .name = BuiltinName(3461), .classes = { 12, 1 } },
+    { .name = BuiltinName(3471), .classes = { 621, 4 } },
+    { .name = BuiltinName(3478), .classes = { 154, 1 } },
+    { .name = BuiltinName(3481), .classes = { 184, 1 } },
+    { .name = BuiltinName(3482), .classes = { 154, 1 } },
+    { .name = BuiltinName(3484), .classes = { 625, 4 } },
+    { .name = BuiltinName(3485), .classes = { 65, 1 } },
+    { .name = BuiltinName(3486), .classes = { 13, 1 } },
+    { .name = BuiltinName(3492), .classes = { 629, 2 } },
+    { .name = BuiltinName(3496), .classes = { 359, 1 } },
+    { .name = BuiltinName(3501), .classes = { 90, 1 } },
+    { .name = BuiltinName(3505), .classes = { 154, 1 } },
+    { .name = BuiltinName(3513), .classes = { 631, 11 } },
+    { .name = BuiltinName(3514), .classes = { 359, 1 } },
+    { .name = BuiltinName(3515), .classes = { 89, 1 } },
+    { .name = BuiltinName(3517), .classes = { 136, 1 } },
+    { .name = BuiltinName(3519), .classes = { 93, 1 } },
+    { .name = BuiltinName(3520), .classes = { 571, 3 } },
+    { .name = BuiltinName(3521), .classes = { 33, 1 } },
+    { .name = BuiltinName(3523), .classes = { 571, 3 } },
+    { .name = BuiltinName(3524), .classes = { 33, 1 } },
+    { .name = BuiltinName(3534), .classes = { 90, 1 } },
+    { .name = BuiltinName(3539), .classes = { 571, 3 } },
+    { .name = BuiltinName(3540), .classes = { 33, 1 } },
+    { .name = BuiltinName(3542), .classes = { 12, 1 } },
+    { .name = BuiltinName(3543), .classes = { 12, 1 } },
+    { .name = BuiltinName(3544), .classes = { 12, 1 } },
+    { .name = BuiltinName(3545), .classes = { 12, 1 } },
+    { .name = BuiltinName(3546), .classes = { 12, 1 } },
+    { .name = BuiltinName(3549), .classes = { 12, 1 } },
+    { .name = BuiltinName(3553), .classes = { 136, 1 } },
+    { .name = BuiltinName(3554), .classes = { 89, 1 } },
+    { .name = BuiltinName(3560), .classes = { 383, 4 } },
+    { .name = BuiltinName(3561), .classes = { 137, 5 } },
+    { .name = BuiltinName(3562), .classes = { 33, 1 } },
+    { .name = BuiltinName(3564), .classes = { 383, 4 } },
+    { .name = BuiltinName(3565), .classes = { 55, 2 } },
+    { .name = BuiltinName(3569), .classes = { 93, 1 } },
+    { .name = BuiltinName(3570), .classes = { 93, 1 } },
+    { .name = BuiltinName(3571), .classes = { 197, 1 } },
+    { .name = BuiltinName(3579), .classes = { 642, 15 } },
+    { .name = BuiltinName(3582), .classes = { 88, 1 } },
+    { .name = BuiltinName(3584), .classes = { 571, 3 } },
+    { .name = BuiltinName(3585), .classes = { 33, 1 } },
+    { .name = BuiltinName(3902), .classes = { 33, 1 } },
+    { .name = BuiltinName(3917), .classes = { 657, 14 } },
+    { .name = BuiltinName(3932), .classes = { 64, 1 } },
+    { .name = BuiltinName(4028), .classes = { 65, 1 } },
+    { .name = BuiltinName(4032), .classes = { 671, 3 } },
+    { .name = BuiltinName(4038), .classes = { 674, 1 } },
+    { .name = BuiltinName(4040), .classes = { 486, 1 } },
+    { .name = BuiltinName(4043), .classes = { 469, 1 } },
+    { .name = BuiltinName(4044), .classes = { 469, 1 } },
+    { .name = BuiltinName(4045), .classes = { 30, 1 } },
+    { .name = BuiltinName(4046), .classes = { 30, 1 } },
+    { .name = BuiltinName(4050), .classes = { 30, 1 } },
+    { .name = BuiltinName(4051), .classes = { 90, 1 } },
+    { .name = BuiltinName(4052), .classes = { 90, 1 } },
+    { .name = BuiltinName(4054), .classes = { 675, 2 } },
+    { .name = BuiltinName(4055), .classes = { 66, 1 } },
+    { .name = BuiltinName(4057), .classes = { 677, 1 } },
+    { .name = BuiltinName(4058), .classes = { 45, 1 } },
+    { .name = BuiltinName(4059), .classes = { 678, 2 } },
+    { .name = BuiltinName(4060), .classes = { 542, 1 } },
+    { .name = BuiltinName(4061), .classes = { 680, 1 } },
+    { .name = BuiltinName(4063), .classes = { 83, 1 } },
+    { .name = BuiltinName(4065), .classes = { 681, 2 } },
+    { .name = BuiltinName(4067), .classes = { 683, 1 } },
+    { .name = BuiltinName(4069), .classes = { 88, 1 } },
+    { .name = BuiltinName(4075), .classes = { 486, 1 } },
+    { .name = BuiltinName(4076), .classes = { 45, 1 } },
+    { .name = BuiltinName(4077), .classes = { 93, 1 } },
+    { .name = BuiltinName(4078), .classes = { 93, 1 } },
+    { .name = BuiltinName(4079), .classes = { 486, 1 } },
+    { .name = BuiltinName(4080), .classes = { 588, 3 } },
+    { .name = BuiltinName(4081), .classes = { 200, 1 } },
+    { .name = BuiltinName(4083), .classes = { 684, 1 } },
+    { .name = BuiltinName(4084), .classes = { 154, 1 } },
+    { .name = BuiltinName(4085), .classes = { 486, 1 } },
+    { .name = BuiltinName(4086), .classes = { 12, 1 } },
+    { .name = BuiltinName(4088), .classes = { 12, 1 } },
+    { .name = BuiltinName(4091), .classes = { 72, 1 } },
+    { .name = BuiltinName(4092), .classes = { 12, 1 } },
+    { .name = BuiltinName(4095), .classes = { 359, 1 } },
+    { .name = BuiltinName(4102), .classes = { 685, 3 } },
+    { .name = BuiltinName(4107), .classes = { 360, 1 } },
+    { .name = BuiltinName(4117), .classes = { 65, 1 } },
+    { .name = BuiltinName(4118), .classes = { 65, 1 } },
+    { .name = BuiltinName(4121), .classes = { 83, 1 } },
+    { .name = BuiltinName(4122), .classes = { 83, 1 } },
+    { .name = BuiltinName(4123), .classes = { 688, 5 } },
+    { .name = BuiltinName(4124), .classes = { 82, 1 } },
+    { .name = BuiltinName(4143), .classes = { 469, 1 } },
+    { .name = BuiltinName(4146), .classes = { 563, 1 } },
+    { .name = BuiltinName(4148), .classes = { 620, 1 } },
+    { .name = BuiltinName(4150), .classes = { 693, 2 } },
+    { .name = BuiltinName(4152), .classes = { 695, 4 } },
+    { .name = BuiltinName(4154), .classes = { 486, 1 } },
+    { .name = BuiltinName(4155), .classes = { 485, 1 } },
+    { .name = BuiltinName(4162), .classes = { 185, 4 } },
+    { .name = BuiltinName(4163), .classes = { 185, 4 } },
+    { .name = BuiltinName(4172), .classes = { 93, 1 } },
+    { .name = BuiltinName(4173), .classes = { 93, 1 } },
+    { .name = BuiltinName(4174), .classes = { 93, 1 } },
+    { .name = BuiltinName(4175), .classes = { 93, 1 } },
+    { .name = BuiltinName(4176), .classes = { 93, 1 } },
+    { .name = BuiltinName(4177), .classes = { 93, 1 } },
+    { .name = BuiltinName(4178), .classes = { 93, 1 } },
+    { .name = BuiltinName(4179), .classes = { 83, 1 } },
+    { .name = BuiltinName(4180), .classes = { 414, 1 } },
+    { .name = BuiltinName(4181), .classes = { 699, 3 } },
+    { .name = BuiltinName(4186), .classes = { 89, 1 } },
+    { .name = BuiltinName(4197), .classes = { 89, 1 } },
+    { .name = BuiltinName(4199), .classes = { 532, 1 } },
+    { .name = BuiltinName(4201), .classes = { 489, 1 } },
+    { .name = BuiltinName(4202), .classes = { 702, 8 } },
+    { .name = BuiltinName(4207), .classes = { 193, 2 } },
+    { .name = BuiltinName(4222), .classes = { 88, 1 } },
+    { .name = BuiltinName(4223), .classes = { 45, 1 } },
+    { .name = BuiltinName(4224), .classes = { 45, 1 } },
+    { .name = BuiltinName(4225), .classes = { 710, 2 } },
+    { .name = BuiltinName(4226), .classes = { 103, 1 } },
+    { .name = BuiltinName(4228), .classes = { 13, 1 } },
+    { .name = BuiltinName(4230), .classes = { 13, 1 } },
+    { .name = BuiltinName(4238), .classes = { 712, 2 } },
+    { .name = BuiltinName(4247), .classes = { 14, 1 } },
+    { .name = BuiltinName(4249), .classes = { 714, 5 } },
+    { .name = BuiltinName(4250), .classes = { 719, 2 } },
+    { .name = BuiltinName(4254), .classes = { 93, 1 } },
+    { .name = BuiltinName(4255), .classes = { 93, 1 } },
+    { .name = BuiltinName(4260), .classes = { 93, 1 } },
+    { .name = BuiltinName(4263), .classes = { 721, 1 } },
+    { .name = BuiltinName(4265), .classes = { 722, 6 } },
+    { .name = BuiltinName(4266), .classes = { 532, 1 } },
+    { .name = BuiltinName(4267), .classes = { 532, 1 } },
+    { .name = BuiltinName(4270), .classes = { 93, 1 } },
+    { .name = BuiltinName(4271), .classes = { 728, 4 } },
+    { .name = BuiltinName(4272), .classes = { 93, 1 } },
+    { .name = BuiltinName(4273), .classes = { 489, 1 } },
+    { .name = BuiltinName(4274), .classes = { 64, 1 } },
+    { .name = BuiltinName(4283), .classes = { 480, 1 } },
+    { .name = BuiltinName(4293), .classes = { 540, 1 } },
+    { .name = BuiltinName(4296), .classes = { 93, 1 } },
+    { .name = BuiltinName(4302), .classes = { 45, 1 } },
+    { .name = BuiltinName(4310), .classes = { 732, 3 } },
+    { .name = BuiltinName(4311), .classes = { 82, 1 } },
+    { .name = BuiltinName(4312), .classes = { 82, 1 } },
+    { .name = BuiltinName(4313), .classes = { 82, 1 } },
+    { .name = BuiltinName(4314), .classes = { 82, 1 } },
+    { .name = BuiltinName(4315), .classes = { 82, 1 } },
+    { .name = BuiltinName(4316), .classes = { 82, 1 } },
+    { .name = BuiltinName(4317), .classes = { 82, 1 } },
+    { .name = BuiltinName(4318), .classes = { 82, 1 } },
+    { .name = BuiltinName(4319), .classes = { 12, 1 } },
+    { .name = BuiltinName(4320), .classes = { 82, 1 } },
+    { .name = BuiltinName(4321), .classes = { 82, 1 } },
+    { .name = BuiltinName(4322), .classes = { 82, 1 } },
+    { .name = BuiltinName(4323), .classes = { 12, 1 } },
+    { .name = BuiltinName(4324), .classes = { 12, 1 } },
+    { .name = BuiltinName(4325), .classes = { 12, 1 } },
+    { .name = BuiltinName(4326), .classes = { 82, 1 } },
+    { .name = BuiltinName(4327), .classes = { 82, 1 } },
+    { .name = BuiltinName(4328), .classes = { 82, 1 } },
+    { .name = BuiltinName(4329), .classes = { 82, 1 } },
+    { .name = BuiltinName(4330), .classes = { 82, 1 } },
+    { .name = BuiltinName(4331), .classes = { 82, 1 } },
+    { .name = BuiltinName(4332), .classes = { 82, 1 } },
+    { .name = BuiltinName(4333), .classes = { 82, 1 } },
+    { .name = BuiltinName(4334), .classes = { 82, 1 } },
+    { .name = BuiltinName(4335), .classes = { 82, 1 } },
+    { .name = BuiltinName(4336), .classes = { 82, 1 } },
+    { .name = BuiltinName(4337), .classes = { 82, 1 } },
+    { .name = BuiltinName(4340), .classes = { 12, 1 } },
+    { .name = BuiltinName(4342), .classes = { 82, 1 } },
+    { .name = BuiltinName(4343), .classes = { 82, 1 } },
+    { .name = BuiltinName(4344), .classes = { 82, 1 } },
+    { .name = BuiltinName(4345), .classes = { 82, 1 } },
+    { .name = BuiltinName(4346), .classes = { 82, 1 } },
+    { .name = BuiltinName(4347), .classes = { 82, 1 } },
+    { .name = BuiltinName(4348), .classes = { 82, 1 } },
+    { .name = BuiltinName(4349), .classes = { 82, 1 } },
+    { .name = BuiltinName(4350), .classes = { 82, 1 } },
+    { .name = BuiltinName(4351), .classes = { 82, 1 } },
+    { .name = BuiltinName(4352), .classes = { 82, 1 } },
+    { .name = BuiltinName(4353), .classes = { 82, 1 } },
+    { .name = BuiltinName(4354), .classes = { 82, 1 } },
+    { .name = BuiltinName(4355), .classes = { 82, 1 } },
+    { .name = BuiltinName(4356), .classes = { 735, 3 } },
+    { .name = BuiltinName(4357), .classes = { 30, 1 } },
+    { .name = BuiltinName(4365), .classes = { 12, 1 } },
+    { .name = BuiltinName(4366), .classes = { 12, 1 } },
+    { .name = BuiltinName(4367), .classes = { 12, 1 } },
+    { .name = BuiltinName(4368), .classes = { 12, 1 } },
+    { .name = BuiltinName(4369), .classes = { 12, 1 } },
+    { .name = BuiltinName(4370), .classes = { 12, 1 } },
+    { .name = BuiltinName(4371), .classes = { 12, 1 } },
+    { .name = BuiltinName(4372), .classes = { 12, 1 } },
+    { .name = BuiltinName(4373), .classes = { 12, 1 } },
+    { .name = BuiltinName(4374), .classes = { 738, 3 } },
+    { .name = BuiltinName(4376), .classes = { 12, 1 } },
+    { .name = BuiltinName(4377), .classes = { 12, 1 } },
+    { .name = BuiltinName(4378), .classes = { 12, 1 } },
+    { .name = BuiltinName(4379), .classes = { 12, 1 } },
+    { .name = BuiltinName(4380), .classes = { 12, 1 } },
+    { .name = BuiltinName(4381), .classes = { 12, 1 } },
+    { .name = BuiltinName(4384), .classes = { 30, 1 } },
+    { .name = BuiltinName(4389), .classes = { 136, 1 } },
+    { .name = BuiltinName(4390), .classes = { 680, 1 } },
+    { .name = BuiltinName(4392), .classes = { 457, 3 } },
+    { .name = BuiltinName(4393), .classes = { 366, 2 } },
+    { .name = BuiltinName(4394), .classes = { 741, 24 } },
+    { .name = BuiltinName(4395), .classes = { 765, 2 } },
+    { .name = BuiltinName(4396), .classes = { 136, 1 } },
+    { .name = BuiltinName(4397), .classes = { 25, 1 } },
+    { .name = BuiltinName(4398), .classes = { 90, 1 } },
+    { .name = BuiltinName(4399), .classes = { 767, 1 } },
+    { .name = BuiltinName(4406), .classes = { 469, 1 } },
+    { .name = BuiltinName(4407), .classes = { 66, 1 } },
+    { .name = BuiltinName(4414), .classes = { 768, 1 } },
+    { .name = BuiltinName(4415), .classes = { 184, 1 } },
+    { .name = BuiltinName(4417), .classes = { 769, 9 } },
+    { .name = BuiltinName(4418), .classes = { 778, 4 } },
+    { .name = BuiltinName(4419), .classes = { 62, 2 } },
+    { .name = BuiltinName(4420), .classes = { 62, 2 } },
+    { .name = BuiltinName(4421), .classes = { 72, 1 } },
+    { .name = BuiltinName(4422), .classes = { 782, 5 } },
+    { .name = BuiltinName(4423), .classes = { 45, 1 } },
+    { .name = BuiltinName(4424), .classes = { 88, 1 } },
+    { .name = BuiltinName(4425), .classes = { 88, 1 } },
+    { .name = BuiltinName(4426), .classes = { 44, 1 } },
+    { .name = BuiltinName(4428), .classes = { 45, 1 } },
+    { .name = BuiltinName(4429), .classes = { 787, 4 } },
+    { .name = BuiltinName(4430), .classes = { 791, 2 } },
+    { .name = BuiltinName(4431), .classes = { 12, 1 } },
+    { .name = BuiltinName(4432), .classes = { 12, 1 } },
+    { .name = BuiltinName(4433), .classes = { 93, 1 } },
+    { .name = BuiltinName(4435), .classes = { 62, 2 } },
+    { .name = BuiltinName(4437), .classes = { 65, 1 } },
+    { .name = BuiltinName(4439), .classes = { 793, 4 } },
+    { .name = BuiltinName(4440), .classes = { 65, 1 } },
+    { .name = BuiltinName(4443), .classes = { 64, 1 } },
+    { .name = BuiltinName(4445), .classes = { 185, 4 } },
+    { .name = BuiltinName(4452), .classes = { 192, 1 } },
+    { .name = BuiltinName(4454), .classes = { 588, 3 } },
+    { .name = BuiltinName(4455), .classes = { 29, 1 } },
+    { .name = BuiltinName(4456), .classes = { 403, 1 } },
+    { .name = BuiltinName(4457), .classes = { 797, 3 } },
+    { .name = BuiltinName(4458), .classes = { 541, 1 } },
+    { .name = BuiltinName(4461), .classes = { 541, 1 } },
+    { .name = BuiltinName(4462), .classes = { 541, 1 } },
+    { .name = BuiltinName(4463), .classes = { 541, 1 } },
+    { .name = BuiltinName(4465), .classes = { 541, 1 } },
+    { .name = BuiltinName(4466), .classes = { 541, 1 } },
+    { .name = BuiltinName(4467), .classes = { 541, 1 } },
+    { .name = BuiltinName(4473), .classes = { 541, 1 } },
+    { .name = BuiltinName(4474), .classes = { 541, 1 } },
+    { .name = BuiltinName(4475), .classes = { 541, 1 } },
+    { .name = BuiltinName(4477), .classes = { 541, 1 } },
+    { .name = BuiltinName(4479), .classes = { 800, 9 } },
+    { .name = BuiltinName(4480), .classes = { 809, 2 } },
+    { .name = BuiltinName(4481), .classes = { 66, 1 } },
+    { .name = BuiltinName(4483), .classes = { 414, 1 } },
+    { .name = BuiltinName(4485), .classes = { 811, 1 } },
+    { .name = BuiltinName(4486), .classes = { 811, 1 } },
+    { .name = BuiltinName(4489), .classes = { 695, 4 } },
+    { .name = BuiltinName(4494), .classes = { 62, 2 } },
+    { .name = BuiltinName(4497), .classes = { 812, 5 } },
+    { .name = BuiltinName(4498), .classes = { 83, 1 } },
+    { .name = BuiltinName(4500), .classes = { 817, 3 } },
+    { .name = BuiltinName(4506), .classes = { 12, 1 } },
+    { .name = BuiltinName(4507), .classes = { 12, 1 } },
+    { .name = BuiltinName(4508), .classes = { 12, 1 } },
+    { .name = BuiltinName(4510), .classes = { 12, 1 } },
+    { .name = BuiltinName(4511), .classes = { 12, 1 } },
+    { .name = BuiltinName(4512), .classes = { 12, 1 } },
+    { .name = BuiltinName(4517), .classes = { 89, 1 } },
+    { .name = BuiltinName(4518), .classes = { 820, 5 } },
+    { .name = BuiltinName(4522), .classes = { 825, 1 } },
+    { .name = BuiltinName(4524), .classes = { 93, 1 } },
+    { .name = BuiltinName(4525), .classes = { 93, 1 } },
+    { .name = BuiltinName(4526), .classes = { 93, 1 } },
+    { .name = BuiltinName(4527), .classes = { 93, 1 } },
+    { .name = BuiltinName(4528), .classes = { 64, 1 } },
+    { .name = BuiltinName(4531), .classes = { 43, 1 } },
+    { .name = BuiltinName(4532), .classes = { 826, 3 } },
+    { .name = BuiltinName(4551), .classes = { 93, 1 } },
+    { .name = BuiltinName(4552), .classes = { 30, 1 } },
+    { .name = BuiltinName(4554), .classes = { 684, 1 } },
+    { .name = BuiltinName(4556), .classes = { 829, 3 } },
+    { .name = BuiltinName(4557), .classes = { 832, 1 } },
+    { .name = BuiltinName(4562), .classes = { 833, 1 } },
+    { .name = BuiltinName(4563), .classes = { 93, 1 } },
+    { .name = BuiltinName(4567), .classes = { 834, 2 } },
+    { .name = BuiltinName(4568), .classes = { 480, 1 } },
+    { .name = BuiltinName(4571), .classes = { 93, 1 } },
+    { .name = BuiltinName(4572), .classes = { 93, 1 } },
+    { .name = BuiltinName(4574), .classes = { 836, 2 } },
+    { .name = BuiltinName(4575), .classes = { 563, 1 } },
+    { .name = BuiltinName(4576), .classes = { 571, 3 } },
+    { .name = BuiltinName(4577), .classes = { 33, 1 } },
+    { .name = BuiltinName(4585), .classes = { 838, 1 } },
+    { .name = BuiltinName(4586), .classes = { 839, 2 } },
+    { .name = BuiltinName(4587), .classes = { 841, 1 } },
+    { .name = BuiltinName(4590), .classes = { 88, 1 } },
+    { .name = BuiltinName(4592), .classes = { 842, 4 } },
+    { .name = BuiltinName(4593), .classes = { 532, 1 } },
+    { .name = BuiltinName(4594), .classes = { 72, 1 } },
+    { .name = BuiltinName(4595), .classes = { 29, 1 } },
+    { .name = BuiltinName(4597), .classes = { 46, 1 } },
+    { .name = BuiltinName(4599), .classes = { 532, 1 } },
+    { .name = BuiltinName(4600), .classes = { 64, 1 } },
+    { .name = BuiltinName(4607), .classes = { 200, 1 } },
+    { .name = BuiltinName(4608), .classes = { 200, 1 } },
+    { .name = BuiltinName(4627), .classes = { 846, 7 } },
+    { .name = BuiltinName(4628), .classes = { 88, 1 } },
+    { .name = BuiltinName(4629), .classes = { 531, 1 } },
+    { .name = BuiltinName(4630), .classes = { 531, 1 } },
+    { .name = BuiltinName(4631), .classes = { 46, 1 } },
+    { .name = BuiltinName(4635), .classes = { 365, 1 } },
+    { .name = BuiltinName(4636), .classes = { 853, 1 } },
+    { .name = BuiltinName(4637), .classes = { 536, 1 } },
+    { .name = BuiltinName(4647), .classes = { 853, 1 } },
+    { .name = BuiltinName(4651), .classes = { 531, 1 } },
+    { .name = BuiltinName(4652), .classes = { 531, 1 } },
+    { .name = BuiltinName(4653), .classes = { 531, 1 } },
+    { .name = BuiltinName(4654), .classes = { 854, 1 } },
+    { .name = BuiltinName(4655), .classes = { 855, 1 } },
+    { .name = BuiltinName(4656), .classes = { 855, 1 } },
+    { .name = BuiltinName(4657), .classes = { 536, 1 } },
+    { .name = BuiltinName(4662), .classes = { 536, 1 } },
+    { .name = BuiltinName(4664), .classes = { 88, 1 } },
+    { .name = BuiltinName(4665), .classes = { 531, 1 } },
+    { .name = BuiltinName(4666), .classes = { 531, 1 } },
+    { .name = BuiltinName(4667), .classes = { 531, 1 } },
+    { .name = BuiltinName(4670), .classes = { 62, 2 } },
+    { .name = BuiltinName(4671), .classes = { 62, 2 } },
+    { .name = BuiltinName(4672), .classes = { 541, 1 } },
+    { .name = BuiltinName(4673), .classes = { 64, 1 } },
+    { .name = BuiltinName(4676), .classes = { 45, 1 } },
+    { .name = BuiltinName(4678), .classes = { 62, 2 } },
+    { .name = BuiltinName(4679), .classes = { 536, 1 } },
+    { .name = BuiltinName(4680), .classes = { 536, 1 } },
+    { .name = BuiltinName(4681), .classes = { 398, 2 } },
+    { .name = BuiltinName(4682), .classes = { 536, 1 } },
+    { .name = BuiltinName(4683), .classes = { 46, 1 } },
+    { .name = BuiltinName(4684), .classes = { 46, 1 } },
+    { .name = BuiltinName(4685), .classes = { 46, 1 } },
+    { .name = BuiltinName(4686), .classes = { 64, 1 } },
+    { .name = BuiltinName(4691), .classes = { 64, 1 } },
+    { .name = BuiltinName(4692), .classes = { 62, 2 } },
+    { .name = BuiltinName(4694), .classes = { 398, 2 } },
+    { .name = BuiltinName(4695), .classes = { 29, 1 } },
+    { .name = BuiltinName(4697), .classes = { 853, 1 } },
+    { .name = BuiltinName(4699), .classes = { 856, 2 } },
+    { .name = BuiltinName(4701), .classes = { 154, 1 } },
+    { .name = BuiltinName(4702), .classes = { 184, 1 } },
+    { .name = BuiltinName(4703), .classes = { 536, 1 } },
+    { .name = BuiltinName(4708), .classes = { 62, 2 } },
+    { .name = BuiltinName(4709), .classes = { 541, 1 } },
+    { .name = BuiltinName(4710), .classes = { 62, 2 } },
+    { .name = BuiltinName(4712), .classes = { 64, 1 } },
+    { .name = BuiltinName(4713), .classes = { 64, 1 } },
+    { .name = BuiltinName(4715), .classes = { 46, 1 } },
+    { .name = BuiltinName(4716), .classes = { 536, 1 } },
+    { .name = BuiltinName(4721), .classes = { 62, 2 } },
+    { .name = BuiltinName(4722), .classes = { 536, 1 } },
+    { .name = BuiltinName(4723), .classes = { 536, 1 } },
+    { .name = BuiltinName(4724), .classes = { 536, 1 } },
+    { .name = BuiltinName(4725), .classes = { 536, 1 } },
+    { .name = BuiltinName(4726), .classes = { 536, 1 } },
+    { .name = BuiltinName(4727), .classes = { 536, 1 } },
+    { .name = BuiltinName(4728), .classes = { 536, 1 } },
+    { .name = BuiltinName(4729), .classes = { 531, 1 } },
+    { .name = BuiltinName(4730), .classes = { 531, 1 } },
+    { .name = BuiltinName(4731), .classes = { 531, 1 } },
+    { .name = BuiltinName(4733), .classes = { 62, 2 } },
+    { .name = BuiltinName(4734), .classes = { 29, 1 } },
+    { .name = BuiltinName(4735), .classes = { 536, 1 } },
+    { .name = BuiltinName(4736), .classes = { 93, 1 } },
+    { .name = BuiltinName(4739), .classes = { 93, 1 } },
+    { .name = BuiltinName(4742), .classes = { 93, 1 } },
+    { .name = BuiltinName(4743), .classes = { 93, 1 } },
+    { .name = BuiltinName(4744), .classes = { 64, 1 } },
+    { .name = BuiltinName(4753), .classes = { 489, 1 } },
+    { .name = BuiltinName(4754), .classes = { 359, 1 } },
+    { .name = BuiltinName(4757), .classes = { 62, 2 } },
+    { .name = BuiltinName(4760), .classes = { 33, 1 } },
+    { .name = BuiltinName(4762), .classes = { 858, 2 } },
+    { .name = BuiltinName(4763), .classes = { 414, 1 } },
+    { .name = BuiltinName(4764), .classes = { 359, 1 } },
+    { .name = BuiltinName(4766), .classes = { 860, 6 } },
+    { .name = BuiltinName(4768), .classes = { 93, 1 } },
+    { .name = BuiltinName(4769), .classes = { 93, 1 } },
+    { .name = BuiltinName(4770), .classes = { 93, 1 } },
+    { .name = BuiltinName(4771), .classes = { 93, 1 } },
+    { .name = BuiltinName(4772), .classes = { 866, 8 } },
+    { .name = BuiltinName(4774), .classes = { 200, 1 } },
+    { .name = BuiltinName(4775), .classes = { 200, 1 } },
+    { .name = BuiltinName(4778), .classes = { 874, 9 } },
+    { .name = BuiltinName(4780), .classes = { 65, 1 } },
+    { .name = BuiltinName(4782), .classes = { 93, 1 } },
+    { .name = BuiltinName(4783), .classes = { 93, 1 } },
+    { .name = BuiltinName(4784), .classes = { 93, 1 } },
+    { .name = BuiltinName(4789), .classes = { 457, 3 } },
+    { .name = BuiltinName(4790), .classes = { 883, 4 } },
+    { .name = BuiltinName(4792), .classes = { 197, 1 } },
+    { .name = BuiltinName(4795), .classes = { 620, 1 } },
+    { .name = BuiltinName(4800), .classes = { 192, 1 } },
+    { .name = BuiltinName(4801), .classes = { 489, 1 } },
+    { .name = BuiltinName(4802), .classes = { 65, 1 } },
+    { .name = BuiltinName(4805), .classes = { 93, 1 } },
+    { .name = BuiltinName(4806), .classes = { 93, 1 } },
+    { .name = BuiltinName(4810), .classes = { 93, 1 } },
+    { .name = BuiltinName(4811), .classes = { 480, 1 } },
+    { .name = BuiltinName(4812), .classes = { 93, 1 } },
+    { .name = BuiltinName(4813), .classes = { 93, 1 } },
+    { .name = BuiltinName(4815), .classes = { 887, 2 } },
+    { .name = BuiltinName(4817), .classes = { 889, 10 } },
+    { .name = BuiltinName(4818), .classes = { 542, 1 } },
+    { .name = BuiltinName(4823), .classes = { 65, 1 } },
+    { .name = BuiltinName(4825), .classes = { 899, 4 } },
+    { .name = BuiltinName(4827), .classes = { 12, 1 } },
+    { .name = BuiltinName(4828), .classes = { 12, 1 } },
+    { .name = BuiltinName(4829), .classes = { 12, 1 } },
+    { .name = BuiltinName(4830), .classes = { 12, 1 } },
+    { .name = BuiltinName(4831), .classes = { 12, 1 } },
+    { .name = BuiltinName(4833), .classes = { 680, 1 } },
+    { .name = BuiltinName(4834), .classes = { 680, 1 } },
+    { .name = BuiltinName(4835), .classes = { 414, 1 } },
+    { .name = BuiltinName(4836), .classes = { 414, 1 } },
+    { .name = BuiltinName(4837), .classes = { 414, 1 } },
+    { .name = BuiltinName(4838), .classes = { 414, 1 } },
+    { .name = BuiltinName(4845), .classes = { 197, 1 } },
+    { .name = BuiltinName(4846), .classes = { 903, 6 } },
+    { .name = BuiltinName(4848), .classes = { 103, 1 } },
+    { .name = BuiltinName(4849), .classes = { 103, 1 } },
+    { .name = BuiltinName(4850), .classes = { 29, 1 } },
+    { .name = BuiltinName(4854), .classes = { 909, 3 } },
+    { .name = BuiltinName(4858), .classes = { 65, 1 } },
+    { .name = BuiltinName(4860), .classes = { 30, 1 } },
+    { .name = BuiltinName(4863), .classes = { 66, 1 } },
+    { .name = BuiltinName(4866), .classes = { 66, 1 } },
+    { .name = BuiltinName(4867), .classes = { 30, 1 } },
+    { .name = BuiltinName(4872), .classes = { 13, 1 } },
+    { .name = BuiltinName(4878), .classes = { 93, 1 } },
+    { .name = BuiltinName(4881), .classes = { 825, 1 } },
+    { .name = BuiltinName(4884), .classes = { 65, 1 } },
+    { .name = BuiltinName(4885), .classes = { 912, 2 } },
+    { .name = BuiltinName(4887), .classes = { 914, 2 } },
+    { .name = BuiltinName(4888), .classes = { 185, 4 } },
+    { .name = BuiltinName(4889), .classes = { 532, 1 } },
+    { .name = BuiltinName(4890), .classes = { 916, 2 } },
+    { .name = BuiltinName(4891), .classes = { 65, 1 } },
+    { .name = BuiltinName(4892), .classes = { 540, 1 } },
+    { .name = BuiltinName(4893), .classes = { 918, 7 } },
+    { .name = BuiltinName(4902), .classes = { 93, 1 } },
+    { .name = BuiltinName(4903), .classes = { 93, 1 } },
+    { .name = BuiltinName(4904), .classes = { 65, 1 } },
+    { .name = BuiltinName(4910), .classes = { 82, 1 } },
+    { .name = BuiltinName(4911), .classes = { 82, 1 } },
+    { .name = BuiltinName(4912), .classes = { 82, 1 } },
+    { .name = BuiltinName(4913), .classes = { 359, 1 } },
+    { .name = BuiltinName(4914), .classes = { 925, 1 } },
+    { .name = BuiltinName(4915), .classes = { 12, 1 } },
+    { .name = BuiltinName(4916), .classes = { 12, 1 } },
+    { .name = BuiltinName(4917), .classes = { 12, 1 } },
+    { .name = BuiltinName(4918), .classes = { 404, 1 } },
+    { .name = BuiltinName(4924), .classes = { 721, 1 } },
+    { .name = BuiltinName(4928), .classes = { 88, 1 } },
+    { .name = BuiltinName(4930), .classes = { 151, 1 } },
+    { .name = BuiltinName(4933), .classes = { 486, 1 } },
+    { .name = BuiltinName(4934), .classes = { 486, 1 } },
+    { .name = BuiltinName(4941), .classes = { 414, 1 } },
+    { .name = BuiltinName(4942), .classes = { 738, 3 } },
+    { .name = BuiltinName(4943), .classes = { 197, 1 } },
+    { .name = BuiltinName(4945), .classes = { 926, 10 } },
+    { .name = BuiltinName(4946), .classes = { 101, 2 } },
+    { .name = BuiltinName(4950), .classes = { 149, 1 } },
+    { .name = BuiltinName(4951), .classes = { 83, 1 } },
+    { .name = BuiltinName(4955), .classes = { 936, 3 } },
+    { .name = BuiltinName(4957), .classes = { 939, 1 } },
+    { .name = BuiltinName(4962), .classes = { 93, 1 } },
+    { .name = BuiltinName(4966), .classes = { 154, 1 } },
+    { .name = BuiltinName(4970), .classes = { 542, 1 } },
+    { .name = BuiltinName(4972), .classes = { 940, 6 } },
+    { .name = BuiltinName(4974), .classes = { 154, 1 } },
+    { .name = BuiltinName(4975), .classes = { 540, 1 } },
+    { .name = BuiltinName(4980), .classes = { 151, 1 } },
+    { .name = BuiltinName(4982), .classes = { 946, 2 } },
+    { .name = BuiltinName(4983), .classes = { 469, 1 } },
+    { .name = BuiltinName(4984), .classes = { 83, 1 } },
+    { .name = BuiltinName(4985), .classes = { 809, 2 } },
+    { .name = BuiltinName(4986), .classes = { 469, 1 } },
+    { .name = BuiltinName(4987), .classes = { 83, 1 } },
+    { .name = BuiltinName(4988), .classes = { 809, 2 } },
+    { .name = BuiltinName(4989), .classes = { 83, 1 } },
+    { .name = BuiltinName(4990), .classes = { 469, 1 } },
+    { .name = BuiltinName(4991), .classes = { 469, 1 } },
+    { .name = BuiltinName(4992), .classes = { 469, 1 } },
+    { .name = BuiltinName(4993), .classes = { 469, 1 } },
+    { .name = BuiltinName(4994), .classes = { 83, 1 } },
+    { .name = BuiltinName(4995), .classes = { 469, 1 } },
+    { .name = BuiltinName(4996), .classes = { 469, 1 } },
+    { .name = BuiltinName(4997), .classes = { 469, 1 } },
+    { .name = BuiltinName(4998), .classes = { 469, 1 } },
+    { .name = BuiltinName(4999), .classes = { 469, 1 } },
+    { .name = BuiltinName(5000), .classes = { 469, 1 } },
+    { .name = BuiltinName(5001), .classes = { 469, 1 } },
+    { .name = BuiltinName(5002), .classes = { 469, 1 } },
+    { .name = BuiltinName(5003), .classes = { 809, 2 } },
+    { .name = BuiltinName(5004), .classes = { 469, 1 } },
+    { .name = BuiltinName(5005), .classes = { 469, 1 } },
+    { .name = BuiltinName(5006), .classes = { 469, 1 } },
+    { .name = BuiltinName(5007), .classes = { 469, 1 } },
+    { .name = BuiltinName(5008), .classes = { 469, 1 } },
+    { .name = BuiltinName(5009), .classes = { 469, 1 } },
+    { .name = BuiltinName(5010), .classes = { 469, 1 } },
+    { .name = BuiltinName(5011), .classes = { 469, 1 } },
+    { .name = BuiltinName(5012), .classes = { 83, 1 } },
+    { .name = BuiltinName(5013), .classes = { 469, 1 } },
+    { .name = BuiltinName(5014), .classes = { 809, 2 } },
+    { .name = BuiltinName(5015), .classes = { 809, 2 } },
+    { .name = BuiltinName(5016), .classes = { 809, 2 } },
+    { .name = BuiltinName(5017), .classes = { 469, 1 } },
+    { .name = BuiltinName(5018), .classes = { 469, 1 } },
+    { .name = BuiltinName(5019), .classes = { 469, 1 } },
+    { .name = BuiltinName(5020), .classes = { 809, 2 } },
+    { .name = BuiltinName(5021), .classes = { 809, 2 } },
+    { .name = BuiltinName(5022), .classes = { 469, 1 } },
+    { .name = BuiltinName(5023), .classes = { 469, 1 } },
+    { .name = BuiltinName(5024), .classes = { 469, 1 } },
+    { .name = BuiltinName(5025), .classes = { 809, 2 } },
+    { .name = BuiltinName(5026), .classes = { 83, 1 } },
+    { .name = BuiltinName(5027), .classes = { 469, 1 } },
+    { .name = BuiltinName(5028), .classes = { 83, 1 } },
+    { .name = BuiltinName(5029), .classes = { 469, 1 } },
+    { .name = BuiltinName(5030), .classes = { 89, 1 } },
+    { .name = BuiltinName(5032), .classes = { 469, 1 } },
+    { .name = BuiltinName(5033), .classes = { 469, 1 } },
+    { .name = BuiltinName(5034), .classes = { 469, 1 } },
+    { .name = BuiltinName(5035), .classes = { 469, 1 } },
+    { .name = BuiltinName(5036), .classes = { 469, 1 } },
+    { .name = BuiltinName(5037), .classes = { 469, 1 } },
+    { .name = BuiltinName(5038), .classes = { 469, 1 } },
+    { .name = BuiltinName(5039), .classes = { 469, 1 } },
+    { .name = BuiltinName(5040), .classes = { 469, 1 } },
+    { .name = BuiltinName(5041), .classes = { 469, 1 } },
+    { .name = BuiltinName(5042), .classes = { 536, 1 } },
+    { .name = BuiltinName(5043), .classes = { 469, 1 } },
+    { .name = BuiltinName(5044), .classes = { 469, 1 } },
+    { .name = BuiltinName(5045), .classes = { 469, 1 } },
+    { .name = BuiltinName(5046), .classes = { 83, 1 } },
+    { .name = BuiltinName(5047), .classes = { 948, 1 } },
+    { .name = BuiltinName(5048), .classes = { 83, 1 } },
+    { .name = BuiltinName(5049), .classes = { 948, 1 } },
+    { .name = BuiltinName(5050), .classes = { 949, 1 } },
+    { .name = BuiltinName(5051), .classes = { 536, 1 } },
+    { .name = BuiltinName(5052), .classes = { 469, 1 } },
+    { .name = BuiltinName(5053), .classes = { 469, 1 } },
+    { .name = BuiltinName(5054), .classes = { 469, 1 } },
+    { .name = BuiltinName(5055), .classes = { 469, 1 } },
+    { .name = BuiltinName(5056), .classes = { 469, 1 } },
+    { .name = BuiltinName(5057), .classes = { 469, 1 } },
+    { .name = BuiltinName(5058), .classes = { 469, 1 } },
+    { .name = BuiltinName(5059), .classes = { 469, 1 } },
+    { .name = BuiltinName(5060), .classes = { 469, 1 } },
+    { .name = BuiltinName(5061), .classes = { 809, 2 } },
+    { .name = BuiltinName(5062), .classes = { 469, 1 } },
+    { .name = BuiltinName(5063), .classes = { 469, 1 } },
+    { .name = BuiltinName(5064), .classes = { 469, 1 } },
+    { .name = BuiltinName(5065), .classes = { 855, 1 } },
+    { .name = BuiltinName(5066), .classes = { 536, 1 } },
+    { .name = BuiltinName(5067), .classes = { 469, 1 } },
+    { .name = BuiltinName(5068), .classes = { 469, 1 } },
+    { .name = BuiltinName(5069), .classes = { 542, 1 } },
+    { .name = BuiltinName(5071), .classes = { 950, 18 } },
+    { .name = BuiltinName(5073), .classes = { 536, 1 } },
+    { .name = BuiltinName(5074), .classes = { 65, 1 } },
+    { .name = BuiltinName(5075), .classes = { 968, 15 } },
+    { .name = BuiltinName(5076), .classes = { 536, 1 } },
+    { .name = BuiltinName(5077), .classes = { 65, 1 } },
+    { .name = BuiltinName(5078), .classes = { 65, 1 } },
+    { .name = BuiltinName(5079), .classes = { 469, 1 } },
+    { .name = BuiltinName(5080), .classes = { 469, 1 } },
+    { .name = BuiltinName(5081), .classes = { 469, 1 } },
+    { .name = BuiltinName(5082), .classes = { 83, 1 } },
+    { .name = BuiltinName(5083), .classes = { 469, 1 } },
+    { .name = BuiltinName(5084), .classes = { 83, 1 } },
+    { .name = BuiltinName(5090), .classes = { 983, 4 } },
+    { .name = BuiltinName(5091), .classes = { 987, 2 } },
+    { .name = BuiltinName(5092), .classes = { 989, 1 } },
+    { .name = BuiltinName(5093), .classes = { 990, 2 } },
+    { .name = BuiltinName(5094), .classes = { 989, 1 } },
+    { .name = BuiltinName(5095), .classes = { 948, 1 } },
+    { .name = BuiltinName(5098), .classes = { 949, 1 } },
+    { .name = BuiltinName(5099), .classes = { 469, 1 } },
+    { .name = BuiltinName(5100), .classes = { 366, 2 } },
+    { .name = BuiltinName(5101), .classes = { 469, 1 } },
+    { .name = BuiltinName(5102), .classes = { 366, 2 } },
+    { .name = BuiltinName(5103), .classes = { 489, 1 } },
+    { .name = BuiltinName(5104), .classes = { 469, 1 } },
+    { .name = BuiltinName(5105), .classes = { 469, 1 } },
+    { .name = BuiltinName(5106), .classes = { 992, 26 } },
+    { .name = BuiltinName(5108), .classes = { 536, 1 } },
+    { .name = BuiltinName(5109), .classes = { 469, 1 } },
+    { .name = BuiltinName(5110), .classes = { 469, 1 } },
+    { .name = BuiltinName(5111), .classes = { 469, 1 } },
+    { .name = BuiltinName(5112), .classes = { 469, 1 } },
+    { .name = BuiltinName(5113), .classes = { 536, 1 } },
+    { .name = BuiltinName(5115), .classes = { 536, 1 } },
+    { .name = BuiltinName(5117), .classes = { 65, 1 } },
+    { .name = BuiltinName(5119), .classes = { 65, 1 } },
+    { .name = BuiltinName(5120), .classes = { 1018, 2 } },
+    { .name = BuiltinName(5121), .classes = { 1020, 1 } },
+    { .name = BuiltinName(5122), .classes = { 200, 1 } },
+    { .name = BuiltinName(5123), .classes = { 200, 1 } },
+    { .name = BuiltinName(5124), .classes = { 33, 1 } },
+    { .name = BuiltinName(5127), .classes = { 93, 1 } },
+    { .name = BuiltinName(5137), .classes = { 403, 1 } },
+    { .name = BuiltinName(5138), .classes = { 403, 1 } },
+    { .name = BuiltinName(5139), .classes = { 1021, 2 } },
+    { .name = BuiltinName(5140), .classes = { 832, 1 } },
+    { .name = BuiltinName(5146), .classes = { 65, 1 } },
+    { .name = BuiltinName(5147), .classes = { 65, 1 } },
+    { .name = BuiltinName(5149), .classes = { 65, 1 } },
+    { .name = BuiltinName(5150), .classes = { 65, 1 } },
+    { .name = BuiltinName(5151), .classes = { 65, 1 } },
+    { .name = BuiltinName(5155), .classes = { 12, 1 } },
+    { .name = BuiltinName(5156), .classes = { 12, 1 } },
+    { .name = BuiltinName(5158), .classes = { 12, 1 } },
+    { .name = BuiltinName(5163), .classes = { 93, 1 } },
+    { .name = BuiltinName(5164), .classes = { 1023, 7 } },
+    { .name = BuiltinName(5171), .classes = { 82, 1 } },
+    { .name = BuiltinName(5172), .classes = { 82, 1 } },
+    { .name = BuiltinName(5176), .classes = { 30, 1 } },
+    { .name = BuiltinName(5183), .classes = { 30, 1 } },
+    { .name = BuiltinName(5189), .classes = { 576, 2 } },
+    { .name = BuiltinName(5190), .classes = { 197, 1 } },
+    { .name = BuiltinName(5191), .classes = { 197, 1 } },
+    { .name = BuiltinName(5192), .classes = { 404, 1 } },
+    { .name = BuiltinName(5195), .classes = { 544, 1 } },
+    { .name = BuiltinName(5196), .classes = { 460, 5 } },
+    { .name = BuiltinName(5197), .classes = { 12, 1 } },
+    { .name = BuiltinName(5198), .classes = { 12, 1 } },
+    { .name = BuiltinName(5200), .classes = { 1030, 23 } },
+    { .name = BuiltinName(5201), .classes = { 767, 1 } },
+    { .name = BuiltinName(5205), .classes = { 489, 1 } },
+    { .name = BuiltinName(5206), .classes = { 914, 2 } },
+    { .name = BuiltinName(5207), .classes = { 860, 6 } },
+    { .name = BuiltinName(5211), .classes = { 405, 9 } },
+    { .name = BuiltinName(5212), .classes = { 72, 1 } },
+    { .name = BuiltinName(5213), .classes = { 417, 3 } },
+    { .name = BuiltinName(5214), .classes = { 185, 4 } },
+    { .name = BuiltinName(5216), .classes = { 62, 2 } },
+    { .name = BuiltinName(5220), .classes = { 486, 1 } },
+    { .name = BuiltinName(5222), .classes = { 1053, 7 } },
+    { .name = BuiltinName(5226), .classes = { 55, 2 } },
+    { .name = BuiltinName(5231), .classes = { 563, 1 } },
+    { .name = BuiltinName(5235), .classes = { 82, 1 } },
+    { .name = BuiltinName(5236), .classes = { 82, 1 } },
+    { .name = BuiltinName(5241), .classes = { 82, 1 } },
+    { .name = BuiltinName(5242), .classes = { 82, 1 } },
+    { .name = BuiltinName(5244), .classes = { 465, 1 } },
+    { .name = BuiltinName(5245), .classes = { 12, 1 } },
+    { .name = BuiltinName(5246), .classes = { 12, 1 } },
+    { .name = BuiltinName(5247), .classes = { 12, 1 } },
+    { .name = BuiltinName(5265), .classes = { 1060, 1 } },
+    { .name = BuiltinName(5266), .classes = { 1061, 16 } },
+    { .name = BuiltinName(5267), .classes = { 436, 6 } },
+    { .name = BuiltinName(5268), .classes = { 90, 1 } },
+    { .name = BuiltinName(5277), .classes = { 811, 1 } },
+    { .name = BuiltinName(5283), .classes = { 93, 1 } },
+    { .name = BuiltinName(5287), .classes = { 12, 1 } },
+    { .name = BuiltinName(5288), .classes = { 12, 1 } },
+    { .name = BuiltinName(5293), .classes = { 89, 1 } },
+    { .name = BuiltinName(5296), .classes = { 380, 3 } },
+    { .name = BuiltinName(5298), .classes = { 33, 1 } },
+    { .name = BuiltinName(5304), .classes = { 89, 1 } },
+    { .name = BuiltinName(5309), .classes = { 151, 1 } },
+    { .name = BuiltinName(5312), .classes = { 1077, 9 } },
+    { .name = BuiltinName(5313), .classes = { 380, 3 } },
+    { .name = BuiltinName(5315), .classes = { 990, 2 } },
+    { .name = BuiltinName(5317), .classes = { 542, 1 } },
+    { .name = BuiltinName(5329), .classes = { 735, 3 } },
+    { .name = BuiltinName(5330), .classes = { 1086, 22 } },
+    { .name = BuiltinName(5331), .classes = { 82, 1 } },
+    { .name = BuiltinName(5332), .classes = { 82, 1 } },
+    { .name = BuiltinName(5333), .classes = { 82, 1 } },
+    { .name = BuiltinName(5334), .classes = { 82, 1 } },
+    { .name = BuiltinName(5335), .classes = { 82, 1 } },
+    { .name = BuiltinName(5336), .classes = { 82, 1 } },
+    { .name = BuiltinName(5337), .classes = { 12, 1 } },
+    { .name = BuiltinName(5338), .classes = { 486, 1 } },
+    { .name = BuiltinName(5339), .classes = { 82, 1 } },
+    { .name = BuiltinName(5340), .classes = { 82, 1 } },
+    { .name = BuiltinName(5341), .classes = { 82, 1 } },
+    { .name = BuiltinName(5342), .classes = { 12, 1 } },
+    { .name = BuiltinName(5343), .classes = { 12, 1 } },
+    { .name = BuiltinName(5344), .classes = { 12, 1 } },
+    { .name = BuiltinName(5345), .classes = { 82, 1 } },
+    { .name = BuiltinName(5346), .classes = { 82, 1 } },
+    { .name = BuiltinName(5347), .classes = { 82, 1 } },
+    { .name = BuiltinName(5348), .classes = { 486, 1 } },
+    { .name = BuiltinName(5349), .classes = { 486, 1 } },
+    { .name = BuiltinName(5351), .classes = { 486, 1 } },
+    { .name = BuiltinName(5352), .classes = { 82, 1 } },
+    { .name = BuiltinName(5353), .classes = { 82, 1 } },
+    { .name = BuiltinName(5354), .classes = { 82, 1 } },
+    { .name = BuiltinName(5355), .classes = { 82, 1 } },
+    { .name = BuiltinName(5356), .classes = { 82, 1 } },
+    { .name = BuiltinName(5357), .classes = { 82, 1 } },
+    { .name = BuiltinName(5358), .classes = { 82, 1 } },
+    { .name = BuiltinName(5360), .classes = { 64, 1 } },
+    { .name = BuiltinName(5361), .classes = { 1108, 4 } },
+    { .name = BuiltinName(5362), .classes = { 82, 1 } },
+    { .name = BuiltinName(5363), .classes = { 82, 1 } },
+    { .name = BuiltinName(5364), .classes = { 82, 1 } },
+    { .name = BuiltinName(5365), .classes = { 82, 1 } },
+    { .name = BuiltinName(5366), .classes = { 82, 1 } },
+    { .name = BuiltinName(5367), .classes = { 82, 1 } },
+    { .name = BuiltinName(5368), .classes = { 82, 1 } },
+    { .name = BuiltinName(5369), .classes = { 82, 1 } },
+    { .name = BuiltinName(5370), .classes = { 82, 1 } },
+    { .name = BuiltinName(5371), .classes = { 82, 1 } },
+    { .name = BuiltinName(5372), .classes = { 82, 1 } },
+    { .name = BuiltinName(5373), .classes = { 82, 1 } },
+    { .name = BuiltinName(5374), .classes = { 82, 1 } },
+    { .name = BuiltinName(5375), .classes = { 82, 1 } },
+    { .name = BuiltinName(5376), .classes = { 82, 1 } },
+    { .name = BuiltinName(5377), .classes = { 82, 1 } },
+    { .name = BuiltinName(5378), .classes = { 82, 1 } },
+    { .name = BuiltinName(5379), .classes = { 82, 1 } },
+    { .name = BuiltinName(5380), .classes = { 574, 2 } },
+    { .name = BuiltinName(5381), .classes = { 12, 1 } },
+    { .name = BuiltinName(5382), .classes = { 12, 1 } },
+    { .name = BuiltinName(5383), .classes = { 12, 1 } },
+    { .name = BuiltinName(5389), .classes = { 93, 1 } },
+    { .name = BuiltinName(5390), .classes = { 93, 1 } },
+    { .name = BuiltinName(5391), .classes = { 93, 1 } },
+    { .name = BuiltinName(5392), .classes = { 93, 1 } },
+    { .name = BuiltinName(5393), .classes = { 93, 1 } },
+    { .name = BuiltinName(5395), .classes = { 93, 1 } },
+    { .name = BuiltinName(5396), .classes = { 93, 1 } },
+    { .name = BuiltinName(5398), .classes = { 93, 1 } },
+    { .name = BuiltinName(5400), .classes = { 93, 1 } },
+    { .name = BuiltinName(5401), .classes = { 93, 1 } },
+    { .name = BuiltinName(5402), .classes = { 93, 1 } },
+    { .name = BuiltinName(5403), .classes = { 93, 1 } },
+    { .name = BuiltinName(5404), .classes = { 93, 1 } },
+    { .name = BuiltinName(5405), .classes = { 93, 1 } },
+    { .name = BuiltinName(5407), .classes = { 93, 1 } },
+    { .name = BuiltinName(5412), .classes = { 383, 4 } },
+    { .name = BuiltinName(5413), .classes = { 380, 3 } },
+    { .name = BuiltinName(5414), .classes = { 33, 1 } },
+    { .name = BuiltinName(5416), .classes = { 93, 1 } },
+    { .name = BuiltinName(5417), .classes = { 93, 1 } },
+    { .name = BuiltinName(5418), .classes = { 93, 1 } },
+    { .name = BuiltinName(5419), .classes = { 93, 1 } },
+    { .name = BuiltinName(5420), .classes = { 93, 1 } },
+    { .name = BuiltinName(5427), .classes = { 93, 1 } },
+    { .name = BuiltinName(5428), .classes = { 93, 1 } },
+    { .name = BuiltinName(5429), .classes = { 93, 1 } },
+    { .name = BuiltinName(5430), .classes = { 93, 1 } },
+    { .name = BuiltinName(5433), .classes = { 93, 1 } },
+    { .name = BuiltinName(5434), .classes = { 93, 1 } },
+    { .name = BuiltinName(5435), .classes = { 93, 1 } },
+    { .name = BuiltinName(5437), .classes = { 93, 1 } },
+    { .name = BuiltinName(5438), .classes = { 93, 1 } },
+    { .name = BuiltinName(5439), .classes = { 93, 1 } },
+    { .name = BuiltinName(5440), .classes = { 93, 1 } },
+    { .name = BuiltinName(5441), .classes = { 93, 1 } },
+    { .name = BuiltinName(5442), .classes = { 93, 1 } },
+    { .name = BuiltinName(5443), .classes = { 93, 1 } },
+    { .name = BuiltinName(5444), .classes = { 93, 1 } },
+    { .name = BuiltinName(5445), .classes = { 93, 1 } },
+    { .name = BuiltinName(5446), .classes = { 93, 1 } },
+    { .name = BuiltinName(5447), .classes = { 93, 1 } },
+    { .name = BuiltinName(5448), .classes = { 93, 1 } },
+    { .name = BuiltinName(5449), .classes = { 93, 1 } },
+    { .name = BuiltinName(5450), .classes = { 93, 1 } },
+    { .name = BuiltinName(5451), .classes = { 93, 1 } },
+    { .name = BuiltinName(5452), .classes = { 93, 1 } },
+    { .name = BuiltinName(5453), .classes = { 93, 1 } },
+    { .name = BuiltinName(5454), .classes = { 93, 1 } },
+    { .name = BuiltinName(5460), .classes = { 93, 1 } },
+    { .name = BuiltinName(5461), .classes = { 93, 1 } },
+    { .name = BuiltinName(5462), .classes = { 1112, 4 } },
+    { .name = BuiltinName(5463), .classes = { 1116, 1 } },
+    { .name = BuiltinName(5464), .classes = { 1117, 14 } },
+    { .name = BuiltinName(5465), .classes = { 73, 1 } },
+    { .name = BuiltinName(5467), .classes = { 1131, 10 } },
+    { .name = BuiltinName(5468), .classes = { 197, 1 } },
+    { .name = BuiltinName(5469), .classes = { 197, 1 } },
+    { .name = BuiltinName(5470), .classes = { 197, 1 } },
+    { .name = BuiltinName(5471), .classes = { 197, 1 } },
+    { .name = BuiltinName(5472), .classes = { 82, 1 } },
+    { .name = BuiltinName(5473), .classes = { 197, 1 } },
+    { .name = BuiltinName(5474), .classes = { 1141, 6 } },
+    { .name = BuiltinName(5475), .classes = { 1147, 70 } },
+    { .name = BuiltinName(5476), .classes = { 489, 1 } },
+    { .name = BuiltinName(5479), .classes = { 1217, 3 } },
 };
 
 constinit const BuiltinProtocolKeys builtinTableProtocolKeys[] = {
@@ -7336,6219 +8504,677 @@ constinit const BuiltinProtocolKeys builtinTableProtocolKeys[] = {
     { .protocol = Protocol::PrototypeChain },
 };
 
-constinit const ASCIILiteral builtinTableBuiltinTokens[] = {
-    "GlobalThis"_s,
-    "ArrayIteratorPrototype"_s,
-    "AsyncFromSyncIteratorPrototype"_s,
-    "AsyncFunction"_s,
-    "AsyncGeneratorPrototype"_s,
-    "AsyncGeneratorFunction"_s,
-    "AsyncIteratorPrototype"_s,
-    "AttributeIteratorPrototype"_s,
-    "BlobInternalReadableStreamSourcePrototype"_s,
-    "BlockList"_s,
-    "BuildArtifactPrototype"_s,
-    "BunRequestPrototype"_s,
-    "BytesInternalReadableStreamSourcePrototype"_s,
-    "CommentPrototype"_s,
-    "CompilerHelpers"_s,
-    "CronJobPrototype"_s,
-    "DNSResolverPrototype"_s,
-    "DebugHTTPSServerPrototype"_s,
-    "DebugHTTPServerPrototype"_s,
-    "DocEndPrototype"_s,
-    "DocTypePrototype"_s,
-    "DoneCallbackPrototype"_s,
-    "ElementPrototype"_s,
-    "EndTagPrototype"_s,
-    "EventEmitterPrototype"_s,
-    "Expect"_s,
-    "ExpectAnyPrototype"_s,
-    "ExpectAnythingPrototype"_s,
-    "ExpectArrayContainingPrototype"_s,
-    "ExpectCloseToPrototype"_s,
-    "ExpectCustomAsymmetricMatcherPrototype"_s,
-    "ExpectMatcherContextPrototype"_s,
-    "ExpectMatcherUtilsPrototype"_s,
-    "ExpectObjectContainingPrototype"_s,
-    "ExpectStaticPrototype"_s,
-    "ExpectStringContainingPrototype"_s,
-    "ExpectStringMatchingPrototype"_s,
-    "ExpectTypeOf"_s,
-    "FFIPrototype"_s,
-    "FSWatcherPrototype"_s,
-    "FetchRequestBodySink"_s,
-    "FileInternalReadableStreamSourcePrototype"_s,
-    "FileSink"_s,
-    "FrameworkFileSystemRouter"_s,
-    "GeneratorPrototype"_s,
-    "GeneratorFunction"_s,
-    "H2FrameParser"_s,
-    "HTMLBundlePrototype"_s,
-    "HTMLRewriterSink"_s,
-    "HTMLRewriterTransformPrototype"_s,
-    "HTTPResponseSink"_s,
-    "HTTPSResponseSink"_s,
-    "HTTPSServerPrototype"_s,
-    "HTTPServerPrototype"_s,
-    "HeadersIteratorPrototype"_s,
-    "Immediate"_s,
-    "ImportMeta"_s,
-    "IntlSegmentIteratorPrototype"_s,
-    "IntlSegmentsPrototype"_s,
-    "IteratorHelperPrototype"_s,
-    "JSONText"_s,
-    "LinkTimeConstantArrayFromFastWithoutMapFn"_s,
-    "LinkTimeConstantAsyncFromSyncIteratorCreate"_s,
-    "LinkTimeConstantInstanceOf"_s,
-    "LinkTimeConstantIsArray"_s,
-    "LinkTimeConstantIsTypedArrayOutOfBounds"_s,
-    "LinkTimeConstantIteratorHelperCreate"_s,
-    "LinkTimeConstantMakeTypeError"_s,
-    "LinkTimeConstantNewRejectedPromise"_s,
-    "LinkTimeConstantNewResolvedPromise"_s,
-    "LinkTimeConstantPromiseReject"_s,
-    "LinkTimeConstantPromiseResolve"_s,
-    "LinkTimeConstantToIntegerOrInfinity"_s,
-    "LinkTimeConstantTypedArrayFromFast"_s,
-    "LinkTimeConstantTypedArrayLength"_s,
-    "LinkTimeConstantWrapForValidIteratorCreate"_s,
-    "ListenerPrototype"_s,
-    "MapIteratorPrototype"_s,
-    "MatchedRoutePrototype"_s,
-    "ModuleCache"_s,
-    "ModuleObject"_s,
-    "ModuleRequire"_s,
-    "MySQLConnectionPrototype"_s,
-    "MySQLQueryPrototype"_s,
-    "NativeBrotli"_s,
-    "NativeZlib"_s,
-    "NativeZstd"_s,
-    "NetworkSink"_s,
-    "NodeHTTPResponsePrototype"_s,
-    "NodeJSFSPrototype"_s,
-    "ParsedShellScriptPrototype"_s,
-    "PostgresSQLConnectionPrototype"_s,
-    "PostgresSQLQueryPrototype"_s,
-    "PrivateGlobals"_s,
-    "QuicEndpoint"_s,
-    "QuicSessionPrototype"_s,
-    "QuicStreamPrototype"_s,
-    "RegExpStringIteratorPrototype"_s,
-    "ResourceUsagePrototype"_s,
-    "S3Stat"_s,
-    "ScopeFunctionsPrototype"_s,
-    "SecureContext"_s,
-    "ServerWebSocket"_s,
-    "SetIteratorPrototype"_s,
-    "ShellInterpreterPrototype"_s,
-    "SocketAddress"_s,
-    "StatWatcherPrototype"_s,
-    "StringIteratorPrototype"_s,
-    "SubprocessPrototype"_s,
-    "TCPSocketPrototype"_s,
-    "TLSSocketPrototype"_s,
-    "TextChunkPrototype"_s,
-    "Timeout"_s,
-    "TypedArray"_s,
-    "UDPSocketPrototype"_s,
-    "URLSearchParamsIteratorPrototype"_s,
-    "UndeclaredNativeCode"_s,
-    "WrapForValidIteratorPrototype"_s,
-    "BunBundle"_s,
-    "VercelFetch"_s,
-    "AbortController_"_s,
-    "BunBake"_s,
-    "BunFfi"_s,
-    "BunInternalForTesting"_s,
-    "BunJsc"_s,
-    "BunSql_"_s,
-    "BunSqlite"_s,
-    "BunTest"_s,
-    "BunWrap"_s,
-    "InternalAbort_listener"_s,
-    "InternalAssertAssertion_error"_s,
-    "InternalAssertCalltracker"_s,
-    "InternalAssertMyers_diff"_s,
-    "InternalAssertUtils"_s,
-    "InternalAsync_context_frame"_s,
-    "InternalAsync_hooks"_s,
-    "InternalAsync_hooks_tick"_s,
-    "InternalBake"_s,
-    "InternalClusterRoundRobinHandle"_s,
-    "InternalClusterSharedHandle"_s,
-    "InternalClusterWorker"_s,
-    "InternalClusterChild"_s,
-    "InternalClusterIsPrimary"_s,
-    "InternalClusterPrimary"_s,
-    "InternalDebugger"_s,
-    "InternalDgram"_s,
-    "InternalErrors"_s,
-    "InternalFifo"_s,
-    "InternalFixed_queue"_s,
-    "InternalFreelist"_s,
-    "InternalFsBinding"_s,
-    "InternalFsCp"_s,
-    "InternalFsCpSync"_s,
-    "InternalFsGlob"_s,
-    "InternalFsStreams"_s,
-    "InternalFsWatch"_s,
-    "InternalFsWatchfile"_s,
-    "InternalHtml"_s,
-    "InternalHttp"_s,
-    "InternalHttpFakeSocket"_s,
-    "InternalHttp1_server_fallback"_s,
-    "InternalInspectorCdp"_s,
-    "InternalLinkedlist"_s,
-    "InternalNetIsIP"_s,
-    "InternalNetServer_abort_signal"_s,
-    "InternalNetSymbols"_s,
-    "InternalPerf_hooksMonitorEventLoopDelay"_s,
-    "InternalPrimordials"_s,
-    "InternalProcessNext_tick_queue"_s,
-    "InternalProcessPre_execution"_s,
-    "InternalPromisify"_s,
-    "InternalQuicBinding"_s,
-    "InternalQuicDiagnostics"_s,
-    "InternalQuicHttp2util"_s,
-    "InternalQuicQuic"_s,
-    "InternalQuicState"_s,
-    "InternalQuicStats"_s,
-    "InternalQuicSymbols"_s,
-    "InternalReadlineCallbacks"_s,
-    "InternalReadlineEmitKeypressEvents"_s,
-    "InternalReadlineInterface"_s,
-    "InternalReadlinePromises"_s,
-    "InternalReadlineUtils"_s,
-    "InternalRepl"_s,
-    "InternalReplAcorn"_s,
-    "InternalReplAcornWalk"_s,
-    "InternalReplAwait"_s,
-    "InternalReplCompletion"_s,
-    "InternalReplHistory"_s,
-    "InternalReplMode"_s,
-    "InternalReplNodeErrors"_s,
-    "InternalReplNodeInspect"_s,
-    "InternalReplNodePrimordials"_s,
-    "InternalReplNodeShims"_s,
-    "InternalReplUtils"_s,
-    "InternalSerialization_buffers"_s,
-    "InternalServe_cli"_s,
-    "InternalShared"_s,
-    "InternalSqlErrors"_s,
-    "InternalSqlMysql"_s,
-    "InternalSqlOptions"_s,
-    "InternalSqlPool"_s,
-    "InternalSqlPostgres"_s,
-    "InternalSqlQuery"_s,
-    "InternalSqlShared"_s,
-    "InternalSqlSqlite"_s,
-    "InternalStream"_s,
-    "InternalStreamPromises"_s,
-    "InternalStreamsAddAbortSignal"_s,
-    "InternalStreamsCompose"_s,
-    "InternalStreamsDestroy"_s,
-    "InternalStreamsDuplex"_s,
-    "InternalStreamsDuplexify"_s,
-    "InternalStreamsDuplexpair"_s,
-    "InternalStreamsEndOfStream"_s,
-    "InternalStreamsFastUtf8Stream"_s,
-    "InternalStreamsFrom"_s,
-    "InternalStreamsIterBroadcast"_s,
-    "InternalStreamsIterClassic"_s,
-    "InternalStreamsIterConsumers"_s,
-    "InternalStreamsIterDuplex"_s,
-    "InternalStreamsIterFrom"_s,
-    "InternalStreamsIterPull"_s,
-    "InternalStreamsIterPush"_s,
-    "InternalStreamsIterRingbuffer"_s,
-    "InternalStreamsIterShare"_s,
-    "InternalStreamsIterTransform"_s,
-    "InternalStreamsIterTypes"_s,
-    "InternalStreamsIterUtils"_s,
-    "InternalStreamsLazy_transform"_s,
-    "InternalStreamsLegacy"_s,
-    "InternalStreamsNativeReadable"_s,
-    "InternalStreamsOperators"_s,
-    "InternalStreamsPassthrough"_s,
-    "InternalStreamsPipeline"_s,
-    "InternalStreamsReadable"_s,
-    "InternalStreamsState"_s,
-    "InternalStreamsTransform"_s,
-    "InternalStreamsUtils"_s,
-    "InternalStreamsWritable"_s,
-    "InternalTestBinding"_s,
-    "InternalTest_runnerMock_timers"_s,
-    "InternalTimers"_s,
-    "InternalTls"_s,
-    "InternalTrace_event_recorder"_s,
-    "InternalTrace_events"_s,
-    "InternalTty"_s,
-    "InternalUrl"_s,
-    "InternalUtilColors"_s,
-    "InternalUtilComparisons"_s,
-    "InternalUtilDebuglog"_s,
-    "InternalUtilDeprecate"_s,
-    "InternalUtilInspect"_s,
-    "InternalUtilMime"_s,
-    "InternalValidators"_s,
-    "InternalWebstreams_adapters"_s,
-    "InternalWorkerMessaging"_s,
-    "InternalWorkerStdio"_s,
-    "IsomorphicFetch"_s,
-    "NativeBindgenDevServerBindTsGetDeinitCountForTesting"_s,
-    "NativeBindgenListenerBindTsAddServerName"_s,
-    "NativeBindgenListenerBindTsSetSecureContext"_s,
-    "NativeBindgenTimerBindTsMonotonicNowMs"_s,
-    "NativeBindgenDns_internalsBindTsGetRuntimeDefaultResultOrderOption"_s,
-    "NativeBindgenFmt_jscBindTsFmtString"_s,
-    "NativeBindgenJestBindTsFileGeneration"_s,
-    "NativeBindgenJestBindTsNodeTestMarkResult"_s,
-    "NativeBindgenJsc_hooksBindTsHotReloadGeneration"_s,
-    "NativeBindgenNode_assert_bindingBindTsMyersDiff"_s,
-    "NativeBindgenNode_assert_bindingBindTsPrintMyersDiff"_s,
-    "NativeBindgenNode_assert_bindingBindTsPrintSimpleMyersDiff"_s,
-    "NativeBindgenNode_cluster_bindingBindTsChannelIgnoreOneDisconnectEventListener"_s,
-    "NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle"_s,
-    "NativeBindgenNode_cluster_bindingBindTsClusterValidateFd"_s,
-    "NativeBindgenNode_cluster_bindingBindTsOnInternalMessageChild"_s,
-    "NativeBindgenNode_cluster_bindingBindTsOnInternalMessagePrimary"_s,
-    "NativeBindgenNode_cluster_bindingBindTsSetRef"_s,
-    "NativeBindgenNode_http_bindingBindTsGetBunServerOpenCount"_s,
-    "NativeBindgenNode_http_bindingBindTsGetInsecureHTTPParser"_s,
-    "NativeBindgenNode_http_bindingBindTsGetMaxHTTPHeaderSize"_s,
-    "NativeBindgenNode_http_bindingBindTsSendWebSocketFrame"_s,
-    "NativeBindgenNode_http_bindingBindTsSetMaxHTTPHeaderSize"_s,
-    "NativeBindgenNode_http_bindingBindTsUpgradeNodeHTTPResponseToWebSocket"_s,
-    "NativeBindgenNode_net_bindingBindTsGetDefaultAutoSelectFamily"_s,
-    "NativeBindgenNode_net_bindingBindTsGetDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "NativeBindgenNode_net_bindingBindTsNewDetachedSocket"_s,
-    "NativeBindgenNode_net_bindingBindTsSetDefaultAutoSelectFamily"_s,
-    "NativeBindgenNode_net_bindingBindTsSetDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "NativeBindgenNode_osBindTsCpus"_s,
-    "NativeBindgenNode_osBindTsFreemem"_s,
-    "NativeBindgenNode_osBindTsGetPriority"_s,
-    "NativeBindgenNode_osBindTsHomedir"_s,
-    "NativeBindgenNode_osBindTsHostCpuCount"_s,
-    "NativeBindgenNode_osBindTsHostname"_s,
-    "NativeBindgenNode_osBindTsLoadavg"_s,
-    "NativeBindgenNode_osBindTsNetworkInterfaces"_s,
-    "NativeBindgenNode_osBindTsRelease"_s,
-    "NativeBindgenNode_osBindTsSetPriority"_s,
-    "NativeBindgenNode_osBindTsTotalmem"_s,
-    "NativeBindgenNode_osBindTsUptime"_s,
-    "NativeBindgenNode_osBindTsUserInfo"_s,
-    "NativeBindgenNode_osBindTsVersion"_s,
-    "NativeBindgenNode_tls_bindingBindTsGetUseSystemCA"_s,
-    "NativeBindgenNode_util_bindingBindTsAssertEncodingValid"_s,
-    "NativeBindgenNode_util_bindingBindTsEcanceledErrorCode"_s,
-    "NativeBindgenNode_util_bindingBindTsEnobufsErrorCode"_s,
-    "NativeBindgenNode_util_bindingBindTsEtimedoutErrorCode"_s,
-    "NativeBindgenNode_util_bindingBindTsExtractedSplitNewLinesFastPathStringsOnly"_s,
-    "NativeBindgenNode_util_bindingBindTsInternalErrorEntries"_s,
-    "NativeBindgenNode_util_bindingBindTsInternalErrorName"_s,
-    "NativeBindgenNode_util_bindingBindTsNormalizeEncoding"_s,
-    "NativeBindgenNode_util_bindingBindTsParseEnv"_s,
-    "NativeBindgenNode_util_bindingBindTsUvTranslateSysError"_s,
-    "NativeBindgenNode_zlib_bindingBindTsCrc32"_s,
-    "NativeBindgenSocket_bodyBindTsCheckServerIdentityInHandshake"_s,
-    "NativeBindgenSocket_bodyBindTsFirstFlightBeforeFin"_s,
-    "NativeBindgenSocket_bodyBindTsGetBufferedAmount"_s,
-    "NativeBindgenSocket_bodyBindTsIsNamedPipeSocket"_s,
-    "NativeBindgenSocket_bodyBindTsReleaseHeldFlight"_s,
-    "NativeBindgenSocket_bodyBindTsUpgradeTLSDeferred"_s,
-    "NativeBindgenUdp_socketBindTsBufferSize"_s,
-    "NativeBindgenUdp_socketBindTsConnect"_s,
-    "NativeBindgenUdp_socketBindTsDgramAdoptFd"_s,
-    "NativeBindgenUdp_socketBindTsDgramBindFd"_s,
-    "NativeBindgenUdp_socketBindTsDgramCloseFd"_s,
-    "NativeBindgenUdp_socketBindTsDgramGetSockNameFd"_s,
-    "NativeBindgenUdp_socketBindTsDgramGuessHandleType"_s,
-    "NativeBindgenUdp_socketBindTsDgramIsFdAdopted"_s,
-    "NativeBindgenUdp_socketBindTsDgramListenFd"_s,
-    "NativeBindgenUdp_socketBindTsDgramNewSocketFd"_s,
-    "NativeBindgenUdp_socketBindTsDisconnect"_s,
-    "NativeBindgenUdp_socketBindTsGetFd"_s,
-    "NativeCppCallSiteCppCreateNativeFrameForTesting"_s,
-    "NativeCppIsolatedModuleCacheCppCreateIsolatedModuleCacheSourceTypeForTesting"_s,
-    "NativeCppJSCTestingHelpersCppCreateJSCTestingHelpers"_s,
-    "NativeCppJSMIMEParamsCppCreateJSMIMEBinding"_s,
-    "NativeCppJSSQLStatementCppCreateJSSQLStatementConstructor"_s,
-    "NativeCppJSWebSocketCppCreateWebSocketBindingForWs"_s,
-    "NativeCppNoOpForTestingCppCreateNoOpForTesting"_s,
-    "NativeCppNodeFetchCppCreateNodeFetchInternalBinding"_s,
-    "NativeCppNodeHTTPCppCreateNodeHTTPInternalBinding"_s,
-    "NativeCppNodeModuleModuleCppCreateStreamIterEnabledFlag"_s,
-    "NativeCppNodeURLCppBunCreateNodeICUBinding"_s,
-    "NativeCppNodeURLCppBunCreateNodeURLBinding"_s,
-    "NativeCppNodeV8CppBunCreateNodeV8Binding"_s,
-    "NativeCppNodeVMCppBunCreateNodeVMBinding"_s,
-    "NativeCppPathCppCreateNodePathBinding"_s,
-    "NativeCppProcessBindingTTYWrapCppCreateBunTTYFunctions"_s,
-    "NativeCppUndiciCppCreateUndiciInternalBinding"_s,
-    "NativeCppWorkerCppCreateNodeWorkerConstructor"_s,
-    "NativeCppWorkerCppCreateNodeWorkerThreadsBinding"_s,
-    "NativeCppNode_crypto_bindingCppCreateNodeCryptoBinding"_s,
-    "NativeNewCppFunctionBunDebuggerCppJsFunction_closeNodeInspector"_s,
-    "NativeNewCppFunctionBunDebuggerCppJsFunction_openNodeInspector"_s,
-    "NativeNewCppFunctionBunDebuggerCppJsFunction_postNodeInspectorControl"_s,
-    "NativeNewCppFunctionBunDebuggerCppJsFunction_waitForNodeInspectorConnection"_s,
-    "NativeNewCppFunctionBunProcessCppJsFunctionReportUncaughtException"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_BunString_makeThreadShareableRefCountDelta"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_BunString_threadIsolatedCopyRefCountDelta"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_aotBuiltinEntries"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_aotBuiltinMismatches"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_aotBuiltinValue"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_aotNameClass"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_arrayBufferViewHasBuffer"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_builtinFeatureUses"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_emitMemoryPressure"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_hasReifiedStatic"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_isASANEnabled"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_isMemoryPressureWatcherInstalled"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_lowercaseHeaderNameSIMD"_s,
-    "NativeNewCppFunctionInternalForTestingCppJsFunction_spawnThreadsForTesting"_s,
-    "NativeNewCppFunctionInternalModuleRegistryCppJsInternalModuleBytecode"_s,
-    "NativeNewCppFunctionInternalModuleRegistryCppJsInternalModulesLoadedFromBytecode"_s,
-    "NativeNewCppFunctionJSEventTargetCppJsEventTargetGetEventListenersCount"_s,
-    "NativeNewCppFunctionJSEventTargetNodeCppJsFunctionNodeEventsGetEventListeners"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_collectPreciseCoverage"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_isCPUProfilerRunning"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_setCPUSamplingInterval"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_startCPUProfiler"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_startPreciseCoverage"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_stopCPUProfiler"_s,
-    "NativeNewCppFunctionJSInspectorProfilerCppJsFunction_stopPreciseCoverage"_s,
-    "NativeNewCppFunctionJSNodePerformanceHooksHistogramCppJsFunction_createHistogram"_s,
-    "NativeNewCppFunctionJSNodePerformanceHooksHistogramPrototypeCppJsFunction_disableEventLoopDelay"_s,
-    "NativeNewCppFunctionJSNodePerformanceHooksHistogramPrototypeCppJsFunction_enableEventLoopDelay"_s,
-    "NativeNewCppFunctionJSNodePerformanceHooksHistogramPrototypeCppJsFunction_monitorEventLoopDelay"_s,
-    "NativeNewCppFunctionModuleGraphCppJsFunctionIsFrameOfStoppedModuleGraph"_s,
-    "NativeNewCppFunctionModuleGraphCppJsFunctionModuleGraphFrameOfFrame"_s,
-    "NativeNewCppFunctionModuleGraphCppJsFunctionModuleGraphOfFrame"_s,
-    "NativeNewCppFunctionNodeAsyncHooksCppJsSetAsyncHooksEnabled"_s,
-    "NativeNewCppFunctionNodeModuleModuleCppJsFunctionIsModuleResolveFilenameSlowPathEnabled"_s,
-    "NativeNewCppFunctionNodeTLSCppBun__canonicalizeIP"_s,
-    "NativeNewCppFunctionNodeTLSCppGetBundledRootCertificates"_s,
-    "NativeNewCppFunctionNodeTLSCppGetDefaultCiphers"_s,
-    "NativeNewCppFunctionNodeTLSCppGetExtraCACertificates"_s,
-    "NativeNewCppFunctionNodeTLSCppGetSystemCACertificates"_s,
-    "NativeNewCppFunctionNodeTLSCppLoadExtraCACertificates"_s,
-    "NativeNewCppFunctionNodeTLSCppParseCACertificates"_s,
-    "NativeNewCppFunctionNodeTLSCppSelectServerName"_s,
-    "NativeNewCppFunctionNodeTLSCppSetDefaultCiphers"_s,
-    "NativeNewCppFunctionNodeUtilTypesModuleCppJsFunctionIsDeepStrictEqual"_s,
-    "NativeNewCppFunctionNodeUtilTypesModuleCppJsFunctionIsError"_s,
-    "NativeNewCppFunctionNodeUtilTypesModuleCppJsFunctionIsMapIterator"_s,
-    "NativeNewCppFunctionNodeUtilTypesModuleCppJsFunctionIsSetIterator"_s,
-    "NativeNewCppFunctionNodeUtilTypesModuleCppJsFunctionPartialDeepStrictEqual"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_checkRangesOrGetDefault"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateAbortSignal"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateArray"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateBuffer"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateEncoding"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateFiniteNumber"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateInt32"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateInteger"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateNumber"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateObject"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateOneOf"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validatePort"_s,
-    "NativeNewCppFunctionNodeValidatorCppJsFunction_validateUint32"_s,
-    "NativeNewCppFunctionStructuredCloneCppJsFunctionStructuredCloneAdvanced"_s,
-    "NativeNewCppFunctionUtilInspectCppJsFunctionGetOwnNonIndexProperties"_s,
-    "NativeNewCppFunctionWorkerCppJsFunctionPostMessage"_s,
-    "NativeNewCppFunctionZigSourceProviderCppJsSourceHasLineStarts"_s,
-    "NativeNewCppFunctionDecodeURIComponentSIMDCppJsFunctionDecodeURIComponentSIMD"_s,
-    "NativeNewCppFunctionHighway_strings_testingCppBun__highwayStringsForTesting"_s,
-    "NativeNewCppFunctionStreamsBunStreamConsumersCppJsFunctionTransferToNativeReadableStream"_s,
-    "NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth"_s,
-    "NativeNewCppFunctionXxhash3_testingCppBun__xxhash3_64_forTesting"_s,
-    "NativeNewRustFunctionBytecodeOrderRecorderRsNamesForTesting"_s,
-    "NativeNewRustFunctionCountersRsCreateCountersObject"_s,
-    "NativeNewRustFunctionJSBundlerRsJsWorkerLiveCount"_s,
-    "NativeNewRustFunctionMarkdownObjectRsSetMaxMarkdownBlockBytesForTesting"_s,
-    "NativeNewRustFunctionSecureContextRsJsLiveCount"_s,
-    "NativeNewRustFunctionSemverObjectRsIntersectsForTesting"_s,
-    "NativeNewRustFunctionStatRsCreateStatsForIno"_s,
-    "NativeNewRustFunctionBakeConfigPluginsRsCheckFramework"_s,
-    "NativeNewRustFunctionBakeConfigPluginsRsIsRestart"_s,
-    "NativeNewRustFunctionBakeConfigPluginsRsIsRestarting"_s,
-    "NativeNewRustFunctionBakeConfigPluginsRsRestartProcess"_s,
-    "NativeNewRustFunctionBakeConfigPluginsRsSetConfigPlugins"_s,
-    "NativeNewRustFunctionBakeConfigPluginsRsSetPages"_s,
-    "NativeNewRustFunctionChecker_queries_testingRsDescribeCheckerQueries"_s,
-    "NativeNewRustFunctionCode_resolver_testingRsCompareCodeResolution"_s,
-    "NativeNewRustFunctionCode_resolver_testingRsDescribeCodeGraph"_s,
-    "NativeNewRustFunctionCode_resolver_testingRsResolveComputedSpecifier"_s,
-    "NativeNewRustFunctionCollectionsLinear_fifoRsTestingAPIsOrderedRemoveProbe"_s,
-    "NativeNewRustFunctionCss_internalsRs_test"_s,
-    "NativeNewRustFunctionCss_internalsRsAttrTest"_s,
-    "NativeNewRustFunctionCss_internalsRsMinifyErrorTestWithOptions"_s,
-    "NativeNewRustFunctionCss_internalsRsMinifyTest"_s,
-    "NativeNewRustFunctionCss_internalsRsMinifyTestWithOptions"_s,
-    "NativeNewRustFunctionCss_internalsRsPrefixTest"_s,
-    "NativeNewRustFunctionCss_internalsRsPrefixTestWithOptions"_s,
-    "NativeNewRustFunctionCss_internalsRsTestWithOptions"_s,
-    "NativeNewRustFunctionEscapeRegExpRsJsEscapeRegExp"_s,
-    "NativeNewRustFunctionEscapeRegExpRsJsEscapeRegExpForPackageNameMatching"_s,
-    "NativeNewRustFunctionEvent_loopRsGetActiveTasks"_s,
-    "NativeNewRustFunctionFfiRsBun__FFI__cc"_s,
-    "NativeNewRustFunctionHosted_git_infoRsTestingAPIsJsFromUrl"_s,
-    "NativeNewRustFunctionHosted_git_infoRsTestingAPIsJsParseUrl"_s,
-    "NativeNewRustFunctionHttpH2ClientRsTestingAPIsLiveCounts"_s,
-    "NativeNewRustFunctionHttpH3ClientRsTestingAPIsQuicLiveCounts"_s,
-    "NativeNewRustFunctionIniRsIniTestingAPIsLoadNpmrcFromJS"_s,
-    "NativeNewRustFunctionIniRsIniTestingAPIsParse"_s,
-    "NativeNewRustFunctionIpcRsEmitHandleIPCMessage"_s,
-    "NativeNewRustFunctionMemory_pressureRsJsPsiFilter"_s,
-    "NativeNewRustFunctionMemory_pressureRsJsPsiTrigger"_s,
-    "NativeNewRustFunctionMemory_pressureRsJsWatcherHasOsBackend"_s,
-    "NativeNewRustFunctionNapi_bodyRsJsThreadsafeFunctionLiveCount"_s,
-    "NativeNewRustFunctionNode_cluster_bindingRsClusterRawBind"_s,
-    "NativeNewRustFunctionNode_cluster_bindingRsSendHelperPrimary"_s,
-    "NativeNewRustFunctionNode_fs_bindingRsCreateMemfdForTesting"_s,
-    "NativeNewRustFunctionNode_fs_bindingRsRm_options_for_testing"_s,
-    "NativeNewRustFunctionNode_fs_bindingRsString_to_flags_for_testing"_s,
-    "NativeNewRustFunctionNode_http_bindingRsGetBunServerAllClosedPromise"_s,
-    "NativeNewRustFunctionNode_net_bindingRsDoConnect"_s,
-    "NativeNewRustFunctionNpmRsArchitectureJsFunctionArchitectureIsMatch"_s,
-    "NativeNewRustFunctionNpmRsOperatingSystemJsFunctionOperatingSystemIsMatch"_s,
-    "NativeNewRustFunctionPack_commandRsBindingsJsReadTarball"_s,
-    "NativeNewRustFunctionParse_argsRsParseArgs"_s,
-    "NativeNewRustFunctionPatchRsTestingAPIsApply"_s,
-    "NativeNewRustFunctionPatchRsTestingAPIsMakeDiff"_s,
-    "NativeNewRustFunctionPatchRsTestingAPIsParse"_s,
-    "NativeNewRustFunctionRuntimeDns_jscDnsRsResolverNewResolver"_s,
-    "NativeNewRustFunctionRuntimeDns_jscDnsRsInternalGetaddrinfoErrorForTesting"_s,
-    "NativeNewRustFunctionRuntimeDns_jscDnsRsInternalIsAllLoopbackOfOneFamilyForTesting"_s,
-    "NativeNewRustFunctionRuntimeDns_jscDnsRsInternalIsLocalhostNameForTesting"_s,
-    "NativeNewRustFunctionRuntimeDns_jscDnsRsInternalSeedCacheForTesting"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsTestingAPIsJsClearSocketFaults"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsTestingAPIsJsNamedPipeContextLiveCount"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsTestingAPIsJsSetSocketFault"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsTestingAPIsJsSocketFaultInjectionAvailable"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsJsCreateSocketPair"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsJsSetSocketOptions"_s,
-    "NativeNewRustFunctionRuntimeSocketSocketRsJsUpgradeDuplexToTLS"_s,
-    "NativeNewRustFunctionRuntimeTimerTimerRsInternal_bindingsTimerClockMs"_s,
-    "NativeNewRustFunctionRuntimeWebcoreByteStreamRsTestingAPIsByteStreamCancelOnDrain"_s,
-    "NativeNewRustFunctionRuntimeWebcoreFileSinkRsTestingAPIsFileSinkLiveCount"_s,
-    "NativeNewRustFunctionRuntimeWebcoreFetchRsTestingAPIsNoProxyMatches"_s,
-    "NativeNewRustFunctionRuntimeWebcoreFetchRsTestingAPIsParseURL"_s,
-    "NativeNewRustFunctionRuntimeWebcoreFetchRsTestingAPIsProxyFor"_s,
-    "NativeNewRustFunctionShellRsTestingAPIsDisabledOnThisPlatform"_s,
-    "NativeNewRustFunctionShellRsTestingAPIsShellLex"_s,
-    "NativeNewRustFunctionShellRsTestingAPIsShellParse"_s,
-    "NativeNewRustFunctionSourcemapInternalSourceMapRsTestingAPIsFind"_s,
-    "NativeNewRustFunctionSourcemapInternalSourceMapRsTestingAPIsFromVLQ"_s,
-    "NativeNewRustFunctionSourcemapInternalSourceMapRsTestingAPIsToVLQ"_s,
-    "NativeNewRustFunctionStringImmutableUnicodeRsTestingAPIsToUTF16AllocSentinel"_s,
-    "NativeNewRustFunctionSubprocessRsTestingAPIsCloseStdinWriter"_s,
-    "NativeNewRustFunctionSubprocessRsTestingAPIsInjectStdioReadError"_s,
-    "NativeNewRustFunctionSysRsTestingAPIsSigactionLayout"_s,
-    "NativeNewRustFunctionSysRsTestingAPIsTranslateNtStatusToE"_s,
-    "NativeNewRustFunctionSysRsTestingAPIsTranslateUVErrorToE"_s,
-    "NativeNewRustFunctionTrim_testingRsMeasureTrimProfile"_s,
-    "NativeNewRustFunctionTrim_testingRsReadTrimTable"_s,
-    "NativeNewRustFunctionTrim_testingRsTrimExecutable"_s,
-    "NativeNewRustFunctionVirtual_machine_exportsRsBun__setSyntheticAllocationLimitForTesting"_s,
-    "NativeRustFrameworkRouterRsJSFrameworkRouterGetBindings"_s,
-    "NativeRustSecureContextRsJsGetConstructor"_s,
-    "NativeRustCrash_handlerRsJs_bindingsGenerate"_s,
-    "NativeRustH2_frame_parserRsH2FrameParserConstructor"_s,
-    "NativeRustInstall_bindingRsBun_install_js_bindingsGenerate"_s,
-    "NativeRustMysqlRsCreateBinding"_s,
-    "NativeRustNode_crypto_bindingRsCreateNodeCryptoBindingZig"_s,
-    "NativeRustNode_fs_bindingRsCreateBinding"_s,
-    "NativeRustNode_net_bindingRsBlockList"_s,
-    "NativeRustNode_net_bindingRsSocketAddress"_s,
-    "NativeRustNode_quic_bindingRsCreateNodeQuicBinding"_s,
-    "NativeRustNode_zlib_bindingRsNativeBrotli"_s,
-    "NativeRustNode_zlib_bindingRsNativeZlib"_s,
-    "NativeRustNode_zlib_bindingRsNativeZstd"_s,
-    "NativeRustNpmRsPackageManifestBindingsGenerate"_s,
-    "NativeRustPostgresRsCreateBinding"_s,
-    "NativeRustUpgrade_commandRsUpgrade_js_bindingsGenerate"_s,
-    "NodeFetch"_s,
-    "Node_http2_upgrade"_s,
-    "Node_http_agent"_s,
-    "Node_http_client"_s,
-    "Node_http_common"_s,
-    "Node_http_incoming"_s,
-    "Node_http_outgoing"_s,
-    "Node_http_server"_s,
-    "Node_stream_duplex"_s,
-    "Node_stream_passthrough"_s,
-    "Node_stream_readable"_s,
-    "Node_stream_transform"_s,
-    "Node_stream_wrap"_s,
-    "Node_stream_writable"_s,
-    "Node_tls_common"_s,
-    "Node_tls_wrap"_s,
-    "NodeAssert"_s,
-    "NodeAssertStrict_"_s,
-    "NodeAsync_hooks"_s,
-    "NodeBuffer"_s,
-    "NodeChild_process"_s,
-    "NodeCluster"_s,
-    "NodeConsole"_s,
-    "NodeConstants"_s,
-    "NodeCrypto"_s,
-    "NodeDgram"_s,
-    "NodeDiagnostics_channel"_s,
-    "NodeDns"_s,
-    "NodeDnsPromises_"_s,
-    "NodeDomain"_s,
-    "NodeEvents"_s,
-    "NodeFs"_s,
-    "NodeFsPromises_"_s,
-    "NodeHttp"_s,
-    "NodeHttp2"_s,
-    "NodeHttps"_s,
-    "NodeInspector"_s,
-    "NodeInspectorPromises"_s,
-    "NodeModule"_s,
-    "NodeNet"_s,
-    "NodeOs"_s,
-    "NodePath"_s,
-    "NodePathPosix_"_s,
-    "NodePathWin32_"_s,
-    "NodePerf_hooks"_s,
-    "NodePunycode"_s,
-    "NodeQuerystring"_s,
-    "NodeQuic"_s,
-    "NodeReadline"_s,
-    "NodeReadlinePromises_"_s,
-    "NodeRepl"_s,
-    "NodeSqlite"_s,
-    "NodeStream"_s,
-    "NodeStreamConsumers"_s,
-    "NodeStreamIter"_s,
-    "NodeStreamPromises_"_s,
-    "NodeStreamWeb"_s,
-    "NodeString_decoder"_s,
-    "NodeTest"_s,
-    "NodeTimers"_s,
-    "NodeTimersPromises_"_s,
-    "NodeTls"_s,
-    "NodeTrace_events"_s,
-    "NodeTty"_s,
-    "NodeUrl"_s,
-    "NodeUtil"_s,
-    "NodeUtilTypes_"_s,
-    "NodeV8"_s,
-    "NodeVm"_s,
-    "NodeWasi"_s,
-    "NodeWorker_threads"_s,
-    "NodeZlib"_s,
-    "NodeZlibIter"_s,
-    "Runtime"_s,
-    "Undici"_s,
-    "Utf8Validate"_s,
-    "Ws"_s,
-    "GlobalThis_AbortController"_s,
-    "AbortSignal"_s,
-    "AggregateError"_s,
-    "Array"_s,
-    "ArrayBuffer"_s,
-    "AsyncDisposableStack"_s,
-    "Atomics"_s,
-    "BigInt"_s,
-    "BigInt64Array"_s,
-    "BigUint64Array"_s,
-    "Blob"_s,
-    "Boolean"_s,
-    "BroadcastChannel"_s,
-    "Buffer"_s,
-    "BuildError"_s,
-    "BuildMessage"_s,
-    "Bun"_s,
-    "ByteLengthQueuingStrategy"_s,
-    "CloseEvent"_s,
-    "CompressionStream"_s,
-    "CountQueuingStrategy"_s,
-    "GlobalThis_Crypto"_s,
-    "CryptoKey"_s,
-    "CustomEvent"_s,
-    "DOMException"_s,
-    "DataView"_s,
-    "Date"_s,
-    "DecompressionStream"_s,
-    "DisposableStack"_s,
-    "Error"_s,
-    "ErrorEvent"_s,
-    "EvalError"_s,
-    "Event"_s,
-    "EventTarget"_s,
-    "File"_s,
-    "FinalizationRegistry"_s,
-    "Float16Array"_s,
-    "Float32Array"_s,
-    "Float64Array"_s,
-    "FormData"_s,
-    "Function"_s,
-    "HTMLRewriter"_s,
-    "Headers"_s,
-    "Infinity"_s,
-    "Int16Array"_s,
-    "Int32Array"_s,
-    "Int8Array"_s,
-    "Intl"_s,
-    "Iterator"_s,
-    "JSON"_s,
-    "Map"_s,
-    "Math"_s,
-    "MessageChannel"_s,
-    "MessageEvent"_s,
-    "MessagePort"_s,
-    "NaN"_s,
-    "Number"_s,
-    "Object"_s,
-    "GlobalThis_Performance"_s,
-    "PerformanceEntry"_s,
-    "GlobalThis_PerformanceMark"_s,
-    "GlobalThis_PerformanceMeasure"_s,
-    "PerformanceObserver"_s,
-    "PerformanceObserverEntryList"_s,
-    "PerformanceResourceTiming"_s,
-    "PerformanceServerTiming"_s,
-    "GlobalThis_PerformanceTiming"_s,
-    "Promise"_s,
-    "Proxy"_s,
-    "RangeError"_s,
-    "ReadableByteStreamController"_s,
-    "ReadableStream"_s,
-    "ReadableStreamBYOBReader"_s,
-    "ReadableStreamBYOBRequest"_s,
-    "ReadableStreamDefaultController"_s,
-    "ReadableStreamDefaultReader"_s,
-    "ReferenceError"_s,
-    "Reflect"_s,
-    "RegExp"_s,
-    "Request"_s,
-    "ResolveError"_s,
-    "ResolveMessage"_s,
-    "Response"_s,
-    "Set"_s,
-    "ShadowRealm"_s,
-    "SharedArrayBuffer"_s,
-    "String"_s,
-    "SubtleCrypto"_s,
-    "SuppressedError"_s,
-    "Symbol"_s,
-    "SyntaxError"_s,
-    "Temporal"_s,
-    "TextDecoder"_s,
-    "TextDecoderStream"_s,
-    "TextEncoder"_s,
-    "TextEncoderStream"_s,
-    "TransformStream"_s,
-    "TransformStreamDefaultController"_s,
-    "TypeError"_s,
-    "URIError"_s,
-    "URL"_s,
-    "URLPattern"_s,
-    "URLSearchParams"_s,
-    "Uint16Array"_s,
-    "Uint32Array"_s,
-    "Uint8Array"_s,
-    "Uint8ClampedArray"_s,
-    "WeakMap"_s,
-    "WeakRef"_s,
-    "WeakSet"_s,
-    "WebAssembly"_s,
-    "WebSocket"_s,
-    "Worker"_s,
-    "WritableStream"_s,
-    "WritableStreamDefaultController"_s,
-    "WritableStreamDefaultWriter"_s,
-    "AddEventListener"_s,
-    "Alert"_s,
-    "Atob"_s,
-    "Btoa"_s,
-    "ClearImmediate"_s,
-    "ClearInterval"_s,
-    "ClearTimeout"_s,
-    "Confirm"_s,
-    "Console"_s,
-    "GlobalThis_crypto"_s,
-    "DecodeURI"_s,
-    "DecodeURIComponent"_s,
-    "DispatchEvent"_s,
-    "EncodeURI"_s,
-    "EncodeURIComponent"_s,
-    "Escape"_s,
-    "Eval"_s,
-    "Fetch"_s,
-    "Global"_s,
-    "IsFinite"_s,
-    "IsNaN"_s,
-    "Navigator"_s,
-    "Onerror"_s,
-    "Onmessage"_s,
-    "ParseFloat"_s,
-    "ParseInt"_s,
-    "GlobalThis_performance"_s,
-    "PostMessage"_s,
-    "Process"_s,
-    "Prompt"_s,
-    "QueueMicrotask"_s,
-    "RemoveEventListener"_s,
-    "ReportError"_s,
-    "_Self"_s,
-    "SetImmediate"_s,
-    "SetInterval"_s,
-    "SetTimeout"_s,
-    "StructuredClone"_s,
-    "Undefined"_s,
-    "Unescape"_s,
-    "ArrayIteratorPrototypeNext"_s,
-    "ArrayIteratorPrototypeSymbolToStringTag"_s,
-    "AsyncFromSyncIteratorPrototypeNext"_s,
-    "AsyncFromSyncIteratorPrototypeReturn"_s,
-    "AsyncFromSyncIteratorPrototypeThrow"_s,
-    "AsyncFunctionPrototype"_s,
-    "AsyncGeneratorPrototypeConstructor"_s,
-    "AsyncGeneratorPrototypeNext"_s,
-    "AsyncGeneratorPrototypeReturn"_s,
-    "AsyncGeneratorPrototypeThrow"_s,
-    "AsyncGeneratorPrototypeSymbolToStringTag"_s,
-    "AsyncGeneratorFunctionPrototype"_s,
-    "AsyncIteratorPrototypeSymbolAsyncDispose"_s,
-    "AsyncIteratorPrototypeSymbolAsyncIterator"_s,
-    "AttributeIteratorPrototypeNext"_s,
-    "AttributeIteratorPrototypeSymbolIterator"_s,
-    "BlobInternalReadableStreamSourcePrototypeArrayBuffer"_s,
-    "BlobInternalReadableStreamSourcePrototypeBlob"_s,
-    "BlobInternalReadableStreamSourcePrototypeBytes"_s,
-    "BlobInternalReadableStreamSourcePrototypeCancel"_s,
-    "BlobInternalReadableStreamSourcePrototypeDrain"_s,
-    "BlobInternalReadableStreamSourcePrototypeIsClosed"_s,
-    "BlobInternalReadableStreamSourcePrototypeJson"_s,
-    "BlobInternalReadableStreamSourcePrototypePull"_s,
-    "BlobInternalReadableStreamSourcePrototypeStart"_s,
-    "BlobInternalReadableStreamSourcePrototypeText"_s,
-    "BlobInternalReadableStreamSourcePrototypeUpdateRef"_s,
-    "BlockListIsBlockList"_s,
-    "BlockListPrototype"_s,
-    "BuildArtifactPrototypeArrayBuffer"_s,
-    "BuildArtifactPrototypeHash"_s,
-    "BuildArtifactPrototypeJson"_s,
-    "BuildArtifactPrototypeKind"_s,
-    "BuildArtifactPrototypeLoader"_s,
-    "BuildArtifactPrototypePath"_s,
-    "BuildArtifactPrototypeSize"_s,
-    "BuildArtifactPrototypeSlice"_s,
-    "BuildArtifactPrototypeSourcemap"_s,
-    "BuildArtifactPrototypeStream"_s,
-    "BuildArtifactPrototypeText"_s,
-    "BuildArtifactPrototypeType"_s,
-    "BunRequestPrototypeClone"_s,
-    "BunRequestPrototypeCookies"_s,
-    "BunRequestPrototypeParams"_s,
-    "BunRequestPrototypeSymbolToStringTag"_s,
-    "BytesInternalReadableStreamSourcePrototypeArrayBuffer"_s,
-    "BytesInternalReadableStreamSourcePrototypeBlob"_s,
-    "BytesInternalReadableStreamSourcePrototypeBytes"_s,
-    "BytesInternalReadableStreamSourcePrototypeCancel"_s,
-    "BytesInternalReadableStreamSourcePrototypeDrain"_s,
-    "BytesInternalReadableStreamSourcePrototypeIsClosed"_s,
-    "BytesInternalReadableStreamSourcePrototypeJson"_s,
-    "BytesInternalReadableStreamSourcePrototypePull"_s,
-    "BytesInternalReadableStreamSourcePrototypeStart"_s,
-    "BytesInternalReadableStreamSourcePrototypeText"_s,
-    "BytesInternalReadableStreamSourcePrototypeUpdateRef"_s,
-    "CommentPrototypeAfter"_s,
-    "CommentPrototypeBefore"_s,
-    "CommentPrototypeRemove"_s,
-    "CommentPrototypeRemoved"_s,
-    "CommentPrototypeReplace"_s,
-    "CommentPrototypeText"_s,
-    "CompilerHelpersApplyAccessorDecorators"_s,
-    "CompilerHelpersApplyClassDecorators"_s,
-    "CompilerHelpersApplyFieldDecorators"_s,
-    "CompilerHelpersApplyMethodDecorators"_s,
-    "CompilerHelpersApplyPrivateAccessorDecorators"_s,
-    "CompilerHelpersApplyPrivateFieldDecorators"_s,
-    "CompilerHelpersApplyPrivateMethodDecorators"_s,
-    "CompilerHelpersCopyOwnProperties"_s,
-    "CompilerHelpersCreateDecoratorMetadata"_s,
-    "CompilerHelpersCreateElement"_s,
-    "CompilerHelpersCreatePrivateStorage"_s,
-    "CompilerHelpersDecorateClass"_s,
-    "CompilerHelpersDecorateMethod"_s,
-    "CompilerHelpersDecorateParameter"_s,
-    "CompilerHelpersDecorateProperty"_s,
-    "CompilerHelpersDefineMetadata"_s,
-    "CompilerHelpersGetAsyncDisposeMethod"_s,
-    "CompilerHelpersGetDisposeMethod"_s,
-    "CompilerHelpersHoldsRule"_s,
-    "CompilerHelpersInterpretNode"_s,
-    "CompilerHelpersRunInitializers"_s,
-    "CompilerHelpersRunValueInitializers"_s,
-    "CompilerHelpersSetDecoratorMetadata"_s,
-    "CompilerHelpersStringifyElement"_s,
-    "CompilerHelpersStringifyProperties"_s,
-    "CompilerHelpersStringifyProperty"_s,
-    "CompilerHelpersTraverseArray"_s,
-    "CompilerHelpersValidateByPlan"_s,
-    "CronJobPrototypeCron"_s,
-    "CronJobPrototypeRef"_s,
-    "CronJobPrototypeStop"_s,
-    "CronJobPrototypeUnref"_s,
-    "CronJobPrototypeSymbolDispose"_s,
-    "DNSResolverPrototypeCancel"_s,
-    "DNSResolverPrototypeGetServers"_s,
-    "DNSResolverPrototypeResolve"_s,
-    "DNSResolverPrototypeResolveAny"_s,
-    "DNSResolverPrototypeResolveCaa"_s,
-    "DNSResolverPrototypeResolveCname"_s,
-    "DNSResolverPrototypeResolveMx"_s,
-    "DNSResolverPrototypeResolveNaptr"_s,
-    "DNSResolverPrototypeResolveNs"_s,
-    "DNSResolverPrototypeResolvePtr"_s,
-    "DNSResolverPrototypeResolveSoa"_s,
-    "DNSResolverPrototypeResolveSrv"_s,
-    "DNSResolverPrototypeResolveTxt"_s,
-    "DNSResolverPrototypeReverse"_s,
-    "DNSResolverPrototypeSetLocalAddress"_s,
-    "DNSResolverPrototypeSetServers"_s,
-    "DebugHTTPSServerPrototypeAddress"_s,
-    "DebugHTTPSServerPrototypeCloseIdleConnections"_s,
-    "DebugHTTPSServerPrototypeDevelopment"_s,
-    "DebugHTTPSServerPrototypeFetch"_s,
-    "DebugHTTPSServerPrototypeHostname"_s,
-    "DebugHTTPSServerPrototypeId"_s,
-    "DebugHTTPSServerPrototypePendingRequests"_s,
-    "DebugHTTPSServerPrototypePendingWebSockets"_s,
-    "DebugHTTPSServerPrototypePort"_s,
-    "DebugHTTPSServerPrototypeProtocol"_s,
-    "DebugHTTPSServerPrototypePublish"_s,
-    "DebugHTTPSServerPrototypeRef"_s,
-    "DebugHTTPSServerPrototypeReload"_s,
-    "DebugHTTPSServerPrototypeRequestIP"_s,
-    "DebugHTTPSServerPrototypeStop"_s,
-    "DebugHTTPSServerPrototypeSubscriberCount"_s,
-    "DebugHTTPSServerPrototypeTimeout"_s,
-    "DebugHTTPSServerPrototypeUnref"_s,
-    "DebugHTTPSServerPrototypeUpgrade"_s,
-    "DebugHTTPSServerPrototypeUrl"_s,
-    "DebugHTTPSServerPrototypeSymbolDispose"_s,
-    "DebugHTTPServerPrototypeAddress"_s,
-    "DebugHTTPServerPrototypeCloseIdleConnections"_s,
-    "DebugHTTPServerPrototypeDevelopment"_s,
-    "DebugHTTPServerPrototypeFetch"_s,
-    "DebugHTTPServerPrototypeHostname"_s,
-    "DebugHTTPServerPrototypeId"_s,
-    "DebugHTTPServerPrototypePendingRequests"_s,
-    "DebugHTTPServerPrototypePendingWebSockets"_s,
-    "DebugHTTPServerPrototypePort"_s,
-    "DebugHTTPServerPrototypeProtocol"_s,
-    "DebugHTTPServerPrototypePublish"_s,
-    "DebugHTTPServerPrototypeRef"_s,
-    "DebugHTTPServerPrototypeReload"_s,
-    "DebugHTTPServerPrototypeRequestIP"_s,
-    "DebugHTTPServerPrototypeStop"_s,
-    "DebugHTTPServerPrototypeSubscriberCount"_s,
-    "DebugHTTPServerPrototypeTimeout"_s,
-    "DebugHTTPServerPrototypeUnref"_s,
-    "DebugHTTPServerPrototypeUpgrade"_s,
-    "DebugHTTPServerPrototypeUrl"_s,
-    "DebugHTTPServerPrototypeSymbolDispose"_s,
-    "DocEndPrototypeAppend"_s,
-    "DocTypePrototypeName"_s,
-    "DocTypePrototypePublicId"_s,
-    "DocTypePrototypeRemove"_s,
-    "DocTypePrototypeRemoved"_s,
-    "DocTypePrototypeSystemId"_s,
-    "ElementPrototypeAfter"_s,
-    "ElementPrototypeAppend"_s,
-    "ElementPrototypeAttributes"_s,
-    "ElementPrototypeBefore"_s,
-    "ElementPrototypeCanHaveContent"_s,
-    "ElementPrototypeGetAttribute"_s,
-    "ElementPrototypeHasAttribute"_s,
-    "ElementPrototypeNamespaceURI"_s,
-    "ElementPrototypeOnEndTag"_s,
-    "ElementPrototypePrepend"_s,
-    "ElementPrototypeRemove"_s,
-    "ElementPrototypeRemoveAndKeepContent"_s,
-    "ElementPrototypeRemoveAttribute"_s,
-    "ElementPrototypeRemoved"_s,
-    "ElementPrototypeReplace"_s,
-    "ElementPrototypeSelfClosing"_s,
-    "ElementPrototypeSetAttribute"_s,
-    "ElementPrototypeSetInnerContent"_s,
-    "ElementPrototypeTagName"_s,
-    "EndTagPrototypeAfter"_s,
-    "EndTagPrototypeBefore"_s,
-    "EndTagPrototypeName"_s,
-    "EndTagPrototypeRemove"_s,
-    "ExpectAddSnapshotSerializer"_s,
-    "ExpectAny"_s,
-    "ExpectAnything"_s,
-    "ExpectArrayContaining"_s,
-    "ExpectAssertions"_s,
-    "ExpectCloseTo"_s,
-    "ExpectExtend"_s,
-    "ExpectHasAssertions"_s,
-    "ExpectNot"_s,
-    "ExpectObjectContaining"_s,
-    "ExpectPrototype"_s,
-    "ExpectRejectsTo"_s,
-    "ExpectResolvesTo"_s,
-    "ExpectStringContaining"_s,
-    "ExpectStringMatching"_s,
-    "ExpectUnreachable"_s,
-    "ExpectCustomAsymmetricMatcherPrototypeAsymmetricMatch"_s,
-    "ExpectMatcherContextPrototypeEquals"_s,
-    "ExpectMatcherContextPrototypeExpand"_s,
-    "ExpectMatcherContextPrototypeIsNot"_s,
-    "ExpectMatcherContextPrototypePromise"_s,
-    "ExpectMatcherContextPrototypeUtils"_s,
-    "ExpectMatcherUtilsPrototypeEXPECTED_COLOR"_s,
-    "ExpectMatcherUtilsPrototypeRECEIVED_COLOR"_s,
-    "ExpectMatcherUtilsPrototypeMatcherHint"_s,
-    "ExpectMatcherUtilsPrototypePrintExpected"_s,
-    "ExpectMatcherUtilsPrototypePrintReceived"_s,
-    "ExpectMatcherUtilsPrototypeStringify"_s,
-    "ExpectStaticPrototypeAny"_s,
-    "ExpectStaticPrototypeAnything"_s,
-    "ExpectStaticPrototypeArrayContaining"_s,
-    "ExpectStaticPrototypeCloseTo"_s,
-    "ExpectStaticPrototypeNot"_s,
-    "ExpectStaticPrototypeObjectContaining"_s,
-    "ExpectStaticPrototypeRejectsTo"_s,
-    "ExpectStaticPrototypeResolvesTo"_s,
-    "ExpectStaticPrototypeStringContaining"_s,
-    "ExpectStaticPrototypeStringMatching"_s,
-    "ExpectTypeOfPrototype"_s,
-    "FFIPrototypeClose"_s,
-    "FFIPrototypeSymbols"_s,
-    "FSWatcherPrototypeClose"_s,
-    "FSWatcherPrototypeRef"_s,
-    "FSWatcherPrototypeUnref"_s,
-    "FetchRequestBodySinkPrototype"_s,
-    "FileInternalReadableStreamSourcePrototypeCancel"_s,
-    "FileInternalReadableStreamSourcePrototypeDrain"_s,
-    "FileInternalReadableStreamSourcePrototypeIsClosed"_s,
-    "FileInternalReadableStreamSourcePrototypePull"_s,
-    "FileInternalReadableStreamSourcePrototypeSetFlowing"_s,
-    "FileInternalReadableStreamSourcePrototypeSetRawMode"_s,
-    "FileInternalReadableStreamSourcePrototypeStart"_s,
-    "FileInternalReadableStreamSourcePrototypeUpdateRef"_s,
-    "FileSinkPrototype"_s,
-    "FrameworkFileSystemRouterPrototype"_s,
-    "GeneratorPrototypeConstructor"_s,
-    "GeneratorPrototypeNext"_s,
-    "GeneratorPrototypeReturn"_s,
-    "GeneratorPrototypeThrow"_s,
-    "GeneratorPrototypeSymbolToStringTag"_s,
-    "GeneratorFunctionPrototype"_s,
-    "H2FrameParserPrototype"_s,
-    "HTMLBundlePrototypeIndex"_s,
-    "HTMLRewriterSinkPrototype"_s,
-    "HTTPResponseSinkPrototype"_s,
-    "HTTPSResponseSinkPrototype"_s,
-    "HTTPSServerPrototypeAddress"_s,
-    "HTTPSServerPrototypeCloseIdleConnections"_s,
-    "HTTPSServerPrototypeDevelopment"_s,
-    "HTTPSServerPrototypeFetch"_s,
-    "HTTPSServerPrototypeHostname"_s,
-    "HTTPSServerPrototypeId"_s,
-    "HTTPSServerPrototypePendingRequests"_s,
-    "HTTPSServerPrototypePendingWebSockets"_s,
-    "HTTPSServerPrototypePort"_s,
-    "HTTPSServerPrototypeProtocol"_s,
-    "HTTPSServerPrototypePublish"_s,
-    "HTTPSServerPrototypeRef"_s,
-    "HTTPSServerPrototypeReload"_s,
-    "HTTPSServerPrototypeRequestIP"_s,
-    "HTTPSServerPrototypeStop"_s,
-    "HTTPSServerPrototypeSubscriberCount"_s,
-    "HTTPSServerPrototypeTimeout"_s,
-    "HTTPSServerPrototypeUnref"_s,
-    "HTTPSServerPrototypeUpgrade"_s,
-    "HTTPSServerPrototypeUrl"_s,
-    "HTTPSServerPrototypeSymbolDispose"_s,
-    "HTTPServerPrototypeAddress"_s,
-    "HTTPServerPrototypeCloseIdleConnections"_s,
-    "HTTPServerPrototypeDevelopment"_s,
-    "HTTPServerPrototypeFetch"_s,
-    "HTTPServerPrototypeHostname"_s,
-    "HTTPServerPrototypeId"_s,
-    "HTTPServerPrototypePendingRequests"_s,
-    "HTTPServerPrototypePendingWebSockets"_s,
-    "HTTPServerPrototypePort"_s,
-    "HTTPServerPrototypeProtocol"_s,
-    "HTTPServerPrototypePublish"_s,
-    "HTTPServerPrototypeRef"_s,
-    "HTTPServerPrototypeReload"_s,
-    "HTTPServerPrototypeRequestIP"_s,
-    "HTTPServerPrototypeStop"_s,
-    "HTTPServerPrototypeSubscriberCount"_s,
-    "HTTPServerPrototypeTimeout"_s,
-    "HTTPServerPrototypeUnref"_s,
-    "HTTPServerPrototypeUpgrade"_s,
-    "HTTPServerPrototypeUrl"_s,
-    "HTTPServerPrototypeSymbolDispose"_s,
-    "HeadersIteratorPrototypeNext"_s,
-    "HeadersIteratorPrototypeSymbolToStringTag"_s,
-    "ImmediatePrototype"_s,
-    "ImportMetaDir"_s,
-    "ImportMetaDirname"_s,
-    "ImportMetaEnv"_s,
-    "ImportMetaFile"_s,
-    "ImportMetaFilename"_s,
-    "ImportMetaHot"_s,
-    "ImportMetaMain"_s,
-    "ImportMetaPath"_s,
-    "ImportMetaRequire"_s,
-    "ImportMetaResolve"_s,
-    "ImportMetaResolveSync"_s,
-    "ImportMetaUrl"_s,
-    "IntlSegmentIteratorPrototypeNext"_s,
-    "IntlSegmentsPrototypeContaining"_s,
-    "IntlSegmentsPrototypeSymbolIterator"_s,
-    "IteratorHelperPrototypeNext"_s,
-    "IteratorHelperPrototypeReturn"_s,
-    "IteratorHelperPrototypeSymbolToStringTag"_s,
-    "JSONTextResponseJson"_s,
-    "ListenerPrototypeData"_s,
-    "ListenerPrototypeFd"_s,
-    "ListenerPrototypeGetsockname"_s,
-    "ListenerPrototypeHostname"_s,
-    "ListenerPrototypePort"_s,
-    "ListenerPrototypeRef"_s,
-    "ListenerPrototypeReload"_s,
-    "ListenerPrototypeStop"_s,
-    "ListenerPrototypeUnix"_s,
-    "ListenerPrototypeUnref"_s,
-    "ListenerPrototypeSymbolDispose"_s,
-    "MapIteratorPrototypeNext"_s,
-    "MapIteratorPrototypeSymbolToStringTag"_s,
-    "MatchedRoutePrototypeFilePath"_s,
-    "MatchedRoutePrototypeKind"_s,
-    "MatchedRoutePrototypeName"_s,
-    "MatchedRoutePrototypeParams"_s,
-    "MatchedRoutePrototypePathname"_s,
-    "MatchedRoutePrototypeQuery"_s,
-    "MatchedRoutePrototypeScriptSrc"_s,
-    "MatchedRoutePrototypeSrc"_s,
-    "ModuleObject_compile"_s,
-    "ModuleObjectChildren"_s,
-    "ModuleObjectExports"_s,
-    "ModuleObjectFilename"_s,
-    "ModuleObjectId"_s,
-    "ModuleObjectLoaded"_s,
-    "ModuleObjectParent"_s,
-    "ModuleObjectPath"_s,
-    "ModuleObjectPaths"_s,
-    "ModuleObjectRequire"_s,
-    "ModuleRequireCache"_s,
-    "ModuleRequireExtensions"_s,
-    "ModuleRequireMain"_s,
-    "ModuleRequireResolve"_s,
-    "MySQLConnectionPrototypeClose"_s,
-    "MySQLConnectionPrototypeFlush"_s,
-    "MySQLConnectionPrototypeHold"_s,
-    "MySQLConnectionPrototypeInTransaction"_s,
-    "MySQLConnectionPrototypeUnhold"_s,
-    "MySQLQueryPrototypeCancel"_s,
-    "MySQLQueryPrototypeDescribeResult"_s,
-    "MySQLQueryPrototypeRun"_s,
-    "MySQLQueryPrototypeSetMode"_s,
-    "MySQLQueryPrototypeSetPendingValue"_s,
-    "NativeBrotliPrototype"_s,
-    "NativeZlibPrototype"_s,
-    "NativeZstdPrototype"_s,
-    "NetworkSinkPrototype"_s,
-    "NodeHTTPResponsePrototypeAbort"_s,
-    "NodeHTTPResponsePrototypeAborted"_s,
-    "NodeHTTPResponsePrototypeBufferedAmount"_s,
-    "NodeHTTPResponsePrototypeCork"_s,
-    "NodeHTTPResponsePrototypeEnd"_s,
-    "NodeHTTPResponsePrototypeFinished"_s,
-    "NodeHTTPResponsePrototypeFlags"_s,
-    "NodeHTTPResponsePrototypeFlushHeaders"_s,
-    "NodeHTTPResponsePrototypeGetBytesWritten"_s,
-    "NodeHTTPResponsePrototypeHasBody"_s,
-    "NodeHTTPResponsePrototypeHeadersObject"_s,
-    "NodeHTTPResponsePrototypeNotifyWhenReadParsed"_s,
-    "NodeHTTPResponsePrototypeOnabort"_s,
-    "NodeHTTPResponsePrototypeOndata"_s,
-    "NodeHTTPResponsePrototypeOnwritable"_s,
-    "NodeHTTPResponsePrototypePause"_s,
-    "NodeHTTPResponsePrototypePauseReads"_s,
-    "NodeHTTPResponsePrototypeRef"_s,
-    "NodeHTTPResponsePrototypeResume"_s,
-    "NodeHTTPResponsePrototypeTakeRawHeaders"_s,
-    "NodeHTTPResponsePrototypeTakeRequestTrailers"_s,
-    "NodeHTTPResponsePrototypeUnref"_s,
-    "NodeHTTPResponsePrototypeUpgraded"_s,
-    "NodeHTTPResponsePrototypeWrite"_s,
-    "NodeHTTPResponsePrototypeWriteContinue"_s,
-    "NodeHTTPResponsePrototypeWriteHead"_s,
-    "NodeHTTPResponsePrototypeWriteHeadAndEnd"_s,
-    "NodeHTTPResponsePrototypeWriteInformational"_s,
-    "NodeJSFSPrototypeDirent"_s,
-    "NodeJSFSPrototypeStats"_s,
-    "NodeJSFSPrototypeAccess"_s,
-    "NodeJSFSPrototypeAccessCb"_s,
-    "NodeJSFSPrototypeAccessSync"_s,
-    "NodeJSFSPrototypeAppendFile"_s,
-    "NodeJSFSPrototypeAppendFileCb"_s,
-    "NodeJSFSPrototypeAppendFileSync"_s,
-    "NodeJSFSPrototypeChmod"_s,
-    "NodeJSFSPrototypeChmodCb"_s,
-    "NodeJSFSPrototypeChmodSync"_s,
-    "NodeJSFSPrototypeChown"_s,
-    "NodeJSFSPrototypeChownCb"_s,
-    "NodeJSFSPrototypeChownSync"_s,
-    "NodeJSFSPrototypeClose"_s,
-    "NodeJSFSPrototypeCloseCb"_s,
-    "NodeJSFSPrototypeCloseSync"_s,
-    "NodeJSFSPrototypeCopyFile"_s,
-    "NodeJSFSPrototypeCopyFileCb"_s,
-    "NodeJSFSPrototypeCopyFileSync"_s,
-    "NodeJSFSPrototypeCp"_s,
-    "NodeJSFSPrototypeCpSync"_s,
-    "NodeJSFSPrototypeExists"_s,
-    "NodeJSFSPrototypeExistsCb"_s,
-    "NodeJSFSPrototypeExistsSync"_s,
-    "NodeJSFSPrototypeFchmod"_s,
-    "NodeJSFSPrototypeFchmodCb"_s,
-    "NodeJSFSPrototypeFchmodSync"_s,
-    "NodeJSFSPrototypeFchown"_s,
-    "NodeJSFSPrototypeFchownCb"_s,
-    "NodeJSFSPrototypeFchownSync"_s,
-    "NodeJSFSPrototypeFdatasync"_s,
-    "NodeJSFSPrototypeFdatasyncCb"_s,
-    "NodeJSFSPrototypeFdatasyncSync"_s,
-    "NodeJSFSPrototypeFstat"_s,
-    "NodeJSFSPrototypeFstatCb"_s,
-    "NodeJSFSPrototypeFstatSync"_s,
-    "NodeJSFSPrototypeFsync"_s,
-    "NodeJSFSPrototypeFsyncCb"_s,
-    "NodeJSFSPrototypeFsyncSync"_s,
-    "NodeJSFSPrototypeFtruncate"_s,
-    "NodeJSFSPrototypeFtruncateCb"_s,
-    "NodeJSFSPrototypeFtruncateSync"_s,
-    "NodeJSFSPrototypeFutimes"_s,
-    "NodeJSFSPrototypeFutimesCb"_s,
-    "NodeJSFSPrototypeFutimesSync"_s,
-    "NodeJSFSPrototypeLchmod"_s,
-    "NodeJSFSPrototypeLchmodCb"_s,
-    "NodeJSFSPrototypeLchmodSync"_s,
-    "NodeJSFSPrototypeLchown"_s,
-    "NodeJSFSPrototypeLchownCb"_s,
-    "NodeJSFSPrototypeLchownSync"_s,
-    "NodeJSFSPrototypeLink"_s,
-    "NodeJSFSPrototypeLinkCb"_s,
-    "NodeJSFSPrototypeLinkSync"_s,
-    "NodeJSFSPrototypeLstat"_s,
-    "NodeJSFSPrototypeLstatCb"_s,
-    "NodeJSFSPrototypeLstatSync"_s,
-    "NodeJSFSPrototypeLutimes"_s,
-    "NodeJSFSPrototypeLutimesCb"_s,
-    "NodeJSFSPrototypeLutimesSync"_s,
-    "NodeJSFSPrototypeMkdir"_s,
-    "NodeJSFSPrototypeMkdirCb"_s,
-    "NodeJSFSPrototypeMkdirSync"_s,
-    "NodeJSFSPrototypeMkdtemp"_s,
-    "NodeJSFSPrototypeMkdtempCb"_s,
-    "NodeJSFSPrototypeMkdtempSync"_s,
-    "NodeJSFSPrototypeOpen"_s,
-    "NodeJSFSPrototypeOpenCb"_s,
-    "NodeJSFSPrototypeOpenSync"_s,
-    "NodeJSFSPrototypeRead"_s,
-    "NodeJSFSPrototypeReadCb"_s,
-    "NodeJSFSPrototypeReadFile"_s,
-    "NodeJSFSPrototypeReadFileCb"_s,
-    "NodeJSFSPrototypeReadFileSync"_s,
-    "NodeJSFSPrototypeReadSync"_s,
-    "NodeJSFSPrototypeReaddir"_s,
-    "NodeJSFSPrototypeReaddirCb"_s,
-    "NodeJSFSPrototypeReaddirSync"_s,
-    "NodeJSFSPrototypeReadlink"_s,
-    "NodeJSFSPrototypeReadlinkCb"_s,
-    "NodeJSFSPrototypeReadlinkSync"_s,
-    "NodeJSFSPrototypeReadv"_s,
-    "NodeJSFSPrototypeReadvCb"_s,
-    "NodeJSFSPrototypeReadvSync"_s,
-    "NodeJSFSPrototypeRealpath"_s,
-    "NodeJSFSPrototypeRealpathCb"_s,
-    "NodeJSFSPrototypeRealpathNative"_s,
-    "NodeJSFSPrototypeRealpathNativeCb"_s,
-    "NodeJSFSPrototypeRealpathNativeSync"_s,
-    "NodeJSFSPrototypeRealpathSync"_s,
-    "NodeJSFSPrototypeRename"_s,
-    "NodeJSFSPrototypeRenameCb"_s,
-    "NodeJSFSPrototypeRenameSync"_s,
-    "NodeJSFSPrototypeRm"_s,
-    "NodeJSFSPrototypeRmCb"_s,
-    "NodeJSFSPrototypeRmSync"_s,
-    "NodeJSFSPrototypeRmdir"_s,
-    "NodeJSFSPrototypeRmdirCb"_s,
-    "NodeJSFSPrototypeRmdirSync"_s,
-    "NodeJSFSPrototypeStat"_s,
-    "NodeJSFSPrototypeStatCb"_s,
-    "NodeJSFSPrototypeStatSync"_s,
-    "NodeJSFSPrototypeStatfs"_s,
-    "NodeJSFSPrototypeStatfsCb"_s,
-    "NodeJSFSPrototypeStatfsSync"_s,
-    "NodeJSFSPrototypeSymlink"_s,
-    "NodeJSFSPrototypeSymlinkCb"_s,
-    "NodeJSFSPrototypeSymlinkSync"_s,
-    "NodeJSFSPrototypeTruncate"_s,
-    "NodeJSFSPrototypeTruncateCb"_s,
-    "NodeJSFSPrototypeTruncateSync"_s,
-    "NodeJSFSPrototypeUnlink"_s,
-    "NodeJSFSPrototypeUnlinkCb"_s,
-    "NodeJSFSPrototypeUnlinkSync"_s,
-    "NodeJSFSPrototypeUtimes"_s,
-    "NodeJSFSPrototypeUtimesCb"_s,
-    "NodeJSFSPrototypeUtimesSync"_s,
-    "NodeJSFSPrototypeWatch"_s,
-    "NodeJSFSPrototypeWatchFile"_s,
-    "NodeJSFSPrototypeWrite"_s,
-    "NodeJSFSPrototypeWriteCb"_s,
-    "NodeJSFSPrototypeWriteFile"_s,
-    "NodeJSFSPrototypeWriteFileCb"_s,
-    "NodeJSFSPrototypeWriteFileSync"_s,
-    "NodeJSFSPrototypeWriteSync"_s,
-    "NodeJSFSPrototypeWritev"_s,
-    "NodeJSFSPrototypeWritevCb"_s,
-    "NodeJSFSPrototypeWritevSync"_s,
-    "ParsedShellScriptPrototypeSetCwd"_s,
-    "ParsedShellScriptPrototypeSetEnv"_s,
-    "ParsedShellScriptPrototypeSetQuiet"_s,
-    "PostgresSQLConnectionPrototypeClose"_s,
-    "PostgresSQLConnectionPrototypeFlush"_s,
-    "PostgresSQLConnectionPrototypeHold"_s,
-    "PostgresSQLConnectionPrototypeInTransaction"_s,
-    "PostgresSQLConnectionPrototypeOnnotification"_s,
-    "PostgresSQLConnectionPrototypeRef"_s,
-    "PostgresSQLConnectionPrototypeSasl"_s,
-    "PostgresSQLConnectionPrototypeUnhold"_s,
-    "PostgresSQLQueryPrototypeCancel"_s,
-    "PostgresSQLQueryPrototypeCopyDone"_s,
-    "PostgresSQLQueryPrototypeCopyFail"_s,
-    "PostgresSQLQueryPrototypeCopyResume"_s,
-    "PostgresSQLQueryPrototypeCopyWrite"_s,
-    "PostgresSQLQueryPrototypeDescribeResult"_s,
-    "PostgresSQLQueryPrototypeRun"_s,
-    "PostgresSQLQueryPrototypeSetCopy"_s,
-    "PostgresSQLQueryPrototypeSetMode"_s,
-    "PostgresSQLQueryPrototypeSetPendingValue"_s,
-    "PrivateGlobalsInherits"_s,
-    "PrivateGlobalsMakeAbortError"_s,
-    "PrivateGlobalsMakeErrorWithCode"_s,
-    "PrivateGlobalsPeekPromiseSettledValue"_s,
-    "PrivateGlobalsPeekPromiseStatus"_s,
-    "PrivateGlobalsPokePromiseAsHandled"_s,
-    "PrivateGlobalsToClass"_s,
-    "PrivateGlobalsWebStreamClosedPromise"_s,
-    "PrivateGlobalsWebStreamControllerError"_s,
-    "QuicEndpointPrototype"_s,
-    "QuicSessionPrototypeApplicationOptions"_s,
-    "QuicSessionPrototypeDestroy"_s,
-    "QuicSessionPrototypeGetCertificate"_s,
-    "QuicSessionPrototypeGetEphemeralKey"_s,
-    "QuicSessionPrototypeGetLocalAddress"_s,
-    "QuicSessionPrototypeGetPeerCertificate"_s,
-    "QuicSessionPrototypeGetRemoteAddress"_s,
-    "QuicSessionPrototypeGracefulClose"_s,
-    "QuicSessionPrototypeLocalTransportParams"_s,
-    "QuicSessionPrototypeOpenStream"_s,
-    "QuicSessionPrototypeRemoteTransportParams"_s,
-    "QuicSessionPrototypeSendDatagram"_s,
-    "QuicSessionPrototypeUpdateKey"_s,
-    "QuicStreamPrototypeAbortForDestroy"_s,
-    "QuicStreamPrototypeAttachSource"_s,
-    "QuicStreamPrototypeDestroy"_s,
-    "QuicStreamPrototypeEndWrite"_s,
-    "QuicStreamPrototypeGetPriority"_s,
-    "QuicStreamPrototypeGetReader"_s,
-    "QuicStreamPrototypeInitStreamingSource"_s,
-    "QuicStreamPrototypePull"_s,
-    "QuicStreamPrototypeResetStream"_s,
-    "QuicStreamPrototypeSendHeaders"_s,
-    "QuicStreamPrototypeSetPriority"_s,
-    "QuicStreamPrototypeSetWakeup"_s,
-    "QuicStreamPrototypeStopSending"_s,
-    "QuicStreamPrototypeWrite"_s,
-    "RegExpStringIteratorPrototypeNext"_s,
-    "RegExpStringIteratorPrototypeSymbolToStringTag"_s,
-    "ResourceUsagePrototypeContextSwitches"_s,
-    "ResourceUsagePrototypeCpuTime"_s,
-    "ResourceUsagePrototypeMaxRSS"_s,
-    "ResourceUsagePrototypeMessages"_s,
-    "ResourceUsagePrototypeOps"_s,
-    "ResourceUsagePrototypeShmSize"_s,
-    "ResourceUsagePrototypeSignalCount"_s,
-    "ResourceUsagePrototypeSwapCount"_s,
-    "S3StatPrototype"_s,
-    "ScopeFunctionsPrototypeConcurrent"_s,
-    "ScopeFunctionsPrototypeConcurrentIf"_s,
-    "ScopeFunctionsPrototypeEach"_s,
-    "ScopeFunctionsPrototypeFailing"_s,
-    "ScopeFunctionsPrototypeFailingIf"_s,
-    "ScopeFunctionsPrototypeIf"_s,
-    "ScopeFunctionsPrototypeOnly"_s,
-    "ScopeFunctionsPrototypeSerial"_s,
-    "ScopeFunctionsPrototypeSerialIf"_s,
-    "ScopeFunctionsPrototypeSkip"_s,
-    "ScopeFunctionsPrototypeSkipIf"_s,
-    "ScopeFunctionsPrototypeTodo"_s,
-    "ScopeFunctionsPrototypeTodoIf"_s,
-    "SecureContextCreatePrivate"_s,
-    "SecureContextIntern"_s,
-    "SecureContextParsePkcs12"_s,
-    "SecureContextPrototype"_s,
-    "ServerWebSocketPrototype"_s,
-    "SetIteratorPrototypeNext"_s,
-    "SetIteratorPrototypeSymbolToStringTag"_s,
-    "ShellInterpreterPrototypeRun"_s,
-    "SocketAddressIsSocketAddress"_s,
-    "SocketAddressParse"_s,
-    "SocketAddressPrototype"_s,
-    "StatWatcherPrototypeClose"_s,
-    "StatWatcherPrototypeRef"_s,
-    "StatWatcherPrototypeUnref"_s,
-    "StringIteratorPrototypeNext"_s,
-    "StringIteratorPrototypeSymbolToStringTag"_s,
-    "SubprocessPrototypeConnected"_s,
-    "SubprocessPrototypeDisconnect"_s,
-    "SubprocessPrototypeExitCode"_s,
-    "SubprocessPrototypeExited"_s,
-    "SubprocessPrototypeKill"_s,
-    "SubprocessPrototypeKilled"_s,
-    "SubprocessPrototypePid"_s,
-    "SubprocessPrototypeReadable"_s,
-    "SubprocessPrototypeRef"_s,
-    "SubprocessPrototypeResourceUsage"_s,
-    "SubprocessPrototypeSend"_s,
-    "SubprocessPrototypeSignalCode"_s,
-    "SubprocessPrototypeStderr"_s,
-    "SubprocessPrototypeStdin"_s,
-    "SubprocessPrototypeStdio"_s,
-    "SubprocessPrototypeStdout"_s,
-    "SubprocessPrototypeTerminal"_s,
-    "SubprocessPrototypeUnref"_s,
-    "SubprocessPrototypeWritable"_s,
-    "SubprocessPrototypeSymbolAsyncDispose"_s,
-    "TCPSocketPrototypeAlpnProtocol"_s,
-    "TCPSocketPrototypeAuthorized"_s,
-    "TCPSocketPrototypeBytesWritten"_s,
-    "TCPSocketPrototypeClose"_s,
-    "TCPSocketPrototypeData"_s,
-    "TCPSocketPrototypeDisableRenegotiation"_s,
-    "TCPSocketPrototypeEnd"_s,
-    "TCPSocketPrototypeExportKeyingMaterial"_s,
-    "TCPSocketPrototypeFd"_s,
-    "TCPSocketPrototypeFlush"_s,
-    "TCPSocketPrototypeGetAuthorizationError"_s,
-    "TCPSocketPrototypeGetCertificate"_s,
-    "TCPSocketPrototypeGetCipher"_s,
-    "TCPSocketPrototypeGetEphemeralKeyInfo"_s,
-    "TCPSocketPrototypeGetPeerCertificate"_s,
-    "TCPSocketPrototypeGetServername"_s,
-    "TCPSocketPrototypeGetSession"_s,
-    "TCPSocketPrototypeGetSharedSigalgs"_s,
-    "TCPSocketPrototypeGetTLSFinishedMessage"_s,
-    "TCPSocketPrototypeGetTLSPeerFinishedMessage"_s,
-    "TCPSocketPrototypeGetTLSTicket"_s,
-    "TCPSocketPrototypeGetTLSVersion"_s,
-    "TCPSocketPrototypeGetTypeOfService"_s,
-    "TCPSocketPrototypeIsSessionReused"_s,
-    "TCPSocketPrototypeListener"_s,
-    "TCPSocketPrototypeLocalAddress"_s,
-    "TCPSocketPrototypeLocalFamily"_s,
-    "TCPSocketPrototypeLocalPort"_s,
-    "TCPSocketPrototypePause"_s,
-    "TCPSocketPrototypeReadyState"_s,
-    "TCPSocketPrototypeRef"_s,
-    "TCPSocketPrototypeReload"_s,
-    "TCPSocketPrototypeRemoteAddress"_s,
-    "TCPSocketPrototypeRemoteFamily"_s,
-    "TCPSocketPrototypeRemotePort"_s,
-    "TCPSocketPrototypeRenegotiate"_s,
-    "TCPSocketPrototypeResume"_s,
-    "TCPSocketPrototypeResumeSNI"_s,
-    "TCPSocketPrototypeSetKeepAlive"_s,
-    "TCPSocketPrototypeSetKeyCert"_s,
-    "TCPSocketPrototypeSetMaxSendFragment"_s,
-    "TCPSocketPrototypeSetNoDelay"_s,
-    "TCPSocketPrototypeSetServername"_s,
-    "TCPSocketPrototypeSetSession"_s,
-    "TCPSocketPrototypeSetTypeOfService"_s,
-    "TCPSocketPrototypeSetVerifyMode"_s,
-    "TCPSocketPrototypeShutdown"_s,
-    "TCPSocketPrototypeTerminate"_s,
-    "TCPSocketPrototypeTimeout"_s,
-    "TCPSocketPrototypeUnref"_s,
-    "TCPSocketPrototypeUpgradeTLS"_s,
-    "TCPSocketPrototypeWrite"_s,
-    "TCPSocketPrototypeSymbolDispose"_s,
-    "TLSSocketPrototypeAlpnProtocol"_s,
-    "TLSSocketPrototypeAuthorized"_s,
-    "TLSSocketPrototypeBytesWritten"_s,
-    "TLSSocketPrototypeClose"_s,
-    "TLSSocketPrototypeData"_s,
-    "TLSSocketPrototypeDisableRenegotiation"_s,
-    "TLSSocketPrototypeEnd"_s,
-    "TLSSocketPrototypeExportKeyingMaterial"_s,
-    "TLSSocketPrototypeFd"_s,
-    "TLSSocketPrototypeFlush"_s,
-    "TLSSocketPrototypeGetAuthorizationError"_s,
-    "TLSSocketPrototypeGetCertificate"_s,
-    "TLSSocketPrototypeGetCipher"_s,
-    "TLSSocketPrototypeGetEphemeralKeyInfo"_s,
-    "TLSSocketPrototypeGetPeerCertificate"_s,
-    "TLSSocketPrototypeGetPeerX509Certificate"_s,
-    "TLSSocketPrototypeGetServername"_s,
-    "TLSSocketPrototypeGetSession"_s,
-    "TLSSocketPrototypeGetSharedSigalgs"_s,
-    "TLSSocketPrototypeGetTLSFinishedMessage"_s,
-    "TLSSocketPrototypeGetTLSPeerFinishedMessage"_s,
-    "TLSSocketPrototypeGetTLSTicket"_s,
-    "TLSSocketPrototypeGetTLSVersion"_s,
-    "TLSSocketPrototypeGetTypeOfService"_s,
-    "TLSSocketPrototypeGetX509Certificate"_s,
-    "TLSSocketPrototypeIsSessionReused"_s,
-    "TLSSocketPrototypeListener"_s,
-    "TLSSocketPrototypeLocalAddress"_s,
-    "TLSSocketPrototypeLocalFamily"_s,
-    "TLSSocketPrototypeLocalPort"_s,
-    "TLSSocketPrototypePause"_s,
-    "TLSSocketPrototypeReadyState"_s,
-    "TLSSocketPrototypeRef"_s,
-    "TLSSocketPrototypeReload"_s,
-    "TLSSocketPrototypeRemoteAddress"_s,
-    "TLSSocketPrototypeRemoteFamily"_s,
-    "TLSSocketPrototypeRemotePort"_s,
-    "TLSSocketPrototypeRenegotiate"_s,
-    "TLSSocketPrototypeResume"_s,
-    "TLSSocketPrototypeResumeSNI"_s,
-    "TLSSocketPrototypeSetKeepAlive"_s,
-    "TLSSocketPrototypeSetKeyCert"_s,
-    "TLSSocketPrototypeSetMaxSendFragment"_s,
-    "TLSSocketPrototypeSetNoDelay"_s,
-    "TLSSocketPrototypeSetServername"_s,
-    "TLSSocketPrototypeSetSession"_s,
-    "TLSSocketPrototypeSetTypeOfService"_s,
-    "TLSSocketPrototypeSetVerifyMode"_s,
-    "TLSSocketPrototypeShutdown"_s,
-    "TLSSocketPrototypeTerminate"_s,
-    "TLSSocketPrototypeTimeout"_s,
-    "TLSSocketPrototypeUnref"_s,
-    "TLSSocketPrototypeUpgradeTLS"_s,
-    "TLSSocketPrototypeWrite"_s,
-    "TLSSocketPrototypeSymbolDispose"_s,
-    "TextChunkPrototypeAfter"_s,
-    "TextChunkPrototypeBefore"_s,
-    "TextChunkPrototypeLastInTextNode"_s,
-    "TextChunkPrototypeRemove"_s,
-    "TextChunkPrototypeRemoved"_s,
-    "TextChunkPrototypeReplace"_s,
-    "TextChunkPrototypeText"_s,
-    "TimeoutPrototype"_s,
-    "TypedArrayFrom"_s,
-    "TypedArrayLength"_s,
-    "TypedArrayName"_s,
-    "TypedArrayOf"_s,
-    "TypedArrayPrototype"_s,
-    "TypedArraySymbolSpecies"_s,
-    "UDPSocketPrototypeAddMembership"_s,
-    "UDPSocketPrototypeAddSourceSpecificMembership"_s,
-    "UDPSocketPrototypeAddress"_s,
-    "UDPSocketPrototypeBinaryType"_s,
-    "UDPSocketPrototypeClose"_s,
-    "UDPSocketPrototypeClosed"_s,
-    "UDPSocketPrototypeDropMembership"_s,
-    "UDPSocketPrototypeDropSourceSpecificMembership"_s,
-    "UDPSocketPrototypeFd"_s,
-    "UDPSocketPrototypeHostname"_s,
-    "UDPSocketPrototypePort"_s,
-    "UDPSocketPrototypeRef"_s,
-    "UDPSocketPrototypeReload"_s,
-    "UDPSocketPrototypeRemoteAddress"_s,
-    "UDPSocketPrototypeSend"_s,
-    "UDPSocketPrototypeSendMany"_s,
-    "UDPSocketPrototypeSetBroadcast"_s,
-    "UDPSocketPrototypeSetMulticastInterface"_s,
-    "UDPSocketPrototypeSetMulticastLoopback"_s,
-    "UDPSocketPrototypeSetMulticastTTL"_s,
-    "UDPSocketPrototypeSetTTL"_s,
-    "UDPSocketPrototypeUnref"_s,
-    "UDPSocketPrototypeSymbolDispose"_s,
-    "URLSearchParamsIteratorPrototypeNext"_s,
-    "URLSearchParamsIteratorPrototypeSymbolToStringTag"_s,
-    "WrapForValidIteratorPrototypeNext"_s,
-    "WrapForValidIteratorPrototypeReturn"_s,
-    "WrapForValidIteratorPrototypeSymbolToStringTag"_s,
-    "BunBundleFeature"_s,
-    "BunBundleValidate"_s,
-    "AbortControllerAbortController"_s,
-    "AbortControllerAbortSignal"_s,
-    "AbortControllerDefault"_s,
-    "BunFfiCFunction"_s,
-    "BunFfiCString"_s,
-    "BunFfiFFIType"_s,
-    "BunFfiJSCallback"_s,
-    "BunFfiCc"_s,
-    "BunFfiDefault"_s,
-    "BunFfiDlopen"_s,
-    "BunFfiLinkSymbols"_s,
-    "BunFfiNative"_s,
-    "BunFfiPtr"_s,
-    "BunFfiRead"_s,
-    "BunFfiSuffix"_s,
-    "BunFfiToArrayBuffer"_s,
-    "BunFfiToBuffer"_s,
-    "BunFfiViewSource"_s,
-    "BunJscBytecodeOrderStats"_s,
-    "BunJscCallerSourceOrigin"_s,
-    "BunJscCodeCoverageForFile"_s,
-    "BunJscDefault"_s,
-    "BunJscDescribe"_s,
-    "BunJscDescribeArray"_s,
-    "BunJscDeserialize"_s,
-    "BunJscDrainMicrotasks"_s,
-    "BunJscEdenGC"_s,
-    "BunJscEstimateShallowMemoryUsageOf"_s,
-    "BunJscFullGC"_s,
-    "BunJscGcAndSweep"_s,
-    "BunJscGenerateHeapSnapshotForDebugging"_s,
-    "BunJscGetProtectedObjects"_s,
-    "BunJscGetRandomSeed"_s,
-    "BunJscHeapSize"_s,
-    "BunJscHeapStats"_s,
-    "BunJscIsRope"_s,
-    "BunJscJscDescribe"_s,
-    "BunJscJscDescribeArray"_s,
-    "BunJscMemoryUsage"_s,
-    "BunJscNoFTL"_s,
-    "BunJscNoInline"_s,
-    "BunJscNoOSRExitFuzzing"_s,
-    "BunJscNumberOfDFGCompiles"_s,
-    "BunJscOptimizeNextInvocation"_s,
-    "BunJscPercentAvailableMemoryInUse"_s,
-    "BunJscProfile"_s,
-    "BunJscReleaseWeakRefs"_s,
-    "BunJscReoptimizationRetryCount"_s,
-    "BunJscSamplingProfilerStackTraces"_s,
-    "BunJscSerialize"_s,
-    "BunJscSetRandomSeed"_s,
-    "BunJscSetTimeZone"_s,
-    "BunJscSetTimezone"_s,
-    "BunJscStartRemoteDebugger"_s,
-    "BunJscStartSamplingProfiler"_s,
-    "BunJscTotalCompileTime"_s,
-    "BunSqliteDatabase"_s,
-    "BunSqliteSQLiteError"_s,
-    "BunSqliteStatement"_s,
-    "BunSqlite__esModule"_s,
-    "BunSqliteConstants"_s,
-    "BunSqliteDefault"_s,
-    "BunTestAfterAll"_s,
-    "BunTestAfterEach"_s,
-    "BunTestBeforeAll"_s,
-    "BunTestBeforeEach"_s,
-    "BunTestDefault"_s,
-    "BunTestDescribe"_s,
-    "BunTestExpect"_s,
-    "BunTestExpectTypeOf"_s,
-    "BunTestIt"_s,
-    "BunTestJest"_s,
-    "BunTestMock"_s,
-    "BunTestOnTestFinished"_s,
-    "BunTestSetDefaultTimeout"_s,
-    "BunTestSetSystemTime"_s,
-    "BunTestSpyOn"_s,
-    "BunTestTest"_s,
-    "BunTestVi"_s,
-    "BunTestXdescribe"_s,
-    "BunTestXit"_s,
-    "BunTestXtest"_s,
-    "Node_http_agentAgent"_s,
-    "Node_http_agentDefault"_s,
-    "Node_http_agentGlobalAgent"_s,
-    "Node_http_agentShouldUseEnvProxy"_s,
-    "Node_http_clientClientRequest"_s,
-    "Node_http_clientDefault"_s,
-    "Node_http_commonCRLF"_s,
-    "Node_http_commonHTTPParser"_s,
-    "Node_http_commonMAX_HEADER_PAIRS"_s,
-    "Node_http_common_checkInvalidHeaderChar"_s,
-    "Node_http_common_checkIsHttpToken"_s,
-    "Node_http_commonCalculateLenientFlags"_s,
-    "Node_http_commonChunkExpression"_s,
-    "Node_http_commonContinueExpression"_s,
-    "Node_http_commonDefault"_s,
-    "Node_http_commonFreeParser"_s,
-    "Node_http_commonIsLenient"_s,
-    "Node_http_commonKIncomingMessage"_s,
-    "Node_http_commonKSkipPendingData"_s,
-    "Node_http_commonMethods"_s,
-    "Node_http_commonParsers"_s,
-    "Node_http_commonPrepareError"_s,
-    "Node_http_commonValidateHeaderName"_s,
-    "Node_http_commonValidateHeaderValue"_s,
-    "Node_http_incomingIncomingMessage"_s,
-    "Node_http_incomingDefault"_s,
-    "Node_http_incomingKReqShouldKeepAlive"_s,
-    "Node_http_incomingReadStart"_s,
-    "Node_http_incomingReadStop"_s,
-    "Node_http_outgoingFakeSocket"_s,
-    "Node_http_outgoingOutgoingMessage"_s,
-    "Node_http_outgoingDefault"_s,
-    "Node_http_outgoingKErrored"_s,
-    "Node_http_outgoingKHighWaterMark"_s,
-    "Node_http_outgoingKOutHeaders"_s,
-    "Node_http_outgoingKRejectNonStandardBodyWrites"_s,
-    "Node_http_outgoingKSocket"_s,
-    "Node_http_outgoingKUniqueHeaders"_s,
-    "Node_http_outgoingParseUniqueHeadersOption"_s,
-    "Node_http_outgoingValidateHeaderName"_s,
-    "Node_http_outgoingValidateHeaderValue"_s,
-    "Node_http_serverServer"_s,
-    "Node_http_serverServerResponse"_s,
-    "Node_http_serverDefault"_s,
-    "Node_http_serverKConnectionsCheckingInterval"_s,
-    "Node_stream_duplexDefault"_s,
-    "Node_stream_duplexFrom"_s,
-    "Node_stream_duplexFromWeb"_s,
-    "Node_stream_duplexToWeb"_s,
-    "Node_stream_passthroughDefault"_s,
-    "Node_stream_readableReadableState"_s,
-    "Node_stream_readable_fromList"_s,
-    "Node_stream_readableDefault"_s,
-    "Node_stream_readableFrom"_s,
-    "Node_stream_readableFromWeb"_s,
-    "Node_stream_readableToWeb"_s,
-    "Node_stream_readableWrap"_s,
-    "Node_stream_transformDefault"_s,
-    "Node_stream_wrapDuplex"_s,
-    "Node_stream_wrapPassThrough"_s,
-    "Node_stream_wrapReadable"_s,
-    "Node_stream_wrapStream"_s,
-    "Node_stream_wrapTransform"_s,
-    "Node_stream_wrapWritable"_s,
-    "Node_stream_wrap_isArrayBufferView"_s,
-    "Node_stream_wrap_isUint8Array"_s,
-    "Node_stream_wrap_uint8ArrayToBuffer"_s,
-    "Node_stream_wrapAddAbortSignal"_s,
-    "Node_stream_wrapCompose"_s,
-    "Node_stream_wrapDefault"_s,
-    "Node_stream_wrapDestroy"_s,
-    "Node_stream_wrapDuplexPair"_s,
-    "Node_stream_wrapEos"_s,
-    "Node_stream_wrapFinished"_s,
-    "Node_stream_wrapGetDefaultHighWaterMark"_s,
-    "Node_stream_wrapIsDestroyed"_s,
-    "Node_stream_wrapIsDisturbed"_s,
-    "Node_stream_wrapIsErrored"_s,
-    "Node_stream_wrapIsReadable"_s,
-    "Node_stream_wrapIsWritable"_s,
-    "Node_stream_wrapPipeline"_s,
-    "Node_stream_wrapPromises"_s,
-    "Node_stream_wrapSetDefaultHighWaterMark"_s,
-    "Node_stream_writableWritableState"_s,
-    "Node_stream_writableDefault"_s,
-    "Node_stream_writableFromWeb"_s,
-    "Node_stream_writableToWeb"_s,
-    "Node_tls_commonSecureContext"_s,
-    "Node_tls_commonCreateSecureContext"_s,
-    "Node_tls_commonDefault"_s,
-    "Node_tls_commonTranslatePeerCertificate"_s,
-    "Node_tls_wrapServer"_s,
-    "Node_tls_wrapTLSSocket"_s,
-    "Node_tls_wrapConnect"_s,
-    "Node_tls_wrapCreateServer"_s,
-    "Node_tls_wrapDefault"_s,
-    "NodeAssertAssert"_s,
-    "NodeAssertAssertionError"_s,
-    "NodeAssertCallTracker"_s,
-    "NodeAssertDeepEqual"_s,
-    "NodeAssertDeepStrictEqual"_s,
-    "NodeAssertDefault"_s,
-    "NodeAssertDoesNotMatch"_s,
-    "NodeAssertDoesNotReject"_s,
-    "NodeAssertDoesNotThrow"_s,
-    "NodeAssertEqual"_s,
-    "NodeAssertFail"_s,
-    "NodeAssertIfError"_s,
-    "NodeAssertMatch"_s,
-    "NodeAssertNotDeepEqual"_s,
-    "NodeAssertNotDeepStrictEqual"_s,
-    "NodeAssertNotEqual"_s,
-    "NodeAssertNotStrictEqual"_s,
-    "NodeAssertOk"_s,
-    "NodeAssertPartialDeepStrictEqual"_s,
-    "NodeAssertRejects"_s,
-    "NodeAssert_strict"_s,
-    "NodeAssert_strictEqual"_s,
-    "NodeAssertThrows"_s,
-    "NodeAssertStrictAssert"_s,
-    "NodeAssertStrictAssertionError"_s,
-    "NodeAssertStrictCallTracker"_s,
-    "NodeAssertStrictDeepEqual"_s,
-    "NodeAssertStrictDeepStrictEqual"_s,
-    "NodeAssertStrictDefault"_s,
-    "NodeAssertStrictDoesNotMatch"_s,
-    "NodeAssertStrictDoesNotReject"_s,
-    "NodeAssertStrictDoesNotThrow"_s,
-    "NodeAssertStrict_equal"_s,
-    "NodeAssertStrictFail"_s,
-    "NodeAssertStrictIfError"_s,
-    "NodeAssertStrictMatch"_s,
-    "NodeAssertStrictNotDeepEqual"_s,
-    "NodeAssertStrictNotDeepStrictEqual"_s,
-    "NodeAssertStrictNotEqual"_s,
-    "NodeAssertStrictNotStrictEqual"_s,
-    "NodeAssertStrictOk"_s,
-    "NodeAssertStrictPartialDeepStrictEqual"_s,
-    "NodeAssertStrictRejects"_s,
-    "NodeAssertStrictStrict"_s,
-    "NodeAssertStrictStrictEqual"_s,
-    "NodeAssertStrictThrows"_s,
-    "NodeAsync_hooksAsyncLocalStorage"_s,
-    "NodeAsync_hooksAsyncResource"_s,
-    "NodeAsync_hooksAsyncWrapProviders"_s,
-    "NodeAsync_hooksCreateHook"_s,
-    "NodeAsync_hooksDefault"_s,
-    "NodeAsync_hooksExecutionAsyncId"_s,
-    "NodeAsync_hooksExecutionAsyncResource"_s,
-    "NodeAsync_hooksTriggerAsyncId"_s,
-    "NodeBufferBlob"_s,
-    "NodeBufferBuffer"_s,
-    "NodeBufferFile"_s,
-    "NodeBufferINSPECT_MAX_BYTES"_s,
-    "NodeBufferSlowBuffer"_s,
-    "NodeBufferAtob"_s,
-    "NodeBufferBtoa"_s,
-    "NodeBufferConstants"_s,
-    "NodeBufferDefault"_s,
-    "NodeBufferIsAscii"_s,
-    "NodeBufferIsUtf8"_s,
-    "NodeBufferKMaxLength"_s,
-    "NodeBufferKStringMaxLength"_s,
-    "NodeBufferResolveObjectURL"_s,
-    "NodeBufferTranscode"_s,
-    "NodeChild_processChildProcess"_s,
-    "NodeChild_processDefault"_s,
-    "NodeChild_processExec"_s,
-    "NodeChild_processExecFile"_s,
-    "NodeChild_processExecFileSync"_s,
-    "NodeChild_processExecSync"_s,
-    "NodeChild_processFork"_s,
-    "NodeChild_processSpawn"_s,
-    "NodeChild_processSpawnSync"_s,
-    "NodeClusterSCHED_NONE"_s,
-    "NodeClusterSCHED_RR"_s,
-    "NodeClusterWorker"_s,
-    "NodeCluster_events"_s,
-    "NodeCluster_eventsCount"_s,
-    "NodeCluster_maxListeners"_s,
-    "NodeClusterDefault"_s,
-    "NodeClusterDisconnect"_s,
-    "NodeClusterFork"_s,
-    "NodeClusterIsMaster"_s,
-    "NodeClusterIsPrimary"_s,
-    "NodeClusterIsWorker"_s,
-    "NodeClusterSchedulingPolicy"_s,
-    "NodeClusterSettings"_s,
-    "NodeClusterSetupMaster"_s,
-    "NodeClusterSetupPrimary"_s,
-    "NodeClusterWorkers"_s,
-    "NodeConsoleConsole"_s,
-    "NodeConsoleAssert"_s,
-    "NodeConsoleClear"_s,
-    "NodeConsoleCount"_s,
-    "NodeConsoleCountReset"_s,
-    "NodeConsoleDebug"_s,
-    "NodeConsoleDefault"_s,
-    "NodeConsoleDir"_s,
-    "NodeConsoleDirxml"_s,
-    "NodeConsoleError"_s,
-    "NodeConsoleGroup"_s,
-    "NodeConsoleGroupCollapsed"_s,
-    "NodeConsoleGroupEnd"_s,
-    "NodeConsoleInfo"_s,
-    "NodeConsoleLog"_s,
-    "NodeConsoleProfile"_s,
-    "NodeConsoleProfileEnd"_s,
-    "NodeConsoleRecord"_s,
-    "NodeConsoleRecordEnd"_s,
-    "NodeConsoleScreenshot"_s,
-    "NodeConsoleTable"_s,
-    "NodeConsoleTakeHeapSnapshot"_s,
-    "NodeConsoleTime"_s,
-    "NodeConsoleTimeEnd"_s,
-    "NodeConsoleTimeLog"_s,
-    "NodeConsoleTimeStamp"_s,
-    "NodeConsoleTrace"_s,
-    "NodeConsoleWarn"_s,
-    "NodeConsoleWrite"_s,
-    "NodeConstantsCOPYFILE_EXCL"_s,
-    "NodeConstantsCOPYFILE_FICLONE"_s,
-    "NodeConstantsCOPYFILE_FICLONE_FORCE"_s,
-    "NodeConstantsDH_CHECK_P_NOT_PRIME"_s,
-    "NodeConstantsDH_CHECK_P_NOT_SAFE_PRIME"_s,
-    "NodeConstantsDH_NOT_SUITABLE_GENERATOR"_s,
-    "NodeConstantsDH_UNABLE_TO_CHECK_GENERATOR"_s,
-    "NodeConstantsE2BIG"_s,
-    "NodeConstantsEACCES"_s,
-    "NodeConstantsEADDRINUSE"_s,
-    "NodeConstantsEADDRNOTAVAIL"_s,
-    "NodeConstantsEAFNOSUPPORT"_s,
-    "NodeConstantsEAGAIN"_s,
-    "NodeConstantsEALREADY"_s,
-    "NodeConstantsEBADF"_s,
-    "NodeConstantsEBADMSG"_s,
-    "NodeConstantsEBUSY"_s,
-    "NodeConstantsECANCELED"_s,
-    "NodeConstantsECHILD"_s,
-    "NodeConstantsECONNABORTED"_s,
-    "NodeConstantsECONNREFUSED"_s,
-    "NodeConstantsECONNRESET"_s,
-    "NodeConstantsEDEADLK"_s,
-    "NodeConstantsEDESTADDRREQ"_s,
-    "NodeConstantsEDOM"_s,
-    "NodeConstantsEDQUOT"_s,
-    "NodeConstantsEEXIST"_s,
-    "NodeConstantsEFAULT"_s,
-    "NodeConstantsEFBIG"_s,
-    "NodeConstantsEHOSTUNREACH"_s,
-    "NodeConstantsEIDRM"_s,
-    "NodeConstantsEILSEQ"_s,
-    "NodeConstantsEINPROGRESS"_s,
-    "NodeConstantsEINTR"_s,
-    "NodeConstantsEINVAL"_s,
-    "NodeConstantsEIO"_s,
-    "NodeConstantsEISCONN"_s,
-    "NodeConstantsEISDIR"_s,
-    "NodeConstantsELOOP"_s,
-    "NodeConstantsEMFILE"_s,
-    "NodeConstantsEMLINK"_s,
-    "NodeConstantsEMSGSIZE"_s,
-    "NodeConstantsEMULTIHOP"_s,
-    "NodeConstantsENAMETOOLONG"_s,
-    "NodeConstantsENETDOWN"_s,
-    "NodeConstantsENETRESET"_s,
-    "NodeConstantsENETUNREACH"_s,
-    "NodeConstantsENFILE"_s,
-    "NodeConstantsENGINE_METHOD_ALL"_s,
-    "NodeConstantsENGINE_METHOD_CIPHERS"_s,
-    "NodeConstantsENGINE_METHOD_DH"_s,
-    "NodeConstantsENGINE_METHOD_DIGESTS"_s,
-    "NodeConstantsENGINE_METHOD_DSA"_s,
-    "NodeConstantsENGINE_METHOD_EC"_s,
-    "NodeConstantsENGINE_METHOD_NONE"_s,
-    "NodeConstantsENGINE_METHOD_PKEY_ASN1_METHS"_s,
-    "NodeConstantsENGINE_METHOD_PKEY_METHS"_s,
-    "NodeConstantsENGINE_METHOD_RAND"_s,
-    "NodeConstantsENGINE_METHOD_RSA"_s,
-    "NodeConstantsENOBUFS"_s,
-    "NodeConstantsENODATA"_s,
-    "NodeConstantsENODEV"_s,
-    "NodeConstantsENOENT"_s,
-    "NodeConstantsENOEXEC"_s,
-    "NodeConstantsENOLCK"_s,
-    "NodeConstantsENOLINK"_s,
-    "NodeConstantsENOMEM"_s,
-    "NodeConstantsENOMSG"_s,
-    "NodeConstantsENOPROTOOPT"_s,
-    "NodeConstantsENOSPC"_s,
-    "NodeConstantsENOSR"_s,
-    "NodeConstantsENOSTR"_s,
-    "NodeConstantsENOSYS"_s,
-    "NodeConstantsENOTCONN"_s,
-    "NodeConstantsENOTDIR"_s,
-    "NodeConstantsENOTEMPTY"_s,
-    "NodeConstantsENOTSOCK"_s,
-    "NodeConstantsENOTSUP"_s,
-    "NodeConstantsENOTTY"_s,
-    "NodeConstantsENXIO"_s,
-    "NodeConstantsEOPNOTSUPP"_s,
-    "NodeConstantsEOVERFLOW"_s,
-    "NodeConstantsEPERM"_s,
-    "NodeConstantsEPIPE"_s,
-    "NodeConstantsEPROTO"_s,
-    "NodeConstantsEPROTONOSUPPORT"_s,
-    "NodeConstantsEPROTOTYPE"_s,
-    "NodeConstantsERANGE"_s,
-    "NodeConstantsEROFS"_s,
-    "NodeConstantsESPIPE"_s,
-    "NodeConstantsESRCH"_s,
-    "NodeConstantsESTALE"_s,
-    "NodeConstantsETIME"_s,
-    "NodeConstantsETIMEDOUT"_s,
-    "NodeConstantsETXTBSY"_s,
-    "NodeConstantsEWOULDBLOCK"_s,
-    "NodeConstantsEXDEV"_s,
-    "NodeConstantsEXTENSIONLESS_FORMAT_JAVASCRIPT"_s,
-    "NodeConstantsEXTENSIONLESS_FORMAT_WASM"_s,
-    "NodeConstantsF_OK"_s,
-    "NodeConstantsOPENSSL_VERSION_NUMBER"_s,
-    "NodeConstantsO_APPEND"_s,
-    "NodeConstantsO_CREAT"_s,
-    "NodeConstantsO_DIRECTORY"_s,
-    "NodeConstantsO_DSYNC"_s,
-    "NodeConstantsO_EXCL"_s,
-    "NodeConstantsO_NOCTTY"_s,
-    "NodeConstantsO_NOFOLLOW"_s,
-    "NodeConstantsO_NONBLOCK"_s,
-    "NodeConstantsO_RDONLY"_s,
-    "NodeConstantsO_RDWR"_s,
-    "NodeConstantsO_SYNC"_s,
-    "NodeConstantsO_TRUNC"_s,
-    "NodeConstantsO_WRONLY"_s,
-    "NodeConstantsPOINT_CONVERSION_COMPRESSED"_s,
-    "NodeConstantsPOINT_CONVERSION_HYBRID"_s,
-    "NodeConstantsPOINT_CONVERSION_UNCOMPRESSED"_s,
-    "NodeConstantsPRIORITY_ABOVE_NORMAL"_s,
-    "NodeConstantsPRIORITY_BELOW_NORMAL"_s,
-    "NodeConstantsPRIORITY_HIGH"_s,
-    "NodeConstantsPRIORITY_HIGHEST"_s,
-    "NodeConstantsPRIORITY_LOW"_s,
-    "NodeConstantsPRIORITY_NORMAL"_s,
-    "NodeConstantsRSA_NO_PADDING"_s,
-    "NodeConstantsRSA_PKCS1_OAEP_PADDING"_s,
-    "NodeConstantsRSA_PKCS1_PADDING"_s,
-    "NodeConstantsRSA_PKCS1_PSS_PADDING"_s,
-    "NodeConstantsRSA_PSS_SALTLEN_AUTO"_s,
-    "NodeConstantsRSA_PSS_SALTLEN_DIGEST"_s,
-    "NodeConstantsRSA_PSS_SALTLEN_MAX_SIGN"_s,
-    "NodeConstantsRSA_X931_PADDING"_s,
-    "NodeConstantsRTLD_GLOBAL"_s,
-    "NodeConstantsRTLD_LAZY"_s,
-    "NodeConstantsRTLD_LOCAL"_s,
-    "NodeConstantsRTLD_NOW"_s,
-    "NodeConstantsR_OK"_s,
-    "NodeConstantsSIGABRT"_s,
-    "NodeConstantsSIGALRM"_s,
-    "NodeConstantsSIGBUS"_s,
-    "NodeConstantsSIGCHLD"_s,
-    "NodeConstantsSIGCONT"_s,
-    "NodeConstantsSIGFPE"_s,
-    "NodeConstantsSIGHUP"_s,
-    "NodeConstantsSIGILL"_s,
-    "NodeConstantsSIGINT"_s,
-    "NodeConstantsSIGIO"_s,
-    "NodeConstantsSIGIOT"_s,
-    "NodeConstantsSIGKILL"_s,
-    "NodeConstantsSIGPIPE"_s,
-    "NodeConstantsSIGPROF"_s,
-    "NodeConstantsSIGQUIT"_s,
-    "NodeConstantsSIGSEGV"_s,
-    "NodeConstantsSIGSTOP"_s,
-    "NodeConstantsSIGSYS"_s,
-    "NodeConstantsSIGTERM"_s,
-    "NodeConstantsSIGTRAP"_s,
-    "NodeConstantsSIGTSTP"_s,
-    "NodeConstantsSIGTTIN"_s,
-    "NodeConstantsSIGTTOU"_s,
-    "NodeConstantsSIGURG"_s,
-    "NodeConstantsSIGUSR1"_s,
-    "NodeConstantsSIGUSR2"_s,
-    "NodeConstantsSIGVTALRM"_s,
-    "NodeConstantsSIGWINCH"_s,
-    "NodeConstantsSIGXCPU"_s,
-    "NodeConstantsSIGXFSZ"_s,
-    "NodeConstantsSSL_OP_ALL"_s,
-    "NodeConstantsSSL_OP_ALLOW_NO_DHE_KEX"_s,
-    "NodeConstantsSSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s,
-    "NodeConstantsSSL_OP_CIPHER_SERVER_PREFERENCE"_s,
-    "NodeConstantsSSL_OP_CISCO_ANYCONNECT"_s,
-    "NodeConstantsSSL_OP_COOKIE_EXCHANGE"_s,
-    "NodeConstantsSSL_OP_CRYPTOPRO_TLSEXT_BUG"_s,
-    "NodeConstantsSSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s,
-    "NodeConstantsSSL_OP_EPHEMERAL_RSA"_s,
-    "NodeConstantsSSL_OP_LEGACY_SERVER_CONNECT"_s,
-    "NodeConstantsSSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s,
-    "NodeConstantsSSL_OP_MICROSOFT_SESS_ID_BUG"_s,
-    "NodeConstantsSSL_OP_MSIE_SSLV2_RSA_PADDING"_s,
-    "NodeConstantsSSL_OP_NETSCAPE_CA_DN_BUG"_s,
-    "NodeConstantsSSL_OP_NETSCAPE_CHALLENGE_BUG"_s,
-    "NodeConstantsSSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s,
-    "NodeConstantsSSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s,
-    "NodeConstantsSSL_OP_NO_COMPRESSION"_s,
-    "NodeConstantsSSL_OP_NO_ENCRYPT_THEN_MAC"_s,
-    "NodeConstantsSSL_OP_NO_QUERY_MTU"_s,
-    "NodeConstantsSSL_OP_NO_RENEGOTIATION"_s,
-    "NodeConstantsSSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION"_s,
-    "NodeConstantsSSL_OP_NO_SSLv2"_s,
-    "NodeConstantsSSL_OP_NO_SSLv3"_s,
-    "NodeConstantsSSL_OP_NO_TICKET"_s,
-    "NodeConstantsSSL_OP_NO_TLSv1"_s,
-    "NodeConstantsSSL_OP_NO_TLSv1_1"_s,
-    "NodeConstantsSSL_OP_NO_TLSv1_2"_s,
-    "NodeConstantsSSL_OP_NO_TLSv1_3"_s,
-    "NodeConstantsSSL_OP_PKCS1_CHECK_1"_s,
-    "NodeConstantsSSL_OP_PKCS1_CHECK_2"_s,
-    "NodeConstantsSSL_OP_PRIORITIZE_CHACHA"_s,
-    "NodeConstantsSSL_OP_SINGLE_DH_USE"_s,
-    "NodeConstantsSSL_OP_SINGLE_ECDH_USE"_s,
-    "NodeConstantsSSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s,
-    "NodeConstantsSSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s,
-    "NodeConstantsSSL_OP_TLS_BLOCK_PADDING_BUG"_s,
-    "NodeConstantsSSL_OP_TLS_D5_BUG"_s,
-    "NodeConstantsSSL_OP_TLS_ROLLBACK_BUG"_s,
-    "NodeConstantsS_IFBLK"_s,
-    "NodeConstantsS_IFCHR"_s,
-    "NodeConstantsS_IFDIR"_s,
-    "NodeConstantsS_IFIFO"_s,
-    "NodeConstantsS_IFLNK"_s,
-    "NodeConstantsS_IFMT"_s,
-    "NodeConstantsS_IFREG"_s,
-    "NodeConstantsS_IFSOCK"_s,
-    "NodeConstantsS_IRGRP"_s,
-    "NodeConstantsS_IROTH"_s,
-    "NodeConstantsS_IRUSR"_s,
-    "NodeConstantsS_IRWXG"_s,
-    "NodeConstantsS_IRWXO"_s,
-    "NodeConstantsS_IRWXU"_s,
-    "NodeConstantsS_IWGRP"_s,
-    "NodeConstantsS_IWOTH"_s,
-    "NodeConstantsS_IWUSR"_s,
-    "NodeConstantsS_IXGRP"_s,
-    "NodeConstantsS_IXOTH"_s,
-    "NodeConstantsS_IXUSR"_s,
-    "NodeConstantsTLS1_1_VERSION"_s,
-    "NodeConstantsTLS1_2_VERSION"_s,
-    "NodeConstantsTLS1_3_VERSION"_s,
-    "NodeConstantsTLS1_VERSION"_s,
-    "NodeConstantsUV_DIRENT_BLOCK"_s,
-    "NodeConstantsUV_DIRENT_CHAR"_s,
-    "NodeConstantsUV_DIRENT_DIR"_s,
-    "NodeConstantsUV_DIRENT_FIFO"_s,
-    "NodeConstantsUV_DIRENT_FILE"_s,
-    "NodeConstantsUV_DIRENT_LINK"_s,
-    "NodeConstantsUV_DIRENT_SOCKET"_s,
-    "NodeConstantsUV_DIRENT_UNKNOWN"_s,
-    "NodeConstantsUV_FS_COPYFILE_EXCL"_s,
-    "NodeConstantsUV_FS_COPYFILE_FICLONE"_s,
-    "NodeConstantsUV_FS_COPYFILE_FICLONE_FORCE"_s,
-    "NodeConstantsUV_FS_O_FILEMAP"_s,
-    "NodeConstantsUV_FS_SYMLINK_DIR"_s,
-    "NodeConstantsUV_FS_SYMLINK_JUNCTION"_s,
-    "NodeConstantsW_OK"_s,
-    "NodeConstantsX_OK"_s,
-    "NodeConstantsDefault"_s,
-    "NodeConstantsDefaultCipherList"_s,
-    "NodeConstantsDefaultCoreCipherList"_s,
-    "NodeCryptoCertificate"_s,
-    "NodeCryptoCipheriv"_s,
-    "NodeCryptoDecipheriv"_s,
-    "NodeCrypto_DiffieHellman"_s,
-    "NodeCryptoDiffieHellmanGroup"_s,
-    "NodeCryptoECDH"_s,
-    "NodeCrypto_Hash"_s,
-    "NodeCryptoHmac"_s,
-    "NodeCryptoKeyObject"_s,
-    "NodeCrypto_Sign"_s,
-    "NodeCrypto_Verify"_s,
-    "NodeCryptoX509Certificate"_s,
-    "NodeCryptoArgon2"_s,
-    "NodeCryptoArgon2Sync"_s,
-    "NodeCryptoCheckPrime"_s,
-    "NodeCryptoCheckPrimeSync"_s,
-    "NodeCryptoConstants"_s,
-    "NodeCryptoCreateCipheriv"_s,
-    "NodeCryptoCreateDecipheriv"_s,
-    "NodeCryptoCreateDiffieHellman"_s,
-    "NodeCryptoCreateDiffieHellmanGroup"_s,
-    "NodeCryptoCreateECDH"_s,
-    "NodeCryptoCreateHash"_s,
-    "NodeCryptoCreateHmac"_s,
-    "NodeCryptoCreatePrivateKey"_s,
-    "NodeCryptoCreatePublicKey"_s,
-    "NodeCryptoCreateSecretKey"_s,
-    "NodeCryptoCreateSign"_s,
-    "NodeCryptoCreateVerify"_s,
-    "NodeCryptoDefault"_s,
-    "NodeCrypto_diffieHellman"_s,
-    "NodeCryptoGenerateKey"_s,
-    "NodeCryptoGenerateKeyPair"_s,
-    "NodeCryptoGenerateKeyPairSync"_s,
-    "NodeCryptoGenerateKeySync"_s,
-    "NodeCryptoGeneratePrime"_s,
-    "NodeCryptoGeneratePrimeSync"_s,
-    "NodeCryptoGetCipherInfo"_s,
-    "NodeCryptoGetCiphers"_s,
-    "NodeCryptoGetCurves"_s,
-    "NodeCryptoGetDiffieHellman"_s,
-    "NodeCryptoGetFips"_s,
-    "NodeCryptoGetHashes"_s,
-    "NodeCryptoGetRandomValues"_s,
-    "NodeCrypto_hash"_s,
-    "NodeCryptoHkdf"_s,
-    "NodeCryptoHkdfSync"_s,
-    "NodeCryptoPbkdf2"_s,
-    "NodeCryptoPbkdf2Sync"_s,
-    "NodeCryptoPrivateDecrypt"_s,
-    "NodeCryptoPrivateEncrypt"_s,
-    "NodeCryptoPublicDecrypt"_s,
-    "NodeCryptoPublicEncrypt"_s,
-    "NodeCryptoRandomBytes"_s,
-    "NodeCryptoRandomFill"_s,
-    "NodeCryptoRandomFillSync"_s,
-    "NodeCryptoRandomInt"_s,
-    "NodeCryptoRandomUUID"_s,
-    "NodeCryptoRandomUUIDv7"_s,
-    "NodeCryptoScrypt"_s,
-    "NodeCryptoScryptSync"_s,
-    "NodeCryptoSecureHeapUsed"_s,
-    "NodeCryptoSetEngine"_s,
-    "NodeCryptoSetFips"_s,
-    "NodeCrypto_sign"_s,
-    "NodeCryptoSubtle"_s,
-    "NodeCryptoTimingSafeEqual"_s,
-    "NodeCrypto_verify"_s,
-    "NodeCryptoWebcrypto"_s,
-    "NodeDgramSocket"_s,
-    "NodeDgramCreateSocket"_s,
-    "NodeDgramDefault"_s,
-    "NodeDiagnostics_channel_Channel"_s,
-    "NodeDiagnostics_channel_channel"_s,
-    "NodeDiagnostics_channelDefault"_s,
-    "NodeDiagnostics_channelHasSubscribers"_s,
-    "NodeDiagnostics_channelSubscribe"_s,
-    "NodeDiagnostics_channelTracingChannel"_s,
-    "NodeDiagnostics_channelUnsubscribe"_s,
-    "NodeDnsADDRCONFIG"_s,
-    "NodeDnsADDRGETNETWORKPARAMS"_s,
-    "NodeDnsALL"_s,
-    "NodeDnsBADFAMILY"_s,
-    "NodeDnsBADFLAGS"_s,
-    "NodeDnsBADHINTS"_s,
-    "NodeDnsBADNAME"_s,
-    "NodeDnsBADQUERY"_s,
-    "NodeDnsBADRESP"_s,
-    "NodeDnsBADSTR"_s,
-    "NodeDnsCANCELLED"_s,
-    "NodeDnsCONNREFUSED"_s,
-    "NodeDnsDESTRUCTION"_s,
-    "NodeDnsEOF"_s,
-    "NodeDnsFILE"_s,
-    "NodeDnsFORMERR"_s,
-    "NodeDnsLOADIPHLPAPI"_s,
-    "NodeDnsNODATA"_s,
-    "NodeDnsNOMEM"_s,
-    "NodeDnsNONAME"_s,
-    "NodeDnsNOTFOUND"_s,
-    "NodeDnsNOTIMP"_s,
-    "NodeDnsNOTINITIALIZED"_s,
-    "NodeDnsREFUSED"_s,
-    "NodeDnsResolver"_s,
-    "NodeDnsSERVFAIL"_s,
-    "NodeDnsTIMEOUT"_s,
-    "NodeDnsV4MAPPED"_s,
-    "NodeDnsDefault"_s,
-    "NodeDnsGetDefaultResultOrder"_s,
-    "NodeDnsGetServers"_s,
-    "NodeDnsLookup"_s,
-    "NodeDnsLookupService"_s,
-    "NodeDns_promises"_s,
-    "NodeDnsResolve"_s,
-    "NodeDnsResolve4"_s,
-    "NodeDnsResolve6"_s,
-    "NodeDnsResolveAny"_s,
-    "NodeDnsResolveCaa"_s,
-    "NodeDnsResolveCname"_s,
-    "NodeDnsResolveMx"_s,
-    "NodeDnsResolveNaptr"_s,
-    "NodeDnsResolveNs"_s,
-    "NodeDnsResolvePtr"_s,
-    "NodeDnsResolveSoa"_s,
-    "NodeDnsResolveSrv"_s,
-    "NodeDnsResolveTxt"_s,
-    "NodeDnsReverse"_s,
-    "NodeDnsSetDefaultResultOrder"_s,
-    "NodeDnsSetServers"_s,
-    "NodeDnsPromisesADDRGETNETWORKPARAMS"_s,
-    "NodeDnsPromisesBADFAMILY"_s,
-    "NodeDnsPromisesBADFLAGS"_s,
-    "NodeDnsPromisesBADHINTS"_s,
-    "NodeDnsPromisesBADNAME"_s,
-    "NodeDnsPromisesBADQUERY"_s,
-    "NodeDnsPromisesBADRESP"_s,
-    "NodeDnsPromisesBADSTR"_s,
-    "NodeDnsPromisesCANCELLED"_s,
-    "NodeDnsPromisesCONNREFUSED"_s,
-    "NodeDnsPromisesDESTRUCTION"_s,
-    "NodeDnsPromisesEOF"_s,
-    "NodeDnsPromisesFILE"_s,
-    "NodeDnsPromisesFORMERR"_s,
-    "NodeDnsPromisesLOADIPHLPAPI"_s,
-    "NodeDnsPromisesNODATA"_s,
-    "NodeDnsPromisesNOMEM"_s,
-    "NodeDnsPromisesNONAME"_s,
-    "NodeDnsPromisesNOTFOUND"_s,
-    "NodeDnsPromisesNOTIMP"_s,
-    "NodeDnsPromisesNOTINITIALIZED"_s,
-    "NodeDnsPromisesREFUSED"_s,
-    "NodeDnsPromisesResolver"_s,
-    "NodeDnsPromisesSERVFAIL"_s,
-    "NodeDnsPromisesTIMEOUT"_s,
-    "NodeDnsPromisesDefault"_s,
-    "NodeDnsPromisesGetDefaultResultOrder"_s,
-    "NodeDnsPromisesGetServers"_s,
-    "NodeDnsPromisesLookup"_s,
-    "NodeDnsPromisesLookupService"_s,
-    "NodeDnsPromisesResolve"_s,
-    "NodeDnsPromisesResolve4"_s,
-    "NodeDnsPromisesResolve6"_s,
-    "NodeDnsPromisesResolveAny"_s,
-    "NodeDnsPromisesResolveCaa"_s,
-    "NodeDnsPromisesResolveCname"_s,
-    "NodeDnsPromisesResolveMx"_s,
-    "NodeDnsPromisesResolveNaptr"_s,
-    "NodeDnsPromisesResolveNs"_s,
-    "NodeDnsPromisesResolvePtr"_s,
-    "NodeDnsPromisesResolveSoa"_s,
-    "NodeDnsPromisesResolveSrv"_s,
-    "NodeDnsPromisesResolveTxt"_s,
-    "NodeDnsPromisesReverse"_s,
-    "NodeDnsPromisesSetDefaultResultOrder"_s,
-    "NodeDnsPromisesSetServers"_s,
-    "NodeDomain_stack"_s,
-    "NodeDomainActive"_s,
-    "NodeDomainCreate"_s,
-    "NodeDomainCreateDomain"_s,
-    "NodeDomainDefault"_s,
-    "NodeEventsEventEmitter"_s,
-    "NodeEventsEventEmitterAsyncResource"_s,
-    "NodeEventsAddAbortListener"_s,
-    "NodeEventsCaptureRejectionSymbol"_s,
-    "NodeEventsCaptureRejections"_s,
-    "NodeEventsDefault"_s,
-    "NodeEventsDefaultMaxListeners"_s,
-    "NodeEventsErrorMonitor"_s,
-    "NodeEventsGetEventListeners"_s,
-    "NodeEventsGetMaxListeners"_s,
-    "NodeEventsInit"_s,
-    "NodeEventsListenerCount"_s,
-    "NodeEventsOn"_s,
-    "NodeEventsOnce"_s,
-    "NodeEventsPrototype"_s,
-    "NodeEventsSetMaxListeners"_s,
-    "NodeEventsUsingDomains"_s,
-    "NodeFsDir"_s,
-    "NodeFsDirent"_s,
-    "NodeFsF_OK"_s,
-    "NodeFsFileReadStream"_s,
-    "NodeFsFileWriteStream"_s,
-    "NodeFsR_OK"_s,
-    "NodeFsReadStream"_s,
-    "NodeFsStats"_s,
-    "NodeFsUtf8Stream"_s,
-    "NodeFsW_OK"_s,
-    "NodeFsWriteStream"_s,
-    "NodeFsX_OK"_s,
-    "NodeFs_toUnixTimestamp"_s,
-    "NodeFsAccess"_s,
-    "NodeFsAccessSync"_s,
-    "NodeFsAppendFile"_s,
-    "NodeFsAppendFileSync"_s,
-    "NodeFsChmod"_s,
-    "NodeFsChmodSync"_s,
-    "NodeFsChown"_s,
-    "NodeFsChownSync"_s,
-    "NodeFsClose"_s,
-    "NodeFsCloseSync"_s,
-    "NodeFsConstants"_s,
-    "NodeFsCopyFile"_s,
-    "NodeFsCopyFileSync"_s,
-    "NodeFsCp"_s,
-    "NodeFsCpSync"_s,
-    "NodeFsCreateReadStream"_s,
-    "NodeFsCreateWriteStream"_s,
-    "NodeFsDefault"_s,
-    "NodeFsExists"_s,
-    "NodeFsExistsSync"_s,
-    "NodeFsFchmod"_s,
-    "NodeFsFchmodSync"_s,
-    "NodeFsFchown"_s,
-    "NodeFsFchownSync"_s,
-    "NodeFsFdatasync"_s,
-    "NodeFsFdatasyncSync"_s,
-    "NodeFsFstat"_s,
-    "NodeFsFstatSync"_s,
-    "NodeFsFsync"_s,
-    "NodeFsFsyncSync"_s,
-    "NodeFsFtruncate"_s,
-    "NodeFsFtruncateSync"_s,
-    "NodeFsFutimes"_s,
-    "NodeFsFutimesSync"_s,
-    "NodeFsGlob"_s,
-    "NodeFsGlobSync"_s,
-    "NodeFsLchmod"_s,
-    "NodeFsLchmodSync"_s,
-    "NodeFsLchown"_s,
-    "NodeFsLchownSync"_s,
-    "NodeFsLink"_s,
-    "NodeFsLinkSync"_s,
-    "NodeFsLstat"_s,
-    "NodeFsLstatSync"_s,
-    "NodeFsLutimes"_s,
-    "NodeFsLutimesSync"_s,
-    "NodeFsMkdir"_s,
-    "NodeFsMkdirSync"_s,
-    "NodeFsMkdtemp"_s,
-    "NodeFsMkdtempDisposableSync"_s,
-    "NodeFsMkdtempSync"_s,
-    "NodeFsOpen"_s,
-    "NodeFsOpenAsBlob"_s,
-    "NodeFsOpenSync"_s,
-    "NodeFsOpendir"_s,
-    "NodeFsOpendirSync"_s,
-    "NodeFs_promises"_s,
-    "NodeFsRead"_s,
-    "NodeFsReadFile"_s,
-    "NodeFsReadFileSync"_s,
-    "NodeFsReadSync"_s,
-    "NodeFsReaddir"_s,
-    "NodeFsReaddirSync"_s,
-    "NodeFsReadlink"_s,
-    "NodeFsReadlinkSync"_s,
-    "NodeFsReadv"_s,
-    "NodeFsReadvSync"_s,
-    "NodeFsRealpath"_s,
-    "NodeFsRealpathSync"_s,
-    "NodeFsRename"_s,
-    "NodeFsRenameSync"_s,
-    "NodeFsRm"_s,
-    "NodeFsRmSync"_s,
-    "NodeFsRmdir"_s,
-    "NodeFsRmdirSync"_s,
-    "NodeFsStat"_s,
-    "NodeFsStatSync"_s,
-    "NodeFsStatfs"_s,
-    "NodeFsStatfsSync"_s,
-    "NodeFsSymlink"_s,
-    "NodeFsSymlinkSync"_s,
-    "NodeFsTruncate"_s,
-    "NodeFsTruncateSync"_s,
-    "NodeFsUnlink"_s,
-    "NodeFsUnlinkSync"_s,
-    "NodeFsUnwatchFile"_s,
-    "NodeFsUtimes"_s,
-    "NodeFsUtimesSync"_s,
-    "NodeFsWatch"_s,
-    "NodeFsWatchFile"_s,
-    "NodeFsWrite"_s,
-    "NodeFsWriteFile"_s,
-    "NodeFsWriteFileSync"_s,
-    "NodeFsWriteSync"_s,
-    "NodeFsWritev"_s,
-    "NodeFsWritevSync"_s,
-    "NodeFsPromisesAccess"_s,
-    "NodeFsPromisesAppendFile"_s,
-    "NodeFsPromisesChmod"_s,
-    "NodeFsPromisesChown"_s,
-    "NodeFsPromisesClose"_s,
-    "NodeFsPromisesConstants"_s,
-    "NodeFsPromisesCopyFile"_s,
-    "NodeFsPromisesCp"_s,
-    "NodeFsPromisesDefault"_s,
-    "NodeFsPromisesExists"_s,
-    "NodeFsPromisesFchmod"_s,
-    "NodeFsPromisesFchown"_s,
-    "NodeFsPromisesFdatasync"_s,
-    "NodeFsPromisesFstat"_s,
-    "NodeFsPromisesFsync"_s,
-    "NodeFsPromisesFtruncate"_s,
-    "NodeFsPromisesFutimes"_s,
-    "NodeFsPromisesGlob"_s,
-    "NodeFsPromisesLchmod"_s,
-    "NodeFsPromisesLchown"_s,
-    "NodeFsPromisesLink"_s,
-    "NodeFsPromisesLstat"_s,
-    "NodeFsPromisesLutimes"_s,
-    "NodeFsPromisesMkdir"_s,
-    "NodeFsPromisesMkdtemp"_s,
-    "NodeFsPromisesMkdtempDisposable"_s,
-    "NodeFsPromisesOpen"_s,
-    "NodeFsPromisesOpendir"_s,
-    "NodeFsPromisesRead"_s,
-    "NodeFsPromisesReadFile"_s,
-    "NodeFsPromisesReaddir"_s,
-    "NodeFsPromisesReadlink"_s,
-    "NodeFsPromisesReadv"_s,
-    "NodeFsPromisesRealpath"_s,
-    "NodeFsPromisesRename"_s,
-    "NodeFsPromisesRm"_s,
-    "NodeFsPromisesRmdir"_s,
-    "NodeFsPromisesStat"_s,
-    "NodeFsPromisesStatfs"_s,
-    "NodeFsPromisesSymlink"_s,
-    "NodeFsPromisesTruncate"_s,
-    "NodeFsPromisesUnlink"_s,
-    "NodeFsPromisesUtimes"_s,
-    "NodeFsPromisesWatch"_s,
-    "NodeFsPromisesWrite"_s,
-    "NodeFsPromisesWriteFile"_s,
-    "NodeFsPromisesWritev"_s,
-    "NodeHttpAgent"_s,
-    "NodeHttpClientRequest"_s,
-    "NodeHttpCloseEvent"_s,
-    "NodeHttpIncomingMessage"_s,
-    "NodeHttpMETHODS"_s,
-    "NodeHttpMessageEvent"_s,
-    "NodeHttpOutgoingMessage"_s,
-    "NodeHttpSTATUS_CODES"_s,
-    "NodeHttpServer"_s,
-    "NodeHttpServerResponse"_s,
-    "NodeHttpWebSocket"_s,
-    "NodeHttpCreateServer"_s,
-    "NodeHttpDefault"_s,
-    "NodeHttpGet"_s,
-    "NodeHttpGlobalAgent"_s,
-    "NodeHttpMaxHeaderSize"_s,
-    "NodeHttpRequest"_s,
-    "NodeHttpSetGlobalProxyFromEnv"_s,
-    "NodeHttpSetMaxIdleHTTPParsers"_s,
-    "NodeHttpValidateHeaderName"_s,
-    "NodeHttpValidateHeaderValue"_s,
-    "NodeHttp2ClientHttp2Session"_s,
-    "NodeHttp2Http2ServerRequest"_s,
-    "NodeHttp2Http2ServerResponse"_s,
-    "NodeHttp2Connect"_s,
-    "NodeHttp2Constants"_s,
-    "NodeHttp2CreateSecureServer"_s,
-    "NodeHttp2CreateServer"_s,
-    "NodeHttp2Default"_s,
-    "NodeHttp2GetDefaultSettings"_s,
-    "NodeHttp2GetPackedSettings"_s,
-    "NodeHttp2GetUnpackedSettings"_s,
-    "NodeHttp2PerformServerHandshake"_s,
-    "NodeHttp2SensitiveHeaders"_s,
-    "NodeHttpsAgent"_s,
-    "NodeHttpsServer"_s,
-    "NodeHttpsCreateServer"_s,
-    "NodeHttpsDefault"_s,
-    "NodeHttpsGet"_s,
-    "NodeHttpsGlobalAgent"_s,
-    "NodeHttpsRequest"_s,
-    "NodeInspectorSession"_s,
-    "NodeInspectorClose"_s,
-    "NodeInspectorConsole"_s,
-    "NodeInspectorDefault"_s,
-    "NodeInspectorOpen"_s,
-    "NodeInspectorUrl"_s,
-    "NodeInspectorWaitForDebugger"_s,
-    "NodeInspectorPromisesSession"_s,
-    "NodeInspectorPromisesClose"_s,
-    "NodeInspectorPromisesConsole"_s,
-    "NodeInspectorPromisesDefault"_s,
-    "NodeInspectorPromisesOpen"_s,
-    "NodeInspectorPromisesUrl"_s,
-    "NodeInspectorPromisesWaitForDebugger"_s,
-    "NodeModuleModule"_s,
-    "NodeModuleSourceMap"_s,
-    "NodeModule_cache"_s,
-    "NodeModule_debug"_s,
-    "NodeModule_extensions"_s,
-    "NodeModule_findPath"_s,
-    "NodeModule_initPaths"_s,
-    "NodeModule_load"_s,
-    "NodeModule_nodeModulePaths"_s,
-    "NodeModule_pathCache"_s,
-    "NodeModule_preloadModules"_s,
-    "NodeModule_resolveFilename"_s,
-    "NodeModule_resolveLookupPaths"_s,
-    "NodeModule_stat"_s,
-    "NodeModuleBuiltinModules"_s,
-    "NodeModuleConstants"_s,
-    "NodeModuleCreateRequire"_s,
-    "NodeModuleDefault"_s,
-    "NodeModuleEnableCompileCache"_s,
-    "NodeModuleFindSourceMap"_s,
-    "NodeModuleFlushCompileCache"_s,
-    "NodeModuleGetCompileCacheDir"_s,
-    "NodeModuleGlobalPaths"_s,
-    "NodeModuleIsBuiltin"_s,
-    "NodeModulePrototype"_s,
-    "NodeModuleRegister"_s,
-    "NodeModuleRunMain"_s,
-    "NodeModuleSyncBuiltinESMExports"_s,
-    "NodeModuleWrap"_s,
-    "NodeModuleWrapper"_s,
-    "NodeNetBlockList"_s,
-    "NodeNetServer"_s,
-    "NodeNetSocket"_s,
-    "NodeNetSocketAddress"_s,
-    "NodeNetStream"_s,
-    "NodeNet_normalizeArgs"_s,
-    "NodeNet_setSimultaneousAccepts"_s,
-    "NodeNetConnect"_s,
-    "NodeNetCreateConnection"_s,
-    "NodeNetCreateServer"_s,
-    "NodeNetDefault"_s,
-    "NodeNetGetDefaultAutoSelectFamily"_s,
-    "NodeNetGetDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "NodeNetIsIP"_s,
-    "NodeNetIsIPv4"_s,
-    "NodeNetIsIPv6"_s,
-    "NodeNetSetDefaultAutoSelectFamily"_s,
-    "NodeNetSetDefaultAutoSelectFamilyAttemptTimeout"_s,
-    "NodeOsEOL"_s,
-    "NodeOsArch"_s,
-    "NodeOsAvailableParallelism"_s,
-    "NodeOsConstants"_s,
-    "NodeOsCpus"_s,
-    "NodeOsDefault"_s,
-    "NodeOsDevNull"_s,
-    "NodeOsEndianness"_s,
-    "NodeOsFreemem"_s,
-    "NodeOsGetPriority"_s,
-    "NodeOsHomedir"_s,
-    "NodeOsHostname"_s,
-    "NodeOsLoadavg"_s,
-    "NodeOsMachine"_s,
-    "NodeOsNetworkInterfaces"_s,
-    "NodeOsPlatform"_s,
-    "NodeOsRelease"_s,
-    "NodeOsSetPriority"_s,
-    "NodeOsTmpdir"_s,
-    "NodeOsTotalmem"_s,
-    "NodeOsType"_s,
-    "NodeOsUptime"_s,
-    "NodeOsUserInfo"_s,
-    "NodeOsVersion"_s,
-    "NodePath_makeLong"_s,
-    "NodePathBasename"_s,
-    "NodePathDefault"_s,
-    "NodePathDelimiter"_s,
-    "NodePathDirname"_s,
-    "NodePathExtname"_s,
-    "NodePathFormat"_s,
-    "NodePathIsAbsolute"_s,
-    "NodePathJoin"_s,
-    "NodePathMatchesGlob"_s,
-    "NodePathNormalize"_s,
-    "NodePathParse"_s,
-    "NodePath_posix"_s,
-    "NodePathRelative"_s,
-    "NodePathResolve"_s,
-    "NodePathSep"_s,
-    "NodePathToNamespacedPath"_s,
-    "NodePath_win32"_s,
-    "NodePathPosix_makeLong"_s,
-    "NodePathPosixBasename"_s,
-    "NodePathPosixDefault"_s,
-    "NodePathPosixDelimiter"_s,
-    "NodePathPosixDirname"_s,
-    "NodePathPosixExtname"_s,
-    "NodePathPosixFormat"_s,
-    "NodePathPosixIsAbsolute"_s,
-    "NodePathPosixJoin"_s,
-    "NodePathPosixMatchesGlob"_s,
-    "NodePathPosixNormalize"_s,
-    "NodePathPosixParse"_s,
-    "NodePathPosixPosix"_s,
-    "NodePathPosixRelative"_s,
-    "NodePathPosixResolve"_s,
-    "NodePathPosixSep"_s,
-    "NodePathPosixToNamespacedPath"_s,
-    "NodePathPosixWin32"_s,
-    "NodePathWin32_makeLong"_s,
-    "NodePathWin32Basename"_s,
-    "NodePathWin32Default"_s,
-    "NodePathWin32Delimiter"_s,
-    "NodePathWin32Dirname"_s,
-    "NodePathWin32Extname"_s,
-    "NodePathWin32Format"_s,
-    "NodePathWin32IsAbsolute"_s,
-    "NodePathWin32Join"_s,
-    "NodePathWin32MatchesGlob"_s,
-    "NodePathWin32Normalize"_s,
-    "NodePathWin32Parse"_s,
-    "NodePathWin32Posix"_s,
-    "NodePathWin32Relative"_s,
-    "NodePathWin32Resolve"_s,
-    "NodePathWin32Sep"_s,
-    "NodePathWin32ToNamespacedPath"_s,
-    "NodePathWin32Win32"_s,
-    "NodePerf_hooks_Performance"_s,
-    "NodePerf_hooksPerformanceEntry"_s,
-    "NodePerf_hooksPerformanceMark"_s,
-    "NodePerf_hooksPerformanceMeasure"_s,
-    "NodePerf_hooksPerformanceNodeTiming"_s,
-    "NodePerf_hooksPerformanceObserver"_s,
-    "NodePerf_hooksPerformanceObserverEntryList"_s,
-    "NodePerf_hooksPerformanceResourceTiming"_s,
-    "NodePerf_hooksConstants"_s,
-    "NodePerf_hooksCreateHistogram"_s,
-    "NodePerf_hooksDefault"_s,
-    "NodePerf_hooksEventLoopUtilization"_s,
-    "NodePerf_hooksMonitorEventLoopDelay"_s,
-    "NodePerf_hooks_performance"_s,
-    "NodePerf_hooksTimerify"_s,
-    "NodePunycodeDecode"_s,
-    "NodePunycodeDefault"_s,
-    "NodePunycodeEncode"_s,
-    "NodePunycodeToASCII"_s,
-    "NodePunycodeToUnicode"_s,
-    "NodePunycodeUcs2"_s,
-    "NodePunycodeVersion"_s,
-    "NodeQuerystringDecode"_s,
-    "NodeQuerystringDefault"_s,
-    "NodeQuerystringEncode"_s,
-    "NodeQuerystringEscape"_s,
-    "NodeQuerystringParse"_s,
-    "NodeQuerystringStringify"_s,
-    "NodeQuerystringUnescape"_s,
-    "NodeQuerystringUnescapeBuffer"_s,
-    "NodeReadlineInterface"_s,
-    "NodeReadlineClearLine"_s,
-    "NodeReadlineClearScreenDown"_s,
-    "NodeReadlineCreateInterface"_s,
-    "NodeReadlineCursorTo"_s,
-    "NodeReadlineDefault"_s,
-    "NodeReadlineEmitKeypressEvents"_s,
-    "NodeReadlineMoveCursor"_s,
-    "NodeReadline_promises"_s,
-    "NodeReadlinePromisesInterface"_s,
-    "NodeReadlinePromisesReadline"_s,
-    "NodeReadlinePromisesCreateInterface"_s,
-    "NodeReadlinePromisesDefault"_s,
-    "NodeReplREPLServer"_s,
-    "NodeReplREPL_MODE_SLOPPY"_s,
-    "NodeReplREPL_MODE_STRICT"_s,
-    "NodeReplRecoverable"_s,
-    "NodeReplDefault"_s,
-    "NodeReplIsValidSyntax"_s,
-    "NodeReplRepl"_s,
-    "NodeReplStart"_s,
-    "NodeReplWriter"_s,
-    "NodeSqliteDatabaseSync"_s,
-    "NodeSqliteSession"_s,
-    "NodeSqliteStatementSync"_s,
-    "NodeSqliteBackup"_s,
-    "NodeSqliteConstants"_s,
-    "NodeSqliteDefault"_s,
-    "NodeStreamDuplex"_s,
-    "NodeStreamPassThrough"_s,
-    "NodeStreamReadable"_s,
-    "NodeStreamStream"_s,
-    "NodeStreamTransform"_s,
-    "NodeStreamWritable"_s,
-    "NodeStream_isArrayBufferView"_s,
-    "NodeStream_isUint8Array"_s,
-    "NodeStream_uint8ArrayToBuffer"_s,
-    "NodeStreamAddAbortSignal"_s,
-    "NodeStreamCompose"_s,
-    "NodeStreamDefault"_s,
-    "NodeStreamDestroy"_s,
-    "NodeStreamDuplexPair"_s,
-    "NodeStreamEos"_s,
-    "NodeStreamFinished"_s,
-    "NodeStreamGetDefaultHighWaterMark"_s,
-    "NodeStreamIsDestroyed"_s,
-    "NodeStreamIsDisturbed"_s,
-    "NodeStreamIsErrored"_s,
-    "NodeStreamIsReadable"_s,
-    "NodeStreamIsWritable"_s,
-    "NodeStreamPipeline"_s,
-    "NodeStream_promises"_s,
-    "NodeStreamSetDefaultHighWaterMark"_s,
-    "NodeStreamConsumersArrayBuffer"_s,
-    "NodeStreamConsumersBlob"_s,
-    "NodeStreamConsumersBuffer"_s,
-    "NodeStreamConsumersBytes"_s,
-    "NodeStreamConsumersDefault"_s,
-    "NodeStreamConsumersJson"_s,
-    "NodeStreamConsumersText"_s,
-    "NodeStreamPromisesDefault"_s,
-    "NodeStreamPromisesFinished"_s,
-    "NodeStreamPromisesPipeline"_s,
-    "NodeStreamWebByteLengthQueuingStrategy"_s,
-    "NodeStreamWebCompressionStream"_s,
-    "NodeStreamWebCountQueuingStrategy"_s,
-    "NodeStreamWebDecompressionStream"_s,
-    "NodeStreamWebReadableByteStreamController"_s,
-    "NodeStreamWebReadableStream"_s,
-    "NodeStreamWebReadableStreamBYOBReader"_s,
-    "NodeStreamWebReadableStreamBYOBRequest"_s,
-    "NodeStreamWebReadableStreamDefaultController"_s,
-    "NodeStreamWebReadableStreamDefaultReader"_s,
-    "NodeStreamWebTextDecoderStream"_s,
-    "NodeStreamWebTextEncoderStream"_s,
-    "NodeStreamWebTransformStream"_s,
-    "NodeStreamWebTransformStreamDefaultController"_s,
-    "NodeStreamWebWritableStream"_s,
-    "NodeStreamWebWritableStreamDefaultController"_s,
-    "NodeStreamWebWritableStreamDefaultWriter"_s,
-    "NodeStreamWebDefault"_s,
-    "NodeString_decoderStringDecoder"_s,
-    "NodeString_decoderDefault"_s,
-    "NodeTimersActive"_s,
-    "NodeTimersClearImmediate"_s,
-    "NodeTimersClearInterval"_s,
-    "NodeTimersClearTimeout"_s,
-    "NodeTimersDefault"_s,
-    "NodeTimersEnroll"_s,
-    "NodeTimers_promises"_s,
-    "NodeTimersSetImmediate"_s,
-    "NodeTimersSetInterval"_s,
-    "NodeTimersSetTimeout"_s,
-    "NodeTimersUnenroll"_s,
-    "NodeTimersPromisesDefault"_s,
-    "NodeTimersPromisesScheduler"_s,
-    "NodeTimersPromisesSetImmediate"_s,
-    "NodeTimersPromisesSetInterval"_s,
-    "NodeTimersPromisesSetTimeout"_s,
-    "NodeTlsCLIENT_RENEG_LIMIT"_s,
-    "NodeTlsCLIENT_RENEG_WINDOW"_s,
-    "NodeTlsDEFAULT_CIPHERS"_s,
-    "NodeTlsDEFAULT_ECDH_CURVE"_s,
-    "NodeTlsDEFAULT_MAX_VERSION"_s,
-    "NodeTlsDEFAULT_MIN_VERSION"_s,
-    "NodeTlsSecureContext"_s,
-    "NodeTlsServer"_s,
-    "NodeTlsTLSSocket"_s,
-    "NodeTlsCheckServerIdentity"_s,
-    "NodeTlsConnect"_s,
-    "NodeTlsConvertALPNProtocols"_s,
-    "NodeTlsCreateSecureContext"_s,
-    "NodeTlsCreateServer"_s,
-    "NodeTlsDefault"_s,
-    "NodeTlsGetCACertificates"_s,
-    "NodeTlsGetCiphers"_s,
-    "NodeTlsParseCertString"_s,
-    "NodeTlsRootCertificates"_s,
-    "NodeTlsSetDefaultCACertificates"_s,
-    "NodeTrace_eventsCreateTracing"_s,
-    "NodeTrace_eventsDefault"_s,
-    "NodeTrace_eventsGetEnabledCategories"_s,
-    "NodeTtyReadStream"_s,
-    "NodeTtyWriteStream"_s,
-    "NodeTtyDefault"_s,
-    "NodeTtyIsatty"_s,
-    "NodeUrlURL"_s,
-    "NodeUrlURLPattern"_s,
-    "NodeUrlURLSearchParams"_s,
-    "NodeUrlUrl"_s,
-    "NodeUrlDefault"_s,
-    "NodeUrlDomainToASCII"_s,
-    "NodeUrlDomainToUnicode"_s,
-    "NodeUrlFileURLToPath"_s,
-    "NodeUrlFileURLToPathBuffer"_s,
-    "NodeUrlFormat"_s,
-    "NodeUrlParse"_s,
-    "NodeUrlPathToFileURL"_s,
-    "NodeUrlResolve"_s,
-    "NodeUrlResolveObject"_s,
-    "NodeUrlUrlToHttpOptions"_s,
-    "NodeUtilMIMEParams"_s,
-    "NodeUtilMIMEType"_s,
-    "NodeUtilTextDecoder"_s,
-    "NodeUtilTextEncoder"_s,
-    "NodeUtil_errnoException"_s,
-    "NodeUtil_extend"_s,
-    "NodeUtilAborted"_s,
-    "NodeUtilCallbackify"_s,
-    "NodeUtilConvertProcessSignalToExitCode"_s,
-    "NodeUtilDebug"_s,
-    "NodeUtilDebuglog"_s,
-    "NodeUtilDefault"_s,
-    "NodeUtilDeprecate"_s,
-    "NodeUtilFormat"_s,
-    "NodeUtilFormatWithOptions"_s,
-    "NodeUtilGetCallSites"_s,
-    "NodeUtilGetSystemErrorMap"_s,
-    "NodeUtilGetSystemErrorMessage"_s,
-    "NodeUtilGetSystemErrorName"_s,
-    "NodeUtilInherits"_s,
-    "NodeUtilInspect"_s,
-    "NodeUtilIsArray"_s,
-    "NodeUtilIsBoolean"_s,
-    "NodeUtilIsBuffer"_s,
-    "NodeUtilIsDate"_s,
-    "NodeUtilIsDeepStrictEqual"_s,
-    "NodeUtilIsError"_s,
-    "NodeUtilIsFunction"_s,
-    "NodeUtilIsNull"_s,
-    "NodeUtilIsNullOrUndefined"_s,
-    "NodeUtilIsNumber"_s,
-    "NodeUtilIsObject"_s,
-    "NodeUtilIsPrimitive"_s,
-    "NodeUtilIsRegExp"_s,
-    "NodeUtilIsString"_s,
-    "NodeUtilIsSymbol"_s,
-    "NodeUtilIsUndefined"_s,
-    "NodeUtilLog"_s,
-    "NodeUtilParseArgs"_s,
-    "NodeUtilParseEnv"_s,
-    "NodeUtilPromisify"_s,
-    "NodeUtilSetTraceSigInt"_s,
-    "NodeUtilStripVTControlCharacters"_s,
-    "NodeUtilStyleText"_s,
-    "NodeUtilToUSVString"_s,
-    "NodeUtil_types"_s,
-    "NodeUtilTypesDefault"_s,
-    "NodeUtilTypesIsAnyArrayBuffer"_s,
-    "NodeUtilTypesIsArgumentsObject"_s,
-    "NodeUtilTypesIsArrayBuffer"_s,
-    "NodeUtilTypesIsArrayBufferView"_s,
-    "NodeUtilTypesIsAsyncFunction"_s,
-    "NodeUtilTypesIsBigInt64Array"_s,
-    "NodeUtilTypesIsBigIntObject"_s,
-    "NodeUtilTypesIsBigUint64Array"_s,
-    "NodeUtilTypesIsBooleanObject"_s,
-    "NodeUtilTypesIsBoxedPrimitive"_s,
-    "NodeUtilTypesIsCryptoKey"_s,
-    "NodeUtilTypesIsDataView"_s,
-    "NodeUtilTypesIsDate"_s,
-    "NodeUtilTypesIsEventTarget"_s,
-    "NodeUtilTypesIsExternal"_s,
-    "NodeUtilTypesIsFloat16Array"_s,
-    "NodeUtilTypesIsFloat32Array"_s,
-    "NodeUtilTypesIsFloat64Array"_s,
-    "NodeUtilTypesIsGeneratorFunction"_s,
-    "NodeUtilTypesIsGeneratorObject"_s,
-    "NodeUtilTypesIsInt16Array"_s,
-    "NodeUtilTypesIsInt32Array"_s,
-    "NodeUtilTypesIsInt8Array"_s,
-    "NodeUtilTypesIsKeyObject"_s,
-    "NodeUtilTypesIsMap"_s,
-    "NodeUtilTypesIsMapIterator"_s,
-    "NodeUtilTypesIsModuleNamespaceObject"_s,
-    "NodeUtilTypesIsNativeError"_s,
-    "NodeUtilTypesIsNumberObject"_s,
-    "NodeUtilTypesIsPromise"_s,
-    "NodeUtilTypesIsProxy"_s,
-    "NodeUtilTypesIsRegExp"_s,
-    "NodeUtilTypesIsSet"_s,
-    "NodeUtilTypesIsSetIterator"_s,
-    "NodeUtilTypesIsSharedArrayBuffer"_s,
-    "NodeUtilTypesIsStringObject"_s,
-    "NodeUtilTypesIsSymbolObject"_s,
-    "NodeUtilTypesIsTypedArray"_s,
-    "NodeUtilTypesIsUint16Array"_s,
-    "NodeUtilTypesIsUint32Array"_s,
-    "NodeUtilTypesIsUint8Array"_s,
-    "NodeUtilTypesIsUint8ClampedArray"_s,
-    "NodeUtilTypesIsWeakMap"_s,
-    "NodeUtilTypesIsWeakSet"_s,
-    "NodeV8DefaultDeserializer"_s,
-    "NodeV8DefaultSerializer"_s,
-    "NodeV8Deserializer"_s,
-    "NodeV8GCProfiler"_s,
-    "NodeV8Serializer"_s,
-    "NodeV8CachedDataVersionTag"_s,
-    "NodeV8Default"_s,
-    "NodeV8Deserialize"_s,
-    "NodeV8GetCppHeapStatistics"_s,
-    "NodeV8GetHeapCodeStatistics"_s,
-    "NodeV8GetHeapSnapshot"_s,
-    "NodeV8GetHeapSpaceStatistics"_s,
-    "NodeV8GetHeapStatistics"_s,
-    "NodeV8IsStringOneByteRepresentation"_s,
-    "NodeV8PromiseHooks"_s,
-    "NodeV8Serialize"_s,
-    "NodeV8SetFlagsFromString"_s,
-    "NodeV8SetHeapSnapshotNearHeapLimit"_s,
-    "NodeV8StartupSnapshot"_s,
-    "NodeV8StopCoverage"_s,
-    "NodeV8TakeCoverage"_s,
-    "NodeV8WriteHeapSnapshot"_s,
-    "NodeVmModule"_s,
-    "NodeVmScript"_s,
-    "NodeVmSourceTextModule"_s,
-    "NodeVmSyntheticModule"_s,
-    "NodeVmCompileFunction"_s,
-    "NodeVmConstants"_s,
-    "NodeVmCreateContext"_s,
-    "NodeVmCreateScript"_s,
-    "NodeVmDefault"_s,
-    "NodeVmIsContext"_s,
-    "NodeVmMeasureMemory"_s,
-    "NodeVmRunInContext"_s,
-    "NodeVmRunInNewContext"_s,
-    "NodeVmRunInThisContext"_s,
-    "NodeWasiWASI"_s,
-    "NodeWasiDefault"_s,
-    "NodeWorker_threadsBroadcastChannel"_s,
-    "NodeWorker_threadsMessageChannel"_s,
-    "NodeWorker_threadsMessagePort"_s,
-    "NodeWorker_threadsSHARE_ENV"_s,
-    "NodeWorker_threadsWorker"_s,
-    "NodeWorker_threadsDefault"_s,
-    "NodeWorker_threadsGetEnvironmentData"_s,
-    "NodeWorker_threadsIsInternalThread"_s,
-    "NodeWorker_threadsIsMainThread"_s,
-    "NodeWorker_threadsIsMarkedAsUntransferable"_s,
-    "NodeWorker_threadsMarkAsUncloneable"_s,
-    "NodeWorker_threadsMarkAsUntransferable"_s,
-    "NodeWorker_threadsMoveMessagePortToContext"_s,
-    "NodeWorker_threadsParentPort"_s,
-    "NodeWorker_threadsPostMessageToThread"_s,
-    "NodeWorker_threadsReceiveMessageOnPort"_s,
-    "NodeWorker_threadsResourceLimits"_s,
-    "NodeWorker_threadsSetEnvironmentData"_s,
-    "NodeWorker_threadsThreadId"_s,
-    "NodeWorker_threadsThreadName"_s,
-    "NodeWorker_threadsWorkerData"_s,
-    "NodeZlib_BrotliCompress"_s,
-    "NodeZlib_BrotliDecompress"_s,
-    "NodeZlib_Deflate"_s,
-    "NodeZlib_DeflateRaw"_s,
-    "NodeZlib_Gunzip"_s,
-    "NodeZlib_Gzip"_s,
-    "NodeZlib_Inflate"_s,
-    "NodeZlib_InflateRaw"_s,
-    "NodeZlib_Unzip"_s,
-    "NodeZlib_ZstdCompress"_s,
-    "NodeZlib_ZstdDecompress"_s,
-    "NodeZlib_brotliCompress"_s,
-    "NodeZlibBrotliCompressSync"_s,
-    "NodeZlib_brotliDecompress"_s,
-    "NodeZlibBrotliDecompressSync"_s,
-    "NodeZlibCodes"_s,
-    "NodeZlibConstants"_s,
-    "NodeZlibCrc32"_s,
-    "NodeZlibCreateBrotliCompress"_s,
-    "NodeZlibCreateBrotliDecompress"_s,
-    "NodeZlibCreateDeflate"_s,
-    "NodeZlibCreateDeflateRaw"_s,
-    "NodeZlibCreateGunzip"_s,
-    "NodeZlibCreateGzip"_s,
-    "NodeZlibCreateInflate"_s,
-    "NodeZlibCreateInflateRaw"_s,
-    "NodeZlibCreateUnzip"_s,
-    "NodeZlibCreateZstdCompress"_s,
-    "NodeZlibCreateZstdDecompress"_s,
-    "NodeZlibDefault"_s,
-    "NodeZlib_deflate"_s,
-    "NodeZlib_deflateRaw"_s,
-    "NodeZlibDeflateRawSync"_s,
-    "NodeZlibDeflateSync"_s,
-    "NodeZlib_gunzip"_s,
-    "NodeZlibGunzipSync"_s,
-    "NodeZlib_gzip"_s,
-    "NodeZlibGzipSync"_s,
-    "NodeZlib_inflate"_s,
-    "NodeZlib_inflateRaw"_s,
-    "NodeZlibInflateRawSync"_s,
-    "NodeZlibInflateSync"_s,
-    "NodeZlib_unzip"_s,
-    "NodeZlibUnzipSync"_s,
-    "NodeZlib_zstdCompress"_s,
-    "NodeZlibZstdCompressSync"_s,
-    "NodeZlib_zstdDecompress"_s,
-    "NodeZlibZstdDecompressSync"_s,
-    "UndiciAgent"_s,
-    "UndiciBalancedPool"_s,
-    "UndiciClient"_s,
-    "UndiciCloseEvent"_s,
-    "UndiciDecoratorHandler"_s,
-    "UndiciDispatcher"_s,
-    "UndiciEnvHttpProxyAgent"_s,
-    "UndiciErrorEvent"_s,
-    "UndiciEventSource"_s,
-    "UndiciFile"_s,
-    "UndiciFileReader"_s,
-    "UndiciFormData"_s,
-    "UndiciHeaders"_s,
-    "UndiciMessageEvent"_s,
-    "UndiciMockAgent"_s,
-    "UndiciMockClient"_s,
-    "UndiciMockPool"_s,
-    "UndiciPool"_s,
-    "UndiciProxyAgent"_s,
-    "UndiciRedirectHandler"_s,
-    "Undici_Request"_s,
-    "UndiciResponse"_s,
-    "UndiciRetryAgent"_s,
-    "UndiciRetryHandler"_s,
-    "UndiciWebSocket"_s,
-    "UndiciBuildConnector"_s,
-    "UndiciCaches"_s,
-    "UndiciConnect"_s,
-    "UndiciCreateRedirectInterceptor"_s,
-    "UndiciDefault"_s,
-    "UndiciDeleteCookie"_s,
-    "UndiciErrors"_s,
-    "UndiciFetch"_s,
-    "UndiciGetCookies"_s,
-    "UndiciGetGlobalDispatcher"_s,
-    "UndiciGetGlobalOrigin"_s,
-    "UndiciGetSetCookies"_s,
-    "UndiciInterceptors"_s,
-    "UndiciMockErrors"_s,
-    "UndiciParseMIMEType"_s,
-    "UndiciPipeline"_s,
-    "Undici_request"_s,
-    "UndiciSerializeAMimeType"_s,
-    "UndiciSetCookie"_s,
-    "UndiciSetGlobalDispatcher"_s,
-    "UndiciSetGlobalOrigin"_s,
-    "UndiciStream"_s,
-    "UndiciUpgrade"_s,
-    "UndiciUtil"_s,
-    "WsCLOSED"_s,
-    "WsCLOSING"_s,
-    "WsCONNECTING"_s,
-    "WsOPEN"_s,
-    "WsReceiver"_s,
-    "WsSender"_s,
-    "WsServer"_s,
-    "WsWebSocket"_s,
-    "WsWebSocketServer"_s,
-    "WsCreateWebSocketStream"_s,
-    "WsDefault"_s,
-    "AbortSignalPrototype"_s,
-    "AggregateErrorLength"_s,
-    "AggregateErrorName"_s,
-    "AggregateErrorPrototype"_s,
-    "ArrayFrom"_s,
-    "ArrayFromAsync"_s,
-    "ArrayIsArray"_s,
-    "ArrayLength"_s,
-    "ArrayName"_s,
-    "ArrayOf"_s,
-    "ArrayPrototype"_s,
-    "ArraySymbolSpecies"_s,
-    "ArrayBufferIsView"_s,
-    "ArrayBufferLength"_s,
-    "ArrayBufferName"_s,
-    "ArrayBufferPrototype"_s,
-    "ArrayBufferSymbolSpecies"_s,
-    "AsyncDisposableStackLength"_s,
-    "AsyncDisposableStackName"_s,
-    "AsyncDisposableStackPrototype"_s,
-    "AtomicsAdd"_s,
-    "AtomicsAnd"_s,
-    "AtomicsCompareExchange"_s,
-    "AtomicsExchange"_s,
-    "AtomicsIsLockFree"_s,
-    "AtomicsLoad"_s,
-    "AtomicsNotify"_s,
-    "AtomicsOr"_s,
-    "AtomicsPause"_s,
-    "AtomicsStore"_s,
-    "AtomicsSub"_s,
-    "AtomicsWait"_s,
-    "AtomicsWaitAsync"_s,
-    "AtomicsXor"_s,
-    "AtomicsSymbolToStringTag"_s,
-    "BigIntAsIntN"_s,
-    "BigIntAsUintN"_s,
-    "BigIntLength"_s,
-    "BigIntName"_s,
-    "BigIntPrototype"_s,
-    "BigInt64ArrayBYTES_PER_ELEMENT"_s,
-    "BigInt64ArrayLength"_s,
-    "BigInt64ArrayName"_s,
-    "BigInt64ArrayPrototype"_s,
-    "BigUint64ArrayBYTES_PER_ELEMENT"_s,
-    "BigUint64ArrayLength"_s,
-    "BigUint64ArrayName"_s,
-    "BigUint64ArrayPrototype"_s,
-    "BlobPrototype"_s,
-    "BooleanLength"_s,
-    "BooleanName"_s,
-    "BooleanPrototype"_s,
-    "BufferAlloc"_s,
-    "BufferAllocUnsafe"_s,
-    "BufferAllocUnsafeSlow"_s,
-    "BufferByteLength"_s,
-    "BufferCompare"_s,
-    "BufferConcat"_s,
-    "BufferCopyBytesFrom"_s,
-    "BufferFrom"_s,
-    "BufferIsBuffer"_s,
-    "BufferIsEncoding"_s,
-    "BufferLength"_s,
-    "BufferName"_s,
-    "BufferPoolSize"_s,
-    "BufferPrototype"_s,
-    "BuildMessagePrototype"_s,
-    "BunDollar"_s,
-    "BunArchive"_s,
-    "BunArrayBufferSink"_s,
-    "BunCSRF"_s,
-    "BunCookie"_s,
-    "BunCookieMap"_s,
-    "BunCryptoHasher"_s,
-    "BunFFI"_s,
-    "BunFetchSession"_s,
-    "BunFileSystemRouter"_s,
-    "BunGlob"_s,
-    "BunImage"_s,
-    "BunJSON"_s,
-    "BunJSON5"_s,
-    "BunJSONC"_s,
-    "BunJSONL"_s,
-    "BunMD4"_s,
-    "BunMD5"_s,
-    "BunModuleGraph"_s,
-    "BunRedisClient"_s,
-    "BunS3Client"_s,
-    "BunSHA1"_s,
-    "BunSHA224"_s,
-    "BunSHA256"_s,
-    "BunSHA384"_s,
-    "BunSHA512"_s,
-    "BunSHA512_256"_s,
-    "BunSQL"_s,
-    "BunTOML"_s,
-    "BunTerminal"_s,
-    "BunTranspiler"_s,
-    "BunWebView"_s,
-    "BunXML"_s,
-    "BunYAML"_s,
-    "BunAllocUnsafe"_s,
-    "BunArgv"_s,
-    "BunBuild"_s,
-    "BunColor"_s,
-    "BunConcatArrayBuffers"_s,
-    "BunConnect"_s,
-    "BunCron"_s,
-    "BunCwd"_s,
-    "BunDeepEquals"_s,
-    "BunDeepMatch"_s,
-    "BunDefault"_s,
-    "BunDeflateSync"_s,
-    "BunDns"_s,
-    "BunEmbeddedFiles"_s,
-    "BunEnableANSIColors"_s,
-    "BunEnv"_s,
-    "BunEscapeHTML"_s,
-    "BunFetch"_s,
-    "BunFile"_s,
-    "BunFileURLToPath"_s,
-    "BunGc"_s,
-    "BunGenerateHeapSnapshot"_s,
-    "BunGunzipSync"_s,
-    "BunGzipSync"_s,
-    "BunHash"_s,
-    "BunIndexOfLine"_s,
-    "BunInflateSync"_s,
-    "BunInspect"_s,
-    "BunIsMainThread"_s,
-    "BunIsStandaloneExecutable"_s,
-    "BunJest"_s,
-    "BunListen"_s,
-    "BunMain"_s,
-    "BunMarkdown"_s,
-    "BunMmap"_s,
-    "BunNanoseconds"_s,
-    "BunOpenInEditor"_s,
-    "BunOrigin"_s,
-    "BunPassword"_s,
-    "BunPathToFileURL"_s,
-    "BunPeek"_s,
-    "BunPlugin"_s,
-    "BunPostgres"_s,
-    "BunRandomUUIDv5"_s,
-    "BunRandomUUIDv7"_s,
-    "BunReadableStreamToArray"_s,
-    "BunReadableStreamToArrayBuffer"_s,
-    "BunReadableStreamToBlob"_s,
-    "BunReadableStreamToBytes"_s,
-    "BunReadableStreamToFormData"_s,
-    "BunReadableStreamToJSON"_s,
-    "BunReadableStreamToText"_s,
-    "BunRedis"_s,
-    "BunRegisterMacro"_s,
-    "BunResolve"_s,
-    "BunResolveSync"_s,
-    "BunRevision"_s,
-    "BunS3"_s,
-    "BunSecrets"_s,
-    "BunSemver"_s,
-    "BunServe"_s,
-    "BunSha"_s,
-    "BunShrink"_s,
-    "BunSleep"_s,
-    "BunSleepSync"_s,
-    "BunSliceAnsi"_s,
-    "BunSpawn"_s,
-    "BunSpawnSync"_s,
-    "Bun_sql"_s,
-    "BunStderr"_s,
-    "BunStdin"_s,
-    "BunStdout"_s,
-    "BunStringWidth"_s,
-    "BunStripANSI"_s,
-    "BunUdpSocket"_s,
-    "BunUnsafe"_s,
-    "BunVersion"_s,
-    "BunVersion_with_sha"_s,
-    "BunWhich"_s,
-    "BunWrapAnsi"_s,
-    "BunWrite"_s,
-    "BunZstdCompress"_s,
-    "BunZstdCompressSync"_s,
-    "BunZstdDecompress"_s,
-    "BunZstdDecompressSync"_s,
-    "CompressionStreamPrototype"_s,
-    "CryptoPrototype"_s,
-    "DataViewBYTES_PER_ELEMENT"_s,
-    "DataViewLength"_s,
-    "DataViewName"_s,
-    "DataViewPrototype"_s,
-    "DateUTC"_s,
-    "DateLength"_s,
-    "DateName"_s,
-    "DateNow"_s,
-    "DateParse"_s,
-    "DatePrototype"_s,
-    "DecompressionStreamPrototype"_s,
-    "DisposableStackLength"_s,
-    "DisposableStackName"_s,
-    "DisposableStackPrototype"_s,
-    "ErrorAppendStackTrace"_s,
-    "ErrorCaptureStackTrace"_s,
-    "ErrorIsError"_s,
-    "ErrorLength"_s,
-    "ErrorName"_s,
-    "ErrorPrepareStackTrace"_s,
-    "ErrorPrototype"_s,
-    "ErrorStackTraceLimit"_s,
-    "EvalErrorLength"_s,
-    "EvalErrorName"_s,
-    "EvalErrorPrototype"_s,
-    "EventTargetPrototype"_s,
-    "FinalizationRegistryLength"_s,
-    "FinalizationRegistryName"_s,
-    "FinalizationRegistryPrototype"_s,
-    "Float16ArrayBYTES_PER_ELEMENT"_s,
-    "Float16ArrayLength"_s,
-    "Float16ArrayName"_s,
-    "Float16ArrayPrototype"_s,
-    "Float32ArrayBYTES_PER_ELEMENT"_s,
-    "Float32ArrayLength"_s,
-    "Float32ArrayName"_s,
-    "Float32ArrayPrototype"_s,
-    "Float64ArrayBYTES_PER_ELEMENT"_s,
-    "Float64ArrayLength"_s,
-    "Float64ArrayName"_s,
-    "Float64ArrayPrototype"_s,
-    "FunctionLength"_s,
-    "FunctionName"_s,
-    "FunctionPrototype"_s,
-    "HTMLRewriterPrototype"_s,
-    "HeadersPrototype"_s,
-    "Int16ArrayBYTES_PER_ELEMENT"_s,
-    "Int16ArrayLength"_s,
-    "Int16ArrayName"_s,
-    "Int16ArrayPrototype"_s,
-    "Int32ArrayBYTES_PER_ELEMENT"_s,
-    "Int32ArrayLength"_s,
-    "Int32ArrayName"_s,
-    "Int32ArrayPrototype"_s,
-    "Int8ArrayBYTES_PER_ELEMENT"_s,
-    "Int8ArrayLength"_s,
-    "Int8ArrayName"_s,
-    "Int8ArrayPrototype"_s,
-    "IntlCollator"_s,
-    "IntlDateTimeFormat"_s,
-    "IntlDisplayNames"_s,
-    "IntlDurationFormat"_s,
-    "IntlListFormat"_s,
-    "IntlLocale"_s,
-    "IntlNumberFormat"_s,
-    "IntlPluralRules"_s,
-    "IntlRelativeTimeFormat"_s,
-    "IntlSegmenter"_s,
-    "IntlGetCanonicalLocales"_s,
-    "IntlSupportedValuesOf"_s,
-    "IntlSymbolToStringTag"_s,
-    "IteratorConcat"_s,
-    "IteratorFrom"_s,
-    "IteratorLength"_s,
-    "IteratorName"_s,
-    "IteratorPrototype"_s,
-    "IteratorZip"_s,
-    "IteratorZipKeyed"_s,
-    "JSONIsRawJSON"_s,
-    "JSONParse"_s,
-    "JSONRawJSON"_s,
-    "JSONStringify"_s,
-    "JSONSymbolToStringTag"_s,
-    "MapGroupBy"_s,
-    "MapLength"_s,
-    "MapName"_s,
-    "MapPrototype"_s,
-    "MapSymbolSpecies"_s,
-    "MathE"_s,
-    "MathLN10"_s,
-    "MathLN2"_s,
-    "MathLOG10E"_s,
-    "MathLOG2E"_s,
-    "MathPI"_s,
-    "MathSQRT1_2"_s,
-    "MathSQRT2"_s,
-    "MathAbs"_s,
-    "MathAcos"_s,
-    "MathAcosh"_s,
-    "MathAsin"_s,
-    "MathAsinh"_s,
-    "MathAtan"_s,
-    "MathAtan2"_s,
-    "MathAtanh"_s,
-    "MathCbrt"_s,
-    "MathCeil"_s,
-    "MathClz32"_s,
-    "MathCos"_s,
-    "MathCosh"_s,
-    "MathExp"_s,
-    "MathExpm1"_s,
-    "MathF16round"_s,
-    "MathFloor"_s,
-    "MathFround"_s,
-    "MathHypot"_s,
-    "MathImul"_s,
-    "MathLog"_s,
-    "MathLog10"_s,
-    "MathLog1p"_s,
-    "MathLog2"_s,
-    "MathMax"_s,
-    "MathMin"_s,
-    "MathPow"_s,
-    "MathRandom"_s,
-    "MathRound"_s,
-    "MathSign"_s,
-    "MathSin"_s,
-    "MathSinh"_s,
-    "MathSqrt"_s,
-    "MathSumPrecise"_s,
-    "MathTan"_s,
-    "MathTanh"_s,
-    "MathTrunc"_s,
-    "MathSymbolToStringTag"_s,
-    "NumberEPSILON"_s,
-    "NumberMAX_SAFE_INTEGER"_s,
-    "NumberMAX_VALUE"_s,
-    "NumberMIN_SAFE_INTEGER"_s,
-    "NumberMIN_VALUE"_s,
-    "NumberNEGATIVE_INFINITY"_s,
-    "NumberNaN"_s,
-    "NumberPOSITIVE_INFINITY"_s,
-    "NumberIsFinite"_s,
-    "NumberIsInteger"_s,
-    "NumberIsNaN"_s,
-    "NumberIsSafeInteger"_s,
-    "NumberLength"_s,
-    "NumberName"_s,
-    "NumberParseFloat"_s,
-    "NumberParseInt"_s,
-    "NumberPrototype"_s,
-    "ObjectAssign"_s,
-    "ObjectCreate"_s,
-    "ObjectDefineProperties"_s,
-    "ObjectDefineProperty"_s,
-    "ObjectEntries"_s,
-    "ObjectFreeze"_s,
-    "ObjectFromEntries"_s,
-    "ObjectGetOwnPropertyDescriptor"_s,
-    "ObjectGetOwnPropertyDescriptors"_s,
-    "ObjectGetOwnPropertyNames"_s,
-    "ObjectGetOwnPropertySymbols"_s,
-    "ObjectGetPrototypeOf"_s,
-    "ObjectGroupBy"_s,
-    "ObjectHasOwn"_s,
-    "ObjectIs"_s,
-    "ObjectIsExtensible"_s,
-    "ObjectIsFrozen"_s,
-    "ObjectIsSealed"_s,
-    "ObjectKeys"_s,
-    "ObjectLength"_s,
-    "ObjectName"_s,
-    "ObjectPreventExtensions"_s,
-    "ObjectPrototype"_s,
-    "ObjectSeal"_s,
-    "ObjectSetPrototypeOf"_s,
-    "ObjectValues"_s,
-    "PromiseAll"_s,
-    "PromiseAllSettled"_s,
-    "PromiseAny"_s,
-    "PromiseLength"_s,
-    "PromiseName"_s,
-    "PromisePrototype"_s,
-    "PromiseRace"_s,
-    "PromiseReject"_s,
-    "PromiseResolve"_s,
-    "PromiseTry"_s,
-    "PromiseWithResolvers"_s,
-    "PromiseSymbolSpecies"_s,
-    "ProxyLength"_s,
-    "ProxyName"_s,
-    "ProxyRevocable"_s,
-    "RangeErrorLength"_s,
-    "RangeErrorName"_s,
-    "RangeErrorPrototype"_s,
-    "ReadableStreamPrototype"_s,
-    "ReferenceErrorLength"_s,
-    "ReferenceErrorName"_s,
-    "ReferenceErrorPrototype"_s,
-    "ReflectApply"_s,
-    "ReflectConstruct"_s,
-    "ReflectDefineProperty"_s,
-    "ReflectDeleteProperty"_s,
-    "ReflectGet"_s,
-    "ReflectGetOwnPropertyDescriptor"_s,
-    "ReflectGetPrototypeOf"_s,
-    "ReflectHas"_s,
-    "ReflectIsExtensible"_s,
-    "ReflectOwnKeys"_s,
-    "ReflectPreventExtensions"_s,
-    "ReflectSet"_s,
-    "ReflectSetPrototypeOf"_s,
-    "ReflectSymbolToStringTag"_s,
-    "RegExpDollarAmpersand"_s,
-    "RegExpDollarApostrophe"_s,
-    "RegExpDollarAsterisk"_s,
-    "RegExpDollarPlus"_s,
-    "RegExpDollar1"_s,
-    "RegExpDollar2"_s,
-    "RegExpDollar3"_s,
-    "RegExpDollar4"_s,
-    "RegExpDollar5"_s,
-    "RegExpDollar6"_s,
-    "RegExpDollar7"_s,
-    "RegExpDollar8"_s,
-    "RegExpDollar9"_s,
-    "RegExpDollar_"_s,
-    "RegExpDollarBacktick"_s,
-    "RegExpEscape"_s,
-    "RegExpInput"_s,
-    "RegExpLastMatch"_s,
-    "RegExpLastParen"_s,
-    "RegExpLeftContext"_s,
-    "RegExpLength"_s,
-    "RegExpMultiline"_s,
-    "RegExpName"_s,
-    "RegExpPrototype"_s,
-    "RegExpRightContext"_s,
-    "RegExpSymbolSpecies"_s,
-    "RequestPrototype"_s,
-    "ResolveMessagePrototype"_s,
-    "ResponseError"_s,
-    "ResponseJson"_s,
-    "ResponsePrototype"_s,
-    "ResponseRedirect"_s,
-    "SetLength"_s,
-    "SetName"_s,
-    "SetPrototype"_s,
-    "SetSymbolSpecies"_s,
-    "ShadowRealmLength"_s,
-    "ShadowRealmName"_s,
-    "ShadowRealmPrototype"_s,
-    "SharedArrayBufferLength"_s,
-    "SharedArrayBufferName"_s,
-    "SharedArrayBufferPrototype"_s,
-    "SharedArrayBufferSymbolSpecies"_s,
-    "StringFromCharCode"_s,
-    "StringFromCodePoint"_s,
-    "StringLength"_s,
-    "StringName"_s,
-    "StringPrototype"_s,
-    "StringRaw"_s,
-    "SubtleCryptoPrototype"_s,
-    "SuppressedErrorLength"_s,
-    "SuppressedErrorName"_s,
-    "SuppressedErrorPrototype"_s,
-    "SymbolAsyncDispose"_s,
-    "SymbolAsyncIterator"_s,
-    "SymbolDispose"_s,
-    "SymbolFor"_s,
-    "SymbolHasInstance"_s,
-    "SymbolIsConcatSpreadable"_s,
-    "SymbolIterator"_s,
-    "SymbolKeyFor"_s,
-    "SymbolLength"_s,
-    "SymbolMatch"_s,
-    "SymbolMatchAll"_s,
-    "SymbolName"_s,
-    "SymbolPrototype"_s,
-    "SymbolReplace"_s,
-    "SymbolSearch"_s,
-    "SymbolSpecies"_s,
-    "SymbolSplit"_s,
-    "SymbolToPrimitive"_s,
-    "SymbolToStringTag"_s,
-    "SymbolUnscopables"_s,
-    "SyntaxErrorLength"_s,
-    "SyntaxErrorName"_s,
-    "SyntaxErrorPrototype"_s,
-    "TemporalDuration"_s,
-    "TemporalInstant"_s,
-    "TemporalNow"_s,
-    "TemporalPlainDate"_s,
-    "TemporalPlainDateTime"_s,
-    "TemporalPlainMonthDay"_s,
-    "TemporalPlainTime"_s,
-    "TemporalPlainYearMonth"_s,
-    "TemporalZonedDateTime"_s,
-    "TemporalSymbolToStringTag"_s,
-    "TextDecoderPrototype"_s,
-    "TextEncoderPrototype"_s,
-    "TypeErrorLength"_s,
-    "TypeErrorName"_s,
-    "TypeErrorPrototype"_s,
-    "URIErrorLength"_s,
-    "URIErrorName"_s,
-    "URIErrorPrototype"_s,
-    "URLCanParse"_s,
-    "URLParse"_s,
-    "URLPrototype"_s,
-    "URLSearchParamsPrototype"_s,
-    "Uint16ArrayBYTES_PER_ELEMENT"_s,
-    "Uint16ArrayLength"_s,
-    "Uint16ArrayName"_s,
-    "Uint16ArrayPrototype"_s,
-    "Uint32ArrayBYTES_PER_ELEMENT"_s,
-    "Uint32ArrayLength"_s,
-    "Uint32ArrayName"_s,
-    "Uint32ArrayPrototype"_s,
-    "Uint8ArrayBYTES_PER_ELEMENT"_s,
-    "Uint8ArrayFromBase64"_s,
-    "Uint8ArrayFromHex"_s,
-    "Uint8ArrayLength"_s,
-    "Uint8ArrayName"_s,
-    "Uint8ArrayPrototype"_s,
-    "Uint8ClampedArrayBYTES_PER_ELEMENT"_s,
-    "Uint8ClampedArrayLength"_s,
-    "Uint8ClampedArrayName"_s,
-    "Uint8ClampedArrayPrototype"_s,
-    "WeakMapLength"_s,
-    "WeakMapName"_s,
-    "WeakMapPrototype"_s,
-    "WeakRefLength"_s,
-    "WeakRefName"_s,
-    "WeakRefPrototype"_s,
-    "WeakSetLength"_s,
-    "WeakSetName"_s,
-    "WeakSetPrototype"_s,
-    "WebAssemblyCompileError"_s,
-    "WebAssemblyException"_s,
-    "WebAssemblyGlobal"_s,
-    "WebAssemblyInstance"_s,
-    "WebAssemblyJSTag"_s,
-    "WebAssemblyLinkError"_s,
-    "WebAssemblyMemory"_s,
-    "WebAssemblyModule"_s,
-    "WebAssemblyRuntimeError"_s,
-    "WebAssemblySuspendError"_s,
-    "WebAssemblySuspending"_s,
-    "WebAssemblyTable"_s,
-    "WebAssemblyTag"_s,
-    "WebAssemblyCompile"_s,
-    "WebAssemblyCompileStreaming"_s,
-    "WebAssemblyInstantiate"_s,
-    "WebAssemblyInstantiateStreaming"_s,
-    "WebAssemblyPromising"_s,
-    "WebAssemblyValidate"_s,
-    "WebAssemblySymbolToStringTag"_s,
-    "ConsoleConsole"_s,
-    "Console_stderr"_s,
-    "Console_stdout"_s,
-    "ConsoleAssert"_s,
-    "ConsoleClear"_s,
-    "ConsoleCount"_s,
-    "ConsoleCountReset"_s,
-    "ConsoleDebug"_s,
-    "ConsoleDir"_s,
-    "ConsoleDirxml"_s,
-    "ConsoleError"_s,
-    "ConsoleGroup"_s,
-    "ConsoleGroupCollapsed"_s,
-    "ConsoleGroupEnd"_s,
-    "ConsoleInfo"_s,
-    "ConsoleLog"_s,
-    "ConsoleProfile"_s,
-    "ConsoleProfileEnd"_s,
-    "ConsoleTable"_s,
-    "ConsoleTakeHeapSnapshot"_s,
-    "ConsoleTime"_s,
-    "ConsoleTimeEnd"_s,
-    "ConsoleTimeLog"_s,
-    "ConsoleTimeStamp"_s,
-    "ConsoleTrace"_s,
-    "ConsoleWarn"_s,
-    "ConsoleWrite"_s,
-    "ConsoleSymbolAsyncIterator"_s,
-    "DecodeURILength"_s,
-    "DecodeURIName"_s,
-    "DecodeURIComponentLength"_s,
-    "DecodeURIComponentName"_s,
-    "EncodeURILength"_s,
-    "EncodeURIName"_s,
-    "EncodeURIComponentLength"_s,
-    "EncodeURIComponentName"_s,
-    "EscapeLength"_s,
-    "EscapeName"_s,
-    "EvalLength"_s,
-    "EvalName"_s,
-    "IsFiniteLength"_s,
-    "IsFiniteName"_s,
-    "IsNaNLength"_s,
-    "IsNaNName"_s,
-    "ParseFloatLength"_s,
-    "ParseFloatName"_s,
-    "ParseIntLength"_s,
-    "ParseIntName"_s,
-    "PerformanceAddEventListener"_s,
-    "PerformanceClearMarks"_s,
-    "PerformanceClearMeasures"_s,
-    "PerformanceClearResourceTimings"_s,
-    "PerformanceDispatchEvent"_s,
-    "PerformanceGetEntries"_s,
-    "PerformanceGetEntriesByName"_s,
-    "PerformanceGetEntriesByType"_s,
-    "Performance_mark"_s,
-    "PerformanceMarkResourceTiming"_s,
-    "Performance_measure"_s,
-    "PerformanceNow"_s,
-    "PerformanceOnresourcetimingbufferfull"_s,
-    "PerformanceRemoveEventListener"_s,
-    "PerformanceSetResourceTimingBufferSize"_s,
-    "PerformanceTimeOrigin"_s,
-    "Performance_timing"_s,
-    "PerformanceToJSON"_s,
-    "Process_eval"_s,
-    "Process_eventsCount"_s,
-    "Process_exiting"_s,
-    "Process_fatalException"_s,
-    "Process_getActiveHandles"_s,
-    "Process_getActiveRequests"_s,
-    "Process_kill"_s,
-    "Process_linkedBinding"_s,
-    "Process_preload_modules"_s,
-    "Process_rawDebug"_s,
-    "Process_tickCallback"_s,
-    "ProcessAbort"_s,
-    "ProcessAddListener"_s,
-    "ProcessAllowedNodeEnvironmentFlags"_s,
-    "ProcessArch"_s,
-    "ProcessArgv"_s,
-    "ProcessArgv0"_s,
-    "ProcessAssert"_s,
-    "ProcessAvailableMemory"_s,
-    "ProcessBinding"_s,
-    "ProcessBrowser"_s,
-    "ProcessChannel"_s,
-    "ProcessChdir"_s,
-    "ProcessConfig"_s,
-    "ProcessConnected"_s,
-    "ProcessConstrainedMemory"_s,
-    "ProcessConstructor"_s,
-    "ProcessCpuUsage"_s,
-    "ProcessCwd"_s,
-    "ProcessDebugPort"_s,
-    "ProcessDefault"_s,
-    "ProcessDisconnect"_s,
-    "ProcessDlopen"_s,
-    "ProcessEmit"_s,
-    "ProcessEmitWarning"_s,
-    "ProcessEnv"_s,
-    "ProcessEventNames"_s,
-    "ProcessExecArgv"_s,
-    "ProcessExecPath"_s,
-    "ProcessExecve"_s,
-    "ProcessExit"_s,
-    "ProcessExitCode"_s,
-    "ProcessFeatures"_s,
-    "ProcessFinalization"_s,
-    "ProcessGetActiveResourcesInfo"_s,
-    "ProcessGetBuiltinModule"_s,
-    "ProcessGetMaxListeners"_s,
-    "ProcessGetegid"_s,
-    "ProcessGeteuid"_s,
-    "ProcessGetgid"_s,
-    "ProcessGetgroups"_s,
-    "ProcessGetuid"_s,
-    "ProcessHasUncaughtExceptionCaptureCallback"_s,
-    "ProcessHrtime"_s,
-    "ProcessInitgroups"_s,
-    "ProcessIsBun"_s,
-    "ProcessKill"_s,
-    "ProcessListenerCount"_s,
-    "ProcessListeners"_s,
-    "ProcessLoadEnvFile"_s,
-    "ProcessMainModule"_s,
-    "ProcessMemoryUsage"_s,
-    "ProcessModuleLoadList"_s,
-    "ProcessNextTick"_s,
-    "ProcessOff"_s,
-    "ProcessOn"_s,
-    "ProcessOnce"_s,
-    "ProcessOpenStdin"_s,
-    "ProcessPid"_s,
-    "ProcessPlatform"_s,
-    "ProcessPpid"_s,
-    "ProcessPrependListener"_s,
-    "ProcessPrependOnceListener"_s,
-    "ProcessRawListeners"_s,
-    "ProcessReallyExit"_s,
-    "ProcessRef"_s,
-    "ProcessRelease"_s,
-    "ProcessRemoveAllListeners"_s,
-    "ProcessRemoveListener"_s,
-    "ProcessReport"_s,
-    "ProcessResourceUsage"_s,
-    "ProcessRevision"_s,
-    "ProcessSend"_s,
-    "ProcessSetMaxListeners"_s,
-    "ProcessSetSourceMapsEnabled"_s,
-    "ProcessSetUncaughtExceptionCaptureCallback"_s,
-    "ProcessSetegid"_s,
-    "ProcessSeteuid"_s,
-    "ProcessSetgid"_s,
-    "ProcessSetgroups"_s,
-    "ProcessSetuid"_s,
-    "ProcessStderr"_s,
-    "ProcessStdin"_s,
-    "ProcessStdout"_s,
-    "ProcessThreadCpuUsage"_s,
-    "ProcessTitle"_s,
-    "ProcessUmask"_s,
-    "ProcessUnref"_s,
-    "ProcessUptime"_s,
-    "ProcessVersion"_s,
-    "ProcessVersions"_s,
-    "SetImmediateSymbolForNodejsUtilPromisifyCustom"_s,
-    "SetIntervalSymbolForNodejsUtilPromisifyCustom"_s,
-    "SetTimeoutSymbolForNodejsUtilPromisifyCustom"_s,
-    "UnescapeLength"_s,
-    "UnescapeName"_s,
-    "AsyncFunctionPrototypeConstructor"_s,
-    "AsyncFunctionPrototypeSymbolToStringTag"_s,
-    "AsyncGeneratorFunctionPrototypeConstructor"_s,
-    "AsyncGeneratorFunctionPrototypePrototype"_s,
-    "AsyncGeneratorFunctionPrototypeSymbolToStringTag"_s,
-    "BlockListPrototypeAddAddress"_s,
-    "BlockListPrototypeAddRange"_s,
-    "BlockListPrototypeAddSubnet"_s,
-    "BlockListPrototypeCheck"_s,
-    "BlockListPrototypeConstructor"_s,
-    "BlockListPrototypeRules"_s,
-    "ExpectPrototypeConstructor"_s,
-    "ExpectPrototypeFail"_s,
-    "ExpectPrototypeLastCalledWith"_s,
-    "ExpectPrototypeLastReturnedWith"_s,
-    "ExpectPrototypeNot"_s,
-    "ExpectPrototypeNthCalledWith"_s,
-    "ExpectPrototypeNthReturnedWith"_s,
-    "ExpectPrototypePass"_s,
-    "ExpectPrototypeRejects"_s,
-    "ExpectPrototypeResolves"_s,
-    "ExpectPrototypeToBe"_s,
-    "ExpectPrototypeToBeArray"_s,
-    "ExpectPrototypeToBeArrayOfSize"_s,
-    "ExpectPrototypeToBeBoolean"_s,
-    "ExpectPrototypeToBeCalled"_s,
-    "ExpectPrototypeToBeCalledTimes"_s,
-    "ExpectPrototypeToBeCalledWith"_s,
-    "ExpectPrototypeToBeCloseTo"_s,
-    "ExpectPrototypeToBeDate"_s,
-    "ExpectPrototypeToBeDefined"_s,
-    "ExpectPrototypeToBeEmpty"_s,
-    "ExpectPrototypeToBeEmptyObject"_s,
-    "ExpectPrototypeToBeEven"_s,
-    "ExpectPrototypeToBeFalse"_s,
-    "ExpectPrototypeToBeFalsy"_s,
-    "ExpectPrototypeToBeFinite"_s,
-    "ExpectPrototypeToBeFunction"_s,
-    "ExpectPrototypeToBeGreaterThan"_s,
-    "ExpectPrototypeToBeGreaterThanOrEqual"_s,
-    "ExpectPrototypeToBeInstanceOf"_s,
-    "ExpectPrototypeToBeInteger"_s,
-    "ExpectPrototypeToBeLessThan"_s,
-    "ExpectPrototypeToBeLessThanOrEqual"_s,
-    "ExpectPrototypeToBeNaN"_s,
-    "ExpectPrototypeToBeNegative"_s,
-    "ExpectPrototypeToBeNil"_s,
-    "ExpectPrototypeToBeNull"_s,
-    "ExpectPrototypeToBeNumber"_s,
-    "ExpectPrototypeToBeObject"_s,
-    "ExpectPrototypeToBeOdd"_s,
-    "ExpectPrototypeToBeOneOf"_s,
-    "ExpectPrototypeToBePositive"_s,
-    "ExpectPrototypeToBeString"_s,
-    "ExpectPrototypeToBeSymbol"_s,
-    "ExpectPrototypeToBeTrue"_s,
-    "ExpectPrototypeToBeTruthy"_s,
-    "ExpectPrototypeToBeTypeOf"_s,
-    "ExpectPrototypeToBeUndefined"_s,
-    "ExpectPrototypeToBeValidDate"_s,
-    "ExpectPrototypeToBeWithin"_s,
-    "ExpectPrototypeToContain"_s,
-    "ExpectPrototypeToContainAllKeys"_s,
-    "ExpectPrototypeToContainAllValues"_s,
-    "ExpectPrototypeToContainAnyKeys"_s,
-    "ExpectPrototypeToContainAnyValues"_s,
-    "ExpectPrototypeToContainEqual"_s,
-    "ExpectPrototypeToContainKey"_s,
-    "ExpectPrototypeToContainKeys"_s,
-    "ExpectPrototypeToContainValue"_s,
-    "ExpectPrototypeToContainValues"_s,
-    "ExpectPrototypeToEndWith"_s,
-    "ExpectPrototypeToEqual"_s,
-    "ExpectPrototypeToEqualIgnoringWhitespace"_s,
-    "ExpectPrototypeToHaveBeenCalled"_s,
-    "ExpectPrototypeToHaveBeenCalledOnce"_s,
-    "ExpectPrototypeToHaveBeenCalledTimes"_s,
-    "ExpectPrototypeToHaveBeenCalledWith"_s,
-    "ExpectPrototypeToHaveBeenLastCalledWith"_s,
-    "ExpectPrototypeToHaveBeenNthCalledWith"_s,
-    "ExpectPrototypeToHaveLastReturnedWith"_s,
-    "ExpectPrototypeToHaveLength"_s,
-    "ExpectPrototypeToHaveNthReturnedWith"_s,
-    "ExpectPrototypeToHaveProperty"_s,
-    "ExpectPrototypeToHaveReturned"_s,
-    "ExpectPrototypeToHaveReturnedTimes"_s,
-    "ExpectPrototypeToHaveReturnedWith"_s,
-    "ExpectPrototypeToInclude"_s,
-    "ExpectPrototypeToIncludeRepeated"_s,
-    "ExpectPrototypeToMatch"_s,
-    "ExpectPrototypeToMatchInlineSnapshot"_s,
-    "ExpectPrototypeToMatchObject"_s,
-    "ExpectPrototypeToMatchSnapshot"_s,
-    "ExpectPrototypeToReturn"_s,
-    "ExpectPrototypeToSatisfy"_s,
-    "ExpectPrototypeToStartWith"_s,
-    "ExpectPrototypeToStrictEqual"_s,
-    "ExpectPrototypeToThrow"_s,
-    "ExpectPrototypeToThrowError"_s,
-    "ExpectPrototypeToThrowErrorMatchingInlineSnapshot"_s,
-    "ExpectPrototypeToThrowErrorMatchingSnapshot"_s,
-    "ExpectTypeOfPrototypeAsserts"_s,
-    "ExpectTypeOfPrototypeBranded"_s,
-    "ExpectTypeOfPrototypeConstructor"_s,
-    "ExpectTypeOfPrototypeConstructorParameters"_s,
-    "ExpectTypeOfPrototypeExclude"_s,
-    "ExpectTypeOfPrototypeExtract"_s,
-    "ExpectTypeOfPrototypeGuards"_s,
-    "ExpectTypeOfPrototypeInstance"_s,
-    "ExpectTypeOfPrototypeItems"_s,
-    "ExpectTypeOfPrototypeMap"_s,
-    "ExpectTypeOfPrototypeNot"_s,
-    "ExpectTypeOfPrototypeOmit"_s,
-    "ExpectTypeOfPrototypeParameter"_s,
-    "ExpectTypeOfPrototypeParameters"_s,
-    "ExpectTypeOfPrototypePick"_s,
-    "ExpectTypeOfPrototypeResolves"_s,
-    "ExpectTypeOfPrototypeReturns"_s,
-    "ExpectTypeOfPrototypeThisParameter"_s,
-    "ExpectTypeOfPrototypeToBeAny"_s,
-    "ExpectTypeOfPrototypeToBeArray"_s,
-    "ExpectTypeOfPrototypeToBeBigInt"_s,
-    "ExpectTypeOfPrototypeToBeBoolean"_s,
-    "ExpectTypeOfPrototypeToBeCallableWith"_s,
-    "ExpectTypeOfPrototypeToBeConstructibleWith"_s,
-    "ExpectTypeOfPrototypeToBeFunction"_s,
-    "ExpectTypeOfPrototypeToBeNever"_s,
-    "ExpectTypeOfPrototypeToBeNull"_s,
-    "ExpectTypeOfPrototypeToBeNumber"_s,
-    "ExpectTypeOfPrototypeToBeObject"_s,
-    "ExpectTypeOfPrototypeToBeString"_s,
-    "ExpectTypeOfPrototypeToBeSymbol"_s,
-    "ExpectTypeOfPrototypeToBeUndefined"_s,
-    "ExpectTypeOfPrototypeToBeUnknown"_s,
-    "ExpectTypeOfPrototypeToBeVoid"_s,
-    "ExpectTypeOfPrototypeToEqualTypeOf"_s,
-    "ExpectTypeOfPrototypeToExtend"_s,
-    "ExpectTypeOfPrototypeToHaveProperty"_s,
-    "ExpectTypeOfPrototypeToMatchObjectType"_s,
-    "ExpectTypeOfPrototypeToMatchTypeOf"_s,
-    "FetchRequestBodySinkPrototype_getFd"_s,
-    "FetchRequestBodySinkPrototypeClose"_s,
-    "FetchRequestBodySinkPrototypeConstructor"_s,
-    "FetchRequestBodySinkPrototypeEnd"_s,
-    "FetchRequestBodySinkPrototypeFlush"_s,
-    "FetchRequestBodySinkPrototypeRef"_s,
-    "FetchRequestBodySinkPrototypeStart"_s,
-    "FetchRequestBodySinkPrototypeUnref"_s,
-    "FetchRequestBodySinkPrototypeWrite"_s,
-    "FileSinkPrototype_getFd"_s,
-    "FileSinkPrototypeClose"_s,
-    "FileSinkPrototypeConstructor"_s,
-    "FileSinkPrototypeEnd"_s,
-    "FileSinkPrototypeFlush"_s,
-    "FileSinkPrototypeRef"_s,
-    "FileSinkPrototypeStart"_s,
-    "FileSinkPrototypeUnref"_s,
-    "FileSinkPrototypeWrite"_s,
-    "FrameworkFileSystemRouterPrototypeConstructor"_s,
-    "FrameworkFileSystemRouterPrototypeMatch"_s,
-    "FrameworkFileSystemRouterPrototypeToJSON"_s,
-    "GeneratorFunctionPrototypeConstructor"_s,
-    "GeneratorFunctionPrototypePrototype"_s,
-    "GeneratorFunctionPrototypeSymbolToStringTag"_s,
-    "H2FrameParserPrototypeAltsvc"_s,
-    "H2FrameParserPrototypeBufferSize"_s,
-    "H2FrameParserPrototypeConstructor"_s,
-    "H2FrameParserPrototypeDetach"_s,
-    "H2FrameParserPrototypeEmitAbortToAllStreams"_s,
-    "H2FrameParserPrototypeEmitErrorToAllStreams"_s,
-    "H2FrameParserPrototypeFlush"_s,
-    "H2FrameParserPrototypeForEachStream"_s,
-    "H2FrameParserPrototypeGetCurrentState"_s,
-    "H2FrameParserPrototypeGetEndAfterHeaders"_s,
-    "H2FrameParserPrototypeGetFrameCounters"_s,
-    "H2FrameParserPrototypeGetNextStream"_s,
-    "H2FrameParserPrototypeGetStreamContext"_s,
-    "H2FrameParserPrototypeGetStreamState"_s,
-    "H2FrameParserPrototypeGoaway"_s,
-    "H2FrameParserPrototypeNoTrailers"_s,
-    "H2FrameParserPrototypeOrigin"_s,
-    "H2FrameParserPrototypePing"_s,
-    "H2FrameParserPrototypePushPromise"_s,
-    "H2FrameParserPrototypeRead"_s,
-    "H2FrameParserPrototypeRequest"_s,
-    "H2FrameParserPrototypeRstStream"_s,
-    "H2FrameParserPrototypeSendTrailers"_s,
-    "H2FrameParserPrototypeSetLocalWindowSize"_s,
-    "H2FrameParserPrototypeSetNativeSocket"_s,
-    "H2FrameParserPrototypeSetNextStreamID"_s,
-    "H2FrameParserPrototypeSetStreamContext"_s,
-    "H2FrameParserPrototypeSetStreamReading"_s,
-    "H2FrameParserPrototypeSettings"_s,
-    "H2FrameParserPrototypeWriteStream"_s,
-    "HTMLRewriterSinkPrototype_getFd"_s,
-    "HTMLRewriterSinkPrototypeClose"_s,
-    "HTMLRewriterSinkPrototypeConstructor"_s,
-    "HTMLRewriterSinkPrototypeEnd"_s,
-    "HTMLRewriterSinkPrototypeFlush"_s,
-    "HTMLRewriterSinkPrototypeRef"_s,
-    "HTMLRewriterSinkPrototypeStart"_s,
-    "HTMLRewriterSinkPrototypeUnref"_s,
-    "HTMLRewriterSinkPrototypeWrite"_s,
-    "HTTPResponseSinkPrototype_getFd"_s,
-    "HTTPResponseSinkPrototypeClose"_s,
-    "HTTPResponseSinkPrototypeConstructor"_s,
-    "HTTPResponseSinkPrototypeEnd"_s,
-    "HTTPResponseSinkPrototypeFlush"_s,
-    "HTTPResponseSinkPrototypeRef"_s,
-    "HTTPResponseSinkPrototypeStart"_s,
-    "HTTPResponseSinkPrototypeUnref"_s,
-    "HTTPResponseSinkPrototypeWrite"_s,
-    "HTTPSResponseSinkPrototype_getFd"_s,
-    "HTTPSResponseSinkPrototypeClose"_s,
-    "HTTPSResponseSinkPrototypeConstructor"_s,
-    "HTTPSResponseSinkPrototypeEnd"_s,
-    "HTTPSResponseSinkPrototypeFlush"_s,
-    "HTTPSResponseSinkPrototypeRef"_s,
-    "HTTPSResponseSinkPrototypeStart"_s,
-    "HTTPSResponseSinkPrototypeUnref"_s,
-    "HTTPSResponseSinkPrototypeWrite"_s,
-    "ImmediatePrototype_destroyed"_s,
-    "ImmediatePrototypeConstructor"_s,
-    "ImmediatePrototypeHasRef"_s,
-    "ImmediatePrototypeRef"_s,
-    "ImmediatePrototypeUnref"_s,
-    "ImmediatePrototypeSymbolDispose"_s,
-    "ImmediatePrototypeSymbolToPrimitive"_s,
-    "NativeBrotliPrototypeClose"_s,
-    "NativeBrotliPrototypeConstructor"_s,
-    "NativeBrotliPrototypeInit"_s,
-    "NativeBrotliPrototypeOnerror"_s,
-    "NativeBrotliPrototypeParams"_s,
-    "NativeBrotliPrototypeReset"_s,
-    "NativeBrotliPrototypeWrite"_s,
-    "NativeBrotliPrototypeWriteSync"_s,
-    "NativeZlibPrototypeClose"_s,
-    "NativeZlibPrototypeConstructor"_s,
-    "NativeZlibPrototypeInit"_s,
-    "NativeZlibPrototypeOnerror"_s,
-    "NativeZlibPrototypeParams"_s,
-    "NativeZlibPrototypeReset"_s,
-    "NativeZlibPrototypeWrite"_s,
-    "NativeZlibPrototypeWriteSync"_s,
-    "NativeZstdPrototypeClose"_s,
-    "NativeZstdPrototypeConstructor"_s,
-    "NativeZstdPrototypeInit"_s,
-    "NativeZstdPrototypeOnerror"_s,
-    "NativeZstdPrototypeParams"_s,
-    "NativeZstdPrototypeReset"_s,
-    "NativeZstdPrototypeWrite"_s,
-    "NativeZstdPrototypeWriteSync"_s,
-    "NetworkSinkPrototype_getFd"_s,
-    "NetworkSinkPrototypeClose"_s,
-    "NetworkSinkPrototypeConstructor"_s,
-    "NetworkSinkPrototypeEnd"_s,
-    "NetworkSinkPrototypeFlush"_s,
-    "NetworkSinkPrototypeRef"_s,
-    "NetworkSinkPrototypeStart"_s,
-    "NetworkSinkPrototypeUnref"_s,
-    "NetworkSinkPrototypeWrite"_s,
-    "QuicEndpointPrototypeAddress"_s,
-    "QuicEndpointPrototypeCloseGracefully"_s,
-    "QuicEndpointPrototypeConnect"_s,
-    "QuicEndpointPrototypeConstructor"_s,
-    "QuicEndpointPrototypeListen"_s,
-    "QuicEndpointPrototypeMarkBusy"_s,
-    "QuicEndpointPrototypeReleaseSocket"_s,
-    "QuicEndpointPrototypeSetSNIContexts"_s,
-    "S3StatPrototypeConstructor"_s,
-    "S3StatPrototypeEtag"_s,
-    "S3StatPrototypeLastModified"_s,
-    "S3StatPrototypeSize"_s,
-    "S3StatPrototypeType"_s,
-    "SecureContextPrototype_external"_s,
-    "SecureContextPrototypeAddCACert"_s,
-    "SecureContextPrototypeConstructor"_s,
-    "ServerWebSocketPrototypeBinaryType"_s,
-    "ServerWebSocketPrototypeClose"_s,
-    "ServerWebSocketPrototypeConstructor"_s,
-    "ServerWebSocketPrototypeCork"_s,
-    "ServerWebSocketPrototypeData"_s,
-    "ServerWebSocketPrototypeGetBufferedAmount"_s,
-    "ServerWebSocketPrototypeIsPaused"_s,
-    "ServerWebSocketPrototypeIsSubscribed"_s,
-    "ServerWebSocketPrototypePause"_s,
-    "ServerWebSocketPrototypePing"_s,
-    "ServerWebSocketPrototypePong"_s,
-    "ServerWebSocketPrototypePublish"_s,
-    "ServerWebSocketPrototypePublishBinary"_s,
-    "ServerWebSocketPrototypePublishText"_s,
-    "ServerWebSocketPrototypeReadyState"_s,
-    "ServerWebSocketPrototypeRemoteAddress"_s,
-    "ServerWebSocketPrototypeResume"_s,
-    "ServerWebSocketPrototypeSend"_s,
-    "ServerWebSocketPrototypeSendBinary"_s,
-    "ServerWebSocketPrototypeSendText"_s,
-    "ServerWebSocketPrototypeSubscribe"_s,
-    "ServerWebSocketPrototypeSubscriptions"_s,
-    "ServerWebSocketPrototypeTerminate"_s,
-    "ServerWebSocketPrototypeUnsubscribe"_s,
-    "SocketAddressPrototypeAddress"_s,
-    "SocketAddressPrototypeAddrfamily"_s,
-    "SocketAddressPrototypeConstructor"_s,
-    "SocketAddressPrototypeFamily"_s,
-    "SocketAddressPrototypeFlowlabel"_s,
-    "SocketAddressPrototypePort"_s,
-    "SocketAddressPrototypeToJSON"_s,
-    "TimeoutPrototype_destroyed"_s,
-    "TimeoutPrototype_idleStart"_s,
-    "TimeoutPrototype_idleTimeout"_s,
-    "TimeoutPrototype_onTimeout"_s,
-    "TimeoutPrototype_repeat"_s,
-    "TimeoutPrototypeClose"_s,
-    "TimeoutPrototypeConstructor"_s,
-    "TimeoutPrototypeHasRef"_s,
-    "TimeoutPrototypeRef"_s,
-    "TimeoutPrototypeRefresh"_s,
-    "TimeoutPrototypeUnref"_s,
-    "TimeoutPrototypeSymbolDispose"_s,
-    "TimeoutPrototypeSymbolToPrimitive"_s,
-    "TypedArrayPrototypeAt"_s,
-    "TypedArrayPrototypeBuffer"_s,
-    "TypedArrayPrototypeByteLength"_s,
-    "TypedArrayPrototypeByteOffset"_s,
-    "TypedArrayPrototypeConstructor"_s,
-    "TypedArrayPrototypeCopyWithin"_s,
-    "TypedArrayPrototypeEntries"_s,
-    "TypedArrayPrototypeEvery"_s,
-    "TypedArrayPrototypeFill"_s,
-    "TypedArrayPrototypeFilter"_s,
-    "TypedArrayPrototypeFind"_s,
-    "TypedArrayPrototypeFindIndex"_s,
-    "TypedArrayPrototypeFindLast"_s,
-    "TypedArrayPrototypeFindLastIndex"_s,
-    "TypedArrayPrototypeForEach"_s,
-    "TypedArrayPrototypeIncludes"_s,
-    "TypedArrayPrototypeIndexOf"_s,
-    "TypedArrayPrototypeJoin"_s,
-    "TypedArrayPrototypeKeys"_s,
-    "TypedArrayPrototypeLastIndexOf"_s,
-    "TypedArrayPrototypeLength"_s,
-    "TypedArrayPrototypeMap"_s,
-    "TypedArrayPrototypeReduce"_s,
-    "TypedArrayPrototypeReduceRight"_s,
-    "TypedArrayPrototypeReverse"_s,
-    "TypedArrayPrototypeSet"_s,
-    "TypedArrayPrototypeSlice"_s,
-    "TypedArrayPrototypeSome"_s,
-    "TypedArrayPrototypeSort"_s,
-    "TypedArrayPrototypeSubarray"_s,
-    "TypedArrayPrototypeToLocaleString"_s,
-    "TypedArrayPrototypeToReversed"_s,
-    "TypedArrayPrototypeToSorted"_s,
-    "TypedArrayPrototypeToString"_s,
-    "TypedArrayPrototypeValues"_s,
-    "TypedArrayPrototypeWith"_s,
-    "TypedArrayPrototypeSymbolIterator"_s,
-    "TypedArrayPrototypeSymbolToStringTag"_s,
-    "BunTestJestSpyOn"_s,
-    "BunTestViSpyOn"_s,
-    "NodeModuleSourceMapPrototype"_s,
-    "NodeModulePrototype_compile"_s,
-    "NodeModulePrototypeRequire"_s,
-    "AbortSignalPrototypeConstructor"_s,
-    "AggregateErrorPrototypeConstructor"_s,
-    "AggregateErrorPrototypeMessage"_s,
-    "AggregateErrorPrototypeName"_s,
-    "ArrayPrototypeAt"_s,
-    "ArrayPrototypeConcat"_s,
-    "ArrayPrototypeConstructor"_s,
-    "ArrayPrototypeCopyWithin"_s,
-    "ArrayPrototypeEntries"_s,
-    "ArrayPrototypeEvery"_s,
-    "ArrayPrototypeFill"_s,
-    "ArrayPrototypeFilter"_s,
-    "ArrayPrototypeFind"_s,
-    "ArrayPrototypeFindIndex"_s,
-    "ArrayPrototypeFindLast"_s,
-    "ArrayPrototypeFindLastIndex"_s,
-    "ArrayPrototypeFlat"_s,
-    "ArrayPrototypeFlatMap"_s,
-    "ArrayPrototypeForEach"_s,
-    "ArrayPrototypeIncludes"_s,
-    "ArrayPrototypeIndexOf"_s,
-    "ArrayPrototypeJoin"_s,
-    "ArrayPrototypeKeys"_s,
-    "ArrayPrototypeLastIndexOf"_s,
-    "ArrayPrototypeLength"_s,
-    "ArrayPrototypeMap"_s,
-    "ArrayPrototypePop"_s,
-    "ArrayPrototypePush"_s,
-    "ArrayPrototypeReduce"_s,
-    "ArrayPrototypeReduceRight"_s,
-    "ArrayPrototypeReverse"_s,
-    "ArrayPrototypeShift"_s,
-    "ArrayPrototypeSlice"_s,
-    "ArrayPrototypeSome"_s,
-    "ArrayPrototypeSort"_s,
-    "ArrayPrototypeSplice"_s,
-    "ArrayPrototypeToLocaleString"_s,
-    "ArrayPrototypeToReversed"_s,
-    "ArrayPrototypeToSorted"_s,
-    "ArrayPrototypeToSpliced"_s,
-    "ArrayPrototypeToString"_s,
-    "ArrayPrototypeUnshift"_s,
-    "ArrayPrototypeValues"_s,
-    "ArrayPrototypeWith"_s,
-    "ArrayPrototypeSymbolIterator"_s,
-    "ArrayPrototypeSymbolUnscopables"_s,
-    "ArrayBufferPrototypeByteLength"_s,
-    "ArrayBufferPrototypeConstructor"_s,
-    "ArrayBufferPrototypeDetached"_s,
-    "ArrayBufferPrototypeMaxByteLength"_s,
-    "ArrayBufferPrototypeResizable"_s,
-    "ArrayBufferPrototypeResize"_s,
-    "ArrayBufferPrototypeSlice"_s,
-    "ArrayBufferPrototypeTransfer"_s,
-    "ArrayBufferPrototypeTransferToFixedLength"_s,
-    "ArrayBufferPrototypeSymbolToStringTag"_s,
-    "AsyncDisposableStackPrototypeAdopt"_s,
-    "AsyncDisposableStackPrototypeConstructor"_s,
-    "AsyncDisposableStackPrototypeDefer"_s,
-    "AsyncDisposableStackPrototypeDisposeAsync"_s,
-    "AsyncDisposableStackPrototypeDisposed"_s,
-    "AsyncDisposableStackPrototypeMove"_s,
-    "AsyncDisposableStackPrototypeUse"_s,
-    "AsyncDisposableStackPrototypeSymbolAsyncDispose"_s,
-    "AsyncDisposableStackPrototypeSymbolToStringTag"_s,
-    "BigIntPrototypeConstructor"_s,
-    "BigIntPrototypeToLocaleString"_s,
-    "BigIntPrototypeToString"_s,
-    "BigIntPrototypeValueOf"_s,
-    "BigIntPrototypeSymbolToStringTag"_s,
-    "BigInt64ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "BigInt64ArrayPrototypeConstructor"_s,
-    "BigUint64ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "BigUint64ArrayPrototypeConstructor"_s,
-    "BlobPrototypeArrayBuffer"_s,
-    "BlobPrototypeBytes"_s,
-    "BlobPrototypeConstructor"_s,
-    "BlobPrototypeDelete"_s,
-    "BlobPrototypeExists"_s,
-    "BlobPrototypeFormData"_s,
-    "BlobPrototypeImage"_s,
-    "BlobPrototypeJson"_s,
-    "BlobPrototypeLastModified"_s,
-    "BlobPrototypeName"_s,
-    "BlobPrototypeSize"_s,
-    "BlobPrototypeSlice"_s,
-    "BlobPrototypeStat"_s,
-    "BlobPrototypeStream"_s,
-    "BlobPrototypeText"_s,
-    "BlobPrototypeType"_s,
-    "BlobPrototypeUnlink"_s,
-    "BlobPrototypeWrite"_s,
-    "BlobPrototypeWriter"_s,
-    "BlobPrototypeSymbolToStringTag"_s,
-    "BooleanPrototypeConstructor"_s,
-    "BooleanPrototypeToString"_s,
-    "BooleanPrototypeValueOf"_s,
-    "BufferPrototypeAsciiSlice"_s,
-    "BufferPrototypeAsciiWrite"_s,
-    "BufferPrototypeBase64Slice"_s,
-    "BufferPrototypeBase64Write"_s,
-    "BufferPrototypeBase64urlSlice"_s,
-    "BufferPrototypeBase64urlWrite"_s,
-    "BufferPrototypeCompare"_s,
-    "BufferPrototypeConstructor"_s,
-    "BufferPrototypeCopy"_s,
-    "BufferPrototypeEquals"_s,
-    "BufferPrototypeFill"_s,
-    "BufferPrototypeHexSlice"_s,
-    "BufferPrototypeHexWrite"_s,
-    "BufferPrototypeIncludes"_s,
-    "BufferPrototypeIndexOf"_s,
-    "BufferPrototypeInspect"_s,
-    "BufferPrototypeLastIndexOf"_s,
-    "BufferPrototypeLatin1Slice"_s,
-    "BufferPrototypeLatin1Write"_s,
-    "BufferPrototypeOffset"_s,
-    "BufferPrototypeParent"_s,
-    "BufferPrototypeReadBigInt64"_s,
-    "BufferPrototypeReadBigInt64BE"_s,
-    "BufferPrototypeReadBigInt64LE"_s,
-    "BufferPrototypeReadBigUInt64"_s,
-    "BufferPrototypeReadBigUInt64BE"_s,
-    "BufferPrototypeReadBigUInt64LE"_s,
-    "BufferPrototypeReadBigUint64BE"_s,
-    "BufferPrototypeReadBigUint64LE"_s,
-    "BufferPrototypeReadDouble"_s,
-    "BufferPrototypeReadDoubleBE"_s,
-    "BufferPrototypeReadDoubleLE"_s,
-    "BufferPrototypeReadFloat"_s,
-    "BufferPrototypeReadFloatBE"_s,
-    "BufferPrototypeReadFloatLE"_s,
-    "BufferPrototypeReadInt16"_s,
-    "BufferPrototypeReadInt16BE"_s,
-    "BufferPrototypeReadInt16LE"_s,
-    "BufferPrototypeReadInt32"_s,
-    "BufferPrototypeReadInt32BE"_s,
-    "BufferPrototypeReadInt32LE"_s,
-    "BufferPrototypeReadInt8"_s,
-    "BufferPrototypeReadIntBE"_s,
-    "BufferPrototypeReadIntLE"_s,
-    "BufferPrototypeReadUInt16BE"_s,
-    "BufferPrototypeReadUInt16LE"_s,
-    "BufferPrototypeReadUInt32BE"_s,
-    "BufferPrototypeReadUInt32LE"_s,
-    "BufferPrototypeReadUInt8"_s,
-    "BufferPrototypeReadUIntBE"_s,
-    "BufferPrototypeReadUIntLE"_s,
-    "BufferPrototypeReadUint16BE"_s,
-    "BufferPrototypeReadUint16LE"_s,
-    "BufferPrototypeReadUint32BE"_s,
-    "BufferPrototypeReadUint32LE"_s,
-    "BufferPrototypeReadUint8"_s,
-    "BufferPrototypeReadUintBE"_s,
-    "BufferPrototypeReadUintLE"_s,
-    "BufferPrototypeSlice"_s,
-    "BufferPrototypeSubarray"_s,
-    "BufferPrototypeSwap16"_s,
-    "BufferPrototypeSwap32"_s,
-    "BufferPrototypeSwap64"_s,
-    "BufferPrototypeToJSON"_s,
-    "BufferPrototypeToLocaleString"_s,
-    "BufferPrototypeToString"_s,
-    "BufferPrototypeUcs2Slice"_s,
-    "BufferPrototypeUcs2Write"_s,
-    "BufferPrototypeUtf16leSlice"_s,
-    "BufferPrototypeUtf16leWrite"_s,
-    "BufferPrototypeUtf8Slice"_s,
-    "BufferPrototypeUtf8Write"_s,
-    "BufferPrototypeWrite"_s,
-    "BufferPrototypeWriteBigInt64BE"_s,
-    "BufferPrototypeWriteBigInt64LE"_s,
-    "BufferPrototypeWriteBigUInt64BE"_s,
-    "BufferPrototypeWriteBigUInt64LE"_s,
-    "BufferPrototypeWriteBigUint64BE"_s,
-    "BufferPrototypeWriteBigUint64LE"_s,
-    "BufferPrototypeWriteDouble"_s,
-    "BufferPrototypeWriteDoubleBE"_s,
-    "BufferPrototypeWriteDoubleLE"_s,
-    "BufferPrototypeWriteFloat"_s,
-    "BufferPrototypeWriteFloatBE"_s,
-    "BufferPrototypeWriteFloatLE"_s,
-    "BufferPrototypeWriteInt16BE"_s,
-    "BufferPrototypeWriteInt16LE"_s,
-    "BufferPrototypeWriteInt32BE"_s,
-    "BufferPrototypeWriteInt32LE"_s,
-    "BufferPrototypeWriteInt8"_s,
-    "BufferPrototypeWriteIntBE"_s,
-    "BufferPrototypeWriteIntLE"_s,
-    "BufferPrototypeWriteUInt16"_s,
-    "BufferPrototypeWriteUInt16BE"_s,
-    "BufferPrototypeWriteUInt16LE"_s,
-    "BufferPrototypeWriteUInt32"_s,
-    "BufferPrototypeWriteUInt32BE"_s,
-    "BufferPrototypeWriteUInt32LE"_s,
-    "BufferPrototypeWriteUInt8"_s,
-    "BufferPrototypeWriteUIntBE"_s,
-    "BufferPrototypeWriteUIntLE"_s,
-    "BufferPrototypeWriteUint16"_s,
-    "BufferPrototypeWriteUint16BE"_s,
-    "BufferPrototypeWriteUint16LE"_s,
-    "BufferPrototypeWriteUint32"_s,
-    "BufferPrototypeWriteUint32BE"_s,
-    "BufferPrototypeWriteUint32LE"_s,
-    "BufferPrototypeWriteUint8"_s,
-    "BufferPrototypeWriteUintBE"_s,
-    "BufferPrototypeWriteUintLE"_s,
-    "BufferPrototypeSymbolSpecies"_s,
-    "BufferPrototypeSymbolToStringTag"_s,
-    "BufferPrototypeSymbolForNodejsUtilInspectCustom"_s,
-    "BuildMessagePrototypeColumn"_s,
-    "BuildMessagePrototypeConstructor"_s,
-    "BuildMessagePrototypeLevel"_s,
-    "BuildMessagePrototypeLine"_s,
-    "BuildMessagePrototypeMessage"_s,
-    "BuildMessagePrototypeNotes"_s,
-    "BuildMessagePrototypePosition"_s,
-    "BuildMessagePrototypeToJSON"_s,
-    "BuildMessagePrototypeToString"_s,
-    "BuildMessagePrototypeSymbolToPrimitive"_s,
-    "BunArchivePrototype"_s,
-    "BunArchiveWrite"_s,
-    "BunArrayBufferSinkPrototype"_s,
-    "BunCSRFGenerate"_s,
-    "BunCSRFVerify"_s,
-    "BunCryptoHasherAlgorithms"_s,
-    "BunCryptoHasherHash"_s,
-    "BunCryptoHasherPrototype"_s,
-    "BunFetchSessionPrototype"_s,
-    "BunFileSystemRouterPrototype"_s,
-    "BunGlobPrototype"_s,
-    "BunImageBackend"_s,
-    "BunImageClipboardChangeCount"_s,
-    "BunImageFromClipboard"_s,
-    "BunImageHasClipboardImage"_s,
-    "BunImagePrototype"_s,
-    "BunJSON5Parse"_s,
-    "BunJSON5Stringify"_s,
-    "BunJSONCParse"_s,
-    "BunJSONLParse"_s,
-    "BunJSONLParseChunk"_s,
-    "BunMD4ByteLength"_s,
-    "BunMD4Hash"_s,
-    "BunMD4Prototype"_s,
-    "BunMD5ByteLength"_s,
-    "BunMD5Hash"_s,
-    "BunMD5Prototype"_s,
-    "BunRedisClientPrototype"_s,
-    "BunS3ClientDelete"_s,
-    "BunS3ClientExists"_s,
-    "BunS3ClientFile"_s,
-    "BunS3ClientList"_s,
-    "BunS3ClientPresign"_s,
-    "BunS3ClientPrototype"_s,
-    "BunS3ClientSize"_s,
-    "BunS3ClientStat"_s,
-    "BunS3ClientUnlink"_s,
-    "BunS3ClientWrite"_s,
-    "BunSHA1ByteLength"_s,
-    "BunSHA1Hash"_s,
-    "BunSHA1Prototype"_s,
-    "BunSHA224ByteLength"_s,
-    "BunSHA224Hash"_s,
-    "BunSHA224Prototype"_s,
-    "BunSHA256ByteLength"_s,
-    "BunSHA256Hash"_s,
-    "BunSHA256Prototype"_s,
-    "BunSHA384ByteLength"_s,
-    "BunSHA384Hash"_s,
-    "BunSHA384Prototype"_s,
-    "BunSHA512ByteLength"_s,
-    "BunSHA512Hash"_s,
-    "BunSHA512Prototype"_s,
-    "BunSHA512_256ByteLength"_s,
-    "BunSHA512_256Hash"_s,
-    "BunSHA512_256Prototype"_s,
-    "BunTOMLParse"_s,
-    "BunTOMLStringify"_s,
-    "BunTerminalPrototype"_s,
-    "BunTranspilerPrototype"_s,
-    "BunXMLParse"_s,
-    "BunXMLStringify"_s,
-    "BunYAMLParse"_s,
-    "BunYAMLStringify"_s,
-    "BunDnsGetCacheStats"_s,
-    "BunDnsLookup"_s,
-    "BunDnsPrefetch"_s,
-    "BunHashAdler32"_s,
-    "BunHashCityHash32"_s,
-    "BunHashCityHash64"_s,
-    "BunHashCrc32"_s,
-    "BunHashMurmur32v2"_s,
-    "BunHashMurmur32v3"_s,
-    "BunHashMurmur64v2"_s,
-    "BunHashRapidhash"_s,
-    "BunHashWyhash"_s,
-    "BunHashXxHash3"_s,
-    "BunHashXxHash32"_s,
-    "BunHashXxHash64"_s,
-    "BunMarkdownAnsi"_s,
-    "BunMarkdownHtml"_s,
-    "BunMarkdownReact"_s,
-    "BunMarkdownRender"_s,
-    "BunPasswordHash"_s,
-    "BunPasswordHashSync"_s,
-    "BunPasswordVerify"_s,
-    "BunPasswordVerifySync"_s,
-    "BunPluginClearAll"_s,
-    "BunSecretsDelete"_s,
-    "BunSecretsGet"_s,
-    "BunSecretsSet"_s,
-    "BunSemverOrder"_s,
-    "BunSemverSatisfies"_s,
-    "BunUnsafeArrayBufferToString"_s,
-    "BunUnsafeGcAggressionLevel"_s,
-    "BunUnsafeMemoryFootprint"_s,
-    "BunUnsafeMimallocDump"_s,
-    "BunUnsafeSetJITPolicy"_s,
-    "CompressionStreamPrototypeConstructor"_s,
-    "CryptoPrototypeConstructor"_s,
-    "CryptoPrototypeGetRandomValues"_s,
-    "CryptoPrototypeRandomUUID"_s,
-    "CryptoPrototypeSubtle"_s,
-    "CryptoPrototypeTimingSafeEqual"_s,
-    "DataViewPrototypeBuffer"_s,
-    "DataViewPrototypeByteLength"_s,
-    "DataViewPrototypeByteOffset"_s,
-    "DataViewPrototypeConstructor"_s,
-    "DataViewPrototypeGetBigInt64"_s,
-    "DataViewPrototypeGetBigUint64"_s,
-    "DataViewPrototypeGetFloat16"_s,
-    "DataViewPrototypeGetFloat32"_s,
-    "DataViewPrototypeGetFloat64"_s,
-    "DataViewPrototypeGetInt16"_s,
-    "DataViewPrototypeGetInt32"_s,
-    "DataViewPrototypeGetInt8"_s,
-    "DataViewPrototypeGetUint16"_s,
-    "DataViewPrototypeGetUint32"_s,
-    "DataViewPrototypeGetUint8"_s,
-    "DataViewPrototypeSetBigInt64"_s,
-    "DataViewPrototypeSetBigUint64"_s,
-    "DataViewPrototypeSetFloat16"_s,
-    "DataViewPrototypeSetFloat32"_s,
-    "DataViewPrototypeSetFloat64"_s,
-    "DataViewPrototypeSetInt16"_s,
-    "DataViewPrototypeSetInt32"_s,
-    "DataViewPrototypeSetInt8"_s,
-    "DataViewPrototypeSetUint16"_s,
-    "DataViewPrototypeSetUint32"_s,
-    "DataViewPrototypeSetUint8"_s,
-    "DataViewPrototypeSymbolToStringTag"_s,
-    "DatePrototypeConstructor"_s,
-    "DatePrototypeGetDate"_s,
-    "DatePrototypeGetDay"_s,
-    "DatePrototypeGetFullYear"_s,
-    "DatePrototypeGetHours"_s,
-    "DatePrototypeGetMilliseconds"_s,
-    "DatePrototypeGetMinutes"_s,
-    "DatePrototypeGetMonth"_s,
-    "DatePrototypeGetSeconds"_s,
-    "DatePrototypeGetTime"_s,
-    "DatePrototypeGetTimezoneOffset"_s,
-    "DatePrototypeGetUTCDate"_s,
-    "DatePrototypeGetUTCDay"_s,
-    "DatePrototypeGetUTCFullYear"_s,
-    "DatePrototypeGetUTCHours"_s,
-    "DatePrototypeGetUTCMilliseconds"_s,
-    "DatePrototypeGetUTCMinutes"_s,
-    "DatePrototypeGetUTCMonth"_s,
-    "DatePrototypeGetUTCSeconds"_s,
-    "DatePrototypeGetYear"_s,
-    "DatePrototypeSetDate"_s,
-    "DatePrototypeSetFullYear"_s,
-    "DatePrototypeSetHours"_s,
-    "DatePrototypeSetMilliseconds"_s,
-    "DatePrototypeSetMinutes"_s,
-    "DatePrototypeSetMonth"_s,
-    "DatePrototypeSetSeconds"_s,
-    "DatePrototypeSetTime"_s,
-    "DatePrototypeSetUTCDate"_s,
-    "DatePrototypeSetUTCFullYear"_s,
-    "DatePrototypeSetUTCHours"_s,
-    "DatePrototypeSetUTCMilliseconds"_s,
-    "DatePrototypeSetUTCMinutes"_s,
-    "DatePrototypeSetUTCMonth"_s,
-    "DatePrototypeSetUTCSeconds"_s,
-    "DatePrototypeSetYear"_s,
-    "DatePrototypeToDateString"_s,
-    "DatePrototypeToGMTString"_s,
-    "DatePrototypeToISOString"_s,
-    "DatePrototypeToJSON"_s,
-    "DatePrototypeToLocaleDateString"_s,
-    "DatePrototypeToLocaleString"_s,
-    "DatePrototypeToLocaleTimeString"_s,
-    "DatePrototypeToString"_s,
-    "DatePrototypeToTemporalInstant"_s,
-    "DatePrototypeToTimeString"_s,
-    "DatePrototypeToUTCString"_s,
-    "DatePrototypeValueOf"_s,
-    "DatePrototypeSymbolToPrimitive"_s,
-    "DecompressionStreamPrototypeConstructor"_s,
-    "DisposableStackPrototypeAdopt"_s,
-    "DisposableStackPrototypeConstructor"_s,
-    "DisposableStackPrototypeDefer"_s,
-    "DisposableStackPrototypeDispose"_s,
-    "DisposableStackPrototypeDisposed"_s,
-    "DisposableStackPrototypeMove"_s,
-    "DisposableStackPrototypeUse"_s,
-    "DisposableStackPrototypeSymbolDispose"_s,
-    "DisposableStackPrototypeSymbolToStringTag"_s,
-    "ErrorPrototypeConstructor"_s,
-    "ErrorPrototypeMessage"_s,
-    "ErrorPrototypeName"_s,
-    "ErrorPrototypeToString"_s,
-    "EvalErrorPrototypeConstructor"_s,
-    "EvalErrorPrototypeMessage"_s,
-    "EvalErrorPrototypeName"_s,
-    "EventTargetPrototypeConstructor"_s,
-    "FinalizationRegistryPrototypeConstructor"_s,
-    "FinalizationRegistryPrototypeRegister"_s,
-    "FinalizationRegistryPrototypeUnregister"_s,
-    "FinalizationRegistryPrototypeSymbolToStringTag"_s,
-    "Float16ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Float16ArrayPrototypeConstructor"_s,
-    "Float32ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Float32ArrayPrototypeConstructor"_s,
-    "Float64ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Float64ArrayPrototypeConstructor"_s,
-    "FunctionPrototypeApply"_s,
-    "FunctionPrototypeArguments"_s,
-    "FunctionPrototypeBind"_s,
-    "FunctionPrototypeCall"_s,
-    "FunctionPrototypeCaller"_s,
-    "FunctionPrototypeConstructor"_s,
-    "FunctionPrototypeLength"_s,
-    "FunctionPrototypeName"_s,
-    "FunctionPrototypeToString"_s,
-    "FunctionPrototypeSymbolHasInstance"_s,
-    "HTMLRewriterPrototypeConstructor"_s,
-    "HTMLRewriterPrototypeOn"_s,
-    "HTMLRewriterPrototypeOnDocument"_s,
-    "HTMLRewriterPrototypeTransform"_s,
-    "HeadersPrototypeAppend"_s,
-    "HeadersPrototypeConstructor"_s,
-    "HeadersPrototypeCount"_s,
-    "HeadersPrototypeDelete"_s,
-    "HeadersPrototypeEntries"_s,
-    "HeadersPrototypeForEach"_s,
-    "HeadersPrototypeGet"_s,
-    "HeadersPrototypeGetAll"_s,
-    "HeadersPrototypeGetSetCookie"_s,
-    "HeadersPrototypeHas"_s,
-    "HeadersPrototypeKeys"_s,
-    "HeadersPrototypeSet"_s,
-    "HeadersPrototypeToJSON"_s,
-    "HeadersPrototypeValues"_s,
-    "HeadersPrototypeSymbolIterator"_s,
-    "HeadersPrototypeSymbolToStringTag"_s,
-    "Int16ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Int16ArrayPrototypeConstructor"_s,
-    "Int32ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Int32ArrayPrototypeConstructor"_s,
-    "Int8ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Int8ArrayPrototypeConstructor"_s,
-    "IntlCollatorLength"_s,
-    "IntlCollatorName"_s,
-    "IntlCollatorPrototype"_s,
-    "IntlCollatorSupportedLocalesOf"_s,
-    "IntlDateTimeFormatLength"_s,
-    "IntlDateTimeFormatName"_s,
-    "IntlDateTimeFormatPrototype"_s,
-    "IntlDateTimeFormatSupportedLocalesOf"_s,
-    "IntlDisplayNamesLength"_s,
-    "IntlDisplayNamesName"_s,
-    "IntlDisplayNamesPrototype"_s,
-    "IntlDisplayNamesSupportedLocalesOf"_s,
-    "IntlDurationFormatLength"_s,
-    "IntlDurationFormatName"_s,
-    "IntlDurationFormatPrototype"_s,
-    "IntlDurationFormatSupportedLocalesOf"_s,
-    "IntlListFormatLength"_s,
-    "IntlListFormatName"_s,
-    "IntlListFormatPrototype"_s,
-    "IntlListFormatSupportedLocalesOf"_s,
-    "IntlLocaleLength"_s,
-    "IntlLocaleName"_s,
-    "IntlLocalePrototype"_s,
-    "IntlNumberFormatLength"_s,
-    "IntlNumberFormatName"_s,
-    "IntlNumberFormatPrototype"_s,
-    "IntlNumberFormatSupportedLocalesOf"_s,
-    "IntlPluralRulesLength"_s,
-    "IntlPluralRulesName"_s,
-    "IntlPluralRulesPrototype"_s,
-    "IntlPluralRulesSupportedLocalesOf"_s,
-    "IntlRelativeTimeFormatLength"_s,
-    "IntlRelativeTimeFormatName"_s,
-    "IntlRelativeTimeFormatPrototype"_s,
-    "IntlRelativeTimeFormatSupportedLocalesOf"_s,
-    "IntlSegmenterLength"_s,
-    "IntlSegmenterName"_s,
-    "IntlSegmenterPrototype"_s,
-    "IntlSegmenterSupportedLocalesOf"_s,
-    "IteratorPrototypeChunks"_s,
-    "IteratorPrototypeConstructor"_s,
-    "IteratorPrototypeDrop"_s,
-    "IteratorPrototypeEvery"_s,
-    "IteratorPrototypeFilter"_s,
-    "IteratorPrototypeFind"_s,
-    "IteratorPrototypeFlatMap"_s,
-    "IteratorPrototypeForEach"_s,
-    "IteratorPrototypeIncludes"_s,
-    "IteratorPrototypeJoin"_s,
-    "IteratorPrototypeMap"_s,
-    "IteratorPrototypeReduce"_s,
-    "IteratorPrototypeSome"_s,
-    "IteratorPrototypeTake"_s,
-    "IteratorPrototypeToArray"_s,
-    "IteratorPrototypeWindows"_s,
-    "IteratorPrototypeSymbolDispose"_s,
-    "IteratorPrototypeSymbolIterator"_s,
-    "IteratorPrototypeSymbolToStringTag"_s,
-    "MapPrototypeClear"_s,
-    "MapPrototypeConstructor"_s,
-    "MapPrototypeDelete"_s,
-    "MapPrototypeEntries"_s,
-    "MapPrototypeForEach"_s,
-    "MapPrototypeGet"_s,
-    "MapPrototypeGetOrInsert"_s,
-    "MapPrototypeGetOrInsertComputed"_s,
-    "MapPrototypeHas"_s,
-    "MapPrototypeKeys"_s,
-    "MapPrototypeSet"_s,
-    "MapPrototypeSize"_s,
-    "MapPrototypeValues"_s,
-    "MapPrototypeSymbolIterator"_s,
-    "MapPrototypeSymbolToStringTag"_s,
-    "NumberPrototypeConstructor"_s,
-    "NumberPrototypeToExponential"_s,
-    "NumberPrototypeToFixed"_s,
-    "NumberPrototypeToLocaleString"_s,
-    "NumberPrototypeToPrecision"_s,
-    "NumberPrototypeToString"_s,
-    "NumberPrototypeValueOf"_s,
-    "ObjectPrototype__defineGetter__"_s,
-    "ObjectPrototype__defineSetter__"_s,
-    "ObjectPrototype__lookupGetter__"_s,
-    "ObjectPrototype__lookupSetter__"_s,
-    "ObjectPrototype__proto__"_s,
-    "ObjectPrototypeConstructor"_s,
-    "ObjectPrototypeHasOwnProperty"_s,
-    "ObjectPrototypeIsPrototypeOf"_s,
-    "ObjectPrototypePropertyIsEnumerable"_s,
-    "ObjectPrototypeToLocaleString"_s,
-    "ObjectPrototypeToString"_s,
-    "ObjectPrototypeValueOf"_s,
-    "PromisePrototypeCatch"_s,
-    "PromisePrototypeConstructor"_s,
-    "PromisePrototypeFinally"_s,
-    "PromisePrototypeThen"_s,
-    "PromisePrototypeSymbolToStringTag"_s,
-    "RangeErrorPrototypeConstructor"_s,
-    "RangeErrorPrototypeMessage"_s,
-    "RangeErrorPrototypeName"_s,
-    "ReadableStreamPrototypeConstructor"_s,
-    "ReferenceErrorPrototypeConstructor"_s,
-    "ReferenceErrorPrototypeMessage"_s,
-    "ReferenceErrorPrototypeName"_s,
-    "RegExpPrototypeCompile"_s,
-    "RegExpPrototypeConstructor"_s,
-    "RegExpPrototypeDotAll"_s,
-    "RegExpPrototypeExec"_s,
-    "RegExpPrototypeFlags"_s,
-    "RegExpPrototypeGlobal"_s,
-    "RegExpPrototypeHasIndices"_s,
-    "RegExpPrototypeIgnoreCase"_s,
-    "RegExpPrototypeLastIndex"_s,
-    "RegExpPrototypeMultiline"_s,
-    "RegExpPrototypeSource"_s,
-    "RegExpPrototypeSticky"_s,
-    "RegExpPrototypeTest"_s,
-    "RegExpPrototypeToString"_s,
-    "RegExpPrototypeUnicode"_s,
-    "RegExpPrototypeUnicodeSets"_s,
-    "RegExpPrototypeSymbolMatch"_s,
-    "RegExpPrototypeSymbolMatchAll"_s,
-    "RegExpPrototypeSymbolReplace"_s,
-    "RegExpPrototypeSymbolSearch"_s,
-    "RegExpPrototypeSymbolSplit"_s,
-    "RequestPrototypeArrayBuffer"_s,
-    "RequestPrototypeBlob"_s,
-    "RequestPrototypeBody"_s,
-    "RequestPrototypeBodyUsed"_s,
-    "RequestPrototypeBytes"_s,
-    "RequestPrototypeCache"_s,
-    "RequestPrototypeClone"_s,
-    "RequestPrototypeConstructor"_s,
-    "RequestPrototypeCredentials"_s,
-    "RequestPrototypeDestination"_s,
-    "RequestPrototypeFormData"_s,
-    "RequestPrototypeHeaders"_s,
-    "RequestPrototypeIntegrity"_s,
-    "RequestPrototypeJson"_s,
-    "RequestPrototypeMethod"_s,
-    "RequestPrototypeMode"_s,
-    "RequestPrototypeRedirect"_s,
-    "RequestPrototypeReferrer"_s,
-    "RequestPrototypeReferrerPolicy"_s,
-    "RequestPrototypeSignal"_s,
-    "RequestPrototypeText"_s,
-    "RequestPrototypeTextStream"_s,
-    "RequestPrototypeUrl"_s,
-    "RequestPrototypeSymbolToStringTag"_s,
-    "ResolveMessagePrototypeCode"_s,
-    "ResolveMessagePrototypeColumn"_s,
-    "ResolveMessagePrototypeConstructor"_s,
-    "ResolveMessagePrototypeImportKind"_s,
-    "ResolveMessagePrototypeLevel"_s,
-    "ResolveMessagePrototypeLine"_s,
-    "ResolveMessagePrototypeMessage"_s,
-    "ResolveMessagePrototypePosition"_s,
-    "ResolveMessagePrototypeReferrer"_s,
-    "ResolveMessagePrototypeRequireStack"_s,
-    "ResolveMessagePrototypeSpecifier"_s,
-    "ResolveMessagePrototypeStack"_s,
-    "ResolveMessagePrototypeToJSON"_s,
-    "ResolveMessagePrototypeToString"_s,
-    "ResolveMessagePrototypeSymbolToPrimitive"_s,
-    "ResponsePrototypeArrayBuffer"_s,
-    "ResponsePrototypeBlob"_s,
-    "ResponsePrototypeBody"_s,
-    "ResponsePrototypeBodyUsed"_s,
-    "ResponsePrototypeBytes"_s,
-    "ResponsePrototypeClone"_s,
-    "ResponsePrototypeConstructor"_s,
-    "ResponsePrototypeFormData"_s,
-    "ResponsePrototypeHeaders"_s,
-    "ResponsePrototypeJson"_s,
-    "ResponsePrototypeOk"_s,
-    "ResponsePrototypeRedirected"_s,
-    "ResponsePrototypeStatus"_s,
-    "ResponsePrototypeStatusText"_s,
-    "ResponsePrototypeText"_s,
-    "ResponsePrototypeTextStream"_s,
-    "ResponsePrototypeType"_s,
-    "ResponsePrototypeUrl"_s,
-    "ResponsePrototypeSymbolToStringTag"_s,
-    "SetPrototypeAdd"_s,
-    "SetPrototypeClear"_s,
-    "SetPrototypeConstructor"_s,
-    "SetPrototypeDelete"_s,
-    "SetPrototypeDifference"_s,
-    "SetPrototypeEntries"_s,
-    "SetPrototypeForEach"_s,
-    "SetPrototypeHas"_s,
-    "SetPrototypeIntersection"_s,
-    "SetPrototypeIsDisjointFrom"_s,
-    "SetPrototypeIsSubsetOf"_s,
-    "SetPrototypeIsSupersetOf"_s,
-    "SetPrototypeKeys"_s,
-    "SetPrototypeSize"_s,
-    "SetPrototypeSymmetricDifference"_s,
-    "SetPrototypeUnion"_s,
-    "SetPrototypeValues"_s,
-    "SetPrototypeSymbolIterator"_s,
-    "SetPrototypeSymbolToStringTag"_s,
-    "ShadowRealmPrototypeConstructor"_s,
-    "ShadowRealmPrototypeEvaluate"_s,
-    "ShadowRealmPrototypeImportValue"_s,
-    "ShadowRealmPrototypeSymbolToStringTag"_s,
-    "SharedArrayBufferPrototypeByteLength"_s,
-    "SharedArrayBufferPrototypeConstructor"_s,
-    "SharedArrayBufferPrototypeGrow"_s,
-    "SharedArrayBufferPrototypeGrowable"_s,
-    "SharedArrayBufferPrototypeMaxByteLength"_s,
-    "SharedArrayBufferPrototypeSlice"_s,
-    "SharedArrayBufferPrototypeSymbolToStringTag"_s,
-    "StringPrototypeAnchor"_s,
-    "StringPrototypeAt"_s,
-    "StringPrototypeBig"_s,
-    "StringPrototypeBlink"_s,
-    "StringPrototypeBold"_s,
-    "StringPrototypeCharAt"_s,
-    "StringPrototypeCharCodeAt"_s,
-    "StringPrototypeCodePointAt"_s,
-    "StringPrototypeConcat"_s,
-    "StringPrototypeConstructor"_s,
-    "StringPrototypeEndsWith"_s,
-    "StringPrototypeFixed"_s,
-    "StringPrototypeFontcolor"_s,
-    "StringPrototypeFontsize"_s,
-    "StringPrototypeIncludes"_s,
-    "StringPrototypeIndexOf"_s,
-    "StringPrototypeIsWellFormed"_s,
-    "StringPrototypeItalics"_s,
-    "StringPrototypeLastIndexOf"_s,
-    "StringPrototypeLength"_s,
-    "StringPrototypeLink"_s,
-    "StringPrototypeLocaleCompare"_s,
-    "StringPrototypeMatch"_s,
-    "StringPrototypeMatchAll"_s,
-    "StringPrototypeNormalize"_s,
-    "StringPrototypePadEnd"_s,
-    "StringPrototypePadStart"_s,
-    "StringPrototypeRepeat"_s,
-    "StringPrototypeReplace"_s,
-    "StringPrototypeReplaceAll"_s,
-    "StringPrototypeSearch"_s,
-    "StringPrototypeSlice"_s,
-    "StringPrototypeSmall"_s,
-    "StringPrototypeSplit"_s,
-    "StringPrototypeStartsWith"_s,
-    "StringPrototypeStrike"_s,
-    "StringPrototypeSub"_s,
-    "StringPrototypeSubstr"_s,
-    "StringPrototypeSubstring"_s,
-    "StringPrototypeSup"_s,
-    "StringPrototypeToLocaleLowerCase"_s,
-    "StringPrototypeToLocaleUpperCase"_s,
-    "StringPrototypeToLowerCase"_s,
-    "StringPrototypeToString"_s,
-    "StringPrototypeToUpperCase"_s,
-    "StringPrototypeToWellFormed"_s,
-    "StringPrototypeTrim"_s,
-    "StringPrototypeTrimEnd"_s,
-    "StringPrototypeTrimLeft"_s,
-    "StringPrototypeTrimRight"_s,
-    "StringPrototypeTrimStart"_s,
-    "StringPrototypeValueOf"_s,
-    "StringPrototypeSymbolIterator"_s,
-    "SubtleCryptoPrototypeConstructor"_s,
-    "SuppressedErrorPrototypeConstructor"_s,
-    "SuppressedErrorPrototypeMessage"_s,
-    "SuppressedErrorPrototypeName"_s,
-    "SymbolPrototypeConstructor"_s,
-    "SymbolPrototypeDescription"_s,
-    "SymbolPrototypeToString"_s,
-    "SymbolPrototypeValueOf"_s,
-    "SymbolPrototypeSymbolToPrimitive"_s,
-    "SymbolPrototypeSymbolToStringTag"_s,
-    "SyntaxErrorPrototypeConstructor"_s,
-    "SyntaxErrorPrototypeMessage"_s,
-    "SyntaxErrorPrototypeName"_s,
-    "TemporalDurationCompare"_s,
-    "TemporalDurationFrom"_s,
-    "TemporalDurationLength"_s,
-    "TemporalDurationName"_s,
-    "TemporalDurationPrototype"_s,
-    "TemporalInstantCompare"_s,
-    "TemporalInstantFrom"_s,
-    "TemporalInstantFromEpochMilliseconds"_s,
-    "TemporalInstantFromEpochNanoseconds"_s,
-    "TemporalInstantLength"_s,
-    "TemporalInstantName"_s,
-    "TemporalInstantPrototype"_s,
-    "TemporalNowInstant"_s,
-    "TemporalNowPlainDateISO"_s,
-    "TemporalNowPlainDateTimeISO"_s,
-    "TemporalNowPlainTimeISO"_s,
-    "TemporalNowTimeZoneId"_s,
-    "TemporalNowZonedDateTimeISO"_s,
-    "TemporalNowSymbolToStringTag"_s,
-    "TemporalPlainDateCompare"_s,
-    "TemporalPlainDateFrom"_s,
-    "TemporalPlainDateLength"_s,
-    "TemporalPlainDateName"_s,
-    "TemporalPlainDatePrototype"_s,
-    "TemporalPlainDateTimeCompare"_s,
-    "TemporalPlainDateTimeFrom"_s,
-    "TemporalPlainDateTimeLength"_s,
-    "TemporalPlainDateTimeName"_s,
-    "TemporalPlainDateTimePrototype"_s,
-    "TemporalPlainMonthDayFrom"_s,
-    "TemporalPlainMonthDayLength"_s,
-    "TemporalPlainMonthDayName"_s,
-    "TemporalPlainMonthDayPrototype"_s,
-    "TemporalPlainTimeCompare"_s,
-    "TemporalPlainTimeFrom"_s,
-    "TemporalPlainTimeLength"_s,
-    "TemporalPlainTimeName"_s,
-    "TemporalPlainTimePrototype"_s,
-    "TemporalPlainYearMonthCompare"_s,
-    "TemporalPlainYearMonthFrom"_s,
-    "TemporalPlainYearMonthLength"_s,
-    "TemporalPlainYearMonthName"_s,
-    "TemporalPlainYearMonthPrototype"_s,
-    "TemporalZonedDateTimeCompare"_s,
-    "TemporalZonedDateTimeFrom"_s,
-    "TemporalZonedDateTimeLength"_s,
-    "TemporalZonedDateTimeName"_s,
-    "TemporalZonedDateTimePrototype"_s,
-    "TextDecoderPrototypeConstructor"_s,
-    "TextDecoderPrototypeDecode"_s,
-    "TextDecoderPrototypeEncoding"_s,
-    "TextDecoderPrototypeFatal"_s,
-    "TextDecoderPrototypeIgnoreBOM"_s,
-    "TextEncoderPrototypeConstructor"_s,
-    "TextEncoderPrototypeEncode"_s,
-    "TextEncoderPrototypeEncodeInto"_s,
-    "TextEncoderPrototypeEncoding"_s,
-    "TypeErrorPrototypeConstructor"_s,
-    "TypeErrorPrototypeMessage"_s,
-    "TypeErrorPrototypeName"_s,
-    "URIErrorPrototypeConstructor"_s,
-    "URIErrorPrototypeMessage"_s,
-    "URIErrorPrototypeName"_s,
-    "URLPrototypeConstructor"_s,
-    "URLPrototypeHash"_s,
-    "URLPrototypeHost"_s,
-    "URLPrototypeHostname"_s,
-    "URLPrototypeHref"_s,
-    "URLPrototypeOrigin"_s,
-    "URLPrototypePassword"_s,
-    "URLPrototypePathname"_s,
-    "URLPrototypePort"_s,
-    "URLPrototypeProtocol"_s,
-    "URLPrototypeSearch"_s,
-    "URLPrototypeSearchParams"_s,
-    "URLPrototypeToJSON"_s,
-    "URLPrototypeToString"_s,
-    "URLPrototypeUsername"_s,
-    "URLPrototypeSymbolToStringTag"_s,
-    "URLPrototypeSymbolForNodejsUtilInspectCustom"_s,
-    "URLSearchParamsPrototypeAppend"_s,
-    "URLSearchParamsPrototypeConstructor"_s,
-    "URLSearchParamsPrototypeDelete"_s,
-    "URLSearchParamsPrototypeEntries"_s,
-    "URLSearchParamsPrototypeForEach"_s,
-    "URLSearchParamsPrototypeGet"_s,
-    "URLSearchParamsPrototypeGetAll"_s,
-    "URLSearchParamsPrototypeHas"_s,
-    "URLSearchParamsPrototypeKeys"_s,
-    "URLSearchParamsPrototypeLength"_s,
-    "URLSearchParamsPrototypeSet"_s,
-    "URLSearchParamsPrototypeSize"_s,
-    "URLSearchParamsPrototypeSort"_s,
-    "URLSearchParamsPrototypeToJSON"_s,
-    "URLSearchParamsPrototypeToString"_s,
-    "URLSearchParamsPrototypeValues"_s,
-    "URLSearchParamsPrototypeSymbolIterator"_s,
-    "URLSearchParamsPrototypeSymbolToStringTag"_s,
-    "URLSearchParamsPrototypeSymbolForNodejsUtilInspectCustom"_s,
-    "Uint16ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Uint16ArrayPrototypeConstructor"_s,
-    "Uint32ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Uint32ArrayPrototypeConstructor"_s,
-    "Uint8ArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Uint8ArrayPrototypeConstructor"_s,
-    "Uint8ArrayPrototypeSetFromBase64"_s,
-    "Uint8ArrayPrototypeSetFromHex"_s,
-    "Uint8ArrayPrototypeToBase64"_s,
-    "Uint8ArrayPrototypeToHex"_s,
-    "Uint8ClampedArrayPrototypeBYTES_PER_ELEMENT"_s,
-    "Uint8ClampedArrayPrototypeConstructor"_s,
-    "WeakMapPrototypeConstructor"_s,
-    "WeakMapPrototypeDelete"_s,
-    "WeakMapPrototypeGet"_s,
-    "WeakMapPrototypeGetOrInsert"_s,
-    "WeakMapPrototypeGetOrInsertComputed"_s,
-    "WeakMapPrototypeHas"_s,
-    "WeakMapPrototypeSet"_s,
-    "WeakMapPrototypeSymbolToStringTag"_s,
-    "WeakRefPrototypeConstructor"_s,
-    "WeakRefPrototypeDeref"_s,
-    "WeakRefPrototypeSymbolToStringTag"_s,
-    "WeakSetPrototypeAdd"_s,
-    "WeakSetPrototypeConstructor"_s,
-    "WeakSetPrototypeDelete"_s,
-    "WeakSetPrototypeHas"_s,
-    "WeakSetPrototypeSymbolToStringTag"_s,
-    "WebAssemblyCompileErrorLength"_s,
-    "WebAssemblyCompileErrorName"_s,
-    "WebAssemblyCompileErrorPrototype"_s,
-    "WebAssemblyExceptionLength"_s,
-    "WebAssemblyExceptionName"_s,
-    "WebAssemblyExceptionPrototype"_s,
-    "WebAssemblyGlobalLength"_s,
-    "WebAssemblyGlobalName"_s,
-    "WebAssemblyGlobalPrototype"_s,
-    "WebAssemblyInstanceLength"_s,
-    "WebAssemblyInstanceName"_s,
-    "WebAssemblyInstancePrototype"_s,
-    "WebAssemblyLinkErrorLength"_s,
-    "WebAssemblyLinkErrorName"_s,
-    "WebAssemblyLinkErrorPrototype"_s,
-    "WebAssemblyMemoryLength"_s,
-    "WebAssemblyMemoryName"_s,
-    "WebAssemblyMemoryPrototype"_s,
-    "WebAssemblyModuleCustomSections"_s,
-    "WebAssemblyModuleExports"_s,
-    "WebAssemblyModuleImports"_s,
-    "WebAssemblyModuleLength"_s,
-    "WebAssemblyModuleName"_s,
-    "WebAssemblyModulePrototype"_s,
-    "WebAssemblyRuntimeErrorLength"_s,
-    "WebAssemblyRuntimeErrorName"_s,
-    "WebAssemblyRuntimeErrorPrototype"_s,
-    "WebAssemblySuspendErrorLength"_s,
-    "WebAssemblySuspendErrorName"_s,
-    "WebAssemblySuspendErrorPrototype"_s,
-    "WebAssemblySuspendingLength"_s,
-    "WebAssemblySuspendingName"_s,
-    "WebAssemblySuspendingPrototype"_s,
-    "WebAssemblyTableLength"_s,
-    "WebAssemblyTableName"_s,
-    "WebAssemblyTablePrototype"_s,
-    "WebAssemblyTagLength"_s,
-    "WebAssemblyTagName"_s,
-    "WebAssemblyTagPrototype"_s,
-    "ProcessReportGetReport"_s,
-    "ProcessReportWriteReport"_s,
-    "NodeModuleSourceMapPrototypeConstructor"_s,
-    "NodeModuleSourceMapPrototypeFindEntry"_s,
-    "NodeModuleSourceMapPrototypeFindOrigin"_s,
-    "NodeModuleSourceMapPrototypeLineLengths"_s,
-    "NodeModuleSourceMapPrototypePayload"_s,
-    "BunArchivePrototypeBlob"_s,
-    "BunArchivePrototypeBytes"_s,
-    "BunArchivePrototypeConstructor"_s,
-    "BunArchivePrototypeExtract"_s,
-    "BunArchivePrototypeFiles"_s,
-    "BunArrayBufferSinkPrototype_getFd"_s,
-    "BunArrayBufferSinkPrototypeClose"_s,
-    "BunArrayBufferSinkPrototypeConstructor"_s,
-    "BunArrayBufferSinkPrototypeEnd"_s,
-    "BunArrayBufferSinkPrototypeFlush"_s,
-    "BunArrayBufferSinkPrototypeRef"_s,
-    "BunArrayBufferSinkPrototypeStart"_s,
-    "BunArrayBufferSinkPrototypeUnref"_s,
-    "BunArrayBufferSinkPrototypeWrite"_s,
-    "BunCryptoHasherPrototypeAlgorithm"_s,
-    "BunCryptoHasherPrototypeByteLength"_s,
-    "BunCryptoHasherPrototypeConstructor"_s,
-    "BunCryptoHasherPrototypeCopy"_s,
-    "BunCryptoHasherPrototypeDigest"_s,
-    "BunCryptoHasherPrototypeUpdate"_s,
-    "BunFetchSessionPrototypeClose"_s,
-    "BunFetchSessionPrototypeConstructor"_s,
-    "BunFetchSessionPrototypeFetch"_s,
-    "BunFetchSessionPrototypeSymbolDispose"_s,
-    "BunFileSystemRouterPrototypeConstructor"_s,
-    "BunFileSystemRouterPrototypeMatch"_s,
-    "BunFileSystemRouterPrototypeOrigin"_s,
-    "BunFileSystemRouterPrototypeReload"_s,
-    "BunFileSystemRouterPrototypeRoutes"_s,
-    "BunFileSystemRouterPrototypeStyle"_s,
-    "BunGlobPrototypeConstructor"_s,
-    "BunGlobPrototypeMatch"_s,
-    "BunGlobPrototypeScan"_s,
-    "BunGlobPrototypeScanSync"_s,
-    "BunImagePrototypeAvif"_s,
-    "BunImagePrototypeBlob"_s,
-    "BunImagePrototypeBuffer"_s,
-    "BunImagePrototypeBytes"_s,
-    "BunImagePrototypeConstructor"_s,
-    "BunImagePrototypeDataurl"_s,
-    "BunImagePrototypeFlip"_s,
-    "BunImagePrototypeFlop"_s,
-    "BunImagePrototypeHeic"_s,
-    "BunImagePrototypeHeight"_s,
-    "BunImagePrototypeJpeg"_s,
-    "BunImagePrototypeMetadata"_s,
-    "BunImagePrototypeModulate"_s,
-    "BunImagePrototypePlaceholder"_s,
-    "BunImagePrototypePng"_s,
-    "BunImagePrototypeResize"_s,
-    "BunImagePrototypeRotate"_s,
-    "BunImagePrototypeToBase64"_s,
-    "BunImagePrototypeToBuffer"_s,
-    "BunImagePrototypeWebp"_s,
-    "BunImagePrototypeWidth"_s,
-    "BunImagePrototypeWrite"_s,
-    "BunMD4PrototypeByteLength"_s,
-    "BunMD4PrototypeConstructor"_s,
-    "BunMD4PrototypeDigest"_s,
-    "BunMD4PrototypeUpdate"_s,
-    "BunMD5PrototypeByteLength"_s,
-    "BunMD5PrototypeConstructor"_s,
-    "BunMD5PrototypeDigest"_s,
-    "BunMD5PrototypeUpdate"_s,
-    "BunRedisClientPrototypeAppend"_s,
-    "BunRedisClientPrototypeBitcount"_s,
-    "BunRedisClientPrototypeBitfield"_s,
-    "BunRedisClientPrototypeBitop"_s,
-    "BunRedisClientPrototypeBitpos"_s,
-    "BunRedisClientPrototypeBlmove"_s,
-    "BunRedisClientPrototypeBlmpop"_s,
-    "BunRedisClientPrototypeBlpop"_s,
-    "BunRedisClientPrototypeBrpop"_s,
-    "BunRedisClientPrototypeBrpoplpush"_s,
-    "BunRedisClientPrototypeBufferedAmount"_s,
-    "BunRedisClientPrototypeBzmpop"_s,
-    "BunRedisClientPrototypeBzpopmax"_s,
-    "BunRedisClientPrototypeBzpopmin"_s,
-    "BunRedisClientPrototypeClient"_s,
-    "BunRedisClientPrototypeClose"_s,
-    "BunRedisClientPrototypeCommand"_s,
-    "BunRedisClientPrototypeConfig"_s,
-    "BunRedisClientPrototypeConnect"_s,
-    "BunRedisClientPrototypeConnected"_s,
-    "BunRedisClientPrototypeConstructor"_s,
-    "BunRedisClientPrototypeCopy"_s,
-    "BunRedisClientPrototypeDbsize"_s,
-    "BunRedisClientPrototypeDebug"_s,
-    "BunRedisClientPrototypeDecr"_s,
-    "BunRedisClientPrototypeDecrby"_s,
-    "BunRedisClientPrototypeDel"_s,
-    "BunRedisClientPrototypeDump"_s,
-    "BunRedisClientPrototypeDuplicate"_s,
-    "BunRedisClientPrototypeEcho"_s,
-    "BunRedisClientPrototypeEval"_s,
-    "BunRedisClientPrototypeEvalsha"_s,
-    "BunRedisClientPrototypeExists"_s,
-    "BunRedisClientPrototypeExpire"_s,
-    "BunRedisClientPrototypeExpireat"_s,
-    "BunRedisClientPrototypeExpiretime"_s,
-    "BunRedisClientPrototypeFcall"_s,
-    "BunRedisClientPrototypeFlushall"_s,
-    "BunRedisClientPrototypeFlushdb"_s,
-    "BunRedisClientPrototypeFunction"_s,
-    "BunRedisClientPrototypeGeoadd"_s,
-    "BunRedisClientPrototypeGeodist"_s,
-    "BunRedisClientPrototypeGeohash"_s,
-    "BunRedisClientPrototypeGeopos"_s,
-    "BunRedisClientPrototypeGeosearch"_s,
-    "BunRedisClientPrototypeGeosearchstore"_s,
-    "BunRedisClientPrototypeGet"_s,
-    "BunRedisClientPrototypeGetBuffer"_s,
-    "BunRedisClientPrototypeGetbit"_s,
-    "BunRedisClientPrototypeGetdel"_s,
-    "BunRedisClientPrototypeGetex"_s,
-    "BunRedisClientPrototypeGetrange"_s,
-    "BunRedisClientPrototypeGetset"_s,
-    "BunRedisClientPrototypeHdel"_s,
-    "BunRedisClientPrototypeHexists"_s,
-    "BunRedisClientPrototypeHexpire"_s,
-    "BunRedisClientPrototypeHexpireat"_s,
-    "BunRedisClientPrototypeHexpiretime"_s,
-    "BunRedisClientPrototypeHget"_s,
-    "BunRedisClientPrototypeHgetall"_s,
-    "BunRedisClientPrototypeHgetdel"_s,
-    "BunRedisClientPrototypeHgetex"_s,
-    "BunRedisClientPrototypeHincrby"_s,
-    "BunRedisClientPrototypeHincrbyfloat"_s,
-    "BunRedisClientPrototypeHkeys"_s,
-    "BunRedisClientPrototypeHlen"_s,
-    "BunRedisClientPrototypeHmget"_s,
-    "BunRedisClientPrototypeHmset"_s,
-    "BunRedisClientPrototypeHpersist"_s,
-    "BunRedisClientPrototypeHpexpire"_s,
-    "BunRedisClientPrototypeHpexpireat"_s,
-    "BunRedisClientPrototypeHpexpiretime"_s,
-    "BunRedisClientPrototypeHpttl"_s,
-    "BunRedisClientPrototypeHrandfield"_s,
-    "BunRedisClientPrototypeHscan"_s,
-    "BunRedisClientPrototypeHset"_s,
-    "BunRedisClientPrototypeHsetex"_s,
-    "BunRedisClientPrototypeHsetnx"_s,
-    "BunRedisClientPrototypeHstrlen"_s,
-    "BunRedisClientPrototypeHttl"_s,
-    "BunRedisClientPrototypeHvals"_s,
-    "BunRedisClientPrototypeIncr"_s,
-    "BunRedisClientPrototypeIncrby"_s,
-    "BunRedisClientPrototypeIncrbyfloat"_s,
-    "BunRedisClientPrototypeInfo"_s,
-    "BunRedisClientPrototypeKeys"_s,
-    "BunRedisClientPrototypeLastsave"_s,
-    "BunRedisClientPrototypeLcs"_s,
-    "BunRedisClientPrototypeLindex"_s,
-    "BunRedisClientPrototypeLinsert"_s,
-    "BunRedisClientPrototypeLlen"_s,
-    "BunRedisClientPrototypeLmove"_s,
-    "BunRedisClientPrototypeLmpop"_s,
-    "BunRedisClientPrototypeLpop"_s,
-    "BunRedisClientPrototypeLpos"_s,
-    "BunRedisClientPrototypeLpush"_s,
-    "BunRedisClientPrototypeLpushx"_s,
-    "BunRedisClientPrototypeLrange"_s,
-    "BunRedisClientPrototypeLrem"_s,
-    "BunRedisClientPrototypeLset"_s,
-    "BunRedisClientPrototypeLtrim"_s,
-    "BunRedisClientPrototypeMget"_s,
-    "BunRedisClientPrototypeMset"_s,
-    "BunRedisClientPrototypeMsetnx"_s,
-    "BunRedisClientPrototypeObject"_s,
-    "BunRedisClientPrototypeOnclose"_s,
-    "BunRedisClientPrototypeOnconnect"_s,
-    "BunRedisClientPrototypePersist"_s,
-    "BunRedisClientPrototypePexpire"_s,
-    "BunRedisClientPrototypePexpireat"_s,
-    "BunRedisClientPrototypePexpiretime"_s,
-    "BunRedisClientPrototypePfadd"_s,
-    "BunRedisClientPrototypePfcount"_s,
-    "BunRedisClientPrototypePfmerge"_s,
-    "BunRedisClientPrototypePing"_s,
-    "BunRedisClientPrototypePsetex"_s,
-    "BunRedisClientPrototypePsubscribe"_s,
-    "BunRedisClientPrototypePttl"_s,
-    "BunRedisClientPrototypePublish"_s,
-    "BunRedisClientPrototypePubsub"_s,
-    "BunRedisClientPrototypePunsubscribe"_s,
-    "BunRedisClientPrototypeRandomkey"_s,
-    "BunRedisClientPrototypeRename"_s,
-    "BunRedisClientPrototypeRenamenx"_s,
-    "BunRedisClientPrototypeRpop"_s,
-    "BunRedisClientPrototypeRpoplpush"_s,
-    "BunRedisClientPrototypeRpush"_s,
-    "BunRedisClientPrototypeRpushx"_s,
-    "BunRedisClientPrototypeSadd"_s,
-    "BunRedisClientPrototypeScan"_s,
-    "BunRedisClientPrototypeScard"_s,
-    "BunRedisClientPrototypeScript"_s,
-    "BunRedisClientPrototypeSdiff"_s,
-    "BunRedisClientPrototypeSdiffstore"_s,
-    "BunRedisClientPrototypeSelect"_s,
-    "BunRedisClientPrototypeSend"_s,
-    "BunRedisClientPrototypeSet"_s,
-    "BunRedisClientPrototypeSetbit"_s,
-    "BunRedisClientPrototypeSetex"_s,
-    "BunRedisClientPrototypeSetnx"_s,
-    "BunRedisClientPrototypeSetrange"_s,
-    "BunRedisClientPrototypeSinter"_s,
-    "BunRedisClientPrototypeSintercard"_s,
-    "BunRedisClientPrototypeSinterstore"_s,
-    "BunRedisClientPrototypeSismember"_s,
-    "BunRedisClientPrototypeSmembers"_s,
-    "BunRedisClientPrototypeSmismember"_s,
-    "BunRedisClientPrototypeSmove"_s,
-    "BunRedisClientPrototypeSort"_s,
-    "BunRedisClientPrototypeSpop"_s,
-    "BunRedisClientPrototypeSpublish"_s,
-    "BunRedisClientPrototypeSrandmember"_s,
-    "BunRedisClientPrototypeSrem"_s,
-    "BunRedisClientPrototypeSscan"_s,
-    "BunRedisClientPrototypeStrlen"_s,
-    "BunRedisClientPrototypeSubscribe"_s,
-    "BunRedisClientPrototypeSubstr"_s,
-    "BunRedisClientPrototypeSunion"_s,
-    "BunRedisClientPrototypeSunionstore"_s,
-    "BunRedisClientPrototypeTime"_s,
-    "BunRedisClientPrototypeTouch"_s,
-    "BunRedisClientPrototypeTtl"_s,
-    "BunRedisClientPrototypeType"_s,
-    "BunRedisClientPrototypeUnlink"_s,
-    "BunRedisClientPrototypeUnsubscribe"_s,
-    "BunRedisClientPrototypeWait"_s,
-    "BunRedisClientPrototypeXack"_s,
-    "BunRedisClientPrototypeXadd"_s,
-    "BunRedisClientPrototypeXautoclaim"_s,
-    "BunRedisClientPrototypeXclaim"_s,
-    "BunRedisClientPrototypeXdel"_s,
-    "BunRedisClientPrototypeXgroup"_s,
-    "BunRedisClientPrototypeXinfo"_s,
-    "BunRedisClientPrototypeXlen"_s,
-    "BunRedisClientPrototypeXpending"_s,
-    "BunRedisClientPrototypeXrange"_s,
-    "BunRedisClientPrototypeXread"_s,
-    "BunRedisClientPrototypeXreadgroup"_s,
-    "BunRedisClientPrototypeXrevrange"_s,
-    "BunRedisClientPrototypeXsetid"_s,
-    "BunRedisClientPrototypeXtrim"_s,
-    "BunRedisClientPrototypeZadd"_s,
-    "BunRedisClientPrototypeZcard"_s,
-    "BunRedisClientPrototypeZcount"_s,
-    "BunRedisClientPrototypeZdiff"_s,
-    "BunRedisClientPrototypeZdiffstore"_s,
-    "BunRedisClientPrototypeZincrby"_s,
-    "BunRedisClientPrototypeZinter"_s,
-    "BunRedisClientPrototypeZintercard"_s,
-    "BunRedisClientPrototypeZinterstore"_s,
-    "BunRedisClientPrototypeZlexcount"_s,
-    "BunRedisClientPrototypeZmpop"_s,
-    "BunRedisClientPrototypeZmscore"_s,
-    "BunRedisClientPrototypeZpopmax"_s,
-    "BunRedisClientPrototypeZpopmin"_s,
-    "BunRedisClientPrototypeZrandmember"_s,
-    "BunRedisClientPrototypeZrange"_s,
-    "BunRedisClientPrototypeZrangebylex"_s,
-    "BunRedisClientPrototypeZrangebyscore"_s,
-    "BunRedisClientPrototypeZrangestore"_s,
-    "BunRedisClientPrototypeZrank"_s,
-    "BunRedisClientPrototypeZrem"_s,
-    "BunRedisClientPrototypeZremrangebylex"_s,
-    "BunRedisClientPrototypeZremrangebyrank"_s,
-    "BunRedisClientPrototypeZremrangebyscore"_s,
-    "BunRedisClientPrototypeZrevrange"_s,
-    "BunRedisClientPrototypeZrevrangebylex"_s,
-    "BunRedisClientPrototypeZrevrangebyscore"_s,
-    "BunRedisClientPrototypeZrevrank"_s,
-    "BunRedisClientPrototypeZscan"_s,
-    "BunRedisClientPrototypeZscore"_s,
-    "BunRedisClientPrototypeZunion"_s,
-    "BunRedisClientPrototypeZunionstore"_s,
-    "BunS3ClientPrototypeConstructor"_s,
-    "BunS3ClientPrototypeDelete"_s,
-    "BunS3ClientPrototypeExists"_s,
-    "BunS3ClientPrototypeFile"_s,
-    "BunS3ClientPrototypeList"_s,
-    "BunS3ClientPrototypePresign"_s,
-    "BunS3ClientPrototypeSize"_s,
-    "BunS3ClientPrototypeStat"_s,
-    "BunS3ClientPrototypeUnlink"_s,
-    "BunS3ClientPrototypeWrite"_s,
-    "BunSHA1PrototypeByteLength"_s,
-    "BunSHA1PrototypeConstructor"_s,
-    "BunSHA1PrototypeDigest"_s,
-    "BunSHA1PrototypeUpdate"_s,
-    "BunSHA224PrototypeByteLength"_s,
-    "BunSHA224PrototypeConstructor"_s,
-    "BunSHA224PrototypeDigest"_s,
-    "BunSHA224PrototypeUpdate"_s,
-    "BunSHA256PrototypeByteLength"_s,
-    "BunSHA256PrototypeConstructor"_s,
-    "BunSHA256PrototypeDigest"_s,
-    "BunSHA256PrototypeUpdate"_s,
-    "BunSHA384PrototypeByteLength"_s,
-    "BunSHA384PrototypeConstructor"_s,
-    "BunSHA384PrototypeDigest"_s,
-    "BunSHA384PrototypeUpdate"_s,
-    "BunSHA512PrototypeByteLength"_s,
-    "BunSHA512PrototypeConstructor"_s,
-    "BunSHA512PrototypeDigest"_s,
-    "BunSHA512PrototypeUpdate"_s,
-    "BunSHA512_256PrototypeByteLength"_s,
-    "BunSHA512_256PrototypeConstructor"_s,
-    "BunSHA512_256PrototypeDigest"_s,
-    "BunSHA512_256PrototypeUpdate"_s,
-    "BunTerminalPrototypeClose"_s,
-    "BunTerminalPrototypeClosed"_s,
-    "BunTerminalPrototypeConstructor"_s,
-    "BunTerminalPrototypeControlFlags"_s,
-    "BunTerminalPrototypeInputFlags"_s,
-    "BunTerminalPrototypeLocalFlags"_s,
-    "BunTerminalPrototypeOutputFlags"_s,
-    "BunTerminalPrototypeRef"_s,
-    "BunTerminalPrototypeResize"_s,
-    "BunTerminalPrototypeSetRawMode"_s,
-    "BunTerminalPrototypeUnref"_s,
-    "BunTerminalPrototypeWrite"_s,
-    "BunTerminalPrototypeSymbolAsyncDispose"_s,
-    "BunTranspilerPrototypeConstructor"_s,
-    "BunTranspilerPrototypeScan"_s,
-    "BunTranspilerPrototypeScanImports"_s,
-    "BunTranspilerPrototypeTransform"_s,
-    "BunTranspilerPrototypeTransformSync"_s,
-    "IntlCollatorPrototypeCompare"_s,
-    "IntlCollatorPrototypeConstructor"_s,
-    "IntlCollatorPrototypeResolvedOptions"_s,
-    "IntlCollatorPrototypeSymbolToStringTag"_s,
-    "IntlDateTimeFormatPrototypeConstructor"_s,
-    "IntlDateTimeFormatPrototypeFormat"_s,
-    "IntlDateTimeFormatPrototypeFormatRange"_s,
-    "IntlDateTimeFormatPrototypeFormatRangeToParts"_s,
-    "IntlDateTimeFormatPrototypeFormatToParts"_s,
-    "IntlDateTimeFormatPrototypeResolvedOptions"_s,
-    "IntlDateTimeFormatPrototypeSymbolToStringTag"_s,
-    "IntlDisplayNamesPrototypeConstructor"_s,
-    "IntlDisplayNamesPrototypeOf"_s,
-    "IntlDisplayNamesPrototypeResolvedOptions"_s,
-    "IntlDisplayNamesPrototypeSymbolToStringTag"_s,
-    "IntlDurationFormatPrototypeConstructor"_s,
-    "IntlDurationFormatPrototypeFormat"_s,
-    "IntlDurationFormatPrototypeFormatToParts"_s,
-    "IntlDurationFormatPrototypeResolvedOptions"_s,
-    "IntlDurationFormatPrototypeSymbolToStringTag"_s,
-    "IntlListFormatPrototypeConstructor"_s,
-    "IntlListFormatPrototypeFormat"_s,
-    "IntlListFormatPrototypeFormatToParts"_s,
-    "IntlListFormatPrototypeResolvedOptions"_s,
-    "IntlListFormatPrototypeSymbolToStringTag"_s,
-    "IntlLocalePrototypeBaseName"_s,
-    "IntlLocalePrototypeCalendar"_s,
-    "IntlLocalePrototypeCaseFirst"_s,
-    "IntlLocalePrototypeCollation"_s,
-    "IntlLocalePrototypeConstructor"_s,
-    "IntlLocalePrototypeFirstDayOfWeek"_s,
-    "IntlLocalePrototypeGetCalendars"_s,
-    "IntlLocalePrototypeGetCollations"_s,
-    "IntlLocalePrototypeGetHourCycles"_s,
-    "IntlLocalePrototypeGetNumberingSystems"_s,
-    "IntlLocalePrototypeGetTextInfo"_s,
-    "IntlLocalePrototypeGetTimeZones"_s,
-    "IntlLocalePrototypeGetWeekInfo"_s,
-    "IntlLocalePrototypeHourCycle"_s,
-    "IntlLocalePrototypeLanguage"_s,
-    "IntlLocalePrototypeMaximize"_s,
-    "IntlLocalePrototypeMinimize"_s,
-    "IntlLocalePrototypeNumberingSystem"_s,
-    "IntlLocalePrototypeNumeric"_s,
-    "IntlLocalePrototypeRegion"_s,
-    "IntlLocalePrototypeScript"_s,
-    "IntlLocalePrototypeToString"_s,
-    "IntlLocalePrototypeVariants"_s,
-    "IntlLocalePrototypeSymbolToStringTag"_s,
-    "IntlNumberFormatPrototypeConstructor"_s,
-    "IntlNumberFormatPrototypeFormat"_s,
-    "IntlNumberFormatPrototypeFormatRange"_s,
-    "IntlNumberFormatPrototypeFormatRangeToParts"_s,
-    "IntlNumberFormatPrototypeFormatToParts"_s,
-    "IntlNumberFormatPrototypeResolvedOptions"_s,
-    "IntlNumberFormatPrototypeSymbolToStringTag"_s,
-    "IntlPluralRulesPrototypeConstructor"_s,
-    "IntlPluralRulesPrototypeResolvedOptions"_s,
-    "IntlPluralRulesPrototypeSelect"_s,
-    "IntlPluralRulesPrototypeSelectRange"_s,
-    "IntlPluralRulesPrototypeSymbolToStringTag"_s,
-    "IntlRelativeTimeFormatPrototypeConstructor"_s,
-    "IntlRelativeTimeFormatPrototypeFormat"_s,
-    "IntlRelativeTimeFormatPrototypeFormatToParts"_s,
-    "IntlRelativeTimeFormatPrototypeResolvedOptions"_s,
-    "IntlRelativeTimeFormatPrototypeSymbolToStringTag"_s,
-    "IntlSegmenterPrototypeConstructor"_s,
-    "IntlSegmenterPrototypeResolvedOptions"_s,
-    "IntlSegmenterPrototypeSegment"_s,
-    "IntlSegmenterPrototypeSymbolToStringTag"_s,
-    "TemporalDurationPrototypeAbs"_s,
-    "TemporalDurationPrototypeAdd"_s,
-    "TemporalDurationPrototypeBlank"_s,
-    "TemporalDurationPrototypeConstructor"_s,
-    "TemporalDurationPrototypeDays"_s,
-    "TemporalDurationPrototypeHours"_s,
-    "TemporalDurationPrototypeMicroseconds"_s,
-    "TemporalDurationPrototypeMilliseconds"_s,
-    "TemporalDurationPrototypeMinutes"_s,
-    "TemporalDurationPrototypeMonths"_s,
-    "TemporalDurationPrototypeNanoseconds"_s,
-    "TemporalDurationPrototypeNegated"_s,
-    "TemporalDurationPrototypeRound"_s,
-    "TemporalDurationPrototypeSeconds"_s,
-    "TemporalDurationPrototypeSign"_s,
-    "TemporalDurationPrototypeSubtract"_s,
-    "TemporalDurationPrototypeToJSON"_s,
-    "TemporalDurationPrototypeToLocaleString"_s,
-    "TemporalDurationPrototypeToString"_s,
-    "TemporalDurationPrototypeTotal"_s,
-    "TemporalDurationPrototypeValueOf"_s,
-    "TemporalDurationPrototypeWeeks"_s,
-    "TemporalDurationPrototypeWith"_s,
-    "TemporalDurationPrototypeYears"_s,
-    "TemporalDurationPrototypeSymbolToStringTag"_s,
-    "TemporalInstantPrototypeAdd"_s,
-    "TemporalInstantPrototypeConstructor"_s,
-    "TemporalInstantPrototypeEpochMilliseconds"_s,
-    "TemporalInstantPrototypeEpochNanoseconds"_s,
-    "TemporalInstantPrototypeEquals"_s,
-    "TemporalInstantPrototypeRound"_s,
-    "TemporalInstantPrototypeSince"_s,
-    "TemporalInstantPrototypeSubtract"_s,
-    "TemporalInstantPrototypeToJSON"_s,
-    "TemporalInstantPrototypeToLocaleString"_s,
-    "TemporalInstantPrototypeToString"_s,
-    "TemporalInstantPrototypeToZonedDateTimeISO"_s,
-    "TemporalInstantPrototypeUntil"_s,
-    "TemporalInstantPrototypeValueOf"_s,
-    "TemporalInstantPrototypeSymbolToStringTag"_s,
-    "TemporalPlainDatePrototypeAdd"_s,
-    "TemporalPlainDatePrototypeCalendarId"_s,
-    "TemporalPlainDatePrototypeConstructor"_s,
-    "TemporalPlainDatePrototypeDay"_s,
-    "TemporalPlainDatePrototypeDayOfWeek"_s,
-    "TemporalPlainDatePrototypeDayOfYear"_s,
-    "TemporalPlainDatePrototypeDaysInMonth"_s,
-    "TemporalPlainDatePrototypeDaysInWeek"_s,
-    "TemporalPlainDatePrototypeDaysInYear"_s,
-    "TemporalPlainDatePrototypeEquals"_s,
-    "TemporalPlainDatePrototypeEra"_s,
-    "TemporalPlainDatePrototypeEraYear"_s,
-    "TemporalPlainDatePrototypeInLeapYear"_s,
-    "TemporalPlainDatePrototypeMonth"_s,
-    "TemporalPlainDatePrototypeMonthCode"_s,
-    "TemporalPlainDatePrototypeMonthsInYear"_s,
-    "TemporalPlainDatePrototypeSince"_s,
-    "TemporalPlainDatePrototypeSubtract"_s,
-    "TemporalPlainDatePrototypeToJSON"_s,
-    "TemporalPlainDatePrototypeToLocaleString"_s,
-    "TemporalPlainDatePrototypeToPlainDateTime"_s,
-    "TemporalPlainDatePrototypeToPlainMonthDay"_s,
-    "TemporalPlainDatePrototypeToPlainYearMonth"_s,
-    "TemporalPlainDatePrototypeToString"_s,
-    "TemporalPlainDatePrototypeToZonedDateTime"_s,
-    "TemporalPlainDatePrototypeUntil"_s,
-    "TemporalPlainDatePrototypeValueOf"_s,
-    "TemporalPlainDatePrototypeWeekOfYear"_s,
-    "TemporalPlainDatePrototypeWith"_s,
-    "TemporalPlainDatePrototypeWithCalendar"_s,
-    "TemporalPlainDatePrototypeYear"_s,
-    "TemporalPlainDatePrototypeYearOfWeek"_s,
-    "TemporalPlainDatePrototypeSymbolToStringTag"_s,
-    "TemporalPlainDateTimePrototypeAdd"_s,
-    "TemporalPlainDateTimePrototypeCalendarId"_s,
-    "TemporalPlainDateTimePrototypeConstructor"_s,
-    "TemporalPlainDateTimePrototypeDay"_s,
-    "TemporalPlainDateTimePrototypeDayOfWeek"_s,
-    "TemporalPlainDateTimePrototypeDayOfYear"_s,
-    "TemporalPlainDateTimePrototypeDaysInMonth"_s,
-    "TemporalPlainDateTimePrototypeDaysInWeek"_s,
-    "TemporalPlainDateTimePrototypeDaysInYear"_s,
-    "TemporalPlainDateTimePrototypeEquals"_s,
-    "TemporalPlainDateTimePrototypeEra"_s,
-    "TemporalPlainDateTimePrototypeEraYear"_s,
-    "TemporalPlainDateTimePrototypeHour"_s,
-    "TemporalPlainDateTimePrototypeInLeapYear"_s,
-    "TemporalPlainDateTimePrototypeMicrosecond"_s,
-    "TemporalPlainDateTimePrototypeMillisecond"_s,
-    "TemporalPlainDateTimePrototypeMinute"_s,
-    "TemporalPlainDateTimePrototypeMonth"_s,
-    "TemporalPlainDateTimePrototypeMonthCode"_s,
-    "TemporalPlainDateTimePrototypeMonthsInYear"_s,
-    "TemporalPlainDateTimePrototypeNanosecond"_s,
-    "TemporalPlainDateTimePrototypeRound"_s,
-    "TemporalPlainDateTimePrototypeSecond"_s,
-    "TemporalPlainDateTimePrototypeSince"_s,
-    "TemporalPlainDateTimePrototypeSubtract"_s,
-    "TemporalPlainDateTimePrototypeToJSON"_s,
-    "TemporalPlainDateTimePrototypeToLocaleString"_s,
-    "TemporalPlainDateTimePrototypeToPlainDate"_s,
-    "TemporalPlainDateTimePrototypeToPlainTime"_s,
-    "TemporalPlainDateTimePrototypeToString"_s,
-    "TemporalPlainDateTimePrototypeToZonedDateTime"_s,
-    "TemporalPlainDateTimePrototypeUntil"_s,
-    "TemporalPlainDateTimePrototypeValueOf"_s,
-    "TemporalPlainDateTimePrototypeWeekOfYear"_s,
-    "TemporalPlainDateTimePrototypeWith"_s,
-    "TemporalPlainDateTimePrototypeWithCalendar"_s,
-    "TemporalPlainDateTimePrototypeWithPlainTime"_s,
-    "TemporalPlainDateTimePrototypeYear"_s,
-    "TemporalPlainDateTimePrototypeYearOfWeek"_s,
-    "TemporalPlainDateTimePrototypeSymbolToStringTag"_s,
-    "TemporalPlainMonthDayPrototypeCalendarId"_s,
-    "TemporalPlainMonthDayPrototypeConstructor"_s,
-    "TemporalPlainMonthDayPrototypeDay"_s,
-    "TemporalPlainMonthDayPrototypeEquals"_s,
-    "TemporalPlainMonthDayPrototypeMonthCode"_s,
-    "TemporalPlainMonthDayPrototypeToJSON"_s,
-    "TemporalPlainMonthDayPrototypeToLocaleString"_s,
-    "TemporalPlainMonthDayPrototypeToPlainDate"_s,
-    "TemporalPlainMonthDayPrototypeToString"_s,
-    "TemporalPlainMonthDayPrototypeValueOf"_s,
-    "TemporalPlainMonthDayPrototypeWith"_s,
-    "TemporalPlainMonthDayPrototypeSymbolToStringTag"_s,
-    "TemporalPlainTimePrototypeAdd"_s,
-    "TemporalPlainTimePrototypeConstructor"_s,
-    "TemporalPlainTimePrototypeEquals"_s,
-    "TemporalPlainTimePrototypeHour"_s,
-    "TemporalPlainTimePrototypeMicrosecond"_s,
-    "TemporalPlainTimePrototypeMillisecond"_s,
-    "TemporalPlainTimePrototypeMinute"_s,
-    "TemporalPlainTimePrototypeNanosecond"_s,
-    "TemporalPlainTimePrototypeRound"_s,
-    "TemporalPlainTimePrototypeSecond"_s,
-    "TemporalPlainTimePrototypeSince"_s,
-    "TemporalPlainTimePrototypeSubtract"_s,
-    "TemporalPlainTimePrototypeToJSON"_s,
-    "TemporalPlainTimePrototypeToLocaleString"_s,
-    "TemporalPlainTimePrototypeToString"_s,
-    "TemporalPlainTimePrototypeUntil"_s,
-    "TemporalPlainTimePrototypeValueOf"_s,
-    "TemporalPlainTimePrototypeWith"_s,
-    "TemporalPlainTimePrototypeSymbolToStringTag"_s,
-    "TemporalPlainYearMonthPrototypeAdd"_s,
-    "TemporalPlainYearMonthPrototypeCalendarId"_s,
-    "TemporalPlainYearMonthPrototypeConstructor"_s,
-    "TemporalPlainYearMonthPrototypeDaysInMonth"_s,
-    "TemporalPlainYearMonthPrototypeDaysInYear"_s,
-    "TemporalPlainYearMonthPrototypeEquals"_s,
-    "TemporalPlainYearMonthPrototypeEra"_s,
-    "TemporalPlainYearMonthPrototypeEraYear"_s,
-    "TemporalPlainYearMonthPrototypeInLeapYear"_s,
-    "TemporalPlainYearMonthPrototypeMonth"_s,
-    "TemporalPlainYearMonthPrototypeMonthCode"_s,
-    "TemporalPlainYearMonthPrototypeMonthsInYear"_s,
-    "TemporalPlainYearMonthPrototypeSince"_s,
-    "TemporalPlainYearMonthPrototypeSubtract"_s,
-    "TemporalPlainYearMonthPrototypeToJSON"_s,
-    "TemporalPlainYearMonthPrototypeToLocaleString"_s,
-    "TemporalPlainYearMonthPrototypeToPlainDate"_s,
-    "TemporalPlainYearMonthPrototypeToString"_s,
-    "TemporalPlainYearMonthPrototypeUntil"_s,
-    "TemporalPlainYearMonthPrototypeValueOf"_s,
-    "TemporalPlainYearMonthPrototypeWith"_s,
-    "TemporalPlainYearMonthPrototypeYear"_s,
-    "TemporalPlainYearMonthPrototypeSymbolToStringTag"_s,
-    "TemporalZonedDateTimePrototypeAdd"_s,
-    "TemporalZonedDateTimePrototypeCalendarId"_s,
-    "TemporalZonedDateTimePrototypeConstructor"_s,
-    "TemporalZonedDateTimePrototypeDay"_s,
-    "TemporalZonedDateTimePrototypeDayOfWeek"_s,
-    "TemporalZonedDateTimePrototypeDayOfYear"_s,
-    "TemporalZonedDateTimePrototypeDaysInMonth"_s,
-    "TemporalZonedDateTimePrototypeDaysInWeek"_s,
-    "TemporalZonedDateTimePrototypeDaysInYear"_s,
-    "TemporalZonedDateTimePrototypeEpochMilliseconds"_s,
-    "TemporalZonedDateTimePrototypeEpochNanoseconds"_s,
-    "TemporalZonedDateTimePrototypeEquals"_s,
-    "TemporalZonedDateTimePrototypeEra"_s,
-    "TemporalZonedDateTimePrototypeEraYear"_s,
-    "TemporalZonedDateTimePrototypeGetTimeZoneTransition"_s,
-    "TemporalZonedDateTimePrototypeHour"_s,
-    "TemporalZonedDateTimePrototypeHoursInDay"_s,
-    "TemporalZonedDateTimePrototypeInLeapYear"_s,
-    "TemporalZonedDateTimePrototypeMicrosecond"_s,
-    "TemporalZonedDateTimePrototypeMillisecond"_s,
-    "TemporalZonedDateTimePrototypeMinute"_s,
-    "TemporalZonedDateTimePrototypeMonth"_s,
-    "TemporalZonedDateTimePrototypeMonthCode"_s,
-    "TemporalZonedDateTimePrototypeMonthsInYear"_s,
-    "TemporalZonedDateTimePrototypeNanosecond"_s,
-    "TemporalZonedDateTimePrototypeOffset"_s,
-    "TemporalZonedDateTimePrototypeOffsetNanoseconds"_s,
-    "TemporalZonedDateTimePrototypeRound"_s,
-    "TemporalZonedDateTimePrototypeSecond"_s,
-    "TemporalZonedDateTimePrototypeSince"_s,
-    "TemporalZonedDateTimePrototypeStartOfDay"_s,
-    "TemporalZonedDateTimePrototypeSubtract"_s,
-    "TemporalZonedDateTimePrototypeTimeZoneId"_s,
-    "TemporalZonedDateTimePrototypeToInstant"_s,
-    "TemporalZonedDateTimePrototypeToJSON"_s,
-    "TemporalZonedDateTimePrototypeToLocaleString"_s,
-    "TemporalZonedDateTimePrototypeToPlainDate"_s,
-    "TemporalZonedDateTimePrototypeToPlainDateTime"_s,
-    "TemporalZonedDateTimePrototypeToPlainTime"_s,
-    "TemporalZonedDateTimePrototypeToString"_s,
-    "TemporalZonedDateTimePrototypeUntil"_s,
-    "TemporalZonedDateTimePrototypeValueOf"_s,
-    "TemporalZonedDateTimePrototypeWeekOfYear"_s,
-    "TemporalZonedDateTimePrototypeWith"_s,
-    "TemporalZonedDateTimePrototypeWithCalendar"_s,
-    "TemporalZonedDateTimePrototypeWithPlainTime"_s,
-    "TemporalZonedDateTimePrototypeWithTimeZone"_s,
-    "TemporalZonedDateTimePrototypeYear"_s,
-    "TemporalZonedDateTimePrototypeYearOfWeek"_s,
-    "TemporalZonedDateTimePrototypeSymbolToStringTag"_s,
-    "WebAssemblyCompileErrorPrototypeConstructor"_s,
-    "WebAssemblyExceptionPrototypeConstructor"_s,
-    "WebAssemblyExceptionPrototypeGetArg"_s,
-    "WebAssemblyExceptionPrototypeIs"_s,
-    "WebAssemblyExceptionPrototypeStack"_s,
-    "WebAssemblyExceptionPrototypeSymbolToStringTag"_s,
-    "WebAssemblyGlobalPrototypeConstructor"_s,
-    "WebAssemblyGlobalPrototypeValue"_s,
-    "WebAssemblyGlobalPrototypeValueOf"_s,
-    "WebAssemblyGlobalPrototypeSymbolToStringTag"_s,
-    "WebAssemblyInstancePrototypeConstructor"_s,
-    "WebAssemblyInstancePrototypeExports"_s,
-    "WebAssemblyInstancePrototypeSymbolToStringTag"_s,
-    "WebAssemblyLinkErrorPrototypeConstructor"_s,
-    "WebAssemblyMemoryPrototypeBuffer"_s,
-    "WebAssemblyMemoryPrototypeConstructor"_s,
-    "WebAssemblyMemoryPrototypeGrow"_s,
-    "WebAssemblyMemoryPrototypeToFixedLengthBuffer"_s,
-    "WebAssemblyMemoryPrototypeToResizableBuffer"_s,
-    "WebAssemblyMemoryPrototypeSymbolToStringTag"_s,
-    "WebAssemblyModulePrototypeConstructor"_s,
-    "WebAssemblyModulePrototypeSymbolToStringTag"_s,
-    "WebAssemblyRuntimeErrorPrototypeConstructor"_s,
-    "WebAssemblySuspendErrorPrototypeConstructor"_s,
-    "WebAssemblySuspendingPrototypeConstructor"_s,
-    "WebAssemblyTablePrototypeConstructor"_s,
-    "WebAssemblyTablePrototypeGet"_s,
-    "WebAssemblyTablePrototypeGrow"_s,
-    "WebAssemblyTablePrototypeLength"_s,
-    "WebAssemblyTablePrototypeSet"_s,
-    "WebAssemblyTablePrototypeSymbolToStringTag"_s,
-    "WebAssemblyTagPrototypeConstructor"_s,
-    "WebAssemblyTagPrototypeSymbolToStringTag"_s,
+constinit const BuiltinID builtinTableBuiltinsWithQualifiedTokens[] = {
+    BuiltinID(142),
+    BuiltinID(603),
+    BuiltinID(614),
+    BuiltinID(618),
+    BuiltinID(628),
+    BuiltinID(629),
+    BuiltinID(635),
+    BuiltinID(641),
+    BuiltinID(646),
+    BuiltinID(652),
+    BuiltinID(685),
+    BuiltinID(723),
+    BuiltinID(799),
+    BuiltinID(817),
+    BuiltinID(1562),
+    BuiltinID(1568),
+    BuiltinID(1569),
+    BuiltinID(1579),
+    BuiltinID(1595),
+    BuiltinID(1596),
+    BuiltinID(2287),
+    BuiltinID(2288),
+    BuiltinID(2299),
+    BuiltinID(2642),
+    BuiltinID(2645),
+    BuiltinID(2648),
+    BuiltinID(2649),
+    BuiltinID(2669),
+    BuiltinID(2683),
+    BuiltinID(2703),
+    BuiltinID(2706),
+    BuiltinID(2711),
+    BuiltinID(2712),
+    BuiltinID(2751),
+    BuiltinID(2905),
+    BuiltinID(3131),
+    BuiltinID(3136),
+    BuiltinID(3173),
+    BuiltinID(3186),
+    BuiltinID(3211),
+    BuiltinID(3254),
+    BuiltinID(3292),
+    BuiltinID(3389),
+    BuiltinID(3494),
+    BuiltinID(3495),
+    BuiltinID(3496),
+    BuiltinID(3497),
+    BuiltinID(3498),
+    BuiltinID(3499),
+    BuiltinID(3500),
+    BuiltinID(3501),
+    BuiltinID(3502),
+    BuiltinID(3503),
+    BuiltinID(3504),
+    BuiltinID(3505),
+    BuiltinID(3507),
+    BuiltinID(3524),
+    BuiltinID(3525),
+    BuiltinID(3528),
+    BuiltinID(3530),
+    BuiltinID(3532),
+    BuiltinID(3533),
+    BuiltinID(3536),
+    BuiltinID(3538),
+    BuiltinID(3540),
+    BuiltinID(3562),
+    BuiltinID(3583),
+    BuiltinID(3782),
 };
 
-constinit const ASCIILiteral builtinTableClassTokens[] = {
-    "AbortSignal"_s,
-    "AggregateError"_s,
-    "Archive"_s,
-    "Arguments"_s,
-    "Array"_s,
-    "ArrayBuffer"_s,
-    "ArrayBufferSink"_s,
-    "ArrayIterator"_s,
-    "AsyncDisposableStack"_s,
-    "AsyncFromSyncIterator"_s,
-    "AsyncFunction"_s,
-    "AsyncGenerator"_s,
-    "AsyncGeneratorFunction"_s,
-    "AsyncIterator"_s,
-    "AttributeIterator"_s,
-    "BigInt"_s,
-    "BigInt64Array"_s,
-    "BigUint64Array"_s,
-    "Blob"_s,
-    "BlobInternalReadableStreamSource"_s,
-    "BlockList"_s,
-    "Boolean"_s,
-    "BoundFunction"_s,
-    "Buffer"_s,
-    "BuildArtifact"_s,
-    "BuildMessage"_s,
-    "BunCookie"_s,
-    "BunCookieMap"_s,
-    "BunRequest"_s,
-    "BunWebView"_s,
-    "BytesInternalReadableStreamSource"_s,
-    "Comment"_s,
-    "CompressionStream"_s,
-    "CronJob"_s,
-    "Crypto"_s,
-    "CryptoHasher"_s,
-    "CryptoKey"_s,
-    "DNSResolver"_s,
-    "DataView"_s,
-    "Date"_s,
-    "DebugHTTPSServer"_s,
-    "DebugHTTPServer"_s,
-    "DecompressionStream"_s,
-    "DisposableStack"_s,
-    "DocEnd"_s,
-    "DocType"_s,
-    "DoneCallback"_s,
-    "Element"_s,
-    "EndTag"_s,
-    "Error"_s,
-    "EvalError"_s,
-    "EventEmitter"_s,
-    "EventTarget"_s,
-    "Expect"_s,
-    "ExpectAny"_s,
-    "ExpectAnything"_s,
-    "ExpectArrayContaining"_s,
-    "ExpectCloseTo"_s,
-    "ExpectCustomAsymmetricMatcher"_s,
-    "ExpectMatcherContext"_s,
-    "ExpectMatcherUtils"_s,
-    "ExpectObjectContaining"_s,
-    "ExpectStatic"_s,
-    "ExpectStringContaining"_s,
-    "ExpectStringMatching"_s,
-    "ExpectTypeOf"_s,
-    "FFI"_s,
-    "FSWatcher"_s,
-    "FetchRequestBodySink"_s,
-    "FetchSession"_s,
-    "FileInternalReadableStreamSource"_s,
-    "FileSink"_s,
-    "FileSystemRouter"_s,
-    "FinalizationRegistry"_s,
-    "Float16Array"_s,
-    "Float32Array"_s,
-    "Float64Array"_s,
-    "FrameworkFileSystemRouter"_s,
-    "Function"_s,
-    "Generator"_s,
-    "GeneratorFunction"_s,
-    "Glob"_s,
-    "H2FrameParser"_s,
-    "HTMLBundle"_s,
-    "HTMLRewriter"_s,
-    "HTMLRewriterSink"_s,
-    "HTMLRewriterTransform"_s,
-    "HTTPResponseSink"_s,
-    "HTTPSResponseSink"_s,
-    "HTTPSServer"_s,
-    "HTTPServer"_s,
-    "Headers"_s,
-    "HeadersIterator"_s,
-    "Image"_s,
-    "Immediate"_s,
-    "Int16Array"_s,
-    "Int32Array"_s,
-    "Int8Array"_s,
-    "IntlCollator"_s,
-    "IntlDateTimeFormat"_s,
-    "IntlDisplayNames"_s,
-    "IntlDurationFormat"_s,
-    "IntlListFormat"_s,
-    "IntlLocale"_s,
-    "IntlNumberFormat"_s,
-    "IntlPluralRules"_s,
-    "IntlRelativeTimeFormat"_s,
-    "IntlSegmentIterator"_s,
-    "IntlSegmenter"_s,
-    "IntlSegments"_s,
-    "Iterator"_s,
-    "IteratorHelper"_s,
-    "Listener"_s,
-    "MD4"_s,
-    "MD5"_s,
-    "Map"_s,
-    "MapIterator"_s,
-    "MatchedRoute"_s,
-    "MySQLConnection"_s,
-    "MySQLQuery"_s,
-    "NativeBrotli"_s,
-    "NativeZlib"_s,
-    "NativeZstd"_s,
-    "NetworkSink"_s,
-    "NodeHTTPResponse"_s,
-    "NodeJSFS"_s,
-    "NodeModule"_s,
-    "Number"_s,
-    "Object"_s,
-    "ParsedShellScript"_s,
-    "PostgresSQLConnection"_s,
-    "PostgresSQLQuery"_s,
-    "Promise"_s,
-    "Proxy"_s,
-    "QuicEndpoint"_s,
-    "QuicSession"_s,
-    "QuicStream"_s,
-    "RangeError"_s,
-    "ReadableStream"_s,
-    "RedisClient"_s,
-    "ReferenceError"_s,
-    "RegExp"_s,
-    "RegExpStringIterator"_s,
-    "Request"_s,
-    "ResolveMessage"_s,
-    "ResourceUsage"_s,
-    "Response"_s,
-    "S3Client"_s,
-    "S3Stat"_s,
-    "SHA1"_s,
-    "SHA224"_s,
-    "SHA256"_s,
-    "SHA384"_s,
-    "SHA512"_s,
-    "SHA512_256"_s,
-    "ScopeFunctions"_s,
-    "SecureContext"_s,
-    "ServerWebSocket"_s,
-    "Set"_s,
-    "SetIterator"_s,
-    "ShadowRealm"_s,
-    "SharedArrayBuffer"_s,
-    "ShellInterpreter"_s,
-    "SocketAddress"_s,
-    "SourceMap"_s,
-    "StatWatcher"_s,
-    "String"_s,
-    "StringIterator"_s,
-    "Subprocess"_s,
-    "SubtleCrypto"_s,
-    "SuppressedError"_s,
-    "Symbol"_s,
-    "SyntaxError"_s,
-    "TCPSocket"_s,
-    "TLSSocket"_s,
-    "TemporalDuration"_s,
-    "TemporalInstant"_s,
-    "TemporalPlainDate"_s,
-    "TemporalPlainDateTime"_s,
-    "TemporalPlainMonthDay"_s,
-    "TemporalPlainTime"_s,
-    "TemporalPlainYearMonth"_s,
-    "TemporalZonedDateTime"_s,
-    "Terminal"_s,
-    "TextChunk"_s,
-    "TextDecoder"_s,
-    "TextEncoder"_s,
-    "Timeout"_s,
-    "Transpiler"_s,
-    "TypeError"_s,
-    "TypedArray"_s,
-    "UDPSocket"_s,
-    "URIError"_s,
-    "URL"_s,
-    "URLPattern"_s,
-    "URLSearchParams"_s,
-    "URLSearchParamsIterator"_s,
-    "Uint16Array"_s,
-    "Uint32Array"_s,
-    "Uint8Array"_s,
-    "Uint8ClampedArray"_s,
-    "WeakMap"_s,
-    "WeakRef"_s,
-    "WeakSet"_s,
-    "WebAssemblyCompileError"_s,
-    "WebAssemblyException"_s,
-    "WebAssemblyGlobal"_s,
-    "WebAssemblyInstance"_s,
-    "WebAssemblyLinkError"_s,
-    "WebAssemblyMemory"_s,
-    "WebAssemblyModule"_s,
-    "WebAssemblyRuntimeError"_s,
-    "WebAssemblySuspendError"_s,
-    "WebAssemblySuspending"_s,
-    "WebAssemblyTable"_s,
-    "WebAssemblyTag"_s,
-    "WebSocket"_s,
-    "Worker"_s,
-    "WrapForValidIterator"_s,
+constinit const BuiltinTextStorage<271, 4034> builtinTableClassTokens = {
+    271,
+    {
+        0, 16, 28, 43, 51, 61, 67, 79, 95, 109, 130, 152, 166, 181, 204, 218,
+        236, 243, 257, 272, 277, 310, 320, 328, 342, 359, 366, 380, 393, 403, 416, 427,
+        438, 464, 498, 509, 517, 535, 556, 564, 571, 584, 594, 606, 618, 631, 640, 645,
+        662, 678, 702, 722, 738, 745, 753, 766, 774, 781, 787, 798, 808, 814, 827, 839,
+        846, 856, 871, 893, 907, 937, 958, 977, 1000, 1013, 1036, 1057, 1070, 1074, 1084, 1105,
+        1118, 1123, 1156, 1165, 1182, 1203, 1216, 1229, 1242, 1251, 1277, 1286, 1296, 1314, 1319, 1333,
+        1344, 1357, 1374, 1396, 1413, 1431, 1443, 1454, 1462, 1478, 1484, 1494, 1505, 1516, 1526, 1539,
+        1558, 1575, 1594, 1609, 1620, 1637, 1653, 1676, 1696, 1710, 1723, 1732, 1747, 1756, 1760, 1764,
+        1786, 1806, 1810, 1822, 1835, 1850, 1863, 1875, 1891, 1902, 1915, 1926, 1937, 1949, 1973, 2004,
+        2040, 2062, 2084, 2106, 2133, 2155, 2179, 2212, 2229, 2238, 2249, 2281, 2301, 2321, 2328, 2335,
+        2353, 2365, 2382, 2398, 2417, 2437, 2466, 2492, 2516, 2534, 2556, 2573, 2581, 2587, 2600, 2612,
+        2623, 2634, 2663, 2678, 2703, 2729, 2761, 2789, 2801, 2816, 2823, 2844, 2852, 2867, 2881, 2890,
+        2899, 2906, 2913, 2918, 2925, 2932, 2939, 2946, 2957, 2972, 2986, 3002, 3006, 3018, 3030, 3048,
+        3065, 3079, 3089, 3101, 3108, 3123, 3134, 3147, 3163, 3170, 3182, 3192, 3202, 3219, 3235, 3253,
+        3275, 3297, 3315, 3338, 3360, 3369, 3379, 3391, 3409, 3421, 3439, 3447, 3463, 3496, 3507, 3517,
+        3528, 3538, 3547, 3551, 3562, 3578, 3602, 3614, 3626, 3637, 3655, 3663, 3671, 3679, 3703, 3724,
+        3742, 3762, 3783, 3801, 3819, 3843, 3867, 3889, 3906, 3921, 3931, 3938, 3959, 3974, 4006, 4034,
+    },
+    "AbortController\0"
+    "AbortSignal\0"
+    "AggregateError\0"
+    "Archive\0"
+    "Arguments\0"
+    "Array\0"
+    "ArrayBuffer\0"
+    "ArrayBufferSink\0"
+    "ArrayIterator\0"
+    "AsyncDisposableStack\0"
+    "AsyncFromSyncIterator\0"
+    "AsyncFunction\0"
+    "AsyncGenerator\0"
+    "AsyncGeneratorFunction\0"
+    "AsyncIterator\0"
+    "AttributeIterator\0"
+    "BigInt\0"
+    "BigInt64Array\0"
+    "BigUint64Array\0"
+    "Blob\0"
+    "BlobInternalReadableStreamSource\0"
+    "BlockList\0"
+    "Boolean\0"
+    "BoundFunction\0"
+    "BroadcastChannel\0"
+    "Buffer\0"
+    "BuildArtifact\0"
+    "BuildMessage\0"
+    "BunCookie\0"
+    "BunCookieMap\0"
+    "BunRequest\0"
+    "BunWebView\0"
+    "ByteLengthQueuingStrategy\0"
+    "BytesInternalReadableStreamSource\0"
+    "CloseEvent\0"
+    "Comment\0"
+    "CompressionStream\0"
+    "CountQueuingStrategy\0"
+    "CronJob\0"
+    "Crypto\0"
+    "CryptoHasher\0"
+    "CryptoKey\0"
+    "CustomEvent\0"
+    "DNSResolver\0"
+    "DOMException\0"
+    "DataView\0"
+    "Date\0"
+    "DebugHTTPSServer\0"
+    "DebugHTTPServer\0"
+    "DeclaredTypesForTesting\0"
+    "DecompressionStream\0"
+    "DisposableStack\0"
+    "DocEnd\0"
+    "DocType\0"
+    "DoneCallback\0"
+    "Element\0"
+    "EndTag\0"
+    "Error\0"
+    "ErrorEvent\0"
+    "EvalError\0"
+    "Event\0"
+    "EventEmitter\0"
+    "EventTarget\0"
+    "Expect\0"
+    "ExpectAny\0"
+    "ExpectAnything\0"
+    "ExpectArrayContaining\0"
+    "ExpectCloseTo\0"
+    "ExpectCustomAsymmetricMatcher\0"
+    "ExpectMatcherContext\0"
+    "ExpectMatcherUtils\0"
+    "ExpectObjectContaining\0"
+    "ExpectStatic\0"
+    "ExpectStringContaining\0"
+    "ExpectStringMatching\0"
+    "ExpectTypeOf\0"
+    "FFI\0"
+    "FSWatcher\0"
+    "FetchRequestBodySink\0"
+    "FetchSession\0"
+    "File\0"
+    "FileInternalReadableStreamSource\0"
+    "FileSink\0"
+    "FileSystemRouter\0"
+    "FinalizationRegistry\0"
+    "Float16Array\0"
+    "Float32Array\0"
+    "Float64Array\0"
+    "FormData\0"
+    "FrameworkFileSystemRouter\0"
+    "Function\0"
+    "Generator\0"
+    "GeneratorFunction\0"
+    "Glob\0"
+    "H2FrameParser\0"
+    "HTMLBundle\0"
+    "HTMLRewriter\0"
+    "HTMLRewriterSink\0"
+    "HTMLRewriterTransform\0"
+    "HTTPResponseSink\0"
+    "HTTPSResponseSink\0"
+    "HTTPSServer\0"
+    "HTTPServer\0"
+    "Headers\0"
+    "HeadersIterator\0"
+    "Image\0"
+    "Immediate\0"
+    "Int16Array\0"
+    "Int32Array\0"
+    "Int8Array\0"
+    "IntlCollator\0"
+    "IntlDateTimeFormat\0"
+    "IntlDisplayNames\0"
+    "IntlDurationFormat\0"
+    "IntlListFormat\0"
+    "IntlLocale\0"
+    "IntlNumberFormat\0"
+    "IntlPluralRules\0"
+    "IntlRelativeTimeFormat\0"
+    "IntlSegmentIterator\0"
+    "IntlSegmenter\0"
+    "IntlSegments\0"
+    "Iterator\0"
+    "IteratorHelper\0"
+    "Listener\0"
+    "MD4\0"
+    "MD5\0"
+    "MIMEBindingMIMEParams\0"
+    "MIMEBindingMIMEType\0"
+    "Map\0"
+    "MapIterator\0"
+    "MatchedRoute\0"
+    "MessageChannel\0"
+    "MessageEvent\0"
+    "MessagePort\0"
+    "MySQLConnection\0"
+    "MySQLQuery\0"
+    "NativeBrotli\0"
+    "NativeZlib\0"
+    "NativeZstd\0"
+    "NetworkSink\0"
+    "NodeCryptoBindingCipher\0"
+    "NodeCryptoBindingDiffieHellman\0"
+    "NodeCryptoBindingDiffieHellmanGroup\0"
+    "NodeCryptoBindingECDH\0"
+    "NodeCryptoBindingHash\0"
+    "NodeCryptoBindingHmac\0"
+    "NodeCryptoBindingKeyObject\0"
+    "NodeCryptoBindingSign\0"
+    "NodeCryptoBindingVerify\0"
+    "NodeCryptoBindingX509Certificate\0"
+    "NodeHTTPResponse\0"
+    "NodeJSFS\0"
+    "NodeModule\0"
+    "NodeString_decoderStringDecoder\0"
+    "NodeVMBindingModule\0"
+    "NodeVMBindingScript\0"
+    "Number\0"
+    "Object\0"
+    "ParsedShellScript\0"
+    "Performance\0"
+    "PerformanceEntry\0"
+    "PerformanceMark\0"
+    "PerformanceMeasure\0"
+    "PerformanceObserver\0"
+    "PerformanceObserverEntryList\0"
+    "PerformanceResourceTiming\0"
+    "PerformanceServerTiming\0"
+    "PerformanceTiming\0"
+    "PostgresSQLConnection\0"
+    "PostgresSQLQuery\0"
+    "Promise\0"
+    "Proxy\0"
+    "QuicEndpoint\0"
+    "QuicSession\0"
+    "QuicStream\0"
+    "RangeError\0"
+    "ReadableByteStreamController\0"
+    "ReadableStream\0"
+    "ReadableStreamBYOBReader\0"
+    "ReadableStreamBYOBRequest\0"
+    "ReadableStreamDefaultController\0"
+    "ReadableStreamDefaultReader\0"
+    "RedisClient\0"
+    "ReferenceError\0"
+    "RegExp\0"
+    "RegExpStringIterator\0"
+    "Request\0"
+    "ResolveMessage\0"
+    "ResourceUsage\0"
+    "Response\0"
+    "S3Client\0"
+    "S3File\0"
+    "S3Stat\0"
+    "SHA1\0"
+    "SHA224\0"
+    "SHA256\0"
+    "SHA384\0"
+    "SHA512\0"
+    "SHA512_256\0"
+    "ScopeFunctions\0"
+    "SecureContext\0"
+    "ServerWebSocket\0"
+    "Set\0"
+    "SetIterator\0"
+    "ShadowRealm\0"
+    "SharedArrayBuffer\0"
+    "ShellInterpreter\0"
+    "SocketAddress\0"
+    "SourceMap\0"
+    "StatWatcher\0"
+    "String\0"
+    "StringIterator\0"
+    "Subprocess\0"
+    "SubtleCrypto\0"
+    "SuppressedError\0"
+    "Symbol\0"
+    "SyntaxError\0"
+    "TCPSocket\0"
+    "TLSSocket\0"
+    "TemporalDuration\0"
+    "TemporalInstant\0"
+    "TemporalPlainDate\0"
+    "TemporalPlainDateTime\0"
+    "TemporalPlainMonthDay\0"
+    "TemporalPlainTime\0"
+    "TemporalPlainYearMonth\0"
+    "TemporalZonedDateTime\0"
+    "Terminal\0"
+    "TextChunk\0"
+    "TextDecoder\0"
+    "TextDecoderStream\0"
+    "TextEncoder\0"
+    "TextEncoderStream\0"
+    "Timeout\0"
+    "TransformStream\0"
+    "TransformStreamDefaultController\0"
+    "Transpiler\0"
+    "TypeError\0"
+    "TypedArray\0"
+    "UDPSocket\0"
+    "URIError\0"
+    "URL\0"
+    "URLPattern\0"
+    "URLSearchParams\0"
+    "URLSearchParamsIterator\0"
+    "Uint16Array\0"
+    "Uint32Array\0"
+    "Uint8Array\0"
+    "Uint8ClampedArray\0"
+    "WeakMap\0"
+    "WeakRef\0"
+    "WeakSet\0"
+    "WebAssemblyCompileError\0"
+    "WebAssemblyException\0"
+    "WebAssemblyGlobal\0"
+    "WebAssemblyInstance\0"
+    "WebAssemblyLinkError\0"
+    "WebAssemblyMemory\0"
+    "WebAssemblyModule\0"
+    "WebAssemblyRuntimeError\0"
+    "WebAssemblySuspendError\0"
+    "WebAssemblySuspending\0"
+    "WebAssemblyTable\0"
+    "WebAssemblyTag\0"
+    "WebSocket\0"
+    "Worker\0"
+    "WrapForValidIterator\0"
+    "WritableStream\0"
+    "WritableStreamDefaultController\0"
+    "WritableStreamDefaultWriter"
 };
 
-constinit const ASCIILiteral builtinTableSlotTokens[] = {
-    "ArgumentsElement"_s,
-    "ArrayElement"_s,
-    "ArrayBufferBytes"_s,
-    "ArrayIteratorIterated"_s,
-    "AsyncFromSyncIteratorIterated"_s,
-    "AsyncGeneratorElement"_s,
-    "AsyncIteratorIterated"_s,
-    "BoundFunctionTarget"_s,
-    "BoundFunctionBoundThis"_s,
-    "BoundFunctionBoundArguments"_s,
-    "DataViewBuffer"_s,
-    "DataViewBytes"_s,
-    "DateTime"_s,
-    "FinalizationRegistryCleanup"_s,
-    "FinalizationRegistryTarget"_s,
-    "FinalizationRegistryHeldValue"_s,
-    "FinalizationRegistryUnregisterToken"_s,
-    "GeneratorElement"_s,
-    "IntlSegmentIteratorIterated"_s,
-    "IteratorHelperIterated"_s,
-    "MapKey"_s,
-    "MapValue"_s,
-    "MapIteratorIterated"_s,
-    "PromiseValue"_s,
-    "PromiseReason"_s,
-    "ProxyTarget"_s,
-    "ProxyHandler"_s,
-    "RegExpLastIndex"_s,
-    "RegExpStringIteratorIterated"_s,
-    "SetElement"_s,
-    "SetIteratorIterated"_s,
-    "SharedArrayBufferBytes"_s,
-    "StringIteratorIterated"_s,
-    "TypedArrayElement"_s,
-    "WeakMapKey"_s,
-    "WeakMapValue"_s,
-    "WeakRefTarget"_s,
-    "WeakSetElement"_s,
-    "WrapForValidIteratorIterated"_s,
+constinit const BuiltinTextStorage<39, 751> builtinTableSlotTokens = {
+    39,
+    {
+        0, 17, 30, 47, 69, 99, 121, 143, 163, 186, 214, 229, 243, 252, 280, 307,
+        337, 373, 390, 418, 441, 448, 457, 477, 490, 504, 516, 529, 545, 574, 585, 605,
+        628, 651, 669, 680, 693, 707, 722, 751,
+    },
+    "ArgumentsElement\0"
+    "ArrayElement\0"
+    "ArrayBufferBytes\0"
+    "ArrayIteratorIterated\0"
+    "AsyncFromSyncIteratorIterated\0"
+    "AsyncGeneratorElement\0"
+    "AsyncIteratorIterated\0"
+    "BoundFunctionTarget\0"
+    "BoundFunctionBoundThis\0"
+    "BoundFunctionBoundArguments\0"
+    "DataViewBuffer\0"
+    "DataViewBytes\0"
+    "DateTime\0"
+    "FinalizationRegistryCleanup\0"
+    "FinalizationRegistryTarget\0"
+    "FinalizationRegistryHeldValue\0"
+    "FinalizationRegistryUnregisterToken\0"
+    "GeneratorElement\0"
+    "IntlSegmentIteratorIterated\0"
+    "IteratorHelperIterated\0"
+    "MapKey\0"
+    "MapValue\0"
+    "MapIteratorIterated\0"
+    "PromiseValue\0"
+    "PromiseReason\0"
+    "ProxyTarget\0"
+    "ProxyHandler\0"
+    "RegExpLastIndex\0"
+    "RegExpStringIteratorIterated\0"
+    "SetElement\0"
+    "SetIteratorIterated\0"
+    "SharedArrayBufferBytes\0"
+    "StringIteratorIterated\0"
+    "TypedArrayElement\0"
+    "WeakMapKey\0"
+    "WeakMapValue\0"
+    "WeakRefTarget\0"
+    "WeakSetElement\0"
+    "WrapForValidIteratorIterated"
 };
 
-constinit const ASCIILiteral builtinTableLayoutTokens[] = {
-    "EntriesPair"_s,
-    "IteratorResult"_s,
-    "PromiseCapability"_s,
-    "PromiseFulfilledResult"_s,
-    "PromiseRejectedResult"_s,
-    "PropertyDescriptor"_s,
-    "ReadAndWrittenCounts"_s,
-    "StringPair"_s,
-    "StringPairIteratorResult"_s,
+constinit const BuiltinTextStorage<13, 227> builtinTableLayoutTokens = {
+    13,
+    {
+        0, 19, 31, 46, 61, 72, 90, 113, 135, 154, 175, 191, 202, 227,
+    },
+    "ClusterBoundSocket\0"
+    "EntriesPair\0"
+    "IteratorResult\0"
+    "NodeURLBinding\0"
+    "ParsedPath\0"
+    "PromiseCapability\0"
+    "PromiseFulfilledResult\0"
+    "PromiseRejectedResult\0"
+    "PropertyDescriptor\0"
+    "ReadAndWrittenCounts\0"
+    "SpawnSyncResult\0"
+    "StringPair\0"
+    "StringPairIteratorResult"
 };
 
-constinit const ASCIILiteral builtinTableModuleTokens[] = {
-    "BunBake"_s,
-    "BunFfi"_s,
-    "BunSql"_s,
-    "BunSqlite"_s,
-    "InternalAbort_listener"_s,
-    "InternalAssertAssertion_error"_s,
-    "InternalAssertCalltracker"_s,
-    "InternalAssertMyers_diff"_s,
-    "InternalAssertUtils"_s,
-    "InternalAsync_context_frame"_s,
-    "InternalAsync_hooks"_s,
-    "InternalAsync_hooks_tick"_s,
-    "InternalBake"_s,
-    "InternalClusterRoundRobinHandle"_s,
-    "InternalClusterSharedHandle"_s,
-    "InternalClusterWorker"_s,
-    "InternalClusterChild"_s,
-    "InternalClusterIsPrimary"_s,
-    "InternalClusterPrimary"_s,
-    "InternalDebugger"_s,
-    "InternalDgram"_s,
-    "InternalErrors"_s,
-    "InternalFifo"_s,
-    "InternalFixed_queue"_s,
-    "InternalFreelist"_s,
-    "InternalFsBinding"_s,
-    "InternalFsCpSync"_s,
-    "InternalFsCp"_s,
-    "InternalFsGlob"_s,
-    "InternalFsStreams"_s,
-    "InternalFsWatch"_s,
-    "InternalFsWatchfile"_s,
-    "InternalHtml"_s,
-    "InternalHttp"_s,
-    "InternalHttpFakeSocket"_s,
-    "InternalHttp1_server_fallback"_s,
-    "InternalInspectorCdp"_s,
-    "InternalLinkedlist"_s,
-    "InternalNetIsIP"_s,
-    "InternalNetServer_abort_signal"_s,
-    "InternalNetSymbols"_s,
-    "InternalPerf_hooksMonitorEventLoopDelay"_s,
-    "InternalPrimordials"_s,
-    "InternalProcessPre_execution"_s,
-    "InternalPromisify"_s,
-    "InternalQuicBinding"_s,
-    "InternalQuicDiagnostics"_s,
-    "InternalQuicHttp2util"_s,
-    "InternalQuicQuic"_s,
-    "InternalQuicState"_s,
-    "InternalQuicStats"_s,
-    "InternalQuicSymbols"_s,
-    "InternalReadlineCallbacks"_s,
-    "InternalReadlineEmitKeypressEvents"_s,
-    "InternalReadlineInterface"_s,
-    "InternalReadlinePromises"_s,
-    "InternalReadlineUtils"_s,
-    "InternalRepl"_s,
-    "InternalReplAcornWalk"_s,
-    "InternalReplAcorn"_s,
-    "InternalReplAwait"_s,
-    "InternalReplCompletion"_s,
-    "InternalReplHistory"_s,
-    "InternalReplMode"_s,
-    "InternalReplNodeErrors"_s,
-    "InternalReplNodeInspect"_s,
-    "InternalReplNodePrimordials"_s,
-    "InternalReplNodeShims"_s,
-    "InternalReplUtils"_s,
-    "InternalSerialization_buffers"_s,
-    "InternalServe_cli"_s,
-    "InternalShared"_s,
-    "InternalSqlErrors"_s,
-    "InternalSqlMysql"_s,
-    "InternalSqlOptions"_s,
-    "InternalSqlPool"_s,
-    "InternalSqlPostgres"_s,
-    "InternalSqlQuery"_s,
-    "InternalSqlShared"_s,
-    "InternalSqlSqlite"_s,
-    "InternalStreamPromises"_s,
-    "InternalStream"_s,
-    "InternalStreamsAddAbortSignal"_s,
-    "InternalStreamsCompose"_s,
-    "InternalStreamsDestroy"_s,
-    "InternalStreamsDuplex"_s,
-    "InternalStreamsDuplexify"_s,
-    "InternalStreamsDuplexpair"_s,
-    "InternalStreamsEndOfStream"_s,
-    "InternalStreamsFastUtf8Stream"_s,
-    "InternalStreamsFrom"_s,
-    "InternalStreamsIterBroadcast"_s,
-    "InternalStreamsIterClassic"_s,
-    "InternalStreamsIterConsumers"_s,
-    "InternalStreamsIterDuplex"_s,
-    "InternalStreamsIterFrom"_s,
-    "InternalStreamsIterPull"_s,
-    "InternalStreamsIterPush"_s,
-    "InternalStreamsIterRingbuffer"_s,
-    "InternalStreamsIterShare"_s,
-    "InternalStreamsIterTransform"_s,
-    "InternalStreamsIterTypes"_s,
-    "InternalStreamsIterUtils"_s,
-    "InternalStreamsLazy_transform"_s,
-    "InternalStreamsLegacy"_s,
-    "InternalStreamsNativeReadable"_s,
-    "InternalStreamsOperators"_s,
-    "InternalStreamsPassthrough"_s,
-    "InternalStreamsPipeline"_s,
-    "InternalStreamsReadable"_s,
-    "InternalStreamsState"_s,
-    "InternalStreamsTransform"_s,
-    "InternalStreamsUtils"_s,
-    "InternalStreamsWritable"_s,
-    "InternalTestBinding"_s,
-    "InternalTest_runnerMock_timers"_s,
-    "InternalTimers"_s,
-    "InternalTls"_s,
-    "InternalTrace_events"_s,
-    "InternalTty"_s,
-    "InternalUrl"_s,
-    "InternalUtilColors"_s,
-    "InternalUtilComparisons"_s,
-    "InternalUtilDebuglog"_s,
-    "InternalUtilDeprecate"_s,
-    "InternalUtilInspect"_s,
-    "InternalUtilMime"_s,
-    "InternalValidators"_s,
-    "InternalWebstreams_adapters"_s,
-    "InternalWorkerMessaging"_s,
-    "InternalWorkerStdio"_s,
-    "Node_http2_upgrade"_s,
-    "Node_http_agent"_s,
-    "Node_http_client"_s,
-    "Node_http_common"_s,
-    "Node_http_incoming"_s,
-    "Node_http_outgoing"_s,
-    "Node_http_server"_s,
-    "Node_stream_duplex"_s,
-    "Node_stream_passthrough"_s,
-    "Node_stream_readable"_s,
-    "Node_stream_transform"_s,
-    "Node_stream_wrap"_s,
-    "Node_stream_writable"_s,
-    "Node_tls_common"_s,
-    "Node_tls_wrap"_s,
-    "NodeAssertStrict"_s,
-    "NodeAssert"_s,
-    "NodeAsync_hooks"_s,
-    "NodeChild_process"_s,
-    "NodeCluster"_s,
-    "NodeConsole"_s,
-    "NodeCrypto"_s,
-    "NodeDgram"_s,
-    "NodeDiagnostics_channel"_s,
-    "NodeDnsPromises"_s,
-    "NodeDns"_s,
-    "NodeDomain"_s,
-    "NodeEvents"_s,
-    "NodeFsPromises"_s,
-    "NodeFs"_s,
-    "NodeHttp"_s,
-    "NodeHttp2"_s,
-    "NodeHttps"_s,
-    "NodeInspectorPromises"_s,
-    "NodeInspector"_s,
-    "NodeNet"_s,
-    "NodeOs"_s,
-    "NodePathPosix"_s,
-    "NodePath"_s,
-    "NodePathWin32"_s,
-    "NodePerf_hooks"_s,
-    "NodePunycode"_s,
-    "NodeQuerystring"_s,
-    "NodeQuic"_s,
-    "NodeReadline"_s,
-    "NodeReadlinePromises"_s,
-    "NodeRepl"_s,
-    "NodeStreamConsumers"_s,
-    "NodeStreamIter"_s,
-    "NodeStreamPromises"_s,
-    "NodeStream"_s,
-    "NodeStreamWeb"_s,
-    "NodeTest"_s,
-    "NodeTimersPromises"_s,
-    "NodeTimers"_s,
-    "NodeTls"_s,
-    "NodeTrace_events"_s,
-    "NodeTty"_s,
-    "NodeUrl"_s,
-    "NodeUtil"_s,
-    "NodeV8"_s,
-    "NodeVm"_s,
-    "NodeWasi"_s,
-    "NodeWorker_threads"_s,
-    "NodeZlibIter"_s,
-    "NodeZlib"_s,
-    "IsomorphicFetch"_s,
-    "NodeFetch"_s,
-    "Undici"_s,
-    "VercelFetch"_s,
-    "Ws"_s,
-    "BunInternalForTesting"_s,
-    "BunTest"_s,
-    "BunJsc"_s,
-    "NodeBuffer"_s,
-    "NodeConstants"_s,
-    "NodeSqlite"_s,
-    "NodeString_decoder"_s,
-    "NodeUtilTypes"_s,
-    "Utf8Validate"_s,
-    "AbortController"_s,
-    "NodeModule"_s,
-    "NodeProcess"_s,
-    "Bun"_s,
-    "BunWrap"_s,
-    "Runtime"_s,
-    "InternalProcessNext_tick_queue"_s,
-    "InternalTrace_event_recorder"_s,
+constinit const BuiltinTextStorage<220, 4047> builtinTableModuleTokens = {
+    220,
+    {
+        0, 8, 15, 22, 32, 55, 85, 111, 136, 156, 184, 204, 229, 242, 274, 302,
+        324, 345, 370, 393, 410, 424, 439, 452, 472, 489, 507, 524, 537, 552, 570, 586,
+        606, 619, 632, 655, 685, 706, 725, 741, 772, 791, 831, 851, 882, 911, 936, 954,
+        974, 998, 1020, 1037, 1055, 1073, 1093, 1119, 1154, 1180, 1205, 1227, 1240, 1262, 1280, 1298,
+        1321, 1341, 1358, 1381, 1405, 1433, 1455, 1473, 1503, 1521, 1536, 1554, 1571, 1590, 1606, 1626,
+        1643, 1661, 1679, 1702, 1717, 1747, 1770, 1793, 1815, 1840, 1866, 1893, 1923, 1943, 1972, 1999,
+        2028, 2054, 2078, 2102, 2126, 2156, 2181, 2210, 2235, 2260, 2290, 2312, 2342, 2367, 2394, 2418,
+        2442, 2463, 2488, 2509, 2533, 2553, 2584, 2599, 2611, 2640, 2661, 2673, 2685, 2704, 2728, 2749,
+        2771, 2791, 2808, 2827, 2855, 2879, 2899, 2918, 2934, 2951, 2968, 2987, 3006, 3023, 3042, 3066,
+        3087, 3109, 3126, 3147, 3163, 3177, 3194, 3205, 3221, 3239, 3251, 3263, 3274, 3284, 3308, 3324,
+        3332, 3343, 3354, 3369, 3376, 3385, 3395, 3405, 3427, 3441, 3449, 3456, 3470, 3479, 3493, 3508,
+        3521, 3537, 3546, 3567, 3580, 3589, 3609, 3624, 3643, 3654, 3668, 3677, 3696, 3707, 3715, 3732,
+        3740, 3748, 3757, 3764, 3771, 3780, 3799, 3812, 3821, 3837, 3847, 3854, 3866, 3869, 3891, 3899,
+        3906, 3917, 3931, 3942, 3961, 3975, 3988, 4004, 4015, 4027, 4031, 4039, 4047,
+    },
+    "BunBake\0"
+    "BunFfi\0"
+    "BunSql\0"
+    "BunSqlite\0"
+    "InternalAbort_listener\0"
+    "InternalAssertAssertion_error\0"
+    "InternalAssertCalltracker\0"
+    "InternalAssertMyers_diff\0"
+    "InternalAssertUtils\0"
+    "InternalAsync_context_frame\0"
+    "InternalAsync_hooks\0"
+    "InternalAsync_hooks_tick\0"
+    "InternalBake\0"
+    "InternalClusterRoundRobinHandle\0"
+    "InternalClusterSharedHandle\0"
+    "InternalClusterWorker\0"
+    "InternalClusterChild\0"
+    "InternalClusterIsPrimary\0"
+    "InternalClusterPrimary\0"
+    "InternalDebugger\0"
+    "InternalDgram\0"
+    "InternalErrors\0"
+    "InternalFifo\0"
+    "InternalFixed_queue\0"
+    "InternalFreelist\0"
+    "InternalFsBinding\0"
+    "InternalFsCpSync\0"
+    "InternalFsCp\0"
+    "InternalFsGlob\0"
+    "InternalFsStreams\0"
+    "InternalFsWatch\0"
+    "InternalFsWatchfile\0"
+    "InternalHtml\0"
+    "InternalHttp\0"
+    "InternalHttpFakeSocket\0"
+    "InternalHttp1_server_fallback\0"
+    "InternalInspectorCdp\0"
+    "InternalLinkedlist\0"
+    "InternalNetIsIP\0"
+    "InternalNetServer_abort_signal\0"
+    "InternalNetSymbols\0"
+    "InternalPerf_hooksMonitorEventLoopDelay\0"
+    "InternalPrimordials\0"
+    "InternalProcessNext_tick_queue\0"
+    "InternalProcessPre_execution\0"
+    "InternalProcessTick_ring\0"
+    "InternalPromisify\0"
+    "InternalQuicBinding\0"
+    "InternalQuicDiagnostics\0"
+    "InternalQuicHttp2util\0"
+    "InternalQuicQuic\0"
+    "InternalQuicState\0"
+    "InternalQuicStats\0"
+    "InternalQuicSymbols\0"
+    "InternalReadlineCallbacks\0"
+    "InternalReadlineEmitKeypressEvents\0"
+    "InternalReadlineInterface\0"
+    "InternalReadlinePromises\0"
+    "InternalReadlineUtils\0"
+    "InternalRepl\0"
+    "InternalReplAcornWalk\0"
+    "InternalReplAcorn\0"
+    "InternalReplAwait\0"
+    "InternalReplCompletion\0"
+    "InternalReplHistory\0"
+    "InternalReplMode\0"
+    "InternalReplNodeErrors\0"
+    "InternalReplNodeInspect\0"
+    "InternalReplNodePrimordials\0"
+    "InternalReplNodeShims\0"
+    "InternalReplUtils\0"
+    "InternalSerialization_buffers\0"
+    "InternalServe_cli\0"
+    "InternalShared\0"
+    "InternalSqlErrors\0"
+    "InternalSqlMysql\0"
+    "InternalSqlOptions\0"
+    "InternalSqlPool\0"
+    "InternalSqlPostgres\0"
+    "InternalSqlQuery\0"
+    "InternalSqlShared\0"
+    "InternalSqlSqlite\0"
+    "InternalStreamPromises\0"
+    "InternalStream\0"
+    "InternalStreamsAddAbortSignal\0"
+    "InternalStreamsCompose\0"
+    "InternalStreamsDestroy\0"
+    "InternalStreamsDuplex\0"
+    "InternalStreamsDuplexify\0"
+    "InternalStreamsDuplexpair\0"
+    "InternalStreamsEndOfStream\0"
+    "InternalStreamsFastUtf8Stream\0"
+    "InternalStreamsFrom\0"
+    "InternalStreamsIterBroadcast\0"
+    "InternalStreamsIterClassic\0"
+    "InternalStreamsIterConsumers\0"
+    "InternalStreamsIterDuplex\0"
+    "InternalStreamsIterFrom\0"
+    "InternalStreamsIterPull\0"
+    "InternalStreamsIterPush\0"
+    "InternalStreamsIterRingbuffer\0"
+    "InternalStreamsIterShare\0"
+    "InternalStreamsIterTransform\0"
+    "InternalStreamsIterTypes\0"
+    "InternalStreamsIterUtils\0"
+    "InternalStreamsLazy_transform\0"
+    "InternalStreamsLegacy\0"
+    "InternalStreamsNativeReadable\0"
+    "InternalStreamsOperators\0"
+    "InternalStreamsPassthrough\0"
+    "InternalStreamsPipeline\0"
+    "InternalStreamsReadable\0"
+    "InternalStreamsState\0"
+    "InternalStreamsTransform\0"
+    "InternalStreamsUtils\0"
+    "InternalStreamsWritable\0"
+    "InternalTestBinding\0"
+    "InternalTest_runnerMock_timers\0"
+    "InternalTimers\0"
+    "InternalTls\0"
+    "InternalTrace_event_recorder\0"
+    "InternalTrace_events\0"
+    "InternalTty\0"
+    "InternalUrl\0"
+    "InternalUtilColors\0"
+    "InternalUtilComparisons\0"
+    "InternalUtilDebuglog\0"
+    "InternalUtilDeprecate\0"
+    "InternalUtilInspect\0"
+    "InternalUtilMime\0"
+    "InternalValidators\0"
+    "InternalWebstreams_adapters\0"
+    "InternalWorkerMessaging\0"
+    "InternalWorkerStdio\0"
+    "Node_http2_upgrade\0"
+    "Node_http_agent\0"
+    "Node_http_client\0"
+    "Node_http_common\0"
+    "Node_http_incoming\0"
+    "Node_http_outgoing\0"
+    "Node_http_server\0"
+    "Node_stream_duplex\0"
+    "Node_stream_passthrough\0"
+    "Node_stream_readable\0"
+    "Node_stream_transform\0"
+    "Node_stream_wrap\0"
+    "Node_stream_writable\0"
+    "Node_tls_common\0"
+    "Node_tls_wrap\0"
+    "NodeAssertStrict\0"
+    "NodeAssert\0"
+    "NodeAsync_hooks\0"
+    "NodeChild_process\0"
+    "NodeCluster\0"
+    "NodeConsole\0"
+    "NodeCrypto\0"
+    "NodeDgram\0"
+    "NodeDiagnostics_channel\0"
+    "NodeDnsPromises\0"
+    "NodeDns\0"
+    "NodeDomain\0"
+    "NodeEvents\0"
+    "NodeFsPromises\0"
+    "NodeFs\0"
+    "NodeHttp\0"
+    "NodeHttp2\0"
+    "NodeHttps\0"
+    "NodeInspectorPromises\0"
+    "NodeInspector\0"
+    "NodeNet\0"
+    "NodeOs\0"
+    "NodePathPosix\0"
+    "NodePath\0"
+    "NodePathWin32\0"
+    "NodePerf_hooks\0"
+    "NodePunycode\0"
+    "NodeQuerystring\0"
+    "NodeQuic\0"
+    "NodeReadlinePromises\0"
+    "NodeReadline\0"
+    "NodeRepl\0"
+    "NodeStreamConsumers\0"
+    "NodeStreamIter\0"
+    "NodeStreamPromises\0"
+    "NodeStream\0"
+    "NodeStreamWeb\0"
+    "NodeTest\0"
+    "NodeTimersPromises\0"
+    "NodeTimers\0"
+    "NodeTls\0"
+    "NodeTrace_events\0"
+    "NodeTty\0"
+    "NodeUrl\0"
+    "NodeUtil\0"
+    "NodeV8\0"
+    "NodeVm\0"
+    "NodeWasi\0"
+    "NodeWorker_threads\0"
+    "NodeZlibIter\0"
+    "NodeZlib\0"
+    "IsomorphicFetch\0"
+    "NodeFetch\0"
+    "Undici\0"
+    "VercelFetch\0"
+    "Ws\0"
+    "BunInternalForTesting\0"
+    "BunTest\0"
+    "BunJsc\0"
+    "NodeBuffer\0"
+    "NodeConstants\0"
+    "NodeSqlite\0"
+    "NodeString_decoder\0"
+    "NodeUtilTypes\0"
+    "Utf8Validate\0"
+    "AbortController\0"
+    "NodeModule\0"
+    "NodeProcess\0"
+    "Bun\0"
+    "BunWrap\0"
+    "Runtime"
 };
 
 } } // namespace JSC::AOT

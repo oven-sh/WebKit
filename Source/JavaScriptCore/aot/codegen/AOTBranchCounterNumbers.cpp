@@ -25,6 +25,7 @@ namespace {
 struct CountedTest {
     const Instruction* instruction { nullptr };
     bool isNegated { false };
+    ValueID value;
 };
 
 } // anonymous namespace
@@ -35,16 +36,16 @@ static CountedTest countedTestOf(const Function& function, const Terminator& ter
     case TerminatorKind::Branch:
     case TerminatorKind::TestAndBranch: {
         bool isNegated = false;
-        const Value* test = &function.at(terminator.conditionOperand());
-        for (; test->opcode == Opcode::LogicalNot; test = &function.at(test->valueOperand()))
+        ValueID id = terminator.conditionOperand();
+        for (; function.at(id).opcode == Opcode::LogicalNot; id = function.at(id).valueOperand())
             isNegated = !isNegated;
-        return { test, isNegated };
+        return { &function.at(id), isNegated, id };
     }
     case TerminatorKind::Switch:
     case TerminatorKind::SwitchString:
     case TerminatorKind::SwitchOnShape:
     case TerminatorKind::TryCallInline:
-        return { &terminator, false };
+        return { &terminator, false, { } };
     case TerminatorKind::Jump:
     case TerminatorKind::Return:
     case TerminatorKind::ReturnCall:
@@ -66,7 +67,7 @@ Vector<CountedBranch> findCountedBranches(const Program& program, const Function
         ModuleID module = program.sourceFunctionOf(function, *test.instruction).module;
         if (!module)
             continue;
-        branches.append(CountedBranch { .block = BlockID(index), .module = module, .position = test.instruction->position, .isNegated = test.isNegated });
+        branches.append(CountedBranch { .block = BlockID(index), .module = module, .position = test.instruction->position, .isNegated = test.isNegated, .test = test.value });
     }
     return branches;
 }
@@ -116,7 +117,10 @@ BranchCounterNumbers numberBranchCounters(const Program& program, BuildContext& 
         if (!firstFunctionPastLimit && total > numbers.m_limit)
             firstFunctionPastLimit = FunctionID(index);
     }
-    build.exceeds(LimitID::BranchCounters, total, { .function = firstFunctionPastLimit });
+    numbers.m_firstOfEntries = total;
+    if (!firstFunctionPastLimit && total + count > numbers.m_limit)
+        firstFunctionPastLimit = FunctionID(static_cast<uint32_t>(numbers.m_limit - total));
+    build.exceeds(LimitID::BranchCounters, total + count, { .function = firstFunctionPastLimit });
     return numbers;
 }
 
@@ -132,6 +136,14 @@ std::optional<uint32_t> BranchCounterNumbers::counterFor(FunctionID function, ui
         return std::nullopt;
     uint64_t counter = static_cast<uint64_t>(m_first[function.index()]) + numberOfSides * static_cast<uint64_t>(ordinal) + side;
     if (counter >= m_limit)
+        return std::nullopt;
+    return static_cast<uint32_t>(counter);
+}
+
+std::optional<uint32_t> BranchCounterNumbers::counterOfEntries(FunctionID function) const
+{
+    uint64_t counter = m_firstOfEntries + function.index();
+    if (function.index() >= m_first.size() || counter >= m_limit)
         return std::nullopt;
     return static_cast<uint32_t>(counter);
 }
@@ -162,6 +174,11 @@ void BranchCounterNumbers::dump(PrintStream& out, const Program& program) const
             printCounter(out, counterFor(function, ordinal, 1));
             out.print("] position: ", branch.position, " negated: ", branch.isNegated ? "yes" : "no", "\n");
         }
+    }
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        out.print("f", index, " entries: ");
+        printCounter(out, counterOfEntries(FunctionID(index)));
+        out.print("\n");
     }
 }
 

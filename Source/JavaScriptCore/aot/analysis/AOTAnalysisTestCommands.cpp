@@ -11,12 +11,15 @@
 #include "AOTCallGraph.h"
 #include "AOTDefinitions.h"
 #include "AOTEffectSummaries.h"
-#include "AOTFlowAnalysis.h"
+#include "AOTEffectsDescription.h"
+#include "AOTFlowApply.h"
 #include "AOTHeatGraph.h"
 #include "AOTIRPrinter.h"
+#include "AOTRecordUsers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
+#include "AOTValueFlowResults.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVerifier.h"
 #include <algorithm>
@@ -27,7 +30,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class BlockEdit : uint8_t { Split, RemoveParameters, EraseValues };
+enum class TestedBlockEdit : uint8_t { Split, RemoveParameters, EraseValues };
 
 using FunctionCommand = void (*)(TestCommandContext&, CommandWords&, Session&);
 using ArgumentOnEdge = std::pair<Edge, ValueID>;
@@ -45,7 +48,7 @@ FlowPreparation prepareFlow(TestCommandContext& context, CommandWords& words)
     }
 
     Program& program = *context.program;
-    preparation.flow.emplace(analyzeFlow(program, program.types, context.build));
+    preparation.flow.emplace(analyzeValueFlow(program, program.types, context.build));
     applyFlowResults(program, *preparation.flow, context.build);
     program.setForm(IRForm::Prepared);
     context.form = program.form();
@@ -110,8 +113,14 @@ static void runOnFunction(TestCommandContext& context)
     FunctionID id = words.parseRequired("function"_s, functionParser(*context.program));
     if (!id)
         return;
+    bool printsUseLists = words.parseFlag("use-lists"_s);
     Session session(context, id);
+    // The lists outlive an edit only in a pass that tells of every change, as the commands do: they edit through the builder alone.
+    if (printsUseLists)
+        session.analyses.setRunningPass(PassID::CompactBlocks);
     run(context, words, session);
+    if (printsUseLists)
+        dumpAnalyses(context.out, session.analyses, FunctionAnalysis::UseLists);
 }
 
 static bool beginRewrite(CommandWords& words, Session& session)
@@ -246,7 +255,14 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
     if (!beginRewrite(words, session))
         return;
 
-    CloneCheck check = RegionCloner::checkCanDuplicate(session.analyses, region.span());
+    // An edge of the region itself that is redirected makes its target an entry of the copy.
+    Vector<BlockID> entries;
+    for (Edge edge : redirectedEdges) {
+        BlockID target = targetOf(function, edge).block;
+        if (region.contains(edge.from) && !entries.contains(target))
+            entries.append(target);
+    }
+    CloneCheck check = RegionCloner::checkCanDuplicate(session.analyses, region.span(), entries.span());
     context.out.println("check: ", enumName(check));
     if (check != CloneCheck::CanClone)
         return;
@@ -296,9 +312,9 @@ static Function outlineRegion(Session& session, const Vector<BlockID>& region, c
     BlockID entry = builder.addBlock();
     auto addEntryParameterLike = [&](ValueID inOrigin) {
         const Value& value = origin.at(inOrigin);
-        outlined.parameters.append(DeclaredType { .type = value.type, .predicted = value.prediction() });
+        outlined.parameters.append(DeclaredType { .type = value.type });
         ValueID parameter = builder.addParameter(entry, value.type);
-        outlined.at(parameter).setPrediction(value.prediction());
+        outlined.edit(parameter).setExpected(value.expected());
         return parameter;
     };
     for (ValueID liveIn : liveIns)
@@ -376,7 +392,7 @@ static void inlineCall(TestCommandContext& context, CommandWords& words, Session
     cloner.cloneBlocks(idsMatching<BlockID>(callee.blocks.size(), [](BlockID) { return true; }).span(), [](ValueID, Value&) { });
     builder.emitJump(cloner.cloneOf(entryBlock));
     for (BlockID block : cloner.clonedBlocks()) {
-        Terminator& terminator = function.at(block).terminator;
+        Terminator& terminator = function.edit(block).terminator;
         if (terminator.kind != TerminatorKind::Return)
             continue;
         ValueID result = std::exchange(terminator, Terminator { }).valueOperand();
@@ -405,23 +421,23 @@ static void repairSSA(TestCommandContext& context, CommandWords& words, Session&
     finishRewrite(context, session);
 }
 
-static size_t numberOfEditableIndexes(BlockEdit edit, const Block& block)
+static size_t numberOfEditableIndexes(TestedBlockEdit edit, const Block& block)
 {
     switch (edit) {
-    case BlockEdit::Split:
+    case TestedBlockEdit::Split:
         return numberOfInsertionPoints(block);
-    case BlockEdit::RemoveParameters:
+    case TestedBlockEdit::RemoveParameters:
         return block.parameters.size();
-    case BlockEdit::EraseValues:
+    case TestedBlockEdit::EraseValues:
         return block.values.size();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<BlockEdit edit>
+template<TestedBlockEdit edit>
 static void editBlock(TestCommandContext& context, CommandWords& words, Session& session)
 {
-    auto canBeEdited = [](BlockID block) { return edit != BlockEdit::RemoveParameters || block != entryBlock; };
+    auto canBeEdited = [](BlockID block) { return edit != TestedBlockEdit::RemoveParameters || block != entryBlock; };
     BlockID block = words.parseRequired("block"_s, filterParser(blockParser(session.function), canBeEdited));
     size_t numberOfIndexes = block ? numberOfEditableIndexes(edit, session.function.at(block)) : 0;
     BitVector indexes = words.parseRequired("indexes"_s, collectionParser<BitVector>(indexParser(numberOfIndexes)));
@@ -429,13 +445,13 @@ static void editBlock(TestCommandContext& context, CommandWords& words, Session&
         return;
 
     switch (edit) {
-    case BlockEdit::Split:
+    case TestedBlockEdit::Split:
         session.builder.splitBlock(block, idsIn<uint32_t>(indexes).span());
         break;
-    case BlockEdit::RemoveParameters:
+    case TestedBlockEdit::RemoveParameters:
         session.builder.removeParameters(block, indexes);
         break;
-    case BlockEdit::EraseValues:
+    case TestedBlockEdit::EraseValues:
         session.builder.eraseValues(block, indexes);
         break;
     }
@@ -488,11 +504,14 @@ static void substituteValues(TestCommandContext& context, CommandWords& words, S
         }
         substitution.replace(from, to);
     }
+    bool printsFrequencies = words.parseFlag("frequencies"_s);
     if (!beginRewrite(words, session))
         return;
 
     substitution.apply(session.function, &session.analyses);
     finishRewrite(context, session);
+    if (printsFrequencies)
+        session.analyses.blockFrequencies().dump(context.out, session.function);
 }
 
 static void dumpComputedAnalyses(PrintStream& out, const FunctionAnalyses& analyses)
@@ -675,6 +694,40 @@ static void runFunctionReferences(TestCommandContext& context)
     });
 }
 
+static void runFunctionsSeeing(TestCommandContext& context)
+{
+    const Program& program = *context.program;
+    CommandWords words(context);
+    Vector<LayoutID> layouts = words.parseOptional("layouts"_s, listParser(idParser<LayoutID>('L', program.layouts.size()))).value_or(Vector<LayoutID> { });
+    auto fieldsAsParsed = words.parseOptional("fields"_s, listParser(pairParser(':', idParser<LayoutID>('L', program.layouts.size()), indexParser(UINT32_MAX))));
+    Vector<VariableID> variables = words.parseOptional("variables"_s, listParser(idParser<VariableID>('g', program.variables.size()))).value_or(Vector<VariableID> { });
+    if (!words.finish())
+        return;
+
+    Vector<FieldReference> fields;
+    if (fieldsAsParsed) {
+        for (auto [layout, field] : *fieldsAsParsed) {
+            if (field >= program.at(layout).fields.size()) {
+                context.out.println("no such field");
+                return;
+            }
+            fields.append({ layout, static_cast<uint32_t>(field) });
+        }
+    }
+
+    Vector<uint8_t> followsFieldsOfOperands(program.functions.size(), [&](size_t index) -> uint8_t {
+        const Function& function = program.functions[index];
+        return std::ranges::any_of(function.blocks, [&](const Block& block) {
+            return describeEffects(program, function, block.terminator).followsFieldsOfOperands || std::ranges::any_of(block.values, [&](ValueID value) {
+                return describeEffects(program, function, function.at(value)).followsFieldsOfOperands;
+            });
+        });
+    });
+    Vector<uint8_t> isAsked(FillWith { }, program.functions.size(), static_cast<uint8_t>(1));
+    for (FunctionID id : findFunctionsSeeing(program, { layouts.span(), fields.span(), variables.span() }, followsFieldsOfOperands.span(), isAsked.span(), context.build.parallelLoops()))
+        context.out.println("f", id.index());
+}
+
 std::span<const TestCommand> analysisTestCommands()
 {
     static constexpr TestCommand commands[] {
@@ -685,9 +738,9 @@ std::span<const TestCommand> analysisTestCommands()
         { "extract"_s, IRForm::Prepared, runOnFunction<extractRegion>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "inline"_s, IRForm::Prepared, runOnFunction<inlineCall>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "repair"_s, IRForm::Prepared, runOnFunction<repairSSA>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "split-block"_s, IRForm::Prepared, runOnFunction<editBlock<BlockEdit::Split>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "remove-parameters"_s, IRForm::Prepared, runOnFunction<editBlock<BlockEdit::RemoveParameters>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "erase-values"_s, IRForm::Prepared, runOnFunction<editBlock<BlockEdit::EraseValues>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "split-block"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::Split>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "remove-parameters"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::RemoveParameters>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "erase-values"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::EraseValues>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "convert-branch"_s, IRForm::Prepared, runOnFunction<convertBranch>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "empty-unreachable-blocks"_s, IRForm::Prepared, runOnFunction<emptyUnreachableBlocks>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "insert"_s, IRForm::Prepared, runOnFunction<insertValues>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
@@ -701,6 +754,7 @@ std::span<const TestCommand> analysisTestCommands()
         { "heat-graph"_s, IRForm::Prepared, runHeatGraph, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "definitions"_s, IRForm::AsRead, runDefinitions, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "function-references"_s, IRForm::Prepared, runFunctionReferences, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "functions-seeing"_s, IRForm::Prepared, runFunctionsSeeing, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "guards"_s, IRForm::Prepared, runGuardAvailability, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "failed-tests"_s, IRForm::Prepared, runFailedTests, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "induction"_s, IRForm::Prepared, runInductionVariables, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },

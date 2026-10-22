@@ -75,11 +75,16 @@ private:
     bool m_hasOtherPrototype { false };
 };
 static_assert(sizeof(Generator) == 32);
+static_assert(Generator::offsetOfSavedFrame() == sizeof(JSObjectWithButterfly) && Generator::offsetOfState() == Generator::offsetOfSavedFrame() + 8);
+static_assert(Generator::offsetOfHasOtherPrototype() == Generator::offsetOfState() + 4 && Generator::offsetOfState() + 8 == sizeof(Generator));
+static_assert(!static_cast<int32_t>(Generator::State::SuspendedAtStart));
 
+Structure* structureOfGenerator(JSGlobalObject*, Instance&, JSObject* generatorFunction, CoroutineKind);
 JSObject* createGenerator(JSGlobalObject*, Instance&, JSObject* generatorFunction, CoroutineKind);
 SavedFrame* savedFrameOfGenerator(JSObject* generator);
 void setSavedFrameOfGenerator(VM&, JSObject* generator, SavedFrame*);
 void completeGeneratorLeftByThrow(CallFrame* stepStubFrame);
+void installGeneratorMethodsForCompiledGenerators(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
 

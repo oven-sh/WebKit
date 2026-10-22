@@ -10,6 +10,7 @@
 
 #include "AOTEffectsOfAccesses.h"
 #include "AOTIR.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
@@ -80,27 +81,34 @@ enum class FoundValue : uint8_t { IsOnlyRead, IsConverted, IsCalled };
 
 } // anonymous namespace
 
-static bool hasOnlyLayoutObjects(const Type& type)
+// A function, a host object or an ordinary object that was converted to the type of the family.
+static bool mayBeMemberWithoutLayout(const Program& program, const Type& type)
 {
-    return !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty();
+    return type.layouts && program.at(type.layouts).hasMembersWithoutLayout;
 }
 
-static bool mayBeCallable(const BuiltinTable& table, const Type& type)
+static bool hasOnlyLayoutObjects(const Program& program, const Type& type)
 {
-    return type.mayBeFunction() || mayContainAnyCallable(table, type);
+    return !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty() && !mayBeMemberWithoutLayout(program, type);
+}
+
+static bool mayBeCallable(const Program& program, const Type& type)
+{
+    return type.mayBeFunction() || mayBeMemberWithoutLayout(program, type) || mayContainAnyCallable(program.builtins(), type);
 }
 
 static bool mayReadFromField(const Program& program, const Type& operand, PropertyKeyID key, NOESCAPE const Invocable<bool(const Type&)> auto& predicate)
 {
-    if (!hasOnlyLayoutObjects(operand))
+    if (!hasOnlyLayoutObjects(program, operand))
         return true;
     return std::ranges::any_of(membersOf(program, operand), [&](LayoutID member) {
         std::optional<FieldReference> field = findField(program, member, key, BaseChain::Proven);
         // A namespace answers with the binding of an export, which is no field.
         if (!field)
             return program.at(member).kind == LayoutKind::ModuleNamespace;
-        TypeID type = fieldAt(program, *field).declared.type;
-        return !type || predicate(program.at(type));
+        // Nothing checks what enters an expected position, so its type says nothing about what the slot holds.
+        const DeclaredType& declared = fieldAt(program, *field).declared;
+        return !declared.type || declared.flags.contains(PositionFlags::IsExpected) || predicate(program.at(slotTypeOf(program, fieldAt(program, *field))));
     });
 }
 
@@ -118,7 +126,7 @@ static bool mayFindUnlistedCallable(const Program& program, const Type& operand,
     if (!read.accessors.isEmpty() || read.mayFindPrototypeProperty)
         return true;
     return !read.operations.isEmpty() && mayReadFromField(program, operand, read.key, [&](const Type& type) {
-        return mayBeCallable(program.builtins(), type);
+        return mayBeCallable(program, type);
     });
 }
 

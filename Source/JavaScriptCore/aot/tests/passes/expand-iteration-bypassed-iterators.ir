@@ -37,6 +37,7 @@ function f0 name="mapValues" parameters=[{type=Map<string, number>}] results=[{t
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: NewArray
 
@@ -67,6 +68,7 @@ function f1 name="mapKeys" parameters=[{type=Map<string, number>}] results=[{typ
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: NewArray
 
@@ -97,6 +99,7 @@ function f2 name="setEntries" parameters=[{type=Set<number>}] results=[{type=any
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 
 function f3 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type=anything}] {
@@ -126,6 +129,7 @@ function f3 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 
 function f4 name="throughCast" parameters=[{type=Set<number>}] results=[{type=anything}] {
@@ -152,6 +156,7 @@ function f4 name="throughCast" parameters=[{type=Set<number>}] results=[{type=an
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 
 function f5 name="iteratorHasOtherUse" parameters=[{type=Map<string, number>}, {type=anything}] results=[{type=anything}] {
@@ -171,8 +176,8 @@ function f5 name="iteratorHasOtherUse" parameters=[{type=Map<string, number>}, {
 }
 # CHECK-LABEL: function f5 name="iteratorHasOtherUse"
 # CHECK: = Call v1, -, v2
-# CHECK-NEXT: = PropGet v2 key=@@iterator
-# CHECK: key="next"
+# CHECK-NEXT: [[open5]]: undefined = CallDirect v2 function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open5]] index=1
 # ABSENT-LABEL: function f5 name="iteratorHasOtherUse"
 # ABSENT-NOT: CollectionTable
 # ABSENT-NOT: MapNext
@@ -203,8 +208,8 @@ function f6 name="joinsAnotherValue" parameters=[{type=Map<string, number>}, {ty
 # CHECK: b3(v4: anything, [[arm6]]: int[0, 1], [[map6]]: Map<string, number>):
 # CHECK-NEXT: Switch [[arm6]] cases=[0]
 # CHECK: = MapNext [[map6]],
-# CHECK: key=@@iterator
-# CHECK: key="next"
+# CHECK: [[open6]]: undefined = CallDirect {{*}} function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open6]] index=1
 # ABSENT-LABEL: function f6 name="joinsAnotherValue"
 # ABSENT-NOT: b3(v3
 
@@ -224,8 +229,8 @@ function f7 name="receiverNotProven" parameters=[{type=anything}] results=[{type
 }
 # CHECK-LABEL: function f7 name="receiverNotProven"
 # CHECK: v1: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0 builtinCallForm=AnyReceiver
-# CHECK-NEXT: = PropGet v1 key=@@iterator
-# CHECK: key="next"
+# CHECK-NEXT: [[open7]]: undefined = CallDirect v1 function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open7]] index=1
 # ABSENT-LABEL: function f7 name="receiverNotProven"
 # ABSENT-NOT: CollectionTable
 # ABSENT-NOT: MapNext
@@ -249,8 +254,8 @@ function f8 name="openInLoopAroundNoCall" parameters=[{type=Map<string, number>}
 # Each run of the loop goes on where the one iterator object stands, so only the first run starts at the first entry.
 # CHECK-LABEL: function f8 name="openInLoopAroundNoCall"
 # CHECK: LoopHint
-# CHECK-NEXT: = PropGet v2 key=@@iterator
-# CHECK: key="next"
+# CHECK-NEXT: [[open8]]: undefined = CallDirect v2 function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open8]] index=1
 # ABSENT-LABEL: function f8 name="openInLoopAroundNoCall"
 # ABSENT-NOT: CollectionTable
 # ABSENT-NOT: MapNext

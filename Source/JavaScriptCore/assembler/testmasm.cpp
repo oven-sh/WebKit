@@ -7619,6 +7619,150 @@ static void testBranchConvertDoubleToInt52()
 }
 #endif
 
+#if CPU(X86_64)
+struct TagsInMemory {
+    int64_t numberTag { JSValue::NumberTag };
+    int64_t notCellMask { JSValue::NotCellMask };
+};
+
+template<typename Emit>
+static MacroAssemblerCodeRef<JSEntryPtrTag> compileWithTagsInMemory(const Emit& emit)
+{
+    return compile([&](CCallHelpers& jit) {
+        constexpr GPRReg tags = GPRInfo::argumentGPR1;
+        emitFunctionPrologue(jit);
+        jit.push(GPRInfo::numberTagRegister);
+        jit.push(GPRInfo::notCellMaskRegister);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::numberTagRegister);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::notCellMaskRegister);
+        jit.readTagsFromMemory(CCallHelpers::Address(tags, OBJECT_OFFSETOF(TagsInMemory, numberTag)), CCallHelpers::Address(tags, OBJECT_OFFSETOF(TagsInMemory, notCellMask)));
+        emit(jit);
+        jit.pop(GPRInfo::notCellMaskRegister);
+        jit.pop(GPRInfo::numberTagRegister);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+}
+
+static void testTagsInMemory()
+{
+    constexpr GPRReg value = GPRInfo::argumentGPR0;
+    constexpr GPRReg scratch = GPRInfo::argumentGPR2;
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
+    constexpr FPRReg fpScratch = FPRInfo::fpRegT0;
+    enum ValueKind : uint32_t { Cell, Int32, Double, Other };
+
+    auto encodedInt32 = [](int32_t number) {
+        return static_cast<uint64_t>(JSValue::NumberTag) | static_cast<uint32_t>(number);
+    };
+    auto encodedDouble = [](double number) {
+        return std::bit_cast<uint64_t>(number) + static_cast<uint64_t>(JSValue::DoubleEncodeOffset);
+    };
+
+    auto returnKind = [&](CCallHelpers& jit, ValueKind kind, CCallHelpers::JumpList& done) {
+        jit.move(CCallHelpers::TrustedImm32(kind), result);
+        done.append(jit.jump());
+    };
+    auto kindOf = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        CCallHelpers::JumpList done;
+        CCallHelpers::Jump isCell = jit.branchIfCell(value);
+        CCallHelpers::Jump isInt32 = jit.branchIfInt32(value);
+        CCallHelpers::Jump isNumber = jit.branchIfNumber(value);
+        returnKind(jit, Other, done);
+        isCell.link(&jit);
+        returnKind(jit, Cell, done);
+        isInt32.link(&jit);
+        returnKind(jit, Int32, done);
+        isNumber.link(&jit);
+        returnKind(jit, Double, done);
+        done.link(&jit);
+    });
+    auto kindOfByExclusion = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        CCallHelpers::JumpList done;
+        CCallHelpers::Jump isNotCell = jit.branchIfNotCell(value);
+        returnKind(jit, Cell, done);
+        isNotCell.link(&jit);
+        CCallHelpers::Jump isNotInt32 = jit.branchIfNotInt32(value);
+        returnKind(jit, Int32, done);
+        isNotInt32.link(&jit);
+        CCallHelpers::Jump isNotNumber = jit.branchIfNotNumber(value);
+        returnKind(jit, Double, done);
+        isNotNumber.link(&jit);
+        returnKind(jit, Other, done);
+        done.link(&jit);
+    });
+
+    TagsInMemory tags;
+    struct EncodedValue {
+        uint64_t bits;
+        ValueKind kind;
+    };
+    const EncodedValue values[] = {
+        { 0x1000, Cell },
+        { encodedInt32(42), Int32 },
+        { encodedInt32(-7), Int32 },
+        { encodedDouble(1.5), Double },
+        { encodedDouble(-0.0), Double },
+        { static_cast<uint64_t>(JSValue::ValueUndefined), Other },
+        { static_cast<uint64_t>(JSValue::ValueNull), Other },
+        { static_cast<uint64_t>(JSValue::ValueTrue), Other },
+    };
+    for (const EncodedValue& encoded : values) {
+        CHECK_EQ(invoke<uint32_t>(kindOf, encoded.bits, &tags), static_cast<uint32_t>(encoded.kind));
+        CHECK_EQ(invoke<uint32_t>(kindOfByExclusion, encoded.bits, &tags), static_cast<uint32_t>(encoded.kind));
+    }
+
+    auto boxInt32 = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.boxInt32(value, result);
+    });
+    for (int32_t number : { 0, 42, -7 })
+        CHECK_EQ(invoke<uint64_t>(boxInt32, static_cast<uint64_t>(static_cast<uint32_t>(number)), &tags), encodedInt32(number));
+
+    auto boxDouble = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.move64ToDouble(value, fpScratch);
+        jit.boxDouble(fpScratch, result);
+    });
+    auto unboxDouble = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.unboxDoubleWithoutAssertions(value, result, fpScratch);
+        jit.moveDoubleTo64(fpScratch, result);
+    });
+    for (double number : { 1.5, -0.0, 1e300 }) {
+        CHECK_EQ(invoke<uint64_t>(boxDouble, std::bit_cast<uint64_t>(number), &tags), encodedDouble(number));
+        CHECK_EQ(invoke<uint64_t>(unboxDouble, encodedDouble(number), &tags), std::bit_cast<uint64_t>(number));
+    }
+
+    auto boxInt52 = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.boxInt52(value, result, scratch, fpScratch);
+    });
+    CHECK_EQ(invoke<uint64_t>(boxInt52, static_cast<int64_t>(-7), &tags), encodedInt32(-7));
+    CHECK_EQ(invoke<uint64_t>(boxInt52, static_cast<int64_t>(1) << 40, &tags), encodedDouble(static_cast<double>(static_cast<int64_t>(1) << 40)));
+
+    auto checkSameBytes = [](const auto& helper, const auto& expected) {
+        CHECK_EQ(emitWithPolicy(AssemblerPolicy::forJIT(), helper) == emitWithPolicy(AssemblerPolicy::forJIT(), expected), true);
+    };
+    checkSameBytes([&](CCallHelpers& jit) {
+        jit.branchIfCell(value);
+        jit.branchIfNotCell(value);
+        jit.branchIfInt32(value);
+        jit.branchIfNotInt32(value);
+        jit.branchIfNumber(value);
+        jit.branchIfNotNumber(value);
+        jit.boxInt32(value, result);
+        jit.unboxDoubleWithoutAssertions(value, result, fpScratch);
+    }, [&](CCallHelpers& jit) {
+        jit.branchTest64(CCallHelpers::Zero, value, GPRInfo::notCellMaskRegister);
+        jit.branchTest64(CCallHelpers::NonZero, value, GPRInfo::notCellMaskRegister);
+        jit.branch64(CCallHelpers::AboveOrEqual, value, GPRInfo::numberTagRegister);
+        jit.branch64(CCallHelpers::Below, value, GPRInfo::numberTagRegister);
+        jit.branchTest64(CCallHelpers::NonZero, value, GPRInfo::numberTagRegister);
+        jit.branchTest64(CCallHelpers::Zero, value, GPRInfo::numberTagRegister);
+        jit.or64(GPRInfo::numberTagRegister, value, result);
+        jit.add64(GPRInfo::numberTagRegister, value, result);
+        jit.move64ToDouble(result, fpScratch);
+    });
+}
+#endif
+
 #if CPU(ARM64)
 // Test that the CachedTempRegister properly normalizes 32-bit immediates
 // to their zero-extended form. On ARM64, 32-bit W-register writes implicitly
@@ -9183,6 +9327,65 @@ void checkOopsForm()
     CHECK_EQ(emitWithPolicy(AssemblerPolicy::forJIT(), emitOops).size() > breakpoint.size(), true);
 }
 
+#if CPU(X86_64)
+void checkEncodingsFollowPolicy()
+{
+    AssemblerPolicy longEncodings = AssemblerPolicy::forJIT();
+    AssemblerPolicy shortEncodings = longEncodings;
+    shortEncodings.shortensEncodings = true;
+    auto sizeUnder = [](const AssemblerPolicy& policy, const auto& emit) {
+        return emitWithPolicy(policy, emit).size();
+    };
+    auto checkSizes = [&](size_t longSize, size_t shortSize, const auto& emit) {
+        CHECK_EQ(sizeUnder(longEncodings, emit), longSize);
+        CHECK_EQ(sizeUnder(shortEncodings, emit), shortSize);
+    };
+
+    checkSizes(3, 2, [](CCallHelpers& jit) {
+        jit.signExtend32To64(CCallHelpers::TrustedImm32(0), X86Registers::eax);
+    });
+    checkSizes(7, 5, [](CCallHelpers& jit) {
+        jit.signExtend32To64(CCallHelpers::TrustedImm32(5), X86Registers::eax);
+    });
+    checkSizes(7, 7, [](CCallHelpers& jit) {
+        jit.signExtend32To64(CCallHelpers::TrustedImm32(-5), X86Registers::eax);
+    });
+    checkSizes(3, 3, [](CCallHelpers& jit) {
+        jit.test32(X86Registers::edx, CCallHelpers::TrustedImm32(0x10));
+    });
+    checkSizes(6, 4, [](CCallHelpers& jit) {
+        jit.test32(X86Registers::edi, CCallHelpers::TrustedImm32(0x10));
+    });
+    checkSizes(7, 4, [](CCallHelpers& jit) {
+        jit.test32(X86Registers::r10, CCallHelpers::TrustedImm32(0x10));
+    });
+
+    for (const AssemblerPolicy& policy : { longEncodings, shortEncodings }) {
+        for (int32_t immediate : { 0, 5, -5, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() }) {
+            CCallHelpers jit;
+            jit.setPolicy(policy);
+            emitFunctionPrologue(jit);
+            jit.move(CCallHelpers::TrustedImm64(-1), GPRInfo::returnValueGPR);
+            jit.signExtend32To64(CCallHelpers::TrustedImm32(immediate), GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+            LinkBuffer linkBuffer(jit, nullptr);
+            CHECK_EQ(invoke<int64_t>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm sign extension of an immediate")), static_cast<int64_t>(immediate));
+        }
+        for (uint32_t value : { 0u, 0x10u, 0x1000u, 0xffffffefu }) {
+            CCallHelpers jit;
+            jit.setPolicy(policy);
+            emitFunctionPrologue(jit);
+            jit.test32(CCallHelpers::NonZero, GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0x10), GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+            LinkBuffer linkBuffer(jit, nullptr);
+            CHECK_EQ(invoke<uint32_t>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm test of a byte mask"), value), static_cast<uint32_t>(!!(value & 0x10)));
+        }
+    }
+}
+#endif
+
 void checkFeaturesAboveHost()
 {
     AssemblerPolicy policy = AssemblerPolicy::forImage(allCPUFeatures);
@@ -9198,8 +9401,9 @@ void checkFeaturesAboveHost()
 void testAssemblerPolicy()
 {
     constexpr AssemblerPolicy imagePolicy = AssemblerPolicy::forImage(CPUFeatureSet());
-    static_assert(!imagePolicy.blindsConstants && imagePolicy.recordsProcessAddresses && imagePolicy.recordsLinkedSites && imagePolicy.shortensJumps);
+    static_assert(!imagePolicy.blindsConstants && imagePolicy.recordsProcessAddresses && imagePolicy.recordsLinkedSites && imagePolicy.shortensJumps && imagePolicy.shortensEncodings);
     static_assert(imagePolicy.oops == OopsForm::Breakpoint);
+    static_assert(imagePolicy.needsLinkRecords() && !AssemblerPolicy().needsLinkRecords());
 
     CCallHelpers jit;
     CHECK_EQ(jit.policy() == AssemblerPolicy::forJIT(), true);
@@ -9207,6 +9411,9 @@ void testAssemblerPolicy()
     checkPerAssemblerFeatures();
     checkEmittersFollowFeatures();
     checkOopsForm();
+#if CPU(X86_64)
+    checkEncodingsFollowPolicy();
+#endif
     checkFeaturesAboveHost();
 }
 
@@ -9444,6 +9651,45 @@ void checkLabelAfterJumps()
     CHECK_EQ(code.size, static_cast<size_t>(linkedEnd));
 }
 
+void checkShorteningWithoutRecords()
+{
+    AssemblerPolicy policy = AssemblerPolicy::forJIT();
+    policy.shortensJumps = true;
+
+    for (unsigned seed = 1; seed <= 3; ++seed) {
+        CCallHelpers jit;
+        jit.setPolicy(policy);
+        emitRandomJumpProgram(jit, seed);
+        CCallHelpers::Label end = jit.label();
+        size_t sizeWithLongJumps = jit.m_assembler.codeSize();
+        LinkBuffer linkBuffer(jit, nullptr);
+        CHECK_EQ(linkBuffer.offsetOf(end) < sizeWithLongJumps, true);
+        auto shortened = FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm shortened jumps without records");
+
+        auto codeWithLongJumps = compile([&](CCallHelpers& unshortened) {
+            emitRandomJumpProgram(unshortened, seed);
+        });
+        for (int32_t argument : { 0, 1, 12345 })
+            CHECK_EQ(invoke<int32_t>(shortened, argument), invoke<int32_t>(codeWithLongJumps, argument));
+    }
+
+    CCallHelpers jit;
+    jit.setPolicy(policy);
+    emitFunctionPrologue(jit);
+    jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+    CCallHelpers::Jump shortJump = jit.jump();
+    jit.move(CCallHelpers::TrustedImm32(2), GPRInfo::returnValueGPR);
+    shortJump.link(&jit);
+    CCallHelpers::Jump lateJump = jit.jump();
+    jit.move(CCallHelpers::TrustedImm32(3), GPRInfo::returnValueGPR);
+    CCallHelpers::Label target = jit.label();
+    emitFunctionEpilogue(jit);
+    jit.ret();
+    LinkBuffer linkBuffer(jit, nullptr);
+    linkBuffer.link(lateJump, linkBuffer.locationOf<JSInternalPtrTag>(target));
+    CHECK_EQ(invoke<int>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm late jump after a shortened jump")), 1);
+}
+
 void testJumpShorteningBounds()
 {
     struct JumpKinds {
@@ -9466,6 +9712,7 @@ void testJumpShorteningBounds()
     }
     checkJumpChainShortens();
     checkLabelAfterJumps();
+    checkShorteningWithoutRecords();
 }
 
 void checkCarryFlagInstructions(GPRReg result)
@@ -10384,7 +10631,7 @@ struct OtherCode {
         jit.ret();
     }) };
     // Not the first byte: the end of a buffer counts as inside it, and this code may start there.
-    CodeLocationLabel<JSEntryPtrTag> location { code.code() + 4 };
+    CodeLocationLabel<JSEntryPtrTag> location { code.code() + static_cast<size_t>(4) };
     uintptr_t address { location.untaggedPtr<uintptr_t>() };
 };
 
@@ -11348,6 +11595,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
 #if CPU(X86_64)
+    RUN(testTagsInMemory());
     RUN(testAtomicAndEmitsCode());
 #endif
 

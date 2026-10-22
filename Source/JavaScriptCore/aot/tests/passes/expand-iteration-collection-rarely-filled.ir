@@ -4,7 +4,8 @@
 #   const onOnePath = new Set(); if (flag()) onOnePath.add("a"); for (const element of onOnePath) print(element.length)
 #   const elsewhere = new Map(); fill(elsewhere); for (const [key, value] of elsewhere) print(key, value)
 #   print("end")
-# RUN: pipeline ExpandIteration
+# The loops over the two collections that flow follows are expanded in front of the optimizer, the loop over the one that unknown code has seen by ExpandIteration
+# RUN: pipeline ExpandProvenIterations
 # CHECK-LABEL: function f0
 # CHECK: Map<never, never, proven,
 # CHECK: [[stepOfNever]]: undefined = MapNext
@@ -15,9 +16,13 @@
 # CHECK: [[stepOnOnePath]]: undefined = SetNext
 # CHECK: [[element]]: undefined|"a" = ResultAt [[stepOnOnePath]] index=2
 # CHECK: String string="end"
-# CHECK: [[stepElsewhere]]: undefined = MapNext
-# CHECK: anything {{*}}= ResultAt [[stepElsewhere]] index=2
 # CHECK: "a" = AssumeType [[element]] castType="a"
+# RUN(LATER): pipeline ExpandIteration
+# LATER-LABEL: function f0
+# LATER: calleeName="fill"
+# LATER: [[stepElsewhere]]: undefined = MapNext
+# LATER: anything {{*}}= ResultAt [[stepElsewhere]] index=2
+# LATER: String string="end"
 # RUN(FINAL): pipeline CheckPlacement
 # FINAL-LABEL: function f0
 # FINAL: String string="end"
@@ -29,9 +34,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b1():
     v0 = Builtin builtin=GlobalThis @18
     v1 = PropGet v0 key="Map" [isFreeName] @18
-    v2 = Predict v1 predicted=builtin(Map) @18
+    v2 = Convert v1 declared={type=builtin(Map) flags=[IsExpected]} @18
     v3 = Construct v2 calleeName="Map" @18
-    v4 = Predict v3 predicted=Map @14
+    v4 = Convert v3 declared={type=Map flags=[IsExpected]} @14
     v5 = IteratorOpen v4 @25
     Jump -> next b2() @25
   b2():
@@ -43,9 +48,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b3():
     v10 = Builtin builtin=GlobalThis @88
     v11 = PropGet v10 key="Set" [isFreeName] @88
-    v12 = Predict v11 predicted=builtin(Set) @88
+    v12 = Convert v11 declared={type=builtin(Set) flags=[IsExpected]} @88
     v13 = Construct v12 calleeName="Set" @88
-    v14 = Predict v13 predicted=Set @84
+    v14 = Convert v13 declared={type=Set flags=[IsExpected]} @84
     v15 = Builtin builtin=GlobalThis @99
     v16 = PropGet v15 key="flag" [isFreeName] @99
     v17 = Call v16 calleeName="flag" @99
@@ -55,7 +60,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Jump -> next b5() @99
   b5():
     v20 = PropGet v14 key="add" @107
-    v21 = Predict v20 predicted=function @107
+    v21 = Convert v20 declared={type=function flags=[IsExpected]} @107
     v22 = String string="a" @121
     v23 = Call v21, v14, v22 calleeKey="add" calleeName="add" @117
     Jump -> next b7() @107
@@ -73,9 +78,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b9():
     v30 = Builtin builtin=GlobalThis @205
     v31 = PropGet v30 key="Map" [isFreeName] @205
-    v32 = Predict v31 predicted=builtin(Map) @205
+    v32 = Convert v31 declared={type=builtin(Map) flags=[IsExpected]} @205
     v33 = Construct v32 calleeName="Map" @205
-    v34 = Predict v33 predicted=Map @201
+    v34 = Convert v33 declared={type=Map flags=[IsExpected]} @201
     v35 = Builtin builtin=GlobalThis @212
     v36 = PropGet v35 key="fill" [isFreeName] @212
     v37 = Call v36, -, v34 calleeName="fill" @212
@@ -142,7 +147,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b24():
     Jump -> next b25() @25
   b25() handler=b26():
-    v69 = Predict v9 predicted=Array @36
+    v69 = Convert v9 declared={type=Array flags=[IsExpected]} @36
     v70 = Builtin builtin=GlobalThis @52
     v71 = PropGet v70 key="print" [isFreeName] @52
     v72 = Call v71, -, v69 calleeName="print" @52

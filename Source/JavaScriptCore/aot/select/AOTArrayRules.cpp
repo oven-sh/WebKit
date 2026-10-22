@@ -15,9 +15,9 @@ namespace JSC { namespace AOT { namespace Typed {
 ArrayLiteralStorage chooseArrayLiteralStorage(SelectionContext& context, ValueID literal)
 {
     const Value& value = context.function().at(literal);
-    if (!value.elementsOperands().empty() || !value.holes().empty() || value.capacityOperand())
+    if (!value.elementsOperands().empty() || !value.holes().empty() || value.capacityOperand() || value.storage() != AllocationStorage::Heap)
         return ArrayLiteralStorage::Fresh;
-    if (context.shapeAt(literal) == CodeShape::Compact)
+    if (context.shapeAt(literal) != CodeShape::Fast)
         return ArrayLiteralStorage::Fresh;
     return ArrayLiteralStorage::Profiled;
 }
@@ -30,7 +30,7 @@ void selectArrayLiteralStorage(SelectionContext& context)
         ArrayLiteralStorage storage = chooseArrayLiteralStorage(context, literal);
         if (storage == ArrayLiteralStorage::Fresh)
             continue;
-        function.at(literal).setLiteralStorage(storage);
+        function.edit(literal).setLiteralStorage(storage);
         ++numberOfSelectedLiterals;
     }
     context.didSelectForms(SelectionRuleID::ArrayLiteralStorage, numberOfSelectedLiterals);

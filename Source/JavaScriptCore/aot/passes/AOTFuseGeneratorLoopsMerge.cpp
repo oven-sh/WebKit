@@ -52,6 +52,7 @@ struct Merge {
     SSARepair& repair;
     const FusionCandidate& candidate;
     Origin origin;
+    Origin originOfSteps;
     BlockFrequency frequency { BlockFrequency::Normal };
     Vector<IRBuilder::Expansion, 4> siteCuts;
     Vector<IRBuilder::Expansion, 4> yieldCuts;
@@ -196,12 +197,35 @@ static bool canBecomeParameter(FunctionAnalyses& analyses, ValueID id)
     });
 }
 
+// In a stack trace the caller of the body stands at the step that runs it, not where the generator was made. A step that only ends the generator counts where no other step is.
+// Nothing: the steps stand at several positions. The copy of the body has one frame, and a frame has one position of its call.
+static std::optional<Origin> findOriginOfSteps(const Function& function, const FusionCandidate& candidate)
+{
+    std::optional<Origin> running;
+    std::optional<Origin> ending;
+    for (const GeneratorStepSite& site : candidate.sites.subspan(startSite + 1)) {
+        Origin origin = function.at(site.step).origin();
+        if (site.mode == ResumeMode::Return) {
+            ending = origin;
+            continue;
+        }
+        if (running && *running != origin)
+            return std::nullopt;
+        running = origin;
+    }
+    if (running)
+        return running;
+    return ending ? ending : function.at(candidate.generator).origin();
+}
+
 static GeneratorFusionDeclineReason findObstacle(FunctionPassContext& pass, const FusionCandidate& candidate, FunctionAnalyses& bodyAnalyses, const CarriedValues& carried)
 {
     for (const GeneratorStepSite& site : candidate.sites.subspan(startSite + 1)) {
         if (!pass.analyses.dominates(candidate.body.startAtCreation, pass.analyses.useLists().pointOf(site.step)))
             return GeneratorFusionDeclineReason::Unknown;
     }
+    if (!findOriginOfSteps(pass.function, candidate))
+        return GeneratorFusionDeclineReason::Unknown;
     for (size_t index : carried.bodyValues) {
         ValueID id(index);
         if (!isYield(bodyAnalyses.function(), id) && !canBecomeParameter(bodyAnalyses, id))
@@ -233,9 +257,7 @@ static Value makeSeed(const Value& definition)
         return definition;
     Value seed = IRBuilder::make(Opcode::Unspecified);
     seed.setValueType(definition.type);
-    TypeID predicted = definition.predictionOrType();
-    if (predicted != definition.type)
-        seed.setPrediction(predicted);
+    seed.setExpected(definition.expected());
     return seed;
 }
 
@@ -298,6 +320,7 @@ static void insertStateSeeds(Merge& merge)
     const Function& function = merge.pass.function;
     ProgramPoint point = merge.pass.analyses.useLists().pointAfter(merge.candidate.generator);
     merge.origin = function.at(merge.candidate.generator).origin();
+    merge.originOfSteps = *findOriginOfSteps(function, merge.candidate);
     merge.frequency = function.at(point.block).frequency;
 
     merge.builder.setOrigin(merge.origin);
@@ -409,7 +432,7 @@ static void copyBody(Merge& merge, RegionCloner& cloner, const Function& body, s
 {
     IRBuilder& builder = merge.builder;
     Function& function = merge.pass.function;
-    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = merge.candidate.body.body, .callPosition = merge.origin.position, .parent = merge.origin.inlineFrame, .module = body.module }, body);
+    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = merge.candidate.body.body, .callPosition = merge.originOfSteps.position, .parent = merge.originOfSteps.inlineFrame, .module = body.module }, body);
 
     builder.setOrigin(merge.origin);
     builder.moveToEndOf(merge.start);
@@ -423,8 +446,17 @@ static void copyBody(Merge& merge, RegionCloner& cloner, const Function& body, s
     builder.setHandler(std::nullopt);
     builder.emitJump(cloner.cloneOf(entryBlock));
 
-    for (BlockID clone : cloner.clonedBlocks())
-        function.at(clone).frequency = rarerOf(function.at(clone).frequency, merge.frequency);
+    for (BlockID clone : cloner.clonedBlocks()) {
+        function.edit(clone).frequency = rarerOf(function.at(clone).frequency, merge.frequency);
+        // The first site is the start at the creation, which runs up to the initial yield.
+        for (ValueID id : function.at(clone).values) {
+            Value& value = function.edit(id);
+            if (value.opcode != Opcode::IsGeneratorRunning)
+                continue;
+            value.become(Opcode::Boolean);
+            value.setBoolean(false);
+        }
+    }
     merge.pass.analyses.didChangeControlFlow();
 }
 
@@ -438,7 +470,7 @@ static void replaceReturns(Merge& merge, std::span<const BlockID> clonedBlocks)
         if (function.at(block).terminator.kind != TerminatorKind::Return)
             continue;
 
-        Terminator returned = std::exchange(function.at(block).terminator, Terminator());
+        Terminator returned = std::exchange(function.edit(block).terminator, Terminator());
         merge.pass.analyses.didChangeControlFlow();
         builder.setOrigin(returned.origin());
         builder.moveToEndOf(block);

@@ -4,7 +4,7 @@
 # DIAGNOSTIC: CodeOutsideImageIsRefused 4
 # CHECK: image not empty
 
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/other.js" displayPath="other.js" body=f5
 entry module=m0
 modulefailure q0 importer=m0 specifier="./missing"
@@ -39,8 +39,9 @@ function f2 name="dynamicTargets" parameters=[{type=anything}, {type=anything}] 
     v5 = RequireDynamic v0 referrer=m0
     v6 = ResolveDynamic v0 referrer=m0
     v7 = ResolveDynamic v0 referrer=m0 [isURL]
-    v8 = NewArray v2, v3, v4, v5, v6, v7 contents=anything
-    Return v8
+    v8 = ResolveDynamic v0 referrer=m0 [isForRequire]
+    v9 = NewArray v2, v3, v4, v5, v6, v7, v8 contents=anything
+    Return v9
 }
 function f3 name="moduleBuiltins" results=[{type=anything}] {
   b0():

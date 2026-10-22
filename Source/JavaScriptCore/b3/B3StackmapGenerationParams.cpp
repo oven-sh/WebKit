@@ -65,6 +65,9 @@ RegisterSet StackmapGenerationParams::unavailableRegisters() const
 
 Vector<Box<MacroAssembler::Label>> StackmapGenerationParams::successorLabels() const
 {
+    if (m_labelsOfSuccessors)
+        return *m_labelsOfSuccessors;
+
     RELEASE_ASSERT(m_context.indexInBlock == m_context.currentBlock->size() - 1);
     RELEASE_ASSERT(m_value->effects().terminal);
     
@@ -76,6 +79,9 @@ Vector<Box<MacroAssembler::Label>> StackmapGenerationParams::successorLabels() c
 
 bool StackmapGenerationParams::fallsThroughToSuccessor(unsigned successorIndex) const
 {
+    if (m_labelsOfSuccessors)
+        return m_successorsFallenThroughTo >> successorIndex & 1;
+
     RELEASE_ASSERT(m_context.indexInBlock == m_context.currentBlock->size() - 1);
     RELEASE_ASSERT(m_value->effects().terminal);
     

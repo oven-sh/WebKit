@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSchemaEnums.h"
+#include <array>
 #include <bit>
 #include <utility>
 #include <wtf/EnumSet.h>
@@ -40,6 +41,7 @@ inline constexpr AbstractHeapSet perObjectHeaps = heapsMatching([](AbstractHeap 
 inline constexpr AbstractHeapSet indexedHeaps = heapsMatching([](AbstractHeap heap) { return numberOfIndexesOf(heap) > 0; });
 
 inline constexpr AbstractHeapSet bookkeepingHeaps { AbstractHeap::AllocatorState, AbstractHeap::RuntimeState };
+inline constexpr AbstractHeapSet heapsWhoseWritesNobodySees = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage, AbstractHeap::CollectionStorage };
 inline constexpr AbstractHeapSet compiledCodeHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 
 inline constexpr unsigned numberOfIndexedHeaps = static_cast<unsigned>(indexedHeaps.size());
@@ -54,6 +56,16 @@ constexpr unsigned maskIndexOf(AbstractHeap heap)
     uint64_t lowerHeaps = (uint64_t { 1 } << std::to_underlying(heap)) - 1;
     return static_cast<unsigned>(std::popcount(static_cast<uint64_t>(indexedHeaps.toRaw()) & lowerHeaps));
 }
+
+inline constexpr std::array<AbstractHeap, numberOfIndexedHeaps> indexedHeapsInOrder = [] {
+    std::array<AbstractHeap, numberOfIndexedHeaps> heaps { };
+    for (unsigned index = 0; index < numberOfHeaps; ++index) {
+        auto heap = static_cast<AbstractHeap>(index);
+        if (indexedHeaps.contains(heap))
+            heaps[maskIndexOf(heap)] = heap;
+    }
+    return heaps;
+}();
 
 struct AbstractHeapSetDump {
     AbstractHeapSet heaps;

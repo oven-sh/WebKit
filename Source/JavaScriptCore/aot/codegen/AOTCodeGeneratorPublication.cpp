@@ -93,6 +93,7 @@ static BitVector collectUnspecifiedValues(const Function& function, const CFG& c
                     changed |= unspecifiedValues.add(value.index());
             }
         }
+        changed &= cfg.hasCycle();
     }
     return unspecifiedValues;
 }
@@ -110,6 +111,80 @@ static ValueID valueBeforeConversions(const Function& function, ValueID id)
     while (familyOf(function.at(id).opcode) == OperationFamily::Representation)
         id = function.at(id).valueOperand();
     return id;
+}
+
+// The result of a call stays at the call. Anything else that is computed may be computed earlier than it stands: a load in front of the guard that it rests on.
+static bool hasTypeWhereverSourceIsComputed(const Function& function, const BitVector& typedOnlyBehindTest, ValueID source)
+{
+    const Value& value = function.at(source);
+    if (value.opcode == Opcode::Parameter)
+        return !typedOnlyBehindTest.get(source.index());
+    if (value.opcode == Opcode::ResultAt)
+        return effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
+
+    switch (resultRuleOf(value.opcode)) {
+    case ResultRule::Constant:
+    case ResultRule::Allocation:
+        return true;
+    case ResultRule::Natural:
+    case ResultRule::Declared:
+    case ResultRule::Unknown:
+        return effectRuleOf(value.opcode) == EffectRule::Call;
+    case ResultRule::None:
+    case ResultRule::Cast:
+    case ResultRule::Results:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool arrivesTypedOnlyBehindTest(const Function& function, const BitVector& typedOnlyBehindTest, Edge edge, uint32_t parameterIndex)
+{
+    IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
+    switch (incoming.kind) {
+    case IncomingValue::Kind::Argument:
+        return !hasTypeWhereverSourceIsComputed(function, typedOnlyBehindTest, valueBeforeConversions(function, incoming.argument));
+    case IncomingValue::Kind::EdgeResult:
+        // The operand that the edge of a test has narrowed, and what an operation answers on one of its edges.
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A block parameter is a Phi, and stays in its block. B3 folds a Phi with one source away, and what is computed from the parameter is then computed from the source, wherever that is at hand:
+// also in front of the test whose edge has narrowed it. So the type of a parameter speaks for what is derived from it only if it holds for each of its sources wherever that is computed.
+static BitVector collectParametersTypedOnlyBehindTest(const Function& function, const CFG& cfg)
+{
+    BitVector typedOnlyBehindTest;
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (BlockID id : cfg.reversePostOrder()) {
+            if (id == entryBlock)
+                continue;
+            const Block& block = function.at(id);
+            for (uint32_t parameterIndex = 0; parameterIndex < block.parameters.size(); ++parameterIndex) {
+                if (typedOnlyBehindTest.get(block.parameters[parameterIndex].index()))
+                    continue;
+                for (Edge edge : cfg.incomingEdges(id)) {
+                    if (arrivesTypedOnlyBehindTest(function, typedOnlyBehindTest, edge, parameterIndex)) {
+                        typedOnlyBehindTest.set(block.parameters[parameterIndex].index());
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        changed &= cfg.hasCycle();
+    }
+    return typedOnlyBehindTest;
+}
+
+bool CodeGenerator::hasTypeOnlyBehindTest(ValueID parameter)
+{
+    if (!m_parametersTypedOnlyBehindTest)
+        m_parametersTypedOnlyBehindTest = collectParametersTypedOnlyBehindTest(function(), analyses().cfg());
+    return m_parametersTypedOnlyBehindTest->get(parameter.index());
 }
 
 static bool isPinnedByEffects(const Effects& effects)
@@ -131,11 +206,13 @@ static bool isPinnedWithOperation(CodeGenerator& generator, LValue lowered, Valu
     return isCallOrPhi(call->opcode()) && isPinnedByEffects(generator.analyses().effectsOf(operation).onAnyEdge());
 }
 
-static bool hasUnconditionalType(CodeGenerator& generator, std::span<const LValue> loweredValues, ValueID id)
+enum class PublishedValue : uint8_t { Itself, DerivedFromIt };
+
+static bool hasUnconditionalType(CodeGenerator& generator, std::span<const LValue> loweredValues, ValueID id, PublishedValue published)
 {
     const Value& value = generator.function().at(id);
     if (value.opcode == Opcode::Parameter)
-        return !generator.mayBeUnspecified(id);
+        return !generator.mayBeUnspecified(id) && (published == PublishedValue::Itself || !generator.hasTypeOnlyBehindTest(id));
     if (value.opcode == Opcode::ResultAt)
         return !generator.mayBeUnspecified(id) && isPinnedWithOperation(generator, loweredValues[id.index()], value.resultsOperand());
 
@@ -158,18 +235,18 @@ static bool hasUnconditionalType(CodeGenerator& generator, std::span<const LValu
 static bool typeHoldsWhereverComputed(CodeGenerator& generator, std::span<const LValue> loweredValues, ValueID id)
 {
     const Function& function = generator.function();
-    id = valueBeforeConversions(function, id);
-    if (hasUnconditionalType(generator, loweredValues, id))
+    ValueID converted = std::exchange(id, valueBeforeConversions(function, id));
+    if (hasUnconditionalType(generator, loweredValues, id, converted == id ? PublishedValue::Itself : PublishedValue::DerivedFromIt))
         return true;
 
     const Value& value = function.at(id);
-    if (resultRuleOf(value.opcode) != ResultRule::Natural || !generator.analyses().effectsOf(id).onAnyEdge().isPure())
+    if (resultRuleOf(value.opcode) != ResultRule::Natural || !generator.analyses().hasNoEffects(id))
         return false;
 
     bool holdsForOperands = true;
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         holdsForOperands &= value.operandKind(operandIndex) != OperandKind::Guard
-            && hasUnconditionalType(generator, loweredValues, valueBeforeConversions(function, operand));
+            && hasUnconditionalType(generator, loweredValues, valueBeforeConversions(function, operand), PublishedValue::DerivedFromIt);
     });
     return holdsForOperands;
 }
@@ -220,7 +297,7 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))
         return sizeof(JSString);
-    if (!type.hasOnlyLayouts())
+    if (!type.hasOnlyLayouts(program))
         return headerSize;
 
     std::optional<unsigned> least;
@@ -248,8 +325,10 @@ void CodeGenerator::publishKnownProperties(ValueID id, LValue lowered)
 
     if (range)
         m_proc.setKnownRange(lowered, *range);
-    if (bytes)
+    if (bytes) {
         m_proc.setKnownDereferenceableBytes(lowered, bytes);
+        build().statistics().count(StatisticID::ReferencesPublishedAsDereferenceable, 1);
+    }
 }
 
 static std::optional<int64_t> constantStepOf(const InductionStep& step, Representation representation)

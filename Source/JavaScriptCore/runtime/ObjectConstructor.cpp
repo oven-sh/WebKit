@@ -22,15 +22,18 @@
 #include "ObjectConstructor.h"
 
 #include "BuiltinNames.h"
+#include "ExceptionHelpers.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "ObjectConstructorInlines.h"
+#include "OwedOutOfMemoryError.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include "Symbol.h"
 
 #if ENABLE(AOT)
+#include "AOTClassPrototype.h"
 #include "AOTPropertyWalkInlines.h"
 #endif
 
@@ -41,7 +44,7 @@ namespace JSC {
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorAssign);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorEntries);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorValues);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorGetPrototypeOf);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorGetPrototypeOf);
 JSC_DECLARE_HOST_FUNCTION(objectConstructorSetPrototypeOf);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperties);
@@ -452,15 +455,12 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
             }
         }
 #if ENABLE(AOT)
-        JSCellButterfly* compiledObjectKeys = nullptr;
         if (!canUseFastPath && target->structure()->isCompiledStructure()) {
             canUseFastPath = AOT::PropertyWalk::forEachOwnPropertyInline(vm, target, AOT::PropertyWalk::Filter::EnumerableStrings, [&](const AOT::PropertyWalk::OwnProperty& property) {
                 properties.append(property.name);
                 values.appendWithCrashOnOverflow(property.value);
                 return IterationStatus::Continue;
             }) == AOT::PropertyWalk::Result::Completed;
-            if (canUseFastPath)
-                compiledObjectKeys = AOT::PropertyWalk::tryGetCachedOwnKeys(vm, target, AOT::PropertyWalk::Filter::EnumerableStrings);
         }
 #endif
 
@@ -482,8 +482,11 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                         cachedButterfly = butterfly;
                 }
 #if ENABLE(AOT)
-                else if (compiledObjectKeys && compiledObjectKeys->length() == properties.size())
-                    cachedButterfly = compiledObjectKeys;
+                else if (targetStructure->isCompiledStructure()) {
+                    auto* keys = AOT::PropertyWalk::tryGetCachedOwnKeys(vm, target, AOT::PropertyWalk::Filter::EnumerableStrings);
+                    if (keys && keys->length() == properties.size())
+                        cachedButterfly = keys;
+                }
 #endif
             }
 
@@ -504,6 +507,8 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
             }
 
             for (size_t i = 0; i < properties.size(); ++i) {
+                if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[unlikely]]
+                    return { };
                 JSString* key = nullptr;
                 if (cachedButterfly) {
                     auto* cachedKey = asString(cachedButterfly->get(i));
@@ -759,39 +764,64 @@ inline bool toPropertyDescriptor(JSGlobalObject* globalObject, JSValue in, Prope
         globalObject->tryInstallPropertyDescriptorFastPathWatchpoint();
 
 
-    auto takeOwnProperty = [&](PropertyName propertyName, JSValue propertyValue) {
-        if (propertyName == vm.propertyNames->enumerable)
-            enumerable = propertyValue;
-        else if (propertyName == vm.propertyNames->configurable)
-            configurable = propertyValue;
-        else if (propertyName == vm.propertyNames->value)
-            value = propertyValue;
-        else if (propertyName == vm.propertyNames->writable)
-            writable = propertyValue;
-        else if (propertyName == vm.propertyNames->get)
-            get = propertyValue;
-        else if (propertyName == vm.propertyNames->set)
-            set = propertyValue;
-    };
-
     bool canUseFastPath = false;
     if (globalObject->propertyDescriptorFastPathWatchpointSet().isStillValid() && globalObject->objectPrototypeChainIsSane() && description->getPrototypeDirect() == globalObject->objectPrototype() && !description->hasNonReifiedStaticProperties()) {
         Structure* descriptionStructure = description->structure();
+#if USE(BUN_JSC_ADDITIONS)
+        // What Object.getOwnPropertyDescriptor() and Object.getOwnPropertyDescriptors() make, as they made it: constructObjectFromPropertyDescriptor().
+        if (descriptionStructure == globalObject->dataPropertyDescriptorObjectStructure()) {
+            canUseFastPath = true;
+            value = description->getDirect(dataPropertyDescriptorValuePropertyOffset);
+            writable = description->getDirect(dataPropertyDescriptorWritablePropertyOffset);
+            enumerable = description->getDirect(dataPropertyDescriptorEnumerablePropertyOffset);
+            configurable = description->getDirect(dataPropertyDescriptorConfigurablePropertyOffset);
+        } else if (descriptionStructure == globalObject->accessorPropertyDescriptorObjectStructure()) {
+            canUseFastPath = true;
+            get = description->getDirect(accessorPropertyDescriptorGetPropertyOffset);
+            set = description->getDirect(accessorPropertyDescriptorSetPropertyOffset);
+            enumerable = description->getDirect(accessorPropertyDescriptorEnumerablePropertyOffset);
+            configurable = description->getDirect(accessorPropertyDescriptorConfigurablePropertyOffset);
+        } else
+#endif
         if (description->inherits<JSFinalObject>() && descriptionStructure->canPerformFastPropertyEnumeration()) {
             canUseFastPath = true;
             descriptionStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                takeOwnProperty(entry.key(), description->getDirect(entry.offset()));
+                PropertyName propertyName(entry.key());
+                if (propertyName == vm.propertyNames->enumerable)
+                    enumerable = description->getDirect(entry.offset());
+                else if (propertyName == vm.propertyNames->configurable)
+                    configurable = description->getDirect(entry.offset());
+                else if (propertyName == vm.propertyNames->value)
+                    value = description->getDirect(entry.offset());
+                else if (propertyName == vm.propertyNames->writable)
+                    writable = description->getDirect(entry.offset());
+                else if (propertyName == vm.propertyNames->get)
+                    get = description->getDirect(entry.offset());
+                else if (propertyName == vm.propertyNames->set)
+                    set = description->getDirect(entry.offset());
                 return true;
             });
         }
 #if ENABLE(AOT)
         // The walk takes the names it knows and shows nobody the others or their order. A validating image, which fails where keys are listed that nobody may list, reads the names one by one below.
-        if (descriptionStructure->isCompiledStructure() && !vm.aotState().validatesRuntime) {
+        else if (descriptionStructure->isCompiledStructure() && !vm.aotState().validatesRuntime) {
             EnsureStillAliveScope descriptionScope(description);
             canUseFastPath = AOT::PropertyWalk::forEachOwnPropertyInline(vm, description, AOT::PropertyWalk::Filter::Strings, [&](const AOT::PropertyWalk::OwnProperty& property) {
                 if (property.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
                     return IterationStatus::Done;
-                takeOwnProperty(property.name, property.value);
+                PropertyName propertyName(property.name);
+                if (propertyName == vm.propertyNames->enumerable)
+                    enumerable = property.value;
+                else if (propertyName == vm.propertyNames->configurable)
+                    configurable = property.value;
+                else if (propertyName == vm.propertyNames->value)
+                    value = property.value;
+                else if (propertyName == vm.propertyNames->writable)
+                    writable = property.value;
+                else if (propertyName == vm.propertyNames->get)
+                    get = property.value;
+                else if (propertyName == vm.propertyNames->set)
+                    set = property.value;
                 return IterationStatus::Continue;
             }) == AOT::PropertyWalk::Result::Completed;
         }
@@ -808,14 +838,14 @@ inline bool toPropertyDescriptor(JSGlobalObject* globalObject, JSValue in, Prope
                 desc.setWritable(writable.toBoolean(globalObject));
             if (get) {
                 if (!get.isUndefined() && !get.isCallable()) {
-                    throwTypeError(globalObject, scope, "Getter must be a function."_s);
+                    throwTypeError(globalObject, scope, GetterNotFunctionError);
                     return false;
                 }
                 desc.setGetter(get);
             }
             if (set) {
                 if (!set.isUndefined() && !set.isCallable()) {
-                    throwTypeError(globalObject, scope, "Setter must be a function."_s);
+                    throwTypeError(globalObject, scope, SetterNotFunctionError);
                     return false;
                 }
                 desc.setSetter(set);
@@ -849,7 +879,7 @@ inline bool toPropertyDescriptor(JSGlobalObject* globalObject, JSValue in, Prope
         RETURN_IF_EXCEPTION(scope, false);
         if (get) {
             if (!get.isUndefined() && !get.isCallable()) {
-                throwTypeError(globalObject, scope, "Getter must be a function."_s);
+                throwTypeError(globalObject, scope, GetterNotFunctionError);
                 return false;
             }
             desc.setGetter(get);
@@ -859,7 +889,7 @@ inline bool toPropertyDescriptor(JSGlobalObject* globalObject, JSValue in, Prope
         RETURN_IF_EXCEPTION(scope, false);
         if (set) {
             if (!set.isUndefined() && !set.isCallable()) {
-                throwTypeError(globalObject, scope, "Setter must be a function."_s);
+                throwTypeError(globalObject, scope, SetterNotFunctionError);
                 return false;
             }
             desc.setSetter(set);
@@ -894,7 +924,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorDefineProperty, (JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!callFrame->argument(0).isObject())
-        return throwVMTypeError(globalObject, scope, "Properties can only be defined on Objects."_s);
+        return throwVMTypeError(globalObject, scope, DefinePropertyOnNonObjectError);
     JSObject* obj = asObject(callFrame->argument(0));
     auto propertyName = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1098,7 +1128,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorDefineProperties, (JSGlobalObject* glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!callFrame->argument(0).isObject())
-        return throwVMTypeError(globalObject, scope, "Properties can only be defined on Objects."_s);
+        return throwVMTypeError(globalObject, scope, DefinePropertyOnNonObjectError);
     JSObject* targetObj = asObject(callFrame->argument(0));
     JSObject* props = callFrame->argument(1).toObject(globalObject);
     EXCEPTION_ASSERT(!!scope.exception() == !props);
@@ -1228,16 +1258,21 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (object->structure()->isCompiledStructure()) [[unlikely]] {
-        AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Sealed);
-        return object;
-    }
+    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    AOT::ClassPrototype::ensureMembers(object);
 #endif
 
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
         return object;
     }
+
+#if ENABLE(AOT)
+    if (object->structure()->isCompiledStructure()) {
+        AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Sealed);
+        return object;
+    }
+#endif
 
     bool success = setIntegrityLevel<IntegrityLevel::Sealed>(globalObject, vm, object);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1268,10 +1303,8 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (object->structure()->isCompiledStructure()) [[unlikely]] {
-        AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Frozen);
-        return object;
-    }
+    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    AOT::ClassPrototype::ensureMembers(object);
 #endif
 
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
@@ -1279,7 +1312,19 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
         return object;
     }
 
-    if (object->type() == ArrayType && object->tryFreezeArrayInPlace(vm))
+#if ENABLE(AOT)
+    if (object->structure()->isCompiledStructure()) {
+        AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Frozen);
+        return object;
+    }
+    // A slim closure is an ordinary object once it has its properties: JSObject::freeze() gives it them and takes the one transition. Its `prototype` object is still made at the first read.
+    if (isSlimClosureType(object->type()) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+        object->freeze(vm);
+        return object;
+    }
+#endif
+
+    if (object->type() == ArrayType && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense && object->tryFreezeArrayInPlace(vm))
         return object;
 
     bool success = setIntegrityLevel<IntegrityLevel::Frozen>(globalObject, vm, object);

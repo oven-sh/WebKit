@@ -15,6 +15,11 @@ const elementOrUndefined = b.union(element, b.undefined);
 const newArrayOf = (contents: b.TableType) => anyArray.holding({ element: contents }).fresh;
 const newDenseArrayOf = (contents: b.TableType) => newArrayOf(contents).dense;
 const objectFromSpecies = b.object.freshUnlessSpecies;
+// ArraySpeciesCreate: a new array, or whatever object the species constructor of the receiver makes. The method defines the elements on that object and keeps them nowhere else.
+const arrayFromSpecies = b.union(anyArray, b.object).freshUnlessSpecies;
+// The array has a hole only where the operands that say so have one.
+const denseArrayFromSpecies = b.union(anyArray.dense, b.object).freshUnlessSpecies;
+const elementOfResult = b.resultSlot("element");
 
 const maximumArrayLength = b.checked(2 ** 32 - 1, "UINT32_MAX");
 const arrayLength = b.int(0, maximumArrayLength);
@@ -24,8 +29,9 @@ const relativeIndex = b.integer.loose;
 const optionalRelativeIndex = relativeIndex.optional;
 
 const nativeEffects = { capability: "heap", throws: true } as const;
+const allocationEffects = { capability: "heap", throws: b.propagated } as const;
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
-const propertyStoreEffects = { ...operandCodeEffects, writes: ["ShapeEpoch", "MemberGuards"] } as const;
+const propertyStoreEffects = { ...operandCodeEffects, writes: ["MemberGuards"] } as const;
 
 const readsArrayLike = [b.readsContents(), b.runs("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
 const storesLength = b.storedByKey(b.keysNamed("length"), b.length);
@@ -49,15 +55,15 @@ const separator = { separator: b.string.loose.optional };
 
 const creation = [
   {
-    args: { length: b.f64, second: b.notPassed },
+    args: { length: b.f64.admitting(arrayLength), second: b.notPassed },
     returns: newArrayOf(b.never),
-    ...nativeEffects,
+    ...allocationEffects,
     implementation: b.inline("ArrayWithLength"),
   },
   {
     args: { items: b.any.rest },
     returns: newDenseArrayOf(b.operand("items")),
-    ...nativeEffects,
+    ...allocationEffects,
     uses: { items: b.inspected },
     implementation: b.inline("ArrayOf"),
   },
@@ -93,7 +99,7 @@ const searchFromStart = (name: string, inlineBuiltin: string, nativeSymbol: stri
       this: arrayWithPristineStorage,
       args: { searched: b.f64, fromIndex: optionalRelativeIndex },
       returns: foundInArray,
-      ...nativeEffects,
+      ...allocationEffects,
       readsStateBeforeConversions: true,
       uses: { this: [b.readsContents()] },
       isSpecialCase: true,
@@ -106,10 +112,10 @@ const searchFromStart = (name: string, inlineBuiltin: string, nativeSymbol: stri
       this: arrayWithPristineStorage,
       args: searchedRange,
       returns: foundInArray,
-      ...nativeEffects,
+      ...allocationEffects,
       readsStateBeforeConversions: true,
       uses: { this: [b.readsContents()], searched: b.inspected },
-      implementation: b.compiled("prelude/array-search", name, { stubConvention: true }),
+      implementation: b.inline(inlineBuiltin, { max: 1, otherwise: b.compiled("prelude/array-search", name, { stubConvention: true }) }),
     },
     searchInArrayLike(found),
   ] satisfies b.FunctionField[];
@@ -172,7 +178,7 @@ export default b.declarations(
         {
           args: { items: b.any.rest },
           returns: newDenseArrayOf(b.operand("items")),
-          ...nativeEffects,
+          ...allocationEffects,
           uses: { this: b.inspected, items: b.inspected },
           requiresHolderAsThis: true,
           implementation: b.inline("ArrayOf"),
@@ -202,7 +208,7 @@ export default b.declarations(
           this: arrayWithPristineStorage,
           args: { index: relativeIndex },
           returns: elementOrUndefined,
-          ...nativeEffects,
+          ...allocationEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()] },
           implementation: b.inline("ArrayAt", { otherwise: b.compiled("ArrayPrototype", "at") }),
@@ -268,7 +274,7 @@ export default b.declarations(
           this: arrayWithPristineStorage,
           args: searchedRange,
           returns: foundArrayIndex,
-          ...nativeEffects,
+          ...allocationEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()], searched: b.inspected },
           ...rareMethod("arrayProtoFuncLastIndexOf"),
@@ -415,14 +421,14 @@ export default b.declarations(
         {
           this: arrayWithPristineStorage,
           returns: newDenseArrayOf(elementOrUndefined),
-          ...nativeEffects,
+          ...allocationEffects,
           uses: { this: [b.readsContents()] },
           ...rareMethod("arrayProtoFuncToReversed"),
           implementation: b.hostCall,
         },
         {
           this: arrayLike,
-          returns: newArrayOf(b.any),
+          returns: newDenseArrayOf(b.any),
           ...operandCodeEffects,
           uses: { this: [...readsArrayLike, b.contentsStoredIn(b.resultSlot("element"))] },
           implementation: b.hostCall,
@@ -442,7 +448,7 @@ export default b.declarations(
         {
           this: arrayLike,
           args: { start: optionalRelativeIndex, skipCount: optionalRelativeIndex, items: b.any.rest },
-          returns: newArrayOf(b.any),
+          returns: newDenseArrayOf(b.any),
           ...operandCodeEffects,
           readsStateBeforeConversions: true,
           uses: {
@@ -466,7 +472,7 @@ export default b.declarations(
         {
           this: arrayLike,
           args: { index: relativeIndex, value: b.any },
-          returns: newArrayOf(b.any),
+          returns: newDenseArrayOf(b.any),
           ...operandCodeEffects,
           readsStateBeforeConversions: true,
           uses: {
@@ -484,11 +490,11 @@ export default b.declarations(
         {
           this: arrayLike,
           args: { items: b.any.rest },
-          returns: objectFromSpecies,
+          returns: denseArrayFromSpecies,
           ...operandCodeEffects,
           uses: {
-            this: [b.runs("Species"), testsConcatSpreadable, b.retained, b.contentsStoredIn(b.nativeMemory)],
-            items: [testsConcatSpreadable, b.retained, b.contentsStoredIn(b.nativeMemory)],
+            this: [b.runs("Species"), testsConcatSpreadable, b.storedIn(elementOfResult), b.contentsStoredIn(elementOfResult), b.copiesHolesToResult],
+            items: [testsConcatSpreadable, b.storedIn(elementOfResult), b.contentsStoredIn(elementOfResult), b.copiesHolesToResult],
           },
           implementation: b.hostCall,
         },
@@ -497,7 +503,7 @@ export default b.declarations(
         {
           this: pristineArray,
           args: { depth: optionalRelativeIndex },
-          returns: newArrayOf(b.any),
+          returns: newDenseArrayOf(b.any),
           ...operandCodeEffects,
           readsStateBeforeConversions: true,
           uses: { this: [...readsArrayLike, b.reachableValuesStoredIn(b.nativeMemory)] },
@@ -520,7 +526,7 @@ export default b.declarations(
           this: pristineArray,
           args: slicedRange,
           returns: newDenseArrayOf(element),
-          ...nativeEffects,
+          ...allocationEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents(), b.copiesHolesToResult] },
           length: 2,
@@ -531,10 +537,10 @@ export default b.declarations(
         {
           this: arrayLike,
           args: slicedRange,
-          returns: objectFromSpecies,
+          returns: denseArrayFromSpecies,
           ...operandCodeEffects,
           readsStateBeforeConversions: true,
-          uses: { this: [b.runs("Species"), ...readsArrayLike, b.contentsStoredIn(b.nativeMemory)] },
+          uses: { this: [b.runs("Species"), ...readsArrayLike, b.contentsStoredIn(elementOfResult), b.copiesHolesToResult] },
           implementation: b.hostCall,
         },
       ],
@@ -552,14 +558,15 @@ export default b.declarations(
         {
           this: arrayLike,
           args: { start: optionalRelativeIndex, deleteCount: optionalRelativeIndex, items: b.any.rest },
-          returns: objectFromSpecies,
+          returns: denseArrayFromSpecies,
           ...propertyStoreEffects,
           readsStateBeforeConversions: true,
           uses: {
             this: [
               b.runs("Species"),
               ...readsArrayLike,
-              b.contentsStoredIn(b.nativeMemory),
+              b.contentsStoredIn(elementOfResult),
+              b.copiesHolesToResult,
               ...movesOwnValues,
               b.storedByKey(b.indexKeys, b.operand("items")),
               storesLength,
@@ -587,6 +594,10 @@ export default b.declarations(
       ],
     },
   }),
+  // Array.prototype.toString calls what it finds under `join` without operands.
+  b.namedMemberCall("join", []),
+  // ArrayPrototype.cpp finishCreation: an object without a prototype that holds `true` under the name of each method that `with` does not see.
+  b.static("Array.prototype.@@unscopables", b.property(b.any)),
   b.same("Array.prototype.@@iterator", "Array.prototype.values"),
   b.privateAlias(
     "Array.prototype.entries",

@@ -15,7 +15,6 @@
 #include "LineColumn.h"
 #include <bit>
 #include <optional>
-#include <wtf/Noncopyable.h>
 #include <wtf/StackBounds.h>
 #include <wtf/text/WTFString.h>
 
@@ -31,10 +30,45 @@ namespace AOT {
 
 struct Instance;
 
+// A frame of compiled code is named by the place of its frame record, the word below its return address, whether it has a record or not.
+// stackPointer and framePointer are what the two registers hold in the frame at the return site.
+ALWAYS_INLINE CallFrame* frameAtReturnSite(const ImageFrame& frame, const void* stackPointer, CallFrame* framePointer)
+{
+    if (frame.hasFrameRecord())
+        return framePointer;
+    if (frame.isEmpty()) [[unlikely]]
+        return std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(stackPointer) - sizeof(void*));
+    return std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes());
+}
+
+constexpr ImageFrame frameAtStubReturnSite(StubFrameKind kind)
+{
+    return kind == StubFrameKind::AtStubEntry ? ImageFrame::empty() : ImageFrame { };
+}
+
+// What the stack pointer is once the frame has returned.
+ALWAYS_INLINE void* stackPointerOfCaller(const CallFrame* frame, unsigned bytesAboveReturnAddress = 0)
+{
+    return std::bit_cast<void*>(std::bit_cast<uintptr_t>(frame) + sizeof(CallerFrameAndPC) + bytesAboveReturnAddress);
+}
+
+ALWAYS_INLINE unsigned bytesAboveReturnAddressOf(const ImageFrame& frame)
+{
+    return frame.liesBelowSpilledArguments() ? sizeOfSpilledArgumentRegisters : 0;
+}
+
+ALWAYS_INLINE unsigned bytesAboveReturnAddressOf(const CallSiteCache::Entry& site)
+{
+    return site.isStubReturnSite() ? bytesAboveReturnAddressOf(site.stubFrameKind) : bytesAboveReturnAddressOf(site.frame);
+}
+
 struct MachineFrame {
     CallFrame* callFrame { nullptr };
     const void* pc { nullptr };
     CodeLocation code;
+    CallFrame* framePointer { nullptr };
+    bool hasFrameRecord { true };
+    unsigned bytesAboveReturnAddress { 0 };
 };
 
 struct TrustedStack {
@@ -50,11 +84,13 @@ struct SuspendedThreadStack {
 template<typename Stack>
 class MachineFrameIterator {
 public:
-    MachineFrameIterator(const Image& image, CallFrame* callFrame, const void* pc, Stack stack = { })
+    // framePointer is null for a frame that has a record.
+    MachineFrameIterator(const Image& image, CallFrame* callFrame, const void* pc, Stack stack = { }, CallFrame* framePointer = nullptr)
         : m_image(&image)
         , m_stack(stack)
     {
-        set(callFrame, pc);
+        m_frame = { callFrame, pc, callFrame && m_stack.contains(callFrame) ? m_image->locate(pc) : CodeLocation { }, framePointer ? framePointer : callFrame, !framePointer };
+        m_frame.bytesAboveReturnAddress = bytesAboveReturnAddressAt(m_frame.code, imageFrameAt(m_frame.code));
     }
 
     explicit operator bool() const { return m_frame.code.kind != CodeKind::NotInImage; }
@@ -63,19 +99,30 @@ public:
     SUPPRESS_ASAN MachineFrameIterator& operator++()
     {
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(m_frame.callFrame);
-        if (record->callerFrame <= m_frame.callFrame) {
+        CallFrame* framePointer = m_frame.hasFrameRecord ? record->callerFrame : m_frame.framePointer;
+        const void* pc = removeCodePtrTag(record->returnPC);
+        CodeLocation code = m_image->locate(pc);
+        ImageFrame imageFrame = imageFrameAt(code);
+        CallFrame* callFrame = frameAtReturnSite(imageFrame, stackPointerOfCaller(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);
+        if (callFrame <= m_frame.callFrame || !m_stack.contains(callFrame)) {
             m_frame = { };
             return *this;
         }
-        set(record->callerFrame, removeCodePtrTag(record->returnPC));
+        m_frame = { callFrame, pc, code, framePointer, imageFrame.hasFrameRecord(), bytesAboveReturnAddressAt(code, imageFrame) };
         return *this;
     }
 
 private:
-    void set(CallFrame* callFrame, const void* pc)
+    ImageFrame imageFrameAt(const CodeLocation& code) const
     {
-        m_frame = { callFrame, pc, callFrame && m_stack.contains(callFrame) ? m_image->locate(pc) : CodeLocation { } };
+        return code.kind == CodeKind::Function ? m_image->frameAtReturnOffset(code.function, code.offset) : frameAtStubReturnSite(code.stubFrameKind);
     }
+
+    static unsigned bytesAboveReturnAddressAt(const CodeLocation& code, const ImageFrame& imageFrame)
+    {
+        return code.kind == CodeKind::Stub ? bytesAboveReturnAddressOf(code.stubFrameKind) : bytesAboveReturnAddressOf(imageFrame);
+    }
+
 
     const Image* m_image;
     Stack m_stack;
@@ -93,6 +140,8 @@ struct SampledTop {
     CallFrame* callFrame;
     const void* pc;
     const void* callerPCOfFramelessTop;
+    // Of a frame without a record. Null for any other.
+    CallFrame* framePointer { nullptr };
 };
 
 JS_EXPORT_PRIVATE std::optional<SampledTop> findSampledTop(const Image&, const SampledRegisters&, CallFrame* topCallFrame, const StackBounds&);
@@ -148,14 +197,29 @@ public:
     };
 
     enum class OperationState : bool { MayNotHaveCalled, HasCalled };
-    JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreate(VM&, CallFrame*, const void* returnAddress, EntryFrame*, OperationState = OperationState::MayNotHaveCalled);
+    // framePointer and stackPointer are what the registers hold in the frame that returnAddress runs in. Without stackPointer only a frame that has a record is found.
+    JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreate(VM&, CallFrame* framePointer, const void* returnAddress, EntryFrame*, OperationState = OperationState::MayNotHaveCalled, void* stackPointer = nullptr);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtTop(VM&);
+    JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtCallerOf(VM&, CallFrame* callee, EntryFrame*);
 
     bool isAtEnd() const { return m_isAtEnd; }
     const CompiledFrame& frame() const
     {
         ASSERT(!m_isAtEnd);
+        if (!m_hasReadFrame)
+            readFrame();
         return m_frame;
+    }
+    // A walk over machine frames that asks for these and for callSite() never pays for frame().
+    Instance* instance() const
+    {
+        ASSERT(!m_isAtEnd);
+        return m_instance;
+    }
+    CallFrame* machineFrame() const
+    {
+        ASSERT(!m_isAtEnd);
+        return m_cursor.callFrame;
     }
     const Exit& exit() const
     {
@@ -179,35 +243,60 @@ public:
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
+    CallFrame* framePointer() const { return m_cursor.framePointer; }
+    void* stackPointer() const { return m_cursor.stackPointer; }
     CallFrame* generatorStubFrameLeft() const { return m_cursor.generatorStubFrame; }
+    CallFrame* asyncGeneratorStubFrameLeft() const { return m_cursor.asyncGeneratorStubFrame; }
+    // The frame that returns to that stub frame: the body's, or that of the stub that throws because the stack has no room for the body's.
+    CallFrame* asyncGeneratorBodyFrameLeft() const { return m_cursor.asyncGeneratorBodyFrame; }
     CallFrame* engineCalleeStubFrameLeft() const { return m_cursor.engineCalleeStubFrame; }
 
 private:
     struct Cursor {
-        CallFrame* callFrame;
+        // What the frame pointer register holds in the frame that rawPC runs in.
+        CallFrame* framePointer;
         void* rawPC;
         EntryFrame* entryFrame;
+        // The frame that returns to rawPC, where the walk has seen it.
+        CallFrame* calleeFrame { nullptr };
+        // What the stack pointer is in the frame that rawPC runs in, where the walk has seen the frame that returns to rawPC.
+        void* stackPointer { nullptr };
+        // The frame that rawPC runs in, once enterFrame() has looked at the return site.
+        CallFrame* callFrame { nullptr };
+        bool hasFrameRecord { true };
+        unsigned bytesAboveReturnAddress { 0 };
         bool isAtFirstReadSite { false };
         CallFrame* generatorStubFrame { nullptr };
+        CallFrame* asyncGeneratorStubFrame { nullptr };
+        CallFrame* asyncGeneratorBodyFrame { nullptr };
         CallFrame* engineCalleeStubFrame { nullptr };
     };
 
+public:
+    // Public for std::optional: tryCreate() makes the iterator in the place it returns it in.
     CompiledFrameIterator(VM&, const Cursor&, bool calleeWasEntered);
 
+private:
+    static std::optional<CompiledFrameIterator> tryCreate(VM&, const Cursor&, OperationState);
+    static void enterFrame(Cursor&, const CallSiteCache::Entry&);
     static void leaveRun(Cursor&, Exit&);
     static bool passOverFrame(Cursor&, Exit&);
+    Instance* findEnclosingAdapterInstance(Cursor) const;
+    Instance* tryFindInstance() const;
     const CallSiteCache::Entry* findFunctionFrame(Cursor&, Exit&, RunEnd&);
     const CallSiteCache::Entry* findCallerFunctionFrame(Cursor&, Exit&, RunEnd&);
     void enterMachineFrame(const CallSiteCache::Entry*);
-    void readMachineFrame(const CallSiteCache::Entry&);
+    JS_EXPORT_PRIVATE void readFrame() const;
 
     VM* m_vm;
     const Image* m_image;
     CallSiteCache* m_cache;
+    Instance* m_instance { nullptr };
     Cursor m_cursor;
     CallSiteCache::Entry m_callSite;
-    CompiledFrame m_frame;
-    bool m_isInlinedConstructCall { false };
+    mutable CompiledFrame m_frame;
+    mutable bool m_isInlinedConstructCall { false };
+    mutable bool m_hasReadFrame { false };
     bool m_calleeWasEntered;
     bool m_isAtEnd { false };
     Exit m_exit;
@@ -215,24 +304,6 @@ private:
     InlineFrameReader m_inlineFrames;
 };
 static_assert(sizeof(CompiledFrameIterator) <= 1024);
-
-class CallSiteOverride {
-    WTF_MAKE_NONCOPYABLE(CallSiteOverride);
-public:
-    JS_EXPORT_PRIVATE CallSiteOverride(Instance&, const void* frame);
-    JS_EXPORT_PRIVATE ~CallSiteOverride();
-
-    void setItem(unsigned item) { m_item = item; }
-    const CallSiteOverride* previous() const { return m_previous; }
-    const void* frame() const { return m_frame; }
-    unsigned item() const { return m_item; }
-
-private:
-    Instance& m_instance;
-    const CallSiteOverride* m_previous;
-    const void* m_frame;
-    unsigned m_item { 0 };
-};
 
 } // namespace AOT
 } // namespace JSC

@@ -1,4 +1,5 @@
-enum KnowledgeLevel { Unknown Predicted Written Proven }
+enum KnowledgeLevel { Unknown Expected Proven }
+enum AccessCost { ByName TestsReceiver TestsSlot Free }
 enum AccessKind { Unknown Read Store Define Has Delete Call Construct }
 enum UnprovenCauseFamily { UnprovenType UnknownCode Mutation Limit }
 enum UnprovenCause (family: UnprovenCauseFamily) {
@@ -7,12 +8,18 @@ enum UnprovenCause (family: UnprovenCauseFamily) {
     UnprovenContents(UnprovenType) FieldDeleted(Mutation) UnknownKeyDelete(Mutation) PropertyRedefined(Mutation) PropertyAdded(Mutation) UnknownKeyStore(Mutation)
     StoreOfOtherType(Mutation) IntegrityChanged(Mutation) PrototypeChanged(Mutation) OwnPropertyHidesMember(Mutation) OtherNewTarget(Mutation)
     LeftByPasses(UnprovenType)
+    UndescribedNativeResult(UnknownCode) UnseenCode(UnknownCode) UncheckedConversionOfUntracked(UnprovenType) DataFromOutside(UnknownCode) ThrownByRunTime(UnknownCode)
+    ParameterOfEscapedFunction(UnknownCode) ContentsOfEscapedObject(UnknownCode) ResultOfUnknownCallee(UnknownCode) ObjectWithoutLayout(UnprovenType)
+    Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
 }
 enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
-enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled }
+enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled RunsMachineCode }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped }
 enum LocaleUseKind { Unknown HostDefault Constant }
 enum TypeTestFailure { TakesGenericPath Throws }
+enum ArrivalStamp { None Open Complete }
+flags ArrivalLayoutFlags { IsDerived }
+flags ArrivalFieldFlags { IsOptional }
 
 enum ImageVerdict {
     Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
@@ -20,8 +27,7 @@ enum ImageVerdict {
 }
 enum DeclineKind {
     Unknown HotCallNotInlined HotCallNotResolved GeneratorLoopNotFused ArrayChainNotFused StringBuilderNotCreated StringBuildersNotJoined AllocationNotSunk
-    TypedResultNotSelected IterationNotExpandedByClass LoopNotVersioned LoopPollNotStripMined LoopBoundNotClamped StretchNotGuarded ResultNodeInterpreted
-    PositionAdmitsObjects AssertedObjectPassedToUnknownCallee
+    TypedResultNotSelected IterationNotExpandedByClass LoopNotVersioned LoopBoundNotClamped StretchNotGuarded ResultNodeInterpreted GenericVersionNotCreated
 }
 enum TypedResultDeclineReason {
     None NoTarget TargetIsNotModeledByFlow TargetHasNoTypedPart PromiseIsNotAwaitedAtOnce HostHasNoBytesForm RowsHaveSeveralLayouts AnotherSourceIsOpen
@@ -38,7 +44,7 @@ enum ArrayChainDeclineReason {
 enum StringBuilderDeclineReason { Unknown Created TooFewAppends TwoStatesLive StateIsNotFirstOperand WebLimit }
 enum LoopDeclineReason {
     None NotInnermost SeveralEntries NoSingleLikelyPath UncloneableValue NothingToHoist NotCounted CounterMayWrap BoundNotInvariant TestNotOnLikelyPath
-    EffectsBeforeTopTest PollNotOnEveryIteration SeveralPolls LimitReached
+    EffectsBeforeTopTest LimitReached
 }
 enum InterpretedCause { None TooManyNodes RepeatedRecursion MemberKeyIsNotText LayoutIsNotModeled MemberIsNotNamedField FieldTypeIsNotTestable }
 flags AllocationEscapeReason {
@@ -55,6 +61,7 @@ enum AllocationKind {
 enum ResultSection {
     Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed Accesses AccessCounts TypeTests RemainingChecks
     Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
+    ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
 }
 
 record TextRange abi { offset: UInt32 length: UInt32 }
@@ -74,9 +81,9 @@ record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witnes
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record AccessRecord abi {
     location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 witness: Witness
-    function: Function?
+    function: Function? illTypedCause: IllTypedCause cost: AccessCost
 }
-record AccessCountRecord abi { module: Module accesses: UInt32[4] calls: UInt32[4] typeTests: UInt32 }
+record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }
 record TypeTestRecord abi { location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 }
 record RemainingCheckRecord abi { id: UInt64 witness: Witness origin: SourceLocation cause: CheckCause siteKind: TypeSiteKind }
 record DeclineRecord abi { kind: DeclineKind limit: LimitID count: UInt32 reason: UInt32 witness: Witness }
@@ -86,34 +93,50 @@ record AllocationRemarkRecord abi {
 }
 record LossRecord abi { limit: LimitID stage: Stage layout: Layout? count: UInt32 witness: Witness }
 record FunctionReportRecord abi {
-    source: Function? role: TextRange codeBytes: UInt32 accesses: UInt32[4] calls: UInt32[4] firstOperation: UInt32 operationCount: UInt32
+    source: Function? role: TextRange codeBytes: UInt32 accesses: UInt32[3] calls: UInt32[3] firstOperation: UInt32 operationCount: UInt32
+    accessCosts: UInt32[4]
 }
 record OperationCountRecord abi { name: TextRange count: UInt32 }
 record PassTimeRecord abi { pass: PassID reserved: UInt32 runs: UInt64 wallNanoseconds: UInt64 cpuNanoseconds: UInt64 }
 record ObfuscatedSiteRecord abi { function: UInt32 site: UInt32 location: SourceLocation name: TextRange }
+record ArrivalSiteRecord abi {
+    number: UInt32 location: SourceLocation function: Function? operation: TextRange kind: AccessKind level: KnowledgeLevel cause: UnprovenCause
+    firstExpectedLayout: UInt32 expectedLayoutCount: UInt32 stamp: ArrivalStamp
+}
+record ArrivalLayoutRecord abi {
+    layout: Layout base: Layout? kind: TextRange name: TextRange firstField: UInt32 fieldCount: UInt32 flags: ArrivalLayoutFlags
+}
+record ArrivalLayoutFieldRecord abi { name: TextRange flags: ArrivalFieldFlags }
 
-enum CompileAction { Compile VerifyOnly }
+enum CompileAction { Compile VerifyOnly CheckOnly }
 enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum MismatchPolicy { Throw Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences FlowFixpoint VerifyEachStage ValidateReferenceGuards }
-flags ReportSet { Flow Declines Symbols Allocations Functions }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnorePredictions LoseFlowWakeUps AnalyzeValueFlow DropReferenceGuards }
-flags Instrumentation { CountBranches }
-flags AdmittedCode { Inspector RuntimeCode }
-flags ExcludedCode { EvaluatedText }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry }
+flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals PassCodeBytes }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime ConvertOperandsAtFetch }
+enum Sabotage {
+    None
+    StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
+    InnerCellIsMarkedWithoutItsOuterCell InnerCellLetGoKeepsItsHeader
+    RoomIsNotInReferenceList RoomsLeftEmptyAreNotZeroed NoBarrierBehindFreshStoreIntoRoom NoBarrierForStoreThroughBorrowedObject StoreLeavesRoomAsItIs
+    FlattenedObjectIsMadeWithoutBarrier MakingLeavesRoomAsItIs
+}
+flags Instrumentation { CountBranches CountArrivals }
+flags AdmittedCode { Inspector }
+flags ExcludedCode { EvaluatedText FunctionSource }
 flags OutputOptions { Obfuscate }
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
 record BisectionSwitches abi {
     disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
-    droppedGuard: DroppedGuardWords flowOrderSeed: UInt32 reserved: UInt32
+    droppedGuard: DroppedGuardWords
 }
 record TargetOptions abi { features: UInt64 architecture: Architecture referenceWidth: ReferenceWidth }
 record CompileOptions abi {
     bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double executableIdentity: UInt8[16] size: UInt32
     action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation
     heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
-    excludedCode: ExcludedCode
+    excludedCode: ExcludedCode sabotage: Sabotage reserved: UInt32
 }

@@ -1,6 +1,6 @@
 # An array literal with elements, holes or a capacity, or in a compact block, is created without an allocation profile
 # FORM: Prepared
-# OPTIONS: heat=only-loops-are-hot
+# OPTIONS: heat=EverythingIsHot
 # RUN: pass Select
 # STATISTIC: ArrayLiteralStorageGroups = 1
 

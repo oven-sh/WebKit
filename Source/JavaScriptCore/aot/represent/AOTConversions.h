@@ -40,6 +40,8 @@ public:
     void convertEdgeResult(Edge, uint32_t parameterIndex, Representation passed, Representation wanted);
 
     uint32_t numberOfConversions() const { return m_numberOfConversions; }
+    // False where nothing has asked for a conversion: every use names the value that it named.
+    bool mayHaveChangedUses() const { return m_mayHaveChangedUses; }
     void finish();
 
 private:
@@ -70,6 +72,8 @@ private:
     };
 
     ValueID convert(ValueID source, Representation wanted, ProgramPoint before, SharingScope);
+    ValueID findSameValueMadeBefore(ValueID, Representation wanted) const;
+    ValueID onlyValueArrivingAt(ValueID parameter) const;
     ValueID findSharedConversion(SharingScope, BlockID, ValueID source, Representation wanted) const;
     ValueID findConversionInList(std::optional<uint32_t> last, Representation wanted) const;
     void shareConversion(SharingScope, BlockID, ValueID source, Representation to, ValueID converted);
@@ -79,7 +83,7 @@ private:
     void convertOnSplitEdge(Edge, const EdgeConversion&);
     BlockID splitEdge(const SplitEdge&);
 
-    void reportUnsupportedConversion(ValueID source, BlockID);
+    void reportUnsupportedConversion(ValueID source, Representation wanted, BlockID);
 
     FunctionPassContext& m_pass;
     IRBuilder& m_builder;
@@ -88,6 +92,9 @@ private:
     Vector<SharedConversionLists> m_sharedConversionsOf;
     Vector<SplitEdge> m_splitEdges;
     uint32_t m_numberOfConversions { 0 };
+    uint32_t m_numberOfValuesAtStart { 0 };
+    bool m_hasSplitEdges { false };
+    bool m_mayHaveChangedUses { false };
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -17,7 +17,6 @@ public:
 
     void generateGetArgument(const ValueContext&);
     void generateGetRestLength(const ValueContext&);
-    void generateReturnsToResultTest(const ValueContext&);
     void generateCreateRest(const ValueContext&);
     void generateGetMyArgumentByVal(const ValueContext&);
     void generateCallForwardVarargs(const ValueContext&);

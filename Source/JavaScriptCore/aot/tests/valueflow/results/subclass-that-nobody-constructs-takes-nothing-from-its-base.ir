@@ -1,0 +1,38 @@
+# class Base { constructor(a) { this.a = a } }  class Dead extends Base { constructor(a) { super(a); this.b = a } }  new Base(1).a
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Base" {{*}}fields=[{key="a" {{*}}stores=AtMostOnce{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled{{*}}fieldCreation=OnlyAtConstruction
+# CHECK: layout L1 kind=Instance name="Dead" {{*}}allocation=NeverAllocated
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Dead" base=L0 constructor=f2 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = NewClosure function=f2
+    v5 = ResolveHeritage v3
+    v6 = NewClass v4, v3, v5 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = Construct v3, -, v0
+    v9 = PropGet v8 key="a"
+    Return v9
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f2 name="Dead" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    PropSet v4, v2 key="b" mode=Strict
+    Return v4
+}

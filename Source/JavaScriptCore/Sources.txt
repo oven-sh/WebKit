@@ -142,6 +142,7 @@ b3/B3CheckKnownProperties.cpp @no-unify
 b3/B3CheckSpecial.cpp
 b3/B3CheckValue.cpp
 b3/B3CheckVariablesAreSet.cpp @no-unify
+b3/B3ClampLoopBound.cpp @no-unify
 b3/B3Common.cpp
 b3/B3Commutativity.cpp
 b3/B3CompilationScratch.cpp @no-unify
@@ -227,7 +228,6 @@ b3/B3SplitBranchConditions.cpp @no-unify
 b3/B3StackmapGenerationParams.cpp
 b3/B3StackmapSpecial.cpp
 b3/B3StackmapValue.cpp
-b3/B3StripMineLoops.cpp @no-unify
 b3/B3SwitchCase.cpp
 b3/B3SwitchValue.cpp
 b3/B3TZoneImpls.cpp
@@ -839,10 +839,6 @@ runtime/CachedBytecode.cpp
 runtime/CachedSpecialPropertyAdaptiveStructureWatchpoint.cpp
 runtime/CachedTypes.cpp
 runtime/ImmutablePropertyNames.cpp @no-unify
-runtime/IntlDatePatternCompiler.cpp @no-unify
-runtime/IntlFormatPattern.cpp @no-unify
-runtime/IntlFormatPatternCompiler.cpp @no-unify
-runtime/IntlNumberPatternCompiler.cpp @no-unify
 runtime/JSObjectElementsStartOffset.cpp @no-unify
 runtime/JSObjectFrozenElements.cpp @no-unify
 runtime/PropertyRun.cpp @no-unify
@@ -1378,6 +1374,7 @@ yarr/YarrBacktrackingAnalysis.cpp @no-unify
 yarr/YarrCanonicalizeUCS2.cpp
 yarr/YarrCharacterSetBits.cpp @no-unify
 yarr/YarrClassTable.cpp @no-unify
+yarr/YarrCodeGenerator.cpp @no-unify
 yarr/YarrDisassembler.cpp
 yarr/YarrErrorCode.cpp
 yarr/YarrFirstFollowSets.cpp @no-unify

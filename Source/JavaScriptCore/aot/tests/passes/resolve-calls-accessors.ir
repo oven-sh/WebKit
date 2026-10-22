@@ -1,14 +1,14 @@
-# A read that runs a getter and a store that runs a setter are direct calls, member by member, and the members with a field are left to the rest
+# A read that runs a getter and a store that runs a setter are direct calls, member by member, behind one test where the class may change, and the members with a field are left to the rest
 # FORM: Prepared
 # RUN: pass ResolveCalls
-# STATISTIC: CallsResolved = 6
-# STATISTIC: DispatchArms = 7
+# STATISTIC: CallsResolved = 8
+# STATISTIC: DispatchArms = 9
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Buffer" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="size" kind=Getter function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="level" kind=Setter function=f3 mutability=Fixed}, {key="age" kind=Getter function=f4 mutability=Fixed}, {key="name" kind=Getter function=f5}, {key="name" kind=Setter function=f6}, {key="owner" kind=Getter function=f7 mutability=Fixed}] namedMembers=[{key="size" kind=Getter function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="level" kind=Setter function=f3 mutability=Fixed}, {key="age" kind=Getter function=f4 mutability=Fixed}, {key="name" kind=Getter function=f5}, {key="name" kind=Setter function=f6}, {key="owner" kind=Getter function=f7 mutability=Fixed}]}
-layout L1 kind=Instance name="Span" constructor=f8 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L2 kind=Instance name="Rope" constructor=f9 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f10 mutability=Fixed}]}
+layout L0 kind=Instance name="Buffer" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="size" kind=Getter function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="level" kind=Setter function=f3 mutability=Fixed}, {key="age" kind=Getter function=f4 mutability=Fixed}, {key="name" kind=Getter function=f5}, {key="name" kind=Setter function=f6}, {key="owner" kind=Getter function=f7 mutability=Fixed}] namedMembers=[{key="size" kind=Getter function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="level" kind=Setter function=f3 mutability=Fixed}, {key="age" kind=Getter function=f4 mutability=Fixed}, {key="name" kind=Getter function=f5}, {key="name" kind=Setter function=f6}, {key="owner" kind=Getter function=f7 mutability=Fixed}]}
+layout L1 kind=Instance name="Span" constructor=f8 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Rope" constructor=f9 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f10 mutability=Fixed}]}
 function f0 name="Buffer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="size" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=number}] {
   b0(v0: L0):
@@ -65,7 +65,7 @@ function f11 name="getter-and-field" parameters=[{type=L0|L1}] results=[{type=an
 # CHECK-NEXT: [[stored]]{{*}}= PropGet [[span]] key="size" receivers=[L1]
 # CHECK-NEXT: Jump -> next [[join]]([[stored]])
 # CHECK-NEXT: }
-function f12 name="field-is-expected" parameters=[{type=L0|L1 predicted=L1}] results=[{type=anything}] {
+function f12 name="field-is-expected" parameters=[{type=L0|L1}] results=[{type=anything}] {
   b0(v0: L0|L1 ~ L1):
     v1 = PropGet v0 key="size"
     Return v1
@@ -122,8 +122,8 @@ function f16 name="setter-and-field" parameters=[{type=L0|L1}, {type=number}] re
 # CHECK-NEXT: Branch [[takesSetter]] -> taken [[setterArm]](| 0), notTaken [[storeRest]](| 0)
 # CHECK-NEXT: [[afterStore]]():
 # CHECK-NEXT: Return
-# CHECK-NEXT: [[setterArm]]([[written]]: L0):
-# CHECK-NEXT: = CallDirect [[written]], v1 function=f2
+# CHECK-NEXT: [[setterArm]]([[setterOwner]]: L0):
+# CHECK-NEXT: = CallDirect [[setterOwner]], v1 function=f2
 # CHECK-NEXT: Jump -> next [[afterStore]]()
 # CHECK-NEXT: [[storeRest]]([[filled]]: L1) frequency=Unlikely:
 # CHECK-NEXT: PropSet [[filled]], v1 key="size" receivers=[L1]
@@ -159,10 +159,17 @@ function f19 name="accessors-may-be-replaced" parameters=[{type=L0}] results=[{t
 }
 # CHECK-LABEL: function f19 name="accessors-may-be-replaced"
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: = PropGet v0 key="name"
-# CHECK-NEXT: PropSet v0, v1 key="name"
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
+# CHECK-NEXT: [[getterIsUnchanged]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L0{{*}}key="name"{{*}}]
+# CHECK-NEXT: Branch [[getterIsUnchanged]] -> taken [[getterArm]](), notTaken [[readByName]]()
+# CHECK: = CallDirect v0, v1 function=f6
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="name" receivers=[L0]
+# CHECK: [[setterIsUnchanged]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L0{{*}}key="name"{{*}}]
+# CHECK-NEXT: Branch [[setterIsUnchanged]] -> taken
+# CHECK-NEXT: [[getterArm]]():
+# CHECK-NEXT: = CallDirect v0 function=f5
+# CHECK: [[readByName]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="name" receivers=[L0]
 function f20 name="getter-with-capture" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="owner"
@@ -183,13 +190,13 @@ function f21 name="getter-on-nullable-receiver" parameters=[{type=null|L0}] resu
 # CHECK-NEXT: = PropGet v0 key="size"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
-function f22 name="getter-of-predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f22 name="getter-of-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="size"
     Return v1
 }
-# CHECK-LABEL: function f22 name="getter-of-predicted-receiver"
-# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-LABEL: function f22 name="getter-of-expected-receiver"
+# CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: = PropGet v0 key="size"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }

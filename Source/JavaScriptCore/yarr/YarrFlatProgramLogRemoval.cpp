@@ -75,6 +75,7 @@ static bool propagateStackState(const FlatProgram& program, unsigned index, Stac
         break;
     case Kind::Choice:
     case Kind::ChoiceByFirst:
+    case Kind::ChoiceByTable:
     case Kind::GreedyLoopChoice:
     case Kind::NegativeLookaheadBegin:
         join(atOp[next], StackState::MayHoldFrames);

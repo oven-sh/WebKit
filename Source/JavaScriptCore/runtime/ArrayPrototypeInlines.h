@@ -159,7 +159,7 @@ ALWAYS_INLINE void setLength(JSGlobalObject* globalObject, VM& vm, JSObject* obj
         }
         JSArray* array = uncheckedDowncast<JSArray>(obj);
         // An array with ArrayStorage or with elements frozen in place can have a read-only length, whose unchanged assignment must still throw.
-        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value && !array->structure()->hasFrozenElementsInPlace())
+        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value && !(isCopyOnWrite(array->indexingMode()) && array->structure()->hasFrozenElementsInPlace()))
             return;
         scope.release();
         array->setLength(globalObject, static_cast<uint32_t>(value), throwException);

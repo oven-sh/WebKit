@@ -15,6 +15,8 @@
 #include "AOTResultRules.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
+#include <algorithm>
 #include <initializer_list>
 #include <optional>
 #include <utility>
@@ -43,9 +45,13 @@ private:
     void prepareHeader(TypeID driverType);
     void markRareModeArms();
     void mergeAwaitsIntoYields();
+    void moveProofsOfSentValueBehindMode(BlockID, ValueID yield);
     void replaceYields();
+    void replaceSteps();
     void replaceAwaits();
     void expandTypedAwait(ProgramPoint);
+    bool headMayChangePrototype(ProgramPoint initialYield);
+    bool headHasNoEffect(ProgramPoint initialYield);
     void expandInitialYield();
     void replaceReturns();
 
@@ -54,6 +60,7 @@ private:
     ReplacedEffects replacedEffectsOf(std::initializer_list<ValueID>) const;
     void checkSuccessor(BlockID, ValueID, const ReplacedEffects&);
     bool canKeepType(const Value& successor, TypeID storedType);
+    bool canExpect(const Value& successor, TypeID expected);
 
     const AnalysisContext& m_context;
     TypeArena& m_types;
@@ -100,7 +107,7 @@ static void markModeArmsRare(Function& function, const UseLists& useLists, Value
             BlockID otherwise = terminator.otherwise().block;
             for (const Target& target : terminator.caseTargets()) {
                 if (target.block != otherwise)
-                    function.at(target.block).frequency = BlockFrequency::Rare;
+                    function.edit(target.block).frequency = BlockFrequency::Rare;
             }
         }
     }
@@ -109,7 +116,8 @@ static void markModeArmsRare(Function& function, const UseLists& useLists, Value
 static std::optional<uint32_t> findYieldToMerge(const Function& function, const UseLists& useLists, ProgramPoint point)
 {
     const BlockValues& values = function.at(point.block).values;
-    if (function.at(values[point.index]).opcode != Opcode::Await)
+    const Value& await = function.at(values[point.index]);
+    if (await.opcode != Opcode::Await || await.takesExtraTurn())
         return std::nullopt;
 
     for (uint32_t index = point.index; index + 1 < values.size(); ++index) {
@@ -168,10 +176,12 @@ Function BodyBuilder::run(TypeID driverType)
         markRareModeArms();
         mergeAwaitsIntoYields();
         replaceYields();
+        replaceSteps();
         replaceAwaits();
         expandInitialYield();
         break;
     case CoroutineKind::AsyncFunction:
+        replaceSteps();
         replaceAwaits();
         break;
     }
@@ -185,6 +195,8 @@ void BodyBuilder::prepareHeader(TypeID driverType)
 {
     unsigned sourceParameters = m_body.numberOfEntryParameters();
 
+    if (m_body.runsOnlyBehindFailedTest())
+        m_body.flags.add(FunctionFlags::IsSplitOffGenericVersion);
     m_body.role = FunctionRole::CoroutineBody;
     m_body.creator = m_record;
     m_body.text = { };
@@ -231,6 +243,13 @@ bool BodyBuilder::canKeepType(const Value& successor, TypeID storedType)
     return successorType.isSubsetOf(m_types.at(storedType), m_context.program);
 }
 
+// An expected type is set only where it says more than the type.
+bool BodyBuilder::canExpect(const Value& successor, TypeID expected)
+{
+    TypeID type = resultTypeOf(m_context.program, m_body, successor, m_types);
+    return expected && expected != type && m_types.at(expected).isSubsetOf(m_types.at(type), m_context.program);
+}
+
 void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands)
 {
     rewriteInPlace(block, id, opcode, operands, replacedEffectsOf({ id }));
@@ -238,7 +257,7 @@ void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::
 
 void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands, const ReplacedEffects& replaced)
 {
-    Value& value = m_body.at(id);
+    Value& value = m_body.edit(id);
     value.become(opcode);
     uint32_t operandIndex = 0;
     for (ValueID operand : operands)
@@ -259,9 +278,113 @@ void BodyBuilder::markRareModeArms()
     m_analyses.invalidate(FunctionAnalysis::Frequencies);
 }
 
+// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown. What is known of the values that `next`, `throw` and `return` send in stands in front of the switch on the mode.
+// It holds in the arms that do not throw, so it goes there. The arm that throws takes the value as it came.
+void BodyBuilder::moveProofsOfSentValueBehindMode(BlockID block, ValueID yield)
+{
+    const Terminator& terminator = m_body.at(block).terminator;
+    if (terminator.kind != TerminatorKind::Switch)
+        return;
+
+    const BlockValues& values = m_body.at(block).values;
+    ValueID sent;
+    Vector<ValueID, 4> proofs;
+    BitVector proofIndexes(values.size());
+    for (uint32_t index = 0; index < values.size(); ++index) {
+        const Value& value = m_body.at(values[index]);
+        if (value.opcode == Opcode::ResultAt && value.operand(0) == yield && value.index() == static_cast<uint32_t>(YieldResult::Sent)) {
+            if (sent)
+                return;
+            sent = values[index];
+            continue;
+        }
+        if (!sent || (!isCastWithoutTest(value.opcode) && value.opcode != Opcode::ValidateType))
+            continue;
+        if (value.valueOperand() != sent && !proofs.contains(value.valueOperand()))
+            continue;
+        proofs.append(values[index]);
+        proofIndexes.quickSet(index);
+    }
+    if (proofs.isEmpty())
+        return;
+
+    BlockID throwingArm;
+    Vector<BlockID, 2> otherArms;
+    auto addArm = [&](BlockID arm) {
+        if (!otherArms.contains(arm))
+            otherArms.append(arm);
+    };
+    std::span<const Target> caseTargets = terminator.caseTargets();
+    for (size_t index = 0; index < caseTargets.size(); ++index) {
+        if (terminator.cases()[index] == static_cast<int64_t>(ResumeMode::Throw))
+            throwingArm = caseTargets[index].block;
+        else
+            addArm(caseTargets[index].block);
+    }
+    addArm(terminator.otherwise().block);
+    if (!throwingArm || otherArms.contains(throwingArm))
+        return;
+    const CFG& cfg = m_analyses.cfg();
+    if (!cfg.singleIncomingEdge(throwingArm))
+        return;
+    for (BlockID arm : otherArms) {
+        if (!cfg.singleIncomingEdge(arm))
+            return;
+    }
+
+    struct UseInArm {
+        Use use;
+        uint32_t proof;
+        // None for the arm that throws.
+        std::optional<uint32_t> arm;
+    };
+    Vector<UseInArm, 8> uses;
+    Dominators& dominators = m_analyses.dominators();
+    const UseLists& useLists = m_analyses.useLists();
+    for (uint32_t proof = 0; proof < proofs.size(); ++proof) {
+        for (const Use& use : useLists.usesOf(proofs[proof])) {
+            if (use.kind == Use::Kind::Operand && proofs.contains(use.user))
+                continue;
+            if (use.kind == Use::Kind::BlockSubject)
+                return;
+            if (dominators.dominates(throwingArm, use.block)) {
+                uses.append({ use, proof, std::nullopt });
+                continue;
+            }
+            size_t arm = otherArms.findIf([&](BlockID candidate) {
+                return dominators.dominates(candidate, use.block);
+            });
+            // Somebody reads it where several arms meet, or in front of the switch.
+            if (arm == notFound)
+                return;
+            uses.append({ use, proof, static_cast<uint32_t>(arm) });
+        }
+    }
+
+    Vector<Vector<ValueID, 4>, 2> copies;
+    for (BlockID arm : otherArms) {
+        Vector<ValueID, 4> copiesInArm;
+        for (ValueID proof : proofs) {
+            Value copy = m_body.at(proof);
+            size_t operand = proofs.find(copy.valueOperand());
+            if (operand != notFound)
+                copy.setValueOperand(copiesInArm[operand]);
+            m_builder.setOrigin(copy.origin());
+            copiesInArm.append(m_builder.insertBefore(ProgramPoint::atHeadOf(arm), WTF::move(copy)));
+        }
+        copies.append(WTF::move(copiesInArm));
+    }
+    for (const UseInArm& use : uses)
+        replaceUse(m_body, use.use, use.arm ? copies[*use.arm][use.proof] : sent);
+    m_builder.applyInsertions();
+    m_builder.eraseValues(block, proofIndexes);
+    m_analyses.didChangeValues();
+}
+
 void BodyBuilder::mergeAwaitsIntoYields()
 {
     Vector<AwaitedYield> merges = findYieldsToMerge(m_body, m_analyses.useLists());
+    Vector<std::pair<BlockID, ValueID>, 8> mergedYields;
     for (size_t next = 0; next < merges.size();) {
         BlockID block = merges[next].block;
         const BlockValues& values = m_body.at(block).values;
@@ -273,9 +396,12 @@ void BodyBuilder::mergeAwaitsIntoYields()
             rewriteInPlace(block, yield, Opcode::AsyncGeneratorYield, { m_driver, m_body.at(await).valueOperand() }, replacedEffectsOf({ await, yield }));
             for (uint32_t index = merge.awaitIndex; index < merge.yieldIndex; ++index)
                 mergedIndexes.quickSet(index);
+            mergedYields.append({ block, yield });
         }
         m_builder.eraseValues(block, mergedIndexes);
     }
+    for (auto [block, yield] : mergedYields)
+        moveProofsOfSentValueBehindMode(block, yield);
 }
 
 void BodyBuilder::replaceYields()
@@ -290,6 +416,19 @@ void BodyBuilder::replaceYields()
     }
 }
 
+// A step suspends this frame where the generator does not answer at once, and whoever finishes the step resumes the frame through its driver.
+void BodyBuilder::replaceSteps()
+{
+    for (const Block& block : m_body.blocks) {
+        for (ValueID id : block.values) {
+            Value& value = m_body.edit(id);
+            if (value.opcode == Opcode::StepAsyncGenerator)
+                value.setDriverOperand(m_driver);
+        }
+    }
+    m_analyses.didChangeValues();
+}
+
 void BodyBuilder::replaceAwaits()
 {
     Vector<ProgramPoint> typedAwaits;
@@ -301,9 +440,11 @@ void BodyBuilder::replaceAwaits()
             if (value.opcode != Opcode::Await)
                 continue;
             ValueID awaited = value.valueOperand();
-            if (canKeepType(IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, m_driver }), value.type))
+            bool takesExtraTurn = value.takesExtraTurn();
+            if (canKeepType(IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, m_driver }), value.type)) {
                 rewriteInPlace(block, values[index], Opcode::AwaitBySavingFrame, { awaited, m_driver });
-            else
+                m_body.edit(values[index]).setTakesExtraTurn(takesExtraTurn);
+            } else
                 typedAwaits.append(ProgramPoint { block, index });
         }
     }
@@ -317,15 +458,39 @@ void BodyBuilder::expandTypedAwait(ProgramPoint point)
     ValueID id = m_body.at(point.block).values[point.index];
     ValueID awaited = m_body.at(id).valueOperand();
     TypeID type = m_body.at(id).type;
-    TypeID prediction = m_body.at(id).prediction();
+    TypeID expected = m_body.at(id).expected();
+    bool takesExtraTurn = m_body.at(id).takesExtraTurn();
     ReplacedEffects replaced = replacedEffectsOf({ id });
 
     IRBuilder::Expansion expansion = m_builder.beginExpansion(point);
     Value successor = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, m_driver });
-    successor.setPrediction(prediction);
+    successor.setTakesExtraTurn(takesExtraTurn);
+    if (canExpect(successor, expected))
+        successor.setExpected(expected);
     ValueID result = m_builder.append(WTF::move(successor));
     checkSuccessor(point.block, result, replaced);
     m_builder.endExpansion(expansion, convertTo(m_builder, result, DeclaredType { .type = type }));
+}
+
+// The ramp allocates the generator, which reads the property `prototype` of the function, and only then does the head of the body evaluate the parameters.
+bool BodyBuilder::headMayChangePrototype(ProgramPoint initialYield)
+{
+    if (initialYield.block != entryBlock)
+        return true;
+    return std::ranges::any_of(m_body.at(entryBlock).values.span().first(initialYield.index), [&](ValueID id) {
+        Effects effects = m_analyses.effectsOf(id).onAnyEdge();
+        return effects.mayCallUnknownCode || effects.writes.contains(AbstractHeap::NamedProperties);
+    });
+}
+
+// Nothing tells when such a head has run, so the call that starts the generator may be left to its first step.
+bool BodyBuilder::headHasNoEffect(ProgramPoint initialYield)
+{
+    if (initialYield.block != entryBlock)
+        return false;
+    return std::ranges::all_of(m_body.at(entryBlock).values.span().first(initialYield.index), [&](ValueID id) {
+        return m_analyses.isUnobservable(id);
+    });
 }
 
 void BodyBuilder::expandInitialYield()
@@ -335,9 +500,21 @@ void BodyBuilder::expandInitialYield()
         return;
 
     ReplacedEffects replaced = replacedEffectsOf({ m_body.at(point->block).values[point->index] });
+    bool takesPrototypeAgain = headMayChangePrototype(*point);
 
     IRBuilder::Expansion expansion = m_builder.beginExpansion(*point);
     RELEASE_ASSERT(expansion.results.isEmpty());
+    if (m_record.kind == CoroutineKind::Generator && headHasNoEffect(*point)) {
+        // Whoever takes the first step by calling the body has marked the generator as running, and the body does not suspend here.
+        IRBuilder::BranchBlocks blocks = m_builder.emitBranch(m_builder.append(Opcode::IsGeneratorRunning, { m_driver }));
+        m_builder.emitJump(expansion.continuation);
+        m_builder.moveToEndOf(blocks.notTaken);
+    }
+    if (takesPrototypeAgain) {
+        std::optional<unsigned> calleeParameter = m_body.calleeParameterIndex();
+        RELEASE_ASSERT(calleeParameter);
+        m_builder.append(Opcode::TakeGeneratorPrototype, { m_driver, m_body.at(entryBlock).parameters[*calleeParameter] });
+    }
     ValueID yield = m_builder.append(Opcode::YieldBySavingFrame, { m_driver, m_builder.appendUndefined() });
     checkSuccessor(point->block, yield, replaced);
     ValueID sent = appendResultAt(m_builder, yield, YieldResult::Sent);
@@ -362,7 +539,7 @@ void BodyBuilder::replaceReturns()
     bool isAsyncFunction = m_record.kind == CoroutineKind::AsyncFunction;
     for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
-        Terminator& terminator = m_body.at(block).terminator;
+        Terminator& terminator = m_body.edit(block).terminator;
         if (terminator.kind != TerminatorKind::Return)
             continue;
 

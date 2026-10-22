@@ -1,0 +1,29 @@
+# A function that is created with a prototype property keeps it as a data property of its own: the read that a construction makes of it runs no code, so the language prescribes no error for it,
+# and where nobody takes its answer it goes away. The read of a value that may be a proxy or a function without the property stays
+# FORM: Prepared
+# RUN(EFFECTS): effects f2
+# RUN: pass EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Legacy" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]
+function f1 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f2 name="reads" parameters=[{type=f0}, {type=f1}, {type=anything}, {type=undefined|f1}] results=[{type=undefined}] {
+  b0(v0: f0, v1: f1, v2: anything, v3: undefined|f1):
+    v4 = GetConstructPrototype v0 layout=L0
+    v5 = GetConstructPrototype v1 layout=L1
+    v6 = GetConstructPrototype v2 layout=L1
+    v7 = GetConstructPrototype v3 layout=L1
+    Return
+}
+# EFFECTS-LABEL: function f2
+# EFFECTS-NEXT: v4 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throwsForLackOfMemory collects
+# EFFECTS-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throwsForLackOfMemory collects
+# EFFECTS-NEXT: v6 GetConstructPrototype: unknownCode
+# EFFECTS-NEXT: v7 GetConstructPrototype: {{*}} throws collects
+# CHECK-LABEL: function f2 name="reads"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = GetConstructPrototype v2 layout=L1
+# CHECK-NEXT: = GetConstructPrototype v3 layout=L1
+# CHECK-NEXT: Return

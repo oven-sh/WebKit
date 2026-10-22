@@ -28,6 +28,7 @@
 
 #include "AbstractModuleRecord.h"
 #include "CyclicModuleRecord.h"
+#include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
@@ -397,28 +398,28 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     // 4. If IsAccessorDescriptor(Desc) is true, return false.
     if (descriptor.isAccessorDescriptor()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot change module namespace object's binding to accessor"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToAccessorError);
         return false;
     }
 
     // 5. If Desc.[[Writable]] is present and has value false, return false.
     if (descriptor.writablePresent() && !descriptor.writable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot change module namespace object's binding to non-writable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToNonWritableError);
         return false;
     }
 
     // 6. If Desc.[[Enumerable]] is present and has value false, return false.
     if (descriptor.enumerablePresent() && !descriptor.enumerable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding with non-enumerable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToNonEnumerableError);
         return false;
     }
 
     // 7. If Desc.[[Configurable]] is present and has value true, return false.
     if (descriptor.configurablePresent() && descriptor.configurable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding with configurable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToConfigurableError);
         return false;
     }
 
@@ -428,7 +429,7 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, false);
         if (!result) {
             if (shouldThrow)
-                throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding's value"_s);
+                throwTypeError(globalObject, scope, NamespaceBindingValueError);
             return false;
         }
     }

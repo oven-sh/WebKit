@@ -76,10 +76,6 @@ KeyLookup keyLookupOf(const Program&, PropertyKeyID);
 
 LayoutID classOfClassObject(const Program&, const Type& classObject);
 
-enum class Ancestry : uint8_t { Unknown, Unrelated, Descendant };
-
-Ancestry ancestryOf(const Program&, LayoutID layout, LayoutID ancestor);
-
 struct MemberArm {
     MemberAnswer answer;
     LayoutList layouts;

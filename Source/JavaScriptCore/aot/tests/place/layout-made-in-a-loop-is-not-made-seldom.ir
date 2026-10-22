@@ -1,0 +1,77 @@
+# An event counts for far more than a loop in the estimate of a run, so a layout that one loop makes looks as if it were made seldom. A loop may fill an array with any number of objects,
+# so what the code itself shows to be made in a loop is not made seldom: at a place in a loop, in a function that such a place calls by name, directly or through others, and in a function that calls itself.
+# Such a layout keeps its 32-bit references
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L1 name="MadeOnce" fields=[{key="left" declared={type=L0} flags=[IsRequired]}, {key="right" declared={type=L0} flags=[IsRequired]}, {key="parent" declared={type=L0} flags=[IsRequired]}, {key="child" declared={type=L0} flags=[IsRequired]}]
+layout L2 name="MadeInLoop" fields=[{key="left" declared={type=L0} flags=[IsRequired]}, {key="right" declared={type=L0} flags=[IsRequired]}, {key="parent" declared={type=L0} flags=[IsRequired]}, {key="child" declared={type=L0} flags=[IsRequired]}]
+layout L3 name="MadeBelowLoop" fields=[{key="left" declared={type=L0} flags=[IsRequired]}, {key="right" declared={type=L0} flags=[IsRequired]}, {key="parent" declared={type=L0} flags=[IsRequired]}, {key="child" declared={type=L0} flags=[IsRequired]}]
+layout L4 name="MadeByRecursion" fields=[{key="left" declared={type=L0} flags=[IsRequired]}, {key="right" declared={type=L0} flags=[IsRequired]}, {key="parent" declared={type=L0} flags=[IsRequired]}, {key="child" declared={type=L0} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v4, v4, v4, v4 layout=L1 fields=[0, 1, 2, 3]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g0
+    v8 = CallDirect v2, v4 function=f3
+    PutModuleVariable v8 variable=g0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = NewObject -, v4, v4, v4, v4 layout=L2 fields=[0, 1, 2, 3]
+    v12 = FinishObject v11
+    PutModuleVariable v12 variable=g0
+    v14 = CallDirect v4 function=f1
+    PutModuleVariable v14 variable=g0
+    v16 = Call v0
+    v17 = ToBoolean v16
+    Branch v17 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="through" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+function f2 name="make" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = NewObject -, v0, v0, v0, v0 layout=L3 fields=[0, 1, 2, 3]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="build" parameters=[{type=number}, {type=L0}] results=[{type=anything}] {
+  b0(v0: number, v1: L0):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=-1
+    v4 = Add v0, v3
+    v5 = ToNumber v4
+    v6 = CallDirect v5, v1 function=f3
+    PutModuleVariable v6 variable=g0
+    Jump -> next b2()
+  b2():
+    v8 = NewObject -, v1, v1, v1, v1 layout=L4 fields=[0, 1, 2, 3]
+    v9 = FinishObject v8
+    Return v9
+}
+# CHECK: L1 CompiledObject size=48
+# CHECK-NEXT: "left" Cell @16
+# CHECK: L2 CompiledObject size=32
+# CHECK-NEXT: "left" Cell32 @16
+# CHECK: L3 CompiledObject size=32
+# CHECK-NEXT: "left" Cell32 @16
+# CHECK: L4 CompiledObject size=32
+# CHECK-NEXT: "left" Cell32 @16

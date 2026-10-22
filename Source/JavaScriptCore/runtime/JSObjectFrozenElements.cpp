@@ -43,6 +43,7 @@ void JSObject::moveFrozenElementsToSparseMap(VM& vm)
     objectConstructorFreeze(realm(), this);
     scope.releaseAssertNoException();
     RELEASE_ASSERT(inSparseIndexingMode());
+    didBecomePrototype(vm);
 }
 
 bool JSObject::tryFreezeArrayInPlace(VM& vm)

@@ -1,8 +1,8 @@
-# A slot holds deferred closures if its own field always gets a new closure of one function at creation and cannot leave the slot, also in an object that lives in a frame
+# A slot holds deferred closures if an allocation of its layout lists a new closure for the field, also where another allocation lists a closure of another function, where the field may leave the slot later and in an object that lives in a frame
 # FORM: AsRead
-# OPTIONS: only-passes=AllocateInFrames,ResolveAccesses references=narrow
+# OPTIONS: only-passes=AllocateInFrames,ResolveAccesses,DeferClosuresInFields references=narrow
 # RUN: plan-slots layouts
-# STATISTIC: DeferredClosureSlots = 3
+# STATISTIC: DeferredClosureSlots = 5
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -52,7 +52,7 @@ function f1 name="CapturesObject" kind=BaseConstructor flags=[HasNewTarget] resu
     Return v2
 }
 function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     Return
 }
 function f3 name="first" kind=Arrow results=[{type=anything}] {
@@ -72,7 +72,10 @@ function f5 name="third" kind=Arrow results=[{type=anything}] {
 # CHECK-NEXT: .0 "run" DeferredClosure @16 f2 capturesObject record=0
 # CHECK-NEXT: L1 CompiledObject size=32
 # CHECK-NEXT: .0 "run" DeferredClosure @16 f3 record=0
-# CHECK-NEXT: L2 CompiledObject
-# CHECK-NOT: DeferredClosure
-# CHECK: L4 CompiledObject size=32
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f3 record=0
+# What deletes the field makes the closure first, and then the slot reads empty like any other.
+# CHECK: L3 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f4 record=0
+# CHECK-NEXT: L4 CompiledObject size=32
 # CHECK-NEXT: .0 "run" DeferredClosure @16 f5 record=0

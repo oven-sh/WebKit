@@ -1,4 +1,4 @@
-# An argument of another type than an async function wrote rejects the promise, so the generic entrypoint throws nothing and returns from a join
+# The generic entrypoint of an async function is like any other: it tests nothing, so no argument makes it reject. It has no handler and no promise of its own, and jumps to the ramp, which returns the promise
 # FORM: Prepared
 # RUN: derived-functions GenericEntrypoint:f0
 # RUN(QUIET): derived-functions GenericEntrypoint:f0
@@ -18,18 +18,14 @@ function f1 name="asynchronous" role=CoroutineBody flags=[IsAsync] parameters=[{
     v3 = ReturnAsyncResult v1, v2
     Return v3
 }
-# CHECK: role=GenericEntrypoint
-# CHECK: [[handler]]() role=CatchHandler
-# CHECK-NEXT: [[error]]: anything = CatchValue
-# CHECK-NEXT: [[rejected]]: Promise = NewPromise
-# CHECK-NEXT: RejectPromise [[rejected]], [[error]]
-# CHECK-NEXT: Jump -> next [[join]]([[rejected]])
-# CHECK: handler=[[handler]]():
-# CHECK-NEXT: [[number]]: number = Claim {{*}} castType=number site=w0
-# CHECK: [[promise]]: Promise = CallDirect [[number]] function=f0
-# CHECK-NEXT: Jump -> next [[join]]([[promise]])
-# CHECK: [[join]]([[joined]]: Promise):
-# CHECK-NEXT: Return [[joined]]
-# QUIET-LABEL: role=GenericEntrypoint
+# CHECK: name="asynchronous" module=m0 role=GenericEntrypoint
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[argument]]: anything):
+# CHECK-NEXT: [[number]]: number = AssumeType [[argument]] castType=number
+# CHECK-NEXT: [[promise]]: Promise = CallDirect [[number]] function=f0
+# CHECK-NEXT: ReturnCall [[promise]] requirement=Allowed
+# QUIET-LABEL: name="asynchronous" module=m0 role=GenericEntrypoint
 # QUIET-NOT: Throw
-# QUIET-NOT: ReturnCall
+# QUIET-NOT: handler=
+# QUIET-NOT: CatchHandler
+# QUIET-NOT: NewPromise
+# QUIET-NOT: RejectPromise

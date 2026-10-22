@@ -4,7 +4,7 @@
 # CHECK-NEXT: layout L0 kind=Instance name="C" module=m0 staticFields=[{key="s" variable=g3}]
 # CHECK-NEXT: variable g0 module=m0 declared={type=anything}
 # CHECK-NEXT: variable g1 name="f" module=m1 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
-# CHECK-NEXT: variable g2 name="n" module=m0 declared={type=number predicted=i32 site=w0} initialization=Undefined
+# CHECK-NEXT: variable g2 name="n" module=m0 declared={type=number site=w0 flags=[IsExpected]} initialization=Undefined
 # CHECK-NEXT: variable g3 name="s" module=m0 declared={type=anything} owner=L0
 # CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0
 # CHECK-NEXT: module m1 path="/b.ts" displayPath="b.ts"
@@ -22,7 +22,7 @@ typesite w0 module=m0 position=3 kind=Variable text="number"
 layout L0 kind=Instance name="C" module=m0 staticFields=[{key="s" variable=g3}]
 variable g0 module=m0 declared={type=anything}
 variable g1 name="f" module=m1 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
-variable g2 name="n" module=m0 declared={type=number predicted=i32 site=w0} initialization=Undefined
+variable g2 name="n" module=m0 declared={type=number site=w0 flags=[IsExpected]} initialization=Undefined
 variable g3 name="s" module=m0 declared={type=anything} owner=L0
 module m0 path="/a.ts" displayPath="a.ts" body=f0
 module m1 path="/b.ts" displayPath="b.ts"

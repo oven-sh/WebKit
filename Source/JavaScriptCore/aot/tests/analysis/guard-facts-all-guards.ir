@@ -20,7 +20,7 @@ function f0 name="unionOfTwoTests" parameters=[{type=object}] results=[{type=any
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK: v5 facts: [Shape of v0 by v1 reads ShapeWords[L0], SlotFilled of v0 by v3 reads ObjectFields["x"]]
+# CHECK: v5 facts: [Shape of v0 by v1 reads -, SlotFilled of v0 by v3 reads ObjectFields["x"]]
 
 function f1 name="sameFactTwice" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object):
@@ -37,8 +37,8 @@ function f1 name="sameFactTwice" parameters=[{type=object}] results=[{type=anyth
     Return
 }
 # CHECK-LABEL: function f1
-# CHECK: v4 facts: [Shape of v0 by v3 reads ShapeWords[L0]]
-# CHECK-NEXT: v5 facts: [Shape of v0 by v1 reads ShapeWords[L0]]
+# CHECK: v4 facts: [Shape of v0 by v3 reads -]
+# CHECK-NEXT: v5 facts: [Shape of v0 by v1 reads -]
 
 function f2 name="unknownOperand" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object):
@@ -58,5 +58,5 @@ function f2 name="unknownOperand" parameters=[{type=object}] results=[{type=anyt
 # CHECK: v3 facts: unknown
 # CHECK-NEXT: v4 facts: unknown
 # CHECK-NEXT: v5 facts: unknown
-# CHECK-NEXT: v6 facts: [Shape of v0 by v1 reads ShapeWords[L0]]
+# CHECK-NEXT: v6 facts: [Shape of v0 by v1 reads -]
 # CHECK-NEXT: v7 facts: []

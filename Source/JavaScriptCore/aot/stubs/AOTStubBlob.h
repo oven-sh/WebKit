@@ -40,12 +40,21 @@ struct StubReturnSite {
 };
 static_assert(sizeof(StubReturnSite) == 8 && std::has_unique_object_representations_v<StubReturnSite>);
 
+// From the offset up to the end nothing else can be entered.
+struct StubEntryRange {
+    uint32_t offset;
+    uint32_t end;
+};
+
 struct StubBlob {
     std::optional<uint32_t> offsetOf(StubKey) const;
 
     RelocatableCode code;
     Vector<StubPlacement> placements;
     Vector<StubReturnSite> returnSites;
+    // The run time and the stubs know a frame of such a kind by its return address, and hold one address per kind: that of the first copy.
+    // So the calls in front of those sites run in the first copy only. In every other copy these entries, which are all the ways to them, are jumps to the first.
+    Vector<StubEntryRange> entriesInFrontOfSingleReturnSites;
     WTF::BitSet<numberOfEntries> entriesUsed;
 };
 

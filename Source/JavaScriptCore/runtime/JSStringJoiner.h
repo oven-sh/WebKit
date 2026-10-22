@@ -246,12 +246,6 @@ public:
             if constexpr (indexingShape == ContiguousShape) {
                 if (value.isString())
                     return asString(value);
-#if USE(BUN_JSC_ADDITIONS)
-                if (auto int32Value = strictInt32Of(value)) {
-                    m_accumulatedStringsLength = WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
-                    return joinImpl<indexingShape>(globalObject, data, length);
-                }
-#endif
                 if (!value.isInt32())
                     return nullptr;
             }
@@ -272,12 +266,6 @@ public:
                     m_isAll8Bit &= string->is8Bit();
                     continue;
                 }
-#if USE(BUN_JSC_ADDITIONS)
-                if (auto int32Value = strictInt32Of(value)) {
-                    m_accumulatedStringsLength += WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
-                    continue;
-                }
-#endif
                 if (!value.isInt32())
                     return nullptr;
             }
@@ -288,12 +276,8 @@ public:
         return joinImpl<indexingShape>(globalObject, data, length);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    static std::optional<int32_t> strictInt32Of(JSValue value)
-    {
-        return value.isDouble() ? tryConvertToStrictInt32(value.asDouble()) : std::nullopt;
-    }
-
+#if ENABLE(AOT)
+    // Compiled code chooses an array's storage by the type of its elements: an array of numbers holds doubles, whatever their values.
     JSString* tryJoin(JSGlobalObject* globalObject, const double* data, unsigned length)
     {
         for (size_t i = 0; i < length; ++i) {
@@ -309,7 +293,7 @@ public:
 private:
     template<IndexingType indexingShape>
     JSString* joinImpl(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(AOT)
     JSString* joinImpl(JSGlobalObject*, const double*, unsigned);
 #endif
 

@@ -49,13 +49,19 @@ function f4 name="yieldsOnce" text={start=127 end=161} flags=[IsGenerator, Takes
 }
 
 # CHECK: magic ok
-# CHECK: functionNames [[functions]]
-# CHECK-NEXT: functionKinds [[functions]]
-# CHECK-NEXT: functionTraces [[functions]]
+# CHECK: functionNames
+# CHECK-NEXT: functionNameGroups
+# CHECK-NEXT: functionNameRuns
+# CHECK-NEXT: functionRecordNumbers
+# CHECK-NEXT: functionRecords
+# CHECK-NEXT: functionRecordsByFunction
 # CHECK-NEXT: functionSources
 # CHECK-NEXT: implementedBuiltins
+# CHECK-NEXT: closureFunctionKinds [[closureFunctions]]
 # CHECK-NEXT: functionLengths [[closureFunctions]]
 # CHECK-NEXT: closureCaptureCounts [[closureFunctions]]
+# CHECK-NEXT: functionsWithLargeCounts 0 0
+# CHECK-NEXT: closureCellNumbers [[closureFunctions]]
 # CHECK-NEXT: functionTexts 1 12
 
 # ROWS: function f1 name="plain" callable=Plain

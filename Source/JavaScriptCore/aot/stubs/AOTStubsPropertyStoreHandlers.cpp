@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTCellFormat.h"
 #include "AOTFunctionTables.h"
 #include "AOTInstance.h"
@@ -308,6 +309,10 @@ static void emitFieldCreation(StoreSlotBody& body, FieldStoreArm& arm, FieldStor
     // A field that is about to be created has no granule yet. With one it is a field that has storage and is absent.
     hasNoStorage.link(&jit);
     arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
+    // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none.
+    Jump alwaysNeedsStorage = slot.branchUnlessFlag(jit, Slot::undefinedNeedsNoStorage);
+    Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, body.value, TrustedImm32(JSValue::ValueUndefined));
+    alwaysNeedsStorage.link(&jit);
     const GPRReg granule = r.field.representation;
     const GPRReg granuleBit = r.secondScratch;
     const GPRReg extension = r.field.address;
@@ -336,13 +341,17 @@ static void emitFieldCreation(StoreSlotBody& body, FieldStoreArm& arm, FieldStor
         const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
         const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
         const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
-        RELEASE_ASSERT(noOverlap(granuleBit, A0, A1) && noOverlap(body.receiver, A0, A2));
+        RELEASE_ASSERT(body.receiver != A2 && noOverlap(instanceGPR, A1, A2));
         jit.move(granuleBit, A2);
         jit.move(body.receiver, A1);
         jit.move(instanceGPR, A0);
         jit.callOperation(Entry::operationAOTEnsureExtensionGranules, jit.reuseScratch(StubRegister::Operation));
     });
     jit.jump().linkTo(findStorage, &jit);
+
+    needsNoStorage.link(&jit);
+    arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, r.field.slotData, TrustedImm32(offsetBitsWithoutSlotKey)));
+    stored.append(jit.jump());
 
     storeExits.wasAbsentAndIsNotAccepted.link(&jit);
     arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
@@ -366,12 +375,9 @@ static void emitFieldCreation(StoreSlotBody& body, FieldStoreArm& arm, FieldStor
     appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
     returnAfterStoring(jit, body.receiver, body.value);
 
+    // The slot key says where the slot is. The storage is there by now, or the field needs none.
     hasNoTransition.link(&jit);
-    Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
     jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldAt, didCreateFieldCall);
-
-    isOutOfLine.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldOutOfLineAt, didCreateFieldCall);
 }
 
 static void emitFieldStore(StoreSlotBody& body)
@@ -391,6 +397,29 @@ static void emitFieldStore(StoreSlotBody& body)
     slot.loadSecondPayloadWord(jit, r.type);
     Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
     computeFieldAddress(jit, r.field, false, hasNoStorage);
+    // Slot::remembersOrder: nothing is asked of the value. An object with the order word that the slot remembers has none of the bits that forbid a new field, and gets the order that the slot remembers.
+    // With any other order word the field is created as by a slot that remembers nothing.
+    if (createsField && slot.form() == SlotForm::Slot) {
+        const GPRReg orderWordBefore = r.type;
+        const GPRReg orderAfter = r.scratch;
+        const Address valueInSlot(r.field.address);
+        const Address orderWord(body.receiver, offsetOfOrderWord);
+        Jump remembersNothing = slot.branchUnlessFlag(jit, Slot::remembersOrder);
+        Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, valueInSlot);
+        jit.store64(body.value, valueInSlot);
+        returnAfterStoring(jit, body.receiver, body.value);
+
+        isAbsent.link(&jit);
+        exits.wasAbsent.append(jit.branch32(CCallHelpers::NotEqual, orderWord, orderWordBefore));
+        jit.store64(body.value, valueInSlot);
+        slot.loadHiddenWordOffset(jit, orderAfter);
+        jit.add32(TrustedImm32(1 << orderWordCountShift), orderWordBefore);
+        jit.and32(TrustedImm32(static_cast<int32_t>(~orderWordOrderMask)), orderWordBefore);
+        jit.or32(orderAfter, orderWordBefore);
+        jit.store32(orderWordBefore, orderWord);
+        returnAfterStoring(jit, body.receiver, body.value);
+        remembersNothing.link(&jit);
+    }
     Label hasAddress = jit.label();
     storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
 
@@ -573,8 +602,9 @@ static void emitAdditionInNewStorage(StoreSlotBody& body)
     JumpList cannot;
 
     // No packed slot has the flag.
+    Jump hasIndexingHeader;
     if (body.traits.form == SlotForm::Slot)
-        cannot.append(body.slot.branchIfFlag(jit, Slot::storageHasIndexingHeader));
+        hasIndexingHeader = body.slot.branchIfFlag(jit, Slot::storageHasIndexingHeader);
     body.slot.loadSecondPayloadWord(jit, newCapacity);
     Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
     cannot.append(jit.branchTestPtr(CCallHelpers::Zero, butterfly));
@@ -598,6 +628,18 @@ static void emitAdditionInNewStorage(StoreSlotBody& body)
         .addedValue = body.value,
     }, cannot);
     jit.jumpToStub(writeBarrier());
+
+    // An array that was born with room for its first named properties has the new storage already: the room lies in front of its indexing header.
+    if (hasIndexingHeader.isSet()) {
+        const GPRReg distanceToButterfly = oldCapacity;
+        hasIndexingHeader.link(&jit);
+        body.slot.loadSecondPayloadWord(jit, newCapacity);
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
+        jit.loadPtr(butterfly, distanceToButterfly);
+        jit.subPtr(body.receiver, distanceToButterfly);
+        cannot.append(jit.branch64(CCallHelpers::NotEqual, distanceToButterfly, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
+        emitAdditionInStorage(body);
+    }
 
     linkToSlotCannot(jit, cannot, body.table, SlotFinisher::GrowStorage, body.slot);
 }
@@ -662,7 +704,10 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::Absent:
     case Slot::Kind::Getter:
     case Slot::Kind::CustomGetter:
+    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldOrInherited:
+    case Slot::Kind::InheritedField:
+    case Slot::Kind::FieldOrInheritedField:
     case Slot::Kind::ExtraGetter:
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:
@@ -745,7 +790,10 @@ static void emitStoreBySlot(StoreSlotBody& body)
     case Slot::Kind::Absent:
     case Slot::Kind::Getter:
     case Slot::Kind::CustomGetter:
+    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldOrInherited:
+    case Slot::Kind::InheritedField:
+    case Slot::Kind::FieldOrInheritedField:
     case Slot::Kind::ExtraGetter:
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:

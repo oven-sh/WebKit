@@ -67,8 +67,9 @@ function f3 name="oneOfTwoProofsNarrows" parameters=[{type=number}] results=[{ty
     Return v0
 }
 # CHECK-LABEL: function f3 name="oneOfTwoProofsNarrows"
-# CHECK: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: 5):
+# CHECK: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: 5 = Integer integer=5
 # CHECK-NEXT: = Add v3, v1
 
 function f4 name="proofAndArgumentMeet" parameters=[{type=string}, {type=boolean}] results=[{type=string}] {

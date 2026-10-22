@@ -279,6 +279,7 @@ static void testExternalCards()
     alignas(RememberedSlotSet::cardsPerWord) std::array<uint8_t, 24> cards { };
     static_assert(RememberedSlotSet::numberOfCardsFor(9 * regionSize, regionShift) == 16);
     RememberedSlotSet set(table.bytes(), regionShift, std::span<uint8_t>(cards));
+    set.setCardsAreWrittenWithoutRecord();
     AOT_TEST_CHECK(set.cards() == cards.data());
 
     table.slotAt(8 * regionSize).set(set, 1);
@@ -289,6 +290,65 @@ static void testExternalCards()
 
     cards[16] = RememberedSlotSet::writtenCard;
     AOT_TEST_CHECK(!set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Eden).isEmpty() && cards[16] == RememberedSlotSet::writtenCard);
+}
+
+// The roots are visited at every stop of the mutator. A set lists the cards that record() writes, and whoever asks for the written ones reads the list and not the cards.
+// So a card that is stored to directly counts only in a set that says so: the cards of the statics, which compiled code writes.
+static void testWrittenCardsAreListed()
+{
+    ByteTable<4 * regionSize> table;
+    RememberedSlotSet set(table.bytes(), regionShift);
+    set.cards()[2] = RememberedSlotSet::writtenCard;
+    AOT_TEST_CHECK(!set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Eden).isEmpty());
+    AOT_TEST_CHECK(set.cards()[2] == RememberedSlotSet::writtenCard);
+
+    table.slotAt(3 * regionSize).set(set, 1);
+    table.slotAt(0).set(set, 1);
+    table.slotAt(3 * regionSize + sizeof(uint64_t)).set(set, 1);
+    AOT_TEST_CHECK(set.hasWrittenRegions());
+    AOT_TEST_CHECK((regionsToSweep(set, CollectionScope::Eden) == Regions { { 0, regionSize }, { 3 * regionSize, 4 * regionSize } }));
+    AOT_TEST_CHECK(!set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Eden).isEmpty());
+
+    set.recordAll();
+    AOT_TEST_CHECK(set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Eden).size() == 4);
+    AOT_TEST_CHECK(regionsToSweep(set, CollectionScope::Eden).isEmpty() && regionsToSweep(set, CollectionScope::Full).size() == 4);
+
+    table.slotAt(regionSize).set(set, 1);
+    AOT_TEST_CHECK(regionsToClear(set).size() == 4);
+    AOT_TEST_CHECK(!set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Full).isEmpty());
+    table.slotAt(regionSize).set(set, 1);
+    AOT_TEST_CHECK((regionsToSweep(set, CollectionScope::Eden) == Regions { { regionSize, 2 * regionSize } }));
+
+    RememberedSlotSet writtenByCompiledCode(table.bytes(), regionShift);
+    writtenByCompiledCode.setCardsAreWrittenWithoutRecord();
+    writtenByCompiledCode.cards()[2] = RememberedSlotSet::writtenCard;
+    AOT_TEST_CHECK(writtenByCompiledCode.hasWrittenRegions());
+    AOT_TEST_CHECK((regionsToSweep(writtenByCompiledCode, CollectionScope::Eden) == Regions { { 2 * regionSize, 3 * regionSize } }));
+    writtenByCompiledCode.cards()[1] = RememberedSlotSet::writtenCard;
+    table.slotAt(3 * regionSize).set(writtenByCompiledCode, 1);
+    AOT_TEST_CHECK((regionsToSweep(writtenByCompiledCode, CollectionScope::Eden) == Regions { { regionSize, 2 * regionSize }, { 3 * regionSize, 4 * regionSize } }));
+}
+
+// The list ends where it would be no shorter than the cards. From there on the cards are read, and none is missed.
+static void testMoreWrittenCardsThanAreListed()
+{
+    constexpr size_t numberOfRegions = 400;
+    auto tableOffTheStack = makeUniqueWithoutFastMallocCheck<ByteTable<numberOfRegions * regionSize>>();
+    auto& table = *tableOffTheStack;
+    RememberedSlotSet set(table.bytes(), regionShift);
+    for (unsigned round = 0; round < 2; ++round) {
+        for (size_t region = numberOfRegions; region--;) {
+            if (region % 3)
+                table.slotAt(region * regionSize).set(set, 1);
+        }
+        Regions written = regionsToSweep(set, CollectionScope::Eden);
+        AOT_TEST_CHECK(written.size() == numberOfRegions - (numberOfRegions + 2) / 3);
+        AOT_TEST_CHECK(written[0] == (Region { regionSize, 2 * regionSize }) && written.last() == (Region { (numberOfRegions - 2) * regionSize, (numberOfRegions - 1) * regionSize }));
+        AOT_TEST_CHECK(!set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Eden).isEmpty());
+
+        table.slotAt(3 * regionSize).set(set, 1);
+        AOT_TEST_CHECK((regionsToSweep(set, CollectionScope::Eden) == Regions { { 3 * regionSize, 4 * regionSize } }));
+    }
 }
 
 static void testMovedTable()
@@ -620,6 +680,8 @@ std::span<const NativeTest> heapRememberedSlotTests()
         { "remembered-slot/set/last-region-is-clipped-to-the-table"_s, testLastRegionIsClippedToTheTable },
         { "remembered-slot/set/one-region"_s, testSetWithOneRegion },
         { "remembered-slot/set/external-cards"_s, testExternalCards },
+        { "remembered-slot/set/written-cards-are-listed"_s, testWrittenCardsAreListed },
+        { "remembered-slot/set/more-written-cards-than-are-listed"_s, testMoreWrittenCardsThanAreListed },
         { "remembered-slot/set/moved-table"_s, testMovedTable },
         { "remembered-slot/set/entry-across-a-border-is-seen-from-both-regions"_s, testEntryAcrossABorderIsSeenFromBothRegions },
         { "remembered-slot/set/young-cell-in-recorded-slot-survives-eden-collection"_s, testYoungCellInRecordedSlotSurvivesEdenCollection },

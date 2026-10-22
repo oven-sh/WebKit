@@ -8,10 +8,12 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 struct FieldAccess;
+struct StateOfNewObject;
 
 class SlotRunEmitter final : public OperationEmitter {
 public:
@@ -25,8 +27,8 @@ private:
 
     void storeRun(const ValueContext&, CellPointer, const Run&);
     Condition isMissing(CellPointer, const Entry&);
-    void listMissingFields(const ValueContext&, CellPointer, const Run&);
-    void listFieldsInRuntime(const ValueContext&, CellPointer, const Run&);
+    void listMissingFields(const ValueContext&, CellPointer, const Run&, const std::optional<StateOfNewObject>&);
+    bool listFieldsInRuntime(const ValueContext&, CellPointer, const Run&, std::optional<uint32_t> placePlusOne);
 };
 
 } } } // namespace JSC::AOT::Typed

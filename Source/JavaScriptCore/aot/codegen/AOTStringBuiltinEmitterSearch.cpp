@@ -181,10 +181,75 @@ void StringBuiltinEmitter::generateHasAt(const InlineCall& call, LiteralEnd end)
     }
 
     finish(call, selectByBranch<Condition>(hasRoom, [&] {
-        return isNotZero(low32(callOperation<Integer>(call.context(), RuntimeOperation::StringHasAt, { string, other, low32(at) })));
+        return hasCharactersAt(call, string, other, at);
     }, [&] {
         return boolean(false);
     }));
+}
+
+// There is room for other at that place in string.
+// Two strings that are no ropes and have characters of 8 bits, the sought one of at most two words: its first and its last bytes are compared, which may overlap.
+Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPointer string, CellPointer other, Integer at)
+{
+    constexpr unsigned maxLengthComparedInLine = 2 * sizeof(uint64_t);
+    const B3::AbstractHeap& characters = m_heaps.characters8.atAnyIndex();
+    LBasicBlock generic = newBlock();
+    Join<Condition> join(m_out);
+    auto continueIf = [&](Condition condition) {
+        LBasicBlock next = newBlock();
+        m_out.branch(condition.value(), normalEdge(next), unlikelyEdge(generic));
+        m_out.appendTo(next);
+    };
+    auto load = [&](unsigned width, Pointer pointer) -> LValue {
+        TypedPointer address(characters, pointer.value());
+        switch (width) {
+        case 8:
+            return m_out.load64(address);
+        case 4:
+            return m_out.load32(address);
+        case 2:
+            return m_out.load16ZeroExt32(address);
+        case 1:
+            return m_out.load8ZeroExt32(address);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+
+    continueIf(logicalNot(isRopeString(string)));
+    continueIf(logicalNot(isRopeString(other)));
+    CharacterView subject = strings().viewOfFlatString(string);
+    CharacterView sought = strings().viewOfFlatString(other);
+    continueIf(logicalAnd(subject.is8Bit, sought.is8Bit));
+    continueIf(belowOrEqual(sought.length, word32(maxLengthComparedInLine)));
+    Pointer here = offsetBy(subject.characters, at, 0);
+    Integer size = zeroExtended(sought.length);
+    for (unsigned width : { 8u, 4u, 2u }) {
+        LBasicBlock compare = newBlock();
+        LBasicBlock shorter = newBlock();
+        m_out.branch(aboveOrEqual(sought.length, word32(width)).value(), normalEdge(compare), normalEdge(shorter));
+
+        m_out.appendTo(compare);
+        Integer lastOffset = sub(size, integer(width));
+        LValue firstDifference = m_out.bitXor(load(width, here), load(width, sought.characters));
+        LValue lastDifference = m_out.bitXor(load(width, offsetBy(here, lastOffset, 0)), load(width, offsetBy(sought.characters, lastOffset, 0)));
+        LValue difference = m_out.bitOr(firstDifference, lastDifference);
+        join.add(Condition(width == 8 ? m_out.isZero64(difference) : m_out.isZero32(difference)));
+
+        m_out.appendTo(shorter);
+    }
+    LBasicBlock oneCharacter = newBlock();
+    LBasicBlock noCharacter = newBlock();
+    m_out.branch(isNotZero(sought.length).value(), normalEdge(oneCharacter), normalEdge(noCharacter));
+
+    m_out.appendTo(oneCharacter);
+    join.add(Condition(m_out.equal(load(1, here), load(1, sought.characters))));
+
+    m_out.appendTo(noCharacter);
+    join.add(boolean(true));
+
+    m_out.appendTo(generic);
+    join.add(isNotZero(low32(callOperation<Integer>(call.context(), RuntimeOperation::StringHasAt, { string, other, low32(at) }))));
+    return join.finish();
 }
 
 void StringBuiltinEmitter::generateSearch(const InlineCall& call, SearchDirection direction, bool resultIsBoolean)

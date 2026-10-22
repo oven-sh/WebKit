@@ -12,9 +12,9 @@ layout L5 name="Created" fields=[{key="run" declared={type=function}}, {key="cou
 
 function f0 name="sharedObjectInListedFields" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: boolean):
-    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v4 = NewObject -, v0, v3, v1 layout=L1 fields=[0, 1, 2] [keepsShape]
-    v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1] [keepsShape]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v0, v3, v1 layout=L1 fields=[0, 1, 2]
+    v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v6 = Call v0, -, v5
@@ -31,12 +31,12 @@ function f0 name="sharedObjectInListedFields" parameters=[{type=anything}, {type
 
 function f1 name="sharedObjectInCreatedFields" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: boolean):
-    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
-    v4 = NewObject layout=L1 [keepsShape]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject layout=L1
     PropDefine v4, v0 key="id" receivers=[L1]
     PropDefine v4, v3 key="leaf" receivers=[L1]
     PropDefine v4, v1 key="size" receivers=[L1]
-    v8 = NewObject -, v3, v4 layout=L2 fields=[0, 1] [keepsShape]
+    v8 = NewObject -, v3, v4 layout=L2 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v9 = Call v0, -, v8

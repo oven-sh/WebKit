@@ -31,7 +31,7 @@ static ProofEnding endingBeforeBranch(FunctionAnalyses& analyses, const TestCond
     const BlockValues& values = analyses.function().at(test.block).values;
     for (uint32_t index = test.index + 1; index < values.size(); ++index) {
         const EffectsOnEdges& effects = analyses.effectsOf(values[index]);
-        if (effects.normal.maySuspend || endingOf(analyses, condition, values[index], effects) == ProofEnding::MayEnd)
+        if (effects.normal.maySuspend || endingBetweenTestAndBranch(analyses, condition, values[index], effects) == ProofEnding::MayEnd)
             return ProofEnding::MayEnd;
     }
     return ProofEnding::DoesNotEnd;
@@ -102,7 +102,7 @@ static std::optional<TestConditionID> findConditionOf(const Function& function, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void appendProofsOfGuard(FunctionAnalyses& analyses, const TestConditions& conditions, const GuardAvailability::Cursor& afterDefinition, ValueID guard, Vector<ExistingProof>& proofs)
+static void appendProofsOfGuard(FunctionAnalyses& analyses, const TestConditions& conditions, NOESCAPE const Invocable<const GuardAvailability::Cursor&()> auto& cursorAfterDefinition, ProgramPoint afterDefinition, ValueID guard, Vector<ExistingProof>& proofs)
 {
     const GuardFacts& facts = analyses.guardFacts(guard);
     if (!facts.isKnown())
@@ -119,9 +119,12 @@ static void appendProofsOfGuard(FunctionAnalyses& analyses, const TestConditions
         if (isRepeated)
             continue;
 
-        // A parameter or a list may hold a guard that has ended: a stale guard on its way to the epoch test that renews it.
+        // A parameter or a list may hold a guard that has ended.
         const TestCondition& tested = conditions.at(*condition);
-        if (afterDefinition.stateOf(guard, ProofSet { tested.proof }, tested.subject) != GuardState::Available)
+        std::optional<GuardState> state = analyses.guards().stateSeenWithoutSolving(guard, ProofSet { tested.proof }, tested.subject, afterDefinition);
+        if (!state)
+            state = cursorAfterDefinition().stateOf(guard, ProofSet { tested.proof }, tested.subject);
+        if (*state != GuardState::Available)
             continue;
         proofs.append(ExistingProof { ProofSource::GuardValue, *condition, guard, { } });
     }
@@ -136,10 +139,14 @@ static void appendGuardValueProofs(FunctionAnalyses& analyses, const TestConditi
         auto appendProofsOf = [&](ValueID value, uint32_t indexAfterDefinition) {
             if (!isGuardValue(function, value))
                 return;
-            if (!cursor)
-                cursor.emplace(analyses.guards(), block);
-            cursor->advanceTo(indexAfterDefinition);
-            appendProofsOfGuard(analyses, conditions, *cursor, value, proofs);
+            // Few guards prove a condition of this plan, and the state of the guards at the head of a block is solved for.
+            auto cursorAfterDefinition = [&]() -> const GuardAvailability::Cursor& {
+                if (!cursor)
+                    cursor.emplace(analyses.guards(), block);
+                cursor->advanceTo(indexAfterDefinition);
+                return *cursor;
+            };
+            appendProofsOfGuard(analyses, conditions, cursorAfterDefinition, { block, indexAfterDefinition }, value, proofs);
         };
 
         for (ValueID parameter : contents.parameters)
@@ -161,14 +168,15 @@ static void appendAllocationProofs(FunctionPassContext& context, const TestCondi
     }
 }
 
-Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const TestConditions& conditions)
+Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const TestConditions& conditions, ProofsHeldByGuards heldByGuards)
 {
     Vector<ExistingProof> proofs;
     appendEdgeProofs(context.analyses, conditions, proofs);
     if (conditions.stretchConditions().isEmpty())
         return proofs;
 
-    appendGuardValueProofs(context.analyses, conditions, proofs);
+    if (heldByGuards == ProofsHeldByGuards::AreListed)
+        appendGuardValueProofs(context.analyses, conditions, proofs);
     appendAllocationProofs(context, conditions, proofs);
     return proofs;
 }

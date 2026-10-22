@@ -1,0 +1,34 @@
+# `const { color, bold, dim, wrap } = props`: a function that reads four optional fields of one kind of object handles options, and callers leave most options out.
+# The tests under which an empty slot reads as undefined are asked of the object once, and a field that was left out is no surprise that leaves the typed code.
+# Where fewer are read, each read tests its slot, which is one test: `bold` alone is expected to be there. So is an optional field that every construction gives
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Props" fields=[{key="children" declared={type=anything}}, {key="color" declared={type=undefined|string}}, {key="bold" declared={type=undefined|boolean}}, {key="dim" declared={type=undefined|boolean}}, {key="wrap" declared={type=undefined|string}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4]}, {fields=[0]}]}
+
+function f0 name="manyOptions" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="color"
+    v2 = PropGet v0 key="bold"
+    v3 = PropGet v0 key="dim"
+    v4 = PropGet v0 key="wrap"
+    v5 = NewArray v1, v2, v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f0 name="manyOptions"
+# CHECK-NOT: IsSlotFilled
+# CHECK: = GetSlotOrUndefined {{*}} key="color"
+# CHECK: = GetSlotOrUndefined {{*}} key="bold"
+# CHECK: = GetSlotOrUndefined {{*}} key="dim"
+# CHECK: = GetSlotOrUndefined {{*}} key="wrap"
+
+function f1 name="oneOption" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="bold"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="oneOption"
+# CHECK: = IsSlotFilled {{*}} key="bold"
+# CHECK-NOT: GetSlotOrUndefined

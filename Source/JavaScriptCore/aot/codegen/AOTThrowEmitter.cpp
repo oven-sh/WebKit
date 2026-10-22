@@ -9,12 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTBuiltinTable.h"
 #include "AOTCodeUnits.h"
 #include "AOTConversionEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFaultTable.h"
-#include "AOTIdentifierNumbering.h"
 #include "AOTPlacement.h"
 #include "AOTRepresentation.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -24,8 +22,16 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
 #include "AllowMacroScratchRegisterUsage.h"
+#include "B3ArgumentRegValue.h"
+#include "B3BasicBlockInlines.h"
 #include "B3CheckValue.h"
+#include "B3Const32Value.h"
+#include "B3Const64Value.h"
+#include "B3InsertionSetInlines.h"
+#include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
+#include "B3Procedure.h"
+#include "B3ReduceStrength.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
 #include "JSCJSValueInlines.h"
@@ -36,8 +42,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(numberOfEnumerators<ErrorKind> <= ThrowSiteWord::numberOfRegistersPerBank);
-static_assert(!(Primitive::All & (typeAllowsObjects | typeAllowsFunctions)));
 static_assert(JSValue::ValueNull < JSValue::ValueUndefined && static_cast<uintptr_t>(JSValue::ValueUndefined + JSCell::typeInfoTypeOffset()) < FaultSite::reach);
+static_assert(nullCell32 < undefinedCell32 && (static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + JSCell::typeInfoTypeOffset() < FaultSite::reach);
 static_assert(traitsOf(SlotRepresentation::LiteralString).undefinedBits == JSValue::ValueUndefined && traitsOf(SlotRepresentation::LiteralString).nullBits == JSValue::ValueNull);
 
 namespace {
@@ -63,7 +69,7 @@ public:
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation representation, unsigned registerNumber)
 {
-    RELEASE_ASSERT(representation != Representation::LiteralString && representation != Representation::Cell32 && representation != Representation::Boolean);
+    RELEASE_ASSERT(representation != Representation::LiteralString && representation != Representation::Boolean);
     RELEASE_ASSERT(registerNumber < ThrowSiteWord::numberOfRegistersPerBank);
     bool hasWideA = site.a > ThrowSiteWord::maxNarrowA;
     ThrowSiteWord word { };
@@ -173,34 +179,6 @@ static ThrowSite checkedThrowSite(const ThrowSite& site)
 static uint32_t nameWord(StringID name)
 {
     return name ? name.index() : ThrowSiteWord::none;
-}
-
-static bool hasRuntimeType(const Placement& placement, TypeID type)
-{
-    return !TypeTable::isProvisional(type) && placement.typesNeededAtRunTime().get(type.index());
-}
-
-static bool hasLayoutRecord(const Program& program, const Placement& placement, LayoutID layout)
-{
-    return !placement.shapes().shapesOf(layout).isEmpty() || program.at(layout).kind == LayoutKind::Instance;
-}
-
-// The image keeps the text of a string only if a table or an identifier names it, and code generation adds no string to either.
-static std::optional<uint32_t> expectedNameOf(const Program& program, const Placement& placement, const IdentifierNumbering& identifiers, const Type& type)
-{
-    auto indexIfInImage = [&](StringID name, bool isInLayoutRecord) {
-        return name && (isInLayoutRecord || identifiers.numberOfText(name)) ? std::optional(name.index()) : std::nullopt;
-    };
-    std::span<const LayoutID> members = membersOf(program, type);
-    if (!members.empty()) {
-        LayoutID layout = members[0];
-        return indexIfInImage(program.at(layout).name, hasLayoutRecord(program, placement, layout));
-    }
-    if (type.classes.isEmpty())
-        return std::nullopt;
-    const BuiltinTable& builtins = program.builtins();
-    BuiltinID constructor = builtins.at(type.classes[0].builtinClass).constructor;
-    return constructor ? indexIfInImage(program.stringOf(builtins.at(constructor).name), false) : std::nullopt;
 }
 
 static bool isCellOrNullish(const Type& type)
@@ -340,28 +318,6 @@ void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, S
     emitThrowSite(context, { ThrowKind::ErrorWithMessage, message.index(), std::nullopt }, std::nullopt, kind);
 }
 
-ThrowSite ThrowEmitter::typeMismatchSite(TypeID expected, TypeSiteID site) const
-{
-    if (hasRuntimeType(m_placement, expected))
-        return { ThrowKind::TypeMismatch, expected.index(), site ? std::optional(site.index()) : std::nullopt };
-    const Type& type = m_program.at(expected);
-    uint32_t kinds = type.primitives & Primitive::All;
-    if (type.primitives & Primitive::LiteralString)
-        kinds |= Primitive::String;
-    if (type.primitives & Primitive::LiteralSymbol)
-        kinds |= Primitive::Symbol;
-    if (type.anyObject || type.layouts || !type.classes.isEmpty())
-        kinds |= typeAllowsObjects;
-    if (type.mayBeFunction())
-        kinds |= typeAllowsFunctions;
-    return { ThrowKind::KindMismatch, kinds, expectedNameOf(m_program, m_placement, m_generator.build().identifierNumbering(), type) };
-}
-
-void ThrowEmitter::throwTypeMismatch(const OperationContext& context, Operand operand, TypeID expected, TypeSiteID site)
-{
-    throwAt(context, typeMismatchSite(expected, site), operand);
-}
-
 ThrowKind ThrowEmitter::throwKindOf(NullishAccess access)
 {
     switch (access) {
@@ -371,6 +327,8 @@ ThrowKind ThrowEmitter::throwKindOf(NullishAccess access)
         return ThrowKind::NullishWrite;
     case NullishAccess::Iterate:
         return ThrowKind::NullishIterate;
+    case NullishAccess::Spread:
+        return ThrowKind::NullishSpread;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -392,6 +350,10 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
     }
     case Representation::Cell32: {
         NarrowReference word = operand.as<NarrowReference>();
+        if (isCellOrNullish(type) && canTrapAt(context)) {
+            trapIfNullish(context, word, site);
+            return;
+        }
         if (isCellOrNullish(type)) {
             requireOrThrow(context, isCellReference(word), site, operand);
             return;
@@ -440,11 +402,103 @@ bool ThrowEmitter::canTrapAt(const OperationContext& context)
 
 void ThrowEmitter::trapIfNullish(const OperationContext& context, Boxed value, const ThrowSite& site)
 {
+    trapThrough(context, value.value(), Representation::JSValue, site);
+}
+
+// The first pages of the cage of cells are never mapped, and a marker is a small word: what it decodes to lies in them.
+void ThrowEmitter::trapIfNullish(const OperationContext& context, NarrowReference word, const ThrowSite& site)
+{
+    trapThrough(context, decode(word).value(), Representation::Cell, site);
+}
+
+void ThrowEmitter::trapThrough(const OperationContext& context, LValue pointer, Representation representation, const ThrowSite& site)
+{
     RELEASE_ASSERT(!generator().isInitializingCell());
     RELEASE_ASSERT(canTrapAt(context) && valueOfOrigin(m_out.origin()) == context.valueID());
     RELEASE_ASSERT(!site.b);
-    m_out.load8ZeroExt32Trapping(m_out.address(value.value(), m_heaps.JSCell_typeInfoType));
-    m_records.traps.trapSites.append(TrapSite { context.valueID(), checkedThrowSite(site), Representation::JSValue, emitter<RuntimeCallEmitter>().addSite(context) });
+    m_out.load8ZeroExt32Trapping(m_out.address(pointer, m_heaps.JSCell_typeInfoType));
+    m_records.traps.trapSites.append(TrapSite { context.valueID(), checkedThrowSite(site), representation, emitter<RuntimeCallEmitter>().addSite(context) });
+}
+
+static bool isCellCageBase(const B3::Value* value)
+{
+    auto* argument = value->as<B3::ArgumentRegValue>();
+    return argument && argument->argumentReg() == Reg(cellCageBaseGPR);
+}
+
+// The boxed value, also where the access goes through what a narrow reference decodes to.
+static std::optional<int64_t> findValueKnownToBeReadThrough(const B3::MemoryValue* access)
+{
+    const B3::Value* base = access->lastChild();
+    int64_t distance = static_cast<int64_t>(access->offset()) - JSCell::typeInfoTypeOffset();
+    if (base->hasIntPtr())
+        return base->asIntPtr() + distance;
+    if (base->opcode() == B3::Add && isCellCageBase(base->child(0)) && base->child(1)->hasIntPtr()) {
+        distance += base->child(1)->asIntPtr();
+        base = base->child(0);
+    }
+    if (!isCellCageBase(base) || distance < 0 || distance & ((1 << cell32Shift) - 1))
+        return std::nullopt;
+    return distance >> cell32Shift;
+}
+
+static bool throwWhereTrapIsCertain(B3::Procedure& proc, CodeRecords& records, const RegisterSet& clobberedRegisters)
+{
+    if (records.traps.trapSites.isEmpty())
+        return false;
+
+    bool changed = false;
+    B3::InsertionSet insertionSet(proc);
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            auto* access = block->at(index)->as<B3::MemoryValue>();
+            if (!access || !access->traps())
+                continue;
+            std::optional<int64_t> known = findValueKnownToBeReadThrough(access);
+            if (!known || (*known != JSValue::ValueNull && *known != JSValue::ValueUndefined))
+                continue;
+            int64_t bits = *known;
+            const Vector<TrapSite>& trapSites = records.traps.trapSites;
+            size_t site = trapSites.findIf([&](const TrapSite& candidate) {
+                return candidate.value == valueOfOrigin(access->origin());
+            });
+            RELEASE_ASSERT(site != notFound);
+
+            B3::Origin origin = access->origin();
+            // The thrower takes a site that names no operand for one of undefined.
+            bool namesOperand = bits != JSValue::ValueUndefined;
+            B3::Value* operand = namesOperand ? insertionSet.insert<B3::Const64Value>(index, origin, bits) : nullptr;
+            B3::CheckValue* check = insertionSet.insert<B3::CheckValue>(index, B3::Check, origin, insertionSet.insert<B3::Const32Value>(index, origin, 1));
+            if (operand)
+                check->append(B3::ConstrainedValue(operand, B3::ValueRep::SomeRegister));
+            check->clobberEarly(clobberedRegisters);
+            check->setRunsWithoutFrame(true);
+            ThrowSiteCode code { trapSites[site].throwSite, namesOperand ? Representation::JSValue : Representation::Void, 0, trapSites[site].callSite };
+            check->setGenerator([records = &records, code](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+                emitThrowSiteCode(jit, *records, params.context().frameIsSetUp, code, params);
+            });
+            changed = true;
+            break;
+        }
+        insertionSet.execute(block);
+    }
+    // A check that always fails ends its block.
+    if (changed)
+        B3::reduceStrength(proc, B3::ReduceStrengthPass::Final);
+    return changed;
+}
+
+// The handler of a fault reads the tested value out of the base register of the access that faulted. Once the back end has found out on some path that the value is null or undefined,
+// nothing is left to test there, and an address that is a constant may be computed from any other constant. So on that path the test becomes the throw.
+B3::ClientPhase throwWhereTrapsAreCertain(CodeRecords& records, const StubCatalog& catalog)
+{
+    return {
+        B3::ClientPhase::Point::AfterOptimization,
+        "throwWhereTrapsAreCertain"_s,
+        createSharedTask<bool(B3::Procedure&)>([&records, clobberedRegisters = registersClobberedByThrowSites(catalog)](B3::Procedure& proc) {
+            return throwWhereTrapIsCertain(proc, records, clobberedRegisters);
+        })
+    };
 }
 
 void ThrowEmitter::requireInitialized(const OperationContext& context, Operand operand, const Type& type, StringID name)

@@ -12,11 +12,16 @@
 #include "AOTInstance.h"
 #include "AOTModuleLinkWalk.h"
 #include "AOTModuleStarExports.h"
+#include "AOTObject.h"
+#include "AOTObjectInternal.h"
+#include "AOTObjectModel.h"
+#include "AOTPendingStars.h"
 #include "AOTProgramStatics.h"
+#include "AOTState.h"
+#include "JSCellButterfly.h"
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
-#include "ObjectConstructor.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/text/StringView.h>
@@ -25,7 +30,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-enum class LinkWork : uint8_t { None, CaptureExports, UncompiledRecord, Requests };
+enum class LinkWork : uint8_t { None, CaptureExports, UncompiledRecord, Requests, RequestsAndCapture };
 
 struct AbsentExport {
     ModuleID module;
@@ -45,6 +50,8 @@ static LinkWork linkWorkOf(const ModuleData& data)
 {
     if (!data.needsLink())
         return LinkWork::None;
+    if (data.capturesExportsBehindEvaluation())
+        return LinkWork::RequestsAndCapture;
     if (data.capturesExports())
         return LinkWork::CaptureExports;
     if (data.isUncompiledCode())
@@ -52,10 +59,18 @@ static LinkWork linkWorkOf(const ModuleData& data)
     return LinkWork::Requests;
 }
 
+// A CommonJS file has a rule of its own only where ES modules bind its names. Whoever else asks for its namespace object is the host, for an entry point.
+static SyntheticExportRule captureRuleOf(const ModuleData& data)
+{
+    if (data.exportRule == SyntheticExportRule::None && data.kind == ModuleKind::CommonJs)
+        return SyntheticExportRule::CommonJs;
+    return data.exportRule;
+}
+
 static void checkSafeToRecurse(JSGlobalObject* realm, ThrowScope& scope)
 {
     if (!realm->vm().isSafeToRecurse()) [[unlikely]]
-        throwRangeError(realm, scope, "Maximum call stack size exceeded"_s);
+        throwException(realm, scope, createModuleGraphTooDeepError(realm));
 }
 
 static bool hasUnvisitedRequests(AbstractModuleRecord* record, const VisitedModuleRecords& visited)
@@ -81,10 +96,23 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     };
 
     const ModuleTable& table = modules.table();
+    if (table.data(root).hasLinkPlan()) {
+        if (modules.status(root) == ModuleStatus::Unlinked)
+            m_plan = table.entryPointLinkPlan();
+        return;
+    }
+    // With the cycle linked the walk is short, and most steps of the plan are done.
+    if (auto plan = table.linkPlanOfRoot(root); plan && modules.status(root) == ModuleStatus::Unlinked && modules.status(plan->memberOfCycle) == ModuleStatus::Unlinked) {
+        m_plan = plan->steps;
+        m_memberOfCycle = plan->memberOfCycle;
+        return;
+    }
+
     Vector<Frame, 64> path;
     auto record = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
         const ModuleData& moduleData = table.data(module);
-        switch (linkWorkOf(moduleData)) {
+        LinkWork work = linkWorkOf(moduleData);
+        switch (work) {
         case LinkWork::None:
             return;
         case LinkWork::CaptureExports:
@@ -94,10 +122,17 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
             append(module, StepKind::IsUncompiled);
             return;
         case LinkWork::Requests:
-            if (modules.status(module) != ModuleStatus::Unlinked)
+        case LinkWork::RequestsAndCapture:
+            if (modules.status(module) != ModuleStatus::Unlinked) {
+                // A module of the graph that is being evaluated may import it back.
+                if (work == LinkWork::RequestsAndCapture)
+                    append(module, StepKind::CapturesExports);
                 return;
-            path.append(Frame { static_cast<uint32_t>(m_steps.size()), moduleData.firstRequest, table.endOfRequests(module) });
+            }
+            path.append(Frame { static_cast<uint32_t>(m_steps.size()), moduleData.firstLinkRequest, table.endOfLinkRequests(module) });
             append(module, StepKind::Enter);
+            if (work == LinkWork::RequestsAndCapture)
+                append(module, StepKind::CapturesExports);
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -107,7 +142,7 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     if (path.isEmpty())
         return;
 
-    std::span<const ModuleRequestData> requests = table.allRequests();
+    ModuleNumbers requests = table.allLinkRequests();
     BitVector seen(table.size());
     seen.quickSet(root.index());
     while (!path.isEmpty()) {
@@ -116,7 +151,7 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         uint32_t end = frame.endOfRequests;
         size_t depth = path.size();
         while (next != end && path.size() == depth) {
-            ModuleID target = requests[next++].targetModule();
+            ModuleID target(requests[next++]);
             if (seen.quickSet(target.index()))
                 continue;
             // record() may move the frames.
@@ -129,7 +164,7 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         Step& enter = m_steps[path.last().enter];
         ModuleID module(enter.module);
         enter.leave = static_cast<uint32_t>(m_steps.size());
-        append(module, StepKind::Leave, !table.requiredNames(module).empty() || !table.syntheticExports(module).empty());
+        append(module, StepKind::Leave, !table.data(module).capturesExports() && (!table.requiredNames(module).empty() || !table.syntheticExports(module).empty()));
         path.removeLast();
     }
 }
@@ -176,8 +211,19 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk)
 
 void Modules::link(ModuleID root)
 {
-    if (data(root).needsLink())
-        link(ModuleLinkWalk(*this, root));
+    switch (linkWorkOf(data(root))) {
+    case LinkWork::None:
+        return;
+    case LinkWork::Requests:
+    case LinkWork::RequestsAndCapture:
+        if (status(root) != ModuleStatus::Unlinked)
+            return;
+        break;
+    case LinkWork::CaptureExports:
+    case LinkWork::UncompiledRecord:
+        break;
+    }
+    link(ModuleLinkWalk(*this, root));
 }
 
 void Modules::link(const ModuleLinkWalk& walk)
@@ -209,6 +255,14 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    // A link runs no code of the program: a file runs where the evaluation comes to it. Only a module that finds its names in what another module turns out to export cannot wait for that.
+    bool resolvesNames = false;
+    walk.replay(scope, [&](ModuleID module) {
+        return status(module) == ModuleStatus::Unlinked;
+    }, [](ModuleLinkWalk::Leaf, ModuleID) { }, [&](ModuleID module, bool moduleResolvesNames) {
+        resolvesNames |= moduleResolvesNames && !findsItsNamesInLibraryAlone(module);
+    });
+
     // Only an uncompiled module asks which modules are on the path.
     bool needsPath = data(walk.root()).reachesUncompiledCode();
     Vector<ModuleID, 16> path;
@@ -225,7 +279,10 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
-            captureExports(module);
+            if (data(module).capturesExportsBehindEvaluation() && !resolvesNames)
+                captureExportsBehindEvaluation(module);
+            else
+                captureExports(module);
             return;
         }
         ASSERT(needsPath);
@@ -265,6 +322,9 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     Vector<ModuleID, 16> modulesThatResolveNames;
     bool didEnterRoot = walk.replay(scope, isUnlinked, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
+            // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
+            if (data(module).capturesExportsBehindEvaluation())
+                return;
             captureExports(module);
             RETURN_IF_EXCEPTION(scope, void());
             std::optional<uint32_t> absentName = ensureLoaded(module).firstAbsentExport;
@@ -305,10 +365,71 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
             continue;
         fillStarExports(module, resolver);
         RETURN_IF_EXCEPTION(scope, void());
+        fillDeferredExports(module);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (data(walk.root()).hasLinkPlan()) {
+        didLinkEntryPoint();
+        return;
+    }
+    // No status says of the modules between the root and the steps that they are linked, as none says so of a module without work in a link. They are evaluated next, which every walk sees.
+    // A walk that comes by before that finds the steps done.
+    if (walk.hasPlan()) {
+        setStatus(walk.root(), ModuleStatus::Linked);
+        if (isUnlinked(*walk.memberOfCycle()))
+            setStatus(*walk.memberOfCycle(), ModuleStatus::Linked);
+        for (ModuleID module : modulesThatResolveNames) {
+            if (isUnlinked(module))
+                setStatus(module, ModuleStatus::Linked);
+        }
+        return;
     }
     walk.replay(scope, isUnlinked, [](ModuleLinkWalk::Leaf, ModuleID) { }, [&](ModuleID module, bool) {
         setStatus(module, ModuleStatus::Linked);
     });
+}
+
+bool Modules::didCaptureExports(ModuleID module) const
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    return loaded && (loaded->capturedExports || loaded->capturedFields);
+}
+
+// An ES importer gets copies of what the file exports when an ES graph first links it, and the file runs where that graph has it: in front of the ES modules, in the order of the imports.
+// With a record, the code that comes to evaluate the module asks the run time, which evaluates it and captures behind that.
+void Modules::captureExportsBehindEvaluation(ModuleID module)
+{
+    if (didCaptureExports(module))
+        return;
+    switch (status(module)) {
+    case ModuleStatus::Unlinked:
+    case ModuleStatus::Linking:
+    case ModuleStatus::Linked:
+        ensureRecord(module);
+        return;
+    case ModuleStatus::Evaluating:
+    case ModuleStatus::EvaluatingAsync:
+    case ModuleStatus::Evaluated:
+        captureExports(module);
+        return;
+    case ModuleStatus::Failed:
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What the names are found in.
+JSValue Modules::evaluateForCapture(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!data(module).hasExportTable())
+        RELEASE_AND_RETURN(scope, execute(module));
+
+    std::optional<ModuleID> file = m_table.fileBehindFace(module);
+    RELEASE_ASSERT(file);
+    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, exportsSeenByLoader(*file));
 }
 
 void Modules::captureExports(ModuleID module)
@@ -318,52 +439,188 @@ void Modules::captureExports(ModuleID module)
     auto scope = DECLARE_THROW_SCOPE(vm);
     LoadedModule& loaded = ensureLoaded(module);
 
-    if (loaded.capturedExports)
+    if (loaded.capturedExports || loaded.capturedFields)
         return;
 
-    JSValue value = execute(module);
+    JSValue value = evaluateForCapture(module);
     RETURN_IF_EXCEPTION(scope, void());
+    // The body can require() an ES module that imports this module back. That link captured the exports as they were then.
+    if (loaded.capturedExports || loaded.capturedFields)
+        return;
+    bool hasCapturedFields = tryCaptureFields(module, value);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (hasCapturedFields)
+        RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 
     Vector<Identifier, 4> names;
     MarkedArgumentBuffer values;
+    KeyListingThatShowsNoOrder listing(value.getObject());
     auto* captureNativeModuleExports = host().captureNativeModuleExports;
-    if (captureNativeModuleExports && isNativeModule(data(module)))
-        captureNativeModuleExports(realm, *data(module).registryID(), names, values);
-    else
-        host().captureSyntheticExports(realm, data(module).exportRule, value, names, values);
+    JSObject* deferredExportsSource = captureNativeModuleExports && isNativeModule(data(module))
+        ? captureNativeModuleExports(realm, *data(module).registryID(), names, values)
+        : host().captureSyntheticExports(realm, captureRuleOf(data(module)), value, names, values);
     RETURN_IF_EXCEPTION(scope, void());
     if (values.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(realm, scope);
         return;
     }
     RELEASE_ASSERT(names.size() == values.size());
-    // The body can require() an ES module that imports this module back. That link captured the exports as they were then.
-    if (loaded.capturedExports)
+    if (loaded.capturedExports || loaded.capturedFields)
         return;
 
-    JSObject* captured = constructEmptyObject(vm, realm->nullPrototypeObjectStructure());
+    // No program sees the object, so no export is equal to it: it stands for the value of a deferred export.
+    JSObject* captured = createTableOfExports();
     for (unsigned i = 0; i < names.size(); ++i) {
-        captured->putDirectMayBeIndex(realm, names[i], values.at(i));
+        JSValue exported = values.at(i);
+        RELEASE_ASSERT(exported || deferredExportsSource);
+        captured->putDirectMayBeIndex(realm, names[i], exported ? exported : JSValue(captured));
         RETURN_IF_EXCEPTION(scope, void());
     }
-    loaded.capturedExports = captured;
-    RELEASE_AND_RETURN(scope, fillCapturedExports(module, captured));
+    loaded.capturedExports.set(*this, captured);
+    loaded.deferredExportsSource.set(*this, deferredExportsSource);
+    RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 }
 
-void Modules::fillCapturedExports(ModuleID module, JSObject* captured)
+// The host lists the own properties of what a CommonJS module exports and reads each of them: Bun's populateESMExports(). Of a compiled object that has nothing but data in its fields
+// that runs no code of the program, so all that has to happen now is that the values are kept. An importer binds a few of the names, which capturedField() finds by the host's rules.
+bool Modules::tryCaptureFields(ModuleID module, JSValue value)
 {
+    VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    SyntheticExportRule rule = captureRuleOf(data(module));
+    if (rule == SyntheticExportRule::None)
+        return false;
+    Object* exports = compiledObjectOrNull(value);
+    if (!exports || (exports->hasExtraProperties() && !hasPendingStars(*exports)))
+        return false;
+    const LayoutData& layout = exports->layout();
+    if (layout.kind() != LayoutKind::Record)
+        return false;
+    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    for (const FieldData& field : layout.fields()) {
+        if (field.isAccessor() || (layouts.hasStringKey(field) && parseIndex(*layouts.nameOf(vm, field))))
+            return false;
+    }
+
+    bool isMarkedAsESModule = false;
+    if (rule == SyntheticExportRule::CommonJs) {
+        PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasMark = exports->getPropertySlot(realm, vm.propertyNames->__esModule, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (hasMark) {
+            JSValue mark = slot.getValue(realm, vm.propertyNames->__esModule);
+            TRY_CLEAR_EXCEPTION(scope, false);
+            isMarkedAsESModule = mark && !mark.isUndefinedOrNull() && mark.pureToBoolean() == TriState::True;
+        }
+    }
+
+    JSCellButterfly* stars = nullptr;
+    if (exports->hasExtraProperties()) {
+        stars = snapshotOfPendingStars(vm, *exports);
+        if (!stars)
+            return false;
+    }
+    JSCellButterfly* fields = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, layout.numberOfFields);
+    for (const FieldData& field : layout.fields()) {
+        if (field.isPrivate())
+            continue;
+        JSValue held = exports->readInline(field);
+        if (!held)
+            held = exports->read(field);
+        if (held)
+            fields->setIndex(vm, layout.indexOf(field), held);
+    }
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.capturedFields.set(*this, fields);
+    loaded.capturedStars.set(*this, stars);
+    loaded.sourceOfCapturedFields.set(*this, exports);
+    loaded.capturedFieldsAreOfESModule = isMarkedAsESModule;
+    loaded.capturedFieldsAreOfRuntimeModule = rule == SyntheticExportRule::RuntimeModule;
+    return true;
+}
+
+// Nothing where the host would not have listed the name. In plain Bun such an exports object is an ordinary object with nothing but data properties, of which the host takes every own name,
+// whether or not it can be listed. One with stars has accessors there: of that the host leaves out `constructor` and, behind the mark, what cannot be listed.
+JSValue Modules::capturedField(const LoadedModule& loaded, UniquedStringImpl* name) const
+{
+    VM& vm = *m_instance.vm;
+    const CommonIdentifiers& names = *vm.propertyNames;
+    bool isMarked = loaded.capturedFieldsAreOfESModule;
+    bool isDefault = name == names.defaultKeyword.impl();
+    // Of one of its own modules the host takes the own names that can be listed, and the module itself as `default` where it has none: Bun's appendInternalModuleExports().
+    if (loaded.capturedFieldsAreOfRuntimeModule) {
+        const LayoutData& layout = uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get())->layout();
+        const FieldData* field = m_state.objects->layouts.field(vm, layout, name);
+        JSValue held = field && !field->isPrivate() && !(field->flags & fieldIsNotEnumerable) ? loaded.capturedFields->get(layout.indexOf(*field)) : JSValue();
+        return !held && isDefault ? JSValue(loaded.sourceOfCapturedFields) : held;
+    }
+    // Without the mark the module itself is the default export, whatever it has under that name.
+    if (isDefault && !isMarked)
+        return loaded.sourceOfCapturedFields.get();
+    if ((isMarked && name == names.__esModule.impl()) || (loaded.capturedStars && name == names.constructor.impl()))
+        return { };
+    Object& source = *uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get());
+    const LayoutData& layout = source.layout();
+    const FieldData* field = m_state.objects->layouts.field(vm, layout, name);
+    JSValue held = field && !field->isPrivate() ? loaded.capturedFields->get(layout.indexOf(*field)) : JSValue();
+    if (held && loaded.capturedStars && isMarked && field->flags & fieldIsNotEnumerable)
+        held = JSValue();
+    if (!field && loaded.capturedStars)
+        held = valueInSnapshotOfPendingStars(vm, source, loaded.capturedStars, name);
+    if (!held && isDefault)
+        return loaded.sourceOfCapturedFields.get();
+    return held;
+}
+
+void Modules::makeTableOfCapturedFields(LoadedModule& loaded)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    const LayoutData& layout = uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get())->layout();
+    UniquedStringImpl* defaultName = vm.propertyNames->defaultKeyword.impl();
+
+    JSObject* captured = createTableOfExports();
+    // Nobody sees the order of the names in the table.
+    for (const FieldData& field : layout.fields()) {
+        if (field.isPrivate() || !layouts.hasStringKey(field))
+            continue;
+        UniquedStringImpl* name = layouts.nameOf(vm, field);
+        JSValue held = name == defaultName ? JSValue() : capturedField(loaded, name);
+        if (held)
+            captured->putDirect(vm, Identifier::fromUid(vm, name), held);
+    }
+    if (loaded.capturedStars) {
+        forEachBindingInSnapshotOfPendingStars(vm, *uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get()), loaded.capturedStars, [&](UniquedStringImpl* name, JSValue value) {
+            if (name != vm.propertyNames->constructor.impl())
+                captured->putDirect(vm, Identifier::fromUid(vm, name), value);
+        });
+    }
+    captured->putDirect(vm, vm.propertyNames->defaultKeyword, capturedField(loaded, defaultName));
+    UNUSED_PARAM(realm);
+    loaded.capturedExports.set(*this, captured);
+}
+
+void Modules::fillCapturedExports(ModuleID module)
+{
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
-        JSValue found = StarExportResolver::capturedValue(realm, captured, identifier(syntheticExport.name));
-        RETURN_IF_EXCEPTION(scope, void());
-        if (found) {
-            if (syntheticExport.hasVariable)
+        const Identifier& name = identifier(syntheticExport.name);
+        // Only a variable binds the name. Without one, a deferred export stays unread.
+        if (syntheticExport.hasVariable) {
+            if (syntheticExport.isBoundByRequiredName && isDeferredExport(loaded, name))
+                continue;
+            JSValue found = capturedValue(module, name);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (found) {
                 ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found);
+                continue;
+            }
+        } else if (hasCapturedExport(module, name))
             continue;
-        }
         if (syntheticExport.absentIsUndefined) {
             if (syntheticExport.hasVariable)
                 ProgramStatics::writeVariable(m_instance, syntheticExport.variable, jsUndefined());
@@ -371,6 +628,45 @@ void Modules::fillCapturedExports(ModuleID module, JSObject* captured)
         }
         if (!loaded.firstAbsentExport)
             loaded.firstAbsentExport = static_cast<uint32_t>(syntheticExport.name);
+    }
+}
+
+bool Modules::isDeferredExport(const LoadedModule& loaded, const Identifier& name) const
+{
+    JSObject* captured = loaded.capturedExports;
+    return captured && StarExportResolver::storedValue(m_instance.globalObject, captured, name) == JSValue(captured);
+}
+
+// A module of the library has its names once it is loaded: no file of the program has to run for them.
+bool Modules::findsItsNamesInLibraryAlone(ModuleID module) const
+{
+    if (!m_table.syntheticExports(module).empty())
+        return false;
+    return std::ranges::all_of(m_table.requiredNames(module), [&](const RequiredNameData& requiredName) {
+        return data(requiredName.exporterModule()).exportRule == SyntheticExportRule::RuntimeModule;
+    });
+}
+
+// The host reads a deferred export when it links a module that binds the name, and later importers get what it read then: SyntheticModuleRecord::materializeLazyExport().
+// A run that links no such module does not load what the getter loads.
+void Modules::fillDeferredExports(ModuleID importer)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+
+    for (const RequiredNameData& requiredName : m_table.requiredNames(importer)) {
+        ModuleID exporter = requiredName.exporterModule();
+        if (data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
+            continue;
+        for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(exporter)) {
+            if (syntheticExport.name != requiredName.name)
+                continue;
+            if (!syntheticExport.hasVariable || ProgramStatics::readVariableWithoutAllocating(m_instance, syntheticExport.variable))
+                break;
+            JSValue found = capturedValue(exporter, identifier(syntheticExport.name));
+            RETURN_IF_EXCEPTION(scope, void());
+            ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found ? found : jsUndefined());
+            break;
+        }
     }
 }
 
@@ -409,8 +705,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
     const ModuleData& moduleData = data(module);
     Vector<DynamicExport> result;
 
-    if (moduleData.capturesExports()) {
-        StarExportResolver::forEachCapturedExport(m_instance.globalObject, capturedExports(module), [&](const Identifier& name, JSValue value) {
+    if (moduleData.capturesExports() || moduleData.kind == ModuleKind::CommonJs) {
+        StarExportResolver::forEachCapturedExport(*this, module, [&](const Identifier& name, JSValue value) {
             result.append({ name, value });
         });
         RETURN_IF_EXCEPTION(scope, { });

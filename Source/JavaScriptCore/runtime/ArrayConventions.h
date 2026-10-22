@@ -124,13 +124,6 @@ inline bool storesBeyondVectorInDenseStorage(ArrayStoragePolicy policy, unsigned
     return (index < MIN_SPARSE_ARRAY_INDEX || isDenseEnoughForVector(index, numberOfValues)) && !indexIsSufficientlyBeyondLengthForSparseMap(index, vectorLength);
 }
 
-inline bool movesElementsInDenseStorage(ArrayStoragePolicy policy, unsigned numberOfElementsToMove, unsigned length, unsigned lengthThreshold)
-{
-    if (policy == ArrayStoragePolicy::KeepsDenseArraysDense)
-        return true;
-    return numberOfElementsToMove < MIN_SPARSE_ARRAY_INDEX && length <= lengthThreshold;
-}
-
 inline bool copiesIntoDenseStorage(ArrayStoragePolicy policy, uint64_t numberOfElements)
 {
     if (policy == ArrayStoragePolicy::KeepsDenseArraysDense)

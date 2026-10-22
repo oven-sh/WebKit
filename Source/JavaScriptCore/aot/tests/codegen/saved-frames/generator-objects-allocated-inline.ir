@@ -1,0 +1,71 @@
+# In fast code a generator object is a cell allocated in place under the Structure its function remembers. The run time is called on the rare path alone, so a function that does nothing else sets up no frame at its entry. A rare block calls the stub, and so does every async generator
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+# CHECK: f0: size={{*}} frame={{*}}@[[setup]]-
+function f1 name="generator" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=Generator}] creator=Coroutine{ramp=f1 body=f5 promiseParameter=1} {
+  b0(v0: function):
+    v1 = NewGenerator v0 function=f1
+    v2 = CallDirect v0, v1 function=f5
+    Return v1
+}
+# CHECK: f1: size=
+# CHECK-NEXT: function f5 x1
+# CHECK-NEXT: operation operationAOTNewGenerator x1
+# CHECK-NOT: stub NewGenerator
+function f2 name="onlyAllocates" parameters=[{type=function}] results=[{type=Generator}] {
+  b0(v0: function):
+    v1 = NewGenerator v0 function=f1
+    Return v1
+}
+# CHECK: f2: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CHECK: operation operationAOTNewGenerator x1
+# CHECK-NOT: stub
+function f3 name="allocatesInRareBlock" parameters=[{type=function}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: function, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = NewGenerator v0 function=f1
+    Return v2
+  b2():
+    v3 = Undefined
+    Return v3
+}
+# CHECK: f3: size=
+# CHECK-NEXT: stub NewGenerator.Sync x1
+# CHECK-NOT: operation
+function f4 name="asyncGenerator" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f4 body=f6 promiseType=Promise promiseParameter=1} {
+  b0(v0: function):
+    v1 = NewAsyncGenerator v0 function=f4
+    v2 = CallDirect v0, v1 function=f6
+    Return v1
+}
+# CHECK: f4: size=
+# CHECK-NEXT: function f6 x1
+# CHECK-NEXT: stub NewGenerator.Async x1
+# CHECK-NOT: operation
+function f5 name="generator" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{ramp=f1 body=f5 promiseParameter=1} {
+  b0(v0: function, v1: Generator):
+    v2 = Undefined
+    v3 = YieldBySavingFrame v1, v2
+    v4 = ResultAt v3 index=0
+    Return v4
+}
+# CHECK: f5: size=
+function f6 name="asyncGenerator" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=AsyncGenerator}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncGenerator ramp=f4 body=f6 promiseType=Promise promiseParameter=1} {
+  b0(v0: function, v1: AsyncGenerator):
+    v2 = Undefined
+    v3 = YieldBySavingFrame v1, v2
+    v4 = ResultAt v3 index=0
+    Return v4
+}
+# CHECK: f6: size=

@@ -1,12 +1,13 @@
 # An instance of a class below a compiled base class that reaches unknown JavaScript: the caller allocates, super(..) hands the object on, and the definitions and stores of both classes become the field list of the allocation.
 # Unknown code can give the class another parent, so the link is tested at super(..); the arm that fails starts the constructor over and joins nothing
+# TODO: flow-termination: the object of a derived class is no longer allocated with the fields of both classes at once
 # FORM: AsRead
 # RUN: pipeline Select
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Base" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"raw"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="env" declared={type=anything} flags=[IsRequired]}]
-layout L1 kind=Instance name="Heir" predictedBase=L0 constructor=f3 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"status"@L1 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="last" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+layout L1 kind=Instance name="Heir" base=L0 constructor=f3 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"status"@L1 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="last" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
 variable g0 name="tokenOfBase" module=m0 declared={type=classtoken} flags=[IsImmutable]
 variable g1 name="Base" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="tokenOfHeir" module=m0 declared={type=classtoken} flags=[IsImmutable]
@@ -38,13 +39,14 @@ function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
   b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = CallDirect v3 function=f2
-    v5 = GetModuleVariable variable=g0
-    PrivateSet v3, v5, v1 layout=L0 field=1
-    Return v3
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = GetModuleVariable variable=g0
+    PrivateSet v4, v6, v1 layout=L0 field=1
+    Return v4
 }
-function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=object written=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: object):
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
     v1 = GetModuleVariable variable=g0
     PrivateDefine v0, v1, v1 layout=L0
     v3 = Undefined
@@ -57,14 +59,15 @@ function f3 name="Heir" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1, v2 layout=L1
-    v5 = CallDirect v4 function=f4
-    v6 = GetModuleVariable variable=g2
-    v7 = Integer integer=200
-    PrivateSet v4, v6, v7 layout=L1 field=1
-    Return v4
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f4
+    v7 = GetModuleVariable variable=g2
+    v8 = Integer integer=200
+    PrivateSet v5, v7, v8 layout=L1 field=1
+    Return v5
 }
-function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=object written=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: object):
+function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L1):
     v1 = GetModuleVariable variable=g2
     PrivateDefine v0, v1, v1 layout=L1
     v3 = Undefined
@@ -83,13 +86,13 @@ function f5 name="handle" parameters=[{type=anything}] results=[{type=anything}]
     Return v5
 }
 # CHECK-LABEL: function f5 name="handle"
-# CHECK: [[unchanged]]: boolean = IsPrototypeLinkUnchanged layout=L1 side=Static
+# CHECK: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
 # CHECK-NEXT: TestAndBranch [[unchanged]] -> taken [[fast]](), notTaken [[slow]]()
 # CHECK-NEXT: [[fast]]():
 # CHECK-NOT: Define
 # CHECK-NOT: PrivateSet
 # CHECK-NOT: CallDirect
-# CHECK: [[heir]]: object = NewObject -, {{*}}, v0, {{*}} layout=L1 fields=[3, 4, 5, 0, 1, 2]
+# CHECK: [[heir]]: L1 = NewObject -, {{*}}, v0, {{*}} layout=L1 fields=[3, 4, 5, 0, 1, 2]
 # CHECK-NEXT: Jump -> next [[after]]([[heir]])
 # CHECK-NEXT: [[slow]]() frequency=Rare:
 # CHECK: = SuperConstruct

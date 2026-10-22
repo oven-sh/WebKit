@@ -1,0 +1,52 @@
+# A read that a store is proven to come before has a cast where the other reads have the test for the dead zone. It becomes a read of the object and looks at nothing else
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass DeferDefinitions
+# STATISTIC: DeadZonesKeptBesideDefinitions = 2
+# STATISTIC: ClosuresDeferredInVariables = 1
+# STATISTIC: RegExpsDeferredInVariables = 1
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: CheckInitialized
+# CHECK: [[helper]]: f1 = GetModuleVariable variable=g2
+# CHECK-NEXT: = Call [[helper]]
+# CHECK-NOT: CheckInitialized
+# CHECK: [[held]]:{{*}}= GetModuleVariable variable=g3
+# CHECK-NEXT: = TypeTest [[held]] testedType=absent
+# CHECK-LABEL: function f2 name="early"
+# CHECK: [[state]]:{{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: = CheckInitialized [[state]] name="helper"
+# CHECK-NEXT: = GetModuleVariable variable=g2
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="helper" module=m0 declared={type=absent|f1} flow={writers=AllKnown stores=AtMostOnce}
+variable g1 name="pattern" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewRegExp pattern="a+"
+    PutModuleVariable v2 variable=g1
+    v4 = GetModuleVariable variable=g0
+    v5 = AssumeType v4 castType=f1
+    v6 = Call v5
+    v7 = GetModuleVariable variable=g1
+    v8 = AssumeType v7 castType=RegExp
+    v9 = Call v5, -, v8
+    Return
+}
+function f1 name="helper" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="early" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="helper"
+    v3 = Call v0, -, v2
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="pattern"
+    v6 = Call v0, -, v5
+    Return v6
+}

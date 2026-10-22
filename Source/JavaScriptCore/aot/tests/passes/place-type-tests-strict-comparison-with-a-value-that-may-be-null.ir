@@ -1,0 +1,26 @@
+# `node.key === key`, where the key is expected to be null or an object: the bits are compared whichever of them it is. A test for an object alone would fail on the null that is expected,
+# and what stands behind a failed test is the copy in which nothing else is tested either. So undefined and null pass the test where one of them is expected
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Key" fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="nullOrObject" parameters=[{type=null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything ~ null|L0, v1: anything):
+    v2 = StrictEq v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="nullOrObject"
+# CHECK-NOT: testedType=object
+# CHECK: = TypeTest v0 testedType=undefined|null|object
+# CHECK: = StrictEq v1, {{*}}
+
+function f1 name="objectAlone" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = StrictEq v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="objectAlone"
+# CHECK: = TypeTest v0 testedType=object

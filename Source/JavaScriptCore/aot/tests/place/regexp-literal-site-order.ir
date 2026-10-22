@@ -26,13 +26,12 @@ function f1 name="other" results=[{type=anything}] {
     Return v7
 }
 
-# CHECK: statics size=40
-# CHECK: module-value m0 @8
-# CHECK-NEXT: site-cell NewRegExp @16
-# CHECK-NEXT: site-cell SharedRegExpLiteral @24
-# CHECK-NEXT: site-cell NewRegExp @32
+# CHECK: statics size=32
+# CHECK: site-cell NewRegExp @8
+# CHECK-NEXT: site-cell SharedRegExpLiteral @16
+# CHECK-NEXT: site-cell NewRegExp @24
 # CHECK-LABEL: function f0 name="main"
-# CHECK: = NewRegExp {{*}}staticsOffset=16 @30
+# CHECK: = NewRegExp {{*}}staticsOffset=8 @30
 # CHECK-LABEL: function f1 name="other"
-# CHECK: = NewRegExp {{*}}staticsOffset=32 @20
-# CHECK: = SharedRegExpLiteral {{*}}staticsOffset=24 @10
+# CHECK: = NewRegExp {{*}}staticsOffset=24 @20
+# CHECK: = SharedRegExpLiteral {{*}}staticsOffset=16 @10

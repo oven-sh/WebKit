@@ -1,15 +1,15 @@
-# Layout lines of every kind of the wire with every field; a derived layout is named by its token or module and has no line
+# Layout lines of every kind of the wire with every field; the layout of a built-in or of a namespace is named by its token or module and has no line
 # RUN: round-trip
 # CHECK: typesite w0 module=m0 position=9 kind=Field
-# CHECK-NEXT: layout L0 name="I" module=m0 position=4 fields=[{key="x" declared={type=number predicted=i32 site=w0} flags=[IsRequired]}]
+# CHECK-NEXT: layout L0 name="I" module=m0 position=4 fields=[{key="x" declared={type=number site=w0 flags=[IsExpected]} flags=[IsRequired]}]
 # CHECK-NEXT: layout L1 kind=Environment module=m0 position=6 fields=[{key="c" declared={type=anything}}, {declared={type=anything|absent} flags=[IsImmutable]}]
-# CHECK-NEXT: layout L2 kind=Instance name="C" module=m0 position=12 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}, {key="m" declared={type=function} flags=[IsMethod]}, {computedKey=0 declared={type=anything predicted=i32 flags=[IsInt32Promise]}}, {key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}, {key=#"brand"@L2 declared={type=anything} flags=[IsPrivate, IsBrand, IsHidden]}] staticFields=[{key="s" variable=g0}, {computedKey=1 variable=g1}] supertypes=[L0] computedKeyCount=2
-# CHECK-NEXT: layout L3 kind=Instance name="D" module=m0 position=40 predictedBase=L2 constructor=f2 fields=[{key="o" declared={type=object written=L0|L2|L3 predicted=L3}}] supertypes=[L0, L2] flags=[HasHeritage]
-# CHECK-NEXT: layout L4 kind=Container name="E" module=m0 position=50 fields=[{key="a" declared={type=number}}]
+# CHECK-NEXT: layout L2 kind=Instance name="C" module=m0 position=12 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}, {key="m" declared={type=function} flags=[IsMethod]}, {computedKey=0 declared={type=i32 flags=[IsInt32Promise]}}, {key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}, {key=#"brand"@L2 declared={type=anything} flags=[IsPrivate, IsBrand, IsHidden]}] staticFields=[{key="s" variable=g0}, {computedKey=1 variable=g1}] supertypes=[L0] computedKeyCount=2
+# CHECK-NEXT: layout L3 kind=Instance name="D" module=m0 position=40 base=L2 constructor=f2 fields=[{key="o" declared={type=L0|L2|L3}}] supertypes=[L0, L2] flags=[HasHeritage]
+# CHECK-NEXT: layout L4 kind=Container name="E" module=m0 position=50 fields=[{key="a" declared={type=number} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}]
 # CHECK-NEXT: layout L5 kind=Instance name="Legacy" module=m0 position=60 constructor=f3 flags=[IsConstructorFunction]
 # CHECK-NEXT: variable g0 name="s" module=m0 declared={type=anything} owner=L2
 # CHECK-NEXT: variable g1 module=m0 declared={type=anything} owner=L2
-# CHECK-NEXT: variable g2 name="derived" module=m0 declared={type=object written=L(IteratorResult)|L(m0)}
+# CHECK-NEXT: variable g2 name="derived" module=m0 declared={type=L(IteratorResult)|L(m0)}
 # CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0
 # CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: b0():
@@ -17,22 +17,22 @@
 # CHECK-NEXT: }
 # CHECK-NEXT: function f1 name="C" module=m0 position=12 kind=BaseConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=object}]
 # CHECK-NEXT: function f2 name="D" module=m0 position=40 kind=DerivedConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=object}]
-# CHECK-NEXT: function f3 name="Legacy" module=m0 position=60 flags=[IsSloppy, HasThis] thisType={type=object written=L5} results=[{type=anything}]
+# CHECK-NEXT: function f3 name="Legacy" module=m0 position=60 flags=[IsSloppy, HasThis] thisType={type=L5} results=[{type=anything}]
 # CHECK-NEXT: entry module=m0
 # CHECK-NEXT: round trip: same
 # RUN(V): verify
 # V: valid
 
 typesite w0 module=m0 position=9 kind=Field
-layout L0 name="I" module=m0 position=4 fields=[{key="x" declared={type=number predicted=i32 site=w0} flags=[IsRequired]}]
+layout L0 name="I" module=m0 position=4 fields=[{key="x" declared={type=number site=w0 flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Environment module=m0 position=6 fields=[{key="c" declared={type=anything}}, {declared={type=anything|absent} flags=[IsImmutable]}]
 layout L2 kind=Instance name="C" module=m0 position=12 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}, {key="m" declared={type=function} flags=[IsMethod]}, {computedKey=0 declared={type=i32 flags=[IsInt32Promise]}}, {key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}, {key=#"brand"@L2 declared={type=anything} flags=[IsPrivate, IsBrand, IsHidden]}] staticFields=[{key="s" variable=g0}, {computedKey=1 variable=g1}] supertypes=[L0] computedKeyCount=2
-layout L3 kind=Instance name="D" module=m0 position=40 predictedBase=L2 constructor=f2 fields=[{key="o" declared={type=object written=L0|L2|L3 predicted=L3}}] supertypes=[L0, L2] flags=[HasHeritage]
-layout L4 kind=Container name="E" module=m0 position=50 fields=[{key="a" declared={type=number}}]
+layout L3 kind=Instance name="D" module=m0 position=40 base=L2 constructor=f2 fields=[{key="o" declared={type=L0|L2|L3}}] supertypes=[L0, L2] flags=[HasHeritage]
+layout L4 kind=Container name="E" module=m0 position=50 fields=[{key="a" declared={type=number} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}]
 layout L5 kind=Instance name="Legacy" module=m0 position=60 constructor=f3 flags=[IsConstructorFunction]
 variable g0 name="s" module=m0 declared={type=anything} owner=L2
 variable g1 module=m0 declared={type=anything} owner=L2
-variable g2 name="derived" module=m0 declared={type=object written=L(IteratorResult)|L(m0)}
+variable g2 name="derived" module=m0 declared={type=L(IteratorResult)|L(m0)}
 module m0 path="/a.ts" displayPath="a.ts" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -40,5 +40,5 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 }
 function f1 name="C" module=m0 position=12 kind=BaseConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=object}]
 function f2 name="D" module=m0 position=40 kind=DerivedConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=object}]
-function f3 name="Legacy" module=m0 position=60 flags=[IsSloppy, HasThis] thisType={type=object written=L5} results=[{type=anything}]
+function f3 name="Legacy" module=m0 position=60 flags=[IsSloppy, HasThis] thisType={type=L5} results=[{type=anything}]
 entry module=m0

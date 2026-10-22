@@ -37,6 +37,17 @@ static std::unique_ptr<FieldMovePlan> createFieldCopyPlan(VM& vm, Object& target
     auto listed = keyOrders.propertiesInOrder(vm, source.layout(), source.orderWord() & orderAndCountMask, Object::SymbolKeys::Include);
     if (!listed)
         return neverApplies();
+    Vector<const FieldData*, 16> fieldsStoredTo;
+    for (auto& property : *listed) {
+        const FieldData* to = layouts.field(vm, layout, property.name);
+        if (!to || to->flags & fieldIsStoredOnce || to->slot.representation() == SlotRepresentation::DeferredClosure)
+            return neverApplies();
+        plan->appendFieldToField(layouts, *property.field, *to);
+        // A value that has to be tested against the type of its field is stored faster by an assignment plan, which remembers what it has accepted.
+        if (!plan->moves.isEmpty() && plan->moves.last().kind == FieldMoveKind::BoxedToSlot)
+            return neverApplies();
+        fieldsStoredTo.append(to);
+    }
     bool listsKeys = !layout.keysAreNeverEnumerated;
     BitVector present;
     Object::KeyOrderStorage storage;
@@ -45,11 +56,7 @@ static std::unique_ptr<FieldMovePlan> createFieldCopyPlan(VM& vm, Object& target
             present.set(key);
     }
     uint32_t word = target.orderWord();
-    for (auto& property : *listed) {
-        const FieldData* to = layouts.field(vm, layout, property.name);
-        if (!to || to->flags & fieldIsStoredOnce || to->slot.representation() == SlotRepresentation::DeferredClosure)
-            return neverApplies();
-        plan->appendFieldToField(layouts, *property.field, *to);
+    for (const FieldData* to : fieldsStoredTo) {
         uint16_t index = target.indexOf(*to);
         if (!listsKeys || present.get(index))
             continue;
@@ -59,12 +66,6 @@ static std::unique_ptr<FieldMovePlan> createFieldCopyPlan(VM& vm, Object& target
         word = *next;
         present.set(index);
     }
-    // A value that has to be tested against the type of its field is stored faster by an assignment plan, which remembers what it has accepted.
-    bool testsValues = std::ranges::any_of(plan->moves, [](const FieldMove& move) {
-        return move.kind == FieldMoveKind::BoxedToSlot;
-    });
-    if (testsValues)
-        return neverApplies();
     plan->finish(state.objects->structures.objectStructure(vm, layout.shape), layout.size, word & orderAndCountMask);
     return plan;
 }
@@ -88,7 +89,7 @@ static size_t sizeOfFieldWords(const LayoutData& layout)
 void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
 {
     const LayoutData& layout = this->layout();
-    ASSERT(&layout == &source.layout() && compiledStructure().hasOnlyPlainSlots() && !source.hasExtraProperties() && !source.hasOutOfLineKeyOrder());
+    ASSERT(&layout == &source.layout() && !source.hasOutOfLineKeyOrder());
     Extension* extension = createCopyOf(vm, source.extension());
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
     if (layout.hasExtension())
@@ -97,19 +98,185 @@ void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
     vm.writeBarrier(this);
 }
 
+// The copy holds the function objects of the source, so a closure that the source has not made yet is made first. Then its slot is copied like any other, as compiled code does it.
+// False where a field is neither plain nor such a closure. That some closures are made by then shows nowhere.
+// The words of a field that is stored once are its one store where the copy is made by them.
+enum class CopyOfWords : bool { FillsObject, MakesObject };
+static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source, CopyOfWords copy)
+{
+    const uint16_t flagsOfOtherFields = fieldIsPrivate | fieldIsBrand | fieldAttributeFlags | (copy == CopyOfWords::FillsObject ? fieldIsStoredOnce : 0);
+    for (const FieldData& field : source.layout().fields()) {
+        if (field.flags & flagsOfOtherFields)
+            return false;
+        if (field.slot.representation() == SlotRepresentation::DeferredClosure && source.at<uint32_t>(field.slot.offset) == uncreatedDeferredClosure)
+            source.materializeDeferredClosure(vm, field);
+    }
+    return true;
+}
+
+// An object with the Structure and the values of another, all of whose properties are plain: what a copy of each property in turn would make. Null for any other object.
+static JSObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
+{
+    Structure* structure = extra->structure();
+    if (extra->type() != FinalObjectType || structure->isDictionary() || hasIndexedProperties(structure->indexingType()) || extra->hasNonReifiedStaticProperties())
+        return nullptr;
+    if (structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties() || structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || !structure->canPerformFastPropertyEnumeration())
+        return nullptr;
+    Butterfly* butterfly = structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
+    JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
+    PropertyOffset maxOffset = structure->maxOffset();
+    PropertyOffset endOfInlineOffsets = std::min<PropertyOffset>(maxOffset + 1, structure->inlineCapacity());
+    for (PropertyOffset offset = 0; offset < endOfInlineOffsets; ++offset)
+        copy->locationForOffset(offset)->setWithoutWriteBarrier(extra->getDirect(offset));
+    for (PropertyOffset offset = firstOutOfLineOffset; offset <= maxOffset; ++offset)
+        copy->locationForOffset(offset)->setWithoutWriteBarrier(extra->getDirect(offset));
+    return copy;
+}
+
+// What create() and tryCopyFieldsOf() make together of a record below Object.prototype, without the pass over the fields that empties each slot: every word comes from the source.
+ALWAYS_INLINE Object* Object::createCopyOfWords(VM& vm, const Object& source, Structure* structure)
+{
+    const LayoutData& layout = source.layout();
+    Object* copy = new (NotNull, allocateCell<Object>(vm, layout.size)) Object(vm, structure);
+    if (!layout.hasExtension()) {
+        // Nothing is allocated before the last word is written, so nobody visits the cell while it holds what the cell before it held.
+        copy->setPerCellBit(source.perCellBit());
+        copy->at<uint32_t>(offsetOfOrderWord) = source.orderWord() & orderAndCountMask;
+        copy->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
+        gcSafeMemcpy(&copy->at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
+        copy->JSCell::finishCreation(vm);
+        vm.writeBarrier(copy);
+        return copy;
+    }
+    zeroSpan(std::span { reinterpret_cast<uint8_t*>(copy) + sizeof(JSCell), layout.size - sizeof(JSCell) });
+    copy->setPerCellBit(source.perCellBit());
+    copy->at<uint32_t>(offsetOfOrderWord) = unorderedOrderWord;
+    copy->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
+    copy->JSCell::finishCreation(vm);
+    copy->copyFieldsOfSameLayout(vm, source);
+    return copy;
+}
+
+// The extra properties of the source are copied where all of them are plain. That the source takes no more, or that nothing of it may be changed, is not copied.
+NEVER_INLINE Object* Object::tryCreateCopyOfFieldsAndExtraProperties(VM& vm, const Object& source)
+{
+    const CompiledStructure& structure = source.compiledStructure();
+    const LayoutData& layout = source.layout();
+    if (source.orderWord() & orderWordHasFieldOutsideSlot || structure.hasOtherPrototype())
+        return nullptr;
+    bool hasExtraProperties = source.hasExtraProperties();
+    if (hasExtraProperties ? !layout.extraPropertiesSlot() : !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        return nullptr;
+    DeferGC deferGC(vm);
+    if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::MakesObject))
+        return nullptr;
+    if (!hasExtraProperties)
+        return createCopyOfWords(vm, source, source.structure());
+    JSObject* extraProperties = tryCopyPlainExtraProperties(vm, source.extraProperties());
+    if (!extraProperties)
+        return nullptr;
+    StructureTable& structures = source.state().objects->structures;
+    Object* copy = createCopyOfWords(vm, source, structures.objectStructure(vm, layout.shape));
+    copy->setExtraProperties(vm, extraProperties, structures.withExtraProperties(vm, copy->compiledStructure(), extraProperties->structure()));
+    return copy;
+}
+
+Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
+{
+    const CompiledStructure& structure = source.compiledStructure();
+    const LayoutData& layout = source.layout();
+    if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated || source.hasOutOfLineKeyOrder() || structure.mayBePrototype())
+        return nullptr;
+    // The words of the source refer to the objects that lie in the cell of the source, and the copy has a cell without room for any.
+    if (layout.holdsInnerObjectsInPlace || layout.mayBeInnerObject)
+        return nullptr;
+    if (source.hasFlagsInOrderWord() || !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype)) [[unlikely]]
+        return tryCreateCopyOfFieldsAndExtraProperties(vm, source);
+    DeferGC deferGC(vm);
+    if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::MakesObject))
+        return nullptr;
+    return createCopyOfWords(vm, source, source.structure());
+}
+
+// A field that has left its slot lies beside the slots under its own name. An object of the same layout that takes it over gets no name that the layout does not have,
+// and the source has answered for what took the field out of its slot.
+static void validateCopyOfExtraProperties(VM& vm, const Object& target, JSObject* extraProperties)
+{
+    if (!vm.aotState().validatesRuntime)
+        return;
+    RuntimeLayoutTable& layouts = target.state().objects->layouts;
+    bool addsName = false;
+    extraProperties->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        addsName |= !layouts.field(vm, target.layout(), entry.key());
+        return true;
+    });
+    if (addsName)
+        validateMutation(vm, target, ObjectMutation::AddProperty);
+}
+
+// Two objects with one Structure are objects of one layout of one program, and what the Structure says of the one it says of the other. Whether the keys of an object are listed in order is in its shape.
+ALWAYS_INLINE bool Object::tryCopyWordsOfSameStructure(VM& vm, const Object& source)
+{
+    if (structureID() != source.structureID() || shapeWord() != source.shapeWord() || this == &source || orderWord() != unorderedOrderWord)
+        return false;
+    uint32_t orderWordOfSource = source.orderWord();
+    if (orderWordOfSource & ~(orderAndCountMask | orderWordIntegrityBits) || isOrderStoredOutOfLine(orderWordOfSource))
+        return false;
+    const CompiledStructure& structure = compiledStructure();
+    constexpr OptionSet<CompiledStructure::Flag> flagsOfOtherStorage { CompiledStructure::Flag::HasExtraProperties, CompiledStructure::Flag::HasOutOfLineKeyOrder };
+    if (!structure.hasOnlyPlainSlots() || structure.flags().containsAny(flagsOfOtherStorage) || structure.mayBePrototype())
+        return false;
+    const LayoutData& layout = structure.layout();
+    if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated || layout.hasExtension())
+        return false;
+    gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
+    at<uint32_t>(offsetOfOrderWord) = orderWordOfSource & orderAndCountMask;
+    vm.writeBarrier(this);
+    return true;
+}
+
 bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
 {
-    if (this == &source || &source.state() != &state() || layout().kind() != LayoutKind::Record || hasFlagsInOrderWord() || source.hasExtraProperties())
+    if (tryCopyWordsOfSameStructure(vm, source)) [[likely]]
+        return true;
+    if (this == &source || &source.state() != &state() || layout().kind() != LayoutKind::Record || hasFlagsInOrderWord())
         return false;
     if (hasOutOfLineKeyOrder() || source.hasOutOfLineKeyOrder() || source.layout().keysAreNeverEnumerated)
         return false;
     DeferGC deferGC(vm);
-    if (shapeWord() == source.shapeWord() && !countOf(orderWord()) && compiledStructure().hasOnlyPlainSlots()) {
+    bool mayCopyWords = shapeWord() == source.shapeWord() && !countOf(orderWord());
+    // The order word of the source says where its extra properties stand among its fields, by their places in the Structure that the copy shares.
+    JSObject* extraProperties = nullptr;
+    if (source.hasExtraProperties()) [[unlikely]] {
+        if (!mayCopyWords || source.orderWord() & orderWordIntegrityBits || !layout().extraPropertiesSlot() || isInFrame())
+            return false;
+        extraProperties = tryCopyPlainExtraProperties(vm, source.extraProperties());
+        if (!extraProperties)
+            return false;
+    }
+    if (mayCopyWords && !compiledStructure().hasOnlyPlainSlots()) [[unlikely]]
+        mayCopyWords = tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::FillsObject);
+    if (extraProperties && !mayCopyWords)
+        return false;
+    if (mayCopyWords) {
+        CompiledStructure* structureWithExtraProperties = nullptr;
+        if (extraProperties) {
+            validateCopyOfExtraProperties(vm, *this, extraProperties);
+            structureWithExtraProperties = state().objects->structures.withExtraProperties(vm, compiledStructure(), extraProperties->structure());
+        }
         copyFieldsOfSameLayout(vm, source);
-        if (countOf(orderWord()))
+        if (extraProperties) {
+            setExtraProperties(vm, extraProperties, structureWithExtraProperties);
+            at<uint32_t>(offsetOfOrderWord) |= source.orderWord() & orderWordHasFieldOutsideSlot;
+            if (source.perCellBit())
+                setPerCellBit(true);
+        }
+        if (countOf(orderWord()) || extraProperties)
             didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
         return true;
     }
+    if (!countOf(source.orderWord()))
+        return true;
     FieldMovePlanCache& movePlans = state().objects->caches->movePlans;
     FieldMovePlanKey key { FieldMovePlanPurpose::CopyFields };
     key.sourceWords = source.orderAndShapeWords() & orderCountAndShapeMask;
@@ -142,11 +309,37 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
     State& state = this->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
     Vector<const FieldData*, 16> fields;
+    Vector<AcceptedValue, 16> acceptedValues;
     for (size_t i = 0; i < names.size(); ++i) {
         const FieldData* field = layouts.field(vm, layout, names[i]);
-        if (!field || field->flags & fieldIsStoredOnce || field->slot.representation() == SlotRepresentation::DeferredClosure || !canStoreInField(*this, *field, JSValue::decode(values[i])))
+        if (!field || field->flags & (fieldIsStoredOnce | fieldAttributeFlags) || field->slot.representation() == SlotRepresentation::DeferredClosure)
+            return false;
+        std::optional<AcceptedValue> accepted = acceptInSlot(*this, *field, JSValue::decode(values[i]));
+        if (!accepted)
             return false;
         fields.append(field);
+        acceptedValues.append(*accepted);
+    }
+
+    // One by one the fields out of line would each take a larger Extension.
+    uint64_t granuleBits = 0;
+    for (const FieldData* field : fields) {
+        if (field->isOutOfLine())
+            granuleBits |= granuleBitOf(field->slot.offset);
+    }
+    if (granuleBits)
+        ensureExtensionGranules(vm, granuleBits);
+
+    if (layout.keysAreNeverEnumerated) {
+        bool didCreateFields = false;
+        for (size_t i = 0; i < fields.size(); ++i) {
+            didCreateFields |= !isInKeyOrder(state, *fields[i]);
+            bool didStore = store(vm, *fields[i], acceptedValues[i]);
+            RELEASE_ASSERT(didStore);
+        }
+        if (didCreateFields)
+            didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
+        return true;
     }
 
     KeyOrderStorage storage;
@@ -156,7 +349,7 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
     for (uint16_t key : keys)
         isListed.set(key);
     for (size_t i = 0; i < fields.size(); ++i) {
-        bool didStore = store(vm, *fields[i], JSValue::decode(values[i]));
+        bool didStore = store(vm, *fields[i], acceptedValues[i]);
         RELEASE_ASSERT(didStore);
         uint16_t index = layout.indexOf(*fields[i]);
         if (!isListed.set(index))
@@ -164,8 +357,7 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
     }
     if (keys.size() == numberOfKeysBefore)
         return true;
-    if (!layout.keysAreNeverEnumerated)
-        setKeyOrder(vm, state, keys.span());
+    setKeyOrder(vm, state, keys.span());
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
     return true;
 }
@@ -184,7 +376,13 @@ public:
     }
 
     bool store(AssignmentPlan::FieldStore&, JSValue);
+    bool tryCopyBits(AssignmentPlan::FieldStore&, const Object& source);
+    bool tryRunAsBefore(AssignmentPlan&, const AssignmentSource&);
+    bool tryRunListingOnce(AssignmentPlan&, const AssignmentSource&);
+    void setExtraProperties(JSObject* extra) { m_extra = extra; }
     bool didCreateFields() const { return m_didCreateFields; }
+    // Stores into a slot that was empty or cannot be.
+    size_t numberOfStoresThatReplacedNothing() const { return m_numberOfStoresThatReplacedNothing; }
     void writeBarrierIfNeeded()
     {
         if (m_didStoreCell)
@@ -192,6 +390,14 @@ public:
     }
 
 private:
+    struct ReplacedBits {
+        void* slot;
+        uint64_t bits;
+        unsigned width;
+    };
+    using ReplacedSlots = Vector<ReplacedBits, 24>;
+
+    bool tryStoreEveryField(AssignmentPlan&, const AssignmentSource&, ReplacedSlots&);
     bool acceptsObject(AssignmentPlan::FieldStore&, JSObject*);
     bool isAccepted(AssignmentPlan::FieldStore&, JSValue);
     void listCreatedField(AssignmentPlan::FieldStore&);
@@ -203,6 +409,7 @@ private:
     JSObject* m_extra;
     bool m_didStoreCell { false };
     bool m_didCreateFields { false };
+    size_t m_numberOfStoresThatReplacedNothing { 0 };
 };
 
 }
@@ -238,7 +445,7 @@ bool FieldStoreRun::acceptsObject(AssignmentPlan::FieldStore& store, JSObject* o
     });
     if (acceptsEveryObjectOfStructure) {
         store.lastAcceptedStructure = object->structureID();
-        m_state.objects->caches->assignmentPlans.didWritePlan();
+        m_state.objects->caches->assignmentPlans.didWritePlan(const_cast<AssignmentPlan&>(m_plan));
     }
     return true;
 }
@@ -269,7 +476,7 @@ ALWAYS_INLINE void FieldStoreRun::listCreatedField(AssignmentPlan::FieldStore& s
     }
 }
 
-bool FieldStoreRun::store(AssignmentPlan::FieldStore& store, JSValue value)
+ALWAYS_INLINE bool FieldStoreRun::store(AssignmentPlan::FieldStore& store, JSValue value)
 {
     SlotRepresentation representation = store.to->slot.representation();
     uint32_t offset = store.to->slot.offset;
@@ -290,17 +497,23 @@ bool FieldStoreRun::store(AssignmentPlan::FieldStore& store, JSValue value)
             isDirect = false;
     }
     auto mayFillEmptySlot = [&]() ALWAYS_INLINE_LAMBDA {
+        bool mayCreate = !m_extra && m_plan.mayCreateFields;
         if (store.isAbsentWhenEmpty)
-            return !m_extra && m_plan.mayCreateFields;
-        existsWithoutStorage = existsWithoutStorage || m_target.isInKeyOrder(m_state, *store.to);
-        return existsWithoutStorage;
+            return mayCreate;
+        // An order that the field has been created from does not list it.
+        bool isKnownToBeAbsent = mayCreate && store.orderWordBeforeCreation == m_target.orderWord();
+        existsWithoutStorage = existsWithoutStorage || (!isKnownToBeAbsent && m_target.isInKeyOrder(m_state, *store.to));
+        return existsWithoutStorage || mayCreate;
     };
     if (isDirect && isValueAccepted) {
         bool isEmpty = slotHoldsAbsent(representation, slot);
         if ((!isEmpty || mayFillEmptySlot()) && tryWriteSlot(*m_state.strings, representation, slot, value)) {
             m_didStoreCell |= traits.holdsCell && value.isCell();
-            if (isEmpty && !existsWithoutStorage)
+            if (isEmpty && !existsWithoutStorage) {
                 listCreatedField(store);
+                ++m_numberOfStoresThatReplacedNothing;
+            } else if (!store.hasAbsent)
+                ++m_numberOfStoresThatReplacedNothing;
             return true;
         }
     }
@@ -309,7 +522,7 @@ bool FieldStoreRun::store(AssignmentPlan::FieldStore& store, JSValue value)
         return false;
     if (isCreated) {
         m_didCreateFields = true;
-        m_target.didCreateField(m_state, *store.to);
+        m_target.didCreateField(m_state, *store.to, !!m_target.slotOf(*store.to));
     }
     return true;
 }
@@ -338,8 +551,9 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
         JSValue value = source.read(store);
         if (!value)
             return false;
-        extra->putDirectOffset(vm, store.offset, value);
+        extra->locationForOffset(store.offset)->setWithoutWriteBarrier(value);
     }
+    vm.writeBarrier(extra);
     if (!before) {
         target.setExtraProperties(vm, extra, plan.targetAfter);
         return true;
@@ -351,54 +565,1033 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
     return true;
 }
 
-static std::optional<AssignmentSource> assignmentSourceFor(JSObject* source, std::span<UniquedStringImpl* const> excludedNames)
+static ALWAYS_INLINE uint64_t loadSlotBits(unsigned width, const void* slot)
+{
+    switch (width) {
+    case 1:
+        return *static_cast<const uint8_t*>(slot);
+    case 2:
+        return *static_cast<const uint16_t*>(slot);
+    case 4:
+        return *static_cast<const uint32_t*>(slot);
+    case 8:
+        return *static_cast<const uint64_t*>(slot);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static ALWAYS_INLINE void storeSlotBits(unsigned width, void* slot, uint64_t bits)
+{
+    switch (width) {
+    case 1:
+        *static_cast<uint8_t*>(slot) = static_cast<uint8_t>(bits);
+        return;
+    case 2:
+        *static_cast<uint16_t*>(slot) = static_cast<uint16_t>(bits);
+        return;
+    case 4:
+        *static_cast<uint32_t*>(slot) = static_cast<uint32_t>(bits);
+        return;
+    case 8:
+        *static_cast<uint64_t*>(slot) = bits;
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static ALWAYS_INLINE void* slotIn(const Object& object, Extension* extensionOrNull, const FieldData& field)
+{
+    if (!field.isOutOfLine()) [[likely]]
+        return &object.at<uint8_t>(field.slot.offset);
+    return extensionOrNull ? extensionOrNull->slotOrNull(field.slot.offset) : nullptr;
+}
+
+// What store() does with a value that needs no test and no other form. False, with nothing done, where there is more to it.
+ALWAYS_INLINE bool FieldStoreRun::tryCopyBits(AssignmentPlan::FieldStore& store, const Object& source)
+{
+    ASSERT(store.copiesBitsUntested);
+    void* to = slotIn(m_target, store.to->isOutOfLine() ? m_target.extension() : nullptr, *store.to);
+    const void* from = slotIn(source, store.from->isOutOfLine() ? source.extension() : nullptr, *store.from);
+    if (!to || !from)
+        return false;
+    uint64_t bits = loadSlotBits(store.width, from);
+    if (store.hasAbsent && bits == store.absentBits)
+        return false;
+    bool isEmpty = store.hasAbsent && loadSlotBits(store.width, to) == store.absentBits;
+    if (isEmpty && (m_extra || !m_plan.mayCreateFields))
+        return false;
+    storeSlotBits(store.width, to, bits);
+    m_didStoreCell |= store.holdsCell;
+    if (isEmpty) {
+        listCreatedField(store);
+        ++m_numberOfStoresThatReplacedNothing;
+    } else if (!store.hasAbsent)
+        ++m_numberOfStoresThatReplacedNothing;
+    return true;
+}
+
+// False where a value is missing or does not go to its slot. The caller puts back what the stores in front of it have replaced.
+ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryField(AssignmentPlan& plan, const AssignmentSource& source, ReplacedSlots& replaced)
+{
+    // Extra properties that the run creates are seen by nobody before they are complete.
+    if (m_extra) {
+        for (auto& store : plan.extraPropertyStores) {
+            if (!source.read(store))
+                return false;
+        }
+    }
+    Extension* targetExtension = nullptr;
+    if (plan.granuleBitsFilled) {
+        m_target.ensureExtensionGranules(m_vm, plan.granuleBitsFilled);
+        targetExtension = m_target.extension();
+    }
+    Extension* sourceExtension = plan.readsOutOfLineFields ? source.compiledObject->extension() : nullptr;
+    bool didStoreAll = true;
+    for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
+        void* to = slotIn(m_target, targetExtension, *store.to);
+        didStoreAll = !!to;
+        if (!didStoreAll)
+            break;
+        replaced.append({ to, loadSlotBits(store.width, to), store.width });
+        if (store.copiesBitsUntested) {
+            const void* from = slotIn(*source.compiledObject, sourceExtension, *store.from);
+            uint64_t bits = from ? loadSlotBits(store.width, from) : store.absentBits;
+            didStoreAll = from && !(store.hasAbsent && bits == store.absentBits);
+            if (!didStoreAll)
+                break;
+            storeSlotBits(store.width, to, bits);
+            m_didStoreCell |= store.holdsCell;
+            continue;
+        }
+        JSValue value = source.read(store);
+        if (value && !isAccepted(store, value)) {
+            // A kind of which the field takes some values: numbers in a range, the strings of a list.
+            std::optional<AcceptedValue> accepted = m_state.objects->layouts.accept(*store.to, value);
+            value = accepted ? accepted->value() : JSValue();
+        }
+        didStoreAll = value && tryWriteSlot(*m_state.strings, store.to->slot.representation(), to, value);
+        if (!didStoreAll)
+            break;
+        m_didStoreCell |= store.holdsCell && value.isCell();
+    }
+    return didStoreAll;
+}
+
+// The Structures of the target and of its extra properties and its order word say which keys it has and in which order, and those of the source say the same of the source.
+// So a target like an earlier one ends with the order word and the Structures that the earlier one ended with, and no field is created or listed by itself.
+// False, with the target as it was, where a value does not go where the earlier one went.
+bool FieldStoreRun::tryRunAsBefore(AssignmentPlan& plan, const AssignmentSource& source)
+{
+    ASSERT(plan.orderWordBeforeRun == m_target.orderWord());
+    ReplacedSlots replaced;
+    bool didStoreAll = tryStoreEveryField(plan, source, replaced);
+    if (didStoreAll && !plan.extraPropertyStores.isEmpty())
+        didStoreAll = storeExtraProperties(m_vm, m_target, plan, m_extra, source);
+    if (!didStoreAll) [[unlikely]] {
+        for (const ReplacedBits& one : replaced)
+            storeSlotBits(one.width, one.slot, one.bits);
+        return false;
+    }
+    m_target.at<uint32_t>(offsetOfOrderWord) = plan.orderWordAfterRun;
+    writeBarrierIfNeeded();
+    return true;
+}
+
+// The first run for an order word. The values go to their slots, the extra properties get their Structure, and the keys that the run adds are listed in one step, in the order of the source:
+// one by one, each would look for the order that follows, and a field behind an added name would count the extra properties first.
+// False, with the target as it was, where a value does not go to its slot.
+bool FieldStoreRun::tryRunListingOnce(AssignmentPlan& plan, const AssignmentSource& source)
+{
+    const LayoutData& layout = m_target.layout();
+    uint32_t orderWord = m_target.orderWord();
+    if (layout.keysAreNeverEnumerated || isOrderStoredOutOfLine(orderWord) || orderWord & (orderWordHasFieldOutsideSlot | orderWordIntegrityBits))
+        return false;
+    if (!plan.storesAreDefinitions || plan.storesInSourceOrder.size() != plan.fieldStores.size() + plan.extraPropertyStores.size())
+        return false;
+    if (!std::ranges::all_of(plan.fieldStores, &AssignmentPlan::FieldStore::isDirect))
+        return false;
+    Object::KeyOrderStorage storage;
+    Vector<uint16_t, 32> keys(m_target.keyOrder(m_state, storage));
+    size_t numberOfKeysBefore = keys.size();
+    ExtraKeyCounter positioned(layout.numberOfFields);
+    BitVector isListed;
+    for (uint16_t key : keys) {
+        if (key >= layout.numberOfFields)
+            positioned.add(key);
+        else
+            isListed.set(key);
+    }
+    // Only a field that is listed behind them asks how many extra keys there are, and a walk over all extra properties may be what answers.
+    std::optional<uint32_t> numberOfExtraKeysBefore;
+    uint32_t numberOfExtraKeysAdded = 0;
+    for (uint16_t number : plan.storesInSourceOrder) {
+        size_t index = number & ~AssignmentPlan::isExtraPropertyStore;
+        if (number & AssignmentPlan::isExtraPropertyStore) {
+            const AssignmentPlan::ExtraPropertyStore& store = plan.extraPropertyStores[index];
+            numberOfExtraKeysAdded += store.addsName && m_target.hasPositionAmongKeys(store.name);
+            continue;
+        }
+        uint16_t key = layout.indexOf(*plan.fieldStores[index].to);
+        if (isListed.set(key))
+            continue;
+        if (!numberOfExtraKeysBefore) {
+            numberOfExtraKeysBefore = m_target.numberOfExtraKeysByStructure();
+            if (!numberOfExtraKeysBefore)
+                numberOfExtraKeysBefore = m_target.extraKeyNames().size();
+        }
+        positioned.appendEntriesCountingTo(*numberOfExtraKeysBefore + numberOfExtraKeysAdded, keys);
+        keys.append(key);
+    }
+    ReplacedSlots replaced;
+    bool didStoreAll = tryStoreEveryField(plan, source, replaced);
+    if (didStoreAll && !plan.extraPropertyStores.isEmpty())
+        didStoreAll = storeExtraProperties(m_vm, m_target, plan, m_extra, source);
+    if (!didStoreAll) {
+        for (const ReplacedBits& one : replaced)
+            storeSlotBits(one.width, one.slot, one.bits);
+        return false;
+    }
+    if (keys.size() != numberOfKeysBefore)
+        m_target.setKeyOrder(m_vm, m_state, keys.span());
+    for (size_t index = 0; index < replaced.size(); ++index) {
+        const AssignmentPlan::FieldStore& store = plan.fieldStores[index];
+        m_numberOfStoresThatReplacedNothing += !store.hasAbsent || replaced[index].bits == store.absentBits;
+    }
+    writeBarrierIfNeeded();
+    return true;
+}
+
+static bool listSameNames(VM& vm, Structure* first, Structure* second)
+{
+    if (first == second)
+        return true;
+    auto namesOf = [&](Structure* structure) {
+        Vector<UniquedStringImpl*, 16> names;
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            names.append(entry.attributes() ? nullptr : entry.key());
+            return true;
+        });
+        return names;
+    };
+    return namesOf(first) == namesOf(second);
+}
+
+// After a run that has stored everything. A definition by name can have dropped the plan.
+static void rememberRun(VM& vm, Object& target, AssignmentPlan& plan, const AssignmentSource& source, uint32_t orderWordBefore)
+{
+    uint32_t orderWordAfter = target.orderWord();
+    constexpr uint32_t flagsOfOtherRuns = orderWordHasFieldOutsideSlot | orderWordIntegrityBits;
+    if (!plan.isUsable || (orderWordBefore | orderWordAfter) & flagsOfOtherRuns || isOrderStoredOutOfLine(orderWordBefore) || isOrderStoredOutOfLine(orderWordAfter))
+        return;
+    if (plan.extraPropertyStores.isEmpty()) {
+        if (target.structureID() != plan.target)
+            return;
+    } else {
+        // Names that were defined one by one have led to another Structure than the one that a run gives all at once.
+        JSObject* extra = target.extraProperties();
+        if (!extra || !listSameNames(vm, extra->structure(), plan.extraPropertiesAfter))
+            return;
+    }
+    for (const AssignmentPlan::FieldStore& store : plan.fieldStores) {
+        const void* slot = store.isDirect ? target.slotOf(*store.to) : nullptr;
+        if (!slot || (store.hasAbsent && loadSlotBits(store.width, slot) == store.absentBits) || !source.read(store))
+            return;
+    }
+    plan.orderWordBeforeRun = orderWordBefore;
+    plan.orderWordAfterRun = orderWordAfter;
+}
+
+// A target that has the order word of an earlier one, and whose slots are as empty as that one's were, ends with the order word that the earlier one ended with.
+// Where a slot of the target is filled already, or a field of the source holds nothing to store, the slots are emptied again and the target is as it was.
+// A slot that cannot be empty belongs to a field that every object of the layout has. Whatever runs instead stores to it again.
+static bool tryFillEmptySlotsAsBefore(VM& vm, Object& target, State& state, const AssignmentPlan& plan, const Object& source)
+{
+    ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord());
+    Extension* targetExtension = nullptr;
+    if (plan.granuleBitsFilled) {
+        target.ensureExtensionGranules(vm, plan.granuleBitsFilled);
+        targetExtension = target.extension();
+    }
+    Extension* sourceExtension = plan.readsOutOfLineFields ? source.extension() : nullptr;
+    std::span<const AssignmentPlan::FieldStore> stores = plan.fieldStores.span();
+    size_t numberStored = 0;
+    for (const AssignmentPlan::FieldStore& store : stores) {
+        void* to = slotIn(target, targetExtension, *store.to);
+        if (store.hasAbsent && loadSlotBits(store.width, to) != store.absentBits)
+            break;
+        if (store.copiesBits) {
+            const void* from = slotIn(source, sourceExtension, *store.from);
+            if (!from)
+                break;
+            uint64_t bits = loadSlotBits(store.width, from);
+            if (store.hasAbsent && bits == store.absentBits)
+                break;
+            storeSlotBits(store.width, to, bits);
+        } else {
+            JSValue value = source.readInline(*store.from);
+            if (!value || !tryWriteSlot(*state.strings, store.to->slot.representation(), to, value))
+                break;
+        }
+        ++numberStored;
+    }
+    if (numberStored != stores.size()) [[unlikely]] {
+        for (const AssignmentPlan::FieldStore& store : stores.first(numberStored)) {
+            if (store.hasAbsent)
+                target.clear(*store.to);
+        }
+        return false;
+    }
+    target.at<uint32_t>(offsetOfOrderWord) = plan.orderWordAfterFillingAll;
+    if (plan.mayStoreCells)
+        vm.writeBarrier(&target);
+    return true;
+}
+
+static std::optional<AssignmentSource> assignmentSourceFor(JSObject* source, std::span<UniquedStringImpl* const> excludedNames, bool defines)
 {
     if (!isCompiledObject(source)) {
         if (source->type() != FinalObjectType || source->canHaveExistingOwnIndexedProperties())
             return std::nullopt;
-        return AssignmentSource { source, nullptr, source, 0, excludedNames };
+        return AssignmentSource { source, nullptr, source, 0, excludedNames, defines };
     }
     auto* compiledSource = uncheckedDowncast<Object>(source);
     uint32_t orderWord = compiledSource->orderWord();
     if (orderWord & orderWordIntegrityBits || isOrderStoredOutOfLine(orderWord) || compiledSource->layout().keysAreNeverEnumerated)
         return std::nullopt;
-    return AssignmentSource { source, compiledSource, compiledSource->extraProperties(), orderWord, excludedNames };
+    return AssignmentSource { source, compiledSource, compiledSource->extraProperties(), orderWord, excludedNames, defines, compiledSource->extension(), compiledSource->state().strings.get() };
+}
+
+static bool assignByPlan(VM&, Object& target, State&, AssignmentPlan&, JSObject* extra, const AssignmentSource&);
+
+static ALWAYS_INLINE uint64_t granuleBitsOf(const Extension* extensionOrNull) { return extensionOrNull ? extensionOrNull->granuleBits() : 0; }
+
+static uint32_t offsetInExtensionWith(uint64_t granuleBits, uint32_t offset)
+{
+    ASSERT(granuleBits & granuleBitOf(offset));
+    return offsetOfFirstExtensionSlot + std::popcount(granuleBits & (granuleBitOf(offset) - 1)) * extensionGranuleSize + offsetInGranule(offset);
+}
+
+static MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, bool isTested)
+{
+    using Kind = MappedCopy::MoveKind;
+    if (isTested)
+        return Kind::Tested;
+    auto isNarrowReference = [](SlotRepresentation representation) {
+        return representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
+    };
+    auto isDouble = [](SlotRepresentation representation) {
+        return representation == SlotRepresentation::Double || representation == SlotRepresentation::OptionalDouble;
+    };
+    if (from != to) {
+        // Undefined and null are the same bits in both.
+        static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined);
+        if (isNarrowReference(from) && isNarrowReference(to))
+            return Kind::HalfWordUnlessZero;
+        if (isNarrowReference(from) && (to == SlotRepresentation::JSValue || to == SlotRepresentation::Cell))
+            return Kind::WideNarrowReference;
+        if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::JSValue)
+            return Kind::BoxedOptionalInt32;
+        if (from == SlotRepresentation::Int32 && to == SlotRepresentation::JSValue)
+            return Kind::BoxedInt32;
+        if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::OptionalDouble)
+            return Kind::OptionalInt32AsDouble;
+        if (from == SlotRepresentation::Int32 && isDouble(to))
+            return Kind::Int32AsDouble;
+        return Kind::OtherForm;
+    }
+    switch (from) {
+    case SlotRepresentation::OptionalInt32:
+        return Kind::OptionalInt32;
+    case SlotRepresentation::OptionalInt64:
+        return Kind::OptionalInt64;
+    case SlotRepresentation::OptionalDouble:
+        return Kind::OptionalDouble;
+    default:
+        break;
+    }
+    const SlotTraits traits = traitsOf(from);
+    RELEASE_ASSERT(!traits.absentBits);
+    switch (traits.width) {
+    case 8:
+        return traits.hasAbsent ? Kind::WordUnlessZero : Kind::Word;
+    case 4:
+        return traits.hasAbsent ? Kind::HalfWordUnlessZero : Kind::HalfWord;
+    case 2:
+        RELEASE_ASSERT(!traits.hasAbsent);
+        return Kind::QuarterWord;
+    case 1:
+        return traits.hasAbsent ? Kind::ByteUnlessZero : Kind::Byte;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The first copy between objects with these words: which fields the map serves, where each of them goes, which granules they fill, and which keys the target ends with.
+// It touches neither object: the copy that it describes may still find a value that does not fit.
+// False where no map serves the copy, which the place remembers unless that may change.
+static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source, uint32_t excludedRunNumberPlusOne)
+{
+    AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
+    const LayoutData& targetLayout = target.layout();
+    const LayoutData& sourceLayout = source.layout();
+    FieldMap* map = plans.fieldMapFor(targetLayout, sourceLayout, excludedRunNumberPlusOne);
+    if (!map)
+        return false;
+    copy = { };
+    copy.targetWords = target.orderAndShapeWords();
+    copy.sourceWords = source.orderAndShapeWords();
+    copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
+    copy.state = MappedCopy::State::IsNotServed;
+    if (sourceLayout.keysAreNeverEnumerated)
+        return false;
+    uint32_t orderWordOfSource = source.orderWord();
+    std::span<const uint16_t> entries = state.objects->keyOrders.entriesInOrder(sourceLayout, orderOf(orderWordOfSource)).first(countOf(orderWordOfSource));
+    // The order word of an object whose keys nobody lists stays as it is.
+    bool listsKeys = !targetLayout.keysAreNeverEnumerated;
+    Vector<uint16_t, 32> keysAfter;
+    if (listsKeys) {
+        Object::KeyOrderStorage storage;
+        keysAfter.append(target.keyOrder(state, storage));
+    }
+    BitVector isListed;
+    for (uint16_t key : keysAfter) {
+        if (key >= targetLayout.numberOfFields)
+            return false;
+        isListed.set(key);
+    }
+    copy.granuleBitsOfSource = sourceLayout.hasExtension() ? granuleBitsOf(source.extension()) : 0;
+    copy.granuleBitsOfTargetBefore = targetLayout.hasExtension() ? granuleBitsOf(target.extension()) : 0;
+    Vector<MappedCopy::Move> moves;
+    moves.reserveInitialCapacity(entries.size());
+    for (uint16_t index : entries) {
+        if (index >= sourceLayout.numberOfFields)
+            return false;
+        uint16_t& entry = map->entries[index];
+        if (entry == FieldMap::isUnknown)
+            entry = plans.describeMappedField(vm, targetLayout, sourceLayout.fields()[index], excludedRunNumberPlusOne);
+        if (entry == FieldMap::isNotServed)
+            return false;
+        if (entry == FieldMap::isLeftOut)
+            continue;
+        uint16_t key = (entry & ~FieldMap::isTested) - FieldMap::firstField;
+        const FieldData& from = sourceLayout.fields()[index];
+        const FieldData& to = targetLayout.fields()[key];
+        bool isTested = entry & FieldMap::isTested;
+        uint8_t acceptedKinds = isTested ? kindsAlwaysAccepted(state.objects->layouts.typeOf(to)).toRaw() : 0;
+        if (from.isOutOfLine() && !(copy.granuleBitsOfSource & granuleBitOf(from.slot.offset)))
+            return false;
+        moves.append(MappedCopy::Move { from.slot.offset, to.slot.offset, moveKindFor(from.slot.representation(), to.slot.representation(), isTested), static_cast<uint8_t>(widthOf(to.slot.representation())),
+            from.isOutOfLine(), to.isOutOfLine(), from.slot.representation(), to.slot.representation(), acceptedKinds, key });
+        copy.mayStoreCells |= traitsOf(to.slot.representation()).holdsCell;
+        if (to.isOutOfLine())
+            copy.granuleBitsFilled |= granuleBitOf(to.slot.offset);
+        if (listsKeys && !isListed.set(key))
+            keysAfter.append(key);
+    }
+    for (MappedCopy::Move& move : moves) {
+        if (move.readsExtension)
+            move.from = offsetInExtensionWith(copy.granuleBitsOfSource, move.from);
+        if (move.writesExtension)
+            move.to = offsetInExtensionWith(copy.granuleBitsOfTargetBefore | copy.granuleBitsFilled, move.to);
+    }
+    copy.orderWordAfter = target.orderWord();
+    if (listsKeys && keysAfter.size() != countOf(copy.orderWordAfter)) {
+        // An order without a number is in a Structure of its own.
+        std::optional<uint32_t> numbered = state.objects->keyOrders.orderStartingWith(targetLayout, keysAfter.span());
+        if (!numbered)
+            return false;
+        copy.orderWordAfter = *numbered;
+    }
+    copy.moves = WTF::move(moves);
+    copy.state = MappedCopy::State::IsServed;
+    return true;
+}
+
+// The bits that say in a slot of the one form what the slot says in its own. The value fits: the type of its field lies within the type of the field that takes it.
+static NEVER_INLINE bool tryReadInOtherForm(State& state, const MappedCopy::Move& move, const uint8_t* slot, uint64_t& bits)
+{
+    JSValue value = readSlot(move.representationOfSource, slot, *state.strings);
+    bits = 0;
+    return value && tryWriteSlot(*state.strings, move.representationOfTarget, &bits, value);
+}
+
+// The same for a value that its type does not promise to fit. False for one that the field of the target does not take: what becomes of it is for a plan to say.
+static NEVER_INLINE bool tryReadTested(State& state, const MappedCopy::Move& move, const FieldData& to, const uint8_t* slot, uint64_t& bits)
+{
+    JSValue value = readSlot(move.representationOfSource, slot, *state.strings);
+    if (!value)
+        return false;
+    if (!OptionSet<ValueKind>::fromRaw(move.acceptedKinds).containsAny(valueKindOf(value))) {
+        std::optional<AcceptedValue> accepted = state.objects->layouts.accept(to, value);
+        if (!accepted)
+            return false;
+        value = accepted->value();
+    }
+    bits = 0;
+    return tryWriteSlot(*state.strings, move.representationOfTarget, &bits, value);
+}
+
+// What the slot of the target is to hold. False for a slot of the source that holds nothing.
+static ALWAYS_INLINE bool tryReadMove(State& state, const MappedCopy::Move& move, std::span<const FieldData> fieldsOfTarget, const uint8_t* slot, uint64_t& bits)
+{
+    using Kind = MappedCopy::MoveKind;
+    auto load = [&]<typename T>(T) ALWAYS_INLINE_LAMBDA {
+        return *reinterpret_cast<const T*>(slot);
+    };
+    switch (move.kind) {
+    case Kind::WordUnlessZero:
+        bits = load(uint64_t());
+        return bits;
+    case Kind::HalfWordUnlessZero:
+        bits = load(uint32_t());
+        return bits;
+    case Kind::ByteUnlessZero:
+        bits = load(uint8_t());
+        return bits;
+    case Kind::OptionalInt32:
+        bits = load(uint32_t());
+        return bits != traitsOf(SlotRepresentation::OptionalInt32).absentBits;
+    case Kind::OptionalInt64:
+        bits = load(uint64_t());
+        return bits != traitsOf(SlotRepresentation::OptionalInt64).absentBits;
+    case Kind::OptionalDouble:
+        bits = load(uint64_t());
+        return bits != traitsOf(SlotRepresentation::OptionalDouble).absentBits;
+    case Kind::Word:
+        bits = load(uint64_t());
+        return true;
+    case Kind::HalfWord:
+        bits = load(uint32_t());
+        return true;
+    case Kind::QuarterWord:
+        bits = load(uint16_t());
+        return true;
+    case Kind::Byte:
+        bits = load(uint8_t());
+        return true;
+    case Kind::BoxedOptionalInt32:
+    case Kind::OptionalInt32AsDouble: {
+        int32_t integer = load(int32_t());
+        // Absent, undefined or null.
+        if (integer < minInlineInt32) [[unlikely]]
+            return integer != absentInt32 && tryReadInOtherForm(state, move, slot, bits);
+        bits = move.kind == Kind::BoxedOptionalInt32 ? JSValue::encode(jsNumber(integer)) : std::bit_cast<uint64_t>(static_cast<double>(integer));
+        return true;
+    }
+    case Kind::BoxedInt32:
+        bits = JSValue::encode(jsNumber(load(int32_t())));
+        return true;
+    case Kind::Int32AsDouble:
+        bits = std::bit_cast<uint64_t>(static_cast<double>(load(int32_t())));
+        return true;
+    case Kind::WideNarrowReference:
+        bits = load(uint32_t());
+        if (bits > undefinedCell32) [[likely]]
+            bits = std::bit_cast<uint64_t>(MarkedBlockCage::decode(state.instance.cellCageBase, static_cast<uint32_t>(bits)));
+        return bits;
+    case Kind::OtherForm:
+        return !slotHoldsAbsent(move.representationOfSource, slot) && tryReadInOtherForm(state, move, slot, bits);
+    case Kind::Tested:
+        return !slotHoldsAbsent(move.representationOfSource, slot) && tryReadTested(state, move, fieldsOfTarget[move.fieldOfTarget], slot, bits);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static ALWAYS_INLINE void storeBitsOfWidth(unsigned width, uint8_t* slot, uint64_t bits)
+{
+    if (width == sizeof(uint64_t))
+        *reinterpret_cast<uint64_t*>(slot) = bits;
+    else if (width == sizeof(uint32_t))
+        *reinterpret_cast<uint32_t*>(slot) = static_cast<uint32_t>(bits);
+    else if (width == sizeof(uint8_t))
+        *slot = static_cast<uint8_t>(bits);
+    else
+        *reinterpret_cast<uint16_t*>(slot) = static_cast<uint16_t>(bits);
+}
+
+// A copy between two objects of the program without extra properties, each field of which is a load and a store. The values are read first, in the form of the slots that take them,
+// so a source that lacks one leaves the target as it was.
+static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object& target, const Object& source, uint32_t excludedRunNumberPlusOne)
+{
+    uint32_t orderWordOfTarget = target.orderWord();
+    uint32_t orderWordOfSource = source.orderWord();
+    if ((orderWordOfTarget | orderWordOfSource) & ~orderAndCountMask || isOrderStoredOutOfLine(orderWordOfTarget) || isOrderStoredOutOfLine(orderWordOfSource))
+        return RepeatedCopy::IsNotDone;
+    // The numbers of orders are those of one realm.
+    JSGlobalObject* realm = state.instance.globalObject;
+    if (target.structure()->realm() != realm || source.structure()->realm() != realm)
+        return RepeatedCopy::IsNotDone;
+    uint64_t targetWords = target.orderAndShapeWords();
+    uint64_t sourceWords = source.orderAndShapeWords();
+    MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(targetWords, sourceWords, excludedRunNumberPlusOne);
+    bool isFirstCopy = !copy.isFor(targetWords, sourceWords, excludedRunNumberPlusOne);
+    if (isFirstCopy && !tryDescribeMappedCopy(vm, state, copy, target, source, excludedRunNumberPlusOne))
+        return RepeatedCopy::IsNotDone;
+    if (copy.state != MappedCopy::State::IsServed)
+        return RepeatedCopy::IsNotDone;
+
+    const Extension* extensionOfSource = copy.granuleBitsOfSource ? source.extension() : nullptr;
+    if (granuleBitsOf(extensionOfSource) != copy.granuleBitsOfSource)
+        return RepeatedCopy::IsNotDone;
+    Extension* extensionOfTargetBefore = copy.granuleBitsOfTargetBefore | copy.granuleBitsFilled ? target.extension() : nullptr;
+    if (granuleBitsOf(extensionOfTargetBefore) != copy.granuleBitsOfTargetBefore)
+        return RepeatedCopy::IsNotDone;
+
+    // What is read is held by nothing but the source until it is stored.
+    DeferGC deferGC(vm);
+    constexpr size_t numberOfValuesOnTheStack = 64;
+    std::array<uint64_t, numberOfValuesOnTheStack> valuesOnTheStack;
+    Vector<uint64_t> valuesOfWideCopy;
+    uint64_t* values = valuesOnTheStack.data();
+    if (copy.moves.size() > numberOfValuesOnTheStack) [[unlikely]] {
+        valuesOfWideCopy.grow(copy.moves.size());
+        values = valuesOfWideCopy.mutableSpan().data();
+    }
+    uint64_t* value = values;
+    const uint8_t* cellOfSource = &source.at<uint8_t>(0);
+    std::span<const FieldData> fieldsOfTarget = target.layout().fields();
+    for (const MappedCopy::Move& move : copy.moves) {
+        const uint8_t* slot = (move.readsExtension ? reinterpret_cast<const uint8_t*>(extensionOfSource) : cellOfSource) + move.from;
+        if (!tryReadMove(state, move, fieldsOfTarget, slot, *value++))
+            return RepeatedCopy::IsNotDone;
+    }
+
+    // An Extension that the copy makes is whole before the target has it.
+    Extension* newExtension = copy.granuleBitsFilled && !extensionOfTargetBefore ? Extension::create(vm, copy.granuleBitsFilled) : nullptr;
+    Extension* extensionOfTarget = newExtension;
+    if (copy.granuleBitsFilled && !newExtension) {
+        target.ensureExtensionGranules(vm, copy.granuleBitsFilled);
+        extensionOfTarget = target.extension();
+    }
+    uint8_t* cellOfTarget = &target.at<uint8_t>(0);
+    value = values;
+    for (const MappedCopy::Move& move : copy.moves)
+        storeBitsOfWidth(move.widthInTarget, (move.writesExtension ? reinterpret_cast<uint8_t*>(extensionOfTarget) : cellOfTarget) + move.to, *value++);
+    if (newExtension)
+        target.setExtension(vm, newExtension);
+    target.at<uint32_t>(offsetOfOrderWord) = copy.orderWordAfter;
+    if (copy.mayStoreCells)
+        vm.writeBarrier(&target);
+    didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+    return isFirstCopy ? RepeatedCopy::ByMapForTheFirstTime : RepeatedCopy::ByMap;
+}
+
+// The names that the copy leaves out are those of the plan, which has left them out of its stores.
+static ALWAYS_INLINE RepeatedCopy tryRunPlanAsBefore(VM& vm, State& state, Object& to, AssignmentPlan& plan, const AssignmentSource& source, uint32_t excludedRunNumberPlusOne)
+{
+    if (!plan.runsAsBeforeOn(to, source, excludedRunNumberPlusOne))
+        return RepeatedCopy::IsNotDone;
+    DeferGC deferGC(vm);
+    FieldStoreRun run(vm, to, state, plan, nullptr);
+    if (!run.tryRunAsBefore(plan, source))
+        return RepeatedCopy::IsNotDone;
+    didChangeOwnProperties(vm, to, VM::StructureChainIntegrityEvent::Add, nullptr);
+    return RepeatedCopy::AsThePlanDidBefore;
+}
+
+static NEVER_INLINE RepeatedCopy tryRepeatAssignmentByRecentPlan(VM& vm, State& state, Object& to, const Object& from, uint32_t excludedRunNumberPlusOne)
+{
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from.structureID(), from.orderWord(), excludedRunNumberPlusOne);
+    if (!plan || &to == &from)
+        return RepeatedCopy::IsNotDone;
+    if (!plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne)) {
+        // The order word is one that a plan was made for, so it is one that a plan can be made for.
+        return tryRunPlanAsBefore(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), state.strings.get() }, excludedRunNumberPlusOne);
+    }
+    DeferGC deferGC(vm);
+    if (!tryFillEmptySlotsAsBefore(vm, to, state, *plan, from))
+        return RepeatedCopy::IsNotDone;
+    didChangeOwnProperties(vm, to, VM::StructureChainIntegrityEvent::Add, nullptr);
+    return RepeatedCopy::AsThePlanDidBefore;
+}
+
+// Each half is a function of its own, so that the copy by a map saves no registers for the plan's.
+static NEVER_INLINE RepeatedCopy tryRepeatAssignmentBetweenLayouts(VM& vm, State& state, Object& to, const Object& from, uint32_t excludedRunNumberPlusOne)
+{
+    if (&to != &from) {
+        if (RepeatedCopy way = tryCopyByFieldMap(vm, state, to, from, excludedRunNumberPlusOne); way != RepeatedCopy::IsNotDone)
+            return way;
+    }
+    return tryRepeatAssignmentByRecentPlan(vm, state, to, from, excludedRunNumberPlusOne);
+}
+
+static NEVER_INLINE RepeatedCopy tryRepeatAssignmentFromOrdinaryObject(VM& vm, State& state, Object& to, JSValue source, uint32_t excludedRunNumberPlusOne)
+{
+    if (!source.isCell() || source.asCell()->type() != FinalObjectType)
+        return RepeatedCopy::IsNotDone;
+    JSObject* from = asObject(source.asCell());
+    if (from->canHaveExistingOwnIndexedProperties())
+        return RepeatedCopy::IsNotDone;
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from->structureID(), 0, excludedRunNumberPlusOne);
+    if (!plan)
+        return RepeatedCopy::IsNotDone;
+    return tryRunPlanAsBefore(vm, state, to, *plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
+}
+
+RepeatedCopy tryRepeatAssignment(VM& vm, State& state, JSObject* target, JSValue source, uint32_t excludedRunNumberPlusOne)
+{
+    ASSERT(isCompiledObject(target));
+    Object* to = uncheckedDowncast<Object>(target);
+    Object* from = compiledObjectOrNull(source);
+    if (!from)
+        return tryRepeatAssignmentFromOrdinaryObject(vm, state, *to, source, excludedRunNumberPlusOne);
+    // An object of the target's own layout is copied word by word. Either answer is handed on as it comes, so nothing is saved here for afterwards.
+    static_assert(!static_cast<uint8_t>(RepeatedCopy::IsNotDone) && static_cast<uint8_t>(RepeatedCopy::ByWordsOrMoves) == 1);
+    if (!excludedRunNumberPlusOne && to->shapeWord() == from->shapeWord())
+        return static_cast<RepeatedCopy>(to->tryCopyFieldsOf(vm, *from));
+    return tryRepeatAssignmentBetweenLayouts(vm, state, *to, *from, excludedRunNumberPlusOne);
+}
+
+PlannedAssignment tryAssignPropertiesByExistingPlan(VM& vm, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames)
+{
+    if (target.orderWord() & orderWordIntegrityBits || source == &target)
+        return PlannedAssignment::HasNoPlan;
+    constexpr bool defines = true;
+    std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames, defines);
+    if (!assignmentSource)
+        return PlannedAssignment::HasNoPlan;
+    JSObject* extra = target.extraProperties();
+    State& state = target.state();
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.existingPlanFor(target, extra, *assignmentSource);
+    if (!plan)
+        return PlannedAssignment::HasNoPlan;
+    if (!plan->isUsable)
+        return PlannedAssignment::GaveUp;
+    DeferGC deferGC(vm);
+    return assignByPlan(vm, target, state, *plan, extra, *assignmentSource) ? PlannedAssignment::IsDone : PlannedAssignment::GaveUp;
+}
+
+static constexpr size_t minNumberOfNamesPutTogether = 3;
+
+// An extra property that is there in another form than a plain one is redefined, which only a definition by name does.
+static bool isPutAmongExtraProperties(VM& vm, State& state, Object& target, UniquedStringImpl* name)
+{
+    ASSERT(!parseIndex(PropertyName(name)));
+    if (target.fieldNamed(state, name))
+        return false;
+    JSObject* extra = target.extraProperties();
+    if (!extra)
+        return true;
+    unsigned attributes = 0;
+    return !isValidOffset(extra->structure()->get(vm, name, attributes)) || !attributes;
+}
+
+bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+{
+    ASSERT(names.size() == values.size() && !(target.orderWord() & orderWordIntegrityBits));
+    State& state = target.state();
+    for (size_t index = 0; index < names.size();) {
+        size_t end = index;
+        while (end < names.size() && isPutAmongExtraProperties(vm, state, target, names[end]))
+            ++end;
+        if (end - index < minNumberOfNamesPutTogether) {
+            end = std::max(end, index + 1);
+            for (; index < end; ++index) {
+                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), 0))
+                    return false;
+            }
+            continue;
+        }
+        JSObject* extra = target.ensureExtraProperties(vm);
+        RELEASE_ASSERT(extra);
+        for (UniquedStringImpl* name : names.subspan(index, end - index)) {
+            if (!extra->getDirect(vm, name))
+                target.willAddExtraProperty(vm, name);
+        }
+        extra->putOwnDataPropertyBatching(vm, names.subspan(index).data(), values.subspan(index).data(), static_cast<unsigned>(end - index));
+        target.didChangeExtraProperties(vm);
+        didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Change, nullptr);
+        index = end;
+    }
+    return true;
+}
+
+static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, Object::PlanCreation creation, bool defines)
+{
+    if (target.orderWord() & orderWordIntegrityBits || source == &target)
+        return false;
+    std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames, defines);
+    if (!assignmentSource)
+        return false;
+    DeferGC deferGC(vm);
+    JSObject* extra = target.extraProperties();
+    State& state = target.state();
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, target, extra, *assignmentSource, creation);
+    if (!plan || !plan->isUsable)
+        return false;
+    return assignByPlan(vm, target, state, *plan, extra, *assignmentSource);
 }
 
 bool Object::tryAssignPropertiesOf(VM& vm, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, PlanCreation creation)
 {
-    if (orderWord() & orderWordIntegrityBits || source == this)
+    return tryAssignOrDefinePropertiesOf(vm, *this, source, excludedNames, creation, false);
+}
+
+bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, Object::PlanCreation creation)
+{
+    ASSERT(target->type() == FinalObjectType && !target->structure()->isCompiledStructure());
+    if (source == target || hasIndexedProperties(target->indexingType()))
         return false;
-    std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames);
-    if (!assignmentSource)
+    std::optional<AssignmentSource> assignmentSource = assignmentSourceFor(source, excludedNames, true);
+    if (!assignmentSource || (assignmentSource->compiledObject && &assignmentSource->compiledObject->state() != &state))
         return false;
     DeferGC deferGC(vm);
-    JSObject* extra = extraProperties();
-    State& state = this->state();
-    AssignmentPlan* planOrNull = state.objects->caches->assignmentPlans.planFor(vm, *this, extra, *assignmentSource, creation);
-    if (!planOrNull || !planOrNull->isUsable)
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planForOrdinaryTarget(vm, target, *assignmentSource, creation);
+    if (!plan || !plan->isUsable)
         return false;
-    AssignmentPlan& plan = *planOrNull;
-    FieldStoreRun run(vm, *this, state, plan, extra);
+    // Nothing of the target changes before every value is there. No collection runs, so the values need no roots.
+    Vector<EncodedJSValue, 16> values;
+    for (auto& store : plan->extraPropertyStores) {
+        JSValue value = assignmentSource->read(store);
+        if (!value)
+            return false;
+        values.append(JSValue::encode(value));
+    }
+    Structure* before = target->structure();
+    Structure* after = plan->extraPropertiesAfter;
+    if (before->outOfLineCapacity() != after->outOfLineCapacity())
+        target->nukeStructureAndSetButterfly(vm, before->id(), target->allocateMoreOutOfLineStorage(vm, before->outOfLineCapacity(), after->outOfLineCapacity()));
+    for (size_t i = 0; i < values.size(); ++i)
+        target->locationForOffset(plan->extraPropertyStores[i].offset)->setWithoutWriteBarrier(JSValue::decode(values[i]));
+    vm.writeBarrier(target);
+    if (before != after || before->outOfLineCapacity() != after->outOfLineCapacity())
+        target->setStructure(vm, after);
+    return true;
+}
+
+JSFinalObject* tryCopyTwoObjects(VM& vm, State& state, JSGlobalObject* realm, JSValue first, JSValue second)
+{
+    // A copy of a compiled object is an object of its layout, which whoever expects the type of the source finds.
+    if (compiledObjectOrNull(first))
+        return nullptr;
+    std::array<std::optional<AssignmentSource>, 2> sources;
+    std::array<JSValue, 2> values { first, second };
+    for (size_t index = 0; index < values.size(); ++index) {
+        JSValue value = values[index];
+        if (!value.isCell())
+            continue;
+        if (!value.isObject())
+            return nullptr;
+        sources[index] = assignmentSourceFor(asObject(value), { }, true);
+        if (!sources[index] || (sources[index]->compiledObject && &sources[index]->compiledObject->state() != &state))
+            return nullptr;
+    }
+    auto sourceOrNull = [&](size_t index) {
+        return sources[index] ? &*sources[index] : nullptr;
+    };
+    DeferGC deferGC(vm);
+    CopyOfTwoPlan* plan = state.objects->caches->assignmentPlans.planForCopyOfTwo(vm, realm, sourceOrNull(0), sourceOrNull(1));
+    if (!plan || !plan->structure)
+        return nullptr;
+    if (plan->sources[1].fields.sourceHasDeferredClosures)
+        const_cast<Object*>(sources[1]->compiledObject)->materializeDeferredClosures(vm);
+    JSFinalObject* copy = JSFinalObject::create(vm, plan->structure);
+    for (size_t index = 0; index < values.size(); ++index) {
+        const CopyOfTwoPlan::Source& moved = plan->sources[index];
+        if (!moved.fields.movesNothing() && !applyMovesToNewObject(vm, moved.fields, copy, sources[index]->object))
+            return nullptr;
+        if (!moved.properties.movesNothing() && !applyMovesToNewObject(vm, moved.properties, copy, sources[index]->propertyStorage))
+            return nullptr;
+    }
+    return copy;
+}
+
+bool tryDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, Object::PlanCreation creation)
+{
+    return tryAssignOrDefinePropertiesOf(vm, target, source, excludedNames, creation, true);
+}
+
+using ValuesThatLeaveTheirSlots = Vector<std::pair<const FieldData*, EncodedJSValue>, 4>;
+
+// The place of a field among the keys is in the order word wherever its value lies. So a field whose slot cannot take its value is listed at its place, and the value goes to the extra properties
+// behind the last store of the run: until then the object is what the plan expects, and the stores behind this one go on as fast as those in front of it.
+// False, with nothing done, for a value that the slot would take: the run also fails to store where it may create no field.
+static NEVER_INLINE bool tryListFieldWhoseValueLeavesItsSlot(Object& target, State& state, const AssignmentPlan& plan, const AssignmentPlan::FieldStore& store, JSValue value, ValuesThatLeaveTheirSlots& values)
+{
+    if (!plan.storesAreDefinitions)
+        return false;
+    if (store.isDefinedByName || acceptInSlot(target, *store.to, value))
+        return false;
+    if (!target.isInKeyOrder(state, *store.to)) {
+        // Where a field may lie between two added names, the run adds the names behind its last store: a field listed now would come in front of names that the source has in front of it.
+        if (!plan.mayCreateFields)
+            return false;
+        target.didCreateField(state, *store.to, false);
+    }
+    values.append({ store.to, JSValue::encode(value) });
+    return true;
+}
+
+// It can drop the plan of the run.
+static void moveValuesOutOfTheirSlots(VM& vm, Object& target, const ValuesThatLeaveTheirSlots& values)
+{
+    for (auto& [field, value] : values)
+        target.moveFieldToExtraProperties(vm, *field, { JSValue::decode(value), 0 }, SlotExitReason::StoreOfOtherType);
+}
+
+static bool mayFinishByName(const AssignmentPlan& plan)
+{
+    return plan.storesAreDefinitions && plan.storesInSourceOrder.size() == plan.fieldStores.size() + plan.extraPropertyStores.size();
+}
+
+// The run has stored the fields in front of firstFieldStoreLeft, and all extra properties or none. What is left is stored in the order of the source.
+// Only the values that their fields do not take, and the extra properties, are defined by name. The first field left is one that the run could not store.
+// A definition by name can drop the plan, so the stores are copied first; a dropped plan creates no field.
+static NEVER_INLINE void finishByName(VM& vm, Object& target, State& state, FieldStoreRun& run, const AssignmentPlan& plan, size_t firstFieldStoreLeft, bool didStoreExtraProperties, const AssignmentSource& source, ValuesThatLeaveTheirSlots& valuesThatLeaveTheirSlots)
+{
+    ASSERT(plan.storesAreDefinitions);
+    Vector<AssignmentPlan::FieldStore, 16> fieldStores(plan.fieldStores.span());
+    Vector<AssignmentPlan::ExtraPropertyStore, 16> extraPropertyStores(plan.extraPropertyStores.span());
+    Vector<uint16_t, 32> storesInSourceOrder(plan.storesInSourceOrder.span());
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    // Extra properties that follow one another in the source are defined together. The caller defers collections, so the values need no roots.
+    Vector<UniquedStringImpl*, 16> namesToDefine;
+    Vector<EncodedJSValue, 16> valuesToDefine;
+    auto define = [&](UniquedStringImpl* name, JSValue value) {
+        bool isDefined = target.putDirectFromNativeCode(vm, name, value, 0);
+        RELEASE_ASSERT(isDefined);
+        run.setExtraProperties(target.extraProperties());
+    };
+    auto defineWhatWaits = [&] {
+        if (namesToDefine.isEmpty())
+            return;
+        if (namesToDefine.size() < minNumberOfNamesPutTogether) {
+            for (size_t i = 0; i < namesToDefine.size(); ++i)
+                define(namesToDefine[i], JSValue::decode(valuesToDefine[i]));
+        } else {
+            bool isDefined = definePropertiesInOrder(vm, target, namesToDefine.mutableSpan(), valuesToDefine.span());
+            RELEASE_ASSERT(isDefined);
+            run.setExtraProperties(target.extraProperties());
+        }
+        namesToDefine.shrink(0);
+        valuesToDefine.shrink(0);
+    };
+    for (uint16_t number : storesInSourceOrder) {
+        size_t index = number & ~AssignmentPlan::isExtraPropertyStore;
+        if (number & AssignmentPlan::isExtraPropertyStore) {
+            if (didStoreExtraProperties)
+                continue;
+            if (JSValue value = source.read(extraPropertyStores[index])) {
+                namesToDefine.append(extraPropertyStores[index].name);
+                valuesToDefine.append(JSValue::encode(value));
+            }
+            continue;
+        }
+        if (index < firstFieldStoreLeft)
+            continue;
+        defineWhatWaits();
+        AssignmentPlan::FieldStore& store = fieldStores[index];
+        JSValue value = source.read(store);
+        if (!value)
+            continue;
+        if (index != firstFieldStoreLeft && !store.isDefinedByName && run.store(store, value))
+            continue;
+        if (store.isDefinedByName || acceptInSlot(target, *store.to, value)) {
+            define(layouts.nameOf(vm, *store.to), value);
+            continue;
+        }
+        if (!target.isInKeyOrder(state, *store.to))
+            target.didCreateField(state, *store.to, false);
+        valuesThatLeaveTheirSlots.append({ store.to, JSValue::encode(value) });
+    }
+    defineWhatWaits();
+    run.writeBarrierIfNeeded();
+}
+
+static bool assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
+{
+    uint32_t orderWordBefore = target.orderWord();
+    if (plan.orderWordBeforeFillingAll == orderWordBefore && tryFillEmptySlotsAsBefore(vm, target, state, plan, *source.compiledObject)) {
+        state.objects->caches->assignmentPlans.didFillEmptySlots(plan);
+        didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+        return true;
+    }
+    FieldStoreRun run(vm, target, state, plan, extra);
+    if (plan.orderWordBeforeRun == orderWordBefore) {
+        if (run.tryRunAsBefore(plan, source)) [[likely]] {
+            state.objects->caches->assignmentPlans.didRunAsBefore(plan);
+            didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+            return true;
+        }
+        plan.orderWordBeforeRun = std::nullopt;
+    }
+    if (run.tryRunListingOnce(plan, source)) {
+        if (plan.storesOnlyFieldsThatFit && !plan.fieldStores.isEmpty() && run.numberOfStoresThatReplacedNothing() == plan.fieldStores.size() && !target.hasOutOfLineKeyOrder()) {
+            plan.orderWordBeforeFillingAll = orderWordBefore;
+            plan.orderWordAfterFillingAll = target.orderWord();
+        } else if (!target.hasOutOfLineKeyOrder()) {
+            // Such a run has left every value in its slot or among the extra properties with the Structure of the plan.
+            plan.orderWordBeforeRun = orderWordBefore;
+            plan.orderWordAfterRun = target.orderWord();
+        }
+        didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+        return true;
+    }
+    // The source holds every property of the plan, so each granule gets a value. One by one they would each take a larger Extension.
+    if (plan.granuleBitsFilled && plan.mayCreateFields && !extra)
+        target.ensureExtensionGranules(vm, plan.granuleBitsFilled);
     std::span<AssignmentPlan::FieldStore> fieldStores = plan.fieldStores.mutableSpan();
     size_t numberOfFieldStoresBeforeAddedNames = plan.numberOfFieldStoresBeforeAddedNames;
+    size_t numberOfFieldStoresInRun = plan.numberOfFieldStoresInRun;
     bool didAddExtraProperties = false;
+    bool didStoreExtraProperties = false;
+    bool didFailAtExtraProperties = false;
     bool didStoreEveryProperty = true;
-    for (size_t index = 0; didStoreEveryProperty; ++index) {
+    ValuesThatLeaveTheirSlots valuesThatLeaveTheirSlots;
+    size_t index = 0;
+    for (; didStoreEveryProperty; ++index) {
         if (index == numberOfFieldStoresBeforeAddedNames && !plan.extraPropertyStores.isEmpty()) {
-            didStoreEveryProperty = storeExtraProperties(vm, *this, plan, extra, *assignmentSource);
+            didStoreExtraProperties = storeExtraProperties(vm, target, plan, extra, source);
+            didFailAtExtraProperties = !didStoreExtraProperties;
+            didStoreEveryProperty = didStoreExtraProperties;
             didAddExtraProperties = didStoreEveryProperty && plan.addsExtraProperties;
         }
-        if (!didStoreEveryProperty || index == fieldStores.size())
+        if (!didStoreEveryProperty || index == numberOfFieldStoresInRun)
             break;
         AssignmentPlan::FieldStore& store = fieldStores[index];
-        JSValue value = assignmentSource->read(store);
+        if (store.copiesBitsUntested && run.tryCopyBits(store, *source.compiledObject))
+            continue;
+        JSValue value = source.read(store);
         didStoreEveryProperty = !value || run.store(store, value);
+        if (!didStoreEveryProperty) [[unlikely]]
+            didStoreEveryProperty = tryListFieldWhoseValueLeavesItsSlot(target, state, plan, store, value, valuesThatLeaveTheirSlots);
     }
     run.writeBarrierIfNeeded();
+    // One value that its field does not take does not undo what the run has stored in front of it.
+    // Where the store to a field has failed, the loop has counted past it. Where the stores to the extra properties have failed, the loop was left at once and nothing goes on from there.
+    bool isLeftUnfinished = didStoreEveryProperty ? numberOfFieldStoresInRun != fieldStores.size() : !didFailAtExtraProperties;
+    if (isLeftUnfinished) [[unlikely]] {
+        size_t firstFieldStoreLeft = didStoreEveryProperty ? numberOfFieldStoresInRun : index - 1;
+        if (mayFinishByName(plan)) {
+            state.objects->caches->assignmentPlans.notePlanWithoutUse(extra ? "a run was finished by name: the target had extra properties"_s : !plan.mayCreateFields ? "a run was finished by name: the plan may create no field"_s : "a run was finished by name: a store failed"_s);
+            finishByName(vm, target, state, run, plan, firstFieldStoreLeft, didStoreExtraProperties, source, valuesThatLeaveTheirSlots);
+            if (valuesThatLeaveTheirSlots.isEmpty())
+                rememberRun(vm, target, plan, source, orderWordBefore);
+            if (run.didCreateFields() || didAddExtraProperties)
+                didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+            moveValuesOutOfTheirSlots(vm, target, valuesThatLeaveTheirSlots);
+            return true;
+        }
+        didStoreEveryProperty = false;
+    }
+    constexpr uint8_t maxNumberOfRunsGivenUp = 2;
+    if (!didStoreEveryProperty) [[unlikely]]
+        state.objects->caches->assignmentPlans.notePlanWithoutUse(didFailAtExtraProperties ? "a run gave up: the stores to the extra properties failed"_s : !plan.storesAreDefinitions ? "a run gave up: a prototype intercepts a store that would create a field"_s : "a run gave up: a kept field is left to store"_s);
+    if (!didStoreEveryProperty || plan.numberOfRunsGivenUp) [[unlikely]] {
+        plan.numberOfRunsGivenUp = didStoreEveryProperty ? 0 : plan.numberOfRunsGivenUp + 1;
+        if (plan.numberOfRunsGivenUp > maxNumberOfRunsGivenUp)
+            plan.isUsable = false;
+    }
+    if (didStoreEveryProperty && plan.storesOnlyFieldsThatFit && !fieldStores.empty() && run.numberOfStoresThatReplacedNothing() == fieldStores.size() && !target.hasOutOfLineKeyOrder()) {
+        plan.orderWordBeforeFillingAll = orderWordBefore;
+        plan.orderWordAfterFillingAll = target.orderWord();
+    } else if (didStoreEveryProperty && valuesThatLeaveTheirSlots.isEmpty())
+        rememberRun(vm, target, plan, source, orderWordBefore);
     // It can drop the plan of this run, so nothing reads the plan afterward.
     if (run.didCreateFields() || didAddExtraProperties)
-        didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, nullptr);
+        didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+    // Where the run gave up, whoever copies in its place stores these again. Their fields are listed, as that store would list them.
+    if (didStoreEveryProperty && !valuesThatLeaveTheirSlots.isEmpty()) [[unlikely]]
+        moveValuesOutOfTheirSlots(vm, target, valuesThatLeaveTheirSlots);
     return didStoreEveryProperty;
 }
 

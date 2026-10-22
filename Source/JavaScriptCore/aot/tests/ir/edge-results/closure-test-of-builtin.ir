@@ -1,4 +1,4 @@
-# A value that passed IsClosureOf is a closure of that function, whatever its type said before. A built-in is a closure of no function of the application, so it does not pass. One that is written in JavaScript is a closure of the function the program registers for it. An instance of Function may be a closure of any function
+# A value that passed IsClosureOf is a closure of that function, whatever its type said before. A built-in is a closure of no function of the application, so it does not pass. One that is implemented in JavaScript is a closure of the function the program registers for it. An instance of Function may be a closure of any function
 # FORM: Prepared
 # RUN: print
 

@@ -5,8 +5,8 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Shape" constructor=f4 flow={baseState=None members=[L0, L1] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L1 kind=Instance name="Circle" predictedBase=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L0 kind=Instance name="Shape" constructor=f4 flow={baseState=None members=[L0, L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Circle" base=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 function f0 name="two" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     Return v1
@@ -87,7 +87,7 @@ function f9 name="constructsWithList" parameters=[{type=f4}, {type=Array<anythin
 }
 # CHECK-LABEL: function f9 name="constructsWithList"
 # CHECK-COUNT-2: = ElemGet v1,
-# CHECK-NEXT: object = Construct v0, -, {{*}}, {{*}}
+# CHECK-NEXT: anything ~ object = Construct v0, -, {{*}}, {{*}}
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = ConstructList v0, -, v1
 

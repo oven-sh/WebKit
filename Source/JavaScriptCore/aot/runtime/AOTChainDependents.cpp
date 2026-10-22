@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClassTable.h"
+#include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
@@ -30,9 +31,21 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ChainDependents);
 class ChainDependents::StructureStateOwner final : public ChainDependentOwner {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(StructureStateOwner);
 public:
+    void add(StructureID id) { m_structures.add(id); }
+
+    void removeDeadStructures(VM& vm)
+    {
+        m_structures.removeIf([&](StructureID id) {
+            return !vm.heap.isMarked(id.decode());
+        });
+    }
+
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final
     {
-        Structure* structure = std::bit_cast<StructureID>(structureIDBits).decode();
+        StructureID id = std::bit_cast<StructureID>(structureIDBits);
+        if (!m_structures.contains(id))
+            return;
+        Structure* structure = id.decode();
         structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NotComputed);
         StructureRareData* rareData = structure->tryRareData();
         if (!rareData)
@@ -41,10 +54,13 @@ public:
             rareData->clearCachedSpecialProperty(static_cast<CachedSpecialPropertyKey>(index));
     }
 
-    bool hasChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl*) const final
+    bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const final
     {
-        return vm.heap.isMarked(std::bit_cast<StructureID>(structureIDBits).decode());
+        return m_structures.contains(std::bit_cast<StructureID>(structureIDBits));
     }
+
+private:
+    UncheckedKeyHashSet<StructureID> m_structures;
 };
 
 ChainDependents::ChainDependents(State& state)
@@ -68,11 +84,13 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
 {
     if (chainObjects.empty())
         return;
+    if (dependent.owner == m_structureStateOwner)
+        m_structureState->add(std::bit_cast<StructureID>(dependent.subject));
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
-        m_dependentsByObject.ensure(object, [] {
+        m_numberOfDependentsAddedSinceOwnersWereAsked += m_dependentsByObject.ensure(object, [] {
             return DependentSet();
-        }).iterator->value.add(dependent);
+        }).iterator->value.add(dependent).isNewEntry;
     }
     m_writtenSinceCollection.recordAll();
 }
@@ -125,7 +143,11 @@ size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     // A dependent that its owner evicted is not counted: nothing records an eviction here, and validation reads a count from an unwritten region as a missing record.
     size_t numberOfDependentsOfDeadObjects = 0;
-    bool dropsEvictedDependents = scope == CollectionScope::Full;
+    // To ask the owner of each dependent costs more than all the rest of a full collection's sweep of the tables, and what it finds takes room and does no harm:
+    // a dependent that its owner evicted is dropped without effect when its object changes. So the owners are asked when the table may have doubled since they were last asked.
+    bool dropsEvictedDependents = scope == CollectionScope::Full && m_numberOfDependentsAddedSinceOwnersWereAsked >= m_numberOfDependentsLeftWhenOwnersWereAsked;
+    size_t numberOfDependentsLeft = 0;
+    m_structureState->removeDeadStructures(vm);
     m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
         m_dependentsByObject.removeIf([&](auto& entry) {
             if (!vm.heap.isMarked(entry.key)) {
@@ -137,9 +159,14 @@ size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
             entry.value.removeIf([&](const ChainDependent& dependent) {
                 return !ownerOf(dependent).hasChainDependent(vm, dependent.subject, dependent.uidOrNull);
             });
+            numberOfDependentsLeft += entry.value.size();
             return entry.value.isEmpty();
         });
     });
+    if (dropsEvictedDependents) {
+        m_numberOfDependentsAddedSinceOwnersWereAsked = 0;
+        m_numberOfDependentsLeftWhenOwnersWereAsked = numberOfDependentsLeft;
+    }
     return numberOfDependentsOfDeadObjects;
 }
 
@@ -170,12 +197,21 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         classes.didChangeMember(*layout, side, uidOrNull);
         return;
     }
+    // Freezing is reported without a name, behind the change. It changes neither what a name finds nor the prototype, and nothing of a frozen object changes ever again.
+    if (changed->isFrozen(vm))
+        return;
     classes.didChangeEveryMember(*layout, side);
     classes.didChangePrototypeLink(*layout, side);
 }
 
 void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
+    if (vm.aotState().propertyCaches)
+        vm.aotState().propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
+    JSGlobalObject* realm = changed->structure()->realm();
+    // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
+    if (realm && changed == realm->objectPrototype() && Instance::of(realm))
+        vm.aotState().propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
     for (Instance* instance : vm.aotState().instances) {
         State* state = instance->state;
         if (!state)
@@ -203,6 +239,15 @@ void didFlattenStructure(VM& vm, Structure* structure)
 void didChangeGlobalLexicalBindings(JSGlobalObject* realm)
 {
     didChangeChainObject(realm->vm(), realm, nullptr);
+
+    Instance* instance = Instance::of(realm);
+    State* state = instance ? instance->state : nullptr;
+    if (!state || !state->globalBindings)
+        return;
+    state->globalBindings->dropConstants();
+    // The caller counts the epoch up next, and at this number it starts over.
+    if (realm->globalLexicalBindingEpoch() + 1 == Options::thresholdForGlobalLexicalBindingEpoch())
+        state->globalBindings->dropLocations();
 }
 
 static State* stateOrNull(Structure* structure)

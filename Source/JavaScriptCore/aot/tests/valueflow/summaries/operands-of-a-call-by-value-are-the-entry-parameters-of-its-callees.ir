@@ -1,0 +1,44 @@
+# take(a, b, c); method.call-like: withThis with a receiver; arrow(receiver ignored)
+# An operand of a call by value is followed to the entry parameter that it is in each callee which flow lists. What the callee stores into another parameter lies in the operand passed there.
+# A callee that has declared fewer parameters, has no rest parameter and never looks at `arguments` cannot see a surplus argument, and one that takes no `this` cannot see the receiver.
+# RUN: fates-at-calls f1.p0=members-read f1.p1=nothing f1.p1.into-parameters=1 f2.p0=members-written f2.p1=nothing f2.p1.results=1 f3.p0=compared
+# CHECK: f0 v5 Call operand 0: called contents=nothing
+# CHECK-NEXT: f0 v5 Call operand 2: members-read contents=nothing read=[any]
+# CHECK-NEXT: f0 v5 Call operand 3: nothing contents=nothing stored-into-operands=[2]
+# CHECK-NEXT: f0 v5 Call operand 4: nothing contents=nothing
+# CHECK-NEXT: f0 v7 Call operand 0: called contents=nothing
+# CHECK-NEXT: f0 v7 Call operand 1: members-written contents=nothing written=[any]
+# CHECK-NEXT: f0 v7 Call operand 2: returned contents=nothing results=[0]
+# CHECK-NEXT: f0 v9 Call operand 0: called contents=nothing
+# CHECK-NEXT: f0 v9 Call operand 1: nothing contents=nothing
+# CHECK-NEXT: f0 v9 Call operand 2: compared contents=nothing
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v1, v2, v3
+    v6 = NewClosure function=f2
+    v7 = Call v6, v1, v2
+    v8 = NewClosure function=f3
+    v9 = Call v8, v1, v2
+    Return
+}
+function f1 name="take" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f2 name="withThis" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="arrow" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

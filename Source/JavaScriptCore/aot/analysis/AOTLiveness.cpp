@@ -10,6 +10,7 @@
 
 #include "AOTEdgeResults.h"
 #include <algorithm>
+#include <bit>
 #include <wtf/IterationStatus.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -21,8 +22,28 @@ struct NarrowedOperandUse {
     friend auto operator<=>(const NarrowedOperandUse&, const NarrowedOperandUse&) = default;
 };
 
+static constexpr OpcodeSet opcodesWithBase = [] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (baseOf(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
+
+static bool hasProofs(const Terminator& terminator)
+{
+    for (const Target& target : terminator.targets) {
+        if (!target.proofs.isEmpty())
+            return true;
+    }
+    return false;
+}
+
 static void forEachNarrowedOperand(const Function& function, BlockID block, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
+    if (!hasProofs(function.at(block).terminator))
+        return;
     forEachEdgeResult(function, block, [&](const EdgeResult& result, ValueID) {
         if (result.kind == EdgeResultKind::NarrowedOperand)
             functor(result.subject);
@@ -46,7 +67,6 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     : m_function(function)
     , m_cfg(cfg)
     , m_useLists(useLists)
-    , m_liveAtHead(cfg.numNodes())
 {
     RELEASE_ASSERT(m_function.blocks.size() == m_cfg.numNodes());
     RELEASE_ASSERT(m_function.values.size() == m_useLists.numberOfValues());
@@ -60,9 +80,11 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     }
     std::ranges::sort(m_additionalEdges);
 
-    auto interiorPointers = collectInteriorPointers();
+    Vector<InteriorPointer> interiorPointers;
+    if (!options.opcodesOfValues || options.opcodesOfValues->intersects(opcodesWithBase))
+        interiorPointers = collectInteriorPointers();
     m_hasTrackedBases = !interiorPointers.isEmpty();
-    computeLiveAtHeads(interiorPointers.span());
+    computeLiveAtHeads(interiorPointers.span(), options.solver);
 }
 
 bool Liveness::isTrackedBlock(BlockID block) const
@@ -107,28 +129,22 @@ Vector<Liveness::InteriorPointer> Liveness::collectInteriorPointers() const
     return interiorPointers;
 }
 
-void Liveness::computeLiveAtHeads(std::span<const InteriorPointer> interiorPointers)
+template<typename Functor>
+void Liveness::forEachValueWithUseBlocks(std::span<const InteriorPointer> interiorPointers, NOESCAPE const Functor& functor) const
 {
-    unsigned numberOfBlocks = m_cfg.numNodes();
-    unsigned numberOfValues = m_useLists.numberOfValues();
-    Vector<Vector<BlockID, 1>> additionalPredecessors;
-    if (!m_additionalEdges.isEmpty()) {
-        additionalPredecessors.grow(numberOfBlocks);
-        for (auto [from, to] : m_additionalEdges)
-            additionalPredecessors[to.index()].append(from);
-    }
-
     Vector<NarrowedOperandUse> narrowedOperandUses = collectNarrowedOperandUses(m_function, m_cfg);
-    Vector<ValueID> lastValueLiveInto(numberOfBlocks);
-    Vector<BlockID, 16> worklist;
+    Vector<BlockID, 16> useBlocks;
     auto appendUseBlocks = [&](ValueID used) {
         for (auto& use : m_useLists.usesOf(used)) {
-            if (worklist.isEmpty() || worklist.last() != use.block)
-                worklist.append(use.block);
+            if (useBlocks.isEmpty() || useBlocks.last() != use.block)
+                useBlocks.append(use.block);
         }
+        if (narrowedOperandUses.isEmpty())
+            return;
         for (auto& use : std::ranges::equal_range(narrowedOperandUses, used, { }, &NarrowedOperandUse::subject))
-            worklist.append(use.block);
+            useBlocks.append(use.block);
     };
+    unsigned numberOfValues = m_useLists.numberOfValues();
     for (unsigned index = 0; index < numberOfValues; ++index) {
         ValueID value(index);
         size_t numberOfPointers = 0;
@@ -140,19 +156,198 @@ void Liveness::computeLiveAtHeads(std::span<const InteriorPointer> interiorPoint
         ValueLocation location = m_useLists.locationOf(value);
         if (!isTrackedValue(value) || location.placement == ValuePlacement::Detached)
             continue;
+        useBlocks.shrink(0);
         appendUseBlocks(value);
         for (auto& interiorPointer : pointers)
             appendUseBlocks(interiorPointer.pointer);
+        functor(value, location.block, useBlocks);
+    }
+}
+
+Liveness::CrossBlockValues Liveness::collectCrossBlockValues(std::span<const InteriorPointer> interiorPointers) const
+{
+    CrossBlockValues result;
+    forEachValueWithUseBlocks(interiorPointers, [&](ValueID value, BlockID definingBlock, const Vector<BlockID, 16>& useBlocks) {
+        uint32_t firstUseBlockIndex = result.useBlocks.size();
+        for (BlockID block : useBlocks) {
+            if (block != definingBlock)
+                result.useBlocks.append(block);
+        }
+        if (result.useBlocks.size() != firstUseBlockIndex)
+            result.values.append({ value, definingBlock, firstUseBlockIndex });
+    });
+    return result;
+}
+
+void Liveness::computeLiveAtHeads(std::span<const InteriorPointer> interiorPointers, LivenessOptions::Solver solver)
+{
+    static constexpr size_t maxWordsForPerBlockSolver = 1 << 18;
+
+    unsigned numberOfBlocks = m_cfg.numNodes();
+    m_firstLiveValue.fill(0, numberOfBlocks + 1);
+    CrossBlockValues crossBlockValues = collectCrossBlockValues(interiorPointers);
+    if (crossBlockValues.values.isEmpty())
+        return;
+
+    AdditionalPredecessors additionalPredecessors;
+    if (!m_additionalEdges.isEmpty()) {
+        additionalPredecessors.grow(numberOfBlocks);
+        for (auto [from, to] : m_additionalEdges)
+            additionalPredecessors[to.index()].append(from);
+    }
+
+    // The per-block solver visits every block, which does not pay for a few tracked values in a large function.
+    size_t numberOfValues = crossBlockValues.values.size();
+    size_t numberOfReachableBlocks = m_cfg.reversePostOrder().size();
+    bool isDenseEnough = numberOfValues * 64 >= numberOfReachableBlocks;
+    bool isSmallEnough = numberOfReachableBlocks * ((numberOfValues + 63) / 64) <= maxWordsForPerBlockSolver;
+    if (solver == LivenessOptions::Solver::ChosenBySize && isDenseEnough && isSmallEnough)
+        solvePerBlock(crossBlockValues, additionalPredecessors);
+    else
+        solvePerValue(crossBlockValues, additionalPredecessors);
+}
+
+void Liveness::solvePerValue(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors)
+{
+    struct LiveValue {
+        BlockID block;
+        ValueID value;
+    };
+
+    unsigned numberOfBlocks = m_cfg.numNodes();
+    Vector<LiveValue> liveValues;
+    Vector<ValueID> lastValueLiveInto(numberOfBlocks);
+    Vector<BlockID, 16> worklist;
+    for (size_t index = 0; index < crossBlockValues.values.size(); ++index) {
+        ValueID value = crossBlockValues.values[index].value;
+        BlockID definingBlock = crossBlockValues.values[index].definingBlock;
+        worklist.append(crossBlockValues.useBlocksOf(index));
         while (!worklist.isEmpty()) {
             BlockID block = worklist.takeLast();
-            if (block == location.block || lastValueLiveInto[block.index()] == value)
+            if (block == definingBlock || lastValueLiveInto[block.index()] == value)
                 continue;
             lastValueLiveInto[block.index()] = value;
-            if (isTrackedBlock(block))
-                m_liveAtHead[block.index()].append(value);
+            if (isTrackedBlock(block)) {
+                liveValues.append({ block, value });
+                ++m_firstLiveValue[block.index() + 1];
+            }
             worklist.append(m_cfg.predecessors(block));
             if (!additionalPredecessors.isEmpty())
                 worklist.appendVector(additionalPredecessors[block.index()]);
+        }
+    }
+
+    for (unsigned index = 0; index < numberOfBlocks; ++index)
+        m_firstLiveValue[index + 1] += m_firstLiveValue[index];
+    m_liveValues.grow(liveValues.size());
+    Vector<uint32_t> next(m_firstLiveValue.span());
+    for (const LiveValue& live : liveValues)
+        m_liveValues[next[live.block.index()]++] = live.value;
+}
+
+void Liveness::solvePerBlock(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors)
+{
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    std::span<const CrossBlockValue> values = crossBlockValues.values.span();
+    size_t wordsPerBlock = (values.size() + 63) / 64;
+
+    Vector<uint64_t, 128> liveAtHeadStorage;
+    liveAtHeadStorage.fill(0, order.size() * wordsPerBlock);
+    std::span<uint64_t> liveAtHeads = liveAtHeadStorage.mutableSpan();
+    auto liveAtHeadOf = [&](BlockID block) {
+        return liveAtHeads.subspan(m_cfg.reversePostOrderIndex(block) * wordsPerBlock, wordsPerBlock);
+    };
+
+    Vector<uint32_t, 64> firstDefinitionStorage;
+    firstDefinitionStorage.fill(0, order.size() + 1);
+    std::span<uint32_t> firstDefinition = firstDefinitionStorage.mutableSpan();
+    for (size_t index = 0; index < values.size(); ++index) {
+        ++firstDefinition[m_cfg.reversePostOrderIndex(values[index].definingBlock) + 1];
+        for (BlockID block : crossBlockValues.useBlocksOf(index))
+            liveAtHeadOf(block)[index / 64] |= 1ull << (index % 64);
+    }
+    for (size_t orderIndex = 0; orderIndex < order.size(); ++orderIndex)
+        firstDefinition[orderIndex + 1] += firstDefinition[orderIndex];
+    Vector<uint32_t, 32> definitionStorage;
+    definitionStorage.grow(values.size());
+    std::span<uint32_t> definitions = definitionStorage.mutableSpan();
+    Vector<uint32_t, 64> nextDefinition(firstDefinitionStorage.span());
+    for (uint32_t index = 0; index < values.size(); ++index)
+        definitions[nextDefinition[m_cfg.reversePostOrderIndex(values[index].definingBlock)]++] = index;
+
+    Vector<uint8_t, 64> isStaleStorage;
+    isStaleStorage.fill(true, order.size());
+    std::span<uint8_t> isStale = isStaleStorage.mutableSpan();
+    Vector<uint64_t, 16> liveThroughStorage;
+    liveThroughStorage.grow(wordsPerBlock);
+    std::span<uint64_t> liveThrough = liveThroughStorage.mutableSpan();
+    bool needsAnotherSweep = true;
+    while (needsAnotherSweep) {
+        needsAnotherSweep = false;
+        for (size_t orderIndex = order.size(); orderIndex--;) {
+            if (!isStale[orderIndex])
+                continue;
+            isStale[orderIndex] = false;
+
+            BlockID block = order[orderIndex];
+            std::ranges::fill(liveThrough, 0);
+            auto addSuccessor = [&](BlockID successor) {
+                std::span<const uint64_t> liveAtSuccessor = liveAtHeadOf(successor);
+                for (size_t word = 0; word < wordsPerBlock; ++word)
+                    liveThrough[word] |= liveAtSuccessor[word];
+            };
+            for (BlockID successor : m_cfg.successors(block))
+                addSuccessor(successor);
+            if (!m_additionalEdges.isEmpty()) {
+                for (auto& edge : std::ranges::equal_range(m_additionalEdges, block, { }, &std::pair<BlockID, BlockID>::first))
+                    addSuccessor(edge.second);
+            }
+            for (uint32_t definition : definitions.subspan(firstDefinition[orderIndex], firstDefinition[orderIndex + 1] - firstDefinition[orderIndex]))
+                liveThrough[definition / 64] &= ~(1ull << (definition % 64));
+
+            std::span<uint64_t> live = liveAtHeads.subspan(orderIndex * wordsPerBlock, wordsPerBlock);
+            bool didChange = false;
+            for (size_t word = 0; word < wordsPerBlock; ++word) {
+                uint64_t merged = live[word] | liveThrough[word];
+                didChange |= merged != live[word];
+                live[word] = merged;
+            }
+            if (!didChange)
+                continue;
+
+            auto markStale = [&](BlockID predecessor) {
+                size_t predecessorIndex = m_cfg.reversePostOrderIndex(predecessor);
+                isStale[predecessorIndex] = true;
+                needsAnotherSweep |= predecessorIndex >= orderIndex;
+            };
+            for (BlockID predecessor : m_cfg.predecessors(block))
+                markStale(predecessor);
+            if (!additionalPredecessors.isEmpty()) {
+                for (BlockID predecessor : additionalPredecessors[block.index()])
+                    markStale(predecessor);
+            }
+        }
+    }
+
+    unsigned numberOfBlocks = m_cfg.numNodes();
+    for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
+        uint32_t numberOfLiveValues = 0;
+        if (isTrackedBlock(BlockID(blockIndex))) {
+            for (uint64_t word : liveAtHeadOf(BlockID(blockIndex)))
+                numberOfLiveValues += std::popcount(word);
+        }
+        m_firstLiveValue[blockIndex + 1] = m_firstLiveValue[blockIndex] + numberOfLiveValues;
+    }
+    m_liveValues.grow(m_firstLiveValue[numberOfBlocks]);
+    std::span<ValueID> liveValues = m_liveValues.mutableSpan();
+    for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
+        size_t next = m_firstLiveValue[blockIndex];
+        if (next == m_firstLiveValue[blockIndex + 1])
+            continue;
+        std::span<const uint64_t> live = liveAtHeadOf(BlockID(blockIndex));
+        for (size_t word = 0; word < wordsPerBlock; ++word) {
+            for (uint64_t bits = live[word]; bits; bits &= bits - 1)
+                liveValues[next++] = values[word * 64 + std::countr_zero(bits)].value;
         }
     }
 }
@@ -160,7 +355,8 @@ void Liveness::computeLiveAtHeads(std::span<const InteriorPointer> interiorPoint
 std::span<const ValueID> Liveness::liveAtHead(BlockID block) const
 {
     RELEASE_ASSERT(block.index() < m_cfg.numNodes());
-    return m_liveAtHead[block.index()].span();
+    uint32_t first = m_firstLiveValue[block.index()];
+    return m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first);
 }
 
 bool Liveness::isLiveAtHead(ValueID id, BlockID block) const
@@ -168,6 +364,66 @@ bool Liveness::isLiveAtHead(ValueID id, BlockID block) const
     RELEASE_ASSERT(id.index() < m_useLists.numberOfValues());
     RELEASE_ASSERT(isTrackedValue(id) && isTrackedBlock(block));
     return std::ranges::binary_search(liveAtHead(block), id);
+}
+
+LivenessOfAskedValues::LivenessOfAskedValues(const Function& function, const CFG& cfg, const UseLists& useLists)
+    : m_function(function)
+    , m_cfg(cfg)
+    , m_useLists(useLists)
+{
+    RELEASE_ASSERT(m_function.blocks.size() == m_cfg.numNodes());
+    RELEASE_ASSERT(m_function.values.size() == m_useLists.numberOfValues());
+    m_setOfValue.fill(0, m_useLists.numberOfValues());
+}
+
+bool LivenessOfAskedValues::answersFor(const OpcodeSet& opcodesOfValues)
+{
+    return !opcodesOfValues.intersects(opcodesWithBase);
+}
+
+uint32_t LivenessOfAskedValues::findBlocksEnteredWith(ValueID id)
+{
+    if (!m_narrowedOperandUses) {
+        m_narrowedOperandUses.emplace();
+        for (const NarrowedOperandUse& use : collectNarrowedOperandUses(m_function, m_cfg))
+            m_narrowedOperandUses->append({ use.subject, use.block });
+    }
+
+    BitVector entered(m_cfg.numNodes());
+    ValueLocation location = m_useLists.locationOf(id);
+    if (location.placement != ValuePlacement::Detached) {
+        Vector<BlockID, 16> worklist;
+        for (const Use& use : m_useLists.usesOf(id))
+            worklist.append(use.block);
+        for (auto& use : std::ranges::equal_range(*m_narrowedOperandUses, id, { }, &std::pair<ValueID, BlockID>::first))
+            worklist.append(use.second);
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            if (block == location.block || entered.quickSet(block.index()))
+                continue;
+            worklist.append(m_cfg.predecessors(block));
+        }
+    }
+    m_blocksEnteredWithValue.append(WTF::move(entered));
+    return m_blocksEnteredWithValue.size();
+}
+
+bool LivenessOfAskedValues::isLiveAtHead(ValueID id, BlockID block)
+{
+    RELEASE_ASSERT(m_function.values.size() == m_setOfValue.size() && m_function.blocks.size() == m_cfg.numNodes());
+    RELEASE_ASSERT(id.index() < m_setOfValue.size() && m_cfg.isReachable(block));
+    uint32_t& set = m_setOfValue[id.index()];
+    if (!set)
+        set = findBlocksEnteredWith(id);
+    return m_blocksEnteredWithValue[set - 1].quickGet(block.index());
+}
+
+const BitVector& LivenessOfAskedValues::blocksEnteredWith(ValueID id)
+{
+    uint32_t& set = m_setOfValue[id.index()];
+    if (!set)
+        set = findBlocksEnteredWith(id);
+    return m_blocksEnteredWithValue[set - 1];
 }
 
 Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)

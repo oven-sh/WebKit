@@ -59,13 +59,14 @@ function f2 name="startsUnderHandler" flags=[IsGenerator, TakesCallee] parameter
 
 # CHECK-LABEL: function f4 name="yieldsUnderHandler"
 # CHECK: b0(v0: function, v1: anything, [[generator]]: Generator):
-# CHECK: = YieldBySavingFrame [[generator]], {{*}} @20
-# CHECK: Switch {{*}} cases=[1, 2] -> case [[throws]](), case [[returns]](), otherwise [[rest]]()
 # CHECK: b1() handler=b6(v1):
 # CHECK-NEXT: = YieldBySavingFrame [[generator]], v1 @21
 # CHECK: b4():
 # CHECK-NEXT: = YieldBySavingFrame [[generator]], v4 @22
-# CHECK: [[rest]]():
+# CHECK: b7():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: = YieldBySavingFrame [[generator]], {{*}} @20
+# CHECK: Switch {{*}} cases=[1, 2] -> case [[throws]](), case [[returns]](), otherwise b7()
 # CHECK: [[throws]]() frequency=Rare:
 # CHECK: [[returns]]() frequency=Rare:
 

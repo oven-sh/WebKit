@@ -13,14 +13,15 @@
 #include "AOTBuiltinTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
-#include "AOTIdentifierNumbering.h"
 #include "AOTInstance.h"
 #include "AOTNumberLiteralStrings.h"
+#include "AOTOperationData.h"
 #include "AOTPlacement.h"
 #include "AOTPureOperations.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStringConstantNumbering.h"
 #include "AOTStringTable.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsConstants.h"
 #include "JSCJSValueInlines.h"
 #include "JSCellButterfly.h"
@@ -72,6 +73,17 @@ static bool hasKeyCell(PropertyKeyKind kind)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static constexpr ptrdiff_t offsetOfKeyCells(bool isNarrow)
+{
+    return isNarrow ? AOT_INSTANCE_OFFSET(runtime.constants.keyCells) : AOT_INSTANCE_OFFSET(runtime.constants.wideKeyCells);
+}
+
+// Of the tables of cells that are read here through a pointer in the instance, the narrow key cells alone hold narrow references.
+static constexpr ptrdiff_t sizeOfCellWordIn(ptrdiff_t offsetOfTable)
+{
+    return offsetOfTable == offsetOfKeyCells(true) ? sizeof(uint32_t) : sizeof(JSCell*);
 }
 
 ConstantEmitter::ConstantEmitter(CodeGenerator& generator)
@@ -166,7 +178,7 @@ void ConstantEmitter::generateData(const ValueContext& value)
     defineCell(value, callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { word32(static_cast<int32_t>(request->value())) }));
 }
 
-// Every array of the site shares one storage, which the first of them creates. The others are a cell around it.
+// Every array of the site is a cell around one storage. Storage without cells lies in the image. Any other is created by the first array of the site.
 CellPointer ConstantEmitter::newCopyOnWriteArray(const ValueContext& value, Request request)
 {
     auto createOutOfLine = [&](bool isOnRarePath) {
@@ -175,17 +187,32 @@ CellPointer ConstantEmitter::newCopyOnWriteArray(const ValueContext& value, Requ
     const RequestRecord* record = m_placement.requests().recordAt(request);
     const DataRecord* data = record ? std::get_if<DataRecord>(record) : nullptr;
     const auto* elements = m_program.at(value->data()).root.tryAs<DataNode::Array>();
-    if (!data || !data->sharedStorageOffset || !elements || value.shape() == CodeShape::Compact)
+    if (!data || !(data->sharedStorageOffset || data->node) || !elements)
         return createOutOfLine(false);
+    IndexingType indexingType = indexingTypeOf(m_program, *elements);
+    // In place the array is 80 bytes of code. A short array stands where a literal handed its elements to a stub, which is half of that.
+    bool isShort = elements->elements.size() < build().limit(LimitID::MaxExpandedDataNodes);
+    if (value.shape() == CodeShape::Compact || (isShort && value.shape() != CodeShape::Fast)) {
+        CallOptions options { .immediate = request.value() };
+        if (!data->node)
+            return CellPointer(callStub(value, arrayOfData(ArrayOfData::SharedValues), { m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *data->sharedStorageOffset)) }, options).first);
+        ArrayOfData form = indexingType == ArrayWithInt32 ? ArrayOfData::Int32 : indexingType == ArrayWithDouble ? ArrayOfData::Double : ArrayOfData::Values;
+        return CellPointer(callStub(value, arrayOfData(form), { }, options).first);
+    }
 
     build().statistics().count(StatisticID::CopyOnWriteArraysCreatedInline);
     LBasicBlock outOfLine = newBlock();
     Join<CellPointer> arrays(m_out);
-    Pointer storage(m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *data->sharedStorageOffset)));
-    branchUnless(Condition(m_out.notNull(storage.value())), outOfLine);
-    Integer header = loadMutable64(Instance::offsetOfNewCopyOnWriteArrayHeader(indexingTypeOf(*elements)));
+    Pointer firstElement = [&] {
+        if (data->node)
+            return offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.data)), (static_cast<ptrdiff_t>(*data->node) + DataNodeHeader::wordsBeforeElements) * sizeof(uint64_t));
+        Pointer storage(m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *data->sharedStorageOffset)));
+        branchUnless(Condition(m_out.notNull(storage.value())), outOfLine);
+        return offsetBy(storage, JSCellButterfly::offsetOfData());
+    }();
+    Integer header = loadMutable64(Instance::offsetOfNewCopyOnWriteArrayHeader(indexingType));
     branchUnless(isNotZero(header), outOfLine);
-    arrays.add(ArrayAllocationEmitter(generator()).allocateArrayCell(header, offsetBy(storage, JSCellButterfly::offsetOfData()), outOfLine));
+    arrays.add(ArrayAllocationEmitter(generator()).allocateArrayCell(header, firstElement, outOfLine));
 
     m_out.appendTo(outOfLine);
     arrays.add(createOutOfLine(true));
@@ -212,10 +239,23 @@ void ConstantEmitter::generateUnspecified(const ValueContext& value)
     define(value, zeroOf(value.representation()));
 }
 
+void ConstantEmitter::generateEmptyArgumentList(const ValueContext& value)
+{
+    defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value()));
+}
+
 TypedPointer ConstantEmitter::cellWordInTable(const B3::AbstractHeap& heap, ptrdiff_t offsetOfTable, uint32_t number)
 {
     Pointer table = loadImmutablePointer(offsetOfTable);
-    return m_out.address(heap, table.value(), static_cast<ptrdiff_t>(number) * sizeof(JSCell*));
+    return m_out.address(heap, table.value(), static_cast<ptrdiff_t>(number) * sizeOfCellWordIn(offsetOfTable));
+}
+
+TypedPointer ConstantEmitter::builtinCellWord(uint32_t number)
+{
+    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::AllocatorState);
+    if (InstanceLayout::holdsBuiltinCells(m_placement.builtinCells().size()))
+        return instanceField(heap, InstanceLayout::offsetOfBuiltinCells + number * sizeof(JSCell*));
+    return cellWordInTable(heap, AOT_INSTANCE_PREFIX_OFFSET(builtinCells), number);
 }
 
 template<typename Create>
@@ -247,12 +287,18 @@ CellPointer ConstantEmitter::stringConstant(const OperationContext& context, Str
     if (!number)
         return CellPointer(callStub(context, createConstant(CreatedConstant::NewString), { }, { .immediate = id.index() }).first);
 
+    auto callStringConstantStub = [&](bool isOnRarePath) {
+        return CellPointer(callStub(context, createConstant(CreatedConstant::String), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::StringConstant, *number), .isOnRarePath = isOnRarePath }).first);
+    };
+    if (context.shape() != CodeShape::Fast)
+        return callStringConstantStub(false);
+
     bool isNarrow = !m_options.recorded.useWideReferences();
     TypedPointer cellWord = isNarrow
         ? instanceField(m_heaps.AOTInstance_stringCells, InstanceLayout::offsetOfStringCell(*number))
         : cellWordInTable(m_heaps.AOTInstance_stringCells, AOT_INSTANCE_OFFSET(runtime.constants.wideStringCells), *number);
     return permanentCell(cellWord, isNarrow, [&] {
-        return CellPointer(callStub(context, createConstant(CreatedConstant::String), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::StringConstant, *number), .isOnRarePath = true }).first);
+        return callStringConstantStub(true);
     });
 }
 
@@ -260,13 +306,21 @@ CellPointer ConstantEmitter::keyConstant(const OperationContext& context, Proper
 {
     if (!hasKeyCell(m_program.at(key).kind))
         return failWithoutCell(context, InternalErrorKind::OpcodeWithoutCode);
-    std::optional<uint32_t> number = build().identifierNumbering().numberOf(key);
+    std::optional<uint32_t> number = m_placement.keyCell(key);
     if (!number)
         return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
 
-    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(runtime.constants.keyCells), *number);
-    return permanentCell(cellWord, false, [&] {
-        return CellPointer(callStub(context, createConstant(CreatedConstant::Key), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::KeyConstant, *number), .isOnRarePath = true }).first);
+    auto callKeyConstantStub = [&](bool isOnRarePath) {
+        return CellPointer(callStub(context, createConstant(CreatedConstant::Key), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::KeyConstant, *number), .isOnRarePath = isOnRarePath }).first);
+    };
+    if (context.shape() != CodeShape::Fast)
+        return callKeyConstantStub(false);
+
+    // A key cell lives as long as the program, like a string cell. The check of narrow references knows that of a word it sees loaded from this heap.
+    bool isNarrow = !m_options.recorded.useWideReferences();
+    TypedPointer cellWord = cellWordInTable(m_heaps.AOTInstance_stringCells, offsetOfKeyCells(isNarrow), *number);
+    return permanentCell(cellWord, isNarrow, [&] {
+        return callKeyConstantStub(true);
     });
 }
 
@@ -294,13 +348,14 @@ CellPointer ConstantEmitter::builtinCell(const OperationContext& context, Builti
     if (!number)
         return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
 
+    // The result is the same each time, and only the first call does anything: the host makes the object, and a member that its holder makes at the first read gets a slot in the holder.
     auto callBuiltinCellStub = [&](bool isOnRarePath) {
-        return CellPointer(callStub(context, AOT::builtinCell(), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::BuiltinCell, *number), .isOnRarePath = isOnRarePath }).first);
+        return CellPointer(callStub(context, AOT::builtinCell(), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::BuiltinCell, *number), .isOnRarePath = isOnRarePath, .runsCodeOfHost = true }).first);
     };
     if (context.shape() != CodeShape::Fast)
         return callBuiltinCellStub(false);
 
-    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_PREFIX_OFFSET(builtinCells), *number);
+    TypedPointer cellWord = builtinCellWord(*number);
     return permanentCell(cellWord, false, [&] {
         return callBuiltinCellStub(true);
     });
@@ -326,10 +381,11 @@ CellPointer ConstantEmitter::moduleBuiltinCell(const OperationContext& context, 
 
 CellPointer ConstantEmitter::keyConstant(PropertyKeyID key)
 {
-    std::optional<uint32_t> number = build().identifierNumbering().numberOf(key);
+    std::optional<uint32_t> number = m_placement.keyCell(key);
     RELEASE_ASSERT(number);
-    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(runtime.constants.keyCells), *number);
-    return permanentCell(cellWord, false, [&] {
+    bool isNarrow = !m_options.recorded.useWideReferences();
+    TypedPointer cellWord = cellWordInTable(m_heaps.AOTInstance_stringCells, offsetOfKeyCells(isNarrow), *number);
+    return permanentCell(cellWord, isNarrow, [&] {
         return callWithoutSite<CellPointer>(RuntimeOperation::KeyConstant, { word32(static_cast<int32_t>(*number)) }, { .pureFunction = pureFunction(PureOperation::KeyConstant, *number), .isOnRarePath = true });
     });
 }
@@ -338,10 +394,29 @@ CellPointer ConstantEmitter::builtinCell(BuiltinID id)
 {
     std::optional<uint32_t> number = m_placement.builtinCell(id);
     RELEASE_ASSERT(number);
-    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_PREFIX_OFFSET(builtinCells), *number);
+    TypedPointer cellWord = builtinCellWord(*number);
     return permanentCell(cellWord, false, [&] {
         return callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { word32(static_cast<int32_t>(*number)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, *number), .isOnRarePath = true });
     });
+}
+
+// A boxed cell is its address. No value has the bits of a word that is still empty, so whether the cell has been made matters only where the two differ.
+void ConstantEmitter::branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID id, BranchTargets targets)
+{
+    std::optional<uint32_t> number = m_placement.builtinCell(id);
+    RELEASE_ASSERT(number);
+    LBasicBlock differs = newBlock();
+    LBasicBlock isNotMade = newBlock();
+    m_out.branch(m_out.equal(boxedValueOrCell, m_out.load64(builtinCellWord(*number))), targets.taken, B3::FrequentedBlock(differs, targets.notTaken.frequency()));
+
+    // Read through the address of the table: a word that two blocks looked at would go through a register, and the usual way compares it where it lies.
+    m_out.appendTo(differs);
+    LValue cell = m_out.load64(cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_PREFIX_OFFSET(builtinCells), *number));
+    m_out.branch(m_out.notZero64(cell), targets.notTaken, rareEdge(isNotMade));
+
+    m_out.appendTo(isNotMade);
+    CellPointer made = callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { word32(static_cast<int32_t>(*number)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, *number), .isOnRarePath = true });
+    m_out.branch(m_out.equal(boxedValueOrCell, made.value()), targets.taken, targets.notTaken);
 }
 
 Operand ConstantEmitter::constantOf(JSValue value, Representation representation)

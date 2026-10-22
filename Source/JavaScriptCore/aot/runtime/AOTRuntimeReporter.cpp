@@ -11,12 +11,14 @@
 #include "AOTCompileOptions.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
+#include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTModuleData.h"
 #include "AOTModuleHost.h"
+#include "AOTModuleTable.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramStrings.h"
 #include "AOTProgramTables.h"
@@ -24,7 +26,6 @@
 #include "AOTRuntimeType.h"
 #include "AOTSchemaEnums.h"
 #include "AOTStringTable.h"
-#include "AOTTypeErrorMessages.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include "StackVisitor.h"
@@ -195,40 +196,31 @@ static ASCIILiteral kindWordOf(JSValue value, const RuntimeType& expected)
     return { };
 }
 
-static ASCIILiteral wordOf(ReportedAction action)
-{
-    switch (action) {
-    case ReportedAction::Continued:
-        return "continued"_s;
-    case ReportedAction::Threw:
-        return "threw"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static StringID displayPathStringOf(const ProgramTables& tables, ModuleID module)
-{
-    return StringID(tables.modules()[module.index()].displayPath);
-}
-
 static String displayPath(const Image& image, ModuleID module)
 {
     if (image.isObfuscated())
         return emptyString();
     if (!module)
         return "unknown"_s;
-    const ProgramTables& tables = image.programTables();
-    return nonEmptyOr(ProgramStrings::text(tables, displayPathStringOf(tables, module)), "unknown"_s);
+    return nonEmptyOr(ModuleTable(image.programTables()).displayPathText(module), "unknown"_s);
 }
 
-static StringView pathForCheckID(const Image& image, ModuleID module)
+static String pathForLineColumns(const Image& image, ModuleID module)
+{
+    if (image.isObfuscated())
+        return emptyString();
+    if (!module)
+        return "unknown"_s;
+    return nonEmptyOr(ModuleTable(image.programTables()).pathTextForLineColumns(module), "unknown"_s);
+}
+
+static String pathForCheckID(const Image& image, ModuleID module)
 {
     if (!module)
         return { };
     if (image.isObfuscated())
         return modulePath(module);
-    const ProgramTables& tables = image.programTables();
-    return ProgramStrings::viewInImage(tables, displayPathStringOf(tables, module));
+    return ModuleTable(image.programTables()).displayPathText(module);
 }
 
 struct CheckSite {
@@ -276,7 +268,7 @@ static std::optional<CheckSite> checkSiteOf(VM& vm, const Image& image, const Co
         return std::nullopt;
     FunctionDescription description(frame.function);
     String function = description.codeType() == ModuleCode ? "module"_str : nonEmptyOr(description.name(vm), "anonymous"_s);
-    return CheckSite { displayPath(image, position->source), position->lineColumn, WTF::move(function) };
+    return CheckSite { pathForLineColumns(image, position->source), position->lineColumn, WTF::move(function) };
 }
 
 static String describeCaller(const Image& image, const CompiledFrame& frame)
@@ -288,7 +280,7 @@ static String describeCaller(const Image& image, const CompiledFrame& frame)
     auto position = image.positionOf(frame.code.index(), frame.callSite);
     if (!position)
         return { };
-    return makeString(displayPath(image, position->source), ':', position->lineColumn.line);
+    return makeString(pathForLineColumns(image, position->source), ':', position->lineColumn.line);
 }
 
 static Callers findCallers(VM& vm)
@@ -365,7 +357,7 @@ RuntimeReporter::Site* RuntimeReporter::addSite(uint64_t id, NOESCAPE const Invo
         installExitHook();
     }
     if (!site && !std::exchange(m_hasOverflowed, true))
-        writeLine(m_destination, m_destination.isJSON ? makeString("{\"aot\":\"type-error\",\"kind\":\"overflow\",\"sites\":"_s, maxNumberOfSites, "}\n"_s) : makeString("[aot] type-error log is full ("_s, maxNumberOfSites, " places); further places are not recorded\n"_s));
+        writeLine(m_destination, m_destination.isJSON ? makeString("{\"aot\":\"type-mismatch\",\"kind\":\"overflow\",\"sites\":"_s, maxNumberOfSites, "}\n"_s) : makeString("[aot] type-mismatch log is full ("_s, maxNumberOfSites, " sites). New sites are not logged\n"_s));
     return site;
 }
 
@@ -382,7 +374,7 @@ uint64_t RuntimeReporter::bump(Site& site, ASCIILiteral word, const String& name
     return 0;
 }
 
-void RuntimeReporter::reportClaim(Instance& instance, std::optional<uint32_t> typeSite, const RuntimeType& expected, JSValue actual, ReportedAction action)
+void RuntimeReporter::reportFailedCheck(Instance& instance, std::optional<uint32_t> typeSite, const RuntimeType& expected, JSValue actual)
 {
     if (!isEnabled())
         return;
@@ -409,12 +401,11 @@ void RuntimeReporter::reportClaim(Instance& instance, std::optional<uint32_t> ty
         site = addSite(id, [&] {
             auto newSite = makeUnique<Site>();
             newSite->id = id;
-            newSite->kind = logWordOf(data && action != ReportedAction::Threw ? static_cast<TypeSiteKind>(data->kind) : TypeSiteKind::Unknown);
+            newSite->kind = logWordOf(data ? static_cast<TypeSiteKind>(data->kind) : TypeSiteKind::Unknown);
             newSite->file = checkSite.file.isolatedCopy();
             newSite->position = checkSite.position;
             newSite->function = checkSite.function.isolatedCopy();
             newSite->expected = truncated(describe(tables, expected, typeSite ? TypeSiteID(*typeSite) : TypeSiteID()), maxLengthOfType).isolatedCopy();
-            newSite->action = action;
             return newSite;
         });
         if (frame)
@@ -446,21 +437,21 @@ void RuntimeReporter::write(const Site& site, const String& got, uint64_t count,
             line.append(",\""_s, name, "\":"_s);
             line.appendQuotedJSONString(text);
         };
-        line.append("{\"aot\":\"type-error\",\"id\":\""_s, hex(site.id, 12, Lowercase), "\",\"kind\":\""_s, site.kind, '"');
+        line.append("{\"aot\":\"type-mismatch\",\"id\":\""_s, hex(site.id, 12, Lowercase), "\",\"kind\":\""_s, site.kind, '"');
         member("file"_s, site.file);
         line.append(",\"line\":"_s, site.position.line, ",\"col\":"_s, site.position.column);
         member("fn"_s, site.function);
         member("expected"_s, site.expected);
         member("got"_s, got);
-        line.append(",\"action\":\""_s, wordOf(site.action), "\",\"count\":"_s, count);
+        line.append(",\"action\":\"continued\",\"count\":"_s, count);
         for (auto& caller : callers) {
             line.append(&caller == callers.begin() ? ",\"from\":["_s : ","_s);
             line.appendQuotedJSONString(caller);
         }
         line.append(callers.isEmpty() ? ""_s : "]"_s, isTotal ? ",\"total\":true}\n"_s : "}\n"_s);
     } else {
-        line.append("[aot] type-error "_s, hex(site.id, 12, Lowercase), ' ', site.kind, ' ', site.file, ':', site.position.line, ':', site.position.column, " ("_s, site.function, "): "_s);
-        line.append("expected "_s, site.expected, ", got "_s, got, "; "_s, wordOf(site.action), "; count "_s, count);
+        line.append("[aot] type-mismatch "_s, hex(site.id, 12, Lowercase), ' ', site.kind, ' ', site.file, ':', site.position.line, ':', site.position.column, " ("_s, site.function, "): "_s);
+        line.append("expected "_s, site.expected, ", got "_s, got, "; continued; count "_s, count);
         for (auto& caller : callers)
             line.append(&caller == callers.begin() ? "; from "_s : " < "_s, caller);
         line.append(isTotal ? "; total\n"_s : "\n"_s);
@@ -533,22 +524,9 @@ static std::optional<uint32_t> indexOf(TypeSiteID site)
     return site.index();
 }
 
-bool reportsMismatches(const Instance& instance)
+void reportFailedCheck(Instance& instance, uint32_t typeSite, const RuntimeType& expected, JSValue actual)
 {
-    return instance.options().policy() == MismatchPolicy::Report;
-}
-
-void reportFailedClaim(Instance& instance, uint32_t typeSite, const RuntimeType& expected, JSValue actual)
-{
-    reporterOf(*instance.vm).reportClaim(instance, indexOf(TypeSiteID(typeSite)), expected, actual, ReportedAction::Continued);
-}
-
-void reportThrownClaim(Instance& instance, const RuntimeType& expected, JSValue actual, TypeSiteID typeSite)
-{
-    RuntimeReporter& reporter = reporterOf(*instance.vm);
-    if (!reporter.isExplicitlyEnabled())
-        return;
-    reporter.reportClaim(instance, indexOf(typeSite), expected, actual, ReportedAction::Threw);
+    reporterOf(*instance.vm).reportFailedCheck(instance, indexOf(TypeSiteID(typeSite)), expected, actual);
 }
 
 #if ENABLE(WEBASSEMBLY)
@@ -562,9 +540,9 @@ static InterpreterFallbackText textOf(Wasm::InterpreterFallbackReason reason)
 {
     switch (reason) {
     case Wasm::InterpreterFallbackReason::MemoryChecksBounds:
-        return { "memory-checks-bounds"_s, "its memory has no guard pages"_s };
+        return { "no-guard-pages"_s, "its memory has no guard pages"_s };
     case Wasm::InterpreterFallbackReason::VectorsAreDisabled:
-        return { "vectors-are-disabled"_s, "vector instructions are not available"_s };
+        return { "no-simd"_s, "SIMD isn't available on this CPU"_s };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -583,7 +561,7 @@ void reportInterpreterFallback(Wasm::InterpreterFallbackReason reason)
     if (!destination.isExplicit && !currentImageReportsMismatches())
         return;
     auto [word, cause] = textOf(reason);
-    writeLine(destination, destination.isJSON ? makeString("{\"aot\":\"interpreter-fallback\",\"reason\":\""_s, word, "\"}\n"_s) : makeString("[aot] interpreter-fallback "_s, word, ": a WebAssembly module of the executable runs in the interpreter, because "_s, cause, '\n'));
+    writeLine(destination, destination.isJSON ? makeString("{\"aot\":\"interpreter-fallback\",\"reason\":\""_s, word, "\"}\n"_s) : makeString("[aot] interpreter-fallback "_s, word, ": a compiled WebAssembly module is running in the interpreter because "_s, cause, '\n'));
 }
 
 #endif // ENABLE(WEBASSEMBLY)

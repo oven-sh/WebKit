@@ -296,7 +296,7 @@ function f23 name="handlerEdge" captures=[{type=env L0}] parameters=[{type=anyth
     Jump -> next b1()
   b1() handler=b3():
     v2 = GetEnvironmentField v0 layout=L0 field=0
-    v3 = Claim v1 castType=number
+    v3 = RequireObjectCoercible v1
     Jump -> next b2()
   b2():
     v4 = GetEnvironmentField v0 layout=L0 field=0
@@ -342,8 +342,8 @@ function f25 name="nonNumbersDoNotMerge" parameters=[{type=anything}, {type=anyt
 # CHECK: b3():
 # CHECK-NEXT: v5: anything = GetModuleVariable
 
-function f26 name="readByName" parameters=[{type=object written=L1}] results=[{type=boolean}] {
-  b0(v0: object ? L1):
+function f26 name="readByName" parameters=[{type=L1}] results=[{type=boolean}] {
+  b0(v0: L1):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="x"
     v3 = StrictEq v1, v2
@@ -415,7 +415,7 @@ function f32 name="propertyReadAfterStore" parameters=[{type=L2}, {type=anything
 
 function f33 name="propertyReadsAfterAllocation" parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L2 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L2] level=Proven
     v3 = GetSlotOrUndefined v1 key="y" receivers=[L2] level=Proven
     v4 = StrictEq v2, v3
@@ -463,7 +463,7 @@ function f36 name="classTokenReadAfterRead" captures=[{type=env L3}] parameters=
 function f37 name="closureReadAfterAllocation" results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f29
-    v1 = NewObject -, v0 layout=L2 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L2] level=Proven
     Return v2
 }
@@ -473,7 +473,7 @@ function f37 name="closureReadAfterAllocation" results=[{type=anything}] {
 function f38 name="deferredClosureReadAfterAllocation" results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f29
-    v1 = NewObject -, v0 layout=L4 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L4 fields=[0]
     v2 = GetSlot v1 key="run" receivers=[L4] level=Proven
     Return v2
 }

@@ -25,6 +25,7 @@ struct TextInputs {
     const IdentifierNumbering& identifiers;
     const StringConstantNumbering& constants;
     const BitVector& stringsNamedByTables;
+    const BitVector* stringsOnlyShownByTables { nullptr };
 };
 
 struct EncodedText {

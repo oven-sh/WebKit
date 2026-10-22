@@ -1,0 +1,44 @@
+# class Numbers { [Symbol.iterator](): Iterator<number> { return { step: 1 } } }: the front end gives no site to a result that is declared as an interface of the library,
+# so flow publishes nothing for the position, and it stays expected: a call of the function is typed `anything`.
+# The table of origins says that all `made` answers is the object that it makes itself. The position gets the type of that operation, proven.
+# `passedOn` answers what a callee has made: its position stays as it was, because the object may come out of a tail call, whose result nothing tests.
+# `either` may answer its parameter: nothing is said of it.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: function f1 name="made" {{*}} results=[{type=L0}]
+# CHECK: function f2 name="passedOn" {{*}} results=[{type=L1 flags=[IsExpected]}]
+# CHECK: function f3 name="either" {{*}} results=[{type=L1 flags=[IsExpected]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="step" declared={type=anything}}]
+layout L1 name="Declared"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect v0 function=f3
+    Return
+}
+function f1 name="made" results=[{type=L1 flags=[IsExpected]}] relations={subjects=[{kind=Constant}, {kind=Allocation index=1 fate=[IsReturned] results=1}] stores=[{target=1 creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="passedOn" results=[{type=L1 flags=[IsExpected]}] relations={subjects=[{kind=CallResult fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0():
+    v0 = CallDirect function=f1
+    Return v0
+}
+function f3 name="either" parameters=[{type=anything}] results=[{type=L1 flags=[IsExpected]}] relations={subjects=[{fate=[IsReturned] results=1}, {kind=Constant index=1}, {kind=Allocation index=2 fate=[IsReturned] results=1}] stores=[{source=1 target=2 creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v2
+}

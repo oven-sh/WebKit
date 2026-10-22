@@ -1,0 +1,31 @@
+# global = new WebAssembly.Global(descriptor, first); global.value(); global.value = second; global.value()
+# `value` answers what native code keeps in the cell behind it: what the constructor and the setter were handed. The program instantiates no module, so nothing else comes into the cell.
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> WebAssemblyGlobal
+# CHECK-NEXT: f0 v5 -> f1 f2
+# CHECK-NEXT: f0 v9 -> f1 f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=WebAssemblyGlobal
+    v1 = Undefined
+    v2 = NewClosure function=f1
+    v3 = Construct v0, -, v1, v2
+    v4 = PropGet v3 key="value"
+    v5 = Call v4, -
+    v6 = NewClosure function=f2
+    PropSet v3, v6 key="value" mode=Strict
+    v8 = PropGet v3 key="value"
+    v9 = Call v8, -
+    Return
+}
+function f1 name="first" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="second" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

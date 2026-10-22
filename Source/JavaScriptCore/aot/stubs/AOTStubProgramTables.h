@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInstance.h"
 #include "AOTProgramTables.h"
 #include "AOTStubHelpers.h"
 
@@ -28,6 +29,15 @@ inline void loadProgramTable(StubAssembler& jit, GPRReg tables, ProgramTableInde
     ASSERT(noOverlap(tables, result));
     jit.load32(Address(tables, offsetOfProgramTableRange(index) + OBJECT_OFFSETOF(TableRange, offset)), result);
     jit.addPtr(tables, result);
+}
+
+// The function is one that closures are made of: it comes from a closure, or from the field of a closure that is yet to be made.
+inline void loadKindOfClosureFunction(StubAssembler& jit, GPRReg function, GPRReg kind)
+{
+    static_assert(sizeof(FunctionKindData) == 2);
+    ASSERT(noOverlap(function, kind));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.closureFunctionKindsOrigin)), kind);
+    jit.load16(BaseIndex(kind, function, CCallHelpers::TimesTwo), kind);
 }
 
 } } // namespace JSC::AOT

@@ -38,10 +38,7 @@ function f0 name="call-in-third-block" parameters=[{type=anything}, {type=anythi
 
 # CHECK-LABEL: function f1 name="constant-used-later"
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: = String string="a"
-# CHECK-NEXT: = String string="b"
 # CHECK-NEXT: [[third]]: "c" = String string="c"
-# CHECK-NEXT: = String string="d"
 # CHECK-NEXT: SwitchString v0 strings=["a", "b", "c", "d"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
 # CHECK: b3():
 # CHECK-NEXT: Return [[third]]

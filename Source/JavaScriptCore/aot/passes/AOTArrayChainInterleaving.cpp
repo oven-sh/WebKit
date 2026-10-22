@@ -97,7 +97,7 @@ static ArrayChainDeclineReason findSeenIntermediateArray(FunctionPassContext& co
 
         bool isReducer = chain.shape.end == ChainEndKind::Reduce && callback.call == chain.lastCall;
         std::optional<unsigned> parameter = findParameterReceiving(callee, isReducer ? arrayArgumentIndexOfReducer : arrayArgumentIndex);
-        if (parameter && !context.inputs.effects.of(callback.callee).parameter(*parameter).operand.uses.isEmpty())
+        if (parameter && !context.inputs.effects.of(callback.callee).operand(*parameter).uses.isEmpty())
             return ArrayChainDeclineReason::CallbackSeesIntermediateArray;
     }
     return ArrayChainDeclineReason::None;
@@ -117,7 +117,7 @@ static Effects effectsOfJoining(FunctionPassContext& context, ValueID joinedArra
 static Effects effectsOfFlattening(FunctionPassContext& context, FunctionID mapper)
 {
     const Program& program = context.program;
-    if (!mapper || program.at(mapper).results.size() != 1)
+    if (!mapper || program.at(mapper).results.size() != 1 || program.at(mapper).result().flags.contains(PositionFlags::IsExpected))
         return context.inputs.effects.unknownCode();
 
     const Type& parts = program.at(program.at(mapper).result().type);
@@ -126,14 +126,7 @@ static Effects effectsOfFlattening(FunctionPassContext& context, FunctionID mapp
     return Effects::none();
 }
 
-static TypeID elementTypeOf(FunctionPassContext& context, ValueID array)
-{
-    const Program& program = context.program;
-    const ClassPart* part = program.typeOf(context.function, array).findClassPart(BuiltinClasses::Array);
-    return part && part->contentsAreProven ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
-}
-
-static Effects effectsOfCallback(FunctionPassContext& context, const ChainCallback& callback, bool isReducer)
+static Effects effectsOfCallback(FunctionPassContext& context, const ChainCallback& callback)
 {
     EffectContext effects { context.program, context.inputs.effects };
     if (!callback.callee)
@@ -141,23 +134,14 @@ static Effects effectsOfCallback(FunctionPassContext& context, const ChainCallba
 
     CalleeList callees = CalleeList::none();
     callees.add(callback.callee);
-    std::optional<ArrayMethodCall> call = arrayMethodCallOf(context.program, context.function, callback.call);
-    if (!call)
-        return effectsOfCallees(effects, callees, BuiltinCallMode::Call).onAnyEdge();
-
-    Vector<TypeID, 4> arguments;
-    if (isReducer)
-        arguments.append(TypeTable::anything);
-    arguments.appendList({ elementTypeOf(context, call->receiver), TypeTable::length, context.function.at(call->receiver).type });
-    TypeID thisValue = callback.thisArgument ? context.function.at(callback.thisArgument).type : TypeTable::undefined;
-    return effectsOfCallees(effects, callees, BuiltinCallMode::Call, { thisValue, arguments.span() }).onAnyEdge();
+    return effectsOfCallees(effects, callees, BuiltinCallMode::Call).onAnyEdge();
 }
 
 static StepEffects collectStepEffects(FunctionPassContext& context, const ArrayChain& chain, const ArrayMethodCall& last)
 {
     StepEffects effects;
     for (const ChainCallback& callback : chain.callbacks)
-        effects.append(effectsOfCallback(context, callback, chain.shape.end == ChainEndKind::Reduce && callback.call == chain.lastCall));
+        effects.append(effectsOfCallback(context, callback));
     if (chain.shape.end == ChainEndKind::Join)
         effects.append(effectsOfJoining(context, last.receiver));
     if (chain.shape.end == ChainEndKind::FlatMap)

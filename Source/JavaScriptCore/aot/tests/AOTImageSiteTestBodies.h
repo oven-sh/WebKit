@@ -72,9 +72,10 @@ inline SiteBody finishBody(CodeSketch& sketch, Vector<ExpectedSite>&& sites)
     return { sketch.take(), WTF::move(sites) };
 }
 
+// Pinned: the offsets that these bodies expect are those of the sketch, so the outliner must find nothing to take.
 inline void appendCall(CodeSketch& sketch, Vector<ExpectedSite>& sites, uint32_t word)
 {
-    sketch.plain(word);
+    sketch.pinned(word);
     OptionalIndex site = sketch.addSite(0, 10 + word, 1 + word % 7);
     uint32_t call = sketch.callStub(writeBarrier(), site);
     sites.append(ExpectedSite { returnOffsetOf(call), *site });

@@ -92,7 +92,7 @@ static Vector<DecodedString> decodeRetainedStrings(const Typed::StringTable& str
     return decoded;
 }
 
-// Counts a byte before every holder. appendText() adds one only between two printable characters or to align 16-bit text.
+// Counts a byte before every holder. appendText() adds one only to align 16-bit text.
 static uint64_t computeMaxTextSize(const RetainedStrings& strings)
 {
     uint64_t maxSize = 1;
@@ -118,10 +118,7 @@ static Vector<uint32_t> appendText(Vector<uint8_t>& text, const TextInputs& inpu
             return;
         const DecodedString& string = strings.decoded[holder];
         std::span<const uint8_t> bytes = string.bytes();
-        if (string.is16Bit()) {
-            if (text.size() % sizeof(char16_t))
-                text.append(0);
-        } else if (!bytes.empty() && isASCIIPrintable(text.last()) && isASCIIPrintable(bytes.front()))
+        if (string.is16Bit() && text.size() % sizeof(char16_t))
             text.append(0);
         text.append(bytes);
         ends[holder] = static_cast<uint32_t>(text.size());
@@ -145,19 +142,47 @@ static Vector<uint32_t> appendText(Vector<uint8_t>& text, const TextInputs& inpu
     return ends;
 }
 
-static uint32_t encodeLocation(uint32_t offset, uint32_t length, Vector<ImageLongString>& longStrings)
+// In the image nothing but the list says where a string without a header is.
+static uint32_t encodeLocation(uint32_t offset, uint32_t length, bool hasHeader, Vector<ImageLongString>& longStrings)
 {
-    if (length && length <= ImageString::lengthMask && !(offset >> (32 - ImageString::lengthBits)))
+    if (hasHeader && length && length <= ImageString::lengthMask && !(offset >> (32 - ImageString::lengthBits)))
         return offset << ImageString::lengthBits | length;
     uint32_t longStringIndex = static_cast<uint32_t>(longStrings.size());
     longStrings.append(ImageLongString { offset, length });
     return longStringIndex << ImageString::lengthBits;
 }
 
+// By a stub that compares with the text, by the atom table, by whoever takes the string out of a table as a value.
+static bool isReadThroughHeader(const TextInputs& inputs, const RetainedStrings& strings, size_t index)
+{
+    const StringUses& uses = inputs.uses;
+    if (strings.isName.quickGet(index) || uses.isAtom.get(index) || uses.isNamedBesideCreation.get(index))
+        return true;
+    return inputs.stringsNamedByTables.get(index) && !(inputs.stringsOnlyShownByTables && inputs.stringsOnlyShownByTables->get(index));
+}
+
+// Whoever makes the cell of the constant makes the header: see ProgramStrings::tryCreateHeader().
+static bool getsHeaderWithCell(const TextInputs& inputs, const RetainedStrings& strings, size_t index)
+{
+    return inputs.uses.isConstant.get(index) && !isReadThroughHeader(inputs, strings, index);
+}
+
+// A string that only a message shows becomes a String when the message is made.
+static bool hasHeader(const TextInputs& inputs, const RetainedStrings& strings, size_t index)
+{
+    if (isReadThroughHeader(inputs, strings, index))
+        return true;
+    return !inputs.uses.isNamed.get(index) && !inputs.stringsNamedByTables.get(index);
+}
+
 static uint32_t encodeHashAndFlags(const TextInputs& inputs, const RetainedStrings& strings, size_t index)
 {
     const DecodedString& string = strings.decoded[index];
     uint32_t flags = 0;
+    if (!hasHeader(inputs, strings, index))
+        flags |= ImageString::hasNoHeaderFlag;
+    if (getsHeaderWithCell(inputs, strings, index))
+        flags |= ImageString::hasListedHashFlag;
     if (string.is16Bit())
         flags |= ImageString::is16BitFlag;
     if (inputs.uses.isAtom.get(index) || strings.isName.quickGet(index))
@@ -180,7 +205,7 @@ static uint32_t encodeHashAndFlags(const TextInputs& inputs, const RetainedStrin
         RELEASE_ASSERT(end > distanceToEnd);
         uint32_t offset = end - static_cast<uint32_t>(distanceToEnd);
         RELEASE_ASSERT(!string.is16Bit() || !(offset % sizeof(char16_t)));
-        records[index] = ImageString { encodeLocation(offset, string.length(), longStrings), encodeHashAndFlags(inputs, strings, index) };
+        records[index] = ImageString { encodeLocation(offset, string.length(), hasHeader(inputs, strings, index), longStrings), encodeHashAndFlags(inputs, strings, index) };
     }
     if (longStrings.size() > context.limit(LimitID::MaxListedStrings)) {
         context.reportLimitExceeded(LimitID::MaxListedStrings, longStrings.size());
@@ -259,7 +284,6 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context)
         return { };
     result.identifiers = encodeIdentifiers(inputs, strings.decoded.span());
     result.stringConstants = encodeStringConstants(inputs.constants);
-    context.statistics().count(StatisticID::TextBytesEmitted, result.text.size());
     context.destroyLater(WTF::move(strings));
     return result;
 }

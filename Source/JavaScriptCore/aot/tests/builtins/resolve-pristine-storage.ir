@@ -47,10 +47,10 @@ function f3 name="noProof" parameters=[{type=Array}, {type=Array<anything, prist
     Return v5
 }
 # CHECK-LABEL: function f3 name="noProof"
-# CHECK-NOT: CallBuiltin
 # CHECK-NOT: IsPristine
-# CHECK: v4: anything = Call v3, v0, v2
-# CHECK-NEXT: v5: anything = Call v3, v1, v2
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v4: string = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: v5: string = CallBuiltin v1, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
 
 function f4 name="unknownCodeBeforeCall" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
   b0(v0: anything, v1: string):
@@ -73,9 +73,10 @@ function f5 name="unknownCodeSeesArrayBeforeCall" parameters=[{type=anything}, {
     Return v5
 }
 # CHECK-LABEL: function f5 name="unknownCodeSeesArrayBeforeCall"
-# CHECK-NOT: CallBuiltin
+# CHECK-NOT: needsPristineReceiver
 # CHECK: v4: anything = Call v0, -, v2
-# CHECK-NEXT: v5: anything = Call v3, v2, v1
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v5: string = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
 
 function f6 name="conversionWithoutUserCode" parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number):

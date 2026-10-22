@@ -1,0 +1,52 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTRecordTypes.h"
+#include <optional>
+#include <wtf/ScopedLambda.h>
+#include <wtf/text/UniquedStringImpl.h>
+
+namespace JSC {
+
+class JSCellButterfly;
+class JSObject;
+class JSValue;
+class VM;
+
+namespace AOT {
+
+class Object;
+
+// A star is what compilers make of `export * from` in a CommonJS module: each enumerable name of the source but "default" that the target lacks becomes an accessor of the target,
+// whose getter reads the name from the source. A pending star is recorded in the target and carried out when somebody asks for the extra properties of the target.
+// Until then the target says that it has extra properties, so compiled code leaves every question about a name that is in no slot to the run time.
+
+// The bits of the argument `rule` of RuntimeOperation::TryReExportFields.
+// A closure of the getter has two capture slots. This is the number of the one that holds the key. The other one holds the source.
+static constexpr uint32_t starRuleKeyCaptureSlot = 1 << 0;
+// An accessor of a source that is marked as an ES module is taken over as it is, as TypeScript's `__createBinding` does from version 4.6 on.
+static constexpr uint32_t starRuleReusesDescriptors = 1 << 1;
+
+// False where the star has to be carried out now. Nothing has been done then. Runs no code of the program.
+bool tryAddPendingStar(VM&, Object& target, Object& source, FunctionID getter, uint32_t rule);
+bool hasPendingStars(const Object&);
+// A read of a name that a pending star binds gets what the getter of the binding would read: the name, from this object. No answer where the stars are better carried out:
+// each answer costs a search, so once the searches have cost as much as the bindings the object gets them. Null inside the answer: no star binds the name. Runs no code of the program.
+std::optional<Object*> sourceOfPendingBinding(VM&, const Object& target, UniquedStringImpl* name);
+// What the getters of the pending bindings of an object would answer now, kept without making any of them: the values of the fields of every source. Null where a getter might
+// find anything but a value in a slot. The names and their values can be asked for as long as the snapshot lives, whatever has happened to the objects since. Runs no code of the program.
+JSCellButterfly* snapshotOfPendingStars(VM&, const Object& target);
+JSValue valueInSnapshotOfPendingStars(VM&, const Object& target, JSCellButterfly* snapshot, UniquedStringImpl* name);
+void forEachBindingInSnapshotOfPendingStars(VM&, const Object& target, JSCellButterfly* snapshot, const ScopedLambda<void(UniquedStringImpl*, JSValue)>&);
+// For whoever must not allocate, as during a walk over the heap. Nothing for an object with pending stars.
+JSObject* extraPropertiesIfMade(const Object&);
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

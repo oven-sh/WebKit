@@ -235,13 +235,7 @@ private:
     // cannot handle it being a reference.
     VM* const m_vm;
 #if ENABLE(AOT)
-public:
-    static constexpr unsigned numberOfAOTClosureStructures = 5;
-    static constexpr unsigned numberOfAOTSlimClosureStructures = 2;
-private:
     AOT::Instance* m_aotInstance { nullptr };
-    WriteBarrierStructureID m_aotClosureStructures[numberOfAOTClosureStructures];
-    WriteBarrierStructureID m_aotSlimClosureStructures[numberOfAOTSlimClosureStructures];
     JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
 #endif
     Debugger* m_debugger { nullptr };
@@ -252,11 +246,7 @@ private:
 
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger && m_microtaskRunnability == QueuedTaskResult::Executed;
-#else
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
-#endif
 #if ENABLE(AOT)
         if (m_vm->hasCompiledCode())
             didChangeMicrotaskQueueing();
@@ -1165,14 +1155,11 @@ public:
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
-    bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask; }
 #if ENABLE(AOT)
+    // Compiled code runs some jobs without queueing them. True where a job would go straight into the queue and the queue would run it.
+    bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask && m_microtaskRunnability == QueuedTaskResult::Executed; }
     AOT::Instance* aotInstance() const { return m_aotInstance; }
     void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
-    Structure* aotClosureStructure(unsigned index) const { return m_aotClosureStructures[index].get(); }
-    void setAOTClosureStructure(VM& vm, unsigned index, Structure* structure) { m_aotClosureStructures[index].set(vm, this, structure); }
-    Structure* aotSlimClosureStructure(unsigned index) const { return m_aotSlimClosureStructures[index].get(); }
-    void setAOTSlimClosureStructure(VM& vm, unsigned index, Structure* structure) { m_aotSlimClosureStructures[index].set(vm, this, structure); }
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
 #endif
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
@@ -1414,7 +1401,10 @@ public:
     void setMicrotaskRunnability(QueuedTaskResult runnability)
     {
         m_microtaskRunnability = runnability;
-        updateCanFastQueueMicrotask();
+#if ENABLE(AOT)
+        if (m_vm->hasCompiledCode())
+            didChangeMicrotaskQueueing();
+#endif
     }
 
     void setAssociatedContextIsFullyActive(bool value)

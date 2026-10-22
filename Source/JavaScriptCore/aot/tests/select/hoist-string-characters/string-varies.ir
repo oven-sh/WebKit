@@ -4,7 +4,6 @@
 # STATISTIC: HoistStringCharactersGroups = 3
 
 module m0 path="main.js" displayPath="main.js"
-typesite w0 kind=Assertion
 
 # CHECK-LABEL: function f0 name="string-is-loop-parameter"
 # CHECK-NOT: FlattenString
@@ -28,15 +27,15 @@ function f0 name="string-is-loop-parameter" parameters=[{type=string}, {type=num
     Return v7
 }
 
-# CHECK-LABEL: function f1 name="claim-in-loop"
+# CHECK-LABEL: function f1 name="cast-in-loop"
 # CHECK-NOT: LoopHint
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: LoopHint
-# CHECK: v9: string = Claim v0 castType=string site=w0
+# CHECK: v9: string = AssumeType v0 castType=string
 # CHECK-NEXT: v10: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
 # CHECK-COUNT-1: : flatstring = FlattenString
 # CHECK: ([[flat1]]: flatstring):
-function f1 name="claim-in-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
+function f1 name="cast-in-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
   b0(v0: undefined|string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
@@ -47,7 +46,7 @@ function f1 name="claim-in-loop" parameters=[{type=undefined|string}, {type=numb
     v8 = Less v5, v1
     Branch v8 -> taken b2(), notTaken b3()
   b2():
-    v9 = Claim v0 castType=string site=w0
+    v9 = AssumeType v0 castType=string
     v10 = CallBuiltin v9, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
     v11 = Add v5, v4
     Jump -> next b1(v11, v10)
@@ -55,8 +54,8 @@ function f1 name="claim-in-loop" parameters=[{type=undefined|string}, {type=numb
     Return v6
 }
 
-# CHECK-LABEL: function f2 name="claim-outside-loop"
-# CHECK: v5: string = Claim v0 castType=string site=w0
+# CHECK-LABEL: function f2 name="cast-outside-loop"
+# CHECK: v5: string = AssumeType v0 castType=string
 # CHECK-NOT: LoopHint
 # CHECK-NOT: TypeTest
 # CHECK: [[flat2]]: flatstring = FlattenString v5
@@ -64,12 +63,12 @@ function f1 name="claim-in-loop" parameters=[{type=undefined|string}, {type=numb
 # CHECK-NOT: FlattenString
 # CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat2]], -, -, v6
 # CHECK-NOT: FlattenString
-function f2 name="claim-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
+function f2 name="cast-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
   b0(v0: undefined|string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
-    v5 = Claim v0 castType=string site=w0
+    v5 = AssumeType v0 castType=string
     Jump -> next b1(v3, v2)
   b1(v6, v7):
     LoopHint

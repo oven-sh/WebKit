@@ -80,7 +80,7 @@ static constexpr StubKey literalComparison(unsigned length)
 
 static StubSignature calleeSignature(StubKey callee)
 {
-    return descriptorOf(callee.family()).signature(callee);
+    return signatureOf(callee);
 }
 
 static void emitSecondRead(const TwoReadsBody& body, bool rowIsLoaded)

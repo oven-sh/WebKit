@@ -14,6 +14,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTPassRunner.h"
 #include "AOTRelocation.h"
+#include "AOTThreads.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/CommaPrinter.h>
@@ -38,11 +39,6 @@ CallingConventions::CallingConventions(CallingConventionTables&& tables)
 FunctionConvention CallingConventions::of(const Program& program, FunctionID id) const
 {
     const Function& function = program.at(id);
-    if (function.role == FunctionRole::Continuation) {
-        FunctionConvention origin = of(program, function.creator.as<CreatorRecord::Continuation>().origin);
-        return { origin.resultIsBoxed, false, origin.reservedStackWords };
-    }
-
     FunctionConvention convention = id.index() < m_tables.conventions.size() ? m_tables.conventions[id.index()] : FunctionConvention();
     bool didChooseConventions = !m_tables.conventions.isEmpty();
     if (!didChooseConventions && function.results.size() == 1 && function.hasOrdinaryFrame())
@@ -68,7 +64,12 @@ ArgumentLocations CallingConventions::locationsOf(const Program& program, Functi
 
 uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& program, FunctionID callee) const
 {
-    return std::max<uint32_t>(locationsOf(program, callee).numberOfStackWords(), of(program, callee).reservedStackWords);
+    return stackWordsReservedByCallersOf(program, callee, locationsOf(program, callee));
+}
+
+uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& program, FunctionID callee, const ArgumentLocations& calleeLocations) const
+{
+    return std::max<uint32_t>(calleeLocations.numberOfStackWords(), of(program, callee).reservedStackWords);
 }
 
 std::span<const SecondaryEntry> CallingConventions::secondaryEntriesOf(FunctionID id) const
@@ -88,16 +89,6 @@ SecondaryEntry CallingConventions::findEntryOmittingArguments(FunctionID callee,
             return entry;
     }
     return { primaryEntry, static_cast<uint8_t>(numberOfGPRArguments) };
-}
-
-FunctionID CallingConventions::valueEntryOf(FunctionID genericEntrypoint) const
-{
-    return genericEntrypoint.index() < m_tables.valueEntries.size() ? m_tables.valueEntries[genericEntrypoint.index()] : FunctionID();
-}
-
-ClosureCells CallingConventions::closureCellsOf(FunctionID groupEntrypoint) const
-{
-    return groupEntrypoint.index() < m_tables.closureCells.size() ? m_tables.closureCells[groupEntrypoint.index()] : ClosureCells::Unknown;
 }
 
 static void dumpLocations(PrintStream& out, std::span<const ArgumentLocation> locations)
@@ -143,10 +134,6 @@ void CallingConventions::dump(PrintStream& out, const Program& program) const
         if (convention.reservedStackWords)
             out.print(" reserved=", convention.reservedStackWords);
         dumpSecondaryEntries(out, secondaryEntriesOf(id));
-        if (FunctionID valueEntry = valueEntryOf(id))
-            out.print(" value-entry=f", valueEntry.index());
-        if (function.role == FunctionRole::GroupEntrypoint)
-            out.print(" closures=", enumName(closureCellsOf(id)));
         out.println();
     }
 }
@@ -156,34 +143,22 @@ bool ConventionInputs::isEnabledFor(FunctionID function) const
     return build.isEnabled(PassID::ChooseCallingConventions, findFunctionAsRead(&program(), function));
 }
 
-std::span<const FunctionID> ConventionInputs::entrypointsOfSameGroup(FunctionID groupEntrypoint) const
+static uint64_t countClosuresNeverCreated(const Program& program, const DerivedFunctions& derivedFunctions, const ParallelLoops& loops)
 {
-    const Function& function = program().at(groupEntrypoint);
-    RELEASE_ASSERT(function.role == FunctionRole::GroupEntrypoint);
-    CallGroupID group = groups.groupOf(function.creator.as<CreatorRecord::Entrypoint>().target);
-    return groupEntrypoints[group.index()].all.span();
-}
-
-static uint64_t countClosuresNeverCreated(const Program& program, const DerivedFunctions& derivedFunctions)
-{
-    uint64_t count = 0;
-    for (unsigned index = 0; index < program.functions.size(); ++index) {
+    return findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
         if (!function.hasBody() || !hasSourceBodyOf(function.role) || !canBeCalledByValueOf(function.role) || function.hasOnlyDirectCallers())
-            continue;
-        if (!derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, FunctionID(index))))
-            ++count;
-    }
-    return count;
+            return false;
+        return !derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, FunctionID(index)));
+    }).size();
 }
 
-CallingConventions chooseCallingConventions(ProgramEditor& editor, const OptimizationInputs& inputs, const CallGroups& groups, const PassRunner& runner)
+CallingConventions chooseCallingConventions(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
     RELEASE_ASSERT(inputs.derivedFunctions);
     const Program& program = editor.program();
     BuildContext& build = runner.build();
-    Vector<GroupEntrypoints> groupEntrypoints = findGroupEntrypoints(groups, *inputs.derivedFunctions);
-    ConventionInputs context { editor, inputs, groups, runner, build, groupEntrypoints };
+    ConventionInputs context { editor, inputs, runner, build };
     BitVector changed;
     unsigned count = program.functions.size();
 
@@ -191,10 +166,6 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     tables.registers.numberOfGPRs = static_cast<unsigned>(std::min<uint64_t>(build.limit(LimitID::MaxArgumentRegisters), numberOfDirectArgumentGPRs));
     tables.registers.numberOfFPRs = numberOfDirectArgumentFPRs;
     tables.conventions.grow(count);
-    tables.valueEntries.grow(count);
-    tables.closureCells.fill(ClosureCells::Unknown, count);
-
-    convertCallsToGroupCalls(context, tables, changed);
 
     Vector<TailCallSite> sites = collectTailCallSites(context);
     DirectCallUse use = collectDirectCallUse(context);
@@ -202,11 +173,10 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     chooseResultRepresentations(context, sites.span(), use, tables);
     demoteMismatchedTailCalls(context, sites, tables, changed);
     reserveStackWords(context, sites.span(), tables);
-    chooseArgumentSpills(context, tables);
     chooseSecondaryEntries(context, tables);
 
     RELEASE_ASSERT(program.functions.size() == count);
-    build.statistics().count(StatisticID::ClosuresNeverCreated, countClosuresNeverCreated(program, *inputs.derivedFunctions));
+    build.statistics().count(StatisticID::ClosuresNeverCreated, countClosuresNeverCreated(program, *inputs.derivedFunctions, build.parallelLoops()));
     build.statistics().countChanges(PassID::ChooseCallingConventions, changed.bitCount());
     return CallingConventions(WTF::move(tables));
 }

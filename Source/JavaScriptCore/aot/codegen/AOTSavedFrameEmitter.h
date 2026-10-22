@@ -18,8 +18,14 @@ public:
 
     void generateNewGenerator(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
+    void generateTakeGeneratorPrototype(const ValueContext&);
+    void generateIsGeneratorUnstarted(const ValueContext&);
+    void generateIsGeneratorRunning(const ValueContext&);
+    void generateMarkGeneratorRunning(const ValueContext&);
+    void generateTakeGeneratorStepStatus(const ValueContext&);
     void generateIsUnmodifiedAsyncGenerator(const ValueContext&);
     void generateStepAsyncGenerator(const ValueContext&);
+    void generateAwaitMayContinue(const ValueContext&);
     void generateAwaitBySavingFrame(const ValueContext&);
     void generateAwaitCallBySavingFrame(const ValueContext&);
     void generateYieldBySavingFrame(const ValueContext&);
@@ -31,16 +37,22 @@ public:
     void generateIsUnmodifiedGenerator(const ValueContext&);
 
 private:
+    // The operands of the stub in front of the site word.
     struct Suspension {
         StubKey key;
         LValue firstOperand { nullptr };
         LValue secondOperand { nullptr };
+        LValue thirdOperand { nullptr };
         ValueID driver;
     };
 
     CoroutineKind kindOfFunction() const;
     CellPointer newGenerator(const ValueContext&, CoroutineKind);
+    CellPointer allocateGenerator(CellPointer closure, LBasicBlock slowPath);
     LValue cellOrZero(ValueID driver);
+    LValue driverAsPassed(ValueID driver);
+    TypedPointer stateOf(CellPointer generator);
+    Pointer framePointerAtThisPoint();
     StubCallResult suspend(const ValueContext&, const Suspension&);
     void suspendGenerator(const ValueContext&, GeneratorSuspension, Boxed value);
     void defineYieldResults(const ValueContext&, StubCallResult);

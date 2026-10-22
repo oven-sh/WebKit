@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTIRBuilder.h"
-#include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
@@ -39,21 +38,15 @@ struct DirectCallRequest {
     ValueID argumentCount;
     ValueID hiddenRest;
     AccessSiteID accessSite;
-    ResultCheck resultCheck { ResultCheck::ByCallee };
     bool isConstruction { false };
     bool isNeverInlined { false };
     bool isDemotedTailCall { false };
 };
 
-bool needsArgumentConversion(const Program&, const Function& caller, const DirectCallRequest&);
-bool rejectsOnFailedConversion(const Program&, FunctionID callee);
-
 ValueID appendDirectCall(IRBuilder&, const DirectCallRequest&);
-std::optional<Value> tryMakeDirectCall(const ValueInsertion&, const DirectCallRequest&);
-
-bool needsResultCheck(IRBuilder&, ResultCheck, FunctionID callee, ValueID result);
-ValueID appendResultCheck(IRBuilder&, ResultCheck, FunctionID callee, ValueID result);
-ValueID appendResultCheck(IRBuilder&, ValueID result);
+Value makeDirectCall(const ValueInsertion&, const DirectCallRequest&);
+// A validating build tests the callee of a call that its type alone made direct.
+void appendCalleeValidation(IRBuilder&, ValueID callee);
 
 Vector<ValueID, 8> appendCaptures(IRBuilder&, FunctionID, ValueID closure);
 Vector<ValueID, 8> insertCaptures(const ValueInsertion&, FunctionID, ValueID closure);

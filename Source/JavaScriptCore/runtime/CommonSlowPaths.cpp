@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CommonSlowPaths.h"
 
+#include "AOTInterpreterSlowPaths.h"
 #include "ArithProfile.h"
 #include "ArrayPrototypeInlines.h"
 #include "BytecodeStructs.h"
@@ -35,6 +36,7 @@
 #include "DirectArguments.h"
 #include "ErrorHandlingScope.h"
 #include "ExceptionFuzz.h"
+#include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "IteratorOperations.h"
 #include "JSArrayIterator.h"
@@ -317,7 +319,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
     BEGIN();
     auto bytecode = pc->as<OpCheckTdz>();
     if (bytecode.m_targetVirtualRegister == codeBlock->thisRegister())  {
-        THROW(createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
+        THROW(createReferenceError(globalObject, SuperNotCalledError));
     } else {
         auto [block, index] = getBytecodeIndex(codeBlock->vm(), callFrame);
         auto info = block->expressionInfoForBytecodeIndex(index);
@@ -360,6 +362,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_neq)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_stricteq)
 {
     BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpStricteq>();
     RETURN(jsBoolean(JSValue::strictEqual(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue())));
 }
@@ -367,6 +373,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_stricteq)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_nstricteq)
 {
     BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpNstricteq>();
     RETURN(jsBoolean(!JSValue::strictEqual(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue())));
 }
@@ -545,6 +555,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_object)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_add)
 {
     BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpAdd>();
     JSValue v1 = GET_C(bytecode.m_lhs).jsValue();
     JSValue v2 = GET_C(bytecode.m_rhs).jsValue();
@@ -756,6 +770,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_object)
 {
     BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpTypeofIsObject>();
     RETURN(jsBoolean(jsTypeofIsObject(globalObject, GET_C(bytecode.m_operand).jsValue())));
 }
@@ -763,6 +781,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_object)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_function)
 {
     BEGIN();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::Interpreter::didLeaveInlineOperator(vm);
+#endif
     auto bytecode = pc->as<OpTypeofIsFunction>();
     RETURN(jsBoolean(jsTypeofIsFunction(globalObject, GET_C(bytecode.m_operand).jsValue())));
 }
@@ -770,7 +792,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_function)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_throw_static_error_from_instanceof)
 {
     BEGIN();
-    THROW(createTypeError(globalObject, "Right hand side of instanceof is not an object"_s));
+    THROW(createTypeError(globalObject, InstanceofRightHandSideNotObjectError));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_instanceof_custom_from_instanceof)

@@ -44,6 +44,8 @@ struct Pattern {
     String text;
     RegExpFlags flags { };
     bool fitsCodeLimits { true };
+    // For a pattern that is no literal: the build put the text together from constants.
+    bool isEvaluated { false };
 };
 
 struct RequestWithForm {
@@ -75,7 +77,7 @@ public:
 
 private:
     RequestWithForm makeRequest(const Pattern&, RegExpRequestOrigin);
-    Vector<RegExpRequest> makeRequests(std::span<const Pattern>, RegExpRequestOrigin);
+    Vector<RegExpRequest> makeRequests(std::span<const Pattern>, RegExpRequestOrigin originUnlessEvaluated);
     EncodedText encodeNamedText();
 
     RefPtr<VM> m_vm;
@@ -138,11 +140,13 @@ RequestWithForm RegExpImage::makeRequest(const Pattern& pattern, RegExpRequestOr
     return { WTF::move(request), formFor(summary, pattern.fitsCodeLimits) };
 }
 
-Vector<RegExpRequest> RegExpImage::makeRequests(std::span<const Pattern> patterns, RegExpRequestOrigin origin)
+Vector<RegExpRequest> RegExpImage::makeRequests(std::span<const Pattern> patterns, RegExpRequestOrigin originUnlessEvaluated)
 {
     Vector<RequestWithForm> requestsWithForms;
-    for (const Pattern& pattern : patterns)
-        requestsWithForms.append(makeRequest(pattern, origin));
+    for (const Pattern& pattern : patterns) {
+        AOT_TEST_CHECK(!pattern.isEvaluated || originUnlessEvaluated == RegExpRequestOrigin::Candidate);
+        requestsWithForms.append(makeRequest(pattern, pattern.isEvaluated ? RegExpRequestOrigin::Evaluated : originUnlessEvaluated));
+    }
     std::ranges::sort(requestsWithForms, { }, [](const RequestWithForm& entry) {
         return std::pair { entry.request.pattern.index(), entry.request.flags.toRaw() };
     });
@@ -161,14 +165,15 @@ Vector<RegExpRequest> RegExpImage::makeRequests(std::span<const Pattern> pattern
 
 EncodedText RegExpImage::encodeNamedText()
 {
+    // Only the image writer makes headers of strings, and this image is put together by hand. So its strings are of the kind that has none.
     StringUses uses;
+    BitVector stringsOnlyShown;
     requests.forEachString([&](StringID string) {
-        uses.isNamed.set(string.index());
+        stringsOnlyShown.set(string.index());
     });
     IdentifierNumbering identifiers;
     StringConstantNumbering constants;
-    BitVector stringsNamedByTables;
-    return encodeText({ program.program, uses, identifiers, constants, stringsNamedByTables }, context);
+    return encodeText({ program.program, uses, identifiers, constants, stringsOnlyShown, &stringsOnlyShown }, context);
 }
 
 RegExpImage::RegExpImage(std::span<const Pattern> literals, std::span<const Pattern> candidates, const TestOptions& options)
@@ -180,11 +185,27 @@ RegExpImage::RegExpImage(std::span<const Pattern> literals, std::span<const Patt
     EncodedText text = encodeNamedText();
     AOT_TEST_CHECK(!context.diagnostics().hasErrors());
 
+    std::span encodedStrings = spanReinterpretCast<const ImageString>(text.strings.span());
+    Vector<uint32_t> listedStrings;
+    Vector<ImageStringWord> stringsInImage(encodedStrings.size(), [&](size_t index) {
+        const ImageString& string = encodedStrings[index];
+        if (!string.hasText())
+            return string.inImage(0);
+        ImageLongString range = string.range(spanReinterpretCast<const ImageLongString>(text.longStrings.span()));
+        uint32_t firstWord = static_cast<uint32_t>(listedStrings.size());
+        listedStrings.grow(firstWord + ImageListedString::numberOfWords(range));
+        ImageListedString::write(listedStrings.mutableSpan().subspan(firstWord), range);
+        return string.inImage(firstWord);
+    });
+    std::span encodedIdentifiers = spanReinterpretCast<const ImageIdentifier>(text.identifiers.span());
+    Vector<ImageIdentifierWord> identifiersInImage(encodedIdentifiers.size(), [&](size_t number) {
+        return encodedIdentifiers[number].inImage();
+    });
     bytes = imageWithSections({
-        { ImageSection::Strings, text.strings.span() },
-        { ImageSection::LongStrings, text.longStrings.span() },
+        { ImageSection::Strings, asByteSpan(stringsInImage.span()) },
+        { ImageSection::LongStrings, asByteSpan(listedStrings.span()) },
         { ImageSection::Text, text.text.span() },
-        { ImageSection::Identifiers, text.identifiers.span() },
+        { ImageSection::Identifiers, asByteSpan(identifiersInImage.span()) },
         { ImageSection::RegExps, sections.records.span() },
         { ImageSection::RegExpHashes, sections.hashes.span() },
         { ImageSection::RegExpDetails, sections.details.span() },
@@ -343,14 +364,32 @@ static void testCandidates()
 {
     String nested = "((n+))"_s;
     RegExpImage regExps({ { "l+m"_s } }, { { "c+0"_s }, { "c+1"_s, { }, false }, { "c+(2)"_s }, { "abc"_s }, { nested } }, { .loweredLimit = LimitID::RegExpNestingDepthWithCode, .loweredLimitValue = 1 });
-    AOT_TEST_CHECK(regExps.records().size() == 5);
+    AOT_TEST_CHECK(regExps.records().size() == 4);
     checkFoundLiteral(regExps, "l+m"_s);
-    for (const String& pattern : { String("c+0"_s), String("c+1"_s), String("c+(2)"_s), String("abc"_s) })
+    for (const String& pattern : { String("c+0"_s), String("c+(2)"_s), String("abc"_s) })
         checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }, RegExpRequestOrigin::Candidate));
-    // With the record the run time creates the object without parsing the text. A record without metadata would save it nothing.
-    AOT_TEST_CHECK(findRegExpRecord(regExps.vm(), "c+1"_s, { })->form() == Form::NoCode);
-    AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), nested, { }));
+    // Flow names far more texts than the program creates, so one that gets no code gets no record either.
+    AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
     AOT_TEST_CHECK(regExps.sections.maxOutputSize == 4);
+}
+
+static void testEvaluatedTexts()
+{
+    String nested = "((n+))"_s;
+    RegExpImage regExps({ { "l+m"_s } }, {
+        { .text = "e+0"_s, .isEvaluated = true },
+        { .text = "e+1"_s, .fitsCodeLimits = false, .isEvaluated = true },
+        { .text = "c+1"_s, .fitsCodeLimits = false },
+        { .text = "abc"_s, .isEvaluated = true },
+        { .text = nested, .isEvaluated = true },
+    }, { .loweredLimit = LimitID::RegExpNestingDepthWithCode, .loweredLimitValue = 1 });
+    AOT_TEST_CHECK(regExps.records().size() == 4);
+    checkFoundLiteral(regExps, "l+m"_s);
+    for (const String& pattern : { String("e+0"_s), String("e+1"_s), String("abc"_s) })
+        checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }, RegExpRequestOrigin::Evaluated));
+    // With the record the run time creates the object without parsing the text. A record without metadata would save it nothing.
+    AOT_TEST_CHECK(findRegExpRecord(regExps.vm(), "e+1"_s, { })->form() == Form::NoCode);
+    AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
 }
 
 static void testOrder()
@@ -449,7 +488,7 @@ static void testSourceIsPattern()
 static void checkNamedGroupsRoundTrip(const String& text)
 {
     Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
-    Yarr::YarrPattern pattern(text, { }, error);
+    Yarr::YarrPattern pattern(text, { }, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed);
     AOT_TEST_CHECK(!Yarr::hasError(error));
 
     RegExpImage regExps({ { "ab+c"_s }, { text } });
@@ -511,7 +550,7 @@ static void testCharacterSets()
 static void testEncodingIsDeterministic()
 {
     std::array<Pattern, 5> literals { Pattern { "ab+c"_s }, Pattern { "abc"_s }, Pattern { "(?<n>a+)|(?<n>b+)"_s }, Pattern { "[a-z\\u0400-\\u04ff]+"_s }, Pattern { "ab+c"_s, Yarr::Flags::IgnoreCase } };
-    std::array<Pattern, 2> candidates { Pattern { "c+0"_s }, Pattern { "c+1"_s, { }, false } };
+    std::array<Pattern, 4> candidates { Pattern { "c+0"_s }, Pattern { "c+1"_s, { }, false }, Pattern { .text = "e+1"_s, .fitsCodeLimits = false, .isEvaluated = true }, Pattern { .text = "e+2"_s, .isEvaluated = true } };
     RegExpImage first(literals, candidates);
     RegExpImage second(literals, candidates, { .threadCount = 4 });
     AOT_TEST_CHECK(!first.sections.records.isEmpty() && !first.sections.hashes.isEmpty() && !first.sections.details.isEmpty());
@@ -532,6 +571,7 @@ std::span<const NativeTest> regExpTableTests()
         { "image/regexps/wide-string-of-narrow-characters"_s, testWideStringOfNarrowCharacters },
         { "image/regexps/forms"_s, testForms },
         { "image/regexps/candidates"_s, testCandidates },
+        { "image/regexps/evaluated-texts"_s, testEvaluatedTexts },
         { "image/regexps/order"_s, testOrder },
         { "image/regexps/other-last-character"_s, testOtherLastCharacter },
         { "image/regexps/other-flags"_s, testOtherFlags },

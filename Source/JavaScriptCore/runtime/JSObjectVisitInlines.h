@@ -36,6 +36,18 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// Compiled code makes an array and its first storage as one cell: the storage lies behind the cell of the array. Such storage is no allocation of its own:
+// nobody marks it, and behind its vector there is no room that a size class left over.
+// Storage with an allocation of its own comes from another space than its owner, so the two never share a block.
+ALWAYS_INLINE bool isStorageInOwnCell(const JSObject* owner, const void* baseOfButterfly)
+{
+    uintptr_t cell = std::bit_cast<uintptr_t>(owner);
+    uintptr_t base = std::bit_cast<uintptr_t>(baseOfButterfly);
+    if (base == cell + sizeof(JSObjectWithButterfly))
+        return true;
+    return !((cell ^ base) & MarkedBlock::blockMask) && !owner->isPreciseAllocation();
+}
+
 template<typename Visitor>
 ALWAYS_INLINE void JSObjectWithButterfly::markAuxiliaryAndVisitOutOfLineProperties(Visitor& visitor, Butterfly* butterfly, Structure* structure, PropertyOffset maxOffset)
 {
@@ -46,7 +58,8 @@ ALWAYS_INLINE void JSObjectWithButterfly::markAuxiliaryAndVisitOutOfLineProperti
         return;
 
     if (isCopyOnWrite(structure->indexingMode())) {
-        visitor.append(std::bit_cast<WriteBarrier<JSCell>>(JSCellButterfly::fromButterfly(butterfly)));
+        if (!JSCellButterfly::isOutsideHeap(butterfly))
+            visitor.append(std::bit_cast<WriteBarrier<JSCell>>(JSCellButterfly::fromButterfly(butterfly)));
         return;
     }
 
@@ -60,7 +73,8 @@ ALWAYS_INLINE void JSObjectWithButterfly::markAuxiliaryAndVisitOutOfLineProperti
     HeapCell* base = std::bit_cast<HeapCell*>(
         butterfly->base(preCapacity, Structure::outOfLineCapacity(maxOffset)));
     
-    visitor.markAuxiliary(base);
+    if (!isStorageInOwnCell(this, base)) [[likely]]
+        visitor.markAuxiliary(base);
     
     unsigned outOfLineSize = Structure::outOfLineSize(maxOffset);
     visitor.appendValuesHidden(butterfly->propertyStorage() - outOfLineSize, outOfLineSize);

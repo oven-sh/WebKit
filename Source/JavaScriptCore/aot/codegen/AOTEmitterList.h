@@ -49,6 +49,7 @@
     v(StringEmitter) \
     v(StringRangeReadEmitter) \
     v(StringBuilderPartEmitter) \
+    v(KeyPartsLookupEmitter) \
     v(ResolvedCallEmitter) \
     v(InlineBuiltinEmitter) \
     v(RepresentationEmitter)

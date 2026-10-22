@@ -11,17 +11,22 @@
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTEnvironment.h"
+#include "AOTErrorMessages.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTImage.h"
+#include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
+#include "AOTCompactTable.h"
 #include "AOTObjectVisiting.h"
+#include "AOTPendingStars.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
 #include "AOTStructureCensus.h"
 #include "AOTTableCensus.h"
-#include "AOTTypeErrorMessages.h"
+#include "AOTVMState.h"
 #include "BlockDirectoryInlines.h"
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
@@ -34,6 +39,7 @@
 #include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "PreventCollectionScope.h"
+#include "SubspaceInlines.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -149,6 +155,16 @@ private:
         const Object* example { nullptr };
         uint64_t objects { 0 };
     };
+    // What the objects of a layout hold beside their cells.
+    struct Beside {
+        uint64_t extensions { 0 };
+        uint64_t extensionBytes { 0 };
+        uint64_t extras { 0 };
+        uint64_t extrasWithoutProperties { 0 };
+        uint64_t extrasBytes { 0 };
+        uint64_t extrasStorages { 0 };
+        uint64_t extrasStorageBytes { 0 };
+    };
     using CountsByPair = UncheckedKeyHashMap<std::pair<uint32_t, uint32_t>, uint64_t>;
     using KeySetsByState = UncheckedKeyHashMap<std::tuple<uintptr_t, uint32_t, uintptr_t>, KeySet>;
     using CountsBySize = UncheckedKeyHashMap<size_t, uint64_t>;
@@ -169,6 +185,7 @@ private:
     void countFields(const LayoutData&, const Object&);
     void countFieldStates(const LayoutData&, const Object&);
     void countKeySet(const LayoutData&, const Object&);
+    void countBeside(const LayoutData&, const Object&);
     void countFieldsOutsideSlots();
     void countStorage(LiveCellKind, const void* descriptor, JSObject*);
     void countString(JSString*);
@@ -185,6 +202,7 @@ private:
     static String keysOf(const Object&);
     void printLayouts(PrintStream&) const;
     void printExtensions(PrintStream&) const;
+    void printBeside(PrintStream&) const;
     void printEnvironments(PrintStream&) const;
     void printContainers(PrintStream&) const;
     void printStrings(PrintStream&) const;
@@ -205,10 +223,24 @@ private:
     UncheckedKeyHashMap<String, KeySet> m_unorderedKeySets;
     UncheckedKeyHashMap<const LayoutData*, Vector<Field>> m_fields;
     UncheckedKeyHashMap<std::tuple<uintptr_t, uint32_t, uint32_t>, uint64_t> m_extensions;
+    UncheckedKeyHashMap<const LayoutData*, Beside> m_beside;
     UncheckedKeyHashMap<FunctionID, ClosureCounts> m_closuresByFunction;
     std::array<std::array<uint64_t, numberOfBuckets>, numberOfBuckets> m_arrays { };
+    std::array<std::pair<uint64_t, uint64_t>, 4> m_arrayForms { };
+    UncheckedKeyHashMap<std::tuple<uint32_t, uint32_t, uint32_t>, uint64_t> m_arraysThatLeftTheirRoom;
     std::array<uint64_t, numberOfBuckets> m_maps { };
     std::array<uint64_t, numberOfBuckets> m_sets { };
+    void findHoldersOfFirstTables();
+
+    struct FirstTable {
+        CompactTable* table { nullptr };
+        uint64_t lengthOfChain { 0 };
+        Vector<String> holders;
+    };
+    Vector<FirstTable> m_firstTables;
+    Vector<CompactTable*> m_obsoleteTables;
+    UncheckedKeyHashSet<JSCell*> m_successorsOfTables;
+    UncheckedKeyHashMap<std::pair<uint32_t, uint32_t>, uint64_t> m_tables;
     UncheckedKeyHashMap<JSCell*, uint32_t> m_fieldReferencesByArray;
     uint64_t m_singlyReferencedArrays { 0 };
     uint64_t m_multiplyReferencedArrays { 0 };
@@ -256,6 +288,7 @@ void ObjectCensus::collect()
             countFreeCells(block, liveCellsInBlock);
         });
     }
+    findHoldersOfFirstTables();
     // A property lookup can allocate the property table of a Structure, and nothing may allocate during the walk.
     countFieldsOutsideSlots();
     for (auto& entry : m_auxiliaryCells) {
@@ -267,6 +300,52 @@ void ObjectCensus::collect()
         ++(entry.value == 1 ? m_singlyReferencedArrays : m_multiplyReferencedArrays);
 }
 
+// An obsolete table names the table that took its place, so whoever holds the first of a chain holds them all. The longest chains are listed with the cells that have a word, wide or narrow,
+// that may name the first table. A chain without such a cell is held from outside the heap: by the stack, a register or a table of the run time.
+void ObjectCensus::findHoldersOfFirstTables()
+{
+    constexpr size_t maxListedChains = 8;
+    for (CompactTable* table : m_obsoleteTables) {
+        if (m_successorsOfTables.contains(table))
+            continue;
+        FirstTable first { table, 0, { } };
+        for (JSCell* next = table; next->classInfo() == CompactTable::info() && !uncheckedDowncast<CompactTable>(next)->isLive(); next = uncheckedDowncast<CompactTable>(next)->successorOfObsoleteTable())
+            ++first.lengthOfChain;
+        m_firstTables.append(WTF::move(first));
+    }
+    std::ranges::sort(m_firstTables, std::ranges::greater { }, &FirstTable::lengthOfChain);
+    size_t numberOfListedChains = std::min(m_firstTables.size(), maxListedChains);
+    if (!numberOfListedChains)
+        return;
+
+    HeapIterationScope iterationScope(m_vm.heap);
+    forEachLiveCell([&](HeapCell* heapCell, HeapCell::Kind kind, size_t cellSize) {
+        if (isJSCellKind(kind) && heapCell->isZapped())
+            return;
+        const uint32_t* words = reinterpret_cast<const uint32_t*>(heapCell);
+        for (size_t index = 0; index < cellSize / sizeof(uint32_t); ++index) {
+            for (size_t chain = 0; chain < numberOfListedChains; ++chain) {
+                FirstTable& first = m_firstTables[chain];
+                bool isNamedWide = !(index % 2) && *reinterpret_cast<const uint64_t*>(words + index) == std::bit_cast<uint64_t>(first.table);
+                bool isNamedNarrow = words[index] == MarkedBlockCage::encode(cageBaseOf(first.table), first.table);
+                if ((!isNamedWide && !isNamedNarrow) || heapCell == static_cast<HeapCell*>(first.table))
+                    continue;
+                String holder = "auxiliary"_s;
+                if (isJSCellKind(kind)) {
+                    JSCell* cell = static_cast<JSCell*>(heapCell);
+                    if (const LayoutData* layout = isCompiledObject(cell) ? compiledLayoutOrNull(cell->structure()) : nullptr)
+                        holder = makeString("layout:"_s, nameAsWord(*layout));
+                    else if (cell->type() == CompiledEnvironmentType)
+                        holder = makeString("environment:"_s, nameAsWord(uncheckedDowncast<Environment>(cell)->layout()));
+                    else
+                        holder = makeString("class:"_s, cell->classInfo()->className);
+                }
+                first.holders.append(makeString(holder, '+', index * sizeof(uint32_t), isNamedWide ? ":wide"_s : ":narrow"_s));
+            }
+        }
+    }, [](MarkedBlock::Handle&, uint64_t) { });
+}
+
 void ObjectCensus::collectExtraProperties(HeapCell* heapCell, HeapCell::Kind kind)
 {
     if (!isJSCellKind(kind) || heapCell->isZapped())
@@ -275,7 +354,7 @@ void ObjectCensus::collectExtraProperties(HeapCell* heapCell, HeapCell::Kind kin
     if (!isCompiledObject(cell))
         return;
     const Object* object = uncheckedDowncast<Object>(cell);
-    JSObject* extraProperties = object->extraProperties();
+    JSObject* extraProperties = extraPropertiesIfMade(*object);
     if (!extraProperties)
         return;
     m_extraPropertyObjects.add(extraProperties);
@@ -327,6 +406,31 @@ void ObjectCensus::countObject(const LayoutData& layout, const Object& object, s
         ++m_ownedAuxiliaryCells.add(extensionCellSize, 0).iterator->value;
     }
     countFieldStates(layout, object);
+    countBeside(layout, object);
+}
+
+void ObjectCensus::countBeside(const LayoutData& layout, const Object& object)
+{
+    Extension* extension = object.extension();
+    JSObject* extraProperties = extraPropertiesIfMade(object);
+    if (!extension && !extraProperties)
+        return;
+    Beside& beside = m_beside.add(&layout, Beside { }).iterator->value;
+    if (extension) {
+        ++beside.extensions;
+        beside.extensionBytes += reinterpret_cast<HeapCell*>(extension)->cellSize();
+    }
+    if (!extraProperties)
+        return;
+    ++beside.extras;
+    beside.extrasBytes += extraProperties->cellSize();
+    Structure* structure = extraProperties->structure();
+    beside.extrasWithoutProperties += structure->maxOffset() == invalidOffset;
+    Butterfly* butterfly = extraProperties->butterfly();
+    if (!butterfly || isCopyOnWrite(structure->indexingMode()))
+        return;
+    ++beside.extrasStorages;
+    beside.extrasStorageBytes += static_cast<HeapCell*>(butterfly->base(structure))->cellSize();
 }
 
 void ObjectCensus::countFieldStates(const LayoutData& layout, const Object& object)
@@ -392,10 +496,28 @@ void ObjectCensus::countOrdinaryCell(JSCell* cell, size_t cellSize)
     if (classInfo == JSArray::info()) {
         auto [length, capacity] = arraySizes(uncheckedDowncast<JSArray>(cell));
         ++m_arrays[bucketOf(length)][bucketOf(capacity)];
+        // 0: the cell has no room for storage. 1: the storage lies in the cell. 2: the array has left the room in its cell for other storage.
+        Butterfly* butterfly = uncheckedDowncast<JSArray>(cell)->butterfly();
+        bool isInOwnCell = static_cast<size_t>(std::bit_cast<char*>(butterfly) - std::bit_cast<char*>(cell)) < cellSize;
+        unsigned form = cellSize == sizeof(JSArray) ? 0 : isInOwnCell ? 1 : cell->structure()->outOfLineCapacity() ? 3 : 2;
+        if (form >= 2)
+            ++m_arraysThatLeftTheirRoom.add({ static_cast<uint32_t>(form), static_cast<uint32_t>(cellSize), static_cast<uint32_t>(std::min<uint64_t>(length, 40)) }, 0).iterator->value;
+        ++m_arrayForms[form].first;
+        m_arrayForms[form].second += cellSize;
     } else if (classInfo == JSMap::info())
         ++m_maps[bucketOf(uncheckedDowncast<JSMap>(cell)->size())];
     else if (classInfo == JSSet::info())
         ++m_sets[bucketOf(uncheckedDowncast<JSSet>(cell)->size())];
+    else if (classInfo == CompactTable::info()) {
+        auto* table = uncheckedDowncast<CompactTable>(cell);
+        // 0: obsolete. 1: without an entry, nothing was ever added. 2: without an entry, all were deleted. 3: with entries.
+        uint32_t state = !table->isLive() ? 0 : table->size() ? 3 : table->used() ? 2 : 1;
+        ++m_tables.add({ state << 2 | static_cast<uint32_t>(table->status()), static_cast<uint32_t>(cellSize) }, 0).iterator->value;
+        if (!table->isLive()) {
+            m_obsoleteTables.append(table);
+            m_successorsOfTables.add(table->successorOfObsoleteTable());
+        }
+    }
     if (cell->isObject())
         countStorage(LiveCellKind::ClassStorage, classInfo, asObject(cell));
     else if (cell->isString())
@@ -435,7 +557,7 @@ void ObjectCensus::countFields(const LayoutData& layout, const Object& object)
         auto& counts = fields[layout.indexOf(field)];
         JSCell* valueCell = cellInSlot(field.slot.representation(), slot, cageBaseOf(&object));
         if (!valueCell) {
-            counts.deferred += traits.valueKind == SlotValueKind::DeferredClosure;
+            counts.deferred += traits.valueKind == SlotValueKind::DeferredClosure && !slotHoldsAbsent(field.slot.representation(), slot);
             continue;
         }
         ++counts.filled;
@@ -457,7 +579,7 @@ void ObjectCensus::countFields(const LayoutData& layout, const Object& object)
 // The Structure, the order word and the Structure of the extra properties name the keys of an ordered object. An unordered object has what its slots hold.
 void ObjectCensus::countKeySet(const LayoutData& layout, const Object& object)
 {
-    JSObject* extraProperties = object.extraProperties();
+    JSObject* extraProperties = extraPropertiesIfMade(object);
     uintptr_t extraPropertiesStructure = extraProperties ? std::bit_cast<uintptr_t>(extraProperties->structure()) : 0;
     KeySet* keySet;
     if (!layout.keysAreNeverEnumerated)
@@ -493,7 +615,10 @@ void ObjectCensus::countStorage(LiveCellKind kind, const void* descriptor, JSObj
     Butterfly* butterfly = object->butterfly();
     if (!butterfly || isCopyOnWrite(structure->indexingMode()))
         return;
-    size_t cellSize = static_cast<HeapCell*>(butterfly->base(structure))->cellSize();
+    void* base = butterfly->base(structure);
+    if (static_cast<size_t>(static_cast<char*>(base) - std::bit_cast<char*>(object)) < object->cellSize())
+        return;
+    size_t cellSize = static_cast<HeapCell*>(base)->cellSize();
     count(kind, descriptor, cellSize);
     ++m_ownedAuxiliaryCells.add(cellSize, 0).iterator->value;
 }
@@ -566,6 +691,7 @@ void ObjectCensus::print(PrintStream& out) const
     printKeySets(out);
     printLayouts(out);
     printExtensions(out);
+    printBeside(out);
     printEnvironments(out);
     printContainers(out);
     printStrings(out);
@@ -664,7 +790,7 @@ void ObjectCensus::printClosures(PrintStream& out) const
         functions.append({ entry.key, entry.value });
     std::ranges::sort(functions);
     for (auto& [function, counts] : functions) {
-        FunctionKindData kind = programTables().functionKinds()[function.index()];
+        FunctionKindData kind = programTables().kindOfFunction(function.index());
         ASCIILiteral role = kind.closureStructure == classObjectClosureStructure ? "class"_s : kind.isConstructor ? "constructor"_s : "not-constructor"_s;
         out.println("AOT live: closures-of ", function.index(), " ", asWord(writtenFunctionName(function)), " full ", counts[indexOf(ClosureClass::Full)], " slim ", counts[indexOf(ClosureClass::Slim)], " reified ", counts[indexOf(ClosureClass::Reified)], " role ", role, " in ", kind.isInRuntimeModule ? "runtime"_s : "program"_s,
             " kind ", callableKindName(kind), " captures ", captureCountsOf(function).captures);
@@ -808,6 +934,20 @@ void ObjectCensus::printExtensions(PrintStream& out) const
         out.println("AOT live: granules ", index, " ", nameAsWord(*layout), " held ", granulesHeld, " with-value ", granulesWithValue, " objects ", objects);
 }
 
+void ObjectCensus::printBeside(PrintStream& out) const
+{
+    Vector<const LayoutData*> layouts;
+    for (auto& entry : m_beside)
+        layouts.append(entry.key);
+    std::ranges::sort(layouts, [](auto* a, auto* b) {
+        return std::tie(a->index, a->shape) < std::tie(b->index, b->shape);
+    });
+    for (const LayoutData* layout : layouts) {
+        const Beside& beside = m_beside.find(layout)->value;
+        out.println("AOT live: beside ", layout->index, " ", nameAsWord(*layout), " extensions ", beside.extensions, " bytes ", beside.extensionBytes, " extras ", beside.extras, " bytes ", beside.extrasBytes, " without-properties ", beside.extrasWithoutProperties, " extras-storages ", beside.extrasStorages, " bytes ", beside.extrasStorageBytes);
+    }
+}
+
 void ObjectCensus::printEnvironments(PrintStream& out) const
 {
     Vector<const EnvironmentData*> environments;
@@ -828,7 +968,14 @@ void ObjectCensus::printContainers(PrintStream& out) const
                 out.println("AOT live: array length ", boundOf(length), " capacity ", boundOf(capacity), " arrays ", arrays);
         }
     }
+    out.println("AOT live: array-cells without-room ", m_arrayForms[0].first, " bytes ", m_arrayForms[0].second, " storage-in-cell ", m_arrayForms[1].first, " bytes ", m_arrayForms[1].second, " room-left-behind-by-growth ", m_arrayForms[2].first, " bytes ", m_arrayForms[2].second, " room-left-behind-for-named-properties ", m_arrayForms[3].first, " bytes ", m_arrayForms[3].second);
+    for (auto& entry : m_arraysThatLeftTheirRoom)
+        out.println("AOT live: array-left-its-room ", std::get<0>(entry.key) == 2 ? "by-growth" : "for-named-properties", " cell ", std::get<1>(entry.key), " length ", std::get<2>(entry.key), " arrays ", entry.value);
     out.println("AOT live: arrays-held once ", m_singlyReferencedArrays, " more ", m_multiplyReferencedArrays);
+    for (Instance* instance : m_vm.aotState().instances) {
+        if (JSCell* list = instance->realm.emptyArgumentList)
+            out.println("AOT live: empty-argument-list length ", uncheckedDowncast<JSArray>(list)->length(), " pristine ", list->isPristine() ? 1 : 0);
+    }
     for (unsigned size = 0; size < numberOfBuckets; ++size) {
         if (m_maps[size])
             out.println("AOT live: map size ", boundOf(size), " objects ", m_maps[size]);
@@ -836,6 +983,16 @@ void ObjectCensus::printContainers(PrintStream& out) const
     for (unsigned size = 0; size < numberOfBuckets; ++size) {
         if (m_sets[size])
             out.println("AOT live: set size ", boundOf(size), " objects ", m_sets[size]);
+    }
+    static constexpr ASCIILiteral statesOfTables[] = { "obsolete"_s, "never-filled"_s, "emptied"_s, "with-entries"_s };
+    for (auto& entry : m_tables)
+        out.println("AOT live: compact-table ", statesOfTables[entry.key.first >> 2], " status ", entry.key.first & 3, " cell ", entry.key.second, " objects ", entry.value);
+    out.println("AOT live: compact-table chains ", m_firstTables.size(), " obsolete ", m_obsoleteTables.size());
+    for (const FirstTable& first : m_firstTables.span().first(std::min<size_t>(m_firstTables.size(), 8))) {
+        out.print("AOT live: compact-table chain of ", first.lengthOfChain, " status ", static_cast<unsigned>(first.table->status()), " held-by");
+        for (const String& holder : first.holders)
+            out.print(" ", holder);
+        out.println(first.holders.isEmpty() ? " nothing-in-the-heap" : "");
     }
     out.println("AOT live: extras-entries ", m_extraPropertyObjects.size());
 }
@@ -876,9 +1033,27 @@ void dumpObjectCensus(VM& vm, PrintStream& out)
     dumpStructureCensus(vm, out);
 }
 
+void validateSlotTypesOfLiveObjects(VM& vm)
+{
+    RELEASE_ASSERT(!vm.heap.currentThreadIsDoingGCWork());
+    PreventCollectionScope preventCollection(vm.heap);
+    DeferGCForAWhile deferGC(vm);
+    HeapIterationScope iterationScope(vm.heap);
+    vm.cellSpace().forEachLiveCell([&](HeapCell* heapCell, HeapCell::Kind) {
+        if (heapCell->isZapped())
+            return;
+        if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(heapCell)))
+            validateSlotTypes(vm, *object);
+    });
+}
+
 void dumpObjectCensusIfRequested(VM& vm)
 {
-    if (!Options::dumpAOTObjectCensusAtExit() || !vm.hasCompiledCode()) [[likely]]
+    if (!vm.hasCompiledCode())
+        return;
+    if (validatesRuntime(vm)) [[unlikely]]
+        validateSlotTypesOfLiveObjects(vm);
+    if (!Options::dumpAOTObjectCensusAtExit()) [[likely]]
         return;
     // A collection empties caches that name dead cells.
     dumpTableCensus(vm, WTF::dataFile());

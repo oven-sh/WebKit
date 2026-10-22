@@ -100,10 +100,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Builtin builtin=Object
     v3 = Construct v2
-    v4 = NewClosure function=f1
-    DefineGetter v3, v4 key="seven"
-    v6 = PropGet v3 key="seven"
-    v7 = Call v1, -, v6
+    v4 = Convert v3 declared={type=object flags=[IsFromCompiler]}
+    v5 = NewClosure function=f1
+    DefineGetter v4, v5 key="seven"
+    v7 = PropGet v4 key="seven"
+    v8 = Call v1, -, v7
     Return
 }
 function f1 name="seven" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {

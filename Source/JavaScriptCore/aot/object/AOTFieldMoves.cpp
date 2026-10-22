@@ -70,21 +70,12 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
+// A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
+static bool hasEveryMarkerOf(SlotRepresentation from, SlotRepresentation to)
 {
-    if (from.type == to.type)
-        return true;
-    const RuntimeType& fromType = layouts.typeOf(from);
-    const RuntimeType& toType = layouts.typeOf(to);
-    if (!fromType.cellTests().empty() || !fromType.literalStrings().empty() || !toType.literalStrings().empty())
-        return false;
-    if (!(fromType.primitiveSet() - toType.primitiveSet() - PrimitiveSet::Absent).isEmpty())
-        return false;
-    auto toRange = toType.integerRange();
-    if (!fromType.primitiveSet().contains(PrimitiveSet::Integer) || !toRange)
-        return true;
-    auto fromRange = fromType.integerRange();
-    return fromRange && fromRange->first >= toRange->first && fromRange->second <= toRange->second;
+    SlotTraits fromTraits = traitsOf(from);
+    SlotTraits toTraits = traitsOf(to);
+    return (!fromTraits.hasUndefined || toTraits.hasUndefined) && (!fromTraits.hasNull || toTraits.hasNull);
 }
 
 static bool acceptsEveryValue(const RuntimeType& type)
@@ -92,6 +83,48 @@ static bool acceptsEveryValue(const RuntimeType& type)
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
         return false;
     return type.acceptsEveryObject();
+}
+
+static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
+{
+    if (from.type == to.type)
+        return true;
+    const RuntimeType& fromType = layouts.typeOf(from);
+    const RuntimeType& toType = layouts.typeOf(to);
+    if (acceptsEveryValue(toType))
+        return true;
+    if (!fromType.cellTests().empty())
+        return false;
+    constexpr OptionSet<PrimitiveSet> stringPrimitives { PrimitiveSet::String, PrimitiveSet::LiteralString };
+    if (!(fromType.primitiveSet() - toType.primitiveSet() - PrimitiveSet::Absent - stringPrimitives).isEmpty())
+        return false;
+    // As stringHasType() in AOTRuntimeLayoutTable.cpp goes: a type that lists strings takes those and no other; one that lists none takes every string or none.
+    if (fromType.primitiveSet().containsAny(stringPrimitives)) {
+        if (toType.literalStrings().empty()) {
+            if (!toType.primitiveSet().contains(PrimitiveSet::String))
+                return false;
+        } else {
+            if (fromType.literalStrings().empty() || !toType.primitiveSet().containsAny(stringPrimitives))
+                return false;
+            bool takesEveryListedString = std::ranges::all_of(fromType.literalStrings(), [&](uint32_t string) {
+                return std::ranges::contains(toType.literalStrings(), string);
+            });
+            if (!takesEveryListedString)
+                return false;
+        }
+    }
+    auto toRange = toType.integerRange();
+    if (!fromType.primitiveSet().contains(PrimitiveSet::Integer) || !toRange)
+        return true;
+    auto fromRange = fromType.integerRange();
+    return fromRange && fromRange->first >= toRange->first && fromRange->second <= toRange->second;
+}
+
+bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
+{
+    if (to.keepsStateOfBirth && !from.keepsStateOfBirth)
+        return false;
+    return hasEveryMarkerOf(from.slot.representation(), to.slot.representation()) && typeAlwaysFits(layouts, from, to);
 }
 
 static std::optional<FieldMoveKind> rawMoveKind(SlotRepresentation from, SlotRepresentation to)
@@ -103,7 +136,7 @@ static std::optional<FieldMoveKind> rawMoveKind(SlotRepresentation from, SlotRep
         return representation == SlotRepresentation::Cell || representation == SlotRepresentation::JSValue;
     };
     if (from == to)
-        return from == SlotRepresentation::Int32OrDouble ? FieldMoveKind::Int32OrDouble : FieldMoveKind::CopyBits;
+        return FieldMoveKind::CopyBits;
     switch (from) {
     case SlotRepresentation::Uint8:
     case SlotRepresentation::Int8:
@@ -115,7 +148,6 @@ static std::optional<FieldMoveKind> rawMoveKind(SlotRepresentation from, SlotRep
     case SlotRepresentation::OptionalInt64:
     case SlotRepresentation::OptionalInt32:
     case SlotRepresentation::Boolean:
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalBoolean:
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
@@ -159,7 +191,8 @@ FieldMoveKind classifyMove(const RuntimeLayoutTable& layouts, const FieldData* f
         return from->flags & mayLieOutsideCell ? FieldMoveKind::SlotToBoxed : rawMoveKind(from->slot.representation(), SlotRepresentation::JSValue).value_or(FieldMoveKind::SlotToBoxed);
     if (!from)
         return to->slot.representation() == SlotRepresentation::JSValue && acceptsEveryValue(layouts.typeOf(*to)) ? FieldMoveKind::CopyBits : FieldMoveKind::BoxedToSlot;
-    bool fits = alwaysFits(layouts, *from, *to);
+    bool fits = typeAlwaysFits(layouts, *from, *to);
+    static_assert(traitsOf(SlotRepresentation::JSValue).hasUndefined && traitsOf(SlotRepresentation::JSValue).hasNull);
     FieldMoveKind valueMove = to->slot.representation() == SlotRepresentation::JSValue && fits ? FieldMoveKind::SlotToBoxed : FieldMoveKind::BoxedToSlot;
     if (from->flags & mayLieOutsideCell || !fits)
         return valueMove;
@@ -224,8 +257,11 @@ void FieldMovePlan::appendFieldToField(const RuntimeLayoutTable& layouts, const 
     FieldMove move = moveToField(to);
     setMoveSource(move, from);
     move.kind = classifyMove(layouts, &from, &to);
+    if (!hasEveryMarkerOf(from.slot.representation(), to.slot.representation()))
+        move.flags |= FieldMove::refusesUndefinedAndNull;
     append(move);
     addGranuleOf(*this, to);
+    namesFieldWithAttributes |= !!((from.flags | to.flags) & fieldAttributeFlags);
     if (from.slot.representation() == SlotRepresentation::DeferredClosure)
         sourceHasDeferredClosures = true;
 }
@@ -237,6 +273,7 @@ void FieldMovePlan::appendPropertyToField(const RuntimeLayoutTable& layouts, Pro
     move.kind = classifyMove(layouts, nullptr, &to);
     append(move);
     addGranuleOf(*this, to);
+    namesFieldWithAttributes |= !!(to.flags & fieldAttributeFlags);
 }
 
 void FieldMovePlan::appendPropertyToInlineProperty(PropertyOffset from, PropertyOffset to)
@@ -253,6 +290,7 @@ void FieldMovePlan::appendFieldToInlineProperty(const RuntimeLayoutTable& layout
     setMoveSource(move, from);
     move.kind = classifyMove(layouts, &from, nullptr);
     append(move);
+    namesFieldWithAttributes |= !!(from.flags & fieldAttributeFlags);
     if (from.slot.representation() == SlotRepresentation::DeferredClosure)
         sourceHasDeferredClosures = true;
 }
@@ -266,7 +304,7 @@ void FieldMovePlan::appendSetAbsent(const FieldData& to)
 
 void FieldMovePlan::finish(Structure* targetStructure, uint32_t targetSize, uint32_t targetOrderWord)
 {
-    status = FieldMovePlanStatus::Usable;
+    status = namesFieldWithAttributes ? FieldMovePlanStatus::NeverApplies : FieldMovePlanStatus::Usable;
     size = targetSize;
     orderWord = targetOrderWord;
     structure = targetStructure;
@@ -316,49 +354,52 @@ static void copyBits(unsigned width, const uint8_t* from, uint8_t* to)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool canStoreInField(Object& target, const FieldData& to, JSValue value)
+std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, JSValue value)
 {
     if (!value)
-        return false;
+        return std::nullopt;
     State& state = target.state();
-    if (!state.objects->layouts.fieldAccepts(to, value))
-        return false;
+    std::optional<AcceptedValue> accepted = state.objects->layouts.accept(to, value);
     uint64_t scratch = 0;
-    SlotRepresentation representation = to.slot.representation();
-    return tryWriteSlot(*state.strings, representation, &scratch, value) || (representation == SlotRepresentation::Int32OrDouble && value.isNumber());
+    if (!accepted || !tryWriteSlot(*state.strings, to.slot.representation(), &scratch, value))
+        return std::nullopt;
+    return accepted;
 }
 
-static bool canApplyMove(const FieldMove& move, JSObject* source, JSObject* target)
+static bool slotHoldsUndefinedOrNull(SlotRepresentation representation, const void* slot)
+{
+    SlotTraits traits = traitsOf(representation);
+    uint64_t bits = readSlotBits(representation, slot);
+    return (traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits);
+}
+
+static bool canApplyMove(const FieldMove& move, JSObject* source)
 {
     switch (move.kind) {
     case FieldMoveKind::SetAbsent:
         return true;
     case FieldMoveKind::SlotToBoxed:
         return !!readBoxedValue(source, move);
-    case FieldMoveKind::BoxedToSlot:
-        return canStoreInField(*uncheckedDowncast<Object>(target), *move.toField, readBoxedValue(source, move));
     case FieldMoveKind::CopyBits:
     case FieldMoveKind::PurifyDouble:
     case FieldMoveKind::Int32ToDouble:
     case FieldMoveKind::BoxCell32:
-    case FieldMoveKind::UnboxToCell32:
-    case FieldMoveKind::Int32OrDouble:
-        return !move.fromField || !slotHoldsAbsent(move.fromField->slot.representation(), sourceAddress(source, move));
+    case FieldMoveKind::UnboxToCell32: {
+        if (!move.fromField)
+            return true;
+        SlotRepresentation representation = move.fromField->slot.representation();
+        const uint8_t* slot = sourceAddress(source, move);
+        if (slotHoldsAbsent(representation, slot))
+            return false;
+        return !(move.flags & FieldMove::refusesUndefinedAndNull) || !slotHoldsUndefinedOrNull(representation, slot);
+    }
+    case FieldMoveKind::BoxedToSlot:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void moveInt32OrDouble(VM& vm, const FieldMove& move, Object& source, Object& target)
-{
-    int32_t word = *static_cast<const int32_t*>(source.slotOf(*move.fromField));
-    if (word == doubleInExtensionInt32) {
-        double number = *static_cast<const double*>(source.extension()->slot(source.layout().overflowOffsetOf(*move.fromField)));
-        target.storeDoubleInExtension(vm, target.layout().overflowOffsetOf(*move.toField), number);
-    }
-    *static_cast<int32_t*>(target.slotOf(*move.toField)) = word;
-}
-
-static void applyMove(VM& vm, const FieldMove& move, JSObject* source, JSObject* target)
+static void applyMove(const FieldMove& move, JSObject* source, JSObject* target)
 {
     auto from = [&] {
         return sourceAddress(source, move);
@@ -387,20 +428,14 @@ static void applyMove(VM& vm, const FieldMove& move, JSObject* source, JSObject*
         *reinterpret_cast<uint32_t*>(to()) = value.isCell() ? encodeCell32(target, value.asCell()) : static_cast<uint32_t>(JSValue::encode(value));
         return;
     }
-    case FieldMoveKind::BoxedToSlot: {
-        bool didStore = uncheckedDowncast<Object>(target)->store(vm, *move.toField, readBoxedValue(source, move));
-        ASSERT_UNUSED(didStore, didStore);
-        return;
-    }
     case FieldMoveKind::SlotToBoxed:
         *reinterpret_cast<EncodedJSValue*>(to()) = JSValue::encode(readBoxedValue(source, move));
-        return;
-    case FieldMoveKind::Int32OrDouble:
-        moveInt32OrDouble(vm, move, *uncheckedDowncast<Object>(source), *uncheckedDowncast<Object>(target));
         return;
     case FieldMoveKind::SetAbsent:
         uncheckedDowncast<Object>(target)->clear(*move.toField);
         return;
+    case FieldMoveKind::BoxedToSlot:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -415,14 +450,30 @@ bool applyMoves(VM& vm, const FieldMovePlan& plan, JSObject* target, JSObject* s
         if (!wordOf(source, move.from))
             return false;
     }
+    // The source keeps every one of them alive.
+    Vector<AcceptedValue, 8> acceptedValues;
     for (const FieldMove& move : plan.moves) {
-        if (!canApplyMove(move, source, target))
+        if (move.kind != FieldMoveKind::BoxedToSlot) {
+            if (!canApplyMove(move, source))
+                return false;
+            continue;
+        }
+        std::optional<AcceptedValue> accepted = acceptInSlot(*uncheckedDowncast<Object>(target), *move.toField, readBoxedValue(source, move));
+        if (!accepted)
             return false;
+        acceptedValues.append(*accepted);
     }
     for (BoxedWordMove move : plan.boxedWordMoves)
         wordOf(target, move.to) = wordOf(source, move.from);
-    for (const FieldMove& move : plan.moves)
-        applyMove(vm, move, source, target);
+    size_t numberOfValuesStored = 0;
+    for (const FieldMove& move : plan.moves) {
+        if (move.kind != FieldMoveKind::BoxedToSlot) {
+            applyMove(move, source, target);
+            continue;
+        }
+        bool didStore = uncheckedDowncast<Object>(target)->store(vm, *move.toField, acceptedValues[numberOfValuesStored++]);
+        ASSERT_UNUSED(didStore, didStore);
+    }
     vm.writeBarrier(target);
     vm.mutatorFence();
     return true;
@@ -444,20 +495,19 @@ static ALWAYS_INLINE bool tryApplyMove(VM& vm, const FieldMove& move, JSObject* 
         return true;
     }
     case FieldMoveKind::BoxedToSlot: {
-        JSValue value = readBoxedValue(source, move);
         Object& object = *uncheckedDowncast<Object>(target);
-        return canStoreInField(object, *move.toField, value) && object.store(vm, *move.toField, value);
+        std::optional<AcceptedValue> accepted = acceptInSlot(object, *move.toField, readBoxedValue(source, move));
+        return accepted && object.store(vm, *move.toField, *accepted);
     }
     case FieldMoveKind::CopyBits:
     case FieldMoveKind::PurifyDouble:
     case FieldMoveKind::Int32ToDouble:
     case FieldMoveKind::BoxCell32:
     case FieldMoveKind::UnboxToCell32:
-    case FieldMoveKind::Int32OrDouble:
     case FieldMoveKind::SetAbsent:
-        if (!canApplyMove(move, source, target))
+        if (!canApplyMove(move, source))
             return false;
-        applyMove(vm, move, source, target);
+        applyMove(move, source, target);
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -492,7 +542,10 @@ JSObject* tryCreateByPlan(VM& vm, const FieldMovePlan& plan, JSObject* source)
     Object* target = Object::create(vm, plan.structure, uncheckedDowncast<CompiledStructure>(plan.structure)->layout(), plan.size, plan.orderWord);
     if (plan.granuleBits)
         target->ensureExtensionGranules(vm, plan.granuleBits);
-    return applyMoves(vm, plan, target, source) ? target : nullptr;
+    if (!applyMoves(vm, plan, target, source))
+        return nullptr;
+    target->tryFinishBirth();
+    return target;
 }
 
 } } // namespace JSC::AOT

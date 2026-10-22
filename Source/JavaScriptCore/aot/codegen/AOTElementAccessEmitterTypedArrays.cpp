@@ -12,6 +12,7 @@
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTResultRules.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTTypedArrayKinds.h"
 #include "JSArrayBufferView.h"
@@ -51,6 +52,18 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(CellPointer view, 
 {
     branchUnless(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), isNotFixedLength);
     return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
+}
+
+// The guard has found the view to have a fixed length and the position to be inside it.
+TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view, Integer index)
+{
+    TypedArrayElements elements { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
+    if (generator().validatesOrChecksProofs()) {
+        RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
+        validation.checkPrecondition(value, hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask));
+        validation.checkPrecondition(value, below(index, elements.length));
+    }
+    return elements;
 }
 
 Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type)
@@ -103,6 +116,13 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
         define(value, readByValue());
         return;
     }
+    if (value->isInsideView()) {
+        Integer index = indexInsideLength(value->positionOperand());
+        TypedArrayElements elements = typedArrayElementsInsideView(value, view, index);
+        Operand element = loadTypedArrayElement(elements, index, type);
+        define(value, TypedArraySupport(generator()).inRepresentation(value, representation, element, elementTypeOf(type)));
+        return;
+    }
 
     LBasicBlock outside = newBlock();
     LBasicBlock otherwise = newBlock();
@@ -133,6 +153,19 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     TypedArraySupport support(generator());
     CellPointer view = in<CellPointer>(value->viewOperand());
+    Operand stored = get(storedValue);
+    bool storesInline = hasInlineElementAccess(type) && !stored.is<Boxed>() && !(isClamped(type) && stored.is<Number>());
+    auto elementToStore = [&] {
+        return isFloat(type) ? Operand(support.numberOperand(storedValue)) : stored;
+    };
+    // A store that takes the operation has no use for the guard: the operation tests the position for itself.
+    if (value->isInsideView() && storesInline) {
+        Integer index = indexInsideLength(value->positionOperand());
+        TypedArrayElements elements = typedArrayElementsInsideView(value, view, index);
+        storeTypedArrayElement(elements, index, type, elementToStore());
+        return;
+    }
+
     LBasicBlock done = newBlock();
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), done);
     if (isBigInt(type)) {
@@ -146,13 +179,11 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
         return;
     }
 
-    Operand stored = get(storedValue);
-    bool storesInline = hasInlineElementAccess(type) && !stored.is<Boxed>() && !(isClamped(type) && stored.is<Number>());
     LBasicBlock otherwise = newBlock();
     if (storesInline) {
         TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
         branchUnless(below(index, elements.length), done);
-        storeTypedArrayElement(elements, index, type, isFloat(type) ? Operand(support.numberOperand(storedValue)) : stored);
+        storeTypedArrayElement(elements, index, type, elementToStore());
         m_out.jump(done);
     } else
         m_out.jump(otherwise);

@@ -1,4 +1,4 @@
-# as read, after typing, a cast of a returned call is resolved, and it may be a claim
+# as read, after typing, a cast of a returned call is resolved, and it may be a check
 # FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidReturnCall 1
@@ -10,10 +10,10 @@ function f0 name="goodWithoutCast" parameters=[{type=anything}] results=[{type=a
     v1 = Call v0
     ReturnCall v1
 }
-function f1 name="goodClaim" parameters=[{type=anything}] results=[{type=number}] {
+function f1 name="goodCheck" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):
     v1 = Call v0
-    ReturnCall v1 casts=[{declared={type=number} resolution=Claim}]
+    ReturnCall v1 casts=[{declared={type=number} resolution=Check}]
 }
 function f2 name="badUnresolvedCast" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):

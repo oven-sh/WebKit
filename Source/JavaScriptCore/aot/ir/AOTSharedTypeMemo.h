@@ -1,0 +1,221 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTID.h"
+#include <array>
+#include <atomic>
+#include <memory>
+#include <wtf/FastMalloc.h>
+#include <wtf/Lock.h>
+#include <wtf/Locker.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+// What an answer follows from, beside the ids in its key.
+// AboutTypes: the records of those ids and the table of built-ins. It holds as long as the ids do.
+// AboutProgram: also layouts, variables and whatever else stays as it is while a ProgramCaches stands. It holds that long.
+enum class SharedAnswers : uint8_t { AboutTypes, AboutProgram };
+
+inline constexpr size_t numberOfSharedAnswerKinds = 2;
+
+// Types that follow from ids that the table holds for good, shared by all threads. A lookup takes no lock. Entries are never removed and never change.
+// Which thread adds an entry is a race. So an entry must be the same whoever computes it, and computing it must leave nothing behind in the arena that does
+// (TypeArena::sharedAnswer()): a thread that finds the entry then stands where it would stand had it computed the type, and which task uses a record first depends on no race.
+// A memo that is full takes no more. Nothing but time depends on what it holds.
+class SharedTypeMemo {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedTypeMemo);
+    WTF_MAKE_NONCOPYABLE(SharedTypeMemo);
+public:
+    enum class Relation : uint32_t { Union = 1, Intersection, Join };
+
+    struct Key {
+        uint64_t first { 0 };
+        uint32_t second { 0 };
+    };
+
+    struct Counts {
+        uint64_t entries { 0 };
+        uint64_t found { 0 };
+        uint64_t notFound { 0 };
+        unsigned fullShards { 0 };
+    };
+
+    // The two ids are the whole key. They differ: a relation of a type to itself needs no memo.
+    static constexpr Key keyOf(Relation relation, TypeID first, TypeID second)
+    {
+        return { static_cast<uint64_t>(first.index()) << 32 | second.index(), static_cast<uint32_t>(relation) };
+    }
+
+    // For a key of any length: two hashes of it, neither of which follows from the other.
+    static constexpr Key keyOf(uint64_t firstHash, uint64_t secondHash)
+    {
+        return { firstHash ? firstHash : 1, static_cast<uint32_t>(secondHash >> 32) | hashedKeyBit };
+    }
+
+    SharedTypeMemo(bool verifiesAnswers, bool countsLookups)
+        : m_verifiesAnswers(verifiesAnswers)
+        , m_countsLookups(countsLookups)
+    {
+    }
+
+    // Whoever finds an answer computes it all the same and compares.
+    bool verifiesAnswers() const { return m_verifiesAnswers; }
+
+    TypeID find(Key key) const
+    {
+        uint64_t position = positionOf(key);
+        const Shard& shard = m_shards[shardIndexOf(position)];
+        const Table* table = shard.table.load(std::memory_order_acquire);
+        TypeID type = table ? table->find(key, position) : TypeID();
+        if (m_countsLookups) [[unlikely]]
+            (type ? shard.found : shard.notFound).fetch_add(1, std::memory_order_relaxed);
+        return type;
+    }
+
+    void add(Key key, TypeID type)
+    {
+        RELEASE_ASSERT(key.first && type && !(type.index() & provisionalBit));
+        uint64_t position = positionOf(key);
+        m_shards[shardIndexOf(position)].add(key, position, type);
+    }
+
+    // For a caller that knows that no other thread adds.
+    Counts counts()
+    {
+        Counts total;
+        for (Shard& shard : m_shards) {
+            Locker locker { shard.lock };
+            total.entries += shard.size;
+            total.found += shard.found.load(std::memory_order_relaxed);
+            total.notFound += shard.notFound.load(std::memory_order_relaxed);
+            total.fullShards += shard.isFull.load(std::memory_order_relaxed);
+        }
+        return total;
+    }
+
+private:
+    static constexpr unsigned shardBits = 6;
+    static constexpr size_t initialSlotsInShard = 64;
+    static constexpr size_t growthFactor = 4;
+    // 16 MB in all shards, and a third of that in the tables they have grown out of.
+    static constexpr size_t maxSlotsInShard = 1 << 14;
+    static constexpr uint32_t hashedKeyBit = 1u << 31;
+    static constexpr uint32_t provisionalBit = 1u << 31;
+
+    // Free while `first` is zero. Whoever reads a `first` that is not zero finds the other word filled.
+    struct Slot {
+        std::atomic<uint64_t> first { 0 };
+        std::atomic<uint64_t> secondAndType { 0 };
+    };
+
+    struct Table {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Table);
+
+        explicit Table(size_t size)
+            : slots(size)
+        {
+        }
+
+        TypeID find(Key key, uint64_t position) const
+        {
+            size_t mask = slots.size() - 1;
+            for (size_t index = position & mask; ; index = (index + 1) & mask) {
+                const Slot& slot = slots[index];
+                uint64_t first = slot.first.load(std::memory_order_acquire);
+                if (!first)
+                    return { };
+                if (first != key.first)
+                    continue;
+                uint64_t secondAndType = slot.secondAndType.load(std::memory_order_relaxed);
+                if (static_cast<uint32_t>(secondAndType >> 32) == key.second)
+                    return TypeID(static_cast<uint32_t>(secondAndType));
+            }
+        }
+
+        void insert(Key key, uint64_t position, uint32_t type)
+        {
+            size_t mask = slots.size() - 1;
+            size_t index = position & mask;
+            while (slots[index].first.load(std::memory_order_relaxed))
+                index = (index + 1) & mask;
+            slots[index].secondAndType.store(static_cast<uint64_t>(key.second) << 32 | type, std::memory_order_relaxed);
+            slots[index].first.store(key.first, std::memory_order_release);
+        }
+
+        Vector<Slot> slots;
+    };
+
+    struct Shard {
+        void add(Key key, uint64_t position, TypeID type)
+        {
+            if (isFull.load(std::memory_order_relaxed))
+                return;
+            Locker locker { lock };
+            Table* current = table.load(std::memory_order_relaxed);
+            if (current && current->find(key, position))
+                return;
+            if (!current || (size + 1) * 4 > current->slots.size() * 3) {
+                if (current && current->slots.size() >= maxSlotsInShard) {
+                    isFull.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                current = &grow();
+            }
+            current->insert(key, position, type.index());
+            ++size;
+        }
+
+        Table& grow() WTF_REQUIRES_LOCK(lock)
+        {
+            auto larger = makeUnique<Table>(tables.isEmpty() ? initialSlotsInShard : tables.last()->slots.size() * growthFactor);
+            if (!tables.isEmpty()) {
+                for (const Slot& slot : tables.last()->slots) {
+                    uint64_t first = slot.first.load(std::memory_order_relaxed);
+                    if (!first)
+                        continue;
+                    uint64_t secondAndType = slot.secondAndType.load(std::memory_order_relaxed);
+                    Key key { first, static_cast<uint32_t>(secondAndType >> 32) };
+                    larger->insert(key, positionOf(key), static_cast<uint32_t>(secondAndType));
+                }
+            }
+            tables.append(WTF::move(larger));
+            table.store(tables.last().get(), std::memory_order_release);
+            return *tables.last();
+        }
+
+        Lock lock;
+        std::atomic<Table*> table { nullptr };
+        std::atomic<bool> isFull { false };
+        mutable std::atomic<uint64_t> found { 0 };
+        mutable std::atomic<uint64_t> notFound { 0 };
+        // A lookup on another thread may still be probing an earlier table.
+        Vector<std::unique_ptr<Table>> tables WTF_GUARDED_BY_LOCK(lock);
+        size_t size WTF_GUARDED_BY_LOCK(lock) { 0 };
+    };
+
+    static constexpr uint64_t positionOf(Key key)
+    {
+        uint64_t mixed = (key.first ^ key.second) * 0x9e3779b97f4a7c15ull;
+        return mixed ^ mixed >> 32;
+    }
+
+    // A table takes its slot from the low bits.
+    static constexpr unsigned shardIndexOf(uint64_t position) { return static_cast<unsigned>(position >> (64 - shardBits)); }
+
+    const bool m_verifiesAnswers;
+    const bool m_countsLookups;
+    std::array<Shard, 1u << shardBits> m_shards;
+};
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

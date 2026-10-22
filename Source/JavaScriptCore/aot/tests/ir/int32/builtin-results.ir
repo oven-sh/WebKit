@@ -1,4 +1,5 @@
-# What a call or a read of a built-in gives is taken from the table of built-ins, with the ranges of the operands, before any call is resolved
+# What a call or a read of a built-in gives is taken from the table of built-ins, with the ranges of the operands, before any call is resolved.
+# The result of a method that only a declaration types is converted to a type that is no promise. TypeValues has made that request a Check by the time a flow is judged, so it stands here as a Check
 # FORM: AsRead
 # RUN: int32-bounds
 
@@ -7,177 +8,175 @@ entry module=m0
 typesite w0 module=m0 position=10 kind=Parameter
 typesite w1 module=m0 position=20 kind=Result
 typesite w2 module=m0 position=30 kind=Variable
-function f0 name="product" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything, v1: anything):
+typesite w3 module=m0 position=40 kind=CallResult
+function f0 name="product" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32, v1: i32):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="Math" [isFreeName]
-    v4 = Predict v3 predicted=builtin(Math)
+    v4 = Convert v3 declared={type=builtin(Math) flags=[IsExpected]}
     v5 = PropGet v4 key="imul"
-    v6 = Predict v5 predicted=builtin(MathImul)
+    v6 = Convert v5 declared={type=builtin(MathImul) flags=[IsExpected]}
     v7 = Call v6, v4, v0, v1
-    v8 = ClaimDeclared v7 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v8 = Convert v7 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v8
 }
 # CHECK-LABEL: function f0
 # CHECK-NEXT: v8: integers [-2147483648, 2147483647]
-function f1 name="leadingZeros" parameters=[{type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: undefined|null|number):
+function f1 name="leadingZeros" parameters=[{type=number}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: number):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Math" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Math)
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
     v4 = PropGet v3 key="clz32"
-    v5 = Predict v4 predicted=builtin(MathClz32)
+    v5 = Convert v4 declared={type=builtin(MathClz32) flags=[IsExpected]}
     v6 = Call v5, v3, v0
-    v7 = ClaimDeclared v6 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v7
 }
 # CHECK-LABEL: function f1
 # CHECK-NEXT: v7: integers [0, 32]
-function f2 name="least" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything):
+function f2 name="least" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Math" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Math)
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
     v4 = PropGet v3 key="min"
-    v5 = Predict v4 predicted=builtin(MathMin)
+    v5 = Convert v4 declared={type=builtin(MathMin) flags=[IsExpected]}
     v6 = Integer integer=7
     v7 = Call v5, v3, v0, v6
     v8 = Increment v7
-    v9 = ClaimDeclared v8 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v9
 }
 # CHECK-LABEL: function f2
 # CHECK-NEXT: v9: integers [-2147483647, 8]
-function f3 name="greatest" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything, v1: anything):
+function f3 name="greatest" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32, v1: i32):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="Math" [isFreeName]
-    v4 = Predict v3 predicted=builtin(Math)
+    v4 = Convert v3 declared={type=builtin(Math) flags=[IsExpected]}
     v5 = PropGet v4 key="max"
-    v6 = Predict v5 predicted=builtin(MathMax)
+    v6 = Convert v5 declared={type=builtin(MathMax) flags=[IsExpected]}
     v7 = Integer
     v8 = Call v6, v4, v0, v1, v7
-    v9 = ClaimDeclared v8 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v9
 }
 # CHECK-LABEL: function f3
 # CHECK-NEXT: v9: integers [0, 2147483647]
-function f4 name="leastOfNumbers" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything, v1: undefined|null|number):
+function f4 name="leastOfNumbers" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=number}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32, v1: number):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="Math" [isFreeName]
-    v4 = Predict v3 predicted=builtin(Math)
+    v4 = Convert v3 declared={type=builtin(Math) flags=[IsExpected]}
     v5 = PropGet v4 key="min"
-    v6 = Predict v5 predicted=builtin(MathMin)
+    v6 = Convert v5 declared={type=builtin(MathMin) flags=[IsExpected]}
     v7 = Call v6, v4, v0, v1
-    v8 = ClaimDeclared v7 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v8 = Convert v7 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v8
 }
 # CHECK-LABEL: function f4
 # CHECK-NEXT: v8: unknown AnyNumber
-function f5 name="distance" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything):
+function f5 name="distance" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Math" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Math)
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
     v4 = PropGet v3 key="abs"
-    v5 = Predict v4 predicted=builtin(MathAbs)
+    v5 = Convert v4 declared={type=builtin(MathAbs) flags=[IsExpected]}
     v6 = Integer integer=255
     v7 = BitAnd v0, v6
     v8 = Integer integer=128
     v9 = Sub v7, v8
     v10 = Call v5, v3, v9
-    v11 = ClaimDeclared v10 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v11 = Convert v10 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v11
 }
 # CHECK-LABEL: function f5
 # CHECK-NEXT: v11: integers [0, 128]
-function f6 name="absoluteValue" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything):
+function f6 name="absoluteValue" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Math" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Math)
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
     v4 = PropGet v3 key="abs"
-    v5 = Predict v4 predicted=builtin(MathAbs)
+    v5 = Convert v4 declared={type=builtin(MathAbs) flags=[IsExpected]}
     v6 = Call v5, v3, v0
-    v7 = ClaimDeclared v6 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v7
 }
 # CHECK-LABEL: function f6
 # CHECK-NEXT: v7: integers [0, 2147483648]
-function f7 name="sign" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything):
+function f7 name="sign" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Math" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Math)
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
     v4 = PropGet v3 key="sign"
-    v5 = Predict v4 predicted=builtin(MathSign)
+    v5 = Convert v4 declared={type=builtin(MathSign) flags=[IsExpected]}
     v6 = Call v5, v3, v0
-    v7 = ClaimDeclared v6 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v7
 }
 # CHECK-LABEL: function f7
 # CHECK-NEXT: v7: integers [-1, 1]
-function f8 name="lengthOfString" parameters=[{type=undefined|null|string predicted=string}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+function f8 name="lengthOfString" parameters=[{type=undefined|null|string}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
   b0(v0: undefined|null|string):
     v1 = PropGet v0 key="length"
-    v2 = Predict v1 predicted=number
-    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
-    Return v3
+    v2 = Convert v1 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v2
 }
 # CHECK-LABEL: function f8
-# CHECK-NEXT: v3: integers [0, 2147483647]
-function f9 name="lengthOfArray" parameters=[{type=undefined|null|Array<number> predicted=Array<number>}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+# CHECK-NEXT: v2: integers [0, 2147483647]
+function f9 name="lengthOfArray" parameters=[{type=undefined|null|Array<number>}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
   b0(v0: undefined|null|Array<number>):
     v1 = PropGet v0 key="length"
-    v2 = Predict v1 predicted=number
-    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
-    Return v3
+    v2 = Convert v1 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v2
 }
 # CHECK-LABEL: function f9
-# CHECK-NEXT: v3: integers [0, 4294967295]
-function f10 name="indexInString" parameters=[{type=undefined|null|string predicted=string}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+# CHECK-NEXT: v2: integers [0, 4294967295]
+function f10 name="indexInString" parameters=[{type=undefined|null|string}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
   b0(v0: undefined|null|string):
     v1 = PropGet v0 key="indexOf"
     v2 = String string="t"
     v3 = Call v1, v0, v2
-    v4 = Predict v3 predicted=number
-    v5 = ClaimDeclared v4 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v4 = Check v3 castType=number site=w3
+    v5 = Convert v4 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v5
 }
 # CHECK-LABEL: function f10
 # CHECK-NEXT: v5: integers [-1, 2147483647]
-function f11 name="codeUnit" parameters=[{type=undefined|null|string predicted=string}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: undefined|null|string, v1: anything):
+function f11 name="codeUnit" parameters=[{type=undefined|null|string}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|string, v1: i32):
     v2 = PropGet v0 key="charCodeAt"
     v3 = Call v2, v0, v1
-    v4 = Predict v3 predicted=number
-    v5 = ClaimDeclared v4 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v4 = Check v3 castType=number site=w3
+    v5 = Convert v4 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v5
 }
 # CHECK-LABEL: function f11
 # CHECK-NEXT: v5: unknown AnyNumber
-function f12 name="lengthOfUnknownValue" parameters=[{type=anything}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+function f12 name="lengthOfUnknownValue" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
   b0(v0: anything):
     v1 = PropGet v0 key="length"
-    v2 = ClaimDeclared v1 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    v2 = Convert v1 declared={type=i32 site=w1 flags=[IsInt32Promise]} illTypedCause=FromLooseType
     Return v2
 }
 # CHECK-LABEL: function f12
 # CHECK-NEXT: v2: unknown Untyped
-function f13 name="withinLength" parameters=[{type=undefined|null|string predicted=string}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: undefined|null|string, v1: anything):
+function f13 name="withinLength" parameters=[{type=undefined|null|string}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|string, v1: i32):
     v2 = PropGet v0 key="length"
-    v3 = Predict v2 predicted=number
-    v4 = Less v1, v3
-    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v5):
-    v6 = Increment v5
-    v7 = ClaimDeclared v6 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
-    Return v7
-  b2(v8):
-    v9 = ClaimDeclared v8 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
-    Return v9
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Increment v4
+    v6 = Convert v5 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v6
+  b2(v7):
+    v8 = Convert v7 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v8
 }
 # CHECK-LABEL: function f13
-# CHECK-NEXT: v7: integers [-2147483647, 2147483647]
+# CHECK-NEXT: v6: integers [-2147483647, 2147483647]

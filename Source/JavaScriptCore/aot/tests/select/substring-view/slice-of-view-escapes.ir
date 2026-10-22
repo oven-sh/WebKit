@@ -91,8 +91,8 @@ function f3 name="slice-of-escaping-slice" parameters=[{type=string}, {type=int}
 }
 variable g0 name="equal" declared={type=anything} initialization=Undefined
 # CHECK-LABEL: function f3 name="slice-of-escaping-slice"
-# CHECK: [[flat3]]: flatstring = FlattenString v0
-# CHECK-NEXT: [[outer3]]: string = Substring [[flat3]], v6, v7
+# CHECK-NOT: FlattenString
+# CHECK: [[outer3]]: string = Substring v0, v6, v7
 # CHECK-NEXT: [[differenceInner3]]: int[-2147483647, 2147483647] = Sub v7, v6
 # CHECK-NEXT: [[maskInner3]]: 2147483647 = Integer integer=2147483647
 # CHECK-NEXT: [[innerLength3]]: int[0, 2147483647] = BitAnd [[differenceInner3]], [[maskInner3]]
@@ -102,6 +102,6 @@ variable g0 name="equal" declared={type=anything} initialization=Undefined
 # CHECK-NOT: = Substring
 # CHECK: [[innerFrom3]]: {{*}} = Add v6, [[relativeFrom3]]
 # CHECK-NEXT: [[innerTo3]]: {{*}} = Add v6, [[relativeTo3]]
-# CHECK-NEXT: [[equal3]]: boolean = StringRangeEqualsLiteral [[flat3]], [[innerFrom3]], [[innerTo3]] literal="ab"
+# CHECK-NEXT: [[equal3]]: boolean = StringRangeEqualsLiteral v0, [[innerFrom3]], [[innerTo3]] literal="ab"
 # CHECK-NEXT: PutModuleVariable [[equal3]] variable=g0
 # CHECK-NEXT: Return [[outer3]]

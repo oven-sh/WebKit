@@ -11,6 +11,7 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinPristine.h"
+#include "AOTEffectsDescription.h"
 #include "AOTKnownValue.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTTypeArena.h"
@@ -170,18 +171,28 @@ void JSONSerializerBuilder::leaveAfterUnknownCode()
         return;
     BlockFrequency frequency = builder().function().at(builder().currentBlock()).frequency;
     jumpTo(*m_afterUnknownCode);
-    Block& block = builder().function().at(m_afterUnknownCode->block);
+    Block& block = builder().function().edit(m_afterUnknownCode->block);
     block.frequency = moreFrequentOf(block.frequency, frequency);
+}
+
+// The host and a serializer run for a value what JSON.stringify runs for it. Where its type says that this is no code at all, the call that is expanded here says so too,
+// and tests have been placed across it: what takes its place may not read the array or the object around the value as if code had run.
+void JSONSerializerBuilder::leaveIfWritingRunsCode(ValueID written)
+{
+    EffectDescription description;
+    describeOverload(program(), program().builtins().overloadIDsOf(Builtins::JSONStringify).at(0), typeOf(written), description);
+    if (description.callsUnknownCode || !description.functions.isEmpty() || !description.slowPathFunctions.isEmpty())
+        leaveAfterUnknownCode();
 }
 
 auto JSONSerializerBuilder::planValue(ValueID id) const -> ValuePlan
 {
     const Value& value = function().at(id);
-    TypeID predicted = value.predictionOrType();
-    return planType(program().at(value.type), predicted == value.type ? nullptr : &program().at(predicted));
+    TypeID expected = value.expected();
+    return planType(program().at(value.type), expected ? &program().at(expected) : nullptr);
 }
 
-auto JSONSerializerBuilder::planType(const Type& proven, const Type* predicted) const -> ValuePlan
+auto JSONSerializerBuilder::planType(const Type& proven, const Type* expected) const -> ValuePlan
 {
     Type defined = proven.withoutNullish();
     bool mayBeNullish = proven != defined;
@@ -190,35 +201,35 @@ auto JSONSerializerBuilder::planType(const Type& proven, const Type* predicted) 
 
     TypeArena& types = inputs().types;
     ValuePlan plan = planDefinedType(defined, TypeCertainty::Proven);
-    ValuePlan predictedPlan;
-    if (predicted && (plan.kind == ValueKind::Generic || plan.kind == ValueKind::Array))
-        predictedPlan = planDefinedType(predicted->withoutNullish(), TypeCertainty::Predicted);
+    ValuePlan expectedPlan;
+    if (expected && (plan.kind == ValueKind::Generic || plan.kind == ValueKind::Array))
+        expectedPlan = planDefinedType(expected->withoutNullish(), TypeCertainty::Expected);
 
-    if (plan.kind == ValueKind::Array && predictedPlan.kind == ValueKind::Array) {
-        TypeID element = types.intersectionOf(plan.element, predictedPlan.element);
+    if (plan.kind == ValueKind::Array && expectedPlan.kind == ValueKind::Array) {
+        TypeID element = types.intersectionOf(plan.element, expectedPlan.element);
         if (element != TypeTable::never)
             plan.element = element;
     }
-    if (plan.kind == ValueKind::Generic && removePartsThatCannotPass(predictedPlan, defined))
-        plan = WTF::move(predictedPlan);
+    if (plan.kind == ValueKind::Generic && removePartsThatCannotPass(expectedPlan, defined))
+        plan = WTF::move(expectedPlan);
     plan.mayBeNullish = mayBeNullish;
     return plan;
 }
 
-bool JSONSerializerBuilder::removePartsThatCannotPass(ValuePlan& predicted, const Type& defined) const
+bool JSONSerializerBuilder::removePartsThatCannotPass(ValuePlan& expected, const Type& defined) const
 {
     TypeArena& types = inputs().types;
-    switch (predicted.kind) {
+    switch (expected.kind) {
     case ValueKind::Objects:
-        predicted.layouts.removeAllMatching([&](LayoutID layout) {
+        expected.layouts.removeAllMatching([&](LayoutID layout) {
             return !canNarrow(program(), types, defined, Type::forLayout(layout, types));
         });
-        return !predicted.layouts.isEmpty();
+        return !expected.layouts.isEmpty();
     case ValueKind::ObjectParts:
-        predicted.parts.removeAllMatching([&](ValuePlan& part) {
+        expected.parts.removeAllMatching([&](ValuePlan& part) {
             return !removePartsThatCannotPass(part, defined);
         });
-        return !predicted.parts.isEmpty();
+        return !expected.parts.isEmpty();
     case ValueKind::Generic:
     case ValueKind::Nullish:
     case ValueKind::Boolean:
@@ -227,7 +238,7 @@ bool JSONSerializerBuilder::removePartsThatCannotPass(ValuePlan& predicted, cons
     case ValueKind::String:
     case ValueKind::Date:
     case ValueKind::Array:
-        return predicted.tested && canNarrow(program(), types, defined, types.at(predicted.tested));
+        return expected.tested && canNarrow(program(), types, defined, types.at(expected.tested));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -287,9 +298,9 @@ auto JSONSerializerBuilder::planBuiltinClass(const Type& instances, TypeCertaint
     if (pristineTestOf(builtins, part->builtinClass) == PristineTest::NeverPasses)
         return { };
     if (part->builtinClass == BuiltinClasses::Date && findInstanceOverload(*this, BuiltinClasses::Date, BuiltinNames::getTime, BuiltinCallMode::Call))
-        return { .kind = ValueKind::Date, .certainty = certainty, .tested = types.intern(instances.withoutProofs()) };
+        return { .kind = ValueKind::Date, .certainty = certainty, .tested = types.intern(instances.withoutClassProofs()) };
     if (part->builtinClass == BuiltinClasses::Array)
-        return { .kind = ValueKind::Array, .certainty = certainty, .tested = types.intern(instances.withoutProofs()), .element = part->predictedContentsAt(builtins, ContentsSlot::Element) };
+        return { .kind = ValueKind::Array, .certainty = certainty, .tested = types.intern(instances.withoutClassProofs()), .element = part->contentsAt(builtins, ContentsSlot::Element) };
     return { };
 }
 
@@ -574,7 +585,7 @@ void JSONSerializerBuilder::appendGeneric(ValueID value, const Position& positio
                 return;
         }
         appendByHost(undefinedArm.remaining, position);
-        leaveAfterUnknownCode();
+        leaveIfWritingRunsCode(undefinedArm.remaining);
     }
     if (!done.block)
         return;

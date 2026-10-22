@@ -165,6 +165,48 @@ bool clobbersOperand(Inst& inst, const AvailableFlags& flags)
     return result;
 }
 
+bool isMaskThatIsNoAnd(int64_t mask)
+{
+    // MacroAssemblerX86_64::and32 and and64 make a move or an extension of these.
+    return !mask || mask == -1 || mask == 0xff || mask == 0xffff;
+}
+
+// The register and the width of the result, where the flags say what a test of it would.
+std::optional<std::pair<Tmp, Width>> resultInFlagsOf(const Inst& inst)
+{
+    if (!isX86())
+        return std::nullopt;
+    std::span<const Arg> args = inst.args();
+    if (args.size() < 2 || args.size() > 3 || !args.back().isTmp() || !args.back().isGP())
+        return std::nullopt;
+    for (const Arg& arg : args) {
+        if (!arg.isTmp() && !arg.isImm() && !arg.isBitImm())
+            return std::nullopt;
+    }
+
+    switch (inst.kind.opcode) {
+    case Lshift32:
+    case Lshift64: {
+        Width width = inst.kind.opcode == Lshift32 ? Width32 : Width64;
+        // A shift by nothing leaves the flags alone.
+        if (args.size() != 2 || !args[0].isImm() || !(args[0].value() & (bytesForWidth(width) * 8 - 1)))
+            return std::nullopt;
+        return std::pair { args[1].tmp(), width };
+    }
+    case And32:
+    case And64: {
+        Width width = inst.kind.opcode == And32 ? Width32 : Width64;
+        if (!args[0].isTmp() && isMaskThatIsNoAnd(args[0].value()))
+            return std::nullopt;
+        if (args.size() == 3 && (!args[1].isTmp() || args[0] == args[1]))
+            return std::nullopt;
+        return std::pair { args.back().tmp(), width };
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
 class ConditionFlagsReuse {
 public:
     explicit ConditionFlagsReuse(Code& code)
@@ -229,6 +271,35 @@ private:
         return comparison;
     }
 
+    // The operation right in front of the branch has made the register that the branch compares with zero.
+    std::optional<MacroAssembler::ResultCondition> conditionOnResultOf(const Inst& operation, Inst& branch) const
+    {
+        std::optional<std::pair<Tmp, Width>> result = resultInFlagsOf(operation);
+        if (!result)
+            return std::nullopt;
+        std::optional<OpcodeParts> parts = partsOf(branch.kind.opcode);
+        if (!parts || parts->consumer != FlagsConsumer::Branch || parts->width != result->second)
+            return std::nullopt;
+        std::optional<Comparison> comparison = comparisonOf(branch);
+        if (!comparison || comparison->left != Arg(result->first))
+            return std::nullopt;
+        bool isAgainstZero = comparison->definerOpcode == compareOnFlagsOpcode(parts->width) ? comparison->right == Arg::imm(0) : comparison->right == Arg::bitImm(-1);
+        if (!isAgainstZero)
+            return std::nullopt;
+        switch (comparison->condition) {
+        case MacroAssembler::Equal:
+            return MacroAssembler::Zero;
+        case MacroAssembler::NotEqual:
+            return MacroAssembler::NonZero;
+        case MacroAssembler::LessThan:
+            return MacroAssembler::Signed;
+        case MacroAssembler::GreaterThanOrEqual:
+            return MacroAssembler::PositiveOrZero;
+        default:
+            return std::nullopt;
+        }
+    }
+
     static Inst definerFor(const Inst& user, const Comparison& comparison)
     {
         return Inst(comparison.definerOpcode, user.origin, comparison.left, comparison.right);
@@ -262,6 +333,13 @@ private:
         std::optional<AvailableFlags> flags = flagsAtHead(block);
         for (unsigned index = 0; index < block->size(); ++index) {
             Inst& inst = block->at(index);
+            if (std::optional<MacroAssembler::ResultCondition> condition = index ? conditionOnResultOf(block->at(index - 1), inst) : std::nullopt) {
+                inst = Inst(BranchOnFlags, inst.origin, Arg::resCond(*condition));
+                // They are not the flags of a comparison with zero: carry and overflow may be anything.
+                flags = std::nullopt;
+                m_changed = true;
+                continue;
+            }
             if (std::optional<Comparison> comparison = comparisonOf(inst)) {
                 if (flags && flags->matches(*comparison)) {
                     makeExplicit(*flags);
@@ -315,6 +393,11 @@ private:
 };
 
 } // anonymous namespace
+
+bool setsFlagsToResult(const Inst& inst)
+{
+    return !!resultInFlagsOf(inst);
+}
 
 bool reuseConditionFlags(Code& code)
 {

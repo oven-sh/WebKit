@@ -10,6 +10,7 @@
 #include "AOTIR.h"
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
 
@@ -17,6 +18,7 @@ class BuildContext;
 
 namespace Typed {
 
+class BorrowedParameters;
 class FlowResults;
 class FrameAllocation;
 
@@ -30,12 +32,12 @@ public:
     void dump(PrintStream&, const Program&) const;
 
 private:
-    friend EnvironmentReuse reuseEnvironments(ProgramEditor&, const FlowResults&, const FrameAllocation&, BuildContext&);
+    friend EnvironmentReuse reuseEnvironments(ProgramEditor&, const FlowResults&, const FrameAllocation&, BuildContext&, NOESCAPE const ScopedLambda<BorrowedParameters()>& computeBorrowedParameters);
 
     BitVector m_reusedLayouts;
 };
 
-EnvironmentReuse reuseEnvironments(ProgramEditor&, const FlowResults&, const FrameAllocation&, BuildContext&);
+EnvironmentReuse reuseEnvironments(ProgramEditor&, const FlowResults&, const FrameAllocation&, BuildContext&, NOESCAPE const ScopedLambda<BorrowedParameters()>& computeBorrowedParameters);
 
 } } } // namespace JSC::AOT::Typed
 

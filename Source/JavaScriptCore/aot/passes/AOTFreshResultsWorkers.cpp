@@ -189,7 +189,7 @@ static void refinePartTypes(Function& worker, FreshResultShape& shape, TypeArena
             continue;
 
         for (ValueID returned : returnedValues) {
-            Value& operand = worker.at(returnedOperandAt(worker, returned, numberOfResults, result));
+            Value& operand = worker.edit(returnedOperandAt(worker, returned, numberOfResults, result));
             if (operand.opcode != Opcode::Unspecified)
                 continue;
             operand.setValueType(refined);
@@ -235,7 +235,8 @@ static FreshResultShape shapeOfOrdinaryResult(const Function& function)
     shape.state = FreshResultsState::NotFresh;
     shape.variants.append(FreshResultVariant { });
     shape.fieldOfPart.append(VirtualField { });
-    shape.partTypes.append(function.result().type);
+    const DeclaredType& result = function.result();
+    shape.partTypes.append(result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type);
     shape.cellPart = 0;
     return shape;
 }
@@ -318,6 +319,13 @@ static ValueID appendRebuiltVariant(IRBuilder& builder, const FreshResultShape& 
 
     Vector<FieldValue, 8> properties = fieldValuesOf(shape, variant.properties.span(), results);
     Vector<FieldValue, 8> parts = fieldValuesOf(shape, variant.parts.span(), results);
+    Vector<FieldValue, 2> storedByName;
+    for (FieldValue& property : properties) {
+        if (property.field.kind != VirtualFieldKind::UnprovenNamed)
+            continue;
+        storedByName.append(property);
+        property.value = builder.append(makeFiller(builder.context().program, variant.description, property.field));
+    }
     Value allocation = makeAllocation(builder.context().program, { variant.description, variant.prototype, properties.span(), parts.span(), variant.length });
     assumeDeclaredOperandTypes(builder, allocation);
 
@@ -326,6 +334,8 @@ static ValueID appendRebuiltVariant(IRBuilder& builder, const FreshResultShape& 
     if (!variant.prototype.inlineFrame && variant.prototype.hasPosition())
         builder.setOrigin({ variant.prototype.position, origin.inlineFrame });
     ValueID rebuilt = builder.append(WTF::move(allocation));
+    for (const FieldValue& stored : storedByName)
+        builder.append(makeStoreByName(stored, rebuilt));
     builder.setOrigin(origin);
     return rebuilt;
 }
@@ -339,8 +349,8 @@ ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& shape, V
     Function& function = builder.function();
     BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
     Vector<BlockID, 4> arms;
-    for (size_t index = 0; index < shape.variants.size(); ++index)
-        arms.append(builder.addBlock(frequency));
+    for (const FreshResultVariant& variant : shape.variants)
+        arms.append(builder.addBlock(rarerOf(frequency, variant.frequency)));
     BlockID continuation = builder.addBlock(frequency);
     emitSwitchOnTag(builder, results[0], arms.span(), [&](size_t index) {
         return shape.tagOf(static_cast<uint32_t>(index));
@@ -419,7 +429,8 @@ Function createResultWrapper(const AnalysisContext& context, FunctionID worker, 
     });
 
     ValueID result = appendRebuiltResult(builder, shape, call);
-    builder.emitReturn(assumeDeclaredType(builder, result, wrapper.result().type));
+    TypingContext typing { builder.context().program, builder.function(), builder.types() };
+    builder.emitReturn(assumeDeclaredType(builder, result, typing.typeIDOf(wrapper.result())));
     return wrapper;
 }
 

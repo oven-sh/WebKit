@@ -18,7 +18,7 @@ struct NamedAccess {
     JSGlobalObject* globalObject;
     VM& vm;
     PropertyCaches& caches;
-    const Identifier& ident;
+    Identifier ident;
     std::optional<uint32_t> number;
     SiteCache site;
 };
@@ -27,6 +27,8 @@ struct NamedAccess {
 JSValue getAndCache(const NamedAccess&, JSValue base);
 void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);
 bool hasPropertyAndCache(Instance*, JSObject*, const CachedName&);
+// Class objects that nobody has looked into share a Structure although they declare different names, so no slot answers for one, be it the receiver or an object above it.
+void createClassObjectsOnChain(VM&, JSCell* receiver, UniquedStringImpl* nameAskedFor);
 
 } } // namespace JSC::AOT
 

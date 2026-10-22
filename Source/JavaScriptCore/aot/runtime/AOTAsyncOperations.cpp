@@ -13,12 +13,17 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTSavedFrame.h"
+#include "AOTUnwinding.h"
 #include "InternalFunction.h"
+#include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSMicrotask.h"
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
+#include "JSSentinel.h"
 #include "LinkTimeConstant.h"
+#include "Microtask.h"
 #include "TopExceptionScope.h"
 
 namespace JSC { namespace AOT {
@@ -26,6 +31,7 @@ namespace JSC { namespace AOT {
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewPromise, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewPromise);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     RELEASE_AND_RETURN(scope, JSPromise::create(vm, globalObject->promiseStructure()));
 }
 
@@ -98,6 +104,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndAwait, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, saved->promiseOrWaiter());
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndAwaitAfterTurn, JSCell*, (Instance* instance, EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSaveFrameAndAwaitAfterTurn);
+    SuspendedMachineFrame machineFrame { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) };
+    SavedFrame* saved = SavedFrame::saveAsyncFunction(vm, *instance, machineFrame);
+    resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), saved, InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn);
+    if (scope.exception()) [[unlikely]]
+        saved->willBeRestoredToStack();
+    OPERATION_RETURN(scope, saved->promiseOrWaiter());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndAwaitCall, JSCell*, (Instance* instance, EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSaveFrameAndAwaitCall);
@@ -119,6 +136,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAwaitWithSavedFrame, JSCell*, (Instance* in
     OPERATION_RETURN(scope, saved->promiseOrWaiter());
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTAwaitWithSavedFrameAfterTurn, JSCell*, (Instance* instance, EncodedJSValue awaited, JSCell* savedFrame))
+{
+    constexpr Entry entry = Entry::operationAOTAwaitWithSavedFrameAfterTurn;
+    AOT_OPERATION_BEGIN(instance, entry);
+    SavedFrame* saved = cellArgument<SavedFrame>(savedFrame, entry);
+    vm.writeBarrier(saved);
+    resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), saved, InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn);
+    if (scope.exception()) [[unlikely]]
+        saved->willBeRestoredToStack();
+    OPERATION_RETURN(scope, saved->promiseOrWaiter());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAwaitCallWithSavedFrame, JSCell*, (Instance* instance, EncodedJSValue awaited, JSCell* savedFrame))
 {
     constexpr Entry entry = Entry::operationAOTAwaitCallWithSavedFrame;
@@ -129,20 +158,46 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAwaitCallWithSavedFrame, JSCell*, (Instance
     OPERATION_RETURN(scope, saved->promiseOrWaiter());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStepAsyncGenerator, void, (Instance* instance, JSCell* generator, EncodedJSValue sent, EncodedJSValue* results))
+static JSObject* asyncIteratorArgument(JSCell* iterator, Entry entry)
 {
-    constexpr Entry entry = Entry::operationAOTStepAsyncGenerator;
-    AOT_OPERATION_BEGIN(instance, entry);
-    auto* frame = std::bit_cast<const uint64_t*>(callFrame->callerFrame());
-    AsyncGeneratorStep step = stepAsyncGenerator(*instance, frame, cellArgument<JSAsyncGenerator>(generator, entry), JSValue::decode(sent));
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    auto words = unsafeMakeSpan(results, numberOfEnumerators<StepGeneratorResult>);
-    words[static_cast<size_t>(StepGeneratorResult::Value)] = JSValue::encode(step.value);
-    words[static_cast<size_t>(StepGeneratorResult::Status)] = JSValue::encode(jsNumber(static_cast<int32_t>(step.status)));
-    OPERATION_RETURN(scope);
+    if (!iterator || (!iterator->inherits<JSAsyncGenerator>() && !iterator->inherits<JSAsyncFromSyncIterator>())) [[unlikely]]
+        crashOnWrongOperand(entry);
+    return asObject(iterator);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRejectWithException, JSCell*, (Instance* instance, uint64_t frame))
+JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorStep, EncodedJSValue, (Instance* instance, JSCell* iterator, EncodedJSValue sent))
+{
+    constexpr Entry entry = Entry::operationAOTAsyncIteratorStep;
+    AOT_OPERATION_BEGIN(instance, entry);
+    auto* frame = std::bit_cast<const uint64_t*>(callFrame->callerFrame());
+    auto* slotsOfStub = std::bit_cast<uint64_t*>(callFrame);
+    uint64_t& consumer = slotsOfStub[consumerSlotInStubFrame];
+    if (consumer & consumerOfStepNeedsSavedFrame) {
+        // The stack of the consumer ends where the frame record of the stub begins.
+        SuspensionWords words { slotsOfStub[siteWordSlotInStubFrame], slotsOfStub[driverSlotInStubFrame] };
+        SavedFrame* made = SavedFrame::createForAsyncFunction(vm, *instance, { const_cast<uint64_t*>(frame), slotsOfStub + 2, nullptr, &words });
+        slotsOfStub[driverSlotInStubFrame] = std::bit_cast<uint64_t>(made);
+        consumer = (consumer & ~static_cast<uint64_t>(consumerOfStepNeedsSavedFrame)) | consumerOfStepHasNewSavedFrame;
+    }
+    SavedFrame* newSavedFrame = consumer & consumerOfStepHasNewSavedFrame ? std::bit_cast<SavedFrame*>(slotsOfStub[driverSlotInStubFrame]) : nullptr;
+    StepAnswer answer = consumer & consumerOfStepAwaitsPromise ? StepAnswer::IsPromise : StepAnswer::ResumesDriver;
+    AsyncGeneratorStep step = stepAsyncIterator(*instance, frame, newSavedFrame, answer, asyncIteratorArgument(iterator, entry), JSValue::decode(sent));
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    instance->coroutines.stepStatus = static_cast<uint32_t>(step.status);
+    OPERATION_RETURN(scope, JSValue::encode(step.value));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTFinishAsyncIteratorStep, EncodedJSValue, (Instance* instance, JSCell* generator, EncodedJSValue returned, uint32_t consumerMayContinue))
+{
+    constexpr Entry entry = Entry::operationAOTFinishAsyncIteratorStep;
+    AOT_OPERATION_BEGIN(instance, entry);
+    AsyncGeneratorStep step = finishAsyncGeneratorStep(*instance, std::bit_cast<const uint64_t*>(callFrame), cellArgument<JSAsyncGenerator>(generator, entry), JSValue::decode(returned), consumerMayContinue);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    instance->coroutines.stepStatus = static_cast<uint32_t>(step.status);
+    OPERATION_RETURN(scope, JSValue::encode(step.value));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTRejectWithException, JSCell*, (Instance* instance, uint64_t frameBits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRejectWithException);
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -154,23 +209,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRejectWithException, JSCell*, (Ins
     } else
         value = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0));
     RELEASE_ASSERT(value);
-    SavedFrame* saved = SavedFrame::forFrame(*instance, std::bit_cast<const uint64_t*>(frame));
+    auto* frame = std::bit_cast<const uint64_t*>(frameBits);
+    if (JSAsyncGenerator* generator = asyncGeneratorEnteredByStub(*instance, frame)) {
+        rejectAsyncGeneratorStep(*instance, std::bit_cast<const uint64_t*>(frame[0]), generator, value);
+        OPERATION_RETURN(scope, vm.fastAsyncGeneratorSentinel());
+    }
+    SavedFrame* saved = SavedFrame::forFrame(*instance, frame);
     if (!saved) {
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->reject(vm, value);
-        return promise;
+        OPERATION_RETURN(scope, promise);
     }
     switch (saved->kind()) {
     case CoroutineKind::AsyncFunction:
         saved->reject(globalObject, vm, value);
-        return saved->promiseOrWaiter();
+        OPERATION_RETURN(scope, saved->promiseOrWaiter());
     case CoroutineKind::Generator:
     case CoroutineKind::AsyncGenerator:
         if (exception)
             throwException(globalObject, scope, exception);
         else
             throwException(globalObject, scope, value);
-        return nullptr;
+        OPERATION_RETURN(scope, nullptr);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -190,10 +250,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPromiseCatch, JSCell*, (Instance* instance,
     OPERATION_RETURN(scope, derived);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* elements))
+JSC_DEFINE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* elements, uint32_t directCalls))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPromiseAll);
-    OPERATION_RETURN(scope, promiseAllOfElements(globalObject, std::span { elements, count }));
+    OPERATION_RETURN(scope, promiseAllOfElements(globalObject, std::span { elements, count }, directCalls));
 }
 
 } } // namespace JSC::AOT

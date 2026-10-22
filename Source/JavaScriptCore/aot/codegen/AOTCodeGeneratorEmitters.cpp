@@ -101,8 +101,10 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, B3::Procedure& proc, 
     , m_records(records)
     , m_out(proc)
     , m_emitters(makeUnique<Emitters>())
-    , m_droppedGuard(inputs.build.recordedOptions().droppedGuard())
+    , m_droppedGuard(droppedGuardIn(inputs.build.recordedOptions(), inputs.id))
     , m_validates(inputs.build.validates())
+    , m_checksProofs(!inputs.build.validates() && inputs.build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime))
+    , m_checksKeptRegisters(inputs.build.validates() && inputs.build.options().validatesBackEnd)
     , m_forcesGCSlowPaths(inputs.build.recordedOptions().has(TestingSwitch::ForceGCSlowPaths))
 {
 }

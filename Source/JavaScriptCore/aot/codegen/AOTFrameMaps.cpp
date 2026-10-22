@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEffects.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
@@ -116,7 +117,7 @@ FrameMaps computeFrameMaps(const Program& program, const Function& function, Fun
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
-            if (analyses.effectsOf(values[index]).normal.maySuspend)
+            if (maySuspend(function.at(values[index]).opcode) && analyses.maySuspend(values[index]))
                 suspensionIndexes.append(index);
         }
         if (suspensionIndexes.isEmpty())

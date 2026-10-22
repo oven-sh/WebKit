@@ -16,6 +16,7 @@ namespace JSC { namespace AOT {
 enum class NativeCallDeclarationSource : uint8_t {
     Compiler,
     CalleeInRealm,
+    NativeCodeOfCallee,
     NameOfModuleMember,
     NotInTable,
 };

@@ -48,8 +48,8 @@ function f2 name="lengthInFront" parameters=[{type=string}, {type=number}] resul
     Return v5
 }
 # CHECK-LABEL: function f2 name="lengthInFront"
-# CHECK: v2: int[0, 2147483647] = GetStringLength v0
-# CHECK-NEXT: [[flat2]]: flatstring = FlattenString v0
+# CHECK: [[flat2]]: flatstring = FlattenString v0
+# CHECK-NEXT: v2: int[0, 2147483647] = GetStringLength [[flat2]]
 # CHECK-NEXT: = StringRangeCodeUnitOrNaN [[flat2]], -, -, v1
 # CHECK-NEXT: = StringRangeCodeUnitOrNaN [[flat2]], -, -, v2
 

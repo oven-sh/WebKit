@@ -3,11 +3,11 @@
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass SummarizeForInlining
 # LOSS: MaxConditionChainLength f29
-# LOSS: MaxInlineHeadBytes x5 f6
+# LOSS: MaxInlineHeadBytes x6 f6
 
 module m0 path="main.js" displayPath="main.js"
 typesite w0 position=0 text="number"
-layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
 layout L1 name="Cache" fields=[{key="cached" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
 
 function f0 name="readsSlot" parameters=[{type=L0}] results=[{type=anything}] {
@@ -22,13 +22,13 @@ function f1 name="readsSlotUnderShapeTest" parameters=[{type=object}] results=[{
     v1 = ShapeTest v0 layouts=[L1]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = GetSlot v0, v2 key="cached" receivers=[L1] level=Predicted
+    v3 = GetSlot v0, v2 key="cached" receivers=[L1] level=Expected
     Return v3
   b2() frequency=Rare:
     v4 = PropGet v0 key="cached"
     Return v4
 }
-# CHECK: f1: barrier=None bytes=60 head=[b0 b1] headBytes=36
+# CHECK: f1: barrier=None bytes=36 head=[b0 b1] headBytes=36
 
 function f2 name="readsAnything" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -51,16 +51,16 @@ function f4 name="addsAnything" parameters=[{type=anything}, {type=anything}] re
 }
 # CHECK: f4: barrier=None bytes=36
 
-function f5 name="claims" parameters=[{type=anything}] results=[{type=number}] {
+function f5 name="checks" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=number site=w0
+    v1 = Check v0 castType=number site=w0
     Return v1
 }
 # CHECK: f5: barrier=None bytes=20
 
 function f6 name="createsObject" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
-    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return v1
 }
 # CHECK: f6: barrier=None bytes=64{{*}} returnsFreshAggregate
@@ -385,7 +385,7 @@ function f35 name="throwsOnOneSide" parameters=[{type=anything}, {type=boolean}]
 
 function f36 name="returnsStoredObject" parameters=[{type=number}, {type=anything}] results=[{type=L0}] {
   b0(v0: number, v1: anything):
-    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PropSet v1, v2 key="last" mode=Strict
     Return v2
 }
@@ -398,4 +398,25 @@ function f37 name="outlined" role=OutlinedBody parameters=[{type=number}] result
 }
 # CHECK: f37: barrier=NotInlinable
 # CHECK-NOT: head=
+
+# The generic version is entered where either test fails, so neither test owns b5. Its bytes go where both tests are decided
+function f38 name="genericVersionBehindTwoTests" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3(| 0)
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v5):
+    v6 = Add v3, v5
+    Return v6
+  b3(v7) frequency=Unlikely:
+    Jump -> next b5(v7, v1)
+  b4(v8) frequency=Unlikely:
+    Jump -> next b5(v3, v8)
+  b5(v9, v10) frequency=Unlikely:
+    v11 = Add v9, v10
+    Return v11
+}
+# CHECK: f38: barrier=None{{*}} condition(v2 p0 {{*}}) condition(v4 p1 {{*}}) someTestFails=
 # CHECK: outcome: Unchanged

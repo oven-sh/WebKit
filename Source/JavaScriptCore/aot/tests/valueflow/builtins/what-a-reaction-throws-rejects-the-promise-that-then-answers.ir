@@ -1,0 +1,43 @@
+# Promise.resolve(1).then(thrower).finally(nothing).catch(handler);  function thrower() { throw held }  function handler(caught) { caught() }
+# The promise that `then` answers is resolved with what the reaction answers and rejected with what the reaction throws. `finally` hands the reason on, and `catch` gives it to its handler:
+# what the handler calls is `held`.
+# RUN: valueflow-solve calls
+# CHECK: f3 v1 -> f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=PromisePrototypeThen
+    v5 = NewClosure function=f1
+    v6 = Call v4, v3, v5
+    v7 = Builtin builtin=PromisePrototypeFinally
+    v8 = NewClosure function=f2
+    v9 = Call v7, v6, v8
+    v10 = Builtin builtin=PromisePrototypeCatch
+    v11 = NewClosure function=f3
+    v12 = Call v10, v9, v11
+    Return
+}
+function f1 name="thrower" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    Throw v1
+}
+function f2 name="nothing" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="handler" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f4 name="held" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

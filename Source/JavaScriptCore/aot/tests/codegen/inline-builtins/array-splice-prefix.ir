@@ -1,4 +1,4 @@
-# A splice whose removed elements are delivered as results allocates no array where the elements are moved by inline code; behind that, and with a count of removed elements that is not known, it calls the operation and then the function; compact code calls the function alone
+# A splice whose removed elements are delivered as results allocates no array where the elements are moved by inline code; behind that, and with a count of removed elements that is not known, it calls the operation and then the function; compact code moves nothing in place
 # FORM: Selected
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
 # RUN: generate-code calls
@@ -50,5 +50,5 @@ function f3 name="inCompactCode" parameters=[{type=Array<anything, proven, prist
 }
 # S: f3 b1 Compact
 # CHECK-LABEL: f3: size=
-# CHECK-NOT: operationAOTArraySplice
+# CHECK: operation operationAOTArraySplice x1
 # CHECK: stub CallHostFunction

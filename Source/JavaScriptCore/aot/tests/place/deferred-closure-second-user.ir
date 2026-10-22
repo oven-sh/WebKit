@@ -1,6 +1,6 @@
 # A closure with a second user is created, so the field it is stored into defers nothing
 # FORM: AsRead
-# OPTIONS: only-passes=AnalyzeFlow references=narrow
+# OPTIONS: only-passes=AnalyzeFlow,DeferClosuresInFields references=narrow
 # RUN: place program
 # RUN(PLAN): plan-slots layouts
 # STATISTIC: DeferredClosureSlots = 1

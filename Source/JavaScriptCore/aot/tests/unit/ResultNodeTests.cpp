@@ -732,7 +732,7 @@ expectedresult x10 type=object
 expectedresult x11 type=L3
 expectedresult x12 type=L0|L3
 expectedresult x13 type=false|"x"
-layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}, {key=symbol("tag")@m0:120 declared={type=number}}, {key="friend" declared={type=undefined|object written=undefined|L0}}, {key="guess" declared={type=anything written=string predicted=number}}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}, {key=symbol("tag")@m0:120 declared={type=number}}, {key="friend" declared={type=undefined|L0}}, {key="guess" declared={type=undefined|number flags=[IsExpected]}}]
 layout L1 name="UserLiteral" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}] supertypes=[L0]
 layout L2 kind=Instance name="Made"
 layout L3 name="Other" fields=[{key="x" declared={type=number}}]
@@ -836,8 +836,7 @@ static void testMembersOfLayout()
         AOT_TEST_CHECK(member.node == ResultNodeRef::forType(expectationOf(field.declared)));
     }
     AOT_TEST_CHECK(expectationOf(layout.fields[0].declared) == layout.fields[0].declared.type);
-    AOT_TEST_CHECK(expectationOf(layout.fields[3].declared) == layout.fields[3].declared.written && layout.fields[3].declared.written != layout.fields[3].declared.type);
-    AOT_TEST_CHECK(expectationOf(layout.fields[4].declared) == layout.fields[4].declared.predicted && layout.fields[4].declared.predicted != layout.fields[4].declared.written);
+    AOT_TEST_CHECK(layout.fields[4].declared.flags.contains(PositionFlags::IsExpected) && expectationOf(layout.fields[4].declared) == layout.fields[4].declared.type);
     AOT_TEST_CHECK(describeNode(types.program(), object.members[2].node).layout == LayoutID(0u));
     AOT_TEST_CHECK(describeNode(types.program(), object.members[3].node).shape == ResultShape::Number);
 }

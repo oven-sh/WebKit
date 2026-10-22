@@ -24,8 +24,9 @@ public:
     void generateObjectIs(const InlineCall&);
     void generateReturnThis(const InlineCall&);
 
-private:
     CellPointer allocateEmptyObject(InlineAllocation, std::optional<Integer> header, LBasicBlock slowPath);
+
+private:
     CellPointer createObjectWithPrototype(const InlineCall&, CellPointer prototype);
     CellPointer createObjectWithoutPrototype(const InlineCall&);
     Condition isSameValue(const OperationContext&, ValueID, ValueID);

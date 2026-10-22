@@ -37,8 +37,6 @@ TestPlaceability placeabilityOf(FunctionAnalyses& analyses, const Value& test)
 {
     if (provesOf(test.opcode) == Proof::None)
         return TestPlaceability::Unknown;
-    if (test.opcode == Opcode::IsShapeEpochCurrent)
-        return TestPlaceability::Unknown;
 
     Effects bound = declaredBoundOf(test.opcode);
     if (!bound.writes.isEmpty() || bound.mayExitSideways() || bound.mayCollect)
@@ -78,8 +76,6 @@ TestConditionID TestConditions::add(const Value& test)
         for (const MemoryLocation& location : condition.dependsOn)
             m_heapsDependedOn.add(location.heap());
         m_stretchConditions.set(index);
-        if (condition.isRenewable())
-            m_renewableConditions.set(index);
     }
 
     m_conditions.append(WTF::move(condition));
@@ -114,8 +110,7 @@ Value TestConditions::canonicalize(const Value& test) const
             canonical.setOperand(operandIndex, m_identities.identityOf(operand));
     }
     canonical.type = TypeID();
-    canonical.setWritten(TypeID());
-    canonical.setPrediction(TypeID());
+    canonical.setExpected(TypeID());
     canonical.representation = Representation::Unchosen;
     canonical.setOrigin({ Instruction::noPosition, 0 });
     return canonical;

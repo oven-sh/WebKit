@@ -2,7 +2,7 @@
 # FORM: AsRead
 # RUN: generate-code
 # RUN(PLACED): pipeline CheckPlacement
-# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
 # PLACED: function f4 name="awaits" {{*}}role=CoroutineBody
 # PLACED: function f5 name="yields" {{*}}role=CoroutineBody
 # CHECK: f4: size={{*}} frame={{*}}@{{*}} prologueChecks=1

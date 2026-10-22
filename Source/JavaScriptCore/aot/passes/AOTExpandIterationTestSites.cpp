@@ -92,7 +92,7 @@ static ValueID findPositionRead(const TestSiteReporter& reporter, ValueID step)
 
 static bool canReadByPosition(const TestSiteReporter& reporter, ValueID object)
 {
-    return !reporter.program().predictionOrTypeOf(reporter.function(), object).hasOnlyLayouts() && reporter.typeOf(reporter.use()).isAnything();
+    return !reporter.program().expectedOrTypeOf(reporter.function(), object).hasOnlyLayouts(reporter.program()) && reporter.typeOf(reporter.use()).isAnything();
 }
 
 static Opcode opcodeWhenCurrent(KeyUseKind kind)

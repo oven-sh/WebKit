@@ -33,6 +33,7 @@ public:
     void generateNewClosure(const ValueContext&);
     void generateKeyConstant(const ValueContext&);
     void generateUnspecified(const ValueContext&);
+    void generateEmptyArgumentList(const ValueContext&);
 
     CellPointer stringConstant(const OperationContext&, StringID);
     CellPointer keyConstant(const OperationContext&, PropertyKeyID);
@@ -44,6 +45,7 @@ public:
     // For a type test, which has no context. Placement has numbered the cell.
     CellPointer keyConstant(PropertyKeyID);
     CellPointer builtinCell(BuiltinID);
+    void branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID, BranchTargets);
     Operand constantOf(JSValue, Representation);
     Operand zeroOf(Representation);
 
@@ -63,6 +65,7 @@ private:
     CellPointer failWithoutCell(const OperationContext&, InternalErrorKind);
 
     TypedPointer cellWordInTable(const B3::AbstractHeap&, ptrdiff_t offsetOfTable, uint32_t number);
+    TypedPointer builtinCellWord(uint32_t number);
     template<typename Create> CellPointer permanentCell(TypedPointer cellWord, bool isNarrow, const Create&);
     CellPointer newCopyOnWriteArray(const ValueContext&, Request);
 

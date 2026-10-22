@@ -1,0 +1,20 @@
+# Outside fast code the code point at a position of a whole string is read by one stub, which also answers undefined for a position out of range. A read of a part of a string is in line
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="wholeString" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = StringRangeCodePointOrUndefined v0, -, -, v1
+    Return v2
+}
+function f1 name="part" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 2147483647], v2: int[0, 2147483647], v3: number):
+    v4 = StringRangeCodePointOrUndefined v0, v1, v2, v3
+    Return v4
+}
+# CHECK: f0: size=
+# CHECK: stub StringCodePointAt x1
+# CHECK: f1: size=
+# CHECK-NOT: stub StringCodePointAt

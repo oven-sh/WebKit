@@ -54,7 +54,8 @@ const pristineCatch = (onRejected: b.TableType, contents: Contents) =>
 const resolveImplementation = b.inline("PromiseResolve", { otherwise: b.hostCall });
 
 const elementProtocols = b.runsTransitively("Iterate", "Thenable");
-const adoptedElement = b.iterated("iterable");
+// The promise settles as the first element that settles does: with what a promise among the elements holds, not with the promise.
+const adoptedElement = b.settled("iterable");
 const settlementRecord = b.union(
   b.ordinaryObjectOf("PromiseFulfilledResult"),
   b.ordinaryObjectOf("PromiseRejectedResult"),
@@ -92,6 +93,7 @@ export default b.declarations(
   b.class("Promise", {
     jsType: "JSPromiseType",
     constructorCallee: "Function",
+    constructorOnlyReadsPrototypeOfNewTarget: true,
     slots: { value: b.contents("Value", promiseState), reason: b.state(promiseState) },
     lockedObjects: ["prototype"],
     lockedMembers: ["constructor"],
@@ -128,7 +130,8 @@ export default b.declarations(
           args: { reason: b.any.optional },
           returns: newPromiseHolding({ value: b.never }),
           capability: "heap",
-          uses: { this: b.inspected, reason: [b.storedIn(b.resultSlot("reason"))] },
+          // The host hands the reason of a promise that nobody handles to the listeners for unhandled rejections, and Promise.any puts it among the errors of what it rejects with.
+          uses: { this: b.inspected, reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
           writes: [promiseState],
           requiresHolderAsThis: true,
           privateAlias: true,
@@ -156,6 +159,16 @@ export default b.declarations(
             this: b.inspected,
             value: [b.runs("Thenable", b.named("constructor")), b.membersOnlyInspected, b.retained, b.returned],
           },
+          reads: [promiseState],
+          writes: [promiseState],
+          implementation: resolveImplementation,
+        },
+        // No primitive is a thenable, so nothing rejects the promise.
+        {
+          args: { value: b.primitiveValue.optional },
+          returns: newPromiseHolding({ value: b.operand("value"), reason: b.never }),
+          capability: "heap",
+          uses: { this: b.inspected, value: b.inspected },
           reads: [promiseState],
           writes: [promiseState],
           implementation: resolveImplementation,
@@ -221,7 +234,7 @@ export default b.declarations(
         pristineCatch(b.any.optional, { value: settledValue, reason: settledReason }),
         {
           ...operandCodeEffects,
-          this: b.any,
+          this: b.any.refusing(b.null),
           args: { onRejected: b.any.optional },
           returns: b.any,
           uses: { this: [b.runs(b.calls("then"))], onRejected: [b.retained] },
@@ -294,7 +307,7 @@ export default b.declarations(
         },
         {
           this: b.any,
-          returns: newPromiseHolding({ value: b.never }),
+          returns: newPromiseHolding({ value: b.never, reason: b.instance("TypeError").unaliased }),
           capability: "heap",
           throws: true,
           uses: { this: b.inspected },

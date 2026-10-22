@@ -19,6 +19,7 @@ class BuildContext;
 
 namespace Typed {
 
+class EffectSummaries;
 class FlowResults;
 
 enum class ConstantCollectionKind : uint8_t { Set, Map };
@@ -41,12 +42,13 @@ public:
     void dump(PrintStream&, const Program&) const;
 
 private:
-    friend ConstantCollections embedConstantCollections(ProgramEditor&, const FlowResults&, BuildContext&);
+    friend ConstantCollections embedConstantCollections(ProgramEditor&, const FlowResults&, const EffectSummaries* summariesFromFlow, BuildContext&);
 
     Vector<ConstantCollection> m_collections;
 };
 
-ConstantCollections embedConstantCollections(ProgramEditor&, const FlowResults&, BuildContext&);
+// Computes the summaries where it is given none.
+ConstantCollections embedConstantCollections(ProgramEditor&, const FlowResults&, const EffectSummaries* summariesFromFlow, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

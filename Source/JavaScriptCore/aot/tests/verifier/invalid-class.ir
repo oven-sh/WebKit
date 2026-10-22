@@ -6,10 +6,10 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="record"
 layout L1 kind=Instance name="goodBaseClass" constructor=f0 staticFields=[{key="s" variable=g0}]
-layout L2 kind=Instance name="goodDerivedClass" predictedBase=L1 constructor=f1 flags=[HasHeritage]
+layout L2 kind=Instance name="goodDerivedClass" base=L1 constructor=f1 flags=[HasHeritage]
 layout L3 kind=Instance name="goodConstructorFunction" constructor=f2 flags=[IsConstructorFunction]
 layout L4 kind=Instance name="goodWithoutConstructor"
-layout L5 kind=Instance name="badPredictedBaseIsRecord" predictedBase=L0 flags=[HasHeritage]
+layout L5 kind=Instance name="badPredictedBaseIsRecord" base=L0 flags=[HasHeritage]
 layout L6 name="badStaticFieldOnRecord" staticFields=[{key="s" variable=g0}]
 layout L7 name="badHeritageOnRecord" flags=[HasHeritage]
 layout L8 kind=Instance name="badArrowConstructs" constructor=f3

@@ -8,13 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
+#include "AOTFrameArrays.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationScope.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTPropertyCachesNamedAccess.h"
 #include "AOTState.h"
-#include "AOTTypeErrorMessages.h"
 #include "JSCInlines.h"
 
 namespace JSC { namespace AOT {
@@ -23,7 +25,7 @@ static OperationReturnType<EncodedJSValue> getByVal(JSGlobalObject* globalObject
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (base.isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, nullishMessage(globalObject, base, property, false));
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, base, property));
         OPERATION_RETURN(scope, encodedJSValue());
     }
 
@@ -66,14 +68,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instan
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByVal);
     scope.release();
-    return getByVal(globalObject, vm, JSValue::decode(encodedBase), JSValue::decode(encodedProperty));
+    return getByVal(globalObject, vm, heapValueOf(instance, JSValue::decode(encodedBase)), JSValue::decode(encodedProperty));
 }
 
 static OperationReturnType<void> putByVal(JSGlobalObject* globalObject, VM& vm, JSValue base, JSValue property, JSValue value, bool isStrict)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (base.isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, nullishMessage(globalObject, base, property, true));
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, base, property));
         OPERATION_RETURN(scope);
     }
 
@@ -115,6 +117,7 @@ struct PendingAccess {
 static PendingAccess prepareAccess(VM& vm, JSObject* object, UniquedStringImpl* uid)
 {
     Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
+    createClassObjectsOnChain(vm, object, uid);
     return { object, object->structure(), uid };
 }
 
@@ -145,14 +148,16 @@ static OperationReturnType<EncodedJSValue> getFromObjectAndCache(Instance* insta
     JSGlobalObject* globalObject = instance->globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
-    PendingAccess pending = prepareAccess(vm, object, name.impl());
+    bool shouldFile = caches.shouldFile(object->structureID(), name.impl(), SlotAccess::Read);
+    PendingAccess pending = shouldFile ? prepareAccess(vm, object, name.impl()) : PendingAccess { object, object->structure(), name.impl() };
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
 
     JSObject* lookupStart = object;
     LazyPrototypeRead lazy = classifyReadThroughLazyPrototypes(globalObject, object, pending.uid);
     switch (lazy.result) {
     case LazyPrototypeReadResult::Answered:
-        caches.cache(cachedAccess(pending, SlotAccess::Read), lazy.answer);
+        if (shouldFile)
+            caches.cache(cachedAccess(pending, SlotAccess::Read), lazy.answer);
         OPERATION_RETURN(scope, JSValue::encode(readThroughAnswer(globalObject, object, lazy.answer)));
     case LazyPrototypeReadResult::ContinuesAbove:
         lookupStart = lazy.firstObjectAbove;
@@ -166,7 +171,8 @@ static OperationReturnType<EncodedJSValue> getFromObjectAndCache(Instance* insta
     JSValue result = isFound ? slot.getValue(globalObject, name) : jsUndefined();
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    caches.cache(cachedAccess(pending, SlotAccess::Read), classifyRead({ globalObject, pending.object, pending.structureBefore, pending.uid, slot }));
+    if (shouldFile)
+        caches.cache(cachedAccess(pending, SlotAccess::Read), classifyRead({ globalObject, pending.object, pending.structureBefore, pending.uid, slot }));
     ensureStillAliveHere(pending.structureBefore);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
@@ -269,6 +275,7 @@ static OperationReturnType<void> putByValAndCache(Instance* instance, JSGlobalOb
     JSObject* object = asObject(base);
     PendingAccess pending { object, nullptr, name->impl() };
     PutPropertySlot slot(base, isStrict);
+    bool shouldFile = instance->state->propertyCaches->shouldFile(object->structureID(), name->impl(), accessFor(mode));
     Object* compiledObject = compiledObjectOrNull(base);
     const FieldData* field = compiledObject ? compiledObject->fieldNamed(compiledObject->state(), *name) : nullptr;
     if (compiledObject && !field && tryStoreExtraProperty(instance, *compiledObject, pending, value, mode, slot))
@@ -281,8 +288,15 @@ static OperationReturnType<void> putByValAndCache(Instance* instance, JSGlobalOb
     else
         base.put(globalObject, *name, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (!repeatsAddition && slot.type() == PutPropertySlot::NewProperty)
+    if (!repeatsAddition && slot.type() == PutPropertySlot::NewProperty) {
+        instance->state->propertyCaches->didAddProperty(pending.structureBefore, object->structure());
         OPERATION_RETURN(scope);
+    }
+    if (!shouldFile) {
+        if (slot.type() == PutPropertySlot::NewProperty)
+            instance->state->propertyCaches->didAddProperty(pending.structureBefore, object->structure());
+        OPERATION_RETURN(scope);
+    }
 
     PropertyAnswer answer = classifyStore({ globalObject, pending.object, pending.structureBefore, pending.uid, slot, mode });
     instance->state->propertyCaches->cache(cachedAccess(pending, accessFor(mode)), answer);

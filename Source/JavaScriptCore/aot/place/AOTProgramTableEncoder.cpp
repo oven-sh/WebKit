@@ -26,12 +26,20 @@ TableEncoder::TableEncoder(const ProgramTableInputs& inputs, BuildContext& build
     , writer(build)
 {
     namedStrings.ensureSize(program.strings.size());
+    stringsWithOtherUses.ensureSize(program.strings.size());
     writtenTables.ensureSize(numberOfProgramTables);
     uint32_t headerOffset = writer.allocate(sizeof(ProgramTables), 16);
     RELEASE_ASSERT(!headerOffset);
 }
 
 uint32_t TableEncoder::stringNumber(StringID id)
+{
+    uint32_t number = shownStringNumber(id);
+    stringsWithOtherUses.quickSet(number);
+    return number;
+}
+
+uint32_t TableEncoder::shownStringNumber(StringID id)
 {
     if (!id)
         id = program.strings.emptyString();
@@ -142,6 +150,16 @@ static void fillHeader(TableEncoder& encoder)
     header.closureFunctions = { closureFunctions.first.index(), closureFunctions.end.index(), closureFunctions.omittedWordCount };
 }
 
+BodyFactsForTables collectBodyFactsForTables(const Program& program, BuildContext& build)
+{
+    BodyFactsForTables facts;
+    if (build.recordedOptions().policy() == MismatchPolicy::Report)
+        facts.usedTypeSites = findUsedTypeSites(program, build.parallelLoops());
+    facts.functionsThatOnlyReturn = findModuleBodiesThatOnlyReturn(program);
+    facts.importSites = findImportSites(program, build.parallelLoops());
+    return facts;
+}
+
 EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, BuildContext& build)
 {
     struct TableGroup {
@@ -154,11 +172,15 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
         { encodeLayoutTables, StatisticID::ProgramTableBytesLayouts },
         { encodePropertyRunTable, StatisticID::ProgramTableBytesLayouts },
         { encodeFieldTable, StatisticID::ProgramTableBytesFieldTable },
+        { encodeMethodTable, StatisticID::ProgramTableBytesOther },
         { encodeStaticsTables, StatisticID::ProgramTableBytesStatics },
         { encodeFunctionTables, StatisticID::ProgramTableBytesFunctions },
         { encodeModuleTables, StatisticID::ProgramTableBytesModules },
         { encodeRequestTable, StatisticID::ProgramTableBytesRequests },
         { encodeConstantTables, StatisticID::ProgramTableBytesOther },
+        { encodeGlobalBindingTable, StatisticID::ProgramTableBytesOther },
+        // The last: the image builder takes it off the tables and puts it in front of the constants of the code.
+        { encodeShapeSetBits, StatisticID::ProgramTableBytesLayouts },
     };
 
     TableEncoder encoder(inputs, build);
@@ -177,7 +199,9 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     checkProgramTables(encoder, bytes.span());
     if (build.diagnostics().hasErrors())
         return { };
-    return { WTF::move(bytes), WTF::move(encoder.namedStrings) };
+    BitVector stringsOnlyShown = encoder.namedStrings;
+    stringsOnlyShown.exclude(encoder.stringsWithOtherUses);
+    return { WTF::move(bytes), WTF::move(encoder.namedStrings), WTF::move(stringsOnlyShown) };
 }
 
 } } } // namespace JSC::AOT::Typed

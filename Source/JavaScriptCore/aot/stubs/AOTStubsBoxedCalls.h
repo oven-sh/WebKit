@@ -10,10 +10,11 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubWords.h"
+#include "AOTStubsCalls.h"
 
 namespace JSC { namespace AOT {
 
-enum class BoxedCallForm : uint8_t { ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, FunctionBind, IsNaN, MapDelete, MapGet, MapHas, MapSet, ObjectIs, ObjectSetPrototypeOf, SetAdd, SetDelete, SetHas, StringIndexOf, StringStartsWith, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas };
+enum class BoxedCallForm : uint8_t { ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, FunctionBind, IsNaN, JSONStringify, MapDelete, MapGet, MapHas, MapSet, MapSize, ObjectGetPrototypeOf, ObjectIs, ObjectSetPrototypeOf, SetAdd, SetDelete, SetHas, SetSize, StringIndexOf, StringSlice, StringStartsWith, StringToLowerCase, StringTrim, TypedArrayLength, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas };
 
 constexpr BoxedCallForm boxedCallFormOf(BuiltinBoxedStub stub)
 {
@@ -32,6 +33,8 @@ constexpr BoxedCallForm boxedCallFormOf(BuiltinBoxedStub stub)
         return BoxedCallForm::FunctionBind;
     case BuiltinBoxedStub::IsNaN:
         return BoxedCallForm::IsNaN;
+    case BuiltinBoxedStub::JSONStringify:
+        return BoxedCallForm::JSONStringify;
     case BuiltinBoxedStub::MapDelete:
         return BoxedCallForm::MapDelete;
     case BuiltinBoxedStub::MapGet:
@@ -40,6 +43,10 @@ constexpr BoxedCallForm boxedCallFormOf(BuiltinBoxedStub stub)
         return BoxedCallForm::MapHas;
     case BuiltinBoxedStub::MapSet:
         return BoxedCallForm::MapSet;
+    case BuiltinBoxedStub::MapSize:
+        return BoxedCallForm::MapSize;
+    case BuiltinBoxedStub::ObjectGetPrototypeOf:
+        return BoxedCallForm::ObjectGetPrototypeOf;
     case BuiltinBoxedStub::ObjectIs:
         return BoxedCallForm::ObjectIs;
     case BuiltinBoxedStub::ObjectSetPrototypeOf:
@@ -50,10 +57,20 @@ constexpr BoxedCallForm boxedCallFormOf(BuiltinBoxedStub stub)
         return BoxedCallForm::SetDelete;
     case BuiltinBoxedStub::SetHas:
         return BoxedCallForm::SetHas;
+    case BuiltinBoxedStub::SetSize:
+        return BoxedCallForm::SetSize;
     case BuiltinBoxedStub::StringIndexOf:
         return BoxedCallForm::StringIndexOf;
+    case BuiltinBoxedStub::StringSlice:
+        return BoxedCallForm::StringSlice;
     case BuiltinBoxedStub::StringStartsWith:
         return BoxedCallForm::StringStartsWith;
+    case BuiltinBoxedStub::StringToLowerCase:
+        return BoxedCallForm::StringToLowerCase;
+    case BuiltinBoxedStub::StringTrim:
+        return BoxedCallForm::StringTrim;
+    case BuiltinBoxedStub::TypedArrayLength:
+        return BoxedCallForm::TypedArrayLength;
     case BuiltinBoxedStub::WeakMapGet:
         return BoxedCallForm::WeakMapGet;
     case BuiltinBoxedStub::WeakMapHas:
@@ -69,6 +86,12 @@ constexpr BoxedCallForm boxedCallFormOf(BuiltinBoxedStub stub)
 constexpr bool acceptsArgumentCount(BoxedCallForm form, unsigned count)
 {
     switch (form) {
+    case BoxedCallForm::MapSize:
+    case BoxedCallForm::SetSize:
+    case BoxedCallForm::StringToLowerCase:
+    case BoxedCallForm::StringTrim:
+    case BoxedCallForm::TypedArrayLength:
+        return !count;
     case BoxedCallForm::ArrayIncludes:
     case BoxedCallForm::ArrayIndexOf:
     case BoxedCallForm::ArrayIsArray:
@@ -77,6 +100,7 @@ constexpr bool acceptsArgumentCount(BoxedCallForm form, unsigned count)
     case BoxedCallForm::MapDelete:
     case BoxedCallForm::MapGet:
     case BoxedCallForm::MapHas:
+    case BoxedCallForm::ObjectGetPrototypeOf:
     case BoxedCallForm::SetAdd:
     case BoxedCallForm::SetDelete:
     case BoxedCallForm::SetHas:
@@ -91,6 +115,9 @@ constexpr bool acceptsArgumentCount(BoxedCallForm form, unsigned count)
     case BoxedCallForm::ObjectSetPrototypeOf:
     case BoxedCallForm::WeakMapSet:
         return count == 2;
+    case BoxedCallForm::JSONStringify:
+    case BoxedCallForm::StringSlice:
+        return count == 1 || count == 2;
     case BoxedCallForm::ArraySlice:
         return count <= 2;
     case BoxedCallForm::FunctionBind:
@@ -104,9 +131,11 @@ constexpr StubKey weakMapSet() { return StubKey(StubFamily::WeakMapSet); }
 constexpr StubKey stringStartsWith() { return StubKey(StubFamily::StringStartsWith); }
 constexpr StubKey stringIndexOf() { return StubKey(StubFamily::StringIndexOf); }
 
-// nativeFunction has the word at NativeExecutable::offsetOfNativeFunctionFor(CodeForCall) of the callee. The registers of the call are in place and stay so.
-// Falls through when the function has no boxed call for this count. Overwrites entry and scratch.
-void emitBoxedCallDispatch(StubAssembler&, GPRReg nativeFunction, unsigned count, GPRReg entry, GPRReg scratch);
+constexpr StubKey findBoxedCall() { return StubKey(StubFamily::FindBoxedCall); }
+
+// executable has the NativeExecutable of the callee. The registers of the call are in place and stay so.
+// Leaves for hasNoBoxedCall, with executable as it was, when the function has no boxed call. Nothing falls through. Emits nothing for a count that no boxed call takes.
+void emitBoxedCallDispatch(StubAssembler&, const CallRegisters&, unsigned count, JumpList& hasNoBoxedCall);
 
 static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).numberOfForms == static_cast<unsigned>(BoxedCallForm::WeakSetHas) + 1);
 static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).minCount == BoxedCallEntry::minArgumentCount && descriptorOf(StubFamily::CallBoxedBuiltin).maxCount == BoxedCallEntry::maxArgumentCount);

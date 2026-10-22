@@ -1,0 +1,30 @@
+# function identity(x) { return x }; first = identity({ a: 1 }); second = identity({ b: 2 })
+# One node holds what all callers pass as `x`. A caller that knows its callee gets its own operand back, not what the other caller has passed
+# RUN: valueflow-why values=f0:v4 values=f0:v7
+# CHECK: values=f0:v4
+# CHECK: result {{*}} 1 members: object{{*}}@f0
+# CHECK: values=f0:v7
+# CHECK: result {{*}} 1 members: object{{*}}@f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = Call v0, -, v3
+    v5 = PropGet v4 key="a"
+    v6 = NewObject -, v2 layout=L1 fields=[0]
+    v7 = Call v0, -, v6
+    v8 = PropGet v7 key="b"
+    v9 = NewArray v5, v8 contents=anything
+    Return v9
+}
+function f1 name="identity" module=m0 position=5 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

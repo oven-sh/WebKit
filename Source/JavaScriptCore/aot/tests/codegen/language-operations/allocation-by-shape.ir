@@ -1,4 +1,4 @@
-# An object and a closure are allocated in line in fast code alone: balanced and compact code call the stubs
+# An object and a closure on the heap come from their stubs in code of every shape
 # FORM: AsRead
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
@@ -9,12 +9,11 @@
 # CHECK: f1: size=
 # CHECK-NEXT: stub AllocateCell.{{*}} x1
 # CHECK-NEXT: stub New{{*}}Closure{{*}}.n1 x1
-# CHECK-NEXT: stub PollAtPrologue
 # CHECK-NEXT: f2: size=
-# CHECK-NEXT: operation operationAOTAllocateSlow x1
-# CHECK-NEXT: operation operationAOTNewClosureSlow x1
-# CHECK-NOT: stub AllocateCell
-# CHECK-NOT: stub New
+# CHECK-NOT: operation operationAOTAllocateSlow
+# CHECK-NOT: operation operationAOTNewClosureSlow
+# CHECK: stub AllocateCell.
+# CHECK-NEXT: stub New{{*}}Closure{{*}}.n1
 # CHECK: f3: size=
 
 layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]

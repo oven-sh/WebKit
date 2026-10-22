@@ -7,6 +7,8 @@ const typedArrayStorage = "TypedArrayStorage";
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const realmPromise = b.builtin("Promise");
 const newPromiseHolding = (contents: Contents) => b.instance("Promise").holding(contents).fresh;
+// No primitive is a thenable, so nothing rejects the promise.
+const fulfilledWithPrimitive = newPromiseHolding({ value: b.operand("value"), reason: b.never });
 const otherConstructor = b.otherwiseBy(b.hostCall);
 
 const keptByIterator = b.storedIn(b.resultSlot("iterated"));
@@ -63,6 +65,15 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       {
+        args: { constructor: realmPromise, value: b.primitiveValue },
+        returns: fulfilledWithPrimitive,
+        capability: "heap",
+        uses: { constructor: b.inspected, value: b.inspected },
+        reads: [promiseState],
+        writes: [promiseState],
+        implementation: b.hostCall,
+      },
+      {
         args: { constructor: realmPromise, value: b.any },
         returns: newPromiseHolding({ value: b.operand("value") }),
         capability: "js",
@@ -85,16 +96,27 @@ export default b.declarations(
       },
       otherConstructor,
     ],
-    newResolvedPromise: {
-      args: { value: b.any },
-      returns: newPromiseHolding({ value: b.operand("value") }),
-      capability: "js",
-      runsOnlyOperandCode: true,
-      uses: { value: [b.runs("Thenable")] },
-      reads: [promiseState],
-      writes: [promiseState],
-      implementation: b.hostCall,
-    },
+    newResolvedPromise: [
+      {
+        args: { value: b.primitiveValue },
+        returns: fulfilledWithPrimitive,
+        capability: "heap",
+        uses: { value: b.inspected },
+        reads: [promiseState],
+        writes: [promiseState],
+        implementation: b.hostCall,
+      },
+      {
+        args: { value: b.any },
+        returns: newPromiseHolding({ value: b.operand("value") }),
+        capability: "js",
+        runsOnlyOperandCode: true,
+        uses: { value: [b.runs("Thenable")] },
+        reads: [promiseState],
+        writes: [promiseState],
+        implementation: b.hostCall,
+      },
+    ],
     newRejectedPromise: {
       args: { reason: b.any },
       returns: newPromiseHolding({ value: b.never }),

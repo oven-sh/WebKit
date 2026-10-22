@@ -7,78 +7,78 @@
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
-runtimefunction id=32 function=f1
-runtimefunction id=34 function=f2
-runtimefunction id=36 function=f3
-runtimefunction id=38 function=f4
-runtimefunction id=43 function=f5
-runtimefunction id=45 function=f6
-runtimefunction id=66 function=f7
-runtimefunction id=83 function=f8
-runtimefunction id=90 function=f9
-runtimefunction id=131088 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131088 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=31 function=f1
+runtimefunction id=33 function=f2
+runtimefunction id=35 function=f3
+runtimefunction id=37 function=f4
+runtimefunction id=42 function=f5
+runtimefunction id=44 function=f6
+runtimefunction id=65 function=f7
+runtimefunction id=82 function=f8
+runtimefunction id=89 function=f9
+runtimefunction id=131090 function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     v6 = Undefined
     Return v6
 }
-function f1 name="every" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="every" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f2 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=34 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f3 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=36 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=35 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f4 name="findIndex" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=38 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="findIndex" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=37 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f5 name="flatMap" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="flatMap" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=42 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f6 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=45 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f6 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f7 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=66 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f8 name="reduce" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=83 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f8 name="reduce" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=82 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array<anything>):
     v4 = Integer integer=0
     v5 = ElemGet v0, v4
     v6 = Call v2, -, v5, v5, v4, v0
     Return v6
 }
-function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=90 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
@@ -130,11 +130,11 @@ function f16 name="arrayAfterMap" parameters=[{type=Array<number, proven, pristi
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f11
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f7
-    v8 = Claim v7 castType=Array<number> cause=AddedByPass
+    v8 = AssumeType v7 castType=Array<number>
     Return v8
 }
 # CHECK-LABEL: function f16 name="arrayAfterMap"
@@ -144,7 +144,7 @@ function f16 name="arrayAfterMap" parameters=[{type=Array<number, proven, pristi
 # CHECK: [[zero16]]: 0 = Integer
 # CHECK-NEXT: [[none16]]: undefined = Undefined
 # CHECK-NEXT: [[fused16]]: anything = CallDirect v0, [[zero16]], [[none16]], v1, [[none16]], v5, [[none16]] function=[[filterMapToArray]]
-# CHECK-NEXT: v8: Array<number> = Claim [[fused16]] castType=Array<number> cause=AddedByPass
+# CHECK-NEXT: v8: Array<number> = AssumeType [[fused16]] castType=Array<number>
 # CHECK-NEXT: Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -155,11 +155,11 @@ function f17 name="arrayAfterFilter" parameters=[{type=Array<number, proven, pri
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f10
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f2
-    v8 = Claim v7 castType=Array<number> cause=AddedByPass
+    v8 = AssumeType v7 castType=Array<number>
     Return v8
 }
 # CHECK-LABEL: function f17 name="arrayAfterFilter"
@@ -169,7 +169,7 @@ function f17 name="arrayAfterFilter" parameters=[{type=Array<number, proven, pri
 # CHECK: [[zero17]]: 0 = Integer
 # CHECK-NEXT: [[none17]]: undefined = Undefined
 # CHECK-NEXT: [[fused17]]: anything = CallDirect v0, [[zero17]], [[none17]], v1, [[none17]], v5, [[none17]] function=[[mapFilterToArray]]
-# CHECK-NEXT: v8: Array<number> = Claim [[fused17]] castType=Array<number> cause=AddedByPass
+# CHECK-NEXT: v8: Array<number> = AssumeType [[fused17]] castType=Array<number>
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -179,7 +179,7 @@ function f18 name="endsInLength" parameters=[{type=Array<number, proven, pristin
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = AssumeType v4 castType=Array<number, proven, pristine[Storage, Names]>
     v6 = GetArrayLength v5
     Return v6
@@ -191,7 +191,7 @@ function f18 name="endsInLength" parameters=[{type=Array<number, proven, pristin
 # CHECK: [[zero18]]: 0 = Integer
 # CHECK-NEXT: [[none18]]: undefined = Undefined
 # CHECK-NEXT: [[fused18]]: anything = CallDirect v0, [[zero18]], [[none18]], v1, [[none18]] function=[[filterToLength]]
-# CHECK-NEXT: [[length18]]: int[0, 4294967295] = Claim [[fused18]] castType=int[0, 4294967295] cause=AddedByPass
+# CHECK-NEXT: [[length18]]: int[0, 4294967295] = AssumeType [[fused18]] castType=int[0, 4294967295]
 # CHECK-NEXT: Return [[length18]]
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
@@ -202,7 +202,7 @@ function f19 name="lengthAsCallBuiltin" parameters=[{type=Array<number, proven, 
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = CallBuiltin v4 overload=ArrayPrototypeLength/0
     Return v5
 }
@@ -222,7 +222,7 @@ function f20 name="endsInForEach" parameters=[{type=Array<number, proven, pristi
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f14
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f6
@@ -245,7 +245,7 @@ function f21 name="reduceWithoutInitialValue" parameters=[{type=Array<number, pr
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f12
     v6 = Integer integer=1
     v7 = NewArray contents=anything
@@ -268,7 +268,7 @@ function f22 name="reduceWithInitialValue" parameters=[{type=Array<number, prove
     v2 = NewClosure function=f11
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f7
-    v5 = Claim v4 castType=Array<number> cause=AddedByPass
+    v5 = AssumeType v4 castType=Array<number>
     v6 = NewClosure function=f12
     v7 = Integer integer=2
     v8 = NewArray v1 contents=anything
@@ -291,7 +291,7 @@ function f23 name="endsInSome" parameters=[{type=Array<number, proven, pristine[
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f10
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f9
@@ -313,7 +313,7 @@ function f24 name="endsInEvery" parameters=[{type=Array<number, proven, pristine
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f10
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f1
@@ -335,7 +335,7 @@ function f25 name="endsInFind" parameters=[{type=Array<number, proven, pristine[
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f10
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f3
@@ -357,7 +357,7 @@ function f26 name="endsInFindIndex" parameters=[{type=Array<number, proven, pris
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f10
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
@@ -379,7 +379,7 @@ function f27 name="joinWithSeparator" parameters=[{type=Array<number, proven, pr
     v2 = NewClosure function=f15
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f7
-    v5 = Claim v4 castType=Array<string> cause=AddedByPass
+    v5 = AssumeType v4 castType=Array<string>
     v6 = AssumeType v5 castType=Array<string, proven>
     v7 = CallBuiltin v6, v1 overload=ArrayPrototypeJoin/0
     Return v7
@@ -391,7 +391,7 @@ function f27 name="joinWithSeparator" parameters=[{type=Array<number, proven, pr
 # CHECK: [[zero27]]: 0 = Integer
 # CHECK-NEXT: [[none27]]: undefined = Undefined
 # CHECK-NEXT: [[fused27]]: anything = CallDirect v0, [[zero27]], [[none27]], v2, [[none27]], v1 function=[[mapToJoin]]
-# CHECK-NEXT: [[joined27]]: string = Claim [[fused27]] castType=string cause=AddedByPass
+# CHECK-NEXT: [[joined27]]: string = AssumeType [[fused27]] castType=string
 # CHECK-NEXT: Return [[joined27]]
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
 # CHECK-NOT: NewArray
@@ -402,7 +402,7 @@ function f28 name="joinWithoutSeparator" parameters=[{type=Array<number, proven,
     v1 = NewClosure function=f15
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<string> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<string>
     v5 = AssumeType v4 castType=Array<string, proven>
     v6 = CallBuiltin v5 overload=ArrayPrototypeJoin/0
     Return v6
@@ -424,11 +424,11 @@ function f29 name="endsInFlatMap" parameters=[{type=Array<number, proven, pristi
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f13
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f5
-    v8 = Claim v7 castType=Array<number> cause=AddedByPass
+    v8 = AssumeType v7 castType=Array<number>
     Return v8
 }
 # CHECK-LABEL: function f29 name="endsInFlatMap"
@@ -448,7 +448,7 @@ function f30 name="sliceFirst" parameters=[{type=Array<number, proven, pristine[
     v4 = NewClosure function=f11
     v5 = NewArray contents=anything
     v6 = CallDirect v3, v4, v5 function=f7
-    v7 = Claim v6 castType=Array<number> cause=AddedByPass
+    v7 = AssumeType v6 castType=Array<number>
     Return v7
 }
 # CHECK-LABEL: function f30 name="sliceFirst"
@@ -467,7 +467,7 @@ function f31 name="sliceToTheEnd" parameters=[{type=Array<number, proven, pristi
     v3 = NewClosure function=f11
     v4 = NewArray contents=anything
     v5 = CallDirect v2, v3, v4 function=f7
-    v6 = Claim v5 castType=Array<number> cause=AddedByPass
+    v6 = AssumeType v5 castType=Array<number>
     Return v6
 }
 # CHECK-LABEL: function f31 name="sliceToTheEnd"
@@ -486,7 +486,7 @@ function f32 name="sliceWithNumberArgument" parameters=[{type=Array<number, prov
     v3 = NewClosure function=f11
     v4 = NewArray contents=anything
     v5 = CallDirect v2, v3, v4 function=f7
-    v6 = Claim v5 castType=Array<number> cause=AddedByPass
+    v6 = AssumeType v5 castType=Array<number>
     Return v6
 }
 # CHECK-LABEL: function f32 name="sliceWithNumberArgument"
@@ -498,11 +498,11 @@ function f33 name="thisArguments" parameters=[{type=Array<number, proven, pristi
     v3 = NewClosure function=f10
     v4 = NewArray v1 contents=anything
     v5 = CallDirect v0, v3, v4 function=f2
-    v6 = Claim v5 castType=Array<number> cause=AddedByPass
+    v6 = AssumeType v5 castType=Array<number>
     v7 = NewClosure function=f11
     v8 = NewArray v2 contents=anything
     v9 = CallDirect v6, v7, v8 function=f7
-    v10 = Claim v9 castType=Array<number> cause=AddedByPass
+    v10 = AssumeType v9 castType=Array<number>
     Return v10
 }
 # CHECK-LABEL: function f33 name="thisArguments"
@@ -521,21 +521,21 @@ function f34 name="fourLinks" parameters=[{type=Array<number, proven, pristine[S
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = AssumeType v4 castType=Array<number, proven, pristine[Storage, Names]>
     v6 = NewClosure function=f10
     v7 = NewArray contents=anything
     v8 = CallDirect v5, v6, v7 function=f2
-    v9 = Claim v8 castType=Array<number> cause=AddedByPass
+    v9 = AssumeType v8 castType=Array<number>
     v10 = AssumeType v9 castType=Array<number, proven>
     v11 = NewClosure function=f11
     v12 = NewArray contents=anything
     v13 = CallDirect v10, v11, v12 function=f7
-    v14 = Claim v13 castType=Array<number> cause=AddedByPass
+    v14 = AssumeType v13 castType=Array<number>
     v15 = NewClosure function=f10
     v16 = NewArray contents=anything
     v17 = CallDirect v14, v15, v16 function=f2
-    v18 = Claim v17 castType=Array<number> cause=AddedByPass
+    v18 = AssumeType v17 castType=Array<number>
     Return v18
 }
 # CHECK-LABEL: function f34 name="fourLinks"
@@ -572,7 +572,7 @@ function f36 name="bothFormsOfLink" parameters=[{type=Array<number, proven, pris
     v3 = NewClosure function=f11
     v4 = NewArray contents=anything
     v5 = CallDirect v2, v3, v4 function=f7
-    v6 = Claim v5 castType=Array<number> cause=AddedByPass
+    v6 = AssumeType v5 castType=Array<number>
     Return v6
 }
 # CHECK-LABEL: function f36 name="bothFormsOfLink"
@@ -594,11 +594,11 @@ function f37 name="sourceGuardedByTest" parameters=[{type=Array<number, proven>}
     v3 = NewClosure function=f10
     v4 = NewArray contents=anything
     v5 = CallDirect v0, v3, v4 function=f2
-    v6 = Claim v5 castType=Array<number> cause=AddedByPass
+    v6 = AssumeType v5 castType=Array<number>
     v7 = NewClosure function=f11
     v8 = NewArray contents=anything
     v9 = CallDirect v6, v7, v8 function=f7
-    v10 = Claim v9 castType=Array<number> cause=AddedByPass
+    v10 = AssumeType v9 castType=Array<number>
     Return v10
   b2():
     Return v0
@@ -619,7 +619,7 @@ function f38 name="oneCall" parameters=[{type=Array<number, proven, pristine[Sto
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     Return v4
 }
 # CHECK-LABEL: function f38 name="oneCall"
@@ -630,11 +630,11 @@ function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     v5 = NewClosure function=f11
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f7
-    v8 = Claim v7 castType=Array<number> cause=AddedByPass
+    v8 = AssumeType v7 castType=Array<number>
     PutModuleVariable v4 variable=g0
     Return v8
 }
@@ -647,13 +647,13 @@ function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
-    v4 = Claim v3 castType=Array<number> cause=AddedByPass
+    v4 = AssumeType v3 castType=Array<number>
     Jump -> next b1()
   b1():
     v5 = NewClosure function=f11
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f7
-    v8 = Claim v7 castType=Array<number> cause=AddedByPass
+    v8 = AssumeType v7 castType=Array<number>
     Return v8
 }
 # CHECK-LABEL: function f40 name="otherBlock"
@@ -667,11 +667,11 @@ function f41 name="rareBlock" parameters=[{type=Array<number, proven, pristine[S
     v2 = NewClosure function=f10
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f2
-    v5 = Claim v4 castType=Array<number> cause=AddedByPass
+    v5 = AssumeType v4 castType=Array<number>
     v6 = NewClosure function=f11
     v7 = NewArray contents=anything
     v8 = CallDirect v5, v6, v7 function=f7
-    v9 = Claim v8 castType=Array<number> cause=AddedByPass
+    v9 = AssumeType v8 castType=Array<number>
     Return v9
   b2():
     Return v0
@@ -685,7 +685,7 @@ function f42 name="joinWithUnknownSeparator" parameters=[{type=Array<number, pro
     v2 = NewClosure function=f15
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f7
-    v5 = Claim v4 castType=Array<string> cause=AddedByPass
+    v5 = AssumeType v4 castType=Array<string>
     v6 = AssumeType v5 castType=Array<string, proven>
     v7 = CallBuiltin v6, v1 overload=ArrayPrototypeJoin/0
     Return v7

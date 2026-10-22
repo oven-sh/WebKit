@@ -21,13 +21,16 @@ const lazyOwnProperty = (type: b.TableType) =>
     implementation: b.generic,
   }) satisfies b.GetterField;
 
+// FunctionPrototype.cpp argumentsGetter, callerGetter.
 const poisoned = {
+  this: b.any.refusing(b.null),
   getter: b.any,
   capability: "heap",
   throws: true,
   uses: { this: b.inspected },
   implementation: b.generic,
   setter: {
+    this: b.any.refusing(b.null),
     value: b.any,
     capability: "none",
     throws: true,
@@ -39,6 +42,7 @@ const poisoned = {
 export default b.declarations(
   b.class("Function", {
     isNeverPristine: true,
+    pristineTest: "ClosureAsCreated",
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
     openNamesOfPrototype: ["demethodize", "unThis"],
@@ -55,7 +59,7 @@ export default b.declarations(
       arguments: poisoned,
       caller: poisoned,
       apply: {
-        this: b.any,
+        this: b.any.refusing(b.null),
         args: { thisArg: b.any.optional, argumentList: b.any.optional },
         returns: b.callbackResult("this"),
         capability: "js",

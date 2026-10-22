@@ -112,7 +112,9 @@ NEVER_INLINE ParsedJSONString makeUncachedJSONString(Instance& instance, VM& vm,
     JSString* string = vm.jsonCache().tryMakeJSString(vm, std::span<const Latin1Character> { byteCast<Latin1Character>(start), byteCast<Latin1Character>(cursor) });
     if (!string) [[unlikely]]
         return { jsEmptyString(vm) };
-    vm.jsonCache().addString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding }, cursor + 2 - start, string);
+    // Only a source that is no Latin-1 text asks, so only there is it worth finding out.
+    bool textIsASCII = words.sourceEncoding != JSONSourceEncoding::Latin1 && charactersAreAllASCII(std::span<const uint8_t> { start, cursor });
+    vm.jsonCache().addString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding }, cursor + 2 - start, string, textIsASCII);
     return { string, cursor + 1 };
 }
 

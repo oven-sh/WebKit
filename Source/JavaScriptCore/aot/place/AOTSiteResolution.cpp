@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTPlacementCheck.h"
@@ -28,7 +29,7 @@ static_assert(defaultLimitValue(LimitID::MaxEvalBindingOffset, hostArchitecture(
 
 static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Opcode::NewObject, Opcode::MaterializeEnvironment });
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
-static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::IsMemberUnchanged, Opcode::IsPrototypeLinkUnchanged, Opcode::IsClassEvaluatedOnce });
+static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithRequest == OpcodeSet {
     Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
     Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject
@@ -60,6 +61,8 @@ public:
     FunctionResolver(const ResolutionInputs&, FunctionID, Function&);
 
     Vector<PendingRequest> run();
+    void resolveFieldAccesses(Vector<ValueID>& valuesWithOtherWords);
+    Vector<PendingRequest> resolveOtherWordsOf(std::span<const ValueID>);
 
 private:
     const Program& program() const { return m_inputs.context.program; }
@@ -74,7 +77,7 @@ private:
     FieldAccessID fieldAccessOf(PropertyKeyID, LayoutSetID receivers, bool isStore) const;
     AllocationID allocationOf(ValueID, const Value&) const;
     AllocationID closureAllocationOf(const Value&) const;
-    AllocationID cellAllocationOf(ValueID, LayoutID, uint32_t shape, std::span<const FieldIndex> initialFields) const;
+    AllocationID cellAllocationOf(ValueID, LayoutID, uint32_t shape, std::span<const FieldIndex> initialFields, bool holdsInnerObjects = false) const;
     RegExpRecordID regExpRecordOf(ValueID, const Value&) const;
     std::optional<StaticsOffset> staticsOffsetOf(const Value&) const;
     std::optional<StaticsOffset> arrayProfileOffsetOf(const Value&) const;
@@ -118,9 +121,46 @@ Vector<PendingRequest> FunctionResolver::run()
 {
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
-            Value& value = m_function.at(id);
+            Value& value = m_function.edit(id);
             if (m_inputs.resolvedOpcodes.contains(value.opcode))
                 resolveValue(id, value);
+        }
+    }
+    return WTF::move(m_requests);
+}
+
+// The two halves of run(): between them they hand every field to resolveField() that run() does.
+void FunctionResolver::resolveFieldAccesses(Vector<ValueID>& valuesWithOtherWords)
+{
+    for (auto& block : m_function.blocks) {
+        for (ValueID id : block.values) {
+            if (!m_inputs.resolvedOpcodes.contains(m_function.at(id).opcode))
+                continue;
+            Value& value = m_function.edit(id);
+            if (Value::opcodesWithPlacedKeys.contains(value.opcode))
+                resolvePlacedKeys(value);
+            bool hasOtherWords = false;
+            for (const PayloadFieldInfo& field : payloadFieldsOf(value.opcode)) {
+                if (field.firstForm != IRForm::Placed)
+                    continue;
+                if (field.kind == PayloadKind::FieldAccess)
+                    resolveField(id, value, field);
+                else if (field.kind != PayloadKind::SiteCache && field.kind != PayloadKind::GlobalBinding)
+                    hasOtherWords = true;
+            }
+            if (hasOtherWords)
+                valuesWithOtherWords.append(id);
+        }
+    }
+}
+
+Vector<PendingRequest> FunctionResolver::resolveOtherWordsOf(std::span<const ValueID> values)
+{
+    for (ValueID id : values) {
+        Value& value = m_function.edit(id);
+        for (const PayloadFieldInfo& field : payloadFieldsOf(value.opcode)) {
+            if (field.firstForm == IRForm::Placed && field.kind != PayloadKind::FieldAccess)
+                resolveField(id, value, field);
         }
     }
     return WTF::move(m_requests);
@@ -160,10 +200,7 @@ void FunctionResolver::resolveField(ValueID id, Value& value, const PayloadField
     case PayloadKind::GuardBit:
         value.setGuardBit(guardBitOf(value));
         return;
-    case PayloadKind::UInt32:
-        RELEASE_ASSERT(Value::opcodesWithEdge.contains(value.opcode));
-        value.setEdge(placement().requireEdge(value.referrer(), value.module()));
-        return;
+    case PayloadKind::GlobalBinding:
     case PayloadKind::SiteCache:
         return;
     case PayloadKind::String:
@@ -183,6 +220,7 @@ void FunctionResolver::resolveField(ValueID id, Value& value, const PayloadField
     case PayloadKind::Enum:
     case PayloadKind::Flags:
     case PayloadKind::Bool:
+    case PayloadKind::UInt32:
     case PayloadKind::Int64:
     case PayloadKind::Double:
     case PayloadKind::External:
@@ -201,23 +239,33 @@ void FunctionResolver::resolveField(ValueID id, Value& value, const PayloadField
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void FunctionResolver::resolvePlacedKeys(Value& value)
+static FieldAccessID fieldAccessIn(const Placement& placement, PropertyKeyID key, LayoutSetID receivers, bool isStore)
+{
+    FieldAccessID access = placement.findFieldAccess(key, receivers, isStore);
+    RELEASE_ASSERT(access);
+    return access;
+}
+
+static void resolvePlacedKeysIn(const Placement& placement, Value& value)
 {
     LayoutSetID receivers = value.receivers();
     auto placedKeys = value.placedKeys();
     Vector<PlacedKey, 8> keys(placedKeys.size(), [&](size_t index) {
         PlacedKey placedKey = placedKeys[index];
-        placedKey.fieldAccess = fieldAccessOf(placedKey.key, receivers, true);
+        placedKey.fieldAccess = fieldAccessIn(placement, placedKey.key, receivers, true);
         return placedKey;
     });
     value.setPlacedKeys(keys.span());
 }
 
+void FunctionResolver::resolvePlacedKeys(Value& value)
+{
+    resolvePlacedKeysIn(placement(), value);
+}
+
 FieldAccessID FunctionResolver::fieldAccessOf(PropertyKeyID key, LayoutSetID receivers, bool isStore) const
 {
-    FieldAccessID access = placement().findFieldAccess(key, receivers, isStore);
-    RELEASE_ASSERT(access);
-    return access;
+    return fieldAccessIn(placement(), key, receivers, isStore);
 }
 
 AllocationID FunctionResolver::allocationOf(ValueID id, const Value& value) const
@@ -227,7 +275,7 @@ AllocationID FunctionResolver::allocationOf(ValueID id, const Value& value) cons
     case Opcode::NewClosure:
         return closureAllocationOf(value);
     case Opcode::NewObject:
-        return cellAllocationOf(id, value.layout(), shapes.shapeOf(value.layout(), value.allocationClass()), value.fields());
+        return cellAllocationOf(id, value.layout(), shapes.shapeOf(value.layout(), value.allocationClass()), value.fields(), takesCellWithInnerObjects(m_inputs.context.slots(), value));
     case Opcode::MaterializeEnvironment:
         return cellAllocationOf(id, value.layout(), shapes.generalShapeOf(value.layout()), { });
     default:
@@ -249,9 +297,9 @@ AllocationID FunctionResolver::closureAllocationOf(const Value& value) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-AllocationID FunctionResolver::cellAllocationOf(ValueID id, LayoutID layout, uint32_t shape, std::span<const FieldIndex> initialFields) const
+AllocationID FunctionResolver::cellAllocationOf(ValueID id, LayoutID layout, uint32_t shape, std::span<const FieldIndex> initialFields, bool holdsInnerObjects) const
 {
-    AllocationID allocation = placement().allocations().find(layout, shape, initialFields);
+    AllocationID allocation = placement().allocations().find(layout, shape, initialFields, holdsInnerObjects);
     if (!allocation)
         m_inputs.failures.fail(PlacementRule::AllocationOfUnplacedLayout, layout, m_id, id);
     return allocation;
@@ -316,18 +364,7 @@ std::optional<OrderWord> FunctionResolver::orderWordOf(const Value& value) const
 
 GuardBitID FunctionResolver::guardBitOf(const Value& value) const
 {
-    const GuardBitTable& guardBits = placement().guardBits();
-    switch (value.opcode) {
-    case Opcode::IsMemberUnchanged:
-        return guardBits.find(value.layout(), value.side(), MemberGuardKind::Member, value.key());
-    case Opcode::IsPrototypeLinkUnchanged:
-        return guardBits.find(value.layout(), value.side(), MemberGuardKind::PrototypeLink, { });
-    case Opcode::IsClassEvaluatedOnce:
-        return guardBits.find(value.layout(), ClassSide::Static, MemberGuardKind::EvaluatedOnce, { });
-    default:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return placement().guardBits().find(value.conditions());
 }
 
 void FunctionResolver::addRequest(ValueID id, const Value& value)
@@ -402,9 +439,11 @@ RequestRecord FunctionResolver::dataRecordOf(const Value& value) const
     DataID data = value.data();
     switch (value.encoding()) {
     case DataEncoding::ReadOnlyTree:
-        return DataRecord { data, std::nullopt };
+        return DataRecord { data, std::nullopt, std::nullopt };
     case DataEncoding::CopyOnWriteArray:
-        return DataRecord { data, offsetOfKey(sites().copyOnWriteArrays, literals().sharedStorageOffsets, data) };
+        if (isStorageOfArray(program().at(data).root.as<DataNode::Array>()))
+            return DataRecord { data, std::nullopt, offsetOfKey(sites().arraysWithStorageInImage, literals().nodesOfStorageInImage, data) };
+        return DataRecord { data, offsetOfKey(sites().copyOnWriteArrays, literals().sharedStorageOffsets, data), std::nullopt };
     case DataEncoding::Unselected:
     case DataEncoding::Expanded:
         break;
@@ -442,7 +481,7 @@ static OpcodeSet computeResolvedOpcodes()
     OpcodeSet opcodes = Value::opcodesWithPlacedKeys;
     for (Opcode opcode : allMembersOf<Opcode>) {
         bool hasResolvedField = std::ranges::any_of(payloadFieldsOf(opcode), [](const PayloadFieldInfo& field) {
-            return field.firstForm == IRForm::Placed && field.kind != PayloadKind::SiteCache;
+            return field.firstForm == IRForm::Placed && field.kind != PayloadKind::SiteCache && field.kind != PayloadKind::GlobalBinding;
         });
         if (hasResolvedField)
             opcodes.add(opcode);
@@ -464,7 +503,7 @@ static Vector<FunctionRequests> collectFunctions(ProgramEditor& editor)
     Vector<FunctionRequests> functions;
     for (uint32_t i = 0; i < program.functions.size(); ++i) {
         if (program.functions[i].hasBody())
-            functions.append(FunctionRequests { FunctionID(i), &editor.at(FunctionID(i)), { } });
+            functions.append(FunctionRequests { FunctionID(i), &editor.atForPlacedWords(FunctionID(i)), { } });
     }
     return functions;
 }
@@ -489,6 +528,17 @@ static ResolvedSites numberRequests(const Program& program, Vector<FunctionReque
     return resolved;
 }
 
+static ResolvedSites numberAndWriteRequests(const PlacementContext& context, Vector<FunctionRequests>& functions)
+{
+    ResolvedSites resolved = numberRequests(context.program, functions);
+    forEachIndexInParallel(context.build.parallelLoops(), functions.size(), [&](unsigned index) {
+        auto& entry = functions[index];
+        for (auto& pending : entry.requests)
+            entry.function->edit(pending.value).setRequest(pending.request);
+    });
+    return resolved;
+}
+
 ResolvedSites resolveSites(ProgramEditor& editor, const PlacementContext& context, const SiteResolutionInputs& steps)
 {
     checkTerminatorPayloads();
@@ -500,13 +550,34 @@ ResolvedSites resolveSites(ProgramEditor& editor, const PlacementContext& contex
         auto& entry = functions[index];
         entry.requests = FunctionResolver(inputs, entry.id, *entry.function).run();
     });
-    ResolvedSites resolved = numberRequests(context.program, functions);
-    forEachIndexInParallel(loops, functions.size(), [&](unsigned index) {
+    return numberAndWriteRequests(context, functions);
+}
+
+void resolveFieldAccesses(const PlacementContext& context, const SiteResolutionInputs& steps, FunctionID id, Function& function, Vector<ValueID>& valuesWithOtherWords)
+{
+    static const OpcodeSet resolvedOpcodes = computeResolvedOpcodes();
+    PlacementFailureSink failures(context.build);
+    ResolutionInputs inputs { context, steps, failures, resolvedOpcodes };
+    FunctionResolver(inputs, id, function).resolveFieldAccesses(valuesWithOtherWords);
+}
+
+ResolvedSites resolveOtherWords(ProgramEditor& editor, const PlacementContext& context, const SiteResolutionInputs& steps, std::span<const Vector<ValueID>> valuesWithOtherWords)
+{
+    checkTerminatorPayloads();
+    const Program& program = context.program;
+    RELEASE_ASSERT(valuesWithOtherWords.size() == program.functions.size());
+    PlacementFailureSink failures(context.build);
+    ResolutionInputs inputs { context, steps, failures, computeResolvedOpcodes() };
+    Vector<FunctionRequests> functions;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (program.functions[index].hasBody() && !valuesWithOtherWords[index].isEmpty())
+            functions.append(FunctionRequests { FunctionID(index), &editor.atForPlacedWords(FunctionID(index)), { } });
+    }
+    forEachIndexInParallel(context.build.parallelLoops(), functions.size(), [&](unsigned index) {
         auto& entry = functions[index];
-        for (auto& pending : entry.requests)
-            entry.function->at(pending.value).setRequest(pending.request);
+        entry.requests = FunctionResolver(inputs, entry.id, *entry.function).resolveOtherWordsOf(valuesWithOtherWords[entry.id.index()].span());
     });
-    return resolved;
+    return numberAndWriteRequests(context, functions);
 }
 
 } } } // namespace JSC::AOT::Typed

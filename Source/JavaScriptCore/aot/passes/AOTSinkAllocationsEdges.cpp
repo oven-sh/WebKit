@@ -69,16 +69,22 @@ static bool isJoinReboundOnEdge(const ObjectInterpreter& interpreter, Allocation
     return interpreter.objectOf(bindingOfJoin(sinking, interpreter.mode(), outgoing, object).value) != object;
 }
 
-static bool isReferenced(const SinkingState& state, VirtualObjectID object)
+static BitVector collectReferencedObjects(const SinkingState& state)
 {
-    bool isAliased = state.aliases.containsIf([&](const AliasEntry& alias) {
-        return alias.object == object;
-    });
-    return isAliased || state.objects.containsIf([&](const ObjectEntry& holder) {
-        return holder.state.heldObjects.containsIf([&](const HeldObject& entry) {
-            return entry.object == object;
-        });
-    });
+    BitVector referencedObjects;
+    for (const AliasEntry& alias : state.aliases)
+        referencedObjects.set(alias.object.index());
+    for (const ObjectEntry& holder : state.objects) {
+        for (const HeldObject& entry : holder.state.heldObjects)
+            referencedObjects.set(entry.object.index());
+    }
+    return referencedObjects;
+}
+
+static bool isParameterOf(const UseLists& useLists, BlockID block, ValueID value)
+{
+    ValueLocation location = useLists.locationOf(value);
+    return location.placement == ValuePlacement::Parameter && location.block == block;
 }
 
 static bool hasFieldHoldingCells(AllocationSinking& sinking, VirtualObjectID object)
@@ -89,18 +95,6 @@ static bool hasFieldHoldingCells(AllocationSinking& sinking, VirtualObjectID obj
             return true;
     }
     return false;
-}
-
-static BitVector loadableFieldsOf(const AllocationSinking& sinking, VirtualObjectID object)
-{
-    const VirtualFamily& family = sinking.familyOf(object);
-    const VirtualObjectDescription& description = sinking.descriptionOf(object);
-    BitVector fields;
-    for (uint32_t field = 0; field < family.numberOfFields(); ++field) {
-        if (canLoadSpeculatively(sinking.objectContext(), description, family.fieldAt(field)) == SpeculativeLoad::Safe)
-            fields.set(field);
-    }
-    return fields;
 }
 
 static void requireCellInCoveredBlock(AllocationSinking& sinking, SinkingState& state, BlockID covered, VirtualObjectID object)
@@ -169,11 +163,21 @@ static void removeDeadEntries(AllocationSinking& sinking, SinkingState& state, B
     if (state.objects.isEmpty() && state.aliases.isEmpty() && state.tests.isEmpty())
         return;
 
-    const Liveness& liveness = sinking.analyses().liveness();
-    const CompactList<ValueID>& parameters = sinking.function().at(target).parameters;
+    const UseLists& useLists = sinking.analyses().useLists();
     auto isLive = [&](ValueID value) {
-        return parameters.contains(value) || liveness.isLiveAtHead(value, target);
+        return isParameterOf(useLists, target, value) || sinking.isLiveAtHead(value, target);
     };
+    // Mostly nothing dies.
+    bool everyNameIsLive = std::ranges::all_of(state.objects, [&](const ObjectEntry& entry) {
+        return isLive(sinking.at(entry.object).definition);
+    }) && std::ranges::all_of(state.aliases, [&](const AliasEntry& alias) {
+        return isLive(alias.value);
+    }) && std::ranges::all_of(state.tests, [&](const TestEntry& test) {
+        return isLive(test.test);
+    });
+    if (everyNameIsLive)
+        return;
+
     state.aliases.removeAllMatching([&](const AliasEntry& alias) {
         return !isLive(alias.value);
     });
@@ -181,46 +185,86 @@ static void removeDeadEntries(AllocationSinking& sinking, SinkingState& state, B
         return !isLive(test.test);
     });
 
-    BitVector isLiveObject(sinking.numberOfCandidates());
-    Vector<VirtualObjectID, 8> worklist;
-    auto markLive = [&](VirtualObjectID object) {
-        if (object && state.find(object) && !isLiveObject.quickSet(object.index()))
-            worklist.append(object);
+    size_t numberOfEntries = state.objects.size();
+    Vector<bool, 16> isLiveEntry(FillWith { }, numberOfEntries, false);
+    size_t numberOfLiveEntries = 0;
+    Vector<uint32_t, 8> worklist;
+    auto markEntryLive = [&](size_t index) {
+        if (std::exchange(isLiveEntry[index], true))
+            return;
+        ++numberOfLiveEntries;
+        if (!state.objects[index].state.heldObjects.isEmpty())
+            worklist.append(static_cast<uint32_t>(index));
     };
+    auto markLive = [&](VirtualObjectID object) {
+        if (!object || numberOfLiveEntries == numberOfEntries)
+            return;
+        if (std::optional<size_t> index = state.indexOf(object))
+            markEntryLive(*index);
+    };
+    for (size_t index = 0; index < numberOfEntries; ++index) {
+        if (isLive(sinking.at(state.objects[index].object).definition))
+            markEntryLive(index);
+    }
     for (const AliasEntry& alias : state.aliases)
         markLive(alias.object);
     for (const TestEntry& test : state.tests)
         markLive(test.object);
-    for (const ObjectEntry& entry : state.objects) {
-        if (isLive(sinking.at(entry.object).definition))
-            markLive(entry.object);
-    }
     while (!worklist.isEmpty()) {
-        for (const HeldObject& entry : state.find(worklist.takeLast())->heldObjects)
+        for (const HeldObject& entry : state.objects[worklist.takeLast()].state.heldObjects)
             markLive(entry.object);
     }
-    state.objects.removeAllMatching([&](const ObjectEntry& entry) {
-        return !isLiveObject.quickGet(entry.object.index());
+    if (numberOfLiveEntries == numberOfEntries)
+        return;
+    size_t index = 0;
+    state.objects.removeAllMatching([&](const ObjectEntry&) {
+        return !isLiveEntry[index++];
     });
 }
 
 void ObjectInterpreter::enterEdge(const OutgoingEdge& outgoing, const Terminator* terminator, const SinkingState* headOfTarget)
 {
-    m_enteredEdge = EnteredEdge { &outgoing, terminator, { }, { }, { } };
+    m_enteredEdge.edge = &outgoing;
+    m_enteredEdge.terminator = terminator;
+    m_enteredEdge.newAliases.shrink(0);
+    m_enteredEdge.newJoinStates.shrink(0);
+    m_enteredEdge.consumedSources.shrink(0);
     uint32_t targetIndex = outgoing.edge.targetIndex;
-    bool isTaken = m_state.isReachable && !m_sinking.isIgnored(outgoing.edge) && !(terminator && isDeadEdge(*terminator, targetIndex));
+    // While the function is rewritten its blocks get parameters that the names know nothing of.
+    bool isPlain = !isRewriting() && m_sinking.isPlain(outgoing.edge, outgoing.target);
+    bool takesShortcuts = isPlain && !m_sinking.checksShortcuts();
+    bool isTaken = m_state.isReachable && (takesShortcuts || (!m_sinking.isIgnored(outgoing.edge) && !(terminator && isDeadEdge(*terminator, targetIndex))));
+    RELEASE_ASSERT(!isPlain || isTaken || !m_state.isReachable);
     if (!isTaken || (m_mode != SinkingMode::Analyze && !headOfTarget)) {
         m_state = SinkingState::unreachableAt(outgoing.target);
         return;
     }
 
-    if (terminator)
-        narrowOnEdge(*terminator, targetIndex);
-    bindParameters(outgoing);
-    applyDecisions(outgoing);
-    commitBindings();
+    if (takesShortcuts) {
+        forgetAnswersOfTests();
+        if (m_sinking.decisions().buildsAtHeadOf(outgoing.target))
+            applyDecisions(outgoing);
+    } else {
+        std::optional<SinkingState> stateBefore;
+        if (isPlain) [[unlikely]] {
+            stateBefore = m_state;
+            ObjectInterpreter(m_sinking, m_mode, *stateBefore).forgetAnswersOfTests();
+        }
+        if (terminator)
+            narrowOnEdge(*terminator, targetIndex);
+        bindParameters(outgoing);
+        RELEASE_ASSERT(!isPlain || (m_state == *stateBefore && m_enteredEdge.newAliases.isEmpty() && m_enteredEdge.newJoinStates.isEmpty() && m_enteredEdge.consumedSources.isEmpty()));
+        RELEASE_ASSERT(!isPlain || !objectOf(function().at(outgoing.target).subject));
+        applyDecisions(outgoing);
+        RELEASE_ASSERT(!isPlain || m_sinking.decisions().buildsAtHeadOf(outgoing.target) || m_state == *stateBefore);
+        if (isPlain) [[unlikely]]
+            stateBefore = m_state;
+        commitBindings();
+        RELEASE_ASSERT(!isPlain || m_state == *stateBefore);
+    }
     dropDeadEntries(outgoing.target, headOfTarget);
-    abandonJoinsOfLiveSources();
+    if (!takesShortcuts)
+        abandonJoinsOfLiveSources();
     makeFieldsOfCellsValid(outgoing, headOfTarget);
 
     bool meetsStatesOfCoveredBlock = m_mode == SinkingMode::Analyze && outgoing.edge.isHandlerEdge();
@@ -234,6 +278,33 @@ void ObjectInterpreter::enterEdge(const OutgoingEdge& outgoing, const Terminator
     }
     m_state.block = outgoing.target;
     m_state.isAtHead = true;
+}
+
+// Everything that enterEdge() does there in one look at each object. Where a name has died or something is to be built, enterEdge() does it.
+bool ObjectInterpreter::tryEnterPlainEdge(BlockID target)
+{
+    ASSERT(m_mode == SinkingMode::Analyze && m_state.isReachable);
+    if (m_sinking.decisions().buildsAtHeadOf(target) || !m_state.aliases.isEmpty() || !m_state.tests.isEmpty())
+        return false;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!m_sinking.isDefinitionLiveIn(entry.object, target))
+            return false;
+    }
+
+    bool canMeetOtherShapes = m_sinking.inputs().mergeBlocks.get(target.index());
+    for (ObjectEntry& entry : m_state.objects) {
+        ObjectState& state = entry.state;
+        if (state.isCell()) {
+            if (canMeetOtherShapes && !m_sinking.at(entry.object).isJoin)
+                state.fieldsValidInCell = m_sinking.loadableFieldsOf(entry.object);
+            else
+                state.fieldsValidInCell.clearAll();
+        }
+        state.normalize();
+    }
+    m_state.block = target;
+    m_state.isAtHead = true;
+    return true;
 }
 
 void ObjectInterpreter::applyDecisions(const OutgoingEdge& outgoing)
@@ -311,6 +382,8 @@ void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& b
     VirtualObjectID source = objectOf(binding.value);
     if (source == join)
         return;
+    if (m_mode == SinkingMode::Count && source)
+        m_sinking.didEnterJoin(join, source);
     if (binding.kind == IncomingBinding::Kind::Other)
         m_sinking.abandon(join);
     if (source) {
@@ -353,16 +426,21 @@ void ObjectInterpreter::commitBindings()
             valuesOfJoins.append({ join.object, valuesEnteringJoin(*this, m_sinking, m_enteredEdge, join) });
     }
 
-    const CompactList<ValueID>& parameters = function().at(m_enteredEdge.edge->target).parameters;
-    m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
-        return parameters.contains(alias.value);
-    });
+    BlockID target = m_enteredEdge.edge->target;
+    if (isRewriting()) {
+        const CompactList<ValueID>& parameters = function().at(target).parameters;
+        m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
+            return parameters.contains(alias.value);
+        });
+    } else if (!m_state.aliases.isEmpty()) {
+        const UseLists& useLists = m_sinking.analyses().useLists();
+        m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
+            return isParameterOf(useLists, target, alias.value);
+        });
+    }
     for (const AliasEntry& alias : m_enteredEdge.newAliases)
         m_state.setAlias(alias.value, alias.object, alias.kind);
-    for (const ObjectEntry& join : m_enteredEdge.newJoinStates) {
-        m_state.remove(join.object);
-        m_state.add(join.object, ObjectState(join.state));
-    }
+    m_state.set(m_enteredEdge.newJoinStates.mutableSpan());
     for (auto& [join, joinValues] : valuesOfJoins)
         values().ensure(join) = WTF::move(joinValues);
 }
@@ -379,8 +457,11 @@ void ObjectInterpreter::abandonJoinsOfLiveSources()
         if (hasSeveralJoins || stateOf(consumed.source))
             m_sinking.abandon(consumed.join);
     }
+    if (m_enteredEdge.newJoinStates.isEmpty())
+        return;
+    BitVector referencedObjects = collectReferencedObjects(m_state);
     for (const ObjectEntry& join : m_enteredEdge.newJoinStates) {
-        if (isReferenced(m_state, join.object))
+        if (referencedObjects.get(join.object.index()))
             m_sinking.abandon(join.object);
     }
 }
@@ -389,6 +470,7 @@ void ObjectInterpreter::makeFieldsOfCellsValid(const OutgoingEdge& outgoing, con
 {
     bool isHandlerEdge = outgoing.edge.isHandlerEdge();
     bool canMeetOtherShapes = m_sinking.inputs().mergeBlocks.get(outgoing.target.index());
+    m_noCellHasValidFields = false;
     for (ObjectEntry& entry : m_state.objects) {
         ObjectState& state = entry.state;
         if (!state.hasCell())
@@ -401,7 +483,10 @@ void ObjectInterpreter::makeFieldsOfCellsValid(const OutgoingEdge& outgoing, con
         if (isJoin || !state.isCell())
             continue;
         if (m_mode == SinkingMode::Analyze) {
-            state.fieldsValidInCell = canMeetOtherShapes ? loadableFieldsOf(m_sinking, entry.object) : BitVector();
+            if (canMeetOtherShapes)
+                state.fieldsValidInCell = m_sinking.loadableFieldsOf(entry.object);
+            else
+                state.fieldsValidInCell.clearAll();
             continue;
         }
 
@@ -449,10 +534,13 @@ void ObjectInterpreter::dropDeadEntries(BlockID target, const SinkingState* head
     }
     for (VirtualObjectID object : deadObjects) {
         m_state.remove(object);
-        if (isRewriting())
+        if (isRewriting()) {
             values().remove(object);
-        else
-            m_sinking.at(object).diesVirtual = true;
+            continue;
+        }
+        Candidate& candidate = m_sinking.at(object);
+        candidate.diesVirtual = true;
+        candidate.diesOutsideJoins |= !std::ranges::contains(m_enteredEdge.consumedSources, object, &ConsumedSource::source);
     }
     m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
         return !stateOf(alias.object);

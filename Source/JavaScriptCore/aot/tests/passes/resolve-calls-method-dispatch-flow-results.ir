@@ -2,14 +2,13 @@
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveCalls
 # RUN: pipeline ResolveCalls
-# CHECK: layout L0 {{*}}namedMembers=[{key="run" function=f2 mutability=Fixed closureUse=CalledOnly isWritableData=true}, {key="stop" function=f3 closureUse=CalledOnly isWritableData=true}, {key="stop" function=f10 closureUse=CalledOnly isWritableData=true}]
+# CHECK: layout L0 {{*}}namedMembers=[{key="run" function=f2 mutability=Fixed closureUse=CalledOnly isWritableData=true}, {key="stop" function=f3 closureUse=CalledOnly isWritableData=true}, {key="stop" function=f8 isWritableData=true}]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Task" constructor=f1
 layout L1 kind=Instance name="Job" constructor=f4
 layout L2 kind=Instance name="Leaked" constructor=f6
-layout L3 kind=Instance name="Panel" constructor=f8 fields=[{key="handler" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f1
@@ -29,29 +28,24 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v14 = NewClosure function=f7
     DefineMethod v13, v14 layout=L2 key="run"
     v16 = FinishClass v13 layout=L2
-    v17 = NewClosure function=f8
-    v18 = NewClass v17 layout=L3
-    v19 = FinishClass v18 layout=L3
-    v20 = PropGet v6 key="prototype"
-    v21 = NewClosure function=f10
-    PropSet v20, v21 key="stop"
-    v23 = Construct v6
-    v24 = Construct v11
-    v25 = Construct v16
-    v26 = Construct v19
-    v27 = Builtin builtin=GlobalThis
-    v28 = PropGet v27 key="text" [isFreeName]
-    v29 = Builtin builtin=Function
-    v30 = Construct v29, -, v28
-    v31 = Call v30, -, v25
-    v32 = CallDirect v23 function=f11
-    v33 = CallDirect v24 function=f11
-    v34 = CallDirect v23 function=f12
-    v35 = CallDirect v25 function=f13
-    v36 = CallDirect v26 function=f14
+    v17 = PropGet v6 key="prototype"
+    v18 = NewClosure function=f8
+    PropSet v17, v18 key="stop"
+    v20 = Construct v6
+    v21 = Construct v11
+    v22 = Construct v16
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="text" [isFreeName]
+    v25 = Builtin builtin=Function
+    v26 = Construct v25, -, v24
+    v27 = Call v26, -, v22
+    v28 = CallDirect v20 function=f9
+    v29 = CallDirect v21 function=f9
+    v30 = CallDirect v20 function=f10
+    v31 = CallDirect v22 function=f11
     Return
 }
-function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
@@ -65,7 +59,7 @@ function f3 name="stop" kind=Method flags=[HasThis] thisType={type=L0} results=[
   b0(v0):
     Return
 }
-function f4 name="Job" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L1}] {
+function f4 name="Job" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
@@ -75,7 +69,7 @@ function f5 name="run" kind=Method flags=[HasThis] thisType={type=L1} results=[{
   b0(v0):
     Return
 }
-function f6 name="Leaked" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L2}] {
+function f6 name="Leaked" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
@@ -85,36 +79,24 @@ function f7 name="run" kind=Method flags=[HasThis] thisType={type=L2} results=[{
   b0(v0):
     Return
 }
-function f8 name="Panel" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L3}] {
-  b0(v0: anything):
-    v1 = GetConstructPrototype v0 layout=L3
-    v2 = NewObject v1 layout=L3
-    v3 = NewClosure v2 function=f9
-    PropDefine v2, v3 key="handler"
-    Return v2
-}
-function f9 name="handler" kind=Arrow captures=[{type=L3}] results=[{type=anything}] {
-  b0(v0):
-    Return
-}
-function f10 name="replacement" results=[{type=anything}] {
+function f8 name="replacement" results=[{type=anything}] {
   b0():
     Return
 }
 
-function f11 name="two-classes" parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="two-classes" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
 }
-# CHECK-LABEL: function f11 name="two-classes"
+# CHECK-LABEL: function f9 name="two-classes"
 # CHECK: b0(v0: L0|L1):
-# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = TypeTest {{*}} testedType=L0
 # CHECK: = CallDirect {{*}} function=f2
 # CHECK: = CallDirect {{*}} function=f5
 # CHECK-NOT: = Call v
-function f12 name="replaced-method-and-its-neighbor" parameters=[{type=anything}] results=[{type=anything}] {
+function f10 name="replaced-method-and-its-neighbor" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="stop"
     v2 = Call v1, v0 calleeKey="stop"
@@ -122,35 +104,25 @@ function f12 name="replaced-method-and-its-neighbor" parameters=[{type=anything}
     v4 = Call v3, v0 calleeKey="run"
     Return v4
 }
-# CHECK-LABEL: function f12 name="replaced-method-and-its-neighbor"
+# CHECK-LABEL: function f10 name="replaced-method-and-its-neighbor"
 # CHECK: b0(v0: L0):
-# CHECK-NEXT: = PropGet v0 key="stop"
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="stop"}]
 # CHECK-NOT: key="run"
 # CHECK: = CallDirect v0 function=f2
 # CHECK-NOT: key="run"
 # CHECK: = CallDirect v0 function=f3
-# CHECK: = CallDirect function=f10
-function f13 name="object-reached-unknown-javascript" parameters=[{type=anything}] results=[{type=anything}] {
+# CHECK: = PropGet v0 key="stop"
+# CHECK: calleeKey="stop"{{*}}callees=[f3, f8]
+function f11 name="object-reached-unknown-javascript" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
 }
-# CHECK-LABEL: function f13 name="object-reached-unknown-javascript"
-# CHECK: b0(v0: object ~ L2):
+# CHECK-LABEL: function f11 name="object-reached-unknown-javascript"
+# CHECK: b0(v0: object):
 # CHECK-NOT: CallDirect
-# CHECK: = PropGet v0 key="run"
-# CHECK: , v0 calleeKey="run"
+# CHECK: = PropGet [[leaked]] key="run"
+# CHECK: , [[leaked]] calleeKey="run"
 # CHECK-NOT: CallDirect
-function f14 name="closure-over-its-own-object" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = PropGet v0 key="handler"
-    v2 = Call v1, v0 calleeKey="handler"
-    Return v2
-}
-# CHECK-LABEL: function f14 name="closure-over-its-own-object"
-# CHECK: b0(v0: L3):
-# CHECK-NOT: key="handler"
-# CHECK: = CallDirect v0 function=f9
-# CHECK-NOT: key="handler"
 # CHECK: Return

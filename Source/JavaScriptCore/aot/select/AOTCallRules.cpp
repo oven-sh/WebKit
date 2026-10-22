@@ -75,12 +75,13 @@ static std::optional<MethodCall> matchMethodCall(SelectionContext& context, Valu
     if (!isUntypedMethodRead(context, read, key))
         return std::nullopt;
 
-    FunctionAnalyses& analyses = context.analyses();
-    if (analyses.identityOf(thisValue) != analyses.identityOf(function.at(read).objectOperand()))
-        return std::nullopt;
     if (!isOrdinaryKey(context.program(), key) || !context.slots().hasColumn(key))
         return std::nullopt;
     if (isOwnedByReturnCall(context, id))
+        return std::nullopt;
+    FunctionAnalyses& analyses = context.analyses();
+    ValueID object = function.at(read).objectOperand();
+    if (thisValue != object && analyses.identityOf(thisValue) != analyses.identityOf(object))
         return std::nullopt;
     return MethodCall { groupOf({ read, id }), read };
 }
@@ -136,13 +137,13 @@ static bool canCallResolvedTarget(SelectionContext& context, ValueID id)
 {
     const Function& function = context.function();
     const Value& call = function.at(id);
-    if (context.isClaimed(id) || context.isOnSlowPath(id) || call.expectedResult() || numberOfArgumentsOf(call) > numberOfArgumentGPRs)
+    if (context.isClaimed(id) || context.isOnSlowPath(id) || call.expectedResult() || numberOfArgumentsOf(call) > numberOfArgumentGPRs || argumentsLentBy(function, call))
         return false;
 
     BlockID block = context.analyses().useLists().blockOf(id);
     if (!block || isOwnedByReturnCall(context, id))
         return false;
-    return function.at(block).frequency != BlockFrequency::Rare && context.shapeOf(block) != CodeShape::Compact;
+    return function.at(block).frequency != BlockFrequency::Rare && context.shapeOf(block) == CodeShape::Fast;
 }
 
 static Vector<ResolvedCalls> findCallsOfInvariantCallees(SelectionContext& context)
@@ -215,7 +216,7 @@ void selectResolvedCallTarget(SelectionContext& context)
         if (result != LoopEntryResult::Emitted)
             return;
         for (ValueID call : match.calls)
-            convertToCallResolved(rewriter.function().at(call), target);
+            convertToCallResolved(rewriter.function().edit(call), target);
     });
 }
 

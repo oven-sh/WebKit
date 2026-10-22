@@ -34,4 +34,4 @@ function f2 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 # CHECK: request 8 DirectEval module=m0 strict inFunction
-# CHECK-NEXT: binding name={{*}} kind=PrivateName depth=0 operand=- function=- setter=- privateKey=- slot=OptionalDouble@0
+# CHECK-NEXT: binding name={{*}} kind=PrivateName depth=0 operand=- function=- setter=- privateKey=- slot=JSValue@0

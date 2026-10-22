@@ -31,7 +31,7 @@ public:
     static DerivedSignature signatureOf(Emission&, LayoutID);
 
 private:
-    enum class TypeCertainty : uint8_t { Proven, Predicted };
+    enum class TypeCertainty : uint8_t { Proven, Expected };
 
     enum class ValueKind : uint8_t {
         Generic,
@@ -48,7 +48,7 @@ private:
 
     struct ValuePlan {
         ValueKind kind { ValueKind::Generic };
-        TypeCertainty certainty { TypeCertainty::Predicted };
+        TypeCertainty certainty { TypeCertainty::Expected };
         TypeID tested;
         TypeID element;
         Vector<LayoutID, 4> layouts;
@@ -136,9 +136,10 @@ private:
     void jumpTo(MergePoint&, ValueID guard = { });
     void continueAt(const MergePoint&);
     void leaveAfterUnknownCode();
+    void leaveIfWritingRunsCode(ValueID written);
 
     ValuePlan planValue(ValueID) const;
-    ValuePlan planType(const Type& proven, const Type* predicted) const;
+    ValuePlan planType(const Type& proven, const Type* expected) const;
     ValuePlan planDefinedType(const Type& defined, TypeCertainty) const;
     ValuePlan planBuiltinClass(const Type& instances, TypeCertainty) const;
     ValuePlan planLayouts(const Type& objects, TypeCertainty) const;

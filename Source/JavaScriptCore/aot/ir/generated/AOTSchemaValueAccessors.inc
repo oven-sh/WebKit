@@ -25,13 +25,13 @@
 
     BuiltinID builtin() const { return decodePayloadWord<BuiltinID>(payloadWordAt(declaredPosition(PayloadWord::builtin(opcode)))); }
     void setBuiltin(BuiltinID builtin) { setPayloadWordAt(declaredPosition(PayloadWord::builtin(opcode)), encodePayloadWord(builtin)); }
-    static constexpr OpcodeSet opcodesWithBuiltin { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::NativeBinding };
+    static constexpr OpcodeSet opcodesWithBuiltin { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::NativeBinding, Opcode::GetBuiltinValue };
 
     ModuleID module() const { return decodePayloadWord<ModuleID>(payloadWordAt(declaredPosition(PayloadWord::module(opcode)))); }
     void setModule(ModuleID module) { setPayloadWordAt(declaredPosition(PayloadWord::module(opcode)), encodePayloadWord(module)); }
     static constexpr OpcodeSet opcodesWithModule {
-        Opcode::ModuleBuiltin, Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::ResolveModule,
-        Opcode::IsRequireEdgeReady, Opcode::GetRequiredValue
+        Opcode::ModuleBuiltin, Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::RecordRequire,
+        Opcode::ResolveModule, Opcode::BeginModuleEvaluation, Opcode::FinishModuleEvaluation, Opcode::AbandonModuleEvaluation
     };
 
     DataID data() const { return decodePayloadWord<DataID>(payloadWordAt(declaredPosition(PayloadWord::data(opcode)))); }
@@ -54,20 +54,20 @@
     std::optional<Request> request() const { return decodePayloadWord<std::optional<Request>>(payloadWordAt(declaredPosition(PayloadWord::request(opcode)))); }
     void setRequest(std::optional<Request> request) { setPayloadWordAt(declaredPosition(PayloadWord::request(opcode)), encodePayloadWord(request)); }
     static constexpr OpcodeSet opcodesWithRequest {
-        Opcode::Data, Opcode::NewTemplateObject, Opcode::CopyDataProperties, Opcode::NewClass, Opcode::DirectEval, Opcode::CopyObject,
+        Opcode::Data, Opcode::NewTemplateObject, Opcode::CopyDataProperties, Opcode::CopyObject, Opcode::NewClass, Opcode::DirectEval,
         Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CloneAs, Opcode::TryPutByIds
     };
 
     FunctionID function() const { return decodePayloadWord<FunctionID>(payloadWordAt(declaredPosition(PayloadWord::function(opcode)))); }
     void setFunction(FunctionID function) { setPayloadWordAt(declaredPosition(PayloadWord::function(opcode)), encodePayloadWord(function)); }
     static constexpr OpcodeSet opcodesWithFunction {
-        Opcode::NewClosure, Opcode::CallDirect, Opcode::CallGroup, Opcode::IsClosureOf, Opcode::GetCapture, Opcode::NewGenerator,
-        Opcode::NewAsyncGenerator, Opcode::AwaitCallBySavingFrame
+        Opcode::NewClosure, Opcode::TryReExportFields, Opcode::CallDirect, Opcode::IsClosureOf, Opcode::CallTable, Opcode::GetCapture,
+        Opcode::NewGenerator, Opcode::NewAsyncGenerator, Opcode::AwaitCallBySavingFrame
     };
 
     AllocationStorage storage() const { return decodePayloadWord<AllocationStorage>(payloadWordAt(declaredPosition(PayloadWord::storage(opcode)))); }
     void setStorage(AllocationStorage storage) { setPayloadWordAt(declaredPosition(PayloadWord::storage(opcode)), encodePayloadWord(storage)); }
-    static constexpr OpcodeSet opcodesWithStorage { Opcode::NewClosure, Opcode::NewObject };
+    static constexpr OpcodeSet opcodesWithStorage { Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::CreateRest };
 
     AllocationID allocation() const { return decodePayloadWord<AllocationID>(payloadWordAt(declaredPosition(PayloadWord::allocation(opcode)))); }
     void setAllocation(AllocationID allocation) { setPayloadWordAt(declaredPosition(PayloadWord::allocation(opcode)), encodePayloadWord(allocation)); }
@@ -88,9 +88,8 @@
     static constexpr OpcodeSet opcodesWithLayout {
         Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::NewObject, Opcode::NewClass, Opcode::GetClassPrototype,
         Opcode::DefineMethod, Opcode::FinishClass, Opcode::NewClassToken, Opcode::GetConstructPrototype, Opcode::SuperConstruct,
-        Opcode::SuperConstructList, Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas, Opcode::IsMemberUnchanged,
-        Opcode::IsPrototypeLinkUnchanged, Opcode::IsClassEvaluatedOnce, Opcode::HasKeyOrder, Opcode::TryCopyFields,
-        Opcode::ConstructSuperForwardVarargs, Opcode::MaterializeEnvironment, Opcode::JSONObjectBegin, Opcode::JSONObjectKey,
+        Opcode::SuperConstructList, Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas, Opcode::HasKeyOrder,
+        Opcode::TryCopyFields, Opcode::ConstructSuperForwardVarargs, Opcode::MaterializeEnvironment, Opcode::JSONObjectBegin, Opcode::JSONObjectKey,
         Opcode::JSONObjectFinish, Opcode::JSONParseExtraMembers, Opcode::JSONAddExtraMember, Opcode::CloneAs, Opcode::ExpectRows
     };
 
@@ -105,10 +104,11 @@
     void setKey(PropertyKeyID key) { setPayloadWordAt(declaredPosition(PayloadWord::key(opcode)), encodePayloadWord(key)); }
     static constexpr OpcodeSet opcodesWithKey {
         Opcode::ScopeHasBinding, Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropDelete, Opcode::DefineGetter,
-        Opcode::DefineSetter, Opcode::SuperGet, Opcode::SuperSet, Opcode::DefineMethod, Opcode::GetOwnProperty, Opcode::KeyConstant,
-        Opcode::IsSlotFilled, Opcode::IsMemberUnchanged, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::PutSlot,
-        Opcode::PutSlotOrAdd, Opcode::PropHasOwn, Opcode::GetOwnDataProperty, Opcode::PropGetChecked, Opcode::PropGetChain, Opcode::PropGetPair,
-        Opcode::PropGetAndTest, Opcode::CallMethod
+        Opcode::DefineSetter, Opcode::SuperGet, Opcode::SuperSet, Opcode::NarrowByField, Opcode::DefineMethod, Opcode::GetOwnProperty,
+        Opcode::KeyConstant, Opcode::CallTable, Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetSlotGetter,
+        Opcode::GetFlattenedSlot, Opcode::GetFlattenedSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined,
+        Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropHasOwn, Opcode::GetGlobalBinding, Opcode::SetGlobalBinding, Opcode::ValidateLookup,
+        Opcode::GetOwnDataProperty, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::PropGetAndTest, Opcode::CallMethod
     };
 
     std::span<const uint32_t> fields() const LIFETIME_BOUND { return payloadListOf<uint32_t>(declaredPosition(PayloadWord::fields(opcode))); }
@@ -118,6 +118,10 @@
     AllocationClassID allocationClass() const { return decodePayloadWord<AllocationClassID>(payloadWordAt(declaredPosition(PayloadWord::allocationClass(opcode)))); }
     void setAllocationClass(AllocationClassID allocationClass) { setPayloadWordAt(declaredPosition(PayloadWord::allocationClass(opcode)), encodePayloadWord(allocationClass)); }
     static constexpr OpcodeSet opcodesWithAllocationClass { Opcode::NewObject };
+
+    LayoutID outerLayout() const { return decodePayloadWord<LayoutID>(payloadWordAt(declaredPosition(PayloadWord::outerLayout(opcode)))); }
+    void setOuterLayout(LayoutID outerLayout) { setPayloadWordAt(declaredPosition(PayloadWord::outerLayout(opcode)), encodePayloadWord(outerLayout)); }
+    static constexpr OpcodeSet opcodesWithOuterLayout { Opcode::NewObject, Opcode::NewArray };
 
     TypeID contents() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::contents(opcode)))); }
     void setContents(TypeID contents) { setPayloadWordAt(declaredPosition(PayloadWord::contents(opcode)), encodePayloadWord(contents)); }
@@ -174,11 +178,13 @@
         Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropDelete, Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas,
         Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet, Opcode::Call, Opcode::Construct, Opcode::CallList,
         Opcode::ConstructList, Opcode::CallDirect, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::PrivateGet, Opcode::PrivateSet,
-        Opcode::PrivateDefine, Opcode::PrivateHas, Opcode::CallGroup, Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined,
-        Opcode::GetDeferredClosureSlot, Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropHasOwn, Opcode::GetArrayElement, Opcode::PutArrayElement,
-        Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::CallForwardVarargs,
-        Opcode::ConstructSuperForwardVarargs, Opcode::CallBuiltin, Opcode::AwaitCallBySavingFrame, Opcode::PropGetChecked, Opcode::PropGetChain,
-        Opcode::PropGetPair, Opcode::PropGetAndTest, Opcode::CallMethod, Opcode::CallResolved, Opcode::CallInline
+        Opcode::PrivateDefine, Opcode::PrivateHas, Opcode::CallTable, Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined,
+        Opcode::GetSlotGetter, Opcode::GetFlattenedSlot, Opcode::GetFlattenedSlotOrUndefined, Opcode::GetDeferredClosureSlot,
+        Opcode::GetDeferredClosureSlotOrUndefined, Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropHasOwn, Opcode::GetGlobalBinding,
+        Opcode::SetGlobalBinding, Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::GetTypedArrayElement,
+        Opcode::PutTypedArrayElement, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs, Opcode::CallBuiltin,
+        Opcode::AwaitCallBySavingFrame, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::PropGetAndTest, Opcode::CallMethod, Opcode::CallResolved,
+        Opcode::CallInline
     };
 
     LayoutSetID receivers() const { return decodePayloadWord<LayoutSetID>(payloadWordAt(declaredPosition(PayloadWord::receivers(opcode)))); }
@@ -186,8 +192,9 @@
     static constexpr OpcodeSet opcodesWithReceivers {
         Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropDelete, Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas,
         Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet, Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine,
-        Opcode::PrivateHas, Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::PutSlot,
-        Opcode::PutSlotOrAdd, Opcode::PropHasOwn, Opcode::PropGetChecked, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::PropGetAndTest,
+        Opcode::PrivateHas, Opcode::CallTable, Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetSlotGetter,
+        Opcode::GetFlattenedSlot, Opcode::GetFlattenedSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined,
+        Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropHasOwn, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::PropGetAndTest,
         Opcode::CallMethod, Opcode::PutSlots
     };
 
@@ -196,15 +203,19 @@
     static constexpr OpcodeSet opcodesWithSiteCache {
         Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropDelete, Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas,
         Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet, Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine,
-        Opcode::PrivateHas, Opcode::PropHasOwn, Opcode::PropGetChecked, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::PropGetAndTest,
-        Opcode::CallMethod, Opcode::TryPutByIds
+        Opcode::PrivateHas, Opcode::PropHasOwn, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::PropGetAndTest, Opcode::CallMethod,
+        Opcode::TryPutByIds
     };
 
     ECMAMode mode() const { return decodePayloadWord<ECMAMode>(payloadWordAt(declaredPosition(PayloadWord::mode(opcode)))); }
     void setMode(ECMAMode mode) { setPayloadWordAt(declaredPosition(PayloadWord::mode(opcode)), encodePayloadWord(mode)); }
     static constexpr OpcodeSet opcodesWithMode {
-        Opcode::PropSet, Opcode::PropDelete, Opcode::ElemSet, Opcode::ElemDelete, Opcode::SuperSet, Opcode::PutArrayElement
+        Opcode::PropSet, Opcode::PropDelete, Opcode::ElemSet, Opcode::ElemDelete, Opcode::SuperSet, Opcode::SetGlobalBinding, Opcode::PutArrayElement
     };
+
+    ExpectedElements expectedElements() const { return decodePayloadWord<ExpectedElements>(payloadWordAt(declaredPosition(PayloadWord::expectedElements(opcode)))); }
+    void setExpectedElements(ExpectedElements expectedElements) { setPayloadWordAt(declaredPosition(PayloadWord::expectedElements(opcode)), encodePayloadWord(expectedElements)); }
+    static constexpr OpcodeSet opcodesWithExpectedElements { Opcode::ElemGet, Opcode::ElemSet };
 
     MethodKind methodKind() const { return decodePayloadWord<MethodKind>(payloadWordAt(declaredPosition(PayloadWord::methodKind(opcode)))); }
     void setMethodKind(MethodKind methodKind) { setPayloadWordAt(declaredPosition(PayloadWord::methodKind(opcode)), encodePayloadWord(methodKind)); }
@@ -232,27 +243,23 @@
 
     TypeID castType() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::castType(opcode)))); }
     void setCastType(TypeID castType) { setPayloadWordAt(declaredPosition(PayloadWord::castType(opcode)), encodePayloadWord(castType)); }
-    static constexpr OpcodeSet opcodesWithCastType { Opcode::Upcast, Opcode::Claim, Opcode::AssumeType };
+    static constexpr OpcodeSet opcodesWithCastType { Opcode::Upcast, Opcode::Check, Opcode::AssumeType };
 
     TypeSiteID site() const { return decodePayloadWord<TypeSiteID>(payloadWordAt(declaredPosition(PayloadWord::site(opcode)))); }
     void setSite(TypeSiteID site) { setPayloadWordAt(declaredPosition(PayloadWord::site(opcode)), encodePayloadWord(site)); }
-    static constexpr OpcodeSet opcodesWithSite { Opcode::Claim, Opcode::ClaimRead, Opcode::ReportMismatch, Opcode::PropGetChecked };
+    static constexpr OpcodeSet opcodesWithSite { Opcode::Check, Opcode::ReportMismatch };
 
     CheckCause cause() const { return decodePayloadWord<CheckCause>(payloadWordAt(declaredPosition(PayloadWord::cause(opcode)))); }
     void setCause(CheckCause cause) { setPayloadWordAt(declaredPosition(PayloadWord::cause(opcode)), encodePayloadWord(cause)); }
-    static constexpr OpcodeSet opcodesWithCause { Opcode::Claim, Opcode::PropGetChecked };
+    static constexpr OpcodeSet opcodesWithCause { Opcode::Check };
 
     DeclaredType declared() const { return decodePayloadRecord<DeclaredType>(*this, declaredPosition(PayloadWord::declared(opcode))); }
     void setDeclared(const DeclaredType& declared) { encodePayloadRecord(*this, declaredPosition(PayloadWord::declared(opcode)), declared); }
-    static constexpr OpcodeSet opcodesWithDeclared { Opcode::ClaimDeclared };
+    static constexpr OpcodeSet opcodesWithDeclared { Opcode::Convert };
 
-    ClaimSource source() const { return decodePayloadRecord<ClaimSource>(*this, declaredPosition(PayloadWord::source(opcode))); }
-    void setSource(const ClaimSource& source) { encodePayloadRecord(*this, declaredPosition(PayloadWord::source(opcode)), source); }
-    static constexpr OpcodeSet opcodesWithSource { Opcode::ClaimRead };
-
-    TypeID predicted() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::predicted(opcode)))); }
-    void setPredicted(TypeID predicted) { setPayloadWordAt(declaredPosition(PayloadWord::predicted(opcode)), encodePayloadWord(predicted)); }
-    static constexpr OpcodeSet opcodesWithPredicted { Opcode::Predict };
+    IllTypedCause illTypedCause() const { return decodePayloadWord<IllTypedCause>(payloadWordAt(declaredPosition(PayloadWord::illTypedCause(opcode)))); }
+    void setIllTypedCause(IllTypedCause illTypedCause) { setPayloadWordAt(declaredPosition(PayloadWord::illTypedCause(opcode)), encodePayloadWord(illTypedCause)); }
+    static constexpr OpcodeSet opcodesWithIllTypedCause { Opcode::Convert };
 
     NullishAccess nullishAccess() const { return decodePayloadWord<NullishAccess>(payloadWordAt(declaredPosition(PayloadWord::nullishAccess(opcode)))); }
     void setNullishAccess(NullishAccess nullishAccess) { setPayloadWordAt(declaredPosition(PayloadWord::nullishAccess(opcode)), encodePayloadWord(nullishAccess)); }
@@ -280,20 +287,12 @@
     void setCallees(CalleeSetID callees) { setPayloadWordAt(declaredPosition(PayloadWord::callees(opcode)), encodePayloadWord(callees)); }
     static constexpr OpcodeSet opcodesWithCallees {
         Opcode::Call, Opcode::Construct, Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList,
-        Opcode::CallGroup, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs, Opcode::CallMethod, Opcode::CallResolved
+        Opcode::CallTable, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs, Opcode::CallMethod, Opcode::CallResolved
     };
-
-    LayoutID allocatedLayout() const { return decodePayloadWord<LayoutID>(payloadWordAt(declaredPosition(PayloadWord::allocatedLayout(opcode)))); }
-    void setAllocatedLayout(LayoutID allocatedLayout) { setPayloadWordAt(declaredPosition(PayloadWord::allocatedLayout(opcode)), encodePayloadWord(allocatedLayout)); }
-    static constexpr OpcodeSet opcodesWithAllocatedLayout { Opcode::Construct };
-
-    ResultCheck resultCheck() const { return decodePayloadWord<ResultCheck>(payloadWordAt(declaredPosition(PayloadWord::resultCheck(opcode)))); }
-    void setResultCheck(ResultCheck resultCheck) { setPayloadWordAt(declaredPosition(PayloadWord::resultCheck(opcode)), encodePayloadWord(resultCheck)); }
-    static constexpr OpcodeSet opcodesWithResultCheck { Opcode::CallDirect };
 
     ClassSide side() const { return decodePayloadWord<ClassSide>(payloadWordAt(declaredPosition(PayloadWord::side(opcode)))); }
     void setSide(ClassSide side) { setPayloadWordAt(declaredPosition(PayloadWord::side(opcode)), encodePayloadWord(side)); }
-    static constexpr OpcodeSet opcodesWithSide { Opcode::DefineMethod, Opcode::IsMemberUnchanged, Opcode::IsPrototypeLinkUnchanged };
+    static constexpr OpcodeSet opcodesWithSide { Opcode::DefineMethod };
 
     IteratorKind iteratorKind() const { return decodePayloadWord<IteratorKind>(payloadWordAt(declaredPosition(PayloadWord::iteratorKind(opcode)))); }
     void setIteratorKind(IteratorKind iteratorKind) { setPayloadWordAt(declaredPosition(PayloadWord::iteratorKind(opcode)), encodePayloadWord(iteratorKind)); }
@@ -322,8 +321,8 @@
     ModuleID referrer() const { return decodePayloadWord<ModuleID>(payloadWordAt(declaredPosition(PayloadWord::referrer(opcode)))); }
     void setReferrer(ModuleID referrer) { setPayloadWordAt(declaredPosition(PayloadWord::referrer(opcode)), encodePayloadWord(referrer)); }
     static constexpr OpcodeSet opcodesWithReferrer {
-        Opcode::ImportModule, Opcode::RequireModule, Opcode::ResolveModule, Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic,
-        Opcode::IsRequireEdgeReady
+        Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::ResolveModule, Opcode::ImportDynamic,
+        Opcode::RequireDynamic, Opcode::ResolveDynamic
     };
 
     StringID specifier() const { return decodePayloadWord<StringID>(payloadWordAt(declaredPosition(PayloadWord::specifier(opcode)))); }
@@ -365,17 +364,21 @@
     ArrayStorage arrayStorage() const { return decodePayloadWord<ArrayStorage>(payloadWordAt(declaredPosition(PayloadWord::arrayStorage(opcode)))); }
     void setArrayStorage(ArrayStorage arrayStorage) { setPayloadWordAt(declaredPosition(PayloadWord::arrayStorage(opcode)), encodePayloadWord(arrayStorage)); }
     static constexpr OpcodeSet opcodesWithArrayStorage {
-        Opcode::NewArrayLike, Opcode::NewArrayWithCapacity, Opcode::TryPutByValDirect, Opcode::HasArrayStorage, Opcode::GetArrayElement,
-        Opcode::PutArrayElement, Opcode::HasArrayElement
+        Opcode::NewArrayLike, Opcode::NewArrayWithCapacity, Opcode::TryPutByValDirect, Opcode::HasArrayStorage, Opcode::IsElementPresent,
+        Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement
     };
 
     TypeID valueType() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::valueType(opcode)))); }
     void setValueType(TypeID valueType) { setPayloadWordAt(declaredPosition(PayloadWord::valueType(opcode)), encodePayloadWord(valueType)); }
-    static constexpr OpcodeSet opcodesWithValueType { Opcode::Unspecified };
+    static constexpr OpcodeSet opcodesWithValueType { Opcode::Unspecified, Opcode::EmptyArgumentList };
 
     TypeID expectedType() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::expectedType(opcode)))); }
     void setExpectedType(TypeID expectedType) { setPayloadWordAt(declaredPosition(PayloadWord::expectedType(opcode)), encodePayloadWord(expectedType)); }
     static constexpr OpcodeSet opcodesWithExpectedType { Opcode::ReportMismatch };
+
+    std::span<const FunctionID> entrypoints() const LIFETIME_BOUND { return payloadListOf<FunctionID>(declaredPosition(PayloadWord::entrypoints(opcode))); }
+    void setEntrypoints(std::span<const FunctionID> entrypoints) { setPayloadListOf<FunctionID>(declaredPosition(PayloadWord::entrypoints(opcode)), entrypoints); }
+    static constexpr OpcodeSet opcodesWithEntrypoints { Opcode::CallTable };
 
     LayoutSetID layouts() const { return decodePayloadWord<LayoutSetID>(payloadWordAt(declaredPosition(PayloadWord::layouts(opcode)))); }
     void setLayouts(LayoutSetID layouts) { setPayloadWordAt(declaredPosition(PayloadWord::layouts(opcode)), encodePayloadWord(layouts)); }
@@ -384,14 +387,18 @@
     KnowledgeLevel level() const { return decodePayloadWord<KnowledgeLevel>(payloadWordAt(declaredPosition(PayloadWord::level(opcode)))); }
     void setLevel(KnowledgeLevel level) { setPayloadWordAt(declaredPosition(PayloadWord::level(opcode)), encodePayloadWord(level)); }
     static constexpr OpcodeSet opcodesWithLevel {
-        Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::PutSlot, Opcode::PutSlotOrAdd,
-        Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement
+        Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetSlotGetter, Opcode::GetFlattenedSlot,
+        Opcode::GetFlattenedSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined, Opcode::PutSlot,
+        Opcode::PutSlotOrAdd, Opcode::GetGlobalBinding, Opcode::SetGlobalBinding, Opcode::GetArrayElement, Opcode::PutArrayElement,
+        Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement
     };
 
     FieldAccessID fieldAccess() const { return decodePayloadWord<FieldAccessID>(payloadWordAt(declaredPosition(PayloadWord::fieldAccess(opcode)))); }
     void setFieldAccess(FieldAccessID fieldAccess) { setPayloadWordAt(declaredPosition(PayloadWord::fieldAccess(opcode)), encodePayloadWord(fieldAccess)); }
     static constexpr OpcodeSet opcodesWithFieldAccess {
-        Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::PutSlot, Opcode::PutSlotOrAdd
+        Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetSlotGetter, Opcode::GetFlattenedSlot,
+        Opcode::GetFlattenedSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined, Opcode::PutSlot,
+        Opcode::PutSlotOrAdd
     };
 
     BuiltinClassID builtinClass() const { return decodePayloadWord<BuiltinClassID>(payloadWordAt(declaredPosition(PayloadWord::builtinClass(opcode)))); }
@@ -402,21 +409,27 @@
     void setAspects(OptionSet<PristineAspects> aspects) { setPayloadWordAt(declaredPosition(PayloadWord::aspects(opcode)), encodePayloadWord(aspects)); }
     static constexpr OpcodeSet opcodesWithAspects { Opcode::IsPristine };
 
+    JSC::TypedArrayType typedArrayType() const { return decodePayloadWord<JSC::TypedArrayType>(payloadWordAt(declaredPosition(PayloadWord::typedArrayType(opcode)))); }
+    void setTypedArrayType(JSC::TypedArrayType typedArrayType) { setPayloadWordAt(declaredPosition(PayloadWord::typedArrayType(opcode)), encodePayloadWord(typedArrayType)); }
+    static constexpr OpcodeSet opcodesWithTypedArrayType {
+        Opcode::IsInsideView, Opcode::GetTypedArrayLength, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement
+    };
+
+    PayloadListView<MemberConditionRecord> conditions() const LIFETIME_BOUND { return PayloadListView<MemberConditionRecord>(payloadListFrom(declaredPosition(PayloadWord::conditions(opcode)))); }
+    void setConditions(std::span<const MemberConditionRecord> conditions) { setPayloadListFrom(declaredPosition(PayloadWord::conditions(opcode)), encodePayloadList(conditions).span()); }
+    static constexpr OpcodeSet opcodesWithConditions { Opcode::AreMembersUnchanged };
+
     GuardBitID guardBit() const { return decodePayloadWord<GuardBitID>(payloadWordAt(declaredPosition(PayloadWord::guardBit(opcode)))); }
     void setGuardBit(GuardBitID guardBit) { setPayloadWordAt(declaredPosition(PayloadWord::guardBit(opcode)), encodePayloadWord(guardBit)); }
-    static constexpr OpcodeSet opcodesWithGuardBit { Opcode::IsMemberUnchanged, Opcode::IsPrototypeLinkUnchanged, Opcode::IsClassEvaluatedOnce };
-
-    std::optional<uint32_t> edge() const { return decodePayloadWord<std::optional<uint32_t>>(payloadWordAt(declaredPosition(PayloadWord::edge(opcode)))); }
-    void setEdge(std::optional<uint32_t> edge) { setPayloadWordAt(declaredPosition(PayloadWord::edge(opcode)), encodePayloadWord(edge)); }
-    static constexpr OpcodeSet opcodesWithEdge { Opcode::IsRequireEdgeReady };
+    static constexpr OpcodeSet opcodesWithGuardBit { Opcode::AreMembersUnchanged };
 
     std::optional<OrderWord> orderWord() const { return decodePayloadWord<std::optional<OrderWord>>(payloadWordAt(declaredPosition(PayloadWord::orderWord(opcode)))); }
     void setOrderWord(std::optional<OrderWord> orderWord) { setPayloadWordAt(declaredPosition(PayloadWord::orderWord(opcode)), encodePayloadWord(orderWord)); }
     static constexpr OpcodeSet opcodesWithOrderWord { Opcode::HasKeyOrder };
 
-    JSC::TypedArrayType typedArrayType() const { return decodePayloadWord<JSC::TypedArrayType>(payloadWordAt(declaredPosition(PayloadWord::typedArrayType(opcode)))); }
-    void setTypedArrayType(JSC::TypedArrayType typedArrayType) { setPayloadWordAt(declaredPosition(PayloadWord::typedArrayType(opcode)), encodePayloadWord(typedArrayType)); }
-    static constexpr OpcodeSet opcodesWithTypedArrayType { Opcode::GetTypedArrayLength, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement };
+    GlobalBindingID binding() const { return decodePayloadWord<GlobalBindingID>(payloadWordAt(declaredPosition(PayloadWord::binding(opcode)))); }
+    void setBinding(GlobalBindingID binding) { setPayloadWordAt(declaredPosition(PayloadWord::binding(opcode)), encodePayloadWord(binding)); }
+    static constexpr OpcodeSet opcodesWithBinding { Opcode::GetGlobalBinding, Opcode::SetGlobalBinding };
 
     uint32_t argumentIndex() const { return decodePayloadWord<uint32_t>(payloadWordAt(declaredPosition(PayloadWord::argumentIndex(opcode)))); }
     void setArgumentIndex(uint32_t argumentIndex) { setPayloadWordAt(declaredPosition(PayloadWord::argumentIndex(opcode)), encodePayloadWord(argumentIndex)); }
@@ -431,7 +444,7 @@
     BuiltinOverloadID overload() const { return decodePayloadWord<BuiltinOverloadID>(payloadWordAt(declaredPosition(PayloadWord::overload(opcode)))); }
     void setOverload(BuiltinOverloadID overload) { setPayloadWordAt(declaredPosition(PayloadWord::overload(opcode)), encodePayloadWord(overload)); }
     static constexpr OpcodeSet opcodesWithOverload {
-        Opcode::CallBuiltin, Opcode::StringBuilderAppendBuiltin, Opcode::RegExpMatchLiteral, Opcode::CallInline
+        Opcode::CallBuiltin, Opcode::GetBuiltinValue, Opcode::StringBuilderAppendBuiltin, Opcode::RegExpMatchLiteral, Opcode::CallInline
     };
 
     BuiltinCallForm builtinCallForm() const { return decodePayloadWord<BuiltinCallForm>(payloadWordAt(declaredPosition(PayloadWord::builtinCallForm(opcode)))); }
@@ -450,9 +463,17 @@
     void setRounding(QuotientRounding rounding) { setPayloadWordAt(declaredPosition(PayloadWord::rounding(opcode)), encodePayloadWord(rounding)); }
     static constexpr OpcodeSet opcodesWithRounding { Opcode::DivideIntegers };
 
+    BuiltinID member() const { return decodePayloadWord<BuiltinID>(payloadWordAt(declaredPosition(PayloadWord::member(opcode)))); }
+    void setMember(BuiltinID member) { setPayloadWordAt(declaredPosition(PayloadWord::member(opcode)), encodePayloadWord(member)); }
+    static constexpr OpcodeSet opcodesWithMember { Opcode::IsBuiltinLocationUnchanged, Opcode::IsFunctionOfBuiltin };
+
     uint32_t count() const { return decodePayloadWord<uint32_t>(payloadWordAt(declaredPosition(PayloadWord::count(opcode)))); }
     void setCount(uint32_t count) { setPayloadWordAt(declaredPosition(PayloadWord::count(opcode)), encodePayloadWord(count)); }
     static constexpr OpcodeSet opcodesWithCount { Opcode::DestructureIterable };
+
+    uint32_t directCalls() const { return decodePayloadWord<uint32_t>(payloadWordAt(declaredPosition(PayloadWord::directCalls(opcode)))); }
+    void setDirectCalls(uint32_t directCalls) { setPayloadWordAt(declaredPosition(PayloadWord::directCalls(opcode)), encodePayloadWord(directCalls)); }
+    static constexpr OpcodeSet opcodesWithDirectCalls { Opcode::PromiseAllOfElements };
 
     TypeID validatedType() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::validatedType(opcode)))); }
     void setValidatedType(TypeID validatedType) { setPayloadWordAt(declaredPosition(PayloadWord::validatedType(opcode)), encodePayloadWord(validatedType)); }
@@ -470,17 +491,13 @@
     void setJsonPosition(JSONPosition jsonPosition) { setPayloadWordAt(declaredPosition(PayloadWord::jsonPosition(opcode)), encodePayloadWord(jsonPosition)); }
     static constexpr OpcodeSet opcodesWithJsonPosition { Opcode::JSONAppendValue };
 
-    TypeID checkedType() const { return decodePayloadWord<TypeID>(payloadWordAt(declaredPosition(PayloadWord::checkedType(opcode)))); }
-    void setCheckedType(TypeID checkedType) { setPayloadWordAt(declaredPosition(PayloadWord::checkedType(opcode)), encodePayloadWord(checkedType)); }
-    static constexpr OpcodeSet opcodesWithCheckedType { Opcode::PropGetChecked };
-
-    Origin readOrigin() const { return decodePayloadRecord<Origin>(*this, declaredPosition(PayloadWord::readOrigin(opcode))); }
-    void setReadOrigin(const Origin& readOrigin) { encodePayloadRecord(*this, declaredPosition(PayloadWord::readOrigin(opcode)), readOrigin); }
-    static constexpr OpcodeSet opcodesWithReadOrigin { Opcode::PropGetChecked, Opcode::PropGetChain, Opcode::PropGetPair, Opcode::CallMethod };
-
     PropertyKeyID secondKey() const { return decodePayloadWord<PropertyKeyID>(payloadWordAt(declaredPosition(PayloadWord::secondKey(opcode)))); }
     void setSecondKey(PropertyKeyID secondKey) { setPayloadWordAt(declaredPosition(PayloadWord::secondKey(opcode)), encodePayloadWord(secondKey)); }
     static constexpr OpcodeSet opcodesWithSecondKey { Opcode::PropGetChain, Opcode::PropGetPair };
+
+    Origin readOrigin() const { return decodePayloadRecord<Origin>(*this, declaredPosition(PayloadWord::readOrigin(opcode))); }
+    void setReadOrigin(const Origin& readOrigin) { encodePayloadRecord(*this, declaredPosition(PayloadWord::readOrigin(opcode)), readOrigin); }
+    static constexpr OpcodeSet opcodesWithReadOrigin { Opcode::PropGetChain, Opcode::PropGetPair, Opcode::CallMethod };
 
     AccessSiteID secondAccessSite() const { return decodePayloadWord<AccessSiteID>(payloadWordAt(declaredPosition(PayloadWord::secondAccessSite(opcode)))); }
     void setSecondAccessSite(AccessSiteID secondAccessSite) { setPayloadWordAt(declaredPosition(PayloadWord::secondAccessSite(opcode)), encodePayloadWord(secondAccessSite)); }
@@ -551,7 +568,15 @@
 
     bool isMadeOnDemand() const { return flags & declaredPosition(FlagMask::isMadeOnDemand(opcode)); }
     void setIsMadeOnDemand(bool isMadeOnDemand) { flags = isMadeOnDemand ? flags | declaredPosition(FlagMask::isMadeOnDemand(opcode)) : flags & ~declaredPosition(FlagMask::isMadeOnDemand(opcode)); }
-    static constexpr OpcodeSet opcodesWithIsMadeOnDemand { Opcode::NewClosure };
+    static constexpr OpcodeSet opcodesWithIsMadeOnDemand { Opcode::NewClosure, Opcode::NewObject };
+
+    bool isHeldByClosureTable() const { return flags & declaredPosition(FlagMask::isHeldByClosureTable(opcode)); }
+    void setIsHeldByClosureTable(bool isHeldByClosureTable) { flags = isHeldByClosureTable ? flags | declaredPosition(FlagMask::isHeldByClosureTable(opcode)) : flags & ~declaredPosition(FlagMask::isHeldByClosureTable(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsHeldByClosureTable { Opcode::NewClosure };
+
+    bool isLent() const { return flags & declaredPosition(FlagMask::isLent(opcode)); }
+    void setIsLent(bool isLent) { flags = isLent ? flags | declaredPosition(FlagMask::isLent(opcode)) : flags & ~declaredPosition(FlagMask::isLent(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsLent { Opcode::NewClosure };
 
     bool ownerCannotBeMarked() const { return flags & declaredPosition(FlagMask::ownerCannotBeMarked(opcode)); }
     void setOwnerCannotBeMarked(bool ownerCannotBeMarked) { flags = ownerCannotBeMarked ? flags | declaredPosition(FlagMask::ownerCannotBeMarked(opcode)) : flags & ~declaredPosition(FlagMask::ownerCannotBeMarked(opcode)); }
@@ -569,11 +594,13 @@
         Opcode::FulfillFreshPromise
     };
 
-    bool keepsShape() const { return flags & declaredPosition(FlagMask::keepsShape(opcode)); }
-    void setKeepsShape(bool keepsShape) { flags = keepsShape ? flags | declaredPosition(FlagMask::keepsShape(opcode)) : flags & ~declaredPosition(FlagMask::keepsShape(opcode)); }
-    static constexpr OpcodeSet opcodesWithKeepsShape {
-        Opcode::NewObject, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::CreateIteratorResult, Opcode::ConstructSuperForwardVarargs
-    };
+    bool takesCellOfInnerObject() const { return flags & declaredPosition(FlagMask::takesCellOfInnerObject(opcode)); }
+    void setTakesCellOfInnerObject(bool takesCellOfInnerObject) { flags = takesCellOfInnerObject ? flags | declaredPosition(FlagMask::takesCellOfInnerObject(opcode)) : flags & ~declaredPosition(FlagMask::takesCellOfInnerObject(opcode)); }
+    static constexpr OpcodeSet opcodesWithTakesCellOfInnerObject { Opcode::NewObject };
+
+    bool cellCannotBeMarked() const { return flags & declaredPosition(FlagMask::cellCannotBeMarked(opcode)); }
+    void setCellCannotBeMarked(bool cellCannotBeMarked) { flags = cellCannotBeMarked ? flags | declaredPosition(FlagMask::cellCannotBeMarked(opcode)) : flags & ~declaredPosition(FlagMask::cellCannotBeMarked(opcode)); }
+    static constexpr OpcodeSet opcodesWithCellCannotBeMarked { Opcode::NewObject };
 
     bool isFreeName() const { return flags & declaredPosition(FlagMask::isFreeName(opcode)); }
     void setIsFreeName(bool isFreeName) { flags = isFreeName ? flags | declaredPosition(FlagMask::isFreeName(opcode)) : flags & ~declaredPosition(FlagMask::isFreeName(opcode)); }
@@ -581,14 +608,26 @@
 
     bool isForTypeOf() const { return flags & declaredPosition(FlagMask::isForTypeOf(opcode)); }
     void setIsForTypeOf(bool isForTypeOf) { flags = isForTypeOf ? flags | declaredPosition(FlagMask::isForTypeOf(opcode)) : flags & ~declaredPosition(FlagMask::isForTypeOf(opcode)); }
-    static constexpr OpcodeSet opcodesWithIsForTypeOf { Opcode::PropGet };
+    static constexpr OpcodeSet opcodesWithIsForTypeOf { Opcode::PropGet, Opcode::GetGlobalBinding };
 
     bool keyIsIntegral() const { return flags & declaredPosition(FlagMask::keyIsIntegral(opcode)); }
     void setKeyIsIntegral(bool keyIsIntegral) { flags = keyIsIntegral ? flags | declaredPosition(FlagMask::keyIsIntegral(opcode)) : flags & ~declaredPosition(FlagMask::keyIsIntegral(opcode)); }
     static constexpr OpcodeSet opcodesWithKeyIsIntegral {
-        Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::GetArrayElement, Opcode::PutArrayElement,
-        Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement
+        Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::IsElementPresent, Opcode::IsInsideView,
+        Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement
     };
+
+    bool reusesDescriptors() const { return flags & declaredPosition(FlagMask::reusesDescriptors(opcode)); }
+    void setReusesDescriptors(bool reusesDescriptors) { flags = reusesDescriptors ? flags | declaredPosition(FlagMask::reusesDescriptors(opcode)) : flags & ~declaredPosition(FlagMask::reusesDescriptors(opcode)); }
+    static constexpr OpcodeSet opcodesWithReusesDescriptors { Opcode::TryReExportFields };
+
+    bool keyIsFirstCapture() const { return flags & declaredPosition(FlagMask::keyIsFirstCapture(opcode)); }
+    void setKeyIsFirstCapture(bool keyIsFirstCapture) { flags = keyIsFirstCapture ? flags | declaredPosition(FlagMask::keyIsFirstCapture(opcode)) : flags & ~declaredPosition(FlagMask::keyIsFirstCapture(opcode)); }
+    static constexpr OpcodeSet opcodesWithKeyIsFirstCapture { Opcode::TryReExportFields };
+
+    bool refusesOtherValues() const { return flags & declaredPosition(FlagMask::refusesOtherValues(opcode)); }
+    void setRefusesOtherValues(bool refusesOtherValues) { flags = refusesOtherValues ? flags | declaredPosition(FlagMask::refusesOtherValues(opcode)) : flags & ~declaredPosition(FlagMask::refusesOtherValues(opcode)); }
+    static constexpr OpcodeSet opcodesWithRefusesOtherValues { Opcode::SetLiteralPrototype };
 
     bool isLikelyKey() const { return flags & declaredPosition(FlagMask::isLikelyKey(opcode)); }
     void setIsLikelyKey(bool isLikelyKey) { flags = isLikelyKey ? flags | declaredPosition(FlagMask::isLikelyKey(opcode)) : flags & ~declaredPosition(FlagMask::isLikelyKey(opcode)); }
@@ -605,8 +644,8 @@
     bool isDemotedTailCall() const { return flags & declaredPosition(FlagMask::isDemotedTailCall(opcode)); }
     void setIsDemotedTailCall(bool isDemotedTailCall) { flags = isDemotedTailCall ? flags | declaredPosition(FlagMask::isDemotedTailCall(opcode)) : flags & ~declaredPosition(FlagMask::isDemotedTailCall(opcode)); }
     static constexpr OpcodeSet opcodesWithIsDemotedTailCall {
-        Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallGroup, Opcode::CallForwardVarargs, Opcode::CallBuiltin,
-        Opcode::AwaitCallBySavingFrame, Opcode::CallMethod, Opcode::CallResolved, Opcode::CallInline
+        Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs, Opcode::CallBuiltin, Opcode::AwaitCallBySavingFrame,
+        Opcode::CallMethod, Opcode::CallResolved, Opcode::CallInline
     };
 
     bool isAlwaysInlined() const { return flags & declaredPosition(FlagMask::isAlwaysInlined(opcode)); }
@@ -637,17 +676,55 @@
     void setReadsValueWhenDone(bool readsValueWhenDone) { flags = readsValueWhenDone ? flags | declaredPosition(FlagMask::readsValueWhenDone(opcode)) : flags & ~declaredPosition(FlagMask::readsValueWhenDone(opcode)); }
     static constexpr OpcodeSet opcodesWithReadsValueWhenDone { Opcode::IteratorResume };
 
+    bool takesExtraTurn() const { return flags & declaredPosition(FlagMask::takesExtraTurn(opcode)); }
+    void setTakesExtraTurn(bool takesExtraTurn) { flags = takesExtraTurn ? flags | declaredPosition(FlagMask::takesExtraTurn(opcode)) : flags & ~declaredPosition(FlagMask::takesExtraTurn(opcode)); }
+    static constexpr OpcodeSet opcodesWithTakesExtraTurn { Opcode::Await, Opcode::AwaitBySavingFrame };
+
+    bool isBare() const { return flags & declaredPosition(FlagMask::isBare(opcode)); }
+    void setIsBare(bool isBare) { flags = isBare ? flags | declaredPosition(FlagMask::isBare(opcode)) : flags & ~declaredPosition(FlagMask::isBare(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsBare { Opcode::EvaluateModule };
+
     bool isURL() const { return flags & declaredPosition(FlagMask::isURL(opcode)); }
     void setIsURL(bool isURL) { flags = isURL ? flags | declaredPosition(FlagMask::isURL(opcode)) : flags & ~declaredPosition(FlagMask::isURL(opcode)); }
     static constexpr OpcodeSet opcodesWithIsURL { Opcode::ResolveModule, Opcode::ResolveDynamic };
+
+    bool isForRequire() const { return flags & declaredPosition(FlagMask::isForRequire(opcode)); }
+    void setIsForRequire(bool isForRequire) { flags = isForRequire ? flags | declaredPosition(FlagMask::isForRequire(opcode)) : flags & ~declaredPosition(FlagMask::isForRequire(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsForRequire { Opcode::ResolveDynamic };
+
+    bool holdsDeclaredType() const { return flags & declaredPosition(FlagMask::holdsDeclaredType(opcode)); }
+    void setHoldsDeclaredType(bool holdsDeclaredType) { flags = holdsDeclaredType ? flags | declaredPosition(FlagMask::holdsDeclaredType(opcode)) : flags & ~declaredPosition(FlagMask::holdsDeclaredType(opcode)); }
+    static constexpr OpcodeSet opcodesWithHoldsDeclaredType {
+        Opcode::IsSlotFilled, Opcode::GetSlot, Opcode::GetFlattenedSlot, Opcode::GetDeferredClosureSlot
+    };
+
+    bool mayMeetUnfinishedObject() const { return flags & declaredPosition(FlagMask::mayMeetUnfinishedObject(opcode)); }
+    void setMayMeetUnfinishedObject(bool mayMeetUnfinishedObject) { flags = mayMeetUnfinishedObject ? flags | declaredPosition(FlagMask::mayMeetUnfinishedObject(opcode)) : flags & ~declaredPosition(FlagMask::mayMeetUnfinishedObject(opcode)); }
+    static constexpr OpcodeSet opcodesWithMayMeetUnfinishedObject { Opcode::HasNoFieldOutsideSlot };
 
     bool isWritable() const { return flags & declaredPosition(FlagMask::isWritable(opcode)); }
     void setIsWritable(bool isWritable) { flags = isWritable ? flags | declaredPosition(FlagMask::isWritable(opcode)) : flags & ~declaredPosition(FlagMask::isWritable(opcode)); }
     static constexpr OpcodeSet opcodesWithIsWritable { Opcode::HasArrayStorage };
 
+    bool seesScriptBindings() const { return flags & declaredPosition(FlagMask::seesScriptBindings(opcode)); }
+    void setSeesScriptBindings(bool seesScriptBindings) { flags = seesScriptBindings ? flags | declaredPosition(FlagMask::seesScriptBindings(opcode)) : flags & ~declaredPosition(FlagMask::seesScriptBindings(opcode)); }
+    static constexpr OpcodeSet opcodesWithSeesScriptBindings { Opcode::GetGlobalBinding, Opcode::SetGlobalBinding };
+
     bool isInBounds() const { return flags & declaredPosition(FlagMask::isInBounds(opcode)); }
     void setIsInBounds(bool isInBounds) { flags = isInBounds ? flags | declaredPosition(FlagMask::isInBounds(opcode)) : flags & ~declaredPosition(FlagMask::isInBounds(opcode)); }
     static constexpr OpcodeSet opcodesWithIsInBounds { Opcode::GetArrayElement, Opcode::PutArrayElement };
+
+    bool isPresent() const { return flags & declaredPosition(FlagMask::isPresent(opcode)); }
+    void setIsPresent(bool isPresent) { flags = isPresent ? flags | declaredPosition(FlagMask::isPresent(opcode)) : flags & ~declaredPosition(FlagMask::isPresent(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsPresent { Opcode::GetArrayElement };
+
+    bool readsHoleAsNaN() const { return flags & declaredPosition(FlagMask::readsHoleAsNaN(opcode)); }
+    void setReadsHoleAsNaN(bool readsHoleAsNaN) { flags = readsHoleAsNaN ? flags | declaredPosition(FlagMask::readsHoleAsNaN(opcode)) : flags & ~declaredPosition(FlagMask::readsHoleAsNaN(opcode)); }
+    static constexpr OpcodeSet opcodesWithReadsHoleAsNaN { Opcode::GetArrayElement };
+
+    bool isInsideView() const { return flags & declaredPosition(FlagMask::isInsideView(opcode)); }
+    void setIsInsideView(bool isInsideView) { flags = isInsideView ? flags | declaredPosition(FlagMask::isInsideView(opcode)) : flags & ~declaredPosition(FlagMask::isInsideView(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsInsideView { Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement };
 
     bool readsArgumentsObject() const { return flags & declaredPosition(FlagMask::readsArgumentsObject(opcode)); }
     void setReadsArgumentsObject(bool readsArgumentsObject) { flags = readsArgumentsObject ? flags | declaredPosition(FlagMask::readsArgumentsObject(opcode)) : flags & ~declaredPosition(FlagMask::readsArgumentsObject(opcode)); }
@@ -676,6 +753,10 @@
     bool readsFromFirstResult() const { return flags & declaredPosition(FlagMask::readsFromFirstResult(opcode)); }
     void setReadsFromFirstResult(bool readsFromFirstResult) { flags = readsFromFirstResult ? flags | declaredPosition(FlagMask::readsFromFirstResult(opcode)) : flags & ~declaredPosition(FlagMask::readsFromFirstResult(opcode)); }
     static constexpr OpcodeSet opcodesWithReadsFromFirstResult { Opcode::PropGetPair };
+
+    bool isDefinition() const { return flags & declaredPosition(FlagMask::isDefinition(opcode)); }
+    void setIsDefinition(bool isDefinition) { flags = isDefinition ? flags | declaredPosition(FlagMask::isDefinition(opcode)) : flags & ~declaredPosition(FlagMask::isDefinition(opcode)); }
+    static constexpr OpcodeSet opcodesWithIsDefinition { Opcode::TryPutByIds };
 
     bool numberIsOnLeft() const { return flags & declaredPosition(FlagMask::numberIsOnLeft(opcode)); }
     void setNumberIsOnLeft(bool numberIsOnLeft) { flags = numberIsOnLeft ? flags | declaredPosition(FlagMask::numberIsOnLeft(opcode)) : flags & ~declaredPosition(FlagMask::numberIsOnLeft(opcode)); }

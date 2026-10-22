@@ -1,6 +1,6 @@
 # The late fields of a layout with more fields than a cell holds in line are created by a store that may allocate, also where nobody enumerates the keys, so that they can lie in the Extension
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN(SLOTS): plan-slots layouts
 # RUN(CODE): pipeline PlanSlots
 

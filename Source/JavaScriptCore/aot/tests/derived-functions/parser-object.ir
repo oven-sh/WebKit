@@ -92,7 +92,7 @@ layout L4 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
 # CHECK-NEXT: [[object1]]:{{*}}= NewObject layout=L1
 # CHECK-NEXT: Branch [[seenOptionalId]] -> taken [[storesOptionalId]](), notTaken
 # CHECK: [[storesOptionalId]]():
-# CHECK-NEXT: PutSlot [[object1]], [[object1]], [[optionalId]] key="id" receivers=[L1] level=Predicted
+# CHECK-NEXT: PutSlot [[object1]], [[object1]], [[optionalId]] key="id" receivers=[L1] level=Expected
 # CHECK: = JSONObjectFinish [[order1]], [[object1]], [[extra1]] layout=L1
 
 # CHECK-LABEL: form=ParsedText expectedResult=x2}

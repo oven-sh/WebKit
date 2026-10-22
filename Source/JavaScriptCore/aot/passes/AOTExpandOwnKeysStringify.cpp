@@ -62,6 +62,9 @@ bool OwnKeyWalkExpander::expandStringify(const OwnKeyWalkSite& site)
     IRBuilder& builder = this->builder();
     if (!JSONSerializerBuilder(builder, inputs(), ValueID()).hasPlanFor(site.source))
         return false;
+    // A string builder for one string, number, boolean or null costs three times what the stub of the call needs to write it.
+    if (site.walk == OwnKeyWalk::Stringify && !m_pass.program.typeOf(m_pass.function, site.source).hasObjects())
+        return false;
 
     std::optional<BuiltinCallPlan> textFormCall;
     if (site.walk == OwnKeyWalk::StringifyIntoText) {

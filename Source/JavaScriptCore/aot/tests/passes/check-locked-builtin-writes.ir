@@ -2,7 +2,7 @@
 # RUN: pipeline CheckLockedBuiltinWrites
 # DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 2
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="imported.js" displayPath="imported.js" body=f1
 entry module=m0
 layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]

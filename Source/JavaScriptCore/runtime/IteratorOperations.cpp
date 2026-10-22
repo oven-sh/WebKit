@@ -28,6 +28,7 @@
 #include "IteratorOperations.h"
 
 #include "CachedCall.h"
+#include "ExceptionHelpers.h"
 #include "InterpreterInlines.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncFromSyncIterator.h"
@@ -61,7 +62,7 @@ static JSValue iteratorNextImpl(JSGlobalObject* globalObject, IterationRecord it
     RETURN_IF_EXCEPTION(scope, JSValue());
 
     if (!result.isObject())
-        return throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        return throwTypeError(globalObject, scope, IteratorResultNotObjectError);
 
     return result;
 }
@@ -83,7 +84,7 @@ JSValue iteratorNextWithCachedCall(JSGlobalObject* globalObject, IterationRecord
     RETURN_IF_EXCEPTION(scope, { });
 
     if (!result.isObject()) [[unlikely]]
-        return throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        return throwTypeError(globalObject, scope, IteratorResultNotObjectError);
 
     return result;
 }
@@ -190,7 +191,7 @@ void iteratorClose(JSGlobalObject* globalObject, JSValue iterator)
     RETURN_IF_EXCEPTION(scope, void());
 
     if (!innerResult.isObject()) {
-        throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwTypeError(globalObject, scope, IteratorResultNotObjectError);
         return;
     }
 }

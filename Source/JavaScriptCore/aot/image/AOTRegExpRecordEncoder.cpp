@@ -103,20 +103,15 @@ static ImageRegExp createRecord(const RegExpRequest& request, RegExpRecordForm f
 
 static bool hasRecord(RegExpRequestOrigin origin, RegExpRecordForm form)
 {
-    switch (origin) {
-    case RegExpRequestOrigin::Literal:
-        return true;
-    case RegExpRequestOrigin::Candidate:
-        break;
-    }
     switch (form) {
     case RegExpRecordForm::Code:
     case RegExpRecordForm::Atom:
-    // The run time need not parse the text to create the object.
-    case RegExpRecordForm::NoCode:
         return true;
+    // With the record the run time need not parse the text to create the object.
+    case RegExpRecordForm::NoCode:
+        return origin != RegExpRequestOrigin::Candidate;
     case RegExpRecordForm::NoMetadata:
-        return false;
+        return origin == RegExpRequestOrigin::Literal;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -142,7 +137,7 @@ RegExpSections encodeRegExpRecords(const RegExpRecordInputs& inputs, BuildContex
             continue;
 
         uint32_t recordNumber = static_cast<uint32_t>(records.size());
-        RELEASE_ASSERT(request.origin == RegExpRequestOrigin::Candidate || recordNumber == index);
+        RELEASE_ASSERT(request.origin != RegExpRequestOrigin::Literal || recordNumber == index);
         const RegExpSummary* summary = context.regExpSummaries().summaryIfComputed(request.pattern, request.flags);
         RELEASE_ASSERT(summary);
 

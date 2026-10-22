@@ -30,6 +30,7 @@
 #include "AOTFusedAccessEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTGuardValueEmitter.h"
+#include "AOTHashTableBuiltinEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTInlineBuiltinEmitter.h"
 #include "AOTJSONParseEmitter.h"

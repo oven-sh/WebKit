@@ -1,0 +1,56 @@
+# /a/.lastIndex    [].length    String(input).length    (function () {}).name    ({ __proto__: Array.prototype }).length    (choice ? [] : {}).length
+# Nobody can delete the length of an array or of a string or the lastIndex of a RegExp, or make an accessor of it. So a read from such an instance finds the property, whatever lies above the instance, and does not answer undefined.
+# The name of a function can be deleted. An object that only inherits from Array.prototype is no array, and beside an array an object of the program may have no such property
+# RUN: valueflow-apply
+# CHECK: variable g0 name="lastIndex" module=m0 declared={type=number}
+# CHECK: variable g1 name="lengthOfArray" module=m0 declared={type=number}
+# CHECK: variable g2 name="lengthOfString" module=m0 declared={type=number}
+# CHECK: variable g3 name="nameOfFunction" module=m0 declared={type=undefined|string}
+# CHECK: variable g4 name="lengthOfHeir" module=m0 declared={type=undefined|number}
+# CHECK: variable g5 name="lengthOfEither" module=m0 declared={type=undefined|number}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
+variable g0 name="lastIndex" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="lengthOfArray" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="lengthOfString" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="nameOfFunction" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="lengthOfHeir" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="lengthOfEither" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="a"
+    v1 = PropGet v0 key="lastIndex"
+    PutModuleVariable v1 variable=g0
+    v3 = NewArray contents=anything
+    v4 = PropGet v3 key="length"
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = ToString v7
+    v9 = PropGet v8 key="length"
+    PutModuleVariable v9 variable=g2
+    v11 = NewClosure function=f1
+    v12 = PropGet v11 key="name"
+    PutModuleVariable v12 variable=g3
+    v14 = Builtin builtin=ArrayPrototype
+    v15 = NewObject v14 layout=L0 fields=[]
+    v16 = PropGet v15 key="length"
+    PutModuleVariable v16 variable=g4
+    v18 = NewObject layout=L0 fields=[]
+    v19 = ToBoolean v7
+    Branch v19 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v18)
+  b3(v20: anything):
+    v21 = PropGet v20 key="length"
+    PutModuleVariable v21 variable=g5
+    Return
+}
+function f1 name="plain" results=[{type=anything}] {
+  b0():
+    Return
+}

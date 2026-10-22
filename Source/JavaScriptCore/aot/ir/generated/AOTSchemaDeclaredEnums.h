@@ -11,16 +11,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using Wire::Primitives; using Wire::Stage; using Wire::Protects; using Wire::DegradesTo; using Wire::LimitID; using Wire::PassID;
-using Wire::SelectionRuleID; using Wire::FlowResultKind; using Wire::StatisticID; using Wire::RuntimeCounterID; using Wire::DiagnosticSeverity;
-using Wire::Int32ProofFailure; using Wire::UserDiagnosticKind; using Wire::InternalErrorKind; using Wire::KnowledgeLevel; using Wire::AccessKind;
-using Wire::UnprovenCauseFamily; using Wire::UnprovenCause; using Wire::CheckCause; using Wire::UnseenCodeCause; using Wire::LocaleUseKind;
-using Wire::TypeTestFailure; using Wire::ImageVerdict; using Wire::DeclineKind; using Wire::TypedResultDeclineReason; using Wire::CallDeclineReason;
+using Wire::IllTypedCause; using Wire::Primitives; using Wire::Stage; using Wire::Protects; using Wire::DegradesTo; using Wire::LimitID;
+using Wire::PassID; using Wire::SelectionRuleID; using Wire::FlowResultKind; using Wire::StatisticID; using Wire::RuntimeCounterID;
+using Wire::DiagnosticSeverity; using Wire::Int32ProofFailure; using Wire::UserDiagnosticKind; using Wire::InternalErrorKind;
+using Wire::KnowledgeLevel; using Wire::AccessCost; using Wire::AccessKind; using Wire::UnprovenCauseFamily; using Wire::UnprovenCause;
+using Wire::CheckCause; using Wire::UnseenCodeCause; using Wire::LocaleUseKind; using Wire::TypeTestFailure; using Wire::ArrivalStamp;
+using Wire::ImageVerdict; using Wire::DeclineKind; using Wire::TypedResultDeclineReason; using Wire::CallDeclineReason;
 using Wire::GeneratorFusionDeclineReason; using Wire::ArrayChainDeclineReason; using Wire::StringBuilderDeclineReason; using Wire::LoopDeclineReason;
 using Wire::InterpretedCause; using Wire::AllocationHeapCause; using Wire::AllocationOutcome; using Wire::AllocationKind; using Wire::ResultSection;
 using Wire::CompileAction; using Wire::Architecture; using Wire::ReferenceWidth; using Wire::MismatchPolicy; using Wire::HeatOverride;
-using Wire::BuiltinUse; using Wire::AllocationEscapeReason; using Wire::CheckSet; using Wire::ReportSet; using Wire::TestingSwitch;
-using Wire::Instrumentation; using Wire::AdmittedCode; using Wire::ExcludedCode; using Wire::OutputOptions;
+using Wire::Sabotage; using Wire::BuiltinUse; using Wire::ArrivalLayoutFlags; using Wire::ArrivalFieldFlags; using Wire::AllocationEscapeReason;
+using Wire::CheckSet; using Wire::ReportSet; using Wire::TestingSwitch; using Wire::Instrumentation; using Wire::AdmittedCode;
+using Wire::ExcludedCode; using Wire::OutputOptions;
 
 enum class IRForm : uint8_t { AsRead, Prepared, Selected, Placed };
 enum class ResultRule : uint8_t { None, Constant, Natural, Allocation, Declared, Unknown, Cast, Results };
@@ -29,6 +31,7 @@ enum class RetainedIn : uint8_t { UnknownMemory, Result, Operand };
 enum class Branches : uint8_t { No, May, Only };
 enum class Access : uint8_t { None, Read, Store, Define, Has };
 enum class Interpretation : uint8_t { None, Allocation, Cast, Read, Store, Test, List, Guards };
+enum class ValueFlowEdgeClass : uint8_t { Unsound, Allocates, Copies, TableProves, Checks };
 enum class BoundTo : uint8_t { Nothing, Frame, Function, Site };
 enum class ProgramEvent : uint8_t { None, EvaluatesText, LoadsModule };
 enum class AccessClass : uint8_t { None, Slot, ByName, DirectCall, IndirectCall };
@@ -39,9 +42,9 @@ enum class Representation : uint8_t {
 };
 enum class ProofLifetime : uint8_t { Forever, Stretch };
 enum class Proof : uint8_t {
-    None, TestedType, Truthiness, Equality, IntegerBound, ExactFunction, CaseValue, Shape, SlotFilled, NoExtraProperties, NotFrozen, OwnInstance,
-    Pristine, ArrayStorage, InBounds, NotThenable, MemberUnchanged, PrototypeLinkUnchanged, EvaluatedOnce, KeyOrder, EpochCurrent,
-    UnmodifiedGenerator, EnumeratorCurrent, PlainData, SourceOpen, TextMatches, RequireEdgeReady
+    None, TestedType, Truthiness, Equality, IntegerBound, ExactFunction, CaseValue, NotNullish, Shape, SlotFilled, NoExtraProperties,
+    NoFieldOutsideSlot, BirthFieldsFilled, NotFrozen, OwnInstance, Pristine, ArrayStorage, InBounds, NotThenable, MemberUnchanged,
+    PrototypeLinkUnchanged, EvaluatedOnce, KeyOrder, UnmodifiedGenerator, EnumeratorCurrent, PlainData, SourceOpen, TextMatches
 };
 enum class OperandKind : uint8_t {
     Any, Boolean, Integer, Number, String, PropertyKey, Object, Callable, Array, Layout, Declared, Environment, EvalOperand, Results, IteratorState,
@@ -50,7 +53,7 @@ enum class OperandKind : uint8_t {
 enum class PayloadKind : uint8_t {
     String, PropertyKey, Function, Layout, Field, Variable, Module, ModuleFailure, Type, TypeSite, EvalScope, Data, ExpectedResult, Builtin, Enum,
     Flags, Bool, UInt32, Int64, Double, External, Record, Variant, List, LayoutSet, CalleeSet, AccessSite, AllocationSite, AllocationClass,
-    FieldAccess, Allocation, RegExpRecord, SiteCache, GuardBit, Request, StaticsOffset, OrderWord, Origin, Opcode
+    FieldAccess, Allocation, RegExpRecord, SiteCache, GlobalBinding, GuardBit, Request, StaticsOffset, OrderWord, Origin, Opcode
 };
 enum class ElementBase : uint8_t { Unknown, Array, Arguments, Object };
 enum class OperandUse : uint32_t {
@@ -78,7 +81,7 @@ enum class TypeSiteKind : uint8_t {
     Unknown, Parameter, This, Capture, Result, Field, StaticField, Variable, Element, MapKey, MapValue, SetElement, PromiseValue, CallResult,
     PropertyRead, Assertion
 };
-enum class CastResolution : uint8_t { Unresolved, Nothing, Upcast, Claim, Prediction, Assume };
+enum class CastResolution : uint8_t { Unresolved, Nothing, Upcast, Check, Assume };
 enum class ValidatedPrimitive : uint8_t { String, Number, Boolean, BigInt };
 enum class TemplatePlaceholder : uint8_t { String, Number, BigInt };
 enum class TextFormat : uint8_t { Email, Uuid, Ipv4, Ipv6, Date, DateTime, Url };
@@ -87,15 +90,19 @@ enum class PrimitiveSet : uint16_t {
     Undefined = 1 << 0, Null = 1 << 1, False = 1 << 2, True = 1 << 3, Integer = 1 << 4, WholeNumber = 1 << 5, FractionalNumber = 1 << 6,
     String = 1 << 7, Symbol = 1 << 8, BigInt = 1 << 9, Absent = 1 << 10, LiteralString = 1 << 11, LiteralSymbol = 1 << 12
 };
-enum class TypeFlags : uint8_t { HasIntegers = 1 << 0, AnyObject = 1 << 1, AnyFunction = 1 << 2 };
+enum class TypeFlags : uint8_t { HasIntegers = 1 << 0, AnyObject = 1 << 1, AnyFunction = 1 << 2, HasMembersWithoutLayout = 1 << 3 };
 enum class PristineAspects : uint8_t { Storage = 1 << 0, Names = 1 << 1, AsCreated = 1 << 2, Dense = 1 << 3 };
-enum class PositionFlags : uint8_t { IsInt32Promise = 1 << 0, IsFromCompiler = 1 << 1, AdmitsObjects = 1 << 2 };
+enum class PositionFlags : uint8_t {
+    IsInt32Promise = 1 << 0, IsFromCompiler = 1 << 1, IsExpected = 1 << 2, OmitsNull = 1 << 3, OmitsUndefined = 1 << 4,
+    IsDeclaredByDependency = 1 << 5
+};
 enum class LayoutKind : uint8_t { Record, Instance, Container, Environment, Closure, CoroutineFrame, BuiltinResult, ModuleNamespace };
 enum class MethodKind : uint8_t { Method, Getter, Setter };
 enum class ClassSide : uint8_t { Prototype, Static };
 enum class VariableInitialization : uint8_t { Uninitialized, Undefined, Function };
 enum class FunctionKind : uint8_t { Plain, Arrow, Method, Getter, Setter, BaseConstructor, DerivedConstructor, Initializer, Module, CommonJsModule };
 enum class EntryParameter : uint8_t { Capture, This, Callee, NewTarget, ArgumentCount, Parameter, HiddenRest };
+enum class RelationSubjectKind : uint8_t { Parameter, Allocation, CallResult, ReadFrom, Constant, Computed };
 enum class ECMAMode : uint8_t { Strict, Sloppy };
 enum class EvalBindingKind : uint8_t {
     Variable, Constant, FunctionName, This, NewTarget, HomeObject, ClassObject, Arguments, PrivateName, PrivateMethod, PrivateAccessor, WithObject,
@@ -107,39 +114,53 @@ enum class ExternalKind : uint8_t { UncompiledCode, HostValue };
 enum class SyntheticExportRule : uint8_t { None, CommonJs, CommonJsIgnoringAnnotation, RuntimeModule };
 enum class RequireResult : uint8_t { Namespace, ModuleExports, DefaultExport };
 enum class ImportPhase : uint8_t { Evaluation, Defer };
+enum class ModuleRequestKind : uint8_t { Import, Require };
 enum class ModuleExportKind : uint8_t { Variable, Namespace, Indirect };
 enum class FunctionVisibility : uint8_t { Public, Private, PrivateRecursive };
 enum class ResumeMode : uint8_t { Next, Throw, Return };
 enum class IteratorKind : uint8_t { Sync, Async };
 enum class IteratorCompletion : uint8_t { Normal, Throw };
 enum class HomeObjectKind : uint8_t { Object, ClassPrototype };
-enum class NullishAccess : uint8_t { Read, Write, Iterate };
+enum class NullishAccess : uint8_t { Read, Write, Iterate, Spread };
 enum class ErrorKind : uint8_t { Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, AggregateError };
 enum class RuntimeErrorKind : uint8_t {
     UninitializedBinding, ConstantAssignment, UninitializedThis, ThisAlreadyBound, DeleteSuperProperty, UnresolvableReference, ImportAssignment,
     NotDestructurable, DerivedConstructorResult, StaticPrototypeKey, IteratorResultNotObject, IteratorWithoutThrowMethod, IteratorIsNotAnObject,
     InvalidPrivateRead, InvalidPrivateWrite, InvalidPrivateBrand, PrivateFieldExists, PrivateMethodWrite, PrivateAccessorWithoutGetter,
-    PrivateAccessorWithoutSetter, PrivateStaticTestOfNonObject
+    PrivateAccessorWithoutSetter, PrivateStaticTestOfNonObject, SpreadResultNotObject, LeftOutOfExecutable, FunctionNotCompiled
 };
 enum class BlockRole : uint8_t { Ordinary, CatchHandler, CleanupHandler, IterationCleanup, DisposalCleanup };
 enum class BlockFrequency : uint8_t { Normal, Unlikely, Rare };
 enum class CodeShape : uint8_t { Unchosen, Compact, Balanced, Fast };
-enum class LayoutFlags : uint8_t { HasHeritage = 1 << 0, IsConstructorFunction = 1 << 1, IsDerived = 1 << 2 };
-enum class FieldFlags : uint16_t {
-    IsRequired = 1 << 0, IsMethod = 1 << 1, IsPrivate = 1 << 2, IsImmutable = 1 << 3, IsBrand = 1 << 4, IsHidden = 1 << 5, IsInherited = 1 << 6,
-    IsAppendedByFlow = 1 << 7, IsRemovedAsUnread = 1 << 8
+enum class LayoutFlags : uint8_t {
+    HasHeritage = 1 << 0, IsConstructorFunction = 1 << 1, HasMembersWithoutLayout = 1 << 2, IsTypeParameter = 1 << 3, IsNeverAllocated = 1 << 4,
+    IsWrittenUnderDictionaryType = 1 << 5, IsDerived = 1 << 6, IsOfCreatedObject = 1 << 7
 };
+enum class FieldFlags : uint16_t {
+    IsRequired = 1 << 0, IsMethod = 1 << 1, IsPrivate = 1 << 2, IsImmutable = 1 << 3, IsBrand = 1 << 4, IsHidden = 1 << 5, IsNeverWritten = 1 << 6,
+    IsAlsoInPrototype = 1 << 7, IsInherited = 1 << 8, IsAddedLate = 1 << 9, IsRemovedAsUnread = 1 << 10, IsEnforced = 1 << 11
+};
+enum class FieldForm : uint8_t { IsReadOnly = 1 << 0, IsNotEnumerable = 1 << 1, IsNotConfigurable = 1 << 2, IsAccessor = 1 << 3 };
 enum class VariableFlags : uint8_t { IsImmutable = 1 << 0 };
 enum class FunctionFlags : uint16_t {
     IsAsync = 1 << 0, IsGenerator = 1 << 1, IsSloppy = 1 << 2, HasRestParameter = 1 << 3, HasThis = 1 << 4, HasNewTarget = 1 << 5,
     TakesCallee = 1 << 6, HasArgumentCount = 1 << 7, HasHiddenRest = 1 << 8, IsChecked = 1 << 9, IsHiddenInStackTraces = 1 << 10,
-    HasExplicitName = 1 << 11, IsNakedConstructor = 1 << 12
+    HasExplicitName = 1 << 11, IsNakedConstructor = 1 << 12, IsNamedBySymbol = 1 << 13, AllocatesOwnThis = 1 << 14, IsSplitOffGenericVersion = 1 << 15
+};
+enum class ValueFate : uint32_t {
+    IsReturned = 1u << 0, IsThrown = 1u << 1, IsYielded = 1u << 2, IsStoredInVariable = 1u << 3, IsStoredInEnvironment = 1u << 4,
+    IsStoredInUnknownObject = 1u << 5, IsHandedToUnknownCode = 1u << 6, IsCalled = 1u << 7, IsConstructed = 1u << 8, HasMembersRead = 1u << 9,
+    HasMembersWritten = 1u << 10, HasMembersDeletedOrDefined = 1u << 11, HasKeysEnumerated = 1u << 12, IsIterated = 1u << 13, IsCompared = 1u << 14,
+    IsConvertedToPrimitive = 1u << 15, IsIncomplete = 1u << 16
 };
 enum class EvalScopeFlags : uint8_t {
     IsInFunction = 1 << 0, IsInArrowFunction = 1 << 1, IsInFieldInitializer = 1 << 2, IsInDerivedConstructor = 1 << 3, AllowsSuperProperty = 1 << 4,
     AllowsSuperCall = 1 << 5, AllowsNewTarget = 1 << 6
 };
-enum class ModuleFlags : uint8_t { HasTopLevelAwait = 1 << 0, IsLibrary = 1 << 1, IsLoadedByImportOnly = 1 << 2, HasNoSideEffects = 1 << 3 };
+enum class ModuleFlags : uint16_t {
+    HasTopLevelAwait = 1 << 0, IsLibrary = 1 << 1, IsLoadedByImportOnly = 1 << 2, HasNoSideEffects = 1 << 3, KeepsError = 1 << 4,
+    IsBundlerHelper = 1 << 5, NamesWayToModuleObjects = 1 << 6, HasInstalledPositions = 1 << 7, EvaluatesItself = 1 << 8
+};
 enum class RegExpFlags : uint8_t {
     HasIndices = 1 << 0, Global = 1 << 1, IgnoreCase = 1 << 2, Multiline = 1 << 3, DotAll = 1 << 4, Unicode = 1 << 5, UnicodeSets = 1 << 6,
     Sticky = 1 << 7
@@ -147,15 +168,14 @@ enum class RegExpFlags : uint8_t {
 enum class WriterState : uint8_t { Unknown, AllKnown };
 enum class StoreCount : uint8_t { Unknown, Never, AtMostOnce };
 enum class InitializationState : uint8_t { Unknown, StoredBeforeEveryRead, SetAtCreation };
-enum class ReadState : uint8_t { Unknown, OnlyCalled, NeverRead };
-enum class ClosureDeferral : uint8_t { Unknown, CapturesNothing, CapturesObject };
-enum class Occupancy : uint8_t { Unknown, AlwaysFilled };
+enum class ReadState : uint8_t { Unknown, OnlyCalled, OnlyAccessed, NeverRead };
+enum class ClosureDeferral : uint8_t { Unknown, CapturesNothing, CapturesObject, CapturesEnvironment, FlattenedObject };
+enum class Occupancy : uint8_t { Unknown, FilledAtBirth, FilledWithValueAtBirth, AlwaysFilled };
 enum class PrototypeNameState : uint8_t { Unknown, AbsentOnPrototypes };
 enum class ExecutionCount : uint8_t { Unknown, AtMostOnce };
 enum class AllocationState : uint8_t { Unknown, NeverAllocated };
 enum class KeyEnumeration : uint8_t { Unknown, NeverEnumerated };
 enum class FieldCreation : uint8_t { Unknown, OnlyAtConstruction };
-enum class ThisLeak : uint8_t { Unknown, DoesNotLeak };
 enum class MemberMutability : uint8_t { Unknown, Fixed };
 enum class BaseState : uint8_t { Unknown, None, Layout, BuiltinClass };
 enum class FrameLocality : uint8_t { Unknown, FrameLocal };
@@ -163,20 +183,18 @@ enum class FunctionReachability : uint8_t { Unknown, Unreached };
 enum class CallerState : uint8_t { Unknown, AllKnown };
 enum class ClosureUse : uint8_t { Unknown, CalledOnly };
 enum class NamespaceUse : uint8_t { Unknown, NamedReadsOnly, NeverCreated };
-enum class ResultCheck : uint8_t { ByCallee, ByCallers };
 enum class BuiltinLocationState : uint8_t { Unknown, Constant };
 enum class StoreNaming : uint8_t { Unknown, EveryStoreNamesLocation };
 enum class ObjectMutation : uint16_t {
     ReachNativeCode = 1 << 0, ReachUnknownJavaScript = 1 << 1, DeleteField = 1 << 2, RedefineProperty = 1 << 3, AddProperty = 1 << 4,
-    ChangeIntegrity = 1 << 5, ChangePrototype = 1 << 6, BecomePrototype = 1 << 7, StoreAfterCreation = 1 << 8, StoreOfOtherType = 1 << 9,
-    LoseShape = 1 << 10
+    ChangeIntegrity = 1 << 5, ChangePrototype = 1 << 6, BecomePrototype = 1 << 7, StoreAfterCreation = 1 << 8, StoreOfOtherType = 1 << 9
 };
 enum class FieldStability : uint8_t { IsNeverDeleted = 1 << 0, IsNeverRedefined = 1 << 1, IsNeverStoredWithOtherType = 1 << 2 };
 enum class ObservedUse : uint8_t { Serialized = 1 << 0, ReachesTypedParse = 1 << 1 };
 enum class FunctionRole : uint8_t {
-    Source, Library, Model, Signature, GenericEntrypoint, GroupEntrypoint, GenericVersion, AllocatedThisVersion, CallSiteVersion, CoroutineRamp,
-    CoroutineBody, BoundFunction, ResultWrapper, ResultWorker, ParameterWrapper, OutlinedBody, Continuation, Serializer, Parser, ValidatingParser,
-    Validator, ChainStep, StubBody
+    Source, Library, Model, Signature, GenericEntrypoint, TableEntrypoint, TableLookup, GenericVersion, AllocatedThisVersion, ConstructBody,
+    CallSiteVersion, CalleeVersion, CoroutineRamp, CoroutineBody, AsyncWorker, BoundFunction, ResultWrapper, ResultWorker, ParameterWrapper,
+    EntryChecks, OutlinedBody, Serializer, Parser, ValidatingParser, Validator, ChainStep, StubBody
 };
 enum class ArgumentPassing : uint8_t { Buffer, Registers };
 enum class CoroutineKind : uint8_t { Generator, AsyncFunction, AsyncGenerator };
@@ -191,6 +209,7 @@ enum class ClosureForm : uint8_t { Full, Slim, Deferred, Singleton };
 enum class ArrayLiteralStorage : uint8_t { Fresh, Profiled };
 enum class TailCallRequirement : uint8_t { Required, Allowed };
 enum class DataEncoding : uint8_t { Unselected, Expanded, ReadOnlyTree, CopyOnWriteArray };
+enum class ExpectedElements : uint8_t { Anything, Int32Array, Uint8Array };
 enum class OperatorForm : uint8_t {
     Unselected, Generic, Integers, CheckedIntegers, Numbers, NumberAndValue, Bits, Booleans, BigInts, Strings, StringAndValue, Int32AndValue,
     StringAndPrimitive, NullableStrings, NullableStringAndPrimitive, String, Number, NumberByOperation, NullableString, NullableNumber, MayBeString,
@@ -207,7 +226,10 @@ enum class MapNextResult : uint8_t { HasEntry, Entry, Key, Value };
 enum class SetNextResult : uint8_t { HasEntry, Entry, Element };
 enum class BuiltinCallForm : uint8_t { Whole, Fields, Prefix, AnyReceiver, List };
 enum class QuotientRounding : uint8_t { Floor, Ceil, Truncate, Round, ToInt32 };
-enum class AsyncGeneratorStepStatus : uint8_t { Yielded, Completed, Awaited };
+enum class AsyncGeneratorStepStatus : uint8_t { Result, Yielded, Completed };
+enum class MemberConditionKind : uint8_t {
+    MemberUnchanged, PrototypeLinkUnchanged, ClassEvaluatedOnce, InstancePrototypeUnchanged, MemberNotHidden, MemberPassedByStores
+};
 enum class JSONOutcome : uint8_t { Unknown, Parsed, Rejected };
 enum class JSONMemberSearch : uint8_t { Unknown, Found, Absent };
 enum class JSONPosition : uint8_t { Root, Property, Element };
@@ -232,7 +254,7 @@ enum class NumberKind : uint8_t { Signed, Unsigned, Float, BigInt };
 enum class Endianness : uint8_t { Little, Big };
 enum class SearchValueKind : uint8_t { String, RegExp };
 enum class SlotRepresentation : uint8_t {
-    JSValue, Cell, Cell32, OptionalCell32, Int32, Uint32, Int64, OptionalInt64, OptionalInt32, Double, OptionalDouble, Int32OrDouble, Float, Boolean,
+    JSValue, Cell, Cell32, OptionalCell32, Int32, Uint32, Int64, OptionalInt64, OptionalInt32, Double, OptionalDouble, Float, Boolean,
     OptionalBoolean, Uint8, Int8, Uint16, Int16, LiteralString, LiteralString32, DeferredClosure
 };
 enum class CellTestKind : uint8_t {
@@ -245,11 +267,12 @@ enum class EvaluationState : uint8_t { SeenTwice, PredictedOnce, ProvenOnce };
 
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(IRForm); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ResultRule); JS_EXPORT_PRIVATE ASCIILiteral nameOf(EffectRule);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(RetainedIn); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Branches); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Access);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(Interpretation); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BoundTo);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProgramEvent); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AccessClass);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionReferenceKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleReferenceKind);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(Representation); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProofLifetime);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(Proof); JS_EXPORT_PRIVATE ASCIILiteral nameOf(OperandKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(PayloadKind);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(Interpretation); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ValueFlowEdgeClass);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(BoundTo); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProgramEvent);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(AccessClass); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionReferenceKind);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleReferenceKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Representation);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProofLifetime); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Proof);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(OperandKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(PayloadKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ElementBase); JS_EXPORT_PRIVATE ASCIILiteral nameOf(OperandUse);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(Protocol); JS_EXPORT_PRIVATE ASCIILiteral nameOf(NameClass);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(PropertyKeyKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(WellKnownSymbol);
@@ -262,10 +285,11 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(PristineAspects); JS_EXPORT_PRIVATE ASCIIL
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(LayoutKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(MethodKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ClassSide); JS_EXPORT_PRIVATE ASCIILiteral nameOf(VariableInitialization);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(EntryParameter);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ECMAMode); JS_EXPORT_PRIVATE ASCIILiteral nameOf(EvalBindingKind);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(CommonJsParameter);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExternalKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(SyntheticExportRule);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(RequireResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ImportPhase);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(RelationSubjectKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ECMAMode);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(EvalBindingKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleKind);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(CommonJsParameter); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExternalKind);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(SyntheticExportRule); JS_EXPORT_PRIVATE ASCIILiteral nameOf(RequireResult);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ImportPhase); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleRequestKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleExportKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionVisibility);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ResumeMode); JS_EXPORT_PRIVATE ASCIILiteral nameOf(IteratorKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(IteratorCompletion); JS_EXPORT_PRIVATE ASCIILiteral nameOf(HomeObjectKind);
@@ -273,7 +297,8 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(NullishAccess); JS_EXPORT_PRIVATE ASCIILit
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(RuntimeErrorKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BlockRole);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(BlockFrequency); JS_EXPORT_PRIVATE ASCIILiteral nameOf(CodeShape);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(LayoutFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FieldFlags);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(VariableFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionFlags);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(FieldForm); JS_EXPORT_PRIVATE ASCIILiteral nameOf(VariableFlags);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ValueFate);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(EvalScopeFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ModuleFlags);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(RegExpFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(WriterState);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(StoreCount); JS_EXPORT_PRIVATE ASCIILiteral nameOf(InitializationState);
@@ -281,11 +306,10 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReadState); JS_EXPORT_PRIVATE ASCIILiteral
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(Occupancy); JS_EXPORT_PRIVATE ASCIILiteral nameOf(PrototypeNameState);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExecutionCount); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationState);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(KeyEnumeration); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FieldCreation);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ThisLeak); JS_EXPORT_PRIVATE ASCIILiteral nameOf(MemberMutability);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(BaseState); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FrameLocality);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionReachability); JS_EXPORT_PRIVATE ASCIILiteral nameOf(CallerState);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ClosureUse); JS_EXPORT_PRIVATE ASCIILiteral nameOf(NamespaceUse);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ResultCheck); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinLocationState);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(MemberMutability); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BaseState);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(FrameLocality); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionReachability);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(CallerState); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ClosureUse);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(NamespaceUse); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinLocationState);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(StoreNaming); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ObjectMutation);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(FieldStability); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ObservedUse);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionRole); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArgumentPassing);
@@ -293,13 +317,14 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(CoroutineKind); JS_EXPORT_PRIVATE ASCIILit
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(TypedResultForm); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FunctionCapabilities);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationStorage); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ClosureForm);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrayLiteralStorage); JS_EXPORT_PRIVATE ASCIILiteral nameOf(TailCallRequirement);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(DataEncoding); JS_EXPORT_PRIVATE ASCIILiteral nameOf(OperatorForm);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(IteratorResumeResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ForInStepResult);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(YieldResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(GeneratorStepCheck);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(GeneratorStepStatus); JS_EXPORT_PRIVATE ASCIILiteral nameOf(StepGeneratorResult);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(StepArrayIteratorResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(MapNextResult);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(SetNextResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinCallForm);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(QuotientRounding); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AsyncGeneratorStepStatus);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(DataEncoding); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExpectedElements);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(OperatorForm); JS_EXPORT_PRIVATE ASCIILiteral nameOf(IteratorResumeResult);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ForInStepResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(YieldResult);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(GeneratorStepCheck); JS_EXPORT_PRIVATE ASCIILiteral nameOf(GeneratorStepStatus);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(StepGeneratorResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(StepArrayIteratorResult);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(MapNextResult); JS_EXPORT_PRIVATE ASCIILiteral nameOf(SetNextResult);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinCallForm); JS_EXPORT_PRIVATE ASCIILiteral nameOf(QuotientRounding);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(AsyncGeneratorStepStatus); JS_EXPORT_PRIVATE ASCIILiteral nameOf(MemberConditionKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(JSONOutcome); JS_EXPORT_PRIVATE ASCIILiteral nameOf(JSONMemberSearch);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(JSONPosition); JS_EXPORT_PRIVATE ASCIILiteral nameOf(JSONToken);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(StringRangeMethod); JS_EXPORT_PRIVATE ASCIILiteral nameOf(RegExpMatchForm);
@@ -315,10 +340,10 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(EvaluationState);
 
 inline constexpr ProofLifetime lastsByProof[] = {
     ProofLifetime::Forever, ProofLifetime::Forever, ProofLifetime::Forever, ProofLifetime::Forever, ProofLifetime::Forever, ProofLifetime::Forever,
-    ProofLifetime::Forever, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch,
+    ProofLifetime::Forever, ProofLifetime::Forever, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch,
     ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch,
     ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch,
-    ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch
+    ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch, ProofLifetime::Stretch
 };
 constexpr ProofLifetime lastsOf(Proof value)
 {
@@ -328,8 +353,8 @@ constexpr ProofLifetime lastsOf(Proof value)
 }
 
 inline constexpr bool readsOnlySubjectByProof[] = {
-    false, false, false, false, false, false, false, true, true, true, true, true, true, true, true, false, false, true, false, true, false, false,
-    false, false, false, false, false
+    false, false, false, false, false, false, false, false, true, true, true, true, true, true, true, true, true, true, false, false, true, false,
+    true, false, false, false, false, false
 };
 constexpr bool readsOnlySubjectOf(Proof value)
 {
@@ -354,7 +379,7 @@ constexpr Representation wantsOf(OperandKind value)
 
 inline constexpr bool isIdByPayloadKind[] = {
     true, true, true, true, false, true, true, true, true, true, true, true, true, true, false, false, false, false, false, false, false, false,
-    false, false, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false
+    false, false, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false, false
 };
 constexpr bool isIdOf(PayloadKind value)
 {
@@ -364,7 +389,7 @@ constexpr bool isIdOf(PayloadKind value)
 }
 
 inline constexpr uint32_t wordsByPayloadKind[] = {
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1
 };
 constexpr uint32_t wordsOf(PayloadKind value)
 {
@@ -396,22 +421,22 @@ constexpr ASCIILiteral wordsOf(NameClass value)
 }
 
 inline constexpr ASCIILiteral logWordByTypeSiteKind[] = {
-    "type-mismatch"_s,
-    "enter-function"_s,
-    "enter-function"_s,
-    "enter-function"_s,
-    "enter-return"_s,
-    "enter-field"_s,
-    "enter-field"_s,
-    "enter-variable"_s,
-    "read-element"_s,
-    "read-element"_s,
-    "read-element"_s,
-    "read-element"_s,
-    "read-element"_s,
+    "unknown"_s,
+    "argument"_s,
+    "this"_s,
+    "capture"_s,
+    "return"_s,
+    "field"_s,
+    "field"_s,
+    "variable"_s,
+    "element"_s,
+    "element"_s,
+    "element"_s,
+    "element"_s,
+    "element"_s,
     "call-result"_s,
-    "read-property"_s,
-    "as-convert"_s,
+    "property"_s,
+    "cast"_s,
 };
 constexpr ASCIILiteral logWordOf(TypeSiteKind value)
 {
@@ -432,8 +457,8 @@ constexpr OptionSet<FunctionFlags> presentWithOf(EntryParameter value)
 }
 
 inline constexpr bool hasSourceBodyByFunctionRole[] = {
-    true, true, true, false, false, false, true, true, true, false, false, false, false, false, false, false, false, false, false, false, false,
-    false, false
+    true, true, true, false, false, false, false, true, true, true, true, true, false, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, false
 };
 constexpr bool hasSourceBodyOf(FunctionRole value)
 {
@@ -443,8 +468,8 @@ constexpr bool hasSourceBodyOf(FunctionRole value)
 }
 
 inline constexpr bool canBeCalledByValueByFunctionRole[] = {
-    true, true, false, false, false, false, false, false, false, true, false, true, true, false, true, false, false, false, false, false, false,
-    false, false
+    true, true, false, false, false, false, false, false, false, false, false, false, true, false, false, true, true, false, true, true, false, false,
+    false, false, false, false, false
 };
 constexpr bool canBeCalledByValueOf(FunctionRole value)
 {
@@ -454,7 +479,8 @@ constexpr bool canBeCalledByValueOf(FunctionRole value)
 }
 
 inline constexpr bool hasStackArgumentAreaByFunctionRole[] = {
-    true, true, true, false, false, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false
+    true, true, true, false, false, false, false, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+    true, true, true, false
 };
 constexpr bool hasStackArgumentAreaOf(FunctionRole value)
 {
@@ -464,9 +490,9 @@ constexpr bool hasStackArgumentAreaOf(FunctionRole value)
 }
 
 inline constexpr ASCIILiteral recordByFunctionRole[] = {
-    "None"_s, "None"_s, "None"_s, "None"_s, "Entrypoint"_s, "Entrypoint"_s, "Version"_s, "Version"_s, "Version"_s, "Coroutine"_s, "Coroutine"_s,
-    "BoundFunction"_s, "ResultWrapper"_s, "ResultWorker"_s, "ParameterWrapper"_s, "None"_s, "Continuation"_s, "Serializer"_s, "Parser"_s, "Parser"_s,
-    "Validator"_s, "ChainStep"_s, "StubBody"_s
+    "None"_s, "None"_s, "None"_s, "None"_s, "Entrypoint"_s, "Entrypoint"_s, "TableLookup"_s, "Version"_s, "Version"_s, "Version"_s, "Version"_s,
+    "Version"_s, "Coroutine"_s, "Coroutine"_s, "Coroutine"_s, "BoundFunction"_s, "ResultWrapper"_s, "ResultWorker"_s, "ParameterWrapper"_s,
+    "EntryChecks"_s, "None"_s, "Serializer"_s, "Parser"_s, "Parser"_s, "Validator"_s, "ChainStep"_s, "StubBody"_s
 };
 constexpr ASCIILiteral recordOf(FunctionRole value)
 {
@@ -477,20 +503,24 @@ constexpr ASCIILiteral recordOf(FunctionRole value)
 
 inline constexpr OptionSet<FunctionCapabilities> capabilitiesByFunctionRole[] = {
     { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeCloned, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost },
-    { FunctionCapabilities::MayBeCloned, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame }, { }, { },
+    { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeCloned, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame },
+    { }, { }, { FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::MayBeCloned, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
+    { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
+    { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeCloned, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
     { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeCloned, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
     { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { },
+    { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
+    { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
-    { FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
     { FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::IsHiddenInStackTraces },
@@ -514,6 +544,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::RetainedIn> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::Branches> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::Access> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::Interpretation> = 8;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ValueFlowEdgeClass> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::BoundTo> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ProgramEvent> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::AccessClass> = 5;
@@ -521,9 +552,9 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionReferenc
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ModuleReferenceKind> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::Representation> = 13;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ProofLifetime> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::Proof> = 27;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::Proof> = 28;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::OperandKind> = 26;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::PayloadKind> = 39;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::PayloadKind> = 40;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ElementBase> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::OperandUse> = 21;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::Protocol> = 11;
@@ -533,21 +564,22 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::WellKnownSymbol>
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ContentsSlot> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ArrayStorage> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::TypeSiteKind> = 16;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::CastResolution> = 6;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::CastResolution> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ValidatedPrimitive> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::TemplatePlaceholder> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::TextFormat> = 7;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::UndeclaredMembers> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::PrimitiveSet> = 13;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::TypeFlags> = 3;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::TypeFlags> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::PristineAspects> = 4;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::PositionFlags> = 3;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::PositionFlags> = 6;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::LayoutKind> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::MethodKind> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ClassSide> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::VariableInitialization> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionKind> = 10;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::EntryParameter> = 7;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::RelationSubjectKind> = 6;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ECMAMode> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::EvalBindingKind> = 15;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ModuleKind> = 6;
@@ -556,37 +588,39 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::ExternalKind> = 
 template<> inline constexpr unsigned numberOfEnumerators<Typed::SyntheticExportRule> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::RequireResult> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ImportPhase> = 2;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ModuleRequestKind> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ModuleExportKind> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionVisibility> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ResumeMode> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::IteratorKind> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::IteratorCompletion> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::HomeObjectKind> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::NullishAccess> = 3;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::NullishAccess> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ErrorKind> = 8;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::RuntimeErrorKind> = 21;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::RuntimeErrorKind> = 24;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::BlockRole> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::BlockFrequency> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::CodeShape> = 4;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::LayoutFlags> = 3;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::FieldFlags> = 9;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::LayoutFlags> = 8;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::FieldFlags> = 12;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::FieldForm> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::VariableFlags> = 1;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionFlags> = 13;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionFlags> = 16;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ValueFate> = 17;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::EvalScopeFlags> = 7;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ModuleFlags> = 4;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ModuleFlags> = 9;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::RegExpFlags> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::WriterState> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::StoreCount> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::InitializationState> = 3;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ReadState> = 3;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ClosureDeferral> = 3;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::Occupancy> = 2;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ReadState> = 4;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ClosureDeferral> = 5;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::Occupancy> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::PrototypeNameState> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ExecutionCount> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::AllocationState> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::KeyEnumeration> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::FieldCreation> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ThisLeak> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::MemberMutability> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::BaseState> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::FrameLocality> = 2;
@@ -594,13 +628,12 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionReachabi
 template<> inline constexpr unsigned numberOfEnumerators<Typed::CallerState> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ClosureUse> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::NamespaceUse> = 3;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ResultCheck> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::BuiltinLocationState> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::StoreNaming> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ObjectMutation> = 11;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ObjectMutation> = 10;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::FieldStability> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ObservedUse> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionRole> = 23;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::FunctionRole> = 27;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ArgumentPassing> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::CoroutineKind> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::NullishResult> = 3;
@@ -611,6 +644,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::ClosureForm> = 4
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ArrayLiteralStorage> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::TailCallRequirement> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::DataEncoding> = 4;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ExpectedElements> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::OperatorForm> = 22;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::IteratorResumeResult> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::ForInStepResult> = 3;
@@ -624,6 +658,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::SetNextResult> =
 template<> inline constexpr unsigned numberOfEnumerators<Typed::BuiltinCallForm> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::QuotientRounding> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::AsyncGeneratorStepStatus> = 3;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::MemberConditionKind> = 6;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::JSONOutcome> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::JSONMemberSearch> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::JSONPosition> = 3;
@@ -642,7 +677,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::AccessDirection>
 template<> inline constexpr unsigned numberOfEnumerators<Typed::NumberKind> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::Endianness> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::SearchValueKind> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::SlotRepresentation> = 22;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::SlotRepresentation> = 21;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::CellTestKind> = 11;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::PutMode> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::StubExit> = 2;
@@ -656,6 +691,7 @@ template<> inline constexpr unsigned numberOfWireEnumerators<Typed::RetainedIn> 
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::Branches> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::Access> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::Interpretation> = 0;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ValueFlowEdgeClass> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::BoundTo> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ProgramEvent> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::AccessClass> = 0;
@@ -669,12 +705,13 @@ template<> inline constexpr unsigned numberOfWireEnumerators<Typed::PropertyKeyK
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::CastResolution> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::PrimitiveSet> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::PristineAspects> = 0;
-template<> inline constexpr unsigned numberOfWireEnumerators<Typed::PositionFlags> = 2;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::LayoutKind> = 4;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::BlockFrequency> = 2;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::CodeShape> = 0;
-template<> inline constexpr unsigned numberOfWireEnumerators<Typed::LayoutFlags> = 2;
-template<> inline constexpr unsigned numberOfWireEnumerators<Typed::FieldFlags> = 6;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::LayoutFlags> = 6;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::FieldFlags> = 8;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::FunctionFlags> = 14;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ModuleFlags> = 8;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::WriterState> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::StoreCount> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::InitializationState> = 0;
@@ -686,7 +723,6 @@ template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ExecutionCou
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::AllocationState> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::KeyEnumeration> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::FieldCreation> = 0;
-template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ThisLeak> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::MemberMutability> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::BaseState> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::FrameLocality> = 0;
@@ -694,7 +730,6 @@ template<> inline constexpr unsigned numberOfWireEnumerators<Typed::FunctionReac
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::CallerState> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ClosureUse> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::NamespaceUse> = 0;
-template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ResultCheck> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::BuiltinLocationState> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::StoreNaming> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ObjectMutation> = 0;
@@ -711,6 +746,7 @@ template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ClosureForm>
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ArrayLiteralStorage> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::TailCallRequirement> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::DataEncoding> = 0;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ExpectedElements> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::OperatorForm> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::ForInStepResult> = 2;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::GeneratorStepCheck> = 2;
@@ -721,6 +757,7 @@ template<> inline constexpr unsigned numberOfWireEnumerators<Typed::SetNextResul
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::BuiltinCallForm> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::QuotientRounding> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::AsyncGeneratorStepStatus> = 0;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::MemberConditionKind> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::JSONOutcome> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::JSONMemberSearch> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::JSONPosition> = 0;
@@ -754,8 +791,10 @@ template<> inline constexpr bool isFlagWord<Typed::PristineAspects> = true;
 template<> inline constexpr bool isFlagWord<Typed::PositionFlags> = true;
 template<> inline constexpr bool isFlagWord<Typed::LayoutFlags> = true;
 template<> inline constexpr bool isFlagWord<Typed::FieldFlags> = true;
+template<> inline constexpr bool isFlagWord<Typed::FieldForm> = true;
 template<> inline constexpr bool isFlagWord<Typed::VariableFlags> = true;
 template<> inline constexpr bool isFlagWord<Typed::FunctionFlags> = true;
+template<> inline constexpr bool isFlagWord<Typed::ValueFate> = true;
 template<> inline constexpr bool isFlagWord<Typed::EvalScopeFlags> = true;
 template<> inline constexpr bool isFlagWord<Typed::ModuleFlags> = true;
 template<> inline constexpr bool isFlagWord<Typed::RegExpFlags> = true;

@@ -1,7 +1,7 @@
 # A RequireObject of a value whose type has only objects goes, a second one of the same value is the first, any other stays
 # FORM: Prepared
 # RUN: pass SimplifyCasts
-# STATISTIC: SimplifyCastsChanges = 7
+# STATISTIC: SimplifyCastsChanges = 8
 # CHECK: outcome: Changed
 # RUN(AGAIN): pass SimplifyCasts SimplifyCasts
 # AGAIN: outcome: Changed
@@ -146,7 +146,8 @@ function f12 name="otherCastOfSameValue" parameters=[{type=anything}] results=[{
     v2 = RequireObject v0 runtimeError=IteratorIsNotAnObject
     Return v2
 }
+# It stays, and takes what the earlier cast has let through.
 # CHECK-LABEL: function f12 name="otherCastOfSameValue"
 # CHECK: = RequireObjectCoercible v0
-# CHECK-NEXT: = RequireObject v0
+# CHECK-NEXT: = RequireObject v1
 # CHECK-NEXT: Return v2

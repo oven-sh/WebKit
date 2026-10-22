@@ -51,6 +51,7 @@ public:
         for (const DecidedUse& decided : m_uses)
             replaceUse(m_function, decided.use, m_edges[decided.edgeIndex].constant);
         m_analyses.didChangeValues();
+        m_context.keptAnalyses = allAnalyses;
         return PassOutcome::Changed;
     }
 
@@ -58,14 +59,43 @@ private:
     void collectDecidedUses()
     {
         BitVector visitedConditions;
+        BitVector isUndecided(m_function.values.size());
+        Vector<ValueID, 16> undecidedConditions;
         for (BlockID block : m_analyses.cfg().reversePostOrder()) {
             const Terminator& terminator = m_function.at(block).terminator;
             if (terminator.kind != TerminatorKind::Branch || !visitedConditions.add(terminator.conditionOperand().index()))
                 continue;
             const Value& condition = m_function.at(terminator.conditionOperand());
-            if (condition.opcode != Opcode::Boolean && condition.type == TypeTable::boolean)
-                collectDecidedUsesOf(terminator.conditionOperand());
+            if (condition.opcode != Opcode::Boolean && condition.type == TypeTable::boolean) {
+                isUndecided.quickSet(terminator.conditionOperand().index());
+                undecidedConditions.append(terminator.conditionOperand());
+            }
         }
+        if (undecidedConditions.isEmpty())
+            return;
+        if (!m_analyses.computed().contains(FunctionAnalysis::UseLists) && !isAnyUsedTwice(isUndecided))
+            return;
+        for (ValueID condition : undecidedConditions)
+            collectDecidedUsesOf(condition);
+    }
+
+    bool isAnyUsedTwice(const BitVector& values)
+    {
+        BitVector isUsed(m_function.values.size());
+        bool isUsedTwice = false;
+        auto addUse = [&](ValueID used) {
+            if (used && values.quickGet(used.index()))
+                isUsedTwice |= isUsed.quickSet(used.index());
+        };
+        for (BlockID id : m_analyses.cfg().reversePostOrder()) {
+            const Block& block = m_function.at(id);
+            for (ValueID value : block.values)
+                m_function.at(value).forEachChild(addUse);
+            block.forEachChildOutsideValues(addUse);
+            if (isUsedTwice)
+                return true;
+        }
+        return false;
     }
 
     void collectDecidedUsesOf(ValueID condition)

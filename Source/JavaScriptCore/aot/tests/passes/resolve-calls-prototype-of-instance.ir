@@ -3,8 +3,8 @@
 # RUN: pass ResolveCalls
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Widget" constructor=f0 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}, {key="render" kind=Method function=f2 mutability=Fixed}, {key="changes" kind=Getter function=f1}]}
-layout L1 kind=Instance name="Moved" constructor=f3 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}]}
+layout L0 kind=Instance name="Widget" constructor=f0 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}, {key="render" kind=Method function=f2 mutability=Fixed}, {key="changes" kind=Getter function=f1}]}
+layout L1 kind=Instance name="Moved" constructor=f3 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}]}
 
 function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="area" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
@@ -80,15 +80,20 @@ function f9 name="prototypeOfTheObjectMayChange" parameters=[{type=L1}] results=
     Return v2
 }
 # CHECK-LABEL: function f9 name="prototypeOfTheObjectMayChange"
-# CHECK: v2:{{*}}= SuperGet v1, v0 key="area"
+# CHECK: [[keepsPrototype]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L1{{*}}key="area"}]
+# CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[kept]](), notTaken [[moved]]()
+# CHECK: [[kept]]():
+# CHECK-NEXT: = CallDirect v0 function=f1
+# CHECK: [[moved]]() frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v1, v0 key="area"
 
-function f10 name="layoutOfTheObjectIsUnknown" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+function f10 name="layoutOfTheObjectIsOnlyExpected" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = GetSuperBase v0 homeKind=Object
     v2 = SuperGet v1, v0 key="area"
     Return v2
 }
-# CHECK-LABEL: function f10 name="layoutOfTheObjectIsUnknown"
+# CHECK-LABEL: function f10 name="layoutOfTheObjectIsOnlyExpected"
 # CHECK: v2:{{*}}= SuperGet v1, v0 key="area"
 
 function f11 name="anotherObjectIsTheReceiver" parameters=[{type=L0}, {type=object}] results=[{type=anything}] {

@@ -21,14 +21,57 @@ static bool dependsOnModule(Opcode opcode)
     });
 }
 
-static Value withoutAccessSite(const Value& value)
+static uint64_t findWordsOfAccessSites(Opcode opcode)
 {
-    Value copy(value);
-    for (const PayloadFieldInfo& field : payloadFieldsOf(value.opcode)) {
-        if (field.kind == PayloadKind::AccessSite)
-            copy.setPayloadWordAt(field.firstWord, absentPayloadWord);
+    uint64_t words = 0;
+    for (const PayloadFieldInfo& field : payloadFieldsOf(opcode)) {
+        if (field.kind != PayloadKind::AccessSite)
+            continue;
+        RELEASE_ASSERT(field.firstWord < 64);
+        words |= uint64_t { 1 } << field.firstWord;
     }
-    return copy;
+    return words;
+}
+
+template<typename Functor>
+static void forEachPayloadWordWithoutAccessSite(const Value& value, const Functor& functor)
+{
+    uint64_t wordsOfAccessSites = findWordsOfAccessSites(value.opcode);
+    unsigned position = 0;
+    auto visit = [&](uint32_t word) {
+        bool isAccessSite = position < 64 && (wordsOfAccessSites >> position & 1);
+        ++position;
+        functor(isAccessSite ? absentPayloadWord : word);
+    };
+    for (uint32_t word : value.inlinePayload())
+        visit(word);
+    functor(static_cast<uint32_t>(value.outOfLinePayload().size()));
+    for (uint32_t word : value.outOfLinePayload())
+        visit(word);
+}
+
+static void addPayloadWithoutAccessSite(Hasher& hasher, const Value& value)
+{
+    add(hasher, static_cast<uint16_t>(value.flags));
+    forEachPayloadWordWithoutAccessSite(value, [&](uint32_t word) {
+        add(hasher, word);
+    });
+}
+
+static bool haveSamePayloadWithoutAccessSite(const Value& first, const Value& second)
+{
+    if (first.flags != second.flags || first.outOfLinePayload().size() != second.outOfLinePayload().size())
+        return false;
+    Vector<uint32_t, 16> wordsOfFirst;
+    forEachPayloadWordWithoutAccessSite(first, [&](uint32_t word) {
+        wordsOfFirst.append(word);
+    });
+    size_t position = 0;
+    bool areSame = true;
+    forEachPayloadWordWithoutAccessSite(second, [&](uint32_t word) {
+        areSame &= wordsOfFirst[position++] == word;
+    });
+    return areSame;
 }
 
 static bool readsConditionOperands(const Terminator& terminator)
@@ -60,6 +103,9 @@ OutliningNormalForm::OutliningNormalForm(const Function& function, const Outlini
     }
     appendMark(Mark::Result);
     appendWord(site.rootIsUsed);
+    // A constant leaves nothing in the form where it stands, and it may be what the run answers.
+    if (site.rootIsUsed && isRematerializable(function.at(site.root)))
+        appendReference(site.root);
     appendWord(site.resultType.index());
 }
 
@@ -110,8 +156,9 @@ void OutliningNormalForm::appendTerminator(const Terminator& terminator)
     }
 
     appendWord(terminator.flags);
-    appendCount(terminator.inlinePayload().size());
-    m_words.append(terminator.inlinePayload());
+    std::array<uint32_t, numberOfInlinePayloadWords> inlinePayload = terminator.inlinePayload();
+    appendCount(inlinePayload.size());
+    m_words.append(std::span<const uint32_t> { inlinePayload });
     appendCount(terminator.outOfLinePayload().size());
     m_words.append(terminator.outOfLinePayload());
 
@@ -188,14 +235,14 @@ unsigned OutliningNormalForm::hash() const
     for (uint32_t word : m_words)
         add(hasher, word);
     for (const Value* payload : m_payloads)
-        withoutAccessSite(*payload).addPayloadTo(hasher);
+        addPayloadWithoutAccessSite(hasher, *payload);
     return hasher.hash();
 }
 
 bool OutliningNormalForm::isEqualTo(const OutliningNormalForm& other) const
 {
     return m_words == other.m_words && std::ranges::equal(m_payloads, other.m_payloads, [](const Value* payload, const Value* otherPayload) {
-        return withoutAccessSite(*payload).hasSamePayloadAs(withoutAccessSite(*otherPayload));
+        return haveSamePayloadWithoutAccessSite(*payload, *otherPayload);
     });
 }
 

@@ -32,6 +32,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <wtf/DataLog.h>
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
@@ -182,7 +183,6 @@ static constexpr ASCIILiteral nameOfFieldWithTypeFor(SlotRepresentation represen
     case SlotRepresentation::Double:
         return "num"_s;
     case SlotRepresentation::OptionalDouble:
-    case SlotRepresentation::Int32OrDouble:
         return "onum"_s;
     case SlotRepresentation::Boolean:
         return "bool"_s;
@@ -208,17 +208,14 @@ namespace {
 
 struct LayoutWithEveryRepresentation {
     static constexpr unsigned numberOfFields = numberOfEnumerators<SlotRepresentation>;
-    static constexpr uint32_t overflowOffset = 8;
 
     explicit LayoutWithEveryRepresentation(LoadedProgram&);
 
-    RareLayoutData rare { };
     LayoutData layout { };
     FieldData fields[numberOfFields] { };
-    uint32_t operands[2] { };
-    uint32_t references[numberOfInlineReferenceCounts + numberOfFields + numberOfExtensionHeaderWords] { };
+    uint32_t operands[1] { };
+    uint32_t references[numberOfInlineReferenceCounts + numberOfFields] { };
 };
-static_assert(offsetof(LayoutWithEveryRepresentation, layout) == sizeof(RareLayoutData));
 static_assert(offsetof(LayoutWithEveryRepresentation, fields) == offsetof(LayoutWithEveryRepresentation, layout) + sizeof(LayoutData));
 static_assert(offsetof(LayoutWithEveryRepresentation, operands) == offsetof(LayoutWithEveryRepresentation, fields) + sizeof(LayoutWithEveryRepresentation::fields));
 
@@ -255,9 +252,6 @@ LayoutWithEveryRepresentation::LayoutWithEveryRepresentation(LoadedProgram& prog
     Vector<uint32_t, numberOfFields> wideReferences;
     Vector<uint32_t, numberOfFields> narrowReferences;
     uint32_t offset = offsetOfFirstField;
-    rare.extension = SlotData::create(offset, SlotRepresentation::Cell);
-    rare.extensionSize = overflowOffset + sizeof(double);
-    offset += sizeof(void*);
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
         const FieldData& model = typedField(program, nameOfFieldWithTypeFor(representation));
         SlotTraits traits = traitsOf(representation);
@@ -266,16 +260,11 @@ LayoutWithEveryRepresentation::LayoutWithEveryRepresentation(LoadedProgram& prog
         field.name = model.name;
         field.type = model.type;
         field.slot = SlotData::create(offset, representation);
-        if (representation == SlotRepresentation::Int32OrDouble || representation == SlotRepresentation::DeferredClosure) {
-            field.flags = fieldHasOperand;
-            field.operandIndex = representation == SlotRepresentation::DeferredClosure;
-        }
         if (traits.holdsCell)
             (traits.isNarrowReference ? narrowReferences : wideReferences).append(offset);
         offset += traits.width;
     }
-    operands[0] = overflowOffset;
-    operands[1] = functionNamed(program, "callback"_s).index();
+    operands[0] = functionNamed(program, "callback"_s).index();
 
     uint32_t* next = references;
     *next++ = wideReferences.size();
@@ -285,12 +274,10 @@ LayoutWithEveryRepresentation::LayoutWithEveryRepresentation(LoadedProgram& prog
         *next++ = reference;
     for (uint32_t reference : narrowReferences)
         *next++ = reference;
-    *next++ = rare.extension.encoded();
 
     const LayoutData& model = typedLayout(program);
     layout.kindBits = static_cast<uint32_t>(LayoutKind::Record);
     layout.keysAreNeverEnumerated = true;
-    layout.hasRareData = true;
     layout.index = model.index;
     layout.shape = model.shape;
     layout.name = model.name;
@@ -322,7 +309,8 @@ Fixture::Fixture(LoadedProgram& program)
 Object* Fixture::createHolding(const FieldData& field, JSValue value)
 {
     Object* object = create();
-    if (!layouts().fieldAccepts(field, value) || !object->store(vm(), field, value))
+    std::optional<AcceptedValue> accepted = layouts().accept(field, value);
+    if (!accepted || !object->store(vm(), field, *accepted))
         return nullptr;
     AOT_TEST_CHECK(isSame(object->read(field), value));
     return object;
@@ -332,8 +320,7 @@ void Fixture::checkPlan(const FieldMovePlan& plan, JSObject* source, JSValue val
 {
     bool fits = !!createHolding(to, valueOfSource);
     Object* target = create();
-    target->ensureExtensionGranules(vm(), plan.granuleBits);
-    AOT_TEST_CHECK(applyMoves(vm(), plan, target, source) == fits);
+    AOT_TEST_CHECK(!plan.granuleBits && applyMoves(vm(), plan, target, source) == fits);
     AOT_TEST_CHECK(fits ? isSame(target->read(to), valueOfSource) : holdsInitialBits(target, to));
 
     JSObject* created = tryCreateByPlan(vm(), plan, source);
@@ -391,8 +378,8 @@ static void checkAbsentSourceIsNeverMoved(LoadedProgram& program)
             plan.appendFieldToField(fixture.layouts(), from, to);
             plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
             Object* source = fixture.create();
+            source->clear(from);
             Object* target = fixture.create();
-            target->ensureExtensionGranules(fixture.vm(), plan.granuleBits);
             AOT_TEST_CHECK(!source->isInSlot(from) && !source->read(from));
             AOT_TEST_CHECK(!applyMoves(fixture.vm(), plan, target, source) && fixture.holdsInitialBits(target, to));
             AOT_TEST_CHECK(!tryCreateByPlan(fixture.vm(), plan, source));
@@ -434,7 +421,7 @@ static void checkPropertyOfOrdinaryObjectToEveryRepresentation(LoadedProgram& pr
     }
 }
 
-static void checkNothingIsWrittenWhenOneMoveFails(LoadedProgram& program)
+static void checkNothingIsStoredWhenOneMoveFails(LoadedProgram& program)
 {
     Fixture fixture(program);
     const FieldData& number = fixture.field(SlotRepresentation::Double);
@@ -448,12 +435,12 @@ static void checkNothingIsWrittenWhenOneMoveFails(LoadedProgram& program)
     plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
 
     Object* source = fixture.createHolding(number, jsNumber(1.5));
-    AOT_TEST_CHECK(source->store(fixture.vm(), anything, jsNumber(7)));
+    AOT_TEST_CHECK(source->tryStore(fixture.vm(), anything, jsNumber(7)));
     Object* target = fixture.create();
     AOT_TEST_CHECK(!applyMoves(fixture.vm(), plan, target, source));
     AOT_TEST_CHECK(!target->isInSlot(optionalNumber) && !target->isInSlot(text));
 
-    AOT_TEST_CHECK(source->store(fixture.vm(), anything, jsNontrivialString(fixture.vm(), "text"_s)));
+    AOT_TEST_CHECK(source->tryStore(fixture.vm(), anything, jsNontrivialString(fixture.vm(), "text"_s)));
     AOT_TEST_CHECK(applyMoves(fixture.vm(), plan, target, source));
     AOT_TEST_CHECK(target->read(optionalNumber) == jsNumber(1.5) && target->read(text) == source->read(anything));
 }
@@ -495,7 +482,7 @@ static void checkAnswersAboutTypesHoldForEveryValue(LoadedProgram& program)
             ++(fits ? numberOfFittingPairs : numberOfOtherPairs);
             for (unsigned index = 0; fits && index < fixture.samples().size(); ++index) {
                 JSValue value = fixture.samples().at(index);
-                AOT_TEST_CHECK(!fixture.layouts().fieldAccepts(from, value) || fixture.layouts().fieldAccepts(to, value));
+                AOT_TEST_CHECK(!fixture.layouts().slotAdmits(from, value) || fixture.layouts().slotAdmits(to, value));
             }
         }
     }
@@ -505,7 +492,13 @@ static void checkAnswersAboutTypesHoldForEveryValue(LoadedProgram& program)
     AOT_TEST_CHECK(!alwaysFits(fixture.layouts(), fixture.field(SlotRepresentation::Int16), fixture.field(SlotRepresentation::Uint8)));
     AOT_TEST_CHECK(alwaysFits(fixture.layouts(), fixture.field(SlotRepresentation::Double), fixture.field(SlotRepresentation::OptionalDouble)));
     AOT_TEST_CHECK(!alwaysFits(fixture.layouts(), fixture.field(SlotRepresentation::OptionalDouble), fixture.field(SlotRepresentation::Double)));
-    AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::Int32))) == OptionSet<ValueKind> { ValueKind::Int32 });
+    // A field that takes anything takes what a field of objects holds. The other way round it does not fit.
+    AOT_TEST_CHECK(!fixture.layouts().typeOf(typedField(program, "fn"_s)).cellTests().empty());
+    AOT_TEST_CHECK(alwaysFits(fixture.layouts(), typedField(program, "fn"_s), typedField(program, "any"_s)));
+    AOT_TEST_CHECK(!alwaysFits(fixture.layouts(), typedField(program, "any"_s), typedField(program, "fn"_s)));
+    // The type of a field that is declared to hold int32s leaves out the five words that its slot needs for markers.
+    AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::Int32))).isEmpty());
+    AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::Int64))) == OptionSet<ValueKind> { ValueKind::Int32 });
     AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::Uint8))).isEmpty());
     AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::OptionalBoolean))) == (OptionSet<ValueKind> { ValueKind::True, ValueKind::False, ValueKind::Undefined, ValueKind::Null }));
     AOT_TEST_CHECK(valueKindOf(jsNumber(1)) == ValueKind::Int32 && valueKindOf(jsNumber(1.5)) == ValueKind::Double && valueKindOf(constructEmptyObject(program.realm())).isEmpty());
@@ -623,7 +616,8 @@ static void checkAssignmentTestsEachClosure(LoadedProgram& program)
         if (tables.allocations()[number].shape == layout.shape)
             target = uncheckedDowncast<Object>(program.state().objects->structures.allocate(vm, number));
     }
-    AOT_TEST_CHECK(target && target->store(vm, field, accepted));
+    std::optional<AcceptedValue> acceptedByField = layoutsOf(program).accept(field, accepted);
+    AOT_TEST_CHECK(target && acceptedByField && target->store(vm, field, *acceptedByField));
 
     uint64_t exitsBefore = valueOf(vm, RuntimeCounterID::FieldsLeftSlotByStoreOfOtherType);
     AOT_TEST_CHECK(PropertyWalk::tryAssign(vm, target, sourceOfAccepted));
@@ -646,7 +640,7 @@ std::span<const NativeTest> fieldMoveTests()
         { "field-moves/every-pair-of-representations"_s, runNativeTestWithNarrowReferences<checkEveryPairOfRepresentations> },
         { "field-moves/absent-source-is-never-moved"_s, runNativeTestWithNarrowReferences<checkAbsentSourceIsNeverMoved> },
         { "field-moves/property-of-ordinary-object-to-every-representation"_s, runNativeTestWithNarrowReferences<checkPropertyOfOrdinaryObjectToEveryRepresentation> },
-        { "field-moves/nothing-is-written-when-one-move-fails"_s, runNativeTestWithNarrowReferences<checkNothingIsWrittenWhenOneMoveFails> },
+        { "field-moves/nothing-is-stored-when-one-move-fails"_s, runNativeTestWithNarrowReferences<checkNothingIsStoredWhenOneMoveFails> },
         { "field-moves/set-absent"_s, runNativeTestWithNarrowReferences<checkSetAbsent> },
         { "field-moves/answers-about-types-hold-for-every-value"_s, runNativeTestWithNarrowReferences<checkAnswersAboutTypesHoldForEveryValue> },
         { "field-moves/plan-cache-never-refuses"_s, runNativeTestWithNarrowReferences<checkPlanCacheNeverRefuses> },

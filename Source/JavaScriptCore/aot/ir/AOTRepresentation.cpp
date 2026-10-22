@@ -157,7 +157,6 @@ Representation representationOf(SlotRepresentation slot)
     case SlotRepresentation::OptionalInt32:
         return Representation::OptionalInt64;
     case SlotRepresentation::OptionalDouble:
-    case SlotRepresentation::Int32OrDouble:
         return Representation::OptionalDouble;
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
@@ -166,6 +165,47 @@ Representation representationOf(SlotRepresentation slot)
         return Representation::RawWord;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+Representation loadedRepresentationOf(SlotRepresentation slot, const Type& loaded)
+{
+    switch (slot) {
+    case SlotRepresentation::OptionalInt32:
+        if (loaded.isInteger())
+            return Representation::Int32;
+        break;
+    case SlotRepresentation::OptionalInt64:
+        if (loaded.isInteger())
+            return Representation::Int64;
+        break;
+    case SlotRepresentation::OptionalDouble:
+        if (loaded.isNumber())
+            return Representation::Double;
+        break;
+    case SlotRepresentation::OptionalBoolean:
+        if (loaded.isBoolean())
+            return Representation::Boolean;
+        break;
+    case SlotRepresentation::Uint8:
+    case SlotRepresentation::Int8:
+    case SlotRepresentation::Uint16:
+    case SlotRepresentation::Int16:
+    case SlotRepresentation::Int32:
+    case SlotRepresentation::Boolean:
+    case SlotRepresentation::Uint32:
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::Float:
+    case SlotRepresentation::Double:
+    case SlotRepresentation::Cell:
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::OptionalCell32:
+    case SlotRepresentation::JSValue:
+    case SlotRepresentation::LiteralString:
+    case SlotRepresentation::LiteralString32:
+    case SlotRepresentation::DeferredClosure:
+        break;
+    }
+    return representationOf(slot);
 }
 
 bool isLegalRepresentation(const Type& type, Representation representation)
@@ -184,6 +224,40 @@ bool isLegalRepresentation(const Type& type, Representation representation)
     if (!type.integers.isSubsetOf(set.integers))
         return false;
     return set.hasObjects || !type.hasObjects();
+}
+
+template<typename Predicate>
+static RepresentationSet representationsThat(const Predicate& holds)
+{
+    RepresentationSet result;
+    for (Representation representation : allMembersOf<Representation>) {
+        if (representation != Representation::Unchosen && holds(representation))
+            result.add(representation);
+    }
+    return result;
+}
+
+RepresentationSet legalRepresentationsOf(const Type& type)
+{
+    if (type.isNever()) {
+        return representationsThat([](Representation) {
+            return true;
+        });
+    }
+    if (auto internal = internalRepresentationOf(type)) {
+        bool mayBeAbsent = type.primitives & Primitive::Absent;
+        return representationsThat([&](Representation representation) {
+            return canHoldInternalValue(representation, *internal, mayBeAbsent);
+        });
+    }
+    bool isMarker = isSingleMarker(type);
+    bool hasObjects = type.hasObjects();
+    return representationsThat([&](Representation representation) {
+        if (representation == Representation::Void)
+            return isMarker;
+        RepresentableSet set = representableSetOf(representation);
+        return !(type.primitives & ~set.primitives) && type.integers.isSubsetOf(set.integers) && (set.hasObjects || !hasObjects);
+    });
 }
 
 static SlotRepresentation narrowestIntegerSlotFor(Range integers)

@@ -48,7 +48,21 @@ public:
     {
         size_t offset = std::bit_cast<uintptr_t>(slot) - m_tableStart;
         ASSERT(!m_tableSize || offset < m_tableSize);
-        m_cards[offset >> m_regionShift] = writtenCard;
+        size_t card = offset >> m_regionShift;
+        if (m_cards[card] == writtenCard)
+            return;
+        m_cards[card] = writtenCard;
+        if (m_writtenCards.size() < m_maxNumberOfListedCards) [[likely]]
+            m_writtenCards.append(static_cast<uint32_t>(card));
+        else
+            m_listsEveryWrittenCard = false;
+    }
+
+    // Compiled code stores into the cards of such a set itself, so only the cards say what was written.
+    void setCardsAreWrittenWithoutRecord()
+    {
+        m_cardsAreWrittenWithoutRecord = true;
+        m_listsEveryWrittenCard = false;
     }
 
     uint8_t* cards() { return m_cards; }
@@ -75,14 +89,27 @@ private:
 
     enum class Selection : uint8_t { Written, WrittenOrScanned };
 
-    template<typename Functor> void forEachSelectedCard(Selection, const Functor&) const;
+    using ListOfCards = Vector<uint32_t, 16>;
+
+    // The roots are visited at every stop of the mutator, and little or nothing was written to most tables since the stop before.
+    // So the cards that record() writes are listed, and whoever asks for the written ones reads the list and not all the cards.
+    // A list of an eighth of the cards is no shorter than the cards, which are read eight at a time: from there on nothing is listed.
+    static size_t maxNumberOfListedCardsFor(size_t numberOfCards) { return std::max<size_t>(numberOfCards / cardsPerWord, 16); }
+    ListOfCards takeListOfWrittenCards(bool& listsEveryWrittenCard);
+
+    template<typename Functor> void forEachSelectedCard(Selection, const Functor&);
+    template<typename Functor> void forEachCardInState(Selection, const Functor&) const;
     template<typename Functor> void callWithRegionOf(size_t card, const Functor&) const;
 
     uintptr_t m_tableStart { 0 };
     size_t m_tableSize { 0 };
     unsigned m_regionShift { shiftOfSingleRegion };
     uint32_t m_lastFullVisitVersion { 0 };
+    bool m_listsEveryWrittenCard { true };
+    bool m_cardsAreWrittenWithoutRecord { false };
     size_t m_numberOfCards { cardsPerWord };
+    size_t m_maxNumberOfListedCards { maxNumberOfListedCardsFor(cardsPerWord) };
+    ListOfCards m_writtenCards;
     uint8_t* m_cards { nullptr };
     Vector<uint8_t, cardsPerWord> m_ownedCards;
 };
@@ -115,6 +142,13 @@ static_assert(sizeof(RememberedSlot<uint32_t>) == sizeof(uint32_t));
 
 inline bool RememberedSlotSet::hasWrittenRegions() const
 {
+    if (m_listsEveryWrittenCard) {
+        for (uint32_t card : m_writtenCards) {
+            if (m_cards[card] == writtenCard)
+                return true;
+        }
+        return false;
+    }
     for (size_t first = 0; first < m_numberOfCards; first += cardsPerWord) {
         uint64_t states;
         memcpy(&states, m_cards + first, sizeof(states));
@@ -124,8 +158,31 @@ inline bool RememberedSlotSet::hasWrittenRegions() const
     return false;
 }
 
+inline auto RememberedSlotSet::takeListOfWrittenCards(bool& listsEveryWrittenCard) -> ListOfCards
+{
+    listsEveryWrittenCard = std::exchange(m_listsEveryWrittenCard, !m_cardsAreWrittenWithoutRecord);
+    return std::exchange(m_writtenCards, { });
+}
+
+// Whoever calls this takes every written card out of that state. What the functor records is listed anew.
 template<typename Functor>
-ALWAYS_INLINE void RememberedSlotSet::forEachSelectedCard(Selection selection, const Functor& functor) const
+ALWAYS_INLINE void RememberedSlotSet::forEachSelectedCard(Selection selection, const Functor& functor)
+{
+    bool listsEveryWrittenCard;
+    ListOfCards writtenCards = takeListOfWrittenCards(listsEveryWrittenCard);
+    if (selection != Selection::Written || !listsEveryWrittenCard) {
+        forEachCardInState(selection, functor);
+        return;
+    }
+    std::ranges::sort(writtenCards);
+    for (uint32_t card : writtenCards) {
+        if (m_cards[card] == writtenCard)
+            functor(card);
+    }
+}
+
+template<typename Functor>
+ALWAYS_INLINE void RememberedSlotSet::forEachCardInState(Selection selection, const Functor& functor) const
 {
     static_assert(writtenCard == 1 && scannedCard == 2 && !neverWrittenCard);
     for (size_t first = 0; first < m_numberOfCards; first += cardsPerWord) {
@@ -171,7 +228,7 @@ void RememberedSlotSet::forEachRegionToVisit(Visitor& visitor, const Functor& fu
             callWithRegionOf(card, functor);
         });
     } else {
-        forEachSelectedCard(Selection::WrittenOrScanned, [&](size_t card) {
+        forEachCardInState(Selection::WrittenOrScanned, [&](size_t card) {
             callWithRegionOf(card, functor);
         });
     }

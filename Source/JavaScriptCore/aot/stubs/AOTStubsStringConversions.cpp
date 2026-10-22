@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTInstance.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
@@ -51,6 +53,22 @@ void generateIntegerToString(StubAssembler& jit)
     Jump isSmall = jit.branch64(CCallHelpers::Below, value, TrustedImm32(NumericStrings::cacheSize));
     jit.signExtend32ToPtr(value, first);
     slow.append(jit.branch64(CCallHelpers::NotEqual, first, value));
+    if (!jit.options().useWideReferences) {
+        JumpList isNoIntegerKey;
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeys)), second);
+        isNoIntegerKey.append(jit.branchTestPtr(CCallHelpers::Zero, second));
+        jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeyMask)), high);
+        jit.and64(value, high);
+        jit.load64(BaseIndex(second, high, CCallHelpers::TimesEight), second);
+        jit.move(second, high);
+        jit.urshift64(TrustedImm32(32), high);
+        isNoIntegerKey.append(jit.branch32(CCallHelpers::NotEqual, high, value));
+        jit.zeroExtend32ToWord(second, second);
+        isNoIntegerKey.append(jit.branchTest32(CCallHelpers::Zero, second));
+        decodeCell32(jit, second, result);
+        jit.returnToCaller();
+        isNoIntegerKey.link(&jit);
+    }
     jit.zeroExtend32ToWord(value, first);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(numbers.hashSecrets[1])), second);
     jit.xor64(first, second);
@@ -88,8 +106,37 @@ void generateIntegerToString(StubAssembler& jit)
     });
 }
 
-static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, uint8_t firstConvertedLetter, uint8_t lastConvertedLetter)
+// StringKeyCache::tryFindCaseConversion(): what the conversion of this very string gave the last time.
+static void returnRememberedCaseConversion(StubAssembler& jit, StringKeyCache::LetterCase letterCase, GPRReg string, GPRReg source, GPRReg index, GPRReg entry)
 {
+    RELEASE_ASSERT(noOverlap(string, source, index, entry, instanceGPR, cellCageBaseGPR));
+    if (jit.options().useWideReferences)
+        return;
+    JumpList isNotRemembered;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.caseConversions)), entry);
+    isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, entry));
+    // Of a string outside the cage this has more than 32 bits, and equals the upper half of no entry.
+    jit.move(string, source);
+    jit.sub64(cellCageBaseGPR, source);
+    jit.urshift64(TrustedImm32(cell32Shift), source);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::caseConversionMultiplier)), source, index);
+    jit.urshift32(TrustedImm32(StringKeyCache::caseConversionShift), index);
+    jit.lshift32(TrustedImm32(1), index);
+    jit.load64(BaseIndex(entry, index, CCallHelpers::TimesEight, static_cast<int32_t>(static_cast<size_t>(letterCase) * sizeof(uint64_t))), entry);
+    jit.move(entry, index);
+    jit.urshift64(TrustedImm32(32), index);
+    isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, index, source));
+    jit.zeroExtend32ToWord(entry, entry);
+    decodeCell32(jit, entry, jit.result());
+    jit.returnToCaller();
+
+    isNotRemembered.link(&jit);
+}
+
+static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, StringKeyCache::LetterCase letterCase)
+{
+    const uint8_t firstConvertedLetter = letterCase == StringKeyCache::LetterCase::Lower ? 'A' : 'a';
+    const uint8_t lastConvertedLetter = letterCase == StringKeyCache::LetterCase::Lower ? 'Z' : 'z';
     // A call that preserves registers has none to scan with.
     if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
@@ -118,17 +165,18 @@ static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, uint8_t firstCon
     jit.returnToCaller();
 
     mayChange.link(&jit);
+    returnRememberedCaseConversion(jit, letterCase, string, scanned.size, scanned.word, scanned.bytes);
     return PreludeExit::CallsOperation;
 }
 
 PreludeExit emitToLowerCasePrelude(StubAssembler& jit)
 {
-    return emitUnchangedCasePrelude(jit, 'A', 'Z');
+    return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Lower);
 }
 
 PreludeExit emitToUpperCasePrelude(StubAssembler& jit)
 {
-    return emitUnchangedCasePrelude(jit, 'a', 'z');
+    return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Upper);
 }
 
 } } // namespace JSC::AOT

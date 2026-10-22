@@ -133,6 +133,59 @@ static CodeOrFailureReason generateWithinReach(const RegExpCompilerInputs& input
     return generate(inputs, pattern, charSize, PCRelativeReach::Far);
 }
 
+static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction)
+{
+    for (auto& alternative : disjunction.m_alternatives) {
+        for (const Yarr::PatternTerm& term : alternative->m_terms) {
+            switch (term.type) {
+            case Yarr::PatternTerm::Type::AssertionBOL:
+            case Yarr::PatternTerm::Type::AssertionEOL:
+            case Yarr::PatternTerm::Type::AssertionWordBoundary:
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+            case Yarr::PatternTerm::Type::NumberedBackReference:
+            case Yarr::PatternTerm::Type::NamedBackReference:
+            case Yarr::PatternTerm::Type::NumberedForwardReference:
+            case Yarr::PatternTerm::Type::NamedForwardReference:
+                break;
+            case Yarr::PatternTerm::Type::PatternCharacter:
+                if (term.patternCharacter > 0xff)
+                    return false;
+                break;
+            case Yarr::PatternTerm::Type::CharacterClass: {
+                const Yarr::CharacterClass& characterClass = *term.characterClass;
+                bool holdsWideCharacter = characterClass.hasStrings()
+                    || std::ranges::any_of(characterClass.m_matches32, [](char32_t character) { return character > 0xff; })
+                    || std::ranges::any_of(characterClass.m_ranges32, [](const Yarr::CharacterRange& range) { return range.end > 0xff; });
+                if (term.invert() || holdsWideCharacter)
+                    return false;
+                break;
+            }
+            case Yarr::PatternTerm::Type::ParenthesesSubpattern:
+                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction))
+                    return false;
+                break;
+            case Yarr::PatternTerm::Type::DotStarEnclosure:
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// A pattern that has to match its subject from end to end with characters of one byte matches no subject that holds a wider one: an address, a version, a name.
+// Letters that are the same but for their case may be wider.
+static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
+{
+    if (pattern.multiline() || pattern.ignoreCase() || pattern.m_containsModifiers)
+        return false;
+    for (auto& alternative : pattern.m_body->m_alternatives) {
+        auto& terms = alternative->m_terms;
+        if (terms.size() < 2 || terms.first().type != Yarr::PatternTerm::Type::AssertionBOL || terms.last().type != Yarr::PatternTerm::Type::AssertionEOL)
+            return false;
+    }
+    return consumesOnly8BitCharacters(*pattern.m_body);
+}
+
 NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
 {
     const RegExpSummary& summary = inputs.summary;
@@ -156,6 +209,8 @@ NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
     RELEASE_ASSERT(!yarrPattern.m_firstFollowSets.didExhaustStack());
 
     for (auto charSize : { Yarr::CharSize::Char8, Yarr::CharSize::Char16 }) {
+        if (charSize == Yarr::CharSize::Char16 && inputs.codeFor16BitSubjects == RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject && matchesOnlyWhole8BitSubjects(yarrPattern))
+            break;
         CodeOrFailureReason code = generateWithinReach(inputs, yarrPattern, charSize);
         if (!code) {
             RELEASE_ASSERT(code.error() != Yarr::JITFailureReason::ParenthesisNestedTooDeep);
@@ -204,7 +259,7 @@ static void applyCandidateBudget(const RegExpRequests& requests, CompiledRegExps
     UncheckedKeyHashMap<std::pair<FunctionID, ValueID>, uint64_t> bytesBySite;
     for (size_t index = 0; index < candidates.size(); ++index) {
         uint64_t size = results[index].codeSize();
-        if (!size)
+        if (!size || candidates[index].origin == RegExpRequestOrigin::Evaluated)
             continue;
         const RegExpSite& site = candidates[index].sites.first();
         uint64_t& chargedBytes = bytesBySite.add(std::pair { site.function, site.value }, 0).iterator->value;
@@ -240,22 +295,25 @@ static void reportDecline(const RegExpRequest& request, RegExpDeclineReason reas
             .value = site.value,
             .limit = limit,
             .count = static_cast<uint32_t>(reason),
+            .location = site.location,
         });
     }
     if (limit == LimitID::None)
         return;
     const RegExpSite& firstSite = request.sites.first();
-    context.gaveUp(limit, Subject { .function = firstSite.function, .value = firstSite.value });
+    context.gaveUp(limit, Subject { .function = firstSite.function, .value = firstSite.value, .location = firstSite.location });
 }
 
 static void countResult(Statistics& statistics, const RegExpRequest& request, const CompiledRegExp& result)
 {
-    bool isCandidate = request.origin == RegExpRequestOrigin::Candidate;
+    bool isCandidate = request.origin != RegExpRequestOrigin::Literal;
     switch (result.form) {
     case RegExpRecordForm::Code: {
         uint64_t analysisLimitHits = 0;
         uint64_t elidedFrames = 0;
         for (auto& code : result.code) {
+            if (!code)
+                continue;
             analysisLimitHits += code->analysisLimitHits;
             elidedFrames += code->hasElidedFrame;
         }
@@ -289,7 +347,8 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         Vector<char16_t> patternBuffer;
         StringView pattern = program.strings.viewOf(request.pattern, patternBuffer);
         const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
-        compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context });
+        RegExpCodeFor16BitSubjects codeFor16BitSubjects = request.origin == RegExpRequestOrigin::Literal ? RegExpCodeFor16BitSubjects::Always : RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject;
+        compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, codeFor16BitSubjects });
     });
 
     applyCandidateBudget(requests, compiled, context);

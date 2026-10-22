@@ -11,6 +11,7 @@
 #include "AOTNativeTest.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTState.h"
+#include <initializer_list>
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
@@ -36,8 +37,9 @@ private:
 
 using LoadedProgramTest = void (*)(LoadedProgram&);
 
-Vector<uint8_t> compileProgramText(ASCIILiteral programText);
-void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body);
+// The words are those of an `# OPTIONS:` line of an .ir test, such as "heat=EverythingIsHot".
+Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords = { });
+void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, std::initializer_list<ASCIILiteral> optionWords = { });
 // No page of a loaded image is writable. A test that wants a table the compiler does not write changes it through this.
 void overwriteWordInImage(const uint32_t& word, uint32_t value);
 

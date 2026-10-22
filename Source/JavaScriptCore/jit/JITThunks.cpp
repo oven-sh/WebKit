@@ -55,22 +55,29 @@ JITThunks::~JITThunks() = default;
 
 using SharedCommonThunks = std::array<MacroAssemblerCodeRef<JITThunkPtrTag>, numberOfVMIndependentCommonThunkIDs>;
 
+NEVER_INLINE static void generateSharedCommonThunks(SharedCommonThunks& thunks)
+{
+    JSC_REMOVABLE_DEFINITION(JIT, generateSharedCommonThunks);
+    unsigned index = 0;
+#define JSC_DEFINE_SHARED_JIT_THUNK(name, func) thunks[index++] = func();
+JSC_FOR_EACH_VM_INDEPENDENT_COMMON_THUNK(JSC_DEFINE_SHARED_JIT_THUNK)
+#undef JSC_DEFINE_SHARED_JIT_THUNK
+}
+
 static const SharedCommonThunks& sharedCommonThunks()
 {
     static LazyNeverDestroyed<SharedCommonThunks> thunks;
     static std::once_flag onceKey;
     std::call_once(onceKey, [] {
         thunks.construct();
-        unsigned index = 0;
-#define JSC_DEFINE_SHARED_JIT_THUNK(name, func) thunks.get()[index++] = func();
-JSC_FOR_EACH_VM_INDEPENDENT_COMMON_THUNK(JSC_DEFINE_SHARED_JIT_THUNK)
-#undef JSC_DEFINE_SHARED_JIT_THUNK
+        generateSharedCommonThunks(thunks.get());
     });
     return thunks.get();
 }
 
-static ThunkGenerator generatorForLazyCommonThunk(CommonJITThunkID thunkID)
+NEVER_INLINE static ThunkGenerator generatorForLazyCommonThunk(CommonJITThunkID thunkID)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, generatorForLazyCommonThunk);
     switch (thunkID) {
 #define JSC_CASE_COMMON_JIT_THUNK(name, func) \
     case CommonJITThunkID::name: return func;
@@ -176,16 +183,14 @@ CodePtr<JITThunkPtrTag> JITThunks::ctiNativeTailCallWithoutSavedTags(VM& vm)
     return ctiStub(vm, CommonJITThunkID::NativeTailCallWithoutSavedTags).code();
 }
 
-NEVER_INLINE CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionCall(VM& vm)
+CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionCall(VM& vm)
 {
-    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::ctiInternalFunctionCall);
     ASSERT(Options::useJIT());
     return ctiStub(vm, CommonJITThunkID::InternalFunctionCall).code();
 }
 
-NEVER_INLINE CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionConstruct(VM& vm)
+CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionConstruct(VM& vm)
 {
-    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::ctiInternalFunctionConstruct);
     ASSERT(Options::useJIT());
     return ctiStub(vm, CommonJITThunkID::InternalFunctionConstruct).code();
 }
@@ -225,17 +230,15 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStubImpl(ThunkGenerator key,
     return handleEntry(addResult.iterator->value);
 }
 
-NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, ThunkGenerator generator)
+MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, ThunkGenerator generator)
 {
-    JSC_REMOVABLE_DEFINITION(JIT, static_cast<MacroAssemblerCodeRef<JITThunkPtrTag> (JITThunks::*)(VM&, ThunkGenerator)>(&JITThunks::ctiStub));
     return ctiStubImpl(generator, [&] {
         return generator(vm);
     });
 }
 
-NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, CommonJITThunkID thunkID)
+MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, CommonJITThunkID thunkID)
 {
-    JSC_REMOVABLE_DEFINITION(JIT, static_cast<MacroAssemblerCodeRef<JITThunkPtrTag> (JITThunks::*)(VM&, CommonJITThunkID)>(&JITThunks::ctiStub));
     unsigned index = static_cast<unsigned>(thunkID);
     if (index < numberOfVMIndependentCommonThunkIDs)
         return sharedCommonThunks()[index];

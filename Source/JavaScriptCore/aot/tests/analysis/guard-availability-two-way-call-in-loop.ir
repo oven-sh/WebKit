@@ -17,7 +17,7 @@ function f0 name="handedOnInAnotherRound" parameters=[{type=object}, {type=objec
   b4(v6):
     PropSet v1, v0 key="source"
     v8 = Integer integer=0
-    v9 = GetArrayElement v4, v8, v6 level=Predicted [keyIsIntegral]
+    v9 = GetArrayElement v4, v8, v6 level=Expected [keyIsIntegral]
     Jump -> next b1()
   b5():
     TryCallInline -, v4 inlineBuiltin=SetFromIterable overload=Set/2 -> done b6(), miss b8()
@@ -96,7 +96,7 @@ function f3 name="resultsMeetBehindABlockOfTheInlineResult" parameters=[{type=ob
   b5(v7):
     PropSet v1, v0 key="source"
     v9 = Integer integer=0
-    v10 = GetArrayElement v5, v9, v7 level=Predicted [keyIsIntegral]
+    v10 = GetArrayElement v5, v9, v7 level=Expected [keyIsIntegral]
     Jump -> next b1()
   b6():
     TryCallInline -, v5 inlineBuiltin=SetFromIterable overload=Set/2 -> done b7(), miss b9()
@@ -151,7 +151,7 @@ function f5 name="objectInUseMeetsTheResultOnAnotherPath" parameters=[{type=obje
   b4(v9):
     PropSet v1, v0 key="source"
     v11 = Integer integer=0
-    v12 = GetArrayElement v7, v11, v9 level=Predicted [keyIsIntegral]
+    v12 = GetArrayElement v7, v11, v9 level=Expected [keyIsIntegral]
     Jump -> next b1()
   b5():
     Branch v2 -> taken b6(v7), notTaken b6(v5)

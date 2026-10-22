@@ -1,0 +1,57 @@
+# A function that is only called keeps the check of a number parameter where flow cannot prove its callers: here the caller is handed on, and goes on with whatever it was given.
+# Where every call the program shows fills that parameter with what looks like an int32, the check that stays asks for an int32. A check that flow folds is left alone.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=7
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="keep" [isFreeName]
+    v5 = Call v4, -, v0
+    v6 = NewClosure function=f3
+    v7 = PropGet v3 key="input" [isFreeName]
+    v8 = Integer integer=0
+    v9 = BitOr v7, v8
+    v10 = Add v9, v1
+    v11 = Call v6, -, v10
+    Return
+}
+
+function f1 name="handedOn" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+    v4 = Call v1, -, v3
+    Return v4
+}
+
+function f2 name="calledWithASumByAFunctionThatIsHandedOn" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=number site=w1}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = BitOr v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="calledWithASumByAFunctionThatIsHandedOn" {{*}}parameters=[{type=i32 site=w1 flags=[IsExpected]}]
+# CHECK: b0(v0: anything ~ i32):
+# CHECK: i32 = Check v0 castType=i32 site=w1
+
+function f3 name="calledWithASumThatFlowProves" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=number site=w2}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = BitOr v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="calledWithASumThatFlowProves" {{*}}parameters=[{type=int[-2147483641, 2147483654] site=w2}]
+# CHECK-NOT: Check
+# CHECK: AssumeType v0 castType=number

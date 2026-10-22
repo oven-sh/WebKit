@@ -1,4 +1,5 @@
-# An object passed to a callee that gives back what it reads from it is in the caller's frame: only what the object holds leaves. So what such an object holds is on the heap
+# An object passed to a callee that gives back what it reads from it is in the caller's frame: only what the object holds leaves. So what such an object holds is on the heap.
+# The inner object gets into the outer one by a store: the second under its name, which the allocation does not list
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,AllocateInFrames
@@ -34,9 +35,10 @@ function f2 name="heldObjectGivenBack" parameters=[{type=anything}] results=[{ty
   b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v2, v0 key="inner" mode=Strict
     PropSet v2, v1 key="inner" mode=Strict
-    v4 = CallDirect v2 function=f5
-    Return v4
+    v5 = CallDirect v2 function=f5
+    Return v5
 }
 # CHECK-LABEL: function f2 name="heldObjectGivenBack"
 # CHECK-NOT: layout=L1 {{*}}storage=
@@ -46,9 +48,10 @@ function f3 name="heldObjectTested" parameters=[{type=anything}] results=[{type=
   b0(v0: anything):
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = NewObject -, v0 layout=L4 fields=[0]
+    PropSet v2, v0 key="inner" mode=Strict
     PropSet v2, v1 key="inner" mode=Strict
-    v4 = CallDirect v2 function=f6
-    Return v4
+    v5 = CallDirect v2 function=f6
+    Return v5
 }
 # CHECK-LABEL: function f3 name="heldObjectTested"
 # CHECK: NewObject {{*}}layout=L3 {{*}}storage=Frame

@@ -1,6 +1,6 @@
 # The arms of a walk over own keys are cut at the limits, and a layout whose orders flow has proven complete needs no original call
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
 # LOSS: MaxExpandedKeyOrders x3 f0 v1
 
@@ -17,7 +17,7 @@ layout L8 name="FieldMayBeCreatedLater" fields=[{key="a" declared={type=number} 
 layout L9 name="BaseIsUnknown" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, StoreOfOtherType]}
 layout L10 name="SlotMayBeEmpty" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number}}] flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, StoreOfOtherType]}
 
-function f0 name="fiveOrders" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+function f0 name="fiveOrders" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
@@ -30,7 +30,7 @@ function f0 name="fiveOrders" parameters=[{type=object predicted=L0}] results=[{
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 2, 0]
 # CHECK-NOT: HasKeyOrder
 
-function f1 name="fourOrdersOneListedTwice" parameters=[{type=object predicted=L1}] results=[{type=anything}] {
+function f1 name="fourOrdersOneListedTwice" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
@@ -42,7 +42,7 @@ function f1 name="fourOrdersOneListedTwice" parameters=[{type=object predicted=L
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[2, 0, 1]
 # CHECK-NOT: HasKeyOrder
 
-function f2 name="orderOfFortyNineFields" parameters=[{type=object predicted=L2}] results=[{type=anything}] {
+function f2 name="orderOfFortyNineFields" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L2):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
@@ -52,11 +52,11 @@ function f2 name="orderOfFortyNineFields" parameters=[{type=object predicted=L2}
 # CHECK-NOT: HasKeyOrder
 # CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[7]
 # CHECK-NOT: HasKeyOrder
-# CHECK: [[k7]]: number = GetSlot v0, {{*}} key="k7" receivers=[L2] level=Predicted
+# CHECK: [[k7]]: undefined|null|number ~ number = GetSlot v0, {{*}} key="k7" receivers=[L2] level=Expected
 # CHECK-NEXT: = NewArray [[k7]] contents=anything
 # CHECK-NOT: HasKeyOrder
 
-function f3 name="twoLayoutsWithThreeOrdersEach" parameters=[{type=object predicted=L3|L4}] results=[{type=anything}] {
+function f3 name="twoLayoutsWithThreeOrdersEach" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L3|L4):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
@@ -79,8 +79,8 @@ function f4 name="oneProvenOrder" parameters=[{type=L5}] results=[{type=anything
 }
 # CHECK-LABEL: function f4 name="oneProvenOrder"
 # CHECK: b0(v0: L5):
-# CHECK-NEXT: [[b4]]: number = GetSlot v0 key="b" receivers=[L5] level=Proven
-# CHECK-NEXT: [[a4]]: number = GetSlot v0 key="a" receivers=[L5] level=Proven
+# CHECK-NEXT: [[b4]]: undefined|null|number ~ number = GetSlot v0 key="b" receivers=[L5] level=Proven
+# CHECK-NEXT: [[a4]]: undefined|null|number ~ number = GetSlot v0 key="a" receivers=[L5] level=Proven
 # CHECK-NEXT: = NewArray [[b4]], [[a4]] contents=anything
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
@@ -98,12 +98,12 @@ function f5 name="twoProvenOrders" parameters=[{type=L6}] results=[{type=anythin
 # CHECK: = HasKeyOrder v0 layout=L6 fields=[1, 0]
 # CHECK-NOT: CallBuiltin
 
-function f6 name="provenOrderOfPredictedLayout" parameters=[{type=object predicted=L5}] results=[{type=anything}] {
+function f6 name="provenOrderOfExpectedLayout" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L5):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
 }
-# CHECK-LABEL: function f6 name="provenOrderOfPredictedLayout"
+# CHECK-LABEL: function f6 name="provenOrderOfExpectedLayout"
 # CHECK: = ShapeTest v0 layouts=[L5]
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK: = HasKeyOrder v0, {{*}} layout=L5 fields=[1, 0]
@@ -147,5 +147,5 @@ function f10 name="slotMayBeEmpty" parameters=[{type=L10}] results=[{type=anythi
 # CHECK-NOT: CallBuiltin
 # CHECK: = HasKeyOrder v0 layout=L10 fields=[1, 0]
 # CHECK-NOT: CallBuiltin
-# CHECK: = GetSlot v0, {{*}} key="b" receivers=[L10] level=Predicted
+# CHECK: = GetSlot v0, {{*}} key="b" receivers=[L10] level=Expected
 # CHECK-NOT: CallBuiltin

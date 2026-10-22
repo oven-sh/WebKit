@@ -35,6 +35,7 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
 )IR"_s;
 
 // A hundred accesses in a row call the run time at most three times where a cache answers: a site is written at its second miss, and an object is flattened at one.
+// Where no cache answers and the stub asks the object itself, one miss in MissesOfPairs::missesBetweenFilings calls it.
 #define MEASURE_ACCESSES R"JS(
 const operations = ["GetByIdAndCache", "GetById", "PutByIdAndCache", "PutById"];
 const calls = () => {
@@ -47,7 +48,7 @@ const measure = (what, access) => {
     let result;
     for (let i = 0; i < 100; i++) result = access(i);
     const callsMade = calls() - callsBefore;
-    const served = callsMade <= 3 ? "cached" : callsMade >= 100 ? "not cached" : callsMade + " calls";
+    const served = callsMade <= 3 ? "cached" : callsMade <= 8 ? "the object answers" : callsMade >= 100 ? "not cached" : callsMade + " calls";
     print(what + ": " + result + (globalThis.printsCalls ? ", " + served : ""));
 };
 const create = () => {
@@ -58,6 +59,7 @@ const create = () => {
 };
 const flattenByReading = (read, object) => {
     $vm.toUncacheableDictionary(object);
+    read(object);
     read(object);
 };
 )JS"
@@ -92,6 +94,15 @@ globalThis.publish = (read, store) => {
 
 #define OUTPUT_LINE(what, served) what served "\n"
 
+// What a read, or a store that replaces a value, is served by where no cache may answer, and a read of a name that the object has not.
+#if CPU(X86_64)
+#define READ_WITHOUT_CACHE(cached, notCached, objectAnswers) objectAnswers
+#define READ_OF_ABSENT_NAME(cached, notCached) cached
+#else
+#define READ_WITHOUT_CACHE(cached, notCached, objectAnswers) notCached
+#define READ_OF_ABSENT_NAME(cached, notCached) notCached
+#endif
+
 #define OUTPUT_OF_CACHEABLE_DICTIONARIES(cached, notCached) \
     OUTPUT_LINE("held: 2", cached) \
     OUTPUT_LINE("replaced: 3", cached) \
@@ -100,7 +111,7 @@ globalThis.publish = (read, store) => {
     OUTPUT_LINE("held, flattened before: 2", cached) \
     OUTPUT_LINE("stored, flattened before: 99", cached) \
     OUTPUT_LINE("read after the stores: 99", cached) \
-    OUTPUT_LINE("deleted: undefined", notCached) \
+    OUTPUT_LINE("deleted: undefined", READ_OF_ABSENT_NAME(cached, notCached)) \
     OUTPUT_LINE("added under the same Structure: 6", cached) \
     OUTPUT_LINE("read-only: 7", notCached)
 
@@ -144,26 +155,26 @@ globalThis.publish = (read, store) => {
 };
 )JS"
 
-#define OUTPUT_OF_UNCACHEABLE_DICTIONARIES(cached, notCached) \
+#define OUTPUT_OF_UNCACHEABLE_DICTIONARIES(cached, notCached, objectAnswers) \
     OUTPUT_LINE("flattened by the first read: 2", cached) \
-    OUTPUT_LINE("held: 2", notCached) \
-    OUTPUT_LINE("replaced: 3", notCached) \
-    OUTPUT_LINE("stored: 99", notCached) \
-    OUTPUT_LINE("deleted: undefined", notCached) \
-    OUTPUT_LINE("added: 4", notCached) \
-    OUTPUT_LINE("another name in the place of a deleted one: 4", notCached) \
-    OUTPUT_LINE("getter: 6", notCached) \
-    OUTPUT_LINE("inherited: 7", notCached) \
-    OUTPUT_LINE("inherited, replaced: 8", notCached) \
-    OUTPUT_LINE("inherited getter: 9", notCached) \
-    OUTPUT_LINE("no prototype: undefined", notCached)
+    OUTPUT_LINE("held: 2", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("replaced: 3", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("stored: 99", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("deleted: undefined", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("added: 4", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("another name in the place of a deleted one: 4", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("getter: 6", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("inherited: 7", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("inherited, replaced: 8", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("inherited getter: 9", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("no prototype: undefined", READ_WITHOUT_CACHE(cached, notCached, objectAnswers))
 
 static void testUncacheableDictionaryFilesNothing()
 {
-    checkOutputOfProgramInShell(programText, OUTPUT_OF_UNCACHEABLE_DICTIONARIES(", cached", ", not cached") ""_s,
+    checkOutputOfProgramInShell(programText, OUTPUT_OF_UNCACHEABLE_DICTIONARIES(", cached", ", not cached", ", the object answers") ""_s,
         { }, "globalThis.printsCalls = true;" MEASURE_ACCESSES STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES ""_s, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
     for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
-        checkOutputOfProgramInShell(programText, OUTPUT_OF_UNCACHEABLE_DICTIONARIES("", "") ""_s, { word }, MEASURE_ACCESSES STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES ""_s, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
+        checkOutputOfProgramInShell(programText, OUTPUT_OF_UNCACHEABLE_DICTIONARIES("", "", "") ""_s, { word }, MEASURE_ACCESSES STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES ""_s, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
 }
 
 std::span<const NativeTest> dictionaryAccessByNameProgramTests()

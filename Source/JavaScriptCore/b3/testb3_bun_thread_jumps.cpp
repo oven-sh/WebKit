@@ -643,6 +643,31 @@ static void testThreadJumpsCopiesOnlyIntoLikelyPredecessors()
     }
 }
 
+static void testThreadJumpsKeepsTailOffHotPathShared()
+{
+    for (FrequencyClass chooserClass : { FrequencyClass::Normal, FrequencyClass::Unlikely, FrequencyClass::Rare }) {
+        Procedure proc(policyWithMaxTailSize(1));
+        Graph graph { proc };
+        TailWithTwoPredecessors blocks(graph);
+        BasicBlock* chooser = proc.addBlock();
+        Value* test = graph.make(blocks.root, Equal, blocks.first, graph.int64(blocks.root, 7));
+        graph.branch(blocks.root, blocks.first, FrequentedBlock(chooser, chooserClass), FrequentedBlock(blocks.taken));
+        graph.branch(chooser, blocks.second, blocks.left, blocks.right);
+        graph.branch(blocks.tail, test, blocks.taken, blocks.notTaken);
+        blocks.thread(graph);
+        for (BasicBlock* predecessor : { blocks.left, blocks.right })
+            CHECK(predecessor->last()->opcode() == (chooserClass == FrequencyClass::Normal ? Branch : Jump));
+
+        auto code = compileProc(proc);
+        int64_t memory[1];
+        CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 7, 0, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 7, 1, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 6, 0, memory), 20);
+        CHECK_EQ(invoke<int64_t>(*code, 6, 1, memory), 20);
+    }
+}
+
 static void checkTailDuplication(const Policy& policy, unsigned tailSize, bool isCopied)
 {
     Procedure proc(policy);
@@ -984,6 +1009,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsStopsAtTestDepthLimit());
     RUN(testThreadJumpsStopsAtPredecessorLimit());
     RUN(testThreadJumpsCopiesOnlyIntoLikelyPredecessors());
+    RUN(testThreadJumpsKeepsTailOffHotPathShared());
     RUN(testDuplicateTailsUnderDefaultPolicy());
     RUN(testDuplicateTailsSizeFromPolicy());
     RUN(testFoldPathConstantsFoldsComparisonImpliedByBranch());

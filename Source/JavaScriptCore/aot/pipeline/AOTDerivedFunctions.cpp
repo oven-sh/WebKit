@@ -11,8 +11,10 @@
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTInterningPhases.h"
+#include "AOTSummarizeForInlining.h"
 #include "AOTThreads.h"
 #include <algorithm>
+#include <utility>
 #include <wtf/ParkingLot.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -22,12 +24,19 @@ static bool isValidKey(const DerivedFunctionKey& key, DerivedFunctionTarget targ
     switch (target) {
     case DerivedFunctionTarget::Function:
         return key.target && !key.node;
+    case DerivedFunctionTarget::FunctionAndCallee: {
+        FunctionID callee(key.node);
+        return key.target && callee && !ProvisionalFunctions::contains(callee);
+    }
     case DerivedFunctionTarget::Layout:
         return !key.target && !key.node;
     case DerivedFunctionTarget::Type:
         return !key.target && !key.node && !TypeTable::isProvisional(TypeID(key.parameter));
     case DerivedFunctionTarget::ValidationNode:
+    case DerivedFunctionTarget::Selector:
         return !key.target;
+    case DerivedFunctionTarget::FunctionAndSelector:
+        return !!key.target;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -53,6 +62,39 @@ DerivedFunctions::DerivedFunctions(BuildContext& build)
 DerivedFunctions::~DerivedFunctions()
 {
     RELEASE_ASSERT(!m_phase);
+}
+
+DerivedFunctions::Entry::~Entry() = default;
+
+thread_local DerivedFunctions::RequestRecorder* DerivedFunctions::RequestRecorder::s_current { nullptr };
+
+DerivedFunctions::RequestRecorder::RequestRecorder(RequestHandling handling)
+    : m_outer(std::exchange(s_current, this))
+    , m_handling(handling)
+{
+}
+
+DerivedFunctions::RequestRecorder::~RequestRecorder()
+{
+    RELEASE_ASSERT(s_current == this);
+    s_current = m_outer;
+}
+
+auto DerivedFunctions::RequestRecorder::current() -> RequestRecorder*
+{
+    return s_current;
+}
+
+void DerivedFunctions::RequestRecorder::record(uint32_t ordinal)
+{
+    if (m_recordedOrdinals.add(ordinal).isNewEntry)
+        m_requests.append(ordinal);
+}
+
+Vector<uint32_t> DerivedFunctions::RequestRecorder::takeRequests()
+{
+    m_recordedOrdinals.clear();
+    return std::exchange(m_requests, { });
 }
 
 DerivedFunctions::IDTable::Slots::Slots(size_t capacity)
@@ -176,6 +218,14 @@ FunctionID DerivedFunctions::ensure(const DerivedFunctionKey& key)
     RELEASE_ASSERT(role && role->creation == DerivedFunctionCreation::OnRequest);
     RELEASE_ASSERT(isValidKey(key, role->target));
 
+    FunctionID id = findOrAdd(key);
+    if (contains(id))
+        m_phase->didRequest(ordinalOf(id));
+    return id;
+}
+
+FunctionID DerivedFunctions::findOrAdd(const DerivedFunctionKey& key)
+{
     uint32_t hash = hashOf(key);
     Shard& shard = shardOf(hash);
     if (FunctionID existing = shard.ids.get(key, hash))
@@ -236,6 +286,33 @@ void DerivedFunctions::PhaseState::createEntries()
     numberOfCreatedEntries.store(numberCreated + numberAdded, std::memory_order_release);
 }
 
+void DerivedFunctions::PhaseState::didRequest(uint32_t ordinal)
+{
+    if (entries[ordinal].isConfirmed())
+        return;
+    RequestRecorder* recorder = RequestRecorder::current();
+    if (recorder && recorder->handling() == RequestHandling::Record)
+        recorder->record(ordinal);
+    else
+        confirm(ordinal);
+}
+
+// The derivation of a function names the target of its key, so the target needs an id too.
+void DerivedFunctions::PhaseState::confirm(uint32_t requestedOrdinal)
+{
+    Vector<uint32_t, 16> worklist { requestedOrdinal };
+    while (!worklist.isEmpty()) {
+        Entry& entry = entries[worklist.takeLast()];
+        uint8_t previous = entry.flags.fetch_or(Entry::Confirmed, std::memory_order_acq_rel);
+        if (previous & Entry::Confirmed)
+            continue;
+        if (ProvisionalFunctions::contains(entry.key.target))
+            worklist.append(ProvisionalFunctions::ordinalOf(entry.key.target));
+        if (previous & Entry::Built)
+            worklist.appendVector(entry.nestedRequests);
+    }
+}
+
 DerivedFunctions::Entry& DerivedFunctions::entryOf(FunctionID id) const
 {
     RELEASE_ASSERT(m_phase && contains(id) && ordinalOf(id) < m_phase->size());
@@ -250,6 +327,20 @@ const Function& DerivedFunctions::at(FunctionID id) const
     return buildOrWait(entry);
 }
 
+const InliningSummary& DerivedFunctions::inliningSummaryOf(FunctionID id, NOESCAPE const ScopedLambda<InliningSummary()>& summarize) const
+{
+    Entry& entry = entryOf(id);
+    if (const InliningSummary* summary = entry.publishedInliningSummary.load(std::memory_order_acquire))
+        return *summary;
+
+    Locker locker { entry.inliningSummaryLock };
+    if (!entry.inliningSummary) {
+        entry.inliningSummary = makeUniqueWithoutFastMallocCheck<const InliningSummary>(summarize());
+        entry.publishedInliningSummary.store(entry.inliningSummary.get(), std::memory_order_release);
+    }
+    return *entry.inliningSummary;
+}
+
 const Function& DerivedFunctions::buildOrWait(Entry& entry) const
 {
     if (entry.state.compareExchangeStrong(State::Requested, State::Building) != State::Requested) {
@@ -260,10 +351,20 @@ const Function& DerivedFunctions::buildOrWait(Entry& entry) const
     }
     entry.builder.store(&Thread::currentSingleton(), std::memory_order_relaxed);
 
-    entry.asBuilt = build(entry);
+    {
+        RequestRecorder recorder(RequestHandling::Record);
+        entry.asBuilt = build(entry);
+        entry.nestedRequests = recorder.takeRequests();
+    }
     entry.published.store(entry.asBuilt.get(), std::memory_order_release);
     entry.state.store(State::Published);
     ParkingLot::unparkAll(&entry.state);
+
+    // Whichever thread sets the second of Confirmed and Built confirms the nested requests.
+    if (entry.flags.fetch_or(Entry::Built, std::memory_order_acq_rel) & Entry::Confirmed) {
+        for (uint32_t ordinal : entry.nestedRequests)
+            m_phase->confirm(ordinal);
+    }
     return *entry.asBuilt;
 }
 
@@ -385,6 +486,11 @@ unsigned DerivedFunctionPhase::numberOfRequests() const
     return m_table.m_phase->size();
 }
 
+bool DerivedFunctionPhase::isConfirmed(FunctionID provisional) const
+{
+    return m_table.entryOf(provisional).isConfirmed();
+}
+
 unsigned DerivedFunctionPhase::taskOf(FunctionID provisional) const
 {
     return m_table.entryOf(provisional).optimizeTask();
@@ -395,18 +501,30 @@ void DerivedFunctionPhase::setOptimizedBody(FunctionID provisional, std::unique_
     m_table.entryOf(provisional).optimized = WTF::move(function);
 }
 
+void DerivedFunctionPhase::confirmRequestsOf(FunctionID requester)
+{
+    DerivedFunctions::PhaseState& phase = *m_table.m_phase;
+    Vector<uint32_t> requests;
+    {
+        Locker locker { phase.recordedRequestsLock };
+        requests = phase.recordedRequests.take(requester);
+    }
+    for (uint32_t ordinal : requests)
+        phase.confirm(ordinal);
+}
+
 DerivedFunctionCommit DerivedFunctionPhase::commit(const BitVector& reachedOrdinals)
 {
     RELEASE_ASSERT(!m_didCommit);
-    buildRequestedFunctions();
+    buildConfirmedFunctions();
 
     DerivedFunctions::PhaseState& phase = *m_table.m_phase;
-    Vector<uint32_t> order = ordinalsInKeyOrder();
+    Vector<uint32_t> order = confirmedOrdinalsInKeyOrder();
     RELEASE_ASSERT(phase.program.functions.size() + order.size() <= ProvisionalFunctions::firstIndex);
 
     DerivedFunctionCommit result;
     result.firstID = FunctionID(phase.program.functions.size());
-    Vector<FunctionID> finalIDs(order.size());
+    Vector<FunctionID> finalIDs(phase.size());
     for (uint32_t ordinal : order) {
         DerivedFunctions::Entry& entry = phase.entries[ordinal];
         finalIDs[ordinal] = FunctionID(result.firstID.index() + result.functions.size());
@@ -428,18 +546,32 @@ DerivedFunctionCommit DerivedFunctionPhase::commit(const BitVector& reachedOrdin
     return result;
 }
 
-void DerivedFunctionPhase::buildRequestedFunctions()
-{
-    for (uint32_t ordinal = 0; ordinal < numberOfRequests(); ++ordinal)
-        m_table.at(ProvisionalFunctions::idOf(ordinal));
-}
-
-Vector<uint32_t> DerivedFunctionPhase::ordinalsInKeyOrder() const
+// Building a function can confirm one with a lower ordinal.
+void DerivedFunctionPhase::buildConfirmedFunctions()
 {
     const auto& entries = m_table.m_phase->entries;
-    Vector<uint32_t> order(m_table.m_phase->size(), [](size_t ordinal) {
-        return static_cast<uint32_t>(ordinal);
-    });
+    bool didBuild;
+    do {
+        didBuild = false;
+        for (uint32_t ordinal = 0; ordinal < numberOfRequests(); ++ordinal) {
+            const DerivedFunctions::Entry& entry = entries[ordinal];
+            if (!entry.isConfirmed() || entry.published.load(std::memory_order_relaxed))
+                continue;
+            m_table.at(ProvisionalFunctions::idOf(ordinal));
+            didBuild = true;
+        }
+    } while (didBuild);
+}
+
+Vector<uint32_t> DerivedFunctionPhase::confirmedOrdinalsInKeyOrder() const
+{
+    const auto& entries = m_table.m_phase->entries;
+    Vector<uint32_t> order;
+    order.reserveInitialCapacity(m_table.m_phase->size());
+    for (uint32_t ordinal = 0; ordinal < m_table.m_phase->size(); ++ordinal) {
+        if (entries[ordinal].isConfirmed())
+            order.append(ordinal);
+    }
     parallelSort(m_table.m_build.parallelLoops(), order.mutableSpan(), [&](uint32_t a, uint32_t b) {
         return std::is_lt(m_table.compareKeys(entries[a].key, entries[b].key));
     });
@@ -462,6 +594,24 @@ void DerivedFunctionPhase::replaceProvisionalIDs(const BitVector& reachedOrdinal
         Locker locker { shard.lock };
         shard.ids.add(key, hash, remap(ProvisionalFunctions::idOf(ordinal)));
     }
+}
+
+DerivedFunctionRequester::DerivedFunctionRequester(DerivedFunctionPhase& phase, FunctionID requester, bool isConfirmed)
+    : m_phase(phase)
+    , m_requester(requester)
+    , m_recorder(isConfirmed ? DerivedFunctions::RequestHandling::Confirm : DerivedFunctions::RequestHandling::Record)
+{
+}
+
+DerivedFunctionRequester::~DerivedFunctionRequester()
+{
+    Vector<uint32_t> requests = m_recorder.takeRequests();
+    if (requests.isEmpty())
+        return;
+    DerivedFunctions::PhaseState& phase = *m_phase.m_table.m_phase;
+    Locker locker { phase.recordedRequestsLock };
+    auto result = phase.recordedRequests.add(m_requester, WTF::move(requests));
+    RELEASE_ASSERT(result.isNewEntry);
 }
 
 } } } // namespace JSC::AOT::Typed

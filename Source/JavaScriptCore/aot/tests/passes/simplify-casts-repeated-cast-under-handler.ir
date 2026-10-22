@@ -7,58 +7,58 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="repeatedInCoveredBlockAndInHandler" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything) handler=b1():
-    v1 = Claim v0 castType=number
-    v2 = Claim v0 castType=number
+    v1 = Check v0 castType=number
+    v2 = Check v0 castType=number
     v3 = Add v1, v2
     Return v3
   b1() role=CatchHandler:
     v4 = CatchValue
-    v5 = Claim v0 castType=number
+    v5 = Check v0 castType=number
     Return v5
 }
 # CHECK-LABEL: function f0 name="repeatedInCoveredBlockAndInHandler"
 # CHECK-NEXT: b0(v0: anything) handler=b1():
-# CHECK-NEXT: v1: number = Claim v0 castType=number
+# CHECK-NEXT: v1: number = Check v0 castType=number
 # CHECK-NEXT: = Add v1, v1
 # CHECK: b1() role=CatchHandler:
 # CHECK-NEXT: = CatchValue
-# CHECK-NEXT: v5: number = Claim v0 castType=number
+# CHECK-NEXT: v5: number = Check v0 castType=number
 # CHECK-NEXT: Return v5
 
 function f1 name="repeatedBehindHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
   b0(v0: anything, v1: anything) handler=b1():
     v2 = Call v1
-    v3 = Claim v0 castType=number
-    v4 = Claim v0 castType=number
+    v3 = Check v0 castType=number
+    v4 = Check v0 castType=number
     v5 = Add v3, v4
     Jump -> next b2()
   b1() role=CatchHandler:
     v6 = CatchValue
     Jump -> next b2()
   b2():
-    v7 = Claim v0 castType=number
+    v7 = Check v0 castType=number
     Return v7
 }
 # CHECK-LABEL: function f1 name="repeatedBehindHandler"
-# CHECK: v3: number = Claim v0 castType=number
+# CHECK: v3: number = Check v0 castType=number
 # CHECK-NEXT: = Add v3, v3
 # CHECK: b2():
-# CHECK-NEXT: v7: number = Claim v0 castType=number
+# CHECK-NEXT: v7: number = Check v0 castType=number
 # CHECK-NEXT: Return v7
 
 function f2 name="onlyInHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
   b0(v0: anything, v1: anything) handler=b1():
     v2 = Call v1
-    v3 = Claim v0 castType=number
+    v3 = Check v0 castType=number
     Return v3
   b1() role=CatchHandler:
     v4 = CatchValue
-    v5 = Claim v0 castType=number
+    v5 = Check v0 castType=number
     Return v5
 }
 # CHECK-LABEL: function f2 name="onlyInHandler"
-# CHECK: v3: number = Claim v0 castType=number
+# CHECK: v3: number = Check v0 castType=number
 # CHECK: b1() role=CatchHandler:
 # CHECK-NEXT: = CatchValue
-# CHECK-NEXT: v5: number = Claim v0 castType=number
+# CHECK-NEXT: v5: number = Check v0 castType=number
 # CHECK-NEXT: Return v5

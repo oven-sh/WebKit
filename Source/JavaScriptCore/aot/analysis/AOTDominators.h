@@ -9,8 +9,10 @@
 
 #include "AOTCFG.h"
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/Dominators.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -19,24 +21,52 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class Dominators : public WTF::Dominators<CFG> {
+class Dominators {
     WTF_MAKE_NONCOPYABLE(Dominators);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Dominators);
 public:
+    using Tree = WTF::Dominators<CFG>;
+
     Dominators(CFG&, bool selfCheck);
     ~Dominators();
+
+    Tree& treeForChecking() const LIFETIME_BOUND;
+
+    BlockID idom(BlockID block) const { return placeOf(block).idom; }
+
+    bool strictlyDominates(BlockID from, BlockID to) const
+    {
+        // The entry block dominates all that is reachable.
+        if (from == m_cfg.root())
+            return to != from && m_cfg.isReachable(to);
+        uint32_t numberOfDominated = placeOf(to).number;
+        const Place& dominator = placeOf(from);
+        return dominator.number < numberOfDominated && numberOfDominated <= dominator.lastNumberBelow;
+    }
+
+    bool dominates(BlockID from, BlockID to) const { return from == to || strictlyDominates(from, to); }
 
     std::span<const BlockID> children(BlockID block) const
     {
         RELEASE_ASSERT(block.index() < m_cfg.numNodes());
+        if (m_firstChild.isEmpty()) [[unlikely]]
+            computeChildren();
         uint32_t begin = m_firstChild[block.index()];
         return m_children.subspan(begin, m_firstChild[block.index() + 1] - begin);
     }
 
-    uint32_t depthOf(BlockID block) const { return m_depth[block.index()]; }
+    uint32_t depthOf(BlockID block) const
+    {
+        if (m_depth.isEmpty()) [[unlikely]]
+            computeJumpPointers();
+        return m_depth[block.index()];
+    }
+
     BlockID nearestCommonDominator(BlockID, BlockID) const;
 
     bool terminatorDominates(BlockID from, BlockID to) const;
+    // The same answer from the dominator tree of a graph in which every covered block is two nodes, for a checking build.
+    bool terminatorDominatesInSplitGraph(BlockID from, BlockID to) const;
 
     void walkTree(NOESCAPE const Invocable<void(BlockID)> auto& enter, NOESCAPE const Invocable<void(BlockID)> auto& leave) const
     {
@@ -62,17 +92,44 @@ public:
 private:
     class SplitBlockDominators;
 
-    void computeChildren();
-    void computeJumpPointers();
+    struct Place {
+        BlockID idom;
+        uint32_t number { UINT32_MAX };
+        uint32_t lastNumberBelow { 0 };
+    };
 
-    BlockID jumpOf(BlockID block) const { return m_jump[block.index()]; }
+    const Place& placeOf(BlockID block) const
+    {
+        if (m_places.isEmpty()) [[unlikely]]
+            computePlaces();
+        return m_places[block.index()];
+    }
 
-    const CFG& m_cfg;
-    Vector<BlockID> m_children;
-    Vector<uint32_t> m_firstChild;
-    Vector<uint32_t> m_depth;
-    Vector<BlockID> m_jump;
-    std::unique_ptr<SplitBlockDominators> m_splitBlockDominators;
+    void computePlaces() const;
+    bool tryFindDominatorsByOrder(std::span<uint32_t> dominatorByOrder) const;
+    void computeChildren() const;
+    void computeJumpPointers() const;
+    const SplitBlockDominators& splitBlockDominators() const;
+    const BitVector& blocksReachedFromHandlerOfDominator() const;
+
+    BlockID jumpOf(BlockID block) const
+    {
+        if (m_depth.isEmpty()) [[unlikely]]
+            computeJumpPointers();
+        return m_jump[block.index()];
+    }
+    BlockID ancestorAtDepth(BlockID, uint32_t depth) const;
+
+    CFG& m_cfg;
+    mutable Vector<Place> m_places;
+    mutable std::optional<Tree> m_treeForChecking;
+    mutable Vector<BlockID> m_children;
+    mutable Vector<uint32_t> m_firstChild;
+    mutable Vector<uint32_t> m_depth;
+    mutable Vector<BlockID> m_jump;
+    bool m_selfCheck;
+    mutable std::optional<BitVector> m_blocksReachedFromHandlerOfDominator;
+    mutable std::unique_ptr<SplitBlockDominators> m_splitBlockDominators;
 };
 
 } } } // namespace JSC::AOT::Typed

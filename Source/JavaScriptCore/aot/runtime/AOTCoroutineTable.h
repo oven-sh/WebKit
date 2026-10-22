@@ -33,6 +33,7 @@ public:
     Structure* generatorStructure() const { return m_generatorStructure; }
     Structure* savedFrameStructure() const { return m_savedFrameStructure; }
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
+    void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
 
     void didCreateSavedFrame(VM&, SavedFrame*);
 
@@ -42,10 +43,12 @@ public:
 private:
     void createStructures(VM&);
     uint32_t createEmptyPrototypeStructure(VM&, JSObject* parent);
+    void initializeCoroutineWords(VM&);
 
     State& m_state;
     Instance& m_instance;
     void* m_savedFrameEntrypoint;
+    void* m_handlerOfJobEntrypoint;
     Structure* m_generatorStructure { nullptr };
     Structure* m_savedFrameStructure { nullptr };
     Vector<SavedFrame*> m_savedFramesForValidation;

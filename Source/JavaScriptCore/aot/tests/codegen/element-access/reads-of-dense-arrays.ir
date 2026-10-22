@@ -2,14 +2,14 @@
 # FORM: Placed
 # OPTIONS: check=validate-back-end
 # RUN: generate-code
-# CHECK: f0: size=[[int32]] 
-# CHECK-NOT: f1: size=[[int32]] 
-# CHECK: f2: size=[[double]] 
-# CHECK-NOT: f3: size=[[double]] 
-# CHECK: f4: size=[[contiguous]] 
-# CHECK-NOT: f5: size=[[contiguous]] 
-# CHECK: f6: size=[[has]] 
-# CHECK-NOT: f7: size=[[has]] 
+# CHECK: f0: size=[[int32]] frame=[[int32Frame]]@
+# CHECK-NOT: f1: size=[[int32]] frame=[[int32Frame]]@
+# CHECK: f2: size=[[double]] frame=[[doubleFrame]]@
+# CHECK-NOT: f3: size=[[double]] frame=[[doubleFrame]]@
+# CHECK: f4: size=[[contiguous]] frame=[[contiguousFrame]]@
+# CHECK-NOT: f5: size=[[contiguous]] frame=[[contiguousFrame]]@
+# CHECK: f6: size=[[has]] frame=[[hasFrame]]@
+# CHECK-NOT: f7: size=[[has]] frame=[[hasFrame]]@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="denseInt32" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Dense]>}, {type=i32}] results=[{type=anything}] {

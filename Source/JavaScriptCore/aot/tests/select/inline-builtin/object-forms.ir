@@ -1,5 +1,6 @@
 # Selection answers for each inline built-in of objects, own properties, functions, errors, formatters and dates whether the call stays, gets inline code with a miss edge to the call, or is inline code alone
 # FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
 # RUN: pass Select
 # RUN(FORMS): inline-forms
 # RUN(SHAPES): code-shapes
@@ -32,11 +33,13 @@ function f1 name="ownKeysInCompactBlock" parameters=[{type=object}, {type=boolea
 }
 # SHAPES: f1 b1 Compact
 # FORMS: function f1
-# FORMS-NEXT: v2 {{*}} OwnPropertyKeys {{*}} Call
+# FORMS-NEXT: v2 {{*}} OwnPropertyKeys {{*}} Whole
 # CHECK-LABEL: function f1 name="ownKeysInCompactBlock"
-# CHECK-NOT: CallInline
-# CHECK: v2: {{*}} = CallBuiltin -, v0 overload=ObjectKeys/0
-# CHECK-NOT: CallInline
+# CHECK-NOT: TryCallInline
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: {{*}} = CallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[{{*}}] overload=ObjectKeys/0
+# CHECK-NOT: TryCallInline
+# CHECK-NOT: CallBuiltin
 
 function f2 name="otherTwoWayBuiltinInCompactBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object, v1: boolean):

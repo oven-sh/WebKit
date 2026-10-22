@@ -780,6 +780,79 @@ static void testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites()
     }
 }
 
+// A slot holds the address of a cell, or zero until the cell is made at its first use. Behind the join the address can be read through; what the slot holds cannot, until it has been tested.
+static void testVersionLoopsTestsSlotBeforeReadingThroughIt()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* usual = proc.addBlock();
+    BasicBlock* isMade = proc.addBlock();
+    BasicBlock* make = proc.addBlock();
+    BasicBlock* merged = proc.addBlock();
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    proc.setKnownDereferenceableBytes(loop.pointer, 8);
+    // What makes the version with resolved phis the better one.
+    BasicBlock* given = proc.addBlock();
+    BasicBlock* replaced = proc.addBlock();
+    BasicBlock* chosen = proc.addBlock();
+    Variable* key = proc.addVariable(Int64);
+    graph.branch(loop.body, loop.extra, FrequentedBlock(given), rarely(replaced));
+    graph.set(given, key, loop.extra);
+    graph.jump(given, chosen);
+    graph.set(replaced, key, graph.int64(replaced, 5));
+    graph.jump(replaced, chosen);
+    Value* mixed = graph.get(chosen, key);
+    for (int64_t factor : { 3, 5, 7, 11, 13, 17 })
+        mixed = graph.make(chosen, Add, graph.make(chosen, Mul, mixed, graph.int64(chosen, factor)), loop.bound);
+    graph.increase(chosen, loop.sum, graph.make(chosen, BitAnd, mixed, graph.int64(chosen, 0)));
+    graph.branch(chosen, graph.make(chosen, Equal, graph.get(chosen, loop.index), graph.int64(chosen, 5)), rarely(special), FrequentedBlock(usual));
+    graph.ret(special, graph.int64(special, -1));
+    Value* held = graph.load(usual, Int64, loop.pointer, 0, firstHeap);
+    graph.branch(usual, held, FrequentedBlock(isMade), rarely(make));
+    Value* cell = graph.phi(merged, Int64);
+    graph.upsilon(isMade, held, cell);
+    graph.jump(isMade, merged);
+    PatchpointValue* made = make->appendNew<PatchpointValue>(proc, Int64, Origin());
+    made->append(loop.pointer, ValueRep::SomeRegister);
+    made->append(loop.extra, ValueRep::SomeRegister);
+    made->effects = Effects::none();
+    made->effects.controlDependent = true;
+    made->effects.writes = firstHeap;
+    made->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        jit.store64(params[2].gpr(), CCallHelpers::Address(params[1].gpr()));
+        jit.move(params[2].gpr(), params[0].gpr());
+    });
+    graph.upsilon(make, made, cell);
+    graph.jump(make, merged);
+    MemoryValue* kind = graph.load(merged, Int64, cell, 0, secondHeap);
+    kind->setReadsMutability(Mutability::Immutable);
+    graph.branch(merged, graph.make(merged, Equal, kind, graph.int64(merged, 7)), FrequentedBlock(hot), rarely(unexpected));
+    graph.increase(unexpected, loop.sum, 100);
+    graph.jump(unexpected, hot);
+    graph.increase(hot, loop.sum, kind);
+    loop.endBody(hot);
+    loop.rotate();
+    CHECK(kind->lastChild()->foldIdentity()->opcode() == Phi);
+    proc.setKnownDereferenceableBytes(kind->lastChild()->foldIdentity(), 8);
+
+    CHECK(versionLoopsAndValidate(proc));
+    auto code = compileProc(proc);
+    for (int64_t kindOfCell : { 7, 8 }) {
+        for (bool isMadeBefore : { false, true }) {
+            for (int64_t bound : { 0, 1, 2, 3, 9 }) {
+                int64_t madeCell[1] = { kindOfCell };
+                int64_t slot[1] = { isMadeBefore ? std::bit_cast<int64_t>(&madeCell[0]) : 0 };
+                int64_t expected = bound > 5 ? -1 : bound * (kindOfCell + (kindOfCell == 7 ? 0 : 100));
+                CHECK_EQ(run(*code, bound, slot, std::bit_cast<int64_t>(&madeCell[0])), expected);
+                CHECK_EQ(slot[0], bound || isMadeBefore ? std::bit_cast<int64_t>(&madeCell[0]) : 0);
+            }
+        }
+    }
+}
+
 void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testVersionLoopsHoistsLoadAndGuard());
@@ -803,6 +876,7 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsKeepsVariantBranch());
     RUN(testVersionLoopsStoreInExcursionToResolvedHeaderPhi());
     RUN(testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites());
+    RUN(testVersionLoopsTestsSlotBeforeReadingThroughIt());
 }
 
 #endif // ENABLE(B3_JIT)

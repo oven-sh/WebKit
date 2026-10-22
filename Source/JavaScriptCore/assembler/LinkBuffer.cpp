@@ -53,6 +53,7 @@ size_t LinkBuffer::s_profileCummulativeLinkedCounts[LinkBuffer::numberOfProfiles
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IRDumpDebugInfo);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SourceCodeDumpDebugInfo);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LinkBuffer);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(LinkBuffer::Records);
 
 static const char* LEGACY_NODELETE profileName(LinkBuffer::Profile profile)
 {
@@ -425,7 +426,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             encoding = MacroAssembler::link<memcpyRepatch>(linkRecord, outData + linkRecord.from(), location, target);
         else
             encoding = MacroAssembler::link<jitMemcpyRepatch>(linkRecord, outData + linkRecord.from(), location, target);
-        if (recordsLinks()) [[unlikely]]
+        if (m_records) [[unlikely]]
             didLinkRecord(linkRecord, to, encoding);
     }
 
@@ -481,9 +482,13 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
 void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort effort)
 {
     m_policy = macroAssembler.policy();
-#if !CPU(X86_64) && !CPU(ARM64)
-    RELEASE_ASSERT(!recordsLinks() && !m_policy.shortensJumps);
+    if (m_policy.needsLinkRecords()) [[unlikely]] {
+#if CPU(X86_64) || CPU(ARM64)
+        m_records.reset(new Records);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
 #endif
+    }
 
     // Ensure that the end of the last invalidation point does not extend beyond the end of the buffer.
     macroAssembler.label();
@@ -494,10 +499,10 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
     macroAssembler.m_assembler.buffer().flushConstantPool(false);
 #endif
 #if CPU(X86_64)
-    if (m_policy.recordsLinkedSites || m_policy.shortensJumps) {
+    if (m_records && (m_policy.recordsLinkedSites || m_policy.shortensJumps)) [[unlikely]] {
         macroAssembler.m_assembler.assignJumpKinds();
         if (m_policy.shortensJumps)
-            m_jumpShifts = macroAssembler.m_assembler.shortenJumps();
+            m_records->jumpShifts = macroAssembler.m_assembler.shortenJumps();
     }
 #endif
     allocate(macroAssembler, effort);
@@ -517,7 +522,7 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
 UNUSED_PARAM(effort);
 #endif // ENABLE(JIT)
 
-    if (m_didAllocate && recordsLinks()) [[unlikely]]
+    if (m_records) [[unlikely]]
         takeRecords(macroAssembler);
 
     m_linkTasks = WTF::move(macroAssembler.m_linkTasks);
@@ -607,23 +612,26 @@ static LinkedSite twoWordJump(uint32_t secondWordOffset, uint32_t target, Reloca
 
 void LinkBuffer::takeRecords(MacroAssembler& macroAssembler)
 {
-    m_patchablePointerCount = std::exchange(macroAssembler.m_patchablePointerCount, 0);
-    m_wideImmediates = WTF::move(macroAssembler.m_wideImmediates);
-    for (WideImmediate& immediate : m_wideImmediates)
+    if (!m_didAllocate || !recordsLinks())
+        return;
+
+    m_records->patchablePointerCount = std::exchange(macroAssembler.m_patchablePointerCount, 0);
+    m_records->wideImmediates = WTF::move(macroAssembler.m_wideImmediates);
+    for (WideImmediate& immediate : m_records->wideImmediates)
         immediate.offset = applyOffset(AssemblerLabel(immediate.offset)).offset();
 
 #if CPU(X86_64)
     if (!m_policy.recordsLinkedSites)
         return;
-    m_emittedJumps = macroAssembler.m_assembler.takeEmittedJumps();
+    m_records->emittedJumps = macroAssembler.m_assembler.takeEmittedJumps();
     Vector<X86LinkedJump> jumps = macroAssembler.m_assembler.takeLinkedJumps();
-    m_linkedSites.reserveInitialCapacity(jumps.size());
+    m_records->linkedSites.reserveInitialCapacity(jumps.size());
     for (const X86LinkedJump& jump : jumps) {
         bool isConditional = jump.kind == X86JumpKind::Conditional;
         RelocationKind kind = jump.isShort
             ? (isConditional ? RelocationKind::ShortConditionalJump : RelocationKind::ShortJump)
             : (isConditional ? RelocationKind::ConditionalJump : RelocationKind::Jump);
-        m_linkedSites.append(LinkedSite { jump.from - MacroAssembler::relocationSize(kind), jump.to, kind });
+        m_records->linkedSites.append(LinkedSite { jump.from - MacroAssembler::relocationSize(kind), jump.to, kind });
     }
 #endif
 }
@@ -632,7 +640,7 @@ void LinkBuffer::recordExternalLink(AssemblerLabel label, const void* target)
 {
     RELEASE_ASSERT(!m_didFinalize);
     if (m_policy.recordsProcessAddresses)
-        m_externalLinks.append(ExternalLink { label.offset(), reinterpret_cast<uintptr_t>(target) });
+        m_records->externalLinks.append(ExternalLink { label.offset(), reinterpret_cast<uintptr_t>(target) });
 }
 
 void LinkBuffer::didLinkCall(Call call, AssemblerLabel, const void* target)
@@ -655,25 +663,25 @@ void LinkBuffer::didLinkJump(Jump jump, AssemblerLabel emittedLabel, BranchEncod
     uint32_t targetOffset = static_cast<uint32_t>(static_cast<const uint8_t*>(target) - static_cast<const uint8_t*>(code()));
 #if CPU(X86_64)
     UNUSED_PARAM(encoding);
-    const X86EmittedJump& emitted = findEmittedJump(m_emittedJumps.span(), emittedLabel.offset());
+    const X86EmittedJump& emitted = findEmittedJump(m_records->emittedJumps.span(), emittedLabel.offset());
     RelocationKind kind = emitted.kind == X86JumpKind::Conditional ? RelocationKind::ConditionalJump : RelocationKind::Jump;
-    m_linkedSites.append(LinkedSite { offset - MacroAssembler::relocationSize(kind), targetOffset, kind });
+    m_records->linkedSites.append(LinkedSite { offset - MacroAssembler::relocationSize(kind), targetOffset, kind });
 #elif CPU(ARM64)
     UNUSED_PARAM(emittedLabel);
     switch (jump.m_type) {
     case Assembler::JumpNoCondition:
     case Assembler::JumpNoConditionFixedSize:
-        m_linkedSites.append(LinkedSite { offset, targetOffset, RelocationKind::Jump });
+        m_records->linkedSites.append(LinkedSite { offset, targetOffset, RelocationKind::Jump });
         return;
     case Assembler::JumpCondition:
     case Assembler::JumpConditionFixedSize:
     case Assembler::JumpCompareAndBranch:
     case Assembler::JumpCompareAndBranchFixedSize:
-        m_linkedSites.append(twoWordJump(offset, targetOffset, RelocationKind::ConditionalJumpThenNop, encoding));
+        m_records->linkedSites.append(twoWordJump(offset, targetOffset, RelocationKind::ConditionalJumpThenNop, encoding));
         return;
     case Assembler::JumpTestBit:
     case Assembler::JumpTestBitFixedSize:
-        m_linkedSites.append(twoWordJump(offset, targetOffset, RelocationKind::TestBitJumpThenNop, encoding));
+        m_records->linkedSites.append(twoWordJump(offset, targetOffset, RelocationKind::TestBitJumpThenNop, encoding));
         return;
     case Assembler::JumpFixed:
         break;
@@ -698,21 +706,21 @@ void LinkBuffer::didLinkRecord(const LinkRecord& record, intptr_t to, BranchEnco
     case Assembler::LinkInvalid:
         return;
     case Assembler::LinkJumpNoCondition:
-        m_linkedSites.append(LinkedSite { from, target, RelocationKind::Jump });
+        m_records->linkedSites.append(LinkedSite { from, target, RelocationKind::Jump });
         return;
     case Assembler::LinkJumpConditionDirect:
     case Assembler::LinkJumpCompareAndBranchDirect:
-        m_linkedSites.append(LinkedSite { from, target, RelocationKind::ConditionalJump });
+        m_records->linkedSites.append(LinkedSite { from, target, RelocationKind::ConditionalJump });
         return;
     case Assembler::LinkJumpTestBitDirect:
-        m_linkedSites.append(LinkedSite { from, target, RelocationKind::TestBitJump });
+        m_records->linkedSites.append(LinkedSite { from, target, RelocationKind::TestBitJump });
         return;
     case Assembler::LinkJumpCondition:
     case Assembler::LinkJumpCompareAndBranch:
-        m_linkedSites.append(twoWordJump(from, target, RelocationKind::ConditionalJumpThenNop, encoding));
+        m_records->linkedSites.append(twoWordJump(from, target, RelocationKind::ConditionalJumpThenNop, encoding));
         return;
     case Assembler::LinkJumpTestBit:
-        m_linkedSites.append(twoWordJump(from, target, RelocationKind::TestBitJumpThenNop, encoding));
+        m_records->linkedSites.append(twoWordJump(from, target, RelocationKind::TestBitJumpThenNop, encoding));
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -745,18 +753,42 @@ bool LinkBuffer::link(Label site, RelocationKind kind, Label target)
 #endif
 
     if (m_policy.recordsLinkedSites)
-        m_linkedSites.append(LinkedSite { siteOffset, targetOffset, kind });
+        m_records->linkedSites.append(LinkedSite { siteOffset, targetOffset, kind });
     return true;
 }
+
+NEVER_INLINE void LinkBuffer::finalizeRecords()
+{
+    std::ranges::sort(m_records->externalLinks, { }, &ExternalLink::offset);
+    std::ranges::sort(m_records->linkedSites, { }, &LinkedSite::offset);
+    const Vector<LinkedSite>& linkedSites = m_records->linkedSites;
+    for (size_t i = 1; i < linkedSites.size(); ++i) {
+        const LinkedSite& previous = linkedSites[i - 1];
+        RELEASE_ASSERT(previous.offset + MacroAssembler::relocationSize(previous.kind) <= linkedSites[i].offset);
+    }
+}
+
+#if CPU(X86_64)
+uint32_t LinkBuffer::jumpShiftAt(uint32_t offset) const
+{
+    return shortenedJumpShiftAt(m_records->jumpShifts.span(), offset, m_records->jumpShiftCursor);
+}
+#endif
 
 #else
 
 void LinkBuffer::takeRecords(MacroAssembler&) { RELEASE_ASSERT_NOT_REACHED(); }
+void LinkBuffer::finalizeRecords() { RELEASE_ASSERT_NOT_REACHED(); }
 void LinkBuffer::recordExternalLink(AssemblerLabel, const void*) { RELEASE_ASSERT_NOT_REACHED(); }
 void LinkBuffer::didLinkCall(Call, AssemblerLabel, const void*) { RELEASE_ASSERT_NOT_REACHED(); }
 void LinkBuffer::didLinkJump(Jump, AssemblerLabel, BranchEncoding, const void*) { RELEASE_ASSERT_NOT_REACHED(); }
 
 #endif // CPU(X86_64) || CPU(ARM64)
+
+void LinkBuffer::RecordsDeleter::operator()(Records* records) const
+{
+    delete records;
+}
 
 void LinkBuffer::performFinalization()
 {
@@ -771,14 +803,8 @@ void LinkBuffer::performFinalization()
     ExecutableAllocator::singleton().finishWriting(code(), m_size);
 #endif
 
-    std::ranges::sort(m_externalLinks, { }, &ExternalLink::offset);
-    std::ranges::sort(m_linkedSites, { }, &LinkedSite::offset);
-#if CPU(X86_64) || CPU(ARM64)
-    for (size_t i = 1; i < m_linkedSites.size(); ++i) {
-        const LinkedSite& previous = m_linkedSites[i - 1];
-        RELEASE_ASSERT(previous.offset + MacroAssembler::relocationSize(previous.kind) <= m_linkedSites[i].offset);
-    }
-#endif
+    if (m_records) [[unlikely]]
+        finalizeRecords();
     m_didFinalize = true;
 
 #ifndef NDEBUG

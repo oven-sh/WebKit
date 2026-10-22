@@ -34,6 +34,8 @@ struct NativeTest {
     v(stringTableTests) \
     v(flowResultsTests) \
     v(arrayTests) \
+    v(concurrentComponentsTests) \
+    v(effectSummariesTests) \
     v(heatGraphTests) \
     v(irProgramTests) \
     v(resultNodeDeclineTests) \
@@ -134,17 +136,20 @@ struct NativeTest {
     v(optionWordTests) \
     v(testFileTests) \
     v(childProcessTests) \
+    v(arrivalCountTests) \
     v(assignmentPlanTests) \
     v(boxedCallProgramTests) \
+    v(builtinLocationWatchTests) \
     v(builtinResultObjectTests) \
     v(builtinSubclassTests) \
+    v(cacheSweepTests) \
     v(callingConventionTests) \
     v(classMemberOrderTests) \
     v(classWithoutInstanceTestTests) \
     v(closedWorldTests) \
     v(collectorTests) \
-    v(commonJSRerunTests) \
     v(constructorFunctionTests) \
+    v(coroutineJobTests) \
     v(deferredClosureProgramTests) \
     v(dictionaryAccessByNameProgramTests) \
     v(dictionaryExtraPropertiesTests) \
@@ -153,10 +158,13 @@ struct NativeTest {
     v(flowWorkLimitProgramTests) \
     v(forInExpansionProgramTests) \
     v(frameCellProgramTests) \
+    v(globalBindingProgramTests) \
     v(globalProxyReadProgramTests) \
+    v(hashedSlotTableTests) \
     v(imageFunctionTableTests) \
     v(imageTextTests) \
     v(inlinedSerializerTests) \
+    v(innerObjectTests) \
     v(instanceKeyOrderTests) \
     v(interpretedStoreUnderCompiledPrototypeTests) \
     v(jsonKeyOrderTests) \
@@ -165,8 +173,8 @@ struct NativeTest {
     v(locationsReadAtRunTimeTests) \
     v(lockedRealmMemberTests) \
     v(membersNamedLikeBuiltinsTests) \
-    v(moduleAdoptionTests) \
     v(moduleProgramTests) \
+    v(moduleRequestListTests) \
     v(nakedConstructorTests) \
     v(narrowReferenceValidationTests) \
     v(nativeCallValidationTests) \
@@ -192,8 +200,8 @@ struct NativeTest {
     v(savedFrameTests) \
     v(sharingModeAndNamespaceTests) \
     v(siteCacheFillTests) \
-    v(splitFunctionProgramTests) \
     v(stackCheckTests) \
+    v(startupTests) \
     v(staticMembersNamedLikeBuiltinsTests) \
     v(storageOwnerProgramTests) \
     v(stringBuilderStorageTests) \
@@ -225,10 +233,19 @@ FOR_EACH_AOT_ENGINE_NATIVE_TEST_PROVIDER(AOT_DECLARE_NATIVE_TEST_PROVIDER)
 
 class ChildProcessLauncher;
 
+// Of the tests that the filter lets through, in their order: the one with the index, and every count-th behind it.
+struct NativeTestPart {
+    bool contains(unsigned ordinal) const { return ordinal % count == index; }
+
+    unsigned index { 0 };
+    unsigned count { 1 };
+};
+
 struct NativeTestRequest {
     StringView filter;
     StringView previousTest;
     const ChildProcessLauncher* launcher { nullptr };
+    NativeTestPart part;
 };
 
 struct NativeTestSummary {
@@ -241,6 +258,7 @@ NativeTestSummary runNativeTests(const NativeTestRequest&, PrintStream&);
 inline constexpr ASCIILiteral nativeSubcommandName = "native"_s;
 inline constexpr ASCIILiteral previousNativeTestFlag = "--after"_s;
 inline constexpr ASCIILiteral singleProcessFlag = "--single-process"_s;
+inline constexpr ASCIILiteral nativeTestPartFlag = "--part"_s;
 
 } } // namespace JSC::AOT
 

@@ -1,7 +1,7 @@
 # every receiver of a slot access has the field, a plain read finds its slot filled, and a read of a deferred closure names a field that can hold one
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: InvalidGuard 8
+# DIAGNOSTIC: InvalidGuard 7
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="y" declared={type=anything}}, {key="m" declared={type=anything} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled}}]
@@ -83,19 +83,4 @@ function f13 name="badNoDeferredClosureInField" parameters=[{type=L0}] results=[
   b0(v0: L0):
     v1 = GetDeferredClosureSlot v0 key="x" receivers=[L0] level=Proven
     Return v1
-}
-function f14 name="badEpochDoesNotRenewFilledSlot" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
-    v2 = IsSlotFilled v0 key="y" receivers=[L0] level=Proven
-    Branch v2 -> taken b1(| 0), notTaken b3()
-  b1(v3):
-    v4 = GetShapeEpoch
-    v5 = Call v1
-    v6 = IsShapeEpochCurrent v4, v3
-    Branch v6 -> taken b2(| 0), notTaken b3()
-  b2(v7):
-    v8 = GetSlot v0, v7 key="y" receivers=[L0] level=Proven
-    Return v8
-  b3():
-    Return
 }

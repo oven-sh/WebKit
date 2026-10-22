@@ -62,7 +62,7 @@ public:
 
         if (base->m_storage) {
 #if ENABLE(AOT)
-            if (base->hasCompactStorage()) [[unlikely]] {
+            if (Helper::isCompact(*base->m_storage.get())) [[unlikely]] {
                 JSCell* storage = AOT::CompactStorage::copy(globalObject, base->m_storage.get());
                 RETURN_IF_EXCEPTION(scope, void());
                 m_storage.set(vm, this, storage);
@@ -92,8 +92,8 @@ public:
     {
         if (m_storage) {
 #if ENABLE(AOT)
-            if (hasCompactStorage()) [[unlikely]]
-                return !!AOT::CompactStorage::find(globalObject, m_storage.get(), key);
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+                return AOT::CompactStorage::has(globalObject, m_storage.get(), key);
 #endif
             auto result = Helper::find(globalObject, storageRef(), key);
             return result.entryKeyIndex != Helper::InvalidTableIndex;
@@ -106,10 +106,20 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        bool isAdded = materializeAndTryAddToCompactStorage(globalObject, key, value);
+#if ENABLE(AOT)
+        if (!m_storage && vm.hasCompiledCode()) [[unlikely]] {
+            JSCell* storage = AOT::CompactStorage::tryCreateForFirstEntry(globalObject, Traits::hasValueData, key, value);
+            RETURN_IF_EXCEPTION(scope, void());
+            m_storage.set(vm, this, storage);
+        }
+#endif
+        materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        if (isAdded)
-            return;
+
+#if ENABLE(AOT)
+        if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+            RELEASE_AND_RETURN(scope, AOT::CompactStorage::add(globalObject, this, m_storage.get(), key, value));
+#endif
 
         RELEASE_AND_RETURN(scope, Helper::add(globalObject, this, storageRef(), key, value));
     }
@@ -118,30 +128,25 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        bool isAdded = materializeAndTryAddToCompactStorage(globalObject, key, value);
+        materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        if (isAdded)
-            return;
 
         RELEASE_AND_RETURN(scope, Helper::addNormalized(globalObject, this, storageRef(), key, value, hash));
     }
 
     ALWAYS_INLINE bool remove(JSGlobalObject* globalObject, JSValue key)
     {
+        if (m_storage) {
 #if ENABLE(AOT)
-        if (hasCompactStorage()) [[unlikely]]
-            return AOT::CompactStorage::remove(globalObject, this, m_storage.get(), key);
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+                return AOT::CompactStorage::remove(globalObject, this, m_storage.get(), key);
 #endif
-        if (m_storage)
             return Helper::remove(globalObject, this, storageRef(), key);
+        }
         return false;
     }
     ALWAYS_INLINE bool removeNormalized(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     {
-#if ENABLE(AOT)
-        if (hasCompactStorage()) [[unlikely]]
-            return AOT::CompactStorage::remove(globalObject, this, m_storage.get(), key);
-#endif
         if (m_storage)
             return Helper::removeNormalized(globalObject, this, storageRef(), key, hash);
         return false;
@@ -149,25 +154,27 @@ public:
 
     ALWAYS_INLINE uint32_t size()
     {
+        if (m_storage) {
 #if ENABLE(AOT)
-        if (hasCompactStorage()) [[unlikely]]
-            return AOT::CompactStorage::aliveEntryCount(m_storage.get());
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+                return AOT::CompactStorage::aliveEntryCount(m_storage.get());
 #endif
-        if (m_storage)
             return Helper::aliveEntryCount(storageRef());
+        }
         return 0;
     }
 
     ALWAYS_INLINE void clear(JSGlobalObject* globalObject)
     {
+        if (m_storage) {
 #if ENABLE(AOT)
-        if (hasCompactStorage()) [[unlikely]] {
-            AOT::CompactStorage::clear(globalObject, this, m_storage.get());
-            return;
-        }
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]] {
+                AOT::CompactStorage::clear(globalObject, this, m_storage.get());
+                return;
+            }
 #endif
-        if (m_storage)
             Helper::clear(globalObject, this, storageRef());
+        }
     }
 
     ALWAYS_INLINE void materializeIfNeeded(JSGlobalObject* globalObject)
@@ -179,7 +186,7 @@ public:
             return;
 
 #if ENABLE(AOT)
-        if (vm.hasCompiledCode()) {
+        if (vm.hasCompiledCode()) [[unlikely]] {
             JSCell* storage = AOT::CompactStorage::tryCreate(globalObject, Traits::hasValueData);
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
@@ -189,31 +196,6 @@ public:
         Storage* storage = Helper::tryCreate(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         m_storage.set(vm, this, storage);
-    }
-
-    ALWAYS_INLINE bool materializeAndTryAddToCompactStorage(JSGlobalObject* globalObject, JSValue key, JSValue value)
-    {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        materializeIfNeeded(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-#if ENABLE(AOT)
-        if (hasCompactStorage()) [[unlikely]] {
-            bool isAdded = AOT::CompactStorage::tryAdd(globalObject, this, m_storage.get(), key, value);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (isAdded)
-                return true;
-            DeferTerminationForAWhile noTermination(vm);
-            Storage* storage = AOT::CompactStorage::convertToOrdinaryStorage(globalObject, m_storage.get());
-            RETURN_IF_EXCEPTION(scope, false);
-            m_storage.set(vm, this, storage);
-        }
-#else
-        UNUSED_PARAM(key);
-        UNUSED_PARAM(value);
-#endif
-        return false;
     }
 
     ALWAYS_INLINE JSCell* tryGetStorage(JSGlobalObject* globalObject)
@@ -253,18 +235,12 @@ public:
     }
 
     template<typename FindKeyFunctor>
-    ALWAYS_INLINE JSValue getImpl(JSGlobalObject* globalObject, JSValue key, NOESCAPE const FindKeyFunctor& findKeyFunctor)
+    ALWAYS_INLINE JSValue getImpl(JSGlobalObject* globalObject, NOESCAPE const FindKeyFunctor& findKeyFunctor)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (m_storage) {
-#if ENABLE(AOT)
-            if (hasCompactStorage()) [[unlikely]]
-                RELEASE_AND_RETURN(scope, AOT::CompactStorage::find(globalObject, m_storage.get(), key));
-#else
-            UNUSED_PARAM(key);
-#endif
             Storage& storage = storageRef();
             auto result = findKeyFunctor(storage);
             RETURN_IF_EXCEPTION(scope, { });
@@ -277,14 +253,20 @@ public:
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key)
     {
-        JSValue result = getImpl(globalObject, key, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]] {
+            JSValue result = AOT::CompactStorage::find(globalObject, m_storage.get(), key);
+            return result.isEmpty() ? jsUndefined() : result;
+        }
+#endif
+        JSValue result = getImpl(globalObject, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
             return Helper::find(globalObject, storage, key);
         });
         return result.isEmpty() ? jsUndefined() : result;
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     {
-        JSValue result = getImpl(globalObject, key, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
+        JSValue result = getImpl(globalObject, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
             return Helper::find(globalObject, storage, key, hash);
         });
         return result.isEmpty() ? jsUndefined() : result;
@@ -301,20 +283,34 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        JSValue value = getImpl(globalObject, key, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
-            return Helper::find(globalObject, storage, key);
-        });
+        materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
 
-        if (!value) {
-            value = getValueFunctor();
+#if ENABLE(AOT)
+        if (Helper::isCompact(*m_storage.get())) [[unlikely]] {
+            JSValue value = AOT::CompactStorage::find(globalObject, m_storage.get(), key);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (value)
+                return value;
+        } else
+#endif
+        {
+            Storage& storage = storageRef();
+
+            auto result = Helper::find(globalObject, storage, key);
             RETURN_IF_EXCEPTION(scope, { });
 
-            // Call to getValueFunctor can modify our state, so we need to re-check the index
-            // There is a chance that callback inserts an entry for this |key|.
-            add(globalObject, key, value);
-            RETURN_IF_EXCEPTION(scope, { });
+            if (Helper::isValidTableIndex(result.entryKeyIndex))
+                return Helper::get(storage, result.entryKeyIndex + 1);
         }
+
+        JSValue value = getValueFunctor();
+        RETURN_IF_EXCEPTION(scope, { });
+
+        // Call to getValueFunctor can modify our state, so we need to re-check the index
+        // There is a chance that callback inserts an entry for this |key|.
+        add(globalObject, key, value);
+        RETURN_IF_EXCEPTION(scope, { });
 
         return value;
     }

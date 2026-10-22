@@ -185,12 +185,16 @@ JSValue ModuleNamespace::readDynamicExport(JSGlobalObject* globalObject, Propert
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSObject* liveSources = m_liveSources.get()) {
-        JSValue source = StarExportResolver::capturedValue(globalObject, liveSources, Identifier::fromUid(vm, name.uid()));
+        JSValue source = StarExportResolver::storedValue(globalObject, liveSources, Identifier::fromUid(vm, name.uid()));
         RETURN_IF_EXCEPTION(scope, { });
         if (source)
             RELEASE_AND_RETURN(scope, asObject(source)->get(globalObject, name));
     }
-    RELEASE_AND_RETURN(scope, m_capturedValues->get(globalObject, name));
+    Identifier identifier = Identifier::fromUid(vm, name.uid());
+    if (JSValue captured = StarExportResolver::storedValue(globalObject, m_capturedValues.get(), identifier))
+        return captured;
+    // A deferred export: the host makes the value when somebody first asks for it, as it does in plain Bun, and the module keeps it from then on.
+    RELEASE_AND_RETURN(scope, modules().capturedValue(m_module, identifier));
 }
 
 static JSValue fixedProperty(VM& vm, const ModuleNamespace& object, PropertyName name)
@@ -331,25 +335,25 @@ bool ModuleNamespace::defineOwnProperty(JSObject* object, JSGlobalObject* global
     if (!isCurrentDefined || !thisObject->hasExport(name.uid()))
         RELEASE_AND_RETURN(scope, validateAndApplyPropertyDescriptor(globalObject, nullptr, name, false, descriptor, isCurrentDefined, current, shouldThrow));
 
-    // The steps and the messages of JSModuleNamespaceObject::defineOwnProperty.
+    // The steps of JSModuleNamespaceObject::defineOwnProperty.
     auto reject = [&](ASCIILiteral message) {
         if (shouldThrow)
             throwTypeError(globalObject, scope, message);
         return false;
     };
     if (descriptor.isAccessorDescriptor())
-        return reject("Cannot change module namespace object's binding to accessor"_s);
+        return reject(NamespaceBindingToAccessorError);
     if (descriptor.writablePresent() && !descriptor.writable())
-        return reject("Cannot change module namespace object's binding to non-writable attribute"_s);
+        return reject(NamespaceBindingToNonWritableError);
     if (descriptor.enumerablePresent() && !descriptor.enumerable())
-        return reject("Cannot replace module namespace object's binding with non-enumerable attribute"_s);
+        return reject(NamespaceBindingToNonEnumerableError);
     if (descriptor.configurablePresent() && descriptor.configurable())
-        return reject("Cannot replace module namespace object's binding with configurable attribute"_s);
+        return reject(NamespaceBindingToConfigurableError);
     if (descriptor.value()) {
         bool isSame = sameValue(globalObject, descriptor.value(), current.value());
         RETURN_IF_EXCEPTION(scope, false);
         if (!isSame)
-            return reject("Cannot replace module namespace object's binding's value"_s);
+            return reject(NamespaceBindingValueError);
     }
     return true;
 }

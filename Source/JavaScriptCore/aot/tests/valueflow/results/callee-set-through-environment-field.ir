@@ -1,6 +1,6 @@
 # An environment field that closures of two functions reach has the type of the two functions, and the call through it lists both in a complete set
 # RUN: valueflow-apply
-# CHECK: layout L0 {{*}}fields=[{key="handler" declared={type=f2|f3 written=anything}
+# CHECK: layout L0 {{*}}fields=[{key="handler" declared={type=f2|f3}
 # CHECK-LABEL: function f4 name="run"
 # CHECK: [[field]]: f2|f3 = GetEnvironmentField v0 layout=L0
 # CHECK: = Call [[field]] accessSite={{*}} callees=[f2, f3]

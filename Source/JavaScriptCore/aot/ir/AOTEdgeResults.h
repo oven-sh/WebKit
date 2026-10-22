@@ -45,10 +45,12 @@ uint32_t firstEdgeResultParameter(const Function&, BlockID from, uint32_t target
 std::optional<Proof> proofOfTerminator(const Function&, const Block&);
 std::optional<EdgeResult> tryGetEdgeResult(const Function&, EdgeResultPosition);
 EdgeResult edgeResultAt(const Function&, EdgeResultPosition);
+ValueID operandNarrowedOnEdge(const Function&, EdgeResultPosition);
 
 Type computeTypeOnEdge(const TypingContext&, EdgeResultPosition);
 TypeID typeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeArena&);
-TypeID predictionOnEdge(const Program&, const Function&, EdgeResultPosition, TypeArena&);
+// Null where nothing narrower than the type on the edge is expected.
+TypeID expectedTypeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeID provenType, TypeArena&);
 
 Type narrowOperandByTest(const TypingContext&, const Value& test, uint32_t operandIndex, EdgeSide);
 Type narrowSubjectByCase(const TypingContext&, const Terminator&, uint32_t caseIndex);

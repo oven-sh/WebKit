@@ -15,6 +15,9 @@ const storedAsEntries = [
   b.reachableValuesStoredIn(b.resultSlot("value")),
 ];
 
+// A Map refuses an entry that is no object, and a WeakSet a value that is none.
+const arrayOfObjects = b.instance("Array").holding({ element: b.object });
+
 const requiresNew = {
   returns: b.never,
   capability: "none",
@@ -54,7 +57,7 @@ const removal = (implementation: b.ImplementationSpec) =>
 const clearing = (inlineBuiltin: string) =>
   ({
     capability: "heap",
-    throws: true,
+    throws: b.propagated,
     uses: { this: [b.writesContents()] },
     implementation: b.inline(inlineBuiltin),
   }) satisfies b.FunctionField;
@@ -66,10 +69,19 @@ const setMethod = (nativeSymbol: string, withPristineSet: b.TableType, withSetLi
       args: { other: b.instance("Set").pristine("Names") },
       returns: withPristineSet,
       capability: "heap",
-      throws: true,
+      throws: b.propagated,
       uses: { this: [b.readsContents()], other: [b.readsContents()] },
       usesFeature: "SetMethods",
       nativeSymbols: [nativeSymbol],
+      implementation: b.hostCall,
+    },
+    // SetPrototype.cpp getSetSizeAsInt: what is no object, or is not passed, makes each of them throw.
+    {
+      args: { other: b.primitiveValue },
+      returns: b.never,
+      capability: "heap",
+      throws: true,
+      uses: { this: b.inspected },
       implementation: b.hostCall,
     },
     {
@@ -103,13 +115,14 @@ export default b.declarations(
         args: { entries: b.null },
         returns: b.instance("Map").holding({ key: b.never, value: b.never }).fresh,
         capability: "heap",
+        isSpecialCase: true,
         implementation: b.inline("NewMap"),
       },
       {
-        args: { entries: b.any },
+        args: { entries: b.any.admitting(arrayOfObjects) },
         returns: b.instance("Map").fresh,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { entries: storedAsEntries },
         model: b.functionIn("models/Collections", "mapFromEntries"),
@@ -119,7 +132,7 @@ export default b.declarations(
     static: {
       groupBy: {
         args: { items: b.any, callback: b.callable },
-        returns: b.instance("Map").fresh,
+        returns: b.instance("Map").holding({ value: b.instance("Array").holding({ element: b.iterated("items") }).fresh }).fresh,
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
@@ -143,12 +156,15 @@ export default b.declarations(
         capability: "none",
         uses: { this: [b.readsContents()] },
         privateAlias: true,
+        length: 0,
+        boxedCallStub: "MapSize",
+        nativeSymbols: ["mapProtoFuncSize"],
         implementation: b.inline("MapSize"),
       },
       clear: { ...clearing("MapClear"), privateAlias: true },
       delete: {
         ...removal(b.inline("MapDelete")),
-        throws: true,
+        throws: b.propagated,
         privateAlias: true,
         length: 1,
         boxedCallStub: "MapDelete",
@@ -176,8 +192,9 @@ export default b.declarations(
         args: { key: b.any },
         returns: b.union(value, b.undefined),
         capability: "heap",
-        throws: true,
+        throws: b.propagated,
         uses: { this: [b.readsContents()], key: b.inspected },
+        writes: [storage],
         privateAlias: true,
         length: 1,
         boxedCallStub: "MapGet",
@@ -186,7 +203,8 @@ export default b.declarations(
       },
       has: {
         ...lookup("MapHas"),
-        throws: true,
+        writes: [storage],
+        throws: b.propagated,
         privateAlias: true,
         length: 1,
         boxedCallStub: "MapHas",
@@ -196,7 +214,7 @@ export default b.declarations(
         args: { key: b.any, value: b.any },
         returns: self,
         capability: "heap",
-        throws: true,
+        throws: b.propagated,
         uses: { this: [b.readsContents()], key: [b.storedIn(key)], value: [b.storedIn(value)] },
         privateAlias: true,
         length: 2,
@@ -208,7 +226,7 @@ export default b.declarations(
         args: { key: b.any, value: b.any },
         returns: b.union(value, b.operand("value")),
         capability: "heap",
-        throws: true,
+        throws: b.propagated,
         uses: { this: [b.readsContents()], key: [b.storedIn(key)], value: [b.storedIn(value)] },
         usesFeature: "MapGetOrInsert",
         nativeSymbols: ["mapProtoFuncGetOrInsert"],
@@ -248,13 +266,14 @@ export default b.declarations(
         args: { values: b.null },
         returns: b.instance("Set").holding({ element: b.never }).fresh,
         capability: "heap",
-        implementation: b.hostCall,
+        isSpecialCase: true,
+        implementation: b.inline("NewSet"),
       },
       {
-        args: { values: b.any },
+        args: { values: b.any.admitting(b.instance("Array")) },
         returns: b.instance("Set").holding({ element: b.iterated("values") }).fresh,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { values: [b.runs("Iterate")] },
         model: b.functionIn("models/Collections", "setFromValues"),
@@ -267,13 +286,16 @@ export default b.declarations(
         capability: "none",
         uses: { this: [b.readsContents()] },
         privateAlias: true,
+        length: 0,
+        boxedCallStub: "SetSize",
+        nativeSymbols: ["setProtoFuncSize"],
         implementation: b.inline("SetSize"),
       },
       add: {
         args: { value: b.any },
         returns: self,
         capability: "heap",
-        throws: true,
+        throws: b.propagated,
         uses: { this: [b.readsContents()], value: [b.storedIn(element)] },
         privateAlias: true,
         length: 1,
@@ -284,7 +306,7 @@ export default b.declarations(
       clear: { ...clearing("SetClear"), privateAlias: true },
       delete: {
         ...removal(b.inline("SetDelete")),
-        throws: true,
+        throws: b.propagated,
         privateAlias: true,
         length: 1,
         boxedCallStub: "SetDelete",
@@ -314,7 +336,8 @@ export default b.declarations(
       },
       has: {
         ...lookup("SetHas"),
-        throws: true,
+        writes: [storage],
+        throws: b.propagated,
         privateAlias: true,
         length: 1,
         boxedCallStub: "SetHas",
@@ -431,10 +454,10 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       {
-        args: { values: b.any },
+        args: { values: b.any.admitting(arrayOfObjects) },
         returns: b.instance("WeakSet").holding({ element: b.iterated("values") }).fresh,
         capability: "js",
-        throws: true,
+        throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { values: [b.runs("Iterate")] },
         model: b.functionIn("models/Collections", "weakSetFromValues"),
@@ -501,7 +524,7 @@ export default b.declarations(
     call: requiresNew,
     construct: {
       args: { cleanup: b.callable },
-      returns: b.instance("FinalizationRegistry").fresh,
+      returns: b.instance("FinalizationRegistry").holding({ target: b.never, heldValue: b.never, unregisterToken: b.never }).fresh,
       capability: "heap",
       throws: true,
       uses: {
@@ -540,8 +563,16 @@ export default b.declarations(
     },
   }),
 
-  b.extend("Map.@@species", { mutability: "AlwaysLocked" }),
-  b.extend("Set.@@species", { mutability: "AlwaysLocked" }),
+  ["Map", "Set"].flatMap(name =>
+    b.static(`${name}.@@species`, {
+      this: b.any,
+      getter: b.operand("this"),
+      capability: "none",
+      uses: { this: b.inspected },
+      mutability: "AlwaysLocked",
+      implementation: b.hostCall,
+    }),
+  ),
 
   // `import "core-js"` replaces a proposal without a test until the proposal is finished: 3.22 to 3.30, and 3.40 to 3.41.
   b.replacedByPackages("Map.groupBy"),

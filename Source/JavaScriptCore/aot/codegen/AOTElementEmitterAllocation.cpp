@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTElementEmitterAllocation.h"
+#include "AOTAllocationEmitter.h"
 
 #if ENABLE(AOT)
 
@@ -65,7 +66,7 @@ static std::optional<EmptyArray> emptyArrayWithCapacity(const ArrayStorageForm& 
         return std::nullopt;
     switch (kindOf(form)) {
     case ArrayElementKind::Contiguous:
-        return capacity == 1 ? EmptyArray::ContiguousCapacity1 : EmptyArray::ContiguousCapacity3;
+        return capacity == 1 ? EmptyArray::ContiguousCapacity1OwnStorage : EmptyArray::ContiguousCapacity3OwnStorage;
     case ArrayElementKind::Double:
         return capacity == 1 ? EmptyArray::DoubleCapacity1 : EmptyArray::DoubleCapacity3;
     case ArrayElementKind::Int32:
@@ -133,16 +134,71 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(std::span<const Va
         // A NaN among the numbers is found when the literal runs and takes the slow path.
         if (form.element == Representation::Double)
             return typeOf(element).isNumber();
-        bool isUnboxedDouble = representation == Representation::Double || representation == Representation::OptionalDouble;
-        if (form.element == Representation::Int32 && isUnboxedDouble)
-            return false;
         return canStoreWithoutConversion(form.kind, typeOf(element));
     });
     return canHoldElements ? form : arrayStorageFormOf(ArrayStorage::Contiguous);
 }
 
+// The cell of the array and its first storage lie in the cell of the object that will list the array. An array that outgrows the storage gets another, like any array.
 CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 {
+    std::optional<AllocationEmitter::RoomForInnerCell> room = emitter<AllocationEmitter>().allocateRoomForInnerCell(value);
+    if (!room)
+        return newLiteralOnItsOwn(value);
+
+    std::span<const ValueID> elements = value->elementsOperands();
+    unsigned length = elements.size();
+    RELEASE_ASSERT(length <= room->arrayCapacity);
+    const ArrayStorageForm& form = length ? formOfLiteral(elements, typeOf(value.id())) : formOfEmptyLiteral(value.id());
+    CellPointer array = room->inner;
+    LBasicBlock slowPath = newBlock();
+    LBasicBlock continuation = newBlock();
+
+    Integer header = headerOfNewArray(form);
+    branchUnless(isNotZero(header), slowPath);
+    RawElements rawElements = form.element == Representation::JSValue ? boxElements<Operand>(generator(), value, elements) : rawElementsOf(elements, form, slowPath);
+    if (rawElements.size() != length) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return CellPointer(m_out.int64Zero);
+    }
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        Pointer butterfly = offsetBy(asPointer(array), sizeof(JSArray) + sizeof(IndexingHeader));
+        m_out.store32(m_out.constInt32(length), butterfly.value(), m_heaps.Butterfly_publicLength);
+        m_out.store32(m_out.constInt32(room->arrayCapacity), butterfly.value(), m_heaps.Butterfly_vectorLength);
+        const B3::AbstractHeap& elementHeap = m_heaps.forIndexingType(form.indexingType)->atAnyIndex();
+        for (unsigned index = length; index < room->arrayCapacity; ++index)
+            m_out.store64(m_out.constInt64(static_cast<int64_t>(form.hole)), TypedPointer(elementHeap, butterfly.value(), index * sizeof(EncodedJSValue)));
+        emitter<CellAllocationEmitter>().storeHeader(array, header);
+        m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
+    }
+    storeElements(array, form, rawElements.span(), consecutiveIndexes(length).span());
+    emitter<AllocationEmitter>().didFillInnerCell(*room);
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    m_out.jump(continuation);
+
+    // Nobody has seen the array that was made in the usual way, so its cell may move. Its storage stays where it is.
+    m_out.appendTo(slowPath);
+    CellPointer made = newLiteralOnItsOwn(value);
+    moveStorageOutOfOwnCell(value, made);
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        m_out.storePtr(m_out.loadPtr(made.value(), m_heaps.JSObject_butterfly), array.value(), m_heaps.JSObject_butterfly);
+        emitter<CellAllocationEmitter>().storeHeader(array, Integer(m_out.load64(m_out.address(m_heaps.JSCell_header, made.value(), 0))));
+    }
+    emitter<AllocationEmitter>().didFillInnerCell(*room);
+    emitter<BarrierEmitter>().barrier(value, room->outer);
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return array;
+}
+
+CellPointer ArrayAllocationEmitter::newLiteralOnItsOwn(const ValueContext& value)
+{
+    if (value->storage() != AllocationStorage::Heap)
+        return emitter<CellAllocationEmitter>().newArrayInFrameOf(value, boxElements<Boxed>(generator(), value, value->elementsOperands()).span());
+
     switch (value->literalStorage()) {
     case ArrayLiteralStorage::Fresh:
         break;
@@ -172,20 +228,49 @@ Integer ArrayAllocationEmitter::headerOfNewArrayWithShape(Word32 shape)
     return header;
 }
 
-Pointer ArrayAllocationEmitter::allocateStorage(const OperationContext& context, Integer sizeInBytes, LBasicBlock slowPath)
+// An empty array with room for `capacity` elements, which nobody has written yet. Whoever gives up on it leaves an array that the collector can visit.
+CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithStorage(const OperationContext& context, Integer header, Integer capacity, LBasicBlock slowPath)
 {
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
     LBasicBlock isExhausted = newBlock();
     Join<Pointer> join(m_out);
-    branchUnless(isNotZero(sizeInBytes), slowPath);
-    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), sizeInBytes, slowPath);
+    Integer sizeInBytes = add(mul(capacity, integer(sizeof(EncodedJSValue))), integer(sizeOfArrayWithStorage(0)));
+    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeInBytes, slowPath, isExhausted);
     join.add(asPointer(cells.allocateHeapCell(allocator, std::nullopt, isExhausted)));
 
     m_out.appendTo(isExhausted);
     Pointer allocated = callOperation<Pointer>(context, RuntimeOperation::AllocateStorage, { sizeInBytes }, { .isOnRarePath = true });
     branchUnless(Condition(m_out.notNull(allocated.value())), slowPath);
     join.add(allocated);
-    return join.finish();
+
+    CellPointer array(join.finish().value());
+    CodeGenerator::InitializationScope scope(generator());
+    Pointer butterfly = offsetBy(asPointer(array), sizeOfArrayWithStorage(0));
+    cells.storeHeader(array, header);
+    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
+    m_out.store32(m_out.int32Zero, butterfly.value(), m_heaps.Butterfly_publicLength);
+    m_out.store32(low32(capacity).value(), butterfly.value(), m_heaps.Butterfly_vectorLength);
+    return array;
+}
+
+// The storage of an array that stands on its own lies in its cell. Whoever takes the storage and gives up the cell asks for storage that stands on its own first.
+void ArrayAllocationEmitter::moveStorageOutOfOwnCell(const OperationContext& context, CellPointer array)
+{
+    LBasicBlock isInOwnCell = newBlock();
+    LBasicBlock hasFailed = newBlock();
+    LBasicBlock continuation = newBlock();
+    LValue butterfly = m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly);
+    m_out.branch(m_out.equal(butterfly, offsetBy(asPointer(array), sizeOfArrayWithStorage(0)).value()), rareEdge(isInOwnCell), normalEdge(continuation));
+
+    m_out.appendTo(isInOwnCell);
+    Word32 longerThanVector(m_out.add(m_out.load32(butterfly, m_heaps.Butterfly_vectorLength), m_out.int32One));
+    Integer hasGrown = callOperation<Integer>(context, RuntimeOperation::ArrayGrow, { array, longerThanVector }, { .isOnRarePath = true });
+    m_out.branch(isNotZero(hasGrown).value(), normalEdge(continuation), rareEdge(hasFailed));
+
+    m_out.appendTo(hasFailed);
+    m_out.unreachable();
+
+    m_out.appendTo(continuation);
 }
 
 CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath)
@@ -204,49 +289,15 @@ CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer bu
 
 CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath)
 {
-    if (context.shape() != CodeShape::Fast) {
-        branchUnless(belowOrEqual(length, integer(maxHoleArrayCapacity)), slowPath);
-        Integer capacity = bitOr(length, integer(1));
-        CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
-        branchUnless(Condition(m_out.notNull(array.value())), slowPath);
-        CodeGenerator::InitializationScope scope(generator());
-        m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
-        return array;
-    }
-
-    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    LBasicBlock fill = newBlock();
-    LBasicBlock filled = newBlock();
-    branchUnless(belowOrEqual(length, integer(MAX_STORAGE_VECTOR_LENGTH)), slowPath);
-    Integer header = headerOfNewArray(form);
-    branchUnless(isNotZero(header), slowPath);
-    Integer vectorLength = bitOr(length, integer(1));
-    Integer size = add(Integer(m_out.shl(vectorLength.value(), m_out.constInt32(3))), integer(sizeof(IndexingHeader)));
-    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), size, slowPath);
-    Pointer storage = asPointer(cells.allocateHeapCell(allocator, std::nullopt, slowPath));
-    Pointer butterfly = offsetBy(storage, sizeof(IndexingHeader));
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        const B3::AbstractHeap& elementHeap = m_heaps.forIndexingType(form.indexingType)->atAnyIndex();
-        LValue end = m_out.add(storage.value(), size.value());
-        LValue hole = m_out.constInt64(static_cast<int64_t>(form.hole));
-        // The indexing header and an odd number of elements are an even number of words, so the pairs start at the header.
-        ValueFromBlock start = m_out.anchor(storage.value());
-        m_out.jump(fill);
-
-        m_out.appendTo(fill);
-        LValue pair = m_out.phi(B3::pointerType(), start);
-        m_out.store64(hole, TypedPointer(elementHeap, pair));
-        m_out.store64(hole, TypedPointer(elementHeap, pair, sizeof(EncodedJSValue)));
-        LValue next = m_out.add(pair, m_out.constIntPtr(2 * sizeof(EncodedJSValue)));
-        m_out.addIncomingToPhi(pair, m_out.anchor(next));
-        m_out.branch(m_out.below(next, end), normalEdge(fill), normalEdge(filled));
-
-        m_out.appendTo(filled);
-        m_out.store32(low32(length).value(), butterfly.value(), m_heaps.Butterfly_publicLength);
-        m_out.store32(low32(vectorLength).value(), butterfly.value(), m_heaps.Butterfly_vectorLength);
-    }
-    return allocateArrayCell(header, butterfly, slowPath);
+    branchUnless(belowOrEqual(length, integer(maxHoleArrayCapacity)), slowPath);
+    // Nobody makes an array of no elements to leave it so.
+    bool isEmpty = length.value()->hasInt64() && !length.value()->asInt64();
+    Integer capacity = isEmpty ? integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) : bitOr(length, integer(1));
+    CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
+    branchUnless(Condition(m_out.notNull(array.value())), slowPath);
+    CodeGenerator::InitializationScope scope(generator());
+    m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
+    return array;
 }
 
 CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form)
@@ -442,7 +493,7 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
         return newArrayOf(value, elements, array);
     uint64_t maxCapacity = build().limit(LimitID::MaxPlannedArrayCapacity);
     Integer capacity = plannedCapacityOf(generator(), value);
-    const ArrayStorageForm& form = formOfLiteral(elements, array);
+    const ArrayStorageForm& form = length ? formOfLiteral(elements, array) : formOfEmptyLiteral(value.id());
     if (!length && capacity.value()->hasInt64()) {
         uint64_t constantCapacity = capacity.value()->asInt64();
         if (constantCapacity > maxCapacity || (constantCapacity | 1) == arrayLiteralVectorLength(0))
@@ -473,10 +524,30 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
     return join.finish();
 }
 
+const ArrayStorageForm& ArrayAllocationEmitter::formOfEmptyLiteral(ValueID literal)
+{
+    static_assert(ArrayStorage::Int32 < ArrayStorage::Double && ArrayStorage::Double < ArrayStorage::Contiguous);
+    const Type& array = typeOf(literal);
+    if (arrayStorageDeclaredBy(m_program, array) != ArrayStorage::Other)
+        return formAtAllocation(array);
+
+    std::optional<ArrayStorage> pushed;
+    for (const Use& use : analyses().useLists().usesOf(literal)) {
+        if (use.kind != Use::Kind::Operand)
+            continue;
+        const Value& user = m_function.at(use.user);
+        if (user.opcode != Opcode::CallInline || user.inlineBuiltin() != InlineBuiltin::ArrayPush || user.receiverOperand() != literal)
+            continue;
+        for (ValueID argument : user.argumentsOperands())
+            pushed = std::max(pushed.value_or(ArrayStorage::Int32), arrayStorageAtAllocation(typeOf(argument)));
+    }
+    return pushed ? arrayStorageFormOf(*pushed) : formAtAllocation(array);
+}
+
 CellPointer ArrayAllocationEmitter::newLiteralAtSite(const ValueContext& value, StaticsOffset offset)
 {
     LValue profile = m_out.valueOf(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::RuntimeState), offset));
-    return CellPointer(callStub(value, newEmptyArrayAtSite(kindOf(formAtAllocation(typeOf(value.id())))), { profile }).first);
+    return CellPointer(callStub(value, newEmptyArrayAtSite(kindOf(formOfEmptyLiteral(value.id()))), { profile }).first);
 }
 
 } } } // namespace JSC::AOT::Typed

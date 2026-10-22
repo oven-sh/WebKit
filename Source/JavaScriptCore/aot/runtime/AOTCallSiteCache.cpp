@@ -10,6 +10,7 @@
 
 #include "AOTCompiledFrame.h"
 #include "AOTShownFrameFilter.h"
+#include <utility>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC::AOT {
@@ -31,19 +32,27 @@ static uint16_t countShownFrames(const Image& image, InlineFrameReader& reader, 
     }
 }
 
-static CallSiteCache::Entry createEntry(const Image& image, InlineFrameReader& reader, const CodeLocation& location, const void* returnAddress)
+static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameReader& reader, const CodeLocation& location, const void* returnAddress)
 {
     CallSiteCache::Entry entry;
     entry.address = returnAddress;
     entry.code = CompiledFunctionID(location.function);
-    if (auto site = image.callSiteAt(location.function, location.offset)) {
-        entry.site = *site;
-        entry.handler = image.handlerAt(location.function, site->callSite);
-    }
+    ReturnSiteInfo returnSite = image.returnSiteInfoAt(location.function, location.offset);
+    if (returnSite.site)
+        entry.site = *returnSite.site;
+    entry.handler = returnSite.handler;
+    entry.frame = returnSite.frame;
 
-    entry.rejectsOnThrow = FunctionDescription(image.rootFunctionOf(location.function)).rejectsOnThrow();
-    if (image.hasFrameAtReturnOffset(location.function, location.offset))
-        entry.frame = image.frameOf(location.function);
+    FunctionID rootFunction = image.rootFunctionOf(location.function);
+    FunctionDescription root(rootFunction);
+    entry.rejectsOnThrow = root.rejectsOnThrow();
+    if (!entry.site.inlineFrame) {
+        entry.innermostFunction = rootFunction;
+        entry.innermostVisibility = root.visibility();
+        entry.shownFrameCount = ShownFrameFilter(true).shows(entry.innermostVisibility, entry.site.isTailCall);
+        entry.shownFrameCountOnTop = ShownFrameFilter(false).shows(entry.innermostVisibility, false);
+        return entry;
+    }
 
     LogicalFrame innermost = innermostLogicalFrame(image, reader, { entry.code, entry.site.callSite, entry.site.inlineFrame, false });
     entry.innermostFunction = innermost.function;
@@ -55,16 +64,58 @@ static CallSiteCache::Entry createEntry(const Image& image, InlineFrameReader& r
     return entry;
 }
 
-std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const
+static CallSiteCache::Entry createStubEntry(const CodeLocation& location, const void* returnAddress)
 {
-    if (hasShownFrame) {
-        if (!site.isTailCall || calleeWasEntered)
-            return shownFrameCount;
-        return std::nullopt;
+    CallSiteCache::Entry entry;
+    entry.address = returnAddress;
+    entry.stubFrameKind = location.stubFrameKind;
+    entry.frame = frameAtStubReturnSite(location.stubFrameKind);
+    return entry;
+}
+
+CallSiteCache::Entry* CallSiteCache::findEmptySlot(const void* address)
+{
+    Entry& primary = m_entries[primaryIndex(address)];
+    if (!primary.address)
+        return &primary;
+    Entry& secondary = m_entries[secondaryIndex(address)];
+    return secondary.address ? nullptr : &secondary;
+}
+
+void CallSiteCache::setNumberOfEntries(size_t numberOfEntries)
+{
+    ASSERT(std::has_single_bit(numberOfEntries) && numberOfEntries > m_entries.size());
+    FixedVector<Entry> previousEntries = std::exchange(m_entries, FixedVector<Entry>(numberOfEntries));
+    m_table = m_entries.span().data();
+    m_indexMask = numberOfEntries - 1;
+    m_secondaryIndexShift = 64 - static_cast<unsigned>(std::countr_zero(numberOfEntries));
+    m_numberOfFilledEntries = 0;
+    for (const Entry& entry : previousEntries) {
+        if (!entry.address)
+            continue;
+        if (Entry* slot = findEmptySlot(entry.address)) {
+            *slot = entry;
+            ++m_numberOfFilledEntries;
+        }
     }
-    if (!site.isTailCall || !calleeWasEntered)
-        return shownFrameCountOnTop;
-    return std::nullopt;
+}
+
+// An entry that is pushed out comes back into its other slot the next time it is asked for, which settles as long as less than half of the slots are taken. From there on the table doubles.
+CallSiteCache::Entry& CallSiteCache::slotForNewEntry(const void* address)
+{
+    if (m_entries.isEmpty())
+        setNumberOfEntries(initialNumberOfEntries);
+    for (;;) {
+        if (Entry* slot = findEmptySlot(address)) {
+            ++m_numberOfFilledEntries;
+            return *slot;
+        }
+        if (m_entries.size() == maxNumberOfEntries || m_numberOfFilledEntries * 2 < m_entries.size())
+            break;
+        setNumberOfEntries(m_entries.size() * 2);
+    }
+    m_evictsSecondary = !m_evictsSecondary;
+    return m_entries[m_evictsSecondary ? secondaryIndex(address) : primaryIndex(address)];
 }
 
 const CallSiteCache::Entry* CallSiteCache::resolve(const Image& image, const void* returnAddress)
@@ -73,26 +124,11 @@ const CallSiteCache::Entry* CallSiteCache::resolve(const Image& image, const voi
         return entry;
 
     CodeLocation location = image.locate(returnAddress);
-    if (location.kind != CodeKind::Function)
+    if (!location.runsCompiledCode())
         return nullptr;
 
-    if (m_entries.isEmpty())
-        m_entries = FixedVector<Entry>(numberOfEntries);
-
-    size_t index = primaryIndex(returnAddress);
-    if (m_entries[index].address) {
-        size_t secondary = secondaryIndex(returnAddress);
-        if (!m_entries[secondary].address)
-            index = secondary;
-        else {
-            m_evictsSecondary = !m_evictsSecondary;
-            if (m_evictsSecondary)
-                index = secondary;
-        }
-    }
-
-    Entry& entry = m_entries[index];
-    entry = createEntry(image, m_inlineFrames, location, returnAddress);
+    Entry& entry = slotForNewEntry(returnAddress);
+    entry = location.kind == CodeKind::Stub ? createStubEntry(location, returnAddress) : createFunctionEntry(image, m_inlineFrames, location, returnAddress);
     return &entry;
 }
 

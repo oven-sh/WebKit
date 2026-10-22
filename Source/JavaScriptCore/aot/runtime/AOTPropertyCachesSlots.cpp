@@ -36,6 +36,18 @@ static std::optional<uint16_t> locationOfHiddenWord(std::optional<SlotData> hidd
     return static_cast<uint16_t>(offset);
 }
 
+static bool canRememberOrder(const PropertyAnswer& answer)
+{
+    if (!answer.orderWords || answer.access == SlotAccess::Read)
+        return false;
+    auto [before, after] = *answer.orderWords;
+    static_assert(orderWordOrderMask == (1u << orderWordCountShift) - 1 && orderWordOrderMask <= UINT16_MAX);
+    // Only a numbered order says which keys the object lists.
+    if (orderOf(before) == orderStoredOutOfLine || orderOf(after) == orderStoredOutOfLine || before & (orderWordIntegrityBits | orderWordHasFieldOutsideSlot))
+        return false;
+    return (after & ~orderWordOrderMask) == ((before + (1u << orderWordCountShift)) & ~orderWordOrderMask);
+}
+
 static Slot slotForField(const PropertyAnswer& answer, Structure* receiverStructure, Slot::Kind kind, uint8_t flags)
 {
     RELEASE_ASSERT(answer.field);
@@ -50,6 +62,12 @@ static Slot slotForField(const PropertyAnswer& answer, Structure* receiverStruct
         flags |= Slot::isOutOfLine;
     if (answer.absentIsUndefined)
         flags |= Slot::absentIsUndefined;
+    if (answer.kind == PropertyAnswerKind::Field && answer.emptySlotMayBeUndefined)
+        flags |= Slot::emptySlotMayBeUndefined;
+    if (kind == Slot::Kind::FieldCreation && answer.undefinedNeedsNoStorage)
+        flags |= Slot::undefinedNeedsNoStorage;
+    if (kind == Slot::Kind::FieldCreation && canRememberOrder(answer))
+        return Slot::createField(id, kind, flags | Slot::remembersOrder, field.slot, answer.orderWords->first, static_cast<uint16_t>(answer.orderWords->second & orderWordOrderMask));
     return Slot::createField(id, kind, flags, field.slot, answer.access == SlotAccess::Read ? 0 : field.type, *extensionWordOffset);
 }
 
@@ -61,11 +79,27 @@ static Slot slotForFieldOrInherited(const PropertyAnswer& answer, Structure* rec
     uint8_t flagsOfKind = flags;
     if (isRead && answer.kind == PropertyAnswerKind::FieldOrInheritedAccessor)
         flagsOfKind |= Slot::inheritsGetter;
+    if (answer.emptySlotMayBeUndefined)
+        flagsOfKind |= Slot::emptySlotMayBeUndefined;
     if (answer.field->isOutOfLine())
         flagsOfKind |= Slot::isOutOfLine;
     Slot::Kind kind = isRead ? Slot::Kind::FieldOrInherited : Slot::Kind::FieldOrInheritedSetter;
     if (auto slot = Slot::tryCreateFieldAndHolder(receiverStructure->id(), kind, flagsOfKind, answer.field->slot, answer.holder, answer.offset, receiverStructure->vm().heap.cage().base()))
         return *slot;
+    return slotForField(answer, receiverStructure, Slot::Kind::Field, flags);
+}
+
+static Slot slotForFieldOrInheritedField(const PropertyAnswer& answer, Structure* receiverStructure, uint8_t flags)
+{
+    RELEASE_ASSERT(answer.field && answer.holder && answer.access == SlotAccess::Read);
+    std::optional<uint16_t> extensionWordOffset = locationOfHiddenWord(compiledStructureOf(receiverStructure).extensionSlot());
+    uint8_t flagsOfKind = flags;
+    if (answer.field->isOutOfLine())
+        flagsOfKind |= Slot::isOutOfLine;
+    if (extensionWordOffset) {
+        if (auto slot = Slot::tryCreateFieldOrInheritedField(receiverStructure->id(), flagsOfKind, answer.field->slot, answer.holder, *extensionWordOffset, receiverStructure->vm().heap.cage().base()))
+            return *slot;
+    }
     return slotForField(answer, receiverStructure, Slot::Kind::Field, flags);
 }
 
@@ -133,11 +167,18 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
         return Slot::createCustomAccessor(id, isRead ? Kind::CustomGetter : Kind::CustomSetter, flags, answer.customAccessor);
     case PropertyAnswerKind::Field:
         return slotForField(answer, receiverStructure, Kind::Field, flags);
+    case PropertyAnswerKind::FieldAccessor:
+        RELEASE_ASSERT(isRead);
+        return slotForField(answer, receiverStructure, Kind::FieldGetter, flags);
     case PropertyAnswerKind::FieldCreation:
         return slotForField(answer, receiverStructure, Kind::FieldCreation, flags);
     case PropertyAnswerKind::FieldOrInheritedValue:
     case PropertyAnswerKind::FieldOrInheritedAccessor:
         return slotForFieldOrInherited(answer, receiverStructure, flags);
+    case PropertyAnswerKind::InheritedField:
+        return Slot::createInheritedField(id, flags, answer.holder);
+    case PropertyAnswerKind::FieldOrInheritedField:
+        return slotForFieldOrInheritedField(answer, receiverStructure, flags);
     case PropertyAnswerKind::Variable:
         return slotForVariable(answer, id, flags);
     case PropertyAnswerKind::ExtraProperty:
@@ -176,9 +217,12 @@ JSValue readThroughAnswer(JSGlobalObject* globalObject, JSValue base, const Prop
     case PropertyAnswerKind::Uncacheable:
     case PropertyAnswerKind::CustomAccessor:
     case PropertyAnswerKind::Field:
+    case PropertyAnswerKind::FieldAccessor:
     case PropertyAnswerKind::FieldCreation:
     case PropertyAnswerKind::FieldOrInheritedValue:
     case PropertyAnswerKind::FieldOrInheritedAccessor:
+    case PropertyAnswerKind::InheritedField:
+    case PropertyAnswerKind::FieldOrInheritedField:
     case PropertyAnswerKind::Variable:
     case PropertyAnswerKind::ExtraProperty:
     case PropertyAnswerKind::ExtraAccessor:
@@ -261,8 +305,9 @@ static bool transitionSlotAgrees(const Slot& slot, SlotAccess access, const Stru
         return false;
     if (access == SlotAccess::Store && found.outcome == StructureLookup::Inherited && isInterceptedByHolder(found.attributes))
         return false;
+    Structure* structure = slot.structureID.decode();
     Structure* newStructure = slot.transition.newStructureID.decode();
-    return newStructure->previousID() == slot.structureID.decode() && newStructure->getConcurrently(uid) == slot.offsetInStorage();
+    return (newStructure->isTransitionFrom(structure) || isLastAdditionOfRun(structure, newStructure, uid)) && newStructure->getConcurrently(uid) == slot.offsetInStorage();
 }
 
 bool slotAgreesWithStructures(VM& vm, const Slot& slot, SlotAccess access, UniquedStringImpl* uid)
@@ -287,9 +332,12 @@ bool slotAgreesWithStructures(VM& vm, const Slot& slot, SlotAccess access, Uniqu
     case Slot::Kind::CustomGetter:
     case Slot::Kind::CustomSetter:
     case Slot::Kind::Field:
+    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldCreation:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::FieldOrInheritedSetter:
+    case Slot::Kind::InheritedField:
+    case Slot::Kind::FieldOrInheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraProperty:
     case Slot::Kind::ExtraGetter:

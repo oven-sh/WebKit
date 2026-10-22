@@ -126,7 +126,7 @@ public:
     void reset(OptionSet<Yarr::Flags> flags, JSValue lastIndex, unsigned numberOfGroups = 0)
     {
         regExp.at<uint16_t>(RegExp::offsetOfFlags()) = flags.toRaw();
-        regExp.at<uint8_t>(RegExp::offsetOfState()) = RegExp::stateWithJITCode();
+        regExp.at<uint8_t>(RegExp::offsetOfState()) = RegExp::stateWithImageCode();
         regExp.at<uint32_t>(RegExp::offsetOfNumSubpatterns()) = numberOfGroups;
         regExp.at<void*>(RegExp::offsetOfRareData()) = nullptr;
         regExp.at<void*>(RegExp::offsetOfAtom()) = nullptr;
@@ -257,7 +257,7 @@ static void testMatchesOfAtoms()
         for (auto [atomText, start] : { std::pair { "c"_span, 2u }, std::pair { "def"_span, 3u } }) {
             Ref<StringImpl> atom = StringImpl::create(atomText);
             matches.reset({ }, jsNumber(0));
-            matches.regExp.at<uint8_t>(RegExp::offsetOfState()) = RegExp::stateWithJITCode() + 1;
+            matches.regExp.at<uint8_t>(RegExp::offsetOfState()) = RegExp::stateWithImageCode() + 1;
             matches.regExp.at<StringImpl*>(RegExp::offsetOfAtom()) = atom.ptr();
             StubRun run = matches.match(form, subject);
             AOT_TEST_CHECK(!run.calledOperation && run.result == match && !matches.script.numberOfCalls);
@@ -265,7 +265,7 @@ static void testMatchesOfAtoms()
         }
         Ref<StringImpl> absent = StringImpl::create("x"_span);
         matches.reset({ }, jsNumber(0));
-        matches.regExp.at<uint8_t>(RegExp::offsetOfState()) = RegExp::stateWithJITCode() + 1;
+        matches.regExp.at<uint8_t>(RegExp::offsetOfState()) = RegExp::stateWithImageCode() + 1;
         matches.regExp.at<StringImpl*>(RegExp::offsetOfAtom()) = absent.ptr();
         StubRun run = matches.match(form, subject);
         AOT_TEST_CHECK(!run.calledOperation && run.result == miss && matches.hasRecordedNothing());

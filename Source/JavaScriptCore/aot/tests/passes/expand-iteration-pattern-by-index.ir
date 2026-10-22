@@ -125,10 +125,10 @@ function f5 name="testsBetweenTheSteps" parameters=[{type=Array<number, pristine
   b1() handler=b4():
     v2 = IteratorResume v1 stepIndex=0
     v3 = ResultAt v2 index=1
-    v4 = Claim v3 castType=undefined|null|number cause=UnprovenContents
+    v4 = RequireObjectCoercible v3 nullishAccess=Read
     v5 = IteratorResume v1 stepIndex=1
     v6 = ResultAt v5 index=1
-    v7 = Claim v6 castType=undefined|null|number cause=UnprovenContents
+    v7 = RequireObjectCoercible v6 nullishAccess=Read
     Jump -> next b2()
   b2():
     IteratorClose v1
@@ -147,7 +147,7 @@ function f5 name="testsBetweenTheSteps" parameters=[{type=Array<number, pristine
 # CHECK-NOT: handler=
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # CHECK-NOT: Branch
-# CHECK: v4: undefined|null|number = Claim v3 castType=undefined|null|number
+# CHECK: v4: {{*}} = RequireObjectCoercible v3
 # CHECK-NOT: Branch
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # CHECK-NOT: Branch
@@ -223,10 +223,10 @@ function f9 name="testedArrayWithTestsBetweenTheSteps" parameters=[{type=Array<n
   b1() handler=b4():
     v2 = IteratorResume v1 stepIndex=0
     v3 = ResultAt v2 index=1
-    v4 = Claim v3 castType=undefined|null|number cause=UnprovenContents
+    v4 = RequireObjectCoercible v3 nullishAccess=Read
     v5 = IteratorResume v1 stepIndex=1
     v6 = ResultAt v5 index=1
-    v7 = Claim v6 castType=undefined|null|number cause=UnprovenContents
+    v7 = RequireObjectCoercible v6 nullishAccess=Read
     Jump -> next b2()
   b2():
     IteratorClose v1

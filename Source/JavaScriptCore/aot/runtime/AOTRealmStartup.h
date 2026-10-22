@@ -22,9 +22,17 @@ class VM;
 
 namespace AOT {
 
+enum class RefusedChange : uint8_t;
 struct Instance;
 
 bool runsCompiledProgram(JSGlobalObject*);
+bool locksBuiltins(JSGlobalObject*);
+JS_EXPORT_PRIVATE void lockBuiltinsWithoutImage();
+JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
+using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
+JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
+void didRefuseChange(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RefusedChange);
+String messageOfRefusalByLockedObject(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RefusedChange);
 JS_EXPORT_PRIVATE ASCIILiteral evaluationRefusedMessage();
 void refuseEvaluationUnlessAdmitted(JSGlobalObject*);
 Instance* reserveInstance(JSGlobalObject*);
@@ -36,8 +44,12 @@ JS_EXPORT_PRIVATE void hostDidCreateRealm(JSGlobalObject*);
 // A class is reported with its Structure, and once more with its constructor if it has one.
 void didCreateClass(JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructorOrNull);
 void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
+// Whether the holder has not created the member yet and didCreateStaticProperty() will be told when it does.
+bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 // For a Structure of instances that a host does not keep in a LazyClassStructure.
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
+// No name of the realm leads to the object of node:module, and the table locks the hooks of the loader on it.
+JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
 
 } } // namespace JSC::AOT
 

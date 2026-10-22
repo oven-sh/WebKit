@@ -12,7 +12,11 @@
 #include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTPropertyAccessCache.h"
 #include <algorithm>
+#include <limits>
+#include <wtf/HashMap.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,18 +37,132 @@ static KnownBoolean evaluateFromOperands(const Program& program, const Function&
     }));
 }
 
-static KnownBoolean evaluateFromDominatingBranches(FunctionAnalyses& analyses, ValueID condition, BlockID block)
+static constexpr uint32_t noGroup = std::numeric_limits<uint32_t>::max();
+
+static KnownBoolean outcomeOnEdge(Edge edge)
 {
-    const Function& function = analyses.function();
-    for (const Use& use : analyses.useLists().usesOf(condition)) {
-        if (use.kind != Use::Kind::TerminatorOperand || use.block == block || !function.at(use.block).terminator.isConditionalBranch())
-            continue;
-        if (analyses.dominates(Edge { use.block, 0 }, block))
-            return KnownBoolean::True;
-        if (analyses.dominates(Edge { use.block, 1 }, block))
-            return KnownBoolean::False;
+    if (edge.isHandlerEdge() || edge.targetIndex > 1)
+        return KnownBoolean::Unknown;
+    return edge.targetIndex ? KnownBoolean::False : KnownBoolean::True;
+}
+
+static Vector<KnownBoolean> outcomesBehindOutermostEdges(FunctionAnalyses& analyses, uint32_t numberOfGroups, NOESCAPE const Invocable<void(BlockID, const ScopedLambda<void(uint32_t)>&)> auto& forEachGroupBranchedOn, NOESCAPE const Invocable<uint32_t(BlockID)> auto& groupAskedFor)
+{
+    const CFG& cfg = analyses.cfg();
+    Vector<KnownBoolean> outcomes(FillWith { }, cfg.numNodes(), KnownBoolean::Unknown);
+    Vector<KnownBoolean> outcomeInScope(FillWith { }, numberOfGroups, KnownBoolean::Unknown);
+    Vector<std::pair<BlockID, uint32_t>, 16> decided;
+    analyses.dominators().walkTree([&](BlockID block) {
+        std::optional<Edge> edge = cfg.singleIncomingEdge(block);
+        KnownBoolean outcome = edge ? outcomeOnEdge(*edge) : KnownBoolean::Unknown;
+        if (outcome != KnownBoolean::Unknown) {
+            auto decide = [&](uint32_t group) {
+                if (outcomeInScope[group] != KnownBoolean::Unknown)
+                    return;
+                outcomeInScope[group] = outcome;
+                decided.append({ block, group });
+            };
+            forEachGroupBranchedOn(edge->from, ScopedLambda<void(uint32_t)>(decide));
+        }
+        if (uint32_t group = groupAskedFor(block); group != noGroup)
+            outcomes[block.index()] = outcomeInScope[group];
+    }, [&](BlockID block) {
+        while (!decided.isEmpty() && decided.last().first == block)
+            outcomeInScope[decided.takeLast().second] = KnownBoolean::Unknown;
+    });
+    return outcomes;
+}
+
+// Nobody edits the function while the branches are asked about, so this says what the use lists would say of the terminators. It holds the values that several branches name, and no other.
+auto TypeTestBranches::branchesOn(ValueID value) const -> std::span<const BranchOnValue>
+{
+    if (m_branchesByOperand.isEmpty())
+        return { };
+    auto found = std::ranges::equal_range(m_branchesByOperand, value.index(), { }, [](const BranchOnValue& branch) {
+        return branch.operand.index();
+    });
+    return { found.begin(), found.end() };
+}
+
+// Those on one value stay in reverse post order.
+void TypeTestBranches::keepValuesThatSeveralBranchesName()
+{
+    Vector<BranchOnValue, 32>& branches = m_branchesByOperand;
+    std::ranges::stable_sort(branches, { }, [](const BranchOnValue& branch) {
+        return branch.operand.index();
+    });
+    size_t end = 0;
+    for (size_t first = 0; first < branches.size();) {
+        size_t endOfValue = first + 1;
+        while (endOfValue < branches.size() && branches[endOfValue].operand == branches[first].operand)
+            ++endOfValue;
+        if (endOfValue - first > 1) {
+            for (size_t index = first; index < endOfValue; ++index)
+                branches[end++] = branches[index];
+        }
+        first = endOfValue;
     }
-    return KnownBoolean::Unknown;
+    branches.shrink(end);
+}
+
+void TypeTestBranches::computeOutcomesOfFrequentConditions() const
+{
+    const Function& function = m_analyses.function();
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> groupOfCondition;
+    auto groupOf = [&](ValueID condition) {
+        auto found = groupOfCondition.find(condition.index());
+        return found == groupOfCondition.end() ? noGroup : found->value;
+    };
+    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch())
+            continue;
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            if (branchesOn(operand).size() > maxComparedBranches)
+                groupOfCondition.add(operand.index(), groupOfCondition.size());
+        });
+    }
+    m_outcomesOfFrequentConditions = outcomesBehindOutermostEdges(m_analyses, groupOfCondition.size(), [&](BlockID block, const ScopedLambda<void(uint32_t)>& functor) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch())
+            return;
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            if (uint32_t group = groupOf(operand); group != noGroup)
+                functor(group);
+        });
+    }, [&](BlockID block) {
+        const Terminator& terminator = function.at(block).terminator;
+        return terminator.isConditionalBranch() ? groupOf(terminator.conditionOperand()) : noGroup;
+    });
+}
+
+KnownBoolean TypeTestBranches::outcomeFromDominatingBranches(ValueID condition, BlockID block) const
+{
+    std::span<const BranchOnValue> branches = branchesOn(condition);
+    if (branches.empty())
+        return KnownBoolean::Unknown;
+    const Function& function = m_analyses.function();
+    auto compareWithEachBranch = [&] {
+        for (const BranchOnValue& branch : branches) {
+            if (branch.block == block)
+                continue;
+            if (m_analyses.dominates(Edge { branch.block, 0 }, block))
+                return KnownBoolean::True;
+            if (m_analyses.dominates(Edge { branch.block, 1 }, block))
+                return KnownBoolean::False;
+        }
+        return KnownBoolean::Unknown;
+    };
+    if (branches.size() <= maxComparedBranches)
+        return compareWithEachBranch();
+
+    RELEASE_ASSERT(function.at(block).terminator.isConditionalBranch() && function.at(block).terminator.conditionOperand() == condition);
+    if (m_outcomesOfFrequentConditions.isEmpty())
+        computeOutcomesOfFrequentConditions();
+    KnownBoolean outcome = m_outcomesOfFrequentConditions[block.index()];
+    if (m_analyses.context().build.options().verifiesAfterEveryPass)
+        RELEASE_ASSERT(outcome == compareWithEachBranch());
+    return outcome;
 }
 
 static const Value* typeTestBranchedOn(FunctionAnalyses& analyses, BlockID block)
@@ -60,10 +178,20 @@ static const Value* typeTestBranchedOn(FunctionAnalyses& analyses, BlockID block
 TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
     : m_analyses(analyses)
 {
+    const Function& function = analyses.function();
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (const Value* test = typeTestBranchedOn(analyses, block))
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch())
+            continue;
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            m_branchesByOperand.append(BranchOnValue { operand, block });
+        });
+        if (const Value* test = typeTestBranchedOn(analyses, block)) {
             m_branches.append(TestedBranch { test->valueOperand(), test->testedType(), block });
+            m_blocksThatBranchOnTypeTest.append(block);
+        }
     }
+    keepValuesThatSeveralBranchesName();
     // The identities of values are asked for only where two tests are for one type.
     std::ranges::stable_sort(m_branches, { }, [](const TestedBranch& branch) {
         return branch.testedType.index();
@@ -83,24 +211,124 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
     for (TestedBranch& branch : m_branches)
         branch.subject = analyses.identityOf(branch.subject);
     std::ranges::stable_sort(m_branches, { }, &TestedBranch::test);
+
+    // A test that no other branch repeats has nothing to learn from the table.
+    size_t end = 0;
+    for (size_t first = 0; first < m_branches.size();) {
+        size_t endOfTest = first + 1;
+        while (endOfTest < m_branches.size() && m_branches[endOfTest].test() == m_branches[first].test())
+            ++endOfTest;
+        if (endOfTest - first > 1) {
+            for (size_t index = first; index < endOfTest; ++index) {
+                m_repeatsTest.set(m_branches[index].block.index());
+                m_branches[end++] = m_branches[index];
+            }
+        }
+        first = endOfTest;
+    }
+    m_branches.shrink(end);
+}
+
+void TypeTestBranches::computeOutcomesOfFrequentTests() const
+{
+    Vector<uint32_t> groupOfBlock(FillWith { }, m_analyses.cfg().numNodes(), noGroup);
+    uint32_t numberOfGroups = 0;
+    for (size_t first = 0; first < m_branches.size();) {
+        size_t end = first + 1;
+        while (end < m_branches.size() && m_branches[end].test() == m_branches[first].test())
+            ++end;
+        if (end - first > maxComparedBranches) {
+            for (size_t index = first; index < end; ++index)
+                groupOfBlock[m_branches[index].block.index()] = numberOfGroups;
+            ++numberOfGroups;
+        }
+        first = end;
+    }
+    m_outcomesOfFrequentTests = outcomesBehindOutermostEdges(m_analyses, numberOfGroups, [&](BlockID block, const ScopedLambda<void(uint32_t)>& functor) {
+        if (uint32_t group = groupOfBlock[block.index()]; group != noGroup)
+            functor(group);
+    }, [&](BlockID block) {
+        return groupOfBlock[block.index()];
+    });
 }
 
 // What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome.
 KnownBoolean TypeTestBranches::outcomeFromDominatingTest(BlockID block) const
 {
-    const Value* test = m_branches.isEmpty() ? nullptr : typeTestBranchedOn(m_analyses, block);
+    const Value* test = m_repeatsTest.get(block.index()) ? typeTestBranchedOn(m_analyses, block) : nullptr;
     if (!test)
         return KnownBoolean::Unknown;
     std::tuple tested { m_analyses.identityOf(test->valueOperand()).index(), test->testedType().index() };
-    for (const TestedBranch& other : std::ranges::equal_range(m_branches, tested, { }, &TestedBranch::test)) {
-        if (other.block == block)
-            continue;
-        if (m_analyses.dominates(Edge { other.block, 0 }, block))
-            return KnownBoolean::True;
-        if (m_analyses.dominates(Edge { other.block, 1 }, block))
-            return KnownBoolean::False;
+    auto branchesOnTest = std::ranges::equal_range(m_branches, tested, { }, &TestedBranch::test);
+    auto compareWithEachBranch = [&] {
+        for (const TestedBranch& other : branchesOnTest) {
+            if (other.block == block)
+                continue;
+            if (m_analyses.dominates(Edge { other.block, 0 }, block))
+                return KnownBoolean::True;
+            if (m_analyses.dominates(Edge { other.block, 1 }, block))
+                return KnownBoolean::False;
+        }
+        return KnownBoolean::Unknown;
+    };
+    if (branchesOnTest.size() <= maxComparedBranches)
+        return compareWithEachBranch();
+
+    if (m_outcomesOfFrequentTests.isEmpty())
+        computeOutcomesOfFrequentTests();
+    KnownBoolean outcome = m_outcomesOfFrequentTests[block.index()];
+    if (m_analyses.context().build.options().verifiesAfterEveryPass)
+        RELEASE_ASSERT(outcome == compareWithEachBranch());
+    return outcome;
+}
+
+static bool listsOnlyFunctions(const Type& type)
+{
+    return !type.functions.isEmpty() && type.hasOnlyKnownCallees() && !type.primitives && !type.layouts && type.builtins.isEmpty();
+}
+
+// No single test dominates the block, and every way to it leaves some test of the value for the type by an edge with the same outcome:
+// a function that is called several times is one of those that its type lists on each of the ways that come together between the calls.
+KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
+{
+    static constexpr unsigned maxBlocksOnTheWays = 32;
+
+    const Value* test = m_repeatsTest.get(block.index()) ? typeTestBranchedOn(m_analyses, block) : nullptr;
+    if (!test || !listsOnlyFunctions(m_analyses.program().at(test->testedType())))
+        return KnownBoolean::Unknown;
+    std::tuple tested { m_analyses.identityOf(test->valueOperand()).index(), test->testedType().index() };
+    auto branchesOnTest = std::ranges::equal_range(m_branches, tested, { }, &TestedBranch::test);
+    if (branchesOnTest.size() < 3)
+        return KnownBoolean::Unknown;
+
+    const CFG& cfg = m_analyses.cfg();
+    KnownBoolean outcome = KnownBoolean::Unknown;
+    Vector<BlockID, maxBlocksOnTheWays> seen { block };
+    for (size_t next = 0; next < seen.size(); ++next) {
+        std::span<const Edge> incomingEdges = cfg.incomingEdges(seen[next]);
+        if (incomingEdges.empty())
+            return KnownBoolean::Unknown;
+        for (Edge edge : incomingEdges) {
+            bool leavesTest = std::ranges::contains(branchesOnTest, edge.from, &TestedBranch::block);
+            if (leavesTest) {
+                KnownBoolean onEdge = outcomeOnEdge(edge);
+                if (onEdge == KnownBoolean::Unknown || (outcome != KnownBoolean::Unknown && outcome != onEdge))
+                    return KnownBoolean::Unknown;
+                outcome = onEdge;
+                continue;
+            }
+            if (edge.isHandlerEdge())
+                return KnownBoolean::Unknown;
+            if (seen.contains(edge.from))
+                continue;
+            if (seen.size() == maxBlocksOnTheWays) {
+                m_gaveUpOnLongWays = true;
+                return KnownBoolean::Unknown;
+            }
+            seen.append(edge.from);
+        }
     }
-    return KnownBoolean::Unknown;
+    return outcome;
 }
 
 static constexpr OpcodeSet slotReads { Opcode::GetSlot, Opcode::GetSlotOrUndefined };
@@ -112,33 +340,31 @@ static const Value* layoutTestBranchedOn(FunctionAnalyses& analyses, BlockID blo
         return nullptr;
     const Program& program = analyses.program();
     const Type& subject = program.typeOf(analyses.function(), test->valueOperand());
-    return subject.hasOnlyLayouts() && membersOf(program, subject).size() > 1 ? test : nullptr;
+    return subject.hasOnlyLayouts(program) && membersOf(program, subject).size() > 1 ? test : nullptr;
 }
 
-SlotValueTests::SlotValueTests(FunctionAnalyses& analyses, TypeArena& types)
+SlotValueTests::SlotValueTests(FunctionAnalyses& analyses, TypeArena& types, std::span<const BlockID> blocksThatBranchOnTypeTest)
     : m_analyses(analyses)
     , m_types(types)
 {
-    std::span<const BlockID> blocks = analyses.cfg().reversePostOrder();
     Vector<ValueID, 8> testedObjects;
-    for (BlockID block : blocks) {
+    for (BlockID block : blocksThatBranchOnTypeTest) {
         if (const Value* test = layoutTestBranchedOn(analyses, block))
             testedObjects.append(analyses.identityOf(test->valueOperand()));
     }
     if (testedObjects.isEmpty())
         return;
     std::ranges::sort(testedObjects);
-    for (BlockID block : blocks)
+    for (BlockID block : analyses.cfg().reversePostOrder())
         collectTestedReads(testedObjects.span(), block);
     std::ranges::stable_sort(m_reads, { }, &TestedRead::object);
 }
 
-// No value of such a slot tells the layouts apart.
-static bool hasSameTypeInEveryLayout(const Program& program, const Value& read)
+static bool declareSameType(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key)
 {
     TypeID common;
-    for (LayoutID layout : program.at(read.receivers()).members) {
-        std::optional<FieldReference> field = findField(program, layout, read.key(), BaseChain::Proven);
+    for (LayoutID layout : layouts) {
+        std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Proven);
         if (!field)
             continue;
         TypeID type = fieldAt(program, *field).declared.type;
@@ -149,9 +375,26 @@ static bool hasSameTypeInEveryLayout(const Program& program, const Value& read)
     return true;
 }
 
+// No value of such a slot tells the layouts apart.
+static bool hasSameTypeInEveryLayout(const Program& program, const Value& read)
+{
+    std::span<const LayoutID> layouts = program.at(read.receivers()).members.span();
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || layouts.size() < PropertyAccessCache::fewestLayouts || TypeTable::isProvisional(read.key()))
+        return declareSameType(program, layouts, read.key());
+    PropertyAccessCache::DeclaredTypesKey key { cache->lists.idOf(program.types, read.receivers()), read.key() };
+    return findOrCompute(cache->declaredTypes, key, computeHash(key.layouts, key.key), [&] {
+        return PropertyAccessCache::DeclaredTypes { key, declareSameType(program, layouts, read.key()) };
+    }).areTheSame;
+}
+
 void SlotValueTests::addTestedRead(std::span<const ValueID> testedObjects, BlockID block, ValueID tested, std::optional<uint32_t> operandIndex)
 {
     const Function& function = m_analyses.function();
+    // Behind its casts a value is what it is, unless that is a parameter.
+    Opcode opcodeBehindCasts = function.at(sameObjectThroughCasts(function, tested)).opcode;
+    if (opcodeBehindCasts != Opcode::Parameter && !slotReads.contains(opcodeBehindCasts))
+        return;
     ValueID read = m_analyses.identityOf(tested);
     const Value& definition = function.at(read);
     if (!slotReads.contains(definition.opcode) || !definition.receivers())
@@ -207,11 +450,26 @@ void SlotValueTests::collectTestedReads(std::span<const ValueID> testedObjects, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool SlotValueTests::isRuledOut(const TestedRead& tested, uint32_t targetIndex, LayoutID layout) const
+const Vector<Type>& SlotValueTests::slotTypesByReceiverOf(ValueID read)
+{
+    for (const auto& [knownRead, slotTypes] : m_slotTypesByReceiver) {
+        if (knownRead == read)
+            return *slotTypes;
+    }
+    const Function& function = m_analyses.function();
+    TypingContext context { m_analyses.program(), function, m_types };
+    const Vector<LayoutID>& receivers = m_types.at(function.at(read).receivers()).members;
+    auto slotTypes = makeUniqueWithoutFastMallocCheck<Vector<Type>>(receivers.size(), [&](size_t index) {
+        return typeOfSlotRead(context, function.at(read), singleElementSpan(receivers[index]));
+    });
+    m_slotTypesByReceiver.append({ read, WTF::move(slotTypes) });
+    return *m_slotTypesByReceiver.last().second;
+}
+
+bool SlotValueTests::isRuledOut(const TestedRead& tested, uint32_t targetIndex, const Type& slotType) const
 {
     const Function& function = m_analyses.function();
     TypingContext context { m_analyses.program(), function, m_types };
-    Type slotType = typeOfSlotRead(context, function.at(tested.read), singleElementSpan(layout));
 
     const Terminator& terminator = function.at(tested.block).terminator;
     if (terminator.hasCases()) {
@@ -233,12 +491,14 @@ const Vector<LayoutID>& SlotValueTests::layoutsRuledOutBy(TestedRead& tested)
 
     std::span<const Edge> incomingEdges = m_analyses.cfg().incomingEdges(tested.target);
     Vector<LayoutID> layouts;
-    for (LayoutID layout : m_types.at(m_analyses.function().at(tested.read).receivers()).members) {
+    const Vector<LayoutID>& receivers = m_types.at(m_analyses.function().at(tested.read).receivers()).members;
+    const Vector<Type>& slotTypes = slotTypesByReceiverOf(tested.read);
+    for (size_t index = 0; index < receivers.size(); ++index) {
         bool isRuledOutOnEveryEdge = std::ranges::all_of(incomingEdges, [&](Edge edge) {
-            return isRuledOut(tested, edge.targetIndex, layout);
+            return isRuledOut(tested, edge.targetIndex, slotTypes[index]);
         });
         if (isRuledOutOnEveryEdge)
-            layouts.append(layout);
+            layouts.append(receivers[index]);
     }
     tested.layoutsRuledOut = WTF::move(layouts);
     return *tested.layoutsRuledOut;
@@ -283,6 +543,20 @@ bool isConditionOfBranchWithProofs(const Function& function, const UseLists& use
         const Terminator& terminator = function.at(use.block).terminator;
         return terminator.isConditionalBranch() && (!terminator.taken().proofs.isEmpty() || !terminator.notTaken().proofs.isEmpty());
     });
+}
+
+BitVector conditionsOfBranchesWithProofs(const Function& function, const CFG& cfg)
+{
+    BitVector conditions;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch() || (terminator.taken().proofs.isEmpty() && terminator.notTaken().proofs.isEmpty()))
+            continue;
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            conditions.set(operand.index());
+        });
+    }
+    return conditions;
 }
 
 bool canFollowWithoutTest(const Function& function, Edge edge)
@@ -347,7 +621,7 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
 {
     const Program& program = builder.context().program;
     Function& function = builder.function();
-    Terminator& terminator = function.at(block).terminator;
+    Terminator& terminator = function.edit(block).terminator;
     RELEASE_ASSERT(terminator.kind == TerminatorKind::Jump);
 
     builder.setOrigin(terminator.origin());
@@ -406,7 +680,7 @@ std::optional<uint32_t> decidedTargetOf(const Terminator& terminator, KnownValue
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranches& typeTests, SlotValueTests& slotValueTests, BlockID block)
+KnownBoolean evaluateConditionByDefinitions(FunctionAnalyses& analyses, BlockID block)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
@@ -417,10 +691,18 @@ KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranche
     KnownBoolean outcome = booleanOf(knownValueOf(program, function, condition));
     if (outcome == KnownBoolean::Unknown)
         outcome = evaluateFromOperands(program, function, function.at(analyses.definitionThroughUpcasts(condition)));
+    return outcome;
+}
+
+KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranches& typeTests, SlotValueTests& slotValueTests, BlockID block)
+{
+    KnownBoolean outcome = evaluateConditionByDefinitions(analyses, block);
     if (outcome == KnownBoolean::Unknown)
-        outcome = evaluateFromDominatingBranches(analyses, condition, block);
+        outcome = typeTests.outcomeFromDominatingBranches(analyses.function().at(block).terminator.conditionOperand(), block);
     if (outcome == KnownBoolean::Unknown)
         outcome = typeTests.outcomeFromDominatingTest(block);
+    if (outcome == KnownBoolean::Unknown)
+        outcome = typeTests.outcomeOnEveryWay(block);
     if (outcome == KnownBoolean::Unknown)
         outcome = slotValueTests.outcomeFromDominatingTests(block);
     return outcome;
@@ -432,7 +714,7 @@ void decideTerminator(IRBuilder& builder, BlockID block, uint32_t targetIndex)
     Edge edge { block, targetIndex };
     RELEASE_ASSERT(canFollowWithoutTest(function, edge));
 
-    Terminator& terminator = function.at(block).terminator;
+    Terminator& terminator = function.edit(block).terminator;
     if (terminator.isConditionalBranch()) {
         builder.convertBranchToJump(block, targetIndex);
         return;

@@ -103,7 +103,10 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (status(module) == ModuleStatus::Evaluating) {
-        queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
+        // The body of the module is on the stack below this job, so a job queued now would run, and queue itself again, before the body can go on.
+        vm.whenIdle([realm = m_instance.globalObject, importPromise = Strong<JSPromise>(vm, importPromise), module, referrerAsyncOrder] {
+            queueImportJob(realm, importPromise.get(), module, referrerAsyncOrder);
+        });
         return;
     }
 
@@ -172,7 +175,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
 
     JSString* text = specifier.toString(realm);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    willLoadByName(realm, text);
+    willLoadByName(realm, text, LoadByName::Import);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -181,8 +184,11 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     Identifier key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!*fetchParameters) {
-        if (std::optional<ModuleID> found = m_table.findByPath(key.string()))
+        if (std::optional<ModuleID> found = m_table.findByPath(key.string())) {
+            willAnswerWithModule(realm, *found, LoadByName::Import);
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
             RELEASE_AND_RETURN(scope, import(*found, referrer));
+        }
     }
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
 }

@@ -148,7 +148,7 @@ std::optional<Object::InitialKeyOrder> Object::initialKeyOrder(VM& vm, std::span
     }
     if (layout.keysAreNeverEnumerated)
         return InitialKeyOrder { unorderedOrderWord, structure };
-    if (auto orderAndCount = state.objects->keyOrders.orderStartingWith(layout, keys, PrefixRegistration::WholeOrderOnly))
+    if (auto orderAndCount = state.objects->keyOrders.orderStartingWith(layout, keys))
         return InitialKeyOrder { *orderAndCount, structure };
     count(instance(), RuntimeCounterID::KeyOrdersStoredOutOfLine);
     return InitialKeyOrder { outOfLineOrderWord, structures.withOutOfLineKeyOrder(vm, *structure, keys) };
@@ -173,11 +173,27 @@ static uint32_t countExtraKeys(State& state, const Object& object, JSObject* ext
         if (std::optional<uint16_t> known = structure.numberOfExtraKeys())
             return *known;
     }
-    uint32_t numberOfExtraKeys = 0;
-    extra->structure()->forEachProperty(object.vm(), [&](const auto& property) {
-        numberOfExtraKeys += isExtraKey(state, object, property.key());
-        return true;
-    });
+    auto countByWalk = [&](bool mayHoldFields) {
+        uint32_t count = 0;
+        const RuntimeLayoutTable& layouts = state.objects->layouts;
+        const LayoutData& layout = object.layout();
+        extra->structure()->forEachProperty(object.vm(), [&](const auto& property) {
+            ASSERT(mayHoldFields || !object.fieldNamed(state, property.key()));
+            count += mayHoldFields ? isExtraKey(state, object, property.key()) : layouts.hasPositionAmongKeys(layout, property.key());
+            return true;
+        });
+        return count;
+    };
+    // While no field lies outside its slot, no extra property has the name of a field, and nobody has to look each of them up.
+    bool mayHoldFields = object.orderWord() & orderWordHasFieldOutsideSlot;
+    uint32_t numberOfExtraKeys;
+    // A Structure allows quick access for enumeration until it gets a symbol or a property that is not enumerable, or loses a property. Until then each of its slots holds a property under a string.
+    // An object that a loop fills, some names fields and the rest not, asks for every field it gets: a walk each time is the square of its size.
+    if (Structure* extraStructure = extra->structure(); !mayHoldFields && extraStructure->isQuickPropertyAccessAllowedForEnumeration()) {
+        numberOfExtraKeys = static_cast<uint32_t>(numberOfSlotsForMaxOffset(extraStructure->maxOffset(), extraStructure->inlineCapacity()));
+        ASSERT(numberOfExtraKeys == countByWalk(false));
+    } else
+        numberOfExtraKeys = countByWalk(mayHoldFields);
     if (isFixedByStructure)
         structure.setNumberOfExtraKeys(numberOfExtraKeys);
     return numberOfExtraKeys;
@@ -206,10 +222,8 @@ static AddedEntries entriesPositioningExtraKeys(State& state, const Object& obje
     if (!object.hasOutOfLineKeyOrder() && state.objects->keyOrders.positionsExtraKeys(layout, object.orderWord() & orderAndCountMask, numberOfExtraKeys))
         return entries;
     ExtraKeyCounter positioned(layout.numberOfFields);
-    object.forEachKeyInOrder(state, [&](uint16_t key) {
-        if (key >= layout.numberOfFields)
-            positioned.add(key);
-    });
+    Object::KeyOrderStorage storage;
+    positioned.addAll(object.keyOrder(state, storage));
     positioned.appendEntriesCountingTo(numberOfExtraKeys, entries);
     return entries;
 }
@@ -254,12 +268,14 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
     added.append(indexOf(field));
     if (!hasOutOfLineKeyOrder()) {
         std::optional<uint32_t> after = before;
+        // The one step of an object without extra keys is published by whoever makes it. No such object ever stands where one with extra keys does.
+        bool publishesWholeStep = numberOfExtraKeys && (*numberOfExtraKeys || added.size() > 1);
         for (uint16_t entry : added) {
             if (after)
-                after = keyOrders.orderAfterCreating(layout, *after, entry);
+                after = keyOrders.orderAfterCreating(layout, *after, entry, publishesWholeStep ? KeyOrderTable::Step::IsNotPublished : KeyOrderTable::Step::IsPublished);
         }
         if (after) {
-            if (numberOfExtraKeys)
+            if (publishesWholeStep)
                 keyOrders.publishTransition(layout, before, field, *after, *numberOfExtraKeys);
             setOrderAndCount(*after);
             return;

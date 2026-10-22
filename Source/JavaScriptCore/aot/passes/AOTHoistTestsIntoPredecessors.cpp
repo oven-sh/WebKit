@@ -10,8 +10,8 @@
 
 #include "AOTDecidedBranches.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHoistTestsIntoPredecessors.h"
 #include "AOTIRBuilder.h"
-#include "AOTInductionVariables.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -41,9 +41,6 @@ struct ParameterOperation {
     uint32_t parameterIndex;
     uint32_t operandIndex;
 };
-
-// These convert a number to int32, which costs nothing where the number is an integer.
-constexpr OpcodeSet operatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
 
 class TestHoister {
 public:
@@ -77,7 +74,7 @@ public:
         m_analyses.didChangeValues();
 
         if (!retypedParameters.isEmpty())
-            narrowValueTypes(TypePropagationInputs { m_context.program, m_context.id, m_function, m_analyses, m_context.types, m_context.build }, retypedParameters.span());
+            narrowValueTypes(TypePropagationInputs { m_context.program, m_context.id, m_function, m_analyses, m_context.types, m_context.build, &m_context.typingMemo }, retypedParameters.span());
         return PassOutcome::Changed;
     }
 
@@ -112,7 +109,7 @@ private:
             return false;
         if (isConditionOfBranchWithProofs(m_function, useLists, testID))
             return false;
-        if (!m_analyses.effectsOf(testID).onAnyEdge().isRemovableWhenUnused())
+        if (!m_analyses.isRemovableWhenUnused(testID))
             return false;
         m_truthinessTests.append({ id, static_cast<uint32_t>(parameterIndex) });
         return true;
@@ -143,7 +140,7 @@ private:
             return;
         ValueID operation = block.values[valueIndex];
         const Value& value = m_function.at(operation);
-        if (!relationalOperators.contains(value.opcode) && !operatorsOnInt32.contains(value.opcode))
+        if (!operatorsHoistedIntoPredecessors.contains(value.opcode))
             return;
         size_t leftIndex = block.parameters.find(value.operand(0));
         size_t rightIndex = block.parameters.find(value.operand(1));
@@ -193,7 +190,7 @@ private:
             if (typeOf(argument).isBoolean())
                 continue;
             ValueID copy = insertBeforeTerminator(builder, edge.from, IRBuilder::make(Opcode::ToBoolean, { argument }));
-            targetOf(m_function, edge).arguments[candidate.parameterIndex] = copy;
+            editTarget(m_function, edge).arguments[candidate.parameterIndex] = copy;
         }
     }
 
@@ -220,7 +217,7 @@ private:
 
     ValueID removeFromMergePoint(IRBuilder& builder, const TruthinessTest& candidate)
     {
-        Block& block = m_function.at(candidate.mergePoint);
+        Block& block = m_function.edit(candidate.mergePoint);
         ValueID parameter = block.parameters[candidate.parameterIndex];
         block.terminator.setConditionOperand(parameter);
         builder.eraseValues(candidate.mergePoint, singleIndex(0));
@@ -247,6 +244,8 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     while (TestHoister(context).run() == PassOutcome::Changed)
         outcome = PassOutcome::Changed;
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses;
     return outcome;
 }
 

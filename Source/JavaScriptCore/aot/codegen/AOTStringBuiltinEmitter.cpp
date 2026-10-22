@@ -50,12 +50,32 @@ Condition StringBuiltinEmitter::is8Bit(CellPointer string)
     return isNarrow;
 }
 
-std::optional<Number> StringBuiltinEmitter::numberArgument(const InlineCall& call, unsigned index)
+std::optional<Condition> StringBuiltinEmitter::isUndefinedArgument(const InlineCall& call, unsigned index)
+{
+    ValueID argument = call.argumentOrNull(index);
+    if (!argument || !(typeOf(argument).primitives & Primitive::Undefined) || typeOf(argument).hasOnlyPrimitives(Primitive::Undefined))
+        return std::nullopt;
+    Operand operand = get(argument);
+    if (operand.is<Boxed>())
+        return equal(operand.as<Boxed>(), undefined());
+    return emitter<ConversionEmitter>().isMarker(operand);
+}
+
+std::optional<Number> StringBuiltinEmitter::numberArgument(const InlineCall& call, unsigned index, double whenUndefined)
 {
     ValueID argument = call.argumentOrNull(index);
     if (!argument || typeOf(argument).hasOnlyPrimitives(Primitive::Undefined))
         return std::nullopt;
-    return numberOperand(argument);
+    std::optional<Condition> isUndefined = isUndefinedArgument(call, index);
+    if (!isUndefined)
+        return numberOperand(argument);
+
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Operand operand = get(argument);
+    Number passed = operand.is<Boxed>() ? numberToDouble(operand.as<Boxed>())
+        : operand.is<OptionalInteger>() ? conversions.toNumber(conversions.withoutMarkers(operand).as<Integer>(), typeOf(argument).integers)
+        : conversions.withoutMarkers(operand).as<Number>();
+    return select(*isUndefined, number(whenUndefined), passed);
 }
 
 Word32 StringBuiltinEmitter::positionArgument(const InlineCall& call, unsigned index, Word32 length, Word32 whenAbsent)
@@ -63,7 +83,10 @@ Word32 StringBuiltinEmitter::positionArgument(const InlineCall& call, unsigned i
     std::optional<Number> position = numberArgument(call, index);
     if (!position)
         return whenAbsent;
-    return strings().clampRange(StringRangeMethod::Substring, length, *position, std::nullopt).start;
+    Word32 passed = strings().clampRange(StringRangeMethod::Substring, length, *position, std::nullopt).start;
+    if (std::optional<Condition> isUndefined = isUndefinedArgument(call, index))
+        return select(*isUndefined, whenAbsent, passed);
+    return passed;
 }
 
 void StringBuiltinEmitter::finish(const InlineCall& call, Operand naturalResult)
@@ -167,7 +190,8 @@ void StringBuiltinEmitter::generateRange(const InlineCall& call, StringRangeMeth
     CellPointer string = stringOperand(call.receiver());
     Word32 length = strings().lengthOf(string);
     Number first = numberArgument(call, 0).value_or(number(0));
-    CodeUnitRange range = strings().clampRange(method, length, first, numberArgument(call, 1));
+    // Without an end the range goes on to the end of the string, as it does for an end past it.
+    CodeUnitRange range = strings().clampRange(method, length, first, numberArgument(call, 1, std::numeric_limits<double>::infinity()));
     finish(call, strings().substring(call.context(), string, range));
 }
 
@@ -208,6 +232,11 @@ void StringBuiltinEmitter::generateCallStringConstructor(const InlineCall& call)
 
 void StringBuiltinEmitter::generateStringUTF8ByteLength(const InlineCall& call)
 {
+    if (call.canMiss()) {
+        ValueID encoding = call.argument(1);
+        const TypeTestPlan& isString = typeTestPlanFor(m_function.at(encoding).type, representationOf(encoding), TypeTable::string);
+        branchUnless(logicalNot(hasType(get(encoding), isString)), missBlockOf(call));
+    }
     CharacterView view = strings().viewOfString(call.context(), stringOperand(call.argument(0)));
     Integer byteLength = selectByBranch<Integer>(view.is8Bit, [&] {
         return callLeaf<Integer>(RuntimeOperation::StringUTF8Length8, { view.characters, view.length });

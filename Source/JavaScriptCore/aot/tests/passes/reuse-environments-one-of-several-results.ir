@@ -1,0 +1,120 @@
+# An environment among several results: ownership goes with the value. The function that hands it back never lets go of it. The caller that takes out of the results what the callee has made
+# is the one to let go of it, behind its own last use, and marks it where it keeps it. What holds the results has no type of its own and is followed like the environment:
+# Results until the return, the call until the last ResultAt. So the maker that gets its own environment back does not let go of it between the call and ResultAt.
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# OPTIONS: disable=pass:AllocateInFrames
+# STATISTIC: EnvironmentsReused = 2
+# CHECK: reused environments: [L1 L2]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="handedBackToItsMaker" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="madeByTheWorker" fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Environment name="staysHere" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="handedBackToItsMaker" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    v5 = GetEnvironmentField v4 layout=L0 field=0
+    v6 = Call v0, -, v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f0 name="handedBackToItsMaker"
+# CHECK: = CallDirect v1 function=f1
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: = GetEnvironmentField v4 layout=L0
+
+function f1 name="handsItsCaptureBack" captures=[{type=env L0}] results=[{type=anything}, {type=env L0}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Results v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="handsItsCaptureBack"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f2 name="madeByTheWorker" parameters=[{type=anything}] results=[{type=anything}, {type=env L1}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L1 field=0
+    v3 = Results v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f2 name="madeByTheWorker"
+# CHECK-NOT: ReleaseEnvironment
+
+function f3 name="onlyReadsWhatTheWorkerMade" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = ResultAt v1 index=1
+    v3 = GetEnvironmentField v2 layout=L1 field=0
+    v4 = Call v0, -, v3
+    Return v4
+}
+# CHECK-LABEL: function f3 name="onlyReadsWhatTheWorkerMade"
+# CHECK: = GetEnvironmentField v2 layout=L1
+# CHECK-NEXT: ReleaseEnvironment v2
+# CHECK-NEXT: = Call v0
+
+function f4 name="staysHere" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L2 field=0
+    v3 = Call v0, -, v2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="staysHere"
+# CHECK: = GetEnvironmentField v1 layout=L2
+# CHECK-NEXT: ReleaseEnvironment v1
+
+function f5 name="keepsWhatTheWorkerMade" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = ResultAt v1 index=1
+    v3 = NewClosure v2 function=f6
+    Return v3
+}
+# CHECK-LABEL: function f5 name="keepsWhatTheWorkerMade"
+# CHECK: = ResultAt v1 index=1
+# CHECK-NEXT: MarkEnvironmentEscaped v2
+# CHECK-NEXT: = NewClosure v2 function=f6
+
+function f6 name="closure" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+
+function f7 name="handsOnWhatTheWorkerMade" parameters=[{type=anything}] results=[{type=anything}, {type=env L1}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = GetEnvironmentField v3 layout=L1 field=0
+    v5 = Results v4, v3
+    Return v5
+}
+# CHECK-LABEL: function f7 name="handsOnWhatTheWorkerMade"
+# CHECK-NOT: ReleaseEnvironment
+
+function f8 name="takesWhatWasHandedOn" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f7
+    v2 = ResultAt v1 index=1
+    v3 = GetEnvironmentField v2 layout=L1 field=0
+    Return v3
+}
+# CHECK-LABEL: function f8 name="takesWhatWasHandedOn"
+# CHECK-NOT: ReleaseEnvironment
+
+function f9 name="returnsTheAnswerOfACall" parameters=[{type=anything}] results=[{type=anything}, {type=env L1}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK-LABEL: function f9 name="returnsTheAnswerOfACall"
+# CHECK-NOT: ReleaseEnvironment

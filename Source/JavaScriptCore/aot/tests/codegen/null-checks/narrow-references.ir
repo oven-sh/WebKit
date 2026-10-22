@@ -1,0 +1,136 @@
+# The first pages of the cage of cells are never mapped, and a marker in a narrow reference is a small word. So the null check of a narrow reference is the read behind it, `[cage + 8 * word + offset]`:
+# no compare, no branch, no pointer (f0 to f2). Where somebody asks for the pointer it is made, and where only a block that is seldom entered asks, it is made there (f3, f8).
+# A loop variable that is read before anything else is done with it takes the pointer whatever the word is, and `=== null` asks the word (f5: two markers; f4: one, where the test decides the decoding).
+# The fault's record names the register of the word, so the error names null or undefined as it did (f6, f7: B:test/aot/programs/typed-objects/null-checks-of-narrow-references.ts runs them)
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: generate-code NullChecksFoldedIntoAccesses
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# RUN(SLOTS): pass PlanSlots
+# CHECK: f0: size={{*}} faults=1
+# CHECK: f1: size={{*}} faults=2
+# CHECK: f2: size={{*}} faults=1
+# CHECK: f3: size={{*}} faults=1
+# CHECK: f4: size={{*}} faults=0
+# CHECK: f5: size={{*}} faults=1
+# CHECK: f6: size={{*}} faults=1
+# CHECK: f7: size={{*}} faults=1
+# CHECK: f8: size={{*}} faults=1
+# CHECK: statistic NullChecksFoldedIntoAccesses 7
+# X64: f0: size=16 frame=none
+# X64: f1: size=21 frame=none
+# X64: f2: size=15 frame=none
+# X64: f3: size=15 frame=none
+# X64: f4: size=43 frame=none
+# X64: f5: size=43 frame=none
+# X64: f6: size=26 frame=none
+# X64: f7: size=26 frame=none
+# X64: f8: size=31 frame=none
+# SLOTS: "next" OptionalCell32
+# SLOTS: "down" OptionalCell32
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="left" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="right" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="up" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="down" declared={type=undefined|null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="readsThroughReference" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="count"
+    v3 = GetSlot v2 key="count" receivers=[L0] level=Proven
+    Return v3
+}
+function f1 name="readsThroughTwoReferences" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="next"
+    v3 = GetSlot v2 key="next" receivers=[L0] level=Proven
+    v4 = RequireObjectCoercible v3 name="count"
+    v5 = GetSlot v4 key="count" receivers=[L0] level=Proven
+    Return v5
+}
+function f2 name="onlyChecks" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="count"
+    v3 = Integer integer=2
+    Return v3
+}
+function f3 name="returnsTheReference" parameters=[{type=L0}] results=[{type=L0}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="count"
+    Return v2
+}
+function f4 name="walks" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = Integer integer=0
+    Jump -> next b1(v0, v1)
+  b1(v2: null|L0, v3: i32):
+    LoopHint
+    v5 = TypeTest v2 testedType=null
+    TestAndBranch v5 -> taken b3(), notTaken b2(| 0)
+  b2(v6: L0):
+    v7 = GetSlot v6 key="count" receivers=[L0] level=Proven
+    v8 = BitXor v3, v7 form=Numbers
+    v9 = GetSlot v6 key="next" receivers=[L0] level=Proven
+    Jump -> next b1(v9, v8)
+  b3():
+    Return v3
+}
+function f5 name="walksAReferenceWithTwoMarkers" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = Integer integer=0
+    Jump -> next b1(v0, v1)
+  b1(v2: undefined|null|L0, v3: i32):
+    LoopHint
+    v5 = TypeTest v2 testedType=null
+    TestAndBranch v5 -> taken b3(), notTaken b2(| 0)
+  b2(v6: undefined|L0):
+    v7 = RequireObjectCoercible v6 name="count"
+    v8 = GetSlot v7 key="count" receivers=[L0] level=Proven
+    v9 = BitXor v3, v8 form=Numbers
+    v10 = GetSlot v7 key="down" receivers=[L0] level=Proven
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v3
+}
+function f6 name="nullIsKnown" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = Null
+    v3 = StrictEq v1, v2 form=Bits
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = RequireObjectCoercible v1 name="count"
+    v5 = GetSlot v4 key="count" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    v6 = Integer integer=1
+    Return v6
+}
+function f7 name="undefinedIsKnown" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="down" receivers=[L0] level=Proven
+    v2 = Undefined
+    v3 = StrictEq v1, v2 form=Bits
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = RequireObjectCoercible v1 name="count"
+    v5 = GetSlot v4 key="count" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    v6 = Integer integer=1
+    Return v6
+}
+function f8 name="askedForThePointerWhereATestFails" parameters=[{type=L0}, {type=L0}] results=[{type=null|L0}] {
+  b0(v0: L0, v1: L0):
+    v2 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v3 = RequireObjectCoercible v2 name="left"
+    v4 = GetSlot v3 key="left" receivers=[L0] level=Proven
+    v5 = StrictEq v4, v1 form=Bits
+    TestAndBranch v5 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2() frequency=Rare:
+    Return v3
+}

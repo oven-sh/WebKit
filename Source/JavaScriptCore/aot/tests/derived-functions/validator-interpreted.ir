@@ -5,7 +5,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=L0 layouts=[L0, L1, L2] validation=[{shape=Object{layout=L0 members=[{key="tree" node=1 field=0}, {key="n" node=4 field=1}, {key="inner" node=5 field=2}]} type=L0}, {shape=Union{arms=[2, 3]} type=L1|L2}, {shape=Object{layout=L1 members=[{key="left" node=1 field=0 isOptional=true}]} type=L1}, {shape=Object{layout=L2 members=[{key="right" node=1 field=0 isOptional=true}]} type=L2}, {shape=Primitive{primitive=Number} type=number}, {shape=Object{layout=L3 members=[{key="x" node=4 field=0}]} type=L3}]
-layout L0 name="Holder" fields=[{key="tree" declared={type=object}}, {key="n" declared={type=number}}, {key="inner" declared={type=object written=L3}}]
+layout L0 name="Holder" fields=[{key="tree" declared={type=object}}, {key="n" declared={type=number}}, {key="inner" declared={type=L3}}]
 layout L1 name="LeftNode" fields=[{key="left" declared={type=undefined|object}}]
 layout L2 name="RightNode" fields=[{key="right" declared={type=undefined|object}}]
 layout L3 name="Inner" fields=[{key="x" declared={type=number}}]

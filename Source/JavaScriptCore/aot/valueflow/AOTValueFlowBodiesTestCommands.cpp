@@ -11,7 +11,6 @@
 #include "AOTAnalysisTestCommands.h"
 #include "AOTIRPrinter.h"
 #include "AOTSupportTestCommands.h"
-#include "AOTValueFlowBodyCopies.h"
 #include "AOTValueFlowTestCommands.h"
 #include "AOTValueSets.h"
 #include <wtf/CommaPrinter.h>
@@ -82,6 +81,13 @@ public:
             print(Body::Operand { { }, seed.constant, seed.mask });
             m_out.println();
         }
+        for (const Body::PassedParameter& passed : m_body.passedParameters) {
+            m_out.print("  returns "_s);
+            print(Body::Operand { ValueFlowNodeName::ofBody(passed.entryParameter), 0, passed.mask });
+            m_out.print(" as it came, the rest in "_s);
+            print(ValueFlowNodeName::ofBody(m_body.ownResult));
+            m_out.println();
+        }
         for (FunctionID function : m_body.functionsEnteredOnceReached) {
             m_out.print("  reached: enters "_s);
             m_printer.print(function);
@@ -118,10 +124,6 @@ private:
     {
         const ValueFlowSite& site = m_body.sites[index];
         m_out.print("  s"_s, index, " "_s);
-        if (site.function) {
-            m_printer.print(site.function);
-            m_out.print(" "_s);
-        }
         m_printer.print(site.value);
         switch (site.origin) {
         case ValueFlowSiteOrigin::Operation:
@@ -132,8 +134,8 @@ private:
         case ValueFlowSiteOrigin::BuiltinResult:
             m_out.print(site.ordinal ? " contents of the result of a built-in"_s : " result of a built-in"_s);
             break;
-        case ValueFlowSiteOrigin::ParsedData:
-            m_out.print(" parsed data"_s);
+        case ValueFlowSiteOrigin::TypedResult:
+            m_out.print(" typed result ordinal="_s, site.ordinal);
             break;
         }
         if (site.layout) {
@@ -161,6 +163,8 @@ private:
         switch (kind) {
         case ValueFlowStatementKind::ModuleEvaluation:
             return "ModuleEvaluation"_s;
+        case ValueFlowStatementKind::EntryChecks:
+            return "entry checks"_s;
         case ValueFlowStatementKind::Coroutine:
             return "Coroutine"_s;
         case ValueFlowStatementKind::HostRoots:
@@ -194,11 +198,8 @@ private:
             m_out.println();
             return;
         }
-        m_out.print("  "_s, index < m_body.firstStatementLeavingBody ? "inside: "_s : ""_s, Typed::nameOf(statement.opcode), " "_s);
-        if (statement.function) {
-            m_printer.print(statement.function);
-            m_out.print(" "_s);
-        }
+        ASCIILiteral group = index < m_body.firstStatementLeavingBody ? "inside: "_s : ""_s;
+        m_out.print("  "_s, group, Typed::nameOf(statement.opcode), " "_s);
         m_printer.print(statement.site);
         m_out.print(" ("_s);
         CommaPrinter comma;
@@ -214,10 +215,6 @@ private:
         if (statement.thrown) {
             m_out.print(" throws "_s);
             print(statement.thrown);
-        }
-        if (statement.copiedCallee) {
-            m_out.print(" has a copy of "_s);
-            m_printer.print(statement.copiedCallee);
         }
         m_out.println();
     }
@@ -294,6 +291,14 @@ private:
             m_out.print("rest "_s);
             m_printer.print(FunctionID(object.index));
             return;
+        case ValueFlowObjectKind::FunctionPrototype:
+            m_out.print("prototype of "_s);
+            m_printer.print(FunctionID(object.index));
+            return;
+        case ValueFlowObjectKind::ConstructedObject:
+            m_out.print("constructed by "_s);
+            m_printer.print(FunctionID(object.index));
+            return;
         case ValueFlowObjectKind::Site:
             m_out.print("s"_s, object.index);
             return;
@@ -339,11 +344,12 @@ private:
         printMask(operand.mask);
     }
 
+    // `&` where a test stands behind the type, `:` where the type is taken on trust.
     void printMask(uint32_t index)
     {
         const Body::Mask& mask = m_body.masks[index];
         for (TypeID type : mask.inside) {
-            m_out.print(" & "_s);
+            m_out.print(mask.kind == ValueFlowMaskKind::Checked ? " & "_s : " : "_s);
             m_printer.print(type);
         }
         for (TypeID type : mask.outside) {
@@ -359,7 +365,7 @@ private:
 
 } // namespace
 
-// valueflow-body [copies] [fN | host ..]: what is left of a function; with `copies` after the bodies of small functions have been copied into call sites.
+// valueflow-body [fN | host ..]: what is left of a function.
 void runValueFlowBodyTestCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;
@@ -367,22 +373,6 @@ void runValueFlowBodyTestCommand(TestCommandContext& context)
     auto print = [&](const Body& body) {
         BodyPrinter(context.out, program, body).print();
     };
-
-    if (!context.arguments.empty() && context.arguments[0] == "copies"_s) {
-        unsigned numberOfFunctions = program.functions.size();
-        ParallelArray<Body> bodies(context.build.parallelLoops(), numberOfFunctions + 1, [&](unsigned index) {
-            return index == numberOfFunctions ? makeHostBody(program, tables) : reduceBody(program, tables, FunctionID(index));
-        });
-        copyBodiesIntoCallSites(program, context.build, bodies);
-        auto parseFunction = functionParser(program);
-        for (const String& word : context.arguments.subspan(1)) {
-            std::optional<FunctionID> function = parseFunction(word);
-            if (!function)
-                return printBadArgument(context.out, word);
-            print(bodies[function->index()]);
-        }
-        return;
-    }
 
     if (context.arguments.empty()) {
         for (uint32_t index = 0; index < program.functions.size(); ++index) {
@@ -440,8 +430,10 @@ void runValueFlowBodiesTestCommand(TestCommandContext& context)
         else if (word == "operations"_s) {
             Vector<uint32_t> counts;
             counts.fill(0, numberOfEnumerators<Opcode>);
-            for (const ValueFlowStatement& statement : bodies.statements())
-                ++counts[static_cast<unsigned>(statement.opcode)];
+            for (const ValueFlowStatement& statement : bodies.statements()) {
+                if (statement.kind == ValueFlowStatementKind::Operation)
+                    ++counts[static_cast<unsigned>(statement.opcode)];
+            }
             for (unsigned index = 0; index < counts.size(); ++index) {
                 if (counts[index])
                     out.println("  "_s, Typed::nameOf(static_cast<Opcode>(index)), " "_s, counts[index]);

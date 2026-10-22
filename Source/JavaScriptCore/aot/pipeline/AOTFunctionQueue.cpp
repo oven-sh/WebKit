@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <wtf/ParkingLot.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -47,12 +48,12 @@ static Vector<QueuedFunction> takeHalf(Vector<QueuedFunction>& functions, Half h
 FunctionQueue::FunctionQueue(const ParallelLoops& loops, unsigned numberOfFunctions)
     : m_loops(loops)
     , m_workers(makeUniqueArray<Worker>(loops.width()))
-    , m_isQueued((numberOfFunctions + bitsPerWord - 1) / bitsPerWord)
+    , m_states(numberOfFunctions)
 {
     for (unsigned index = 0; index < loops.width(); ++index)
         m_workers[index].queue = this;
-    for (Word& word : m_isQueued)
-        word.store(0, std::memory_order_relaxed);
+    for (std::atomic<uint8_t>& state : m_states)
+        state.store(0, std::memory_order_relaxed);
 }
 
 FunctionQueue::~FunctionQueue()
@@ -61,11 +62,8 @@ FunctionQueue::~FunctionQueue()
         delete segment.load(std::memory_order_relaxed);
 }
 
-auto FunctionQueue::ensureWordOf(FunctionID id) -> Word&
+auto FunctionQueue::ensureProvisionalWord(FunctionID id) -> Word&
 {
-    if (!ProvisionalFunctions::contains(id))
-        return m_isQueued[id.index() / bitsPerWord];
-
     uint32_t word = ProvisionalFunctions::ordinalOf(id) / bitsPerWord;
     RELEASE_ASSERT(word / wordsPerSegment < numberOfSegments);
     std::atomic<Segment*>& slot = m_isProvisionalQueued[word / wordsPerSegment];
@@ -78,11 +76,8 @@ auto FunctionQueue::ensureWordOf(FunctionID id) -> Word&
     return (*segment)[word % wordsPerSegment];
 }
 
-auto FunctionQueue::wordOf(FunctionID id) const -> const Word*
+auto FunctionQueue::provisionalWord(FunctionID id) const -> const Word*
 {
-    if (!ProvisionalFunctions::contains(id))
-        return &m_isQueued[id.index() / bitsPerWord];
-
     uint32_t word = ProvisionalFunctions::ordinalOf(id) / bitsPerWord;
     if (word / wordsPerSegment >= numberOfSegments)
         return nullptr;
@@ -90,19 +85,91 @@ auto FunctionQueue::wordOf(FunctionID id) const -> const Word*
     return segment ? &(*segment)[word % wordsPerSegment] : nullptr;
 }
 
-bool FunctionQueue::markQueued(FunctionID id)
+bool FunctionQueue::isSpeculative(FunctionID id) const
 {
-    Word& word = ensureWordOf(id);
-    uint64_t bit = 1ull << (id.index() % bitsPerWord);
-    if (word.load(std::memory_order_relaxed) & bit)
-        return false;
-    return !(word.fetch_or(bit, std::memory_order_relaxed) & bit);
+    return !ProvisionalFunctions::contains(id) && m_states[id.index()].load(std::memory_order_relaxed) & Speculative;
+}
+
+auto FunctionQueue::speculativeFunction(FunctionID id) -> SpeculativeFunction&
+{
+    auto function = std::ranges::lower_bound(m_speculativeFunctions, id, { }, &SpeculativeFunction::id);
+    RELEASE_ASSERT(function != m_speculativeFunctions.end() && function->id == id);
+    return *function;
+}
+
+// Only a confirmed function queues a provisional function, so one bit is enough for it.
+auto FunctionQueue::confirm(FunctionID id) -> Confirmation
+{
+    if (ProvisionalFunctions::contains(id)) {
+        Word& word = ensureProvisionalWord(id);
+        uint64_t bit = 1ull << (id.index() % bitsPerWord);
+        if (word.load(std::memory_order_relaxed) & bit || word.fetch_or(bit, std::memory_order_relaxed) & bit)
+            return Confirmation::AlreadyQueued;
+        return Confirmation::FirstQueued;
+    }
+
+    constexpr uint8_t queuedAndConfirmed = Queued | Confirmed;
+    std::atomic<uint8_t>& state = m_states[id.index()];
+    if ((state.load(std::memory_order_relaxed) & queuedAndConfirmed) == queuedAndConfirmed)
+        return Confirmation::AlreadyQueued;
+    uint8_t previous = state.fetch_or(queuedAndConfirmed, std::memory_order_acq_rel);
+    if (!(previous & Queued))
+        return Confirmation::FirstQueued;
+    if (previous & Confirmed || !(previous & Done))
+        return Confirmation::AlreadyQueued;
+    return Confirmation::FinishedSpeculatively;
+}
+
+void FunctionQueue::confirmFoundFunctions(FoundFunctions& found)
+{
+    size_t numberToProcess = 0;
+    for (size_t index = 0; index < found.size(); ++index) {
+        QueuedFunction function = found[index];
+        switch (confirm(function.id)) {
+        case Confirmation::AlreadyQueued:
+            break;
+        case Confirmation::FirstQueued:
+            found[numberToProcess++] = function;
+            break;
+        case Confirmation::FinishedSpeculatively: {
+            (*m_didConfirm)(function.id);
+            Vector<QueuedFunction> foundSpeculatively = std::exchange(speculativeFunction(function.id).found, { });
+            found.append(foundSpeculatively.span());
+            break;
+        }
+        }
+    }
+    found.shrink(numberToProcess);
+}
+
+// Whichever thread sets the second of Confirmed and Done queues the functions that the speculative function found.
+bool FunctionQueue::finishSpeculativeFunction(FunctionID id, const FoundFunctions& found)
+{
+    std::atomic<uint8_t>& state = m_states[id.index()];
+    if (!(state.load(std::memory_order_relaxed) & Confirmed)) {
+        SpeculativeFunction& function = speculativeFunction(id);
+        function.found = Vector<QueuedFunction>(found.span());
+        if (!(state.fetch_or(Done, std::memory_order_acq_rel) & Confirmed))
+            return false;
+        function.found.clear();
+    }
+    (*m_didConfirm)(id);
+    return true;
 }
 
 bool FunctionQueue::wasQueued(FunctionID id) const
 {
-    const Word* word = wordOf(id);
+    if (!ProvisionalFunctions::contains(id))
+        return m_states[id.index()].load(std::memory_order_relaxed) & Queued;
+    const Word* word = provisionalWord(id);
     return word && word->load(std::memory_order_relaxed) & 1ull << (id.index() % bitsPerWord);
+}
+
+bool FunctionQueue::wasConfirmed(FunctionID id) const
+{
+    if (!ProvisionalFunctions::contains(id))
+        return m_states[id.index()].load(std::memory_order_relaxed) & Confirmed;
+    return wasQueued(id);
 }
 
 BitVector FunctionQueue::takeQueuedProvisionalOrdinals()
@@ -209,10 +276,12 @@ void FunctionQueue::processShare(Worker& own)
         }
 
         (*m_process)(next->id, found);
+        if (isSpeculative(next->id) && !finishSpeculativeFunction(next->id, found)) {
+            found.shrink(0);
+            continue;
+        }
 
-        found.removeAllMatching([&](const QueuedFunction& function) {
-            return !markQueued(function.id);
-        });
+        confirmFoundFunctions(found);
         std::ranges::sort(found, isProcessedLater);
         if (!found.isEmpty()) {
             Locker locker { own.lock };
@@ -230,17 +299,34 @@ void FunctionQueue::processShare(Worker& own)
 
 void FunctionQueue::processEach(std::span<const QueuedFunction> functions, NOESCAPE const Process& process)
 {
+    processEach(functions, { }, process, [](FunctionID) { });
+}
+
+void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::span<const QueuedFunction> speculativeFunctions, NOESCAPE const Process& process, NOESCAPE const DidConfirm& didConfirm)
+{
     RELEASE_ASSERT(!m_process);
     m_process = &process;
+    m_didConfirm = &didConfirm;
 
     Vector<QueuedFunction> first;
-    first.reserveInitialCapacity(functions.size());
+    first.reserveInitialCapacity(functions.size() + speculativeFunctions.size());
     for (QueuedFunction function : functions) {
-        if (markQueued(function.id))
+        if (confirm(function.id) == Confirmation::FirstQueued)
             first.append(function);
     }
+    for (QueuedFunction function : speculativeFunctions) {
+        RELEASE_ASSERT(!ProvisionalFunctions::contains(function.id));
+        std::atomic<uint8_t>& state = m_states[function.id.index()];
+        if (state.load(std::memory_order_relaxed) & Queued)
+            continue;
+        state.store(Queued | Speculative, std::memory_order_relaxed);
+        first.append(function);
+        m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
+    }
+    std::ranges::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
     std::ranges::sort(first, isProcessedLater);
 
+    ParallelRegionScope parallelRegion;
     m_numberOfSpareThreads.store(m_loops.width() - 1, std::memory_order_relaxed);
     m_numberOfBusyWorkers.store(1);
     Worker& own = takeIdleWorker();
@@ -250,9 +336,13 @@ void FunctionQueue::processEach(std::span<const QueuedFunction> functions, NOESC
         own.didChangeFunctions();
     }
     processShare(own);
-    for (uint32_t busy = m_numberOfBusyWorkers.load(); busy; busy = m_numberOfBusyWorkers.load())
-        ParkingLot::compareAndPark(&m_numberOfBusyWorkers, busy);
+    if (m_numberOfBusyWorkers.load()) {
+        BusyThreads::WaitScope waitScope;
+        for (uint32_t busy = m_numberOfBusyWorkers.load(); busy; busy = m_numberOfBusyWorkers.load())
+            ParkingLot::compareAndPark(&m_numberOfBusyWorkers, busy);
+    }
     m_process = nullptr;
+    m_didConfirm = nullptr;
 }
 
 } } } // namespace JSC::AOT::Typed

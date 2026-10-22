@@ -1,0 +1,41 @@
+# function Point() { this.size = 0 }; Point.prototype.count = 1; new Point(); pick(new Point(), Point.prototype).reset(); Point.prototype.reset = Point
+# `this.size = 0` is written for the instances. Flow also sees the function run on the prototype object, which is among the receivers of one call, so the store may put `size` there.
+# A name that is listed without a function refuses every plan of an access that passes the prototype object by, and then no store of the constructor has a slot.
+# So such a store lists nothing: the names of a constructor function are never complete, and whoever passes the prototype object by watches the name at run time.
+# `count` is stored into the prototype object and nothing else: it is listed.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}namedMembers=[{key="count"}, {key="reset" function=f1}]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = Integer integer=1
+    PropSet v1, v2 key="count" mode=Strict
+    PropSet v1, v0 key="reset" mode=Strict
+    v5 = Construct v0
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v5, v1
+    v8 = PropGet v7 key="reset"
+    v9 = Call v8, v7 calleeKey="reset"
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+function f2 name="pick" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v1
+}

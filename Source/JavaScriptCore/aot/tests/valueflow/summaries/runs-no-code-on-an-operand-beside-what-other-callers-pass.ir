@@ -1,0 +1,43 @@
+# function takes(thing) { }; takes([1]); takes({ x: 1 }); takes({ get x() { } }); takes(); takes(() => { })
+# The entry parameter is the union of what all callers pass. Of an array only the part about arrays speaks. Two literals are told apart by the operands' own types.
+# RUN: runs-no-code x
+# CHECK: f0 v2: Array<1>: x=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f0 v3 operand 2: x=yes|yes any=yes|yes keys=yes iterate=yes convert=yes define=no unlisted=no called=yes
+# CHECK: f0 v5 operand 2: x=yes|yes any=yes|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f0 v9 operand 2: x=no|no any=no|no keys=no iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f0 v13 operand 2: x=yes|yes any=no|no keys=yes iterate=no convert=no define=no unlisted=no called=yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Spy"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f2
+    v2 = NewArray v0 contents=anything
+    v3 = Call v1, -, v2
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = Call v1, -, v4
+    v6 = NewObject layout=L1 fields=[]
+    v7 = NewClosure function=f1
+    DefineGetter v6, v7 key="x"
+    v9 = Call v1, -, v6
+    v10 = Call v1
+    v11 = NewClosure function=f3
+    v12 = Call v11
+    v13 = Call v1, -, v11
+    Return
+}
+function f1 name="spy" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="takes" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="plain" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

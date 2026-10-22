@@ -51,6 +51,15 @@ static void dumpCondition(PrintStream& out, const MemberCondition& condition)
     case MemberCondition::Kind::ClassEvaluatedOnce:
         out.print("ClassEvaluatedOnce(L", condition.layout.index(), ")");
         return;
+    case MemberCondition::Kind::InstancePrototypeUnchanged:
+        out.print("InstancePrototypeUnchanged(L", condition.layout.index(), ")");
+        return;
+    case MemberCondition::Kind::MemberNotHidden:
+        out.print("MemberNotHidden(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
+        return;
+    case MemberCondition::Kind::MemberPassedByStores:
+        out.print("MemberPassedByStores(L", condition.layout.index(), ", K", condition.key.index(), ")");
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -165,33 +174,6 @@ LayoutID classOfClassObject(const Program& program, const Type& classObject)
     return constructor ? program.at(constructor).constructedClass : LayoutID();
 }
 
-Ancestry ancestryOf(const Program& program, LayoutID layout, LayoutID ancestor)
-{
-    if (!layout || !ancestor)
-        return Ancestry::Unknown;
-    LayoutID current = layout;
-    for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
-        if (current == ancestor)
-            return Ancestry::Descendant;
-        const LayoutFlow& flow = program.at(current).flow;
-        switch (flow.baseState) {
-        case BaseState::Unknown:
-            return Ancestry::Unknown;
-        case BaseState::None:
-            current = program.at(current).classFlow.prototypeBase;
-            if (!current)
-                return Ancestry::Unrelated;
-            break;
-        case BaseState::BuiltinClass:
-            return Ancestry::Unrelated;
-        case BaseState::Layout:
-            current = flow.base;
-            break;
-        }
-    }
-    return Ancestry::Unknown;
-}
-
 void setLevel(MemberAnswer& answer)
 {
     if (answer.kind == MemberKind::Unknown) {
@@ -199,7 +181,7 @@ void setLevel(MemberAnswer& answer)
         return;
     }
     bool needsNoTest = answer.receiverProofs.isEmpty() && answer.conditions.isEmpty();
-    answer.level = needsNoTest ? KnowledgeLevel::Proven : KnowledgeLevel::Predicted;
+    answer.level = needsNoTest ? KnowledgeLevel::Proven : KnowledgeLevel::Expected;
 }
 
 void setDeclaredMember(MemberAnswer& answer, const DeclaredMember& member, LayoutID holder)
@@ -239,6 +221,21 @@ static void addConditionWithCause(MemberAnswer& walked, const MemberCondition& c
 {
     addCondition(walked.conditions, condition);
     addCause(walked, cause);
+}
+
+static bool isMemberOfClass(const MemberAnswer& answer)
+{
+    return answer.kind == MemberKind::Method || answer.kind == MemberKind::Accessor;
+}
+
+// The object itself must not stand in the way of the lookup. The run time ends the condition of a member of a class as soon as one object of the layout
+// no longer finds the member where the class definitions put it. Whatever else the lookup finds is tested for on the object.
+static void requireLookupPastObject(const Program& program, MemberAnswer& walked, const MemberAnswer& found, const MemberQuery& query, Proof proof, UnprovenCause cause)
+{
+    if (isMemberOfClass(found))
+        addConditionWithCause(walked, { MemberCondition::Kind::MemberNotHidden, declaredLayoutOf(program, query.layout), ClassSide::Prototype, query.key }, cause);
+    else
+        addReceiverProof(walked, proof, cause);
 }
 
 static bool isPrivateName(const Program& program, PropertyKeyID key)
@@ -360,15 +357,15 @@ NextHolder nextHolderOf(const Program& program, LayoutID classLayout, ClassSide 
         break;
     case BaseState::None:
         // The prototype object of a class that extends null inherits from no object.
-        if (side == ClassSide::Prototype && layout.classFlow.prototypeBase)
-            next = { ChainStep::CompiledClass, layout.classFlow.prototypeBase, { } };
+        if (LayoutID base = side == ClassSide::Prototype ? expectedBaseOf(layout) : LayoutID())
+            next = { ChainStep::CompiledClass, base, { } };
         else if (!hasHeritage || side == ClassSide::Static)
             next.step = ChainStep::NoBase;
         break;
     case BaseState::Unknown:
-        if (LayoutID predicted = side == ClassSide::Prototype ? layout.predictedBase : predictedHeritageOf(layout)) {
+        if (LayoutID expected = side == ClassSide::Prototype ? expectedBaseOf(layout) : predictedHeritageOf(layout)) {
             link = MemberMutability::Unknown;
-            next = { ChainStep::CompiledClass, predicted, { } };
+            next = { ChainStep::CompiledClass, expected, { } };
         } else if (!hasHeritage)
             next.step = ChainStep::NoBase;
         break;
@@ -408,12 +405,18 @@ BuiltinHolderGain builtinHolderGainOf(const PropertyAccessContext& context, Buil
     return BuiltinHolderGain::Impossible;
 }
 
+// "Infinity" and "NaN" name no element of anything but a typed array, and no object of the table is one.
+static bool isLookedUpByNameInBuiltinObjects(const Program& program, PropertyKeyID key)
+{
+    return keyLookupOf(program, key) == KeyLookup::Ordinary || (key && program.nameClassOf(key) == NameClass::CanonicalNumericString);
+}
+
 MemberAnswer findBuiltinObjectMember(const PropertyAccessContext& context, BuiltinID holder, PropertyKeyID key, Access)
 {
     const Program& program = context.program;
     if (!holder)
         return MemberAnswer::unknown(UnprovenCause::UnknownBase);
-    if (keyLookupOf(program, key) != KeyLookup::Ordinary || isPrivateName(program, key))
+    if (!isLookedUpByNameInBuiltinObjects(program, key) || isPrivateName(program, key))
         return MemberAnswer::unknown(UnprovenCause::Unknown);
 
     const BuiltinTable& table = program.builtins();
@@ -443,15 +446,25 @@ MemberAnswer findBuiltinObjectMember(const PropertyAccessContext& context, Built
     }
 }
 
+// The lookup goes on at the prototype object of the class itself, so what the classes below it define is out of its way.
+static MemberAnswer findMemberFromPrototypeOf(const PropertyAccessContext& context, BuiltinClassID builtinClass, PropertyKeyID key, Access access)
+{
+    if (!builtinClass)
+        return MemberAnswer::unknown(UnprovenCause::UnknownBase);
+    // The instance answers first, and it may be a typed array.
+    if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
+        return MemberAnswer::unknown(UnprovenCause::Unknown);
+    return findBuiltinObjectMember(context, context.program.builtins().at(builtinClass).prototype, key, access);
+}
+
 MemberAnswer findBuiltinInstanceMember(const PropertyAccessContext& context, BuiltinClassID builtinClass, PropertyKeyID key, Access access)
 {
     if (!builtinClass)
         return MemberAnswer::unknown(UnprovenCause::UnknownBase);
-    const BuiltinTable& table = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
-    if (name && table.isRedefinedBelow(builtinClass, name.name))
+    if (name && context.program.builtins().isRedefinedBelow(builtinClass, name.name))
         return MemberAnswer::unknown(UnprovenCause::UnknownBase);
-    return findBuiltinObjectMember(context, table.at(builtinClass).prototype, key, access);
+    return findMemberFromPrototypeOf(context, builtinClass, key, access);
 }
 
 MemberAnswer finishAtChainEnd(MemberAnswer&& walked, MemberAnswer&& chainEnd)
@@ -476,6 +489,23 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
     bool isConstructorKey = program.nameClassOf(key) == NameClass::Constructor;
     MemberCondition memberUnchanged { MemberCondition::Kind::MemberUnchanged, query.layout, ClassSide::Prototype, key };
     MemberAnswer walked;
+    // The run time looks at the chain above the prototype object of the first evaluation.
+    const bool asksRunTime = query.access == Access::Store && program.at(query.layout).classFlow.evaluations == ExecutionCount::AtMostOnce;
+    // A store that creates a property asks for less than a read that finds nothing: the first object above that has the name may have a writable data property.
+    bool mayBeHidden = false;
+    auto finish = [&](MemberAnswer&& chainEnd) {
+        MemberAnswer answer = finishAtChainEnd(WTF::move(walked), WTF::move(chainEnd));
+        if (mayBeHidden && answer.isKnown() && answer.kind != MemberKind::Absent)
+            return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
+        if (!asksRunTime || answer.kind != MemberKind::Absent)
+            return answer;
+        bool asksForMember = answer.conditions.removeAllMatching([&](const MemberCondition& condition) {
+            return condition == memberUnchanged;
+        });
+        if (asksForMember)
+            addCondition(answer.conditions, { MemberCondition::Kind::MemberPassedByStores, query.layout, ClassSide::Prototype, key });
+        return answer;
+    };
     LayoutID current = query.layout;
     for (size_t unvisitedClasses = program.layouts.size(); unvisitedClasses; --unvisitedClasses) {
         const Layout& layout = program.at(current);
@@ -485,17 +515,31 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
             return MemberAnswer::unknown(UnprovenCause::Unknown);
 
         DeclaredMember member = findDeclaredMember(layout.classFlow, ClassSide::Prototype, key);
-        // A store to an object that inherits a writable data property creates a property of the object, as it does where the holder lacks the name.
+        // A store to an object that inherits a writable data property creates a property of the object, as it does where no holder has the name. While the property is there it hides whatever is above it.
         bool isPassedByStore = query.access == Access::Store && member.isWritableData;
-        if (member.isDeclared() && !isPassedByStore) {
+        if (isPassedByStore && member.mutability == MemberMutability::Fixed)
+            return finish(createProvenAnswer(MemberKind::Absent));
+        // One that a store puts there comes at some time: until then the store goes on to what is above.
+        mayBeHidden |= isPassedByStore;
+        // A method is a writable data property until somebody redefines it or freezes its holder, which the run time sees: knowing the function may not make the store worse than knowing the name alone.
+        bool isMethodLeftToRunTime = asksRunTime && !isPassedByStore && member.method && !member.isAccessor() && member.mutability != MemberMutability::Fixed;
+        if (member.isDeclared() && !isPassedByStore && !isMethodLeftToRunTime) {
+            if (mayBeHidden)
+                return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
             if (member.mutability != MemberMutability::Fixed)
                 addConditionWithCause(walked, memberUnchanged, UnprovenCause::PropertyRedefined);
             setDeclaredMember(walked, member, current);
             setLevel(walked);
             return walked;
         }
-        if (member.isListedWithoutDefinition() && !isPassedByStore)
-            return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
+        if ((member.isListedWithoutDefinition() || isMethodLeftToRunTime) && !isPassedByStore) {
+            if (!asksRunTime)
+                return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
+            // `Message.prototype.url = ""`: a default. What a plain store puts on the holder is a writable data property, which a store below passes like a method, and it hides whatever is above it.
+            // Nobody says when the default is stored or what else is done under the name, so the run time looks at the chain that is there.
+            addConditionWithCause(walked, memberUnchanged, UnprovenCause::PropertyAdded);
+            return finish(createProvenAnswer(MemberKind::Absent));
+        }
         if (!layout.classFlow.prototypeNamesAreComplete)
             addConditionWithCause(walked, memberUnchanged, UnprovenCause::UnknownKeyStore);
 
@@ -507,9 +551,9 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
             current = next.layout;
             continue;
         case ChainStep::BuiltinClass:
-            return finishAtChainEnd(WTF::move(walked), findBuiltinInstanceMember(context, next.builtinClass, key, query.access));
+            return finish(findMemberFromPrototypeOf(context, next.builtinClass, key, query.access));
         case ChainStep::NoBase:
-            return finishAtChainEnd(WTF::move(walked), findBuiltinInstanceMember(context, BuiltinClasses::Object, key, query.access));
+            return finish(findMemberFromPrototypeOf(context, BuiltinClasses::Object, key, query.access));
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -529,8 +573,9 @@ static MemberAnswer findInheritedMember(const PropertyAccessContext& context, co
         return findPrototypeMember(context, { MemberStart::ClassPrototype, declaredLayoutOf(context.program, query.layout), query.key, query.access, false });
     case LayoutKind::Record:
     case LayoutKind::Container:
+        return findMemberFromPrototypeOf(context, BuiltinClasses::Object, query.key, query.access);
     case LayoutKind::BuiltinResult:
-        return findBuiltinInstanceMember(context, BuiltinClasses::Object, query.key, query.access);
+        return findMemberFromPrototypeOf(context, isTupleLayout(context.program, query.layout) ? BuiltinClasses::Array : BuiltinClasses::Object, query.key, query.access);
     case LayoutKind::Environment:
     case LayoutKind::Closure:
     case LayoutKind::CoroutineFrame:
@@ -543,10 +588,32 @@ static MemberAnswer findInheritedMember(const PropertyAccessContext& context, co
 
 MemberAnswer findMemberOnPrototypes(const PropertyAccessContext& context, const MemberQuery& query)
 {
+    MemberAnswer inherited = findInheritedMember(context, query);
     MemberAnswer walked;
     if (!receiverStateOf(context.program, query.layout).cannot(ObjectMutation::ChangePrototype))
-        addReceiverProof(walked, Proof::PrototypeLinkUnchanged, UnprovenCause::PrototypeChanged);
-    return finishAtChainEnd(WTF::move(walked), findInheritedMember(context, query));
+        requireLookupPastObject(context.program, walked, inherited, query, Proof::PrototypeLinkUnchanged, UnprovenCause::PrototypeChanged);
+    return finishAtChainEnd(WTF::move(walked), WTF::move(inherited));
+}
+
+// A tuple is an array: it has an own length, which its layout does not list, and inherits from Array.prototype.
+// It has no shape word, so no test on the object says that it has gained no name and kept its prototype.
+static MemberAnswer findTupleMember(const PropertyAccessContext& context, const MemberQuery& query)
+{
+    const Program& program = context.program;
+    BuiltinName name = program.builtinNameOf(query.key);
+    if (BuiltinID member = name ? program.builtins().findOwnPropertyOfInstances(BuiltinClasses::Array, name) : BuiltinID()) {
+        MemberAnswer answer = createProvenAnswer(MemberKind::Builtin);
+        answer.builtin = member;
+        return answer;
+    }
+
+    if (ownPropertyGainOf(program, query.layout, query.key) != OwnPropertyGain::Impossible)
+        return MemberAnswer::unknown(UnprovenCause::OwnPropertyHidesMember);
+    if (query.isOwnLookup || query.access == Access::Define)
+        return createProvenAnswer(MemberKind::Absent);
+    if (!receiverStateOf(program, query.layout).cannot(ObjectMutation::ChangePrototype))
+        return MemberAnswer::unknown(UnprovenCause::PrototypeChanged);
+    return findInheritedMember(context, query);
 }
 
 MemberAnswer findInstanceMember(const PropertyAccessContext& context, const MemberQuery& query)
@@ -555,9 +622,8 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
     PropertyKeyID key = query.key;
     if (keyLookupOf(program, key) != KeyLookup::Ordinary)
         return MemberAnswer::unknown(UnprovenCause::Unknown);
-    // A tuple is an array: it has an own length, which its layout does not list, and inherits from Array.prototype.
     if (isTupleLayout(program, query.layout))
-        return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
+        return findTupleMember(context, query);
 
     // What the constructor of a built-in base class defines on the object comes before every field and every prototype.
     BuiltinClassID builtinBase = builtinBaseClassOf(program, query.layout);
@@ -574,6 +640,10 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
     }
 
     if (std::optional<FieldReference> found = findField(program, query.layout, key, BaseChain::Proven)) {
+        // The constructor of the built-in class makes the object: a cell of that class, which has no slots. Its fields are properties like any other.
+        if (builtinBase)
+            return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
+
         // No object of this layout gets to a store of the field, and placement gives the field no slot. A receiver that is only expected to have the layout is expected in vain.
         bool storesValue = query.access == Access::Store || query.access == Access::Define;
         if (storesValue && !isPrivateName(program, key) && isNeverStored(program, *found))
@@ -591,16 +661,20 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
         return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
 
     // A private name of a class is never inherited. An engine private name is looked up like any other key.
+    bool mayGainOwnProperty = ownPropertyGainOf(program, query.layout, key) != OwnPropertyGain::Impossible;
     MemberAnswer walked;
-    if (ownPropertyGainOf(program, query.layout, key) != OwnPropertyGain::Impossible)
-        addReceiverProof(walked, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
     if (query.isOwnLookup || query.access == Access::Define || keyKind == PropertyKeyKind::PrivateName) {
+        if (mayGainOwnProperty)
+            addReceiverProof(walked, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
         walked.kind = MemberKind::Absent;
         setLevel(walked);
         return walked;
     }
 
-    return finishAtChainEnd(WTF::move(walked), findMemberOnPrototypes(context, query));
+    MemberAnswer inherited = findMemberOnPrototypes(context, query);
+    if (mayGainOwnProperty)
+        requireLookupPastObject(program, walked, inherited, query, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
+    return finishAtChainEnd(WTF::move(walked), WTF::move(inherited));
 }
 
 MemberAnswer findMember(const PropertyAccessContext& context, const MemberQuery& query)

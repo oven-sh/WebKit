@@ -1,4 +1,5 @@
 # A call that flow proves to enter nothing retains no argument, so the closure it passes lies in the frame. CallMethod retains its operands, so the read and the call stay apart. Beside it the same call with a closure of the heap becomes one CallMethod
+# TODO: flow-termination: a call that enters nothing gets no empty list of callees, so its arguments count as kept and no closure goes into the frame
 # FORM: AsRead
 # RUN: pipeline Select
 # OPTIONS: check=VerifyEachPass

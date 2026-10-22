@@ -3,7 +3,7 @@
 # RUN: operands
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Pair" fields=[{key="first" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="second" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L0 name="Pair" fields=[{key="first" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="second" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
 layout L1 kind=Instance name="Counter" constructor=f11 fields=[{key=#"count"@L1 declared={type=number} flags=[IsPrivate]}]
 function f0 name="putSlot" parameters=[{type=L0}, {type=object}] results=[{type=undefined}] {
   b0(v0: L0, v1: object):

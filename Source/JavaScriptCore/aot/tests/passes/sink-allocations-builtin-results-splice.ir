@@ -80,7 +80,7 @@ function f6 name="elementReadAfterStorageTest" parameters=[{type=Array<number, p
     v6 = HasArrayStorage v5 arrayStorage=Double
     Branch v6 -> taken b1(| 0), notTaken b2()
   b1(v7):
-    v8 = GetArrayElement v5, v4, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    v8 = GetArrayElement v5, v4, v7 arrayStorage=Double level=Expected [keyIsIntegral]
     Jump -> next b3(v8)
   b2():
     v9 = ElemGet v5, v4
@@ -132,7 +132,7 @@ function f9 name="storageTestNarrowsElementType" parameters=[{type=Array<number|
     v6 = HasArrayStorage v5 arrayStorage=Double
     Branch v6 -> taken b1(| 0), notTaken b2()
   b1(v7):
-    v8 = GetArrayElement v5, v4, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    v8 = GetArrayElement v5, v4, v7 arrayStorage=Double level=Expected [keyIsIntegral]
     Jump -> next b3(v8)
   b2():
     v9 = ElemGet v5, v4

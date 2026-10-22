@@ -1,0 +1,69 @@
+# `A[i & 63] + A[j & 63] + A[k & 63]` where A is a text of 64 characters: each position lies inside the text, so each read gives a string and never undefined, the sums are concatenations,
+# and a read of a character, which fails for lack of memory alone as a concatenation does, does not stand between two of them. A position that may lie outside gives undefined too
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="threeOfSixtyFour" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=string}] {
+  b0(v0: i32, v1: i32, v2: i32):
+    v3 = String string="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    v4 = Integer integer=63
+    v5 = BitAnd v0, v4
+    v6 = ElemGet v3, v5
+    v7 = BitAnd v1, v4
+    v8 = ElemGet v3, v7
+    v9 = Add v6, v8
+    v10 = BitAnd v2, v4
+    v11 = ElemGet v3, v10
+    v12 = Add v9, v11
+    Return v12
+}
+# CHECK-LABEL: function f0 name="threeOfSixtyFour"
+# CHECK: v6: string = ElemGet v3, v5
+# CHECK: v8: string = ElemGet v3, v7
+# CHECK-NOT: = Add
+# CHECK: v11: string = ElemGet v3, v10
+# CHECK-NEXT: string = Strcat v6, v8, v11
+
+function f1 name="onePastTheEnd" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = String string="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"
+    v2 = Integer integer=63
+    v3 = BitAnd v0, v2
+    v4 = ElemGet v1, v3
+    Return v4
+}
+# CHECK-LABEL: function f1 name="onePastTheEnd"
+# CHECK: v4: undefined|string = ElemGet v1, v3
+
+function f2 name="mayBeNegative" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = String string="abcd"
+    v2 = Integer integer=1
+    v3 = RShift v0, v2
+    v4 = ElemGet v1, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="mayBeNegative"
+# CHECK: v4: undefined|string = ElemGet v1, v3
+
+# The bytes of a text that is not ASCII are more than its characters.
+function f3 name="notASCII" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = String string="ЖЖ"
+    v2 = Integer integer=3
+    v3 = BitAnd v0, v2
+    v4 = ElemGet v1, v3
+    Return v4
+}
+# CHECK-LABEL: function f3 name="notASCII"
+# CHECK: v4: undefined|string = ElemGet v1, v3
+
+function f4 name="anyString" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="anyString"
+# CHECK: v2: undefined|string = ElemGet v0, v1

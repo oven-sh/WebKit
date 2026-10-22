@@ -1,55 +1,46 @@
-# A prediction that says no more than the type or the prediction of its operand goes, and one that narrows stays
+# An upcast that carries an expected type goes where it expects no more than its operand is expected to be, and stays where it narrows
 # FORM: Prepared
 # RUN: pass SimplifyCasts
-# STATISTIC: SimplifyCastsChanges = 3
+# STATISTIC: SimplifyCastsChanges = 2
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="typeIsInsidePrediction" parameters=[{type=i32}] results=[{type=number}] {
-  b0(v0: i32):
-    v1 = Predict v0 predicted=number
-    Return v1
-}
-# CHECK-LABEL: function f0 name="typeIsInsidePrediction"
-# CHECK-NEXT: b0(v0: i32):
-# CHECK-NEXT: Return v0
-
-function f1 name="operandHasSamePrediction" parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+function f0 name="operandHasSameExpectedType" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number):
-    v1 = Predict v0 predicted=number
+    v1: anything ~ number = Upcast v0 castType=anything
     Return v1
 }
-# CHECK-LABEL: function f1 name="operandHasSamePrediction"
+# CHECK-LABEL: function f0 name="operandHasSameExpectedType"
 # CHECK-NEXT: b0(v0: anything ~ number):
 # CHECK-NEXT: Return v0
 
-function f2 name="predictedTwice" parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="expectedTwice" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=number
-    v2 = Predict v1 predicted=number
+    v1: anything ~ number = Upcast v0 castType=anything
+    v2: anything ~ number = Upcast v1 castType=anything
     Return v2
 }
-# CHECK-LABEL: function f2 name="predictedTwice"
+# CHECK-LABEL: function f1 name="expectedTwice"
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: anything ~ number = Predict v0 predicted=number
+# CHECK-NEXT: v1: anything ~ number = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
 
-function f3 name="narrowsType" parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="narrowsType" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Predict v0 predicted=number
+    v1: anything ~ number = Upcast v0 castType=anything
     Return v1
 }
-# CHECK-LABEL: function f3 name="narrowsType"
+# CHECK-LABEL: function f2 name="narrowsType"
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: anything ~ number = Predict v0 predicted=number
+# CHECK-NEXT: v1: anything ~ number = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
 
-function f4 name="narrowsPrediction" parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+function f3 name="narrowsExpectedType" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number):
-    v1 = Predict v0 predicted=i32
+    v1: anything ~ i32 = Upcast v0 castType=anything
     Return v1
 }
-# CHECK-LABEL: function f4 name="narrowsPrediction"
+# CHECK-LABEL: function f3 name="narrowsExpectedType"
 # CHECK-NEXT: b0(v0: anything ~ number):
-# CHECK-NEXT: v1: anything ~ i32 = Predict v0 predicted=i32
+# CHECK-NEXT: v1: anything ~ i32 = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1

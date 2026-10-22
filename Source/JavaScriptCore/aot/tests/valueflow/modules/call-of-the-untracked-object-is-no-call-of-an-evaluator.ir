@@ -1,0 +1,42 @@
+# kept = Function; tools = first or second or third; tools("text")
+# The program reads an evaluator and keeps it. Elsewhere it calls a variable whose set was given up. The untracked object stands for functions of the program, never for an evaluator, so nothing is evaluated
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 1
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code no
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="tools" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=Function
+    PutModuleVariable v3 variable=g1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    v8 = GetModuleVariable variable=g0
+    v9 = String string="text"
+    v10 = Call v8, -, v9
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="third" results=[{type=anything}] {
+  b0():
+    Return
+}

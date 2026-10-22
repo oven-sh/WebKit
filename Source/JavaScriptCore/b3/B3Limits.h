@@ -125,7 +125,6 @@ private:
 
 namespace Limits {
 
-inline constexpr int64_t maxIterationsPerStrip = 1 << 16;
 inline constexpr int64_t maxCountedLoopStep = 1 << 16;
 inline constexpr int64_t maxRangeCheckOffset = 1 << 16;
 inline constexpr int64_t maxLoopBoundForRangeChecks = 1ll << 62;
@@ -158,8 +157,6 @@ enum class GaveUpReason : uint8_t {
     BoundNotInvariant,
     TestNotOnLikelyPath,
     EffectsBeforeTopTest,
-    PollNotOnEveryIteration,
-    SeveralPolls,
     LimitReached,
 };
 

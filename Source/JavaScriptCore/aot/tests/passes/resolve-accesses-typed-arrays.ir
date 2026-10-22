@@ -86,12 +86,12 @@ function f9 name="nullable-view" parameters=[{type=undefined|Uint8Array}, {type=
 # CHECK-NEXT: b0(
 # CHECK-NEXT: = ElemGet v0, v1
 # CHECK-NEXT: Return v2
-function f10 name="predicted-view" parameters=[{type=object predicted=Uint8Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ~ Uint8Array, v1: number):
+function f10 name="expected-view" parameters=[{type=Uint8Array flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ Uint8Array, v1: number):
     v2 = ElemGet v0, v1
     Return v2
 }
-# CHECK-LABEL: function f10 name="predicted-view"
+# CHECK-LABEL: function f10 name="expected-view"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: = ElemGet v0, v1
 # CHECK-NEXT: Return v2
@@ -104,12 +104,12 @@ function f11 name="key-may-be-undefined" parameters=[{type=Uint8Array}, {type=un
 # CHECK-NEXT: b0(
 # CHECK-NEXT: = ElemGet v0, v1
 # CHECK-NEXT: Return v2
-function f12 name="predicted-key" parameters=[{type=Uint8Array}, {type=anything predicted=number}] results=[{type=anything}] {
+function f12 name="expected-key" parameters=[{type=Uint8Array}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: Uint8Array, v1: anything ~ number):
     v2 = ElemGet v0, v1
     Return v2
 }
-# CHECK-LABEL: function f12 name="predicted-key"
+# CHECK-LABEL: function f12 name="expected-key"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: = ElemGet v0, v1
 # CHECK-NEXT: Return v2

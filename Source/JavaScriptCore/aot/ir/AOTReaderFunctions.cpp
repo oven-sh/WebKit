@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
+#include "AOTCheckTypesAtEntry.h"
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>
@@ -19,13 +21,14 @@ static constexpr uint32_t numberOfWordsIn = sizeof(Record) / sizeof(uint32_t);
 
 static_assert(std::ranges::none_of(allMembersOf<TerminatorKind>, [](TerminatorKind kind) { return wireFlagsOf(kind); }), "A terminator has no flags word on the wire.");
 
-BodyDecoder::BodyDecoder(const Reader& reader, FunctionID id, const Wire::Body& wire, std::span<const uint32_t> code, Function& function)
+BodyDecoder::BodyDecoder(const Reader& reader, FunctionID id, const Wire::Body& wire, std::span<const uint32_t> code, Function& function, const UnitIDRemap* remap)
     : m_id(id)
     , m_wire(wire)
     , m_code(code)
     , m_function(function)
     , m_checker(reader, InternalError { .kind = InternalErrorKind::Unknown, .function = id, .count = id.index() })
 {
+    m_checker.setIDRemap(remap);
 }
 
 Failure BodyDecoder::run()
@@ -36,8 +39,9 @@ Failure BodyDecoder::run()
         return m_failure;
     }
 
-    m_function.blocks.grow(m_wire.blockCount);
-    m_function.values.grow(m_wire.valueCount);
+    m_function.editAllBlocks().grow(m_wire.blockCount);
+    // A value is constructed with its opcode when its turn comes: the ids go up by one.
+    m_function.editAllValues().reserveInitialCapacity(m_wire.valueCount + m_numberOfChecks);
     for (uint32_t index = 0; index < m_wire.blockCount && !hasFailed(); ++index)
         decodeBlock(BlockID(index));
 
@@ -110,12 +114,33 @@ ValueID BodyDecoder::allocateValueID()
     return m_value;
 }
 
+Value& BodyDecoder::appendValue(ValueID id, Opcode opcode)
+{
+    Function::Values::Storage& values = m_function.editAllValues();
+    RELEASE_ASSERT(id.index() == values.size());
+    values.constructAndAppend(opcode);
+    return values.last();
+}
+
 ValueID BodyDecoder::valueID(uint32_t word)
 {
     if (word < m_wire.valueCount)
-        return ValueID(word);
+        return usedValue(word);
     fail(InternalErrorKind::IdOutOfRange);
     return { };
+}
+
+// The parameters of the entry come first, so the number of such a value is its place among them.
+void BodyDecoder::setParametersCheckedAtEntry(std::span<const unsigned> checkedParameters)
+{
+    if (checkedParameters.empty())
+        return;
+    m_numberOfChecks = static_cast<uint32_t>(checkedParameters.size());
+    m_checksOfParameters = Vector<ValueID, 8>(checkedParameters.back() + 1, [](size_t index) {
+        return ValueID(static_cast<uint32_t>(index));
+    });
+    for (size_t position = 0; position < checkedParameters.size(); ++position)
+        m_checksOfParameters[checkedParameters[position]] = ValueID(m_wire.valueCount + static_cast<uint32_t>(position));
 }
 
 ValueID BodyDecoder::nextOperand()
@@ -138,7 +163,7 @@ ValueID BodyDecoder::nextOptionalOperand()
 void BodyDecoder::decodeVariadicOperands(Instruction& instruction)
 {
     uint32_t count = nextCount();
-    instruction.arguments.reserveCapacity(instruction.arguments.size() + count);
+    instruction.reserveVariadicOperands(count);
     for (uint32_t index = 0; index < count && !hasFailed(); ++index)
         instruction.appendVariadicOperand(valueID(next()));
 }
@@ -161,7 +186,7 @@ void BodyDecoder::decodeBlock(BlockID id)
 {
     m_block = id;
     m_value = { };
-    Block& block = m_function.at(id);
+    Block& block = m_function.edit(id);
 
     auto head = nextRecord<Wire::BlockHead>();
     block.role = m_checker.enumerator<BlockRole>(head.role);
@@ -195,9 +220,8 @@ void BodyDecoder::decodeParameters(Block& block, uint32_t count)
             return;
 
         auto head = nextRecord<Wire::ParameterHead>();
-        Value& parameter = m_function.at(id);
-        parameter.become(Opcode::Parameter);
-        parameter.type = m_checker.reader().promisedTypeOf(m_checker.optionalID<TypeID>(head.type));
+        Value& parameter = appendValue(id, Opcode::Parameter);
+        parameter.type = m_checker.optionalID<TypeID>(head.type);
         adoptCheckerFailure();
         block.parameters.append(id);
     }
@@ -217,14 +241,44 @@ void BodyDecoder::decodeValue(Block& block)
     if (hasFailed())
         return;
 
-    Value& value = m_function.at(id);
-    value.become(opcode);
+    Value& value = appendValue(id, opcode);
     value.position = head.position;
     if (uint16_t wireFlags = wireFlagsOf(opcode))
         value.flags = nextFlags(wireFlags, declaredFlagsOf(opcode));
     decodeFields(*this, value);
     adoptCheckerFailure();
+    if (opcode == Opcode::Convert && !hasFailed())
+        checkConvertedAllocation(value);
+    if (opcode == Opcode::Builtin && !hasFailed())
+        m_namesObjectCreate |= m_checker.reader().builtins().canonicalID(value.builtin()) == Builtins::ObjectCreate;
+    if (opcode == Opcode::CallDirect && !hasFailed())
+        m_directCallees.append(value.function());
     block.values.append(id);
+}
+
+// A family begins at its allocations. Where the front end says that the families cover a conversion, the type lists the layout of a new object that is converted to it.
+// A conversion that breaks this becomes a check that fails, so nothing goes wrong but the speed.
+void BodyDecoder::checkConvertedAllocation(const Value& conversion)
+{
+    ValueID operand = conversion.valueOperand();
+    DeclaredType declared = conversion.declared();
+    bool isDecoded = operand.index() < m_value.index();
+    if (!isDecoded || m_function.at(operand).opcode != Opcode::NewObject)
+        return;
+    if (conversion.illTypedCause() != IllTypedCause::None || declared.flags.contains(PositionFlags::IsExpected))
+        return;
+
+    const Reader& reader = m_checker.reader();
+    LayoutID allocated = m_function.at(operand).layout();
+    const Type& type = reader.program().at(declared.type);
+    if (type.anyObject || std::ranges::binary_search(membersOf(reader.program(), type), allocated))
+        return;
+
+    reader.build().statistics().count(StatisticID::ConversionsOutsideFamily);
+    if (!reader.build().options().verifiesAfterEveryStage)
+        return;
+    fail(InternalErrorKind::FamilyNotClosed);
+    m_failure->layout = allocated;
 }
 
 void BodyDecoder::decodeTerminator(Block& block)
@@ -269,29 +323,128 @@ Target BodyDecoder::decodeTarget()
     return target;
 }
 
-bool Reader::readFunctions()
+Vector<Failure> Reader::readFunctions()
 {
     constexpr size_t functionsPerChunk = 32;
     RELEASE_ASSERT(m_program.functions.size() == m_sections.functions.size());
-    auto failures = readInChunks(m_build.parallelLoops(), m_sections.functions.size(), functionsPerChunk, [&](uint32_t index) {
-        return readFunction(index, m_program.functions[index]);
+    RELEASE_ASSERT(!m_externalBodies || m_externalBodies->bodyCount == m_sections.functions.size());
+    size_t numberOfFunctions = m_sections.functions.size();
+    Vector<Failure> failures((numberOfFunctions + functionsPerChunk - 1) / functionsPerChunk);
+    // What the threads see is united and sorted, so it does not matter which thread reads which function.
+    Vector<Program::BodiesAsRead> seenByWorkers(m_build.parallelLoops().width());
+    forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>(failures.size()), [&](unsigned chunk, unsigned worker) {
+        size_t end = std::min(numberOfFunctions, (static_cast<size_t>(chunk) + 1) * functionsPerChunk);
+        for (size_t index = static_cast<size_t>(chunk) * functionsPerChunk; index < end && !failures[chunk]; ++index) {
+            Function& function = m_program.functions[index];
+            SeenInBody seen;
+            failures[chunk] = readFunction(static_cast<uint32_t>(index), function, seen);
+            if (failures[chunk])
+                break;
+            if (seen.namesObjectCreate)
+                seenByWorkers[worker].functionsThatNameObjectCreate.append(FunctionID(static_cast<uint32_t>(index)));
+            if (!seen.directCallees.isEmpty()) {
+                seenByWorkers[worker].functionsCalledDirectly.ensureSize(numberOfFunctions);
+                for (FunctionID callee : seen.directCallees)
+                    seenByWorkers[worker].functionsCalledDirectly.quickSet(callee.index());
+            }
+            if (m_layoutUses)
+                m_layoutUses->collect(function, worker);
+            // The layouts that a long expectation names count as named.
+            if (m_preparesFunctionsForTyping && m_longExpectations->hasAny())
+                m_longExpectations->forgetInBodyOf(function);
+        }
     });
-    return reportFirst(failures.span());
+    if (m_preparesFunctionsForTyping) {
+        Program::BodiesAsRead bodies;
+        bodies.functionsCalledDirectly.ensureSize(numberOfFunctions);
+        for (Program::BodiesAsRead& seen : seenByWorkers) {
+            bodies.functionsThatNameObjectCreate.appendVector(seen.functionsThatNameObjectCreate);
+            bodies.functionsCalledDirectly.merge(seen.functionsCalledDirectly);
+        }
+        std::ranges::sort(bodies.functionsThatNameObjectCreate);
+        m_program.setBodiesAsRead(WTF::move(bodies));
+    }
+    return failures;
 }
 
-Failure Reader::readFunction(uint32_t index, Function& function) const
+// The linker leaves the record as the file's lowering made it. It adds the function types, which no file knows, with their program ids.
+static void readRecordWithIDsOfUnit(RecordChecker& checker, const Wire::Function& wire, const UnitIDRemap& remap, FunctionRecord& record)
+{
+    Wire::Function withoutFunctionTypes = wire;
+    withoutFunctionTypes.functionTypes = { };
+    checker.setIDRemap(&remap);
+    read(checker, withoutFunctionTypes, record);
+    checker.setIDRemap(nullptr);
+
+    std::span<const uint32_t> functionTypes = checker.words(wire.functionTypes);
+    record.functionTypes.reserveInitialCapacity(functionTypes.size());
+    for (size_t index = 0; index < functionTypes.size(); ++index) {
+        if (index)
+            checker.requireAscending(functionTypes[index - 1], functionTypes[index]);
+        record.functionTypes.append(checker.id<FunctionID>(functionTypes[index]));
+    }
+
+    // They come in the order of the numbers that the file gave its keys, which hang on what else the file has looked at.
+    auto orderOf = [](const StoredInto& store) {
+        return std::tuple { store.source, store.target, store.key ? store.key.index() + 1 : 0, store.creationOperand ? static_cast<uint64_t>(*store.creationOperand) + 1 : 0 };
+    };
+    std::ranges::sort(record.relations.stores, std::less { }, orderOf);
+}
+
+Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& seen) const
 {
     const Wire::Function& wire = m_sections.functions[index];
     FunctionID id(index);
     RecordChecker checker(*this, { .kind = InternalErrorKind::Unknown, .function = id, .count = index });
-    read(checker, wire, static_cast<FunctionRecord&>(function));
     std::span<const uint32_t> code = checker.code(wire.body.code);
+    const UnitIDRemap* remap = nullptr;
+    if (m_externalBodies) {
+        const ExternalFunctionBody& body = m_externalBodies->bodies[index];
+        checker.require(code.empty() && body.unitIndex < m_externalBodies->unitCount, InternalErrorKind::ListOutOfBounds);
+        if (Failure failure = checker.takeFailure())
+            return failure;
+        code = { body.code, body.wordCount };
+        remap = &m_externalBodies->units[body.unitIndex];
+        readRecordWithIDsOfUnit(checker, wire, *remap, function);
+    } else
+        read(checker, wire, static_cast<FunctionRecord&>(function));
     if (Failure failure = checker.takeFailure())
         return failure;
-    if (Failure failure = BodyDecoder(*this, id, wire.body, code, function).run())
-        return failure;
+
+    Vector<unsigned, 8> checkedParameters;
+    if (m_preparesFunctionsForTyping) {
+        if (m_longExpectations->hasAny())
+            m_longExpectations->forgetInRecordOf(function);
+        if (!m_constructorsOfTaggedFamilies.quickGet(index))
+            checkedParameters = findParametersCheckedAtEntry(m_program, m_build, id, function, wire.body.blockCount);
+    }
+    {
+        BodyDecoder decoder(*this, id, wire.body, code, function, remap);
+        decoder.setParametersCheckedAtEntry(checkedParameters.span());
+        if (Failure failure = decoder.run())
+            return failure;
+        seen.namesObjectCreate = decoder.namesObjectCreate();
+        seen.directCallees = decoder.takeDirectCallees();
+    }
+    if (seen.namesObjectCreate && !checkedParameters.isEmpty()) {
+        // The pass adds the checks, behind the values that are added first, so that each value gets the number it has always got.
+        checkedParameters.clear();
+        function.editAllBlocks().clear();
+        function.editAllValues().clear();
+        if (Failure failure = BodyDecoder(*this, id, wire.body, code, function, remap).run())
+            return failure;
+    }
+    if (!checkedParameters.isEmpty()) {
+        if (function.at(entryBlock).parameters.size() != function.numberOfEntryParameters())
+            return InternalError { .kind = InternalErrorKind::ListOutOfBounds, .function = id, .count = index };
+        appendChecksAtEntry(m_program, m_build, function, checkedParameters.span());
+        m_build.statistics().count(StatisticID::FunctionsWithTypesCheckedAtEntry);
+    }
     function.capabilities = initialCapabilitiesOf(function);
 
+    const auto& options = m_build.options();
+    if (!options.verifiesProgram && !options.isVerifyOnly())
+        return std::nullopt;
     FunctionVerifier verifier(m_program, id, function, m_form, m_build, m_verifierInputs);
     if (verifier.runStructure())
         return std::nullopt;

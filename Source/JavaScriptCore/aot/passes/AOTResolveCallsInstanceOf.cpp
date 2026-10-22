@@ -19,91 +19,150 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(OperandIndex::TypeTest::value == testedOperandIndex);
-static_assert(OperandIndex::ShapeTest::object == testedOperandIndex);
 
-static bool usesOrdinaryHasInstance(const PropertyAccessContext& context, LayoutID tested)
-{
-    PropertyKeyID key = context.program.keyOf(BuiltinNames::hasInstanceSymbol);
-    MemberAnswer answer = findMember(context, { MemberStart::ClassObject, tested, key, Access::Read });
-    return answer.kind == MemberKind::Builtin && answer.needsNoTest() && answer.builtin == Builtins::FunctionPrototypeSymbolHasInstance;
-}
+static constexpr uint32_t numberOfBranchTargets = 2;
 
-static MemberMutability classPrototypeLinkOf(const Program& program, const Layout& layout)
+namespace {
+
+enum class ChainEnd : uint8_t { Unknown, MeetsClass, MissesClass };
+
+// What says that an object still inherits from the prototype object that its layout names: a bit of its class, which the run time clears when any object of the class gets another prototype,
+// or a test of the object itself. The bit costs a site nothing beside the other bits it asks for. The test is what is left once the bit is cleared.
+enum class PrototypeKnownBy : uint8_t { BitOfClass, TestOfObject };
+
+struct ChainAnswers {
+    // The layouts whose objects are instances, or are none, while the conditions hold.
+    LayoutList decided;
+    LayoutList instances;
+    MemberConditions conditions;
+    bool leavesOutLayouts { false };
+    bool testsObjects { false };
+};
+
+} // anonymous namespace
+
+static bool inheritsFromObjectPrototype(const Program& program, const Layout& layout)
 {
     switch (layout.kind) {
-    case LayoutKind::Instance:
-        return layout.constructor ? layout.classFlow.prototypeLink : MemberMutability::Unknown;
-    case LayoutKind::BuiltinResult: {
-        bool inheritsFromObjectPrototype = layout.builtinLayout && !program.builtins().at(layout.builtinLayout).isTuple;
-        return inheritsFromObjectPrototype ? MemberMutability::Fixed : MemberMutability::Unknown;
-    }
     case LayoutKind::Record:
     case LayoutKind::Container:
+        return true;
+    case LayoutKind::BuiltinResult:
+        // A tuple is an array, and no record says that the prototype object of a built-in class keeps its own prototype.
+        return layout.builtinLayout && !program.builtins().at(layout.builtinLayout).isTuple;
+    case LayoutKind::Instance:
     case LayoutKind::ModuleNamespace:
-        return MemberMutability::Fixed;
     case LayoutKind::Environment:
     case LayoutKind::Closure:
     case LayoutKind::CoroutineFrame:
-        return MemberMutability::Unknown;
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasDefinedChain(const Program& program, LayoutID layout, LayoutID tested)
+// Collects what has to hold for the prototype objects of the classes above the layout's own to be linked as the classes were defined, up to the tested class or to the end of the chain.
+// Object.prototype, where a class without a base ends, inherits from nothing for good. An object that was assigned as the prototype of a function may be the prototype of another one too,
+// so a chain with such an object in it, or a tested function with one, is not known to miss.
+static ChainEnd followChain(const Program& program, LayoutID layout, LayoutID tested, MemberConditions& conditions)
 {
-    if (!receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype))
-        return false;
+    const Layout& start = program.at(layout);
+    if (start.kind == LayoutKind::ModuleNamespace)
+        return ChainEnd::MissesClass;
 
-    LayoutID current = layout;
-    while (current != tested) {
+    bool mayShareObject = program.at(tested).classFlow.hasAssignedPrototype;
+    if (inheritsFromObjectPrototype(program, start))
+        return mayShareObject ? ChainEnd::Unknown : ChainEnd::MissesClass;
+    if (start.kind != LayoutKind::Instance)
+        return ChainEnd::Unknown;
+
+    LayoutID current = declaredLayoutOf(program, layout);
+    for (size_t unvisitedClasses = program.layouts.size(); unvisitedClasses; --unvisitedClasses) {
+        if (current == tested)
+            return ChainEnd::MeetsClass;
         const Layout& passed = program.at(current);
-        if (classPrototypeLinkOf(program, passed) != MemberMutability::Fixed)
-            return false;
-        switch (passed.flow.baseState) {
-        case BaseState::Layout:
-            current = passed.flow.base;
+        if (passed.kind != LayoutKind::Instance || !passed.constructor)
+            return ChainEnd::Unknown;
+        mayShareObject |= passed.classFlow.hasAssignedPrototype;
+        NextHolder next = nextHolderOf(program, current, ClassSide::Prototype, conditions);
+        switch (next.step) {
+        case ChainStep::CompiledClass:
+            current = next.layout;
+            // `function Meter() {}`, `Meter.prototype = first`, `class Fine extends Meter {}`, `Meter.prototype = second`: the class below is linked to the object that the property held when it was defined.
+            // The guard on the property begins when the function is first used as a class, which may be later: it says nothing about that object.
+            if (program.at(current).has(LayoutFlags::IsConstructorFunction) && program.at(current).classFlow.prototypeProperty != MemberMutability::Fixed)
+                return ChainEnd::Unknown;
             break;
-        case BaseState::None:
-            current = passed.classFlow.prototypeBase;
-            if (!current)
-                return true;
-            break;
-        // No record says that the prototype object of a built-in class keeps its own prototype.
-        case BaseState::BuiltinClass:
-        case BaseState::Unknown:
-            return false;
+        case ChainStep::NoBase:
+            return mayShareObject ? ChainEnd::Unknown : ChainEnd::MissesClass;
+        case ChainStep::BuiltinClass:
+        case ChainStep::Unknown:
+            return ChainEnd::Unknown;
         }
     }
-    return true;
+    return ChainEnd::Unknown;
 }
 
-static bool hasProvenAncestry(const Program& program, LayoutID layout, LayoutID tested, Ancestry ancestry)
+static bool neverChangesPrototype(const Program& program, LayoutID layout)
 {
-    RELEASE_ASSERT(ancestry != Ancestry::Unknown);
-    return ancestryOf(program, layout, tested) == ancestry && hasDefinedChain(program, layout, tested);
+    return program.at(layout).kind == LayoutKind::ModuleNamespace || receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype);
+}
+
+static ChainAnswers followChains(const Program& program, const LayoutList& layouts, LayoutID tested, PrototypeKnownBy knownBy)
+{
+    ChainAnswers answers;
+    for (LayoutID layout : layouts) {
+        if (program.at(layout).flow.allocation == AllocationState::NeverAllocated)
+            continue;
+
+        MemberConditions conditions;
+        ChainEnd end = followChain(program, layout, tested, conditions);
+        bool testsObject = false;
+        // The run time defines the class of a constructor function at the first construction that is carried out, with whatever the function has as its prototype property then.
+        // Until then the guards of that class speak of no object and stand in nobody's way, and an allocation that is never carried out defines nothing. So the object itself is asked.
+        bool isMadeByConstructorFunction = program.at(layout).kind == LayoutKind::Instance && program.at(declaredLayoutOf(program, layout)).has(LayoutFlags::IsConstructorFunction);
+        if (end != ChainEnd::Unknown && (isMadeByConstructorFunction || !neverChangesPrototype(program, layout))) {
+            switch (knownBy) {
+            case PrototypeKnownBy::BitOfClass:
+                // Only a class has bits.
+                if (program.at(layout).kind == LayoutKind::Instance && !isMadeByConstructorFunction)
+                    addCondition(conditions, { MemberCondition::Kind::InstancePrototypeUnchanged, declaredLayoutOf(program, layout), ClassSide::Prototype, { } });
+                else
+                    end = ChainEnd::Unknown;
+                break;
+            case PrototypeKnownBy::TestOfObject:
+                testsObject = true;
+                break;
+            }
+        }
+        if (end == ChainEnd::Unknown) {
+            answers.leavesOutLayouts = true;
+            continue;
+        }
+
+        answers.decided.add(layout);
+        if (end == ChainEnd::MeetsClass)
+            answers.instances.add(layout);
+        addConditions(answers.conditions, conditions.span());
+        answers.testsObjects |= testsObject;
+    }
+    return answers;
 }
 
 static LayoutList layoutsToConsider(const Program& program, const ReceiverCandidates& subject, const Type& subjectType, LayoutID tested)
 {
     if (subject.isProven())
         return subject.proven;
+    // Objects that no layout describes were converted to the type of the family, so its layouts are only expected.
+    if (hasMembersWithoutLayout(program, subjectType))
+        return subject.predicted;
     if (!subjectType.anyObject)
         return { };
-    LayoutList considered(program.at(tested).flow.members.span());
+
+    // Nothing is known of the object. The layouts of the class and of what is below it are worth one test.
+    LayoutList considered(program.layoutsBelow(tested));
+    considered.unite(LayoutList(program.at(program.declaredMembersOf(tested)).members.span()));
     considered.add(tested);
     return considered;
-}
-
-static LayoutList findInstanceLayouts(const Program& program, const LayoutList& considered, LayoutID tested)
-{
-    LayoutList instances;
-    for (LayoutID layout : considered) {
-        if (program.at(layout).flow.allocation == AllocationState::NeverAllocated)
-            continue;
-        if (hasProvenAncestry(program, layout, tested, Ancestry::Descendant))
-            instances.add(layout);
-    }
-    return instances;
 }
 
 static bool isObjectOutsideLayouts(UnionPartKind kind)
@@ -127,9 +186,9 @@ static bool isObjectOutsideLayouts(UnionPartKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasObjectsOutsideLayouts(const Type& type)
+static bool hasObjectsOutsideLayouts(const Program& program, const Type& type)
 {
-    return std::ranges::any_of(unionPartsOf(type), [](const UnionPart& part) {
+    return hasMembersWithoutLayout(program, type) || std::ranges::any_of(unionPartsOf(type), [](const UnionPart& part) {
         return isObjectOutsideLayouts(part.kind);
     });
 }
@@ -137,36 +196,6 @@ static bool hasObjectsOutsideLayouts(const Type& type)
 static bool mayBelongToOtherInstance(const PropertyAccessContext& context, const ReceiverCandidates& subject)
 {
     return !subject.isProven() && instanceCountOf(context) != InstanceCount::AtMostOne;
-}
-
-enum class ChainEnd : uint8_t { Unknown, MeetsClass, MissesClass };
-
-// Collects what has to hold for the prototype objects of the classes above the layout's own to be linked as the classes were defined, up to the tested class or to the end of the chain.
-// Object.prototype, where a class without a base ends, inherits from nothing for good. An object that was assigned as the prototype of a function may be the prototype of another one too,
-// so a chain with such an object in it, or a tested function with one, is not known to miss.
-static ChainEnd followChain(const Program& program, LayoutID layout, LayoutID tested, MemberConditions& conditions)
-{
-    if (program.at(layout).kind != LayoutKind::Instance)
-        return ChainEnd::Unknown;
-    bool mayShareObject = program.at(tested).classFlow.hasAssignedPrototype;
-    LayoutID current = declaredLayoutOf(program, layout);
-    for (size_t unvisitedClasses = program.layouts.size(); unvisitedClasses; --unvisitedClasses) {
-        if (current == tested)
-            return ChainEnd::MeetsClass;
-        mayShareObject |= program.at(current).classFlow.hasAssignedPrototype;
-        NextHolder next = nextHolderOf(program, current, ClassSide::Prototype, conditions);
-        switch (next.step) {
-        case ChainStep::CompiledClass:
-            current = next.layout;
-            break;
-        case ChainStep::NoBase:
-            return mayShareObject ? ChainEnd::Unknown : ChainEnd::MissesClass;
-        case ChainStep::BuiltinClass:
-        case ChainStep::Unknown:
-            return ChainEnd::Unknown;
-        }
-    }
-    return ChainEnd::Unknown;
 }
 
 LayoutID classTestedBy(const Program& program, const Function& function, const Value& instanceOf)
@@ -179,13 +208,16 @@ LayoutID classTestedBy(const Program& program, const Function& function, const V
 static std::optional<MemberConditions> conditionsOfClassObject(const PropertyAccessContext& context, LayoutID tested)
 {
     const Program& program = context.program;
+    if (guardsAreNeverSet(program, program.at(tested)))
+        return std::nullopt;
     MemberAnswer hasInstance = findMember(context, { MemberStart::ClassObject, tested, program.keyOf(BuiltinNames::hasInstanceSymbol), Access::Read });
     if (hasInstance.kind != MemberKind::Builtin || hasInstance.builtin != Builtins::FunctionPrototypeSymbolHasInstance || !hasInstance.receiverProofs.isEmpty())
         return std::nullopt;
 
     MemberConditions conditions = WTF::move(hasInstance.conditions);
     const ClassFlow& classFlow = program.at(tested).classFlow;
-    if (classFlow.prototypeProperty != MemberMutability::Fixed && !classFlow.hasAssignedPrototype)
+    // No code can change the property of a class.
+    if (program.at(tested).has(LayoutFlags::IsConstructorFunction) && classFlow.prototypeProperty != MemberMutability::Fixed && !classFlow.hasAssignedPrototype)
         addCondition(conditions, { MemberCondition::Kind::MemberUnchanged, tested, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
     if (!isEvaluatedOnce(program, program.at(tested)))
         addCondition(conditions, { MemberCondition::Kind::ClassEvaluatedOnce, tested, ClassSide::Prototype, { } });
@@ -205,106 +237,76 @@ Vector<TestedInstanceOf, 2> planTestedInstanceOf(FunctionPassContext& context, c
 
     Vector<TestedInstanceOf, 2> forms;
     auto appendForm = [&](bool walksChain, AccessTests&& tests) {
-        if (!walksChain && !tests.tests.isEmpty())
+        if (!tests.tests.isEmpty())
             forms.append(TestedInstanceOf { walksChain, WTF::move(tests) });
     };
 
     ValueID subject = instanceOf.operand(OperandIndex::InstanceOf::value);
-    ReceiverCandidates candidates = receiverCandidates(program, context.function, subject, { });
-    PropertyAccessPlan plan;
-    plan.conditions = *conditionsOfClass;
-    bool leavesOutLayouts = false;
-    if (!candidates.isProven() || !candidates.hasOtherParts) {
-        for (LayoutID layout : candidates.isProven() ? candidates.proven : candidates.predicted) {
-            MemberConditions conditionsOfChain;
-            if (followChain(program, layout, tested, conditionsOfChain) == ChainEnd::Unknown) {
-                leavesOutLayouts = true;
-                continue;
-            }
-            plan.receivers.add(layout);
-            for (const MemberCondition& condition : conditionsOfChain)
-                addCondition(plan.conditions, condition);
-            if (!receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype))
-                plan.requiredProofs.add(Proof::PrototypeLinkUnchanged);
-        }
-    }
-    if (!plan.receivers.isEmpty()) {
+    ReceiverCandidates candidates = receiverCandidates(program, context.function, subject);
+    auto appendFormOfLayouts = [&](PrototypeKnownBy knownBy) {
+        ChainAnswers answers = followChains(program, candidates.isProven() ? candidates.proven : candidates.predicted, tested, knownBy);
+        // Where no object has to be asked, the bits have said it all.
+        if (answers.decided.isEmpty() || (knownBy == PrototypeKnownBy::TestOfObject && !answers.testsObjects))
+            return;
+
+        PropertyAccessPlan plan;
+        plan.conditions = *conditionsOfClass;
+        addConditions(plan.conditions, answers.conditions.span());
+        plan.receivers = answers.decided;
         // undefined and null are instances of nothing, and the tests of an object take an object.
-        if (!candidates.isProven() || candidates.mayBeNullish || leavesOutLayouts)
-            plan.receiverTest = layoutTestKindFor(program, plan.receivers.span()) == LayoutTestKind::Type ? ReceiverTest::Type : ReceiverTest::Shape;
+        if (!candidates.isProven() || candidates.mayBeNullish || answers.leavesOutLayouts)
+            plan.receiverTest = ReceiverTest::Type;
         if (mayBelongToOtherInstance(accessContext, candidates))
             plan.requiredProofs.add(Proof::OwnInstance);
+        if (answers.testsObjects)
+            plan.requiredProofs.add(Proof::PrototypeLinkUnchanged);
         appendForm(false, createAccessTests(context, plan, { subject, { }, { } }));
+    };
+    if (!candidates.isProven() || !candidates.hasOtherParts) {
+        appendFormOfLayouts(PrototypeKnownBy::BitOfClass);
+        appendFormOfLayouts(PrototypeKnownBy::TestOfObject);
     }
 
-    AccessTests testsOfClass;
-    for (const MemberCondition& condition : *conditionsOfClass)
-        testsOfClass.tests.append(makeConditionTest(condition));
-    appendForm(true, WTF::move(testsOfClass));
+    if (!conditionsOfClass->isEmpty()) {
+        AccessTests testsOfClass;
+        testsOfClass.tests.append(makeConditionsTest(context.types, conditionsOfClass->span()));
+        appendForm(true, WTF::move(testsOfClass));
+    }
     return forms;
 }
 
 std::optional<LayoutList> instancesAmongTestedLayouts(const Program& program, const Function& function, const Value& instanceOf, std::span<const Value> tests, LayoutList& testedLayouts)
 {
-    // The tests of the class object are about no value.
-    bool testsValue = std::ranges::any_of(tests, [](const Value& test) {
-        return test.numberOfOperands();
-    });
-    if (!testsValue)
-        return std::nullopt;
-
     std::optional<ReceiverCandidates> established = receiversEstablishedBy(program, tests);
     if (!established)
-        established = receiverCandidates(program, function, instanceOf.operand(OperandIndex::InstanceOf::value), { });
-    RELEASE_ASSERT(established->isProven());
-    testedLayouts = established->proven;
+        established = receiverCandidates(program, function, instanceOf.operand(OperandIndex::InstanceOf::value));
+    if (!established->isProven() || established->hasOtherParts || established->mayBeNullish)
+        return std::nullopt;
 
-    LayoutID tested = classTestedBy(program, function, instanceOf);
-    LayoutList instances;
-    for (LayoutID layout : testedLayouts) {
-        MemberConditions conditions;
-        switch (followChain(program, layout, tested, conditions)) {
-        case ChainEnd::MeetsClass:
-            instances.add(layout);
-            break;
-        case ChainEnd::MissesClass:
-            break;
-        case ChainEnd::Unknown:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-    return instances;
+    bool testsObjects = std::ranges::contains(tests, Opcode::HasLayoutPrototype, &Value::opcode);
+    PrototypeKnownBy knownBy = testsObjects ? PrototypeKnownBy::TestOfObject : PrototypeKnownBy::BitOfClass;
+    ChainAnswers answers = followChains(program, established->proven, classTestedBy(program, function, instanceOf), knownBy);
+    // The layouts answer only under the tests that their chains ask for. The tests of the class object are among the tests of every form.
+    if (answers.leavesOutLayouts || !testsCoverConditions(tests, answers.conditions.span()))
+        return std::nullopt;
+
+    testedLayouts = WTF::move(answers.decided);
+    return WTF::move(answers.instances);
 }
 
-static Value makeInstanceTest(TypeArena& types, const InstanceOfPlan& plan, ValueID subject)
+static Value makeInstanceTest(TypeArena& types, const InstanceOfPlan& plan)
 {
-    switch (plan.test) {
-    case LayoutTestKind::Type:
-        return makeTypeTest(subject, types.intern(Type::forLayoutSet(plan.instances)));
-    case LayoutTestKind::Shape:
-        return makeShapeTest(subject, plan.instances);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return makeTypeTest(plan.subject, types.intern(Type::forLayoutSet(plan.instances)));
 }
 
-static ValueID emitObjectTest(SiteExpansion& expansion, ValueID subject)
+// Both lookups on the class object are answered, so what is left of the operation is the walk up the chain of the value.
+static void finishArmWithWalk(SiteExpansion& expansion, ValueID subject)
 {
-    if (!expansion.context().program.typeOf(expansion.function(), subject).primitives)
-        return subject;
-
-    IRBuilder& builder = expansion.builder();
-    BlockFrequency frequency = expansion.frequency();
-    ValueID isObject = builder.appendTypeTest(subject, Type::object());
-    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isObject, testedOperandIndex, frequency, frequency);
-    builder.moveToEndOf(branch.notTaken);
-    expansion.finishArm(builder.appendBoolean(false));
-    builder.moveToEndOf(branch.taken);
-    return branch.provenOnTaken;
-}
-
-static void finishArmWithOriginal(SiteExpansion& expansion, ValueID subject)
-{
-    expansion.finishArm(expansion.appendOriginal({ OperandIndex::InstanceOf::value, subject, { }, { } }));
+    const Value& original = expansion.original();
+    Value read = IRBuilder::make(Opcode::GetClassPrototype, { original.operand(OperandIndex::InstanceOf::constructor) });
+    read.setLayout(classTestedBy(expansion.context().program, expansion.function(), original));
+    ValueID prototype = expansion.append(WTF::move(read));
+    expansion.finishArm(expansion.append(IRBuilder::make(Opcode::HasInPrototypeChain, { subject, prototype })));
 }
 
 static bool namesGuard(const Function& function, const Use& use)
@@ -324,100 +326,136 @@ static bool namesGuard(const Function& function, const Use& use)
 
 static void overwriteValue(FunctionPassContext& context, ValueID id, Value&& replacement)
 {
-    Value& value = context.function.at(id);
+    Value& value = context.function.edit(id);
     replacement.setOrigin(value.origin());
     replacement.type = resultTypeOf(context.program, context.function, replacement, context.types);
     value = WTF::move(replacement);
     context.analyses.didChangeValues();
 }
 
+static bool isLeftToTestsOfExpectedLayouts(FunctionPassContext& context, const Value& instanceOf, const ReceiverCandidates& subject, BlockID block)
+{
+    if (subject.isProven() || subject.predicted.isEmpty())
+        return false;
+    return std::ranges::any_of(planTestedInstanceOf(context, instanceOf), [&](const TestedInstanceOf& form) {
+        return !form.walksChain && std::ranges::none_of(form.tests.tests, [&](const Value& test) {
+            return context.analyses.findEarlierTest(test, block) == EarlierTest::Failed;
+        });
+    });
+}
+
 PlanOrDecline<InstanceOfPlan> CallResolver::planInstanceOf(const CallSite& site)
 {
     const Value& instanceOf = m_function.at(site.position.value);
-    const Type& constructorType = typeOf(instanceOf.operand(OperandIndex::InstanceOf::constructor));
-    LayoutID tested = classOfClassObject(m_program, constructorType);
-    if (!tested || constructorType.mayBeUndefinedOrNull())
+    LayoutID tested = classTestedBy(m_program, m_function, instanceOf);
+    if (!tested)
         return std::unexpected(CallDeclineReason::None);
-
-    const ClassFlow& classFlow = m_program.at(tested).classFlow;
-    bool hasOnePrototypeObject = classFlow.prototypeProperty == MemberMutability::Fixed || classFlow.hasAssignedPrototype;
-    if (classFlow.evaluations != ExecutionCount::AtMostOnce || !hasOnePrototypeObject)
-        return std::unexpected(CallDeclineReason::UnknownMember);
-    if (!usesOrdinaryHasInstance(accessContext(), tested))
+    std::optional<MemberConditions> conditionsOfClass = conditionsOfClassObject(accessContext(), tested);
+    if (!conditionsOfClass)
         return std::unexpected(CallDeclineReason::UnknownMember);
 
     InstanceOfPlan plan;
     plan.subject = instanceOf.operand(OperandIndex::InstanceOf::value);
+    plan.conditions = WTF::move(*conditionsOfClass);
     const Type& subjectType = typeOf(plan.subject);
-    ReceiverCandidates subject = receiverCandidates(m_program, m_function, plan.subject, { });
-    LayoutList instances = findInstanceLayouts(m_program, layoutsToConsider(m_program, subject, subjectType, tested), tested);
+    ReceiverCandidates subject = receiverCandidates(m_program, m_function, plan.subject);
+    if (isLeftToTestsOfExpectedLayouts(m_context, instanceOf, subject, site.position.block))
+        return std::unexpected(CallDeclineReason::NeedsTest);
 
-    plan.failedTestMeansFalse = subject.isProven() && !hasObjectsOutsideLayouts(subjectType) && std::ranges::all_of(subject.proven, [&](LayoutID layout) {
-        return instances.contains(layout) || hasProvenAncestry(m_program, layout, tested, Ancestry::Unrelated);
-    });
-    plan.isAlwaysFalse = plan.failedTestMeansFalse && instances.isEmpty();
-    if (plan.isAlwaysFalse)
-        return plan;
-    if (instances.isEmpty())
-        return std::unexpected(CallDeclineReason::UnknownMember);
-
-    plan.test = subject.isProven() ? LayoutTestKind::Type : layoutTestKindFor(m_program, instances.span());
-    plan.instances = m_context.types.completeLayoutSet(instances.span());
-    if (plan.failedTestMeansFalse)
-        return plan;
+    LayoutList considered = layoutsToConsider(m_program, subject, subjectType, tested);
+    bool isOverLimit = m_context.exceeds(LimitID::MaxAccessPlanMembers, considered.size(), site.position.value);
+    if (isOverLimit)
+        considered.clear();
+    ChainAnswers answers = followChains(m_program, considered, tested, PrototypeKnownBy::BitOfClass);
 
     FunctionAnalyses& analyses = m_context.analyses;
     BlockID block = site.position.block;
-    if (analyses.findEarlierTest(makeInstanceTest(m_context.types, plan, plan.subject), block) == EarlierTest::Failed)
+    plan.failedTestMeansFalse = !isOverLimit && !answers.leavesOutLayouts && !hasObjectsOutsideLayouts(m_program, subjectType);
+    plan.isAlwaysFalse = plan.failedTestMeansFalse && answers.instances.isEmpty();
+    if (!plan.failedTestMeansFalse) {
+        // A miss walks the chain, so nothing is asked about the layouts that are no instances.
+        answers = followChains(m_program, answers.instances, tested, PrototypeKnownBy::BitOfClass);
+    }
+    if (!answers.instances.isEmpty())
+        plan.instances = m_context.types.completeLayoutSet(answers.instances.span());
+
+    if (plan.instances && !plan.failedTestMeansFalse) {
+        bool hasFailed = analyses.findEarlierTest(makeInstanceTest(m_context.types, plan), block) == EarlierTest::Failed
+            || (mayBelongToOtherInstance(accessContext(), subject) && analyses.findEarlierTest(makeObjectTest(Proof::OwnInstance, plan.subject, { }), block) == EarlierTest::Failed);
+        if (hasFailed) {
+            plan.instances = { };
+            answers.conditions.clear();
+        }
+    }
+    addConditions(plan.conditions, answers.conditions.span());
+
+    // Rare code stays small: there the operation gives way only to what takes its place without a branch.
+    bool takesPlaceOfOperation = plan.failedTestMeansFalse && plan.conditions.isEmpty();
+    if (!takesPlaceOfOperation && analyses.blockFrequencies().classOf(block) == BlockFrequency::Rare)
         return std::unexpected(CallDeclineReason::None);
-    if (mayBelongToOtherInstance(accessContext(), subject) && analyses.findEarlierTest(makeObjectTest(Proof::OwnInstance, plan.subject, { }), block) == EarlierTest::Failed)
-        return std::unexpected(CallDeclineReason::None);
+
+    // A bit that was cleared stays cleared. What stands behind its test is left to the tests that ask each object.
+    if (!plan.conditions.isEmpty() && analyses.findEarlierTest(makeConditionsTest(m_context.types, plan.conditions.span()), block) == EarlierTest::Failed)
+        return std::unexpected(CallDeclineReason::NeedsTest);
     return plan;
 }
 
 void CallResolver::rewriteInstanceOf(const CallSite& site, const InstanceOfPlan& plan)
 {
-    if (plan.isAlwaysFalse) {
+    if (plan.conditions.isEmpty() && plan.isAlwaysFalse) {
         Value answer = IRBuilder::make(Opcode::Boolean);
         answer.setBoolean(false);
         overwriteValue(m_context, site.position.value, WTF::move(answer));
         return;
     }
 
-    if (plan.failedTestMeansFalse) {
-        overwriteValue(m_context, site.position.value, makeInstanceTest(m_context.types, plan, plan.subject));
+    if (plan.conditions.isEmpty() && plan.failedTestMeansFalse) {
+        overwriteValue(m_context, site.position.value, makeInstanceTest(m_context.types, plan));
         passProofOnBranches(site.position.value, plan.subject);
         return;
     }
 
-    bool isTypeTest = plan.test == LayoutTestKind::Type;
-    bool testsOwnInstance = mayBelongToOtherInstance(accessContext(), receiverCandidates(m_program, m_function, plan.subject, { }));
-
     m_expansion.begin(site.position);
-    BlockFrequency frequency = m_expansion.frequency();
-    ValueID subject = testsOwnInstance && !isTypeTest ? emitObjectTest(m_expansion, plan.subject) : plan.subject;
+    branchOnConditions(plan.conditions.span(), { });
 
-    ValueID test = m_expansion.append(makeInstanceTest(m_context.types, plan, subject));
+    if (plan.isAlwaysFalse) {
+        m_expansion.finishArm(m_builder.appendBoolean(false));
+        m_expansion.end();
+        return;
+    }
+    if (plan.failedTestMeansFalse) {
+        m_expansion.finishArm(m_expansion.append(makeInstanceTest(m_context.types, plan)));
+        m_expansion.end();
+        return;
+    }
+    if (!plan.instances) {
+        finishArmWithWalk(m_expansion, plan.subject);
+        m_expansion.end();
+        return;
+    }
+
+    BlockFrequency frequency = m_function.at(m_builder.currentBlock()).frequency;
+    bool testsOwnInstance = mayBelongToOtherInstance(accessContext(), receiverCandidates(m_program, m_function, plan.subject));
+
+    ValueID test = m_expansion.append(makeInstanceTest(m_context.types, plan));
     IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, testedOperandIndex, frequency, frequency);
     if (testsOwnInstance) {
-        // The copy below names the subject as it was before the layout test: a type that lists layouts counts as a proof of the instance.
-        ValueID isOwnObject = m_expansion.append(makeObjectTest(Proof::OwnInstance, isTypeTest ? branch.provenOnTaken : subject, { }));
-        IRBuilder::BranchBlocks ownership = m_builder.emitBranch(isOwnObject, frequency, BlockFrequency::Unlikely);
+        ValueID isOwnObject = m_expansion.append(makeObjectTest(Proof::OwnInstance, branch.provenOnTaken, { }));
+        IRBuilder::BranchBlocks ownership = m_builder.emitBranch(isOwnObject, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
         m_expansion.finishArm(m_builder.appendBoolean(true));
         m_builder.moveToEndOf(ownership.notTaken);
-        finishArmWithOriginal(m_expansion, subject);
+        // The walk names the subject as it was before the layout test: a type that lists layouts counts as a proof of the instance.
+        finishArmWithWalk(m_expansion, plan.subject);
     } else
         m_expansion.finishArm(m_builder.appendBoolean(true));
 
     m_builder.moveToEndOf(branch.notTaken);
-    finishArmWithOriginal(m_expansion, isTypeTest ? branch.provenOnNotTaken : subject);
+    finishArmWithWalk(m_expansion, branch.provenOnNotTaken);
     m_expansion.end();
 }
 
 void CallResolver::passProofOnBranches(ValueID test, ValueID subject)
 {
-    bool narrowsSubject = provesForever(provesOf(m_function.at(test).opcode));
-    uint32_t numberOfProvingTargets = narrowsSubject ? 2 : 1;
     m_builder.setOrigin(m_function.at(test).origin());
 
     Vector<ValueID, 2> proofs;
@@ -427,13 +465,13 @@ void CallResolver::passProofOnBranches(ValueID test, ValueID subject)
         const Terminator& terminator = m_function.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch || terminator.conditionOperand() != test)
             continue;
-        for (uint32_t targetIndex = 0; targetIndex < numberOfProvingTargets; ++targetIndex) {
+        for (uint32_t targetIndex = 0; targetIndex < numberOfBranchTargets; ++targetIndex) {
             Edge edge { block, targetIndex };
             m_builder.splitEdge(edge);
             proofs.append(m_builder.addEdgeResult(edge, testedOperandIndex));
         }
     }
-    if (!narrowsSubject || proofs.isEmpty())
+    if (proofs.isEmpty())
         return;
 
     FunctionAnalyses& analyses = m_context.analyses;

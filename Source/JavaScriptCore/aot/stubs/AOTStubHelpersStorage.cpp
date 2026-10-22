@@ -160,8 +160,8 @@ static void branchUnlessHasOriginalArrayStructure(StubAssembler& jit, GPRReg arr
     hasOriginalStructure.link(&jit);
 }
 
-// The allocator that Butterfly::optimalContiguousVectorLength(0, nextLength(length + 1)) rounds up to.
-static void loadAllocatorOfNextVector(StubAssembler& jit, const VectorGrowth& growth, JumpList& slowPath)
+// The allocator that Butterfly::optimalContiguousVectorLength(0, nextLength(length + 1)) rounds up to, or the same for nextLength(neededLength).
+static void loadAllocatorOfNextVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
     static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
     constexpr unsigned longestNextVector = maxLengthForElementwiseCopy + 1 + (maxLengthForElementwiseCopy + 1) / 2;
@@ -169,7 +169,10 @@ static void loadAllocatorOfNextVector(StubAssembler& jit, const VectorGrowth& gr
     const GPRReg allocator = growth.allocator;
     const GPRReg vectorLength = growth.scratch;
 
-    jit.add32(TrustedImm32(1), growth.length, vectorLength);
+    if (neededLength)
+        jit.move(*neededLength, vectorLength);
+    else
+        jit.add32(TrustedImm32(1), growth.length, vectorLength);
     jit.urshift32(vectorLength, TrustedImm32(1), allocator);
     jit.add32(allocator, vectorLength);
     Jump isLongEnough = jit.branch32(CCallHelpers::AboveOrEqual, vectorLength, TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN));
@@ -196,22 +199,23 @@ static void loadHoleOf(StubAssembler& jit, GPRReg array, GPRReg hole)
     isLoaded.link(&jit);
 }
 
-void growFullVector(StubAssembler& jit, const VectorGrowth& growth, JumpList& slowPath)
+static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
     const auto [array, butterfly, length, storage, allocator, scratch] = growth;
     const GPRReg index = length;
     const GPRReg vectorLength = allocator;
     RELEASE_ASSERT(noOverlap(array, butterfly, length, storage, allocator, scratch, instanceGPR));
+    RELEASE_ASSERT(!neededLength || noOverlap(*neededLength, array, butterfly, length, storage, allocator, scratch, instanceGPR));
 
-    if (jit.options().validates)
-        emitVectorGrowthValidation(jit, growth);
-
-    slowPath.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthForElementwiseCopy)));
+    slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
     // Only the array leads to the new vector, so an array that the collector will not visit again is left to C++.
     // While the collector marks beside the program every cell needs a barrier, so nobody reads the array during the stores below.
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
     branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
-    loadAllocatorOfNextVector(jit, growth, slowPath);
+    // The length of an array with ArrayStorage may lie beyond its vector.
+    if (jit.options().validates && !neededLength)
+        emitVectorGrowthValidation(jit, growth);
+    loadAllocatorOfNextVector(jit, growth, neededLength, slowPath);
     allocateCell(jit, storage, allocator, scratch, slowPath);
 
     jit.load32(Address(allocator, LocalAllocator::offsetOfCellSize()), vectorLength);
@@ -236,6 +240,16 @@ void growFullVector(StubAssembler& jit, const VectorGrowth& growth, JumpList& sl
     jit.add32(TrustedImm32(1), index);
     jit.branch32(CCallHelpers::Below, index, vectorLength).linkTo(fillNext, &jit);
     jit.storePtr(storage, Address(array, JSObject::butterflyOffset()));
+}
+
+void growFullVector(StubAssembler& jit, const VectorGrowth& growth, JumpList& slowPath)
+{
+    growVector(jit, growth, std::nullopt, slowPath);
+}
+
+void growVectorFor(StubAssembler& jit, const VectorGrowth& growth, GPRReg neededLength, JumpList& slowPath)
+{
+    growVector(jit, growth, neededLength, slowPath);
 }
 
 } } // namespace JSC::AOT

@@ -14,6 +14,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCaches.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "JSCInlines.h"
 #include "MathCommon.h"
 #include "NumberPrototype.h"
@@ -31,12 +32,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToLiteralString, EncodedJSValue, (
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLiteralStringToString, JSCell*, (Instance* instance, uint64_t word))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTLiteralStringToString);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, instance->state->strings->stringForLiteralStringWord(word));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCell* left, JSCell* right))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcat);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSString* leftString = cellArgument<JSString>(left, Entry::operationAOTConcat);
     JSString* rightString = cellArgument<JSString>(right, Entry::operationAOTConcat);
     OPERATION_RETURN(scope, jsString(globalObject, leftString, rightString));
@@ -45,6 +48,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCel
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, JSCell* first, JSCell* second, JSCell* third))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatThree);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSString* firstString = cellArgument<JSString>(first, Entry::operationAOTConcatThree);
     JSString* secondString = cellArgument<JSString>(second, Entry::operationAOTConcatThree);
     JSString* thirdString = cellArgument<JSString>(third, Entry::operationAOTConcatThree);
@@ -54,6 +58,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, 
 JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JSCell* string, int32_t from, int32_t to))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSubstring);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, jsSubstring(globalObject, cellArgument<JSString>(string, Entry::operationAOTSubstring), from, to - from));
 }
 
@@ -78,7 +83,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrings, size_t, (Instance* instance
     OPERATION_RETURN(scope, static_cast<size_t>(static_cast<int64_t>(order < 0 ? -1 : order > 0 ? 1 : 0)));
 }
 
+static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringHasAtGeneric(Instance*, JSCell* string, JSCell* other, int32_t position);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringHasAt, size_t, (Instance* instance, JSCell* string, JSCell* other, int32_t position))
+{
+    const StringImpl* base = uncheckedDowncast<JSString>(string)->tryGetValueImpl();
+    const StringImpl* argument = uncheckedDowncast<JSString>(other)->tryGetValueImpl();
+    if (base && argument && base->is8Bit() && argument->is8Bit()) [[likely]] {
+        unsigned length = base->length();
+        unsigned otherLength = argument->length();
+        if (position < 0 || otherLength > length || static_cast<unsigned>(position) > length - otherLength)
+            return { false, nullptr };
+        return { WTF::equal(base->span8().data() + position, argument->span8()), nullptr };
+    }
+    [[clang::musttail]] return stringHasAtGeneric(instance, string, other, position);
+}
+
+static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringHasAtGeneric(Instance* instance, JSCell* string, JSCell* other, int32_t position)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringHasAt);
     JSString* base = cellArgument<JSString>(string, Entry::operationAOTStringHasAt);
@@ -118,14 +139,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfFrom, size_t, (Instance* insta
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* instance, uint64_t bits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTIntToString);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     int64_t value = static_cast<int64_t>(bits);
     if (value >= static_cast<int64_t>(NumericStrings::cacheSize) && value <= INT32_MAX) {
-        std::array<Latin1Character, 10> digits;
-        size_t first = digits.size();
-        for (uint32_t rest = static_cast<uint32_t>(value); rest; rest /= 10)
-            digits[--first] = static_cast<Latin1Character>('0' + rest % 10);
-        JSString* string = instance->state->propertyCaches->stringKeys().findOrAdd(vm, std::span<const Latin1Character> { digits }.subspan(first));
-        vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
+        StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+        JSString* string = keys.tryFindIntegerKey(static_cast<uint32_t>(value));
+        if (!string) {
+            std::array<Latin1Character, 10> digits;
+            size_t first = digits.size();
+            for (uint32_t rest = static_cast<uint32_t>(value); rest; rest /= 10)
+                digits[--first] = static_cast<Latin1Character>('0' + rest % 10);
+            string = keys.makeIntegerKey(vm, static_cast<uint32_t>(value), std::span<const Latin1Character> { digits }.subspan(first));
+            vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
+        }
         OPERATION_RETURN(scope, string);
     }
     if (value == static_cast<int32_t>(value)) {
@@ -138,8 +164,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* i
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance* instance, double value))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDoubleToString);
+    // Most numbers that become text are ids and counts. Their text is asked for by the integer, as the stub IntegerToString asks, so that every road gives the same string.
     int32_t integer = truncateDoubleToInt32(value);
+    if (integer == value && integer >= static_cast<int32_t>(NumericStrings::cacheSize)) {
+        if (JSString* key = instance->state->propertyCaches->stringKeys().tryFindIntegerKey(static_cast<uint32_t>(integer)))
+            return key;
+        return operationAOTIntToString(instance, static_cast<uint64_t>(integer));
+    }
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDoubleToString);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     if (integer == value)
         OPERATION_RETURN(scope, int32ToString(vm, integer, 10));
     OPERATION_RETURN(scope, vm.numericStrings.addJSString(vm, value));
@@ -148,6 +181,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCharToString, JSCell*, (Instance* instance, uint32_t character))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCharToString);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, jsSingleCharacterString(vm, static_cast<char16_t>(character)));
 }
 

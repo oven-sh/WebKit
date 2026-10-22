@@ -1,11 +1,12 @@
-# An async iteration over an async generator steps it with StepAsyncGenerator: no lookup of next, no promise and no result object where the step ends at once. Everything else is the protocol
+# An async iteration over an async generator steps it with StepAsyncGenerator: no lookup of next, no promise, no result object, and no await behind the step, which suspends the function by itself where it has to wait.
+# Where the engine did not make the iterator result itself, the step hands it over and it is read by the protocol. Everything else is the protocol
 # FORM: Prepared optimizing
 # RUN: pass ExpandIteration
 # RUN(ABSENT): pass ExpandIteration
 # RUN(STEPS): pass ExpandIteration
 # RUN(THROWS): pass ExpandIteration
-# STATISTIC: IterationsExpandedByClass = 6
-# STATISTIC: IterationsExpandedGenerically = 3
+# STATISTIC: IterationsExpandedByClass = 7
+# STATISTIC: IterationsExpandedGenerically = 2
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
 # ABSENT-NOT: IteratorClose
@@ -35,25 +36,27 @@ function f0 name="provenUnmodified" flags=[IsAsync] parameters=[{type=AsyncGener
 # CHECK-NOT: key="next"
 # CHECK: LoopHint
 # CHECK-NEXT: [[nothing0]]: undefined = Undefined
-# CHECK-NEXT: [[step0]]{{*}} = StepAsyncGenerator v0, [[nothing0]]
+# The split puts the driver of the body in the place of the third operand.
+# CHECK: [[step0]]{{*}} = StepAsyncGenerator v0, [[nothing0]], [[noDriver0]]
 # CHECK-NEXT: [[value0]]: anything = ResultAt [[step0]]
 # CHECK-NEXT: [[status0]]: int[0, 2] = ResultAt [[step0]] index=1
-# CHECK-NEXT: [[awaited0]]: 2 = Integer integer=2
-# CHECK-NEXT: [[isAwaited0]]: boolean = StrictEq [[status0]], [[awaited0]]
-# CHECK-NEXT: Branch [[isAwaited0]] -> taken [[waits0]](), notTaken [[ended0]]()
+# CHECK-NEXT: [[result0]]: 0 = Integer
+# CHECK-NEXT: [[isResult0]]: boolean = StrictEq [[status0]], [[result0]]
+# CHECK-NEXT: Branch [[isResult0]] -> taken [[reads0]](), notTaken [[ended0]]()
 # CHECK: [[rest0]](v5: boolean, v6: anything):
 # CHECK: Branch v5 -> taken b3(), notTaken b2()
-# CHECK: [[waits0]]():
-# CHECK-NEXT: [[result0]]: anything = Await [[value0]]
-# CHECK-NEXT: [[object0]]: object = RequireObject [[result0]] runtimeError=IteratorResultNotObject
+# CHECK: [[reads0]]() frequency=Rare:
+# CHECK-NEXT: [[object0]]: object = RequireObject [[value0]] runtimeError=IteratorResultNotObject
 # CHECK-NEXT: = PropGet [[object0]] key="done"
 # CHECK: [[ended0]]():
-# CHECK-NEXT: [[completed0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[completed0]]: 2 = Integer integer=2
 # CHECK-NEXT: [[done0]]: boolean = StrictEq [[status0]], [[completed0]]
 # CHECK-NEXT: Branch [[done0]] -> taken [[atEnd0]](), notTaken [[yielded0]]()
 # CHECK: [[yielded0]]():
 # CHECK-NEXT: [[false0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[rest0]]([[false0]], [[value0]])
+# STEPS-LABEL: function f0 name="provenUnmodified"
+# STEPS-NOT: Await
 
 function f1 name="testedOnceAtTheOpen" flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=anything}] results=[{type=anything}] {
   b0(v0: AsyncGenerator, v1: anything):
@@ -80,33 +83,34 @@ function f1 name="testedOnceAtTheOpen" flags=[IsAsync] parameters=[{type=AsyncGe
 # CHECK-NOT: IsUnmodifiedAsyncGenerator
 # CHECK: key=@@asyncIterator
 # CHECK: key="next"
+# STEPS-LABEL: function f1 name="testedOnceAtTheOpen"
 
-function f2 name="predicted" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = Predict v0 predicted=AsyncGenerator
-    v3 = IteratorOpen v2 iteratorKind=Async
+function f2 name="expected" flags=[IsAsync] parameters=[{type=AsyncGenerator flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ AsyncGenerator, v1: anything):
+    v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
     LoopHint
-    v5 = IteratorResume v3 iteratorKind=Async
-    v6 = ResultAt v5
-    v7 = ResultAt v5 index=1
-    Branch v6 -> taken b3(), notTaken b2()
+    v4 = IteratorResume v2 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
   b2():
-    v8 = PropGet v7 key="x"
+    v7 = PropGet v6 key="x"
     Jump -> next b1()
   b3():
     Return v1
 }
-# CHECK-LABEL: function f2 name="predicted"
-# CHECK: [[isGenerator2]]: boolean ~ true = TypeTest {{*}} testedType=AsyncGenerator
+# CHECK-LABEL: function f2 name="expected"
+# CHECK: [[isGenerator2]]: boolean {{*}}= TypeTest v0 testedType=AsyncGenerator
 # CHECK-NEXT: Branch [[isGenerator2]] -> taken [[generatorArm2]](| 0)
 # CHECK: [[generatorArm2]]([[generator2]]: AsyncGenerator):
 # CHECK-NEXT: = IsUnmodifiedAsyncGenerator [[generator2]]
-# STEPS-LABEL: function f2 name="predicted"
-# STEPS-COUNT-1: = StepAsyncGenerator
+# One step in the copy for a generator, one in the copy for the protocol: the wrapper around a sync iterator is stepped the same way.
+# STEPS-LABEL: function f2 name="expected"
+# STEPS-COUNT-2: = StepAsyncGenerator
 # STEPS-NOT: = StepAsyncGenerator
-# THROWS-LABEL: function f2 name="predicted"
+# THROWS-LABEL: function f2 name="expected"
 # THROWS: key=@@asyncIterator
 
 function f3 name="closesByTheProtocol" flags=[IsAsync] parameters=[{type=AsyncGenerator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
@@ -161,8 +165,9 @@ function f5 name="syncIterationOverAsyncGenerator" parameters=[{type=AsyncGenera
     Return v5
 }
 # CHECK-LABEL: function f5 name="syncIterationOverAsyncGenerator"
+# STEPS-LABEL: function f5 name="syncIterationOverAsyncGenerator"
 # CHECK-NOT: StepAsyncGenerator
-# CHECK: key=@@iterator
+# CHECK: = CallDirect v0 function=f9 [isNeverInlined]
 # CHECK-NOT: StepAsyncGenerator
 
 function f6 name="asyncIterationOverGenerator" flags=[IsAsync] parameters=[{type=Generator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
@@ -173,12 +178,14 @@ function f6 name="asyncIterationOverGenerator" flags=[IsAsync] parameters=[{type
     v5 = ResultAt v3 index=1
     Return v5
 }
+# What is stepped is the wrapper: it closes a generator whose value rejects a turn before the loop hears of the rejection.
 # CHECK-LABEL: function f6 name="asyncIterationOverGenerator"
-# CHECK-NOT: StepAsyncGenerator
+# CHECK-NOT: StepAsyncGenerator v0
 # CHECK-NOT: StepGenerator
 # CHECK: key=@@asyncIterator
-# CHECK: CreateAsyncFromSyncIterator
-# CHECK-NOT: StepAsyncGenerator
+# The shared function opens the sync iterator and wraps it.
+# CHECK: : object = CallDirect {{*}} [isNeverInlined]
+# CHECK-NOT: StepAsyncGenerator v0
 # CHECK-NOT: StepGenerator
 
 function f7 name="asyncIterationOverArray" flags=[IsAsync] parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
@@ -189,11 +196,13 @@ function f7 name="asyncIterationOverArray" flags=[IsAsync] parameters=[{type=Arr
     v5 = ResultAt v3 index=1
     Return v5
 }
+# An array has an arm of its own: passes/expand-iteration-async-over-sync.ir
 # CHECK-LABEL: function f7 name="asyncIterationOverArray"
-# CHECK-NOT: StepAsyncGenerator
-# CHECK-NOT: IsPristine
+# CHECK-NOT: StepAsyncGenerator v0
+# CHECK-NOT: IsUnmodifiedAsyncGenerator
 # CHECK: key=@@asyncIterator
-# CHECK-NOT: StepAsyncGenerator
+# CHECK-NOT: StepAsyncGenerator v0
+# CHECK-NOT: IsUnmodifiedAsyncGenerator
 
 function f8 name="valueNobodyKnows" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -217,7 +226,7 @@ function f8 name="valueNobodyKnows" flags=[IsAsync] parameters=[{type=anything},
 # CHECK: [[generatorArm8]]([[generator8]]: AsyncGenerator):
 # CHECK-NEXT: = IsUnmodifiedAsyncGenerator [[generator8]]
 # STEPS-LABEL: function f8 name="valueNobodyKnows"
-# STEPS-COUNT-1: = StepAsyncGenerator
+# STEPS-COUNT-2: = StepAsyncGenerator
 # STEPS-NOT: = StepAsyncGenerator
 # THROWS-LABEL: function f8 name="valueNobodyKnows"
 # THROWS: key=@@asyncIterator

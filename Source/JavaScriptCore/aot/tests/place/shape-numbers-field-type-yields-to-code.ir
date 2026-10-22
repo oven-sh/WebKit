@@ -6,9 +6,9 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="First" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L1 name="Between" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L2 name="Last" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L0 name="First" fields=[{key="x" declared={type=number}}]
+layout L1 name="Between" fields=[{key="x" declared={type=number}}]
+layout L2 name="Last" fields=[{key="x" declared={type=number}}]
 layout L3 name="Holder" fields=[{key="member" declared={type=L0|L2} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -30,10 +30,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b1():
     LoopHint
     v14 = PropGet v0 key="first" [isFreeName]
-    v15 = Predict v14 predicted=L0|L1
+    v15 = Convert v14 declared={type=L0|L1 flags=[IsExpected]}
     v16 = PropGet v15 key="x"
     v17 = PropGet v0 key="second" [isFreeName]
-    v18 = Predict v17 predicted=L1|L2
+    v18 = Convert v17 declared={type=L1|L2 flags=[IsExpected]}
     v19 = PropGet v18 key="x"
     v20 = ToBoolean v19
     Branch v20 -> taken b1(), notTaken b2()
@@ -45,4 +45,4 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK: L2 shapes 3..3
 # CHECK: set [L0, L1] upto 2 cost=2
 # CHECK-NEXT: set [L1, L2] range 2..3 cost=3
-# TABLES: set 0 name="" test=1+3@0
+# TABLES: type L0|L2 {{*}}tests=[ShapeIn(1+3@0)]

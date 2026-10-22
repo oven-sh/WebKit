@@ -26,11 +26,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v13 = NewClosure function=f12
     v14 = NewClosure function=f13
     v15 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14
-    v16 = Builtin builtin=DataView
+    v16 = Builtin builtin=BunGlob
     PropDefine v16, v2 key=@@hasInstance
     v18 = NewClosure function=f15
     v19 = NewClosure function=f16
-    v20 = Call v1, -, v18, v19
+    v20 = NewClosure function=f17
+    v21 = NewClosure function=f18
+    v22 = NewClosure function=f19
+    v23 = Call v1, -, v18, v19, v20, v21, v22
     Return
 }
 
@@ -167,7 +170,7 @@ function f7 name="otherClassWithoutProof" parameters=[{type=Map}] results=[{type
 function f8 name="prototypeIsNotLocked" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="Date" [isFreeName]
+    v2 = PropGet v1 key="WeakRef" [isFreeName]
     v3 = InstanceOf v0, v2
     Return v3
 }
@@ -175,7 +178,7 @@ function f8 name="prototypeIsNotLocked" parameters=[{type=anything}] results=[{t
 # CHECK-NOT: TypeTest
 # CHECK-NOT: IsPristine
 # CHECK-NOT: InstanceOf
-# CHECK: [[prototype8]]:{{*}}= Builtin builtin=DatePrototype
+# CHECK: [[prototype8]]:{{*}}= Builtin builtin=WeakRefPrototype
 # CHECK-NEXT: [[walk8]]: boolean = HasInPrototypeChain v0, [[prototype8]]
 # CHECK-NEXT: v3: boolean = Upcast [[walk8]] castType=boolean
 # CHECK-NEXT: Return v3
@@ -214,16 +217,15 @@ function f10 name="classWithoutInstanceTest" parameters=[{type=anything}] result
 
 function f11 name="hasInstanceIsDefined" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="DataView" [isFreeName]
-    v3 = InstanceOf v0, v2
-    Return v3
+    v1 = Builtin builtin=BunGlob
+    v2 = InstanceOf v0, v1
+    Return v2
 }
 # CHECK-LABEL: function f11 name="hasInstanceIsDefined"
 # CHECK-NOT: TypeTest
 # CHECK-NOT: IsPristine
-# CHECK: v3: boolean = InstanceOf v0,
-# CHECK-NEXT: Return v3
+# CHECK: v2: boolean = InstanceOf v0,
+# CHECK-NEXT: Return v2
 
 function f12 name="constructorIsNotConstant" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -272,12 +274,12 @@ function f14 name="lockedConstructor" parameters=[{type=anything}] results=[{typ
 # TWICE: boolean = HasInPrototypeChain
 # TWICE-NOT: InstanceOf
 
-function f15 name="predictedConstructor" parameters=[{type=anything}, {type=anything predicted=builtin(Promise)}] results=[{type=anything}] {
+function f15 name="expectedConstructor" parameters=[{type=anything}, {type=builtin(Promise) flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = InstanceOf v0, v1
     Return v2
 }
-# CHECK-LABEL: function f15 name="predictedConstructor"
+# CHECK-LABEL: function f15 name="expectedConstructor"
 # CHECK: [[isPromise15]]:{{*}}= TypeTest v1 testedType=builtin(Promise)
 # CHECK-NEXT: Branch [[isPromise15]] -> taken [[known15]](), notTaken [[other15]]()
 # CHECK: [[known15]]():
@@ -285,11 +287,11 @@ function f15 name="predictedConstructor" parameters=[{type=anything}, {type=anyt
 # CHECK: [[other15]]() frequency=Unlikely:
 # CHECK-NEXT: boolean = InstanceOf v0, v1
 # CHECK: boolean = HasInPrototypeChain
-# TWICE-LABEL: function f15 name="predictedConstructor"
+# TWICE-LABEL: function f15 name="expectedConstructor"
 # TWICE: = TypeTest v1 testedType=builtin(Promise)
 # TWICE-NOT: testedType=builtin(Promise)
 
-function f16 name="predictedConstructorInRareBlock" parameters=[{type=anything}, {type=anything predicted=builtin(Promise)}, {type=boolean}] results=[{type=anything}] {
+function f16 name="expectedConstructorInRareBlock" parameters=[{type=anything}, {type=builtin(Promise) flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -298,7 +300,49 @@ function f16 name="predictedConstructorInRareBlock" parameters=[{type=anything},
   b2():
     Return v2
 }
-# CHECK-LABEL: function f16 name="predictedConstructorInRareBlock"
+# CHECK-LABEL: function f16 name="expectedConstructorInRareBlock"
 # CHECK-NOT: TypeTest
 # CHECK: v3: boolean = InstanceOf v0, v1
 # CHECK-NEXT: Throw v3
+
+# A constructor that the host puts on the global object is native: it takes no Symbol.hasInstance of its own and no other parent, whoever has had it in hand.
+function f17 name="constructorOfTheHost" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Blob
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f17 name="constructorOfTheHost"
+# CHECK: = TypeTest v0 testedType=Blob
+# CHECK: = Builtin builtin=BlobPrototype
+# CHECK: boolean = HasInPrototypeChain
+# CHECK-NOT: InstanceOf
+
+# The table has no entry for FormData.prototype: it is read from the constructor, and what is no object there is left to the whole operation.
+function f18 name="prototypeWithoutEntry" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=FormData
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f18 name="prototypeWithoutEntry"
+# CHECK: [[prototype18]]:{{*}}= PropGet v1 key="prototype"
+# CHECK-NEXT: = TypeTest [[prototype18]] testedType=object
+# CHECK: boolean = HasInPrototypeChain v0,
+# CHECK: frequency=Rare:
+# CHECK-NEXT: boolean = InstanceOf v0, v1
+# TWICE-LABEL: function f18 name="prototypeWithoutEntry"
+# TWICE: = PropGet v1 key="prototype"
+# TWICE-NOT: = PropGet v1 key="prototype"
+
+# File answers by native code of its own.
+function f19 name="answersItself" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=File
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f19 name="answersItself"
+# CHECK-NOT: HasInPrototypeChain
+# CHECK: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2

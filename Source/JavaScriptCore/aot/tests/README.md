@@ -15,18 +15,24 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 |---|---|
 | `driver/` | the directives and the matcher themselves |
 | `ir/text/`, `verifier/`, `types/` | IR text and the reader, the verifier, the type lattice |
+| `ir/reader/` | what the reader makes of positions, families and layouts that nobody allocates |
+| `ir/families/` | which layouts the reader puts into the family of a type: those that have the names it requires, but for the ones a literal field or a tag tells apart |
+| `ir/tagged-layouts/` | layouts by tag: the reader's plan, the pass `AllocateTaggedLayouts` |
 | `ir/result-types/`, `ir/edge-results/`, `ir/type-values/`, `ir/int32/` | result rules, what an edge proves, typing of values and requests, `int32` promises |
 | `ir/effects/` | effects, locations, summaries |
 | `support/`, `pipeline/` | the build context, limits, diagnostics, threads; the pass table, schedules, derived functions |
 | `analysis/` | the analyses of one function, the builder, the region cloner, the call graph |
-| `flow/{core,objects,properties,calls,results}/` | the flow analysis, one folder per part |
-| `valueflow/{bodies,heap,results}/` | the value flow analysis: the reduced bodies, the rules of the heap, the results |
+| `valueflow/{bodies,heap,calls,protocols,builtins,host,modules,families}/` | the flow analysis, one folder per part: the reduced bodies, then the rules of the heap, of calls, of the protocols of the language, of built-ins, of what the run time does by itself, of modules, of families |
+| `valueflow/placeholders/` | what the untracked and the unknown object stand for: calls, lookups, stores, escape |
+| `valueflow/{results,validation}/` | the results of the flow analysis, and the check of results that a test has damaged |
 | `passes/` | every pass of the pass table: `<pass>.ir`, `<pass>-<case>.ir`, `<pass>/<case>.ir` |
 | `derived-functions/` | the builders of derived functions: `<role>-<case>.ir` |
 | `builtins/` | the resolution of built-ins |
 | `select/` | one family of files or one folder per selection rule; raw words |
 | `place/` | slots, numbering, shape tests, site caches, program tables |
+| `represent/` | the representations of values |
 | `codegen/` | code generation, type test plans, barriers, frame maps, validation |
+| `validation/` | a lie per producer: a program in which one thing that typed code relies on is false. The validating build ends the process with the kind that names the lie, or fails at build time |
 | `cliffs/` | the cliffs that no program can cause |
 
 ## Running
@@ -44,7 +50,9 @@ testaot fuzz-reader [--seed=<n>] [--count=<n>] [<program>..]
 `<program>` is IR text, or program bytes as the front end writes them.
 
 The exit code is 0 if nothing failed, 1 if a test failed, no test matched or a build reported an error, and 2 if the command
-line is wrong. Each failure is a line `FAIL <file>:<line>: <why>`, and the last line is `<n> passed, <m> failed`.
+line is wrong. Each failure is a line `FAIL <file>:<line>: <why>`, and the last line is `<n> passed, <m> failed, <k> todo`. A file
+that fails under a `TODO` line is no failure: it prints `TODO <file>:<line>: <owner>: <what is lost>` and, indented below it, where
+it still fails.
 
 `--filter=<text>` runs only the files whose path contains the text. `--jobs=1` runs the files one at a time and prints each path
 before the file runs. `--show-output` prints, after a file's failures, what each of its `RUN` lines printed, under a line
@@ -53,14 +61,6 @@ before the file runs. `--show-output` prints, after a file's failures, what each
 `--option=<option word>` adds an option word to the `OPTIONS` of every file. `--only-diagnostic=<kind>` runs the files for that
 diagnostic alone: a file fails if one of its runs reports it, nothing else of the file is compared, and a file that expects the
 diagnostic itself is left out. Together they run a folder in another way than its files were written for.
-
-`all` does that with `<folder>/flow`, three more times: with `check=FlowFixpoint` for `FlowNotAtFixpoint`, in the usual order of
-the worklist (`flow-order-seed=0`) and in two shuffled orders. The check runs every rule of the flow analysis once more after the
-solve and reports whatever that still changes, which no check line shows. One file:
-
-```
-testaot run flow/calls/direct-eval.ir --option=check=FlowFixpoint --option=flow-order-seed=1 --only-diagnostic=FlowNotAtFixpoint
-```
 
 A test that crashes fails alone, because tests run in child processes. `run` starts one child per file. `native` starts one
 child for all its tests, and after a crash another one for the tests that are left. The failure is
@@ -134,22 +134,22 @@ DIAGNOSTIC: <UserDiagnosticKind or InternalErrorKind> [ <count> ]
 STATISTIC: <StatisticID> ( = | >= | <= ) <n>
 LOSS: <LimitID> { x<count> | f<n> | v<n> | L<n> }
 LIBRARY: own
+TODO: <owner>: <what is lost>
 ```
 
 A directive is a whole comment line: `#`, a name in capitals, then `:`. A comment after IR tokens on the same line is never a
 directive.
 
 Each `RUN` parses the file again (directives are comments to the parser), sends the wire records through the reader in the form and
-applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
-the pipeline themselves: a test runs `pass TypeValues` or `verify` itself. A command registered with `ProgramAsRead::TypedAndVerified` (the commands of the flow analysis, of the
+applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `verify-relations`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
+the pipeline themselves: a test runs `pass TypeValues` or `verify` itself, and `verify` refuses a program that still has a `Convert` (`RequestAfterTyping`). A command registered with `ProgramAsRead::TypedAndVerified` (the commands of the flow analysis, of the
 analyses and of effects) gets the program after the read stage of the pipeline: every value typed, every request resolved, the program verified. In a later form every
 value is typed by its rule, the types the text states are applied again, and the program is verified. Then the command runs on a new
 `BuildContext`, and what it printed is matched against the check lines with its prefix. A command registered with `RawWordCheck::Skip` gets a program that was verified
 without the check of raw words, and verifies it itself after its rewrite.
 
-The flow analysis takes a library function that the built-ins table names and the program lacks for a bug of the build (`FlowRuntimeFunctionMissing`). A front end always sends the
-library. So that a test need not, every command that runs the flow analysis on a program in form `AsRead` (all but `print`, `round-trip`, `verify`, `result-types` and `pass`) gets a
-stand-in library: one more function, `role=Library`, that returns `undefined`, registered for every runtime function of the table that the text has no `runtimefunction` line for. A test
+A front end always sends the library functions that the built-ins table names. So that a test need not, every command that runs the flow analysis on a program in form `AsRead` (all but `print`, `round-trip`, `verify`, `result-types` and `pass`) gets a
+stand-in library: one more module without a body (`flags=[IsLibrary]`, as a front end sends the library's files) and in it one more function, `role=Library`, that returns `undefined`, registered for every runtime function of the table that the text has no `runtimefunction` line for. A test
 about a library function or a model writes the lines of the functions it is about, and the stand-in serves the rest. The line `# LIBRARY: own`, written exactly so, says that the text brings all it
 needs: nothing is added. `testaot compile`, `testaot print --until` on IR text and
 `compileProgramText` (`AOTLoadedProgramTestSupport.h`) do the same. An image built with the stand-in carries it: in the realm of such a program every built-in that is written in
@@ -186,9 +186,16 @@ A run must give up on exactly the limits listed. A build keeps one loss record p
 subject. `x<count>` is the number of hits, `f<n>`, `v<n>` and `L<n>` are the function, value and layout of the subject. A word that
 is left out is not compared. With no `LOSS` line, the run must hit no limit.
 
-The commands that run the whole pipeline themselves (`pipeline`, `compile`, `generate-code`, `plan-slots`, `place`, `tables`, `check-placement`, `allocation-remarks`,
+The commands that run the whole pipeline themselves (`pipeline`, `compile`, `run-in-shell`, `generate-code`, `plan-slots`, `place`, `tables`, `check-placement`, `allocation-remarks`,
 `unsupported-conversions`) are the exception: the thresholds of heuristics are limits too, a build of almost any program hits some, and which ones depends on the target. There a listed
 limit must be hit, a limit that is not listed may be, and `LOSS: <LimitID> x0` says that a limit is not hit.
+
+`TODO` marks a test that shows a debt of the compiler: an optimization that is lost, a result that flow does not give. The test keeps
+its expectation and still runs. While it fails it is counted as `todo` and not as `failed`, so that `failed` means something new. As
+soon as it passes it fails, with `passes: remove the TODO line`, so no mark outlives its reason. The text names who owes it and, in
+plain words, the thing that is lost: the `TODO` lines of the folder are the list of debts. A file has at most one. A file that
+crashes, or whose directives are wrong, fails as ever. A test whose expectation is out of date is restated and gets no `TODO`, and
+neither does one that shows wrong code. Under `--option` and `--only-diagnostic` a file with a `TODO` line may pass.
 
 Directives can appear in any order. Only the order of the check lines with the same prefix matters.
 
@@ -208,23 +215,30 @@ schema is the reference for every keyword, field, operand, payload name and flag
   `w` type site, `e` eval scope, `x` expected result, `d` data.
 - A flag word is `[A, B]`, a nested record `{field=value ..}`, a variant `Case` or `Case{field=value ..}`, a list `[a, b]`.
 - A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`.
-- A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `env L1`,
-  `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). The engine has
-  more parts than the wire: `whole`, `fractional`, `double`, an exact function `f3`, a symbol key, `Array<number, proven, Int32>`
-  (contents proven, storage kind), `Array<object ~ L3, proven>` (what is predicted of the contents), `RegExp<"ab+c"[Global]>`.
+- A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
+  `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
+  family: the layouts below it. `nolayout` beside layouts says that the family also has members without a layout (`L3|nolayout`, in a layout
+  set `[L3, nolayout]`). `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
+  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-ins converted into it (`builtinMembers=[MathAbs]` on the function type). The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
+  symbol key, `Array<L3, proven>` (contents proven), `Array<number, proven, Int32>` (storage kind), `RegExp<"ab+c"[Global]>`.
+- A position is `{type=T site=w0 flags=[..]}`. Every value that enters it is inside `T`, by a conversion that the families cover or by a
+  `Check`. With the flag `IsExpected` nothing checks what enters: a read of it proves nothing and expects `T`.
 - A value is `vN = Operation operands.. name=value.. [flag, flag] @position`. Operands come first, in declaration order, separated by
   commas, with `-` for an absent optional operand that another operand follows. An operation without a result has no `vN =` and
   still takes the next id.
 - A terminator is `Name operands.. name=value.. -> target bK(arguments | proofs), ..`.
 - A block is `bN(parameters) role=.. subject=vK frequency=.. handler=bK(arguments):`.
 
-Four fields of a value are the engine's: `vN: TYPE`, `? WRITTEN`, `~ PREDICTION` and `@REPRESENTATION`, in this order and all left of
-the `=`. They are legal in every form. Text in form `AsRead` needs none: `TypeValues` types every value. Text in a later form writes types on entry positions,
+Three fields of a value are the engine's: `vN: TYPE`, `~ EXPECTED` and `@REPRESENTATION`, in this order and all left of
+the `=`. The type is proven. The expected type lies inside it and is there only where the best that is known is not proven. They are legal in every form. Text in form `AsRead` needs none: `TypeValues` types every value. Text in a later form writes types on entry positions,
 and on a value only where the test wants another type than the rule gives:
 
 ```
-v4: L0 ~ L0|L1 @Cell = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+v4: object ~ L0|L1 @Cell = GetSlot v1, v3 key="x" receivers=[L0] level=Expected
 ```
+
+In form `AsRead` the layouts that the reader derives (flag `IsDerived`) print as comment lines, `# layout L4 ..`, and with wire fields only
+not at all: the reader makes them again. `L<n>` with n past the layout lines of the text names the (n - lines)th of them.
 
 What the flow analysis knows is written in the records it belongs to, so a test of a pass states its own flow results:
 
@@ -276,12 +290,13 @@ Three things in a pattern are not literal text:
 There is no `[[x:..]]`. A label cannot use a variable. Each `RUN` starts with no variable bound. A `-NOT` binds nothing: it is
 tried after the match that follows it, with that match's bindings.
 
-Two mistakes that are easy to make:
+Three mistakes that are easy to make:
 
 - The printer omits a field that has its zero value, in a payload (`mode=Strict`) and in a record (`role=Source`, `kind=Record`).
   A pattern cannot name one: a positive line with it never matches, and a `-NOT` with it always passes.
 - A `-NOT` stops at the positive lines around it. To check that something appears nowhere in a function, give the function a
   block (`-LABEL`) with no positive line, or put the `-NOT` on both sides of the only one.
+- A pattern matches part of a line, so `v5: L0` also matches `v5: L0|L1`. Put `CHECK-NOT: |` behind it and go on with `CHECK:`.
 
 ## Commands
 
@@ -301,10 +316,17 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
   `decline <DeclineKind> f<n> v<n> <LimitID> [<count>] reason=<member>` per decline. The member is one of the enum that belongs to the kind
   (`decodeDeclineReason` in `AOTLosses.cpp`), the flags of `AllocationNotSunk` are joined by `+`, and a decline whose reason is `None`, or
   whose kind has no enum, has no ` reason=`. Then it prints the program. Its default form is `Prepared`.
+- `function-passes <PassID> { <PassID> }` runs the named function passes on one function after the other, all of them with one
+  `FunctionPassContext` per function, as a schedule does: what a pass remembers in the context about a function is there for the next.
+  It prints `f<n> <PassID>: Changed` or `Unchanged` per run, then the program. Passes that derive functions are refused.
 - `pipeline <PassID>` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, under
   `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
+- `run-in-shell { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The words are statements of
+  JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
+  `exited with <code>` or `crashed with <signal>`. A failure of a validating build is the line `AOT validation: <Kind> f<n> v<n> ..` in
+  front of `crashed with`.
 - `list-passes` prints the pass table: id, scope, necessity, forms.
 - `pass-context` prints what a function pass can ask its context: heat and "runs at most once" per block, the subject of a value.
 - `derived-functions <Role>:<target> ..` asks the table of derived functions for keys and prints, under `OPTIONS: report=Declines` the
@@ -407,7 +429,7 @@ test that crashed. That is also how `native` learns from a child which test to r
 - It tests one optimization or one rule.
 - Every positive case has a negative case next to it: the same shape with the one property changed that must stop the pass,
   checked with `outcome: Unchanged` or `-NOT`.
-- A case that gives up shows the answer one level down (the declared type, the larger set, the prediction, the generic path), for
+- A case that gives up shows the answer one level down (the declared type, the larger set, the expected type, the generic path), for
   the one value, site or object that caused it, and that its neighbor in the same function keeps its answer.
 - It binds the ids of values a pass creates with `[[name]]`, because the number of a new value is not part of the contract.
 - It states the form.
@@ -425,7 +447,7 @@ testaot compile main.bin --output=main.image validate
 jsc --aotImagePath=main.image -e "runCompiledEntryPoint(1)"
 ```
 
-The shell has seven functions for compiled code:
+The shell has eight functions for compiled code:
 
 - `runCompiledEntryPoint(id)` takes an id that `testaot compile` printed, runs that entry point and returns its promise. A
   rejection prints `Exception: ..` and exits with 3.
@@ -434,6 +456,9 @@ The shell has seven functions for compiled code:
 - `aotOperationCount(name)` returns how often a run-time operation ran. It needs `--aotCountsPath=<path>`.
 - `aotRuntimeCounters()` returns the run-time counters as text.
 - `aotBuiltinEntries()` returns the built-ins table as Bun's `test/aot/builtins` reads it.
+- `storeInSlotWithoutTest(object, name, value)` writes the value into the slot of that field of a compiled object and tests no type: the
+  writer that nobody listed, for the tests in `validation/`. It throws where the object has no such slot or the form of the slot cannot
+  hold the value.
 
 The shell has no host: a program that calls a built-in of Bun's compiles, and the call throws when it runs.
 
@@ -442,5 +467,6 @@ The run time refuses what the flow analysis did not see, in the shell too. With 
 (that script itself runs). With an image that loads no module by name, `runCompiledEntryPoint` throws for a module that has no
 `entry` line, and so do `RequireDynamic` and `ImportDynamic` in a function with `role=Library`. With an image in which nothing
 replaces what the loader answers, `setRequireCacheEntry` and `overrideRequire` throw, and `evictCompiledModule` throws for a
-CommonJS module whose body is proven to run at most once. The option word `admit=RuntimeCode` opens all of it.
+CommonJS module whose body is proven to run at most once. The option word `admit=Inspector` opens all of it: the flow analysis then
+states nothing, and any code may run.
 `AOTClosedWorldTests.cpp` has the cases.

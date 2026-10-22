@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinFamilyEmitter.h"
+#include "AOTStubsCoroutines.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,6 +22,9 @@ public:
 
 private:
     Boxed argumentOrUndefined(const InlineCall&, unsigned index);
+    bool isFunction(const InlineCall&, unsigned index);
+    bool isNoObject(const InlineCall&, unsigned index);
+    CellPointer thenWithOneHandler(const InlineCall&, PromiseHandler, unsigned index);
 };
 
 } } } // namespace JSC::AOT::Typed

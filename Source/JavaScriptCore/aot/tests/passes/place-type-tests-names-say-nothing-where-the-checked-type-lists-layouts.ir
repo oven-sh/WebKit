@@ -1,0 +1,33 @@
+# In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: `socket.highWaterMark` is an accessor above the
+# layout that the type names, other layouts have a field of that name, and a test for those would fail every time and send what stands behind it into the copy.
+# In a function that nobody has checked, what is expected came from what the analysis has seen, and the names may know better
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Socket" constructor=f2 fields=[{key="fd" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="State" constructor=f3 fields=[{key="highWaterMark" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="checked" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="highWaterMark"
+    Return v2
+}
+# CHECK-LABEL: function f0 name="checked"
+# CHECK-NOT: L1
+# CHECK: = PropGet {{*}} key="highWaterMark"
+# CHECK-NOT: L1
+
+function f1 name="notChecked" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="highWaterMark"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="notChecked"
+# CHECK: = TypeTest {{*}} testedType=L1
+# CHECK: = GetSlot {{*}} key="highWaterMark" receivers=[L1] level=Expected
+
+function f2 name="Socket" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="State" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

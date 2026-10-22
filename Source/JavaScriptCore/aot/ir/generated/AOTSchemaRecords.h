@@ -21,7 +21,6 @@ struct LocationFlow {
     ClosureDeferral deferral { ClosureDeferral::Unknown };
     FunctionID deferredFunction;
     bool isUnchangedDuringActivation { false };
-    bool mayKeepObservedObjectAlive { false };
     UnprovenCause cause { UnprovenCause::Unknown };
     Witness witness;
 
@@ -42,9 +41,11 @@ struct Field {
     std::optional<uint32_t> computedKey;
     DeclaredType declared;
     OptionSet<FieldFlags> flags;
+    OptionSet<FieldForm> form;
     LayoutID originLayout;
     std::optional<uint32_t> originField;
     FieldFlow flow;
+    TypeID slotType;
 
     friend bool operator==(const Field&, const Field&) = default;
 };
@@ -55,6 +56,26 @@ struct StaticField {
     VariableID variable;
 
     friend bool operator==(const StaticField&, const StaticField&) = default;
+};
+
+struct InnerObject {
+    uint32_t field { 0 };
+    LayoutID layout;
+    uint32_t arrayCapacity { 0 };
+    Vector<uint32_t> outerFields;
+    AllocationClassID outerAllocationClass;
+    bool isAlwaysInPlace { false };
+
+    friend bool operator==(const InnerObject&, const InnerObject&) = default;
+};
+
+struct FlattenedObject {
+    uint32_t field { 0 };
+    LayoutID layout;
+    Vector<uint32_t> fields;
+    AllocationClassID allocationClass;
+
+    friend bool operator==(const FlattenedObject&, const FlattenedObject&) = default;
 };
 
 struct FieldOrder {
@@ -84,7 +105,6 @@ struct LayoutFlow {
     Vector<AllocationClassID> allocationClasses;
     Vector<FieldOrder> constructorOrders;
     FieldCreation fieldCreation { FieldCreation::Unknown };
-    ThisLeak thisLeak { ThisLeak::Unknown };
     OptionSet<ObservedUse> observedUses;
     UnprovenCause cause { UnprovenCause::Unknown };
     Witness witness;
@@ -92,8 +112,10 @@ struct LayoutFlow {
     KeyEnumeration keys { KeyEnumeration::Unknown };
     Vector<PropertyKeyID> addedKeys;
     bool addedKeysAreComplete { false };
+    bool isReachedThroughUnknownReceivers { false };
     Vector<ClassMember> ownAccessors;
     bool ownAccessorsAreComplete { false };
+    std::optional<uint32_t> closureEnvironmentField;
 
     friend bool operator==(const LayoutFlow&, const LayoutFlow&) = default;
 };
@@ -119,18 +141,21 @@ struct LayoutRecord {
     StringID name;
     ModuleID module;
     uint32_t position { 0 };
-    LayoutID predictedBase;
+    LayoutID base;
     FunctionID constructor;
     Vector<Field> fields;
     Vector<StaticField> staticFields;
     Vector<LayoutID> supertypes;
     uint32_t computedKeyCount { 0 };
     OptionSet<LayoutFlags> flags;
+    Vector<uint32_t> declaredOrder;
     BuiltinLayoutID builtinLayout;
     ModuleID namespaceOf;
     uint32_t ownFieldCount { 0 };
     LayoutFlow flow;
     ClassFlow classFlow;
+    Vector<InnerObject> innerObjects;
+    Vector<FlattenedObject> flattenedObjects;
 
     friend bool operator==(const LayoutRecord&, const LayoutRecord&) = default;
 };
@@ -155,6 +180,54 @@ struct SourceRange {
     friend bool operator==(const SourceRange&, const SourceRange&) = default;
 };
 
+struct RelationSubject {
+    RelationSubjectKind kind { RelationSubjectKind::Parameter };
+    uint32_t index { 0 };
+    uint32_t source { 0 };
+    PropertyKeyID key;
+    OptionSet<ValueFate> fate;
+    uint32_t results { 0 };
+
+    friend bool operator==(const RelationSubject&, const RelationSubject&) = default;
+};
+
+struct StoredInto {
+    uint32_t source { 0 };
+    uint32_t target { 0 };
+    PropertyKeyID key;
+    std::optional<uint32_t> creationOperand;
+    bool isOnEveryPath { false };
+    bool isBeforeTargetLeaves { false };
+
+    friend bool operator==(const StoredInto&, const StoredInto&) = default;
+};
+
+struct HandedTo {
+    uint32_t source { 0 };
+    uint32_t call { 0 };
+    uint32_t argument { 0 };
+
+    friend bool operator==(const HandedTo&, const HandedTo&) = default;
+};
+
+struct OperandOf {
+    uint32_t source { 0 };
+    uint32_t user { 0 };
+    uint32_t position { 0 };
+
+    friend bool operator==(const OperandOf&, const OperandOf&) = default;
+};
+
+struct FunctionRelations {
+    Vector<RelationSubject> subjects;
+    Vector<StoredInto> stores;
+    Vector<HandedTo> handed;
+    Vector<OperandOf> operands;
+    uint32_t resultsFullyListed { 0 };
+
+    friend bool operator==(const FunctionRelations&, const FunctionRelations&) = default;
+};
+
 struct ParameterOrigin {
     std::optional<uint32_t> original;
 
@@ -172,20 +245,23 @@ struct Derivation {
 
 struct CreatorRecord {
     enum class Kind : uint8_t {
-        None, Entrypoint, Version, Coroutine, BoundFunction, ResultWrapper, ResultWorker, ParameterWrapper, Continuation, Serializer, Parser,
-        Validator, ChainStep, StubBody
+        None, Entrypoint, TableLookup, Version, Coroutine, BoundFunction, ResultWrapper, ResultWorker, ParameterWrapper, EntryChecks, Serializer,
+        Parser, Validator, ChainStep, StubBody
     };
 
     struct None { friend bool operator==(const None&, const None&) = default; };
     struct Entrypoint {
         FunctionID target;
-        CalleeSetID group;
         ArgumentPassing arguments { ArgumentPassing::Buffer };
         bool takesNewTarget { false };
         FunctionID constructEntrypoint;
-        FunctionID groupEntrypoint;
 
         friend bool operator==(const Entrypoint&, const Entrypoint&) = default;
+    };
+    struct TableLookup {
+        PropertyKeyID key;
+
+        friend bool operator==(const TableLookup&, const TableLookup&) = default;
     };
     struct Version {
         FunctionID provenVersion;
@@ -199,6 +275,7 @@ struct CreatorRecord {
         FunctionID entryWithoutPromise;
         TypeID promiseType;
         std::optional<uint32_t> promiseParameter;
+        FunctionID worker;
 
         friend bool operator==(const Coroutine&, const Coroutine&) = default;
     };
@@ -228,11 +305,11 @@ struct CreatorRecord {
 
         friend bool operator==(const ParameterWrapper&, const ParameterWrapper&) = default;
     };
-    struct Continuation {
-        FunctionID origin;
-        uint32_t index { 0 };
+    struct EntryChecks {
+        FunctionID body;
+        FunctionID fallback;
 
-        friend bool operator==(const Continuation&, const Continuation&) = default;
+        friend bool operator==(const EntryChecks&, const EntryChecks&) = default;
     };
     struct Serializer {
         LayoutID layout;
@@ -263,7 +340,7 @@ struct CreatorRecord {
         friend bool operator==(const StubBody&, const StubBody&) = default;
     };
 
-    using Cases = Variant<None, Entrypoint, Version, Coroutine, BoundFunction, ResultWrapper, ResultWorker, ParameterWrapper, Continuation, Serializer, Parser, Validator, ChainStep, StubBody>;
+    using Cases = Variant<None, Entrypoint, TableLookup, Version, Coroutine, BoundFunction, ResultWrapper, ResultWorker, ParameterWrapper, EntryChecks, Serializer, Parser, Validator, ChainStep, StubBody>;
 
     CreatorRecord() = default;
     template<typename Case> requires (!std::is_same_v<std::remove_cvref_t<Case>, CreatorRecord>)
@@ -311,6 +388,8 @@ struct FunctionRecord {
     Vector<DeclaredType> parameters;
     Vector<DeclaredType> results;
     Vector<FunctionID> functionTypes;
+    Vector<BuiltinID> builtinMembers;
+    FunctionRelations relations;
     OptionSet<FunctionCapabilities> capabilities;
     Derivation derivation;
     CreatorRecord creator;
@@ -345,7 +424,7 @@ struct EvalScope {
 struct ColumnAdjustment {
     uint32_t offset { 0 };
     uint32_t line { 0 };
-    uint32_t excessBytes { 0 };
+    uint32_t column { 0 };
 
     friend bool operator==(const ColumnAdjustment&, const ColumnAdjustment&) = default;
 };
@@ -359,6 +438,8 @@ struct ModuleRequest {
     ModuleID target;
     ImportPhase phase { ImportPhase::Evaluation };
     bool isDynamicStarExport { false };
+    ModuleRequestKind kind { ModuleRequestKind::Import };
+    bool completes { false };
 
     friend bool operator==(const ModuleRequest&, const ModuleRequest&) = default;
 };
@@ -394,6 +475,7 @@ struct RequiredName {
 struct ModuleFailure {
     ModuleID importer;
     StringID specifier;
+    ModuleID exporter;
 
     friend bool operator==(const ModuleFailure&, const ModuleFailure&) = default;
 };
@@ -409,6 +491,7 @@ struct Module {
     RuntimeModuleID runtimeModule;
     ModuleID referrer;
     FunctionID body;
+    VariableID exportsVariable;
     DataID data;
     Vector<ModuleRequest> requests;
     Vector<ModuleExport> exports;
@@ -537,10 +620,8 @@ struct FunctionFlow {
     CallerState callers { CallerState::Unknown };
     ExecutionCount executions { ExecutionCount::Unknown };
     ClosureUse closureUse { ClosureUse::Unknown };
-    FunctionID genericVersion;
     UnprovenCause cause { UnprovenCause::Unknown };
     Witness witness;
-    ResultCheck resultCheck { ResultCheck::ByCallee };
 
     friend bool operator==(const FunctionFlow&, const FunctionFlow&) = default;
 };
@@ -563,6 +644,7 @@ struct BuiltinLocationFlow {
 struct LayoutSet {
     Vector<LayoutID> members;
     bool isComplete { false };
+    bool hasMembersWithoutLayout { false };
 
     friend bool operator==(const LayoutSet&, const LayoutSet&) = default;
 };
@@ -597,12 +679,12 @@ struct AllocationClass {
     LayoutID layout;
     BuiltinClassID builtinClass;
     FunctionID closureFunction;
-    OptionSet<PristineAspects> pristine;
     OptionSet<ObjectMutation> impossibleMutations;
     KeyEnumeration keys { KeyEnumeration::Unknown };
     FrameLocality locality { FrameLocality::Unknown };
     Vector<PropertyKeyID> addedKeys;
     bool addedKeysAreComplete { false };
+    bool isReachedThroughUnknownReceivers { false };
     UnprovenCause cause { UnprovenCause::Unknown };
     Witness witness;
     bool isStoredUnderUnnamedKeys { false };
@@ -624,6 +706,15 @@ struct Origin {
     uint32_t inlineFrame { 0 };
 
     friend bool operator==(const Origin&, const Origin&) = default;
+};
+
+struct MemberConditionRecord {
+    MemberConditionKind kind { MemberConditionKind::MemberUnchanged };
+    LayoutID layout;
+    ClassSide side { ClassSide::Prototype };
+    PropertyKeyID key;
+
+    friend bool operator==(const MemberConditionRecord&, const MemberConditionRecord&) = default;
 };
 
 struct PlacedKey {

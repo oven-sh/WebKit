@@ -32,7 +32,9 @@ class StubCatalog;
 struct SideTables {
     Vector<uint8_t> bytes;
     Vector<uint32_t> offsets;
+    Vector<uint8_t> positions;
     Vector<uint32_t> frameMapWords;
+    Vector<ImageFrame> frames;
 };
 
 struct ImageSections {
@@ -99,7 +101,7 @@ BuiltImage buildImage(ImageInputs&&, BuildContext&);
 OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput&);
 void orderFunctions(LinkedFunctions&, const Typed::PipelineOutput&, BuildContext&);
 ResolvedCallees resolveCallees(const LinkedFunctions&, const CodeIndex&, std::span<const EntryAlias>, BuildContext&);
-SideTables encodeSideTables(const LinkedFunctions&, std::span<const uint32_t> callSiteOffsets, BuildContext&);
+SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8_t>> callSites, BuildContext&);
 
 void removeJumpOnlyFunctions(LinkedFunctions&, Vector<EntryAlias>&, const CodeTemplates&, BuildContext&);
 

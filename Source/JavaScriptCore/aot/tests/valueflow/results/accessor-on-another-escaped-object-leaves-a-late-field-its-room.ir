@@ -1,0 +1,77 @@
+# function Type() {}    const type = new Type(); type.id = 1; publish(type)    publish(Object.create(target, { id: { get, set } }))
+# Unknown code may hang every object that has escaped above every other one, and a definition on an object that nobody knows may hit every prototype that has escaped.
+# So one accessor anywhere in the program lies "above" the instances of every class whose instances escape. That takes no name from them: `id` gets its field in Type.
+# The field is right whatever hangs above an instance, since a store that creates it and a read that finds it empty test that the object inherits nothing under the name.
+# An accessor that the program itself defines on the prototype object of the class does take the name: a store to `id` of a State runs the setter, and State gets no field
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Type" constructor=f1 fields=[{key="id" {{*}}flags=[IsAddedLate
+# CHECK: layout L2 kind=Instance name="State" constructor=f4
+# CHECK-NOT: fields=[{key="id"
+# CHECK: layout L3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}]
+layout L2 kind=Instance name="State" constructor=f4 flags=[IsConstructorFunction]
+layout L3 name="Target" fields=[{key="text" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f1
+    v4 = Construct v3
+    PropSet v4, v2 key="id" mode=Strict
+    v6 = Call v1, -, v4
+    v7 = NewObject layout=L3
+    v8 = FinishObject v7
+    v9 = NewDictionary
+    v10 = NewObject layout=L1
+    v11 = NewClosure function=f2
+    PropDefine v10, v11 key="get"
+    v13 = NewClosure function=f3
+    PropDefine v10, v13 key="set"
+    v15 = FinishObject v10
+    PropDefine v9, v15 key="id"
+    v17 = Builtin builtin=Object
+    v18 = Builtin builtin=ObjectCreate
+    v19 = Call v18, v17, v8, v9
+    v20 = Call v1, -, v19
+    v21 = NewClosure function=f4
+    v22 = PropGet v21 key="prototype"
+    v23 = NewDictionary
+    v24 = NewObject layout=L1
+    v25 = NewClosure function=f2
+    PropDefine v24, v25 key="get"
+    v27 = NewClosure function=f3
+    PropDefine v24, v27 key="set"
+    v29 = FinishObject v24
+    PropDefine v23, v29 key="id"
+    v31 = Builtin builtin=ObjectDefineProperties
+    v32 = Call v31, v17, v22, v23
+    v33 = Construct v21
+    PropSet v33, v2 key="id" mode=Strict
+    v35 = Call v1, -, v33
+    Return
+}
+function f1 name="Type" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=7
+    Return v1
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f4 name="State" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

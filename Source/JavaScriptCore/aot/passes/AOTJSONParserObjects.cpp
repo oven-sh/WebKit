@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTExpandOwnKeysOrders.h"
 #include "AOTFlowResults.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRemoveUnreadFields.h"
@@ -71,9 +72,17 @@ static Emission::ProofsByOrigin proofsByOriginOf(Emission& emission, const Resul
     return createsArrays ? Emission::ProofsByOrigin::AboutArrays : Emission::ProofsByOrigin::None;
 }
 
+// The slot of a field of a function type holds fewer functions than the type admits.
+static TypeID typeStoredInSlotOf(const Program& program, const Field& field)
+{
+    if (field.slotType && program.at(field.slotType).isSubsetOf(program.at(field.declared.type), program))
+        return field.slotType;
+    return field.declared.type;
+}
+
 static TypeID testedFieldTypeOf(Emission& emission, const ResultMember& member, const Field& field)
 {
-    return emission.fieldTypeToTest(field.declared.type, proofsByOriginOf(emission, member));
+    return emission.fieldTypeToTest(typeStoredInSlotOf(emission.program(), field), proofsByOriginOf(emission, member));
 }
 
 static bool canFillField(Emission& emission, TypeID parsedType, const ResultMember& member, const Field& field)
@@ -88,7 +97,7 @@ static ValueID emitTestFieldType(Emission& emission, ValueID value, const Result
 
 static ValueID emitRequireTypeOfMember(Emission& emission, ValueID value, const ResultMember& member, const Field& field, BlockID otherwise)
 {
-    return emission.emitRequireFieldType(value, field.declared.type, proofsByOriginOf(emission, member), otherwise);
+    return emission.emitRequireFieldType(value, typeStoredInSlotOf(emission.program(), field), proofsByOriginOf(emission, member), otherwise);
 }
 
 static ValueID appendObjectKey(IRBuilder& builder, ValueID order, LayoutID layout, uint32_t field)
@@ -145,7 +154,7 @@ auto JSONParserBuilder::resolveMembers(const ResultNode& node) -> Vector<MemberP
             quoted->append(':');
             parse.quotedKeyAndColon = inputs().strings.intern(quoted->span());
         }
-        parse.valueType = inputs().types.intern(program().at(memberNode.type).withoutProofs().withPrimitives(Primitive::Undefined));
+        parse.valueType = inputs().types.intern(program().at(memberNode.type).withoutClassProofs().withUntestableBuiltinsWidened().withPrimitives(Primitive::Undefined));
         parse.missing = classifyMissingMember(member, memberNode);
 
         const Type& fieldType = program().at(fieldOf(program(), node, member).declared.type);
@@ -164,6 +173,16 @@ auto JSONParserBuilder::resolveMembers(const ResultNode& node) -> Vector<MemberP
         }
         members.append(parse);
     }
+
+    if (!node.layout)
+        return members;
+    // A text is most likely written from an object that the program's own code has made, or else by somebody who read the declaration of the type.
+    ExpectedKeyOrders expected = expectedKeyOrdersOf(program(), node.layout, KeyOrderLimits { 1, program().at(node.layout).fields.size() });
+    bool isCreatedByProgram = !expected.orders.isEmpty() && !expected.orders.first().isEmpty();
+    std::span<const uint32_t> order = isCreatedByProgram ? expected.orders.first().span() : program().at(node.layout).declaredOrder.span();
+    std::ranges::stable_sort(members, { }, [&](const MemberParse& parse) {
+        return parse.member->field ? static_cast<size_t>(std::ranges::find(order, *parse.member->field) - order.begin()) : order.size();
+    });
     return members;
 }
 
@@ -444,7 +463,7 @@ void JSONParserBuilder::emitStoreOfMemberIfSeen(const ObjectParse& parse, size_t
     Value store = IRBuilder::make(Opcode::PutSlot, { object, object, value });
     store.setKey(field.key);
     store.setReceivers(layoutSetOf(singleElementSpan(parse.node.layout)));
-    store.setLevel(KnowledgeLevel::Predicted);
+    store.setLevel(KnowledgeLevel::Expected);
     builder().append(WTF::move(store));
     builder().emitJump(next);
 

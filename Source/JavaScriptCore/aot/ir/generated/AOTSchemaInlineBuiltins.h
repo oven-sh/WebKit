@@ -12,22 +12,22 @@
     v(ArrayAt) v(ArrayIndexOf) v(ArrayIncludes) v(ArrayJoin) v(ArrayConcat) v(ArrayShift) v(ArrayPop) v(ArraySlice) v(ArraySplice) v(ArrayUnshift) \
     v(ArraySplicePrefix) v(ArrayIterator) v(ArrayPush) v(ArrayIsArray) v(ArrayLength) v(ArraySetLength) v(ArrayWithLength) v(ArrayOf) v(ArrayFrom) \
     v(TypedArrayLength) v(TypedArrayByteLength) v(TypedArrayByteOffset) v(TypedArrayWithLength) v(OwnPropertyKeys) v(ObjectGetOwnPropertyDescriptor) \
-    v(ObjectHasOwn) v(ObjectPropertyIsEnumerable) v(OwnPropertyDescriptorFields) v(ObjectCreate) v(GetPrototypeOf) v(SetPrototypeOf) \
-    v(CallObjectConstructor) v(ObjectFreeze) v(ObjectPrototypeToString) v(ObjectIs) v(ReturnThis) v(NewMap) v(MapGet) v(MapHas) v(SetHas) v(MapSet) \
-    v(SetAdd) v(MapSize) v(SetSize) v(SetFromIterable) v(MapFromEntries) v(WeakMapGet) v(WeakMapHas) v(WeakSetHas) v(MapDelete) v(SetDelete) \
-    v(MapClear) v(SetClear) v(MapIterator) v(SetIterator) v(PromiseResolve) v(PromiseThen) v(PromiseCatch) v(DataViewGet) v(DataViewSet) v(Atomics) \
-    v(BufferAccess) v(MathMinOfArray) v(MathMaxOfArray) v(CallNumberConstructor) v(NumberToString) v(ParseInt) v(NumberToStringAppend) v(MathAbs) \
-    v(MathFloor) v(MathCeil) v(MathTrunc) v(MathRound) v(MathFround) v(MathF16Round) v(MathSqrt) v(MathPow) v(MathMin) v(MathMax) v(MathImul) \
-    v(MathClz32) v(MathSign) v(MathFunction) v(MathATan2) v(MathHypot) v(IsNaN) v(IsFinite) v(NumberIsNaN) v(NumberIsFinite) v(NumberIsInteger) \
-    v(NumberIsSafeInteger) v(MathRandom) v(DateGetField) v(DateToISOString) v(DateNow) v(DateGetTime) v(DateGetMilliseconds) v(DateSetTime) \
-    v(FunctionBind) v(ReflectApply) v(FunctionApply) v(StringRepeat) v(StringPadStart) v(StringPadEnd) v(StringIsWellFormed) v(StringToWellFormed) \
-    v(StringNormalize) v(StringFromCodePoint) v(CallStringConstructor) v(StringUTF8ByteLength) v(StringLength) v(StringAt) v(StringCharAt) \
-    v(StringCharCodeAt) v(StringCodePointAt) v(StringSlice) v(StringSubstring) v(StringSubstr) v(StringStartsWith) v(StringEndsWith) \
-    v(StringIncludes) v(StringIndexOf) v(StringLastIndexOf) v(StringToLowerCase) v(StringToUpperCase) v(StringTrim) v(StringTrimStart) \
-    v(StringTrimEnd) v(StringLocaleCompare) v(StringConcat) v(StringFromCharCode) v(StringSplitPrefix) v(StringSliceAppend) v(StringSubstringAppend) \
-    v(CallStringConstructorAppend) v(NewRegExp) v(StringMatch) v(StringSearch) v(RegExpExec) v(RegExpTest) v(RegExpFlags) v(RegExpSource) \
-    v(StringReplace) v(StringReplaceAll) v(StringSplit) v(RegExpFlag) v(RegExpGetLastIndex) v(RegExpSetLastIndex) v(RegExpExecPrefix) \
-    v(StringMatchPrefix) v(NewError) v(FormatDateTime) v(FormatNumber)
+    v(ObjectHasOwn) v(ObjectPropertyIsEnumerable) v(OwnPropertyDescriptorFields) v(ObjectValues) v(ObjectEntries) v(ObjectCreate) v(GetPrototypeOf) \
+    v(SetPrototypeOf) v(CallObjectConstructor) v(ObjectFreeze) v(ObjectPrototypeToString) v(ObjectIs) v(ReturnThis) v(NewMap) v(NewSet) v(MapGet) \
+    v(MapHas) v(SetHas) v(MapSet) v(SetAdd) v(MapSize) v(SetSize) v(SetFromIterable) v(MapFromEntries) v(WeakMapGet) v(WeakMapHas) v(WeakSetHas) \
+    v(MapDelete) v(SetDelete) v(MapClear) v(SetClear) v(MapIterator) v(SetIterator) v(PromiseResolve) v(PromiseThen) v(PromiseCatch) v(DataViewGet) \
+    v(DataViewSet) v(Atomics) v(BufferAccess) v(MathMinOfArray) v(MathMaxOfArray) v(CallNumberConstructor) v(NumberToString) v(ParseInt) \
+    v(NumberToStringAppend) v(MathAbs) v(MathFloor) v(MathCeil) v(MathTrunc) v(MathRound) v(MathFround) v(MathF16Round) v(MathSqrt) v(MathPow) \
+    v(MathMin) v(MathMax) v(MathImul) v(MathClz32) v(MathSign) v(MathFunction) v(MathATan2) v(MathHypot) v(IsNaN) v(IsFinite) v(NumberIsNaN) \
+    v(NumberIsFinite) v(NumberIsInteger) v(NumberIsSafeInteger) v(MathRandom) v(DateGetField) v(DateToISOString) v(DateNow) v(DateGetTime) \
+    v(DateGetMilliseconds) v(DateSetTime) v(FunctionBind) v(ReflectApply) v(FunctionApply) v(StringRepeat) v(StringPadStart) v(StringPadEnd) \
+    v(StringIsWellFormed) v(StringToWellFormed) v(StringNormalize) v(StringFromCodePoint) v(CallStringConstructor) v(StringUTF8ByteLength) \
+    v(StringLength) v(StringAt) v(StringCharAt) v(StringCharCodeAt) v(StringCodePointAt) v(StringSlice) v(StringSubstring) v(StringSubstr) \
+    v(StringStartsWith) v(StringEndsWith) v(StringIncludes) v(StringIndexOf) v(StringLastIndexOf) v(StringToLowerCase) v(StringToUpperCase) \
+    v(StringTrim) v(StringTrimStart) v(StringTrimEnd) v(StringLocaleCompare) v(StringConcat) v(StringFromCharCode) v(StringSplitPrefix) \
+    v(StringSliceAppend) v(StringSubstringAppend) v(CallStringConstructorAppend) v(NewRegExp) v(StringMatch) v(StringSearch) v(RegExpExec) \
+    v(RegExpTest) v(RegExpFlags) v(RegExpSource) v(StringReplace) v(StringReplaceAll) v(StringSplit) v(RegExpFlag) v(RegExpGetLastIndex) \
+    v(RegExpSetLastIndex) v(RegExpExecPrefix) v(StringMatchPrefix) v(NewError) v(FormatDateTime) v(FormatNumber)
 
 #define FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(v) \
     v(ArrayAt) v(ArrayIndexOf) v(ArrayIncludes) v(ArrayJoin) v(ArrayConcat) v(ArrayShift) v(ArrayPop) v(ArraySlice) v(ArraySplice) v(ArrayUnshift) \
@@ -40,14 +40,15 @@
     v(ArrayFrom) v(TypedArrayLength) v(TypedArrayByteLength) v(TypedArrayByteOffset) v(TypedArrayWithLength)
 
 #define FOR_EACH_AOT_INLINE_BUILTIN_IN_OWN_PROPERTY_BUILTIN(v) \
-    v(OwnPropertyKeys) v(ObjectGetOwnPropertyDescriptor) v(ObjectHasOwn) v(ObjectPropertyIsEnumerable) v(OwnPropertyDescriptorFields)
+    v(OwnPropertyKeys) v(ObjectGetOwnPropertyDescriptor) v(ObjectHasOwn) v(ObjectPropertyIsEnumerable) v(OwnPropertyDescriptorFields) \
+    v(ObjectValues) v(ObjectEntries)
 
 #define FOR_EACH_AOT_INLINE_BUILTIN_IN_OBJECT_BUILTIN(v) \
     v(ObjectCreate) v(GetPrototypeOf) v(SetPrototypeOf) v(CallObjectConstructor) v(ObjectFreeze) v(ObjectPrototypeToString) v(ObjectIs) \
     v(ReturnThis)
 
 #define FOR_EACH_AOT_INLINE_BUILTIN_IN_HASH_TABLE_BUILTIN(v) \
-    v(NewMap) v(MapGet) v(MapHas) v(SetHas) v(MapSet) v(SetAdd) v(MapSize) v(SetSize)
+    v(NewMap) v(NewSet) v(MapGet) v(MapHas) v(SetHas) v(MapSet) v(SetAdd) v(MapSize) v(SetSize)
 
 #define FOR_EACH_AOT_INLINE_BUILTIN_IN_MAP_SET_BUILTIN(v) \
     v(SetFromIterable) v(MapFromEntries) v(WeakMapGet) v(WeakMapHas) v(WeakSetHas) v(MapDelete) v(SetDelete) v(MapClear) v(SetClear) v(MapIterator) \
@@ -104,14 +105,15 @@ constexpr InlineBuiltinFamily familyOf(InlineBuiltin builtin)
     case InlineBuiltin::TypedArrayByteOffset: case InlineBuiltin::TypedArrayWithLength:
         return InlineBuiltinFamily::ArrayBufferViewBuiltin;
     case InlineBuiltin::OwnPropertyKeys: case InlineBuiltin::ObjectGetOwnPropertyDescriptor: case InlineBuiltin::ObjectHasOwn:
-    case InlineBuiltin::ObjectPropertyIsEnumerable: case InlineBuiltin::OwnPropertyDescriptorFields:
+    case InlineBuiltin::ObjectPropertyIsEnumerable: case InlineBuiltin::OwnPropertyDescriptorFields: case InlineBuiltin::ObjectValues:
+    case InlineBuiltin::ObjectEntries:
         return InlineBuiltinFamily::OwnPropertyBuiltin;
     case InlineBuiltin::ObjectCreate: case InlineBuiltin::GetPrototypeOf: case InlineBuiltin::SetPrototypeOf:
     case InlineBuiltin::CallObjectConstructor: case InlineBuiltin::ObjectFreeze: case InlineBuiltin::ObjectPrototypeToString:
     case InlineBuiltin::ObjectIs: case InlineBuiltin::ReturnThis:
         return InlineBuiltinFamily::ObjectBuiltin;
-    case InlineBuiltin::NewMap: case InlineBuiltin::MapGet: case InlineBuiltin::MapHas: case InlineBuiltin::SetHas: case InlineBuiltin::MapSet:
-    case InlineBuiltin::SetAdd: case InlineBuiltin::MapSize: case InlineBuiltin::SetSize:
+    case InlineBuiltin::NewMap: case InlineBuiltin::NewSet: case InlineBuiltin::MapGet: case InlineBuiltin::MapHas: case InlineBuiltin::SetHas:
+    case InlineBuiltin::MapSet: case InlineBuiltin::SetAdd: case InlineBuiltin::MapSize: case InlineBuiltin::SetSize:
         return InlineBuiltinFamily::HashTableBuiltin;
     case InlineBuiltin::SetFromIterable: case InlineBuiltin::MapFromEntries: case InlineBuiltin::WeakMapGet: case InlineBuiltin::WeakMapHas:
     case InlineBuiltin::WeakSetHas: case InlineBuiltin::MapDelete: case InlineBuiltin::SetDelete: case InlineBuiltin::MapClear:
@@ -181,9 +183,10 @@ constexpr bool hasOptionalSlowPath(InlineBuiltin builtin)
     switch (builtin) {
     case InlineBuiltin::ArraySplicePrefix: case InlineBuiltin::ArrayIterator: case InlineBuiltin::ArrayLength: case InlineBuiltin::ArraySetLength:
     case InlineBuiltin::ArrayWithLength: case InlineBuiltin::ArrayOf: case InlineBuiltin::TypedArrayWithLength: case InlineBuiltin::ObjectHasOwn:
-    case InlineBuiltin::ObjectPropertyIsEnumerable: case InlineBuiltin::OwnPropertyDescriptorFields: case InlineBuiltin::ObjectIs:
-    case InlineBuiltin::ReturnThis: case InlineBuiltin::NewMap: case InlineBuiltin::MapGet: case InlineBuiltin::MapHas: case InlineBuiltin::SetHas:
-    case InlineBuiltin::MapSet: case InlineBuiltin::SetAdd: case InlineBuiltin::MapSize: case InlineBuiltin::SetSize: case InlineBuiltin::WeakMapGet:
+    case InlineBuiltin::ObjectPropertyIsEnumerable: case InlineBuiltin::OwnPropertyDescriptorFields: case InlineBuiltin::ObjectValues:
+    case InlineBuiltin::ObjectEntries: case InlineBuiltin::ObjectIs: case InlineBuiltin::ReturnThis: case InlineBuiltin::NewMap:
+    case InlineBuiltin::NewSet: case InlineBuiltin::MapGet: case InlineBuiltin::MapHas: case InlineBuiltin::SetHas: case InlineBuiltin::MapSet:
+    case InlineBuiltin::SetAdd: case InlineBuiltin::MapSize: case InlineBuiltin::SetSize: case InlineBuiltin::WeakMapGet:
     case InlineBuiltin::WeakMapHas: case InlineBuiltin::WeakSetHas: case InlineBuiltin::MapDelete: case InlineBuiltin::SetDelete:
     case InlineBuiltin::MapClear: case InlineBuiltin::SetClear: case InlineBuiltin::MapIterator: case InlineBuiltin::SetIterator:
     case InlineBuiltin::PromiseThen: case InlineBuiltin::PromiseCatch: case InlineBuiltin::MathAbs: case InlineBuiltin::MathFloor:

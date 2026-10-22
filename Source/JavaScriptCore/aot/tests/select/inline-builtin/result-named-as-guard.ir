@@ -9,13 +9,13 @@ function f0 name="resultIsItsOwnGuard" parameters=[{type=object}] results=[{type
   b0(v0: object):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     v2 = Integer integer=0
-    v3 = GetArrayElement v1, v2, v1 level=Predicted
+    v3 = GetArrayElement v1, v2, v1 level=Expected
     Return v3
 }
 # CHECK-LABEL: function f0 name="resultIsItsOwnGuard"
 # CHECK-NOT: TryCallInline
 # CHECK: v1: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0
-# CHECK: = GetArrayElement v1, v2, v1 level=Predicted
+# CHECK: = GetArrayElement v1, v2, v1 level=Expected
 
 function f1 name="readUnderAnotherGuard" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object):
@@ -24,12 +24,12 @@ function f1 name="readUnderAnotherGuard" parameters=[{type=object}] results=[{ty
     v3 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):
-    v5 = GetArrayElement v1, v2, v4 level=Predicted
+    v5 = GetArrayElement v1, v2, v4 level=Expected
     Return v5
   b2() frequency=Rare:
     Return v2
 }
 # CHECK-LABEL: function f1 name="readUnderAnotherGuard"
 # CHECK: TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[{{*}}] overload=ObjectKeys/0 -> done [[done1]](), miss [[miss1]]()
-# CHECK: = GetArrayElement v1, v2, v4 level=Predicted
+# CHECK: = GetArrayElement v1, v2, v4 level=Expected
 # CHECK: [[done1]](v1: Array<string>):

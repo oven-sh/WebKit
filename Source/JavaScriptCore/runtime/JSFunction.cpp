@@ -304,17 +304,17 @@ JSString* JSFunction::toString(JSGlobalObject* globalObject)
         return asString(string);
     }
 
+    if (isHostFunction()) {
 #if ENABLE(AOT)
-    if (isCompiledClosure()) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue string = AOT::CompiledCallee::sourceText(globalObject, this);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        return asString(string);
-    }
+        if (isCompiledClosure()) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSValue string = AOT::CompiledCallee::sourceText(globalObject, this);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            return asString(string);
+        }
 #endif
-
-    if (isHostFunction())
         return static_cast<NativeExecutable*>(executable())->toString(globalObject);
+    }
     return jsExecutable()->toString(globalObject);
 }
 
@@ -519,8 +519,7 @@ CallData JSFunction::getConstructData(JSCell* cell)
 
 String getCalculatedDisplayName(VM& vm, JSObject* object)
 {
-    bool isCompiledCallee = isCompiledCalleeType(object->type());
-    if (!is<JSFunction>(object) && !is<InternalFunction>(object) && !isCompiledCallee)
+    if (!is<JSFunction>(object) && !is<InternalFunction>(object) && !isSlimClosureType(object->type()))
         return emptyString();
 
     Structure* structure = object->structure();
@@ -533,13 +532,13 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
             return asString(displayName)->tryGetValueWithoutGC();
     }
 
-#if ENABLE(AOT)
-    if (isCompiledCallee) {
-        if (String displayName = AOT::CompiledCallee::displayName(object); !displayName.isNull())
-            return displayName;
-    }
-#endif
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
+#if ENABLE(AOT)
+        if (function->isCompiledClosure()) {
+            if (String displayName = AOT::CompiledCallee::displayName(function); !displayName.isNull())
+                return displayName;
+        }
+#endif
         String actualName = function->nameWithoutGC(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction())
             return actualName;
@@ -549,6 +548,10 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     if (auto* function = dynamicDowncast<InternalFunction>(object))
         return function->name();
 
+#if ENABLE(AOT)
+    if (String displayName = AOT::CompiledCallee::displayName(object); !displayName.isNull())
+        return displayName;
+#endif
     return emptyString();
 }
 
@@ -747,8 +750,13 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
     } else {
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
-        JSString* name = originalName(realm());
-        scope.assertNoException();
+        JSString* name = nullptr;
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            name = jsString(vm, AOT::CompiledCallee::name(this));
+        else
+#endif
+            name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);

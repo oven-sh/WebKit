@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEntrypointsNothingEnters.h"
 #include "AOTFlowReport.h"
 #include "AOTPass.h"
 #include <memory>
@@ -15,14 +16,18 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
 #include <wtf/PrintStream.h>
+#include <wtf/RefPtr.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
 
+class BackgroundTask;
 class RegExpRequests;
+struct CompiledRegExps;
+struct ExternalFunctionBodies;
 
 namespace Typed {
 
-class CallGroups;
 class ConstantCollections;
 class EnvironmentReuse;
 class FrameAllocation;
@@ -39,12 +44,15 @@ struct PipelineOutput {
     PipelineOutput();
     ~PipelineOutput();
 
+    void releaseCodeGenerationInputs(BuildContext&);
+    void startCompilingRegExps(const Program&, BuildContext&);
+    CompiledRegExps takeCompiledRegExps(BuildContext&);
+
     std::unique_ptr<Program> program;
     std::unique_ptr<DerivedFunctions> derivedFunctions;
     std::unique_ptr<FlowResults> flow;
     std::unique_ptr<EffectSummaries> effects;
     std::unique_ptr<Heat> heat;
-    std::unique_ptr<CallGroups> callGroups;
     std::unique_ptr<CallingConventions> callingConventions;
     std::unique_ptr<FrameAllocation> frameAllocation;
     std::unique_ptr<EnvironmentReuse> environmentReuse;
@@ -52,17 +60,27 @@ struct PipelineOutput {
     std::unique_ptr<ConstantCollections> constantCollections;
     std::unique_ptr<SlotPlan> slots;
     std::unique_ptr<RegExpRequests> regExpRequests;
+    std::unique_ptr<CompiledRegExps> compiledRegExps;
+    RefPtr<BackgroundTask> compilationOfRegExps;
     std::unique_ptr<StackChecks> stackChecks;
     std::unique_ptr<Placement> placement;
     std::unique_ptr<SiteCaches> siteCaches;
-    Vector<FlowSiteLevel> accessSiteLevels;
+    AccessSiteObservations accessSiteObservations;
+    Vector<Wire::RemainingCheckRecord> remainingChecks;
+    CalleesOfSites calleesOfSites;
+    // By function: what forEachCalledFunction() names. Empty where the bodies were not read for it while they were in the cache.
+    Vector<Vector<FunctionID>> calledFunctions;
     bool isComplete { false };
 };
 
-std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, BuildContext&);
+using ReaderOfFinishedBodies = ScopedLambda<void(const PipelineOutput&)>;
+
+std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies*, BuildContext&, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
+std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
 std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&);
 std::unique_ptr<PipelineOutput> runPipelineUntil(PassID last, std::unique_ptr<Program>, BuildContext&);
 std::unique_ptr<PipelineOutput> runPasses(std::unique_ptr<Program>, PassRunner&);
+std::unique_ptr<PipelineOutput> runPasses(std::unique_ptr<Program>, PassRunner&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
 
 bool canRunPassForTesting(PassID, IRForm);
 PassOutcome runPassForTesting(PassID, Program&, PrintStream& results, BuildContext&);

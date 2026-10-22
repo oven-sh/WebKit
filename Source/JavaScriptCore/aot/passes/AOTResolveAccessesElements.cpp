@@ -32,10 +32,12 @@ void AccessRewriter::becomeArrayAccess(const ElementAccessSite& site, const Acce
 {
     const ElementAccessPlan& plan = site.plan;
     RELEASE_ASSERT(operands.guard || plan.needsNoTest());
+    RELEASE_ASSERT(!plan.checksNullish);
 
     Value& value = valueAt(site.site);
     ReplacedEffects replaced;
-    replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
+    if (m_checksEffects)
+        replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
 
     ValueID position = value.propertyOperand();
     AccessSiteID accessSite = value.accessSite();
@@ -50,6 +52,10 @@ void AccessRewriter::becomeArrayAccess(const ElementAccessSite& site, const Acce
     value.setKeyIsIntegral(plan.keyIsIntegral);
     if (Value::opcodesWithIsInBounds.contains(plan.operation))
         value.setIsInBounds(plan.isInBounds);
+    if (Value::opcodesWithIsPresent.contains(plan.operation))
+        value.setIsPresent(plan.isPresent);
+    if (Value::opcodesWithReadsHoleAsNaN.contains(plan.operation))
+        value.setReadsHoleAsNaN(plan.readsHoleAsNaN);
     if (OperandPosition::value(plan.operation))
         value.setValueOperand(operands.stored);
     if (PayloadWord::mode(plan.operation))
@@ -63,10 +69,13 @@ void AccessRewriter::becomeTypedArrayAccess(const ElementAccessSite& site, const
 {
     const ElementAccessPlan& plan = site.plan;
     RELEASE_ASSERT(isTypedView(plan.typedArrayType));
+    RELEASE_ASSERT(operands.guard || !plan.isInsideView);
+    RELEASE_ASSERT(!plan.checksNullish);
 
     Value& value = valueAt(site.site);
     ReplacedEffects replaced;
-    replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
+    if (m_checksEffects)
+        replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
 
     ValueID position = value.propertyOperand();
     AccessSiteID accessSite = value.accessSite();
@@ -74,8 +83,11 @@ void AccessRewriter::becomeTypedArrayAccess(const ElementAccessSite& site, const
     value.become(plan.operation);
     value.setViewOperand(operands.receiver);
     value.setPositionOperand(position);
+    if (plan.isInsideView)
+        value.setGuardOperand(operands.guard);
     value.setTypedArrayType(plan.typedArrayType);
     value.setKeyIsIntegral(plan.keyIsIntegral);
+    value.setIsInsideView(plan.isInsideView);
     value.setLevel(plan.level);
     value.setAccessSite(accessSite);
     if (OperandPosition::value(plan.operation))

@@ -1,4 +1,4 @@
-# An if chain that compares one value with string constants becomes one SwitchString
+# An if chain that compares one value with string constants becomes one SwitchString. A constant that only a comparison read goes with the comparison
 # FORM: Prepared
 # RUN: pass Select
 # STATISTIC: SwitchStringGroups = 2
@@ -6,10 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 # CHECK-LABEL: function f0 name="four-strings"
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: = String string="a"
-# CHECK-NEXT: = String string="b"
-# CHECK-NEXT: = String string="c"
-# CHECK-NEXT: = String string="d"
 # CHECK-NEXT: SwitchString v0 strings=["a", "b", "c", "d"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
 # CHECK-NEXT: b1():
 # CHECK-NOT: StrictEq

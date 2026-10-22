@@ -13,31 +13,13 @@
 #include "AOTIRBuilder.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
-#include <algorithm>
 #include <optional>
-#include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
-
-struct Resolution {
-    enum class Cast : uint8_t { Nothing, Upcast, Claim };
-
-    Cast cast { Cast::Nothing };
-    TypeID castType;
-    TypeID reported;
-    TypeID predicted;
-    TypeSiteID site;
-    CheckCause cause { CheckCause::Unknown };
-};
-
-struct RequestContext {
-    TypingContext typing;
-    MismatchPolicy policy { MismatchPolicy::Throw };
-};
 
 struct RequestEdits {
     explicit RequestEdits(FunctionPassContext& context)
@@ -53,143 +35,20 @@ struct RequestEdits {
 
 } // anonymous namespace
 
-static Resolution::Cast resolveCast(const TypingContext& typing, const Type& source, const Type& target, const Type& cast)
-{
-    if (!source.isSubsetOf(target, typing.program))
-        return Resolution::Cast::Claim;
-    return cast == source ? Resolution::Cast::Nothing : Resolution::Cast::Upcast;
-}
-
-static TypeID resolvePrediction(const TypingContext& typing, const Type& proven, TypeID expected)
-{
-    Type met = proven.castTo(typing.types.at(expected), typing.types);
-    if (met.isNever() || met == proven)
-        return { };
-    return expected;
-}
-
-static TypeID resolveReport(const TypingContext& typing, const Type& value, TypeID written)
-{
-    Type expected = typing.types.at(written).withoutProofs();
-    if (value.isSubsetOf(expected, typing.program))
-        return { };
-    return typing.types.intern(expected);
-}
-
-// In a build that reports, the written types say what the types would be in one that throws: a value inside them has been reported where it entered them.
-static Resolution resolveClaimDeclared(const RequestContext& context, const Type& source, const Type& writtenSource, const DeclaredType& declared)
-{
-    const TypingContext& typing = context.typing;
-    const Type& target = typing.types.at(declared.type);
-    Type cast = source.castTo(target, typing.types);
-
-    Resolution resolution;
-    resolution.cast = resolveCast(typing, source, target, cast);
-    resolution.castType = declared.type;
-    resolution.site = declared.site;
-    resolution.cause = CheckCause::MayFail;
-    if (context.policy == MismatchPolicy::Report && declared.written)
-        resolution.reported = resolveReport(typing, writtenSource.castTo(target, typing.types), declared.written);
-    TypeID expected = typing.predicting().typeIDOf(declared);
-    if (expected != declared.type)
-        resolution.predicted = resolvePrediction(typing, cast, expected);
-    return resolution;
-}
-
-static CheckCause causeOf(ClaimSource::Kind kind)
-{
-    switch (kind) {
-    case ClaimSource::Kind::None:
-        break;
-    case ClaimSource::Kind::Field:
-        return CheckCause::UnknownObject;
-    case ClaimSource::Kind::Contents:
-        return CheckCause::UnprovenContents;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Resolution resolveClaimRead(const RequestContext& context, const Value& request)
-{
-    const TypingContext& typing = context.typing;
-    RequestBound bound = boundOfClaimRead(typing, request);
-    const Type& source = typing.typeOf(request.valueOperand());
-
-    Resolution resolution;
-    switch (bound.source) {
-    case RequestBound::Source::NotFound:
-        return resolution;
-    case RequestBound::Source::Prediction:
-        resolution.predicted = resolvePrediction(typing, source, bound.type);
-        return resolution;
-    case RequestBound::Source::Written:
-    case RequestBound::Source::Type:
-        break;
-    }
-
-    resolution.site = request.site();
-    if (context.policy == MismatchPolicy::Report) {
-        resolution.predicted = resolvePrediction(typing, source, bound.type);
-        resolution.reported = resolveReport(typing, source, bound.type);
-        return resolution;
-    }
-
-    Type target = typing.types.at(bound.type).withoutProofs();
-    Type cast = source.castTo(target, typing.types);
-    resolution.cast = resolveCast(typing, source, target, cast);
-    resolution.castType = typing.types.intern(target);
-    resolution.cause = causeOf(request.source().kind());
-    if (resolution.castType != bound.type)
-        resolution.predicted = resolvePrediction(typing, cast, bound.type);
-    return resolution;
-}
-
-static Resolution resolveRequest(const RequestContext& context, const Value& request)
-{
-    if (request.opcode == Opcode::ClaimRead)
-        return resolveClaimRead(context, request);
-    ValueID operand = request.valueOperand();
-    return resolveClaimDeclared(context, context.typing.typeOf(operand), context.typing.atLevel(TypeLevel::Written).typeOf(operand), request.declared());
-}
-
-static StatisticID statisticOf(Resolution::Cast cast)
+static StatisticID statisticOf(CastResolution cast)
 {
     switch (cast) {
-    case Resolution::Cast::Nothing:
+    case CastResolution::Nothing:
         return StatisticID::RequestsResolvedToNothing;
-    case Resolution::Cast::Upcast:
+    case CastResolution::Upcast:
         return StatisticID::RequestsResolvedToUpcast;
-    case Resolution::Cast::Claim:
-        return StatisticID::RequestsResolvedToClaim;
+    case CastResolution::Check:
+        return StatisticID::RequestsResolvedToCheck;
+    case CastResolution::Unresolved:
+    case CastResolution::Assume:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void becomeCast(Value& value, ValueID operand, const Resolution& resolution)
-{
-    switch (resolution.cast) {
-    case Resolution::Cast::Nothing:
-        RELEASE_ASSERT_NOT_REACHED();
-    case Resolution::Cast::Upcast:
-        value.become(Opcode::Upcast);
-        break;
-    case Resolution::Cast::Claim:
-        value.become(Opcode::Claim);
-        value.setSite(resolution.site);
-        value.setCause(resolution.cause);
-        break;
-    }
-    value.setValueOperand(operand);
-    value.setCastType(resolution.castType);
-}
-
-static void insertReport(FunctionPassContext& context, IRBuilder& builder, ProgramPoint point, ValueID operand, const Resolution& resolution)
-{
-    Value report = IRBuilder::make(Opcode::ReportMismatch, { operand });
-    report.setExpectedType(resolution.reported);
-    report.setSite(resolution.site);
-    builder.insertBefore(point, WTF::move(report));
-    context.build.statistics().count(StatisticID::RequestsResolvedToReport);
 }
 
 static void replaceWithOperand(FunctionPassContext& context, RequestEdits& edits, BlockID block, ValueID request)
@@ -202,45 +61,9 @@ static void replaceWithOperand(FunctionPassContext& context, RequestEdits& edits
         edits.blocksWithErasedValues.append(block);
 }
 
-static void applyResolution(FunctionPassContext& context, RequestEdits& edits, ProgramPoint point, const Resolution& resolution)
-{
-    Function& function = context.function;
-    Statistics& statistics = context.build.statistics();
-    ValueID id = function.at(point.block).values[point.index];
-    ValueID operand = function.at(id).valueOperand();
-    bool hasCast = resolution.cast != Resolution::Cast::Nothing;
-
-    if (resolution.reported) {
-        edits.builder.setOrigin(function.at(id).origin());
-        insertReport(context, edits.builder, point, operand, resolution);
-    }
-    if (hasCast || (!resolution.predicted && !resolution.reported))
-        statistics.count(statisticOf(resolution.cast));
-    if (!resolution.predicted) {
-        if (hasCast)
-            becomeCast(function.at(id), operand, resolution);
-        else
-            replaceWithOperand(context, edits, point.block, id);
-        return;
-    }
-
-    statistics.count(StatisticID::RequestsResolvedToPrediction);
-    if (hasCast) {
-        Value cast;
-        becomeCast(cast, operand, resolution);
-        edits.builder.setOrigin(function.at(id).origin());
-        operand = edits.builder.insertBefore(point, WTF::move(cast));
-    }
-    Value& request = function.at(id);
-    request.become(Opcode::Predict);
-    request.setValueOperand(operand);
-    request.setPredicted(resolution.predicted);
-}
-
 static void applyEdits(FunctionPassContext& context, RequestEdits& edits)
 {
     Function& function = context.function;
-    edits.builder.applyInsertions();
     if (!edits.substitution)
         return;
 
@@ -258,11 +81,10 @@ static void applyEdits(FunctionPassContext& context, RequestEdits& edits)
     context.analyses.didChangeControlFlow();
 }
 
+// Every flow into an int32 promise is judged while the requests are in place, so CheckInt32Promises resolves those.
 static bool isResolvedByTypeValues(const Value& value)
 {
-    if (value.opcode == Opcode::ClaimRead)
-        return true;
-    return value.opcode == Opcode::ClaimDeclared && !value.declared().flags.contains(PositionFlags::IsInt32Promise);
+    return value.opcode == Opcode::Convert && !value.declared().flags.contains(PositionFlags::IsInt32Promise);
 }
 
 static Vector<ProgramPoint, 16> collectRequests(const Function& function)
@@ -278,118 +100,43 @@ static Vector<ProgramPoint, 16> collectRequests(const Function& function)
     return requests;
 }
 
-static bool isTestedOnEntry(EntryParameter kind)
+static void resolveRequests(FunctionPassContext& context)
 {
-    switch (kind) {
-    case EntryParameter::This:
-    case EntryParameter::Parameter:
-        return true;
-    case EntryParameter::Capture:
-    case EntryParameter::Callee:
-    case EntryParameter::NewTarget:
-    case EntryParameter::ArgumentCount:
-    case EntryParameter::HiddenRest:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// No caller converts an argument to a type that promises nothing, so the function reports what enters it.
-static void reportEntryParameters(FunctionPassContext& context, const RequestContext& requestContext, RequestEdits& edits)
-{
-    const Function& function = context.function;
-    const CompactList<ValueID>& parameters = function.at(entryBlock).parameters;
-    unsigned count = std::min<unsigned>(function.numberOfEntryParameters(), parameters.size());
-    for (unsigned index = 0; index < count; ++index) {
-        if (!isTestedOnEntry(function.entryParameterKind(index)))
-            continue;
-        const DeclaredType& declared = *function.declaredEntryParameter(index);
-        if (!declared.site)
-            continue;
-        const Type& entered = requestContext.typing.typeOf(parameters[index]);
-        Resolution resolution = resolveClaimDeclared(requestContext, entered, entered, declared);
-        if (!resolution.reported)
-            continue;
-        edits.builder.setOrigin(Origin { context.program.at(declared.site).position, 0 });
-        insertReport(context, edits.builder, ProgramPoint::atHeadOf(entryBlock), parameters[index], resolution);
-    }
-}
-
-static void resolveRequests(FunctionPassContext& context, MismatchPolicy policy)
-{
-    const Function& function = context.function;
+    Function& function = context.function;
     Vector<ProgramPoint, 16> requests = collectRequests(function);
-    if (requests.isEmpty() && policy == MismatchPolicy::Throw)
+    if (requests.isEmpty())
         return;
 
-    RequestContext requestContext { { context.program, function, context.types }, policy };
+    TypingContext typing { context.program, function, context.types };
+    Statistics& statistics = context.build.statistics();
     RequestEdits edits(context);
-    if (policy == MismatchPolicy::Report)
-        reportEntryParameters(context, requestContext, edits);
     for (ProgramPoint point : requests) {
-        Resolution resolution = resolveRequest(requestContext, function.at(function.at(point.block).values[point.index]));
-        applyResolution(context, edits, point, resolution);
+        ValueID id = function.at(point.block).values[point.index];
+        const Value& request = function.at(id);
+        ConvertResolution resolution = resolveConvert(typing, typing.typeOf(request.valueOperand()), request.declared());
+        statistics.count(statisticOf(resolution.cast));
+        if (!becomeResolved(function, id, resolution))
+            replaceWithOperand(context, edits, point.block, id);
     }
     applyEdits(context, edits);
 }
 
-static CastResolution tailCastResolutionOf(const Resolution& resolution)
+static void resolveTailCasts(FunctionPassContext& context)
 {
-    switch (resolution.cast) {
-    case Resolution::Cast::Nothing:
-        return resolution.predicted ? CastResolution::Prediction : CastResolution::Nothing;
-    case Resolution::Cast::Upcast:
-        return CastResolution::Upcast;
-    case Resolution::Cast::Claim:
-        return CastResolution::Claim;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// A report runs after the call, which a tail call has no frame for.
-static void demoteReportedTailCall(FunctionPassContext& context, BlockID block, std::span<const Resolution> reports)
-{
-    const Terminator& terminator = context.function.at(block).terminator;
-    ValueID call = terminator.callOperand();
-    Origin origin = terminator.origin();
-
-    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
-    builder.demoteReturnCall(block);
-    builder.setOrigin(origin);
-    for (const Resolution& report : reports)
-        insertReport(context, builder, pointBeforeTerminatorOf(context.function, block), call, report);
-    builder.applyInsertions();
-    context.build.statistics().count(StatisticID::ReturnCallsDemoted);
-}
-
-static void resolveTailCasts(FunctionPassContext& context, MismatchPolicy policy)
-{
-    Function& function = context.function;
-    RequestContext requestContext { { context.program, function, context.types }, policy };
-    const TypingContext& typing = requestContext.typing;
-    TypingContext written = typing.atLevel(TypeLevel::Written);
-    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        BlockID block(blockIndex);
-        Terminator& terminator = function.at(block).terminator;
+    TypingContext typing { context.program, context.function, context.types };
+    for (Block& block : context.function.editAllBlocks()) {
+        Terminator& terminator = block.terminator;
         if (terminator.kind != TerminatorKind::ReturnCall)
             continue;
 
         Type source = typing.typeOf(terminator.callOperand());
-        Type writtenSource = written.typeOf(terminator.callOperand());
         Vector<TailCast, 4> casts;
-        Vector<Resolution, 2> reports;
         for (TailCast cast : terminator.casts()) {
-            Resolution resolution = resolveClaimDeclared(requestContext, source, writtenSource, cast.declared);
-            cast.resolution = tailCastResolutionOf(resolution);
-            if (resolution.reported)
-                reports.append(resolution);
-            source = source.castTo(typing.types.at(cast.declared.type), typing.types);
-            writtenSource = writtenSource.castTo(written.typeOf(cast.declared), typing.types);
+            cast.resolution = resolveConvert(typing, source, cast.declared).cast;
+            source = typeOfConvert(typing, source, source, cast.declared);
             casts.append(cast);
         }
         terminator.setCasts(casts.span());
-        if (!reports.isEmpty())
-            demoteReportedTailCall(context, block, reports.span());
     }
 }
 
@@ -398,14 +145,19 @@ PassOutcome typeValues(FunctionPassContext& context)
     if (!context.function.hasBody())
         return PassOutcome::Unchanged;
 
-    MismatchPolicy policy = context.build.options().recorded.policy();
-    TypePropagationInputs inputs { context.program, context.id, context.function, context.analyses, context.types, context.build };
+    TypePropagationInputs inputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo };
     if (hasTypedValues(context.function))
         finishTypedValues(inputs);
     else
         typeValuesFromNever(inputs);
-    resolveRequests(context, policy);
-    resolveTailCasts(context, policy);
+    resolveRequests(context);
+    resolveTailCasts(context);
+    // A request that has become a cast where it stood has the one operand that it had, and is the same value as that operand only from now on. The casts of a tail call are no operands.
+    static_assert(OperandIndex::Convert::value == OperandIndex::Upcast::value && OperandIndex::Convert::value == OperandIndex::Check::value);
+    context.analyses.invalidate(valueAnalyses - AnalysisSet { FunctionAnalysis::UseLists, FunctionAnalysis::Liveness });
+    finishTypedValues(inputs);
+    // The analyses were told of every edit when it was made.
+    context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }
 

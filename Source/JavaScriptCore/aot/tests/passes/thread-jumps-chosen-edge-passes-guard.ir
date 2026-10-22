@@ -10,7 +10,7 @@ function f0 name="takenEdgePassesGuard" parameters=[{type=anything}, {type=boole
   b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = NewObject -, v2 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v2 layout=L0 fields=[0]
     Jump -> next b3(v3)
   b2():
     Jump -> next b3(v0)
@@ -35,7 +35,7 @@ function f1 name="takenEdgePassesNarrowedOperand" parameters=[{type=anything}, {
   b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = NewObject -, v2 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v2 layout=L0 fields=[0]
     Jump -> next b3(v3)
   b2():
     Jump -> next b3(v0)

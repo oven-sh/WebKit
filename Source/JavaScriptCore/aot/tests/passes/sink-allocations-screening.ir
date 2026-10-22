@@ -1,0 +1,77 @@
+# Where one walk over the blocks shows that every allocation is built on every way, before anything could be saved, the pass leaves before its analysis.
+# With no work allowed, a function whose analysis starts hits the limit at once, and a function that is screened out never does
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingWork:0
+# RUN: pass SinkAllocations
+# LOSS: MaxSinkingWork x3 f4
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="builtAtOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Call v0, -, v2
+    Return v3
+}
+
+function f1 name="builtOnBothWays" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v4
+  b2():
+    v5 = Call v1, -, v3
+    Return v5
+}
+
+function f2 name="readThroughAParameterThatMayHoldAnotherObject" parameters=[{type=anything}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: L0, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4: L0):
+    v5 = PropGet v4 key="x" receivers=[L0]
+    v6 = Call v0, -, v4
+    Return v5
+}
+
+function f3 name="propertiesCopiedFromAnUnknownObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    CopyDataProperties v2, v1
+    Return v2
+}
+
+function f4 name="diesOnOneWay" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v4
+  b2():
+    Return v1
+}
+
+function f5 name="aStoreMayBeFolded" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="y" receivers=[L0]
+    v4 = Call v0, -, v2
+    Return v4
+}
+
+function f6 name="propertiesCopiedFromAnAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v3, v2
+    Return v3
+}

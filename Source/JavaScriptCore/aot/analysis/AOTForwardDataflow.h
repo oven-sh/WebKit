@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include <concepts>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
@@ -33,6 +34,37 @@ template<typename Problem>
 concept HasThrowTransfer = requires(Problem& problem, typename Problem::State& state, const DataflowStep& step) {
     problem.executeThrow(state, step);
 };
+
+// A problem may name states in which effects decide nothing: every transfer leaves such a state as that of an operation without effects would,
+// and the state at the head of a handler does not hang on whether it was met with such a state. The effects of what is executed in such a state are not computed.
+template<typename Problem>
+concept HasStatesThatIgnoreEffects = requires(const Problem& problem, const typename Problem::State& state) {
+    { problem.ignoresEffects(state) } -> std::same_as<bool>;
+};
+
+template<typename Problem>
+bool ignoresEffects(const Problem& problem, const typename Problem::State& state)
+{
+    if constexpr (HasStatesThatIgnoreEffects<Problem>)
+        return problem.ignoresEffects(state);
+    else
+        return false;
+}
+
+// A problem whose transfers read no effects says so. Then only the solver reads them, for what may throw in a block that has a handler, and nowhere else are they computed.
+template<typename Problem>
+concept ReadsNoEffects = requires {
+    requires !Problem::readsEffects();
+};
+
+// A problem may carry out all values of a block in one step, with the outcome of execute() for one after the other. The solver goes value by value only in a block with a handler,
+// where it has to see the state at whatever may throw.
+template<typename Problem>
+concept ExecutesValuesOfBlock = requires(Problem& problem, typename Problem::State& state, BlockID block) {
+    problem.executeValuesOf(state, block);
+};
+
+inline constexpr EffectsOnEdges noEffectsOnEdges = EffectsOnEdges::none();
 
 template<typename Problem>
 class ForwardDataflowSolver {
@@ -136,16 +168,24 @@ private:
         if (block.handler)
             handlerEntry = HandlerEntry { state };
 
-        for (uint32_t index = 0; index < block.values.size(); ++index) {
+        bool nobodyReadsEffects = ReadsNoEffects<Problem> && !handlerEntry;
+        uint32_t firstIndex = 0;
+        if constexpr (ExecutesValuesOfBlock<Problem>) {
+            if (!handlerEntry) {
+                m_problem.executeValuesOf(state, id);
+                firstIndex = block.values.size();
+            }
+        }
+        for (uint32_t index = firstIndex; index < block.values.size(); ++index) {
             ValueID value = block.values[index];
-            DataflowStep step { id, index, value, m_function.at(value), m_analyses.effectsOf(value) };
+            DataflowStep step { id, index, value, m_function.at(value), nobodyReadsEffects || ignoresEffects(m_problem, state) ? noEffectsOnEdges : m_analyses.effectsOf(value) };
             if (handlerEntry)
                 executeCoveredValue(state, *handlerEntry, step);
             else
                 m_problem.execute(state, step);
         }
 
-        DataflowTerminatorStep terminatorStep { id, block.terminator, m_analyses.effectsOfTerminator(id) };
+        DataflowTerminatorStep terminatorStep { id, block.terminator, nobodyReadsEffects || ignoresEffects(m_problem, state) ? noEffectsOnEdges : m_analyses.effectsOfTerminator(id) };
         if (handlerEntry)
             executeCoveredTerminator(state, *handlerEntry, terminatorStep);
         else
@@ -184,7 +224,7 @@ void replayBlock(FunctionAnalyses& analyses, Problem& problem, typename Problem:
     RELEASE_ASSERT(endIndex <= block.values.size());
     for (uint32_t index = 0; index < endIndex; ++index) {
         ValueID value = block.values[index];
-        problem.execute(state, DataflowStep { id, index, value, function.at(value), analyses.effectsOf(value) });
+        problem.execute(state, DataflowStep { id, index, value, function.at(value), ReadsNoEffects<Problem> ? noEffectsOnEdges : analyses.effectsOf(value) });
     }
 }
 

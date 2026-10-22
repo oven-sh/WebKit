@@ -6,23 +6,27 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="methodOfUnlockedPrototype" parameters=[{type=Date}, {type=number}] results=[{type=anything}] {
-  b0(v0: Date, v1: number):
-    v2 = PropGet v0 key="setTime"
-    v3 = Call v2, v0, v1 calleeKey="setTime"
+function f0 name="methodOfUnlockedPrototype" parameters=[{type=WeakRef}, {type=number}] results=[{type=anything}] {
+  b0(v0: WeakRef, v1: number):
+    v2 = PropGet v0 key="deref"
+    v3 = Call v2, v0 calleeKey="deref"
     Return v3
 }
 # CHECK-LABEL: function f0 name="methodOfUnlockedPrototype"
 # CHECK-NOT: IsPristine
-# CHECK: v2: anything = PropGet v0 key="setTime"
-# CHECK-NEXT: [[isSetTime]]: boolean = TypeTest v2 testedType=builtin(DatePrototypeSetTime)
-# CHECK-NEXT: Branch [[isSetTime]] -> taken
+# CHECK: v2: anything = PropGet v0 key="deref"
+# CHECK-NEXT: Jump -> next [[test0]]()
 # CHECK-NOT: IsPristine
 # CHECK-NOT: PropGet
-# CHECK: number = CallBuiltin v0, v1 overload=DatePrototypeSetTime/0
+# CHECK: anything = CallBuiltin v0 overload=WeakRefPrototypeDeref/0
+# CHECK-NOT: IsPristine
 # CHECK-NOT: PropGet
-# CHECK: frequency=Unlikely:
-# CHECK-NEXT: anything = Call v2, v0, v1 calleeKey="setTime"
+# CHECK: [[test0]]():
+# CHECK-NEXT: [[isDeref]]: boolean = TypeTest v2 testedType=builtin(WeakRefPrototypeDeref)
+# CHECK-NEXT: Branch [[isDeref]] -> taken
+# CHECK-NEXT: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v2, v0 calleeKey="deref"
+# CHECK-NOT: IsPristine
 # CHECK-NOT: PropGet
 
 function f1 name="methodOfClassNeverPristine" parameters=[{type=Buffer}, {type=number}] results=[{type=anything}] {
@@ -34,12 +38,16 @@ function f1 name="methodOfClassNeverPristine" parameters=[{type=Buffer}, {type=n
 # CHECK-LABEL: function f1 name="methodOfClassNeverPristine"
 # CHECK-NOT: IsPristine
 # CHECK: v2: anything = PropGet v0 key="readUInt8"
-# CHECK-NEXT: [[isReadUInt8]]: boolean = TypeTest v2 testedType=builtin(BufferPrototypeReadUInt8)
-# CHECK-NEXT: Branch [[isReadUInt8]] -> taken
+# CHECK-NEXT: Jump -> next [[test1]]()
 # CHECK-NOT: IsPristine
 # CHECK: int[0, 255] = CallBuiltin v0, v1 overload=BufferPrototypeReadUInt8/0
-# CHECK: frequency=Unlikely:
+# CHECK-NOT: IsPristine
+# CHECK: [[test1]]():
+# CHECK-NEXT: [[isReadUInt8]]: boolean = TypeTest v2 testedType=builtin(BufferPrototypeReadUInt8)
+# CHECK-NEXT: Branch [[isReadUInt8]] -> taken
+# CHECK-NEXT: frequency=Unlikely:
 # CHECK-NEXT: anything = Call v2, v0, v1 calleeKey="readUInt8"
+# CHECK-NOT: IsPristine
 
 function f2 name="getterOfUnlockedPrototype" parameters=[{type=DisposableStack}] results=[{type=anything}] {
   b0(v0: DisposableStack):
@@ -92,7 +100,9 @@ function f6 name="nullableReceiver" parameters=[{type=undefined|Buffer}, {type=n
 # CHECK-LABEL: function f6 name="nullableReceiver"
 # CHECK: [[checked]]: Buffer = RequireObjectCoercible v0 name="readUInt8"
 # CHECK-NEXT: v2: anything = PropGet [[checked]] key="readUInt8"
-# CHECK-NEXT: boolean = TypeTest v2 testedType=builtin(BufferPrototypeReadUInt8)
+# CHECK-NEXT: Jump -> next [[test6]]()
 # CHECK: int[0, 255] = CallBuiltin [[checked]], v1 overload=BufferPrototypeReadUInt8/0
+# CHECK: [[test6]]():
+# CHECK-NEXT: boolean = TypeTest v2 testedType=builtin(BufferPrototypeReadUInt8)
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = Call v2, [[checked]], v1 calleeKey="readUInt8"

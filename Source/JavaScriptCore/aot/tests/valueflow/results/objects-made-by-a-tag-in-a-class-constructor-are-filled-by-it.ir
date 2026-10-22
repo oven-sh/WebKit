@@ -1,0 +1,43 @@
+# interface Node { kind: number; pos: number }  interface Num extends Node { kind: 1; value: number }  interface Add extends Node { kind: 2; left: Node }
+# class NodeObject implements Node { constructor(kind: number, pos: number) { this.kind = kind; this.pos = pos } }       new NodeObject(1, 7), new NodeObject(2, 8)
+# The constructor of a base class allocates its own `this`. AllocateTaggedLayouts puts a switch on the tag where the allocation stood: one allocation for each tag, which meet in one value.
+# Whichever of them has run, that value is the object under construction, so a store to it is a store to that object
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# CHECK: layout L0 kind=Instance name="NodeObject" {{*}}{key="kind" {{*}}initialization=SetAtCreation{{*}} occupancy=AlwaysFilled {{*}}{key="pos" {{*}}initialization=SetAtCreation{{*}} occupancy=AlwaysFilled
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Integer integer=1
+    v4 = Integer integer=7
+    v5 = Construct v2, -, v3, v4
+    v6 = Integer integer=2
+    v7 = Integer integer=8
+    v8 = Construct v2, -, v6, v7
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v5
+    v11 = Call v9, -, v8
+    Return v10
+}
+function f1 name="NodeObject" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: number, v2: number):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v4, v1 key="kind" mode=Strict
+    PropSet v4, v2 key="pos" mode=Strict
+    Return v4
+}
+function f2 name="positionOf" parameters=[{type=undefined|null|L1}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="pos"
+    Return v1
+}

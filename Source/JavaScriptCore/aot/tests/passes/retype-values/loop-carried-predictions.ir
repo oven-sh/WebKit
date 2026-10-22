@@ -1,4 +1,4 @@
-# The prediction of a loop parameter is the join of the predictions that flow around the loop, like its type
+# The expected type of a loop parameter is the join of the expected types that flow around the loop, like its type
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass SimplifyControlFlow RetypeValues
@@ -7,8 +7,8 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=anything}}]
 layout L1 name="Leaf" fields=[{key="value" declared={type=anything}}]
 
-function f0 name="carriedAround" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: boolean, v2: anything):
+function f0 name="carriedAround" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean, v2: anything):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -24,11 +24,11 @@ function f0 name="carriedAround" parameters=[{type=object predicted=L0}, {type=b
     Return v4
 }
 # CHECK-LABEL: function f0 name="carriedAround"
-# CHECK: b3(v4: object ~ L0):
+# CHECK: b3(v4: anything ~ L0):
 # CHECK-NEXT: LoopHint
 
-function f1 name="otherLayoutStoredInLoop" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}, {type=object predicted=L1}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: boolean, v2: anything, v3: object ~ L1):
+function f1 name="otherLayoutStoredInLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}, {type=anything}, {type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean, v2: anything, v3: anything ~ L1):
     v4 = Boolean boolean=false
     Branch v4 -> taken b1(), notTaken b2()
   b1():
@@ -44,11 +44,11 @@ function f1 name="otherLayoutStoredInLoop" parameters=[{type=object predicted=L0
     Return v5
 }
 # CHECK-LABEL: function f1 name="otherLayoutStoredInLoop"
-# CHECK: b3(v5: object ~ L0|L1):
+# CHECK: b3(v5: anything ~ L0|L1):
 # CHECK-NEXT: LoopHint
 
-function f2 name="unpredictedObjectStoredInLoop" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: boolean, v2: anything, v3: object):
+function f2 name="objectOfNoExpectedLayoutStoredInLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean, v2: anything, v3: object):
     v4 = Boolean boolean=false
     Branch v4 -> taken b1(), notTaken b2()
   b1():
@@ -63,6 +63,6 @@ function f2 name="unpredictedObjectStoredInLoop" parameters=[{type=object predic
   b5():
     Return v5
 }
-# CHECK-LABEL: function f2 name="unpredictedObjectStoredInLoop"
-# CHECK: b3(v5: object):
+# CHECK-LABEL: function f2 name="objectOfNoExpectedLayoutStoredInLoop"
+# CHECK: b3(v5: anything ~ object):
 # CHECK-NEXT: LoopHint

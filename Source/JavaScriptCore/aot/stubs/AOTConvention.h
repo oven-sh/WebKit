@@ -69,27 +69,6 @@ static_assert(sizeOfSpilledArgumentRegisters <= maxUncheckedFrameSize);
 
 static_assert(numberOfArgumentGPRs <= ClosureWord::maxNumberOfParameters);
 
-struct ValueEntryWords {
-    static constexpr ptrdiff_t offsetOfDistanceFromEntry() { return -static_cast<ptrdiff_t>(sizeof(int32_t)); }
-
-    int32_t distanceToValueEntry;
-};
-static_assert(sizeof(ValueEntryWords) == sizeof(int32_t));
-
-// Two instructions that do nothing, behind a call whose caller tests the result against the written result type of the callee.
-// An entrypoint that would have to test a result of its own reads them at its return address: see ReturnsToResultTest.
-struct ResultTestMark {
-#if CPU(ARM64)
-    // movz xzr, #0x7e57; movz xzr, #0xca11
-    static constexpr uint32_t firstWord = 0xd2800000u | 0x7e57u << 5 | 31;
-    static constexpr uint32_t secondWord = 0xd2800000u | 0xca11u << 5 | 31;
-#elif CPU(X86_64)
-    // nopl 0x7e57ca11(%rax,%rax,1)
-    static constexpr uint32_t firstWord = 0x00841f0f;
-    static constexpr uint32_t secondWord = 0x7e57ca11;
-#endif
-};
-
 struct ClosureRequest {
     static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits + 2;
     static constexpr unsigned allocationShift = 32;

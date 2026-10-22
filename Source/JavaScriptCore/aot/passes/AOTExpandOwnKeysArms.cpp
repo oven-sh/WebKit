@@ -40,21 +40,7 @@ static bool visitsSymbolKeys(OwnKeyWalk walk)
     switch (walk) {
     case OwnKeyWalk::Assign:
     case OwnKeyWalk::Spread:
-        return true;
-    case OwnKeyWalk::Values:
-    case OwnKeyWalk::Entries:
-    case OwnKeyWalk::Stringify:
-    case OwnKeyWalk::StringifyIntoText:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool copiesNothingFromNullish(OwnKeyWalk walk)
-{
-    switch (walk) {
-    case OwnKeyWalk::Assign:
-    case OwnKeyWalk::Spread:
+    case OwnKeyWalk::Copy:
         return true;
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
@@ -83,7 +69,7 @@ static ValueID appendWalkedFieldRead(Emission& emission, const Emission::TestedO
     Value read = IRBuilder::make(Opcode::GetDeferredClosureSlot, { object.object, object.guard });
     read.setKey(fieldAt(program, { layout, field }).key);
     read.setReceivers(emission.layoutSetOf(singleElementSpan(layout)));
-    read.setLevel(object.guard ? KnowledgeLevel::Predicted : KnowledgeLevel::Proven);
+    read.setLevel(object.guard ? KnowledgeLevel::Expected : KnowledgeLevel::Proven);
     return emission.builder().append(WTF::move(read));
 }
 
@@ -110,9 +96,9 @@ static void forEachGuardOperand(Function& function, const Functor& functor)
                 functor(operand);
         });
     };
-    for (Block& block : function.blocks) {
+    for (Block& block : function.editAllBlocks()) {
         for (ValueID value : block.values)
-            visit(function.at(value));
+            visit(function.edit(value));
         visit(block.terminator);
     }
 }
@@ -205,6 +191,8 @@ void OwnKeyWalkExpander::emitArms(const OwnKeyWalkSite& site, const OwnKeyWalkPl
         case OwnKeyWalk::Spread:
             emitSpread(site, object, arm, fields.span());
             return { };
+        case OwnKeyWalk::Copy:
+            return emitCopy(object, arm, fields.span());
         case OwnKeyWalk::Stringify:
         case OwnKeyWalk::StringifyIntoText:
             break;
@@ -212,9 +200,17 @@ void OwnKeyWalkExpander::emitArms(const OwnKeyWalkSite& site, const OwnKeyWalkPl
         RELEASE_ASSERT_NOT_REACHED();
     };
 
+    ValueID source = site.source;
     if (copiesNothingFromNullish(site.walk) && !plan.unchangedAllocation && typeOf(site.source).mayBeUndefinedOrNull()) {
-        BlockID firstArm = builder.addBlock(frequency);
-        emitTypeTest(site.source, TypeTable::nullish, firstArm);
+        BlockID firstArm;
+        if (typeOf(site.source).isUndefinedOrNull()) {
+            firstArm = builder.addBlock(frequency);
+            emitTypeTest(site.source, TypeTable::nullish, firstArm);
+        } else {
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(site.source, TypeTable::nullish), 0, frequency, frequency);
+            firstArm = branch.notTaken;
+            source = branch.provenOnNotTaken;
+        }
         endArm(site.walk == OwnKeyWalk::Assign ? site.target : ValueID());
         builder.moveToEndOf(firstArm);
     }
@@ -223,7 +219,7 @@ void OwnKeyWalkExpander::emitArms(const OwnKeyWalkSite& site, const OwnKeyWalkPl
     BlockID afterLastArm = hasFailingEdges || plan.needsOriginalCall ? builder.addBlock(BlockFrequency::Rare) : BlockID();
     for (const OwnKeyWalkArm& arm : plan.arms) {
         BlockID nextArm = &arm == &plan.arms.last() ? afterLastArm : builder.addBlock(frequency);
-        TestedObject object = emitArmTests(site, plan, arm, nextArm);
+        TestedObject object = emitArmTests(source, plan, arm, nextArm);
         if (arm.copiesFieldsAtOnce) {
             emitCopyOfFields(site, object, arm, nextArm);
             endArm({ });
@@ -264,13 +260,13 @@ auto OwnKeyWalkExpander::fieldsWalkedBy(OwnKeyWalk walk, const OwnKeyWalkArm& ar
     return walkedFields;
 }
 
-auto OwnKeyWalkExpander::emitArmTests(const OwnKeyWalkSite& site, const OwnKeyWalkPlan& plan, const OwnKeyWalkArm& arm, BlockID nextArm) -> TestedObject
+auto OwnKeyWalkExpander::emitArmTests(ValueID source, const OwnKeyWalkPlan& plan, const OwnKeyWalkArm& arm, BlockID nextArm) -> TestedObject
 {
     if (arm.copiesFieldsAtOnce)
-        return { emitTypeTest(site.source, TypeTable::object, nextArm), { } };
-    TestedObject object { site.source, { } };
+        return { emitTypeTest(source, TypeTable::object, nextArm), { } };
+    TestedObject object { source, { } };
     if (plan.needsShapeTest)
-        object = emitShapeTest(site.source, singleElementSpan(arm.layout), nextArm);
+        object = emitShapeTest(source, singleElementSpan(arm.layout), nextArm);
     if (plan.needsKeyOrderTest) {
         object.guard = emitKeyOrderTest(object, arm.layout, arm.order.span(), nextArm);
         return object;
@@ -325,6 +321,22 @@ void OwnKeyWalkExpander::emitSpread(const OwnKeyWalkSite& site, const TestedObje
         definition.setKey(fields[index].key);
         builder().append(WTF::move(definition));
     }
+}
+
+// The copy has the layout of its source, and gets its fields in the order in which the source got them.
+ValueID OwnKeyWalkExpander::emitCopy(const TestedObject& object, const OwnKeyWalkArm& arm, std::span<const WalkedField> fields)
+{
+    Vector<ValueID, 8> values(fields.size(), [&](size_t index) {
+        return appendWalkedFieldRead(*this, object, arm.layout, fields[index].field);
+    });
+    Vector<uint32_t, 8> listedFields(fields.size(), [&](size_t index) {
+        return fields[index].field;
+    });
+    Value allocation = IRBuilder::make(Opcode::NewObject);
+    allocation.setLayout(arm.layout);
+    allocation.setFields(listedFields.span());
+    allocation.setValuesOperands(values.span());
+    return builder().append(WTF::move(allocation));
 }
 
 void OwnKeyWalkExpander::emitCopyOfFields(const OwnKeyWalkSite& site, const TestedObject& object, const OwnKeyWalkArm& arm, BlockID nextArm)
@@ -422,7 +434,7 @@ BitVector findUnchangedAllocations(FunctionPassContext& context, std::span<const
     if (askedUses.isEmpty())
         return unchanged;
 
-    TestEvents events(TestEventInputs { context.analyses, conditions, { }, requirements.span(), proofs.span(), { }, RenewalPolicy::Never });
+    TestEvents events(TestEventInputs { context.analyses, conditions, { }, requirements.span(), proofs.span(), { }, false });
     TestCoverage coverage(TestCoverageInputs { events, GapBudget::unlimited(), nullptr });
     for (size_t asked = 0; asked < askedUses.size(); ++asked) {
         bool isUnchanged = true;
@@ -457,7 +469,7 @@ static bool evaluateAtCreation(const Value& test, const Value& allocation)
 static void decideBranchOn(IRBuilder& builder, const TestOfAllocation& test, bool result)
 {
     BlockID block = test.point.block;
-    Terminator& terminator = builder.function().at(block).terminator;
+    Terminator& terminator = builder.function().edit(block).terminator;
     if (!terminator.isConditionalBranch() || terminator.conditionOperand() != test.test)
         return;
     if (!result) {
@@ -478,12 +490,11 @@ static void decideBranchOn(IRBuilder& builder, const TestOfAllocation& test, boo
 
 static void becomeBoolean(FunctionPassContext& context, ValueID id, bool boolean)
 {
-    Value& value = context.function.at(id);
+    Value& value = context.function.edit(id);
     value.become(Opcode::Boolean);
     value.setBoolean(boolean);
     value.type = resultTypeOf(context.program, context.function, value, context.types);
-    value.setWritten({ });
-    value.setPrediction({ });
+    value.setExpected({ });
 }
 
 bool foldKeyOrderTests(FunctionPassContext& context)

@@ -10,6 +10,7 @@
 #include "AddressSpaceBudget.h"
 #include "MarkedBlock.h"
 #include "Options.h"
+#include "OwedOutOfMemoryError.h"
 #include "ReservedRangeHeap.h"
 #include <mutex>
 #include <optional>
@@ -21,6 +22,7 @@
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/Vector.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC {
 
@@ -33,10 +35,14 @@ static constexpr size_t smallestUsableSize = 4 * unusedPrefixSize;
 static constexpr size_t randomPrefixDivisor = 32;
 static constexpr size_t randomPrefixGranule = 64 * KB;
 static constexpr unsigned maxHalvingsOfFirstRange = 7;
+static constexpr size_t reserveDivisor = 64;
+static constexpr size_t smallestReserveSize = 4 * MB;
+static constexpr size_t largestReserveSize = 32 * MB;
+static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
 
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
 static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
-static_assert(unusedPrefixSize + smallestUsableSize / randomPrefixDivisor < smallestUsableSize);
+static_assert(unusedPrefixSize + (MarkedBlockCage::maxSize >> maxHalvingsOfFirstRange) / randomPrefixDivisor < smallestUsableSize);
 
 std::atomic<bool> MarkedBlockCage::s_isRequired { false };
 std::atomic<bool> MarkedBlockCage::s_hasAllocationsOutside { false };
@@ -47,6 +53,7 @@ static ReservedRangeHeap* s_firstRange WTF_GUARDED_BY_LOCK(s_poolLock);
 static size_t s_totalReservedSize WTF_GUARDED_BY_LOCK(s_poolLock);
 static std::once_flag s_initializeOnce;
 static std::optional<MarkedBlockCage::Error> s_initializationError;
+static MarkedBlockCage::ReservationFailure s_reservationFailure;
 
 #if ENABLE(AOT)
 static void makeEmptyExtensionReadable(uintptr_t start)
@@ -62,17 +69,23 @@ static void makeEmptyExtensionReadable(uintptr_t start)
 }
 #endif
 
-static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize) WTF_REQUIRES_LOCK(s_poolLock)
+static size_t remainingAddressSpace() WTF_REQUIRES_LOCK(s_poolLock)
+{
+    size_t budget = addressSpaceForMarkedBlockCages();
+    return budget > s_totalReservedSize ? budget - s_totalReservedSize : 0;
+}
+
+static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t randomPrefixRange) WTF_REQUIRES_LOCK(s_poolLock)
 {
     RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
+    RELEASE_ASSERT(randomPrefixRange >= randomPrefixGranule && unusedPrefixSize + randomPrefixRange < minSize, randomPrefixRange, minSize);
 
-    size_t budget = addressSpaceToReserve() / addressSpaceDivisorForMarkedBlockCages;
-    size_t remaining = budget > s_totalReservedSize ? budget - s_totalReservedSize : 0;
+    size_t remaining = remainingAddressSpace();
     if (minSize > remaining)
         return nullptr;
 
     uint64_t random = Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint64_t>();
-    size_t prefixSize = unusedPrefixSize + random % (minSize / randomPrefixDivisor / randomPrefixGranule) * randomPrefixGranule;
+    size_t prefixSize = unusedPrefixSize + random % (randomPrefixRange / randomPrefixGranule) * randomPrefixGranule;
 
     ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
         .name = "Cell Cage"_s,
@@ -114,9 +127,10 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
             g_jscConfig.markedBlockCageSize = size;
             return;
         }
-        s_firstRange = tryCreateRange(size, std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize));
+        s_firstRange = tryCreateRange(size, smallestUsableSize, std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize) / randomPrefixDivisor);
         if (!s_firstRange) {
             s_initializationError = Error::ReservationFailed;
+            s_reservationFailure = { std::min(size, remainingAddressSpace()), smallestUsableSize };
             return;
         }
         s_freeRanges->append(s_firstRange);
@@ -139,7 +153,7 @@ MarkedBlockCage::MarkedBlockCage()
     if (!s_freeRanges->isEmpty())
         m_range = s_freeRanges->takeLast();
     else
-        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize);
+        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize / randomPrefixDivisor);
     if (!m_range) {
         m_range = s_firstRange;
         m_sharesRange = true;
@@ -150,6 +164,7 @@ MarkedBlockCage::MarkedBlockCage()
 
 MarkedBlockCage::~MarkedBlockCage()
 {
+    releaseReserve();
     if (!m_range || m_sharesRange)
         return;
 
@@ -193,6 +208,34 @@ void MarkedBlockCage::free(void* pointer)
     m_range->free(pointer);
 }
 
+size_t MarkedBlockCage::reserveSize() const
+{
+    return m_reserve.size() * reserveChunkSize;
+}
+
+void MarkedBlockCage::keepReserveOnceHalfFull()
+{
+#if CPU(X86_64)
+    if (!m_range || m_hasReleasedReserve)
+        return;
+    size_t size = std::clamp(m_size / reserveDivisor, smallestReserveSize, largestReserveSize);
+    if (reserveSize() >= size || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_size / 2)
+        return;
+    if (void* chunk = m_range->tryAllocateAligned(MarkedBlock::blockSize, reserveChunkSize))
+        m_reserve.append(chunk);
+#endif
+}
+
+bool MarkedBlockCage::releaseReserve()
+{
+    if (m_reserve.isEmpty())
+        return false;
+    for (void* chunk : std::exchange(m_reserve, { }))
+        m_range->free(chunk);
+    m_hasReleasedReserve = true;
+    return true;
+}
+
 void MarkedBlockCage::didAllocate(const void* pointer, size_t size)
 {
     uintptr_t begin = std::bit_cast<uintptr_t>(pointer);
@@ -226,12 +269,27 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::require()
     return { };
 }
 
+MarkedBlockCage::ReservationFailure MarkedBlockCage::reservationFailure()
+{
+    return s_reservationFailure;
+}
+
+String describeLimitOfMarkedBlockCage()
+{
+    if (!MarkedBlockCage::isRequired())
+        return { };
+    size_t size = g_jscConfig.markedBlockCageSize;
+    bool isInGB = !(size % GB);
+    if (size < static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB)
+        return makeString("The limit on address space (ulimit -v) leaves the threads of this executable "_s, size / MB, " MB for JavaScript objects. Raise the limit, or build with --aot-huge-heap."_s);
+    return makeString("Each thread of a compiled executable can use "_s, size / (isInGB ? GB : MB), isInGB ? " GB"_s : " MB"_s, " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower."_s);
+}
+
 void MarkedBlockCage::logExhaustion()
 {
     if (!isRequired())
         return;
-    bool isInGB = !(g_jscConfig.markedBlockCageSize % GB);
-    dataLogLn("FATAL: out of memory. Each thread of a compiled executable can use ", g_jscConfig.markedBlockCageSize / (isInGB ? GB : MB), isInGB ? " GB" : " MB", " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower.");
+    dataLogLn("FATAL: out of memory. ", describeLimitOfMarkedBlockCage());
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }

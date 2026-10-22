@@ -36,6 +36,7 @@ JS_EXPORT_PRIVATE String name(JSObject* callee);
 JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
+JS_EXPORT_PRIVATE bool isBoundFunction(JSObject* callee);
 
 JS_EXPORT_PRIVATE void setPrototypeProperty(VM&, JSObject* callee, JSObject* prototype, unsigned attributes);
 JS_EXPORT_PRIVATE void setNameProperty(JSGlobalObject*, JSObject* callee, JSString* name, unsigned attributes);

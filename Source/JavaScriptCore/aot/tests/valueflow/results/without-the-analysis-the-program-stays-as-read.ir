@@ -1,0 +1,53 @@
+# Without the flow analysis the application leaves the program as read, without one stamp, and the program is legal in the next form.
+# It changes one thing. Past form AsRead no test may stand on a terminator, so a tail call whose result has to be tested becomes an ordinary call, the test and a return
+# FORM: AsRead
+# RUN: pass TypeValues ApplyFlowResults VerifyProgram
+# RUN(NOWHERE): pass TypeValues ApplyFlowResults
+# OPTIONS: disable=pass:AnalyzeFlow
+# STATISTIC: ReturnCallsDemoted = 1
+# CHECK: layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+# CHECK-NEXT: variable g0 name="point" module=m0 declared={type=anything}
+# CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: v3: f1 = NewClosure function=f1
+# CHECK-NEXT: v4: anything = Call v3, -, v1
+# CHECK-NEXT: v5: anything = PropGet v4 key="x"
+# CHECK-NEXT: Return
+# CHECK: function f1 name="identity" {{*}}parameters=[{type=anything}] results=[{type=anything}]
+# NOWHERE-NOT: accessSite=
+# NOWHERE-NOT: allocationSite=
+# NOWHERE-NOT: allocationClass=
+# NOWHERE-NOT: receivers=
+# NOWHERE-NOT: callees=
+# NOWHERE-NOT: flow={
+# NOWHERE-NOT: classFlow={
+# NOWHERE-NOT: AssumeType
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Result
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="point" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="x"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = PropGet v4 key="x"
+    Return
+}
+function f1 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="tailCall" parameters=[{type=anything}] results=[{type=number site=w0}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=number site=w0}}]
+}
+# CHECK-LABEL: function f2 name="tailCall"
+# CHECK: v1: anything = Call v0 [isDemotedTailCall]
+# CHECK-NEXT: [[tested]]: number = Check v1 castType=number site=w0
+# CHECK-NEXT: Return [[tested]]

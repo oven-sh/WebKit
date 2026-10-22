@@ -11,58 +11,12 @@
 #include "B3FixSSA.h"
 #include "B3LoopUtilities.h"
 #include "B3RotateLoops.h"
-#include "B3StripMineLoops.h"
 
 static Value* increaseCounter(Graph& graph, BasicBlock* block, Variable* counter, Value* step)
 {
     Value* next = graph.make(block, Add, graph.get(block, counter), step);
     graph.set(block, counter, next);
     return next;
-}
-
-static void testVersionLoopsStripMinesPollInFastVersion()
-{
-    Procedure proc(loopPolicy());
-    Graph graph { proc };
-    PollState state;
-    TopTestedLoop loop(graph);
-    BasicBlock* rare = proc.addBlock();
-    BasicBlock* hot = proc.addBlock();
-    appendPoll(graph, loop.body, state);
-    BasicBlock* block = loop.body;
-    Value* loaded = graph.load(block, Int64, loop.pointer, 0, firstHeap);
-    graph.branch(block, graph.make(block, Equal, loaded, loop.extra), FrequentedBlock(hot), rarely(rare));
-    graph.increase(rare, loop.sum, 1000);
-    graph.jump(rare, hot);
-    graph.increase(hot, loop.sum, loaded);
-    loop.endBody(hot);
-    loop.rotate();
-
-    CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
-    CHECK(!stripMineLoops(proc));
-    auto code = compileProc(proc);
-    int64_t memory[1] = { 7 };
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
-
-    CHECK_EQ(run(*code, iterations, memory, 7), iterations * 7);
-    CHECK_EQ(state.numberOfPolls, 3);
-    CHECK_EQ(state.numberOfStops, 0);
-
-    state = { };
-    CHECK_EQ(run(*code, 100, memory, 7), 700);
-    CHECK_EQ(state.numberOfPolls, 0);
-
-    state = { };
-    CHECK_EQ(run(*code, 100, memory, 8), 100 * 1007);
-    CHECK_EQ(state.numberOfPolls, 100);
-
-    state = { };
-    state.limit = -1;
-    CHECK_EQ(run(*code, iterations, memory, 7), iterations * 7);
-    CHECK_EQ(state.numberOfStops, 1);
-    CHECK_EQ(state.limit, 0);
-    CHECK_EQ(state.numberOfPolls, 3);
 }
 
 enum class ValueOfEarlierLoop : uint8_t { Bound, Start };
@@ -78,7 +32,7 @@ static int64_t countOfEarlierLoop(int64_t bound)
 
 static void checkCountedLoopAfterEarlierLoop(ValueOfEarlierLoop role)
 {
-    constexpr int64_t constantBound = 2 * maxIterationsPerStrip + 100;
+    constexpr int64_t constantBound = 2 * longRun + 100;
     Procedure proc(loopPolicy());
     Graph graph { proc };
     PollState state;
@@ -120,16 +74,15 @@ static void checkCountedLoopAfterEarlierLoop(ValueOfEarlierLoop role)
 
     CHECK(versionLoopsAndValidate(proc));
     CHECK_EQ(proc.report().countOf(Counter::LoopsVersioned), 2u);
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
     CHECK(!hasRemark(proc, RemarkKind::LoopBoundNotClamped, GaveUpReason::BoundNotInvariant));
     auto code = compileProc(proc);
     int64_t memory[1] = { 7 };
-    for (int64_t bound : { static_cast<int64_t>(-1), static_cast<int64_t>(1), static_cast<int64_t>(5), static_cast<int64_t>(100), maxIterationsPerStrip + 101 }) {
+    for (int64_t bound : { static_cast<int64_t>(-1), static_cast<int64_t>(1), static_cast<int64_t>(5), static_cast<int64_t>(100), longRun + 101 }) {
         int64_t earlierCount = countOfEarlierLoop(bound);
         int64_t iterations = role == ValueOfEarlierLoop::Bound ? earlierCount : constantBound - earlierCount;
         state = { };
         CHECK_EQ(run(*code, bound, memory, 7), iterations * 7);
-        CHECK_EQ(state.numberOfPolls, (iterations - 1) / maxIterationsPerStrip);
+        CHECK_EQ(state.numberOfPolls, iterations);
         state = { };
         CHECK_EQ(run(*code, bound, memory, 8), iterations * 1007);
         CHECK_EQ(state.numberOfPolls, iterations);
@@ -140,57 +93,6 @@ static void testVersionLoopsCountsLoopAfterEarlierLoop()
 {
     checkCountedLoopAfterEarlierLoop(ValueOfEarlierLoop::Bound);
     checkCountedLoopAfterEarlierLoop(ValueOfEarlierLoop::Start);
-}
-
-static void testVersionLoopsExcursionIterationsCountTowardStrip()
-{
-    Procedure proc(loopPolicy());
-    Graph graph { proc };
-    PollState state;
-    TopTestedLoop loop(graph);
-    BasicBlock* unexpected = proc.addBlock();
-    BasicBlock* expected = proc.addBlock();
-    BasicBlock* special = proc.addBlock();
-    BasicBlock* hot = proc.addBlock();
-    appendPoll(graph, loop.body, state);
-    BasicBlock* block = loop.body;
-    Value* loaded = graph.load(block, Int64, loop.pointer, 0, firstHeap);
-    graph.branch(block, graph.make(block, Below, loaded, graph.int64(block, 100)), FrequentedBlock(expected), rarely(unexpected));
-    graph.callLikePatchpoint(unexpected);
-    graph.jump(unexpected, expected);
-    graph.branch(expected, graph.make(expected, Below, graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3)), loop.extra), rarely(special), FrequentedBlock(hot));
-    graph.increase(special, loop.sum, 1000);
-    graph.jump(special, hot);
-    graph.increase(hot, loop.sum, loaded);
-    loop.endBody(hot);
-    loop.rotate();
-
-    CHECK(versionLoopsAndValidate(proc));
-    CHECK(!stripMineLoops(proc));
-    auto code = compileProc(proc);
-    int64_t memory[1] = { 7 };
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
-
-    CHECK_EQ(run(*code, iterations, memory, 0), iterations * 7);
-    CHECK_EQ(state.numberOfPolls, 3);
-
-    for (int64_t rareIterationsPerFour : { 1, 4 }) {
-        state = { };
-        CHECK_EQ(run(*code, iterations, memory, rareIterationsPerFour), iterations * 7 + iterations / 4 * rareIterationsPerFour * 1000);
-        CHECK_EQ(state.numberOfPolls, 3);
-        CHECK_EQ(state.numberOfStops, 0);
-
-        state = { };
-        CHECK_EQ(run(*code, 400, memory, rareIterationsPerFour), 400 * 7 + 100 * rareIterationsPerFour * 1000);
-        CHECK_EQ(state.numberOfPolls, 0);
-
-        state = { };
-        state.limit = -1;
-        CHECK_EQ(run(*code, iterations, memory, rareIterationsPerFour), iterations * 7 + iterations / 4 * rareIterationsPerFour * 1000);
-        CHECK_EQ(state.numberOfStops, 1);
-        CHECK_EQ(state.limit, 0);
-        CHECK_EQ(state.numberOfPolls, 3);
-    }
 }
 
 static void testVersionLoopsCountsLoopWithBoundLoadedBeforeAndAtBottom()
@@ -234,18 +136,17 @@ static void testVersionLoopsCountsLoopWithBoundLoadedBeforeAndAtBottom()
     validate(proc);
 
     CHECK(versionLoopsAndValidate(proc));
-    CHECK(!stripMineLoops(proc));
     auto code = compileProc(proc);
-    constexpr int64_t iterations = 2 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 2 * longRun + 100;
     for (int64_t bound : { static_cast<int64_t>(-1), static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(9), iterations }) {
         int64_t inner[2] = { 0, bound };
         int64_t outer[1] = { reinterpret_cast<int64_t>(inner) };
         state = { };
         CHECK_EQ(run(*code, 0, outer, -1), sumBelow(bound));
-        CHECK_EQ(state.numberOfPolls, bound / maxIterationsPerStrip);
+        CHECK_EQ(state.numberOfPolls, std::max<int64_t>(bound, 0));
         state = { };
         CHECK_EQ(run(*code, 0, outer, 5), sumBelow(bound) + (bound > 5 ? 1000 : 0));
-        CHECK_EQ(state.numberOfPolls, bound > 5 ? bound - 6 : 0);
+        CHECK_EQ(state.numberOfPolls, std::max<int64_t>(bound, 0));
     }
 }
 
@@ -293,14 +194,14 @@ static void testVersionLoopsTopTestedExcursionStillPolls()
     versionLoopsAndValidate(proc);
     auto code = compileProc(proc);
     int64_t memory[1] = { 7 };
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 3 * longRun + 100;
 
     CHECK_EQ(run(*code, iterations, memory, 0), iterations * 7);
-    CHECK(state.numberOfPolls >= iterations / maxIterationsPerStrip);
+    CHECK_EQ(state.numberOfPolls, iterations);
 
     state = { };
     CHECK_EQ(run(*code, iterations, memory, 4), iterations * 1007 + 1000);
-    CHECK(state.numberOfPolls >= iterations / maxIterationsPerStrip);
+    CHECK_EQ(state.numberOfPolls, iterations);
 }
 
 static constexpr int64_t rareIndex = 1000;
@@ -374,14 +275,13 @@ static void testVersionLoopsTopTestedExcursionReturnsToFastLoop()
     buildTopTestedLoopWithRarePath(graph, state, false);
 
     CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
     CHECK_EQ(numberOfRarePathCopies(proc), 2u);
     auto code = compileProc(proc);
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 3 * longRun + 100;
     int64_t memory[2] = { 7, iterations };
     CHECK_EQ(run(*code, iterations, memory), iterations * 7 + rareSummand);
-    CHECK_EQ(state.numberOfPolls, 3);
+    CHECK_EQ(state.numberOfPolls, iterations);
     memory[1] = 1500;
     CHECK_EQ(run(*code, 2000, memory), -1);
 }
@@ -435,7 +335,7 @@ static void buildTopTestedLoopWithRarePathBeforeTest(Graph& graph, PollState& st
 
 static void testVersionLoopsExcursionBeforeTopTestReturnsToFastLoop()
 {
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 3 * longRun + 100;
     for (RarePathBeforeTest rarePath : { RarePathBeforeTest::OnlyComputes, RarePathBeforeTest::WritesHoistedLocation }) {
         bool returnsToFastLoop = rarePath == RarePathBeforeTest::OnlyComputes;
         Procedure proc(loopPolicy());
@@ -444,24 +344,17 @@ static void testVersionLoopsExcursionBeforeTopTestReturnsToFastLoop()
         buildTopTestedLoopWithRarePathBeforeTest(graph, state, rarePath);
 
         CHECK(versionLoopsAndValidate(proc));
-        CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
         CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
         CHECK_EQ(numberOfRarePathCopies(proc), returnsToFastLoop ? 2u : 1u);
         auto code = compileProc(proc);
         int64_t memory[2] = { 7, iterations };
 
         CHECK_EQ(run(*code, iterations, memory, -1), iterations * 7);
-        CHECK_EQ(state.numberOfPolls, 3);
+        CHECK_EQ(state.numberOfPolls, iterations);
 
-        // The iteration that takes the rare path runs the excursion's copy of the body, which has its own poll.
         state = { };
         CHECK_EQ(run(*code, iterations, memory, rareIndex), iterations * 7 + rareSummand);
-        CHECK_EQ(state.numberOfPolls, returnsToFastLoop ? 4 : iterations - rareIndex);
-
-        // At the end of a strip the excursion's copy of the test fails, and the original loop continues from its own test.
-        state = { };
-        CHECK_EQ(run(*code, iterations, memory, maxIterationsPerStrip), iterations * 7 + rareSummand);
-        CHECK_EQ(state.numberOfPolls, iterations - maxIterationsPerStrip);
+        CHECK_EQ(state.numberOfPolls, iterations);
 
         memory[1] = 1500;
         for (int64_t rareIteration : { 1498, 1499, 1500, 1501 })
@@ -475,21 +368,20 @@ static void testVersionLoopsExcursionBeforeTopTestReturnsToFastLoop()
 
 static void testLoopPhasesKeepFastLoopAfterRarePathBeforeTopTest()
 {
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 3 * longRun + 100;
     Procedure proc(optimizingPolicy());
     Graph graph { proc };
     PollState state;
     buildTopTestedLoopWithRarePathBeforeTest(graph, state, RarePathBeforeTest::OnlyComputes);
 
     auto code = compileProc(proc, 2);
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
     int64_t memory[2] = { 7, iterations };
-    for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, maxIterationsPerStrip - 1, maxIterationsPerStrip + 1, iterations - 1 }) {
+    for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, longRun - 1, longRun + 1, iterations - 1 }) {
         state = { };
         CHECK_EQ(run(*code, iterations, memory, rareIteration), iterations * 7 + rareSummand);
-        CHECK(state.numberOfPolls <= 4);
+        CHECK_EQ(state.numberOfPolls, iterations);
     }
-    CHECK_EQ(run(*code, iterations, memory, maxIterationsPerStrip), iterations * 7 + rareSummand);
+    CHECK_EQ(run(*code, iterations, memory, longRun), iterations * 7 + rareSummand);
     CHECK_EQ(run(*code, iterations, memory, iterations), iterations * 7 + rareSummand);
     CHECK_EQ(run(*code, iterations, memory, 0), iterations * 7 + rareSummand);
 
@@ -509,6 +401,8 @@ static void buildLoopWithBoundReplacedOnRarePath(Graph& graph, PollState& state,
     BasicBlock* join = proc.addBlock();
     BasicBlock* body = position == LoopTestPosition::Top ? proc.addBlock() : join;
     BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* checked = proc.addBlock();
+    BasicBlock* outOfBounds = proc.addBlock();
     BasicBlock* hot = proc.addBlock();
     BasicBlock* exit = proc.addBlock();
     Variable* index = proc.addVariable(Int64);
@@ -530,9 +424,12 @@ static void buildLoopWithBoundReplacedOnRarePath(Graph& graph, PollState& state,
     }
     appendPoll(graph, body, state);
     Value* loaded = graph.load(body, Int64, arguments[1], 0, firstHeap);
-    graph.branch(body, graph.make(body, Below, loaded, graph.int64(body, 100)), FrequentedBlock(hot), rarely(unexpected));
+    graph.branch(body, graph.make(body, Below, loaded, graph.int64(body, 100)), FrequentedBlock(checked), rarely(unexpected));
     graph.callLikePatchpoint(unexpected);
-    graph.jump(unexpected, hot);
+    graph.jump(unexpected, checked);
+    Value* length = graph.make(checked, ZExt32, graph.load(checked, Int32, arguments[1], 8, secondHeap));
+    graph.branch(checked, graph.make(checked, Below, graph.get(checked, index), length), FrequentedBlock(hot), rarely(outOfBounds));
+    graph.ret(outOfBounds, graph.int64(outOfBounds, -1));
     graph.increase(hot, sum, loaded);
     Value* nextIndex = increaseCounter(graph, hot, index, graph.int64(hot, 1));
     if (position == LoopTestPosition::Top)
@@ -550,7 +447,7 @@ static void buildLoopWithBoundReplacedOnRarePath(Graph& graph, PollState& state,
 
 static void testVersionLoopsRarePathWithOtherBoundLeavesFastLoop()
 {
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 3 * longRun + 100;
     for (LoopTestPosition position : { LoopTestPosition::Top, LoopTestPosition::Bottom }) {
         Procedure proc(loopPolicy());
         Graph graph { proc };
@@ -558,15 +455,15 @@ static void testVersionLoopsRarePathWithOtherBoundLeavesFastLoop()
         buildLoopWithBoundReplacedOnRarePath(graph, state, position);
 
         CHECK(versionLoopsAndValidate(proc));
-        CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
+        CHECK_EQ(proc.report().countOf(Counter::LoopBoundsClamped), 1u);
         CHECK_EQ(numberOfRarePathCopies(proc), 1u);
         auto code = compileProc(proc);
-        int64_t memory[1] = { 7 };
+        int64_t memory[2] = { 7, iterations };
 
         CHECK_EQ(run(*code, iterations, memory, -1), iterations * 7);
-        CHECK_EQ(state.numberOfPolls, 3);
+        CHECK_EQ(state.numberOfPolls, iterations);
         int64_t bodyRunsOnRareIteration = position == LoopTestPosition::Top ? 0 : 1;
-        for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, maxIterationsPerStrip - 1, maxIterationsPerStrip, maxIterationsPerStrip + 1 })
+        for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, longRun - 1, longRun, longRun + 1 })
             CHECK_EQ(run(*code, iterations, memory, rareIteration), (rareIteration + bodyRunsOnRareIteration) * 7 + rareSummand);
     }
 }
@@ -580,6 +477,8 @@ static void buildTopTestedLoopWithConditionReplacedOnRarePath(Graph& graph, Poll
     BasicBlock* test = proc.addBlock();
     BasicBlock* body = proc.addBlock();
     BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* checked = proc.addBlock();
+    BasicBlock* outOfBounds = proc.addBlock();
     BasicBlock* hot = proc.addBlock();
     BasicBlock* exit = proc.addBlock();
     Variable* index = proc.addVariable(Int64);
@@ -587,9 +486,10 @@ static void buildTopTestedLoopWithConditionReplacedOnRarePath(Graph& graph, Poll
     Variable* condition = proc.addVariable(Int32);
     auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
     Value* pointer = arguments[1];
-    // With a load on each side of it, the load in the loop is hoisted without peeling the loop test, whose condition is a Phi.
+    // With a load on each side of them, the loads in the loop are hoisted without peeling the loop test, whose condition is a Phi.
     graph.load(root, Int64, pointer, 0, firstHeap);
     graph.load(root, Int64, pointer, 16, firstHeap);
+    graph.load(root, Int64, pointer, 32, firstHeap);
     graph.set(root, index, graph.int64(root, 0));
     graph.set(root, sum, graph.int64(root, 0));
     graph.jump(root, header);
@@ -602,9 +502,12 @@ static void buildTopTestedLoopWithConditionReplacedOnRarePath(Graph& graph, Poll
     graph.branch(test, graph.get(test, condition), body, exit);
     appendPoll(graph, body, state);
     Value* loaded = graph.load(body, Int64, pointer, 8, firstHeap);
-    graph.branch(body, graph.make(body, Below, loaded, graph.int64(body, 100)), FrequentedBlock(hot), rarely(unexpected));
+    graph.branch(body, graph.make(body, Below, loaded, graph.int64(body, 100)), FrequentedBlock(checked), rarely(unexpected));
     graph.callLikePatchpoint(unexpected);
-    graph.jump(unexpected, hot);
+    graph.jump(unexpected, checked);
+    Value* length = graph.make(checked, ZExt32, graph.load(checked, Int32, pointer, 24, secondHeap));
+    graph.branch(checked, graph.make(checked, Below, graph.get(checked, index), length), FrequentedBlock(hot), rarely(outOfBounds));
+    graph.ret(outOfBounds, graph.int64(outOfBounds, -1));
     graph.increase(hot, sum, loaded);
     Value* nextIndex = increaseCounter(graph, hot, index, graph.int64(hot, 1));
     graph.jump(hot, header);
@@ -617,21 +520,21 @@ static void buildTopTestedLoopWithConditionReplacedOnRarePath(Graph& graph, Poll
 
 static void testVersionLoopsRarePathWithOtherConditionLeavesFastLoop()
 {
-    constexpr int64_t iterations = 3 * maxIterationsPerStrip + 100;
+    constexpr int64_t iterations = 3 * longRun + 100;
     Procedure proc(loopPolicy());
     Graph graph { proc };
     PollState state;
     buildTopTestedLoopWithConditionReplacedOnRarePath(graph, state);
 
     CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 1u);
+    CHECK_EQ(proc.report().countOf(Counter::LoopBoundsClamped), 1u);
     CHECK_EQ(numberOfRarePathCopies(proc), 1u);
     auto code = compileProc(proc);
-    int64_t memory[3] = { 0, 7, 0 };
+    int64_t memory[5] = { 0, 7, 0, iterations, 0 };
 
     CHECK_EQ(run(*code, iterations, memory, -1), iterations * 7);
-    CHECK_EQ(state.numberOfPolls, 3);
-    for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, maxIterationsPerStrip - 1, maxIterationsPerStrip, maxIterationsPerStrip + 1 })
+    CHECK_EQ(state.numberOfPolls, iterations);
+    for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, longRun - 1, longRun, longRun + 1 })
         CHECK_EQ(run(*code, iterations, memory, rareIteration), rareIteration * 7 + rareSummand);
 }
 
@@ -645,7 +548,6 @@ static void testVersionLoopsDoesNotCountLoopWithoutRecord()
     CHECK(versionLoopsAndValidate(proc));
     CHECK(hasRemark(proc, RemarkKind::LoopBoundNotClamped, GaveUpReason::NotCounted));
     CHECK_EQ(proc.report().countOf(Counter::KnownInductionsUsed), 0u);
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 0u);
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 0u);
     CHECK_EQ(numberOfRarePathCopies(proc), 2u);
     checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 1, 1 });
@@ -696,7 +598,6 @@ static void testVersionLoopsKeepsPollWithRedundantLoopTest()
     validate(proc);
 
     CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), 0u);
     checkValueCountInEachLoop(proc, Patchpoint, { 1, 1 });
     auto code = compileProc(proc);
     int64_t memory[1] = { 7 };
@@ -820,7 +721,6 @@ static void checkRangeChecks(const LoopCounter& counter, CounterProof proof)
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), checksRemoved);
     CHECK_EQ(hasRemark(proc, RemarkKind::RangeChecksRemoved, GaveUpReason::None), isProven);
     CHECK_EQ(hasRemark(proc, RemarkKind::LoopBoundNotClamped, GaveUpReason::NotCounted), !isProven);
-    CHECK_EQ(proc.report().countOf(Counter::PollsStripMined), isProven ? 1u : 0u);
     CHECK_EQ(hasInt64Constant(proc, std::numeric_limits<int64_t>::max() - 1), proof == CounterProof::EntryGuard);
 
     auto code = compileProc(proc);
@@ -848,9 +748,7 @@ static void testVersionLoopsRemovesRangeChecksOnlyFromProvenCounter()
 
 void addBunCountedLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
 {
-    RUN(testVersionLoopsStripMinesPollInFastVersion());
     RUN(testVersionLoopsCountsLoopAfterEarlierLoop());
-    RUN(testVersionLoopsExcursionIterationsCountTowardStrip());
     RUN(testVersionLoopsCountsLoopWithBoundLoadedBeforeAndAtBottom());
     RUN(testVersionLoopsTopTestedExcursionStillPolls());
     RUN(testVersionLoopsTopTestedExcursionReturnsToFastLoop());

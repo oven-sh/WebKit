@@ -105,6 +105,7 @@ function f2 name="handlerLeavesTheLoop" parameters=[{type=anything}, {type=boole
 # CHECK-NEXT: b3(v6: env L2) role=CatchHandler:
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: [[read]]: anything = GetEnvironmentField v6
+# CHECK-NEXT: ReleaseEnvironment v6
 # CHECK-NEXT: Return [[read]]
 # CHECK-NOT: ReleaseEnvironment
 # CHECK: [[behindLeaving]]():

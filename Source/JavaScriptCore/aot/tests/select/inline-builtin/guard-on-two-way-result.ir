@@ -10,9 +10,9 @@ function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] re
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
     v5 = Integer integer=1
-    v6 = GetArrayElement v2, v5, v4 level=Predicted [keyIsIntegral]
+    v6 = GetArrayElement v2, v5, v4 level=Expected [keyIsIntegral]
     PropSet v1, v6 key="first"
-    v8 = GetArrayElement v2, v5, v4 level=Predicted [keyIsIntegral]
+    v8 = GetArrayElement v2, v5, v4 level=Expected [keyIsIntegral]
     Return v8
   b2():
     Return
@@ -20,5 +20,5 @@ function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] re
 # CHECK-LABEL: function f0 name="resultStaysLocal"
 # CHECK: TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done [[done]](), miss [[miss]]()
 # CHECK: PropSet v1, v6 key="first"
-# CHECK-NEXT: v8: anything = GetArrayElement v2, v5, v4 level=Predicted
+# CHECK-NEXT: v8: anything = GetArrayElement v2, v5, v4 level=Expected
 # CHECK: [[done]](v2: Array<string>):

@@ -20,6 +20,7 @@
 #include "AOTPropertyCachesWords.h"
 #include "AOTRuntimeRecords.h"
 #include "AOTRuntimeWords.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTStringBuilderWords.h"
 #include "AOTStubWords.h"
 #include "AOTStubsArrayWords.h"
@@ -32,6 +33,7 @@
 #include "TypedArrayType.h"
 #include <span>
 #include <type_traits>
+#include <wtf/text/UniquedStringImpl.h>
 
 #define AOT_INSTANCE_OFFSET(path) OBJECT_OFFSETOF(JSC::AOT::Instance, path)
 #define AOT_INSTANCE_PREFIX_OFFSET(member) (static_cast<ptrdiff_t>(OBJECT_OFFSETOF(JSC::AOT::InstancePrefix, member)) - static_cast<ptrdiff_t>(sizeof(JSC::AOT::InstancePrefix)))
@@ -47,6 +49,8 @@ class VM;
 namespace AOT {
 
 struct ImageFunction;
+struct ImageStringRecord;
+struct ProgramSymbols;
 struct RecordedOptions;
 struct State;
 
@@ -64,33 +68,45 @@ private:
     alignas(T) uint8_t m_bytes[sizeof(T)];
 };
 
+// On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
-    uint64_t newArrayWithInt32Header;
-    uint64_t newArrayWithDoubleHeader;
-    uint64_t newArrayWithContiguousHeader;
-    int64_t notUndefinedOrNullMask;
+    int64_t minInt64;
     uint64_t newCopyOnWriteArrayWithContiguousHeader;
     uint64_t stringHeader;
     void* ropeStringAllocator;
-    void* arrayAllocator;
     uint32_t collectionStructureIDs[numberOfReceivers];
     uint32_t unused;
+    EncodedJSValue boxedNaN;
+    uint64_t newArrayWithInt32Header;
+    uint64_t newArrayWithDoubleHeader;
+    uint64_t newArrayWithContiguousHeader;
+    // Constants that take ten bytes as an immediate: AOTB3Policy.cpp.
+    uint64_t doubleEncodeOffset;
+    uint64_t boxedOne;
+    int64_t undefinedInteger;
+    int64_t nullInteger;
+    int64_t absentInteger;
+    uint64_t undefinedDouble;
+    uint64_t nullDouble;
+    uint64_t absentDouble;
+    double one;
+    double pureNaN;
+    int64_t notUndefinedOrNullMask;
+    void* arrayAllocator;
     JSCell** builtinCells;
     uintptr_t structureIDBase;
-    EncodedJSValue boxedNaN;
     JSCell* emptyString;
 };
 
 struct InstanceHeader {
     void** runtimeTable;
-    const uint32_t* shapeSets;
+    const uint64_t* shapeSets;
     VM* vm;
     ZeroedStorage<StackManager::Mirror> stackMirror;
     uint32_t barrierThreshold;
     uint8_t mutatorShouldBeFenced;
     uint8_t awaitMustSuspend;
     uint64_t slimClosureHeaders[numberOfSlimClosureKinds];
-    uint64_t shapeEpoch;
     void* closureCells;
     void* singleCharacterStrings;
     int64_t numberTag;
@@ -104,14 +120,37 @@ struct ImageWords {
     const uint32_t* codeGranules;
     const uint32_t* subsequentFunctionStarts;
     const ProgramTables* tables;
-    UniquedStringImpl* const* programIdentifiers;
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    const ImageStringRecord* stringRecords;
+    const uint32_t* lazyStringHeaderOffsets;
+    uint8_t* lazyStringHeaders;
+    uint64_t lazyStringHeadersCapacity;
+#else
+    // The atoms of the image, read-only, one header per identifier number: the name with the number n is programIdentifiers + n.
+    // A symbol or a private name is made at run time. Its header here is zero, and ProgramIdentifiers has its uid.
+    UniquedStringImpl* programIdentifiers;
+    uint64_t sizeOfProgramIdentifiers;
+#endif
+    // ImageSection::Strings, one ImageStringWord for each StringID, and ImageSection::StringConstants, the StringID of each string cell.
+    const uint32_t* stringWords;
+    const uint32_t* stringConstants;
+    // ImageSection::LongStrings, which says where the strings without a header are, and ImageSection::Text.
+    const uint32_t* listedStrings;
+    const uint8_t* text;
+    // The symbols and private names made so far, by identifier number. The table grows, this record stays where it is.
+    const ProgramSymbols* programSymbols;
     const uint32_t* fieldTableEntries;
     const uint16_t* fieldRecordIndices;
+    const uint64_t* classAccessors;
+    // ProgramTables::data(): compiled code points an array of constants at the storage in its node.
+    const uint64_t* data;
+    // Where the kind of function 0 would lie if ProgramTables::closureFunctionKinds() began with it: a stub adds the number of a closure's function.
+    uintptr_t closureFunctionKindsOrigin;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, DefaultFinalObject, RegExpObject, NullPrototypeObject, RegExpMatchesArray };
-static constexpr unsigned numberOfInlineAllocations = 8;
-static_assert(static_cast<unsigned>(InlineAllocation::RegExpMatchesArray) + 1 == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, DefaultFinalObject, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set };
+static constexpr unsigned numberOfInlineAllocations = 9;
+static_assert(static_cast<unsigned>(InlineAllocation::Set) + 1 == numberOfInlineAllocations);
 
 struct InlineAllocationData {
     void* allocator;
@@ -125,8 +164,16 @@ struct TypedArrayAllocation {
     uint64_t unused;
 };
 
+struct ClonedStructure {
+    uint64_t header;
+    uint64_t cellSize;
+};
+
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
+    static constexpr unsigned numberOfClonedStructures = 16;
+    static constexpr unsigned clonedStructureShift = 4;
+    static constexpr unsigned placeOfClonedStructure(uint32_t structureID) { return structureID >> clonedStructureShift & (numberOfClonedStructures - 1); }
 
     void* auxiliarySpace;
     void* cagedAuxiliarySpace;
@@ -135,7 +182,12 @@ struct AllocationWords {
     InlineAllocationData inlineAllocations[numberOfInlineAllocations];
     TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
     uint64_t newCopyOnWriteArrayHeaders[2];
+    // Of an array of values that lies in a frame. Zero unless the Structure of such arrays is pristine in every aspect.
+    uint64_t frameArrayHeader;
     uint64_t compactTableHeader;
+    // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
+    const uint64_t* compactTableGrowthPlans;
+    ClonedStructure clonedStructures[numberOfClonedStructures];
 };
 
 // Most objects that have extra properties have one or two.
@@ -146,6 +198,8 @@ struct RealmWords {
     JSCell* functionPrototypeCall;
     JSCell* boundFunctionExecutable;
     Structure* emptyExtraPropertiesStructure;
+    // What a call without surplus arguments hands to a function that takes the list of them. Nothing writes to it.
+    JSCell* emptyArgumentList;
     const ClassInfo* boundFunctionClassInfo;
     const ClassInfo* const* instanceClassInfos;
     uint32_t boundFunctionStructureID;
@@ -153,7 +207,13 @@ struct RealmWords {
     EncodedJSValue linkTimeConstants[JSC::numberOfLinkTimeConstants];
     const void* smallIntStrings;
     const void* intStrings;
+    const uint64_t* integerKeys;
+    uint64_t integerKeyMask;
+    // StringKeyCache::tryFindCaseConversion().
+    const uint64_t* caseConversions;
     MicrotaskQueue* microtaskQueue;
+    // Of the ordinary object { read, written } that an encoder answers with. Null until the first is made.
+    Structure* readAndWrittenCountsStructure;
 };
 
 struct NumberWords {
@@ -180,7 +240,8 @@ struct NumberWords {
     v(json, JSONWords) \
     v(stringBuilder, StringBuilderWords) \
     v(stubs, StubWords) \
-    v(scratch, CodegenScratchWords)
+    v(scratch, CodegenScratchWords) \
+    v(constructWords, ConstructWordCache)
 
 struct Instance : InstanceHeader {
 #define AOT_DECLARE_INSTANCE_PART(member, Type) Type member;
@@ -199,13 +260,18 @@ struct Instance : InstanceHeader {
     const ProgramTables& tables() const { return *image.tables; }
     const RecordedOptions& options() const;
 
-    void bumpShapeEpoch() { ++shapeEpoch; }
     void captureCellHeaders();
     void didCreateInstanceStructure(BuiltinClassID, Structure*);
 
     uint8_t* statics() { return reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfStatics(tables().instanceSizes); }
     const uint8_t* statics() const { return reinterpret_cast<const uint8_t*>(this) + InstanceLayout::offsetOfStatics(tables().instanceSizes); }
     uint8_t* cards() { return reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCards(tables().instanceSizes); }
+    template<typename T> T* tableAt(size_t offsetInInstance) { return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(this) + offsetInInstance); }
+    std::span<uint32_t> methodTable()
+    {
+        InstanceSizes sizes = tables().instanceSizes;
+        return { reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfMethodTable(sizes)), sizes.sizeOfMethodTable / sizeof(uint32_t) };
+    }
     RememberedSlot<uint32_t>& stringCell(uint32_t number)
     {
         ASSERT(number < tables().instanceSizes.numberOfStringCells);
@@ -217,7 +283,6 @@ struct Instance : InstanceHeader {
         return { reinterpret_cast<RememberedSlot<Slot>*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfSiteCaches(sizes)), sizes.numberOfSiteCaches };
     }
 
-    static constexpr ptrdiff_t offsetOfShapeEpoch() { return OBJECT_OFFSETOF(InstanceHeader, shapeEpoch); }
     static constexpr ptrdiff_t offsetOfReceiverStructureID(Receiver receiver) { return AOT_INSTANCE_PREFIX_OFFSET(collectionStructureIDs) + static_cast<unsigned>(receiver) * static_cast<ptrdiff_t>(sizeof(uint32_t)); }
     uint32_t& receiverStructureID(Receiver receiver) { return prefix().collectionStructureIDs[static_cast<unsigned>(receiver)]; }
 
@@ -239,7 +304,7 @@ struct Instance : InstanceHeader {
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
-        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure };
+        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure };
         for (JSCell* cell : cells) {
             if (cell)
                 visitor.appendUnbarriered(cell);
@@ -269,14 +334,17 @@ FOR_EACH_AOT_INSTANCE_PART(AOT_CHECK_INSTANCE_PART)
 static_assert(OBJECT_OFFSETOF(InstanceHeader, vm) == 16, "JSWebAssemblyInstance::offsetOfVM()");
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
 static_assert(OBJECT_OFFSETOF(InstanceHeader, globalObject) <= 128);
-static_assert(Instance::offsetOfShapeEpoch() < 128);
-static_assert(sizeof(InstancePrefix) <= 128, "On x86-64, an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes.");
+static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == -128);
 static_assert(sizeof(Instance) <= 32 * KB, "On ARM64, the immediate offset of a 64-bit load reaches 32 KB.");
 static_assert(AOT_INSTANCE_OFFSET(propertyCaches.hashedSlots) <= 504, "On ARM64, the immediate offset of a load of a pair reaches 504 bytes.");
-static_assert(sizeof(Instance) <= InstanceLayout::offsetOfStringCells);
+static_assert(sizeof(Instance) <= InstanceLayout::offsetOfKeyOrderSteps);
+static_assert(InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache) <= InstanceLayout::offsetOfBuiltinLocationStates);
 static_assert(sizeof(InstancePrefix) + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::bytesReservedForPrefixAndPollPage);
 static_assert(sizeof(RememberedSlot<Slot>) == InstanceLayout::sizeOfSiteCache && sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
 static_assert(sizeof(TypedArrayAllocation) == 32);
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
+#endif
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 
@@ -289,8 +357,8 @@ constexpr uint64_t runtimeLayoutHash()
 #undef AOT_HASH_INSTANCE_PART
         OBJECT_OFFSETOF(Instance, state),
         sizeof(Slot), sizeof(PackedSlot), sizeof(SiteCacheState), sizeof(CustomAccessorRecord), numberOfSlotKinds,
-        sizeof(AllocationSiteRecord), sizeof(KeyOrderTransition), sizeof(KeyListCacheEntry),
-        sizeof(LayoutData), sizeof(RareLayoutData), sizeof(MessageLayoutData), sizeof(ClassData), sizeof(FieldData), sizeof(MethodData), sizeof(MemberGuardData),
+        sizeof(AllocationSiteRecord), sizeof(KeyOrderTransition), sizeof(KeyListCacheEntry), sizeof(GlobalBinding),
+        sizeof(LayoutData), sizeof(ExtensionLayoutData), sizeof(ClassData), sizeof(FieldData), sizeof(MethodData), sizeof(MemberGuardData), sizeof(MemberGuardAggregates),
         sizeof(EnvironmentData), sizeof(KeyOrderData), sizeof(ShapeTestData), sizeof(RuntimeType), sizeof(RuntimeCellTest),
         numberOfProgramTables,
 #define AOT_HASH_PROGRAM_TABLE(accessor, ElementType) sizeof(ElementType),

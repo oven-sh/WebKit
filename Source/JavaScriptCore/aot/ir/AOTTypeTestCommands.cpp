@@ -210,7 +210,7 @@ static std::optional<BaseChain> parseBaseChain(StringView word)
 {
     if (word == "proven"_s)
         return BaseChain::Proven;
-    if (word == "predicted"_s)
+    if (word == "expected"_s)
         return BaseChain::Predicted;
     return std::nullopt;
 }
@@ -252,31 +252,32 @@ static bool hasSameValues(const Type& a, const Type& b, const Program& program)
     return a.isSubsetOf(b, program) && b.isSubsetOf(a, program);
 }
 
-static Type withoutPredictedContents(const Type& type)
+static Type withoutExpectedContents(const Type& type)
 {
     Type result = type;
-    for (ClassPart& part : result.classes)
-        part.predictedContents.clear();
+    for (ClassPart& part : result.classes) {
+        if (part.contentsAreProven)
+            continue;
+        part.contents.clear();
+        part.arrayStorage = ArrayStorage::Other;
+    }
     return result;
 }
 
 using TypeOperation = Type (Type::*)(const Type&, TypeArena&) const;
 
-static bool ignoresPredictedContents(TypeOperation operation, const Type& a, const Type& b, const Type& result, TypeArena& arena)
+static bool ignoresExpectedContents(TypeOperation operation, const Type& a, const Type& b, const Type& result, TypeArena& arena)
 {
-    Type expected = (withoutPredictedContents(a).*operation)(withoutPredictedContents(b), arena);
-    return withoutPredictedContents(result) == withoutPredictedContents(expected);
+    Type resultWithoutThem = (withoutExpectedContents(a).*operation)(withoutExpectedContents(b), arena);
+    return withoutExpectedContents(result) == withoutExpectedContents(resultWithoutThem);
 }
 
 // Types with the same values may differ in declared parts, in the types their contents name, and in a callable built-in listed beside `function`.
 static Type topLevelPartsOf(const Type& type, const BuiltinTable& builtins)
 {
-    Type result = withoutPredictedContents(type);
-    for (ClassPart& part : result.classes) {
+    Type result = withoutExpectedContents(type);
+    for (ClassPart& part : result.classes)
         part.contents.clear();
-        if (!part.contentsAreProven)
-            part.arrayStorage = ArrayStorage::Other;
-    }
     if (result.anyFunction) {
         removeAllMatching(result.builtins, [&](BuiltinID builtin) {
             return isCallableBuiltin(builtins, builtin);
@@ -327,6 +328,8 @@ static bool hasIncomparableParts(const Type& a, const Type& b, const TypeTable& 
 {
     if (a.anyObject || b.anyObject)
         return false;
+    if (hasMembersWithoutLayout(types, a) || hasMembersWithoutLayout(types, b))
+        return true;
     if (mayContainPartsOf(a, b, types) || mayContainPartsOf(b, a, types))
         return true;
     return std::ranges::any_of(a.classes, [&](const ClassPart& part) {
@@ -353,7 +356,7 @@ static void checkSubsetLaws(LawChecker& laws, const Program& program, std::span<
         for (unsigned j = 0; j < size; ++j) {
             laws.check(overlaps(i, j) == overlaps(j, i), "overlap-symmetric"_s, i, j);
             laws.check(!isSubset(i, j) || overlaps(i, j) || types[i].isNever(), "subset-overlaps"_s, i, j);
-            laws.check(isSubset(i, j) == withoutPredictedContents(types[i]).isSubsetOf(withoutPredictedContents(types[j]), program), "ignores-predictions"_s, i, j);
+            laws.check(isSubset(i, j) == withoutExpectedContents(types[i]).isSubsetOf(withoutExpectedContents(types[j]), program), "ignores-expected-contents"_s, i, j);
             if (!isSubset(i, j))
                 continue;
             if (isSubset(j, i))
@@ -410,7 +413,7 @@ static void checkUnionLaws(LawChecker& laws, const Program& program, std::span<c
             const Type& united = unions(i, j);
             laws.check(united == unions(j, i), "commutative"_s, i, j);
             laws.check(isCanonical(united), "canonical"_s, i, j);
-            laws.check(ignoresPredictedContents(&Type::unionWith, a, b, united, arena), "ignores-predictions"_s, i, j);
+            laws.check(ignoresExpectedContents(&Type::unionWith, a, b, united, arena), "ignores-expected-contents"_s, i, j);
             if (!hasUpperBound(a, b))
                 continue;
             laws.check(a.isSubsetOf(united, program) && b.isSubsetOf(united, program), "upper-bound"_s, i, j);
@@ -505,7 +508,7 @@ static void checkIntersectLaws(LawChecker& laws, const Program& program, std::sp
             if (hasUpperBound(a, b))
                 laws.check(a.isSubsetOf(difference.unionWith(b, arena), program), "difference-complete"_s, i, j);
             laws.check(isCanonical(intersection) && isCanonical(difference), "canonical"_s, i, j);
-            laws.check(ignoresPredictedContents(&Type::intersectWith, a, b, intersection, arena), "ignores-predictions"_s, i, j);
+            laws.check(ignoresExpectedContents(&Type::intersectWith, a, b, intersection, arena), "ignores-expected-contents"_s, i, j);
             for (unsigned k = 0; k < size; ++k) {
                 const Type& c = types[k];
                 if (c.isSubsetOf(a, program) && c.isSubsetOf(b, program))
@@ -557,8 +560,9 @@ static bool hasExpectedDeclaredParts(const Type& cast, const Type& source, const
     });
 }
 
-static bool namesClassesAsCastType(const BuiltinTable& builtins, const Type& cast, const Type& castType)
+static bool namesClassesAsCastType(const TypeTable& types, const Type& cast, const Type& castType)
 {
+    const BuiltinTable& builtins = types.builtins();
     return castType.anyObject || std::ranges::all_of(cast.classes, [&](const ClassPart& part) {
         if (isFunctionClass(builtins, part.builtinClass))
             return true;
@@ -568,27 +572,45 @@ static bool namesClassesAsCastType(const BuiltinTable& builtins, const Type& cas
     });
 }
 
-static bool namesBuiltinsAsCastType(const BuiltinTable& builtins, const Type& cast, const Type& castType)
+static bool namesBuiltinsAsCastType(const TypeTable& types, const Type& cast, const Type& castType)
 {
     return castType.anyObject || std::ranges::all_of(cast.builtins, [&](BuiltinID builtin) {
-        return includesBuiltin(castType, builtin, builtins);
+        return includesBuiltin(castType, builtin, types.builtins());
     });
+}
+
+// A family does not say which objects its members without a layout are. The cast says of an object that only the source lists what the family says, so it names less than the intersection.
+static bool holdsValuesOfIntersection(const Type& cast, const Type& intersection, const Program& program)
+{
+    if (intersection.isSubsetOf(cast, program))
+        return true;
+    Type namedByFamily = intersection;
+    namedByFamily.anyFunction = false;
+    namedByFamily.functions.clear();
+    namedByFamily.builtins.clear();
+    namedByFamily.classes.clear();
+    namedByFamily.regExpLiteralSet.clear();
+    namedByFamily.canonicalize();
+    return hasMembersWithoutLayout(program, cast) && namedByFamily.isSubsetOf(cast, program);
 }
 
 static void checkCastLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<Type>& casts, TypeArena& arena)
 {
-    const BuiltinTable& builtins = program.types.builtins();
     unsigned size = types.size();
     for (unsigned i = 0; i < size; ++i) {
         for (unsigned j = 0; j < size; ++j) {
             const Type& a = types[i];
             const Type& b = types[j];
             const Type& cast = casts(i, j);
-            laws.check(hasSameValues(cast, a.intersectWith(b, arena), program), "same-values"_s, i, j);
-            laws.check(namesClassesAsCastType(builtins, cast, b), "names-classes-as-cast-type"_s, i, j);
-            laws.check(namesBuiltinsAsCastType(builtins, cast, b), "names-builtins-as-cast-type"_s, i, j);
+            if (hasMembersWithoutLayout(program, b)) {
+                laws.check(cast.isSubsetOf(b, program), "inside-cast-type"_s, i, j);
+                laws.check(holdsValuesOfIntersection(cast, a.intersectWith(b, arena), program), "holds-values-of-intersection"_s, i, j);
+            } else
+                laws.check(hasSameValues(cast, a.intersectWith(b, arena), program), "same-values"_s, i, j);
+            laws.check(namesClassesAsCastType(program.types, cast, b), "names-classes-as-cast-type"_s, i, j);
+            laws.check(namesBuiltinsAsCastType(program.types, cast, b), "names-builtins-as-cast-type"_s, i, j);
             laws.check(isCanonical(cast), "canonical"_s, i, j);
-            laws.check(ignoresPredictedContents(&Type::castTo, a, b, cast, arena), "ignores-predictions"_s, i, j);
+            laws.check(ignoresExpectedContents(&Type::castTo, a, b, cast, arena), "ignores-expected-contents"_s, i, j);
             if (!hasIncomparableParts(a, b, program.types))
                 laws.check(hasExpectedDeclaredParts(cast, a, b), "declared-parts"_s, i, j);
         }
@@ -622,7 +644,7 @@ static void runCast(TestCommandContext& context)
 static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& arena)
 {
     Type raw;
-    Vector<LayoutID> members;
+    LayoutSet layouts { .isComplete = true };
     bool hasUnrestrictedRegExp = false;
     for (const Type& type : types | std::views::reverse) {
         raw.primitives |= type.primitives;
@@ -635,7 +657,8 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
         raw.builtins.unite(type.builtins);
         raw.regExpLiteralSet.unite(type.regExpLiteralSet);
         raw.classes.appendVector(type.classes);
-        members.append(membersOf(arena.table(), type));
+        layouts.members.append(membersOf(arena.table(), type));
+        layouts.hasMembersWithoutLayout |= hasMembersWithoutLayout(arena.table(), type);
         hasUnrestrictedRegExp |= type.regExpLiteralSet.isEmpty() && type.findClassPart(BuiltinClasses::RegExp);
         if (type.environment)
             raw.environment = type.environment;
@@ -644,7 +667,8 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
     }
     if (hasUnrestrictedRegExp)
         raw.regExpLiteralSet.clear();
-    raw.layouts = Type::forLayouts(members.span(), arena).layouts;
+    if (!layouts.members.isEmpty() || layouts.hasMembersWithoutLayout)
+        raw.layouts = arena.intern(WTF::move(layouts));
     return raw;
 }
 
@@ -686,35 +710,15 @@ static void runCanonical(TestCommandContext& context)
     laws.finish();
 }
 
-static void runWithoutProofs(TestCommandContext& context)
-{
-    auto types = typesUnderTest(context);
-    if (!types)
-        return;
-    const Program& program = *context.program;
-
-    Vector<Type> testableTypes = types->map([](const Type& type) {
-        return type.withoutProofs();
-    });
-    for (unsigned i = 0; i < types->size(); ++i)
-        context.out.println("t"_s, i, " = "_s, TypeText { program, testableTypes[i] });
-
-    LawChecker laws(context.out);
-    for (unsigned i = 0; i < types->size(); ++i) {
-        const Type& testable = testableTypes[i];
-        laws.check(testable.withoutProofs() == testable, "idempotent"_s, i, i);
-        laws.check(types->at(i).isSubsetOf(testable, program), "superset"_s, i, i);
-        laws.check(isCanonical(testable), "canonical"_s, i, i);
-    }
-    laws.finish();
-}
-
 static void checkRepresentationLaws(LawChecker& laws, const Program& program, std::span<const Type> types)
 {
     for (unsigned i = 0; i < types.size(); ++i) {
         const Type& type = types[i];
         Representation representation = defaultRepresentationOf(type);
         laws.check(isLegalRepresentation(type, representation), "default-legal"_s, i, i);
+        RepresentationSet legal = legalRepresentationsOf(type);
+        for (Representation candidate : allMembersOf<Representation>)
+            laws.check(legal.contains(candidate) == isLegalRepresentation(type, candidate), "legal-set"_s, i, i);
         for (unsigned j = 0; j < types.size(); ++j) {
             if (type.isJavaScriptValue() == types[j].isJavaScriptValue() && type.isSubsetOf(types[j], program))
                 laws.check(isLegalRepresentation(type, defaultRepresentationOf(types[j])), "subset-legal"_s, i, j);
@@ -770,7 +774,7 @@ static void runMembers(TestCommandContext& context)
     }
     for (unsigned i = 0; i < types->size(); ++i) {
         const Type& type = types->at(i);
-        out.println('t', i, ": members "_s, LayoutSetText { program, type.layouts }, " only-layouts: "_s, yesOrNo(type.hasOnlyLayouts()));
+        out.println('t', i, ": members "_s, LayoutSetText { program, type.layouts }, " only-layouts: "_s, yesOrNo(type.hasOnlyLayouts(program)));
     }
 }
 
@@ -983,7 +987,6 @@ std::span<const TestCommand> typeTestCommands()
         { "intersect"_s, IRForm::Prepared, runIntersect },
         { "cast"_s, IRForm::Prepared, runCast },
         { "canonical"_s, IRForm::Prepared, runCanonical },
-        { "without-proofs"_s, IRForm::Prepared, runWithoutProofs },
         { "rep"_s, IRForm::Prepared, runRepresentation },
         { "members"_s, IRForm::Prepared, runMembers },
         { "find-field"_s, IRForm::Prepared, runFindField },

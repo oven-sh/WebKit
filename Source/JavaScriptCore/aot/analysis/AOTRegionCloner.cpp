@@ -29,23 +29,38 @@ public:
         , m_function(analyses.function())
         , m_cfg(analyses.cfg())
         , m_useLists(analyses.useLists())
-        , m_isInRegion(m_function.blocks.size())
+        , m_addedBlocks(m_function.blocks.size())
+        , m_isInRegion(m_addedBlocks)
         , m_separatesFunctions(separatesFunctions)
+    {
+    }
+
+    RegionBorder(FunctionAnalyses& analyses, const BitVector& isInRegion)
+        : m_analyses(analyses)
+        , m_program(analyses.program())
+        , m_function(analyses.function())
+        , m_cfg(analyses.cfg())
+        , m_useLists(analyses.useLists())
+        , m_isInRegion(isInRegion)
+        , m_separatesFunctions(false)
     {
     }
 
     bool add(BlockID block)
     {
-        return block != m_cfg.root() && m_cfg.isReachable(block) && !m_isInRegion.set(block.index());
+        return block != m_cfg.root() && m_cfg.isReachable(block) && !m_addedBlocks.set(block.index());
     }
 
-    bool addEntry(const Liveness&, BlockID);
+    bool setEntries(std::span<const BlockID>, const RegionCloner::LivenessSource&);
 
     CloneCheck check(BlockID) const;
+    bool canMergeAt(ValueID definition, BlockID join) const;
+    bool canMergeAt(BlockID join) const;
 
 private:
     bool contains(BlockID block) const { return m_isInRegion.get(block.index()); }
     bool isDefinedOutside(ValueID) const;
+    bool isLiveAtEntry(ValueID definition) const;
 
     bool namesOnlyOutsideValues(const GuardOrigin&) const;
     bool isAboutOutsideValues(const GuardFact&) const;
@@ -57,8 +72,13 @@ private:
 
     bool isSeparatedFromDefinition(const Use&, ValueID definition) const;
     bool canBeSeparatedFromUses(ValueID definition) const;
+    bool canMergeWithClone(ValueID definition) const;
+    bool canFillParameters(Edge, const Target&) const;
     bool canFillOutsideParameters(BlockID from) const;
     bool canUseOutsideValues(BlockID) const;
+    bool getsNewNameInCopy(ValueID) const;
+    bool isAboutValueWithNewNameInCopy(const GuardFact&) const;
+    bool joinsGuardsOfValuesWithNewNames(BlockID) const;
     CloneCheck checkIncomingEdges(BlockID) const;
 
     FunctionAnalyses& m_analyses;
@@ -66,20 +86,38 @@ private:
     const Function& m_function;
     const CFG& m_cfg;
     const UseLists& m_useLists;
-    BitVector m_isInRegion;
-    BitVector m_isLiveAtEntry;
+    BitVector m_addedBlocks;
+    const BitVector& m_isInRegion;
+    std::span<const BlockID> m_entries;
+    const RegionCloner::LivenessSource* m_liveness { nullptr };
+    mutable std::optional<BitVector> m_isLiveAtEntry;
     bool m_separatesFunctions;
 };
 
-bool RegionBorder::addEntry(const Liveness& liveness, BlockID entry)
+bool RegionBorder::setEntries(std::span<const BlockID> entries, const RegionCloner::LivenessSource& liveness)
 {
-    if (!contains(entry))
+    m_entries = entries;
+    m_liveness = &liveness;
+    return std::ranges::all_of(entries, [&](BlockID entry) {
+        return contains(entry);
+    });
+}
+
+bool RegionBorder::isLiveAtEntry(ValueID definition) const
+{
+    if (m_entries.empty())
         return false;
-    for (ValueID value : liveness.liveAtHead(entry)) {
-        if (!isDefinedOutside(value))
-            m_isLiveAtEntry.set(value.index());
+    if (!m_isLiveAtEntry) {
+        m_isLiveAtEntry.emplace();
+        const Liveness& liveness = (*m_liveness)();
+        for (BlockID entry : m_entries) {
+            for (ValueID value : liveness.liveAtHead(entry)) {
+                if (!isDefinedOutside(value))
+                    m_isLiveAtEntry->set(value.index());
+            }
+        }
     }
-    return true;
+    return m_isLiveAtEntry->get(definition.index());
 }
 
 bool RegionBorder::isDefinedOutside(ValueID value) const
@@ -181,7 +219,7 @@ bool RegionBorder::isSeparatedFromDefinition(const Use& use, ValueID definition)
 {
     if (!contains(use.block))
         return true;
-    return m_isLiveAtEntry.get(definition.index()) && use.block != m_useLists.blockOf(definition);
+    return use.block != m_useLists.blockOf(definition) && isLiveAtEntry(definition);
 }
 
 bool RegionBorder::canBeSeparatedFromUses(ValueID definition) const
@@ -197,26 +235,61 @@ bool RegionBorder::canBeSeparatedFromUses(ValueID definition) const
     return !isSeparated || canBecomeParameter(definition);
 }
 
+bool RegionBorder::canMergeWithClone(ValueID definition) const
+{
+    if (isDefinedOutside(definition))
+        return true;
+    BlockID block = m_useLists.blockOf(definition);
+    for (const Use& use : m_useLists.usesOf(definition)) {
+        if (use.block != block && !acceptsParameter(use, definition))
+            return false;
+    }
+    return canBecomeParameter(definition);
+}
+
+bool RegionBorder::canMergeAt(ValueID definition, BlockID join) const
+{
+    return !m_analyses.liveness().isLiveAtHead(definition, join) || canMergeWithClone(definition);
+}
+
+bool RegionBorder::canMergeAt(BlockID join) const
+{
+    for (ValueID definition : m_analyses.liveness().liveAtHead(join)) {
+        if (!canMergeWithClone(definition))
+            return false;
+    }
+    for (Edge edge : m_cfg.incomingEdges(join)) {
+        if (contains(edge.from) && !canFillParameters(edge, targetOf(m_function, edge)))
+            return false;
+    }
+    return true;
+}
+
+bool RegionBorder::canFillParameters(Edge edge, const Target& target) const
+{
+    auto& parameters = m_function.at(target.block).parameters;
+    for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
+        IncomingValue incoming = incomingValueOf(m_function, edge, parameterIndex);
+        switch (incoming.kind) {
+        case IncomingValue::Kind::Argument:
+            if (incoming.argument && !isDefinedOutside(incoming.argument) && !canBecomeParameter(incoming.argument))
+                return false;
+            break;
+        case IncomingValue::Kind::EdgeResult:
+            if (!canBecomeParameter(parameters[parameterIndex]))
+                return false;
+            break;
+        }
+    }
+    return true;
+}
+
 bool RegionBorder::canFillOutsideParameters(BlockID from) const
 {
     bool canFill = true;
     forEachOutgoingEdge(m_function, from, [&](Edge edge, const Target& target) {
-        if (contains(target.block))
-            return;
-        auto& parameters = m_function.at(target.block).parameters;
-        for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
-            IncomingValue incoming = incomingValueOf(m_function, edge, parameterIndex);
-            switch (incoming.kind) {
-            case IncomingValue::Kind::Argument:
-                if (incoming.argument && !isDefinedOutside(incoming.argument) && !canBecomeParameter(incoming.argument))
-                    canFill = false;
-                break;
-            case IncomingValue::Kind::EdgeResult:
-                if (!canBecomeParameter(parameters[parameterIndex]))
-                    canFill = false;
-                break;
-            }
-        }
+        if (!contains(target.block))
+            canFill &= canFillParameters(edge, target);
     });
     return canFill;
 }
@@ -244,6 +317,63 @@ bool RegionBorder::canUseOutsideValues(BlockID blockID) const
     });
     block.forEachChildOutsideValues(visitChild);
     return canUse;
+}
+
+bool RegionBorder::getsNewNameInCopy(ValueID value) const
+{
+    auto isJoinedWithCopy = [&](ValueID id) {
+        return !isDefinedOutside(id) && isLiveAtEntry(id);
+    };
+    return isJoinedWithCopy(value) || isJoinedWithCopy(m_analyses.identityOf(value));
+}
+
+bool RegionBorder::isAboutValueWithNewNameInCopy(const GuardFact& fact) const
+{
+    if (fact.subject && getsNewNameInCopy(fact.subject))
+        return true;
+    return std::ranges::any_of(fact.origins, [&](const GuardOrigin& origin) {
+        switch (origin.source) {
+        case GuardSource::SwitchCase:
+            return false;
+        case GuardSource::Allocation:
+            return getsNewNameInCopy(origin.test);
+        case GuardSource::Test:
+            break;
+        }
+        const Value& test = m_function.at(origin.test);
+        bool readsSuchValue = false;
+        test.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (test.operandKind(operandIndex) != OperandKind::Guard)
+                readsSuchValue |= getsNewNameInCopy(operand);
+        });
+        return readsSuchValue;
+    });
+}
+
+// `for (..) { .. odd[k] .. }` behind tests of `odd` and `k` in front of the loop, and again behind a call in it: the head of the loop takes the guards as arguments, and they join because all the tests are
+// about the same two values. A value of the region that is live at an entry is joined with its copy there and wherever the paths from there meet the others: in the copy the tests would be about values with
+// different names, and so would the operation that relies on what they join into.
+bool RegionBorder::joinsGuardsOfValuesWithNewNames(BlockID blockID) const
+{
+    if (m_entries.empty())
+        return false;
+    const CompactList<ValueID>& parameters = m_function.at(blockID).parameters;
+    for (uint32_t index = 0; index < parameters.size(); ++index) {
+        if (!isGuardValue(m_function, parameters[index]))
+            continue;
+        bool isArgument = std::ranges::any_of(m_cfg.incomingEdges(blockID), [&](Edge edge) {
+            return !edge.isHandlerEdge() && incomingValueOf(m_function, edge, index).kind == IncomingValue::Kind::Argument;
+        });
+        if (!isArgument)
+            continue;
+        const GuardFacts& facts = m_analyses.guardFacts(parameters[index]);
+        bool staysAboutSameNames = facts.isKnown() && std::ranges::none_of(facts.facts, [&](const GuardFact& fact) {
+            return isAboutValueWithNewNameInCopy(fact);
+        });
+        if (!staysAboutSameNames)
+            return true;
+    }
+    return false;
 }
 
 CloneCheck RegionBorder::checkIncomingEdges(BlockID blockID) const
@@ -276,7 +406,7 @@ CloneCheck RegionBorder::check(BlockID blockID) const
         if (!canBeSeparatedFromUses(value))
             return CloneCheck::OperandMustBeDefinition;
     }
-    if (!canFillOutsideParameters(blockID))
+    if (!canFillOutsideParameters(blockID) || joinsGuardsOfValuesWithNewNames(blockID))
         return CloneCheck::OperandMustBeDefinition;
     if (!m_separatesFunctions)
         return CloneCheck::CanClone;
@@ -290,7 +420,7 @@ CloneCheck RegionBorder::check(BlockID blockID) const
 
 } // anonymous namespace
 
-static CloneCheck checkRegionBorder(FunctionAnalyses& analyses, std::span<const BlockID> region, std::span<const BlockID> entries, bool separatesFunctions)
+static CloneCheck checkRegionBorder(FunctionAnalyses& analyses, std::span<const BlockID> region, std::span<const BlockID> entries, const RegionCloner::LivenessSource& liveness, bool separatesFunctions)
 {
     if (region.empty())
         return CloneCheck::Unknown;
@@ -299,13 +429,8 @@ static CloneCheck checkRegionBorder(FunctionAnalyses& analyses, std::span<const 
         if (!border.add(block))
             return CloneCheck::Unknown;
     }
-    if (!entries.empty()) {
-        const Liveness& liveness = analyses.liveness();
-        for (BlockID entry : entries) {
-            if (!border.addEntry(liveness, entry))
-                return CloneCheck::Unknown;
-        }
-    }
+    if (!border.setEntries(entries, liveness))
+        return CloneCheck::Unknown;
     for (BlockID block : region) {
         CloneCheck check = border.check(block);
         if (check != CloneCheck::CanClone)
@@ -341,7 +466,9 @@ RegionCloner::RegionCloner(IRBuilder& destination, const Function& source)
 
 CloneCheck RegionCloner::checkBorder(FunctionAnalyses& analyses, std::span<const BlockID> region, Border border)
 {
-    return checkRegionBorder(analyses, region, { }, border == Border::BothWays);
+    return checkRegionBorder(analyses, region, { }, [&]() -> const Liveness& {
+        return analyses.liveness();
+    }, border == Border::BothWays);
 }
 
 CloneCheck RegionCloner::checkBindings(const Function& function, std::span<const BlockID> region, CloneDestination destination)
@@ -374,11 +501,38 @@ CloneCheck RegionCloner::checkCanDuplicate(FunctionAnalyses& analyses, std::span
 
 CloneCheck RegionCloner::checkCanDuplicate(FunctionAnalyses& analyses, std::span<const BlockID> region, std::span<const BlockID> entries)
 {
+    return checkCanDuplicate(analyses, region, entries, [&]() -> const Liveness& {
+        return analyses.liveness();
+    });
+}
+
+CloneCheck RegionCloner::checkCanDuplicate(FunctionAnalyses& analyses, std::span<const BlockID> region, std::span<const BlockID> entries, NOESCAPE const LivenessSource& liveness)
+{
     constexpr bool separatesFunctions = false;
-    CloneCheck check = checkRegionBorder(analyses, region, entries, separatesFunctions);
+    CloneCheck check = checkRegionBorder(analyses, region, entries, liveness, separatesFunctions);
     if (check != CloneCheck::CanClone)
         return check;
     return checkBindings(analyses.function(), region, CloneDestination::SameFunction);
+}
+
+std::unique_ptr<Liveness> RegionCloner::computeLivenessInside(FunctionAnalyses& analyses, std::span<const BlockID> blocks, std::span<const BlockID> entries)
+{
+    const Function& function = analyses.function();
+    BitVector isDefinedInBlocks(function.values.size());
+    for (BlockID block : blocks) {
+        for (ValueID parameter : function.at(block).parameters)
+            isDefinedInBlocks.quickSet(parameter.index());
+        for (ValueID value : function.at(block).values)
+            isDefinedInBlocks.quickSet(value.index());
+    }
+    BitVector isEntry(function.blocks.size());
+    for (BlockID entry : entries)
+        isEntry.quickSet(entry.index());
+
+    LivenessOptions options;
+    options.trackedValues = &isDefinedInBlocks;
+    options.trackedBlocks = &isEntry;
+    return makeUnique<Liveness>(function, analyses.cfg(), analyses.useLists(), options);
 }
 
 CloneCheck RegionCloner::checkCanExtract(FunctionAnalyses& analyses, std::span<const BlockID> region)
@@ -399,6 +553,25 @@ CloneCheck RegionCloner::checkCanInline(const Function& callee)
         return BlockID(index);
     });
     return checkBindings(callee, blocks.span(), CloneDestination::OtherFunction);
+}
+
+bool RegionCloner::canMergeAt(FunctionAnalyses& analyses, ValueID definition, BlockID join)
+{
+    size_t numberOfBlocks = analyses.function().blocks.size();
+    BitVector isInRegion(numberOfBlocks);
+    for (size_t index = 0; index < numberOfBlocks; ++index)
+        isInRegion.quickSet(index);
+    return canMergeAt(analyses, isInRegion, definition, join);
+}
+
+bool RegionCloner::canMergeAt(FunctionAnalyses& analyses, const BitVector& isInRegion, ValueID definition, BlockID join)
+{
+    return RegionBorder(analyses, isInRegion).canMergeAt(definition, join);
+}
+
+bool RegionCloner::canMergeAt(FunctionAnalyses& analyses, const BitVector& isInRegion, BlockID join)
+{
+    return RegionBorder(analyses, isInRegion).canMergeAt(join);
 }
 
 Vector<ValueID> RegionCloner::findLiveIns(const Function& function, std::span<const BlockID> region)
@@ -471,8 +644,8 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
     for (BlockID block : m_region) {
         RELEASE_ASSERT(!m_blockMap[block.index()]);
         BlockID clone = m_destination.addBlock(m_source.at(block).frequency);
-        m_destination.function().at(clone).role = m_source.at(block).role;
-        m_destination.function().at(clone).shape = m_source.at(block).shape;
+        m_destination.function().edit(clone).role = m_source.at(block).role;
+        m_destination.function().edit(clone).shape = m_source.at(block).shape;
         m_blockMap[block.index()] = clone;
         m_isInRegion.set(block.index());
         m_clonedBlocks.append(clone);
@@ -481,13 +654,13 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
         addClones(block, didCloneValue);
     for (BlockID block : m_region)
         cloneContents(block, didCloneValue);
-    m_destination.didChangeControlFlow();
+    m_destination.didChangeControlFlow(m_clonedBlocks.span());
 }
 
 void RegionCloner::addClones(BlockID regionBlock, NOESCAPE const DidCloneValue& didCloneValue)
 {
     const Block& source = m_source.at(regionBlock);
-    Block& clone = m_destination.function().at(m_blockMap[regionBlock.index()]);
+    Block& clone = m_destination.function().edit(m_blockMap[regionBlock.index()]);
     auto addClone = [&](ValueID id) {
         RELEASE_ASSERT(!m_valueMap[id.index()]);
         ValueID added = m_destination.addValue(Value(m_source.at(id)));
@@ -514,7 +687,7 @@ void RegionCloner::cloneContents(BlockID regionBlock, NOESCAPE const DidCloneVal
     auto cloneValues = [&](std::span<const ValueID> values) {
         for (ValueID id : values) {
             ValueID clone = cloneOperands(id, regionBlock, cloneBlock, didCloneValue);
-            function.at(cloneBlock).values.append(clone);
+            function.edit(cloneBlock).values.append(clone);
         }
     };
 
@@ -523,7 +696,7 @@ void RegionCloner::cloneContents(BlockID regionBlock, NOESCAPE const DidCloneVal
     cloneValues(source.values.span().first(numberOfCaughtValues));
     Terminator terminator = cloneTerminator(regionBlock, cloneBlock, didCloneValue);
     cloneValues(source.values.span().subspan(numberOfCaughtValues));
-    function.at(cloneBlock).terminator = WTF::move(terminator);
+    function.edit(cloneBlock).terminator = WTF::move(terminator);
 
     auto hasCloneAtHead = [&](ValueID inSource) -> bool {
         return !inSource || isSameFunction() || cloneOf(inSource);
@@ -536,7 +709,7 @@ void RegionCloner::cloneContents(BlockID regionBlock, NOESCAPE const DidCloneVal
     }
     RELEASE_ASSERT(hasCloneAtHead(source.subject));
 
-    Block& clone = function.at(cloneBlock);
+    Block& clone = function.edit(cloneBlock);
     if (handler || isSameFunction())
         clone.handler = WTF::move(handler);
     clone.subject = remap(source.subject, regionBlock, cloneBlock, didCloneValue);
@@ -546,11 +719,11 @@ ValueID RegionCloner::cloneOperands(ValueID inSource, BlockID regionBlock, Block
 {
     Function& function = m_destination.function();
     ValueID clone = m_valueMap[inSource.index()];
-    Value value = WTF::move(function.at(clone));
+    Value value = WTF::move(function.edit(clone));
     value.forEachChild([&](ValueID& child) {
         child = remap(child, regionBlock, cloneBlock, didCloneValue);
     });
-    function.at(clone) = WTF::move(value);
+    function.edit(clone) = WTF::move(value);
     callDidCloneValue(inSource, clone, didCloneValue);
     return clone;
 }
@@ -594,7 +767,7 @@ ValueID RegionCloner::remap(ValueID inSource, BlockID regionBlock, BlockID clone
         return m_rematerializedClone[inSource.index()];
     ValueID clone = m_destination.addValue(Value(m_source.at(inSource)));
     callDidCloneValue(inSource, clone, didCloneValue);
-    m_destination.function().at(cloneBlock).values.append(clone);
+    m_destination.function().edit(cloneBlock).values.append(clone);
     m_rematerializedIn[inSource.index()] = regionBlock;
     m_rematerializedClone[inSource.index()] = clone;
     return clone;
@@ -605,7 +778,7 @@ void RegionCloner::callDidCloneValue(ValueID inSource, ValueID clone, NOESCAPE c
     Function& function = m_destination.function();
     size_t numberOfBlocks = function.blocks.size();
     size_t numberOfValues = function.values.size();
-    didCloneValue(inSource, function.at(clone));
+    didCloneValue(inSource, function.edit(clone));
     RELEASE_ASSERT(function.blocks.size() == numberOfBlocks && function.values.size() == numberOfValues);
 }
 

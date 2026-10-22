@@ -1,15 +1,28 @@
-# class C { #m() { return 1 } n() { return this.#m() } static s(o) { return o.#m() } }: behind the read of the brand the call of the private method is resolved and inlined. On a proven instance nothing is left of the read; on a value nobody knows the read stays in front of the inlined body, because it is what throws
+# The generic copy comes back, without a test, where the tested code knows nothing more than the copy: in f4 behind the read of the brand.
+# class C { #m() { return 1 } n() { return this.#m() } static s(o) { return o.#m() } }: behind the read of the brand the call of the private method is resolved and inlined. On a proven instance nothing is left of the read: `n` is the constant 1 and does nothing else, so its caller takes the constant, and neither the call nor the instance is left. A value nobody knows is expected to be an instance, which has the brand; on anything else the read stays in front of the inlined body, because it is what throws
+# TODO: nobody: `o.#m()` on a value nobody knows looks the brand up each time: the value is no longer expected to be an instance and tested for its class once
 # RUN: pipeline Select
-# CHECK-LABEL: function f3 name="n"
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: [[answer]]: 1 = Integer integer=1
-# CHECK-NEXT: Return [[answer]]
+# CHECK-LABEL: function f0 module=m0 kind=Module
+# CHECK-NOT: NewObject
+# CHECK-NOT: function=f3
+# CHECK: [[print]]: anything = PropGet [[global]] key="print"
+# CHECK-NEXT: [[constant]]: 1 = Integer integer=1
+# CHECK-NEXT: = Call [[print]], -, [[constant]]
 # CHECK-LABEL: function f4 name="s"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: [[token]]: classtoken = GetModuleVariable variable=g0
-# CHECK-NEXT: : classtoken = PrivateGet v0, [[token]] layout=L0
+# CHECK-NEXT: [[isInstance]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: TestAndBranch [[isInstance]] -> taken [[instance]](), notTaken [[other]]()
+# CHECK-NEXT: [[instance]]():
 # CHECK-NEXT: [[result]]: 1 = Integer integer=1
 # CHECK-NEXT: Return [[result]]
+# CHECK-NEXT: [[other]]() frequency=Unlikely:
+# CHECK-NEXT: : classtoken = PrivateGet v0, [[token]] layout=L0
+# CHECK-NEXT: Jump -> next [[instance]]()
+# CHECK-LABEL: name="n" module=m0 kind=Method role=GenericEntrypoint
+# CHECK-NEXT: b0(v0: f3, v1: anything):
+# CHECK-NEXT: [[answer]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[answer]]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

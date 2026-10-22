@@ -7,29 +7,35 @@
 # CHECK-NEXT: reached: seed n1 <- undefined
 # CHECK-NEXT: PropGet v4 (n0 & null|boolean|number|string|symbol|bigint|object - undefined) throws n2
 # CHECK-NEXT: observed v1: n0
-# CHECK-NEXT: body f1: nodes=5 sites=0 edges=3 edgesOnceReached=0 seeds=1 statements=2
+# CHECK-NEXT: body f1: nodes=6 sites=0 edges=3 edgesOnceReached=0 seeds=2 statements=2
 # CHECK-NEXT: n0 parameter v0
 # CHECK-NEXT: n1 result
 # CHECK-NEXT: n2 thrown
 # CHECK-NEXT: n3 filter v2 & function
-# CHECK-NEXT: n4 filter - function
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter - function
 # CHECK-NEXT: edge n0 -> n3
-# CHECK-NEXT: edge n0 -> n4
-# CHECK-NEXT: edge n4 -> n1
+# CHECK-NEXT: edge n0 -> n5
+# CHECK-NEXT: edge n5 -> n1
 # CHECK-NEXT: reached: seed n1 <- undefined
+# CHECK-NEXT: reached: seed n4 <- undefined
+# CHECK-NEXT: returns n0 - function as it came, the rest in n4
 # CHECK-NEXT: PropGet v3 (n3) throws n2
 # CHECK-NEXT: PropGet v4 (n3) throws n2
 # CHECK-NEXT: observed v1: n0
-# CHECK-NEXT: body f2: nodes=5 sites=0 edges=4 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: body f2: nodes=6 sites=0 edges=4 edgesOnceReached=0 seeds=0 statements=0
 # CHECK-NEXT: n0 parameter v0
 # CHECK-NEXT: n1 result
 # CHECK-NEXT: n2 thrown
-# CHECK-NEXT: n3 filter & true|number|string|symbol|bigint|object
-# CHECK-NEXT: n4 filter & undefined|null|false|0|whole|string|bigint
-# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: n3 merge
+# CHECK-NEXT: n4 filter & true|number|string|symbol|bigint|object
+# CHECK-NEXT: n5 filter & undefined|null|false|0|whole|string|bigint
 # CHECK-NEXT: edge n0 -> n4
-# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: edge n0 -> n5
 # CHECK-NEXT: edge n4 -> n1
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: returns n0 & true|number|string|symbol|bigint|object as it came, the rest in n3
+# CHECK-NEXT: returns n0 & undefined|null|false|0|whole|string|bigint as it came, the rest in n3
 # CHECK-NEXT: observed v1: n0
 
 module m0 path="main.js" displayPath="main.js"

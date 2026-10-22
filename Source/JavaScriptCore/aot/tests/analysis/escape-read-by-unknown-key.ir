@@ -9,7 +9,7 @@ layout L2 name="HolderThatMayGetAccessor" fields=[{key="inner" declared={type=an
 function f0 name="handsOutWhatItHolds" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = NewObject layout=L0 fields=[]
-    v2 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = ElemGet v2, v0
     Return v3
 }
@@ -23,7 +23,7 @@ function f0 name="handsOutWhatItHolds" parameters=[{type=string}] results=[{type
 function f1 name="onlyTests" parameters=[{type=string}] results=[{type=boolean}] {
   b0(v0: string):
     v1 = NewObject layout=L0 fields=[]
-    v2 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = ElemHas v2, v0
     Return v3
 }
@@ -35,7 +35,7 @@ function f1 name="onlyTests" parameters=[{type=string}] results=[{type=boolean}]
 function f2 name="mayRunAccessor" parameters=[{type=string}] results=[{type=boolean}] {
   b0(v0: string):
     v1 = NewObject layout=L0 fields=[]
-    v2 = NewObject -, v1 layout=L2 fields=[0] [keepsShape]
+    v2 = NewObject -, v1 layout=L2 fields=[0]
     v3 = ElemHas v2, v0
     v4 = ElemGet v2, v0
     Return v3

@@ -510,10 +510,10 @@ public:
         m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
-    BytecodePattern(std::unique_ptr<FlatProgram> flatProgram, const YarrPattern& pattern)
+    BytecodePattern(std::unique_ptr<FlatProgram> flatProgram, const YarrPattern& pattern, BumpPointerAllocator* allocator, ConcurrentJSLock* lock, const String& source)
         : m_flags(pattern.m_flags)
-        , m_allocator(nullptr)
-        , m_lock(nullptr)
+        , m_allocator(allocator)
+        , m_lock(lock)
         , m_numDuplicateNamedCaptureGroups(pattern.m_numDuplicateNamedCaptureGroups)
         , m_endAnchoredFixedSize(pattern.m_endAnchoredFixedSize)
         , m_offsetVectorBaseForNamedCaptures(pattern.offsetVectorBaseForNamedCaptures())
@@ -522,6 +522,7 @@ public:
         , wordcharCharacterClass(nullptr)
         , ignoreCaseWordcharCharacterClass(nullptr)
         , m_flatProgram(WTF::move(flatProgram))
+        , m_source(source)
     {
         ASSERT(m_flatProgram);
     }
@@ -531,6 +532,10 @@ public:
         size_t size = m_body ? m_body->estimatedSizeInBytes() : 0;
         if (m_flatProgram)
             size += m_flatProgram->estimatedSizeInBytes();
+        if (m_flatProgramFor8BitSubjects)
+            size += m_flatProgramFor8BitSubjects->estimatedSizeInBytes();
+        if (m_bytecodeBehindFlatProgram)
+            size += m_bytecodeBehindFlatProgram->estimatedSizeInBytes();
         return size;
     }
 
@@ -580,15 +585,23 @@ public:
     CharacterClass* wordcharCharacterClass;
     CharacterClass* ignoreCaseWordcharCharacterClass;
 
+    static constexpr ptrdiff_t offsetOfFlatProgram() { return OBJECT_OFFSETOF(BytecodePattern, m_flatProgram); }
+    static constexpr ptrdiff_t offsetOfFlatProgramFor8BitSubjects() { return OBJECT_OFFSETOF(BytecodePattern, m_flatProgramFor8BitSubjects); }
+
     std::unique_ptr<FlatProgram> m_flatProgram;
+    // One with runsOnlyOn8BitSubjects, beside the bytecode for the other subjects.
+    std::unique_ptr<FlatProgram> m_flatProgramFor8BitSubjects;
     std::optional<FlatProgramDecline> m_flatProgramDecline;
+    // A pattern that has only a flat program gets its bytecode out of its text on the day the flat program runs out of frames.
+    String m_source;
+    std::unique_ptr<BytecodePattern> m_bytecodeBehindFlatProgram;
 
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
 };
 
-JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
+JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, const String& source = { });
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
 
 } } // namespace JSC::Yarr

@@ -1,0 +1,30 @@
+# class List extends Array { constructor() { super(); this.tag = 1 } }; list = new List; flat = list.flat(); return flat.tag
+# flat asks the class of its receiver for a species and fills what that has made: it defines elements and stores the length. It deletes nothing there, redefines no name and freezes nothing,
+# so the field that the constructor of the class fills keeps its facts, and a read of it gives what the constructor has stored.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="List" {{*}}{key="tag" {{*}}stability=[IsNeverDeleted, IsNeverRedefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=ArrayPrototypeFlat
+    v7 = Call v6, v5
+    v8 = PropGet v7 key="tag"
+    Return v8
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="tag"
+    Return v3
+}

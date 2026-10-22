@@ -392,24 +392,24 @@ public:
     JSValue getDirect(VM& vm, PropertyName propertyName) const
     {
         Structure* structure = this->structure();
-        PropertyOffset offset = structure->get(vm, propertyName);
-        checkOffset(offset, structure->inlineCapacity());
 #if ENABLE(AOT)
-        if (offset == invalidOffset && structure->isCompiledStructure()) [[unlikely]]
+        if (structure->isCompiledStructure()) [[unlikely]]
             return getDirectFromCompiledObject(vm, propertyName, nullptr);
 #endif
+        PropertyOffset offset = structure->get(vm, propertyName);
+        checkOffset(offset, structure->inlineCapacity());
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
     
     JSValue getDirect(VM& vm, PropertyName propertyName, unsigned& attributes) const
     {
         Structure* structure = this->structure();
-        PropertyOffset offset = structure->get(vm, propertyName, attributes);
-        checkOffset(offset, structure->inlineCapacity());
 #if ENABLE(AOT)
-        if (offset == invalidOffset && structure->isCompiledStructure()) [[unlikely]]
+        if (structure->isCompiledStructure()) [[unlikely]]
             return getDirectFromCompiledObject(vm, propertyName, &attributes);
 #endif
+        PropertyOffset offset = structure->get(vm, propertyName, attributes);
+        checkOffset(offset, structure->inlineCapacity());
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
 
@@ -567,9 +567,12 @@ public:
     bool isExtensible(JSGlobalObject*);
     bool indexingShouldBeSparse()
     {
-        return !isStructureExtensible()
-            || structure()->typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero()
-            || structure()->hasImmutableIndexedProperties();
+        Structure* structure = this->structure();
+        if (structure->hasAnyOfBitFieldFlags(Structure::s_didPreventExtensionsBits | Structure::s_anyImmutablePropertiesBits)) [[unlikely]] {
+            if (!structure->isStructureExtensible() || structure->hasImmutableIndexedProperties())
+                return true;
+        }
+        return structure->typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero();
     }
 
     bool staticPropertiesReified() { return structure()->staticPropertiesReified(); }
@@ -589,6 +592,8 @@ public:
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
     JS_EXPORT_PRIVATE bool tryPutDirectPropertyRun(VM&, const PropertyRun&, std::span<const EncodedJSValue> values);
+    // The Structure has the properties of this object's Structure at the same offsets and then, in this order, a property for each name.
+    JS_EXPORT_PRIVATE void putDirectPropertiesWithStructure(VM&, Structure*, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values);
     bool tryPutDirectByExistingTransition(VM&, PropertyName, JSValue, unsigned attributes);
     void growOutOfLineStorageForTransition(VM&, Structure* next);
 
@@ -682,6 +687,7 @@ public:
     bool canPerformFastPutInlineExcludingProto();
 
     bool mayBePrototype() const;
+    void didAddPropertyWithTransition(VM&, PropertyName);
     void didBecomePrototype(VM&);
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
@@ -842,8 +848,10 @@ private:
         
     template<PutMode>
     ASCIILiteral putDirectInternal(VM&, PropertyName, JSValue, unsigned attr, PutPropertySlot&);
-    bool tryPutDirectByExistingTransition(VM&, Structure*, PropertyName, JSValue, unsigned attributes, PropertyOffset&);
+    void setStructureForAddedProperty(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
+    JS_EXPORT_PRIVATE NEVER_INLINE void setStructureForAddedPropertySlow(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
 #if ENABLE(AOT)
+    bool hasPrivateBrandAsField(VM&, JSValue brand) const;
     JS_EXPORT_PRIVATE JSValue getDirectFromCompiledObject(VM&, PropertyName, unsigned* attributesOrNull) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes, PutMode, PutPropertySlot&);
 #endif

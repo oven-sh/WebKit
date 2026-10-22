@@ -229,10 +229,10 @@ static void lexerRejectsNumberFollowedByWordByte()
 
 static void lexerPunctuators()
 {
-    AOT_TEST_CHECK(hasElements(kindsOnLine(": = , . ( ) [ ] { } < > | ~ @ ? - /"_s), {
+    AOT_TEST_CHECK(hasElements(kindsOnLine(": = , . ( ) [ ] { } < > | ~ @ - /"_s), {
         TokenKind::Colon, TokenKind::Equal, TokenKind::Comma, TokenKind::Dot, TokenKind::LeftParenthesis, TokenKind::RightParenthesis,
         TokenKind::LeftBracket, TokenKind::RightBracket, TokenKind::LeftBrace, TokenKind::RightBrace, TokenKind::LeftAngle, TokenKind::RightAngle,
-        TokenKind::Bar, TokenKind::Tilde, TokenKind::At, TokenKind::Question, TokenKind::Minus, TokenKind::Slash,
+        TokenKind::Bar, TokenKind::Tilde, TokenKind::At, TokenKind::Minus, TokenKind::Slash,
     }));
     AOT_TEST_CHECK(hasElements(kindsOnLine("-> - > -x --1"_s), { TokenKind::Arrow, TokenKind::Minus, TokenKind::RightAngle, TokenKind::Minus, TokenKind::Word, TokenKind::Minus, TokenKind::Integer }));
     AOT_TEST_CHECK(hasElements(kindsOnLine("@@iterator @@@ @ @"_s), { TokenKind::AtAt, TokenKind::Word, TokenKind::AtAt, TokenKind::At, TokenKind::At, TokenKind::At }));
@@ -311,6 +311,7 @@ static void parserReportsPositionInRecordLines()
         { "layout L0\n\n# a comment\nlayout L2\n"_s, InternalErrorKind::IRTextError, { 4, 8 } },
         { "variable g0 declared=\n"_s, InternalErrorKind::IRTextError, { 1, 22 } },
         { "variable g0 declared={type=anything\n"_s, InternalErrorKind::IRTextError, { 1, 36 } },
+        { "variable g0 declared={type=anything expected=number}\n"_s, InternalErrorKind::IRTextError, { 1, 37 } },
         { "variable g0 bogus=1\n"_s, InternalErrorKind::IRTextError, { 1, 13 } },
         { "variable g0 name=\"a\" name=\"b\"\n"_s, InternalErrorKind::IRTextError, { 1, 22 } },
         { "variable g0 declared={type=anything} name=\"g\"\n"_s, InternalErrorKind::IRTextError, { 1, 38 } },
@@ -405,6 +406,8 @@ static void parserReportsPositionInBodies()
         { "v1 = LoopHint"_s, InternalErrorKind::IRTextError, { 3, 10 } },
         { "v1 = Undefined @4294967295"_s, InternalErrorKind::IRTextError, { 3, 21 } },
         { "v1: Bogus = Undefined"_s, InternalErrorKind::IRTextError, { 3, 9 } },
+        { "v1: number ~ Bogus = Undefined"_s, InternalErrorKind::IRTextError, { 3, 18 } },
+        { "v1: number ~ int ~ i32 = Undefined"_s, InternalErrorKind::IRTextError, { 3, 22 } },
         { "v1 @Bogus = Undefined"_s, InternalErrorKind::IRTextError, { 3, 9 } },
     };
     for (const ExpectedFailure& expected : lines) {
@@ -528,12 +531,12 @@ static void parserRejectsCharacterEscapesInBytes()
 static void parserFillsUntypedThis()
 {
     BuildContext build(makeDefaultCompileOptions());
-    auto program = parseProgram(makeString(moduleLine, "function f0 results=[{type=number}]\nfunction f1 flags=[HasThis] thisType={type=string predicted=\"a\"} results=[{type=number}]\n"_s), IRForm::AsRead, build);
+    auto program = parseProgram(makeString(moduleLine, "function f0 results=[{type=number}]\nfunction f1 flags=[HasThis] thisType={type=\"a\" flags=[IsExpected]} results=[{type=number}]\n"_s), IRForm::AsRead, build);
     AOT_TEST_CHECK(program);
     DeclaredType untyped;
     untyped.type = TypeTable::anything;
     AOT_TEST_CHECK(program->functions[0].thisType == untyped);
-    AOT_TEST_CHECK(program->functions[1].thisType.type == TypeTable::string && program->at(program->functions[1].thisType.predicted).singleStringLiteral());
+    AOT_TEST_CHECK(program->at(program->functions[1].thisType.type).singleStringLiteral() && program->functions[1].thisType.flags == OptionSet<PositionFlags> { PositionFlags::IsExpected });
 }
 
 static void parserChecksRuntimeFunctionNumbers()
@@ -573,7 +576,7 @@ static void parserAppliesEngineFieldsAfterTheRead()
 variable g1 declared={type=anything}
 function f0 results=[{type=anything}] capabilities=[MayBeInlined] {
   b0():
-    v0: number ? int ~ i32 @Double = Integer integer=5 @12:3
+    v0: number ~ i32 @Double = Integer integer=5 @12:3
     v1 = Integer integer=6 @13
     Return v0
 }
@@ -585,10 +588,10 @@ function f1 results=[{type=anything}]
     AOT_TEST_CHECK(program->functions[1].capabilities == initialCapabilitiesOf(program->functions[1]) && !program->functions[1].capabilities.isEmpty());
 
     const Value& stated = program->functions[0].at(ValueID(0u));
-    AOT_TEST_CHECK(stated.type == TypeTable::number && stated.written() == TypeTable::integer && stated.prediction() == TypeTable::int32);
+    AOT_TEST_CHECK(stated.type == TypeTable::number && stated.expected() == TypeTable::int32 && stated.expectedOrType() == TypeTable::int32);
     AOT_TEST_CHECK(stated.representation == Representation::Double && stated.position == 12 && stated.inlineFrame == 3 && stated.integer() == 5);
     const Value& unstated = program->functions[0].at(ValueID(1u));
-    AOT_TEST_CHECK(!unstated.type && !unstated.written() && !unstated.prediction() && unstated.representation == Representation::Unchosen);
+    AOT_TEST_CHECK(!unstated.type && !unstated.expected() && unstated.representation == Representation::Unchosen);
     AOT_TEST_CHECK(unstated.position == 13 && !unstated.inlineFrame && unstated.integer() == 6);
 
     auto read = Program::read(program->buffer(), build);

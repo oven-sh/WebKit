@@ -53,7 +53,10 @@ static bool isNumberOrAbsent(const InlineBuiltinSite& site, unsigned index)
     const Type* type = argumentTypeOf(site, index);
     if (!type || type->isNumber())
         return true;
-    return !type->isNever() && type->hasOnlyPrimitives(Primitive::Undefined);
+    if (type->isNever() || type->primitives & Primitive::Null)
+        return false;
+    // `to?: number`: the code in line asks whether the operand is undefined.
+    return type->hasOnlyPrimitives(Primitive::Undefined) || type->withoutNullish().isNumber();
 }
 
 static InlineForm wholeIf(const InlineBuiltinSite& site, bool handlesOperandTypes)
@@ -134,8 +137,12 @@ static bool isUTF8Encoding(const InlineBuiltinSite& site, ValueID encoding)
 static InlineForm formOfStringUTF8ByteLength(const InlineBuiltinSite& site)
 {
     std::span<const ValueID> arguments = site.arguments();
-    bool countsUTF8 = arguments.size() == 1 || (arguments.size() == 2 && isUTF8Encoding(site, arguments[1]));
-    return wholeIf(site, countsUTF8 && isStringArgument(site, 0));
+    if (!isStringArgument(site, 0))
+        return wholeIf(site, false);
+    // Only a string names an encoding. `Buffer.byteLength(chunk, encoding)`: the code in line asks whether it is one.
+    if (arguments.size() == 1 || isUTF8Encoding(site, arguments[1]) || !(site.typeOf(arguments[1]).primitives & Primitive::AnyString))
+        return InlineForm::Whole;
+    return twoWayIf(site.hasSlowPath);
 }
 
 static InlineForm formOfStringFromCodePoint(const InlineBuiltinSite& site)

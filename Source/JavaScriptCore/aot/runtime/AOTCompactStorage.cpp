@@ -26,9 +26,22 @@ JSCell* tryCreate(JSGlobalObject* globalObject, bool hasValues)
     return CompactTable::tryCreate(globalObject, width, hasValues ? width : Width::None, CompactTable::initialCapacity);
 }
 
+// A number needs a wide column. A table that starts with one is not replaced by its first entry.
+JSCell* tryCreateForFirstEntry(JSGlobalObject* globalObject, bool hasValues, JSValue key, JSValue value)
+{
+    RELEASE_ASSERT(!Options::useJIT());
+    CompactTable::ensureInitialTableAllocators(globalObject->vm());
+    return CompactTable::tryCreateForFirstEntry(globalObject, hasValues, key, value);
+}
+
 JSCell* copy(JSGlobalObject* globalObject, JSCell* storage)
 {
     return uncheckedDowncast<CompactTable>(storage)->tryCopy(globalObject);
+}
+
+bool has(JSGlobalObject* globalObject, JSCell* storage, JSValue key)
+{
+    return uncheckedDowncast<CompactTable>(storage)->find(globalObject, key).has_value();
 }
 
 JSValue find(JSGlobalObject* globalObject, JSCell* storage, JSValue key)
@@ -43,10 +56,14 @@ JSValue find(JSGlobalObject* globalObject, JSCell* storage, JSValue key)
     return table->hasValues() ? table->valueAt(*entry) : table->keyAt(*entry);
 }
 
-bool tryAdd(JSGlobalObject* globalObject, JSObject* owner, JSCell* storage, JSValue key, JSValue value)
+void add(JSGlobalObject* globalObject, JSObject* owner, JSCell* storage, JSValue key, JSValue value)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT_UNUSED(storage, CompactTable::tableOf(owner) == storage);
-    return CompactTable::add(globalObject, owner, key, value);
+    bool isAdded = CompactTable::add(globalObject, owner, key, value);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_ASSERT(isAdded);
 }
 
 bool remove(JSGlobalObject* globalObject, JSObject* owner, JSCell* storage, JSValue key)
@@ -64,11 +81,6 @@ void clear(JSGlobalObject* globalObject, JSObject* owner, JSCell* storage)
 uint32_t aliveEntryCount(JSCell* storage)
 {
     return uncheckedDowncast<CompactTable>(storage)->size();
-}
-
-JSCellButterfly* convertToOrdinaryStorage(JSGlobalObject* globalObject, JSCell* storage)
-{
-    return CompactTable::convertToOrdinaryStorage(globalObject, uncheckedDowncast<CompactTable>(storage));
 }
 
 Position transitAndNext(VM& vm, JSCell* storage, uint32_t entry)

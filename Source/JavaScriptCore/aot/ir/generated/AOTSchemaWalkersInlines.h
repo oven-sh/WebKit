@@ -169,8 +169,6 @@ template<typename Subject, typename Visitor>
 void walkDeclaredType(Subject& record, Visitor& visitor)
 {
     visitReference(record.type, visitor);
-    visitReference(record.written, visitor);
-    visitReference(record.predicted, visitor);
     visitReference(record.site, visitor);
 }
 
@@ -178,27 +176,6 @@ template<typename Visitor> void walkReferences(DeclaredType& subject, Visitor& v
 template<typename Visitor> void walkReferences(const DeclaredType& subject, Visitor& visitor) { walkDeclaredType(subject, visitor); }
 template<typename Visitor> void forEachReference(DeclaredType& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
 template<typename Visitor> void forEachReference(const DeclaredType& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
-
-template<typename Subject, typename Visitor>
-void walkClaimSource(Subject& variant, Visitor& visitor)
-{
-    switch (variant.kind()) {
-    case ClaimSource::Kind::None: case ClaimSource::Kind::Contents:
-        return;
-    case ClaimSource::Kind::Field:
-        {
-            auto& value = variant.template as<ClaimSource::Field>();
-            visitReference(value.key, visitor);
-            return;
-        }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-template<typename Visitor> void walkReferences(ClaimSource& subject, Visitor& visitor) { walkClaimSource(subject, visitor); }
-template<typename Visitor> void walkReferences(const ClaimSource& subject, Visitor& visitor) { walkClaimSource(subject, visitor); }
-template<typename Visitor> void forEachReference(ClaimSource& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
-template<typename Visitor> void forEachReference(const ClaimSource& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
 
 template<typename Subject, typename Visitor>
 void walkTailCast(Subject& record, Visitor& visitor)
@@ -370,6 +347,7 @@ void walkField(Subject& record, Visitor& visitor)
     walkReferences(record.declared, visitor);
     visitReference(record.originLayout, visitor);
     walkReferences(record.flow, visitor);
+    visitReference(record.slotType, visitor);
 }
 
 template<typename Visitor> void walkReferences(Field& subject, Visitor& visitor) { walkField(subject, visitor); }
@@ -388,6 +366,30 @@ template<typename Visitor> void walkReferences(StaticField& subject, Visitor& vi
 template<typename Visitor> void walkReferences(const StaticField& subject, Visitor& visitor) { walkStaticField(subject, visitor); }
 template<typename Visitor> void forEachReference(StaticField& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
 template<typename Visitor> void forEachReference(const StaticField& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
+void walkInnerObject(Subject& record, Visitor& visitor)
+{
+    visitReference(record.layout, visitor);
+    visitReference(record.outerAllocationClass, visitor);
+}
+
+template<typename Visitor> void walkReferences(InnerObject& subject, Visitor& visitor) { walkInnerObject(subject, visitor); }
+template<typename Visitor> void walkReferences(const InnerObject& subject, Visitor& visitor) { walkInnerObject(subject, visitor); }
+template<typename Visitor> void forEachReference(InnerObject& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const InnerObject& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
+void walkFlattenedObject(Subject& record, Visitor& visitor)
+{
+    visitReference(record.layout, visitor);
+    visitReference(record.allocationClass, visitor);
+}
+
+template<typename Visitor> void walkReferences(FlattenedObject& subject, Visitor& visitor) { walkFlattenedObject(subject, visitor); }
+template<typename Visitor> void walkReferences(const FlattenedObject& subject, Visitor& visitor) { walkFlattenedObject(subject, visitor); }
+template<typename Visitor> void forEachReference(FlattenedObject& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const FlattenedObject& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
 
 template<typename Subject, typename Visitor>
 void walkFieldOrder(Subject& record, Visitor& visitor)
@@ -453,7 +455,7 @@ void walkLayoutRecord(Subject& record, Visitor& visitor)
 {
     visitReference(record.name, visitor);
     visitReference(record.module, visitor, ModuleReferenceKind::Referrer);
-    visitReference(record.predictedBase, visitor);
+    visitReference(record.base, visitor);
     visitReference(record.constructor, visitor, FunctionReferenceKind::Constructor);
     for (auto& element : record.fields)
         walkReferences(element, visitor);
@@ -464,6 +466,10 @@ void walkLayoutRecord(Subject& record, Visitor& visitor)
     visitReference(record.namespaceOf, visitor, ModuleReferenceKind::Referrer);
     walkReferences(record.flow, visitor);
     walkReferences(record.classFlow, visitor);
+    for (auto& element : record.innerObjects)
+        walkReferences(element, visitor);
+    for (auto& element : record.flattenedObjects)
+        walkReferences(element, visitor);
 }
 
 template<typename Visitor> void walkReferences(LayoutRecord& subject, Visitor& visitor) { walkLayoutRecord(subject, visitor); }
@@ -500,6 +506,66 @@ template<typename Visitor> void forEachReference(SourceRange& subject, Visitor&&
 template<typename Visitor> void forEachReference(const SourceRange& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
 
 template<typename Subject, typename Visitor>
+void walkRelationSubject(Subject& record, Visitor& visitor)
+{
+    visitReference(record.key, visitor);
+}
+
+template<typename Visitor> void walkReferences(RelationSubject& subject, Visitor& visitor) { walkRelationSubject(subject, visitor); }
+template<typename Visitor> void walkReferences(const RelationSubject& subject, Visitor& visitor) { walkRelationSubject(subject, visitor); }
+template<typename Visitor> void forEachReference(RelationSubject& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const RelationSubject& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
+void walkStoredInto(Subject& record, Visitor& visitor)
+{
+    visitReference(record.key, visitor);
+}
+
+template<typename Visitor> void walkReferences(StoredInto& subject, Visitor& visitor) { walkStoredInto(subject, visitor); }
+template<typename Visitor> void walkReferences(const StoredInto& subject, Visitor& visitor) { walkStoredInto(subject, visitor); }
+template<typename Visitor> void forEachReference(StoredInto& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const StoredInto& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
+void walkHandedTo(Subject& record, Visitor& visitor)
+{
+    UNUSED_PARAM(record);
+    UNUSED_PARAM(visitor);
+}
+
+template<typename Visitor> void walkReferences(HandedTo& subject, Visitor& visitor) { walkHandedTo(subject, visitor); }
+template<typename Visitor> void walkReferences(const HandedTo& subject, Visitor& visitor) { walkHandedTo(subject, visitor); }
+template<typename Visitor> void forEachReference(HandedTo& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const HandedTo& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
+void walkOperandOf(Subject& record, Visitor& visitor)
+{
+    UNUSED_PARAM(record);
+    UNUSED_PARAM(visitor);
+}
+
+template<typename Visitor> void walkReferences(OperandOf& subject, Visitor& visitor) { walkOperandOf(subject, visitor); }
+template<typename Visitor> void walkReferences(const OperandOf& subject, Visitor& visitor) { walkOperandOf(subject, visitor); }
+template<typename Visitor> void forEachReference(OperandOf& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const OperandOf& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
+void walkFunctionRelations(Subject& record, Visitor& visitor)
+{
+    for (auto& element : record.subjects)
+        walkReferences(element, visitor);
+    for (auto& element : record.stores)
+        walkReferences(element, visitor);
+}
+
+template<typename Visitor> void walkReferences(FunctionRelations& subject, Visitor& visitor) { walkFunctionRelations(subject, visitor); }
+template<typename Visitor> void walkReferences(const FunctionRelations& subject, Visitor& visitor) { walkFunctionRelations(subject, visitor); }
+template<typename Visitor> void forEachReference(FunctionRelations& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const FunctionRelations& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
 void walkParameterOrigin(Subject& record, Visitor& visitor)
 {
     UNUSED_PARAM(record);
@@ -532,9 +598,13 @@ void walkCreatorRecord(Subject& variant, Visitor& visitor)
         {
             auto& value = variant.template as<CreatorRecord::Entrypoint>();
             visitReference(value.target, visitor, FunctionReferenceKind::Call);
-            visitReference(value.group, visitor);
             visitReference(value.constructEntrypoint, visitor, FunctionReferenceKind::Call);
-            visitReference(value.groupEntrypoint, visitor, FunctionReferenceKind::Call);
+            return;
+        }
+    case CreatorRecord::Kind::TableLookup:
+        {
+            auto& value = variant.template as<CreatorRecord::TableLookup>();
+            visitReference(value.key, visitor);
             return;
         }
     case CreatorRecord::Kind::Version:
@@ -550,18 +620,19 @@ void walkCreatorRecord(Subject& variant, Visitor& visitor)
             visitReference(value.body, visitor, FunctionReferenceKind::Dispatch);
             visitReference(value.entryWithoutPromise, visitor, FunctionReferenceKind::Dispatch);
             visitReference(value.promiseType, visitor);
+            visitReference(value.worker, visitor, FunctionReferenceKind::Dispatch);
             return;
         }
     case CreatorRecord::Kind::BoundFunction:
         {
             auto& value = variant.template as<CreatorRecord::BoundFunction>();
-            visitReference(value.target, visitor, FunctionReferenceKind::Call);
+            visitReference(value.target, visitor, FunctionReferenceKind::Closure);
             return;
         }
     case CreatorRecord::Kind::ResultWrapper:
         {
             auto& value = variant.template as<CreatorRecord::ResultWrapper>();
-            visitReference(value.worker, visitor, FunctionReferenceKind::Call);
+            visitReference(value.worker, visitor, FunctionReferenceKind::Dispatch);
             visitReference(value.layout, visitor);
             return;
         }
@@ -574,13 +645,14 @@ void walkCreatorRecord(Subject& variant, Visitor& visitor)
     case CreatorRecord::Kind::ParameterWrapper:
         {
             auto& value = variant.template as<CreatorRecord::ParameterWrapper>();
-            visitReference(value.body, visitor, FunctionReferenceKind::Call);
+            visitReference(value.body, visitor, FunctionReferenceKind::Dispatch);
             return;
         }
-    case CreatorRecord::Kind::Continuation:
+    case CreatorRecord::Kind::EntryChecks:
         {
-            auto& value = variant.template as<CreatorRecord::Continuation>();
-            visitReference(value.origin, visitor, FunctionReferenceKind::Dispatch);
+            auto& value = variant.template as<CreatorRecord::EntryChecks>();
+            visitReference(value.body, visitor, FunctionReferenceKind::Dispatch);
+            visitReference(value.fallback, visitor, FunctionReferenceKind::Dispatch);
             return;
         }
     case CreatorRecord::Kind::Serializer:
@@ -640,6 +712,7 @@ void walkFunctionRecord(Subject& record, Visitor& visitor)
         walkReferences(element, visitor);
     for (auto& element : record.functionTypes)
         visitReference(element, visitor, FunctionReferenceKind::Dispatch);
+    walkReferences(record.relations, visitor);
     walkReferences(record.derivation, visitor);
     walkReferences(record.creator, visitor);
     visitReference(record.constructedClass, visitor);
@@ -755,6 +828,7 @@ void walkModuleFailure(Subject& record, Visitor& visitor)
 {
     visitReference(record.importer, visitor, ModuleReferenceKind::Referrer);
     visitReference(record.specifier, visitor);
+    visitReference(record.exporter, visitor, ModuleReferenceKind::Target);
 }
 
 template<typename Visitor> void walkReferences(ModuleFailure& subject, Visitor& visitor) { walkModuleFailure(subject, visitor); }
@@ -769,6 +843,7 @@ void walkModule(Subject& record, Visitor& visitor)
     visitReference(record.displayPath, visitor);
     visitReference(record.referrer, visitor, ModuleReferenceKind::Referrer);
     visitReference(record.body, visitor, FunctionReferenceKind::Call);
+    visitReference(record.exportsVariable, visitor);
     visitReference(record.data, visitor);
     for (auto& element : record.requests)
         walkReferences(element, visitor);
@@ -914,7 +989,6 @@ template<typename Visitor> void forEachReference(const WebAssemblyModule& subjec
 template<typename Subject, typename Visitor>
 void walkFunctionFlow(Subject& record, Visitor& visitor)
 {
-    visitReference(record.genericVersion, visitor, FunctionReferenceKind::Dispatch);
     walkReferences(record.witness, visitor);
 }
 
@@ -1036,6 +1110,18 @@ template<typename Visitor> void forEachReference(Origin& subject, Visitor&& visi
 template<typename Visitor> void forEachReference(const Origin& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
 
 template<typename Subject, typename Visitor>
+void walkMemberConditionRecord(Subject& record, Visitor& visitor)
+{
+    visitReference(record.layout, visitor);
+    visitReference(record.key, visitor);
+}
+
+template<typename Visitor> void walkReferences(MemberConditionRecord& subject, Visitor& visitor) { walkMemberConditionRecord(subject, visitor); }
+template<typename Visitor> void walkReferences(const MemberConditionRecord& subject, Visitor& visitor) { walkMemberConditionRecord(subject, visitor); }
+template<typename Visitor> void forEachReference(MemberConditionRecord& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+template<typename Visitor> void forEachReference(const MemberConditionRecord& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }
+
+template<typename Subject, typename Visitor>
 void walkPlacedKey(Subject& record, Visitor& visitor)
 {
     visitReference(record.key, visitor);
@@ -1053,39 +1139,44 @@ void walkValue(Subject& subject, Visitor& visitor)
 {
     switch (subject.opcode) {
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double:
-    case Opcode::Builtin: case Opcode::FinishObject: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole:
-    case Opcode::NewSuppressedError: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::SetFunctionName:
-    case Opcode::SetLiteralPrototype: case Opcode::GetSuperBase: case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div:
-    case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd: case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift:
-    case Opcode::URShift: case Opcode::Negate: case Opcode::ToNumeric: case Opcode::Increment: case Opcode::Decrement: case Opcode::BitNot:
-    case Opcode::ToNumber: case Opcode::Less: case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq:
-    case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::ToString:
-    case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToThis: case Opcode::RequireObject: case Opcode::Results: case Opcode::ResultAt:
-    case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::IteratorOpen:
-    case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::Await: case Opcode::Yield:
-    case Opcode::InitialYield: case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::ToLength:
-    case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
-    case Opcode::StepArrayIterator: case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant:
-    case Opcode::HasJSType: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ResolvePromise: case Opcode::RejectPromise:
-    case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex:
-    case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::TryPutByValDirect:
-    case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::CollectionTable: case Opcode::MapNext:
-    case Opcode::SetNext: case Opcode::Parameter: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
-    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable:
-    case Opcode::IsShapeEpochCurrent: case Opcode::IsEnumeratorCurrent: case Opcode::GetShapeEpoch: case Opcode::AllGuards:
-    case Opcode::GetArrayLength: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity:
+    case Opcode::Builtin: case Opcode::NewDictionary: case Opcode::FinishObject: case Opcode::AppendElement: case Opcode::AppendSpread:
+    case Opcode::AppendHole: case Opcode::NewSuppressedError: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument:
+    case Opcode::TryDefineLiveBinding: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype: case Opcode::GetSuperBase: case Opcode::Add:
+    case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd: case Opcode::BitOr:
+    case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::Negate: case Opcode::ToNumeric:
+    case Opcode::Increment: case Opcode::Decrement: case Opcode::BitNot: case Opcode::ToNumber: case Opcode::Less: case Opcode::LessEq:
+    case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::ToBoolean:
+    case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::ToString: case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToThis:
+    case Opcode::RequireObject: case Opcode::Results: case Opcode::ResultAt: case Opcode::CatchValue: case Opcode::CatchException:
+    case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose:
+    case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::IsConstructor:
+    case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::ToLength: case Opcode::ResumeGenerator: case Opcode::StepGenerator:
+    case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::StepArrayIterator: case Opcode::RequireBuiltinModule:
+    case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::HasJSType: case Opcode::GetInternalField: case Opcode::PutInternalField:
+    case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind:
+    case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex:
+    case Opcode::PutDoubleIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
+    case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext: case Opcode::Parameter: case Opcode::ReadAgain:
+    case Opcode::BorrowedParameter: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage:
+    case Opcode::IsInBounds: case Opcode::IsElementPresent: case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::IsEnumeratorCurrent:
+    case Opcode::AllGuards: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject: case Opcode::GetArrayLength:
+    case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
     case Opcode::GetTypedArrayLength: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::GetArgument:
-    case Opcode::GetRestLength: case Opcode::ReturnsToResultTest: case Opcode::GetMyArgumentByVal: case Opcode::MarkEnvironmentEscaped:
-    case Opcode::ReleaseEnvironment: case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity:
-    case Opcode::NewArgumentList: case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray:
-    case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator:
-    case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult:
-    case Opcode::HasInPrototypeChain: case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendBuiltin:
-    case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
-    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue:
-    case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon:
-    case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString:
-    case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONKeyRepeats:
+    case Opcode::GetRestLength: case Opcode::GetMyArgumentByVal: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
+    case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList:
+    case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin: case Opcode::GetBuiltinValue: case Opcode::DestructureIterable:
+    case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable:
+    case Opcode::IsCollectionTableFull: case Opcode::ReserveCollectionCapacity: case Opcode::TakeGeneratorPrototype:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
+    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain:
+    case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderAppendJSON:
+    case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard:
+    case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen:
+    case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes:
+    case Opcode::JSONGetByte: case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey:
+    case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONKeyRepeats:
     case Opcode::JSONKeyHasEscapes: case Opcode::JSONHasStackSpace: case Opcode::IsPlainDataObject: case Opcode::StringBuilderReserve:
     case Opcode::StringBuilderCommit: case Opcode::JSONAppendToken: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger:
     case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::JSONAppendValue:
@@ -1096,9 +1187,9 @@ void walkValue(Subject& subject, Visitor& visitor)
     case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
     case Opcode::StringRangeSubstringOrUndefined: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber:
     case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange: case Opcode::StringBuilderAppendBoolean:
-    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue: case Opcode::ResolveCallTarget: case Opcode::Box:
-    case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger:
-    case Opcode::Decode: case Opcode::Compress:
+    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue: case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts:
+    case Opcode::ResolveCallTarget: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger:
+    case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
         return;
     case Opcode::String: case Opcode::BigInt: case Opcode::ToObject: case Opcode::CheckInitialized: case Opcode::JSONStartsWith:
     case Opcode::JSONAdvance: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONAppendKey:
@@ -1128,8 +1219,8 @@ void walkValue(Subject& subject, Visitor& visitor)
     case Opcode::JSONAddExtraMember: case Opcode::ExpectRows:
         visitPayloadReference<LayoutID>(subject, 0, visitor);
         return;
-    case Opcode::ScopeHasBinding: case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::GetOwnProperty: case Opcode::KeyConstant:
-    case Opcode::GetOwnDataProperty:
+    case Opcode::ScopeHasBinding: case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::NarrowByField: case Opcode::GetOwnProperty:
+    case Opcode::KeyConstant: case Opcode::ValidateLookup: case Opcode::GetOwnDataProperty:
         visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
         return;
     case Opcode::NewObject:
@@ -1137,10 +1228,12 @@ void walkValue(Subject& subject, Visitor& visitor)
         visitPayloadReference<AllocationSiteID>(subject, 1, visitor);
         visitPayloadReference<AllocationID>(subject, 3, visitor);
         visitPayloadReference<AllocationClassID>(subject, 4, visitor);
+        visitPayloadReference<LayoutID>(subject, 5, visitor);
         return;
     case Opcode::NewArray:
         visitPayloadReference<TypeID>(subject, 0, visitor);
         visitPayloadReference<AllocationSiteID>(subject, 1, visitor);
+        visitPayloadReference<LayoutID>(subject, 4, visitor);
         return;
     case Opcode::NewRegExp:
         visitPayloadReference<StringID>(subject, 0, visitor);
@@ -1180,6 +1273,9 @@ void walkValue(Subject& subject, Visitor& visitor)
         visitPayloadReference<LayoutSetID>(subject, 2, visitor);
         visitPayloadReference<SiteCacheID>(subject, 3, visitor);
         return;
+    case Opcode::TryReExportFields:
+        visitPayloadReference<FunctionID>(subject, 0, visitor, FunctionReferenceKind::Closure);
+        return;
     case Opcode::CopyDataProperties: case Opcode::CopyObject:
         visitPayloadReferenceList<PropertyKeyID>(subject, std::max<unsigned>(numberOfInlinePayloadWords, 1), visitor);
         return;
@@ -1189,20 +1285,16 @@ void walkValue(Subject& subject, Visitor& visitor)
         visitPayloadReference<LayoutSetID>(subject, 3, visitor);
         visitPayloadReference<SiteCacheID>(subject, 4, visitor);
         return;
-    case Opcode::Upcast: case Opcode::Predict: case Opcode::TypeTest: case Opcode::Unspecified: case Opcode::AssumeType:
+    case Opcode::Upcast: case Opcode::TypeTest: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::AssumeType:
     case Opcode::PromiseAllOfElements: case Opcode::ValidateType: case Opcode::ValidateCallee:
         visitPayloadReference<TypeID>(subject, 0, visitor);
         return;
-    case Opcode::Claim: case Opcode::ReportMismatch:
+    case Opcode::Check: case Opcode::ReportMismatch:
         visitPayloadReference<TypeID>(subject, 0, visitor);
         visitPayloadReference<TypeSiteID>(subject, 1, visitor);
         return;
-    case Opcode::ClaimDeclared:
+    case Opcode::Convert:
         visitPayloadRecord<DeclaredType>(subject, 0, visitor);
-        return;
-    case Opcode::ClaimRead:
-        visitPayloadRecord<ClaimSource>(subject, 0, visitor);
-        visitPayloadReference<TypeSiteID>(subject, 2, visitor);
         return;
     case Opcode::Call: case Opcode::CallList:
         visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
@@ -1211,13 +1303,7 @@ void walkValue(Subject& subject, Visitor& visitor)
         visitPayloadReference<AccessSiteID>(subject, 3, visitor);
         visitPayloadReference<CalleeSetID>(subject, 4, visitor);
         return;
-    case Opcode::Construct:
-        visitPayloadReference<StringID>(subject, 0, visitor);
-        visitPayloadReference<AccessSiteID>(subject, 1, visitor);
-        visitPayloadReference<CalleeSetID>(subject, 2, visitor);
-        visitPayloadReference<LayoutID>(subject, 3, visitor);
-        return;
-    case Opcode::ConstructList: case Opcode::CallResolved:
+    case Opcode::Construct: case Opcode::ConstructList: case Opcode::CallResolved:
         visitPayloadReference<StringID>(subject, 0, visitor);
         visitPayloadReference<AccessSiteID>(subject, 1, visitor);
         visitPayloadReference<CalleeSetID>(subject, 2, visitor);
@@ -1241,10 +1327,10 @@ void walkValue(Subject& subject, Visitor& visitor)
         visitPayloadReference<LayoutSetID>(subject, 3, visitor);
         visitPayloadReference<SiteCacheID>(subject, 4, visitor);
         return;
-    case Opcode::ModuleNamespace: case Opcode::GetRequiredValue:
+    case Opcode::ModuleNamespace: case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation:
         visitPayloadReference<ModuleID>(subject, 0, visitor, ModuleReferenceKind::Target);
         return;
-    case Opcode::ImportModule: case Opcode::IsRequireEdgeReady:
+    case Opcode::ImportModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
         visitPayloadReference<ModuleID>(subject, 0, visitor, ModuleReferenceKind::Target);
         visitPayloadReference<ModuleID>(subject, 1, visitor, ModuleReferenceKind::Referrer);
         return;
@@ -1267,36 +1353,41 @@ void walkValue(Subject& subject, Visitor& visitor)
     case Opcode::DirectEval:
         visitPayloadReference<EvalScopeID>(subject, 0, visitor);
         return;
-    case Opcode::CallGroup:
+    case Opcode::IsClosureOf: case Opcode::GetCapture:
         visitPayloadReference<FunctionID>(subject, 0, visitor, FunctionReferenceKind::Dispatch);
-        visitPayloadReference<AccessSiteID>(subject, 1, visitor);
-        visitPayloadReference<CalleeSetID>(subject, 2, visitor);
+        return;
+    case Opcode::CallTable:
+        visitPayloadReference<FunctionID>(subject, 0, visitor, FunctionReferenceKind::Call);
+        visitPayloadReference<PropertyKeyID>(subject, 1, visitor);
+        visitPayloadReference<LayoutSetID>(subject, 2, visitor);
+        visitPayloadReferenceList<FunctionID>(subject, std::max<unsigned>(numberOfInlinePayloadWords, 5), visitor, FunctionReferenceKind::Call);
+        visitPayloadReference<AccessSiteID>(subject, 3, visitor);
+        visitPayloadReference<CalleeSetID>(subject, 4, visitor);
         return;
     case Opcode::ShapeTest:
         visitPayloadReference<LayoutSetID>(subject, 0, visitor);
         return;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
         visitPayloadReference<LayoutSetID>(subject, 1, visitor);
         visitPayloadReference<AccessSiteID>(subject, 3, visitor);
         visitPayloadReference<FieldAccessID>(subject, 4, visitor);
         return;
-    case Opcode::IsMemberUnchanged:
-        visitPayloadReference<LayoutID>(subject, 0, visitor);
-        visitPayloadReference<PropertyKeyID>(subject, 2, visitor);
-        visitPayloadReference<GuardBitID>(subject, 3, visitor);
+    case Opcode::AreMembersUnchanged:
+        visitPayloadRecordList<MemberConditionRecord>(subject, std::max<unsigned>(numberOfInlinePayloadWords, 1), visitor);
+        visitPayloadReference<GuardBitID>(subject, 0, visitor);
         return;
-    case Opcode::IsPrototypeLinkUnchanged:
-        visitPayloadReference<LayoutID>(subject, 0, visitor);
-        visitPayloadReference<GuardBitID>(subject, 2, visitor);
+    case Opcode::GetGlobalBinding:
+        visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
+        visitPayloadReference<AccessSiteID>(subject, 2, visitor);
+        visitPayloadReference<GlobalBindingID>(subject, 3, visitor);
         return;
-    case Opcode::IsClassEvaluatedOnce:
-        visitPayloadReference<LayoutID>(subject, 0, visitor);
-        visitPayloadReference<GuardBitID>(subject, 1, visitor);
-        return;
-    case Opcode::IsClosureOf: case Opcode::GetCapture:
-        visitPayloadReference<FunctionID>(subject, 0, visitor, FunctionReferenceKind::Dispatch);
+    case Opcode::SetGlobalBinding:
+        visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
+        visitPayloadReference<AccessSiteID>(subject, 3, visitor);
+        visitPayloadReference<GlobalBindingID>(subject, 4, visitor);
         return;
     case Opcode::GetArrayElement: case Opcode::HasArrayElement: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
         visitPayloadReference<AccessSiteID>(subject, 2, visitor);
@@ -1337,14 +1428,6 @@ void walkValue(Subject& subject, Visitor& visitor)
     case Opcode::CloneAs:
         visitPayloadReference<LayoutID>(subject, 0, visitor);
         visitPayloadReference<AllocationSiteID>(subject, 1, visitor);
-        return;
-    case Opcode::PropGetChecked:
-        visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
-        visitPayloadReference<TypeID>(subject, 1, visitor);
-        visitPayloadReference<TypeSiteID>(subject, 2, visitor);
-        visitPayloadReference<AccessSiteID>(subject, 6, visitor);
-        visitPayloadReference<LayoutSetID>(subject, 7, visitor);
-        visitPayloadReference<SiteCacheID>(subject, 8, visitor);
         return;
     case Opcode::PropGetChain: case Opcode::PropGetPair:
         visitPayloadReference<PropertyKeyID>(subject, 0, visitor);
@@ -1466,6 +1549,8 @@ void forEachRegExpRecord(const Subject& subject, const Functor& functor) { walkF
 template<typename Subject, typename Functor>
 void forEachSiteCache(const Subject& subject, const Functor& functor) { walkFiltered<SiteCacheID>(subject, functor); }
 template<typename Subject, typename Functor>
+void forEachGlobalBinding(const Subject& subject, const Functor& functor) { walkFiltered<GlobalBindingID>(subject, functor); }
+template<typename Subject, typename Functor>
 void forEachGuardBit(const Subject& subject, const Functor& functor) { walkFiltered<GuardBitID>(subject, functor); }
 
 template<typename Subject, typename Functor>
@@ -1480,18 +1565,19 @@ void walkPlacedWordsOfValue(Subject& subject, Visitor& visitor)
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double:
     case Opcode::String: case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::NewClosure:
     case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::GetEnvironmentField: case Opcode::PutEnvironmentField:
-    case Opcode::ScopeHasBinding: case Opcode::NewObject: case Opcode::FinishObject: case Opcode::AppendElement: case Opcode::AppendSpread:
-    case Opcode::AppendHole: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::CreateUnmappedArguments:
-    case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::PropGet: case Opcode::PropSet:
-    case Opcode::PropDefine: case Opcode::PropHas: case Opcode::PropDelete: case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas:
-    case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::SetFunctionName:
+    case Opcode::ScopeHasBinding: case Opcode::NewObject: case Opcode::NewDictionary: case Opcode::FinishObject: case Opcode::AppendElement:
+    case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError:
+    case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument:
+    case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::PropDelete: case Opcode::ElemGet:
+    case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::DefineGetter:
+    case Opcode::DefineSetter: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::SetFunctionName:
     case Opcode::SetLiteralPrototype: case Opcode::GetSuperBase: case Opcode::SuperGet: case Opcode::SuperSet: case Opcode::Add: case Opcode::Sub:
     case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd: case Opcode::BitOr: case Opcode::BitXor:
     case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::Negate: case Opcode::ToNumeric: case Opcode::Increment:
     case Opcode::Decrement: case Opcode::BitNot: case Opcode::ToNumber: case Opcode::Less: case Opcode::LessEq: case Opcode::Greater:
     case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::ToBoolean: case Opcode::LogicalNot:
     case Opcode::TypeOf: case Opcode::ToString: case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToObject: case Opcode::ToThis:
-    case Opcode::Upcast: case Opcode::Claim: case Opcode::ClaimDeclared: case Opcode::ClaimRead: case Opcode::Predict: case Opcode::CheckInitialized:
+    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::Convert: case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest: case Opcode::Call: case Opcode::Construct:
     case Opcode::CallList: case Opcode::ConstructList: case Opcode::CallDirect: case Opcode::Results: case Opcode::ResultAt: case Opcode::CatchValue:
     case Opcode::CatchException: case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::GetClassPrototype: case Opcode::DefineMethod:
@@ -1499,67 +1585,74 @@ void walkPlacedWordsOfValue(Subject& subject, Visitor& visitor)
     case Opcode::SuperConstructList: case Opcode::PrivateGet: case Opcode::PrivateSet: case Opcode::PrivateDefine: case Opcode::PrivateHas:
     case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::ForInOpen: case Opcode::ForInStep:
     case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::ModuleNamespace: case Opcode::ImportModule:
-    case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ImportDynamic: case Opcode::RequireDynamic:
-    case Opcode::ResolveDynamic: case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis:
-    case Opcode::GetOwnProperty: case Opcode::ToLength: case Opcode::ThrowNewError: case Opcode::ResumeGenerator: case Opcode::StepGenerator:
-    case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::CreateIteratorResult: case Opcode::StepArrayIterator:
-    case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::HasJSType:
-    case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::ResolvePromise:
-    case Opcode::RejectPromise: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex:
-    case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
-    case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity:
-    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::CollectionTable:
-    case Opcode::MapNext: case Opcode::SetNext: case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::Parameter:
-    case Opcode::GetEncodedModuleVariable: case Opcode::AssumeType: case Opcode::ReportMismatch: case Opcode::CallGroup: case Opcode::ShapeTest:
-    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
-    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable:
-    case Opcode::IsMemberUnchanged: case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady:
-    case Opcode::IsShapeEpochCurrent: case Opcode::IsClosureOf: case Opcode::IsEnumeratorCurrent: case Opcode::GetShapeEpoch: case Opcode::AllGuards:
-    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
-    case Opcode::PropHasOwn: case Opcode::TryCopyFields: case Opcode::GetArrayLength: case Opcode::GetArrayElement: case Opcode::PutArrayElement:
-    case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity:
-    case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetStringLength:
-    case Opcode::GetStringCodeUnit: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::ReturnsToResultTest: case Opcode::CreateRest:
-    case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs: case Opcode::GetCapture:
-    case Opcode::MaterializeEnvironment: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::CallBuiltin:
-    case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList:
-    case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray:
-    case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
-    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame:
-    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
-    case Opcode::HasInPrototypeChain: case Opcode::GetRequiredValue: case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend:
-    case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength:
-    case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint:
-    case Opcode::StringBuilderRollBack: case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateFirstRun:
-    case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose:
-    case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance:
-    case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
+    case Opcode::RequireModule: case Opcode::EvaluateModule: case Opcode::RecordRequire: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
+    case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate:
+    case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength: case Opcode::ThrowNewError: case Opcode::ResumeGenerator:
+    case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::CreateIteratorResult:
+    case Opcode::StepArrayIterator: case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant:
+    case Opcode::HasJSType: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::NewPromise: case Opcode::CreatePromise:
+    case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind:
+    case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex:
+    case Opcode::PutDoubleIndex: case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike:
+    case Opcode::NewArrayWithCapacity: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::GrowNewArray:
+    case Opcode::TruncateNewArray: case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext: case Opcode::IsClosureOf:
+    case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter: case Opcode::GetEncodedModuleVariable:
+    case Opcode::AssumeType: case Opcode::ReadAgain: case Opcode::BorrowedParameter: case Opcode::ReportMismatch: case Opcode::CallTable:
+    case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance:
+    case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent: case Opcode::IsInsideView:
+    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::IsEnumeratorCurrent: case Opcode::AllGuards: case Opcode::GetSlot:
+    case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined:
+    case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+    case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject: case Opcode::PropHasOwn: case Opcode::TryCopyFields:
+    case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetArrayLength: case Opcode::GetArrayElement:
+    case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity:
+    case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage: case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayElement:
+    case Opcode::PutTypedArrayElement: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::GetArgument:
+    case Opcode::GetRestLength: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
+    case Opcode::ConstructSuperForwardVarargs: case Opcode::GetCapture: case Opcode::MaterializeEnvironment: case Opcode::MarkEnvironmentEscaped:
+    case Opcode::ReleaseEnvironment: case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32:
+    case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin:
+    case Opcode::GetBuiltinValue: case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray:
+    case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable: case Opcode::IsCollectionTableFull:
+    case Opcode::ReserveCollectionCapacity: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult:
+    case Opcode::PromiseAllOfElements: case Opcode::HasInPrototypeChain: case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation:
+    case Opcode::AbandonModuleEvaluation: case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendBuiltin:
+    case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
+    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::ValidateType:
+    case Opcode::ValidateCallee: case Opcode::ValidateLookup: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue:
+    case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon:
+    case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance: case Opcode::JSONSkipByte:
+    case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
     case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats:
     case Opcode::JSONKeyRepeats: case Opcode::JSONKeyHasEscapes: case Opcode::JSONHasStackSpace: case Opcode::JSONObjectBegin:
     case Opcode::JSONObjectKey: case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::JSONAddExtraMember:
     case Opcode::IsPlainDataObject: case Opcode::GetOwnDataProperty: case Opcode::ExpectRows: case Opcode::StringBuilderReserve:
     case Opcode::StringBuilderCommit: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken: case Opcode::JSONAppendBoolean:
     case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate: case Opcode::JSONAppendString:
-    case Opcode::JSONAppendValue: case Opcode::PropGetChecked: case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest:
-    case Opcode::CallMethod: case Opcode::PutSlots: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::IntegerBound:
-    case Opcode::FulfillFreshPromise: case Opcode::Substring: case Opcode::SubstringOrUndefined: case Opcode::FlattenString: case Opcode::StringRange:
-    case Opcode::StringOrder: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral:
-    case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
-    case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
-    case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodeUnitOrMinusOne: case Opcode::StringRangeCodePointOrUndefined:
-    case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeEqualsLiteral:
-    case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::StringRangeSubstringOrUndefined:
-    case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber:
-    case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange: case Opcode::StringBuilderAppendBoolean:
-    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue: case Opcode::ResolveCallTarget: case Opcode::CallResolved:
+    case Opcode::JSONAppendValue: case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::CallMethod:
+    case Opcode::PutSlots: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::IntegerBound: case Opcode::FulfillFreshPromise:
+    case Opcode::Substring: case Opcode::SubstringOrUndefined: case Opcode::FlattenString: case Opcode::StringRange: case Opcode::StringOrder:
+    case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral:
+    case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral: case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter:
+    case Opcode::StringLastIndexOfLiteral: case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodeUnitOrMinusOne:
+    case Opcode::StringRangeCodePointOrUndefined: case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined:
+    case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
+    case Opcode::StringRangeSubstringOrUndefined: case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger:
+    case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
+    case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
+    case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts: case Opcode::ResolveCallTarget: case Opcode::CallResolved:
     case Opcode::RegExpMatchLiteral: case Opcode::CallInline: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber:
     case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
         return;
     case Opcode::Data:
         visitPlacedWord<Request>(subject, 3, visitor);
         return;
-    case Opcode::NewArray: case Opcode::SharedRegExpLiteral:
-        visitPlacedWord<StaticsOffset>(subject, 3, visitor);
+    case Opcode::NewArray:
+        visitPlacedWord<StaticsOffset>(subject, 5, visitor);
         return;
     case Opcode::NewRegExp:
         visitPlacedWord<StaticsOffset>(subject, 4, visitor);
@@ -1579,6 +1672,9 @@ void walkPlacedWordsOfValue(Subject& subject, Visitor& visitor)
         return;
     case Opcode::NewSetFromData: case Opcode::NewMapFromData: case Opcode::CloneAs:
         visitPlacedWord<Request>(subject, 2, visitor);
+        return;
+    case Opcode::SharedRegExpLiteral:
+        visitPlacedWord<StaticsOffset>(subject, 3, visitor);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

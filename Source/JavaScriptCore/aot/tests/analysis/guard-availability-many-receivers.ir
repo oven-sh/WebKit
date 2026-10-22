@@ -2,7 +2,7 @@
 # FORM: Prepared
 # RUN: guards uses
 # CHECK-LABEL: function f0
-# CHECK-COUNT-300: reads ShapeWords[L0]]
+# CHECK-COUNT-300: reads -]
 # CHECK-COUNT-301: : Available
 # CHECK-NOT: : Available
 # RUN(STATES): guards uses

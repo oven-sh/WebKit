@@ -167,6 +167,11 @@ public:
 
     static constexpr unsigned EmptyEntryIndex = 0;
 
+    static constexpr ptrdiff_t offsetOfIndexSize() { return OBJECT_OFFSETOF(PropertyTable, m_indexSize); }
+    static constexpr ptrdiff_t offsetOfIndexMask() { return OBJECT_OFFSETOF(PropertyTable, m_indexMask); }
+    static constexpr ptrdiff_t offsetOfIndexVector() { return OBJECT_OFFSETOF(PropertyTable, m_indexVector); }
+    static constexpr uintptr_t flagOfCompactIndexVector = 0x1;
+
 private:
     PropertyTable(VM&, unsigned initialCapacity);
     PropertyTable(VM&, const PropertyTable&);
@@ -282,7 +287,7 @@ private:
         return withIndexVector(m_indexVector, function);
     }
 
-    static constexpr uintptr_t isCompactFlag = 0x1;
+    static constexpr uintptr_t isCompactFlag = flagOfCompactIndexVector;
     static constexpr uintptr_t indexVectorMask = ~isCompactFlag;
 
     unsigned m_indexSize;

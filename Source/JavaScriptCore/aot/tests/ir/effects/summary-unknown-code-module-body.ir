@@ -1,4 +1,4 @@
-# A variable whose writers are all known and whose one writer is called only by compiled code, from the body of the entry module down, is not written by unknown code
+# Unknown code does not write a variable whose writers are all known and whose one writer is called only by compiled code, from the body of the entry module down
 # FORM: AsRead
 # RUN: effects flow summaries f3
 # RUN(W): write-overlap flow summaries f3

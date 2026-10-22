@@ -25,7 +25,7 @@ function f0 name="pairArray" parameters=[{type=number}] results=[{type=Array<num
 # CHECK-NEXT: [[array]]: Array<number> = NewArray [[first]], [[second]] contents=number
 # CHECK-NEXT: Return [[array]]
 
-function f1 name="point" parameters=[{type=number}] results=[{type=object written=L0}] {
+function f1 name="point" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
     v1 = Add v0, v0
     v2 = NewObject -, v1, v0 layout=L0 fields=[1, 0]
@@ -50,7 +50,7 @@ function f2 name="onePart" parameters=[{type=number}] results=[{type=Array<numbe
 # CHECK-NOT: ResultAt
 # CHECK: = NewArray [[onlyPart]] contents=number
 
-function f3 name="storesAfterCreation" parameters=[{type=number}] results=[{type=object written=L0}] {
+function f3 name="storesAfterCreation" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
     v1 = NewObject layout=L0
     PropDefine v1, v0 key="x" receivers=[L0]
@@ -157,7 +157,7 @@ function f12 name="returnsParameter" parameters=[{type=Array<number>}] results=[
 # CHECK-NOT: role=
 # CHECK: Return v0
 
-function f13 name="passedOnBeforeReturn" parameters=[{type=number}, {type=anything}] results=[{type=object written=L0}] {
+function f13 name="passedOnBeforeReturn" parameters=[{type=number}, {type=anything}] results=[{type=L0}] {
   b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = Call v1, -, v2
@@ -168,7 +168,7 @@ function f13 name="passedOnBeforeReturn" parameters=[{type=number}, {type=anythi
 # CHECK: v2:{{*}}= NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK: Return v2
 
-function f14 name="testFoldedInWorker" parameters=[{type=number}, {type=anything}] results=[{type=object written=L0}] {
+function f14 name="testFoldedInWorker" parameters=[{type=number}, {type=anything}] results=[{type=L0}] {
   b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = StrictEq v2, v1
@@ -225,3 +225,23 @@ function f14 name="testFoldedInWorker" parameters=[{type=number}, {type=anything
 # CHECK-NOT: StrictEq
 # CHECK: PutModuleVariable {{*}} variable=g0
 # CHECK: = Results v0, v0
+
+# Whoever calls them needs no object
+function f15 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=anything}, {type=number}, {type=anything}, {type=number}, {type=number}, {type=Array<number>}, {type=number}, {type=anything}, {type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: anything, v8: number, v9: anything, v10: number, v11: number, v12: Array<number>, v13: number, v14: anything, v15: number, v16: anything):
+    v17 = CallDirect v0 function=f0
+    v18 = CallDirect v1 function=f1
+    v19 = CallDirect v2 function=f2
+    v20 = CallDirect v3 function=f3
+    v21 = CallDirect v4 function=f4
+    v22 = CallDirect v5 function=f5
+    v23 = CallDirect v6, v7 function=f6
+    v24 = CallDirect v8, v9 function=f7
+    v25 = CallDirect v10 function=f8
+    v26 = CallDirect v11 function=f9
+    v27 = CallDirect v12 function=f12
+    v28 = CallDirect v13, v14 function=f13
+    v29 = CallDirect v15, v16 function=f14
+    v30 = Undefined
+    Return v30
+}

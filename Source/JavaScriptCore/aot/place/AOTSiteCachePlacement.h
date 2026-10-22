@@ -8,8 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTSiteWeight.h"
 #include "JSExportMacros.h"
 #include <compare>
+#include <span>
 #include <wtf/FastMalloc.h>
 #include <wtf/PrintStream.h>
 
@@ -44,7 +46,16 @@ private:
     uint32_t m_numberOfSitesWithoutCache { 0 };
 };
 
-JS_EXPORT_PRIVATE unsigned numberOfSiteCachesUsedBy(const Program&, const Placement&, const Value&);
+// For a store by name whose receiver is proven to have a layout with a plain field of the name, at one place in the record of every layout that it may have: how far behind the data of the layout
+// the record of the field lies. Such a store names the record to the stub PutKnownField, which looks nothing up. Nothing for a slot that the stubs by name store into through the table of fields,
+// which is the shorter way where the name has a column there. Names get their numbers behind the placement of the site caches, which takes it that a name has a column.
+enum class NameHasColumn : bool { No, Yes };
+JS_EXPORT_PRIVATE std::optional<uint32_t> findRecordOfStoredField(const Program&, const Placement&, const Function&, const Value&, NameHasColumn);
+// Of a store that has such a record: in every layout of the receiver the slot lies in the cell and holds any value as it is, and the type of the field is that of any value.
+bool storedFieldTakesAnyValue(const Program&, const Placement&, const Function&, const Value&);
+JS_EXPORT_PRIVATE unsigned numberOfSiteCachesUsedBy(const Program&, const Placement&, const Function&, const Value&);
+// The same of an operation that is no run of stores, or is one that has a request.
+unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program&, const Placement&, const Function&, const Value&);
 // Nothing reads what a site that runs at most once would remember, so it has no cache.
 JS_EXPORT_PRIVATE bool mayReadSiteCachesAgain(FunctionAnalyses&, BlockID);
 // Caches and their states are numbered in the order of the program's text: module, function as written, the form of it that holds the site. Most modules and functions of a large
@@ -58,7 +69,18 @@ struct SiteCachePosition {
     friend auto operator<=>(const SiteCachePosition&, const SiteCachePosition&) = default;
 };
 JS_EXPORT_PRIVATE SiteCachePosition siteCachePositionOf(const Program&, FunctionID, ValueID);
-JS_EXPORT_PRIVATE SiteCaches placeSiteCaches(ProgramEditor&, const Placement&, const FlowResults&, const Heat&, BuildContext&);
+struct SiteCacheRequest {
+    SiteWeight weight { 0 };
+    FunctionID function;
+    ValueID value;
+    bool runsAtMostOnce { false };
+};
+enum class RequestsOfStoreRuns : bool { AreWritten, AreNotWrittenYet };
+// The requests of one function, in front of the step that writes the requests of runs of stores. Of the placement it asks for the slot plan.
+// The weights are needed where the program may ask for more caches than LimitID::MaxSiteCaches.
+void collectSiteCacheRequests(const Program&, const Placement&, const FlowResults&, const Heat&, BuildContext&, FunctionID, bool needsWeights, Vector<SiteCacheRequest>&);
+// With requests by function: what collectSiteCacheRequests() gave for each function with a body. No value has got another number since.
+JS_EXPORT_PRIVATE SiteCaches placeSiteCaches(ProgramEditor&, const Placement&, const FlowResults&, const Heat&, BuildContext&, std::span<const Vector<SiteCacheRequest>> requestsOfFunctions = { });
 
 } } } // namespace JSC::AOT::Typed
 

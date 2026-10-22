@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTPropertyAccessInternal.h"
@@ -22,6 +23,11 @@ enum class MemberIntent : uint8_t { Read, Store, Call };
 struct MemberUse {
     CallArmKind kind { CallArmKind::OriginalOperations };
     FunctionID callee;
+};
+
+struct MemberLookup {
+    ValueID firstHolder;
+    PropertyKeyID key;
 };
 
 } // anonymous namespace
@@ -119,6 +125,54 @@ static MemberUse memberUseOf(Opcode opcode, const MemberAnswer& answer)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isMemberOfClass(const MemberAnswer& answer)
+{
+    return answer.kind == MemberKind::Method || answer.kind == MemberKind::Accessor;
+}
+
+// What the class definitions say of a member holds while the bits of its conditions are set, and one test at the site asks for all of them.
+static bool canTestConditions(FunctionPassContext& context, const CallSite& site, const MemberAnswer& answer)
+{
+    if (answer.needsNoTest())
+        return true;
+    if (!isMemberOfClass(answer) || !answer.receiverProofs.isEmpty())
+        return false;
+    // The failing side reads the member again, at the call.
+    if (site.opcode == Opcode::Call && !site.memberRead.canSinkToCall)
+        return false;
+
+    // Rare code stays small: there the operations give way only to what takes their place without a branch.
+    context.planAsksAboutPlace = true;
+    FunctionAnalyses& analyses = context.analyses;
+    BlockID block = site.position.block;
+    if (analyses.blockFrequencies().classOf(block) == BlockFrequency::Rare)
+        return false;
+    // A bit that was cleared stays cleared, so the operations behind a failed test stay as they are.
+    return analyses.findEarlierTest(makeConditionsTest(context.types, answer.conditions.span()), block) != EarlierTest::Failed;
+}
+
+static MemberLookup lookupOf(const Value& memberRead)
+{
+    switch (memberRead.opcode) {
+    case Opcode::PropGet:
+        return { memberRead.objectOperand(), memberRead.key() };
+    case Opcode::SuperGet:
+        return { memberRead.baseOperand(), memberRead.key() };
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static void appendLookupValidation(IRBuilder& builder, FunctionID method, const MemberLookup& lookup)
+{
+    Value closure = IRBuilder::make(Opcode::NewClosure);
+    closure.setFunction(method);
+
+    Value validation = IRBuilder::make(Opcode::ValidateLookup, { lookup.firstHolder, builder.append(WTF::move(closure)) });
+    validation.setKey(lookup.key);
+    builder.append(WTF::move(validation));
+}
+
 HomeObject findHomeObject(const Program& program, const Function& function, const Value& superAccess)
 {
     const Value& superBase = function.at(sameObjectThroughCasts(function, superAccess.baseOperand()));
@@ -170,7 +224,7 @@ PlanOrDecline<HolderMemberPlan> CallResolver::planHolderMember(const CallSite& s
 {
     if (!answer.isKnown())
         return std::unexpected(CallDeclineReason::UnknownMember);
-    if (!answer.needsNoTest())
+    if (!canTestConditions(m_context, site, answer))
         return std::unexpected(CallDeclineReason::NeedsTest);
 
     HolderMemberPlan plan;
@@ -182,6 +236,7 @@ PlanOrDecline<HolderMemberPlan> CallResolver::planHolderMember(const CallSite& s
         return std::unexpected(CallDeclineReason::None);
     case CallArmKind::Undefined:
         plan.arm.kind = CallArmKind::Undefined;
+        plan.arm.conditions = answer.conditions;
         return plan;
     case CallArmKind::DirectCall:
         break;
@@ -190,24 +245,22 @@ PlanOrDecline<HolderMemberPlan> CallResolver::planHolderMember(const CallSite& s
     if (!canCallWithoutClosure(m_program, use.callee))
         return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
 
-    const Value& original = m_function.at(site.position.value);
-    CalleeSetID stamp;
     switch (intentOf(site.opcode)) {
     case MemberIntent::Read:
         break;
     case MemberIntent::Store:
-        plan.storedValue = original.valueOperand();
+        plan.storedValue = m_function.at(site.position.value).valueOperand();
         break;
     case MemberIntent::Call:
         if (!canRetireMemberRead(site, use.callee))
             return std::unexpected(CallDeclineReason::None);
         plan.passesCallArguments = true;
         plan.retiresMemberRead = true;
-        stamp = original.callees();
         break;
     }
 
-    plan.arm = createDirectCallArm(m_program, m_flow, use.callee, stamp);
+    plan.arm = createDirectCallArm(use.callee);
+    plan.arm.conditions = answer.conditions;
     return plan;
 }
 
@@ -236,7 +289,7 @@ MemberAnswer CallResolver::findMemberOnPrototypesOfHome(const Value& superAccess
     if (superBase.opcode != Opcode::GetSuperBase || superBase.homeKind() != HomeObjectKind::Object)
         return MemberAnswer::unknown(UnprovenCause::Unknown);
 
-    ReceiverCandidates homes = receiverCandidates(m_program, m_function, superBase.homeOperand(), { });
+    ReceiverCandidates homes = receiverCandidates(m_program, m_function, superBase.homeOperand());
     if (!homes.isProven() || homes.mayBeNullish || homes.proven.size() > m_context.limit(LimitID::MaxAccessPlanMembers))
         return MemberAnswer::unknown(UnprovenCause::Unknown);
 
@@ -274,9 +327,14 @@ PlanOrDecline<HolderMemberPlan> CallResolver::planSuperMember(const CallSite& si
 
 void CallResolver::rewriteHolderMember(const CallSite& site, const HolderMemberPlan& plan)
 {
+    std::optional<MemberLookup> validatedLookup;
+    if (plan.retiresMemberRead && m_context.build.validates())
+        validatedLookup = lookupOf(m_function.at(site.memberRead.read().value));
+
     m_expansion.begin(site.position);
     if (plan.retiresMemberRead)
         retireMemberRead(site, false, { });
+    branchOnConditions(plan.arm.conditions.span(), { });
 
     Vector<ValueID, 4> arguments;
     if (plan.passesCallArguments)
@@ -289,6 +347,8 @@ void CallResolver::rewriteHolderMember(const CallSite& site, const HolderMemberP
         m_expansion.finishArm(m_builder.appendUndefined());
         break;
     case CallArmKind::DirectCall: {
+        if (validatedLookup)
+            appendLookupValidation(m_builder, plan.arm.closureFunction, *validatedLookup);
         ValueID result = appendCall(plan.arm, plan.thisValue, { }, arguments.span());
         if (typeOf(result).isNever())
             m_expansion.finishArmAsUnreachable();

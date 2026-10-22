@@ -24,11 +24,23 @@ enum class PureOperation : uint16_t {
     RuntimeOperation,
     LiteralStringToString,
     ToLiteralString,
+    BoxNumber,
+    RemainderAsNumber,
 };
 
 constexpr B3::PureFunction pureFunction(PureOperation operation, uint32_t payload = 0, bool dependsOnChildren = false)
 {
     return { static_cast<uint64_t>(operation) << 32 | payload, dependsOnChildren };
+}
+
+constexpr B3::PureFunction remainderAsNumber(bool is32Bit, bool mayBeNaN)
+{
+    return pureFunction(PureOperation::RemainderAsNumber, is32Bit << 1 | mayBeNaN, true);
+}
+
+constexpr bool isRemainderThatIsNeverNaN(const B3::PureFunction& function)
+{
+    return function.id == remainderAsNumber(false, false).id || function.id == remainderAsNumber(true, false).id;
 }
 
 static_assert(pureFunction(PureOperation::StringConstant, 7).id != pureFunction(PureOperation::KeyConstant, 7).id);

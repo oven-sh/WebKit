@@ -41,6 +41,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "Debugger.h"
 #include "EnsureStillAliveHere.h"
 #include "ExceptionFuzz.h"
+#include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GetterSetter.h"
 #include "ICStats.h"
@@ -286,7 +287,7 @@ JSC_DEFINE_JIT_OPERATION(operationThrowIteratorResultIsNotObject, void, (JSGloba
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+    throwTypeError(globalObject, scope, IteratorResultNotObjectError);
     OPERATION_RETURN(scope);
 }
 
@@ -2593,11 +2594,7 @@ JSC_DEFINE_JIT_OPERATION(operationCompareStringEq, EncodedJSValue, (JSGlobalObje
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool result = asString(left)->equal(globalObject, asString(right));
-#else
     bool result = asString(left)->equalInline(globalObject, asString(right));
-#endif
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(result)));
 }
 

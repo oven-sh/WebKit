@@ -16,13 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void emitValueEntryWords(CCallHelpers& jit, FunctionID valueEntry, CodeRecords& records)
-{
-    CCallHelpers::Label begin = jit.label();
-    records.stubCalls.emitDistanceToFunction(jit, valueEntry, primaryEntry, -static_cast<int32_t>(sizeof(ValueEntryWords)));
-    records.units.pin(begin, jit.label());
-}
-
 static unsigned numberOfGPRParameters(const ArgumentLocations& locations)
 {
     unsigned count = 0;
@@ -62,18 +55,16 @@ static void emitArgumentRegisterSpill(CCallHelpers& jit, CodeRecords& records)
     written.add(CCallHelpers::stackPointerRegister);
     records.units.addPlain(begin, jit.label(), written);
     records.frame.stackUsedAtCalls += sizeOfSpilledArgumentRegisters;
+    records.frame.spillsArgumentRegisters = true;
 }
 
 void emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInputs& inputs, FunctionID id, CodeRecords& records)
 {
     const CallingConventions& conventions = inputs.conventions;
-    FunctionID valueEntry = conventions.valueEntryOf(id);
     std::span<const SecondaryEntry> secondaryEntries = conventions.secondaryEntriesOf(id);
     bool spillsArgumentRegisters = conventions.of(inputs.program, id).spillsArgumentRegisters;
-    RELEASE_ASSERT(secondaryEntries.empty() || (!valueEntry && !spillsArgumentRegisters));
+    RELEASE_ASSERT(secondaryEntries.empty() || !spillsArgumentRegisters);
 
-    if (valueEntry)
-        emitValueEntryWords(jit, valueEntry, records);
     if (!secondaryEntries.empty())
         emitSecondaryEntries(jit, secondaryEntries, numberOfGPRParameters(conventions.locationsOf(inputs.program, id)), records);
     if (spillsArgumentRegisters)

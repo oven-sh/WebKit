@@ -1,6 +1,6 @@
 # Three layouts of two fields each fill their cells, and three accesses ask for one location each for a name that two of them hold. Only two of the three can be met: the lightest access keeps two groups, and no cell grows
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
 # RUN(PLACED): place accesses
 # STATISTIC: SharedSlots = 2
@@ -53,6 +53,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: "z" {L0 L2} read
 # CHECK-NEXT: 2 groups: {L0} Double @24, {L2} Double @16
 
-# Selection gives each group an access of its own.
-# PLACED: "z" [L0] read EveryMember Double @24
-# PLACED: "z" [L2] read EveryMember Double @16
+# The groups differ in the offset alone, so the read stays one access: the slot is the one with the lowest offset, and a table by shape says how far behind it the slot of an object lies.
+# PLACED: "z" [L0, L2] read EveryMember Double @16 offsetByShape withField=[L0, L2]

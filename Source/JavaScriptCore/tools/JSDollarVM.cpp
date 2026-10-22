@@ -2213,6 +2213,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionInlineCapacity);
 static JSC_DECLARE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty);
 static JSC_DECLARE_HOST_FUNCTION(functionTryMarkPristine);
 static JSC_DECLARE_HOST_FUNCTION(functionIsPristine);
+static JSC_DECLARE_HOST_FUNCTION(functionHasPristineNames);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPristineElements);
 static JSC_DECLARE_HOST_FUNCTION(functionPutDirectPropertyRun);
 static JSC_DECLARE_HOST_FUNCTION(functionClearLinkBufferStats);
@@ -3355,6 +3356,13 @@ JSC_DEFINE_HOST_FUNCTION(functionIsPristine, (JSGlobalObject*, CallFrame* callFr
     DollarVMAssertScope assertScope;
     JSObject* object = callFrame->argument(0).getObject();
     return JSValue::encode(jsBoolean(object && object->isPristine()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHasPristineNames, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->structure()->isPristine()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionHasPristineElements, (JSGlobalObject*, CallFrame* callFrame))
@@ -6098,6 +6106,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "unusedInlineStorageIsEmpty"_s, functionUnusedInlineStorageIsEmpty, 1);
     addFunction(vm, allowIfNotFuzz, "tryMarkPristine"_s, functionTryMarkPristine, 1);
     addFunction(vm, allowIfNotFuzz, "isPristine"_s, functionIsPristine, 1);
+    addFunction(vm, allowIfNotFuzz, "hasPristineNames"_s, functionHasPristineNames, 1);
     addFunction(vm, allowIfNotFuzz, "hasPristineElements"_s, functionHasPristineElements, 1);
     addFunction(vm, allowIfNotFuzz, "putDirectPropertyRun"_s, functionPutDirectPropertyRun, 3);
     addFunction(vm, allowIfNotFuzz, "clearLinkBufferStats"_s, functionClearLinkBufferStats, 0);

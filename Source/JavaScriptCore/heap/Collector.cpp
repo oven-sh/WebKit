@@ -26,7 +26,6 @@
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectorInlines.h"
-#include "CollectorMechanism.h"
 #include "HeapHelperPool.h"
 #include "HeapInlines.h"
 #include "HeapVerifier.h"
@@ -201,7 +200,7 @@ void Collector::assertMarkStacksEmpty()
         ok = false;
     }
 
-    {
+    if (Options::useAOT()) {
         Locker locker { m_markingMutex };
         if (!m_deferredRootRegions.isEmpty()) {
             dataLog("FATAL: ", m_deferredRootRegions.size(), " deferred root regions were not visited.\n");
@@ -433,7 +432,7 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     m_hasStartedHelpers.store(false, std::memory_order_relaxed);
     if (startsHelpersLazily()) {
         if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1) {
-            size_t bytesPerHelper = (16 * MB) >> ((Options::disabledCollectorMechanisms() >> 8) & 7);
+            constexpr size_t bytesPerHelper = 16 * MB;
             size_t allocated = totalBytesAllocatedThisCycle();
             size_t bytesToVisit = allocated / 2;
             if (scope == CollectionScope::Full) {
@@ -513,21 +512,18 @@ void Collector::setUpVisitors(CollectionScope scope)
 
 bool Collector::isNotRunning() const
 {
-    return Options::useAOT() && isEnabled(CollectorMechanism::IdlePollShortcut) && m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed);
+    return m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed);
 }
 
 bool Collector::canSkipMarking()
 {
+    if (!Options::useAOT())
+        return false;
     bool result = true;
     forEachHeap([&](Heap& heap) {
         result &= heap.canSkipMarking();
     });
     return result;
-}
-
-bool Collector::startsHelpersLazily()
-{
-    return Options::useAOT() && isEnabled(CollectorMechanism::LazyMarkerHelpers);
 }
 
 void Collector::startHelpers()
@@ -593,10 +589,12 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
         m_scheduler->didExecuteConstraints();
 
-        Locker locker { m_markingMutex };
-        if (!m_deferredRootRegions.isEmpty()) {
-            startHelpers();
-            m_markingConditionVariable.notifyOne();
+        if (Options::useAOT()) {
+            Locker locker { m_markingMutex };
+            if (!m_deferredRootRegions.isEmpty()) {
+                startHelpers();
+                m_markingConditionVariable.notifyOne();
+            }
         }
     }
 

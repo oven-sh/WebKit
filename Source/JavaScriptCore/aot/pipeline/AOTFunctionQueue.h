@@ -39,13 +39,21 @@ class FunctionQueue {
 public:
     using FoundFunctions = Vector<QueuedFunction, 128>;
     using Process = ScopedLambda<void(FunctionID, FoundFunctions&)>;
+    using DidConfirm = ScopedLambda<void(FunctionID)>;
 
     FunctionQueue(const ParallelLoops&, unsigned numberOfFunctions);
     ~FunctionQueue();
 
     void processEach(std::span<const QueuedFunction>, NOESCAPE const Process&);
 
+    // A speculative function starts before anything has found it, so a long function does not wait for the long function that
+    // names it. The functions it finds are queued only once a confirmed function finds it. One that is never confirmed is
+    // still processed, so anything Process reports about it (statistics, losses, declines) stays reported.
+    // DidConfirm runs once per speculative function that is confirmed, after Process has returned for it.
+    void processEach(std::span<const QueuedFunction>, std::span<const QueuedFunction> speculativeFunctions, NOESCAPE const Process&, NOESCAPE const DidConfirm&);
+
     bool wasQueued(FunctionID) const;
+    bool wasConfirmed(FunctionID) const;
     BitVector takeQueuedProvisionalOrdinals();
 
 private:
@@ -55,6 +63,20 @@ private:
 
     using Word = std::atomic<uint64_t>;
     using Segment = std::array<Word, wordsPerSegment>;
+
+    enum State : uint8_t {
+        Queued = 1 << 0,
+        Speculative = 1 << 1,
+        Confirmed = 1 << 2,
+        Done = 1 << 3,
+    };
+
+    enum class Confirmation : uint8_t { AlreadyQueued, FirstQueued, FinishedSpeculatively };
+
+    struct SpeculativeFunction {
+        FunctionID id;
+        Vector<QueuedFunction> found;
+    };
 
     struct Worker {
         void didChangeFunctions() WTF_REQUIRES_LOCK(lock) { numberOfFunctions.store(functions.size(), std::memory_order_relaxed); }
@@ -68,9 +90,13 @@ private:
         uint8_t restOfCacheLine[16];
     };
 
-    Word& ensureWordOf(FunctionID);
-    const Word* wordOf(FunctionID) const;
-    bool markQueued(FunctionID);
+    Word& ensureProvisionalWord(FunctionID);
+    const Word* provisionalWord(FunctionID) const;
+    bool isSpeculative(FunctionID) const;
+    SpeculativeFunction& speculativeFunction(FunctionID) LIFETIME_BOUND;
+    Confirmation confirm(FunctionID);
+    void confirmFoundFunctions(FoundFunctions&);
+    bool finishSpeculativeFunction(FunctionID, const FoundFunctions&);
     bool takeSpareThread();
     Worker& takeIdleWorker();
     void start(Vector<QueuedFunction>&&);
@@ -79,8 +105,10 @@ private:
 
     const ParallelLoops& m_loops;
     const Process* m_process { nullptr };
+    const DidConfirm* m_didConfirm { nullptr };
     const UniqueArray<Worker> m_workers;
-    Vector<Word> m_isQueued;
+    Vector<std::atomic<uint8_t>> m_states;
+    Vector<SpeculativeFunction> m_speculativeFunctions;
     std::array<std::atomic<Segment*>, numberOfSegments> m_isProvisionalQueued { };
     std::atomic<unsigned> m_numberOfSpareThreads { 0 };
     Atomic<uint32_t> m_numberOfBusyWorkers { 0 };

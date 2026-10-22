@@ -1,4 +1,4 @@
-# The caller of a constructor function allocates without reading the prototype where the run time knows the one function object: the definition runs once, nothing replaces the prototype property or one operation assigns it before every read, and the function captures nothing, so that the closure table can create the closure. With another new.target the construction stays generic: new.target selects what is allocated, and the prototype object of a function names no layout
+# `new` of a constructor function calls the copy of the function that allocates its own object. The copy allocates without reading the prototype where the run time knows the one function object: the definition runs once, nothing replaces the prototype property or one operation assigns it before every read, and the function captures nothing, so that the closure table can create the closure. With another new.target the construction stays generic: new.target selects what is allocated, and the prototype object of a function names no layout
 # FORM: Prepared
 # RUN: pass ResolveCalls
 # STATISTIC: ConstructsResolved = 5
@@ -10,20 +10,20 @@ layout L1 kind=Instance name="Capturing" constructor=f1 flags=[IsConstructorFunc
 layout L2 kind=Instance name="Many" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 layout L3 kind=Instance name="Replaced" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce staticLink=Fixed}
 layout L4 kind=Instance name="Assigned" constructor=f9 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed hasAssignedPrototype=true}
-function f0 name="Once" flags=[HasThis] thisType={type=object written=L0} results=[{type=undefined}] {
-  b0(v0: object ? L0):
+function f0 name="Once" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+  b0(v0: L0):
     Return
 }
-function f1 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=object written=L1} results=[{type=undefined}] {
-  b0(v0: number, v1: object ? L1):
+function f1 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=L1} results=[{type=undefined}] {
+  b0(v0: number, v1: L1):
     Return
 }
-function f2 name="Many" flags=[HasThis] thisType={type=object written=L2} results=[{type=undefined}] {
-  b0(v0: object ? L2):
+function f2 name="Many" flags=[HasThis] thisType={type=L2} results=[{type=undefined}] {
+  b0(v0: L2):
     Return
 }
-function f3 name="Replaced" flags=[HasThis] thisType={type=object written=L3} results=[{type=undefined}] {
-  b0(v0: object ? L3):
+function f3 name="Replaced" flags=[HasThis] thisType={type=L3} results=[{type=undefined}] {
+  b0(v0: L3):
     Return
 }
 
@@ -34,9 +34,8 @@ function f4 name="evaluated-once" parameters=[{type=f0}] results=[{type=anything
 }
 # CHECK-LABEL: function f4 name="evaluated-once"
 # CHECK-NEXT: b0(v0: f0):
-# CHECK-NEXT: [[once]]: {{*}} = NewObject layout=L0
-# CHECK-NEXT: = CallDirect [[once]] function=f0 [isConstruction]
-# CHECK-NOT: GetConstructPrototype
+# CHECK-NEXT: : L0 = CallDirect function=[[onceBody]] [isConstruction]
+# CHECK-NOT: NewObject
 function f5 name="evaluated-once-with-a-capture" parameters=[{type=f1}] results=[{type=anything}] {
   b0(v0: f1):
     v1 = Construct v0
@@ -44,8 +43,9 @@ function f5 name="evaluated-once-with-a-capture" parameters=[{type=f1}] results=
 }
 # CHECK-LABEL: function f5 name="evaluated-once-with-a-capture"
 # CHECK-NEXT: b0(v0: f1):
-# CHECK-NEXT: [[capturingPrototype]]: object = GetConstructPrototype v0 layout=L1
-# CHECK-NEXT: [[capturing]]: {{*}} = NewObject [[capturingPrototype]] layout=L1
+# CHECK-NEXT: [[captured]]: number = GetCapture v0 function=f1
+# CHECK-NEXT: : L1 = CallDirect [[captured]], v0 function=[[capturingBody]] [isConstruction]
+# CHECK-NOT: NewObject
 function f6 name="evaluated-many-times" parameters=[{type=f2}] results=[{type=anything}] {
   b0(v0: f2):
     v1 = Construct v0
@@ -53,8 +53,8 @@ function f6 name="evaluated-many-times" parameters=[{type=f2}] results=[{type=an
 }
 # CHECK-LABEL: function f6 name="evaluated-many-times"
 # CHECK-NEXT: b0(v0: f2):
-# CHECK-NEXT: [[manyPrototype]]: object = GetConstructPrototype v0 layout=L2
-# CHECK-NEXT: [[many]]: {{*}} = NewObject [[manyPrototype]] layout=L2
+# CHECK-NEXT: : L2 = CallDirect v0 function=[[manyBody]] [isConstruction]
+# CHECK-NOT: NewObject
 function f7 name="prototype-property-replaced" parameters=[{type=f3}] results=[{type=anything}] {
   b0(v0: f3):
     v1 = Construct v0
@@ -62,8 +62,8 @@ function f7 name="prototype-property-replaced" parameters=[{type=f3}] results=[{
 }
 # CHECK-LABEL: function f7 name="prototype-property-replaced"
 # CHECK-NEXT: b0(v0: f3):
-# CHECK-NEXT: [[replacedPrototype]]: object = GetConstructPrototype v0 layout=L3
-# CHECK-NEXT: [[replaced]]: {{*}} = NewObject [[replacedPrototype]] layout=L3
+# CHECK-NEXT: : L3 = CallDirect v0 function=[[replacedBody]] [isConstruction]
+# CHECK-NOT: NewObject
 function f8 name="other-new-target" parameters=[{type=f0}, {type=f2}] results=[{type=anything}] {
   b0(v0: f0, v1: f2):
     v2 = Construct v0, v1
@@ -73,8 +73,8 @@ function f8 name="other-new-target" parameters=[{type=f0}, {type=f2}] results=[{
 # CHECK-NEXT: b0(v0: f0, v1: f2):
 # CHECK-NOT: NewObject
 # CHECK: = Construct v0, v1
-function f9 name="Assigned" flags=[HasThis] thisType={type=object written=L4} results=[{type=undefined}] {
-  b0(v0: object ? L4):
+function f9 name="Assigned" flags=[HasThis] thisType={type=L4} results=[{type=undefined}] {
+  b0(v0: L4):
     Return
 }
 function f10 name="prototype-property-assigned-before-every-read" parameters=[{type=f9}] results=[{type=anything}] {
@@ -84,6 +84,25 @@ function f10 name="prototype-property-assigned-before-every-read" parameters=[{t
 }
 # CHECK-LABEL: function f10 name="prototype-property-assigned-before-every-read"
 # CHECK-NEXT: b0(v0: f9):
-# CHECK-NEXT: [[assigned]]: {{*}} = NewObject layout=L4
-# CHECK-NEXT: = CallDirect [[assigned]] function=f9 [isConstruction]
+# CHECK-NEXT: : L4 = CallDirect function=[[assignedBody]] [isConstruction]
+
+# CHECK: function [[onceBody]] name="Once"{{*}}role=ConstructBody
 # CHECK-NOT: GetConstructPrototype
+# CHECK: [[once]]: L0 = NewObject layout=L0
+# CHECK-NEXT: Return [[once]]
+# CHECK: function [[capturingBody]] name="Capturing"{{*}}role=ConstructBody
+# CHECK: [[capturingPrototype]]: object = GetConstructPrototype {{*}} layout=L1
+# CHECK-NEXT: [[capturing]]: L1 = NewObject [[capturingPrototype]] layout=L1
+# CHECK-NEXT: Return [[capturing]]
+# CHECK: function [[manyBody]] name="Many"{{*}}role=ConstructBody
+# CHECK: [[manyPrototype]]: object = GetConstructPrototype {{*}} layout=L2
+# CHECK-NEXT: [[many]]: L2 = NewObject [[manyPrototype]] layout=L2
+# CHECK-NEXT: Return [[many]]
+# CHECK: function [[replacedBody]] name="Replaced"{{*}}role=ConstructBody
+# CHECK: [[replacedPrototype]]: object = GetConstructPrototype {{*}} layout=L3
+# CHECK-NEXT: [[replaced]]: L3 = NewObject [[replacedPrototype]] layout=L3
+# CHECK-NEXT: Return [[replaced]]
+# CHECK: function [[assignedBody]] name="Assigned"{{*}}role=ConstructBody
+# CHECK-NOT: GetConstructPrototype
+# CHECK: [[assigned]]: L4 = NewObject layout=L4
+# CHECK-NEXT: Return [[assigned]]

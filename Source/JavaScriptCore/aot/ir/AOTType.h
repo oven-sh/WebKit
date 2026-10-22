@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTCompactList.h"
 #include "AOTDiagnostics.h"
 #include "AOTID.h"
 #include "AOTLimits.h"
@@ -38,16 +39,17 @@ struct ClassPart {
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
     OptionSet<PristineAspects> provenPristine;
-    Vector<TypeID, 2> contents;
-    Vector<TypeID, 2> predictedContents;
+    InlineList<TypeID, 3> contents;
 
     TypeID contentsAt(unsigned indexInType) const;
     TypeID contentsAt(const BuiltinTable&, ContentsSlot) const;
-    TypeID predictedContentsAt(unsigned indexInType) const;
-    TypeID predictedContentsAt(const BuiltinTable&, ContentsSlot) const;
 
     friend bool operator==(const ClassPart&, const ClassPart&) = default;
 };
+
+template<> inline constexpr bool canMoveWithMemcpy<ClassPart> = true;
+
+using ClassParts = InlineList<ClassPart, 1>;
 
 struct RegExpLiteralInType {
     StringID pattern;
@@ -64,6 +66,7 @@ struct WideningContext {
     TypeArena& types;
     BuildContext& build;
     Subject subject;
+    bool* didWiden { nullptr };
 };
 
 struct Type {
@@ -76,7 +79,8 @@ struct Type {
     LayoutSetID layouts;
     SortedSet<StringID> stringLiterals;
     SortedSet<PropertyKeyID> symbolLiterals;
-    Vector<ClassPart, 1> classes;
+    ClassParts classes;
+    // Beside anyFunction: the functions that the program is seen to convert to the type. They say what to expect of a value, and nothing about what it cannot be.
     SortedSet<FunctionID> functions;
     SortedSet<BuiltinID> builtins;
     SortedSet<RegExpLiteralInType> regExpLiteralSet;
@@ -128,7 +132,9 @@ struct Type {
     bool isNumberLike() const { return hasOnlyPrimitives(Primitive::NumberLike); }
     bool mayBeFunction() const { return anyFunction || anyObject || !functions.isEmpty() || !builtins.isEmpty(); }
     bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
-    bool hasOnlyLayouts() const;
+    // Every object here has one of the listed layouts. The set says whether it lists every object, so the answer takes the table.
+    bool hasOnlyLayouts(const Program&) const;
+    bool hasOnlyLayouts(const TypeTable&) const;
     bool isSingleValue() const;
 
     LayoutID singleLayout(const Program&) const;
@@ -149,8 +155,7 @@ struct Type {
     // import.meta, module, exports and require are one object per module, and a CommonJS module gets new ones each time it runs. Native code hands out what a native
     // binding answers. No test finds such an object, so a type that names its built-in is a proof, and a test asks for a function or an object.
     Type withUntestableBuiltinsWidened() const;
-    Type withoutProofs() const;
-    // The type a Claim or a TypeTest may name: a test can find a layout, and nothing that is proven or predicted about an instance of a class.
+    // The type a Check or a TypeTest may name: a test can find a layout, and nothing that is proven about an instance of a class.
     // That an object is an instance of a class without an instance test is such a proof, and a test asks for an object.
     Type withoutClassProofs() const;
 
@@ -177,7 +182,10 @@ Wire::Primitives toWire(uint16_t primitives);
 std::span<const LayoutID> membersOf(const Program&, const Type&);
 std::span<const LayoutID> membersOf(const TypeTable&, const Type&);
 
-inline Type withoutProofs(const Type& type) { return type.withoutProofs(); }
+// The program converts objects without a layout to the type: functions, instances of built-in and host classes, ordinary objects. The type lists the primitives it admits.
+// The questions of Type that take no table, mayBeFunction() and hasOnlyKnownCallees() among them, answer for the listed parts alone.
+bool hasMembersWithoutLayout(const Program&, const Type&);
+bool hasMembersWithoutLayout(const TypeTable&, const Type&);
 
 } } } // namespace JSC::AOT::Typed
 

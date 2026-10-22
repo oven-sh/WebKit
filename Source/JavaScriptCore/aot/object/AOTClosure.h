@@ -24,8 +24,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | GetOwnPropertySlotIsImpureForPropertyAbsence;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
+    template<typename CellType, SubspaceAccess mode>
+    static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, bool isBound = false);
     static Closure* create(VM&, Structure*, FunctionID, std::span<const uint64_t> captures = { }, unsigned numberOfReferences = 0);
@@ -63,7 +63,15 @@ public:
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
+    // A built-in function that the library writes in JavaScript is a closure like those of the program. Like a native function it takes no call, apply, bind or Symbol.hasInstance of its own:
+    // compiled code finds the members of Function.prototype through it, whoever has had it in hand (BuiltinTable::isFunctionOfEngine). No store under one of the names is cached for any closure.
+    static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
+    bool refusesOwnProperty(VM&, PropertyName) const;
+    bool isBuiltinFunction() const;
     void ensureClassObject(VM&);
+    // Leaves the class object with `prototype` as its only property: what it owned before is the caller's to put back. A class that declares static members gets a Structure of its own,
+    // which they enter without transitions. The other classes with one parent share a Structure.
+    void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);
     void adoptBoundFunctionStructure(VM&);
     JSValue prototypeProperty(VM&);
     void setPrototypeProperty(VM&, JSObject* prototype, unsigned attributes);
@@ -97,10 +105,17 @@ ALWAYS_INLINE void Closure::visitFields(Closure* closure, Visitor& visitor)
 JSC_DECLARE_HOST_FUNCTION(callClassConstructor);
 JSC_DECLARE_HOST_FUNCTION(callCompiledClosure);
 JSC_DECLARE_HOST_FUNCTION(constructCompiledClosure);
+JSC_DECLARE_HOST_FUNCTION(constructBoundClosure);
 
 enum class LookupPosition : uint8_t { Receiver, PrototypeChain };
 
 JSObject* boundFunctionTarget(VM&, State&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
+// How a closure of a bound function is constructed: not at all, unless its target constructs.
+CallData constructDataOfBoundClosure(FunctionID);
+// The object is marked as a prototype from the start, so the names that the program adds before the first construction are not followed by a transition for the mark.
+JSObject* createPrototypeObjectOfFunction(VM&, JSGlobalObject*, JSObject* function);
+// For DefineMethod. Until its definition ends nothing else has seen the class object or the prototype object of a class, and those of a class that is evaluated once have Structures of their own.
+bool tryDefineClassMemberWithoutTransition(JSGlobalObject*, Closure& classObject, const LayoutData& classLayout, JSObject* holder, PropertyName, JSObject* function, MethodKind);
 bool mayHaveLazyProperty(VM&, JSCell*, UniquedStringImpl*, LookupPosition);
 bool closureHandlesPrototypeProperty(JSCell*);
 GetValueFunc closurePrototypePropertyGetter();

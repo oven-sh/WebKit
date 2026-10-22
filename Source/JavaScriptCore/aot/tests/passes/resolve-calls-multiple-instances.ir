@@ -1,5 +1,6 @@
-# Every instance of a program numbers its shapes alike, so a shape test alone does not say whose method to call
-# OPTIONS: only-passes=PlaceTypeTests disable=flow:ProvenLayoutSets
+# Every instance of a program numbers its shapes alike, so a test of the layout alone does not say whose method to call.
+# What passes the test has a type that lists the layout from there on, and such a value counts as an object of this instance: a read of a field asks for the instance too
+# OPTIONS: only-passes=PlaceTypeTests
 # RUN: pass PlaceTypeTests
 # RUN(ONE): pipeline PlaceTypeTests
 # CHECK: outcome: Changed
@@ -7,6 +8,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Task" constructor=f1 fields=[{key="count" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f2 mutability=Fixed}]}
+# A value that nobody knows reaches both functions beside the task, so flow does not prove their parameter.
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f1
@@ -17,9 +19,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = Construct v4
     v6 = CallDirect v5 function=f3
     v7 = CallDirect v5 function=f4
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = CallDirect v9 function=f3
+    v11 = CallDirect v9 function=f4
     Return
 }
-function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object written=L0}] {
+function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
@@ -27,34 +33,36 @@ function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type
     PropDefine v2, v3 key="count"
     Return v2
 }
-function f2 name="run" kind=Method flags=[HasThis] thisType={type=object written=L0} results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
     Return
 }
 
-function f3 name="method-of-predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f3 name="method-of-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
 }
-# CHECK-LABEL: function f3 name="method-of-predicted-receiver"
-# CHECK: = ShapeTest v0 layouts=[L0]
-# CHECK: = CallDirect v0 function=f2
-# CHECK: = BelongsToInstance v0
-# ONE-LABEL: function f3 name="method-of-predicted-receiver"
-# ONE: = ShapeTest v0 layouts=[L0]
+# CHECK-LABEL: function f3 name="method-of-expected-receiver"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = CallDirect [[task]] function=f2
+# CHECK: ([[task]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[task]]
+# ONE-LABEL: function f3 name="method-of-expected-receiver"
+# ONE: = TypeTest v0 testedType=L0
 # ONE-NOT: BelongsToInstance
-# ONE: = CallDirect v0 function=f2
+# ONE: = CallDirect {{*}} function=f2
 # ONE-NOT: BelongsToInstance
-function f4 name="field-of-predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f4 name="field-of-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="count"
     Return v1
 }
-# CHECK-LABEL: function f4 name="field-of-predicted-receiver"
-# CHECK: = ShapeTest v0 layouts=[L0]
-# CHECK-NOT: BelongsToInstance
-# CHECK: = GetSlot v0, {{*}} key="count" receivers=[L0] level=Predicted
-# CHECK-NOT: BelongsToInstance
-# ONE-LABEL: function f4 name="field-of-predicted-receiver"
+# CHECK-LABEL: function f4 name="field-of-expected-receiver"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot [[counted]], {{*}} key="count" receivers=[L0] level=Expected
+# CHECK: ([[counted]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[counted]]
+# ONE-LABEL: function f4 name="field-of-expected-receiver"
+# ONE-NOT: BelongsToInstance

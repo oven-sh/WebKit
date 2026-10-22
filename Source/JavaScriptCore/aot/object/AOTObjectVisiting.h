@@ -9,7 +9,9 @@
 
 #include "AOTLayoutData.h"
 #include "AOTSlotAccess.h"
+#include "HeapCellInlines.h"
 #include "JSCell.h"
+#include "MarkedBlock.h"
 #include <bit>
 #include <span>
 
@@ -25,8 +27,23 @@ struct Reference {
 static_assert(sizeof(Reference) == 16);
 
 static constexpr size_t numberOfInlineReferenceCounts = 3;
-static constexpr size_t numberOfExtensionReferenceCounts = 2;
-static constexpr size_t numberOfExtensionHeaderWords = 1 + numberOfExtensionReferenceCounts;
+static constexpr size_t numberOfExtensionGranuleSets = 3;
+static constexpr size_t numberOfExtensionHeaderWords = 1 + numberOfExtensionGranuleSets * (sizeof(uint64_t) / sizeof(uint32_t));
+static_assert(maxExtensionGranules <= 64 && extensionGranuleSize == 2 * sizeof(uint32_t));
+
+struct ExtensionReferences {
+    uint64_t wide;
+    uint64_t narrowInFirstHalf;
+    uint64_t narrowInSecondHalf;
+};
+
+ALWAYS_INLINE ExtensionReferences extensionReferencesAt(const uint32_t* header)
+{
+    auto setAt = [&](size_t index) ALWAYS_INLINE_LAMBDA {
+        return header[1 + 2 * index] | static_cast<uint64_t>(header[2 + 2 * index]) << 32;
+    };
+    return { setAt(0), setAt(1), setAt(2) };
+}
 
 template<typename Record>
 inline std::span<const uint32_t> inlineReferenceTableOf(const Record& record)
@@ -43,8 +60,7 @@ inline std::span<const uint32_t> referenceTableOf(const LayoutData& layout)
     std::span inlineTable = inlineReferenceTableOf(layout);
     if (!layout.hasExtension() || inlineTable.empty())
         return inlineTable;
-    const uint32_t* header = inlineTable.data() + inlineTable.size();
-    return { inlineTable.data(), inlineTable.size() + numberOfExtensionHeaderWords + header[1] + header[2] };
+    return { inlineTable.data(), inlineTable.size() + numberOfExtensionHeaderWords };
 }
 
 inline std::span<const uint32_t> referenceTableOf(const EnvironmentData& environment)
@@ -63,10 +79,8 @@ ALWAYS_INLINE const uint8_t* extensionStorageOrNull(const JSCell* cell, SlotData
 }
 
 template<typename Functor>
-ALWAYS_INLINE void forEachReference(const JSCell* cell, std::span<const uint32_t> references, const Functor& functor)
+ALWAYS_INLINE void forEachReference(const JSCell* cell, const uint32_t* counts, bool hasExtension, const Functor& functor)
 {
-    if (references.empty())
-        return;
     auto visitValue = [&](const uint8_t* slot) ALWAYS_INLINE_LAMBDA {
         functor(Reference { Reference::Kind::Value, *reinterpret_cast<const uint64_t*>(slot) });
     };
@@ -75,43 +89,51 @@ ALWAYS_INLINE void forEachReference(const JSCell* cell, std::span<const uint32_t
             functor(Reference { Reference::Kind::Cell32, word });
     };
     const uint8_t* fields = reinterpret_cast<const uint8_t*>(cell);
-    const uint32_t* counts = references.data();
-    std::span wide { counts + numberOfInlineReferenceCounts, static_cast<size_t>(counts[0]) + counts[1] };
-    for (uint32_t offset : wide)
-        visitValue(fields + offset);
-    std::span narrow { wide.data() + wide.size(), counts[2] };
-    for (uint32_t offset : narrow)
-        visitCell32(fields + offset);
-    const uint32_t* header = narrow.data() + narrow.size();
-    if (header == references.data() + references.size())
+    const uint32_t* next = counts + numberOfInlineReferenceCounts;
+    for (const uint32_t* end = next + counts[0] + counts[1]; next != end; ++next)
+        visitValue(fields + *next);
+    for (const uint32_t* end = next + counts[2]; next != end; ++next)
+        visitCell32(fields + *next);
+    if (!hasExtension)
         return;
+    const uint32_t* header = next;
     const uint8_t* extension = extensionStorageOrNull(cell, SlotData::decode(header[0]));
     if (!extension)
         return;
     functor(Reference { Reference::Kind::Auxiliary, std::bit_cast<uintptr_t>(extension) });
     // Read once: the mutator may set bits of granules that come after these, and those hold nothing that this visit could miss.
     uint64_t granuleBits = *reinterpret_cast<const uint64_t*>(extension + offsetOfExtensionGranuleBits);
-    auto slotAt = [&](uint32_t offset) ALWAYS_INLINE_LAMBDA -> const uint8_t* {
-        uint64_t bit = granuleBitOf(offset);
-        if (!(granuleBits & bit))
-            return nullptr;
-        return extension + offsetOfFirstExtensionSlot + std::popcount(granuleBits & (bit - 1)) * extensionGranuleSize + offsetInGranule(offset);
-    };
-    std::span wideOutOfLine { header + numberOfExtensionHeaderWords, header[1] };
-    for (uint32_t offset : wideOutOfLine) {
-        if (const uint8_t* slot = slotAt(offset))
+    ExtensionReferences sets = extensionReferencesAt(header);
+    for (uint64_t remaining = granuleBits & (sets.wide | sets.narrowInFirstHalf | sets.narrowInSecondHalf); remaining; remaining &= remaining - 1) {
+        uint64_t bit = remaining & -remaining;
+        const uint8_t* slot = extension + offsetOfFirstExtensionSlot + std::popcount(granuleBits & (bit - 1)) * extensionGranuleSize;
+        if (sets.wide & bit) {
             visitValue(slot);
-    }
-    for (std::span narrowOutOfLine { wideOutOfLine.data() + wideOutOfLine.size(), header[2] }; uint32_t offset : narrowOutOfLine) {
-        if (const uint8_t* slot = slotAt(offset))
+            continue;
+        }
+        if (sets.narrowInFirstHalf & bit)
             visitCell32(slot);
+        if (sets.narrowInSecondHalf & bit)
+            visitCell32(slot + sizeof(uint32_t));
     }
 }
 
-template<typename Visitor>
-ALWAYS_INLINE void visitReferences(const JSCell* cell, std::span<const uint32_t> references, Visitor& visitor)
+template<typename Functor>
+ALWAYS_INLINE void forEachReference(const JSCell* cell, std::span<const uint32_t> references, const Functor& functor)
 {
-    forEachReference(cell, references, [&](Reference reference) ALWAYS_INLINE_LAMBDA {
+    if (references.empty())
+        return;
+    const uint32_t* counts = references.data();
+    forEachReference(cell, counts, references.size() != numberOfInlineReferenceCounts + counts[0] + counts[1] + counts[2], functor);
+}
+
+template<typename Record, typename Visitor>
+ALWAYS_INLINE void visitReferences(const JSCell* cell, const Record& record, bool hasExtension, Visitor& visitor)
+{
+    if (!record.referencesOffset)
+        return;
+    const uint32_t* counts = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(&record) + record.referencesOffset);
+    forEachReference(cell, counts, hasExtension, [&](Reference reference) ALWAYS_INLINE_LAMBDA {
         switch (reference.kind) {
         case Reference::Kind::Value:
             visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(reference.bits)));

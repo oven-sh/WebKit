@@ -1,16 +1,14 @@
-# A call whose callee is only predicted tests the closure for the function, and under the test the call is direct with the captures read off the closure
+# A call whose callee is only expected to be one function tests the closure for the function, and under the test the call is direct with the captures read off the closure.
+# Several expected callees get no test here: ResolveCalls gives each an arm, with the call as it was behind them
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
-# RUN(TWICE): pass PlaceTypeTests PlaceTypeTests
 # RUN(NEXT): pass PlaceTypeTests ResolveCalls
 # CHECK: outcome: Changed
-# TWICE: outcome: Changed
-# TWICE-NEXT: outcome: Changed
 # NEXT: outcome: Changed
 # NEXT-NEXT: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Point" constructor=f2 flow={baseState=None impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L0 kind=Instance name="Point" constructor=f2 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 function f0 name="counted" kind=Arrow captures=[{type=number}, {type=string}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: string, v2: anything):
     Return v2
@@ -24,141 +22,111 @@ function f2 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
     Jump -> next b1()
   b1():
     v2 = GetConstructPrototype v0 layout=L0
-    v3 = NewObject v2 layout=L0 [keepsShape]
+    v3 = NewObject v2 layout=L0
     Return v3
 }
 function f3 name="declared-elsewhere" kind=Arrow parameters=[{type=anything}] results=[{type=anything}]
 
-function f4 name="predicted-callee" parameters=[{type=anything predicted=f0}, {type=anything}] results=[{type=anything}] {
+function f4 name="expected-callee" parameters=[{type=f0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f0, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f4 name="predicted-callee"
+# CHECK-LABEL: function f4 name="expected-callee"
 # CHECK-NEXT: b0(v0: anything ~ f0, v1: anything):
 # CHECK-NEXT: [[isCounted]]: boolean{{*}}= IsClosureOf v0 function=f0
-# CHECK-NEXT: Branch [[isCounted]] -> taken [[passed]](| 0), notTaken [[failed]](| 0)
-# CHECK-NEXT: {{*}}():
+# CHECK-NEXT: Branch [[isCounted]] -> taken [[passed]](| 0), notTaken [[failed]]()
+# CHECK-NEXT: [[passed]]([[closure]]: f0):
 # CHECK-NEXT: [[count]]: number = GetCapture [[closure]] function=f0
 # CHECK-NEXT: [[label]]: string = GetCapture [[closure]] function=f0 index=1
 # CHECK-NEXT: v2: anything = CallDirect [[count]], [[label]], v1 function=f0
 # CHECK-NEXT: Return v2
-# CHECK-NEXT: {{*}}() frequency=Unlikely:
+# CHECK-NEXT: [[failed]]() frequency=Unlikely:
 # CHECK-NEXT: [[byValue]]: anything = Call {{*}}, -, v1
 # CHECK-NEXT: Return [[byValue]]
-# CHECK-NEXT: [[passed]]([[closure]]: f0):
-# CHECK: [[failed]]({{*}}: anything{{*}}) frequency=Unlikely:
 # CHECK-NOT: IsClosureOf
-function f5 name="two-predicted-callees" parameters=[{type=anything predicted=f0|f1}, {type=anything}] results=[{type=anything}] {
+function f5 name="two-expected-callees" parameters=[{type=f0|f1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f0|f1, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f5 name="two-predicted-callees"
-# CHECK: = IsClosureOf v0 function=f0
-# CHECK-NOT: IsClosureOf
-# CHECK-NOT: function=f1
-# CHECK: = CallDirect {{*}}, v1 function=f0
-# CHECK-NOT: IsClosureOf
-# CHECK-NOT: function=f1
-# CHECK: frequency=Unlikely:
-# CHECK-NEXT: = Call {{*}}, -, v1
-# TWICE-LABEL: function f5 name="two-predicted-callees"
-# TWICE: = IsClosureOf v0 function=f0
-# TWICE: = CallDirect {{*}}, v1 function=f0
-# TWICE: () frequency=Unlikely:
-# TWICE-NEXT: = IsClosureOf {{*}} function=f1
-# TWICE: () frequency=Unlikely:
-# TWICE-NEXT: = CallDirect v1 function=f1
-# TWICE: () frequency=Rare:
-# TWICE-NEXT: = Call {{*}}, -, v1
-# TWICE-NOT: IsClosureOf
-function f6 name="stamp-without-prediction" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = Call v0, -, v1 callees=[f1, ..]
-    Return v2
-}
-# CHECK-LABEL: function f6 name="stamp-without-prediction"
-# TWICE-LABEL: function f6 name="stamp-without-prediction"
-# CHECK: = IsClosureOf v0 function=f1
-# CHECK: = CallDirect v1 function=f1
-# CHECK: frequency=Unlikely:
-# CHECK-NEXT: = Call {{*}}, -, v1 callees=[f1, ..]
-function f7 name="predicted-class" parameters=[{type=anything predicted=f2}, {type=anything}] results=[{type=anything}] {
+# CHECK-LABEL: function f5 name="two-expected-callees"
+# CHECK-NEXT: b0(v0: anything ~ f0|f1, v1: anything):
+# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# NEXT-LABEL: function f5 name="two-expected-callees"
+# NEXT-NEXT: b0(v0: anything ~ f0|f1, v1: anything):
+# NEXT-NEXT: = Call v0, -, v1
+# NEXT-NEXT: Return v2
+# NEXT-NEXT: }
+function f6 name="expected-class" parameters=[{type=f2 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f2, v1: anything):
     v2 = Construct v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f7 name="predicted-class"
+# CHECK-LABEL: function f6 name="expected-class"
 # CHECK-NEXT: b0(v0: anything ~ f2, v1: anything):
 # CHECK-NEXT: [[isPoint]]: boolean{{*}}= IsClosureOf v0 function=f2
-# CHECK-NEXT: Branch [[isPoint]] -> taken [[isClass]](| 0), notTaken {{*}}(| 0)
+# CHECK-NEXT: Branch [[isPoint]] -> taken [[isClass]](| 0), notTaken {{*}}
+# CHECK: [[isClass]]([[class]]: f2):
 # CHECK-NOT: CallDirect
-# CHECK: v2: object = Construct [[class]], -, v1
+# CHECK: v2: anything ~ object = Construct [[class]], -, v1
 # CHECK-NOT: CallDirect
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = Construct {{*}}, -, v1
-# CHECK: [[isClass]]([[class]]: f2):
-# NEXT-LABEL: function f7 name="predicted-class"
+# NEXT-LABEL: function f6 name="expected-class"
 # NEXT: = IsClosureOf v0 function=f2
+# NEXT: ([[newTarget]]: f2):
 # NEXT: : L0 = CallDirect [[newTarget]], v1 function=f2 [isConstruction]
 # NEXT: frequency=Unlikely:
 # NEXT-NEXT: = Construct {{*}}, -, v1
-# NEXT: ([[newTarget]]: f2):
-function f8 name="class-is-called" parameters=[{type=anything predicted=f2}, {type=anything}] results=[{type=anything}] {
+function f7 name="class-is-called" parameters=[{type=f2 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f2, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f8 name="class-is-called"
+# CHECK-LABEL: function f7 name="class-is-called"
 # CHECK-NEXT: b0(v0: anything ~ f2, v1: anything):
 # CHECK-NEXT: = Call v0, -, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
-function f9 name="arrow-function-is-constructed" parameters=[{type=anything predicted=f1}, {type=anything}] results=[{type=anything}] {
+function f8 name="arrow-function-is-constructed" parameters=[{type=f1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f1, v1: anything):
     v2 = Construct v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f9 name="arrow-function-is-constructed"
+# CHECK-LABEL: function f8 name="arrow-function-is-constructed"
 # CHECK-NEXT: b0(v0: anything ~ f1, v1: anything):
 # CHECK-NEXT: = Construct v0, -, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
-function f10 name="predicted-function-without-body" parameters=[{type=anything predicted=f3}, {type=anything}] results=[{type=anything}] {
+function f9 name="expected-function-without-body" parameters=[{type=f3 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f3, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f10 name="predicted-function-without-body"
+# CHECK-LABEL: function f9 name="expected-function-without-body"
 # CHECK-NEXT: b0(v0: anything ~ f3, v1: anything):
 # CHECK-NEXT: = Call v0, -, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
-function f11 name="proven-callee" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+function f10 name="proven-callee" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
   b0(v0: f1, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f11 name="proven-callee"
+# CHECK-LABEL: function f10 name="proven-callee"
 # CHECK-NEXT: b0(v0: f1, v1: anything):
 # CHECK-NEXT: = Call v0, -, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
-function f12 name="no-function-in-the-type" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
-    v2 = Predict v0 predicted=f1
-    v3 = Call v2, -, v1
-    Return v3
-}
-# CHECK-LABEL: function f12 name="no-function-in-the-type"
-# CHECK-NOT: IsClosureOf
-function f13 name="no-prediction" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f11 name="nothing-expected" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
-# CHECK-LABEL: function f13 name="no-prediction"
+# CHECK-LABEL: function f11 name="nothing-expected"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: = Call v0, -, v1
 # CHECK-NEXT: Return v2

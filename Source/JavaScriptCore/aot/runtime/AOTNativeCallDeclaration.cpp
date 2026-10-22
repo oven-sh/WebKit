@@ -8,8 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTInstance.h"
+#include "AOTState.h"
+#include "FunctionPrototype.h"
 #include "InternalFunction.h"
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
@@ -57,12 +61,43 @@ String nameOfNativeFunction(JSObject* callee)
     return { };
 }
 
+// The host makes a function object of a module's built-in for whoever asks, so nothing leads from the realm to one. All of them have the native code that the host has bound to the built-in.
+static BuiltinID findBuiltinWithNativeCodeOf(const BuiltinTable& table, JSObject* callee, BuiltinScope scope)
+{
+    auto* function = dynamicDowncast<JSFunction>(callee);
+    if (!function || !function->isHostFunction())
+        return { };
+    TaggedNativeFunction code = uncheckedDowncast<NativeExecutable>(function->executable())->function();
+    for (const BuiltinNativeFunctionBinding& binding : BuiltinBindings::nativeFunctionsOfHost()) {
+        if (table.at(binding.builtin).scope == scope && code == TaggedNativeFunction(binding.function))
+            return binding.builtin;
+    }
+    return { };
+}
+
+// Nothing leads from the realm to the constructor of a class that only a native binding hands out. The host keeps the Structure of the instances, and the prototype object names the constructor.
+static BuiltinID findConstructorOfHostClass(const BuiltinTable& table, JSGlobalObject* realm, JSObject* callee)
+{
+    if (callee->inherits<JSFunction>())
+        return { };
+    VM& vm = realm->vm();
+    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
+        BuiltinID constructor = table.at(binding.builtinClass).constructor;
+        Structure* structure = constructor && binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
+        JSObject* prototype = structure ? structure->storedPrototypeObject() : nullptr;
+        if (prototype && prototype->getDirect(vm, vm.propertyNames->constructor) == JSValue(callee))
+            return constructor;
+    }
+    return { };
+}
+
 static BuiltinCallMode modeOf(BuiltinCellKey::Kind kind, CodeSpecializationKind specialization)
 {
     switch (kind) {
     case BuiltinCellKey::Kind::Object:
         return specialization == CodeSpecializationKind::CodeForConstruct ? BuiltinCallMode::Construct : BuiltinCallMode::Call;
     case BuiltinCellKey::Kind::Getter:
+    case BuiltinCellKey::Kind::Value:
         return BuiltinCallMode::Get;
     case BuiltinCellKey::Kind::Setter:
         return BuiltinCallMode::Set;
@@ -80,7 +115,7 @@ static Fit fitOfInstance(const BuiltinTable& table, const BuiltinTypePart& part,
     case BuiltinInstanceTest::None:
         return Fit::Unknown;
     case BuiltinInstanceTest::JSTypeEquals:
-        passes = object->type() == builtinClass.type || (builtinClass.type == ArrayType && object->type() == DerivedArrayType);
+        passes = object->type() == builtinClass.type;
         break;
     case BuiltinInstanceTest::ClassInfoInherits: {
         const ClassInfo* info = BuiltinBindings::instanceClassInfoOf(part.builtinClass);
@@ -207,6 +242,28 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
         return declaration;
     }
 
+    auto declareByNativeCode = [&](BuiltinScope scope) {
+        BuiltinID builtin = findBuiltinWithNativeCodeOf(table, call.callee, scope);
+        if (!builtin)
+            return false;
+        declaration.source = NativeCallDeclarationSource::NativeCodeOfCallee;
+        declaration.builtin = builtin;
+        appendOverloads(declaration, table.canonicalID(builtin), modeOf(BuiltinCellKey::Kind::Object, call.kind), call);
+        return true;
+    };
+    if (declareByNativeCode(BuiltinScope::Module))
+        return declaration;
+
+    // The program may have replaced a step of the path to the function, such as `console.log`. Compiled code that names the function has it in a cell.
+    if (Instance* instance = Instance::of(call.realm); instance && instance->state) {
+        if (std::optional<BuiltinCellKey> key = instance->state->builtinCells->keyOfCellHolding(call.callee)) {
+            declaration.source = NativeCallDeclarationSource::CalleeInRealm;
+            declaration.builtin = key->builtin();
+            appendOverloads(declaration, table.canonicalID(key->builtin()), modeOf(key->kind(), call.kind), call);
+            return declaration;
+        }
+    }
+
     String name = nameOfNativeFunction(call.callee);
     BuiltinCellKey::Kind kind = BuiltinCellKey::Kind::Object;
     if (name.startsWith("get "_s)) {
@@ -216,11 +273,29 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
         kind = BuiltinCellKey::Kind::Setter;
         name = name.substring(4);
     }
-    if (name.isEmpty())
+    if (name.isEmpty()) {
+        // Function.prototype is the one function of the realm that has no name.
+        if (kind == BuiltinCellKey::Kind::Object && call.callee == call.realm->functionPrototype()) {
+            declaration.source = NativeCallDeclarationSource::CalleeInRealm;
+            declaration.builtin = Builtins::FunctionPrototype;
+            appendOverloads(declaration, table.canonicalID(Builtins::FunctionPrototype), modeOf(kind, call.kind), call);
+        }
         return declaration;
+    }
+    auto declareConstructorOfHostClass = [&] {
+        BuiltinID constructor = kind == BuiltinCellKey::Kind::Object ? findConstructorOfHostClass(table, call.realm, call.callee) : BuiltinID();
+        if (!constructor)
+            return false;
+        declaration.source = NativeCallDeclarationSource::CalleeInRealm;
+        declaration.builtin = constructor;
+        appendOverloads(declaration, table.canonicalID(constructor), modeOf(kind, call.kind), call);
+        return true;
+    };
     auto candidates = builtinsByFunctionName().find(name);
-    if (candidates == builtinsByFunctionName().end())
+    if (candidates == builtinsByFunctionName().end()) {
+        declareConstructorOfHostClass();
         return declaration;
+    }
 
     BuiltinCallMode mode = modeOf(kind, call.kind);
     for (BuiltinID candidate : candidates->value) {
@@ -233,6 +308,20 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
             continue;
         auto found = findInRealm(call.realm, key);
         if (!found || *found != call.callee)
+            continue;
+        declaration.source = NativeCallDeclarationSource::CalleeInRealm;
+        declaration.builtin = candidate;
+        appendOverloads(declaration, table.canonicalID(candidate), mode, call);
+        return declaration;
+    }
+
+    // Nothing leads from the realm to what a native module exports either: a function of the realm that was not found there is known by its native code.
+    if (declareByNativeCode(BuiltinScope::Realm) || declareConstructorOfHostClass())
+        return declaration;
+
+    // The program may have replaced a step of the path to the function, such as `console`. The call names the built-ins that flow lists as its callees.
+    for (BuiltinID candidate : candidates->value) {
+        if (table.at(candidate).scope == BuiltinScope::Module || !expectation.isKnown || expectation.namesMoreBuiltins || !expectation.names(table.canonicalID(candidate)))
             continue;
         declaration.source = NativeCallDeclarationSource::CalleeInRealm;
         declaration.builtin = candidate;

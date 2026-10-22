@@ -49,7 +49,7 @@ function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
-    v3 = ClaimDeclared v2 declared={type=undefined|null|L1}
+    v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
     Return v3
 }
 function f2 name="describe" parameters=[{type=string}] results=[{type=anything}] {
@@ -81,7 +81,7 @@ function f3 name="change" parameters=[{type=string}] results=[{type=anything}] {
     v2 = PropGet v1 key="show" [isFreeName]
     v3 = Builtin builtin=JSONParse
     v4 = Call v3, -, v0
-    v5 = ClaimDeclared v4 declared={type=undefined|null|L2}
+    v5 = Convert v4 declared={type=undefined|null|L2} illTypedCause=FromLooseType
     v6 = PropGet v5 key="list"
     v7 = Integer integer=4
     v8 = Integer integer=6

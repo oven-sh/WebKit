@@ -27,12 +27,22 @@ public:
     void generateNewMapFromData(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
     void generateSharedRegExpLiteral(const ValueContext&);
+    void generateIsBuiltinLocationUnchanged(const ValueContext&);
+    void generateIsFunctionOfBuiltin(const ValueContext&);
+    void generateGetBuiltinValue(const ValueContext&);
 
     Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
+    // What the host made at the first read of the member. The instance keeps it in a word of its own, which is empty until then.
+    Boxed builtinValue(const OperationContext&, BuiltinCellKey);
 
 private:
     Boxed readCachedGetter(const ValueContext&, const BuiltinOverload&, uint32_t offsetOfCachedValue);
+    Boxed readOwnSlot(const ValueContext&, const BuiltinOverload&);
+    Boxed loadProperty(CellPointer object, PropertyOffset);
+    Boxed callCustomGetter(const OperationContext&, BuiltinOverloadID, Boxed receiver, bool receiverIsMatched);
+    Boxed callDirectFunction(const ValueContext&, uint32_t number);
+    PropertyKeyID keyOf(const BuiltinOverload&) const;
     CellPointer calleeOf(const OperationContext&, const BuiltinOverload&);
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer roundedQuotient(QuotientRounding, Integer dividend, Range dividends, Integer divisor, Range divisors);

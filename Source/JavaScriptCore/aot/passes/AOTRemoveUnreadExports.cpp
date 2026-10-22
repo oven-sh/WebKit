@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTIR.h"
@@ -85,15 +86,11 @@ static bool isStoreTo(const Value& value, const BitVector& variables)
 static Vector<FunctionStores> findStores(const Program& program, const BitVector& variables, const ParallelLoops& loops)
 {
     return collectInParallel<FunctionStores>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionStores>& found) {
-        const Function& function = program.functions[index];
         Vector<VariableID, 4> storedVariables;
-        for (const Block& block : function.blocks) {
-            for (ValueID id : block.values) {
-                const Value& value = function.at(id);
-                if (isStoreTo(value, variables))
-                    storedVariables.append(value.variable());
-            }
-        }
+        forEachListedValue(program, FunctionID(index), { Opcode::PutModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
+            if (isStoreTo(value, variables))
+                storedVariables.append(value.variable());
+        });
         if (!storedVariables.isEmpty())
             found.append({ FunctionID(index), WTF::move(storedVariables) });
     });
@@ -101,7 +98,7 @@ static Vector<FunctionStores> findStores(const Program& program, const BitVector
 
 static void removeStores(Function& function, const BitVector& variables)
 {
-    for (Block& block : function.blocks) {
+    for (Block& block : function.editAllBlocks()) {
         block.values.removeAllMatching([&](ValueID id) {
             return isStoreTo(function.at(id), variables);
         });
@@ -129,7 +126,7 @@ static void removeUnusedPureCalls(Function& function)
         }
 
         didRemove = false;
-        for (Block& block : function.blocks) {
+        for (Block& block : function.editAllBlocks()) {
             didRemove |= !!block.values.removeAllMatching([&](ValueID id) {
                 const Value& value = function.at(id);
                 return (isAnnotatedPure(value) || isCastWithoutTest(value.opcode)) && !usedValues.quickGet(id.index());

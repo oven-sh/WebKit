@@ -1,15 +1,15 @@
 # The test of a member that can change compares the holder with what the class definition creates, so such a lookup answers the last definition under the key, in definition order. A name that only a store or a computed key can create has no answer
 # FORM: Prepared
 # RUN(METHODGETTER): member-lookup layout=L0 key="m"
-# METHODGETTER: Accessor level=Predicted holder=L0 getter=F11 setter=none conditions=[MemberUnchanged(L0, Prototype, K{{*}})]
+# METHODGETTER: Accessor level=Expected holder=L0 getter=F11 setter=none conditions=[MemberUnchanged(L0, Prototype, K{{*}})]
 # RUN(GETTERMETHOD): member-lookup layout=L1 key="m"
-# GETTERMETHOD: Method level=Predicted holder=L1 method=F10 conditions=[MemberUnchanged(L1, Prototype, K{{*}})]
+# GETTERMETHOD: Method level=Expected holder=L1 method=F10 conditions=[MemberUnchanged(L1, Prototype, K{{*}})]
 # RUN(TWICE): member-lookup layout=L2 key="m"
-# TWICE: Method level=Predicted holder=L2 method=F10 conditions=[MemberUnchanged(L2, Prototype, K{{*}})]
+# TWICE: Method level=Expected holder=L2 method=F10 conditions=[MemberUnchanged(L2, Prototype, K{{*}})]
 # RUN(PAIR): member-lookup layout=L3 key="m"
-# PAIR: Accessor level=Predicted holder=L3 getter=F11 setter=F12 conditions=[MemberUnchanged(L3, Prototype, K{{*}})]
+# PAIR: Accessor level=Expected holder=L3 getter=F11 setter=F12 conditions=[MemberUnchanged(L3, Prototype, K{{*}})]
 # RUN(STORED): member-lookup layout=L4 key="m"
-# STORED: Method level=Predicted holder=L4 method=F10 conditions=[MemberUnchanged(L4, Prototype, K{{*}})]
+# STORED: Method level=Expected holder=L4 method=F10 conditions=[MemberUnchanged(L4, Prototype, K{{*}})]
 # RUN(ONLYSTORED): member-lookup layout=L5 key="m"
 # ONLYSTORED: Unknown level=Unknown cause=PropertyAdded
 # RUN(STATICONLYSTORED): member-lookup start=ClassObject layout=L5 key="m"
@@ -32,7 +32,7 @@ layout L4 kind=Instance name="DefinedThenStored" constructor=f4 flow={baseState=
 layout L5 kind=Instance name="OnlyStored" constructor=f5 flow={baseState=None members=[L5] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="m" function=f13}, {key="m" side=Static function=f13}]}
 layout L6 kind=Instance name="ComputedKeyMayNameMember" constructor=f6 flow={baseState=None members=[L6] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{function=f10}] namedMembers=[{key="m" function=f10}]}
 layout L7 kind=Instance name="ComputedKeyHasOneName" constructor=f7 flow={baseState=None members=[L7] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{function=f10}] namedMembers=[{key="m" function=f10 mutability=Fixed}]}
-layout L8 kind=Instance name="BelowOnlyStored" predictedBase=L5 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L5 members=[L8] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="BelowOnlyStored" base=L5 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L5 members=[L8] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 
 function f0 name="MethodThenGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f1 name="GetterThenMethod" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

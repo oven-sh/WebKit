@@ -3,6 +3,19 @@ runtime ArrayGrow : size_t (JSCell* array, uint32_t length) ; reads(all) writes(
 runtime AllocateStorage : void* (uint64_t size) ; RuntimeAllocates
 runtime ArrayUnshift : EncodedJSValue (JSCell* array, EncodedJSValue item) ; unknownCode
 runtime ArrayJoin : JSCell* (JSCell* array, JSCell* separator) ; RuntimeCreatesString
+runtime ArrayJoinOfAnyReceiver : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue separator, JSCell* function) ; unknownCode
+runtime NumberOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
+runtime StringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
+runtime ObjectToStringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
+# These answer for the usual operands. For the rest they hand back the empty value, and the code that called them calls the function of the host or the engine.
+runtime TextOfBytes : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue encoding, EncodedJSValue start, EncodedJSValue end) ; unknownCode
+runtime EncodeTextToBytes : EncodedJSValue (EncodedJSValue source) ; unknownCode
+runtime EncodeTextIntoBytes : EncodedJSValue (EncodedJSValue source, EncodedJSValue destination) ; unknownCode
+runtime TypedArraySetOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue source, EncodedJSValue offset) ; unknownCode
+runtime TypedArraySubarrayOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue begin, EncodedJSValue end) ; unknownCode
+runtime CodeURIOfAnyValue : EncodedJSValue (EncodedJSValue value, uint32_t coding) ; unknownCode
+runtime ArraySearchOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue searched, EncodedJSValue fromIndex, uint32_t answersIndex) ; unknownCode
+runtime ByteLengthOfAnyValue : EncodedJSValue (EncodedJSValue value, EncodedJSValue encoding) ; unknownCode
 runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime ArrayIndexOfDouble : size_t (JSCell* array, double searched) ; reads(all)
 runtime ArrayIndexOfInt32 : size_t (JSCell* array, EncodedJSValue searched) ; reads(all)
@@ -14,7 +27,8 @@ runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGro
 runtime NewArrayWithHoles : JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 
 runtime OwnPropertyKeys : JSCell* (EncodedJSValue object, uint32_t kind) ; unknownCode
-runtime HasOwnProperty, PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
+runtime ObjectValues, ObjectEntries : JSCell* (EncodedJSValue object) ; unknownCode
+runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyFields : void (EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results) ; unknownCode
 runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, AllocatorState, RuntimeState) collects
@@ -95,6 +109,7 @@ runtime RegExpTest, RegExpFind : size_t (JSCell* regExp, JSCell* string) ; unkno
 runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
 runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
+runtime RegExpMatchFlatProgram8 : int64_t (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output) ; none ; leaf
 runtime NewRegExpLiteral : JSCell* (uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime SharedRegExpLiteral : JSCell* (uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags) ; RuntimeCreatesConstant
 runtime NewRegExp : JSCell* (JSCell* pattern, uint32_t flags) ; RuntimeCreatesString
@@ -127,3 +142,4 @@ runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes
 runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendDate : uint8_t* (uint8_t* cursor, double timeValue) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendValue : UGPRPair (JSCell* builder, uint8_t* cursor, EncodedJSValue value, uint32_t position) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
+runtime JSONStringifyPrimitive : JSCell* (EncodedJSValue value) ; RuntimeCreatesString

@@ -36,18 +36,57 @@
 
 namespace JSC {
 
-static JSGlobalObject* calleeRealm(const CallData& callData)
-{
-    RELEASE_ASSERT(callData.type == CallData::Type::JS || callData.type == CallData::Type::Compiled);
-    return callData.type == CallData::Type::JS ? callData.js.scope->realm() : callData.compiled.realm;
-}
-
-CachedCall::CachedCall(ConstructionKey, JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
+CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int argumentCount)
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
-    , m_entryScope(m_vm, calleeRealm(callData))
-    , m_functionExecutable(callData.type == CallData::Type::JS ? callData.js.functionExecutable : nullptr)
-    , m_scope(callData.type == CallData::Type::JS ? callData.js.scope : nullptr)
+    , m_entryScope(m_vm, function->scope()->realm())
+    , m_functionExecutable(function->jsExecutable())
+    , m_scope(function->scope())
+{
+    VM& vm = m_vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if ASSERT_ENABLED
+    auto updateValidStatus = makeScopeExit([&] {
+        m_valid = !scope.exception();
+    });
+#endif
+    ASSERT(!function->isHostFunctionNonInline());
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return;
+    }
+
+    if (vm.disallowVMEntryCount) [[unlikely]] {
+        VM::checkVMEntryPermission();
+        throwStackOverflowError(globalObject, scope);
+        return;
+    }
+
+    m_arguments.ensureCapacity(argumentCount);
+    if (m_arguments.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+
+    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
+    if (scope.exception()) [[unlikely]]
+        return;
+    m_numParameters = newCodeBlock->numParameters();
+    m_protoCallFrame.init(newCodeBlock, function->realm(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+}
+
+static JSGlobalObject* realmOfCompiledCallee(const CallData& callData)
+{
+    RELEASE_ASSERT(callData.type == CallData::Type::Compiled);
+    return callData.compiled.realm;
+}
+
+CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* compiledCallee, const CallData& callData, int argumentCount)
+    : CallLinkInfoBase(CallSiteType::CachedCall)
+    , m_vm(globalObject->vm())
+    , m_entryScope(m_vm, realmOfCompiledCallee(callData))
+    , m_functionExecutable(nullptr)
+    , m_scope(nullptr)
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -73,17 +112,8 @@ CachedCall::CachedCall(ConstructionKey, JSGlobalObject* globalObject, JSObject* 
         return;
     }
 
-    if (callData.type == CallData::Type::Compiled) {
-        m_addressForCall = const_cast<void*>(callData.compiled.entrypoint);
-        m_protoCallFrame.init(nullptr, callData.compiled.realm, callee, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
-        return;
-    }
-
-    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, uncheckedDowncast<JSFunction>(callee));
-    if (scope.exception()) [[unlikely]]
-        return;
-    m_numParameters = newCodeBlock->numParameters();
-    m_protoCallFrame.init(newCodeBlock, callee->realm(), callee, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+    m_addressForCall = const_cast<void*>(callData.compiled.entrypoint);
+    m_protoCallFrame.init(nullptr, callData.compiled.realm, compiledCallee, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
 }
 
 void CachedCall::relink()

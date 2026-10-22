@@ -9,13 +9,13 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
-function f0 name="open" parameters=[{type=object written=L0}] results=[{type=undefined}] {
-  b0(v0: object ? L0):
+function f0 name="open" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
     v1 = IteratorOpen v0
     Return
 }
 # CHECK-LABEL: function f0 name="open"
-# CHECK: b0(v0: object ? L0
+# CHECK: b0(v0: L0
 # CHECK-NEXT: [[method4]]: anything = PropGet v0 key=@@iterator
 # CHECK-NEXT: [[isCallable4]]: boolean = TypeTest [[method4]] testedType=function
 # CHECK-NEXT: Branch [[isCallable4]] -> taken [[call4]](| 0), notTaken [[throw4]](| 0)
@@ -31,21 +31,21 @@ function f0 name="open" parameters=[{type=object written=L0}] results=[{type=und
 # ABSENT-NOT: RequireObjectCoercible
 # ABSENT-NOT: testedType=Array
 
-function f1 name="openOfNullable" parameters=[{type=undefined|null|object written=L0}] results=[{type=undefined}] {
-  b0(v0: undefined|null|object ? L0):
+function f1 name="openOfNullable" parameters=[{type=undefined|null|L0}] results=[{type=undefined}] {
+  b0(v0: undefined|null|L0):
     v1 = IteratorOpen v0
     Return
 }
 # CHECK-LABEL: function f1 name="openOfNullable"
-# CHECK: b0(v0: undefined|null|object ? L0
+# CHECK: b0(v0: undefined|null|L0
 # CHECK-NEXT: [[object5]]: {{*}} = RequireObjectCoercible v0 nullishAccess=Iterate
 # CHECK-NEXT: [[method5]]: anything = PropGet [[object5]] key=@@iterator
 # CHECK: = Call {{*}}, [[object5]]
 # CHECK: never = ThrowNotIterable [[object5]]
 # ABSENT-LABEL: function f1 name="openOfNullable"
 
-function f2 name="step" parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f2 name="step" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     v2 = IteratorOpen v0
     v3 = IteratorResume v2
     v4 = ResultAt v3
@@ -74,8 +74,8 @@ function f2 name="step" parameters=[{type=object written=L0}, {type=anything}] r
 # ABSENT-COUNT-1: key="value"
 # ABSENT-NOT: key="value"
 
-function f3 name="stepSendsValue" parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f3 name="stepSendsValue" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     v2 = IteratorOpen v0
     v3 = IteratorResume v2, v1
     v4 = ResultAt v3 index=1
@@ -86,8 +86,8 @@ function f3 name="stepSendsValue" parameters=[{type=object written=L0}, {type=an
 # CHECK: [[next7]]: anything = PropGet [[iterator7]] key="next"
 # ABSENT-LABEL: function f3 name="stepSendsValue"
 
-function f4 name="closeNormal" parameters=[{type=object written=L0}] results=[{type=undefined}] {
-  b0(v0: object ? L0):
+function f4 name="closeNormal" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
     v1 = IteratorOpen v0
     IteratorClose v1
     Return
@@ -107,8 +107,8 @@ function f4 name="closeNormal" parameters=[{type=object written=L0}] results=[{t
 # ABSENT-NOT: handler=
 # ABSENT-NOT: CatchValue
 
-function f5 name="closeThrow" parameters=[{type=object written=L0}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object ? L0, v1: anything):
+function f5 name="closeThrow" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1() handler=b3():

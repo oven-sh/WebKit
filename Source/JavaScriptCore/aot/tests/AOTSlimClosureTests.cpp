@@ -266,7 +266,7 @@ static void testHooksWithoutEffectKeepCellSlim(LoadedProgram& program)
     AOT_TEST_CHECK(isSlim(closure));
 }
 
-static void testSecondReadOfLengthOrNameReifies(LoadedProgram& program)
+static void testReadsOfNameAndLengthDoNotReify(LoadedProgram& program)
 {
     VM& vm = program.vm();
     FunctionID function = findSlimFunction(program, "plain"_s);
@@ -282,8 +282,9 @@ static void testSecondReadOfLengthOrNameReifies(LoadedProgram& program)
         AOT_TEST_CHECK(readsLengthFirst ? hasLength() : hasName());
         AOT_TEST_CHECK(isSlim(closure));
         AOT_TEST_CHECK(readsLengthFirst ? hasName() : hasLength());
-        AOT_TEST_CHECK(isReifiedClosureOf(closure, function));
-        AOT_TEST_CHECK(hasLength() && hasName());
+        AOT_TEST_CHECK(isSlim(closure));
+        AOT_TEST_CHECK(hasLength() && hasLength() && hasName() && hasName() && hasName());
+        AOT_TEST_CHECK(isSlim(closure));
     }
 }
 
@@ -385,8 +386,9 @@ static void testPut(LoadedProgram& program)
     JSObject* closureWithDisplayName = createSlimClosure(program, function);
     PutPropertySlot displayNameSlot(closureWithDisplayName, true);
     AOT_TEST_CHECK(put(program, closureWithDisplayName, vm.propertyNames->displayName, jsNontrivialString(vm, "shown"_s), displayNameSlot));
-    AOT_TEST_CHECK(FunctionTables::of(vm).hasDisplayNames.load());
-    AOT_TEST_CHECK(captureCountsOf(function).captures);
+    AOT_TEST_CHECK(!displayNameSlot.isCacheablePut());
+    // A function that captures has many function objects, and a frame does not say which of them runs in it: nothing is written down.
+    AOT_TEST_CHECK(captureCountsOf(function).captures && !FunctionTables::of(vm).hasDisplayNames.load());
     AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "arrow"_s);
 }
 
@@ -411,6 +413,11 @@ static void testDisplayNameInFrames(LoadedProgram& program)
     AOT_TEST_CHECK(functionName(vm, function, NameForm::AsWritten) == "callAll"_s);
     storeDisplayName(program, closure, "shown later"_s);
     AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown later"_s);
+    DeletePropertySlot deletion;
+    AOT_TEST_CHECK(closure->methodTable()->deleteProperty(closure, program.realm(), vm.propertyNames->displayName, deletion));
+    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "callAll"_s);
+    storeDisplayName(program, closure, "shown again"_s);
+    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown again"_s);
 
     JSObject* otherClosure = closures.createClosure(vm, function, { }, 0);
     storeDisplayName(program, otherClosure, "other"_s);
@@ -739,7 +746,7 @@ std::span<const NativeTest> slimClosureTests()
     static constexpr NativeTest tests[] = {
         { "slim-closure/created-cells-are-slim"_s, withProgram<testCreatedCellsAreSlim> },
         { "slim-closure/hooks-without-effect-keep-cell-slim"_s, withProgram<testHooksWithoutEffectKeepCellSlim> },
-        { "slim-closure/second-read-of-length-or-name-reifies"_s, withProgram<testSecondReadOfLengthOrNameReifies> },
+        { "slim-closure/reads-of-name-and-length-do-not-reify"_s, withProgram<testReadsOfNameAndLengthDoNotReify> },
         { "slim-closure/read-of-prototype-reifies"_s, withProgram<testReadOfPrototypeReifies> },
         { "slim-closure/prototype-object-is-made-by-its-first-read"_s, withProgram<testPrototypeObjectIsMadeByItsFirstRead> },
         { "slim-closure/own-property-names"_s, withProgram<testOwnPropertyNames> },

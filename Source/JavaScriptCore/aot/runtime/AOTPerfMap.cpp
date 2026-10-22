@@ -12,7 +12,7 @@
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
-#include "AOTModuleData.h"
+#include "AOTModuleTable.h"
 #include "AOTProgramStrings.h"
 #include "AOTProgramTables.h"
 #include <algorithm>
@@ -44,7 +44,7 @@ static String symbolNameOf(const Image& image, uint32_t function)
     auto position = image.positionOf(function, CallSiteIndex(0));
     if (!position || !position->source)
         return name;
-    return makeString(name, ' ', ProgramStrings::text(tables, StringID(tables.modules()[position->source.index()].displayPath)), ':', position->lineColumn.line);
+    return makeString(name, ' ', ModuleTable(tables).pathTextForLineColumns(position->source), ':', position->lineColumn.line);
 }
 
 void writePerfMap()

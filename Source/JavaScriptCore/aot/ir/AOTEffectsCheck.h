@@ -20,6 +20,7 @@ class FunctionAnalyses;
 
 class ReplacedEffects {
 public:
+    void add(const EffectsOnEdges&, Opcode);
     void add(const EffectContext&, const Function&, const Value&);
     void add(const EffectContext&, const Function&, const Terminator&);
 
@@ -44,7 +45,8 @@ void checkReplacement(const EffectContext&, const Function&, const ReplacementSi
 
 void checkDeclaredEffects(Diagnostics&);
 void checkSummaryCoversBody(const EffectContext&, FunctionID, FunctionAnalyses&, Diagnostics&);
-// A call by value claims the summary of its callee and what the entrypoint does around the call of the callee. The entrypoint is as its builder left it.
+// A call by value claims the summary of its callee and what the entrypoint does around the call of the callee: it reads the captures and the arguments and collects the rest arguments.
+// The tests of `this` and of the arguments are operations of the callee. The entrypoint is as its builder left it.
 void checkCallByValueCoversEntrypoint(const Program&, FunctionID target, const Function& entrypoint, Diagnostics&);
 
 } } } // namespace JSC::AOT::Typed

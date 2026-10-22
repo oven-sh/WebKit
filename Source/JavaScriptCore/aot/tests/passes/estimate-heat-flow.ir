@@ -1,8 +1,9 @@
-# Heat with flow results, for callbacks of built-ins and code that runs once
+# Heat with flow results, for callbacks of built-ins, code that runs once and closures handed to a callee nobody knows: one call for each time the closure is handed over
 # FORM: AsRead
 # OPTIONS: only-passes=EstimateHeat
 # RUN: pipeline EstimateHeat
 # RUN(ONCE): pipeline EstimateHeat
+# RUN(HANDED): pipeline EstimateHeat
 
 module m0 path="/main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -20,14 +21,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v7 = CallDirect v0 function=f3
     v8 = NewClosure function=f5
     v9 = ToBoolean v0
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="register" [isFreeName]
+    v12 = NewClosure function=f7
+    v13 = Call v11, -, v12
     Jump -> next b1()
   b1():
     LoopHint
-    v11 = NewClosure function=f2
-    v12 = PropGet v3 key="forEach"
-    v13 = Call v12, v3, v11
-    v14 = CallDirect v0 function=f4
-    v15 = Call v8, -, v0
+    v15 = NewClosure function=f2
+    v16 = PropGet v3 key="forEach"
+    v17 = Call v16, v3, v15
+    v18 = CallDirect v0 function=f4
+    v19 = Call v8, -, v0
+    v20 = NewClosure function=f6
+    v21 = Call v11, -, v20
     Branch v9 -> taken b2(), notTaken b3()
   b2():
     Jump -> next b1()
@@ -59,6 +66,16 @@ function f5 name="closureCalledInLoop" parameters=[{type=anything}] results=[{ty
   b0(v0: anything):
     Return v0
 }
+
+function f6 name="handedOverInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f7 name="handedOverOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
 # CHECK: f0 RunsOnce [[p0]] 1
 # CHECK-NEXT: f1 [[c1]] [[p1]] 8
 # CHECK-NEXT: f2 [[c2]] [[p2]] 80
@@ -69,3 +86,5 @@ function f5 name="closureCalledInLoop" parameters=[{type=anything}] results=[{ty
 # ONCE-NOT: f2 RunsOnce
 # ONCE-NOT: f4 RunsOnce
 # ONCE-NOT: f5 RunsOnce
+# HANDED-NOT: f6 Cold
+# HANDED: f7 Cold

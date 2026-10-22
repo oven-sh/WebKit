@@ -104,7 +104,7 @@ unsigned ModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, ModuleLi
 void ModuleRecord::execute(JSGlobalObject*, JSPromise* capability)
 {
     RELEASE_ASSERT(!capability);
-    modules().callBody(m_module, jsUndefined(), ArgList());
+    modules().callBodyOfModuleEnteredByLoader(m_module);
 }
 
 void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
@@ -114,7 +114,7 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
     ASSERT(hasTLA());
 
-    JSValue result = modules().callBody(m_module, jsUndefined(), ArgList());
+    JSValue result = modules().callBodyOfModuleEnteredByLoader(m_module);
     RETURN_IF_EXCEPTION(scope, void());
     auto* promise = dynamicDowncast<JSPromise>(result);
     if (!promise) {
@@ -134,9 +134,9 @@ auto ModuleRecord::resolveCapturedExport(JSGlobalObject* globalObject, const Ide
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = StarExportResolver::capturedValue(globalObject, modules().capturedExports(m_module), exportName);
+    bool hasExport = modules().hasCapturedExport(m_module, exportName);
     RETURN_IF_EXCEPTION(scope, Resolution::error());
-    if (!value)
+    if (!hasExport)
         return absentExport(vm, exportName);
     return { Resolution::Type::Resolved, this, exportName };
 }
@@ -170,7 +170,7 @@ auto ModuleRecord::resolveExportEntry(JSGlobalObject* globalObject, const Identi
         AbstractModuleRecord* record = modules.uncompiledRecord(indirectExport.targetModule());
         RETURN_IF_EXCEPTION(scope, Resolution::error());
         if (!vm.isSafeToRecurse()) [[unlikely]] {
-            throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
+            throwException(globalObject, scope, createModuleGraphTooDeepError(globalObject));
             return Resolution::error();
         }
         RELEASE_AND_RETURN(scope, record->resolveExport(globalObject, modules.identifier(indirectExport.importName)));
@@ -249,6 +249,13 @@ JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier&
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (exportIndex)
         RELEASE_AND_RETURN(scope, modules().readExport(m_module, *exportIndex));
+    // The namespace object holds the same value, and to make it reads every deferred export.
+    if (modules().data(m_module).capturesExports()) {
+        JSValue value = modules().capturedValue(m_module, exportName);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value)
+            return value;
+    }
     JSObject* namespaceObject = modules().moduleNamespace(m_module, ModulePhase::Evaluation);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, namespaceObject->get(globalObject, exportName));

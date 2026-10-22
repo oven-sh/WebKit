@@ -73,6 +73,17 @@ static void jumpToGenericUnwindTarget(StubAssembler& jit)
     jit.farJump(GPRInfo::regT1, ExceptionHandlerPtrTag);
 }
 
+// The callee-saved registers are those of the frame of the handler, so the instance is the one that unwinding has left the word in.
+static void loadStackPointerOfHandler(StubAssembler& jit)
+{
+#if CPU(X86_64)
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), CCallHelpers::stackPointerRegister);
+#else
+    // A landing pad takes the stack pointer from the frame pointer.
+    UNUSED_PARAM(jit);
+#endif
+}
+
 void emitUnwind(StubAssembler& jit)
 {
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
@@ -82,6 +93,7 @@ void emitUnwind(StubAssembler& jit)
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
     jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(savedVM, A2);
+    loadStackPointerOfHandler(jit);
     jit.farJump(GPRInfo::returnValueGPR, NoPtrTag);
     isNotInCompiledCallers.link(&jit);
     jumpToGenericUnwindTarget(jit);
@@ -143,6 +155,7 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
         else
             jit.loadDouble(Address(sp, i * sizeof(CPURegister)), registers[i].fpr());
     }
+    loadStackPointerOfHandler(jit);
     jit.farJump(landingPad, NoPtrTag);
     isNotInCompiledCallers.link(&jit);
     jumpToGenericUnwindTarget(jit);
@@ -182,6 +195,7 @@ void generateCatch(StubAssembler& jit)
     jit.loadPtr(Address(vm, VM::callFrameForCatchOffset()), GPRInfo::callFrameRegister);
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(vm, VM::callFrameForCatchOffset()));
     jit.loadPtr(Address(vm, OBJECT_OFFSETOF(VM, targetMachinePCAfterCatch)), GPRInfo::regT1);
+    loadStackPointerOfHandler(jit);
     jit.farJump(GPRInfo::regT1, ExceptionHandlerPtrTag);
 }
 

@@ -354,6 +354,9 @@ void VerifierSlotVisitor::markAuxiliary(const void* base)
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
 
     ASSERT(m_collector.hasHeap(*cell->heap()));
+    // Storage that lies in the cell of its owner has no mark of its own: it lives with that cell.
+    if (!cell->isPreciseAllocation() && cell->markedBlock().hasInnerCells())
+        return;
     testAndSetMarked(cell);
 }
 

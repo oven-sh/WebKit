@@ -24,7 +24,6 @@ function f1 name="plainObject" parameters=[{type=anything}] results=[{type=anyth
     v4 = PropGet v2 key="toString"
     Return v4
 }
-# CHECK-NOT: IsShapeEpochCurrent
 # CHECK-NOT: IsPristine
 # CHECK: = PropGet {{*}}key="toString"
 

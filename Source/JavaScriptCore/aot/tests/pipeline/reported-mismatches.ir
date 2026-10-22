@@ -1,14 +1,12 @@
-# A build that logs type errors goes through every stage: after selection each written type is still only reported, and an image comes out
+# A build that logs values that do not match their types goes through every stage: after selection no check is left, the arm behind a failed test reports the value before it goes on without types, and an image comes out
 # FORM: AsRead
 # OPTIONS: type-errors=log
 # RUN: pipeline Select
 # RUN(IMAGE): compile
 # IMAGE: image not empty
-# CHECK-NOT: Claim {{*}}site=
-# CHECK-NOT: PropGetChecked
+# CHECK-NOT: Check {{*}}site=
 # CHECK: ReportMismatch {{*}}site=w
-# CHECK-NOT: Claim {{*}}site=
-# CHECK-NOT: PropGetChecked
+# CHECK-NOT: Check {{*}}site=
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -29,7 +27,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = Integer integer=2
     v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
     v7 = CallDirect v6 function=f2
-    v8 = ClaimDeclared v3 declared={type=undefined|null|number site=w4}
+    v8 = Convert v3 declared={type=undefined|null|number site=w4}
     PutModuleVariable v8 variable=g0
     v10 = GetModuleVariable variable=g0
     v11 = Add v10, v7
@@ -43,15 +41,15 @@ function f1 name="double" parameters=[{type=undefined|null|number site=w0}] resu
   b0(v0: undefined|null|number):
     v1 = Integer integer=2
     v2 = Mul v0, v1
-    v3 = ClaimDeclared v2 declared={type=undefined|null|number site=w1}
+    v3 = Convert v2 declared={type=undefined|null|number site=w1}
     Return v3
 }
 function f2 name="sum" parameters=[{type=undefined|null|L0 site=w3}] results=[{type=anything}] {
-  b0(v0: undefined|null|object):
+  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="x"
-    v2 = ClaimRead v1, v0 source=Field{key="x"} site=w2
+    v2 = Convert v1 declared={type=undefined|null|number site=w2}
     v3 = PropGet v0 key="y"
-    v4 = ClaimRead v3, v0 source=Field{key="y"} site=w2
+    v4 = Convert v3 declared={type=undefined|null|number site=w2}
     v5 = Add v2, v4
     Return v5
 }

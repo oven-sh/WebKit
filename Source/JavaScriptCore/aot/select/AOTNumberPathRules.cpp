@@ -49,9 +49,9 @@ static constexpr OpcodeSet pathOperators {
 
 static bool readsTaggedSlot(SelectionContext& context, const Value& read)
 {
-    SlotAgreement agreement = context.slots().agreementOf(context.program(), read.key(), read.receivers());
+    const SlotAgreement& agreement = context.slots().agreementOf(context.program(), read.key(), read.receivers());
     return !agreement.groups.isEmpty() && std::ranges::all_of(agreement.groups, [](const SlotGroup& group) {
-        return group.slot.representation == SlotRepresentation::JSValue || group.slot.representation == SlotRepresentation::Int32OrDouble;
+        return group.slot.representation == SlotRepresentation::JSValue;
     });
 }
 
@@ -136,7 +136,7 @@ static void growPath(SelectionContext& context, NumberPath& path, BitVector& isD
     const BlockValues& values = function.at(path.block).values;
     for (uint32_t index = path.firstIndex + 1; index < values.size(); ++index) {
         ValueID id = values[index];
-        if (analyses.effectsOf(id) != EffectsOnEdges::none())
+        if (!analyses.hasNoEffects(id))
             return;
         if (context.pass().exceeds(LimitID::MaxNumberPathValues, index - path.firstIndex + 1, id))
             return;
@@ -212,7 +212,7 @@ static std::optional<NumberPath> findPathFrom(SelectionContext& context, BlockID
     ValueID seed = contents.values[firstIndex];
     if (!isPathOperator(context, function.at(seed)) || context.isClaimed(seed) || context.isOnSlowPath(seed))
         return std::nullopt;
-    if (analyses.effectsOf(seed) != EffectsOnEdges::none())
+    if (!analyses.hasNoEffects(seed))
         return std::nullopt;
 
     NumberPath path {
@@ -271,7 +271,7 @@ static void emitIntegerTests(IRBuilder& builder, FunctionAnalyses& analyses, Spl
     Function& function = builder.function();
     builder.setOrigin(function.at(split.path->group.root).origin());
     builder.setHandler(function.at(split.head).handler);
-    function.at(split.head).terminator = Terminator { };
+    function.edit(split.head).terminator = Terminator { };
     analyses.didChangeControlFlow();
     builder.moveToEndOf(split.head);
 
@@ -293,9 +293,11 @@ static void replaceOperandInBlock(Function& function, BlockID block, ValueID ope
         if (child == operand)
             child = replacement;
     };
-    Block& contents = function.at(block);
-    for (ValueID id : contents.values)
-        function.at(id).forEachChild(replace);
+    Block& contents = function.edit(block);
+    for (ValueID id : contents.values) {
+        if (std::ranges::contains(function.at(id).operands(), operand))
+            function.edit(id, ValueEdit::Definition).forEachChild(replace);
+    }
     contents.terminator.forEachChild(replace);
 }
 
@@ -343,7 +345,7 @@ void selectNumberPaths(SelectionContext& context)
     const Function& function = context.function();
     Vector<NumberPath> paths;
     for (BlockID block : context.analyses().cfg().reversePostOrder()) {
-        if (context.shapeOf(block) == CodeShape::Compact)
+        if (context.shapeOf(block) != CodeShape::Fast)
             continue;
 
         uint32_t numberOfValues = static_cast<uint32_t>(function.at(block).values.size());

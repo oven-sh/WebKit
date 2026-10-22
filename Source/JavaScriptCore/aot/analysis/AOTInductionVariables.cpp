@@ -545,7 +545,7 @@ bool InductionFinder::isComputedInLoop(ValueID bound)
     ValueLocation location = m_useLists.locationOf(definition);
     if (location.placement != ValuePlacement::InBlock || !isInLoop(location.block))
         return false;
-    if (!m_analyses.effectsOf(definition).onAnyEdge().isRemovableWhenUnused())
+    if (!m_analyses.isUnobservable(definition))
         return false;
 
     bool hasInvariantOperands = true;

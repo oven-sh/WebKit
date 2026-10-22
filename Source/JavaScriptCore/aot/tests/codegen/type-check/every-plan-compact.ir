@@ -1,9 +1,7 @@
-# Every kind of type test generates code as a value, as the condition of a branch and as a claim, in compact code
+# Every kind of type test generates code as a value, as the condition of a branch and as what is left of a Check, a branch whose edges pass on what the test proved, in compact code
 # FORM: Selected
 # RUN: generate-code
 # OPTIONS: check=validate-back-end validate heat=everything-is-cold
-# STATISTIC: TypeChecksByOperation >= 1
-# STATISTIC: TypeChecksInB3 >= 1
 # CHECK: f2: size=
 # CHECK: f49: size=
 
@@ -12,12 +10,12 @@ layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired
 layout L1 name="Point3" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
 function f0 name="allocatePoint" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }
 function f1 name="allocatePoint3" parameters=[{type=number}] results=[{type=L1}] {
   b0(v0: number):
-    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1] [keepsShape]
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     Return v1
 }
 function f2 name="nullableNumber" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -28,8 +26,12 @@ function f2 name="nullableNumber" parameters=[{type=anything}, {type=anything}, 
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|null|number
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|null|number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f3 name="range" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -39,8 +41,12 @@ function f3 name="range" parameters=[{type=anything}, {type=anything}, {type=any
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=int[0, 10]
-    Return v5
+    v5 = TypeTest v2 testedType=int[0, 10]
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f4 name="point" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -50,8 +56,12 @@ function f4 name="point" parameters=[{type=anything}, {type=anything}, {type=any
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=3|double
-    Return v5
+    v5 = TypeTest v2 testedType=3|double
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f5 name="int32" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: number, v1: number, v2: number):
@@ -61,8 +71,12 @@ function f5 name="int32" parameters=[{type=number}, {type=number}, {type=number}
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=i32
-    Return v5
+    v5 = TypeTest v2 testedType=i32
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f6 name="wider" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
   b0(v0: i32, v1: i32, v2: i32):
@@ -72,8 +86,12 @@ function f6 name="wider" parameters=[{type=i32}, {type=i32}, {type=i32}] results
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=number
-    Return v5
+    v5 = TypeTest v2 testedType=number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4() frequency=Unlikely:
+    Return
 }
 function f7 name="disjoint" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: number, v1: number, v2: number):
@@ -83,8 +101,12 @@ function f7 name="disjoint" parameters=[{type=number}, {type=number}, {type=numb
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=string
-    Unreachable
+    v5 = TypeTest v2 testedType=string
+    TestAndBranch v5 -> taken b3(), notTaken b4(| 0)
+  b3():
+    Return
+  b4(v6) frequency=Unlikely:
+    Return v6
 }
 function f8 name="anyObject" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -94,8 +116,12 @@ function f8 name="anyObject" parameters=[{type=anything}, {type=anything}, {type
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=object
-    Return v5
+    v5 = TypeTest v2 testedType=object
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f9 name="twoLayouts" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -105,8 +131,12 @@ function f9 name="twoLayouts" parameters=[{type=anything}, {type=anything}, {typ
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=L0|L1
-    Return v5
+    v5 = TypeTest v2 testedType=L0|L1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f10 name="oneLayout" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -116,8 +146,12 @@ function f10 name="oneLayout" parameters=[{type=anything}, {type=anything}, {typ
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=L0
-    Return v5
+    v5 = TypeTest v2 testedType=L0
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f11 name="secondOfTwo" parameters=[{type=L0|L1}, {type=L0|L1}, {type=L0|L1}] results=[{type=anything}] {
   b0(v0: L0|L1, v1: L0|L1, v2: L0|L1):
@@ -127,8 +161,12 @@ function f11 name="secondOfTwo" parameters=[{type=L0|L1}, {type=L0|L1}, {type=L0
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=L1
-    Return v5
+    v5 = TypeTest v2 testedType=L1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f12 name="bothOfTwo" parameters=[{type=L1}, {type=L1}, {type=L1}] results=[{type=anything}] {
   b0(v0: L1, v1: L1, v2: L1):
@@ -138,8 +176,12 @@ function f12 name="bothOfTwo" parameters=[{type=L1}, {type=L1}, {type=L1}] resul
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=L0|L1
-    Return v5
+    v5 = TypeTest v2 testedType=L0|L1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4() frequency=Unlikely:
+    Return
 }
 function f13 name="firstOfTwo" parameters=[{type=L0|L1}, {type=L0|L1}, {type=L0|L1}] results=[{type=anything}] {
   b0(v0: L0|L1, v1: L0|L1, v2: L0|L1):
@@ -149,8 +191,12 @@ function f13 name="firstOfTwo" parameters=[{type=L0|L1}, {type=L0|L1}, {type=L0|
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=L0
-    Return v5
+    v5 = TypeTest v2 testedType=L0
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f14 name="otherLayout" parameters=[{type=L0}, {type=L0}, {type=L0}] results=[{type=anything}] {
   b0(v0: L0, v1: L0, v2: L0):
@@ -160,8 +206,12 @@ function f14 name="otherLayout" parameters=[{type=L0}, {type=L0}, {type=L0}] res
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=L1
-    Unreachable
+    v5 = TypeTest v2 testedType=L1
+    TestAndBranch v5 -> taken b3(), notTaken b4(| 0)
+  b3():
+    Return
+  b4(v6) frequency=Unlikely:
+    Return v6
 }
 function f15 name="array" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -171,8 +221,12 @@ function f15 name="array" parameters=[{type=anything}, {type=anything}, {type=an
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=Array
-    Return v5
+    v5 = TypeTest v2 testedType=Array
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f16 name="closure" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -182,8 +236,12 @@ function f16 name="closure" parameters=[{type=anything}, {type=anything}, {type=
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=f1
-    Return v5
+    v5 = TypeTest v2 testedType=f1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f17 name="callable" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -193,8 +251,12 @@ function f17 name="callable" parameters=[{type=anything}, {type=anything}, {type
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=function
-    Return v5
+    v5 = TypeTest v2 testedType=function
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f18 name="builtin" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -204,8 +266,12 @@ function f18 name="builtin" parameters=[{type=anything}, {type=anything}, {type=
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=builtin(Math)
-    Return v5
+    v5 = TypeTest v2 testedType=builtin(Math)
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f19 name="symbol" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -215,8 +281,12 @@ function f19 name="symbol" parameters=[{type=anything}, {type=anything}, {type=a
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=symbol@m0:1
-    Return v5
+    v5 = TypeTest v2 testedType=symbol@m0:1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f20 name="knownSymbol" parameters=[{type=undefined|symbol@m0:1}, {type=undefined|symbol@m0:1}, {type=undefined|symbol@m0:1}] results=[{type=anything}] {
   b0(v0: undefined|symbol@m0:1, v1: undefined|symbol@m0:1, v2: undefined|symbol@m0:1):
@@ -226,8 +296,12 @@ function f20 name="knownSymbol" parameters=[{type=undefined|symbol@m0:1}, {type=
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=symbol@m0:1
-    Return v5
+    v5 = TypeTest v2 testedType=symbol@m0:1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f21 name="literals" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=anything}] {
   b0(v0: string, v1: string, v2: string):
@@ -237,8 +311,12 @@ function f21 name="literals" parameters=[{type=string}, {type=string}, {type=str
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType="a"|"b"
-    Return v5
+    v5 = TypeTest v2 testedType="a"|"b"
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f22 name="fewer" parameters=[{type="a"|"b"|"c"}, {type="a"|"b"|"c"}, {type="a"|"b"|"c"}] results=[{type=anything}] {
   b0(v0: "a"|"b"|"c", v1: "a"|"b"|"c", v2: "a"|"b"|"c"):
@@ -248,8 +326,12 @@ function f22 name="fewer" parameters=[{type="a"|"b"|"c"}, {type="a"|"b"|"c"}, {t
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType="a"|"b"
-    Return v5
+    v5 = TypeTest v2 testedType="a"|"b"
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f23 name="anyString" parameters=[{type="a"}, {type="a"}, {type="a"}] results=[{type=anything}] {
   b0(v0: "a", v1: "a", v2: "a"):
@@ -259,8 +341,12 @@ function f23 name="anyString" parameters=[{type="a"}, {type="a"}, {type="a"}] re
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=string
-    Return v5
+    v5 = TypeTest v2 testedType=string
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4() frequency=Unlikely:
+    Return
 }
 function f24 name="allOfThem" parameters=[{type="a"|"b"}, {type="a"|"b"}, {type="a"|"b"}] results=[{type=anything}] {
   b0(v0: "a"|"b", v1: "a"|"b", v2: "a"|"b"):
@@ -270,8 +356,12 @@ function f24 name="allOfThem" parameters=[{type="a"|"b"}, {type="a"|"b"}, {type=
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType="a"|"b"|"c"
-    Return v5
+    v5 = TypeTest v2 testedType="a"|"b"|"c"
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4() frequency=Unlikely:
+    Return
 }
 function f25 name="nullableString" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -281,8 +371,12 @@ function f25 name="nullableString" parameters=[{type=anything}, {type=anything},
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|null|string
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|null|string
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f26 name="nullableBoolean" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -292,8 +386,12 @@ function f26 name="nullableBoolean" parameters=[{type=anything}, {type=anything}
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|null|boolean
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|null|boolean
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f27 name="nullableArray" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -303,8 +401,12 @@ function f27 name="nullableArray" parameters=[{type=anything}, {type=anything}, 
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|null|Array
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|null|Array
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f28 name="plainNumber" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -314,8 +416,12 @@ function f28 name="plainNumber" parameters=[{type=anything}, {type=anything}, {t
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=number
-    Return v5
+    v5 = TypeTest v2 testedType=number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f29 name="optionalNumber" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
@@ -325,8 +431,12 @@ function f29 name="optionalNumber" parameters=[{type=anything}, {type=anything},
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|number
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f30 name="upperBound" parameters=[{type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
   b0(v0: int[0, 100], v1: int[0, 100], v2: int[0, 100]):
@@ -336,8 +446,12 @@ function f30 name="upperBound" parameters=[{type=int[0, 100]}, {type=int[0, 100]
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=int[0, 10]
-    Return v5
+    v5 = TypeTest v2 testedType=int[0, 10]
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f31 name="mask" parameters=[{type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
   b0(v0: int[0, 100], v1: int[0, 100], v2: int[0, 100]):
@@ -347,8 +461,12 @@ function f31 name="mask" parameters=[{type=int[0, 100]}, {type=int[0, 100]}, {ty
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=int[0, 15]
-    Return v5
+    v5 = TypeTest v2 testedType=int[0, 15]
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f32 name="lowerBound" parameters=[{type=int[-5, 10]}, {type=int[-5, 10]}, {type=int[-5, 10]}] results=[{type=anything}] {
   b0(v0: int[-5, 10], v1: int[-5, 10], v2: int[-5, 10]):
@@ -358,8 +476,12 @@ function f32 name="lowerBound" parameters=[{type=int[-5, 10]}, {type=int[-5, 10]
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=int[0, 10]
-    Return v5
+    v5 = TypeTest v2 testedType=int[0, 10]
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f33 name="bothBounds" parameters=[{type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
   b0(v0: int[0, 100], v1: int[0, 100], v2: int[0, 100]):
@@ -369,8 +491,12 @@ function f33 name="bothBounds" parameters=[{type=int[0, 100]}, {type=int[0, 100]
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=int[5, 10]
-    Return v5
+    v5 = TypeTest v2 testedType=int[5, 10]
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f34 name="onlyTrue" parameters=[{type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: boolean, v1: boolean, v2: boolean):
@@ -380,8 +506,12 @@ function f34 name="onlyTrue" parameters=[{type=boolean}, {type=boolean}, {type=b
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=true
-    Return v5
+    v5 = TypeTest v2 testedType=true
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f35 name="pointOfNumber" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: number, v1: number, v2: number):
@@ -391,8 +521,12 @@ function f35 name="pointOfNumber" parameters=[{type=number}, {type=number}, {typ
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=3|double
-    Return v5
+    v5 = TypeTest v2 testedType=3|double
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f36 name="definedNumber" parameters=[{type=undefined|number}, {type=undefined|number}, {type=undefined|number}] results=[{type=anything}] {
   b0(v0: undefined|number, v1: undefined|number, v2: undefined|number):
@@ -402,8 +536,12 @@ function f36 name="definedNumber" parameters=[{type=undefined|number}, {type=und
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=number
-    Return v5
+    v5 = TypeTest v2 testedType=number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f37 name="notNull" parameters=[{type=undefined|null|number}, {type=undefined|null|number}, {type=undefined|null|number}] results=[{type=anything}] {
   b0(v0: undefined|null|number, v1: undefined|null|number, v2: undefined|null|number):
@@ -413,8 +551,12 @@ function f37 name="notNull" parameters=[{type=undefined|null|number}, {type=unde
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|number
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f38 name="definedRange" parameters=[{type=undefined|int[0, 10]}, {type=undefined|int[0, 10]}, {type=undefined|int[0, 10]}] results=[{type=anything}] {
   b0(v0: undefined|int[0, 10], v1: undefined|int[0, 10], v2: undefined|int[0, 10]):
@@ -424,8 +566,12 @@ function f38 name="definedRange" parameters=[{type=undefined|int[0, 10]}, {type=
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=int[0, 5]
-    Return v5
+    v5 = TypeTest v2 testedType=int[0, 5]
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f39 name="optionalInt32" parameters=[{type=undefined|number}, {type=undefined|number}, {type=undefined|number}] results=[{type=anything}] {
   b0(v0: undefined|number, v1: undefined|number, v2: undefined|number):
@@ -435,8 +581,12 @@ function f39 name="optionalInt32" parameters=[{type=undefined|number}, {type=und
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|i32
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|i32
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f40 name="definedInt32" parameters=[{type=undefined|number}, {type=undefined|number}, {type=undefined|number}] results=[{type=anything}] {
   b0(v0: undefined|number, v1: undefined|number, v2: undefined|number):
@@ -446,8 +596,12 @@ function f40 name="definedInt32" parameters=[{type=undefined|number}, {type=unde
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=i32
-    Return v5
+    v5 = TypeTest v2 testedType=i32
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f41 name="definedLiteral" parameters=[{type=undefined|"a"|"b"}, {type=undefined|"a"|"b"}, {type=undefined|"a"|"b"}] results=[{type=anything}] {
   b0(v0: undefined|"a"|"b", v1: undefined|"a"|"b", v2: undefined|"a"|"b"):
@@ -457,8 +611,12 @@ function f41 name="definedLiteral" parameters=[{type=undefined|"a"|"b"}, {type=u
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType="a"
-    Return v5
+    v5 = TypeTest v2 testedType="a"
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f42 name="optionalLiteral" parameters=[{type=undefined|null|"a"|"b"}, {type=undefined|null|"a"|"b"}, {type=undefined|null|"a"|"b"}] results=[{type=anything}] {
   b0(v0: undefined|null|"a"|"b", v1: undefined|null|"a"|"b", v2: undefined|null|"a"|"b"):
@@ -468,8 +626,12 @@ function f42 name="optionalLiteral" parameters=[{type=undefined|null|"a"|"b"}, {
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|"a"
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|"a"
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f43 name="literalToNumber" parameters=[{type=undefined|"a"}, {type=undefined|"a"}, {type=undefined|"a"}] results=[{type=anything}] {
   b0(v0: undefined|"a", v1: undefined|"a", v2: undefined|"a"):
@@ -479,8 +641,12 @@ function f43 name="literalToNumber" parameters=[{type=undefined|"a"}, {type=unde
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|number
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f44 name="presentString" parameters=[{type=undefined|string|absent}, {type=undefined|string|absent}, {type=undefined|string|absent}] results=[{type=anything}] {
   b0(v0: undefined|string|absent, v1: undefined|string|absent, v2: undefined|string|absent):
@@ -490,8 +656,12 @@ function f44 name="presentString" parameters=[{type=undefined|string|absent}, {t
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=undefined|string
-    Return v5
+    v5 = TypeTest v2 testedType=undefined|string
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return
 }
 function f45 name="stringOrAbsent" parameters=[{type=undefined|string|absent}, {type=undefined|string|absent}, {type=undefined|string|absent}] results=[{type=anything}] {
   b0(v0: undefined|string|absent, v1: undefined|string|absent, v2: undefined|string|absent):
@@ -501,8 +671,12 @@ function f45 name="stringOrAbsent" parameters=[{type=undefined|string|absent}, {
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=string|absent
+    v5 = TypeTest v2 testedType=string|absent
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
     Return
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f46 name="presentNumber" parameters=[{type=number|absent}, {type=number|absent}, {type=number|absent}] results=[{type=anything}] {
   b0(v0: number|absent, v1: number|absent, v2: number|absent):
@@ -512,8 +686,12 @@ function f46 name="presentNumber" parameters=[{type=number|absent}, {type=number
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=number
-    Return v5
+    v5 = TypeTest v2 testedType=number
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return
 }
 function f47 name="numberOrAbsent" parameters=[{type=undefined|number|absent}, {type=undefined|number|absent}, {type=undefined|number|absent}] results=[{type=anything}] {
   b0(v0: undefined|number|absent, v1: undefined|number|absent, v2: undefined|number|absent):
@@ -523,8 +701,12 @@ function f47 name="numberOrAbsent" parameters=[{type=undefined|number|absent}, {
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=number|absent
+    v5 = TypeTest v2 testedType=number|absent
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
     Return
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f48 name="oneSymbol" parameters=[{type=symbol}, {type=symbol}, {type=symbol}] results=[{type=anything}] {
   b0(v0: symbol, v1: symbol, v2: symbol):
@@ -534,8 +716,12 @@ function f48 name="oneSymbol" parameters=[{type=symbol}, {type=symbol}, {type=sy
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=symbol@m0:1
-    Return v5
+    v5 = TypeTest v2 testedType=symbol@m0:1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }
 function f49 name="symbolOrObject" parameters=[{type=symbol|object}, {type=symbol|object}, {type=symbol|object}] results=[{type=anything}] {
   b0(v0: symbol|object, v1: symbol|object, v2: symbol|object):
@@ -545,6 +731,10 @@ function f49 name="symbolOrObject" parameters=[{type=symbol|object}, {type=symbo
   b1():
     Return v3
   b2():
-    v5 = Claim v2 castType=object|symbol@m0:1
-    Return v5
+    v5 = TypeTest v2 testedType=object|symbol@m0:1
+    TestAndBranch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Return v6
+  b4(v7) frequency=Unlikely:
+    Return v7
 }

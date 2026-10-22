@@ -54,7 +54,9 @@ public:
 private:
     StringEmitter& strings() { return emitter<StringEmitter>(); }
     CellPointer stringOperand(ValueID string) { return cellOperand(string); }
-    std::optional<Number> numberArgument(const InlineCall&, unsigned index);
+    // Where the operand may be undefined at run time it counts as `whenUndefined`. NaN is what the conversion of undefined to a number gives: position 0.
+    std::optional<Number> numberArgument(const InlineCall&, unsigned index, double whenUndefined = PNaN);
+    std::optional<Condition> isUndefinedArgument(const InlineCall&, unsigned index);
     Word32 positionArgument(const InlineCall&, unsigned index, Word32 length, Word32 whenAbsent);
     Condition is8Bit(CellPointer string);
     void finish(const InlineCall&, Operand naturalResult);
@@ -62,6 +64,7 @@ private:
     void generateIndexedRead(const InlineCall&, InlineBuiltin);
     void generateRange(const InlineCall&, StringRangeMethod);
     void generateHasAt(const InlineCall&, LiteralEnd);
+    Condition hasCharactersAt(const InlineCall&, CellPointer string, CellPointer other, Integer at);
     void generateSearch(const InlineCall&, SearchDirection, bool resultIsBoolean);
     void generateTrim(const InlineCall&, TrimmedEnds);
     void generateCase(const InlineCall&, StringCase);

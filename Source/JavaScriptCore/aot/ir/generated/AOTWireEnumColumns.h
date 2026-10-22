@@ -11,34 +11,41 @@
 namespace JSC { namespace AOT { namespace Wire {
 
 inline constexpr StatisticID changesByPassID[] = {
-    StatisticID::None, StatisticID::AdmitAssertedObjectsChanges, StatisticID::TypeValuesChanges, StatisticID::CheckInt32PromisesChanges,
-    StatisticID::VerifyProgramChanges, StatisticID::CheckRegExpLiteralsChanges, StatisticID::AnalyzeFlowChanges, StatisticID::ApplyFlowResultsChanges,
-    StatisticID::CheckLockedBuiltinWritesChanges, StatisticID::BuildCallGraphChanges, StatisticID::ComputeEffectSummariesChanges,
-    StatisticID::EstimateHeatChanges, StatisticID::SummarizeForInliningChanges, StatisticID::RemoveUnreadExportsChanges,
-    StatisticID::PromoteEnvironmentsToVariablesChanges, StatisticID::DeferDefinitionsChanges, StatisticID::RemoveUnreadFieldsChanges,
-    StatisticID::RemoveUnusedResultsChanges, StatisticID::RemoveUnusedParametersChanges, StatisticID::RemoveUnreachableFunctionsChanges,
-    StatisticID::SplitFreshResultsChanges, StatisticID::PromoteAggregateParametersChanges, StatisticID::SplitCoroutinesChanges,
-    StatisticID::CreateEntrypointsChanges, StatisticID::GroupCallsByValueChanges, StatisticID::ChooseCallingConventionsChanges,
-    StatisticID::DeferClosuresInFieldsChanges, StatisticID::AllocateInFramesChanges, StatisticID::ReuseEnvironmentsChanges,
-    StatisticID::NumberLiteralStringsChanges, StatisticID::EmbedConstantCollectionsChanges, StatisticID::CollectRegExpLiteralsChanges,
-    StatisticID::OutlineColdOperationsChanges, StatisticID::SplitFunctionsAtCallsChanges, StatisticID::ElideStackChecksChanges,
-    StatisticID::ResolveBuiltinsChanges, StatisticID::ResolveCallsChanges, StatisticID::ResolveAccessesChanges, StatisticID::SplitUnionsChanges,
-    StatisticID::PlaceTypeTestsChanges, StatisticID::ExpandIterationChanges, StatisticID::ExpandOwnKeysChanges,
-    StatisticID::SelectTypedResultsChanges, StatisticID::RetypeValuesChanges, StatisticID::InlineCallsChanges, StatisticID::SimplifyCastsChanges,
-    StatisticID::SinkAllocationsChanges, StatisticID::EliminateRedundantReadsChanges, StatisticID::EliminateGuardsChanges,
-    StatisticID::SeparateUnlikelyLoopPathsChanges, StatisticID::ConvertCountersToIntegersChanges, StatisticID::RemoveDeadCountedLoopsChanges,
-    StatisticID::FuseArrayChainsChanges, StatisticID::FuseGeneratorLoopsChanges, StatisticID::CreateStringBuildersChanges,
+    StatisticID::None, StatisticID::AllocateTaggedLayoutsChanges, StatisticID::CheckTypesAtEntryChanges, StatisticID::TypeValuesChanges,
+    StatisticID::CheckInt32PromisesChanges, StatisticID::VerifyProgramChanges, StatisticID::CheckRegExpLiteralsChanges,
+    StatisticID::NarrowFieldTypesChanges, StatisticID::NameCreatedSymbolsChanges, StatisticID::GuardTaintedPositionsChanges,
+    StatisticID::AnalyzeFlowChanges, StatisticID::ApplyFlowResultsChanges, StatisticID::CheckLockedBuiltinWritesChanges,
+    StatisticID::BuildCallGraphChanges, StatisticID::ComputeEffectSummariesChanges, StatisticID::EstimateHeatChanges,
+    StatisticID::SummarizeForInliningChanges, StatisticID::RemoveUnreadExportsChanges, StatisticID::PromoteEnvironmentsToVariablesChanges,
+    StatisticID::DeferDefinitionsChanges, StatisticID::NarrowConstantVariablesChanges, StatisticID::DeferInitializersChanges,
+    StatisticID::ReadCapturesFromEnvironmentsChanges, StatisticID::RemoveUnreadFieldsChanges, StatisticID::RemoveUnusedResultsChanges,
+    StatisticID::RemoveUnusedParametersChanges, StatisticID::RemoveUnreachableFunctionsChanges, StatisticID::SplitBehindEntryChecksChanges,
+    StatisticID::SkipAnsweredEntryChecksChanges, StatisticID::SplitFreshResultsChanges, StatisticID::PromoteAggregateParametersChanges,
+    StatisticID::SplitCoroutinesChanges, StatisticID::CallModulesChanges, StatisticID::CreateEntrypointsChanges,
+    StatisticID::ChooseCallingConventionsChanges, StatisticID::DeferClosuresInFieldsChanges, StatisticID::FlattenInnerObjectsChanges,
+    StatisticID::AllocateInFramesChanges, StatisticID::AllocateInnerObjectsChanges, StatisticID::ReuseEnvironmentsChanges,
+    StatisticID::NumberLiteralStringsChanges, StatisticID::EmbedConstantCollectionsChanges, StatisticID::MarkResultsUsedAsKeysChanges,
+    StatisticID::CollectRegExpLiteralsChanges, StatisticID::OutlineColdOperationsChanges, StatisticID::InlineHeadsChanges,
+    StatisticID::ElideStackChecksChanges, StatisticID::AddGenericVersionChanges, StatisticID::ResolveBuiltinsChanges,
+    StatisticID::BindGlobalNamesChanges, StatisticID::CallThroughMethodTableChanges, StatisticID::ResolveCallsChanges,
+    StatisticID::ResolveAccessesChanges, StatisticID::SplitUnionsChanges, StatisticID::PlaceTypeTestsChanges, StatisticID::ExpandIterationChanges,
+    StatisticID::ExpandProvenIterationsChanges, StatisticID::ExpandOwnKeysChanges, StatisticID::SelectTypedResultsChanges,
+    StatisticID::RetypeValuesChanges, StatisticID::InlineCallsChanges, StatisticID::SimplifyCastsChanges, StatisticID::SinkAllocationsChanges,
+    StatisticID::EliminateRedundantReadsChanges, StatisticID::EliminateGuardsChanges, StatisticID::SeparateUnlikelyLoopPathsChanges,
+    StatisticID::ConvertCountersToIntegersChanges, StatisticID::RemoveDeadCountedLoopsChanges, StatisticID::FuseArrayChainsChanges,
+    StatisticID::FuseGeneratorLoopsChanges, StatisticID::StartGeneratorsAtFirstStepChanges, StatisticID::CreateStringBuildersChanges,
     StatisticID::FuseConcatenationsChanges, StatisticID::ExpandDataChanges, StatisticID::FoldConstantsChanges,
     StatisticID::SimplifyControlFlowChanges, StatisticID::RemoveTrivialParametersChanges, StatisticID::PropagateBranchConditionsChanges,
-    StatisticID::HoistTestsIntoPredecessorsChanges, StatisticID::ThreadJumpsChanges, StatisticID::InferSwitchesChanges,
-    StatisticID::EliminateDeadCodeChanges, StatisticID::MergeDuplicateBlocksChanges, StatisticID::CompactBlocksChanges,
-    StatisticID::RemoveRedundantHandlersChanges, StatisticID::HoistLoopInvariantReadsChanges, StatisticID::SimplifyBuiltinCallsChanges,
-    StatisticID::ReduceIntegerDivisionsChanges, StatisticID::PlanArrayCapacitiesChanges, StatisticID::FoldConstantRegExpsChanges,
-    StatisticID::ShareRegExpLiteralsChanges, StatisticID::InsertObjectCoercibleChecksChanges, StatisticID::EliminateTailRecursionChanges,
-    StatisticID::ResolveAwaitedCallsChanges, StatisticID::SinkConstantsChanges, StatisticID::ExpandLongArrayLiteralsChanges,
-    StatisticID::PlanSlotsChanges, StatisticID::SelectChanges, StatisticID::NumberAndEncodeChanges, StatisticID::PlaceSiteCachesChanges,
-    StatisticID::CheckPlacementChanges, StatisticID::ChooseRepresentationsChanges, StatisticID::RemoveRedundantBarriersChanges,
-    StatisticID::GenerateCodeChanges
+    StatisticID::HoistTestsIntoPredecessorsChanges, StatisticID::TestNarrowerTypesFirstChanges, StatisticID::ThreadJumpsChanges,
+    StatisticID::InferSwitchesChanges, StatisticID::EliminateDeadCodeChanges, StatisticID::MergeDuplicateBlocksChanges,
+    StatisticID::CompactBlocksChanges, StatisticID::RemoveRedundantHandlersChanges, StatisticID::HoistLoopInvariantReadsChanges,
+    StatisticID::SimplifyBuiltinCallsChanges, StatisticID::ReduceIntegerDivisionsChanges, StatisticID::PlanArrayCapacitiesChanges,
+    StatisticID::PlanCollectionCapacitiesChanges, StatisticID::FoldConstantRegExpsChanges, StatisticID::ShareRegExpLiteralsChanges,
+    StatisticID::InsertObjectCoercibleChecksChanges, StatisticID::EliminateTailRecursionChanges, StatisticID::ResolveAwaitedCallsChanges,
+    StatisticID::SinkConstantsChanges, StatisticID::ExpandLongArrayLiteralsChanges, StatisticID::FinishBirthsChanges,
+    StatisticID::RestartInGenericVersionChanges, StatisticID::PlaceAllocationsAtTheirUseChanges, StatisticID::PlanSlotsChanges,
+    StatisticID::SelectChanges, StatisticID::NumberAndEncodeChanges, StatisticID::PlaceSiteCachesChanges, StatisticID::CheckPlacementChanges,
+    StatisticID::ChooseRepresentationsChanges, StatisticID::RemoveRedundantBarriersChanges, StatisticID::GenerateCodeChanges
 };
 constexpr StatisticID changesOf(PassID value)
 {
@@ -47,14 +54,120 @@ constexpr StatisticID changesOf(PassID value)
     return changesByPassID[index];
 }
 
+inline constexpr StatisticID codeBytesAddedByPassID[] = {
+    StatisticID::None, StatisticID::AllocateTaggedLayoutsCodeBytesAdded, StatisticID::CheckTypesAtEntryCodeBytesAdded,
+    StatisticID::TypeValuesCodeBytesAdded, StatisticID::CheckInt32PromisesCodeBytesAdded, StatisticID::VerifyProgramCodeBytesAdded,
+    StatisticID::CheckRegExpLiteralsCodeBytesAdded, StatisticID::NarrowFieldTypesCodeBytesAdded, StatisticID::NameCreatedSymbolsCodeBytesAdded,
+    StatisticID::GuardTaintedPositionsCodeBytesAdded, StatisticID::AnalyzeFlowCodeBytesAdded, StatisticID::ApplyFlowResultsCodeBytesAdded,
+    StatisticID::CheckLockedBuiltinWritesCodeBytesAdded, StatisticID::BuildCallGraphCodeBytesAdded, StatisticID::ComputeEffectSummariesCodeBytesAdded,
+    StatisticID::EstimateHeatCodeBytesAdded, StatisticID::SummarizeForInliningCodeBytesAdded, StatisticID::RemoveUnreadExportsCodeBytesAdded,
+    StatisticID::PromoteEnvironmentsToVariablesCodeBytesAdded, StatisticID::DeferDefinitionsCodeBytesAdded,
+    StatisticID::NarrowConstantVariablesCodeBytesAdded, StatisticID::DeferInitializersCodeBytesAdded,
+    StatisticID::ReadCapturesFromEnvironmentsCodeBytesAdded, StatisticID::RemoveUnreadFieldsCodeBytesAdded,
+    StatisticID::RemoveUnusedResultsCodeBytesAdded, StatisticID::RemoveUnusedParametersCodeBytesAdded,
+    StatisticID::RemoveUnreachableFunctionsCodeBytesAdded, StatisticID::SplitBehindEntryChecksCodeBytesAdded,
+    StatisticID::SkipAnsweredEntryChecksCodeBytesAdded, StatisticID::SplitFreshResultsCodeBytesAdded,
+    StatisticID::PromoteAggregateParametersCodeBytesAdded, StatisticID::SplitCoroutinesCodeBytesAdded, StatisticID::CallModulesCodeBytesAdded,
+    StatisticID::CreateEntrypointsCodeBytesAdded, StatisticID::ChooseCallingConventionsCodeBytesAdded,
+    StatisticID::DeferClosuresInFieldsCodeBytesAdded, StatisticID::FlattenInnerObjectsCodeBytesAdded, StatisticID::AllocateInFramesCodeBytesAdded,
+    StatisticID::AllocateInnerObjectsCodeBytesAdded, StatisticID::ReuseEnvironmentsCodeBytesAdded, StatisticID::NumberLiteralStringsCodeBytesAdded,
+    StatisticID::EmbedConstantCollectionsCodeBytesAdded, StatisticID::MarkResultsUsedAsKeysCodeBytesAdded,
+    StatisticID::CollectRegExpLiteralsCodeBytesAdded, StatisticID::OutlineColdOperationsCodeBytesAdded, StatisticID::InlineHeadsCodeBytesAdded,
+    StatisticID::ElideStackChecksCodeBytesAdded, StatisticID::AddGenericVersionCodeBytesAdded, StatisticID::ResolveBuiltinsCodeBytesAdded,
+    StatisticID::BindGlobalNamesCodeBytesAdded, StatisticID::CallThroughMethodTableCodeBytesAdded, StatisticID::ResolveCallsCodeBytesAdded,
+    StatisticID::ResolveAccessesCodeBytesAdded, StatisticID::SplitUnionsCodeBytesAdded, StatisticID::PlaceTypeTestsCodeBytesAdded,
+    StatisticID::ExpandIterationCodeBytesAdded, StatisticID::ExpandProvenIterationsCodeBytesAdded, StatisticID::ExpandOwnKeysCodeBytesAdded,
+    StatisticID::SelectTypedResultsCodeBytesAdded, StatisticID::RetypeValuesCodeBytesAdded, StatisticID::InlineCallsCodeBytesAdded,
+    StatisticID::SimplifyCastsCodeBytesAdded, StatisticID::SinkAllocationsCodeBytesAdded, StatisticID::EliminateRedundantReadsCodeBytesAdded,
+    StatisticID::EliminateGuardsCodeBytesAdded, StatisticID::SeparateUnlikelyLoopPathsCodeBytesAdded,
+    StatisticID::ConvertCountersToIntegersCodeBytesAdded, StatisticID::RemoveDeadCountedLoopsCodeBytesAdded,
+    StatisticID::FuseArrayChainsCodeBytesAdded, StatisticID::FuseGeneratorLoopsCodeBytesAdded, StatisticID::StartGeneratorsAtFirstStepCodeBytesAdded,
+    StatisticID::CreateStringBuildersCodeBytesAdded, StatisticID::FuseConcatenationsCodeBytesAdded, StatisticID::ExpandDataCodeBytesAdded,
+    StatisticID::FoldConstantsCodeBytesAdded, StatisticID::SimplifyControlFlowCodeBytesAdded, StatisticID::RemoveTrivialParametersCodeBytesAdded,
+    StatisticID::PropagateBranchConditionsCodeBytesAdded, StatisticID::HoistTestsIntoPredecessorsCodeBytesAdded,
+    StatisticID::TestNarrowerTypesFirstCodeBytesAdded, StatisticID::ThreadJumpsCodeBytesAdded, StatisticID::InferSwitchesCodeBytesAdded,
+    StatisticID::EliminateDeadCodeCodeBytesAdded, StatisticID::MergeDuplicateBlocksCodeBytesAdded, StatisticID::CompactBlocksCodeBytesAdded,
+    StatisticID::RemoveRedundantHandlersCodeBytesAdded, StatisticID::HoistLoopInvariantReadsCodeBytesAdded,
+    StatisticID::SimplifyBuiltinCallsCodeBytesAdded, StatisticID::ReduceIntegerDivisionsCodeBytesAdded,
+    StatisticID::PlanArrayCapacitiesCodeBytesAdded, StatisticID::PlanCollectionCapacitiesCodeBytesAdded,
+    StatisticID::FoldConstantRegExpsCodeBytesAdded, StatisticID::ShareRegExpLiteralsCodeBytesAdded,
+    StatisticID::InsertObjectCoercibleChecksCodeBytesAdded, StatisticID::EliminateTailRecursionCodeBytesAdded,
+    StatisticID::ResolveAwaitedCallsCodeBytesAdded, StatisticID::SinkConstantsCodeBytesAdded, StatisticID::ExpandLongArrayLiteralsCodeBytesAdded,
+    StatisticID::FinishBirthsCodeBytesAdded, StatisticID::RestartInGenericVersionCodeBytesAdded,
+    StatisticID::PlaceAllocationsAtTheirUseCodeBytesAdded, StatisticID::PlanSlotsCodeBytesAdded, StatisticID::SelectCodeBytesAdded,
+    StatisticID::NumberAndEncodeCodeBytesAdded, StatisticID::PlaceSiteCachesCodeBytesAdded, StatisticID::CheckPlacementCodeBytesAdded,
+    StatisticID::ChooseRepresentationsCodeBytesAdded, StatisticID::RemoveRedundantBarriersCodeBytesAdded, StatisticID::GenerateCodeCodeBytesAdded
+};
+constexpr StatisticID codeBytesAddedOf(PassID value)
+{
+    auto index = static_cast<size_t>(value);
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(index < std::size(codeBytesAddedByPassID));
+    return codeBytesAddedByPassID[index];
+}
+
+inline constexpr StatisticID codeBytesRemovedByPassID[] = {
+    StatisticID::None, StatisticID::AllocateTaggedLayoutsCodeBytesRemoved, StatisticID::CheckTypesAtEntryCodeBytesRemoved,
+    StatisticID::TypeValuesCodeBytesRemoved, StatisticID::CheckInt32PromisesCodeBytesRemoved, StatisticID::VerifyProgramCodeBytesRemoved,
+    StatisticID::CheckRegExpLiteralsCodeBytesRemoved, StatisticID::NarrowFieldTypesCodeBytesRemoved, StatisticID::NameCreatedSymbolsCodeBytesRemoved,
+    StatisticID::GuardTaintedPositionsCodeBytesRemoved, StatisticID::AnalyzeFlowCodeBytesRemoved, StatisticID::ApplyFlowResultsCodeBytesRemoved,
+    StatisticID::CheckLockedBuiltinWritesCodeBytesRemoved, StatisticID::BuildCallGraphCodeBytesRemoved,
+    StatisticID::ComputeEffectSummariesCodeBytesRemoved, StatisticID::EstimateHeatCodeBytesRemoved, StatisticID::SummarizeForInliningCodeBytesRemoved,
+    StatisticID::RemoveUnreadExportsCodeBytesRemoved, StatisticID::PromoteEnvironmentsToVariablesCodeBytesRemoved,
+    StatisticID::DeferDefinitionsCodeBytesRemoved, StatisticID::NarrowConstantVariablesCodeBytesRemoved,
+    StatisticID::DeferInitializersCodeBytesRemoved, StatisticID::ReadCapturesFromEnvironmentsCodeBytesRemoved,
+    StatisticID::RemoveUnreadFieldsCodeBytesRemoved, StatisticID::RemoveUnusedResultsCodeBytesRemoved,
+    StatisticID::RemoveUnusedParametersCodeBytesRemoved, StatisticID::RemoveUnreachableFunctionsCodeBytesRemoved,
+    StatisticID::SplitBehindEntryChecksCodeBytesRemoved, StatisticID::SkipAnsweredEntryChecksCodeBytesRemoved,
+    StatisticID::SplitFreshResultsCodeBytesRemoved, StatisticID::PromoteAggregateParametersCodeBytesRemoved,
+    StatisticID::SplitCoroutinesCodeBytesRemoved, StatisticID::CallModulesCodeBytesRemoved, StatisticID::CreateEntrypointsCodeBytesRemoved,
+    StatisticID::ChooseCallingConventionsCodeBytesRemoved, StatisticID::DeferClosuresInFieldsCodeBytesRemoved,
+    StatisticID::FlattenInnerObjectsCodeBytesRemoved, StatisticID::AllocateInFramesCodeBytesRemoved,
+    StatisticID::AllocateInnerObjectsCodeBytesRemoved, StatisticID::ReuseEnvironmentsCodeBytesRemoved,
+    StatisticID::NumberLiteralStringsCodeBytesRemoved, StatisticID::EmbedConstantCollectionsCodeBytesRemoved,
+    StatisticID::MarkResultsUsedAsKeysCodeBytesRemoved, StatisticID::CollectRegExpLiteralsCodeBytesRemoved,
+    StatisticID::OutlineColdOperationsCodeBytesRemoved, StatisticID::InlineHeadsCodeBytesRemoved, StatisticID::ElideStackChecksCodeBytesRemoved,
+    StatisticID::AddGenericVersionCodeBytesRemoved, StatisticID::ResolveBuiltinsCodeBytesRemoved, StatisticID::BindGlobalNamesCodeBytesRemoved,
+    StatisticID::CallThroughMethodTableCodeBytesRemoved, StatisticID::ResolveCallsCodeBytesRemoved, StatisticID::ResolveAccessesCodeBytesRemoved,
+    StatisticID::SplitUnionsCodeBytesRemoved, StatisticID::PlaceTypeTestsCodeBytesRemoved, StatisticID::ExpandIterationCodeBytesRemoved,
+    StatisticID::ExpandProvenIterationsCodeBytesRemoved, StatisticID::ExpandOwnKeysCodeBytesRemoved, StatisticID::SelectTypedResultsCodeBytesRemoved,
+    StatisticID::RetypeValuesCodeBytesRemoved, StatisticID::InlineCallsCodeBytesRemoved, StatisticID::SimplifyCastsCodeBytesRemoved,
+    StatisticID::SinkAllocationsCodeBytesRemoved, StatisticID::EliminateRedundantReadsCodeBytesRemoved, StatisticID::EliminateGuardsCodeBytesRemoved,
+    StatisticID::SeparateUnlikelyLoopPathsCodeBytesRemoved, StatisticID::ConvertCountersToIntegersCodeBytesRemoved,
+    StatisticID::RemoveDeadCountedLoopsCodeBytesRemoved, StatisticID::FuseArrayChainsCodeBytesRemoved,
+    StatisticID::FuseGeneratorLoopsCodeBytesRemoved, StatisticID::StartGeneratorsAtFirstStepCodeBytesRemoved,
+    StatisticID::CreateStringBuildersCodeBytesRemoved, StatisticID::FuseConcatenationsCodeBytesRemoved, StatisticID::ExpandDataCodeBytesRemoved,
+    StatisticID::FoldConstantsCodeBytesRemoved, StatisticID::SimplifyControlFlowCodeBytesRemoved,
+    StatisticID::RemoveTrivialParametersCodeBytesRemoved, StatisticID::PropagateBranchConditionsCodeBytesRemoved,
+    StatisticID::HoistTestsIntoPredecessorsCodeBytesRemoved, StatisticID::TestNarrowerTypesFirstCodeBytesRemoved,
+    StatisticID::ThreadJumpsCodeBytesRemoved, StatisticID::InferSwitchesCodeBytesRemoved, StatisticID::EliminateDeadCodeCodeBytesRemoved,
+    StatisticID::MergeDuplicateBlocksCodeBytesRemoved, StatisticID::CompactBlocksCodeBytesRemoved,
+    StatisticID::RemoveRedundantHandlersCodeBytesRemoved, StatisticID::HoistLoopInvariantReadsCodeBytesRemoved,
+    StatisticID::SimplifyBuiltinCallsCodeBytesRemoved, StatisticID::ReduceIntegerDivisionsCodeBytesRemoved,
+    StatisticID::PlanArrayCapacitiesCodeBytesRemoved, StatisticID::PlanCollectionCapacitiesCodeBytesRemoved,
+    StatisticID::FoldConstantRegExpsCodeBytesRemoved, StatisticID::ShareRegExpLiteralsCodeBytesRemoved,
+    StatisticID::InsertObjectCoercibleChecksCodeBytesRemoved, StatisticID::EliminateTailRecursionCodeBytesRemoved,
+    StatisticID::ResolveAwaitedCallsCodeBytesRemoved, StatisticID::SinkConstantsCodeBytesRemoved,
+    StatisticID::ExpandLongArrayLiteralsCodeBytesRemoved, StatisticID::FinishBirthsCodeBytesRemoved,
+    StatisticID::RestartInGenericVersionCodeBytesRemoved, StatisticID::PlaceAllocationsAtTheirUseCodeBytesRemoved,
+    StatisticID::PlanSlotsCodeBytesRemoved, StatisticID::SelectCodeBytesRemoved, StatisticID::NumberAndEncodeCodeBytesRemoved,
+    StatisticID::PlaceSiteCachesCodeBytesRemoved, StatisticID::CheckPlacementCodeBytesRemoved, StatisticID::ChooseRepresentationsCodeBytesRemoved,
+    StatisticID::RemoveRedundantBarriersCodeBytesRemoved, StatisticID::GenerateCodeCodeBytesRemoved
+};
+constexpr StatisticID codeBytesRemovedOf(PassID value)
+{
+    auto index = static_cast<size_t>(value);
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(index < std::size(codeBytesRemovedByPassID));
+    return codeBytesRemovedByPassID[index];
+}
+
 inline constexpr StatisticID groupsBySelectionRuleID[] = {
     StatisticID::None, StatisticID::PlannedSlotsGroups, StatisticID::ClassDefinitionGroups, StatisticID::DescriptorLiteralGroups,
     StatisticID::AccessorGroupGroups, StatisticID::SlotStoreRunGroups, StatisticID::PropertyRunGroups, StatisticID::MethodCallGroups,
-    StatisticID::CheckedPropertyReadGroups, StatisticID::PropertyReadAndTestGroups, StatisticID::EncodedVariableTestGroups,
-    StatisticID::PropertyChainGroups, StatisticID::PropertyPairGroups, StatisticID::SubstringViewGroups, StatisticID::SwitchStringGroups,
-    StatisticID::SwitchNumberGroups, StatisticID::StringLiteralFormsGroups, StatisticID::HoistStringCharactersGroups,
-    StatisticID::SharedStringOrderGroups, StatisticID::IntegerBoundGroups, StatisticID::FreshPromiseFulfillmentGroups,
-    StatisticID::ResolvedCallTargetGroups, StatisticID::RegExpLiteralMatchGroups, StatisticID::ThrowNewErrorGroups, StatisticID::InlineBuiltinGroups,
+    StatisticID::PropertyReadAndTestGroups, StatisticID::EncodedVariableTestGroups, StatisticID::PropertyChainGroups, StatisticID::PropertyPairGroups,
+    StatisticID::SubstringViewGroups, StatisticID::SwitchStringGroups, StatisticID::SwitchNumberGroups, StatisticID::StringLiteralFormsGroups,
+    StatisticID::HoistStringCharactersGroups, StatisticID::SharedStringOrderGroups, StatisticID::IntegerBoundGroups,
+    StatisticID::FreshPromiseFulfillmentGroups, StatisticID::AwaitInPlaceGroups, StatisticID::ResolvedCallTargetGroups,
+    StatisticID::RegExpLiteralMatchGroups, StatisticID::ThrowNewErrorGroups, StatisticID::KeyPartsLookupGroups, StatisticID::InlineBuiltinGroups,
     StatisticID::StringBuilderPartsGroups, StatisticID::ArrayLiteralStorageGroups, StatisticID::DataEncodingGroups, StatisticID::ClosureFormGroups,
     StatisticID::NumberPathsGroups, StatisticID::OperatorFormGroups, StatisticID::TestAndBranchGroups
 };
@@ -71,7 +184,10 @@ inline constexpr UnprovenCauseFamily familyByUnprovenCause[] = {
     UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode,
     UnprovenCauseFamily::UnprovenType, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation,
     UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation,
-    UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::UnprovenType
+    UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::Mutation, UnprovenCauseFamily::UnprovenType,
+    UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnprovenType, UnprovenCauseFamily::UnknownCode,
+    UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode, UnprovenCauseFamily::UnknownCode,
+    UnprovenCauseFamily::UnprovenType, UnprovenCauseFamily::UnprovenType, UnprovenCauseFamily::UnprovenType
 };
 constexpr UnprovenCauseFamily familyOf(UnprovenCause value)
 {

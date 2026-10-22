@@ -8,6 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -16,7 +18,8 @@ class InsertionSet {
 public:
     void insert(ProgramPoint, ValueID);
     bool isEmpty() const { return m_insertions.isEmpty(); }
-    void execute(Function&);
+    // Tells of each block what it has put into the list of the block, in the order of the list.
+    void execute(Function&, NOESCAPE const ScopedLambda<void(BlockID, std::span<const ValueID>)>& didInsert);
 
 private:
     struct QueuedInsertion {

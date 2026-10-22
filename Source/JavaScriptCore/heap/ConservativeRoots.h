@@ -78,6 +78,9 @@ public:
     ConservativeRoots(Heap&);
     ~ConservativeRoots();
 
+    // Nothing but its header names the Structure of a compiled object that lies in a frame.
+    static constexpr bool findsStructuresOfFrameCells = true;
+
     void add(void* begin, void* end);
     void add(void* begin, void* end, JITStubRoutineSet&, CodeBlockSet&);
     

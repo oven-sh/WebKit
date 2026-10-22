@@ -150,6 +150,8 @@ private:
     Value* invariantValueOfHeaderPhi(Value* phi, InvalidationSet& walked) const;
 
     HoistDecision checkEffects(Value*, Effects) const;
+    bool isChosenByPendingGuard(Value* phi) const;
+    bool readsThroughPhiChosenByPendingGuard(Value*) const;
     void resolvePhi(Value*);
     void visitCheck(Value*);
     void hoistValue(Value*, HoistDecision);
@@ -179,6 +181,7 @@ private:
     UncheckedKeyHashMap<Value*, bool> m_loopGuardConditions;
 
     Vector<PendingGuard, 4> m_pendingGuards;
+    IndexSet<Value*> m_phisChosenByPendingGuards;
     UncheckedKeyHashMap<Value*, FirstIterationValue> m_peeledValues;
     bool m_peelingFailed { false };
 

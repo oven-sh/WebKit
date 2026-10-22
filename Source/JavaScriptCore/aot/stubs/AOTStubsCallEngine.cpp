@@ -16,7 +16,7 @@
 #include "CallFrame.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
-#include "JSBoundFunction.h"
+#include "JSFunction.h"
 #include "NativeExecutable.h"
 #include "StackAlignment.h"
 #include "StackManager.h"
@@ -32,7 +32,6 @@ struct EngineCallRegisters {
     GPRReg word;
 };
 
-StubSignature signatureOfCallBoundTarget(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallEngineCallee(StubKey) { return callConventionSignatureWithCount(); }
 
 static Address softStackLimit()
@@ -46,76 +45,6 @@ static void emitAlignedListSize(StubAssembler& jit, GPRReg count, unsigned extra
     jit.add32(TrustedImm32(extraRegisters + 1), count, size);
     jit.and32(TrustedImm32(~1), size);
     jit.lshiftPtr(TrustedImm32(3), size);
-}
-
-static void emitCallBoundThis(StubAssembler& jit, const CallRegisters& registers, GPRReg count, JumpList& cannotUnpack)
-{
-    jit.load64(Address(calleeGPR, JSBoundFunction::offsetOfBoundThis()), registers.word);
-    cannotUnpack.append(jit.branchIfNotCell(registers.word));
-    cannotUnpack.append(branchIfNotFunctionType(jit, registers.word, registers.scratch));
-    jit.move(registers.word, calleeGPR);
-    Jump hasNoArguments = jit.branchTest32(CCallHelpers::Zero, count);
-    jit.move(argumentGPR(0), thisGPR);
-    for (unsigned i = 0; i + 1 < numberOfArgumentGPRs; ++i)
-        jit.move(argumentGPR(i + 1), argumentGPR(i));
-    jit.sub32(TrustedImm32(1), count);
-    jit.jumpToStub(callCellWithCount());
-    hasNoArguments.link(&jit);
-    jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.jumpToStub(callCellWithCount());
-}
-
-static void emitPrependBoundArguments(StubAssembler& jit, const CallRegisters& registers, GPRReg count, JumpList& cannotUnpack)
-{
-    static_assert(JSBoundFunction::maxEmbeddedArgs < numberOfArgumentGPRs);
-    cannotUnpack.append(jit.branch32(CCallHelpers::Above, registers.scratch, TrustedImm32(JSBoundFunction::maxEmbeddedArgs)));
-    jit.add32(count, registers.scratch, registers.word);
-    cannotUnpack.append(jit.branch32(CCallHelpers::Above, registers.word, TrustedImm32(numberOfArgumentGPRs)));
-    jit.move(registers.word, count);
-    JumpList areInPlace;
-    for (unsigned bound = 1; bound <= JSBoundFunction::maxEmbeddedArgs; ++bound) {
-        Jump hasMore;
-        if (bound < JSBoundFunction::maxEmbeddedArgs)
-            hasMore = jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(bound));
-        for (unsigned i = numberOfArgumentGPRs; i-- > bound;)
-            jit.move(argumentGPR(i - bound), argumentGPR(i));
-        for (unsigned i = 0; i < bound; ++i)
-            jit.load64(Address(calleeGPR, JSBoundFunction::offsetOfBoundArgs() + i * sizeof(WriteBarrier<Unknown>)), argumentGPR(i));
-        if (bound < JSBoundFunction::maxEmbeddedArgs) {
-            areInPlace.append(jit.jump());
-            hasMore.link(&jit);
-        }
-    }
-    areInPlace.link(&jit);
-}
-
-void generateCallBoundTarget(StubAssembler& jit)
-{
-    const CallRegisters registers = CallRegisters::allocate(jit);
-    const GPRReg count = jit.clobberOperand(0);
-    JumpList cannotUnpack;
-    cannotUnpack.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(numberOfArgumentGPRs)));
-    cannotUnpack.append(jit.branchIfNotCell(calleeGPR));
-    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-    cannotUnpack.append(jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionStructureID))));
-    jit.load32(Address(calleeGPR, JSBoundFunction::offsetOfBoundArgsLength()), registers.scratch);
-    Jump hasBoundArguments = jit.branchTest32(CCallHelpers::NonZero, registers.scratch);
-    jit.loadPtr(Address(calleeGPR, JSBoundFunction::offsetOfTargetFunction()), registers.word);
-    Jump bindsCall = jit.branchPtr(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.functionPrototypeCall)));
-    jit.load64(Address(calleeGPR, JSBoundFunction::offsetOfBoundThis()), thisGPR);
-    jit.move(registers.word, calleeGPR);
-    jit.jumpToStub(callCellWithCount());
-
-    bindsCall.link(&jit);
-    emitCallBoundThis(jit, registers, count, cannotUnpack);
-
-    hasBoundArguments.link(&jit);
-    emitPrependBoundArguments(jit, registers, count, cannotUnpack);
-    jit.load64(Address(calleeGPR, JSBoundFunction::offsetOfBoundThis()), thisGPR);
-    jit.loadPtr(Address(calleeGPR, JSBoundFunction::offsetOfTargetFunction()), calleeGPR);
-    jit.jumpToStub(callCellWithCount());
-
-    jit.linkToStub(cannotUnpack, callEngineCallee());
 }
 
 static void emitEngineCallFrame(StubAssembler& jit, const EngineCallRegisters& registers, JumpList& doesNotFitOnStack)
@@ -170,6 +99,7 @@ static void emitCallNativeFunctionByOperation(StubAssembler& jit, const EngineCa
     jit.addPtr(TrustedImm32(static_cast<int32_t>(offsetOfStackWordsFromFrame)), fp, operationArgumentGPR(4));
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTCallNativeFunction, jit.reuseScratch(StubRegister::Operation));
+    jit.bindReturnLabel(StubFrameKind::BelowSpilledArguments);
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);
     Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);

@@ -112,11 +112,11 @@ function f4 name="guardFromOutside" parameters=[{type=boolean}, {type=object}, {
   b2() frequency=Rare:
     Branch v2 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Predicted
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
     v7 = CallMethod v3, v6 key="wide"
     Jump -> next b5(v7)
   b4() frequency=Rare:
-    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Predicted
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
     v9 = CallMethod v3, v8 key="tall"
     Jump -> next b5(v9)
   b5(v10):
@@ -142,11 +142,11 @@ function f5 name="guardFromOutside2" parameters=[{type=boolean}, {type=object}, 
   b2() frequency=Rare:
     Branch v2 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Predicted
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
     v7 = CallMethod v3, v6 key="wide"
     Jump -> next b5(v7)
   b4() frequency=Rare:
-    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Predicted
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
     v9 = CallMethod v3, v8 key="tall"
     Jump -> next b5(v9)
   b5(v10):
@@ -168,11 +168,11 @@ function f6 name="guardFromOutside3" parameters=[{type=boolean}, {type=object}, 
   b2() frequency=Rare:
     Branch v2 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Predicted
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
     v7 = CallMethod v3, v6 key="wide"
     Jump -> next b5(v7)
   b4() frequency=Rare:
-    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Predicted
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
     v9 = CallMethod v3, v8 key="tall"
     Jump -> next b5(v9)
   b5(v10):
@@ -194,11 +194,11 @@ function f7 name="guardFromOutside4" parameters=[{type=boolean}, {type=object}, 
   b2() frequency=Rare:
     Branch v2 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Predicted
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
     v7 = CallMethod v3, v6 key="wide"
     Jump -> next b5(v7)
   b4() frequency=Rare:
-    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Predicted
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
     v9 = CallMethod v3, v8 key="tall"
     Jump -> next b5(v9)
   b5(v10):

@@ -15,19 +15,57 @@
 #include "RegExp.h"
 #include "SlotVisitorInlines.h"
 #include "VM.h"
+#include <bit>
+#include <wtf/HashFunctions.h>
 #include <wtf/TZoneMallocInlines.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RegExpLiterals);
 
+namespace {
+
+struct Literal {
+    const ImageRegExp* record;
+    OptionSet<Yarr::Flags> flags;
+};
+
+struct LiteralTranslator {
+    static unsigned hash(const Literal& literal)
+    {
+        constexpr unsigned bitsAboveFlags = 64 - 8 * sizeof(literal.flags);
+        return intHash(static_cast<uint64_t>(std::bit_cast<uintptr_t>(literal.record)) ^ static_cast<uint64_t>(literal.flags.toRaw()) << bitsAboveFlags);
+    }
+
+    static bool equal(RegExp* regExp, const Literal& literal)
+    {
+        return regExp->imageRecord() == literal.record && regExp->flags() == literal.flags;
+    }
+};
+
+} // anonymous namespace
+
+unsigned RegExpLiterals::CellHash::hash(RegExp* regExp)
+{
+    return LiteralTranslator::hash({ regExp->imageRecord(), regExp->flags() });
+}
+
 template<typename Visitor>
 void RegExpLiterals::visitRoots(Visitor& visitor)
 {
-    m_writtenCells.forEachRegionToVisit(visitor, [&](size_t, size_t) {
-        for (RegExp* regExp : m_cells.values())
-            visitor.appendUnbarriered(regExp);
-    });
+    // A cell lasts as long as the program. One that a collection has marked is old, and only the next full collection has to mark it again.
+    size_t first = 0;
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        if (visitor.collectionScope() == CollectionScope::Full && m_lastFullVisitVersion != visitor.markingVersion())
+            m_lastFullVisitVersion = visitor.markingVersion();
+        else
+            first = m_numberOfCellsVisited;
+        m_numberOfCellsVisited = m_cellsInOrderOfCreation.size();
+    }
+    for (RegExp* regExp : m_cellsInOrderOfCreation.span().subspan(first))
+        visitor.appendUnbarriered(regExp);
 }
 
 RegExpLiterals::RegExpLiterals(CacheRegistry& registry)
@@ -37,17 +75,20 @@ RegExpLiterals::RegExpLiterals(CacheRegistry& registry)
 
 RegExp* RegExpLiterals::regExpFor(VM& vm, RegExpRecordID id, OptionSet<Yarr::Flags> flags)
 {
-    uint32_t key = keyOf(id, flags);
-    if (RegExp* regExp = m_cells.get(key))
-        return regExp;
+    if (!m_records) [[unlikely]]
+        m_records = &RegExpRecords(*vm.aotState().image).at(id) - id.index();
+    const ImageRegExp& record = m_records[id.index()];
+    if (auto known = m_cells.find<LiteralTranslator>(Literal { &record, flags }); known != m_cells.end())
+        return *known;
 
-    const ImageRegExp& record = RegExpRecords(*vm.aotState().image).at(id);
     RegExp* regExp = RegExp::createFromImage(vm, regExpPatternOf(vm, record), flags, record);
-    m_cells.set(key, regExp);
-    m_writtenCells.recordAll();
+    m_cells.add(regExp);
+    m_cellsInOrderOfCreation.append(regExp);
     return regExp;
 }
 
 } } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(AOT)

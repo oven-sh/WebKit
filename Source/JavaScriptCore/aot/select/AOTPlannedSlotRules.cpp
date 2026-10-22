@@ -9,22 +9,35 @@
 #if ENABLE(AOT)
 
 #include "AOTGroupRewriter.h"
+#include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <optional>
+#include <tuple>
 #include <utility>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
+using ArmsOfAgreements = HashMap<const SlotAgreement*, Vector<LayoutSetID, 4>>;
+
 struct Match {
     SelectionGroup group;
     Vector<LayoutSetID, 4> arms;
+    bool typeListsReceivers { false };
+};
+
+struct Arm {
+    LayoutSetID receivers;
+    ValueID object;
+    ValueID guard;
 };
 
 struct RepeatedTest {
@@ -50,28 +63,52 @@ static constexpr std::array<Opcode, numberOfSlotOperations> slotOperations = [] 
     return operations;
 }();
 
-static size_t findLargestGroup(const SlotAgreement& agreement)
+static bool findsOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
 {
-    size_t largest = 0;
-    for (size_t index = 1; index < agreement.groups.size(); ++index) {
-        if (agreement.groups[index].members.size() > agreement.groups[largest].members.size())
-            largest = index;
-    }
-    return largest;
+    return operationsWithOffsetByShape.contains(opcode) && agreement.hasOffsetByShape(storedOf(opcode).has_value());
 }
 
-static Vector<LayoutSetID, 4> createArms(TypeArena& types, const SlotAgreement& agreement)
+// The arms are tested in this order: first the groups with a layout of the module that the function is written in, for a library handles the objects that it makes;
+// then those whose layouts are allocated most often, then those with the most layouts. The first arm takes the members without a slot too.
+static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAgreement& agreement)
 {
-    size_t largest = findLargestGroup(agreement);
+    const Program& program = context.program();
+    const Heat& heat = context.pass().inputs.heat;
+    TypeArena& types = context.pass().types;
+    ModuleID module = context.function().module;
+
+    Vector<std::tuple<bool, double, size_t>, 4> likelihoods(agreement.groups.size(), [&](size_t index) {
+        std::span<const LayoutID> members = agreement.groups[index].members.span();
+        bool hasLayoutOfModule = module && std::ranges::any_of(members, [&](LayoutID layout) {
+            return program.at(layout).module == module || heat.isAllocatedIn(layout, module);
+        });
+        double allocations = 0;
+        for (LayoutID layout : members)
+            allocations += heat.allocationsOf(layout);
+        return std::tuple { hasLayoutOfModule, allocations, members.size() };
+    });
+    Vector<size_t, 4> likeliestFirst(agreement.groups.size(), [](size_t index) {
+        return index;
+    });
+    std::ranges::stable_sort(likeliestFirst, std::ranges::greater { }, [&](size_t index) {
+        return likelihoods[index];
+    });
+
     Vector<LayoutSetID, 4> arms;
     arms.reserveInitialCapacity(agreement.groups.size());
-    for (size_t index = 0; index < agreement.groups.size(); ++index) {
+    for (size_t index : likeliestFirst) {
         Vector<LayoutID, 8> members(agreement.groups[index].members.span());
-        if (index == largest)
+        if (arms.isEmpty())
             members.append(agreement.membersWithoutSlot.span());
         arms.append(types.completeLayoutSet(members.span()));
     }
     return arms;
+}
+
+// The type of such a receiver holds for good, and so does what is left of it behind a failed test: the last arm needs no test.
+static bool typeListsReceivers(SelectionContext& context, const Value& access)
+{
+    return reliesOf(access.opcode).contains(Proof::Shape) && !proofsNeededFromGuard(context.program(), context.function(), access).contains(Proof::Shape);
 }
 
 static bool canCopyIntoArms(SelectionContext& context, ValueID id)
@@ -113,7 +150,8 @@ static void collectRepeatedTests(SelectionContext& context, Opcode opcode, Vecto
     const Program& program = context.program();
     for (ValueID id : context.candidates(opcode)) {
         const Value& test = context.function().at(id);
-        if (canCopyIntoArms(context, id) || context.slots().agreementOf(program, test.key(), test.receivers()).groups.size() < 2)
+        const SlotAgreement& agreement = context.slots().agreementOf(program, test.key(), test.receivers());
+        if (canCopyIntoArms(context, id) || agreement.groups.size() < 2 || findsOffsetByShape(opcode, agreement))
             continue;
 
         RepeatedTest repeated { groupOfOne(id), { }, false };
@@ -135,25 +173,24 @@ static void repeatInFrontOfBranches(GroupRewriter& rewriter, const RepeatedTest&
 {
     Function& function = rewriter.function();
     for (BlockID branch : test.branches)
-        function.at(branch).terminator.setConditionOperand(rewriter.copyRootToEndOf(branch));
+        function.edit(branch).terminator.setConditionOperand(rewriter.copyRootToEndOf(branch));
     if (test.hasOtherUsers)
         rewriter.leaveUnclaimed(test.group.root);
     else
         rewriter.eraseRoot();
 }
 
-static void collectMatches(SelectionContext& context, Opcode opcode, Vector<Match>& matches)
+static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgreements& armsOfAgreements, Vector<Match>& matches)
 {
     const Program& program = context.program();
     const Function& function = context.function();
     for (ValueID id : context.candidates(opcode)) {
         const Value& access = function.at(id);
-        std::span<const LayoutID> receivers = program.at(access.receivers()).members.span();
-        if (receivers.size() < 2)
+        if (program.at(access.receivers()).members.size() < 2)
             continue;
 
-        SlotAgreement agreement = context.slots().agreementOf(program, access.key(), receivers);
-        if (agreement.groups.size() < 2 || !canCopyIntoArms(context, id))
+        const SlotAgreement& agreement = context.slots().agreementOf(program, access.key(), access.receivers());
+        if (agreement.groups.size() < 2 || findsOffsetByShape(opcode, agreement) || !canCopyIntoArms(context, id))
             continue;
 
         SelectionGroup group = groupOfOne(id);
@@ -161,7 +198,10 @@ static void collectMatches(SelectionContext& context, Opcode opcode, Vector<Matc
         group.endsEveryArmInCopyOfRoot = true;
         if (context.tryClaim(SelectionRuleID::PlannedSlots, group) != ClaimResult::Claimed)
             continue;
-        matches.append(Match { WTF::move(group), createArms(context.pass().types, agreement) });
+        const Vector<LayoutSetID, 4>& arms = armsOfAgreements.ensure(&agreement, [&] {
+            return createArms(context, agreement);
+        }).iterator->value;
+        matches.append(Match { WTF::move(group), arms, typeListsReceivers(context, access) });
     }
 }
 
@@ -173,21 +213,45 @@ static ValueID appendArmGuard(IRBuilder& builder, ValueID caseGuard, ValueID pre
     return builder.appendAllGuards(guards);
 }
 
-static void narrowToArm(IRBuilder& builder, ValueID copy, LayoutSetID receivers, ValueID guard)
+static void endArmInCopy(GroupRewriter& rewriter, const Arm& arm)
 {
+    IRBuilder& builder = rewriter.builder();
     Function& function = builder.function();
-    Value& access = function.at(copy);
-    access.setReceivers(receivers);
-    access.setGuardOperand(guard);
+    ValueID copy = rewriter.appendOriginals();
+    Value& access = function.edit(copy);
+    access.setObjectOperand(arm.object);
+    access.setGuardOperand(arm.guard);
+    access.setReceivers(arm.receivers);
     access.type = resultTypeOf(builder.context().program, function, access, builder.types());
+    rewriter.endArm(resultRuleOf(access.opcode) != ResultRule::None ? std::optional(copy) : std::nullopt);
 }
 
-static void rewrite(GroupRewriter& rewriter, const Match& match)
+// A failed test takes the layouts of its arm out of the type of the object. What has failed every test has the layouts of the last arm, so no arm is left for other objects.
+static void dispatchOnType(GroupRewriter& rewriter, const Match& match)
+{
+    const Value& original = rewriter.original(match.group.root);
+    ValueID object = original.objectOperand();
+    ValueID guard = original.guardOperand();
+    BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
+
+    rewriter.beginArms();
+    IRBuilder& builder = rewriter.builder();
+    for (LayoutSetID arm : match.arms.span().first(match.arms.size() - 1)) {
+        ValueID test = builder.appendTypeTest(object, Type::forLayoutSet(arm));
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, frequency);
+        endArmInCopy(rewriter, { arm, branch.provenOnTaken, guard });
+        builder.moveToEndOf(branch.notTaken);
+        object = branch.provenOnNotTaken;
+    }
+    endArmInCopy(rewriter, { match.arms.last(), object, guard });
+}
+
+// A guard proves the layouts of the receiver, and only the case of a switch gives a guard for fewer of them: every arm is a case.
+static void dispatchOnShape(GroupRewriter& rewriter, const Match& match)
 {
     const Value& original = rewriter.original(match.group.root);
     ValueID object = original.objectOperand();
     ValueID previousGuard = original.guardOperand();
-    bool hasResult = resultRuleOf(original.opcode) != ResultRule::None;
     BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
 
     rewriter.beginArms();
@@ -211,10 +275,7 @@ static void rewrite(GroupRewriter& rewriter, const Match& match)
 
     for (uint32_t index = 0; index < blocks.size(); ++index) {
         builder.moveToEndOf(blocks[index]);
-        ValueID guard = appendArmGuard(builder, caseGuards[index], previousGuard);
-        ValueID copy = rewriter.appendOriginals();
-        narrowToArm(builder, copy, match.arms[index], guard);
-        rewriter.endArm(hasResult ? std::optional(copy) : std::nullopt);
+        endArmInCopy(rewriter, { match.arms[index], object, appendArmGuard(builder, caseGuards[index], previousGuard) });
     }
 
     builder.moveToEndOf(unreachable);
@@ -232,11 +293,15 @@ void selectPlannedSlots(SelectionContext& context)
     });
 
     Vector<Match> matches;
+    ArmsOfAgreements armsOfAgreements;
     for (Opcode opcode : slotOperations)
-        collectMatches(context, opcode, matches);
+        collectMatches(context, opcode, armsOfAgreements, matches);
 
     context.rewriteGroups(SelectionRuleID::PlannedSlots, matches, [](GroupRewriter& rewriter, const Match& match) {
-        rewrite(rewriter, match);
+        if (match.typeListsReceivers)
+            dispatchOnType(rewriter, match);
+        else
+            dispatchOnShape(rewriter, match);
     });
 }
 

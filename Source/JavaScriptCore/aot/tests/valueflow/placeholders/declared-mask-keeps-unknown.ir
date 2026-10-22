@@ -1,0 +1,50 @@
+# function area(shape: Shape) { shape.side }  area(somethingNoTableLists); area(circle)    function keep(shape: Shape) { shape.side }  keep(circle)    square.side
+# Nothing is tested in front of a parameter: its type is taken on trust, and a type that is taken on trust keeps nothing out. The unknown object is a value from code that nobody compiles.
+# It may be anything, whatever the type says, so it is still in the set behind the type, and whoever asks for a proof finds it there.
+# The objects of the family do not take its place, as they do for the untracked object: the square that is never passed is not in the set. Beside it: the same parameter without the unknown object
+# STATISTIC: LayoutsOutsideFamily = 0
+# RUN: valueflow-families
+# CHECK: parameter positions 2 layout-outside 0 unknown-object 1 object-without-layout 0 no-object 0 untracked-object 0
+# RUN(RECEIVERS): valueflow-families receivers
+# RECEIVERS: application accesses 4 unknown-object 1 object-without-layout 1 several-layouts 0 one-layout 2 no-object 0 untracked-object 0
+# RECEIVERS-NEXT: application unknown-object where the receiver is expected to be: layouts-alone 1
+# RUN(VALUES): valueflow-why values=f0:v6 values=f0:v9 values=f1:v1 values=f2:v1
+# VALUES: values=f0:v6
+# VALUES: operand 2 1 members: [[circle]]@f0
+# VALUES: values=f0:v9
+# VALUES: operand 0 1 members: [[square]]@f0
+# VALUES: values=f1:v1
+# VALUES: operand 0 {{*}} unknown [[circle]]@f0
+# VALUES-NOT: [[square]]@f0
+# VALUES: values=f2:v1
+# VALUES: operand 0 {{*}} 1 members: [[circle]]@f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewObject layout=L2 fields=[]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="somethingThatNoTableLists" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    v6 = Call v4, -, v0
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v0
+    v9 = PropGet v1 key="side"
+    Return
+}
+function f1 name="area" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="side"
+    Return
+}
+function f2 name="keep" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="side"
+    Return
+}

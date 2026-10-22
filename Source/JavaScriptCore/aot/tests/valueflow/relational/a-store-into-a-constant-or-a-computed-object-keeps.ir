@@ -1,0 +1,23 @@
+# function f(p) { globalThis.kept = p }   function g(C, p) { <the prototype of class C>.held = p }
+# The holder is a subject that nothing happens to: a constant, or the result of an operation. It is no object of this call: the global object, a prototype. What is stored into it is kept.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: {{*}}stored
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thing" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Call v0, -, v2
+    Return
+}
+function f1 name="intoTheGlobalObject" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Constant index=1 fate=[HasMembersWritten]}] stores=[{source=0 target=1 key="kept" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="kept" mode=Strict
+    Return
+}

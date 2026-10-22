@@ -35,7 +35,7 @@ struct ForInLoop {
 
 static bool hasNoEffect(FunctionPassContext& context, ValueID id)
 {
-    return context.function.at(id).opcode == Opcode::LoopHint || context.analyses.effectsOf(id).onAnyEdge().isRemovableWhenUnused();
+    return context.function.at(id).opcode == Opcode::LoopHint || context.analyses.isUnobservable(id);
 }
 
 // A turn that finds the object changed starts over at the header of the loop as written, so nothing in front of the step may have happened twice.
@@ -65,6 +65,69 @@ static BlockID findOnlyEntryOf(FunctionPassContext& context, const NaturalLoop& 
     return entry;
 }
 
+// Between the open and the entry of the loop nothing may change the object: the tests of an arm say what the enumerator lists. Blocks that only jump on may lie between the two.
+static bool leadsToEntryWithoutEffect(FunctionPassContext& context, ValueID open, BlockID entry)
+{
+    const Function& function = context.function;
+    for (BlockID block = entry;;) {
+        const BlockValues& values = function.at(block).values;
+        size_t first = values.contains(open) ? values.find(open) + 1 : 0;
+        for (size_t index = first; index < values.size(); ++index) {
+            if (!hasNoEffect(context, values[index]))
+                return false;
+        }
+        if (first)
+            return true;
+        auto predecessors = context.analyses.cfg().predecessors(block);
+        if (predecessors.size() != 1 || function.at(predecessors[0]).terminator.kind != TerminatorKind::Jump)
+            return false;
+        block = predecessors[0];
+    }
+}
+
+// `out[name] = record[name]` under a type: the value is tested, and the arm of the failing test is unlikely. SeparateUnlikelyLoopPaths gives such a loop a second header in front of the first,
+// for the turns that end in unlikely code. It only hands its parameters on. A for-in loop is expanded turn by turn, however a turn ends, so those turns go back to the header with the step.
+static bool rejoinSeparatedLoop(FunctionPassContext& context, Function& function, const NaturalLoop& loop)
+{
+    if (!findStepAtHeadOf(context, loop.header()))
+        return false;
+    BlockID second = findOnlyEntryOf(context, loop);
+    if (!second || !function.at(second).values.isEmpty() || function.at(second).handler != function.at(loop.header()).handler)
+        return false;
+    const Target& onward = function.at(second).terminator.targets[0];
+    if (!std::ranges::equal(onward.arguments, function.at(second).parameters))
+        return false;
+
+    Vector<BlockID, 4> ends;
+    for (BlockID predecessor : context.analyses.cfg().predecessors(second)) {
+        if (context.analyses.dominators().dominates(loop.header(), predecessor))
+            ends.append(predecessor);
+    }
+    for (BlockID end : ends) {
+        for (Target& target : function.edit(end).terminator.targets) {
+            if (target.block == second)
+                target.block = loop.header();
+        }
+    }
+    return !ends.isEmpty();
+}
+
+static bool rejoinSeparatedLoops(FunctionPassContext& context, Function& function)
+{
+    bool changed = false;
+    for (bool found = true; found;) {
+        found = false;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index)
+            found = rejoinSeparatedLoop(context, function, loops.loop(index));
+        if (found) {
+            context.analyses.didChangeControlFlow();
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 static Vector<PropertyKeyID, 8> namesListedFor(const Program& program, const OwnKeyWalkArm& arm)
 {
     Vector<PropertyKeyID, 8> names;
@@ -81,7 +144,7 @@ static std::optional<ForInLoop> planForInLoop(FunctionPassContext& context, cons
     const Function& function = context.function;
     ForInLoop loop;
     loop.header = naturalLoop.header();
-    if (function.at(loop.header).frequency == BlockFrequency::Rare || isCold(heatClassOf(context, loop.header)))
+    if (function.at(loop.header).frequency == BlockFrequency::Rare || context.runsAtMostOnce(loop.header))
         return std::nullopt;
 
     loop.step = findStepAtHeadOf(context, loop.header);
@@ -93,14 +156,8 @@ static std::optional<ForInLoop> planForInLoop(FunctionPassContext& context, cons
         return std::nullopt;
 
     loop.entry = findOnlyEntryOf(context, naturalLoop);
-    if (!loop.entry || !function.at(loop.entry).values.contains(loop.open))
+    if (!loop.entry || !leadsToEntryWithoutEffect(context, loop.open, loop.entry))
         return std::nullopt;
-    // Between the open and the entry of the loop nothing may change the object: the tests of an arm say what the enumerator lists.
-    const BlockValues& valuesOfEntry = function.at(loop.entry).values;
-    for (size_t index = valuesOfEntry.find(loop.open) + 1; index < valuesOfEntry.size(); ++index) {
-        if (!hasNoEffect(context, valuesOfEntry[index]))
-            return std::nullopt;
-    }
 
     for (unsigned index = 0; index < naturalLoop.size(); ++index)
         loop.region.append(naturalLoop.at(index));
@@ -117,9 +174,27 @@ static std::optional<ForInLoop> planForInLoop(FunctionPassContext& context, cons
         return namesListedFor(context.program, arm).isEmpty();
     });
 
+    // `"key" !== name`: in a copy for one name the answer is known, and the comparison is gone.
+    auto comparesNameWithText = [&](const Value& value) {
+        if (value.opcode != Opcode::StrictEq)
+            return false;
+        auto isName = [&](ValueID id) {
+            const Value& result = function.at(id);
+            return result.opcode == Opcode::ResultAt && result.index() == 1 && result.operand(OperandIndex::ResultAt::results) == loop.step;
+        };
+        auto isText = [&](ValueID id) {
+            return function.at(id).opcode == Opcode::String;
+        };
+        return (isName(value.operand(0)) && isText(value.operand(1))) || (isText(value.operand(0)) && isName(value.operand(1)));
+    };
     uint64_t bytesOfRegion = 0;
-    for (BlockID block : loop.region)
+    for (BlockID block : loop.region) {
         bytesOfRegion += estimatedCodeBytes(context.program, function, function.at(block));
+        for (ValueID id : function.at(block).values) {
+            if (comparesNameWithText(function.at(id)))
+                bytesOfRegion -= estimatedCodeBytes(context.program, function, function.at(id));
+        }
+    }
     uint64_t numberOfCopies = 0;
     for (const OwnKeyWalkArm& arm : loop.plan.arms)
         numberOfCopies += namesListedFor(context.program, arm).size();
@@ -160,7 +235,7 @@ public:
         m_pass.analyses.didChangeControlFlow();
 
         Target toLoop = function.at(m_loop.entry).terminator.targets[0];
-        function.at(m_loop.entry).terminator = Terminator();
+        function.edit(m_loop.entry).terminator = Terminator();
         m_pass.analyses.didChangeControlFlow();
         builder().setHandler(function.at(m_loop.entry).handler);
         builder().moveToEndOf(m_loop.entry);
@@ -207,7 +282,7 @@ private:
         cloner->cloneBlocks(m_loop.region.span(), [](ValueID, Value&) { });
         BlockID header = cloner->cloneOf(m_loop.header);
         for (BlockID block : cloner->clonedBlocks()) {
-            for (Target& target : function.at(block).terminator.targets) {
+            for (Target& target : function.edit(block).terminator.targets) {
                 if (target.block == header)
                     target.block = nextTurn;
             }
@@ -266,7 +341,7 @@ bool expandForInLoops(FunctionPassContext& context, IRBuilder& builder, const Em
         return false;
 
     // One loop at a time: an expansion changes the blocks that the loops are made of.
-    bool changed = false;
+    bool changed = rejoinSeparatedLoops(context, builder.function());
     for (;;) {
         std::optional<ForInLoop> found;
         NaturalLoops& loops = context.analyses.naturalLoops();

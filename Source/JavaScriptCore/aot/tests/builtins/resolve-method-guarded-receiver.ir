@@ -7,27 +7,30 @@
 # PLACED: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="methodOfClassNeverPristine" parameters=[{type=Date}] results=[{type=anything}] {
-  b0(v0: Date):
-    v1 = PropGet v0 key="getTime"
-    v2 = Call v1, v0 calleeKey="getTime"
+function f0 name="methodOfClassNeverPristine" parameters=[{type=WeakRef}] results=[{type=anything}] {
+  b0(v0: WeakRef):
+    v1 = PropGet v0 key="deref"
+    v2 = Call v1, v0 calleeKey="deref"
     Return v2
 }
 # PLACED-LABEL: function f0 name="methodOfClassNeverPristine"
 # PLACED-NOT: IsPristine
-# PLACED: v1: anything = PropGet v0 key="getTime"
-# PLACED-NEXT: [[isGetTime]]: boolean = TypeTest v1 testedType=builtin(DatePrototypeGetTime)
-# PLACED-NEXT: Branch [[isGetTime]] -> taken [[fast0]](| 0), notTaken [[generic0]](
+# PLACED: v1: anything = PropGet v0 key="deref"
+# PLACED-NEXT: Jump -> next [[test0]]()
 # PLACED-NOT: IsPristine
-# PLACED: number = CallBuiltin v0 overload=DatePrototypeGetTime/0
+# PLACED: anything = CallBuiltin v0 overload=WeakRefPrototypeDeref/0
 # PLACED-NOT: IsPristine
-# PLACED: frequency=Unlikely
-# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="getTime"
+# PLACED: [[test0]]():
+# PLACED-NEXT: [[isDeref]]: boolean = TypeTest v1 testedType=builtin(WeakRefPrototypeDeref)
+# PLACED-NEXT: Branch [[isDeref]] -> taken [[fast0]](| 0), notTaken [[generic0]](
+# PLACED-NEXT: frequency=Unlikely
+# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="deref"
+# PLACED-NOT: IsPristine
 
-function f1 name="methodUnderHandler" parameters=[{type=Date}] results=[{type=anything}] {
-  b0(v0: Date) handler=b2():
-    v1 = PropGet v0 key="getTime"
-    v2 = Call v1, v0 calleeKey="getTime"
+function f1 name="methodUnderHandler" parameters=[{type=WeakRef}] results=[{type=anything}] {
+  b0(v0: WeakRef) handler=b2():
+    v1 = PropGet v0 key="deref"
+    v2 = Call v1, v0 calleeKey="deref"
     Jump -> next b1()
   b1():
     Return v2
@@ -36,11 +39,11 @@ function f1 name="methodUnderHandler" parameters=[{type=Date}] results=[{type=an
     Return v3
 }
 # PLACED-LABEL: function f1 name="methodUnderHandler"
-# PLACED: TypeTest v1 testedType=builtin(DatePrototypeGetTime)
-# PLACED: handler=b2():
-# PLACED-NEXT: number = CallBuiltin v0 overload=DatePrototypeGetTime/0
+# PLACED: ({{*}}: builtin(WeakRefPrototypeDeref)) handler=b2():
+# PLACED-NEXT: anything = CallBuiltin v0 overload=WeakRefPrototypeDeref/0
+# PLACED: TypeTest v1 testedType=builtin(WeakRefPrototypeDeref)
 # PLACED: frequency=Unlikely handler=b2():
-# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="getTime"
+# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="deref"
 
 function f2 name="methodOfLockedClass" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
   b0(v0: RegExp, v1: string):
@@ -113,9 +116,11 @@ function f7 name="wrapperObject" parameters=[{type=String}] results=[{type=anyth
 # PLACED-LABEL: function f7 name="wrapperObject"
 # PLACED-NOT: IsPristine
 # PLACED: v1: anything = PropGet v0 key="trim"
-# PLACED-NEXT: boolean = TypeTest v1 testedType=builtin(StringPrototypeTrim)
+# PLACED-NEXT: Jump -> next [[test7]]()
 # PLACED: [[text]]: string = ToString v0
 # PLACED-NEXT: string = CallBuiltin [[text]] overload=StringPrototypeTrim/0
+# PLACED: [[test7]]():
+# PLACED-NEXT: boolean = TypeTest v1 testedType=builtin(StringPrototypeTrim)
 # PLACED: frequency=Unlikely
 # PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="trim"
 
@@ -131,12 +136,12 @@ function f8 name="receiverWithProvenContents" parameters=[{type=Array<number, pr
 # PLACED: frequency=Unlikely
 # PLACED: anything = Call {{*}}, v0, v1 calleeKey="at"
 
-function f9 name="predictedReceiver" parameters=[{type=anything predicted=RegExp}] results=[{type=anything}] {
+function f9 name="expectedReceiver" parameters=[{type=RegExp flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ RegExp):
     v1 = PropGet v0 key="sticky"
     Return v1
 }
-# PLACED-LABEL: function f9 name="predictedReceiver"
+# PLACED-LABEL: function f9 name="expectedReceiver"
 # PLACED: [[isRegExp]]: boolean{{*}} = TypeTest v0 testedType=RegExp
 # PLACED-NEXT: Branch [[isRegExp]] -> taken [[tested9]](| 0)
 # PLACED: boolean = CallBuiltin [[regExp]] overload=RegExpPrototypeSticky/0

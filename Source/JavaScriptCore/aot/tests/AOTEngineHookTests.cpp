@@ -7,19 +7,24 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncResumption.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
+#include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSavedFrame.h"
 #include "AOTVMState.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
+#include "IteratorOperations.h"
+#include "JSAsyncGenerator.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCallee.h"
@@ -29,10 +34,12 @@
 #include "JSWeakObjectRef.h"
 #include "MapConstructor.h"
 #include "NullSetterFunction.h"
+#include "ObjectConstructor.h"
 #include "PropertyRun.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <array>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -167,7 +174,7 @@ void checkPromiseAllOfElements(Realms& realms, JSGlobalObject* realm)
     VM& vm = realms.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     EncodedJSValue elements[] = { JSValue::encode(jsNumber(1)), JSValue::encode(realms.evaluate(realm, "promise"_s)), JSValue::encode(realms.evaluate(realm, "thenable"_s)) };
-    JSPromise* promise = promiseAllOfElements(realm, elements);
+    JSPromise* promise = promiseAllOfElements(realm, elements, 0);
     AOT_TEST_CHECK(promise && !scope.exception());
     vm.drainMicrotasks();
     AOT_TEST_CHECK(promise->status() == JSPromise::Status::Fulfilled);
@@ -321,29 +328,70 @@ static void testImageIsAttachedToVM(LoadedProgram& program)
     AOT_TEST_CHECK(state.counters && state.reporter && state.callSiteCache && state.regExpLiterals);
     AOT_TEST_CHECK(state.moduleRecordStructure && state.stringBuilderStorageStructure);
     AOT_TEST_CHECK(program.instance().runtimeTable == state.runtimeTable->entries());
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    const ImageText& text = state.image->text();
+    AOT_TEST_CHECK(program.instance().image.stringRecords == text.stringRecords().data() && program.instance().image.lazyStringHeaderOffsets == text.lazyHeaderOffsets());
+    AOT_TEST_CHECK(program.instance().image.lazyStringHeaders == text.lazyHeaders() && program.instance().image.lazyStringHeadersCapacity == text.lazyHeadersCapacity());
+#else
     AOT_TEST_CHECK(program.instance().image.programIdentifiers == state.identifiers->identifiers());
+#endif
+    AOT_TEST_CHECK(program.instance().image.programSymbols == &state.identifiers->symbols());
 }
 
-static void testClearingPristineBitsBumpsShapeEpoch(LoadedProgram& program)
+static void testDeliverStepToDriver(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    Instance& instance = program.instance();
-    auto bumpsDuring = [&](ASCIILiteral source) {
-        uint64_t epoch = instance.shapeEpoch;
-        uint64_t count = valueOf(vm, RuntimeCounterID::ShapeEpochBumps);
-        program.realms().evaluate(program.realm(), source);
-        AOT_TEST_CHECK_FOR_SOURCE(instance.shapeEpoch - epoch == valueOf(vm, RuntimeCounterID::ShapeEpochBumps) - count, source);
-        return instance.shapeEpoch - epoch;
+    Realms& realms = program.realms();
+    JSGlobalObject* realm = program.realm();
+    SavedFrame* asyncFunction = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, 2, 0, 0);
+    SavedFrame* bodyOfGenerator = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncGenerator, 2, 0, 0);
+    JSAsyncGenerator* generator = JSAsyncGenerator::create(vm, realm->asyncGeneratorStructure());
+    setSavedFrameOfGenerator(vm, generator, bodyOfGenerator);
+
+    constexpr ASCIILiteral foreignResults[] = {
+        "({ value: 1, done: false, other: 0 })"_s,
+        "({ value: 1, get done() { return false; } })"_s,
+        "Object.create({ value: 1, done: false })"_s,
+        "[1, false]"_s,
+        "(function () { })"_s,
     };
 
-    AOT_TEST_CHECK(program.realms().object(program.realm(), "[1, 2, 3]"_s)->structure()->isPristine());
-    bumpsDuring("(a => { a.foo = 1; })([1, 2, 3])"_s);
-    AOT_TEST_CHECK(!bumpsDuring("(a => { a.foo = 1; })([1, 2, 3])"_s));
-    AOT_TEST_CHECK(!bumpsDuring("(a => { a.index = 0; a.input = 'a'; })(['a'])"_s));
-    AOT_TEST_CHECK(bumpsDuring("(a => { a.map = 1; })([1, 2, 3])"_s));
-    AOT_TEST_CHECK(bumpsDuring("(a => { a['-1'] = 1; })(['a'])"_s));
-    AOT_TEST_CHECK(bumpsDuring("Object.setPrototypeOf([1, 2, 3], {})"_s));
-    AOT_TEST_CHECK(!bumpsDuring("(a => { a.foo = 1; })([1, 2, 3])"_s));
+    std::pair<JSObject*, SavedFrame*> drivers[] = { { asyncFunction, asyncFunction }, { generator, bodyOfGenerator } };
+    for (auto [driver, saved] : drivers) {
+        AOT_TEST_CHECK(saved->stepStatus() == AsyncGeneratorStepStatus::Result);
+        for (bool isDone : { false, true }) {
+            JSValue value = isDone ? JSValue(constructEmptyObject(realm)) : jsNumber(1);
+            JSObject* result = createIteratorResultObject(realm, value, isDone);
+            AOT_TEST_CHECK(realm->promiseThenWatchpointSet().isStillValid());
+            AOT_TEST_CHECK(deliverStepToDriver(driver, result, false) == value);
+            AOT_TEST_CHECK(saved->stepStatus() == (isDone ? AsyncGeneratorStepStatus::Completed : AsyncGeneratorStepStatus::Yielded));
+            AOT_TEST_CHECK(result->getDirect(iteratorResultObjectValuePropertyOffset).isUndefined());
+            AOT_TEST_CHECK(result->getDirect(iteratorResultObjectDonePropertyOffset) == jsBoolean(isDone));
+            saved->setStepStatus(AsyncGeneratorStepStatus::Result);
+        }
+
+        for (ASCIILiteral source : foreignResults) {
+            JSValue foreign = realms.object(realm, source);
+            AOT_TEST_CHECK_FOR_SOURCE(deliverStepToDriver(driver, foreign, false) == foreign, source);
+            AOT_TEST_CHECK_FOR_SOURCE(saved->stepStatus() == AsyncGeneratorStepStatus::Result, source);
+        }
+        for (JSValue primitive : { jsUndefined(), jsNull(), jsNumber(1), jsBoolean(true) }) {
+            AOT_TEST_CHECK(deliverStepToDriver(driver, primitive, false) == primitive);
+            AOT_TEST_CHECK(saved->stepStatus() == AsyncGeneratorStepStatus::Result);
+        }
+
+        JSValue rejections[] = { createIteratorResultObject(realm, jsNumber(1), false), createIteratorResultObject(realm, jsNumber(1), true), jsNumber(1) };
+        for (JSValue rejection : rejections) {
+            AOT_TEST_CHECK(deliverStepToDriver(driver, rejection, true) == rejection);
+            AOT_TEST_CHECK(saved->stepStatus() == AsyncGeneratorStepStatus::Result);
+        }
+    }
+
+    JSObject* driversOfTheEngine[] = { JSAsyncGenerator::create(vm, realm->asyncGeneratorStructure()), JSPromise::create(vm, realm->promiseStructure()) };
+    for (JSObject* driver : driversOfTheEngine) {
+        JSValue result = createIteratorResultObject(realm, jsNumber(1), false);
+        AOT_TEST_CHECK(deliverStepToDriver(driver, result, false) == result);
+    }
 }
 
 static void testInstanceClassInfos(LoadedProgram& program)
@@ -363,6 +411,36 @@ static void testInstanceClassInfos(LoadedProgram& program)
     AOT_TEST_CHECK(numberOfHostClasses);
 }
 
+static void testCreateWithProperties(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Structure* empty = program.realm()->objectStructureForObjectConstructor();
+    Vector<Identifier> identifiers(6, [&](size_t index) {
+        return Identifier::fromString(vm, makeString("created"_s, index));
+    });
+    Vector<UniquedStringImpl*> names(identifiers.size(), [&](size_t index) {
+        return identifiers[index].impl();
+    });
+
+    Structure* created = Structure::createWithProperties(vm, empty, names.span());
+    AOT_TEST_CHECK(created && !created->isDictionary() && created->isPinnedPropertyTable() && !created->previousID());
+    AOT_TEST_CHECK(Structure::createWithProperties(vm, empty, names.span()) == created);
+    for (unsigned i = 0; i < names.size(); ++i)
+        AOT_TEST_CHECK(created->get(vm, identifiers[i]) == offsetForPropertyNumber(i, empty->inlineCapacity()));
+
+    Structure* grown = empty;
+    PropertyOffset offset;
+    for (auto& name : identifiers)
+        grown = Structure::addPropertyTransition(vm, grown, name, 0, offset);
+    AOT_TEST_CHECK(grown == created);
+    AOT_TEST_CHECK(created->previousID() && created->isCacheableTransitionFrom(created->previousID()));
+
+    UniquedStringImpl* repeated[] = { names[0], names[1], names[0] };
+    AOT_TEST_CHECK(!Structure::createWithProperties(vm, empty, repeated));
+    UniquedStringImpl* present[] = { names[0], vm.propertyNames->length.impl() };
+    AOT_TEST_CHECK(!Structure::createWithProperties(vm, created, present));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<engineHookTests, programText, body>;
 
@@ -376,8 +454,9 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/function-types"_s, testFunctionTypes },
         { "engine-hooks/only-realm-with-module-host-has-instance"_s, withProgram<testOnlyRealmWithModuleHostHasInstance> },
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
-        { "engine-hooks/clearing-pristine-bits-bumps-shape-epoch"_s, withProgram<testClearingPristineBitsBumpsShapeEpoch> },
+        { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },
+        { "engine-hooks/create-with-properties"_s, withProgram<testCreateWithProperties> },
     };
     return tests;
 }

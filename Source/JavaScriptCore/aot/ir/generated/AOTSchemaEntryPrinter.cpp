@@ -26,11 +26,6 @@ static void printRecord(IRPrinter& printer, const Record& record)
     printer.endRecord();
 }
 
-static bool isZero(const ClaimSource& variant)
-{
-    return variant.kind() == ClaimSource::Kind::None;
-}
-
 static bool isZero(const Origin& record)
 {
     return !record.position && !record.inlineFrame;
@@ -64,28 +59,31 @@ void printFields(IRPrinter& printer, const Value& value)
     bool printsEngineFields = printer.printsEngineFields();
     UNUSED_VARIABLE(printsEngineFields);
     switch (value.opcode) {
-    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::FinishObject: case Opcode::AppendElement: case Opcode::AppendSpread:
-    case Opcode::AppendHole: case Opcode::NewSuppressedError: case Opcode::SetLiteralPrototype: case Opcode::InstanceOf: case Opcode::LogicalNot:
-    case Opcode::TypeOf: case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToThis: case Opcode::Results: case Opcode::CatchValue:
-    case Opcode::CatchException: case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::ForInOpen: case Opcode::Await: case Opcode::Yield:
-    case Opcode::InitialYield: case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::ToLength:
-    case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::StepArrayIterator: case Opcode::ResolvePromise:
-    case Opcode::RejectPromise: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex:
-    case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
-    case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::CollectionTable: case Opcode::MapNext:
-    case Opcode::SetNext: case Opcode::Parameter: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
-    case Opcode::BelongsToInstance: case Opcode::IsInBounds: case Opcode::IsNotThenable: case Opcode::IsShapeEpochCurrent:
-    case Opcode::IsEnumeratorCurrent: case Opcode::GetShapeEpoch: case Opcode::AllGuards: case Opcode::GetArrayLength: case Opcode::AppendElements:
-    case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
-    case Opcode::ReturnsToResultTest: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::ToInt32:
-    case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList: case Opcode::EnumeratorGetByVal:
-    case Opcode::RequireAttachedTypedArray: case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable:
-    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame:
-    case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain: case Opcode::StringBuilderBegin:
-    case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString:
-    case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
-    case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose:
-    case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte:
+    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::NewDictionary: case Opcode::FinishObject: case Opcode::AppendElement:
+    case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewSuppressedError: case Opcode::TryDefineLiveBinding: case Opcode::InstanceOf:
+    case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToThis: case Opcode::Results:
+    case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::ForInOpen:
+    case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::IsConstructor: case Opcode::ArraySpeciesCreate:
+    case Opcode::GetByValWithThis: case Opcode::ToLength: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
+    case Opcode::StepArrayIterator: case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::IsPristineArray:
+    case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
+    case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
+    case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext: case Opcode::Parameter: case Opcode::ReadAgain:
+    case Opcode::BorrowedParameter: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::IsInBounds: case Opcode::IsNotThenable:
+    case Opcode::IsEnumeratorCurrent: case Opcode::AllGuards: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject:
+    case Opcode::GetArrayLength: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity:
+    case Opcode::ConvertToDoubleStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::MarkEnvironmentEscaped:
+    case Opcode::ReleaseEnvironment: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewArgumentList:
+    case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable:
+    case Opcode::IsCollectionTableFull: case Opcode::ReserveCollectionCapacity: case Opcode::TakeGeneratorPrototype:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
+    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain:
+    case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength:
+    case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint:
+    case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart:
+    case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte:
     case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
     case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONKeyRepeats: case Opcode::JSONKeyHasEscapes:
     case Opcode::JSONHasStackSpace: case Opcode::IsPlainDataObject: case Opcode::StringBuilderCommit: case Opcode::JSONAppendBoolean:
@@ -95,9 +93,9 @@ void printFields(IRPrinter& printer, const Value& value)
     case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeToNumber:
     case Opcode::StringRangeParseInt: case Opcode::StringRangeSubstringOrUndefined: case Opcode::StringBuilderAppendInteger:
     case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
-    case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue: case Opcode::Box:
-    case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger:
-    case Opcode::Decode: case Opcode::Compress:
+    case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
+    case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber:
+    case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
         break;
     case Opcode::Boolean:
         if (value.boolean())
@@ -153,7 +151,8 @@ void printFields(IRPrinter& printer, const Value& value)
         if (value.field())
             printer.field("field"_s, value.field());
         break;
-    case Opcode::ScopeHasBinding: case Opcode::GetOwnProperty: case Opcode::KeyConstant: case Opcode::GetOwnDataProperty:
+    case Opcode::ScopeHasBinding: case Opcode::NarrowByField: case Opcode::GetOwnProperty: case Opcode::KeyConstant: case Opcode::ValidateLookup:
+    case Opcode::GetOwnDataProperty:
         printer.field("key"_s, value.key());
         break;
     case Opcode::NewObject:
@@ -172,6 +171,8 @@ void printFields(IRPrinter& printer, const Value& value)
             printer.field("allocation"_s, value.allocation());
         if (printsEngineFields && value.allocationClass())
             printer.field("allocationClass"_s, value.allocationClass());
+        if (printsEngineFields && value.outerLayout())
+            printer.field("outerLayout"_s, value.outerLayout());
         break;
     case Opcode::NewArray:
         printer.field("contents"_s, value.contents());
@@ -185,8 +186,12 @@ void printFields(IRPrinter& printer, const Value& value)
             printer.field("capacity"_s, value.operand(0));
         if (printsEngineFields && value.allocationSite())
             printer.field("allocationSite"_s, value.allocationSite());
+        if (printsEngineFields && value.storage() != AllocationStorage::Heap)
+            printer.field("storage"_s, value.storage());
         if (printsEngineFields && value.literalStorage() != ArrayLiteralStorage::Fresh)
             printer.field("literalStorage"_s, value.literalStorage());
+        if (printsEngineFields && value.outerLayout())
+            printer.field("outerLayout"_s, value.outerLayout());
         if (printsEngineFields && value.staticsOffset())
             printer.field("staticsOffset"_s, value.staticsOffset()->value());
         break;
@@ -249,7 +254,29 @@ void printFields(IRPrinter& printer, const Value& value)
         if (printsEngineFields && value.siteCache())
             printer.field("siteCache"_s, value.siteCache());
         break;
-    case Opcode::ElemGet: case Opcode::ElemHas: case Opcode::ElemDefine:
+    case Opcode::ElemGet:
+        if (printsEngineFields && value.accessSite())
+            printer.field("accessSite"_s, value.accessSite());
+        if (printsEngineFields && value.receivers())
+            printer.field("receivers"_s, value.receivers());
+        if (printsEngineFields && value.siteCache())
+            printer.field("siteCache"_s, value.siteCache());
+        if (printsEngineFields && value.expectedElements() != ExpectedElements::Anything)
+            printer.field("expectedElements"_s, value.expectedElements());
+        break;
+    case Opcode::ElemSet:
+        if (value.mode() != ECMAMode::Strict)
+            printer.field("mode"_s, value.mode());
+        if (printsEngineFields && value.accessSite())
+            printer.field("accessSite"_s, value.accessSite());
+        if (printsEngineFields && value.receivers())
+            printer.field("receivers"_s, value.receivers());
+        if (printsEngineFields && value.siteCache())
+            printer.field("siteCache"_s, value.siteCache());
+        if (printsEngineFields && value.expectedElements() != ExpectedElements::Anything)
+            printer.field("expectedElements"_s, value.expectedElements());
+        break;
+    case Opcode::ElemHas: case Opcode::ElemDefine:
         if (printsEngineFields && value.accessSite())
             printer.field("accessSite"_s, value.accessSite());
         if (printsEngineFields && value.receivers())
@@ -257,7 +284,7 @@ void printFields(IRPrinter& printer, const Value& value)
         if (printsEngineFields && value.siteCache())
             printer.field("siteCache"_s, value.siteCache());
         break;
-    case Opcode::ElemSet: case Opcode::ElemDelete:
+    case Opcode::ElemDelete:
         if (value.mode() != ECMAMode::Strict)
             printer.field("mode"_s, value.mode());
         if (printsEngineFields && value.accessSite())
@@ -271,11 +298,20 @@ void printFields(IRPrinter& printer, const Value& value)
         if (value.key())
             printer.field("key"_s, value.key());
         break;
+    case Opcode::TryReExportFields: case Opcode::IsClosureOf:
+        printer.field("function"_s, value.function());
+        break;
     case Opcode::SetFunctionName:
         if (value.methodKind() != MethodKind::Method)
             printer.field("methodKind"_s, value.methodKind());
         break;
-    case Opcode::CopyDataProperties:
+    case Opcode::SetLiteralPrototype:
+        if (printsEngineFields && value.operand(2))
+            printer.field("replacedCallee"_s, value.operand(2));
+        if (printsEngineFields && value.operand(3))
+            printer.field("replacedThis"_s, value.operand(3));
+        break;
+    case Opcode::CopyDataProperties: case Opcode::CopyObject:
         if (!value.excludedKeys().empty()) {
             printer.beginField("excludedKeys"_s);
             printer.list(value.excludedKeys(), [&](const auto& element) {
@@ -326,27 +362,18 @@ void printFields(IRPrinter& printer, const Value& value)
     case Opcode::Upcast: case Opcode::AssumeType:
         printer.field("castType"_s, value.castType());
         break;
-    case Opcode::Claim:
+    case Opcode::Check:
         printer.field("castType"_s, value.castType());
         if (value.site())
             printer.field("site"_s, value.site());
         if (printsEngineFields && value.cause() != CheckCause::Unknown)
             printer.field("cause"_s, value.cause());
         break;
-    case Opcode::ClaimDeclared:
+    case Opcode::Convert:
         printer.beginField("declared"_s);
         printRecord(printer, value.declared());
-        break;
-    case Opcode::ClaimRead:
-        if (!isZero(value.source())) {
-            printer.beginField("source"_s);
-            printVariant(printer, value.source());
-        }
-        if (value.site())
-            printer.field("site"_s, value.site());
-        break;
-    case Opcode::Predict:
-        printer.field("predicted"_s, value.predicted());
+        if (value.illTypedCause() != IllTypedCause::None)
+            printer.field("illTypedCause"_s, value.illTypedCause());
         break;
     case Opcode::CheckInitialized:
         printer.field("name"_s, value.name());
@@ -376,17 +403,7 @@ void printFields(IRPrinter& printer, const Value& value)
         if (printsEngineFields && value.callees())
             printer.field("callees"_s, value.callees());
         break;
-    case Opcode::Construct:
-        if (value.calleeName())
-            printer.field("calleeName"_s, value.calleeName());
-        if (printsEngineFields && value.accessSite())
-            printer.field("accessSite"_s, value.accessSite());
-        if (printsEngineFields && value.callees())
-            printer.field("callees"_s, value.callees());
-        if (printsEngineFields && value.allocatedLayout())
-            printer.field("allocatedLayout"_s, value.allocatedLayout());
-        break;
-    case Opcode::ConstructList: case Opcode::CallResolved:
+    case Opcode::Construct: case Opcode::ConstructList: case Opcode::CallResolved:
         if (value.calleeName())
             printer.field("calleeName"_s, value.calleeName());
         if (printsEngineFields && value.accessSite())
@@ -398,8 +415,6 @@ void printFields(IRPrinter& printer, const Value& value)
         printer.field("function"_s, value.function());
         if (printsEngineFields && value.accessSite())
             printer.field("accessSite"_s, value.accessSite());
-        if (printsEngineFields && value.resultCheck() != ResultCheck::ByCallee)
-            printer.field("resultCheck"_s, value.resultCheck());
         break;
     case Opcode::NewClass:
         printer.field("layout"_s, value.layout());
@@ -469,7 +484,7 @@ void printFields(IRPrinter& printer, const Value& value)
         if (value.phase() != ImportPhase::Evaluation)
             printer.field("phase"_s, value.phase());
         break;
-    case Opcode::ImportModule:
+    case Opcode::ImportModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
         printer.field("module"_s, value.module());
         printer.field("referrer"_s, value.referrer());
         break;
@@ -527,7 +542,7 @@ void printFields(IRPrinter& printer, const Value& value)
         if (printsEngineFields && value.arrayStorage() != ArrayStorage::Other)
             printer.field("arrayStorage"_s, value.arrayStorage());
         break;
-    case Opcode::Unspecified:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList:
         printer.field("valueType"_s, value.valueType());
         break;
     case Opcode::ReportMismatch:
@@ -535,8 +550,16 @@ void printFields(IRPrinter& printer, const Value& value)
         if (value.site())
             printer.field("site"_s, value.site());
         break;
-    case Opcode::CallGroup:
+    case Opcode::CallTable:
         printer.field("function"_s, value.function());
+        printer.field("key"_s, value.key());
+        printer.field("receivers"_s, value.receivers());
+        if (!value.entrypoints().empty()) {
+            printer.beginField("entrypoints"_s);
+            printer.list(value.entrypoints(), [&](const auto& element) {
+                printer.print(element);
+            });
+        }
         if (printsEngineFields && value.accessSite())
             printer.field("accessSite"_s, value.accessSite());
         if (printsEngineFields && value.callees())
@@ -545,8 +568,9 @@ void printFields(IRPrinter& printer, const Value& value)
     case Opcode::ShapeTest:
         printer.field("layouts"_s, value.layouts());
         break;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         printer.field("key"_s, value.key());
         printer.field("receivers"_s, value.receivers());
         if (value.level() != KnowledgeLevel::Unknown)
@@ -561,35 +585,23 @@ void printFields(IRPrinter& printer, const Value& value)
         if (!value.aspects().isEmpty())
             printer.field("aspects"_s, value.aspects());
         break;
-    case Opcode::HasArrayStorage:
+    case Opcode::HasArrayStorage: case Opcode::IsElementPresent:
         if (value.arrayStorage() != ArrayStorage::Other)
             printer.field("arrayStorage"_s, value.arrayStorage());
         break;
-    case Opcode::IsMemberUnchanged:
-        printer.field("layout"_s, value.layout());
-        if (value.side() != ClassSide::Prototype)
-            printer.field("side"_s, value.side());
-        printer.field("key"_s, value.key());
+    case Opcode::IsInsideView: case Opcode::GetTypedArrayLength:
+        if (static_cast<uint32_t>(value.typedArrayType()))
+            printer.field("typedArrayType"_s, static_cast<uint32_t>(value.typedArrayType()));
+        break;
+    case Opcode::AreMembersUnchanged:
+        if (!value.conditions().isEmpty()) {
+            printer.beginField("conditions"_s);
+            printer.list(value.conditions(), [&](const auto& element) {
+                printRecord(printer, element);
+            });
+        }
         if (value.guardBit())
             printer.field("guardBit"_s, value.guardBit());
-        break;
-    case Opcode::IsPrototypeLinkUnchanged:
-        printer.field("layout"_s, value.layout());
-        if (value.side() != ClassSide::Prototype)
-            printer.field("side"_s, value.side());
-        if (value.guardBit())
-            printer.field("guardBit"_s, value.guardBit());
-        break;
-    case Opcode::IsClassEvaluatedOnce:
-        printer.field("layout"_s, value.layout());
-        if (value.guardBit())
-            printer.field("guardBit"_s, value.guardBit());
-        break;
-    case Opcode::IsRequireEdgeReady:
-        printer.field("module"_s, value.module());
-        printer.field("referrer"_s, value.referrer());
-        if (value.edge())
-            printer.field("edge"_s, *value.edge());
         break;
     case Opcode::HasKeyOrder:
         printer.field("layout"_s, value.layout());
@@ -602,18 +614,25 @@ void printFields(IRPrinter& printer, const Value& value)
         if (value.orderWord())
             printer.field("orderWord"_s, value.orderWord()->value());
         break;
-    case Opcode::IsClosureOf:
-        printer.field("function"_s, value.function());
+    case Opcode::GetGlobalBinding:
+        printer.field("key"_s, value.key());
+        if (value.level() != KnowledgeLevel::Unknown)
+            printer.field("level"_s, value.level());
+        if (value.accessSite())
+            printer.field("accessSite"_s, value.accessSite());
+        if (value.binding())
+            printer.field("binding"_s, value.binding());
         break;
-    case Opcode::CopyObject:
-        if (!value.excludedKeys().empty()) {
-            printer.beginField("excludedKeys"_s);
-            printer.list(value.excludedKeys(), [&](const auto& element) {
-                printer.print(element);
-            });
-        }
-        if (value.request())
-            printer.field("request"_s, value.request()->value());
+    case Opcode::SetGlobalBinding:
+        printer.field("key"_s, value.key());
+        if (value.mode() != ECMAMode::Strict)
+            printer.field("mode"_s, value.mode());
+        if (value.level() != KnowledgeLevel::Unknown)
+            printer.field("level"_s, value.level());
+        if (value.accessSite())
+            printer.field("accessSite"_s, value.accessSite());
+        if (value.binding())
+            printer.field("binding"_s, value.binding());
         break;
     case Opcode::GetArrayElement: case Opcode::HasArrayElement:
         if (value.arrayStorage() != ArrayStorage::Other)
@@ -632,10 +651,6 @@ void printFields(IRPrinter& printer, const Value& value)
             printer.field("level"_s, value.level());
         if (value.accessSite())
             printer.field("accessSite"_s, value.accessSite());
-        break;
-    case Opcode::GetTypedArrayLength:
-        if (static_cast<uint32_t>(value.typedArrayType()))
-            printer.field("typedArrayType"_s, static_cast<uint32_t>(value.typedArrayType()));
         break;
     case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
         if (static_cast<uint32_t>(value.typedArrayType()))
@@ -658,6 +673,8 @@ void printFields(IRPrinter& printer, const Value& value)
             printer.field("firstArgument"_s, value.firstArgument());
         if (value.allocationSite())
             printer.field("allocationSite"_s, value.allocationSite());
+        if (value.storage() != AllocationStorage::Heap)
+            printer.field("storage"_s, value.storage());
         break;
     case Opcode::CallForwardVarargs:
         if (value.firstArgument())
@@ -721,6 +738,13 @@ void printFields(IRPrinter& printer, const Value& value)
         if (value.staticsOffset())
             printer.field("staticsOffset"_s, value.staticsOffset()->value());
         break;
+    case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin:
+        printer.field("member"_s, value.member());
+        break;
+    case Opcode::GetBuiltinValue:
+        printer.field("builtin"_s, value.builtin());
+        printer.field("overload"_s, value.overload());
+        break;
     case Opcode::DestructureIterable:
         if (value.count())
             printer.field("count"_s, value.count());
@@ -737,8 +761,10 @@ void printFields(IRPrinter& printer, const Value& value)
         break;
     case Opcode::PromiseAllOfElements:
         printer.field("contents"_s, value.contents());
+        if (value.directCalls())
+            printer.field("directCalls"_s, value.directCalls());
         break;
-    case Opcode::GetRequiredValue:
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation:
         printer.field("module"_s, value.module());
         break;
     case Opcode::StringBuilderAppendBuiltin:
@@ -771,23 +797,6 @@ void printFields(IRPrinter& printer, const Value& value)
     case Opcode::JSONAppendValue:
         if (value.jsonPosition() != JSONPosition::Root)
             printer.field("jsonPosition"_s, value.jsonPosition());
-        break;
-    case Opcode::PropGetChecked:
-        printer.field("key"_s, value.key());
-        printer.field("checkedType"_s, value.checkedType());
-        printer.field("site"_s, value.site());
-        if (value.cause() != CheckCause::Unknown)
-            printer.field("cause"_s, value.cause());
-        if (!isZero(value.readOrigin())) {
-            printer.beginField("readOrigin"_s);
-            printRecord(printer, value.readOrigin());
-        }
-        if (printsEngineFields && value.accessSite())
-            printer.field("accessSite"_s, value.accessSite());
-        if (printsEngineFields && value.receivers())
-            printer.field("receivers"_s, value.receivers());
-        if (printsEngineFields && value.siteCache())
-            printer.field("siteCache"_s, value.siteCache());
         break;
     case Opcode::PropGetChain: case Opcode::PropGetPair:
         printer.field("key"_s, value.key());

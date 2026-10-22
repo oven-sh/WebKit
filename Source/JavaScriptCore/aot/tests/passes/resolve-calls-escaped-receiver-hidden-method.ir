@@ -1,11 +1,30 @@
-# A store through an unknown receiver under the name of a method may give an instance that reached native code an own property of that name, which hides the method: the call is no direct call without a test
+# A store through an unknown receiver under the name of a method may give an instance that reached native code an own property of that name, which hides the method.
+# The store pays: it clears one bit of the class. The call tests that bit and calls the method directly.
+# Behind a cleared bit each receiver is asked whether it still has the prototype of its layout and no property of its own, so one object that hides the method costs the others two tests, not the call by name.
 # FORM: AsRead
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
 # RUN: pipeline ResolveCalls
-# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses
 # CHECK-LABEL: function f3 name="use"
 # CHECK: [[point]]: L0 = GetModuleVariable variable=g0
+# CHECK: [[isNotHidden]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="norm"}]
+# CHECK-NEXT: Branch [[isNotHidden]] -> taken [[direct]](), notTaken [[byName]]()
+# CHECK: [[direct]]():
+# CHECK-NEXT: = CallDirect [[point]] function=f2
+# CHECK: [[byName]]() frequency=Unlikely:
 # CHECK-NEXT: [[callee]]: anything = PropGet [[point]] key="norm"
-# CHECK: = TypeTest {{*}} testedType=f2
+# CHECK-NEXT: = Call [[callee]], [[point]] calleeKey="norm"
+# RUN(PLACED): pipeline PlaceTypeTests
+# PLACED-LABEL: function f3 name="use"
+# PLACED: [[point]]: L0 = GetModuleVariable variable=g0
+# PLACED: [[isNotHidden]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="norm"}]
+# PLACED-NEXT: Branch [[isNotHidden]] -> taken {{*}}, notTaken [[cleared]]()
+# PLACED: [[cleared]]() frequency=Unlikely:
+# PLACED-NEXT: = HasLayoutPrototype [[point]]
+# PLACED: frequency=Unlikely:
+# PLACED: = CallDirect [[point]] function=f2
+# PLACED: frequency=Rare:
+# PLACED-NEXT: = PropGet [[point]] key="norm"
+# PLACED: = HasNoExtraProperties [[point]],
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

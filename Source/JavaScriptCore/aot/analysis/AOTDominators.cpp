@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include <algorithm>
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
@@ -197,18 +199,122 @@ public:
 };
 
 Dominators::Dominators(CFG& cfg, bool selfCheck)
-    : WTF::Dominators<CFG>(cfg, selfCheck)
-    , m_cfg(cfg)
+    : m_cfg(cfg)
+    , m_selfCheck(selfCheck)
 {
-    computeChildren();
-    computeJumpPointers();
-    if (cfg.hasHandlers())
-        m_splitBlockDominators = makeUnique<SplitBlockDominators>(cfg, selfCheck);
 }
 
 Dominators::~Dominators() = default;
 
-void Dominators::computeChildren()
+auto Dominators::treeForChecking() const -> Tree&
+{
+    if (!m_treeForChecking)
+        m_treeForChecking.emplace(m_cfg, m_selfCheck);
+    return *m_treeForChecking;
+}
+
+bool Dominators::tryFindDominatorsByOrder(std::span<uint32_t> dominatorByOrder) const
+{
+    constexpr uint32_t unknown = UINT32_MAX;
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    uint32_t size = order.size();
+    const BlockID* successors = m_cfg.successorsOfAllBlocks().data();
+    const uint32_t* firstSuccessor = m_cfg.firstSuccessorOfBlocks().data();
+    uint32_t* dominatorOf = dominatorByOrder.data();
+    std::ranges::fill(dominatorByOrder, unknown);
+    dominatorOf[0] = 0;
+
+    Vector<uint64_t, 64> isBelowDominatorOf(FillWith { }, size, 0ull);
+    uint64_t stepsLeft = 16ull * (size + m_cfg.successorsOfAllBlocks().size()) + 64;
+    uint64_t firstStampOfPass = 1;
+    bool didChange;
+    do {
+        didChange = false;
+        for (uint32_t source = 0; source < size; ++source) {
+            unsigned block = order[source].index();
+            for (uint32_t edge = firstSuccessor[block]; edge < firstSuccessor[block + 1]; ++edge) {
+                uint32_t target = m_cfg.reversePostOrderIndex(successors[edge]);
+                uint32_t known = dominatorOf[target];
+                uint64_t stamp = firstStampOfPass + target;
+                if (known == unknown) {
+                    dominatorOf[target] = source;
+                    isBelowDominatorOf[source] = stamp;
+                    didChange = true;
+                    continue;
+                }
+                uint32_t common = known;
+                uint32_t above = source;
+                while (above != common) {
+                    if (above > common) {
+                        if (isBelowDominatorOf[above] == stamp) {
+                            above = common;
+                            break;
+                        }
+                        isBelowDominatorOf[above] = stamp;
+                        above = dominatorOf[above];
+                    } else
+                        common = dominatorOf[common];
+                    if (!--stepsLeft) [[unlikely]]
+                        return false;
+                }
+                if (common != known) {
+                    dominatorOf[target] = common;
+                    didChange = true;
+                }
+            }
+        }
+        firstStampOfPass += size;
+    } while (didChange && m_cfg.hasCycle());
+    return true;
+}
+
+void Dominators::computePlaces() const
+{
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    uint32_t size = order.size();
+    m_places.fill(Place { }, m_cfg.numNodes());
+    Place* places = m_places.mutableSpan().data();
+
+    Vector<uint32_t, 192> tables(3 * size);
+    std::span<uint32_t> dominatorOf = tables.mutableSpan().first(size);
+    uint32_t* sizeOf = tables.mutableSpan().data() + size;
+    uint32_t* nextNumberBelow = sizeOf + size;
+    if (!tryFindDominatorsByOrder(dominatorOf)) [[unlikely]] {
+        Tree& tree = treeForChecking();
+        dominatorOf[0] = 0;
+        for (uint32_t index = 1; index < size; ++index)
+            dominatorOf[index] = m_cfg.reversePostOrderIndex(tree.idom(order[index]));
+    }
+
+    for (uint32_t index = 0; index < size; ++index)
+        sizeOf[index] = 1;
+    for (uint32_t index = size; --index;)
+        sizeOf[dominatorOf[index]] += sizeOf[index];
+    places[order[0].index()] = { BlockID(), 0, size - 1 };
+    nextNumberBelow[0] = 1;
+    for (uint32_t index = 1; index < size; ++index) {
+        uint32_t dominator = dominatorOf[index];
+        uint32_t number = nextNumberBelow[dominator];
+        nextNumberBelow[dominator] += sizeOf[index];
+        nextNumberBelow[index] = number + 1;
+        places[order[index].index()] = { order[dominator], number, number + sizeOf[index] - 1 };
+    }
+
+    if (!m_selfCheck)
+        return;
+    Tree& tree = treeForChecking();
+    for (unsigned index = 0; index < m_cfg.numNodes(); ++index)
+        RELEASE_ASSERT(places[index].idom == tree.idom(BlockID(index)));
+}
+
+auto Dominators::splitBlockDominators() const -> const SplitBlockDominators&
+{
+    if (!m_splitBlockDominators)
+        m_splitBlockDominators = makeUnique<SplitBlockDominators>(m_cfg, m_selfCheck);
+    return *m_splitBlockDominators;
+}
+
+void Dominators::computeChildren() const
 {
     unsigned numberOfBlocks = m_cfg.numNodes();
     auto dominatedBlocks = m_cfg.reversePostOrder().subspan(1);
@@ -225,7 +331,7 @@ void Dominators::computeChildren()
         m_children[nextChild[idom(block).index()]++] = block;
 }
 
-void Dominators::computeJumpPointers()
+void Dominators::computeJumpPointers() const
 {
     unsigned numberOfBlocks = m_cfg.numNodes();
     m_depth.fill(0, numberOfBlocks);
@@ -238,13 +344,21 @@ void Dominators::computeJumpPointers()
     }
 }
 
+BlockID Dominators::ancestorAtDepth(BlockID block, uint32_t depth) const
+{
+    while (depthOf(block) > depth)
+        block = depthOf(jumpOf(block)) >= depth ? jumpOf(block) : idom(block);
+    return block;
+}
+
 BlockID Dominators::nearestCommonDominator(BlockID a, BlockID b) const
 {
     RELEASE_ASSERT(m_cfg.isReachable(a) && m_cfg.isReachable(b));
+    if (a == b)
+        return a;
     if (depthOf(a) < depthOf(b))
         std::swap(a, b);
-    while (depthOf(a) > depthOf(b))
-        a = depthOf(jumpOf(a)) >= depthOf(b) ? jumpOf(a) : idom(a);
+    a = ancestorAtDepth(a, depthOf(b));
     while (a != b) {
         bool canJump = jumpOf(a) != jumpOf(b);
         a = canJump ? jumpOf(a) : idom(a);
@@ -253,17 +367,65 @@ BlockID Dominators::nearestCommonDominator(BlockID a, BlockID b) const
     return a;
 }
 
+// A covered block may leave for its handler in front of its terminator, so the terminator dominates what the block dominates, less what the handler reaches
+// without coming through the block again. There is such a path only where the block dominates its handler. It stays below the block in the tree, and it enters
+// the subtree of a child of the block at that child. So the question is one about the children of the block, and a block is the child of one block: a bit a block.
+const BitVector& Dominators::blocksReachedFromHandlerOfDominator() const
+{
+    if (m_blocksReachedFromHandlerOfDominator)
+        return *m_blocksReachedFromHandlerOfDominator;
+
+    BitVector& isReached = m_blocksReachedFromHandlerOfDominator.emplace(m_cfg.numNodes());
+    for (BlockID block : m_cfg.reversePostOrder()) {
+        if (!m_cfg.hasHandler(block))
+            continue;
+        BlockID handler = m_cfg.successors(block).back();
+        if (idom(handler) != block)
+            continue;
+
+        isReached.quickSet(handler.index());
+        uint32_t depthOfChildren = depthOf(block) + 1;
+        auto isEnteredFromReachedChild = [&](BlockID child) {
+            return std::ranges::any_of(m_cfg.predecessors(child), [&](BlockID predecessor) {
+                return predecessor != block && isReached.quickGet(ancestorAtDepth(predecessor, depthOfChildren).index());
+            });
+        };
+        // The children stand in reverse post order, so only an edge of a cycle leads from a child to one in front of it.
+        bool didReachChild;
+        do {
+            didReachChild = false;
+            for (BlockID child : children(block)) {
+                if (isReached.quickGet(child.index()) || !isEnteredFromReachedChild(child))
+                    continue;
+                isReached.quickSet(child.index());
+                didReachChild = true;
+            }
+        } while (didReachChild && m_cfg.hasCycle());
+    }
+    return isReached;
+}
+
 bool Dominators::terminatorDominates(BlockID from, BlockID to) const
 {
     if (!m_cfg.isReachable(from) || !m_cfg.isReachable(to))
         return false;
     if (from == to)
         return false;
+    // A dominator comes before the blocks it dominates in reverse post order.
+    if (m_cfg.reversePostOrderIndex(to) < m_cfg.reversePostOrderIndex(from))
+        return false;
     if (!m_cfg.hasHandler(from))
         return strictlyDominates(from, to);
 
-    const SplitBlockGraph& graph = m_splitBlockDominators->graph;
-    return m_splitBlockDominators->dominators.dominates(graph.terminatorOf(from), graph.headOf(to));
+    return strictlyDominates(from, to) && !blocksReachedFromHandlerOfDominator().quickGet(ancestorAtDepth(to, depthOf(from) + 1).index());
+}
+
+bool Dominators::terminatorDominatesInSplitGraph(BlockID from, BlockID to) const
+{
+    if (from == to || !m_cfg.isReachable(from) || !m_cfg.isReachable(to))
+        return false;
+    const SplitBlockDominators& split = splitBlockDominators();
+    return split.dominators.dominates(split.graph.terminatorOf(from), split.graph.headOf(to));
 }
 
 } } } // namespace JSC::AOT::Typed

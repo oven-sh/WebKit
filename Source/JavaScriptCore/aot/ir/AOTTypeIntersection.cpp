@@ -164,38 +164,17 @@ static void intersectContents(ClassPart& result, const ClassPart& a, const Class
         result.contents[index] = intersectKnownContents(a.contentsAt(index), b.contentsAt(index), arena);
 }
 
-// Beside a proof, what the other part declares is a prediction. Predictions that contradict each other say nothing.
-static void intersectPredictedContents(ClassPart& result, const ClassPart& a, const ClassPart& b, TypeArena& arena, bool replacesContentsOfFirst)
-{
-    result.predictedContents.clear();
-    if (!result.contentsAreProven && a.predictedContents.isEmpty() && b.predictedContents.isEmpty())
-        return;
-
-    size_t size = std::max({ a.contents.size(), a.predictedContents.size(), b.contents.size(), b.predictedContents.size() });
-    result.predictedContents.grow(size);
-    for (unsigned index = 0; index < size; ++index) {
-        bool ignoresFirst = replacesContentsOfFirst && index >= a.predictedContents.size();
-        TypeID met = intersectKnownContents(ignoresFirst ? TypeTable::anything : a.predictedContentsAt(index), b.predictedContentsAt(index), arena);
-        if (met != TypeTable::never)
-            result.predictedContents[index] = met;
-    }
-}
-
 static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeArena& arena, DeclaredParts declared)
 {
     ClassPart result = a;
     result.contentsAreProven = a.contentsAreProven || b.contentsAreProven;
     result.provenPristine = a.provenPristine | b.provenPristine;
-    bool replacesContentsOfFirst = false;
     if (a.contentsAreProven != b.contentsAreProven)
         copyContents(result, a.contentsAreProven ? a : b);
     else if (a.contentsAreProven || declared == DeclaredParts::FromEither)
         intersectContents(result, a, b, arena);
-    else {
-        replacesContentsOfFirst = !b.contents.isEmpty();
-        copyContents(result, replacesContentsOfFirst ? b : a);
-    }
-    intersectPredictedContents(result, a, b, arena, replacesContentsOfFirst);
+    else
+        copyContents(result, b.contents.isEmpty() ? a : b);
     return result;
 }
 
@@ -267,33 +246,69 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     }
 }
 
-static LayoutSetID intersectLayouts(LayoutSetID a, LayoutSetID b, TypeArena& arena)
+static Type objectsWithoutLayoutOf(const Type& type)
 {
-    if (!a || !b)
-        return { };
-    if (a == b)
-        return a;
-    const Vector<LayoutID>& membersOfA = arena.at(a).members;
-    const Vector<LayoutID>& membersOfB = arena.at(b).members;
-    Vector<LayoutID> common(std::min(membersOfA.size(), membersOfB.size()));
-    common.shrink(std::ranges::set_intersection(membersOfA, membersOfB, common.begin()).out - common.begin());
-    if (common.isEmpty())
-        return { };
-    if (common.size() == membersOfA.size())
-        return a;
-    if (common.size() == membersOfB.size())
-        return b;
-    return arena.intern(LayoutSet { WTF::move(common), true });
+    Type objects = type.withOnlyObjects();
+    objects.layouts = { };
+    return objects;
 }
 
-static void intersectKnownObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
+// A set does not say which objects its members without a layout are, so each object without a layout that the other type lists may be one of them.
+static void intersectMembersWithoutLayout(Type& result, const Type& a, const Type& b, TypeArena& arena)
+{
+    bool areInFirst = hasMembersWithoutLayout(arena.table(), a);
+    bool areInSecond = hasMembersWithoutLayout(arena.table(), b);
+    if (areInFirst && areInSecond)
+        copyObjectParts(result, objectsWithoutLayoutOf(a).unionWith(objectsWithoutLayoutOf(b), arena));
+    else
+        copyObjectParts(result, areInFirst ? b : a);
+    result.layouts = arena.intersectionOf(a.layouts, b.layouts);
+}
+
+static void intersectListedObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     const BuiltinTable& builtins = arena.builtins();
     result.anyFunction = a.anyFunction && b.anyFunction;
     result.functions = intersectLists(a.functions, mayContainAnyCallable(builtins, b), b.functions, mayContainAnyCallable(builtins, a));
+    // Beside any function a list says what to expect, and a cast says it anew: behind the failed test for a function that function is expected no more.
+    if (result.anyFunction && declared == DeclaredParts::FromSecond)
+        result.functions = b.functions;
     intersectBuiltins(result, a, b, arena.table());
     intersectClasses(result, a, b, arena, declared);
-    result.layouts = intersectLayouts(a.layouts, b.layouts, arena);
+    result.layouts = arena.intersectionOf(a.layouts, b.layouts);
+}
+
+// What a cast gives lies inside the cast type. An object without a layout that only the source lists may be one of the members the family does not list,
+// so the result says of it what the family says.
+static void castToFamilyWithUnlistedMembers(Type& result, const Type& source, const Type& family, TypeArena& arena)
+{
+    if (hasMembersWithoutLayout(arena.table(), source)) {
+        copyObjectParts(result, family);
+        result.layouts = arena.intersectionOf(source.layouts, family.layouts);
+        return;
+    }
+
+    intersectListedObjects(result, source, family, arena, DeclaredParts::FromSecond);
+    if (isSubset(objectsWithoutLayoutOf(source), objectsWithoutLayoutOf(result), arena.table()))
+        return;
+    LayoutSet layouts { .isComplete = true };
+    if (result.layouts)
+        layouts = arena.at(result.layouts);
+    layouts.hasMembersWithoutLayout = true;
+    result.layouts = arena.intern(WTF::move(layouts));
+}
+
+static void intersectKnownObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
+{
+    if (declared == DeclaredParts::FromSecond && hasMembersWithoutLayout(arena.table(), b)) {
+        castToFamilyWithUnlistedMembers(result, a, b, arena);
+        return;
+    }
+    if (hasMembersWithoutLayout(arena.table(), a) || hasMembersWithoutLayout(arena.table(), b)) {
+        intersectMembersWithoutLayout(result, a, b, arena);
+        return;
+    }
+    intersectListedObjects(result, a, b, arena, declared);
 }
 
 static void intersectObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
@@ -386,27 +401,11 @@ static void subtractClasses(Type& result, const Type& removed, const TypeTable& 
         result.classes.removeFirstMatching(isRegExpPart);
 }
 
-static LayoutSetID subtractLayouts(LayoutSetID layouts, LayoutSetID removed, TypeArena& arena)
-{
-    if (!layouts || !removed)
-        return layouts;
-    if (layouts == removed)
-        return { };
-    const Vector<LayoutID>& members = arena.at(layouts).members;
-    Vector<LayoutID> remaining(members.size());
-    remaining.shrink(std::ranges::set_difference(members, arena.at(removed).members, remaining.begin()).out - remaining.begin());
-    if (remaining.isEmpty())
-        return { };
-    if (remaining.size() == members.size())
-        return layouts;
-    return arena.intern(LayoutSet { WTF::move(remaining), true });
-}
-
 static void subtractKnownObjects(Type& result, const Type& removed, TypeArena& arena)
 {
     subtractCallables(result, removed, arena.builtins());
     subtractClasses(result, removed, arena.table());
-    result.layouts = subtractLayouts(result.layouts, removed.layouts, arena);
+    result.layouts = arena.differenceOf(result.layouts, removed.layouts);
 }
 
 Type Type::without(const Type& other, TypeArena& arena) const

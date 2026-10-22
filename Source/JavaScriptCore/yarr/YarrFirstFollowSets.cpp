@@ -67,15 +67,25 @@ static Outcome buildCharacterSpans(const YarrPattern& pattern, const PatternTerm
         if (characterClass.m_table)
             return Outcome::GaveUp;
     } else {
-        for (char32_t ch : characterClass.m_matches8)
-            members.append({ ch, ch });
-        for (char32_t ch : characterClass.m_matches32)
-            members.append({ ch, ch });
-        for (auto range : characterClass.m_ranges8)
-            members.append({ range.begin, range.end });
-        for (auto range : characterClass.m_ranges32)
-            members.append({ range.begin, range.end });
-        std::ranges::sort(members);
+        // Each of the four lists is in order, and the two of narrow characters come before the two of wide ones.
+        auto appendInOrder = [&](const auto& characters, const auto& ranges) {
+            size_t nextCharacter = 0;
+            size_t nextRange = 0;
+            while (nextCharacter < characters.size() || nextRange < ranges.size()) {
+                if (nextRange == ranges.size() || (nextCharacter < characters.size() && static_cast<char32_t>(characters[nextCharacter]) <= static_cast<char32_t>(ranges[nextRange].begin))) {
+                    char32_t ch = characters[nextCharacter++];
+                    members.append({ ch, ch });
+                } else {
+                    auto range = ranges[nextRange++];
+                    members.append({ range.begin, range.end });
+                }
+            }
+        };
+        members.reserveInitialCapacity(characterClass.m_matches8.size() + characterClass.m_ranges8.size() + characterClass.m_matches32.size() + characterClass.m_ranges32.size());
+        appendInOrder(characterClass.m_matches8, characterClass.m_ranges8);
+        appendInOrder(characterClass.m_matches32, characterClass.m_ranges32);
+        if (!std::ranges::is_sorted(members)) [[unlikely]]
+            std::ranges::sort(members);
     }
 
     char32_t nextExcluded = 0;
@@ -336,9 +346,16 @@ CharacterSetWalker::NextCharacters CharacterSetWalker::internMembers(Walk& walk)
     result.includesEndOfInput = walk.includesEndOfInput;
     CharacterRanges& ranges = result.ranges;
     ranges.reserveInitialCapacity(rangeCount);
-    for (CharacterSetID member : walk.members)
+    // The ranges of each member are in order.
+    constexpr size_t maxMembersMergedOneByOne = 4;
+    for (CharacterSetID member : walk.members) {
+        size_t sizeBefore = ranges.size();
         ranges.appendVector(sets().set(member).ranges);
-    std::ranges::sort(ranges);
+        if (walk.members.size() <= maxMembersMergedOneByOne)
+            std::inplace_merge(ranges.begin(), ranges.begin() + sizeBefore, ranges.end());
+    }
+    if (walk.members.size() > maxMembersMergedOneByOne)
+        std::ranges::sort(ranges);
     size_t mergedCount = 0;
     for (auto [begin, end] : ranges) {
         if (mergedCount && begin <= ranges[mergedCount - 1].second + 1)
@@ -536,22 +553,30 @@ void computeFirstFollowSets(YarrPattern& pattern, StackCheck& stackCheck)
         return termSet(PatternTerm(characterClass, invert, pattern.m_flags));
     };
 
+    bool hasWordBoundary = false;
+    bool hasEndOfLine = false;
     for (auto& disjunction : pattern.m_disjunctions) {
         for (auto& alternative : disjunction->m_alternatives) {
             for (auto& term : alternative->m_terms) {
                 if (term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass)
                     term.m_matchedSet = termSet(term);
+                hasWordBoundary |= term.type == PatternTerm::Type::AssertionWordBoundary;
+                hasEndOfLine |= term.type == PatternTerm::Type::AssertionEOL && term.multiline();
             }
         }
     }
 
-    sets.m_lineTerminators = atomSet(sharedCharacterClass(SharedCharacterClass::Newline), false);
+    // Only a $ that ends a line asks for the line terminators, and what is known of word characters is of use at a \b or \B alone.
+    if (hasEndOfLine)
+        sets.m_lineTerminators = atomSet(sharedCharacterClass(SharedCharacterClass::Newline), false);
     auto setWordCharacters = [&](WordClassKind kind, SharedCharacterClass wordClass) {
         sets.m_wordCharacters[std::to_underlying(kind)] = atomSet(sharedCharacterClass(wordClass), false);
         sets.m_notWordCharacters[std::to_underlying(kind)] = atomSet(sharedCharacterClass(wordClass), true);
     };
-    setWordCharacters(WordClassKind::Plain, SharedCharacterClass::WordChar);
-    setWordCharacters(WordClassKind::UnicodeIgnoreCase, SharedCharacterClass::WordUnicodeIgnoreCaseChar);
+    if (hasWordBoundary) {
+        setWordCharacters(WordClassKind::Plain, SharedCharacterClass::WordChar);
+        setWordCharacters(WordClassKind::UnicodeIgnoreCase, SharedCharacterClass::WordUnicodeIgnoreCaseChar);
+    }
 
     PatternAnnotator annotator(pattern, stackCheck);
     for (auto& alternative : pattern.m_body->m_alternatives)

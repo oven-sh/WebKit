@@ -1,0 +1,54 @@
+# function each(list, use) { use(list[i], i, list) }   each(records, reader);  each(records, keeper);  each(records, unknown)
+# Of `each` alone the table can only say that `use` is called with an element of `list` and with `list` itself. At a call the closure is known, and its function answers:
+# `reader` reads a member of the element and cannot see the third argument; `keeper` stores the element into what it has captured, which lies behind the operand that holds the closure;
+# `giver` returns the element to `each`, which does with it what the row says. Where nobody knows the closure the answer is the one for every caller.
+# RUN: fates-at-calls f1.p0.whole=anything f1.p0.apart=members-read f1.p1.whole=called f1.p1.whole.contents=anything f1.p1.apart=called f1.calls=p1(p1@callee)->nothing f1.calls=p1(*p0@argument0)->nothing f1.calls=p1(p0@argument2)->nothing f2.p0=members-read f3.p0=members-written f3.p1=nothing f3.p1.into-parameters=1 f4.p0=nothing f4.p0.results=1
+# CHECK: f0 v6 Call operand 2: members-read contents=members-read read=[any]
+# CHECK-NEXT: f0 v6 Call operand 3: called contents=nothing
+# CHECK: f0 v9 Call operand 2: members-read contents=stored-in-unknown-object read=[any]
+# CHECK-NEXT: f0 v9 Call operand 3: called contents=members-written
+# CHECK: f0 v11 Call operand 2: members-read contents=nothing read=[any]
+# CHECK: f0 v14 Call operand 2: anything
+# CHECK-NEXT: f0 v14 Call operand 3: called contents=anything
+# RUN(KEPT): fates-at-calls f1.p0.whole=anything f1.p0.apart=members-read f1.p1=called f1.calls=p1(p1@callee)->stored-in-variable f1.calls=p1(*p0@argument0)->stored-in-variable f4.p0=nothing f4.p0.results=1
+# KEPT: f0 v11 Call operand 2: members-read contents=stored-in-variable read=[any]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Environment name="main" fields=[{key="kept" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray v1 contents=anything
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewObject layout=L1 fields=[]
+    v6 = Call v3, -, v2, v4
+    v7 = NewClosure v5 function=f3
+    v8 = Undefined
+    v9 = Call v3, -, v2, v7
+    v10 = NewClosure function=f4
+    v11 = Call v3, -, v2, v10
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="unknown" [isFreeName]
+    v14 = Call v3, -, v2, v13
+    Return
+}
+function f1 name="each" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f2 name="reader" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="keeper" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    Return
+}
+function f4 name="giver" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

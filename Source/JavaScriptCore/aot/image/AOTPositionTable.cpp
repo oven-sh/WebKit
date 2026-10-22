@@ -13,7 +13,9 @@
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTVarint.h"
+#include <array>
 #include <limits>
+#include <wtf/Lock.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -75,7 +77,12 @@ static uint32_t sourceNumber(const SitePosition& position)
     return position.source ? position.source.index() + 1 : 0;
 }
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites)
+OwnPosition OwnPosition::of(const SiteDescription& sites)
+{
+    return { sites.positions[0].line, sourceNumber(sites.positions[0]) };
+}
+
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnPosition ofFunctionInFront)
 {
     RELEASE_ASSERT(!sites.positions.isEmpty());
     size_t count = sites.positions.size();
@@ -96,10 +103,7 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites)
     };
 
     PositionState start { sites.positions[0].line, sites.positions[0].column, sourceNumber(sites.positions[0]) };
-    appendVarint(stream, sites.positions[0].line);
-    appendVarint(stream, sites.positions[0].column);
-    appendVarint(stream, static_cast<uint64_t>(count) << 1 | followsInlineFrames);
-    appendVarint(stream, start.source);
+    Vector<uint8_t> checkpoints;
     Vector<uint8_t> positions;
     size_t lastRunEnd = 0;
     PositionEncoder encoder(positions);
@@ -109,8 +113,8 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites)
         if (!(site % sitesBetweenPositionCheckpoints)) {
             size_t bytesSinceLast = positions.size() - lastRunEnd;
             ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * maxPositionSize);
-            stream.append(static_cast<uint8_t>(bytesSinceLast));
-            stream.append(static_cast<uint8_t>(bytesSinceLast >> 8));
+            checkpoints.append(static_cast<uint8_t>(bytesSinceLast));
+            checkpoints.append(static_cast<uint8_t>(bytesSinceLast >> 8));
             lastRunEnd = positions.size();
             states.fill(start);
         }
@@ -120,7 +124,53 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites)
         encoder.append({ position.line, position.column }, sourceNumber(position));
         state = encoder.state();
     }
+
+    bool hasCheckpoints = !checkpoints.isEmpty();
+    bool isInOtherSource = start.source != ofFunctionInFront.source;
+    appendVarint(stream, static_cast<uint64_t>(checkpoints.size() + positions.size()) << 2 | hasCheckpoints << 1 | followsInlineFrames);
+    appendVarint(stream, zigZagEncode(start.line - (isInOtherSource ? 0 : static_cast<int64_t>(ofFunctionInFront.line))) << 1 | isInOtherSource);
+    if (isInOtherSource)
+        appendVarint(stream, zigZagEncode(static_cast<int64_t>(start.source) - ofFunctionInFront.source));
+    appendVarint(stream, sites.positions[0].column);
+    if (hasCheckpoints)
+        appendVarint(stream, count);
+    stream.appendVector(checkpoints);
     stream.appendVector(positions);
+}
+
+namespace {
+
+struct PositionsEntry {
+    PositionState start;
+    bool followsInlineFrames { false };
+    std::optional<uint64_t> count;
+    const uint8_t* sites { nullptr };
+    const uint8_t* end { nullptr };
+};
+
+} // anonymous namespace
+
+static PositionsEntry readEntry(const uint8_t*& cursor, OwnPosition& ofFunctionInFront)
+{
+    PositionsEntry entry;
+    uint64_t sizeAndFlags = readVarint(cursor);
+    uint64_t lineWord = readVarint(cursor);
+    entry.start.source = ofFunctionInFront.source;
+    entry.start.line = ofFunctionInFront.line;
+    if (lineWord & 1) {
+        entry.start.source = static_cast<uint32_t>(ofFunctionInFront.source + zigZagDecode(readVarint(cursor)));
+        entry.start.line = 0;
+    }
+    entry.start.line += zigZagDecode(lineWord >> 1);
+    entry.start.column = static_cast<int64_t>(readVarint(cursor));
+    entry.followsInlineFrames = sizeAndFlags & 1;
+    if (sizeAndFlags & 2)
+        entry.count = readVarint(cursor);
+    entry.sites = cursor;
+    entry.end = cursor + (sizeAndFlags >> 2);
+    cursor = entry.end;
+    ofFunctionInFront = { static_cast<uint32_t>(entry.start.line), entry.start.source };
+    return entry;
 }
 
 static void readPosition(const uint8_t*& cursor, PositionState& state)
@@ -141,40 +191,41 @@ static SourcePosition sourcePositionFor(const PositionState& state)
     return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID() };
 }
 
-std::optional<SourcePosition> decodePosition(const Image& image, uint32_t function, const uint8_t* positions, CallSiteIndex site)
+std::optional<SourcePosition> decodePosition(const Image& image, uint32_t function, const uint8_t* entryInSection, OwnPosition ofFunctionInFront, CallSiteIndex site)
 {
-    const uint8_t* cursor = positions;
-    PositionState start;
-    start.line = static_cast<int64_t>(readVarint(cursor));
-    start.column = static_cast<int64_t>(readVarint(cursor));
-    uint64_t countAndFollowsInlineFrames = readVarint(cursor);
-    start.source = static_cast<uint32_t>(readVarint(cursor));
-    uint64_t count = countAndFollowsInlineFrames >> 1;
-    bool followsInlineFrames = countAndFollowsInlineFrames & 1;
+    PositionsEntry entry = readEntry(entryInSection, ofFunctionInFront);
+    const PositionState& start = entry.start;
+    const uint8_t* cursor = entry.sites;
 
     uint64_t number = site.bits();
-    if (number >= count)
+    if (entry.count && number >= *entry.count)
         return std::nullopt;
     if (!number)
         return sourcePositionFor(start);
 
-    constexpr uint64_t sitesBetween = sitesBetweenPositionCheckpoints;
-    uint64_t numberOfCheckpoints = (count - 1) / sitesBetween;
-    const uint8_t* checkpoints = cursor;
-    cursor += numberOfCheckpoints * sizeof(uint16_t);
-    uint64_t precedingCount = number / sitesBetween;
-    for (uint64_t i = 0; i < precedingCount; ++i)
-        cursor += checkpoints[2 * i] | checkpoints[2 * i + 1] << 8;
-    uint64_t first = precedingCount ? precedingCount * sitesBetween : 1;
+    uint64_t first = 1;
+    if (entry.count) {
+        constexpr uint64_t sitesBetween = sitesBetweenPositionCheckpoints;
+        uint64_t numberOfCheckpoints = (*entry.count - 1) / sitesBetween;
+        const uint8_t* checkpoints = cursor;
+        cursor += numberOfCheckpoints * sizeof(uint16_t);
+        uint64_t precedingCount = number / sitesBetween;
+        for (uint64_t i = 0; i < precedingCount; ++i)
+            cursor += checkpoints[2 * i] | checkpoints[2 * i + 1] << 8;
+        if (precedingCount)
+            first = precedingCount * sitesBetween;
+    }
 
     std::optional<SiteFrames> frames;
-    if (followsInlineFrames) {
+    if (entry.followsInlineFrames) {
         frames.emplace(image, function);
         frames->skip(first - 1);
     }
     Vector<PositionState, 8> states { start };
     unsigned frame = 0;
     for (uint64_t i = first; i <= number; ++i) {
+        if (cursor == entry.end)
+            return std::nullopt;
         if (frames)
             frame = frames->next();
         while (frame >= states.size())
@@ -184,13 +235,58 @@ std::optional<SourcePosition> decodePosition(const Image& image, uint32_t functi
     return sourcePositionFor(states[frame]);
 }
 
-std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex site) const
+namespace {
+
+struct RememberedPosition {
+    const Image* image;
+    uint32_t function;
+    uint32_t site;
+    uint32_t line;
+    uint32_t column;
+    uint32_t sourcePlusOne;
+};
+
+} // anonymous namespace
+
+static Lock rememberedPositionsLock;
+static std::array<RememberedPosition, 64> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock);
+
+void forgetRememberedPositions()
 {
-    const ImageFunction& record = this->function(function);
+    Locker locker { rememberedPositionsLock };
+    rememberedPositions.fill({ });
+}
+
+static std::optional<SourcePosition> findPosition(const Image& image, uint32_t function, CallSiteIndex site)
+{
+    const ImageFunction& record = image.function(function);
     if (!record.has(ImageFunctionFlag::HasPositions))
         return std::nullopt;
-    SideTableParts parts = SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data());
-    return decodePosition(*this, function, parts.positions, site);
+    // Asked when a stack trace is printed: it goes over the entries of up to 31 functions.
+    const uint8_t* table = image.section<uint8_t>(ImageSection::Positions).data();
+    uint32_t placeOfFirstEntry;
+    memcpy(&placeOfFirstEntry, table + function / PositionIndex::functionsBetween * sizeof(uint32_t), sizeof(uint32_t));
+    const uint8_t* cursor = table + PositionIndex::numberOfEntriesFor(image.section<ImageFunction>(ImageSection::Functions).size()) * sizeof(uint32_t) + placeOfFirstEntry;
+    OwnPosition ofFunctionInFront;
+    for (unsigned entriesInFront = function % PositionIndex::functionsBetween; entriesInFront; --entriesInFront)
+        readEntry(cursor, ofFunctionInFront);
+    return decodePosition(image, function, cursor, ofFunctionInFront, site);
+}
+
+std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex site) const
+{
+    RememberedPosition& remembered = rememberedPositions[(function * 31 + site.bits()) % rememberedPositions.size()];
+    {
+        Locker locker { rememberedPositionsLock };
+        if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
+            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID() };
+    }
+    std::optional<SourcePosition> position = findPosition(*this, function, site);
+    if (position) {
+        Locker locker { rememberedPositionsLock };
+        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0 };
+    }
+    return position;
 }
 
 } } // namespace JSC::AOT

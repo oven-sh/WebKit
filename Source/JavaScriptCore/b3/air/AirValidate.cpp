@@ -33,6 +33,7 @@
 #include "AirFrameStates.h"
 #include "AirInstInlines.h"
 #include "AirLiveness.h"
+#include "AirReuseConditionFlags.h"
 #include "B3Procedure.h"
 #include <wtf/IndexSet.h>
 #include <wtf/StringPrintStream.h>
@@ -208,16 +209,17 @@ bool anyInstUsesFlags(Code& code)
     return false;
 }
 
-bool flagsAfter(bool areDefined, Opcode opcode)
+bool flagsAfter(bool areDefined, const Inst& inst)
 {
-    return definesFlags(opcode) || (areDefined && preservesFlags(opcode));
+    Opcode opcode = inst.kind.opcode;
+    return definesFlags(opcode) || setsFlagsToResult(inst) || (areDefined && preservesFlags(opcode));
 }
 
 bool flagsAtTail(bool areDefinedAtHead, BasicBlock* block)
 {
     bool areDefined = areDefinedAtHead;
     for (Inst& inst : *block)
-        areDefined = flagsAfter(areDefined, inst.kind.opcode);
+        areDefined = flagsAfter(areDefined, inst);
     return areDefined;
 }
 
@@ -281,7 +283,7 @@ Inst* findUseOfUndefinedFlags(Code& code)
         for (Inst& inst : *block) {
             if (usesFlags(inst.kind.opcode) && !areDefined)
                 return &inst;
-            areDefined = flagsAfter(areDefined, inst.kind.opcode);
+            areDefined = flagsAfter(areDefined, inst);
         }
     }
     return nullptr;

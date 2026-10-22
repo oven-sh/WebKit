@@ -1,6 +1,6 @@
 # A for-in loop over an object of an expected layout has, behind the tests of the layout and of its key order, one copy of its body for each name, with the name as a constant. A turn that finds the object changed, and the turn behind the last name, are taken by the loop as written
 # FORM: Prepared optimizing
-# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
 # RUN: pass ExpandOwnKeys
 # STATISTIC: OwnKeyWalksExpanded = 3
 
@@ -9,7 +9,7 @@ layout L0 name="Options" fields=[{key="a" declared={type=number}}, {key=@@iterat
 layout L1 name="One" fields=[{key="only" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
 layout L2 name="Nothing"
 
-function f0 name="copies" parameters=[{type=object predicted=L0}, {type=object}] results=[{type=undefined}] {
+function f0 name="copies" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
   b0(v0: object ~ L0, v1: object):
     v2 = ForInOpen v0
     v3 = Integer integer=0
@@ -83,7 +83,7 @@ function f1 name="nothingExpected" parameters=[{type=object}, {type=object}] res
 # CHECK-LABEL: function f1 name="nothingExpected"
 # CHECK-NOT: IsEnumeratorCurrent
 
-function f2 name="changedBeforeTheLoop" parameters=[{type=object predicted=L0}, {type=object}, {type=anything}] results=[{type=undefined}] {
+function f2 name="changedBeforeTheLoop" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object ~ L0, v1: object, v2: anything):
     v3 = ForInOpen v0
     v4 = Call v2, -, v0
@@ -109,7 +109,7 @@ function f2 name="changedBeforeTheLoop" parameters=[{type=object predicted=L0}, 
 # CHECK-LABEL: function f2 name="changedBeforeTheLoop"
 # CHECK-NOT: IsEnumeratorCurrent
 
-function f3 name="severalLayouts" parameters=[{type=object predicted=L0|L1|L2}, {type=object}] results=[{type=undefined}] {
+function f3 name="severalLayouts" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
   b0(v0: object ~ L0|L1|L2, v1: object):
     v2 = ForInOpen v0
     v3 = Integer integer=0

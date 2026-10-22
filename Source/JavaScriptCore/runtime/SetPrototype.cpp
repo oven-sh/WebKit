@@ -27,6 +27,7 @@
 #include "SetPrototype.h"
 
 #include "CachedCallInlines.h"
+#include "ExceptionHelpers.h"
 #include "InterpreterInlines.h"
 #include "BuiltinNames.h"
 #include "GetterSetter.h"
@@ -55,7 +56,7 @@ static JSC_DECLARE_HOST_FUNCTION(setProtoFuncIsSubsetOf);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncIsSupersetOf);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncIsDisjointFrom);
 
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncSize);
+JSC_DECLARE_HOST_FUNCTION(setProtoFuncSize);
 
 void SetPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
@@ -284,8 +285,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIntersection, (JSGlobalObject* globalObject
             return JSValue::encode(result);
 
         CallData hasCallData = JSC::getCallDataInline(has);
-        auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
-        RETURN_IF_EXCEPTION(scope, { });
+        std::optional<CachedCall> cachedHasCall;
+        if (hasCallData.type == CallData::Type::JS) [[likely]] {
+            cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
 
         scope.release();
         forEachInSetStorage(vm, globalObject, storageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
@@ -493,8 +497,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
             return JSValue::encode(result);
 
         CallData hasCallData = JSC::getCallDataInline(has);
-        auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
-        RETURN_IF_EXCEPTION(scope, { });
+        std::optional<CachedCall> cachedHasCall;
+        if (hasCallData.type == CallData::Type::JS) [[likely]] {
+            cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
 
         scope.release();
         forEachInSetStorage(vm, globalObject, resultStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
@@ -533,8 +540,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
-    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<CachedCall> cachedNextCall;
+    if (nextCallData.type == CallData::Type::JS) [[likely]] {
+        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     while (true) {
         JSValue nextResult;
@@ -547,7 +557,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
@@ -648,8 +658,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncSymmetricDifference, (JSGlobalObject* globa
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
-    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<CachedCall> cachedNextCall;
+    if (nextCallData.type == CallData::Type::JS) [[likely]] {
+        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     while (true) {
         JSValue nextResult;
@@ -662,7 +675,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncSymmetricDifference, (JSGlobalObject* globa
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
@@ -731,8 +744,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSubsetOf, (JSGlobalObject* globalObject, 
     if (thisStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
 
-    auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
-    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<CachedCall> cachedHasCall;
+    if (hasCallData.type == CallData::Type::JS) [[likely]] {
+        cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     scope.release();
     bool isSubset = true;
@@ -835,8 +851,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSupersetOf, (JSGlobalObject* globalObject
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
-    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<CachedCall> cachedNextCall;
+    if (nextCallData.type == CallData::Type::JS) [[likely]] {
+        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     while (true) {
         JSValue nextResult;
@@ -849,7 +868,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSupersetOf, (JSGlobalObject* globalObject
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
@@ -943,8 +962,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
             return JSValue::encode(jsBoolean(true));
 
         CallData hasCallData = JSC::getCallDataInline(has);
-        auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
-        RETURN_IF_EXCEPTION(scope, { });
+        std::optional<CachedCall> cachedHasCall;
+        if (hasCallData.type == CallData::Type::JS) [[likely]] {
+            cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
 
         scope.release();
         bool isDisjoint = true;
@@ -985,8 +1007,11 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
-    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<CachedCall> cachedNextCall;
+    if (nextCallData.type == CallData::Type::JS) [[likely]] {
+        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     while (true) {
         JSValue nextResult;
@@ -999,7 +1024,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });

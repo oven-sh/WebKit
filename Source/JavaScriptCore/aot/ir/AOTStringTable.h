@@ -10,6 +10,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTID.h"
 #include "AOTNameClass.h"
+#include "AOTNonMovingVector.h"
 #include "AOTSchemaEnums.h"
 #include <array>
 #include <compare>
@@ -55,7 +56,9 @@ public:
 
     StringTable() = default;
 
-    InitializationResult initialize(const BuiltinTable&, const ParallelLoops&, Vector<StringAsRead>&&);
+    // What the front end says of a string: that it is canonical, the class of the name, the built-in name. To work it out again costs six times the rest of the table.
+    enum class WhatIsSaidOfStrings : bool { IsBelieved, IsChecked };
+    InitializationResult initialize(const BuiltinTable&, const ParallelLoops&, Vector<StringAsRead>&&, WhatIsSaidOfStrings = WhatIsSaidOfStrings::IsChecked);
 
     size_t size() const { return m_strings.size(); }
     bool hasOpenPhase() const { return m_openPhase; }
@@ -95,9 +98,9 @@ private:
     std::span<const uint8_t> provisionalAt(StringID) const;
 
     const BuiltinTable* m_builtins { nullptr };
-    Vector<std::span<const uint8_t>> m_strings;
-    Vector<NameClass> m_nameClasses;
-    Vector<BuiltinName> m_builtinNames;
+    NonMovingVector<std::span<const uint8_t>> m_strings;
+    NonMovingVector<NameClass> m_nameClasses;
+    NonMovingVector<BuiltinName> m_builtinNames;
     Vector<StringID> m_builtinNameStrings;
     Vector<Vector<uint8_t>> m_ownStrings;
     std::array<Shard, numberOfShards> m_shards;

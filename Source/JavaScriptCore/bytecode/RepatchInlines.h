@@ -26,6 +26,7 @@
 #pragma once
 
 #include "AOTInterpreterSlowPaths.h"
+#include "AOTMembersLeftOut.h"
 #include "CallLinkInfo.h"
 #include "ErrorInstance.h"
 #include "ErrorInstanceInlines.h"
@@ -39,7 +40,7 @@
 
 namespace JSC {
 
-inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCell* owner, JSValue callee, CallLinkInfo* callLinkInfo)
+inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCell* owner, JSValue callee, [[maybe_unused]] JSValue receiver, CallLinkInfo* callLinkInfo)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -57,6 +58,9 @@ inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCe
     if (codeBlock)
         errorMessage = appendSourceToErrorMessage(codeBlock, bytecodeIndex, errorMessage, runtimeTypeForValue(callee), notAFunctionSourceAppender);
     auto* error = ErrorInstance::create(vm, globalObject->errorStructure(ErrorType::TypeError), errorMessage, JSValue(), ErrorType::TypeError, owner, callLinkInfo);
+#if ENABLE(AOT)
+    AOT::explainErrorBehindMemberLeftOut(globalObject, error, receiver);
+#endif
     throwException(globalObject, scope, error);
     return nullptr;
 }
@@ -134,7 +138,7 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
         auto* globalObject = callLinkInfo->globalObjectForSlowPath(owner);
         calleeFrame->setCallee(globalObject->zombieFrameCallee());
         ASSERT(callData.type == CallData::Type::None);
-        RELEASE_AND_RETURN(scope, throwNotAFunctionErrorFromCallIC(globalObject, owner, callee, callLinkInfo));
+        RELEASE_AND_RETURN(scope, throwNotAFunctionErrorFromCallIC(globalObject, owner, callee, calleeFrame->thisValue(), callLinkInfo));
     }
 
     ASSERT(callLinkInfo->specializationKind() == CodeSpecializationKind::CodeForConstruct);

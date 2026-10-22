@@ -128,6 +128,8 @@ public:
             materializeStackTrace();
         return m_stackTrace.get();
     }
+    AOT::ReturnAddressTrace* returnAddresses() const { return m_returnAddresses; }
+    const Vector<StackFrame>* framesBesideReturnAddresses() const { return m_stackTrace.get(); }
 
     bool materializeErrorInfoIfNeeded(VM&);
     bool materializeErrorInfoIfNeeded(VM&, PropertyName);
@@ -169,6 +171,7 @@ protected:
 
     void computeErrorInfo(VM&, bool allocationAllowed);
     JS_EXPORT_PRIVATE void materializeStackTrace();
+    bool tryRetainReturnAddresses(VM&, bool useCurrentFrame, JSCell* subclassCaller, std::unique_ptr<Vector<StackFrame>>& otherFrames);
     bool materializeCapturedStackPropertyIfSaved(VM&);
 
     SourceAppender m_sourceAppender { nullptr };

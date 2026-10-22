@@ -24,7 +24,6 @@
 #include "B3SimplifyTerminals.h"
 #include "B3SinkValues.h"
 #include "B3SplitBranchConditions.h"
-#include "B3StripMineLoops.h"
 #include "B3ThreadJumps.h"
 #include "B3Validate.h"
 #include "B3VersionLoops.h"
@@ -505,6 +504,8 @@ private:
             if (policyChance())
                 policy.air.layout.placesRareBlocksAfterGuards = true;
             if (policyChance())
+                policy.air.layout.makesGapsForRareBlocks = true;
+            if (policyChance())
                 policy.air.layout.duplicatesReturns = true;
             if (policyChance())
                 policy.allocation.usesArena = false;
@@ -696,10 +697,6 @@ private:
                     sometimes(runEliminateDeadCode);
                 }
             }
-        }
-        if (often([&] { return stripMineLoops(proc); })) {
-            always(runFixSSA);
-            sometimes(runHoisting);
         }
         often([&] { return convertBranchesToSelects(proc); });
         sometimes([&] { return mergeAdjacentConstantStores(proc); });

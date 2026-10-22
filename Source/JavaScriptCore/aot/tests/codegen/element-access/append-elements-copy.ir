@@ -1,4 +1,4 @@
-# The elements of a short array are appended by a loop in the code, with one loop for each way the source may keep them that the target can take; compact code only calls the operation
+# The elements of an array are appended by one stub in code of every shape, whatever the two arrays hold
 # FORM: Placed
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
 # RUN: generate-code calls
@@ -15,7 +15,8 @@ function f0 name="stringsInCompactCode" parameters=[{type=Array}, {type=Array<st
     Return
 }
 # CHECK-LABEL: f0: size=
-# CHECK: operation operationAOTAppendElements x1
+# CHECK-NOT: operation operationAOTAppendElements
+# CHECK: stub AppendElements x1
 # CHECK-NOT: stub WriteBarrier
 # S: f0 b1 Compact
 function f1 name="stringsInBalancedCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
@@ -24,8 +25,9 @@ function f1 name="stringsInBalancedCode" parameters=[{type=Array}, {type=Array<s
     Return
 }
 # CHECK-LABEL: f1: size=
-# CHECK: operation operationAOTAppendElements x1
-# CHECK: stub WriteBarrier x1
+# CHECK-NOT: operation operationAOTAppendElements
+# CHECK: stub AppendElements x1
+# CHECK-NOT: stub WriteBarrier
 # S: f1 b0 Balanced
 function f2 name="stringsInFastCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array, v1: Array<string, pristine[Storage, Names]>, v2: boolean):
@@ -38,38 +40,23 @@ function f2 name="stringsInFastCode" parameters=[{type=Array}, {type=Array<strin
     Return
 }
 # CHECK-LABEL: f2: size=
-# CHECK: operation operationAOTAppendElements x1
-# CHECK: stub WriteBarrier x1
+# CHECK-NOT: operation operationAOTAppendElements
+# CHECK: stub AppendElements
+# CHECK-NOT: stub WriteBarrier
 # S: f2 b1 Fast
-function f3 name="numbersIntoValues" parameters=[{type=Array}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<number, pristine[Storage, Names]>):
-    AppendElements v0, v1
-    Return
-}
-# CHECK-LABEL: f3: size=
-# CHECK: operation operationAOTAppendElements x1
-# CHECK: stub WriteBarrier x1
-function f4 name="numbersIntoNumbers" parameters=[{type=Array<number>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+function f3 name="numbersIntoNumbers" parameters=[{type=Array<number>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
   b0(v0: Array<number>, v1: Array<number, pristine[Storage, Names]>):
     AppendElements v0, v1
     Return
 }
-# CHECK-LABEL: f4: size=
-# CHECK: operation operationAOTAppendElements x1
-# CHECK-NOT: stub WriteBarrier
-function f5 name="integersIntoIntegers" parameters=[{type=Array<i32>}, {type=Array<i32, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<i32>, v1: Array<i32, pristine[Storage, Names]>):
-    AppendElements v0, v1
-    Return
-}
-# CHECK-LABEL: f5: size=
-# CHECK: operation operationAOTAppendElements x1
-# CHECK-NOT: stub WriteBarrier
-function f6 name="stringsIntoNumbers" parameters=[{type=Array<number>}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: operation operationAOTAppendElements
+# CHECK: stub AppendElements x1
+function f4 name="stringsIntoNumbers" parameters=[{type=Array<number>}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
   b0(v0: Array<number>, v1: Array<string, pristine[Storage, Names]>):
     AppendElements v0, v1
     Return
 }
-# CHECK-LABEL: f6: size=
-# CHECK: operation operationAOTAppendElements x1
-# CHECK-NOT: stub WriteBarrier
+# CHECK-LABEL: f4: size=
+# CHECK-NOT: operation operationAOTAppendElements
+# CHECK: stub AppendElements x1

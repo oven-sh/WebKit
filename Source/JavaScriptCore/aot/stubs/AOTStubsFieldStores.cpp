@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompiledStructure.h"
 #include "AOTInstance.h"
+#include "AOTLayoutData.h"
 #include "AOTOperationData.h"
 #include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
@@ -27,6 +29,19 @@ static_assert(std::ranges::all_of(allMembersOf<SlotRepresentation>, [](SlotRepre
     SlotTraits traits = traitsOf(representation);
     return traits.valueKind != SlotValueKind::Boxed || traits.width == sizeof(EncodedJSValue);
 }));
+static_assert(std::ranges::all_of(allMembersOf<SlotRepresentation>, [](SlotRepresentation representation) {
+    return traitsOf(representation).hasUndefined == traitsOf(representation).hasNull;
+}));
+
+static constexpr uint32_t representationsWithUndefinedAndNull = [] {
+    static_assert(numberOfEnumerators<SlotRepresentation> <= 32);
+    uint32_t representations = 0;
+    for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
+        if (traitsOf(representation).hasUndefined)
+            representations |= 1u << static_cast<unsigned>(representation);
+    }
+    return representations;
+}();
 
 namespace {
 
@@ -262,9 +277,9 @@ static void storeIntegerField(FieldStore& store, const SlotTraits& traits)
     storeUndefinedOrNull(store, traits);
 }
 
-static void storeInt32OrDoubleField(FieldStore& store, const SlotTraits& traits)
+static void storeOptionalInt32Field(FieldStore& store, const SlotTraits& traits)
 {
-    static_assert(absentInt32 < undefinedInt32 && undefinedInt32 < nullInt32 && nullInt32 < doubleInExtensionInt32 && doubleInExtensionInt32 < minInlineInt32);
+    static_assert(absentInt32 < minInlineInt32 && undefinedInt32 < minInlineInt32 && nullInt32 < minInlineInt32);
     StubAssembler& jit = store.jit;
     const GPRReg value = store.registers.value;
     Jump isNotInt32 = jit.branchIfNotInt32(value);
@@ -357,12 +372,9 @@ static void storeWithRepresentation(FieldStore& store, SlotRepresentation repres
     case SlotValueKind::SignedInteger:
     case SlotValueKind::UnsignedInteger:
         if (traits.width == sizeof(int32_t) && traits.hasAbsent)
-            storeInt32OrDoubleField(store, traits);
+            storeOptionalInt32Field(store, traits);
         else
             storeIntegerField(store, traits);
-        return;
-    case SlotValueKind::Int32OrDouble:
-        storeInt32OrDoubleField(store, traits);
         return;
     case SlotValueKind::Double:
         storeDoubleField(store, traits);
@@ -399,6 +411,30 @@ static void branchUnlessFieldTypeAccepts(FieldStore& store, JumpList& isNotAccep
     unpackRepresentation(store);
 }
 
+// RuntimeLayoutTable::slotAdmits(): the slot of an object's field that has markers for undefined and null holds them whatever the type of the field says.
+static void jumpIfSlotHoldsValueAsMarker(FieldStore& store, Label isAdmitted)
+{
+    StubAssembler& jit = store.jit;
+    const FieldStoreRegisters& r = store.registers;
+    Jump isNeitherUndefinedNorNull = jit.branchIfNotOther(r.value, r.scratch);
+    // The mark of the cell may answer for the raw value of the field, and Object::store() knows for which fields it does. A cell that has the mark, as every object has until its constructor is through, takes the marker here.
+    Jump cellHasNoMark = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(r.field.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
+    LayoutData layoutWithSuchField { };
+    layoutWithSuchField.hasFieldThatKeepsStateOfBirth = 1;
+    static_assert(sizeof(LayoutData) % sizeof(uint32_t) == 0);
+    uint32_t hasFieldThatKeepsStateOfBirth = std::bit_cast<std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>>(layoutWithSuchField)[0];
+    RELEASE_ASSERT(hasOneBitSet(hasFieldThatKeepsStateOfBirth));
+    loadStructure(jit, r.field.object, r.scratch);
+    jit.loadPtr(Address(r.scratch, CompiledStructure::offsetOfLayout()), r.scratch);
+    Jump someFieldTakesNoMarker = jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch), TrustedImm32(static_cast<int32_t>(hasFieldThatKeepsStateOfBirth)));
+    jit.move(TrustedImm32(static_cast<int32_t>(representationsWithUndefinedAndNull)), r.scratch);
+    jit.urshift32(r.field.representation, r.scratch);
+    jit.branchTest32(CCallHelpers::NonZero, r.scratch, TrustedImm32(1)).linkTo(isAdmitted, &jit);
+    someFieldTakesNoMarker.link(&jit);
+    cellHasNoMark.link(&jit);
+    isNeitherUndefinedNorNull.link(&jit);
+}
+
 void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd end, FieldTypeTest typeTest, JumpList* stored, FieldStoreExits& exits)
 {
     RELEASE_ASSERT(noOverlap(r.field.object, r.field.address, r.field.representation, r.value, r.type, r.scratch, r.secondScratch, instanceGPR));
@@ -408,18 +444,21 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
 
     if (typeTest == FieldTypeTest::IsEmitted)
         branchUnlessFieldTypeAccepts(store, typeIsNotAccepted);
+    Label isAdmitted = jit.label();
     emitDispatchOnRepresentation(jit, r.field.representation, [&](SlotRepresentation representation) {
         storeWithRepresentation(store, representation);
     });
 
     switch (end) {
     case FieldStoreEnd::JoinList:
+        // Behind a type test this is the store to a variable, which has no other place to go to: its type is all that its slot may hold.
         exits.cannot.append(typeIsNotAccepted);
         return;
     case FieldStoreEnd::ReturnAfterBarrier:
         RELEASE_ASSERT(typeTest == FieldTypeTest::IsEmitted);
         typeIsNotAccepted.link(&jit);
         unpackRepresentation(store);
+        jumpIfSlotHoldsValueAsMarker(store, isAdmitted);
         branchOnFieldPresence(jit, r.field, r.scratch, exits.cannot, exits.wasAbsentAndIsNotAccepted);
         return;
     }

@@ -26,7 +26,6 @@ static_assert(OperandIndex::Switch::subject == OperandIndex::SwitchString::subje
 namespace {
 
 struct SwitchLike {
-    ValueID subject;
     ValueID switchedValue;
     ValueID comparison;
     Vector<ChainCase, 1> cases;
@@ -253,7 +252,7 @@ private:
             return std::nullopt;
         if (!passesProofsOnlyAbout(branch, comparedIndex) || !isListedWithSingleUse(block, comparison) || !m_mayJoinChain(comparison))
             return std::nullopt;
-        return SwitchLike { m_analyses.identityOf(compared), compared, comparison, { createCase(m_function.at(constant->constant), Edge { block, 0 }) } };
+        return SwitchLike { compared, comparison, { createCase(m_function.at(constant->constant), Edge { block, 0 }) } };
     }
 
     std::optional<SwitchLike> describeSwitch(BlockID block, const Terminator& terminator) const
@@ -262,7 +261,7 @@ private:
         if (!canBeSubject(m_program.typeOf(m_function, switchedValue)))
             return std::nullopt;
 
-        SwitchLike description { m_analyses.identityOf(switchedValue), switchedValue, { }, { } };
+        SwitchLike description { switchedValue, { }, { } };
         uint32_t numberOfCases = static_cast<uint32_t>(terminator.caseTargets().size());
         description.cases.reserveInitialCapacity(numberOfCases);
         for (uint32_t index = 0; index < numberOfCases; ++index) {
@@ -305,14 +304,19 @@ private:
         return canReplaceAll;
     }
 
-    std::optional<SwitchLike> describeLink(const ComparisonChain& chain, ValueID subject) const
+    bool isSameValue(ValueID a, ValueID b) const
+    {
+        return a == b || m_analyses.identityOf(a) == m_analyses.identityOf(b);
+    }
+
+    std::optional<SwitchLike> describeLink(const ComparisonChain& chain, ValueID valueSwitchedByHead) const
     {
         BlockID next = targetOf(m_function, chain.fallThrough).block;
         const Block& block = m_function.at(next);
         if (m_analyses.cfg().singleIncomingEdge(next) != chain.fallThrough || block.role != BlockRole::Ordinary || block.handler != m_function.at(chain.head).handler)
             return std::nullopt;
         std::optional<SwitchLike> description = describe(next);
-        if (!description || description->subject != subject || !canReplaceParameters(chain.fallThrough, 0, description->comparison))
+        if (!description || !isSameValue(description->switchedValue, valueSwitchedByHead) || !canReplaceParameters(chain.fallThrough, 0, description->comparison))
             return std::nullopt;
 
         bool canMoveValues = std::ranges::all_of(block.values, [&](ValueID value) {
@@ -332,7 +336,7 @@ private:
         chain.head = head;
         chain.subject = replacementOf(description.switchedValue);
         appendCases(chain, head, description);
-        while (std::optional<SwitchLike> link = describeLink(chain, description.subject)) {
+        while (std::optional<SwitchLike> link = describeLink(chain, description.switchedValue)) {
             if (chain.cases.size() + link->cases.size() > m_limits.maxCases) {
                 m_analyses.context().build.gaveUp(m_limits.maxCasesLimit, m_analyses.subject(link->switchedValue));
                 break;
@@ -418,20 +422,42 @@ static void replaceParameters(IRBuilder& builder, const ComparisonChain& chain, 
 
 static Target takeTarget(Function& function, Edge edge)
 {
-    return std::exchange(targetOf(function, edge), Target { });
+    return std::exchange(editTarget(function, edge), Target { });
 }
 
-static void mergeLinksIntoHead(Function& function, const ComparisonChain& chain)
+// The switch holds what the subject is compared with, so a constant that only a comparison of the chain reads has no reader behind it.
+static BitVector findConstantsOnlyCompared(FunctionAnalyses& analyses, const ComparisonChain& chain)
 {
-    Block& head = function.at(chain.head);
+    const Function& function = analyses.function();
+    const UseLists& uses = analyses.useLists();
+    BitVector result;
+    for (ValueID comparison : chain.comparisons) {
+        for (ValueID value : function.at(comparison).operands()) {
+            while (value != chain.subject && uses.useCount(value) == 1 && isRematerializableThroughUpcasts(function, value)) {
+                result.set(value.index());
+                if (function.at(value).opcode != Opcode::Upcast)
+                    break;
+                value = function.at(value).operand(0);
+            }
+        }
+    }
+    return result;
+}
+
+static void mergeLinksIntoHead(Function& function, const ComparisonChain& chain, const BitVector& isLeftWithoutReader)
+{
+    Block& head = function.edit(chain.head);
     if (head.terminator.kind == TerminatorKind::Branch) {
         bool wasListed = head.values.removeFirst(head.terminator.conditionOperand());
         RELEASE_ASSERT(wasListed);
+        head.values.removeAllMatching([&](ValueID value) {
+            return isLeftWithoutReader.get(value.index());
+        });
     }
     for (BlockID link : chain.links) {
-        Block removed = std::exchange(function.at(link), Block { });
+        Block removed = std::exchange(function.edit(link), Block { });
         for (ValueID value : removed.values) {
-            if (isRematerializableThroughUpcasts(function, value))
+            if (isRematerializableThroughUpcasts(function, value) && !isLeftWithoutReader.get(value.index()))
                 head.values.append(value);
         }
     }
@@ -476,6 +502,7 @@ void convertChainToSwitch(IRBuilder& builder, FunctionAnalyses& analyses, ChainK
 {
     builder.applyInsertions();
     Function& function = builder.function();
+    BitVector isLeftWithoutReader = findConstantsOnlyCompared(analyses, chain);
 
     ValueSubstitution substitution(function);
     replaceParameters(builder, chain, substitution);
@@ -486,10 +513,10 @@ void convertChainToSwitch(IRBuilder& builder, FunctionAnalyses& analyses, ChainK
         caseTargets.append(takeTarget(function, chainCase.edge));
     Target otherwise = takeTarget(function, chain.fallThrough);
 
-    mergeLinksIntoHead(function, chain);
+    mergeLinksIntoHead(function, chain, isLeftWithoutReader);
     builder.setOrigin(function.at(chain.head).terminator.origin());
     builder.setHandler(function.at(chain.head).handler);
-    function.at(chain.head).terminator = Terminator { };
+    function.edit(chain.head).terminator = Terminator { };
     analyses.didChangeControlFlow();
     builder.moveToEndOf(chain.head);
 

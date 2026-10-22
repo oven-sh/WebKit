@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
+#include "AOTAllocationEmitter.h"
 #include "AOTAllocationSiteRecord.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBarrierEmitter.h"
@@ -84,8 +86,15 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
     allocation->resultConstraints = { B3::ValueRep::SomeEarlyRegister };
     allocation->clobber(RegisterSet::macroClobberedGPRs());
     m_out.m_block->setSuccessors(normalEdge(continuation), rareEdge(slowPath));
-    allocation->setGenerator([cellSize, forcesSlowPath = generator().forcesGCSlowPaths(), units = &m_records.units](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    allocation->setGenerator([cellSize, countsCell = build().recordedOptions().countsBranches, forcesSlowPath = generator().forcesGCSlowPaths(), units = &m_records.units](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (countsCell) {
+            size_t kind = ExactAllocationCounts::kindOfCompiledCode();
+            jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.counters.allocationCounts)), params[0].gpr());
+            jit.load32(CCallHelpers::Address(params[1].gpr(), LocalAllocator::offsetOfCellSize()), params.gpScratch(0));
+            jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(params[0].gpr(), static_cast<int32_t>(ExactAllocationCounts::offsetOfCells(kind))));
+            jit.add64(params.gpScratch(0), CCallHelpers::Address(params[0].gpr(), static_cast<int32_t>(ExactAllocationCounts::offsetOfBytes(kind))));
+        }
         Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         CCallHelpers::JumpList slowCases;
         std::optional<CCallHelpers::FreeListRefill> refill;
@@ -123,14 +132,15 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
     return CellPointer(allocation);
 }
 
-Pointer CellAllocationEmitter::allocatorForSize(Pointer subspace, Integer size, LBasicBlock slowPath)
+// A size class has its allocator from the first allocation that goes through the heap.
+Pointer CellAllocationEmitter::allocatorForSize(Pointer subspace, Integer size, LBasicBlock isTooLarge, LBasicBlock hasNoAllocator)
 {
     static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");
     constexpr unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
     LValue sizeClassIndex = m_out.lShr(m_out.add(size.value(), m_out.constIntPtr(MarkedSpace::sizeStep - 1)), m_out.constInt32(stepShift));
-    branchUnless(Condition(m_out.belowOrEqual(sizeClassIndex, m_out.constIntPtr(MarkedSpace::largeCutoff >> stepShift))), slowPath);
+    branchUnless(Condition(m_out.belowOrEqual(sizeClassIndex, m_out.constIntPtr(MarkedSpace::largeCutoff >> stepShift))), isTooLarge);
     Pointer allocator(m_out.loadPtr(m_out.baseIndex(m_heaps.CompleteSubspace_allocatorForSizeStep, subspace.value(), sizeClassIndex)));
-    branchUnless(Condition(m_out.notNull(allocator.value())), slowPath);
+    branchUnless(Condition(m_out.notNull(allocator.value())), hasNoAllocator);
     return allocator;
 }
 
@@ -144,26 +154,6 @@ void CellAllocationEmitter::storeHeader(CellPointer cell, Integer header)
 {
     static_assert(!JSCell::structureIDOffset());
     m_out.store64(header.value(), cell.value(), m_heaps.JSCell_header);
-}
-
-void CellAllocationEmitter::fillWords(Pointer base, Integer beginIndex, Integer endIndex, Integer word, const B3::AbstractHeap& heap)
-{
-    LBasicBlock fillLoop = newBlock();
-    LBasicBlock filled = newBlock();
-    ValueFromBlock originalIndex = m_out.anchor(endIndex.value());
-    ValueFromBlock originalPointer = m_out.anchor(offsetBy(base, beginIndex, 3).value());
-    m_out.branch(notEqual(endIndex, beginIndex).value(), normalEdge(fillLoop), normalEdge(filled));
-
-    m_out.appendTo(fillLoop);
-    LValue index = m_out.phi(B3::Int64, originalIndex);
-    LValue pointer = m_out.phi(B3::pointerType(), originalPointer);
-    m_out.store64(word.value(), TypedPointer(heap, pointer));
-    LValue nextIndex = m_out.sub(index, m_out.constInt64(1));
-    m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
-    m_out.addIncomingToPhi(pointer, m_out.anchor(m_out.add(pointer, m_out.intPtrEight)));
-    m_out.branch(m_out.notEqual(nextIndex, beginIndex.value()), normalEdge(fillLoop), normalEdge(filled));
-
-    m_out.appendTo(filled);
 }
 
 CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicBlock slowPath)
@@ -237,37 +227,112 @@ void CellAllocationEmitter::copyHeaderAndWords(const AllocationSiteAddress& site
     });
 }
 
-CellPointer CellAllocationEmitter::allocate(const OperationContext& context, AllocationID id)
+void CellAllocationEmitter::copyHeaderAndWords(AllocationID id, CellPointer cell)
+{
+    copyHeaderAndWords(allocationSiteAddress(id), cell);
+}
+
+void CellAllocationEmitter::ensureRecordIsFilled(const OperationContext& context, AllocationID id)
+{
+    LBasicBlock isEmpty = newBlock();
+    LBasicBlock continuation = newBlock();
+    Integer header(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), allocationSiteRecord(id).value(), AllocationSiteRecord::offsetOfHeader())));
+    m_out.branch(isNotZero(header).value(), normalEdge(continuation), rareEdge(isEmpty));
+
+    // The operation fills the record and allocates no cell.
+    m_out.appendTo(isEmpty);
+    callOperation<Integer>(context, RuntimeOperation::GetHeaderOfAllocation, { word32(static_cast<int32_t>(id.index())) }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+}
+
+static constexpr size_t maxBytesZeroedInLine = 256;
+static constexpr unsigned maxInstructionsForEachStoreOfZeroSaved = 4;
+
+ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, AllocationID id, unsigned storesOfZero) const
+{
+    const PlacedAllocation& allocation = m_placement.allocation(id);
+    CellInitialization form = isObjectLayout(m_program.at(allocation.layout).kind) ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
+    unsigned instructionsInStub = instructionsToZeroBody(form, allocation.size, knownCellSizeFor(allocation.size).has_value());
+    if (storesOfZero >= instructionsInStub)
+        return ZeroedBy::Stub;
+    // A store of zero is seven or eight bytes at every place that allocates. Outside fast code each one saved may cost a few instructions in the stub.
+    if (context.shape() != CodeShape::Fast && storesOfZero && instructionsInStub <= maxInstructionsForEachStoreOfZeroSaved * (storesOfZero + 1))
+        return ZeroedBy::Stub;
+    if (allocation.size <= maxBytesZeroedInLine && storesOfZero >= instructionsToZeroBody(form, allocation.size, true))
+        return ZeroedBy::CodeInLine;
+    return ZeroedBy::Nobody;
+}
+
+void CellAllocationEmitter::zeroBody(CellPointer cell, AllocationID id)
+{
+    const PlacedAllocation& allocation = m_placement.allocation(id);
+    const Layout& layout = m_program.at(allocation.layout);
+    std::array<const B3::AbstractHeap*, 2> written { &m_heaps.entire(layout.isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields), &m_heaps.entire(AbstractHeap::RuntimeState) };
+    if (!isObjectLayout(layout.kind))
+        m_out.store64(m_out.constInt64(0), m_out.address(*written[0], cell.value(), sizeof(JSCell)));
+    unsigned end = static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(allocation.size));
+    if (end <= copyChunkBytes)
+        return;
+    B3::PatchpointValue* zero = m_out.patchpoint(B3::Void);
+    zero->effects = B3::Effects::none();
+    m_heaps.decoratePatchpointWrite(written, zero);
+    zero->appendSomeRegister(cell.value());
+    zero->setRunsWithoutFrame(true);
+    if (isX86_64())
+        zero->numFPScratchRegisters = 1;
+    zero->setGenerator([end](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        GPRReg cell = params[0].gpr();
+#if CPU(X86_64)
+        FPRReg zero = params.fpScratch(0);
+        jit.moveZeroToDouble(zero);
+#endif
+        for (unsigned offset = copyChunkBytes; offset < end; offset += copyChunkBytes) {
+#if CPU(X86_64)
+            if (jit.supportsAVX())
+                jit.m_assembler.vmovups_rm(zero, offset, cell);
+            else
+                jit.m_assembler.movups_rm(zero, offset, cell);
+#else
+            jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, cell, CCallHelpers::TrustedImm32(offset));
+#endif
+        }
+    });
+}
+
+CellPointer CellAllocationEmitter::allocate(const OperationContext& context, AllocationID id, WholeCell, ZeroedBy zeroedBy)
+{
+    return allocateWithoutPlace(context, id, zeroedBy);
+}
+
+CellPointer CellAllocationEmitter::allocateCellOfBothObjects(const OperationContext& context, const PlaceInCell& place)
+{
+    RELEASE_ASSERT(place.kind() == PlaceInCell::Kind::BehindOuterObject);
+    return allocateWithoutPlace(context, place.outerAllocation(), ZeroedBy::Nobody);
+}
+
+CellPointer CellAllocationEmitter::allocateWithoutPlace(const OperationContext& context, AllocationID id, ZeroedBy zeroedBy)
 {
     const PlacedAllocation& allocation = m_placement.allocation(id);
     bool hasOrderAndShapeWords = isObjectLayout(m_program.at(allocation.layout).kind);
-    if (context.shape() != CodeShape::Fast) {
-        CellInitialization form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWords : CellInitialization::Header;
-        return CellPointer(callStub(context, allocateCell(form, knownCellSizeFor(allocation.size)), { m_out.constInt64(id.index()) }).first);
-    }
-
-    const B3::AbstractHeap& recordHeap = m_heaps.entire(AbstractHeap::AllocatorState);
-    LBasicBlock slowPath = newBlock();
-    Join<CellPointer> join(m_out);
-    AllocationSiteAddress site = allocationSiteAddress(id);
-    Pointer record = recordAt(site);
-    Pointer allocator(m_out.loadPtr(m_out.address(recordHeap, record.value(), AllocationSiteRecord::offsetOfAllocator())));
-    CellPointer cell = allocateHeapCell(allocator, knownCellSizeFor(allocation.size), slowPath);
-    {
+    CellInitialization form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWords : CellInitialization::Header;
+    if (zeroedBy == ZeroedBy::Stub)
+        form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
+    CellPointer cell(callStub(context, allocateCell(form, knownCellSizeFor(allocation.size)), { m_out.constInt64(id.index()) }).first);
+    if (zeroedBy == ZeroedBy::CodeInLine) {
         CodeGenerator::InitializationScope scope(generator());
-        if (hasOrderAndShapeWords)
-            copyHeaderAndWords(site, cell);
-        else
-            storeHeader(cell, Integer(m_out.load64(m_out.address(recordHeap, record.value(), AllocationSiteRecord::offsetOfHeader()))));
+        zeroBody(cell, id);
     }
-    join.add(cell);
-
-    m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::AllocateSlow, { word32(id.index()) }, { .isOnRarePath = true }));
-    return join.finish();
+    return cell;
 }
 
-CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, AllocationID id, CellPointer source, unsigned fieldBytes)
+CellPointer CellAllocationEmitter::allocateZeroedByNumber(const OperationContext& context, Word32 numberOfAllocation, WholeCell)
+{
+    return CellPointer(callStub(context, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { zeroExtended(numberOfAllocation).value() }).first);
+}
+
+CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, AllocationID id, WholeCell, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(fieldBytes && !(fieldBytes % copyChunkBytes));
     LValue allocation = m_out.constInt64(id.index());
@@ -283,30 +348,11 @@ CellPointer CellAllocationEmitter::allocateInFrame(size_t size)
 
 std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const OperationContext& context, Word32 length, Word32 vectorLength, IndexingType indexingType, LBasicBlock slowPath)
 {
-    if (context.shape() != CodeShape::Fast) {
-        branchUnless(below(length, word32(1 << holeArrayCapacityShift)), slowPath);
-        Word32 lengthAndCapacity = bitOr(length, shiftLeft(vectorLength, word32(holeArrayCapacityShift)));
-        CellPointer array(callStub(context, newArrayWithLength(arrayElementKindOf(indexingType)), { zeroExtended(lengthAndCapacity).value() }).first);
-        branchUnless(Condition(m_out.notNull(array.value())), slowPath);
-        return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly)) };
-    }
-
-    const ArrayStorageForm& form = arrayStorageFormOf(arrayStorageOf(indexingType));
-    Integer header = loadMutable64(Instance::offsetOfNewArrayHeader(form.indexingType));
-    branchUnless(isNotZero(header), slowPath);
-    Integer size(m_out.add(m_out.shl(zeroExtended(vectorLength).value(), m_out.constInt32(3)), m_out.constIntPtr(sizeof(IndexingHeader))));
-    Pointer allocator = allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), size, slowPath);
-    Pointer storage = asPointer(allocateHeapCell(allocator, std::nullopt, slowPath));
-    Pointer butterfly = offsetBy(storage, sizeof(IndexingHeader));
-
-    CodeGenerator::InitializationScope scope(generator());
-    m_out.store32(length.value(), butterfly.value(), m_heaps.Butterfly_publicLength);
-    m_out.store32(vectorLength.value(), butterfly.value(), m_heaps.Butterfly_vectorLength);
-    fillWords(butterfly, zeroExtended(length), zeroExtended(vectorLength), integer(static_cast<int64_t>(form.hole)), m_heaps.forIndexingType(form.indexingType)->atAnyIndex());
-    CellPointer array = allocateHeapCell(loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), sizeof(JSArray), slowPath);
-    storeHeader(array, header);
-    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
-    return { array, butterfly };
+    branchUnless(below(length, word32(1 << holeArrayCapacityShift)), slowPath);
+    Word32 lengthAndCapacity = bitOr(length, shiftLeft(vectorLength, word32(holeArrayCapacityShift)));
+    CellPointer array(callStub(context, newArrayWithLength(arrayElementKindOf(indexingType)), { zeroExtended(lengthAndCapacity).value() }).first);
+    branchUnless(Condition(m_out.notNull(array.value())), slowPath);
+    return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly)) };
 }
 
 CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements)
@@ -345,9 +391,7 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     LBasicBlock copyElement = newBlock();
     LBasicBlock copied = newBlock();
     Join<CellPointer> join(m_out);
-    Word32 minVectorLength = select(isZero(count), word32(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY), word32(BASE_CONTIGUOUS_VECTOR_LEN));
-    Word32 vectorLength = bitOr(select(below(minVectorLength, count), count, minVectorLength), word32(1));
-    auto [array, butterfly] = allocateArray(context, count, vectorLength, ArrayWithContiguous, slowPath);
+    auto [array, butterfly] = allocateArray(context, count, bitOr(count, word32(1)), ArrayWithContiguous, slowPath);
     {
         CodeGenerator::InitializationScope scope(generator());
         LValue end = m_out.shl(zeroExtended(count).value(), m_out.constInt32(3));
@@ -370,7 +414,83 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     join.add(array);
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { count, buffer }, { .isOnRarePath = true }));
+    Word32 countOrCapacityOfEmptyArray = select(isZero(count), word32(1 << capacityShiftInArrayLiteralCount), count);
+    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { countOrCapacityOfEmptyArray, buffer }, { .isOnRarePath = true }));
+    return join.finish();
+}
+
+std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(Word32 length, unsigned capacity, LBasicBlock isOnHeap)
+{
+    Integer header = loadMutable64(AOT_INSTANCE_OFFSET(allocation.frameArrayHeader));
+    branchUnless(isNotZero(header), isOnHeap);
+    CellPointer array = allocateInFrame(sizeOfFrameArray(capacity));
+    Pointer butterfly = offsetBy(asPointer(array), sizeOfFrameArray(0));
+
+    CodeGenerator::InitializationScope scope(generator());
+    storeHeader(array, header);
+    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
+    m_out.store32(length.value(), butterfly.value(), m_heaps.Butterfly_publicLength);
+    m_out.store32(length.value(), butterfly.value(), m_heaps.Butterfly_vectorLength);
+    return { array, butterfly };
+}
+
+CellPointer CellAllocationEmitter::newArrayInFrameOf(const OperationContext& context, std::span<const Boxed> elements)
+{
+    unsigned length = static_cast<unsigned>(elements.size());
+    if (length <= maxArrayElementsInRegisters) {
+        Vector<LValue, maxArrayElementsInRegisters + 1> operands;
+        for (Boxed element : elements)
+            operands.append(element.value());
+        operands.append(allocateInFrame(sizeOfFrameArray(length)).value());
+        return CellPointer(callStub(context, frameArrayLiteral(length), operands.span()).first);
+    }
+
+    LBasicBlock isOnHeap = newBlock();
+    Join<CellPointer> join(m_out);
+    auto [array, butterfly] = allocateArrayInFrame(word32(static_cast<int32_t>(length)), length, isOnHeap);
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        for (unsigned i = 0; i < length; ++i)
+            m_out.store64(elements[i].value(), butterfly.value(), m_heaps.indexedContiguousProperties[i]);
+    }
+    join.add(array);
+
+    m_out.appendTo(isOnHeap);
+    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { word32(static_cast<int32_t>(length)), argumentBuffer(elements) }, { .isOnRarePath = true }));
+    return join.finish();
+}
+
+CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationContext& context, Word32 count, Pointer buffer, unsigned capacity)
+{
+    LBasicBlock isOnHeap = newBlock();
+    LBasicBlock copyLoop = newBlock();
+    LBasicBlock copyElement = newBlock();
+    LBasicBlock copied = newBlock();
+    Join<CellPointer> join(m_out);
+    branchUnless(belowOrEqual(count, word32(static_cast<int32_t>(capacity))), isOnHeap);
+    auto [array, butterfly] = allocateArrayInFrame(count, capacity, isOnHeap);
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        LValue end = m_out.shl(zeroExtended(count).value(), m_out.constInt32(3));
+        ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
+        m_out.jump(copyLoop);
+
+        m_out.appendTo(copyLoop);
+        LValue offset = m_out.phi(B3::pointerType(), start);
+        m_out.branch(m_out.below(offset, end), normalEdge(copyElement), normalEdge(copied));
+
+        m_out.appendTo(copyElement);
+        LValue element = m_out.load64(TypedPointer(m_heaps.argumentBuffer, m_out.add(buffer.value(), offset)));
+        m_out.store64(element, TypedPointer(m_heaps.indexedContiguousProperties.atAnyIndex(), m_out.add(butterfly.value(), offset)));
+        m_out.addIncomingToPhi(offset, m_out.anchor(m_out.add(offset, m_out.intPtrEight)));
+        m_out.jump(copyLoop);
+
+        m_out.appendTo(copied);
+    }
+    join.add(array);
+
+    m_out.appendTo(isOnHeap);
+    join.add(newArrayFromBuffer(context, count, buffer));
     return join.finish();
 }
 
@@ -390,18 +510,6 @@ void CellAllocationEmitter::storeRopeFibers(CellPointer rope, Integer fiber0, In
     m_out.store64(fiber0.value(), rope.value(), m_heaps.JSRopeString_fiber0);
     m_out.store64(lengthWord, rope.value(), m_heaps.JSRopeString_fiber1);
     m_out.store64(upperWord, rope.value(), m_heaps.JSRopeString_fiber2);
-}
-
-CellPointer CellAllocationEmitter::newPromise(LBasicBlock slowPath)
-{
-    CellPointer result = allocateObject(InlineAllocation::Promise, slowPath);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        m_out.store64(m_out.int64Zero, result.value(), m_heaps.JSPromise_packed);
-        m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), result.value(), m_heaps.JSPromise_slot);
-    }
-    emitter<BarrierEmitter>().fenceAfterInitialization();
-    return result;
 }
 
 } } } // namespace JSC::AOT::Typed

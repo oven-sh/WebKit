@@ -26,7 +26,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v12 = Call v1
     Return
 }
-function f1 name="Point" flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="x" mode=Strict
     Return
@@ -49,7 +49,7 @@ function f3 name="usesPoint" results=[{type=anything}] {
 # CHECK-LABEL: function f3 name="usesPoint"
 # CHECK-NOT: PropGet
 # CHECK: CallDirect {{*}} function=f2
-function f4 name="Early" flags=[HasThis] thisType={type=anything predicted=L1} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="Early" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="x" mode=Strict
     Return

@@ -50,12 +50,92 @@ void ObjectBuilderPlan::createInitialBody(uint32_t orderAndCount)
     *reinterpret_cast<uint32_t*>(slotAt(offsetOfShapeWord)) = shapeWordOf(m_layout.shape);
 }
 
+void ObjectBuilderPlan::createFastPath()
+{
+    size_t numberOfWords = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(m_initialBody.size()) / sizeof(uint64_t);
+    if (!m_extraPropertyNames.isEmpty() || numberOfWords > maxFastPathWords || m_fields.isEmpty())
+        return;
+    for (const PlannedField& planned : m_fields) {
+        if (planned.field->isOutOfLine())
+            return;
+    }
+
+    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    BitVector namedFields(m_layout.numberOfFields);
+    for (const PlannedField& planned : m_fields) {
+        const FieldData& field = *planned.field;
+        const RuntimeType& type = layouts.typeOf(field);
+        OptionSet<PrimitiveSet> primitives = type.primitiveSet();
+        uint8_t accepted = 0;
+        if (planned.acceptsEveryInt32)
+            accepted |= AcceptsInt32;
+        if (planned.acceptsEveryNumber)
+            accepted |= AcceptsDouble;
+        if (planned.acceptsBooleans)
+            accepted |= AcceptsBoolean;
+        if (primitives.contains(PrimitiveSet::String))
+            accepted |= AcceptsString;
+        if (type.acceptsEveryObject())
+            accepted |= AcceptsObject;
+        if (layouts.slotAdmits(field, jsNull()))
+            accepted |= AcceptsNull;
+        if (field.holdsRawValueFromBirth)
+            accepted |= HoldsRawValueFromBirth;
+        bool structureDecidesAcceptance = std::ranges::all_of(type.cellTests(), [](const RuntimeCellTest& test) {
+            return test.kind == CellTestKind::IsObject || test.kind == CellTestKind::IsCallable || test.kind == CellTestKind::CellTypeIs || test.kind == CellTestKind::ShapeIn || test.kind == CellTestKind::InheritsClassInfo;
+        });
+        if (structureDecidesAcceptance)
+            accepted |= StructureDecidesAcceptance;
+        m_fastFields.append({ static_cast<uint16_t>(field.slot.offset), field.slot.representation(), accepted });
+        namedFields.set(m_layout.indexOf(field));
+    }
+    m_acceptedStructureIDs.fill(0, m_fastFields.size());
+    m_namesEveryFieldOfBirth = true;
+    for (const FieldData& field : m_layout.fields()) {
+        if ((field.isFilledAtBirth || field.holdsRawValueFromBirth) && !namedFields.get(m_layout.indexOf(field)))
+            m_namesEveryFieldOfBirth = false;
+    }
+    Vector<uint64_t, maxFastPathWords> initialWords;
+    initialWords.fill(0, numberOfWords);
+    memcpySpan(asMutableByteSpan(initialWords.mutableSpan()), m_initialBody.span());
+    BitVector isOverwritten(numberOfWords);
+    for (const FastField& field : m_fastFields) {
+        if (widthOf(field.representation) == sizeof(uint64_t))
+            isOverwritten.set((field.offset - sizeof(JSCell)) / sizeof(uint64_t));
+    }
+    for (size_t index = 0; index < numberOfWords; ++index) {
+        if (!isOverwritten.get(index))
+            m_initialWords.append({ static_cast<uint32_t>(sizeof(JSCell) + index * sizeof(uint64_t)), initialWords[index] });
+    }
+    m_allocator = m_state.instance.vm->cellSpace().allocatorFor(sizeof(JSCell) + numberOfWords * sizeof(uint64_t), AllocatorForMode::EnsureAllocator);
+    m_allocationSize = m_allocator.cellSize();
+}
+
+static bool defersClosure(const FieldData& field)
+{
+    return traitsOf(field.slot.representation()).valueKind == SlotValueKind::DeferredClosure;
+}
+
+static uint64_t granuleBitsOf(const FieldData& field)
+{
+    return field.isOutOfLine() ? granuleBitOf(field.slot.offset) : 0;
+}
+
 static bool canBeExtraProperty(VM& vm, const LayoutData& layout, UniquedStringImpl* name)
 {
     // The slot belongs to the layout, while compiled code leaves out its test for extra properties where this shape cannot gain any.
     if (!layout.extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
         return false;
     return !name->isSymbol() && name != vm.propertyNames->underscoreProto.impl();
+}
+
+bool ObjectBuilder::canBuildWithoutCompilerKnowledge(const LayoutData& layout)
+{
+    if (layout.keysAreNeverEnumerated || layout.isDerived || layout.holdsInnerObjectsInPlace || !layout.impossibleMutations().isEmpty())
+        return false;
+    return std::ranges::none_of(layout.fields(), [](const FieldData& field) {
+        return field.flags & (fieldIsStoredOnce | fieldIsNeverStoredWithOtherType | fieldIsNeverDeleted | fieldIsNeverRedefined);
+    });
 }
 
 std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, const LayoutData& layout, std::span<UniquedStringImpl* const> names)
@@ -82,7 +162,8 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
             numberOfExtraKeys += !parseIndex(*name);
             continue;
         }
-        if (field->isPrivate() || traitsOf(field->slot.representation()).valueKind == SlotValueKind::DeferredClosure)
+        // What is built has plain data properties.
+        if (field->isPrivate() || field->attributes() || defersClosure(*field))
             return nullptr;
         uint16_t index = layout.indexOf(*field);
         if (!namedFields.add(index))
@@ -92,8 +173,6 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
             plan->m_keyOrder.append(static_cast<uint16_t>(fields.size() + numberOfExtraKeys - 1));
         }
         plan->m_keyOrder.append(index);
-        if (field->isOutOfLine())
-            plan->m_initialGranuleBits |= granuleBitOf(field->slot.offset);
 
         const RuntimeType& type = layouts.typeOf(*field);
         OptionSet<PrimitiveSet> primitives = type.primitiveSet();
@@ -101,13 +180,16 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
             auto range = type.integerRange();
             return primitives.contains(PrimitiveSet::Integer) && (!range || integers.isSubsetOf({ range->first, range->second }));
         };
-        bool acceptsEveryInt32 = acceptsEveryIntegerIn(Typed::Range::int32());
+        // The words below minInlineInt32 are the markers of such a slot: tryWriteInt32 refuses them, and the field's type leaves them out.
+        bool keepsMarkersAmongInt32s = field->slot.representation() == SlotRepresentation::OptionalInt32;
+        bool acceptsEveryInt32 = acceptsEveryIntegerIn(keepsMarkersAmongInt32s ? Typed::Range { minInlineInt32, INT32_MAX } : Typed::Range::int32());
         bool acceptsEveryNumber = acceptsEveryIntegerIn(Typed::Range::full()) && primitives.containsAll({ PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber });
         bool acceptsBooleans = primitives.containsAll({ PrimitiveSet::True, PrimitiveSet::False });
         plan->m_fields.append({ .field = field, .acceptsEveryInt32 = acceptsEveryInt32, .acceptsEveryNumber = acceptsEveryNumber, .acceptsBooleans = acceptsBooleans });
     }
     for (size_t index = 0; index < fields.size(); ++index) {
-        bool mayStayAbsent = (fields[index].flags & fieldIsOptional) && fields[index].canLeaveSlot();
+        // Every allocation that the compiler saw lists the closure that a slot defers.
+        bool mayStayAbsent = (fields[index].flags & fieldIsOptional) && fields[index].canLeaveSlot() && !defersClosure(fields[index]);
         if (!namedFields.get(index) && !mayStayAbsent)
             return nullptr;
     }
@@ -118,7 +200,23 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
     if (!orderAndCount)
         return nullptr;
     plan->createInitialBody(*orderAndCount);
+    plan->createFastPath();
     return plan;
+}
+
+bool ObjectBuilder::tryStoreSlow(const ObjectBuilderPlan& plan, uint8_t* cell, size_t index, JSValue value)
+{
+    std::span<const ObjectBuilderPlan::FastField> fields = plan.m_fastFields.span();
+    for (const ObjectBuilderPlan::FastField& unwritten : fields.subspan(index))
+        clearSlot(unwritten.representation, cell + unwritten.offset);
+
+    State& state = plan.m_state;
+    const FieldData& field = *plan.m_fields[index].field;
+    if (!state.objects->layouts.slotAdmits(field, value) || !tryWriteSlot(*state.strings, field.slot.representation(), cell + fields[index].offset, value))
+        return false;
+    if (value.isObject() && fields[index].acceptedValues & ObjectBuilderPlan::StructureDecidesAcceptance)
+        plan.m_acceptedStructureIDs[index] = value.asCell()->structureID().bits();
+    return true;
 }
 
 ObjectBuilder::ObjectBuilder(VM& vm, const ObjectBuilderPlan& plan)
@@ -126,21 +224,13 @@ ObjectBuilder::ObjectBuilder(VM& vm, const ObjectBuilderPlan& plan)
     , m_plan(plan)
     , m_deferGC(vm)
     , m_stored(plan.numberOfFields())
-    , m_granuleBits(plan.m_initialGranuleBits)
+    , m_granuleBits(0)
     , m_cellWords(numberOfWordsFor(plan.m_layout.size))
     , m_extensionWords(FillWith { }, numberOfWordsFor(plan.m_layout.extensionSize()), 0)
     , m_extraPropertyValues(FillWith { }, plan.m_extraPropertyNames.size(), JSValue())
 {
     ASSERT(&vm == plan.m_state.instance.vm);
     memcpySpan(cellBytes().subspan(sizeof(JSCell)), plan.m_initialBody.span());
-}
-
-void ObjectBuilder::storeDoubleInExtension(const FieldData& field, double number)
-{
-    uint32_t overflowOffset = m_plan.m_layout.overflowOffsetOf(field);
-    *static_cast<int32_t*>(slotOf(field)) = doubleInExtensionInt32;
-    *reinterpret_cast<double*>(extensionBytes().subspan(overflowOffset).data()) = number;
-    m_granuleBits |= granuleBitOf(overflowOffset);
 }
 
 bool ObjectBuilder::tryStore(unsigned index, JSValue value)
@@ -157,14 +247,11 @@ bool ObjectBuilder::tryStore(unsigned index, JSValue value)
 
     const FieldData& field = *planned.field;
     State& state = m_plan.m_state;
-    if (!state.objects->layouts.fieldAccepts(field, value))
+    if (!state.objects->layouts.slotAdmits(field, value) || !tryWriteSlot(*state.strings, field.slot.representation(), slotOf(field), value))
         return false;
-
-    if (!tryWriteSlot(*state.strings, field.slot.representation(), slotOf(field), value)) {
-        if (field.slot.representation() != SlotRepresentation::Int32OrDouble || !value.isNumber())
-            return false;
-        storeDoubleInExtension(field, value.asNumber());
-    }
+    // A field that is in the key order and has no storage reads as undefined. Its marker goes along where another field holds the granule.
+    if (!value.isUndefined() || !(field.flags & fieldMayExistWithoutStorage))
+        m_granuleBits |= granuleBitsOf(field);
     didStore(index);
     return true;
 }
@@ -174,6 +261,7 @@ bool ObjectBuilder::tryStoreInt32(unsigned index, int32_t number)
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
     if (!planned.acceptsEveryInt32 || !tryWriteInt32(planned.field->slot.representation(), slotOf(*planned.field), number))
         return tryStore(index, jsNumber(number));
+    m_granuleBits |= granuleBitsOf(*planned.field);
     didStore(index);
     return true;
 }
@@ -183,6 +271,7 @@ bool ObjectBuilder::tryStoreDouble(unsigned index, double number)
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
     if (!planned.acceptsEveryNumber || !tryWriteDouble(planned.field->slot.representation(), slotOf(*planned.field), number))
         return tryStore(index, jsNumber(purifyNaN(number)));
+    m_granuleBits |= granuleBitsOf(*planned.field);
     didStore(index);
     return true;
 }
@@ -192,6 +281,7 @@ bool ObjectBuilder::tryStoreBoolean(unsigned index, bool value)
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
     if (!planned.acceptsBooleans || !tryWriteBoolean(planned.field->slot.representation(), slotOf(*planned.field), value))
         return tryStore(index, jsBoolean(value));
+    m_granuleBits |= granuleBitsOf(*planned.field);
     didStore(index);
     return true;
 }

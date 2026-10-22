@@ -1,0 +1,171 @@
+# plain = { x: 1 }; frozen = { x: 1 }; Object.freeze(frozen); closed = { }; Object.preventExtensions(closed); readOnly = { x: 1 }; Object.defineProperty(readOnly, "x", { writable: false })
+# class Below { }; Object.defineProperty(Below.prototype, "x", { value: 1, writable: false }); class Over { x() { } }; class Iced { x() { } }; Object.freeze(Iced.prototype); array = [1]; icedArray = [1]; Object.freeze(icedArray)
+# None of these stores runs code. Those that a frozen or closed object, a read-only property or a read-only member above refuses leave the object without what was stored.
+# A method that a class defines is a writable property, which a store passes by: the object gets a property of its own.
+# RUN: runs-no-code x 0 toString
+# CHECK: f5 v0: L0: x=yes|yes 0=no|no toString=yes|yes any=yes|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f5 v0 stores land: x=yes 0=no toString=no any=no
+# CHECK: f6 v0: L1: x=yes|yes 0=no|no toString=yes|yes any=yes|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f6 v0 stores land: x=no 0=no toString=no any=no
+# CHECK: f7 v0: L2: x=yes|yes 0=no|no toString=yes|yes any=yes|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f7 v0 stores land: x=no 0=no toString=no any=no
+# CHECK: f8 v0: L3: x=no|no 0=no|no toString=yes|yes any=no|no keys=no iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f8 v0 stores land: x=no 0=no toString=no any=no
+# CHECK: f9 v0: L5: x=no|no 0=no|no toString=no|no any=no|no keys=yes iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f9 v0 stores land: x=no 0=no toString=no any=no
+# CHECK: f10 v0: L6: x=yes|yes 0=no|no toString=yes|yes any=no|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f10 v0 stores land: x=yes 0=no toString=no any=no
+# CHECK: f11 v0: L7: x=yes|yes 0=no|no toString=yes|yes any=no|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
+# CHECK: f11 v0 stores land: x=no 0=no toString=no any=no
+# CHECK: f12 v0: Array<int[0, 1], proven, pristine[Storage, Names]>: x=yes|yes 0=yes|yes toString=yes|yes any=yes|yes keys=yes iterate=yes convert=yes define=no unlisted=no called=yes
+# CHECK: f12 v0 stores land: x=yes 0=yes toString=no any=yes
+# CHECK: f13 v0: Array<int, proven>: x=no|no 0=no|no toString=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f13 v0 stores land: x=no 0=no toString=no any=no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Frozen" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Closed" fields=[{key="x" declared={type=anything}}]
+layout L3 name="ReadOnly" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Descriptor" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything} flags=[IsRequired]}]
+layout L5 kind=Instance name="Below" constructor=f2 fields=[{key="x" declared={type=anything}}]
+layout L6 kind=Instance name="Over" constructor=f3 fields=[{key="x" declared={type=anything}}]
+layout L7 kind=Instance name="Iced" constructor=f4 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Boolean boolean=false
+    v2 = String string="x"
+    v3 = Builtin builtin=ObjectFreeze
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = NewClosure function=f5
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = Call v5, -, v6
+    v8 = NewClosure function=f6
+    v9 = NewObject -, v0 layout=L1 fields=[0]
+    v10 = Call v3, -, v9
+    v11 = Call v8, -, v9
+    v12 = NewClosure function=f7
+    v13 = NewObject layout=L2 fields=[]
+    v14 = Builtin builtin=ObjectPreventExtensions
+    v15 = Call v14, -, v13
+    v16 = Call v12, -, v13
+    v17 = NewClosure function=f8
+    v18 = NewObject -, v0 layout=L3 fields=[0]
+    v19 = NewObject -, v1 layout=L4 fields=[1]
+    v20 = Call v4, -, v18, v2, v19
+    v21 = Call v17, -, v18
+    v22 = NewClosure function=f2
+    v23 = NewClass v22 layout=L5
+    v24 = FinishClass v23 layout=L5
+    v25 = PropGet v24 key="prototype"
+    v26 = NewObject -, v0, v1 layout=L4 fields=[0, 1]
+    v27 = Call v4, -, v25, v2, v26
+    v28 = Construct v24
+    v29 = NewClosure function=f9
+    v30 = Call v29, -, v28
+    v31 = NewClosure function=f3
+    v32 = NewClass v31 layout=L6
+    v33 = NewClosure function=f1
+    DefineMethod v32, v33 layout=L6 key="x"
+    v35 = FinishClass v32 layout=L6
+    v36 = Construct v35
+    v37 = NewClosure function=f10
+    v38 = Call v37, -, v36
+    v39 = NewClosure function=f4
+    v40 = NewClass v39 layout=L7
+    v41 = NewClosure function=f1
+    DefineMethod v40, v41 layout=L7 key="x"
+    v43 = FinishClass v40 layout=L7
+    v44 = PropGet v43 key="prototype"
+    v45 = Call v3, -, v44
+    v46 = Construct v43
+    v47 = NewClosure function=f11
+    v48 = Call v47, -, v46
+    v49 = NewArray v0 contents=anything
+    v50 = NewClosure function=f12
+    v51 = Call v50, -, v49
+    v52 = NewArray v0 contents=anything
+    v53 = Call v3, -, v52
+    v54 = NewClosure function=f13
+    v55 = Call v54, -, v52
+    v56 = PropGet v6 key="toString"
+    Return
+}
+function f1 name="x" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Below" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    Return v2
+}
+function f3 name="Over" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6
+    Return v2
+}
+function f4 name="Iced" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L7
+    v2 = NewObject v1 layout=L7
+    Return v2
+}
+function f5 name="storesIntoPlain" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f6 name="storesIntoFrozen" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f7 name="storesIntoClosed" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f8 name="storesIntoReadOnly" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f9 name="storesIntoBelow" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f10 name="storesIntoOver" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f11 name="storesIntoIced" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x" mode=Sloppy
+    Return
+}
+function f12 name="storesIntoArray" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    ElemSet v0, v1, v1 mode=Sloppy
+    Return
+}
+function f13 name="storesIntoIcedArray" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    ElemSet v0, v1, v1 mode=Sloppy
+    Return
+}

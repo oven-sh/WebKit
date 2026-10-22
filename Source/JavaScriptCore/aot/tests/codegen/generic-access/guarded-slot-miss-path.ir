@@ -1,11 +1,10 @@
-# The miss path of a guarded slot read is unlikely code: with fewer site caches than sites the reads on the likely path have one, and the miss paths read by name through the lookup tables
+# The miss path of a guarded slot read is stamped with the layout of the guard: it asks for no site cache and reads by name through the lookup tables, of which the table of fields comes first
 # RUN: compile
 # RUN(SITES): pipeline PlaceSiteCaches
-# OPTIONS: heat=everything-is-hot check=validate-back-end limit=MaxSiteCaches:2
+# OPTIONS: heat=everything-is-hot check=validate-back-end limit=MaxSiteCaches:2 disable=pass:InlineCalls
 # STATISTIC: TypeTestsPlaced = 16
 # STATISTIC: SiteCachesPlaced = 2
-# STATISTIC: SitesWithoutSiteCache = 17
-# LOSS: MaxSiteCaches x16 f1
+# STATISTIC: SitesWithoutSiteCache = 1
 # CHECK: image not empty
 # SITES-LABEL: name="readsPointBetweenCalls"
 # SITES: PropGet {{*}} key="report" {{*}}siteCache=
@@ -29,7 +28,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="readsPointBetweenCalls" parameters=[{type=anything}, {type=undefined|null|L0}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|null|object ? L0):
+  b0(v0: anything, v1: undefined|null|L0):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="report" [isFreeName]
     v4 = PropGet v0 key="first"

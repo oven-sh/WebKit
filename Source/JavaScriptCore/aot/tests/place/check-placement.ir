@@ -37,6 +37,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v21 = Call v20, v13
     v22 = PropGet v7 key="more" [isFreeName]
     v23 = ToBoolean v22
+    v24 = CallDirect v8 function=f3
     Branch v23 -> taken b1(), notTaken b2()
   b2():
     Return
@@ -55,6 +56,18 @@ function f2 name="read" kind=Method flags=[HasThis] results=[{type=anything}] {
     v2 = PropGet v0 key="y"
     v3 = Add v1, v2
     Return v3
+}
+function f3 name="callsByName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    v2 = Call v1, v0 calleeKey="a"
+    v3 = PropGet v0 key="b"
+    v4 = Call v3, v0 calleeKey="b"
+    v5 = PropGet v0 key="c"
+    v6 = Call v5, v0 calleeKey="c"
+    v7 = PropGet v0 key="d"
+    v8 = Call v7, v0 calleeKey="d"
+    Return v8
 }
 
 # ACCESS: mutated

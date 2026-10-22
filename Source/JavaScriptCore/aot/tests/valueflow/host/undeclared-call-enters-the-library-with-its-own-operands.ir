@@ -1,0 +1,47 @@
+# Array.from.call(List, [held], take)
+# `this` is not Array, so no declared overload takes the call: it enters the library's function (runtimefunction 48) with its own operands, and the body says what the call does:
+# `take` is reached through the body's call of its mapper. Every operand of the call is known, so no code runs that nobody compiles. The same call in the body may also have a callee nobody knows,
+# the one of a call that records describe, so what it hands over has escaped: the element.
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 escaped=f4
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: escaped=f4
+# CHECK-NEXT: n0 escaped
+# RUN(REACHED): valueflow-solve unreached
+# REACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=47 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=Array
+    v4 = PropGet v3 key="from"
+    v5 = NewClosure function=f2
+    v6 = Call v4, v5, v1, v2
+    Return
+}
+function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Integer integer=0
+    v5 = ElemGet v1, v4
+    v6 = Call v2, v3, v5, v4
+    Return v6
+}
+function f2 name="List" kind=Plain flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="take" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v0
+}
+function f4 name="held" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

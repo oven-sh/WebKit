@@ -30,11 +30,6 @@ void AllocationEmitter::generateNewRegExp(const ValueContext& value)
     Word32 recordNumber = word32(static_cast<int32_t>(record.index()));
     Word32 flags = word32(static_cast<int32_t>(toYarrFlags(value->regExpFlags()).toRaw()));
     Word32 offset = word32(static_cast<int32_t>(sharedCellOffset ? sharedCellOffset->value() : noSharedRegExpOffset));
-    if (value.shape() == CodeShape::Compact) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRegExpLiteral, { recordNumber, flags, offset }));
-        return;
-    }
-
     LValue sharedCell = m_out.constInt64(0);
     if (sharedCellOffset)
         sharedCell = m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *sharedCellOffset));
@@ -68,15 +63,15 @@ void AllocationEmitter::generateNewRuntimeError(const ValueContext& value)
 {
     Word32 errorKind = word32(static_cast<int32_t>(value->runtimeError()));
     if (StringID name = value->name()) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeErrorWithName, { errorKind, word32(static_cast<int32_t>(name.index())) }));
+        define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeErrorWithName, { errorKind, word32(static_cast<int32_t>(name.index())) }, { .capturesStackTrace = true }));
         return;
     }
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeError, { errorKind }));
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeError, { errorKind }, { .capturesStackTrace = true }));
 }
 
 void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
 {
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSuppressedError, { in<Boxed>(value->errorOperand()), in<Boxed>(value->suppressedOperand()) }));
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSuppressedError, { in<Boxed>(value->errorOperand()), in<Boxed>(value->suppressedOperand()) }, { .capturesStackTrace = true }));
 }
 
 CellPointer AllocationEmitter::createArguments(const ValueContext& value, RuntimeOperation operation, std::optional<CellPointer> callee)

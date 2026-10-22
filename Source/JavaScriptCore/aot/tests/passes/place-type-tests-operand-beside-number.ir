@@ -1,4 +1,4 @@
-# An operand of which no kind of primitive is predicted is tested for a number where the operand beside it is a number by type or by prediction
+# An operand of which no kind of primitive is expected is tested for a number where the operand beside it is a number, proven or expected
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
 
@@ -15,22 +15,22 @@ function f0 name="besideProvenNumber" parameters=[{type=number}, {type=anything}
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: number|string|bigint = Add v0,
 
-function f1 name="besidePredictedNumber" parameters=[{type=number|string|bigint predicted=number}, {type=anything}] results=[{type=number|string|bigint}] {
+function f1 name="besideExpectedNumber" parameters=[{type=number|string|bigint}, {type=anything}] results=[{type=number|string|bigint}] {
   b0(v0: number|string|bigint ~ number, v1: anything):
     v2 = Add v0, v1
     Return v2
 }
-# CHECK-LABEL: function f1 name="besidePredictedNumber"
+# CHECK-LABEL: function f1 name="besideExpectedNumber"
 # CHECK: = TypeTest v0 testedType=number
 # CHECK: v2: number = Add
 # CHECK: = TypeTest v1 testedType=number
 
-function f2 name="predictionOfObjectsOnly" parameters=[{type=number}, {type=anything predicted=undefined|null|boolean|number|string|symbol|bigint|L0}] results=[{type=number|string|bigint}] {
+function f2 name="everyPrimitiveIsExpected" parameters=[{type=number}, {type=undefined|null|boolean|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=number|string|bigint}] {
   b0(v0: number, v1: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0):
     v2 = Add v0, v1
     Return v2
 }
-# CHECK-LABEL: function f2 name="predictionOfObjectsOnly"
+# CHECK-LABEL: function f2 name="everyPrimitiveIsExpected"
 # CHECK: = TypeTest v1 testedType=number
 # CHECK: v2: number = Add v0,
 
@@ -60,12 +60,12 @@ function f5 name="besideUnknown" parameters=[{type=anything}, {type=anything}] r
 # CHECK-NOT: = TypeTest
 # CHECK: v2:{{*}}= Add v0, v1
 
-function f6 name="predictedStringOrNumber" parameters=[{type=number}, {type=anything predicted=number|string}] results=[{type=number|string|bigint}] {
+function f6 name="expectedStringOrNumber" parameters=[{type=number}, {type=number|string flags=[IsExpected]}] results=[{type=number|string|bigint}] {
   b0(v0: number, v1: anything ~ number|string):
     v2 = Add v0, v1
     Return v2
 }
-# CHECK-LABEL: function f6 name="predictedStringOrNumber"
+# CHECK-LABEL: function f6 name="expectedStringOrNumber"
 # CHECK-NOT: = TypeTest
 # CHECK: v2:{{*}}= Add v0, v1
 

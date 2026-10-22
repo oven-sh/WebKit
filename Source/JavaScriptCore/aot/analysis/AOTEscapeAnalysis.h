@@ -18,11 +18,13 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class EffectsCache;
+class FunctionAnalyses;
 struct PointsToResults;
 
 using ObjectID = ID<struct ObjectIDTag>;
@@ -43,7 +45,6 @@ struct TrackedObject {
     EscapeReasons reasons;
     std::optional<Use> firstEscape;
     OperandUses uses { OperandUses::all() };
-    LiveInstances liveInstances { LiveInstances::Unknown };
 };
 
 class ObjectSet {
@@ -105,6 +106,29 @@ struct ObjectUse {
     friend bool operator==(const ObjectUse&, const ObjectUse&) = default;
 };
 
+// What the solver has taken from types: from those of the value or of the terminator that the question is about, and from those of its operands. It reads a type nowhere else.
+struct AnswerFromTypes {
+    enum class Question : uint8_t {
+        IsReference,
+        MayHoldReference,
+        RefersToOperand,
+        HasFreshResult,
+        MayRunOtherCode,
+        SummaryOfOperand,
+        MakesObjectOnEdge,
+        SummaryOfTerminatorOperand,
+    };
+
+    Question question { Question::IsReference };
+    bool isTrue { false };
+    // The index of a value. For the last two questions that of the block of the terminator.
+    uint32_t subject { 0 };
+    uint32_t operandIndex { 0 };
+    OperandSummary summary;
+
+    friend bool operator==(const AnswerFromTypes&, const AnswerFromTypes&) = default;
+};
+
 struct EscapeAnalysisInputs {
     const AnalysisContext& context;
     const EffectContext& effects;
@@ -112,19 +136,29 @@ struct EscapeAnalysisInputs {
     const Function& function;
     const CFG& cfg;
     const UseLists& useLists;
-    const BlockCycles& cycles;
     Subject subject;
+    // For didRetypeValues(). A program pass makes its analyses for one look at a function, and nobody retypes it meanwhile.
+    bool remembersAnswersFromTypes { false };
 };
 
 class EscapeAnalysis {
     WTF_MAKE_NONCOPYABLE(EscapeAnalysis);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EscapeAnalysis);
 public:
-    explicit EscapeAnalysis(const EscapeAnalysisInputs&);
+    explicit EscapeAnalysis(FunctionAnalyses&);
 
     bool gaveUp() const { return m_gaveUp; }
 
-    unsigned numberOfObjects() const { return m_objects.size(); }
+    // The body makes no object, so every object is an entry parameter, and its caller may have done anything with it before the function was entered.
+    // Here the solve stays within its limit, no two values are known to be different objects but by their types, and nothing about an object is known not to have happened yet.
+    // All that is seen without the solve, which waits for the first question about an entry parameter. False says nothing.
+    bool tracksOnlyEntryParameters() const { return m_tracksOnlyEntryParameters; }
+
+    unsigned numberOfObjects() const
+    {
+        solveIfWaiting();
+        return m_objects.size();
+    }
     const TrackedObject& at(ObjectID) const LIFETIME_BOUND;
     std::optional<ObjectID> objectDefinedBy(ValueID) const;
 
@@ -132,34 +166,83 @@ public:
     std::optional<ObjectID> singleObject(ValueID) const;
     bool isExactUse(ObjectID, const Use&) const;
 
-    std::span<const ValueID> aliasesOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_aliases, m_firstAlias); }
-    std::span<const ObjectUse> usesOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_uses, m_firstUse); }
+    std::span<const ValueID> aliasesOf(ObjectID) const LIFETIME_BOUND;
+    std::span<const ObjectUse> usesOf(ObjectID object) const LIFETIME_BOUND
+    {
+        if (!m_hasListedUses) [[unlikely]]
+            listUses();
+        return entriesOf(object, m_uses, m_firstUse);
+    }
     std::span<const ObjectID> contentsOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_contents, m_firstContent); }
     std::span<const ObjectID> containersOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_containers, m_firstContainer); }
 
     AliasResult alias(ValueID, ValueID) const;
+    bool mayAlias(ValueID, ValueID) const;
+
+    bool hasLiveInstances() const { return m_hasLiveInstances; }
+    void computeLiveInstances(const CFG&, const UseLists&, const ScopedLambda<const BlockCycles&()>&);
+    LiveInstances liveInstancesOf(ObjectID object) const
+    {
+        RELEASE_ASSERT(m_hasLiveInstances);
+        return m_liveInstances[object.index()];
+    }
 
     // The object, and every object that some value may name as well as it.
     BitVector objectsSharingValuesWith(ObjectID) const;
     // About an object that a terminator makes on an edge: those of objectsSharingValuesWith of which no value that is live in front of any such terminator
     // may name an earlier instance. What happened to them is over there. An object that is still in use there keeps its past and costs the others nothing.
-    const BitVector& objectsRenewedAtMakersOf(ObjectID object) const LIFETIME_BOUND { return object.index() < m_objectsRenewedAtMakers.size() ? m_objectsRenewedAtMakers[object.index()] : m_noObjects; }
+    const BitVector& objectsRenewedAtMakersOf(ObjectID object) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_hasLiveInstances);
+        return object.index() < m_objectsRenewedAtMakers.size() ? m_objectsRenewedAtMakers[object.index()] : m_noObjects;
+    }
+
+    // The objects are numbered in the reverse post order of the blocks and in the order of their lists, and the uses are listed in that order. Neither changes with the numbers.
+    void didRenumber(const Renumbering&);
+    // Types and expected types have changed, and nothing else. Answers whether the solver would be told all that it was told: then it would find what it has found.
+    bool didRetypeValues();
 
 private:
     struct StoredSet {
         BitVector objects;
+        // Where some member is an entry parameter: the members that are allocations. Else `objects` are those.
+        BitVector allocationsBesideEntryParameters;
+        bool mayBeUntracked { true };
+        bool holdsEntryParameter { false };
+    };
+    // What a value may be among the allocations of the function. An entry parameter is an object that nobody tracks.
+    struct AllocationSet {
+        const BitVector& objects;
         bool mayBeUntracked { true };
     };
+    struct TypesOfValue {
+        TypeID type;
+        TypeID expected;
 
+        friend bool operator==(const TypesOfValue&, const TypesOfValue&) = default;
+    };
+    AllocationSet allocationSetOf(ValueID) const LIFETIME_BOUND;
+
+    // Answers how much work it was.
+    uint64_t solve();
+    void solveIfWaiting() const
+    {
+        if (!m_isSolved) [[unlikely]]
+            const_cast<EscapeAnalysis*>(this)->solve();
+    }
+
+    void rememberTypes();
     void createObjects(const PointsToResults&);
     void takeSets(PointsToResults&);
-    void computeAliases();
+    void computeAliases() const;
     void computeContents(const PointsToResults&);
     Vector<EscapeReasons> computeReasons(const PointsToResults&);
     void propagateEscapeToContents();
-    void computeUses(const PointsToResults&, const UseLists&, std::span<const EscapeReasons> useReasons);
+    void computeUses(PointsToResults&, const UseLists&, std::span<const EscapeReasons> useReasons);
+    void listUses() const;
     void computeStates();
-    void computeLiveInstances(const CFG&, const UseLists&, const BlockCycles&);
+    AliasResult aliasWhere(ValueID, ValueID, NOESCAPE const Invocable<bool(ObjectID)> auto& hasAtMostOneLiveInstance) const;
+    AliasResult aliasAmongAllocations(ValueID, ValueID, NOESCAPE const Invocable<bool(ObjectID)> auto& hasAtMostOneLiveInstance) const;
 
     template<typename T>
     std::span<const T> entriesOf(ObjectID object, const Vector<T>& entries, const Vector<uint32_t>& firstEntry) const
@@ -169,23 +252,58 @@ private:
         return entries.subspan(first, firstEntry[object.index() + 1] - first);
     }
 
+    FunctionAnalyses& m_analyses;
     const Program& m_program;
     const Function& m_function;
+    bool m_tracksOnlyEntryParameters { false };
+    bool m_isSolved { false };
+    bool m_remembersAnswersFromTypes { false };
     bool m_gaveUp { false };
+    bool m_hasLiveInstances { false };
     Vector<TrackedObject> m_objects;
+    Vector<LiveInstances> m_liveInstances;
     Vector<ValueSetID> m_setOfValue;
     Vector<StoredSet> m_sets;
     BitVector m_noObjects;
-    Vector<ValueID> m_aliases;
-    Vector<uint32_t> m_firstAlias;
-    Vector<ObjectUse> m_uses;
+    mutable Vector<ValueID> m_aliases;
+    mutable Vector<uint32_t> m_firstAlias;
+    // The lists are made for the first who asks for one. Until then their entries lie in the order in which the solver found them.
+    struct UnlistedUse {
+        ObjectID object;
+        ObjectUse use;
+    };
+    mutable bool m_hasListedUses { false };
+    mutable Vector<UnlistedUse> m_unlistedUses;
+    mutable Vector<ObjectUse> m_uses;
     Vector<uint32_t> m_firstUse;
     Vector<ObjectID> m_contents;
     Vector<uint32_t> m_firstContent;
     Vector<ObjectID> m_containers;
     Vector<uint32_t> m_firstContainer;
     Vector<BitVector> m_objectsRenewedAtMakers;
+    Vector<AnswerFromTypes> m_answersFromTypes;
+    Vector<TypesOfValue> m_typesWhenAnswered;
 };
+
+// False where every allocation that the value may name was read out of an object that is open to others, and so has a use that lets it escape.
+// It is seen from what the value is computed from, without the solve. True says nothing.
+bool mayNameUnescapedAllocation(const Function&, ValueID);
+// Seen without the solve too, through the parameters of blocks as well: the values that make the objects which the value may name, or out of which what it names may have been read,
+// however many objects lie between. An allocation that the value may name and that is made by none of them, and stands in none of their objects, was read out of an object that is open to others.
+// Nothing where that takes too long to see.
+std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses&, ValueID);
+
+// What the solve says of a use of a value for every object that the value names, seen from the use alone.
+enum class UseSeenAlone : uint8_t {
+    Unknown,
+    // The user names each of the objects as well, and the use stands in no list.
+    HandsOn,
+    // It stands in usesOf() of each of the objects.
+    IsListed,
+    // And lets them escape.
+    IsListedAsEscape,
+};
+UseSeenAlone classifyUseAlone(FunctionAnalyses&, const Use&);
 
 // The blocks whose terminators declare a result on an edge to the parameter.
 Vector<BlockID, 2> blocksWithResultIn(const Function&, const CFG&, BlockID blockOfParameter, ValueID parameter);
@@ -196,8 +314,16 @@ inline const TrackedObject& EscapeAnalysis::at(ObjectID object) const
     return m_objects[object.index()];
 }
 
+inline std::span<const ValueID> EscapeAnalysis::aliasesOf(ObjectID object) const
+{
+    if (m_firstAlias.isEmpty())
+        computeAliases();
+    return entriesOf(object, m_aliases, m_firstAlias);
+}
+
 inline PointsToSet EscapeAnalysis::pointsTo(ValueID value) const
 {
+    solveIfWaiting();
     RELEASE_ASSERT(value.index() < m_setOfValue.size());
     ValueSetID id = m_setOfValue[value.index()];
     if (!id)

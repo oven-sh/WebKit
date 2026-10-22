@@ -1,15 +1,15 @@
 # A shared representation is wider than a field's own only where the cell has bytes to spare. The fields of Full take all 16 bytes behind the header, so its "small" stays as narrow as it is and the access has two groups
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
 # STATISTIC: SharedSlots = 1
 # STATISTIC: SharesRefused = 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="Full" fields=[{key="wide" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="middle" declared={type=number} flags=[IsRequired]}, {key="small" declared={type=number} flags=[IsRequired]}, {key="other" declared={type=number} flags=[IsRequired]}]
-layout L1 name="Roomy" fields=[{key="small" declared={type=number} flags=[IsRequired]}, {key="narrow" declared={type=number} flags=[IsRequired]}]
-layout L2 name="AlsoRoomy" fields=[{key="narrow" declared={type=number} flags=[IsRequired]}]
+layout L0 name="Full" fields=[{key="wide" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="middle" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="small" declared={type=int[0, 255]} flags=[IsRequired]}, {key="other" declared={type=int[0, 255]} flags=[IsRequired]}]
+layout L1 name="Roomy" fields=[{key="small" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="narrow" declared={type=int[0, 255]} flags=[IsRequired]}]
+layout L2 name="AlsoRoomy" fields=[{key="narrow" declared={type=int[0, 65535]} flags=[IsRequired]}]
 variable g0 name="fullOrRoomy" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="roomy" module=m0 declared={type=anything} initialization=Undefined
 

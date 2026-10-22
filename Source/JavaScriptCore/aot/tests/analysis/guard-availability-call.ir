@@ -1,4 +1,4 @@
-# A summarized call ends a guard only when it may write the tested object, and unknown code ends the guards of what it can reach and of nothing else
+# A summarized call ends a guard only when it may write the tested object, and unknown code ends the guards of what it can reach and of nothing else. No code ends the proof of a shape
 # FORM: Prepared
 # RUN: guards points uses summaries
 # RUN(PLAIN): guards points uses
@@ -58,7 +58,7 @@ function f2 name="calleeWritesPossibleAlias" parameters=[{type=L0}, {type=L0}, {
 
 function f3 name="calleeWritesFreshArgument" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything):
-    v2 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
     v4 = HasKeyOrder v0 layout=L0 fields=[0]
     Branch v4 -> taken b1(| 0), notTaken b3()
@@ -77,7 +77,7 @@ function f3 name="calleeWritesFreshArgument" parameters=[{type=L0}, {type=anythi
 # CHECK-NEXT: b1:1 available: [v5]
 # PLAIN-LABEL: function f3
 # PLAIN: b1 available at head: [v2.0 v2.1 v2.2 v2.3 v5.0]
-# PLAIN-NEXT: b2 available at head: []
+# PLAIN-NEXT: b2 available at head: [v2.0]
 # PLAIN: b1:0 available: [v2 v5]
 # PLAIN-NEXT: b1:1 available: []
 
@@ -101,20 +101,20 @@ function f4 name="unknownCode" parameters=[{type=object}, {type=function}, {type
 # CHECK: b0:5 available: [v3 v4]
 # CHECK-NEXT: b0:6 available: [v3 v4]
 # CHECK-NEXT: b1:0 available: [v3 v4 v9]
-# CHECK-NEXT: b1:1 available: [v3]
-# CHECK-NEXT: b1:2 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3 v9]
+# CHECK-NEXT: b1:2 available: [v3 v9]
 # CHECK-NEXT: b2:0 available: [v3 v4]
 # CHECK-NEXT: v5 guard v3: Available
 # CHECK-NEXT: v6 guard v4: Available
 # CHECK-NEXT: v11 guard v3: Available
 # PLAIN-LABEL: function f4
 # PLAIN: b1:0 available: [v3 v4 v9]
-# PLAIN-NEXT: b1:1 available: [v3]
+# PLAIN-NEXT: b1:1 available: [v3 v9]
 # PLAIN: v11 guard v3: Available
 
 function f5 name="makesPoint" parameters=[{type=anything}] results=[{type=L0}] {
   b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
     PutSlotOrAdd v1, v1, v0 key="y" receivers=[L0] level=Proven
     Return v1
 }

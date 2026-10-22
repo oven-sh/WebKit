@@ -1,4 +1,4 @@
-# A test for a function of the application leaves no built-in on the edge that is taken and every built-in on the other. A built-in that is written in JavaScript passes the test for the function the program registers for it, and is a closure of that function from there on
+# A test for a function of the application leaves no built-in on the edge that is taken and every built-in on the other. A built-in that is implemented in JavaScript passes the test for the function the program registers for it, and is a closure of that function from there on
 # FORM: Prepared
 # RUN: print
 

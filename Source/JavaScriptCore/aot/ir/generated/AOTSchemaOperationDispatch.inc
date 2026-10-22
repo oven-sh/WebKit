@@ -18,6 +18,7 @@
     case Opcode::PutEnvironmentField: emitter<BindingEmitter>().generatePutEnvironmentField(value); break;
     case Opcode::ScopeHasBinding: emitter<BindingEmitter>().generateScopeHasBinding(value); break;
     case Opcode::NewObject: emitter<AllocationEmitter>().generateNewObject(value); break;
+    case Opcode::NewDictionary: emitter<AllocationEmitter>().generateNewDictionary(value); break;
     case Opcode::FinishObject: emitter<AllocationEmitter>().generateFinishObject(value); break;
     case Opcode::NewArray: emitter<AllocationEmitter>().generateNewArray(value); break;
     case Opcode::AppendElement: emitter<AllocationEmitter>().generateAppendElement(value); break;
@@ -42,9 +43,12 @@
     case Opcode::ElemDefine: emitter<AccessEmitter>().generateElemDefine(value); break;
     case Opcode::DefineGetter: emitter<AccessEmitter>().generateDefineGetter(value); break;
     case Opcode::DefineSetter: emitter<AccessEmitter>().generateDefineSetter(value); break;
+    case Opcode::TryDefineLiveBinding: emitter<AccessEmitter>().generateTryDefineLiveBinding(value); break;
+    case Opcode::TryReExportFields: emitter<AccessEmitter>().generateTryReExportFields(value); break;
     case Opcode::SetFunctionName: emitter<AccessEmitter>().generateSetFunctionName(value); break;
     case Opcode::SetLiteralPrototype: emitter<AccessEmitter>().generateSetLiteralPrototype(value); break;
     case Opcode::CopyDataProperties: emitter<AccessEmitter>().generateCopyDataProperties(value); break;
+    case Opcode::CopyObject: emitter<AccessEmitter>().generateCopyObject(value); break;
     case Opcode::GetSuperBase: emitter<AccessEmitter>().generateGetSuperBase(value); break;
     case Opcode::SuperGet: emitter<AccessEmitter>().generateSuperGet(value); break;
     case Opcode::SuperSet: emitter<AccessEmitter>().generateSuperSet(value); break;
@@ -82,7 +86,7 @@
     case Opcode::ToObject: emitter<OperatorEmitter>().generateToObject(value); break;
     case Opcode::ToThis: emitter<OperatorEmitter>().generateToThis(value); break;
     case Opcode::Upcast: emitter<CastEmitter>().generateUpcast(value); break;
-    case Opcode::Claim: emitter<CastEmitter>().generateClaim(value); break;
+    case Opcode::NarrowByField: emitter<CastEmitter>().generateNarrowByField(value); break;
     case Opcode::CheckInitialized: emitter<CastEmitter>().generateCheckInitialized(value); break;
     case Opcode::RequireObjectCoercible: emitter<CastEmitter>().generateRequireObjectCoercible(value); break;
     case Opcode::RequireObject: emitter<CastEmitter>().generateRequireObject(value); break;
@@ -115,6 +119,7 @@
     case Opcode::ModuleNamespace: emitter<ModuleEmitter>().generateModuleNamespace(value); break;
     case Opcode::ImportModule: emitter<ModuleEmitter>().generateImportModule(value); break;
     case Opcode::RequireModule: emitter<ModuleEmitter>().generateRequireModule(value); break;
+    case Opcode::RecordRequire: emitter<ModuleEmitter>().generateRecordRequire(value); break;
     case Opcode::ResolveModule: emitter<ModuleEmitter>().generateResolveModule(value); break;
     case Opcode::ThrowModuleFailure: emitter<ModuleEmitter>().generateThrowModuleFailure(value); break;
     case Opcode::ImportDynamic: emitter<ModuleEmitter>().generateImportDynamic(value); break;
@@ -159,41 +164,51 @@
     case Opcode::CollectionTable: emitter<CollectionIntrinsicEmitter>().generateCollectionTable(value); break;
     case Opcode::MapNext: emitter<CollectionIntrinsicEmitter>().generateMapNext(value); break;
     case Opcode::SetNext: emitter<CollectionIntrinsicEmitter>().generateSetNext(value); break;
+    case Opcode::IsClosureOf: emitter<GuardEmitter>().generateIsClosureOf(value); break;
     case Opcode::KeyConstant: emitter<ConstantEmitter>().generateKeyConstant(value); break;
     case Opcode::Unspecified: emitter<ConstantEmitter>().generateUnspecified(value); break;
+    case Opcode::EmptyArgumentList: emitter<ConstantEmitter>().generateEmptyArgumentList(value); break;
     case Opcode::Parameter: emitter<BindingEmitter>().generateParameter(value); break;
     case Opcode::GetEncodedModuleVariable: emitter<BindingEmitter>().generateGetEncodedModuleVariable(value); break;
     case Opcode::AssumeType: emitter<CastEmitter>().generateAssumeType(value); break;
+    case Opcode::ReadAgain: emitter<CastEmitter>().generateReadAgain(value); break;
+    case Opcode::BorrowedParameter: emitter<CastEmitter>().generateBorrowedParameter(value); break;
     case Opcode::ReportMismatch: emitter<CastEmitter>().generateReportMismatch(value); break;
-    case Opcode::CallGroup: emitter<CallEmitter>().generateCallGroup(value); break;
+    case Opcode::CallTable: emitter<CallEmitter>().generateCallTable(value); break;
     case Opcode::ShapeTest: emitter<GuardEmitter>().generateShapeTest(value); break;
     case Opcode::IsSlotFilled: emitter<GuardEmitter>().generateIsSlotFilled(value); break;
     case Opcode::HasNoExtraProperties: emitter<GuardEmitter>().generateHasNoExtraProperties(value); break;
+    case Opcode::HasNoFieldOutsideSlot: emitter<GuardEmitter>().generateHasNoFieldOutsideSlot(value); break;
+    case Opcode::HasBirthFieldsFilled: emitter<GuardEmitter>().generateHasBirthFieldsFilled(value); break;
     case Opcode::IsNotFrozen: emitter<GuardEmitter>().generateIsNotFrozen(value); break;
     case Opcode::HasLayoutPrototype: emitter<GuardEmitter>().generateHasLayoutPrototype(value); break;
     case Opcode::BelongsToInstance: emitter<GuardEmitter>().generateBelongsToInstance(value); break;
     case Opcode::IsPristine: emitter<GuardEmitter>().generateIsPristine(value); break;
     case Opcode::HasArrayStorage: emitter<GuardEmitter>().generateHasArrayStorage(value); break;
     case Opcode::IsInBounds: emitter<GuardEmitter>().generateIsInBounds(value); break;
+    case Opcode::IsElementPresent: emitter<GuardEmitter>().generateIsElementPresent(value); break;
+    case Opcode::IsInsideView: emitter<GuardEmitter>().generateIsInsideView(value); break;
     case Opcode::IsNotThenable: emitter<GuardEmitter>().generateIsNotThenable(value); break;
-    case Opcode::IsMemberUnchanged: emitter<GuardEmitter>().generateIsMemberUnchanged(value); break;
-    case Opcode::IsPrototypeLinkUnchanged: emitter<GuardEmitter>().generateIsPrototypeLinkUnchanged(value); break;
-    case Opcode::IsClassEvaluatedOnce: emitter<GuardEmitter>().generateIsClassEvaluatedOnce(value); break;
-    case Opcode::IsRequireEdgeReady: emitter<GuardEmitter>().generateIsRequireEdgeReady(value); break;
+    case Opcode::AreMembersUnchanged: emitter<GuardEmitter>().generateAreMembersUnchanged(value); break;
     case Opcode::HasKeyOrder: emitter<GuardEmitter>().generateHasKeyOrder(value); break;
-    case Opcode::IsShapeEpochCurrent: emitter<GuardEmitter>().generateIsShapeEpochCurrent(value); break;
-    case Opcode::IsClosureOf: emitter<GuardEmitter>().generateIsClosureOf(value); break;
     case Opcode::IsEnumeratorCurrent: emitter<GuardEmitter>().generateIsEnumeratorCurrent(value); break;
-    case Opcode::GetShapeEpoch: emitter<GuardValueEmitter>().generateGetShapeEpoch(value); break;
     case Opcode::AllGuards: emitter<GuardValueEmitter>().generateAllGuards(value); break;
     case Opcode::GetSlot: emitter<SlotAccessEmitter>().generateGetSlot(value); break;
     case Opcode::GetSlotOrUndefined: emitter<SlotAccessEmitter>().generateGetSlotOrUndefined(value); break;
+    case Opcode::GetSlotGetter: emitter<SlotAccessEmitter>().generateGetSlotGetter(value); break;
+    case Opcode::GetFlattenedSlot: emitter<SlotAccessEmitter>().generateGetFlattenedSlot(value); break;
+    case Opcode::GetFlattenedSlotOrUndefined: emitter<SlotAccessEmitter>().generateGetFlattenedSlotOrUndefined(value); break;
     case Opcode::GetDeferredClosureSlot: emitter<SlotAccessEmitter>().generateGetDeferredClosureSlot(value); break;
+    case Opcode::GetDeferredClosureSlotOrUndefined: emitter<SlotAccessEmitter>().generateGetDeferredClosureSlotOrUndefined(value); break;
     case Opcode::PutSlot: emitter<SlotAccessEmitter>().generatePutSlot(value); break;
     case Opcode::PutSlotOrAdd: emitter<SlotAccessEmitter>().generatePutSlotOrAdd(value); break;
+    case Opcode::FinishBirth: emitter<AllocationEmitter>().generateFinishBirth(value); break;
+    case Opcode::TryFinishBirth: emitter<AllocationEmitter>().generateTryFinishBirth(value); break;
+    case Opcode::MakeBorrowedObject: emitter<AllocationEmitter>().generateMakeBorrowedObject(value); break;
     case Opcode::PropHasOwn: emitter<OwnAccessEmitter>().generatePropHasOwn(value); break;
-    case Opcode::CopyObject: emitter<AccessEmitter>().generateCopyObject(value); break;
     case Opcode::TryCopyFields: emitter<AccessEmitter>().generateTryCopyFields(value); break;
+    case Opcode::GetGlobalBinding: emitter<AccessEmitter>().generateGetGlobalBinding(value); break;
+    case Opcode::SetGlobalBinding: emitter<AccessEmitter>().generateSetGlobalBinding(value); break;
     case Opcode::GetArrayLength: emitter<ElementAccessEmitter>().generateGetArrayLength(value); break;
     case Opcode::GetArrayElement: emitter<ElementAccessEmitter>().generateGetArrayElement(value); break;
     case Opcode::PutArrayElement: emitter<ElementAccessEmitter>().generatePutArrayElement(value); break;
@@ -201,6 +216,7 @@
     case Opcode::AppendElements: emitter<ElementAccessEmitter>().generateAppendElements(value); break;
     case Opcode::HasSpareArrayCapacity: emitter<ElementAccessEmitter>().generateHasSpareArrayCapacity(value); break;
     case Opcode::ReserveArrayCapacity: emitter<ElementAccessEmitter>().generateReserveArrayCapacity(value); break;
+    case Opcode::ConvertToDoubleStorage: emitter<ElementAccessEmitter>().generateConvertToDoubleStorage(value); break;
     case Opcode::GetTypedArrayLength: emitter<ElementAccessEmitter>().generateGetTypedArrayLength(value); break;
     case Opcode::GetTypedArrayElement: emitter<ElementAccessEmitter>().generateGetTypedArrayElement(value); break;
     case Opcode::PutTypedArrayElement: emitter<ElementAccessEmitter>().generatePutTypedArrayElement(value); break;
@@ -208,7 +224,6 @@
     case Opcode::GetStringCodeUnit: emitter<ElementAccessEmitter>().generateGetStringCodeUnit(value); break;
     case Opcode::GetArgument: emitter<ArgumentsEmitter>().generateGetArgument(value); break;
     case Opcode::GetRestLength: emitter<ArgumentsEmitter>().generateGetRestLength(value); break;
-    case Opcode::ReturnsToResultTest: emitter<ArgumentsEmitter>().generateReturnsToResultTest(value); break;
     case Opcode::CreateRest: emitter<ArgumentsEmitter>().generateCreateRest(value); break;
     case Opcode::GetMyArgumentByVal: emitter<ArgumentsEmitter>().generateGetMyArgumentByVal(value); break;
     case Opcode::CallForwardVarargs: emitter<ArgumentsEmitter>().generateCallForwardVarargs(value); break;
@@ -226,15 +241,26 @@
     case Opcode::NewMapFromData: emitter<BuiltinCallEmitter>().generateNewMapFromData(value); break;
     case Opcode::NewArgumentList: emitter<BuiltinCallEmitter>().generateNewArgumentList(value); break;
     case Opcode::SharedRegExpLiteral: emitter<BuiltinCallEmitter>().generateSharedRegExpLiteral(value); break;
+    case Opcode::IsBuiltinLocationUnchanged: emitter<BuiltinCallEmitter>().generateIsBuiltinLocationUnchanged(value); break;
+    case Opcode::IsFunctionOfBuiltin: emitter<BuiltinCallEmitter>().generateIsFunctionOfBuiltin(value); break;
+    case Opcode::GetBuiltinValue: emitter<BuiltinCallEmitter>().generateGetBuiltinValue(value); break;
     case Opcode::DestructureIterable: emitter<ExpandedIterationEmitter>().generateDestructureIterable(value); break;
     case Opcode::EnumeratorGetByVal: emitter<ExpandedIterationEmitter>().generateEnumeratorGetByVal(value); break;
     case Opcode::RequireAttachedTypedArray: emitter<ExpandedIterationEmitter>().generateRequireAttachedTypedArray(value); break;
     case Opcode::CreateAsyncFromSyncIterator: emitter<ExpandedIterationEmitter>().generateCreateAsyncFromSyncIterator(value); break;
     case Opcode::ThrowNotIterable: emitter<ExpandedIterationEmitter>().generateThrowNotIterable(value); break;
+    case Opcode::IsCollectionTableFull: emitter<CollectionIntrinsicEmitter>().generateIsCollectionTableFull(value); break;
+    case Opcode::ReserveCollectionCapacity: emitter<CollectionIntrinsicEmitter>().generateReserveCollectionCapacity(value); break;
     case Opcode::NewGenerator: emitter<SavedFrameEmitter>().generateNewGenerator(value); break;
     case Opcode::NewAsyncGenerator: emitter<SavedFrameEmitter>().generateNewAsyncGenerator(value); break;
+    case Opcode::TakeGeneratorPrototype: emitter<SavedFrameEmitter>().generateTakeGeneratorPrototype(value); break;
+    case Opcode::IsGeneratorUnstarted: emitter<SavedFrameEmitter>().generateIsGeneratorUnstarted(value); break;
+    case Opcode::IsGeneratorRunning: emitter<SavedFrameEmitter>().generateIsGeneratorRunning(value); break;
+    case Opcode::MarkGeneratorRunning: emitter<SavedFrameEmitter>().generateMarkGeneratorRunning(value); break;
+    case Opcode::TakeGeneratorStepStatus: emitter<SavedFrameEmitter>().generateTakeGeneratorStepStatus(value); break;
     case Opcode::IsUnmodifiedAsyncGenerator: emitter<SavedFrameEmitter>().generateIsUnmodifiedAsyncGenerator(value); break;
     case Opcode::StepAsyncGenerator: emitter<SavedFrameEmitter>().generateStepAsyncGenerator(value); break;
+    case Opcode::AwaitMayContinue: emitter<SavedFrameEmitter>().generateAwaitMayContinue(value); break;
     case Opcode::AwaitBySavingFrame: emitter<SavedFrameEmitter>().generateAwaitBySavingFrame(value); break;
     case Opcode::AwaitCallBySavingFrame: emitter<SavedFrameEmitter>().generateAwaitCallBySavingFrame(value); break;
     case Opcode::YieldBySavingFrame: emitter<SavedFrameEmitter>().generateYieldBySavingFrame(value); break;
@@ -242,7 +268,9 @@
     case Opcode::ReturnAsyncResult: emitter<SavedFrameEmitter>().generateReturnAsyncResult(value); break;
     case Opcode::PromiseAllOfElements: emitter<SavedFrameEmitter>().generatePromiseAllOfElements(value); break;
     case Opcode::HasInPrototypeChain: emitter<OperatorEmitter>().generateHasInPrototypeChain(value); break;
-    case Opcode::GetRequiredValue: emitter<ModuleEmitter>().generateGetRequiredValue(value); break;
+    case Opcode::BeginModuleEvaluation: emitter<ModuleEmitter>().generateBeginModuleEvaluation(value); break;
+    case Opcode::FinishModuleEvaluation: emitter<ModuleEmitter>().generateFinishModuleEvaluation(value); break;
+    case Opcode::AbandonModuleEvaluation: emitter<ModuleEmitter>().generateAbandonModuleEvaluation(value); break;
     case Opcode::StringBuilderBegin: emitter<StringBuilderEmitter>().generateStringBuilderBegin(value); break;
     case Opcode::StringBuilderAppendBuiltin: emitter<StringBuilderEmitter>().generateStringBuilderAppendBuiltin(value); break;
     case Opcode::StringBuilderAppendJSON: emitter<StringBuilderEmitter>().generateStringBuilderAppendJSON(value); break;
@@ -254,6 +282,7 @@
     case Opcode::StringBuilderRollBack: emitter<StringBuilderEmitter>().generateStringBuilderRollBack(value); break;
     case Opcode::ValidateType: emitter<RuntimeValidationEmitter>().generateValidateType(value); break;
     case Opcode::ValidateCallee: emitter<RuntimeValidationEmitter>().generateValidateCallee(value); break;
+    case Opcode::ValidateLookup: emitter<RuntimeValidationEmitter>().generateValidateLookup(value); break;
     case Opcode::ValidateFirstRun: emitter<RuntimeValidationEmitter>().generateValidateFirstRun(value); break;
     case Opcode::ValidateSameValue: emitter<RuntimeValidationEmitter>().generateValidateSameValue(value); break;
     case Opcode::JSONSourceOpen: emitter<JSONParseEmitter>().generateJSONSourceOpen(value); break;
@@ -295,7 +324,6 @@
     case Opcode::JSONAppendDate: emitter<JSONWriteEmitter>().generateJSONAppendDate(value); break;
     case Opcode::JSONAppendString: emitter<JSONWriteEmitter>().generateJSONAppendString(value); break;
     case Opcode::JSONAppendValue: emitter<JSONWriteEmitter>().generateJSONAppendValue(value); break;
-    case Opcode::PropGetChecked: emitter<FusedAccessEmitter>().generatePropGetChecked(value); break;
     case Opcode::PropGetChain: emitter<FusedAccessEmitter>().generatePropGetChain(value); break;
     case Opcode::PropGetPair: emitter<FusedAccessEmitter>().generatePropGetPair(value); break;
     case Opcode::PropGetAndTest: emitter<FusedAccessEmitter>().generatePropGetAndTest(value); break;
@@ -337,6 +365,8 @@
     case Opcode::StringBuilderAppendBoolean: emitter<StringBuilderPartEmitter>().generateStringBuilderAppendBoolean(value); break;
     case Opcode::StringBuilderAppendStringOrNullish: emitter<StringBuilderPartEmitter>().generateStringBuilderAppendStringOrNullish(value); break;
     case Opcode::StringBuilderAppendValue: emitter<StringBuilderPartEmitter>().generateStringBuilderAppendValue(value); break;
+    case Opcode::MapGetByKeyParts: emitter<KeyPartsLookupEmitter>().generateMapGetByKeyParts(value); break;
+    case Opcode::HasByKeyParts: emitter<KeyPartsLookupEmitter>().generateHasByKeyParts(value); break;
     case Opcode::ResolveCallTarget: emitter<ResolvedCallEmitter>().generateResolveCallTarget(value); break;
     case Opcode::CallResolved: emitter<ResolvedCallEmitter>().generateCallResolved(value); break;
     case Opcode::RegExpMatchLiteral: emitter<ResolvedCallEmitter>().generateRegExpMatchLiteral(value); break;
@@ -349,7 +379,7 @@
     case Opcode::NarrowInteger: emitter<RepresentationEmitter>().generateNarrowInteger(value); break;
     case Opcode::Decode: emitter<RepresentationEmitter>().generateDecode(value); break;
     case Opcode::Compress: emitter<RepresentationEmitter>().generateCompress(value); break;
-    case Opcode::AppendSpread: case Opcode::ClaimDeclared: case Opcode::ClaimRead: case Opcode::Predict: case Opcode::IteratorOpen:
-    case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield:
+    case Opcode::AppendSpread: case Opcode::Check: case Opcode::Convert: case Opcode::IteratorOpen: case Opcode::IteratorResume:
+    case Opcode::IteratorClose: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::EvaluateModule:
     case Opcode::CreateIteratorResult: case Opcode::StepArrayIterator: case Opcode::StringBuilderAppend:
         RELEASE_ASSERT_NOT_REACHED();

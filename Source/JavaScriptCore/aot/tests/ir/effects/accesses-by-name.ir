@@ -5,7 +5,7 @@
 # RUN(ONLY): effects f4
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="redefined" declared={type=number}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 layout L1 kind=Instance name="Lazy" constructor=f0 flow={baseState=None members=[L1] impossibleMutations=[AddProperty, ChangePrototype]} classFlow={prototypeLink=Fixed prototypeNamesAreComplete=true members=[{key="x" kind=Getter function=f1 mutability=Fixed}, {key="run" function=f2 mutability=Fixed}, {key="loose" kind=Getter function=f1}] namedMembers=[{key="x" kind=Getter function=f1 mutability=Fixed}, {key="run" function=f2 mutability=Fixed}, {key="loose" kind=Getter function=f1}]}
 variable g0 name="count" declared={type=number} initialization=Undefined
 function f0 name="Lazy" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
@@ -55,14 +55,14 @@ function f4 name="slots" parameters=[{type=L0}, {type=null|L0}, {type=undefined|
 # CHECK-NEXT: v5 PropGet: reads(ObjectFields/1) throws
 # CHECK-NEXT: v6 PropGet: reads(ObjectFields/1) throws
 # CHECK-NEXT: v7 PropGet: reads(ObjectFields/1)
-# CHECK-NEXT: v8 PropGet: {{*}}callsUnknownCode
+# CHECK-NEXT: v8 PropGet: reads(ObjectFields/1)
 # PLAIN-LABEL: function f4
 # PLAIN-NEXT: v3 PropGet: reads(ObjectFields/1)
 # PLAIN-NEXT: v4 PropGet: reads(ObjectFields/1)
 # PLAIN-NEXT: v5 PropGet: reads(ObjectFields/1) throws
 # PLAIN-NEXT: v6 PropGet: reads(ObjectFields/1) throws
 # PLAIN-NEXT: v7 PropGet: reads(ObjectFields/1)
-# PLAIN-NEXT: v8 PropGet: unknownCode
+# PLAIN-NEXT: v8 PropGet: reads(ObjectFields/1)
 # ONLY-NOT: v3 PropGet:{{*}}throws
 # ONLY-NOT: v4 PropGet:{{*}}throws
 # ONLY-NOT: v7 PropGet:{{*}}throws
@@ -86,6 +86,7 @@ function f6 name="walks" parameters=[{type=L1}, {type=L0}] results=[{type=undefi
     v4 = PropHas v1 key="x" receivers=[L0]
     v5 = PropHas v1 key="y" receivers=[L0]
     v6 = PropHas v1 key="z" receivers=[L0]
+    v7 = PropHas v1 key="redefined" receivers=[L0]
     Return
 }
 # CHECK-LABEL: function f6
@@ -94,6 +95,7 @@ function f6 name="walks" parameters=[{type=L1}, {type=L0}] results=[{type=undefi
 # CHECK-NEXT: v4 PropHas: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1)
 # CHECK-NEXT: v5 PropHas: reads(ObjectFields/1)
 # CHECK-NEXT: v6 PropHas: {{*}}callsUnknownCode
+# CHECK-NEXT: v7 PropHas: {{*}}callsUnknownCode
 function f7 name="freeName" results=[{type=undefined}] {
   b0():
     v0 = Builtin builtin=GlobalThis

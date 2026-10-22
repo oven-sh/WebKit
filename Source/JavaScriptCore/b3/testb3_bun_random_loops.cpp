@@ -160,8 +160,8 @@ auto RandomProgram::appendCountedLoopEntry(const CountedLoopShape& shape) -> Loo
     using Bound = CountedLoopShape::Bound;
     auto maskedExpression = [&](int64_t mask) {
         Value* result = make(BitAnd, expression(2), int64(mask));
-        if (mask > maxIterationsPerStrip && chance(70))
-            return make(BitOr, result, int64(maxIterationsPerStrip));
+        if (mask > longRun && chance(70))
+            return make(BitOr, result, int64(longRun));
         return result;
     };
     auto integer = [&](int64_t value) {
@@ -329,7 +329,7 @@ auto RandomProgram::chooseFuelBoundedLoopShape() -> FuelBoundedLoopShape
 {
     using Next = FuelBoundedLoopShape::Next;
     static constexpr B3::Opcode relations[] = { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual };
-    static constexpr int64_t steps[] = { 0, 1, -1, 2, -2, 3, maxIterationsPerStrip, -maxIterationsPerStrip, maxIterationsPerStrip + 1, -maxIterationsPerStrip - 1, 100000, 1ll << 40, std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max() };
+    static constexpr int64_t steps[] = { 0, 1, -1, 2, -2, 3, longRun, -longRun, longRun + 1, -longRun - 1, 100000, 1ll << 40, std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max() };
     static constexpr Next nextKinds[] = { Next::AddStep, Next::AddStepToOtherValue, Next::AddNonConstant, Next::DoubleIndex, Next::SubtractFromBound, Next::WrapsInt32, Next::SaturateAtInt64Limit };
 
     FuelBoundedLoopShape shape;

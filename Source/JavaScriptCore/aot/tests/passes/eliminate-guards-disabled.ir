@@ -16,7 +16,7 @@ function f0 name="underPassedTest" parameters=[{type=object}] results=[{type=any
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Predicted
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
     Return v5
   b3():
     Return v0

@@ -30,6 +30,7 @@
 #include "AOTModuleRecord.h"
 #endif
 #include "BuiltinNames.h"
+#include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -279,7 +280,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         return;
                     }
                 }
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createExportNotFoundError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
 #endif
@@ -287,7 +288,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
             case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createAmbiguousExportError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -303,7 +304,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         return;
                     }
                 }
-                throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createMissingDefaultExportError(globalObject, importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
 #endif

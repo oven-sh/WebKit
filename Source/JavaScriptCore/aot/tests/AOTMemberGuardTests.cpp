@@ -14,8 +14,9 @@
 #include "AOTImageLoading.h"
 #include "AOTImageTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTModuleHost.h"
+#include "AOTModules.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeCounters.h"
@@ -44,9 +45,9 @@ std::span<const NativeTest> memberGuardTests();
 static constexpr ASCIILiteral programWithOpenClassesText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="value" declared={type=number} flags=[IsRequired]}] staticFields=[{key="tally" variable=g0}, {key="mode" variable=g1}]
-layout L1 kind=Instance name="Middle" module=m0 predictedBase=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
-layout L2 kind=Instance name="Leaf" module=m0 predictedBase=L1 constructor=f3 supertypes=[L0, L1] flags=[HasHeritage]
-layout L3 kind=Instance name="Late" module=m0 predictedBase=L0 constructor=f14 supertypes=[L0] flags=[HasHeritage]
+layout L1 kind=Instance name="Middle" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Leaf" module=m0 base=L1 constructor=f3 supertypes=[L0, L1] flags=[HasHeritage]
+layout L3 kind=Instance name="Late" module=m0 base=L0 constructor=f14 supertypes=[L0] flags=[HasHeritage]
 layout L4 kind=Instance name="Foreign" module=m0 constructor=f16 flags=[HasHeritage]
 variable g0 name="tally" module=m0 declared={type=number} owner=L0
 variable g1 name="mode" module=m0 declared={type="red"|"green"} owner=L0
@@ -176,8 +177,12 @@ function f11 name="use" parameters=[{type=number}] results=[{type=anything}] {
     v28 = PropGet v3 key="level"
     v29 = PropGet v4 key="absentStep"
     v30 = PropGet v6 key="absentStep"
-    v31 = NewArray v23, v24, v25, v26, v29, v30 contents=anything holes=[]
-    Return v31
+    v31 = PropGet v4 key="secondStep"
+    v32 = Call v31, v4 calleeKey="secondStep"
+    v33 = PropGet v5 key="secondStep"
+    v34 = Call v33, v5 calleeKey="secondStep"
+    v35 = NewArray v23, v24, v25, v26, v29, v30 contents=anything holes=[]
+    Return v35
 }
 function f12 name="mutate" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: string, v2: anything):
@@ -240,7 +245,7 @@ function f18 name="foreignStep" kind=Method flags=[HasThis] results=[{type=anyth
 static constexpr ASCIILiteral programWithLazyClassText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Lazy" module=m0 constructor=f1
-layout L1 kind=Instance name="Shadowing" module=m0 predictedBase=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+layout L1 kind=Instance name="Shadowing" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 variable g0 name="Shadowing" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -294,6 +299,167 @@ function f5 name="shadow" parameters=[{type=string}, {type=anything}] results=[{
 }
 )IR"_s;
 
+static constexpr ASCIILiteral programWithComputedMemberText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Above" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Computed" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="Computed" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = PropGet v2 key="prototype"
+    v4 = NewClosure function=f3
+    PropSet v3, v4 key="step"
+    v6 = Construct v2
+    v7 = ResolveHeritage v2
+    v8 = NewClosure function=f2
+    v9 = NewClass v8, v2, v7 layout=L1
+    v10 = PropGet v0 key="nameOfMember" [isFreeName]
+    v11 = ToPropertyKey v10
+    v12 = NewClosure function=f5
+    DefineMethod v9, v12, v11 layout=L1
+    v14 = FinishClass v9 layout=L1
+    PutModuleVariable v14 variable=g0
+    v16 = NewClosure function=f4
+    v17 = Call v1, -, v16
+    Return
+}
+function f1 name="Above" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Computed" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="step" flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="useComputed" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    v2 = PropGet v1 key="step"
+    v3 = Call v2, v1 calleeKey="step"
+    Return
+}
+function f5 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral programWithClassDefinedLaterText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Early" module=m0 constructor=f1
+layout L1 kind=Instance name="Late" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="Early" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f3
+    DefineMethod v3, v4 layout=L0 key="step"
+    v6 = FinishClass v3 layout=L0
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f4
+    v9 = NewClosure function=f5
+    v10 = Call v1, -, v6, v8, v9
+    Return
+}
+function f1 name="Early" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Late" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="step" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=7
+    Return v1
+}
+function f4 name="callStep" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0|L1
+    v2 = PropGet v1 key="step"
+    v3 = Call v2, v1 calleeKey="step"
+    Return v3
+}
+function f5 name="defineLate" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Construct v4
+    Return v5
+}
+)IR"_s;
+
+static constexpr ASCIILiteral programWithClassObjectNobodyReadsText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Quiet" module=m0 constructor=f1
+variable g0 name="Quiet" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = String string="return globalThis.publish"
+    v2 = Construct v0, -, v1
+    v3 = Call v2
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 key="step"
+    v8 = FinishClass v5 layout=L0
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f3
+    v11 = NewClosure function=f4
+    v12 = Call v3, -, v10, v11
+    Return
+}
+function f1 name="Quiet" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="step" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=7
+    Return v1
+}
+function f3 name="make" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    Return v1
+}
+function f4 name="callStep" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0
+    v2 = PropGet v1 key="step"
+    v3 = Call v2, v1 calleeKey="step"
+    Return v3
+}
+)IR"_s;
+
 static intptr_t openForMappingCode(const char* path)
 {
 #if OS(WINDOWS)
@@ -323,6 +489,7 @@ namespace {
 struct Guard {
     bool isOn(ClassSide expectedSide, MemberGuardKind expectedKind) const { return side == expectedSide && kind == expectedKind; }
     bool isOnMember(ClassSide expectedSide, ASCIILiteral expectedName) const { return isOn(expectedSide, MemberGuardKind::Member) && name == expectedName; }
+    bool saysNoInstanceHides(ASCIILiteral expectedName) const { return isOn(ClassSide::Prototype, MemberGuardKind::NotHidden) && name == expectedName; }
     bool isOfOneOf(std::initializer_list<ASCIILiteral> classNames) const
     {
         return std::ranges::any_of(classNames, [&](ASCIILiteral candidate) {
@@ -335,6 +502,7 @@ struct Guard {
     MemberGuardKind kind;
     String name;
     bool isSet;
+    bool holdsFromStart;
 };
 
 using Guards = Vector<Guard>;
@@ -354,6 +522,9 @@ public:
     void evaluateModule(ASCIILiteral definitionOfPublish);
     const LayoutData& classNamed(ASCIILiteral);
     Guards readGuards();
+    void checkNoSetOutlivesItsGuards();
+    Vector<uint32_t> setsWith(ASCIILiteral className, MemberGuardKind, ASCIILiteral name);
+    bool isSetNumbered(uint32_t set);
     bool isSet(ASCIILiteral className, ClassSide, MemberGuardKind, ASCIILiteral name = { });
     void checkClears(ASCIILiteral source, unsigned minimumNumber, const Invocable<bool(const Guard&)> auto& isExpectedToBeCleared);
     void checkClearsNothing(ASCIILiteral source);
@@ -373,7 +544,7 @@ void RunningProgram::evaluateModule(ASCIILiteral definitionOfPublish)
     std::optional<ModuleID> module = findModule("/main.js"_s);
     AOT_TEST_CHECK(module);
     evaluateModuleSynchronously(realm(), *module);
-    AOT_TEST_CHECK(!scope.exception() && isEvaluated(realm(), *module));
+    AOT_TEST_CHECK(!scope.exception() && modulesOf(realm())->status(*module) == ModuleStatus::Evaluated);
 }
 
 void RunningProgram::forEachClass(const Invocable<void(const LayoutData&)> auto& functor)
@@ -402,18 +573,59 @@ Guards RunningProgram::readGuards()
     forEachClass([&](const LayoutData& layout) {
         String className = Image::current()->text().createString(StringID(layout.name));
         for (const MemberGuardData& guard : layout.memberGuards()) {
-            String name = guard.kind() == MemberGuardKind::Member ? ProgramIdentifiers::textOf(*Image::current(), guard.name) : String();
-            bool isSet = state().objects->classes.guardWords(layout, guard.side())[guard.wordIndex()] & guard.mask();
-            guards.append({ className, guard.side(), guard.kind(), name, isSet });
+            bool hasName = guard.kind() == MemberGuardKind::Member || guard.kind() == MemberGuardKind::NotHidden || guard.kind() == MemberGuardKind::PassedByStores;
+            String name = hasName ? ProgramIdentifiers::textOf(*Image::current(), guard.name) : String();
+            bool isBitSet = state().objects->classes.guardWords(layout, guard.side())[guard.wordIndex()] & guard.mask();
+            bool holdsFromStart = layout.classData().guardsHoldWhileClear;
+            guards.append({ className, guard.side(), guard.kind(), name, isBitSet != holdsFromStart, holdsFromStart });
         }
     });
     return guards;
 }
 
+// A site with several conditions tests the one bit of their set.
+void RunningProgram::checkNoSetOutlivesItsGuards()
+{
+    forEachClass([&](const LayoutData& layout) {
+        for (const MemberGuardData& guard : layout.memberGuards()) {
+            bool holdsFromStart = layout.classData().guardsHoldWhileClear;
+            bool isBitSet = state().objects->classes.guardWords(layout, guard.side())[guard.wordIndex()] & guard.mask();
+            if (isBitSet != holdsFromStart)
+                continue;
+            uint32_t guardWord = MemberGuardAggregates::wordIndex(MemberGuardAggregates::bitNumber(*layout.classData().guardWordsOffsetFor(guard.side()), guard.bit));
+            if (!holdsFromStart && !state().objects->caches->memberGuardWatchpoints.isAboutExistingClass(guardWord))
+                continue;
+            MemberGuardAggregates aggregates = layout.aggregatesOf(guard);
+            for (uint32_t set : std::span { state().tables.at<uint32_t>(aggregates.offset), aggregates.count })
+                AOT_TEST_CHECK(!isSetNumbered(set));
+        }
+    });
+}
+
+Vector<uint32_t> RunningProgram::setsWith(ASCIILiteral className, MemberGuardKind kind, ASCIILiteral name)
+{
+    const LayoutData& layout = classNamed(className);
+    for (const MemberGuardData& guard : layout.memberGuards()) {
+        if (guard.side() != ClassSide::Prototype || guard.kind() != kind || ProgramIdentifiers::textOf(*Image::current(), guard.name) != name)
+            continue;
+        MemberGuardAggregates aggregates = layout.aggregatesOf(guard);
+        return Vector<uint32_t>(std::span { state().tables.at<uint32_t>(aggregates.offset), aggregates.count });
+    }
+    failNativeTest(__FILE__, __LINE__, name.characters());
+}
+
+bool RunningProgram::isSetNumbered(uint32_t set)
+{
+    const uint64_t* words = reinterpret_cast<const uint64_t*>(state().instance.statics());
+    uint32_t number = MemberGuardAggregates::numberInListEntry(set);
+    bool isBitSet = words[MemberGuardAggregates::wordIndex(number)] & MemberGuardAggregates::mask(number);
+    return isBitSet != !!(set & MemberGuardAggregates::holdsWhileClear);
+}
+
 bool RunningProgram::isSet(ASCIILiteral className, ClassSide side, MemberGuardKind kind, ASCIILiteral name)
 {
     for (const Guard& guard : readGuards()) {
-        if (guard.className == className && guard.isOn(side, kind) && (kind != MemberGuardKind::Member || guard.name == name))
+        if (guard.className == className && guard.isOn(side, kind) && (guard.name.isNull() || guard.name == name))
             return guard.isSet;
     }
     failNativeTest(__FILE__, __LINE__, name.isNull() ? className.characters() : name.characters());
@@ -427,10 +639,12 @@ void RunningProgram::checkClears(ASCIILiteral source, unsigned minimumNumber, co
     evaluate(source);
     Guards after = readGuards();
 
+    unsigned numberOfGuards = 0;
     unsigned numberOfMembers = 0;
     unsigned numberOfLinks = 0;
     for (size_t index = 0; index < before.size(); ++index) {
         bool isCleared = before[index].isSet && isExpectedToBeCleared(before[index]);
+        numberOfGuards += isCleared;
         numberOfMembers += isCleared && before[index].kind == MemberGuardKind::Member;
         numberOfLinks += isCleared && before[index].kind == MemberGuardKind::PrototypeLink;
         if (after[index].isSet != (before[index].isSet && !isCleared)) {
@@ -438,9 +652,10 @@ void RunningProgram::checkClears(ASCIILiteral source, unsigned minimumNumber, co
             failNativeTest(__FILE__, __LINE__, source.characters());
         }
     }
-    AOT_TEST_CHECK_FOR_SOURCE(numberOfMembers + numberOfLinks >= minimumNumber, source);
+    AOT_TEST_CHECK_FOR_SOURCE(numberOfGuards >= minimumNumber, source);
     AOT_TEST_CHECK_FOR_SOURCE(valueOf(vm(), RuntimeCounterID::MemberGuardsCleared) == membersBefore + numberOfMembers, source);
     AOT_TEST_CHECK_FOR_SOURCE(valueOf(vm(), RuntimeCounterID::PrototypeLinkGuardsCleared) == linksBefore + numberOfLinks, source);
+    checkNoSetOutlivesItsGuards();
 }
 
 void RunningProgram::checkClearsNothing(ASCIILiteral source)
@@ -451,25 +666,29 @@ void RunningProgram::checkClearsNothing(ASCIILiteral source)
 }
 
 static constexpr ASCIILiteral publishOpenClasses = "globalThis.publish = function (Base, Middle, Leaf, use, mutate, defineLate, defineForeign) { globalThis.Base = Base; globalThis.Middle = Middle; globalThis.Leaf = Leaf; globalThis.use = use; globalThis.defineLate = defineLate; globalThis.defineForeign = defineForeign }"_s;
+static constexpr ASCIILiteral publishClassDefinedLater = "globalThis.publish = function (Early, callStep, defineLate) { globalThis.Early = Early; globalThis.callStep = callStep; globalThis.defineLate = defineLate }"_s;
+static constexpr ASCIILiteral publishClassObjectNobodyReads = "globalThis.publish = function (make, callStep) { globalThis.make = make; globalThis.callStep = callStep }"_s;
 static constexpr ASCIILiteral publishLazyClass = "globalThis.publish = function (useShadowing, shadow) { globalThis.useShadowing = useShadowing; globalThis.shadow = shadow }"_s;
 
 static void checkGuardsAreSetAtTheDefinition(LoadedProgram& loaded)
 {
     RunningProgram program(loaded);
     AOT_TEST_CHECK(program.readGuards().size() >= 20);
-    for (const Guard& guard : program.readGuards())
-        AOT_TEST_CHECK(!guard.isSet);
+    for (const Guard& guard : program.readGuards()) {
+        AOT_TEST_CHECK(guard.isSet == guard.holdsFromStart);
+        AOT_TEST_CHECK(guard.holdsFromStart);
+    }
 
     program.evaluateModule(publishOpenClasses);
     for (const Guard& guard : program.readGuards())
-        AOT_TEST_CHECK(guard.isSet == guard.isOfOneOf({ "Base"_s, "Middle"_s, "Leaf"_s }));
+        AOT_TEST_CHECK(guard.isSet);
     AOT_TEST_CHECK(program.isSet("Base"_s, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s) && program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s));
     AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Static, MemberGuardKind::Member, "createOne"_s) && program.isSet("Leaf"_s, ClassSide::Static, MemberGuardKind::Member, "tally"_s));
     AOT_TEST_CHECK(program.isSet("Middle"_s, ClassSide::Prototype, MemberGuardKind::PrototypeLink) && program.isSet("Middle"_s, ClassSide::Static, MemberGuardKind::PrototypeLink));
 
     program.evaluate("defineLate()"_s);
     for (const Guard& guard : program.readGuards())
-        AOT_TEST_CHECK(guard.isSet == !guard.isOfOneOf({ "Foreign"_s }));
+        AOT_TEST_CHECK(guard.isSet);
     AOT_TEST_CHECK(program.isSet("Late"_s, ClassSide::Static, MemberGuardKind::EvaluatedOnce) && program.isSet("Late"_s, ClassSide::Static, MemberGuardKind::Member, "tally"_s));
 
     program.evaluate("defineForeign(function () { })"_s);
@@ -526,7 +745,7 @@ static void checkLinkChangedInTheMiddleOfTheChain(LoadedProgram& loaded)
     RunningProgram program(loaded);
     program.evaluateModule(publishOpenClasses);
     program.checkClears("Object.setPrototypeOf(Middle.prototype, { })"_s, 6, [](const Guard& guard) {
-        if (guard.side != ClassSide::Prototype || !guard.isOfOneOf({ "Middle"_s, "Leaf"_s }))
+        if (guard.side != ClassSide::Prototype || guard.kind == MemberGuardKind::InstancePrototype || guard.kind == MemberGuardKind::NotHidden || !guard.isOfOneOf({ "Middle"_s, "Leaf"_s }))
             return false;
         // The engine reports the change of a prototype holder without a name, which stands for every member of the holder too.
         bool isDeclaredBelowTheHolder = guard.name == "leafStep"_s && guard.className == "Leaf"_s;
@@ -551,8 +770,84 @@ static void checkUnguardedNameClearsNothing(LoadedProgram& loaded)
 {
     RunningProgram program(loaded);
     program.evaluateModule(publishOpenClasses);
-    for (ASCIILiteral source : { "Base.prototype.unusedStep = 1"_s, "delete Base.prototype.unusedStep"_s, "Base.prototype.brandNew = 1"_s, "Middle.prototype.brandNew = 1"_s, "Base.extra = 1"_s, "Leaf.extra = 1"_s, "delete Leaf.extra"_s, "new Leaf(1).firstStep = 1"_s, "Base.prototype[Symbol.iterator] = 1"_s, "use(1)"_s })
+    for (ASCIILiteral source : { "Base.prototype.unusedStep = 1"_s, "delete Base.prototype.unusedStep"_s, "Base.prototype.brandNew = 1"_s, "Middle.prototype.brandNew = 1"_s, "Base.extra = 1"_s, "Leaf.extra = 1"_s, "delete Leaf.extra"_s, "new Leaf(1).brandNew = 1"_s, "Base.prototype[Symbol.iterator] = 1"_s, "use(1)"_s })
         program.checkClearsNothing(source);
+}
+
+static void checkOwnPropertyHidesMember(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule(publishOpenClasses);
+    program.checkClears("new Leaf(1).firstStep = 1"_s, 1, [](const Guard& guard) {
+        return guard.saysNoInstanceHides("firstStep"_s) && guard.className == "Leaf"_s;
+    });
+    program.checkClearsNothing("new Leaf(1).firstStep = 1"_s);
+    program.checkClears("Object.defineProperty(new Middle(1), 'firstStep', { get() { return 1 } })"_s, 1, [](const Guard& guard) {
+        return guard.saysNoInstanceHides("firstStep"_s) && guard.className == "Middle"_s;
+    });
+    AOT_TEST_CHECK(program.isSet("Base"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "firstStep"_s) && program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "secondStep"_s));
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s) && program.isSet("Middle"_s, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s));
+
+    // Each object is tested for a name that no class declares.
+    program.checkClearsNothing("new Leaf(1).absentStep = 1"_s);
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "absentStep"_s));
+}
+
+static bool saysWhatInstancesOfLeafFind(const Guard& guard)
+{
+    return guard.className == "Leaf"_s && guard.side == ClassSide::Prototype && (guard.kind == MemberGuardKind::NotHidden || guard.kind == MemberGuardKind::InstancePrototype);
+}
+
+static void checkInstanceGetsAnotherPrototype(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule(publishOpenClasses);
+    program.checkClearsNothing("Object.setPrototypeOf(new Leaf(1), Leaf.prototype)"_s);
+    program.checkClears("Object.setPrototypeOf(new Leaf(1), { })"_s, 4, saysWhatInstancesOfLeafFind);
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::PrototypeLink) && program.isSet("Leaf"_s, ClassSide::Static, MemberGuardKind::Member, "createOne"_s));
+    AOT_TEST_CHECK(program.isSet("Middle"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "firstStep"_s) && program.isSet("Base"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "firstStep"_s));
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s) && program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "leafStep"_s));
+}
+
+static void checkInstancePrototypeLeadsBackToTheClass(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule(publishOpenClasses);
+    program.checkClears("globalThis.between = Object.create(Leaf.prototype); Object.setPrototypeOf(new Leaf(1), between)"_s, 0, [](const Guard& guard) {
+        return guard.className == "Leaf"_s && guard.kind == MemberGuardKind::InstancePrototype;
+    });
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "firstStep"_s) && program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "leafStep"_s));
+    program.checkClearsNothing("between.brandNew = 1"_s);
+    program.checkClears("between.firstStep = 1"_s, 1, [](const Guard& guard) {
+        return guard.saysNoInstanceHides("firstStep"_s) && guard.className == "Leaf"_s;
+    });
+
+    program.checkClears("globalThis.hiding = Object.create(Leaf.prototype); hiding.leafStep = 1; Object.setPrototypeOf(new Leaf(1), hiding)"_s, 1, [](const Guard& guard) {
+        return guard.saysNoInstanceHides("leafStep"_s) && guard.className == "Leaf"_s;
+    });
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "secondStep"_s));
+
+    program.checkClears("Object.setPrototypeOf(between, { })"_s, 2, saysWhatInstancesOfLeafFind);
+    AOT_TEST_CHECK(program.isSet("Middle"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "firstStep"_s) && program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::PrototypeLink));
+    AOT_TEST_CHECK(program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s) && program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "leafStep"_s));
+}
+
+static void checkGuardIsNeverSetAgain(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule(publishOpenClasses);
+    program.checkClears("globalThis.original = Base.prototype.firstStep; Base.prototype.firstStep = function () { }"_s, 3, [](const Guard& guard) {
+        return guard.isOnMember(ClassSide::Prototype, "firstStep"_s);
+    });
+    for (ASCIILiteral source : { "Base.prototype.firstStep = original"_s, "Object.defineProperty(Base.prototype, 'firstStep', { value: original, writable: true, enumerable: false, configurable: true })"_s, "use(1)"_s, "defineLate()"_s }) {
+        program.evaluate(source);
+        for (ASCIILiteral className : { "Base"_s, "Middle"_s, "Leaf"_s })
+            AOT_TEST_CHECK_FOR_SOURCE(!program.isSet(className, ClassSide::Prototype, MemberGuardKind::Member, "firstStep"_s), source);
+    }
+
+    program.evaluate("Object.setPrototypeOf(Middle.prototype, { }); Object.setPrototypeOf(Middle.prototype, Base.prototype)"_s);
+    AOT_TEST_CHECK(!program.isSet("Middle"_s, ClassSide::Prototype, MemberGuardKind::PrototypeLink) && !program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::PrototypeLink));
+    program.checkNoSetOutlivesItsGuards();
 }
 
 static void checkStaticMember(LoadedProgram& loaded)
@@ -603,7 +898,7 @@ static void checkNameAddedAboveTheClasses(LoadedProgram& loaded)
     RunningProgram program(loaded);
     program.evaluateModule(publishOpenClasses);
     AOT_TEST_CHECK(program.evaluate("use(1)[4] === undefined && use(1)[5] === undefined"_s).isTrue());
-    bool isInherited = program.evaluate("Object.prototype.absentStep = 1; 'absentStep' in Base.prototype"_s).isTrue();
+    bool isInherited = program.evaluate("try { Object.prototype.absentStep = 1; } catch { } 'absentStep' in Base.prototype"_s).isTrue();
     if (isInherited)
         AOT_TEST_CHECK(!program.isSet("Base"_s, ClassSide::Prototype, MemberGuardKind::Member, "absentStep"_s) && !program.isSet("Leaf"_s, ClassSide::Prototype, MemberGuardKind::Member, "absentStep"_s));
     AOT_TEST_CHECK(program.evaluate("use(1)[4] === new Base(1).absentStep && use(1)[5] === new Leaf(1).absentStep"_s).isTrue());
@@ -669,7 +964,7 @@ static void checkSecondEvaluation(LoadedProgram& loaded)
     for (size_t index = 0; index < before.size(); ++index) {
         bool isOfClass = before[index].className == "Late"_s;
         numberOfGuardsOfClass += isOfClass;
-        AOT_TEST_CHECK(before[index].isSet == !before[index].isOfOneOf({ "Foreign"_s }) && after[index].isSet == (before[index].isSet && !isOfClass));
+        AOT_TEST_CHECK(before[index].isSet && after[index].isSet == !isOfClass);
     }
     AOT_TEST_CHECK(numberOfGuardsOfClass >= 4 && valueOf(program.vm(), RuntimeCounterID::ClassesEvaluatedAgain) == 1);
     AOT_TEST_CHECK(program.evaluate("First !== Second && Object.getPrototypeOf(Second) === Base && new Second(1) instanceof Base && Second.tally === 0"_s).isTrue());
@@ -687,13 +982,13 @@ static JSObject* prototypeOfClass(RunningProgram& program, ASCIILiteral classNam
 static void checkLazyPrototypeKeepsItsBits(LoadedProgram& loaded)
 {
     RunningProgram program(loaded);
-    AOT_TEST_CHECK(program.classNamed("Lazy"_s).createsMembersLazily && !program.isSet("Shadowing"_s, ClassSide::Prototype, MemberGuardKind::Member, "lazyStep"_s));
+    AOT_TEST_CHECK(program.classNamed("Lazy"_s).createsMembersLazily && program.classNamed("Shadowing"_s).classData().guardsHoldWhileClear);
+    AOT_TEST_CHECK(program.isSet("Shadowing"_s, ClassSide::Prototype, MemberGuardKind::Member, "lazyStep"_s));
     program.evaluateModule(publishLazyClass);
     AOT_TEST_CHECK(program.isSet("Shadowing"_s, ClassSide::Prototype, MemberGuardKind::Member, "lazyStep"_s));
 
-    JSObject* lazyPrototype = asObject(prototypeOfClass(program, "Shadowing"_s)->getPrototypeDirect());
-    AOT_TEST_CHECK(lazyPrototype->classInfo() == ClassPrototype::info());
     program.checkClearsNothing("useShadowing()"_s);
+    JSObject* lazyPrototype = asObject(prototypeOfClass(program, "Shadowing"_s)->getPrototypeDirect());
     AOT_TEST_CHECK(lazyPrototype->classInfo() == ClassPrototype::info());
 
     PropertyNameArrayBuilder names(program.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -704,7 +999,33 @@ static void checkLazyPrototypeKeepsItsBits(LoadedProgram& loaded)
 
     PutPropertySlot slot(lazyPrototype);
     AOT_TEST_CHECK(lazyPrototype->methodTable()->put(lazyPrototype, program.realm(), lazyStep, jsNumber(1), slot));
-    AOT_TEST_CHECK(!program.isSet("Shadowing"_s, ClassSide::Prototype, MemberGuardKind::Member, "lazyStep"_s) && valueOf(program.vm(), RuntimeCounterID::MemberGuardsCleared) == 1);
+    unsigned numberOfGuardsOnMember = 0;
+    for (const Guard& guard : program.readGuards()) {
+        if (!guard.isOnMember(ClassSide::Prototype, "lazyStep"_s))
+            continue;
+        ++numberOfGuardsOnMember;
+        AOT_TEST_CHECK(!guard.isSet && guard.isOfOneOf({ "Lazy"_s, "Shadowing"_s }));
+    }
+    AOT_TEST_CHECK(numberOfGuardsOnMember && !program.isSet("Shadowing"_s, ClassSide::Prototype, MemberGuardKind::Member, "lazyStep"_s));
+    AOT_TEST_CHECK(valueOf(program.vm(), RuntimeCounterID::MemberGuardsCleared) == numberOfGuardsOnMember);
+}
+
+// The guards are armed when the class is created, and then nobody knows what the member under the computed name will hide. Once it is defined, what the class inherits is looked up.
+static void checkInheritedNameBelowComputedMember(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    AOT_TEST_CHECK(!program.classNamed("Computed"_s).classData().guardsHoldWhileClear);
+    program.evaluateModule("globalThis.nameOfMember = Symbol('member'); globalThis.publish = function (useComputed) { globalThis.useComputed = useComputed; };"_s);
+    AOT_TEST_CHECK(program.isSet("Computed"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s));
+    program.checkClearsNothing("useComputed()"_s);
+}
+
+// The name that it turns out to be hides what the class inherits under it.
+static void checkComputedMemberHidesInheritedName(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule("globalThis.nameOfMember = 'step'; globalThis.publish = function (useComputed) { globalThis.useComputed = useComputed; };"_s);
+    AOT_TEST_CHECK(!program.isSet("Computed"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s));
 }
 
 static void checkNameAddedBelowLazyPrototype(LoadedProgram& loaded)
@@ -717,6 +1038,82 @@ static void checkNameAddedBelowLazyPrototype(LoadedProgram& loaded)
     program.checkClearsNothing("useShadowing()"_s);
 }
 
+namespace {
+
+struct SetsOverBothClasses {
+    uint32_t membersThatNoInstanceHides;
+};
+
+} // anonymous namespace
+
+static SetsOverBothClasses findSetsOverBothClasses(RunningProgram& program)
+{
+    Vector<uint32_t> setsOfLate = program.setsWith("Late"_s, MemberGuardKind::Member, "step"_s);
+    Vector<uint32_t> setsOfInstances = program.setsWith("Late"_s, MemberGuardKind::NotHidden, "step"_s);
+    Vector<uint32_t> sets = program.setsWith("Early"_s, MemberGuardKind::Member, "step"_s);
+    sets.removeAllMatching([&](uint32_t set) {
+        return !setsOfLate.contains(set);
+    });
+    AOT_TEST_CHECK(setsOfInstances.size() == 1 && sets.contains(setsOfInstances[0]));
+    AOT_TEST_CHECK(program.classNamed("Early"_s).classData().guardsHoldWhileClear && program.classNamed("Late"_s).classData().guardsHoldWhileClear);
+    AOT_TEST_CHECK(setsOfInstances[0] & MemberGuardAggregates::holdsWhileClear);
+    return { setsOfInstances[0] };
+}
+
+static void checkSetOverClassDefinedLater(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    SetsOverBothClasses sets = findSetsOverBothClasses(program);
+    AOT_TEST_CHECK(program.isSetNumbered(sets.membersThatNoInstanceHides));
+
+    program.evaluateModule(publishClassDefinedLater);
+    AOT_TEST_CHECK(program.isSet("Early"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s) && program.isSet("Late"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s));
+    AOT_TEST_CHECK(program.isSetNumbered(sets.membersThatNoInstanceHides));
+    AOT_TEST_CHECK(program.evaluate("callStep(new Early)"_s) == jsNumber(7));
+
+    program.evaluate("globalThis.late = defineLate()"_s);
+    AOT_TEST_CHECK(program.isSet("Late"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s) && program.isSet("Late"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "step"_s));
+    AOT_TEST_CHECK(program.isSetNumbered(sets.membersThatNoInstanceHides));
+    AOT_TEST_CHECK(program.evaluate("callStep(late)"_s) == jsNumber(7));
+
+    program.evaluate("late.step = function () { return 9 }"_s);
+    AOT_TEST_CHECK(!program.isSetNumbered(sets.membersThatNoInstanceHides));
+    AOT_TEST_CHECK(program.evaluate("callStep(late)"_s) == jsNumber(9) && program.evaluate("callStep(new Early)"_s) == jsNumber(7));
+    program.checkNoSetOutlivesItsGuards();
+}
+
+static void checkClassDefinedLaterFindsChangedMember(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    SetsOverBothClasses sets = findSetsOverBothClasses(program);
+    program.evaluateModule(publishClassDefinedLater);
+    AOT_TEST_CHECK(program.isSetNumbered(sets.membersThatNoInstanceHides));
+
+    program.evaluate("Early.prototype.step = function () { return 8 }"_s);
+    AOT_TEST_CHECK(!program.isSetNumbered(sets.membersThatNoInstanceHides));
+    AOT_TEST_CHECK(program.evaluate("callStep(new Early)"_s) == jsNumber(8));
+
+    program.evaluate("globalThis.late = defineLate()"_s);
+    AOT_TEST_CHECK(!program.isSet("Late"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s));
+    AOT_TEST_CHECK(!program.isSetNumbered(sets.membersThatNoInstanceHides));
+    AOT_TEST_CHECK(program.evaluate("callStep(late)"_s) == jsNumber(8));
+    program.checkNoSetOutlivesItsGuards();
+}
+
+static void checkClassObjectNobodyReads(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule(publishClassObjectNobodyReads);
+    program.evaluate("globalThis.quiet = make()"_s);
+    AOT_TEST_CHECK(program.isSet("Quiet"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s) && program.isSet("Quiet"_s, ClassSide::Prototype, MemberGuardKind::NotHidden, "step"_s));
+    AOT_TEST_CHECK(program.evaluate("callStep(quiet)"_s) == jsNumber(7));
+
+    program.evaluate("Object.getPrototypeOf(quiet).step = function () { return 8 }"_s);
+    AOT_TEST_CHECK(!program.isSet("Quiet"_s, ClassSide::Prototype, MemberGuardKind::Member, "step"_s));
+    AOT_TEST_CHECK(program.evaluate("callStep(quiet)"_s) == jsNumber(8));
+    program.checkNoSetOutlivesItsGuards();
+}
+
 template<const ASCIILiteral& programText, LoadedProgramTest body>
 static void runNativeTestWithCompiledCode()
 {
@@ -725,7 +1122,8 @@ static void runNativeTestWithCompiledCode()
             continue;
         if (const char* imagePath = byteCast<char>(Options::aotImagePath()))
             useImageWithCodeMappedFromFile(imagePath);
-        runWithLoadedProgram(test.name, programText, body);
+        // Hot, so that the calls rest on guards: cold code, and much of these programs runs once, keeps its calls by name and asks for no guard.
+        runWithLoadedProgram(test.name, programText, body, { "heat=EverythingIsHot"_s });
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -737,6 +1135,15 @@ static constexpr void (*withOpenClasses)() = runNativeTestWithCompiledCode<progr
 template<LoadedProgramTest body>
 static constexpr void (*withLazyClass)() = runNativeTestWithCompiledCode<programWithLazyClassText, body>;
 
+template<LoadedProgramTest body>
+static constexpr void (*withComputedMember)() = runNativeTestWithCompiledCode<programWithComputedMemberText, body>;
+
+template<LoadedProgramTest body>
+static constexpr void (*withClassDefinedLater)() = runNativeTestWithCompiledCode<programWithClassDefinedLaterText, body>;
+
+template<LoadedProgramTest body>
+static constexpr void (*withClassObjectNobodyReads)() = runNativeTestWithCompiledCode<programWithClassObjectNobodyReadsText, body>;
+
 std::span<const NativeTest> memberGuardTests()
 {
     static constexpr NativeTest tests[] = {
@@ -747,6 +1154,10 @@ std::span<const NativeTest> memberGuardTests()
         { "member-guards/link-changed-in-the-middle-of-the-chain"_s, withOpenClasses<checkLinkChangedInTheMiddleOfTheChain> },
         { "member-guards/link-of-class-object-changed"_s, withOpenClasses<checkLinkOfClassObjectChanged> },
         { "member-guards/unguarded-name-clears-nothing"_s, withOpenClasses<checkUnguardedNameClearsNothing> },
+        { "member-guards/own-property-hides-member"_s, withOpenClasses<checkOwnPropertyHidesMember> },
+        { "member-guards/instance-gets-another-prototype"_s, withOpenClasses<checkInstanceGetsAnotherPrototype> },
+        { "member-guards/instance-prototype-leads-back-to-the-class"_s, withOpenClasses<checkInstancePrototypeLeadsBackToTheClass> },
+        { "member-guards/never-set-again"_s, withOpenClasses<checkGuardIsNeverSetAgain> },
         { "member-guards/static-member"_s, withOpenClasses<checkStaticMember> },
         { "member-guards/store-running-a-static-setter"_s, withOpenClasses<checkStoreThatRunsStaticSetter> },
         { "member-guards/name-declared-by-no-class"_s, withOpenClasses<checkNameDeclaredByNoClass> },
@@ -757,6 +1168,11 @@ std::span<const NativeTest> memberGuardTests()
         { "member-guards/second-evaluation"_s, withOpenClasses<checkSecondEvaluation> },
         { "member-guards/lazy-prototype-keeps-its-bits"_s, withLazyClass<checkLazyPrototypeKeepsItsBits> },
         { "member-guards/name-added-below-lazy-prototype"_s, withLazyClass<checkNameAddedBelowLazyPrototype> },
+        { "member-guards/inherited-name-below-a-computed-member"_s, withComputedMember<checkInheritedNameBelowComputedMember> },
+        { "member-guards/computed-member-hides-an-inherited-name"_s, withComputedMember<checkComputedMemberHidesInheritedName> },
+        { "member-guards/set-over-a-class-defined-later"_s, withClassDefinedLater<checkSetOverClassDefinedLater> },
+        { "member-guards/class-defined-later-finds-a-changed-member"_s, withClassDefinedLater<checkClassDefinedLaterFindsChangedMember> },
+        { "member-guards/class-object-nobody-reads"_s, withClassObjectNobodyReads<checkClassObjectNobodyReads> },
     };
     return tests;
 }

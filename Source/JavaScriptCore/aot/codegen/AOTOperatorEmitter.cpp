@@ -118,8 +118,12 @@ void OperatorEmitter::generateArithmetic(const ValueContext& value, ArithmeticOp
         define(value, arithmeticOnCheckedIntegers(value, op));
         return;
     case OperatorForm::Numbers: {
-        Number left = asNumericOperand(value->leftOperand());
-        Number right = asNumericOperand(value->rightOperand());
+        if (value.representation() == Representation::JSValue) {
+            define(value, sumOfBoxedNumbers(op, get(value->leftOperand()), typeOf(value->leftOperand()), get(value->rightOperand()), typeOf(value->rightOperand())));
+            return;
+        }
+        Number left = op == ArithmeticOperator::Add ? asTermOfSum(value->leftOperand(), value->rightOperand()) : asNumericOperand(value->leftOperand());
+        Number right = op == ArithmeticOperator::Add || op == ArithmeticOperator::Sub ? asTermOfSum(value->rightOperand(), value->leftOperand()) : asNumericOperand(value->rightOperand());
         define(value, arithmeticOnNumbers(op, left, right));
         return;
     }
@@ -208,6 +212,12 @@ void OperatorEmitter::generateUnary(const ValueContext& value, UnaryOperator op)
         define(value, unaryOnCheckedIntegers(value, op));
         return;
     case OperatorForm::Numbers:
+        if (value.representation() == Representation::JSValue) {
+            RELEASE_ASSERT(op == UnaryOperator::Increment || op == UnaryOperator::Decrement);
+            ArithmeticOperator sum = op == UnaryOperator::Increment ? ArithmeticOperator::Add : ArithmeticOperator::Sub;
+            define(value, sumOfBoxedNumbers(sum, get(operand), typeOf(operand), word32(1), typeOf(operand)));
+            return;
+        }
         define(value, unaryOnNumbers(op, asNumericOperand(operand)));
         return;
     case OperatorForm::BigInts:

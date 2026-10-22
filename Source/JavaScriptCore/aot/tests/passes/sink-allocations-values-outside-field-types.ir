@@ -1,0 +1,193 @@
+# An object that is never built holds whatever the rare arm of a store has put under the key of a field by name, also a value that the slot of the field may not admit
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Sized" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Holder" fields=[{key="held" declared={type=L0} flags=[IsRequired]}]
+
+function f0 name="readOnBothArms" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b2() frequency=Rare:
+    v5 = Integer integer=0
+    v6 = NewObject -, v5, v1 layout=L0 fields=[0, 1]
+    PropSet v6, v0 key="n" mode=Strict receivers=[L0]
+    v8 = FinishObject v6
+    Jump -> next b3(v8)
+  b3(v9: L0):
+    v10 = IsSlotFilled v9 key="n" receivers=[L0] level=Expected
+    Branch v10 -> taken b4(| 0), notTaken b5()
+  b4(v11: guard):
+    v12 = GetSlot v9, v11 key="n" receivers=[L0] level=Expected
+    Return v12
+  b5() frequency=Rare:
+    v13 = PropGet v9 key="n" receivers=[L0]
+    Return v13
+}
+# CHECK-LABEL: function f0 name="readOnBothArms"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropSet
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: PropGet
+# CHECK: Return
+
+function f1 name="builtWhereItLeaves" parameters=[{type=anything}, {type=string}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: boolean, v3: L0):
+    v4 = IsSlotFilled v3 key="n" receivers=[L0] level=Expected
+    Branch v4 -> taken b4(), notTaken b1()
+  b1() frequency=Rare:
+    v5 = Integer integer=0
+    v6 = NewObject -, v5, v1 layout=L0 fields=[0, 1]
+    PropSet v6, v0 key="n" mode=Strict receivers=[L0]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v8 = Call v0, -, v6
+    Return v8
+  b3() frequency=Rare:
+    Return v1
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="builtWhereItLeaves"
+# CHECK: b1() frequency=Rare:
+# CHECK-NOT: NewObject
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: [[filler1]]:{{*}}= Integer
+# CHECK-NEXT: [[object1]]: L0 = NewObject -, [[filler1]], v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet [[object1]], v0 key="n"
+# CHECK-NEXT: = Call v0, -, [[object1]]
+
+function f2 name="storedAgainWithValueThatFits" parameters=[{type=anything}, {type=string}, {type=number}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: number, v3: L0):
+    v4 = IsSlotFilled v3 key="n" receivers=[L0] level=Expected
+    Branch v4 -> taken b2(), notTaken b1()
+  b1() frequency=Rare:
+    v5 = Integer integer=0
+    v6 = NewObject -, v5, v1 layout=L0 fields=[0, 1]
+    PropSet v6, v0 key="n" mode=Strict receivers=[L0]
+    PropSet v6, v2 key="n" mode=Strict receivers=[L0]
+    v9 = PropGet v6 key="n" receivers=[L0]
+    Return v9
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="storedAgainWithValueThatFits"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropSet
+# CHECK: v9:{{*}}= Upcast v2
+
+function f3 name="waitsInFrequentCode" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = Integer integer=0
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    PropSet v3, v0 key="n" mode=Strict receivers=[L0]
+    v5 = IsSlotFilled v3 key="n" receivers=[L0] level=Expected
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6: guard):
+    v7 = GetSlot v3, v6 key="n" receivers=[L0] level=Expected
+    Return v7
+  b2() frequency=Rare:
+    v8 = PropGet v3 key="n" receivers=[L0]
+    Return v8
+}
+# CHECK-LABEL: function f3 name="waitsInFrequentCode"
+# CHECK: = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet v3, v0 key="n"
+
+function f4 name="waitsWhileAccessesGoByName" parameters=[{type=anything}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: boolean):
+    Branch v2 -> taken b2(), notTaken b1()
+  b1() frequency=Rare:
+    v3 = Integer integer=0
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    PropSet v4, v0 key="n" mode=Strict receivers=[L0]
+    v6 = PropGet v4 key="n" receivers=[L0]
+    Return v6
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f4 name="waitsWhileAccessesGoByName"
+# CHECK: = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet v4, v0 key="n"
+
+function f5 name="nothingStandsInForAnObject" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: L0):
+    v2 = IsSlotFilled v1 key="n" receivers=[L0] level=Expected
+    Branch v2 -> taken b2(), notTaken b1()
+  b1() frequency=Rare:
+    v3 = NewObject -, v1 layout=L1 fields=[0]
+    PropSet v3, v0 key="held" mode=Strict receivers=[L1]
+    v5 = PropGet v3 key="held" receivers=[L1]
+    Return v5
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f5 name="nothingStandsInForAnObject"
+# CHECK: = NewObject -, v1 layout=L1 fields=[0]
+# CHECK-NEXT: PropSet v3, v0 key="held"
+
+function f6 name="propertyIsThere" parameters=[{type=anything}, {type=string}, {type=L0}] results=[{type=boolean}] {
+  b0(v0: anything, v1: string, v2: L0):
+    v3 = IsSlotFilled v2 key="n" receivers=[L0] level=Expected
+    Branch v3 -> taken b2(), notTaken b1()
+  b1() frequency=Rare:
+    v4 = Integer integer=0
+    v5 = NewObject -, v4, v1 layout=L0 fields=[0, 1]
+    PropSet v5, v0 key="n" mode=Strict receivers=[L0]
+    v7 = PropHasOwn v5 key="n"
+    Return v7
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f6 name="propertyIsThere"
+# CHECK-NOT: NewObject
+# CHECK: Boolean boolean=true
+
+function f7 name="staysInFrontOfAnOperationThatMayKeepGuards" parameters=[{type=anything}, {type=string}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: L0, v3: boolean):
+    v4 = IsSlotFilled v2 key="n" receivers=[L0] level=Expected
+    Branch v4 -> taken b4(), notTaken b1()
+  b1() frequency=Rare:
+    v5 = Integer integer=0
+    v6 = NewObject -, v5, v1 layout=L0 fields=[0, 1]
+    PropSet v6, v0 key="n" mode=Strict receivers=[L0]
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v8 = NewArray v6 contents=anything
+    Return v8
+  b3() frequency=Rare:
+    Return v1
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f7 name="staysInFrontOfAnOperationThatMayKeepGuards"
+# CHECK: b1() frequency=Rare:
+# CHECK: = NewObject -, v5, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet v6, v0 key="n"
+
+function f8 name="builtAtTheStoreWhereNoLaterPlaceAdmitsIt" parameters=[{type=anything}, {type=string}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: L0):
+    v3 = IsSlotFilled v2 key="n" receivers=[L0] level=Expected
+    v4 = Integer integer=0
+    v5 = NewObject -, v4, v1 layout=L0 fields=[0, 1]
+    Branch v3 -> taken b2(), notTaken b1()
+  b1() frequency=Rare:
+    PropSet v5, v0 key="n" mode=Strict receivers=[L0]
+    v7 = NewArray v5 contents=anything
+    Return v7
+  b2():
+    v8 = PropGet v5 key="label" receivers=[L0]
+    Return v8
+}
+# CHECK-LABEL: function f8 name="builtAtTheStoreWhereNoLaterPlaceAdmitsIt"
+# CHECK-NOT: NewObject
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[object8]]: L0 = NewObject -, v4, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet [[object8]], v0 key="n"
+# CHECK: b2():
+# CHECK-NOT: NewObject

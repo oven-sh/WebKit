@@ -1,0 +1,115 @@
+# A read of the function's own unmapped arguments object under a key nobody typed is copied once for a number, where nothing else needs the object: that copy reads an argument, so the object is built in the unlikely copy alone. A store, a test with in, a mapped object, an object that leaves the function and the object of a caller stay as they are
+# FORM: Prepared
+# RUN: pass SplitUnions SplitUnions
+# RUN(SUNK): pass SplitUnions SinkAllocations
+# STATISTIC: UnionsSplit = 2
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="open-key" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ElemGet v3, v1
+    Return v4
+}
+# CHECK-LABEL: function f0 name="open-key"
+# CHECK: v3: Arguments = CreateUnmappedArguments v0, v2, v1
+# CHECK-NEXT: [[isNumber]]: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[isNumber]] -> taken [[element]](| 0), notTaken [[name]](| 0)
+# CHECK: [[element]]([[index]]: number):
+# CHECK-NEXT: = ElemGet v3, [[index]]
+# CHECK: [[name]]([[other]]: {{*}}) frequency=Unlikely:
+# CHECK-NEXT: = ElemGet v3, [[other]]
+# CHECK-NOT: TypeTest
+# SUNK-LABEL: function f0 name="open-key"
+# SUNK-NOT: CreateUnmappedArguments
+# SUNK: ([[otherKey]]: {{*}}) frequency=Unlikely:
+# SUNK-NEXT: [[built]]:{{*}}= CreateUnmappedArguments v0, v2, v1
+# SUNK-NEXT: = ElemGet [[built]], [[otherKey]]
+# SUNK-NOT: CreateUnmappedArguments
+# SUNK-LABEL: function f1 name="store"
+
+function f1 name="store" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: Array):
+    v4 = CreateUnmappedArguments v0, v3, v1, v2
+    ElemSet v4, v1, v2 mode=Strict
+    Return
+}
+# CHECK-LABEL: function f1 name="store"
+# CHECK-NOT: TypeTest
+# CHECK: ElemSet v4, v1, v2
+# CHECK-NOT: TypeTest
+
+function f2 name="mapped" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
+    v4 = CreateMappedArguments v0, v1, v3, v2
+    v5 = ElemGet v4, v2
+    Return v5
+}
+# CHECK-LABEL: function f2 name="mapped"
+# CHECK-NOT: TypeTest
+# CHECK: v5: anything = ElemGet v4, v2
+# CHECK-NOT: TypeTest
+
+function f3 name="object-leaves-the-function" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: Array):
+    v4 = CreateUnmappedArguments v0, v3, v1, v2
+    v5 = ElemGet v4, v1
+    v6 = Call v2, -, v4
+    Return v5
+}
+# CHECK-LABEL: function f3 name="object-leaves-the-function"
+# CHECK-NOT: TypeTest
+# CHECK: v5: anything = ElemGet v4, v1
+# CHECK-NOT: TypeTest
+
+function f4 name="number-or-undefined" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=undefined|int[0, 9]}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: undefined|int[0, 9], v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ElemGet v3, v1
+    Return v4
+}
+# CHECK-LABEL: function f4 name="number-or-undefined"
+# CHECK: = TypeTest v1 testedType=int[0, 9]
+# CHECK-NOT: TypeTest
+# CHECK: ([[position]]: int[0, 9]):
+# CHECK-NEXT: = ElemGet v3, [[position]]
+# CHECK: ([[missing]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: = ElemGet v3, [[missing]]
+# SUNK-LABEL: function f4 name="number-or-undefined"
+# SUNK-NOT: CreateUnmappedArguments
+# SUNK: ([[missingKey]]: undefined) frequency=Unlikely:
+
+function f5 name="object-of-a-caller" parameters=[{type=Arguments}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Arguments, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="object-of-a-caller"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = ElemGet v0, v1
+# CHECK-NOT: TypeTest
+
+function f6 name="test-with-in" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ElemHas v3, v1
+    Return v4
+}
+# CHECK-LABEL: function f6 name="test-with-in"
+# CHECK-NOT: TypeTest
+# CHECK: v4: boolean = ElemHas v3, v1
+# CHECK-NOT: TypeTest
+
+function f7 name="key-is-a-number" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: number, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ElemGet v3, v1
+    Return v4
+}
+# CHECK-LABEL: function f7 name="key-is-a-number"
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = ElemGet v3, v1
+# CHECK-NOT: TypeTest

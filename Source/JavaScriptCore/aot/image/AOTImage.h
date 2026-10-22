@@ -27,7 +27,9 @@
 #include <atomic>
 #include <bit>
 #include <memory>
+#include <mutex>
 #include <span>
+#include <wtf/Vector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringImpl.h>
@@ -69,6 +71,12 @@ struct CodeLocation {
     uint32_t offset { 0 };
 };
 
+struct ReturnSiteInfo {
+    std::optional<CallSiteRecord> site;
+    std::optional<HandlerRecord> handler;
+    ImageFrame frame { };
+};
+
 // A uint32_t function is an image function index, a position in ImageSection::Functions. A FunctionID is the program's.
 class Image {
     WTF_MAKE_TZONE_ALLOCATED(Image);
@@ -95,8 +103,8 @@ public:
     bool isObfuscated() const { return header().isObfuscated(); }
     bool admitsUnknownJavaScript() const { return header().admitsUnknownJavaScript(); }
     bool loadsModulesByName() const { return header().loadsModulesByName(); }
-    bool replacesLoaderAnswers() const { return header().replacesLoaderAnswers(); }
     bool admitsLibraryText() const { return header().admitsLibraryText(); }
+    bool showsWaysBetweenModuleObjects() const { return header().showsWaysBetweenModuleObjects(); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;
 
@@ -108,9 +116,12 @@ public:
     uint64_t closureWord(FunctionID) const;
 
     JS_EXPORT_PRIVATE const void* stubAddress(StubKey) const;
+    JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
     std::span<const uint32_t> slotHandlerOffsets() const { return section<uint32_t>(ImageSection::SlotHandlers); }
+    std::span<const uint32_t> methodTable() const { return section<uint32_t>(ImageSection::MethodTable); }
+    std::span<const uint32_t> methodLookups() const { return section<uint32_t>(ImageSection::MethodLookups); }
     const uint8_t* sharedCodeCopy(unsigned index) const;
 
     JS_EXPORT_PRIVATE bool containsCharactersOf(const StringImpl&) const;
@@ -121,6 +132,9 @@ public:
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
     bool hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
+    bool hasFrameAtReturnOffset(uint32_t function, const SideTableParts&, uint32_t returnOffset) const;
+    ImageFrame frameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
+    ReturnSiteInfo returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const;
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;
@@ -142,6 +156,8 @@ private:
     const uint32_t* m_functionStarts;
     const uint32_t* m_codeGranules;
     ImageText m_text;
+    mutable std::once_flag m_didSortFunctionsByID;
+    mutable Vector<uint32_t> m_functionsByID;
 };
 
 template<typename T>
@@ -172,7 +188,21 @@ inline size_t Image::sizeOfCodeOf(uint32_t function) const
 
 inline const ImageFrame& Image::frameOf(uint32_t function) const
 {
-    return section<ImageFrame>(ImageSection::Frames)[this->function(function).frame()];
+    static constexpr ImageFrame noFrame { 0, 0, 0 };
+    SideTableParts parts = SideTableParts::read(this->function(function), section<uint8_t>(ImageSection::SideTables).data());
+    if (parts.frameRanges.empty())
+        return noFrame;
+    return section<ImageFrame>(ImageSection::Frames)[parts.frame];
+}
+
+inline ImageFrame Image::frameAtReturnOffset(uint32_t function, uint32_t returnOffset) const
+{
+    ImageFrame frame { };
+    if (hasFrameAtReturnOffset(function, returnOffset))
+        frame = frameOf(function);
+    if (this->function(function).has(ImageFunctionFlag::SpillsArgumentRegisters))
+        frame.calleeSavesStart |= ImageFrame::liesBelowSpilledArgumentsBit;
+    return frame;
 }
 
 inline FunctionID Image::rootFunctionOf(uint32_t function) const
@@ -216,6 +246,8 @@ inline bool Image::isBackedByStaticData(const StringImpl& string)
 JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
+// For a walk of the machine stack that reads memory in its own way (a crash report): the frame of the compiled code that returnAddress runs in. No answer outside compiled code.
+JS_EXPORT_PRIVATE std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress);
 
 } } // namespace JSC::AOT
 

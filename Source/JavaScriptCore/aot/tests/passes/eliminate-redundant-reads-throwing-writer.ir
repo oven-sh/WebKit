@@ -31,7 +31,7 @@ function f1 name="castThrows" parameters=[{type=anything}] results=[{type=anythi
     v1 = GetModuleVariable variable=g1
     Jump -> next b1()
   b1() handler=b3():
-    v2 = Claim v0 castType=number
+    v2 = RequireObjectCoercible v0
     Jump -> next b2()
   b2():
     Return v1

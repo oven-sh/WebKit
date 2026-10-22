@@ -38,6 +38,10 @@
 #include "ResourceExhaustion.h"
 #include "SuperSampler.h"
 
+#if ENABLE(AOT)
+#include "AOTAllocationCounts.h"
+#endif
+
 namespace JSC {
 
 LocalAllocator::LocalAllocator(BlockDirectory* directory)
@@ -136,7 +140,12 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 
     ASSERT(!m_directory->markedSpace().isIterating());
     heap.didAllocate(m_freeList.originalSize());
-    
+
+#if ENABLE(AOT)
+    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
+        AOT::AllocationCounts::willRefill(heap.vm(), *this);
+#endif
+
     didConsumeFreeList();
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -180,21 +189,27 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT(!subspace->isPreciseOnly());
     ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
     MarkedBlock::Handle* block = m_directory->tryAllocateBlock(heap);
-    if (!block && heap.tryCollectForExhaustedCage(deferralContext)) [[unlikely]] {
-        if (m_currentBlock)
-            return allocate(heap, cellSize, deferralContext, failureMode);
-        result = tryAllocateWithoutCollecting(cellSize);
-        if (result)
-            return result;
-        block = m_directory->tryAllocateBlock(heap);
-    }
     if (!block) [[unlikely]] {
-        if (failureMode == AllocationFailureMode::Assert)
-            MarkedBlockCage::logExhaustion();
-        RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
-        return nullptr;
+        if (heap.tryCollectForExhaustedCage(deferralContext)) {
+            if (m_currentBlock)
+                return allocate(heap, cellSize, deferralContext, failureMode);
+            result = tryAllocateWithoutCollecting(cellSize);
+            if (result)
+                return result;
+            block = m_directory->tryAllocateBlock(heap);
+        }
+        if (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage())
+            block = m_directory->tryAllocateBlock(heap);
+        if (!block) {
+            if (failureMode == AllocationFailureMode::Assert)
+                MarkedBlockCage::logExhaustion();
+            RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+            return nullptr;
+        }
     }
     m_directory->addBlock(block);
+    if (MarkedBlockCage::isRequired())
+        heap.cage().keepReserveOnceHalfFull();
     result = allocateIn(block, cellSize);
     ASSERT(result);
     return result;

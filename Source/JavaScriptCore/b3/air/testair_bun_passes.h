@@ -16,6 +16,8 @@
         RUN(testMergeInvertsBranchIntoFallThrough()); \
         RUN(testDuplicateReturns()); \
         RUN(testShuffleOrderFollowsPairs()); \
+        RUN(testShuffleMovesValuesInEitherOrder()); \
+        RUN(testSpilledOperandIsReadInPlaceOnRequest()); \
     } while (false)
 
 struct PassRegisters {
@@ -139,8 +141,11 @@ static int64_t invokeInt64(const Compilation& compilation, Arguments... argument
 void testShuffleOrderFollowsPairs()
 {
     constexpr unsigned numberOfPairs = 8;
-    for (unsigned round = 0; round < 8; ++round) {
-        B3::Procedure proc;
+    for (unsigned round = 0; round < 16; ++round) {
+        bool followsPairs = round < 8;
+        B3::Policy policy;
+        policy.air.peepholes.emitsShufflesInPairOrder = followsPairs;
+        B3::Procedure proc(policy);
         Code& code = proc.code();
         const Vector<Reg>& registers = code.regsInPriorityOrder(GP);
         CHECK(registers.size() >= numberOfPairs);
@@ -156,8 +161,128 @@ void testShuffleOrderFollowsPairs()
         CHECK(insts.size() == numberOfPairs);
         for (unsigned index = 0; index < numberOfPairs; ++index) {
             const ShufflePair& pair = pairs[numberOfPairs - 1 - index];
-            CHECK(insts[index].kind.opcode == Move && insts[index].args()[0] == pair.src() && insts[index].args()[1] == pair.dst());
+            auto movesPair = [&](const Inst& inst) {
+                return inst.kind.opcode == Move && inst.args()[0] == pair.src() && inst.args()[1] == pair.dst();
+            };
+            CHECK(followsPairs ? movesPair(insts[index]) : insts.containsIf(movesPair));
         }
+    }
+}
+
+// Upstream's tests of Shuffle run under the default policy, which takes shifts and rotates in the order of a hash table.
+void testShuffleMovesValuesInEitherOrder()
+{
+    constexpr unsigned numberOfRegisters = 6;
+    WeakRandom random(1);
+    for (unsigned round = 0; round < 100; ++round) {
+        std::array<unsigned, numberOfRegisters> sourceOf;
+        for (unsigned destination = 0; destination < numberOfRegisters; ++destination) {
+            unsigned source = random.getUint32(numberOfRegisters + 2);
+            sourceOf[destination] = source < numberOfRegisters ? source : destination;
+        }
+
+        for (bool followsPairs : { false, true }) {
+            B3::Policy policy;
+            policy.air.peepholes.emitsShufflesInPairOrder = followsPairs;
+            B3::Procedure proc(policy);
+            proc.setOptLevel(2);
+            proc.setUsesShuffle(true);
+            Code& code = proc.code();
+            const Vector<Reg>& registers = code.regsInPriorityOrder(GP);
+            CHECK(registers.size() > numberOfRegisters);
+
+            BasicBlock* root = code.addBlock();
+            Vector<ShufflePair> pairs;
+            for (unsigned index = 0; index < numberOfRegisters; ++index) {
+                appendChecked(root, Move, Arg::imm(index + 1), Tmp(registers[index]));
+                pairs.append(ShufflePair(Tmp(registers[sourceOf[index]]), Tmp(registers[index]), Width64));
+            }
+            appendCheckedInst(root, createShuffle(nullptr, pairs.span()));
+
+            int64_t memory[numberOfRegisters] = { };
+            Tmp base = code.newTmp(GP);
+            appendChecked(root, Move, Arg::bigImm(std::bit_cast<intptr_t>(&memory)), base);
+            for (unsigned index = 0; index < numberOfRegisters; ++index)
+                appendChecked(root, Move, Tmp(registers[index]), Arg::addr(base, static_cast<int32_t>(index * sizeof(int64_t))));
+            appendReturn(root, 0);
+
+            CHECK(!compileAndRun<int64_t>(proc));
+            for (unsigned index = 0; index < numberOfRegisters; ++index)
+                CHECK(memory[index] == sourceOf[index] + 1);
+        }
+    }
+}
+
+// Upstream's Air has no form of these opcodes that reads the operand from memory, and the JIT tiers emit upstream's code.
+static bool readsSpilledOperandInPlace(B3::Air::Opcode opcode, bool extendsInstructionSelection)
+{
+    auto [a0, a1, a2, a3, a4, ret] = PassRegisters { };
+    B3::Policy policy;
+    policy.selection.extendsInstructionSelection = extendsInstructionSelection;
+    B3::Procedure proc(policy);
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+
+    RegisterSet clobbered;
+    for (Reg reg : code.regsInPriorityOrder(GP))
+        clobbered.add(reg, IgnoreVectors);
+    clobbered.exclude(RegisterSet { a1.reg(), a2.reg(), a3.reg() });
+    B3::PatchpointValue* patchpoint = addPatchpoint(proc);
+    patchpoint->clobberLate(clobbered);
+    patchpoint->setGenerator([clobbered](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        clobbered.forEach([&](Reg reg) {
+            jit.move(CCallHelpers::TrustedImm32(-1), reg.gpr());
+        });
+    });
+
+    BasicBlock* root = code.addBlock();
+    Tmp operand = code.newTmp(GP);
+    Arg nonZero = Arg::resCond(MacroAssembler::NonZero);
+    appendChecked(root, Move, a0, operand);
+    appendCheckedPatch(root, patchpoint, patchpointSpecialOf(code));
+    switch (opcode) {
+    case SignExtend32To64:
+        appendChecked(root, SignExtend32To64, operand, ret);
+        break;
+    case Test64:
+        appendChecked(root, Test64, nonZero, operand, a1, ret);
+        break;
+    case MoveConditionallyTest64:
+        appendChecked(root, MoveConditionallyTest64, nonZero, operand, a1, a2, a3, ret);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    for (Tmp liveAcrossPatch : { a1, a2, a3 })
+        appendChecked(root, Add64, liveAcrossPatch, ret);
+    appendReturn(root);
+
+    auto compilation = compile(proc);
+    for (int64_t value : { 0ll, 4ll, 0x180000001ll }) {
+        constexpr int64_t mask = 5;
+        constexpr int64_t ifNonZero = 100;
+        constexpr int64_t ifZero = 1000;
+        int64_t expected = static_cast<int32_t>(value);
+        if (opcode == Test64)
+            expected = !!(value & mask);
+        else if (opcode == MoveConditionallyTest64)
+            expected = (value & mask) ? ifNonZero : ifZero;
+        CHECK(invokeInt64(*compilation, value, mask, ifNonZero, ifZero) == expected + mask + ifNonZero + ifZero);
+    }
+
+    bool result = false;
+    for (const Inst& inst : *root) {
+        if (inst.kind.opcode == opcode)
+            result = std::ranges::any_of(inst.args(), &Arg::isMemory);
+    }
+    return result;
+}
+
+void testSpilledOperandIsReadInPlaceOnRequest()
+{
+    for (B3::Air::Opcode opcode : { SignExtend32To64, Test64, MoveConditionallyTest64 }) {
+        CHECK(!readsSpilledOperandInPlace(opcode, false));
+        CHECK(readsSpilledOperandInPlace(opcode, true) == (isX86() || opcode == SignExtend32To64));
     }
 }
 
@@ -282,6 +407,53 @@ static void checkSuccessorWithEntryClobber(bool padHasSecondPredecessor)
         CHECK(invokeInt64(*compilation, 0, 0) == 7);
 }
 
+static void checkManyTerminalResults()
+{
+    constexpr unsigned numberOfTerminals = 150;
+    enum class Reader : uint8_t { LastBlock, NextBlock, Nobody };
+    auto readerOf = [](unsigned index) {
+        return static_cast<Reader>(index % 3);
+    };
+
+    B3::Procedure proc;
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    B3::Air::Special* special = patchpointSpecialOf(code);
+    Vector<BasicBlock*> blocks;
+    for (unsigned i = 0; i <= numberOfTerminals; ++i)
+        blocks.append(code.addBlock());
+    BasicBlock* exit = code.addBlock();
+    Tmp sum = code.newTmp(GP);
+    Vector<Tmp> results;
+
+    appendChecked(blocks[0], Move, Arg::imm(0), sum);
+    for (unsigned i = 0; i < numberOfTerminals; ++i) {
+        results.append(code.newTmp(GP));
+        appendCheckedPatch(blocks[i], addTerminalPatchpoint(proc), special, returnTmp());
+        blocks[i]->setSuccessors(blocks[i + 1], exit);
+        appendChecked(blocks[i], Move, returnTmp(), results[i]);
+        if (readerOf(i) == Reader::NextBlock)
+            appendChecked(blocks[i + 1], Add64, results[i], sum);
+    }
+    for (unsigned i = 0; i < numberOfTerminals; ++i) {
+        if (readerOf(i) == Reader::LastBlock)
+            appendChecked(blocks.last(), Add64, results[i], sum);
+    }
+    appendChecked(blocks.last(), Move, sum, returnTmp());
+    appendReturn(blocks.last());
+    appendChecked(exit, Move, results[0], returnTmp());
+    appendReturn(exit);
+
+    checkPassChangesCode(code, fixSpillsAfterTerminals);
+    for (unsigned i = 0; i < numberOfTerminals; ++i) {
+        CHECK(blocks[i]->last().kind.opcode == Patch);
+        CHECK(blocks[i]->successorBlock(0) == blocks[i + 1]);
+        CHECK(isInst(blocks[i + 1]->at(0), Move, { returnTmp(), results[i] }) == (readerOf(i) != Reader::Nobody));
+        CHECK((blocks[i]->successorBlock(1) == exit) == !!i);
+    }
+    CHECK(isInst(blocks[0]->successorBlock(1)->at(0), Move, { returnTmp(), results[0] }));
+}
+
 void testTerminalResultsOnEdge()
 {
     enum class Case : uint8_t { OnePredecessor, TwoPredecessors, SameSuccessorTwice, LiveAtBothSuccessors, StoresToStackSlot, NothingTrails };
@@ -378,6 +550,7 @@ void testTerminalResultsOnEdge()
     }
 
     checkTerminalWithoutSuccessors();
+    checkManyTerminalResults();
     checkSuccessorWithEntryClobber(false);
     checkSuccessorWithEntryClobber(true);
 }

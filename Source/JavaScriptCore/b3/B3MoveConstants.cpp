@@ -201,7 +201,8 @@ private:
                 
                 if (MemoryValue* memoryValue = value->as<MemoryValue>()) {
                     Value* pointer = memoryValue->lastChild();
-                    if (pointer->hasIntPtr() && filter(pointer)) {
+                    // Whoever handles the fault of a trapping access may read the pointer out of its base register.
+                    if (pointer->hasIntPtr() && filter(pointer) && !memoryValue->traps()) {
                         auto desiredOffset = [&] (Value* otherPointer) -> intptr_t {
                             // We would turn this:
                             //
@@ -261,7 +262,16 @@ private:
                         BasicBlock* addendBlock = placement.blockOf.get(addend);
                         if (!dominators.dominates(bestBlock, block))
                             break;
-                        if (bestBlock == addendBlock ? addendConst > 0 : dominators.dominates(addendBlock, bestBlock))
+                        bool keepsAddend;
+                        if (bestBlock != addendBlock)
+                            keepsAddend = dominators.dominates(addendBlock, bestBlock);
+                        else if (placesByFrequency)
+                            keepsAddend = addendConst > 0;
+                        else {
+                            const Vector<Value*>& materializedInBlock = placement.materializations[bestBlock];
+                            keepsAddend = materializedInBlock.find(addend) < materializedInBlock.find(bestAddend);
+                        }
+                        if (keepsAddend)
                             break;
                         materialize(value->child(0));
                         materialize(bestAddend);

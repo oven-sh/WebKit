@@ -11,6 +11,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
+#include "AOTExpandOwnKeysInternal.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTTypeTestSite.h"
@@ -28,19 +29,24 @@ struct PlannedValue {
     OptionSet<PristineAspects> aspects;
     IteratorKind kind { IteratorKind::Sync };
     bool isSentValues { false };
+    bool isOnlyAskedForNextValue { true };
 };
 
 } // anonymous namespace
 
+// An async iteration over an object without @@asyncIterator wraps the iterator that @@iterator makes. The wrapper closes a generator whose value rejects
+// one turn of the job queue before the loop hears of the rejection, which an await in the loop cannot do: a generator keeps its wrapper.
 static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, BuiltinClassID id, IteratorKind kind)
 {
     switch (kind) {
     case IteratorKind::Sync:
+        if (id == BuiltinClasses::Generator)
+            return IterationForm::Generator;
         break;
     case IteratorKind::Async:
         if (id == BuiltinClasses::AsyncGenerator)
             return IterationForm::AsyncGenerator;
-        return std::nullopt;
+        break;
     }
 
     if (id == BuiltinClasses::Array)
@@ -49,14 +55,12 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
         return IterationForm::Map;
     if (id == BuiltinClasses::Set)
         return IterationForm::Set;
-    if (id == BuiltinClasses::Generator)
-        return IterationForm::Generator;
     if (isTypedView(builtins.at(id).typedArrayType))
         return IterationForm::TypedArray;
     return std::nullopt;
 }
 
-static IterationArm armForPart(FunctionPassContext& pass, const ClassPart& part, IterationForm form)
+static IterationArm armForPart(FunctionPassContext& pass, const ClassPart& part, IterationForm form, IteratorKind kind)
 {
     return IterationArm {
         .form = form,
@@ -64,6 +68,7 @@ static IterationArm armForPart(FunctionPassContext& pass, const ClassPart& part,
         .builtinClass = part.builtinClass,
         .typedArrayType = pass.program.builtins().at(part.builtinClass).typedArrayType,
         .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.contents.span())),
+        .awaitsEachValue = kind == IteratorKind::Async && form != IterationForm::AsyncGenerator,
     };
 }
 
@@ -72,9 +77,18 @@ static bool hasConstantIteratorMethod(FunctionPassContext& pass, const Iteration
 {
     const Program& program = pass.program;
     BuiltinClassID receiverClass = arm.form == IterationForm::String ? BuiltinClasses::String : arm.builtinClass;
-    WellKnownSymbol symbol = arm.form == IterationForm::AsyncGenerator ? WellKnownSymbol::AsyncIterator : WellKnownSymbol::Iterator;
-    PropertyKeyID key = program.keyOf(program.builtins().nameOf(symbol));
-    return findMemberOfInstances({ program, pass.inputs.flow }, receiverClass, key).isConstant();
+    auto findMethod = [&](WellKnownSymbol symbol) {
+        return findMemberOfInstances({ program, pass.inputs.flow }, receiverClass, program.keyOf(program.builtins().nameOf(symbol)));
+    };
+
+    if (arm.form == IterationForm::AsyncGenerator)
+        return findMethod(WellKnownSymbol::AsyncIterator).isConstant();
+    if (arm.awaitsEachValue) {
+        BuiltinMemberAnswer asyncMethod = findMethod(WellKnownSymbol::AsyncIterator);
+        if (asyncMethod.outcome != BuiltinMemberLookup::Outcome::Absent || asyncMethod.proof != LocationProof::Constant)
+            return false;
+    }
+    return findMethod(WellKnownSymbol::Iterator).isConstant();
 }
 
 static bool hasFailedEarlier(FunctionPassContext& pass, Value&& test, BlockID block)
@@ -96,14 +110,16 @@ static void appendCandidate(Arms& candidates, IterationArm&& arm)
         candidates.append(WTF::move(arm));
 }
 
-static void appendCandidatesOf(FunctionPassContext& pass, const Type& type, IteratorKind kind, Arms& candidates)
+static void appendCandidatesOf(FunctionPassContext& pass, const Type& type, const PlannedValue& planned, Arms& candidates)
 {
     const BuiltinTable& builtins = pass.program.builtins();
     for (const ClassPart& part : type.classes) {
-        if (std::optional<IterationForm> form = formOfClass(builtins, part.builtinClass, kind))
-            appendCandidate(candidates, armForPart(pass, part, *form));
+        std::optional<IterationForm> form = formOfClass(builtins, part.builtinClass, planned.kind);
+        if (!form)
+            continue;
+        appendCandidate(candidates, armForPart(pass, part, *form, planned.kind));
     }
-    if (kind == IteratorKind::Sync && hasKnownStringPart(type))
+    if (planned.kind == IteratorKind::Sync && hasKnownStringPart(type))
         appendCandidate(candidates, IterationArm { .form = IterationForm::String, .testedType = TypeTable::string });
 }
 
@@ -123,18 +139,18 @@ static Vector<BuiltinClassID, 2> classesExpectedOfUnknownIterable(const PlannedV
 
 static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& planned)
 {
-    const Type& predicted = pass.program.predictionOrTypeOf(pass.function, planned.value);
+    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value);
 
     Arms candidates;
-    appendCandidatesOf(pass, predicted, planned.kind, candidates);
-    appendCandidatesOf(pass, pass.program.typeOf(pass.function, planned.value), planned.kind, candidates);
-    if (!predicted.anyObject)
+    appendCandidatesOf(pass, expected, planned, candidates);
+    appendCandidatesOf(pass, pass.program.typeOf(pass.function, planned.value), planned, candidates);
+    if (!expected.anyObject)
         return candidates;
 
     for (BuiltinClassID expectedClass : classesExpectedOfUnknownIterable(planned)) {
-        ClassPart expected;
-        expected.builtinClass = expectedClass;
-        appendCandidate(candidates, armForPart(pass, expected, *formOfClass(pass.program.builtins(), expectedClass, planned.kind)));
+        ClassPart part;
+        part.builtinClass = expectedClass;
+        appendCandidate(candidates, armForPart(pass, part, *formOfClass(pass.program.builtins(), expectedClass, planned.kind), planned.kind));
     }
     return candidates;
 }
@@ -160,6 +176,7 @@ static bool canTestNames(const BuiltinTable& builtins, const IterationArm& arm)
         return true;
     case IterationForm::String:
     case IterationForm::SplitString:
+    case IterationForm::OwnEntries:
     case IterationForm::Protocol:
         break;
     }
@@ -187,6 +204,18 @@ static bool canServe(FunctionPassContext& pass, const PlannedValue& planned, con
     if (hasFailedEarlier(pass, makeTypeTest(planned.value, arm.testedType), planned.block))
         return false;
     return arm.namesAreProven || !hasFailedEarlier(pass, makeNamesTest(planned, arm), planned.block);
+}
+
+// The protocol arm of a value that may be a string nobody expected walks the string itself.
+static bool protocolArmMayGetString(FunctionPassContext& pass, const PlannedValue& planned, const IterationPlan& plan)
+{
+    if (planned.kind != IteratorKind::Sync || !planned.isOnlyAskedForNextValue || !plan.hasProtocolArm() || !plan.armSources.isEmpty())
+        return false;
+    bool hasStringArm = plan.arms.containsIf([](const IterationArm& arm) {
+        return arm.form == IterationForm::String;
+    });
+    IterationArm string { .form = IterationForm::String, .testedType = TypeTable::string, .namesAreProven = true };
+    return !hasStringArm && canServe(pass, planned, string);
 }
 
 static Arms findClassArms(FunctionPassContext& pass, const PlannedValue& planned)
@@ -243,6 +272,7 @@ static bool makesIteratorOver(InlineBuiltin maker, IterationForm form)
     case IterationForm::Protocol:
     case IterationForm::String:
     case IterationForm::SplitString:
+    case IterationForm::OwnEntries:
     case IterationForm::Generator:
     case IterationForm::AsyncGenerator:
         return false;
@@ -458,7 +488,7 @@ static bool hasNoObservableEffectBetween(FunctionPassContext& pass, ValueID call
 
     const BlockValues& values = pass.function.at(first.block).values;
     for (uint32_t index = first.index + 1; index < last.index; ++index) {
-        if (!pass.analyses.effectsOf(values[index]).onAnyEdge().isRemovableWhenUnused())
+        if (!pass.analyses.isUnobservable(values[index]))
             return false;
     }
     return true;
@@ -497,12 +527,90 @@ static std::optional<IterationPlan> planSplitString(FunctionPassContext& pass, c
     return plan;
 }
 
+// The call moves down to the open. Code of the program may run in it, so what stands between sees and changes nothing.
+static bool hasNothingBetween(FunctionPassContext& pass, ValueID call, ValueID open)
+{
+    const UseLists& useLists = pass.analyses.useLists();
+    ValueLocation first = useLists.locationOf(call);
+    ValueLocation last = useLists.locationOf(open);
+    if (first.block != last.block)
+        return false;
+
+    const BlockValues& values = pass.function.at(first.block).values;
+    for (uint32_t index = first.index + 1; index < last.index; ++index) {
+        Effects effects = pass.analyses.effectsOf(values[index]).onAnyEdge();
+        if (!effects.isUnobservable() || !effects.reads.containsOnly(bookkeepingHeaps) || !effects.writes.containsOnly(bookkeepingHeaps))
+            return false;
+    }
+    return true;
+}
+
+// Also a call that nobody has resolved yet: its callee is the function itself.
+static BuiltinID findCalledBuiltin(const BuiltinTable& builtins, const Function& function, const Value& call)
+{
+    if (call.opcode == Opcode::Call) {
+        const Value& callee = function.at(call.calleeOperand());
+        return callee.opcode == Opcode::Builtin ? builtins.canonicalID(callee.builtin()) : BuiltinID();
+    }
+    if (call.opcode != Opcode::CallBuiltin || (call.builtinCallForm() != BuiltinCallForm::Whole && call.builtinCallForm() != BuiltinCallForm::AnyReceiver))
+        return { };
+    const BuiltinOverload& overload = builtins.at(call.overload());
+    return overload.mode == BuiltinCallMode::Call ? builtins.canonicalID(overload.builtin) : BuiltinID();
+}
+
+// Where the layouts of the object are known, ExpandOwnKeys reads its slots and calls nothing. That is the cheaper list.
+static bool isWalkedByLayout(FunctionPassContext& pass, ValueID call, ValueID object)
+{
+    ValueLocation location = pass.analyses.useLists().locationOf(call);
+    OwnKeyWalkSite site { .walk = OwnKeyWalk::Entries, .block = location.block, .index = location.index, .value = call, .source = object };
+    UnchangedAllocations unchanged(pass, singleElementSpan(site));
+    return planOwnKeyWalk(pass, unchanged, site).has_value();
+}
+
+// `for (const [key, value] of Object.entries(object))`: the loop alone has the list, so nobody sees how it holds the pairs. Each step makes its
+// pair in compiled code, where a pattern that takes it apart leaves nothing of it.
+static std::optional<IterationPlan> planOwnEntries(FunctionPassContext& pass, const Iteration& iteration)
+{
+    static_assert(!OperandIndex::IteratorOpen::iterable, "findSingleUseCastChain starts at operand 0.");
+    const Function& function = pass.function;
+    const BuiltinTable& builtins = pass.program.builtins();
+
+    if (function.at(iteration.open).isDestructuring())
+        return std::nullopt;
+    Vector<ValueID, 2> chain = findSingleUseCastChain(function, pass.analyses.useLists(), iteration.open);
+    if (chain.isEmpty() || hasCastWithTest(function, chain.span()))
+        return std::nullopt;
+    const Value& call = function.at(chain.first());
+    if (findCalledBuiltin(builtins, function, call) != Builtins::ObjectEntries || call.argumentsOperands().size() != 1)
+        return std::nullopt;
+    if (!hasNothingBetween(pass, chain.first(), iteration.open))
+        return std::nullopt;
+    if (!hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array }))
+        return std::nullopt;
+    if (isWalkedByLayout(pass, chain.first(), call.argumentsOperands()[0]))
+        return std::nullopt;
+
+    IterationPlan plan;
+    plan.source = call.argumentsOperands()[0];
+    plan.arms.append(IterationArm {
+        .form = IterationForm::OwnEntries,
+        .testedType = function.at(plan.source).type,
+        .classIsProven = true,
+        .namesAreProven = true,
+    });
+    plan.replacedValues = WTF::move(chain);
+    return plan;
+}
+
 IterationPlan planIteration(FunctionPassContext& pass, const Iteration& iteration)
 {
     bool isSentValues = std::ranges::any_of(iteration.resumes, [&](ValueID resume) {
         return !!pass.function.at(resume).sentOperand();
     });
-    PlannedValue planned { pass.function.at(iteration.open).iterableOperand(), pass.analyses.useLists().blockOf(iteration.open), { PristineAspects::Names }, iteration.kind, isSentValues };
+    bool isOnlyAskedForNextValue = !isSentValues && std::ranges::all_of(iteration.resumes, [&](ValueID resume) {
+        return pass.function.at(resume).resumeMode() == ResumeMode::Next;
+    });
+    PlannedValue planned { pass.function.at(iteration.open).iterableOperand(), pass.analyses.useLists().blockOf(iteration.open), { PristineAspects::Names }, iteration.kind, isSentValues, isOnlyAskedForNextValue };
     switch (iteration.kind) {
     case IteratorKind::Sync:
         break;
@@ -514,7 +622,13 @@ IterationPlan planIteration(FunctionPassContext& pass, const Iteration& iteratio
         return WTF::move(*bypassed);
     if (std::optional<IterationPlan> splitString = planSplitString(pass, iteration))
         return WTF::move(*splitString);
-    return planForValue(pass, planned);
+    if (std::optional<IterationPlan> ownEntries = planOwnEntries(pass, iteration))
+        return WTF::move(*ownEntries);
+
+    IterationPlan plan = planForValue(pass, planned);
+    if (protocolArmMayGetString(pass, planned, plan))
+        plan.arms.last().alsoServesStrings = true;
+    return plan;
 }
 
 IterationPlan planSpread(FunctionPassContext& pass, ValueID appendSpread)

@@ -1,17 +1,22 @@
-# a report tests what a test at the edge can establish, so its type names no layout
+# a report tests what a test at the edge can establish: its type may name a layout, and nothing that is proven of contents
 # FORM: Prepared
 # RUN: verify
 # DIAGNOSTIC: PayloadOutOfRange 1
 
 module m0 path="main.ts" displayPath="main.ts"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
-function f0 name="badLayout" parameters=[{type=anything}] results=[{type=anything}] {
+function f0 name="badProvenContents" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    ReportMismatch v0 expectedType=undefined|null|L0
+    ReportMismatch v0 expectedType=undefined|null|Array<number, proven>
     Return v0
 }
 function f1 name="goodObject" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     ReportMismatch v0 expectedType=undefined|null|object
+    Return v0
+}
+function f2 name="goodLayout" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    ReportMismatch v0 expectedType=undefined|null|L0
     Return v0
 }

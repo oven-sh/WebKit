@@ -6,7 +6,7 @@
 # CHECK: variable g0 name="called"{{*}}writers=AllKnown stores=AtMostOnce{{*}}reads=OnlyCalled
 # CHECK: variable g1 name="unread"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
 
-module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1}]
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/library.ts" displayPath="library.ts" body=f1 exports=[{name="called" variable=g0}, {name="unread" variable=g1}]
 entry module=m0
 variable g0 name="called" module=m1 declared={type=anything}

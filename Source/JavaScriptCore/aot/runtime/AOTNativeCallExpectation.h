@@ -32,6 +32,8 @@ struct NativeCallExpectation {
     static constexpr unsigned overloadShift = 40;
     static_assert(numberOfEnumerators<AbstractHeap> <= mayThrowBit);
 
+    static constexpr uint64_t overwrittenSite = std::numeric_limits<uint64_t>::max();
+
     static constexpr NativeCallExpectation unknown() { return { }; }
     // What the caller left for this callee. The words are taken, so no later call finds them.
     JS_EXPORT_PRIVATE static NativeCallExpectation take(JSGlobalObject* realm, JSObject* callee);

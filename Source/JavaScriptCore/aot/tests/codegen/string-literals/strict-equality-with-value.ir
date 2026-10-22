@@ -39,7 +39,7 @@ function f3 name="emptyText" parameters=[{type=anything}] results=[{type=boolean
     Return v1
 }
 # CHECK-NEXT: f3: size={{*}} constants=0
-# CHECK-NEXT: stub ValueEqualsLiteral x1
+# CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1
 
 function f4 name="generalComparison" parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: anything):

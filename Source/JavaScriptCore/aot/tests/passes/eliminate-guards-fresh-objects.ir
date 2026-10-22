@@ -545,7 +545,7 @@ function f20 name="freshObjectInLoop" parameters=[{type=number}] results=[{type=
     v3 = ShapeTest v1 layouts=[L0]
     Branch v3 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlot v1, v4 key="x" receivers=[L0] level=Predicted
+    v5 = GetSlot v1, v4 key="x" receivers=[L0] level=Expected
     Jump -> next b4(v5)
   b3() frequency=Unlikely:
     v6 = PropGet v1 key="x"
@@ -564,7 +564,7 @@ function f20 name="freshObjectInLoop" parameters=[{type=number}] results=[{type=
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b2([[carried20]])
 # CHECK-NEXT: b2(v4: guard):
-# CHECK-NEXT: v5: number = GetSlot v1, v4 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: v5: number = GetSlot v1, v4 key="x" receivers=[L0] level=Expected
 # CHECK-NOT: ShapeTest
 
 function f21 name="objectFromParameter" parameters=[{type=object}] results=[{type=undefined}] {
@@ -575,7 +575,7 @@ function f21 name="objectFromParameter" parameters=[{type=object}] results=[{typ
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v3):
-    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
     Jump -> next b4(v4)
   b3() frequency=Unlikely:
     v5 = PropGet v0 key="x"

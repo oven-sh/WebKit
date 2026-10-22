@@ -36,7 +36,7 @@ function f2 name="callsBothWays" parameters=[{type=number}, {type=number}] resul
 # CHECK-LABEL: function f2 name="callsBothWays"
 # CHECK: [[direct]]: number = CallDirect v0 function=f3
 # CHECK-NEXT: [[closure]]: f0 = NewClosure function=f0
-# CHECK-NEXT: [[byValue]]: anything = Call [[closure]], -, [[direct]], v1
+# CHECK-NEXT: [[byValue]]: number = Call [[closure]], -, [[direct]], v1
 # CHECK-NEXT: [[other]]: f1 = NewClosure function=f1
 # CHECK-NEXT: = Call [[other]], -, [[byValue]], v1
 

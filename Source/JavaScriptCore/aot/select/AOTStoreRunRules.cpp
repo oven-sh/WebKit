@@ -8,9 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFamilyTables.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -23,8 +25,8 @@ namespace {
 
 struct RunKey {
     ValueID receiver;
-    ValueID guard;
     LayoutSetID receivers;
+    bool isDefinition { false };
 
     friend bool operator==(const RunKey&, const RunKey&) = default;
 };
@@ -33,14 +35,13 @@ struct RunMember {
     ValueID store;
     ValueID stored;
     PropertyKeyID key;
+    ValueID guard;
     bool mayAdd { false };
 };
 
 struct StoreRun {
     SelectionGroup group;
-    ValueID receiver;
-    ValueID guard;
-    LayoutSetID receivers;
+    RunKey key;
     Vector<RunMember, 4> members;
     Opcode operation;
 };
@@ -51,10 +52,9 @@ struct RunRule {
     uint64_t minMembers;
     LimitID maxMembers;
     size_t minAddingMembers { 0 };
-    bool appliesToCompactCode { true };
 };
 
-using MemberTest = ScopedLambda<std::optional<RunMember>(ValueID, const Value&)>;
+using MemberTest = ScopedLambda<std::optional<RunMember>(ValueID, const Value&, BlockID)>;
 
 } // anonymous namespace
 
@@ -66,12 +66,15 @@ static_assert(minSlotsPerRun >= minRunMembers, "a run has a last member, which i
 static constexpr size_t minAddingSlotStores = 2;
 
 static constexpr OpcodeSet slotStores { Opcode::PutSlot, Opcode::PutSlotOrAdd };
+static constexpr OpcodeSet storesByName { Opcode::PropSet, Opcode::PropDefine };
 
+// The members of a family hold a field in one place, so the stores of a constructor to whichever member it allocated have one key.
+// A store and a definition do different things to a property that exists, so one operation does not stand for both.
 static RunKey runKeyOf(const Value& store)
 {
     if (slotStores.contains(store.opcode))
-        return { store.objectOperand(), store.guardOperand(), store.receivers() };
-    return { store.objectOperand(), { }, { } };
+        return { store.objectOperand(), store.receivers() };
+    return { store.objectOperand(), { }, store.opcode == Opcode::PropDefine };
 }
 
 static SelectionGroup groupOf(std::span<const RunMember> members, Opcode operation)
@@ -96,7 +99,7 @@ static void claimLongestRuns(SelectionContext& context, const RunRule& rule, con
             SelectionGroup group = groupOf(candidate, rule.operation);
             if (context.tryClaim(rule.id, group) != ClaimResult::Claimed)
                 continue;
-            runs.append(StoreRun { WTF::move(group), key.receiver, key.guard, key.receivers, Vector<RunMember, 4>(candidate), rule.operation });
+            runs.append(StoreRun { WTF::move(group), key, Vector<RunMember, 4>(candidate), rule.operation });
             next = end;
             break;
         }
@@ -116,8 +119,6 @@ static void collectRuns(SelectionContext& context, const RunRule& rule, const Me
     RELEASE_ASSERT(rule.minMembers >= minRunMembers);
     const Function& function = context.function();
     for (BlockID block : context.analyses().cfg().reversePostOrder()) {
-        if (!rule.appliesToCompactCode && context.shapeOf(block) == CodeShape::Compact)
-            continue;
         Vector<RunMember, 4> list;
         RunKey listKey;
         auto closeList = [&] {
@@ -129,7 +130,7 @@ static void collectRuns(SelectionContext& context, const RunRule& rule, const Me
             if (context.isClaimed(id) || context.isOnSlowPath(id))
                 continue;
             const Value& value = function.at(id);
-            std::optional<RunMember> member = describeMember(id, value);
+            std::optional<RunMember> member = describeMember(id, value, block);
             if (!member)
                 continue;
             RunKey key = runKeyOf(value);
@@ -144,7 +145,7 @@ static void collectRuns(SelectionContext& context, const RunRule& rule, const Me
 
 static void setRunOperands(Value& value, const StoreRun& run)
 {
-    value.setObjectOperand(run.receiver);
+    value.setObjectOperand(run.key.receiver);
     Vector<ValueID, 4> storedValues;
     for (const RunMember& member : run.members)
         storedValues.append(member.stored);
@@ -161,24 +162,45 @@ static Vector<PlacedKey, 4> placedKeysOf(GroupRewriter& rewriter, const StoreRun
     return keys;
 }
 
+// A store that creates a field stands under tests of its own name, so the stores of one constructor name different guards. Every test was made before the block began,
+// or is the allocation of the receiver, and a claimed group has nothing between its members that ends what a member relies on. So all the guards hold where the run stands.
+static ValueID insertGuardOf(GroupRewriter& rewriter, const StoreRun& run)
+{
+    Vector<ValueID, 4> guards;
+    for (const RunMember& member : run.members) {
+        if (member.guard)
+            guards.appendIfNotContains(member.guard);
+    }
+    if (guards.isEmpty())
+        return { };
+    if (guards.size() == 1)
+        return guards.first();
+
+    Value allGuards = IRBuilder::make(Opcode::AllGuards);
+    allGuards.setGuardsOperands(guards.span());
+    return rewriter.insert(WTF::move(allGuards));
+}
+
 static void setByNameRunPayload(Value& attempt, const StoreRun& run)
 {
     Vector<PropertyKeyID, 4> keys;
     for (const RunMember& member : run.members)
         keys.append(member.key);
     attempt.setKeys(keys.span());
+    attempt.setIsDefinition(run.key.isDefinition);
 }
 
 static void rewriteRun(GroupRewriter& rewriter, const StoreRun& run)
 {
     if (run.operation == Opcode::PutSlots) {
         Vector<PlacedKey, 4> placedKeys = placedKeysOf(rewriter, run);
+        ValueID guard = insertGuardOf(rewriter, run);
         Value& root = rewriter.replaceRoot(Opcode::PutSlots);
         setRunOperands(root, run);
-        if (run.guard)
-            root.setGuardOperand(run.guard);
+        if (guard)
+            root.setGuardOperand(guard);
         root.setPlacedKeys(placedKeys.span());
-        root.setReceivers(run.receivers);
+        root.setReceivers(run.key.receivers);
         return;
     }
 
@@ -191,15 +213,15 @@ static void rewriteRun(GroupRewriter& rewriter, const StoreRun& run)
 
 static std::optional<RunMember> slotRunMember(SelectionContext& context, ValueID id, const Value& value)
 {
-    if (!slotStores.contains(value.opcode))
+    if (!slotStores.contains(value.opcode) || isBorrowedInnerObject(context.function(), value.objectOperand()))
         return std::nullopt;
-    SlotAgreement agreement = context.slots().agreementOf(context.program(), value.key(), value.receivers());
+    const SlotAgreement& agreement = context.slots().agreementOf(context.program(), value.key(), value.receivers());
     if (!agreement.hasOneLocation() || !agreement.coversEveryMember())
         return std::nullopt;
     const PlacedSlot& slot = agreement.groups.first().slot;
     if (slot.deferredFunction || slot.representation == SlotRepresentation::DeferredClosure)
         return std::nullopt;
-    return RunMember { id, value.valueOperand(), value.key(), value.opcode == Opcode::PutSlotOrAdd };
+    return RunMember { id, value.valueOperand(), value.key(), value.guardOperand(), value.opcode == Opcode::PutSlotOrAdd };
 }
 
 void selectSlotStoreRun(SelectionContext& context)
@@ -207,7 +229,7 @@ void selectSlotStoreRun(SelectionContext& context)
     if (context.candidates(Opcode::PutSlotOrAdd).size() < minAddingSlotStores)
         return;
 
-    auto describeMember = [&](ValueID id, const Value& value) -> std::optional<RunMember> {
+    auto describeMember = [&](ValueID id, const Value& value, BlockID) -> std::optional<RunMember> {
         return slotRunMember(context, id, value);
     };
 
@@ -226,31 +248,75 @@ static bool isOrdinaryObjectReceiver(const Type& receiver)
     return instance && instance->builtinClass == BuiltinClasses::Object;
 }
 
-static std::optional<RunMember> byNameRunMember(SelectionContext& context, ValueID id, const Value& value)
+// The layouts of a receiver that is a compiled object for certain: its type lists them, or flow saw nothing else arrive at the access.
+static LayoutSetID compiledReceiversOf(const Program& program, const Type& receiver, const Value& store)
 {
-    if (value.opcode != Opcode::PropSet || value.isFreeName())
+    if (receiver.primitives)
+        return { };
+    if (receiver.hasOnlyLayouts(program))
+        return receiver.layouts;
+    LayoutSetID arriving = store.receivers();
+    if (!arriving || !program.at(arriving).isComplete)
+        return { };
+    return arriving;
+}
+
+// The emitted code of a run stores into the cell of an ordinary object, at the place its site cache remembers. Compact code does not probe a site cache.
+// There a run of definitions calls the operation straight away, which costs less than the first miss of each definition, and a run of stores has nothing to gain.
+// What is only known to be an object is often a compiled object that has the names as fields, `this` behind a call of super in code without types. The operation refuses those.
+// What NewDictionary made is an ordinary object, whatever its type says.
+static bool paysOnOrdinaryObject(const Function& function, ValueID receiver, const Type& type, CodeShape shape, bool isDefinition)
+{
+    if (shape != CodeShape::Compact)
+        return true;
+    return isDefinition && (!type.anyObject || function.at(receiver).opcode == Opcode::NewDictionary);
+}
+
+// A compiled object keeps the names that are no fields in its extra properties, which only the operation reaches. Where the code probes a site cache the probe never hits,
+// and the single stores, which do hit their caches, would stand in a rare block. The operation refuses a name that is a field.
+static bool paysOnCompiledObject(const Program& program, LayoutSetID receivers, PropertyKeyID key, CodeShape shape, bool isDefinition)
+{
+    return isDefinition && shape == CodeShape::Compact && !program.familyTables().memberOf(receivers, key).holders;
+}
+
+static std::optional<RunMember> byNameRunMember(SelectionContext& context, ValueID id, const Value& value, BlockID block)
+{
+    if (!storesByName.contains(value.opcode))
         return std::nullopt;
-    if (!isOrdinaryObjectReceiver(context.typeOf(value.objectOperand())))
+    bool isDefinition = value.opcode == Opcode::PropDefine;
+    if (!isDefinition && value.isFreeName())
         return std::nullopt;
+    const Program& program = context.program();
     PropertyKeyID key = value.key();
-    if (!isOrdinaryKey(context.program(), key))
+    if (!isOrdinaryKey(program, key))
         return std::nullopt;
-    return RunMember { id, value.valueOperand(), key };
+
+    CodeShape shape = context.shapeOf(block);
+    const Type& receiver = context.typeOf(value.objectOperand());
+    if (LayoutSetID receivers = compiledReceiversOf(program, receiver, value)) {
+        if (!paysOnCompiledObject(program, receivers, key, shape, isDefinition))
+            return std::nullopt;
+    } else if (!isOrdinaryObjectReceiver(receiver) || !paysOnOrdinaryObject(context.function(), value.objectOperand(), receiver, shape, isDefinition))
+        return std::nullopt;
+
+    // A run may do no more than what it replaces, and an access that the types prove harmless does less than a run is declared to do.
+    if (!hasEffectsOfUnknownCode(context, id) && !declaredBoundOf(Opcode::TryPutByIds).isSubsetOf(context.analyses().effectsOf(id).normal))
+        return std::nullopt;
+    return RunMember { .store = id, .stored = value.valueOperand(), .key = key, .guard = { } };
 }
 
 void selectPropertyRun(SelectionContext& context)
 {
     uint64_t minMembers = std::max(context.pass().limit(LimitID::MinByIdsPerRun), minRunMembers);
-    if (context.candidates(Opcode::PropSet).size() < minMembers)
+    if (context.candidates(Opcode::PropSet).size() + context.candidates(Opcode::PropDefine).size() < minMembers)
         return;
 
-    auto describeMember = [&](ValueID id, const Value& value) -> std::optional<RunMember> {
-        return byNameRunMember(context, id, value);
+    auto describeMember = [&](ValueID id, const Value& value, BlockID block) -> std::optional<RunMember> {
+        return byNameRunMember(context, id, value, block);
     };
 
-    // A property run pays through its site cache, which Compact code does not probe.
     Vector<StoreRun> runs;
-    collectRuns(context, RunRule { .id = SelectionRuleID::PropertyRun, .operation = Opcode::TryPutByIds, .minMembers = minMembers, .maxMembers = LimitID::MaxSelectionGroupMembers, .appliesToCompactCode = false }, describeMember, runs);
+    collectRuns(context, RunRule { SelectionRuleID::PropertyRun, Opcode::TryPutByIds, minMembers, LimitID::MaxSelectionGroupMembers }, describeMember, runs);
     context.rewriteGroups(SelectionRuleID::PropertyRun, runs, rewriteRun);
 }
 

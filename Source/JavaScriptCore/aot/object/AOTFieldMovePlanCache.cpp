@@ -13,7 +13,7 @@
 #include "AOTState.h"
 #include "JSCInlines.h"
 #include <algorithm>
-#include <wtf/Hasher.h>
+#include <bit>
 
 namespace JSC { namespace AOT {
 
@@ -26,7 +26,10 @@ FieldMovePlanCache::~FieldMovePlanCache() = default;
 
 unsigned FieldMovePlanCache::hashOf(const FieldMovePlanKey& key)
 {
-    return computeHash(key.purpose, key.sourceWords, key.targetWords, key.sourceStructure, key.replacedFields.hash());
+    uint64_t words = key.sourceWords * 0x9e3779b97f4a7c15ull ^ std::rotl(key.targetWords * 0xc2b2ae3d27d4eb4full, 31) ^ std::bit_cast<uintptr_t>(key.sourceStructure) ^ static_cast<uint64_t>(key.purpose) << 56;
+    if (!key.replacedFields.isEmpty())
+        words ^= key.replacedFields.hash();
+    return static_cast<unsigned>(words >> 32 ^ words);
 }
 
 FieldMovePlanCache::Set& FieldMovePlanCache::setFor(const FieldMovePlanKey& key)

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChooseCallingConventions.h"
+#include "AOTDefinitions.h"
 #include "AOTFunctionKinds.h"
 #include "AOTLayoutData.h"
 #include "AOTRepresentation.h"
@@ -64,38 +65,78 @@ static Vector<FieldData> collectStaticFields(TableEncoder& encoder, const Layout
         if (encoder.placement.variable(field.variable).storage == VariableStorage::None)
             continue;
 
-        TypeID type = program.at(field.variable).declared.type;
-        uint16_t primitives = program.at(type ? type : TypeTable::anything).primitives;
-        uint16_t flags = 0;
-        if (primitives & Primitive::Undefined)
-            flags |= fieldAllowsUndefined;
-
+        // Nothing checks what arrives at an expected position, so the run time accepts every value there.
+        const DeclaredType& declared = program.at(field.variable).declared;
         fields.append(FieldData {
             .name = encoder.identifierNumber(field.key),
-            .flags = flags,
+            .flags = 0,
             .operandIndex = 0,
             .slot = placedVariableSlot(encoder, field.variable),
-            .type = encoder.typeOffset(type),
+            .type = encoder.typeOffset(declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : declared.type),
         });
     }
     return fields;
 }
 
-static Vector<MemberGuardData> collectMemberGuards(TableEncoder& encoder, LayoutID id)
+// How many members the set has, then their numbers. The writer keeps one copy of equal lists, so every member names the same one.
+static uint32_t appendMembersOf(TableEncoder& encoder, GuardBitID set)
 {
-    Vector<MemberGuardData> guards;
-    for (const PlacedGuardBit& placed : encoder.placement.guardBits().ofClass(id)) {
+    std::span<const GuardBitID> members = encoder.placement.guardBits().membersOf(set);
+    Vector<uint32_t, 8> list;
+    list.append(static_cast<uint32_t>(members.size()));
+    for (GuardBitID member : members) {
+        const PlacedGuardBit& placed = encoder.placement.guardBit(member);
+        uint32_t number = numberInStaticsOf(placed);
+        RELEASE_ASSERT(MemberGuardAggregates::numberInListEntry(number) == number);
+        if (isAwaitedBeforeClassExists(encoder.program, placed))
+            number |= MemberGuardAggregates::isAwaitedBeforeClassExists;
+        if (placed.holdsWhileClear)
+            number |= MemberGuardAggregates::holdsWhileClear;
+        list.append(number);
+    }
+    return encoder.writer.append(list);
+}
+
+// The numbers of the sets, which is all that clearing the guard looks at, then the offset of the list of members of each: a set is set with the last of its members.
+static MemberGuardAggregates appendAggregatesOf(TableEncoder& encoder, GuardBitID guard)
+{
+    std::span<const GuardBitID> sets = encoder.placement.guardBits().setsContaining(guard);
+    if (sets.empty())
+        return { 0, 0 };
+    Vector<uint32_t, 8> words;
+    for (GuardBitID set : sets) {
+        const PlacedGuardBit& placed = encoder.placement.guardBit(set);
+        words.append(placed.holdsWhileClear ? numberInStaticsOf(placed) | MemberGuardAggregates::holdsWhileClear : numberInStaticsOf(placed));
+    }
+    for (GuardBitID set : sets)
+        words.append(appendMembersOf(encoder, set));
+    return { encoder.writer.append(words), static_cast<uint32_t>(sets.size()) };
+}
+
+static void collectMemberGuards(TableEncoder& encoder, LayoutID id, ClassRecordParts& parts)
+{
+    const GuardBitTable& table = encoder.placement.guardBits();
+    Vector<std::pair<MemberGuardData, MemberGuardAggregates>> guards;
+    for (const PlacedGuardBit& placed : table.ofClass(id)) {
         MemberGuardData guard { };
         guard.name = placed.key ? encoder.identifierNumber(placed.key) : 0;
         guard.kindBits = static_cast<uint32_t>(placed.kind);
         guard.sideBits = static_cast<uint32_t>(placed.side);
         guard.bit = placed.bit;
-        guards.append(guard);
+        guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
     }
-    std::ranges::sort(guards, { }, [](const MemberGuardData& guard) {
+    std::ranges::sort(guards, { }, [](const auto& entry) {
+        const MemberGuardData& guard = entry.first;
         return std::tuple<uint32_t, uint32_t, uint32_t> { guard.sideBits, guard.kindBits, guard.name };
     });
-    return guards;
+    bool isInSomeSet = std::ranges::any_of(guards, [](const auto& entry) {
+        return entry.second.count;
+    });
+    for (const auto& [guard, aggregates] : guards) {
+        parts.memberGuards.append(guard);
+        if (isInSomeSet)
+            parts.memberGuardAggregates.append(aggregates);
+    }
 }
 
 static LayoutID capturedEnvironmentOf(const Program& program, FunctionID constructor)
@@ -108,6 +149,17 @@ static LayoutID capturedEnvironmentOf(const Program& program, FunctionID constru
     return program.at(captures[0].type).environment;
 }
 
+static uint32_t appendSubclassesOf(TableEncoder& encoder, LayoutID id)
+{
+    const Vector<uint32_t>& subclasses = encoder.subclasses[id.index()];
+    if (subclasses.isEmpty())
+        return 0;
+    Vector<uint32_t, 8> list;
+    list.append(static_cast<uint32_t>(subclasses.size()));
+    list.appendVector(subclasses);
+    return encoder.writer.append(list);
+}
+
 static ClassData classDataOf(TableEncoder& encoder, LayoutID id, FunctionID classConstructor, const ClassRecordParts& parts)
 {
     const Layout& layout = encoder.program.at(id);
@@ -117,15 +169,20 @@ static ClassData classDataOf(TableEncoder& encoder, LayoutID id, FunctionID clas
     bool hasProvenBase = layout.flow.baseState == BaseState::Layout;
     LayoutID expectedBase = expectedBaseOf(layout);
     data.base = hasProvenBase ? expectedBase.index() : LayoutData::noBase;
-    data.predictedBase = !hasProvenBase && expectedBase ? expectedBase.index() : LayoutData::noBase;
+    data.expectedBase = !hasProvenBase && expectedBase ? expectedBase.index() : LayoutData::noBase;
+    BuiltinID builtinBase = builtinParentNamedByClassRecord(encoder.program, layout);
+    data.builtinBase = builtinBase ? builtinBase.index() : LayoutData::noBase;
     data.classConstructor = indexOrNone(classConstructor);
     data.environment = environment ? environment.index() : LayoutData::noBase;
     data.numberOfMethods = static_cast<uint32_t>(parts.methods.size()) - parts.numberOfStaticMethods;
     data.numberOfStaticMethods = parts.numberOfStaticMethods;
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());
     data.numberOfMemberGuards = static_cast<uint32_t>(parts.memberGuards.size());
+    data.hasMemberGuardAggregates = !parts.memberGuardAggregates.isEmpty();
+    data.guardsHoldWhileClear = encoder.slots.classCreation(id).guardsHoldWhileClear;
+    data.subclassesOffset = appendSubclassesOf(encoder, id);
     for (const PlacedGuardBit& placed : encoder.placement.guardBits().ofClass(id))
-        data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset;
+        data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset - placed.bit / MemberGuardData::bitsPerWord * static_cast<uint32_t>(sizeof(uint64_t));
     return data;
 }
 
@@ -143,7 +200,7 @@ ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID id)
         parts.numberOfStaticMethods = static_cast<uint32_t>(parts.methods.size() - numberOfPrototypeMethods);
     }
     parts.staticFields = collectStaticFields(encoder, layout);
-    parts.memberGuards = collectMemberGuards(encoder, id);
+    collectMemberGuards(encoder, id, parts);
     parts.data = classDataOf(encoder, id, classConstructor, parts);
     return parts;
 }
@@ -196,6 +253,18 @@ void encodeBoundFunctions(TableEncoder& encoder)
         data.numberOfBoundArguments = record.numberOfBoundArguments;
         std::optional<unsigned> targetClosureSlot = targetClosureSlotOf(encoder, id);
         data.targetClosureSlotPlusOne = targetClosureSlot ? *targetClosureSlot + 1 : 0;
+        const Function& target = program.at(record.target);
+        if (target.constructorForm() != ConstructorForm::NotConstructor) {
+            unsigned firstArgument = static_cast<unsigned>(target.captures.size()) + target.has(FunctionFlags::HasThis);
+            data.constructs = true;
+            data.numberOfCapturedArguments = record.numberOfCapturedArguments;
+            data.firstArgumentSlot = record.numberOfCapturedArguments ? closureCaptureSlotOf(program, function, firstArgument) : 0;
+            bool isAsRuntimeExpects = !!targetClosureSlot;
+            for (unsigned index = 0; index < record.numberOfCapturedArguments; ++index)
+                isAsRuntimeExpects &= holdsCells(declaredRepresentationOf(program, function.captures[firstArgument + index])) && closureCaptureSlotOf(program, function, firstArgument + index) == data.firstArgumentSlot + index;
+            if (!isAsRuntimeExpects)
+                encoder.fail(ProgramTableRule::TableOutOfBounds, { }, id);
+        }
         boundFunctions.append(data);
     }
     std::ranges::sort(boundFunctions, { }, &BoundFunctionData::function);

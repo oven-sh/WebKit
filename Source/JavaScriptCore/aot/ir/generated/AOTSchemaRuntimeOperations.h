@@ -22,44 +22,54 @@ using WTF::UniquedStringImpl;
 #define FOR_EACH_AOT_RUNTIME_OPERATION(v) \
     v(ScopeHasBinding) v(NewClassToken) v(PrivateGet) v(PrivateHas) v(PrivateSet) v(PrivateDefine) v(GetSuperBase) v(GetSuperPropertyById) \
     v(SuperGet) v(SuperSet) v(DefineById) v(DefineField) v(DefineOwnProperty) v(DefineAccessor) v(DefineAccessors) v(DefineMethod) \
-    v(SetFunctionName) v(SetLiteralPrototype) v(Construct) v(Apply) v(NewArgumentList) v(ConstructWithArray) v(SuperConstruct) v(SuperConstructList) \
-    v(ThrowUnlessCallable) v(ThrowUnlessCallableNamed) v(CreateThis) v(ResolveHeritage) v(NewClass) v(GetClassPrototype) v(GetConstructPrototype) \
-    v(SetConstructPrototype) v(AllocateSlow) v(NewFromData) v(NewSetFromData) v(NewMapFromData) v(CopyDataProperties) v(CopyObject) v(CloneObjectAs) \
-    v(IsPlainDataObject) v(GetOwnDataProperty) v(ExpectRows) v(TryPutProperties) v(MaterializeEnvironment) v(NewClosureSlow) v(BarrierSlow) \
-    v(BarrierSlowPreservingRegisters) v(RememberElement) v(NewArray) v(NewArrayOfHoles) v(NewArrayAtReviewedSite) v(ArrayPush) v(ArrayPushNumber) \
-    v(ArraySlice) v(ArrayCopy) v(AppendElements) v(AppendHole) v(ReserveArrayCapacity) v(ArrayPutAtIndex) v(ArrayPutNumberAtIndex) \
-    v(ArrayPutAtNumber) v(NewTypedArray) v(TypedArrayPut) v(TypedArrayLength) v(ThrowIfTypedArrayIsDetached) v(Concat) v(ConcatThree) v(Substring) \
-    v(Flatten) v(CompareStrings) v(StringHasAt) v(StringIndexOfFrom) v(IntToString) v(DoubleToString) v(CharToString) v(ToLiteralString) \
-    v(LiteralStringToString) v(StringBuilderBegin) v(StringBuilderAppend) v(StringBuilderAppendString) v(StringBuilderAppendStringRange) \
-    v(StringBuilderAppendByHost) v(StringBuilderAppendJSON) v(StringBuilderReserve) v(StringBuilderRollBack) v(StringBuilderToString) \
-    v(StringBuilderFinish) v(StringBuilderDiscard) v(Concatenate) v(ValueAdd) v(ValueSub) v(ValueMul) v(ValueDiv) v(ValueMod) v(ValuePow) \
-    v(ValueBitAnd) v(ValueBitOr) v(ValueBitXor) v(ValueLShift) v(ValueRShift) v(ValueURShift) v(ValueNegate) v(ValueBitNot) v(ToNumeric) v(ToKey) \
-    v(Increment) v(Decrement) v(ToNumber) v(ToString) v(ToBoolean) v(ToObject) v(ToThis) v(TypeOf) v(IsCallable) v(CompareLess) v(CompareLessEq) \
-    v(CompareGreater) v(CompareGreaterEq) v(CompareEq) v(CompareStrictEq) v(CompareEqToString) v(Fmod) v(Pow) v(ToInt32) v(TryConvertToInteger) \
-    v(AddNumberAndValueAsNumber) v(SubNumberAndValueAsNumber) v(MulNumberAndValueAsNumber) v(DivNumberAndValueAsNumber) v(InstanceOfAndCache) \
-    v(DefaultHasInstance) v(DestructureIterable) v(GetPropertyEnumerator) v(EnumeratorNext) v(EnumeratorGetByVal) v(CreateAsyncFromSyncIterator) \
-    v(ThrowNotIterable) v(NewPromise) v(CreatePromise) v(ResolvePromise) v(ResolvePromiseOrReturnResult) v(RejectPromise) v(RejectWithException) \
-    v(NewGenerator) v(SaveFrameAndAwait) v(SaveFrameAndAwaitCall) v(AwaitWithSavedFrame) v(AwaitCallWithSavedFrame) v(SaveFrameAndYield) \
-    v(StepAsyncGenerator) v(PromiseThen) v(PromiseCatch) v(PromiseAll) v(Throw) v(ThrowToHandlerInFunction) v(Catch) v(CatchException) \
-    v(ThrowAtSite) v(ThrowStackOverflowError) v(NewRuntimeError) v(NewRuntimeErrorWithName) v(NewSuppressedError) v(ThrowRuntimeError) \
-    v(EnforceType) v(ReportMismatch) v(ReportValidationFailure) v(ContentsHaveType) v(PollSlow) v(PollAtPrologue) v(DirectEval) v(StringConstant) \
-    v(NewStringConstant) v(KeyConstant) v(BuiltinCell) v(ModuleBuiltinCell) v(BigIntConstant) v(SingletonClosure) v(NewTemplateObject) \
-    v(CreateUnmappedArguments) v(CreateMappedArguments) v(GetFromArguments) v(GetMappedArgument) v(SetMappedArgument) v(GetModuleNamespace) \
-    v(IsNamespaceOfModule) v(ImportModule) v(RequireModule) v(ResolveModule) v(ThrowModuleFailure) v(ImportDynamic) v(RequireDynamic) \
-    v(ResolveDynamic) v(GetById) v(PutById) v(PutByIdSloppy) v(DeleteById) v(DeleteByIdSloppy) v(InByIdAndCache) v(HasOwnByIdAndCache) \
-    v(GetByIdAndCache) v(PutByIdAndCache) v(FillSiteCache) v(GetFreeName) v(GetFreeNameForTypeOf) v(SetFreeName) v(SetFreeNameSloppy) \
-    v(DeleteFreeName) v(GetByVal) v(GetByValAndCache) v(PutByVal) v(PutByValAndCache) v(PutByValAndCacheSloppy) v(InByValAndCache) \
-    v(HasOwnByValAndCache) v(DeleteByVal) v(DeleteByValSloppy) v(GetByValWithThis) v(GetOwnProperty) v(GetGeneric) v(GetByValGeneric) \
-    v(InByValGeneric) v(PutByValGeneric) v(ReadField) v(StoreField) v(CreateField) v(CallGetterOfSlot) v(CallSetterOfSlot) v(AddPropertyBySlot) \
-    v(DidCreateField) v(DidCreateFieldAt) v(DidCreateFieldOutOfLineAt) v(DidCreateFieldsAt) v(EnsureExtensionGranules) v(StoreDoubleInExtension) \
-    v(GetExtraProperty) v(HasExtraProperty) v(PutExtraProperty) v(MaterializeDeferredClosure) v(NewMap) v(MapGet) v(MapHas) v(SetHas) v(MapSet) \
+    v(TryDefineLiveBinding) v(TryReExportFields) v(SetFunctionName) v(SetLiteralPrototype) v(Construct) v(Apply) v(NewArgumentList) \
+    v(ConstructWithArray) v(SuperConstruct) v(SuperConstructList) v(ThrowUnlessCallable) v(ThrowUnlessCallableNamed) v(CreateThis) \
+    v(ResolveHeritage) v(NewClass) v(GetClassPrototype) v(GetConstructPrototype) v(SetConstructPrototype) v(AllocateSlow) v(GetHeaderOfAllocation) \
+    v(NewDictionary) v(NewFromData) v(NewSetFromData) v(NewMapFromData) v(CopyDataProperties) v(CopyObject) v(TryCopyTwoObjects) v(CloneObjectAs) \
+    v(IsPlainDataObject) v(GetOwnDataProperty) v(ExpectRows) v(TryPutProperties) v(MaterializeEnvironment) v(NewClosureSlow) v(MoveClosureToHeap) \
+    v(BarrierSlow) v(BarrierSlowPreservingRegisters) v(RememberElement) v(NewArray) v(NewArrayOfHoles) v(NewArrayAtReviewedSite) v(ArrayPush) \
+    v(ArrayPushNumber) v(ArraySlice) v(ArrayCopy) v(AppendElements) v(AppendHole) v(ReserveArrayCapacity) v(ReserveCollectionCapacity) \
+    v(TryFinishBirth) v(ConvertToDoubleStorage) v(ArrayPutAtIndex) v(ArrayPutNumberAtIndex) v(ArrayPutAtNumber) v(NewTypedArray) v(TypedArrayPut) \
+    v(TypedArrayLength) v(ThrowIfTypedArrayIsDetached) v(Concat) v(ConcatThree) v(Substring) v(Flatten) v(CompareStrings) v(StringHasAt) \
+    v(StringIndexOfFrom) v(IntToString) v(DoubleToString) v(CharToString) v(ToLiteralString) v(LiteralStringToString) v(StringBuilderBegin) \
+    v(StringBuilderAppend) v(StringBuilderAppendString) v(StringBuilderAppendStringRange) v(StringBuilderAppendByHost) v(StringBuilderAppendJSON) \
+    v(StringBuilderReserve) v(StringBuilderRollBack) v(StringBuilderToString) v(StringBuilderFinish) v(StringBuilderDiscard) \
+    v(StackStringBuilderGrow) v(StackStringBuilderAppend) v(StackStringBuilderAppendStringRange) v(StackStringBuilderFinish) \
+    v(StackStringBuilderDiscard) v(Concatenate) v(MapGetByKeyParts) v(HasByKeyParts) v(ValueAdd) v(ValueSub) v(ValueMul) v(ValueDiv) v(ValueMod) \
+    v(ValuePow) v(ValueBitAnd) v(ValueBitOr) v(ValueBitXor) v(ValueLShift) v(ValueRShift) v(ValueURShift) v(ValueNegate) v(ValueBitNot) v(ToNumeric) \
+    v(ToKey) v(Increment) v(Decrement) v(ToNumber) v(ToString) v(ToBoolean) v(ToObject) v(ToThis) v(TypeOf) v(IsCallable) v(CompareLess) \
+    v(CompareLessEq) v(CompareGreater) v(CompareGreaterEq) v(CompareEq) v(CompareStrictEq) v(CompareEqToString) v(Fmod) v(Pow) v(ToInt32) \
+    v(TryConvertToInteger) v(AddNumberAndValueAsNumber) v(SubNumberAndValueAsNumber) v(MulNumberAndValueAsNumber) v(DivNumberAndValueAsNumber) \
+    v(InstanceOfAndCache) v(DefaultHasInstance) v(DestructureIterable) v(GetPropertyEnumerator) v(EnumeratorNext) v(EnumeratorGetByVal) \
+    v(CreateAsyncFromSyncIterator) v(ThrowNotIterable) v(NewPromise) v(CreatePromise) v(ResolvePromise) v(ResolvePromiseOrReturnResult) \
+    v(RejectPromise) v(RejectWithException) v(NewGenerator) v(TakeGeneratorPrototype) v(SaveFrameAndAwait) v(SaveFrameAndAwaitCall) \
+    v(SaveFrameAndAwaitAfterTurn) v(AwaitWithSavedFrame) v(AwaitCallWithSavedFrame) v(AwaitWithSavedFrameAfterTurn) v(SaveFrameAndYield) \
+    v(AsyncIteratorStep) v(FinishAsyncIteratorStep) v(PromiseThen) v(PromiseCatch) v(PromiseAll) v(Throw) v(ThrowToHandlerInFunction) v(Catch) \
+    v(CatchException) v(ThrowAtSite) v(ThrowStackOverflowError) v(NewRuntimeError) v(NewRuntimeErrorWithName) v(NewSuppressedError) \
+    v(ThrowRuntimeError) v(ReportMismatch) v(ReportValidationFailure) v(PhotographOperand) v(CompareOperandWithPhotograph) v(NoteFailedGuard) \
+    v(ContentsHaveType) v(ValidateLookup) v(PollSlow) v(PollAtPrologue) v(DirectEval) v(StringConstant) v(NewStringConstant) v(KeyConstant) \
+    v(BuiltinCell) v(ModuleBuiltinCell) v(FillBuiltinValue) v(ArmBuiltinLocation) v(FindOwnSlotStructure) v(CallCustomGetter) v(BigIntConstant) \
+    v(SingletonClosure) v(NewTemplateObject) v(CreateUnmappedArguments) v(CreateMappedArguments) v(GetFromArguments) v(GetMappedArgument) \
+    v(SetMappedArgument) v(GetModuleNamespace) v(IsNamespaceOfModule) v(ImportModule) v(RequireModule) v(RecordRequire) v(ResolveModule) \
+    v(ThrowModuleFailure) v(BeginModuleEvaluation) v(AbandonModuleEvaluation) v(ImportDynamic) v(RequireDynamic) v(ResolveDynamic) v(GetById) \
+    v(PutById) v(PutByIdSloppy) v(DeleteById) v(DeleteByIdSloppy) v(InByIdAndCache) v(HasOwnByIdAndCache) v(GetByIdAndCache) v(PutByIdAndCache) \
+    v(FillSiteCache) v(RecordArrival) v(GetFreeName) v(GetFreeNameForTypeOf) v(SetFreeName) v(SetFreeNameSloppy) v(DeleteFreeName) \
+    v(GetGlobalBinding) v(GetGlobalObjectBinding) v(SetGlobalBinding) v(SetGlobalBindingSloppy) v(SetGlobalObjectBinding) \
+    v(SetGlobalObjectBindingSloppy) v(ValidateGlobalBinding) v(GetByVal) v(GetByValAndCache) v(PutByVal) v(PutByValAndCache) \
+    v(PutByValAndCacheSloppy) v(InByValAndCache) v(HasOwnByValAndCache) v(DeleteByVal) v(DeleteByValSloppy) v(GetByValWithThis) v(GetOwnProperty) \
+    v(GetGeneric) v(GetByValGeneric) v(InByValGeneric) v(PutByValGeneric) v(ReadField) v(StoreField) v(CreateField) v(CallGetterOfSlot) \
+    v(CallSetterOfSlot) v(AddPropertyBySlot) v(DidCreateField) v(DidCreateFieldAt) v(DidCreateFieldOutOfLineAt) v(DidCreateFieldsAt) \
+    v(EnsureExtensionGranules) v(EnsureExtensionGranulesWithoutCollecting) v(GetExtraProperty) v(HasExtraProperty) v(PutExtraProperty) \
+    v(MaterializeDeferredClosure) v(GetFieldOutsideSlot) v(MakeFlattenedObjectAt) v(NewMap) v(NewSet) v(MapGet) v(MapHas) v(SetHas) v(MapSet) \
     v(SetAdd) v(WeakMapSet) v(MapDelete) v(SetDelete) v(MapClear) v(SetClear) v(NewMapIterator) v(NewSetIterator) v(MapNext) v(SetNext) \
     v(TryNewSetFromIterable) v(TryNewMapFromEntries) v(ArraySplice) v(ArrayGrow) v(AllocateStorage) v(ArrayUnshift) v(ArrayJoin) \
-    v(ArrayFromTypedArray) v(ArrayIndexOfDouble) v(ArrayIndexOfInt32) v(NewArrayWithIndexingType) v(NewArrayFromDoubles) v(NewArrayIterator) \
-    v(GrowNewArray) v(TruncateNewArray) v(NewArrayWithHoles) v(OwnPropertyKeys) v(HasOwnProperty) v(PropertyIsEnumerable) \
-    v(GetOwnPropertyDescriptor) v(GetOwnPropertyFields) v(ObjectCreate) v(IsConstructor) v(ArraySpeciesCreate) v(ResumeGenerator) \
-    v(IsGeneratorSuspendedAtStart) v(ToLength) v(RequireBuiltinModule) v(NativeBinding) v(LinkTimeConstant) v(NewBigInt64) v(DateNow) \
-    v(DateToISOString) v(PrepareBoundFunctionAllocation) v(NewError) v(FormatDateTime) v(FormatNumber) v(NumberToStringWithRadix) \
+    v(ArrayJoinOfAnyReceiver) v(NumberOfAnyValue) v(StringOfAnyValue) v(ObjectToStringOfAnyValue) v(TextOfBytes) v(EncodeTextToBytes) \
+    v(EncodeTextIntoBytes) v(TypedArraySetOfAnyValue) v(TypedArraySubarrayOfAnyValue) v(CodeURIOfAnyValue) v(ArraySearchOfAnyValue) \
+    v(ByteLengthOfAnyValue) v(ArrayFromTypedArray) v(ArrayIndexOfDouble) v(ArrayIndexOfInt32) v(NewArrayWithIndexingType) v(NewArrayFromDoubles) \
+    v(NewArrayIterator) v(GrowNewArray) v(TruncateNewArray) v(NewArrayWithHoles) v(OwnPropertyKeys) v(ObjectValues) v(ObjectEntries) \
+    v(PropertyIsEnumerable) v(GetOwnPropertyDescriptor) v(GetOwnPropertyFields) v(ObjectCreate) v(IsConstructor) v(ArraySpeciesCreate) \
+    v(ResumeGenerator) v(IsGeneratorSuspendedAtStart) v(ToLength) v(RequireBuiltinModule) v(NativeBinding) v(LinkTimeConstant) v(NewBigInt64) \
+    v(DateNow) v(DateToISOString) v(PrepareBoundFunctionAllocation) v(NewError) v(FormatDateTime) v(FormatNumber) v(NumberToStringWithRadix) \
     v(Int32ToStringWithRadix) v(AppendNumberWithRadix) v(MathSin) v(MathSinh) v(MathCos) v(MathCosh) v(MathTan) v(MathTanh) v(MathASin) v(MathASinh) \
     v(MathACos) v(MathACosh) v(MathATan) v(MathATanh) v(MathLog) v(MathLog10) v(MathLog2) v(MathCbrt) v(MathExp) v(MathExpm1) v(MathLog1p) \
     v(MathF16Round) v(MathATan2) v(MathHypot) v(MathHypot3) v(ParseInt8) v(ParseInt16) v(StringToNumber8) v(StringToNumber16) \
@@ -70,13 +80,13 @@ using WTF::UniquedStringImpl;
     v(StringReverseFindLiteral8) v(StringSplitPrefix) v(StringEqualsLiteral) v(StringEqualsLiteralInRegister) v(StringStartsWithLiteral) \
     v(StringEndsWithLiteral) v(StringIndexOfLiteral) v(StringLastIndexOfLiteral) v(StringIndexOfCharacter) v(StringsAreEqual) v(StringTrim) \
     v(StringLastIndexOf) v(StringLocaleCompare) v(StringToLowerCase) v(StringToUpperCase) v(StringRepeat) v(StringPad) v(ShortStringOfString) \
-    v(RegExpExec) v(RegExpTest) v(RegExpFind) v(RegExpTestBoxed) v(RegExpMatchLiteral) v(RegExpMatchLiteralWithoutObject) v(NewRegExpLiteral) \
-    v(SharedRegExpLiteral) v(NewRegExp) v(RegExpFlags) v(RegExpSource) v(StringReplaceString) v(StringReplaceAllString) v(StringReplaceRegExp) \
-    v(StringReplaceAllRegExp) v(StringReplaceRegExpString) v(StringSplitString) v(StringSplitRegExp) v(StringMatchRegExp) v(StringSearchRegExp) \
-    v(RegExpExecPrefix) v(StringMatchPrefix) v(JSONSourceOpen) v(JSONSourceClose) v(JSONSourceAbandon) v(JSONDecodeBytes) v(JSONParseString) \
-    v(JSONParseKey) v(JSONParseValue) v(JSONParseNumber) v(JSONParseInteger) v(JSONFindMember) v(JSONMemberRepeats) v(JSONKeyRepeats) \
-    v(JSONObjectKey) v(JSONObjectFinish) v(JSONParseExtraMembers) v(JSONAddExtraMember) v(JSONAppendString) v(JSONAppendInteger) v(JSONAppendNumber) \
-    v(JSONAppendDate) v(JSONAppendValue)
+    v(RegExpExec) v(RegExpTest) v(RegExpFind) v(RegExpTestBoxed) v(RegExpMatchLiteral) v(RegExpMatchLiteralWithoutObject) v(RegExpMatchFlatProgram8) \
+    v(NewRegExpLiteral) v(SharedRegExpLiteral) v(NewRegExp) v(RegExpFlags) v(RegExpSource) v(StringReplaceString) v(StringReplaceAllString) \
+    v(StringReplaceRegExp) v(StringReplaceAllRegExp) v(StringReplaceRegExpString) v(StringSplitString) v(StringSplitRegExp) v(StringMatchRegExp) \
+    v(StringSearchRegExp) v(RegExpExecPrefix) v(StringMatchPrefix) v(JSONSourceOpen) v(JSONSourceClose) v(JSONSourceAbandon) v(JSONDecodeBytes) \
+    v(JSONParseString) v(JSONParseKey) v(JSONParseValue) v(JSONParseNumber) v(JSONParseInteger) v(JSONFindMember) v(JSONMemberRepeats) \
+    v(JSONKeyRepeats) v(JSONObjectKey) v(JSONObjectFinish) v(JSONParseExtraMembers) v(JSONAddExtraMember) v(JSONAppendString) v(JSONAppendInteger) \
+    v(JSONAppendNumber) v(JSONAppendDate) v(JSONAppendValue) v(JSONStringifyPrimitive)
 
 namespace JSC {
 
@@ -106,8 +116,10 @@ JSC_DECLARE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance*, Encod
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineAccessor, void, (Instance*, EncodedJSValue object, EncodedJSValue property, EncodedJSValue function, uint32_t accessorFlags));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineAccessors, void, (Instance*, JSCell* object, uint32_t count, uint32_t getters, uint32_t enumerable, const EncodedJSValue* keysAndFunctions));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance*, JSCell* classObject, EncodedJSValue property, JSCell* function, uint32_t sideAndKind));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTryDefineLiveBinding, size_t, (Instance*, EncodedJSValue target, EncodedJSValue source, EncodedJSValue sourceKey, EncodedJSValue targetKey, JSCell* getter));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instance*, EncodedJSValue target, EncodedJSValue source, uint32_t getter, uint32_t rule));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance*, JSCell* function, EncodedJSValue name, uint32_t methodKind));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance*, JSCell* object, EncodedJSValue prototype));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance*, JSCell* object, EncodedJSValue prototype, uint32_t refusesOtherValues));
 JSC_DECLARE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments));
 JSC_DECLARE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance*, EncodedJSValue callee, EncodedJSValue arrayLike));
@@ -123,18 +135,22 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Inst
 JSC_DECLARE_JIT_OPERATION(operationAOTGetConstructPrototype, JSCell*, (Instance*, EncodedJSValue newTarget));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (Instance*, JSCell* object, JSCell* prototype, uint32_t allocation));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance*, uint32_t allocation));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetHeaderOfAllocation, uint64_t, (Instance*, uint32_t allocation));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFromData, JSCell*, (Instance*, uint32_t request));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewSetFromData, JSCell*, (Instance*, uint32_t request));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewMapFromData, JSCell*, (Instance*, uint32_t request));
 JSC_DECLARE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance*, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys));
 JSC_DECLARE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance*, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Instance*, EncodedJSValue first, EncodedJSValue second));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCloneObjectAs, JSCell*, (Instance*, EncodedJSValue source, uint32_t request, const EncodedJSValue* values));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTIsPlainDataObject, size_t, (Instance*, EncodedJSValue value));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetOwnDataProperty, EncodedJSValue, (Instance*, JSCell* object, uint32_t key));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTExpectRows, void, (Instance*, EncodedJSValue target, uint32_t shape));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTryPutProperties, size_t, (Instance*, SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTryPutProperties, size_t, (Instance*, SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeEnvironment, JSCell*, (Instance*, uint32_t allocation, const EncodedJSValue* source));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance*, uint64_t request, uint64_t, uint64_t, uint64_t, uint64_t));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Instance*, JSCell* closureInFrame));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBarrierSlow, void, (Instance*, JSCell* cell));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBarrierSlowPreservingRegisters, void, (Instance*, JSCell* cell));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRememberElement, void, (Instance*, JSCell* array, EncodedJSValue element));
@@ -148,6 +164,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTArrayCopy, EncodedJSValue, (Instance*, JSC
 JSC_DECLARE_JIT_OPERATION(operationAOTAppendElements, void, (Instance*, JSCell* array, JSCell* source));
 JSC_DECLARE_JIT_OPERATION(operationAOTAppendHole, JSCell*, (Instance*, JSCell* array));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance*, JSCell* array, uint64_t additional));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReserveCollectionCapacity, void, (Instance*, JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance*, JSCell* object));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance*, JSCell* array));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayPutAtIndex, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t position));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayPutNumberAtIndex, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t position));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayPutAtNumber, void, (Instance*, JSCell* array, EncodedJSValue value, double position));
@@ -178,7 +197,14 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Ins
 JSC_DECLARE_JIT_OPERATION(operationAOTStringBuilderToString, JSCell*, (Instance*, JSCell* builder, uint32_t isLikelyKey));
 JSC_DECLARE_JIT_OPERATION(operationAOTStringBuilderFinish, JSCell*, (Instance*, JSCell* builder, uint32_t isLikelyKey));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderDiscard, void, (Instance*, JSCell* builder));
+JSC_DECLARE_JIT_OPERATION(operationAOTStackStringBuilderGrow, uint8_t*, (Instance*, uint8_t* builder, uint8_t* cursor));
+JSC_DECLARE_JIT_OPERATION(operationAOTStackStringBuilderAppend, uint8_t*, (Instance*, uint8_t* builder, uint8_t* cursor, EncodedJSValue primitive));
+JSC_DECLARE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_t*, (Instance*, uint8_t* builder, uint8_t* cursor, JSCell* string, int32_t start, int32_t end));
+JSC_DECLARE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance*, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTStackStringBuilderDiscard, void, (Instance*, uint8_t* builder));
 JSC_DECLARE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance*, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey));
+JSC_DECLARE_JIT_OPERATION(operationAOTMapGetByKeyParts, EncodedJSValue, (Instance*, JSCell* map, uint32_t count, const EncodedJSValue* parts));
+JSC_DECLARE_JIT_OPERATION(operationAOTHasByKeyParts, size_t, (Instance*, JSCell* collection, uint32_t count, const EncodedJSValue* parts));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueSub, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueMul, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
@@ -232,17 +258,21 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCreatePromise, JSCell*, (Instance*, Encode
 JSC_DECLARE_JIT_OPERATION(operationAOTResolvePromise, void, (Instance*, JSCell* promise, EncodedJSValue value));
 JSC_DECLARE_JIT_OPERATION(operationAOTResolvePromiseOrReturnResult, EncodedJSValue, (Instance*, JSCell* promise, EncodedJSValue value));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRejectPromise, void, (Instance*, JSCell* promise, EncodedJSValue reason));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRejectWithException, JSCell*, (Instance*, uint64_t frame));
+JSC_DECLARE_JIT_OPERATION(operationAOTRejectWithException, JSCell*, (Instance*, uint64_t frame));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance*, EncodedJSValue closure, uint32_t isAsync));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Instance*, JSCell* generator, EncodedJSValue closure));
 JSC_DECLARE_JIT_OPERATION(operationAOTSaveFrameAndAwait, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords));
 JSC_DECLARE_JIT_OPERATION(operationAOTSaveFrameAndAwaitCall, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords));
+JSC_DECLARE_JIT_OPERATION(operationAOTSaveFrameAndAwaitAfterTurn, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords));
 JSC_DECLARE_JIT_OPERATION(operationAOTAwaitWithSavedFrame, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* savedFrame));
 JSC_DECLARE_JIT_OPERATION(operationAOTAwaitCallWithSavedFrame, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* savedFrame));
+JSC_DECLARE_JIT_OPERATION(operationAOTAwaitWithSavedFrameAfterTurn, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* savedFrame));
 JSC_DECLARE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance*, JSCell* generator, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords));
-JSC_DECLARE_JIT_OPERATION(operationAOTStepAsyncGenerator, void, (Instance*, JSCell* generator, EncodedJSValue sent, EncodedJSValue* results));
+JSC_DECLARE_JIT_OPERATION(operationAOTAsyncIteratorStep, EncodedJSValue, (Instance*, JSCell* iterator, EncodedJSValue sent));
+JSC_DECLARE_JIT_OPERATION(operationAOTFinishAsyncIteratorStep, EncodedJSValue, (Instance*, JSCell* generator, EncodedJSValue returned, uint32_t consumerMayContinue));
 JSC_DECLARE_JIT_OPERATION(operationAOTPromiseThen, void, (Instance*, JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived));
 JSC_DECLARE_JIT_OPERATION(operationAOTPromiseCatch, JSCell*, (Instance*, JSCell* promise, EncodedJSValue onRejected));
-JSC_DECLARE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance*, uint32_t count, const EncodedJSValue* elements));
+JSC_DECLARE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance*, uint32_t count, const EncodedJSValue* elements, uint32_t directCalls));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (Instance*, EncodedJSValue value));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance*, EncodedJSValue value));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance*));
@@ -253,10 +283,13 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeError, JSCell*, (Instan
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeErrorWithName, JSCell*, (Instance*, uint32_t errorKind, uint32_t name));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuppressedError, JSCell*, (Instance*, EncodedJSValue error, EncodedJSValue suppressed));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowRuntimeError, void, (Instance*, uint32_t errorKind));
-JSC_DECLARE_JIT_OPERATION(operationAOTEnforceType, EncodedJSValue, (Instance*, EncodedJSValue value, uint32_t type, uint32_t typeSite));
 JSC_DECLARE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance*, EncodedJSValue value, uint32_t type, uint32_t typeSite));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (Instance*, EncodedJSValue value, uint32_t kind, uint32_t function, uint32_t valueIndex));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPhotographOperand, void, (Instance*, EncodedJSValue operand, uint64_t writtenHeaps, uint32_t position));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCompareOperandWithPhotograph, void, (Instance*, EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFailedGuard, void, (Instance*, uint32_t function, uint32_t opcode, uint32_t ordinal));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instance*, JSCell* container, uint32_t contentsSlot, uint32_t type));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance*, JSCell* receiver, uint32_t key, JSCell* expected));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPollSlow, void, (Instance*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance*, uint8_t* returnAddress));
 JSC_DECLARE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance*, EncodedJSValue text, uint32_t request, uint32_t count, const EncodedJSValue* operands));
@@ -265,6 +298,10 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewStringConstant, JSCell*, (Inst
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTKeyConstant, JSCell*, (Instance*, uint32_t index));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance*, uint32_t index));
 JSC_DECLARE_JIT_OPERATION(operationAOTModuleBuiltinCell, JSCell*, (Instance*, uint32_t builtin, uint32_t module));
+JSC_DECLARE_JIT_OPERATION(operationAOTFillBuiltinValue, EncodedJSValue, (Instance*, uint32_t cellKey));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTArmBuiltinLocation, size_t, (Instance*, uint32_t member));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindOwnSlotStructure, void, (Instance*, uint32_t overload));
+JSC_DECLARE_JIT_OPERATION(operationAOTCallCustomGetter, EncodedJSValue, (Instance*, EncodedJSValue thisValue, uint32_t overload, uint32_t key));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBigIntConstant, EncodedJSValue, (Instance*, uint32_t index));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSingletonClosure, JSCell*, (Instance*, uint32_t function));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewTemplateObject, JSCell*, (Instance*, uint32_t request));
@@ -277,11 +314,14 @@ JSC_DECLARE_JIT_OPERATION(operationAOTGetModuleNamespace, JSCell*, (Instance*, u
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTIsNamespaceOfModule, size_t, (JSCell* cell, uint32_t module));
 JSC_DECLARE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance*, uint32_t module, uint32_t referrer));
 JSC_DECLARE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance*, uint32_t module, uint32_t referrer));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRecordRequire, void, (Instance*, uint32_t module, uint32_t referrer));
 JSC_DECLARE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance*, uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance*, uint32_t failure));
+JSC_DECLARE_JIT_OPERATION(operationAOTBeginModuleEvaluation, size_t, (Instance*, uint32_t module));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTAbandonModuleEvaluation, void, (Instance*, uint32_t module, JSCell* exception));
 JSC_DECLARE_JIT_OPERATION(operationAOTImportDynamic, EncodedJSValue, (Instance*, EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer));
 JSC_DECLARE_JIT_OPERATION(operationAOTRequireDynamic, EncodedJSValue, (Instance*, EncodedJSValue specifier, uint32_t referrer));
-JSC_DECLARE_JIT_OPERATION(operationAOTResolveDynamic, EncodedJSValue, (Instance*, EncodedJSValue specifier, uint32_t referrer, uint32_t isURL));
+JSC_DECLARE_JIT_OPERATION(operationAOTResolveDynamic, EncodedJSValue, (Instance*, EncodedJSValue specifier, uint32_t referrer, uint32_t isURL, uint32_t isForRequire));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t key));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutById, void, (Instance*, EncodedJSValue base, uint32_t key, EncodedJSValue value));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdSloppy, void, (Instance*, EncodedJSValue base, uint32_t key, EncodedJSValue value));
@@ -292,11 +332,19 @@ JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnByIdAndCache, size_t, (Instance*, En
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t key, SiteCache cache));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdAndCache, void, (Instance*, EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance*, JSCell* base, uint32_t key, SiteCache cache, uint32_t access));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRecordArrival, void, (Instance*, EncodedJSValue receiver, uint32_t site));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFreeName, EncodedJSValue, (Instance*, uint32_t key, SiteCache cache));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFreeNameForTypeOf, EncodedJSValue, (Instance*, uint32_t key, SiteCache cache));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFreeName, void, (Instance*, uint32_t key, SiteCache cache, EncodedJSValue value));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFreeNameSloppy, void, (Instance*, uint32_t key, SiteCache cache, EncodedJSValue value));
 JSC_DECLARE_JIT_OPERATION(operationAOTDeleteFreeName, size_t, (Instance*, uint32_t key));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetGlobalBinding, EncodedJSValue, (Instance*, uint32_t binding));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetGlobalObjectBinding, EncodedJSValue, (Instance*, uint32_t binding));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetGlobalBinding, void, (Instance*, uint32_t binding, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetGlobalBindingSloppy, void, (Instance*, uint32_t binding, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetGlobalObjectBinding, void, (Instance*, uint32_t binding, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetGlobalObjectBindingSloppy, void, (Instance*, uint32_t binding, EncodedJSValue value));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateGlobalBinding, void, (Instance*, uint32_t binding, EncodedJSValue value));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByVal, void, (Instance*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
@@ -313,8 +361,8 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetByValGeneric, EncodedJSValue, 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance*, JSCell* base, JSCell* property));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance*, JSCell* base, JSCell* property, EncodedJSValue value));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance*, JSCell* object, uint64_t header, uint64_t payload, uint32_t reason));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTStoreField, void, (Instance*, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCreateField, void, (Instance*, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason));
+JSC_DECLARE_JIT_OPERATION(operationAOTStoreField, void, (Instance*, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateField, void, (Instance*, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallGetterOfSlot, EncodedJSValue, (Instance*, EncodedJSValue base, JSCell* getterSetter, uint32_t reason));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallSetterOfSlot, void, (Instance*, EncodedJSValue base, JSCell* getterSetter, EncodedJSValue value, uint32_t putMode, uint32_t reason));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance*, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason));
@@ -323,12 +371,15 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (Instance*, JSCell* object, uint32_t offset));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance*, JSCell* object, uint64_t offsets));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranules, void, (Instance*, JSCell* object, uint64_t granuleBits));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTStoreDoubleInExtension, void, (Instance*, JSCell* object, uint32_t overflowOffset, double value));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranulesWithoutCollecting, void, (Instance*, JSCell* object, uint64_t granuleBits));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetExtraProperty, EncodedJSValue, (Instance*, JSCell* object, uint32_t key));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTHasExtraProperty, size_t, (Instance*, JSCell* object, uint32_t key));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutExtraProperty, void, (Instance*, JSCell* object, uint32_t key, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeDeferredClosure, JSCell*, (Instance*, JSCell* object, uint32_t key));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValue, (Instance*, JSCell* object, uint32_t key));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeFlattenedObjectAt, JSCell*, (Instance*, JSCell* object, uint32_t distance));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewMap, JSCell*, (Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNewSet, JSCell*, (Instance*));
 JSC_DECLARE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue lookupKey));
 JSC_DECLARE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue lookupKey));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue lookupKey));
@@ -350,6 +401,18 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTArrayGrow, size_t, (Instance*, JS
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateStorage, void*, (Instance*, uint64_t size));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance*, JSCell* array, EncodedJSValue item));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayJoin, JSCell*, (Instance*, JSCell* array, JSCell* separator));
+JSC_DECLARE_JIT_OPERATION(operationAOTArrayJoinOfAnyReceiver, EncodedJSValue, (Instance*, EncodedJSValue receiver, EncodedJSValue separator, JSCell* function));
+JSC_DECLARE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTStringOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance*, EncodedJSValue receiver, EncodedJSValue encoding, EncodedJSValue start, EncodedJSValue end));
+JSC_DECLARE_JIT_OPERATION(operationAOTEncodeTextToBytes, EncodedJSValue, (Instance*, EncodedJSValue source));
+JSC_DECLARE_JIT_OPERATION(operationAOTEncodeTextIntoBytes, EncodedJSValue, (Instance*, EncodedJSValue source, EncodedJSValue destination));
+JSC_DECLARE_JIT_OPERATION(operationAOTTypedArraySetOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue receiver, EncodedJSValue source, EncodedJSValue offset));
+JSC_DECLARE_JIT_OPERATION(operationAOTTypedArraySubarrayOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue receiver, EncodedJSValue begin, EncodedJSValue end));
+JSC_DECLARE_JIT_OPERATION(operationAOTCodeURIOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue value, uint32_t coding));
+JSC_DECLARE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue receiver, EncodedJSValue searched, EncodedJSValue fromIndex, uint32_t answersIndex));
+JSC_DECLARE_JIT_OPERATION(operationAOTByteLengthOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue value, EncodedJSValue encoding));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayFromTypedArray, JSCell*, (Instance*, JSCell* view, uint32_t indexingType));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfDouble, size_t, (Instance*, JSCell* array, double searched));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instance*, JSCell* array, EncodedJSValue searched));
@@ -360,7 +423,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTGrowNewArray, void, (Instance*, JSCell* ar
 JSC_DECLARE_JIT_OPERATION(operationAOTTruncateNewArray, JSCell*, (Instance*, JSCell* array, uint32_t length));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance*, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags));
 JSC_DECLARE_JIT_OPERATION(operationAOTOwnPropertyKeys, JSCell*, (Instance*, EncodedJSValue object, uint32_t kind));
-JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance*, EncodedJSValue object, EncodedJSValue property));
+JSC_DECLARE_JIT_OPERATION(operationAOTObjectValues, JSCell*, (Instance*, EncodedJSValue object));
+JSC_DECLARE_JIT_OPERATION(operationAOTObjectEntries, JSCell*, (Instance*, EncodedJSValue object));
 JSC_DECLARE_JIT_OPERATION(operationAOTPropertyIsEnumerable, size_t, (Instance*, EncodedJSValue object, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetOwnPropertyDescriptor, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetOwnPropertyFields, void, (Instance*, EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results));
@@ -457,6 +521,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTRegExpFind, size_t, (Instance*, JSCell* re
 JSC_DECLARE_JIT_OPERATION(operationAOTRegExpTestBoxed, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string));
 JSC_DECLARE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form));
 JSC_DECLARE_JIT_OPERATION(operationAOTRegExpMatchLiteralWithoutObject, EncodedJSValue, (Instance*, JSCell* string, uint32_t regExpRecord, uint32_t form));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram8, int64_t, (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance*, uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSharedRegExpLiteral, JSCell*, (Instance*, uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSCell*, (Instance*, JSCell* pattern, uint32_t flags));
@@ -494,6 +559,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTJSONAppendInteger, uint8_t*, (uin
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTJSONAppendNumber, uint8_t*, (uint8_t* cursor, double number));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTJSONAppendDate, uint8_t*, (uint8_t* cursor, double timeValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTJSONAppendValue, UGPRPair, (Instance*, JSCell* builder, uint8_t* cursor, EncodedJSValue value, uint32_t position));
+JSC_DECLARE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance*, EncodedJSValue value));
 
 enum class RuntimeValueKind : uint8_t { Void, Size, Int32, UInt32, Int64, UInt64, Double, EncodedJSValue, Cell, Pair, SiteCache, Pointer };
 enum class ArgumentBufferAccess : uint8_t { ReadsAndWrites, Reads, None };
@@ -526,7 +592,8 @@ constexpr bool isLeaf(RuntimeOperation operation)
     case RuntimeOperation::StringUTF8Length16: case RuntimeOperation::CountSeparators8: case RuntimeOperation::CountSeparators16:
     case RuntimeOperation::FindSeparators8: case RuntimeOperation::FindSeparators16: case RuntimeOperation::StringImplsAreEqual:
     case RuntimeOperation::CompareStringImpls: case RuntimeOperation::StringImplEqualsImageString: case RuntimeOperation::HashStringImpl:
-    case RuntimeOperation::JSONAppendInteger: case RuntimeOperation::JSONAppendNumber: case RuntimeOperation::JSONAppendDate:
+    case RuntimeOperation::RegExpMatchFlatProgram8: case RuntimeOperation::JSONAppendInteger: case RuntimeOperation::JSONAppendNumber:
+    case RuntimeOperation::JSONAppendDate:
         return true;
     default:
         return false;
@@ -557,16 +624,16 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(RuntimeOperation operation
     case RuntimeOperation::CopyDataProperties: case RuntimeOperation::CopyObject: case RuntimeOperation::CloneObjectAs:
     case RuntimeOperation::TryPutProperties: case RuntimeOperation::MaterializeEnvironment: case RuntimeOperation::NewArray:
     case RuntimeOperation::StringBuilderAppend: case RuntimeOperation::StringBuilderAppendByHost: case RuntimeOperation::Concatenate:
-    case RuntimeOperation::PromiseAll: case RuntimeOperation::ThrowAtSite: case RuntimeOperation::DirectEval:
-    case RuntimeOperation::CreateUnmappedArguments: case RuntimeOperation::CreateMappedArguments: case RuntimeOperation::ArraySplice:
-    case RuntimeOperation::NewArrayWithIndexingType:
+    case RuntimeOperation::MapGetByKeyParts: case RuntimeOperation::HasByKeyParts: case RuntimeOperation::PromiseAll:
+    case RuntimeOperation::ThrowAtSite: case RuntimeOperation::DirectEval: case RuntimeOperation::CreateUnmappedArguments:
+    case RuntimeOperation::CreateMappedArguments: case RuntimeOperation::ArraySplice: case RuntimeOperation::NewArrayWithIndexingType:
         return ArgumentBufferAccess::Reads;
     case RuntimeOperation::DestructureIterable: case RuntimeOperation::SaveFrameAndAwait: case RuntimeOperation::SaveFrameAndAwaitCall:
-    case RuntimeOperation::SaveFrameAndYield: case RuntimeOperation::StepAsyncGenerator: case RuntimeOperation::MapNext:
+    case RuntimeOperation::SaveFrameAndAwaitAfterTurn: case RuntimeOperation::SaveFrameAndYield: case RuntimeOperation::MapNext:
     case RuntimeOperation::SetNext: case RuntimeOperation::GetOwnPropertyFields: case RuntimeOperation::FindSeparators8:
     case RuntimeOperation::FindSeparators16: case RuntimeOperation::FindLongSeparators8: case RuntimeOperation::FindLongSeparators16:
-    case RuntimeOperation::StringSplitPrefix: case RuntimeOperation::RegExpExecPrefix: case RuntimeOperation::StringMatchPrefix:
-    case RuntimeOperation::JSONParseExtraMembers: case RuntimeOperation::JSONAddExtraMember:
+    case RuntimeOperation::StringSplitPrefix: case RuntimeOperation::RegExpMatchFlatProgram8: case RuntimeOperation::RegExpExecPrefix:
+    case RuntimeOperation::StringMatchPrefix: case RuntimeOperation::JSONParseExtraMembers: case RuntimeOperation::JSONAddExtraMember:
         return ArgumentBufferAccess::ReadsAndWrites;
     default:
         return ArgumentBufferAccess::None;

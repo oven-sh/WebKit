@@ -195,7 +195,7 @@ function f14 name="memberChangingOnItsOwn" results=[{type=anything}] {
 
 function f15 name="holderWithUnlistedMembers" results=[{type=anything}] {
   b0():
-    v0 = Builtin builtin=ErrorPrototype
+    v0 = Builtin builtin=IntlSegmentsPrototype
     v1 = PropGet v0 key="valueOf"
     Return v1
 }

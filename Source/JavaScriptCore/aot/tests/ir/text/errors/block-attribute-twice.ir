@@ -1,4 +1,4 @@
-# An attribute of a block written twice
+# The same attribute of a block twice
 # RUN: print
 # DIAGNOSTIC: IRTextError
 

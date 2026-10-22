@@ -9,7 +9,7 @@ layout L0 kind=Instance name="Stored" constructor=f1 fields=[{key="x" declared={
 layout L1 kind=Instance name="Listed" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L2 kind=Instance name="NeverEnumerated" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L3 kind=Instance name="Base" constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L4 kind=Instance name="Derived" predictedBase=L3 constructor=f5 fields=[{key="y" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L4 kind=Instance name="Derived" base=L3 constructor=f5 fields=[{key="y" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
 layout L5 kind=Instance name="Point" constructor=f6 fields=[{key="x" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
 variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
@@ -85,7 +85,7 @@ function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] paramete
     Return v3
 }
 function f6 name="Point" flags=[HasThis] thisType={type=L5} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L5, v1: number):
+  b0(v0: L5, v1: number):
     PropSet v0, v1 key="x"
     Return
 }

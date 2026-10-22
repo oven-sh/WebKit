@@ -1,0 +1,60 @@
+# A callee that stores into a global array at a position that may not be an index should not kill guards on compiled objects in the caller
+# TODO: nobody: NamedProperties covers both non-index names on arrays and the field-state bits of compiled objects, and a summary drops the type of the written base
+# FORM: Prepared optimizing
+# RUN: guards points summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+variable g0 name="table" declared={type=Array<anything, pristine[Storage, Names]>} initialization=Undefined
+function f0 name="atAnyNumber" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = HasBirthFieldsFilled v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = CallDirect v1, v1 function=f2
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+function f1 name="atAnIndex" parameters=[{type=L0}, {type=int[0, 1023]}] results=[{type=anything}] {
+  b0(v0: L0, v1: int[0, 1023]):
+    v2 = HasBirthFieldsFilled v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = CallDirect v1, v1 function=f3
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+function f2 name="putAtAnyNumber" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    PutArrayElement v2, v0, v1 level=Proven
+    Return
+}
+function f3 name="putAtAnIndex" parameters=[{type=int[0, 1023]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: int[0, 1023], v1: anything):
+    v2 = GetModuleVariable variable=g0
+    PutArrayElement v2, v0, v1 level=Proven [keyIsIntegral]
+    Return
+}
+function f4 name="inTheSameBody" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = HasBirthFieldsFilled v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = GetModuleVariable variable=g0
+    PutArrayElement v4, v1, v1 level=Proven
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]

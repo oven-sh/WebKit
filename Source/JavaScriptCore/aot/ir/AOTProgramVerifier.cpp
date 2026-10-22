@@ -82,6 +82,7 @@ public:
     void operator()(RegExpRecordID id) { check(id, placedTableSize(&PlacedTableSizes::regExpRecords)); }
     void operator()(GuardBitID id) { check(id, placedTableSize(&PlacedTableSizes::guardBits)); }
     void operator()(SiteCacheID) { }
+    void operator()(GlobalBindingID) { }
 
     template<typename Tag, typename Storage>
     void operator()(BuiltinTableID<Tag, Storage> id)
@@ -141,8 +142,6 @@ bool hasValidReferences(const Program& program, const Type& type, ReferenceCheck
         checker(part.builtinClass);
         for (TypeID contents : part.contents)
             checker.checkIfSet(contents);
-        for (TypeID contents : part.predictedContents)
-            checker.checkIfSet(contents);
     }
     checker.checkIfSet(type.layouts);
     checker.checkIfSet(type.environment);
@@ -161,7 +160,7 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
     if (type.layouts) {
         const LayoutSet& set = program.at(type.layouts);
-        if (!set.isComplete || set.members.isEmpty())
+        if (!set.isComplete || (set.members.isEmpty() && !set.hasMembersWithoutLayout))
             return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
         for (LayoutID member : set.members) {
             if (!member || program.at(member).isEnvironment())
@@ -178,27 +177,31 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
     return std::nullopt;
 }
 
-enum class ProvenLayouts : bool { Forbidden, Allowed };
-
-bool isValidPosition(const Program& program, const DeclaredType& declared, ProvenLayouts provenLayouts)
+// An int32 promise is about the numbers of a type, which may be one part of a union. The build proves it of every value that enters, and nothing is proven of what enters an expected position.
+bool isValidPosition(const Program& program, const DeclaredType& declared)
 {
     if (!declared.type)
         return false;
+    if (!declared.flags.contains(PositionFlags::IsInt32Promise))
+        return true;
     const Type& type = program.at(declared.type);
-    if (declared.predicted) {
-        const Type& predicted = program.at(declared.predicted);
-        if (!predicted.isNever() && !predicted.overlaps(type, program))
-            return false;
-    }
-    if (declared.flags.contains(PositionFlags::IsInt32Promise) && !(declared.predicted ? program.at(declared.predicted) : type).isInt32OrNullish())
-        return false;
-    return provenLayouts == ProvenLayouts::Allowed || !type.layouts;
+    return !declared.flags.contains(PositionFlags::IsExpected) && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
 }
 
 bool canOutliveActivation(const Program& program, const DeclaredType& declared)
 {
     std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
     return !opaque || !isFunctionLocal(*opaque);
+}
+
+static bool listsFieldsOnce(const Layout& layout, const Vector<uint32_t>& order)
+{
+    BitVector isListed(layout.fields.size());
+    for (uint32_t field : order) {
+        if (field >= layout.fields.size() || isListed.set(field))
+            return false;
+    }
+    return true;
 }
 
 std::optional<InternalError> findLayoutError(const Program& program, IRForm form, uint64_t maxFields, LayoutID id, const Layout& layout)
@@ -210,6 +213,7 @@ std::optional<InternalError> findLayoutError(const Program& program, IRForm form
         || layout.ownFieldCount > layout.fields.size()
         || findUnsortedEntry(layout.supertypes)
         || layout.supertypes.contains(LayoutID())
+        || !listsFieldsOnce(layout, layout.declaredOrder)
         || (layout.constructor && layout.kind != LayoutKind::Instance)
         || (form == IRForm::AsRead && id.index() < program.numberOfLayoutsAsRead() && !isWireKind))
         return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id };
@@ -367,13 +371,14 @@ std::optional<LayoutID> findCyclicChain(const Program& program, const Step& step
 
 } // anonymous namespace
 
+// The body of a module runs at most once, so a variable may be born with the only closure of a function: a declaration that the front end hoists, or what a pass finds.
 bool hoistsFunctionsIntoVariables(ModuleKind kind)
 {
     switch (kind) {
     case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
     case ModuleKind::RuntimeSource:
         return true;
-    case ModuleKind::CommonJs:
     case ModuleKind::Data:
     case ModuleKind::Runtime:
     case ModuleKind::External:
@@ -423,6 +428,7 @@ bool ProgramVerifier::run()
         &ProgramVerifier::verifyModuleGraph,
         &ProgramVerifier::verifyEntries,
         &ProgramVerifier::verifyData,
+        &ProgramVerifier::verifyDataTypes,
         &ProgramVerifier::verifySmallRecords,
         &ProgramVerifier::verifyFunctionHeaders,
         &ProgramVerifier::verifyDerivationChains,
@@ -513,15 +519,13 @@ void ProgramVerifier::verifyPropertyKeys()
 void ProgramVerifier::verifyDeclaredPositions()
 {
     const ParallelLoops& loops = m_build.parallelLoops();
-    ProvenLayouts provenLayouts = isAsRead() ? ProvenLayouts::Forbidden : ProvenLayouts::Allowed;
     auto isValid = [&](const DeclaredType& declared) {
-        return isValidPosition(m_program, declared, provenLayouts);
+        return isValidPosition(m_program, declared);
     };
 
     Vector<uint32_t> invalidLayouts = findIndicesInParallel(loops, m_program.layouts.size(), [&](unsigned index) {
-        bool isDerivedLayout = index >= m_program.numberOfLayoutsAsRead();
         return !std::ranges::all_of(m_program.layouts[index].fields, [&](const Field& field) {
-            return isValidPosition(m_program, field.declared, isDerivedLayout ? ProvenLayouts::Allowed : provenLayouts) && canOutliveActivation(m_program, field.declared);
+            return isValid(field.declared) && canOutliveActivation(m_program, field.declared);
         });
     });
     for (uint32_t index : invalidLayouts)
@@ -561,7 +565,7 @@ void ProgramVerifier::verifyLayouts()
     if (hasFailed())
         return;
 
-    // Two classes that extend each other throw when they are evaluated, so `predictedBase` may form a cycle.
+    // Two classes that extend each other throw when they are evaluated, so `base` may form a cycle. What flow proves does not.
     std::optional<LayoutID> cyclicLayout = findCyclicChain(m_program, [](const Layout& layout) { return layout.flow.base; });
     if (cyclicLayout)
         fail({ .kind = InternalErrorKind::InvalidLayout, .layout = *cyclicLayout });
@@ -596,7 +600,7 @@ void ProgramVerifier::verifyClasses()
 
 bool ProgramVerifier::isValidClass(LayoutID id, const Layout& layout) const
 {
-    if (layout.predictedBase && m_program.at(layout.predictedBase).kind != LayoutKind::Instance)
+    if (layout.base && m_program.at(layout.base).kind != LayoutKind::Instance)
         return false;
     if (layout.kind != LayoutKind::Instance)
         return !layout.constructor && layout.staticFields.isEmpty() && !layout.has(LayoutFlags::HasHeritage);

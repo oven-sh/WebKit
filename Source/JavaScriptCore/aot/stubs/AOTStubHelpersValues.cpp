@@ -30,17 +30,54 @@ void unboxDouble(StubAssembler& jit, GPRReg boxed, GPRReg scratch, FPRReg result
     jit.unboxDoubleWithoutAssertions(boxed, scratch, result);
 }
 
-void boxDouble(StubAssembler& jit, FPRReg number, GPRReg result)
+PureDouble PureDouble::branchIfNaN(StubAssembler& jit, FPRReg number, JumpList& isNaN)
 {
-    jit.moveDoubleTo64(number, result);
-    boxDoubleBits(jit, result);
+    isNaN.append(jit.branchIfNaN(number));
+    return PureDouble(number);
 }
 
-void boxDoubleBits(StubAssembler& jit, GPRReg bitsAndResult)
+PureDouble PureDouble::branchIfNaN(StubAssembler& jit, FPRReg number, Jump& isNaN)
+{
+    isNaN = jit.branchIfNaN(number);
+    return PureDouble(number);
+}
+
+PureDouble PureDouble::purify(StubAssembler& jit, FPRReg number, FPRReg result)
+{
+    jit.purifyNaN(number, result);
+    return PureDouble(result);
+}
+
+PureDouble PureDouble::convertInt64(StubAssembler& jit, GPRReg integer, FPRReg result)
+{
+    jit.convertInt64ToDouble(integer, result);
+    return PureDouble(result);
+}
+
+PureDoubleBits PureDoubleBits::branchIfNotFinite(StubAssembler& jit, GPRReg bits, GPRReg scratch, JumpList& isNotFinite)
+{
+    jit.urshift64(bits, TrustedImm32(52), scratch);
+    jit.and32(TrustedImm32(0x7ff), scratch);
+    isNotFinite.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(0x7ff)));
+    return PureDoubleBits(bits);
+}
+
+static void subtractNumberTag(StubAssembler& jit, GPRReg bitsAndResult)
 {
     jit.withNumberTag([&](auto tag) {
         jit.sub64(tag, bitsAndResult);
     });
+}
+
+void boxDouble(StubAssembler& jit, PureDouble number, GPRReg result)
+{
+    jit.moveDoubleTo64(number.fpr(), result);
+    subtractNumberTag(jit, result);
+}
+
+void boxDoubleBits(StubAssembler& jit, PureDoubleBits bitsAndResult)
+{
+    subtractNumberTag(jit, bitsAndResult.gpr());
 }
 
 void boxInt32(StubAssembler& jit, GPRReg int32, GPRReg result)
@@ -73,7 +110,29 @@ void branchIfNotExactInt32(StubAssembler& jit, FPRReg number, GPRReg integer, Ju
         return;
     }
 #endif
+#if CPU(X86_64)
+    // The integer, made a double again, has the bits of the number, or the number is no int32: the bits of negative zero and of NaN differ from those of any integer.
+    const GPRReg difference = jit.scratchRegister();
+    RELEASE_ASSERT(integer != difference);
+    jit.truncateDoubleToInt32(number, integer);
+    jit.convertInt32ToDouble(integer, scratch);
+    jit.xorDouble(number, scratch);
+    jit.moveDoubleTo64(scratch, difference);
+    isNotExact.append(jit.branchTest64(CCallHelpers::NonZero, difference));
+#else
     jit.branchConvertDoubleToInt32(number, integer, isNotExact, scratch);
+#endif
+}
+
+void boxExactInt32(StubAssembler& jit, GPRReg integer, GPRReg result)
+{
+#if CPU(X86_64)
+    if (integer == result) {
+        jit.or64(numberTag, result);
+        return;
+    }
+#endif
+    boxInt32(jit, integer, result);
 }
 
 void decodeCell32(StubAssembler& jit, GPRReg word, GPRReg result)
@@ -110,11 +169,19 @@ void appendGranule(StubAssembler& jit, GPRReg extension, GPRReg granuleBits, GPR
 
 void loadLiteralString(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated)
 {
-    static_assert(2 << literalStringShift == sizeof(JSCell*));
     RELEASE_ASSERT(noOverlap(wordAndResult, scratch));
+    if (jit.options().useWideReferences) {
+        static_assert(2 << literalStringShift == sizeof(JSCell*));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings)), scratch);
+        jit.load64(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesTwo, -2 * static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
+        isNotCreated.append(jit.branchTest64(CCallHelpers::Zero, wordAndResult));
+        return;
+    }
+    static_assert(1 << literalStringShift == sizeof(uint32_t));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.literalStrings)), scratch);
-    jit.load64(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesTwo, -2 * static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
-    isNotCreated.append(jit.branchTest64(CCallHelpers::Zero, wordAndResult));
+    jit.load32(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesOne, -static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
+    isNotCreated.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult));
+    decodeCell32(jit, wordAndResult, wordAndResult);
 }
 
 void decodeStructureID(CCallHelpers& jit, GPRReg idAndResult)

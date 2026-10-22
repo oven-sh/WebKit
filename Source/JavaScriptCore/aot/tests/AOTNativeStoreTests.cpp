@@ -16,7 +16,7 @@
 #include "AOTImageLoading.h"
 #include "AOTImageTestSupport.h"
 #include "AOTInstance.h"
-#include "AOTModuleHost.h"
+#include "AOTModules.h"
 #include "AOTNativeTest.h"
 #include "AOTObject.h"
 #include "AOTProgramFile.h"
@@ -183,7 +183,7 @@ RunningProgram::RunningProgram()
     std::optional<ModuleID> module = findModule("main.js"_s);
     AOT_TEST_CHECK(module);
     evaluateModuleSynchronously(realm(), *module);
-    AOT_TEST_CHECK(!scope.exception() && isEvaluated(realm(), *module));
+    AOT_TEST_CHECK(!scope.exception() && modulesOf(realm())->status(*module) == ModuleStatus::Evaluated);
 
     JSValue createPoint = registry->getDirect(vm, Identifier::fromString(vm, "createPoint"_s));
     AOT_TEST_CHECK(createPoint && createPoint.isCallable());
@@ -364,7 +364,8 @@ static void testDefinitionOfCustomAccessor(RunningProgram& program)
     AOT_TEST_CHECK(putOwnDataProperty(vm, point, program.x(), jsNumber(3)));
     CustomGetterSetter* accessor = CustomGetterSetter::create(vm, getSeven, nullptr);
     AOT_TEST_CHECK(point->putDirectCustomAccessor(vm, program.added(), accessor, PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly));
-    AOT_TEST_CHECK(!PropertyWalk::isCompiledObject(point));
+    // It is an extra property like any other.
+    AOT_TEST_CHECK(PropertyWalk::isCompiledObject(point) && isFieldInSlot(point, program.x()));
     AOT_TEST_CHECK(hasOwnProperty(vm, point, program.x(), jsNumber(3), 0));
     AOT_TEST_CHECK(point->get(program.realm(), program.added()) == jsNumber(7));
 }

@@ -11,8 +11,10 @@
 #include "AOTBuiltinTable.h"
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
+#include "AOTErrorMessages.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTState.h"
@@ -44,7 +46,7 @@ std::optional<ModuleID> BuiltinModuleTable::find(uint32_t registryID) const
 
 JSValue BuiltinModuleTable::evaluate(ModuleID module)
 {
-    return m_state.modules->require(module, nullptr, nullptr);
+    return m_state.modules->require(module);
 }
 
 bool hasBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
@@ -209,39 +211,45 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     return names;
 }
 
-static String joinAlternatives(std::span<const String> names)
+static bool isGetterOfAccessor(RuntimeFunctionID function)
 {
-    StringBuilder text;
-    for (size_t index = 0; index < names.size(); ++index) {
-        if (index)
-            text.append(index + 1 == names.size() ? " or "_s : ", "_s);
-        text.append(names[index]);
-    }
-    return text.toString();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    return std::ranges::any_of(table.at(function).implements, [&](BuiltinID builtin) {
+        return table.at(builtin).kind == BuiltinKind::Accessor;
+    });
 }
 
-static void throwNotCompiled(JSGlobalObject* realm, const String& message)
+static void throwErrorOfCodeLeftOut(JSGlobalObject* realm, ThrowScope& scope, JSObject* error)
 {
-    auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    throwException(realm, scope, createError(realm, withAOTErrorNote(message)));
+    noteErrorOfCodeLeftOut(realm, error);
+    throwException(realm, scope, error);
 }
 
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
-    throwNotCompiled(realm, makeString("Cannot use "_s, builtin, ": nothing in the program uses it, so the code behind it was not compiled into this executable. Use it in the program itself, or compile with --admit=runtime-code"_s));
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    throwErrorOfCodeLeftOut(realm, scope, createBuiltinNotCompiledError(realm, builtin));
 }
 
 void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& executable)
 {
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
     auto& function = *uncheckedDowncast<FunctionExecutable>(&executable);
     Vector<String, 4> names;
-    if (std::optional<uint32_t> id = builtinFunctionHolding(function))
+    std::optional<uint32_t> id = builtinFunctionHolding(function);
+    if (id)
         names = globalBuiltinsThatRun(RuntimeFunctionID(*id));
+    // Reading an accessor is calling its getter. What it answers may be a number, and a function in the place of a number is a wrong answer: the read is refused.
+    if (id && isGetterOfAccessor(RuntimeFunctionID(*id))) {
+        throwException(realm, scope, names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span()));
+        return;
+    }
     if (names.isEmpty())
-        return throwNotCompiled(realm, makeString("Cannot run the built-in function '"_s, function.name().string(), "': nothing in the program uses it, so it was not compiled into this executable. Compile with --admit=runtime-code"_s));
-    if (names.size() == 1)
-        return throwBuiltinNotCompiled(realm, names[0]);
-    throwNotCompiled(realm, makeString("Cannot use "_s, joinAlternatives(names.span()), ": nothing in the program uses any of them, so the code behind them was not compiled into this executable. Use one of them in the program itself, or compile with --admit=runtime-code"_s));
+        throwErrorOfCodeLeftOut(realm, scope, createBuiltinFunctionNotCompiledError(realm, function.name().string()));
+    else if (names.size() == 1)
+        throwErrorOfCodeLeftOut(realm, scope, createBuiltinNotCompiledError(realm, names[0]));
+    else
+        throwErrorOfCodeLeftOut(realm, scope, createBuiltinsNotCompiledError(realm, names.span()));
 }
 
 } } // namespace JSC::AOT

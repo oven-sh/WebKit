@@ -514,6 +514,9 @@ public:
 #endif
     ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }
     PropertyRunTable propertyRuns;
+    bool mayHaveUncacheableTransitions() const { return m_mayHaveUncacheableTransitions; }
+    void setMayHaveUncacheableTransitions() { m_mayHaveUncacheableTransitions = true; }
+    bool m_mayHaveUncacheableTransitions { false };
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
     ALWAYS_INLINE CompleteSubspace& auxiliarySpace() { return heap.auxiliarySpace; }
@@ -656,6 +659,8 @@ public:
 
     Weak<NativeExecutable> m_fastRemoteFunctionExecutable;
     Weak<NativeExecutable> m_slowRemoteFunctionExecutable;
+    // getHostFunction() without the JIT. With it JITThunks remembers them.
+    UncheckedKeyHashMap<std::tuple<uintptr_t, uintptr_t, unsigned>, Weak<NativeExecutable>> m_executablesOfNamelessHostFunctions;
 
     const Ref<DeferredWorkTimer> deferredWorkTimer;
 

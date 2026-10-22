@@ -28,6 +28,14 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OperandUses contentsUses { OperandUse::ReadsContents, OperandUse::WritesContents };
 
+static constexpr AnalysisSet analysesUnaffectedBySharing {
+    FunctionAnalysis::UseLists,
+    FunctionAnalysis::Identities,
+    FunctionAnalysis::Liveness,
+    FunctionAnalysis::Frequencies,
+    FunctionAnalysis::FailedTests,
+};
+
 // While every use of the object is one that this pass accepts, lastIndex holds a number, and converting it runs no user code.
 static constexpr OperandUses usesOfMatching {
     OperandUse::Inspects,
@@ -211,14 +219,15 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     for (ValueID literal : literals) {
-        Value& value = context.function.at(literal);
+        Value& value = context.function.edit(literal);
         StringID pattern = value.pattern();
         OptionSet<RegExpFlags> flags = value.regExpFlags();
         value.become(Opcode::SharedRegExpLiteral);
         value.setPattern(pattern);
         value.setRegExpFlags(flags);
     }
-    context.analyses.didChangeValues();
+    context.analyses.invalidate(valueAnalyses - analysesUnaffectedBySharing);
+    context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }
 

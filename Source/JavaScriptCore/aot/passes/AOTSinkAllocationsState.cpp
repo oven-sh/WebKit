@@ -149,10 +149,25 @@ SinkingState SinkingState::unreachableAt(BlockID block)
     return state;
 }
 
+SinkingState SinkingState::nothingAt(BlockID block)
+{
+    SinkingState state;
+    state.block = block;
+    return state;
+}
+
 const ObjectState* SinkingState::find(VirtualObjectID object) const
 {
     const ObjectEntry* entry = findEntry(objects, &ObjectEntry::object, object);
     return entry ? &entry->state : nullptr;
+}
+
+std::optional<size_t> SinkingState::indexOf(VirtualObjectID object) const
+{
+    const ObjectEntry* entry = findEntry(objects, &ObjectEntry::object, object);
+    if (!entry)
+        return std::nullopt;
+    return entry - objects.span().data();
 }
 
 ObjectState* SinkingState::find(VirtualObjectID object)
@@ -166,6 +181,43 @@ ObjectState& SinkingState::add(VirtualObjectID object, ObjectState&& state)
     RELEASE_ASSERT(position == objects.size() || objects[position].object != object);
     objects.insert(position, ObjectEntry { object, WTF::move(state) });
     return objects[position].state;
+}
+
+void SinkingState::set(std::span<ObjectEntry> movedEntries)
+{
+    Vector<ObjectEntry*, 8> addedEntries;
+    for (ObjectEntry& entry : movedEntries) {
+        if (ObjectState* state = find(entry.object))
+            *state = WTF::move(entry.state);
+        else
+            addedEntries.append(&entry);
+    }
+    if (addedEntries.isEmpty())
+        return;
+
+    std::ranges::sort(addedEntries, { }, &ObjectEntry::object);
+    size_t source = objects.size();
+    size_t destination = source + addedEntries.size();
+    objects.grow(destination);
+    for (size_t added = addedEntries.size(); added;) {
+        if (source && objects[source - 1].object > addedEntries[added - 1]->object) {
+            --source;
+            --destination;
+            objects[destination] = WTF::move(objects[source]);
+            continue;
+        }
+        --added;
+        --destination;
+        objects[destination] = ObjectEntry { addedEntries[added]->object, WTF::move(addedEntries[added]->state) };
+    }
+}
+
+size_t SinkingState::weight() const
+{
+    size_t result = aliases.size() + tests.size();
+    for (const ObjectEntry& entry : objects)
+        result += entry.state.variants.size() + entry.state.heldObjects.size() + entry.state.assumedTypes.size();
+    return result;
 }
 
 void SinkingState::remove(VirtualObjectID object)
@@ -348,8 +400,10 @@ bool SinkingDecisions::holdsCells(VirtualObjectID holder, uint32_t field) const
 
 void SinkingDecisions::buildAtHead(BlockID block, VirtualObjectID object)
 {
-    if (m_objectsBuiltAtHeads.add(pairOf(block.index(), object.index())).isNewEntry)
+    if (m_objectsBuiltAtHeads.add(pairOf(block.index(), object.index())).isNewEntry) {
+        m_blocksWithObjectsBuiltAtHeads.set(block.index());
         didDecide(object);
+    }
 }
 
 void SinkingDecisions::holdCells(ValueID parameter, VirtualObjectID boundObject)

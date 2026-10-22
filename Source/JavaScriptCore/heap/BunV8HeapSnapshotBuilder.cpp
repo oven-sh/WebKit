@@ -449,6 +449,16 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
     case JSType::ModuleEnvironmentType:
     case JSType::CompiledEnvironmentType:
         return makeString("system / "_s, cell->className());
+#if ENABLE(AOT)
+    case JSType::CompiledClosureType:
+    case JSType::SlimClosureType:
+    case JSType::SlimClosureWithPropertiesType: {
+        String displayName = AOT::HeapHooks::nameOfCompiledCallee(cell);
+        if (!displayName.isEmpty())
+            return displayName;
+        break;
+    }
+#endif
     default: {
         break;
     }
@@ -487,11 +497,6 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
             if (!displayName.isEmpty())
                 return displayName;
         }
-
-#if ENABLE(AOT)
-        if (String displayName = AOT::HeapHooks::nameOfCompiledCallee(cell); !displayName.isEmpty())
-            return displayName;
-#endif
     }
 
     return name;

@@ -9,12 +9,14 @@
 
 #include "AOTStoragePool.h"
 #include "AOTTypeTable.h"
+#include <array>
 #include <atomic>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/ConcurrentVector.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -31,7 +33,7 @@ public:
 
     template<typename IDType> void apply(IDType& id) const { id = (*this)(id); }
 
-    bool isIdentity() const { return m_tasksWithNewRecords.isEmpty(); }
+    bool isIdentity() const { return m_isIdentity; }
     bool isIdentityFor(unsigned task) const { return !m_tasksWithNewRecords.get(task); }
 
 private:
@@ -57,6 +59,7 @@ private:
     FinalIDs<CalleeSetID> m_calleeSets;
     FinalIDs<PropertyKeyID> m_propertyKeys;
     BitVector m_tasksWithNewRecords;
+    bool m_isIdentity { true };
 };
 
 class TypeInterningPhase {
@@ -71,9 +74,13 @@ public:
 
     unsigned addTasks(unsigned count);
 
-    TypeRemap finish(const StringRemap&);
-    TypeRemap finish(std::span<const unsigned> taskOrder, const FunctionRemap&, const StringRemap&);
+    // With loops, a large merge runs on all threads. The ids are the same either way.
+    TypeRemap finish(const StringRemap&, const ParallelLoops* = nullptr);
+    TypeRemap finish(std::span<const unsigned> taskOrder, const FunctionRemap&, const StringRemap&, const ParallelLoops* = nullptr);
     void discard();
+
+    // Provisional ids stay valid only while this number stays the same.
+    static uint64_t currentPhaseSerialNumber(const TypeTable&);
 
 private:
     friend class TypeArena;
@@ -83,6 +90,7 @@ private:
     struct ProvisionalRecords {
         ConcurrentVector<Record, 64> records;
         HashedIndex index;
+        Vector<uint32_t> hashes;
         Vector<uint32_t> lastLease;
     };
 
@@ -118,20 +126,23 @@ private:
     };
 
     struct Merge;
+    struct ParallelMerge;
     enum OwnedByTableTag { OwnedByTable };
 
     TypeInterningPhase(const TypeTable&, OwnedByTableTag);
 
     template<typename Record, typename IDType> static const Record& recordAt(const TypeInterningPhase*, IDType);
+    static uint64_t nextSerialNumber();
 
     Storage& leaseStorage();
     FirstUses& createFirstUses(unsigned task);
     void returnStorages(std::span<Storage* const>);
     void close();
-    TypeRemap merge(std::span<const unsigned> taskOrder, const FunctionRemap*, const StringRemap&);
+    TypeRemap merge(std::span<const unsigned> taskOrder, const FunctionRemap*, const StringRemap&, const ParallelLoops*);
 
     const TypeTable& m_table;
     TypeTable* m_committedTable { nullptr };
+    const uint64_t m_serialNumber { nextSerialNumber() };
     StoragePool<Storage, TypeTable::maxStorages> m_storages;
     Lock m_firstUsesGrowthLock;
     // A phase has a task per function, and most use nothing new.
@@ -155,6 +166,40 @@ template<> inline Vector<LayoutSetID>& TypeInterningPhase::FirstUses::listOf<Lay
 template<> inline Vector<CalleeSetID>& TypeInterningPhase::FirstUses::listOf<CalleeSetID>() { return calleeSets; }
 template<> inline Vector<PropertyKeyID>& TypeInterningPhase::FirstUses::listOf<PropertyKeyID>() { return propertyKeys; }
 
+class TypeMemo {
+public:
+    static constexpr uint64_t keyOf(TypeID first, TypeID second) { return static_cast<uint64_t>(first.index()) << 32 | second.index(); }
+
+    TypeID find(uint64_t key) const
+    {
+        if (m_slots.isEmpty())
+            return { };
+        size_t mask = m_slots.size() - 1;
+        for (size_t index = firstIndexOf(key); ; index = (index + 1) & mask) {
+            const Slot& slot = m_slots[index];
+            if (!slot.type)
+                return { };
+            if (slot.key == key)
+                return slot.type;
+        }
+    }
+
+    void add(uint64_t key, TypeID);
+
+private:
+    struct Slot {
+        uint64_t key { 0 };
+        TypeID type;
+    };
+
+    size_t firstIndexOf(uint64_t key) const { return static_cast<size_t>((key * 0x9e3779b97f4a7c15ull) >> m_shift); }
+    void insert(Slot);
+
+    Vector<Slot> m_slots;
+    unsigned m_size { 0 };
+    unsigned m_shift { 64 };
+};
+
 class TypeArena {
     WTF_MAKE_NONCOPYABLE(TypeArena);
 public:
@@ -164,9 +209,20 @@ public:
     ~TypeArena();
 
     TypeID intern(const Type&);
+    TypeID intern(Type&&);
     LayoutSetID intern(LayoutSet&&);
     CalleeSetID intern(CalleeSet&&);
     PropertyKeyID intern(const PropertyKey&);
+
+    // Re-interns a record that another arena created. An id from a cache shared between threads must be adopted before it is stored in the IR or compared with another id.
+    Type adopt(const Type& fromOtherArena);
+    TypeID adopt(TypeID fromOtherArena);
+    LayoutSetID adopt(LayoutSetID fromOtherArena);
+    CalleeSetID adopt(CalleeSetID fromOtherArena);
+    template<typename Tag> bool owns(ID<Tag> id) const { return !TypeTable::isProvisional(id) || hasLeasedStorage(TypeTable::storageNumberOf(id)); }
+    // False as long as the task has handed out no id that the phase replaces when it ends: TypeRemap::isIdentityFor() will say the same of the task.
+    bool hasUsedProvisionalRecords() const { return m_firstUses; }
+    PropertyKeyID adopt(PropertyKeyID fromOtherArena);
 
     LayoutSetID completeLayoutSet(std::span<const LayoutID> unsortedMembers);
     PropertyKeyID textKey(StringID);
@@ -186,10 +242,64 @@ public:
     TypeID withPrimitives(TypeID, uint16_t);
     TypeID withoutPrimitives(TypeID, uint16_t);
 
+    LayoutSetID unionOf(LayoutSetID, LayoutSetID);
+    LayoutSetID intersectionOf(LayoutSetID, LayoutSetID);
+    LayoutSetID differenceOf(LayoutSetID, LayoutSetID);
+    bool isSubsetOf(LayoutSetID, LayoutSetID);
+
+    // None where one of the ids is known to this arena alone.
+    static std::optional<SharedTypeMemo::Key> sharedKeyOf(SharedTypeMemo::Relation relation, TypeID first, TypeID second)
+    {
+        if (TypeTable::isProvisional(first) || TypeTable::isProvisional(second))
+            return std::nullopt;
+        return SharedTypeMemo::keyOf(relation, first, second);
+    }
+
+    // What `compute` answers. With a key, the answer follows from the key and from what that kind of answer may follow from, whichever arena computes it.
+    // The memo takes an answer only where this arena gave nothing of its own to the computation: no record that the table does not hold for good, and nothing out of a memo,
+    // which says no more what it left behind when it was filled. Every other arena would then have found the same ids in the table,
+    // so whoever finds the answer in the memo has missed no first use of a record.
+    TypeID sharedAnswer(SharedAnswers answers, std::optional<SharedTypeMemo::Key> key, NOESCAPE const Invocable<TypeID()> auto& compute)
+    {
+        SharedTypeMemo* shared = key ? m_table.sharedMemo(answers) : nullptr;
+        if (!shared)
+            return compute();
+        TypeID known = shared->find(*key);
+        if (known && !shared->verifiesAnswers()) [[likely]]
+            return known;
+        uint64_t unshareableEventCountBefore = m_unshareableEventCount;
+        TypeID answer = compute();
+        if (known) {
+            RELEASE_ASSERT(known == answer);
+            return answer;
+        }
+        if (m_unshareableEventCount == unshareableEventCountBefore && !TypeTable::isProvisional(answer))
+            shared->add(*key, answer);
+        return answer;
+    }
+
+    // The answers that are being computed stay with this arena, because there is more to computing them than they show:
+    // something was reported, or a memo of the caller's stood in for work that may have left records here.
+    void markCurrentAnswersUnshareable() { ++m_unshareableEventCount; }
+    // It stands still while this arena gives nothing of its own to what is computed, as for sharedAnswer().
+    uint64_t unshareableEventCount() const { return m_unshareableEventCount; }
+
 private:
+    enum class LayoutSetOperation : uint8_t { Union, Intersection, Difference };
+    static constexpr size_t numberOfLayoutSetOperations = 3;
+    static constexpr size_t minCachedSetSize = 8;
+
+    template<typename Result> using LayoutSetPairMap = UncheckedKeyHashMap<uint64_t, Result, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
     template<typename Record, typename RecordID> RecordID internCanonical(Record&&);
     template<typename Record, typename RecordID> std::optional<RecordID> useExistingIn(TypeInterningPhase::Storage&, const Record&, uint32_t hash);
     template<typename Record, typename RecordID> RecordID didUse(TypeInterningPhase::Storage&, uint32_t position);
+
+    bool hasLeasedStorage(uint32_t number) const;
+    bool shouldCacheResult(LayoutSetID, LayoutSetID) const;
+    LayoutSetID cachedResult(LayoutSetOperation, LayoutSetID, LayoutSetID);
+    LayoutSetID computeResult(LayoutSetOperation, LayoutSetID, LayoutSetID);
+    LayoutSetID internCompleteSet(Vector<LayoutID>&& sortedMembers, bool hasMembersWithoutLayout);
 
     const TypeTable& m_table;
     TypeTable* m_serialTable { nullptr };
@@ -197,6 +307,12 @@ private:
     std::optional<unsigned> m_task;
     TypeInterningPhase::FirstUses* m_firstUses { nullptr };
     Vector<TypeInterningPhase::Storage*, 1> m_storages;
+    std::array<LayoutSetPairMap<LayoutSetID>, numberOfLayoutSetOperations> m_layoutSetResultCache;
+    LayoutSetPairMap<bool> m_layoutSubsetCache;
+    TypeMemo m_unions;
+    TypeMemo m_intersections;
+    UncheckedKeyHashMap<LayoutSetID, LayoutSetID> m_adoptedLayoutSets;
+    uint64_t m_unshareableEventCount { 0 };
 };
 
 class ScratchTypeArena {

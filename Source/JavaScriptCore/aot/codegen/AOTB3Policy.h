@@ -29,7 +29,10 @@ struct FunctionBackEndTraits {
     bool savesFrameOnSuspend { false };
     bool readsCallerFrame { false };
     bool isAsync { false };
+    bool rejectsOnThrow { false };
     bool isCold { false };
+    bool runsOnce { false };
+    bool isHot { false };
     bool returnsAreUnlikely { false };
 };
 

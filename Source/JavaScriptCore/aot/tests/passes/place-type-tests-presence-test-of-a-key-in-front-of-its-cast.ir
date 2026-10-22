@@ -1,0 +1,26 @@
+# for (i = start; i < 10; ..) s[i], with `start` a value of which a number is only expected, and a cast on the key: flow has seen that nothing with a fraction arrives.
+# The site of the read is planned with the type of that operand, so its tests promise a key without a fraction. The comparison in front has tested the value in front of the cast for `number`,
+# and what that test lets through stands for the key in every test behind it. Of that value only `number` is proven, so the presence test promises nothing about fractions.
+# The read gets the cast in front of it again and keeps the promise
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsAtCastKey" parameters=[{type=Array<number>}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: anything ~ number):
+    v2 = Integer integer=10
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = AssumeType v1 castType=undefined|int|whole
+    v5 = ElemGet v0, v4
+    v6 = Check v5 castType=number
+    Return v6
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="readsAtCastKey"
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: [[key]]: int|whole = AssumeType [[number]] castType=int|whole
+# CHECK: = GetArrayElement v0, [[key]], {{*}} [keyIsIntegral, isPresent]
+# CHECK: = IsElementPresent v0, [[number]], {{*}} arrayStorage=Double

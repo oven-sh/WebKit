@@ -9,7 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCallSiteTable.h"
-#include "AOTCompiledFrame.h"
+#include "AOTErrorMessages.h"
+#include "AOTFaultHandler.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
@@ -19,10 +20,11 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeReporter.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStubRegisters.h"
-#include "AOTTypeErrorMessages.h"
+#include "AOTStubsPolls.h"
 #include "AOTUnwinding.h"
 #include "DeferGCInlines.h"
 #include "Error.h"
@@ -56,8 +58,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance, uint8_t* returnAddress))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollAtPrologue);
+    // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
+    DeferGCForAWhile deferGC(vm);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        OPERATION_RETURN(scope, std::bit_cast<void*>(static_cast<uintptr_t>(pollAtPrologueMustThrow)));
+    }
     OPERATION_RETURN(scope, resumeAddressAfterStackCheck(returnAddress));
 }
 
@@ -102,24 +109,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (I
     return JSValue::encode(exception);
 }
 
-void throwTypeMismatch(Instance* instance, JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, uint32_t type, Typed::TypeSiteID site)
-{
-    const RuntimeType& expected = runtimeTypeAt(instance, type);
-    reportThrownClaim(*instance, expected, value, site);
-    throwTypeError(globalObject, scope, withAOTTypeCheckNote(mismatchMessage(*instance->state, globalObject->vm(), value, expected, site)));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTEnforceType, EncodedJSValue, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTEnforceType);
-    DeferGCForAWhile deferGC(vm);
-    JSValue decoded = JSValue::decode(value);
-    JSValue checked = decoded ? decoded : jsUndefined();
-    if (!instance->state->objects->layouts.valueHasType(runtimeTypeAt(instance, type), checked)) [[unlikely]]
-        throwTypeMismatch(instance, globalObject, scope, checked, type, Typed::TypeSiteID(typeSite));
-    OPERATION_RETURN(scope, value);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReportMismatch);
@@ -128,7 +117,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, 
     JSValue checked = decoded ? decoded : jsUndefined();
     const RuntimeType& expected = runtimeTypeAt(instance, type);
     if (!instance->state->objects->layouts.valueHasType(expected, checked)) [[unlikely]]
-        reportFailedClaim(*instance, typeSite, expected, checked);
+        reportFailedCheck(*instance, typeSite, expected, checked);
     OPERATION_RETURN(scope);
 }
 
@@ -144,40 +133,46 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::ImportAssignment:
         return createTypeError(globalObject, ReadonlyPropertyWriteError);
     case Typed::RuntimeErrorKind::UninitializedThis:
-        return createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s);
+        return createSuperNotCalledError(globalObject);
     case Typed::RuntimeErrorKind::ThisAlreadyBound:
-        return createReferenceError(globalObject, "'super()' can't be called more than once in a constructor."_s);
+        return createSuperCalledTwiceError(globalObject);
     case Typed::RuntimeErrorKind::DeleteSuperProperty:
-        return createReferenceError(globalObject, "Cannot delete a super property"_s);
+        return createDeleteSuperPropertyError(globalObject);
     case Typed::RuntimeErrorKind::NotDestructurable:
-        if (name)
-            return createTypeError(globalObject, makeString("Cannot destructure property '"_s, name->string(), "' from null or undefined value"_s));
-        return createTypeError(globalObject, "Cannot destructure null or undefined value"_s);
+        return name ? createDestructureNullishError(globalObject, *name) : createDestructureNullishError(globalObject);
     case Typed::RuntimeErrorKind::DerivedConstructorResult:
-        if (name)
-            return createTypeError(globalObject, makeString("Cannot return a non-object type in the constructor of a derived class "_s, name->string(), "."_s));
-        return createTypeError(globalObject, "Cannot return a non-object type in the constructor of a derived class."_s);
+        return createDerivedConstructorResultError(globalObject, name ? name->string() : String());
     case Typed::RuntimeErrorKind::StaticPrototypeKey:
-        return createTypeError(globalObject, "Cannot declare a static field named 'prototype'"_s);
+        return createStaticFieldNamedPrototypeError(globalObject);
     case Typed::RuntimeErrorKind::IteratorResultNotObject:
     case Typed::RuntimeErrorKind::IteratorIsNotAnObject:
-        return createTypeError(globalObject, "Iterator result interface is not an object."_s);
+        return createIteratorResultNotObjectError(globalObject);
     case Typed::RuntimeErrorKind::IteratorWithoutThrowMethod:
-        return createTypeError(globalObject, "The iterator, to which yield* delegated iteration, does not have a 'throw' method."_s);
+        return createYieldStarIteratorWithoutThrowError(globalObject);
     case Typed::RuntimeErrorKind::InvalidPrivateRead:
     case Typed::RuntimeErrorKind::InvalidPrivateWrite:
         return createInvalidPrivateNameError(globalObject);
     case Typed::RuntimeErrorKind::InvalidPrivateBrand:
-        return createTypeError(globalObject, "Cannot access static private method or accessor"_s);
+        return createStaticPrivateBrandError(globalObject);
     case Typed::RuntimeErrorKind::PrivateFieldExists:
         return createRedefinedPrivateNameError(globalObject);
     case Typed::RuntimeErrorKind::PrivateAccessorWithoutGetter:
-        return createTypeError(globalObject, "Trying to access an undefined private getter"_s);
+        return createUndefinedPrivateGetterError(globalObject);
     case Typed::RuntimeErrorKind::PrivateMethodWrite:
     case Typed::RuntimeErrorKind::PrivateAccessorWithoutSetter:
-        return createTypeError(globalObject, "Trying to access an undefined private setter"_s);
+        return createUndefinedPrivateSetterError(globalObject);
     case Typed::RuntimeErrorKind::PrivateStaticTestOfNonObject:
-        return createTypeError(globalObject, "Cannot access static private method or accessor of a non-Object"_s);
+        return createStaticPrivateBrandOfNonObjectError(globalObject);
+    case Typed::RuntimeErrorKind::SpreadResultNotObject:
+        return createSpreadResultNotObjectError(globalObject);
+    case Typed::RuntimeErrorKind::LeftOutOfExecutable:
+        if (validatesRuntime(globalObject->vm()))
+            crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
+        if (name && !name->isEmpty())
+            return createTypeError(globalObject, makeString('\'', name->string(), "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
+        return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
+    case Typed::RuntimeErrorKind::FunctionNotCompiled:
+        return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string(), ""_s) : functionNotCompiledMessage(""_s));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -244,24 +239,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowRuntimeError, void, (Instance* instanc
     OPERATION_RETURN(scope);
 }
 
-static String textOrNull(uint32_t name)
-{
-    return name == ThrowSiteWord::none ? String() : ProgramStrings::text(*Image::current(), StringID(name));
-}
-
-static void throwKindMismatch(Instance* instance, JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, uint32_t kinds, uint32_t name)
-{
-    throwTypeError(globalObject, scope, withAOTTypeCheckNote(makeString("expected "_s, describeKinds(*instance->state, kinds, name), ", got "_s, describe(value))));
-}
-
-static void throwNullish(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, uint32_t name, Typed::NullishAccess access)
-{
-    if (access == Typed::NullishAccess::Iterate)
-        throwTypeError(globalObject, scope, nullishIterationMessage(value));
-    else
-        throwTypeError(globalObject, scope, nullishMessage(value, textOrNull(name), access == Typed::NullishAccess::Write));
-}
-
 static void throwUninitializedBinding(JSGlobalObject* globalObject, ThrowScope& scope, uint32_t name)
 {
     if (name == ThrowSiteWord::none) {
@@ -274,7 +251,6 @@ static void throwUninitializedBinding(JSGlobalObject* globalObject, ThrowScope& 
 struct DecodedThrowSite {
     ThrowSiteWord word;
     uint32_t a;
-    uint32_t b;
     bool isFaultSite;
 };
 
@@ -299,9 +275,8 @@ static DecodedThrowSite decodeThrowSite(const uint64_t* registers, const uint32_
     }
     }
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(*words++);
-    uint32_t a = word.hasWideA ? *words++ : word.a;
-    uint32_t b = word.hasB ? *words++ : ThrowSiteWord::none;
-    return { word, a, b, source == ThrowSiteSource::FaultSite };
+    uint32_t a = word.hasWideA ? *words : word.a;
+    return { word, a, source == ThrowSiteSource::FaultSite };
 }
 
 JSValue valueOfDecodedReference(const Instance* instance, uint64_t bits)
@@ -344,7 +319,7 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
         return value ? value : jsUndefined();
     }
     case Typed::Representation::JSValue:
-        value = JSValue::decode(bits);
+        value = decoded.isFaultSite ? valueOfDecodedReference(instance, bits) : JSValue::decode(bits);
         return value ? value : jsUndefined();
     case Typed::Representation::OptionalInt64:
         if (static_cast<int64_t>(bits) == nullInteger)
@@ -365,23 +340,6 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isReportedWhenThrown(ThrowKind kind)
-{
-    switch (kind) {
-    case ThrowKind::TypeMismatch:
-        return true;
-    case ThrowKind::KindMismatch:
-    case ThrowKind::NullishRead:
-    case ThrowKind::NullishWrite:
-    case ThrowKind::NullishIterate:
-    case ThrowKind::UninitializedBinding:
-    case ThrowKind::NotAFunction:
-    case ThrowKind::ErrorWithMessage:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObject, ThrowScope& scope, const DecodedThrowSite& decoded)
 {
     ErrorInstance* error = createErrorWithMessage(instance, globalObject, static_cast<Typed::ErrorKind>(decoded.word.registerNumber), StringID(decoded.a));
@@ -392,9 +350,14 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
+#if CPU(X86_64)
+    // The fault handler has passed the return address in the scratch register, which compiled code allocates like any other:
+    // the tested value may have been in it, and so may a value that a handler in the function reads once the stub has loaded the registers again.
+    if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
+        const_cast<uint64_t*>(registers)[MacroAssembler::s_scratchRegister] = scratchRegisterBeforeFault();
+#endif
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));
-    ThrowKind kind = static_cast<ThrowKind>(decoded.word.kind);
-    if (!isReportedWhenThrown(kind) && !needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
+    if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
         count(*instance, RuntimeCounterID::ThrownErrorsNotCreated);
         instance->runtime.exceptions.thrownValue = JSValue::encode(jsUndefined());
         OPERATION_RETURN(scope);
@@ -402,35 +365,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
     auto value = [&] {
         return throwSiteValue(instance, registers, decoded);
     };
-    switch (kind) {
-    case ThrowKind::TypeMismatch:
-        if (decoded.isFaultSite && static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::JSValue) {
-            CallSiteOverride castSiteOverride(*instance, callFrame->callerFrame());
-            throwTypeMismatch(instance, globalObject, scope, value(), decoded.a, Typed::TypeSiteID(decoded.b));
-            break;
-        }
-        throwTypeMismatch(instance, globalObject, scope, value(), decoded.a, Typed::TypeSiteID(decoded.b));
-        break;
-    case ThrowKind::KindMismatch:
-        throwKindMismatch(instance, globalObject, scope, value(), decoded.a, decoded.b);
-        break;
+    switch (static_cast<ThrowKind>(decoded.word.kind)) {
     case ThrowKind::NullishRead:
-        throwNullish(globalObject, scope, value(), decoded.a, Typed::NullishAccess::Read);
-        break;
     case ThrowKind::NullishWrite:
-        throwNullish(globalObject, scope, value(), decoded.a, Typed::NullishAccess::Write);
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::NullishIterate:
-        throwNullish(globalObject, scope, value(), decoded.a, Typed::NullishAccess::Iterate);
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, value()));
+        break;
+    case ThrowKind::NullishSpread:
+        throwException(globalObject, scope, createSpreadOfNullishError(globalObject));
         break;
     case ThrowKind::UninitializedBinding:
         throwUninitializedBinding(globalObject, scope, decoded.a);
         break;
     case ThrowKind::NotAFunction:
-        if (decoded.a == ThrowSiteWord::none)
-            throwNotAFunctionError(globalObject, scope, value());
-        else
-            throwNotAFunctionError(globalObject, scope, value(), identifierOf(vm, StringID(decoded.a)));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::ErrorWithMessage:
         throwErrorWithMessage(instance, globalObject, scope, decoded);

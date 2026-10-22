@@ -1,0 +1,63 @@
+# A read, a `typeof` or a store of a global that no proof settles goes through the record of the name. What a record cannot answer stays an access by name:
+# a key that is no ordinary name, and a deletion. A locked global is a constant before this pass runs, so the pass leaves its read alone
+# FORM: Prepared
+# RUN: pass BindGlobalNames
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="bound" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="shared" [isFreeName]
+    v3 = PropGet v1 key="shared" [isFreeName, isForTypeOf]
+    v4 = PropGet v1 key="shared"
+    PropSet v1, v0 key="shared" mode=Strict [isFreeName]
+    PropSet v1, v0 key="shared" mode=Sloppy
+    Return v2
+}
+# CHECK-LABEL: function f0 name="bound"
+# CHECK: v2:{{*}}= GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+# CHECK-NEXT: v3:{{*}}= GetGlobalBinding key="shared" level=Expected [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v4:{{*}}= GetGlobalBinding key="shared" level=Expected
+# CHECK-NEXT: SetGlobalBinding v0 key="shared" level=Expected [seesScriptBindings]
+# CHECK-NEXT: SetGlobalBinding v0 key="shared" mode=Sloppy level=Expected
+# CHECK-NOT: PropGet
+# CHECK-NOT: PropSet
+
+function f1 name="byName" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="0"
+    v2 = PropGet v0 key="__proto__"
+    v3 = PropDelete v0 key="shared" mode=Sloppy [isFreeName]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="byName"
+# CHECK-NOT: GlobalBinding
+# CHECK: = PropGet v0 key="0"
+# CHECK-NEXT: = PropGet v0 key="__proto__"
+# CHECK-NEXT: = PropDelete v0 key="shared" mode=Sloppy [isFreeName]
+# CHECK-NOT: GlobalBinding
+
+function f2 name="lockedGlobal" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Array" [isFreeName]
+    v2 = PropGet v0 key="Array" [isFreeName, isForTypeOf]
+    Return v1
+}
+# CHECK-LABEL: function f2 name="lockedGlobal"
+# CHECK-NOT: GlobalBinding
+# CHECK: = PropGet v0 key="Array" [isFreeName]
+# CHECK-NEXT: = PropGet v0 key="Array" [isFreeName, isForTypeOf]
+# CHECK-NOT: GlobalBinding
+
+function f3 name="otherReceiver" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="shared"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="otherReceiver"
+# CHECK-NOT: GlobalBinding
+# CHECK: = PropGet v0 key="shared"

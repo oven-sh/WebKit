@@ -8,7 +8,18 @@
 
 namespace JSC { namespace AOT { namespace Typed { namespace FlagMask {
 
-constexpr std::optional<unsigned> isMadeOnDemand(Opcode opcode) { return opcode == Opcode::NewClosure ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+constexpr std::optional<unsigned> isMadeOnDemand(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::NewClosure: return 1 << 0;
+    case Opcode::NewObject: return 1 << 2;
+    default: return std::nullopt;
+    }
+}
+
+constexpr std::optional<unsigned> isHeldByClosureTable(Opcode opcode) { return opcode == Opcode::NewClosure ? std::optional<unsigned>(1 << 1) : std::nullopt; }
+
+constexpr std::optional<unsigned> isLent(Opcode opcode) { return opcode == Opcode::NewClosure ? std::optional<unsigned>(1 << 2) : std::nullopt; }
 
 constexpr std::optional<unsigned> ownerCannotBeMarked(Opcode opcode)
 {
@@ -32,14 +43,9 @@ constexpr std::optional<unsigned> laterBarrierCovers(Opcode opcode)
     }
 }
 
-constexpr std::optional<unsigned> keepsShape(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::NewObject: case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::CreateIteratorResult:
-    case Opcode::ConstructSuperForwardVarargs: return 1 << 0;
-    default: return std::nullopt;
-    }
-}
+constexpr std::optional<unsigned> takesCellOfInnerObject(Opcode opcode) { return opcode == Opcode::NewObject ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+
+constexpr std::optional<unsigned> cellCannotBeMarked(Opcode opcode) { return opcode == Opcode::NewObject ? std::optional<unsigned>(1 << 1) : std::nullopt; }
 
 constexpr std::optional<unsigned> isFreeName(Opcode opcode)
 {
@@ -49,16 +55,29 @@ constexpr std::optional<unsigned> isFreeName(Opcode opcode)
     }
 }
 
-constexpr std::optional<unsigned> isForTypeOf(Opcode opcode) { return opcode == Opcode::PropGet ? std::optional<unsigned>(1 << 1) : std::nullopt; }
+constexpr std::optional<unsigned> isForTypeOf(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::PropGet: case Opcode::GetGlobalBinding: return 1 << 1;
+    default: return std::nullopt;
+    }
+}
 
 constexpr std::optional<unsigned> keyIsIntegral(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::GetArrayElement:
-    case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: return 1 << 0;
+    case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement:
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: return 1 << 0;
     default: return std::nullopt;
     }
 }
+
+constexpr std::optional<unsigned> reusesDescriptors(Opcode opcode) { return opcode == Opcode::TryReExportFields ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+
+constexpr std::optional<unsigned> keyIsFirstCapture(Opcode opcode) { return opcode == Opcode::TryReExportFields ? std::optional<unsigned>(1 << 1) : std::nullopt; }
+
+constexpr std::optional<unsigned> refusesOtherValues(Opcode opcode) { return opcode == Opcode::SetLiteralPrototype ? std::optional<unsigned>(1 << 0) : std::nullopt; }
 
 constexpr std::optional<unsigned> isLikelyKey(Opcode opcode)
 {
@@ -89,8 +108,8 @@ constexpr std::optional<unsigned> isDemotedTailCall(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::Call: return 1 << 2;
-    case Opcode::CallList: case Opcode::CallGroup: case Opcode::CallForwardVarargs: case Opcode::AwaitCallBySavingFrame: case Opcode::CallMethod:
-    case Opcode::CallResolved: case Opcode::CallInline: return 1 << 0;
+    case Opcode::CallList: case Opcode::CallForwardVarargs: case Opcode::AwaitCallBySavingFrame: case Opcode::CallMethod: case Opcode::CallResolved:
+    case Opcode::CallInline: return 1 << 0;
     case Opcode::CallDirect: return 1 << 4;
     case Opcode::CallBuiltin: return 1 << 1;
     default: return std::nullopt;
@@ -111,6 +130,16 @@ constexpr std::optional<unsigned> hasRest(Opcode opcode) { return opcode == Opco
 
 constexpr std::optional<unsigned> readsValueWhenDone(Opcode opcode) { return opcode == Opcode::IteratorResume ? std::optional<unsigned>(1 << 0) : std::nullopt; }
 
+constexpr std::optional<unsigned> takesExtraTurn(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::Await: case Opcode::AwaitBySavingFrame: return 1 << 0;
+    default: return std::nullopt;
+    }
+}
+
+constexpr std::optional<unsigned> isBare(Opcode opcode) { return opcode == Opcode::EvaluateModule ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+
 constexpr std::optional<unsigned> isURL(Opcode opcode)
 {
     switch (opcode) {
@@ -119,12 +148,44 @@ constexpr std::optional<unsigned> isURL(Opcode opcode)
     }
 }
 
+constexpr std::optional<unsigned> isForRequire(Opcode opcode) { return opcode == Opcode::ResolveDynamic ? std::optional<unsigned>(1 << 1) : std::nullopt; }
+
+constexpr std::optional<unsigned> holdsDeclaredType(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetFlattenedSlot: case Opcode::GetDeferredClosureSlot: return 1 << 0;
+    default: return std::nullopt;
+    }
+}
+
+constexpr std::optional<unsigned> mayMeetUnfinishedObject(Opcode opcode) { return opcode == Opcode::HasNoFieldOutsideSlot ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+
 constexpr std::optional<unsigned> isWritable(Opcode opcode) { return opcode == Opcode::HasArrayStorage ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+
+constexpr std::optional<unsigned> seesScriptBindings(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: return 1 << 0;
+    default: return std::nullopt;
+    }
+}
 
 constexpr std::optional<unsigned> isInBounds(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::GetArrayElement: case Opcode::PutArrayElement: return 1 << 1;
+    default: return std::nullopt;
+    }
+}
+
+constexpr std::optional<unsigned> isPresent(Opcode opcode) { return opcode == Opcode::GetArrayElement ? std::optional<unsigned>(1 << 2) : std::nullopt; }
+
+constexpr std::optional<unsigned> readsHoleAsNaN(Opcode opcode) { return opcode == Opcode::GetArrayElement ? std::optional<unsigned>(1 << 3) : std::nullopt; }
+
+constexpr std::optional<unsigned> isInsideView(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: return 1 << 1;
     default: return std::nullopt;
     }
 }
@@ -142,6 +203,8 @@ constexpr std::optional<unsigned> opensObject(Opcode opcode) { return opcode == 
 constexpr std::optional<unsigned> followsMember(Opcode opcode) { return opcode == Opcode::JSONAppendKey ? std::optional<unsigned>(1 << 1) : std::nullopt; }
 
 constexpr std::optional<unsigned> readsFromFirstResult(Opcode opcode) { return opcode == Opcode::PropGetPair ? std::optional<unsigned>(1 << 0) : std::nullopt; }
+
+constexpr std::optional<unsigned> isDefinition(Opcode opcode) { return opcode == Opcode::TryPutByIds ? std::optional<unsigned>(1 << 0) : std::nullopt; }
 
 constexpr std::optional<unsigned> numberIsOnLeft(Opcode opcode) { return opcode == Opcode::IntegerBound ? std::optional<unsigned>(1 << 0) : std::nullopt; }
 

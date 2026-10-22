@@ -1,0 +1,133 @@
+# plain = function () { }; Object.defineProperty(ownAccessor, "call", { get() { } }); Object.setPrototypeOf(below, { get call() { } }); named.extra = 1; async function async() { }; class C { static get extra() { } }
+# Each is handed to a helper of its own, which calls it, and the question is asked of the type that flow proves for the helper's parameter.
+# RUN: runs-no-code call length extra
+# CHECK: f3 v0: f10: call=yes|yes length=yes|yes extra=yes|yes any=no|no keys=yes iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f4 v0: f11: call=no|no length=no|no extra=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f5 v0: f12: call=no|no length=no|no extra=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f6 v0: f13: call=yes|yes length=yes|yes extra=no|no any=no|no keys=yes iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f7 v0: f14: call=no|no length=no|no extra=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f8 v0: f15: call=no|no length=no|no extra=no|no any=no|no keys=no iterate=no convert=no define=no unlisted=no called=yes
+# CHECK: f9 v0: f16: call=yes|yes length=yes|yes extra=yes|yes any=no|no keys=yes iterate=no convert=no define=no unlisted=no called=yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Spy"
+layout L1 name="GetterDescriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="C" constructor=f15
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewClosure function=f1
+    DefineGetter v1, v2 key="call"
+    v4 = NewClosure function=f10
+    v5 = PropGet v4 key="call"
+    v6 = PropGet v4 key="length"
+    v7 = PropGet v4 key="extra"
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v4
+    v10 = NewClosure function=f11
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = NewClosure function=f1
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = String string="call"
+    v15 = Call v11, -, v10, v14, v13
+    v16 = NewClosure function=f4
+    v17 = Call v16, -, v10
+    v18 = NewClosure function=f12
+    v19 = Builtin builtin=ObjectSetPrototypeOf
+    v20 = Call v19, -, v18, v1
+    v21 = NewClosure function=f5
+    v22 = Call v21, -, v18
+    v23 = NewClosure function=f13
+    PropSet v23, v0 key="extra" mode=Strict
+    v25 = NewClosure function=f6
+    v26 = Call v25, -, v23
+    v27 = NewClosure function=f14
+    v28 = NewClosure function=f7
+    v29 = Call v28, -, v27
+    v30 = NewClosure function=f15
+    v31 = NewClass v30 layout=L2
+    v32 = NewClosure function=f1
+    DefineMethod v31, v32 layout=L2 side=Static methodKind=Getter key="extra"
+    v34 = FinishClass v31 layout=L2
+    v35 = NewClosure function=f8
+    v36 = Call v35, -, v34
+    v37 = NewClosure v0 function=f16
+    v38 = NewClosure function=f9
+    v39 = Call v38, -, v37
+    Return
+}
+function f1 name="spy" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="spy" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="takesPlain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f4 name="takesOwnAccessor" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f5 name="takesBelow" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f6 name="takesNamed" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f7 name="takesAsync" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f8 name="takesClassObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f9 name="takesCapturing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f10 name="plain" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="ownAccessor" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f12 name="below" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f13 name="named" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f14 name="async" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    Return
+}
+function f15 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f16 name="capturing" captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

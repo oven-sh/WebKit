@@ -33,9 +33,9 @@ function f1 name="later" results=[{type=anything}] {
 }
 
 # STATICS: roots offset=0 size=16
-# STATICS-NEXT: roots offset=32 size=8
+# STATICS-NOT: roots
 # PLACED: g0 offset=16 representation=Double
 # PLACED-NEXT: g1 offset=0 representation=JSValue
 # PLACED-NEXT: g2 offset=24 representation=Double
 # PLACED-NEXT: g3 offset=8 representation=JSValue
-# PLACED-NEXT: module-value m0 @32
+# PLACED-NOT: module-value

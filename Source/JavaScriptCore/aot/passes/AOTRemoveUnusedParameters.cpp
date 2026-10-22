@@ -10,11 +10,11 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
+#include "AOTEffectSummaries.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTParameterUses.h"
 #include "AOTPassRunner.h"
-#include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTThreads.h"
 #include "AOTValueSubstitution.h"
@@ -52,16 +52,17 @@ static bool countsEntryParameters(CreatorRecord::Kind kind)
 {
     switch (kind) {
     case CreatorRecord::Kind::Entrypoint:
+    case CreatorRecord::Kind::TableLookup:
     case CreatorRecord::Kind::Coroutine:
     case CreatorRecord::Kind::BoundFunction:
     case CreatorRecord::Kind::ResultWrapper:
     case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::ParameterWrapper:
+    case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::StubBody:
         return true;
     case CreatorRecord::Kind::None:
     case CreatorRecord::Kind::Version:
-    case CreatorRecord::Kind::Continuation:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
@@ -101,11 +102,12 @@ static void removeAtPositions(List& list, const BitVector& removed)
 
 ParameterEditing canEditParameters(const Program& program, const CallGraph& callGraph, FunctionID id)
 {
-    auto& function = program.at(id);
-    if (!function.hasBody() || !function.mayChangeSignature() || !function.mayBeCloned() || !function.hasOrdinaryFrame())
-        return ParameterEditing::Unknown;
     if (!callGraph.numberOfDirectCallSites(id))
         return ParameterEditing::Unknown;
+    RecordFacts facts = recordFactsOf(program, id);
+    if (!facts.hasBody || !facts.has(FunctionCapabilities::MayChangeSignature) || !facts.has(FunctionCapabilities::MayBeCloned) || !facts.hasOrdinaryFrame())
+        return ParameterEditing::Unknown;
+    auto& function = program.at(id);
     if (function.constructedClass || function.isUnsplitCoroutine() || function.isModuleBody())
         return ParameterEditing::Unknown;
     if (countsEntryParameters(function.creator.kind()))
@@ -193,7 +195,7 @@ void removeEntryParameters(Function& function, const BitVector& removed)
     }
 
     if (function.hasBody()) {
-        auto& entryParameters = function.at(entryBlock).parameters;
+        auto& entryParameters = function.edit(entryBlock, BlockEdit::Parameters).parameters;
         for (size_t index : removed)
             becomeUndefined(function, entryParameters[index]);
         removeAtPositions(entryParameters, removed);
@@ -203,7 +205,7 @@ void removeEntryParameters(Function& function, const BitVector& removed)
 
 void removeCallArguments(Function& caller, ValueID call, const BitVector& removed)
 {
-    auto& value = caller.at(call);
+    auto& value = caller.edit(call);
     RELEASE_ASSERT(value.opcode == Opcode::CallDirect);
     for (uint32_t position = value.numberOfVariadicOperands(); position--;) {
         if (removed.get(position))
@@ -258,8 +260,7 @@ static void becomeForwarder(const AnalysisContext& context, Function& original, 
         for (size_t index = 0; index < entryParameters.size(); ++index) {
             auto& parameter = original.at(entryParameters[index]);
             ValueID copy = builder.addParameter(entry, parameter.type);
-            forwarder.at(copy).setWritten(parameter.written());
-            forwarder.at(copy).setPrediction(parameter.prediction());
+            forwarder.edit(copy).setExpected(parameter.expected());
             if (!removed.get(index))
                 arguments.append(copy);
         }
@@ -268,7 +269,6 @@ static void becomeForwarder(const AnalysisContext& context, Function& original, 
         Value call = IRBuilder::make(Opcode::CallDirect);
         call.setFunction(reduced);
         call.setArgumentsOperands(arguments.span());
-        call.setResultCheck(resultCheckOf(*context.flow, reduced));
         emitReturnOfForwardedCall(builder, builder.append(WTF::move(call)), tailCallRequirementOf(original));
     }
     original = WTF::move(forwarder);
@@ -302,6 +302,16 @@ static void addReducedFunctions(ProgramEditor& editor, BuildContext& build, Para
         plan.reducedFunctions.append(editor.addFunctionLike(plan.candidates[index], WTF::move(reducedFunctions[index])));
 }
 
+static EffectSummaries summarizeReducedFunctions(const EffectSummaries& known, const ParameterRemovalPlan& plan)
+{
+    RELEASE_ASSERT(plan.reducedFunctions.last().index() - plan.reducedFunctions.first().index() + 1 == plan.reducedFunctions.size());
+    Vector<FunctionSummary> summaries(plan.candidates.size(), [&](size_t index) {
+        FunctionID original = plan.candidates[index];
+        return known.of(original).withoutParameters(plan.removed[original.index()]);
+    });
+    return EffectSummaries(known, plan.reducedFunctions.first(), summaries.span());
+}
+
 static Vector<FunctionID> findCallers(const CallGraph& callGraph, const BuildContext& build, const ParameterRemovalPlan& plan)
 {
     BitVector isCaller;
@@ -326,7 +336,7 @@ static bool retargetCalls(Function& caller, const ParameterRemovalPlan& plan)
     bool didRetarget = false;
     for (auto& block : caller.blocks) {
         for (ValueID id : block.values) {
-            auto& call = caller.at(id);
+            auto& call = caller.edit(id);
             if (call.opcode != Opcode::CallDirect)
                 continue;
             FunctionID callee = call.function();
@@ -367,10 +377,12 @@ void removeUnusedParameters(ProgramEditor& editor, const OptimizationInputs& inp
         return;
 
     addReducedFunctions(editor, build, plan);
+    EffectSummaries effects = summarizeReducedFunctions(inputs.effects, plan);
+    OptimizationInputs inputsOfCallers = inputs.withEffects(effects);
     Vector<FunctionID> callers = findCallers(inputs.callGraph, build, plan);
     editFunctionsInParallel(editor, build, callers.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         if (retargetCalls(function, plan))
-            simplifyEditedFunction(runner, program, inputs, id, function, arenas);
+            simplifyEditedFunction(runner, program, inputsOfCallers, id, function, arenas);
     });
     editFunctionsInParallel(editor, build, plan.candidates.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
         AnalysisContext context { build, program, &inputs.flow, &inputs.effects, id };

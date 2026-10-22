@@ -1,0 +1,58 @@
+# const { kState } = names; bag = { state: one, other: two, undefined: three }; bag[kState]()   where `names` may or may not have the member
+# undefined, null and the booleans are converted to one text each, so a key that is a constant or undefined names two properties and no more: nothing is read under a key nobody knows.
+# A store under such a key lies under those two names: a read under a third name does not find it
+# RUN: valueflow-solve calls
+# CHECK: f0 v11 -> f1 f3
+# CHECK: f0 v17 ->
+# CHECK-NOT: f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+# UNREACHED: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Bag" fields=[{key="state" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}, {key="undefined" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Stored"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = ToBoolean v5
+    v7 = String string="state"
+    v8 = Undefined
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v7)
+  b2():
+    Jump -> next b3(v8)
+  b3(v9: anything):
+    v10 = ElemGet v3, v9
+    v11 = Call v10, v3
+    v12 = NewObject layout=L1 fields=[]
+    v13 = NewClosure function=f4
+    ElemSet v12, v9, v13 mode=Strict
+    v15 = String string="other"
+    v16 = ElemGet v12, v15
+    v17 = Call v16, v12
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    Return
+}

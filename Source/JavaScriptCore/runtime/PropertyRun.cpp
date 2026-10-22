@@ -7,6 +7,8 @@
 #include "PropertyRun.h"
 
 #include "Identifier.h"
+#include "JSCInlines.h"
+#include "PropertyTable.h"
 #include <wtf/HashFunctions.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -85,6 +87,100 @@ const PropertyRun* PropertyRunTable::intern(std::span<UniquedStringImpl* const> 
     });
     runsWithLastName.insert(position == notFound ? runsWithLastName.size() : position, result);
     return result;
+}
+
+bool PropertyAdditionList::hasAttributes() const
+{
+    if (attributes.empty())
+        return commonAttributes;
+    return std::ranges::any_of(attributes, [](unsigned value) {
+        return value;
+    });
+}
+
+struct PropertyAdditionCache::HashTranslator {
+    static unsigned hash(unsigned hash) { return hash; }
+    static bool equal(const Entry& entry, unsigned hash) { return entry.structure && entry.hash == hash; }
+};
+
+struct PropertyAdditionCache::AdditionsTranslator {
+    struct Query {
+        Structure* base;
+        unsigned hash;
+        const PropertyAdditionList& additions;
+    };
+
+    static unsigned hash(const Query& query) { return query.hash; }
+
+    static bool equal(const Entry& entry, const Query& query)
+    {
+        return entry.hash == query.hash && entry.base == query.base && entry.structure && matches(entry.structure, query.base, query.additions);
+    }
+};
+
+PropertyAdditionCache::~PropertyAdditionCache()
+{
+    if (m_vm)
+        m_vm->heap.unregisterWeakGCHashTable(this);
+}
+
+unsigned PropertyAdditionCache::computeHash(unsigned propertyHash, unsigned numberOfProperties)
+{
+    return WTF::pairIntHash(propertyHash, numberOfProperties);
+}
+
+bool PropertyAdditionCache::matches(Structure* structure, Structure* base, const PropertyAdditionList& additions)
+{
+    PropertyTable* table = structure->materializedPropertyTable();
+    if (!table || table->hasDeletedOffset())
+        return false;
+    unsigned inlineCapacity = base->inlineCapacity();
+    unsigned firstPropertyNumber = numberOfSlotsForMaxOffset(base->maxOffset(), inlineCapacity);
+    if (structure->inlineCapacity() != inlineCapacity || table->size() != firstPropertyNumber + additions.names.size())
+        return false;
+    for (size_t i = 0; i < additions.names.size(); ++i) {
+        auto [offset, attributes] = table->get(additions.names[i]);
+        if (offset != offsetForPropertyNumber(firstPropertyNumber + i, inlineCapacity) || attributes != additions.attributesAt(i))
+            return false;
+    }
+    return true;
+}
+
+bool PropertyAdditionCache::containsHash(unsigned hash) const
+{
+    return m_entries.contains<HashTranslator>(hash);
+}
+
+Structure* PropertyAdditionCache::find(Structure* base, unsigned hash, const PropertyAdditionList& additions) const
+{
+    auto iterator = m_entries.find<AdditionsTranslator>(AdditionsTranslator::Query { base, hash, additions });
+    return iterator == m_entries.end() ? nullptr : iterator->structure;
+}
+
+void PropertyAdditionCache::add(VM& vm, Structure* base, unsigned hash, Structure* structure)
+{
+    ASSERT(!m_entries.contains(Entry { base, structure, hash }));
+    if (!m_vm) {
+        m_vm = &vm;
+        vm.heap.registerWeakGCHashTable(this);
+    }
+    m_entries.add(Entry { base, structure, hash });
+    markDirty(vm);
+}
+
+void PropertyAdditionCache::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
+{
+    auto isDead = [&](const Entry& entry) {
+        return !entry.structure || !vm.heap.isMarked(entry.base) || !vm.heap.isMarked(entry.structure);
+    };
+    if (collectionScope == CollectionScope::Full) {
+        m_entries.removeIf(isDead);
+        return;
+    }
+    for (const Entry& entry : m_entries) {
+        if (isDead(entry))
+            entry.structure = nullptr;
+    }
 }
 
 } // namespace JSC

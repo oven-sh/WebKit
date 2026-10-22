@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTShapeTestEmitter.h"
@@ -117,12 +118,17 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
 void ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue subject, LType type, B3::FrequentedBlock otherwise)
 {
     RELEASE_ASSERT(subject->type() == type && (type == B3::Int32 || type == B3::Int64));
+    Vector<BlockID, 16> generatedBlocks = emitter<AllocationEmitter>().allocateByTable(terminator, subject);
+    if (std::optional<SwitchWindow> window = generatedBlocks.isEmpty() ? findSwitchWindow(terminator.terminator()) : std::nullopt) {
+        testBitsOfWindow(terminator, *window, subject, type, otherwise);
+        return;
+    }
     PayloadListView<int64_t> cases = terminator->cases();
     Vector<SwitchTarget, 8> targets;
     targets.reserveInitialCapacity(cases.size());
     for (uint32_t index = 0; index < cases.size(); ++index) {
         int64_t caseValue = cases[index];
-        if (type == B3::Int32 && caseValue != static_cast<int32_t>(caseValue))
+        if ((type == B3::Int32 && caseValue != static_cast<int32_t>(caseValue)) || generatedBlocks.contains(terminator->targets[index].block))
             continue;
         targets.append(SwitchTarget { caseValue, countedEdgeTo(terminator, index) });
     }
@@ -131,6 +137,42 @@ void ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue
         return;
     }
     m_out.switchOn(subject, targets.span(), otherwise);
+}
+
+void ControlEmitter::testBitsOfWindow(const TerminatorContext& terminator, const SwitchWindow& window, LValue subject, LType type, B3::FrequentedBlock otherwise)
+{
+    auto constant = [&](int64_t value) {
+        return type == B3::Int32 ? m_out.constInt32(static_cast<int32_t>(value)) : m_out.constInt64(value);
+    };
+    build().statistics().count(StatisticID::SwitchesTestedByWindow);
+    LValue position = m_out.sub(subject, constant(window.first));
+    Condition isInWindow(m_out.below(position, constant(window.length)));
+    bool hasNoGap = window.hasNoGap();
+    if (hasNoGap && window.places.size() == 1) {
+        branch(isInWindow, { countedEdgeTo(terminator, window.places[0].firstCase), otherwise });
+        return;
+    }
+
+    LBasicBlock inWindow = newBlock();
+    branch(isInWindow, { normalEdge(inWindow), otherwise });
+    m_out.appendTo(inWindow);
+    LValue shift = type == B3::Int32 ? position : m_out.castToInt32(position);
+    for (size_t index = 0; index < window.places.size(); ++index) {
+        B3::FrequentedBlock place = countedEdgeTo(terminator, window.places[index].firstCase);
+        bool isLast = index + 1 == window.places.size();
+        if (isLast && hasNoGap) {
+            m_out.jump(place.block());
+            return;
+        }
+        Condition isListed(m_out.testNonZero64(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.places[index].values)), shift), m_out.constInt64(1)));
+        if (isLast) {
+            branch(isListed, { place, otherwise });
+            return;
+        }
+        LBasicBlock next = newBlock();
+        branch(isListed, { place, normalEdge(next) });
+        m_out.appendTo(next);
+    }
 }
 
 void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, Boxed subject, B3::FrequentedBlock otherwise)

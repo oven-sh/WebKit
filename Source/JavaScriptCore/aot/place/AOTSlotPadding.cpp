@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <optional>
@@ -41,9 +42,10 @@ public:
     void run();
 
 private:
-    static constexpr uint32_t narrow = widthOf(SlotRepresentation::Int32OrDouble);
-    static constexpr uint32_t wide = widthOf(SlotRepresentation::Double);
+    static constexpr uint32_t narrow = widthOf(SlotRepresentation::OptionalInt32);
+    static constexpr uint32_t wide = widthOf(SlotRepresentation::OptionalInt64);
     static_assert(widthOf(SlotRepresentation::Cell32) == narrow && widthOf(SlotRepresentation::OptionalCell32) == narrow);
+    static_assert(widthOf(SlotRepresentation::Cell) == wide && widthOf(SlotRepresentation::JSValue) == wide);
     static_assert(!(offsetOfFirstField % wide) && !(offsetOfFirstEnvironmentVariable % wide));
 
     bool hasSlots(LayoutID id) const { return m_context.isCompiledObject(id) || m_context.isEnvironment(id); }
@@ -51,8 +53,10 @@ private:
     LayoutID layoutOf(SlotRow row) const { return m_layoutOfRow[row]; }
     uint32_t offsetOf(const Unit& unit) const { return m_packed.slots[unit.rows[0]].offset; }
 
-    const Type& declaredTypeOf(SlotRow) const;
+    const Type& contentsOf(SlotRow) const;
+    bool holdsEnvironmentOfDeferredClosures(SlotRow) const;
     bool isNarrow(SlotRepresentation) const;
+    bool holdsUndefinedOrNull(const Unit&) const;
     std::optional<SlotRepresentation> widenedRepresentationOf(const Unit&) const;
     void createUnits();
     bool isCandidate(const Unit&) const;
@@ -60,10 +64,8 @@ private:
     void recordOccupiedBytes();
     void orderCandidates();
     std::optional<uint32_t> roomFor(const Unit&);
-    std::optional<uint32_t> unitAt(LayoutID, uint32_t offset) const;
-    std::optional<uint32_t> roomAfterMovingNeighbor(const Unit&);
-    void move(const Unit&, uint32_t offset, uint32_t width);
-    bool widen(uint32_t unit, bool mayMoveNeighbor);
+    void move(const Unit&, uint32_t offset);
+    bool widen(uint32_t unit);
 
     const SlotPlanContext& m_context;
     const SlotUses& m_uses;
@@ -72,7 +74,6 @@ private:
     PackedLayouts& m_packed;
 
     Vector<LayoutID> m_layoutOfRow;
-    Vector<uint32_t> m_unitOfRow;
     Vector<SlotRow> m_unsharedRows;
     Vector<Unit> m_units;
     Vector<uint32_t> m_candidates;
@@ -90,22 +91,39 @@ PaddingWidener::PaddingWidener(const SlotPlanContext& context, const SlotUses& u
 {
 }
 
-const Type& PaddingWidener::declaredTypeOf(SlotRow row) const
+const Type& PaddingWidener::contentsOf(SlotRow row) const
 {
     const Program& program = m_context.program;
     FieldReference declaration = declarationOf(program, { layoutOf(row), m_context.rows.fieldOf(row) });
-    return program.at(fieldAt(program, declaration).declared.type);
+    return program.at(slotTypeOf(program, fieldAt(program, declaration)));
+}
+
+// The layout table hands the slot to the run time as a narrow reference in the cell, beside each field whose closure is made over it.
+bool PaddingWidener::holdsEnvironmentOfDeferredClosures(SlotRow row) const
+{
+    const Program& program = m_context.program;
+    if (!m_context.isCompiledObject(layoutOf(row)))
+        return false;
+    FieldReference declaration = declarationOf(program, { layoutOf(row), m_context.rows.fieldOf(row) });
+    return fieldAt(program, declaration).flags.contains(FieldFlags::IsHidden) && contentsOf(row).environment;
 }
 
 bool PaddingWidener::isNarrow(SlotRepresentation representation) const
 {
     switch (m_kind) {
     case WidenedRepresentations::Numbers:
-        return representation == SlotRepresentation::Int32OrDouble || representation == SlotRepresentation::OptionalInt32;
+        return representation == SlotRepresentation::OptionalInt32;
     case WidenedRepresentations::References:
         return representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool PaddingWidener::holdsUndefinedOrNull(const Unit& unit) const
+{
+    return std::ranges::any_of(unit.rows, [&](SlotRow row) {
+        return contentsOf(row).mayBeUndefinedOrNull();
+    });
 }
 
 std::optional<SlotRepresentation> PaddingWidener::widenedRepresentationOf(const Unit& unit) const
@@ -117,13 +135,13 @@ std::optional<SlotRepresentation> PaddingWidener::widenedRepresentationOf(const 
         if (m_claims[row].needsAbsentState)
             absent = Primitive::Absent;
     }
-    const Type& first = declaredTypeOf(unit.rows[0]);
+    const Type& first = contentsOf(unit.rows[0]);
     if (unit.rows.size() == 1)
         return representationFor(m_context, absent ? first.withPrimitives(absent) : first, choice);
 
     Type contents = Type::fromPrimitives(absent);
     for (SlotRow row : unit.rows) {
-        const Type& type = declaredTypeOf(row);
+        const Type& type = contentsOf(row);
         if (!type.isJavaScriptValue())
             return std::nullopt;
         contents = contentsOfSharedSlot(contents, type);
@@ -136,7 +154,6 @@ void PaddingWidener::createUnits()
     const SlotRows& rows = m_context.rows;
     auto& sharedLocations = m_packed.sharedLocations;
     m_layoutOfRow.fill(LayoutID { }, rows.count());
-    m_unitOfRow = m_packed.sharedLocationOfRow;
     for (uint32_t index = 0; index < m_context.program.layouts.size(); ++index) {
         LayoutID layout(index);
         if (!hasSlots(layout))
@@ -147,10 +164,8 @@ void PaddingWidener::createUnits()
             if (slot.storage != SlotStorage::Inline || slot.width() != narrow)
                 continue;
             m_layoutOfRow[row] = layout;
-            if (m_unitOfRow[row] != noSharedLocation)
-                continue;
-            m_unitOfRow[row] = static_cast<uint32_t>(sharedLocations.size() + m_unsharedRows.size());
-            m_unsharedRows.append(row);
+            if (m_packed.sharedLocationOfRow[row] == noSharedLocation)
+                m_unsharedRows.append(row);
         }
     }
     m_units.reserveInitialCapacity(sharedLocations.size() + m_unsharedRows.size());
@@ -168,11 +183,15 @@ bool PaddingWidener::isCandidate(const Unit& unit) const
     bool everyRowIsNarrow = std::ranges::all_of(unit.rows, [&](SlotRow row) {
         const PlacedSlot& slot = m_packed.slots[row];
         RELEASE_ASSERT(slot.hasLocationOf(first));
-        if (slot.storage != SlotStorage::Inline || !isNarrow(slot.representation) || m_packed.rowsWithEmptySlotElsewhere.get(row))
+        if (slot.storage != SlotStorage::Inline || !isNarrow(slot.representation) || m_packed.rowsWithEmptySlotElsewhere.get(row) || holdsEnvironmentOfDeferredClosures(row))
             return false;
-        return m_kind != WidenedRepresentations::References || !(declaredTypeOf(row).primitives & (Primitive::AnyString | Primitive::AnySymbol));
+        return m_kind != WidenedRepresentations::References || !(contentsOf(row).primitives & (Primitive::AnyString | Primitive::AnySymbol));
     });
     if (!everyRowIsNarrow)
+        return false;
+    // Where undefined or null is a value of the field, a read takes the marker along, and the markers of the narrow slot are turned into those of the wide form and back at each access.
+    // A field of integers alone is read and stored as its raw word behind one compare with a 32-bit constant: there more bytes only make the constant wider.
+    if (m_kind == WidenedRepresentations::Numbers && !holdsUndefinedOrNull(unit))
         return false;
     auto widened = widenedRepresentationOf(unit);
     return widened && widthOf(*widened) == wide;
@@ -206,7 +225,7 @@ void PaddingWidener::orderCandidates()
     });
 }
 
-void PaddingWidener::move(const Unit& unit, uint32_t offset, uint32_t width)
+void PaddingWidener::move(const Unit& unit, uint32_t offset)
 {
     for (SlotRow row : unit.rows) {
         PlacedSlot& slot = m_packed.slots[row];
@@ -214,12 +233,12 @@ void PaddingWidener::move(const Unit& unit, uint32_t offset, uint32_t width)
         OccupiedBytes& occupied = m_occupied[layout.index()];
         RELEASE_ASSERT((occupied[slot.offset / 64] & bytesAt(slot.offset, narrow)) == bytesAt(slot.offset, narrow));
         occupied[slot.offset / 64] &= ~bytesAt(slot.offset, narrow);
-        RELEASE_ASSERT(!(occupied[offset / 64] & bytesAt(offset, width)));
-        occupied[offset / 64] |= bytesAt(offset, width);
+        RELEASE_ASSERT(!(occupied[offset / 64] & bytesAt(offset, wide)));
+        occupied[offset / 64] |= bytesAt(offset, wide);
         uint32_t& firstPossiblyFree = m_firstPossiblyFreeOffset[layout.index()];
         firstPossiblyFree = std::min(firstPossiblyFree, slot.offset / wide * wide);
         slot.offset = offset;
-        ensureSizeReaches(m_packed, layout, offset + width);
+        ensureSizeReaches(m_packed, layout, offset + wide);
     }
 }
 
@@ -254,77 +273,17 @@ std::optional<uint32_t> PaddingWidener::roomFor(const Unit& unit)
     return std::nullopt;
 }
 
-std::optional<uint32_t> PaddingWidener::unitAt(LayoutID layout, uint32_t offset) const
-{
-    const SlotRows& rows = m_context.rows;
-    for (FieldIndex field = 0; field < rows.numberOfFieldsOf(layout); ++field) {
-        SlotRow row = rows.rowOf(layout, field);
-        const PlacedSlot& slot = m_packed.slots[row];
-        if (slot.storage == SlotStorage::Inline && slot.offset == offset && slot.width() == narrow)
-            return m_unitOfRow[row];
-    }
-    return std::nullopt;
-}
-
-std::optional<uint32_t> PaddingWidener::roomAfterMovingNeighbor(const Unit& unit)
-{
-    uint32_t own = offsetOf(unit) / wide * wide;
-    uint32_t beside = offsetOf(unit) ^ narrow;
-    std::optional<uint32_t> neighbor;
-    for (SlotRow row : unit.rows) {
-        LayoutID layout = layoutOf(row);
-        if (own + wide > m_packed.inlineLimits[layout.index()])
-            return std::nullopt;
-        if (!(m_occupied[layout.index()][beside / 64] & bytesAt(beside, narrow)))
-            continue;
-        auto unitBeside = unitAt(layout, beside);
-        if (!unitBeside || (neighbor && neighbor != unitBeside))
-            return std::nullopt;
-        neighbor = unitBeside;
-    }
-    if (!neighbor)
-        return std::nullopt;
-    const Unit& neighborUnit = m_units[*neighbor];
-    bool neighborHasToStay = std::ranges::any_of(neighborUnit.rows, [&](SlotRow row) {
-        return m_packed.rowsWithEmptySlotElsewhere.get(row);
-    });
-    if (neighborHasToStay)
-        return std::nullopt;
-    uint32_t start = 0;
-    uint32_t end = UINT32_MAX;
-    for (SlotRow row : neighborUnit.rows) {
-        LayoutID layout = layoutOf(row);
-        start = std::max(start, firstSlotOffsetOf(layout));
-        end = std::min(end, m_packed.inlineLimits[layout.index()]);
-    }
-    for (uint32_t offset = start; offset + narrow <= end; offset += narrow) {
-        if (offset / wide * wide == own)
-            continue;
-        bool isFree = std::ranges::all_of(neighborUnit.rows, [&](SlotRow row) {
-            return !(m_occupied[layoutOf(row).index()][offset / 64] & bytesAt(offset, narrow));
-        });
-        if (!isFree)
-            continue;
-        move(neighborUnit, offset, narrow);
-        return own;
-    }
-    return std::nullopt;
-}
-
-bool PaddingWidener::widen(uint32_t index, bool mayMoveNeighbor)
+bool PaddingWidener::widen(uint32_t index)
 {
     const Unit& unit = m_units[index];
     auto offset = roomFor(unit);
-    if (!offset && mayMoveNeighbor)
-        offset = roomAfterMovingNeighbor(unit);
     if (!offset)
         return false;
-    move(unit, *offset, wide);
+    move(unit, *offset);
     SlotRepresentation widened = *widenedRepresentationOf(unit);
     for (SlotRow row : unit.rows) {
         PlacedSlot& slot = m_packed.slots[row];
         slot.representation = widened;
-        slot.doubleOffsetInExtension = std::nullopt;
         RELEASE_ASSERT(slot.width() == wide);
     }
     m_isWidened.set(index);
@@ -342,23 +301,9 @@ void PaddingWidener::run()
     for (bool didWiden = true; didWiden;) {
         didWiden = false;
         for (uint32_t unit : m_candidates) {
-            if (!m_isWidened.get(unit) && widen(unit, false))
+            if (!m_isWidened.get(unit) && widen(unit))
                 didWiden = true;
         }
-    }
-    if (m_kind != WidenedRepresentations::Numbers)
-        return;
-    for (uint32_t unit : m_candidates) {
-        if (m_isWidened.get(unit))
-            continue;
-        bool isWantedAsInteger = std::ranges::any_of(m_units[unit].rows, [&](SlotRow row) {
-            return m_uses.rows[row].integerUses;
-        });
-        bool isBetterWide = std::ranges::any_of(m_units[unit].rows, [&](SlotRow row) {
-            return m_uses.rows[row].doubleUses || m_uses.rows[row].rangeTestedStores;
-        });
-        if (!isWantedAsInteger && isBetterWide)
-            widen(unit, true);
     }
 }
 
@@ -516,8 +461,6 @@ void widenSlotsIntoPadding(const SlotPlanContext& context, const SlotUses& uses,
     if (kind == WidenedRepresentations::References && context.usesWideReferences)
         return;
     PaddingWidener(context, uses, claims, kind, packed).run();
-    if (kind == WidenedRepresentations::Numbers)
-        updateExtensionSizes(context, packed);
 }
 
 void reserveEmptySlots(const SlotPlanContext& context, const SlotUses& uses, PackedLayouts& packed, const EmptySlotRoom& room)

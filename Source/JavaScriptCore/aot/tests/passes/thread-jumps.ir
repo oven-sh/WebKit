@@ -1,7 +1,7 @@
 # An edge whose arguments decide the branch of its target goes straight to the successor
 # FORM: Prepared
 # RUN: pass ThreadJumps
-# STATISTIC: ThreadJumpsChanges = 9
+# STATISTIC: ThreadJumpsChanges = 10
 # LOSS: MaxThreadedBlockValues f13
 
 module m0 path="main.js" displayPath="main.js"
@@ -190,7 +190,7 @@ function f8 name="skippedBitAndMayRunUserCode" parameters=[{type=number}, {type=
 # CHECK: b1():
 # CHECK: Jump -> next b3(v3)
 
-function f9 name="skippedClaimCanFail" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+function f9 name="skippedCastCanThrow" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -199,7 +199,7 @@ function f9 name="skippedClaimCanFail" parameters=[{type=number}, {type=anything
   b2():
     Jump -> next b3(v0)
   b3(v4):
-    v5 = Claim v1 castType=number
+    v5 = RequireObjectCoercible v1
     v6 = ToBoolean v4
     Branch v6 -> taken b4(), notTaken b5()
   b4():
@@ -207,7 +207,7 @@ function f9 name="skippedClaimCanFail" parameters=[{type=number}, {type=anything
   b5():
     Return v1
 }
-# CHECK-LABEL: function f9 name="skippedClaimCanFail"
+# CHECK-LABEL: function f9 name="skippedCastCanThrow"
 # CHECK: b1():
 # CHECK: Jump -> next b3(v3)
 
@@ -383,3 +383,24 @@ function f18 name="storesVariable" parameters=[{type=number}] results=[{type=num
     Return v0
 }
 # CHECK-LABEL: function f18 name="storesVariable"
+
+function f19 name="skippedCheckIsUnused" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    v5 = Check v1 castType=number
+    v6 = ToBoolean v4
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f19 name="skippedCheckIsUnused"
+# CHECK: b1():
+# CHECK: Jump -> next b5()

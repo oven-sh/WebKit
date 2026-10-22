@@ -52,6 +52,8 @@ enum class VirtualObjectKind : uint8_t {
 
 enum class VirtualFieldKind : uint8_t {
     Named,
+    // What a store by name has put under the key of a field while nothing proves that the slot of the field admits it. A shape stores this or the Named field of the key, never both.
+    UnprovenNamed,
     LayoutField,
     Element,
     Capture,
@@ -74,13 +76,14 @@ struct VirtualField {
     uint32_t index { 0 };
 
     static VirtualField named(PropertyKeyID key) { return { VirtualFieldKind::Named, key, { }, 0 }; }
+    static VirtualField unprovenNamed(PropertyKeyID key) { return { VirtualFieldKind::UnprovenNamed, key, { }, 0 }; }
     static VirtualField layoutField(LayoutID layout, uint32_t field) { return { VirtualFieldKind::LayoutField, { }, layout, field }; }
     static VirtualField element(uint32_t index) { return { VirtualFieldKind::Element, { }, { }, index }; }
     static VirtualField capture(uint32_t index) { return { VirtualFieldKind::Capture, { }, { }, index }; }
     static VirtualField operand(uint32_t index) { return { VirtualFieldKind::Operand, { }, { }, index }; }
     static VirtualField part(VirtualFieldKind kind) { return { kind, { }, { }, 0 }; }
 
-    bool isProperty() const { return kind == VirtualFieldKind::Named || kind == VirtualFieldKind::LayoutField || kind == VirtualFieldKind::Element; }
+    bool isProperty() const { return kind == VirtualFieldKind::Named || kind == VirtualFieldKind::UnprovenNamed || kind == VirtualFieldKind::LayoutField || kind == VirtualFieldKind::Element; }
 
     void dump(PrintStream&) const;
 
@@ -181,6 +184,10 @@ struct AllocationRequest {
 Value makeAllocation(const Program&, const AllocationRequest&);
 Value makeFieldRead(const Program&, const VirtualObjectDescription&, const VirtualField&, ValueID cell, ValueID guard);
 Value makeFieldStore(const Program&, const VirtualObjectDescription&, const FieldValue&, ValueID cell, ValueID guard);
+// An object that is built lists something that fits the slot, and the store by name comes behind the allocation, as storeUnprovenInitialValues() lays them.
+bool canHoldUnprovenValue(const Program&, const VirtualObjectDescription&, const VirtualField& named);
+Value makeFiller(const Program&, const VirtualObjectDescription&, const VirtualField& unprovenNamed);
+Value makeStoreByName(const FieldValue& unprovenNamed, ValueID cell);
 void setExactReceivers(Value& slotOperation, LayoutID, TypeArena&);
 
 enum class SpeculativeLoad : uint8_t { Unknown, Safe };

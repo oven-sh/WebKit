@@ -36,7 +36,13 @@ static constexpr uint32_t prefixWord = 0x0105;
 static constexpr uint16_t secondEntry = 1;
 static_assert(numberOfLargeBodies * pinnedUnitsInLargeBody * wordsInPinnedUnit * sizeof(uint32_t) >= 3 * loweredSharedCodeReach);
 
-static Vector<uint8_t> copyBytes(const TestImage& image) { return Vector<uint8_t>(image.bytes.span()); }
+// An image in memory holds addresses inside itself. Two images are compared as the compiler wrote them: for the address 0.
+static Vector<uint8_t> copyBytes(const TestImage& image)
+{
+    Vector<uint8_t> bytes(image.bytes.span());
+    relocateImage(bytes.mutableSpan(), 0);
+    return bytes;
+}
 
 template<typename BuildBytes>
 static void checkSameForAllThreadCounts(const BuildBytes& buildBytes)
@@ -105,6 +111,7 @@ static void copyHeaderMembers(ImageHeader& copy, const ImageHeader& header)
     copy.size = header.size;
     copy.codeOffset = header.codeOffset;
     copy.codeSize = header.codeSize;
+    copy.address = header.address;
     copy.options = header.options;
     copy.heap.sizeClassProgression = header.heap.sizeClassProgression;
     copy.heap.markedBlockCageShift = header.heap.markedBlockCageShift;

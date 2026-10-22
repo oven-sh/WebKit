@@ -1,0 +1,134 @@
+# a = []; a.length = { valueOf: one }; b = []; b[name()] = { valueOf: two }; Reflect.set([], "length", { valueOf: three }); Object.assign([], { length: { valueOf: four } }); Object.defineProperty([], "length", { value: { valueOf: five } }); Object.defineProperties([], { length: { value: { valueOf: six } } }); Reflect.defineProperty([], "length", { value: { valueOf: seven } }); held = { valueOf: eight }; record = {}; the same seven with record and held; [].size = held
+# An array keeps a number as its length. Whatever stores or defines an object under that name, or under a key nobody knows, runs the conversion that the object names. A record keeps the object, and so does an array under another name.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK-NOT: unreached f4
+# CHECK-NOT: unreached f5
+# CHECK-NOT: unreached f6
+# CHECK-NOT: unreached f7
+# CHECK: unreached f8
+# CHECK-NOT: unreached f9
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StoredByName" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="StoredByKey" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="StoredByReflect" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Assigned" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Source" fields=[{key="length" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Defined" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="DefinedByMap" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L8 name="DescriptorInMap" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L9 name="Map" fields=[{key="length" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="DefinedByReflect" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L11 name="DescriptorForReflect" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L12 name="Held" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L13 name="Record"
+layout L14 name="SourceOfHeld" fields=[{key="length" declared={type=anything} flags=[IsRequired]}]
+layout L15 name="DescriptorOfHeld" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L16 name="DescriptorOfHeldInMap" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L17 name="MapOfHeld" fields=[{key="length" declared={type=anything} flags=[IsRequired]}]
+layout L18 name="DescriptorOfHeldForReflect" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    PropSet v0, v2 key="length" mode=Strict
+    v4 = NewArray contents=anything
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = NewClosure function=f9
+    v8 = Call v7
+    v9 = ToPropertyKey v8
+    ElemSet v4, v9, v6 mode=Strict
+    v11 = NewArray contents=anything
+    v12 = NewClosure function=f3
+    v13 = NewObject -, v12 layout=L2 fields=[0]
+    v14 = String string="length"
+    v15 = Builtin builtin=ReflectSet
+    v16 = Call v15, -, v11, v14, v13
+    v17 = NewArray contents=anything
+    v18 = NewClosure function=f4
+    v19 = NewObject -, v18 layout=L3 fields=[0]
+    v20 = NewObject -, v19 layout=L4 fields=[0]
+    v21 = Builtin builtin=ObjectAssign
+    v22 = Call v21, -, v17, v20
+    v23 = NewArray contents=anything
+    v24 = NewClosure function=f5
+    v25 = NewObject -, v24 layout=L5 fields=[0]
+    v26 = NewObject -, v25 layout=L6 fields=[0]
+    v27 = Builtin builtin=ObjectDefineProperty
+    v28 = Call v27, -, v23, v14, v26
+    v29 = NewArray contents=anything
+    v30 = NewClosure function=f6
+    v31 = NewObject -, v30 layout=L7 fields=[0]
+    v32 = NewObject -, v31 layout=L8 fields=[0]
+    v33 = NewObject -, v32 layout=L9 fields=[0]
+    v34 = Builtin builtin=ObjectDefineProperties
+    v35 = Call v34, -, v29, v33
+    v36 = NewArray contents=anything
+    v37 = NewClosure function=f7
+    v38 = NewObject -, v37 layout=L10 fields=[0]
+    v39 = NewObject -, v38 layout=L11 fields=[0]
+    v40 = Builtin builtin=ReflectDefineProperty
+    v41 = Call v40, -, v36, v14, v39
+    v42 = NewClosure function=f8
+    v43 = NewObject -, v42 layout=L12 fields=[0]
+    v44 = NewObject layout=L13 fields=[]
+    PropSet v44, v43 key="length" mode=Strict
+    ElemSet v44, v9, v43 mode=Strict
+    v47 = Call v15, -, v44, v14, v43
+    v48 = NewObject -, v43 layout=L14 fields=[0]
+    v49 = Call v21, -, v44, v48
+    v50 = NewObject -, v43 layout=L15 fields=[0]
+    v51 = Call v27, -, v44, v14, v50
+    v52 = NewObject -, v43 layout=L16 fields=[0]
+    v53 = NewObject -, v52 layout=L17 fields=[0]
+    v54 = Call v34, -, v44, v53
+    v55 = NewObject -, v43 layout=L18 fields=[0]
+    v56 = Call v40, -, v44, v14, v55
+    v57 = NewArray contents=anything
+    PropSet v57, v43 key="size" mode=Strict
+    Return
+}
+function f1 name="one" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="two" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="three" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="four" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="five" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="six" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="seven" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f8 name="eight" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f9 name="name" results=[{type=string}] {
+  b0():
+    v0 = String string="some text that names no property of the program"
+    Return v0
+}

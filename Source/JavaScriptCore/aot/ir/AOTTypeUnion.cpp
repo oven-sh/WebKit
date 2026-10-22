@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTIRProgram.h"
+#include "AOTLayout.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
 
@@ -39,16 +41,12 @@ static ClassPart uniteParts(const ClassPart& a, const ClassPart& b, TypeArena& a
     result.contents.grow(numberOfContents);
     for (unsigned index = 0; index < numberOfContents; ++index)
         result.contents[index] = arena.unionOf(a.contentsAt(index), b.contentsAt(index));
-    size_t numberOfPredictions = std::max(a.predictedContents.size(), b.predictedContents.size());
-    result.predictedContents.grow(numberOfPredictions);
-    for (unsigned index = 0; index < numberOfPredictions; ++index)
-        result.predictedContents[index] = arena.unionOf(a.predictedContentsAt(index), b.predictedContentsAt(index));
     return result;
 }
 
-static Vector<ClassPart, 1> uniteClasses(const Vector<ClassPart, 1>& a, const Vector<ClassPart, 1>& b, TypeArena& arena)
+static ClassParts uniteClasses(const ClassParts& a, const ClassParts& b, TypeArena& arena)
 {
-    Vector<ClassPart, 1> result;
+    ClassParts result;
     result.reserveInitialCapacity(a.size() + b.size());
     size_t indexInA = 0;
     size_t indexInB = 0;
@@ -82,23 +80,6 @@ static SortedSet<RegExpLiteralInType> uniteRegExpLiterals(const Type& a, const T
     return united;
 }
 
-static LayoutSetID uniteLayouts(LayoutSetID a, LayoutSetID b, TypeArena& arena)
-{
-    if (!b || a == b)
-        return a;
-    if (!a)
-        return b;
-    const Vector<LayoutID>& first = arena.at(a).members;
-    const Vector<LayoutID>& second = arena.at(b).members;
-    Vector<LayoutID, 16> members(first.size() + second.size());
-    members.shrink(std::ranges::set_union(first, second, members.begin()).out - members.begin());
-    if (members.size() == first.size())
-        return a;
-    if (members.size() == second.size())
-        return b;
-    return arena.intern(LayoutSet { Vector<LayoutID>(members.span()), true });
-}
-
 Type Type::unionWith(const Type& other, TypeArena& arena) const
 {
     if (*this == other || other.isNever())
@@ -120,9 +101,34 @@ Type Type::unionWith(const Type& other, TypeArena& arena) const
     if (!other.classes.isEmpty())
         result.classes = uniteClasses(classes, other.classes, arena);
     result.regExpLiteralSet = uniteRegExpLiterals(*this, other);
-    result.layouts = uniteLayouts(layouts, other.layouts, arena);
+    result.layouts = arena.unionOf(layouts, other.layouts);
     result.canonicalize();
     return result;
+}
+
+// A test splits a family that the program declares, and the join behind the test puts the two sides together again. Types list such a family anyway, however long it is,
+// and a position that is declared to hold it takes what the join gives only as long as the join still says so.
+static bool liesInsideDeclaredFamily(const WideningContext& context, const Type& type)
+{
+    const Program& program = context.program;
+    std::span<const LayoutID> members = membersOf(context.types.table(), type);
+    if (members.empty())
+        return false;
+
+    Vector<LayoutID, 16> visited { declaredLayoutOf(program, members[0]) };
+    for (size_t index = 0; index < visited.size(); ++index) {
+        for (LayoutID supertype : program.at(visited[index]).supertypes) {
+            if (visited.contains(supertype))
+                continue;
+            visited.append(supertype);
+            if (program.at(supertype).kind != LayoutKind::Record)
+                continue;
+            const LayoutSet& family = program.at(program.declaredMembersOf(supertype));
+            if (family.members.size() >= members.size() && std::ranges::includes(family.members, members))
+                return true;
+        }
+    }
+    return false;
 }
 
 // A union that is as long as its longer operand is that operand: the join has built nothing, however long the list is.
@@ -139,9 +145,10 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
     };
     bool widensStrings = exceeds(LimitID::MaxLiteralsInType, sizeOf(&Type::stringLiterals));
     bool widensSymbols = exceeds(LimitID::MaxSymbolLiteralsInType, sizeOf(&Type::symbolLiterals));
-    bool widensLayouts = exceeds(LimitID::MaxLayoutsInType, [&](const Type& listed) -> size_t {
+    auto numberOfLayouts = [&](const Type& listed) -> size_t {
         return membersOf(context.types.table(), listed).size();
-    });
+    };
+    bool widensLayouts = numberOfLayouts(type) > context.build.limit(LimitID::MaxLayoutsInType) && !liesInsideDeclaredFamily(context, type) && exceeds(LimitID::MaxLayoutsInType, numberOfLayouts);
     bool widensClasses = exceeds(LimitID::MaxClassesInType, sizeOf(&Type::classes));
     bool widensFunctions = exceeds(LimitID::MaxFunctionsInType, sizeOf(&Type::functions));
     bool widensBuiltins = exceeds(LimitID::MaxBuiltinsInType, sizeOf(&Type::builtins));
@@ -153,8 +160,10 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
         type.primitives |= Primitive::Symbol;
     if (widensLayouts || widensClasses || widensBuiltins)
         type.anyObject = true;
-    if (widensFunctions)
+    if (widensFunctions) {
         type.anyFunction = true;
+        type.functions.clear();
+    }
     if (widensRegExpLiterals)
         type.regExpLiteralSet.clear();
     return widensStrings || widensSymbols || widensLayouts || widensClasses || widensFunctions || widensBuiltins || widensRegExpLiterals;
@@ -163,8 +172,11 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
 Type Type::unionWideningWith(const Type& other, const WideningContext& context) const
 {
     Type result = unionWith(other, context.types);
-    if (widenGrownLists(result, *this, other, context))
+    if (widenGrownLists(result, *this, other, context)) {
         result.canonicalize();
+        if (context.didWiden)
+            *context.didWiden = true;
+    }
     return result;
 }
 

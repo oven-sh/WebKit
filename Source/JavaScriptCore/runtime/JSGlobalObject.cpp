@@ -268,6 +268,7 @@
 #include "StringObjectInlines.h"
 #include "StringPrototypeInlines.h"
 #include "StructureInlines.h"
+#include "SubspaceInlines.h"
 #include "SuppressedError.h"
 #include "SuppressedErrorConstructorInlines.h"
 #include "SuppressedErrorPrototypeInlines.h"
@@ -1140,6 +1141,9 @@ void JSGlobalObject::init(VM& vm)
     m_zombieFrameCallee.set(vm, this, JSCallee::create(vm, this, globalScope()));
 
     m_hostFunctionStructure.set(vm, this, JSFunction::createStructure(vm, this, m_functionPrototype.get()));
+#if ENABLE(AOT)
+    m_hostFunctionStructure.set(vm, this, AOT::RuntimeHooks::structureOfHostFunctions(this, m_hostFunctionStructure.get()));
+#endif
 
     auto initFunctionStructures = [&] (FunctionStructures& structures) {
         structures.strictFunctionStructure.set(vm, this, JSStrictFunction::createStructure(vm, this, m_functionPrototype.get()));
@@ -1154,11 +1158,19 @@ void JSGlobalObject::init(VM& vm)
 
     m_customGetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
+#if ENABLE(AOT)
+            init.set(AOT::RuntimeHooks::structureOfHostFunctions(init.owner, JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
+#else
             init.set(JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+#endif
         });
     m_customSetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
+#if ENABLE(AOT)
+            init.set(AOT::RuntimeHooks::structureOfHostFunctions(init.owner, JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
+#else
             init.set(JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+#endif
         });
     m_nativeStdFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -2869,6 +2881,33 @@ public:
         return IterationStatus::Continue;
     }
 
+    bool findsNothingAmongObjects(VM& vm) const
+    {
+        if (hasBrokenIndexing(m_interceptor))
+            return false;
+        bool someStructureIsBelowInterceptor = false;
+        Vector<JSGlobalObject*, 4> realms;
+        auto visitStructure = [&](HeapCell* cell, HeapCell::Kind) {
+            SUPPRESS_MEMORY_UNSAFE_CAST auto* structure = static_cast<Structure*>(cell);
+            JSGlobalObject* realm = structure->realm();
+            if (realm && (realms.isEmpty() || realms.last() != realm) && !realms.contains(realm))
+                realms.append(realm);
+            if (hasBrokenIndexing(structure->indexingType()))
+                someStructureIsBelowInterceptor |= structure->hasPolyProto() || inheritsFromInterceptor(structure->storedPrototypeObject());
+        };
+        vm.heap.structureSpace.forEachLiveCell(visitStructure);
+        vm.heap.brandedStructureSpace.forEachLiveCell(visitStructure);
+#if ENABLE(AOT)
+        if (auto* space = vm.heap.compiledStructureSpace<SubspaceAccess::Concurrently>())
+            space->forEachLiveCell(visitStructure);
+#endif
+        if (someStructureIsBelowInterceptor)
+            return false;
+        for (JSGlobalObject* realm : realms)
+            visitRealm(realm);
+        return true;
+    }
+
 private:
     bool inheritsFromInterceptor(JSObject* object) const
     {
@@ -3121,7 +3160,8 @@ void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
     ObjectsWithInterceptorInChainFinder finder(interceptor, foundObjects, affectedRealms);
     {
         HeapIterationScope iterationScope(vm.heap);
-        vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
+        if (!finder.findsNothingAmongObjects(vm))
+            vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
     }
 
     for (JSGlobalObject* realm : affectedRealms)
@@ -3313,12 +3353,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitFunctionStructures(thisObject->m_ordinaryFunctions);
     visitor.append(thisObject->m_boundFunctionStructure);
     visitor.append(thisObject->m_trustedScriptStructure);
-#if ENABLE(AOT)
-    for (auto& structure : thisObject->m_aotClosureStructures)
-        visitor.append(structure);
-    for (auto& structure : thisObject->m_aotSlimClosureStructures)
-        visitor.append(structure);
-#endif
 
     thisObject->m_customGetterFunctionStructure.visit(visitor);
     thisObject->m_customSetterFunctionStructure.visit(visitor);

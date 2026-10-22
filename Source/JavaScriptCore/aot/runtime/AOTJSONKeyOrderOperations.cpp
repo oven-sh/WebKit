@@ -167,7 +167,7 @@ static RefPtr<UniquedStringImpl> tryAtomize(Instance& instance, JSString* string
 
 static void cacheTransitionName(JSONCache& cache, Structure* before, Structure* after)
 {
-    if (before->isDictionary() || after->isDictionary() || after->previousID() != before)
+    if (before->isDictionary() || after->isDictionary() || !after->isCacheableTransitionFrom(before))
         return;
     if (before->trySingleTransition() == after)
         cache.addName(before, after, after->transitionOffset());
@@ -209,7 +209,7 @@ static ParsedExtraMember parseKnownExtraMember(VM& vm, ExtraMembers& members, JS
     Structure* before = properties->structure();
     StructureID beforeID = before->id();
     auto* entry = vm.jsonCache().findName(beforeID, JSONCache::nameIndex(beforeID), std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
-    if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
+    if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
         return { };
     Structure* after = entry->to.unvalidatedGet();
     PropertyOffset offset = entry->offset;

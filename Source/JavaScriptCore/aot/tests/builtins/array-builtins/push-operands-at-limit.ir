@@ -23,15 +23,20 @@ function f1 name="pushesOne" parameters=[{type=Array<number>}, {type=number}] re
     v3 = Call v2, v0, v1 calleeKey="push"
     Return v3
 }
-# SELECTED-LABEL: function f1 name="pushesOne"
-# SELECTED: = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# Only its entrypoint enters each function, so the body is there
+# SELECTED-LABEL: name="pushesOne" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: = CallInline [[array]], [[number]] inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
 function f2 name="pushesTwo" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
   b0(v0: Array<number>, v1: number):
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1, v1 calleeKey="push"
     Return v3
 }
-# SELECTED-LABEL: function f2 name="pushesTwo"
-# SELECTED: TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 {{*}}-> done [[done]](), miss [[miss]]()
+# SELECTED-LABEL: name="pushesTwo" module=m0 role=GenericEntrypoint
+# SELECTED: [[receiver]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[pushed]]: number = AssumeType v3 castType=number
+# SELECTED: TryCallInline [[receiver]], [[pushed]], [[pushed]] inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 {{*}}-> done [[done]](), miss [[miss]]()
 # SELECTED: [[miss]]() frequency=Rare:
-# SELECTED-NEXT: = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+# SELECTED-NEXT: = CallBuiltin [[receiver]], [[pushed]], [[pushed]] overload=ArrayPrototypePush/0

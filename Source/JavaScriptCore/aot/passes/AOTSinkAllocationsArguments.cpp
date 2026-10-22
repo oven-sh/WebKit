@@ -105,6 +105,7 @@ static std::optional<Value> makeArgumentListRead(const VirtualFieldAccess& acces
     case VirtualFieldKind::Element:
         return makeArgumentRead(firstArgument, access.field.index);
     case VirtualFieldKind::Named:
+    case VirtualFieldKind::UnprovenNamed:
     case VirtualFieldKind::LayoutField:
     case VirtualFieldKind::Capture:
     case VirtualFieldKind::Capacity:
@@ -145,6 +146,7 @@ static ArgumentsPart findArgumentsPart(const Program& program, const VirtualObje
         if (field.index < arguments.numberOfParameters)
             return { ArgumentsPartKind::Parameter, field, field.index };
         return { ArgumentsPartKind::SurplusArgument, VirtualField::part(VirtualFieldKind::RestList), field.index - arguments.numberOfParameters };
+    case VirtualFieldKind::UnprovenNamed:
     case VirtualFieldKind::LayoutField:
     case VirtualFieldKind::Capture:
     case VirtualFieldKind::Capacity:
@@ -169,15 +171,16 @@ static const VirtualObjectDescription* findFrameList(const AllocationSinking& si
     return description.kind == VirtualObjectKind::ArgumentList ? &description : nullptr;
 }
 
-static bool areParametersFrameArguments(const Function& function, const VirtualObjectDescription& arguments, const VirtualObjectDescription& frameList)
+static bool areParametersFrameArguments(AllocationSinking& sinking, const VirtualObjectDescription& arguments, const VirtualObjectDescription& frameList)
 {
     if (frameList.firstArgument < arguments.numberOfParameters)
         return false;
 
+    const Function& function = sinking.function();
     uint32_t firstArgument = frameList.firstArgument - arguments.numberOfParameters;
     std::span<const ValueID> parameters = function.at(arguments.allocation).parametersOperands();
     for (uint32_t index = 0; index < parameters.size(); ++index) {
-        const Value& parameter = function.at(sameObjectThroughCasts(function, parameters[index]));
+        const Value& parameter = function.at(sinking.sameValueThroughTests(parameters[index]));
         if (parameter.opcode != Opcode::GetArgument || parameter.argumentIndex() != firstArgument + index)
             return false;
     }
@@ -226,8 +229,8 @@ static ValueID emitReplacement(AllocationSinking& sinking, ObjectInterpreter& in
 
     ValueID emitted = cursor.emit(WTF::move(replacement));
     Function& function = cursor.builder().function();
-    if (!function.at(emitted).prediction() && function.at(emitted).type == function.at(read).type)
-        function.at(emitted).setPrediction(function.at(read).prediction());
+    if (!function.at(emitted).expected() && function.at(emitted).type == function.at(read).type)
+        function.edit(emitted).setExpected(function.at(read).expected());
     return emitted;
 }
 
@@ -293,9 +296,28 @@ static void becomeForwardingSuperConstruct(Value& construct, uint32_t firstArgum
     construct.setParentOperand(listConstruct.parentOperand());
     construct.setNewTargetOperand(listConstruct.newTargetOperand());
     construct.setFirstArgument(firstArgument);
-    construct.setKeepsShape(listConstruct.keepsShape());
     construct.setAccessSite(listConstruct.accessSite());
     construct.setCallees(listConstruct.callees());
+}
+
+// How many arguments the callees look at, where each of them takes the arguments in front by position and sees nothing else of the list: neither how long it is nor what lies behind them.
+static std::optional<uint32_t> numberOfArgumentsThatCalleesSee(const Program& program, const Value& call)
+{
+    CalleeSetID stamp = call.callees();
+    if (!stamp)
+        return std::nullopt;
+    const CalleeSet& callees = program.at(stamp);
+    if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
+        return std::nullopt;
+
+    uint32_t numberOfArguments = 0;
+    for (FunctionID callee : callees.functions) {
+        const Function& function = program.at(callee);
+        if (function.has(FunctionFlags::HasRestParameter) || function.hiddenRestParameterIndex() || function.argumentCountParameterIndex())
+            return std::nullopt;
+        numberOfArguments = std::max<uint32_t>(numberOfArguments, function.numberOfPositionalParameters());
+    }
+    return numberOfArguments;
 }
 
 Execution ObjectInterpreter::readArgumentList(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)
@@ -365,7 +387,7 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
         ? surplusRead && isResultTypeWithin(program(), function(), *surplusRead, program().at(type))
         : isElementTypeWithin(program(), function(), typeOfField(m_sinking.objectContext(), *description, part.field), program().at(type));
     bool selectsParameter = part.kind == ArgumentsPartKind::DynamicElement
-        && !(frameList && !description->isMapped && areParametersFrameArguments(function(), *description, *frameList));
+        && !(frameList && !description->isMapped && areParametersFrameArguments(m_sinking, *description, *frameList));
     if (frameList && !surplusRead)
         return executeOnCell();
     // What is proven of the contents of the object is proven of the arguments it would hold, which is all that the type of a read of an element comes from.
@@ -399,6 +421,8 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
     else
         surplusRead = makeListElementRead(cursor(), valueOfField(object, *field), part, index, description->numberOfParameters);
     auto replaceReadBy = [&](ValueID argument) {
+        if (assumesTypeOfRead && m_sinking.context().build.validates())
+            cursor().emit(makeValidateType(argument, type));
         replaceRead(read, assumesTypeOfRead ? cursor().emit(makeAssumeType(argument, type)) : argument);
     };
     if (!selectsParameter) {
@@ -455,13 +479,28 @@ Execution ObjectInterpreter::forwardArgumentList(ValueID call, VirtualObjectID o
     for (auto [operand, index] : otherOperands)
         requireCell(operand, causeOf(call, index));
 
-    if (isRewriting() && opcode == Opcode::CallList) {
+    // An argument that was not passed reads as undefined, which is what a callee makes of it.
+    Vector<Value, 8> namedArguments;
+    std::optional<uint32_t> numberOfNamedArguments = isRewriting() ? numberOfArgumentsThatCalleesSee(program(), function().at(call)) : std::nullopt;
+    for (uint32_t index = 0; numberOfNamedArguments && index < *numberOfNamedArguments; ++index) {
+        if (std::optional<Value> argument = makeArgumentRead(description->firstArgument, index))
+            namedArguments.append(WTF::move(*argument));
+        else
+            numberOfNamedArguments = std::nullopt;
+    }
+
+    if (numberOfNamedArguments) {
+        Vector<ValueID, 8> arguments;
+        for (Value& argument : namedArguments)
+            arguments.append(cursor().emit(WTF::move(argument)));
+        convertListCall(cursor().builder().function().edit(call), arguments.span());
+    } else if (isRewriting() && opcode == Opcode::CallList) {
         ValueID thisValue = function().at(call).thisValueOperand();
         if (!thisValue)
             thisValue = emitUndefined();
-        becomeForwardingCall(cursor().builder().function().at(call), thisValue, description->firstArgument);
+        becomeForwardingCall(cursor().builder().function().edit(call), thisValue, description->firstArgument);
     } else if (isRewriting())
-        becomeForwardingSuperConstruct(cursor().builder().function().at(call), description->firstArgument);
+        becomeForwardingSuperConstruct(cursor().builder().function().edit(call), description->firstArgument);
 
     forgetFieldsWrittenBy(call);
     keep(call);
@@ -477,7 +516,7 @@ ArgumentsParts ObjectInterpreter::partsOfArguments(VirtualObjectID arguments) co
     ArgumentsParts parts;
     const VirtualObjectDescription* frameList = findFrameList(m_sinking, stateOf(arguments)->objectHeldIn(restField));
     bool readsOwnFrame = frameList && frameList->firstArgument >= numberOfParameters
-        && (!numberOfParameters || (!description.isMapped && areParametersFrameArguments(function(), description, *frameList)));
+        && (!numberOfParameters || (!description.isMapped && areParametersFrameArguments(m_sinking, description, *frameList)));
     if (readsOwnFrame) {
         parts.firstFrameArgument = frameList->firstArgument - numberOfParameters;
         return parts;
@@ -610,7 +649,7 @@ Execution ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallP
         ValueID restList = passesRestList ? valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList))) : ValueID();
         ValueID thisValue = parts.firstFrameArgument && !plan.thisValue ? emitUndefined() : plan.thisValue;
 
-        Value& forwarded = cursor().builder().function().at(call);
+        Value& forwarded = cursor().builder().function().edit(call);
         becomeForwardedCall(forwarded, plan);
         if (parts.firstFrameArgument)
             becomeForwardingCall(forwarded, thisValue, *parts.firstFrameArgument);
@@ -662,18 +701,14 @@ Execution ObjectInterpreter::listArguments(ValueID list)
     if (singleDescriptionOf(arguments) && tryCopyArguments(list, arguments, 0, cause))
         return Execution::Interpreted;
 
-    // The rest list is an array, and the list of an array is a copy that no protocol runs for.
+    // The rest list is an array as it was created, and the list of such an array is a copy that no protocol runs for. The call reads out of the one what it would read out of the other.
     if (!singleDescriptionOf(arguments) || singleDescriptionOf(arguments)->numberOfParameters || !requireCellOfRestList(arguments, cause)) {
         requireCell(receiver, cause);
         return executeOther(list);
     }
-    if (isRewriting()) {
-        ValueID restList = valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList)));
-        cursor().builder().function().at(list).setArrayLikeOperand(restList);
-    }
-    forgetFieldsWrittenBy(list);
-    keep(list);
-    return Execution::Kept;
+    if (isRewriting())
+        replaceRead(list, valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList))));
+    return Execution::Interpreted;
 }
 
 // Array.prototype.slice.call(arguments, first) is a new array of the arguments from one position on.
@@ -707,7 +742,7 @@ Execution ObjectInterpreter::sliceArguments(ValueID call)
         cursor().setOrigin(function().at(call).origin());
         ValueID restList = valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList)));
         ValueID firstInList = cursor().builder().appendInteger(first - numberOfParameters);
-        Value& sliceOfList = cursor().builder().function().at(call);
+        Value& sliceOfList = cursor().builder().function().edit(call);
         sliceOfList.setReceiverOperand(restList);
         sliceOfList.setArgumentsOperands(std::array { firstInList });
     }
@@ -763,6 +798,8 @@ Execution ObjectInterpreter::passListedElements(ValueID call)
             ordinary.setAccessSite(original.accessSite());
             ordinary.setIsDemotedTailCall(original.isDemotedTailCall());
             ValueID result = emitReplacement(m_sinking, *this, call, WTF::move(ordinary));
+            if (m_sinking.context().build.validates())
+                cursor().emit(makeValidateType(result, original.type));
             replaceRead(call, cursor().emit(makeAssumeType(result, original.type)));
         }
     }

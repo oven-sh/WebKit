@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTCallEmitter.h"
 #include "AOTConvention.h"
 #include "AOTIdentifierNumbering.h"
@@ -24,6 +25,7 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
     unsigned count = static_cast<unsigned>(arguments.size());
 
     Boxed receiver = in<Boxed>(value->receiverOperand());
+    emitter<AccessEmitter>().recordArrival(value, receiver);
     Vector<LValue, 8> values;
     for (ValueID argument : arguments)
         values.append(in<Boxed>(argument).value());
@@ -36,8 +38,9 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
         .thisValue = receiver.value(),
         .arguments = values.span(),
     };
+    // A cache of its own pays for a site in fast code. Elsewhere the tables find the method, and the site is one call in place of two.
     SiteCacheID siteCache = value->siteCache();
-    if (!siteCache) {
+    if (!siteCache || value.shape() != CodeShape::Fast) {
         // One site stands for the read and the call. It has the position of the call, which every stack trace taken in the callee shows.
         define(value, calls.callByConvention(value, call, { .immediate = *number, .isTailCall = value->isDemotedTailCall() }));
         return;

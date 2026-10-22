@@ -59,6 +59,8 @@ static constexpr IndexSlotFormat hugeSlotFormat = indexSlotFormatOf<CompactTable
 struct CompactTableSearch {
     bool isInImage;
     bool comparesStrings;
+    // Nothing but strings is looked for, so the table has seen nothing but strings unless the program got around its types: its keys are narrow.
+    bool keysAreNarrow;
     bool findsInsertionPoint;
     JumpList needsCharacters;
 };
@@ -117,17 +119,23 @@ void emitHashOfBits(StubAssembler& jit, GPRReg key, GPRReg hash, GPRReg scratch,
 #endif
 }
 
-void emitLoadValuesOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg values)
+void emitLoadValuesOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg values, JumpList* keysAreNarrow)
 {
     const GPRReg capacity = registers.cursor;
-    jit.load32(Address(registers.table, CompactTable::offsetOfCapacity()), capacity);
+    const GPRReg keys = registers.keys;
+    const Address capacityOfTable(registers.table, CompactTable::offsetOfCapacity());
     Jump isWide = jit.branchTest8(CCallHelpers::NonZero, Address(registers.table, CompactTable::offsetOfKeysShift()), TrustedImm32(CompactTable::keysAreWide));
-    jit.getEffectiveAddress(BaseIndex(registers.keys, capacity, CCallHelpers::TimesFour), values);
-    Jump isLoaded = jit.jump();
-
-    isWide.link(&jit);
-    jit.getEffectiveAddress(BaseIndex(registers.keys, capacity, CCallHelpers::TimesEight), values);
-    isLoaded.link(&jit);
+    if (keysAreNarrow)
+        keysAreNarrow->link(&jit);
+    jit.load32(capacityOfTable, capacity);
+    jit.getEffectiveAddress(BaseIndex(keys, capacity, CCallHelpers::TimesFour), values);
+    Label isLoaded = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        isWide.link(&jit);
+        jit.load32(capacityOfTable, capacity);
+        jit.getEffectiveAddress(BaseIndex(keys, capacity, CCallHelpers::TimesEight), values);
+        jit.jump().linkTo(isLoaded, &jit);
+    });
 }
 
 static Vector<GPRReg, 8> registersToSaveForLeafCall(const StubAssembler& jit, const HashTableRegisters& registers)
@@ -213,16 +221,25 @@ static void emitCompareWithHeapKey(StubAssembler& jit, const HashTableRegisters&
     const GPRReg table = registers.table;
     const GPRReg candidate = registers.candidate;
 
-    emitLoadCandidate(jit, registers);
-    exits.foundInCompactTable.append(jit.branch64(CCallHelpers::Equal, candidate, key));
-    if (!search.comparesStrings)
-        return;
-
-    next.append(jit.branchTest64(CCallHelpers::Zero, candidate));
-    next.append(jit.branchIfNotCell(candidate));
+    JumpList& found = search.keysAreNarrow ? exits.foundAmongNarrowKeys : exits.foundInCompactTable;
+    if (search.keysAreNarrow) {
+        const BaseIndex word(registers.keys, registers.entry, CCallHelpers::TimesFour);
+        jit.load32(word, candidate);
+        decodeCell32(jit, candidate, candidate);
+        found.append(jit.branch64(CCallHelpers::Equal, candidate, key));
+        // A word that is no reference is an empty place or a value that is no cell: where it points no cell lies, so it was not taken for the key.
+        next.append(jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32)));
+    } else {
+        emitLoadCandidate(jit, registers);
+        exits.foundInCompactTable.append(jit.branch64(CCallHelpers::Equal, candidate, key));
+        if (!search.comparesStrings)
+            return;
+        next.append(jit.branchTest64(CCallHelpers::Zero, candidate));
+        next.append(jit.branchIfNotCell(candidate));
+    }
     next.append(jit.branchIfNotType(candidate, StringType));
     jit.loadPtr(Address(candidate, JSString::offsetOfValue()), candidate);
-    exits.foundInCompactTable.append(jit.branchPtr(CCallHelpers::Equal, candidate, Address(key, JSString::offsetOfValue())));
+    found.append(jit.branchPtr(CCallHelpers::Equal, candidate, Address(key, JSString::offsetOfValue())));
 
     jit.loadPtr(Address(key, JSString::offsetOfValue()), table);
     jit.load32(Address(table, StringImpl::flagsOffset()), table);
@@ -231,45 +248,82 @@ static void emitCompareWithHeapKey(StubAssembler& jit, const HashTableRegisters&
     emitReloadTable(jit, registers, search);
 }
 
+static void emitCompareLatin1Characters(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg length, GPRReg scratch, GPRReg scratch2, JumpList& areSame, JumpList& differ)
+{
+    Jump isBelow8 = jit.branch32(CCallHelpers::Below, length, TrustedImm32(8));
+    Label nextWord = jit.label();
+    jit.sub32(TrustedImm32(8), length);
+    jit.load64(BaseIndex(first, length, CCallHelpers::TimesOne), scratch);
+    jit.load64(BaseIndex(second, length, CCallHelpers::TimesOne), scratch2);
+    differ.append(jit.branch64(CCallHelpers::NotEqual, scratch, scratch2));
+    jit.branch32(CCallHelpers::AboveOrEqual, length, TrustedImm32(8)).linkTo(nextWord, &jit);
+    jit.load64(Address(first), scratch);
+    jit.load64(Address(second), scratch2);
+    areSame.append(jit.branch64(CCallHelpers::Equal, scratch, scratch2));
+    differ.append(jit.jump());
+
+    isBelow8.link(&jit);
+    Jump isBelow4 = jit.branch32(CCallHelpers::Below, length, TrustedImm32(4));
+    jit.load32(Address(first), scratch);
+    jit.load32(Address(second), scratch2);
+    differ.append(jit.branch32(CCallHelpers::NotEqual, scratch, scratch2));
+    jit.sub32(TrustedImm32(4), length);
+    jit.load32(BaseIndex(first, length, CCallHelpers::TimesOne), scratch);
+    jit.load32(BaseIndex(second, length, CCallHelpers::TimesOne), scratch2);
+    areSame.append(jit.branch32(CCallHelpers::Equal, scratch, scratch2));
+    differ.append(jit.jump());
+
+    isBelow4.link(&jit);
+    Label nextCharacter = jit.label();
+    areSame.append(jit.branchTest32(CCallHelpers::Zero, length));
+    jit.sub32(TrustedImm32(1), length);
+    jit.load8(BaseIndex(first, length, CCallHelpers::TimesOne), scratch);
+    jit.load8(BaseIndex(second, length, CCallHelpers::TimesOne), scratch2);
+    jit.branch32(CCallHelpers::Equal, scratch, scratch2).linkTo(nextCharacter, &jit);
+    differ.append(jit.jump());
+}
+
 static void emitCompareCharactersOfHeapKey(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, HashTableExits& exits)
 {
     const GPRReg impl = registers.hash;
+    const GPRReg candidate = registers.candidate;
+    const GPRReg length = registers.table;
     search.needsCharacters.link(&jit);
     jit.loadPtr(Address(registers.key, JSString::offsetOfValue()), impl);
     JumpList areSame;
-    emitBranchOnStringLeaf(jit, registers, { Entry::operationAOTStringImplsAreEqual, registers.candidate, impl }, areSame, exits.unknown);
+    JumpList hasWideCharacters;
+    jit.load32(Address(candidate, StringImpl::lengthMemoryOffset()), length);
+    exits.unknown.append(jit.branch32(CCallHelpers::NotEqual, length, Address(impl, StringImpl::lengthMemoryOffset())));
+    hasWideCharacters.append(jit.branchTest32(CCallHelpers::Zero, Address(candidate, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    hasWideCharacters.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(candidate, StringImpl::dataOffset()), candidate);
+    jit.loadPtr(Address(impl, StringImpl::dataOffset()), impl);
+    emitCompareLatin1Characters(jit, candidate, impl, length, registers.cursor, registers.keys, areSame, exits.unknown);
+
+    hasWideCharacters.link(&jit);
+    emitBranchOnStringLeaf(jit, registers, { Entry::operationAOTStringImplsAreEqual, candidate, impl }, areSame, exits.unknown);
 
     areSame.link(&jit);
     emitReloadTable(jit, registers, search);
     emitLoadKeys(jit, registers);
-    exits.foundInCompactTable.append(jit.jump());
+    (search.keysAreNarrow ? exits.foundAmongNarrowKeys : exits.foundInCompactTable).append(jit.jump());
 }
 
-// Never falls through: the leaf compares every entry whose tag matches.
-static void emitCompareWithKeyInImage(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search)
+// Never falls through: the operation looks at every entry whose tag matches.
+static void emitCompareWithKeyInImage(StubAssembler& jit, CompactTableSearch& search)
 {
-    jit.load32(BaseIndex(registers.keys, registers.entry, CCallHelpers::TimesFour), registers.candidate);
     search.needsCharacters.append(jit.jump());
 }
 
-static void emitCompareCharactersOfKeyInImage(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, HashTableExits& exits)
+static void emitCompareCharactersOfKeyInImage(CompactTableSearch& search, HashTableExits& exits)
 {
-    const GPRReg impl = registers.hash;
-    search.needsCharacters.link(&jit);
-    jit.loadPtr(Address(registers.key, JSString::offsetOfValue()), impl);
-    JumpList areSame;
-    emitBranchOnStringLeaf(jit, registers, { Entry::operationAOTStringImplEqualsImageString, impl, registers.candidate }, areSame, exits.unknown);
-
-    areSame.link(&jit);
-    emitReloadTable(jit, registers, search);
-    emitLoadKeys(jit, registers);
-    exits.foundInTableInImage.append(jit.jump());
+    exits.unknown.append(search.needsCharacters);
 }
 
 static void emitCompareWithEntry(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, JumpList& next, HashTableExits& exits)
 {
     if (search.isInImage)
-        emitCompareWithKeyInImage(jit, registers, search);
+        emitCompareWithKeyInImage(jit, search);
     else
         emitCompareWithHeapKey(jit, registers, search, next, exits);
 }
@@ -287,10 +341,14 @@ static void emitProbeTags(StubAssembler& jit, const HashTableRegisters& register
     jit.not64(cursor);
     jit.and64(entry, cursor);
     jit.and64(TrustedImm64(0x8080808080808080), cursor);
-    jit.addPtr(TrustedImm32(index + CompactTable::maxCapacityWithTags), table, keys);
+    // Whoever inserts wants the keys where the key is absent too.
+    if (search.findsInsertionPoint)
+        jit.addPtr(TrustedImm32(index + CompactTable::maxCapacityWithTags), table, keys);
+    absent.append(jit.branchTest64(CCallHelpers::Zero, cursor));
+    if (!search.findsInsertionPoint)
+        jit.addPtr(TrustedImm32(index + CompactTable::maxCapacityWithTags), table, keys);
 
     Label nextMatch = jit.label();
-    absent.append(jit.branchTest64(CCallHelpers::Zero, cursor));
     jit.countTrailingZeros64(cursor, entry);
     jit.urshift32(TrustedImm32(3), entry);
     absent.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, Address(table, CompactTable::offsetOfUsed())));
@@ -299,7 +357,8 @@ static void emitProbeTags(StubAssembler& jit, const HashTableRegisters& register
     next.link(&jit);
     jit.sub64(cursor, TrustedImm32(1), candidate);
     jit.and64(candidate, cursor);
-    jit.jump().linkTo(nextMatch, &jit);
+    jit.branchTest64(CCallHelpers::NonZero, cursor).linkTo(nextMatch, &jit);
+    absent.append(jit.jump());
 }
 
 static void emitMoveTagIntoSlotPosition(StubAssembler& jit, GPRReg hash, const IndexSlotFormat& format)
@@ -398,16 +457,19 @@ static void emitSearchCompactTable(StubAssembler& jit, const HashTableRegisters&
     if (!search.comparesStrings)
         return;
     if (search.isInImage)
-        emitCompareCharactersOfKeyInImage(jit, registers, search, exits);
+        emitCompareCharactersOfKeyInImage(search, exits);
     else
         emitCompareCharactersOfHeapKey(jit, registers, search, exits);
 }
 
 static void emitFindInCompactTable(StubAssembler& jit, const HashTableRegisters& registers, HashTableLookup lookup, bool comparesStrings, HashTableExits& exits)
 {
+    const bool keysAreNarrow = comparesStrings && lookup.comparison == KeyComparison::String;
     const GPRReg table = registers.table;
-    Jump isInImage = jit.branchTest8(CCallHelpers::NonZero, Address(table, CompactTable::offsetOfKeysShift()), TrustedImm32(CompactTable::keysAreInImage));
-    CompactTableSearch heapSearch { false, comparesStrings, lookup.findsInsertionPoint, { } };
+    // A table that holds strings beside keys that need 64 bits is left to the operation: one test here in place of one for each key that is looked at.
+    const int32_t otherTables = CompactTable::keysAreInImage | (keysAreNarrow ? CompactTable::keysAreWide : 0);
+    Jump isInImage = jit.branchTest8(CCallHelpers::NonZero, Address(table, CompactTable::offsetOfKeysShift()), TrustedImm32(otherTables));
+    CompactTableSearch heapSearch { false, comparesStrings, keysAreNarrow, lookup.findsInsertionPoint, { } };
     emitSearchCompactTable(jit, registers, heapSearch, exits);
 
     if (lookup.findsInsertionPoint)
@@ -416,8 +478,10 @@ static void emitFindInCompactTable(StubAssembler& jit, const HashTableRegisters&
         exits.absent.append(isInImage);
     else if (lookup.searchesTablesInImage) {
         isInImage.link(&jit);
+        if (keysAreNarrow)
+            exits.unknown.append(jit.branchTest8(CCallHelpers::Zero, Address(table, CompactTable::offsetOfKeysShift()), TrustedImm32(CompactTable::keysAreInImage)));
         jit.loadPtr(Address(table, CompactTable::offsetOfIndex()), table);
-        CompactTableSearch imageSearch { true, true, false, { } };
+        CompactTableSearch imageSearch { true, true, false, false, { } };
         emitSearchCompactTable(jit, registers, imageSearch, exits);
     } else
         exits.unknown.append(isInImage);
@@ -458,7 +522,12 @@ static void emitFindStringKey(StubAssembler& jit, const HashTableRegisters& regi
     Jump isRope = jit.branchTestPtr(CCallHelpers::NonZero, impl, TrustedImm32(JSString::isRopeInPointer));
     jit.load32(Address(impl, StringImpl::flagsOffset()), hash);
     jit.urshift32(TrustedImm32(StringImpl::s_flagCount), hash);
+#if CPU(X86_64)
+    // The shift has set the flags.
+    Jump isNotHashed = Jump(jit.m_assembler.jCC(X86Assembler::ConditionE));
+#else
     Jump isNotHashed = jit.branchTest32(CCallHelpers::Zero, hash);
+#endif
 
     Label isHashed = jit.label();
     emitLoadTable(jit, registers, lookup, exits);

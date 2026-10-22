@@ -32,9 +32,14 @@ std::optional<Vector<uint8_t>> quotedIfPlain(std::span<const uint8_t> text)
     return quoted;
 }
 
+static Type testableTypeOf(Emission& emission, const ResultNode& node)
+{
+    return emission.program().at(node.type).withoutClassProofs().withUntestableBuiltinsWidened();
+}
+
 static TypeID valueTypeOf(Emission& emission, const ResultNode& node)
 {
-    return emission.inputs().types.intern(emission.program().at(node.type).withoutProofs().withPrimitives(Primitive::Undefined));
+    return emission.inputs().types.intern(testableTypeOf(emission, node).withPrimitives(Primitive::Undefined));
 }
 
 static Type numberPartOf(const Type& type)
@@ -219,7 +224,7 @@ ParsedValue JSONParserBuilder::emitGenericValueFor(ResultNodeRef ref, const Resu
 {
     ParsedValue generic = emitGenericValue(cursor, exits.unknown);
     if (!ref.isValidated())
-        return { emitTypeTest(generic.value, inputs().types.intern(program().at(node.type).withoutProofs()), exits.unknown), generic.next };
+        return { emitTypeTest(generic.value, inputs().types.intern(testableTypeOf(*this, node)), exits.unknown), generic.next };
 
     ValueID value = ValidatorBuilder(builder(), inputs()).emitNode(ref, generic.value, { exits.rejected, exits.unknown });
     return { emitTypeTest(value, valueTypeOf(*this, node), exits.unknown), generic.next };

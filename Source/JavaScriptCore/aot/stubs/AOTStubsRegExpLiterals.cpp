@@ -69,6 +69,20 @@ static Entry genericOperationOf(RegExpMatchForm form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<RegExpMatchResult> resultOfStubForAnyRegExp(RegExpMatchForm form)
+{
+    switch (form) {
+    case RegExpMatchForm::Test:
+        return RegExpMatchResult::BoxedBoolean;
+    case RegExpMatchForm::Exec:
+        return RegExpMatchResult::Array;
+    case RegExpMatchForm::Search:
+    case RegExpMatchForm::Match:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static bool takesStringFirst(RegExpMatchForm form)
 {
     switch (form) {
@@ -134,8 +148,14 @@ static void callOperationWithoutObjectAndReturn(StubAssembler& jit, RegExpMatchF
     jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteralWithoutObject, { });
 }
 
+// What comes here most often is a subject that is a rope. The stub for any RegExp makes it flat and runs the code that the RegExp has. What it cannot do either it hands to the generic operation.
 static void callMatchingOperationAndReturn(StubAssembler& jit, RegExpMatchForm form, std::optional<GPRReg> regExpObject, GPRReg string)
 {
+    if (std::optional<RegExpMatchResult> result = regExpObject ? resultOfStubForAnyRegExp(form) : std::nullopt) {
+        checkStubOperands(regExpMatch(*result), { *regExpObject, string });
+        jit.jumpToStub(regExpMatch(*result));
+        return;
+    }
     if (regExpObject)
         callGenericOperationAndReturn(jit, form, *regExpObject, string);
     else

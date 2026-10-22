@@ -1,0 +1,69 @@
+# From the flow analysis to the entrypoints: a declared function that is only called has no closure and so no generic entrypoint, also in a program that makes a weak reference.
+# The function that the weak reference takes, the one that is passed on and the one that is stored keep theirs
+# FORM: AsRead
+# RUN: pipeline CheckPlacement
+# CHECK-NOT: name="onlyCalled" {{*}}role=GenericEntrypoint
+# CHECK-COUNT-1: name="watched" {{*}}role=GenericEntrypoint
+# CHECK-COUNT-1: name="passedOn" {{*}}role=GenericEntrypoint
+# CHECK-COUNT-1: name="stored" {{*}}role=GenericEntrypoint
+# CHECK-NOT: name="onlyCalled" {{*}}role=GenericEntrypoint
+
+variable g0 name="onlyCalled" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="watched" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="passedOn" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="stored" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3
+    v6 = GetModuleVariable variable=g1
+    v7 = Builtin builtin=WeakRef
+    v8 = Construct v7, -, v6
+    v9 = GetModuleVariable variable=g2
+    v10 = PropGet v0 key="publish" [isFreeName]
+    v11 = Call v10, -, v9, v5, v8
+    v12 = GetModuleVariable variable=g3
+    PropSet v0, v12 key="kept"
+    Return
+}
+function f1 name="onlyCalled" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    v14 = Mul v13, v0
+    v15 = Mul v14, v0
+    v16 = Mul v15, v0
+    Return v16
+}
+function f2 name="watched" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Mul v0, v0
+    Return v1
+}
+function f3 name="passedOn" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Mul v0, v0
+    Return v1
+}
+function f4 name="stored" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Mul v0, v0
+    Return v1
+}

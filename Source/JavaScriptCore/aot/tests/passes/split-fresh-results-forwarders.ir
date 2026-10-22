@@ -12,7 +12,7 @@ variable g0 name="last" module=m0 declared={type=anything} initialization=Undefi
 function f0 name="point" parameters=[{type=number}] results=[{type=L0}] {
   b0(v0: number):
     v1 = Add v0, v0
-    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
 }
 # CHECK-LABEL: function f0 name="point" module=m0 role=ResultWrapper
@@ -146,7 +146,7 @@ function f10 name="remember" parameters=[{type=anything}] results=[{type=anythin
 # CHECK-NEXT: [[y4]]: number = ResultAt [[inner4]] index=1
 # CHECK-NOT: NewObject
 # CHECK-NOT: GetSlot
-# CHECK: [[read4]]: number = Upcast [[x4]] castType=number
+# CHECK: [[read4]]: number = Upcast [[x4]] castType=undefined|null|number
 # CHECK-NEXT: = CallDirect [[read4]] function=f10
 # CHECK-NEXT: = Results [[x4]], [[y4]]
 # CHECK: function [[eitherWorker]] name="forwardsOrReturnsAnotherCall" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=anything}, {type=number}, {type=number}]
@@ -176,3 +176,21 @@ function f10 name="remember" parameters=[{type=anything}] results=[{type=anythin
 # CHECK: function [[chain3Worker]] name="chain3" module=m0 role=ResultWorker {{*}}creator=ResultWorker{origin=f3}
 # CHECK-NOT: NewObject
 # CHECK: = CallDirect v0 function=[[chain2Worker]]
+
+# Whoever calls them needs no object
+function f11 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number, v8: number, v9: number, v10: anything):
+    v11 = CallDirect v0 function=f0
+    v12 = CallDirect v1 function=f1
+    v13 = CallDirect v2 function=f2
+    v14 = CallDirect v3 function=f3
+    v15 = CallDirect v4 function=f4
+    v16 = CallDirect v5 function=f5
+    v17 = CallDirect v6 function=f6
+    v18 = CallDirect v7 function=f7
+    v19 = CallDirect v8 function=f8
+    v20 = CallDirect v9 function=f9
+    v21 = CallDirect v10 function=f10
+    v22 = Undefined
+    Return v22
+}

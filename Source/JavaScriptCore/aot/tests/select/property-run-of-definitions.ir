@@ -1,0 +1,222 @@
+# PropertyRun turns the definitions of a literal whose values are computed into one operation, with the single definitions in the failing arm, also in code that runs once. A run is all definitions or all stores
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: PropertyRunGroups = 13
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="x" declared={type=number}}] flow={members=[L0]}
+
+function f0 name="four-definitions" parameters=[{type=Object}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything, v2: anything, v3: anything, v4: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v2 key="b"
+    PropDefine v0, v3 key="c"
+    PropDefine v0, v4 key="d"
+    Return v0
+}
+# CHECK-LABEL: function f0 name="four-definitions"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[four]]: boolean = TryPutByIds v0, v1, v2, v3, v4 keys=["a", "b", "c", "d"] [isDefinition]
+# CHECK-NEXT: Branch [[four]] -> taken [[fourDone]](), notTaken [[fourSlow]]()
+# CHECK-NOT: PropDefine
+# CHECK: [[fourSlow]]() frequency=Rare
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v2 key="b"
+# CHECK-NEXT: PropDefine v0, v3 key="c"
+# CHECK-NEXT: PropDefine v0, v4 key="d"
+# CHECK-NEXT: Jump -> next
+# CHECK-NOT: PropDefine
+
+# The names are no fields, so they go to the extra properties, which only the operation reaches. Compact code calls it straight away.
+function f1 name="fresh-object-in-compact-code" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = NewObject layout=L0 fields=[]
+    PropDefine v2, v0 key="a"
+    PropDefine v2, v0 key="b"
+    PropDefine v2, v0 key="c"
+    PropDefine v2, v0 key="d"
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="fresh-object-in-compact-code"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: = NewObject layout=L0
+# CHECK-NEXT: [[fresh]]: boolean = TryPutByIds v2, v0, v0, v0, v0 keys=["a", "b", "c", "d"] [isDefinition]
+# CHECK-NEXT: Branch [[fresh]] -> taken [[freshDone]](), notTaken [[freshSlow]]()
+# CHECK: [[freshSlow]]() frequency=Rare
+# CHECK-NEXT: PropDefine v2, v0 key="a"
+# CHECK-NEXT: PropDefine v2, v0 key="b"
+# CHECK-NEXT: PropDefine v2, v0 key="c"
+# CHECK-NEXT: PropDefine v2, v0 key="d"
+# CHECK-NEXT: Jump -> next
+function f2 name="fresh-object-in-code-that-probes-a-site-cache" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    PropDefine v1, v0 key="a"
+    PropDefine v1, v0 key="b"
+    PropDefine v1, v0 key="c"
+    PropDefine v1, v0 key="d"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="fresh-object-in-code-that-probes-a-site-cache"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = NewObject layout=L0
+# CHECK-NEXT: PropDefine v1, v0 key="a"
+# CHECK-NEXT: PropDefine v1, v0 key="b"
+# CHECK-NEXT: PropDefine v1, v0 key="c"
+# CHECK-NEXT: PropDefine v1, v0 key="d"
+# CHECK-NEXT: Return v1
+function f3 name="dictionary" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    PropDefine v1, v0 key="a"
+    PropDefine v1, v0 key="b"
+    PropDefine v1, v0 key="c"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="dictionary"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = NewDictionary
+# CHECK-NEXT: [[dictionary]]: boolean = TryPutByIds v1, v0, v0, v0 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[dictionary]] -> taken
+function f4 name="two-definitions" parameters=[{type=Object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    Return v0
+}
+# CHECK-LABEL: function f4 name="two-definitions"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v1 key="b"
+# CHECK-NEXT: Return v0
+
+function f5 name="definitions-then-stores" parameters=[{type=Object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    PropSet v0, v1 key="d" mode=Strict
+    PropSet v0, v1 key="e" mode=Strict
+    PropSet v0, v1 key="f" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f5 name="definitions-then-stores"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[defined]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[defined]] -> taken
+# CHECK: [[stored]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["d", "e", "f"]
+# CHECK-NOT: isDefinition
+# CHECK: Branch [[stored]] -> taken
+function f6 name="definitions-and-stores-in-turn" parameters=[{type=Object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything):
+    PropDefine v0, v1 key="a"
+    PropSet v0, v1 key="b" mode=Strict
+    PropDefine v0, v1 key="c"
+    PropSet v0, v1 key="d" mode=Strict
+    PropDefine v0, v1 key="e"
+    PropSet v0, v1 key="f" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f6 name="definitions-and-stores-in-turn"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropSet v0, v1 key="b"
+# CHECK-NEXT: PropDefine v0, v1 key="c"
+# CHECK-NEXT: PropSet v0, v1 key="d"
+# CHECK-NEXT: PropDefine v0, v1 key="e"
+# CHECK-NEXT: PropSet v0, v1 key="f"
+# CHECK-NEXT: Return v0
+function f7 name="name-written-twice" parameters=[{type=Object}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v2 key="b"
+    PropDefine v0, v3 key="a"
+    PropDefine v0, v4 key="c"
+    PropDefine v0, v5 key="d"
+    Return v0
+}
+# CHECK-LABEL: function f7 name="name-written-twice"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v2 key="b"
+# CHECK-NEXT: [[again]]: boolean = TryPutByIds v0, v3, v4, v5 keys=["a", "c", "d"] [isDefinition]
+# CHECK-NEXT: Branch [[again]] -> taken
+
+function f8 name="proto-key-between" parameters=[{type=Object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    PropDefine v0, v1 key="__proto__"
+    PropDefine v0, v1 key="d"
+    PropDefine v0, v1 key="e"
+    PropDefine v0, v1 key="f"
+    Return v0
+}
+# CHECK-LABEL: function f8 name="proto-key-between"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[beforeProto]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[beforeProto]] -> taken
+# CHECK: PropDefine v0, v1 key="__proto__"
+# CHECK-NEXT: [[afterProto]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["d", "e", "f"] [isDefinition]
+# CHECK-NEXT: Branch [[afterProto]] -> taken
+function f9 name="index-key-between" parameters=[{type=Object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    PropDefine v0, v1 key="0"
+    PropDefine v0, v1 key="d"
+    PropDefine v0, v1 key="e"
+    PropDefine v0, v1 key="f"
+    Return v0
+}
+# CHECK-LABEL: function f9 name="index-key-between"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[beforeIndex]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[beforeIndex]] -> taken
+# CHECK: PropDefine v0, v1 key="0"
+# CHECK-NEXT: [[afterIndex]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["d", "e", "f"] [isDefinition]
+# CHECK-NEXT: Branch [[afterIndex]] -> taken
+function f10 name="computed-key-between" parameters=[{type=Object}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Object, v1: anything, v2: anything):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    ElemDefine v0, v2, v1
+    PropDefine v0, v1 key="d"
+    PropDefine v0, v1 key="e"
+    PropDefine v0, v1 key="f"
+    Return v0
+}
+# CHECK-LABEL: function f10 name="computed-key-between"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[beforeComputed]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[beforeComputed]] -> taken
+# CHECK: ElemDefine v0, v2, v1
+# CHECK-NEXT: [[afterComputed]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["d", "e", "f"] [isDefinition]
+# CHECK-NEXT: Branch [[afterComputed]] -> taken
+
+# What NewDictionary makes is an ordinary object, though its type says no more than object.
+function f11 name="dictionary-in-compact-code" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = NewDictionary
+    PropDefine v2, v0 key="a"
+    PropDefine v2, v0 key="b"
+    PropDefine v2, v0 key="c"
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f11 name="dictionary-in-compact-code"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: = NewDictionary
+# CHECK-NEXT: [[once]]: boolean = TryPutByIds v2, v0, v0, v0 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[once]] -> taken

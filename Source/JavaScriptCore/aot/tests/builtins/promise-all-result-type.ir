@@ -1,4 +1,4 @@
-# The promise of Promise.all is predicted to hold an array of what the elements are fulfilled with, not of the elements: a promise counts as what it holds, a number as itself, and an object that may be a thenable predicts nothing
+# The promise of Promise.all is expected to hold an array of what the elements are fulfilled with, not of the elements: a promise counts as what it holds, a number as itself, and of an object that may be a thenable nothing is expected
 # FORM: Prepared
 # RUN: print
 

@@ -1,4 +1,5 @@
-# A store by name that nothing proves to be a slot store may run unknown code, so it stays and keeps its object
+# A store by name that nothing proves to be a slot store may run unknown code, so it stays and keeps its object.
+# An allocation has its layout as its type, unless the prototype it is given may select another class of the program
 # FORM: Prepared
 # RUN: pass EliminateDeadCode
 # STATISTIC: EliminateDeadCodeChanges = 0
@@ -6,32 +7,37 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Stable" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L1 kind=Instance name="Made" constructor=f5 fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L1] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L2 kind=Instance name="Other" constructor=f6 flow={baseState=None}
+layout L3 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
-function f0 name="receiverIsNotProven" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0]
-    PropSet v1, v0 key="x" mode=Strict
-    Return v0
+function f0 name="receiverIsNotProven" parameters=[{type=f5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f5, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2, v1 layout=L1 fields=[0]
+    PropSet v3, v1 key="x" mode=Strict
+    Return v1
 }
 # CHECK-LABEL: function f0 name="receiverIsNotProven"
-# CHECK: v1: object{{*}}= NewObject -, v0 layout=L0 fields=[0]
-# CHECK-NEXT: PropSet v1, v0 key="x"
-# CHECK-NEXT: Return v0
+# CHECK: v3: object ~ L1 = NewObject v2, v1 layout=L1 fields=[0]
+# CHECK-NEXT: PropSet v3, v1 key="x"
+# CHECK-NEXT: Return v1
 
-function f1 name="receiversAreNotComplete" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = NewObject -, v0 layout=L0 fields=[0]
-    PropSet v1, v0 key="x" mode=Strict receivers=[L0, ..]
-    Return v0
+function f1 name="receiversAreNotComplete" parameters=[{type=f5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f5, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2, v1 layout=L1 fields=[0]
+    PropSet v3, v1 key="x" mode=Strict receivers=[L1, ..]
+    Return v1
 }
 # CHECK-LABEL: function f1 name="receiversAreNotComplete"
-# CHECK: v1: object{{*}}= NewObject -, v0 layout=L0 fields=[0]
-# CHECK-NEXT: PropSet v1, v0 key="x"
-# CHECK-NEXT: Return v0
+# CHECK: v3: object ~ L1 = NewObject v2, v1 layout=L1 fields=[0]
+# CHECK-NEXT: PropSet v3, v1 key="x"
+# CHECK-NEXT: Return v1
 
 function f2 name="computedKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
     ElemSet v2, v1, v0 mode=Strict
     Return v0
 }
@@ -40,15 +46,30 @@ function f2 name="computedKey" parameters=[{type=anything}, {type=anything}] res
 # CHECK-NEXT: ElemSet v2, v1, v0
 # CHECK-NEXT: Return v0
 
-function f3 name="storedValueStays" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
-    v1 = Add v0, v0
-    v2 = NewObject -, v0 layout=L0 fields=[0]
-    PropSet v2, v1 key="x" mode=Strict
-    Return v0
+function f3 name="storedValueStays" parameters=[{type=f5}, {type=number}] results=[{type=number}] {
+  b0(v0: f5, v1: number):
+    v2 = Add v1, v1
+    v3 = GetConstructPrototype v0 layout=L1
+    v4 = NewObject v3, v1 layout=L1 fields=[0]
+    PropSet v4, v2 key="x" mode=Strict
+    Return v1
 }
 # CHECK-LABEL: function f3 name="storedValueStays"
-# CHECK: v1: number = Add v0, v0
-# CHECK-NEXT: v2: object{{*}}= NewObject -, v0 layout=L0 fields=[0]
-# CHECK-NEXT: PropSet v2, v1 key="x"
+# CHECK: v2: number = Add v1, v1
+# CHECK: v4: object ~ L1 = NewObject v3, v1 layout=L1 fields=[0]
+# CHECK-NEXT: PropSet v4, v2 key="x"
+# CHECK-NEXT: Return v1
+
+function f4 name="nothingIsKnownOfTheLayout" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    PropSet v1, v0 key="x" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f4 name="nothingIsKnownOfTheLayout"
+# CHECK: v1: L3 = NewObject -, v0 layout=L3 fields=[0]
+# CHECK-NEXT: PropSet v1, v0 key="x"
 # CHECK-NEXT: Return v0
+
+function f5 name="Made" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f6 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

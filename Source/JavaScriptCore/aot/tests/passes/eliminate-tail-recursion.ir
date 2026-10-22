@@ -89,7 +89,7 @@ function f4 name="underHandler" parameters=[{type=number}] results=[{type=number
 function f5 name="checked" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
     v1 = CallDirect v0 function=f5
-    v2 = Claim v1 castType=i32 site=w0
+    v2 = Check v1 castType=i32 site=w0
     Return v2
 }
 # CHECK-LABEL: function f5 name="checked"

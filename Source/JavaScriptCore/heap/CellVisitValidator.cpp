@@ -40,7 +40,13 @@ public:
     NO_RETURN_DUE_TO_CRASH void append(const ConservativeRoots&) final { RELEASE_ASSERT_NOT_REACHED(); }
     void appendUnbarriered(JSCell* cell) final { record(cell); }
     void appendHiddenUnbarriered(JSCell* cell) final { record(cell); }
-    void markAuxiliary(const void* base) final { record(base); }
+    void markAuxiliary(const void* base) final
+    {
+        // Storage that lies in the cell of its owner has no mark of its own.
+        auto* cell = static_cast<const HeapCell*>(base);
+        if (cell->isPreciseAllocation() || !cell->markedBlock().hasInnerCells())
+            record(base);
+    }
 
     bool isFirstVisit() const final { return m_marker.isFirstVisit(); }
     bool isMarked(const void* cell) const final { return m_marker.isMarked(cell); }
@@ -62,8 +68,13 @@ public:
 private:
     void record(const void* reference)
     {
-        if (reference)
-            m_references.add(reference);
+        if (!reference)
+            return;
+        m_references.add(reference);
+        // The marker marks the cell that an inner cell lies in with the inner cell.
+        auto* cell = static_cast<const HeapCell*>(reference);
+        if (!cell->isPreciseAllocation() && cell->markedBlock().isInnerCell(cell))
+            m_references.add(cell->markedBlock().outerCellOf(cell));
     }
 
     const SlotVisitor& m_marker;
@@ -94,6 +105,16 @@ void CellVisitValidator::validate(SlotVisitor& visitor, const JSCell* cell)
         ReferenceRecorder recorder(visitor);
         cell->methodTable()->visitChildren(const_cast<JSCell*>(cell), recorder);
 
+        // The inline visit of a cell visits the inner cells that it is the first to mark. Whether it was the first is not known here, so it may have marked what they refer to and need not have.
+        ReferenceRecorder recorderOfInnerCells(visitor);
+        if (!cell->isPreciseAllocation() && cell->markedBlock().hasInnerCells()) [[unlikely]] {
+            for (const void* reference : recorder.references()) {
+                auto* inner = static_cast<JSCell*>(const_cast<void*>(reference));
+                if (!inner->isPreciseAllocation() && &inner->markedBlock() == &cell->markedBlock() && cell->markedBlock().outerCellIfInnerCell(inner) == cell)
+                    inner->methodTable()->visitChildren(inner, recorderOfInnerCells);
+            }
+        }
+
         // A mark cannot be taken back, so the comparison treats the last cell that the inline visit marked as unmarked.
         const JSCell* droppedCell = nullptr;
         if (Options::dropLastFastVisitReferenceForTesting() && fastVisitor.m_collectorStack.canRemoveLast()) [[unlikely]] {
@@ -106,7 +127,7 @@ void CellVisitValidator::validate(SlotVisitor& visitor, const JSCell* cell)
             for (const void* reference : recorder.references())
                 differs |= reference == droppedCell || !visitor.isMarked(reference);
             for (const JSCell* marked : fastVisitor.m_collectorStack)
-                differs |= !recorder.references().contains(marked);
+                differs |= !recorder.references().contains(marked) && !recorderOfInnerCells.references().contains(marked);
         }
         if (differs) [[unlikely]]
             crashOnMismatch(cell);

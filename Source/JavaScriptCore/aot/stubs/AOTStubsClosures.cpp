@@ -16,6 +16,7 @@
 #include "AOTInstance.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubHelpers.h"
+#include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsCalls.h"
@@ -224,6 +225,55 @@ void generateNewSlimClosure(StubAssembler& jit)
     createClosureInOperation(jit, function, restOfRequest, registers.firstScratch);
 }
 
+StubSignature signatureOfClosureOfTable(StubKey)
+{
+    return closureRequestSignature(0);
+}
+
+void generateClosureOfTable(StubAssembler& jit)
+{
+    static_assert(sizeof(Number24) == 3 && std::endian::native == std::endian::little);
+    const ClosureRegisters registers = allocateClosureRegisters(jit);
+    const GPRReg cell = registers.cell;
+    const GPRReg function = registers.request;
+    const GPRReg tables = registers.firstScratch;
+    const GPRReg numbers = registers.secondScratch;
+    const GPRReg number = cell;
+    const GPRReg cells = registers.firstScratch;
+
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
+    loadProgramTable(jit, tables, ProgramTableIndex::closureCellNumbers, numbers);
+    jit.move(function, number);
+    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
+    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
+    const GPRReg lowBytes = tables;
+    jit.load16(BaseIndex(numbers, number, CCallHelpers::TimesOne), lowBytes);
+    jit.load8(BaseIndex(numbers, number, CCallHelpers::TimesOne, 2), number);
+    jit.lshift32(TrustedImm32(16), number);
+    jit.or32(lowBytes, number);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureCells)), cells);
+    Jump isNotCreated;
+    if (jit.options().useWideReferences) {
+        jit.load64(BaseIndex(cells, number, CCallHelpers::TimesEight), cell);
+        isNotCreated = jit.branchTest64(CCallHelpers::Zero, cell);
+    } else {
+        jit.load32(BaseIndex(cells, number, CCallHelpers::TimesFour), cell);
+        isNotCreated = jit.branchTest32(CCallHelpers::Zero, cell);
+        jit.add32(TrustedImm32(1), cell);
+        decodeCell32(jit, cell, cell);
+    }
+    jit.returnToCaller();
+
+    isNotCreated.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTSingletonClosure, {
+        .returns = OperationCall::Returns::Value,
+        .firstArgument = OperationCall::FirstArgument::Instance,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .checksException = false,
+        .secondArgumentIn = function,
+    });
+}
+
 StubSignature signatureOfInitializeClosure(StubKey key)
 {
     StubSignature signature = closureRequestSignature(key.count());
@@ -314,24 +364,81 @@ void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
     isSlimClosure.link(&jit);
 }
 
-StubSignature signatureOfClosureEntry(StubKey)
+StubSignature signatureOfValueEndsItsTailCalls(StubKey)
 {
-    return StubSignature::withGPRResult({ gprOf(StubRegister::T9) });
+    StubSignature signature;
+    signature.addOperand(gprOf(StubRegister::R0));
+    signature.result = StubResult::Flags;
+    signature.trueCondition = MacroAssembler::NonZero;
+    return signature;
 }
 
-void generateClosureEntry(StubAssembler& jit)
+void generateValueEndsItsTailCalls(StubAssembler& jit)
 {
-    const GPRReg closure = jit.operand(0);
+    const GPRReg value = jit.operand(0);
+    const GPRReg word = jit.allocateScratch(StubRegister::T10);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
-    const GPRReg word = jit.result();
 
+    static_assert(ClosureWord::functionShift == 32 && ClosureWord::endsItsTailCallsBit >= ClosureWord::functionShift);
+    Jump isNotCell = jit.branchIfNotCell(value);
+    jit.load32(Address(value, JSCell::structureIDOffset()), word);
+    auto [isSlim, isNeither] = branchIfNotPlainClosureHeader(jit, word, scratch);
+    jit.load32(Address(value, offsetOfClosureEntry + sizeof(uint32_t)), word);
+    jit.returnFlagsTest32(word, TrustedImm32(1 << (ClosureWord::endsItsTailCallsBit - ClosureWord::functionShift)));
+
+    isSlim.link(&jit);
+    jit.load32(Address(value, offsetOfSlimClosureWord + sizeof(uint32_t)), word);
+    jit.returnFlagsTest32(word, TrustedImm32(1 << (ClosureWord::endsItsTailCallsBit - ClosureWord::functionShift)));
+
+    isNotCell.link(&jit);
+    isNeither.link(&jit);
+    jit.returnFlagsConstant(false);
+}
+
+StubSignature signatureOfValueIsClosureOf(StubKey)
+{
+    StubSignature signature;
+    signature.addOperand(gprOf(StubRegister::R0));
+    signature.addOperand(gprOf(StubRegister::T9));
+    signature.result = StubResult::Flags;
+    signature.trueCondition = MacroAssembler::Zero;
+    return signature;
+}
+
+void generateValueIsClosureOf(StubAssembler& jit)
+{
+    const GPRReg value = jit.operand(0);
+    const GPRReg expectedUpperHalf = jit.operand(1);
+    const GPRReg word = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+
+    static_assert(ClosureWord::functionShift == 32 && !JSCell::structureIDOffset());
     JumpList isNotClosure;
-    loadClosureWordOfThisRealm(jit, closure, { word, scratch, word, scratch }, isNotClosure);
-    jit.returnToCaller();
+    isNotClosure.append(jit.branchIfNotCell(value));
+
+    // Only a slim closure of this realm that is as it was created has one of these Structures.
+    JumpList isSlimClosureAsCreated;
+    jit.load32(Address(value, JSCell::structureIDOffset()), word);
+    for (unsigned kind = 0; kind < numberOfSlimClosureKinds; ++kind) {
+        Address header(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t));
+#if CPU(ARM64)
+        jit.load32(header, scratch);
+        isSlimClosureAsCreated.append(jit.branch32(CCallHelpers::Equal, word, scratch));
+#else
+        isSlimClosureAsCreated.append(jit.branch32(CCallHelpers::Equal, word, header));
+#endif
+    }
+
+    loadClosureWordOfThisRealm(jit, value, { word, scratch, word, scratch }, isNotClosure);
+    jit.urshift64(TrustedImm32(ClosureWord::functionShift), word);
+    jit.returnFlags32(CCallHelpers::Equal, word, expectedUpperHalf);
+
+    isSlimClosureAsCreated.link(&jit);
+    jit.load32(Address(value, offsetOfSlimClosureWord + sizeof(uint32_t)), word);
+    jit.returnFlags32(CCallHelpers::Equal, word, expectedUpperHalf);
 
     isNotClosure.link(&jit);
-    jit.move(TrustedImm32(0), word);
-    jit.returnToCaller();
+    jit.returnFlagsConstant(false);
 }
 
 } } // namespace JSC::AOT

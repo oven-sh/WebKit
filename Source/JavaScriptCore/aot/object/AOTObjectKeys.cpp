@@ -15,6 +15,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTPropertyCaches.h"
 #include "AOTState.h"
 #include "DeferGC.h"
 #include "JSArray.h"
@@ -37,11 +38,11 @@ static bool holdsValue(const Object& object, const FieldData& listedField)
 {
     SlotRepresentation representation = listedField.slot.representation();
     if (representation == SlotRepresentation::DeferredClosure)
-        return true;
+        return object.isInSlot(listedField);
     const void* slot = object.slotOf(listedField);
-    if (!slot)
-        return listedField.flags & fieldMayExistWithoutStorage;
-    return !slotHoldsAbsent(representation, slot);
+    if (slot && !slotHoldsAbsent(representation, slot))
+        return true;
+    return listedField.flags & fieldMayExistWithoutStorage && !livesInExtraProperties(object.vm(), object, listedField);
 }
 
 std::optional<std::span<const FieldAsProperty>> Object::fieldsInKeyOrderSlow() const
@@ -79,6 +80,13 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
     }
     RuntimeLayoutTable& layouts = state.objects->layouts;
     std::span<const FieldData> fields = layout().fields();
+    // A field with a form is no enumerable data property. Nothing may reach the functor before it is known that the order lists none.
+    bool hasOnlyPlainFields = true;
+    forEachFieldInKeyOrder(state, [&](uint16_t index) {
+        hasOnlyPlainFields &= !fields[index].attributes();
+    });
+    if (!hasOnlyPlainFields)
+        return false;
     bool shouldContinue = true;
     forEachFieldInKeyOrder(state, [&](uint16_t index) {
         const FieldData& field = fields[index];
@@ -98,8 +106,6 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         return nullptr;
     State& state = object.state();
     const LayoutData& layout = object.layout();
-    if (layout.hasFieldsWithSymbolKeys)
-        return nullptr;
     PropertyListCache& propertyLists = state.objects->caches->propertyLists;
     Structure* structure = extra->structure();
     uint32_t shapeWord = object.shapeWord();
@@ -131,10 +137,21 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
     Object::KeyOrderStorage storage;
     size_t nextExtraKey = Object::forEachPositionedKey(object.keyOrder(state, storage), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
         const FieldData& field = fields[index];
-        if (!layouts.hasStringKey(field))
+        if (!layouts.hasStringKey(field)) {
+            // The list has no place for a symbol. A layout that declares fields under symbols says nothing about an object that has none of them.
+            hasAllFields &= !layouts.hasSymbolKey(field);
             return;
-        hasAllFields &= holdsValue(object, field);
-        properties.append(PropertyListEntry { layouts.nameOf(vm, field), &field, invalidOffset });
+        }
+        UniquedStringImpl* name = layouts.nameOf(vm, field);
+        if (holdsValue(object, field)) {
+            hasAllFields &= !field.attributes();
+            properties.append(PropertyListEntry { name, &field, invalidOffset });
+            return;
+        }
+        // The property has left its slot. The Structure of the extra properties names it, so that holds for every object that the list is for.
+        PropertyOffset offset = structure->get(vm, name);
+        hasAllFields &= isValidOffset(offset);
+        properties.append(PropertyListEntry { name, nullptr, offset });
     }, [&](size_t ordinal) {
         properties.append(extraKeys[ordinal]);
     });
@@ -217,8 +234,41 @@ JSCellButterfly* Object::keys(VM& vm) const
     return list;
 }
 
-static std::optional<uint32_t> countKeysInOrderWord(const Object& object)
+// A Structure that names the Structure of the extra properties says which there are, and the order word says where they stand among the fields.
+static CachedPropertyList* listOfKeysFixedByStructure(VM& vm, const Object& object)
 {
+    JSObject* extra = object.extraProperties();
+    if (!extra || !object.keysDependOnlyOnStructureAndOrderWord() || hasIndexedProperties(extra->indexingType()))
+        return nullptr;
+    return cachedPropertyList(vm, object);
+}
+
+static bool beginsWithListedKeys(VM& vm, const Object& object, const PropertyNameArrayBuilder& names, uint32_t numberOfListedKeys)
+{
+    CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
+    if (!listing || listing->properties.size() != numberOfListedKeys || names.size() < numberOfListedKeys)
+        return false;
+    for (uint32_t i = 0; i < numberOfListedKeys; ++i) {
+        if (names[i].impl() != listing->properties[i].name)
+            return false;
+    }
+    return true;
+}
+
+static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& object, StructureChain* prototypeChain)
+{
+    CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
+    if (!listing || !listing->enumerator || listing->prototypeChain != prototypeChain || listing->enumerator->cachedStructureID() != object.structureID())
+        return nullptr;
+    return listing->enumerator;
+}
+
+static std::optional<uint32_t> countKeysInOrderWord(VM& vm, const Object& object)
+{
+    if (object.hasExtraProperties()) {
+        CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
+        return listing ? std::optional(static_cast<uint32_t>(listing->properties.size())) : std::nullopt;
+    }
     auto properties = object.fieldsInKeyOrder();
     if (!properties)
         return std::nullopt;
@@ -246,15 +296,20 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
     State& state = this->state();
     KeyOrderTable& keyOrders = state.objects->keyOrders;
     const LayoutData& layout = this->layout();
+    // Nothing is cached for extra properties that the Structure does not name. Whoever has asked for such keys more than once will ask again.
+    if (JSObject* extra = extraProperties(); extra && !compiledStructure().extraPropertiesStructureID() && state.propertyCaches->shouldFile(extra->structureID(), nullptr, SlotAccess::Read))
+        ensureStructureForExtraProperties(vm);
     Structure* structureBefore = structure();
     uint32_t orderWordBefore = orderWord();
 
-    std::optional<uint32_t> numberOfOwnNames = countKeysInOrderWord(*this);
-    bool isCacheable = numberOfOwnNames && !compiledStructure().hasOtherPrototype();
+    bool hasExtraProperties = this->hasExtraProperties();
+    std::optional<uint32_t> numberOfOwnNames = countKeysInOrderWord(vm, *this);
+    // What the key orders keep is kept for good, with the prototypes it names. A list of keys with extra properties is dropped by the next collection.
+    bool isCacheable = numberOfOwnNames && (hasExtraProperties || !compiledStructure().hasOtherPrototype());
     StructureChain* prototypeChainBefore = nullptr;
     if (isCacheable) {
         prototypeChainBefore = structureBefore->prototypeChain(vm, globalObject, this);
-        if (JSPropertyNameEnumerator* cached = keyOrders.enumerator(layout, orderWordBefore, prototypeChainBefore)) {
+        if (JSPropertyNameEnumerator* cached = hasExtraProperties ? cachedEnumeratorOfObjectWithExtraProperties(vm, *this, prototypeChainBefore) : keyOrders.enumerator(layout, orderWordBefore, prototypeChainBefore)) {
             keyOrders.publishEnumerator(*this, cached);
             return cached;
         }
@@ -269,11 +324,16 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
 
     // A Proxy on the chain may have run code that turned this cell into an ordinary object.
     bool isUnchanged = structure() == structureBefore && orderWord() == orderWordBefore;
+    if (hasExtraProperties && numberOfOwnNames && !(isUnchanged && beginsWithListedKeys(vm, *this, names, *numberOfOwnNames))) {
+        numberOfOwnNames = std::nullopt;
+        isCacheable = false;
+    }
+    constexpr uint32_t orderWordMask = orderAndCountMask | orderWordHasExtraProperties;
     JSPropertyNameEnumerator* enumerator = nullptr;
     if (!names.size())
         enumerator = vm.emptyPropertyNameEnumerator();
     else if (numberOfOwnNames && isUnchanged)
-        enumerator = JSPropertyNameEnumerator::tryCreate(vm, structureBefore, 0, *numberOfOwnNames, WTF::move(names), orderWordBefore & orderAndCountMask, orderAndCountMask | orderWordHasExtraProperties);
+        enumerator = JSPropertyNameEnumerator::tryCreate(vm, structureBefore, 0, *numberOfOwnNames, WTF::move(names), orderWordBefore & orderWordMask, orderWordMask);
     else
         enumerator = JSPropertyNameEnumerator::tryCreate(vm, structure(), 0, 0, WTF::move(names));
     if (!enumerator) [[unlikely]] {
@@ -284,7 +344,12 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
     bool sawPolyProto;
     if (isCacheable && isUnchanged && normalizePrototypeChain(globalObject, this, sawPolyProto) != InvalidPrototypeChain) {
         if (structureBefore->prototypeChain(vm, globalObject, this) == prototypeChainBefore && canCacheEnumeratorFor(prototypeChainBefore)) {
-            keyOrders.setEnumerator(vm, layout, orderWordBefore, enumerator, prototypeChainBefore);
+            if (!hasExtraProperties)
+                keyOrders.setEnumerator(vm, layout, orderWordBefore, enumerator, prototypeChainBefore);
+            else if (CachedPropertyList* listing = listOfKeysFixedByStructure(vm, *this)) {
+                listing->enumerator = enumerator;
+                listing->prototypeChain = prototypeChainBefore;
+            }
             keyOrders.publishEnumerator(*this, enumerator);
         }
     }

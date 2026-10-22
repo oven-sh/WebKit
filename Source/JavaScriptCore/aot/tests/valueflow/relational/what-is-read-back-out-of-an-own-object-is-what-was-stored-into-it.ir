@@ -1,0 +1,46 @@
+# function back(p) { const o = { a: p }; return o.a }   function keep(p) { const o = { a: p }; kept = o.a }   function drop(p) { const o = { a: p }; o.a.n }
+# An object that the function has made and that goes nowhere is a second name for what was put into it.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: returned
+# CHECK: f2
+# CHECK-NEXT: p0: stored-in-variable
+# CHECK: f3
+# CHECK-NEXT: p0: members-read | contents: members-read read=[any]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v0, -, v4
+    v6 = Call v1, -, v4
+    v7 = Call v2, -, v4
+    Return
+}
+function f1 name="back" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1 fate=[HasMembersRead]}, {kind=ReadFrom index=2 source=1 key="a" fate=[IsReturned] results=1}] stores=[{source=0 target=1 key="a" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="a"
+    Return v2
+}
+function f2 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1 fate=[HasMembersRead]}, {kind=ReadFrom index=2 source=1 key="a" fate=[IsStoredInVariable]}] stores=[{source=0 target=1 key="a" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="a"
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f3 name="drop" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1 fate=[HasMembersRead]}, {kind=ReadFrom index=2 source=1 key="a" fate=[HasMembersRead]}, {kind=ReadFrom index=3 source=2 key="n"}] stores=[{source=0 target=1 key="a" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="a"
+    v3 = PropGet v2 key="n"
+    Return
+}

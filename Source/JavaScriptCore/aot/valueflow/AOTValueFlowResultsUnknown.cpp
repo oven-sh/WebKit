@@ -73,23 +73,34 @@ static void fillAccessSites(const Program& program, const FlowAccessSiteNumberin
 
 static void fillApplication(const Program& program, BuildContext& build, FlowApplication& application)
 {
-    application.versions.functionCountAsRead = program.functions.size();
-    application.accessSites = numberAccessSites(program, build);
-    application.signatures = Vector<FlowSignatureUpdate>(program.functions.size());
-    application.bodies = Vector<FlowBodyUpdate>(program.functions.size());
-
-    application.layouts = Vector<FlowLayoutUpdate>(program.layouts.size(), [&](size_t index) {
-        const Layout& layout = program.layouts[index];
-        FlowLayoutUpdate update;
-        update.flow = layout.flow;
-        update.classFlow = layout.classFlow;
-        update.fields = Vector<FlowFieldUpdate>(layout.fields.size(), [&](size_t field) {
-            return FlowFieldUpdate { { }, layout.fields[field].flow };
-        });
-        return update;
-    });
-    application.variables = Vector<FlowVariableUpdate>(program.variables.size(), [&](size_t index) {
-        return FlowVariableUpdate { { }, program.variables[index].flow };
+    application.functionCountAsRead = program.functions.size();
+    runTasksInParallel(build.parallelLoops(), {
+        [&] {
+            application.bodies = Vector<FlowBodyUpdate>(program.functions.size());
+        },
+        [&] {
+            application.accessSites = numberAccessSites(program, build);
+        },
+        [&] {
+            application.signatures = Vector<FlowSignatureUpdate>(program.functions.size());
+        },
+        [&] {
+            application.layouts = Vector<FlowLayoutUpdate>(program.layouts.size());
+            forEachIndexInParallel(build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
+                const Layout& layout = program.layouts[index];
+                FlowLayoutUpdate& update = application.layouts[index];
+                update.flow = layout.flow;
+                update.classFlow = layout.classFlow;
+                update.fields = Vector<FlowFieldUpdate>(layout.fields.size(), [&](size_t field) {
+                    return FlowFieldUpdate { { }, layout.fields[field].flow };
+                });
+            });
+        },
+        [&] {
+            application.variables = Vector<FlowVariableUpdate>(program.variables.size(), [&](size_t index) {
+                return FlowVariableUpdate { { }, program.variables[index].flow };
+            });
+        },
     });
 }
 
@@ -119,18 +130,25 @@ FlowResultTables createUnknownResultTables(const Program& program, BuildContext&
     FlowResultTables tables;
     tables.program = &program;
     tables.application = std::unique_ptr<FlowApplication, FlowApplicationDeleter>(new FlowApplication);
-    fillApplication(program, build, *tables.application);
-
     tables.functions.functionCountAsRead = program.functions.size();
-    tables.functions.functions = Vector<FunctionFlow>(program.functions.size());
-    tables.functions.parameterSummaries = Vector<Vector<OperandSummary>>(program.functions.size());
+    runTasksInParallel(build.parallelLoops(), {
+        [&] {
+            fillApplication(program, build, *tables.application);
+        },
+        [&] {
+            tables.functions.functions = Vector<FunctionFlow>(program.functions.size());
+        },
+        [&] {
+            tables.functions.parameterSummaries = Vector<Vector<OperandSummary>>(program.functions.size());
+        },
+    });
     fillAccessSites(program, tables.application->accessSites, build.parallelLoops(), tables.sites);
 
     tables.builtins.uses = listEveryUseOfEveryBuiltin(program.builtins());
     tables.builtins.featureUses = listEveryFeatureOfBuiltins(program.builtins());
     tables.builtins.localeUses.append(FlowLocaleUse { });
     tables.wholeProgram.modules = Vector<ModuleFlow>(program.modules.size());
-    // The one cause that opens the whole program: text is evaluated, modules are loaded by name, the loader's answers are replaced.
+    // The one cause that opens the whole program: text is evaluated, modules are loaded by name, the loader's answers are replaced. The tables stay as they are only in a build with such an option.
     tables.wholeProgram.unseenCode.append(UnseenCodeRecord { .cause = UnseenCodeCause::OptionAdmitsCode });
     return tables;
 }

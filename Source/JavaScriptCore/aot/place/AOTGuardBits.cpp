@@ -15,7 +15,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static_assert(defaultLimitValue(LimitID::MaxGuardBitsPerClassSide, hostArchitecture()) == MemberGuardData::bitsPerWord);
+static_assert(!(defaultLimitValue(LimitID::MaxGuardBitsPerClassSide, hostArchitecture()) % MemberGuardData::bitsPerWord));
 
 static std::pair<MemberGuardKind, PropertyKeyID> kindAndKeyOf(const GuardUse& guard)
 {
@@ -42,7 +42,7 @@ static Vector<GuardUse> chooseHeaviestGuards(const PlacementContext& context, st
     return chosen;
 }
 
-static void appendGuardBits(std::span<const GuardUse> guards, GuardBitTable& table)
+static void appendGuardBits(const PlacementContext& context, std::span<const GuardUse> guards, GuardBitTable& table)
 {
     uint32_t bit = 0;
     for (const GuardUse& guard : guards) {
@@ -52,6 +52,7 @@ static void appendGuardBits(std::span<const GuardUse> guards, GuardBitTable& tab
             .kind = guard.kind,
             .key = guard.key,
             .bit = bit++,
+            .holdsWhileClear = context.slots().classCreation(guard.classLayout).guardsHoldWhileClear,
         });
     }
 }
@@ -61,10 +62,10 @@ static void placeClassSide(const PlacementContext& context, std::span<const Guar
     RELEASE_ASSERT(context.program.at(guards.front().classLayout).kind == LayoutKind::Instance);
     uint64_t limit = context.build.limit(LimitID::MaxGuardBitsPerClassSide);
     if (guards.size() <= limit) {
-        appendGuardBits(guards, table);
+        appendGuardBits(context, guards, table);
         return;
     }
-    appendGuardBits(chooseHeaviestGuards(context, guards, static_cast<size_t>(limit)).span(), table);
+    appendGuardBits(context, chooseHeaviestGuards(context, guards, static_cast<size_t>(limit)).span(), table);
 }
 
 GuardBitTable placeGuardBits(const PlacementContext& context, const PlacedSites& sites)

@@ -28,10 +28,15 @@ struct CoroutinePlan {
     CreatorRecord::Coroutine record;
     Function* bodySlot { nullptr };
     bool didNarrowResult { false };
+    // Only an async function: the slot for its body takes a worker.
+    bool neverSuspends { false };
 };
 
 Function buildCoroutineRamp(const AnalysisContext&, TypeArena&, const CoroutineTypes&, const Function& unsplit, CoroutinePlan&);
 Function buildCoroutineBody(const AnalysisContext&, TypeArena&, const CoroutineTypes&, Function&& unsplit, const CoroutinePlan&);
+
+Function buildRampOfWorker(const AnalysisContext&, TypeArena&, const CoroutineTypes&, const Function& unsplit, CoroutinePlan&);
+Function buildAsyncWorker(const AnalysisContext&, TypeArena&, Function&& unsplit, const CoroutinePlan&);
 
 inline TypeID CoroutineTypes::allocatedBy(CoroutineKind kind) const
 {

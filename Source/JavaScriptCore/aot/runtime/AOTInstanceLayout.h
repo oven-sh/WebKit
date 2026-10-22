@@ -19,8 +19,9 @@ struct InstanceSizes {
     uint32_t sizeOfStatics;
     uint32_t numberOfStringCells;
     uint32_t numberOfSiteCaches;
+    uint32_t sizeOfMethodTable;
 };
-static_assert(sizeof(InstanceSizes) == 12 && isImageRecord<InstanceSizes>);
+static_assert(sizeof(InstanceSizes) == 16 && isImageRecord<InstanceSizes>);
 
 struct InstanceLayout {
     static constexpr size_t bytesReservedForPrefixAndPollPage = 1 * MB;
@@ -29,8 +30,18 @@ struct InstanceLayout {
     static constexpr size_t granuleAboveInstance = 16 * KB;
     static constexpr unsigned cardShift = 8;
     static constexpr size_t sizeOfStringCell = sizeof(uint32_t);
+    // One card says whether a cell was written among this many bytes of string cells.
+    static constexpr unsigned stringCellCardShift = 7;
     static constexpr size_t sizeOfSiteCache = 16;
-    static constexpr size_t offsetOfStringCells = 64 * KB;
+    static constexpr size_t offsetOfStringCells = 384 * KB;
+    // Between the instance and the string cells.
+    static constexpr size_t offsetOfKeyOrderSteps = 32 * KB;
+    // Small tables of which compiled code reads one word at a time. Here it reaches the word from the instance, without the address of the table.
+    // A table that has no room here lies elsewhere, and compiled code goes through its address.
+    static constexpr size_t offsetOfBuiltinLocationStates = 64 * KB;
+    static constexpr size_t offsetOfGlobalBindings = 80 * KB;
+    static constexpr size_t offsetOfBuiltinCells = 128 * KB;
+    static constexpr size_t offsetOfBuiltinValues = 256 * KB;
 
     static constexpr ptrdiff_t offsetOfLoopPollPage() { return -static_cast<ptrdiff_t>(bytesReservedForPrefixAndPollPage); }
     static constexpr ptrdiff_t offsetOfStatics(InstanceSizes sizes) { return offsetOfLoopPollPage() - static_cast<ptrdiff_t>(bytesReservedForStatics(sizes)); }
@@ -41,10 +52,18 @@ struct InstanceLayout {
         return bytesReservedForPrefixAndPollPage + statics + roundUpToMultipleOf<granuleBelowInstance>(statics >> cardShift);
     }
 
+    static constexpr bool holdsBuiltinLocationStates(size_t bytes) { return bytes <= offsetOfGlobalBindings - offsetOfBuiltinLocationStates; }
+    static constexpr bool holdsGlobalBindings(size_t bytes) { return bytes <= offsetOfBuiltinCells - offsetOfGlobalBindings; }
+    // A value has the number of its key, as a cell has, so each of the two tables has a word for every key.
+    static constexpr bool holdsBuiltinCells(size_t numberOfKeys) { return numberOfKeys * sizeof(void*) <= offsetOfBuiltinValues - offsetOfBuiltinCells; }
+
     static constexpr size_t offsetOfStringCell(uint32_t number) { return offsetOfStringCells + number * sizeOfStringCell; }
     static constexpr size_t offsetOfSiteCaches(InstanceSizes sizes) { return offsetOfStringCells + roundUpToMultipleOf<granuleAboveInstance>(sizes.numberOfStringCells * sizeOfStringCell); }
     static constexpr size_t offsetOfSiteCache(InstanceSizes sizes, uint32_t number) { return offsetOfSiteCaches(sizes) + number * sizeOfSiteCache; }
-    static constexpr size_t bytesReservedFromInstance(InstanceSizes sizes) { return offsetOfSiteCaches(sizes) + roundUpToMultipleOf<granuleAboveInstance>(sizes.numberOfSiteCaches * sizeOfSiteCache); }
+    // The instance's own copy of the method table: a copy-on-write clone of the section of the image, so it begins at a page.
+    static constexpr size_t offsetOfMethodTable(InstanceSizes sizes) { return offsetOfSiteCaches(sizes) + roundUpToMultipleOf<granuleAboveInstance>(sizes.numberOfSiteCaches * sizeOfSiteCache); }
+    static constexpr size_t bytesReservedForMethodTable(InstanceSizes sizes) { return roundUpToMultipleOf<granuleAboveInstance>(sizes.sizeOfMethodTable); }
+    static constexpr size_t bytesReservedFromInstance(InstanceSizes sizes) { return offsetOfMethodTable(sizes) + bytesReservedForMethodTable(sizes); }
 
     static constexpr bool isAddressable(InstanceSizes sizes)
     {
@@ -58,10 +77,11 @@ private:
 
 static_assert(!(InstanceLayout::bytesReservedForPrefixAndPollPage % InstanceLayout::granuleBelowInstance));
 static_assert(!(InstanceLayout::offsetOfStringCells % InstanceLayout::granuleAboveInstance));
+static_assert(InstanceLayout::offsetOfStringCells - InstanceLayout::offsetOfBuiltinValues == InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells);
 static_assert(!(InstanceLayout::granuleAboveInstance % InstanceLayout::sizeOfSiteCache));
-static_assert(InstanceLayout::offsetOfSiteCaches({ 0, 1, 0 }) == InstanceLayout::offsetOfStringCells + InstanceLayout::granuleAboveInstance);
-static_assert(InstanceLayout::offsetOfCards({ 0, 0, 0 }) < InstanceLayout::offsetOfStatics({ 0, 0, 0 }) && InstanceLayout::offsetOfStatics({ 0, 0, 0 }) < InstanceLayout::offsetOfLoopPollPage(), "The collector reads a word of cards even when the statics are empty, and the loop poll page can be inaccessible.");
-static_assert(-InstanceLayout::offsetOfCards({ 1, 0, 0 }) <= static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance({ 1, 0, 0 })));
+static_assert(InstanceLayout::offsetOfSiteCaches({ 0, 1, 0, 0 }) == InstanceLayout::offsetOfStringCells + InstanceLayout::granuleAboveInstance);
+static_assert(InstanceLayout::offsetOfCards({ 0, 0, 0, 0 }) < InstanceLayout::offsetOfStatics({ 0, 0, 0, 0 }) && InstanceLayout::offsetOfStatics({ 0, 0, 0, 0 }) < InstanceLayout::offsetOfLoopPollPage(), "The collector reads a word of cards even when the statics are empty, and the loop poll page can be inaccessible.");
+static_assert(-InstanceLayout::offsetOfCards({ 1, 0, 0, 0 }) <= static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance({ 1, 0, 0, 0 })));
 
 } } // namespace JSC::AOT
 

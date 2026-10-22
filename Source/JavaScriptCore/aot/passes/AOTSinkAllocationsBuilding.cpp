@@ -20,7 +20,7 @@ struct MemberVisit {
     uint32_t numberOfVisitedHeldObjects { 0 };
 };
 
-enum class PropertyInitialization : uint8_t { Listed, ListedWithPlaceholder, StoredLate };
+enum class PropertyInitialization : uint8_t { Listed, ListedWithPlaceholder, ListedWithFiller, StoredLate };
 
 struct PlannedProperty {
     uint32_t field { 0 };
@@ -40,6 +40,13 @@ static bool canBuildEveryVariant(const VirtualFamily& family, const ObjectState&
     return std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
         const VirtualShape& shape = family.at(variant.shape);
         return shape.kind != VirtualShapeKind::Fields || family.descriptionOf(shape).canBeBuilt;
+    });
+}
+
+static bool hasVariantWithUnprovenField(const VirtualFamily& family, const ObjectState& state)
+{
+    return std::ranges::any_of(state.variants, [&](const ObjectVariant& variant) {
+        return hasUnprovenField(family, family.at(variant.shape));
     });
 }
 
@@ -64,6 +71,8 @@ static Vector<PlannedProperty, 8> planProperties(const AllocationSinking& sinkin
     for (const FreshResultField& property : variant.properties) {
         PlannedProperty planned;
         planned.field = *family.findField(property.field);
+        if (property.field.kind == VirtualFieldKind::UnprovenNamed)
+            planned.initialization = PropertyInitialization::ListedWithFiller;
         VirtualObjectID held = objectState.objectHeldIn(planned.field);
         if (held && !state.find(held)->isCell()) {
             planned.awaitedObject = held;
@@ -111,12 +120,18 @@ static unsigned countRepeatedStores(const AllocationSinking& sinking, const Sink
         case PropertyInitialization::ListedWithPlaceholder:
             count += fieldsListedByAllocation.get(property.field);
             break;
+        case PropertyInitialization::ListedWithFiller:
         case PropertyInitialization::StoredLate:
             ++count;
             break;
         }
     }
     return count;
+}
+
+static bool isBorrowingCall(const BuildCause& cause)
+{
+    return cause.opcode && effectRuleOf(*cause.opcode) == EffectRule::Call && cause.reasons.isEmpty() && cause.limit == LimitID::None;
 }
 
 template<typename InstructionType>
@@ -144,6 +159,8 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
         const ObjectState& state = *stateOf(member);
         if (!canBuildEveryVariant(m_sinking.familyOf(member), state))
             m_sinking.abandon(member);
+        if (!cause.admitsStoresByName && hasVariantWithUnprovenField(m_sinking.familyOf(member), state))
+            m_sinking.refuseUnprovenValues(member);
         if (m_sinking.at(member).isJoin && !fitsType(member, function().at(m_sinking.at(member).definition).type))
             m_sinking.abandon(member);
         if (m_mode == SinkingMode::Count && state.hasCell())
@@ -289,10 +306,16 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
 
     ValueID placeholder;
     Vector<FieldValue, 8> properties;
+    Vector<FieldValue, 2> storedByName;
     for (const PlannedProperty& property : planProperties(m_sinking, m_state, object, variant)) {
         const VirtualField& field = family.fieldAt(property.field);
         if (property.initialization == PropertyInitialization::Listed) {
             properties.append(FieldValue { field, valueOfField(object, property.field) });
+            continue;
+        }
+        if (property.initialization == PropertyInitialization::ListedWithFiller) {
+            properties.append(FieldValue { field, cursor().emit(makeFiller(program(), variant.description, field)) });
+            storedByName.append(FieldValue { field, valueOfField(object, property.field) });
             continue;
         }
 
@@ -309,6 +332,8 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
         parts.append(FieldValue { part.field, valueOfField(object, *family.findField(part.field)) });
 
     ValueID cell = cursor().emit(makeAllocation(program(), AllocationRequest { variant.description, variant.prototype, properties.span(), parts.span(), variant.length, absentResult == AbsentResult::IsPossible }));
+    for (const FieldValue& stored : storedByName)
+        cursor().emit(makeStoreByName(stored, cell));
     if (m_sinking.at(object).needsGuard) {
         Value guard(Opcode::AllGuards);
         guard.setGuardsOperands(singleElementSpan(cell));
@@ -386,7 +411,13 @@ void ObjectInterpreter::emitLateStores(std::span<const LateFieldStore> stores)
         ValueID stored = store.held ? cellOf(store.held) : store.value;
         RELEASE_ASSERT(holder && stored);
 
-        Value value = makeFieldStore(program(), description, FieldValue { m_sinking.familyOf(store.holder).fieldAt(store.field), stored }, holder, holder);
+        const VirtualField& field = m_sinking.familyOf(store.holder).fieldAt(store.field);
+        cursor().setOrigin(function().at(description.allocation).origin());
+        if (field.kind == VirtualFieldKind::UnprovenNamed) {
+            cursor().emit(makeStoreByName(FieldValue { field, stored }, holder));
+            continue;
+        }
+        Value value = makeFieldStore(program(), description, FieldValue { field, stored }, holder, holder);
         if (Value::opcodesWithReceivers.contains(value.opcode))
             setExactReceivers(value, description.layout, cursor().builder().types());
         cursor().setOrigin(function().at(description.allocation).origin());
@@ -408,11 +439,14 @@ void ObjectInterpreter::didBuild(VirtualObjectID object, const BuildCause& cause
     ObjectState& state = *stateOf(object);
     if (m_mode == SinkingMode::Count) {
         BlockFrequency frequency = frequencyOfBuild();
+        bool isBorrowed = isBorrowingCall(cause);
         auto countBuilds = [&](VirtualObjectID built, unsigned numberOfBuilds) {
             Candidate& candidate = m_sinking.at(built);
             candidate.numberOfBuilds += numberOfBuilds;
             if (isRarerThan(frequency, m_sinking.analyses().blockFrequencies().classOf(candidate.block)))
                 candidate.numberOfRarerBuilds += numberOfBuilds;
+            else if (isBorrowed)
+                candidate.numberOfBorrowingBuilds += numberOfBuilds;
             if (!candidate.firstCause)
                 candidate.firstCause = cause;
         };

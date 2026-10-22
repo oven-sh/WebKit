@@ -18,17 +18,16 @@ function f0 name="underTestOfNames" parameters=[{type=Map<string, number>}] resu
     v4 = Call v3, v0
     Jump -> next b3(v4)
   b3(v5):
-    v6 = Predict v5 predicted=MapIterator
-    v7 = IteratorOpen v6
+    v6 = IteratorOpen v5
     Jump -> next b4()
   b4():
     LoopHint
-    v9 = IteratorResume v7
-    v10 = ResultAt v9
-    v11 = ResultAt v9 index=1
-    Branch v10 -> taken b5(), notTaken b4()
+    v8 = IteratorResume v6
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b5(), notTaken b4()
   b5():
-    Return v11
+    Return v10
 }
 # What the pipeline leaves of `for (const v of m.values())` on a parameter. The tests in front of the call are the tests of the loop.
 # CHECK-LABEL: function f0 name="underTestOfNames"
@@ -47,8 +46,7 @@ function f0 name="underTestOfNames" parameters=[{type=Map<string, number>}] resu
 # CHECK: [[walk0]]():
 # CHECK-NEXT: = CollectionTable [[map0]]
 # CHECK: [[protocol0]]() frequency=Unlikely:
-# CHECK-NEXT: [[iterable0]]: {{*}} = RequireObjectCoercible v6 nullishAccess=Iterate
-# CHECK-NEXT: = PropGet [[iterable0]] key=@@iterator
+# CHECK-NEXT: = CallDirect v5 function=[[openIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f0 name="underTestOfNames"
 # ABSENT-NOT: TypeTest {{*}} testedType=Map
 # ABSENT-NOT: b3(v2
@@ -97,7 +95,7 @@ function f1 name="throughTwoMerges" parameters=[{type=Set<number>}, {type=boolea
 # CHECK-NEXT: b6(v9: anything, [[arm1]]: int[0, 1], [[set1]]: Set<number>):
 # CHECK-NEXT: Switch [[arm1]] cases=[0]
 # CHECK: = SetNext [[set1]],
-# CHECK: key=@@iterator
+# CHECK: function=[[openIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f1 name="throughTwoMerges"
 # ABSENT-NOT: b5(v4
 # ABSENT-NOT: b5(v5
@@ -144,7 +142,7 @@ function f2 name="receiverNarrowedPerClass" parameters=[{type=anything}] results
 # CHECK-NEXT: Switch [[arm2]] cases=[0, 1]
 # CHECK: = PropGet [[array2]] key="length"
 # CHECK: = MapNext [[map2]],
-# CHECK: = RequireObjectCoercible v12 nullishAccess=Iterate
+# CHECK: = CallDirect v12 function=[[openIterator]] [isNeverInlined]
 # CHECK: [[element2]]: {{*}} = ElemGet [[array2]], [[index2]] [keyIsIntegral]
 # CHECK: = NewArray [[index2]], [[element2]] contents=anything
 
@@ -183,6 +181,7 @@ function f3 name="everyEdgeMakesOne" parameters=[{type=Map<string, number>}, {ty
 # ABSENT-NOT: Switch
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 
 function f4 name="keysOrValues" parameters=[{type=Map<string, number>}, {type=boolean}] results=[{type=anything}] {
   b0(v0: Map<string, number>, v1: boolean):
@@ -217,6 +216,7 @@ function f4 name="keysOrValues" parameters=[{type=Map<string, number>}, {type=bo
 # ABSENT-LABEL: function f4 name="keysOrValues"
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 
 function f5 name="testedBehindMerge" parameters=[{type=Map<string, number>}, {type=boolean}, {type=anything}] results=[{type=anything}] {
   b0(v0: Map<string, number>, v1: boolean, v2: anything):
@@ -227,7 +227,7 @@ function f5 name="testedBehindMerge" parameters=[{type=Map<string, number>}, {ty
   b2():
     Jump -> next b3(v2)
   b3(v4):
-    v5 = Claim v4 castType=object cause=MayFail
+    v5 = Check v4 castType=object cause=MayFail
     v6 = IteratorOpen v5
     Jump -> next b4()
   b4():
@@ -243,7 +243,7 @@ function f5 name="testedBehindMerge" parameters=[{type=Map<string, number>}, {ty
 # CHECK-LABEL: function f5 name="testedBehindMerge"
 # CHECK: v3: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
 # CHECK: Jump -> next b3(v3,
-# CHECK: v5: object = Claim v4 castType=object cause=MayFail
+# CHECK: v5: object = Check v4 castType=object cause=MayFail
 # CHECK-NEXT: Switch
 # CHECK: = MapNext
 # ABSENT-LABEL: function f5 name="testedBehindMerge"
@@ -289,7 +289,7 @@ function f6 name="leftEarly" parameters=[{type=Set<number>}, {type=boolean}, {ty
 # CHECK-NEXT: Jump
 # CHECK: frequency=Unlikely handler=
 # CHECK-NEXT: = Call v2, -,
-# CHECK: key="return"
+# CHECK: function=[[closeIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f6 name="leftEarly"
 # ABSENT-NOT: b3(v3
 
@@ -316,7 +316,7 @@ function f7 name="iteratorHasOtherUse" parameters=[{type=Map<string, number>}, {
 }
 # CHECK-LABEL: function f7 name="iteratorHasOtherUse"
 # CHECK: Jump -> next b3(v3)
-# CHECK: key=@@iterator
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f7 name="iteratorHasOtherUse"
 # ABSENT-NOT: MapNext
 # ABSENT-NOT: Switch
@@ -344,7 +344,7 @@ function f8 name="mergedValueHasOtherUse" parameters=[{type=Map<string, number>}
 # CHECK-LABEL: function f8 name="mergedValueHasOtherUse"
 # CHECK: Jump -> next b3(v3)
 # CHECK: Return v4
-# CHECK: key=@@iterator
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f8 name="mergedValueHasOtherUse"
 # ABSENT-NOT: MapNext
 # ABSENT-NOT: Switch
@@ -368,7 +368,7 @@ function f9 name="twoEdgesFromOneBlock" parameters=[{type=Map<string, number>}, 
 # What is defined at the end of a block cannot tell its two edges apart.
 # CHECK-LABEL: function f9 name="twoEdgesFromOneBlock"
 # CHECK: Branch v1 -> taken b1(v3), notTaken b1(v2)
-# CHECK: key=@@iterator
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f9 name="twoEdgesFromOneBlock"
 # ABSENT-NOT: MapNext
 # ABSENT-NOT: Switch
@@ -393,7 +393,7 @@ function f10 name="madeOutsideLoopOfOpen" parameters=[{type=Map<string, number>}
 }
 # CHECK-LABEL: function f10 name="madeOutsideLoopOfOpen"
 # CHECK: Jump -> next b1(v2)
-# CHECK: key=@@iterator
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f10 name="madeOutsideLoopOfOpen"
 # ABSENT-NOT: MapNext
 # ABSENT-NOT: Switch
@@ -420,7 +420,7 @@ function f11 name="receiverOfTwoClasses" parameters=[{type=Map<string, number>|S
 }
 # CHECK-LABEL: function f11 name="receiverOfTwoClasses"
 # CHECK: Jump -> next b3(v3)
-# CHECK: key=@@iterator
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f11 name="receiverOfTwoClasses"
 # ABSENT-NOT: MapNext
 # ABSENT-NOT: Switch
@@ -461,6 +461,7 @@ function f12 name="madeInLoopAroundOpen" parameters=[{type=Map<string, number>},
 # CHECK-NEXT: Switch [[arm12]] cases=[0]
 # CHECK: = MapNext [[map12]],
 # CHECK: Branch v13 -> taken b1(), notTaken b7()
+# CHECK: function [[openIterator]] name="openIterator"
 # ABSENT-LABEL: function f12 name="madeInLoopAroundOpen"
 # ABSENT-NOT: b4(v4
 

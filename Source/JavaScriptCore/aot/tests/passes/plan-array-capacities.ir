@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: limit=MaxPlannedArrayCapacity:8
 # RUN: pass PlanArrayCapacities
-# STATISTIC: ArrayCapacitiesPlanned = 18
+# STATISTIC: ArrayCapacitiesPlanned = 19
 # LOSS: MaxPlannedArrayCapacity x1 f24 v1
 
 module m0 path="main.js" displayPath="main.js"
@@ -724,7 +724,9 @@ function f33 name="lengthGetterWithUnknownCodeInLoop" parameters=[{type=Array<an
     Return v2
 }
 # CHECK-LABEL: function f33
-# CHECK-NOT: capacity=
+# CHECK: [[length33]]: {{*}} = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK: [[sum33]]: {{*}} = Add {{*}}, [[length33]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum33]]
 
 function f34 name="lengthGetterOfArrayMadeAfterLiteral" parameters=[{type=anything}] results=[{type=Array<anything>}] {
   b0(v0: anything):

@@ -56,12 +56,16 @@ struct FramePolicy {
     bool mayPushSpillsAtFrameSetup { false };
     bool ordersSlotsByUse { false };
     bool prefersStackPointerAddresses { false };
+    bool mayOmitFrameRecord { false };
+    // A frame without a record saves instructions each time it is set up, and its addresses are a byte longer. For a function that sets its frame up at most entries.
+    unsigned maxBytesAddedWithoutFrameRecord { 0 };
 };
 
 struct LayoutPolicy {
     bool movesBlocksWithoutSuccessorsToEnd { false };
     bool placesRareBlocksInGaps { false };
     bool placesRareBlocksAfterGuards { false };
+    bool makesGapsForRareBlocks { false };
     bool ordersBlocksByEdgeFrequency { false };
     bool recordsRareCodeStart { false };
     bool mergesIdenticalBlocks { false };
@@ -76,6 +80,7 @@ struct PeepholePolicy {
     bool reusesConditionFlags { false };
     bool pairsMemoryAccesses { false };
     bool resequencesMovesBeforePatches { false };
+    bool emitsShufflesInPairOrder { false };
     uint32_t trapReach { 0 };
 };
 

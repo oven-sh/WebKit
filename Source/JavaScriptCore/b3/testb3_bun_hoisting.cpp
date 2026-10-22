@@ -10,6 +10,7 @@
 
 #include "B3DominatorJumpPointers.h"
 #include "B3Dominators.h"
+#include "B3EliminateDeadCode.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3RegisterPressure.h"
 #include <wtf/WeakRandom.h>
@@ -75,6 +76,36 @@ static void testMoveConstantsByFrequencyHoistsOutOfLoop()
     CHECK_EQ(int64ConstantCount(loop.root, large), 1u);
     CHECK_EQ(int64ConstantCount(loop.body, large), 0u);
     CHECK_EQ(run(*compileProc(proc), 3), 3 * large);
+}
+
+// Upstream keeps whichever of the two constants a hash table yields first.
+static void testMoveConstantsSharesNegatedAddend()
+{
+    constexpr int64_t large = 0x123456789abcll;
+    for (bool byFrequency : { true, false }) {
+        for (int64_t firstAddend : { large, -large }) {
+            Procedure proc(policyWith([&](Policy& policy) {
+                policy.optimization.placesConstantsByFrequency = byFrequency;
+            }));
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+            Value* first = graph.make(root, Add, arguments[0], graph.int64(root, firstAddend));
+            Value* second = graph.make(root, Add, arguments[1], graph.int64(root, -firstAddend));
+            graph.ret(root, graph.make(root, BitXor, first, second));
+            resetAndValidate(proc);
+
+            moveConstants(proc);
+            eliminateDeadCode(proc);
+            validate(proc);
+            CHECK_EQ(numberOfValues(proc, Add), 1u);
+            CHECK_EQ(numberOfValues(proc, Sub), 1u);
+            CHECK_EQ(int64ConstantCount(root, large) + int64ConstantCount(root, -large), 1u);
+            if (byFrequency)
+                CHECK_EQ(int64ConstantCount(root, large), 1u);
+            CHECK_EQ(invoke<int64_t>(*compileProc(proc), static_cast<int64_t>(5), static_cast<int64_t>(7)), (5 + firstAddend) ^ (7 - firstAddend));
+        }
+    }
 }
 
 static unsigned linearDepth(B3::Dominators& dominators, BasicBlock* block)
@@ -432,19 +463,24 @@ static void testHoistLoopInvariantValuesHoistsImmutableLoadPastStores()
 {
     for (Mutability mutability : { Mutability::Immutable, Mutability::Mutable }) {
         for (bool onlyFromLikelyPaths : { true, false }) {
-            Procedure proc(likelyPathsPolicy(onlyFromLikelyPaths));
-            Graph graph { proc };
-            LoopWithBranches loop(graph);
-            MemoryValue* loaded = graph.load(loop.header, Int64, loop.pointer, 0, firstHeap);
-            loaded->setReadsMutability(mutability);
-            graph.increase(loop.header, loop.sum, loaded);
-            graph.store(loop.latch, loop.operand, loop.pointer, 8, firstHeap);
+            for (bool pastWrites : { true, false }) {
+                Procedure proc(policyWith([&](Policy& policy) {
+                    policy.loops.hoistsOnlyFromLikelyPaths = onlyFromLikelyPaths;
+                    policy.loops.hoistsImmutableLoadsPastWrites = pastWrites;
+                }));
+                Graph graph { proc };
+                LoopWithBranches loop(graph);
+                MemoryValue* loaded = graph.load(loop.header, Int64, loop.pointer, 0, firstHeap);
+                loaded->setReadsMutability(mutability);
+                graph.increase(loop.header, loop.sum, loaded);
+                graph.store(loop.latch, loop.operand, loop.pointer, 8, firstHeap);
 
-            loop.hoist();
-            CHECK_EQ(valueCountInLoops(proc, Load), mutability == Mutability::Immutable ? 0u : 1u);
-            int64_t memory[2] = { 6, 0 };
-            CHECK_EQ(run(*compileProc(proc), 4, memory, 3), 24);
-            CHECK_EQ(memory[1], 3);
+                loop.hoist();
+                CHECK_EQ(valueCountInLoops(proc, Load), mutability == Mutability::Immutable && pastWrites ? 0u : 1u);
+                int64_t memory[2] = { 6, 0 };
+                CHECK_EQ(run(*compileProc(proc), 4, memory, 3), 24);
+                CHECK_EQ(memory[1], 3);
+            }
         }
     }
 }
@@ -627,10 +663,48 @@ static void testControlDependentLoadStaysDespiteLikelyPath()
     }
 }
 
+// A poll leaves for reasons of its own. Any other value that may leave can be what makes the load safe.
+static void testControlDependentLoadIsHoistedAcrossPoll()
+{
+    for (bool isPoll : { true, false }) {
+        Procedure proc(likelyPathsPolicy(true));
+        Graph graph { proc };
+        PollState state;
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+        Value* bound = arguments[0];
+        Value* pointer = arguments[1];
+        graph.set(root, index, graph.int64(root, 0));
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.jump(root, body);
+        PatchpointValue* poll = appendPoll(graph, body, state);
+        poll->effects.exitsSideways = true;
+        poll->isLoopPoll = isPoll;
+        graph.increase(body, sum, graph.load(body, Int64, pointer, 0, firstHeap));
+        graph.increase(body, index, 1);
+        graph.branch(body, graph.make(body, LessThan, graph.get(body, index), bound), body, exit);
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+
+        hoistLoopInvariantValues(proc);
+        validate(proc);
+        CHECK_EQ(valueCountInLoops(proc, Load), isPoll ? 0u : 1u);
+        int64_t memory[1] = { 6 };
+        CHECK_EQ(run(*compileProc(proc), 4, memory), 24);
+        CHECK_EQ(state.numberOfPolls, 4);
+    }
+}
+
 void addBunHoistingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testMoveConstantsMaterializesByFrequency());
     RUN(testMoveConstantsByFrequencyHoistsOutOfLoop());
+    RUN(testMoveConstantsSharesNegatedAddend());
     RUN(testDominatorJumpPointersMatchLinearWalk());
     RUN(testVirtualTreeMatchesPathWalk());
     RUN(testConstantPlacementWithNaNFrequency());
@@ -644,6 +718,7 @@ void addBunHoistingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testHoistAcrossInnerLoop());
     RUN(testHoistWhenNoLikelyPathEndsIteration());
     RUN(testControlDependentLoadStaysDespiteLikelyPath());
+    RUN(testControlDependentLoadIsHoistedAcrossPoll());
 }
 
 #endif // ENABLE(B3_JIT)

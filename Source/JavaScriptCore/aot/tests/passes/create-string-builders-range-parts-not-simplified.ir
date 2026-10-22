@@ -1,7 +1,9 @@
 # `out += text.slice(i, i + 2)` creates no substring, also in a build without the pass that turns calls of slice and substring into ranges
 # FORM: AsRead
-# OPTIONS: heat=OnlyLoopsAreHot disable=pass:SimplifyBuiltinCalls
+# Hot, so that the entrypoint takes the body in: the budget for warm code (InlineBudgetWarmBytes) leaves a body of this size where it is, and the entrypoint calls it
+# OPTIONS: heat=EverythingIsHot disable=pass:SimplifyBuiltinCalls
 # RUN: pipeline Select
+# Nothing but its generic entrypoint enters either function, so each body has moved there
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -36,7 +38,7 @@ function f1 name="appendsSlices" parameters=[{type=string}, {type=number}] resul
   b3():
     Return v4
 }
-# CHECK-LABEL: function f1 name="appendsSlices"
+# CHECK-LABEL: name="appendsSlices" module=m0 role=GenericEntrypoint
 # CHECK-NOT: = Substring
 # CHECK-NOT: StringPrototypeSlice
 # CHECK: StringBuilderAppendStringRange
@@ -65,9 +67,9 @@ function f2 name="keepsSlices" parameters=[{type=string}, {type=number}, {type=a
   b3():
     Return v5
 }
-# CHECK-LABEL: function f2 name="keepsSlices"
+# CHECK-LABEL: name="keepsSlices" module=m0 role=GenericEntrypoint
 # CHECK-NOT: StringBuilderAppendStringRange
 # CHECK: StringPrototypeSlice
 # CHECK: StringBuilderAppendString
 # CHECK-NOT: StringBuilderAppendStringRange
-# CHECK-LABEL: function f3
+# CHECK-LABEL: entry module=m0

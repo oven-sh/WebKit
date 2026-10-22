@@ -10,7 +10,10 @@
 #include "AOTProgramTables.h"
 #include "AOTRuntimeType.h"
 #include "JSCJSValue.h"
+#include <optional>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -18,6 +21,7 @@ class VM;
 
 namespace AOT {
 
+class AcceptedValue;
 class Object;
 struct State;
 
@@ -38,10 +42,25 @@ public:
     UniquedStringImpl* nameOf(VM&, const FieldData&);
 
     bool valueHasType(const RuntimeType&, JSValue) const;
+    bool objectHasType(const RuntimeType&, JSCell*) const;
     bool cellPassesTest(const RuntimeCellTest&, JSCell*) const;
     bool shapeHasType(const RuntimeType&, uint32_t shape) const;
     // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
+    // A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
+    // The slot of an accessor field takes a GetterSetter whose getter has the type of the field and nothing else, which accept() sees to.
+    bool slotAdmits(const FieldData& field, JSValue value) const
+    {
+        if (field.isAccessor())
+            return false;
+        if (fieldAccepts(field, value))
+            return true;
+        if (field.keepsStateOfBirth)
+            return false;
+        SlotTraits traits = traitsOf(field.slot.representation());
+        return (value.isUndefined() && traits.hasUndefined) || (value.isNull() && traits.hasNull);
+    }
+    std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
     Object* compiledObject(JSValue) const;
 
@@ -50,6 +69,17 @@ public:
     bool hasPositionAmongKeys(const LayoutData&, UniquedStringImpl*) const;
     bool mayBeAbsent(const FieldData&) const;
     bool everyObjectHadRemovedField(const LayoutData&) const;
+    // What an object of the layout holds behind its header when Object::create() has made it and nothing is stored yet: the same bytes every time. Kept for whoever makes such objects again and again.
+    struct BodyAtBirth {
+        Vector<uint8_t> bytes;
+        bool isBornUnfinished { false };
+    };
+    const BodyAtBirth* bodyAtBirthIfKnown(const LayoutData& layout) const
+    {
+        auto found = m_bodiesAtBirth.find(layout.index + 1);
+        return found == m_bodiesAtBirth.end() ? nullptr : &found->value;
+    }
+    void rememberBodyAtBirth(const LayoutData& layout, std::span<const uint8_t> bytes, bool isBornUnfinished) { m_bodiesAtBirth.add(layout.index + 1, BodyAtBirth { Vector<uint8_t>(bytes), isBornUnfinished }); }
     void didReadAbsentField(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
     {
         if (!m_tables.removedFields().empty()) [[unlikely]]
@@ -70,12 +100,18 @@ private:
     static constexpr unsigned numberOfCachedFields = 4096;
 
     const FieldData* findField(VM&, const LayoutData&, UniquedStringImpl*);
+    const FieldData* findFieldWithoutColumn(const LayoutData&, uint32_t identifierNumber);
     void failIfFieldWasRemoved(VM&, const LayoutData&, UniquedStringImpl*) const;
     void failIfNameIsNotListed(VM&, const LayoutData&, UniquedStringImpl*) const;
 
     State& m_state;
     const ProgramTables& m_tables;
     CachedField* m_cachedFields { nullptr };
+    // By the index of a layout plus one: where each name of a wide layout lies among its fields, made at the first lookup of a name without a column.
+    // Columns go to the names that compiled code looks up. The fields of a well typed object are read by their slots, so only a copy or a listing asks for them by name.
+    UncheckedKeyHashMap<uint32_t, Vector<uint16_t>> m_fieldsByName;
+    // By the index of a layout plus one.
+    UncheckedKeyHashMap<uint32_t, BodyAtBirth> m_bodiesAtBirth;
 };
 
 } } // namespace JSC::AOT

@@ -19,6 +19,7 @@ JS_EXPORT_PRIVATE void* addressOfStubInCurrentImage(StubKey);
 
 CodePtr<JSEntryPtrTag> closureEntrypoint();
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> slimClosureEntrypoint();
+CodePtr<JSEntryPtrTag> moduleBodyEntrypoint();
 CodePtr<JSEntryPtrTag> constructEntrypoint();
 
 void initializeStubWords(Instance&);

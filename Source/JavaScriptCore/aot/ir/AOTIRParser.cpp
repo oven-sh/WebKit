@@ -32,6 +32,9 @@ std::unique_ptr<Program> parseProgram(StringView text, IRForm form, BuildContext
 
 std::unique_ptr<Program> parseProgram(StringView text, IRForm form, BuildContext& build, const VerifierInputs& inputs)
 {
+    // ASCII is its own UTF-8. The text of a large program is over the length that the conversion takes.
+    if (text.is8Bit() && text.containsOnlyASCII())
+        return TextParser(byteCast<uint8_t>(text.span8()), form, build, inputs).run();
     CString utf8 = text.utf8();
     return TextParser(byteCast<uint8_t>(utf8.span()), form, build, inputs).run();
 }
@@ -85,7 +88,7 @@ static bool hasOnlyByteEscapes(std::span<const uint8_t> stringText)
     return true;
 }
 
-static bool canHavePredictions(IRForm form)
+static bool canHaveExpectedTypes(IRForm form)
 {
     switch (form) {
     case IRForm::AsRead:
@@ -105,6 +108,7 @@ static bool canBeRoleOfFunctionAsRead(FunctionRole role)
     case FunctionRole::CoroutineRamp:
     case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
     case FunctionRole::StubBody:
         return true;
     default:
@@ -179,7 +183,7 @@ static bool verifyPatchedReferences(const Program& program, IRForm form, BuildCo
 
 static TypePropagationOutcome typeFunction(const TypePropagationInputs& inputs, IRForm form)
 {
-    if (canHavePredictions(form))
+    if (canHaveExpectedTypes(form))
         return typeValuesFromNever(inputs);
 
     TypePropagation propagation(inputs);
@@ -250,7 +254,7 @@ std::unique_ptr<Program> TextParser::run()
     m_program->adoptBuffer(m_builder.finish());
     Reader reader(*m_program, m_form, m_build);
     reader.setTypeCompletion([&](uint32_t wireIndex, Type& type) {
-        completeType(wireIndex, reader.typesAsRead(), type);
+        completeType(wireIndex, type);
     });
     VerifierInputs inputsOfReader = m_verifierInputs;
     inputsOfReader.lacksEngineFields = true;
@@ -301,12 +305,11 @@ bool TextParser::scanItems()
         scanItem(lexer, keyword);
     }
 
-    uint32_t numberOfNamespaceLayouts = 0;
     for (const TextItem& item : m_items) {
         if (item.list != ProgramList::Modules)
             continue;
         bool hasNamespaceLayout = scanModuleKind(m_text, item.start) == ModuleKind::SourceText;
-        m_scan.namespaceLayoutRanks.append(hasNamespaceLayout ? std::optional(numberOfNamespaceLayouts++) : std::nullopt);
+        m_scan.namespaceLayoutRanks.append(hasNamespaceLayout ? std::optional(m_scan.numberOfNamespaceLayouts++) : std::nullopt);
     }
     return !hasFailed();
 }
@@ -463,6 +466,10 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::RequiredNames:
     case ProgramList::ColumnAdjustments:
     case ProgramList::EvalBindings:
+    case ProgramList::RelationSubjects:
+    case ProgramList::StoredIntos:
+    case ProgramList::HandedTos:
+    case ProgramList::OperandsOf:
     case ProgramList::Code:
     case ProgramList::DataNodes:
     case ProgramList::DataMembers:
@@ -610,10 +617,25 @@ bool TextParser::parseBool()
     return false;
 }
 
+// The reader of a program as read derives layouts from those of the text and places them after the layouts of built-ins and namespaces. The text numbers them after its own.
+uint32_t TextParser::layoutWordOf(uint32_t numberInText)
+{
+    if (m_form != IRForm::AsRead || numberInText < countOf(ProgramList::Layouts))
+        return numberInText;
+    uint64_t word = static_cast<uint64_t>(numberInText) + m_builtins.layoutCount() + m_scan.numberOfNamespaceLayouts;
+    if (word >= Wire::none) {
+        fail(InternalErrorKind::IdOutOfRange);
+        return 0;
+    }
+    return static_cast<uint32_t>(word);
+}
+
 uint32_t TextParser::parseIDWord(IDPrefix prefix)
 {
     if (atID(prefix)) {
         uint32_t number = static_cast<uint32_t>(token().number);
+        if (prefix == IDPrefix::Layout)
+            number = layoutWordOf(number);
         advance();
         return number;
     }
@@ -662,13 +684,11 @@ void TextParser::applyValueEngineFields(const PatchContext& context) const
 {
     for (const ValueEngineFields& fields : m_valueEngineFields) {
         Function& function = context.program.at(fields.function);
-        Value& value = function.at(fields.value);
+        Value& value = function.edit(fields.value);
         if (fields.typeWord != Wire::none)
             value.type = context.type(fields.typeWord);
-        if (fields.writtenWord != Wire::none)
-            value.setWritten(context.type(fields.writtenWord));
-        if (fields.predictionWord != Wire::none)
-            value.setPrediction(context.type(fields.predictionWord));
+        if (fields.expectedWord != Wire::none)
+            value.setExpected(context.type(fields.expectedWord));
         if (fields.representation) {
             value.representation = *fields.representation;
             function.representationsAreChosen = true;
@@ -679,7 +699,7 @@ void TextParser::applyValueEngineFields(const PatchContext& context) const
     for (Function& function : context.program.functions) {
         if (!function.representationsAreChosen)
             continue;
-        for (Value& value : function.values) {
+        for (Value& value : function.editAllValues()) {
             if (resultRuleOf(value.opcode) == ResultRule::None)
                 value.representation = Representation::Void;
         }

@@ -47,11 +47,12 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuiltinExecutables);
 
-static const char* builtinSourceText()
+static ALWAYS_INLINE const char* builtinSourceText()
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(BuiltinSourceText, ReturnDefault, const char*)
-    return WTF::opaque(s_JSCCombinedCode);
-    JSC_END_REMOVABLE_ENTRY_POINT
+    if (isFeatureRemoved(RemovableFeature::BuiltinSourceText)) [[unlikely]]
+        return nullptr;
+    recordRemovableEntryPoint<RemovableFeature::BuiltinSourceText, RemovedFeatureStub::ReturnDefault, &s_JSCCombinedCode>();
+    return s_JSCCombinedCode;
 }
 
 BuiltinExecutables::BuiltinExecutables(VM& vm)

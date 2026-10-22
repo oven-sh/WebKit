@@ -2,51 +2,13 @@
 # FORM: Prepared optimizing
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsRemoved = 1
-# STATISTIC: AllocationsSunk = 1
+# STATISTIC: AllocationsSunk = 0
 # STATISTIC: AllocationsMergedAtJoins = 0
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Holder" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
 
-function f0 name="guardOfCellCarriedAroundLoop" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
-    v2 = NewObject -, v0 layout=L0 fields=[0]
-    v3 = NewArray contents=anything
-    v4 = AllGuards v3
-    v5 = GetShapeEpoch
-    v6 = Integer
-    Jump -> next b1(v6, v4, v5)
-  b1(v7, v8, v9):
-    LoopHint
-    v11 = Less v7, v1
-    Branch v11 -> taken b2(), notTaken b5()
-  b2():
-    v12 = IsShapeEpochCurrent v9, v8
-    Branch v12 -> taken b3(| 0), notTaken b4()
-  b3(v13):
-    v14 = GetShapeEpoch
-    PutArrayElement v3, v7, v0, v13 level=Predicted [keyIsIntegral]
-    v16 = Increment v7
-    Jump -> next b1(v16, v13, v14)
-  b4():
-    ElemDefine v3, v7, v0
-    Return v3
-  b5():
-    v18 = Call v0, -, v3, v2
-    Return v18
-}
-# CHECK-LABEL: function f0 name="guardOfCellCarriedAroundLoop"
-# CHECK: v4: guard = AllGuards v3
-# CHECK: Jump -> next b1(v6, v4, v5,
-# CHECK: b1(v7:{{*}}, v8: guard, v9: int,
-# CHECK: = IsShapeEpochCurrent v9, v8
-# CHECK: PutArrayElement v3, v7, v0, v13
-# CHECK: Jump -> next b1(v16, v13, v14,
-# CHECK: b5():
-# CHECK-NEXT: [[holder0]]:{{*}}= NewObject
-# CHECK-NEXT: = Call v0, -, v3, [[holder0]]
-
-function f1 name="guardOfVirtualObjectPassedOnTwoEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+function f0 name="guardOfVirtualObjectPassedOnTwoEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = AllGuards v2
@@ -56,10 +18,10 @@ function f1 name="guardOfVirtualObjectPassedOnTwoEdges" parameters=[{type=anythi
   b2():
     Jump -> next b3(v3)
   b3(v4):
-    v5 = GetSlotOrUndefined v2, v4 key="list" receivers=[L0] level=Predicted
+    v5 = GetSlotOrUndefined v2, v4 key="list" receivers=[L0] level=Expected
     Return v5
 }
-# CHECK-LABEL: function f1 name="guardOfVirtualObjectPassedOnTwoEdges"
+# CHECK-LABEL: function f0 name="guardOfVirtualObjectPassedOnTwoEdges"
 # CHECK-NOT: NewObject
 # CHECK-NOT: AllGuards
 # CHECK-NOT: guard

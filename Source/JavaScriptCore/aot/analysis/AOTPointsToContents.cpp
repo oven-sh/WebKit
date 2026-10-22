@@ -10,6 +10,7 @@
 
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
+#include "AOTEffectsCache.h"
 #include "AOTFlowResults.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTValueIdentity.h"
@@ -64,12 +65,16 @@ LayoutID PointsToSolver::environmentLayoutOf(ObjectID object) const
 
 ContainerState& PointsToSolver::ensureContainer(ObjectID object)
 {
-    auto& state = m_containers[object.index()];
-    if (!state) {
-        state = makeUnique<ContainerState>();
-        state->environment = environmentLayoutOf(object);
+    uint32_t& index = m_containerOfObject[object.index()];
+    if (index == noContainer) {
+        index = m_containers.size();
+        RELEASE_ASSERT(m_containers.size() < m_containers.capacity());
+        m_containers.append(ContainerState { });
+        ContainerState& state = m_containers.last();
+        state.environment = environmentLayoutOf(object);
+        state.unknownSlot.objects.fill(0, m_wordsPerSet);
     }
-    return *state;
+    return m_containers[index];
 }
 
 OperandUses PointsToSolver::environmentFieldUses(const ContainerState& state, ObjectSlot slot) const
@@ -80,64 +85,71 @@ OperandUses PointsToSolver::environmentFieldUses(const ContainerState& state, Ob
     return slot ? flow->storedValueUses(FieldReference { state.environment, *slot }) : OperandSummary().uses;
 }
 
-void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, ObjectID object)
+void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<const ObjectWord> objects)
 {
-    ContainerState& state = ensureContainer(container);
-    SolvedContents entry { container, slot, object, false };
-    size_t position = std::ranges::lower_bound(state.contents, entry, isOrderedBefore) - state.contents.begin();
-    if (position < state.contents.size() && !isOrderedBefore(entry, state.contents[position]))
+    if (objects.empty())
         return;
 
-    for (auto& [reader, readerSlot] : state.readers) {
-        if (slotsOverlap(readerSlot, slot))
-            add(reader, object);
+    ContainerState& state = ensureContainer(container);
+    SlotState& holder = state.ensure(slot);
+    ObjectWord added = 0;
+    for (unsigned index = 0; index < m_wordsPerSet; ++index) {
+        m_newContents[index] = objects[index] & ~holder.objects[index];
+        holder.objects[index] |= m_newContents[index];
+        added |= m_newContents[index];
     }
+    if (!added)
+        return;
+
+    size_t firstNewEntry = holder.contents.size();
+    forEachObjectIn(m_newContents.span(), [&](ObjectID object) {
+        holder.contents.append(SolvedContents { container, slot, object, false });
+    });
     auto apply = [&](OperandUses uses, EscapeReason reason) {
-        m_applicationWorklist.append({ object, uses, reason });
-        entry.isLeaked |= uses.containsAny(leakingUses);
+        for (SolvedContents& entry : holder.contents.mutableSpan().subspan(firstNewEntry)) {
+            m_applicationWorklist.append({ entry.object, uses, reason });
+            entry.isLeaked |= uses.containsAny(leakingUses);
+        }
     };
-    for (const ContentsApplication& application : state.applications) {
-        if (slotsOverlap(application.slot, slot))
+    forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+        for (ValueID reader : overlapping.readers)
+            addAll(reader, m_newContents.span());
+        for (const ContentsApplication& application : overlapping.applications)
             apply(application.uses, application.reason);
-    }
+    });
     if (OperandUses uses = environmentFieldUses(state, slot); !uses.isEmpty())
         apply(uses, EscapeReason::RetainedByCallee);
-    state.contents.insert(position, entry);
 }
 
-bool PointsToSolver::mayReadContents(const SolvedUse& solved, const UserOperand& operand) const
+bool PointsToSolver::mayReadContentsIntoReference(const SolvedUse& solved, const UserOperand& operand) const
 {
-    if (!solved.reasons.isEmpty() || solved.uses.containsAny({ OperandUse::Retains, OperandUse::Returns }) || isSummarizedCall(operand.user))
-        return false;
-    return mayHoldReference(solved.use.user);
+    return solved.reasons.isEmpty() && !solved.uses.containsAny({ OperandUse::Retains, OperandUse::Returns }) && !isSummarizedCall(operand.user);
 }
 
-// An opaque value made from an object refers to it. A class token refers to nothing: it is read out of the object that holds it, as any value is.
-static bool refersToOperand(const Type& result)
-{
-    return result.opaque && !result.isOpaque(OpaqueKind::ClassToken);
-}
-
-void PointsToSolver::solveContentsRead(SolvedUse& solved, const UserOperand& operand)
+void PointsToSolver::solveContentsRead(SolvedUse& solved, const ArrivedObjects& arrived, const UserOperand& operand)
 {
     ValueID reader = solved.use.user;
     if (!definesObject(reader)) {
-        if (refersToOperand(m_program.typeOf(m_function, reader))) {
+        if (refersToOperand(reader)) {
             solved.flowsTo = reader;
-            add(reader, solved.object);
-        } else
-            addReader(solved.object, reader, slotInContainer(solved.object, operand.user));
+            addAll(reader, arrived);
+        } else {
+            for (ObjectID object : arrived.objects)
+                addReader(object, reader, slotInContainer(object, operand.user));
+        }
     }
-    if (operand.effects.onAnyEdge().mayRunOtherCode())
-        applyToContents(solved.object, std::nullopt, retainedContentsUses, EscapeReason::LeakedByContainer);
+    if (!mayRunOtherCode(reader))
+        return;
+    for (ObjectID object : arrived.objects)
+        applyToContents(object, std::nullopt, retainedContentsUses, EscapeReason::LeakedByContainer);
 }
 
 void PointsToSolver::addReader(ObjectID container, ValueID reader, ObjectSlot slot)
 {
     ContainerState& state = ensureContainer(container);
-    state.readers.append({ reader, slot });
-    forEachOverlappingEntry(state, slot, [&](SolvedContents& entry) {
-        add(reader, entry.object);
+    state.ensure(slot).readers.append(reader);
+    forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+        addAll(reader, overlapping.objects.span());
     });
 }
 
@@ -157,20 +169,30 @@ void PointsToSolver::callObject(ObjectID object)
     }
 
     const Function& callee = m_program.at(function);
-    const FunctionSummary& summary = m_inputs.effects.summaries.of(function);
+    FunctionSummaryView summary = m_inputs.effects.summaries.of(function);
     for (uint32_t capture = 0; capture < callee.captures.size(); ++capture)
-        applyToContents(object, capture, summary.parameter(capture).operand.uses, EscapeReason::RetainedByCallee);
+        applyToContents(object, capture, summary.operand(capture).uses, EscapeReason::RetainedByCallee);
     if (auto calleeParameter = callee.calleeParameterIndex())
-        m_applicationWorklist.append({ object, summary.parameter(*calleeParameter).operand.uses, EscapeReason::RetainedByCallee });
+        m_applicationWorklist.append({ object, summary.operand(*calleeParameter).uses, EscapeReason::RetainedByCallee });
 }
 
 void PointsToSolver::applyToContents(ObjectID container, ObjectSlot slot, OperandUses uses, EscapeReason reason)
 {
+    if (!slot) {
+        std::array<ApplicationToAll, 2>& last = m_lastApplicationsToAll[container.index()];
+        for (const ApplicationToAll& application : last) {
+            if (application.isSet && application.uses == uses && application.reason == reason)
+                return;
+        }
+        last[1] = last[0];
+        last[0] = { uses, reason, true };
+    }
     ContainerState& state = ensureContainer(container);
     ContentsApplication application { slot, uses, reason };
-    if (state.applications.contains(application))
+    auto& applications = state.ensure(slot).applications;
+    if (applications.contains(application))
         return;
-    state.applications.append(application);
+    applications.append(application);
     forEachOverlappingEntry(state, slot, [&](SolvedContents& entry) {
         m_applicationWorklist.append({ entry.object, uses, reason });
         entry.isLeaked |= uses.containsAny(leakingUses);
@@ -238,7 +260,11 @@ ObjectSlot PointsToSolver::slotInContainer(ObjectID container, const Value& user
 {
     if (user.opcode == Opcode::GetCapture)
         return user.index();
-    LayoutID layout = layoutPayloadOf(definitionOf(container));
+    const Value& definition = definitionOf(container);
+    LayoutID layout = layoutPayloadOf(definition);
+    // An environment that is handed in has the layout that its type names. Without it a store to one variable would come back from a read of any other.
+    if (!layout)
+        layout = m_program.at(definition.type).environment;
     if (!layout)
         return std::nullopt;
     if (layoutPayloadOf(user) == layout) {
@@ -260,7 +286,7 @@ bool PointsToSolver::isExactCapable(ValueID value) const
     case ValuePlacement::Parameter:
         return location.block != m_cfg.root();
     case ValuePlacement::InBlock:
-        return isCastOrConversion(m_function.at(value).opcode) || m_valuesSharedByObjects.get(value.index());
+        return isCastOrConversion(m_function.at(value).opcode) || isSharedByObjects(value);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -270,15 +296,18 @@ bool PointsToSolver::handsOperandOn(ValueID user, uint32_t operandIndex) const
     Opcode opcode = m_function.at(user).opcode;
     if (isCastOrConversion(opcode))
         return !operandIndex;
-    return m_valuesSharedByObjects.get(user.index()) && operandUsesOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).contains(OperandUse::Returns);
+    return isSharedByObjects(user) && operandUsesOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).contains(OperandUse::Returns);
 }
 
 bool PointsToSolver::mayBeUntracked(ValueID value) const
 {
     if (!value)
         return true;
-    const ValueSet* set = m_results.setOf(value);
-    return !set || set->mayBeUntracked;
+    // It stands where nobody reads the value: on the way into a block from where the value does not exist yet. It brings no object.
+    if (m_function.at(value).opcode == Opcode::Unspecified)
+        return false;
+    ValueSetID set = m_results.setOfValue[value.index()];
+    return !set || m_setsThatMayBeUntracked[set.index()];
 }
 
 bool PointsToSolver::hasUntrackedSource(ValueID value) const
@@ -339,21 +368,21 @@ void PointsToSolver::forEachExactAlias(ValueID value, const Use& use, NOESCAPE c
 void PointsToSolver::computeMayBeUntracked()
 {
     Vector<ValueID, 16> exactValues;
-    for (uint32_t index = 0; index < m_results.setOfValue.size(); ++index) {
-        ValueSetID id = m_results.setOfValue[index];
-        ValueID value(index);
-        if (!id || definesObject(value) || !isExactCapable(value))
+    for (uint32_t index = 0; index < m_valueOfSet.size(); ++index) {
+        ValueSetID id(index);
+        ValueID value = m_valueOfSet[index];
+        if (definesObject(value) || !isExactCapable(value))
             continue;
-        m_results.sets[id.index()].mayBeUntracked = false;
+        m_setsThatMayBeUntracked[id.index()] = false;
         exactValues.append(value);
     }
 
     Vector<ValueID, 16> worklist;
     auto markUntracked = [&](ValueID value) {
         ValueSetID id = m_results.setOfValue[value.index()];
-        if (!id || m_results.sets[id.index()].mayBeUntracked || definesObject(value))
+        if (!id || m_setsThatMayBeUntracked[id.index()] || definesObject(value))
             return;
-        m_results.sets[id.index()].mayBeUntracked = true;
+        m_setsThatMayBeUntracked[id.index()] = true;
         worklist.append(value);
     };
     for (ValueID value : exactValues) {
@@ -371,30 +400,33 @@ void PointsToSolver::computeMayBeUntracked()
 
 void PointsToSolver::markLeakedEntries(ContainerState& state) const
 {
-    for (const ContentsApplication& application : state.applications) {
-        if (!application.uses.containsAny(callingUses))
-            continue;
-        forEachOverlappingEntry(state, application.slot, [&](SolvedContents& entry) {
-            entry.isLeaked |= at(entry.object).reasons.containsAny(callReasons);
-        });
-    }
-    for (SolvedContents& entry : state.contents) {
+    forEachOverlappingSlot(state, std::nullopt, [&](SlotState& applied) {
+        for (const ContentsApplication& application : applied.applications) {
+            if (!application.uses.containsAny(callingUses))
+                continue;
+            forEachOverlappingEntry(state, application.slot, [&](SolvedContents& entry) {
+                entry.isLeaked |= at(entry.object).reasons.containsAny(callReasons);
+            });
+        }
+    });
+    forEachOverlappingEntry(state, std::nullopt, [&](SolvedContents& entry) {
         if (environmentFieldUses(state, entry.slot).containsAny(callingUses))
             entry.isLeaked |= at(entry.object).reasons.containsAny(callReasons);
-    }
+    });
 }
 
 void PointsToSolver::collectContents()
 {
-    size_t numberOfEntries = 0;
-    for (auto& state : m_containers)
-        numberOfEntries += state ? state->contents.size() : 0;
-    m_results.contents.reserveInitialCapacity(numberOfEntries);
-    for (auto& state : m_containers) {
-        if (!state)
+    for (uint32_t index : m_containerOfObject) {
+        if (index == noContainer)
             continue;
+        ContainerState* state = &m_containers[index];
         markLeakedEntries(*state);
-        m_results.contents.appendVector(state->contents);
+        size_t first = m_results.contents.size();
+        forEachOverlappingSlot(*state, std::nullopt, [&](SlotState& slot) {
+            m_results.contents.appendVector(slot.contents);
+        });
+        std::ranges::sort(m_results.contents.mutableSpan().subspan(first), isOrderedBefore);
     }
     ASSERT(std::ranges::is_sorted(m_results.contents, isOrderedBefore));
 }

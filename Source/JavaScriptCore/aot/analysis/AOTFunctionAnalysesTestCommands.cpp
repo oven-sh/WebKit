@@ -10,7 +10,6 @@
 
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
-#include "AOTFlowAnalysis.h"
 #include <algorithm>
 #include <wtf/EnumTraits.h>
 
@@ -88,9 +87,23 @@ struct AnalysisOptions {
 };
 
 struct SectionPrinter {
+    void checkIdentityShortcuts()
+    {
+        ValueIdentities withoutShortcuts(function, analyses.cfg(), ValueIdentities::RepeatedWalks::StartAtEntry);
+        ValueIdentities onDemand(function, analyses.cfg(), ValueIdentities::RepeatedWalks::StartAtFirstChangedBlock, nullptr, ValueIdentities::Evaluation::OnDemand);
+        for (uint32_t index = 0; index < function.values.size(); ++index) {
+            ValueID identity = withoutShortcuts.identityOf(ValueID(index));
+            RELEASE_ASSERT(analyses.identityOf(ValueID(index)) == identity);
+            ValueID resolved = onDemand.tryResolve(ValueID(index));
+            RELEASE_ASSERT(!resolved || resolved == identity);
+        }
+    }
+
     void printCachedSection(FunctionAnalysis analysis)
     {
-        if (analysis == FunctionAnalysis::Liveness && options.hasLivenessOptions())
+        if (analysis == FunctionAnalysis::Identities)
+            checkIdentityShortcuts();
+        if (analysis == FunctionAnalysis::Liveness)
             dumpLiveness(out, analyses.cfg(), liveness(), pointerOrNull(options.trackedBlocks));
         else if (analysis == FunctionAnalysis::EscapeHistory && options.hasHistoryOptions())
             dumpUseEffectHistory(out, analyses.cfg(), analyses.escape(), history());
@@ -190,7 +203,7 @@ struct SectionPrinter {
         auto mayBeObject = [&](ValueID value) { return isListed(value) && context.program.typeOf(function, value).hasObjects(); };
         Vector<ValueID> values = options.aliasValues ? idsIn<ValueID>(*options.aliasValues) : idsMatching<ValueID>(function.values.size(), mayBeObject);
         forEachAscendingPair(values, [&](ValueID first, ValueID second) {
-            dumpLine(out, first, " "_s, second, " alias: "_s, enumName(analyses.escape().alias(first, second)));
+            dumpLine(out, first, " "_s, second, " alias: "_s, enumName(analyses.escapeWithLiveInstances().alias(first, second)));
         });
     }
 
@@ -285,13 +298,25 @@ struct SectionPrinter {
             dumpLine(out, parameter, " retained in: "_s, nameOf(summary.retainedIn));
     }
 
+    void checkSolversAgree(const Liveness& liveness, LivenessOptions livenessOptions)
+    {
+        livenessOptions.solver = LivenessOptions::Solver::PerValue;
+        Liveness perValue(function, analyses.cfg(), analyses.useLists(), livenessOptions);
+        for (BlockID block : analyses.cfg().reversePostOrder())
+            RELEASE_ASSERT(std::ranges::equal(liveness.liveAtHead(block), perValue.liveAtHead(block)));
+    }
+
     const Liveness& liveness()
     {
-        if (!options.hasLivenessOptions())
-            return analyses.liveness();
+        if (!options.hasLivenessOptions()) {
+            const Liveness& result = analyses.liveness();
+            checkSolversAgree(result, { });
+            return result;
+        }
         if (!livenessWithOptions) {
             LivenessOptions livenessOptions { pointerOrNull(options.trackedValues), pointerOrNull(options.trackedBlocks), options.additionalEdges.span() };
             livenessWithOptions.emplace(function, analyses.cfg(), analyses.useLists(), livenessOptions);
+            checkSolversAgree(*livenessWithOptions, livenessOptions);
         }
         return *livenessWithOptions;
     }

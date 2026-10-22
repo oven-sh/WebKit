@@ -23,7 +23,7 @@ function f0 name="tests" parameters=[{type=object}, {type=L0}, {type=function}] 
 # CHECK-NEXT: v5 ShapeTest: reads(ShapeWords/1)
 # CHECK-NEXT: v6 ShapeTest: reads(ShapeWords)
 # CHECK-NEXT: v7 GetSlot: reads(ObjectFields/1)
-# CHECK-NEXT: v8 DefineGetter: {{*}}writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch,
+# CHECK-NEXT: v8 DefineGetter: {{*}}writes(ObjectFields, ShapeWords, OrderWords,
 # W: v8 on v7: May
 # L: v3 ShapeTest: not exact
 # L: v8 DefineGetter: not exact

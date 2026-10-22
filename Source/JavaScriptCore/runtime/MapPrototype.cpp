@@ -50,7 +50,7 @@ static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncValues);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncKeys);
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncEntries);
 
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSize);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSize);
     
 void MapPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
@@ -220,11 +220,11 @@ JSC_DEFINE_HOST_FUNCTION(mapProtoFuncGetOrInsertComputed, (JSGlobalObject* globa
         auto callData = JSC::getCallDataInline(valueCallback);
         ASSERT(callData.type != CallData::Type::None);
 
-        auto cachedCall = CachedCall::tryCreate(globalObject, asObject(valueCallback), callData, 1);
-        RETURN_IF_EXCEPTION(scope, JSValue());
-        if (cachedCall) [[likely]] {
+        if (callData.type == CallData::Type::JS) [[likely]] {
+            CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(valueCallback), 1);
+            RETURN_IF_EXCEPTION(scope, JSValue());
 
-            return cachedCall->callWithArguments(globalObject, jsUndefined(), key);
+            return cachedCall.callWithArguments(globalObject, jsUndefined(), key);
         }
 
         auto args = WTF::toArray<EncodedJSValue>({

@@ -59,6 +59,7 @@ uint32_t VirtualFamily::ensureField(const VirtualField& field)
         return *existing;
     auto number = static_cast<uint32_t>(m_fields.size());
     m_fields.append(field);
+    m_hasUnprovenFields |= field.kind == VirtualFieldKind::UnprovenNamed;
     return number;
 }
 
@@ -68,6 +69,21 @@ std::optional<uint32_t> VirtualFamily::findField(const VirtualField& field) cons
     if (number == notFound)
         return std::nullopt;
     return static_cast<uint32_t>(number);
+}
+
+std::optional<uint32_t> VirtualFamily::findCounterpart(uint32_t field) const
+{
+    if (!m_hasUnprovenFields)
+        return std::nullopt;
+    const VirtualField& known = m_fields[field];
+    switch (known.kind) {
+    case VirtualFieldKind::Named:
+        return findField(VirtualField::unprovenNamed(known.key));
+    case VirtualFieldKind::UnprovenNamed:
+        return findField(VirtualField::named(known.key));
+    default:
+        return std::nullopt;
+    }
 }
 
 VirtualShapeID VirtualFamily::intern(VirtualShape&& shape)
@@ -189,13 +205,39 @@ bool hasStored(const VirtualShape& shape, uint32_t field)
     return shape.kind == VirtualShapeKind::Fields && shape.stored.get(field);
 }
 
+bool hasStoredCounterpart(const VirtualFamily& family, const VirtualShape& shape, uint32_t field)
+{
+    std::optional<uint32_t> counterpart = family.findCounterpart(field);
+    return counterpart && hasStored(shape, *counterpart);
+}
+
+bool hasUnprovenField(const VirtualFamily& family, const VirtualShape& shape)
+{
+    if (shape.kind != VirtualShapeKind::Fields || !family.hasUnprovenFields())
+        return false;
+    for (size_t field : shape.stored) {
+        if (family.fieldAt(static_cast<uint32_t>(field)).kind == VirtualFieldKind::UnprovenNamed)
+            return true;
+    }
+    return false;
+}
+
+// The order of the keys lists the Named field of a key, whichever of the two is stored.
 static void addStoredField(const VirtualFamily& family, KeyOrderTable& orders, VirtualShape& shape, uint32_t field)
 {
     bool wasStored = shape.stored.set(field);
     if (wasStored)
         return;
-    if (family.descriptionOf(shape).hasKeyOrder && family.fieldAt(field).isProperty())
-        shape.order = orders.append(shape.order, field);
+    std::optional<uint32_t> counterpart = family.findCounterpart(field);
+    if (counterpart && shape.stored.get(*counterpart)) {
+        shape.stored.clear(*counterpart);
+        return;
+    }
+    if (!family.descriptionOf(shape).hasKeyOrder || !family.fieldAt(field).isProperty())
+        return;
+    bool isUnproven = family.fieldAt(field).kind == VirtualFieldKind::UnprovenNamed;
+    RELEASE_ASSERT(!isUnproven || counterpart);
+    shape.order = orders.append(shape.order, isUnproven ? *counterpart : field);
 }
 
 VirtualShape shapeAtAllocation(const VirtualObjectContext& context, VirtualFamily& family, KeyOrderTable& orders, uint32_t descriptionIndex)

@@ -51,22 +51,7 @@ struct EnteringOperands {
     std::optional<std::span<const TypeID>> arguments;
     // Of a construction. Null where new.target is the callee itself.
     TypeID newTarget { TypeTable::anything };
-
-    TypeID argumentAt(size_t index) const
-    {
-        if (!arguments)
-            return TypeTable::anything;
-        return index < arguments->size() ? (*arguments)[index] : TypeTable::undefined;
-    }
 };
-
-// A value that enters a declared position meets two tests, each as far as a test decides its type. The first is for the type the source wrote:
-// where it fails the program gets the TypeError it was promised, and the message names that type. The second is for what flow narrowed the
-// position to. Flow has seen every value that passes the first, so the second fails only for a caller flow has not seen.
-// The passes that emit the tests and the effects of a call by value ask here.
-Type testedWrittenTypeOf(const Type& written);
-Type testedProvenTypeOf(const Type&);
-bool mayFailEntryTests(const Program&, const Type& value, const DeclaredType&);
 
 CalleeList calleesOf(const Program&, const Type& callee);
 CalleeList calleesOf(const Program&, CalleeSetID);

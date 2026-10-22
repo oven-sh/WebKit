@@ -57,8 +57,38 @@ void PromiseBuiltinEmitter::generatePromiseResolve(const InlineCall& call)
     finishInlineCall(call, join.finish());
 }
 
+bool PromiseBuiltinEmitter::isFunction(const InlineCall& call, unsigned index)
+{
+    ValueID id = call.argumentOrNull(index);
+    return id && !typeOf(id).isNever() && typeOf(id).isSubsetOf(Type::function(), m_program);
+}
+
+bool PromiseBuiltinEmitter::isNoObject(const InlineCall& call, unsigned index)
+{
+    ValueID id = call.argumentOrNull(index);
+    return !id || !typeOf(id).hasObjects();
+}
+
+CellPointer PromiseBuiltinEmitter::thenWithOneHandler(const InlineCall& call, PromiseHandler which, unsigned index)
+{
+    CellPointer promise = in<CellPointer>(call.receiver());
+    Boxed handler = boxedOperand(call.context(), call.argument(index));
+    CellPointer derived = emitter<PromiseIntrinsicEmitter>().newPromise(call.context());
+    callStub(call.context(), promiseThen(which), { promise.value(), handler.value(), derived.value() });
+    return derived;
+}
+
 void PromiseBuiltinEmitter::generatePromiseThen(const InlineCall& call)
 {
+    if (isFunction(call, 0) && isNoObject(call, 1)) {
+        finishInlineCall(call, thenWithOneHandler(call, PromiseHandler::OnFulfilled, 0));
+        return;
+    }
+    if (isNoObject(call, 0) && isFunction(call, 1)) {
+        finishInlineCall(call, thenWithOneHandler(call, PromiseHandler::OnRejected, 1));
+        return;
+    }
+
     CellPointer promise = in<CellPointer>(call.receiver());
     Boxed onFulfilled = argumentOrUndefined(call, 0);
     Boxed onRejected = argumentOrUndefined(call, 1);
@@ -69,6 +99,10 @@ void PromiseBuiltinEmitter::generatePromiseThen(const InlineCall& call)
 
 void PromiseBuiltinEmitter::generatePromiseCatch(const InlineCall& call)
 {
+    if (isFunction(call, 0)) {
+        finishInlineCall(call, thenWithOneHandler(call, PromiseHandler::OnRejected, 0));
+        return;
+    }
     CellPointer promise = in<CellPointer>(call.receiver());
     finishInlineCall(call, callOperation<CellPointer>(call.context(), RuntimeOperation::PromiseCatch, { promise, argumentOrUndefined(call, 0) }));
 }

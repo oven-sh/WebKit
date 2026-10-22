@@ -16,6 +16,7 @@
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
 #include "B3Const64Value.h"
+#include "B3EliminateDeadCode.h"
 #include "B3Generate.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
@@ -397,6 +398,34 @@ static void testCompressedPointer()
     checkFindsNothing(bare);
 }
 
+// What is emitted has no dead code, so a use by a dead value keeps no pointer alive and displaces no reference.
+static void testPointerHeldOnlyByDeadCode()
+{
+    Graph graph;
+    B3::Value* pointer = graph.loadThrough(graph.object);
+    B3::Value* reference = graph.compress(pointer);
+    graph.safepoint();
+    graph.binary(B3::Add, pointer, graph.int64(8));
+    graph.store(reference, 40);
+    graph.finish();
+    AOT_TEST_CHECK(graph.insertGuards() == 1);
+    B3::eliminateDeadCode(graph.proc);
+    checkFindsNothing(graph);
+}
+
+static void testReferenceDisplacedOnlyByDeadCode()
+{
+    Graph graph;
+    B3::Value* reference = graph.loadReference();
+    graph.decode(graph.binary(B3::Add, reference, graph.int32(1)));
+    graph.safepoint();
+    graph.store(reference, 40);
+    graph.finish();
+    AOT_TEST_CHECK(graph.insertGuards() == 1);
+    B3::eliminateDeadCode(graph.proc);
+    checkFindsNothing(graph);
+}
+
 static void testReferenceInArgumentRegister()
 {
     Graph graph;
@@ -407,6 +436,29 @@ static void testReferenceInArgumentRegister()
     checkFindsOne(graph);
     AOT_TEST_CHECK(graph.insertGuards() == 1);
     checkFindsNothing(graph);
+}
+
+static void testReferenceReturnedByCallThatEndsItsBlock()
+{
+    Graph graph;
+    B3::BasicBlock* first = graph.block;
+    B3::BasicBlock* continuation = graph.proc.addBlock();
+    B3::BasicBlock* landingPad = graph.proc.addBlock();
+    B3::PatchpointValue* call = first->appendNew<B3::PatchpointValue>(graph.proc, B3::Int64, Graph::originOf(referenceOrigin));
+    call->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    call->effects.terminal = true;
+    first->setSuccessors(B3::FrequentedBlock(continuation), B3::FrequentedBlock(landingPad, B3::FrequencyClass::Rare));
+    graph.block = landingPad;
+    graph.finish();
+    graph.block = continuation;
+    graph.safepoint();
+    graph.store(graph.loadThrough(graph.decode(graph.unary(B3::Trunc, call))));
+    graph.finish();
+    checkFindsOne(graph);
+    AOT_TEST_CHECK(graph.insertGuards() == 1);
+    AOT_TEST_CHECK(first->last() == call);
+    checkFindsNothing(graph);
+    AOT_TEST_CHECK(!graph.insertGuards());
 }
 
 static void testJoinedReferences()
@@ -616,7 +668,10 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-safepoint-on-one-path"_s, testSafepointOnOnePath },
         { "narrow-reference-safepoint-in-loop"_s, testSafepointInLoop },
         { "narrow-reference-compressed-pointer"_s, testCompressedPointer },
+        { "narrow-reference-pointer-held-only-by-dead-code"_s, testPointerHeldOnlyByDeadCode },
+        { "narrow-reference-displaced-only-by-dead-code"_s, testReferenceDisplacedOnlyByDeadCode },
         { "narrow-reference-in-argument-register"_s, testReferenceInArgumentRegister },
+        { "narrow-reference-returned-by-call-that-ends-its-block"_s, testReferenceReturnedByCallThatEndsItsBlock },
         { "narrow-reference-joined"_s, testJoinedReferences },
         { "narrow-reference-displaced"_s, testDisplacedReference },
         { "narrow-reference-suspension"_s, testSuspension },

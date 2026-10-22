@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBackgroundTask.h"
 #include "AOTStoragePool.h"
 #include "AOTThreads.h"
 #include <algorithm>
@@ -378,6 +379,29 @@ static bool restingThreadsTakeTheNextLoop()
     return askedPoolOncePerHelper && numberOfCountedThreads().load() == width - 1;
 }
 
+static bool shortLoopsRunInScope()
+{
+    constexpr unsigned width = 8;
+    ParallelLoops loops(width, &poolOfNewThreads, 1_ms);
+    std::atomic<unsigned> numberOfVisits { 0 };
+    constexpr unsigned numberOfLoops = 2000;
+    {
+        ParallelLoops::ShortLoopsScope outerScope(loops);
+        for (unsigned loop = 0; loop < numberOfLoops; ++loop) {
+            ParallelLoops::ShortLoopsScope innerScope(loops);
+            forEachIndexInParallel(loops, 3 * width, [&](unsigned) {
+                numberOfVisits.fetch_add(1, std::memory_order_relaxed);
+            });
+            if (!(loop % 100))
+                runLoopThatNeedsEveryThread(loops);
+        }
+    }
+    // Behind the scope the threads sleep and go back to the pool as ever.
+    waitForRestingThreads(loops, 0);
+    runLoopThatNeedsEveryThread(loops);
+    return numberOfVisits.load() == numberOfLoops * 3 * width;
+}
+
 static bool restingThreadsGoBackToThePool()
 {
     constexpr unsigned width = 4;
@@ -387,6 +411,89 @@ static bool restingThreadsGoBackToThePool()
     runLoopThatNeedsEveryThread(loops);
     waitForRestingThreads(loops, 0);
     return true;
+}
+
+static bool commitsInIndexOrder(const ParallelLoops& loops, unsigned count)
+{
+    const Thread& caller = Thread::currentSingleton();
+    Vector<std::atomic<uint8_t>> numberOfProductions(count);
+    for (auto& number : numberOfProductions)
+        number.store(0, std::memory_order_relaxed);
+    Vector<unsigned> committed;
+    committed.reserveInitialCapacity(count);
+    bool commitsOnCallerAfterProduction = true;
+    forEachIndexInParallelWithOrderedCommit(loops, count, [&](unsigned index) {
+        numberOfProductions[index].fetch_add(1, std::memory_order_release);
+    }, [&](unsigned index) {
+        commitsOnCallerAfterProduction &= &Thread::currentSingleton() == &caller && numberOfProductions[index].load(std::memory_order_acquire) == 1;
+        committed.append(index);
+    });
+    return commitsOnCallerAfterProduction && std::ranges::equal(committed, std::views::iota(0u, count));
+}
+
+static bool pendingTasksRunByPriority()
+{
+    ParallelLoops loops(4, &poolThatHoldsCalls, 0_s);
+    struct Log {
+        Vector<TaskPriority> scheduled;
+        Vector<TaskPriority> current;
+    } log;
+    struct Entry {
+        Log& log;
+        TaskPriority priority;
+    };
+    Entry entries[] { { log, TaskPriority::Idle }, { log, TaskPriority::Foreground }, { log, TaskPriority::Background }, { log, TaskPriority::Foreground } };
+    for (Entry& entry : entries) {
+        loops.schedule(entry.priority, [](void* argument) {
+            Entry& entry = *static_cast<Entry*>(argument);
+            entry.log.scheduled.append(entry.priority);
+            entry.log.current.append(ParallelLoops::currentPriority());
+        }, &entry);
+    }
+    bool yieldsToHigherPriority = !loops.shouldYield(TaskPriority::Foreground) && loops.shouldYield(TaskPriority::Background) && loops.shouldYield(TaskPriority::Idle);
+    Vector<ScheduledCall> calls = takeHeldCalls();
+    for (ScheduledCall call : calls)
+        call.run(call.argument);
+    Vector<TaskPriority> expected { TaskPriority::Foreground, TaskPriority::Foreground, TaskPriority::Background, TaskPriority::Idle };
+    return yieldsToHigherPriority && calls.size() == std::size(entries) && log.scheduled == expected && log.current == expected
+        && !loops.shouldYield(TaskPriority::Idle) && ParallelLoops::currentPriority() == TaskPriority::Foreground;
+}
+
+static bool backgroundLoopYieldsToForegroundLoop(unsigned width)
+{
+    ParallelLoops loops(width, &poolOfNewThreads);
+    constexpr unsigned count = 20000;
+    std::atomic<unsigned> backgroundVisits { 0 };
+    std::atomic<bool> workerNumbersAreValid { true };
+    Ref<BackgroundTask> task = BackgroundTask::start(loops, [&] {
+        forEachIndexInParallel(loops, count, [&](unsigned, unsigned worker) {
+            if (worker >= loops.width())
+                workerNumbersAreValid = false;
+            backgroundVisits.fetch_add(1, std::memory_order_relaxed);
+        });
+    });
+    bool foregroundLoopsAreRight = true;
+    for (unsigned round = 0; round < 50; ++round)
+        foregroundLoopsAreRight &= visitsEachIndexOnce(loops, 1000);
+    task->finish();
+    return foregroundLoopsAreRight && workerNumbersAreValid && backgroundVisits.load() == count;
+}
+
+static bool tasksRunAfterTheirDependencies(const ParallelLoops& loops)
+{
+    std::atomic<unsigned> numberFinished { 0 };
+    std::array<unsigned, 4> position { };
+    auto record = [&](unsigned task) {
+        return [&position, &numberFinished, task] {
+            position[task] = numberFinished.fetch_add(1);
+        };
+    };
+    Ref<BackgroundTask> first = BackgroundTask::start(loops, record(0));
+    Ref<BackgroundTask> second = BackgroundTask::start(loops, TaskPriority::Idle, { first.ptr() }, record(1));
+    Ref<BackgroundTask> third = BackgroundTask::start(loops, TaskPriority::Background, { first.ptr() }, record(2));
+    Ref<BackgroundTask> last = BackgroundTask::start(loops, TaskPriority::Background, { second.ptr(), third.ptr() }, record(3));
+    last->finish();
+    return numberFinished.load() == 4 && !position[0] && position[3] == 3;
 }
 
 static bool parallelArrayCreatesAndDestroysEachElementOnce(const ParallelLoops& loops)
@@ -490,7 +597,14 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "a thread gets its storage back"_s, storagePoolGivesThreadItsStorageBack());
     printCheck(out, "an array creates and destroys each element once"_s, parallelArrayCreatesAndDestroysEachElementOnce(loops));
     printCheck(out, "resting threads take the next loop"_s, restingThreadsTakeTheNextLoop());
+    printCheck(out, "short loops run in a scope"_s, shortLoopsRunInScope());
     printCheck(out, "resting threads go back to the pool"_s, restingThreadsGoBackToThePool());
+    printCheck(out, "ordered commit"_s, std::ranges::all_of(loopCounts, [&](unsigned count) {
+        return commitsInIndexOrder(loops, count);
+    }));
+    printCheck(out, "pending tasks run by priority"_s, pendingTasksRunByPriority());
+    printCheck(out, "a background loop yields to foreground loops"_s, backgroundLoopYieldsToForegroundLoop(words->threads));
+    printCheck(out, "tasks run after their dependencies"_s, tasksRunAfterTheirDependencies(loops));
 }
 
 } } } // namespace JSC::AOT::Typed

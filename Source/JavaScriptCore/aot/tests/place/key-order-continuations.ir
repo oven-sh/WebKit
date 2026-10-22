@@ -41,12 +41,13 @@ function f1 name="Straight" kind=BaseConstructor flags=[HasNewTarget] parameters
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = CallDirect v3, v1 function=f2
-    PropSet v3, v1 key="b"
-    Return v3
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4, v1 function=f2
+    PropSet v4, v1 key="b"
+    Return v4
 }
-function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
     PropDefine v0, v1 key="a"
     Return
 }
@@ -54,19 +55,20 @@ function f3 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameter
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
-    v4 = ToBoolean v1
-    Branch v4 -> taken b1(), notTaken b2()
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = ToBoolean v1
+    Branch v5 -> taken b1(), notTaken b2()
   b1():
-    PropSet v3, v1 key="y"
-    PropSet v3, v1 key="x"
-    Return v3
+    PropSet v4, v1 key="y"
+    PropSet v4, v1 key="x"
+    Return v4
   b2():
-    PropSet v3, v1 key="x"
-    PropSet v3, v1 key="y"
-    Return v3
+    PropSet v4, v1 key="x"
+    PropSet v4, v1 key="y"
+    Return v4
 }
 function f4 name="addLate" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L2, v1: number):
+  b0(v0: L2, v1: number):
     PropSet v0, v1 key="late"
     Return
 }
@@ -74,8 +76,9 @@ function f5 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] par
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L3
     v3 = NewObject v2 layout=L3
-    PropSet v3, v1 key="x"
-    Return v3
+    v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PropSet v4, v1 key="x"
+    Return v4
 }
 # The constructor of Straight creates a, then b. The declarations say b, then a.
 # CHECK: L0 orders=2: [0 1] [1 0]

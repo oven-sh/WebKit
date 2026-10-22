@@ -27,7 +27,8 @@ class StubCatalog;
 struct CodeBody;
 struct StubSummary;
 
-enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant };
+// The payload of a word on the stack is its offset from the frame pointer, or from the stack pointer at the entry of the thunk.
+enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant, Stack32OffStackPointer, Stack64OffStackPointer };
 
 // StubKey::bits() of the callee, 1 << 32 | immediate if the thunk moves one (else 0), then two words a move.
 using ArgumentMoves = Vector<uint64_t, 8>;
@@ -64,9 +65,9 @@ struct RecordedCall {
     uint32_t relocation;
     OptionalIndex site;
     OptionalIndex firstReadSite;
+    // A call through a register has no relocation: the label says where it returns to.
+    std::optional<CCallHelpers::Label> returnAddress { };
 };
-
-enum class ReturnSiteMark : uint8_t { None, ResultTest };
 
 class StubCalls {
 public:
@@ -74,6 +75,8 @@ public:
 
     // What a failed check of registers reports.
     void setCaller(FunctionID caller) { m_caller = caller; }
+    // Under validation each call of a stub is followed by a look at the registers that the stub's summary does not list, unless the build asks only about the program.
+    void setChecksPreservedRegisters(bool checks) { m_checksPreservedRegisters = checks; }
 
     // Returns the index of the call in CodeBody::returnSites. Under validation no label beside the call is its address or its return address.
     uint32_t call(CCallHelpers&, StubKey, OptionalIndex site, const KeptRegisterCheck* = nullptr);
@@ -82,14 +85,15 @@ public:
     void callForTwoReads(CCallHelpers&, StubKey, OptionalIndex firstRead, OptionalIndex secondRead);
     void tailCall(CCallHelpers&, StubKey);
     void tailCall(CCallHelpers&, StubKey, uint32_t immediate);
-    void callFunction(CCallHelpers&, FunctionID callee, uint16_t entry, OptionalIndex site, const KeptRegisterCheck* = nullptr, ReturnSiteMark = ReturnSiteMark::None);
+    void callFunction(CCallHelpers&, FunctionID callee, uint16_t entry, OptionalIndex site, const KeptRegisterCheck* = nullptr);
+    void callRegister(CCallHelpers&, GPRReg address, OptionalIndex site, const KeptRegisterCheck* = nullptr);
     void jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry);
-    void emitDistanceToFunction(CCallHelpers&, FunctionID callee, uint16_t entry, int32_t addend);
 
     // Under validation: calls the operation that reports a failure, with its arguments in place.
     void reportChangedRegister(CCallHelpers&);
 
-    void describeCalls(std::span<const Relocation>, CodeBody&);
+    // The link buffer places the calls through registers; without one there may be none.
+    void describeCalls(std::span<const Relocation>, CodeBody&, LinkBuffer* = nullptr);
 
 private:
     struct ResolvedKey {
@@ -101,13 +105,14 @@ private:
     StubKey prepare(CCallHelpers&, StubKey, std::optional<uint32_t> immediate);
     uint32_t indexOf(StubKey);
     uint32_t indexOf(FunctionID);
-    uint32_t emitCall(CCallHelpers&, StubKey called, CodeSymbol, const RecordedCall&, const KeptRegisterCheck* = nullptr, ReturnSiteMark = ReturnSiteMark::None);
+    uint32_t emitCall(CCallHelpers&, StubKey called, CodeSymbol, const RecordedCall&, const KeptRegisterCheck* = nullptr);
     void emitJump(CodeSymbol);
 
     const StubCatalog& m_catalog;
     RelocationRecorder& m_relocations;
     CodeUnitRecorder& m_units;
     FunctionID m_caller;
+    bool m_checksPreservedRegisters { true };
     Vector<RecordedCall, 8> m_calls;
     Vector<StubKey> m_stubKeys;
     Vector<FunctionID> m_callees;

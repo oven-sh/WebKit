@@ -66,8 +66,8 @@ struct InsertionPointExits {
 struct HashTableExits {
     // table: the CompactTable, a heap table. keys: address of its first key. entry: the entry's number.
     JumpList foundInCompactTable;
-    // table: the TableInImage. keys, entry: as above. Empty unless searchesTablesInImage.
-    JumpList foundInTableInImage;
+    // The same, where the search has found out that the keys are narrow.
+    JumpList foundAmongNarrowKeys;
     // Empty when findsInsertionPoint.
     JumpList absent;
     // The next two are empty unless findsInsertionPoint. hash: the hash of the key.
@@ -81,8 +81,8 @@ ptrdiff_t offsetOfHashTableStorage();
 void emitFindInHashTable(StubAssembler&, const HashTableRegisters&, HashTableLookup, HashTableExits&);
 // hash = rapidHashMix64(key). On x86-64 hash is rax and scratch is rdx.
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
-// Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor.
-void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values);
+// Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test.
+void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr);
 
 } } // namespace JSC::AOT
 

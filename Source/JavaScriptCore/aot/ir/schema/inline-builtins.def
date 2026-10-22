@@ -23,11 +23,11 @@ inline ArrayFrom ; asOverload ; family ArrayBufferViewBuiltin
 inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ; asOverload ; family OwnPropertyBuiltin
-inline ObjectHasOwn ObjectPropertyIsEnumerable OwnPropertyDescriptorFields ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
+inline ObjectHasOwn ObjectPropertyIsEnumerable OwnPropertyDescriptorFields ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
 inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectFreeze ObjectPrototypeToString ; asOverload ; family ObjectBuiltin
 inline ObjectIs ReturnThis ; none ; family ObjectBuiltin ; optionalSlowPath
-inline NewMap ; Allocates ; family HashTableBuiltin ; optionalSlowPath
-inline MapGet MapHas SetHas ; ResolvesRopes reads(CollectionStorage, CollectionEntries) ; family HashTableBuiltin ; optionalSlowPath
+inline NewMap NewSet ; Allocates ; family HashTableBuiltin ; optionalSlowPath
+inline MapGet MapHas SetHas ; CreatesConstant ResolvesRopes reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; family HashTableBuiltin ; optionalSlowPath
 inline MapSet SetAdd ; Allocates ResolvesRopes reads(CollectionStorage, CollectionEntries) writes(CollectionStorage, CollectionEntries) ; family HashTableBuiltin ; optionalSlowPath
 inline MapSize SetSize ; reads(CollectionStorage) ; family HashTableBuiltin ; optionalSlowPath
 inline SetFromIterable MapFromEntries ; asOverload ; family MapSetBuiltin

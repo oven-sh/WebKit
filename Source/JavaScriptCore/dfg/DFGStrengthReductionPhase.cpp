@@ -1743,7 +1743,6 @@ private:
             if (key->op() == EnumeratorNextUpdatePropertyName && key->child3()->op() == GetPropertyEnumerator && key->child3()->child1().node() == object) {
                 Node* indexNode = key->child1().node();
                 if (indexNode->op() == ExtractFromTuple && indexNode->child1()->op() == EnumeratorNextUpdateIndexAndMode) {
-                    m_insertionSet.insertCheck(m_graph, m_nodeIndex, m_node);
                     m_node->convertToEnumeratorHasOwnProperty(
                         m_graph, Edge(object, CellUse), Edge(key, UntypedUse),
                         key->child1(), key->child2(), key->child3(),

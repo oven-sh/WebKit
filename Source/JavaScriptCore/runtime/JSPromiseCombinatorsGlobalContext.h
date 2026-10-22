@@ -55,6 +55,10 @@ public:
     void setValues(VM& vm, JSValue values) { m_values.set(vm, this, values); }
     void setRemainingElementsCount(uint64_t remainingElementsCount) { m_remainingElementsCount = remainingElementsCount; }
 
+    static constexpr ptrdiff_t offsetOfPromise() { return OBJECT_OFFSETOF(JSPromiseCombinatorsGlobalContext, m_promise); }
+    static constexpr ptrdiff_t offsetOfValues() { return OBJECT_OFFSETOF(JSPromiseCombinatorsGlobalContext, m_values); }
+    static constexpr ptrdiff_t offsetOfRemainingElementsCount() { return OBJECT_OFFSETOF(JSPromiseCombinatorsGlobalContext, m_remainingElementsCount); }
+
 private:
     JSPromiseCombinatorsGlobalContext(VM& vm, Structure* structure, JSValue promise, JSValue values, uint64_t remainingElementsCount)
         : Base(vm, structure)

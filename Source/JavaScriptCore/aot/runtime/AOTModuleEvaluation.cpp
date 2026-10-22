@@ -10,7 +10,9 @@
 
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTProgramStatics.h"
 #include "AOTState.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "Error.h"
 #include "Exception.h"
 #include "JSCInlines.h"
@@ -18,6 +20,7 @@
 #include <algorithm>
 #include <memory>
 #include <ranges>
+#include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/Variant.h>
 #include <wtf/text/MakeString.h>
@@ -34,6 +37,11 @@ struct EvaluationFrame {
     unsigned next { 0 };
     unsigned end { 0 };
     std::unique_ptr<Vector<EvaluationTarget>> evaluationList;
+};
+
+struct EvaluationInProgress {
+    const Modules::EvaluationFrames& frames;
+    const EvaluationInProgress* outer;
 };
 
 static bool isComponentEvaluated(const Modules& modules, ModuleID module)
@@ -53,13 +61,60 @@ static bool isOnStack(CyclicModuleRecord* record, const ModuleEvaluationStack& s
 static void checkSafeToRecurse(JSGlobalObject* realm, ThrowScope& scope)
 {
     if (!realm->vm().isSafeToRecurse()) [[unlikely]]
-        throwRangeError(realm, scope, "Maximum call stack size exceeded"_s);
+        throwException(realm, scope, createModuleGraphTooDeepError(realm));
 }
 
 // Its status is the byte, its requests are those of the table, and nothing but its body is left to run when they are done.
 static ALWAYS_INLINE bool needsOnlyFrame(const ModuleData& data)
 {
     return data.kind == ModuleKind::SourceText && data.isSimple() && !data.hasDeferredRequest();
+}
+
+// The lists of evaluation requests leave out a module that runs nothing itself: what it requests stands in its place, so the evaluation of an importer stores no status for it.
+static bool isPassedOverByEvaluation(const ModuleData& data)
+{
+    if (!data.hasExportTable())
+        return false;
+    return !data.needsEvaluation() || (data.isSimple() && data.isSynchronous() && !data.bodyFunction() && !data.hasDeferredRequest());
+}
+
+// An evaluation that goes by all requests comes from the importer to the required module through modules that are passed over, on the first such way in the order of the requests:
+// none of them can have been evaluated earlier, or the required module would have been too. Answers whether the candidate is on that way.
+static bool isPassedOverBetween(const ModuleTable& table, ModuleID importer, ModuleID required, ModuleID candidate)
+{
+    struct Step {
+        ModuleID module;
+        uint32_t nextRequest;
+        uint32_t endOfRequests;
+    };
+
+    auto stepInto = [&](ModuleID module) {
+        return Step { module, table.data(module).firstRequest, table.endOfRequests(module) };
+    };
+    std::span<const ModuleRequestData> requests = table.allRequests();
+    BitVector visited(table.size());
+    Vector<Step, 16> way { stepInto(importer) };
+    while (!way.isEmpty()) {
+        Step& step = way.last();
+        if (step.nextRequest == step.endOfRequests) {
+            way.removeLast();
+            continue;
+        }
+        const ModuleRequestData& request = requests[step.nextRequest++];
+        if (request.isRequire)
+            continue;
+        ModuleID target = request.targetModule();
+        if (target == required) {
+            return way.containsIf([&](const Step& passed) {
+                return passed.module == candidate;
+            });
+        }
+        const ModuleData& targetData = table.data(target);
+        if (!targetData.needsEvaluation() || !isPassedOverByEvaluation(targetData) || visited.quickSet(target.index()))
+            continue;
+        way.append(stepInto(target));
+    }
+    return false;
 }
 
 static void computeEvaluationList(Modules& modules, EvaluationFrame& frame)
@@ -73,7 +128,7 @@ static void computeEvaluationList(Modules& modules, EvaluationFrame& frame)
         if (listedModules.add(module.index()))
             evaluationList.append(module);
     };
-    for (const ModuleRequestData& request : table.requests(frame.module)) {
+    for (const ModuleRequestData& request : table.imports(frame.module)) {
         if (!request.isDeferred) {
             appendOnce(request.targetModule());
             continue;
@@ -126,7 +181,7 @@ void Modules::gatherAsynchronousTransitiveDependencies(ModuleID start, OrderedHa
             result.add(record);
             continue;
         }
-        for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse)
+        for (const ModuleRequestData& request : m_table.imports(module) | std::views::reverse)
             work.append(request.targetModule());
     }
 }
@@ -169,7 +224,7 @@ bool Modules::readyForSyncExecution(ModuleID start, VisitedModuleRecords& seen)
         }
         if (moduleData.hasTopLevelAwait())
             return false;
-        for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse)
+        for (const ModuleRequestData& request : m_table.imports(module) | std::views::reverse)
             work.append(request.targetModule());
     }
     return true;
@@ -178,15 +233,28 @@ bool Modules::readyForSyncExecution(ModuleID start, VisitedModuleRecords& seen)
 bool Modules::enterModule(ModuleID module, EvaluationContext& context, EvaluationFrames& frames)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    const ModuleData& moduleData = data(module);
 
-    if (!data(module).hasExportTable())
+    if (moduleData.kind == ModuleKind::CommonJs) {
+        scope.release();
+        evaluateCommonJS(module);
+        return false;
+    }
+    // A module of the library ran when its importer was linked.
+    if (!moduleData.hasExportTable())
         return false;
 
-    if (status(module) == ModuleStatus::Unlinked) {
-        link(module);
-        RETURN_IF_EXCEPTION(scope, false);
+    ModuleStatus moduleStatus = status(module);
+    if (moduleStatus == ModuleStatus::Unlinked) {
+        // What a linked module requests was linked with it. No status says so for a module without work in a link.
+        if (frames.isEmpty()) {
+            link(module);
+            RETURN_IF_EXCEPTION(scope, false);
+            moduleStatus = status(module);
+        } else
+            moduleStatus = ModuleStatus::Linked;
     }
-    switch (status(module)) {
+    switch (moduleStatus) {
     case ModuleStatus::Linking:
     case ModuleStatus::Evaluating:
     case ModuleStatus::EvaluatingAsync:
@@ -202,14 +270,25 @@ bool Modules::enterModule(ModuleID module, EvaluationContext& context, Evaluatio
         break;
     }
 
-    const ModuleData& moduleData = data(module);
+    ModuleRecord* record = recordIfExists(module);
+    if (!record && moduleData.evaluatesItself()) {
+        scope.release();
+        evaluateByCallingBody(module);
+        return false;
+    }
+    if (!record && !moduleData.needsEvaluation()) {
+        setStoredStatus(module, StoredModuleStatus::Evaluated);
+        return false;
+    }
+
     setStatus(module, ModuleStatus::Evaluating);
     EvaluationFrame frame { module };
     frame.dfsIndex = context.index++;
     frame.stackPosition = static_cast<unsigned>(context.stack.size());
-    frame.next = moduleData.firstRequest;
-    frame.end = m_table.endOfRequests(module);
-    ModuleRecord* record = recordIfExists(module);
+    if (!moduleData.evaluatesItself()) {
+        frame.next = moduleData.firstEvaluationRequest;
+        frame.end = m_table.endOfEvaluationRequests(module);
+    }
     if (!record && !moduleData.isSimple())
         record = ensureRecord(module);
     if (record)
@@ -320,9 +399,15 @@ void Modules::leaveModule(EvaluationFrame& frame, EvaluationContext& context)
         record->setAsyncEvaluationOrder(vm.incrementModuleAsyncEvaluationCount());
         if (!*record->pendingAsyncDependencies())
             record->executeAsync(m_instance.globalObject);
-    } else
-        callBody(frame.module, jsUndefined(), ArgList());
+    } else if (data(frame.module).evaluatesItself())
+        evaluateByCallingBody(frame.module);
+    else
+        callBodyOfModuleEnteredByLoader(frame.module);
     RETURN_IF_EXCEPTION(scope, void());
+    if (data(frame.module).capturesExportsBehindEvaluation()) [[unlikely]] {
+        captureExports(frame.module);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 
     if (!record) {
         setStatus(frame.module, ModuleStatus::Evaluated);
@@ -358,6 +443,9 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (data(root).kind == ModuleKind::CommonJs)
+        RELEASE_AND_RETURN(scope, evaluateCommonJS(root));
+
     if (!data(root).hasExportTable()) {
         ModuleRecord* record = recordIfExists(root);
         if (!record)
@@ -366,7 +454,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             RELEASE_AND_RETURN(scope, throwEvaluationError(root));
         if (record->status() != CyclicModuleRecord::Status::Linked)
             return;
-        // The body ran at link. If require.cache dropped the module since then, only require() runs it again: the record is finished, and the status moves back to the status byte.
+        // The body ran at link: the record is finished, and the status moves back to the status byte.
         {
             Locker locker { m_state.caches->lock() };
             m_records.remove(root);
@@ -377,8 +465,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         return;
     }
 
-    std::span<const ModuleRequestData> requests = m_table.allRequests();
+    ModuleNumbers requests = m_table.allEvaluationRequests();
     EvaluationFrames frames;
+    EvaluationInProgress evaluation { frames, m_innermostEvaluation };
+    SetForScope innermostEvaluation(m_innermostEvaluation, &evaluation);
     enterModule(root, context, frames);
     while (!scope.exception() && !frames.isEmpty()) {
         if (EvaluationFrame& frame = frames.last(); frame.next != frame.end) {
@@ -386,14 +476,19 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             if (frame.evaluationList) [[unlikely]]
                 target = frame.evaluationList->at(frame.next++);
             else {
-                ModuleID required = requests[frame.next++].targetModule();
+                ModuleID required(requests[frame.next++]);
                 StoredModuleStatus stored = storedStatus(required);
                 if (stored == StoredModuleStatus::Evaluated)
                     continue;
                 const ModuleData& requiredData = data(required);
-                if (needsOnlyFrame(requiredData) && (stored == StoredModuleStatus::Linked || (stored == StoredModuleStatus::Unlinked && !requiredData.needsLink()))) {
+                // It was linked with its importer, whether or not a status was stored for it.
+                if (requiredData.evaluatesItself() && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked)) {
+                    evaluateByCallingBody(required);
+                    continue;
+                }
+                if (needsOnlyFrame(requiredData) && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked)) {
                     setStoredStatus(required, StoredModuleStatus::Evaluating);
-                    frames.append(EvaluationFrame { required, nullptr, context.index++, static_cast<unsigned>(context.stack.size()), requiredData.firstRequest, m_table.endOfRequests(required), nullptr });
+                    frames.append(EvaluationFrame { required, nullptr, context.index++, static_cast<unsigned>(context.stack.size()), requiredData.firstEvaluationRequest, m_table.endOfEvaluationRequests(required), nullptr });
                     continue;
                 }
                 target = required;
@@ -419,6 +514,126 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
 
     if (Exception* exception = scope.exception())
         failFrames(exception->value(), frames);
+}
+
+// The body stores the status of the module in the table. The status of a module with a record is in the record, and whoever gave it the record goes by that: for the time of the call the table has it.
+void Modules::evaluateByCallingBody(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    ASSERT(data(module).evaluatesItself());
+
+    bool isInRecord = storedStatus(module) == StoredModuleStatus::InRecord;
+    if (isInRecord)
+        setStoredStatus(module, StoredModuleStatus::Linked);
+    uint32_t outerMark = m_instance.modules.evaluatingMark;
+    uint8_t mark = static_cast<uint8_t>(std::min<uint32_t>(outerMark + 1, UINT8_MAX));
+    m_instance.modules.evaluatingMark = mark;
+    callBody(module);
+    m_instance.modules.evaluatingMark = outerMark;
+    if (isInRecord)
+        setStoredStatus(module, StoredModuleStatus::InRecord);
+    if (Exception* exception = scope.exception()) [[unlikely]]
+        failModulesLeftEvaluating(mark, exception->value());
+}
+
+JSValue Modules::callBodyOfModuleEnteredByLoader(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    uint32_t outerMark = m_instance.modules.evaluatingMark;
+    uint8_t mark = static_cast<uint8_t>(std::min<uint32_t>(outerMark + 1, UINT8_MAX));
+    m_instance.modules.evaluatingMark = mark;
+    JSValue result = callBody(module);
+    m_instance.modules.evaluatingMark = outerMark;
+    if (Exception* exception = scope.exception()) [[unlikely]]
+        failModulesLeftEvaluating(mark, exception->value());
+    return result;
+}
+
+// No body runs again. Where the module keeps the error, whoever asks for the module later gets it; where it does not, they get what the module had exported when it threw.
+void Modules::didThrowInBody(ModuleID module, JSValue error)
+{
+    if (data(module).keepsError()) {
+        setFailed(module, error);
+        return;
+    }
+    setStatus(module, ModuleStatus::Evaluated);
+}
+
+// Compiled code comes here from the handler around the evaluation of a module, with what it has just caught and is about to throw again.
+void Modules::abandonEvaluation(ModuleID module, JSValue error)
+{
+    if (storedStatus(module) < StoredModuleStatus::Evaluating)
+        return;
+    didThrowInBody(module, error);
+    failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID>(&module, 1), error);
+}
+
+// What was being evaluated when a body threw has failed with it, and whoever asks for one of these modules later gets the same error.
+void Modules::failModulesLeftEvaluating(uint8_t mark, JSValue error)
+{
+    Vector<ModuleID, 16> failedModules;
+    for (unsigned index = 0; index < m_storedStatuses.size(); ++index) {
+        if (m_storedStatuses[index] == mark)
+            failedModules.append(ModuleID(index));
+    }
+    for (ModuleID module : failedModules)
+        didThrowInBody(module, error);
+    failEvaluatedModulesOfUnfinishedCycles(failedModules.span(), error);
+}
+
+// A module of a cycle of imports is evaluated for good when the first module of the cycle that was entered is. A require() makes no such cycle: what it has evaluated stays evaluated.
+void Modules::failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error)
+{
+    bool hasCycle = std::ranges::any_of(failedModules, [&](ModuleID module) {
+        return data(module).hasExportTable() && !data(module).isSimple();
+    });
+    if (!hasCycle)
+        return;
+
+    struct ImportTargets {
+        std::span<const ModuleRequestData> requests;
+        uint32_t importer;
+
+        size_t size() const { return requests.size(); }
+        // A require() leads nowhere.
+        uint32_t operator[](size_t index) const { return requests[index].isRequire ? importer : requests[index].target(); }
+    };
+    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(m_table.size(), [&](unsigned index) {
+        return ImportTargets { m_table.requests(ModuleID(index)), index };
+    });
+    BitVector unfinishedComponents(components.numberOfComponents);
+    for (ModuleID module : failedModules) {
+        if (data(module).hasExportTable())
+            unfinishedComponents.quickSet(components.componentOf[module.index()]);
+    }
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID module(index);
+        if (unfinishedComponents.quickGet(components.componentOf[index]) && data(module).evaluatesItself() && storedStatus(module) == StoredModuleStatus::Evaluated)
+            setFailed(module, error);
+    }
+}
+
+// Compiled code comes here for a module whose status is in a record: one that failed, one that JavaScriptCore's loader knows, and one whose exports are captured behind its evaluation.
+bool Modules::beginEvaluationOfModuleInRecord(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    switch (status(module)) {
+    case ModuleStatus::Failed:
+        scope.release();
+        throwEvaluationError(module);
+        return false;
+    case ModuleStatus::Unlinked:
+    case ModuleStatus::Linked:
+        scope.release();
+        evaluateWithOwnStack(module);
+        return false;
+    case ModuleStatus::Linking:
+    case ModuleStatus::Evaluating:
+    case ModuleStatus::EvaluatingAsync:
+    case ModuleStatus::Evaluated:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void Modules::failFrames(JSValue error, const EvaluationFrames& frames)
@@ -473,10 +688,20 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
         link(root);
     if (scope.exception())
         return rejectedPromiseWithPendingException(realm, scope);
+    if (moduleData.kind == ModuleKind::CommonJs) {
+        evaluateCommonJS(root);
+        if (scope.exception())
+            return rejectedPromiseWithPendingException(realm, scope);
+    }
     if (!moduleData.hasExportTable())
         RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(realm, jsUndefined()));
 
-    if (moduleData.isSimple() && moduleData.isSynchronous() && !recordIfExists(root)) {
+    if (!moduleData.needsEvaluation() && !recordIfExists(root)) {
+        setStoredStatus(root, StoredModuleStatus::Evaluated);
+        RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(realm, jsUndefined()));
+    }
+
+    if (((moduleData.isSimple() && moduleData.isSynchronous()) || moduleData.evaluatesItself()) && !recordIfExists(root)) {
         if (status(root) != ModuleStatus::Evaluated) {
             evaluateWithOwnStack(root);
             if (scope.exception())
@@ -487,6 +712,40 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
     RELEASE_AND_RETURN(scope, ensureRecord(root)->evaluate(realm, referrerAsyncOrder.value_or(-1), importPromise));
 }
 
+// To evaluate such a module is to evaluate what stands in its place in the lists of its importers.
+void Modules::recordEvaluationIfNothingIsLeftToRun(ModuleID module)
+{
+    ASSERT(status(module) == ModuleStatus::Linked);
+    if (!isPassedOverByEvaluation(data(module)))
+        return;
+    for (uint32_t required : m_table.evaluationRequests(module)) {
+        if (status(ModuleID(required)) != ModuleStatus::Evaluated)
+            return;
+    }
+    setStatus(module, ModuleStatus::Evaluated);
+}
+
+// While a body runs, the modules between it and the root of its evaluation are being evaluated, and no status says so for one that is passed over.
+bool Modules::isPassedOverByEvaluationInProgress(ModuleID module) const
+{
+    if (!m_innermostEvaluation || !isPassedOverByEvaluation(data(module)))
+        return false;
+    // What such a module leads to is in its own list.
+    ModuleNumbers requests = m_table.evaluationRequests(module);
+    for (const EvaluationInProgress* evaluation = m_innermostEvaluation; evaluation; evaluation = evaluation->outer) {
+        const EvaluationFrames& frames = evaluation->frames;
+        for (size_t index = 1; index < frames.size(); ++index) {
+            const EvaluationFrame& importer = frames[index - 1];
+            ModuleID required = frames[index].module;
+            if (importer.evaluationList || !requests.contains(required.index()))
+                continue;
+            if (isPassedOverBetween(m_table, importer.module, required, module))
+                return true;
+        }
+    }
+    return false;
+}
+
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -494,7 +753,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     const ModuleData& moduleData = data(module);
 
     auto throwAsyncModuleError = [&] {
-        throwTypeError(realm, scope, makeString("require() async module \""_s, m_table.pathText(module), "\" is unsupported. use \"await import()\" instead."_s));
+        throwException(realm, scope, host().createAsyncModuleRequiredError(realm, m_table.pathText(module)));
     };
 
     if (!moduleData.hasExportTable()) {
@@ -511,7 +770,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         bool isReady = readyForSyncExecution(module, seen);
         RETURN_IF_EXCEPTION(scope, void());
         if (!isReady) {
-            throwTypeError(realm, scope, "Unable to synchronously evaluate deferred module"_s);
+            throwException(realm, scope, createDeferredModuleNotReadyError(realm));
             return;
         }
         break;
@@ -538,6 +797,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     case ModuleStatus::Linked:
         break;
     }
+    if (isPassedOverByEvaluationInProgress(module))
+        return;
 
     JSPromise* promise = nullptr;
     if (isUnlinked && moduleData.reachesUncompiledCode())

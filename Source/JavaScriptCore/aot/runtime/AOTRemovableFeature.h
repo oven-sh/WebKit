@@ -41,7 +41,7 @@ FOR_EACH_ENGINE_REMOVABLE_FEATURE(JSC_CHECK_REMOVABLE_FEATURE)
 #undef JSC_CHECK_REMOVABLE_FEATURE
 
 enum class RemovedFeatureStub : uint8_t { Abort, Throw, ReturnUndefined, ReturnDefault };
-enum class FeatureRemoval : uint8_t { Present, Unused, ByName };
+enum class FeatureRemoval : uint8_t { Present, Unused, Requested };
 enum class GuardOrigin : uint8_t { NativeCode, Builtin, Definition };
 
 struct RemovableFeatureState {
@@ -79,6 +79,8 @@ extern "C" const RemovableFeatureState Bun__removableFeatureState;
 extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature);
 extern "C" EncodedJSValue Bun__throwForRemovedFeature(JSGlobalObject*, uint16_t feature);
 extern "C" EncodedJSValue Bun__throwForRemovedBuiltin(JSGlobalObject*, uint16_t feature, uint32_t builtin);
+// Without a name the error names the feature.
+extern "C" EncodedJSValue Bun__throwForRemovedFunction(JSGlobalObject*, uint16_t feature, StringImpl* name);
 
 ALWAYS_INLINE FeatureRemoval removalOf(RemovableFeature feature)
 {

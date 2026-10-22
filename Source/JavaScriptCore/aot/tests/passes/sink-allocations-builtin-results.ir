@@ -2,7 +2,7 @@
 # The pieces of a split and the groups of an exec are delivered as bounds in the string, and a string is made of them only where one is needed
 # FORM: Prepared
 # RUN: pass SinkAllocations
-# STATISTIC: AllocationsRemoved = 17
+# STATISTIC: AllocationsRemoved = 16
 # STATISTIC: AllocationsSunk = 0
 # LOSS: MaxVirtualArrayLength x1 f17 v2
 
@@ -148,30 +148,24 @@ function f5 name="coercibleCheckWithoutTest" parameters=[{type=RegExp}, {type=st
 # CHECK-NOT: ElemGet
 # CHECK: v5:{{*}}= Upcast [[group5]]
 
-function f6 name="claimFailsForNull" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+function f6 name="checkFailsForNull" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
   b0(v0: RegExp, v1: string):
     v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
-    v3 = Claim v2 castType=Array<anything>
+    v3 = Check v2 castType=Array<anything>
     v4 = Integer integer=1
     v5 = ElemGet v3, v4
     Return v5
 }
-# CHECK-LABEL: function f6 name="claimFailsForNull"
-# CHECK: builtinCallForm=Prefix prefixLength=2
-# CHECK: [[start6]]:{{*}}= ResultAt v2 index=6
-# CHECK-NEXT: [[end6]]:{{*}}= ResultAt v2 index=7
-# CHECK-NEXT: [[group6]]: undefined|string = SubstringOrUndefined v1, [[start6]], [[end6]]
-# CHECK: frequency=Rare:
-# CHECK-NEXT: [[null6]]: null = Null
-# CHECK-NEXT: = Claim [[null6]] castType=Array
-# CHECK-NEXT: Unreachable
-# CHECK-NOT: Claim
-# CHECK: v5:{{*}}= Upcast [[group6]]
+# A check that fails throws nothing: generic code goes on with the value, whichever it is, so the check takes what the call returns.
+# CHECK-LABEL: function f6 name="checkFailsForNull"
+# CHECK-NOT: builtinCallForm=
+# CHECK: v3:{{*}}= Check v2 castType=Array
+# CHECK: v5:{{*}}= ElemGet v3, v4
 
-function f7 name="claimAcceptsNull" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+function f7 name="checkAcceptsNull" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
   b0(v0: RegExp, v1: string):
     v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
-    v3 = Claim v2 castType=null|Array<anything>
+    v3 = Check v2 castType=null|Array<anything>
     v4 = ToBoolean v3
     Branch v4 -> taken b1(| 0), notTaken b2()
   b1(v5):
@@ -181,26 +175,26 @@ function f7 name="claimAcceptsNull" parameters=[{type=RegExp}, {type=string}] re
   b2():
     Return v1
 }
-# CHECK-LABEL: function f7 name="claimAcceptsNull"
+# CHECK-LABEL: function f7 name="checkAcceptsNull"
 # CHECK: builtinCallForm=Prefix prefixLength=2
-# CHECK-NOT: Claim
+# CHECK-NOT: Check
 # CHECK-NOT: Rare
 # CHECK: [[start7]]:{{*}}= ResultAt v2 index=6
 # CHECK-NEXT: [[end7]]:{{*}}= ResultAt v2 index=7
 # CHECK-NEXT: [[group7]]: undefined|string = SubstringOrUndefined v1, [[start7]], [[end7]]
-# CHECK-NOT: Claim
+# CHECK-NOT: Check
 # CHECK-NOT: Rare
 # CHECK: v7:{{*}}= Upcast [[group7]]
 
-function f8 name="claimFailsForTheArray" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+function f8 name="checkFailsForTheArray" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
   b0(v0: RegExp, v1: string):
     v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
-    v3 = Claim v2 castType=null
+    v3 = Check v2 castType=null
     Return v3
 }
-# CHECK-LABEL: function f8 name="claimFailsForTheArray"
+# CHECK-LABEL: function f8 name="checkFailsForTheArray"
 # CHECK-NOT: builtinCallForm=
-# CHECK: v3: null = Claim v2 castType=null
+# CHECK: v3: null = Check v2 castType=null
 
 function f9 name="splitDestructured" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
   b0(v0: string, v1: string):

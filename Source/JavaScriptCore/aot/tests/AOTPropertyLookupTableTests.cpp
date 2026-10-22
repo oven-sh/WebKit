@@ -544,7 +544,8 @@ void growthKeepsEntriesAndPublishesWords()
         ++numberOfKeptEntries;
     });
     AOT_TEST_CHECK(numberOfKeptEntries > initialNumberOfEntries / 2);
-    AOT_TEST_CHECK(valueOf(fixture.vm(), RuntimeCounterID::HashedTableEvictions) > initialNumberOfEntries / 4);
+    // It grows once it has evicted a sixty-fourth of its entries while it was at least half full.
+    AOT_TEST_CHECK(valueOf(fixture.vm(), RuntimeCounterID::HashedTableEvictions) > initialNumberOfEntries / 64);
     fixture.vm().aotState().instances.clear();
 }
 

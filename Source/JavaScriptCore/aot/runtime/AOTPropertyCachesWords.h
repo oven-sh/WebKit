@@ -26,6 +26,7 @@ struct alignas(32) HashedSlot {
 
     static uintptr_t keyFor(const UniquedStringImpl* uid, SlotAccess access) { return std::bit_cast<uintptr_t>(uid) | static_cast<uintptr_t>(access); }
     static constexpr uint64_t offsetMaskFor(uint32_t numberOfEntries) { return static_cast<uint64_t>(numberOfEntries - 1) << sizeShift; }
+    // The size of the table comes in with the mask alone, as the last step. HashedSlotTable::grow relies on it: in a table of twice the size an offset is what it was, or that plus the size the table had.
     static uint32_t offsetOfFirstWay(StructureID structureID, const UniquedStringImpl* uid, uint64_t offsetMask)
     {
         uint32_t structureHash = (structureID.bits() * structureMultiplier) >> structureHashShift;
@@ -151,6 +152,61 @@ struct StructureRowWords {
     static constexpr unsigned wordShift = 2;
 };
 
+// The names that an object of one Structure, or an object above it, may have: a bit for each, found by the number of the name. A name whose bit is clear is absent.
+// What the object itself has is told by its Structure. A change to any object that is a prototype starts a new generation, which no filter of before belongs to.
+// One miss fills the filter for every name. The tables are filed by Structure and name, and a program that builds objects key by key asks each of dozens of Structures for dozens of names once or twice.
+struct AbsenceFilter {
+    static constexpr unsigned numberOfFilters = 256;
+    static constexpr unsigned sizeShift = 6;
+    static constexpr unsigned numberOfWords = 4;
+    static constexpr unsigned bitsOfWordShift = 6;
+
+    static constexpr unsigned indexFor(uint32_t structureIDBits) { return (structureIDBits >> StructureRowWords::granuleShift) & (numberOfFilters - 1); }
+    void add(uint32_t identifierNumber) { names[(identifierNumber >> bitsOfWordShift) & (numberOfWords - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
+    bool rulesOut(uint32_t identifierNumber) const { return !(names[(identifierNumber >> bitsOfWordShift) & (numberOfWords - 1)] >> (identifierNumber & 63) & 1); }
+    static constexpr unsigned numberOfWordsForStores = 2;
+    void addNameThatStopsStores(uint32_t identifierNumber) { namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
+    bool letsStoresPass(uint32_t identifierNumber) const { return !(namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] >> (identifierNumber & 63) & 1); }
+
+    uint32_t structureID;
+    uint32_t generation;
+    uint64_t names[numberOfWords];
+    // A read asks the tables first, and what the filter answers is never filed. So one read in readsBetweenMisses leaves as if the filter had said nothing: a pair that comes again and again gets its slot.
+    static constexpr uint32_t readsBetweenMisses = 64;
+    uint32_t readsAnswered;
+    // A name that an object on some chain gets, loses or has changed is noted by itself, in PropertyCacheWords::namesChangedOnChains. Only a change that is reported without a name starts a new generation of these.
+    uint32_t generationForStores;
+    // Of the names, those under which an object above may have anything but a data property that can be written. A store to the object passes every other name and creates the object's own property.
+    uint64_t namesThatStopStores[numberOfWordsForStores];
+};
+
+// The name that a short text is, for a key that is no atom: a piece of a longer string, or a string made a moment ago. A router asks for the path of each request so, and whoever lowers the name of a
+// method or of a header. What the text of a name is never changes, so an entry holds while its name lives, and the entry keeps it alive.
+// The text is held as two words that cover it, the first bytes and the last ones, which overlap unless it is as long as both: with the length they say every byte.
+struct NameOfText {
+    // Two entries side by side take the texts of one hash, the one that came last in front.
+    static constexpr unsigned numberOfPairs = 64;
+    static constexpr unsigned numberOfEntries = 2 * numberOfPairs;
+    static constexpr unsigned sizeShift = 5;
+    static constexpr uint32_t minLength = 2;
+    static constexpr uint32_t maxLength = 16;
+    static constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+    static constexpr unsigned pairShift = 64 - 6;
+
+    static constexpr unsigned widthOfWordFor(uint32_t length) { return length >= 8 ? 8 : length >= 4 ? 4 : 2; }
+    static constexpr unsigned firstIndexFor(uint64_t first, uint64_t last, uint32_t length) { return static_cast<unsigned>((first + 2 * last + length) * multiplier >> pairShift) * 2; }
+
+    uint64_t first;
+    uint64_t last;
+    uint64_t length;
+    UniquedStringImpl* uid;
+};
+
+struct MissesOfPairs {
+    static constexpr uint32_t numberOfCounters = 1u << 15;
+    static constexpr uint32_t missesBetweenFilings = 16;
+};
+
 struct FrontWords {
     const uint32_t* rowsForStructureIDZero;
     const PackedSlot* plane;
@@ -160,7 +216,26 @@ struct PropertyCacheWords {
     FrontWords front[numberOfSlotAccesses];
     const HashedSlot* hashedSlots;
     uint64_t hashedSlotOffsetMask;
-    uintptr_t siteCacheStateBias;
+    AbsenceFilter* absenceFilters;
+    uint32_t absenceFilterGeneration;
+    uint32_t absenceFilterGenerationForStores;
+    // A bit for the number of every name that the Object.prototype of some realm of the VM has or has had.
+    const uint64_t* namesOfObjectPrototypes;
+    // A bit for the number of every name under which an object that is a prototype has got anything but a data property that can be written.
+    const uint64_t* namesChangedOnChains;
+    // As AbsenceFilter::readsAnswered, for the reads that a Structure's flag answers.
+    uint32_t absentReadsAnswered;
+    // How often a read of a Structure and a name has found them in no table, by a hash of the two. What answers behind the tables files nothing, so one miss in MissesOfPairs::missesBetweenFilings
+    // goes to the operation that files, with the flag set.
+    uint8_t* missesOfPairs;
+    const NameOfText* namesOfTexts;
+    uint8_t missIsDueForFiling;
+    // What the Structure of a stand-in for the prototype object of a class has as its ClassInfo.
+    const void* infoOfClassPrototypes;
+    SiteCacheState* siteCacheStates;
+    uint8_t missesOfEmptySites;
+    uint8_t storesAtEmptySites;
+    uint8_t storesToGuardedFields;
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;
@@ -180,6 +255,9 @@ static_assert(numberOfSlotAccesses <= HashedSlot::accessMask + 1 && alignof(Uniq
 static_assert(hasOneBitSet(HashedSlot::ways));
 static_assert(sizeof(FrontWords) == 2 * sizeof(void*) && OBJECT_OFFSETOF(FrontWords, plane) == sizeof(void*));
 static_assert(1u << StructureRowWords::wordShift == sizeof(uint32_t));
+static_assert(sizeof(AbsenceFilter) == 1u << AbsenceFilter::sizeShift && hasOneBitSet(AbsenceFilter::numberOfFilters) && hasOneBitSet(AbsenceFilter::numberOfWords));
+static_assert(std::is_trivially_copyable_v<AbsenceFilter> && std::is_aggregate_v<AbsenceFilter>);
+static_assert(sizeof(NameOfText) == 1u << NameOfText::sizeShift && NameOfText::numberOfPairs == 1u << (64 - NameOfText::pairShift));
 static_assert(std::is_trivially_default_constructible_v<PropertyCacheWords>);
 static_assert(OBJECT_OFFSETOF(PropertyCacheWords, hashedSlotOffsetMask) == OBJECT_OFFSETOF(PropertyCacheWords, hashedSlots) + sizeof(void*));
 

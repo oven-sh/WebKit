@@ -63,7 +63,8 @@ class Calls {
 public:
     static constexpr uint32_t functionWithProperties = 3;
 
-    Calls()
+    explicit Calls(bool hasOneInstance)
+        : runner(StubOptions { .hasOneInstance = hasOneInstance, .targetFeatures = CPUFeatureSet::buildTarget() })
     {
         Instance& instance = runner.instance();
         instance.prefix().structureIDBase = m_structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
@@ -183,9 +184,9 @@ static void checkCallOfClosure(Calls& calls, uint64_t closure, unsigned numberOf
     AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == countInKey);
 }
 
-static void testCallsOfClosures()
+static void testCallsOfClosures(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     for (unsigned numberOfParameters : { 0u, countInKey, countInKey + 1, numberOfArgumentGPRs }) {
         uint64_t word = calls.runner.closureWord(numberOfParameters);
         FakeClosure plain;
@@ -210,9 +211,9 @@ static void checkCallOfEngineCallee(Calls& calls, uint64_t callee)
     checkLandedInEngine(calls.runner.runCall(callValue(0), callee, thisValue, { }), callee, thisValue, { });
 }
 
-static void testCallsOfEngineCallees()
+static void testCallsOfEngineCallees(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     uint64_t wordOfClass = calls.runner.closureWord(0, { .isNotCallable = true, .takesNewTarget = true });
     FakeClosure classObject;
     FakeClosure classObjectWithOtherStructure;
@@ -239,9 +240,9 @@ static void checkThrowsUnlessCallable(const StubRun& run, uint64_t callee)
     AOT_TEST_CHECK(run.landedCall.place == LandedCall::Place::Nowhere && run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == callee);
 }
 
-static void testCallsOfNonCells()
+static void testCallsOfNonCells(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     const std::array passed { firstArgument, secondArgument };
     calls.runner.recordCallsOf(Entry::operationAOTThrowUnlessCallable);
     for (uint64_t callee : { undefinedBits, boxedInt32(5), nullBits }) {
@@ -263,9 +264,9 @@ static void checkCallOfHostFunction(Calls& calls, StubKey key, uint64_t callee, 
     AOT_TEST_CHECK(lastHostCall.arguments[0] == firstArgument && lastHostCall.arguments[1] == secondArgument);
 }
 
-static void testCallsOfHostFunctions()
+static void testCallsOfHostFunctions(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     FakeExecutable executable;
     executable.setHeader(0, NativeExecutableType);
     executable.at<const void*>(NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall)) = TaggedNativeFunction(recordHostCall).taggedPtr();
@@ -291,9 +292,9 @@ static void initializeBoundFunction(Calls& calls, FakeBoundFunction& function, u
         function.at<uint64_t>(JSBoundFunction::offsetOfBoundArgs() + i * sizeof(uint64_t)) = boundArguments[i];
 }
 
-static void testCallsOfBoundFunctions()
+static void testCallsOfBoundFunctions(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     constexpr uint64_t boundThis = boxedInt32(80);
     constexpr std::array boundArguments { boxedInt32(81), boxedInt32(82), boxedInt32(83) };
     static_assert(boundArguments.size() == JSBoundFunction::maxEmbeddedArgs);
@@ -304,14 +305,10 @@ static void testCallsOfBoundFunctions()
         FakeBoundFunction function;
         initializeBoundFunction(calls, function, target.address(), boundThis, std::span(boundArguments).first(numberOfBoundArguments));
         StubRun run = calls.runner.runCall(callValue(countInKey), function.address(), thisValue, { firstArgument, secondArgument });
-        if (numberOfBoundArguments + countInKey > numberOfArgumentGPRs) {
-            checkLandedInEngine(run, function.address(), thisValue, std::array { firstArgument, secondArgument });
-            continue;
-        }
         Vector<uint64_t> expected(std::span(boundArguments).first(numberOfBoundArguments));
         expected.append(firstArgument);
         expected.append(secondArgument);
-        checkLandedInFunction(run, target.address(), boundThis, expected.span());
+        checkLandedInFunction(run, target.address(), boundThis, expected.span().first(std::min<size_t>(expected.size(), numberOfArgumentGPRs)));
         AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == expected.size());
     }
 
@@ -331,9 +328,9 @@ static void testCallsOfBoundFunctions()
     checkLandedInEngine(run, callBoundToNumber.address(), thisValue, std::array { firstArgument, secondArgument });
 }
 
-static void testConstructions()
+static void testConstructions(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     constexpr uint64_t newTarget = boxedInt32(90);
     const std::array passed { newTarget, firstArgument, secondArgument };
     FakeClosure classObject;
@@ -363,9 +360,9 @@ static void testConstructions()
     }
 }
 
-static void testSuperConstructionsWithLists()
+static void testSuperConstructionsWithLists(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     constexpr uint64_t newTarget = boxedInt32(90);
     constexpr unsigned maxLengthInRegisters = numberOfArgumentGPRs - 1;
     std::array<uint64_t, numberOfArgumentGPRs + 1> list;
@@ -403,9 +400,9 @@ static void testSuperConstructionsWithLists()
     calls.runner.countCallsOf(Entry::operationAOTSuperConstruct);
 }
 
-static void testCallsWithLists()
+static void testCallsWithLists(bool hasOneInstance)
 {
-    Calls calls;
+    Calls calls(hasOneInstance);
     std::array<uint64_t, 2 * numberOfArgumentGPRs + 3> list;
     for (size_t i = 0; i < list.size(); ++i)
         list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
@@ -423,17 +420,24 @@ static void testCallsWithLists()
     }
 }
 
+template<void (*test)(bool hasOneInstance)>
+static void withAnyNumberOfInstances()
+{
+    test(false);
+    test(true);
+}
+
 std::span<const NativeTest> stubCallTests()
 {
     static constexpr NativeTest tests[] = {
-        { "stubs/call-value/closures"_s, ImageTests::whenExecutable<testCallsOfClosures> },
-        { "stubs/call-value/engine-callees"_s, ImageTests::whenExecutable<testCallsOfEngineCallees> },
-        { "stubs/call-value/non-cells"_s, ImageTests::whenExecutable<testCallsOfNonCells> },
-        { "stubs/call-value/host-functions"_s, ImageTests::whenExecutable<testCallsOfHostFunctions> },
-        { "stubs/call-value/bound-functions"_s, ImageTests::whenExecutable<testCallsOfBoundFunctions> },
-        { "stubs/construct-value/class-objects-and-other-callees"_s, ImageTests::whenExecutable<testConstructions> },
-        { "stubs/super-construct-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<testSuperConstructionsWithLists> },
-        { "stubs/call-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<testCallsWithLists> },
+        { "stubs/call-value/closures"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfClosures>> },
+        { "stubs/call-value/engine-callees"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfEngineCallees>> },
+        { "stubs/call-value/non-cells"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfNonCells>> },
+        { "stubs/call-value/host-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfHostFunctions>> },
+        { "stubs/call-value/bound-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfBoundFunctions>> },
+        { "stubs/construct-value/class-objects-and-other-callees"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testConstructions>> },
+        { "stubs/super-construct-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithLists>> },
+        { "stubs/call-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLists>> },
     };
     return tests;
 }

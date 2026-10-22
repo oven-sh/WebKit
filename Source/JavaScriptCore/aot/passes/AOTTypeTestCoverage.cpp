@@ -29,7 +29,6 @@ static void restartGap(TestState& state, TestConditionID condition)
 static void markAsPassed(TestState& state, TestConditionID condition)
 {
     state.passed.set(condition.index());
-    state.stale.clear(condition.index());
     restartGap(state, condition);
 }
 
@@ -75,14 +74,11 @@ bool TestCoverageProblem::merge(State& into, const State& from) const
     for (size_t condition : passedBefore) {
         if (!from.passed.get(condition)) {
             into.passed.clear(condition);
-            into.stale.clear(condition);
             if (m_largestBudget)
                 into.bytesSinceUse[condition] = 0;
             changed = true;
             continue;
         }
-        if (from.stale.get(condition))
-            changed |= into.stale.add(condition);
         if (!m_largestBudget)
             continue;
         uint32_t gap = widenedGap(from.bytesSinceUse[condition], from.pendingBytes, *m_largestBudget);
@@ -125,10 +121,26 @@ bool TestCoverageProblem::leavesOut(Edge edge) const
 
 void TestCoverageProblem::execute(State& state, const DataflowStep& step) const
 {
-    if (!state.isReachable)
+    if (!state.isReachable || !m_inputs.events.hasEventAt(step.id))
         return;
     for (const TestEvent& event : eventsAt(step.block, step.index))
         applyEvent(state, step.block, event);
+}
+
+void TestCoverageProblem::executeValuesOf(State& state, BlockID block) const
+{
+    uint32_t terminatorIndex = m_inputs.events.function().at(block).values.size();
+    std::optional<uint32_t> index;
+    for (const TestEvent& event : m_inputs.events.eventsOf(block)) {
+        if (event.index >= terminatorIndex)
+            break;
+        if (index != event.index) {
+            if (!state.isReachable)
+                break;
+            index = event.index;
+        }
+        applyEvent(state, block, event);
+    }
 }
 
 void TestCoverageProblem::executeTerminator(State& state, const DataflowTerminatorStep& step) const
@@ -154,8 +166,6 @@ RequirementCoverage TestCoverageProblem::classify(const State& state, TestCondit
         return RequirementCoverage::NeedsTest;
     if (std::optional<uint32_t> budget = budgetIn(block); budget && state.bytesSinceUse[condition.index()] > *budget)
         return RequirementCoverage::NeedsTest;
-    if (state.stale.get(condition.index()))
-        return RequirementCoverage::NeedsRenewal;
     return RequirementCoverage::Covered;
 }
 
@@ -179,13 +189,9 @@ void TestCoverageProblem::applyEvent(State& state, BlockID block, const TestEven
         applyRequirement(state, requirement);
         return;
     }
-    case TestEvent::Kind::Ending: {
+    case TestEvent::Kind::Ending:
         end(state, events.endedBy(event));
-        BitVector stale = events.markedStaleBy(event);
-        stale.filter(state.passed);
-        state.stale.merge(stale);
         return;
-    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -223,10 +229,6 @@ void TestCoverageProblem::applyRequirement(State& state, const TestRequirement& 
     case RequirementCoverage::Covered:
         restartGap(state, requirement.condition);
         return;
-    case RequirementCoverage::NeedsRenewal:
-        state.stale.clearAll();
-        restartGap(state, requirement.condition);
-        return;
     case RequirementCoverage::NeedsTest:
         establish(state, requirement.condition);
         return;
@@ -245,7 +247,6 @@ void TestCoverageProblem::establish(State& state, TestConditionID condition) con
 void TestCoverageProblem::end(State& state, const BitVector& conditions) const
 {
     state.passed.exclude(conditions);
-    state.stale.exclude(conditions);
     if (!m_largestBudget)
         return;
     for (size_t condition : conditions)
@@ -255,7 +256,6 @@ void TestCoverageProblem::end(State& state, const BitVector& conditions) const
 void TestCoverageProblem::endAll(State& state) const
 {
     state.passed.clearAll();
-    state.stale.clearAll();
     state.bytesSinceUse.fill(0);
     state.pendingBytes = 0;
 }
@@ -264,7 +264,6 @@ TestCoverage::TestCoverage(const TestCoverageInputs& inputs)
     : m_events(inputs.events)
     , m_requirements(FillWith { }, inputs.events.requirements().size(), RequirementCoverage::Unknown)
     , m_hoistedTests(FillWith { }, inputs.events.hoistedTests().size(), RequirementCoverage::Unknown)
-    , m_staleBefore(inputs.events.requirements().size())
 {
     FunctionAnalyses& analyses = m_events.analyses();
     TestCoverageProblem problem(inputs);
@@ -289,8 +288,6 @@ void TestCoverage::classifyBlock(const TestCoverageProblem& problem, BlockID blo
         const TestRequirement& requirement = m_events.requirements()[event.payload];
         RequirementCoverage coverage = problem.classify(state, requirement);
         m_requirements[event.payload] = coverage;
-        if (coverage == RequirementCoverage::NeedsRenewal)
-            m_staleBefore[event.payload] = state.stale;
         if (coverage == RequirementCoverage::NeedsTest && state.passed.get(requirement.condition.index()))
             m_exceededBudget.set(event.payload);
 
@@ -307,7 +304,7 @@ static BitVector findMissingConditions(const TestState& atHead, const TestState&
 {
     BitVector missing;
     for (size_t condition : atHead.passed) {
-        if (!onEdge.passed.get(condition) || (onEdge.stale.get(condition) && !atHead.stale.get(condition)))
+        if (!onEdge.passed.get(condition))
             missing.set(condition);
     }
     return missing;
@@ -315,9 +312,11 @@ static BitVector findMissingConditions(const TestState& atHead, const TestState&
 
 const BitVector* TestCoverage::missingOn(Edge edge) const
 {
-    for (const auto& [edgeWithoutProofs, missing] : m_missingOnEdges) {
-        if (edgeWithoutProofs == edge)
-            return &missing;
+    if (m_missingOnEdges.isEmpty())
+        return nullptr;
+    for (uint32_t index = m_firstMissingOnEdgeFrom[edge.from.index()]; index < m_missingOnEdges.size() && m_missingOnEdges[index].first.from == edge.from; ++index) {
+        if (m_missingOnEdges[index].first == edge)
+            return &m_missingOnEdges[index].second;
     }
     return nullptr;
 }
@@ -339,8 +338,13 @@ void TestCoverage::classifyRejoiningEdges(const TestCoverageProblem& problem, Bl
             markAsPassed(onEdge, m_events.proofs()[proof].condition);
         });
         BitVector missing = findMissingConditions(*atHead, onEdge);
-        if (!missing.isEmpty())
-            m_missingOnEdges.append({ edge, WTF::move(missing) });
+        if (missing.isEmpty())
+            continue;
+        if (m_firstMissingOnEdgeFrom.isEmpty())
+            m_firstMissingOnEdgeFrom.fill(UINT32_MAX, function.blocks.size());
+        if (m_firstMissingOnEdgeFrom[block.index()] == UINT32_MAX)
+            m_firstMissingOnEdgeFrom[block.index()] = m_missingOnEdges.size();
+        m_missingOnEdges.append({ edge, WTF::move(missing) });
     }
 }
 

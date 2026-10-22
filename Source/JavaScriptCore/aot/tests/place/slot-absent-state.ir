@@ -2,7 +2,7 @@
 # FORM: AsRead
 # RUN: plan-slots layouts
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
 entry module=m0
 layout L0 name="Kept" fields=[{key="filled" declared={type=number} flags=[IsRequired]}, {key="optional" declared={type=number}}, {key="flag" declared={type=boolean}}]

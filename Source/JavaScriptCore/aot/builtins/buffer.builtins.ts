@@ -4,6 +4,8 @@ type ParameterList = Readonly<Record<string, b.TableType>>;
 
 const bytes = "TypedArrayElements";
 const storage = "TypedArrayStorage";
+// No value of the language lies among the bytes.
+const rawBytes = b.state(bytes, b.never);
 const otherAgents = "ExternalState";
 
 const byteCount = b.int(0, b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE"));
@@ -187,8 +189,9 @@ function atomicWait(nativeSymbol: string, returns: b.TableType, uses: readonly b
 export default b.declarations(
   b.class("ArrayBuffer", {
     jsType: "ArrayBufferType",
+    constructorOnlyReadsPrototypeOfNewTarget: true,
     sharingMode: "Default",
-    slots: { bytes: b.state(bytes) },
+    slots: { bytes: rawBytes },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
     mutability: "AlwaysLocked",
@@ -218,9 +221,10 @@ export default b.declarations(
   }),
 
   b.class("SharedArrayBuffer", {
+    constructorOnlyReadsPrototypeOfNewTarget: true,
     jsType: "ArrayBufferType",
     sharingMode: "Shared",
-    slots: { bytes: b.state(bytes) },
+    slots: { bytes: rawBytes },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
     mutability: "AlwaysLocked",
@@ -239,7 +243,7 @@ export default b.declarations(
 
   b.class("DataView", {
     jsType: "DataViewType",
-    slots: { buffer: b.state(storage, anyArrayBuffer), bytes: b.state(bytes) },
+    slots: { buffer: b.state(storage, anyArrayBuffer), bytes: rawBytes },
     stateHeap: storage,
     lockedMembers: ["prototype"],
     types: [b.exactType("DataView", "buffer")],

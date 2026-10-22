@@ -13,6 +13,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 class SelectionContext;
+struct FunctionPassContext;
+enum class PassOutcome : uint8_t;
 
 enum class SelectionRuleKind : uint8_t { Optional, Required };
 
@@ -24,7 +26,6 @@ enum class SelectionRuleKind : uint8_t { Optional, Required };
     v(SlotStoreRun, Optional) \
     v(PropertyRun, Optional) \
     v(MethodCall, Optional) \
-    v(CheckedPropertyRead, Optional) \
     v(PropertyReadAndTest, Optional) \
     v(EncodedVariableTest, Optional) \
     v(PropertyChain, Optional) \
@@ -37,9 +38,11 @@ enum class SelectionRuleKind : uint8_t { Optional, Required };
     v(SharedStringOrder, Optional) \
     v(IntegerBound, Optional) \
     v(FreshPromiseFulfillment, Optional) \
+    v(AwaitInPlace, Optional) \
     v(ResolvedCallTarget, Optional) \
     v(RegExpLiteralMatch, Optional) \
     v(ThrowNewError, Optional) \
+    v(KeyPartsLookup, Optional) \
     v(InlineBuiltin, Required) \
     v(StringBuilderParts, Required) \
     v(ArrayLiteralStorage, Optional) \
@@ -64,6 +67,9 @@ const SelectionRule& ruleOf(SelectionRuleID);
 #define AOT_DECLARE_SELECTION_RULE(name, kind) void select##name(SelectionContext&);
 FOR_EACH_AOT_SELECTION_RULE(AOT_DECLARE_SELECTION_RULE)
 #undef AOT_DECLARE_SELECTION_RULE
+
+// In front of the rules: it changes the arguments of edges, which no rule does.
+PassOutcome makeDescriptorLiteralsBehindJoins(FunctionPassContext&);
 
 } } } // namespace JSC::AOT::Typed
 

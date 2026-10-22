@@ -18,12 +18,12 @@ struct CodeShapeModel {
 
 inline constexpr CodeShapeModel codeShapeModel { };
 
-// Compact code calls. Balanced code has in line what is short and pays at once. Fast code has the long forms in line too: an allocation, a closure, an append, equality, the test of a barrier.
-constexpr CodeShape codeShapeFor(double heat, bool runsAtMostOnce, BlockFrequency recordedFrequency)
+// Compact code calls. Balanced code has in line what is short and pays at once. Fast code has the long forms in line too: an append, equality, the test of a barrier.
+constexpr CodeShape codeShapeFor(double heat, bool runsAtMostOnce, BlockFrequency recordedFrequency, double fastFrom = codeShapeModel.fastFrom)
 {
     if (runsAtMostOnce || recordedFrequency == BlockFrequency::Rare || heat < codeShapeModel.compactBelow)
         return CodeShape::Compact;
-    if (heat >= codeShapeModel.fastFrom)
+    if (heat >= fastFrom)
         return CodeShape::Fast;
     return CodeShape::Balanced;
 }
@@ -34,6 +34,15 @@ static_assert(codeShapeFor(1e6, false, BlockFrequency::Rare) == CodeShape::Compa
 static_assert(codeShapeFor(10, false, BlockFrequency::Unlikely) == CodeShape::Fast);
 
 enum class ChosenShapes : uint8_t { KeepChosen, ChooseAgain };
+
+class CFG;
+
+// Sums of shares of the frequency with which a function is entered come out above it by no more than this.
+inline constexpr double roundingOfFrequencySums = 1 + 1e-6;
+
+// Where no block is entered again, what enters the function is divided among the edges, so no block runs more often than the function is entered.
+// The shares of the edges of a block add up to one as long as its rare edges together stay under the largest share that they may have.
+bool runsNoBlockMoreOftenThanEntry(const CFG&);
 
 PassOutcome chooseCodeShapes(FunctionPassContext&, ChosenShapes);
 

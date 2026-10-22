@@ -242,7 +242,7 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
             objects.append(entry.object);
     }
     for (VirtualObjectID object : objects)
-        build(object, BuildCause { .opcode = std::nullopt, .origin = terminator.origin(), .reasons = { }, .limit = LimitID::MaxMaterializations });
+        build(object, BuildCause { .limit = LimitID::MaxMaterializations });
 }
 
 void ObjectInterpreter::executeTerminator(const Terminator& terminator)
@@ -291,6 +291,53 @@ void ObjectInterpreter::executeTerminator(const Terminator& terminator)
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+void ObjectInterpreter::executeRelevantValue(const BlockValues& values, uint32_t entry)
+{
+    ValueID id = values[entry & ~AllocationSinking::onlyWritesOrThrows];
+    if (!(entry & AllocationSinking::onlyWritesOrThrows)) {
+        execute(id);
+        return;
+    }
+    if (m_sinking.checksShortcuts()) [[unlikely]] {
+        SinkingState state = m_state;
+        ObjectInterpreter(m_sinking, m_mode, state).execute(id);
+        forgetFieldsWrittenBy(id);
+        RELEASE_ASSERT(m_state == state);
+        return;
+    }
+    forgetFieldsWrittenBy(id);
+}
+
+void ObjectInterpreter::executeTerminatorOf(BlockID block)
+{
+    const Terminator& terminator = function().at(block).terminator;
+    if (m_sinking.mentionsName(terminator, block)) {
+        executeTerminator(terminator);
+        return;
+    }
+    if (!m_sinking.checksShortcuts()) [[likely]]
+        return;
+    SinkingState before = m_state;
+    executeTerminator(terminator);
+    RELEASE_ASSERT(m_state == before);
+}
+
+// In the state behind the block. A value that mentions no name and writes nothing does the same in every state.
+void ObjectInterpreter::checkThatOtherValuesChangeNothing(BlockID block)
+{
+    const BlockValues& values = function().at(block).values;
+    std::span<const uint32_t> relevantValues = m_sinking.relevantValuesOf(block);
+    SinkingState before = m_state;
+    for (uint32_t index = 0; index < values.size(); ++index) {
+        if (!relevantValues.empty() && (relevantValues.front() & ~AllocationSinking::onlyWritesOrThrows) == index) {
+            relevantValues = relevantValues.subspan(1);
+            continue;
+        }
+        execute(values[index]);
+        RELEASE_ASSERT(m_state == before);
+    }
 }
 
 void ObjectInterpreter::executeReturn(const Terminator& terminator)
@@ -424,6 +471,11 @@ void ObjectInterpreter::narrowOnEdge(const Terminator& terminator, uint32_t targ
     case TerminatorKind::TestAndBranch:
         break;
     }
+    forgetAnswers(m_state, function());
+}
+
+void ObjectInterpreter::forgetAnswersOfTests()
+{
     forgetAnswers(m_state, function());
 }
 

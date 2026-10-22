@@ -5,10 +5,10 @@
 # CHECK-NEXT: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
-function f0 name="one-site-of-each-form" parameters=[{type=L0}, {type=number}, {type=anything}, {type=int}, {type=Uint8Array}, {type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: number, v2: anything, v3: int, v4: Uint8Array, v5: object ~ L0):
+function f0 name="one-site-of-each-form" parameters=[{type=L0}, {type=number}, {type=anything}, {type=int}, {type=Uint8Array}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0, v1: number, v2: anything, v3: int, v4: Uint8Array, v5: anything ~ L0):
     v6 = PropGet v0 key="x"
     PropSet v0, v1 key="x"
     v8 = PropHas v0 key="x"
@@ -22,7 +22,7 @@ function f0 name="one-site-of-each-form" parameters=[{type=L0}, {type=number}, {
     Return v15
 }
 # CHECK-LABEL: function f0 name="one-site-of-each-form"
-# CHECK-NEXT: b0(v0: L0, v1: number, v2: anything, v3: int, v4: Uint8Array, v5: object ~ L0):
+# CHECK-NEXT: b0(v0: L0, v1: number, v2: anything, v3: int, v4: Uint8Array, v5: anything ~ L0):
 # CHECK-NEXT: v6: number = GetSlot v0 key="x" receivers=[L0] level=Proven
 # CHECK-NEXT: PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
 # CHECK-NEXT: v8: true = Boolean boolean=true

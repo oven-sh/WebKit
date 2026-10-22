@@ -12,6 +12,7 @@
 #include "AOTIR.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTRegExpSummary.h"
+#include "AOTScratchRealm.h"
 #include "B3CompilationScratch.h"
 #include <utility>
 #include <wtf/ASCIICType.h>
@@ -95,6 +96,7 @@ BuildContext::BuildContext(const Wire::CompileOptions& wire, const HostThreadPoo
     , m_parallelLoops(m_options.threadCount, hostPool)
     , m_backEndScratches(m_options.threadCount)
     , m_regExpSummaries(makeUnique<RegExpSummaries>(static_cast<unsigned>(m_options.limits[LimitID::RegExpNestingDepthWithCode])))
+    , m_scratchRealms(makeUniqueWithoutFastMallocCheck<Typed::ScratchRealms>())
     , m_deferredDestroyer(makeUnique<DeferredDestroyer>())
 {
     if (!m_diagnostics.hasErrors() && wire.threadCount > m_options.threadCount)
@@ -162,11 +164,22 @@ void BuildContext::resolveFunctionToDump(const Typed::Program& program)
         return;
 
     auto filter = parseFunctionFilter(StringView(byteCast<Latin1Character>(text)));
+    // Several names are separated by '|'.
+    auto isListed = [&](auto name) {
+        for (auto rest = text;;) {
+            size_t end = find(rest, '|');
+            if (equalSpans(name, rest.first(std::min(end, rest.size()))))
+                return true;
+            if (end == notFound)
+                return false;
+            rest = rest.subspan(end + 1);
+        }
+    };
     auto isSelected = [&](uint32_t index) {
         const Typed::Function& function = program.functions[index];
         if (filter)
             return matches(*filter, index, function);
-        return function.name && equalSpans(program.string(function.name), text);
+        return function.name && isListed(program.string(function.name));
     };
 
     uint32_t functionCount = program.functions.size();

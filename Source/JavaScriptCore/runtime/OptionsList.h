@@ -151,12 +151,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from the image the embedder registers. Turns the JIT off."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "jsc shell and testaot only. Path of an image written by testaot compile. Implies useAOT."_s) \
     v(Unsigned, markedBlockCageSizeInMB, 32 * 1024, Normal, "With useAOT: the address space reserved for the cells of each heap, a power of two, at most 32768. 0: none is reserved, and blocks come from fastMalloc as without useAOT."_s) \
+    v(Bool, useNarrowReferenceScan, true, Normal, "With useAOT: the collector's scan of stacks and registers also takes each 32-bit half of a word for a reference to a cell. Tests turn it off to show that compiled code keeps a pointer next to each such reference."_s) \
     v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
     v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
     v(Bool, dumpAOTObjectCensusAtExit, false, Normal, "Print the live compiled objects by layout when the VM is destroyed."_s) \
     v(OptionString, aotObjectCensusRequestPath, nullptr, Normal, "Whenever a file of this name exists, it is deleted and the live compiled objects by layout are written to <name>.1, <name>.2 and so on. The embedder looks for it about once a second."_s) \
     v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
     v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
+    v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \
     v(OptionString, dumpAOTIR, nullptr, Normal, "When compiling: print the IR of aotFunctionToDump, or of every function, at these points: AsRead, Prepared, Selected, Placed, or the name of a pass to print after. Comma-separated."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
     v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
@@ -311,7 +313,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, warmUpMarkedBlockCount, 32, Normal, "how many MarkedBlocks the helper thread keeps ready with their pages already resident; 0 turns it off"_s) \
     v(Unsigned, warmUpMarkedBlockStartAfterBlocks, 64, Normal, "how many MarkedBlocks the process allocates before the helper thread starts; a program that stops before that never creates it"_s) \
     v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases what it is holding and shuts down"_s) \
-    v(Unsigned, disabledCollectorMechanisms, 0, Normal, "for measuring: a set of CollectorMechanism bits to turn off"_s) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
     v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
     v(Bool, evacuateAuxiliaryBlocksAfterEveryFullCollection, false, Normal, "testing: evacuate every Auxiliary block after each full collection, wherever the mutator happens to be, and scribble the old copies"_s) \

@@ -1,7 +1,7 @@
 # The variable of a function declaration has storage only if its closure can be asked for: one that is only called or never read has none, and one that is only called but exported from a module whose namespace is read by a computed key has
 # RUN: plan-slots variables
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="library.js" displayPath="library.js" body=f1 exports=[{name="exported" variable=g3}]
 entry module=m0
 variable g0 name="readAsValue" module=m0 declared={type=function} initialization=Function function=f2

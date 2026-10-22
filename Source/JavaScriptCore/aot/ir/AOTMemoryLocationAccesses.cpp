@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFamilyTables.h"
 #include "AOTIR.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -163,6 +164,11 @@ static LocationStability weakerOf(LocationStability a, LocationStability b)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static LocationStability stabilityOfField(const Program& program, FieldReference field)
+{
+    return stabilityOfFlow(flowOf(program, field).location, CreationStore::Counted);
+}
+
 static LocationStability stabilityOfObjectField(const Program& program, const Value& access, PropertyKeyID key)
 {
     if (!Value::opcodesWithReceivers.contains(access.opcode) || !access.receivers())
@@ -172,10 +178,19 @@ static LocationStability stabilityOfObjectField(const Program& program, const Va
     if (!receivers.isComplete || receivers.members.isEmpty())
         return LocationStability::Unknown;
 
+    const FamilyMember& member = program.familyTables().memberOf(access.receivers(), key);
+    if (member.withoutField && !program.at(member.withoutField).members.isEmpty())
+        return LocationStability::Unknown;
+    // The flow of a field is kept where the field is declared.
+    if (member.hasOneDeclaration)
+        return stabilityOfField(program, member.declaration);
+
     LocationStability stability = LocationStability::UnchangedDuringActivation;
-    for (LayoutID member : receivers.members) {
-        std::optional<uint32_t> field = program.at(member).findField(key);
-        stability = weakerOf(stability, field ? stabilityOfFlow(flowOf(program, { member, *field }).location, CreationStore::Counted) : LocationStability::Unknown);
+    for (LayoutID receiver : receivers.members) {
+        std::optional<uint32_t> field = program.at(receiver).findField(key);
+        stability = weakerOf(stability, field ? stabilityOfField(program, { receiver, *field }) : LocationStability::Unknown);
+        if (stability == LocationStability::Unknown)
+            break;
     }
     return stability;
 }
@@ -200,31 +215,9 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     }
     case AbstractHeap::ObjectFields:
         return stabilityOfObjectField(program, access, location.key());
-    case AbstractHeap::ShapeWords:
-    case AbstractHeap::OrderWords:
-    case AbstractHeap::ShapeEpoch:
-    case AbstractHeap::MemberGuards:
-    case AbstractHeap::PrototypeLinks:
-    case AbstractHeap::NamedProperties:
-    case AbstractHeap::Elements:
-    case AbstractHeap::ArrayStorage:
-    case AbstractHeap::TypedArrayStorage:
-    case AbstractHeap::TypedArrayElements:
-    case AbstractHeap::CollectionStorage:
-    case AbstractHeap::CollectionEntries:
-    case AbstractHeap::InternalFields:
-    case AbstractHeap::RegExpState:
-    case AbstractHeap::PromiseState:
-    case AbstractHeap::StringStorage:
-    case AbstractHeap::StringBuilderContents:
-    case AbstractHeap::ParserState:
-    case AbstractHeap::ExternalState:
-    case AbstractHeap::AllocatorState:
-    case AbstractHeap::RuntimeState:
-    case AbstractHeap::ValidationState:
+    default:
         return LocationStability::Unknown;
     }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } } } // namespace JSC::AOT::Typed

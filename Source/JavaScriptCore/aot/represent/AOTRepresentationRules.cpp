@@ -9,8 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
-#include "AOTFusedAccessEmitter.h"
+#include "AOTHeat.h"
 #include "AOTOperatorForms.h"
 #include "AOTSchemaResultRules.h"
 #include "AOTValueIdentity.h"
@@ -18,12 +19,15 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet operationsIndexedByNumber {
-    Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement,
+    Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::IsElementPresent,
+    Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView,
     Opcode::StringRangeCodeUnitOrNaN, Opcode::StringRangeCodeUnitOrMinusOne, Opcode::StringRangeCodePointOrUndefined, Opcode::StringRangeCharacterOrEmpty, Opcode::StringRangeCharacterOrUndefined
 };
 static constexpr OpcodeSet numberTruncations { Opcode::ToInt32, Opcode::ToUint32 };
 static constexpr OpcodeSet storesIntoKnownArrayStorage { Opcode::PutArrayElement, Opcode::TryPutByValDirect };
 static_assert((storesIntoKnownArrayStorage | Value::opcodesWithArrayStorage) == Value::opcodesWithArrayStorage);
+static constexpr OpcodeSet testsOfCellOrBoxedValue { Opcode::ShapeTest, Opcode::IsPristine, Opcode::IsClosureOf, Opcode::IsEnumeratorCurrent };
+static constexpr OpcodeSet operationsReturningBoxedValue { Opcode::RegExpMatchLiteral, Opcode::GetBuiltinValue };
 
 static constexpr RepresentationSet unboxedElementRepresentations { Representation::Int32, Representation::Double, Representation::OptionalDouble };
 static constexpr RepresentationSet stringSubjectRepresentations { Representation::Cell, Representation::LiteralString };
@@ -36,6 +40,26 @@ static constexpr bool forwardsOperand(Opcode opcode)
 static constexpr bool isRepresentationConversion(Opcode opcode)
 {
     return familyOf(opcode) == OperationFamily::Representation;
+}
+
+bool isGeneratedWithoutOptimizing(const BuildContext& build, const Heat& heat, const Program& program, FunctionID id)
+{
+    if (build.recordedOptions().has(TestingSwitch::GenerateAllCodeDirectly))
+        return true;
+    return heat.isOfVeryLargeProgram() && !isHot(heat.of(program, id)) && !heat.hasWarmCode(program, id);
+}
+
+static bool conversionsMayBeLeftToCodeGenerator(const BuildContext& build)
+{
+    return build.recordedOptions().has(TestingSwitch::ConvertOperandsAtFetch);
+}
+
+bool leavesConversionsToCodeGenerator(const BuildContext& build, const Heat& heat, const Program& program, FunctionID id)
+{
+    const AOT::CompileOptions& options = build.options();
+    if (!conversionsMayBeLeftToCodeGenerator(build) || build.validates() || options.validatesBackEnd || options.validatesReferences)
+        return false;
+    return program.at(id).role != FunctionRole::StubBody && isGeneratedWithoutOptimizing(build, heat, program, id);
 }
 
 Representation integerRepresentationOf(const Type& type)
@@ -55,12 +79,17 @@ static bool picksOwnRepresentation(const Function& function, const Value& value)
 {
     if (value.opcode == Opcode::Parameter)
         return !isEntryParameter(function, value);
-    return forwardsOperand(value.opcode) || value.opcode == Opcode::Unspecified;
+    return forwardsOperand(value.opcode) || value.opcode == Opcode::Unspecified || constantsInFormOfUses.contains(value.opcode);
 }
 
 bool picksOwnRepresentation(const Function& function, ValueID id)
 {
     return picksOwnRepresentation(function, function.at(id));
+}
+
+bool isForwardedOperand(const Value& user, uint32_t operandIndex)
+{
+    return forwardsOperand(user.opcode) && user.operandUses(operandIndex).contains(OperandUse::Returns);
 }
 
 static Representation unboxedNumberOrJSValue(const Type& type)
@@ -157,9 +186,12 @@ static Representation wantedByArrayStorage(ArrayStorage storage, const Type& sto
     return isLegalRepresentation(stored, element) ? element : Representation::JSValue;
 }
 
-static bool isGroupCallClosure(const Value& user, uint32_t operandIndex)
+static Representation wantedByTestOfCellOrBoxedValue(const Program& program, const Function& function, ValueID tested)
 {
-    return user.opcode == Opcode::CallGroup && operandIndex == OperandIndex::CallGroup::closure;
+    Representation current = function.at(tested).representation;
+    if (current == Representation::Unchosen)
+        current = defaultRepresentationOf(program.typeOf(function, tested));
+    return current == Representation::Cell ? Representation::Unchosen : Representation::JSValue;
 }
 
 static bool isCompiledInline(const Value& call, BuiltinCallForm form)
@@ -196,6 +228,11 @@ static std::optional<InlineBuiltin> inlineBuiltinOf(const Terminator& call)
     return call.inlineBuiltin();
 }
 
+static bool isTestOfNumber(std::optional<InlineBuiltin> builtin)
+{
+    return builtin == InlineBuiltin::NumberIsNaN || builtin == InlineBuiltin::NumberIsFinite || builtin == InlineBuiltin::NumberIsInteger || builtin == InlineBuiltin::NumberIsSafeInteger;
+}
+
 template<typename Call>
 static Representation wantedByBuiltinCall(const Program& program, const Function& function, const Call& call, uint32_t operandIndex)
 {
@@ -206,12 +243,20 @@ static Representation wantedByBuiltinCall(const Program& program, const Function
         return Representation::Cell;
 
     std::optional<uint32_t> argumentIndex = call.variadicOperandIndex(operandIndex);
-    if (argumentIndex && inlineBuiltinOf(call) == InlineBuiltin::ArrayPush)
-        return wantedByNewArrayElement(program, function, call.operand(operandIndex));
+    if (argumentIndex && inlineBuiltinOf(call) == InlineBuiltin::ArrayPush) {
+        // An integer of more than 32 bits has no boxed form of its own: boxed, it is a double that each push would unbox again.
+        Representation wanted = wantedByNewArrayElement(program, function, call.operand(operandIndex));
+        bool isPushedToDoubles = arrayStorageDeclaredBy(program, program.typeOf(function, call.operand(0))) == ArrayStorage::Double;
+        if (wanted == Representation::JSValue && isPushedToDoubles && program.typeOf(function, call.operand(operandIndex)).isNumber())
+            return Representation::Double;
+        return wanted;
+    }
 
     BuiltinOperand operand = argumentIndex ? BuiltinOperand::argument(*argumentIndex) : BuiltinOperand::receiver();
     Representation wanted = defaultRepresentationOf(parameterTypeOfOverload(program, call.overload(), operand));
     const Type& type = program.typeOf(function, call.operand(operandIndex));
+    if (argumentIndex && type.isNumber() && isTestOfNumber(inlineBuiltinOf(call)))
+        wanted = Representation::Double;
     if (wanted == Representation::Double && type.isInteger())
         return integerRepresentationOf(type);
     return wanted;
@@ -228,7 +273,7 @@ Representation wantedRepresentationOf(const Program& program, const Function& fu
     if (kind == OperandKind::Guard || kind == OperandKind::Results)
         return Representation::Void;
     if (forwardsOperand(opcode))
-        return user.representation;
+        return isForwardedOperand(user, operandIndex) ? user.representation : Representation::Unchosen;
     if (opcode == Opcode::TypeTest || opcode == Opcode::ReportMismatch || familyOf(opcode) == OperationFamily::RuntimeValidation || isRepresentationConversion(opcode))
         return Representation::Unchosen;
     if (hasOperatorForm(opcode))
@@ -245,6 +290,11 @@ Representation wantedRepresentationOf(const Program& program, const Function& fu
         return wantedByNewArrayElement(program, function, operand);
     if (opcode == Opcode::Strcat && !user.isLikelyKey())
         return wantedByConcatenation(type);
+    if (opcode == Opcode::StringBuilderAppendNumber && kind == OperandKind::Number) {
+        Representation representation = function.at(operand).representation;
+        if (representation == Representation::JSValue || representation == Representation::Unchosen)
+            return Representation::Unchosen;
+    }
 
     bool isStoredValue = OperandPosition::value(opcode) == operandIndex;
     if (isStoredValue && storesIntoKnownArrayStorage.contains(opcode))
@@ -252,8 +302,8 @@ Representation wantedRepresentationOf(const Program& program, const Function& fu
     if (isStoredValue && opcode == Opcode::PutTypedArrayElement)
         return unboxedNumberOrJSValue(type);
 
-    if (isGroupCallClosure(user, operandIndex))
-        return Representation::Unchosen;
+    if (kind == OperandKind::Any && testsOfCellOrBoxedValue.contains(opcode))
+        return wantedByTestOfCellOrBoxedValue(program, function, operand);
     if (builtinCallOpcodes.contains(opcode))
         return wantedByBuiltinCall(program, function, user, operandIndex);
     return wantedByKind(program, function, kind, operand);
@@ -273,8 +323,14 @@ Representation wantedRepresentationOf(const Program& program, const Function& fu
     case TerminatorKind::Rethrow:
     case TerminatorKind::Return:
         return wantedByKind(program, function, user.operandKind(operandIndex), operand);
-    case TerminatorKind::Switch:
-        return unboxedNumberOrJSValue(program.typeOf(function, operand));
+    case TerminatorKind::Switch: {
+        // A number that is boxed is taken as it is: an int32 is its low word behind one test of the tag.
+        const Type& type = program.typeOf(function, operand);
+        Representation representation = function.at(operand).representation;
+        if (type.isNumber() && !type.isInteger() && (representation == Representation::JSValue || representation == Representation::Unchosen))
+            return Representation::Unchosen;
+        return unboxedNumberOrJSValue(type);
+    }
     case TerminatorKind::SwitchString: {
         Representation natural = defaultRepresentationOf(program.typeOf(function, operand));
         return stringSubjectRepresentations.contains(natural) ? natural : Representation::JSValue;
@@ -295,7 +351,7 @@ Representation wantedRepresentationOf(const RepresentationInputs& inputs, const 
     Representation wanted = wantedRepresentationOf(inputs.program, inputs.function, user, operandIndex);
     if (wanted != Representation::Unchosen)
         return wanted;
-    if (user.operandKind(operandIndex) == OperandKind::Declared || isGroupCallClosure(user, operandIndex))
+    if (user.operandKind(operandIndex) == OperandKind::Declared)
         return wantedByDeclaredPosition(inputs, user, operandIndex);
     return Representation::Unchosen;
 }
@@ -327,6 +383,7 @@ struct ResultRepresentationRules {
     Representation declaredContents(const Value& value, uint32_t, std::optional<ContentsSlot>) { return byType(value); }
 
     Representation declared(const Value& value, ModuleID) { return byType(value); }
+    Representation declared(const Value& value, TypeID) { return byType(value); }
     Representation declared(const Value& value, BuiltinOverloadID, uint32_t) { return byType(value); }
     Representation declared(const Value& value, VariableID) { return byPosition(value); }
     Representation declared(const Value& value, LayoutID, uint32_t) { return byPosition(value); }
@@ -337,14 +394,6 @@ struct ResultRepresentationRules {
     Representation declared(const Value& value, LayoutID)
     {
         return effectRuleOf(value.opcode) == EffectRule::Call ? Representation::JSValue : byType(value);
-    }
-
-    Representation declared(const Value& value, TypeID type)
-    {
-        if (value.opcode != Opcode::PropGetChecked)
-            return byType(value);
-        bool returnsNumber = checkedReadKindOf(inputs.program, inputs.program.at(type)) == CheckedReadKind::Number;
-        return returnsNumber ? Representation::OptionalDouble : Representation::JSValue;
     }
 
     Representation declaredResult(const Value& value, uint32_t operandIndex, uint32_t index)
@@ -378,7 +427,7 @@ private:
 
 static bool returnsBoxedValue(const Value& value)
 {
-    if (value.opcode == Opcode::RegExpMatchLiteral)
+    if (operationsReturningBoxedValue.contains(value.opcode))
         return true;
     return value.opcode == Opcode::CallBuiltin && !isCompiledInline(value, value.builtinCallForm());
 }

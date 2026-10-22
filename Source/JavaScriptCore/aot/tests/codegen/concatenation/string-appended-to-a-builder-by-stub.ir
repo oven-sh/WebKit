@@ -1,0 +1,54 @@
+# A string is appended to a builder by one stub in code of every shape, which copies a short flat string of 8-bit characters itself
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inBalancedCode" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = StringBuilderBegin
+    StringBuilderAppendString v1, v0
+    v3 = StringBuilderFinish v1
+    Return v3
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operation operationAOTStackStringBuilderAppend x
+# CHECK: stub StackStringBuilderAppendString x1
+# S: f0 b0 Balanced
+function f1 name="inCompactCode" parameters=[{type=string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = StringBuilderBegin
+    StringBuilderAppendString v2, v0
+    v4 = StringBuilderFinish v2
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: operation operationAOTStringBuilderAppendString
+# CHECK: stub StringBuilderAppendString x1
+# S: f1 b1 Compact
+function f2 name="orNullish" parameters=[{type=undefined|null|string}] results=[{type=string}] {
+  b0(v0: undefined|null|string):
+    v1 = StringBuilderBegin
+    StringBuilderAppendStringOrNullish v1, v0
+    v3 = StringBuilderFinish v1
+    Return v3
+}
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: operation operationAOTStackStringBuilderAppend x
+# CHECK: stub StackStringBuilderAppendString x1
+function f3 name="readBeforeItIsFinished" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = StringBuilderBegin
+    StringBuilderAppendString v1, v0
+    v3 = StringBuilderToString v1
+    StringBuilderDiscard v1
+    Return v3
+}
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: operation operationAOTStringBuilderAppendString
+# CHECK: stub StringBuilderAppendString x1

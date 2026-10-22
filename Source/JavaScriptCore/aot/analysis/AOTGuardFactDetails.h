@@ -15,6 +15,7 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr uint32_t subjectOperandIndex = 0;
 
 Vector<LayoutID, 4> layoutsProvenBy(const Program&, const Function&, const GuardFact&);
+bool provenLayoutsAreSubsetOf(const Program&, const Function&, const GuardFact&, const GuardFact& other);
 bool provesSlotFilled(const Program&, const Function&, const GuardFact&, PropertyKeyID);
 bool guardProvesSlotFilled(FunctionAnalyses&, const Value& slotOperation);
 bool provesForUser(FunctionAnalyses&, const GuardFact&, Proof, const Value& user);

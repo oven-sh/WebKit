@@ -109,12 +109,17 @@ std::optional<PropertyOffset> findOffset(VM& vm, Structure* structure, UniquedSt
 
 static bool findsLengthGetterOfTypedArrays(Structure* receiverStructure, const ChainWalk& walk)
 {
-    if (!isTypedArrayType(receiverStructure->typeInfo().type()) || !isValidOffset(walk.offset))
+    JSType type = receiverStructure->typeInfo().type();
+    if (!isTypedArrayType(type) || !isValidOffset(walk.offset))
         return false;
     auto* accessors = uncheckedDowncast<GetterSetter>(walk.holder->getDirect(walk.offset).asCell());
     auto* getter = dynamicDowncast<JSFunction>(accessors->getter());
     // A host function has its intrinsic only where the JIT is on.
-    return getter && getter->isHostFunction() && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncLength));
+    if (!getter || !getter->isHostFunction())
+        return false;
+    if (getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncLength)))
+        return true;
+    return elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
 }
 
 static PropertyAnswer classifyReadAboveReceiver(const FinishedRead& read)
@@ -125,9 +130,15 @@ static PropertyAnswer classifyReadAboveReceiver(const FinishedRead& read)
         return classifyCustomGetter(query);
 
     JSObject* receiver = query.base.isObject() ? asObject(read.cellOrNull) : nullptr;
-    ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, receiver, query.mode }, query.uid);
+    ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, receiver, query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
     if (walk.result == ChainWalkResult::Unknown)
         return uncacheableAfter(WTF::move(walk));
+    // The empty slot may be filled by the next read, so what the walk found above it is not kept.
+    if (walk.firstObjectWithEmptySlot) {
+        walk.holder = walk.firstObjectWithEmptySlot;
+        walk.offset = invalidOffset;
+        return answerAboveReceiver(PropertyAnswerKind::InheritedField, WTF::move(walk));
+    }
     if (slot.isUnset()) {
         if (walk.result == ChainWalkResult::Absent)
             return answerAboveReceiver(PropertyAnswerKind::Absent, WTF::move(walk));
@@ -138,10 +149,10 @@ static PropertyAnswer classifyReadAboveReceiver(const FinishedRead& read)
     // A compiled object answers with the value of a field and names no offset, and lets nobody cache what its extra properties answer.
     bool isOwnedByCompiledObject = walk.owner->structure()->isCompiledStructure();
     bool isValue = slot.isCacheableValue() || (slot.isValue() && isOwnedByCompiledObject);
-    if (isValue && isValidOffset(walk.offset) && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
-        return answerAboveReceiver(PropertyAnswerKind::Value, WTF::move(walk));
+    if (isValue && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return answerAboveReceiver(isValidOffset(walk.offset) ? PropertyAnswerKind::Value : PropertyAnswerKind::InheritedField, WTF::move(walk));
     bool isGetter = slot.isCacheableGetter() || (slot.isAccessor() && isOwnedByCompiledObject);
-    if (isGetter && (walk.attributes & PropertyAttribute::Accessor)) {
+    if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor)) {
         bool readsLength = findsLengthGetterOfTypedArrays(query.structureBefore, walk);
         return answerAboveReceiver(readsLength ? PropertyAnswerKind::TypedArrayLength : PropertyAnswerKind::Accessor, WTF::move(walk));
     }
@@ -197,8 +208,13 @@ static std::optional<PropertyAnswer> classifyNeverCachedReceiver(const FinishedR
             return std::nullopt;
         return uncacheable(query.mode == ChainWalkMode::MayAllocate && flattenOnce(read.vm, receiver));
     }
-    if (query.slot.isTaintedByOpaqueObject() && !isModuleNamespace(receiver))
-        return uncacheableAfter(walkChain({ query.globalObject, structure, receiver, query.mode }, query.uid));
+    if (query.slot.isTaintedByOpaqueObject() && !isModuleNamespace(receiver)) {
+        ChainWalk walk = walkChain({ query.globalObject, structure, receiver, query.mode }, query.uid);
+        // The stand-in of a prototype object taints the lookup that gives it its members, and nothing on the chain changes behind that: what is filed now would stay. The next lookup is like any other.
+        if (walk.result != ChainWalkResult::Unknown)
+            return uncacheableOnce();
+        return uncacheableAfter(WTF::move(walk));
+    }
     return std::nullopt;
 }
 
@@ -320,8 +336,9 @@ bool structureProvesOwnAbsence(VM& vm, JSCell* base, Structure* structure, Uniqu
     std::optional<PropertyOffset> offset = findOffset(vm, structure, uid, mode, attributes);
     if (!offset || isValidOffset(*offset))
         return false;
+    // A slim closure that has properties has its length, its name and, where it can construct, its prototype among them.
     JSType type = structure->typeInfo().type();
-    return !((isJSFunctionType(type) || isSlimClosureType(type)) && isFunctionOwnName(vm, uid));
+    return !((isJSFunctionType(type) || type == SlimClosureType) && isFunctionOwnName(vm, uid));
 }
 
 static std::optional<PropertyAnswer> classifyInheritedRead(const FinishedRead& read)

@@ -13,6 +13,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTUnwinding.h"
 #include "ExceptionHelpers.h"
 #include "JSArrayBufferViewInlines.h"
 #include "JSArrayInlines.h"
@@ -28,12 +29,14 @@ static unsigned capacityInUse(const ArrayAllocationProfile& profile)
     return profile.capacity() ? profile.capacity() : arrayLiteralVectorLength(0);
 }
 
-static void resetShrinkHistory(ArrayAllocationProfile& profile)
+static void startWindow(ArrayAllocationProfile& profile)
 {
-    profile.reviewsWithRoomToSpare = 0;
-    profile.largestLengthSinceChange = 0;
+    profile.reviews = 0;
+    std::ranges::fill(profile.largestLengths, 0);
 }
 
+// Every array of the site is born with the room, and only the ones that outgrow it pay for that. Lengths are skewed: most arrays of a site are short and a few are many times as long.
+// So the room follows the smallest of the lengths that are kept: in one window that many arrays less one may be longer without a change.
 void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
 {
     if (!lastArrayOrNull)
@@ -45,26 +48,31 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
     IndexingType learnedShape = std::max(profile.shape(), shape);
     unsigned length = std::min<unsigned>(lastArrayOrNull->butterfly()->publicLength(), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
     unsigned inUse = capacityInUse(profile);
-    if (length > inUse) {
-        profile.set(std::min<unsigned>(length | 1, BASE_CONTIGUOUS_VECTOR_LEN_MAX), learnedShape);
-        resetShrinkHistory(profile);
-        return;
+    uint8_t entering = static_cast<uint8_t>(length);
+    for (uint8_t& kept : profile.largestLengths) {
+        if (entering > kept)
+            std::swap(entering, kept);
     }
 
-    profile.largestLengthSinceChange = std::max(profile.largestLengthSinceChange, static_cast<uint8_t>(length));
-    if (++profile.reviewsWithRoomToSpare < ArrayAllocationProfile::reviewsBeforeShrinking) {
+    unsigned wanted = profile.largestLengths[ArrayAllocationProfile::lengthsKept - 1] | 1;
+    if (wanted > inUse) {
+        profile.set(std::min<unsigned>(wanted, BASE_CONTIGUOUS_VECTOR_LEN_MAX), learnedShape);
+        startWindow(profile);
+        return;
+    }
+    if (++profile.reviews < ArrayAllocationProfile::reviewsInWindow) {
         profile.set(profile.capacity(), learnedShape);
         return;
     }
 
-    unsigned wanted = profile.largestLengthSinceChange | 1;
     profile.set(wanted < inUse ? wanted : profile.capacity(), learnedShape);
-    resetShrinkHistory(profile);
+    startWindow(profile);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayAtReviewedSite, JSCell*, (Instance* instance, void* profileAddress, uint32_t seedIndexingType))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayAtReviewedSite);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     uint8_t* statics = instance->statics();
     uint8_t* address = static_cast<uint8_t*>(profileAddress);
     uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;

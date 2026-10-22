@@ -35,6 +35,9 @@
 #if OS(LINUX) || OS(FREEBSD)
 #include <sys/mman.h>
 #endif
+#if OS(LINUX)
+#include <fcntl.h>
+#endif
 
 namespace JSC::AOT {
 
@@ -52,10 +55,12 @@ LoadedProgram::~LoadedProgram()
     AOT_TEST_CHECK(!vm().exceptionForInspection());
 }
 
-static Vector<uint8_t> compileOnThisThread(ASCIILiteral programText)
+static Vector<uint8_t> compileOnThisThread(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords)
 {
     Wire::CompileOptions options = makeDefaultCompileOptions();
     options.executableIdentity = executableIdentityOfTests;
+    for (ASCIILiteral word : optionWords)
+        AOT_TEST_CHECK(!applyOptionWord(options, word));
     BuildContext build(options);
     std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
     if (!program) {
@@ -72,11 +77,11 @@ static Vector<uint8_t> compileOnThisThread(ASCIILiteral programText)
     return WTF::move(output->image);
 }
 
-Vector<uint8_t> compileProgramText(ASCIILiteral programText)
+Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords)
 {
     Vector<uint8_t> image;
     runOnBuildThread([&] {
-        image = compileOnThisThread(programText);
+        image = compileOnThisThread(programText, optionWords);
     });
     return image;
 }
@@ -89,12 +94,25 @@ static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
     return copy;
 }
 
+// On Linux nothing makes memory executable: the code is mapped from the file, as it is for an executable. The descriptor stays open for as long as the process lives.
+static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
+{
+#if OS(LINUX)
+    int descriptor = open(byteCast<char>(FileSystem::fileSystemRepresentation(path).data()), O_RDONLY | O_CLOEXEC);
+    AOT_TEST_CHECK(descriptor >= 0);
+    return ImageFile { descriptor, 0 };
+#else
+    UNUSED_PARAM(path);
+    return std::nullopt;
+#endif
+}
+
 static void useImageAt(const String& path)
 {
     std::optional<Vector<uint8_t>> file = FileSystem::readEntireFile(path);
     AOT_TEST_CHECK(file);
 
-    Wire::ImageVerdict verdict = useImage(leakAlignedCopy(file->span()), std::nullopt, executableIdentityOfTests);
+    Wire::ImageVerdict verdict = useImage(leakAlignedCopy(file->span()), fileToMapCodeFrom(path), executableIdentityOfTests);
     if (verdict != Wire::ImageVerdict::Accepted) {
         dataLogLn("Cannot use ", path, ": ", nameOf(verdict));
         failNativeTest(__FILE__, __LINE__, "the process accepts the image");
@@ -127,7 +145,7 @@ static void runInChildProcess(ASCIILiteral testName, const String& imagePath)
     }
 }
 
-void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body)
+void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, std::initializer_list<ASCIILiteral> optionWords)
 {
     if (const char* imagePath = byteCast<char>(Options::aotImagePath())) {
         if (!Image::isRegistered())
@@ -137,7 +155,7 @@ void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, Loade
         return;
     }
 
-    TemporaryFile file(".image"_s, compileProgramText(programText).span());
+    TemporaryFile file(".image"_s, compileProgramText(programText, optionWords).span());
     runInChildProcess(testName, file.path());
 }
 

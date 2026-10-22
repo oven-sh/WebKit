@@ -155,6 +155,108 @@ static void testSinkValuesClonesComparisonFusedIntoBranchForRareUser()
     }
 }
 
+static void testSinkValuesClonesAddressTakenIntoAccessesForRareUsers()
+{
+    enum class OtherUsers : uint8_t { OneIsRare, TwoAreRare, OneIsOnHotPath, OneIsInSameBlock };
+    for (OtherUsers otherUsers : { OtherUsers::OneIsRare, OtherUsers::TwoAreRare, OtherUsers::OneIsOnHotPath, OtherUsers::OneIsInSameBlock }) {
+        Procedure proc;
+        Graph graph { proc };
+        BranchToRareBlocks blocks(graph);
+        Value* scaled = graph.make(blocks.root, Shl, blocks.operand, graph.int32(blocks.root, 3));
+        Value* address = graph.make(blocks.root, Add, blocks.pointer, scaled);
+        Value* loaded = graph.load(blocks.root, Int64, address, 0, firstHeap);
+        if (otherUsers == OtherUsers::OneIsInSameBlock)
+            graph.store(blocks.root, address, blocks.pointer, 0, firstHeap);
+        Value* loadedAgain = graph.load(blocks.hot, Int64, address, 0, firstHeap);
+        Value* onHotPath = graph.make(blocks.hot, Add, loaded, loadedAgain);
+        if (otherUsers == OtherUsers::OneIsOnHotPath)
+            onHotPath = graph.make(blocks.hot, Add, onHotPath, address);
+        blocks.finish(graph, address, otherUsers == OtherUsers::TwoAreRare ? address : blocks.operand, onHotPath);
+
+        bool clones = otherUsers == OtherUsers::OneIsRare || otherUsers == OtherUsers::TwoAreRare;
+        CHECK_EQ(sinkValues(proc), clones);
+        validate(proc);
+        for (B3::Opcode opcode : { Add, Shl }) {
+            CHECK_EQ(numberOfValues(blocks.root, opcode), 1u);
+            CHECK_EQ(numberOfValues(blocks.firstRare, opcode), clones ? 1u : 0u);
+            CHECK_EQ(numberOfValues(blocks.secondRare, opcode), otherUsers == OtherUsers::TwoAreRare ? 1u : 0u);
+        }
+        CHECK_EQ(loaded->lastChild(), address);
+        CHECK_EQ(loadedAgain->lastChild(), address);
+        CHECK_EQ(blocks.firstRare->last()->child(0) == address, !clones);
+
+        auto code = compileProc(proc);
+        int64_t memory[2] = { 7, 10 };
+        int64_t addressOfSecond = std::bit_cast<int64_t>(&memory[1]);
+        CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), addressOfSecond);
+        CHECK_EQ(invoke<int64_t>(*code, 2, 1, memory), otherUsers == OtherUsers::TwoAreRare ? addressOfSecond : 1);
+        CHECK_EQ(invoke<int64_t>(*code, 3, 1, memory), 20 + (otherUsers == OtherUsers::OneIsOnHotPath ? addressOfSecond : 0));
+    }
+}
+
+static void testSinkValuesClonesAddressTakenIntoTrappingAccessWhoseBaseIsRegister()
+{
+    for (bool baseIsRegister : { true, false }) {
+        Procedure proc;
+        Graph graph { proc };
+        BranchToRareBlocks blocks(graph);
+        CHECK_EQ(blocks.pointer->opcode(), ArgumentReg);
+        Value* base = baseIsRegister ? blocks.pointer : graph.make(blocks.root, Opaque, blocks.pointer);
+        Value* address = graph.make(blocks.root, Add, base, graph.make(blocks.root, Shl, blocks.operand, graph.int32(blocks.root, 3)));
+        Value* loaded = blocks.root->appendNew<MemoryValue>(proc, trapping(Load), Int64, Origin(), address, 0);
+        blocks.finish(graph, address, blocks.operand, loaded);
+
+        CHECK_EQ(sinkValues(proc), baseIsRegister);
+        validate(proc);
+        CHECK_EQ(numberOfValues(blocks.root, Add), 1u);
+        CHECK_EQ(numberOfValues(blocks.firstRare, Add), baseIsRegister ? 1u : 0u);
+        CHECK_EQ(loaded->lastChild(), address);
+
+        auto code = compileProc(proc);
+        int64_t memory[2] = { 7, 10 };
+        CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), std::bit_cast<int64_t>(&memory[1]));
+        CHECK_EQ(invoke<int64_t>(*code, 3, 1, memory), 10);
+    }
+}
+
+static void testSinkValuesMovesAddressWhoseAccessesAreAllRare()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BranchToRareBlocks blocks(graph);
+    Value* scaled = graph.make(blocks.root, Shl, blocks.operand, graph.int32(blocks.root, 3));
+    Value* address = graph.make(blocks.root, Add, blocks.pointer, scaled);
+    blocks.finish(graph, graph.load(blocks.firstRare, Int64, address, 0, firstHeap), blocks.operand, blocks.operand);
+
+    CHECK(sinkValues(proc));
+    validate(proc);
+    for (B3::Opcode opcode : { Add, Shl }) {
+        CHECK_EQ(numberOfValues(blocks.root, opcode), 0u);
+        CHECK_EQ(numberOfValues(blocks.firstRare, opcode), 1u);
+    }
+    auto code = compileProc(proc);
+    int64_t memory[2] = { 7, 10 };
+    CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 3, 1, memory), 1);
+}
+
+static void testSinkValuesKeepsAddressThatIsAlsoStored()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BranchToRareBlocks blocks(graph);
+    Value* address = graph.make(blocks.root, Add, blocks.pointer, graph.make(blocks.root, Shl, blocks.operand, graph.int32(blocks.root, 3)));
+    graph.store(blocks.root, address, address, 0, firstHeap);
+    blocks.finish(graph, address, blocks.operand, blocks.operand);
+
+    CHECK(!sinkValues(proc));
+    CHECK_EQ(numberOfValues(proc, Add), 1u);
+    auto code = compileProc(proc);
+    int64_t memory[2] = { 7, 10 };
+    CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), std::bit_cast<int64_t>(&memory[1]));
+    CHECK_EQ(memory[1], std::bit_cast<int64_t>(&memory[1]));
+}
+
 static void testSinkValuesSinksWithinIrreducibleCycle()
 {
     Procedure proc;
@@ -295,6 +397,83 @@ static void testSinkValuesDoesNotSinkFromPreHeaderIntoLoop()
 
     CHECK(!sinkValues(proc));
     CHECK_EQ(numberOfValues(root, Mul), 1u);
+}
+
+static void testSinkValuesMovesInductionStepToFirstUse()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* loop = proc.addBlock(10);
+    BasicBlock* latch = proc.addBlock(9);
+    BasicBlock* exit = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t*>(proc, root);
+    Value* bound = arguments[0];
+    Value* pointer = arguments[1];
+    Value* index = graph.phi(loop, Int64);
+    Value* sum = graph.phi(loop, Int64);
+    graph.upsilon(root, graph.int64(root, 0), index);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, loop);
+    Value* next = graph.make(loop, Add, index, graph.int64(loop, 1));
+    Value* address = graph.make(loop, Add, pointer, graph.make(loop, Shl, index, graph.int32(loop, 3)));
+    Value* element = graph.load(loop, Int64, address, 0, firstHeap);
+    Value* total = graph.make(loop, Add, element, sum);
+    Value* comparison = graph.make(loop, LessThan, next, bound);
+    graph.branch(loop, comparison, latch, exit);
+    graph.upsilon(latch, next, index);
+    graph.upsilon(latch, total, sum);
+    graph.jump(latch, loop);
+    graph.ret(exit, total);
+    proc.resetReachability();
+    validate(proc);
+
+    CHECK(sinkValues(proc));
+    validate(proc);
+    CHECK_EQ(next->owner, loop);
+    CHECK(loop->values().find(total) < loop->values().find(next));
+    CHECK_EQ(loop->values().find(next) + 1, loop->values().find(comparison));
+    int64_t elements[] = { 1, 2, 4, 8 };
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 4, elements), 15);
+    CHECK_EQ(invoke<int64_t>(*code, 1, elements), 1);
+}
+
+static void testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* loop = proc.addBlock(10);
+    BasicBlock* latch = proc.addBlock(9);
+    BasicBlock* exit = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t*>(proc, root);
+    Value* first = arguments[0];
+    Value* last = arguments[1];
+    Value* pointer = graph.phi(loop, Int64);
+    Value* sum = graph.phi(loop, Int64);
+    graph.upsilon(root, first, pointer);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, loop);
+    Value* next = graph.make(loop, Add, pointer, graph.int64(loop, 8));
+    Value* element = graph.load(loop, Int64, next, 0, firstHeap);
+    Value* total = graph.make(loop, Add, element, sum);
+    Value* comparison = graph.make(loop, Below, next, last);
+    graph.branch(loop, comparison, latch, exit);
+    graph.upsilon(latch, next, pointer);
+    graph.upsilon(latch, total, sum);
+    graph.jump(latch, loop);
+    graph.ret(exit, total);
+    proc.resetReachability();
+    validate(proc);
+
+    sinkValues(proc);
+    validate(proc);
+    CHECK(loop->values().find(next) < loop->values().find(element));
+    int64_t elements[] = { 1, 2, 4, 8 };
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, elements, elements + 3), 14);
+    CHECK_EQ(invoke<int64_t>(*code, elements, elements + 1), 2);
 }
 
 static void testSinkValuesLeavesAtMostEightLoops()
@@ -916,6 +1095,54 @@ static void testUpdateFrequenciesRunsOnlyAfterChanges()
     }
 }
 
+static void testUpdateEdgeClassesLeavesBlockFrequenciesForLater()
+{
+    Policy estimatingPolicy = policyWith([](Policy& policy) {
+        policy.optimization.estimatesFrequencies = true;
+    });
+    constexpr double storedFrequency = 3;
+    auto hasStoredFrequencies = [&](Procedure& proc) {
+        for (BasicBlock* block : proc) {
+            if (block->frequency() != storedFrequency)
+                return false;
+        }
+        return true;
+    };
+
+    Procedure reference(estimatingPolicy);
+    Graph referenceGraph { reference };
+    LoopWithSlowPaths referenceLoop(referenceGraph, storedFrequency);
+    reference.updateFrequencies();
+    Estimate expected = collectEstimate(reference);
+
+    enum class Event : uint8_t { None, Invalidation, SwappedSuccessors };
+    for (Event event : { Event::None, Event::Invalidation, Event::SwappedSuccessors }) {
+        Procedure proc(estimatingPolicy);
+        Graph graph { proc };
+        LoopWithSlowPaths loop(graph, storedFrequency);
+        proc.updateEdgeClasses();
+        CHECK(collectEstimate(proc).edgeClasses == expected.edgeClasses);
+        CHECK(proc.blockRarity().isRare(loop.trap));
+        CHECK(hasStoredFrequencies(proc));
+
+        switch (event) {
+        case Event::None:
+            break;
+        case Event::Invalidation:
+            proc.invalidateCFG();
+            break;
+        case Event::SwappedSuccessors:
+            proc.willReorderSuccessors();
+            CHECK(collectEstimate(proc) == expected);
+            std::swap(loop.body->successor(0), loop.body->successor(1));
+            proc.didReorderSuccessors();
+            break;
+        }
+        proc.updateFrequencies();
+        CHECK(collectEstimate(proc).blockFrequencies == expected.blockFrequencies);
+    }
+}
+
 static void testBlockRarity()
 {
     Procedure proc;
@@ -969,11 +1196,17 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSinkValuesKeepsValueWithEquallyFrequentUser());
     RUN(testSinkValuesKeepsValueUsedInSameBlock());
     RUN(testSinkValuesClonesComparisonFusedIntoBranchForRareUser());
+    RUN(testSinkValuesClonesAddressTakenIntoAccessesForRareUsers());
+    RUN(testSinkValuesClonesAddressTakenIntoTrappingAccessWhoseBaseIsRegister());
+    RUN(testSinkValuesMovesAddressWhoseAccessesAreAllRare());
+    RUN(testSinkValuesKeepsAddressThatIsAlsoStored());
     RUN(testSinkValuesSinksWithinIrreducibleCycle());
     RUN(testSinkValuesKeepsLoads());
     RUN(testSinkValuesKeepsOpaque());
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
+    RUN(testSinkValuesMovesInductionStepToFirstUse());
+    RUN(testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress());
     RUN(testSinkValuesLeavesAtMostEightLoops());
     RUN(testSinkValuesSinksAfterAndBetweenIrreducibleCycles());
     RUN(testSinkValuesDoesNotSinkIntoIrreducibleCycle());
@@ -991,6 +1224,7 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testEstimateFrequenciesIsIdempotent());
     RUN(testEstimateFrequenciesOfUnlikelyEdge());
     RUN(testUpdateFrequenciesRunsOnlyAfterChanges());
+    RUN(testUpdateEdgeClassesLeavesBlockFrequenciesForLater());
     RUN(testBlockRarity());
 }
 

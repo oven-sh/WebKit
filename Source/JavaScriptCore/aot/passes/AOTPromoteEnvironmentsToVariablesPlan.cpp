@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
@@ -28,11 +29,22 @@ struct EnvironmentAllocation {
     ExecutionCount executions { ExecutionCount::Unknown };
 };
 
+struct SuppliedCapture {
+    static constexpr uint32_t noPosition = UINT32_MAX;
+
+    ValueID supplied;
+    uint32_t entryParameter { noPosition };
+    VariableID variable;
+    LayoutID layout;
+    uint32_t field { 0 };
+};
+
 struct CaptureSupplier {
     FunctionID callee;
     FunctionID function;
     ValueID site;
     BitVector capturesComputedOnce;
+    Vector<SuppliedCapture, 2> captures;
 };
 
 struct CaptureSource {
@@ -63,11 +75,12 @@ struct ProgramScan {
 
 class EnvironmentTypes {
 public:
-    explicit EnvironmentTypes(const Program& program)
-        : m_layouts(program.types.size(), [&](size_t index) {
-            return program.at(TypeID(index)).environment;
-        })
+    EnvironmentTypes(const Program& program, const ParallelLoops& loops)
+        : m_layouts(program.types.size())
     {
+        forEachIndexInParallel(loops, m_layouts.size(), [&](unsigned index) {
+            m_layouts[index] = program.at(TypeID(index)).environment;
+        });
     }
 
     LayoutID layoutOf(TypeID type) const { return type ? m_layouts[type.index()] : LayoutID(); }
@@ -141,9 +154,9 @@ private:
     bool readCapturesFromVariables(FunctionID closureFunction, Suppliers);
     CaptureSource findCommonSource(FunctionID closureFunction, uint32_t capture, Suppliers) const;
     CaptureSource findSource(const CaptureSupplier&, uint32_t capture) const;
-    VariableID findStableVariable(const Function&, ValueID) const;
+    VariableID findStableVariable(const SuppliedCapture&) const;
     TypeID typeOf(const CaptureSource&) const;
-    VariableID ensureVariable(const CaptureSource&);
+    VariableID ensureVariable(const CaptureSource&, const DeclaredType& capture);
     bool suppliesOwnCapture(FunctionID closureFunction, const CaptureSupplier&, uint32_t capture) const;
     void forEachSuppliedFunction(NOESCAPE const Invocable<void(FunctionID, Suppliers)> auto&) const;
     void collectEditedFunctions();
@@ -218,7 +231,9 @@ void FunctionScanner::scanSignature()
 void FunctionScanner::scanFunctionReference(ValueID id, const Value& value)
 {
     FunctionID callee = value.function();
-    if (value.opcode != Opcode::NewClosure && value.opcode != Opcode::CallDirect) {
+    // A closure that is made on demand lists no captures: the object that holds it keeps what it captures.
+    bool listsCaptures = value.opcode == Opcode::CallDirect || (value.opcode == Opcode::NewClosure && !value.isMadeOnDemand());
+    if (!listsCaptures) {
         m_scan.functionsWithOtherReferences.append(callee);
         return;
     }
@@ -226,11 +241,25 @@ void FunctionScanner::scanFunctionReference(ValueID id, const Value& value)
     if (!numberOfCaptures)
         return;
 
-    CaptureSupplier supplier { callee, m_id, id, BitVector(numberOfCaptures) };
+    CaptureSupplier supplier { callee, m_id, id, BitVector(numberOfCaptures), { } };
     std::span<const ValueID> captured = value.variadicOperands().first(numberOfCaptures);
+    supplier.captures.reserveInitialCapacity(numberOfCaptures);
     for (size_t capture = 0; capture < numberOfCaptures; ++capture) {
         if (isComputedAtMostOnce(captured[capture]))
             supplier.capturesComputedOnce.quickSet(capture);
+        SuppliedCapture description { .supplied = captured[capture] };
+        ValueID definitionID = sameObjectThroughCasts(m_function, captured[capture]);
+        const Value& definition = m_function.at(definitionID);
+        if (definition.opcode == Opcode::Parameter) {
+            if (size_t position = m_function.at(entryBlock).parameters.find(definitionID); position != notFound)
+                description.entryParameter = static_cast<uint32_t>(position);
+        } else if (definition.opcode == Opcode::GetModuleVariable)
+            description.variable = definition.variable();
+        else if (definition.opcode == Opcode::GetEnvironmentField) {
+            description.layout = definition.layout();
+            description.field = definition.field();
+        }
+        supplier.captures.append(description);
     }
     m_scan.suppliers.append(WTF::move(supplier));
 }
@@ -269,6 +298,15 @@ void FunctionScanner::scanOutsideValues(const Block& block)
 FunctionScan FunctionScanner::run()
 {
     scanSignature();
+    bool holdsEnvironment = m_function.values.containsIf([&](const Value& value) {
+        return !!m_context.types.layoutOf(value.type);
+    });
+    if (!holdsEnvironment) {
+        forEachListedValue(m_context.program, m_id, Value::opcodesWithFunction, [&](BlockID, uint32_t, ValueID id, const Value& value) {
+            scanFunctionReference(id, value);
+        });
+        return WTF::move(m_scan);
+    }
     for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
         BlockID id(index);
         const Block& block = m_function.at(id);
@@ -289,9 +327,9 @@ static ProgramScan scanProgram(const ScanContext& context)
     });
 
     ProgramScan result;
-    for (const FunctionScan& scan : scans) {
+    for (FunctionScan& scan : scans) {
         result.allocations.appendVector(scan.allocations);
-        result.suppliers.appendVector(scan.suppliers);
+        result.suppliers.appendVector(WTF::move(scan.suppliers));
         for (LayoutID layout : scan.layoutsWithOtherUses)
             result.layoutsWithOtherUses.set(layout.index());
         for (FunctionID function : scan.functionsWithOtherReferences)
@@ -308,12 +346,13 @@ static bool canChangeCaptures(const Function& function)
     case CreatorRecord::Kind::Version:
         return true;
     case CreatorRecord::Kind::Entrypoint:
+    case CreatorRecord::Kind::TableLookup:
     case CreatorRecord::Kind::Coroutine:
     case CreatorRecord::Kind::BoundFunction:
     case CreatorRecord::Kind::ResultWrapper:
     case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::ParameterWrapper:
-    case CreatorRecord::Kind::Continuation:
+    case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
@@ -344,7 +383,6 @@ static LocationFlow variableFlowFor(const LocationFlow& fieldFlow)
     flow.initialization = variableInitializationFor(fieldFlow.initialization);
     flow.reads = fieldFlow.reads;
     flow.isUnchangedDuringActivation = fieldFlow.stores == StoreCount::Never;
-    flow.mayKeepObservedObjectAlive = fieldFlow.mayKeepObservedObjectAlive;
     flow.cause = fieldFlow.cause;
     flow.witness = fieldFlow.witness;
     return flow;
@@ -363,20 +401,84 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
     return variable;
 }
 
-static Variable createValueVariable(const Function& function, ValueID id)
+static TypeID provenTypeOf(const DeclaredType& declared)
 {
-    const Value& value = function.at(id);
+    return declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : declared.type;
+}
+
+// A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
+static DeclaredType declaredTypeOf(const Value& value)
+{
+    DeclaredType declared { .type = value.type };
+    if (value.type == TypeTable::anything && value.expected()) {
+        declared.type = value.expected();
+        declared.flags.add(PositionFlags::IsExpected);
+    }
+    return declared;
+}
+
+static void appendSourcesOfParameter(const Function& function, ValueID parameter, Vector<ValueID, 8>& sources)
+{
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const auto& parameters = function.blocks[blockIndex].parameters;
+        auto found = std::ranges::find(parameters, parameter);
+        if (found == parameters.end())
+            continue;
+        size_t index = found - parameters.begin();
+        for (const Block& from : function.blocks) {
+            for (const Target& target : from.terminator.targets) {
+                if (target.block != BlockID(blockIndex))
+                    continue;
+                if (index < target.arguments.size()) {
+                    sources.append(target.arguments[index]);
+                    continue;
+                }
+                from.terminator.forEachOperand([&](ValueID operand, uint32_t) {
+                    if (!operand)
+                        return;
+                    sources.append(operand);
+                    function.at(operand).forEachOperand([&](ValueID tested, uint32_t) {
+                        if (tested)
+                            sources.append(tested);
+                    });
+                });
+            }
+        }
+        return;
+    }
+}
+
+static bool restsOnCheck(const Function& function, ValueID value)
+{
+    BitVector visited;
+    Vector<ValueID, 8> pending { value };
+    while (!pending.isEmpty()) {
+        CastChain chain(function, pending.takeLast());
+        for (ValueID cast : chain) {
+            if (visited.set(cast.index()))
+                break;
+            if (function.at(cast).opcode == Opcode::Check)
+                return true;
+            if (cast == chain.last() && function.at(cast).opcode == Opcode::Parameter)
+                appendSourcesOfParameter(function, cast, pending);
+        }
+    }
+    return false;
+}
+
+// Where the type of the value rests on a check, the generic version of the function stores what the check has turned away. GuardTaintedPositions has marked the capture for that,
+// and the variable takes the place of the capture.
+static Variable createValueVariable(const Function& function, ValueID id, const DeclaredType& capture)
+{
     Variable variable;
     variable.module = function.module;
-    variable.declared.type = value.type;
-    variable.declared.written = value.written();
-    variable.declared.predicted = value.prediction();
+    variable.declared = declaredTypeOf(function.at(id));
+    if (restsOnCheck(function, id) || capture.flags.contains(PositionFlags::IsExpected))
+        variable.declared.flags.add(PositionFlags::IsExpected);
     variable.flags.add(VariableFlags::IsImmutable);
     variable.flow.writers = WriterState::AllKnown;
     variable.flow.stores = StoreCount::AtMostOnce;
     variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
-    // Flow has no answer for a location that it has not seen.
-    variable.flow.mayKeepObservedObjectAlive = true;
     return variable;
 }
 
@@ -415,7 +517,7 @@ PromotionPlanner::PromotionPlanner(const Program& program, const FlowResults& fl
     : m_program(program)
     , m_flow(flow)
     , m_build(build)
-    , m_types(program)
+    , m_types(program, build.parallelLoops())
     , m_scan(scanProgram(ScanContext { program, flow, build, m_types }))
 {
 }
@@ -452,7 +554,7 @@ bool PromotionPlanner::isUnchangedValue(FunctionID closureFunction, uint32_t cap
 bool PromotionPlanner::fitsCapture(TypeID type, FunctionID closureFunction, uint32_t capture) const
 {
     auto fits = [&](FunctionID function) {
-        return m_program.at(type).isSubsetOf(m_program.at(m_program.at(function).captures[capture].type), m_program);
+        return m_program.at(type).isSubsetOf(m_program.at(provenTypeOf(m_program.at(function).captures[capture])), m_program);
     };
     if (!fits(closureFunction))
         return false;
@@ -464,71 +566,83 @@ bool PromotionPlanner::fitsCapture(TypeID type, FunctionID closureFunction, uint
 
 void PromotionPlanner::findClosureFunctions()
 {
-    m_plan.closureFunctions = Vector<FunctionID>(m_program.functions.size(), [&](size_t index) {
+    m_plan.closureFunctions = Vector<FunctionID>(m_program.functions.size());
+    forEachIndexInParallel(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index) {
         const auto* version = m_program.functions[index].creator.tryAs<CreatorRecord::Version>();
-        return version ? version->provenVersion : FunctionID(index);
+        m_plan.closureFunctions[index] = version ? version->provenVersion : FunctionID(index);
     });
-    for (size_t index = 0; index < m_plan.closureFunctions.size(); ++index) {
-        if (m_plan.closureFunctions[index].index() != index)
-            m_versions.append({ m_plan.closureFunctions[index], FunctionID(index) });
-    }
+    for (uint32_t index : findIndicesInParallel(m_build.parallelLoops(), m_plan.closureFunctions.size(), [&](unsigned index) {
+        return m_plan.closureFunctions[index].index() != index;
+    }))
+        m_versions.append({ m_plan.closureFunctions[index], FunctionID(index) });
     std::ranges::sort(m_versions);
     m_plan.captures.grow(m_program.functions.size());
 }
 
 void PromotionPlanner::findFixedCaptures()
 {
-    for (size_t index = 0; index < m_program.functions.size(); ++index) {
+    for (FunctionID fixed : collectInParallel<FunctionID>(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
         const Function& function = m_program.functions[index];
         FunctionID closureFunction = m_plan.closureFunctions[index];
         bool isVersion = closureFunction.index() != index;
         if (!canChangeCaptures(function) || m_scan.functionsWithOtherReferences.get(index))
-            m_hasFixedCaptures.set(closureFunction.index());
+            found.append(closureFunction);
         if (isVersion && function.captures.size() != m_program.at(closureFunction).captures.size())
-            m_hasFixedCaptures.set(closureFunction.index());
+            found.append(closureFunction);
         if (isVersion && m_plan.closureFunctionOf(closureFunction) != closureFunction) {
-            m_hasFixedCaptures.set(closureFunction.index());
-            m_hasFixedCaptures.set(m_plan.closureFunctionOf(closureFunction).index());
+            found.append(closureFunction);
+            found.append(m_plan.closureFunctionOf(closureFunction));
         }
         if (!isVersion && function.derivation.source)
-            m_hasFixedCaptures.set(m_plan.closureFunctionOf(function.derivation.source).index());
-    }
-    for (const Layout& layout : m_program.layouts) {
-        for (const Field& field : layout.fields) {
+            found.append(m_plan.closureFunctionOf(function.derivation.source));
+    }))
+        m_hasFixedCaptures.set(fixed.index());
+    for (FunctionID deferred : collectInParallel<FunctionID>(m_build.parallelLoops(), m_program.layouts.size(), [&](unsigned index, Vector<FunctionID>& found) {
+        for (const Field& field : m_program.layouts[index].fields) {
             if (FunctionID function = field.flow.location.deferredFunction)
-                m_hasFixedCaptures.set(m_plan.closureFunctionOf(function).index());
+                found.append(function);
         }
-    }
+    }))
+        m_hasFixedCaptures.set(m_plan.closureFunctionOf(deferred).index());
 }
 
 void PromotionPlanner::addUsesInRecords()
 {
-    auto addUse = [&](TypeID type) {
-        if (LayoutID layout = m_types.layoutOf(type))
+    // The records are many and the uses in them few: all threads look, and what they find is noted here.
+    const ParallelLoops& loops = m_build.parallelLoops();
+    auto addUsesIn = [&](unsigned numberOfRecords, const Invocable<void(unsigned, const ScopedLambda<void(TypeID)>&)> auto& forEachTypeIn) {
+        for (LayoutID layout : collectInParallel<LayoutID>(loops, numberOfRecords, [&](unsigned index, Vector<LayoutID>& found) {
+            auto addUse = [&](TypeID type) {
+                if (LayoutID layout = m_types.layoutOf(type))
+                    found.append(layout);
+            };
+            forEachTypeIn(index, ScopedLambda<void(TypeID)>(addUse));
+        }))
             m_scan.layoutsWithOtherUses.set(layout.index());
     };
-    for (unsigned index = 0; index < m_program.types.size(); ++index) {
-        if (m_program.at(TypeID(index)).primitives)
+    addUsesIn(m_program.types.size(), [&](unsigned index, const ScopedLambda<void(TypeID)>& addUse) {
+        if (m_types.layoutOf(TypeID(index)) && m_program.at(TypeID(index)).primitives)
             addUse(TypeID(index));
-    }
-    for (const Layout& layout : m_program.layouts) {
-        for (const Field& field : layout.fields)
+    });
+    addUsesIn(m_program.layouts.size(), [&](unsigned index, const ScopedLambda<void(TypeID)>& addUse) {
+        for (const Field& field : m_program.layouts[index].fields)
             addUse(field.declared.type);
-    }
-    for (const Variable& variable : m_program.variables)
-        addUse(variable.declared.type);
+    });
+    addUsesIn(m_program.variables.size(), [&](unsigned index, const ScopedLambda<void(TypeID)>& addUse) {
+        addUse(m_program.variables[index].declared.type);
+    });
     for (const EvalScope& scope : m_program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
             if (binding.layout)
                 m_scan.layoutsWithOtherUses.set(binding.layout.index());
         }
     }
-    for (size_t index = 0; index < m_program.functions.size(); ++index) {
+    addUsesIn(m_program.functions.size(), [&](unsigned index, const ScopedLambda<void(TypeID)>& addUse) {
         if (!hasFixedCaptures(FunctionID(index)))
-            continue;
+            return;
         for (const DeclaredType& capture : m_program.functions[index].captures)
             addUse(capture.type);
-    }
+    });
 }
 
 void PromotionPlanner::promote(const EnvironmentAllocation& allocation)
@@ -567,17 +681,22 @@ void PromotionPlanner::promoteLayouts()
 
 void PromotionPlanner::removeEnvironmentCaptures()
 {
-    for (size_t index = 0; index < m_program.functions.size(); ++index) {
+    struct Capture {
+        FunctionID function;
+        uint32_t capture;
+    };
+    for (Capture removed : collectInParallel<Capture>(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index, Vector<Capture>& found) {
         FunctionID id(index);
         if (m_plan.closureFunctionOf(id) != id)
-            continue;
+            return;
         const auto& captures = m_program.functions[index].captures;
         for (uint32_t capture = 0; capture < captures.size(); ++capture) {
             LayoutID layout = m_types.layoutOf(captures[capture].type);
             if (layout && m_plan.isPromoted(layout))
-                plannedCapture(id, capture).change = CaptureChange::Remove;
+                found.append({ id, capture });
         }
-    }
+    }))
+        plannedCapture(removed.function, removed.capture).change = CaptureChange::Remove;
 }
 
 void PromotionPlanner::forEachSuppliedFunction(NOESCAPE const Invocable<void(FunctionID, Suppliers)> auto& functor) const
@@ -596,40 +715,29 @@ void PromotionPlanner::forEachSuppliedFunction(NOESCAPE const Invocable<void(Fun
 
 bool PromotionPlanner::suppliesOwnCapture(FunctionID closureFunction, const CaptureSupplier& supplier, uint32_t capture) const
 {
-    if (m_plan.closureFunctionOf(supplier.function) != closureFunction)
-        return false;
-    const Function& function = m_program.at(supplier.function);
-    ValueID supplied = sameObjectThroughCasts(function, function.at(supplier.site).variadicOperands()[capture]);
-    return function.at(entryBlock).parameters[capture] == supplied;
+    return m_plan.closureFunctionOf(supplier.function) == closureFunction && supplier.captures[capture].entryParameter == capture;
 }
 
-VariableID PromotionPlanner::findStableVariable(const Function& function, ValueID id) const
+VariableID PromotionPlanner::findStableVariable(const SuppliedCapture& supplied) const
 {
-    const Value& value = function.at(id);
-    VariableID variable;
-    if (value.opcode == Opcode::GetModuleVariable)
-        variable = value.variable();
-    else if (value.opcode == Opcode::GetEnvironmentField && m_plan.isPromoted(value.layout()))
-        variable = m_plan.variableOf(value.layout(), value.field());
+    VariableID variable = supplied.variable;
+    if (supplied.layout && m_plan.isPromoted(supplied.layout))
+        variable = m_plan.variableOf(supplied.layout, supplied.field);
     return variable && hasStableValue(variableAt(variable).flow) ? variable : VariableID();
 }
 
 CaptureSource PromotionPlanner::findSource(const CaptureSupplier& supplier, uint32_t capture) const
 {
-    const Function& function = m_program.at(supplier.function);
-    ValueID supplied = function.at(supplier.site).variadicOperands()[capture];
-    ValueID definition = sameObjectThroughCasts(function, supplied);
-
-    if (function.at(definition).opcode == Opcode::Parameter) {
+    const SuppliedCapture& supplied = supplier.captures[capture];
+    if (supplied.entryParameter != SuppliedCapture::noPosition) {
         std::span<const PlannedCapture> planned = m_plan.capturesOf(supplier.function);
-        size_t position = function.at(entryBlock).parameters.find(definition);
-        if (position < planned.size() && planned[position].variable)
-            return { planned[position].variable, { }, { } };
+        if (supplied.entryParameter < planned.size() && planned[supplied.entryParameter].variable)
+            return { planned[supplied.entryParameter].variable, { }, { } };
     }
-    if (VariableID variable = findStableVariable(function, definition))
+    if (VariableID variable = findStableVariable(supplied))
         return { variable, { }, { } };
     if (supplier.capturesComputedOnce.get(capture) && isEnabled(supplier.function))
-        return { { }, supplier.function, supplied };
+        return { { }, supplier.function, supplied.supplied };
     return { };
 }
 
@@ -649,16 +757,16 @@ CaptureSource PromotionPlanner::findCommonSource(FunctionID closureFunction, uin
 
 TypeID PromotionPlanner::typeOf(const CaptureSource& source) const
 {
-    return source.variable ? variableAt(source.variable).declared.type : m_program.at(source.function).at(source.value).type;
+    return source.variable ? provenTypeOf(variableAt(source.variable).declared) : m_program.at(source.function).at(source.value).type;
 }
 
-VariableID PromotionPlanner::ensureVariable(const CaptureSource& source)
+VariableID PromotionPlanner::ensureVariable(const CaptureSource& source, const DeclaredType& capture)
 {
     if (source.variable)
         return source.variable;
     uint64_t key = static_cast<uint64_t>(source.function.index()) << 32 | source.value.index();
     return m_variablesByValue.ensure(key, [&] {
-        VariableID variable = addVariable(createValueVariable(m_program.at(source.function), source.value));
+        VariableID variable = addVariable(createValueVariable(m_program.at(source.function), source.value, capture));
         m_plan.storedValues.append(StoredValue { source.function, source.value, variable });
         return variable;
     }).iterator->value;
@@ -674,7 +782,7 @@ bool PromotionPlanner::readCapturesFromVariables(FunctionID closureFunction, Sup
         CaptureSource source = findCommonSource(closureFunction, capture, suppliers);
         if (!source || !fitsCapture(typeOf(source), closureFunction, capture))
             continue;
-        plannedCapture(closureFunction, capture) = { CaptureChange::ReadVariable, ensureVariable(source) };
+        plannedCapture(closureFunction, capture) = { CaptureChange::ReadVariable, ensureVariable(source, m_program.at(closureFunction).captures[capture]) };
         ++m_plan.numberOfPromotedCaptures;
         didChange = true;
     }
@@ -705,10 +813,10 @@ void PromotionPlanner::collectEditedFunctions()
         isEdited.set(function.index());
     for (const StoredValue& stored : m_plan.storedValues)
         isEdited.set(stored.function.index());
-    for (size_t index = 0; index < m_program.functions.size(); ++index) {
-        if (!m_plan.capturesOf(FunctionID(index)).empty())
-            isEdited.set(index);
-    }
+    for (uint32_t index : findIndicesInParallel(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index) {
+        return !m_plan.capturesOf(FunctionID(index)).empty();
+    }))
+        isEdited.set(index);
     for (const CaptureSupplier& supplier : m_scan.suppliers) {
         if (!m_plan.capturesOf(supplier.callee).empty())
             isEdited.set(supplier.function.index());

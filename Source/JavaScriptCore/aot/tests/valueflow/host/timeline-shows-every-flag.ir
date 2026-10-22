@@ -1,0 +1,18 @@
+# sink()  unknown.x = 1
+# A call of a value nobody knows raises ValueNobodyKnowsIsCalled (h23) and a store into an object nobody knows raises ObjectNobodyKnowsIsWritten (h17). `timeline` lists who raised each flag of the host.
+# RUN: valueflow-why timeline
+# CHECK: flag h23
+# RUN(WRITTEN): valueflow-why timeline
+# WRITTEN: flag h17
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1, -
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    Return v2
+}

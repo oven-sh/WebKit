@@ -35,6 +35,8 @@ struct FreshResultVariant {
     uint32_t length { 0 };
     Vector<FreshResultField, 4> properties;
     Vector<FreshResultField, 1> parts;
+    // Of the arm of the wrapper that builds the variant.
+    BlockFrequency frequency { BlockFrequency::Normal };
 
     bool buildsSameValueAs(const FreshResultVariant&) const;
 };
@@ -62,7 +64,8 @@ bool canReturnParts(const Function&);
 FreshResultShape computeFreshResults(FunctionAnalyses&);
 // Also for a function that cannot return parts: a caller that holds a copy of the body can leave the aggregate unbuilt.
 bool returnsFreshAggregate(FunctionAnalyses&);
-FreshResultShape shapeOfReturns(const AllocationSinking&);
+enum class ObjectsThatBecomeOneCell : uint8_t { StayWhole, AreFreshLikeOthers };
+FreshResultShape shapeOfReturns(const AllocationSinking&, ObjectsThatBecomeOneCell = ObjectsThatBecomeOneCell::StayWhole);
 FreshResultVariant variantOfShape(const AllocationSinking&, VirtualObjectID, const VirtualShape&);
 
 struct ResultWorkerRequest {

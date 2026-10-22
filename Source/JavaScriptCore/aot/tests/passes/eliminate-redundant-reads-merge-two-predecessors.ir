@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="n" module=m0 declared={type=undefined|number} initialization=Undefined
-layout L0 name="Counter" fields=[{key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity]}
+layout L0 name="Counter" fields=[{key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity]}
 
 function f0 name="storeInEachArm" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: number, v2: boolean):

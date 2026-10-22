@@ -1,4 +1,5 @@
-# What the passes in front of ExpandIteration leave of `m.values()` on a parameter of a function that unknown code calls is a loop over the map
+# What the passes in front of ExpandIteration leave of `m.values()` on a parameter of a function that unknown code calls is a loop over the map. The generic copy behind the failed test iterates over whatever the call returns, and the two do not merge
+# OPTIONS: heat=EverythingIsHot
 # RUN: pipeline ExpandIteration
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -33,18 +34,39 @@ function f1 name="mapValues" parameters=[{type=Map<string, number>}] results=[{t
   b3():
     Return
 }
+# The loop is printed in front of the block that makes the iterator. In front of that block the checks name what would take an iterator; behind it they name the iterator.
 # CHECK-LABEL: function f1 name="mapValues"
-# CHECK: = IsPristine v0 builtinClass=Map aspects=[Names]
+# CHECK-NOT: IteratorOpen
+# CHECK-NOT: IteratorResume
+# CHECK-NOT: MapIterator
+# CHECK-NOT: calleeKey="next"
+# CHECK-NOT: Switch
 # CHECK: LoopHint
-# CHECK-NEXT: = MapNext [[map1]],
+# CHECK-NEXT: = MapNext v0,
+# CHECK-NOT: IteratorOpen
+# CHECK-NOT: IteratorResume
+# CHECK-NOT: MapIterator
+# CHECK-NOT: calleeKey="next"
+# CHECK-NOT: Switch
 # CHECK: = TypeTest {{*}} testedType=builtin(MapPrototypeValues)
 # CHECK: [[iterator1]]: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
 # CHECK-NOT: [[iterator1]]
-# CHECK: ([[merged1]]: anything ~ MapIterator, [[arm1]]: int[0, 1], [[map1]]: Map<string, number>):
-# CHECK-NEXT: Switch [[arm1]] cases=[0]
+# CHECK-NOT: Switch
+# CHECK: [[isPristine1]]: boolean = IsPristine v0 builtinClass=Map aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine1]] -> taken {{*}}(| 0), notTaken [[changed1]]()
+# CHECK-NOT: [[iterator1]]
+# CHECK-NOT: Switch
+# CHECK: [[changed1]]() frequency=Unlikely:
+# CHECK-NOT: [[iterator1]]
+# CHECK-NOT: Switch
+# CHECK: = PropGet v0 key="values"
 # CHECK: [[returned1]]: anything = Call {{*}}, v0 calleeKey="values"
-# CHECK: ([[returned1]],
-# CHECK: = RequireObjectCoercible [[merged1]] nullishAccess=Iterate
+# CHECK: = TypeTest [[returned1]] testedType=Array
+# CHECK-NOT: [[iterator1]]
+# CHECK-NOT: Switch
+# CHECK: = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
+# CHECK-NOT: [[iterator1]]
+# CHECK-NOT: Switch
 function f2 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type=anything}] {
   b0(v0: Array<number>):
     v1 = Builtin builtin=GlobalThis
@@ -66,12 +88,34 @@ function f2 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type
     Return
 }
 # CHECK-LABEL: function f2 name="arrayEntries"
-# CHECK: = IsPristine v0 builtinClass=Array aspects=[Names]
+# CHECK-NOT: IteratorOpen
+# CHECK-NOT: IteratorResume
+# CHECK-NOT: ArrayIterator
+# CHECK-NOT: calleeKey="next"
+# CHECK-NOT: Switch
 # CHECK: LoopHint
-# CHECK-NEXT: = PropGet [[array2]] key="length"
+# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NOT: IteratorOpen
+# CHECK-NOT: IteratorResume
+# CHECK-NOT: ArrayIterator
+# CHECK-NOT: calleeKey="next"
+# CHECK-NOT: Switch
 # CHECK: [[iterator2]]: ArrayIterator = CallBuiltin v0 overload=ArrayPrototypeEntries/0
 # CHECK-NOT: [[iterator2]]
-# CHECK: ([[merged2]]: anything ~ ArrayIterator, [[arm2]]: int[0, 1], [[array2]]: Array<number>):
-# CHECK-NEXT: Switch [[arm2]] cases=[0]
-# CHECK: = RequireObjectCoercible [[merged2]] nullishAccess=Iterate
-# CHECK: = ElemGet [[array2]],
+# CHECK-NOT: Switch
+# CHECK: [[isPristine2]]: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine2]] -> taken {{*}}(| 0), notTaken [[changed2]]()
+# CHECK-NOT: [[iterator2]]
+# CHECK-NOT: Switch
+# CHECK: [[changed2]]() frequency=Unlikely:
+# CHECK-NOT: [[iterator2]]
+# CHECK-NOT: Switch
+# CHECK: = PropGet v0 key="entries"
+# CHECK: [[returned2]]: anything = Call {{*}}, v0 calleeKey="entries"
+# CHECK: = TypeTest [[returned2]] testedType=Array
+# CHECK-NOT: [[iterator2]]
+# CHECK-NOT: Switch
+# CHECK: = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
+# CHECK-NOT: [[iterator2]]
+# CHECK-NOT: Switch
+# CHECK: = ElemGet v0,

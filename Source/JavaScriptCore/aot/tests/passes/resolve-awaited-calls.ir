@@ -1,45 +1,44 @@
 # An awaited direct call of an async function enters the body of the callee without a promise
 # FORM: Prepared
 # RUN: pass ResolveAwaitedCalls
-# STATISTIC: AwaitedCallsResolved = 9
+# STATISTIC: AwaitedCallsResolved = 10
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-typesite w0 module=m0 kind=Assertion
 variable g0 name="state" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="callee" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f27 entryWithoutPromise=f27 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f27
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f1 name="calleeWithParameter" role=CoroutineRamp flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f28 entryWithoutPromise=f28 promiseType=Promise promiseParameter=1} {
   b0(v0: number):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f28
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 function f2 name="calleeWithRest" role=CoroutineRamp flags=[IsAsync, HasRestParameter] parameters=[{type=number}, {type=Array<anything>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f29 entryWithoutPromise=f29 promiseType=Promise promiseParameter=2} {
   b0(v0: number, v1: Array<anything>):
     v2 = NewPromise
     v3 = CallDirect v0, v1, v2 function=f29
-    v4 = Claim v3 castType=Promise cause=AddedByPass
+    v4 = AssumeType v3 castType=Promise
     Return v4
 }
 function f3 name="calleeWithTwelveParameters" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f30 entryWithoutPromise=f30 promiseType=Promise promiseParameter=12} {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything):
     v12 = NewPromise
     v13 = CallDirect v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12 function=f30
-    v14 = Claim v13 castType=Promise cause=AddedByPass
+    v14 = AssumeType v13 castType=Promise
     Return v14
 }
 function f4 name="calleeOfNumber" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise<number, proven>}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f31 entryWithoutPromise=f31 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f31
-    v2 = Claim v1 castType=Promise<number> cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise<number>
     v3 = AssumeType v2 castType=Promise<number, proven>
     Return v3
 }
@@ -47,7 +46,7 @@ function f5 name="calleeDeclaredNumber" role=CoroutineRamp flags=[IsAsync] resul
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f32
-    v2 = Claim v1 castType=number cause=AddedByPass
+    v2 = AssumeType v1 castType=number
     Return v2
 }
 function f6 name="generatorCallee" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=Generator}] creator=Coroutine{ramp=f6 body=f33 promiseParameter=1} {
@@ -65,119 +64,119 @@ function f8 name="adjacent" role=CoroutineRamp flags=[IsAsync] results=[{type=Pr
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f34
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f9 name="secondUse" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f9 body=f35 entryWithoutPromise=f35 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f35
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f10 name="pureValueBetween" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f36 entryWithoutPromise=f36 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f36
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f11 name="effectBetween" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f11 body=f37 entryWithoutPromise=f37 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f37
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f12 name="upcastBetween" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f38 entryWithoutPromise=f38 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f38
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f13 name="upcastWithSecondUse" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f39 entryWithoutPromise=f39 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f39
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
-function f14 name="claimBetween" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f40 entryWithoutPromise=f40 promiseType=Promise promiseParameter=0} {
+function f14 name="testBetween" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f40 entryWithoutPromise=f40 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f40
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f15 name="inTwoBlocks" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f41 entryWithoutPromise=f41 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f41
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f16 name="passesArguments" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f16 body=f42 entryWithoutPromise=f42 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f42
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f17 name="passesRestArray" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Array<anything>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f17 body=f43 entryWithoutPromise=f43 promiseType=Promise promiseParameter=1} {
   b0(v0: Array<anything>):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f43
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 function f18 name="passesTwelveArguments" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f18 body=f44 entryWithoutPromise=f44 promiseType=Promise promiseParameter=1} {
   b0(v0: anything):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f44
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 function f19 name="keepsPositionOfCall" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f19 body=f45 entryWithoutPromise=f45 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f45
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
-function f20 name="keepsPrediction" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f20 body=f46 entryWithoutPromise=f46 promiseType=Promise promiseParameter=0} {
+function f20 name="keepsExpectedType" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f20 body=f46 entryWithoutPromise=f46 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f46
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f21 name="keepsProvenType" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f21 body=f47 entryWithoutPromise=f47 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f47
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f22 name="calleeIsNoRamp" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f22 body=f48 entryWithoutPromise=f48 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f48
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f23 name="calleeIsGenerator" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f23 body=f49 entryWithoutPromise=f49 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f49
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f24 name="awaitsParameter" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f24 body=f50 entryWithoutPromise=f50 promiseType=Promise promiseParameter=1} {
   b0(v0: anything):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f50
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 function f25 name="callerIsAsyncGenerator" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f25 body=f51 promiseType=Promise promiseParameter=1} {
@@ -320,18 +319,18 @@ function f39 name="upcastWithSecondUse" role=CoroutineBody flags=[IsAsync] param
 # CHECK-NEXT: = Upcast v1
 # CHECK-NEXT: = AwaitBySavingFrame v2, v0
 # CHECK-NOT: AwaitCallBySavingFrame
-function f40 name="claimBetween" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f14} creator=Coroutine{kind=AsyncFunction ramp=f14 body=f40 entryWithoutPromise=f40 promiseType=Promise promiseParameter=0} {
+function f40 name="testBetween" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f14} creator=Coroutine{kind=AsyncFunction ramp=f14 body=f40 entryWithoutPromise=f40 promiseType=Promise promiseParameter=0} {
   b0(v0: undefined|Promise):
     v1 = CallDirect function=f0
-    v2 = Claim v1 castType=Promise<number> site=w0
+    v2 = RequireObjectCoercible v1 nullishAccess=Read
     v3 = AwaitBySavingFrame v2, v0
     v4 = ReturnAsyncResult v0, v3
     Return v4
 }
-# CHECK-LABEL: function f40 name="claimBetween"
+# CHECK-LABEL: function f40 name="testBetween"
 # CHECK-NOT: AwaitCallBySavingFrame
 # CHECK: = CallDirect function=f0
-# CHECK-NEXT: = Claim v1
+# CHECK-NEXT: = RequireObjectCoercible v1
 # CHECK-NEXT: = AwaitBySavingFrame v2, v0
 # CHECK-NOT: AwaitCallBySavingFrame
 function f41 name="inTwoBlocks" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{kind=AsyncFunction ramp=f15 body=f41 entryWithoutPromise=f41 promiseType=Promise promiseParameter=0} {
@@ -344,10 +343,9 @@ function f41 name="inTwoBlocks" role=CoroutineBody flags=[IsAsync] parameters=[{
     Return v3
 }
 # CHECK-LABEL: function f41 name="inTwoBlocks"
-# CHECK-NOT: AwaitCallBySavingFrame
-# CHECK: = CallDirect function=f0
-# CHECK: = AwaitBySavingFrame v1, v0
-# CHECK-NOT: AwaitCallBySavingFrame
+# CHECK-NOT: CallDirect
+# CHECK: v2: anything{{*}} = AwaitCallBySavingFrame v0 function=
+# CHECK-NOT: AwaitBySavingFrame
 function f42 name="passesArguments" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f16} creator=Coroutine{kind=AsyncFunction ramp=f16 body=f42 entryWithoutPromise=f42 promiseType=Promise promiseParameter=0} {
   b0(v0: undefined|Promise):
     v1 = Integer integer=1
@@ -398,21 +396,21 @@ function f45 name="keepsPositionOfCall" role=CoroutineBody flags=[IsAsync] param
 }
 # CHECK-LABEL: function f45 name="keepsPositionOfCall"
 # CHECK: = AwaitCallBySavingFrame v0 function=f27 @9
-function f46 name="keepsPrediction" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f20} creator=Coroutine{kind=AsyncFunction ramp=f20 body=f46 entryWithoutPromise=f46 promiseType=Promise promiseParameter=0} {
+function f46 name="keepsExpectedType" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f20} creator=Coroutine{kind=AsyncFunction ramp=f20 body=f46 entryWithoutPromise=f46 promiseType=Promise promiseParameter=0} {
   b0(v0: undefined|Promise):
     v1 = CallDirect function=f4
     v2 = AwaitBySavingFrame v1, v0
     v3 = ReturnAsyncResult v0, v2
     Return v3
 }
-# CHECK-LABEL: function f46 name="keepsPrediction"
+# CHECK-LABEL: function f46 name="keepsExpectedType"
 # CHECK-NOT: CallDirect
 # CHECK-NOT: AwaitBySavingFrame
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 # CHECK: v2: anything ~ number = AwaitCallBySavingFrame v0 function=f31
 # CHECK-NOT: CallDirect
 # CHECK-NOT: AwaitBySavingFrame
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 function f47 name="keepsProvenType" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f21} creator=Coroutine{kind=AsyncFunction ramp=f21 body=f47 entryWithoutPromise=f47 promiseType=Promise promiseParameter=0} {
   b0(v0: undefined|Promise):
     v1 = CallDirect function=f5 @9
@@ -427,8 +425,8 @@ function f47 name="keepsProvenType" role=CoroutineBody flags=[IsAsync] parameter
 # CHECK: [[awaited]]: anything = AwaitCallBySavingFrame v0 function=f32 @9
 # CHECK-NOT: CallDirect
 # CHECK-NOT: AwaitBySavingFrame
-# CHECK: [[claimed]]: number = Claim [[awaited]] castType=number cause=AddedByPass @3
-# CHECK-NEXT: Jump -> next [[rest]]([[claimed]])
+# CHECK: [[assumed]]: number = AssumeType [[awaited]] castType=number @3
+# CHECK-NEXT: Jump -> next [[rest]]([[assumed]])
 # CHECK-NEXT: [[rest]](v2: number):
 # CHECK-NEXT: v3: number = Mul v2, v2
 function f48 name="calleeIsNoRamp" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f22} creator=Coroutine{kind=AsyncFunction ramp=f22 body=f48 entryWithoutPromise=f48 promiseType=Promise promiseParameter=0} {

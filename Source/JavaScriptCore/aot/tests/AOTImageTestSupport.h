@@ -41,6 +41,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT::ImageTests {
 
+// The offsets are numbered anew behind the change: packed units have none.
+void changeUnits(CodeBody&, NOESCAPE const Invocable<void(Vector<CodeUnit>&)> auto& change);
+
 using Typed::FunctionID;
 
 inline constexpr uint64_t loweredReach = 128 * KB;
@@ -120,6 +123,7 @@ private:
     std::unique_ptr<Typed::PipelineOutput> m_pipeline;
     std::optional<CodeGenerationPlan> m_plan;
     BitVector m_namedStrings;
+    BitVector m_stringsOnlyShown;
     bool m_isFinished { false };
 };
 
@@ -235,6 +239,18 @@ void whenExecutable()
 {
     if (ExecutableAllocator::singleton().isValid())
         run();
+}
+
+void changeUnits(CodeBody& body, NOESCAPE const Invocable<void(Vector<CodeUnit>&)> auto& change)
+{
+    Vector<CodeUnit> units = body.units.unpack();
+    change(units);
+    uint32_t offset = 0;
+    for (CodeUnit& unit : units) {
+        unit.offset = offset;
+        offset += unit.length;
+    }
+    body.units = units;
 }
 
 } // namespace JSC::AOT::ImageTests

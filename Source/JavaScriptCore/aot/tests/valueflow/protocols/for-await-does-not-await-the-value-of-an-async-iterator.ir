@@ -1,0 +1,129 @@
+# for await (own of { [Symbol.asyncIterator]() { return { async next() { return { value: load(), done: false } } } } }) ;
+# for await (wrapped of { [Symbol.iterator]() { return { next() { return { value: load(), done: false } } } } }) ;  for await (element of [load()]) ;
+# async function* delegates() { yield* ownIterable }  for await (delegated of delegates()) ;  async function* yields() { yield await load() }  for await (yielded of yields()) ;
+# An asynchronous loop awaits what the method `next` of an asynchronous iterator answers and never the value in that answer: the promise that such an iterator hands out is what the loop binds.
+# `yield*` in an async generator hands it on as it got it. Only the wrapper around a synchronous iterator awaits the values, and an async generator what it yields by itself.
+# The state of a loop does not say by which of the two methods an iterator of the program came, so what a synchronous one hands out counts both awaited and as it is. An array's elements are awaited and nothing else.
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="own"
+# CHECK: declared={type={{*}}Promise
+# CHECK-LABEL: variable g1 name="wrapped"
+# CHECK: declared={type={{*}}int
+# CHECK-LABEL: variable g2 name="element"
+# CHECK: declared={type=undefined|int}
+# CHECK-LABEL: variable g3 name="delegated"
+# CHECK: declared={type={{*}}Promise
+# CHECK-LABEL: variable g4 name="yielded"
+# CHECK: declared={type=undefined|int}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="own" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="wrapped" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="element" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="delegated" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="yielded" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="AsyncIterable" fields=[{key=@@asyncIterator declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Iterable" fields=[{key=@@iterator declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = IteratorOpen v1 iteratorKind=Async
+    v3 = IteratorResume v2 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f5
+    v8 = NewObject -, v7 layout=L3 fields=[0]
+    v9 = IteratorOpen v8 iteratorKind=Async
+    v10 = IteratorResume v9 iteratorKind=Async
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    PutModuleVariable v12 variable=g1
+    v14 = NewClosure function=f2
+    v15 = Call v14
+    v16 = NewArray v15 contents=anything
+    v17 = IteratorOpen v16 iteratorKind=Async
+    v18 = IteratorResume v17 iteratorKind=Async
+    v19 = ResultAt v18
+    v20 = ResultAt v18 index=1
+    PutModuleVariable v20 variable=g2
+    v22 = NewClosure function=f7
+    v23 = Call v22
+    v24 = IteratorOpen v23 iteratorKind=Async
+    v25 = IteratorResume v24 iteratorKind=Async
+    v26 = ResultAt v25
+    v27 = ResultAt v25 index=1
+    PutModuleVariable v27 variable=g3
+    v29 = NewClosure function=f8
+    v30 = Call v29
+    v31 = IteratorOpen v30 iteratorKind=Async
+    v32 = IteratorResume v31 iteratorKind=Async
+    v33 = ResultAt v32
+    v34 = ResultAt v32 index=1
+    PutModuleVariable v34 variable=g4
+    Return
+}
+function f2 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="asyncIterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    Return v2
+}
+function f4 name="next" kind=Method flags=[IsAsync, HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = Call v1
+    v3 = Boolean boolean=false
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    Return v4
+}
+function f5 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    Return v2
+}
+function f6 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = Call v1
+    v3 = Boolean boolean=false
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    Return v4
+}
+function f7 name="delegates" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = IteratorOpen v3 iteratorKind=Async
+    v5 = Undefined
+    v6 = IteratorResume v4, v5 iteratorKind=Async [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    v9 = Yield v8
+    Return
+}
+function f8 name="yields" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f2
+    v3 = Call v2
+    v4 = Await v3
+    v5 = Yield v4
+    Return
+}

@@ -5,6 +5,8 @@ const storage = "TypedArrayStorage";
 
 const maximumBufferLength = b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE");
 const bufferLength = b.int(0, maximumBufferLength);
+// An element takes eight bytes at most.
+const lengthOfAnyElementSize = b.int(0, 2 ** 29);
 const indexOrNotFound = b.int(-1, maximumBufferLength);
 const element = b.union(b.f64, b.bigint);
 const elementOrUndefined = b.union(element, b.undefined);
@@ -57,10 +59,10 @@ const construction = [
     implementation: b.hostCall,
   },
   {
-    args: { length: b.integer.loose.optional },
+    args: { length: b.integer.loose.optional.admitting(b.union(lengthOfAnyElementSize, b.undefined)) },
     returns: b.sameClass.fresh,
     capability: "heap",
-    throws: true,
+    throws: b.propagated,
     implementation: b.inline("TypedArrayWithLength", { otherwise: b.hostCall }),
   },
 ] satisfies b.FunctionField[];
@@ -267,7 +269,12 @@ export default b.declarations(
       },
       byteLength: storageGetter("TypedArrayByteLength"),
       byteOffset: storageGetter("TypedArrayByteOffset"),
-      length: storageGetter("TypedArrayLength"),
+      length: {
+        ...storageGetter("TypedArrayLength"),
+        length: 0,
+        boxedCallStub: "TypedArrayLength",
+        nativeSymbols: ["typedArrayViewProtoGetterFuncLength"],
+      },
       "@@toStringTag": {
         this: b.any,
         getter: b.union(b.string, b.undefined),
@@ -429,13 +436,13 @@ export default b.declarations(
   b.static("Uint8Array.fromBase64", {
     ...textCodec("uint8ArrayConstructorFromBase64"),
     args: { string: b.string, options: decodingOptions },
-    returns: b.instance("Uint8Array").fresh,
+    returns: b.instance("Uint8Array").exactly.fresh,
     uses: { string: [b.readAsCharacters], options: b.inspected },
   }),
   b.static("Uint8Array.fromHex", {
     ...textCodec("uint8ArrayConstructorFromHex"),
     args: { string: b.string },
-    returns: b.instance("Uint8Array").fresh,
+    returns: b.instance("Uint8Array").exactly.fresh,
     uses: { string: [b.readAsCharacters] },
   }),
   b.method("Uint8Array.prototype.setFromBase64", {

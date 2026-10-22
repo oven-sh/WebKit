@@ -138,11 +138,11 @@ function f14 name="store-adds-the-property" parameters=[{type=L0}, {type=number}
 # CHECK-NEXT: b0(v0: L0, v1: number):
 # CHECK-NEXT: PropSet v0, v1 key="missing"
 # CHECK-NEXT: PropSet v0, v1 key="hasOwnProperty"
-function f15 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f15 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="missing"
     Return v1
 }
-# CHECK-LABEL: function f15 name="predicted-receiver"
+# CHECK-LABEL: function f15 name="expected-receiver"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: = PropGet v0 key="missing"

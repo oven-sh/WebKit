@@ -2,9 +2,11 @@
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
 # RUN: pipeline ResolveAccesses
-# RUN(ORDER): flow-order locations failed
-# ORDER-NOT: g0:
-# ORDER: read-before-initialization g0
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g0 module=
+# ORDER-NOT: stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: module m0 path=
 # CHECK-NOT: evaluations=AtMostOnce
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -69,6 +69,12 @@ public:
     bool hasStopRequest() { return trapAwareSoftStackLimit() == stopRequestMarker(); }
     CONCURRENT_SAFE void requestStop();
     CONCURRENT_SAFE void cancelStop();
+#if USE(BUN_JSC_ADDITIONS)
+    bool stopsAtEveryPoll() const { return m_stopsAtEveryPoll.loadRelaxed(); }
+    bool stopsAtFunctionEntries() const { return m_stopsAtFunctionEntries.loadRelaxed(); }
+    void setStopsAtFunctionEntries(bool);
+    static constexpr ptrdiff_t offsetOfStopsAtFunctionEntries() { return OBJECT_OFFSETOF(StackManager, m_stopsAtFunctionEntries); }
+#endif
 
     void* softStackLimit() const { return m_softStackLimit; }
     void* trapAwareSoftStackLimit() const LIFETIME_BOUND { return m_trapAwareSoftStackLimit.loadRelaxed(); }
@@ -105,6 +111,10 @@ private:
 
     Atomic<void*> m_trapAwareSoftStackLimit { nullptr };
     void* m_softStackLimit { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+    Atomic<bool> m_stopsAtEveryPoll { false };
+    Atomic<bool> m_stopsAtFunctionEntries { false };
+#endif
 
     Lock m_mirrorLock;
     SentinelLinkedList<Mirror, BasicRawSentinelNode<Mirror>> m_mirrors WTF_GUARDED_BY_LOCK(m_mirrorLock);

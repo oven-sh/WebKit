@@ -117,7 +117,7 @@ RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, 
     // Not hasStackForRegExpCompiler(): the 16 KB it adds are for the frames between a caller that tests it and this one.
     RELEASE_ASSERT(remainingStackOnThisThread() >= regExpCompilerStackSize);
     Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
-    Yarr::YarrPattern yarrPattern(pattern, flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Skipped);
+    Yarr::YarrPattern yarrPattern(pattern, flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::CharacterClassForms);
     if (Yarr::hasError(error))
         return summary;
 

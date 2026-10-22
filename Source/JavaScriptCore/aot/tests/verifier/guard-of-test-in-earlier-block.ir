@@ -1,64 +1,65 @@
-# the guard of a test that stands in an earlier block than its branch ends where something may write between the two, in whichever block
+# the guard of a test that stands in an earlier block than its branch ends where something may write between the two, in whichever block.
+# The objects are arrays: a compiled object keeps its shape, so no write ends what a guard says about that
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: GuardNotAvailable 4
+# DIAGNOSTIC: GuardNotAvailable 3
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
-function f0 name="goodNothingBetween" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
+function f0 name="goodNothingBetween" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Jump -> next b1()
   b1():
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v3):
-    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    v4 = GetArrayLength v0, v3
     Return v4
   b3():
     Return
 }
-function f1 name="goodAllocationBetween" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
-    v3 = NewObject -, v1 layout=L0 fields=[0]
+function f1 name="goodAllocationBetween" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    v3 = NewArray v1 contents=anything
     Jump -> next b1()
   b1():
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    v5 = GetArrayLength v0, v4
     Return v5
   b3():
     Return v3
 }
-function f2 name="badCallBehindTest" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
+function f2 name="badCallBehindTest" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     v3 = Call v1
     Jump -> next b1()
   b1():
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    v5 = GetArrayLength v0, v4
     Return v5
   b3():
     Return
 }
-function f3 name="badCallInBlockOfBranch" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
+function f3 name="badCallInBlockOfBranch" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Jump -> next b1()
   b1():
     v3 = Call v1
     Branch v2 -> taken b2(| 0), notTaken b3()
   b2(v4):
-    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    v5 = GetArrayLength v0, v4
     Return v5
   b3():
     Return
 }
-function f4 name="badCallOnOneOfTwoWays" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: anything, v2: boolean):
-    v3 = ShapeTest v0 layouts=[L0]
+function f4 name="badCallOnOneOfTwoWays" parameters=[{type=Array}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything, v2: boolean):
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v4 = Call v1
@@ -66,43 +67,21 @@ function f4 name="badCallOnOneOfTwoWays" parameters=[{type=object}, {type=anythi
   b2():
     Branch v3 -> taken b3(| 0), notTaken b4()
   b3(v5):
-    v6 = GetSlotOrUndefined v0, v5 key="x" receivers=[L0] level=Proven
+    v6 = GetArrayLength v0, v5
     Return v6
   b4():
     Return
 }
-function f5 name="goodEpochTestInEarlierBlock" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+function f5 name="goodShapeOutlastsTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
   b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
-    Branch v2 -> taken b1(| 0), notTaken b4()
-  b1(v3):
-    v4 = GetShapeEpoch
-    v5 = Call v1
-    v6 = IsShapeEpochCurrent v4, v3
-    Jump -> next b2()
-  b2():
-    Branch v6 -> taken b3(| 0), notTaken b4()
-  b3(v7):
-    v8 = GetSlotOrUndefined v0, v7 key="x" receivers=[L0] level=Proven
-    Return v8
-  b4():
-    Return
-}
-function f6 name="badCallBehindEpochTest" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
-    Branch v2 -> taken b1(| 0), notTaken b4()
-  b1(v3):
-    v4 = GetShapeEpoch
-    v5 = Call v1
-    v6 = IsShapeEpochCurrent v4, v3
-    Jump -> next b2()
-  b2():
-    v7 = Call v1
-    Branch v6 -> taken b3(| 0), notTaken b4()
-  b3(v8):
-    v9 = GetSlotOrUndefined v0, v8 key="x" receivers=[L0] level=Proven
-    Return v9
-  b4():
+    v3 = Call v1
+    Jump -> next b1()
+  b1():
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    Return v5
+  b3():
     Return
 }

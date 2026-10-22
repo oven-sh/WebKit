@@ -1,0 +1,39 @@
+# interface ObjectFlagsType extends Type { objectFlags: number }   function createObjectType(flags) { const type = createType(); type.objectFlags = flags; return type }
+# function getObjectFlags(type: Type) { return type.flags & ObjectFlagsType ? (type as ObjectFlagsType).objectFlags : 0 }
+# A field that is added late is often empty, and a read takes its empty slot for undefined behind the tests of what an empty slot leaves open. Where no store that flow has seen and no type that declares
+# the field puts undefined there, whoever reads it expects a value: undefined is what the type rules out. So the read is planned as that of a field which the program declares: one test of the slot,
+# which for a number finds the raw value at once. An empty slot is read by name, as behind any test that fails. Among several receivers one slot that admits undefined keeps the other plan.
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Instance name="Type" constructor=f0 fields=[{key="objectFlags" declared={type=int} flags=[IsAddedLate]}, {key="target" declared={type=L0} flags=[IsAddedLate]}, {key="aliasSymbol" declared={type=undefined|L0} flags=[IsAddedLate]}]
+layout L1 kind=Instance name="Other" constructor=f5 fields=[{key="target" declared={type=undefined|L0} flags=[IsAddedLate]}]
+
+function f0 name="Type" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="number-that-is-never-undefined" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="objectFlags"
+    Return v1
+}
+# CHECK: F1 v1 PropGet [[objectFlags]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] {{*}}
+function f2 name="object-that-is-never-undefined" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="target"
+    Return v1
+}
+# CHECK-NEXT: F2 v1 PropGet [[target]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] {{*}}
+function f3 name="field-that-may-hold-undefined" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="aliasSymbol"
+    Return v1
+}
+# CHECK-NEXT: F3 v1 PropGet [[aliasSymbol]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] {{*}}
+function f4 name="one-receiver-admits-undefined" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="target"
+    Return v1
+}
+# CHECK-NEXT: F4 v1 PropGet [[target]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0, L1] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] {{*}}
+function f5 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

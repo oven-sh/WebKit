@@ -1,7 +1,7 @@
 # A small frame is allocated and then checked, with a record for the run time; a frame of more than 4096 bytes is checked before it is allocated, at the entry, and has no such record
 # FORM: AsRead
 # RUN: generate-code
-# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:ElideStackChecks
 # CHECK: f1: size={{*}} prologueChecks=1
 # CHECK-NOT: enteredWithoutStackCheck
 # CHECK: f2: size={{*}} prologueChecks=0

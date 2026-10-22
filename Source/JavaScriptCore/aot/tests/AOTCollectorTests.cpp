@@ -28,6 +28,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -79,7 +80,7 @@ static void runInProcessWithCompiledCodeOptions()
     }
 
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s, "--disabledCollectorMechanisms=64"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s };
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
         dataLogLn(result.output);
@@ -488,6 +489,59 @@ static void testNothingIsDeferredWithoutCompiledCode()
     table->checkEverythingIsMarked(realm);
 }
 
+static Vector<Identifier> namesOfChain(VM& vm)
+{
+    return Vector<Identifier>(6, [&](size_t index) {
+        return Identifier::fromString(vm, makeString("chained"_s, index));
+    });
+}
+
+static Structure* addNames(VM& vm, Structure* structure, std::span<const Identifier> names)
+{
+    PropertyOffset offset;
+    for (auto& name : names)
+        structure = Structure::addPropertyTransition(vm, structure, name, 0, offset);
+    return structure;
+}
+
+static void checkFullCollectionDropsTransitionChain()
+{
+    TestVM test;
+    VM& vm = test.vm();
+    Structure* empty = test.createRealm()->objectStructureForObjectConstructor();
+    Vector<Identifier> names = namesOfChain(vm);
+    JSObject* object = constructEmptyObject(vm, empty);
+    for (auto& name : names)
+        object->putDirect(vm, name, jsNumber(1));
+    Structure* last = object->structure();
+    AOT_TEST_CHECK(last->previousID() && !last->isPinnedPropertyTable());
+
+    test.heap().collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(!last->previousID() && last->isPinnedPropertyTable());
+    AOT_TEST_CHECK(last->transitionKind() == TransitionKind::PropertyAddition && last->transitionPropertyName() == names.last().impl());
+
+    test.heap().collectNow(Sync, CollectionScope::Full);
+    Structure* previous = addNames(vm, empty, names.span().first(5));
+    AOT_TEST_CHECK(addNames(vm, previous, names.span().last(1)) == last);
+    AOT_TEST_CHECK(last->isCacheableTransitionFrom(previous) && last->previousID() == previous);
+    test.heap().collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(last->previousID() == previous);
+    ensureStillAliveHere(object);
+}
+
+static void testTransitionChainStaysWithoutCompiledCode()
+{
+    if (Options::useAOT())
+        return;
+    TestVM test;
+    VM& vm = test.vm();
+    JSObject* object = constructEmptyObject(vm, test.createRealm()->objectStructureForObjectConstructor());
+    for (auto& name : namesOfChain(vm))
+        object->putDirect(vm, name, jsNumber(1));
+    test.heap().collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(object->structure()->previousID() && !object->structure()->isPinnedPropertyTable() && !object->structure()->materializedPropertyTable());
+}
+
 template<void (*body)()>
 static constexpr void (*withCompiledCodeOptions)() = runInProcessWithCompiledCodeOptions<body>;
 
@@ -502,10 +556,8 @@ std::span<const NativeTest> collectorTests()
         { "collector/helpers/small-heap-starts-none"_s, withCompiledCodeOptions<checkSmallHeapStartsNoHelper> },
         { "collector/helpers/wide-heap-starts-them"_s, withCompiledCodeOptions<checkWideHeapStartsHelpers> },
         { "collector/helpers/eager-without-compiled-code"_s, testHelpersStartEagerlyWithoutCompiledCode },
-#if CPU(X86_64)
         { "collector/roots/full-collection-defers-regions"_s, withCompiledCodeOptions<checkFullCollectionDefersRegionsOfRoots> },
         { "collector/roots/store-after-deferral-is-seen"_s, withCompiledCodeOptions<checkStoreAfterDeferralIsSeen> },
-#endif
         { "collector/roots/eden-collection-defers-nothing"_s, withCompiledCodeOptions<checkEdenCollectionDefersNothing> },
         { "collector/roots/nothing-deferred-without-compiled-code"_s, testNothingIsDeferredWithoutCompiledCode },
         { "collector/empty-eden/skips-marking"_s, withCompiledCodeOptions<checkEdenCollectionWithEmptyEdenSkipsMarking> },
@@ -513,6 +565,8 @@ std::span<const NativeTest> collectorTests()
         { "collector/empty-eden/full-collection-is-never-skipped"_s, withCompiledCodeOptions<checkFullCollectionIsNeverSkipped> },
         { "collector/empty-eden/store-before-a-skip-is-seen-later"_s, withCompiledCodeOptions<checkStoreBeforeSkippedCollectionIsSeenLater> },
         { "collector/empty-eden/off-without-compiled-code"_s, testNoCollectionIsSkippedWithoutCompiledCode },
+        { "collector/structures/full-collection-drops-transition-chain"_s, withCompiledCodeOptions<checkFullCollectionDropsTransitionChain> },
+        { "collector/structures/chain-stays-without-compiled-code"_s, testTransitionChainStaysWithoutCompiledCode },
     };
     return tests;
 }

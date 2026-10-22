@@ -1,0 +1,183 @@
+# A typed body that stands behind the tests at the entrance of a function has a generic version of the whole function beside it.
+# A test of the state of an object that fails before the body has done anything that anybody can see begins the call again there, with the arguments of the call:
+# all such tests of a function share one block, and the generic code that the body held behind them goes. Behind the first effect a failing test keeps its own generic code.
+# FORM: Prepared
+# RUN: pass RestartInGenericVersion VerifyProgram
+# STATISTIC: RestartsInGenericVersion = 4
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="calls" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Record name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f1 name="sum" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: L0):
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f3
+    ReturnCall v4 requirement=Allowed
+}
+
+# Both reads stand in front of every effect
+function f2 name="sum" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+    v4 = IsSlotFilled v0 key="y" receivers=[L0] level=Expected
+    Branch v4 -> taken b2(| 0), notTaken b4(v3)
+  b2(v5: guard):
+    v6 = GetSlot v0, v5 key="y" receivers=[L0] level=Expected
+    v7 = Add v3, v6
+    Return v7
+  b3() frequency=Rare:
+    v8 = PropGet v0 key="x"
+    Jump -> next b4(v8)
+  b4(v9: anything) frequency=Rare:
+    v10 = PropGet v0 key="y"
+    v11 = Add v9, v10
+    Return v11
+}
+# CHECK-LABEL: function f2 name="sum"
+# CHECK: Branch v1 -> taken b1(| 0), notTaken [[restart]]()
+# CHECK: Branch v4 -> taken b2(| 0), notTaken [[restart]]()
+# CHECK-NOT: PropGet
+# CHECK: [[restart]]() frequency=Rare:
+# CHECK: [[result]]: anything = CallDirect {{*}} function=f3 [isNeverInlined]
+# CHECK-NEXT: ReturnCall [[result]]
+
+function f3 name="sum" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything) frequency=Unlikely:
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    Return v3
+}
+
+function f4 name="countAndRead" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f5 fallback=f6} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: L0):
+    v3 = CallDirect v2 function=f5
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f6
+    ReturnCall v4 requirement=Allowed
+}
+
+# The store to the variable can be seen. The test in front of it begins the call again, the one behind it keeps its read by name. A branch of the program is no test that the compiler placed.
+function f5 name="countAndRead" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+    v4 = Integer integer=0
+    v5 = Less v3, v4
+    Branch v5 -> taken b6(), notTaken b2()
+  b2():
+    PutModuleVariable v3 variable=g0
+    v7 = IsSlotFilled v0 key="y" receivers=[L0] level=Expected
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8: guard):
+    v9 = GetSlot v0, v8 key="y" receivers=[L0] level=Expected
+    Return v9
+  b4() frequency=Rare:
+    v10 = PropGet v0 key="y"
+    Return v10
+  b5() frequency=Rare:
+    v11 = PropGet v0 key="x"
+    PutModuleVariable v11 variable=g0
+    v13 = PropGet v0 key="y"
+    Return v13
+  b6() frequency=Unlikely:
+    v14 = Undefined
+    Return v14
+}
+# CHECK-LABEL: function f5 name="countAndRead"
+# CHECK: Branch v1 -> taken b1(| 0), notTaken [[restartOfSecond]]()
+# CHECK: Branch v5 -> taken b6(), notTaken b2()
+# CHECK: Branch v7 -> taken b3(| 0), notTaken b4()
+# CHECK: b4() frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="y"
+# CHECK-NOT: = PropGet v0 key="x"
+# CHECK: = CallDirect {{*}} function=f6 [isNeverInlined]
+
+function f6 name="countAndRead" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} creator=Version{provenVersion=f5} {
+  b0(v0: anything) frequency=Unlikely:
+    v1 = PropGet v0 key="x"
+    PutModuleVariable v1 variable=g0
+    v3 = PropGet v0 key="y"
+    Return v3
+}
+
+# A function without a generic version beside it keeps what it has
+function f7 name="alone" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+    Return v3
+  b2() frequency=Rare:
+    v4 = PropGet v0 key="x"
+    Return v4
+}
+# CHECK-LABEL: function f7 name="alone"
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK: = PropGet v0 key="x"
+
+function f8 name="lengthOf" module=m0 role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f9 fallback=f10} {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=undefined|null|string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: undefined|null|string):
+    v4 = CallDirect v3, v1 function=f9
+    ReturnCall v4 requirement=Allowed
+  b2() frequency=Unlikely:
+    v5 = CallDirect v0, v1 function=f10
+    ReturnCall v5 requirement=Allowed
+}
+
+# Only undefined and null fail the first test, and the read behind them throws: the call begins again. The second test is a guess at what an unknown value is: it keeps its own code, rare or not.
+function f9 name="lengthOf" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8} {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: string):
+    v4 = GetStringLength v3
+    v5 = TypeTest v1 testedType=L0
+    Branch v5 -> taken b2(), notTaken b4()
+  b2():
+    Return v4
+  b3() frequency=Rare:
+    v6 = PropGet v0 key="length"
+    Return v6
+  b4() frequency=Rare:
+    v7 = PropGet v1 key="x"
+    Return v7
+}
+# CHECK-LABEL: function f9 name="lengthOf"
+# CHECK: Branch v2 -> taken b1(| 0), notTaken [[restartOfThird]]()
+# CHECK: Branch v5 -> taken b2(), notTaken b4()
+# CHECK-NOT: key="length"
+# CHECK: = PropGet v1 key="x"
+# CHECK: = CallDirect {{*}} function=f10 [isNeverInlined]
+
+function f10 name="lengthOf" module=m0 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8} creator=Version{provenVersion=f9} {
+  b0(v0: anything, v1: anything) frequency=Unlikely:
+    v2 = PropGet v0 key="length"
+    Return v2
+}

@@ -1,0 +1,35 @@
+# function Item() { this.next = null; this.done = null }    first.next = external; first.done = external; second.done = function () {}
+# The slot of a field whose type is only expected takes every value, so `next` is always filled. DeferClosuresInFields may narrow the slot of a field that is given a closure to objects alone,
+# and a value that such a slot turns away takes the property out of it: nothing says that `done` is always filled
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Item" {{*}}{key="next" declared={type=null flags=[IsExpected]} flags=[IsRequired] flow={location={writers=AllKnown {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="done" {{*}}initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Item" constructor=f1 fields=[{key="next" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="done" declared={type=null flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Construct v0, -
+    v2 = Construct v0, -
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="external" [isFreeName]
+    PropSet v1, v4 key="next" mode=Strict
+    PropSet v1, v4 key="done" mode=Strict
+    v7 = NewClosure function=f2
+    PropSet v2, v7 key="done" mode=Strict
+    v9 = PropGet v1 key="next"
+    v10 = PropGet v1 key="done"
+    Return
+}
+function f1 name="Item" flags=[HasThis] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="next" mode=Strict
+    v3 = Null
+    PropSet v0, v3 key="done" mode=Strict
+    Return
+}
+function f2 name="done" results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -27,8 +27,6 @@ public:
     explicit IdenticalBlockMerger(Code& code)
         : m_code(code)
     {
-        if (code.policy().frame.emitsFrame)
-            m_frameStates.emplace(code);
     }
 
     bool run()
@@ -44,17 +42,25 @@ public:
     }
 
 private:
-    bool areIdentical(BasicBlock* a, BasicBlock* b) const
+    // The first two blocks with the same instructions are found before any block is replaced, so these are the states of the code as it came in.
+    bool haveSameFrameStateAtHead(BasicBlock* a, BasicBlock* b)
     {
-        if (m_frameStates && m_frameStates->atHead(a) != m_frameStates->atHead(b))
-            return false;
+        if (!m_code.policy().frame.emitsFrame)
+            return true;
+        if (!m_frameStates)
+            m_frameStates.emplace(m_code);
+        return m_frameStates->atHead(a) == m_frameStates->atHead(b);
+    }
+
+    bool areIdentical(BasicBlock* a, BasicBlock* b)
+    {
         if (a->size() != b->size() || a->numSuccessors() != b->numSuccessors() || (a->numSuccessors() && a->successorBlock(0) != b->successorBlock(0)))
             return false;
         for (unsigned i = 0; i < a->size(); ++i) {
             if (a->at(i).kind != b->at(i).kind || !std::ranges::equal(a->at(i).args(), b->at(i).args()))
                 return false;
         }
-        return true;
+        return haveSameFrameStateAtHead(a, b);
     }
 
     void collectCandidates()

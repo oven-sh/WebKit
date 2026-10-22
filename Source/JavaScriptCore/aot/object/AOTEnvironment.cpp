@@ -11,6 +11,7 @@
 #include "AOTImmortalCells.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "HeapAnalyzer.h"
@@ -47,7 +48,7 @@ Environment* Environment::create(VM& vm, Structure* structure, const Environment
 {
     ASSERT(size >= layout.size);
     ASSERT(layout.kind != LayoutKind::Closure);
-    void* cell = vm.heap.aotClosureSpace.allocate(vm, WTF::roundUpToMultipleOf<atomSize>(size), nullptr, AllocationFailureMode::Assert);
+    void* cell = vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>()->allocate(vm, WTF::roundUpToMultipleOf<atomSize>(size), nullptr, AllocationFailureMode::Assert);
     static_cast<JSCell*>(cell)->clearStructure();
     Environment* environment = new (NotNull, cell) Environment(vm, structure);
     zeroSpan(std::span { reinterpret_cast<uint8_t*>(environment) + sizeof(JSCell), size - sizeof(JSCell) });
@@ -90,14 +91,14 @@ void Environment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Environment* environment = uncheckedDowncast<Environment>(cell);
     Base::analyzeHeap(cell, analyzer);
-    UniquedStringImpl* const* identifiers = Instance::of(environment->structure()->realm())->image.programIdentifiers;
+    const ProgramIdentifiers& identifiers = *environment->vm().aotState().identifiers;
     uintptr_t cageBase = cageBaseOf(environment);
     for (auto& variable : environment->layout().describedVariables()) {
         if (!traitsOf(variable.slot.representation()).holdsCell)
             continue;
         JSCell* target = cellInSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset), cageBase);
-        UniquedStringImpl* name = identifiers[variable.name];
-        if (target && name)
+        UniquedStringImpl* name = target ? identifiers.tryGetIdentifierConcurrently(variable.name) : nullptr;
+        if (name)
             analyzer.analyzeVariableNameEdge(environment, target, name);
     }
 }

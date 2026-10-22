@@ -1,4 +1,5 @@
 # What became of each allocation of the source, and why an object or a closure that could be in the frame is on the heap
+# TODO: narrow-fields: the closure of main.js:4 is on the heap (HeldByHeapCell) where it was in the frame
 # OPTIONS: report=Allocations limit=MaxFrameEnvironmentFields:1 disable=pass:PromoteEnvironmentsToVariables
 # RUN: allocation-remarks
 # LOSS: MaxFrameEnvironmentFields

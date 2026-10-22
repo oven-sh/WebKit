@@ -13,19 +13,6 @@
 
 namespace JSC { namespace AOT {
 
-constexpr RuntimeCounterID counterFor(ShapeLossReason reason)
-{
-    switch (reason) {
-    case ShapeLossReason::IndexedAccessor:
-        return RuntimeCounterID::ObjectsBecameOrdinaryByIndexedAccessor;
-    case ShapeLossReason::NativeDefinition:
-        return RuntimeCounterID::ObjectsBecameOrdinaryByNativeDefinition;
-    case ShapeLossReason::RepresentationLimit:
-        return RuntimeCounterID::ObjectsBecameOrdinaryByRepresentationLimit;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
 constexpr RuntimeCounterID counterFor(SlotExitReason reason)
 {
     switch (reason) {
@@ -48,18 +35,6 @@ constexpr ObjectMutation mutationOf(SlotExitReason reason)
         return ObjectMutation::RedefineProperty;
     case SlotExitReason::StoreOfOtherType:
         return ObjectMutation::StoreOfOtherType;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-constexpr ObjectMutation mutationOf(ShapeLossReason reason)
-{
-    switch (reason) {
-    case ShapeLossReason::IndexedAccessor:
-    case ShapeLossReason::NativeDefinition:
-        return ObjectMutation::RedefineProperty;
-    case ShapeLossReason::RepresentationLimit:
-        return ObjectMutation::LoseShape;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
@@ -92,7 +67,27 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldDat
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 
+[[noreturn]] void crashOnLostStateOfBirth(VM&, const Object&, const FieldData&, ASCIILiteral event);
+
+ALWAYS_INLINE void willLeaveStateOfBirth(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
+{
+    if (field.keepsStateOfBirth) [[unlikely]]
+        crashOnLostStateOfBirth(vm, object, field, nameOf(mutation));
+}
+
 void failIfKeysMustNotBeListed(VM&, const Object&);
+
+// The loader lists the own keys of what a CommonJS module exports, for the names that importers bind and for a namespace object, whose names are sorted: nobody sees the order of the keys,
+// which is what the proof that they are never listed is used for. Which properties the object has, flow knows the loader to see: it has it read every own property.
+class KeyListingThatShowsNoOrder {
+    WTF_MAKE_NONCOPYABLE(KeyListingThatShowsNoOrder);
+public:
+    explicit KeyListingThatShowsNoOrder(const JSObject*);
+    ~KeyListingThatShowsNoOrder();
+
+private:
+    const JSObject* m_outer;
+};
 
 // A listing shows which fields the object has and in which order it got them.
 ALWAYS_INLINE void validateKeyListing(VM& vm, const Object& object)
@@ -112,10 +107,13 @@ struct FieldProperty {
 UniquedStringImpl* propertyNameOf(VM&, const Object&, const FieldData&);
 FieldProperty findFieldProperty(VM&, const Object&, const FieldData&);
 bool livesInExtraProperties(VM&, const Object&, const FieldData&);
+// The property gets the attributes that the layout gives the field, so the caller has compared them with the ones it creates.
 bool tryCreateField(VM&, State&, Object&, const FieldData&, JSValue);
 void putProperty(VM&, JSObject* holder, PropertyName, Object::LeavingProperty);
 void removeFieldFromKeyOrder(VM&, State&, Object&, const FieldData&);
 void didChangeOwnProperties(VM&, Object&, VM::StructureChainIntegrityEvent, UniquedStringImpl* nameOrNull);
+bool interceptsIndexedAccesses(const Object&);
+void didChangeIndexedProperties(VM&, Object&, bool interceptedIndexedAccessesBefore);
 
 } } // namespace JSC::AOT
 

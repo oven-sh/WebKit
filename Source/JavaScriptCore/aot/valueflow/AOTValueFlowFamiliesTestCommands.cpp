@@ -38,6 +38,7 @@ struct Counts {
     uint32_t withoutArrival { 0 };
     uint32_t withLayoutOutside { 0 };
     uint32_t withUnknownObject { 0 };
+    uint32_t withUntrackedObject { 0 };
     uint32_t withObjectWithoutLayout { 0 };
 };
 
@@ -48,13 +49,13 @@ struct Pair {
     Position first;
 };
 
-// The layouts that the parts of a declared type name, with the layouts below them.
+// The layouts that a declared type names: its family.
 struct Family {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Family);
     BitVector members;
     // The members that lie below no other member.
     Vector<LayoutID, 2> roots;
-    // What the parts admit beside objects with a layout.
+    // What the type admits beside objects with a layout.
     ValueSetID admitted;
 };
 
@@ -69,6 +70,7 @@ public:
     }
 
     // What has escaped is left out where the unknown object arrives, which stands for it: native code hands every escaped object to every position it can reach.
+    // Likewise what the analysis has stopped following where the untracked object arrives.
     void count(const Position&, const DeclaredType&, ValueSetID arrived);
     void print(PrintStream&, size_t numberOfPairs);
 
@@ -81,7 +83,7 @@ private:
     const Program& m_program;
     const ValueFlowUniverse& m_universe;
     ValueSetMaker& m_maker;
-    HashMap<uint64_t, std::unique_ptr<Family>> m_families;
+    HashMap<uint32_t, std::unique_ptr<Family>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_families;
     HashMap<uint64_t, uint32_t> m_pairAt;
     Vector<Pair> m_pairs;
     std::array<Counts, numberOfPositionKinds> m_counts;
@@ -108,26 +110,17 @@ static ASCIILiteral nameOf(PositionKind kind)
 
 const Family* FamilyCounter::familyOf(const DeclaredType& declared)
 {
-    TypeID expected = declared.written ? declared.written : declared.predicted;
-    uint64_t key = (static_cast<uint64_t>(declared.type.index()) << 32 | (expected ? expected.index() : UINT32_MAX - 2)) + 1;
-    auto result = m_families.add(key, nullptr);
+    auto result = m_families.add(declared.type.index(), nullptr);
     if (!result.isNewEntry)
         return result.iterator->value.get();
 
+    const Type& type = m_program.at(declared.type);
     auto family = makeUnique<Family>();
-    family->admitted = ValueSets::nothing;
-    for (TypeID part : { declared.type, declared.written, declared.predicted }) {
-        if (!part)
-            continue;
-        const Type& type = m_program.at(part);
-        for (LayoutID member : membersOf(m_program, type))
-            family->members.set(member.index());
-        // The established part of an object position says `object` and nothing else: it admits whatever arrives.
-        if (part != declared.type)
-            family->admitted = m_maker.unite(family->admitted, m_universe.maskOf(m_maker, m_program, type));
-    }
+    for (LayoutID member : membersOf(m_program, type))
+        family->members.set(member.index());
     if (family->members.isEmpty())
         return nullptr;
+    family->admitted = m_universe.maskOf(m_maker, m_program, type);
     for (uint32_t member : family->members) {
         bool liesBelowAnother = false;
         for (LayoutID above : m_program.layouts[member].supertypes)
@@ -135,7 +128,7 @@ const Family* FamilyCounter::familyOf(const DeclaredType& declared)
         if (!liesBelowAnother)
             family->roots.append(LayoutID(member));
     }
-    // Layouts that are assignable to each other lie below each other.
+    // Layouts that are converted to each other lie below each other.
     if (family->roots.isEmpty())
         family->roots.append(LayoutID(static_cast<uint32_t>(*family->members.begin())));
     result.iterator->value = WTF::move(family);
@@ -148,13 +141,18 @@ void FamilyCounter::count(const Position& position, const DeclaredType& declared
     if (!family)
         return;
 
-    if (m_solution.sets().contains(arrived, ValueFlowUniverse::unknownObject()))
-        arrived = m_maker.unite(m_maker.intersect(arrived, ValueSets::complement(m_solution.solver().valueOf(ValueFlowProgramNodes::escaped()))), m_universe.unknownObjectAlone());
+    auto leaveOutWhatIsCovered = [&](ValueFlowObjectID placeholder, ValueFlowNodeID covered) {
+        if (m_solution.sets().contains(arrived, placeholder))
+            arrived = m_maker.unite(m_maker.intersect(arrived, ValueSets::complement(m_maker.intersect(m_solution.solver().valueOf(covered), m_universe.knownObjects()))), m_maker.of(placeholder));
+    };
+    leaveOutWhatIsCovered(ValueFlowUniverse::unknownObject(), ValueFlowProgramNodes::escaped());
+    leaveOutWhatIsCovered(ValueFlowUniverse::untrackedObject(), ValueFlowProgramNodes::lost());
 
     Counts& counts = m_counts[static_cast<unsigned>(position.kind)];
     ++counts.positions;
     bool hasObject = false;
     bool hasUnknownObject = false;
+    bool hasUntrackedObject = false;
     bool hasObjectWithoutLayout = false;
     Vector<LayoutID, 8> outside;
     m_solution.sets().forEachMember(arrived, [&](ValueFlowObjectID object) {
@@ -163,6 +161,10 @@ void FamilyCounter::count(const Position& position, const DeclaredType& declared
         hasObject = true;
         if (object == ValueFlowUniverse::unknownObject()) {
             hasUnknownObject = true;
+            return;
+        }
+        if (object == ValueFlowUniverse::untrackedObject()) {
+            hasUntrackedObject = true;
             return;
         }
         LayoutID layout = m_universe.layoutOf(object);
@@ -175,6 +177,7 @@ void FamilyCounter::count(const Position& position, const DeclaredType& declared
     });
     counts.withoutArrival += !hasObject;
     counts.withUnknownObject += hasUnknownObject;
+    counts.withUntrackedObject += hasUntrackedObject;
     counts.withObjectWithoutLayout += hasObjectWithoutLayout;
     counts.withLayoutOutside += !outside.isEmpty();
 
@@ -244,15 +247,16 @@ void FamilyCounter::print(PrintStream& out, size_t numberOfPairs)
     for (unsigned kind = 0; kind < numberOfPositionKinds; ++kind) {
         const Counts& counts = m_counts[kind];
         out.println(nameOf(static_cast<PositionKind>(kind)), " positions ", counts.positions, " layout-outside ", counts.withLayoutOutside, " unknown-object ", counts.withUnknownObject,
-            " object-without-layout ", counts.withObjectWithoutLayout, " no-object ", counts.withoutArrival);
+            " object-without-layout ", counts.withObjectWithoutLayout, " no-object ", counts.withoutArrival, " untracked-object ", counts.withUntrackedObject);
         total.positions += counts.positions;
         total.withLayoutOutside += counts.withLayoutOutside;
         total.withUnknownObject += counts.withUnknownObject;
+        total.withUntrackedObject += counts.withUntrackedObject;
         total.withObjectWithoutLayout += counts.withObjectWithoutLayout;
         total.withoutArrival += counts.withoutArrival;
     }
     out.println("all positions ", total.positions, " layout-outside ", total.withLayoutOutside, " unknown-object ", total.withUnknownObject, " object-without-layout ", total.withObjectWithoutLayout,
-        " no-object ", total.withoutArrival, " pairs ", m_pairs.size());
+        " no-object ", total.withoutArrival, " pairs ", m_pairs.size(), " untracked-object ", total.withUntrackedObject);
 
     std::ranges::sort(m_pairs, [](const Pair& a, const Pair& b) {
         return std::tuple(b.positions, a.named.index(), a.arriving.index()) < std::tuple(a.positions, b.named.index(), b.arriving.index());
@@ -335,7 +339,7 @@ constexpr unsigned numberOfExpectedReceivers = 6;
 
 static ExpectedReceiver expectedReceiverOf(const Program& program, const ValueFlowSolution& solution, const Function& function, ValueID receiver)
 {
-    const Type& type = program.at(function.at(receiver).predictionOrType());
+    const Type& type = program.at(function.at(receiver).expectedOrType());
     if (type.isAnything())
         return ExpectedReceiver::Anything;
     if (type.anyObject)
@@ -360,6 +364,7 @@ static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
         std::array<uint32_t, numberOfExpectedReceivers> expectedWhereUnknown { };
         uint32_t accesses { 0 };
         uint32_t withUnknownObject { 0 };
+        uint32_t withUntrackedObject { 0 };
         uint32_t withObjectWithoutLayout { 0 };
         uint32_t ofSeveralLayouts { 0 };
         uint32_t ofOneLayout { 0 };
@@ -376,6 +381,7 @@ static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
             if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropGet && statement.opcode != Opcode::PropSet))
                 continue;
             bool hasUnknownObject = false;
+            bool hasUntrackedObject = false;
             bool hasObjectWithoutLayout = false;
             LayoutID first;
             bool hasSeveralLayouts = false;
@@ -384,6 +390,10 @@ static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
                     return;
                 if (object == ValueFlowUniverse::unknownObject()) {
                     hasUnknownObject = true;
+                    return;
+                }
+                if (object == ValueFlowUniverse::untrackedObject()) {
+                    hasUntrackedObject = true;
                     return;
                 }
                 LayoutID layout = universe.layoutOf(object);
@@ -399,7 +409,9 @@ static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
                 ++counts.withUnknownObject;
                 const Function& function = program.functions[index];
                 ++counts.expectedWhereUnknown[static_cast<unsigned>(expectedReceiverOf(program, solution, function, function.at(statement.site).operand(0)))];
-            } else if (hasObjectWithoutLayout)
+            } else if (hasUntrackedObject)
+                ++counts.withUntrackedObject;
+            else if (hasObjectWithoutLayout)
                 ++counts.withObjectWithoutLayout;
             else if (hasSeveralLayouts)
                 ++counts.ofSeveralLayouts;
@@ -412,7 +424,7 @@ static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
     for (unsigned isLibrary = 0; isLibrary < 2; ++isLibrary) {
         const ReceiverCounts& counts = countsOf[isLibrary];
         out.println(isLibrary ? "library" : "application", " accesses ", counts.accesses, " unknown-object ", counts.withUnknownObject, " object-without-layout ", counts.withObjectWithoutLayout,
-            " several-layouts ", counts.ofSeveralLayouts, " one-layout ", counts.ofOneLayout, " no-object ", counts.withoutObject);
+            " several-layouts ", counts.ofSeveralLayouts, " one-layout ", counts.ofOneLayout, " no-object ", counts.withoutObject, " untracked-object ", counts.withUntrackedObject);
         out.println(isLibrary ? "library" : "application", " unknown-object where the receiver is expected to be: layouts-alone ", counts.expectedWhereUnknown[0], " layouts-never-allocated ", counts.expectedWhereUnknown[1],
             " layouts-and-more ", counts.expectedWhereUnknown[2], " no-layout ", counts.expectedWhereUnknown[3], " any-object ", counts.expectedWhereUnknown[4], " anything ", counts.expectedWhereUnknown[5]);
     }
@@ -425,7 +437,7 @@ constexpr unsigned numberOfWrittenAtCallees = 3;
 
 static ExpectedCallee expectedCalleeOf(const Program& program, const Function& function, ValueID callee)
 {
-    const Type& type = program.at(function.at(callee).predictionOrType());
+    const Type& type = program.at(function.at(callee).expectedOrType());
     if (type.isAnything())
         return ExpectedCallee::Anything;
     if (type.anyObject)
@@ -456,12 +468,11 @@ static TypeSiteID typeSiteOf(const Program& program, const Function& function, V
         case Opcode::GetModuleVariable:
             return program.at(value.variable()).declared.site;
         case Opcode::Upcast:
-        case Opcode::Predict:
-        case Opcode::Claim:
-        case Opcode::ClaimRead:
-        case Opcode::ClaimDeclared:
+        case Opcode::Convert:
+        case Opcode::Check:
         case Opcode::CheckInitialized:
         case Opcode::RequireObject:
+        case Opcode::NarrowByField:
         case Opcode::RequireObjectCoercible:
             id = value.operand(0);
             continue;
@@ -488,6 +499,7 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution)
     struct CalleeCounts {
         uint32_t calls { 0 };
         uint32_t withUnknownCallee { 0 };
+        uint32_t withUntrackedCallee { 0 };
         std::array<std::array<uint32_t, numberOfWrittenAtCallees>, numberOfExpectedCallees> byExpectation { };
     };
     static constexpr std::array<ASCIILiteral, numberOfExpectedCallees> names { "function-alone"_s, "function-and-more"_s, "no-function"_s, "any-object"_s, "anything"_s };
@@ -504,7 +516,9 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution)
             if (statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList && statement.opcode != Opcode::Construct && statement.opcode != Opcode::ConstructList)
                 continue;
             ++counts.calls;
-            if (!solution.sets().contains(solution.valueOf(solution.bodies().operandsOf(statement)[0]), ValueFlowUniverse::unknownObject()))
+            ValueSetID callees = solution.valueOf(solution.bodies().operandsOf(statement)[0]);
+            counts.withUntrackedCallee += solution.sets().contains(callees, ValueFlowUniverse::untrackedObject());
+            if (!solution.sets().contains(callees, ValueFlowUniverse::unknownObject()))
                 continue;
             ++counts.withUnknownCallee;
             ValueID callee = function.at(statement.site).operand(0);
@@ -514,7 +528,7 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution)
     for (unsigned isLibrary = 0; isLibrary < 2; ++isLibrary) {
         const CalleeCounts& counts = countsOf[isLibrary];
         ASCIILiteral part = isLibrary ? "library"_s : "application"_s;
-        out.println(part, " calls ", counts.calls, " unknown-callee ", counts.withUnknownCallee);
+        out.println(part, " calls ", counts.calls, " unknown-callee ", counts.withUnknownCallee, " untracked-callee ", counts.withUntrackedCallee);
         for (unsigned expected = 0; expected < numberOfExpectedCallees; ++expected)
             out.println(part, " unknown-callee expected ", names[expected], ": signature ", counts.byExpectation[expected][0], " other-text ", counts.byExpectation[expected][1], " nothing-written ", counts.byExpectation[expected][2]);
     }
@@ -525,12 +539,11 @@ static ValueID definitionThroughCopies(const Function& function, ValueID id)
     for (unsigned steps = 0; steps < 16; ++steps) {
         switch (function.at(id).opcode) {
         case Opcode::Upcast:
-        case Opcode::Predict:
-        case Opcode::Claim:
-        case Opcode::ClaimRead:
-        case Opcode::ClaimDeclared:
+        case Opcode::Convert:
+        case Opcode::Check:
         case Opcode::CheckInitialized:
         case Opcode::RequireObject:
+        case Opcode::NarrowByField:
         case Opcode::RequireObjectCoercible:
             id = function.at(id).operand(0);
             continue;
@@ -545,6 +558,7 @@ static ASCIILiteral describeObjectsIn(ValueFlowSolution& solution, ValueSetID se
 {
     const ValueFlowUniverse& universe = solution.bodies().universe();
     bool hasUnknownObject = false;
+    bool hasUntrackedObject = false;
     bool hasObjectWithoutLayout = false;
     bool hasSeveralLayouts = false;
     LayoutID first;
@@ -553,6 +567,10 @@ static ASCIILiteral describeObjectsIn(ValueFlowSolution& solution, ValueSetID se
             return;
         if (object == ValueFlowUniverse::unknownObject()) {
             hasUnknownObject = true;
+            return;
+        }
+        if (object == ValueFlowUniverse::untrackedObject()) {
+            hasUntrackedObject = true;
             return;
         }
         LayoutID layout = universe.layoutOf(object);
@@ -565,6 +583,8 @@ static ASCIILiteral describeObjectsIn(ValueFlowSolution& solution, ValueSetID se
     });
     if (hasUnknownObject)
         return "unknown-object"_s;
+    if (hasUntrackedObject)
+        return "untracked-object"_s;
     if (hasObjectWithoutLayout)
         return "object-without-layout"_s;
     if (hasSeveralLayouts)
@@ -625,8 +645,8 @@ static void printCalleeSites(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-// valueflow-families [receivers] [callees] [callee-sites] [pairs=<n>]: for every declared position that names layouts (in any of its parts, with the layouts below them), whether an object arrives there whose layout the position does not name.
-// The unknown object and objects without a layout are counted apart. Then the heaviest pairs (a layout that the position names, the layout that arrives), each with the number of positions and the first of them.
+// valueflow-families [receivers] [callees] [callee-sites] [pairs=<n>]: for every declared position whose type names layouts, whether an object arrives there whose layout is outside that family.
+// The unknown object, the untracked object and objects without a layout are counted apart. Then the heaviest pairs (a layout that the position names, the layout that arrives), each with the number of positions and the first of them.
 // With `receivers`: the accesses by name, by what their receiver may be. With `callees`: the calls whose callee may be the unknown object, by what is expected of the callee;
 // with `callee-sites`: one line for each of them.
 void runValueFlowFamiliesTestCommand(TestCommandContext& context)

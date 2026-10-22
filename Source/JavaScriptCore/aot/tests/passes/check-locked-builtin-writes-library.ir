@@ -3,7 +3,7 @@
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # CHECK: PropSet v0, v1 key="fromRuntime"
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f1
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

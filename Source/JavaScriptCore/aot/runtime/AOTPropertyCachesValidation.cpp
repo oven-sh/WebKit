@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeValidation.h"
@@ -42,9 +43,12 @@ static bool requiresFinishedWalk(Slot::Kind kind)
     case Slot::Kind::CustomGetter:
     case Slot::Kind::CustomSetter:
     case Slot::Kind::Field:
+    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldCreation:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::FieldOrInheritedSetter:
+    case Slot::Kind::InheritedField:
+    case Slot::Kind::FieldOrInheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraProperty:
     case Slot::Kind::ExtraGetter:
@@ -75,8 +79,8 @@ static JSObject* findUnregisteredChainObject(const ChainDependents& dependents, 
     for (JSObject* object = receiverStructure->storedPrototypeObject(); object; object = object->structure()->storedPrototypeObject()) {
         Structure* structure = object->structure();
         bool isHolder = object == found.holder;
-        bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutableProperty(uid);
-        bool canChange = isHolder ? !structure->isImmutableProperty(uid) : canGainProperty || !structure->hasImmutablePrototype();
+        bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
+        bool canChange = isHolder ? !structure->isImmutablePropertyForReader(uid) : canGainProperty || !structure->hasImmutablePrototype();
         if (canChange && !dependents.hasDependents(object))
             return object;
         if (isHolder)
@@ -117,16 +121,20 @@ void VMPropertyCaches::validate(VM& vm) const
     // A collection may end off the mutator's thread, where no identifier can be created.
     const ProgramIdentifiers* identifiers = vm.aotState().identifiers.get();
     m_front.forEachSlot([&](const Slot& slot, uint32_t column, SlotAccess access) {
-        const Identifier* identifier = identifiers && column < identifiers->count() ? identifiers->tryGetIdentifierConcurrently(column) : nullptr;
-        validateSlot(slot, access, identifier ? identifier->impl() : nullptr);
+        validateSlot(slot, access, identifiers && column < identifiers->count() ? identifiers->tryGetIdentifierConcurrently(column) : nullptr);
     });
     m_hashedTable.forEachEntry([&](const HashedSlot& entry) {
         validateSlot(entry.slot, entry.access(), entry.uid());
     });
 }
 
-void PropertyCaches::didFinishCollection(VM& vm, CollectionScope)
+void PropertyCaches::didFinishCollection(VM& vm, CollectionScope scope)
 {
+    {
+        Locker locker { m_state.caches->lock() };
+        m_additionsSinceCollection.shrink(0);
+    }
+    m_shouldForgetMisses.store(true, std::memory_order_relaxed);
     if (!validatesRuntime(vm))
         return;
     if (vm.aotState().instances.first() == &m_state.instance)

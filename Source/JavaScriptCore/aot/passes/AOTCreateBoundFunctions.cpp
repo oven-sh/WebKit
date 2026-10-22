@@ -8,13 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
 #include "AOTCreateEntrypointsInternal.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTFlowResults.h"
-#include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTResultRules.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -23,8 +25,8 @@ static bool canBeBound(FunctionKind kind)
     switch (kind) {
     case FunctionKind::Arrow:
     case FunctionKind::Method:
-        return true;
     case FunctionKind::Plain:
+        return true;
     case FunctionKind::Getter:
     case FunctionKind::Setter:
     case FunctionKind::BaseConstructor:
@@ -45,19 +47,40 @@ bool canCreateBoundFunction(const Program& program, FunctionID targetID)
     return canBeBound(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectly(program, targetID);
 }
 
-static Function createBoundFunctionWithoutBody(FunctionID targetID, uint32_t numberOfBoundArguments, const Function& target, const Function& declared)
+// instanceof asks the target of a bound function. Closures that capture nothing, keep their prototype link and never get a `prototype` or a Symbol.hasInstance of their own all give one answer,
+// so the run time asks the closure that it keeps for the target.
+static bool answersInstanceOfWithAnyClosure(const Program& program, const FlowResults& flow, FunctionID targetID)
+{
+    // Each closure of a function that constructs has a prototype object of its own, which `new` and instanceof on the bound function go by.
+    if (!program.at(targetID).captures.isEmpty() || program.at(targetID).constructorForm() != ConstructorForm::NotConstructor)
+        return false;
+    std::array<PropertyKeyID, 2> keysOfInstanceOf { program.keyOf(BuiltinNames::prototype), program.keyOf(program.builtins().nameOf(WellKnownSymbol::HasInstance)) };
+    return flow.areClosuresAsCreated(targetID, keysOfInstanceOf);
+}
+
+static Function createBoundFunctionWithoutBody(FunctionID targetID, uint32_t numberOfBoundArguments, const Function& target, bool capturesTargetClosure)
 {
     Function bound = createDerivedHeader(target, targetID, FunctionRole::BoundFunction, numberOfBoundArguments);
     bound.length = target.length > numberOfBoundArguments ? target.length - numberOfBoundArguments : 0;
     bound.flags = target.flags & OptionSet<FunctionFlags> { FunctionFlags::IsAsync, FunctionFlags::IsChecked };
-    bound.results = declared.results;
+    bound.results = target.results;
     bound.creator = CreatorRecord::BoundFunction {
         .target = targetID,
         .numberOfBoundArguments = numberOfBoundArguments,
-        .numberOfCapturedArguments = std::min<uint32_t>(numberOfBoundArguments, declared.numberOfPositionalParameters()),
-        .capturesTargetClosure = true,
+        .numberOfCapturedArguments = std::min<uint32_t>(numberOfBoundArguments, target.numberOfPositionalParameters()),
+        .capturesTargetClosure = capturesTargetClosure,
     };
     return bound;
+}
+
+static ValueID addEntryParameter(IRBuilder& builder, BlockID block, const DeclaredType& declared)
+{
+    Function& function = builder.function();
+    TypeID proven = TypingContext { builder.context().program, function, builder.types() }.typeIDOf(declared);
+    ValueID parameter = builder.addParameter(block, proven);
+    if (declared.type != proven)
+        function.edit(parameter).setExpected(declared.type);
+    return parameter;
 }
 
 Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
@@ -70,46 +93,42 @@ Function createBoundFunction(const Program& program, const FlowResults& flow, Ty
     const Function& target = program.at(targetID);
     RELEASE_ASSERT(!target.hasAny(flagsOfUnboundTargets));
 
-    // Unknown code can call the closure, so it declares the types as written, not the types narrowed to the known callers of the target.
-    FunctionID declaredID = versionToEnter(program, flow, targetID, CalleeSetID());
-    const Function& declared = program.at(declaredID);
-
-    Function bound = createBoundFunctionWithoutBody(targetID, numberOfBoundArguments, target, declared);
-    uint32_t numberOfCapturedArguments = bound.creator.as<CreatorRecord::BoundFunction>().numberOfCapturedArguments;
+    Function bound = createBoundFunctionWithoutBody(targetID, numberOfBoundArguments, target, !answersInstanceOfWithAnyClosure(program, flow, targetID));
+    CreatorRecord::BoundFunction record = bound.creator.as<CreatorRecord::BoundFunction>();
 
     IRBuilder builder({ build, program, &flow, nullptr }, bound, types);
     builder.setOrigin({ target.position, 0 });
     BlockID block = builder.addBlock();
     auto addCapture = [&](const DeclaredType& capture) {
         bound.captures.append(capture);
-        return builder.addParameter(block, capture.type);
+        return addEntryParameter(builder, block, capture);
     };
 
     Vector<ValueID, 8> targetCaptures;
-    for (const DeclaredType& capture : declared.captures)
+    for (const DeclaredType& capture : target.captures)
         targetCaptures.append(addCapture(capture));
     ValueID boundThis;
     if (target.has(FunctionFlags::HasThis))
-        boundThis = addCapture(declared.thisType);
+        boundThis = addCapture(target.thisType);
     Vector<ValueID, 8> arguments;
-    for (uint32_t i = 0; i < numberOfCapturedArguments; ++i)
-        arguments.append(addCapture(declared.parameters[i]));
+    for (uint32_t i = 0; i < record.numberOfCapturedArguments; ++i)
+        arguments.append(addCapture(target.parameters[i]));
     // The body does not use the target closure. The run time reads it for instanceof.
-    addCapture(DeclaredType { .type = TypeTable::function });
-    for (size_t i = numberOfCapturedArguments; i < declared.parameters.size(); ++i) {
-        bound.parameters.append(declared.parameters[i]);
-        arguments.append(builder.addParameter(block, declared.parameters[i].type));
+    if (record.capturesTargetClosure)
+        addCapture(DeclaredType { .type = TypeTable::function });
+    for (size_t i = record.numberOfCapturedArguments; i < target.parameters.size(); ++i) {
+        bound.parameters.append(target.parameters[i]);
+        arguments.append(addEntryParameter(builder, block, target.parameters[i]));
     }
 
     builder.moveToEndOf(block);
     ValueID result = appendDirectCall(builder, {
-        .callee = declaredID,
+        .callee = targetID,
         .captures = targetCaptures.span(),
         .thisValue = boundThis,
         .arguments = arguments.span(),
-        .resultCheck = resultCheckOf(flow, declaredID),
     });
-    emitReturnOfEntrypointCall(builder, flow, declaredID, result);
+    emitReturnOfEntrypointCall(builder, result);
     return bound;
 }
 

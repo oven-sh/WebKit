@@ -13,7 +13,7 @@ layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=A
 layout L2 name="AlsoUnrelated"
 layout L3 name="Empty" flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 layout L4 kind=Instance name="Computed" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="x" kind=Getter function=f2 mutability=Fixed}]}
-layout L5 kind=Instance name="SubComputed" predictedBase=L4 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L4 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
+layout L5 kind=Instance name="SubComputed" base=L4 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L4 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
 
 function f0 name="Computed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 function f1 name="SubComputed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
@@ -23,118 +23,117 @@ function f2 name="x" kind=Getter flags=[HasThis] thisType={type=anything} result
     Return v1
 }
 
-function f3 name="field-then-absent" parameters=[{type=object predicted=L1|L3}] results=[{type=anything}] {
-  b0(v0: object ~ L1|L3):
+function f3 name="field-then-absent" parameters=[{type=L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L3):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # FIRST-LABEL: function f3 name="field-then-absent"
 # FIRST-NEXT: b0(
-# FIRST-NEXT: [[first3]]: boolean = ShapeTest v0 layouts=[L1]
+# FIRST-NEXT: [[first3]]: boolean{{*}}= TypeTest v0 testedType=L1
 # FIRST-NEXT: Branch [[first3]] -> taken
-# FIRST: = GetSlot v0, [[guard3]] key="x" receivers=[L1] level=Predicted
+# FIRST: = GetSlot [[object3]], [[guard3]] key="x" receivers=[L1] level=Expected
 # FIRST: frequency=Unlikely:
 # FIRST-NEXT: = PropGet v0 key="x"
-# FIRST-NOT: ShapeTest
+# FIRST-NOT: TypeTest
 # SECOND-LABEL: function f3 name="field-then-absent"
 # SECOND-NEXT: b0(
-# SECOND-NEXT: = ShapeTest v0 layouts=[L1]
-# SECOND: = GetSlot v0, [[guard3]] key="x" receivers=[L1] level=Predicted
+# SECOND-NEXT: = TypeTest v0 testedType=L1
+# SECOND: = GetSlot [[object3]], [[guard3]] key="x" receivers=[L1] level=Expected
 # SECOND: frequency=Unlikely:
-# SECOND-NEXT: [[second3]]: boolean = ShapeTest v0 layouts=[L3]
+# SECOND-NEXT: [[second3]]: boolean{{*}}= TypeTest v0 testedType=L3
 # SECOND-NEXT: Branch [[second3]] -> taken
 # SECOND: = Undefined
 # SECOND: frequency=Rare:
 # SECOND-NEXT: = PropGet v0 key="x"
-# SECOND-NOT: ShapeTest
-function f4 name="first-arm-needs-two-tests" parameters=[{type=object predicted=L1|L3}] results=[{type=anything}] {
-  b0(v0: object ~ L1|L3):
+# SECOND-NOT: TypeTest
+function f4 name="first-arm-also-tests-the-slot" parameters=[{type=L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L3):
     v1 = PropGet v0 key="y"
     Return v1
 }
-# FIRST-LABEL: function f4 name="first-arm-needs-two-tests"
-# FIRST: = ShapeTest v0 layouts=[L1]
+# FIRST-LABEL: function f4 name="first-arm-also-tests-the-slot"
+# FIRST: = TypeTest v0 testedType=L1
 # FIRST: frequency=Unlikely:
 # FIRST-NEXT: = PropGet v0 key="y"
-# FIRST: = IsSlotFilled v0, [[shape4]] key="y" receivers=[L1] level=Predicted
-# FIRST-NOT: ShapeTest
-# SECOND-LABEL: function f4 name="first-arm-needs-two-tests"
-# SECOND: = ShapeTest v0 layouts=[L1]
+# FIRST: = IsSlotFilled [[object4]], {{*}} key="y" receivers=[L1] level=Expected [holdsDeclaredType]
+# FIRST-NOT: TypeTest
+# SECOND-LABEL: function f4 name="first-arm-also-tests-the-slot"
+# SECOND: = TypeTest v0 testedType=L1
 # SECOND: frequency=Unlikely:
-# SECOND-NEXT: [[second4]]: boolean = ShapeTest v0 layouts=[L3]
+# SECOND-NEXT: [[second4]]: boolean{{*}}= TypeTest v0 testedType=L3
 # SECOND-NEXT: Branch [[second4]] -> taken
 # SECOND: = Undefined
 # SECOND: frequency=Rare:
 # SECOND-NEXT: = PropGet v0 key="y"
-function f5 name="field-then-getter" parameters=[{type=object predicted=L1|L4}] results=[{type=anything}] {
-  b0(v0: object ~ L1|L4):
+function f5 name="field-then-getter" parameters=[{type=L1|L4 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L4):
     v1 = PropGet v0 key="x"
     Return v1
 }
+# A field and a getter are tested for together, and nothing that has failed that test is tested for either of them.
 # FIRST-LABEL: function f5 name="field-then-getter"
-# FIRST: = ShapeTest v0 layouts=[L1]
-# FIRST: = GetSlot v0, [[guard5]] key="x" receivers=[L1] level=Predicted
-# FIRST-NOT: ShapeTest
+# FIRST: = TypeTest v0 testedType=L1|L4
+# FIRST: : L1|L4):
+# FIRST-NEXT: = PropGet {{*}} key="x"
+# FIRST-NOT: TypeTest
 # SECOND-LABEL: function f5 name="field-then-getter"
-# SECOND: = ShapeTest v0 layouts=[L1]
+# SECOND: = TypeTest v0 testedType=L1|L4
+# SECOND-NOT: TypeTest
 # SECOND: frequency=Unlikely:
-# SECOND-NEXT: [[second5]]: boolean = ShapeTest v0 layouts=[L4]
-# SECOND-NEXT: Branch [[second5]] -> taken
-# SECOND: = CallDirect v0 function=f2
-# SECOND: frequency=Rare:
 # SECOND-NEXT: = PropGet v0 key="x"
-function f6 name="getter-then-field" parameters=[{type=object predicted=L1|L4|L5}] results=[{type=anything}] {
-  b0(v0: object ~ L1|L4|L5):
+# SECOND-NOT: TypeTest
+function f6 name="getter-then-field" parameters=[{type=L1|L4|L5 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L4|L5):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # FIRST-LABEL: function f6 name="getter-then-field"
-# FIRST: = ShapeTest v0 layouts=[L4, L5]
-# FIRST: = CallDirect v0 function=f2
-# FIRST-NOT: ShapeTest
+# FIRST: = TypeTest v0 testedType=L1|L4|L5
+# FIRST: : L1|L4|L5):
+# FIRST-NEXT: = PropGet {{*}} key="x"
+# FIRST-NOT: TypeTest
 # SECOND-LABEL: function f6 name="getter-then-field"
-# SECOND: = ShapeTest v0 layouts=[L4, L5]
+# SECOND: = TypeTest v0 testedType=L1|L4|L5
+# SECOND-NOT: TypeTest
 # SECOND: frequency=Unlikely:
-# SECOND-NEXT: [[second6]]: boolean = ShapeTest v0 layouts=[L1]
-# SECOND-NEXT: Branch [[second6]] -> taken
-# SECOND: = GetSlot v0, [[guard6]] key="x" receivers=[L1] level=Predicted
-# SECOND: frequency=Rare:
 # SECOND-NEXT: = PropGet v0 key="x"
-function f7 name="third-shape-stays-by-name" parameters=[{type=object predicted=L1|L3|L4}] results=[{type=anything}] {
-  b0(v0: object ~ L1|L3|L4):
+# SECOND-NEXT: Return
+function f7 name="third-shape-stays-by-name" parameters=[{type=L1|L3|L4 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L3|L4):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # FIRST-LABEL: function f7 name="third-shape-stays-by-name"
 # THIRD-LABEL: function f7 name="third-shape-stays-by-name"
-# THIRD: = ShapeTest v0 layouts=[L1]
-# THIRD: = ShapeTest v0 layouts=[L3]
-# THIRD-NOT: ShapeTest
+# THIRD: = TypeTest v0 testedType=L1
+# THIRD: = TypeTest v0 testedType=L4
+# THIRD-NOT: TypeTest
 # THIRD: frequency=Rare:
 # THIRD-NEXT: = PropGet v0 key="x"
-# THIRD-NOT: ShapeTest
-function f8 name="one-shape" parameters=[{type=object predicted=L1}] results=[{type=anything}] {
-  b0(v0: object ~ L1):
+# THIRD-NOT: TypeTest
+function f8 name="one-shape" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # THIRD-LABEL: function f8 name="one-shape"
 # SECOND-LABEL: function f8 name="one-shape"
-# SECOND: = ShapeTest v0 layouts=[L1]
-# SECOND-NOT: ShapeTest
+# SECOND: = TypeTest v0 testedType=L1
+# SECOND-NOT: TypeTest
 # SECOND: frequency=Unlikely:
 # SECOND-NEXT: = PropGet v0 key="x"
-# SECOND-NOT: ShapeTest
-function f9 name="other-arm-is-not-resolved" parameters=[{type=object predicted=L1|L3}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ~ L1|L3, v1: number):
+# SECOND-NOT: TypeTest
+function f9 name="other-arm-is-not-resolved" parameters=[{type=L1|L3 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L3, v1: number):
     PropSet v0, v1 key="x"
     Return
 }
 # SECOND-LABEL: function f9 name="other-arm-is-not-resolved"
-# SECOND: = ShapeTest v0 layouts=[L1]
-# SECOND-NOT: ShapeTest
-# SECOND: PutSlot v0, [[guard9]], v1 key="x" receivers=[L1] level=Predicted
-# SECOND-NOT: ShapeTest
+# SECOND: = TypeTest v0 testedType=L1
+# SECOND-NOT: TypeTest
+# SECOND: PutSlot [[object9]], [[guard9]], v1 key="x" receivers=[L1] level=Expected
+# SECOND-NOT: TypeTest
 # SECOND: frequency=Unlikely:
 # SECOND-NEXT: PropSet v0, v1 key="x"
-# SECOND-NOT: ShapeTest
+# SECOND-NOT: TypeTest

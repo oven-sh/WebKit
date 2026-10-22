@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
@@ -198,6 +199,8 @@ private:
         AOT_TEST_CHECK(equality.result == static_cast<uint64_t>(!order));
         bool comparesCharacters = first.size() == second.size() && m_first.impl() != m_second.impl();
         AOT_TEST_CHECK(equality.numberOfLeafCalls == (comparesCharacters && (!haveSameWidth || first.size() > maxLengthComparedWithoutCall)));
+        Answer equalityOfDistinctCells = runWithoutOperation(distinctStringsAreEqual(), m_first.address(), m_second.address());
+        AOT_TEST_CHECK(equalityOfDistinctCells.result == equality.result && equalityOfDistinctCells.numberOfLeafCalls == equality.numberOfLeafCalls);
         for (bool isStrict : { false, true }) {
             Answer answer = runWithoutOperation(JSC::AOT::equal(isStrict), m_first.address(), m_second.address());
             AOT_TEST_CHECK(answer.result == equality.result && answer.numberOfLeafCalls == equality.numberOfLeafCalls);
@@ -371,6 +374,7 @@ static void testRopes()
     const std::pair<const FakeString*, const FakeString*> pairsOfSameLength[] = { { &flat, &rope }, { &rope, &flat }, { &rope, &otherRope } };
     for (auto [first, second] : pairsOfSameLength) {
         checkLeftToOperation(stubs.runner(), stringsAreEqual(), Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 });
+        checkLeftToOperation(stubs.runner(), distinctStringsAreEqual(), Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 });
         checkLeftToOperation(stubs.runner(), compareStrings(), Entry::operationAOTCompareStrings, *first, *second, { static_cast<uint64_t>(-1), 0, 1 });
     }
 
@@ -388,13 +392,14 @@ struct CaseConversion {
     Entry operation;
     char16_t firstConvertedLetter;
     char16_t lastConvertedLetter;
+    StringKeyCache::LetterCase letterCase;
 
     StubKey call() const { return callOperationFor(operation, OperationCall::Returns::Value, OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(operation)); }
 };
 
 constexpr CaseConversion caseConversions[] = {
-    { Entry::operationAOTStringToLowerCase, 'A', 'Z' },
-    { Entry::operationAOTStringToUpperCase, 'a', 'z' },
+    { Entry::operationAOTStringToLowerCase, 'A', 'Z', StringKeyCache::LetterCase::Lower },
+    { Entry::operationAOTStringToUpperCase, 'a', 'z', StringKeyCache::LetterCase::Upper },
 };
 
 class CaseConversionCalls {
@@ -415,6 +420,47 @@ public:
         else
             AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == string && run.result == resultOfOperation);
         m_runner.countCallsOf(conversion.operation);
+    }
+
+    // What the conversion of a string has given is found by the address of the string, for that conversion alone.
+    void checkRemembered(const CaseConversion& conversion, const CaseConversion& otherConversion)
+    {
+        constexpr uint32_t converted = 0x1234;
+        std::array<uint64_t, StringKeyCache::numberOfCaseConversions> remembered { };
+        Instance& instance = m_runner.instance();
+        const uintptr_t formerCageBase = instance.cellCageBase;
+        m_string.set(Units { 'x', conversion.firstConvertedLetter }, CharacterWidth::Is8Bit, Placement::AtStartOfPage);
+        const uint64_t string = m_string.address();
+        const uintptr_t cageBase = MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(string)));
+        const uint32_t source = static_cast<uint32_t>((string - cageBase) >> MarkedBlockCage::shift);
+        uint64_t& entry = remembered[StringKeyCache::indexOfCaseConversion(source, conversion.letterCase)];
+        auto isRemembered = [&] {
+            m_runner.recordCallsOf(conversion.operation);
+            StubRun run = m_runner.runOperationCall(conversion.call(), { string });
+            m_runner.countCallsOf(conversion.operation);
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 || run.result == instance.cellCageBase + (static_cast<uint64_t>(converted) << MarkedBlockCage::shift));
+            return !run.numberOfRecordedCalls;
+        };
+
+        instance.cellCageBase = cageBase;
+        AOT_TEST_CHECK(!isRemembered());
+        instance.realm.caseConversions = remembered.data();
+        AOT_TEST_CHECK(!isRemembered());
+        entry = static_cast<uint64_t>(source) << 32 | converted;
+        AOT_TEST_CHECK(isRemembered());
+        entry = static_cast<uint64_t>(source + 1) << 32 | converted;
+        AOT_TEST_CHECK(!isRemembered());
+        entry = 0;
+        remembered[StringKeyCache::indexOfCaseConversion(source, otherConversion.letterCase)] = static_cast<uint64_t>(source) << 32 | converted;
+        AOT_TEST_CHECK(!isRemembered());
+
+        // A string outside the cage whose address ends like that of a string inside.
+        entry = static_cast<uint64_t>(source) << 32 | converted;
+        instance.cellCageBase = cageBase - MarkedBlockCage::maxSize;
+        AOT_TEST_CHECK(!isRemembered());
+
+        instance.cellCageBase = formerCageBase;
+        instance.realm.caseConversions = nullptr;
     }
 
     void check(const CaseConversion& conversion, const Units& units, CharacterWidth width, bool isAnsweredWithoutOperation)
@@ -475,6 +521,13 @@ static void testCaseConversionOfRopes()
         calls.check(conversion, rope.address(), false);
 }
 
+static void testCaseConversionsRemembered()
+{
+    CaseConversionCalls calls;
+    calls.checkRemembered(caseConversions[0], caseConversions[1]);
+    calls.checkRemembered(caseConversions[1], caseConversions[0]);
+}
+
 namespace {
 
 // Every entry of the hashed cache has one key, so a probe hits whatever the hash is.
@@ -502,6 +555,16 @@ public:
         }
     }
 
+    void cacheIntegerKey(uint32_t key, uint32_t cell)
+    {
+        Instance& instance = m_runner.instance();
+        instance.realm.integerKeys = m_integerKeys.data();
+        instance.realm.integerKeyMask = m_integerKeys.size() - 1;
+        m_integerKeys[key & instance.realm.integerKeyMask] = static_cast<uint64_t>(key) << 32 | cell;
+    }
+
+    JSString* cellOfIntegerKey(uint32_t cell) { return std::bit_cast<JSString*>(MarkedBlockCage::decode(m_runner.instance().cellCageBase, cell)); }
+
     void checkIsFound(int64_t integer, JSString* cell)
     {
         StubRun run = m_runner.run(integerToString(), { static_cast<uint64_t>(integer) });
@@ -520,6 +583,7 @@ private:
     StubRunner m_runner;
     std::array<NumericStrings::StringWithJSString, NumericStrings::cacheSize> m_smallIntegers { };
     std::array<NumericStrings::CacheEntryWithJSString<int>, NumericStrings::cacheSize> m_integers { };
+    std::array<uint64_t, 8> m_integerKeys { };
 };
 
 } // anonymous namespace
@@ -546,6 +610,35 @@ static void testIntegersOutsideTheCaches()
     strings.checkIsLeftToOperation(firstIntegerInHashedCache);
 }
 
+static void testIntegerKeys()
+{
+    IntegerStrings strings;
+    constexpr uint32_t cell = 0x345678;
+    constexpr uint32_t otherCell = 0x345680;
+    uint32_t key = static_cast<uint32_t>(firstIntegerInHashedCache) + 3;
+    strings.checkIsLeftToOperation(key);
+    strings.cacheIntegerKey(key, cell);
+    strings.checkIsFound(key, strings.cellOfIntegerKey(cell));
+    strings.checkIsLeftToOperation(key + 8);
+    strings.checkIsLeftToOperation(key + 1);
+    strings.checkIsLeftToOperation(static_cast<int64_t>(key) | int64_t { 1 } << 32);
+    strings.checkIsLeftToOperation(-static_cast<int64_t>(key));
+    strings.checkIsFound(3, IntegerStrings::cellOfSmallInteger(3));
+
+    strings.cache(static_cast<int32_t>(key), IntegerStrings::cachedCell());
+    strings.checkIsFound(key, strings.cellOfIntegerKey(cell));
+    strings.cacheIntegerKey(key + 8, otherCell);
+    strings.checkIsFound(key + 8, strings.cellOfIntegerKey(otherCell));
+    strings.checkIsFound(key, IntegerStrings::cachedCell());
+    strings.cacheIntegerKey(key, 0);
+    strings.checkIsFound(key, IntegerStrings::cachedCell());
+    strings.cacheIntegerKey(INT32_MAX, cell);
+    strings.checkIsFound(INT32_MAX, strings.cellOfIntegerKey(cell));
+    strings.cache(0, nullptr);
+    strings.checkIsLeftToOperation(INT32_MIN);
+    strings.checkIsLeftToOperation(-1);
+}
+
 // The low half of each is a key that the caches hold.
 static void testIntegersBeyondInt32()
 {
@@ -570,9 +663,11 @@ std::span<const NativeTest> stubStringTests()
         { "stubs/integer-to-string-cached-integers"_s, ImageTests::whenExecutable<testCachedIntegers> },
         { "stubs/integer-to-string-integers-outside-the-caches"_s, ImageTests::whenExecutable<testIntegersOutsideTheCaches> },
         { "stubs/integer-to-string-integers-beyond-int32"_s, ImageTests::whenExecutable<testIntegersBeyondInt32> },
+        { "stubs/integer-to-string-integer-keys"_s, ImageTests::whenExecutable<testIntegerKeys> },
         { "stubs/string-case-conversion-of-every-unit"_s, ImageTests::whenExecutable<testCaseConversionOfEveryUnit> },
         { "stubs/string-case-conversion-at-every-position"_s, ImageTests::whenExecutable<testCaseConversionAtEveryPosition> },
         { "stubs/string-case-conversion-of-ropes"_s, ImageTests::whenExecutable<testCaseConversionOfRopes> },
+        { "stubs/string-case-conversions-remembered"_s, ImageTests::whenExecutable<testCaseConversionsRemembered> },
         { "stubs/string-comparison-difference-at-every-position"_s, ImageTests::whenExecutable<testDifferenceAtEveryPosition> },
         { "stubs/string-comparison-difference-in-last-unit-only"_s, ImageTests::whenExecutable<testDifferenceInLastUnitOnly> },
         { "stubs/string-comparison-common-prefixes"_s, ImageTests::whenExecutable<testCommonPrefixes> },

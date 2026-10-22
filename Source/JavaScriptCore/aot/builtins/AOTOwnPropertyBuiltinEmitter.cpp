@@ -43,7 +43,7 @@ public:
         static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
         ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
         const B3::AbstractHeap& heap = key == KeyListKey::Shape ? m_heaps.entire(AbstractHeap::RuntimeState) : m_heaps.collectorState;
-        Word32 shapeWord = key == KeyListKey::Shape ? shapeTests.shapeWordOf(object, LayoutSetID()) : shiftRightUnsigned(loadStructureID(object), word32(1));
+        Word32 shapeWord = key == KeyListKey::Shape ? shapeTests.shapeWordOf(object) : shiftRightUnsigned(loadStructureID(object), word32(1));
         Word32 objectOrderWord = shapeTests.orderWordOf(object);
         Integer index = zeroExtended(bitAnd(add(shapeWord, objectOrderWord), word32(numberOfKeyLists - 1)));
         LValue entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.keyLists)), index, 4).value();
@@ -66,7 +66,7 @@ public:
 
     Condition isCompiledObject(CellPointer cell)
     {
-        return hasBits(emitter<ShapeTestEmitter>().shapeWordOf(cell, LayoutSetID()), compiledObjectShapeBit);
+        return hasBits(emitter<ShapeTestEmitter>().shapeWordOf(cell), compiledObjectShapeBit);
     }
 
 private:
@@ -100,10 +100,30 @@ OwnPropertyBuiltinEmitter::OwnPropertyBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
+Boxed OwnPropertyBuiltinEmitter::firstArgumentOrUndefined(const InlineCall& call)
+{
+    ValueID argument = call.argumentOrNull(0);
+    return argument ? boxedOperand(call.context(), argument) : undefined();
+}
+
+void OwnPropertyBuiltinEmitter::generateObjectValues(const InlineCall& call)
+{
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectValues, { firstArgumentOrUndefined(call) }));
+}
+
+void OwnPropertyBuiltinEmitter::generateObjectEntries(const InlineCall& call)
+{
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectEntries, { firstArgumentOrUndefined(call) }));
+}
+
 void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
 {
     static_assert(sizeof(OptionSet<CompiledStructure::Flag>) == 1);
     OwnKeysKind kind = call.parameter<OwnKeysKind>(0);
+    if (!call.canMiss()) {
+        finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
+        return;
+    }
     ValueID argument = call.argument(0);
     const Type& type = typeOf(argument);
     KeyListReader reader(generator());
@@ -135,7 +155,7 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
         lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), KeyListKey::Structure));
     };
     bool mayBeCompiledObject = type.anyObject || type.layouts;
-    if (!listsSymbols && type.hasOnlyLayouts())
+    if (!listsSymbols && type.hasOnlyLayouts(m_program))
         listCompiledObjectKeys();
     else {
         B3::FrequentedBlock isNotCachedOnStructure = mayBeCompiledObject ? unlikelyEdge(newBlock()) : rareEdge(outOfLine);

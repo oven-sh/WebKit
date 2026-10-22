@@ -62,7 +62,7 @@ static uint32_t parseIDWordBelow(TextParser& parser, IDPrefix prefix, uint32_t l
 
 static bool hasAnyField(const ValueEngineFields& fields)
 {
-    return fields.typeWord != Wire::none || fields.writtenWord != Wire::none || fields.predictionWord != Wire::none || fields.representation;
+    return fields.typeWord != Wire::none || fields.expectedWord != Wire::none || fields.representation;
 }
 
 static bool isAtTerminator(const TextParser& parser)
@@ -238,7 +238,7 @@ void TextParser::parseValue()
     overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode), origin.position });
     if (engineFlags || origin.inlineFrame) {
         addPatch([function = m_body.function, id, engineFlags, inlineFrame = origin.inlineFrame](PatchContext& context) {
-            Value& value = context.program.at(function).at(id);
+            Value& value = context.program.at(function).edit(id);
             value.flags |= engineFlags;
             value.inlineFrame = inlineFrame;
         });
@@ -252,10 +252,8 @@ void TextParser::parseEngineValueFields(ValueEngineFields& fields)
         SetForScope layoutsAreExact(m_layoutsAreExact, true);
         if (accept(TokenKind::Colon))
             fields.typeWord = parseTypeWord();
-        if (accept(TokenKind::Question))
-            fields.writtenWord = parseTypeWord();
         if (accept(TokenKind::Tilde))
-            fields.predictionWord = parseTypeWord();
+            fields.expectedWord = parseTypeWord();
     }
     if (accept(TokenKind::At))
         fields.representation = parseEnumerator<Representation>();
@@ -286,7 +284,7 @@ void TextParser::parseTerminator()
     overwriteRecord(code(), headPosition, Wire::TerminatorHead { static_cast<uint32_t>(kind), origin.position, static_cast<uint32_t>(targetNames.size()) });
     if (origin.inlineFrame) {
         addPatch([function = m_body.function, block = m_body.block, inlineFrame = origin.inlineFrame](PatchContext& context) {
-            context.program.at(function).at(block).terminator.inlineFrame = inlineFrame;
+            context.program.at(function).edit(block).terminator.inlineFrame = inlineFrame;
         });
     }
     expectEndOfLine();

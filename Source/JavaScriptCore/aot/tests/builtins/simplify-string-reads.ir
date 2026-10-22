@@ -1,4 +1,4 @@
-# charCodeAt at a position that a comparison with the length of the same string puts inside the string is a code unit, an integer. At any other integer the read gets that comparison: the code unit on one path, NaN on an unlikely one. At a number that may be no integer, in unlikely code and on a range of a string the call stays
+# charCodeAt at a position that a comparison with the length of the same string puts inside the string is a code unit, an integer. At any other integer the read gets that comparison: the code unit on one path, NaN on an unlikely one. In unlikely code and on a range of a string the call stays
 # FORM: Prepared optimizing
 # RUN: pass SimplifyBuiltinCalls
 
@@ -127,42 +127,23 @@ function f5 name="positionMayBeNegative" parameters=[{type=string}, {type=int[-1
 }
 # CHECK-LABEL: function f5 name="positionMayBeNegative"
 # CHECK-NOT: GetStringCodeUnit v0, v1
-# CHECK: [[isNotNegative5]]: boolean = LessEq {{*}}, v1
-# CHECK-NEXT: Branch [[isNotNegative5]] -> taken [[notNegative5]](| 1), notTaken
-# CHECK: [[notNegative5]]([[atLeastZero5]]: int[0, 100]):
-# CHECK: = Less [[atLeastZero5]],
-# CHECK: = Double number=NaN
+# CHECK: [[unsigned5]]: int[0, 4294967295] = URShift v1,
+# CHECK: = Less [[unsigned5]],
 # CHECK: = Double number=NaN
 
-function f6 name="positionIsNoInteger" parameters=[{type=string}, {type=number}] results=[{type=number}] {
-  b0(v0: string, v1: number):
-    v2 = GetStringLength v0
-    v3 = Less v1, v2
-    Branch v3 -> taken b1(), notTaken b2()
-  b1():
-    v4 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
-    Return v4
-  b2():
-    v5 = Integer
-    Return v5
-}
-# CHECK-LABEL: function f6 name="positionIsNoInteger"
-# CHECK-NOT: GetStringCodeUnit
-# CHECK: v4: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
-
-function f7 name="untestedPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
+function f6 name="untestedPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
   b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     v4 = Add v2, v3
     Return v4
 }
-# CHECK-LABEL: function f7 name="untestedPosition"
+# CHECK-LABEL: function f6 name="untestedPosition"
 # CHECK-NOT: GetStringCodeUnit v0, v1
 # CHECK: = Less v1,
 # CHECK: = Double number=NaN
 
-function f8 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
+function f7 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
   b0(v0: string, v1: int[0, 100], v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -172,19 +153,19 @@ function f8 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]},
     v4 = Integer
     Return v4
 }
-# CHECK-LABEL: function f8 name="inUnlikelyCode"
+# CHECK-LABEL: function f7 name="inUnlikelyCode"
 # CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
 
-function f9 name="readOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
+function f8 name="readOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
   b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
     v3 = Substring v0, v1, v2
     v4 = CallBuiltin v3, v1 overload=StringPrototypeCharCodeAt/0
     Return v4
 }
-# CHECK-LABEL: function f9 name="readOfARange"
+# CHECK-LABEL: function f8 name="readOfARange"
 # CHECK: v4: number = CallBuiltin v3, v1 overload=StringPrototypeCharCodeAt/0
 
-function f10 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
+function f9 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
   b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: int[0, 100]):
     v4 = Substring v0, v1, v2
     v5 = GetStringLength v4
@@ -197,5 +178,5 @@ function f10 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 1
     v8 = Integer
     Return v8
 }
-# CHECK-LABEL: function f10 name="provenReadOfARange"
+# CHECK-LABEL: function f9 name="provenReadOfARange"
 # CHECK: v7: number = CallBuiltin v4, v3 overload=StringPrototypeCharCodeAt/0

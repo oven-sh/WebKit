@@ -1,0 +1,89 @@
+# The sets of the analysis know numbers by kind alone: a sum or a product of numbers without a fraction has none, and any other is any number. Which numbers arrive at a variable is asked of the proven types of the values that are stored to it,
+# and of what was found about the variables that those values are computed from: `next` is an integer because `length` is one.
+# A fraction, NaN and -0 stay in the type beside the integers, and a product of integers, which may be -0 or leave the integers, is a number without a fraction. Half of an integer is any number. 2 ** 31 is an integer outside int32. A variable that evaluated text may store to says nothing
+# RUN: valueflow-apply
+# CHECK: variable g0 name="length" {{*}}declared={type=i32}
+# CHECK: variable g1 name="next" {{*}}declared={type=int[-2147483647, 2147483648]}
+# CHECK: variable g2 name="afterNext" {{*}}declared={type=int[-2147483645, 2147483650]}
+# CHECK: variable g3 name="fraction" {{*}}declared={type=i32|fractional}
+# CHECK: variable g4 name="notANumber" {{*}}declared={type=i32|whole}
+# CHECK: variable g5 name="negativeZero" {{*}}declared={type=i32|whole}
+# CHECK: variable g6 name="beyondInt32" {{*}}declared={type=int[-2147483648, 2147483648]}
+# CHECK: variable g7 name="product" {{*}}declared={type=int|whole}
+# CHECK: variable g8 name="bound" {{*}}declared={type=number|absent flags=[IsExpected]}
+# CHECK: variable g9 name="half" {{*}}declared={type=number}
+# CHECK-LABEL: function f1 name="reader"
+# CHECK: : i32 = GetModuleVariable variable=g0
+# CHECK: : int[-2147483647, 2147483648] = GetModuleVariable variable=g1
+# CHECK: : i32|fractional = GetModuleVariable variable=g3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="length" module=m0 declared={type=number|absent}
+variable g1 name="next" module=m0 declared={type=number|absent}
+variable g2 name="afterNext" module=m0 declared={type=number|absent}
+variable g3 name="fraction" module=m0 declared={type=number|absent}
+variable g4 name="notANumber" module=m0 declared={type=number|absent}
+variable g5 name="negativeZero" module=m0 declared={type=number|absent}
+variable g6 name="beyondInt32" module=m0 declared={type=number|absent}
+variable g7 name="product" module=m0 declared={type=number|absent}
+variable g8 name="bound" module=m0 declared={type=number|absent}
+variable g9 name="half" module=m0 declared={type=number|absent}
+evalscope e0 bindings=[{name="bound" variable=g8}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    PutModuleVariable v4 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="length"
+    v8 = Integer integer=1
+    v9 = Add v7, v8
+    PutModuleVariable v9 variable=g1
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="next"
+    v13 = Integer integer=2
+    v14 = Add v12, v13
+    PutModuleVariable v14 variable=g2
+    PutModuleVariable v4 variable=g3
+    v17 = Double number=0.5
+    PutModuleVariable v17 variable=g3
+    PutModuleVariable v4 variable=g4
+    v20 = Double number=NaN
+    PutModuleVariable v20 variable=g4
+    PutModuleVariable v4 variable=g5
+    v23 = Double number=-0
+    PutModuleVariable v23 variable=g5
+    PutModuleVariable v4 variable=g6
+    v26 = Integer integer=2147483648
+    PutModuleVariable v26 variable=g6
+    v28 = Mul v7, v7
+    PutModuleVariable v28 variable=g7
+    v30 = Mul v7, v17
+    PutModuleVariable v30 variable=g9
+    PutModuleVariable v4 variable=g8
+    v33 = NewClosure function=f1
+    v34 = Call v33
+    v35 = Builtin builtin=GlobalThis
+    v36 = PropGet v35 key="input" [isFreeName]
+    v37 = Undefined
+    v38 = DirectEval v36, v37 evalScope=e0
+    Return v34
+}
+function f1 name="reader" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8 contents=anything holes=[]
+    Return v9
+}

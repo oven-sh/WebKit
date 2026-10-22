@@ -1,0 +1,21 @@
+# A run that only checks refuses what the analysis of the flow of values refuses: a store to Math.floor that every run of the program reaches. It emits no code and makes no image
+# RUN: compile CodeBytesEmitted
+# OPTIONS: check-only
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# CHECK: diagnostic LockedBuiltinWriteAlwaysRuns
+# CHECK: image empty
+# CHECK: statistic CodeBytesEmitted 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="floor" mode=Strict @10
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+  b0():
+    Return
+}

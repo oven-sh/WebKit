@@ -3,8 +3,8 @@
 # RUN: derived-functions AllocatedThisVersion:f3 AllocatedThisVersion:f4
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Shape" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None members=[L0, L1] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L1 kind=Instance name="Circle" module=m0 predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L0 kind=Instance name="Shape" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None members=[L0, L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Circle" module=m0 base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 
 function f0 name="main" results=[{type=undefined}] {
   b0():
@@ -20,7 +20,7 @@ function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
 function f2 name="Circle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] constructedClass=L1 {
   b0(v0: function, v1: anything, v2: number):
     v3 = GetSuperBase v0
-    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f1] [keepsShape]
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f1]
     Return v4
 }
 function f3 name="Shape" kind=BaseConstructor role=GenericVersion flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
@@ -33,7 +33,7 @@ function f3 name="Shape" kind=BaseConstructor role=GenericVersion flags=[HasNewT
 function f4 name="Circle" kind=DerivedConstructor role=GenericVersion flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f2} constructedClass=L1 {
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
-    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f3] [keepsShape]
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f3]
     Return v4
 }
 

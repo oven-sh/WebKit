@@ -8,45 +8,50 @@
 
 #define FOR_EACH_AOT_OPCODE(v) \
     v(Undefined) v(Null) v(Absent) v(Boolean) v(Integer) v(Double) v(String) v(BigInt) v(Builtin) v(ModuleBuiltin) v(Data) v(NewClosure) \
-    v(GetModuleVariable) v(PutModuleVariable) v(GetEnvironmentField) v(PutEnvironmentField) v(ScopeHasBinding) v(NewObject) v(FinishObject) \
-    v(NewArray) v(AppendElement) v(AppendSpread) v(AppendHole) v(NewRegExp) v(NewTemplateObject) v(NewRuntimeError) v(NewSuppressedError) \
-    v(CreateUnmappedArguments) v(CreateMappedArguments) v(GetMappedArgument) v(SetMappedArgument) v(PropGet) v(PropSet) v(PropDefine) v(PropHas) \
-    v(PropDelete) v(ElemGet) v(ElemSet) v(ElemHas) v(ElemDelete) v(ElemDefine) v(DefineGetter) v(DefineSetter) v(SetFunctionName) \
-    v(SetLiteralPrototype) v(CopyDataProperties) v(GetSuperBase) v(SuperGet) v(SuperSet) v(Add) v(Sub) v(Mul) v(Div) v(Mod) v(Pow) v(BitAnd) \
-    v(BitOr) v(BitXor) v(LShift) v(RShift) v(URShift) v(Negate) v(ToNumeric) v(Increment) v(Decrement) v(BitNot) v(ToNumber) v(Less) v(LessEq) \
-    v(Greater) v(GreaterEq) v(Eq) v(StrictEq) v(InstanceOf) v(ToBoolean) v(LogicalNot) v(TypeOf) v(ToString) v(Strcat) v(ToPropertyKey) v(ToObject) \
-    v(ToThis) v(Upcast) v(Claim) v(ClaimDeclared) v(ClaimRead) v(Predict) v(CheckInitialized) v(RequireObjectCoercible) v(RequireObject) v(TypeTest) \
-    v(Call) v(Construct) v(CallList) v(ConstructList) v(CallDirect) v(Results) v(ResultAt) v(CatchValue) v(CatchException) v(LoopHint) \
-    v(ResolveHeritage) v(NewClass) v(GetClassPrototype) v(DefineMethod) v(FinishClass) v(NewClassToken) v(GetConstructPrototype) v(SuperConstruct) \
-    v(SuperConstructList) v(PrivateGet) v(PrivateSet) v(PrivateDefine) v(PrivateHas) v(IteratorOpen) v(IteratorResume) v(IteratorClose) v(ForInOpen) \
-    v(ForInStep) v(Await) v(Yield) v(InitialYield) v(ModuleNamespace) v(ImportModule) v(RequireModule) v(ResolveModule) v(ThrowModuleFailure) \
-    v(ImportDynamic) v(RequireDynamic) v(ResolveDynamic) v(DirectEval) v(IsConstructor) v(ArraySpeciesCreate) v(GetByValWithThis) v(GetOwnProperty) \
-    v(ToLength) v(ThrowNewError) v(ResumeGenerator) v(StepGenerator) v(IsGeneratorSuspendedAtStart) v(IsUnmodifiedGenerator) v(CreateIteratorResult) \
-    v(StepArrayIterator) v(RequireBuiltinModule) v(NativeBinding) v(LinkTimeConstant) v(HasJSType) v(GetInternalField) v(PutInternalField) \
-    v(NewPromise) v(CreatePromise) v(ResolvePromise) v(RejectPromise) v(IsPristineArray) v(ArrayStorageKind) v(HasContiguousIndex) \
-    v(GetContiguousIndex) v(GetDoubleIndex) v(PutContiguousIndex) v(PutDoubleIndex) v(NewContiguousArray) v(NewDoubleArray) v(NewArrayLike) \
-    v(NewArrayWithCapacity) v(TryPutByValDirect) v(TryPutIndex) v(GrowNewArray) v(TruncateNewArray) v(CollectionTable) v(MapNext) v(SetNext) \
-    v(KeyConstant) v(Unspecified) v(Parameter) v(GetEncodedModuleVariable) v(AssumeType) v(ReportMismatch) v(CallGroup) v(ShapeTest) v(IsSlotFilled) \
-    v(HasNoExtraProperties) v(IsNotFrozen) v(HasLayoutPrototype) v(BelongsToInstance) v(IsPristine) v(HasArrayStorage) v(IsInBounds) \
-    v(IsNotThenable) v(IsMemberUnchanged) v(IsPrototypeLinkUnchanged) v(IsClassEvaluatedOnce) v(IsRequireEdgeReady) v(HasKeyOrder) \
-    v(IsShapeEpochCurrent) v(IsClosureOf) v(IsEnumeratorCurrent) v(GetShapeEpoch) v(AllGuards) v(GetSlot) v(GetSlotOrUndefined) \
-    v(GetDeferredClosureSlot) v(PutSlot) v(PutSlotOrAdd) v(PropHasOwn) v(CopyObject) v(TryCopyFields) v(GetArrayLength) v(GetArrayElement) \
-    v(PutArrayElement) v(HasArrayElement) v(AppendElements) v(HasSpareArrayCapacity) v(ReserveArrayCapacity) v(GetTypedArrayLength) \
-    v(GetTypedArrayElement) v(PutTypedArrayElement) v(GetStringLength) v(GetStringCodeUnit) v(GetArgument) v(GetRestLength) v(ReturnsToResultTest) \
-    v(CreateRest) v(GetMyArgumentByVal) v(CallForwardVarargs) v(ConstructSuperForwardVarargs) v(GetCapture) v(MaterializeEnvironment) \
-    v(MarkEnvironmentEscaped) v(ReleaseEnvironment) v(CallBuiltin) v(DivideIntegers) v(ToInt32) v(ToUint32) v(ToIntegerOrInfinity) v(NewSetFromData) \
-    v(NewMapFromData) v(NewArgumentList) v(SharedRegExpLiteral) v(DestructureIterable) v(EnumeratorGetByVal) v(RequireAttachedTypedArray) \
-    v(CreateAsyncFromSyncIterator) v(ThrowNotIterable) v(NewGenerator) v(NewAsyncGenerator) v(IsUnmodifiedAsyncGenerator) v(StepAsyncGenerator) \
-    v(AwaitBySavingFrame) v(AwaitCallBySavingFrame) v(YieldBySavingFrame) v(AsyncGeneratorYield) v(ReturnAsyncResult) v(PromiseAllOfElements) \
-    v(HasInPrototypeChain) v(GetRequiredValue) v(StringBuilderBegin) v(StringBuilderAppend) v(StringBuilderAppendBuiltin) v(StringBuilderAppendJSON) \
+    v(GetModuleVariable) v(PutModuleVariable) v(GetEnvironmentField) v(PutEnvironmentField) v(ScopeHasBinding) v(NewObject) v(NewDictionary) \
+    v(FinishObject) v(NewArray) v(AppendElement) v(AppendSpread) v(AppendHole) v(NewRegExp) v(NewTemplateObject) v(NewRuntimeError) \
+    v(NewSuppressedError) v(CreateUnmappedArguments) v(CreateMappedArguments) v(GetMappedArgument) v(SetMappedArgument) v(PropGet) v(PropSet) \
+    v(PropDefine) v(PropHas) v(PropDelete) v(ElemGet) v(ElemSet) v(ElemHas) v(ElemDelete) v(ElemDefine) v(DefineGetter) v(DefineSetter) \
+    v(TryDefineLiveBinding) v(TryReExportFields) v(SetFunctionName) v(SetLiteralPrototype) v(CopyDataProperties) v(CopyObject) v(GetSuperBase) \
+    v(SuperGet) v(SuperSet) v(Add) v(Sub) v(Mul) v(Div) v(Mod) v(Pow) v(BitAnd) v(BitOr) v(BitXor) v(LShift) v(RShift) v(URShift) v(Negate) \
+    v(ToNumeric) v(Increment) v(Decrement) v(BitNot) v(ToNumber) v(Less) v(LessEq) v(Greater) v(GreaterEq) v(Eq) v(StrictEq) v(InstanceOf) \
+    v(ToBoolean) v(LogicalNot) v(TypeOf) v(ToString) v(Strcat) v(ToPropertyKey) v(ToObject) v(ToThis) v(Upcast) v(NarrowByField) v(Check) v(Convert) \
+    v(CheckInitialized) v(RequireObjectCoercible) v(RequireObject) v(TypeTest) v(Call) v(Construct) v(CallList) v(ConstructList) v(CallDirect) \
+    v(Results) v(ResultAt) v(CatchValue) v(CatchException) v(LoopHint) v(ResolveHeritage) v(NewClass) v(GetClassPrototype) v(DefineMethod) \
+    v(FinishClass) v(NewClassToken) v(GetConstructPrototype) v(SuperConstruct) v(SuperConstructList) v(PrivateGet) v(PrivateSet) v(PrivateDefine) \
+    v(PrivateHas) v(IteratorOpen) v(IteratorResume) v(IteratorClose) v(ForInOpen) v(ForInStep) v(Await) v(Yield) v(InitialYield) v(ModuleNamespace) \
+    v(ImportModule) v(RequireModule) v(EvaluateModule) v(RecordRequire) v(ResolveModule) v(ThrowModuleFailure) v(ImportDynamic) v(RequireDynamic) \
+    v(ResolveDynamic) v(DirectEval) v(IsConstructor) v(ArraySpeciesCreate) v(GetByValWithThis) v(GetOwnProperty) v(ToLength) v(ThrowNewError) \
+    v(ResumeGenerator) v(StepGenerator) v(IsGeneratorSuspendedAtStart) v(IsUnmodifiedGenerator) v(CreateIteratorResult) v(StepArrayIterator) \
+    v(RequireBuiltinModule) v(NativeBinding) v(LinkTimeConstant) v(HasJSType) v(GetInternalField) v(PutInternalField) v(NewPromise) v(CreatePromise) \
+    v(ResolvePromise) v(RejectPromise) v(IsPristineArray) v(ArrayStorageKind) v(HasContiguousIndex) v(GetContiguousIndex) v(GetDoubleIndex) \
+    v(PutContiguousIndex) v(PutDoubleIndex) v(NewContiguousArray) v(NewDoubleArray) v(NewArrayLike) v(NewArrayWithCapacity) v(TryPutByValDirect) \
+    v(TryPutIndex) v(GrowNewArray) v(TruncateNewArray) v(CollectionTable) v(MapNext) v(SetNext) v(IsClosureOf) v(KeyConstant) v(Unspecified) \
+    v(EmptyArgumentList) v(Parameter) v(GetEncodedModuleVariable) v(AssumeType) v(ReadAgain) v(BorrowedParameter) v(ReportMismatch) v(CallTable) \
+    v(ShapeTest) v(IsSlotFilled) v(HasNoExtraProperties) v(HasNoFieldOutsideSlot) v(HasBirthFieldsFilled) v(IsNotFrozen) v(HasLayoutPrototype) \
+    v(BelongsToInstance) v(IsPristine) v(HasArrayStorage) v(IsInBounds) v(IsElementPresent) v(IsInsideView) v(IsNotThenable) v(AreMembersUnchanged) \
+    v(HasKeyOrder) v(IsEnumeratorCurrent) v(AllGuards) v(GetSlot) v(GetSlotOrUndefined) v(GetSlotGetter) v(GetFlattenedSlot) \
+    v(GetFlattenedSlotOrUndefined) v(GetDeferredClosureSlot) v(GetDeferredClosureSlotOrUndefined) v(PutSlot) v(PutSlotOrAdd) v(FinishBirth) \
+    v(TryFinishBirth) v(MakeBorrowedObject) v(PropHasOwn) v(TryCopyFields) v(GetGlobalBinding) v(SetGlobalBinding) v(GetArrayLength) \
+    v(GetArrayElement) v(PutArrayElement) v(HasArrayElement) v(AppendElements) v(HasSpareArrayCapacity) v(ReserveArrayCapacity) \
+    v(ConvertToDoubleStorage) v(GetTypedArrayLength) v(GetTypedArrayElement) v(PutTypedArrayElement) v(GetStringLength) v(GetStringCodeUnit) \
+    v(GetArgument) v(GetRestLength) v(CreateRest) v(GetMyArgumentByVal) v(CallForwardVarargs) v(ConstructSuperForwardVarargs) v(GetCapture) \
+    v(MaterializeEnvironment) v(MarkEnvironmentEscaped) v(ReleaseEnvironment) v(CallBuiltin) v(DivideIntegers) v(ToInt32) v(ToUint32) \
+    v(ToIntegerOrInfinity) v(NewSetFromData) v(NewMapFromData) v(NewArgumentList) v(SharedRegExpLiteral) v(IsBuiltinLocationUnchanged) \
+    v(IsFunctionOfBuiltin) v(GetBuiltinValue) v(DestructureIterable) v(EnumeratorGetByVal) v(RequireAttachedTypedArray) \
+    v(CreateAsyncFromSyncIterator) v(ThrowNotIterable) v(IsCollectionTableFull) v(ReserveCollectionCapacity) v(NewGenerator) v(NewAsyncGenerator) \
+    v(TakeGeneratorPrototype) v(IsGeneratorUnstarted) v(IsGeneratorRunning) v(MarkGeneratorRunning) v(TakeGeneratorStepStatus) \
+    v(IsUnmodifiedAsyncGenerator) v(StepAsyncGenerator) v(AwaitMayContinue) v(AwaitBySavingFrame) v(AwaitCallBySavingFrame) v(YieldBySavingFrame) \
+    v(AsyncGeneratorYield) v(ReturnAsyncResult) v(PromiseAllOfElements) v(HasInPrototypeChain) v(BeginModuleEvaluation) v(FinishModuleEvaluation) \
+    v(AbandonModuleEvaluation) v(StringBuilderBegin) v(StringBuilderAppend) v(StringBuilderAppendBuiltin) v(StringBuilderAppendJSON) \
     v(StringBuilderLength) v(StringBuilderToString) v(StringBuilderFinish) v(StringBuilderDiscard) v(StringBuilderCheckpoint) \
-    v(StringBuilderRollBack) v(ValidateType) v(ValidateCallee) v(ValidateFirstRun) v(ValidateSameValue) v(JSONSourceOpen) v(JSONSourceStart) \
-    v(JSONSourceClose) v(JSONSourceAbandon) v(JSONDecodeBytes) v(JSONGetByte) v(JSONStartsWith) v(JSONAdvance) v(JSONSkipByte) v(JSONSkipWhitespace) \
-    v(JSONParseString) v(JSONParseKey) v(JSONParseNumber) v(JSONParseInteger) v(JSONParseValue) v(JSONFindMember) v(JSONMemberRepeats) \
-    v(JSONKeyRepeats) v(JSONKeyHasEscapes) v(JSONHasStackSpace) v(JSONObjectBegin) v(JSONObjectKey) v(JSONObjectFinish) v(JSONParseExtraMembers) \
-    v(JSONAddExtraMember) v(IsPlainDataObject) v(GetOwnDataProperty) v(CloneAs) v(ExpectRows) v(StringBuilderReserve) v(StringBuilderCommit) \
-    v(JSONAppendKey) v(JSONAppendToken) v(JSONAppendBoolean) v(JSONAppendInteger) v(JSONAppendNumber) v(JSONAppendDate) v(JSONAppendString) \
-    v(JSONAppendValue) v(PropGetChecked) v(PropGetChain) v(PropGetPair) v(PropGetAndTest) v(CallMethod) v(TryPutByIds) v(PutSlots) \
+    v(StringBuilderRollBack) v(ValidateType) v(ValidateCallee) v(ValidateLookup) v(ValidateFirstRun) v(ValidateSameValue) v(JSONSourceOpen) \
+    v(JSONSourceStart) v(JSONSourceClose) v(JSONSourceAbandon) v(JSONDecodeBytes) v(JSONGetByte) v(JSONStartsWith) v(JSONAdvance) v(JSONSkipByte) \
+    v(JSONSkipWhitespace) v(JSONParseString) v(JSONParseKey) v(JSONParseNumber) v(JSONParseInteger) v(JSONParseValue) v(JSONFindMember) \
+    v(JSONMemberRepeats) v(JSONKeyRepeats) v(JSONKeyHasEscapes) v(JSONHasStackSpace) v(JSONObjectBegin) v(JSONObjectKey) v(JSONObjectFinish) \
+    v(JSONParseExtraMembers) v(JSONAddExtraMember) v(IsPlainDataObject) v(GetOwnDataProperty) v(CloneAs) v(ExpectRows) v(StringBuilderReserve) \
+    v(StringBuilderCommit) v(JSONAppendKey) v(JSONAppendToken) v(JSONAppendBoolean) v(JSONAppendInteger) v(JSONAppendNumber) v(JSONAppendDate) \
+    v(JSONAppendString) v(JSONAppendValue) v(PropGetChain) v(PropGetPair) v(PropGetAndTest) v(CallMethod) v(TryPutByIds) v(PutSlots) \
     v(DefineOwnProperty) v(DefineAccessors) v(IntegerBound) v(FulfillFreshPromise) v(Substring) v(SubstringOrUndefined) v(FlattenString) \
     v(StringRange) v(StringOrder) v(StringOrderToCharacter) v(StringEqualsLiteral) v(ValueEqualsLiteral) v(ValueLooselyEqualsLiteral) \
     v(StringStartsWithLiteral) v(StringEndsWithLiteral) v(StringIndexOfLiteral) v(StringIndexOfCharacter) v(StringLastIndexOfLiteral) \
@@ -54,25 +59,26 @@
     v(StringRangeCharacterOrUndefined) v(StringRangeEqualsLiteral) v(StringRangeToNumber) v(StringRangeParseInt) v(StringRangeSubstringOrUndefined) \
     v(StringBuilderAppendConstant) v(StringBuilderAppendInteger) v(StringBuilderAppendNumber) v(StringBuilderAppendString) \
     v(StringBuilderAppendStringRange) v(StringBuilderAppendBoolean) v(StringBuilderAppendStringOrNullish) v(StringBuilderAppendValue) \
-    v(ResolveCallTarget) v(CallResolved) v(RegExpMatchLiteral) v(CallInline) v(Box) v(Unbox) v(IntegerToNumber) v(NumberToInteger) v(WidenInteger) \
-    v(NarrowInteger) v(Decode) v(Compress)
+    v(MapGetByKeyParts) v(HasByKeyParts) v(ResolveCallTarget) v(CallResolved) v(RegExpMatchLiteral) v(CallInline) v(Box) v(Unbox) v(IntegerToNumber) \
+    v(NumberToInteger) v(WidenInteger) v(NarrowInteger) v(Decode) v(Compress)
 
 #define FOR_EACH_AOT_OPCODE_IN_CONSTANT(v) \
     v(Undefined) v(Null) v(Absent) v(Boolean) v(Integer) v(Double) v(String) v(BigInt) v(Builtin) v(ModuleBuiltin) v(Data) v(NewClosure) \
-    v(KeyConstant) v(Unspecified)
+    v(KeyConstant) v(Unspecified) v(EmptyArgumentList)
 
 #define FOR_EACH_AOT_OPCODE_IN_BINDING(v) \
     v(GetModuleVariable) v(PutModuleVariable) v(GetEnvironmentField) v(PutEnvironmentField) v(ScopeHasBinding) v(Parameter) \
     v(GetEncodedModuleVariable)
 
 #define FOR_EACH_AOT_OPCODE_IN_ALLOCATION(v) \
-    v(NewObject) v(FinishObject) v(NewArray) v(AppendElement) v(AppendSpread) v(AppendHole) v(NewRegExp) v(NewTemplateObject) v(NewRuntimeError) \
-    v(NewSuppressedError) v(CreateUnmappedArguments) v(CreateMappedArguments) v(GetMappedArgument) v(SetMappedArgument)
+    v(NewObject) v(NewDictionary) v(FinishObject) v(NewArray) v(AppendElement) v(AppendSpread) v(AppendHole) v(NewRegExp) v(NewTemplateObject) \
+    v(NewRuntimeError) v(NewSuppressedError) v(CreateUnmappedArguments) v(CreateMappedArguments) v(GetMappedArgument) v(SetMappedArgument) \
+    v(FinishBirth) v(TryFinishBirth) v(MakeBorrowedObject)
 
 #define FOR_EACH_AOT_OPCODE_IN_ACCESS(v) \
     v(PropGet) v(PropSet) v(PropDefine) v(PropHas) v(PropDelete) v(ElemGet) v(ElemSet) v(ElemHas) v(ElemDelete) v(ElemDefine) v(DefineGetter) \
-    v(DefineSetter) v(SetFunctionName) v(SetLiteralPrototype) v(CopyDataProperties) v(GetSuperBase) v(SuperGet) v(SuperSet) v(CopyObject) \
-    v(TryCopyFields)
+    v(DefineSetter) v(TryDefineLiveBinding) v(TryReExportFields) v(SetFunctionName) v(SetLiteralPrototype) v(CopyDataProperties) v(CopyObject) \
+    v(GetSuperBase) v(SuperGet) v(SuperSet) v(TryCopyFields) v(GetGlobalBinding) v(SetGlobalBinding)
 
 #define FOR_EACH_AOT_OPCODE_IN_OPERATOR(v) \
     v(Add) v(Sub) v(Mul) v(Div) v(Mod) v(Pow) v(BitAnd) v(BitOr) v(BitXor) v(LShift) v(RShift) v(URShift) v(Negate) v(ToNumeric) v(Increment) \
@@ -80,11 +86,11 @@
     v(TypeOf) v(ToString) v(Strcat) v(ToPropertyKey) v(ToObject) v(ToThis) v(HasInPrototypeChain)
 
 #define FOR_EACH_AOT_OPCODE_IN_CAST(v) \
-    v(Upcast) v(Claim) v(ClaimDeclared) v(ClaimRead) v(Predict) v(CheckInitialized) v(RequireObjectCoercible) v(RequireObject) v(TypeTest) \
-    v(AssumeType) v(ReportMismatch)
+    v(Upcast) v(NarrowByField) v(Check) v(Convert) v(CheckInitialized) v(RequireObjectCoercible) v(RequireObject) v(TypeTest) v(AssumeType) \
+    v(ReadAgain) v(BorrowedParameter) v(ReportMismatch)
 
 #define FOR_EACH_AOT_OPCODE_IN_CALL(v) \
-    v(Call) v(Construct) v(CallList) v(ConstructList) v(CallDirect) v(Results) v(ResultAt) v(CallGroup)
+    v(Call) v(Construct) v(CallList) v(ConstructList) v(CallDirect) v(Results) v(ResultAt) v(CallTable)
 
 #define FOR_EACH_AOT_OPCODE_IN_EXCEPTION(v) \
     v(CatchValue) v(CatchException)
@@ -109,8 +115,8 @@
     v(Await) v(Yield) v(InitialYield)
 
 #define FOR_EACH_AOT_OPCODE_IN_MODULE(v) \
-    v(ModuleNamespace) v(ImportModule) v(RequireModule) v(ResolveModule) v(ThrowModuleFailure) v(ImportDynamic) v(RequireDynamic) v(ResolveDynamic) \
-    v(GetRequiredValue)
+    v(ModuleNamespace) v(ImportModule) v(RequireModule) v(EvaluateModule) v(RecordRequire) v(ResolveModule) v(ThrowModuleFailure) v(ImportDynamic) \
+    v(RequireDynamic) v(ResolveDynamic) v(BeginModuleEvaluation) v(FinishModuleEvaluation) v(AbandonModuleEvaluation)
 
 #define FOR_EACH_AOT_OPCODE_IN_EVAL(v) \
     v(DirectEval)
@@ -131,49 +137,51 @@
     v(TruncateNewArray)
 
 #define FOR_EACH_AOT_OPCODE_IN_COLLECTION_INTRINSIC(v) \
-    v(CollectionTable) v(MapNext) v(SetNext)
+    v(CollectionTable) v(MapNext) v(SetNext) v(IsCollectionTableFull) v(ReserveCollectionCapacity)
 
 #define FOR_EACH_AOT_OPCODE_IN_GUARD(v) \
-    v(ShapeTest) v(IsSlotFilled) v(HasNoExtraProperties) v(IsNotFrozen) v(HasLayoutPrototype) v(BelongsToInstance) v(IsPristine) v(HasArrayStorage) \
-    v(IsInBounds) v(IsNotThenable) v(IsMemberUnchanged) v(IsPrototypeLinkUnchanged) v(IsClassEvaluatedOnce) v(IsRequireEdgeReady) v(HasKeyOrder) \
-    v(IsShapeEpochCurrent) v(IsClosureOf) v(IsEnumeratorCurrent)
+    v(IsClosureOf) v(ShapeTest) v(IsSlotFilled) v(HasNoExtraProperties) v(HasNoFieldOutsideSlot) v(HasBirthFieldsFilled) v(IsNotFrozen) \
+    v(HasLayoutPrototype) v(BelongsToInstance) v(IsPristine) v(HasArrayStorage) v(IsInBounds) v(IsElementPresent) v(IsInsideView) v(IsNotThenable) \
+    v(AreMembersUnchanged) v(HasKeyOrder) v(IsEnumeratorCurrent)
 
 #define FOR_EACH_AOT_OPCODE_IN_GUARD_VALUE(v) \
-    v(GetShapeEpoch) v(AllGuards)
+    v(AllGuards)
 
 #define FOR_EACH_AOT_OPCODE_IN_SLOT_ACCESS(v) \
-    v(GetSlot) v(GetSlotOrUndefined) v(GetDeferredClosureSlot) v(PutSlot) v(PutSlotOrAdd)
+    v(GetSlot) v(GetSlotOrUndefined) v(GetSlotGetter) v(GetFlattenedSlot) v(GetFlattenedSlotOrUndefined) v(GetDeferredClosureSlot) \
+    v(GetDeferredClosureSlotOrUndefined) v(PutSlot) v(PutSlotOrAdd)
 
 #define FOR_EACH_AOT_OPCODE_IN_OWN_ACCESS(v) \
     v(PropHasOwn)
 
 #define FOR_EACH_AOT_OPCODE_IN_ELEMENT_ACCESS(v) \
     v(GetArrayLength) v(GetArrayElement) v(PutArrayElement) v(HasArrayElement) v(AppendElements) v(HasSpareArrayCapacity) v(ReserveArrayCapacity) \
-    v(GetTypedArrayLength) v(GetTypedArrayElement) v(PutTypedArrayElement) v(GetStringLength) v(GetStringCodeUnit)
+    v(ConvertToDoubleStorage) v(GetTypedArrayLength) v(GetTypedArrayElement) v(PutTypedArrayElement) v(GetStringLength) v(GetStringCodeUnit)
 
 #define FOR_EACH_AOT_OPCODE_IN_ARGUMENTS(v) \
-    v(GetArgument) v(GetRestLength) v(ReturnsToResultTest) v(CreateRest) v(GetMyArgumentByVal) v(CallForwardVarargs) v(ConstructSuperForwardVarargs)
+    v(GetArgument) v(GetRestLength) v(CreateRest) v(GetMyArgumentByVal) v(CallForwardVarargs) v(ConstructSuperForwardVarargs)
 
 #define FOR_EACH_AOT_OPCODE_IN_ENVIRONMENT(v) \
     v(GetCapture) v(MaterializeEnvironment) v(MarkEnvironmentEscaped) v(ReleaseEnvironment)
 
 #define FOR_EACH_AOT_OPCODE_IN_BUILTIN_CALL(v) \
     v(CallBuiltin) v(DivideIntegers) v(ToInt32) v(ToUint32) v(ToIntegerOrInfinity) v(NewSetFromData) v(NewMapFromData) v(NewArgumentList) \
-    v(SharedRegExpLiteral)
+    v(SharedRegExpLiteral) v(IsBuiltinLocationUnchanged) v(IsFunctionOfBuiltin) v(GetBuiltinValue)
 
 #define FOR_EACH_AOT_OPCODE_IN_EXPANDED_ITERATION(v) \
     v(DestructureIterable) v(EnumeratorGetByVal) v(RequireAttachedTypedArray) v(CreateAsyncFromSyncIterator) v(ThrowNotIterable)
 
 #define FOR_EACH_AOT_OPCODE_IN_SAVED_FRAME(v) \
-    v(NewGenerator) v(NewAsyncGenerator) v(IsUnmodifiedAsyncGenerator) v(StepAsyncGenerator) v(AwaitBySavingFrame) v(AwaitCallBySavingFrame) \
-    v(YieldBySavingFrame) v(AsyncGeneratorYield) v(ReturnAsyncResult) v(PromiseAllOfElements)
+    v(NewGenerator) v(NewAsyncGenerator) v(TakeGeneratorPrototype) v(IsGeneratorUnstarted) v(IsGeneratorRunning) v(MarkGeneratorRunning) \
+    v(TakeGeneratorStepStatus) v(IsUnmodifiedAsyncGenerator) v(StepAsyncGenerator) v(AwaitMayContinue) v(AwaitBySavingFrame) \
+    v(AwaitCallBySavingFrame) v(YieldBySavingFrame) v(AsyncGeneratorYield) v(ReturnAsyncResult) v(PromiseAllOfElements)
 
 #define FOR_EACH_AOT_OPCODE_IN_STRING_BUILDER(v) \
     v(StringBuilderBegin) v(StringBuilderAppend) v(StringBuilderAppendBuiltin) v(StringBuilderAppendJSON) v(StringBuilderLength) \
     v(StringBuilderToString) v(StringBuilderFinish) v(StringBuilderDiscard) v(StringBuilderCheckpoint) v(StringBuilderRollBack)
 
 #define FOR_EACH_AOT_OPCODE_IN_RUNTIME_VALIDATION(v) \
-    v(ValidateType) v(ValidateCallee) v(ValidateFirstRun) v(ValidateSameValue)
+    v(ValidateType) v(ValidateCallee) v(ValidateLookup) v(ValidateFirstRun) v(ValidateSameValue)
 
 #define FOR_EACH_AOT_OPCODE_IN_JSON_PARSE(v) \
     v(JSONSourceOpen) v(JSONSourceStart) v(JSONSourceClose) v(JSONSourceAbandon) v(JSONDecodeBytes) v(JSONGetByte) v(JSONStartsWith) v(JSONAdvance) \
@@ -189,7 +197,7 @@
     v(JSONAppendDate) v(JSONAppendString) v(JSONAppendValue)
 
 #define FOR_EACH_AOT_OPCODE_IN_FUSED_ACCESS(v) \
-    v(PropGetChecked) v(PropGetChain) v(PropGetPair) v(PropGetAndTest) v(CallMethod) v(TryPutByIds)
+    v(PropGetChain) v(PropGetPair) v(PropGetAndTest) v(CallMethod) v(TryPutByIds)
 
 #define FOR_EACH_AOT_OPCODE_IN_SLOT_RUN(v) \
     v(PutSlots)
@@ -212,6 +220,9 @@
 #define FOR_EACH_AOT_OPCODE_IN_STRING_BUILDER_PART(v) \
     v(StringBuilderAppendConstant) v(StringBuilderAppendInteger) v(StringBuilderAppendNumber) v(StringBuilderAppendString) \
     v(StringBuilderAppendStringRange) v(StringBuilderAppendBoolean) v(StringBuilderAppendStringOrNullish) v(StringBuilderAppendValue)
+
+#define FOR_EACH_AOT_OPCODE_IN_KEY_PARTS_LOOKUP(v) \
+    v(MapGetByKeyParts) v(HasByKeyParts)
 
 #define FOR_EACH_AOT_OPCODE_IN_RESOLVED_CALL(v) \
     v(ResolveCallTarget) v(CallResolved) v(RegExpMatchLiteral)
@@ -237,6 +248,7 @@
     v(Iteration) v(ForIn) v(Coroutine) v(Module) v(Eval) v(EngineIntrinsic) v(RuntimeIntrinsic) v(PromiseIntrinsic) v(ArrayIntrinsic) \
     v(CollectionIntrinsic) v(Guard) v(GuardValue) v(SlotAccess) v(OwnAccess) v(ElementAccess) v(Arguments) v(Environment) v(BuiltinCall) \
     v(ExpandedIteration) v(SavedFrame) v(StringBuilder) v(RuntimeValidation) v(JSONParse) v(Validation) v(JSONWrite) v(FusedAccess) v(SlotRun) \
-    v(ObjectCreation) v(SelectedOperator) v(String) v(StringRangeRead) v(StringBuilderPart) v(ResolvedCall) v(InlineBuiltin) v(Representation)
+    v(ObjectCreation) v(SelectedOperator) v(String) v(StringRangeRead) v(StringBuilderPart) v(KeyPartsLookup) v(ResolvedCall) v(InlineBuiltin) \
+    v(Representation)
 
 #endif // ENABLE(AOT)

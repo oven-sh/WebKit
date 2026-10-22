@@ -1,0 +1,71 @@
+# const base = { inherited: 1 }   function build(name) { const made = Object.create(base); Object.defineProperty(made, name, { get: () => name + "!", enumerable: true, configurable: true }); return made }
+# const held = build("fi" + "rst")   function read() { return held.first + held.inherited }   function hand() { return held }
+# Nobody knows the key of the definition, so each name that a read asks of the object gets a field for such an accessor: but not `inherited`, which the program has put above the object.
+# It is more likely read from there, and a field that stays empty makes that read longer.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell globalThis.register = (read, hand) => { print(read(), Object.keys(hand()).join(), hand().inherited); };
+# FLOW: layout {{*}}key="first" {{*}}form=[IsAccessor]{{*}}IsOfCreatedObject
+# FLOW-NOT: key="inherited" {{*}}form=[IsAccessor]
+# FLOW: function f0
+# CHECK: first!1 first 1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+layout L1 fields=[{key="inherited" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="base" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g1
+    v7 = String string="fi"
+    v8 = String string="rst"
+    v9 = Add v7, v8
+    v10 = Call v0, -, v9
+    PutModuleVariable v10 variable=g0
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="register" [isFreeName]
+    v14 = Call v13, -, v1, v2
+    Return
+}
+function f1 name="build" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v2, v1, v3
+    v5 = NewClosure v0 function=f4
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v5, v6, v6 layout=L0 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = Builtin builtin=ObjectDefineProperty
+    v10 = Call v9, v1, v4, v0, v8
+    Return v4
+}
+function f2 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="first"
+    v2 = PropGet v0 key="inherited"
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="hand" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f4 kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="!"
+    v2 = Add v0, v1
+    Return v2
+}

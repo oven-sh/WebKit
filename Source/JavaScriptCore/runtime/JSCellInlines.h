@@ -211,7 +211,8 @@ ALWAYS_INLINE TriState JSCell::isCallableWithConcurrency()
         return TriState::False;
     // JSFunction and InternalFunction assert during construction that derived classes don't override getCallData,
     // which guarantees that CallData::Type::None is never returned.
-    if (functionTypes.contains(type()))
+    static_assert(CompiledClosureType == JSFunctionType + 1 && InternalFunctionType == JSFunctionType + 2);
+    if (JSTypeRange { JSFunctionType, InternalFunctionType }.contains(type()))
         return TriState::True;
     if (inlineTypeFlags() & OverridesGetCallData) {
         if constexpr (concurrency == Concurrency::MainThread)
@@ -266,8 +267,6 @@ ALWAYS_INLINE void JSCell::setStructure(VM& vm, Structure* structure)
     ASSERT(!this->structure()
         || this->structure()->transitionWatchpointSetHasBeenInvalidated()
         || structure->id().decode() == structure);
-    if (structure->clearsPristineBitsOf(*this->structure())) [[unlikely]]
-        Structure::didClearPristineBits(vm);
     m_structureID = structure->id();
     m_flags = TypeInfo::mergeInlineTypeFlags(structure->typeInfo().inlineTypeFlags(), m_flags);
     m_type = structure->typeInfo().type();

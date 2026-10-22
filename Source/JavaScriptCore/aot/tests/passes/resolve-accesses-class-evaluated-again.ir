@@ -1,4 +1,6 @@
 # The instances of a class that is evaluated twice have proven slots, and a method that captures nothing is called without a read. What one evaluation owns is not taken from the class: instanceof stays, and an allocation names the prototype of the class object at hand unless the class was evaluated once so far
+# The host calls the functions and drops what they return: an instance that is handed to a callee nobody knows may be stored into, and then no slot of the layout is proven
+# TODO: flow-termination: a method found through an instance of a class that is evaluated twice is read by name
 # FORM: AsRead
 # RUN: pipeline Select
 
@@ -20,8 +22,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = NewClosure function=f5
     v9 = NewClosure function=f6
     v10 = NewClosure function=f7
-    v11 = PropGet v3 key="publish" [isFreeName]
-    v12 = Call v11, -, v7, v8, v9, v10
+    v11 = Builtin builtin=QueueMicrotask
+    v12 = Call v11, -, v7
+    v13 = Call v11, -, v8
+    v14 = Call v11, -, v9
+    v15 = Call v11, -, v10
     Return
 }
 function f1 name="makeClass" results=[{type=anything}] {
@@ -84,7 +89,7 @@ function f7 name="construct" parameters=[{type=anything}] results=[{type=anythin
     Return v2
 }
 # CHECK-LABEL: function f7 name="construct"
-# CHECK: = IsClassEvaluatedOnce layout=L0
-# CHECK: L0 = NewObject layout=L0 {{*}}[keepsShape]
+# CHECK: = AreMembersUnchanged conditions=[{{*}}{kind=ClassEvaluatedOnce layout=L0}]
+# CHECK: L0 = NewObject layout=L0
 # CHECK: [[prototype]]: object = GetConstructPrototype
-# CHECK-NEXT: L0 = NewObject [[prototype]] layout=L0 {{*}}[keepsShape]
+# CHECK-NEXT: L0 = NewObject [[prototype]] layout=L0

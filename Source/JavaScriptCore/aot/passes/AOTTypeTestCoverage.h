@@ -24,13 +24,12 @@ struct GapBudget {
     static constexpr GapBudget unlimited() { return { }; }
 };
 
-enum class RequirementCoverage : uint8_t { Unknown, NeedsTest, NeedsRenewal, Covered };
+enum class RequirementCoverage : uint8_t { Unknown, NeedsTest, Covered };
 
 struct TestState {
     bool isReachable { true };
     BitVector passed;
-    BitVector stale;
-    Vector<uint32_t> bytesSinceUse;
+    Vector<uint32_t, 8> bytesSinceUse;
     uint32_t pendingBytes { 0 };
 
     friend bool operator==(const TestState&, const TestState&) = default;
@@ -50,6 +49,7 @@ class TestCoverageProblem {
     WTF_MAKE_NONCOPYABLE(TestCoverageProblem);
 public:
     using State = TestState;
+    static constexpr bool readsEffects() { return false; }
 
     explicit TestCoverageProblem(const TestCoverageInputs&);
 
@@ -57,6 +57,7 @@ public:
     bool merge(State& into, const State& from) const;
     void enterEdge(State&, Edge) const;
     void execute(State&, const DataflowStep&) const;
+    void executeValuesOf(State&, BlockID) const;
     void executeTerminator(State&, const DataflowTerminatorStep&) const;
 
     RequirementCoverage classify(const State&, const TestRequirement&) const;
@@ -85,7 +86,6 @@ public:
 
     RequirementCoverage of(uint32_t requirement) const { return m_requirements[requirement]; }
     RequirementCoverage ofHoistedTest(uint32_t hoistedTest) const { return m_hoistedTests[hoistedTest]; }
-    const BitVector& staleBefore(uint32_t requirement) const LIFETIME_BOUND { return m_staleBefore[requirement]; }
     bool exceededBudget(uint32_t requirement) const { return m_exceededBudget.get(requirement); }
 
     // What holds at the head of the target and not on this rejoining edge, which the state at that head leaves out.
@@ -101,9 +101,10 @@ private:
     const TestEvents& m_events;
     Vector<RequirementCoverage> m_requirements;
     Vector<RequirementCoverage> m_hoistedTests;
-    Vector<BitVector> m_staleBefore;
     BitVector m_exceededBudget;
+    // In the order of their sources, which are classified one after another.
     Vector<std::pair<Edge, BitVector>, 4> m_missingOnEdges;
+    Vector<uint32_t> m_firstMissingOnEdgeFrom;
 };
 
 } } } // namespace JSC::AOT::Typed

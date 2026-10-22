@@ -9,7 +9,7 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="definedInFrontOfLoop" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
   b0(v0: anything @JSValue, v1: i32 @Int32):
-    v2 @JSValue = Claim v0 castType=number cause=AddedByPass
+    v2 @JSValue = AssumeType v0 castType=number
     v3 @Double = Double number=0.5
     v4 @Int32 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -29,8 +29,8 @@ function f0 name="definedInFrontOfLoop" parameters=[{type=anything}, {type=i32}]
 }
 function f1 name="definedInOuterLoop" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
   b0(v0: anything @JSValue, v1: anything @JSValue, v2: i32 @Int32):
-    v3 @JSValue = Claim v0 castType=number cause=AddedByPass
-    v4 @JSValue = Claim v1 castType=number cause=AddedByPass
+    v3 @JSValue = AssumeType v0 castType=number
+    v4 @JSValue = AssumeType v1 castType=number
     v5 @Double = Double number=0.5
     v6 @Int32 = Integer integer=0
     Jump -> next b1(v5, v6, v3, v4)

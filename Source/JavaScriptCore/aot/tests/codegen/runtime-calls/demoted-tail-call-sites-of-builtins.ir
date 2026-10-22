@@ -9,7 +9,7 @@
 # CHECK-NEXT: f3: size=
 # CHECK-NOT: tailCallSites
 # CHECK: f8: size={{*}} sites=3 {{*}} tailCallSites=1
-# CHECK-NEXT: f9: size={{*}} sites=3
+# CHECK-NEXT: f9: size={{*}} sites=2
 # CHECK-NOT: tailCallSites
 
 module m0 path="main.js" displayPath="main.js"
@@ -39,7 +39,7 @@ function f4 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=a
   b0(v0: anything):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f7
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 function f5 name="markedAwaitedCall" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f8 entryWithoutPromise=f8 promiseType=Promise promiseParameter=1}

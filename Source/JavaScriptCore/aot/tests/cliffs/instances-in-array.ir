@@ -14,7 +14,7 @@
 # ACCESSES-COUNT-2: : L0 = GetSlot {{*}} key="next" receivers=[L0] level=Proven
 # ACCESSES: : number = GetSlot {{*}} key="weight" receivers=[L0] level=Proven
 # ACCESSES-LABEL: function f3 name="pick"
-# ACCESSES: : undefined|L0 = ElemGet
+# ACCESSES: : undefined|L0 = GetArrayElement {{*}} level=Proven
 # ACCESSES-COUNT-2: : number = GetSlot {{*}} key="weight" receivers=[L0] level=Proven
 
 module m0 path="main.js" displayPath="main.js" body=f0

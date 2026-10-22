@@ -76,7 +76,7 @@ static bool hasKnownHistory(const TrackedObject& object, std::span<const ObjectU
     return listedUses.contains(OperandUse::Retains) || listedUses.containsAll(object.uses & requestedUses);
 }
 
-static std::optional<ValueID> findFreshEntryParameter(const Function& function, const CFG& cfg)
+std::optional<ValueID> findFreshEntryParameter(const Function& function, const CFG& cfg)
 {
     if (function.role != FunctionRole::CoroutineBody)
         return std::nullopt;
@@ -95,7 +95,7 @@ static void forEachSuspension(FunctionAnalyses& analyses, NOESCAPE const Invocab
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         auto& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
-            if (analyses.effectsOf(values[index]).normal.maySuspend)
+            if (analyses.maySuspend(values[index]))
                 functor(ProgramPoint { block, index });
         }
     }
@@ -106,7 +106,7 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
     , m_cfg(analyses.cfg())
     , m_numberOfObjects(analyses.escape().numberOfObjects())
 {
-    const EscapeAnalysis& escape = analyses.escape();
+    const EscapeAnalysis& escape = analyses.escapeWithLiveInstances();
     if (escape.gaveUp()) {
         m_gaveUp = true;
         return;
@@ -122,10 +122,19 @@ UseEffectHistory::UseEffectHistory(FunctionAnalyses& analyses, const UseEffectHi
 
     m_wordsPerBlock = (m_numberOfObjects + bitsPerWord - 1) / bitsPerWord;
     m_head.fill(0, numberOfBlocks * m_wordsPerBlock);
+    m_objectsFromOutside.fill(0, m_wordsPerBlock);
     computeSkippedBlocks(options.ignoredBlocks);
     findUnknownObjects(escape, options.uses);
     collectActions(analyses, escape, options.uses);
-    computeHeads();
+    if (!analyses.context().build.options().verifiesAfterEveryPass) [[likely]] {
+        computeHeads(StartsAt::BlocksWhereSomethingHappens);
+        return;
+    }
+    Vector<uint64_t> headsAtStart = m_head;
+    computeHeads(StartsAt::BlocksWhereSomethingHappens);
+    Vector<uint64_t> heads = std::exchange(m_head, WTF::move(headsAtStart));
+    computeHeads(StartsAt::EveryBlock);
+    RELEASE_ASSERT(m_head == heads);
 }
 
 void UseEffectHistory::computeSkippedBlocks(const BitVector* ignoredBlocks)
@@ -133,8 +142,11 @@ void UseEffectHistory::computeSkippedBlocks(const BitVector* ignoredBlocks)
     unsigned numberOfBlocks = m_cfg.numNodes();
     m_isSkipped.ensureSize(numberOfBlocks);
     for (unsigned block = 0; block < numberOfBlocks; ++block) {
-        if (!m_cfg.isReachable(BlockID(block)) || (ignoredBlocks && ignoredBlocks->get(block)))
-            m_isSkipped.quickSet(block);
+        bool isReachable = m_cfg.isReachable(BlockID(block));
+        if (isReachable && !(ignoredBlocks && ignoredBlocks->get(block)))
+            continue;
+        m_isSkipped.quickSet(block);
+        m_skipsReachableBlocks |= isReachable;
     }
 }
 
@@ -181,6 +193,7 @@ void UseEffectHistory::collectActions(FunctionAnalyses& analyses, const EscapeAn
             if (isFreshAtEntry)
                 break;
             addEventAtHead(m_cfg.root(), object);
+            m_objectsFromOutside[wordIndexOf(object)] |= maskOf(object);
             continue;
         case ObjectKind::Allocation:
             break;
@@ -217,7 +230,7 @@ void UseEffectHistory::collectActions(FunctionAnalyses& analyses, const EscapeAn
             }
             continue;
         }
-        if (tracked.liveInstances != LiveInstances::AtMostOne || allocation.placement != ValuePlacement::InBlock || isSkipped(allocation.block))
+        if (escape.liveInstancesOf(object) != LiveInstances::AtMostOne || allocation.placement != ValuePlacement::InBlock || isSkipped(allocation.block))
             continue;
         addAction(allocation.block, allocation.index, object, ActionKind::Reset);
     }
@@ -267,12 +280,30 @@ void UseEffectHistory::computeStateAtHandler(BlockID block, std::span<uint64_t> 
     }
 }
 
-void UseEffectHistory::computeHeads()
+void UseEffectHistory::computeHeads(StartsAt startsAt)
 {
     auto order = m_cfg.reversePostOrder();
+    // To an object from outside everything has happened at the entry, and nothing takes that back: it holds wherever the entry leads.
+    if (!m_skipsReachableBlocks && startsAt == StartsAt::BlocksWhereSomethingHappens) {
+        Vector<uint64_t, 8> happenedAtEntry(m_wordsPerBlock, [&](size_t word) {
+            return headOf(m_cfg.root())[word] & m_objectsFromOutside[word];
+        });
+        bool hasAny = std::ranges::any_of(happenedAtEntry, [](uint64_t word) { return !!word; });
+        for (uint32_t blockOrder = 0; hasAny && blockOrder < order.size(); ++blockOrder)
+            mergeInto(mutableHeadOf(order[blockOrder]), happenedAtEntry.span());
+    }
+
+    // Nothing comes out of a block into which nothing new has come and in which nothing happens.
     BitVector isPending(order.size());
     for (uint32_t blockOrder = 0; blockOrder < order.size(); ++blockOrder) {
-        if (!isSkipped(order[blockOrder]))
+        BlockID block = order[blockOrder];
+        if (isSkipped(block))
+            continue;
+        std::span<const uint64_t> head = headOf(block);
+        bool hasMoreAtHead = false;
+        for (size_t word = 0; word < head.size(); ++word)
+            hasMoreAtHead |= !!(m_skipsReachableBlocks ? head[word] : head[word] & ~m_objectsFromOutside[word]);
+        if (startsAt == StartsAt::EveryBlock || hasMoreAtHead || std::ranges::any_of(actionsOf(block), [](const Action& action) { return action.kind == ActionKind::Event; }))
             isPending.quickSet(blockOrder);
     }
 
@@ -318,6 +349,35 @@ Occurrence UseEffectHistory::occurredBefore(ObjectID object, ProgramPoint point)
         if (action.index >= point.index)
             break;
         hasOccurred = action.kind == ActionKind::Event;
+    }
+    return hasOccurred ? Occurrence::MayHaveOccurred : Occurrence::HasNotOccurred;
+}
+
+UseEffectHistory::AtPoint::AtPoint(const UseEffectHistory& history, ProgramPoint point)
+    : m_history(history)
+    , m_isUnknown(history.m_gaveUp || !history.m_numberOfObjects || history.isSkipped(point.block))
+    , m_index(point.index)
+{
+    RELEASE_ASSERT(point.index <= history.m_function.at(point.block).values.size());
+    if (m_isUnknown)
+        return;
+    m_head = history.headOf(point.block);
+    m_actions = history.actionsOf(point.block);
+}
+
+Occurrence UseEffectHistory::AtPoint::occurrenceOf(ObjectID object) const
+{
+    RELEASE_ASSERT(object.index() < m_history.m_numberOfObjects);
+    if (m_isUnknown || m_history.m_isUnknown.quickGet(object.index()))
+        return Occurrence::Unknown;
+
+    bool hasOccurred = !!(m_head[wordIndexOf(object)] & maskOf(object));
+    if (!m_actions.empty()) {
+        for (auto& action : std::ranges::equal_range(m_actions, object, { }, &Action::object)) {
+            if (action.index >= m_index)
+                break;
+            hasOccurred = action.kind == ActionKind::Event;
+        }
     }
     return hasOccurred ? Occurrence::MayHaveOccurred : Occurrence::HasNotOccurred;
 }

@@ -20,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
@@ -30,6 +31,7 @@ class StubCatalog;
 
 namespace Typed {
 
+class ArrivalSiteNumbers;
 class BranchCounterNumbers;
 class CallingConventions;
 class DerivedFunctions;
@@ -41,6 +43,7 @@ class FunctionAnalyses;
 class Heat;
 class LiteralStringTable;
 class Placement;
+class PromisedResults;
 class StackChecks;
 class TypeArena;
 struct CodeRecords;
@@ -60,6 +63,8 @@ struct CodeGenerationInputs {
     const StringConstantNumbering& stringConstants;
     InstanceSizes instanceSizes;
     const BranchCounterNumbers& branchCounters;
+    const ArrivalSiteNumbers& arrivalSites;
+    const PromisedResults& promisedResults;
 };
 
 struct FunctionInputs {
@@ -82,6 +87,9 @@ struct PinnedValues {
 };
 
 enum class GenerationResult : uint8_t { Failed, Generated };
+
+// --aot-drop-guard, in the functions that --aot-disable-in names.
+std::optional<DroppedGuard> droppedGuardIn(const RecordedOptions&, FunctionID);
 
 inline B3::Origin b3OriginOf(ValueID id)
 {
@@ -126,12 +134,27 @@ public:
     PinnedValues& pinned() LIFETIME_BOUND { return m_pinned; }
     CodeRecords& records() { return m_records; }
     bool validates() const { return m_validates; }
+    bool checksProofs() const { return m_checksProofs; }
+    bool validatesOrChecksProofs() const { return m_validates || m_checksProofs; }
+    // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
+    bool checksKeptRegisters() const { return m_checksKeptRegisters; }
     bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
 
     const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
-    Representation representationOf(ValueID id) const { return function().at(id).representation; }
+    // Of an operand: the form in which the operation that is being generated takes it.
+    Representation representationOf(ValueID) const;
 
+    // An operand in the form in which the operation that is being generated takes it.
     Operand get(ValueID) const;
+    // In that form, whoever asks: an operation reads what another has read, and the other took it in a form of its own.
+    Operand getIn(ValueID, Representation);
+    Operand getAsDefined(ValueID) const;
+    // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
+    void takeOperandsOf(ValueID operationLeftToUser);
+    // Null for any other parameter.
+    LValue slotsOfBorrowedParameter(ValueID parameter) const { return m_slotsOfBorrowedParameters.get(parameter.index() + 1); }
+    // Whether the value may be an outer object that stands for an inner one which was not made.
+    bool mayBeBorrowedInnerObject(ValueID) const;
     void define(const ValueContext&, Operand);
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
@@ -141,19 +164,43 @@ public:
     LBasicBlock blockFor(BlockID) const;
     B3::FrequentedBlock edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
     void jumpTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
+    // For a terminator that leads to all of these blocks and to which the code of the first does for every one of them: that code goes here, and nothing enters the blocks.
+    void generateInPlaceOfBlocks(std::span<const BlockID>);
     void passHandlerArguments(const Target& handler);
 
     void generateBranchCondition(const TerminatorContext&, ValueID condition, BranchTargets);
     void generateReturnedCall(const TerminatorContext&, ValueID call);
 
+    // The block ends with the call and a test of its result for a type that the callee promises: the return stands for the test, and the test is made at the landing.
+    bool calleeTestsResultOf(const ValueContext& call) const;
+    // The landing is empty. It gives the two values that the meeting of the return and the landing takes from either, and jumps there.
+    struct LandingOfMisfit {
+        LBasicBlock landing { nullptr };
+        LBasicBlock meeting { nullptr };
+        LValue result { nullptr };
+        LValue hasTestedType { nullptr };
+    };
+    void setLandingOfMisfit(ValueID call, const LandingOfMisfit&);
+    std::optional<LandingOfMisfit> takeLandingOfMisfit(ValueID call);
+
+    ValueID nullishCheckBehindFailedTest(BlockID) const;
+    void generateNullishCheckBehindFailedTest(BlockID, ValueID check);
+
     template<typename T> T& emitter();
 
-    bool shouldDropGuard(const ValueContext&);
+    // Under --aot-drop-guard every guard is tested as ever, and one that fails says so on stderr, once. The dropped one then goes on as if it had passed.
+    struct GuardUnderTest {
+        uint32_t ordinal { 0 };
+        bool isDropped { false };
+    };
+    std::optional<GuardUnderTest> takeGuardUnderTest(const ValueContext&);
+    BranchTargets targetsOf(const ValueContext&, const GuardUnderTest&);
 
     void fail(const OperationContext&, InternalErrorKind);
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
     bool mayBeUnspecified(ValueID);
+    bool hasTypeOnlyBehindTest(ValueID parameter);
 
     class InitializationScope {
         WTF_MAKE_NONCOPYABLE(InitializationScope);
@@ -170,9 +217,27 @@ public:
 
 private:
     struct Emitters;
+    class OperationScope;
     struct ResultRange {
         uint32_t first;
         uint32_t count;
+    };
+    struct ConvertedOperand {
+        ValueID id;
+        Operand operand;
+    };
+    // A form of a value that was made where every later operation of the block finds it.
+    struct SharedForm {
+        ValueID source;
+        Operand operand;
+        uint32_t previousOfSource;
+    };
+    struct IncomingOperand {
+        Operand operand;
+        // None for a result that the terminator declares.
+        ValueID source;
+        // Of what the edge itself gives: its type is that on the edge.
+        std::optional<EdgeResultPosition> result { };
     };
     struct ExemptStores {
         B3::AbstractHeapRepository::DecorationMark begin;
@@ -183,6 +248,8 @@ private:
     void createBlocks();
     void createPhis();
     void generateBlock(BlockID);
+    void generateContentsOf(BlockID);
+    bool isHandedOnByJumpAlone(BlockID, const Block&, ValueID);
     void generateValue(BlockID, const Block&, ValueID);
     void generateTerminator(BlockID, const Block&);
     void dispatch(const ValueContext&);
@@ -192,7 +259,19 @@ private:
     void generate(const ValueContext&);
     void defineValue(ValueID, Operand);
     void passArguments(Edge, const Target&, std::span<const Operand> declaredResults);
-    void passArgument(ValueID parameter, Operand);
+    void passArgument(ValueID parameter, const IncomingOperand&);
+    IncomingOperand takeIncomingOperand(Edge, uint32_t parameterIndex, std::span<const Operand>& declaredResults) const;
+
+    template<typename Operation> void convertOperandsOf(const OperationContext&, const Operation&);
+    Operand convert(const OperationContext&, ValueID source, Operand, const Type&, Representation wanted);
+    std::optional<Operand> onlyValueOf(const Type&, Representation);
+    Operand makeConstantIn(const OperationContext&, ValueID constant, Representation);
+    ValueID findSameValueMadeBefore(ValueID source, Representation wanted);
+    ValueID onlyValueArrivingAt(ValueID parameter);
+    std::optional<Operand> findSharedForm(ValueID source, Representation) const;
+    void shareForm(ValueID source, Operand);
+    void dropSharedFormsSince(size_t mark);
+    void forgetSharedForms() { m_firstSharedFormInReach = m_sharedForms.size(); }
     void publishKnownProperties(ValueID, LValue);
     void publishInductionVariables();
     void checkInlineStores(const OperationContext&, const B3::AbstractHeapRepository::DecorationMark&);
@@ -208,18 +287,38 @@ private:
     Output m_out;
     PinnedValues m_pinned;
     Vector<LValue> m_values;
+    // The function holds no conversions but those that cannot wait: an operand is converted in front of the operation that takes it, an argument on its edge.
+    bool m_convertsOperandsAtFetch { false };
+    bool m_valuesOutliveNoSuspension { false };
+    const OperationContext* m_operation { nullptr };
+    Vector<ConvertedOperand, 4> m_convertedOperands;
+    Vector<SharedForm> m_sharedForms;
+    // By the index of the source: one more than the index of its newest form, or zero.
+    Vector<uint32_t> m_newestSharedFormOf;
+    size_t m_firstSharedFormInReach { 0 };
+    Vector<BlockID> m_blockOfParameter;
+    // Takes what the operation that is being generated defines, in place of the table of values.
+    Operand* m_definitionTaken { nullptr };
+    // Beside a parameter in which borrowed objects meet: where the slots lie.
+    UncheckedKeyHashMap<uint32_t, LValue> m_slotsOfBorrowedParameters;
     Vector<std::optional<ResultRange>> m_resultRanges;
     Vector<Operand> m_results;
     Vector<LBasicBlock> m_blocks;
     Vector<ExemptStores, 2> m_exemptStores;
     std::unique_ptr<Emitters> m_emitters;
     std::optional<DroppedGuard> m_droppedGuard;
+    ValueID m_callWithLandingOfMisfit;
+    LandingOfMisfit m_landingOfMisfit;
     std::optional<BitVector> m_unspecifiedValues;
-    uint32_t m_numberOfGuardsSeen { 0 };
+    std::optional<BitVector> m_parametersTypedOnlyBehindTest;
+    Vector<uint32_t> m_numberOfGuardsSeen;
     unsigned m_initializationDepth { 0 };
     bool m_validates { false };
+    bool m_checksProofs { false };
+    bool m_checksKeptRegisters { false };
     bool m_forcesGCSlowPaths { false };
     bool m_hasFailed { false };
+    BitVector m_blocksGeneratedElsewhere;
 };
 
 #define AOT_DECLARE_EMITTER_ACCESSOR(Class) template<> Class& CodeGenerator::emitter<Class>();

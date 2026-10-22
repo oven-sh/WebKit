@@ -18,11 +18,11 @@
 
 namespace JSC { namespace AOT { namespace Wire {
 
-inline constexpr uint64_t schemaHash = 0x7d79d1040f95d0a0ull;
+inline constexpr uint64_t schemaHash = 0x90673dbd44dd2f0aull;
 inline constexpr uint32_t none = UINT32_MAX;
 inline constexpr uint32_t Magic = 0x52495442;
 inline constexpr int64_t MaxTrackedInteger = 4611686018427387903ll;
-inline constexpr unsigned numberOfLists = 35;
+inline constexpr unsigned numberOfLists = 39;
 
 struct UInt64 {
     uint32_t low { 0 };
@@ -55,7 +55,7 @@ static_assert(sizeof(Section) == 8 && alignof(Section) == 4 && std::is_trivially
 static_assert(offsetof(Section, offsetInBytes) == 0); static_assert(offsetof(Section, count) == 4);
 
 struct Header { uint32_t magic { 0 }; UInt64 schemaHash; uint32_t sizeInBytes { 0 }; std::array<Section, numberOfLists> sections { }; };
-static_assert(sizeof(Header) == 296 && alignof(Header) == 4 && std::is_trivially_copyable_v<Header>);
+static_assert(sizeof(Header) == 328 && alignof(Header) == 4 && std::is_trivially_copyable_v<Header>);
 static_assert(offsetof(Header, magic) == 0); static_assert(offsetof(Header, schemaHash) == 4); static_assert(offsetof(Header, sizeInBytes) == 12);
 static_assert(offsetof(Header, sections) == 16);
 
@@ -92,19 +92,12 @@ static_assert(sizeof(TypeSite) == 16 && alignof(TypeSite) == 4 && std::is_trivia
 static_assert(offsetof(TypeSite, module) == 0); static_assert(offsetof(TypeSite, position) == 4); static_assert(offsetof(TypeSite, kind) == 8);
 static_assert(offsetof(TypeSite, text) == 12);
 
-struct DeclaredType {
-    uint32_t type { 0 }; uint32_t written { UINT32_MAX }; uint32_t predicted { UINT32_MAX }; uint32_t site { UINT32_MAX }; uint32_t flags { 0 };
-};
-static_assert(sizeof(DeclaredType) == 20 && alignof(DeclaredType) == 4 && std::is_trivially_copyable_v<DeclaredType>);
-static_assert(offsetof(DeclaredType, type) == 0); static_assert(offsetof(DeclaredType, written) == 4);
-static_assert(offsetof(DeclaredType, predicted) == 8); static_assert(offsetof(DeclaredType, site) == 12);
-static_assert(offsetof(DeclaredType, flags) == 16);
-
-struct ClaimSource { uint32_t kind { 0 }; std::array<uint32_t, 1> words { }; };
-static_assert(sizeof(ClaimSource) == 8 && alignof(ClaimSource) == 4 && std::is_trivially_copyable_v<ClaimSource>);
+struct DeclaredType { uint32_t type { 0 }; uint32_t site { UINT32_MAX }; uint32_t flags { 0 }; };
+static_assert(sizeof(DeclaredType) == 12 && alignof(DeclaredType) == 4 && std::is_trivially_copyable_v<DeclaredType>);
+static_assert(offsetof(DeclaredType, type) == 0); static_assert(offsetof(DeclaredType, site) == 4); static_assert(offsetof(DeclaredType, flags) == 8);
 
 struct TailCast { DeclaredType declared; };
-static_assert(sizeof(TailCast) == 20 && alignof(TailCast) == 4 && std::is_trivially_copyable_v<TailCast>);
+static_assert(sizeof(TailCast) == 12 && alignof(TailCast) == 4 && std::is_trivially_copyable_v<TailCast>);
 static_assert(offsetof(TailCast, declared) == 0);
 
 struct TemplatePart { uint32_t placeholder { 0 }; uint32_t text { 0 }; };
@@ -133,12 +126,13 @@ static_assert(offsetof(ExpectedResult, type) == 0); static_assert(offsetof(Expec
 static_assert(offsetof(ExpectedResult, site) == 12); static_assert(offsetof(ExpectedResult, validation) == 16);
 
 struct Field {
-    uint32_t key { UINT32_MAX }; uint32_t computedKey { UINT32_MAX }; DeclaredType declared; uint32_t flags { 0 };
+    uint32_t key { UINT32_MAX }; uint32_t computedKey { UINT32_MAX }; DeclaredType declared; uint32_t flags { 0 }; uint32_t form { 0 };
     uint32_t originLayout { UINT32_MAX }; uint32_t originField { UINT32_MAX };
 };
-static_assert(sizeof(Field) == 40 && alignof(Field) == 4 && std::is_trivially_copyable_v<Field>);
+static_assert(sizeof(Field) == 36 && alignof(Field) == 4 && std::is_trivially_copyable_v<Field>);
 static_assert(offsetof(Field, key) == 0); static_assert(offsetof(Field, computedKey) == 4); static_assert(offsetof(Field, declared) == 8);
-static_assert(offsetof(Field, flags) == 28); static_assert(offsetof(Field, originLayout) == 32); static_assert(offsetof(Field, originField) == 36);
+static_assert(offsetof(Field, flags) == 20); static_assert(offsetof(Field, form) == 24); static_assert(offsetof(Field, originLayout) == 28);
+static_assert(offsetof(Field, originField) == 32);
 
 struct StaticField { uint32_t key { UINT32_MAX }; uint32_t computedKey { UINT32_MAX }; uint32_t variable { 0 }; };
 static_assert(sizeof(StaticField) == 12 && alignof(StaticField) == 4 && std::is_trivially_copyable_v<StaticField>);
@@ -146,24 +140,25 @@ static_assert(offsetof(StaticField, key) == 0); static_assert(offsetof(StaticFie
 static_assert(offsetof(StaticField, variable) == 8);
 
 struct Layout {
-    uint32_t kind { 0 }; uint32_t name { UINT32_MAX }; uint32_t module { UINT32_MAX }; uint32_t position { 0 }; uint32_t predictedBase { UINT32_MAX };
+    uint32_t kind { 0 }; uint32_t name { UINT32_MAX }; uint32_t module { UINT32_MAX }; uint32_t position { 0 }; uint32_t base { UINT32_MAX };
     uint32_t constructor { UINT32_MAX }; Span fields; Span staticFields; Span supertypes; uint32_t computedKeyCount { 0 }; uint32_t flags { 0 };
+    Span declaredOrder;
 };
-static_assert(sizeof(Layout) == 56 && alignof(Layout) == 4 && std::is_trivially_copyable_v<Layout>);
+static_assert(sizeof(Layout) == 64 && alignof(Layout) == 4 && std::is_trivially_copyable_v<Layout>);
 static_assert(offsetof(Layout, kind) == 0); static_assert(offsetof(Layout, name) == 4); static_assert(offsetof(Layout, module) == 8);
-static_assert(offsetof(Layout, position) == 12); static_assert(offsetof(Layout, predictedBase) == 16);
-static_assert(offsetof(Layout, constructor) == 20); static_assert(offsetof(Layout, fields) == 24);
-static_assert(offsetof(Layout, staticFields) == 32); static_assert(offsetof(Layout, supertypes) == 40);
+static_assert(offsetof(Layout, position) == 12); static_assert(offsetof(Layout, base) == 16); static_assert(offsetof(Layout, constructor) == 20);
+static_assert(offsetof(Layout, fields) == 24); static_assert(offsetof(Layout, staticFields) == 32); static_assert(offsetof(Layout, supertypes) == 40);
 static_assert(offsetof(Layout, computedKeyCount) == 48); static_assert(offsetof(Layout, flags) == 52);
+static_assert(offsetof(Layout, declaredOrder) == 56);
 
 struct Variable {
     uint32_t name { UINT32_MAX }; uint32_t module { 0 }; DeclaredType declared; uint32_t initialization { 0 }; uint32_t function { UINT32_MAX };
     uint32_t owner { UINT32_MAX }; uint32_t flags { 0 };
 };
-static_assert(sizeof(Variable) == 44 && alignof(Variable) == 4 && std::is_trivially_copyable_v<Variable>);
+static_assert(sizeof(Variable) == 36 && alignof(Variable) == 4 && std::is_trivially_copyable_v<Variable>);
 static_assert(offsetof(Variable, name) == 0); static_assert(offsetof(Variable, module) == 4); static_assert(offsetof(Variable, declared) == 8);
-static_assert(offsetof(Variable, initialization) == 28); static_assert(offsetof(Variable, function) == 32);
-static_assert(offsetof(Variable, owner) == 36); static_assert(offsetof(Variable, flags) == 40);
+static_assert(offsetof(Variable, initialization) == 20); static_assert(offsetof(Variable, function) == 24);
+static_assert(offsetof(Variable, owner) == 28); static_assert(offsetof(Variable, flags) == 32);
 
 struct SourceRange { uint32_t start { 0 }; uint32_t end { 0 }; };
 static_assert(sizeof(SourceRange) == 8 && alignof(SourceRange) == 4 && std::is_trivially_copyable_v<SourceRange>);
@@ -173,19 +168,51 @@ struct Body { Span code; uint32_t blockCount { 0 }; uint32_t valueCount { 0 }; }
 static_assert(sizeof(Body) == 16 && alignof(Body) == 4 && std::is_trivially_copyable_v<Body>);
 static_assert(offsetof(Body, code) == 0); static_assert(offsetof(Body, blockCount) == 8); static_assert(offsetof(Body, valueCount) == 12);
 
+struct RelationSubject {
+    uint32_t kind { 0 }; uint32_t index { 0 }; uint32_t source { 0 }; uint32_t key { UINT32_MAX }; uint32_t fate { 0 }; uint32_t results { 0 };
+};
+static_assert(sizeof(RelationSubject) == 24 && alignof(RelationSubject) == 4 && std::is_trivially_copyable_v<RelationSubject>);
+static_assert(offsetof(RelationSubject, kind) == 0); static_assert(offsetof(RelationSubject, index) == 4);
+static_assert(offsetof(RelationSubject, source) == 8); static_assert(offsetof(RelationSubject, key) == 12);
+static_assert(offsetof(RelationSubject, fate) == 16); static_assert(offsetof(RelationSubject, results) == 20);
+
+struct StoredInto {
+    uint32_t source { 0 }; uint32_t target { 0 }; uint32_t key { UINT32_MAX }; uint32_t creationOperand { UINT32_MAX }; uint32_t isOnEveryPath { 0 };
+    uint32_t isBeforeTargetLeaves { 0 };
+};
+static_assert(sizeof(StoredInto) == 24 && alignof(StoredInto) == 4 && std::is_trivially_copyable_v<StoredInto>);
+static_assert(offsetof(StoredInto, source) == 0); static_assert(offsetof(StoredInto, target) == 4); static_assert(offsetof(StoredInto, key) == 8);
+static_assert(offsetof(StoredInto, creationOperand) == 12); static_assert(offsetof(StoredInto, isOnEveryPath) == 16);
+static_assert(offsetof(StoredInto, isBeforeTargetLeaves) == 20);
+
+struct HandedTo { uint32_t source { 0 }; uint32_t call { 0 }; uint32_t argument { 0 }; };
+static_assert(sizeof(HandedTo) == 12 && alignof(HandedTo) == 4 && std::is_trivially_copyable_v<HandedTo>);
+static_assert(offsetof(HandedTo, source) == 0); static_assert(offsetof(HandedTo, call) == 4); static_assert(offsetof(HandedTo, argument) == 8);
+
+struct OperandOf { uint32_t source { 0 }; uint32_t user { 0 }; uint32_t position { 0 }; };
+static_assert(sizeof(OperandOf) == 12 && alignof(OperandOf) == 4 && std::is_trivially_copyable_v<OperandOf>);
+static_assert(offsetof(OperandOf, source) == 0); static_assert(offsetof(OperandOf, user) == 4); static_assert(offsetof(OperandOf, position) == 8);
+
+struct FunctionRelations { Span subjects; Span stores; Span handed; Span operands; uint32_t resultsFullyListed { 0 }; };
+static_assert(sizeof(FunctionRelations) == 36 && alignof(FunctionRelations) == 4 && std::is_trivially_copyable_v<FunctionRelations>);
+static_assert(offsetof(FunctionRelations, subjects) == 0); static_assert(offsetof(FunctionRelations, stores) == 8);
+static_assert(offsetof(FunctionRelations, handed) == 16); static_assert(offsetof(FunctionRelations, operands) == 24);
+static_assert(offsetof(FunctionRelations, resultsFullyListed) == 32);
+
 struct Function {
     uint32_t name { UINT32_MAX }; uint32_t module { 0 }; uint32_t position { 0 }; SourceRange text; uint32_t kind { 0 }; uint32_t role { 0 };
     uint32_t flags { 0 }; uint32_t length { 0 }; uint32_t enclosingRuntimeFunction { UINT32_MAX }; Span captures; DeclaredType thisType;
-    Span parameters; Span results; Body body; Span functionTypes;
+    Span parameters; Span results; Body body; Span functionTypes; Span builtinMembers; FunctionRelations relations;
 };
-static_assert(sizeof(Function) == 108 && alignof(Function) == 4 && std::is_trivially_copyable_v<Function>);
+static_assert(sizeof(Function) == 144 && alignof(Function) == 4 && std::is_trivially_copyable_v<Function>);
 static_assert(offsetof(Function, name) == 0); static_assert(offsetof(Function, module) == 4); static_assert(offsetof(Function, position) == 8);
 static_assert(offsetof(Function, text) == 12); static_assert(offsetof(Function, kind) == 20); static_assert(offsetof(Function, role) == 24);
 static_assert(offsetof(Function, flags) == 28); static_assert(offsetof(Function, length) == 32);
 static_assert(offsetof(Function, enclosingRuntimeFunction) == 36); static_assert(offsetof(Function, captures) == 40);
-static_assert(offsetof(Function, thisType) == 48); static_assert(offsetof(Function, parameters) == 68);
-static_assert(offsetof(Function, results) == 76); static_assert(offsetof(Function, body) == 84);
-static_assert(offsetof(Function, functionTypes) == 100);
+static_assert(offsetof(Function, thisType) == 48); static_assert(offsetof(Function, parameters) == 60);
+static_assert(offsetof(Function, results) == 68); static_assert(offsetof(Function, body) == 76);
+static_assert(offsetof(Function, functionTypes) == 92); static_assert(offsetof(Function, builtinMembers) == 100);
+static_assert(offsetof(Function, relations) == 108);
 
 struct EvalBinding {
     uint32_t name { UINT32_MAX }; uint32_t kind { 0 }; uint32_t depth { 0 }; uint32_t layout { UINT32_MAX }; uint32_t field { UINT32_MAX };
@@ -201,19 +228,22 @@ struct EvalScope { uint32_t mode { 0 }; uint32_t flags { 0 }; Span bindings; };
 static_assert(sizeof(EvalScope) == 16 && alignof(EvalScope) == 4 && std::is_trivially_copyable_v<EvalScope>);
 static_assert(offsetof(EvalScope, mode) == 0); static_assert(offsetof(EvalScope, flags) == 4); static_assert(offsetof(EvalScope, bindings) == 8);
 
-struct ColumnAdjustment { uint32_t offset { 0 }; uint32_t line { 0 }; uint32_t excessBytes { 0 }; };
+struct ColumnAdjustment { uint32_t offset { 0 }; uint32_t line { 0 }; uint32_t column { 0 }; };
 static_assert(sizeof(ColumnAdjustment) == 12 && alignof(ColumnAdjustment) == 4 && std::is_trivially_copyable_v<ColumnAdjustment>);
 static_assert(offsetof(ColumnAdjustment, offset) == 0); static_assert(offsetof(ColumnAdjustment, line) == 4);
-static_assert(offsetof(ColumnAdjustment, excessBytes) == 8);
+static_assert(offsetof(ColumnAdjustment, column) == 8);
 
 struct SourcePositions { Span lineStarts; Span columnAdjustments; };
 static_assert(sizeof(SourcePositions) == 16 && alignof(SourcePositions) == 4 && std::is_trivially_copyable_v<SourcePositions>);
 static_assert(offsetof(SourcePositions, lineStarts) == 0); static_assert(offsetof(SourcePositions, columnAdjustments) == 8);
 
-struct ModuleRequest { uint32_t target { 0 }; uint32_t phase { 0 }; uint32_t isDynamicStarExport { 0 }; };
-static_assert(sizeof(ModuleRequest) == 12 && alignof(ModuleRequest) == 4 && std::is_trivially_copyable_v<ModuleRequest>);
+struct ModuleRequest {
+    uint32_t target { 0 }; uint32_t phase { 0 }; uint32_t isDynamicStarExport { 0 }; uint32_t kind { 0 }; uint32_t completes { 0 };
+};
+static_assert(sizeof(ModuleRequest) == 20 && alignof(ModuleRequest) == 4 && std::is_trivially_copyable_v<ModuleRequest>);
 static_assert(offsetof(ModuleRequest, target) == 0); static_assert(offsetof(ModuleRequest, phase) == 4);
-static_assert(offsetof(ModuleRequest, isDynamicStarExport) == 8);
+static_assert(offsetof(ModuleRequest, isDynamicStarExport) == 8); static_assert(offsetof(ModuleRequest, kind) == 12);
+static_assert(offsetof(ModuleRequest, completes) == 16);
 
 struct ModuleExport {
     uint32_t name { 0 }; uint32_t kind { 0 }; uint32_t variable { UINT32_MAX }; uint32_t module { UINT32_MAX }; uint32_t importName { UINT32_MAX };
@@ -235,24 +265,25 @@ static_assert(sizeof(RequiredName) == 12 && alignof(RequiredName) == 4 && std::i
 static_assert(offsetof(RequiredName, module) == 0); static_assert(offsetof(RequiredName, name) == 4);
 static_assert(offsetof(RequiredName, mayBeAbsent) == 8);
 
-struct ModuleFailure { uint32_t importer { 0 }; uint32_t specifier { 0 }; };
-static_assert(sizeof(ModuleFailure) == 8 && alignof(ModuleFailure) == 4 && std::is_trivially_copyable_v<ModuleFailure>);
+struct ModuleFailure { uint32_t importer { 0 }; uint32_t specifier { 0 }; uint32_t exporter { UINT32_MAX }; };
+static_assert(sizeof(ModuleFailure) == 12 && alignof(ModuleFailure) == 4 && std::is_trivially_copyable_v<ModuleFailure>);
 static_assert(offsetof(ModuleFailure, importer) == 0); static_assert(offsetof(ModuleFailure, specifier) == 4);
+static_assert(offsetof(ModuleFailure, exporter) == 8);
 
 struct Module {
     uint32_t path { 0 }; uint32_t displayPath { 0 }; uint32_t kind { 0 }; uint32_t flags { 0 }; uint32_t exportRule { 0 };
     uint32_t requireResult { 0 }; uint32_t externalKind { 0 }; uint32_t runtimeModule { UINT32_MAX }; uint32_t referrer { UINT32_MAX };
-    uint32_t body { UINT32_MAX }; uint32_t data { UINT32_MAX }; Span requests; Span exports; Span syntheticExports; Span requiredNames;
-    SourcePositions positions; Span functionText;
+    uint32_t body { UINT32_MAX }; uint32_t exportsVariable { UINT32_MAX }; uint32_t data { UINT32_MAX }; Span requests; Span exports;
+    Span syntheticExports; Span requiredNames; SourcePositions positions; Span functionText;
 };
-static_assert(sizeof(Module) == 100 && alignof(Module) == 4 && std::is_trivially_copyable_v<Module>);
+static_assert(sizeof(Module) == 104 && alignof(Module) == 4 && std::is_trivially_copyable_v<Module>);
 static_assert(offsetof(Module, path) == 0); static_assert(offsetof(Module, displayPath) == 4); static_assert(offsetof(Module, kind) == 8);
 static_assert(offsetof(Module, flags) == 12); static_assert(offsetof(Module, exportRule) == 16); static_assert(offsetof(Module, requireResult) == 20);
 static_assert(offsetof(Module, externalKind) == 24); static_assert(offsetof(Module, runtimeModule) == 28);
-static_assert(offsetof(Module, referrer) == 32); static_assert(offsetof(Module, body) == 36); static_assert(offsetof(Module, data) == 40);
-static_assert(offsetof(Module, requests) == 44); static_assert(offsetof(Module, exports) == 52);
-static_assert(offsetof(Module, syntheticExports) == 60); static_assert(offsetof(Module, requiredNames) == 68);
-static_assert(offsetof(Module, positions) == 76); static_assert(offsetof(Module, functionText) == 92);
+static_assert(offsetof(Module, referrer) == 32); static_assert(offsetof(Module, body) == 36); static_assert(offsetof(Module, exportsVariable) == 40);
+static_assert(offsetof(Module, data) == 44); static_assert(offsetof(Module, requests) == 48); static_assert(offsetof(Module, exports) == 56);
+static_assert(offsetof(Module, syntheticExports) == 64); static_assert(offsetof(Module, requiredNames) == 72);
+static_assert(offsetof(Module, positions) == 80); static_assert(offsetof(Module, functionText) == 96);
 
 struct HostRead { uint32_t exportName { 0 }; uint32_t builtin { UINT32_MAX }; uint32_t parameter { 0 }; };
 static_assert(sizeof(HostRead) == 12 && alignof(HostRead) == 4 && std::is_trivially_copyable_v<HostRead>);

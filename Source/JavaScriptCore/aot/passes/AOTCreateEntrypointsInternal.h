@@ -13,7 +13,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 Function createDerivedHeader(const Function& target, FunctionID targetID, FunctionRole, uint32_t keyParameter);
-void emitReturnOfEntrypointCall(IRBuilder&, const FlowResults&, FunctionID callee, ValueID result, EntrypointResultTest = EntrypointResultTest::MadeByEntrypoint);
+// The call is the last operation of the open block.
+void emitReturnOfEntrypointCall(IRBuilder&, ValueID call);
 
 } } } // namespace JSC::AOT::Typed
 

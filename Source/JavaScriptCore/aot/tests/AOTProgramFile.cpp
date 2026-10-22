@@ -108,6 +108,7 @@ String withStandInLibrary(const String& programText)
     };
 
     unsigned numberOfFunctions = 0;
+    unsigned numberOfModules = 0;
     Vector<OwnLine> ownLines;
     StringBuilder text;
     for (StringView line : StringView(programText).splitAllowingEmptyEntries('\n')) {
@@ -118,6 +119,8 @@ String withStandInLibrary(const String& programText)
         else {
             if (line.startsWith("function f"_s))
                 ++numberOfFunctions;
+            if (line.startsWith("module m"_s))
+                ++numberOfModules;
             text.append(line);
         }
         text.append('\n');
@@ -134,7 +137,12 @@ String withStandInLibrary(const String& programText)
     std::ranges::sort(standInIDs);
     std::ranges::stable_sort(ownLines, { }, &OwnLine::id);
 
-    text.append("function f"_s, numberOfFunctions, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+    // As a front end sends it: a registered function lies in a module of the library, which has no body.
+    if (numberOfModules) {
+        text.append("module m"_s, numberOfModules, " path=\"library\" displayPath=\"library\" flags=[IsLibrary]\n"_s);
+        text.append("function f"_s, numberOfFunctions, " name=\"library\" module=m"_s, numberOfModules, " role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+    } else
+        text.append("function f"_s, numberOfFunctions, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
     size_t nextOwnLine = 0;
     auto appendOwnLinesBelow = [&](uint64_t id) {
         for (; nextOwnLine < ownLines.size() && ownLines[nextOwnLine].id < id; ++nextOwnLine)

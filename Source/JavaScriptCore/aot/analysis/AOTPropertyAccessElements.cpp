@@ -37,7 +37,7 @@ enum class ElementReceiverKind : uint8_t { Unknown, String, Union, Class };
 struct ElementReceiver {
     ElementReceiverKind kind { ElementReceiverKind::Unknown };
     const ClassPart* part { nullptr };
-    bool isPredicted { false };
+    bool isExpected { false };
 };
 
 } // anonymous namespace
@@ -117,6 +117,7 @@ static std::optional<Opcode> elementOperationFor(ElementAccessForm form, Access 
     case ElementAccessForm::ByKey:
     case ElementAccessForm::NamedKey:
     case ElementAccessForm::String:
+    case ElementAccessForm::ArgumentsElement:
     case ElementAccessForm::Split:
         break;
     }
@@ -209,36 +210,65 @@ static ElementAccessPlan finishElementPlan(ElementAccessPlan plan, ElementAccess
 {
     plan.form = form;
     plan.operation = operation;
-    plan.level = plan.needsNoTest() ? KnowledgeLevel::Proven : KnowledgeLevel::Predicted;
+    plan.level = plan.needsNoTest() ? KnowledgeLevel::Proven : KnowledgeLevel::Expected;
     return plan;
 }
 
-TypeID testedNumberTypeContaining(const Type& predictedNumber)
+TypeID testedNumberTypeContaining(const Type& expectedNumber)
 {
-    RELEASE_ASSERT(predictedNumber.isNumber());
-    return predictedNumber.isInt32() ? TypeTable::int32 : TypeTable::number;
+    RELEASE_ASSERT(expectedNumber.isNumber());
+    return expectedNumber.isInt32() ? TypeTable::int32 : TypeTable::number;
 }
 
-static Type numbersThatPassTest(const Type& value, const Type& predictedNumber)
+static Type numbersThatPassTest(const Type& value, const Type& expectedNumber)
 {
     Type numbers = value.withoutObjects().withoutPrimitives(static_cast<uint16_t>(~Primitive::Number));
-    if (testedNumberTypeContaining(predictedNumber) == TypeTable::number)
+    if (testedNumberTypeContaining(expectedNumber) == TypeTable::number)
         return numbers;
     return Type::integer(numbers.integers.intersectWith(Range::int32()));
+}
+
+static TypedArrayType typedArrayTypeOf(const BuiltinTable& builtins, BuiltinClassID builtinClass)
+{
+    BuiltinClassID typedArrayClass = builtins.typedArrayClassOf(builtinClass);
+    return typedArrayClass ? builtins.at(typedArrayClass).typedArrayType : NotTypedArray;
+}
+
+static bool hasIndexedElements(const BuiltinTable& builtins, BuiltinClassID builtinClass)
+{
+    return builtinClass == BuiltinClasses::Array || isTypedView(typedArrayTypeOf(builtins, builtinClass));
+}
+
+static NumberKey testedNumberKey(const Type& key, const Type& expectedNumber)
+{
+    Type tested = numbersThatPassTest(key, expectedNumber);
+    return { KnowledgeLevel::Expected, tested.isNumberWithoutFraction(), isArrayIndex(tested) };
+}
+
+static NumberKey expectedIndexKey(const Program& program, const ElementAccessQuery& query)
+{
+    const ClassPart* part = query.receiver.singleBuiltinClass();
+    if (!part || !hasIndexedElements(program.builtins(), part->builtinClass))
+        return { };
+
+    // SplitUnions gives the number part of a closed union an arm of its own, which takes every number.
+    const Type& testedType = program.at(TypeTable::int32);
+    if (!query.key.overlaps(testedType, program) || isClosedUnion(unionPartsOf(query.key)))
+        return { };
+    return testedNumberKey(query.key, testedType);
 }
 
 static NumberKey numberKeyOf(const Program& program, const ElementAccessQuery& query)
 {
     if (query.key.isNumber())
         return { KnowledgeLevel::Proven, query.key.isNumberWithoutFraction(), isArrayIndex(query.key) };
-    if (!query.keyPrediction)
-        return { };
+    if (!query.keyExpected)
+        return expectedIndexKey(program, query);
 
-    Type predicted = query.keyPrediction->withoutNullish();
-    if (!predicted.isNumber() || !query.key.overlaps(predicted, program))
+    Type expected = query.keyExpected->withoutNullish();
+    if (!expected.isNumber() || !query.key.overlaps(expected, program))
         return { };
-    Type tested = numbersThatPassTest(query.key, predicted);
-    return { KnowledgeLevel::Predicted, tested.isNumberWithoutFraction(), isArrayIndex(tested) };
+    return testedNumberKey(query.key, expected);
 }
 
 static bool mayHaveElementForm(UnionPartKind kind)
@@ -273,18 +303,11 @@ static bool canSplitReceiver(const Type& receiver)
     });
 }
 
-static TypedArrayType typedArrayTypeOf(const BuiltinTable& builtins, BuiltinClassID builtinClass)
-{
-    BuiltinClassID typedArrayClass = builtins.typedArrayClassOf(builtinClass);
-    return typedArrayClass ? builtins.at(typedArrayClass).typedArrayType : NotTypedArray;
-}
-
-// What flow could not follow is in a prediction with every primitive and with the objects made of them, beside the array that it did see.
-static const ClassPart* findOnlyClassWithElements(const BuiltinTable& builtins, const Type& prediction)
+static const ClassPart* findOnlyClassWithElements(const BuiltinTable& builtins, const Type& expected)
 {
     const ClassPart* found = nullptr;
-    for (const ClassPart& part : prediction.classes) {
-        if (part.builtinClass != BuiltinClasses::Array && !isTypedView(typedArrayTypeOf(builtins, part.builtinClass)))
+    for (const ClassPart& part : expected.classes) {
+        if (!hasIndexedElements(builtins, part.builtinClass))
             continue;
         if (found)
             return nullptr;
@@ -301,52 +324,40 @@ static ElementReceiver elementReceiverOf(const Program& program, const ElementAc
         return { ElementReceiverKind::String };
     if (canSplitReceiver(query.receiver))
         return { ElementReceiverKind::Union };
-    if (!query.receiverPrediction)
+    if (!query.receiverExpected)
         return { };
 
-    const ClassPart* predictedClass = findOnlyClassWithElements(program.builtins(), *query.receiverPrediction);
-    if (predictedClass && (query.receiver.anyObject || query.receiver.findClassPart(predictedClass->builtinClass)))
-        return { ElementReceiverKind::Class, predictedClass, true };
+    const ClassPart* expectedClass = findOnlyClassWithElements(program.builtins(), *query.receiverExpected);
+    if (expectedClass && (query.receiver.anyObject || query.receiver.findClassPart(expectedClass->builtinClass)))
+        return { ElementReceiverKind::Class, expectedClass, true };
 
-    Type predicted = query.receiverPrediction->withoutNullish();
-    if (predicted.isAnyString() && query.receiver.overlaps(predicted, program))
+    Type expected = query.receiverExpected->withoutNullish();
+    if (expected.isAnyString() && query.receiver.overlaps(expected, program))
         return { ElementReceiverKind::String, nullptr, true };
     return { };
 }
 
 static ElementAccessPlan planCharacterRead(const ElementAccessQuery& query, NumberKey key, const ElementReceiver& receiver)
 {
-    if (!receiver.isPredicted && key.level == KnowledgeLevel::Proven)
+    if (!receiver.isExpected && key.level == KnowledgeLevel::Proven)
         return planWithoutElementOperation(query, ElementAccessForm::String, KnowledgeLevel::Proven);
 
-    ElementAccessPlan plan = planWithoutElementOperation(query, ElementAccessForm::ByKey, KnowledgeLevel::Predicted);
-    plan.testsReceiverIsString = receiver.isPredicted;
+    ElementAccessPlan plan = planWithoutElementOperation(query, ElementAccessForm::ByKey, KnowledgeLevel::Expected);
+    plan.testsReceiverIsString = receiver.isExpected;
     plan.testsKeyIsNumber = key.level != KnowledgeLevel::Proven;
     return plan;
-}
-
-// An array of numbers has one of three kinds by the numbers it has met. An array that is said to hold none is contiguous whoever made it.
-static ArrayStorage storageOfElementsWithoutNumbers(const Program& program, const ClassPart& part)
-{
-    TypeID contents = part.contentsAt(program.builtins(), ContentsSlot::Element);
-    if (!contents)
-        return ArrayStorage::Other;
-    const Type& elements = program.at(contents);
-    if (elements.isAnything() || elements.primitives & Primitive::Number)
-        return ArrayStorage::Other;
-    return arrayStorageHolding(elements);
 }
 
 static ArrayStorage expectedArrayStorageOf(const Program& program, const ElementAccessQuery& query, const ClassPart& part)
 {
     if (part.arrayStorage != ArrayStorage::Other)
         return part.arrayStorage;
-    const ClassPart* predicted = query.receiverPrediction ? query.receiverPrediction->findClassPart(part.builtinClass) : nullptr;
-    if (predicted && predicted->arrayStorage != ArrayStorage::Other)
-        return predicted->arrayStorage;
-    ArrayStorage storage = storageOfElementsWithoutNumbers(program, part);
-    if (storage == ArrayStorage::Other && predicted)
-        storage = storageOfElementsWithoutNumbers(program, *predicted);
+    const ClassPart* expected = query.receiverExpected ? query.receiverExpected->findClassPart(part.builtinClass) : nullptr;
+    if (expected && expected->arrayStorage != ArrayStorage::Other)
+        return expected->arrayStorage;
+    ArrayStorage storage = arrayStorageDeclaredBy(program, part);
+    if (storage == ArrayStorage::Other && expected)
+        storage = arrayStorageDeclaredBy(program, *expected);
     return storage;
 }
 
@@ -357,12 +368,12 @@ static ElementAccessPlan planArrayAccess(const Program& program, const ElementAc
     // -1 and 1.5 name properties, and an accessor on the array or on its prototypes may answer to such a name.
     if (!key.isArrayIndex)
         plan.requiredAspects.add(PristineAspects::Names);
-    if (!receiver.isPredicted)
+    if (!receiver.isExpected)
         plan.requiredAspects = plan.requiredAspects - part.provenPristine;
 
     ArrayStorage expected = expectedArrayStorageOf(program, query, part);
     if (hasArrayStorageForm(expected)) {
-        bool isProven = !receiver.isPredicted && part.contentsAreProven && part.arrayStorage == expected;
+        bool isProven = !receiver.isExpected && part.contentsAreProven && part.arrayStorage == expected;
         plan.arrayStorage = expected;
         plan.testsArrayStorage = !isProven;
     }
@@ -389,13 +400,13 @@ static KnowledgeLevel storedFitOf(const Program& program, const ElementAccessQue
         return KnowledgeLevel::Unknown;
     if (fitsContentType(*query.stored, contentType))
         return KnowledgeLevel::Proven;
-    if (!query.storedPrediction)
+    if (!query.storedExpected)
         return KnowledgeLevel::Unknown;
 
-    Type predicted = query.storedPrediction->withoutNullish();
-    if (!fitsContentType(predicted, contentType) || !query.stored->overlaps(predicted, program))
+    Type expected = query.storedExpected->withoutNullish();
+    if (!fitsContentType(expected, contentType) || !query.stored->overlaps(expected, program))
         return KnowledgeLevel::Unknown;
-    return KnowledgeLevel::Predicted;
+    return KnowledgeLevel::Expected;
 }
 
 static ElementAccessPlan planTypedArrayAccess(const Program& program, const ElementAccessQuery& query, TypedArrayType typedArrayType, ElementAccessPlan plan)
@@ -407,7 +418,7 @@ static ElementAccessPlan planTypedArrayAccess(const Program& program, const Elem
         KnowledgeLevel storedFit = storedFitOf(program, query, contentType(typedArrayType));
         if (storedFit == KnowledgeLevel::Unknown)
             return planByKey(query);
-        plan.testsStoredValue = storedFit == KnowledgeLevel::Predicted;
+        plan.testsStoredValue = storedFit == KnowledgeLevel::Expected;
     }
 
     plan.typedArrayType = typedArrayType;
@@ -420,7 +431,9 @@ static ElementAccessPlan planClassAccess(const Program& program, const ElementAc
     plan.builtinClass = receiver.part->builtinClass;
     plan.keyIsIntegral = key.isIntegral;
     plan.testsKeyIsNumber = key.level != KnowledgeLevel::Proven;
-    plan.testsReceiverClass = receiver.isPredicted;
+    plan.testsReceiverClass = receiver.isExpected;
+    // The test of an expected receiver fails for undefined and null.
+    plan.checksNullish = !receiver.isExpected && query.receiver.mayBeUndefinedOrNull();
 
     if (plan.builtinClass == BuiltinClasses::Array)
         return planArrayAccess(program, query, key, receiver, plan);
@@ -428,6 +441,8 @@ static ElementAccessPlan planClassAccess(const Program& program, const ElementAc
     TypedArrayType typedArrayType = typedArrayTypeOf(program.builtins(), plan.builtinClass);
     if (isTypedView(typedArrayType))
         return planTypedArrayAccess(program, query, typedArrayType, plan);
+    if (plan.builtinClass == BuiltinClasses::Arguments && query.access == Access::Read && plan.needsNoTest())
+        return planWithoutElementOperation(query, ElementAccessForm::ArgumentsElement, KnowledgeLevel::Proven);
     return planByKey(query);
 }
 
@@ -442,8 +457,7 @@ ElementAccessPlan planElementAccess(const Program& program, const ElementAccessQ
         return planByKey(query);
 
     ElementReceiver receiver = elementReceiverOf(program, query);
-    // The test of a predicted receiver fails for undefined and null.
-    if (query.receiver.mayBeUndefinedOrNull() && !receiver.isPredicted)
+    if (query.receiver.mayBeUndefinedOrNull() && !receiver.isExpected && receiver.kind != ElementReceiverKind::Class)
         return planByKey(query);
 
     switch (receiver.kind) {
@@ -461,9 +475,9 @@ ElementAccessPlan planElementAccess(const Program& program, const ElementAccessQ
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const Type* findPredictedType(const Program& program, const Value& value)
+static const Type* findExpectedType(const Program& program, const Value& value)
 {
-    return value.prediction() ? &program.at(value.prediction()) : nullptr;
+    return value.expected() ? &program.at(value.expected()) : nullptr;
 }
 
 std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, const Function& function, const Value& access)
@@ -487,11 +501,11 @@ std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, con
     return planElementAccess(program, {
         .access = *kind,
         .receiver = program.at(receiver.type),
-        .receiverPrediction = findPredictedType(program, receiver),
+        .receiverExpected = findExpectedType(program, receiver),
         .key = program.at(key.type),
-        .keyPrediction = findPredictedType(program, key),
+        .keyExpected = findExpectedType(program, key),
         .stored = hasStoredValue ? &program.typeOf(function, access.valueOperand()) : nullptr,
-        .storedPrediction = hasStoredValue ? findPredictedType(program, function.at(access.valueOperand())) : nullptr,
+        .storedExpected = hasStoredValue ? findExpectedType(program, function.at(access.valueOperand())) : nullptr,
     });
 }
 
@@ -508,6 +522,8 @@ static ASCIILiteral nameOf(ElementAccessForm form)
         return "TypedArray"_s;
     case ElementAccessForm::String:
         return "String"_s;
+    case ElementAccessForm::ArgumentsElement:
+        return "ArgumentsElement"_s;
     case ElementAccessForm::Split:
         return "Split"_s;
     }
@@ -520,6 +536,8 @@ static void dumpTests(PrintStream& out, const ElementAccessPlan& plan)
     CommaPrinter comma;
     if (plan.testsReceiverClass)
         out.print(comma, "class");
+    if (plan.checksNullish)
+        out.print(comma, "nullish");
     if (plan.testsReceiverIsString)
         out.print(comma, "string");
     if (plan.testsKeyIsNumber)
@@ -539,6 +557,8 @@ static void dumpTests(PrintStream& out, const ElementAccessPlan& plan)
         out.print(comma, "storage");
     if (plan.testsInBounds)
         out.print(comma, "bounds");
+    if (plan.testsPresence)
+        out.print(comma, "presence");
     out.print("]");
 }
 
@@ -555,6 +575,12 @@ void ElementAccessPlan::dump(PrintStream& out) const
         out.print(" typedArray=", typedArrayType);
     if (keyIsIntegral)
         out.print(" integralKey");
+    if (isPresent)
+        out.print(" present");
+    if (readsHoleAsNaN)
+        out.print(" holeIsNaN");
+    if (isInsideView)
+        out.print(" insideView");
     if (!needsNoTest())
         dumpTests(out, *this);
     if (cause != UnprovenCause::Unknown)

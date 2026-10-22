@@ -1,6 +1,6 @@
 # The bytes a caller may still grow by go to its hottest call first, wherever that call stands in the function
 # FORM: Prepared
-# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:200
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:100
 # RUN: pass InlineCalls
 # STATISTIC: InlineDecisionInline = 2
 # STATISTIC: InlineDecisionCallerSizeLimit = 2

@@ -18,6 +18,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+inline constexpr OpcodeSet callsWithList { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
+
+// What resolveBuiltins() looks for in a body. Of a function of the library it also looks at the entry parameters.
+inline constexpr OpcodeSet operationsResolvedToBuiltins = builtinUseOpcodes | callsWithList | OpcodeSet { Opcode::CreateIteratorResult, Opcode::RequireModule, Opcode::InstanceOf };
+
 std::optional<TailCallRequirement> tailCallRequirementOf(const Function&, BlockID, ValueID call);
 void demoteTailCall(FunctionPassContext&, IRBuilder&, BlockID);
 
@@ -62,7 +67,6 @@ struct CalleeSplit {
     Vector<MemberOfClasses, 4> members;
 };
 
-bool predictReceiversFromSeenMethods(FunctionPassContext&);
 Vector<CalleeSplit> planCalleeSplits(FunctionPassContext&);
 void emitCalleeSplits(FunctionPassContext&, std::span<const CalleeSplit>);
 
@@ -72,9 +76,11 @@ struct BuiltinInstanceOfSite {
     ValueSite site;
     BuiltinClassID builtinClass;
     InstanceOfAnswer answer { InstanceOfAnswer::Unknown };
-    // Set where the constructor is only predicted: the rest of the plan holds where the operand is this object.
+    // Set where the constructor is only expected: the rest of the plan holds where the operand is this object.
     BuiltinID constructorToTest;
     bool testsClass { false };
+    // No class: the table has no entry for the prototype object of the constructor, so it is read from the constructor.
+    bool readsPrototype { false };
 };
 
 InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext&, const Type& subject, BuiltinClassID);
@@ -111,7 +117,14 @@ void emitTestsOfCalledOperands(FunctionPassContext&, std::span<const CalledOpera
 Vector<ForwardedTailCall> planForwardedTailCalls(FunctionPassContext&);
 void rewriteForwardedTailCalls(FunctionPassContext&, std::span<const ForwardedTailCall>);
 
-unsigned expandStaticRequires(FunctionPassContext&);
+// f.apply(t, arguments), where the object still holds what this function was called with.
+struct CallOfOwnArguments {
+    ValueSite site;
+    ForwardedCallPlan plan;
+};
+
+Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext&);
+void passOnOwnArgumentsByCount(FunctionPassContext&, std::span<const CallOfOwnArguments>);
 
 } } } // namespace JSC::AOT::Typed
 

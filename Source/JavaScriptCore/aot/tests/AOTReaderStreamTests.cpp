@@ -98,7 +98,7 @@ void testStreamPayloads()
         { "NewTemplateObject.templateStrings"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1008), 2), Wire::none, Kind::ListOutOfBounds },
         { "TemplateString.raw"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1008), 4), Wire::none, Kind::IdOutOfRange },
         { "PropGet.key"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1009), 4), Wire::none, Kind::IdOutOfRange },
-        { "Predict.predicted"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1010), 3), fixture.countOf(List::Types), Kind::IdOutOfRange },
+        { "Convert.declared"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1010), 3), fixture.countOf(List::Types), Kind::IdOutOfRange },
         { "Builtin.builtin"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1011), 2), invalidExternal, Kind::IdOutOfRange },
         { "TypeTest.testedType"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1013), 3), fixture.countOf(List::Types), Kind::IdOutOfRange },
         { "Data.data"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1014), 2), fixture.countOf(List::Data), Kind::IdOutOfRange },
@@ -106,6 +106,51 @@ void testStreamPayloads()
         { "NewRegExp.regExpFlags"_s, wordAfter(fixture.offsetOfHeadAt(f7, 1016), 3), 1u << numberOfEnumerators<RegExpFlags>, Kind::UnknownFlag },
         { "ParameterHead.type"_s, parameterType, fixture.countOf(List::Types), Kind::IdOutOfRange },
     });
+}
+
+constexpr ASCIILiteral conversionsText = R"IR(typesite w0 module=m0 position=3 kind=Assertion
+module m0 path="/a.ts" displayPath="a.ts"
+function f0 name="f" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number site=w0} illTypedCause=Assertion @1001
+    v2 = Convert v0 declared={type=string flags=[IsExpected]} @1002
+    v3 = Check v0 castType=number site=w0 @1003
+    Return v1 @2000
+}
+entry module=m0
+)IR"_s;
+
+namespace ConvertWord {
+constexpr unsigned value = 2;
+constexpr unsigned declared = 3;
+constexpr unsigned illTypedCause = 6;
+}
+
+void testStreamConversions()
+{
+    static_assert(sizeof(Wire::DeclaredType) == (ConvertWord::illTypedCause - ConvertWord::declared) * wordSize);
+    static_assert(formsOf(Opcode::Convert).contains(IRForm::AsRead) && !formsOf(Opcode::Convert).contains(IRForm::Prepared));
+    ReaderFixture fixture(conversionsText);
+    constexpr FunctionID f0 { 0u };
+    size_t checked = fixture.offsetOfHeadAt(f0, 1001);
+    size_t expected = fixture.offsetOfHeadAt(f0, 1002);
+    size_t declared = wordAfter(checked, ConvertWord::declared);
+    expectAccepted("conversions"_s, readBytes(fixture.bytes.span()));
+    AOT_TEST_CHECK(!fixture.word(declared + offsetof(Wire::DeclaredType, site)) && !fixture.word(declared + offsetof(Wire::DeclaredType, flags)));
+    AOT_TEST_CHECK(fixture.word(wordAfter(checked, ConvertWord::illTypedCause)) == static_cast<uint32_t>(IllTypedCause::Assertion));
+    AOT_TEST_CHECK(fixture.word(wordAfter(expected, ConvertWord::declared) + offsetof(Wire::DeclaredType, site)) == Wire::none);
+    AOT_TEST_CHECK(fixture.word(wordAfter(expected, ConvertWord::declared) + offsetof(Wire::DeclaredType, flags)) == static_cast<uint32_t>(PositionFlags::IsExpected));
+    AOT_TEST_CHECK(fixture.word(wordAfter(expected, ConvertWord::illTypedCause)) == static_cast<uint32_t>(IllTypedCause::None));
+
+    RecordDamages damages(fixture);
+    addDeclaredTypeDamages(damages, declared);
+    damages.enumerator<IllTypedCause>("Convert.illTypedCause"_s, wordAfter(checked, ConvertWord::illTypedCause));
+    damages.word("Convert.value"_s, wordAfter(checked, ConvertWord::value), Wire::none, Kind::OperandMissing);
+    damages.id("Check.castType"_s, wordAfter(fixture.offsetOfHeadAt(f0, 1003), 3), List::Types);
+    damages.optionalID("Check.site"_s, wordAfter(fixture.offsetOfHeadAt(f0, 1003), 4), List::TypeSites);
+    expectEach(fixture, damages.damages());
+
+    expectRejected("conversion in a later form"_s, readBytesInForm(fixture.bytes.span(), IRForm::Prepared), Kind::RequiredPassLeftOperation);
 }
 
 constexpr ASCIILiteral scopeReferencesText = R"IR(module m0 path="/a.ts" displayPath="a.ts"
@@ -214,6 +259,7 @@ std::span<const NativeTest> readerStreamTests()
         { "reader/stream-heads"_s, testStreamHeads },
         { "reader/stream-operands"_s, testStreamOperands },
         { "reader/stream-payloads"_s, testStreamPayloads },
+        { "reader/stream-conversions"_s, testStreamConversions },
         { "reader/stream-scope-references"_s, testStreamScopeReferences },
         { "reader/stream-terminators"_s, testStreamTerminators },
         { "reader/stream-blocks"_s, testStreamBlocks },

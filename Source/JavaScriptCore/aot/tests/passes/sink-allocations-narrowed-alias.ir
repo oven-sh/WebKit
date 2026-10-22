@@ -1,12 +1,13 @@
 # A parameter that an edge fills with the narrowed object is the object
 # FORM: Prepared
 # RUN: pass SinkAllocations
-# STATISTIC: AllocationsRemoved = 3
+# STATISTIC: AllocationsRemoved = 4
 # STATISTIC: AllocationsSunk = 8
 
 module m0 path="main.js" displayPath="main.js"
 typesite w0 kind=Assertion
 layout L0 name="Holder" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="bothEdgesPassTheObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
@@ -101,7 +102,7 @@ function f3 name="keptTestKeepsItsProofs" parameters=[{type=anything}, {type=boo
     Branch v1 -> taken b1(), notTaken b4()
   b1():
     v4 = Call v0, -, v3
-    v5 = TypeTest v3 testedType=L0
+    v5 = StrictEq v3, v4
     Branch v5 -> taken b2(| 0), notTaken b3(| 0)
   b2(v6):
     v7 = PropGet v6 key="list"
@@ -117,11 +118,11 @@ function f3 name="keptTestKeepsItsProofs" parameters=[{type=anything}, {type=boo
 # CHECK: b1():
 # CHECK-NEXT: [[cell3]]:{{*}}= NewObject -, v0
 # CHECK-NEXT: = Call v0, -, [[cell3]]
-# CHECK-NEXT: v5:{{*}}= TypeTest [[cell3]] testedType=L0
+# CHECK-NEXT: v5:{{*}}= StrictEq [[cell3]], v4
 # CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3(| 0)
 # CHECK: b2(v6: L0):
 # CHECK-NEXT: = PropGet v6 key="list"
-# CHECK: b3(v8: object):
+# CHECK: b3(v8: L0):
 # CHECK-NEXT: Return v8
 
 function f4 name="narrowedOperandIsBuilt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -219,24 +220,23 @@ function f7 name="assumedTypeStoredInVirtualObject" parameters=[{type=anything},
 # CHECK: [[holder7]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, [[holder7]]
 
-function f8 name="testingClaimStays" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+function f8 name="checkForItsOwnLayoutGoes" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = Claim v2 castType=L0 site=w0
+    v3 = Check v2 castType=L0 site=w0
     v4 = GetSlotOrUndefined v3 key="list" receivers=[L0] level=Proven
     Return v4
   b2():
     Return v0
 }
-# CHECK-LABEL: function f8 name="testingClaimStays"
-# CHECK: b0(
-# CHECK-NEXT: Branch
+# CHECK-LABEL: function f8 name="checkForItsOwnLayoutGoes"
+# CHECK-NOT: NewObject
+# CHECK-NOT: Check
 # CHECK: b1():
-# CHECK-NEXT: [[cell8]]:{{*}}= NewObject -, v0
-# CHECK-NEXT: v3: L0 = Claim [[cell8]] castType=L0
-# CHECK-NEXT: = GetSlotOrUndefined v3 key="list"
+# CHECK-NEXT: v4: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Return v4
 
 function f9 name="assumedTypeUnderFoldedTest" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):
@@ -261,3 +261,23 @@ function f9 name="assumedTypeUnderFoldedTest" parameters=[{type=anything}, {type
 # CHECK: b3():
 # CHECK-NEXT: [[cell9]]: Array = NewArray
 # CHECK: = Call v0, -, 
+
+function f10 name="checkThatFailsStays" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Check v2 castType=L1 site=w0
+    v4 = GetSlotOrUndefined v3 key="list" receivers=[L1] level=Proven
+    Return v4
+  b2():
+    Return v0
+}
+# Generic code goes on with the object, and there it needs its cell.
+# CHECK-LABEL: function f10 name="checkThatFailsStays"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[cell10]]:{{*}}= NewObject -, v0
+# CHECK-NEXT: v3: L1 = Check [[cell10]] castType=L1
+# CHECK-NEXT: = GetSlotOrUndefined v3 key="list"

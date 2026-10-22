@@ -1,7 +1,7 @@
 # Three functions called with new store the same names in another order, and what reads an object of any of them reads each name at one location.
 # "text" holds a string in one and nothing but undefined in another: both get the slot of a string that may be undefined. The third never stores it and keeps the bytes of that slot zero, so the read needs no test of the shape
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
 # STATISTIC: SharesRefused = 0
 
@@ -36,7 +36,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Node" flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     v2 = Undefined
     PropSet v0, v1 key="pos"
     PropSet v0, v1 key="end"
@@ -46,7 +46,7 @@ function f1 name="Node" flags=[HasThis] thisType={type=L0} parameters=[{type=num
     Return
 }
 function f2 name="Token" flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L1, v1: number):
+  b0(v0: L1, v1: number):
     v2 = Undefined
     PropSet v0, v1 key="kind"
     PropSet v0, v1 key="pos"
@@ -55,7 +55,7 @@ function f2 name="Token" flags=[HasThis] thisType={type=L1} parameters=[{type=nu
     Return
 }
 function f3 name="Identifier" flags=[HasThis] thisType={type=L2} parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: object ? L2, v1: number, v2: string):
+  b0(v0: L2, v1: number, v2: string):
     v3 = Undefined
     PropSet v0, v2 key="text"
     PropSet v0, v3 key="parent"

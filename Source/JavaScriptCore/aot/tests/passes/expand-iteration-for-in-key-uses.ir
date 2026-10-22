@@ -1,5 +1,7 @@
+# The generic copy comes back, without a test, where the tested code knows nothing more than the copy: in f0 behind the read, in f18 in front of the second test.
 # The uses of an enumerated key on any object are answered from the enumerator under one test per stretch, and the operations as written stay on the failing side
 # FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
 # RUN: pass ExpandIteration PlaceTypeTests
 # RUN(TWICE): pass ExpandIteration PlaceTypeTests ExpandIteration PlaceTypeTests
 # STATISTIC: EnumeratedKeyUsesResolved = 19
@@ -35,14 +37,14 @@ function f0 name="read" parameters=[{type=object}, {type=anything}] results=[{ty
 # CHECK: [[position0]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[test0]]: boolean = IsEnumeratorCurrent v2, v0, [[position0]]
 # CHECK-NEXT: Branch [[test0]] -> taken [[current0]](| 0), notTaken [[other0]]()
+# CHECK: [[current0]]([[guard0]]: guard):
 # CHECK: v7: anything = EnumeratorGetByVal v0, v6, v2, [[position0]], [[guard0]]
 # CHECK-NEXT: Jump -> next [[rest0]](v7)
-# CHECK-NEXT: [[rest0]]([[value0]]: anything):
-# CHECK-NEXT: = Call v1, -, [[value0]]
+# CHECK-NEXT: [[rest0]]([[read0]]: anything):
+# CHECK-NEXT: = Call v1, -, [[read0]]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: [[slow0]]: anything = ElemGet v0, v6
 # CHECK-NEXT: Jump -> next [[rest0]]([[slow0]])
-# CHECK: [[current0]]([[guard0]]: guard):
 
 function f1 name="in" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything):
@@ -67,10 +69,14 @@ function f1 name="in" parameters=[{type=object}, {type=anything}] results=[{type
 # CHECK: [[test1]]: boolean = IsEnumeratorCurrent v2, v0, [[position1]]
 # CHECK-NEXT: Branch [[test1]] -> taken [[current1]](| 0), notTaken [[other1]]()
 # CHECK: v7: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next [[rest1]](v7)
+# CHECK-NEXT: Jump -> next [[rest1]]()
+# CHECK-NEXT: [[rest1]]():
+# CHECK-NEXT: = Call v1, -, v7
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: [[slow1]]: boolean = ElemHas v0, v6
-# CHECK-NEXT: Jump -> next [[rest1]]([[slow1]])
+# CHECK-NEXT: Jump -> next [[copy1]]()
+# CHECK-NEXT: [[copy1]]() frequency=Unlikely:
+# CHECK-NEXT: = Call v1, -, [[slow1]]
 
 function f2 name="hasOwn" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything):
@@ -95,10 +101,14 @@ function f2 name="hasOwn" parameters=[{type=object}, {type=anything}] results=[{
 # CHECK: [[test2]]: boolean = IsEnumeratorCurrent v2, v0, [[position2]]
 # CHECK-NEXT: Branch [[test2]] -> taken [[current2]](| 0), notTaken [[other2]]()
 # CHECK: v7: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next [[rest2]](v7)
+# CHECK-NEXT: Jump -> next [[rest2]]()
+# CHECK-NEXT: [[rest2]]():
+# CHECK-NEXT: = Call v1, -, v7
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: [[slow2]]: boolean = CallBuiltin -, v0, v6 overload=ObjectHasOwn/0
-# CHECK-NEXT: Jump -> next [[rest2]]([[slow2]])
+# CHECK-NEXT: Jump -> next [[copy2]]()
+# CHECK-NEXT: [[copy2]]() frequency=Unlikely:
+# CHECK-NEXT: = Call v1, -, [[slow2]]
 
 function f3 name="hasOwnProperty" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything):
@@ -123,10 +133,14 @@ function f3 name="hasOwnProperty" parameters=[{type=object}, {type=anything}] re
 # CHECK: [[test3]]: boolean = IsEnumeratorCurrent v2, v0, [[position3]]
 # CHECK-NEXT: Branch [[test3]] -> taken [[current3]](| 0), notTaken [[other3]]()
 # CHECK: v7: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next [[rest3]](v7)
+# CHECK-NEXT: Jump -> next [[rest3]]()
+# CHECK-NEXT: [[rest3]]():
+# CHECK-NEXT: = Call v1, -, v7
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: [[slow3]]: boolean = CallBuiltin v0, v6 overload=ObjectPrototypeHasOwnProperty/0
-# CHECK-NEXT: Jump -> next [[rest3]]([[slow3]])
+# CHECK-NEXT: Jump -> next [[copy3]]()
+# CHECK-NEXT: [[copy3]]() frequency=Unlikely:
+# CHECK-NEXT: = Call v1, -, [[slow3]]
 
 function f4 name="otherObject" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
   b0(v0: object, v1: object):
@@ -247,8 +261,10 @@ function f8 name="readAfterStore" parameters=[{type=object}, {type=anything}] re
 # CHECK-LABEL: function f8 name="readAfterStore"
 # CHECK: [[position8]]: {{*}} = ResultAt v4 index=2
 # CHECK: ElemSet v0, v6, v1
-# CHECK-NEXT: = IsEnumeratorCurrent v2, v0, [[position8]]
+# CHECK-NEXT: Jump -> next [[tests8]]()
 # CHECK: = EnumeratorGetByVal v0, v6, v2, [[position8]],
+# CHECK: [[tests8]]():
+# CHECK-NEXT: = IsEnumeratorCurrent v2, v0, [[position8]]
 
 function f9 name="store" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything):
@@ -467,8 +483,10 @@ function f16 name="storeBetweenReads" parameters=[{type=object}, {type=anything}
 # CHECK: = IsEnumeratorCurrent v2, v0, [[position16]]
 # CHECK: v7: anything = EnumeratorGetByVal v0, v6, v2, [[position16]],
 # CHECK: ElemSet v0, v6, v1
-# CHECK: = IsEnumeratorCurrent v2, v0, [[position16]]
+# CHECK-NEXT: Jump -> next [[tests16]]()
 # CHECK: v9: anything = EnumeratorGetByVal v0, v6, v2, [[position16]],
+# CHECK: [[tests16]]():
+# CHECK-NEXT: = IsEnumeratorCurrent v2, v0, [[position16]]
 
 function f17 name="callBetweenReads" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything):
@@ -514,12 +532,12 @@ function f18 name="twoObjects" parameters=[{type=object}, {type=object}] results
 # CHECK: [[position18]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[firstTest18]]: boolean = IsEnumeratorCurrent v2, v0, [[position18]]
 # CHECK-NEXT: Branch [[firstTest18]] -> taken [[firstCurrent18]](| 0), notTaken [[firstOther18]]()
-# CHECK: v7: anything = EnumeratorGetByVal v0, v6, v2, [[position18]], [[firstGuard18]]
-# CHECK-NEXT: [[secondTest18]]: boolean = IsEnumeratorCurrent v2, v1, [[position18]]
-# CHECK-NEXT: Branch [[secondTest18]] -> taken [[secondCurrent18]](| 0), notTaken [[secondOther18]]()
-# CHECK: v8: anything = EnumeratorGetByVal v1, v6, v2, [[position18]], [[secondGuard18]]
 # CHECK: [[firstCurrent18]]([[firstGuard18]]: guard):
+# CHECK: v7: anything = EnumeratorGetByVal v0, v6, v2, [[position18]], [[firstGuard18]]
 # CHECK: [[secondCurrent18]]([[secondGuard18]]: guard):
+# CHECK: v8: anything = EnumeratorGetByVal v1, v6, v2, [[position18]], [[secondGuard18]]
+# CHECK: [[secondTest18]]: boolean = IsEnumeratorCurrent v2, v1, [[position18]]
+# CHECK-NEXT: Branch [[secondTest18]] -> taken [[secondCurrent18]](| 0), notTaken [[secondOther18]]()
 
 # TWICE-LABEL: function f0 name="read"
 # TWICE-COUNT-1: IsEnumeratorCurrent

@@ -1,0 +1,81 @@
+# class Vec { x; get length() { return this.x } }   class Leaky { get length() { kept = this; return 1 } }   class Self { get length() { return this } }
+# function measure(v) { return v.length }   measure(new Vec);  measure(new Leaky);  measure(new Self)
+# Of `measure` the link says that it reads `length` out of its parameter and returns what it finds. Only the caller knows the object. Where the read can find nothing but a getter that a class defines for good,
+# the getter is entered with the operand as `this`: what it reads there is read, and where it keeps `this` the operand is kept. What it returns is what `measure` has read through the operand,
+# so the object that `Self` answers is returned like that.
+# RUN: fates-at-calls
+# CHECK: f0 v19 Call operand 2: members-read contents=returned read=["x", "length"]
+# CHECK: f0 v20 Call operand 2: stored-in-variable+members-read contents=returned read=["length"]
+# CHECK: f0 v21 Call operand 2: returned+members-read contents=returned results=[any] read=["length"]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Vec" constructor=f1 fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Instance name="Leaky" constructor=f3
+layout L2 kind=Instance name="Self" constructor=f5
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Getter key="length"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f4
+    DefineMethod v6, v7 layout=L1 methodKind=Getter key="length"
+    v9 = FinishClass v6 layout=L1
+    v10 = NewClosure function=f5
+    v11 = NewClass v10 layout=L2
+    v12 = NewClosure function=f6
+    DefineMethod v11, v12 layout=L2 methodKind=Getter key="length"
+    v14 = FinishClass v11 layout=L2
+    v15 = Construct v4, -
+    v16 = Construct v9, -
+    v17 = Construct v14, -
+    v18 = NewClosure function=f7
+    v19 = Call v18, -, v15
+    v20 = Call v18, -, v16
+    v21 = Call v18, -, v17
+    Return
+}
+function f1 name="Vec" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Integer integer=1
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}
+function f2 name="length" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] relations={subjects=[{fate=[HasMembersRead]}, {kind=ReadFrom index=1 key="x" fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="Leaky" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f4 name="length" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] relations={subjects=[{fate=[IsStoredInVariable]}]} {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    Return v2
+}
+function f5 name="Self" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f6 name="length" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] relations={subjects=[{fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="measure" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[HasMembersRead]}, {kind=ReadFrom index=1 key="length" fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

@@ -1,0 +1,64 @@
+# holder = { get size() { return 1 }, set size(value) {} }; holder.size; holder.size = 2;  shared = { get size() { return 3 } }; shared.size; publish(the getter of shared)
+# No call lists an accessor as its callee: the read or the store that finds it enters it. Each such entry is an indirect call of that site, so the callers of the accessor are all known,
+# and `this` and the parameter get the type of what the read and the store pass. Its closure is entered by value all the same, so it has not only direct callers.
+# A getter whose closure was also handed to a callee nobody knows has callers nobody knows, and keeps its types
+# RUN: valueflow-results
+# CHECK: function f1 callers=AllKnown
+# CHECK: function f2 callers=AllKnown
+# CHECK: function f3 cause=ReachesNativeCode
+# CHECK: access [[read]] function=f0 kind=Read
+# CHECK-NEXT: access [[store]] function=f0 kind=Store
+# CHECK-NEXT: access [[sharedRead]] function=f0 kind=Read
+# CHECK: indirect f0 [[read]] -> f1 Accessor Once
+# CHECK-NEXT: indirect f0 [[store]] -> f2 Accessor Once
+# CHECK-NEXT: indirect f0 [[sharedRead]] -> f3 Accessor Once
+# RUN(NOWHERE): valueflow-results
+# NOWHERE-NOT: function f3 callers
+# NOWHERE-NOT: -> f1 Host
+# NOWHERE-NOT: -> f2 Host
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="size" {{*}}thisType={type=L0}
+# APPLY-NOT: HasOnlyDirectCallers
+# APPLY: IsNeverCalledByHost
+# APPLY: function f2 name="size" {{*}}parameters=[{type={{*}}int}]
+# APPLY-NOT: HasOnlyDirectCallers
+# APPLY: IsNeverCalledByHost
+# APPLY: function f3 name="size" {{*}}thisType={type=anything}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder"
+layout L1 name="Shared"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="size"
+    v3 = NewClosure function=f2
+    DefineSetter v0, v3 key="size"
+    v5 = PropGet v0 key="size"
+    v6 = Integer integer=2
+    PropSet v0, v6 key="size"
+    v8 = NewObject layout=L1 fields=[]
+    v9 = NewClosure function=f3
+    DefineGetter v8, v9 key="size"
+    v11 = PropGet v8 key="size"
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="publish" [isFreeName]
+    v14 = Call v13, -, v9
+    Return
+}
+function f1 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="size" kind=Setter parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}

@@ -11,6 +11,8 @@
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTCoroutineTable.h"
+#include "AOTFrameMaps.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -215,6 +217,7 @@ static void testSiteWord()
                 AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(*word) == offset);
                 AOT_TEST_CHECK(SavedFrame::promiseLocationOf(*word) == promiseLocation);
                 AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(*word) == savedRegisters);
+                AOT_TEST_CHECK(!SavedFrame::skippedAtBottomOf(*word));
             }
         }
     }
@@ -226,6 +229,34 @@ static void testSiteWord()
 
     AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(SavedFrame::functionSavesPreservedRegister) == 1);
     AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(SavedFrame::functionSavesR15) == 2);
+}
+
+static void testSkippedWordsInSiteWord()
+{
+    constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    struct Case {
+        uint32_t deadWordsAtBottom;
+        uint32_t skippedAtBottom;
+    };
+    // The number of words kept stays even, and what does not fit the field is kept.
+    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 254, 254 }, { 255, 254 }, { 256, 254 }, { UINT32_MAX, 254 } };
+    for (const Case& testCase : cases) {
+        uint64_t word = *SavedFrame::siteWord(maxOffset, UINT32_MAX, 3, testCase.deadWordsAtBottom);
+        AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(word) == testCase.skippedAtBottom);
+        AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == UINT32_MAX && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+    }
+
+    for (uint32_t savedRegistersOrPairs : { 0u, 1u, 2u, 3u }) {
+        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, UINT32_MAX, savedRegistersOrPairs, 254));
+#if CPU(X86_64)
+        AOT_TEST_CHECK(skippedAtTop == (savedRegistersOrPairs == 3 ? 2u : 0u));
+#else
+        AOT_TEST_CHECK(skippedAtTop == 2 * savedRegistersOrPairs);
+#endif
+    }
+
+    AOT_TEST_CHECK(SavedFrame::siteWord(0, 0, 0, 0, SavedFrame::maxNumberOfWords));
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, 0, SavedFrame::maxNumberOfWords + 1));
 }
 
 static void testNarrowLocations()
@@ -280,7 +311,7 @@ static void checkSavedFrameIsCallableForTheEngineOnly(LoadedProgram& program)
     VM& vm = program.vm();
     AOT_TEST_CHECK(!numberOfSavedFrames(vm));
 
-    SavedFrame* saved = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, 2);
+    SavedFrame* saved = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, 2, 0, 0);
     AOT_TEST_CHECK(numberOfSavedFrames(vm) == 1);
     AOT_TEST_CHECK(saved->structure() == program.state().coroutines->savedFrameStructure());
     AOT_TEST_CHECK(saved->structure()->typeInfo().overridesGetCallData() && saved->getPrototypeDirect().isNull());
@@ -307,7 +338,10 @@ struct HandMadeFrame {
     static constexpr uint64_t integerWord = JSValue::NumberTag | 7;
 
     uint64_t& wordAt(uint32_t location) { return stack[numberOfWords - location]; }
+    uint32_t firstKeptLocation() const { return SavedFrame::skippedAtTopOf(siteWord) + 1; }
+    uint32_t lastKeptLocation() const { return numberOfWords - SavedFrame::skippedAtBottomOf(siteWord); }
 
+    uint64_t siteWord { 0 };
     uint32_t numberOfWords { 0 };
     Vector<uint64_t> stack;
     Vector<uint32_t> candidateLocations;
@@ -336,14 +370,16 @@ static FunctionWithMap findFunctionWithMap(const Image& image)
     return { *found, valuesOf(*map) };
 }
 
-static NEVER_INLINE HandMadeFrame fillFrameWithUnreferencedObjects(LoadedProgram& program, const Vector<uint32_t>& listedLocations)
+static NEVER_INLINE HandMadeFrame fillFrameWithUnreferencedObjects(LoadedProgram& program, const Vector<uint32_t>& listedLocations, uint64_t siteWord = *SavedFrame::siteWord(0, 1, 0))
 {
     HandMadeFrame frame;
-    frame.numberOfWords = listedLocations.last() + HandMadeFrame::numberOfCandidates + 3;
+    frame.siteWord = siteWord;
+    frame.numberOfWords = listedLocations.last() + HandMadeFrame::numberOfCandidates + 3 + SavedFrame::skippedAtBottomOf(siteWord);
     frame.stack.fill(0, frame.numberOfWords + 2);
+    AOT_TEST_CHECK(listedLocations.first() >= frame.firstKeptLocation());
 
     Vector<uint32_t> unlistedLocations;
-    for (uint32_t location = 1; location <= frame.numberOfWords; ++location) {
+    for (uint32_t location = frame.firstKeptLocation(); location <= frame.lastKeptLocation(); ++location) {
         if (!listedLocations.contains(location))
             unlistedLocations.append(location);
     }
@@ -364,23 +400,45 @@ static NEVER_INLINE HandMadeFrame fillFrameWithUnreferencedObjects(LoadedProgram
 static SavedFrame* saveHandMadeFrame(LoadedProgram& program, HandMadeFrame& frame, uint32_t function)
 {
     VM& vm = program.vm();
-    SavedFrame* saved;
-    {
-        SetForScope validation(vm.aotState().validatesRuntime, true);
-        saved = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, frame.numberOfWords);
-    }
-
-    SuspensionWords words { *SavedFrame::siteWord(0, 1, 0), HandMadeFrame::integerWord };
+    SuspensionWords words { frame.siteWord, HandMadeFrame::integerWord };
     SuspendedMachineFrame machineFrame {
         frame.stack.mutableSpan().data() + frame.numberOfWords,
         frame.stack.span().data(),
         const_cast<uint8_t*>(Image::current()->codeOf(function)) + 1,
         &words,
     };
-    AOT_TEST_CHECK(machineFrame.numberOfWords() == frame.numberOfWords);
+    AOT_TEST_CHECK(machineFrame.numberOfWords() == frame.lastKeptLocation() - frame.firstKeptLocation() + 1);
+    AOT_TEST_CHECK(machineFrame.firstSavedWord() == &frame.wordAt(frame.lastKeptLocation()));
+
+    SavedFrame* saved;
+    {
+        SetForScope validation(vm.aotState().validatesRuntime, true);
+        saved = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, machineFrame);
+    }
     saved->save(vm, machineFrame, SuspensionKind::Await);
     AOT_TEST_CHECK(!saved->isOnStack() && saved->suspensionKind() == SuspensionKind::Await && saved->resumeAddress() == machineFrame.resumeAddress);
     return saved;
+}
+
+static void checkWordsAfterCollection(LoadedProgram& program, HandMadeFrame& frame, const SavedFrame& saved, const Vector<uint32_t>& listedLocations)
+{
+    VM& vm = program.vm();
+    for (uint32_t location : listedLocations) {
+        AOT_TEST_CHECK(saved.wordAt(location) == frame.wordAt(location));
+        AOT_TEST_CHECK(vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location))));
+    }
+
+    unsigned numberOfDeadCells = 0;
+    for (uint32_t location : frame.candidateLocations) {
+        bool isDead = !vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location)));
+        numberOfDeadCells += isDead;
+        AOT_TEST_CHECK(saved.wordAt(location) == (isDead ? SavedFrame::poisonedWord : frame.wordAt(location)));
+    }
+    AOT_TEST_CHECK(numberOfDeadCells);
+
+    AOT_TEST_CHECK(saved.wordAt(frame.locationOfLiveCell) == std::bit_cast<uint64_t>(program.realm()));
+    AOT_TEST_CHECK(saved.wordAt(frame.locationOfInteger) == HandMadeFrame::integerWord);
+    AOT_TEST_CHECK(saved.wordAt(frame.locationOfZero) == 0u);
 }
 
 static void checkUnlistedDeadWordIsPoisoned(LoadedProgram& program)
@@ -396,27 +454,56 @@ static void checkUnlistedDeadWordIsPoisoned(LoadedProgram& program)
     vm.heap.collectSync(CollectionScope::Full);
     AOT_TEST_CHECK(vm.heap.isMarked(saved));
 
-    const uint64_t* savedWords = reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(saved) + SavedFrame::offsetOfWords());
-    auto savedWordAt = [&](uint32_t location) {
-        return savedWords[frame.numberOfWords - location];
-    };
+    checkWordsAfterCollection(program, frame, *saved, listedInFrame);
+}
 
-    for (uint32_t location : listedInFrame) {
-        AOT_TEST_CHECK(savedWordAt(location) == frame.wordAt(location));
-        AOT_TEST_CHECK(vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location))));
+// The map of the compiled function, made to list other words of the frame.
+static void listValuesInMapOf(uint32_t function, const Vector<uint32_t>& locations)
+{
+    std::span<const uint32_t> words = Image::current()->frameMapWords(function);
+    uint32_t numberOfValueWords = words[1];
+    AOT_TEST_CHECK(numberOfValueWords && locations.last() < 32 * numberOfValueWords);
+    for (uint32_t index = 0; index < numberOfValueWords; ++index) {
+        uint32_t bits = 0;
+        for (uint32_t location : locations) {
+            if (location / 32 == index)
+                bits |= 1u << location % 32;
+        }
+        overwriteWordInImage(words[2 + index], bits);
     }
+    AOT_TEST_CHECK(valuesOf(*SavedFrameMap::tryCreate(words, 0)) == locations);
+}
 
-    unsigned numberOfDeadCells = 0;
-    for (uint32_t location : frame.candidateLocations) {
-        bool isDead = !vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location)));
-        numberOfDeadCells += isDead;
-        AOT_TEST_CHECK(savedWordAt(location) == (isDead ? SavedFrame::poisonedWord : frame.wordAt(location)));
+static void checkSkippedWords(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t function = findFunctionWithMap(*Image::current()).function;
+    for (uint32_t savedRegistersOrPairs : { 0u, 1u, 3u }) {
+        for (uint32_t skippedAtBottom : { 0u, 4u }) {
+            uint64_t siteWord = *SavedFrame::siteWord(0, 1, savedRegistersOrPairs, skippedAtBottom);
+            uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(siteWord);
+            AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(siteWord) == skippedAtBottom);
+            Vector<uint32_t> listedLocations { skippedAtTop + 1, skippedAtTop + 2, skippedAtTop + 9 };
+            listValuesInMapOf(function, listedLocations);
+
+            HandMadeFrame frame = fillFrameWithUnreferencedObjects(program, listedLocations, siteWord);
+            AOT_TEST_CHECK(frame.firstKeptLocation() == skippedAtTop + 1 && frame.lastKeptLocation() + skippedAtBottom == frame.numberOfWords);
+            SavedFrame* saved = saveHandMadeFrame(program, frame, function);
+            vm.heap.collectSync(CollectionScope::Full);
+            AOT_TEST_CHECK(vm.heap.isMarked(saved));
+            checkWordsAfterCollection(program, frame, *saved, listedLocations);
+
+            for (uint32_t location = 1; location < frame.firstKeptLocation(); ++location)
+                AOT_TEST_CHECK(!saved->wordAt(location));
+            for (uint32_t location = frame.lastKeptLocation() + 1; location <= frame.numberOfWords + 2; ++location)
+                AOT_TEST_CHECK(!saved->wordAt(location));
+            AOT_TEST_CHECK(frame.locationOfLiveCell == frame.lastKeptLocation());
+            AOT_TEST_CHECK(*reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(saved) + SavedFrame::offsetOfWords()) == frame.wordAt(frame.lastKeptLocation()));
+
+            // The next round changes the map, and a word that it lists may be poisoned in this frame.
+            saved->willBeRestoredToStack();
+        }
     }
-    AOT_TEST_CHECK(numberOfDeadCells);
-
-    AOT_TEST_CHECK(savedWordAt(frame.locationOfLiveCell) == std::bit_cast<uint64_t>(program.realm()));
-    AOT_TEST_CHECK(savedWordAt(frame.locationOfInteger) == HandMadeFrame::integerWord);
-    AOT_TEST_CHECK(!savedWordAt(frame.locationOfZero));
 }
 
 static void checkFrameOnTheStackIsLeftAlone(LoadedProgram& program)
@@ -432,10 +519,9 @@ static void checkFrameOnTheStackIsLeftAlone(LoadedProgram& program)
     AOT_TEST_CHECK(saved->isOnStack());
     vm.heap.collectSync(CollectionScope::Full);
 
-    const uint64_t* savedWords = reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(saved) + SavedFrame::offsetOfWords());
     unsigned numberOfDeadCells = 0;
     for (uint32_t location = 1; location <= frame.numberOfWords; ++location) {
-        AOT_TEST_CHECK(savedWords[frame.numberOfWords - location] == frame.wordAt(location));
+        AOT_TEST_CHECK(saved->wordAt(location) == frame.wordAt(location));
         if (frame.candidateLocations.contains(location) || listedInFrame.contains(location))
             numberOfDeadCells += !vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location)));
     }
@@ -502,6 +588,56 @@ static void testListedWordsSurviveACollection()
     }
 }
 
+// An async function that keeps so many values alive over its await. They are block parameters, and calls of at most a thousand arguments read them behind it.
+static String programWithRoots(unsigned numberOfRoots)
+{
+    constexpr unsigned firstRoot = 3;
+    constexpr unsigned argumentsInCall = 1000;
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\"\n"_s);
+    text.append("function f0 name=\"waits\" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2} {\n"_s);
+    text.append("  b0(v0: anything @JSValue, v1: anything @JSValue, v2: undefined|Promise @JSValue):\n    Jump -> next b1("_s);
+    for (unsigned root = 0; root < numberOfRoots; ++root)
+        text.append(root ? ", v1"_s : "v1"_s);
+    text.append(")\n  b1("_s);
+    for (unsigned root = 0; root < numberOfRoots; ++root)
+        text.append(root ? ", v"_s : "v"_s, firstRoot + root, " @JSValue"_s);
+    unsigned awaited = firstRoot + numberOfRoots;
+    text.append("):\n    v"_s, awaited, " @JSValue = AwaitBySavingFrame v0, v2\n"_s);
+    unsigned last = awaited;
+    for (unsigned root = 0; root < numberOfRoots; root += argumentsInCall) {
+        text.append("    v"_s, ++last, " @JSValue = Call v"_s, awaited, ", -"_s);
+        for (unsigned argument = root; argument < std::min(root + argumentsInCall, numberOfRoots); ++argument)
+            text.append(", v"_s, firstRoot + argument);
+        text.append('\n');
+    }
+    text.append("    Return v"_s, last, "\n}\n"_s);
+    text.append("function f1 name=\"waits\" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2}\n"_s);
+    return text.toString();
+}
+
+static uint64_t rootLimitHitsWith(unsigned numberOfRoots)
+{
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(programWithRoots(numberOfRoots), Typed::IRForm::Placed, build);
+    AOT_TEST_CHECK(program);
+    Typed::FunctionID body(0u);
+    const Typed::Function& function = program->at(body);
+    Typed::FunctionAnalyses analyses(Typed::AnalysisContext { build, *program, nullptr, nullptr, body }, function);
+    Typed::FrameMaps maps = Typed::computeFrameMaps(*program, function, analyses);
+    AOT_TEST_CHECK(maps.numberOfSuspensions() == 1);
+    uint64_t hits = build.statistics().values()[static_cast<unsigned>(hitsOf(LimitID::MaxFrameMapRoots))];
+    AOT_TEST_CHECK(build.diagnostics().hasErrors() == !!hits);
+    return hits;
+}
+
+static void testRootLimit()
+{
+    constexpr unsigned limit = defaultLimitValue(LimitID::MaxFrameMapRoots, hostArchitecture());
+    AOT_TEST_CHECK(!rootLimitHitsWith(limit));
+    AOT_TEST_CHECK(rootLimitHitsWith(limit + 1) == 1);
+}
+
 std::span<const NativeTest> savedFrameTests()
 {
     static constexpr NativeTest tests[] = {
@@ -511,11 +647,14 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/walk-stops-when-the-functor-does"_s, testWalkStopsWhenTheFunctorDoes },
         { "saved-frame/map-rejects-bad-offsets"_s, testMapRejectsBadOffsets },
         { "saved-frame/site-word"_s, testSiteWord },
+        { "saved-frame/skipped-words-in-site-word"_s, testSkippedWordsInSiteWord },
         { "saved-frame/narrow-locations"_s, testNarrowLocations },
         { "saved-frame/resume-modes"_s, testResumeModes },
+        { "saved-frame/root-limit"_s, testRootLimit },
         { "saved-frame/callable-for-the-engine-only"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSavedFrameIsCallableForTheEngineOnly> },
         { "saved-frame/unlisted-dead-word-is-poisoned"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkUnlistedDeadWordIsPoisoned> },
         { "saved-frame/frame-on-the-stack-is-left-alone"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkFrameOnTheStackIsLeftAlone> },
+        { "saved-frame/skipped-words"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSkippedWords> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },
     };
     return tests;

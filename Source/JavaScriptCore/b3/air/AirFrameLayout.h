@@ -34,6 +34,9 @@ enum class FrameCoverage : uint8_t {
 struct FrameLayout {
     bool isPlanned { false };
     bool hasFrame { true };
+    // Without one the frame pointer register keeps the value it has at the entry of the function, and offsets from the frame pointer count from the place the record would have:
+    // the word below the return address, which such a frame uses as a slot. The stack pointer stays bytesBelowFrameRecord() below that place while the frame is set up.
+    bool hasFrameRecord { true };
     FrameCoverage coverage { FrameCoverage::EveryPathBecauseShrinkWrappingIsOff };
     SlotArea slotArea { SlotArea::BelowFrameRecord };
     CalleeSaveForm calleeSaveForm { CalleeSaveForm::Stored };
@@ -42,6 +45,7 @@ struct FrameLayout {
     unsigned numberOfFrameSetups { 0 };
     unsigned numberOfFrameTeardowns { 0 };
     unsigned numberOfSpillsPushedAtFrameSetup { 0 };
+    unsigned numberOfReloadsPoppedAtFrameTeardown { 0 };
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 };

@@ -1,0 +1,55 @@
+# A variable of a module that is stored at most once, and by every store in the program with one primitive constant, gets the type of that constant; a dead zone stays in the type
+# TODO: known-layouts: the pass narrows the three variables and still answers Unchanged: the runner calls a program pass Changed only where a function changed
+# FORM: Prepared
+# RUN: pass NarrowConstantVariables
+# CHECK: outcome: Changed
+# CHECK: variable g0 name="text" module=m0 declared={type=absent|"a+b"} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g1 name="storedBeforeEveryRead" module=m0 declared={type=7} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g2 name="sameConstantInTwoPlaces" module=m0 declared={type=absent|"c"} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g3 name="twoConstants" module=m0 declared={type=string|absent} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g4 name="unknownValue" module=m0 declared={type=string|absent} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g5 name="storedMoreThanOnce" module=m0 declared={type=string|absent} flow={writers=AllKnown}
+# CHECK-NEXT: variable g6 name="unknownWriters" module=m0 declared={type=string|absent} flow={stores=AtMostOnce}
+# CHECK-NEXT: variable g7 name="object" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g8 name="onlyExpected" module=m0 declared={type=string|absent flags=[IsExpected]} flow={writers=AllKnown stores=AtMostOnce}
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="text" module=m0 declared={type=string|absent} flow={writers=AllKnown stores=AtMostOnce}
+variable g1 name="storedBeforeEveryRead" module=m0 declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g2 name="sameConstantInTwoPlaces" module=m0 declared={type=string|absent} flow={writers=AllKnown stores=AtMostOnce}
+variable g3 name="twoConstants" module=m0 declared={type=string|absent} flow={writers=AllKnown stores=AtMostOnce}
+variable g4 name="unknownValue" module=m0 declared={type=string|absent} flow={writers=AllKnown stores=AtMostOnce}
+variable g5 name="storedMoreThanOnce" module=m0 declared={type=string|absent} flow={writers=AllKnown}
+variable g6 name="unknownWriters" module=m0 declared={type=string|absent} flow={stores=AtMostOnce}
+variable g7 name="object" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
+variable g8 name="onlyExpected" module=m0 declared={type=string|absent flags=[IsExpected]} flow={writers=AllKnown stores=AtMostOnce}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="a+b"
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=7
+    PutModuleVariable v2 variable=g1
+    PutModuleVariable v0 variable=g5
+    PutModuleVariable v0 variable=g6
+    v6 = NewRegExp pattern="a"
+    PutModuleVariable v6 variable=g7
+    PutModuleVariable v0 variable=g8
+    Return
+}
+function f1 name="storesInAnotherFunction" module=m0 parameters=[{type=boolean}, {type=string}] results=[{type=anything}] {
+  b0(v0: boolean, v1: string):
+    PutModuleVariable v1 variable=g4
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="c"
+    PutModuleVariable v3 variable=g2
+    PutModuleVariable v3 variable=g3
+    Return
+  b2():
+    v6 = String string="c"
+    PutModuleVariable v6 variable=g2
+    v8 = String string="d"
+    PutModuleVariable v8 variable=g3
+    Return
+}

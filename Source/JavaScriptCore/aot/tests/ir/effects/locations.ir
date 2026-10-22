@@ -4,8 +4,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
-layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
-layout L2 name="Widget" fields=[{key="run" declared={type=f7} flow={location={deferral=CapturesNothing deferredFunction=f7} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Widget" fields=[{key="run" declared={type=f7} flow={location={deferral=CapturesNothing deferredFunction=f7} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 variable g0 name="first" declared={type=anything} initialization=Undefined
 variable g1 name="second" declared={type=anything} initialization=Undefined
 function f0 name="variables" parameters=[{type=anything}] results=[{type=anything}] {

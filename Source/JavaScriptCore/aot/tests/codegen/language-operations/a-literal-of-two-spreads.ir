@@ -1,0 +1,60 @@
+# function both(first, second) { return { ...first, ...second } }: where the first may be something else than a compiled object, one operation is asked for the copy of both; where it answers nothing, and for a compiled object, each copy is made by its own.
+# A first source of a layout alone, a copy that leaves names out, and a copy with something between the two are made one behind the other.
+# FORM: AsRead
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN(CALLS): generate-code calls
+# RUN: run-in-shell globalThis.register = (both, bothOfState, withoutA, makeState) => { const show = (o) => Object.getPrototypeOf(o) === Object.prototype ? JSON.stringify(o) : "another prototype"; let reads = 0; const pairs = [[undefined, { a: 1, b: 2 }], [{ a: 1, b: 2 }, null], [{ a: 1, b: 2 }, { b: 3, c: 4 }], [{ z: 0 }, makeState(1, 2, 3)], [makeState(1, 2, 3), { b: 9, d: 4 }], [undefined, undefined], ["ab", { a: 1 }], [{ a: 1 }, { get a() { reads++; return "read"; } }], [{ 1: "one", a: 1 }, { 0: "zero" }]]; for (let turn = 0; turn < 4; turn++) { for (const [first, second] of pairs) { const text = show(both(first, second)); if (turn == 3) print(text); } } print(reads, show(bothOfState(makeState(1, 2, 3), { c: 7, e: 8 })), show(withoutA({ a: 1, b: 2 }, { a: 3, c: 4 }))); };
+# CALLS: operation operationAOTCopyDataProperties x1
+# CALLS: operation operationAOTTryCopyTwoObjects
+# CALLS-NOT: operationAOTTryCopyTwoObjects
+# CHECK: {"a":1,"b":2}
+# CHECK-NEXT: {"a":1,"b":2}
+# CHECK-NEXT: {"a":1,"b":3,"c":4}
+# CHECK-NEXT: {"z":0,"a":1,"b":2,"c":3}
+# CHECK-NEXT: {"a":1,"b":9,"c":3,"d":4}
+# CHECK-NEXT: {}
+# CHECK-NEXT: {"0":"a","1":"b","a":1}
+# CHECK-NEXT: {"a":"read"}
+# CHECK-NEXT: {"0":"zero","1":"one","a":1}
+# CHECK-NEXT: 4 {"a":1,"b":2,"c":7,"e":8} {"b":2,"a":3,"c":4}
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="State" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    Return v6
+}
+function f1 name="both" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CopyObject v0
+    CopyDataProperties v2, v1
+    Return v2
+}
+function f2 name="bothOfState" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = CopyObject v0
+    CopyDataProperties v2, v1
+    Return v2
+}
+function f3 name="withoutA" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CopyObject v0 excludedKeys=["a"]
+    CopyDataProperties v2, v1
+    Return v2
+}
+function f4 name="makeState" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    Return v4
+}

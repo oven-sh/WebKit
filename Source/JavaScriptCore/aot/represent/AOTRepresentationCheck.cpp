@@ -10,8 +10,10 @@
 
 #include "AOTCFG.h"
 #include "AOTConversions.h"
+#include "AOTIRPrinter.h"
 #include "AOTValueIdentity.h"
 #include <optional>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -120,11 +122,11 @@ private:
             IncomingValue incoming = incomingValueOf(m_function, edge, index);
             switch (incoming.kind) {
             case IncomingValue::Kind::Argument:
-                if (needsConversion(storedRepresentationOf(incoming.argument), wanted))
+                if (hasRegister(wanted) && !isSameWord(storedRepresentationOf(incoming.argument), wanted))
                     report(InternalErrorKind::WrongRepresentation, edge.from, incoming.argument);
                 break;
             case IncomingValue::Kind::EdgeResult:
-                if (needsConversion(edgeResultRepresentationOf(m_inputs, incoming.result), wanted))
+                if (hasRegister(wanted) && !isSameWord(edgeResultRepresentationOf(m_inputs, incoming.result), wanted))
                     report(InternalErrorKind::WrongRepresentation, edge.from, parameters[index]);
                 break;
             }
@@ -135,7 +137,11 @@ private:
 
     void report(InternalErrorKind kind, BlockID block, ValueID value)
     {
-        m_errors.append(InternalError { .kind = kind, .function = m_inputs.id, .block = block, .value = value });
+        StringPrintStream detail;
+        detail.print("the value has type "_s);
+        printType(detail, m_inputs.program, m_function.at(value).type);
+        detail.print(" and is kept as "_s, nameOf(storedRepresentationOf(value)));
+        m_errors.append(InternalError { .kind = kind, .function = m_inputs.id, .block = block, .value = value, .detail = detail.toString() });
     }
 
     const RepresentationInputs& m_inputs;

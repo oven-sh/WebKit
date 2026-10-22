@@ -10,7 +10,9 @@
         RUN(testBlockOrderPlacesRareBlocksInGaps()); \
         RUN(testBlockOrderComparesEdges()); \
         RUN(testBlockOrderKeepsUnlikelySideOutOfLine()); \
+        RUN(testBlockOrderKeepsArmInFrontOfJoin()); \
         RUN(testRareBlockAfterGuard()); \
+        RUN(testGapMadeForRareBlocks()); \
         RUN(testDefaultLayoutIsUpstream()); \
     } while (false)
 
@@ -281,6 +283,53 @@ void testBlockOrderKeepsUnlikelySideOutOfLine()
     }
 }
 
+// One arm of a choice begins with a guard, so the arms and the join are no diamond: root -> arm | guard, guard -> guardedArm | rare, both arms -> join.
+void testBlockOrderKeepsArmInFrontOfJoin()
+{
+    enum class Case : uint8_t { IsNotRequested, ArmsAreLevel, ArmIsUnlikely, ArmIsEnteredFromBehindJoin };
+    for (Case testCase : { Case::IsNotRequested, Case::ArmsAreLevel, Case::ArmIsUnlikely, Case::ArmIsEnteredFromBehindJoin }) {
+        B3::Policy policy;
+        if (testCase != Case::IsNotRequested)
+            policy.air.layout.ordersBlocksByEdgeFrequency = true;
+        B3::Procedure proc(policy);
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        double armFrequency = testCase == Case::ArmIsUnlikely ? 0.1 : 0.5;
+        BasicBlock* root = code.addBlock();
+        BasicBlock* guard = code.addBlock(1 - armFrequency);
+        BasicBlock* guardedArm = code.addBlock(1 - armFrequency);
+        BasicBlock* arm = code.addBlock(armFrequency);
+        BasicBlock* rare = code.addBlock(0.001);
+        BasicBlock* join = code.addBlock();
+        root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+        root->setSuccessors(arm, guard);
+        guard->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
+        guard->setSuccessors(FrequentedBlock(rare, B3::FrequencyClass::Rare), FrequentedBlock(guardedArm));
+        guardedArm->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR2));
+        guardedArm->append(Jump, nullptr);
+        guardedArm->setSuccessors(join);
+        arm->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR2));
+        arm->append(Jump, nullptr);
+        arm->setSuccessors(join);
+        rare->append(Move, nullptr, Arg::imm(-1), Tmp(GPRInfo::returnValueGPR));
+        rare->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+        BasicBlock* last = join;
+        if (testCase == Case::ArmIsEnteredFromBehindJoin) {
+            last = code.addBlock();
+            join->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR2), Tmp(GPRInfo::argumentGPR3));
+            join->setSuccessors(last, arm);
+        }
+        last->append(Move, nullptr, Tmp(GPRInfo::argumentGPR2), Tmp(GPRInfo::returnValueGPR));
+        last->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+        auto compilation = compile(proc);
+        CHECK(invoke<int32_t>(*compilation, 0, 0, 64, 64) == 65);
+        CHECK(invoke<int32_t>(*compilation, 1, 0, 64, 64) == 66);
+        CHECK(invoke<int32_t>(*compilation, 0, 1, 64, 64) == -1);
+        CHECK((arm->index() < join->index()) == (testCase == Case::ArmsAreLevel));
+    }
+}
+
 struct GuardInLoop {
     enum class Entries : uint8_t { AtGuard, AtGuardAndLatch };
 
@@ -397,6 +446,55 @@ void testRareBlockAfterGuard()
         CHECK((code.findNextBlock(guard) == rare) == followsGuard);
         CHECK((invoke<int64_t, int64_t>(*compilation, likelyArgument)) == (testCase == Case::PatchTerminal ? 42 : 1));
         CHECK((invoke<int64_t, int64_t>(*compilation, rareArgument)) == 3);
+    }
+}
+
+void testGapMadeForRareBlocks()
+{
+    enum class Case : uint8_t { Made, IsNotRequested, WithoutGaps, EveryBlockCanWait, InLoop };
+    constexpr unsigned additionsThatFit = 8;
+    constexpr unsigned additionsPastDistanceLimit = 30;
+    static_assert((2 * additionsThatFit + 8) * B3::AirLimits::estimatedBytesPerInst <= B3::AirLimits::maxBytesFromGuardToRareBlock);
+    static_assert((additionsPastDistanceLimit - 1) * B3::AirLimits::estimatedBytesPerInst > B3::AirLimits::maxBytesFromGuardToRareBlock);
+    for (Case testCase : { Case::Made, Case::IsNotRequested, Case::WithoutGaps, Case::EveryBlockCanWait, Case::InLoop }) {
+        B3::Policy policy;
+        policy.air.layout.placesRareBlocksInGaps = testCase != Case::WithoutGaps;
+        policy.air.layout.makesGapsForRareBlocks = testCase != Case::IsNotRequested;
+        B3::Procedure proc(policy);
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+
+        if (testCase == Case::InLoop) {
+            GuardInLoop blocks(code);
+            auto compilation = compile(proc);
+            CHECK(code.findNextBlock(blocks.guard) == blocks.latch);
+            GuardInLoop::checkResults(*compilation);
+            continue;
+        }
+
+        BasicBlock* firstGuard = code.addBlock();
+        BasicBlock* secondGuard = code.addBlock();
+        BasicBlock* last = code.addBlock();
+        BasicBlock* firstRare = code.addBlock(0.01);
+        BasicBlock* secondRare = code.addBlock(0.01);
+        appendBranchTest(firstGuard, argumentTmp(0), rarely(firstRare), secondGuard);
+        BlocksAroundGap::appendAdditions(secondGuard, additionsThatFit);
+        appendBranchTest(secondGuard, argumentTmp(1), rarely(secondRare), last);
+        BlocksAroundGap::appendAdditions(last, testCase == Case::EveryBlockCanWait ? additionsThatFit : additionsPastDistanceLimit);
+        appendReturn(last, 1);
+        appendReturn(firstRare, 3);
+        appendReturn(secondRare, 4);
+
+        auto compilation = compile(proc);
+        if (testCase == Case::Made)
+            checkBlockOrder(code, { firstGuard, secondGuard, firstRare, secondRare, last });
+        else {
+            CHECK(code.findNextBlock(firstGuard) == secondGuard);
+            CHECK(code.findNextBlock(secondGuard) == last);
+        }
+        CHECK((invoke<int64_t, int64_t, int64_t>(*compilation, 0, 0)) == 1);
+        CHECK((invoke<int64_t, int64_t, int64_t>(*compilation, 1, 0)) == 3);
+        CHECK((invoke<int64_t, int64_t, int64_t>(*compilation, 0, 1)) == 4);
     }
 }
 

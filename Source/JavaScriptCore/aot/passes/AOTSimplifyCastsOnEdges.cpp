@@ -41,7 +41,7 @@ static std::optional<CastCandidate> findCastCandidate(FunctionPassContext& conte
     bool hasTest = function.at(block.values[0]).opcode == Opcode::ValidateType && block.values.size() > 1;
     ValueID castID = block.values[hasTest];
     const Value& cast = function.at(castID);
-    if (cast.opcode != Opcode::Claim && cast.opcode != Opcode::AssumeType)
+    if (cast.opcode != Opcode::Check && cast.opcode != Opcode::AssumeType)
         return std::nullopt;
 
     ValueID parameter = cast.operand(0);
@@ -71,7 +71,7 @@ static bool canMoveCast(const FunctionPassContext& context, const CFG& cfg, cons
 {
     const Function& function = context.function;
     std::span<const Edge> edges = cfg.incomingEdges(candidate.block);
-    bool castHasCode = function.at(candidate.cast).opcode == Opcode::Claim;
+    bool castHasCode = function.at(candidate.cast).opcode == Opcode::Check;
     size_t numberOfEdgesNeedingCast = 0;
     for (Edge edge : edges) {
         if (edge.isHandlerEdge() || edge.from == candidate.block || function.at(edge.from).terminator.kind != TerminatorKind::Jump)
@@ -94,15 +94,14 @@ static bool moveCast(FunctionPassContext& context, IRBuilder& builder, const CFG
     builder.setOrigin(cast.origin());
     bool didChangeEdge = false;
     for (Edge edge : cfg.incomingEdges(candidate.block)) {
-        ValueID& argument = targetOf(function, edge).arguments[candidate.parameterIndex];
+        ValueID& argument = editTarget(function, edge).arguments[candidate.parameterIndex];
         ValueID passed = context.analyses.definitionThroughUpcasts(argument);
         if (edgeNeedsCast(context, candidate, edge)) {
             if (candidate.hasTest)
                 builder.insertBefore(pointBeforeTerminatorOf(function, edge.from), makeValidateType(argument, cast.castType()));
             Value castOnEdge = cast;
             castOnEdge.setOperand(0, argument);
-            castOnEdge.setWritten({ });
-            castOnEdge.setPrediction({ });
+            castOnEdge.setExpected({ });
             passed = builder.insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
         }
         didChangeEdge |= passed != argument;
@@ -135,8 +134,10 @@ size_t moveCastsToEdges(FunctionPassContext& context)
         return 0;
 
     builder.applyInsertions();
+    // The arguments of the edges were written past the builder.
+    context.analyses.didChangeValues();
     // A join may widen, so the cast at the head stays until the type of its parameter is inside it.
-    TypePropagationOutcome outcome = narrowValueTypes(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build }, movedParameters.span());
+    TypePropagationOutcome outcome = narrowValueTypes(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, movedParameters.span());
     if (!didChangeEdge && !outcome.didChange())
         return 0;
     return movedParameters.size();

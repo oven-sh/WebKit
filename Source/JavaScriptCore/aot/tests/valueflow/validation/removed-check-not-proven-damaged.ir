@@ -1,0 +1,42 @@
+# An assumed type whose operand is outside it is an error in a function whose narrowing is off
+# RUN: flow-validate assume=f1:v2:g0
+# CHECK: invalid
+# DIAGNOSTIC: FlowRemovedCheckNotProven 1
+# OPTIONS: disable=flow:NarrowedTypes disable-in=1:1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=40 kind=CallResult
+typesite w1 module=m0 position=80 kind=CallResult
+variable g0 name="text" module=m0 declared={type=undefined|string} initialization=Undefined
+variable g1 name="unknown" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="external" [isFreeName]
+    PutModuleVariable v3 variable=g1
+    v5 = CallDirect function=f1
+    v6 = CallDirect function=f2
+    Return
+}
+function f1 name="narrowingOff" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    v2 = Check v1 castType=number site=w0
+    Return v2
+}
+function f2 name="narrowingOn" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    v2 = Check v1 castType=number site=w1
+    Return v2
+}
+function f3 name="makeNumber" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

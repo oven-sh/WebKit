@@ -103,6 +103,7 @@ static_assert(OperandIndex::ElemGet::object == arrayOperand && OperandIndex::Ele
 static_assert(OperandIndex::GetArrayElement::array == arrayOperand && OperandIndex::PutArrayElement::array == arrayOperand);
 static_assert(OperandIndex::GetArrayLength::array == arrayOperand && OperandIndex::CallBuiltin::receiver == arrayOperand);
 static_assert(OperandIndex::IsPristine::value == arrayOperand && OperandIndex::HasArrayStorage::array == arrayOperand && OperandIndex::IsInBounds::array == arrayOperand);
+static_assert(OperandIndex::IsElementPresent::array == arrayOperand);
 
 static constexpr uint32_t takenTargetIndex = 0;
 
@@ -250,6 +251,7 @@ static bool collectUse(FunctionPassContext& context, const Use& use, LocalArray&
         return user.builtinClass() == BuiltinClasses::Array && collectTest(context, use.user, array);
     case Opcode::HasArrayStorage:
     case Opcode::IsInBounds:
+    case Opcode::IsElementPresent:
         return collectTest(context, use.user, array);
     case Opcode::ElemGet:
     case Opcode::GetArrayElement:
@@ -498,7 +500,7 @@ static void rewriteFlagRead(Rewriter& rewriter, const LocalArray& array, ValueID
     if (initialValue)
         operand = rewriter.insertBefore(point, IRBuilder::make(Opcode::ToBoolean, { operand }));
 
-    Value& value = function.at(read);
+    Value& value = function.edit(read);
     value.become(initialValue ? Opcode::LogicalNot : Opcode::ToBoolean);
     value.setValueOperand(operand);
 }
@@ -511,7 +513,7 @@ static void rewriteRead(Rewriter& rewriter, const LocalArray& array, ValueID rea
         rewriteFlagRead(rewriter, array, read, point);
         return;
     case NarrowElementKind::Integer: {
-        Value& value = rewriter.function.at(read);
+        Value& value = rewriter.function.edit(read);
         becomeNarrowAccess(value, Opcode::GetTypedArrayElement, array, elementAccessOf(rewriter.context, value));
         return;
     }
@@ -549,7 +551,7 @@ static void rewriteStore(Rewriter& rewriter, const LocalArray& array, ValueID st
     rewriter.builder.setOrigin(function.at(store).origin());
     ValueID element = insertStoredElement(rewriter, array, function.at(store).valueOperand(), point);
 
-    Value& value = function.at(store);
+    Value& value = function.edit(store);
     becomeNarrowAccess(value, Opcode::PutTypedArrayElement, array, elementAccessOf(rewriter.context, value));
     value.setValueOperand(element);
     rewriter.didChange(store);
@@ -557,7 +559,7 @@ static void rewriteStore(Rewriter& rewriter, const LocalArray& array, ValueID st
 
 static void rewriteFill(Rewriter& rewriter, const LocalArray& array)
 {
-    Value& fill = rewriter.function.at(array.fill);
+    Value& fill = rewriter.function.edit(array.fill);
     ValueID initialValue = fill.argumentsOperands()[0];
     becomeBuiltinCall(fill, array.calls.fill, BuiltinCallForm::Whole, { array.construction, { initialValue } }, stampsOf(fill));
     rewriter.didChange(array.fill);
@@ -609,7 +611,7 @@ static void rewriteAccesses(Rewriter& rewriter, std::span<const ArrayRewrite> re
     // Both sides of a test run the same source code. The taken side is typed for storage that holds these elements, and no access depends on a JSArray any more.
     for (const ArrayRewrite& rewrite : rewrites) {
         for (ValueID list : rewrite.array.guardLists)
-            removeFromGuardList(function.at(list), rewrite.array.construction);
+            removeFromGuardList(function.edit(list), rewrite.array.construction);
         for (BlockID block : rewrite.array.testedBranches)
             rewriter.builder.convertBranchToJump(block, takenTargetIndex);
     }
@@ -645,14 +647,14 @@ static void convert(Rewriter& rewriter, const LocalArray& array, BlockID block)
     Function& function = rewriter.function;
     ValueID length = lengthArgumentOf(function, array);
     if (array.hasValidLength) {
-        Value& construction = function.at(array.construction);
+        Value& construction = function.edit(array.construction);
         becomeBuiltinCall(construction, array.calls.construct, BuiltinCallForm::Whole, { { }, { length } }, stampsOf(construction));
     } else
         length = expandLengthCheck(rewriter, array, block);
     rewriter.didChange(array.construction);
 
     for (ValueID lengthRead : array.lengths) {
-        Value& value = function.at(lengthRead);
+        Value& value = function.edit(lengthRead);
         value.become(Opcode::ToNumeric);
         value.setValueOperand(length);
         rewriter.didChange(lengthRead);
@@ -689,7 +691,7 @@ unsigned narrowStorageOfLocalArrays(FunctionPassContext& context)
 
     context.analyses.didChangeValues();
     rewriter.builder.emptyUnreachableBlocks();
-    narrowValueTypes(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build }, rewriter.changedValues.span());
+    narrowValueTypes(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, rewriter.changedValues.span());
 
     context.build.statistics().count(StatisticID::ArraysNarrowed, rewrites.size());
     return static_cast<unsigned>(rewrites.size());

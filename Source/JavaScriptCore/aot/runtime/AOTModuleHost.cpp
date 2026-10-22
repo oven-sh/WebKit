@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
 #include "AOTImage.h"
 #include "AOTModuleNamespace.h"
 #include "AOTModuleRecord.h"
@@ -17,6 +18,9 @@
 #include "Error.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
+#include <array>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
@@ -36,26 +40,42 @@ static std::optional<ModuleTable> currentModuleTable()
     return ModuleTable(image->programTables());
 }
 
+namespace {
+
+struct PathsNotInImage {
+    Lock lock;
+    std::array<String, 32> paths WTF_GUARDED_BY_LOCK(lock);
+};
+
+} // anonymous namespace
+
 std::optional<ModuleID> findModule(StringView publicPath)
 {
     std::optional<ModuleTable> table = currentModuleTable();
     if (!table)
         return std::nullopt;
-    return table->findByPath(publicPath);
+    static NeverDestroyed<PathsNotInImage> pathsNotInImage;
+    PathsNotInImage& notFound = pathsNotInImage.get();
+    size_t place = publicPath.hash() % notFound.paths.size();
+    {
+        Locker locker { notFound.lock };
+        if (notFound.paths[place] == publicPath)
+            return std::nullopt;
+    }
+    std::optional<ModuleID> found = table->findByPath(publicPath);
+    if (!found) {
+        String copy = publicPath.toString().isolatedCopy();
+        Locker locker { notFound.lock };
+        notFound.paths[place] = WTF::move(copy);
+    }
+    return found;
 }
 
-StringView modulePath(ModuleID module)
+String modulePath(ModuleID module)
 {
     std::optional<ModuleTable> table = currentModuleTable();
     RELEASE_ASSERT(table);
-    return table->path(module);
-}
-
-bool isCommonJS(ModuleID module)
-{
-    std::optional<ModuleTable> table = currentModuleTable();
-    RELEASE_ASSERT(table);
-    return table->data(module).kind == ModuleKind::CommonJs;
+    return table->pathText(module);
 }
 
 bool entryPointIsCommonJS(JSGlobalObject* realm)
@@ -83,17 +103,64 @@ bool refusesCodeOutsideImage(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
         return modules->refusesCodeOutsideImage();
+    // The build folds what loads code at run time out of the host's modules unless it admits the inspector or names an external module.
+    // That the program evaluates text (ImageFlag::AdmitsUnknownJavaScript) brings none of it back.
     const Image* image = Image::current();
-    return image && !hasFlag(image->header().options.admitted(), AdmittedCode::RuntimeCode);
+    return image && !hasFlag(image->header().options.admitted(), AdmittedCode::Inspector);
 }
 
-static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name)
+static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadByName form)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    throwException(realm, scope, createError(realm, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable was compiled without support for loading a module by a name that is computed at run time. Compile with --admit=runtime-code"_s))));
+    throwException(realm, scope, createLoadByNameRefusedError(realm, name, form == LoadByName::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s));
 }
 
-void willLoadByName(JSGlobalObject* realm, JSValue specifier)
+bool refusesHostObjectsOutsideImage(JSGlobalObject* realm)
+{
+    Modules* modules = modulesOf(realm);
+    return refusesCodeOutsideImage(realm) && !(modules && modules->isAskingHost());
+}
+
+JSObject* mainModuleObject(JSGlobalObject* realm)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && Image::current()->showsWaysBetweenModuleObjects() ? modules->mainModuleObject() : nullptr;
+}
+
+JSValue moduleExports(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->commonJSExports(module) : jsUndefined();
+}
+
+void setModuleExports(JSGlobalObject* realm, ModuleID module, JSValue exports)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->setCommonJSExports(module, exports);
+}
+
+JSObject* parentModuleObject(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && Image::current()->showsWaysBetweenModuleObjects() ? modules->parentModuleObject(module) : nullptr;
+}
+
+bool forEachNewChild(JSGlobalObject* realm, ModuleID module, const ScopedLambda<void(JSObject*)>& functor)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && Image::current()->showsWaysBetweenModuleObjects() && modules->forEachNewChild(module, functor);
+}
+
+bool recordRequire(JSGlobalObject* realm, ModuleID target, ModuleID referrer)
+{
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return false;
+    modules->recordRequire(target, referrer);
+    return modules->data(target).kind == ModuleKind::CommonJs;
+}
+
+void willLoadByName(JSGlobalObject* realm, JSValue specifier, LoadByName form)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     Modules* modules = modulesOf(realm);
@@ -101,25 +168,30 @@ void willLoadByName(JSGlobalObject* realm, JSValue specifier)
     if (modules ? modules->refusesLoadsByName() && modules->refusesCodeOutsideImage() : !Image::current()->loadsModulesByName()) {
         String name = specifier.isString() ? asString(specifier)->value(realm) : String();
         RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, throwLoadByNameRefused(realm, name));
+        RELEASE_AND_RETURN(scope, throwLoadByNameRefused(realm, name, form));
     }
     if (modules)
         RELEASE_AND_RETURN(scope, modules->admitCodeNamedBy(specifier));
 }
 
-static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module)
+static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module, LoadByName form = LoadByName::Import)
 {
     Modules* modules = modulesOf(realm);
     if (modules && !modules->refusesRequestFromHost(module)) [[likely]]
         return modules;
     if (modules) {
-        throwLoadByNameRefused(realm, modulePath(module));
+        throwLoadByNameRefused(realm, modulePath(module), form);
         return nullptr;
     }
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwSyntaxError(realm, scope, withAOTErrorNote(makeString("The module "_s, modulePath(module), " was compiled ahead of time and cannot be loaded in a realm that was created at run time (ShadowRealm)"_s)));
+    throwException(realm, scope, createModuleInShadowRealmError(realm, modulePath(module)));
     return nullptr;
+}
+
+void willAnswerWithModule(JSGlobalObject* realm, ModuleID module, LoadByName form)
+{
+    modulesOrThrow(realm, module, form);
 }
 
 static bool s_isVerbose;
@@ -191,59 +263,10 @@ JSObject* moduleNamespace(JSGlobalObject* realm, ModuleID module)
     return modules ? modules->moduleNamespace(module, Modules::ModulePhase::Evaluation) : nullptr;
 }
 
-JSValue requireModule(JSGlobalObject* realm, ModuleID module, JSObject* commonJSModule)
+JSValue requireModule(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesForEvaluation(realm, module);
-    return modules ? modules->require(module, nullptr, commonJSModule) : JSValue();
-}
-
-void evaluateCommonJSBody(JSGlobalObject* realm, ModuleID module, JSObject* commonJSModule)
-{
-    Modules* modules = modulesOrThrow(realm, module);
-    if (!modules)
-        return;
-    logEvaluation(module);
-    modules->evaluateCommonJSBody(module, commonJSModule);
-}
-
-static bool isEvaluated(const Modules& modules, ModuleID module)
-{
-    return modules.status(module) == ModuleStatus::Evaluated && modules.table().hasFilePath(module);
-}
-
-bool isEvaluated(JSGlobalObject* realm, ModuleID module)
-{
-    Modules* modules = modulesOf(realm);
-    return modules && isEvaluated(*modules, module);
-}
-
-JSObject* namespaceIfEvaluated(JSGlobalObject* realm, ModuleID module)
-{
-    Modules* modules = modulesOf(realm);
-    if (!modules || modules->data(module).kind != ModuleKind::SourceText || modules->refusesRequestFromHost(module))
-        return nullptr;
-    if (modules->status(module) != ModuleStatus::Evaluated)
-        return nullptr;
-    return modules->moduleNamespace(module, Modules::ModulePhase::Evaluation);
-}
-
-void forEachEvaluatedModule(JSGlobalObject* realm, const ScopedLambda<void(ModuleID)>& functor)
-{
-    Modules* modules = modulesOf(realm);
-    if (!modules)
-        return;
-    unsigned numberOfModules = modules->table().size();
-    for (unsigned index = 0; index < numberOfModules; ++index) {
-        ModuleID module(index);
-        if (isEvaluated(*modules, module))
-            functor(module);
-    }
-}
-
-void evictModule(JSGlobalObject* realm, ModuleID module)
-{
-    if (Modules* modules = modulesOf(realm))
-        modules->evict(module);
+    return modules ? modules->require(module) : JSValue();
 }
 
 void willSetRequireCacheEntry(JSGlobalObject* realm, ModuleID module, JSValue entry)
@@ -258,10 +281,10 @@ void willChangeRequireOverride(JSGlobalObject* realm, RequireOverride location, 
         modules->willChangeRequireOverride(location, isOverridden);
 }
 
-void didObserveModuleChildren(JSGlobalObject* realm)
+bool hasFileWithExtension(StringView extension)
 {
-    if (Modules* modules = modulesOf(realm))
-        modules->didObserveModuleChildren();
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && table->hasFileWithExtension(extension);
 }
 
 bool isModuleNamespace(JSCell* cell)

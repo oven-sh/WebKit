@@ -35,7 +35,7 @@ function f4 name="goodThroughCasts" parameters=[{type=int[0, 100]}, {type=Array<
   b0(v0: int[0, 100], v1: Array<anything>, v2: number):
     v3 = NewArrayLike v0, v1 arrayStorage=Double
     v4 = Upcast v3 castType=anything
-    v5 = Claim v4 castType=Array<anything>
+    v5 = AssumeType v4 castType=Array<anything>
     v6 = Integer integer=0
     v7 = TryPutByValDirect v5, v6, v2 arrayStorage=Double
     Return

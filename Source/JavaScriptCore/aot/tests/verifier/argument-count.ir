@@ -1,7 +1,7 @@
 # the variadic operands of an operation are as many as the parameters of the callee, the listed fields or the captures
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: ArgumentCountMismatch 7
+# DIAGNOSTIC: ArgumentCountMismatch 6
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything}}]
@@ -81,18 +81,4 @@ function f15 name="goodAwaitedCall" role=CoroutineBody parameters=[{type=number}
   b0(v0: number, v1: Promise):
     v2 = AwaitCallBySavingFrame v1, v0 function=f15
     Return v2
-}
-function f16 name="group" role=GroupEntrypoint captures=[{type=function}] parameters=[{type=number}] results=[{type=undefined}] creator=Entrypoint{target=f10 group=[f10]} {
-  b0(v0: function, v1: number):
-    Return
-}
-function f17 name="badCallGroup" parameters=[{type=function}, {type=number}] results=[{type=undefined}] {
-  b0(v0: function, v1: number):
-    v2 = CallGroup v0, v0, v1 function=f16
-    Return
-}
-function f18 name="goodCallGroup" parameters=[{type=function}, {type=number}] results=[{type=undefined}] {
-  b0(v0: function, v1: number):
-    v2 = CallGroup v0, v1 function=f16
-    Return
 }

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTJSONHooks.h"
+#include "AOTJSONRuntime.h"
+#include "AOTObjectBuilderInlines.h"
 #include "DeferTermination.h"
 #include "GCMemoryOperations.h"
 #include "JSCInlines.h"
@@ -40,6 +42,7 @@ JSONValueParser::JSONValueParser(Instance& instance, VM& vm, JSGlobalObject* glo
     , m_globalObject(globalObject)
     , m_cache(vm.jsonCache())
     , m_parsingScope(m_cache)
+    , m_learnedNames(instance.json.runtime->learnedNames())
 {
 }
 
@@ -67,6 +70,9 @@ ParsedJSONValue JSONValueParser::parseValue(Cursor cursor)
     cursor = skipWhitespace(cursor);
     switch (*cursor) {
     case '"':
+        // "$", " ", ",": one plain ASCII character between the quotes is a string that the engine keeps.
+        if (cursor[2] == '"' && cursor[1] - 0x20u < 0x60u && cursor[1] != '"' && cursor[1] != '\\')
+            return { m_vm.smallStrings.singleCharacterString(cursor[1]), cursor + 3 };
         return parseString(cursor);
     case '{':
         return parseObject(cursor);
@@ -110,9 +116,80 @@ ParsedJSONValue JSONValueParser::parseNumber(Cursor cursor)
     return { jsNumber(parsed.number), parsed.end };
 }
 
-ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
+void JSONValueParser::NamesOfElementInFront::note(const JSONWords& words, unsigned index, Cursor quote, const NextMember& next)
 {
-    if (!m_vm.isSafeToRecurse()) [[unlikely]]
+    if (index > count || index == capacity)
+        return;
+    // What stood behind this name went on from another Structure.
+    count = index;
+    size_t length = next.value - quote;
+    if (length > maxTextLength)
+        return;
+    // One byte of the source stands for every character that is no Latin-1: equal bytes are not equal names.
+    if (words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(words, quote, length))
+        return;
+    static_assert(maxTextLength <= jsonSourcePadding);
+    auto maskFor = [](size_t bytes) -> uint64_t {
+        return bytes >= sizeof(uint64_t) ? std::numeric_limits<uint64_t>::max() : (1ull << (8 * bytes)) - 1;
+    };
+    Name& name = names[index];
+    name.mask[0] = maskFor(length);
+    name.mask[1] = maskFor(length > sizeof(uint64_t) ? length - sizeof(uint64_t) : 0);
+    name.text[0] = WTF::unalignedLoad<uint64_t>(quote) & name.mask[0];
+    name.text[1] = WTF::unalignedLoad<uint64_t>(quote + sizeof(uint64_t)) & name.mask[1];
+    if (isSharedBetweenSources && (name.text[0] | name.text[1]) & 0x8080808080808080ULL)
+        return;
+    name.structure = next.structure;
+    name.nameIndex = next.nameIndex;
+    name.textLength = length;
+    count = index + 1;
+}
+
+template<bool isShared>
+ALWAYS_INLINE std::optional<ParsedJSONValue> JSONValueParser::parseMembersInFront(Members& members, Cursor& cursor, NamesOfElementInFront& inFront)
+{
+    static_assert(NamesOfElementInFront::capacity <= std::size(decltype(members.values) { }));
+    Structure* structure = nullptr;
+    while (members.count < inFront.count) {
+        const auto& name = inFront.names[members.count];
+        if (((WTF::unalignedLoad<uint64_t>(cursor) & name.mask[0]) ^ name.text[0]) | ((WTF::unalignedLoad<uint64_t>(cursor + sizeof(uint64_t)) & name.mask[1]) ^ name.text[1])) [[unlikely]]
+            break;
+        structure = name.structure;
+        if constexpr (isShared)
+            members.structure = structure;
+        Cursor start = skipWhitespace(cursor + name.textLength);
+        ParsedJSONValue parsed;
+        if (Cursor end = tryParseSmallJSONInteger(start, parsed.value))
+            parsed.end = end;
+        else {
+            parsed = parseValue(start);
+            if (!parsed.end) [[unlikely]]
+                return ParsedJSONValue { };
+        }
+        members.values[members.count++] = JSValue::encode(parsed.value);
+        cursor = skipWhitespace(parsed.end);
+        if (*cursor == ',') {
+            cursor = skipWhitespace(cursor + 1);
+            if constexpr (isShared) {
+                if (!inFront.continuesFrom(members.count, structure)) [[unlikely]]
+                    break;
+            }
+            continue;
+        }
+        if (*cursor != '}') [[unlikely]]
+            return ParsedJSONValue { };
+        members.structure = structure;
+        ++cursor;
+        return ParsedJSONValue { createObject(members), cursor };
+    }
+    if (structure)
+        members.structure = structure;
+    return std::nullopt;
+}
+
+ParsedJSONValue JSONValueParser::parseObject(Cursor brace, NamesOfElementInFront* inFront)
+{
+    if (!m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
         return { };
     Cursor cursor = skipWhitespace(brace + 1);
     if (*cursor == '}') [[unlikely]]
@@ -121,16 +198,23 @@ ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
     Members members;
     members.structure = m_globalObject->objectStructureForObjectConstructor();
     ASSERT(members.structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity);
+    bool isShared = !inFront;
+    if (isShared)
+        inFront = &m_learnedNames.at(cursor);
+    if (std::optional<ParsedJSONValue> parsed = isShared ? parseMembersInFront<true>(members, cursor, *inFront) : parseMembersInFront<false>(members, cursor, *inFront))
+        return *parsed;
     members.nameIndex = JSONCache::nameIndex(StructureID::encode(members.structure));
     for (;;) {
         if (members.count == std::size(members.values)) [[unlikely]]
-            return parseRemainingMembers(createObject(members), cursor);
+            return parseRemainingMembers(createObject(members, ObjectKind::Ordinary), cursor);
         NextMember next = findKnownMember(members, cursor);
         if (!next.structure) [[unlikely]] {
             next = findOrAddMember(members, cursor);
             if (!next.structure)
-                return parseRemainingMembers(createObject(members), cursor);
+                return parseRemainingMembers(createObject(members, ObjectKind::Ordinary), cursor);
         }
+        if (!isShared || inFront->continuesFrom(members.count, members.structure))
+            inFront->note(m_words, members.count, cursor, next);
         ParsedJSONValue parsed = parseValue(next.value);
         if (!parsed.end) [[unlikely]]
             return { };
@@ -153,7 +237,7 @@ auto JSONValueParser::findKnownMember(const Members& members, Cursor quote) -> N
     auto* entry = m_cache.findName(StructureID::encode(members.structure), members.nameIndex, std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
     if (!entry || entry->offset != memberPropertyOffset(members.count))
         return { };
-    if (m_words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(m_words, quote, entry->textLength))
+    if (m_words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(m_words, quote, entry->textLength))
         return { };
     return { entry->to.get(), quote + entry->textLength, entry->toNameIndex };
 }
@@ -199,8 +283,17 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     return { to, parsed.afterColon, JSONCache::nameIndex(StructureID::encode(to)) };
 }
 
-JSObject* JSONValueParser::createObject(Members& members)
+JSObject* JSONValueParser::createObject(Members& members, ObjectKind kind)
 {
+    JSONRuntime& runtime = *m_words.runtime;
+    if (kind == ObjectKind::RecordIfPlanned && runtime.hasParsedRecords()) {
+        JSONRuntime::RecordPlan record = runtime.recordPlanFor(m_vm, members.structure);
+        if (record.plan) {
+            if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *record.plan, record.structure, members.values))
+                return object;
+        }
+    }
+
     Structure* structure = members.structure;
     unsigned inlineCapacity = structure->inlineCapacity();
     for (unsigned i = members.count; i < inlineCapacity; ++i)
@@ -272,7 +365,7 @@ ParsedJSONValue JSONValueParser::parseRemainingMembers(JSObject* object, Cursor 
 
 ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
 {
-    if (!m_vm.isSafeToRecurse()) [[unlikely]]
+    if (!m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
         return { };
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     Cursor cursor = skipWhitespace(bracket + 1);
@@ -282,8 +375,19 @@ ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
         array = constructEmptyArray(m_globalObject, nullptr);
     } else {
         size_t base = m_elements.size();
+        NamesOfElementInFront inFront;
+        // The first object has no element in front. `["$", "td", null, { .. }]` has one object and no more: its names are looked for among those of the objects parsed last.
+        bool hasObjectInFront = false;
         for (;;) {
-            ParsedJSONValue parsed = parseValue(cursor);
+            ParsedJSONValue parsed;
+            if (*cursor != '{')
+                parsed = parseValue(cursor);
+            else if (hasObjectInFront) [[likely]]
+                parsed = parseObject(cursor, &inFront);
+            else {
+                parsed = parseValue(cursor);
+                hasObjectInFront = true;
+            }
             if (!parsed.end) [[unlikely]]
                 return { };
             m_elements.append(parsed.value);

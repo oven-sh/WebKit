@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCallSiteTable.h"
 #include "AOTCodeIndex.h"
@@ -23,6 +24,7 @@
 #include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPipeline.h"
+#include "AOTPlacement.h"
 #include "AOTPositionTable.h"
 #include "AOTProgramTables.h"
 #include "AOTRegExpRecordEncoder.h"
@@ -72,12 +74,6 @@ size_t OutlinedCode::ownBodiesSize(uint32_t caller) const
 
 namespace {
 
-enum class Adjacency : uint8_t {
-    None,
-    AfterOrigin,
-    BeforeTarget,
-};
-
 enum class CodeBand : uint8_t {
     Hot,
     Warm,
@@ -94,37 +90,50 @@ struct CodeOrderKey {
     friend auto operator<=>(const CodeOrderKey&, const CodeOrderKey&) = default;
 
     CodeBand band;
-    uint32_t rank;
     uint32_t leader;
     GroupSide side;
-    uint32_t part;
+    // Of those in front of the leader, what leads to it in fewer steps lies nearer.
+    uint8_t nearness;
     uint32_t function;
     uint32_t position;
 };
 
 } // anonymous namespace
 
-static Adjacency adjacencyOf(FunctionRole role)
+// What the engine has put in front of a body does little and goes on into the body: it lies right in front of it, on the same lines and the same page.
+static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
 {
-    switch (role) {
-    case FunctionRole::Continuation:
-        return Adjacency::AfterOrigin;
+    const Typed::Function& function = program.at(id);
+    switch (function.role) {
     case FunctionRole::GenericEntrypoint:
-    case FunctionRole::GroupEntrypoint:
-        return Adjacency::BeforeTarget;
+    case FunctionRole::TableEntrypoint:
+        return function.creator.as<CreatorRecord::Entrypoint>().target;
+    case FunctionRole::EntryChecks:
+        return function.creator.as<CreatorRecord::EntryChecks>().body;
+    case FunctionRole::ParameterWrapper:
+        return function.creator.as<CreatorRecord::ParameterWrapper>().body;
+    case FunctionRole::ResultWrapper:
+        return function.creator.as<CreatorRecord::ResultWrapper>().worker;
+    case FunctionRole::CoroutineRamp:
+        return function.creator.as<CreatorRecord::Coroutine>().body;
+    case FunctionRole::CallSiteVersion: {
+        // An entrance with fewer tests.
+        FunctionID proven = function.creator.as<CreatorRecord::Version>().provenVersion;
+        return program.at(proven).role == FunctionRole::EntryChecks ? proven : FunctionID();
+    }
+    case FunctionRole::TableLookup:
     case FunctionRole::Source:
     case FunctionRole::Library:
     case FunctionRole::Model:
     case FunctionRole::Signature:
     case FunctionRole::GenericVersion:
     case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CoroutineRamp:
+    case FunctionRole::ConstructBody:
+    case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
     case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
@@ -132,10 +141,10 @@ static Adjacency adjacencyOf(FunctionRole role)
     case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
-        return Adjacency::None;
+        return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
-    return Adjacency::None;
+    return { };
 }
 
 static CodeBand bandOf(HeatClass heatClass)
@@ -155,39 +164,41 @@ static CodeBand bandOf(HeatClass heatClass)
     return CodeBand::Warm;
 }
 
-static CodeOrderKey codeOrderKeyOf(FunctionID function, uint32_t position, const Typed::Program& program, const Typed::Heat& heat, const Vector<uint32_t>& rankByFunction)
+static CodeOrderKey codeOrderKeyOf(FunctionID function, uint32_t position, const Typed::Program& program, const Typed::Heat& heat)
 {
     FunctionID leader = function;
-    uint32_t part = 0;
-    if (adjacencyOf(program.at(leader).role) == Adjacency::AfterOrigin) {
-        auto& record = program.at(leader).creator.as<CreatorRecord::Continuation>();
-        part = 1 + record.index;
-        leader = record.origin;
-    }
     GroupSide side = GroupSide::FromLeader;
-    if (adjacencyOf(program.at(leader).role) == Adjacency::BeforeTarget) {
+    uint8_t nearness = std::numeric_limits<uint8_t>::max();
+    for (FunctionID body = bodyBehind(program, leader); body && nearness; body = bodyBehind(program, leader)) {
         side = GroupSide::BeforeLeader;
-        leader = program.at(leader).creator.as<CreatorRecord::Entrypoint>().target;
+        --nearness;
+        leader = body;
     }
     // An outlined body is shared by sites of several functions, all in cold blocks, so it has no heat of its own.
     CodeBand band = program.at(leader).role == FunctionRole::OutlinedBody ? CodeBand::Cold : bandOf(heat.of(program, leader));
-    uint32_t rank = band == CodeBand::Hot ? rankByFunction[leader.index()] : 0;
-    return { band, rank, leader.index(), side, part, function.index(), position };
+    if (program.at(leader).isModuleBody())
+        band = CodeBand::RunsOnce;
+    return { band, leader.index(), side, nearness, function.index(), position };
 }
 
 void orderFunctions(LinkedFunctions& functions, const Typed::PipelineOutput& pipeline, BuildContext& context)
 {
     const Typed::Program& program = *pipeline.program;
     const Typed::Heat& heat = *pipeline.heat;
-    Vector<uint32_t> rankByFunction(FillWith { }, program.functions.size(), std::numeric_limits<uint32_t>::max());
-    uint32_t rank = 0;
-    for (FunctionID function : heat.hottestFirst())
-        rankByFunction[function.index()] = rank++;
-
     Vector<CodeOrderKey> keys(functions.size());
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        keys[position] = codeOrderKeyOf(functions[position].function, position, program, heat, rankByFunction);
+        keys[position] = codeOrderKeyOf(functions[position].function, position, program, heat);
     });
+    uint64_t bytesInHotAndWarmBands = 0;
+    uint64_t bytesOfHotBlocksInHotAndWarmBands = 0;
+    for (const CodeOrderKey& key : keys) {
+        if (key.band != CodeBand::Hot && key.band != CodeBand::Warm)
+            continue;
+        bytesInHotAndWarmBands += functions[key.position].body.bytes.size();
+        bytesOfHotBlocksInHotAndWarmBands += functions[key.position].body.sizeOfHotBlocks;
+    }
+    context.statistics().count(StatisticID::BytesGeneratedInHotAndWarmBands, bytesInHotAndWarmBands);
+    context.statistics().count(StatisticID::BytesGeneratedOutsideColdBlocksInHotAndWarmBands, bytesOfHotBlocksInHotAndWarmBands);
     parallelSort(context.parallelLoops(), keys.mutableSpan(), std::less<CodeOrderKey> { });
     Vector<uint32_t> order = keys.map([](const CodeOrderKey& key) {
         return key.position;
@@ -263,18 +274,97 @@ ResolvedCallees resolveCallees(const LinkedFunctions& functions, const CodeIndex
     return result;
 }
 
-static void encodeFrameRanges(Vector<uint8_t>& bytes, std::span<const CodeRange> ranges)
+static Vector<uint32_t, 32> collectOffsetsAskedForFrame(const CompiledCode& code)
 {
-    uint32_t previousEnd = 0;
-    for (const CodeRange& range : ranges) {
-        SideTableParts::appendFrameRange(bytes, previousEnd, range.begin, range.end);
-        previousEnd = range.end;
+    Vector<uint32_t, 32> offsets;
+    auto addReturnOffset = [&](uint32_t returnOffset) {
+        RELEASE_ASSERT(returnOffset);
+        offsets.append(returnOffset - 1);
+    };
+    for (const ReturnSite& site : code.body.returnSites)
+        addReturnOffset(site.offset);
+    for (const FaultingAccess& access : code.sites.faultingAccesses)
+        addReturnOffset(access.codeOffset + static_cast<uint32_t>(sizeOfNearCall));
+    for (const PollSite& poll : code.sites.pollSites)
+        addReturnOffset(poll.returnOffset());
+    std::ranges::sort(offsets);
+    return offsets;
+}
+
+static void encodeFrameRanges(Vector<uint8_t>& bytes, const CompiledCode& code)
+{
+    if (!code.frame.hasFrame())
+        return;
+    bool hasFrame = false;
+    uint32_t previousChange = 0;
+    uint32_t endOfLastUnitAsked = 0;
+    for (uint32_t offset : collectOffsetsAskedForFrame(code)) {
+        if (code.frame.hasFrameAt(offset) != hasFrame) {
+            SideTableParts::appendFrameChange(bytes, previousChange, endOfLastUnitAsked);
+            previousChange = endOfLastUnitAsked;
+            hasFrame = !hasFrame;
+        }
+        endOfLastUnitAsked = (offset / codeOffsetUnit + 1) * codeOffsetUnit;
     }
 }
 
-SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const uint32_t> callSiteOffsets, BuildContext& context)
+namespace {
+
+struct SideTablePartSizes {
+    uint32_t frameRanges { 0 };
+    uint32_t handlers { 0 };
+    uint32_t callSites { 0 };
+};
+
+} // anonymous namespace
+
+// Equal streams are stored once, in the order of the functions, so a stream is stored where the streams in front of it end.
+static void countSideTableParts(std::span<const Vector<uint8_t>> streams, std::span<const uint32_t> offsets, std::span<const SideTablePartSizes> partSizes, BuildContext& context)
 {
-    RELEASE_ASSERT(callSiteOffsets.size() == functions.size());
+    uint64_t sizeOfStreams = 0;
+    uint64_t sizeOfFrameRanges = 0;
+    uint64_t sizeOfHandlers = 0;
+    uint64_t sizeOfCallSites = 0;
+    for (size_t index = 0; index < streams.size(); ++index) {
+        if (streams[index].isEmpty() || offsets[index] != sizeOfStreams)
+            continue;
+        sizeOfStreams += streams[index].size();
+        sizeOfFrameRanges += partSizes[index].frameRanges;
+        sizeOfHandlers += partSizes[index].handlers;
+        sizeOfCallSites += partSizes[index].callSites;
+    }
+    Statistics& statistics = context.statistics();
+    statistics.count(StatisticID::SideTableBytesFrameRanges, sizeOfFrameRanges);
+    statistics.count(StatisticID::SideTableBytesHandlers, sizeOfHandlers);
+    statistics.count(StatisticID::CallSiteBytesEmitted, sizeOfCallSites);
+    statistics.count(StatisticID::SideTableBytesReferences, sizeOfStreams - sizeOfFrameRanges - sizeOfHandlers - sizeOfCallSites);
+}
+
+static Vector<uint8_t> joinPositions(std::span<const Vector<uint8_t>> positions, BuildContext& context)
+{
+    size_t sizeOfIndex = PositionIndex::numberOfEntriesFor(positions.size()) * sizeof(uint32_t);
+    uint64_t size = sizeOfIndex;
+    for (const Vector<uint8_t>& bytes : positions)
+        size += bytes.size();
+    if (!checkSectionSize(size, context))
+        return { };
+
+    Vector<uint8_t> result;
+    result.reserveInitialCapacity(size);
+    result.grow(sizeOfIndex);
+    for (size_t function = 0; function < positions.size(); ++function) {
+        if (!(function % PositionIndex::functionsBetween)) {
+            uint32_t place = static_cast<uint32_t>(result.size() - sizeOfIndex);
+            memcpySpan(result.mutableSpan().subspan(function / PositionIndex::functionsBetween * sizeof(uint32_t)), asByteSpan(place));
+        }
+        result.appendVector(positions[function]);
+    }
+    return result;
+}
+
+SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Vector<uint8_t>> callSites, BuildContext& context)
+{
+    RELEASE_ASSERT(callSites.size() == functions.size());
     Vector<uint64_t> firstWordOf(functions.size());
     uint64_t numberOfWords = 0;
     for (size_t position = 0; position < functions.size(); ++position) {
@@ -286,14 +376,22 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const ui
     if (!checkSectionSize(sizeOfFrameMaps, context))
         return { };
 
+    std::optional<FrameTable> frameTable = collectFrames(functions, context);
+    if (!frameTable)
+        return { };
+
     bool hasPositions = !context.options().obfuscates();
     SideTables result;
+    result.frames = WTF::move(frameTable->frames);
     result.frameMapWords.grow(numberOfWords);
     Vector<Vector<uint8_t>> streams(functions.size());
+    Vector<Vector<uint8_t>> positions(functions.size());
+    Vector<SideTablePartSizes> partSizes(functions.size());
+    Atomic<uint64_t> numberOfPositions { 0 };
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
         const SiteDescription& sites = functions[position].sites;
         Vector<uint8_t> frameRanges;
-        encodeFrameRanges(frameRanges, functions[position].frame.frameRanges.span());
+        encodeFrameRanges(frameRanges, functions[position]);
         std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
         if (!sites.frameMapWords.isEmpty()) {
             frameMapRange.emplace(static_cast<uint32_t>(firstWordOf[position]), static_cast<uint32_t>(sites.frameMapWords.size()));
@@ -301,22 +399,28 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const ui
         }
         Vector<uint8_t> handlers;
         encodeHandlers(handlers, sites.handlers.span());
-        Vector<uint8_t> positions;
-        if (hasPositions)
-            encodePositions(positions, sites);
+        if (hasPositions) {
+            encodePositions(positions[position], sites, position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
+            numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
+        }
         SideTableParts::append(streams[position], {
             .frameRanges = frameRanges.span(),
+            .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
-            .callSites = callSiteOffsets[position] ? std::optional(callSiteOffsets[position]) : std::nullopt,
             .handlers = handlers.span(),
-            .positions = positions.span(),
+            .callSites = callSites[position].span(),
         });
+        partSizes[position] = { static_cast<uint32_t>(frameRanges.size()), static_cast<uint32_t>(handlers.size()), static_cast<uint32_t>(callSites[position].size()) };
     });
+    context.statistics().count(StatisticID::SitePositionsEmitted, numberOfPositions.loadRelaxed());
 
     SectionWriter writer(context);
     result.offsets = writer.appendAll(streams.span());
+    countSideTableParts(streams.span(), result.offsets.span(), partSizes.span(), context);
     result.bytes = writer.takeBytes();
+    result.positions = joinPositions(positions.span(), context);
     context.destroyLater(WTF::move(streams));
+    context.destroyLater(WTF::move(positions));
     return result;
 }
 
@@ -370,7 +474,7 @@ struct FunctionLinks {
 };
 
 struct SiteTables {
-    CallSiteTable callSites;
+    Vector<Vector<uint8_t>> callSites;
     SideTables sideTables;
     Vector<uint8_t> faultSites;
     RegExpSections regExps;
@@ -422,7 +526,7 @@ static SiteTables encodeSiteTables(const BuiltImage& built, const ImageInputs& i
         return tables;
 
     runTasksInParallel(context.parallelLoops(), {
-        [&] { tables.sideTables = encodeSideTables(functions, tables.callSites.offsets.span(), context); },
+        [&] { tables.sideTables = encodeSideTables(functions, tables.callSites.span(), context); },
         [&] { tables.faultSites = encodeFaultSites(functions, built.layout.bodyStarts.span(), context); },
         [&] { tables.regExps = encodeRegExpRecords({ inputs.regExpRequests, inputs.regExps, built.regExpSection }, context); },
     });
@@ -436,12 +540,11 @@ static ImageSections collectSections(EncodedFunctionTables&& functionTables, Sit
     sections[ImageSection::Functions] = WTF::move(functionTables.functions);
     sections[ImageSection::FunctionStarts] = WTF::move(functionTables.functionStarts);
     sections[ImageSection::CodeGranules] = WTF::move(functionTables.codeGranules);
-    sections[ImageSection::FunctionsByID] = WTF::move(functionTables.functionsByID);
     sections[ImageSection::InnerEntries] = WTF::move(functionTables.innerEntries);
-    sections[ImageSection::Frames] = WTF::move(functionTables.frames);
+    sections[ImageSection::Frames] = bytesOf(siteTables.sideTables.frames);
     sections[ImageSection::FrameMaps] = bytesOf(siteTables.sideTables.frameMapWords);
     sections[ImageSection::ClosureWords] = WTF::move(functionTables.closureWords);
-    sections[ImageSection::CallSites] = WTF::move(siteTables.callSites.bytes);
+    sections[ImageSection::Positions] = WTF::move(siteTables.sideTables.positions);
     sections[ImageSection::FaultSites] = WTF::move(siteTables.faultSites);
     sections[ImageSection::SideTables] = WTF::move(siteTables.sideTables.bytes);
     sections[ImageSection::SharedCodeCopies] = encodeSharedCodeCopies(built.layout);
@@ -458,6 +561,8 @@ static ImageSections collectSections(EncodedFunctionTables&& functionTables, Sit
     sections[ImageSection::StubAddresses] = encodeStubAddresses(built.sharedCode.blob);
     sections[ImageSection::StubReturnSites] = bytesOf(built.sharedCode.blob.returnSites);
     sections[ImageSection::SlotHandlers] = encodeSlotHandlers(built.sharedCode.blob);
+    sections[ImageSection::MethodLookups] = WTF::move(functionTables.methodLookups);
+    sections[ImageSection::MethodTable] = WTF::move(functionTables.methodTable);
     return sections;
 }
 
@@ -472,7 +577,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
 {
     const Typed::FlowResults& flow = *pipeline.flow;
     if (!flow.hasResults())
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::ReplacesLoaderAnswers, ImageFlag::AdmitsLibraryText };
+        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
 
     OptionSet<ImageFlag> flags;
     for (const auto& record : flow.unseenCode()) {
@@ -480,8 +585,6 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
             flags.add(ImageFlag::AdmitsUnknownJavaScript);
         if (Typed::loadsModulesByName(record.cause))
             flags.add(ImageFlag::LoadsModulesByName);
-        if (Typed::replacesLoaderAnswers(record))
-            flags.add(ImageFlag::ReplacesLoaderAnswers);
         if (Typed::admitsLibraryText(record.cause))
             flags.add(ImageFlag::AdmitsLibraryText);
     }
@@ -493,7 +596,43 @@ static OptionSet<ImageFlag> collectImageFlags(const Typed::PipelineOutput& pipel
     OptionSet<ImageFlag> flags = flagsForUnseenCode(pipeline);
     if (context.options().obfuscates())
         flags.add(ImageFlag::IsObfuscated);
+    if (Typed::namesWaysToModuleObjects(*pipeline.program))
+        flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
     return flags;
+}
+
+namespace {
+
+struct ShapeSetsOfTables {
+    Vector<uint8_t> bytes;
+    Vector<ConstantRange> parts;
+};
+
+} // anonymous namespace
+
+// The sets of shapes that stubs and C++ read are the last thing in the program tables. They become the start of the pool of constants, where compiled code reads the same sets,
+// and the image writer lets the range of the table point there.
+static ShapeSetsOfTables takeShapeSets(Vector<uint8_t>& programTables, const Typed::ShapeTable& shapes)
+{
+    RELEASE_ASSERT(programTables.size() >= sizeof(ProgramTables));
+    auto& tables = *reinterpret_cast<ProgramTables*>(programTables.mutableSpan().data());
+    TableRange& range = tables.ranges[static_cast<unsigned>(ProgramTableIndex::shapeSetBits)];
+    ShapeSetsOfTables sets;
+    if (!range.count)
+        return sets;
+    std::span<const uint8_t> bytes = asBytes(tables.shapeSetBits());
+    RELEASE_ASSERT(bytes.size() == shapes.shapeSetWords().size_bytes());
+    if (range.offset + bytes.size() != programTables.size())
+        return sets;
+    sets.bytes = Vector<uint8_t>(bytes);
+    sets.parts = Vector<ConstantRange>(shapes.shapeSetRanges().size(), [&](size_t index) {
+        Typed::ShapeSetRange set = shapes.shapeSetRanges()[index];
+        return ConstantRange { static_cast<uint32_t>(set.firstWord * sizeof(uint64_t)), static_cast<uint32_t>(set.numberOfWords * sizeof(uint64_t)) };
+    });
+    uint32_t offset = range.offset;
+    range = { 0, 0 };
+    programTables.shrink(offset);
+    return sets;
 }
 
 BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
@@ -518,6 +657,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
 
     unsigned numberOfSharedCodeCopies = countSharedCodeCopies(result.functions, context);
     times.didFinish("count shared code copies"_s);
+    ShapeSetsOfTables shapeSets = takeShapeSets(inputs.programTables, inputs.pipeline.placement->shapes());
     runTasksInParallel(context.parallelLoops(), {
         [&] { checkUncheckedStackUsage(result.functions, callees, result.aliases.span(), links.index, context); },
         [&] {
@@ -525,8 +665,9 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
                 result.regExpSection = WTF::move(*section);
         },
         [&] { result.outlining = chooseOutlinedSequences({ result.functions, callees, result.aliases.span(), templates, numberOfSharedCodeCopies }, context); },
+        [&] { result.constants = buildConstantPool(result.functions, context, { shapeSets.bytes.span(), shapeSets.parts.span() }); },
     });
-    times.didFinish("check stack usage, lay out regular expressions, choose outlined sequences"_s);
+    times.didFinish("check stack usage, lay out regular expressions, choose outlined sequences, build constant pool"_s);
     if (diagnostics.hasErrors())
         return result;
 
@@ -537,10 +678,9 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     Vector<FinalJump> finalJumps;
     runTasksInParallel(context.parallelLoops(), {
         [&] { result.sharedCode = selectSharedCode(result.functions, result.outlinedCode, inputs.stubCatalog, inputs.entriesUsedByFunctions, context); },
-        [&] { result.constants = buildConstantPool(result.functions, context); },
         [&] { finalJumps = findFinalJumps(result.functions, callees, result.outlinedCode, context); },
     });
-    times.didFinish("select shared code, build constant pool, find final jumps"_s);
+    times.didFinish("select shared code, find final jumps"_s);
     if (diagnostics.hasErrors())
         return result;
 
@@ -557,7 +697,8 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         return result;
     RELEASE_ASSERT(inputs.programTables.size() >= sizeof(ProgramTables));
     auto& programTables = *reinterpret_cast<const ProgramTables*>(inputs.programTables.span().data());
-    EncodedFunctionTables functionTables = encodeFunctionTables({ result.functions, result.aliases, result.layout, links.index, siteTables.callSites.offsets.span(), siteTables.sideTables.offsets.span(), programTables, !context.options().obfuscates() }, context);
+    EncodedFunctionTables functionTables = encodeFunctionTables({ result.functions, result.aliases, result.layout, links.index, siteTables.callSites.span(), siteTables.sideTables.offsets.span(), programTables, !context.options().obfuscates() }, context);
+    context.destroyLater(WTF::move(siteTables.callSites));
     times.didFinish("encode function tables"_s);
     if (diagnostics.hasErrors())
         return result;
@@ -584,7 +725,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     times.didFinish("write image"_s);
 
     context.statistics().count(StatisticID::ImageFunctionsEmitted, result.functions.size());
-    context.statistics().count(StatisticID::CallSiteBytesEmitted, sections[ImageSection::CallSites].size());
     context.destroyLater(std::tuple { WTF::move(links.callees), WTF::move(sections), WTF::move(finalJumps) });
     times.didFinish("release intermediate results"_s);
     return result;

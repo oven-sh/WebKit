@@ -11,6 +11,8 @@
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTResultRules.h"
+#include "AOTTypeArena.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -64,16 +66,28 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
         return argument;
 
     ValueID converted = builder.appendUpcast(argument, parameter.type);
-    TypeID prediction = parameter.prediction();
-    if (!prediction || prediction == builder.function().at(converted).prediction())
+    TypeID expected = parameter.expected();
+    if (!expected || expected == builder.function().at(converted).expected())
         return converted;
 
-    if (program.typeOf(builder.function(), converted).isSubsetOf(program.at(prediction), program))
+    if (program.typeOf(builder.function(), converted).isSubsetOf(program.at(expected), program))
         return converted;
 
-    Value predict = IRBuilder::make(Opcode::Predict, { converted });
-    predict.setPredicted(prediction);
-    return builder.append(WTF::move(predict));
+    // Of two expectations that exclude each other the one nearer to the use stands.
+    TypeArena& types = builder.types();
+    TypeID proven = builder.function().at(converted).type;
+    TypeID narrowed = types.intersectionOf(builder.function().at(converted).expectedOrType(), expected);
+    if (narrowed == TypeTable::never)
+        narrowed = types.intersectionOf(proven, expected);
+    // An intersection may keep a part of one side that the subset test does not find in the other.
+    if (narrowed == TypeTable::never || narrowed == proven || !types.at(narrowed).isSubsetOf(types.at(proven), program))
+        return converted;
+
+    // What the copy expects of the value stands on a cast that changes nothing else: the caller's other uses of the argument expect what the caller does.
+    Value cast = IRBuilder::make(Opcode::Upcast, { converted });
+    cast.setCastType(proven);
+    cast.setExpected(narrowed);
+    return builder.append(WTF::move(cast));
 }
 
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
@@ -82,17 +96,18 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
         clone.inlineFrame += firstFrame;
     });
     for (BlockID id : cloner.clonedBlocks())
-        builder.function().at(id).terminator.inlineFrame += firstFrame;
+        builder.function().edit(id).terminator.inlineFrame += firstFrame;
 }
 
-static bool hasSignatureMismatch(const Program& program, const InliningSummary& summary, const Value& call, const Function& callee)
+static bool hasSignatureMismatch(const FunctionPassContext& context, const InliningSummary& summary, const Value& call, const Function& callee)
 {
+    const Program& program = context.program;
     if (call.numberOfOperands() != callee.numberOfEntryParameters())
         return true;
     if (callee.results.size() != 1)
         return summary.hasBareReturn;
 
-    TypeID resultType = callee.result().type;
+    TypeID resultType = TypingContext { program, callee, context.types }.typeIDOf(callee.result());
     if (resultType != call.type && !program.at(resultType).isSubsetOf(program.at(call.type), program))
         return true;
     return summary.hasBareReturn && !program.at(TypeTable::undefined).isSubsetOf(program.at(resultType), program);
@@ -137,7 +152,7 @@ InlineDecision canInline(const FunctionPassContext& context, const InliningSumma
     const Value& call = caller.at(callID);
     if (summary.barrier == InlineBarrier::None) {
         const Function& callee = context.program.at(call.function());
-        if (hasSignatureMismatch(context.program, summary, call, callee))
+        if (hasSignatureMismatch(context, summary, call, callee))
             return InlineDecision::SignatureMismatch;
         if (context.build.exceeds(LimitID::InlineFramesPerFunction, inlineFrameCountOf(caller) + inlineFrameCountOf(callee), context.subject(callID)))
             return InlineDecision::CallerSizeLimit;
@@ -196,7 +211,7 @@ static void cloneBody(IRBuilder& builder, RegionCloner& cloner, InlineCopy& copy
 static void replaceReturn(IRBuilder& builder, BlockID block, const InlineCopy& copy)
 {
     Function& caller = builder.function();
-    ValueID returned = std::exchange(caller.at(block).terminator, Terminator { }).valueOperand();
+    ValueID returned = std::exchange(caller.edit(block).terminator, Terminator { }).valueOperand();
     builder.moveToEndOf(block);
     if (copy.callee.results.size() == 1) {
         builder.endExpansion(copy.expansion, returned ? returned : builder.appendUndefined());
@@ -235,7 +250,7 @@ static void appendCasts(Terminator& returnCall, const Terminator& siteReturnCall
 
 static void finishClonedTerminator(IRBuilder& builder, BlockID clone, const InlineCopy& copy)
 {
-    Terminator& terminator = builder.function().at(clone).terminator;
+    Terminator& terminator = builder.function().edit(clone).terminator;
     switch (terminator.kind) {
     case TerminatorKind::Return:
         replaceReturn(builder, clone, copy);
@@ -269,7 +284,7 @@ static void finishClonedBlocks(IRBuilder& builder, const RegionCloner& cloner, c
     builder.setOrigin(copy.call.origin());
     std::span<const BlockID> clones = cloner.clonedBlocks();
     for (size_t index = 0; index < clones.size(); ++index) {
-        Block& block = caller.at(clones[index]);
+        Block& block = caller.edit(clones[index]);
         block.frequency = rarerOf(block.frequency, copy.callBlockFrequency);
         if (copy.summary.noReturnBlocks.get(copy.region[index].index()))
             block.frequency = BlockFrequency::Rare;

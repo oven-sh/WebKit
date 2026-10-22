@@ -6,9 +6,9 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Button" constructor=f0 fields=[{key="handler" declared={type=f1} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f1} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="reset" declared={type=f2} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="again" declared={type=f3} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f3} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f2} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="replaceable" declared={type=anything} flow={location={deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L1 kind=Instance name="Link" constructor=f4 fields=[{key="handler" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L2 kind=Instance name="Menu" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="handler" function=f7 mutability=Fixed}]}
+layout L0 kind=Instance name="Button" constructor=f0 fields=[{key="handler" declared={type=f1} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f1} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="reset" declared={type=f2} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="again" declared={type=f3} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f3} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f2} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="replaceable" declared={type=anything} flow={location={deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Link" constructor=f4 fields=[{key="handler" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Menu" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="handler" function=f7 mutability=Fixed}]}
 function f0 name="Button" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="handler" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything):
@@ -94,12 +94,11 @@ function f12 name="members-with-different-functions" parameters=[{type=L0|L1}, {
     v3 = Call v2, v0, v1 calleeKey="handler"
     Return v3
 }
+# The fields are only expected to hold their closures, so the call of what was read has to stay, and it serves both
 # CHECK-LABEL: function f12 name="members-with-different-functions"
-# CHECK-NOT: CallDirect
-# CHECK: [[either]]{{*}}= PropGet {{*}} key="handler"
-# CHECK-NOT: CallDirect
-# CHECK: = Call [[either]], {{*}}, v1 calleeKey="handler"
-# CHECK-NOT: CallDirect
+# CHECK-NEXT: b0(v0: L0|L1, v1: anything):
+# CHECK-NEXT: [[either]]{{*}}= PropGet v0 key="handler"
+# CHECK-NEXT: = Call [[either]], v0, v1 calleeKey="handler"
 function f13 name="closure-is-also-returned" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="handler"

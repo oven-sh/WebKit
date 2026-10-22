@@ -142,15 +142,6 @@ uint64_t applyRelocations(std::span<uint8_t> code, size_t bodyStart, std::span<c
     return numberApplied;
 }
 
-// Darwin maps memory from 4 GB up, among the integers that code holds: an indexing header of length 0 and capacity 3 is 0x300000000. There a mapped range says nothing about a word.
-#if OS(DARWIN)
-static constexpr bool mappedIntegersAreAddresses = false;
-#else
-static constexpr bool mappedIntegersAreAddresses = true;
-#endif
-JS_EXPORT_PRIVATE void validateNoMappedAddress(const LinkBuffer&, BuildContext&);
-JS_EXPORT_PRIVATE void validateNoMappedAddress(std::span<const uint8_t> data, BuildContext&);
-
 enum class RelocationSpace : uint32_t {
     B3RuntimeFunction = 0,
     WebAssemblyPointers,

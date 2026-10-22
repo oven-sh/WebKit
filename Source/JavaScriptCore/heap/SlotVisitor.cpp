@@ -29,7 +29,6 @@
 #include "CellContainerInlines.h"
 #include "CellVisitValidator.h"
 #include "Collector.h"
-#include "CollectorMechanism.h"
 #include "ConservativeRoots.h"
 #include "FastMarkAppender.h"
 #include "GCSegmentedArrayInlines.h"
@@ -295,12 +294,25 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
 #endif
     ASSERT(!cell->isZapped());
 
-    container.noteMarked();
-    
-    m_visitCount++;
-    noteBytesMarked(container.vm().heap, container.cellSize());
+    bool isCountedWithOuterCell = false;
+    if constexpr (std::is_same_v<ContainerType, MarkedBlock>)
+        isCountedWithOuterCell = container.isInnerCell(cell);
+    if (!isCountedWithOuterCell) [[likely]] {
+        container.noteMarked();
+
+        m_visitCount++;
+        noteBytesMarked(container.vm().heap, container.cellSize());
+    }
 
     m_collectorStack.append(cell);
+
+    // Whoever holds an inner cell holds the cell that it lies in. No field says so.
+    if constexpr (std::is_same_v<ContainerType, MarkedBlock>) {
+#if ENABLE(AOT)
+        if (isCountedWithOuterCell && !AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::InnerCellIsMarkedWithoutItsOuterCell)) [[unlikely]]
+            appendHiddenSlow(static_cast<JSCell*>(container.outerCellOf(cell)), Dependency());
+#endif
+    }
 }
 
 void SlotVisitor::markAuxiliary(const void* base)
@@ -308,7 +320,11 @@ void SlotVisitor::markAuxiliary(const void* base)
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
     
     ASSERT(m_collector.hasHeap(*cell->heap()));
-    
+
+    // Storage that lies in the cell of its owner lives and is counted with that cell.
+    if (!cell->isPreciseAllocation() && cell->markedBlock().hasInnerCells()) [[unlikely]]
+        return;
+
     if (Heap::testAndSetMarked(m_markingVersion, cell))
         return;
     
@@ -324,7 +340,11 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     // Full collection: if the cell is live somehow.
     
     CellContainer container = cell->cellContainer();
-    
+
+    // Storage that lies in the cell of its owner is counted with that cell.
+    if (container.isMarkedBlock() && container.markedBlock().isInnerCell(cell)) [[unlikely]]
+        return;
+
     container.assertValidCell(cell->vm(), cell);
     container.noteMarked();
     
@@ -437,11 +457,6 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(FastMarkAppender& appender, const 
     if constexpr (!mutatorsAreStopped)
         WTF::storeLoadFence();
 
-    visitChildrenOfBlackCell(appender, cell);
-}
-
-ALWAYS_INLINE void SlotVisitor::visitChildrenOfBlackCell(FastMarkAppender& appender, const JSCell* cell)
-{
     Structure* structure = cell->structureID().decontaminate().decode();
     CellVisitKind kind = appender.visitsInline() ? structure->cellVisitKind() : CellVisitKind::MethodTable;
     if (tryVisitInline<CellVisitPlacement::InLoop>(appender, const_cast<JSCell*>(cell), structure, kind))
@@ -595,39 +610,22 @@ NEVER_INLINE void SlotVisitor::drainStackWithAppender(MarkStackArray& stack, uns
     FastMarkAppender appender(*this);
     auto& cursor = appender.cursor();
 
-    if (isX86() && !(Options::disabledCollectorMechanisms() & 4096)) {
-    constexpr unsigned maxBatchSize = 8;
-    while (countdown && !budget.isExhausted(appender)) {
-        const JSCell* batch[maxBatchSize];
-        unsigned batchSize = 0;
-        unsigned limit = std::min(countdown, maxBatchSize);
+#if CPU(X86_64)
+    for (; countdown && !budget.isExhausted(appender); --countdown) {
+        const JSCell* cell;
         if constexpr (drainsCollectorStack) {
-            limit = std::min<size_t>(limit, cursor.next - cursor.first);
-            for (; batchSize < limit; ++batchSize)
-                batch[batchSize] = *--cursor.next;
+            if (cursor.next == cursor.first)
+                break;
+            cell = *--cursor.next;
         } else {
-            for (; batchSize < limit && stack.canRemoveLast(); ++batchSize)
-                batch[batchSize] = stack.removeLast();
+            if (!stack.canRemoveLast())
+                break;
+            cell = stack.removeLast();
         }
-        if (!batchSize)
-            break;
-        countdown -= batchSize;
-
-        for (unsigned index = 0; index < batchSize; ++index)
-            batch[index]->setCellState(CellState::PossiblyBlack);
-        if constexpr (!mutatorsAreStopped)
-            WTF::storeLoadFence();
-        for (unsigned index = 0; index < batchSize; ++index) {
-            budget.didPop(batch[index]);
-            visitChildrenOfBlackCell(appender, batch[index]);
-        }
-    }
-    } else {
-    auto visit = [&](const JSCell* cell) ALWAYS_INLINE_LAMBDA {
         budget.didPop(cell);
         visitChildren<mutatorsAreStopped>(appender, cell);
-    };
-
+    }
+#else
     auto popAndPrefetch = [&] ALWAYS_INLINE_LAMBDA -> const JSCell* {
         if (!countdown || budget.isExhausted(appender))
             return nullptr;
@@ -649,9 +647,10 @@ NEVER_INLINE void SlotVisitor::drainStackWithAppender(MarkStackArray& stack, uns
     for (const JSCell* next = popAndPrefetch(); next;) {
         const JSCell* cell = next;
         next = popAndPrefetch();
-        visit(cell);
+        budget.didPop(cell);
+        visitChildren<mutatorsAreStopped>(appender, cell);
     }
-    }
+#endif
 }
 
 template<typename Budget>
@@ -823,11 +822,7 @@ bool SlotVisitor::hasWork(const AbstractLocker&)
 
 bool SlotVisitor::defersRootRegions() const
 {
-#if CPU(X86_64)
-    return Options::useAOT() && !isEnabled(CollectorMechanism::DeferredRootRegions) && !m_isAnalyzingHeap;
-#else
-    return false;
-#endif
+    return Options::useAOT() && !m_isAnalyzingHeap;
 }
 
 void SlotVisitor::deferRootRegion(const DeferredRootRegion& region)
@@ -1011,7 +1006,7 @@ void SlotVisitor::donateAll(const AbstractLocker&)
             return IterationStatus::Continue;
         });
 
-    if (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty())
+    if (!collector().hasStartedHelpers() && (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty()))
         collector().startHelpers();
     collector().m_markingConditionVariable.notifyAll();
 }

@@ -24,12 +24,21 @@ static EncodedJSValue encodeIndexKey(int64_t index)
     return JSValue::encode(jsNumber(static_cast<double>(index)));
 }
 
+static bool isLengthOfVector(JSArray* array, uint32_t index)
+{
+    IndexingType shape = array->indexingType() & IndexingShapeMask;
+    return (shape == Int32Shape || shape == DoubleShape || shape == ContiguousShape) && index == array->butterfly()->publicLength();
+}
+
 static void putToArray(JSGlobalObject* globalObject, JSArray* array, EncodedJSValue encodedKey, EncodedJSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue key = JSValue::decode(encodedKey);
     if (std::optional<uint32_t> index = key.tryGetAsUint32Index()) {
+        // A store at the length is a push.
+        if (isLengthOfVector(array, *index) && pushToFullVector(vm, array, JSValue::decode(value)))
+            return;
         scope.release();
         array->methodTable()->putByIndex(array, globalObject, *index, JSValue::decode(value), true);
         return;

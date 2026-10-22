@@ -1,4 +1,4 @@
-# a closure that is made on demand has no operands, and its only use is as the initial value of a field that defers a closure of its function with the same capture
+# a closure that is made on demand has no operands, and its only use is as the initial value of a field that defers a closure of its function with the same capture, or as what a store gives such a field
 # FORM: Prepared
 # RUN: verify
 # DIAGNOSTIC: ClosureOnDemandWithoutField 6
@@ -52,10 +52,14 @@ function f7 name="badFieldDefersAnotherFunction" results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L0 fields=[1]
     Return v1
 }
-function f8 name="badStored" parameters=[{type=L0}] results=[{type=undefined}] {
+function f8 name="goodAndBadStores" parameters=[{type=L0}] results=[{type=undefined}] {
   b0(v0: L0):
     v1 = NewClosure function=f0 [isMadeOnDemand]
     PutSlot v0, -, v1 key="overNothing" receivers=[L0] level=Proven
+    v3 = NewClosure function=f1 [isMadeOnDemand]
+    PutSlotOrAdd v0, -, v3 key="overObject" receivers=[L0] level=Proven
+    v5 = NewClosure function=f0 [isMadeOnDemand]
+    PutSlot v0, -, v5 key="overObject" receivers=[L0] level=Proven
     Return
 }
 function f9 name="badHasOperand" results=[{type=anything}] {

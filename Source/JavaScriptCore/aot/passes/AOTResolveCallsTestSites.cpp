@@ -49,13 +49,13 @@ struct TestedCallRewrite {
 
 } // anonymous namespace
 
-// A test in front of a member call also answers for the member read before it, so what it proves may never come back once it is lost.
-static constexpr ProofSet monotoneObjectProofs { Proof::OwnInstance, Proof::PrototypeLinkUnchanged, Proof::NoExtraProperties };
+// A test in front of a member call also answers for the member read before it, so what it proves may never come back once it is lost. The bits of a class never come back either.
+static constexpr ProofSet monotoneObjectProofs { Proof::NotNullish, Proof::OwnInstance, Proof::PrototypeLinkUnchanged, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot };
 
 static std::optional<TestedMemberUse> planTestedAccess(FunctionPassContext& context, const ValueSite& site, const ReceiverCandidates* established)
 {
     const Value& access = context.function.at(site.value);
-    std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, access);
+    std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, access, ExpectedClassObjects::Tested);
     if (!query)
         return std::nullopt;
     query->isOnlyCalled = true;
@@ -81,16 +81,17 @@ static std::optional<TestedMemberUse> planTestedMemberCall(FunctionPassContext& 
     PropertyAccessQuery query;
     query.access = Access::Read;
     query.key = call.calleeKey();
-    query.receivers = established ? *established : receiverCandidates(context.program, context.function, thisValue, { });
+    query.receivers = established ? *established : receiverCandidates(context.program, context.function, thisValue);
     query.maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
     query.isOnlyCalled = true;
+    query.module = context.function.module;
 
     PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, query);
     if (plan.form != AccessForm::Method)
         return std::nullopt;
 
     AccessOperands operands { thisValue, { }, { } };
-    SlotStamp stamp { query.key, context.types.completeLayoutSet(plan.receivers.span()), KnowledgeLevel::Predicted, call.accessSite() };
+    SlotStamp stamp { query.key, context.types.completeLayoutSet(plan.receivers.span()), KnowledgeLevel::Expected, call.accessSite() };
     AccessTests tests = createAccessTests(context, plan, { thisValue, { }, stamp });
     return TestedMemberUse { { site, WTF::move(query), WTF::move(plan) }, operands, stamp, WTF::move(tests) };
 }
@@ -111,20 +112,64 @@ static std::optional<TestedMemberUse> planWithoutFailedArms(TestSiteReporter& re
     return use;
 }
 
+static bool isSameMember(const MemberAnswer& a, const MemberAnswer& b)
+{
+    return a.kind == b.kind && a.method == b.method && a.getter == b.getter && a.setter == b.setter;
+}
+
+// One bit says of every object of a class that it finds the member where the class definitions put it, and one object that hides the member or gets another prototype clears it for all of them.
+// What the prototype objects hold is then asked of the classes alone, and each receiver is asked whether it still inherits from them and has nothing of its own in front of them.
+static std::optional<TestedMemberUse> planWithTestsOfEachObject(FunctionPassContext& context, TestedMemberUse&& use)
+{
+    const Program& program = context.program;
+    const PropertyAccessQuery& query = use.site.query;
+    PropertyAccessPlan& plan = use.site.plan;
+    bool isMemberOfClass = plan.member.kind == MemberKind::Method || plan.member.kind == MemberKind::Accessor;
+    if (query.start != MemberStart::Instance || !isMemberOfClass)
+        return std::nullopt;
+
+    MemberConditions conditions;
+    ProofSet proofs = plan.requiredProofs;
+    for (LayoutID layout : plan.receivers) {
+        MemberAnswer inherited = findPrototypeMember({ program, &context.inputs.flow }, { MemberStart::ClassPrototype, declaredLayoutOf(program, layout), query.key, query.access, false });
+        if (!isSameMember(inherited, plan.member) || !inherited.receiverProofs.isEmpty())
+            return std::nullopt;
+        addConditions(conditions, inherited.conditions.span());
+        if (ownPropertyGainOf(program, layout, query.key) != OwnPropertyGain::Impossible)
+            proofs.add(Proof::NoExtraProperties);
+        if (!receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype))
+            proofs.add(Proof::PrototypeLinkUnchanged);
+    }
+    if (conditions == plan.conditions)
+        return std::nullopt;
+
+    plan.conditions = WTF::move(conditions);
+    plan.requiredProofs = proofs;
+    use.tests = createAccessTests(context, plan, { use.operands.receiver, use.operands.stored, use.stamp });
+    return WTF::move(use);
+}
+
+static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site)
+{
+    std::optional<TestedMemberUse> use = planWithoutFailedArms(reporter, plan, site);
+    if (!use)
+        return std::nullopt;
+
+    auto conditionsTest = std::ranges::find(use->tests.tests, Opcode::AreMembersUnchanged, &Value::opcode);
+    if (conditionsTest == use->tests.tests.end() || reporter.findEarlierTest(*conditionsTest) != EarlierTest::Failed)
+        return use;
+    return planWithTestsOfEachObject(reporter.context(), WTF::move(*use));
+}
+
 static bool needsPlaceableTests(const TestedMemberUse& use)
 {
     return !use.site.plan.needsNoTest() && !use.tests.tests.isEmpty();
 }
 
-static Effects effectsOfDirectCall(FunctionPassContext& context, FunctionID closureFunction, FunctionID version)
+// The callee tests its own arguments and runs without its types where one of them fails, so the call has the effects of both bodies.
+static Effects effectsOfDirectCall(FunctionPassContext& context, FunctionID callee)
 {
-    EffectContext effectContext { context.program, context.inputs.effects };
-    Effects effects = effectsOfCalling(effectContext, version).normal;
-    // A call whose arguments need a conversion enters the version with the written types.
-    FunctionID writtenVersion = versionToEnter(context.program, context.inputs.flow, closureFunction, { });
-    if (writtenVersion != version)
-        effects.merge(effectsOfCalling(effectContext, writtenVersion).normal);
-    return effects;
+    return effectsOfCalling({ context.program, context.inputs.effects }, callee).normal;
 }
 
 static bool canRecreateMethodClosure(const Program& program, const PropertyAccessPlan& plan)
@@ -133,22 +178,9 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
     return !method.has(FunctionFlags::TakesCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
-// A use under tests is rewritten in place, so neither a rejection path nor a Claim of the result can follow the call.
-static bool canBecomeCallOf(const FunctionPassContext& context, FunctionID version)
+static bool canCallTestedMethod(const Program& program, const PropertyAccessPlan& plan)
 {
-    return !rejectsOnFailedConversion(context.program, version) && resultCheckOf(context.inputs.flow, version) == ResultCheck::ByCallee;
-}
-
-static bool canCallTestedMethod(const FunctionPassContext& context, const PropertyAccessPlan& plan, FunctionID version)
-{
-    return canRecreateMethodClosure(context.program, plan)
-        && mayBeCalledDirectly(context.program, plan.member.method)
-        && canBecomeCallOf(context, version);
-}
-
-static bool canCallTestedAccessor(const FunctionPassContext& context, FunctionID accessor, FunctionID version)
-{
-    return canCallWithoutClosure(context.program, accessor) && canBecomeCallOf(context, version);
+    return canRecreateMethodClosure(program, plan) && mayBeCalledDirectly(program, plan.member.method);
 }
 
 static bool isMemberCall(FunctionAnalyses& analyses, const Function& function, const Value& call)
@@ -162,73 +194,90 @@ static bool isMemberCall(FunctionAnalyses& analyses, const Function& function, c
     return analyses.identityOf(read.objectOperand()) == analyses.identityOf(thisValue);
 }
 
-static Effects effectsOfTestedCallee(TestSiteReporter&, FunctionID member);
+static Effects effectsOfTestedCallee(TestSiteReporter& reporter, FunctionID member)
+{
+    if (reporter.useValue().opcode != Opcode::Call)
+        return reporter.analyses().effectsOf(reporter.use()).normal;
+    return effectsOfDirectCall(reporter.context(), member);
+}
 
-// What may come back says nothing about the time of the read, so the function that was read is tested itself. Where the read stands under its own tests in the same stretch, it is the closure of the method, and this test folds.
+// What may come back says nothing about the time of the read, so the function that was read is tested itself: a closure kept in a field whose slot may be emptied and filled again.
+// Where the read stands under its own tests in the same stretch, it is the closure of the method, and this test folds.
 static bool reportTestOfMethodRead(TestSiteReporter& reporter, FunctionID method)
 {
     if (!mayBeCalledDirectly(reporter.program(), method))
         return false;
-    Value test = makeClosureTest(reporter.useValue().calleeOperand(), method);
-    if (reporter.findEarlierTest(test) == EarlierTest::Failed)
-        return false;
-    reporter.report({ test }, effectsOfTestedCallee(reporter, method));
-    return true;
+    reporter.report({ makeClosureTest(reporter.useValue().calleeOperand(), method) }, effectsOfTestedCallee(reporter, method));
+    return reporter.didReport();
 }
 
 static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& site)
 {
     FunctionPassContext& context = reporter.context();
-    const Value& call = reporter.useValue();
-    if (!isMemberCall(context.analyses, context.function, call))
+    if (!isMemberCall(context.analyses, context.function, reporter.useValue()))
         return false;
 
-    std::optional<TestedMemberUse> use = planWithoutFailedArms(reporter, planTestedMemberCall, site);
+    std::optional<TestedMemberUse> use = planWithoutFailedTests(reporter, planTestedMemberCall, site);
     if (!use || !needsPlaceableTests(*use))
         return false;
 
     const PropertyAccessPlan& plan = use->site.plan;
     if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs)
         return reportTestOfMethodRead(reporter, plan.member.method);
-
-    FunctionID version = versionToEnter(context.program, context.inputs.flow, plan.member.method, call.callees());
-    if (!canCallTestedMethod(context, plan, version))
+    if (!canCallTestedMethod(context.program, plan))
         return false;
 
-    reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, plan.member.method, version));
-    return true;
+    reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, plan.member.method));
+    return reporter.didReport();
 }
 
+static bool isCalleeOf(Opcode user, uint32_t operandIndex)
+{
+    return (user == Opcode::Call && operandIndex == OperandIndex::Call::callee) || (user == Opcode::CallList && operandIndex == OperandIndex::CallList::callee);
+}
+
+// The function that a call enters is read before its arguments are computed, so which function it is is decided where the read stands, whatever the arguments do.
+// What is only called may be another object than the one on the prototype. It stays only called where it goes on as an argument of an edge: the ways that have failed a test meet there.
 static bool canBecomeMethodClosure(FunctionPassContext& context, ValueID read)
 {
-    if (!isOnlyCalled(context.analyses, read))
-        return false;
-
+    const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
+
+    bool isCalled = false;
+    BitVector isSeen(function.values.size());
     Vector<ValueID, 4> worklist { read };
     while (!worklist.isEmpty()) {
-        ValueID current = worklist.takeLast();
-        for (const Use& use : useLists.usesOf(current)) {
-            const Value& user = context.function.at(use.user);
-            if (isCast(user.opcode)) {
-                worklist.append(use.user);
+        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
+            ValueID next;
+            switch (use.kind) {
+            case Use::Kind::Operand:
+                if (isCast(function.at(use.user).opcode) && !use.operandIndex) {
+                    next = use.user;
+                    break;
+                }
+                if (!isCalleeOf(function.at(use.user).opcode, use.operandIndex))
+                    return false;
+                isCalled = true;
                 continue;
-            }
-            if (user.opcode != Opcode::Call)
-                continue;
-            ValueLocation location = useLists.locationOf(use.user);
-            MemberRead memberRead = findMemberRead(context, { location.block, location.index, use.user });
-            if (!memberRead.isEmpty() && memberRead.read().value == read && !memberRead.canSinkToCall)
+            case Use::Kind::EdgeArgument:
+            case Use::Kind::HandlerArgument:
+                next = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
+                break;
+            case Use::Kind::TerminatorOperand:
+            case Use::Kind::BlockSubject:
                 return false;
+            }
+            if (!isSeen.quickSet(next.index()))
+                worklist.append(next);
         }
     }
-    return true;
+    return isCalled;
 }
 
 static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite& site)
 {
     FunctionPassContext& context = reporter.context();
-    std::optional<TestedMemberUse> use = planWithoutFailedArms(reporter, planTestedAccess, site);
+    std::optional<TestedMemberUse> use = planWithoutFailedTests(reporter, planTestedAccess, site);
     if (!use || !needsPlaceableTests(*use))
         return;
 
@@ -242,9 +291,8 @@ static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite&
         return;
 
     FunctionID accessor = plan.member.accessorFor(use->site.query.access);
-    FunctionID version = versionToEnter(context.program, context.inputs.flow, accessor, { });
-    if (canCallTestedAccessor(context, accessor, version))
-        reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, accessor, version));
+    if (canCallWithoutClosure(context.program, accessor))
+        reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, accessor));
 }
 
 static TestedSuperAccess planTestedSuperAccess(FunctionPassContext& context, const Value& access)
@@ -258,7 +306,7 @@ static TestedSuperAccess planTestedSuperAccess(FunctionPassContext& context, con
 
     Access kind = access.opcode == Opcode::SuperSet ? Access::Store : Access::Read;
     MemberAnswer answer = findSuperMember({ program, &context.inputs.flow }, home, access.key(), kind);
-    if (answer.level != KnowledgeLevel::Predicted || !answer.receiverProofs.isEmpty() || answer.conditions.isEmpty())
+    if (answer.level != KnowledgeLevel::Expected || !answer.receiverProofs.isEmpty() || answer.conditions.isEmpty())
         return { };
 
     switch (answer.kind) {
@@ -273,7 +321,7 @@ static TestedSuperAccess planTestedSuperAccess(FunctionPassContext& context, con
                 return { SuperAccessForm::Undefined, { }, WTF::move(answer.conditions) };
             return { };
         }
-        if (canCallTestedAccessor(context, accessor, versionToEnter(program, context.inputs.flow, accessor, { })))
+        if (canCallWithoutClosure(program, accessor))
             return { SuperAccessForm::AccessorCall, accessor, WTF::move(answer.conditions) };
         return { };
     }
@@ -303,56 +351,30 @@ static void reportSuperAccessTests(TestSiteReporter& reporter)
         effects = declaredBoundOf(Opcode::NewClosure);
         break;
     case SuperAccessForm::AccessorCall:
-        effects = effectsOfDirectCall(context, access.function, versionToEnter(context.program, context.inputs.flow, access.function, { }));
+        effects = effectsOfDirectCall(context, access.function);
         break;
     case SuperAccessForm::Undefined:
         effects = Effects::none();
         break;
     }
-
-    Vector<Value, 2> tests;
-    for (const MemberCondition& condition : access.conditions)
-        tests.append(makeConditionTest(condition));
-    reporter.report(tests.span(), effects);
+    reporter.report({ makeConditionsTest(context.types, access.conditions.span()) }, effects);
 }
 
-static Effects effectsOfTestedCallee(TestSiteReporter& reporter, FunctionID member)
-{
-    FunctionPassContext& context = reporter.context();
-    const Value& call = reporter.useValue();
-    const Effects& effectsOfGenericForm = context.analyses.effectsOf(reporter.use()).normal;
-    if (call.opcode != Opcode::Call)
-        return effectsOfGenericForm;
-
-    FunctionID version = versionToEnter(context.program, context.inputs.flow, member, call.callees());
-    if (!canBecomeCallOf(context, version))
-        return effectsOfGenericForm;
-    return effectsOfDirectCall(context, member, version);
-}
-
+// With several expected callees the call of the value stays as it is: chooseDispatchedCallees() says why.
 static void reportCalleeTest(TestSiteReporter& reporter)
 {
-    FunctionPassContext& context = reporter.context();
-    const Program& program = context.program;
+    const Program& program = reporter.program();
     const Value& call = reporter.useValue();
     ValueID callee = call.opcode == Opcode::SuperConstruct ? call.parentOperand() : call.calleeOperand();
 
-    CalleeCandidates candidates = calleeCandidates(program, context.inputs.flow, context.function, callee, call.callees(), call.accessSite());
-    if (candidates.isProven())
-        return;
-    if (context.exceeds(LimitID::MaxDispatchCases, candidates.predicted.size(), reporter.use()))
+    CalleeCandidates candidates = calleeCandidatesOf(program, reporter.function(), call, callee);
+    if (!candidates.hasOneExpectedCallee())
         return;
 
+    FunctionID member = candidates.expected[0];
     bool constructs = call.opcode != Opcode::Call;
-    for (FunctionID member : candidates.predicted) {
-        if (!(constructs ? canConstructDirectly(program, member) : mayBeCalledDirectly(program, member)))
-            continue;
-        Value test = makeClosureTest(callee, member);
-        if (reporter.findEarlierTest(test) == EarlierTest::Failed)
-            continue;
-        reporter.report({ test }, effectsOfTestedCallee(reporter, member));
-        return;
-    }
+    if (constructs ? canConstructDirectly(program, member) : mayBeCalledDirectly(program, member))
+        reporter.report({ makeClosureTest(callee, member) }, effectsOfTestedCallee(reporter, member));
 }
 
 // f.apply(t, list) is a list call once the list is known to be an array.
@@ -366,36 +388,37 @@ static void reportForwardedListTest(TestSiteReporter& reporter)
     if (!plan || !plan->list || isAlwaysArray(reporter.typeOf(plan->list)))
         return;
 
-    Type expected = reporter.predictedPartOf(plan->list).value_or(reporter.typeOf(plan->list));
+    const Type& expected = context.program.expectedOrTypeOf(context.function, plan->list);
     if (!expected.anyObject && !expected.findClassPart(BuiltinClasses::Array))
         return;
     reporter.report({ makeTypeTest(plan->list, context.types.intern(Type::builtinClass(BuiltinClasses::Array))) }, Effects::unknownCode());
 }
 
 // While nobody has stored to the prototype property of the one class object, it holds the prototype object of the class, and that is what the Structure of an allocation site names.
-static Vector<Value, 2> testsOfOwnConstructPrototype(const FunctionPassContext& context, ValueID prototype, LayoutID allocated)
+static std::optional<Value> testOfOwnConstructPrototype(const FunctionPassContext& context, ValueID prototype, LayoutID allocated)
 {
     const Program& program = context.program;
     const Value& read = context.function.at(prototype);
     if (read.opcode != Opcode::GetConstructPrototype || read.layout() != allocated)
-        return { };
+        return std::nullopt;
     // The read of the class object's own prototype takes a function: new.target of a body that native code may enter is undefined or the function.
     const Type& newTarget = program.typeOf(context.function, read.newTargetOperand());
     if (!newTarget.isObject() || classOfClassObject(program, newTarget) != allocated)
-        return { };
+        return std::nullopt;
+    if (guardsAreNeverSet(program, program.at(allocated)))
+        return std::nullopt;
 
-    Vector<Value, 2> tests;
-    tests.append(makeConditionTest({ MemberCondition::Kind::MemberUnchanged, allocated, ClassSide::Static, program.keyOf(BuiltinNames::prototype) }));
+    MemberConditions conditions;
+    addCondition(conditions, { MemberCondition::Kind::MemberUnchanged, allocated, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
     if (!isEvaluatedOnce(program, program.at(allocated)))
-        tests.append(makeConditionTest({ MemberCondition::Kind::ClassEvaluatedOnce, allocated, ClassSide::Prototype, { } }));
-    return tests;
+        addCondition(conditions, { MemberCondition::Kind::ClassEvaluatedOnce, allocated, ClassSide::Prototype, { } });
+    return makeConditionsTest(context.types, conditions.span());
 }
 
 static void reportConstructPrototypeTests(TestSiteReporter& reporter)
 {
-    Vector<Value, 2> tests = testsOfOwnConstructPrototype(reporter.context(), reporter.use(), reporter.useValue().layout());
-    if (!tests.isEmpty())
-        reporter.report(tests.span(), declaredBoundOf(Opcode::GetClassPrototype));
+    if (std::optional<Value> test = testOfOwnConstructPrototype(reporter.context(), reporter.use(), reporter.useValue().layout()))
+        reporter.report({ *test }, declaredBoundOf(Opcode::GetClassPrototype));
 }
 
 static void reportAllocationUnderConstructPrototypeTests(TestSiteReporter& reporter)
@@ -403,9 +426,8 @@ static void reportAllocationUnderConstructPrototypeTests(TestSiteReporter& repor
     const Value& allocation = reporter.useValue();
     if (!allocation.prototypeOperand())
         return;
-    Vector<Value, 2> tests = testsOfOwnConstructPrototype(reporter.context(), allocation.prototypeOperand(), allocation.layout());
-    if (!tests.isEmpty())
-        reporter.report(tests.span(), reporter.context().analyses.effectsOf(reporter.use()).normal);
+    if (std::optional<Value> test = testOfOwnConstructPrototype(reporter.context(), allocation.prototypeOperand(), allocation.layout()))
+        reporter.report({ *test }, reporter.analyses().effectsOf(reporter.use()).normal);
 }
 
 static void reportInstanceOfTests(TestSiteReporter& reporter)
@@ -416,7 +438,8 @@ static void reportInstanceOfTests(TestSiteReporter& reporter)
         });
         if (hasFailed)
             continue;
-        reporter.report(tested.tests.tests.span(), tested.walksChain ? declaredBoundOf(Opcode::HasInPrototypeChain) : Effects::none());
+        // The walk asks each object of the chain for its prototype, and a proxy answers with code of the program: what the row declares is what the walk does by itself.
+        reporter.report(tested.tests.tests.span(), tested.walksChain ? reporter.analyses().effectsOf(reporter.use()).normal : Effects::none());
         return;
     }
 }
@@ -437,10 +460,9 @@ static void becomeWalkOfChain(TestSiteRewriter& rewriter)
 
 static void rewriteTestedInstanceOf(TestSiteRewriter& rewriter)
 {
-    const Program& program = rewriter.program();
     Value& use = rewriter.useValue();
     LayoutList testedLayouts;
-    std::optional<LayoutList> instances = instancesAmongTestedLayouts(program, rewriter.function(), use, rewriter.tests(), testedLayouts);
+    std::optional<LayoutList> instances = instancesAmongTestedLayouts(rewriter.program(), rewriter.function(), use, rewriter.tests(), testedLayouts);
     if (!instances) {
         becomeWalkOfChain(rewriter);
         return;
@@ -451,16 +473,8 @@ static void rewriteTestedInstanceOf(TestSiteRewriter& rewriter)
         return;
     }
 
-    ValueID subject = use.valueOperand();
     Origin origin = use.origin();
-    switch (layoutTestKindFor(program, instances->span())) {
-    case LayoutTestKind::Type:
-        use = makeTypeTest(subject, rewriter.types().intern(Type::forLayouts(instances->span(), rewriter.types())));
-        break;
-    case LayoutTestKind::Shape:
-        use = makeShapeTest(subject, rewriter.types().completeLayoutSet(instances->span()));
-        break;
-    }
+    use = makeTypeTest(use.valueOperand(), rewriter.types().intern(Type::forLayouts(instances->span(), rewriter.types())));
     use.setOrigin(origin);
 }
 
@@ -503,42 +517,36 @@ void reportCallTests(TestSiteReporter& reporter)
     });
 }
 
-static bool tryBecomeDirectCall(const TestedCallRewrite& rewrite, const DirectCallRequest& request)
+static void becomeDirectCall(const TestedCallRewrite& rewrite, const DirectCallRequest& request)
 {
-    std::optional<Value> call = tryMakeDirectCall(rewrite.insertion, request);
-    if (!call)
-        return false;
+    Value call = makeDirectCall(rewrite.insertion, request);
     Value& use = rewrite.rewriter.useValue();
-    call->setOrigin(use.origin());
-    use = WTF::move(*call);
-    return true;
+    call.setOrigin(use.origin());
+    use = WTF::move(call);
 }
 
 static void rewriteTestedMemberCall(const TestedCallRewrite& rewrite)
 {
-    FunctionPassContext& context = rewrite.rewriter.context();
-    std::optional<TestedMemberUse> use = planTestedMemberCall(context, rewrite.site, rewrite.established);
+    std::optional<TestedMemberUse> use = planTestedMemberCall(rewrite.rewriter.context(), rewrite.site, rewrite.established);
     RELEASE_ASSERT(use);
 
+    // The receiver is the value that passed the tests, so the callee's own test of `this` folds once the callee is inlined.
     const Value& call = rewrite.rewriter.useValue();
-    CallArm arm = createDirectCallArm(context.program, context.inputs.flow, use->site.plan.member.method, call.callees());
     ValueID thisValue = use->operands.receiver;
     Vector<ValueID, 1> captures;
     if (use->site.plan.capturesReceiver)
         captures.append(thisValue);
     Vector<ValueID, 8> arguments(call.variadicOperands());
 
-    bool didBecomeDirectCall = tryBecomeDirectCall(rewrite, {
-        .callee = arm.callee,
+    becomeDirectCall(rewrite, {
+        .callee = use->site.plan.member.method,
         .captures = captures.span(),
         .thisValue = thisValue,
         .arguments = arguments.span(),
         .accessSite = call.accessSite(),
-        .resultCheck = arm.resultCheck,
         .isNeverInlined = call.isNeverInlined(),
         .isDemotedTailCall = call.isDemotedTailCall(),
     });
-    RELEASE_ASSERT(didBecomeDirectCall);
 }
 
 static void rewriteTestedAccess(const TestedCallRewrite& rewrite)
@@ -548,32 +556,27 @@ static void rewriteTestedAccess(const TestedCallRewrite& rewrite)
     RELEASE_ASSERT(use);
 
     if (use->site.plan.form == AccessForm::Method) {
-        use->site.plan.level = KnowledgeLevel::Predicted;
+        use->site.plan.level = KnowledgeLevel::Expected;
         AccessRewriter(context, rewrite.insertion.insert).rewrite(use->site, use->operands);
         return;
     }
 
-    FunctionID accessor = use->site.plan.member.accessorFor(use->site.query.access);
-    CallArm arm = createDirectCallArm(context.program, context.inputs.flow, accessor, { });
     Vector<ValueID, 1> arguments;
     if (use->operands.stored)
         arguments.append(use->operands.stored);
 
-    bool didBecomeDirectCall = tryBecomeDirectCall(rewrite, {
-        .callee = arm.callee,
+    becomeDirectCall(rewrite, {
+        .callee = use->site.plan.member.accessorFor(use->site.query.access),
         .thisValue = use->operands.receiver,
         .arguments = arguments.span(),
         .accessSite = use->stamp.accessSite,
-        .resultCheck = arm.resultCheck,
     });
-    RELEASE_ASSERT(didBecomeDirectCall);
 }
 
 static void rewriteTestedSuperAccess(const TestedCallRewrite& rewrite)
 {
-    FunctionPassContext& context = rewrite.rewriter.context();
     Value& use = rewrite.rewriter.useValue();
-    TestedSuperAccess access = planTestedSuperAccess(context, use);
+    TestedSuperAccess access = planTestedSuperAccess(rewrite.rewriter.context(), use);
 
     switch (access.form) {
     case SuperAccessForm::ByName:
@@ -583,19 +586,16 @@ static void rewriteTestedSuperAccess(const TestedCallRewrite& rewrite)
         use.setFunction(access.function);
         return;
     case SuperAccessForm::AccessorCall: {
-        CallArm arm = createDirectCallArm(context.program, context.inputs.flow, access.function, { });
         Vector<ValueID, 1> arguments;
         if (use.opcode == Opcode::SuperSet)
             arguments.append(use.valueOperand());
 
-        bool didBecomeDirectCall = tryBecomeDirectCall(rewrite, {
-            .callee = arm.callee,
+        becomeDirectCall(rewrite, {
+            .callee = access.function,
             .thisValue = use.receiverOperand(),
             .arguments = arguments.span(),
             .accessSite = use.accessSite(),
-            .resultCheck = arm.resultCheck,
         });
-        RELEASE_ASSERT(didBecomeDirectCall);
         return;
     }
     case SuperAccessForm::Undefined:
@@ -605,13 +605,10 @@ static void rewriteTestedSuperAccess(const TestedCallRewrite& rewrite)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool tryCallTestedCallee(const TestedCallRewrite& rewrite)
+static void rewriteCallOfTestedCallee(const TestedCallRewrite& rewrite)
 {
-    FunctionPassContext& context = rewrite.rewriter.context();
     const Value& call = rewrite.rewriter.useValue();
-    CallArm arm = createDirectCallArm(context.program, context.inputs.flow, rewrite.rewriter.tests()[0].function(), call.callees());
-    if (arm.resultCheck == ResultCheck::ByCallers)
-        return false;
+    FunctionID function = rewrite.rewriter.tests()[0].function();
     ValueID callee = call.calleeOperand();
     ValueID thisValue = call.thisValueOperand();
     AccessSiteID accessSite = call.accessSite();
@@ -619,15 +616,14 @@ static bool tryCallTestedCallee(const TestedCallRewrite& rewrite)
     bool isDemotedTailCall = call.isDemotedTailCall();
     Vector<ValueID, 8> arguments(call.variadicOperands());
 
-    Vector<ValueID, 8> captures = insertCaptures(rewrite.insertion, arm.closureFunction, callee);
-    return tryBecomeDirectCall(rewrite, {
-        .callee = arm.callee,
+    Vector<ValueID, 8> captures = insertCaptures(rewrite.insertion, function, callee);
+    becomeDirectCall(rewrite, {
+        .callee = function,
         .captures = captures.span(),
         .thisValue = thisValue,
-        .calleeValue = context.program.at(arm.callee).has(FunctionFlags::TakesCallee) ? callee : ValueID(),
+        .calleeValue = rewrite.rewriter.program().at(function).has(FunctionFlags::TakesCallee) ? callee : ValueID(),
         .arguments = arguments.span(),
         .accessSite = accessSite,
-        .resultCheck = arm.resultCheck,
         .isNeverInlined = isNeverInlined,
         .isDemotedTailCall = isDemotedTailCall,
     });
@@ -638,8 +634,6 @@ static void finishTestedCallRewrite(TestSiteRewriter& rewriter)
     FunctionPassContext& context = rewriter.context();
     Value& use = rewriter.useValue();
     use.type = resultTypeOf(context.program, context.function, use, context.types);
-    use.setWritten(writtenTypeOf(context.program, context.function, use, context.types));
-    use.setPrediction(predictionOf(context.program, context.function, use, context.types));
 
     context.build.statistics().count(StatisticID::CallsGuarded);
 }
@@ -659,10 +653,10 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
 
     switch (rewriter.useValue().opcode) {
     case Opcode::Call:
-        if (rewriter.tests()[0].opcode != Opcode::IsClosureOf)
+        if (rewriter.tests()[0].opcode == Opcode::IsClosureOf)
+            rewriteCallOfTestedCallee(rewrite);
+        else
             rewriteTestedMemberCall(rewrite);
-        else if (!tryCallTestedCallee(rewrite))
-            return;
         break;
     case Opcode::Construct:
     case Opcode::SuperConstruct:

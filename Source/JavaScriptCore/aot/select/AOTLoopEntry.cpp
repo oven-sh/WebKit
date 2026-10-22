@@ -39,6 +39,8 @@ std::optional<InvariantOperand> findOutermostInvariantLoop(SelectionContext& con
 
 std::optional<InvariantOperand> findOutermostInvariantLoop(SelectionContext& context, BlockID user, ValueID operand, NOESCAPE const ScopedLambda<bool(ValueID)>& isUsable)
 {
+    if (!context.analyses().cfg().hasCycle())
+        return std::nullopt;
     const NaturalLoops& loops = context.analyses().naturalLoops();
     std::optional<InvariantOperand> outermost;
     for (const NaturalLoop* loop = loops.innerMostLoopOf(user); loop; loop = loops.innerMostOuterLoop(*loop)) {
@@ -91,7 +93,7 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
         return LoopEntryResult::HandlerDiffers;
 
     BlockID preheader = ensurePreheader(builder, *entry, header);
-    Terminator jump = std::exchange(function.at(preheader).terminator, Terminator { });
+    Terminator jump = std::exchange(function.edit(preheader).terminator, Terminator { });
     analyses.didChangeControlFlow();
 
     Origin savedOrigin = builder.origin();

@@ -140,10 +140,15 @@ static std::optional<Type> bitwiseResultType(Opcode opcode, Range a, Range b)
             return Type::integer({ 0, b.maximum });
         return Type::integer(Range::int32());
     case Opcode::BitOr:
-    case Opcode::BitXor:
-        if (a.minimum < 0 || b.minimum < 0)
+    case Opcode::BitXor: {
+        bool mayBeNegative = a.minimum < 0 || b.minimum < 0;
+        if (mayBeNegative && opcode == Opcode::BitXor)
             return Type::integer(Range::int32());
-        return Type::integer({ 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(a.maximum, b.maximum)))) - 1 });
+        // A bit that is set beside the sign makes a number larger, so x | y is no smaller than x and no smaller than y where they have one sign, and no smaller than the negative one where they differ.
+        if (a.maximum < 0 || b.maximum < 0)
+            return Type::integer({ std::min(a.minimum, b.minimum), -1 });
+        return Type::integer({ mayBeNegative ? std::min(a.minimum, b.minimum) : 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(a.maximum, b.maximum)))) - 1 });
+    }
     case Opcode::LShift:
         return Type::integer(Range::int32());
     case Opcode::RShift: {
@@ -380,16 +385,20 @@ static Type refineConversion(Opcode opcode, const Type& operand, const Type& upp
 
 static Type refinedTypeOf(const TypingContext& context, const Value& value, const Type& upperBound)
 {
+    if (!opcodesWithNaturalTypeRefinedByValue.contains(value.opcode))
+        return upperBound;
     if (Value::opcodesWithForm.contains(value.opcode)) {
         Vector<const Type*, 2> operands = operandTypesOf(context, value, value.numberOfOperands());
         return refineOperator(context, value.opcode, operands.span(), upperBound);
     }
 
     switch (value.opcode) {
-    case Opcode::GetTypedArrayElement:
+    case Opcode::GetTypedArrayElement: {
         if (!isTypedView(value.typedArrayType()))
             return upperBound;
-        return elementTypeOf(value.typedArrayType()).withPrimitives(Primitive::Undefined);
+        Type element = elementTypeOf(value.typedArrayType());
+        return value.isInsideView() ? element : element.withPrimitives(Primitive::Undefined);
+    }
     case Opcode::DivideIntegers:
         return quotientResultType(context.typeOf(value.dividendOperand()), context.typeOf(value.divisorOperand()), value.rounding(), upperBound);
     case Opcode::TypeTest:
@@ -479,6 +488,39 @@ Type elementTypeOf(TypedArrayType type)
         return Type::anything();
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+struct WidestNaturalRules {
+    using Result = std::optional<Type>;
+
+    Result natural(const Value&, const NaturalType& type) { return naturalTypeFrom(type); }
+    Result natural(const Value&, NaturalTable table)
+    {
+        Vector<OperandClass, 2> operands;
+        operands.fill(OperandClass::Any, numberOfOperandsOf(table));
+        return naturalTypeFrom(naturalTypeOf(table, operands.span()));
+    }
+    Result none(auto&&...) { return std::nullopt; }
+    Result constant(auto&&...) { return std::nullopt; }
+    Result sameAs(auto&&...) { return std::nullopt; }
+    Result allocation(auto&&...) { return std::nullopt; }
+    Result declared(auto&&...) { return std::nullopt; }
+    Result declaredContents(auto&&...) { return std::nullopt; }
+    Result declaredResult(auto&&...) { return std::nullopt; }
+    Result declaredParameter(auto&&...) { return std::nullopt; }
+    Result unknown(auto&&...) { return std::nullopt; }
+    Result cast(auto&&...) { return std::nullopt; }
+    Result resultOperand(auto&&...) { return std::nullopt; }
+};
+
+} // namespace
+
+std::optional<Type> tryWidestNaturalTypeOf(const Value& value)
+{
+    WidestNaturalRules rules;
+    return applyResultRule(rules, value, 0, ResultSide::Proven);
 }
 
 } } } // namespace JSC::AOT::Typed

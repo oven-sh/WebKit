@@ -1,11 +1,11 @@
 # Selection answers for each inline array built-in whether the call stays, gets inline code with a miss edge to the call, or is inline code alone
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlinePushOperands:2
+# OPTIONS: heat=EverythingIsHot limit=MaxInlinePushOperands:2
 # RUN: pass Select
 # LOSS: MaxInlinePushOperands x1 f35
 # LOSS: MaxInlineConcatOperands x1 f11
 # LOSS: MaxInlineSpliceInsertions x1 f23
-# STATISTIC: InlineBuiltinGroups = 29
+# STATISTIC: InlineBuiltinGroups = 31
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="atNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
@@ -251,9 +251,9 @@ function f25 name="spliceAtNumber" parameters=[{type=Array<anything, pristine[St
     Return v3
 }
 # CHECK-LABEL: function f25 name="spliceAtNumber"
-# CHECK-NOT: CallInline
-# CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
-# CHECK-NOT: CallInline
+# CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done [[done25]]({{*}}), miss [[miss25]]()
+# CHECK: [[miss25]]()
+# CHECK: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
 function f26 name="spliceInCompactCode" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}, {type=boolean}] results=[{type=anything}] {
   b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: i32, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
@@ -264,9 +264,9 @@ function f26 name="spliceInCompactCode" parameters=[{type=Array<anything, pristi
     Return
 }
 # CHECK-LABEL: function f26 name="spliceInCompactCode"
-# CHECK-NOT: CallInline
-# CHECK: v4:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
-# CHECK-NOT: CallInline
+# CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done [[done26]]({{*}}), miss [[miss26]]()
+# CHECK: [[miss26]]()
+# CHECK: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
 function f27 name="unshiftOne" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
   b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0

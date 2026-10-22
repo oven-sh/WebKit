@@ -14,6 +14,7 @@
 #include "AOTIRParser.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTImageFormat.h"
+#include "AOTImageText.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramTableEncoder.h"
 #include "AOTRegExpRequests.h"
@@ -165,8 +166,9 @@ const CodeGenerationPlan& TestBuild::plan()
 
 Vector<uint8_t> TestBuild::encodeTables()
 {
-    Typed::EncodedProgramTables tables = Typed::encodeProgramTables({ *m_pipeline, plan().instanceSizes, plan().stringConstants }, context());
+    Typed::EncodedProgramTables tables = Typed::encodeProgramTables({ *m_pipeline, plan().instanceSizes, plan().stringConstants, plan().bodyFactsForTables }, context());
     m_namedStrings = WTF::move(tables.namedStrings);
+    m_stringsOnlyShown = WTF::move(tables.stringsOnlyShown);
     return WTF::move(tables.bytes);
 }
 
@@ -186,7 +188,7 @@ TestImage TestBuild::build(Vector<CompiledCode>&& code, CompiledRegExps&& regExp
             .functions = createLinkedFunctions(WTF::move(code), context()),
             .entriesUsedByFunctions = { },
             .programTables = WTF::move(tables),
-            .text = encodeText({ program(), plan().uses.strings, context().identifierNumbering(), plan().stringConstants, m_namedStrings }, context()),
+            .text = encodeText({ program(), plan().uses.strings, context().identifierNumbering(), plan().stringConstants, m_namedStrings, &m_stringsOnlyShown }, context()),
             .regExpRequests = *m_pipeline->regExpRequests,
             .regExps = WTF::move(regExps),
             .webAssembly = WTF::move(webAssembly),
@@ -204,6 +206,7 @@ TestImage TestBuild::build(Vector<CompiledCode>&& code, CompiledRegExps&& regExp
     result.bytes = AlignedBytes(result.built.image.span());
     result.built.image.clear();
     std::span<const uint8_t> bytes = std::as_const(result.bytes).span();
+    relocateImage(result.bytes.span(), std::bit_cast<uintptr_t>(bytes.data()));
     AOT_TEST_CHECK(Image::check(bytes, testIdentity) == Wire::ImageVerdict::Accepted);
     const ImageHeader& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
     result.image = Image::create(bytes, bytes.data() + header.codeOffset);

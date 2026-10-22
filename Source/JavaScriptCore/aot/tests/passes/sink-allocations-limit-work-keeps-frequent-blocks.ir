@@ -1,0 +1,74 @@
+# Where the steps of the analysis run out, the half of the allocations that stand in the rarer blocks stay where they are, and the others are followed again from the start.
+# One block more than the limit allows for two allocations costs the rarer one of them, not both
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingWork:20
+# RUN: pass SinkAllocations
+# LOSS: MaxSinkingWork x1 f1
+# STATISTIC: AllocationsSunk = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="bothFit" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: boolean, v4: boolean):
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v6 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v3 -> taken b3(), notTaken b4()
+  b2():
+    Branch v4 -> taken b5(), notTaken b6()
+  b3() frequency=Unlikely:
+    v7 = Call v0, -, v6
+    Return v7
+  b4() frequency=Unlikely:
+    Return v1
+  b5():
+    v8 = Call v0, -, v5
+    Return v8
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="bothFit"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Unlikely:
+# CHECK-NEXT: Branch v3
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NEXT: [[rarer]]:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[rarer]]
+# CHECK: b5():
+# CHECK-NEXT: [[frequent]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[frequent]]
+
+function f1 name="oneBlockMore" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: boolean, v4: boolean):
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v6 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v3 -> taken b4(), notTaken b5()
+  b2():
+    Jump -> next b3()
+  b3():
+    Branch v4 -> taken b6(), notTaken b7()
+  b4() frequency=Unlikely:
+    v7 = Call v0, -, v6
+    Return v7
+  b5() frequency=Unlikely:
+    Return v1
+  b6():
+    v8 = Call v0, -, v5
+    Return v8
+  b7():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="oneBlockMore"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Unlikely:
+# CHECK-NEXT: v6:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v3
+# CHECK: b6():
+# CHECK-NEXT: [[kept]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[kept]]

@@ -26,7 +26,7 @@ function f2 name="returnsTwoResults" parameters=[{type=number}] results=[{type=n
     Return v2
 }
 
-function f3 name="takesPredictedNumber" parameters=[{type=number predicted=i32}] results=[{type=number}] {
+function f3 name="takesNumberExpectedToBeInt32" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number ~ i32):
     v1 = Mul v0, v0
     Return v1

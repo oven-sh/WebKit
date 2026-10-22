@@ -70,6 +70,12 @@ ASCIILiteral nameOf(MemberGuardKind kind)
         return "PrototypeLink"_s;
     case MemberGuardKind::EvaluatedOnce:
         return "EvaluatedOnce"_s;
+    case MemberGuardKind::InstancePrototype:
+        return "InstancePrototype"_s;
+    case MemberGuardKind::NotHidden:
+        return "NotHidden"_s;
+    case MemberGuardKind::PassedByStores:
+        return "PassedByStores"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -83,6 +89,8 @@ static ASCIILiteral nameOf(BuiltinCellKey::Kind kind)
         return "Getter"_s;
     case BuiltinCellKey::Kind::Setter:
         return "Setter"_s;
+    case BuiltinCellKey::Kind::Value:
+        return "Value"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -187,6 +195,8 @@ void printRequestRecord(IRPrinter& printer, const RequestRecord& request)
             printer.print(record.data);
             if (record.sharedStorageOffset)
                 out.print(" sharedStorage@"_s, *record.sharedStorageOffset);
+            if (record.node)
+                out.print(" node@"_s, *record.node);
         },
         [&](const CollectionDataRecord& record) {
             out.print("CollectionData "_s);
@@ -224,6 +234,7 @@ public:
         dumpConstants();
         dumpRequests();
         dumpPropertyRuns();
+        m_placement.globalBindings().dump(m_out, m_program);
     }
 
 private:
@@ -342,6 +353,8 @@ private:
             m_out.print(" shape="_s, allocation.shape, " fields="_s);
             printFields(allocation.initialFields.span());
             m_out.print(" order="_s, orderOf(allocation.orderWord), " count="_s, countOf(allocation.orderWord), " size="_s, allocation.size);
+            if (allocation.holdsInnerObjects)
+                m_out.print(" holdsInnerObjects"_s);
             if (allocation.numberOfCaptures)
                 m_out.print(" captures="_s, allocation.numberOfCaptures);
             if (allocation.constructedBy) {
@@ -405,17 +418,25 @@ private:
 
     void dumpGuardBits()
     {
-        const Vector<PlacedGuardBit>& bits = m_placement.guardBits().bits;
+        const GuardBitTable& table = m_placement.guardBits();
+        const Vector<PlacedGuardBit>& bits = table.bits;
         for (unsigned index = 0; index < bits.size(); ++index) {
             const PlacedGuardBit& guard = bits[index];
             m_out.print("guard "_s, index, " "_s);
-            m_printer.print(guard.classLayout);
-            m_out.print(" "_s, nameOf(guard.side), " "_s, nameOf(guard.kind));
-            if (guard.key) {
-                m_out.print(" "_s);
-                m_printer.print(guard.key);
+            if (guard.classLayout) {
+                m_printer.print(guard.classLayout);
+                m_out.print(" "_s, nameOf(guard.side), " "_s, nameOf(guard.kind));
+                if (guard.key) {
+                    m_out.print(" "_s);
+                    m_printer.print(guard.key);
+                }
+            } else {
+                m_out.print("set "_s);
+                printList(m_out, table.membersOf(GuardBitID(index)), [&](GuardBitID member) {
+                    m_out.print(member.index());
+                });
             }
-            m_out.print(" bit="_s, guard.bit, " word@"_s, guard.wordOffset, "\n"_s);
+            m_out.print(" bit="_s, guard.bit, " word@"_s, guard.wordOffset, guard.holdsWhileClear ? " holdsWhileClear"_s : ""_s, "\n"_s);
         }
     }
 
@@ -431,9 +452,11 @@ private:
         m_out.print("\n"_s);
 
         for (unsigned index = 0; index < statics.moduleValueOffsets.size(); ++index) {
+            if (!statics.moduleValueOffsets[index])
+                continue;
             m_out.print("moduleValue "_s);
             m_printer.print(ModuleID(index));
-            m_out.print(" @"_s, statics.moduleValueOffsets[index], "\n"_s);
+            m_out.print(" @"_s, *statics.moduleValueOffsets[index], "\n"_s);
         }
         for (const ModuleBuiltinCell& cell : statics.moduleBuiltinCells) {
             m_out.print("moduleBuiltinCell "_s);

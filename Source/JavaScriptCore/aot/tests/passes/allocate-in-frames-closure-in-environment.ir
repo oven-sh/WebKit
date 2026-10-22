@@ -1,4 +1,4 @@
-# A frame closure may be held by a frame environment that dies with it
+# A closure held by a field of an environment is on the heap, also where the environment is in the frame and dies with it: no environment field holds a frame pointer
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # RUN(PLAN): frame-plan flow
@@ -23,8 +23,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = CallDirect v1 function=f6
     Return
 }
-# CHECK: L1.0 holds frame pointers
-# CHECK-NEXT: L2.0 holds frame pointers
 # CHECK-NOT: holds frame pointers
 
 function f1 name="closureInEnvironmentUsedAfterCopy" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -35,7 +33,7 @@ function f1 name="closureInEnvironmentUsedAfterCopy" parameters=[{type=anything}
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v5 = NewClosure v2 function=f3
-    v6 = Call v0, -, v5
+    v6 = Call v0, -, v0, v0, v5
     Jump -> next b2()
   b2():
     v7 = CallDirect v4 function=f4
@@ -43,15 +41,14 @@ function f1 name="closureInEnvironmentUsedAfterCopy" parameters=[{type=anything}
 }
 # CHECK-LABEL: function f1 name="closureInEnvironmentUsedAfterCopy"
 # CHECK-NOT: storage=
-# CHECK: function=f2 {{*}}storage=Frame
 # CHECK: layout=L1 {{*}}storage=Frame
 # CHECK-NOT: storage=
 # CHECK-NOT: MaterializeEnvironment
 # PLAN-LABEL: function f1
 # PLAN-NEXT: v2: Heap MaterializationDoesNotPay
-# PLAN-NEXT: v3: Frame
+# PLAN-NEXT: v3: Heap HeldByHeapCell by v4(1)
 # PLAN-NEXT: v4: Frame
-# PLAN-NEXT: v5: Heap Escapes by v6(2)
+# PLAN-NEXT: v5: Heap Escapes by v6(4)
 
 function f2 name="read" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -85,10 +82,11 @@ function f5 name="closureStoredIntoEnvironmentLater" parameters=[{type=anything}
 }
 # CHECK-LABEL: function f5 name="closureStoredIntoEnvironmentLater"
 # CHECK: layout=L2 {{*}}storage=Frame
-# CHECK: function=f7 {{*}}storage=Frame
+# CHECK: NewClosure function=f7
+# CHECK-NOT: storage=
 # PLAN-LABEL: function f5
 # PLAN-NEXT: v1: Frame
-# PLAN-NEXT: v2: Frame
+# PLAN-NEXT: v2: Heap HeldByHeapCell by v3(1)
 
 function f6 name="environmentOutsideLoop" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

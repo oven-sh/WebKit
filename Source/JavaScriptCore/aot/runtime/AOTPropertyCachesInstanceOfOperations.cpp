@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesNamedAccess.h"
 #include "AOTState.h"
 #include "Error.h"
 #include "JSCInlines.h"
@@ -31,11 +32,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
     JSValue value = JSValue::decode(encodedValue);
     JSValue constructor = JSValue::decode(encodedConstructor);
     if (!constructor.isObject()) {
-        throwException(globalObject, scope, createTypeError(globalObject, "Right hand side of instanceof is not an object"_s));
+        throwException(globalObject, scope, createInstanceofRightHandSideNotObjectError(globalObject));
         OPERATION_RETURN(scope, false);
     }
 
     JSObject* constructorObject = asObject(constructor);
+    createClassObjectsOnChain(vm, constructorObject, vm.propertyNames->hasInstanceSymbol.impl());
     Structure* structureBeforeHasInstance = constructorObject->structure();
     PropertySlot hasInstanceSlot(constructorObject, PropertySlot::InternalMethodType::Get);
     bool hasHasInstance = constructorObject->getPropertySlot(globalObject, vm.propertyNames->hasInstanceSymbol, hasInstanceSlot);

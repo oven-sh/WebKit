@@ -39,6 +39,11 @@ std::optional<E> parseEnum(StringView name)
 
 namespace Wire {
 
+enum class IllTypedCause : uint32_t {
+    None, Unclassified, FromLooseType, Assertion, SuppressedError, DeclarationWithoutBody, OutsideData, LayoutOutsideFamily, MemberWithoutSlot,
+    StoreOutsideFieldType, ComputedKeyStore, UnprovenReceiverStore, NativeWritesOperand, StateChanged, UnseenWriter, UnseenCaller, UnprovenCallee,
+    OtherThis, CalledByEngine, ContainerWriterUnseen, ElementMayBeAbsent, ScopeOpenedByEval, ReadBeforeInitialized, LookupMayChange
+};
 enum class Primitives : uint32_t {
     Undefined = 1u << 0, Null = 1u << 1, False = 1u << 2, True = 1u << 3, Number = 1u << 4, String = 1u << 5, Symbol = 1u << 6, BigInt = 1u << 7,
     Absent = 1u << 8
@@ -54,220 +59,313 @@ enum class DegradesTo : uint32_t {
 };
 enum class LimitID : uint32_t {
     None, MaxFoldedStringBytes, MaxComputedSpecifierCandidates, MaxDataNodes, MaxNestingDepth, MaxTypeNodes, MaxValidationNodes,
-    MaxExpectedResultLayouts, MaxSupertypePairs, MaxCaptures, MaxProgramIds, MaxLayoutsInType, MaxLiteralsInType, MaxSymbolLiteralsInType,
-    MaxClassesInType, MaxFunctionsInType, MaxBuiltinsInType, MaxRegExpLiteralsInType, MaxWorkers, MaxInt32ProofWork, MaxTypeValuesRounds,
-    MaxEscapeAnalysisWork, MaxUseEffectHistoryBits, MaxGuardAvailabilityWork, MaxBlocksForDominatorSelfCheck, MaxFlowWorkPerFunction,
-    MaxFlowInstances, MaxValueFlowEdgesLogged, MaxValueFlowCopiedNodesPercent, MaxFlowInstanceValues, MaxNestedCallSiteInstances,
-    MaxNestedInstancesOfNewObjects, MaxSitesPerLayout, MaxAppendedFieldsPerLayout, MaxDerivedLayoutsPerFamily, MaxCallSiteVersionValues,
-    MaxPositionalParts, MaxFlowRangeGrowth, MaxEscapedObjectsBesideUnknown, MaxGenericVersionGrowthPercent, MinNarrowedUsesForGenericVersion,
-    MaxOptimizationRounds, MaxSinkingRounds, MaxAccessPlanMembers, MaxDispatchCases, MaxDeclarationsPredictedFromNames, MaxExpandedDataNodes,
-    MaxArrayLiteralBatch, MaxBlocksSearchedForLiteralStores, MaxOutlinedOperands, MaxOutlinedRegionValues, MaxResultClones, MaxForwardingDepth,
-    MaxPromotedParameters, MaxParameterWrapperValues, MaxTestedTypesPerFunction, MaxGuardEliminationRounds, MaxClonedBytesPerStretch,
-    MaxBytesOfSeparatedLoop, MaxSeparatedLoopsPerFunction, MaxLoopVersions, MaxContinuationsPerFunction, MaxContinuationSizePercent,
-    MaxFusedConcatenationParts, MaxReservedStackArguments, MaxArgumentRegisters, MaxThreadedBlockValues, MaxThreadingReachabilitySteps,
+    MaxExpectedResultLayouts, MaxSupertypePairs, MaxInferenceNodes, MaxCaptures, MaxProgramIds, MaxLayoutsInType, MaxLiteralsInType,
+    MaxSymbolLiteralsInType, MaxClassesInType, MaxFunctionsInType, MaxBuiltinsInType, MaxRegExpLiteralsInType, MaxWorkers, MaxInt32ProofWork,
+    MaxTypeValuesRounds, MaxEscapeAnalysisWork, MaxUseEffectHistoryBits, MaxGuardAvailabilityWork, MaxBlocksForDominatorSelfCheck,
+    MaxValueFlowEdgesLogged, MaxValueFlowSetMembers, MaxValueFlowMembersToldApart, MaxAppendedFieldsPerLayout, MaxOptimizationRounds,
+    MaxOptimizationWork, MaxSinkingRounds, MaxSinkingWork, MaxAccessPlanMembers, MaxDispatchCases, MaxDeclarationsPredictedFromNames,
+    MaxExpandedDataNodes, MaxArrayLiteralBatch, MaxBlocksSearchedForLiteralStores, MaxOutlinedOperands, MaxOutlinedRegionValues, MaxResultClones,
+    MaxForwardingDepth, MaxPromotedParameters, MaxParameterWrapperValues, MaxValuesInCalleeVersion, MaxBytesOfCalleeVersions,
+    MaxTestedTypesPerFunction, MaxGuardEliminationRounds, MaxClonedBytesPerStretch, MaxBlocksInGenericVersion, MaxGenericVersionJoinWork,
+    MaxBlocksCopiedBehindStretches, MaxBytesOfSeparatedLoop, MaxSeparatedLoopsPerFunction, MaxFusedConcatenationParts,
+    MaxBlocksBetweenFusedConcatenations, MaxReservedStackArguments, MaxArgumentRegisters, MaxThreadedBlockValues, MaxThreadingReachabilitySteps,
     MaxReadsPerSolve, MaxMergedReadPredecessors, MaxVirtualObjectFields, MaxVirtualObjectVariants, MaxVirtualArrayLength, MaxMaterializations,
-    MaxDuplicatedTailValues, MaxCounterStep, MaxIntegerRelationSteps, MaxFrameEnvironmentFields, MaxInlineDepth, MaxInlinedCallerBytes,
-    MaxInlineHeadBytes, MaxOnlyCallSiteBytes, InlineBudgetColdBytes, InlineBudgetWarmBytes, InlineBudgetHotBytes, MaxHotCodeValues,
-    InlineSunkAllocationBytes, InlineCycleWeight, MaxConditionChainLength, MaxFusedArrayCapacity, MinAppendsForStringBuilder,
-    MaxStringWebsPerFunction, MaxParserPlanNodes, MaxParsedObjectMembers, MaxExpandedKeyOrders, MaxExpandedKeyFields, MaxVersionedIterationBytes,
-    MaxDestructuredElements, MinRequestedJSONCapacity, MaxJSONLayoutSetMembers, MaxBuiltinCallArguments, MaxPlannedArrayCapacity,
-    MaxSelectionGroupSpan, MaxSelectionGroupMembers, MaxNumberPathValues, MinByIdsPerRun, MinSwitchCases, MaxSwitchStringCases, MaxSwitchCases,
-    MaxInlineArrayLiteralLength, MaxInlineSpliceInsertions, MaxInlineConcatOperands, MaxInlinePushOperands, MaxInlineTypedArrayCopyLength,
-    MaxInlineClearedElements, MaxInlineStringCompareLength, MaxRegisterStringLength, MaxLengthCopiedInline, FieldsInKeyOrder, KeyOrdersPerLayout,
-    MaxShapes, MaxShapeSetBits, MaxIdentifiers, MaxFieldOffset, MaxExtensionGranules, MaxStaticsSize, MaxSiteCaches, MaxGuardBitsPerClassSide,
+    MaxDuplicatedTailValues, MaxCounterStep, MaxIntegerRelationSteps, MaxFrameEnvironmentFields, MaxFrameArrayLength, MaxInlineDepth,
+    MaxInlinedCallerBytes, MaxInlineHeadBytes, MaxSelectedHeadOperations, MaxSelectedHeadBlocks, MaxOnlyCallSiteBytes, InlineBudgetColdBytes,
+    InlineBudgetWarmBytes, InlineBudgetHotBytes, MaxHotCodeValues, MaxWarmCodeValues, InlineSunkAllocationBytes, InlineCycleWeight,
+    MaxConditionChainLength, MaxFusedArrayCapacity, MinAppendsForStringBuilder, MaxStringWebsPerFunction, MaxParserPlanNodes, MaxParsedObjectMembers,
+    MaxExpandedKeyOrders, MaxExpandedKeyFields, MaxVersionedIterationBytes, MaxDestructuredElements, MinRequestedJSONCapacity,
+    MaxJSONLayoutSetMembers, MaxBuiltinCallArguments, MaxPlannedArrayCapacity, MaxSelectionGroupSpan, MaxSelectionGroupMembers, MaxNumberPathValues,
+    MinByIdsPerRun, MinSwitchCases, MaxSwitchStringCases, MaxSwitchCases, MaxInlineArrayLiteralLength, MaxInlineSpliceInsertions,
+    MaxInlineConcatOperands, MaxInlinePushOperands, MaxKeyParts, MaxInlineTypedArrayCopyLength, MaxInlineClearedElements, MaxInlineSearchedElements,
+    MaxInlineStringCompareLength, MaxRegisterStringLength, MaxLengthCopiedInline, FieldsInKeyOrder, KeyOrdersPerLayout, MaxShapes, MaxShapeSetBits,
+    MaxIdentifiers, MaxFieldOffset, MaxExtensionGranules, MaxStaticsSize, MaxSiteCaches, MaxGlobalBindings, MaxGuardBitsPerClassSide,
     MaxPropertyListNames, MaxEvalBindingDepth, MaxEvalBindingOffset, MaxListedStrings, MaxLiteralStrings, MaxComparedCharactersPerCharacter,
-    MaxFrameSizeInBytes, MaxBarrierBlocks, MaxFrameMapRoots, MaxLandingPadsSearched, MaxClonedValuesPerLoopVersion, MaxValuesPerHotRegion,
-    MaxBlocksScannedBeforeLoop, MaxClonedValuesPerUnswitchedLoop, MaxClonedValuesPerExcursion, MaxValuesScannedForExecutedLoad, MaxSourcesOfLoopTest,
-    MaxRangeCheckBoundsPerLoop, MaxCopiedValuesPerRotatedLoop, MaxRareBlocksPerRotatedLoop, MaxThreadedTestCopyCost, MaxThreadedPathCost,
-    MaxBlocksOnThreadedPath, MaxThreadedTestDepth, MaxPredecessorsForConditionQueries, MaxConditionQueriesPerBlock, MaxSelectNestingDepth,
-    MaxSpeculatedValuesPerSelect, MaxSelectsPerJoin, MaxValuesSearchedForDominatingLoad, MaxLoopsLeftBySinking, MaxHoistedLoadsPerLoop,
-    MaxLivenessStepsPerBlock, MaxLinearDominatorSteps, MaxSlotsForDenseInterference, MaxBlocksPerPlacedConstant, MaxRangeAnalysisDepth,
-    MaxRecordedWritesPerMemoryState, MaxLeavesToRebalance, MaxBitTestTargets, MaxCompareChainSearchSize, MaxClobberSitesPerSplit,
-    ClosureAllocationSites, ImageFunctions, CodeBytes, SitesPerFunction, InlineFramesPerFunction, DirectCallReach, FunctionCallReach, TableBytes,
-    VectorBytes, UncheckedStackBytes, RegExpPatternLengthWithCode, RegExpNestingDepthWithCode, RegExpCandidateCodeBytesPerSite,
-    RegExpCandidateTextLength, RegExpSectionSize, RegExpClassTableClusterSize, WasmImageCodeSize, LookupTableNames, LookupTableBases,
-    HashedTableEntries, CustomAccessorRecords, ForeignCallbackStubs, PromisesWalkedPerImport, BranchCounters, MaxNamesComparedWithLongKey,
-    MinLongKeyUnitsPerPiece, LongKeyExtraPieces, MaxCachedKeyLength, MaxCapacityGrownByStub, MaxOpenJSONSources, MinStringBuilderCapacity,
-    MaxRetainedStringBuilderCapacity, MinLengthAppendedByReference, MinLengthAdoptedByFinish, MaxPooledStringBuilders, MaxStringBuilderSegments,
-    MinRopeJoinLength, MinRopeJoinUnitsPerElement, MaxReservedArrayCapacity
+    MaxContractedModuleRequests, MaxFrameSizeInBytes, MaxBarrierBlocks, MaxFrameMapRoots, MaxLandingPadsSearched, MaxClonedValuesPerLoopVersion,
+    MaxValuesPerHotRegion, MaxBlocksScannedBeforeLoop, MaxClonedValuesPerUnswitchedLoop, MaxClonedValuesPerExcursion, MaxValuesScannedForExecutedLoad,
+    MaxSourcesOfLoopTest, MaxRangeCheckBoundsPerLoop, MaxCopiedValuesPerRotatedLoop, MaxRareBlocksPerRotatedLoop, MaxThreadedTestCopyCost,
+    MaxThreadedPathCost, MaxBlocksOnThreadedPath, MaxThreadedTestDepth, MaxPredecessorsForConditionQueries, MaxConditionQueriesPerBlock,
+    MaxSelectNestingDepth, MaxSpeculatedValuesPerSelect, MaxSelectsPerJoin, MaxValuesSearchedForDominatingLoad, MaxLoopsLeftBySinking,
+    MaxHoistedLoadsPerLoop, MaxLivenessStepsPerBlock, MaxLinearDominatorSteps, MaxSlotsForDenseInterference, MaxBlocksPerPlacedConstant,
+    MaxRangeAnalysisDepth, MaxRecordedWritesPerMemoryState, MaxLeavesToRebalance, MaxBitTestTargets, MaxCompareChainSearchSize,
+    MaxClobberSitesPerSplit, ClosureAllocationSites, ImageFunctions, CodeBytes, SitesPerFunction, InlineFramesPerFunction, DirectCallReach,
+    FunctionCallReach, TableBytes, VectorBytes, UncheckedStackBytes, RegExpPatternLengthWithCode, RegExpNestingDepthWithCode,
+    RegExpCandidateCodeBytesPerSite, RegExpCandidatesPerSite, RegExpCandidateTextLength, RegExpSectionSize, RegExpClassTableClusterSize,
+    WasmImageCodeSize, LookupTableNames, LookupTableBases, HashedTableEntries, CustomAccessorRecords, ForeignCallbackStubs, PromisesWalkedPerImport,
+    BranchCounters, MaxNamesComparedWithLongKey, MinLongKeyUnitsPerPiece, LongKeyExtraPieces, MaxCachedKeyLength, MaxCapacityGrownByStub,
+    MaxOpenJSONSources, MinStringBuilderCapacity, MaxRetainedStringBuilderCapacity, MinLengthAppendedByReference, MinLengthAdoptedByFinish,
+    MaxPooledStringBuilders, MaxStringBuilderSegments, MinRopeJoinLength, MinRopeJoinUnitsPerElement, MaxReservedArrayCapacity,
+    MaxReservedCollectionCapacity
 };
 enum class PassID : uint32_t {
-    None, AdmitAssertedObjects, TypeValues, CheckInt32Promises, VerifyProgram, CheckRegExpLiterals, AnalyzeFlow, ApplyFlowResults,
-    CheckLockedBuiltinWrites, BuildCallGraph, ComputeEffectSummaries, EstimateHeat, SummarizeForInlining, RemoveUnreadExports,
-    PromoteEnvironmentsToVariables, DeferDefinitions, RemoveUnreadFields, RemoveUnusedResults, RemoveUnusedParameters, RemoveUnreachableFunctions,
-    SplitFreshResults, PromoteAggregateParameters, SplitCoroutines, CreateEntrypoints, GroupCallsByValue, ChooseCallingConventions,
-    DeferClosuresInFields, AllocateInFrames, ReuseEnvironments, NumberLiteralStrings, EmbedConstantCollections, CollectRegExpLiterals,
-    OutlineColdOperations, SplitFunctionsAtCalls, ElideStackChecks, ResolveBuiltins, ResolveCalls, ResolveAccesses, SplitUnions, PlaceTypeTests,
-    ExpandIteration, ExpandOwnKeys, SelectTypedResults, RetypeValues, InlineCalls, SimplifyCasts, SinkAllocations, EliminateRedundantReads,
-    EliminateGuards, SeparateUnlikelyLoopPaths, ConvertCountersToIntegers, RemoveDeadCountedLoops, FuseArrayChains, FuseGeneratorLoops,
-    CreateStringBuilders, FuseConcatenations, ExpandData, FoldConstants, SimplifyControlFlow, RemoveTrivialParameters, PropagateBranchConditions,
-    HoistTestsIntoPredecessors, ThreadJumps, InferSwitches, EliminateDeadCode, MergeDuplicateBlocks, CompactBlocks, RemoveRedundantHandlers,
-    HoistLoopInvariantReads, SimplifyBuiltinCalls, ReduceIntegerDivisions, PlanArrayCapacities, FoldConstantRegExps, ShareRegExpLiterals,
-    InsertObjectCoercibleChecks, EliminateTailRecursion, ResolveAwaitedCalls, SinkConstants, ExpandLongArrayLiterals, PlanSlots, Select,
-    NumberAndEncode, PlaceSiteCaches, CheckPlacement, ChooseRepresentations, RemoveRedundantBarriers, GenerateCode
+    None, AllocateTaggedLayouts, CheckTypesAtEntry, TypeValues, CheckInt32Promises, VerifyProgram, CheckRegExpLiterals, NarrowFieldTypes,
+    NameCreatedSymbols, GuardTaintedPositions, AnalyzeFlow, ApplyFlowResults, CheckLockedBuiltinWrites, BuildCallGraph, ComputeEffectSummaries,
+    EstimateHeat, SummarizeForInlining, RemoveUnreadExports, PromoteEnvironmentsToVariables, DeferDefinitions, NarrowConstantVariables,
+    DeferInitializers, ReadCapturesFromEnvironments, RemoveUnreadFields, RemoveUnusedResults, RemoveUnusedParameters, RemoveUnreachableFunctions,
+    SplitBehindEntryChecks, SkipAnsweredEntryChecks, SplitFreshResults, PromoteAggregateParameters, SplitCoroutines, CallModules, CreateEntrypoints,
+    ChooseCallingConventions, DeferClosuresInFields, FlattenInnerObjects, AllocateInFrames, AllocateInnerObjects, ReuseEnvironments,
+    NumberLiteralStrings, EmbedConstantCollections, MarkResultsUsedAsKeys, CollectRegExpLiterals, OutlineColdOperations, InlineHeads,
+    ElideStackChecks, AddGenericVersion, ResolveBuiltins, BindGlobalNames, CallThroughMethodTable, ResolveCalls, ResolveAccesses, SplitUnions,
+    PlaceTypeTests, ExpandIteration, ExpandProvenIterations, ExpandOwnKeys, SelectTypedResults, RetypeValues, InlineCalls, SimplifyCasts,
+    SinkAllocations, EliminateRedundantReads, EliminateGuards, SeparateUnlikelyLoopPaths, ConvertCountersToIntegers, RemoveDeadCountedLoops,
+    FuseArrayChains, FuseGeneratorLoops, StartGeneratorsAtFirstStep, CreateStringBuilders, FuseConcatenations, ExpandData, FoldConstants,
+    SimplifyControlFlow, RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, TestNarrowerTypesFirst, ThreadJumps,
+    InferSwitches, EliminateDeadCode, MergeDuplicateBlocks, CompactBlocks, RemoveRedundantHandlers, HoistLoopInvariantReads, SimplifyBuiltinCalls,
+    ReduceIntegerDivisions, PlanArrayCapacities, PlanCollectionCapacities, FoldConstantRegExps, ShareRegExpLiterals, InsertObjectCoercibleChecks,
+    EliminateTailRecursion, ResolveAwaitedCalls, SinkConstants, ExpandLongArrayLiterals, FinishBirths, RestartInGenericVersion,
+    PlaceAllocationsAtTheirUse, PlanSlots, Select, NumberAndEncode, PlaceSiteCaches, CheckPlacement, ChooseRepresentations, RemoveRedundantBarriers,
+    GenerateCode
 };
 enum class SelectionRuleID : uint32_t {
-    None, PlannedSlots, ClassDefinition, DescriptorLiteral, AccessorGroup, SlotStoreRun, PropertyRun, MethodCall, CheckedPropertyRead,
-    PropertyReadAndTest, EncodedVariableTest, PropertyChain, PropertyPair, SubstringView, SwitchString, SwitchNumber, StringLiteralForms,
-    HoistStringCharacters, SharedStringOrder, IntegerBound, FreshPromiseFulfillment, ResolvedCallTarget, RegExpLiteralMatch, ThrowNewError,
+    None, PlannedSlots, ClassDefinition, DescriptorLiteral, AccessorGroup, SlotStoreRun, PropertyRun, MethodCall, PropertyReadAndTest,
+    EncodedVariableTest, PropertyChain, PropertyPair, SubstringView, SwitchString, SwitchNumber, StringLiteralForms, HoistStringCharacters,
+    SharedStringOrder, IntegerBound, FreshPromiseFulfillment, AwaitInPlace, ResolvedCallTarget, RegExpLiteralMatch, ThrowNewError, KeyPartsLookup,
     InlineBuiltin, StringBuilderParts, ArrayLiteralStorage, DataEncoding, ClosureForm, NumberPaths, OperatorForm, TestAndBranch
 };
 enum class FlowResultKind : uint32_t {
-    ProvenLayoutSets, NarrowedTypes, RemovedNullish, LiteralValues, IntegerRanges, WholeNumbers, ExactFunctions, ProvenContents, ArrayStorageKinds,
-    PristineInstances, ConstantBuiltinLocations, CalleeSets, ReceiverSets, ClassBases, AppendedFields, HolderMutations, OwnNames, ClassEvaluations,
-    StoreCounts, Initialization, ConstructorFieldOrders, ThisLeaks, FrameLocalAllocations, OperandSummaries, ResultChecks, CallVersions, ObjectUses,
-    DeferredClosures, ReachedFunctions, ExecutionCounts, ModuleOrder, NotThenable, Predictions, DictionaryObjects, DerivedLayouts
+    ProvenLayoutSets, NarrowedTypes, RemovedNullish, LiteralValues, ExactFunctions, ProvenContents, ArrayStorageKinds, PristineInstances,
+    ConstantBuiltinLocations, CalleeSets, ReceiverSets, ClassBases, AppendedFields, HolderMutations, OwnNames, ClassEvaluations, StoreCounts,
+    Initialization, ConstructorFieldOrders, OperandSummaries, ObjectUses, ReachedFunctions, ExecutionCounts
 };
 enum class StatisticID : uint32_t {
     None, SourceFilesChecked, SourceFilesInferred, SourceFilesTypesOnly, SourceFilesData, SourceFilesRuntime, SourceFilesDemoted, SourceBytes,
     SourceLines, TypedVersionsUsed, TypedVersionsRejected, CheckerQueries, CheckerQueriesGivenUp, CheckerMembersGivenUp, BuiltinTypesDegradedToViews,
-    SchemaArgumentsDropped, ModulesBound, FunctionsLowered, FunctionsDroppedByLink, ProgramBytes, TypesInterned, ProvisionalTypesInterned,
-    LayoutSetsInterned, CalleeSetsInterned, FunctionTypesWithoutMembers, FunctionTypesWithOneMember, FunctionTypesWithFewMembers,
-    FunctionTypesWithManyMembers, RequestsResolvedToNothing, RequestsResolvedToUpcast, RequestsResolvedToClaim, RequestsResolvedToReport,
-    RequestsResolvedToPrediction, RequestsAdmittingObjects, PositionsAdmittingObjects, AssertedObjectsPassedToUnknownCallees,
-    RequestsAdmittingOtherKinds, PositionsAdmittingOtherKinds, FlowNodes, FlowEdges, FlowWorklistSteps, FlowInstances, FlowLiteralSets,
-    FlowAllocationSites, FlowAllocationClasses, FlowProvenPositions, FlowUnprovenPositions, FlowStatementRuns, FlowStatementRunsWithoutChange,
-    FlowStatementWakeUps, FlowStatementsStartedOver, FlowMembersRepeated, FlowCursorsNotReached, FlowNarrowedPositions, FlowProvenContentsSites,
-    FlowConstantBuiltinLocations, FlowWrittenBuiltinLocations, FlowRemovedClaims, FlowRemainingClaims, FlowGenericVersions, FlowCallSiteVersions,
-    FlowDerivedLayouts, FlowUnreachedFunctions, FlowAppendedFields, FlowProvenBases, FlowDeferredClosureFields, FlowConstructorsLeakingThis,
-    FlowSetsOutsideTypes, AccessesProven, AccessesWritten, AccessesPredicted, AccessesUnknown, DirectCalls, IndirectCalls, GroupCalls, ClosuresFull,
-    ClosuresSlim, ClosuresDeferred, ClosuresInFrames, ClosuresNeverCreated, EnvironmentsOnHeap, EnvironmentsInFrames, ObjectsInFrames,
-    EnvironmentsMaterializedLate, EnvironmentsReused, EnvironmentsPromotedToVariables, CapturesPromotedToVariables, AggregateParametersPromoted,
-    FreshResultsSplit, ResultsReturnedInRegisters, ResultClonesCreated, UnusedResultsRemoved, UnusedParametersRemoved, UnreadFieldsRemoved,
-    UnreadVariableStoresRemoved, ClosuresDeferredInVariables, FieldsDeferringClosures, ClosuresDeferredInFields, StoresListedByAllocations,
-    UnreachableFunctionsRemoved, ConstantCollectionsEmbedded, ColdSitesOutlined, OutlinedBodiesCreated, BodySummariesComputed, BodySummariesKept,
-    EffectSummaryNodes, EffectSummaryNodesInAndAboveCycles, FunctionsTypedFromNever, FunctionsTypedFromChanges, FunctionsTypedAsBefore,
-    StackChecksCoveredByCallers, StackChecksDeferredToCallee, TailRecursionsEliminated, ReturnCallsDemoted, ResultsBoxedForTailCalls,
-    SecondaryEntries, StretchesGuarded, TypeTestsPlaced, StretchesNotClonable, GuardsEliminated, EpochTestsInserted, UnionsSplit, AllocationsRemoved,
-    AllocationsSunk, AllocationsMergedAtJoins, StoresFoldedIntoAllocations, TailsDuplicatedForSinking, LoopsSeparatedFromUnlikelyPaths,
-    LoopsWithoutWayBack, LoopsWithVersions, LoopVersionsCreated, BytesCopiedForLoopVersions, InlineDecisionUnknown, InlineDecisionInline,
-    InlineDecisionInlineHead, InlineDecisionBarrier, InlineDecisionSignatureMismatch, InlineDecisionClosesCycle, InlineDecisionDepthLimit,
-    InlineDecisionCallerSizeLimit, InlineDecisionCostExceedsBenefit, InlineBenefitCallOverhead, InlineBenefitFoldedCode,
+    SchemaArgumentsDropped, ModulesBound, FunctionsLowered, KnownHelperFunctions, KnownHelperCalls, FunctionsDroppedByLink, ProgramBytes,
+    LoadRuntimeProjectNanoseconds, LinkMergeKeysNanoseconds, LinkChooseDefinitionsNanoseconds, LinkMarkNanoseconds,
+    LinkMergeStringsAndTypesNanoseconds, LinkMergePropertyKeysNanoseconds, LinkBuildTypeTableNanoseconds, LinkMoveDefinitionsNanoseconds,
+    LinkNameProgramNanoseconds, ReleaseLoadedProjectsNanoseconds, EmitNanoseconds, EngineCallNanoseconds, AfterEngineNanoseconds, TypesInterned,
+    ProvisionalTypesInterned, LayoutSetsInterned, CalleeSetsInterned, FunctionTypesWithoutMembers, FunctionTypesWithOneMember,
+    FunctionTypesWithFewMembers, FunctionTypesWithManyMembers, TaggedLayoutsAllocated, TaggedLayoutsNeverAllocated, RequestsResolvedToNothing,
+    RequestsResolvedToUpcast, RequestsResolvedToCheck, ConversionsOutsideFamily, FlowAllocationSites, FlowAllocationClasses, FlowProvenPositions,
+    FlowUnprovenPositions, FlowNarrowedPositions, FlowProvenContentsSites, FlowRemovedChecks, FlowRemainingChecks, FlowUnreachedFunctions,
+    FlowAppendedFields, FlowSetsOutsideTypes, LayoutsOutsideFamily, FlowCallsOfUnknownCallees, FlowAccessesOfUnknownReceivers, FieldsNarrowedToInt32,
+    InitialValuesStoredBehindAllocations, AccessesProven, AccessesGuarded, AccessesUnknown, DirectCalls, IndirectCalls, TableCalls,
+    MethodTableSelectors, MethodTableBytes, ClosuresFull, ClosuresSlim, ClosuresDeferred, ClosuresInFrames, ClosuresLent, ClosuresNeverCreated,
+    EnvironmentsOnHeap, EnvironmentsInFrames, ObjectsInFrames, ArraysInFrames, RestArraysInFrames, EmptyArgumentListsShared,
+    EnvironmentsMaterializedLate, EnvironmentsReused, EnvironmentsPromotedToVariables, CapturesPromotedToVariables, FunctionsWithTypesCheckedAtEntry,
+    TypesCheckedAtEntry, FunctionsSplitBehindEntryChecks, ResultsProvenBehindEntryChecks, GenericVersionsBehindEntryChecksCompiled,
+    ShorterEntrancesCreated, CallsThatSkipAnsweredEntryChecks, AggregateParametersPromoted, FreshResultsSplit, FreshResultsKeptWholeForClosures,
+    ResultsReturnedInRegisters, ResultClonesCreated, UnusedResultsRemoved, UnusedParametersRemoved, ModulesWithoutState, ModulesWithState,
+    RequireSitesBound, ModulesWithNames, ModulesWithValue, Faces, RequiresRecorded, UnreadFieldsRemoved, UnreadVariableStoresRemoved,
+    ClosuresDeferredInVariables, ClosuresDeferredInEnvironmentFields, ClassesDeferredInVariables, RegExpsDeferredInVariables, InitializersDeferred,
+    VariablesFilledByInitializers, VariablesAddedForInitializers, DeadZonesKeptBesideDefinitions, FieldsDeferringClosures, ClosuresDeferredInFields,
+    StoresListedByAllocations, UnreachableFunctionsRemoved, FunctionsStartedEarly, FunctionsStartedEarlyButNotReached, ConstantCollectionsEmbedded,
+    ColdSitesOutlined, OutlinedBodiesCreated, BodySummariesComputed, BodySummariesKept, EffectSummaryNodes, EffectSummaryNodesInAndAboveCycles,
+    FunctionsTypedFromNever, FunctionsTypedFromChanges, FunctionsTypedAsBefore, FunctionPassRunsSkipped, ChangesBehindSimplify, EffectsComputed,
+    EffectsKept, StackChecksCoveredByCallers, StackChecksDeferredToCallee, TailRecursionsEliminated, ReturnCallsDemoted, ResultsBoxedForTailCalls,
+    SecondaryEntries, StretchesGuarded, TypeTestsPlaced, TypeTestsPlacedOnClosedSets, TypeTestsPlacedOnOpenSets, StretchesNotClonable,
+    GuardsEliminated, UnionsSplit, GenericVersionsCreated, GenericVersionsNotCreated, ExitsToGenericVersion, WaysBackFromGenericVersion,
+    RestartsInGenericVersion, BlocksInGenericVersions, ChecksReplacedByGuards, TaintedPositions, ChecksOnTaintedPositions, PositionsProvenByTypes,
+    ChecksProvenByTypes, StretchCopiesToWaysBack, StretchCopiesToEndOfFunction, WaysBackFromStretchCopies, WaysBackNotMadeForSizeOfCopy,
+    TestsOnWaysBackNotMade, AllocationsRemoved, AllocationsSunk, AllocationsBuiltApartOnRarerPaths, AllocationsMergedAtJoins,
+    StoresFoldedIntoAllocations, TailsDuplicatedForSinking, LoopsSeparatedFromUnlikelyPaths, LoopsWithoutWayBack, InlineDecisionUnknown,
+    InlineDecisionInline, InlineDecisionInlineHead, InlineDecisionBarrier, InlineDecisionSignatureMismatch, InlineDecisionClosesCycle,
+    InlineDecisionDepthLimit, InlineDecisionCallerSizeLimit, InlineDecisionCostExceedsBenefit, InlineBenefitCallOverhead, InlineBenefitFoldedCode,
     InlineBenefitKnownCalleeArgument, InlineBenefitKnownReceiver, InlineBenefitSunkAllocation, InlineBenefitOnlyCallSite, InlineBenefitWrapper,
-    CallsResolved, CallsGuarded, DispatchArms, ConstructsResolved, AwaitedCallsResolved, BuiltinReadsResolved, BuiltinCallsResolved,
-    BuiltinConversionsInserted, GenericEntrypoints, GroupEntrypoints, BoundFunctions, CoroutinesSplit, GeneratorLoopsFused, ArrayChainsFused,
-    StringBuildersCreated, StringBuildersJoined, ConcatenationsFused, IterationsExpandedByClass, IterationsExpandedGenerically,
-    EnumeratedKeyUsesResolved, OwnKeyWalksExpanded, TypedResultsSelected, ParsersCreated, SerializersCreated, ValidatorsCreated, CountersConverted,
-    IntegerDivisionsReduced, ArrayCapacitiesPlanned, ArrayGrowthsPlanned, ArraysNarrowed, LiteralStringsNumbered, Slots, SharedSlots, SharesRefused,
-    FieldsOutOfLine, HiddenWordsPlaced, DeferredClosureSlots, Shapes, ShapeTestNeverPasses, ShapeTestRange, ShapeTestBitSet, SiteCachesPlaced,
-    SitesWithoutSiteCache, GuardBitsPlaced, RequestsShared, ClassMembersCreatedByClassRecord, ClassMembersCreatedAtDefinition, ClassesCreatedLazily,
-    SlimClosureFunctions, FullClosureFunctions, KeysWithoutColumn, TypeSiteTextsLeftOut, ConversionsInserted, ValuesInInt32, ValuesInInt64,
-    ValuesInDouble, ValuesBoxed, ReferencesCompressed, ExactIntegersBehindNumbers, NumbersUnboxedWithoutBranch, TypeChecksInB3, TypeChecksByOperation,
-    ThrowSites, ShortStringsReadInPlace, CopyOnWriteArraysCreatedInline, BarriersEmitted, BarriersOnUnmarkableOwners, BarriersCoveredLater,
-    SuspensionRoots, NarrowReferenceGuards, NarrowReferencesAcrossSafepoints, NarrowReferencesStoredInFrames, FunctionsWithoutFrame,
-    FunctionsWithFrameOnSomePaths, FunctionsEnteredWithoutStackCheck, ProgramTableBytesTypes, ProgramTableBytesLayouts, ProgramTableBytesFieldTable,
-    ProgramTableBytesStatics, ProgramTableBytesFunctions, ProgramTableBytesModules, ProgramTableBytesRequests, ProgramTableBytesData,
-    ProgramTableBytesOther, StubsGenerated, StubBytes, CodeUnitsRecorded, FunctionsFolded, BytesFolded, JumpOnlyFunctionsRemoved, BodiesOutlined,
-    BytesOutlined, JumpsToNextFunctionRemoved, Veneers, StubCopiesEmitted, CodeBytesEmitted, TableBytesEmitted, LoopsVersioned, LoopsRotated,
-    LoopPollsStripMined, RangeChecksRemoved, LoopBoundsClamped, KnownInductionsUsed, NullChecksFoldedIntoAccesses, ImageFunctionsEmitted,
-    FrameShapesEmitted, CallSiteBytesEmitted, LargestSiteCountInFunction, LargestInlineFrameCountInFunction, TextBytesEmitted, ConstantBytesEmitted,
-    StringConstantsNumbered, IdentifiersNumbered, RegExpsCompiled, RegExpsInterpreted, RegExpFramesElided, RegExpAtoms, RegExpCandidatesCompiled,
-    RegExpCandidatesDropped, RegExpAnalysisLimitHits, WasmFunctionsCompiled, WasmFunctionsInterpreted, MaxFoldedStringBytesHits,
+    SelectedHeadsFound, SelectedHeadsInlined, CallsResolved, RestArraysHandedOver, CallsGuarded, DispatchArms, ConstructsResolved,
+    AwaitedCallsResolved, AwaitsSunkIntoPredecessors, BuiltinReadsResolved, BuiltinCallsResolved, BuiltinConversionsInserted, GenericEntrypoints,
+    TableEntrypoints, TableLookups, BoundFunctions, CalleeVersions, CoroutinesSplit, AsyncWorkersMade, GeneratorLoopsFused,
+    GeneratorsStartedAtFirstStep, ArrayChainsFused, StringBuildersCreated, StringBuildersJoined, ConcatenationsFused, ResultsMarkedAsKeys,
+    IterationsExpandedByClass, IterationsExpandedGenerically, EnumeratedKeyUsesResolved, OwnKeyWalksExpanded, TypedResultsSelected,
+    LiteralArgumentsTakenApart, URLsLeftUnbuilt, ParsersCreated, SerializersCreated, ValidatorsCreated, CountersConverted, IntegerDivisionsReduced,
+    ArrayCapacitiesPlanned, ElementPresenceTestsPlaced, IntegerArrayConversionsPlaced, ArrayGrowthsPlanned, CollectionGrowthsPlanned, ArraysNarrowed,
+    LiteralStringsNumbered, Slots, SharedSlots, SharesRefused, FieldsOutOfLine, HiddenWordsPlaced, DeferredClosureSlots, Shapes, ShapeTestNeverPasses,
+    ShapeTestRange, ShapeTestBitSet, SiteCachesPlaced, SitesWithoutSiteCache, GlobalBindingsPlaced, GuardBitsPlaced, RequestsShared,
+    ClassMembersCreatedByClassRecord, ClassMembersCreatedAtDefinition, ClassesCreatedLazily, SlimClosureFunctions, FullClosureFunctions,
+    KeysWithoutColumn, TypeSiteTextsLeftOut, ConversionsInserted, ValuesInInt32, ValuesInInt64, ValuesInDouble, ValuesBoxed, ReferencesCompressed,
+    ExactIntegersBehindNumbers, NumbersUnboxedWithoutBranch, ThrowSites, ShortStringsReadInPlace, StringLiteralsComparedInPlace,
+    StringPositionsWithKnownSign, CopyOnWriteArraysCreatedInline, NativeFunctionsCalledDirectly, NativeFunctionTestsEmitted, BarriersEmitted,
+    BarriersOnUnmarkableOwners, BarriersCoveredLater, SuspensionRoots, NarrowReferenceGuards, NarrowReferencesAcrossSafepoints,
+    NarrowReferencesStoredInFrames, FunctionsWithoutFrame, FunctionsWithFrameOnSomePaths, FunctionsEnteredWithoutStackCheck, BirthsFinished,
+    BirthsLeftToRunTime, LayoutsWithInnerObjects, InnerObjectsAllocated, InnerArraysAllocated, InnerObjectsAlwaysInPlace,
+    FieldsHoldingFlattenedObjects, FieldsDeferringFlattenedObjects, AllocationsOfFlattenedObjects, ReadsMakingFlattenedObjects,
+    SwitchesTestedByWindow, ProgramTableBytesTypes, ProgramTableBytesLayouts, ProgramTableBytesFieldTable, ProgramTableBytesStatics,
+    ProgramTableBytesFunctions, ProgramTableBytesModules, ProgramTableBytesRequests, ProgramTableBytesData, ProgramTableBytesOther, StubsGenerated,
+    StubBytes, CodeUnitsRecorded, FunctionsFolded, BytesFolded, JumpOnlyFunctionsRemoved, BodiesOutlined, BytesOutlined, JumpsToNextFunctionRemoved,
+    Veneers, StubCopiesEmitted, BytesGeneratedInHotAndWarmBands, BytesGeneratedOutsideColdBlocksInHotAndWarmBands, CodeBytesEmitted,
+    TableBytesEmitted, LoopsVersioned, LoopsRotated, RangeChecksRemoved, LoopBoundsClamped, KnownInductionsUsed, FunctionsGeneratedDirectly,
+    DirectGenerationsAbandoned, NullChecksFoldedIntoAccesses, ReferencesPublishedAsDereferenceable, ImageFunctionsEmitted, FrameShapesEmitted,
+    CallSiteBytesEmitted, LargestSiteCountInFunction, LargestInlineFrameCountInFunction, TextBytesEmitted, FunctionRecordBytesEmitted,
+    FunctionStartBytesEmitted, CodeGranuleBytesEmitted, InnerEntryBytesEmitted, FrameMapBytesEmitted, ClosureWordBytesEmitted, FaultSiteBytesEmitted,
+    SideTableBytesEmitted, StringRecordBytesEmitted, IdentifierBytesEmitted, StringConstantBytesEmitted, StringHeaderBytesEmitted,
+    RegExpRecordBytesEmitted, ProgramTableBytesEmitted, OtherTableBytesEmitted, SideTableBytesFrameRanges, SideTableBytesReferences,
+    SideTableBytesHandlers, SideTableBytesPositions, CallSitesEmitted, SitePositionsEmitted, InlineFramesEmitted, SharedCodeBytesEmitted,
+    RegExpCodeBytesEmitted, LayoutRecordsEmitted, TypeRecordsEmitted, ConstantBytesEmitted, StringConstantsNumbered, IdentifiersNumbered,
+    RegExpsCompiled, RegExpsInterpreted, RegExpFramesElided, RegExpAtoms, RegExpCandidatesCompiled, RegExpCandidatesDropped, RegExpAnalysisLimitHits,
+    WasmFunctionsCompiled, WasmFunctionsInterpreted, WebAssemblyModulesFoundInText, WebAssemblyModulesInTextDeclined, MaxFoldedStringBytesHits,
     MaxComputedSpecifierCandidatesHits, MaxDataNodesHits, MaxNestingDepthHits, MaxTypeNodesHits, MaxValidationNodesHits, MaxExpectedResultLayoutsHits,
-    MaxSupertypePairsHits, MaxCapturesHits, MaxProgramIdsHits, MaxLayoutsInTypeHits, MaxLiteralsInTypeHits, MaxSymbolLiteralsInTypeHits,
-    MaxClassesInTypeHits, MaxFunctionsInTypeHits, MaxBuiltinsInTypeHits, MaxRegExpLiteralsInTypeHits, MaxWorkersHits, MaxInt32ProofWorkHits,
-    MaxTypeValuesRoundsHits, MaxEscapeAnalysisWorkHits, MaxUseEffectHistoryBitsHits, MaxGuardAvailabilityWorkHits, MaxBlocksForDominatorSelfCheckHits,
-    MaxFlowWorkPerFunctionHits, MaxFlowInstancesHits, MaxValueFlowEdgesLoggedHits, MaxValueFlowCopiedNodesPercentHits, MaxFlowInstanceValuesHits,
-    MaxNestedCallSiteInstancesHits, MaxNestedInstancesOfNewObjectsHits, MaxSitesPerLayoutHits, MaxAppendedFieldsPerLayoutHits,
-    MaxDerivedLayoutsPerFamilyHits, MaxCallSiteVersionValuesHits, MaxPositionalPartsHits, MaxFlowRangeGrowthHits, MaxEscapedObjectsBesideUnknownHits,
-    MaxGenericVersionGrowthPercentHits, MinNarrowedUsesForGenericVersionHits, MaxOptimizationRoundsHits, MaxSinkingRoundsHits,
+    MaxSupertypePairsHits, MaxInferenceNodesHits, MaxCapturesHits, MaxProgramIdsHits, MaxLayoutsInTypeHits, MaxLiteralsInTypeHits,
+    MaxSymbolLiteralsInTypeHits, MaxClassesInTypeHits, MaxFunctionsInTypeHits, MaxBuiltinsInTypeHits, MaxRegExpLiteralsInTypeHits, MaxWorkersHits,
+    MaxInt32ProofWorkHits, MaxTypeValuesRoundsHits, MaxEscapeAnalysisWorkHits, MaxUseEffectHistoryBitsHits, MaxGuardAvailabilityWorkHits,
+    MaxBlocksForDominatorSelfCheckHits, MaxValueFlowEdgesLoggedHits, MaxValueFlowSetMembersHits, MaxValueFlowMembersToldApartHits,
+    MaxAppendedFieldsPerLayoutHits, MaxOptimizationRoundsHits, MaxOptimizationWorkHits, MaxSinkingRoundsHits, MaxSinkingWorkHits,
     MaxAccessPlanMembersHits, MaxDispatchCasesHits, MaxDeclarationsPredictedFromNamesHits, MaxExpandedDataNodesHits, MaxArrayLiteralBatchHits,
     MaxBlocksSearchedForLiteralStoresHits, MaxOutlinedOperandsHits, MaxOutlinedRegionValuesHits, MaxResultClonesHits, MaxForwardingDepthHits,
-    MaxPromotedParametersHits, MaxParameterWrapperValuesHits, MaxTestedTypesPerFunctionHits, MaxGuardEliminationRoundsHits,
-    MaxClonedBytesPerStretchHits, MaxBytesOfSeparatedLoopHits, MaxSeparatedLoopsPerFunctionHits, MaxLoopVersionsHits, MaxContinuationsPerFunctionHits,
-    MaxContinuationSizePercentHits, MaxFusedConcatenationPartsHits, MaxReservedStackArgumentsHits, MaxArgumentRegistersHits,
+    MaxPromotedParametersHits, MaxParameterWrapperValuesHits, MaxValuesInCalleeVersionHits, MaxBytesOfCalleeVersionsHits,
+    MaxTestedTypesPerFunctionHits, MaxGuardEliminationRoundsHits, MaxClonedBytesPerStretchHits, MaxBlocksInGenericVersionHits,
+    MaxGenericVersionJoinWorkHits, MaxBlocksCopiedBehindStretchesHits, MaxBytesOfSeparatedLoopHits, MaxSeparatedLoopsPerFunctionHits,
+    MaxFusedConcatenationPartsHits, MaxBlocksBetweenFusedConcatenationsHits, MaxReservedStackArgumentsHits, MaxArgumentRegistersHits,
     MaxThreadedBlockValuesHits, MaxThreadingReachabilityStepsHits, MaxReadsPerSolveHits, MaxMergedReadPredecessorsHits, MaxVirtualObjectFieldsHits,
     MaxVirtualObjectVariantsHits, MaxVirtualArrayLengthHits, MaxMaterializationsHits, MaxDuplicatedTailValuesHits, MaxCounterStepHits,
-    MaxIntegerRelationStepsHits, MaxFrameEnvironmentFieldsHits, MaxInlineDepthHits, MaxInlinedCallerBytesHits, MaxInlineHeadBytesHits,
-    MaxOnlyCallSiteBytesHits, InlineBudgetColdBytesHits, InlineBudgetWarmBytesHits, InlineBudgetHotBytesHits, MaxHotCodeValuesHits,
-    InlineSunkAllocationBytesHits, InlineCycleWeightHits, MaxConditionChainLengthHits, MaxFusedArrayCapacityHits, MinAppendsForStringBuilderHits,
-    MaxStringWebsPerFunctionHits, MaxParserPlanNodesHits, MaxParsedObjectMembersHits, MaxExpandedKeyOrdersHits, MaxExpandedKeyFieldsHits,
-    MaxVersionedIterationBytesHits, MaxDestructuredElementsHits, MinRequestedJSONCapacityHits, MaxJSONLayoutSetMembersHits,
-    MaxBuiltinCallArgumentsHits, MaxPlannedArrayCapacityHits, MaxSelectionGroupSpanHits, MaxSelectionGroupMembersHits, MaxNumberPathValuesHits,
-    MinByIdsPerRunHits, MinSwitchCasesHits, MaxSwitchStringCasesHits, MaxSwitchCasesHits, MaxInlineArrayLiteralLengthHits,
-    MaxInlineSpliceInsertionsHits, MaxInlineConcatOperandsHits, MaxInlinePushOperandsHits, MaxInlineTypedArrayCopyLengthHits,
-    MaxInlineClearedElementsHits, MaxInlineStringCompareLengthHits, MaxRegisterStringLengthHits, MaxLengthCopiedInlineHits, FieldsInKeyOrderHits,
-    KeyOrdersPerLayoutHits, MaxShapesHits, MaxShapeSetBitsHits, MaxIdentifiersHits, MaxFieldOffsetHits, MaxExtensionGranulesHits, MaxStaticsSizeHits,
-    MaxSiteCachesHits, MaxGuardBitsPerClassSideHits, MaxPropertyListNamesHits, MaxEvalBindingDepthHits, MaxEvalBindingOffsetHits,
-    MaxListedStringsHits, MaxLiteralStringsHits, MaxComparedCharactersPerCharacterHits, MaxFrameSizeInBytesHits, MaxBarrierBlocksHits,
-    MaxFrameMapRootsHits, MaxLandingPadsSearchedHits, MaxClonedValuesPerLoopVersionHits, MaxValuesPerHotRegionHits, MaxBlocksScannedBeforeLoopHits,
-    MaxClonedValuesPerUnswitchedLoopHits, MaxClonedValuesPerExcursionHits, MaxValuesScannedForExecutedLoadHits, MaxSourcesOfLoopTestHits,
-    MaxRangeCheckBoundsPerLoopHits, MaxCopiedValuesPerRotatedLoopHits, MaxRareBlocksPerRotatedLoopHits, MaxThreadedTestCopyCostHits,
-    MaxThreadedPathCostHits, MaxBlocksOnThreadedPathHits, MaxThreadedTestDepthHits, MaxPredecessorsForConditionQueriesHits,
-    MaxConditionQueriesPerBlockHits, MaxSelectNestingDepthHits, MaxSpeculatedValuesPerSelectHits, MaxSelectsPerJoinHits,
-    MaxValuesSearchedForDominatingLoadHits, MaxLoopsLeftBySinkingHits, MaxHoistedLoadsPerLoopHits, MaxLivenessStepsPerBlockHits,
-    MaxLinearDominatorStepsHits, MaxSlotsForDenseInterferenceHits, MaxBlocksPerPlacedConstantHits, MaxRangeAnalysisDepthHits,
-    MaxRecordedWritesPerMemoryStateHits, MaxLeavesToRebalanceHits, MaxBitTestTargetsHits, MaxCompareChainSearchSizeHits, MaxClobberSitesPerSplitHits,
-    ClosureAllocationSitesHits, ImageFunctionsHits, CodeBytesHits, SitesPerFunctionHits, InlineFramesPerFunctionHits, DirectCallReachHits,
-    FunctionCallReachHits, TableBytesHits, VectorBytesHits, UncheckedStackBytesHits, RegExpPatternLengthWithCodeHits, RegExpNestingDepthWithCodeHits,
-    RegExpCandidateCodeBytesPerSiteHits, RegExpCandidateTextLengthHits, RegExpSectionSizeHits, RegExpClassTableClusterSizeHits, WasmImageCodeSizeHits,
-    LookupTableNamesHits, LookupTableBasesHits, HashedTableEntriesHits, CustomAccessorRecordsHits, ForeignCallbackStubsHits,
-    PromisesWalkedPerImportHits, BranchCountersHits, MaxNamesComparedWithLongKeyHits, MinLongKeyUnitsPerPieceHits, LongKeyExtraPiecesHits,
-    MaxCachedKeyLengthHits, MaxCapacityGrownByStubHits, MaxOpenJSONSourcesHits, MinStringBuilderCapacityHits, MaxRetainedStringBuilderCapacityHits,
-    MinLengthAppendedByReferenceHits, MinLengthAdoptedByFinishHits, MaxPooledStringBuildersHits, MaxStringBuilderSegmentsHits, MinRopeJoinLengthHits,
-    MinRopeJoinUnitsPerElementHits, MaxReservedArrayCapacityHits, AdmitAssertedObjectsChanges, TypeValuesChanges, CheckInt32PromisesChanges,
-    VerifyProgramChanges, CheckRegExpLiteralsChanges, AnalyzeFlowChanges, ApplyFlowResultsChanges, CheckLockedBuiltinWritesChanges,
-    BuildCallGraphChanges, ComputeEffectSummariesChanges, EstimateHeatChanges, SummarizeForInliningChanges, RemoveUnreadExportsChanges,
-    PromoteEnvironmentsToVariablesChanges, DeferDefinitionsChanges, RemoveUnreadFieldsChanges, RemoveUnusedResultsChanges,
-    RemoveUnusedParametersChanges, RemoveUnreachableFunctionsChanges, SplitFreshResultsChanges, PromoteAggregateParametersChanges,
-    SplitCoroutinesChanges, CreateEntrypointsChanges, GroupCallsByValueChanges, ChooseCallingConventionsChanges, DeferClosuresInFieldsChanges,
-    AllocateInFramesChanges, ReuseEnvironmentsChanges, NumberLiteralStringsChanges, EmbedConstantCollectionsChanges, CollectRegExpLiteralsChanges,
-    OutlineColdOperationsChanges, SplitFunctionsAtCallsChanges, ElideStackChecksChanges, ResolveBuiltinsChanges, ResolveCallsChanges,
-    ResolveAccessesChanges, SplitUnionsChanges, PlaceTypeTestsChanges, ExpandIterationChanges, ExpandOwnKeysChanges, SelectTypedResultsChanges,
+    MaxIntegerRelationStepsHits, MaxFrameEnvironmentFieldsHits, MaxFrameArrayLengthHits, MaxInlineDepthHits, MaxInlinedCallerBytesHits,
+    MaxInlineHeadBytesHits, MaxSelectedHeadOperationsHits, MaxSelectedHeadBlocksHits, MaxOnlyCallSiteBytesHits, InlineBudgetColdBytesHits,
+    InlineBudgetWarmBytesHits, InlineBudgetHotBytesHits, MaxHotCodeValuesHits, MaxWarmCodeValuesHits, InlineSunkAllocationBytesHits,
+    InlineCycleWeightHits, MaxConditionChainLengthHits, MaxFusedArrayCapacityHits, MinAppendsForStringBuilderHits, MaxStringWebsPerFunctionHits,
+    MaxParserPlanNodesHits, MaxParsedObjectMembersHits, MaxExpandedKeyOrdersHits, MaxExpandedKeyFieldsHits, MaxVersionedIterationBytesHits,
+    MaxDestructuredElementsHits, MinRequestedJSONCapacityHits, MaxJSONLayoutSetMembersHits, MaxBuiltinCallArgumentsHits, MaxPlannedArrayCapacityHits,
+    MaxSelectionGroupSpanHits, MaxSelectionGroupMembersHits, MaxNumberPathValuesHits, MinByIdsPerRunHits, MinSwitchCasesHits,
+    MaxSwitchStringCasesHits, MaxSwitchCasesHits, MaxInlineArrayLiteralLengthHits, MaxInlineSpliceInsertionsHits, MaxInlineConcatOperandsHits,
+    MaxInlinePushOperandsHits, MaxKeyPartsHits, MaxInlineTypedArrayCopyLengthHits, MaxInlineClearedElementsHits, MaxInlineSearchedElementsHits,
+    MaxInlineStringCompareLengthHits, MaxRegisterStringLengthHits, MaxLengthCopiedInlineHits, FieldsInKeyOrderHits, KeyOrdersPerLayoutHits,
+    MaxShapesHits, MaxShapeSetBitsHits, MaxIdentifiersHits, MaxFieldOffsetHits, MaxExtensionGranulesHits, MaxStaticsSizeHits, MaxSiteCachesHits,
+    MaxGlobalBindingsHits, MaxGuardBitsPerClassSideHits, MaxPropertyListNamesHits, MaxEvalBindingDepthHits, MaxEvalBindingOffsetHits,
+    MaxListedStringsHits, MaxLiteralStringsHits, MaxComparedCharactersPerCharacterHits, MaxContractedModuleRequestsHits, MaxFrameSizeInBytesHits,
+    MaxBarrierBlocksHits, MaxFrameMapRootsHits, MaxLandingPadsSearchedHits, MaxClonedValuesPerLoopVersionHits, MaxValuesPerHotRegionHits,
+    MaxBlocksScannedBeforeLoopHits, MaxClonedValuesPerUnswitchedLoopHits, MaxClonedValuesPerExcursionHits, MaxValuesScannedForExecutedLoadHits,
+    MaxSourcesOfLoopTestHits, MaxRangeCheckBoundsPerLoopHits, MaxCopiedValuesPerRotatedLoopHits, MaxRareBlocksPerRotatedLoopHits,
+    MaxThreadedTestCopyCostHits, MaxThreadedPathCostHits, MaxBlocksOnThreadedPathHits, MaxThreadedTestDepthHits,
+    MaxPredecessorsForConditionQueriesHits, MaxConditionQueriesPerBlockHits, MaxSelectNestingDepthHits, MaxSpeculatedValuesPerSelectHits,
+    MaxSelectsPerJoinHits, MaxValuesSearchedForDominatingLoadHits, MaxLoopsLeftBySinkingHits, MaxHoistedLoadsPerLoopHits,
+    MaxLivenessStepsPerBlockHits, MaxLinearDominatorStepsHits, MaxSlotsForDenseInterferenceHits, MaxBlocksPerPlacedConstantHits,
+    MaxRangeAnalysisDepthHits, MaxRecordedWritesPerMemoryStateHits, MaxLeavesToRebalanceHits, MaxBitTestTargetsHits, MaxCompareChainSearchSizeHits,
+    MaxClobberSitesPerSplitHits, ClosureAllocationSitesHits, ImageFunctionsHits, CodeBytesHits, SitesPerFunctionHits, InlineFramesPerFunctionHits,
+    DirectCallReachHits, FunctionCallReachHits, TableBytesHits, VectorBytesHits, UncheckedStackBytesHits, RegExpPatternLengthWithCodeHits,
+    RegExpNestingDepthWithCodeHits, RegExpCandidateCodeBytesPerSiteHits, RegExpCandidatesPerSiteHits, RegExpCandidateTextLengthHits,
+    RegExpSectionSizeHits, RegExpClassTableClusterSizeHits, WasmImageCodeSizeHits, LookupTableNamesHits, LookupTableBasesHits, HashedTableEntriesHits,
+    CustomAccessorRecordsHits, ForeignCallbackStubsHits, PromisesWalkedPerImportHits, BranchCountersHits, MaxNamesComparedWithLongKeyHits,
+    MinLongKeyUnitsPerPieceHits, LongKeyExtraPiecesHits, MaxCachedKeyLengthHits, MaxCapacityGrownByStubHits, MaxOpenJSONSourcesHits,
+    MinStringBuilderCapacityHits, MaxRetainedStringBuilderCapacityHits, MinLengthAppendedByReferenceHits, MinLengthAdoptedByFinishHits,
+    MaxPooledStringBuildersHits, MaxStringBuilderSegmentsHits, MinRopeJoinLengthHits, MinRopeJoinUnitsPerElementHits, MaxReservedArrayCapacityHits,
+    MaxReservedCollectionCapacityHits, AllocateTaggedLayoutsChanges, CheckTypesAtEntryChanges, TypeValuesChanges, CheckInt32PromisesChanges,
+    VerifyProgramChanges, CheckRegExpLiteralsChanges, NarrowFieldTypesChanges, NameCreatedSymbolsChanges, GuardTaintedPositionsChanges,
+    AnalyzeFlowChanges, ApplyFlowResultsChanges, CheckLockedBuiltinWritesChanges, BuildCallGraphChanges, ComputeEffectSummariesChanges,
+    EstimateHeatChanges, SummarizeForInliningChanges, RemoveUnreadExportsChanges, PromoteEnvironmentsToVariablesChanges, DeferDefinitionsChanges,
+    NarrowConstantVariablesChanges, DeferInitializersChanges, ReadCapturesFromEnvironmentsChanges, RemoveUnreadFieldsChanges,
+    RemoveUnusedResultsChanges, RemoveUnusedParametersChanges, RemoveUnreachableFunctionsChanges, SplitBehindEntryChecksChanges,
+    SkipAnsweredEntryChecksChanges, SplitFreshResultsChanges, PromoteAggregateParametersChanges, SplitCoroutinesChanges, CallModulesChanges,
+    CreateEntrypointsChanges, ChooseCallingConventionsChanges, DeferClosuresInFieldsChanges, FlattenInnerObjectsChanges, AllocateInFramesChanges,
+    AllocateInnerObjectsChanges, ReuseEnvironmentsChanges, NumberLiteralStringsChanges, EmbedConstantCollectionsChanges, MarkResultsUsedAsKeysChanges,
+    CollectRegExpLiteralsChanges, OutlineColdOperationsChanges, InlineHeadsChanges, ElideStackChecksChanges, AddGenericVersionChanges,
+    ResolveBuiltinsChanges, BindGlobalNamesChanges, CallThroughMethodTableChanges, ResolveCallsChanges, ResolveAccessesChanges, SplitUnionsChanges,
+    PlaceTypeTestsChanges, ExpandIterationChanges, ExpandProvenIterationsChanges, ExpandOwnKeysChanges, SelectTypedResultsChanges,
     RetypeValuesChanges, InlineCallsChanges, SimplifyCastsChanges, SinkAllocationsChanges, EliminateRedundantReadsChanges, EliminateGuardsChanges,
     SeparateUnlikelyLoopPathsChanges, ConvertCountersToIntegersChanges, RemoveDeadCountedLoopsChanges, FuseArrayChainsChanges,
-    FuseGeneratorLoopsChanges, CreateStringBuildersChanges, FuseConcatenationsChanges, ExpandDataChanges, FoldConstantsChanges,
-    SimplifyControlFlowChanges, RemoveTrivialParametersChanges, PropagateBranchConditionsChanges, HoistTestsIntoPredecessorsChanges,
-    ThreadJumpsChanges, InferSwitchesChanges, EliminateDeadCodeChanges, MergeDuplicateBlocksChanges, CompactBlocksChanges,
-    RemoveRedundantHandlersChanges, HoistLoopInvariantReadsChanges, SimplifyBuiltinCallsChanges, ReduceIntegerDivisionsChanges,
-    PlanArrayCapacitiesChanges, FoldConstantRegExpsChanges, ShareRegExpLiteralsChanges, InsertObjectCoercibleChecksChanges,
-    EliminateTailRecursionChanges, ResolveAwaitedCallsChanges, SinkConstantsChanges, ExpandLongArrayLiteralsChanges, PlanSlotsChanges, SelectChanges,
-    NumberAndEncodeChanges, PlaceSiteCachesChanges, CheckPlacementChanges, ChooseRepresentationsChanges, RemoveRedundantBarriersChanges,
-    GenerateCodeChanges, PlannedSlotsGroups, ClassDefinitionGroups, DescriptorLiteralGroups, AccessorGroupGroups, SlotStoreRunGroups,
-    PropertyRunGroups, MethodCallGroups, CheckedPropertyReadGroups, PropertyReadAndTestGroups, EncodedVariableTestGroups, PropertyChainGroups,
-    PropertyPairGroups, SubstringViewGroups, SwitchStringGroups, SwitchNumberGroups, StringLiteralFormsGroups, HoistStringCharactersGroups,
-    SharedStringOrderGroups, IntegerBoundGroups, FreshPromiseFulfillmentGroups, ResolvedCallTargetGroups, RegExpLiteralMatchGroups,
-    ThrowNewErrorGroups, InlineBuiltinGroups, StringBuilderPartsGroups, ArrayLiteralStorageGroups, DataEncodingGroups, ClosureFormGroups,
+    FuseGeneratorLoopsChanges, StartGeneratorsAtFirstStepChanges, CreateStringBuildersChanges, FuseConcatenationsChanges, ExpandDataChanges,
+    FoldConstantsChanges, SimplifyControlFlowChanges, RemoveTrivialParametersChanges, PropagateBranchConditionsChanges,
+    HoistTestsIntoPredecessorsChanges, TestNarrowerTypesFirstChanges, ThreadJumpsChanges, InferSwitchesChanges, EliminateDeadCodeChanges,
+    MergeDuplicateBlocksChanges, CompactBlocksChanges, RemoveRedundantHandlersChanges, HoistLoopInvariantReadsChanges, SimplifyBuiltinCallsChanges,
+    ReduceIntegerDivisionsChanges, PlanArrayCapacitiesChanges, PlanCollectionCapacitiesChanges, FoldConstantRegExpsChanges,
+    ShareRegExpLiteralsChanges, InsertObjectCoercibleChecksChanges, EliminateTailRecursionChanges, ResolveAwaitedCallsChanges, SinkConstantsChanges,
+    ExpandLongArrayLiteralsChanges, FinishBirthsChanges, RestartInGenericVersionChanges, PlaceAllocationsAtTheirUseChanges, PlanSlotsChanges,
+    SelectChanges, NumberAndEncodeChanges, PlaceSiteCachesChanges, CheckPlacementChanges, ChooseRepresentationsChanges,
+    RemoveRedundantBarriersChanges, GenerateCodeChanges, AllocateTaggedLayoutsCodeBytesAdded, CheckTypesAtEntryCodeBytesAdded,
+    TypeValuesCodeBytesAdded, CheckInt32PromisesCodeBytesAdded, VerifyProgramCodeBytesAdded, CheckRegExpLiteralsCodeBytesAdded,
+    NarrowFieldTypesCodeBytesAdded, NameCreatedSymbolsCodeBytesAdded, GuardTaintedPositionsCodeBytesAdded, AnalyzeFlowCodeBytesAdded,
+    ApplyFlowResultsCodeBytesAdded, CheckLockedBuiltinWritesCodeBytesAdded, BuildCallGraphCodeBytesAdded, ComputeEffectSummariesCodeBytesAdded,
+    EstimateHeatCodeBytesAdded, SummarizeForInliningCodeBytesAdded, RemoveUnreadExportsCodeBytesAdded, PromoteEnvironmentsToVariablesCodeBytesAdded,
+    DeferDefinitionsCodeBytesAdded, NarrowConstantVariablesCodeBytesAdded, DeferInitializersCodeBytesAdded,
+    ReadCapturesFromEnvironmentsCodeBytesAdded, RemoveUnreadFieldsCodeBytesAdded, RemoveUnusedResultsCodeBytesAdded,
+    RemoveUnusedParametersCodeBytesAdded, RemoveUnreachableFunctionsCodeBytesAdded, SplitBehindEntryChecksCodeBytesAdded,
+    SkipAnsweredEntryChecksCodeBytesAdded, SplitFreshResultsCodeBytesAdded, PromoteAggregateParametersCodeBytesAdded, SplitCoroutinesCodeBytesAdded,
+    CallModulesCodeBytesAdded, CreateEntrypointsCodeBytesAdded, ChooseCallingConventionsCodeBytesAdded, DeferClosuresInFieldsCodeBytesAdded,
+    FlattenInnerObjectsCodeBytesAdded, AllocateInFramesCodeBytesAdded, AllocateInnerObjectsCodeBytesAdded, ReuseEnvironmentsCodeBytesAdded,
+    NumberLiteralStringsCodeBytesAdded, EmbedConstantCollectionsCodeBytesAdded, MarkResultsUsedAsKeysCodeBytesAdded,
+    CollectRegExpLiteralsCodeBytesAdded, OutlineColdOperationsCodeBytesAdded, InlineHeadsCodeBytesAdded, ElideStackChecksCodeBytesAdded,
+    AddGenericVersionCodeBytesAdded, ResolveBuiltinsCodeBytesAdded, BindGlobalNamesCodeBytesAdded, CallThroughMethodTableCodeBytesAdded,
+    ResolveCallsCodeBytesAdded, ResolveAccessesCodeBytesAdded, SplitUnionsCodeBytesAdded, PlaceTypeTestsCodeBytesAdded, ExpandIterationCodeBytesAdded,
+    ExpandProvenIterationsCodeBytesAdded, ExpandOwnKeysCodeBytesAdded, SelectTypedResultsCodeBytesAdded, RetypeValuesCodeBytesAdded,
+    InlineCallsCodeBytesAdded, SimplifyCastsCodeBytesAdded, SinkAllocationsCodeBytesAdded, EliminateRedundantReadsCodeBytesAdded,
+    EliminateGuardsCodeBytesAdded, SeparateUnlikelyLoopPathsCodeBytesAdded, ConvertCountersToIntegersCodeBytesAdded,
+    RemoveDeadCountedLoopsCodeBytesAdded, FuseArrayChainsCodeBytesAdded, FuseGeneratorLoopsCodeBytesAdded, StartGeneratorsAtFirstStepCodeBytesAdded,
+    CreateStringBuildersCodeBytesAdded, FuseConcatenationsCodeBytesAdded, ExpandDataCodeBytesAdded, FoldConstantsCodeBytesAdded,
+    SimplifyControlFlowCodeBytesAdded, RemoveTrivialParametersCodeBytesAdded, PropagateBranchConditionsCodeBytesAdded,
+    HoistTestsIntoPredecessorsCodeBytesAdded, TestNarrowerTypesFirstCodeBytesAdded, ThreadJumpsCodeBytesAdded, InferSwitchesCodeBytesAdded,
+    EliminateDeadCodeCodeBytesAdded, MergeDuplicateBlocksCodeBytesAdded, CompactBlocksCodeBytesAdded, RemoveRedundantHandlersCodeBytesAdded,
+    HoistLoopInvariantReadsCodeBytesAdded, SimplifyBuiltinCallsCodeBytesAdded, ReduceIntegerDivisionsCodeBytesAdded,
+    PlanArrayCapacitiesCodeBytesAdded, PlanCollectionCapacitiesCodeBytesAdded, FoldConstantRegExpsCodeBytesAdded, ShareRegExpLiteralsCodeBytesAdded,
+    InsertObjectCoercibleChecksCodeBytesAdded, EliminateTailRecursionCodeBytesAdded, ResolveAwaitedCallsCodeBytesAdded, SinkConstantsCodeBytesAdded,
+    ExpandLongArrayLiteralsCodeBytesAdded, FinishBirthsCodeBytesAdded, RestartInGenericVersionCodeBytesAdded,
+    PlaceAllocationsAtTheirUseCodeBytesAdded, PlanSlotsCodeBytesAdded, SelectCodeBytesAdded, NumberAndEncodeCodeBytesAdded,
+    PlaceSiteCachesCodeBytesAdded, CheckPlacementCodeBytesAdded, ChooseRepresentationsCodeBytesAdded, RemoveRedundantBarriersCodeBytesAdded,
+    GenerateCodeCodeBytesAdded, AllocateTaggedLayoutsCodeBytesRemoved, CheckTypesAtEntryCodeBytesRemoved, TypeValuesCodeBytesRemoved,
+    CheckInt32PromisesCodeBytesRemoved, VerifyProgramCodeBytesRemoved, CheckRegExpLiteralsCodeBytesRemoved, NarrowFieldTypesCodeBytesRemoved,
+    NameCreatedSymbolsCodeBytesRemoved, GuardTaintedPositionsCodeBytesRemoved, AnalyzeFlowCodeBytesRemoved, ApplyFlowResultsCodeBytesRemoved,
+    CheckLockedBuiltinWritesCodeBytesRemoved, BuildCallGraphCodeBytesRemoved, ComputeEffectSummariesCodeBytesRemoved, EstimateHeatCodeBytesRemoved,
+    SummarizeForInliningCodeBytesRemoved, RemoveUnreadExportsCodeBytesRemoved, PromoteEnvironmentsToVariablesCodeBytesRemoved,
+    DeferDefinitionsCodeBytesRemoved, NarrowConstantVariablesCodeBytesRemoved, DeferInitializersCodeBytesRemoved,
+    ReadCapturesFromEnvironmentsCodeBytesRemoved, RemoveUnreadFieldsCodeBytesRemoved, RemoveUnusedResultsCodeBytesRemoved,
+    RemoveUnusedParametersCodeBytesRemoved, RemoveUnreachableFunctionsCodeBytesRemoved, SplitBehindEntryChecksCodeBytesRemoved,
+    SkipAnsweredEntryChecksCodeBytesRemoved, SplitFreshResultsCodeBytesRemoved, PromoteAggregateParametersCodeBytesRemoved,
+    SplitCoroutinesCodeBytesRemoved, CallModulesCodeBytesRemoved, CreateEntrypointsCodeBytesRemoved, ChooseCallingConventionsCodeBytesRemoved,
+    DeferClosuresInFieldsCodeBytesRemoved, FlattenInnerObjectsCodeBytesRemoved, AllocateInFramesCodeBytesRemoved,
+    AllocateInnerObjectsCodeBytesRemoved, ReuseEnvironmentsCodeBytesRemoved, NumberLiteralStringsCodeBytesRemoved,
+    EmbedConstantCollectionsCodeBytesRemoved, MarkResultsUsedAsKeysCodeBytesRemoved, CollectRegExpLiteralsCodeBytesRemoved,
+    OutlineColdOperationsCodeBytesRemoved, InlineHeadsCodeBytesRemoved, ElideStackChecksCodeBytesRemoved, AddGenericVersionCodeBytesRemoved,
+    ResolveBuiltinsCodeBytesRemoved, BindGlobalNamesCodeBytesRemoved, CallThroughMethodTableCodeBytesRemoved, ResolveCallsCodeBytesRemoved,
+    ResolveAccessesCodeBytesRemoved, SplitUnionsCodeBytesRemoved, PlaceTypeTestsCodeBytesRemoved, ExpandIterationCodeBytesRemoved,
+    ExpandProvenIterationsCodeBytesRemoved, ExpandOwnKeysCodeBytesRemoved, SelectTypedResultsCodeBytesRemoved, RetypeValuesCodeBytesRemoved,
+    InlineCallsCodeBytesRemoved, SimplifyCastsCodeBytesRemoved, SinkAllocationsCodeBytesRemoved, EliminateRedundantReadsCodeBytesRemoved,
+    EliminateGuardsCodeBytesRemoved, SeparateUnlikelyLoopPathsCodeBytesRemoved, ConvertCountersToIntegersCodeBytesRemoved,
+    RemoveDeadCountedLoopsCodeBytesRemoved, FuseArrayChainsCodeBytesRemoved, FuseGeneratorLoopsCodeBytesRemoved,
+    StartGeneratorsAtFirstStepCodeBytesRemoved, CreateStringBuildersCodeBytesRemoved, FuseConcatenationsCodeBytesRemoved, ExpandDataCodeBytesRemoved,
+    FoldConstantsCodeBytesRemoved, SimplifyControlFlowCodeBytesRemoved, RemoveTrivialParametersCodeBytesRemoved,
+    PropagateBranchConditionsCodeBytesRemoved, HoistTestsIntoPredecessorsCodeBytesRemoved, TestNarrowerTypesFirstCodeBytesRemoved,
+    ThreadJumpsCodeBytesRemoved, InferSwitchesCodeBytesRemoved, EliminateDeadCodeCodeBytesRemoved, MergeDuplicateBlocksCodeBytesRemoved,
+    CompactBlocksCodeBytesRemoved, RemoveRedundantHandlersCodeBytesRemoved, HoistLoopInvariantReadsCodeBytesRemoved,
+    SimplifyBuiltinCallsCodeBytesRemoved, ReduceIntegerDivisionsCodeBytesRemoved, PlanArrayCapacitiesCodeBytesRemoved,
+    PlanCollectionCapacitiesCodeBytesRemoved, FoldConstantRegExpsCodeBytesRemoved, ShareRegExpLiteralsCodeBytesRemoved,
+    InsertObjectCoercibleChecksCodeBytesRemoved, EliminateTailRecursionCodeBytesRemoved, ResolveAwaitedCallsCodeBytesRemoved,
+    SinkConstantsCodeBytesRemoved, ExpandLongArrayLiteralsCodeBytesRemoved, FinishBirthsCodeBytesRemoved, RestartInGenericVersionCodeBytesRemoved,
+    PlaceAllocationsAtTheirUseCodeBytesRemoved, PlanSlotsCodeBytesRemoved, SelectCodeBytesRemoved, NumberAndEncodeCodeBytesRemoved,
+    PlaceSiteCachesCodeBytesRemoved, CheckPlacementCodeBytesRemoved, ChooseRepresentationsCodeBytesRemoved, RemoveRedundantBarriersCodeBytesRemoved,
+    GenerateCodeCodeBytesRemoved, PlannedSlotsGroups, ClassDefinitionGroups, DescriptorLiteralGroups, AccessorGroupGroups, SlotStoreRunGroups,
+    PropertyRunGroups, MethodCallGroups, PropertyReadAndTestGroups, EncodedVariableTestGroups, PropertyChainGroups, PropertyPairGroups,
+    SubstringViewGroups, SwitchStringGroups, SwitchNumberGroups, StringLiteralFormsGroups, HoistStringCharactersGroups, SharedStringOrderGroups,
+    IntegerBoundGroups, FreshPromiseFulfillmentGroups, AwaitInPlaceGroups, ResolvedCallTargetGroups, RegExpLiteralMatchGroups, ThrowNewErrorGroups,
+    KeyPartsLookupGroups, InlineBuiltinGroups, StringBuilderPartsGroups, ArrayLiteralStorageGroups, DataEncodingGroups, ClosureFormGroups,
     NumberPathsGroups, OperatorFormGroups, TestAndBranchGroups, LoadNanoseconds, BindModulesNanoseconds, CheckNanoseconds, LowerNanoseconds,
     LinkAndEmitNanoseconds, ReadAndVerifyNanoseconds, AnalyzeFlowNanoseconds, OptimizeNanoseconds, PlanSlotsNanoseconds, SelectNanoseconds,
     NumberAndEncodeNanoseconds, ChooseRepresentationsNanoseconds, GenerateCodeNanoseconds, BuildImageNanoseconds, RunTimeNanoseconds
 };
 enum class RuntimeCounterID : uint32_t {
-    None, ObjectsBecameOrdinaryByIndexedAccessor, ObjectsBecameOrdinaryByNativeDefinition, ObjectsBecameOrdinaryByRepresentationLimit,
-    FieldsLeftSlotByDelete, FieldsLeftSlotByRedefinition, FieldsLeftSlotByStoreOfOtherType, MemberGuardsCleared, PrototypeLinkGuardsCleared,
-    KeyOrdersStoredOutOfLine, ShapeEpochBumps, ClassesEvaluatedAgain, FieldMovePlansMade, AssignmentPlansMade, CopiesCollectedByName,
-    CopiesByOrdinaryLookups, SiteCacheRefills, HashedTableEvictions, ChainDependentsDropped, StubCannotReadField, StubCannotStoreField,
-    StubCannotCreateField, StubCannotCallGetter, StubCannotCallSetter, StubCannotGrowStorage, TypedParsesFellBackPerValue,
-    ValidationsFellBackPerValue, JSONStringifySlowPaths, RegExpsCreatedWithoutRecord, ThrownErrorsNotCreated, InterpretedGlobalCode,
-    InterpretedEvalCode, InterpretedFunctionCode, InterpretedModuleCode, InterpreterReadSlowPaths, InterpreterStoreSlowPaths,
-    InterpreterPresenceSlowPaths, InterpreterCallSlowPaths, InterpreterAllocationSlowPaths, InterpreterBranchSlowPaths
+    None, FieldsLeftSlotByDelete, FieldsLeftSlotByRedefinition, FieldsLeftSlotByStoreOfOtherType, MemberGuardsCleared, PrototypeLinkGuardsCleared,
+    KeyOrdersStoredOutOfLine, ClassesEvaluatedAgain, ClassesMadeWhenFirstTouched, FieldMovePlansMade, AssignmentPlansMade, CopiesCollectedByName,
+    CopiesByOrdinaryLookups, CompiledStructuresMade, AllocationSiteRecordsFilled, StarsRecorded, StarsCarriedOutLate, SiteCacheRefills,
+    HashedTableEvictions, HashedTableGrowths, ChainDependentsDropped, GlobalBindingNotFiled, FirstMissesNotFiled, AnswersNotFiled, PairsFiledAgain,
+    PairsFiledAgainWhilePresent, StubCannotReadField, StubCannotStoreField, StubCannotCreateField, StubCannotCallGetter, StubCannotCallSetter,
+    StubCannotGrowStorage, TypedParsesFellBackPerValue, ValidationsFellBackPerValue, JSONStringifySlowPaths, RegExpsCreatedWithoutRecord,
+    ThrownErrorsNotCreated, RegExpPatternsParsed, RegExpsCompiledToBytecode, RegExpMatchesInterpreted, InterpretedGlobalCode, InterpretedEvalCode,
+    InterpretedFunctionCode, InterpretedModuleCode, InterpreterReadSlowPaths, InterpreterStoreSlowPaths, InterpreterPresenceSlowPaths,
+    InterpreterCallSlowPaths, InterpreterAllocationSlowPaths, InterpreterBranchSlowPaths, InterpreterOperatorSlowPaths, CalledClosuresNotCreated,
+    FlattenedObjectsMade, DirectEvalsParsed
 };
 enum class DiagnosticSeverity : uint32_t { Error, Warning, Note };
 enum class Int32ProofFailure : uint32_t {
     Unknown, OutOfRange, AnyNumber, Untyped, Product, Quotient, NegatedZero, Remainder, Power, NotANumber, NegativeZero, Fraction, WorkLimit
 };
 enum class UserDiagnosticKind : uint32_t {
-    Unknown, LimitExceeded, InvalidRegExpLiteral, UnprovenInt32, ConstantNotInt32, LockedBuiltinWriteAlwaysRuns, LockedBuiltinWriteMayRun,
-    LockedBuiltinWriteIsIgnored, CodeOutsideImageIsRefused, FrameTooLarge, TooManyShapes, TooManyIdentifiers, TooManyFunctions, RegExpWithoutCode,
-    WasmUnsupportedCPU, WasmInvalidModule, WasmNoFunctions, WasmHasGCTypes, WasmCodeTooLarge, WasmUsesExceptions, WasmUsesTailCalls,
-    WasmTestsReferenceTypes, WasmCallsUnlistedOperation, WasmNamesTypeOfOtherModule, WasmSavesVectorRegister, WasmSavedRegisterOrder,
-    WasmProcessAddressInCode, WasmCodeGeneratorFailed
+    Unknown, LimitExceeded, InvalidRegExpLiteral, UnprovenInt32, ConstantNotInt32, Int32OfDependencyNotProven, LockedBuiltinWriteAlwaysRuns,
+    LockedBuiltinWriteMayRun, LockedBuiltinWriteIsIgnored, CodeOutsideImageIsRefused, FrameTooLarge, TooManyShapes, TooManyIdentifiers,
+    TooManyFunctions, RegExpWithoutCode, WasmUnsupportedCPU, WasmInvalidModule, WasmNoFunctions, WasmHasGCTypes, WasmCodeTooLarge, WasmUsesExceptions,
+    WasmUsesTailCalls, WasmTestsReferenceTypes, WasmCallsUnlistedOperation, WasmNamesTypeOfOtherModule, WasmSavesVectorRegister,
+    WasmSavedRegisterOrder, WasmProcessAddressInCode, WasmCodeGeneratorFailed
 };
 enum class InternalErrorKind : uint32_t {
-    Unknown, InvalidCompileOptions, VerificationFailedAfterPass, VerificationFailedAtTheEnd, ProgramTooShort, NotAProgram, SchemaMismatch,
-    SectionOutOfBounds, ListOutOfBounds, UnknownEnumerator, UnknownFlag, UnknownVariantCase, EngineOnlyOnWire, IdOutOfRange, DuplicateString,
-    DuplicatePropertyKey, StringNotCanonical, NameClassMismatch, UnsortedList, DuplicateListEntry, TypeRefersForward, IRTextError, InvalidPropertyKey,
-    InvalidClass, InvalidLayout, InvalidVariable, InvalidModule, InvalidModuleFailure, InvalidData, InvalidEntry, NoEntryPoint, OpcodeNotInForm,
-    RequiredPassLeftOperation, RequestAfterTyping, OperandMissing, UnexpectedOperand, NotExactlyOneParameter, FunctionFlagMissing,
-    ArgumentCountMismatch, PayloadOutOfRange, PlacedPayloadMissing, FlagNotDeclared, ValueListedTwice, ValueNotListed, ParameterNotInList,
-    EdgeToEntryBlock, TargetCountMismatch, EdgeArgumentCountMismatch, InvalidProof, InvalidHandler, HandlerArgumentNotAvailable, InvalidBlockRole,
-    BlockOrderInvalid, TypeOutOfDate, WrongRepresentation, OperandTypeMismatch, StoredTypeMismatch, EdgeArgumentMismatch, EntryParametersMismatch,
-    ReturnTypeMismatch, UpcastNotSubset, ResultIndexOutOfRange, ValueAfterNever, InvalidEnvironmentUse, UseNotDominated, GuardNotAvailable,
+    Unknown, InvalidCompileOptions, VerificationFailedAfterPass, VerificationFailedAtTheEnd, SkippedPassChangesFunction, ProgramTooShort, NotAProgram,
+    SchemaMismatch, SectionOutOfBounds, ListOutOfBounds, UnknownEnumerator, UnknownFlag, UnknownVariantCase, EngineOnlyOnWire, IdOutOfRange,
+    DuplicateString, DuplicatePropertyKey, StringNotCanonical, NameClassMismatch, UnsortedList, DuplicateListEntry, TypeRefersForward, IRTextError,
+    InvalidPropertyKey, InvalidClass, InvalidLayout, InvalidDeclaredType, FamilyNotClosed, InvalidVariable, InvalidModule, InvalidModuleFailure,
+    InvalidModuleEvaluation, InvalidData, DataOutsideFieldType, InvalidEntry, NoEntryPoint, OpcodeNotInForm, RequiredPassLeftOperation,
+    RequestAfterTyping, OperandMissing, UnexpectedOperand, NotExactlyOneParameter, FunctionFlagMissing, ArgumentCountMismatch, PayloadOutOfRange,
+    PlacedPayloadMissing, FlagNotDeclared, ValueListedTwice, ValueNotListed, ParameterNotInList, EdgeToEntryBlock, TargetCountMismatch,
+    EdgeArgumentCountMismatch, InvalidProof, InvalidHandler, HandlerArgumentNotAvailable, InvalidBlockRole, BlockOrderInvalid, TypeOutOfDate,
+    BrokenResultRule, WrongRepresentation, OperandTypeMismatch, StoredTypeMismatch, EdgeArgumentMismatch, EntryParametersMismatch, ReturnTypeMismatch,
+    UpcastNotSubset, ResultIndexOutOfRange, ValueAfterNever, InvalidEnvironmentUse, UseNotDominated, FunctionEndsInFirstBlock, GuardNotAvailable,
     InvalidGuard, OperandMustBeDefinition, CycleWithoutLoopMark, InvalidCatch, InvalidReturnCall, InvalidTestAndBranch, InvalidBuiltinCall,
-    InvalidSuspension, IntrinsicOutsideLibraryCode, PredictionAfterSelection, InvalidInlineFrame, InvalidCreatorRecord, ClosureOnDemandWithoutField,
-    FlowWriterOutsideDeclaredType, FlowMembersInvalid, FlowProofOverLosableShape, FlowVersionMismatch, FlowRemovedClaimNotProven,
-    FlowRuntimeFunctionMissing, FlowNotAtFixpoint, EffectsExceedReplacedGroup, EffectsOfPreparedTooNarrow, EffectsExceedSummary,
-    StoreOutsideDeclaredEffects, RequiredTailCallNotConverted, FramePointerReturned, FramePointerThrown, FramePointerRetained,
+    InvalidSuspension, IntrinsicOutsideLibraryCode, ExpectedTypeAfterSelection, InvalidInlineFrame, InvalidCreatorRecord, InvalidRelations,
+    UseWithoutRelation, ClosureOnDemandWithoutField, ObjectOnDemandWithoutRoom, BorrowedObjectHeld, FlowWriterOutsideDeclaredType, FlowMembersInvalid,
+    FlowRemovedCheckNotProven, MaskCutKnownValue, FlowEndedTooEarly, FlowRuleWasNotDue, EffectsExceedReplacedGroup, EffectsOfPreparedTooNarrow,
+    EffectsExceedSummary, StoreOutsideDeclaredEffects, RequiredTailCallNotConverted, FramePointerReturned, FramePointerThrown, FramePointerRetained,
     CalleeRetainsFramePointer, FramePointerInTailCall, FramePointerAcrossSuspension, FrameCellAcrossIterations, RawPointerAcrossSuspension,
     RawPointerOutlivesStorage, RawPointerWithoutBase, RawWordEscapes, ResolvedTargetMismatch, CursorInFunctionValue, CursorGuardMismatch,
     CursorUsedAfterClose, KeyOrderOfOtherObject, BuilderCapacityExceeded, BuilderCursorUsedAfterMove, SlotAccessNotPlaced, PlacementCheckFailed,
@@ -276,28 +374,33 @@ enum class InternalErrorKind : uint32_t {
     InvalidCodeUnits, UncheckedStackCycle, UncheckedStackTooDeep, CallToFunctionWithoutCode, CallToStubNotGenerated, ProcessAddressInImageCode,
     RelocationNotApplied, WritableSectionInImage, FunctionWithoutCode, FrameSavesUnknownRegister
 };
-enum class KnowledgeLevel : uint32_t { Unknown, Predicted, Written, Proven };
+enum class KnowledgeLevel : uint32_t { Unknown, Expected, Proven };
+enum class AccessCost : uint32_t { ByName, TestsReceiver, TestsSlot, Free };
 enum class AccessKind : uint32_t { Unknown, Read, Store, Define, Has, Delete, Call, Construct };
 enum class UnprovenCauseFamily : uint32_t { UnprovenType, UnknownCode, Mutation, Limit };
 enum class UnprovenCause : uint32_t {
     Unknown, ResultDisabled, LimitReached, UnknownObject, NonLayoutObject, BuiltinBase, UnknownBase, ClassEvaluatedAgain, ReachesNativeCode,
     ReachesUnknownJavaScript, UnknownWriter, UnknownCallee, UnprovenContents, FieldDeleted, UnknownKeyDelete, PropertyRedefined, PropertyAdded,
-    UnknownKeyStore, StoreOfOtherType, IntegrityChanged, PrototypeChanged, OwnPropertyHidesMember, OtherNewTarget, LeftByPasses
+    UnknownKeyStore, StoreOfOtherType, IntegrityChanged, PrototypeChanged, OwnPropertyHidesMember, OtherNewTarget, LeftByPasses,
+    UndescribedNativeResult, UnseenCode, UncheckedConversionOfUntracked, DataFromOutside, ThrownByRunTime, ParameterOfEscapedFunction,
+    ContentsOfEscapedObject, ResultOfUnknownCallee, ObjectWithoutLayout, Untracked, LayoutOutsideFamily
 };
 enum class CheckCause : uint32_t { Unknown, UnknownObject, UnknownCallee, UnprovenContents, MayFail, LimitReached, ResultDisabled, AddedByPass };
 enum class UnseenCodeCause : uint32_t {
-    Unknown, EvaluatesText, ImportsUncompiledModule, LoadsModuleByName, RunsUnseenCode, OptionAdmitsCode, LimitReached, FlowResultDisabled
+    Unknown, EvaluatesText, ImportsUncompiledModule, LoadsModuleByName, RunsUnseenCode, OptionAdmitsCode, LimitReached, FlowResultDisabled,
+    RunsMachineCode
 };
 enum class LocaleUseKind : uint32_t { Unknown, HostDefault, Constant };
 enum class TypeTestFailure : uint32_t { TakesGenericPath, Throws };
+enum class ArrivalStamp : uint32_t { None, Open, Complete };
 enum class ImageVerdict : uint32_t {
     Unsupported, Accepted, CompiledCodeDisabled, NotAnImage, Truncated, Misaligned, AlreadyInUse, LowPagesAccessible, NoCode, CannotMapCode,
     NeedsCellCage, OptionsConflict, MalformedTables, StampMismatch, IdentityMismatch
 };
 enum class DeclineKind : uint32_t {
     Unknown, HotCallNotInlined, HotCallNotResolved, GeneratorLoopNotFused, ArrayChainNotFused, StringBuilderNotCreated, StringBuildersNotJoined,
-    AllocationNotSunk, TypedResultNotSelected, IterationNotExpandedByClass, LoopNotVersioned, LoopPollNotStripMined, LoopBoundNotClamped,
-    StretchNotGuarded, ResultNodeInterpreted, PositionAdmitsObjects, AssertedObjectPassedToUnknownCallee
+    AllocationNotSunk, TypedResultNotSelected, IterationNotExpandedByClass, LoopNotVersioned, LoopBoundNotClamped, StretchNotGuarded,
+    ResultNodeInterpreted, GenericVersionNotCreated
 };
 enum class TypedResultDeclineReason : uint32_t {
     None, NoTarget, TargetIsNotModeledByFlow, TargetHasNoTypedPart, PromiseIsNotAwaitedAtOnce, HostHasNoBytesForm, RowsHaveSeveralLayouts,
@@ -317,7 +420,7 @@ enum class ArrayChainDeclineReason : uint32_t {
 enum class StringBuilderDeclineReason : uint32_t { Unknown, Created, TooFewAppends, TwoStatesLive, StateIsNotFirstOperand, WebLimit };
 enum class LoopDeclineReason : uint32_t {
     None, NotInnermost, SeveralEntries, NoSingleLikelyPath, UncloneableValue, NothingToHoist, NotCounted, CounterMayWrap, BoundNotInvariant,
-    TestNotOnLikelyPath, EffectsBeforeTopTest, PollNotOnEveryIteration, SeveralPolls, LimitReached
+    TestNotOnLikelyPath, EffectsBeforeTopTest, LimitReached
 };
 enum class InterpretedCause : uint32_t {
     None, TooManyNodes, RepeatedRecursion, MemberKeyIsNotText, LayoutIsNotModeled, MemberIsNotNamedField, FieldTypeIsNotTestable
@@ -334,52 +437,67 @@ enum class AllocationKind : uint32_t {
 enum class ResultSection : uint32_t {
     Image, Text, UserDiagnostics, InternalErrors, EntryModuleIds, UnseenCode, BuiltinsUsed, FeaturesUsed, LocalesUsed, Accesses, AccessCounts,
     TypeTests, RemainingChecks, Declines, AllocationRemarks, Losses, Functions, OperationCounts, PassTimes, Statistics, LimitValues, Symbols,
-    ObfuscatedSites
+    ObfuscatedSites, ArrivalSites, ArrivalSiteLayouts, ArrivalLayouts, ArrivalLayoutFields
 };
-enum class CompileAction : uint32_t { Compile, VerifyOnly };
+enum class CompileAction : uint32_t { Compile, VerifyOnly, CheckOnly };
 enum class Architecture : uint32_t { ARM64, X86_64 };
 enum class ReferenceWidth : uint32_t { Wide, Narrow };
 enum class MismatchPolicy : uint32_t { Throw, Report };
 enum class HeatOverride : uint32_t { None, OnlyLoopsAreHot, EverythingIsHot, EverythingIsCold, NothingIsHottest };
+enum class Sabotage : uint32_t {
+    None, StackNamesNoInnerCell, NarrowReferenceOnStackNamesNoInnerCell, InnerObjectIsVisitedWithoutItsFields, InnerArrayIsVisitedWithoutItsElements,
+    InnerCellVisitedInPlaceStaysWhite, InnerCellIsMarkedWithoutItsOuterCell, InnerCellLetGoKeepsItsHeader, RoomIsNotInReferenceList,
+    RoomsLeftEmptyAreNotZeroed, NoBarrierBehindFreshStoreIntoRoom, NoBarrierForStoreThroughBorrowedObject, StoreLeavesRoomAsItIs,
+    FlattenedObjectIsMadeWithoutBarrier, MakingLeavesRoomAsItIs
+};
 enum class BuiltinUse : uint32_t { Tested = 1u << 0, Read = 1u << 1, Called = 1u << 2, Constructed = 1u << 3, Written = 1u << 4, Escaped = 1u << 5 };
+enum class ArrivalLayoutFlags : uint32_t { IsDerived = 1u << 0 };
+enum class ArrivalFieldFlags : uint32_t { IsOptional = 1u << 0 };
 enum class AllocationEscapeReason : uint32_t {
     Returned = 1u << 0, Thrown = 1u << 1, StoredInUnknownMemory = 1u << 2, PassedToUnknownCode = 1u << 3, RetainedByCallee = 1u << 4,
     StoredInEscapingObject = 1u << 5, LeakedByContainer = 1u << 6, LimitReached = 1u << 7
 };
 enum class CheckSet : uint32_t {
-    VerifyEachPass = 1u << 0, Validate = 1u << 1, ValidateBackEnd = 1u << 2, ValidateReferences = 1u << 3, FlowFixpoint = 1u << 4,
-    VerifyEachStage = 1u << 5, ValidateReferenceGuards = 1u << 6
+    VerifyEachPass = 1u << 0, Validate = 1u << 1, ValidateBackEnd = 1u << 2, ValidateReferences = 1u << 3, VerifyEachStage = 1u << 4,
+    ValidateReferenceGuards = 1u << 5, CountChangesBehindSimplify = 1u << 6, FlowFixpoint = 1u << 7, FunctionsGetPastEntry = 1u << 8
 };
-enum class ReportSet : uint32_t { Flow = 1u << 0, Declines = 1u << 1, Symbols = 1u << 2, Allocations = 1u << 3, Functions = 1u << 4 };
+enum class ReportSet : uint32_t {
+    Flow = 1u << 0, Declines = 1u << 1, Symbols = 1u << 2, Allocations = 1u << 3, Functions = 1u << 4, Arrivals = 1u << 5, PassCodeBytes = 1u << 6
+};
 enum class TestingSwitch : uint32_t {
     IgnoreBranchHints = 1u << 0, ForceGCSlowPaths = 1u << 1, MayEncounterMasqueradesAsUndefined = 1u << 2, DropGuard = 1u << 3,
-    IgnorePredictions = 1u << 4, LoseFlowWakeUps = 1u << 5, AnalyzeValueFlow = 1u << 6, DropReferenceGuards = 1u << 7
+    IgnoreExpectedTypes = 1u << 4, DropReferenceGuards = 1u << 5, ProveEverything = 1u << 6, NoCallConvertsCells = 1u << 7,
+    NoLayoutIsMadeSeldom = 1u << 8, FlattenUntilHeldWhereverLegal = 1u << 9, DelayFlowRules = 1u << 10, DelayOtherFlowRules = 1u << 11,
+    GenerateAllCodeDirectly = 1u << 12, CheckProofsAtRunTime = 1u << 13, ConvertOperandsAtFetch = 1u << 14
 };
-enum class Instrumentation : uint32_t { CountBranches = 1u << 0 };
-enum class AdmittedCode : uint32_t { Inspector = 1u << 0, RuntimeCode = 1u << 1 };
-enum class ExcludedCode : uint32_t { EvaluatedText = 1u << 0 };
+enum class Instrumentation : uint32_t { CountBranches = 1u << 0, CountArrivals = 1u << 1 };
+enum class AdmittedCode : uint32_t { Inspector = 1u << 0 };
+enum class ExcludedCode : uint32_t { EvaluatedText = 1u << 0, FunctionSource = 1u << 1 };
 enum class OutputOptions : uint32_t { Obfuscate = 1u << 0 };
 
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(Primitives); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Stage); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Protects);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(DegradesTo); JS_EXPORT_PRIVATE ASCIILiteral nameOf(LimitID); JS_EXPORT_PRIVATE ASCIILiteral nameOf(PassID);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(SelectionRuleID); JS_EXPORT_PRIVATE ASCIILiteral nameOf(FlowResultKind);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(StatisticID); JS_EXPORT_PRIVATE ASCIILiteral nameOf(RuntimeCounterID);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(DiagnosticSeverity); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Int32ProofFailure);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(UserDiagnosticKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(InternalErrorKind);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(KnowledgeLevel); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AccessKind);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(IllTypedCause); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Primitives); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Stage);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(Protects); JS_EXPORT_PRIVATE ASCIILiteral nameOf(DegradesTo); JS_EXPORT_PRIVATE ASCIILiteral nameOf(LimitID);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(PassID); JS_EXPORT_PRIVATE ASCIILiteral nameOf(SelectionRuleID);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(FlowResultKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(StatisticID);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(RuntimeCounterID); JS_EXPORT_PRIVATE ASCIILiteral nameOf(DiagnosticSeverity);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(Int32ProofFailure); JS_EXPORT_PRIVATE ASCIILiteral nameOf(UserDiagnosticKind);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(InternalErrorKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(KnowledgeLevel);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(AccessCost); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AccessKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(UnprovenCauseFamily); JS_EXPORT_PRIVATE ASCIILiteral nameOf(UnprovenCause);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(CheckCause); JS_EXPORT_PRIVATE ASCIILiteral nameOf(UnseenCodeCause);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(LocaleUseKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(TypeTestFailure);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ImageVerdict); JS_EXPORT_PRIVATE ASCIILiteral nameOf(DeclineKind);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(TypedResultDeclineReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(CallDeclineReason);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(GeneratorFusionDeclineReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrayChainDeclineReason);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(StringBuilderDeclineReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(LoopDeclineReason);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(InterpretedCause); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationHeapCause);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationOutcome); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationKind);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ResultSection); JS_EXPORT_PRIVATE ASCIILiteral nameOf(CompileAction);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(Architecture); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReferenceWidth);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(MismatchPolicy); JS_EXPORT_PRIVATE ASCIILiteral nameOf(HeatOverride);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinUse); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationEscapeReason);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalStamp); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ImageVerdict);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(DeclineKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(TypedResultDeclineReason);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(CallDeclineReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(GeneratorFusionDeclineReason);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrayChainDeclineReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(StringBuilderDeclineReason);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(LoopDeclineReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(InterpretedCause);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationHeapCause); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationOutcome);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ResultSection);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(CompileAction); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Architecture);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReferenceWidth); JS_EXPORT_PRIVATE ASCIILiteral nameOf(MismatchPolicy);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(HeatOverride); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Sabotage);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinUse); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalLayoutFlags);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalFieldFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationEscapeReason);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(CheckSet); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReportSet);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(TestingSwitch); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Instrumentation);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(AdmittedCode); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExcludedCode);
@@ -387,58 +505,66 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(OutputOptions);
 
 } // namespace Wire
 
+template<> inline constexpr unsigned numberOfEnumerators<Wire::IllTypedCause> = 24;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Primitives> = 9;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Stage> = 16;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Protects> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::DegradesTo> = 15;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::LimitID> = 209;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::PassID> = 87;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::SelectionRuleID> = 32;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::FlowResultKind> = 35;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::StatisticID> = 610;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::RuntimeCounterID> = 40;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::LimitID> = 213;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::PassID> = 109;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::SelectionRuleID> = 33;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::FlowResultKind> = 23;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::StatisticID> = 958;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::RuntimeCounterID> = 54;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::DiagnosticSeverity> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Int32ProofFailure> = 13;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::UserDiagnosticKind> = 28;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::InternalErrorKind> = 132;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::KnowledgeLevel> = 4;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::UserDiagnosticKind> = 29;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::InternalErrorKind> = 142;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::KnowledgeLevel> = 3;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::AccessCost> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AccessKind> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::UnprovenCauseFamily> = 4;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::UnprovenCause> = 24;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::UnprovenCause> = 35;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::CheckCause> = 8;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::UnseenCodeCause> = 8;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::UnseenCodeCause> = 9;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::LocaleUseKind> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::TypeTestFailure> = 2;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ArrivalStamp> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ImageVerdict> = 15;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::DeclineKind> = 17;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::DeclineKind> = 15;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::TypedResultDeclineReason> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::CallDeclineReason> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::GeneratorFusionDeclineReason> = 11;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ArrayChainDeclineReason> = 10;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::StringBuilderDeclineReason> = 6;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::LoopDeclineReason> = 14;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::LoopDeclineReason> = 12;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::InterpretedCause> = 7;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AllocationHeapCause> = 17;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AllocationOutcome> = 7;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AllocationKind> = 13;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::ResultSection> = 23;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::CompileAction> = 2;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ResultSection> = 27;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::CompileAction> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Architecture> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ReferenceWidth> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::MismatchPolicy> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::HeatOverride> = 5;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::Sabotage> = 15;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::BuiltinUse> = 6;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ArrivalLayoutFlags> = 1;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ArrivalFieldFlags> = 1;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AllocationEscapeReason> = 8;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::CheckSet> = 7;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::ReportSet> = 5;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::TestingSwitch> = 8;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::Instrumentation> = 1;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::AdmittedCode> = 2;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::ExcludedCode> = 1;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::CheckSet> = 9;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ReportSet> = 7;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::TestingSwitch> = 15;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::Instrumentation> = 2;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::AdmittedCode> = 1;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ExcludedCode> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::OutputOptions> = 1;
 
 template<> inline constexpr bool isFlagWord<Wire::Primitives> = true;
 template<> inline constexpr bool isFlagWord<Wire::BuiltinUse> = true;
+template<> inline constexpr bool isFlagWord<Wire::ArrivalLayoutFlags> = true;
+template<> inline constexpr bool isFlagWord<Wire::ArrivalFieldFlags> = true;
 template<> inline constexpr bool isFlagWord<Wire::AllocationEscapeReason> = true;
 template<> inline constexpr bool isFlagWord<Wire::CheckSet> = true;
 template<> inline constexpr bool isFlagWord<Wire::ReportSet> = true;

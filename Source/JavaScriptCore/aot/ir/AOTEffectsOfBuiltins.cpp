@@ -44,7 +44,7 @@ Effects ownEffectsOf(const BuiltinOverload& overload)
         effects.merge(heapCapabilityEffects);
         break;
     }
-    effects.mayThrow = overload.throws();
+    effects.mayThrow = !overload.throws() ? ThrowEffect(false) : overload.onlyPropagatesErrors() ? ThrowEffect::onlyForLackOfMemory() : ThrowEffect(true);
     return effects;
 }
 
@@ -85,7 +85,7 @@ static bool describeJavaScriptOf(const Program& program, const BuiltinOverload& 
         describeRuntimeFunction(program, libraryFunction, description);
         return true;
     }
-    if (overload.code.model) {
+    if (isDescribedByModel(overload)) {
         description.addOwn(ownEffectsOf(overload));
         describeRuntimeFunction(program, overload.code.model, description);
         return true;
@@ -123,6 +123,22 @@ static OperandBehavior behaviorOfArgument(const BuiltinOverload& overload, unsig
     return declaredBehaviorOf(overload, BuiltinOperand::argument(index));
 }
 
+// An operand that is not passed is undefined. A receiver that is not named may be anything.
+static bool mayFailOnOperands(const Program& program, const BuiltinOverload& overload, const Type* receiver, std::span<const TypeID> arguments)
+{
+    if (overload.receiver && mayFailOnOperand(program, *overload.receiver, receiver ? *receiver : program.at(TypeTable::anything)))
+        return true;
+    return std::ranges::any_of(overload.parameters, [&](const BuiltinParameter& parameter) {
+        size_t first = parameter.operand.argumentIndex();
+        bool takesRest = parameter.operand.kind() == BuiltinOperand::Kind::ArgumentsFrom;
+        if (first >= arguments.size())
+            return !takesRest && mayFailOnOperand(program, parameter, program.at(TypeTable::undefined));
+        return std::ranges::any_of(arguments.subspan(first, takesRest ? std::dynamic_extent : 1), [&](TypeID argument) {
+            return mayFailOnOperand(program, parameter, program.at(argument));
+        });
+    });
+}
+
 static void describeOperandsOf(const Program& program, const BuiltinOverload& overload, const Type* receiver, std::span<const TypeID> arguments, EffectDescription& description)
 {
     if (receiver) {
@@ -132,6 +148,8 @@ static void describeOperandsOf(const Program& program, const BuiltinOverload& ov
     }
     for (unsigned index = 0; index < arguments.size(); ++index)
         describeOperandCode(program, program.at(arguments[index]), behaviorOfArgument(overload, index), description);
+    if (overload.onlyPropagatesErrors() && mayFailOnOperands(program, overload, receiver, arguments))
+        description.addThrow();
 }
 
 static void describeArgumentsOfType(const Program& program, const BuiltinOverload& overload, const Type& argument, EffectDescription& description)
@@ -192,6 +210,8 @@ void describeOverload(const Program& program, BuiltinOverloadID id, const Type& 
         return;
     case OperandCode::IsDeclaredByParameters:
         describeOperandCode(program, argument, behaviorOfArgument(overload, 0), description);
+        if (overload.throws())
+            description.addThrow();
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -229,7 +249,7 @@ static void describeListCall(const Program& program, const BuiltinOverload& over
 
 static bool isDeclaredByParameters(const BuiltinOverload& overload)
 {
-    return !overload.isUndeclared() && !overload.libraryFunction() && !overload.code.model;
+    return !overload.isUndeclared() && !overload.libraryFunction() && !isDescribedByModel(overload);
 }
 
 void describeOperandsOfCall(const Program& program, BuiltinID builtin, BuiltinCallMode mode, BuiltinCallForm form, const Type& receiver, std::span<const TypeID> arguments, EffectDescription& description)
@@ -257,6 +277,7 @@ void describeOverload(const Program& program, BuiltinOverloadID id, BuiltinCallF
         return;
     case BuiltinCallForm::AnyReceiver:
         describeCallOf(program, overload.builtin, overload.mode, description);
+        describeOperandsOfCall(program, overload.builtin, overload.mode, BuiltinCallForm::Whole, receiver ? *receiver : program.at(TypeTable::undefined), arguments, description);
         return;
     case BuiltinCallForm::List:
         describeListCall(program, overload, arguments, description);
@@ -337,8 +358,12 @@ static void describeInline(const Program& program, const Function& function, con
         return;
     }
 
-    describeBound(declaredBoundOf(builtin), description);
     const BuiltinOverload& overload = program.builtins().at(call.overload);
+    // Inline code is the entry in another form: it throws for no reason that the entry has not.
+    Effects bound = declaredBoundOf(builtin);
+    if (bound.mayThrow && overload.onlyPropagatesErrors())
+        bound.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    describeBound(bound, description);
     switch (call.form) {
     case BuiltinCallForm::Whole:
     case BuiltinCallForm::Fields:

@@ -35,8 +35,11 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
         if (string->length() > JSString::maxLengthForOnStackResolve)
             return { };
         bool isIndex = text && parseIndex(*text);
-        if (!isIndex)
-            text = atomization == KeyAtomization::Atomize ? string->toAtomString(globalObject).data : string->toExistingAtomString(globalObject).data;
+        if (!isIndex) {
+            // A constant of the program comes back as a key again and again, and there are only so many of them. With an atom the caches can file that the name is absent.
+            bool atomizes = atomization == KeyAtomization::Atomize || (text && Image::isBackedByStaticData(*text));
+            text = atomizes ? string->toAtomString(globalObject).data : string->toExistingAtomString(globalObject).data;
+        }
         if (!text)
             return { isRope && string->length() <= maxIndexLength ? KeyNameKind::NotAName : KeyNameKind::HasNoAtom };
     }

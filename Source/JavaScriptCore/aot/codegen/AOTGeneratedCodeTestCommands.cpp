@@ -232,6 +232,8 @@ static void printCode(PrintStream& out, const CompiledCode& code)
         out.print(" enteredWithoutStackCheck");
     if (code.frame.isProvenToFitOnStack)
         out.print(" provenToFitOnStack");
+    if (!code.frame.hasFrameRecord)
+        out.print(" noFrameRecord");
     out.println();
 }
 
@@ -291,9 +293,13 @@ static void printUnits(PrintStream& out, const CodeBody& body)
     size_t callBytes = 0;
     size_t pinnedBytes = 0;
     size_t endBytes = 0;
+    size_t bytesThatMayRun = 0;
     for (const CodeUnit& unit : body.units) {
+        if (unit.mayRun)
+            bytesThatMayRun += unit.length;
         switch (unit.kind) {
         case CodeUnit::Kind::Plain:
+        case CodeUnit::Kind::PlainOffStackPointer:
             plainBytes += unit.length;
             break;
         case CodeUnit::Kind::Call:
@@ -307,7 +313,7 @@ static void printUnits(PrintStream& out, const CodeBody& body)
             break;
         }
     }
-    out.println("  units plain=", plainBytes, " call=", callBytes, " pinned=", pinnedBytes, " end=", endBytes);
+    out.println("  units plain=", plainBytes, " call=", callBytes, " pinned=", pinnedBytes, " end=", endBytes, " mayRun=", bytesThatMayRun);
 }
 
 static void printStatistics(PrintStream& out, const Statistics& statistics, std::span<const StatisticID> named)

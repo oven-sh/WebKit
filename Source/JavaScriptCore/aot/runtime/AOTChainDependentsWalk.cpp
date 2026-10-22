@@ -87,10 +87,14 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
         return true;
 
     // The names and classes that the engine's megamorphic caches look up in the property table alone.
-    if (!canUseMegamorphicGetByIdExcludingIndex(vm, uid))
-        return false;
     JSType type = typeInfo.type();
-    return type == ArrayType || type == JSFunctionType || type == DerivedStringObjectType || object == start.globalObject->arrayPrototype();
+    bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || object == start.globalObject->arrayPrototype();
+    if (!canUseMegamorphicGetByIdExcludingIndex(vm, uid)) {
+        // Those caches leave out what a function answers for by itself. An array and a String object look `name` and `prototype` up like any other name.
+        return answersOnlyForLength && (uid == vm.propertyNames->name || uid == vm.propertyNames->prototype);
+    }
+    // A slim closure that has properties has all of them in its table, its length, its name and its prototype too.
+    return answersOnlyForLength || type == JSFunctionType || type == SlimClosureWithPropertiesType;
 }
 
 static bool holdsBoxedValueInCell(const FieldData& field)
@@ -101,21 +105,52 @@ static bool holdsBoxedValueInCell(const FieldData& field)
     return representation == SlotRepresentation::JSValue || representation == SlotRepresentation::Cell;
 }
 
+// Only the key order says that such a field exists where its slot holds nothing. Its value is undefined then.
+static bool existsWithoutStorage(const Object& object, const FieldData& field)
+{
+    return field.flags & fieldMayExistWithoutStorage && !object.layout().keysAreNeverEnumerated && object.isInKeyOrder(object.state(), field);
+}
+
+static StepResult stopAtField(Object& object, const FieldData& field, PropertyOffset offset, ChainWalk& walk)
+{
+    // Whoever finds an accessor takes its getter and setter from the word that the offset names.
+    if (field.isAccessor() && !isValidOffset(offset))
+        return stopAt(&object, walk);
+    walk.changeableObjects.append(&object);
+    walk.result = ChainWalkResult::Found;
+    walk.holder = &object;
+    walk.owner = &object;
+    walk.offset = offset;
+    walk.attributes = object.attributesOf(field);
+    return StepResult::Stop;
+}
+
 // Compiled code leaves the creation of a field to the run time, which reports it, where the object has extra properties and its layout lists its keys.
 static bool reportsCreationOf(const Object& object, const FieldData& field)
 {
     return object.hasExtraProperties() && !object.layout().keysAreNeverEnumerated && !(field.flags & fieldMayExistWithoutStorage);
 }
 
-// A slot that gets filled holds a writable data property, and a store below one creates a property of the receiver, as it does where the name is absent.
+// A slot that gets filled holds a property of the form that the layout gives the field. Where that is a writable data property, a store below it creates a property of the receiver,
+// as it does where the name is absent, and what a read of it answers does not depend on the receiver.
 static StepResult passEmptySlot(const ChainWalkStart& start, Object& object, const FieldData& field, ChainWalk& walk)
 {
-    if (field.slot.representation() == SlotRepresentation::DeferredClosure)
+    if (field.slot.representation() == SlotRepresentation::DeferredClosure || field.flags & (fieldIsReadOnly | fieldIsAccessor))
         return stopAt(&object, walk);
-    if (start.use != ChainWalkUse::UsedAtOnce && !reportsCreationOf(object, field)) {
-        if (start.use == ChainWalkUse::KeptForReads)
+    if (!reportsCreationOf(object, field)) {
+        switch (start.use) {
+        case ChainWalkUse::KeptForReads:
             return stopAt(&object, walk);
-        walk.passedSlotFilledWithoutReport = true;
+        case ChainWalkUse::KeptForReadsThatAskObjects:
+            if (!walk.firstObjectWithEmptySlot)
+                walk.firstObjectWithEmptySlot = &object;
+            break;
+        case ChainWalkUse::KeptForStores:
+            walk.passedSlotFilledWithoutReport = true;
+            break;
+        case ChainWalkUse::UsedAtOnce:
+            break;
+        }
     }
     walk.changeableObjects.append(&object);
     return StepResult::Continue;
@@ -129,7 +164,7 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
         if (structure->isDictionary() && start.use != ChainWalkUse::UsedAtOnce)
             return stopAt(&object, walk);
         std::optional<PropertyOffset> offset = findOffset(start.globalObject->vm(), structure, uid, start.mode, attributes);
-        if (!offset)
+        if (!offset || attributes & PropertyAttribute::CustomAccessorOrValue)
             return stopAt(&object, walk);
         if (isValidOffset(*offset)) {
             walk.changeableObjects.append(&object);
@@ -141,10 +176,13 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
             return StepResult::Stop;
         }
     }
-    if (field)
-        return passEmptySlot(start, object, *field, walk);
-    walk.changeableObjects.append(&object);
-    return StepResult::Continue;
+    if (!field) {
+        walk.changeableObjects.append(&object);
+        return StepResult::Continue;
+    }
+    if (existsWithoutStorage(object, *field))
+        return stopAtField(object, *field, invalidOffset, walk);
+    return passEmptySlot(start, object, *field, walk);
 }
 
 // Compiled code stores to a filled slot without a report, so the walk names the word of the slot and never its value. Only the run time empties a slot, moves its property
@@ -158,14 +196,8 @@ static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStr
         return stopAt(&object, walk);
     if (!field || !object.isInSlot(*field))
         return lookUpExtraPropertyOfCompiledObject(start, uid, object, field, walk);
-    walk.changeableObjects.append(&object);
-    walk.result = ChainWalkResult::Found;
-    walk.holder = &object;
-    walk.owner = &object;
-    walk.attributes = object.attributesOf(*field);
-    if (holdsBoxedValueInCell(*field))
-        walk.offset = Slot::offsetFor(static_cast<int32_t>(field->slot.offset / sizeof(EncodedJSValue)));
-    return StepResult::Stop;
+    PropertyOffset offset = holdsBoxedValueInCell(*field) ? Slot::offsetFor(static_cast<int32_t>(field->slot.offset / sizeof(EncodedJSValue))) : invalidOffset;
+    return stopAtField(object, *field, offset, walk);
 }
 
 static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl* uid, JSObject* object, ChainWalk& walk)
@@ -190,7 +222,9 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         offset = structure->get(vm, uid, attributes);
     }
     if (isValidOffset(*offset)) {
-        if (!structure->isImmutableProperty(uid))
+        // An immutable property keeps its value and its place. It may still be made read-only, as Object.freeze() makes it, and from then on it stops the stores of whoever inherits it.
+        bool mayStopStoresLater = start.use == ChainWalkUse::KeptForStores && !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+        if (!structure->isImmutablePropertyForReader(uid) || mayStopStoresLater)
             walk.changeableObjects.append(object);
         walk.result = ChainWalkResult::Found;
         walk.holder = object;
@@ -201,7 +235,7 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
     }
     if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(uid))
         return stopAt(object, walk);
-    bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutableProperty(uid);
+    bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
     if (canGainProperty || !structure->hasImmutablePrototype())
         walk.changeableObjects.append(object);
     return StepResult::Continue;
@@ -236,6 +270,9 @@ ChainWalk walkChain(const ChainWalkStart& start, UniquedStringImpl* uid)
     ChainWalk walk;
     walkObjectsAbove(start, uid, walk);
     if (walk.passedSlotFilledWithoutReport && storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+        walk.result = ChainWalkResult::Unknown;
+    // The object that is asked answers with itself as the receiver, which is right for a data property and for none.
+    if (walk.firstObjectWithEmptySlot && walk.result == ChainWalkResult::Found && walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
         walk.result = ChainWalkResult::Unknown;
     return walk;
 }

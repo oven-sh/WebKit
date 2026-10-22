@@ -1,4 +1,5 @@
 # A local array of small integers gets the narrowest typed array that holds every value stored in it
+# TODO: nobody: a local `new Array(n).fill(0)` with one store and one read is no longer given narrow storage
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
 # STATISTIC: ArraysNarrowed = 4

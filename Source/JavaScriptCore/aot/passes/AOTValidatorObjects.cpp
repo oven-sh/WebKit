@@ -178,7 +178,7 @@ ValueID ValidatorBuilder::emitObject(ResultNodeRef, const ResultNode& node, Valu
     if (cloneNeedsNewGuard)
         object.guard = emitRequirePlainData(*this, object.object, exits.unknown);
 
-    ValueID copy = emitCopy(object, node, replaced.span());
+    ValueID copy = emitCopy(object, node, replaced.span(), exits);
     if (node.undeclared == UndeclaredMembers::Validated)
         emitValidateUndeclaredMembers(object, node, copy, exits);
     return copy;
@@ -191,7 +191,7 @@ ValueID ValidatorBuilder::emitMember(const PlainObject& object, const ResultMemb
     return builder().append(WTF::move(read));
 }
 
-ValueID ValidatorBuilder::emitCopy(const PlainObject& object, const ResultNode& node, std::span<const CopiedMember> replaced)
+ValueID ValidatorBuilder::emitCopy(const PlainObject& object, const ResultNode& node, std::span<const CopiedMember> replaced, const ValidationExits& exits)
 {
     bool isCopiedAsLayout = copiesAsLayout(decisionInputs(), node);
     ValueID copy;
@@ -211,7 +211,8 @@ ValueID ValidatorBuilder::emitCopy(const PlainObject& object, const ResultNode& 
         clone.setValuesOperands(values.span());
         if (AllocationSiteID site = inputs().flow.typedResultSite(node.layout))
             clone.setAllocationSite(site);
-        copy = builder().append(WTF::move(clone));
+        // Flow knows the copies of a validator as objects of the layout, so an ordinary object, which the run time makes of a source that does not fit, is none of them.
+        copy = emitTypeTest(builder().append(WTF::move(clone)), inputs().types.intern(Type::forLayout(node.layout, inputs().types)), exits.unknown);
     } else
         copy = appendCopyOfOwnProperties(*this, object.object);
 

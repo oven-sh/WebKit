@@ -459,7 +459,15 @@ static void checkPreservingCall(StubKey body, StubRegister scratch, bool returns
                 jit.call(jit.allocateScratch(scratch), tag);
             });
         });
-        AOT_TEST_CHECK(recording.clobberedByCallees == expectedLoss);
+        RegisterSet lostIntegerRegisters = recording.clobberedByCallees;
+        lostIntegerRegisters.filter(RegisterSet::allGPRs());
+        lostIntegerRegisters.exclude(RegisterSet::macroClobberedGPRs());
+        AOT_TEST_CHECK(lostIntegerRegisters == expectedLoss);
+        // Of the floating-point registers that the callee may write, two are stored and loaded.
+        RegisterSet keptFloatingPointRegisters = registersClobberedBy(callee);
+        keptFloatingPointRegisters.filter(RegisterSet::allFPRs());
+        keptFloatingPointRegisters.exclude(recording.clobberedByCallees);
+        AOT_TEST_CHECK(keptFloatingPointRegisters.numberOfSetRegisters() == 2);
         AOT_TEST_CHECK(recording.leavesStubs && recording.hasUnknownEffects == (callee != StubCallee::Operation));
         AOT_TEST_CHECK(!containsRegister(recording.clobbered(), gprOf(scratch)));
     }

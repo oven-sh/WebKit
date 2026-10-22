@@ -1,4 +1,4 @@
-# What receiverCandidates knows about the object of an access: only the type proves layouts, a prediction, a written type and a stamp say which ones to expect
+# What receiverCandidates knows about the object of an access: only the type proves layouts, an expected type and a stamp say which ones to expect
 # FORM: Prepared
 # RUN: receiver-candidates
 
@@ -16,37 +16,38 @@ function f0 name="type-lists-layouts" parameters=[{type=L0|L1}] results=[{type=a
 # CHECK-NOT: predicted
 # CHECK-NOT: otherParts
 # CHECK-NOT: nullish
-function f1 name="prediction-is-a-strict-subset" parameters=[{type=L0|L1 predicted=L0}] results=[{type=anything}] {
+function f1 name="expected-type-is-a-strict-subset" parameters=[{type=L0|L1}] results=[{type=anything}] {
   b0(v0: L0|L1 ~ L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # CHECK: F1 v1: proof=Type level=Proven proven=[L0, L1] predicted=[L0]
-function f2 name="prediction-equals-the-type" parameters=[{type=L0|L1 predicted=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1 ~ L0|L1):
+function f2 name="type-has-members-without-layout" parameters=[{type=L0|nolayout}] results=[{type=anything}] {
+  b0(v0: L0|nolayout):
     v1 = PropGet v0 key="x"
     Return v1
 }
-# CHECK-NEXT: F2 v1: proof=Type level=Proven proven=[L0, L1]
-# CHECK-NOT: predicted
-function f3 name="object-with-prediction" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+# CHECK-NEXT: F2 v1: proof=Unknown level=Expected predicted=[L0] otherParts
+# CHECK-NOT: nullish
+function f3 name="expected-parameter" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK: F3 v1: proof=Unknown level=Expected predicted=[L0] otherParts nullish
+function f4 name="object-with-expected-type" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
-# CHECK: F3 v1: proof=Unknown level=Predicted predicted=[L0] otherParts
-function f4 name="object-with-written-type" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
-    v1 = PropGet v0 key="x"
-    Return v1
-}
-# CHECK-NEXT: F4 v1: proof=Unknown level=Predicted predicted=[L0] otherParts
-function f5 name="object-without-prediction" parameters=[{type=object}] results=[{type=anything}] {
+# CHECK-NEXT: F4 v1: proof=Unknown level=Expected predicted=[L0] otherParts
+# CHECK-NOT: nullish
+function f5 name="object-without-expected-type" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object):
     v1 = PropGet v0 key="x"
     Return v1
 }
-# CHECK-NEXT: F5 v1: proof=Unknown level=Unknown otherParts
+# CHECK: F5 v1: proof=Unknown level=Unknown otherParts
 function f6 name="type-admits-no-object" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = PropGet v0 key="x" receivers=[L0]
@@ -84,19 +85,19 @@ function f11 name="complete-stamp-on-object" parameters=[{type=object}] results=
     v1 = PropGet v0 key="x" receivers=[L0]
     Return v1
 }
-# CHECK: F11 v1: proof=Unknown level=Predicted predicted=[L0] otherParts
+# CHECK: F11 v1: proof=Unknown level=Expected predicted=[L0] otherParts
 function f12 name="incomplete-stamp-on-object" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object):
     v1 = PropGet v0 key="x" receivers=[L0, ..]
     Return v1
 }
-# CHECK-NEXT: F12 v1: proof=Unknown level=Predicted predicted=[L0] otherParts
-function f13 name="prediction-comes-before-stamp" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+# CHECK-NEXT: F12 v1: proof=Unknown level=Expected predicted=[L0] otherParts
+function f13 name="expected-type-and-stamp-are-joined" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = PropGet v0 key="x" receivers=[L1]
     Return v1
 }
-# CHECK-NEXT: F13 v1: proof=Unknown level=Predicted predicted=[L0] otherParts
+# CHECK-NEXT: F13 v1: proof=Unknown level=Expected predicted=[L0, L1] otherParts
 function f14 name="member-never-allocated" parameters=[{type=L0|L2}] results=[{type=anything}] {
   b0(v0: L0|L2):
     v1 = PropGet v0 key="x"
@@ -104,30 +105,30 @@ function f14 name="member-never-allocated" parameters=[{type=L0|L2}] results=[{t
 }
 # CHECK-NEXT: F14 v1: proof=Type level=Proven proven=[L0]
 # CHECK-NOT: predicted
-function f15 name="predicted-member-never-allocated" parameters=[{type=object predicted=L0|L2}] results=[{type=anything}] {
+function f15 name="expected-member-never-allocated" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0|L2):
     v1 = PropGet v0 key="x"
     Return v1
 }
-# CHECK: F15 v1: proof=Unknown level=Predicted predicted=[L0] otherParts
-function f16 name="claim-brought-the-layouts" parameters=[{type=anything}] results=[{type=anything}] {
+# CHECK: F15 v1: proof=Unknown level=Expected predicted=[L0] otherParts
+function f16 name="check-brought-the-layouts" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=L0
+    v1 = Check v0 castType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
-# CHECK-NEXT: F16 v2: proof=Type level=Written proven=[L0]
-function f17 name="claim-through-upcast" parameters=[{type=anything}] results=[{type=anything}] {
+# CHECK-NEXT: F16 v2: proof=Type level=Proven proven=[L0]
+function f17 name="check-through-upcast" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=L0
+    v1 = Check v0 castType=L0
     v2 = Upcast v1 castType=L0|L1
     v3 = PropGet v2 key="x"
     Return v3
 }
-# CHECK-NEXT: F17 v3: proof=Type level=Written proven=[L0]
-function f18 name="claim-of-a-proven-set" parameters=[{type=L0|L1}] results=[{type=anything}] {
+# CHECK-NEXT: F17 v3: proof=Type level=Proven proven=[L0]
+function f18 name="check-of-a-proven-set" parameters=[{type=L0|L1}] results=[{type=anything}] {
   b0(v0: L0|L1):
-    v1 = Claim v0 castType=L0
+    v1 = Check v0 castType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
@@ -140,3 +141,15 @@ function f19 name="store-and-test-name-their-receiver" parameters=[{type=L0}, {t
 }
 # CHECK-NEXT: F19 v3: proof=Type level=Proven proven=[L0]
 # CHECK-NEXT: F19 v4: proof=Type level=Proven proven=[L1]
+function f20 name="expected-type-never-allocated-leaves-the-stamp" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = PropGet v0 key="x" receivers=[L0]
+    Return v1
+}
+# CHECK-NEXT: F20 v1: proof=Unknown level=Expected predicted=[L0] otherParts
+function f21 name="expected-type-never-allocated" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F21 v1: proof=Unknown level=Unknown otherParts

@@ -1,0 +1,35 @@
+# interface Node { kind: number; pos: number }  interface Num extends Node { kind: 1; value: number }  interface Add extends Node { kind: 2; left: Node; right: Node }
+# function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }
+# The relations of a function name its entry parameters by their places. The pass puts new.target in front of `kind` and hands every parameter to the copy that allocates `this`, a call of which
+# the relations know nothing. So they go, as those of the copy do: left as they were they said of new.target what is true of `kind`, of `kind` what is true of `pos`, and of `pos` nothing at all.
+# FORM: AsRead
+# RUN(READ): print
+# RUN: pass AllocateTaggedLayouts
+# READ-LABEL: function f1 name="NodeObject"
+# READ: relations={subjects=[
+# CHECK-LABEL: function f1 name="NodeObject"
+# CHECK: flags=[HasThis, HasNewTarget]
+# CHECK-NOT: relations=
+# CHECK-LABEL: function f2 name="valueOf"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersWritten]}, {kind=Parameter index=1}, {kind=Parameter index=2}] stores=[{source=1 target=0 key="kind" isOnEveryPath=true}, {source=2 target=0 key="pos" isOnEveryPath=true}]} {
+  b0(v0: undefined|null|L1, v1: number, v2: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="valueOf" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
+  b0(v0: undefined|null|L2):
+    v1 = PropGet v0 key="value"
+    Return v1
+}

@@ -33,11 +33,13 @@ public:
         Object,
         Getter,
         Setter,
+        Value,
     };
 
     static constexpr BuiltinCellKey object(BuiltinID id) { return BuiltinCellKey(Kind::Object, id); }
     static constexpr BuiltinCellKey getter(BuiltinID id) { return BuiltinCellKey(Kind::Getter, id); }
     static constexpr BuiltinCellKey setter(BuiltinID id) { return BuiltinCellKey(Kind::Setter, id); }
+    static constexpr BuiltinCellKey value(BuiltinID id) { return BuiltinCellKey(Kind::Value, id); }
 
     constexpr uint32_t encoded() const { return static_cast<uint32_t>(m_kind) << 24 | m_builtin.index(); }
     JS_EXPORT_PRIVATE static std::optional<BuiltinCellKey> decode(uint32_t, const BuiltinTable&);
@@ -76,6 +78,9 @@ enum class BuiltinLookupFailure : uint8_t {
 };
 
 JS_EXPORT_PRIVATE std::expected<JSCell*, BuiltinLookupFailure> findInRealm(JSGlobalObject*, BuiltinCellKey);
+// What the holder makes under the name at its first read, out of its static table, for a name that somebody wrote to before anybody had read it.
+// Nobody has seen that object, so the one that is made now is the one.
+std::expected<JSCell*, BuiltinLookupFailure> makeMemberOfStaticTable(JSGlobalObject*, BuiltinCellKey, JSObject* holder);
 JS_EXPORT_PRIVATE std::expected<JSCell*, BuiltinLookupFailure> findInHolder(JSGlobalObject*, BuiltinCellKey, JSObject* holder);
 JS_EXPORT_PRIVATE std::expected<JSValue, BuiltinLookupFailure> findValueInHolder(JSGlobalObject*, JSObject* holder, const Identifier&);
 JS_EXPORT_PRIVATE JSValue getByPath(JSGlobalObject*, BuiltinID);
@@ -91,11 +96,19 @@ JS_EXPORT_PRIVATE void forEachHiddenPrototype(JSGlobalObject*, const ScopedLambd
 void forEachHiddenPrototype(JSGlobalObject*, const ScopedLambda<void(BuiltinClassID, JSObject*)>&);
 // Visits the Structure that the realm gives a new instance, for each built-in class that has one and whose objects the realm has created. An array has one per kind of storage.
 JS_EXPORT_PRIVATE void forEachInstanceStructure(JSGlobalObject*, const ScopedLambda<void(BuiltinClassID, Structure*)>&);
+BuiltinClassID findClassWithInstanceStructure(JSGlobalObject*, Structure*);
+
+// Hears of every write to a member of a built-in holder that nothing refuses, before it is made. What the engine or the host puts there when it makes a member is no write.
+class WritesToBuiltinMembers {
+public:
+    virtual ~WritesToBuiltinMembers() = default;
+    virtual void willWrite(BuiltinID member, UniquedStringImpl* key) = 0;
+};
 
 // For a holder that is not locked as a whole: the members that the table locks, the members that a program took for constants (their numbers, ascending), and what the table closes
 // on the holder. A holder that locks its members also fixes the names that its instances own: Function.prototype is a function, with a name and a length of its own.
 // No name is listed or interned: a key is looked up in the table, which is read-only data, when somebody is about to write it.
-JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, RefPtr<const ImmutablePropertyNames::OutsideNames>&& namesOfProgram = nullptr);
+JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr);
 
 } // namespace AOT
 } // namespace JSC

@@ -140,6 +140,39 @@ static void checkReturnLabels(const Vector<StubAssembler::BoundReturnLabel>& ret
     }
 }
 
+static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBlob& blob)
+{
+    Vector<StubPlacement> byOffset = blob.placements;
+    std::ranges::sort(byOffset, { }, &StubPlacement::offset);
+    auto isSingleReturnSite = [&](uint32_t offset) {
+        auto site = std::ranges::lower_bound(blob.returnSites, offset, { }, &StubReturnSite::offset);
+        return site != blob.returnSites.end() && site->offset == offset && hasSingleReturnSite(site->kind);
+    };
+
+    Vector<StubEntryRange> result;
+    for (const StubReturnSite& site : blob.returnSites) {
+        if (!hasSingleReturnSite(site.kind))
+            continue;
+        auto behindCall = std::ranges::lower_bound(byOffset, site.offset, { }, &StubPlacement::offset);
+        RELEASE_ASSERT(behindCall != byOffset.begin());
+        StubKey body = bodyOf(std::prev(behindCall)->key);
+        for (auto entry = byOffset.begin(); entry != behindCall; ++entry) {
+            if (bodyOf(entry->key) != body)
+                continue;
+            // Only a return comes to the site itself, and it comes to the copy that made the call.
+            auto next = std::find_if(std::next(entry), byOffset.end(), [&](const StubPlacement& placement) {
+                return placement.offset != entry->offset && !isSingleReturnSite(placement.offset);
+            });
+            result.append({ entry->offset, next == byOffset.end() ? static_cast<uint32_t>(blob.code.bytes.size()) : next->offset });
+        }
+    }
+    std::ranges::sort(result, { }, &StubEntryRange::offset);
+    removeRepeatedElements(result, [](const StubEntryRange& a, const StubEntryRange& b) {
+        return a.offset == b.offset;
+    });
+    return result;
+}
+
 std::optional<uint32_t> StubBlob::offsetOf(StubKey key) const
 {
     auto placement = std::ranges::lower_bound(placements, key, { }, &StubPlacement::key);
@@ -184,6 +217,7 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
         blob.returnSites.append(StubReturnSite { linkBuffer.offsetOf(returnLabel.label), returnLabel.kind });
     std::ranges::sort(blob.returnSites, { }, &StubReturnSite::offset);
     RELEASE_ASSERT(std::ranges::adjacent_find(blob.returnSites, { }, &StubReturnSite::offset) == blob.returnSites.end());
+    blob.entriesInFrontOfSingleReturnSites = findEntriesInFrontOfSingleReturnSites(blob);
     blob.entriesUsed = reached.entriesUsed;
 
     Statistics& statistics = context.statistics();

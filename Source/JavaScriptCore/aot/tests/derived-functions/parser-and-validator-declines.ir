@@ -23,9 +23,9 @@ layout L2 name="RightNode" module=m0 position=25 fields=[{key="right" declared={
 layout L3 name="SymbolKey" module=m0 position=30 fields=[{key="n" declared={type=number}}]
 layout L4 name="NeverMade" module=m0 position=40 fields=[{key="x" declared={type=number}}] flow={allocation=NeverAllocated}
 layout L5 name="MemberWithoutField" module=m0 position=50 fields=[{key="x" declared={type=number}}]
-layout L6 name="ProvenArrayField" module=m0 position=60 fields=[{key="items" declared={type=Array<number, proven> written=Array<number>}}]
+layout L6 name="ProvenArrayField" module=m0 position=60 fields=[{key="items" declared={type=Array<number, proven>}}]
 layout L7 name="Compiled" module=m0 position=70 fields=[{key="x" declared={type=number}}]
-layout L8 name="ContentsProvenNarrowerThanPlainData" module=m0 position=65 fields=[{key="items" declared={type=Array<number, proven> written=Array<number>}}]
+layout L8 name="ContentsProvenNarrowerThanPlainData" module=m0 position=65 fields=[{key="items" declared={type=Array<number, proven>}}]
 variable g0 name="t0" declared={type=L4} initialization=Undefined
 variable g1 name="t1" declared={type=L7} initialization=Undefined
 variable g2 name="t2" declared={type=L8} initialization=Undefined

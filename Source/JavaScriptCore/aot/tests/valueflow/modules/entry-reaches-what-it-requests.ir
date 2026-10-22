@@ -7,8 +7,8 @@
 # CHECK: unreached f3
 # CHECK-NEXT: unreached f4
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
-module m1 path="first.js" displayPath="first.js" body=f1 requests=[{target=m2}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}]
 module m2 path="second.js" displayPath="second.js" body=f2
 module m3 path="other.js" displayPath="other.js" body=f3
 entry module=m0

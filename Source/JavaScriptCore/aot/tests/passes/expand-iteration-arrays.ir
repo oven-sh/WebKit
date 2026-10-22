@@ -4,8 +4,9 @@
 # RUN(ABSENT): pass ExpandIteration
 # RUN(RESOLVED): pass ExpandIteration SimplifyControlFlow ThreadJumps FoldConstants SimplifyControlFlow EliminateDeadCode SimplifyCasts ResolveBuiltins ResolveAccesses PlaceTypeTests CompactBlocks
 # RUN(LEFT): pass ExpandIteration
-# STATISTIC: IterationsExpandedByClass = 5
-# STATISTIC: IterationsExpandedGenerically = 1
+# OPTIONS: disable=pass:PlaceTypeTests disable-in=2:1
+# STATISTIC: IterationsExpandedByClass = 6
+# STATISTIC: IterationsExpandedGenerically = 0
 
 module m0 path="main.js" displayPath="main.js"
 
@@ -65,6 +66,7 @@ function f0 name="forOf" parameters=[{type=Array<number, pristine[Names]>}, {typ
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: key="return"
 # ABSENT-NOT: NewArray
@@ -149,7 +151,7 @@ function f3 name="bodyPushes" parameters=[{type=Array<number, pristine[Names]>}]
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # ABSENT-LABEL: function f3 name="bodyPushes"
 
-function f4 name="sumOfWrittenArray" parameters=[{type=undefined|null|Array<number>}, {type=number}] results=[{type=number}] {
+function f4 name="sumOfNullableArray" parameters=[{type=undefined|null|Array<number>}, {type=number}] results=[{type=number}] {
   b0(v0: undefined|null|Array<number>, v1: number):
     v2 = IteratorOpen v0
     Jump -> next b1(v1)
@@ -162,14 +164,14 @@ function f4 name="sumOfWrittenArray" parameters=[{type=undefined|null|Array<numb
   b2():
     Return v3
   b3():
-    v8 = Claim v7 castType=number
+    v8 = Check v7 castType=number
     v9 = Add v3, v8
     Jump -> next b1(v9)
 }
-# CHECK-LABEL: function f4 name="sumOfWrittenArray"
-# ABSENT-LABEL: function f4 name="sumOfWrittenArray"
-# RESOLVED-LABEL: function f4 name="sumOfWrittenArray"
-# RESOLVED: [[storage4]]: boolean = IsPristine [[array4]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-LABEL: function f4 name="sumOfNullableArray"
+# ABSENT-LABEL: function f4 name="sumOfNullableArray"
+# RESOLVED-LABEL: function f4 name="sumOfNullableArray"
+# RESOLVED: [[storage4]]: boolean = HasArrayStorage [[array4]] arrayStorage=Double
 # RESOLVED-NEXT: Branch [[storage4]] -> taken [[guarded4]](| 0), notTaken
 # RESOLVED: [[guarded4]]([[guard4]]: guard):
 # RESOLVED-NEXT: Jump -> next [[header4]](
@@ -184,7 +186,12 @@ function f4 name="sumOfWrittenArray" parameters=[{type=undefined|null|Array<numb
 # RESOLVED-NOT: ElemGet
 # RESOLVED-NOT: = Call v
 # RESOLVED-NOT: IsPristine
-# RESOLVED: = GetArrayElement [[array4]], {{*}}, [[guard4]] level=Predicted [keyIsIntegral]
+# RESOLVED: = IsElementPresent [[array4]], {{*}}, [[guard4]] arrayStorage=Double [keyIsIntegral]
+# RESOLVED-NOT: PropGet
+# RESOLVED-NOT: ElemGet
+# RESOLVED-NOT: = Call v
+# RESOLVED-NOT: IsPristine
+# RESOLVED: : number = GetArrayElement [[array4]], {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
 # RESOLVED-NOT: PropGet
 # RESOLVED-NOT: ElemGet
 # RESOLVED-NOT: = Call v
@@ -204,14 +211,18 @@ function f5 name="asyncKind" flags=[IsAsync] parameters=[{type=Array<number, pri
   b2():
     Return v5
 }
+# The steps are those of the sync iteration, and each value is awaited as the wrapper around the array's iterator would: passes/expand-iteration-async-over-sync.ir
 # CHECK-LABEL: function f5 name="asyncKind"
-# CHECK: = PropGet v0 key=@@asyncIterator
-# CHECK: b1():
-# CHECK-NEXT: LoopHint
+# CHECK: = Await {{*}} [takesExtraTurn]
+# CHECK: = PropGet v0 key="length"
+# CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # ABSENT-LABEL: function f5 name="asyncKind"
-# ABSENT-NOT: key="length"
-# ABSENT-NOT: Less
-# ABSENT-NOT: ElemGet
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: key="next"
+# ABSENT-LABEL: function f6 name="openIterator"
 # RESOLVED-LABEL: function f5 name="asyncKind"
 
 # LEFT-NOT: IteratorOpen

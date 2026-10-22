@@ -1,13 +1,13 @@
-# A read of a method or of a deferred closure field whose value is only called becomes a closure of the function, which stands in for the one the class or the object holds
+# A read of a method or of a deferred closure field whose value is only called becomes a closure of the function, which stands in for the one the class or the object holds. A method that is read for any other use is the closure that the closure table holds
 # FORM: Prepared
 # RUN: pass ResolveAccesses
-# STATISTIC: ResolveAccessesChanges = 7
+# STATISTIC: ResolveAccessesChanges = 12
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
 layout L0 kind=Instance name="Scanner" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true members=[{key="m" function=f2 mutability=Fixed}, {key="capturing" function=f3 mutability=Fixed}, {key="recursive" function=f4 mutability=Fixed}, {key="changing" function=f2}] namedMembers=[{key="m" function=f2 mutability=Fixed}, {key="capturing" function=f3 mutability=Fixed}, {key="recursive" function=f4 mutability=Fixed}, {key="changing" function=f2}]}
-layout L1 kind=Instance name="SubScanner" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
+layout L1 kind=Instance name="SubScanner" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
 layout L2 name="Widget" fields=[{key="onObject" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="onNothing" declared={type=f6} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f6} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
@@ -94,7 +94,7 @@ function f14 name="value-is-returned" parameters=[{type=L0}] results=[{type=anyt
 }
 # CHECK-LABEL: function f14 name="value-is-returned"
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: = PropGet v0 key="m"
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 [isHeldByClosureTable]
 function f15 name="value-is-stored" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
@@ -104,7 +104,7 @@ function f15 name="value-is-stored" parameters=[{type=L0}] results=[{type=anythi
 }
 # CHECK-LABEL: function f15 name="value-is-stored"
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: = PropGet v0 key="m"
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 [isHeldByClosureTable]
 function f16 name="value-is-an-argument" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
@@ -113,7 +113,7 @@ function f16 name="value-is-an-argument" parameters=[{type=L0}] results=[{type=a
 }
 # CHECK-LABEL: function f16 name="value-is-an-argument"
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: = PropGet v0 key="m"
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 [isHeldByClosureTable]
 function f17 name="value-is-compared" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="m"
@@ -123,7 +123,7 @@ function f17 name="value-is-compared" parameters=[{type=L0}, {type=anything}] re
 }
 # CHECK-LABEL: function f17 name="value-is-compared"
 # CHECK-NEXT: b0(
-# CHECK-NEXT: = PropGet v0 key="m"
+# CHECK-NEXT: v2: f2 = NewClosure function=f2 [isHeldByClosureTable]
 function f18 name="value-is-never-called" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="m"
@@ -131,7 +131,7 @@ function f18 name="value-is-never-called" parameters=[{type=L0}] results=[{type=
 }
 # CHECK-LABEL: function f18 name="value-is-never-called"
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: = PropGet v0 key="m"
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 [isHeldByClosureTable]
 function f19 name="method-needs-its-closure" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="capturing"
@@ -154,12 +154,12 @@ function f20 name="method-may-be-replaced" parameters=[{type=L0}] results=[{type
 # CHECK-LABEL: function f20 name="method-may-be-replaced"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="changing"
-function f21 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
-  b0(v0: object ~ L0):
+function f21 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="m"
     v2 = Call v1
     Return v2
 }
-# CHECK-LABEL: function f21 name="predicted-receiver"
+# CHECK-LABEL: function f21 name="expected-receiver"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: = PropGet v0 key="m"

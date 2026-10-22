@@ -4,9 +4,9 @@
 # STATISTIC: SerializersCreated = 3
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="GenericInTheMiddle" fields=[{key="a" declared={type=number}}, {key="any" declared={type=anything}}, {key="z" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
-layout L1 name="GenericLast" fields=[{key="a" declared={type=number}}, {key="any" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 1]}]}
-layout L2 name="OnlyRequired" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L0 name="GenericInTheMiddle" fields=[{key="a" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="any" declared={type=anything}}, {key="z" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+layout L1 name="GenericLast" fields=[{key="a" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="any" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L2 name="OnlyRequired" fields=[{key="a" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
 # CHECK: function {{*}}creator=Serializer{layout=L0}
 # CHECK: [[one0]]: 1 = Integer integer=1
@@ -14,7 +14,7 @@ layout L2 name="OnlyRequired" fields=[{key="a" declared={type=number}}, {key="b"
 # CHECK: [[guard]]: guard = AllGuards
 # CHECK: = JSONAppendKey v1, {{*}} string="a" [opensObject]
 # CHECK-NEXT: [[afterA]]: buildercursor = JSONAppendNumber v1,
-# CHECK-NEXT: [[any]]: anything = GetSlot v0, [[guard]] key="any" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[any]]: anything = GetSlot v0, [[guard]] key="any" receivers=[L0] level=Expected
 # CHECK-NEXT: [[comma]]: buildercursor = JSONAppendToken v1, [[afterA]] jsonToken=Comma
 # CHECK-NEXT: [[hasText]]: boolean = TypeTest [[any]] testedType=null|boolean|number|string
 # CHECK-NEXT: Branch [[hasText]] -> taken [[primitive]](| 0), notTaken [[other]](| 0)
@@ -49,7 +49,7 @@ layout L2 name="OnlyRequired" fields=[{key="a" declared={type=number}}, {key="b"
 # CHECK-NEXT: [[shapeAgain]]: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch [[shapeAgain]] -> taken [[orderAgainBlock]](| 0), notTaken [[shapeIsStale]]()
 # CHECK: [[memberZ]]([[cursorAtZ]]: buildercursor, [[guardAtZ]]: guard):
-# CHECK-NEXT: [[z]]: number = GetSlot v0, [[guardAtZ]] key="z" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[z]]: number = GetSlot v0, [[guardAtZ]] key="z" receivers=[L0] level=Expected
 # CHECK-NEXT: [[zKey]]: buildercursor = JSONAppendKey v1, [[cursorAtZ]] string="z" @
 # CHECK-NEXT: [[zWritten]]: buildercursor = JSONAppendNumber v1, [[zKey]], [[z]]
 # CHECK-NEXT: [[zComma]]: buildercursor = JSONAppendToken v1, [[zWritten]] jsonToken=Comma

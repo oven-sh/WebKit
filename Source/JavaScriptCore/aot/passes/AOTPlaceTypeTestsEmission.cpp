@@ -8,113 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include <algorithm>
+#include "AOTFlowApply.h"
 
 namespace JSC { namespace AOT { namespace Typed {
-
-namespace {
-
-class PlannedStretchRanges {
-    WTF_MAKE_NONCOPYABLE(PlannedStretchRanges);
-public:
-    PlannedStretchRanges(const Function& function, std::span<const StretchRange> ranges, const auto& cuts, const auto& splitEdges)
-        : m_function(function)
-        , m_ranges(ranges)
-        , m_rangesOfBlock(FillWith { }, function.blocks.size(), RangesOfBlock { })
-    {
-        for (uint32_t index = 0; index < ranges.size(); ++index) {
-            RangesOfBlock& rangesOfBlock = m_rangesOfBlock[ranges[index].block.index()];
-            if (!rangesOfBlock.count)
-                rangesOfBlock.first = index;
-            ++rangesOfBlock.count;
-        }
-
-        uint32_t numberOfBlocks = function.blocks.size();
-        Vector<uint32_t> plannedSizes;
-        plannedSizes.reserveInitialCapacity(numberOfBlocks);
-        m_plannedStarts.reserveInitialCapacity(numberOfBlocks);
-        for (uint32_t index = 0; index < numberOfBlocks; ++index) {
-            BlockID block(index);
-            plannedSizes.append(static_cast<uint32_t>(function.at(block).values.size()));
-            m_plannedStarts.append(ProgramPoint::atHeadOf(block));
-        }
-        for (const auto& cut : cuts) {
-            plannedSizes[cut.point.block.index()] = cut.point.index + static_cast<uint32_t>(function.at(cut.blockAfter).values.size());
-            m_plannedStarts[cut.blockAfter.index()] = cut.point;
-        }
-        for (const auto& split : splitEdges)
-            m_plannedStarts[split.block.index()] = ProgramPoint { split.edge.from, plannedSizes[split.edge.from.index()] };
-    }
-
-    bool isInStretchBefore(ProgramPoint plannedPoint) const
-    {
-        RangesOfBlock rangesOfBlock = m_rangesOfBlock[plannedPoint.block.index()];
-        std::span<const StretchRange> ranges = m_ranges.subspan(rangesOfBlock.first, rangesOfBlock.count);
-        auto range = std::ranges::lower_bound(ranges, plannedPoint.index, { }, &StretchRange::end);
-        return range != ranges.end() && (range->begin < plannedPoint.index || range->end == plannedPoint.index);
-    }
-
-    bool endsInStretch(BlockID block) const
-    {
-        return isInStretchBefore(plannedPointOf(pointBeforeTerminatorOf(m_function, block)));
-    }
-
-    bool isDefinedInStretch(const CFG& cfg, const ValueLocation& definition) const
-    {
-        switch (definition.placement) {
-        case ValuePlacement::Parameter:
-            return std::ranges::any_of(cfg.incomingEdges(definition.block), [&](Edge edge) {
-                return !edge.isHandlerEdge() && endsInStretch(edge.from);
-            });
-        case ValuePlacement::InBlock:
-            return isInStretchBefore(plannedPointOf({ definition.block, definition.index + 1 }));
-        case ValuePlacement::Detached:
-            break;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-
-private:
-    struct RangesOfBlock {
-        uint32_t first { 0 };
-        uint32_t count { 0 };
-    };
-
-    ProgramPoint plannedPointOf(ProgramPoint point) const
-    {
-        ProgramPoint start = m_plannedStarts[point.block.index()];
-        return { start.block, start.index + point.index };
-    }
-
-    const Function& m_function;
-    std::span<const StretchRange> m_ranges;
-    Vector<RangesOfBlock> m_rangesOfBlock;
-    Vector<ProgramPoint> m_plannedStarts;
-};
-
-struct AdoptedProofPoints {
-    Vector<ProgramPoint> pointsAfter;
-    BitVector startsStretch;
-};
-
-} // anonymous namespace
-
-static AdoptedProofPoints findAdoptedProofPoints(FunctionAnalyses& analyses, std::span<const ValueID> proofs, const PlannedStretchRanges* ranges)
-{
-    AdoptedProofPoints result;
-    if (proofs.empty())
-        return result;
-
-    const CFG& cfg = analyses.cfg();
-    const UseLists& useLists = analyses.useLists();
-    result.pointsAfter.reserveInitialCapacity(proofs.size());
-    for (ValueID proof : proofs) {
-        if (ranges && !ranges->isDefinedInStretch(cfg, useLists.locationOf(proof)))
-            result.startsStretch.set(result.pointsAfter.size());
-        result.pointsAfter.append(useLists.pointAfter(proof));
-    }
-    return result;
-}
 
 static bool haveSamePosition(const PlannedTest& a, const PlannedTest& b)
 {
@@ -163,72 +59,29 @@ ValueID TestPlacer::adoptEdgeProof(const ExistingProof& proof)
 
 void TestPlacer::defineAdoptedProofs()
 {
-    bool savesShapeEpoch = m_plan.hasRenewal();
-    if (m_adoptedProofs.isEmpty() && !savesShapeEpoch)
+    if (m_adoptedProofs.isEmpty())
         return;
 
-    std::optional<PlannedStretchRanges> ranges;
-    if (savesShapeEpoch)
-        ranges.emplace(m_function, m_plan.ranges.span(), m_cuts, m_splitEdges);
-    AdoptedProofPoints points = findAdoptedProofPoints(m_context.analyses, m_adoptedProofs.span(), ranges ? &*ranges : nullptr);
+    // An insertion ends the life of the use lists.
+    const UseLists& useLists = m_context.analyses.useLists();
+    Vector<ProgramPoint> pointsAfter;
+    pointsAfter.reserveInitialCapacity(m_adoptedProofs.size());
+    for (ValueID proof : m_adoptedProofs)
+        pointsAfter.append(useLists.pointAfter(proof));
 
-    // A read inside a stretch could follow the write that made an earlier proof stale: the epoch is read where none can be stale.
-    auto saveShapeEpoch = [&](Origin origin, ProgramPoint point) {
-        m_builder.setOrigin(origin);
-        m_epochReads.append(m_builder.insertBefore(point, IRBuilder::make(Opcode::GetShapeEpoch)));
-    };
-
-    // A value of a covered block does not reach the handler of that block, so each handler on the way out of the entry block has a read of its own.
-    BitVector hasBaseEpochRead;
-    BlockID baseBlock = savesShapeEpoch ? entryBlock : BlockID();
-    while (baseBlock && hasBaseEpochRead.add(baseBlock.index())) {
-        const Block& block = m_function.at(baseBlock);
-        saveShapeEpoch(block.terminator.origin(), ProgramPoint { baseBlock, indexAfterCaughtValues(m_function, block) });
-        baseBlock = block.handler ? block.handler->block : BlockID();
-    }
-
-    BitVector isFollowedByEpochRead;
     for (uint32_t index = 0; index < m_adoptedProofs.size(); ++index) {
         TestConditionID condition = m_plan.proofs[index].condition;
         ValueID adopted = m_adoptedProofs[index];
         if (m_definitions[condition.index()].contains(adopted))
             continue;
 
-        Origin origin = m_function.at(adopted).origin();
         ValueID definition = adopted;
         if (m_isDefinition.get(adopted.index())) {
-            m_builder.setOrigin(origin);
-            definition = m_builder.insertBefore(points.pointsAfter[index], IRBuilder::make(Opcode::AllGuards, { adopted }));
+            m_builder.setOrigin(m_function.at(adopted).origin());
+            definition = m_builder.insertBefore(pointsAfter[index], IRBuilder::make(Opcode::AllGuards, { adopted }));
         }
         addDefinition(condition, definition);
-        if (points.startsStretch.get(index) && isFollowedByEpochRead.add(adopted.index()))
-            saveShapeEpoch(origin, points.pointsAfter[index]);
     }
-
-    for (uint32_t index = 0; ranges && index < m_plan.tests.size(); ++index) {
-        const PlannedTest& planned = m_plan.tests[index];
-        if (!isPlaced(planned.stretch) || (index && haveSamePosition(m_plan.tests[index - 1], planned)))
-            continue;
-
-        BlockID block;
-        bool continuesStretch = false;
-        switch (planned.position) {
-        case PlannedTestPosition::BeforeUse: {
-            const Cut* cut = findCut(planned.point);
-            RELEASE_ASSERT(cut);
-            block = cut->blockBefore;
-            continuesStretch = ranges->isInStretchBefore(planned.point);
-            break;
-        }
-        case PlannedTestPosition::OnEdge:
-            block = ensureSplit(planned.edge);
-            continuesStretch = ranges->endsInStretch(block);
-            break;
-        }
-        if (!continuesStretch)
-            saveShapeEpoch(m_function.at(useOf(m_plan, planned)).origin(), pointBeforeTerminatorOf(m_function, block));
-    }
-
     m_builder.applyInsertions();
 }
 
@@ -247,19 +100,19 @@ void TestPlacer::emitTests()
         if (run.isEmpty())
             continue;
 
-        RELEASE_ASSERT(m_cloner);
+        RELEASE_ASSERT(m_copy);
         TestChain chain;
         switch (first.position) {
         case PlannedTestPosition::BeforeUse: {
             const Cut* cut = findCut(first.point);
             RELEASE_ASSERT(cut);
-            chain = TestChain { cut->blockBefore, Target { cut->blockAfter, { }, { } }, Target { m_cloner->cloneOf(cut->blockAfter), { }, { } }, m_function.at(cut->blockAfter).frequency };
+            chain = TestChain { cut->blockBefore, Target { cut->blockAfter, { }, { } }, Target { m_copy->copyOf(cut->blockAfter), { }, { } }, m_function.at(cut->blockAfter).frequency, true };
             break;
         }
         case PlannedTestPosition::OnEdge: {
             BlockID block = ensureSplit(first.edge);
             Target next = m_function.at(block).terminator.next();
-            chain = TestChain { block, next, Target { m_cloner->cloneOf(next.block), next.arguments, { } }, m_function.at(next.block).frequency };
+            chain = TestChain { block, next, Target { m_copy->copyOf(next.block), next.arguments, { } }, m_function.at(next.block).frequency, false };
             break;
         }
         }
@@ -270,63 +123,48 @@ void TestPlacer::emitTests()
 
 void TestPlacer::emitChain(TestChain&& chain, std::span<const uint32_t> plannedTests)
 {
-    Terminator& jump = m_function.at(chain.block).terminator;
+    Terminator& jump = m_function.edit(chain.block).terminator;
     RELEASE_ASSERT(jump.kind == TerminatorKind::Jump && jump.next().block == chain.passedTarget.block);
     jump = Terminator { };
 
     m_builder.setHandler(std::nullopt);
     m_builder.moveToEndOf(chain.block);
-    for (uint32_t plannedTest : plannedTests) {
-        switch (m_plan.tests[plannedTest].kind) {
-        case PlannedTestKind::Test:
-            emitTest(chain, plannedTest);
-            break;
-        case PlannedTestKind::Renewal:
-            emitRenewal(chain, plannedTest);
-            break;
-        }
-    }
-    m_builder.emitJump(chain.passedTarget.block, WTF::move(chain.passedTarget.arguments));
+    for (uint32_t plannedTest : plannedTests.first(plannedTests.size() - 1))
+        emitTest(chain, plannedTest, IsLastOfChain::No);
+    emitTest(chain, plannedTests.back(), IsLastOfChain::Yes);
+    if (!chain.isOnlyWayToPassedTarget)
+        m_builder.emitJump(chain.passedTarget.block, WTF::move(chain.passedTarget.arguments));
 }
 
-void TestPlacer::emitTest(const TestChain& chain, uint32_t plannedTest)
+void TestPlacer::emitTest(const TestChain& chain, uint32_t plannedTest, IsLastOfChain isLast)
 {
     const PlannedTest& planned = m_plan.tests[plannedTest];
     m_builder.setOrigin(m_function.at(useOf(m_plan, planned)).origin());
     ValueID test = m_builder.append(createTest(planned));
-    addDefinition(planned.condition, branchOn(chain, plannedTest, test).provenWhenPassed);
+    addDefinition(planned.condition, branchOn(chain, plannedTest, test, isLast).provenWhenPassed);
 }
 
-void TestPlacer::emitRenewal(const TestChain& chain, uint32_t plannedTest)
-{
-    const PlannedTest& planned = m_plan.tests[plannedTest];
-    m_builder.setOrigin(m_function.at(useOf(m_plan, planned)).origin());
-
-    Vector<ValueID, 4> staleGuards;
-    for (TestConditionID condition : planned.renewed)
-        staleGuards.append(representativeOf(condition));
-    ValueID allStaleGuards = m_builder.appendAllGuards(staleGuards.span());
-
-    RELEASE_ASSERT(!m_epochReads.isEmpty());
-    ValueID test = m_builder.append(Opcode::IsShapeEpochCurrent, { m_epochReads.first(), allStaleGuards });
-    ValueID renewedGuard = branchOn(chain, plannedTest, test).provenWhenPassed;
-    ++m_numberOfRenewals;
-
-    for (TestConditionID condition : planned.renewed)
-        addDefinition(condition, renewedGuard);
-    readShapeEpoch();
-}
-
-auto TestPlacer::branchOn(const TestChain& chain, uint32_t plannedTest, ValueID test) -> EmittedTest&
+// No block is made that only jumps: SimplifyControlFlow would merge it away in the same round, and every pass in between would walk it.
+auto TestPlacer::branchOn(const TestChain& chain, uint32_t plannedTest, ValueID test, IsLastOfChain isLast) -> EmittedTest&
 {
     BlockID block = m_builder.currentBlock();
     const Value& value = m_function.at(test);
     ValueID subject = value.numberOfOperands() ? value.operand(testedOperandIndex) : ValueID();
 
-    IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, testedOperandIndex, chain.frequency, TestPlacementModel::frequencyOfGenericCopy(chain.frequency));
-    m_builder.moveToEndOf(branch.notTaken);
-    m_builder.emitJump(chain.failedTarget.block, Arguments(chain.failedTarget.arguments));
-    m_builder.moveToEndOf(branch.taken);
+    bool provesNothingWhenFailed = provesForStretch(provesOf(value.opcode));
+    bool entersPassedTarget = isLast == IsLastOfChain::Yes && chain.isOnlyWayToPassedTarget;
+    IRBuilder::ProvenBranchTargets targets;
+    if (entersPassedTarget)
+        targets.enteredOnlyWhenTaken = chain.passedTarget.block;
+    if (provesNothingWhenFailed)
+        targets.whenNotTaken = Target { chain.failedTarget.block, Arguments(chain.failedTarget.arguments), { } };
+    IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, testedOperandIndex, chain.frequency, TestPlacementModel::frequencyOfGenericCopy(chain.frequency), WTF::move(targets));
+    if (!provesNothingWhenFailed) {
+        m_builder.moveToEndOf(branch.notTaken);
+        m_builder.emitJump(chain.failedTarget.block, Arguments(chain.failedTarget.arguments));
+    }
+    if (!entersPassedTarget)
+        m_builder.moveToEndOf(branch.taken);
 
     m_emittedTests.append(EmittedTest { plannedTest, block, subject, branch.taken, branch.notTaken, branch.provenOnTaken, branch.provenOnNotTaken });
     return m_emittedTests.last();
@@ -349,19 +187,45 @@ Value TestPlacer::createTest(const PlannedTest& planned)
     Vector<ValueID, 4> guards;
     forEachTestPrerequisite(m_plan.requirements.span(), *m_plan.conditions, planned.requirement, [&](const TestPrerequisite& prerequisite) {
         ValueID proof = representativeOf(prerequisite.condition);
-        if (prerequisite.narrowedOperand)
-            test.setOperand(*prerequisite.narrowedOperand, proof);
-        else
+        if (!prerequisite.narrowedOperand) {
             guards.appendIfNotContains(proof);
+            return;
+        }
+        if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
+            proof = m_builder.append(makeAssumeType(proof, *castType));
+        test.setOperand(*prerequisite.narrowedOperand, proof);
     });
     if (!guards.isEmpty())
         test.setOperand(*guardIndex, m_builder.appendAllGuards(guards.span()));
+    keepOnlyWhatOperandsProve(test);
     return test;
 }
 
-void TestPlacer::readShapeEpoch()
+// An operand that has to be an integer was one at the site: by its own type and the test that it passed. The value that passed the test may be the one in front of a cast.
+std::optional<TypeID> TestPlacer::findTypeOfOperand(const Value& test, uint32_t operandIndex, ValueID passed) const
 {
-    m_epochReads.append(m_builder.append(Opcode::GetShapeEpoch, { }));
+    TypeArena& types = m_context.types;
+    const Type& passedType = types.at(m_function.at(passed).type);
+    const Type& operandType = types.at(m_function.at(test.operand(operandIndex)).type);
+    bool hasToBeInteger = test.operandKind(operandIndex) == OperandKind::Integer;
+    if (!hasToBeInteger && operandIndex != testedOperandIndex)
+        return std::nullopt;
+    if (hasToBeInteger ? passedType.hasOnlyPrimitives(Primitive::Integer) : passedType.isSubsetOf(operandType, m_context.program))
+        return std::nullopt;
+    Type both = passedType.intersectWith(operandType, types);
+    if (both.isNever() || (hasToBeInteger && !both.hasOnlyPrimitives(Primitive::Integer)))
+        return std::nullopt;
+    return types.intern(both);
+}
+
+// The site was planned with the types of its own operands. The value that stands for an operand here may be the one in front of a cast, of which less is known.
+void TestPlacer::keepOnlyWhatOperandsProve(Value& test) const
+{
+    if (!Value::opcodesWithKeyIsIntegral.contains(test.opcode) || !test.keyIsIntegral())
+        return;
+    ValueID key = OperandPosition::property(test.opcode) ? test.propertyOperand() : test.positionOperand();
+    if (!m_context.program.typeOf(m_function, key).hasOnlyPrimitives(Primitive::NumberWithoutFraction))
+        test.setKeyIsIntegral(false);
 }
 
 void TestPlacer::addDefinition(TestConditionID condition, ValueID proof)

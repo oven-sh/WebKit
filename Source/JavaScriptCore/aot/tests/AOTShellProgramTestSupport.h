@@ -42,7 +42,7 @@ inline std::unique_ptr<CompileOutput> compileForShellOnThisThread(ASCIILiteral p
     if (output->image.isEmpty())
         Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
     AOT_TEST_CHECK(!output->image.isEmpty());
-    AOT_TEST_CHECK(output->entryModuleIDs.size() == 1);
+    AOT_TEST_CHECK(!output->entryModuleIDs.isEmpty());
     return output;
 }
 

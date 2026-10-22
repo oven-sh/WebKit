@@ -1,0 +1,46 @@
+# table = { run: 1, stop: 2 }; key = Object.keys(table)[0]; table[key]    function names(o) { return Object.keys(o)[0] }  names({ only: 1 }); names(undefined)
+# A literal whose members are all constants is one Data operation. Nobody else holds it, so its names are the members that its record lists, as those of a literal with a variable in it:
+# the list holds those constants and no text nobody knows (primitive7).
+# For undefined the call throws and lists nothing: beside it the names of the literal are still all that the list holds.
+# RUN: valueflow-why values=f0:v9 values=f1:v5
+# CHECK: values=f0:v9
+# CHECK: operand 1 {{*}} 2 members: key{{*}} key{{*}}
+# CHECK: values=f1:v5
+# CHECK: result {{*}} 2 members: primitive0 key{{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Table" fields=[{key="run" declared={type=number} flags=[IsRequired]}, {key="stop" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Record name="Single" fields=[{key="only" declared={type=number} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="run" value=Number{value=1}}, {key="stop" value=Number{value=2}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="only" value=Number{value=1}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectKeys
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = TypeTest v5 testedType=undefined
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v7):
+    Return
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = NewClosure function=f1
+    v11 = Data data=d1
+    v12 = Call v10, -, v11
+    v13 = Undefined
+    v14 = Call v10, -, v13
+    Return v9
+}
+function f1 name="names" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectKeys
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    Return v5
+}

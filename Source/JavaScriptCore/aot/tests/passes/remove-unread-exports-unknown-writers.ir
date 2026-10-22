@@ -7,7 +7,7 @@
 # CHECK: variable g0 name="unknownWriters"{{*}}reads=NeverRead
 # CHECK: variable g1 name="knownWriters"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
 
-module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1}]
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/library.ts" displayPath="library.ts" body=f1 exports=[{name="knownWriters" variable=g1}, {name="unknownWriters" variable=g0}]
 entry module=m0
 variable g0 name="unknownWriters" module=m1 declared={type=anything}

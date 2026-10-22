@@ -8,82 +8,23 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
 #include "AOTInstance.h"
 #include "AOTModuleNamespace.h"
-#include "AOTObjectModel.h"
 #include "AOTProgramStatics.h"
-#include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "Error.h"
 #include "Exception.h"
 #include "JSCInlines.h"
-#include <span>
+#include "ObjectConstructor.h"
 #include <utility>
-#include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
-static std::span<uint8_t> requireEdgeStates(Instance& instance, const ModuleTable& table)
-{
-    return unsafeMakeSpan(instance.modules.requireEdges, table.numberOfRequireEdges());
-}
-
-template<typename LoadedModule>
-static void setModuleBuiltins(LoadedModule& loaded, JSObject* requirer, const CommonJSModuleObjects& objects)
-{
-    loaded.requirer = requirer;
-    loaded.requireFunction = objects.require;
-    loaded.initialExports = objects.exports;
-}
-
-void Modules::armRequireEdge(uint32_t edge)
-{
-    requireEdgeStates(m_instance, m_table)[edge] = static_cast<uint8_t>(RequireEdgeState::Ready);
-}
-
-void Modules::disarmRequireEdges()
-{
-    zeroSpan(requireEdgeStates(m_instance, m_table));
-}
-
-JSValue Modules::requireFrom(ModuleID target, ModuleID referrer)
-{
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    std::optional<uint32_t> edge = m_table.findRequireEdge(referrer, target);
-    auto isAnsweredByHost = [&] {
-        LoadedModule* loaded = loadedIfExists(target);
-        return requireIsOverridden() || (loaded && loaded->isOverriddenInRequireCache);
-    };
-
-    if (isAnsweredByHost()) [[unlikely]] {
-        std::optional<StringID> writtenSpecifier = requireIsOverridden() && edge ? m_table.requireEdge(*edge).specifierString() : std::nullopt;
-        JSString* specifier = writtenSpecifier ? m_state.strings->string(vm, *writtenSpecifier) : pathString(target);
-        RELEASE_AND_RETURN(scope, requireThroughHost(specifier, referrer));
-    }
-
-    JSObject* parent = nullptr;
-    if (data(target).kind == ModuleKind::CommonJs) {
-        parent = moduleObject(referrer);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-
-    ChildLink link = ChildLink::Recorded;
-    JSValue result = requireWithLink(target, parent, nullptr, link);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (edge && link == ChildLink::Recorded && status(target) == ModuleStatus::Evaluated && !isAnsweredByHost())
-        armRequireEdge(*edge);
-    return result;
-}
-
-JSValue Modules::require(ModuleID target, JSObject* parent, JSObject* adoptedModule)
-{
-    ChildLink link = ChildLink::Recorded;
-    return requireWithLink(target, parent, adoptedModule, link);
-}
-
-JSValue Modules::requireWithLink(ModuleID target, JSObject* parent, JSObject* adoptedModule, ChildLink& link)
+// Compiled code comes here for what it does not evaluate by itself: a module of the library, data, code outside the image, a module with work for a link below it,
+// a module that waits for a promise, and a module whose export "module.exports" is what require() answers.
+JSValue Modules::require(ModuleID target)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -94,14 +35,20 @@ JSValue Modules::requireWithLink(ModuleID target, JSObject* parent, JSObject* ad
     case ModuleKind::SourceText:
     case ModuleKind::Data:
         if (status(target) != ModuleStatus::Evaluated) {
+            LoadedModule& loaded = ensureLoaded(target);
+            if (loaded.isBeingRequired) {
+                if (!loaded.exportsWhileRequired)
+                    loaded.exportsWhileRequired.set(*this, constructEmptyObject(m_instance.globalObject));
+                return loaded.exportsWhileRequired.get();
+            }
+            // An evaluation that an import has begun shows the namespace object, with its bindings as they are.
+            loaded.isBeingRequired = status(target) != ModuleStatus::Evaluating;
             evaluateSynchronously(target, SynchronousEvaluationReason::Require);
+            loaded.isBeingRequired = false;
             RETURN_IF_EXCEPTION(scope, { });
         }
         break;
     case ModuleKind::CommonJs:
-        executed = executeCommonJS(target, parent, adoptedModule, link);
-        RETURN_IF_EXCEPTION(scope, { });
-        break;
     case ModuleKind::RuntimeSource:
     case ModuleKind::Runtime:
         executed = execute(target);
@@ -119,20 +66,23 @@ JSValue Modules::requireWithLink(ModuleID target, JSObject* parent, JSObject* ad
         break;
     }
 
-    switch (targetData.requireResult) {
-    case RequireResult::ModuleExports:
+    if (!targetData.hasExportTable()) {
         RELEASE_ASSERT(executed);
         return executed;
+    }
+
+    switch (targetData.requireResult) {
+    case RequireResult::ModuleExports:
+        break;
     case RequireResult::DefaultExport: {
-        if (!targetData.hasExportTable())
-            return executed;
-        if (JSValue cached = value(target))
-            return cached;
+        LoadedModule& loaded = ensureLoaded(target);
+        if (JSValue answered = loaded.requiredValue)
+            return answered;
         std::optional<unsigned> index = m_table.findExport(target, vm.propertyNames->defaultKeyword.impl());
         RELEASE_ASSERT(index);
         JSValue defaultExport = readExport(target, *index);
         RETURN_IF_EXCEPTION(scope, { });
-        setValue(target, defaultExport);
+        loaded.requiredValue.set(*this, defaultExport);
         return defaultExport;
     }
     case RequireResult::Namespace:
@@ -141,32 +91,23 @@ JSValue Modules::requireWithLink(ModuleID target, JSObject* parent, JSObject* ad
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ChildLink Modules::addChild(JSObject* parent, JSObject* child)
+// A CommonJS module of the image is a function without parameters that runs at most once. A module that is required again while its body runs has exported what it has exported by then.
+void Modules::evaluateCommonJS(ModuleID module)
 {
-    return host().addChild(m_instance.globalObject, parent, child);
-}
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    const ModuleData& moduleData = data(module);
+    ASSERT(moduleData.kind == ModuleKind::CommonJs);
 
-JSValue Modules::executeCommonJS(ModuleID module, JSObject* parent, JSObject* adoptedModule, ChildLink& link)
-{
-    VM& vm = *m_instance.vm;
-    JSGlobalObject* realm = m_instance.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    bool shouldAddChild = parent && !adoptedModule;
-    link = ChildLink::Recorded;
-
-    bool isCached = false;
     switch (status(module)) {
-    case ModuleStatus::Evaluated:
-        isCached = true;
-        break;
     case ModuleStatus::Evaluating:
-        isCached = !ensureLoaded(module).wasEvictedWhileEvaluating;
-        break;
+    case ModuleStatus::Evaluated:
+        return;
     case ModuleStatus::Failed:
-        recordIfExists(module)->setEvaluationError(vm, JSValue());
-        setStatus(module, ModuleStatus::Linked);
-        break;
+        RELEASE_AND_RETURN(scope, throwEvaluationError(module));
     case ModuleStatus::Unlinked:
+        link(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        break;
     case ModuleStatus::Linked:
         break;
     case ModuleStatus::Linking:
@@ -174,175 +115,117 @@ JSValue Modules::executeCommonJS(ModuleID module, JSObject* parent, JSObject* ad
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    if (isCached) {
-        if (shouldAddChild) {
-            JSObject* child = value(module).getObject();
-            link = addChild(parent, child);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (link == ChildLink::ChildrenAreObservable) {
-                host().pushObservableChild(realm, parent, child);
-                RETURN_IF_EXCEPTION(scope, { });
-            }
-        }
-        RELEASE_AND_RETURN(scope, commonJSExports(module));
-    }
+    ModuleRecord* record = recordIfExists(module);
+    if (!record && moduleData.evaluatesItself())
+        RELEASE_AND_RETURN(scope, evaluateByCallingBody(module));
 
-    JSString* path = pathString(module);
-    CommonJSModuleObjects objects;
-    if (adoptedModule)
-        adoptCommonJSModule(module, adoptedModule, objects);
-    else
-        host().createCommonJSModule(realm, path, parent, objects);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    LoadedModule& loaded = ensureLoaded(module);
-    // The edges that an earlier run armed recorded their children on the module object of that run.
-    if (loaded.requireFunction)
-        disarmRequireEdges();
-    setValue(module, objects.module);
-    setModuleBuiltins(loaded, nullptr, objects);
-    loaded.wasEvictedWhileEvaluating = false;
+    // The body of a module that nothing of the image calls stores no status, and whoever gave a module a record goes by the status in the record.
     setStatus(module, ModuleStatus::Evaluating);
-
-    if (shouldAddChild)
-        link = addChild(parent, objects.module);
-    if (!scope.exception()) [[likely]]
-        callCommonJSBody(module, objects);
-
-    Exception* exception = scope.exception();
-    if (!exception) [[likely]] {
-        // After an eviction, a require() inside the body runs the body again, and that run owns the state from then on.
-        if (value(module) == JSValue(objects.module)) {
-            if (loaded.wasEvictedWhileEvaluating) {
-                setValue(module, JSValue());
-                setModuleBuiltins(loaded, nullptr, { });
-                setStatus(module, ModuleStatus::Linked);
-            } else
-                setStatus(module, ModuleStatus::Evaluated);
-        }
-        // The body may have read the children of its parent, so the caller gets what the next require() would find.
-        if (link == ChildLink::ChildrenAreObservable)
-            host().pushObservableChild(realm, parent, objects.module);
-        else if (shouldAddChild)
-            link = addChild(parent, objects.module);
-        RETURN_IF_EXCEPTION(scope, { });
-        RELEASE_AND_RETURN(scope, objects.module->get(realm, vm.propertyNames->exports));
-    }
-
-    setValue(module, JSValue());
-    setModuleBuiltins(loaded, nullptr, { });
-    setStatus(module, ModuleStatus::Linked);
-    disarmRequireEdges();
-    if (adoptedModule)
-        return { };
-    TRY_CLEAR_EXCEPTION(scope, { });
-    host().removeFromRequireCache(realm, path);
-    TRY_CLEAR_EXCEPTION(scope, { });
-    throwException(realm, scope, exception);
-    return { };
-}
-
-void Modules::adoptCommonJSModule(ModuleID module, JSObject* commonJSModule, CommonJSModuleObjects& objects)
-{
-    JSGlobalObject* realm = m_instance.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-
-    ModuleAdoption adoption = host().adoptCommonJSModule(realm, pathString(module), commonJSModule, objects);
-    RETURN_IF_EXCEPTION(scope, void());
-    switch (adoption) {
-    case ModuleAdoption::Adopted:
-        return;
-    case ModuleAdoption::Rejected:
-        throwTypeError(realm, scope, withAOTErrorNote(makeString("The module "_s, m_table.path(module), " was compiled ahead of time and runs only with a module object and an exports object that the module loader created"_s)));
+    if (moduleData.evaluatesItself())
+        evaluateByCallingBody(module);
+    else
+        callBodyOfModuleEnteredByLoader(module);
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        didThrowInBody(module, exception->value());
         return;
     }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+    setStatus(module, ModuleStatus::Evaluated);
+    if (!record)
+        return;
 
-// Compiled code reads the module object, its exports and its require function from cells of the instance, and each run has its own.
-void Modules::resetBeforeNextRun(ModuleID module)
-{
-    for (const ModuleResetSlotData& entry : m_table.resetSlots(module))
-        ProgramStatics::writeVariable(m_instance, entry.slot, JSValue());
-}
-
-void Modules::callCommonJSBody(ModuleID module, const CommonJSModuleObjects& objects)
-{
-    RELEASE_ASSERT(objects.filename.isString() && objects.dirname.isString());
-    if (std::exchange(ensureLoaded(module).hasEnteredBody, true))
-        resetBeforeNextRun(module);
-    MarkedArgumentBuffer arguments;
-    for (CommonJsParameter parameter : allMembersOf<CommonJsParameter>) {
-        switch (parameter) {
-        case CommonJsParameter::Exports:
-            arguments.append(objects.exports);
-            break;
-        case CommonJsParameter::Require:
-            arguments.append(objects.require);
-            break;
-        case CommonJsParameter::Module:
-            arguments.append(objects.module);
-            break;
-        case CommonJsParameter::Filename:
-            arguments.append(objects.filename);
-            break;
-        case CommonJsParameter::Dirname:
-            arguments.append(objects.dirname);
-            break;
-        }
+    // A link has given the module the record so that the evaluation comes by here.
+    if (moduleData.capturesExports()) {
+        captureExports(module);
+        RETURN_IF_EXCEPTION(scope, void());
     }
-    callBody(module, objects.exports, arguments);
+    if (!record->isRetained())
+        retireRecord(record);
 }
 
-void Modules::evaluateCommonJSBody(ModuleID module, JSObject* commonJSModule)
+JSValue Modules::commonJSExports(ModuleID module) const
 {
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    RELEASE_ASSERT(data(module).kind == ModuleKind::CommonJs && commonJSModule);
-
-    CommonJSModuleObjects objects;
-    adoptCommonJSModule(module, commonJSModule, objects);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    LoadedModule& loaded = ensureLoaded(module);
-    CommonJSModuleObjects previous { .module = loaded.requirer, .exports = loaded.initialExports, .require = loaded.requireFunction };
-    setModuleBuiltins(loaded, objects.module, objects);
-    disarmRequireEdges();
-    scope.release();
-    callCommonJSBody(module, objects);
-    // A require() inside the body may have run the body for require.cache, and that run owns the state from then on.
-    if (loaded.requirer == objects.module) {
-        setModuleBuiltins(loaded, previous.module, previous);
-        disarmRequireEdges();
-    }
+    const ModuleData& moduleData = data(module);
+    ASSERT(moduleData.kind == ModuleKind::CommonJs);
+    if (!moduleData.hasValue())
+        return jsUndefined();
+    JSValue exports = ProgramStatics::readVariable(m_instance, moduleData.value);
+    return exports ? exports : jsUndefined();
 }
 
-JSValue Modules::commonJSExports(ModuleID module)
+JSValue Modules::exportsSeenByLoader(ModuleID module)
 {
-    JSObject* commonJSModule = value(module).getObject();
-    ASSERT(commonJSModule);
-    return commonJSModule->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded || !loaded->requirer) [[likely]]
+        return commonJSExports(module);
+    return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
 }
 
+void Modules::setCommonJSExports(ModuleID module, JSValue exports)
+{
+    ASSERT(data(module).kind == ModuleKind::CommonJs);
+    setValue(module, exports);
+}
+
+// `bun run` gives the id "." to the first CommonJS file that its loader of ES modules fetches: the entry point, or the first such file in the graph of an entry point that is an ES module.
+// The CommonJS files of a graph stand in front of everything else that its root requests.
+std::optional<ModuleID> Modules::mainCommonJSModule() const
+{
+    if (!m_firstModuleRequestedByHost)
+        return std::nullopt;
+    ModuleID entryPoint = *m_firstModuleRequestedByHost;
+    if (data(entryPoint).kind == ModuleKind::CommonJs)
+        return entryPoint;
+    auto imports = m_table.imports(entryPoint);
+    auto firstImport = imports.begin();
+    if (firstImport == imports.end())
+        return std::nullopt;
+    ModuleID first = (*firstImport).targetModule();
+    return data(first).kind == ModuleKind::CommonJs ? std::optional(first) : m_table.fileBehindFace(first);
+}
+
+// No module has a module object or a require function until the program uses one as a value.
 JSObject* Modules::moduleObject(ModuleID module)
 {
+    JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
     LoadedModule* existing = loadedIfExists(module);
     if (existing && existing->requirer)
         return existing->requirer;
-    if (data(module).kind == ModuleKind::CommonJs) {
-        if (JSValue commonJSModule = value(module))
-            return asObject(commonJSModule);
+
+    const ModuleData& moduleData = data(module);
+    ModuleObjects objects;
+    if (moduleData.kind == ModuleKind::CommonJs) {
+        OptionSet<ModuleObjectTrait> traits;
+        if (moduleData.hasValue())
+            traits.add(ModuleObjectTrait::HasExportsVariable);
+        if (mainCommonJSModule() == module)
+            traits.add(ModuleObjectTrait::IsMain);
+        host().createModuleObject(realm, pathString(module), module, traits, objects);
+    } else {
+        JSObject* meta = importMeta(module);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        host().createRequirer(realm, meta, objects);
     }
-
-    JSObject* meta = importMeta(module);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    CommonJSModuleObjects objects;
-    host().createRequirer(m_instance.globalObject, meta, objects);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    setModuleBuiltins(ensureLoaded(module), objects.module, objects);
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.requirer.set(*this, objects.module);
+    loaded.requireFunction.set(*this, objects.require);
     return objects.module;
+}
+
+// Every module whose module object a read of the program can reach exports an object. The module object of any other module is handed to nobody.
+bool Modules::mayHandOutModuleObject(ModuleID module) const
+{
+    return data(module).kind != ModuleKind::CommonJs || data(module).hasValue();
+}
+
+JSObject* Modules::mainModuleObject()
+{
+    if (!m_firstModuleRequestedByHost || data(*m_firstModuleRequestedByHost).kind != ModuleKind::CommonJs || !mayHandOutModuleObject(*m_firstModuleRequestedByHost))
+        return nullptr;
+    return moduleObject(*m_firstModuleRequestedByHost);
 }
 
 JSValue Modules::requireFunction(ModuleID module)
@@ -355,6 +238,60 @@ JSValue Modules::requireFunction(ModuleID module)
     moduleObject(module);
     RETURN_IF_EXCEPTION(scope, { });
     return ensureLoaded(module).requireFunction;
+}
+
+// What only time knows, for a program that looks: which require() came to a module first, and which of the calls in functions and branches have run.
+// The objects that show it are made when somebody reads them, so nothing is allocated in the heap here.
+void Modules::recordRequire(ModuleID target, ModuleID referrer)
+{
+    if (data(target).kind != ModuleKind::CommonJs) {
+        markNamespaceAsRequired(target);
+        return;
+    }
+    // A require() is recorded in front of the evaluation and behind it. The module has its parent from the first record on. It is a child from the second on, which a call that throws does not reach.
+    uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
+    auto recorded = m_recordedRequires.add(pair, false);
+    if (recorded.isNewEntry) {
+        LoadedModule& required = ensureLoaded(target);
+        if (!required.firstRequirer)
+            required.firstRequirer = referrer;
+        return;
+    }
+    // The record in front of another require() of a module that has thrown.
+    bool& isChild = recorded.iterator->value;
+    if (isChild || status(target) == ModuleStatus::Failed)
+        return;
+    isChild = true;
+    ensureLoaded(referrer).requiredModules.append(target);
+}
+
+JSObject* Modules::parentModuleObject(ModuleID module)
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded || !loaded->firstRequirer || mainCommonJSModule() == module || !mayHandOutModuleObject(*loaded->firstRequirer))
+        return nullptr;
+    return moduleObject(*loaded->firstRequirer);
+}
+
+bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*)>& functor)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded)
+        return true;
+    for (ModuleID child : loaded->requiredModules) {
+        if (!mayHandOutModuleObject(child))
+            return false;
+    }
+    // The functor may run code of the program, which may require more.
+    while (loaded->numberOfChildrenShown < loaded->requiredModules.size()) {
+        ModuleID child = loaded->requiredModules[loaded->numberOfChildrenShown++];
+        JSObject* childObject = moduleObject(child);
+        RETURN_IF_EXCEPTION(scope, true);
+        functor(childObject);
+        RETURN_IF_EXCEPTION(scope, true);
+    }
+    return true;
 }
 
 JSValue Modules::requireDynamic(JSValue specifier, ModuleID referrer)
@@ -387,6 +324,7 @@ JSValue Modules::resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSp
     JSObject* holder = nullptr;
     switch (form) {
     case ResolvedSpecifierForm::Path:
+    case ResolvedSpecifierForm::PathForRequire:
         holder = moduleObject(referrer);
         break;
     case ResolvedSpecifierForm::URL:
@@ -397,11 +335,18 @@ JSValue Modules::resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSp
     RELEASE_AND_RETURN(scope, host().resolveSpecifier(m_instance.globalObject, holder, specifier, form));
 }
 
-JSValue Modules::resolveFrom(ModuleID target, ModuleID referrer, StringID writtenSpecifier, ResolvedSpecifierForm form)
+// From the first require() on, the namespace object of a module without an export `__esModule` reads `true` under that name, for everybody who holds it.
+void Modules::markNamespaceAsRequired(ModuleID module)
 {
-    if (requireIsOverridden() && form == ResolvedSpecifierForm::Path) [[unlikely]]
-        return resolveDynamic(m_state.strings->string(*m_instance.vm, writtenSpecifier), referrer, form);
-    return resolve(target, form);
+    if (!data(module).hasExportTable() || m_modulesWithMarkOfRequire.get(module.index()))
+        return;
+    m_modulesWithMarkOfRequire.set(module.index());
+    JSObject* created = namespaceIfCreated(module, ModulePhase::Evaluation);
+    if (!created)
+        return;
+    auto* namespaceObject = uncheckedDowncast<ModuleNamespace>(created);
+    if (!namespaceObject->hasExport(m_instance.vm->propertyNames->__esModule.impl()))
+        namespaceObject->setESModuleMarker(true);
 }
 
 JSValue Modules::namespaceForRequire(ModuleID module)
@@ -409,29 +354,27 @@ JSValue Modules::namespaceForRequire(ModuleID module)
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue cached = value(module))
-        return cached;
+    if (LoadedModule* loaded = loadedIfExists(module)) {
+        if (JSValue answered = loaded->requiredValue)
+            return answered;
+    }
 
     JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
     RETURN_IF_EXCEPTION(scope, { });
     if (m_moduleExportsName.isNull())
         m_moduleExportsName = Identifier::fromString(vm, "module.exports"_s);
 
-    const Identifier& esModuleName = vm.propertyNames->__esModule;
-    JSValue esModule = readExportForRequire(namespaceObject, esModuleName);
+    JSValue esModule = readExportForRequire(namespaceObject, vm.propertyNames->__esModule);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue moduleExports;
     if (esModule) {
         moduleExports = readExportForRequire(namespaceObject, m_moduleExportsName);
         RETURN_IF_EXCEPTION(scope, { });
     }
-
-    auto* compiledNamespace = uncheckedDowncast<ModuleNamespace>(namespaceObject);
-    if (!compiledNamespace->hasExport(esModuleName.impl()))
-        compiledNamespace->setESModuleMarker(true);
+    markNamespaceAsRequired(module);
 
     JSValue result = !moduleExports || moduleExports.isUndefinedOrNull() ? JSValue(namespaceObject) : moduleExports;
-    setValue(module, result);
+    ensureLoaded(module).requiredValue.set(*this, result);
     return result;
 }
 
@@ -453,75 +396,18 @@ JSValue Modules::readExportForRequire(JSObject* namespaceObject, const Identifie
     return exported;
 }
 
-void Modules::throwLoaderChangeRefused(const String& change)
+void Modules::throwLoaderChangeRefused(LoaderChange change, StringView changed)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    throwException(realm, scope, createError(realm, withAOTErrorNote(makeString("Cannot "_s, change, ": this executable was compiled without support for changing at run time what a module name loads. Compile with --admit=runtime-code"_s))));
+    throwException(realm, scope, createLoaderChangeRefusedError(realm, change, changed));
 }
 
-void Modules::evict(ModuleID module)
-{
-    if (data(module).isEvaluatedAtMostOnce()) {
-        throwLoaderChangeRefused(makeString("remove '"_s, m_table.path(module), "' from require.cache"_s));
-        return;
-    }
-
-    LoadedModule* loaded = loadedIfExists(module);
-    if (loaded)
-        loaded->isOverriddenInRequireCache = false;
-
-    switch (data(module).kind) {
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-        break;
-    case ModuleKind::SourceText:
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return;
-    }
-
-    switch (status(module)) {
-    case ModuleStatus::Evaluated:
-    case ModuleStatus::Failed:
-        disarmRequireEdges();
-        setValue(module, JSValue());
-        if (loaded && !loaded->requirer)
-            setModuleBuiltins(*loaded, nullptr, { });
-        if (ModuleRecord* record = recordIfExists(module))
-            record->setEvaluationError(*m_instance.vm, JSValue());
-        setStatus(module, ModuleStatus::Linked);
-        return;
-    case ModuleStatus::Evaluating:
-        ensureLoaded(module).wasEvictedWhileEvaluating = true;
-        return;
-    case ModuleStatus::Unlinked:
-    case ModuleStatus::Linking:
-    case ModuleStatus::Linked:
-    case ModuleStatus::EvaluatingAsync:
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
+// The host's require() takes no entry that is falsy.
 void Modules::willSetRequireCacheEntry(ModuleID module, JSValue entry)
 {
-    // The host's require() loads the module again when the entry is falsy.
-    if (!entry.toBoolean(m_instance.globalObject)) {
-        evict(module);
-        return;
-    }
-    bool isOverridden = entry != value(module);
-    LoadedModule* loaded = loadedIfExists(module);
-    if (isOverridden == (loaded && loaded->isOverriddenInRequireCache))
-        return;
-    if (isOverridden && !m_replacesLoaderAnswers) {
-        throwLoaderChangeRefused(makeString("replace '"_s, m_table.path(module), "' in require.cache"_s));
-        return;
-    }
-    ensureLoaded(module).isOverriddenInRequireCache = isOverridden;
-    disarmRequireEdges();
+    if (entry.toBoolean(m_instance.globalObject))
+        throwLoaderChangeRefused(LoaderChange::ReplaceInRequireCache, m_table.pathText(module));
 }
 
 static ASCIILiteral nameOf(RequireOverride location)
@@ -537,20 +423,12 @@ static ASCIILiteral nameOf(RequireOverride location)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A request that is resolved at run time asks the two functions, as under plain Bun. A `require` with a constant name is the module that the build has found, and asks nobody.
+// A loader for an extension would have to be handed the text of a module of the image, which is not there.
 void Modules::willChangeRequireOverride(RequireOverride location, bool isOverridden)
 {
-    if (isOverridden && !m_replacesLoaderAnswers) {
-        throwLoaderChangeRefused(makeString("replace "_s, nameOf(location)));
-        return;
-    }
-    m_requireOverrides.set(location, isOverridden);
-    if (isOverridden)
-        disarmRequireEdges();
-}
-
-void Modules::didObserveModuleChildren()
-{
-    disarmRequireEdges();
+    if (isOverridden && location == RequireOverride::Extensions)
+        throwLoaderChangeRefused(LoaderChange::ReplaceLoaderFunction, nameOf(location));
 }
 
 } } // namespace JSC::AOT

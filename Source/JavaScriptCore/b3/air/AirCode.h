@@ -82,6 +82,9 @@ typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
 struct StackCheckSite {
     unsigned bytesAllocatedBelowFrameRecord { 0 };
     unsigned bytesBelowFrameRecord { 0 };
+    // Of a frame without a record: how far the stack pointer is below the return address, and how far it still has to go.
+    unsigned bytesAllocatedBelowReturnAddress { 0 };
+    unsigned bytesLeftToAllocate { 0 };
 };
 
 typedef void StackCheckGeneratorFunction(CCallHelpers&, GenerationContext&, const StackCheckSite&);
@@ -391,6 +394,13 @@ public:
     const FrameLayout& frameLayout() const { return m_frameLayout; }
     void setFrameLayout(FrameLayout&& layout) { m_frameLayout = WTF::move(layout); }
     unsigned bytesBelowFrameRecord() const { return frameSize() - m_frameLayout.bytesAboveFrameRecord; }
+    // For code that runs while the frame is set up.
+    MacroAssembler::Address addressInFrame(intptr_t offsetFromFP) const
+    {
+        if (m_frameLayout.hasFrameRecord)
+            return MacroAssembler::Address(MacroAssembler::framePointerRegister, safeCast<int32_t>(offsetFromFP));
+        return MacroAssembler::Address(MacroAssembler::stackPointerRegister, safeCast<int32_t>(offsetFromFP + static_cast<intptr_t>(bytesBelowFrameRecord())));
+    }
     StackSlot* calleeSaveStackSlot() const { return m_calleeSaveStackSlot; }
     const Vector<FrameRange>& frameRanges() const LIFETIME_BOUND { return m_frameRanges; }
     void setFrameRanges(Vector<FrameRange>&& ranges) { m_frameRanges = WTF::move(ranges); }

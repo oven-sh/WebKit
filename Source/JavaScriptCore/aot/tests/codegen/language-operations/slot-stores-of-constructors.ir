@@ -1,6 +1,6 @@
 # A store that may create a field records the key when it found the slot absent, also where every read finds the field filled: the constructor is what fills it
 # FORM: Selected
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=EverythingIsHot
 # RUN: generate-code calls
 
 module m0 path="main.js" displayPath="main.js"
@@ -23,8 +23,8 @@ function f3 name="plain-stores" parameters=[{type=L0}, {type=number}] results=[{
     Return
 }
 # CHECK: f1: size=
-# CHECK-NEXT: stub DidCreateField.One x1
+# CHECK-NEXT: stub DidCreateFieldAtPlace.One x1
 # CHECK-NEXT: f2: size=
-# CHECK-NEXT: stub DidCreateField.Run x1
+# CHECK-NEXT: stub DidCreateFieldAtPlace.Run x1
 # CHECK-NEXT: f3: size={{*}} frame=none
 # CHECK-NOT: stub

@@ -7,13 +7,13 @@
 
 module m0 path="main.js" displayPath="main.js"
 typesite w0 module=m0 position=5 kind=Assertion text="Function"
-layout L0 kind=Instance name="Add" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f1 mutability=Fixed}]}
-layout L1 kind=Instance name="Subtract" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f3 mutability=Fixed}]}
-layout L2 kind=Instance name="Multiply" constructor=f4 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
-layout L3 kind=Instance name="Plugin" constructor=f6 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L4 kind=Instance name="AddChecked" predictedBase=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L5 kind=Instance name="Custom" constructor=f8 fields=[{key="run" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L6 kind=Instance name="Buffer" constructor=f9 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f10 mutability=Fixed}, {key="size" kind=Setter function=f11 mutability=Fixed}, {key="level" kind=Setter function=f12 mutability=Fixed}]}
+layout L0 kind=Instance name="Add" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Subtract" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f3 mutability=Fixed}]}
+layout L2 kind=Instance name="Multiply" constructor=f4 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
+layout L3 kind=Instance name="Plugin" constructor=f6 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="AddChecked" base=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="Custom" constructor=f8 fields=[{key="run" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="Buffer" constructor=f9 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f10 mutability=Fixed}, {key="size" kind=Setter function=f11 mutability=Fixed}, {key="level" kind=Setter function=f12 mutability=Fixed}]}
 function f0 name="Add" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0|L4} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: L0|L4, v1: anything):
@@ -166,7 +166,7 @@ function f19 name="nullable-receiver" parameters=[{type=undefined|L0|L1}, {type=
 function f20 name="casts-are-copied-into-the-rest" parameters=[{type=L0|L3}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0|L3, v1: anything):
     v2 = PropGet v0 key="run"
-    v3 = Claim v2 castType=function site=w0
+    v3 = Check v2 castType=function site=w0
     v4 = Call v3, v0, v1 calleeKey="run"
     Return v4
 }
@@ -178,7 +178,7 @@ function f20 name="casts-are-copied-into-the-rest" parameters=[{type=L0|L3}, {ty
 # CHECK: = CallDirect {{*}}, v1 function=f1
 # CHECK: ([[otherPlugin]]: L3) frequency=Unlikely:
 # CHECK-NEXT: [[uncheckedMethod]]: anything = PropGet [[otherPlugin]] key="run" receivers=[L3]
-# CHECK-NEXT: [[checkedMethod]]: function = Claim [[uncheckedMethod]] castType=function site=w0
+# CHECK-NEXT: [[checkedMethod]]: function = Check [[uncheckedMethod]] castType=function site=w0
 # CHECK-NEXT: = Call [[checkedMethod]], [[otherPlugin]], v1 calleeKey="run"
 function f21 name="read-from-another-object" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
   b0(v0: L0, v1: L0):

@@ -94,17 +94,67 @@ static void testEnumeratorIsPublishedByStructureAndOrderWord(LoadedProgram& prog
     AOT_TEST_CHECK(samePair->propertyNameEnumerator(program.realm()) == enumerator);
 }
 
+static Object* createPairWithExtraProperty(LoadedProgram& program, ASCIILiteral name)
+{
+    Object* pair = createPair(program, { 0, 1 });
+    PutPropertySlot slot(pair);
+    AOT_TEST_CHECK(pair->methodTable()->put(pair, program.realm(), Identifier::fromString(program.vm(), name), jsNumber(3), slot) && isCompiledObject(pair) && pair->hasExtraProperties());
+    return pair;
+}
+
 static void testObjectWithExtraPropertiesHasNoPublishedEnumerator(LoadedProgram& program)
 {
-    VM& vm = program.vm();
     Object* pair = createPair(program, { 0, 1 });
     AOT_TEST_CHECK(pair->propertyNameEnumerator(program.realm()) && publishedFor(program, pair));
 
-    PutPropertySlot slot(pair);
-    AOT_TEST_CHECK(pair->methodTable()->put(pair, program.realm(), Identifier::fromString(vm, "third"_s), jsNumber(3), slot) && isCompiledObject(pair) && pair->hasExtraProperties());
-    AOT_TEST_CHECK(!publishedFor(program, pair));
-    JSPropertyNameEnumerator* enumerator = pair->propertyNameEnumerator(program.realm());
-    AOT_TEST_CHECK(enumerator && enumerator->sizeOfPropertyNames() == 3 && !publishedFor(program, pair));
+    Object* withThird = createPairWithExtraProperty(program, "third"_s);
+    AOT_TEST_CHECK(!withThird->compiledStructure().extraPropertiesStructure() && !publishedFor(program, withThird));
+    JSPropertyNameEnumerator* enumerator = withThird->propertyNameEnumerator(program.realm());
+    AOT_TEST_CHECK(enumerator && enumerator->sizeOfPropertyNames() == 3 && !publishedFor(program, withThird));
+}
+
+// A Structure that names the Structure of the extra properties says which there are, so it and the order word say what the keys are.
+static void testEnumeratorIsPublishedWhereTheStructureNamesTheExtraProperties(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto create = [&](ASCIILiteral name) {
+        Object* object = createPairWithExtraProperty(program, name);
+        object->ensureStructureForExtraProperties(vm);
+        AOT_TEST_CHECK(object->compiledStructure().listsEveryExtraProperty());
+        return object;
+    };
+    Object* pair = createPair(program, { 0, 1 });
+    Object* withThird = create("third"_s);
+    Object* sameKeys = create("third"_s);
+    Object* withFourth = create("fourth"_s);
+    AOT_TEST_CHECK(withThird->structure() == sameKeys->structure() && withThird->orderWord() == sameKeys->orderWord() && withThird->structure() != withFourth->structure());
+    AOT_TEST_CHECK(!publishedFor(program, withThird));
+
+    JSPropertyNameEnumerator* enumerator = withThird->propertyNameEnumerator(realm);
+    AOT_TEST_CHECK(enumerator && enumerator->sizeOfPropertyNames() == 3 && enumerator->endStructurePropertyIndex() == 3);
+    AOT_TEST_CHECK(enumerator->isCurrentFor(withThird) && enumerator->isCurrentFor(sameKeys) && !enumerator->isCurrentFor(withFourth) && !enumerator->isCurrentFor(pair));
+    AOT_TEST_CHECK(publishedFor(program, withThird) == enumerator && publishedFor(program, sameKeys) == enumerator && !publishedFor(program, withFourth));
+    AOT_TEST_CHECK(sameKeys->propertyNameEnumerator(realm) == enumerator);
+    AOT_TEST_CHECK(pair->propertyNameEnumerator(realm) != enumerator && !pair->propertyNameEnumerator(realm)->isCurrentFor(withThird));
+
+    JSPropertyNameEnumerator* other = withFourth->propertyNameEnumerator(realm);
+    AOT_TEST_CHECK(other != enumerator && other->isCurrentFor(withFourth) && publishedFor(program, withFourth) == other && publishedFor(program, withThird) == enumerator);
+
+    PutPropertySlot slot(sameKeys);
+    AOT_TEST_CHECK(sameKeys->methodTable()->put(sameKeys, realm, Identifier::fromString(vm, "fifth"_s), jsNumber(5), slot));
+    AOT_TEST_CHECK(!enumerator->isCurrentFor(sameKeys) && publishedFor(program, sameKeys) != enumerator && sameKeys->propertyNameEnumerator(realm)->sizeOfPropertyNames() == 4);
+
+    AOT_TEST_CHECK(withFourth->methodTable()->putByIndex(withFourth, realm, 7, jsNumber(7), false));
+    withFourth->ensureStructureForExtraProperties(vm);
+    JSPropertyNameEnumerator* withIndex = withFourth->propertyNameEnumerator(realm);
+    AOT_TEST_CHECK(!other->isCurrentFor(withFourth) && withIndex->sizeOfPropertyNames() == 4 && !withIndex->endStructurePropertyIndex() && !publishedFor(program, withFourth));
+
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(!publishedFor(program, withThird));
+    JSPropertyNameEnumerator* afterCollection = withThird->propertyNameEnumerator(realm);
+    AOT_TEST_CHECK(afterCollection->isCurrentFor(withThird) && afterCollection->endStructurePropertyIndex() == 3 && publishedFor(program, withThird) == afterCollection);
+    ensureStillAliveHere(withThird);
 }
 
 static void testChangeOnPrototypeChainWithdrawsEnumerators(LoadedProgram& program)
@@ -159,6 +209,7 @@ std::span<const NativeTest> publishedEnumeratorTests()
     static constexpr NativeTest tests[] = {
         { "published-enumerators/by-structure-and-order-word"_s, withPairs<testEnumeratorIsPublishedByStructureAndOrderWord> },
         { "published-enumerators/none-with-extra-properties"_s, withPairs<testObjectWithExtraPropertiesHasNoPublishedEnumerator> },
+        { "published-enumerators/with-extra-properties-that-the-structure-names"_s, withPairs<testEnumeratorIsPublishedWhereTheStructureNamesTheExtraProperties> },
         { "published-enumerators/change-on-prototype-chain-withdraws"_s, withPairs<testChangeOnPrototypeChainWithdrawsEnumerators> },
         { "published-enumerators/none-under-prototype-that-can-get-indexes"_s, withPairs<testNothingIsPublishedUnderPrototypeThatCanGetIndexes> },
         { "published-enumerators/collection-withdraws"_s, withPairs<testCollectionWithdrawsEnumerators> },

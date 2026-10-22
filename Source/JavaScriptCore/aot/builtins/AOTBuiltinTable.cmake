@@ -27,11 +27,16 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/ArrayIteratorPrototype.ts
+    aot/builtins/handwritten/AsyncDisposableStackPrototype.ts
+    aot/builtins/handwritten/DisposableStackPrototype.ts
+    aot/builtins/handwritten/FunctionPrototype.ts
     aot/builtins/handwritten/GeneratorPrototype.ts
     aot/builtins/handwritten/IteratorOperations.ts
     aot/builtins/handwritten/JSIteratorHelperPrototype.ts
     aot/builtins/handwritten/MapPrototype.ts
+    aot/builtins/handwritten/ObjectConstructor.ts
     aot/builtins/handwritten/SetPrototype.ts
+    aot/builtins/handwritten/TypedArrayPrototype.ts
 )
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS

@@ -64,6 +64,7 @@ static constexpr unsigned OverridesPut = 1 << 18;
 static constexpr unsigned WriteHooksHonorImmutableProperties = 1 << 19;
 static constexpr unsigned GetOwnPropertySlotMayBeWrongAboutDontEnum = 1 << 20;
 static constexpr unsigned OverridesIsExtensible = 1 << 21;
+static constexpr unsigned HasPristineNames = 1 << 22; // Structure::setPristineBits() alone sets it. IsPristine is what the cells copy: the same, and for an array only beside pristine elements.
 
 static constexpr unsigned numberOfInlineBits = 8;
 
@@ -110,6 +111,7 @@ public:
     bool overridesGetPrototype() const { return isSetOnFlags1<OverridesGetPrototype>(); }
     bool overridesIsExtensible() const { return isSetOnFlags2<OverridesIsExtensible>(); }
     bool isPristine() const { return isSetOnFlags1<IsPristine>(); }
+    bool hasPristineNames() const { return isSetOnFlags2<HasPristineNames>(); }
     bool writeHooksHonorImmutableProperties() const { return isSetOnFlags2<WriteHooksHonorImmutableProperties>(); }
     bool prohibitsPropertyCaching() const { return isSetOnFlags2<ProhibitsPropertyCaching>(); }
     bool getOwnPropertySlotIsImpure() const { return isSetOnFlags2<GetOwnPropertySlotIsImpure>(); }

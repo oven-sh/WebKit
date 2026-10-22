@@ -12,6 +12,9 @@
 #include "AOTOperationScope.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "JSCInlines.h"
+#include "JSONObject.h"
+#include "NumberPrototype.h"
+#include "NumericStrings.h"
 #include <array>
 #include <wtf/MathExtras.h>
 #include <wtf/SIMDHelpers.h>
@@ -59,6 +62,15 @@ static ALWAYS_INLINE bool copyAndCheckForEscapes(std::span<const Latin1Character
             found = SIMD::bitOr(found, findEscapesInJSON(input));
         };
         size_t offset = 0;
+        // A long text that has something to escape mostly has it early, and all that was copied is copied again.
+        for (; offset + 4 * stride <= size; offset += 4 * stride) {
+            take(offset);
+            take(offset + stride);
+            take(offset + 2 * stride);
+            take(offset + 3 * stride);
+            if (SIMD::isNonZero(found)) [[unlikely]]
+                return true;
+        }
         for (; offset + stride <= size; offset += stride)
             take(offset);
         if (offset < size)
@@ -297,6 +309,107 @@ JSC_DEFINE_JIT_OPERATION(operationAOTJSONAppendValue, UGPRPair, (Instance* insta
     if (Latin1Character* end = tryAppendValueAtCursor(builder, cursor, value)) [[likely]]
         return toRegisterPair({ end, JSONOutcome::Parsed });
     return appendJSONValueInFrame(*instance, AOT_OPERATION_FRAME_RECORD(), builder, cursor, value, static_cast<JSONPosition>(position));
+}
+
+// The engine reserves room for the longest escaped form of a string before it reads the string, and throws if no string is that long.
+static constexpr size_t maxLengthOfStringQuotedHere = (String::MaxLength - numberOfQuotes) / maxEscapedCharacterLength;
+
+static NEVER_INLINE JSString* quoteStringInEngine(JSGlobalObject* globalObject, JSString* string)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String text = JSONStringify(globalObject, string, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return jsString(vm, WTF::move(text));
+}
+
+// A longer text pays for the engine's set-up many times over, and the room for its longest escaped form is no small thing.
+static constexpr size_t maxLengthOfStringEscapedHere = 16 * KB;
+
+static NEVER_INLINE JSString* quoteStringWithEscapes(VM& vm, std::span<const Latin1Character> characters)
+{
+    Vector<Latin1Character, 1024> text;
+    if (!text.tryGrow(roomForEscapedString(characters.size()))) [[unlikely]]
+        return nullptr;
+    Latin1Character* end = appendQuotedAndEscaped(text.mutableSpan().data(), characters);
+    return jsNontrivialString(vm, String { std::span<const Latin1Character> { text.span().data(), end } });
+}
+
+static NEVER_INLINE JSString* quoteWideString(VM& vm, std::span<const char16_t> characters)
+{
+    Vector<char16_t, 512> text;
+    if (!text.tryGrow(characters.size() * maxEscapedCharacterLength + numberOfQuotes)) [[unlikely]]
+        return nullptr;
+    std::span<char16_t> quoted = text.mutableSpan();
+    quoted[0] = '"';
+    std::span<char16_t> output = quoted.subspan(1);
+    WTF::appendEscapedJSONStringContent(output, characters);
+    size_t length = output.data() - quoted.data();
+    quoted[length++] = '"';
+    return jsNontrivialString(vm, String { std::span<const char16_t> { quoted.first(length) } });
+}
+
+static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    {
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (view->is8Bit() && view->length() <= maxLengthOfStringQuotedHere) [[likely]] {
+            auto characters = view->span8();
+            std::span<Latin1Character> quoted;
+            RefPtr impl = StringImpl::tryCreateUninitialized(characters.size() + numberOfQuotes, quoted);
+            if (!impl) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return nullptr;
+            }
+            if (!copyAndCheckForEscapes(characters, quoted.data() + 1)) [[likely]] {
+                quoted.front() = '"';
+                quoted.back() = '"';
+                return jsNontrivialString(vm, String { impl.releaseNonNull() });
+            }
+            if (characters.size() <= maxLengthOfStringEscapedHere) {
+                if (JSString* text = quoteStringWithEscapes(vm, characters)) [[likely]]
+                    return text;
+            }
+        } else if (!view->is8Bit() && view->length() <= maxLengthOfStringEscapedHere) {
+            if (JSString* text = quoteWideString(vm, view->span16())) [[likely]]
+                return text;
+        }
+    }
+    RELEASE_AND_RETURN(scope, quoteStringInEngine(globalObject, string));
+}
+
+static ALWAYS_INLINE JSString* numberToJSONText(VM& vm, JSValue value)
+{
+    if (value.isInt32())
+        return int32ToString(vm, value.asInt32(), 10);
+    double number = value.asDouble();
+    if (!std::isfinite(number))
+        return vm.smallStrings.nullString();
+    int32_t integer = truncateDoubleToInt32(number);
+    if (integer == number)
+        return int32ToString(vm, integer, 10);
+    return vm.numericStrings.addJSString(vm, number);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
+{
+    constexpr Entry entry = Entry::operationAOTJSONStringifyPrimitive;
+    AOT_OPERATION_BEGIN(instance, entry);
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isCell())
+        OPERATION_RETURN(scope, quoteString(globalObject, cellArgument<JSString>(value.asCell(), entry)));
+    if (value.isNumber())
+        OPERATION_RETURN(scope, numberToJSONText(vm, value));
+    if (value.isBoolean())
+        OPERATION_RETURN(scope, value.isTrue() ? vm.smallStrings.trueString() : vm.smallStrings.falseString());
+    if (!value.isNull()) [[unlikely]]
+        crashOnWrongOperand(entry);
+    OPERATION_RETURN(scope, vm.smallStrings.nullString());
 }
 
 } } // namespace JSC::AOT

@@ -9,6 +9,7 @@
 
 #include "AOTBranchCounterNumbers.h"
 #include "AOTOperationEmitter.h"
+#include "AOTSwitchWindow.h"
 #include <optional>
 #include <span>
 #include <wtf/Vector.h>
@@ -35,11 +36,15 @@ public:
     B3::FrequentedBlock countedEdgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
 
 private:
+    bool leavesAnotherWayUnlessPromised(const TerminatorContext&, ValueID);
     void countBranch(const TerminatorContext&, uint32_t targetIndex, B3::FrequentedBlock& edge);
+    void testBitsOfWindow(const TerminatorContext&, const SwitchWindow&, LValue subject, LType, B3::FrequentedBlock otherwise);
     void switchOnInteger(const TerminatorContext&, LValue subject, LType, B3::FrequentedBlock otherwise);
     void switchOnBoxedInteger(const TerminatorContext&, Boxed subject, B3::FrequentedBlock otherwise);
 
     std::optional<Vector<CountedBranch>> m_countedBranches;
+    LBasicBlock m_testedReturn { nullptr };
+    LValue m_resultOfTestedReturn { nullptr };
 };
 
 } } } // namespace JSC::AOT::Typed

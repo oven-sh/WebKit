@@ -21,11 +21,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-DeclaredType createDeclaredType(TypeID type, TypeID predicted = { })
+DeclaredType createDeclaredType(TypeID type)
 {
     DeclaredType declared;
     declared.type = type;
-    declared.predicted = predicted;
     return declared;
 }
 
@@ -113,6 +112,24 @@ static void editorRecordsChangedFunctions()
     AOT_TEST_CHECK(hasElements(editor.changedFunctions(), { FunctionID(0u), FunctionID(2u) }));
 }
 
+static void editorTellsFunctionsGivenOutOnlyForStorage()
+{
+    TestProgram test;
+    test.program.functions.grow(4);
+    ProgramEditor editor(test.program);
+    editor.atForStorage(FunctionID(0u));
+    editor.atForStorage(FunctionID(1u));
+    editor.atForLowering(FunctionID(1u));
+    editor.atForStorage(FunctionID(2u));
+    editor.at(FunctionID(2u));
+    editor.atForLowering(FunctionID(3u));
+    AOT_TEST_CHECK(hasElements(editor.changedFunctions(), { FunctionID(0u), FunctionID(1u), FunctionID(2u), FunctionID(3u) }));
+    AOT_TEST_CHECK(hasElements(editor.functionsWithChangedOperations(), { FunctionID(0u), FunctionID(1u), FunctionID(2u) }));
+    AOT_TEST_CHECK(hasElements(editor.functionsThatWereOnlyLowered(), { FunctionID(3u) }));
+    AOT_TEST_CHECK(editor.wasGivenOutOnlyForStorage(FunctionID(0u)));
+    AOT_TEST_CHECK(!editor.wasGivenOutOnlyForStorage(FunctionID(1u)) && !editor.wasGivenOutOnlyForStorage(FunctionID(2u)) && !editor.wasGivenOutOnlyForStorage(FunctionID(3u)));
+}
+
 static void editorAddFunctionLikeFollowsDerivationSource()
 {
     TestProgram test;
@@ -169,7 +186,18 @@ static void editorAddedLayoutIsItsOnlyDeclaredMember()
     AOT_TEST_CHECK(id == LayoutID(1u) && editor.program().at(id).ownFieldCount == 2);
     const LayoutSet& members = editor.program().at(editor.program().declaredMembersOf(id));
     AOT_TEST_CHECK(members.isComplete && hasElements(members.members, { id }));
-    AOT_TEST_CHECK(editor.reserveLayouts(2) == LayoutID(2u) && editor.program().layouts.size() == 4 && editor.changedFunctions().isEmpty());
+    AOT_TEST_CHECK(editor.changedFunctions().isEmpty());
+}
+
+static void expectedTypeOfValueWinsOverItsType()
+{
+    TestProgram test;
+    Function function;
+    ValueID value = addValue(function, addBlock(function), Opcode::Undefined);
+    function.edit(value).type = TypeTable::number;
+    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::number));
+    function.edit(value).setExpected(TypeTable::int32);
+    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::int32));
 }
 
 static void propertyKeysAreUnique()
@@ -233,12 +261,15 @@ static void wellKnownTypeIDs()
         { TypeTable::guard, Type::forOpaque(OpaqueKind::Guard) },
         { TypeTable::length, Type::integer(Range::length()) },
     };
-    AOT_TEST_CHECK(types.size() == std::size(wellKnownTypes));
+    // Behind them stands one type without a name: what a boxed location with a dead zone holds.
+    constexpr size_t numberOfTypesInNewTable = std::size(wellKnownTypes) + 1;
+    AOT_TEST_CHECK(types.size() == numberOfTypesInNewTable);
     for (unsigned index = 0; index < std::size(wellKnownTypes); ++index) {
         const WellKnownType& expected = wellKnownTypes[index];
         AOT_TEST_CHECK(expected.id == TypeID(index) && types.intern(expected.type) == expected.id && types.find(types.at(expected.id)) == expected.id);
     }
-    AOT_TEST_CHECK(types.size() == std::size(wellKnownTypes));
+    AOT_TEST_CHECK(types.intern(Type::anything().withPrimitives(Primitive::Absent)) == TypeID(static_cast<unsigned>(std::size(wellKnownTypes))));
+    AOT_TEST_CHECK(types.size() == numberOfTypesInNewTable);
     AOT_TEST_CHECK(types.at(TypeTable::never).isNever() && types.at(TypeTable::anything).isAnything() && types.at(TypeTable::guard).isOpaque(OpaqueKind::Guard));
 }
 
@@ -251,6 +282,7 @@ static void equalLayoutSetsGetOneID()
     AOT_TEST_CHECK(types.numberOfLayoutSets() == 1 && hasElements(types.at(set).members, { LayoutID(0u), LayoutID(1u), LayoutID(2u) }));
     AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u), LayoutID(2u) }, false }) != set);
     AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u) }, true }) != set && types.numberOfLayoutSets() == 3);
+    AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u), LayoutID(2u) }, true, true }) != set && types.numberOfLayoutSets() == 4);
 
     TypeArena arena(types);
     AOT_TEST_CHECK(arena.completeLayoutSet(std::array<LayoutID, 3> { LayoutID(1u), LayoutID(0u), LayoutID(2u) }) == set);
@@ -350,9 +382,11 @@ static void lineColumnAfterNonASCII()
     test.program.modules.grow(1);
     SourcePositions& positions = test.program.modules[0].positions;
     positions.lineStarts = lineStarts;
-    positions.columnAdjustments.append(ColumnAdjustment { 14, 1, 2 });
+    positions.columnAdjustments.append(ColumnAdjustment { 17, 1, 5 });
     AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 12) == LineColumn { 2, 3 }));
-    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 16) == LineColumn { 2, 5 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 14) == LineColumn { 2, 5 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 17) == LineColumn { 2, 6 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 19) == LineColumn { 2, 8 }));
     AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 22) == LineColumn { 3, 3 }));
 }
 
@@ -364,7 +398,7 @@ static void lineColumnAtEveryBoundary()
     test.program.modules.grow(1);
     SourcePositions& positions = test.program.modules[0].positions;
     positions.lineStarts = lineStarts;
-    positions.columnAdjustments = { ColumnAdjustment { 3, 1, 1 }, ColumnAdjustment { 5, 1, 2 }, ColumnAdjustment { 8, 1, 2 } };
+    positions.columnAdjustments = { ColumnAdjustment { 5, 1, 1 }, ColumnAdjustment { 8, 1, 2 }, ColumnAdjustment { 12, 1, 4 } };
     struct Boundary {
         uint32_t position;
         unsigned column;
@@ -372,6 +406,32 @@ static void lineColumnAtEveryBoundary()
     for (Boundary boundary : { Boundary { 3, 1 }, Boundary { 5, 2 }, Boundary { 8, 3 }, Boundary { 12, 5 }, Boundary { 13, 6 } })
         AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), boundary.position) == LineColumn { 2, boundary.column }));
     AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 1) == LineColumn { 1, 2 }));
+}
+
+static void lineColumnAfterLineSeparator()
+{
+    static constexpr uint32_t lineStarts[] { 0, 4 };
+    static_assert(sizeof("a\xe2\x80\xa8" "b") - 1 == 5);
+    TestProgram test;
+    test.program.modules.grow(1);
+    SourcePositions& positions = test.program.modules[0].positions;
+    positions.lineStarts = lineStarts;
+    positions.columnAdjustments.append(ColumnAdjustment { 4, 0, 2 });
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 1) == LineColumn { 1, 2 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 4) == LineColumn { 2, 1 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 5) == LineColumn { 2, 2 }));
+}
+
+static void lineColumnWithoutLineStarts()
+{
+    TestProgram test;
+    test.program.modules.grow(1);
+    SourcePositions& positions = test.program.modules[0].positions;
+    positions.columnAdjustments = { ColumnAdjustment { 40, 0, 7 }, ColumnAdjustment { 90, 2, 0 } };
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 0) == LineColumn { 1, 1 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 40) == LineColumn { 1, 8 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 43) == LineColumn { 1, 11 }));
+    AOT_TEST_CHECK((test.program.lineColumnFor(ModuleID(0u), 90) == LineColumn { 3, 1 }));
 }
 
 static void functionsCalledByHostAscending()
@@ -424,10 +484,11 @@ static void verifierRejectsTooManyCaptures()
 
 #define FOR_EACH_AOT_IR_PROGRAM_TEST(v) \
     v(verifierRejectsRecordOfAnotherRole) v(enclosingRuntimeFunctionMustBeRegistered) \
-    v(editorRecordsChangedFunctions) v(editorAddFunctionLikeFollowsDerivationSource) v(editorRemoveBodyKeepsSignature) v(editorReservesConsecutiveFunctions) \
-    v(editorAddedLayoutIsItsOnlyDeclaredMember) v(propertyKeysAreUnique) v(wellKnownTypeIDs) v(equalLayoutSetsGetOneID) \
+    v(editorRecordsChangedFunctions) v(editorTellsFunctionsGivenOutOnlyForStorage) v(editorAddFunctionLikeFollowsDerivationSource) v(editorRemoveBodyKeepsSignature) v(editorReservesConsecutiveFunctions) \
+    v(editorAddedLayoutIsItsOnlyDeclaredMember) \
+    v(expectedTypeOfValueWinsOverItsType) v(propertyKeysAreUnique) v(wellKnownTypeIDs) v(equalLayoutSetsGetOneID) \
     v(builtinLayoutsAppendedOnce) v(derivedLayoutIDsFollowLayoutsAsRead) v(builtinNameKeysAreInverse) \
-    v(lineColumnWithoutTable) v(lineColumnAfterNonASCII) v(lineColumnAtEveryBoundary) v(functionsCalledByHostAscending) \
+    v(lineColumnWithoutTable) v(lineColumnAfterNonASCII) v(lineColumnAtEveryBoundary) v(lineColumnAfterLineSeparator) v(lineColumnWithoutLineStarts) v(functionsCalledByHostAscending) \
     v(verifierRejectsTooManyCaptures)
 
 std::span<const NativeTest> irProgramTests()

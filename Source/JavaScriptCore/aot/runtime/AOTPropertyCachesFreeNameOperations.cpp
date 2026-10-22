@@ -117,7 +117,7 @@ static PropertyAnswer classifyInheritedRead(JSGlobalObject* globalObject, Unique
 static PropertyAnswer classifyOwnValueRead(Instance& instance, JSGlobalObject* globalObject, const Identifier& identifier, const PropertySlot& slot, JSValue value, SiteCache site)
 {
     UniquedStringImpl* uid = identifier.impl();
-    if (isFixed(slot, identifier) || globalObject->structure()->isImmutableProperty(uid))
+    if (isFixed(slot, identifier) || globalObject->structure()->isImmutablePropertyForReader(uid))
         return constantAnswer(value);
 
     if (instance.state->propertyCaches->watchedValues().tryWatchConstant(*instance.vm, globalObject, uid, value, site))

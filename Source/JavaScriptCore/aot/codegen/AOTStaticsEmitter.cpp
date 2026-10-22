@@ -89,7 +89,9 @@ TypedPointer StaticsEmitter::guardByteOf(GuardBitID id)
 {
     const PlacedGuardBit& guard = m_placement.guardBit(id);
     uint32_t bitInWord = guard.bit % MemberGuardData::bitsPerWord;
-    return inStatics(m_heaps.at(m_program, MemoryLocation::memberGuards(guard.classLayout)), guard.wordOffset + bitInWord / bitsPerByte);
+    // The bit of a set of conditions belongs to no class: whatever changes a guard of any class may clear it.
+    MemoryLocation location = guard.classLayout ? MemoryLocation::memberGuards(guard.classLayout) : MemoryLocation(AbstractHeap::MemberGuards);
+    return inStatics(m_heaps.at(m_program, location), guard.wordOffset + bitInWord / bitsPerByte);
 }
 
 uint8_t StaticsEmitter::guardMaskOf(GuardBitID id) const

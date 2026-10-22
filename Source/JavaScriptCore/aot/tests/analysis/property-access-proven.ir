@@ -4,8 +4,8 @@
 
 variable g0 name="count" module=m0 declared={type=number} owner=L2 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
 variable g1 name="a" module=m1 declared={type=number} initialization=Undefined
-module m0 path="main.js" displayPath="main.js" requests=[{target=m1}]
-module m1 path="lib.js" displayPath="lib.js" requests=[{target=m2}] exports=[{name="a" variable=g1}, {name="inner" kind=Namespace module=m2}]
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}]
+module m1 path="lib.js" displayPath="lib.js" requests=[{target=m2 completes=true}] exports=[{name="a" variable=g1}, {name="inner" kind=Namespace module=m2}]
 module m2 path="inner.js" displayPath="inner.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="maybe" declared={type=number}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="deferred" declared={type=f6} flow={location={deferral=CapturesNothing deferredFunction=f6} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 layout L1 name="Freezable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
@@ -166,8 +166,8 @@ function f18 name="one-arm-needs-a-test" parameters=[{type=L0|L1}, {type=number}
     Return
 }
 # CHECK-NEXT: F18 v2 PropSet: unknown
-function f19 name="prediction-only" parameters=[{type=object predicted=L0}, {type=object}] results=[{type=anything}] {
-  b0(v0: object ~ L0, v1: object):
+function f19 name="expected-only" parameters=[{type=L0 flags=[IsExpected]}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: object):
     v2 = PropGet v0 key="x"
     v3 = PropGet v1 key="x" receivers=[L0]
     Return v2
@@ -187,18 +187,18 @@ function f21 name="free-name" results=[{type=anything}] {
     Return v1
 }
 # CHECK-NEXT: F21 v1 PropGet: unknown
-function f22 name="as-many-members-as-the-limit" parameters=[{type=L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68}] results=[{type=anything}] {
+function f22 name="many-members" parameters=[{type=L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68}] results=[{type=anything}] {
   b0(v0: L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # CHECK-NEXT: F22 v1 PropGet: complete operations=[GetSlot] key=K{{*}} receivers=S
-function f23 name="more-members-than-the-limit" parameters=[{type=L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69}] results=[{type=anything}] {
+function f23 name="one-more-member" parameters=[{type=L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69}] results=[{type=anything}] {
   b0(v0: L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69):
     v1 = PropGet v0 key="x"
     Return v1
 }
-# CHECK-NEXT: F23 v1 PropGet: unknown
+# CHECK-NEXT: F23 v1 PropGet: complete operations=[GetSlot] key=K{{*}} receivers=S
 function f24 name="stores" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: L1, v2: L2, v3: number, v4: anything):
     PropSet v0, v3 key="x"

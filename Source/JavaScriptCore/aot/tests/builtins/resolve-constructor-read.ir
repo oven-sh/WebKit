@@ -74,4 +74,4 @@ function f7 name="constructUnresolvedConstructor" parameters=[{type=Int8Array}, 
 }
 # CHECK-LABEL: function f7 name="constructUnresolvedConstructor"
 # CHECK-NOT: CallBuiltin
-# CHECK: v3: object = Construct v2, -, v1
+# CHECK: v3: anything ~ object = Construct v2, -, v1

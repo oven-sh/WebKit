@@ -84,14 +84,17 @@ struct HoistedTest {
 
 enum class ProofEnding : uint8_t { MayEnd, DoesNotEnd };
 
-ProofEnding endingOf(FunctionAnalyses&, const TestCondition&, ValueID writer, const EffectsOnEdges& effectsOfWriter);
+ProofEnding endingBetweenTestAndBranch(FunctionAnalyses&, const TestCondition&, ValueID writer, const EffectsOnEdges& effectsOfWriter);
 
-// endingOf() for one writer and many conditions.
 class EndingsAtWriter {
 public:
     EndingsAtWriter(FunctionAnalyses&, ValueID writer, const EffectsOnEdges& effectsOfWriter);
 
     ProofEnding endingOf(const TestCondition&, const std::optional<GuardDependencies>& dependenciesOfTest);
+
+    // endingOf() in two steps, for many conditions that differ in their subjects alone.
+    GuardWriter::WrittenDependencies writtenOf(const TestCondition&, const GuardDependencies&);
+    ProofEnding endingOf(ValueID subject, bool subjectComesFromOutside, const GuardWriter::WrittenDependencies&);
 
 private:
     FunctionAnalyses& m_analyses;
@@ -103,8 +106,6 @@ private:
 
 ProofEnding endingOfTerminator(FunctionAnalyses&, const TestCondition&, const Effects& effectsOfTerminator);
 
-enum class RenewalPolicy : uint8_t { Never, ByShapeEpoch };
-
 struct TestEventInputs {
     FunctionAnalyses& analyses;
     const TestConditions& conditions;
@@ -112,7 +113,7 @@ struct TestEventInputs {
     std::span<const TestRequirement> requirements;
     std::span<const ExistingProof> proofs;
     std::span<const HoistedTest> hoistedTests;
-    RenewalPolicy renewal { RenewalPolicy::Never };
+    bool measuresCodeBetweenEvents { true };
 };
 
 struct TestEvent {
@@ -137,21 +138,16 @@ public:
     std::span<const TestRequirement> requirements() const { return m_inputs.requirements; }
     std::span<const ExistingProof> proofs() const { return m_inputs.proofs; }
     std::span<const HoistedTest> hoistedTests() const { return m_inputs.hoistedTests; }
-    RenewalPolicy renewal() const { return m_inputs.renewal; }
 
     std::span<const TestEvent> eventsOf(BlockID) const LIFETIME_BOUND;
+    // Whether an event of its block has the index of the value. Most values have none.
+    bool hasEventAt(ValueID value) const { return m_hasEvent.get(value.index()); }
     uint32_t bytesAfterLastEventOf(BlockID block) const { return m_bytesAfterLastEvent[block.index()]; }
 
     const BitVector& endedBy(const TestEvent& event) const LIFETIME_BOUND
     {
         ASSERT(event.kind == TestEvent::Kind::Ending);
-        return m_endedSets[event.payload].ended;
-    }
-
-    const BitVector& markedStaleBy(const TestEvent& event) const LIFETIME_BOUND
-    {
-        ASSERT(event.kind == TestEvent::Kind::Ending);
-        return m_endedSets[event.payload].markedStale;
+        return m_endedSets[event.payload];
     }
 
     void forEachProofOn(Edge edge, NOESCAPE const Invocable<void(uint32_t proof)> auto& functor) const
@@ -172,7 +168,7 @@ public:
 
     uint32_t endOfResultReadsAfter(ProgramPoint) const;
 
-    // A slow path comes back on such an edge: its target is also entered from a block that runs as often as the target.
+    // A slow path comes back on such an edge: without the edges of this kind its target is still reached.
     bool isRejoiningEdge(Edge) const;
 
 private:
@@ -181,29 +177,25 @@ private:
         uint32_t index { 0 };
     };
 
-    struct EndedSet {
-        BitVector ended;
-        BitVector markedStale;
-
-        friend bool operator==(const EndedSet&, const EndedSet&) = default;
-    };
-
     struct PointItem {
         ProgramPoint point;
         uint32_t index { 0 };
     };
 
+    void findBlocksEnteredOnlyFromRarerCode();
     void collectEdgeItems();
     void collectPointItems();
     void findResultReads();
     void collectEvents();
+    void findWhereConditionsMatter();
+    void groupConditionsByDependencies();
     void collectEventsOf(BlockID);
     void appendEvent(TestEvent::Kind, uint32_t index, uint32_t payload);
-    void appendEnding(uint32_t index, EndedSet&&);
-    EndedSet computeEndedSet(ValueID writer, const EffectsOnEdges&) const;
-    EndedSet computeEndedSetOfTerminator(const Effects&) const;
-    void splitByRenewal(EndedSet&) const;
-    uint32_t internEndedSet(EndedSet&&);
+    void appendEnding(uint32_t index, BitVector&& endedConditions);
+    std::span<const uint32_t> conditionsThatMatterIn(BlockID);
+    BitVector findConditionsEndedBy(ValueID writer, const EffectsOnEdges&, std::span<const uint32_t> conditionsThatMatter) const;
+    BitVector findConditionsEndedByTerminator(const Effects&, std::span<const uint32_t> conditionsThatMatter) const;
+    uint32_t internEndedSet(BitVector&& endedConditions);
 
     static std::span<const EdgeItem> itemsFrom(BlockID, const Vector<EdgeItem>&, const Vector<uint32_t>& firstItem);
 
@@ -212,10 +204,29 @@ private:
     const CFG& m_cfg;
     Vector<TestEvent> m_events;
     Vector<uint32_t> m_firstEvent;
+    BitVector m_hasEvent;
     Vector<uint32_t> m_bytesAfterLastEvent;
     uint32_t m_pendingBytes { 0 };
-    Vector<EndedSet, 4> m_endedSets;
+    Vector<BitVector, 4> m_endedSets;
     Vector<std::optional<GuardDependencies>> m_guardDependencies;
+    // Conditions of one group differ in their subjects alone.
+    struct WrittenByWriter {
+        ValueID writer;
+        GuardWriter::WrittenDependencies written;
+    };
+    Vector<uint32_t> m_dependencyGroups;
+    BitVector m_subjectsFromOutside;
+    mutable Vector<WrittenByWriter> m_writtenOfDependencyGroups;
+    struct BlocksWhereConditionMatters {
+        uint32_t condition { 0 };
+        uint32_t first { 0 };
+        uint32_t last { 0 };
+    };
+    Vector<BlocksWhereConditionMatters> m_whereConditionsMatter;
+    // By position in the reverse postorder: the first position that holds a block that the block may reach.
+    Vector<uint32_t> m_firstBlockReachedFrom;
+    Vector<uint32_t, 16> m_conditionsThatMatter;
+    BlockID m_blockOfConditionsThatMatter;
     Vector<EdgeItem> m_edgeProofs;
     Vector<uint32_t> m_firstEdgeProof;
     Vector<EdgeItem> m_edgeTests;
@@ -224,6 +235,7 @@ private:
     Vector<PointItem> m_valueProofsByPoint;
     Vector<PointItem> m_parameterProofsByBlock;
     BitVector m_isBarrier;
+    BitVector m_isEnteredOnlyFromRarerCode;
     Vector<uint32_t> m_lastResultRead;
 };
 

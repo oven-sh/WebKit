@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypeRelations.h"
@@ -21,6 +23,8 @@ struct CalleeAnswer {
     BuiltinID callee;
     TypeID testedCalleeType;
     TypeID testedReceiverType;
+    // The callee has no cell to compare the value with: the native code of the value is compared with that of the callee.
+    bool testsCodeOfCallee { false };
 };
 
 enum class ThisValueHandling : uint8_t { KeepsGenericCall, PassedUnmatched, Matched };
@@ -32,9 +36,16 @@ struct ArrayMatch {
 
 } // anonymous namespace
 
+static bool hasPassedTestOfFunction(const BuiltinUseInputs& inputs, ValueID subject, BuiltinID member)
+{
+    return std::ranges::any_of(inputs.passedTests, [&](const Value& test) {
+        return test.opcode == Opcode::IsFunctionOfBuiltin && test.member() == member && sameObjectThroughCasts(inputs.function, test.valueOperand()) == sameObjectThroughCasts(inputs.function, subject);
+    });
+}
+
 static bool canBecomeBuiltinCall(const BuiltinTable& table, BuiltinID callee)
 {
-    return isCallableBuiltin(table, callee) && table.at(callee).scope == BuiltinScope::Realm;
+    return isCallableBuiltin(table, callee) && (!isCalledOnlyDirectly(table, callee) || hasDirectFunction(table, callee));
 }
 
 static CalleeAnswer answerWithTestedCallee(const BuiltinUseInputs& inputs, const Value& call, BuiltinID callee, TypeID testedReceiverType)
@@ -42,18 +53,37 @@ static CalleeAnswer answerWithTestedCallee(const BuiltinUseInputs& inputs, const
     Type testedCallee = Type::forBuiltin(callee);
     if (!inputs.program.typeOf(inputs.function, call.calleeOperand()).overlaps(testedCallee, inputs.program))
         return { };
+    if (isCalledOnlyDirectly(inputs.program.builtins(), callee))
+        return { callee, { }, testedReceiverType, true };
     return { callee, inputs.types.intern(testedCallee), testedReceiverType };
 }
 
-static CalleeAnswer findPredictedCallee(const BuiltinUseInputs& inputs, const Value& call)
+// A data property whose declared type names one built-in and nothing else is expected to hold that built-in.
+static BuiltinID builtinHeldBy(const BuiltinTable& table, BuiltinID member)
 {
-    TypeID prediction = inputs.function.at(call.calleeOperand()).prediction();
-    if (!prediction)
+    if (table.at(member).kind != BuiltinKind::DataProperty)
+        return member;
+    for (const BuiltinOverload& overload : table.overloadsOf(member)) {
+        if (overload.mode != BuiltinCallMode::Get || overload.isUndeclared())
+            continue;
+        const BuiltinType& type = table.at(overload.result.type);
+        bool namesOneBuiltin = type.flags.isEmpty() && type.primitives.isEmpty() && type.stringLiterals.empty() && type.parts.size() == 1 && type.parts[0].kind == BuiltinTypePartKind::Builtin;
+        if (namesOneBuiltin)
+            return table.canonicalID(type.parts[0].builtin);
+    }
+    return member;
+}
+
+static CalleeAnswer findExpectedCallee(const BuiltinUseInputs& inputs, const Value& call)
+{
+    TypeID expectedType = inputs.function.at(call.calleeOperand()).expected();
+    if (!expectedType)
         return { };
-    BuiltinID predicted = singleBuiltinOf(inputs.types.at(prediction));
-    if (!predicted)
+    BuiltinID expected = singleBuiltinOf(inputs.types.at(expectedType));
+    if (!expected)
         return { };
-    return answerWithTestedCallee(inputs, call, inputs.program.builtins().canonicalID(predicted), { });
+    const BuiltinTable& table = inputs.program.builtins();
+    return answerWithTestedCallee(inputs, call, builtinHeldBy(table, table.canonicalID(expected)), { });
 }
 
 static CalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, const Value& call)
@@ -67,14 +97,15 @@ static CalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, const Value
 
     const BuiltinTable& table = program.builtins();
     ValueID receiver = call.thisValueOperand();
-    Type receiverType = program.typeOf(inputs.function, receiver).withoutNullish();
+    Type present = program.typeOf(inputs.function, receiver).withoutNullish();
+    Type receiverType = present;
     BuiltinReceiver start = builtinReceiverOf(program, receiverType);
-    bool isPredicted = !start;
-    if (isPredicted) {
-        TypeID prediction = inputs.function.at(receiver).prediction();
-        if (!prediction)
+    bool isExpected = !start;
+    if (isExpected) {
+        TypeID expected = inputs.function.at(receiver).expected();
+        if (!expected)
             return { };
-        receiverType = inputs.types.at(prediction).intersectWith(receiverType, inputs.types).withoutNullish();
+        receiverType = inputs.types.at(expected).intersectWith(receiverType, inputs.types).withoutNullish();
         start = builtinReceiverOf(program, receiverType);
     }
 
@@ -86,18 +117,18 @@ static CalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, const Value
         return { };
     case BuiltinReceiverKind::BuiltinObject: {
         Type testedReceiver = Type::forBuiltin(start.object);
-        if (isPredicted && !testedReceiver.isSingleValue())
+        if (isExpected && !testedReceiver.isSingleValue())
             return { };
         found = findMemberFrom(lookup, start.object, call.calleeKey());
-        if (isPredicted)
+        if (isExpected)
             testedReceiverType = inputs.types.intern(testedReceiver);
         break;
     }
     case BuiltinReceiverKind::Instance:
     case BuiltinReceiverKind::Primitive:
         found = findMemberOfInstances(lookup, start.builtinClass, call.calleeKey());
-        if (isPredicted) {
-            std::optional<Type> testedReceiver = testedTypeOfInstances(program, start.builtinClass, receiverType);
+        if (isExpected) {
+            std::optional<Type> testedReceiver = testedTypeOfExpectedInstances(program, inputs.types, start.builtinClass, receiverType, present);
             if (!testedReceiver)
                 return { };
             testedReceiverType = inputs.types.intern(*testedReceiver);
@@ -118,22 +149,84 @@ static CalleeAnswer findOnlyObjectAmongCallees(const BuiltinUseInputs& inputs, c
     return answerWithTestedCallee(inputs, call, inputs.program.builtins().canonicalID(callee), { });
 }
 
+static bool mayBeAmongCallees(const Program& program, const Value& call, BuiltinID callee)
+{
+    if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
+        return true;
+    const CalleeSet& callees = program.at(call.callees());
+    return !callees.isComplete || callees.builtins.contains(program.builtins().canonicalID(callee));
+}
+
+static CalleeAnswer findCalleeByTypes(const BuiltinUseInputs&, const Value& call);
+
 static CalleeAnswer findCallee(const BuiltinUseInputs& inputs, const Value& call)
+{
+    CalleeAnswer answer = findCalleeByTypes(inputs, call);
+    if (answer.callee && !mayBeAmongCallees(inputs.program, call, answer.callee))
+        return { };
+    return answer;
+}
+
+// Among the callees that flow has seen at the call, the first whose native code compiled code calls by itself. The set lists what can be called: whatever else the value may be makes the call throw.
+static CalleeAnswer findCalleeSeenWithDirectFunction(const BuiltinUseInputs& inputs, const Value& call)
+{
+    if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
+        return { };
+    const BuiltinTable& table = inputs.program.builtins();
+    const CalleeSet& callees = inputs.program.at(call.callees());
+    for (BuiltinID seen : callees.builtins) {
+        BuiltinID callee = table.canonicalID(seen);
+        if (!isCalledOnlyDirectly(table, callee) || !hasDirectFunction(table, callee))
+            continue;
+        bool isOnlyCallee = callees.isComplete && callees.functions.isEmpty() && callees.builtins.size() == 1;
+        if (!isOnlyCallee)
+            return { callee, { }, { }, true };
+        bool isFunction = inputs.program.typeOf(inputs.function, call.calleeOperand()).isSubsetOf(Type::function(), inputs.program);
+        return { callee, isFunction ? TypeID() : inputs.types.intern(Type::function()), { } };
+    }
+    return { };
+}
+
+static bool hasReceiverOfBuiltinClass(const BuiltinUseInputs& inputs, const Value& call)
+{
+    if (call.opcode != Opcode::Call || !call.thisValueOperand())
+        return false;
+    ValueID receiver = call.thisValueOperand();
+    Type present = inputs.program.typeOf(inputs.function, receiver).withoutNullish();
+    if (builtinReceiverOf(inputs.program, present))
+        return true;
+    TypeID expected = inputs.function.at(receiver).expected();
+    return expected && builtinReceiverOf(inputs.program, inputs.types.at(expected).intersectWith(present, inputs.types).withoutNullish());
+}
+
+static CalleeAnswer findCalleeByTypes(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (BuiltinID callee = singleBuiltinCalleeOf(inputs.program, inputs.function, call))
         return { callee, { }, { } };
+    if (!hasReceiverOfBuiltinClass(inputs, call)) {
+        if (CalleeAnswer seen = findCalleeSeenWithDirectFunction(inputs, call); seen.callee)
+            return seen;
+    }
     if (CalleeAnswer onlyObject = findOnlyObjectAmongCallees(inputs, call); onlyObject.callee)
         return onlyObject;
     CalleeAnswer method = findMethodCallee(inputs, call);
-    // The type of the receiver is a proof and the callee is only predicted: the member that the class holds under the name is the better expectation.
+    // The type of the receiver is a proof and the callee is only expected: the member that the class holds under the name is the better expectation.
     bool isMemberOfProvenReceiver = method.callee && !method.testedReceiverType;
     if (isMemberOfProvenReceiver)
         return method;
-    CalleeAnswer predicted = findPredictedCallee(inputs, call);
+    CalleeAnswer expected = findExpectedCallee(inputs, call);
     // Where both name one function, the test of the receiver is the one that makes the read of the method a constant.
-    if (predicted.callee && predicted.callee != method.callee)
-        return predicted;
+    if (expected.callee && expected.callee != method.callee)
+        return expected;
     return method;
+}
+
+// Every other answer of findCalleeByTypes() comes with a test of the callee.
+bool mayFindProvenCallee(const BuiltinUseInputs& inputs, const Value& call)
+{
+    if (singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand())))
+        return true;
+    return Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).builtins.isEmpty();
 }
 
 static bool mayObserveThisValue(const BuiltinTable& table, BuiltinID callee)
@@ -190,13 +283,19 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
         return { };
     known.operands.arguments.append(arguments);
     known.stamps.accessSite = call.accessSite();
-    if (known.stamps.accessSite)
-        known.stamps.allocationSite = inputs.flow.resultSiteOf(known.stamps.accessSite);
 
     BuiltinUsePlan plan = planKnownBuiltinCall(inputs, known, point);
     if (!plan)
         return { };
+    if (isCalledOnlyDirectly(inputs.program.builtins(), answer.callee)) {
+        bool isDirect = plan.kind == BuiltinUseKind::Call && thisValueHandling == ThisValueHandling::Matched && BuiltinBindings::directFunctionNumberOf(plan.call.overload, plan.operands.arguments.size());
+        if (!isDirect)
+            return { };
+    }
     if (thisValueHandling == ThisValueHandling::PassedUnmatched)
+        degradeToUnmatchedCall(plan);
+    bool calleeIsProven = !answer.testedReceiverType && !answer.testedCalleeType && !answer.testsCodeOfCallee;
+    if (inputs.asksOnlyForProvenPlans && calleeIsProven && plan.kind == BuiltinUseKind::Call && !plan.isProven() && !isCalledOnlyDirectly(inputs.program.builtins(), answer.callee))
         degradeToUnmatchedCall(plan);
     if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType)
         return { };
@@ -206,6 +305,8 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
         isPossible &= prependRequirement(inputs.types, plan, { known.operands.receiver, answer.testedReceiverType, { } });
     if (answer.testedCalleeType)
         isPossible &= prependRequirement(inputs.types, plan, { call.calleeOperand(), answer.testedCalleeType, { } });
+    if (answer.testsCodeOfCallee && !hasPassedTestOfFunction(inputs, call.calleeOperand(), answer.callee))
+        isPossible &= prependRequirement(inputs.types, plan, { .subject = call.calleeOperand(), .functionOfBuiltin = answer.callee });
     if (!isPossible)
         return { };
 
@@ -256,8 +357,6 @@ BuiltinUsePlan planSuperCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID us
     known.mode = BuiltinCallMode::Construct;
     known.operands.arguments.append(arguments);
     known.stamps.accessSite = call.accessSite();
-    if (known.stamps.accessSite)
-        known.stamps.allocationSite = inputs.flow.resultSiteOf(known.stamps.accessSite);
 
     BuiltinUsePlan plan = planKnownBuiltinCall(inputs, known, point);
     if (plan.kind != BuiltinUseKind::LibraryCall || !program.at(plan.libraryFunction).has(FunctionFlags::HasNewTarget))
@@ -272,7 +371,7 @@ BuiltinUsePlan planSuperCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID us
     return plan;
 }
 
-static bool insertsOperations(const BuiltinCallPlan& plan)
+bool insertsOperations(const BuiltinCallPlan& plan)
 {
     return std::ranges::any_of(plan.steps, [](const OperandStep& step) {
         switch (step.kind) {
@@ -314,12 +413,21 @@ BuiltinUsePlan planRematch(const BuiltinUseInputs& inputs, ValueID use, ProgramP
     known.operands.arguments.append(call.argumentsOperands());
     known.stamps = { call.expectedResult(), call.accessSite(), call.allocationSite() };
 
-    BuiltinUsePlan plan = planKnownBuiltinCall(inputs, known, point);
-    if (plan.kind == BuiltinUseKind::UnmatchedCall)
-        return { };
-    bool isSameCall = form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && plan.call.overload == call.overload() && !insertsOperations(plan.call);
-    if (isSameCall)
-        return { };
+    auto withoutSameCall = [&](BuiltinUsePlan&& plan) -> BuiltinUsePlan {
+        if (plan.kind == BuiltinUseKind::UnmatchedCall)
+            return { };
+        bool isSameCall = form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && plan.call.overload == call.overload() && !insertsOperations(plan.call);
+        if (isSameCall)
+            return { };
+        return WTF::move(plan);
+    };
+
+    bool comparesWithWholePlan = inputs.analyses && inputs.analyses->context().build.options().verifiesAfterEveryPass;
+    bool hasWholePlan = comparesWithWholePlan && !!withoutSameCall(planKnownBuiltinCall(inputs, known, point));
+    if (form == BuiltinCallForm::Whole)
+        known.overloadOfWholeCall = call.overload();
+    BuiltinUsePlan plan = withoutSameCall(planKnownBuiltinCall(inputs, known, point));
+    RELEASE_ASSERT(!comparesWithWholePlan || hasWholePlan == !!plan);
     return plan;
 }
 
@@ -336,7 +444,7 @@ static BuiltinOverloadID findListOverload(const BuiltinTable& table, BuiltinID c
 ValueID findOnlySpreadIntoListOf(const BuiltinUseInputs& inputs, ValueID call)
 {
     const Function& function = inputs.function;
-    const UseLists& useLists = inputs.analyses->useLists();
+    const UseLists& useLists = inputs.useLists();
 
     CastChain chain(function, function.at(call).listOperand());
     const Value& allocation = function.at(chain.last());
@@ -380,10 +488,10 @@ static ArrayMatch matchArray(const BuiltinUseInputs& inputs, ValueID value)
         return { BuiltinMatchState::Proven, { } };
 
     if (!isArray(tested)) {
-        TypeID prediction = inputs.function.at(value).prediction();
-        if (!prediction)
+        TypeID expected = inputs.function.at(value).expected();
+        if (!expected)
             return { };
-        tested = inputs.types.at(prediction).intersectWith(tested, inputs.types).withoutNullish();
+        tested = inputs.types.at(expected).intersectWith(tested, inputs.types).withoutNullish();
         if (!isArray(tested))
             return { };
     }

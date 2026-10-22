@@ -3,7 +3,7 @@
 # RUN: tables functions function-texts
 # RUN(SIZES): tables
 
-module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1}, {target=m2}] functionText="0123456789"
+module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}] functionText="0123456789"
 module m1 path="/b.ts" displayPath="b.ts" body=f9 functionText="abcdefghij"
 module m2 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f10 functionText="ABCDEFGHIJ"
 entry module=m0

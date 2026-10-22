@@ -24,7 +24,7 @@ static bool isWorthDuplicating(Code& code, BasicBlock* target)
         return target->size() == 1 && isX86() && code.calleeSaveRegisters().isEmpty();
     if (target->size() == 1)
         return true;
-    if (target->size() != 2 || target->at(0).kind.opcode != LeaveFrame)
+    if (target->size() != 2 || target->at(0).kind.opcode != LeaveFrame || target->at(0).args().size() != code.calleeSaveRegisterAtOffsetList().registerCount())
         return false;
     constexpr unsigned bytesOfReturn = isX86() ? 1 : 4;
     constexpr unsigned bytesOfShortJump = isX86() ? 2 : 4;

@@ -1,5 +1,5 @@
 # Unknown JavaScript may replace what the language defines and the table leaves open: Date.now and the binding Date. The program names both, so their cells are filled at start-up, before any other code runs, and neither is made immutable. Array.prototype.push is always locked, and no code reads the cell of Date.parse, which only flow's list of uses names
-# OPTIONS: admit=RuntimeCode
+# OPTIONS: admit=Inspector
 # RUN: tables constants
 
 module m0 path="main.js" displayPath="main.js" body=f0

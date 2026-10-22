@@ -1,4 +1,4 @@
-# The prototype of a literal is set by storing the Structure that the same change led to before, with the operation on the rare side; compact code only calls the operation
+# The prototype of a literal is set by storing the Structure that the same change led to before, with the operation on the rare side, in every shape of code
 # FORM: Placed
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
 # RUN: generate-code calls
@@ -16,7 +16,7 @@ function f0 name="inCompactCode" parameters=[{type=object}, {type=anything}, {ty
 }
 # CHECK-LABEL: f0: size=
 # CHECK: operation operationAOTSetLiteralPrototype x1
-# CHECK-NOT: stub WriteBarrier
+# CHECK: stub WriteBarrier{{*}} x1
 # S: f0 b1 Compact
 function f1 name="inBalancedCode" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything):
@@ -25,7 +25,7 @@ function f1 name="inBalancedCode" parameters=[{type=object}, {type=anything}] re
 }
 # CHECK-LABEL: f1: size=
 # CHECK: operation operationAOTSetLiteralPrototype x1
-# CHECK: stub WriteBarrier x1
+# CHECK: stub WriteBarrier{{*}} x1
 # S: f1 b0 Balanced
 function f2 name="inFastCode" parameters=[{type=object}, {type=null}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: object, v1: null, v2: boolean):
@@ -39,5 +39,5 @@ function f2 name="inFastCode" parameters=[{type=object}, {type=null}, {type=bool
 }
 # CHECK-LABEL: f2: size=
 # CHECK: operation operationAOTSetLiteralPrototype x1
-# CHECK: stub WriteBarrier x1
+# CHECK: stub WriteBarrier{{*}} x1
 # S: f2 b1 Fast

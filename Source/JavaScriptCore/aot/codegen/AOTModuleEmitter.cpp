@@ -8,12 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTModuleWords.h"
 #include "AOTPlacement.h"
 #include "AOTStaticsEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool hasNamespaceInValueSlot(const Module& module, ImportPhase phase)
+// The word of such a module holds its namespace object, once the run time has been asked for it, and nothing else.
+static bool keepsNamespaceInValueWord(const Module& module, ImportPhase phase)
 {
     switch (phase) {
     case ImportPhase::Defer:
@@ -24,8 +26,9 @@ static bool hasNamespaceInValueSlot(const Module& module, ImportPhase phase)
 
     switch (module.kind) {
     case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
     case ModuleKind::Data:
+        return true;
+    case ModuleKind::CommonJs:
     case ModuleKind::RuntimeSource:
     case ModuleKind::Runtime:
         return false;
@@ -65,7 +68,7 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
     auto getInSlowPath = [&](const CallOptions& options) {
         return callOperation<CellPointer>(value, RuntimeOperation::GetModuleNamespace, { moduleIndex(module), word32(static_cast<int32_t>(phase)) }, options);
     };
-    if (!hasNamespaceInValueSlot(m_program.at(module), phase)) {
+    if (!keepsNamespaceInValueWord(m_program.at(module), phase) || !m_placement.hasModuleValue(module)) {
         define(value, getInSlowPath({ }));
         return;
     }
@@ -86,6 +89,11 @@ void ModuleEmitter::generateImportModule(const ValueContext& value)
 void ModuleEmitter::generateRequireModule(const ValueContext& value)
 {
     define(value, callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+}
+
+void ModuleEmitter::generateRecordRequire(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
 }
 
 void ModuleEmitter::generateResolveModule(const ValueContext& value)
@@ -114,12 +122,43 @@ void ModuleEmitter::generateRequireDynamic(const ValueContext& value)
 
 void ModuleEmitter::generateResolveDynamic(const ValueContext& value)
 {
-    define(value, callOperation<Boxed>(value, RuntimeOperation::ResolveDynamic, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()), word32(value->isURL()) }));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::ResolveDynamic, { in<Boxed>(value->specifierOperand()), moduleIndex(value->referrer()), word32(value->isURL()), word32(value->isForRequire()) }));
 }
 
-void ModuleEmitter::generateGetRequiredValue(const ValueContext& value)
+TypedPointer ModuleEmitter::statusOf(ModuleID module)
 {
-    define(value, loadModuleValue(value->module()));
+    static_assert(sizeof(StoredModuleStatus) == sizeof(uint8_t));
+    Pointer statuses = loadImmutablePointer(AOT_INSTANCE_OFFSET(modules.status));
+    return m_out.address(m_heaps.entire(AbstractHeap::ExternalState), statuses.value(), module.index());
+}
+
+void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
+{
+    static_assert(StoredModuleStatus::Unlinked < StoredModuleStatus::InRecord && StoredModuleStatus::Linked < StoredModuleStatus::InRecord);
+    static_assert(StoredModuleStatus::InRecord < StoredModuleStatus::Evaluated && StoredModuleStatus::Evaluated < StoredModuleStatus::Evaluating);
+    ModuleID module = value->module();
+    Word32 inRecord = word32(static_cast<int32_t>(StoredModuleStatus::InRecord));
+    Word32 status(m_out.load8ZeroExt32(statusOf(module)));
+    defineTest(value, selectByBranch<Condition>(belowOrEqual(status, inRecord), [&] {
+        return either<Condition>(notEqual(status, inRecord), [&] {
+            m_out.store32As8(loadMutable32(AOT_INSTANCE_OFFSET(modules.evaluatingMark)).value(), statusOf(module));
+            return boolean(true);
+        }, [&] {
+            return callOperation<Condition>(value, RuntimeOperation::BeginModuleEvaluation, { moduleIndex(module) }, { .isOnRarePath = true });
+        });
+    }, [&] {
+        return boolean(false);
+    }));
+}
+
+void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
+{
+    m_out.store32As8(m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), statusOf(value->module()));
+}
+
+void ModuleEmitter::generateAbandonModuleEvaluation(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::AbandonModuleEvaluation, { moduleIndex(value->module()), get(value->exceptionOperand()) });
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -11,6 +11,7 @@
 #include "AOTCompactTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentation.h"
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -172,6 +173,11 @@ void HashTableBuiltinEmitter::generateNewMap(const InlineCall& call)
     finish(call, CellPointer(callStub(call.context(), newMap(), { }).first));
 }
 
+void HashTableBuiltinEmitter::generateNewSet(const InlineCall& call)
+{
+    finish(call, CellPointer(callStub(call.context(), newSet(), { }).first));
+}
+
 void HashTableBuiltinEmitter::generateMapGet(const InlineCall& call)
 {
     lookUp(call, HashTableOwner::Map, true);
@@ -205,6 +211,31 @@ void HashTableBuiltinEmitter::generateMapSize(const InlineCall& call)
 void HashTableBuiltinEmitter::generateSetSize(const InlineCall& call)
 {
     generateSize(call, HashTableOwner::Set);
+}
+
+KeyPartsLookupEmitter::KeyPartsLookupEmitter(CodeGenerator& generator)
+    : BuiltinFamilyEmitter(generator)
+{
+}
+
+Pointer KeyPartsLookupEmitter::partsBuffer(const ValueContext& value)
+{
+    Vector<Boxed, 8> parts;
+    for (ValueID part : value->partsOperands())
+        parts.append(boxedOperand(value, part));
+    return argumentBuffer(parts.span());
+}
+
+void KeyPartsLookupEmitter::generateMapGetByKeyParts(const ValueContext& value)
+{
+    Word32 count = word32(static_cast<int32_t>(value->partsOperands().size()));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::MapGetByKeyParts, { cellOperand(value->mapOperand()), count, partsBuffer(value) }));
+}
+
+void KeyPartsLookupEmitter::generateHasByKeyParts(const ValueContext& value)
+{
+    Word32 count = word32(static_cast<int32_t>(value->partsOperands().size()));
+    defineTest(value, callOperation<Condition>(value, RuntimeOperation::HasByKeyParts, { cellOperand(value->collectionOperand()), count, partsBuffer(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -213,7 +213,7 @@ uint32_t LiteralPlanner::computeCycleBound(std::span<const BlockID> chainBlocks)
 {
     BlockID literalBlock = chainBlocks.front();
     std::span<const BlockID> dominators = chainBlocks.subspan(1);
-    if (!m_analyses.blockCycles().isInCycle(literalBlock))
+    if (!m_analyses.isInCycle(literalBlock))
         return static_cast<uint32_t>(dominators.size());
 
     // A cycle through the literal that avoids one of its dominators avoids every earlier dominator.
@@ -409,7 +409,7 @@ void LiteralRewriter::insertLaterStores()
 void LiteralRewriter::replaceLiterals()
 {
     for (uint32_t planIndex = 0; planIndex < m_plans.size(); ++planIndex) {
-        Value& literal = m_function.at(m_plans[planIndex].literal);
+        Value& literal = m_function.edit(m_plans[planIndex].literal);
         literal.become(Opcode::TruncateNewArray);
         literal.setArrayOperand(m_arrays[planIndex].array);
         literal.setLengthOperand(m_arrays[planIndex].length);
@@ -426,6 +426,8 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
 
     Vector<LiteralPlan> plans = planLiterals(context, literals.span());
     LiteralRewriter(context, plans.span()).rewrite();
+    // Values are put into the blocks that are there.
+    context.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
 }
 

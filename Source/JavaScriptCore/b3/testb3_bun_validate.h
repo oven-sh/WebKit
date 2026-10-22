@@ -200,6 +200,9 @@ static void testValidateKnownRange()
     CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
         return graph.root->appendNew<CCallValue>(graph.proc, Int32, Origin(), graph.appendPointer());
     }) == std::nullopt);
+    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
+        return graph.root->appendNew<Value>(graph.proc, Trunc, Origin(), graph.appendPointer());
+    }) == std::nullopt);
     for (B3::Opcode opcode : { Load8Z, Load8S, Load16Z, Load16S }) {
         CHECK(validateKnownRange(range, [&](ValidationTestGraph& graph) {
             return graph.root->appendNew<MemoryValue>(graph.proc, opcode, Origin(), graph.appendPointer());

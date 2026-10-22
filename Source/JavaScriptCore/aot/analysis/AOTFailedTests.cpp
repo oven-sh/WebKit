@@ -56,8 +56,20 @@ FailedTests::FailedTests(FunctionAnalyses& analyses)
     });
 }
 
+// What is none of several types is not one of them.
+static bool failsWhereOtherFailed(FunctionAnalyses& analyses, const Value& test, const Value& failed)
+{
+    if (haveSameCondition(analyses, failed, test))
+        return true;
+    const Program& program = analyses.program();
+    return test.opcode == Opcode::TypeTest && failed.opcode == Opcode::TypeTest && program.at(test.testedType()).isSubsetOf(program.at(failed.testedType()), program);
+}
+
 EarlierTest FailedTests::find(const Value& test, BlockID at) const
 {
+    // Where no test has failed nobody needs the identity of the subject or the dominators to know it.
+    if (m_failedEdges.isEmpty() && m_failedSwitches.isEmpty())
+        return EarlierTest::Unknown;
     if (!m_analyses.cfg().isReachable(at))
         return EarlierTest::Unknown;
 
@@ -68,7 +80,7 @@ EarlierTest FailedTests::find(const Value& test, BlockID at) const
         return std::pair { edge.opcode, edge.subject };
     });
     for (const FailedEdge& edge : failedEdges) {
-        if (haveSameCondition(m_analyses, m_function.at(edge.test), test) && dominators.dominates(edge.target, at))
+        if (failsWhereOtherFailed(m_analyses, test, m_function.at(edge.test)) && dominators.dominates(edge.target, at))
             return EarlierTest::Failed;
     }
     if (provesOf(test.opcode) != Proof::Shape)

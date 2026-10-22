@@ -59,7 +59,7 @@ function f3 name="receiverIsUnknown" parameters=[{type=L0}, {type=anything}, {ty
 
 function f4 name="receiverIsUnknownAndVariableHoldsTheObject" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
     PutModuleVariable v3 variable=g0
     PropSet v0, v2 key="x" mode=Strict
     v6 = GetSlot v3 key="x" receivers=[L0] level=Proven
@@ -71,7 +71,7 @@ function f4 name="receiverIsUnknownAndVariableHoldsTheObject" parameters=[{type=
 
 function f5 name="receiverIsTheAllocationOnOnePath" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: L0, v1: anything, v2: boolean):
-    v3 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v3)

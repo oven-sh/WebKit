@@ -22,8 +22,8 @@ function f0 name="awaitsOnce" kind=Arrow flags=[IsAsync] captures=[{type=number}
 # CHECK-NEXT: b0(v0: number, v1: anything):
 # CHECK-NEXT: [[promise]]: Promise = NewPromise
 # CHECK-NEXT: [[started]]: anything = CallDirect v0, v1, [[promise]] function=f3
-# CHECK-NEXT: [[claimed]]: Promise = Claim [[started]] castType=Promise cause=AddedByPass
-# CHECK-NEXT: Return [[claimed]]
+# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] castType=Promise
+# CHECK-NEXT: Return [[returned]]
 function f1 name="yieldsOnce" flags=[IsGenerator, TakesCallee] captures=[{type=number}] parameters=[{type=anything}] results=[{type=Generator}] {
   b0(v0: number, v1: function, v2: anything):
     InitialYield @20
@@ -73,11 +73,13 @@ function f2 name="awaitsInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCall
 # CHECK: role=CoroutineBody flags=[IsGenerator, TakesCallee] captures=[{type=number}] {{*}} parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {original=2}, {}]}
 # CHECK: creator=Coroutine{ramp=f1 body=f4 promiseParameter=3}
 # CHECK: b0(v0: number, v1: function, v2: anything, [[generatorDriver]]: Generator):
-# CHECK-NEXT: [[nothing]]: undefined = Undefined
-# CHECK-NEXT: = YieldBySavingFrame [[generatorDriver]], [[nothing]] @20
+# CHECK-NEXT: [[isRunning]]: boolean = IsGeneratorRunning [[generatorDriver]] @20
+# CHECK-NEXT: Branch [[isRunning]] -> taken
 # CHECK: Return v5
 # CHECK: Return v0
 # CHECK: v4{{*}}= YieldBySavingFrame [[generatorDriver]], v2 @21
+# CHECK: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: = YieldBySavingFrame [[generatorDriver]], [[nothing]] @20
 # CHECK-NOT: ReturnAsyncResult
 
 # CHECK-LABEL: function f5 name="awaitsInAsyncGenerator"

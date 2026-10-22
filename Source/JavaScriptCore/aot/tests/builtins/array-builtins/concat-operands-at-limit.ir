@@ -1,7 +1,7 @@
 # A concat with as many operands as the limit allows is expanded inline
 # RUN: compile
 # RUN(SELECTED): pipeline Select
-# OPTIONS: limit=MaxInlineConcatOperands:1
+# OPTIONS: limit=MaxInlineConcatOperands:1 heat=EverythingIsHot
 # CHECK-NOT: loss MaxInlineConcatOperands
 # CHECK: image not empty
 
@@ -23,13 +23,18 @@ function f1 name="concatenatesArray" parameters=[{type=Array<number>}, {type=Arr
     v3 = Call v2, v0, v1 calleeKey="concat"
     Return v3
 }
-# SELECTED-LABEL: function f1 name="concatenatesArray"
-# SELECTED: TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/
+# Only its entrypoint enters each function, so the body is there
+# SELECTED-LABEL: name="concatenatesArray" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[other]]: Array<number> = AssumeType v3 castType=Array<number>
+# SELECTED: TryCallInline [[array]], [[other]] inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/
 function f2 name="appendsNumber" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
   b0(v0: Array<number>, v1: number):
     v2 = PropGet v0 key="concat"
     v3 = Call v2, v0, v1 calleeKey="concat"
     Return v3
 }
-# SELECTED-LABEL: function f2 name="appendsNumber"
-# SELECTED: TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/
+# SELECTED-LABEL: name="appendsNumber" module=m0 role=GenericEntrypoint
+# SELECTED: [[receiver]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: TryCallInline [[receiver]], [[number]] inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/

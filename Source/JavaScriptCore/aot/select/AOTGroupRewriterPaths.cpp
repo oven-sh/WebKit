@@ -40,7 +40,7 @@ static bool hasMemberUsedOutside(const SelectionGroup& group)
     });
 }
 
-static void changeBranchKind(Terminator& terminator, TerminatorKind kind)
+void changeBranchKind(Terminator& terminator, TerminatorKind kind)
 {
     Terminator changed(kind);
     changed.setConditionOperand(terminator.conditionOperand());
@@ -63,14 +63,14 @@ BlockFrequency GroupRewriter::slowPathFrequency() const
 void GroupRewriter::moveRootToBlockEnd()
 {
     flushInsertions();
-    BlockValues& values = function().at(state().block).values;
+    BlockValues& values = function().edit(state().block).values;
     if (values.last() == m_group.root)
         return;
 
     values.removeAt(state().index);
     values.append(m_group.root);
     state().index = static_cast<uint32_t>(values.size() - 1);
-    analyses().didChangeValues();
+    analyses().didChangeBlock(state().block);
 }
 
 void GroupRewriter::emitTestAndBranch()
@@ -78,10 +78,10 @@ void GroupRewriter::emitTestAndBranch()
     RELEASE_ASSERT(state().isOnlyBranchedOn && branchesOf(function().at(m_group.root).opcode) != Branches::No);
     moveRootToBlockEnd();
 
-    Terminator& branch = function().at(state().block).terminator;
+    Terminator& branch = function().edit(state().block).terminator;
     RELEASE_ASSERT(branch.kind == TerminatorKind::Branch && branch.conditionOperand() == m_group.root);
     changeBranchKind(branch, TerminatorKind::TestAndBranch);
-    analyses().didChangeValues();
+    analyses().didChangeBlock(state().block);
 }
 
 void GroupRewriter::emitTestAndBranchAsValue()
@@ -120,10 +120,11 @@ void GroupRewriter::endBlockAsUnreachable()
 void GroupRewriter::expandRoot()
 {
     RELEASE_ASSERT(m_group.hasSlowPath && !m_expansion);
+    analyses().didChangeBlock(state().block);
     flushInsertions();
     m_expansion = builder().beginExpansion(ProgramPoint { state().block, state().index });
     builder().setHandler(m_expansion->handler);
-    unfuseBranch(function().at(m_expansion->continuation).terminator, m_group.root);
+    unfuseBranch(function().edit(m_expansion->continuation).terminator, m_group.root);
     m_session.m_needsCompaction |= m_expansion->results.isEmpty();
     m_didReplaceRoot = false;
 }
@@ -148,7 +149,7 @@ void GroupRewriter::addCarriedParameters(const Vector<uint32_t, 4>& carried)
         if (member == m_group.root)
             continue;
         ValueID parameter = builder().addParameter(m_expansion->continuation, m_originals[index].type);
-        m_session.m_substitution.replace(member, parameter);
+        m_session.substitution().replace(member, parameter);
         m_expansion->results.append(parameter);
     }
 }
@@ -192,6 +193,7 @@ ValueID GroupRewriter::copyRootToEndOf(BlockID block)
     RELEASE_ASSERT(!m_expansion && m_originals.size() == 1);
     ValueID copy = builder().insertBefore(pointBeforeTerminatorOf(function(), block), Value(m_originals.last()));
     m_session.m_slowPathValues.append(copy);
+    analyses().didChangeBlock(block);
     return copy;
 }
 
@@ -199,7 +201,7 @@ void GroupRewriter::emitSlowPath(ValueID succeeded)
 {
     if (succeeded == m_group.root) {
         RELEASE_ASSERT(!hasResult(m_originals.last()));
-        succeeded = insert(std::exchange(function().at(m_group.root), m_originals.last()));
+        succeeded = insert(std::exchange(function().edit(m_group.root), m_originals.last()));
         m_didReplaceRoot = false;
     }
 

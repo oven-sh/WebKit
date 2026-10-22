@@ -23,8 +23,8 @@ static Instruction& instructionAt(PatchContext& context, const PatchTarget& targ
 {
     Function& function = context.program.at(target.function);
     if (target.value)
-        return function.at(target.value);
-    return function.at(target.block).terminator;
+        return function.edit(target.value);
+    return function.edit(target.block).terminator;
 }
 
 UNUSED_FUNCTION static void patchWord(TextParser& parser, const PatchTarget& target, unsigned word, uint32_t parsed, PatchedWord kind = PatchedWord::Unchanged)
@@ -155,8 +155,8 @@ void parseFields(TextParser& parser, Opcode opcode)
     PatchTarget target { parser.currentFunction(), parser.currentBlock(), parser.currentValue() };
     OperandWords operands = parseOperands(parser);
     switch (opcode) {
-    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint:
-    case Opcode::InitialYield: case Opcode::Parameter: case Opcode::GetShapeEpoch: case Opcode::ReturnsToResultTest: case Opcode::StringBuilderBegin:
+    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::NewDictionary: case Opcode::CatchValue: case Opcode::CatchException:
+    case Opcode::LoopHint: case Opcode::InitialYield: case Opcode::Parameter: case Opcode::AwaitMayContinue: case Opcode::StringBuilderBegin:
     case Opcode::JSONHasStackSpace:
         if (operands.size() > 0)
             parser.fail();
@@ -274,20 +274,25 @@ void parseFields(TextParser& parser, Opcode opcode)
             patchWord(parser, target, 3, parser.parseUInt32());
         if (parser.acceptField("allocationClass"_s))
             patchWord(parser, target, 4, parser.parseUInt32());
+        if (parser.acceptField("outerLayout"_s))
+            patchWord(parser, target, 5, parser.parseIDWord(IDPrefix::Layout));
         break;
     case Opcode::FinishObject: case Opcode::AppendHole: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::ToPropertyKey: case Opcode::ToThis:
     case Opcode::ResolveHeritage: case Opcode::ForInOpen: case Opcode::Await: case Opcode::Yield: case Opcode::IsConstructor: case Opcode::ToLength:
     case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator: case Opcode::StepArrayIterator: case Opcode::IsPristineArray:
-    case Opcode::ArrayStorageKind: case Opcode::CollectionTable: case Opcode::BelongsToInstance: case Opcode::IsNotThenable:
-    case Opcode::HasSpareArrayCapacity: case Opcode::GetStringLength: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
-    case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::RequireAttachedTypedArray:
-    case Opcode::ThrowNotIterable: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString:
-    case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::JSONSourceOpen:
-    case Opcode::JSONSourceStart: case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte:
-    case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
-    case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONKeyHasEscapes: case Opcode::IsPlainDataObject:
-    case Opcode::FlattenString: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger:
-    case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
+    case Opcode::ArrayStorageKind: case Opcode::CollectionTable: case Opcode::BorrowedParameter: case Opcode::BelongsToInstance:
+    case Opcode::IsNotThenable: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject:
+    case Opcode::HasSpareArrayCapacity: case Opcode::ConvertToDoubleStorage: case Opcode::GetStringLength: case Opcode::MarkEnvironmentEscaped:
+    case Opcode::ReleaseEnvironment: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity:
+    case Opcode::RequireAttachedTypedArray: case Opcode::ThrowNotIterable: case Opcode::IsCollectionTableFull: case Opcode::IsGeneratorUnstarted:
+    case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus: case Opcode::IsUnmodifiedAsyncGenerator:
+    case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard:
+    case Opcode::StringBuilderCheckpoint: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceAbandon:
+    case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString:
+    case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue:
+    case Opcode::JSONKeyHasEscapes: case Opcode::IsPlainDataObject: case Opcode::FlattenString: case Opcode::Box: case Opcode::Unbox:
+    case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode:
+    case Opcode::Compress:
         appendOperand(parser, operands, 0);
         if (operands.size() > 1)
             parser.fail();
@@ -309,19 +314,23 @@ void parseFields(TextParser& parser, Opcode opcode)
         appendVariadicOperands(parser, operands, 0);
         if (parser.acceptField("allocationSite"_s))
             patchWord(parser, target, 1, parser.parseUInt32());
+        if (parser.acceptField("storage"_s))
+            patchWord(parser, target, 2, static_cast<uint32_t>(parser.parseEnumerator<AllocationStorage>()));
         if (parser.acceptField("literalStorage"_s))
-            patchWord(parser, target, 2, static_cast<uint32_t>(parser.parseEnumerator<ArrayLiteralStorage>()));
+            patchWord(parser, target, 3, static_cast<uint32_t>(parser.parseEnumerator<ArrayLiteralStorage>()));
+        if (parser.acceptField("outerLayout"_s))
+            patchWord(parser, target, 4, parser.parseIDWord(IDPrefix::Layout));
         if (parser.acceptField("staticsOffset"_s))
-            patchWord(parser, target, 3, parser.parseUInt32());
+            patchWord(parser, target, 5, parser.parseUInt32());
         break;
-    case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::NewSuppressedError: case Opcode::SetLiteralPrototype: case Opcode::InstanceOf:
-    case Opcode::ArraySpeciesCreate: case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::HasContiguousIndex:
-    case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::IsInBounds:
-    case Opcode::IsShapeEpochCurrent: case Opcode::ReserveArrayCapacity: case Opcode::GetStringCodeUnit: case Opcode::NewArgumentList:
-    case Opcode::CreateAsyncFromSyncIterator: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame:
-    case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain: case Opcode::StringBuilderRollBack:
-    case Opcode::ValidateSameValue: case Opcode::JSONSourceClose: case Opcode::JSONKeyRepeats: case Opcode::StringBuilderCommit:
-    case Opcode::StringOrder: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString:
+    case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::NewSuppressedError: case Opcode::InstanceOf: case Opcode::ArraySpeciesCreate:
+    case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex:
+    case Opcode::GetDoubleIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::ReadAgain: case Opcode::IsInBounds:
+    case Opcode::ReserveArrayCapacity: case Opcode::GetStringCodeUnit: case Opcode::NewArgumentList: case Opcode::CreateAsyncFromSyncIterator:
+    case Opcode::TakeGeneratorPrototype: case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield:
+    case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain: case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue:
+    case Opcode::JSONSourceClose: case Opcode::JSONKeyRepeats: case Opcode::StringBuilderCommit: case Opcode::StringOrder:
+    case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString:
     case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
@@ -448,7 +457,7 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::ElemGet: case Opcode::ElemHas:
+    case Opcode::ElemGet:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
         if (parser.acceptField("accessSite"_s))
@@ -457,6 +466,8 @@ void parseFields(TextParser& parser, Opcode opcode)
             patchWord(parser, target, 1, parser.parseLayoutSet().index());
         if (parser.acceptField("siteCache"_s))
             patchWord(parser, target, 2, parser.parseUInt32());
+        if (parser.acceptField("expectedElements"_s))
+            patchWord(parser, target, 3, static_cast<uint32_t>(parser.parseEnumerator<ExpectedElements>()));
         if (operands.size() > 2)
             parser.fail();
         break;
@@ -471,7 +482,21 @@ void parseFields(TextParser& parser, Opcode opcode)
             patchWord(parser, target, 2, parser.parseLayoutSet().index());
         if (parser.acceptField("siteCache"_s))
             patchWord(parser, target, 3, parser.parseUInt32());
+        if (parser.acceptField("expectedElements"_s))
+            patchWord(parser, target, 4, static_cast<uint32_t>(parser.parseEnumerator<ExpectedElements>()));
         if (operands.size() > 3)
+            parser.fail();
+        break;
+    case Opcode::ElemHas:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        if (parser.acceptField("accessSite"_s))
+            patchWord(parser, target, 0, parser.parseUInt32());
+        if (parser.acceptField("receivers"_s))
+            patchWord(parser, target, 1, parser.parseLayoutSet().index());
+        if (parser.acceptField("siteCache"_s))
+            patchWord(parser, target, 2, parser.parseUInt32());
+        if (operands.size() > 2)
             parser.fail();
         break;
     case Opcode::ElemDelete:
@@ -508,10 +533,36 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 3)
             parser.fail();
         break;
+    case Opcode::TryDefineLiveBinding: case Opcode::EnumeratorGetByVal:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        appendOperand(parser, operands, 2);
+        appendOperand(parser, operands, 3);
+        appendOperand(parser, operands, 4);
+        if (operands.size() > 5)
+            parser.fail();
+        break;
+    case Opcode::TryReExportFields:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        parser.code().append(parser.acceptField("function"_s) ? parser.parseIDWord(IDPrefix::Function) : 0u);
+        if (operands.size() > 2)
+            parser.fail();
+        break;
     case Opcode::SetFunctionName:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
         parser.code().append(parser.acceptField("methodKind"_s) ? static_cast<uint32_t>(parser.parseEnumerator<MethodKind>()) : 0u);
+        if (operands.size() > 2)
+            parser.fail();
+        break;
+    case Opcode::SetLiteralPrototype:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        if (parser.acceptField("replacedCallee"_s))
+            patchOperand(parser, target, 2, parser.parseValueUseWord());
+        if (parser.acceptField("replacedThis"_s))
+            patchOperand(parser, target, 3, parser.parseValueUseWord());
         if (operands.size() > 2)
             parser.fail();
         break;
@@ -529,6 +580,22 @@ void parseFields(TextParser& parser, Opcode opcode)
             parser.code().appendVector(words);
         }
         appendVariadicOperands(parser, operands, 2);
+        if (parser.acceptField("request"_s))
+            patchWord(parser, target, 0, parser.parseUInt32());
+        break;
+    case Opcode::CopyObject:
+        appendOperand(parser, operands, 0);
+        {
+            Vector<uint32_t> words;
+            if (parser.acceptField("excludedKeys"_s)) {
+                parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+                    words.append(parser.parsePropertyKeyWord());
+                });
+            }
+            parser.code().append(static_cast<uint32_t>(words.size()));
+            parser.code().appendVector(words);
+        }
+        appendVariadicOperands(parser, operands, 1);
         if (parser.acceptField("request"_s))
             patchWord(parser, target, 0, parser.parseUInt32());
         break;
@@ -601,7 +668,14 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::Claim:
+    case Opcode::NarrowByField: case Opcode::ValidateLookup: case Opcode::GetOwnDataProperty:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
+        if (operands.size() > 2)
+            parser.fail();
+        break;
+    case Opcode::Check:
         appendOperand(parser, operands, 0);
         parser.code().append(parser.acceptField("castType"_s) ? parser.parseTypeWord() : 0u);
         parser.code().append(parser.acceptField("site"_s) ? parser.parseIDWord(IDPrefix::TypeSite) : Wire::none);
@@ -610,7 +684,7 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::ClaimDeclared:
+    case Opcode::Convert:
         appendOperand(parser, operands, 0);
         {
             Wire::DeclaredType wire;
@@ -618,25 +692,7 @@ void parseFields(TextParser& parser, Opcode opcode)
                 parser.parseRecord([&] { parseFields(parser, wire); });
             appendWireRecord(parser, wire);
         }
-        if (operands.size() > 1)
-            parser.fail();
-        break;
-    case Opcode::ClaimRead:
-        appendOperand(parser, operands, 0);
-        appendOperand(parser, operands, 1);
-        {
-            Wire::ClaimSource wire;
-            if (parser.acceptField("source"_s))
-                parseVariant(parser, wire);
-            appendWireRecord(parser, wire);
-        }
-        parser.code().append(parser.acceptField("site"_s) ? parser.parseIDWord(IDPrefix::TypeSite) : Wire::none);
-        if (operands.size() > 2)
-            parser.fail();
-        break;
-    case Opcode::Predict:
-        appendOperand(parser, operands, 0);
-        parser.code().append(parser.acceptField("predicted"_s) ? parser.parseTypeWord() : 0u);
+        parser.code().append(parser.acceptField("illTypedCause"_s) ? static_cast<uint32_t>(parser.parseEnumerator<IllTypedCause>()) : 0u);
         if (operands.size() > 1)
             parser.fail();
         break;
@@ -686,8 +742,6 @@ void parseFields(TextParser& parser, Opcode opcode)
             patchWord(parser, target, 1, parser.parseUInt32());
         if (parser.acceptField("callees"_s))
             patchWord(parser, target, 2, parser.parseCalleeSet().index());
-        if (parser.acceptField("allocatedLayout"_s))
-            patchWord(parser, target, 3, parser.parseIDWord(IDPrefix::Layout));
         break;
     case Opcode::CallList:
         appendOperand(parser, operands, 0);
@@ -720,8 +774,6 @@ void parseFields(TextParser& parser, Opcode opcode)
         appendVariadicOperands(parser, operands, 0);
         if (parser.acceptField("accessSite"_s))
             patchWord(parser, target, 1, parser.parseUInt32());
-        if (parser.acceptField("resultCheck"_s))
-            patchWord(parser, target, 2, static_cast<uint32_t>(parser.parseEnumerator<ResultCheck>()));
         break;
     case Opcode::NewClass:
         parser.code().append(parser.acceptField("layout"_s) ? parser.parseIDWord(IDPrefix::Layout) : 0u);
@@ -844,7 +896,7 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 0)
             parser.fail();
         break;
-    case Opcode::ImportModule:
+    case Opcode::ImportModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
         parser.code().append(parser.acceptField("module"_s) ? parser.parseIDWord(IDPrefix::Module) : 0u);
         parser.code().append(parser.acceptField("referrer"_s) ? parser.parseIDWord(IDPrefix::Module) : 0u);
         if (operands.size() > 0)
@@ -885,9 +937,10 @@ void parseFields(TextParser& parser, Opcode opcode)
             patchWord(parser, target, 1, parser.parseUInt32());
         break;
     case Opcode::GetByValWithThis: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::TryPutIndex: case Opcode::MapNext:
-    case Opcode::SetNext: case Opcode::IsEnumeratorCurrent: case Opcode::StringBuilderAppendJSON: case Opcode::JSONAppendBoolean:
-    case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::Substring:
-    case Opcode::SubstringOrUndefined: case Opcode::StringRangeToNumber: case Opcode::StringRangeSubstringOrUndefined:
+    case Opcode::SetNext: case Opcode::IsEnumeratorCurrent: case Opcode::StepAsyncGenerator: case Opcode::StringBuilderAppendJSON:
+    case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate:
+    case Opcode::JSONAppendString: case Opcode::Substring: case Opcode::SubstringOrUndefined: case Opcode::StringRangeToNumber:
+    case Opcode::StringRangeSubstringOrUndefined:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
         appendOperand(parser, operands, 2);
@@ -972,12 +1025,18 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 3)
             parser.fail();
         break;
+    case Opcode::IsClosureOf:
+        parser.code().append(parser.acceptField("function"_s) ? parser.parseIDWord(IDPrefix::Function) : 0u);
+        appendOperand(parser, operands, 0);
+        if (operands.size() > 1)
+            parser.fail();
+        break;
     case Opcode::KeyConstant:
         parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
         if (operands.size() > 0)
             parser.fail();
         break;
-    case Opcode::Unspecified:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList:
         parser.code().append(parser.acceptField("valueType"_s) ? parser.parseTypeWord() : 0u);
         if (operands.size() > 0)
             parser.fail();
@@ -989,14 +1048,25 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::CallGroup:
+    case Opcode::CallTable:
         parser.code().append(parser.acceptField("function"_s) ? parser.parseIDWord(IDPrefix::Function) : 0u);
-        appendOperand(parser, operands, 0);
-        appendVariadicOperands(parser, operands, 1);
+        appendVariadicOperands(parser, operands, 0);
+        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
+        parser.code().append(parser.acceptField("receivers"_s) ? parser.parseLayoutSet().index() : 0u);
+        {
+            Vector<uint32_t> words;
+            if (parser.acceptField("entrypoints"_s)) {
+                parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+                    words.append(parser.parseIDWord(IDPrefix::Function));
+                });
+            }
+            parser.code().append(static_cast<uint32_t>(words.size()));
+            parser.code().appendVector(words);
+        }
         if (parser.acceptField("accessSite"_s))
-            patchWord(parser, target, 1, parser.parseUInt32());
+            patchWord(parser, target, 3, parser.parseUInt32());
         if (parser.acceptField("callees"_s))
-            patchWord(parser, target, 2, parser.parseCalleeSet().index());
+            patchWord(parser, target, 4, parser.parseCalleeSet().index());
         break;
     case Opcode::ShapeTest:
         appendOperand(parser, operands, 0);
@@ -1004,7 +1074,8 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
         appendOperand(parser, operands, 0);
         appendOptionalOperand(parser, operands, 1);
         parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
@@ -1015,7 +1086,8 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 2)
             parser.fail();
         break;
-    case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::GetArrayLength:
+    case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen:
+    case Opcode::HasLayoutPrototype: case Opcode::GetArrayLength:
         appendOperand(parser, operands, 0);
         appendOptionalOperand(parser, operands, 1);
         if (operands.size() > 2)
@@ -1034,31 +1106,35 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::IsMemberUnchanged:
-        parser.code().append(parser.acceptField("layout"_s) ? parser.parseIDWord(IDPrefix::Layout) : 0u);
-        parser.code().append(parser.acceptField("side"_s) ? static_cast<uint32_t>(parser.parseEnumerator<ClassSide>()) : 0u);
-        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
-        parser.code().append(parser.acceptField("guardBit"_s) ? parser.parseUInt32() : Wire::none);
-        if (operands.size() > 0)
+    case Opcode::IsElementPresent:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        appendOptionalOperand(parser, operands, 2);
+        parser.code().append(parser.acceptField("arrayStorage"_s) ? static_cast<uint32_t>(parser.parseEnumerator<ArrayStorage>()) : 0u);
+        if (operands.size() > 3)
             parser.fail();
         break;
-    case Opcode::IsPrototypeLinkUnchanged:
-        parser.code().append(parser.acceptField("layout"_s) ? parser.parseIDWord(IDPrefix::Layout) : 0u);
-        parser.code().append(parser.acceptField("side"_s) ? static_cast<uint32_t>(parser.parseEnumerator<ClassSide>()) : 0u);
-        parser.code().append(parser.acceptField("guardBit"_s) ? parser.parseUInt32() : Wire::none);
-        if (operands.size() > 0)
+    case Opcode::IsInsideView:
+        appendOperand(parser, operands, 0);
+        appendOperand(parser, operands, 1);
+        parser.code().append(parser.acceptField("typedArrayType"_s) ? parser.parseUInt32() : 0u);
+        if (operands.size() > 2)
             parser.fail();
         break;
-    case Opcode::IsClassEvaluatedOnce:
-        parser.code().append(parser.acceptField("layout"_s) ? parser.parseIDWord(IDPrefix::Layout) : 0u);
+    case Opcode::AreMembersUnchanged:
+        {
+            Vector<uint32_t> words;
+            if (parser.acceptField("conditions"_s)) {
+                parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
+                    MemberConditionRecord element;
+                    parser.parseRecord([&] { parseFields(parser, element); });
+                    appendPayloadRecord(words, element);
+                });
+            }
+            parser.code().append(static_cast<uint32_t>(words.size() / 4));
+            parser.code().appendVector(words);
+        }
         parser.code().append(parser.acceptField("guardBit"_s) ? parser.parseUInt32() : Wire::none);
-        if (operands.size() > 0)
-            parser.fail();
-        break;
-    case Opcode::IsRequireEdgeReady:
-        parser.code().append(parser.acceptField("module"_s) ? parser.parseIDWord(IDPrefix::Module) : 0u);
-        parser.code().append(parser.acceptField("referrer"_s) ? parser.parseIDWord(IDPrefix::Module) : 0u);
-        parser.code().append(parser.acceptField("edge"_s) ? parser.parseUInt32() : Wire::none);
         if (operands.size() > 0)
             parser.fail();
         break;
@@ -1080,12 +1156,6 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 2)
             parser.fail();
         break;
-    case Opcode::IsClosureOf:
-        parser.code().append(parser.acceptField("function"_s) ? parser.parseIDWord(IDPrefix::Function) : 0u);
-        appendOperand(parser, operands, 0);
-        if (operands.size() > 1)
-            parser.fail();
-        break;
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         appendOperand(parser, operands, 0);
         appendOptionalOperand(parser, operands, 1);
@@ -1098,26 +1168,29 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 3)
             parser.fail();
         break;
-    case Opcode::CopyObject:
-        appendOperand(parser, operands, 0);
-        {
-            Vector<uint32_t> words;
-            if (parser.acceptField("excludedKeys"_s)) {
-                parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-                    words.append(parser.parsePropertyKeyWord());
-                });
-            }
-            parser.code().append(static_cast<uint32_t>(words.size()));
-            parser.code().appendVector(words);
-        }
-        appendVariadicOperands(parser, operands, 1);
-        parser.code().append(parser.acceptField("request"_s) ? parser.parseUInt32() : Wire::none);
-        break;
     case Opcode::TryCopyFields:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
         parser.code().append(parser.acceptField("layout"_s) ? parser.parseIDWord(IDPrefix::Layout) : 0u);
         if (operands.size() > 2)
+            parser.fail();
+        break;
+    case Opcode::GetGlobalBinding:
+        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
+        parser.code().append(parser.acceptField("level"_s) ? static_cast<uint32_t>(parser.parseEnumerator<KnowledgeLevel>()) : 0u);
+        parser.code().append(parser.acceptField("accessSite"_s) ? parser.parseUInt32() : Wire::none);
+        parser.code().append(parser.acceptField("binding"_s) ? parser.parseUInt32() : Wire::none);
+        if (operands.size() > 0)
+            parser.fail();
+        break;
+    case Opcode::SetGlobalBinding:
+        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
+        parser.code().append(parser.acceptField("mode"_s) ? static_cast<uint32_t>(parser.parseEnumerator<ECMAMode>()) : 0u);
+        appendOperand(parser, operands, 0);
+        parser.code().append(parser.acceptField("level"_s) ? static_cast<uint32_t>(parser.parseEnumerator<KnowledgeLevel>()) : 0u);
+        parser.code().append(parser.acceptField("accessSite"_s) ? parser.parseUInt32() : Wire::none);
+        parser.code().append(parser.acceptField("binding"_s) ? parser.parseUInt32() : Wire::none);
+        if (operands.size() > 1)
             parser.fail();
         break;
     case Opcode::GetArrayElement: case Opcode::HasArrayElement:
@@ -1158,20 +1231,22 @@ void parseFields(TextParser& parser, Opcode opcode)
     case Opcode::GetTypedArrayElement:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
+        appendOptionalOperand(parser, operands, 2);
         parser.code().append(parser.acceptField("typedArrayType"_s) ? parser.parseUInt32() : 0u);
         parser.code().append(parser.acceptField("level"_s) ? static_cast<uint32_t>(parser.parseEnumerator<KnowledgeLevel>()) : 0u);
         parser.code().append(parser.acceptField("accessSite"_s) ? parser.parseUInt32() : Wire::none);
-        if (operands.size() > 2)
+        if (operands.size() > 3)
             parser.fail();
         break;
     case Opcode::PutTypedArrayElement:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
         appendOperand(parser, operands, 2);
+        appendOptionalOperand(parser, operands, 3);
         parser.code().append(parser.acceptField("typedArrayType"_s) ? parser.parseUInt32() : 0u);
         parser.code().append(parser.acceptField("level"_s) ? static_cast<uint32_t>(parser.parseEnumerator<KnowledgeLevel>()) : 0u);
         parser.code().append(parser.acceptField("accessSite"_s) ? parser.parseUInt32() : Wire::none);
-        if (operands.size() > 3)
+        if (operands.size() > 4)
             parser.fail();
         break;
     case Opcode::GetArgument:
@@ -1187,6 +1262,7 @@ void parseFields(TextParser& parser, Opcode opcode)
     case Opcode::CreateRest:
         parser.code().append(parser.acceptField("firstArgument"_s) ? parser.parseUInt32() : 0u);
         parser.code().append(parser.acceptField("allocationSite"_s) ? parser.parseUInt32() : Wire::none);
+        parser.code().append(parser.acceptField("storage"_s) ? static_cast<uint32_t>(parser.parseEnumerator<AllocationStorage>()) : 0u);
         if (operands.size() > 0)
             parser.fail();
         break;
@@ -1266,19 +1342,35 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 0)
             parser.fail();
         break;
+    case Opcode::IsBuiltinLocationUnchanged:
+        parser.code().append(parser.acceptField("member"_s) ? parser.parseBuiltin().index() : 0u);
+        if (operands.size() > 0)
+            parser.fail();
+        break;
+    case Opcode::IsFunctionOfBuiltin:
+        appendOperand(parser, operands, 0);
+        parser.code().append(parser.acceptField("member"_s) ? parser.parseBuiltin().index() : 0u);
+        if (operands.size() > 1)
+            parser.fail();
+        break;
+    case Opcode::GetBuiltinValue:
+        parser.code().append(parser.acceptField("builtin"_s) ? parser.parseBuiltin().index() : 0u);
+        parser.code().append(parser.acceptField("overload"_s) ? parser.parseBuiltinOverload().index() : 0u);
+        if (operands.size() > 0)
+            parser.fail();
+        break;
     case Opcode::DestructureIterable:
         appendOperand(parser, operands, 0);
         parser.code().append(parser.acceptField("count"_s) ? parser.parseUInt32() : 0u);
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::EnumeratorGetByVal:
+    case Opcode::ReserveCollectionCapacity: case Opcode::StringBuilderAppendStringRange:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
         appendOperand(parser, operands, 2);
         appendOperand(parser, operands, 3);
-        appendOperand(parser, operands, 4);
-        if (operands.size() > 5)
+        if (operands.size() > 4)
             parser.fail();
         break;
     case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
@@ -1296,15 +1388,21 @@ void parseFields(TextParser& parser, Opcode opcode)
         break;
     case Opcode::PromiseAllOfElements:
         parser.code().append(parser.acceptField("contents"_s) ? parser.parseTypeWord() : 0u);
+        parser.code().append(parser.acceptField("directCalls"_s) ? parser.parseUInt32() : 0u);
         appendVariadicOperands(parser, operands, 0);
         break;
-    case Opcode::GetRequiredValue:
-        appendOperand(parser, operands, 0);
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation:
         parser.code().append(parser.acceptField("module"_s) ? parser.parseIDWord(IDPrefix::Module) : 0u);
+        if (operands.size() > 0)
+            parser.fail();
+        break;
+    case Opcode::AbandonModuleEvaluation:
+        parser.code().append(parser.acceptField("module"_s) ? parser.parseIDWord(IDPrefix::Module) : 0u);
+        appendOperand(parser, operands, 0);
         if (operands.size() > 1)
             parser.fail();
         break;
-    case Opcode::StringBuilderAppend:
+    case Opcode::StringBuilderAppend: case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts:
         appendOperand(parser, operands, 0);
         appendVariadicOperands(parser, operands, 1);
         break;
@@ -1358,13 +1456,6 @@ void parseFields(TextParser& parser, Opcode opcode)
         if (operands.size() > 4)
             parser.fail();
         break;
-    case Opcode::GetOwnDataProperty:
-        appendOperand(parser, operands, 0);
-        appendOperand(parser, operands, 1);
-        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
-        if (operands.size() > 2)
-            parser.fail();
-        break;
     case Opcode::CloneAs:
         appendOperand(parser, operands, 0);
         appendOperand(parser, operands, 1);
@@ -1402,27 +1493,6 @@ void parseFields(TextParser& parser, Opcode opcode)
         appendOperand(parser, operands, 1);
         appendOperand(parser, operands, 2);
         if (operands.size() > 3)
-            parser.fail();
-        break;
-    case Opcode::PropGetChecked:
-        appendOperand(parser, operands, 0);
-        parser.code().append(parser.acceptField("key"_s) ? parser.parsePropertyKeyWord() : 0u);
-        parser.code().append(parser.acceptField("checkedType"_s) ? parser.parseTypeWord() : 0u);
-        parser.code().append(parser.acceptField("site"_s) ? parser.parseIDWord(IDPrefix::TypeSite) : 0u);
-        parser.code().append(parser.acceptField("cause"_s) ? static_cast<uint32_t>(parser.parseEnumerator<CheckCause>()) : 0u);
-        {
-            Origin record;
-            if (parser.acceptField("readOrigin"_s))
-                parser.parseRecord([&] { parseFields(parser, record); });
-            appendPayloadRecord(parser.code(), record);
-        }
-        if (parser.acceptField("accessSite"_s))
-            patchWord(parser, target, 6, parser.parseUInt32());
-        if (parser.acceptField("receivers"_s))
-            patchWord(parser, target, 7, parser.parseLayoutSet().index());
-        if (parser.acceptField("siteCache"_s))
-            patchWord(parser, target, 8, parser.parseUInt32());
-        if (operands.size() > 1)
             parser.fail();
         break;
     case Opcode::PropGetChain:
@@ -1629,14 +1699,6 @@ void parseFields(TextParser& parser, Opcode opcode)
         appendOperand(parser, operands, 0);
         parser.code().append(parser.acceptField("string"_s) ? parser.parseStringWord() : 0u);
         if (operands.size() > 1)
-            parser.fail();
-        break;
-    case Opcode::StringBuilderAppendStringRange:
-        appendOperand(parser, operands, 0);
-        appendOperand(parser, operands, 1);
-        appendOperand(parser, operands, 2);
-        appendOperand(parser, operands, 3);
-        if (operands.size() > 4)
             parser.fail();
         break;
     case Opcode::ResolveCallTarget:

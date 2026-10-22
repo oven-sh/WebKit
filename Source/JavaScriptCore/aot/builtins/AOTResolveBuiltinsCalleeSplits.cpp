@@ -8,9 +8,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTTypePropagation.h"
+#include "AOTExpectedTypesByUse.h"
 #include "AOTTypeTestSite.h"
-#include "AOTValuePredictions.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <ranges>
@@ -38,14 +37,23 @@ static bool avoidsHostCall(const Program& program, const BuiltinOverload& overlo
     case BuiltinImplementationKind::Number:
     case BuiltinImplementationKind::Cell:
     case BuiltinImplementationKind::CachedGetter:
+    case BuiltinImplementationKind::OwnSlot:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The table calls them host calls. The code for the call enters an operation that answers the usual operands itself.
+static bool hasOperationInFrontOfHostCall(BuiltinID method)
+{
+    return method == Builtins::TextEncoderPrototypeEncode || method == Builtins::TextEncoderPrototypeEncodeInto || method == Builtins::TypedArrayPrototypeSubarray;
+}
+
 static bool isWorthAnArm(const Program& program, BuiltinID method)
 {
     const BuiltinTable& table = program.builtins();
+    if (hasOperationInFrontOfHostCall(method))
+        return !!table.dispatchOf(method, BuiltinCallMode::Call);
     return table.dispatchOf(method, BuiltinCallMode::Call) && std::ranges::any_of(table.overloadsOf(method), [&](const BuiltinOverload& overload) {
         return avoidsHostCall(program, overload);
     });
@@ -61,20 +69,14 @@ static bool passesCallOn(const BuiltinTable& table, BuiltinID method)
 
 static bool knowsNothingAbout(const Function& function, const Type& type, ValueID id)
 {
-    const Value& value = function.at(id);
-    return type.anyObject && !value.written() && !value.prediction();
+    return type.anyObject && !function.at(id).expected();
 }
 
-// Flow predicts what it saw arrive at a read it cannot bound. A method that is not among it gets no arm.
-static bool mayBeUnknownMethod(const Function& function, const Type& type, ValueID callee)
+// A method that is not among what the callee is expected to be gets no arm.
+static bool isExpectedToBe(FunctionPassContext& context, ValueID callee, BuiltinID method)
 {
-    return type.anyObject && !function.at(callee).written();
-}
-
-static bool isPredictedToBe(FunctionPassContext& context, ValueID callee, BuiltinID method)
-{
-    TypeID prediction = context.function.at(callee).prediction();
-    return !prediction || Type::forBuiltin(method).isSubsetOf(context.types.at(prediction), context.program);
+    TypeID expected = context.function.at(callee).expected();
+    return !expected || Type::forBuiltin(method).isSubsetOf(context.types.at(expected), context.program);
 }
 
 static bool hasCalleesToDispatchOver(const Program& program, const Value& call)
@@ -91,6 +93,17 @@ static TypeID calleeTypeOf(TypeArena& types, const MemberOfClasses& method)
     return types.intern(Type::forBuiltin(method.member));
 }
 
+// What planCalleeSplit() asks first, of the call and of the type of its callee alone.
+static bool mayHaveCalleeSplit(const Program& program, const Function& function, const Value& call)
+{
+    if (!call.calleeKey() || !call.thisValueOperand())
+        return false;
+    BuiltinMemberName name = builtinMemberNameOf(program, call.calleeKey());
+    if (!name || name.isPrivateAlias)
+        return false;
+    return program.typeOf(function, call.calleeOperand()).anyObject && !hasCalleesToDispatchOver(program, call);
+}
+
 static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, const ValueSite& site)
 {
     const Program& program = context.program;
@@ -98,7 +111,7 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
     const BuiltinTable& table = program.builtins();
 
     const Value& call = function.at(site.value);
-    if (call.opcode != Opcode::Call || context.analyses.blockFrequencies().classOf(site.block) != BlockFrequency::Normal)
+    if (call.opcode != Opcode::Call)
         return std::nullopt;
     bool hasToStayTailCall = tailCallRequirementOf(function, site.block, site.value) == TailCallRequirement::Required;
 
@@ -110,7 +123,7 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
     if (!name || name.isPrivateAlias)
         return std::nullopt;
 
-    if (!mayBeUnknownMethod(function, program.typeOf(function, callee), callee))
+    if (!program.typeOf(function, callee).anyObject)
         return std::nullopt;
     if (hasCalleesToDispatchOver(program, call))
         return std::nullopt;
@@ -120,17 +133,24 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
     bool knowsReceiver = !knowsNothingAbout(function, receiverType, receiver);
     if (!receiverType.anyObject && !tailCallRequirementOf(function, site.block, site.value))
         return std::nullopt;
+    if (!knowsReceiver && !hasToStayTailCall && expectsReceiverOfCalledMethod(context, site.block, call))
+        return std::nullopt;
 
-    Vector<MemberOfClasses, 4> methods = methodsNamed(table, name.name);
+    Vector<MemberOfClasses, 4> methods = methodsNamed(program, name.name);
     methods.removeAllMatching([&](const MemberOfClasses& method) {
-        if ((hasToStayTailCall || knowsReceiver) && !passesCallOn(table, method.member))
+        // What is expected of the receiver leads to such a method only where its prototype is locked. The function that was read says it anyway.
+        bool isFoundByCalleeAlone = !hasToStayTailCall && receiverType.anyObject && hasOperationInFrontOfHostCall(method.member);
+        if ((hasToStayTailCall || knowsReceiver) && !passesCallOn(table, method.member) && !isFoundByCalleeAlone)
             return true;
         // The arm of such a tail call is the call that the method passes on, whatever the method itself is made of.
         if (!hasToStayTailCall && !isWorthAnArm(program, method.member))
             return true;
-        return !isPredictedToBe(context, callee, method.member);
+        return !isExpectedToBe(context, callee, method.member);
     });
     if (methods.isEmpty())
+        return std::nullopt;
+    // Asked last of what has no effect of its own: few calls come this far, and the frequencies of a whole function are made for the first that does.
+    if (context.analyses.blockFrequencies().classOf(site.block) != BlockFrequency::Normal)
         return std::nullopt;
 
     if (context.exceeds(LimitID::MaxDispatchCases, methods.size(), site.value))
@@ -144,108 +164,51 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
     return CalleeSplit { site, callee, WTF::move(methods) };
 }
 
-static TypeID predictedReceiverTypeOf(const BuiltinTable&, TypeArena&, const MemberOfClasses&);
-
-// Every object that flow saw arrive as the callee is a method of built-in classes under the name of the call: the receivers it saw were their instances.
-static bool isMoreThanCallOfNativeCode(const BuiltinTable& table, BuiltinID method)
-{
-    return std::ranges::any_of(table.overloadsOf(method), [](const BuiltinOverload& overload) {
-        BuiltinImplementationKind kind = overload.code.implementation.kind;
-        return kind != BuiltinImplementationKind::Generic && kind != BuiltinImplementationKind::HostCall;
-    });
-}
-
-// A value that the host may have made brings every method of the name that a class of the host has. The test goes to the receivers whose call becomes code of its own:
-// the others call native code with the test or without it.
-static TypeID receiverTypeSeenByFlow(FunctionPassContext& context, const Value& call)
-{
-    TypeID prediction = context.function.at(call.calleeOperand()).prediction();
-    BuiltinMemberName name = builtinMemberNameOf(context.program, call.calleeKey());
-    if (!prediction || !name || name.isPrivateAlias)
-        return { };
-
-    const BuiltinTable& table = context.program.builtins();
-    Type seenMethods = Type::never();
-    TypeID receivers = TypeTable::never;
-    TypeID receiversWorthTest = TypeTable::never;
-    for (const MemberOfClasses& method : methodsNamed(table, name.name)) {
-        if (!isPredictedToBe(context, call.calleeOperand(), method.member))
-            continue;
-        seenMethods = seenMethods.unionWith(Type::forBuiltin(method.member), context.types);
-        TypeID receiversOfMethod = predictedReceiverTypeOf(table, context.types, method);
-        receivers = context.types.unionOf(receivers, receiversOfMethod);
-        if (isMoreThanCallOfNativeCode(table, method.member))
-            receiversWorthTest = context.types.unionOf(receiversWorthTest, receiversOfMethod);
-    }
-    Type seenObjects = context.types.at(prediction).withOnlyObjects();
-    if (seenObjects.isNever() || !seenObjects.isSubsetOf(seenMethods, context.program))
-        return { };
-    return receiversWorthTest == TypeTable::never ? receivers : receiversWorthTest;
-}
-
-static Vector<ValuePrediction, 4> findReceiversSeenByFlow(FunctionPassContext& context)
-{
-    const Function& function = context.function;
-    auto isUnknown = [&](ValueID value) {
-        return knowsNothingAbout(function, context.program.typeOf(function, value), value);
-    };
-
-    Vector<ValuePrediction, 4> receivers;
-    forEachValueSite(context.analyses, function, [&](const ValueSite& site) {
-        const Value& call = function.at(site.value);
-        if (call.opcode != Opcode::Call || !call.calleeKey() || !call.thisValueOperand())
-            return;
-        ValueID receiver = context.analyses.identityOf(call.thisValueOperand());
-        if (!isUnknown(call.thisValueOperand()) || !isUnknown(receiver))
-            return;
-        TypeID seen = receiverTypeSeenByFlow(context, call);
-        if (!seen)
-            return;
-        size_t index = receivers.findIf([&](const ValuePrediction& earlier) {
-            return earlier.value == receiver;
-        });
-        if (index == notFound)
-            receivers.append(ValuePrediction { receiver, seen });
-        else
-            receivers[index].predicted = context.types.unionOf(receivers[index].predicted, seen);
-    });
-    return receivers;
-}
-
-// One test in front of all the uses of the receiver, and the reads of the methods fold too.
-bool predictReceiversFromSeenMethods(FunctionPassContext& context)
-{
-    return predictValues(context, findReceiversSeenByFlow(context).span());
-}
-
 Vector<CalleeSplit> planCalleeSplits(FunctionPassContext& context)
 {
     Vector<CalleeSplit> splits;
-    forEachValueSite(context.analyses, context.function, [&](const ValueSite& site) {
+    for (const ValueSite& site : context.sitesIn(SiteList::Calls)) {
+        if (!mayHaveCalleeSplit(context.program, context.function, context.function.at(site.value)))
+            continue;
+        uint32_t state = RefusedSites::stateOf(context.function, site.value);
+        if (context.refusedSites.contains(RefusalKind::CalleeSplit, site.value, state))
+            continue;
         if (std::optional<CalleeSplit> split = planCalleeSplit(context, site))
             splits.append(WTF::move(*split));
-    });
+        else
+            context.refusedSites.add(RefusalKind::CalleeSplit, context.function, site.value, state);
+    }
     return splits;
 }
 
-static TypeID predictedReceiverTypeOf(const BuiltinTable& table, TypeArena& types, const MemberOfClasses& method)
+// Whoever finds the method under the name of the call is as a rule an instance of a class that has it. Nothing where no test finds the instances of one of these classes:
+// they would take the arm of the receivers that are not expected.
+static std::optional<Type> testedReceiverTypeOf(const Program& program, TypeArena& types, const MemberOfClasses& method)
 {
-    Type instances = Type::never();
-    for (BuiltinClassID builtinClass : method.classes)
-        instances = instances.unionWith(typeOfInstances(table, builtinClass, Type::anything()), types);
-    return types.intern(instances);
+    Type tested = Type::never();
+    for (BuiltinClassID builtinClass : method.classes) {
+        std::optional<Type> instances = testedTypeOfInstances(program, builtinClass, Type::anything());
+        if (!instances)
+            return std::nullopt;
+        tested = tested.unionWith(*instances, types);
+    }
+    if (tested.isNever())
+        return std::nullopt;
+    return tested;
 }
 
 static void emitCalleeSplit(SiteExpansion& expansion, const CalleeSplit& split)
 {
     FunctionPassContext& context = expansion.context();
-    const BuiltinTable& table = context.program.builtins();
 
     if (tailCallRequirementOf(context.function, split.site.block, split.site.value) == TailCallRequirement::Allowed)
         demoteTailCall(context, expansion.builder(), split.site.block);
 
     expansion.begin(split.site);
+    IRBuilder& builder = expansion.builder();
     ValueID receiver = expansion.original().thisValueOperand();
+    const Type& receiverType = context.program.typeOf(context.function, receiver);
+    bool testsReceiver = knowsNothingAbout(context.function, receiverType, receiver) || (receiverType.anyObject && std::ranges::any_of(split.members, hasOperationInFrontOfHostCall, &MemberOfClasses::member));
 
     ValueSplit valueSplit { .value = split.callee, .arms = { }, .hasRest = true, .restFrequency = BlockFrequency::Unlikely };
     for (const MemberOfClasses& method : split.members)
@@ -253,16 +216,26 @@ static void emitCalleeSplit(SiteExpansion& expansion, const CalleeSplit& split)
 
     emitSplit(expansion, valueSplit,
         [&](uint32_t armIndex, ValueID narrowedCallee) {
-            ValueID predictedReceiver = receiver;
-            if (knowsNothingAbout(context.function, context.program.typeOf(context.function, receiver), receiver)) {
-                Value predict = IRBuilder::make(Opcode::Predict, { receiver });
-                predict.setPredicted(predictedReceiverTypeOf(table, context.types, split.members[armIndex]));
-                predictedReceiver = expansion.append(WTF::move(predict));
+            auto finishArmWithCallOn = [&](ValueID narrowedReceiver) {
+                ValueID call = expansion.appendOriginal({ OperandIndex::Call::callee, narrowedCallee, { }, { } });
+                expansion.function().edit(call).setThisValueOperand(narrowedReceiver);
+                context.analyses.didChangeValues();
+                expansion.finishArm(call);
+            };
+
+            std::optional<Type> testedReceiver = testsReceiver ? testedReceiverTypeOf(context.program, context.types, split.members[armIndex]) : std::nullopt;
+            if (!testedReceiver) {
+                finishArmWithCallOn(receiver);
+                return;
             }
 
-            ValueID call = expansion.appendOriginal({ OperandIndex::Call::callee, narrowedCallee, { }, { } });
-            expansion.function().at(call).setThisValueOperand(predictedReceiver);
-            expansion.finishArm(call);
+            // A passed test defines a value of the tested type, and the overloads of the method are matched against that.
+            ValueID test = builder.appendTypeTest(receiver, *testedReceiver);
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, expansion.frequency(), BlockFrequency::Unlikely);
+            builder.moveToEndOf(branch.notTaken);
+            finishArmWithCallOn(branch.provenOnNotTaken);
+            builder.moveToEndOf(branch.taken);
+            finishArmWithCallOn(branch.provenOnTaken);
         },
         [&](ValueID narrowedCallee) {
             expansion.finishArm(expansion.appendOriginal({ OperandIndex::Call::callee, narrowedCallee, { }, { } }));

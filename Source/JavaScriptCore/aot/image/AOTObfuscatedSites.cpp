@@ -27,10 +27,23 @@ static uint32_t numberOfFrames(const CompiledCode& code)
     return std::max<uint32_t>(code.sites.inlineFrames.size(), 1);
 }
 
+static FunctionID frameFunction(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
+{
+    return findFunctionAsRead(&program, frame ? code.body.callees[code.sites.inlineFrames[frame].callee] : code.function);
+}
+
 static StringID frameName(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
 {
-    FunctionID function = findFunctionAsRead(&program, frame ? code.body.callees[code.sites.inlineFrames[frame].callee] : code.function);
+    FunctionID function = frameFunction(program, code, frame);
     return function ? program.at(function).name : StringID();
+}
+
+// A position in a text that the program evaluates names the file that evaluates it. Its offset counts in the text.
+static ModuleID evaluatedTextOf(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
+{
+    FunctionID function = frameFunction(program, code, frame);
+    ModuleID module = function ? program.at(function).module : ModuleID();
+    return module && program.at(module).kind == Typed::ModuleKind::CommonJs && program.at(module).referrer ? module : ModuleID();
 }
 
 static TextRange appendUTF8(Vector<uint8_t>& names, const Typed::StringTable& strings, StringID string)
@@ -66,19 +79,22 @@ static Vector<TextRange> encodeFrameNames(const LinkedFunctions& functions, cons
 static void appendSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t position, const CompiledCode& code, const Typed::Program& program, const Vector<TextRange>& rangeByString)
 {
     Vector<TextRange, 8> nameByFrame;
+    Vector<ModuleID, 8> evaluatedTextByFrame;
     for (uint32_t frame = 0; frame < numberOfFrames(code); ++frame) {
         StringID name = frameName(program, code, frame);
         nameByFrame.append(name ? rangeByString[name.index()] : TextRange { });
+        evaluatedTextByFrame.append(evaluatedTextOf(program, code, frame));
     }
 
     const Vector<SitePosition>& positions = code.sites.positions;
     size_t firstRecord = records.size();
     for (uint32_t site = 0; site < positions.size(); ++site) {
         const SitePosition& sitePosition = positions[site];
+        ModuleID source = sitePosition.source && evaluatedTextByFrame[sitePosition.inlineFrame] ? evaluatedTextByFrame[sitePosition.inlineFrame] : sitePosition.source;
         records.append(ObfuscatedSiteRecord {
             .function = position,
             .site = site,
-            .location = { sitePosition.source ? sitePosition.source.index() : Wire::none, sitePosition.sourceOffset },
+            .location = { source ? source.index() : Wire::none, sitePosition.sourceOffset },
             .name = nameByFrame[sitePosition.inlineFrame],
         });
     }

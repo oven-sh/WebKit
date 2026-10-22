@@ -1,0 +1,23 @@
+# const o = { a: 1, "-1": 8, "01": 9, d: 10 };  Object.keys(o)
+# "-1" is a name that a number converts to, so it is no field. Own keys are listed in the order of their creation, so ExpandData allocates the object with `a` alone and defines the other three behind it.
+# The definitions of "01" and `d` find their slots empty and add the fields. Were the two taken for filled from the creation on, as constant data that is handed out whole is,
+# they would be stored without being added, and Object.keys would answer a, -1.
+# FORM: AsRead
+# RUN: pipeline Select
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0]
+# CHECK-NOT: PutSlot v
+# CHECK: PutSlots {{*}}{key="01" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Literal" fields=[{key="a" declared={type=anything}}, {key="01" declared={type=anything}}, {key="d" declared={type=anything}}] flags=[HasMembersWithoutLayout]
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="-1" value=Number{value=8}}, {key="01" value=Number{value=9}}, {key="d" value=Number{value=10}}]}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectKeys
+    v3 = Call v2, v1, v0
+    Return v3
+}

@@ -1,4 +1,5 @@
-# An object that evaluated text reaches has the word for extra properties where compiled code stores under a computed key on it. Reaching evaluated text alone gives none
+# An object that evaluated text reaches keeps its shape whatever that text does to it, so it has the word for extra properties, whether or not compiled code stores under a computed key on it.
+# The names that only the code of built-ins may put on it get no field
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow references=narrow
 # RUN: plan-slots layouts
@@ -38,15 +39,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: .0 "x" {{*}} @16
 # CHECK-NEXT: .1 "y" {{*}} @24
 # CHECK-NEXT: extra-properties Cell32 @32
-# CHECK-NEXT: L1 CompiledObject size=32
+# CHECK-NEXT: L1 CompiledObject size=48
 # CHECK-NEXT: .0 "x" {{*}} @16
 # CHECK-NEXT: .1 "y" {{*}} @24
+# CHECK-NEXT: extra-properties Cell32 @32
 # CHECK-NEXT: L2 CompiledObject size=48
 # CHECK-NEXT: .0 "x" {{*}} @16
 # CHECK-NEXT: .1 "y" {{*}} @24
 # CHECK-NEXT: extra-properties Cell32 @32
 
-# CLASSES: class C0 layout=L0 cause=ReachesUnknownJavaScript {{*}}isStoredUnderUnnamedKeys=true
-# CLASSES: class C1 layout=L1 cause=ReachesUnknownJavaScript
-# CLASSES-NOT: class C1 {{*}}isStoredUnderUnnamedKeys
-# CLASSES: class C2 layout=L2 cause=ReachesUnknownJavaScript {{*}}isStoredUnderUnnamedKeys=true
+# CLASSES: class C0 layout=L0 {{*}}cause=ReachesUnknownJavaScript
+# CLASSES: class C1 layout=L1 {{*}}cause=ReachesUnknownJavaScript
+# CLASSES: class C2 layout=L2 {{*}}cause=ReachesUnknownJavaScript

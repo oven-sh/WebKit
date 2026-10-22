@@ -1,0 +1,55 @@
+# interface Range { pos; end }  interface Node { pos }  function take(range: Range) {}  take({ pos: 1, end: 1 }); take(new Node())    let lastRange: Range; lastRange = new Node()
+# An object that the analysis follows arrives at a position whose type does not list its layout: an unsound cast that nobody has recorded, or a fault in the family.
+# The type keeps nothing out, so the object is still in the set, and the meet with the type would drop an object that is there. So the position is not proven and keeps the type as read:
+# the parameter does not lose the layout that never arrives, and the variable stays expected and names the allocation of the stranger. Each such set is counted and listed, and so is the node behind the type.
+# Beside each: the same position with an object of the family alone is proven and narrowed
+# STATISTIC: FlowSetsOutsideTypes >= 2
+# STATISTIC: LayoutsOutsideFamily >= 1
+# RUN: valueflow-apply
+# CHECK: variable g0 name="lastRange" {{*}}declared={type=undefined|L0|L2 site=w0 flags=[IsExpected]}
+# CHECK: variable g1 name="lastLiteral" {{*}}declared={type=L2 site=w1}
+# CHECK: function f1 name="take" {{*}}parameters=[{type=L0|L2}]
+# CHECK-NEXT: b0(v0: L0|L2):
+# CHECK: function f2 name="takeLiteral" {{*}}parameters=[{type=L2}]
+# CHECK-NEXT: b0(v0: L2):
+# RUN(RESULTS): valueflow-results
+# RESULTS: outside-type f1 entry parameter 0 holds L1|L2, declared L0|L2
+# RESULTS-NEXT: outside-type g0 holds L1, declared undefined|L0|L2
+# RESULTS-NOT: outside-type
+# RUN(POSITIONS): flow
+# POSITIONS: variable g0 type=undefined|L0|L2 expected cause=LayoutOutsideFamily witness={function=f0 value=v1}
+# POSITIONS: variable g1 type=L2 proven
+# POSITIONS-NOT: function f1 parameter 0 {{*}}proven
+# POSITIONS: function f2 parameter 0 type=L2 proven
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Variable
+typesite w1 module=m0 position=20 kind=Variable
+layout L0 name="Range" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Node" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Literal" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+variable g0 name="lastRange" module=m0 declared={type=undefined|L0 site=w0 flags=[IsExpected]} initialization=Undefined
+variable g1 name="lastLiteral" module=m0 declared={type=undefined|L0 site=w1 flags=[IsExpected]} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v2
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+function f2 name="takeLiteral" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}

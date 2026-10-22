@@ -165,7 +165,7 @@ function f8 name="parseIntWithOtherRadix" parameters=[{type=string}, {type=undef
 function f9 name="numberToStringWithIntegerRadix" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
   b0(v0: number, v1: i32):
     v2 = CallBuiltin v0 overload=NumberPrototypeToString/0
-    v3 = CallBuiltin v0, v1 overload=NumberPrototypeToString/1
+    v3 = CallBuiltin v0, v1 overload=NumberPrototypeToString/2
     v4 = NewArray v2, v3 contents=anything
     Return v4
 }
@@ -174,18 +174,18 @@ function f9 name="numberToStringWithIntegerRadix" parameters=[{type=number}, {ty
 # FORMS-NEXT: v3 {{*}} NumberToString {{*}} TwoWay
 # CHECK-LABEL: function f9 name="numberToStringWithIntegerRadix"
 # CHECK: TryCallInline v0 inlineBuiltin=NumberToString overload=NumberPrototypeToString/0 -> done
-# CHECK: TryCallInline v0, v1 inlineBuiltin=NumberToString overload=NumberPrototypeToString/1 -> done
+# CHECK: TryCallInline v0, v1 inlineBuiltin=NumberToString overload=NumberPrototypeToString/2 -> done
 
 function f10 name="numberToStringWithOtherRadix" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: number, v1: number):
-    v2 = CallBuiltin v0, v1 overload=NumberPrototypeToString/1
+    v2 = CallBuiltin v0, v1 overload=NumberPrototypeToString/2
     Return v2
 }
 # FORMS: function f10
 # FORMS-NEXT: v2 {{*}} NumberToString {{*}} Call
 # CHECK-LABEL: function f10 name="numberToStringWithOtherRadix"
 # CHECK-NOT: CallInline
-# CHECK: v2: string = CallBuiltin v0, v1 overload=NumberPrototypeToString/1
+# CHECK: v2: string = CallBuiltin v0, v1 overload=NumberPrototypeToString/2
 # CHECK-NOT: CallInline
 
 function f11 name="dataViewAccess" parameters=[{type=DataView}, {type=number}, {type=bigint}] results=[{type=anything}] {

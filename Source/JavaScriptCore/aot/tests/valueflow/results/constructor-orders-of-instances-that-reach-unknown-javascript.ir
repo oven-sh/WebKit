@@ -1,0 +1,64 @@
+# The constructor of a class whose instances reach unknown JavaScript still creates its fields in the order of its stores: until an object leaks, nobody but the constructor holds it,
+# whatever is done later to the objects that were handed out. The order ends where the object leaks, and nothing is listed where a setter above the object may take the store
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Stored" {{*}}constructorOrders=[{fields=[1, 0]}] cause=ReachesUnknownJavaScript
+# CHECK: layout L1 kind=Instance name="LeaksFirst" {{*}}constructorOrders=[{fields=[1]}] cause=ReachesUnknownJavaScript
+# CHECK: layout L2 kind=Instance name="SetterAbove" {{*}}constructorOrders=[{}] cause=ReachesUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Stored" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="LeaksFirst" constructor=f2 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="SetterAbove" constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1
+    v6 = Call v1, -, v5
+    v7 = NewClosure function=f2
+    v8 = NewClass v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Construct v9, -, v1
+    v11 = NewClosure function=f3
+    v12 = NewClass v11 layout=L2
+    v13 = NewClosure function=f4
+    DefineMethod v12, v13 layout=L2 methodKind=Setter key="b"
+    v15 = FinishClass v12 layout=L2
+    v16 = Construct v15, -, v1
+    v17 = Call v1, -, v16
+    Return
+}
+function f1 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="b" mode=Strict
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f2 name="LeaksFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropSet v3, v1 key="b" mode=Strict
+    v5 = Call v1, -, v3
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f3 name="SetterAbove" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PropSet v3, v1 key="b" mode=Strict
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f4 name="b" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

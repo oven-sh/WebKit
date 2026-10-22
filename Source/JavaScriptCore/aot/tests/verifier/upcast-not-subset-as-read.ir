@@ -1,4 +1,4 @@
-# On the wire the source of an Upcast is inside its type, and a written layout puts no value inside a layout
+# On the wire the source of an Upcast is inside its type, and an expected layout puts no value inside a layout
 # FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: UpcastNotSubset 2
@@ -11,14 +11,16 @@ function f0 name="badNarrower" parameters=[{type=anything}] results=[{type=undef
     v1 = Upcast v0 castType=number
     Return
 }
-function f1 name="badWrittenLayout" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: object ? L0):
+function f1 name="badExpectedLayout" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0):
     v1 = Upcast v0 castType=L0
     Return
 }
-function f2 name="good" parameters=[{type=number}, {type=L0}] results=[{type=undefined}] {
-  b0(v0: number, v1: object ? L0):
-    v2 = Upcast v0 castType=undefined|number
-    v3 = Upcast v1 castType=object
+function f2 name="good" parameters=[{type=number}, {type=L0}, {type=L0 flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: number, v1: L0, v2: anything ~ L0):
+    v3 = Upcast v0 castType=undefined|number
+    v4 = Upcast v1 castType=L0
+    v5 = Upcast v1 castType=object
+    v6 = Upcast v2 castType=anything
     Return
 }

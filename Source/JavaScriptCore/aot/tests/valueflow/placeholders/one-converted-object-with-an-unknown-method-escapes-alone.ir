@@ -1,0 +1,50 @@
+# `${onlyConverted}`; plain = { held }; plain + 1; odd = { valueOf: somethingNoTableLists, given }; odd + 1
+# Whatever an operation converts to a primitive lies in one hub, and the conversion calls what it finds on an object with that object as `this`. On one of the three a function nobody knows is found:
+# that object is handed to it, so it escapes and what it holds is entered. Nothing of the kind is found on the other two: they stay in the program, and nobody enters the closure or what the plain object holds.
+# converted-objects-past-those-told-apart-escape-together.ir has the same program with a limit that the hub passes.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+# CHECK-NOT: unreached f3
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped=f3 escaped-layout=L0 escaped-layout=L1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped-layout=L0
+# ESCAPED-NEXT: escaped-layout=L1
+# ESCAPED: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Odd" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="given" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = ToString v0
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
+    v8 = NewClosure function=f3
+    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
+    v10 = Add v9, v4
+    Return
+}
+function f1 name="onlyConverted" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="given" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

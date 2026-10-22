@@ -42,6 +42,7 @@ constexpr LayoutID L2 { 2u };
 constexpr ModuleID m0 { 0u };
 constexpr BlockID b0 { 0u };
 constexpr ValueID v2 { 2u };
+constexpr ValueID v4 { 4u };
 constexpr ValueID v6 { 6u };
 constexpr ValueID v7 { 7u };
 constexpr ValueID v9 { 9u };
@@ -149,13 +150,13 @@ void testInvalidPayloadIDs()
 {
     PrinterTest test;
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v9).setKey(PropertyKeyID(4000000000u));
+        copy.edit(v9).setKey(PropertyKeyID(4000000000u));
     }), "v9 = PropGet v0 key=<invalid key 4000000000> @1009"_s);
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v16).setPattern(StringID(idPastEveryTable));
+        copy.edit(v16).setPattern(StringID(idPastEveryTable));
     }), "v16 = NewRegExp pattern=<invalid string 1000000> regExpFlags=[Global] @1016"_s);
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v6).setLayout(LayoutID(idPastEveryTable));
+        copy.edit(v6).setLayout(LayoutID(idPastEveryTable));
     }), "v6 = NewObject -, v3 layout=<invalid layout 1000000> fields=[0] @1006"_s);
 }
 
@@ -163,7 +164,7 @@ void testInvalidEnumerator()
 {
     PrinterTest test;
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v7).setMode(static_cast<ECMAMode>(9));
+        copy.edit(v7).setMode(static_cast<ECMAMode>(9));
     }), "SuperSet v6, v2, v0, v3 mode=<invalid enumerator 9> @1007"_s);
     expectText(test.print(static_cast<LayoutKind>(200)), "<invalid enumerator 200>"_s);
     expectText(test.print(LayoutKind::Environment), "Environment"_s);
@@ -173,7 +174,7 @@ void testInvalidOpcode()
 {
     PrinterTest test;
     String text = test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v2).opcode = static_cast<Opcode>(numberOfEnumerators<Opcode>);
+        copy.edit(v2).opcode = static_cast<Opcode>(numberOfEnumerators<Opcode>);
     });
     expectPart(text, makeString("    <invalid opcode "_s, numberOfEnumerators<Opcode>, ">\n"_s));
     expectPart(text, "v3 = Double number=1.5 @1003"_s);
@@ -183,10 +184,10 @@ void testInvalidStorage()
 {
     PrinterTest test;
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v2).opcode = Opcode::PropGet;
+        copy.edit(v2).opcode = Opcode::PropGet;
     }), "    v2 = PropGet <invalid operands 0>\n"_s);
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(b0).terminator.kind = TerminatorKind::Jump;
+        copy.edit(b0).terminator.kind = TerminatorKind::Jump;
     }), "    Jump <invalid operands 1>\n"_s);
 }
 
@@ -194,23 +195,23 @@ void testInvalidFlags()
 {
     PrinterTest test;
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v9).flags |= static_cast<uint16_t>(1u << 15);
-    }), "v9 = PropGet v0 key=\"x\" [<invalid flag 15>] @1009"_s);
+        copy.edit(v9).flags |= 1u << 7;
+    }), "v9 = PropGet v0 key=\"x\" [<invalid flag 7>] @1009"_s);
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(v9).setIsFreeName(true);
-        copy.at(v9).setIsForTypeOf(true);
+        copy.edit(v9).setIsFreeName(true);
+        copy.edit(v9).setIsForTypeOf(true);
     }), "v9 = PropGet v0 key=\"x\" [isFreeName, isForTypeOf] @1009"_s);
-    expectText(test.print(OptionSet<LayoutFlags>::fromRaw(1 | 1 << 7)), "[HasHeritage, <invalid flag 7>]"_s);
+    expectText(test.print(OptionSet<FieldFlags>::fromRaw(1 | 1 << 15)), "[IsRequired, <invalid flag 15>]"_s);
 }
 
 void testInvalidTerminator()
 {
     PrinterTest test;
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(b0).terminator.kind = static_cast<TerminatorKind>(numberOfEnumerators<TerminatorKind>);
+        copy.edit(b0).terminator.kind = static_cast<TerminatorKind>(numberOfEnumerators<TerminatorKind>);
     }), makeString("    <invalid terminator "_s, numberOfEnumerators<TerminatorKind>, ">\n"_s));
     expectPart(test.printChangedCopy(f7, [](Typed::Function& copy) {
-        copy.at(b0).terminator.targets.append(Target { BlockID(3u), { }, { } });
+        copy.edit(b0).terminator.targets.append(Target { BlockID(3u), { }, { } });
     }), "Branch v1 -> taken b1(), notTaken b2(), <invalid target 2> b3() @2000"_s);
 }
 
@@ -289,7 +290,7 @@ void testUnlistedValue()
     expectText(valuePastTheEnd.toString(), "<invalid value 18>"_s);
 
     expectPart(test.printChangedCopy(f7, [](Typed::Function& function) {
-        function.at(b0).parameters.append(ValueID(18u));
+        function.edit(b0).parameters.append(ValueID(18u));
     }), "  b0(v0: anything, v1: boolean, <invalid value 18>):\n"_s);
 }
 
@@ -313,6 +314,9 @@ void testSets()
     expectText(test.print(types.intern(LayoutSet { { L0, L2 }, false })), "[L0, L2, ..]"_s);
     expectText(test.print(types.intern(LayoutSet { { }, false })), "[..]"_s);
     expectText(test.print(types.intern(LayoutSet { { }, true })), "[]"_s);
+    expectText(test.print(types.intern(LayoutSet { { L2, L0 }, true, true })), "[L0, L2, nolayout]"_s);
+    expectText(test.print(types.intern(LayoutSet { { L0 }, false, true })), "[L0, nolayout, ..]"_s);
+    expectText(test.print(types.intern(LayoutSet { { }, true, true })), "[nolayout]"_s);
     expectText(test.print(types.intern(CalleeSet { { f3, f1 }, { Builtins::GlobalThis }, true })), "[f1, f3, builtin(GlobalThis)]"_s);
     expectText(test.print(types.intern(CalleeSet { { f1 }, { }, false })), "[f1, ..]"_s);
     expectText(test.print(types.intern(CalleeSet { { }, { Builtins::MathMax }, false })), "[builtin(MathMax), ..]"_s);
@@ -438,10 +442,11 @@ void testObjectTypes()
     expectSpellings(test, {
         { Type::forLayout(L2, test.types), "L2"_s, "L2"_s },
         { Type::forLayouts(layouts, test.types), "L0|L2"_s, "L0|L2"_s },
+        { Type::forLayoutSet(test.types.intern(LayoutSet { { L0, L2 }, true, true })), "L0|L2|nolayout"_s, "L0|L2|nolayout"_s },
         { Type::forEnvironment(L1), "env L1"_s, "env L1"_s },
         { Type::forEnvironment(L1).withPrimitives(Primitive::Absent), "absent|env L1"_s, "absent|env L1"_s },
-        { Type::forFunction(f3), "f3"_s, "never"_s },
-        { test.unionOf({ Type::forFunction(f3), Type::forFunction(f1), Type::fromPrimitives(Primitive::Undefined) }), "undefined|f1|f3"_s, "undefined"_s },
+        { Type::forFunction(f3), "f3"_s, "f3"_s },
+        { test.unionOf({ Type::forFunction(f3), Type::forFunction(f1), Type::fromPrimitives(Primitive::Undefined) }), "undefined|f1|f3"_s, "undefined|f1|f3"_s },
         { Type::forBuiltin(Builtins::GlobalThis), "builtin(GlobalThis)"_s, "builtin(GlobalThis)"_s },
         { test.unionOf({ Type::forBuiltin(Builtins::MathMax), Type::forBuiltin(Builtins::GlobalThis) }), "builtin(GlobalThis)|builtin(MathMax)"_s, "builtin(GlobalThis)|builtin(MathMax)"_s },
         { withFunction, "function|L0|L2|builtin(GlobalThis)"_s, "function|L0|L2|builtin(GlobalThis)"_s },
@@ -469,11 +474,7 @@ void testClassTypes()
     contiguousArray.classes[0].arrayStorage = ArrayStorage::Contiguous;
     Type pristineArray = test.classOf(BuiltinClasses::Array, { TypeTable::number });
     pristineArray.classes[0].provenPristine = { PristineAspects::Storage, PristineAspects::Names };
-    Type arrayOfPredictedInstances = test.classOf(BuiltinClasses::Array, { TypeTable::object }).withContentsProven(true);
-    arrayOfPredictedInstances.classes[0].predictedContents = { instance };
-    Type mapOfPredictedInstances = Type::builtinClass(BuiltinClasses::Map);
-    mapOfPredictedInstances.classes[0].predictedContents = { TypeTable::anything, instance };
-    Type regExps =test.unionOf({ Type::regExpLiteral(test.string("x"_s), { }), Type::regExpLiteral(test.string("ab+c"_s), { RegExpFlags::Global }) });
+    Type regExps = test.unionOf({ Type::regExpLiteral(test.string("x"_s), { }), Type::regExpLiteral(test.string("ab+c"_s), { RegExpFlags::Global }) });
 
     expectSpellings(test, {
         { test.classOf(BuiltinClasses::Array, { TypeTable::number }), "Array<number>"_s, "Array<number>"_s },
@@ -485,8 +486,8 @@ void testClassTypes()
         { provenArrayOfAnything, "Array<anything, proven>"_s, "Array"_s },
         { contiguousArray, "Array<anything, Contiguous>"_s, "Array"_s },
         { pristineArray, "Array<number, pristine[Storage, Names]>"_s, "Array<number>"_s },
-        { arrayOfPredictedInstances, "Array<object ~ L2, proven>"_s, "Array<object>"_s },
-        { mapOfPredictedInstances, "Map<anything, anything ~ L2>"_s, "Map"_s },
+        { test.classOf(BuiltinClasses::Array, { instance }), "Array<L2>"_s, "Array<L2>"_s },
+        { test.classOf(BuiltinClasses::Array, { instance }).withContentsProven(true), "Array<L2, proven>"_s, "Array<L2>"_s },
         { Type::builtinClass(BuiltinClasses::RegExp), "RegExp"_s, "RegExp"_s },
         { regExps, "RegExp<\"ab+c\"[Global], \"x\"[]>"_s, "RegExp"_s },
     });
@@ -506,7 +507,7 @@ void testOrderOfTypeParts()
         Type::integer(Range::int32()),
     });
     expectSpellings(test, {
-        { type, "null|i32|bigint|absent|\"~a\"|@@iterator|L0|f1|builtin(GlobalThis)|Array<number>"_s, "null|i32|bigint|absent|\"~a\"|L0|builtin(GlobalThis)|Array<number>"_s },
+        { type, "null|i32|bigint|absent|\"~a\"|@@iterator|L0|f1|builtin(GlobalThis)|Array<number>"_s, "null|i32|bigint|absent|\"~a\"|L0|f1|builtin(GlobalThis)|Array<number>"_s },
     });
     expectText(test.print(test.types.intern(type)), "null|i32|bigint|absent|\"~a\"|@@iterator|L0|f1|builtin(GlobalThis)|Array<number>"_s);
 }
@@ -592,7 +593,7 @@ void testTargets()
 {
     PrinterTest test;
     String text = test.printChangedCopy(readerFixtureHandlerFunction, [](Typed::Function& copy) {
-        Target& taken = copy.at(b0).terminator.taken();
+        Target& taken = copy.edit(b0).terminator.taken();
         taken.arguments.append(ValueID(0u));
         taken.proofs.append(1);
     });
@@ -601,7 +602,7 @@ void testTargets()
     expectPart(text, "  b3(v4) role=CatchHandler:\n"_s);
 
     expectPart(test.printChangedCopy(readerFixtureHandlerFunction, [](Typed::Function& copy) {
-        Block& block = copy.at(BlockID(3u));
+        Block& block = copy.edit(BlockID(3u));
         block.role = BlockRole::DisposalCleanup;
         block.subject = ValueID(1u);
         block.frequency = BlockFrequency::Rare;
@@ -620,16 +621,15 @@ void addEngineFields(PrinterTest& test)
     frame.module = m0;
     stream.inlineFrames.append(frame);
 
-    Value& read = stream.at(v9);
+    Value& read = stream.edit(v9);
     read.type = TypeTable::number;
-    read.setWritten(TypeTable::integer);
-    read.setPrediction(TypeTable::int32);
+    read.setExpected(TypeTable::int32);
     read.representation = Representation::Double;
     read.inlineFrame = 1;
     read.setAccessSite(AccessSiteID(4u));
     read.setReceivers(program.types.intern(LayoutSet { { L0, L2 }, true }));
-    stream.at(v6).setKeepsShape(true);
-    stream.at(b0).terminator.inlineFrame = 1;
+    stream.edit(v4).setIsDemotedTailCall(true);
+    stream.edit(b0).terminator.inlineFrame = 1;
 
     program.at(L0).fields[0].flow.occupancy = Occupancy::AlwaysFilled;
     program.at(L0).flow.members.append(L0);
@@ -643,8 +643,8 @@ void testEngineFields()
     addEngineFields(test);
     String text = test.printProgram(PrintedFields::All);
     for (ASCIILiteral part : {
-        "    v9: number ? int ~ i32 @Double = PropGet v0 key=\"x\" accessSite=4 receivers=[L0, L2] @1009:1\n"_s,
-        "    v6 = NewObject -, v3 layout=L0 fields=[0] [keepsShape] @1006\n"_s,
+        "    v9: number ~ i32 @Double = PropGet v0 key=\"x\" accessSite=4 receivers=[L0, L2] @1009:1\n"_s,
+        "    v4 = Call v0, -, v2, v3 expectedResult=x0 [isAnnotatedPure, isDemotedTailCall] @1004\n"_s,
         "    Branch v1 -> taken b1(), notTaken b2() @2000:1\n"_s,
         " inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}] {\n"_s,
         " flags=[IsRequired] flow={occupancy=AlwaysFilled}}] ownFieldCount=1 flow={members=[L0]}\n"_s,

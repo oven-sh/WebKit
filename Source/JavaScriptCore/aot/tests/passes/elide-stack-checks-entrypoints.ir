@@ -1,8 +1,8 @@
-# An entrypoint that only calls functions with a stack check leaves the check to them
+# Whatever calls a closure tests the stack, so a generic entrypoint has no check, nor has the function it enters, unless that one calls itself
 # FORM: Selected
 # RUN: pass ElideStackChecks
-# STATISTIC: StackChecksCoveredByCallers = 1
-# STATISTIC: StackChecksDeferredToCallee = 2
+# STATISTIC: StackChecksCoveredByCallers = 7
+# STATISTIC: StackChecksDeferredToCallee = 0
 
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -68,13 +68,13 @@ function f8 name="closureNeverCalledByValue" role=GenericEntrypoint flags=[HasTh
     v2 = CallDirect function=f4
     ReturnCall v2
 }
-# CHECK: f0 stack check: Required
-# CHECK-NEXT: f1 stack check: Required
+# CHECK: f0 stack check: CoveredByCallers
+# CHECK-NEXT: f1 stack check: CoveredByCallers
 # CHECK-NEXT: f2 stack check: Required
 # CHECK-NEXT: f3 stack check: Required
 # CHECK-NEXT: f4 stack check: CoveredByCallers
-# CHECK-NEXT: f5 stack check: DeferredToCallee
-# CHECK-NEXT: f6 stack check: DeferredToCallee
-# CHECK-NEXT: f7 stack check: Required
-# CHECK-NEXT: f8 stack check: Required
+# CHECK-NEXT: f5 stack check: CoveredByCallers
+# CHECK-NEXT: f6 stack check: CoveredByCallers
+# CHECK-NEXT: f7 stack check: CoveredByCallers
+# CHECK-NEXT: f8 stack check: CoveredByCallers
 # CHECK-NEXT: outcome: Unchanged

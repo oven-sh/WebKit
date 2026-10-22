@@ -1,0 +1,189 @@
+# The helper that every program has: `result = []; for (i = 0; i < array.length; i++) result.push(f(array[i]))`. The literal is made with room for array.length elements:
+# a callback is predicted not to change the array that is walked for it, the loop that only unlikely paths close is predicted not to go round,
+# and the test for null in front of the first `array.length` is made in front of the literal where nothing that anybody could tell lies in between
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callbackInLoop" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Call v1, -, v8
+    v10 = CallBuiltin v2, v9 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK: [[length0]]: {{*}} = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK: [[sum0]]: {{*}} = Add {{*}}, [[length0]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum0]]
+
+function f1 name="walkedArrayIsAppendedTo" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Call v1, -, v8
+    v10 = CallBuiltin v2, v9 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v11 = CallBuiltin v0, v9 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v8, v12
+    Jump -> next b1(v13)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: capacity=
+
+function f2 name="loopAroundTheLoopIsClosedByUnlikelyPathsOnly" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b6()
+  b3(v10):
+    v11 = Call v1, -, v10
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v14 = CallBuiltin v3, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2(v13)
+  b5() frequency=Rare:
+    v15 = PropGet v3 key="push"
+    v16 = Call v15, v3, v11
+    Jump -> next b1(v13)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK: [[length2]]: {{*}} = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK: [[sum2]]: {{*}} = Add {{*}}, [[length2]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum2]]
+
+function f3 name="loopAroundTheLoopIsAsLikely" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b6()
+  b3(v10):
+    v11 = Call v1, -, v10
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v14 = CallBuiltin v3, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2(v13)
+  b5():
+    v15 = PropGet v3 key="push"
+    v16 = Call v15, v3, v11
+    Jump -> next b1(v13)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: capacity=
+
+function f4 name="testForNullFollowsTheLiteral" parameters=[{type=null|Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: null|Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = RequireObjectCoercible v0 name="length"
+    v7 = CallBuiltin v6 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v8 = Less v4, v7
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    v10 = Call v1, -, v9
+    v11 = CallBuiltin v2, v10 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v9, v12
+    Jump -> next b1(v13)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK: [[array4]]: {{*}} = RequireObjectCoercible v0 name="length"
+# CHECK-NEXT: [[length4]]: {{*}} = CallBuiltin [[array4]] overload=ArrayPrototypeLength/0
+# CHECK: [[sum4]]: {{*}} = Add {{*}}, [[length4]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum4]]
+
+function f5 name="callBetweenTheLiteralAndTheTestForNull" parameters=[{type=null|Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: null|Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Call v1
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = RequireObjectCoercible v0 name="length"
+    v8 = CallBuiltin v7 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v9 = Less v5, v8
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = Call v1, -, v10
+    v12 = CallBuiltin v2, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v13 = Integer integer=1
+    v14 = Add v10, v13
+    Jump -> next b1(v14)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: capacity=
+
+function f6 name="anotherWayLeadsOnFromTheLiteral" parameters=[{type=null|Array<anything>}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: null|Array<anything>, v1: anything, v2: boolean):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Branch v2 -> taken b1(v4), notTaken b3()
+  b1(v5):
+    LoopHint
+    v7 = RequireObjectCoercible v0 name="length"
+    v8 = CallBuiltin v7 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v9 = Less v5, v8
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = Call v1, -, v10
+    v12 = CallBuiltin v3, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v13 = Integer integer=1
+    v14 = Add v10, v13
+    Jump -> next b1(v14)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f6
+# CHECK-NOT: capacity=

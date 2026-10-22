@@ -29,15 +29,36 @@ struct Instance;
 JS_EXPORT_PRIVATE void resumeAsyncFunction(JSGlobalObject*, VM&, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 JS_EXPORT_PRIVATE void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 
-// For the request of a generator that settles the target. Each answers only while compiled code waits on the stack for the end of that step and the job that the engine
-// would queue is the next one to run. The first returns what the await of a yielded value gives, or the empty value.
+// For the request of an async generator, or of the wrapper of a sync iterator, that settles the target. Each answers only while compiled code waits on the stack for the end
+// of that step and the job that the engine would queue is the next one to run. The first returns what the await of a yielded value gives, or the empty value.
 JS_EXPORT_PRIVATE JSValue tryAwaitForStepInProgress(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
 JS_EXPORT_PRIVATE bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDone);
+struct AsyncGeneratorBodyEntry {
+    Instance* instance { nullptr };
+    JSCell* outerFrame { nullptr };
+    JSCell* outerAsyncGenerator { nullptr };
+    JSCell* outerPromiseOfHandler { nullptr };
+    bool outerAsyncContextIsPutBack { false };
+};
 // The job loop enters a body as the last thing it does in a job.
-JS_EXPORT_PRIVATE void willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
+JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
+// The adapter may have gone on to the consumers of the body and to the jobs that follow. Returns the generator whose body returned last, or null if something else did: that is finished here.
+JS_EXPORT_PRIVATE JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&, JSAsyncGenerator* entered, JSValue returned, JSValue error, bool isTerminated);
+// A PromiseReactionJob whose handler is compiled code and gets the argument alone, under the async context that is in place. False: nothing is done.
+JS_EXPORT_PRIVATE bool tryRunHandlerOfJob(JSGlobalObject*, VM&, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob);
+// A BunPerformMicrotaskJob whose function is compiled code and gets no argument. What it throws is reported before this returns. The caller has no AsyncContextSwapScope yet.
+JS_EXPORT_PRIVATE bool tryRunFunctionOfJob(JSGlobalObject*, VM&, JSValue function, bool endsJob);
+// For the job that resumes a driver. Compiled code takes an iterator result of the engine as a value and a status: returns the value to resume the driver with.
+// The result object that a producer keeps for its driver is left without the value.
+JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
+// A driver of compiled code needs no iterator result: its job has the value as it is, and in the first argument, which is undefined in every other job of the kind, whether the producer is done.
+JS_EXPORT_PRIVATE bool takesBareSteps(JSValue settlementTarget);
+JS_EXPORT_PRIVATE void deliverBareStepToDriver(JSObject* driver, bool isDone);
 
 JSValue enterSavedFrame(VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue sent);
 void resumeSavedAsyncFunction(JSGlobalObject*, VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue resolution);
+// For whoever entered the adapter, if the handler of a job is what the adapter entered last and the handler's promise is not settled yet.
+void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue error);
 
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
 JS_EXPORT_PRIVATE JSPromise* asyncFunctionPromise(JSCell* coroutine);

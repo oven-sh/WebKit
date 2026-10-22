@@ -955,7 +955,7 @@ void StringBuilderPlan::dump(PrintStream& out) const
 
 bool isStringConcatenation(const Program& program, const Function&, const Value& value)
 {
-    if (value.opcode != Opcode::Add && value.opcode != Opcode::Strcat)
+    if (!concatenationOpcodes.contains(value.opcode))
         return false;
     return value.numberOfOperands() && program.at(value.type).isString();
 }

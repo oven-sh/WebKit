@@ -9,6 +9,7 @@
 
 #include "AOTCodeRecords.h"
 #include "AOTOperationEmitter.h"
+#include "B3Policy.h"
 #include "B3StackmapValue.h"
 #include "RegisterSet.h"
 #include <optional>
@@ -28,8 +29,6 @@ public:
     void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>);
     void requireOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
     void throwError(const OperationContext&, ErrorKind, StringID message);
-    void throwTypeMismatch(const OperationContext&, Operand, TypeID expected, TypeSiteID);
-    ThrowSite typeMismatchSite(TypeID expected, TypeSiteID) const;
 
     void requireNotNullish(const OperationContext&, Operand, const Type&, NullishAccess, StringID name);
     void requireInitialized(const OperationContext&, Operand, const Type&, StringID name);
@@ -41,6 +40,8 @@ private:
     void branchOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
     bool canTrapAt(const OperationContext&);
     void trapIfNullish(const OperationContext&, Boxed, const ThrowSite&);
+    void trapIfNullish(const OperationContext&, NarrowReference, const ThrowSite&);
+    void trapThrough(const OperationContext&, LValue pointer, Representation, const ThrowSite&);
     static ThrowKind throwKindOf(NullishAccess);
 
     struct CheckedThrowSite {
@@ -56,6 +57,7 @@ private:
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite&, Representation, unsigned registerNumber);
 RegisterSet registersClobberedByThrowSites(const StubCatalog&);
+B3::ClientPhase throwWhereTrapsAreCertain(CodeRecords&, const StubCatalog&);
 
 } } } // namespace JSC::AOT::Typed
 

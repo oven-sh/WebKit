@@ -8,7 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
+#include "AOTBuildContext.h"
+#include "AOTBuiltinPristine.h"
 #include "AOTCFG.h"
+#include "AOTClosureWord.h"
+#include "AOTConvention.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
@@ -16,8 +21,10 @@
 #include "AOTEffectsOfAccesses.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaRuntimeColumns.h"
+#include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <optional>
@@ -36,6 +43,158 @@ bool isFrameCell(const Function& function, ValueID id)
 {
     const Value& definition = function.at(sameObjectThroughCasts(function, id));
     return Value::opcodesWithStorage.contains(definition.opcode) && definition.storage() == AllocationStorage::Frame;
+}
+
+static constexpr OperandUses usesOfArrayReaders { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
+
+static constexpr OpcodeSet readersOfArraysWhereTheyLie {
+    Opcode::TypeTest, Opcode::IsPristine, Opcode::StrictEq, Opcode::ValueEqualsLiteral, Opcode::ToBoolean,
+    Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayLength, Opcode::GetArrayElement, Opcode::HasSpareArrayCapacity,
+    Opcode::ArrayStorageKind, Opcode::HasContiguousIndex, Opcode::GetContiguousIndex,
+    Opcode::CallList, Opcode::AppendElements, Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments,
+    Opcode::ValidateType, Opcode::ValidateSameValue,
+};
+
+bool canLieInFrame(const Program& program, const BuildContext& build, const Value& allocation)
+{
+    switch (allocation.opcode) {
+    case Opcode::NewArray:
+        return allocation.holes().empty() && !allocation.capacityOperand()
+            && allocation.elementsOperands().size() <= build.limit(LimitID::MaxFrameArrayLength)
+            && arrayStorageAtAllocation(program, program.at(allocation.type)) == ArrayStorage::Contiguous;
+    case Opcode::CreateRest:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool givesSameArray(Opcode opcode, uint32_t operandIndex)
+{
+    return isCast(opcode) && opcode != Opcode::Check && operandUsesOf(opcode, operandIndex).contains(OperandUse::Returns);
+}
+
+Vector<ValueID, 8> findArraysThatMayLieInFrame(const Program& program, const BuildContext& build, const Function& function)
+{
+    BitVector arrays;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            if (canLieInFrame(program, build, function.at(id)))
+                arrays.ensureSizeAndSet(id.index(), function.values.size());
+        }
+    }
+    if (arrays.isEmpty())
+        return { };
+
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& user = function.at(id);
+            user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (!arrays.quickGet(operand.index()) || user.operandKind(operandIndex) == OperandKind::Guard)
+                    return;
+                if (effectRuleOf(user.opcode) != EffectRule::Call && !givesSameArray(user.opcode, operandIndex) && !readsArrayWhereItLies(program, function, user, operandIndex))
+                    arrays.quickClear(operand.index());
+            });
+        }
+        block.terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (block.terminator.operandKind(operandIndex) != OperandKind::Guard)
+                arrays.quickClear(operand.index());
+        });
+    }
+
+    Vector<ValueID, 8> result;
+    for (size_t index : arrays)
+        result.append(ValueID(index));
+    return result;
+}
+
+static bool readsArrayWhereItLies(std::optional<InlineBuiltin> builtin, uint32_t operandIndex, uint32_t receiver, uint32_t firstArgument)
+{
+    if (!builtin)
+        return false;
+    switch (*builtin) {
+    case InlineBuiltin::ArrayLength:
+        return operandIndex == receiver;
+    // f.apply(thisValue, list) is operationAOTApply wherever it stands.
+    case InlineBuiltin::FunctionApply:
+        return operandIndex == firstArgument + 1;
+    default:
+        return false;
+    }
+}
+
+bool readsArrayWhereItLies(const Program& program, const Function& function, const Value& user, uint32_t operandIndex)
+{
+    switch (user.opcode) {
+    case Opcode::CallBuiltin:
+        return user.builtinCallForm() == BuiltinCallForm::Whole && readsArrayWhereItLies(inlineImplementationOf(program, user), operandIndex, OperandIndex::CallBuiltin::receiver, OperandIndex::CallBuiltin::arguments);
+    case Opcode::CallInline:
+        return readsArrayWhereItLies(user.inlineBuiltin(), operandIndex, OperandIndex::CallInline::receiver, OperandIndex::CallInline::arguments);
+    // No prototype of an array has a property whose name is a number.
+    case Opcode::ElemGet:
+        return operandIndex == OperandIndex::ElemGet::object && program.typeOf(function, user.propertyOperand()).isNumber();
+    default:
+        return readersOfArraysWhereTheyLie.contains(user.opcode) && operandUsesOf(user.opcode, operandIndex).containsOnly(usesOfArrayReaders);
+    }
+}
+
+bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow, const Value& call, uint32_t operandIndex)
+{
+    if (!flow || effectRuleOf(call.opcode) != EffectRule::Call || maySuspend(call.opcode) || call.operandUses(operandIndex).containsAny(callingUses))
+        return false;
+    CalleeList callees = calleesOfCall(program, call);
+    if (!callees.isComplete || !callees.builtins.isEmpty())
+        return false;
+    return std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+        std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
+        return entryParameter && flow->mayTakeFrameArray(callee, *entryParameter);
+    });
+}
+
+static bool holdsPartOfItsCaller(FunctionRole role)
+{
+    return role == FunctionRole::OutlinedBody;
+}
+
+bool mayBeGivenFrameArray(const Program& program, const FlowResults* flow, const Function& function, const Value& user, uint32_t operandIndex)
+{
+    if (user.operandKind(operandIndex) == OperandKind::Guard || givesSameArray(user.opcode, operandIndex))
+        return true;
+    // A narrow reference counts from the base of the cage of cells.
+    if (familyOf(user.opcode) == OperationFamily::Representation)
+        return user.opcode != Opcode::Compress;
+    // What was moved out of a function since the table was made is asked where it is now.
+    if (user.opcode == Opcode::CallDirect && flow && flow->frameArrayParameters().isOlderThan(user.function()) && holdsPartOfItsCaller(program.at(user.function()).role))
+        return true;
+    return readsArrayWhereItLies(program, function, user, operandIndex) || mayHandFrameArrayTo(program, flow, user, operandIndex);
+}
+
+std::optional<FrameArrayTest> testOfFrameArray(const Program& program, const Value& test)
+{
+    switch (test.opcode) {
+    case Opcode::IsPristine:
+        if (test.builtinClass() != BuiltinClasses::Array)
+            return std::nullopt;
+        return FrameArrayTest { test.valueOperand(), !test.aspects().containsAny(aspectsWithoutTest) && pristineTestOf(program.builtins(), BuiltinClasses::Array) == PristineTest::MayPass };
+    case Opcode::HasArrayStorage:
+        return FrameArrayTest { test.arrayOperand(), test.arrayStorage() == ArrayStorage::Contiguous };
+    case Opcode::ToBoolean:
+        return FrameArrayTest { test.valueOperand(), true };
+    case Opcode::TypeTest: {
+        // A test looks at the class alone, and leaves out a class of which the type says more than that.
+        const Type& tested = program.at(test.testedType());
+        if (tested.anyObject)
+            return FrameArrayTest { test.valueOperand(), true };
+        const ClassPart* arrays = tested.findClassPart(BuiltinClasses::Array);
+        if (!arrays)
+            return FrameArrayTest { test.valueOperand(), false };
+        if (arrays->contentsAreProven || !arrays->provenPristine.isEmpty())
+            return std::nullopt;
+        return FrameArrayTest { test.valueOperand(), true };
+    }
+    default:
+        return std::nullopt;
+    }
 }
 
 static bool canFollowResultOf(Opcode opcode)
@@ -91,57 +250,133 @@ void forEachReturnedOperand(const Function& function, const Value& value, NOESCA
     });
 }
 
-bool mayBeUnspecified(FunctionAnalyses& analyses, ValueID start)
+bool mayReturnOperand(Opcode opcode)
+{
+    if (opcode == Opcode::ResultAt)
+        return true;
+    if (!canFollowResultOf(opcode))
+        return false;
+    uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
+    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
+        if (operandUsesOf(opcode, operandIndex).contains(OperandUse::Returns))
+            return true;
+    }
+    return false;
+}
+
+static bool hasSourceOfUnspecifiedValues(FunctionAnalyses& analyses)
+{
+    const OpcodeSet& opcodes = analyses.opcodesOfValues();
+    return opcodes.contains(Opcode::Unspecified) || opcodes.contains(Opcode::ResultAt);
+}
+
+static bool isSourceOfUnspecifiedValues(const Function& function, const Value& value)
+{
+    if (value.opcode == Opcode::Unspecified)
+        return true;
+    return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
+}
+
+static void forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
     const Function& function = analyses.function();
-    const CFG& cfg = analyses.cfg();
-    const UseLists& uses = analyses.useLists();
+    const Value& value = function.at(id);
+    if (value.opcode != Opcode::Parameter) {
+        forEachReturnedOperand(function, value, functor);
+        return;
+    }
 
+    BlockID block = analyses.useLists().blockOf(id);
+    uint32_t parameterIndex = static_cast<uint32_t>(function.at(block).parameters.find(id));
+    for (Edge edge : analyses.cfg().incomingEdges(block)) {
+        if (ValueID passed = valuePassedOn(function, edge, parameterIndex))
+            functor(passed);
+    }
+}
+
+bool mayBeUnspecified(FunctionAnalyses& analyses, ValueID start)
+{
+    if (!hasSourceOfUnspecifiedValues(analyses))
+        return false;
+
+    const Function& function = analyses.function();
     BitVector visited;
     Vector<ValueID, 8> worklist { start };
     while (!worklist.isEmpty()) {
         ValueID id = worklist.takeLast();
         if (!visited.add(id.index()))
             continue;
+        if (isSourceOfUnspecifiedValues(function, function.at(id)))
+            return true;
+        forEachValueHandedOn(analyses, id, [&](ValueID source) {
+            worklist.append(source);
+        });
+    }
+    return false;
+}
 
-        const Value& value = function.at(id);
-        if (value.opcode == Opcode::Unspecified)
-            return true;
-        if (value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call)
-            return true;
-        if (value.opcode != Opcode::Parameter) {
-            forEachReturnedOperand(function, value, [&](ValueID operand) {
-                worklist.append(operand);
-            });
+UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses)
+    : m_analyses(analyses)
+    , m_hasSource(hasSourceOfUnspecifiedValues(analyses))
+{
+    if (m_hasSource)
+        m_isSpecified.ensureSize(analyses.function().values.size());
+}
+
+bool UnspecifiedValues::mayContain(ValueID start)
+{
+    if (!m_hasSource)
+        return false;
+
+    const Function& function = m_analyses.function();
+    m_visited.shrink(0);
+    Vector<ValueID, 8> worklist { start };
+    while (!worklist.isEmpty()) {
+        ValueID id = worklist.takeLast();
+        if (m_isSpecified.quickSet(id.index()))
             continue;
+        m_visited.append(id);
+        if (isSourceOfUnspecifiedValues(function, function.at(id))) {
+            for (ValueID visited : m_visited)
+                m_isSpecified.quickClear(visited.index());
+            return true;
         }
-
-        BlockID block = uses.blockOf(id);
-        uint32_t parameterIndex = static_cast<uint32_t>(function.at(block).parameters.find(id));
-        for (Edge edge : cfg.incomingEdges(block)) {
-            if (ValueID passed = valuePassedOn(function, edge, parameterIndex))
-                worklist.append(passed);
-        }
+        forEachValueHandedOn(m_analyses, id, [&](ValueID source) {
+            worklist.append(source);
+        });
     }
     return false;
 }
 
 FramePointers::FramePointers(const Function& function)
-    : FramePointers(nullptr, function)
+    : FramePointers(nullptr, function, FrameCells::All)
 {
 }
 
-FramePointers::FramePointers(const Program& program, const Function& function)
-    : FramePointers(&program, function)
+FramePointers::FramePointers(const Program& program, const Function& function, FrameCells cells)
+    : FramePointers(&program, function, cells)
 {
 }
 
-FramePointers::FramePointers(const Program* program, const Function& function)
+static bool isAmong(FrameCells cells, const Value& allocation)
+{
+    switch (cells) {
+    case FrameCells::All:
+        return true;
+    case FrameCells::Arrays:
+        return arrayAllocationsWithStorage.contains(allocation.opcode);
+    case FrameCells::AllButArrays:
+        return !arrayAllocationsWithStorage.contains(allocation.opcode);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FramePointers::FramePointers(const Program* program, const Function& function, FrameCells cells)
     : m_program(program)
 {
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
-            if (!hasFrameStorage(function.at(id)))
+            if (!hasFrameStorage(function.at(id)) || !isAmong(cells, function.at(id)))
                 continue;
             m_allocations.append(id);
             m_values.ensureSizeAndSet(id.index(), function.values.size());
@@ -262,9 +497,18 @@ bool FramePointers::add(const Function& function, ValueID id)
 bool FramePointers::mayHoldPointers(const Program& program, const Function& function, ValueID cell) const
 {
     const Value& definition = function.at(sameObjectThroughCasts(function, cell));
+    // An array holds values of the heap alone, wherever it lies.
+    if (arrayAllocationsWithStorage.contains(definition.opcode))
+        return false;
     if (definition.opcode == Opcode::NewClosure) {
         return std::ranges::any_of(m_capturesWithPointers, [&](const CaptureReference& capture) {
             return capture.function == definition.function();
+        });
+    }
+    // An environment holds what its fields hold, wherever the cell was read from.
+    if (LayoutID environment = program.typeOf(function, cell).environment) {
+        return std::ranges::any_of(m_environmentFieldsWithPointers, [&](const FieldReference& field) {
+            return field.layout == environment;
         });
     }
     if (definition.opcode != Opcode::NewObject)
@@ -339,13 +583,64 @@ static bool isCalledByRuntimeFunction(const Value& user, uint32_t operandIndex)
     return runtimeOf(user.opcode) && operandUsesOf(user.opcode, operandIndex).containsAny(callingUses);
 }
 
-OperandUses usesOfFrameCellsAllowedIn(const Program&, const Value&)
+bool mayLendArgument(const Value& call, uint32_t operandIndex)
 {
-    return nativeUsesOfFrameCells;
+    if (call.opcode != Opcode::Call || call.argumentsOperands().size() > numberOfArgumentGPRs)
+        return false;
+    std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
+    return argument && *argument < ClosureWord::numberOfBorrowedArguments;
+}
+
+bool isLentTo(const Function& function, const Value& user, uint32_t operandIndex)
+{
+    if (!mayLendArgument(user, operandIndex))
+        return false;
+    const Value& operand = function.at(sameObjectThroughCasts(function, user.operand(operandIndex)));
+    return operand.opcode == Opcode::NewClosure && operand.isLent();
+}
+
+uint8_t argumentsLentBy(const Function& function, const Value& call)
+{
+    uint8_t lent = 0;
+    if (call.opcode != Opcode::Call)
+        return lent;
+    call.forEachOperand([&](ValueID, uint32_t operandIndex) {
+        if (isLentTo(function, call, operandIndex))
+            lent |= 1u << *call.variadicOperandIndex(operandIndex);
+    });
+    return lent;
+}
+
+bool isLastUse(const Function& function, const CFG& cfg, const UseLists& useLists, ValueID definition, std::span<const Use> uses, const Use& last)
+{
+    for (const Use& use : uses) {
+        if (use != last && use.block == last.block && !useLists.isBefore(use, last))
+            return false;
+    }
+
+    BlockID blockOfDefinition = useLists.blockOf(definition);
+    BitVector barrier(function.blocks.size());
+    barrier.quickSet(blockOfDefinition.index());
+    BitVector reached(function.blocks.size());
+    auto follow = [&](BlockID successor) {
+        if (successor != blockOfDefinition && !reached.get(successor.index()))
+            reached.merge(cfg.blocksReachableFrom(successor, barrier));
+    };
+    if (last.isEdgeUse())
+        follow(targetOf(function, last.edge()).block);
+    else {
+        for (BlockID successor : cfg.successors(last.block))
+            follow(successor);
+    }
+    return std::ranges::none_of(uses, [&](const Use& use) {
+        return reached.get(use.block.index());
+    });
 }
 
 bool mayLeakFramePointer(const Program& program, const FlowResults* flow, const Function& function, const Value& user, uint32_t operandIndex)
 {
+    if (isLentTo(function, user, operandIndex))
+        return false;
     OperandSummary summary = summarizeFramePointerUse(program, flow, function, user, operandIndex);
     if (summary.uses.containsAny(unfollowedLeakingUses))
         return true;
@@ -360,7 +655,7 @@ bool mayLeakFramePointer(const Program& program, const FlowResults* flow, const 
         return isRetained || isCalledByRuntimeFunction(user, operandIndex);
     case EffectRule::Builtin:
     case EffectRule::Inline:
-        return !summary.uses.containsOnly(usesOfFrameCellsAllowedIn(program, user));
+        return !mayLookAtFrameCells(effectRuleOf(user.opcode)) || !summary.uses.containsOnly(inlineUsesOfFrameCells);
     case EffectRule::Access:
         return provenAccessOf(program, function, user).isLookupByKey;
     case EffectRule::Declared:
@@ -380,15 +675,34 @@ bool mayLeakFramePointer(const Program& program, const FlowResults* flow, const 
     return summarizeFramePointerUse(program, flow, function, user, operandIndex).uses.containsAny(usesLeakingFramePointers);
 }
 
-bool mayLeakCapture(const FlowResults* flow, const Value& closure, uint32_t captureIndex)
+// A captured closure keeps the strict rule: its captures may be pointers into a frame, and the callee can read them.
+bool mayLeakCapture(const Program& program, const FlowResults* flow, const Value& closure, uint32_t captureIndex)
 {
-    return !flow || flow->framePointerSummary(closure.function(), captureIndex).uses.containsAny(usesLeakingFramePointers);
+    if (!flow)
+        return true;
+    OperandUses leakingUses = usesLeakingFramePointers;
+    if (holdsOnlyHeapValues(program, flow, program.at(closure.function()).captures[captureIndex].type))
+        leakingUses = leakingUses - usesLeakingContents;
+    return flow->framePointerSummary(closure.function(), captureIndex).uses.containsAny(leakingUses);
 }
 
 // Without flow no other function gets the environment: every capture and every operand of a call counts as leaked.
 bool mayLeakStoredValue(const FlowResults* flow, FieldReference environmentField)
 {
     return flow && flow->storedFramePointerUses(environmentField).containsAny(usesLeakingFramePointers);
+}
+
+bool holdsOnlyHeapValues(const Program& program, const FlowResults* flow, TypeID type)
+{
+    LayoutID environment = program.at(type).environment;
+    if (!environment)
+        return false;
+    uint32_t numberOfFields = program.at(environment).fields.size();
+    for (uint32_t field = 0; field < numberOfFields; ++field) {
+        if (!mayLeakStoredValue(flow, FieldReference { environment, field }))
+            return false;
+    }
+    return true;
 }
 
 } } } // namespace JSC::AOT::Typed

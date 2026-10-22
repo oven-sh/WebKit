@@ -26,7 +26,7 @@ function f0 name="subjectIsBuiltBeforeTheRegion" parameters=[{type=anything}] re
 # CHECK: [[cell0]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, [[cell0]]
 # CHECK: b1() handler=b2([[cell0]]):
-# CHECK: b2([[carried0]]: object) role=DisposalCleanup subject=[[carried0]]:
+# CHECK: b2([[carried0]]: L0) role=DisposalCleanup subject=[[carried0]]:
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: = Call v4, [[carried0]]
 
@@ -49,7 +49,7 @@ function f1 name="subjectIsOnlyNamed" parameters=[{type=anything}, {type=boolean
 # CHECK: b0(
 # CHECK-NEXT: Branch v1 -> taken [[edge1]](), notTaken b3()
 # CHECK: b1() handler=b2([[cell1]]):
-# CHECK: b2([[carried1]]: object) role=DisposalCleanup subject=[[carried1]]:
+# CHECK: b2([[carried1]]: L0) role=DisposalCleanup subject=[[carried1]]:
 # CHECK: b3():
 # CHECK-NEXT: Return v0
 # CHECK: [[edge1]]():

@@ -315,6 +315,12 @@ public:
         m_notCellMaskInMemory = notCellMask;
     }
     bool readsTagsFromMemory() const { return !!m_numberTagInMemory; }
+
+    template<typename Functor>
+    NEVER_INLINE static auto withTagInMemory(Functor functor, Address tag)
+    {
+        return functor(tag);
+    }
 #else
     bool readsTagsFromMemory() const { return false; }
 #endif
@@ -323,8 +329,8 @@ public:
     auto withNumberTag(const Functor& functor)
     {
 #if CPU(X86_64)
-        if (m_numberTagInMemory)
-            return functor(*m_numberTagInMemory);
+        if (m_numberTagInMemory) [[unlikely]]
+            return withTagInMemory(functor, *m_numberTagInMemory);
 #endif
         return functor(GPRInfo::numberTagRegister);
     }
@@ -333,8 +339,8 @@ public:
     auto withNotCellMask(const Functor& functor)
     {
 #if CPU(X86_64)
-        if (m_notCellMaskInMemory)
-            return functor(*m_notCellMaskInMemory);
+        if (m_notCellMaskInMemory) [[unlikely]]
+            return withTagInMemory(functor, *m_notCellMaskInMemory);
 #endif
         return functor(GPRInfo::notCellMaskRegister);
     }
@@ -529,7 +535,7 @@ public:
     Jump branchIfNotCell(T maybeCell, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNotCellMask([&](auto mask) { return branchTest64(NonZero, maybeCell, mask); });
+            return withNotCellMask([=, this](auto mask) { return branchTest64(NonZero, maybeCell, mask); });
         return branchTest64(NonZero, maybeCell, TrustedImm64(JSValue::NotCellMask));
     }
 
@@ -537,7 +543,7 @@ public:
     Jump branchIfCell(T maybeCell, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNotCellMask([&](auto mask) { return branchTest64(Zero, maybeCell, mask); });
+            return withNotCellMask([=, this](auto mask) { return branchTest64(Zero, maybeCell, mask); });
         return branchTest64(Zero, maybeCell, TrustedImm64(JSValue::NotCellMask));
     }
     
@@ -556,35 +562,35 @@ public:
     Jump branchIfInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNumberTag([&](auto tag) { return branch64(AboveOrEqual, gpr, tag); });
+            return withNumberTag([=, this](auto tag) { return branch64(AboveOrEqual, gpr, tag); });
         return branch64(AboveOrEqual, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNumberTag([&](auto tag) { return branch64(Below, gpr, tag); });
+            return withNumberTag([=, this](auto tag) { return branch64(Below, gpr, tag); });
         return branch64(Below, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNumberTag([&](auto tag) { return branchTest64(NonZero, gpr, tag); });
+            return withNumberTag([=, this](auto tag) { return branchTest64(NonZero, gpr, tag); });
         return branchTest64(NonZero, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNumberTag([&](auto tag) { return branchTest64(Zero, gpr, tag); });
+            return withNumberTag([=, this](auto tag) { return branchTest64(Zero, gpr, tag); });
         return branchTest64(Zero, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotDoubleKnownNotInt32(GPRReg valueGPR, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return withNumberTag([&](auto tag) { return branchTest64(Zero, valueGPR, tag); });
+            return withNumberTag([=, this](auto tag) { return branchTest64(Zero, valueGPR, tag); });
         return branchTest64(Zero, valueGPR, TrustedImm64(JSValue::NumberTag));
     }
 
@@ -1084,7 +1090,7 @@ public:
         if (mode == DoNotHaveTagRegisters)
             sub64(TrustedImm64(JSValue::NumberTag), gpr);
         else {
-            withNumberTag([&](auto tag) { sub64(tag, gpr); });
+            withNumberTag([=, this](auto tag) { sub64(tag, gpr); });
             jitAssertIsJSDouble(gpr);
         }
         return gpr;
@@ -1095,7 +1101,7 @@ public:
             move(TrustedImm64(JSValue::NumberTag), resultGPR);
             add64(gpr, resultGPR);
         } else
-            withNumberTag([&](auto tag) { add64(tag, gpr, resultGPR); });
+            withNumberTag([=, this](auto tag) { add64(tag, gpr, resultGPR); });
         move64ToDouble(resultGPR, fpr);
         return fpr;
     }
@@ -1149,7 +1155,7 @@ public:
         
         isInt32.link(this);
         zeroExtend32ToWord(source, target);
-        withNumberTag([&](auto tag) { or64(tag, target); });
+        withNumberTag([=, this](auto tag) { or64(tag, target); });
         
         done.link(this);
     }
@@ -1227,7 +1233,7 @@ public:
         if (mode == DoNotHaveTagRegisters)
             or64(TrustedImm64(JSValue::NumberTag), intGPR, boxedGPR);
         else
-            withNumberTag([&](auto tag) { or64(tag, intGPR, boxedGPR); });
+            withNumberTag([=, this](auto tag) { or64(tag, intGPR, boxedGPR); });
     }
 
     void boxNativeCallee(GPRReg calleeGPR, GPRReg boxedGPR)

@@ -7,10 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDiagnostics.h"
 #include "AOTImageForward.h"
 #include "YarrFlags.h"
 #include <compare>
 #include <span>
+#include <tuple>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
 #include <wtf/TZoneMalloc.h>
@@ -26,8 +28,10 @@ class StringArena;
 using Typed::RegExpRecordID;
 using Typed::ValueID;
 
+// Evaluated: a text that the build puts together from the constants that reach a call of RegExp. Candidate: a text that flow names for a call.
 enum class RegExpRequestOrigin : uint8_t {
     Literal,
+    Evaluated,
     Candidate,
 };
 
@@ -44,9 +48,10 @@ enum class RegExpDeclineReason : uint8_t {
 struct RegExpSite {
     FunctionID function;
     ValueID value;
+    SourceLocation location { noSourceLocation };
 
-    friend bool operator==(const RegExpSite&, const RegExpSite&) = default;
-    friend auto operator<=>(const RegExpSite&, const RegExpSite&) = default;
+    friend bool operator==(const RegExpSite& a, const RegExpSite& b) { return a.function == b.function && a.value == b.value; }
+    friend auto operator<=>(const RegExpSite& a, const RegExpSite& b) { return std::tuple { a.function, a.value } <=> std::tuple { b.function, b.value }; }
 };
 
 struct RegExpNamedGroupStrings {

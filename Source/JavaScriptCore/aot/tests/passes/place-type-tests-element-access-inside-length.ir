@@ -1,9 +1,10 @@
-# Where the function compares a position with the length of the array, the access gets the test of the position with its other tests and is an access inside the length: a read of an array without holes gives the element type, and a store writes one element and ends no proof. Each case stands beside one that differs in the one thing that costs the test
+# An access gets the test of its position with its other tests and is an access inside the length. A read of an array without holes gets it wherever nothing asks whether the element is there, and gives the element type. A store gets it only where the function compares the position with the length of the array: it then writes one element and ends no proof. Each store stands beside one that differs in the one thing that costs the test
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
+# RUN(KIND): pass PlaceTypeTests
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="readBelowLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+function f0 name="readBelowLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000]):
     v2 = GetArrayLength v0
     v3 = Less v1, v2
@@ -17,21 +18,20 @@ function f0 name="readBelowLength" parameters=[{type=Array<i32, proven, pristine
 }
 # CHECK-LABEL: function f0 name="readBelowLength"
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32
-# CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Predicted [keyIsIntegral, isInBounds]
+# CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: [[isInside0]]: boolean = IsInBounds v0, v1
 # CHECK-NEXT: Branch [[isInside0]] -> taken {{*}}(| 0), notTaken
 
-function f1 name="readWithoutComparison" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+function f1 name="readWithoutComparison" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
 }
 # CHECK-LABEL: function f1 name="readWithoutComparison"
-# CHECK-NOT: IsInBounds
-# CHECK: v2: undefined|i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Predicted
-# CHECK-NOT: IsInBounds
+# CHECK: v2: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
+# CHECK: = IsInBounds v0, v1
 
-function f2 name="comparedWithLengthOfAnother" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+function f2 name="comparedWithLengthOfAnother" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>):
     v3 = GetArrayLength v2
     v4 = Less v1, v3
@@ -44,11 +44,10 @@ function f2 name="comparedWithLengthOfAnother" parameters=[{type=Array<i32, prov
     Return v6
 }
 # CHECK-LABEL: function f2 name="comparedWithLengthOfAnother"
-# CHECK-NOT: IsInBounds
-# CHECK: v5: undefined|i32 = GetArrayElement v0, v1,
-# CHECK-NOT: IsInBounds
+# CHECK: v5: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
+# CHECK: = IsInBounds v0, v1
 
-function f3 name="positionMayBeNegative" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=anything}] {
+function f3 name="positionMayBeNegative" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: i32):
     v2 = GetArrayLength v0
     v3 = Less v1, v2
@@ -61,9 +60,10 @@ function f3 name="positionMayBeNegative" parameters=[{type=Array<i32, proven, pr
     Return v5
 }
 # CHECK-LABEL: function f3 name="positionMayBeNegative"
-# CHECK-NOT: IsInBounds
+# CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
+# CHECK: = IsInBounds v0, v1
 
-function f4 name="readOfArrayThatMayHaveHoles" parameters=[{type=Array<i32, proven, pristine[Storage, Names]> predicted=Array<i32, proven, Int32, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+function f4 name="readOfArrayThatMayHaveHoles" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names]> ~ Array<i32, proven, Int32, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = GetArrayLength v0
     v3 = Less v1, v2
@@ -75,11 +75,15 @@ function f4 name="readOfArrayThatMayHaveHoles" parameters=[{type=Array<i32, prov
     v5 = Undefined
     Return v5
 }
+# A position inside the length may hold a hole, so the test looks at the element.
 # CHECK-LABEL: function f4 name="readOfArrayThatMayHaveHoles"
-# CHECK: v4: undefined|i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Predicted [keyIsIntegral, isInBounds]
-# CHECK: = IsInBounds v0, v1
+# CHECK-NOT: IsInBounds
+# CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isPresent]
+# CHECK-NOT: IsInBounds
+# CHECK: = IsElementPresent v0, v1, {{*}} arrayStorage=Int32
+# CHECK-NOT: IsInBounds
 
-function f5 name="storeBelowLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+function f5 name="storeBelowLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = GetArrayLength v0
     v4 = Less v1, v3
@@ -92,10 +96,10 @@ function f5 name="storeBelowLength" parameters=[{type=Array<i32, proven, pristin
 }
 # CHECK-LABEL: function f5 name="storeBelowLength"
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
-# CHECK: PutArrayElement v0, v1, v2, {{*}} arrayStorage=Int32 level=Predicted [keyIsIntegral, isInBounds]
+# CHECK: PutArrayElement v0, v1, v2, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: = IsInBounds v0, v1
 
-function f6 name="storeOfValueThatMayNotFit" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=number}] results=[{type=undefined}] {
+function f6 name="storeOfValueThatMayNotFit" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=number}] results=[{type=undefined}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: number):
     v3 = GetArrayLength v0
     v4 = Less v1, v3
@@ -110,7 +114,7 @@ function f6 name="storeOfValueThatMayNotFit" parameters=[{type=Array<i32, proven
 # CHECK-NOT: IsInBounds
 # CHECK-NOT: isInBounds
 
-function f7 name="storeInsideLengthEndsNoProof" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+function f7 name="storeInsideLengthEndsNoProof" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = GetArrayLength v0
     v4 = Less v1, v3
@@ -127,7 +131,7 @@ function f7 name="storeInsideLengthEndsNoProof" parameters=[{type=Array<i32, pro
 # CHECK-COUNT-1: = HasArrayStorage v0
 # CHECK-NOT: = HasArrayStorage v0
 
-function f8 name="storeAnywhereEndsTheProofs" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
+function f8 name="storeAnywhereEndsTheProofs" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: int[0, 1000]):
     v4 = GetArrayLength v0
     v5 = Less v1, v4
@@ -143,7 +147,7 @@ function f8 name="storeAnywhereEndsTheProofs" parameters=[{type=Array<i32, prove
 # CHECK-LABEL: function f8 name="storeAnywhereEndsTheProofs"
 # CHECK-COUNT-2: = HasArrayStorage v0
 
-function f9 name="loopThatStoresInsideTheLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+function f9 name="loopThatStoresInsideTheLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>):
     v1 = Integer integer=0
     Jump -> next b1(v1)
@@ -167,16 +171,17 @@ function f9 name="loopThatStoresInsideTheLength" parameters=[{type=Array<i32, pr
 }
 # The test of the kind stands in front of the loop, because nothing in the loop ends its proof.
 # CHECK-LABEL: function f9 name="loopThatStoresInsideTheLength"
-# CHECK: = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
-# CHECK-NOT: = HasArrayStorage
-# CHECK: LoopHint
-# CHECK-NOT: = HasArrayStorage
-# CHECK: : i32 = GetArrayElement v0, {{*}} arrayStorage=Int32 level=Predicted [keyIsIntegral, isInBounds]
-# CHECK-NOT: = HasArrayStorage
-# CHECK: PutArrayElement v0, {{*}} arrayStorage=Int32 level=Predicted [keyIsIntegral, isInBounds]
-# CHECK-NOT: = HasArrayStorage
+# CHECK: Jump -> next [[front9]](
+# CHECK: [[front9]](
+# CHECK-NEXT: = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+# CHECK: : i32 = GetArrayElement v0, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
+# CHECK: PutArrayElement v0, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
+# KIND-LABEL: function f9 name="loopThatStoresInsideTheLength"
+# KIND-COUNT-1: = HasArrayStorage
+# KIND-NOT: = HasArrayStorage
+# KIND-LABEL: function f10 name="loopThatStoresAnywhere"
 
-function f10 name="loopThatStoresAnywhere" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]> predicted=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+function f10 name="loopThatStoresAnywhere" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000]):
     v2 = Integer integer=0
     Jump -> next b1(v2)
@@ -202,4 +207,4 @@ function f10 name="loopThatStoresAnywhere" parameters=[{type=Array<i32, proven, 
 # CHECK-LABEL: function f10 name="loopThatStoresAnywhere"
 # CHECK: LoopHint
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
-# CHECK: PutArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Predicted [keyIsIntegral]
+# CHECK: PutArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral]

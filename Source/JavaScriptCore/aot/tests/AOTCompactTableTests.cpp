@@ -484,6 +484,299 @@ static void testPositionInReplacedTableLeadsToTheSuccessor(LoadedProgram& progra
     }
 }
 
+// Somebody takes the first entry, and may stand behind it from then on.
+static void takeFirstEntry(LoadedProgram& program, Collection& collection)
+{
+    AOT_TEST_CHECK(CompactTable::next(program.vm(), collection.table(), 0).storage == collection.table());
+}
+
+static void testClearingATableThatNobodyHasWalkedEmptiesIt(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSValue value = numberedString(program, "value"_s, 0);
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        for (unsigned count : { 1u, 3u, 4u, 7u, 8u, 9u, 16u, 20u }) {
+            Collection collection(program, kind);
+            for (unsigned number = 0; number < count; ++number)
+                collection.add(numberedString(program, "key"_s, number), value);
+            CompactTable* table = collection.table();
+            uint32_t capacity = table->capacity();
+            AOT_TEST_CHECK(capacity <= CompactTable::maxCapacityEmptiedByClear);
+            for (unsigned round = 0; round < 3; ++round) {
+                CompactTable::clear(program.realm(), collection.owner());
+                AOT_TEST_CHECK(collection.table() == table && table->isLive() && !table->used() && !table->size() && table->capacity() == capacity);
+                for (unsigned number = 0; number < count; ++number)
+                    AOT_TEST_CHECK(!collection.has(numberedString(program, "key"_s, number)) && !collection.has(numberedString(program, "other"_s, number)));
+                // As many entries fit as before, under other keys and in another order.
+                for (unsigned number = capacity; number--;)
+                    collection.add(numberedString(program, round % 2 ? "key"_s : "other"_s, number), value);
+                AOT_TEST_CHECK(collection.table() == table && table->used() == capacity && table->size() == capacity);
+                for (unsigned number = 0; number < capacity; ++number) {
+                    AOT_TEST_CHECK(collection.find(numberedString(program, round % 2 ? "key"_s : "other"_s, number)) == capacity - 1 - number);
+                    AOT_TEST_CHECK(!collection.has(numberedString(program, round % 2 ? "other"_s : "key"_s, number)));
+                }
+            }
+
+            // Whoever holds the table and has taken nothing finds what is added after the clear, from its start.
+            CompactTable::clear(program.realm(), collection.owner());
+            AOT_TEST_CHECK(!CompactTable::next(vm, table, 0).storage);
+            collection.add(numberedString(program, "later"_s, 0), value);
+            CompactStorage::Position position = CompactTable::next(vm, table, 0);
+            AOT_TEST_CHECK(position.storage == table && !position.entry && textOf(position.key) == "later0"_s);
+
+            // That was a step: from now on a clear leaves the entries' numbers alone.
+            collection.add(numberedString(program, "later"_s, 1), value);
+            collection.add(numberedString(program, "later"_s, 2), value);
+            CompactTable::clear(program.realm(), collection.owner());
+            AOT_TEST_CHECK(collection.table() != table ? table->status() == Status::Cleared : table->used() == 3 && !table->size());
+            collection.add(numberedString(program, "last"_s, 0), value);
+            position = CompactTable::next(vm, table, 1);
+            AOT_TEST_CHECK(position.storage == collection.table() && textOf(position.key) == "last0"_s);
+        }
+
+        // The table that takes the place of a walked one is walked: whoever stood in the old one goes on at the same entry of the new one.
+        Collection grown(program, kind);
+        for (unsigned number = 0; number < CompactTable::initialCapacity; ++number)
+            grown.add(numberedString(program, "key"_s, number), value);
+        CompactTable* small = grown.table();
+        takeFirstEntry(program, grown);
+        grown.add(numberedString(program, "key"_s, CompactTable::initialCapacity), value);
+        CompactTable* larger = grown.table();
+        AOT_TEST_CHECK(larger != small && small->status() == Status::Replaced);
+        CompactTable::clear(program.realm(), grown.owner());
+        AOT_TEST_CHECK(larger->status() == Status::Cleared && grown.table() != larger);
+        grown.add(numberedString(program, "later"_s, 0), value);
+        CompactStorage::Position position = CompactTable::next(vm, small, 1);
+        AOT_TEST_CHECK(position.storage == grown.table() && !position.entry && textOf(position.key) == "later0"_s);
+
+        // A large table is let go.
+        Collection large(program, kind);
+        while (!large.table() || large.table()->capacity() <= CompactTable::maxCapacityEmptiedByClear)
+            large.add(numberedString(program, "key"_s, large.table() ? large.table()->used() : 0), value);
+        CompactTable* largeTable = large.table();
+        CompactTable::clear(program.realm(), large.owner());
+        AOT_TEST_CHECK(largeTable->status() == Status::Cleared && large.table()->capacity() <= CompactTable::maxCapacityWithTags);
+    }
+}
+
+static void testClearingATableThatNothingWasAddedToKeepsIt(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        Collection collection(program, kind);
+        for (unsigned number = 0; number < CompactTable::initialCapacity; ++number)
+            collection.add(numberedString(program, "key"_s, number), numberedString(program, "value"_s, number));
+        CompactTable* filled = collection.table();
+        takeFirstEntry(program, collection);
+        CompactTable::clear(program.realm(), collection.owner());
+        CompactTable* empty = collection.table();
+        AOT_TEST_CHECK(filled->status() == Status::Cleared && empty != filled && empty->isLive() && !empty->used());
+
+        CompactTable::clear(program.realm(), collection.owner());
+        CompactTable::clear(program.realm(), collection.owner());
+        AOT_TEST_CHECK(collection.table() == empty && empty->isLive() && !empty->used() && !CompactTable::next(vm, empty, 0).storage);
+
+        collection.add(numberedString(program, "later"_s, 0), numberedString(program, "value"_s, 1));
+        AOT_TEST_CHECK(collection.table() == empty);
+        for (JSCell* storage : { static_cast<JSCell*>(filled), static_cast<JSCell*>(empty) }) {
+            CompactStorage::Position position = CompactTable::next(vm, storage, 0);
+            AOT_TEST_CHECK(position.storage == empty && !position.entry && textOf(position.key) == "later0"_s);
+        }
+    }
+}
+
+static void testClearingASmallTableWithRoomDeletesItsEntries(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        Collection collection(program, kind);
+        collection.add(numberedString(program, "key"_s, 0), numberedString(program, "value"_s, 0));
+        CompactTable* table = collection.table();
+        uint32_t capacity = table->capacity();
+        AOT_TEST_CHECK(capacity >= CompactTable::initialCapacity);
+        takeFirstEntry(program, collection);
+
+        // Whoever stands in front of the entry or behind it finds what is added later, and the key that was there is found no more until it is added again.
+        CompactTable::clear(program.realm(), collection.owner());
+        AOT_TEST_CHECK(collection.table() == table && table->isLive() && !table->size() && table->used() == 1);
+        AOT_TEST_CHECK(!collection.has(numberedString(program, "key"_s, 0)) && !CompactTable::next(vm, table, 0).storage && !CompactTable::next(vm, table, 1).storage);
+        collection.add(numberedString(program, "key"_s, 0), numberedString(program, "value"_s, 1));
+        AOT_TEST_CHECK(collection.table() == table && table->size() == 1 && table->used() == 2 && collection.find(numberedString(program, "key"_s, 0)) == 1u);
+        for (uint32_t entry : { 0u, 1u }) {
+            CompactStorage::Position position = CompactTable::next(vm, table, entry);
+            AOT_TEST_CHECK(position.storage == table && position.entry == 1 && textOf(position.key) == "key0"_s);
+        }
+
+        // More than half is used: the next round may not fit, so a table takes its place.
+        while (table->used() * 2 <= capacity)
+            collection.add(numberedString(program, "more"_s, table->used()), numberedString(program, "value"_s, 2));
+        AOT_TEST_CHECK(collection.table() == table);
+        CompactTable::clear(program.realm(), collection.owner());
+        AOT_TEST_CHECK(table->status() == Status::Cleared && collection.table() != table && !collection.table()->used());
+        collection.add(numberedString(program, "later"_s, 0), numberedString(program, "value"_s, 3));
+        CompactStorage::Position position = CompactTable::next(vm, table, 2);
+        AOT_TEST_CHECK(position.storage == collection.table() && !position.entry && textOf(position.key) == "later0"_s);
+    }
+}
+
+static void testAClearedTableNamesItsOwner(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        Collection collection(program, kind);
+        Vector<CompactTable*> cleared;
+        for (unsigned round = 0; round < 5; ++round) {
+            // Some rounds outgrow the first table, so tables that were replaced stand between those that were cleared.
+            unsigned count = CompactTable::initialCapacity * (round % 2 ? 6 : 1);
+            for (unsigned number = 0; number < count; ++number)
+                collection.add(numberedString(program, "key"_s, number), numberedString(program, "value"_s, round));
+            cleared.append(collection.table());
+            takeFirstEntry(program, collection);
+            CompactTable::clear(program.realm(), collection.owner());
+            AOT_TEST_CHECK(cleared.last()->status() == Status::Cleared && collection.table() != cleared.last());
+        }
+        // Whoever holds one of them holds the collection and what it has now, and none of the tables between.
+        for (CompactTable* table : cleared) {
+            AOT_TEST_CHECK(table->successorOfObsoleteTable() == collection.owner());
+            AOT_TEST_CHECK(!CompactTable::next(vm, table, 0).storage && !CompactTable::next(vm, table, 3).storage);
+        }
+        collection.add(numberedString(program, "later"_s, 0), numberedString(program, "value"_s, 9));
+        for (CompactTable* table : cleared) {
+            CompactStorage::Position position = CompactTable::next(vm, table, 2);
+            AOT_TEST_CHECK(position.storage == collection.table() && !position.entry && textOf(position.key) == "later0"_s);
+        }
+    }
+}
+
+static void testTheFirstTableHoldsTheFirstEntry(LoadedProgram& program)
+{
+    using Width = CompactTable::Width;
+    JSValue text = numberedString(program, "text"_s, 0);
+    JSValue number = jsNumber(1.5);
+    struct Case {
+        JSValue key;
+        JSValue value;
+        Width keyWidth;
+        Width valueWidth;
+    };
+    for (const Case& first : { Case { text, text, Width::Narrow, Width::Narrow }, Case { number, text, Width::Wide, Width::Narrow }, Case { text, number, Width::Narrow, Width::Wide }, Case { number, number, Width::Wide, Width::Wide } }) {
+        Collection map(program, Collection::Kind::Map);
+        AOT_TEST_CHECK(!map.table());
+        map.add(first.key, first.value);
+        CompactTable* table = map.table();
+        AOT_TEST_CHECK(table->isLive() && table->used() == 1 && table->keyWidth() == first.keyWidth && table->valueWidth() == first.valueWidth);
+        AOT_TEST_CHECK(table->capacity() >= CompactTable::initialCapacity && map.find(first.key) == 0u);
+
+        // The table that takes the place of a cleared one has the same columns.
+        for (unsigned index = 1; table->used() * 2 <= table->capacity(); ++index)
+            map.add(numberedString(program, "more"_s, index), text);
+        AOT_TEST_CHECK(map.table() == table);
+        takeFirstEntry(program, map);
+        CompactTable::clear(program.realm(), map.owner());
+        AOT_TEST_CHECK(map.table() != table && !map.table()->used() && map.table()->keyWidth() == first.keyWidth && map.table()->valueWidth() == first.valueWidth);
+        CompactTable* fresh = map.table();
+        map.add(first.key, first.value);
+        AOT_TEST_CHECK(map.table() == fresh && map.find(first.key) == 0u);
+    }
+    for (const Case& first : { Case { text, { }, Width::Narrow, Width::None }, Case { number, { }, Width::Wide, Width::None } }) {
+        Collection set(program, Collection::Kind::Set);
+        set.add(first.key);
+        AOT_TEST_CHECK(set.table()->used() == 1 && set.table()->keyWidth() == first.keyWidth && set.table()->valueWidth() == Width::None && set.has(first.key));
+    }
+}
+
+static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
+{
+    using Width = CompactTable::Width;
+    JSValue text = numberedString(program, "text"_s, 0);
+    // Of every `period` iterations one comes to the addition, and the keys repeat after `distinct`.
+    auto fill = [&](Collection& collection, uint32_t count, uint32_t distinct, uint32_t period, JSValue held) {
+        unsigned tables = 0;
+        CompactTable* last = collection.table();
+        uint32_t sizeAtEntry = last ? last->size() : 0;
+        for (uint32_t index = 0; index < count; ++index) {
+            if (index % period)
+                continue;
+            CompactTable::reserveForAdditions(program.realm(), collection.owner(), count - index, index, sizeAtEntry);
+            collection.add(numberedString(program, "key"_s, index % distinct), held);
+            if (collection.table() != last) {
+                last = collection.table();
+                ++tables;
+            }
+        }
+        return tables;
+    };
+    auto capacityFor = [&](const CompactTable* table, uint32_t count) {
+        return CompactTable::tryCreate(program.realm(), table->keyWidth(), table->valueWidth(), std::max(count, CompactTable::initialCapacity))->capacity();
+    };
+    for (uint32_t count : { 1u, 4u, 5u, 9u, 20u, 100u, 300u, 5000u }) {
+        for (JSValue held : { text, JSValue(jsNumber(0.5)) }) {
+            Collection map(program, Collection::Kind::Map);
+            unsigned tables = fill(map, count, count, 1, held);
+            CompactTable* table = map.table();
+            unsigned steps = 1;
+            for (uint64_t capacity = CompactTable::initialCapacity; capacity < count; capacity *= CompactTable::largestStepInLoop)
+                ++steps;
+            AOT_TEST_CHECK(tables <= steps && table->used() == count && table->size() == count && table->capacity() == capacityFor(table, count));
+            AOT_TEST_CHECK(table->keyWidth() == Width::Narrow && table->valueWidth() == (held.isNumber() ? Width::Wide : Width::Narrow));
+            for (uint32_t index = 0; index < count; ++index)
+                AOT_TEST_CHECK(map.find(numberedString(program, "key"_s, index)) == index);
+            AOT_TEST_CHECK(!map.has(numberedString(program, "key"_s, count)));
+
+            // A second loop over a collection that has entries: the usual step while nothing is known, then one to the end.
+            Collection more(program, Collection::Kind::Map);
+            for (uint32_t index = 0; index < count; ++index)
+                more.add(numberedString(program, "before"_s, index), held);
+            bool isFullAtEntry = more.table()->used() == more.table()->capacity();
+            unsigned tablesOfSecondLoop = fill(more, 200, 200, 1, held);
+            AOT_TEST_CHECK(tablesOfSecondLoop <= 4 && more.table()->size() == count + 200);
+            AOT_TEST_CHECK(!tablesOfSecondLoop || (tablesOfSecondLoop == 1 && isFullAtEntry) || more.table()->capacity() == capacityFor(more.table(), count + 200));
+        }
+    }
+
+    // Keys that repeat and iterations that skip the addition: the table has room for about as many entries as it gets.
+    for (uint32_t distinct : { 1u, 3u, 5u, 6u, 30u }) {
+        Collection map(program, Collection::Kind::Map);
+        fill(map, 6000, distinct, 1, text);
+        AOT_TEST_CHECK(map.table()->size() == distinct && map.table()->capacity() <= capacityFor(map.table(), distinct * CompactTable::largestStepInLoop));
+    }
+    for (uint32_t period : { 2u, 3u, 10u, 100u }) {
+        Collection map(program, Collection::Kind::Map);
+        unsigned tables = fill(map, 6000, 6000, period, text);
+        uint32_t size = (6000 + period - 1) / period;
+        AOT_TEST_CHECK(map.table()->size() == size && map.table()->capacity() <= size + size / 2 + 8 && tables <= 6);
+    }
+
+    // A number that comes while there is room widens the column and keeps the room.
+    Collection set(program, Collection::Kind::Set);
+    for (uint32_t index = 0; index < CompactTable::initialCapacity; ++index)
+        set.add(numberedString(program, "key"_s, index));
+    CompactTable::reserveForAdditions(program.realm(), set.owner(), 24, CompactTable::initialCapacity, 0);
+    CompactTable* narrowTable = set.table();
+    uint32_t reserved = narrowTable->capacity();
+    AOT_TEST_CHECK(narrowTable->keyWidth() == Width::Narrow && reserved >= 28 && narrowTable->used() == CompactTable::initialCapacity);
+    set.add(jsNumber(1.5));
+    CompactTable* wideTable = set.table();
+    AOT_TEST_CHECK(wideTable != narrowTable && !narrowTable->isLive() && wideTable->keyWidth() == Width::Wide && wideTable->capacity() >= reserved);
+    for (uint32_t index = 1; index < 24; ++index)
+        set.add(jsNumber(index + 1.5));
+    AOT_TEST_CHECK(set.table() == wideTable && set.has(jsNumber(24.5)) && set.has(numberedString(program, "key"_s, 0)));
+
+    // Nothing is done for a collection without a table, for a table with room, in the first iteration, and past the limit.
+    Collection untouched(program, Collection::Kind::Map);
+    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), 100, 1, 0);
+    AOT_TEST_CHECK(!untouched.table());
+    untouched.add(text, text);
+    CompactTable* initial = untouched.table();
+    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), 100, 1, 0);
+    AOT_TEST_CHECK(untouched.table() == initial);
+    for (uint32_t index = 1; index < CompactTable::initialCapacity; ++index)
+        untouched.add(numberedString(program, "key"_s, index), text);
+    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), 100, 0, CompactTable::initialCapacity);
+    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), uint64_t { 1 } << 40, CompactTable::initialCapacity, 0);
+    AOT_TEST_CHECK(untouched.table() == initial);
+}
+
 static void testFindByCharacters(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -626,9 +919,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="countPresent" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = Claim v0 castType=i32
-    v4 = Claim v1 castType=i32
-    v5 = Claim v2 castType=i32
+    v3 = Check v0 castType=i32
+    v4 = Check v1 castType=i32
+    v5 = Check v2 castType=i32
     v6 = Builtin builtin=GlobalThis
     v7 = PropGet v6 key="Set"
     v8 = Construct v7, -
@@ -731,6 +1024,13 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/deletion-of-half-and-growth"_s, narrow<testDeletionOfHalfAndGrowth> },
         { "compact-table/replaced-tables-keep-entries-of-every-width"_s, narrow<testReplacedTablesKeepEntriesOfEveryWidth> },
         { "compact-table/position-in-replaced-table-leads-to-the-successor"_s, narrow<testPositionInReplacedTableLeadsToTheSuccessor> },
+        { "compact-table/clearing-a-table-that-nothing-was-added-to-keeps-it"_s, narrow<testClearingATableThatNothingWasAddedToKeepsIt> },
+        { "compact-table/clearing-a-small-table-with-room-deletes-its-entries"_s, narrow<testClearingASmallTableWithRoomDeletesItsEntries> },
+        { "compact-table/a-cleared-table-names-its-owner"_s, narrow<testAClearedTableNamesItsOwner> },
+        { "compact-table/the-first-table-holds-the-first-entry"_s, narrow<testTheFirstTableHoldsTheFirstEntry> },
+        { "compact-table/a-full-table-grows-once-to-what-a-loop-still-adds"_s, narrow<testAFullTableGrowsOnceToWhatALoopStillAdds> },
+        { "compact-table/clearing-a-table-that-nobody-has-walked-empties-it"_s, narrow<testClearingATableThatNobodyHasWalkedEmptiesIt> },
+        { "compact-table/clearing-a-table-that-nobody-has-walked-empties-it-wide"_s, wide<testClearingATableThatNobodyHasWalkedEmptiesIt> },
         { "compact-table/find-by-characters"_s, narrow<testFindByCharacters> },
         { "compact-table/copy-is-independent"_s, narrow<testCopyIsIndependent> },
         { "compact-table/out-of-memory-throws-and-leaves-the-table-usable"_s, narrow<testOutOfMemoryThrowsAndLeavesTheTableUsable> },
@@ -740,6 +1040,7 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/wide-references/every-slot-kind-of-small-tables"_s, wide<testEverySlotKindOfSmallTables> },
         { "compact-table/wide-references/deletion-of-half-and-growth"_s, wide<testDeletionOfHalfAndGrowth> },
         { "compact-table/wide-references/position-in-replaced-table-leads-to-the-successor"_s, wide<testPositionInReplacedTableLeadsToTheSuccessor> },
+        { "compact-table/wide-references/clearing-a-small-table-with-room-deletes-its-entries"_s, wide<testClearingASmallTableWithRoomDeletesItsEntries> },
         { "compact-table/wide-references/keys-survive-collections"_s, wide<testKeysSurviveCollections> },
         { "slow/compact-table/long-slots-below-the-boundary"_s, narrow<testLongSlotsBelowTheBoundary> },
         { "slow/compact-table/table-created-with-the-largest-long-slots"_s, narrow<testTableCreatedWithTheLargestLongSlots> },

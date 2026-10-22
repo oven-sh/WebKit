@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFFIStubs.h"
+#include "AOTHeat.h"
 #include "AOTImageSiteTestBodies.h"
 #include "AOTImageSymbols.h"
 #include "AOTImageTestBodies.h"
@@ -333,6 +334,41 @@ static void testSymbolNames()
     AOT_TEST_CHECK(symbolNameOf(symbols.span(), entrypoint).endsWith(" (entry)"_s));
 }
 
+static String classLetterOf(std::span<const ImageSymbol> symbols, FunctionID function)
+{
+    for (const ImageSymbol& symbol : symbols) {
+        if (symbol.kind == SymbolKind::Function && symbol.function == function)
+            return symbol.description.substring(symbol.description.reverseFind('\t') + 1);
+    }
+    AOT_TEST_CHECK(false);
+    return { };
+}
+
+// A small function is never compact.
+static String namedProgramWithLargeFunctionText()
+{
+    constexpr ASCIILiteral startOfFunction = "function f1 results=[{type=anything}] {\n  b0():\n"_s;
+    StringBuilder text;
+    text.append(startOfFunction, "    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    for (unsigned value = 2; value <= Typed::HeatModel::maxSizeOfSmallFunction; ++value)
+        text.append("    v"_s, value, " = Call v1, -, v0\n"_s);
+    return makeStringByReplacingAll(String(namedProgramText), startOfFunction, text.toString());
+}
+
+// The closures are handed to code that nobody knows, once each. Only a very large program has compact functions.
+static void testClassOfCompactFunction()
+{
+    for (bool isVeryLarge : { false, true }) {
+        TestBuild build(makeString(namedProgramWithLargeFunctionText(), runtimeFunctionsText(4)), isVeryLarge ? TestOptions { .loweredLimit = LimitID::MaxWarmCodeValues, .loweredLimitValue = 1 } : TestOptions { });
+        AOT_TEST_CHECK(build.pipeline().heat->isCompact(build.program(), FunctionID(1u)) == isVeryLarge);
+        AOT_TEST_CHECK(!build.pipeline().heat->isCompact(build.program(), FunctionID(0u)));
+        TestImage image = builtImage(build, bodies(plainBody(0), plainBody(1)));
+        Vector<ImageSymbol> symbols = symbolsOf(build, image);
+        AOT_TEST_CHECK(classLetterOf(symbols.span(), FunctionID(0u)) == "o"_s);
+        AOT_TEST_CHECK((classLetterOf(symbols.span(), FunctionID(1u)) == "k"_s) == isVeryLarge);
+    }
+}
+
 static size_t countSharedCodeNamed(std::span<const ImageSymbol> symbols, const String& name)
 {
     return std::ranges::count_if(symbols, [&](const ImageSymbol& symbol) {
@@ -554,6 +590,7 @@ std::span<const NativeTest> symbolTests()
         { "image/symbols/parts-after-functions"_s, testPartsAfterFunctions },
         { "image/symbols/no-entry"_s, testNoEntry },
         { "image/symbols/names"_s, testSymbolNames },
+        { "image/symbols/class-of-compact-function"_s, testClassOfCompactFunction },
         { "image/symbols/operation-stub-name"_s, testOperationStubName },
         { "image/symbols/map-file"_s, testMapFile },
         { "image/symbols/map-file-unwritable"_s, testMapFileUnwritable },

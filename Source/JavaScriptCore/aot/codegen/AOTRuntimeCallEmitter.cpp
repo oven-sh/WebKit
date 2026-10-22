@@ -11,9 +11,12 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTPureOperations.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTStubCatalog.h"
+#include "AOTStubsCallHost.h"
 #include "AOTStubsOperations.h"
 #include "AOTThrowEmitter.h"
 #include "AirFrameEmission.h"
@@ -111,7 +114,15 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const B3::Stackmap
             continue;
         }
         RELEASE_ASSERT(rep.isStack());
-        appendArgumentMove(moves, destination, childType == B3::Int32 ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
+        bool isNarrow = childType == B3::Int32;
+        if (params.code().frameLayout().hasFrameRecord) {
+            appendArgumentMove(moves, destination, isNarrow ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
+            continue;
+        }
+        // The call of the thunk pushes the return address.
+        RELEASE_ASSERT(isX86_64());
+        int64_t offsetAtCall = params.code().addressInFrame(rep.offsetFromFP()).offset;
+        appendArgumentMove(moves, destination, isNarrow ? ArgumentSource::Stack32OffStackPointer : ArgumentSource::Stack64OffStackPointer, offsetAtCall + static_cast<int64_t>(sizeof(CPURegister)));
     }
     return moves;
 }
@@ -157,7 +168,7 @@ void CallGenerator::emitCallWithOperandRegister(CCallHelpers& jit, const B3::Sta
         emitStubCallInstruction(jit, called, moves);
         return;
     }
-    GPRReg receiver = params[1].gpr();
+    GPRReg receiver = params[signature.result == StubResult::None ? 0 : 1].gpr();
     if (std::optional<StubKey> variant = tryWithOperandRegister(called, receiver)) {
         emitStubCallInstruction(jit, *variant, moves);
         return;
@@ -212,9 +223,15 @@ static bool acceptsAnyReceiverRegister(StubKey key, const StubSignature& signatu
     case OperandRegisterChoice::NoChoice:
         return false;
     case OperandRegisterChoice::AlternateReceivers:
-        return numberOfOperands == 1 && signature.result == StubResult::GPR;
+        return numberOfOperands == 1 && (signature.result == StubResult::GPR || signature.result == StubResult::None);
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A leaf calls nothing and leaves the stack as it found it. On x86-64 the call itself stores the return address, so the caller needs no frame for it.
+bool leavesCallerWithoutFrame(StubKey key)
+{
+    return isX86_64() && descriptorOf(key.family()).leafness == StubLeafness::Leaf;
 }
 
 static RegisterSet lateClobbersOf(const StubCatalog& catalog, StubKey key, bool receiverIsInAnyRegister, const StubSignature& signature, const RegisterSet& additionalClobbers)
@@ -224,6 +241,8 @@ static RegisterSet lateClobbersOf(const StubCatalog& catalog, StubKey key, bool 
         forEachRegisterVariant(key, [&](StubKey variant) {
             late.merge(catalog.summaryOf(variant).clobbered);
         });
+        // A receiver that lies where no variant takes it is moved to where the stub itself does.
+        late.add(signature.operands[0], IgnoreVectors);
     }
     if (signature.immediate)
         late.add(*signature.immediate, IgnoreVectors);
@@ -315,7 +334,7 @@ static void setTailCallGenerator(B3::PatchpointValue* patchpoint, CodeRecords* r
     patchpoint->setGenerator([records, key, immediate](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (params.context().frameIsSetUp)
-            B3::Air::emitFrameTeardown(jit, params.code());
+            B3::Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
         if (immediate)
             records->stubCalls.tailCall(jit, key, *immediate);
         else
@@ -527,6 +546,7 @@ RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createEntryRequest(AOT::Entr
     request.operationResult = operationResultOf(returns);
     request.effectsOfCallee = AOT::effectsOf(entry);
     request.argumentBufferAccess = argumentBufferAccessOf(*operation);
+    request.entry = entry;
     if (entry == AOT::Entry::operationAOTReportValidationFailure && !callerOptions.reportMayReturn) {
         RELEASE_ASSERT(returns == OperationCall::Returns::Void);
         request.end = CallEnd::NeverReturns;
@@ -571,6 +591,32 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
     }
 }
 
+LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, LValue keptAlive, std::optional<HostFrameOfDirectCall> hostFrame)
+{
+    Effects effects = context.effects().onAnyEdge();
+    bool isLeaf = !effects.mayThrow && !effects.mayCollect && !effects.mayCallUnknownCode;
+
+    Vector<LValue, 8> argumentsWithHostFrame;
+    if (hostFrame && !isLeaf) {
+        RELEASE_ASSERT(arguments.size() == directThisArgumentIndex || arguments.size() == directCalleeArgumentIndex);
+        argumentsWithHostFrame.append(arguments);
+        if (arguments.size() == directThisArgumentIndex)
+            argumentsWithHostFrame.append(hostFrame->thisValue);
+        argumentsWithHostFrame.append(hostFrame->callee);
+        arguments = argumentsWithHostFrame.span();
+    }
+
+    CallRequest request;
+    request.key = AOT::callDirectFunction(isLeaf ? DirectFunctionCall::Leaf : hostFrame ? DirectFunctionCall::WithHostFrame : DirectFunctionCall::WithFrame);
+    request.options.immediate = static_cast<uint32_t>(number * sizeof(BuiltinDirectFunctionBinding) + OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function));
+    request.effectsOfCallee = inputs().stubCatalog.effectsOf(request.key);
+    request.argumentBufferAccess = ArgumentBufferAccess::Reads;
+    placeArguments(request, arguments, OperationCall::FirstArgument::None);
+    if (keptAlive)
+        request.operands.append({ keptAlive, B3::ValueRep::LateColdAny });
+    return emitCall(&context, request).first;
+}
+
 RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createRequest(StubKey key, std::span<const LValue> operands, const CallOptions& options) const
 {
     const StubCatalog& catalog = inputs().stubCatalog;
@@ -600,14 +646,27 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     Effects effects = context ? effectsOfCall(*context, request.effectsOfCallee) : request.effectsOfCallee;
     if (options.pureFunction)
         effects.reads = { };
-    bool hasSite = effects.mayThrow || effects.mayCollect || effects.mayCallUnknownCode;
-    RELEASE_ASSERT(context || !hasSite);
-    RELEASE_ASSERT(!generator().isInitializingCell() || !effects.mayCollect);
+    // A site says where in the source a frame stands and which handler is in force there. Nobody asks that of a call that can only collect:
+    // the collector wants the frame, which it finds by the return address alone.
+    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
+    RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
+    RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
     if (effects.mayCollect)
         emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
+    RuntimeValidationEmitter::OperandCells cellsBeforeCall;
+    if (generator().validates() && context && request.end == CallEnd::Returns && !mayConvertCells(effects) && !options.runsCodeOfHost)
+        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context);
+    RuntimeValidationEmitter::PhotographedOperands photographedOperands;
+    bool comesBack = request.end == CallEnd::Returns || (request.end == CallEnd::BranchesOnFlags && !effects.mayThrow);
+    if (generator().validates() && context && comesBack && !effects.mayRunOtherCode() && !options.runsCodeOfHost && !generator().isInitializingCell())
+        photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects);
+    uint32_t photographedCallee = request.entry ? static_cast<uint32_t>(*request.entry) : PhotographedCall::calleeIsStub | static_cast<uint32_t>(key.family());
+
     B3::PatchpointValue* patchpoint = m_out.patchpoint(patchpointTypeOf(m_proc, signature.result));
     patchpoint->effects.terminal = request.end != CallEnd::Returns;
+    patchpoint->setNeedsFrameRecord(readsFrameRecordOfCaller(key.family()));
+    patchpoint->setRunsWithoutFrame(!hasSite && !generator().validates() && request.end == CallEnd::Returns && leavesCallerWithoutFrame(key));
 
     StubKey boundKey = boundKeyOf(catalog, key, options.immediate);
     bool receiverIsInAnyRegister = request.end == CallEnd::Returns && !request.firstRead && boundKey == key && acceptsAnyReceiverRegister(key, signature, request.operands.size());
@@ -619,7 +678,11 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     patchpoint->clobberLate(late);
     patchpoint->clobberEarly(earlyClobbersOf(signature, receiverIsInAnyRegister, late));
 
-    applyEffects(patchpoint, effects, request.argumentBufferAccess, options.accessesCollectorState);
+    Effects effectsSinceThrow = effects;
+    effectsSinceThrow.mayCollect |= options.followsThrow;
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : CellConversions::AsEffectsSay);
+    if (!options.pureFunction)
+        keepBehindBirthOfFrameCells(patchpoint);
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         applyPureFunction(patchpoint, *options.pureFunction);
@@ -646,9 +709,21 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     patchpoint->setGenerator([callGenerator = WTF::move(callGenerator)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         callGenerator.generate(jit, params);
     });
-    if (branchesOnFlags) {
+    if (branchesOnFlags && photographedOperands.isEmpty()) {
         m_out.m_block->appendSuccessor(request.targets->notTaken);
         m_out.m_block->appendSuccessor(request.targets->taken);
+    } else if (branchesOnFlags) {
+        // The operands are compared on both ways out.
+        LBasicBlock notTaken = newBlock();
+        LBasicBlock taken = newBlock();
+        m_out.m_block->appendSuccessor(B3::FrequentedBlock(notTaken, request.targets->notTaken.frequency()));
+        m_out.m_block->appendSuccessor(B3::FrequentedBlock(taken, request.targets->taken.frequency()));
+        for (auto [block, target] : { std::pair { notTaken, request.targets->notTaken.block() }, std::pair { taken, request.targets->taken.block() } }) {
+            m_out.appendTo(block);
+            emitter<RuntimeValidationEmitter>().compareWithPhotographs(*context, photographedOperands, photographedCallee);
+            m_out.jump(target);
+        }
+        return { };
     }
     if (effects.mayThrow)
         emitter<ExceptionEmitter>().attachLandingPad(*context, patchpoint, *site, request.end == CallEnd::Returns);
@@ -656,7 +731,12 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         m_out.appendTo(newBlock());
         return { };
     }
-    return resultOfCall(signature.result, patchpoint);
+    StubCallResult result = resultOfCall(signature.result, patchpoint);
+    if (!cellsBeforeCall.isEmpty())
+        emitter<RuntimeValidationEmitter>().checkCellsWereNotConverted(cellsBeforeCall);
+    if (!photographedOperands.isEmpty())
+        emitter<RuntimeValidationEmitter>().compareWithPhotographs(*context, photographedOperands, photographedCallee);
+    return result;
 }
 
 StubCallResult RuntimeCallEmitter::resultOfCall(StubResult result, B3::PatchpointValue* patchpoint)
@@ -692,6 +772,14 @@ void RuntimeCallEmitter::callStubAndBranch(const OperationContext& context, Stub
     emitCall(&context, request);
 }
 
+void RuntimeCallEmitter::callStubWithoutSiteAndBranch(StubKey key, std::span<const LValue> operands, BranchTargets targets)
+{
+    CallRequest request = createRequest(key, operands, { });
+    request.end = CallEnd::BranchesOnFlags;
+    request.targets = targets;
+    emitCall(nullptr, request);
+}
+
 void RuntimeCallEmitter::tailCallStub(const OperationContext& context, StubKey key, std::span<const LValue> operands, const CallOptions& options)
 {
     CallRequest request = createRequest(key, operands, options);
@@ -723,6 +811,7 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
 
 void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, B3::PatchpointValue* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
+    keepBehindBirthOfFrameCells(patchpoint);
     if (request.effects.mayThrow)
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);
     if (request.neverReturns)

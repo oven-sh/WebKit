@@ -312,10 +312,14 @@ static StringID literalOf(SelectionContext& context, const Match& match)
     return context.pass().strings.intern(match.atom);
 }
 
-static ValueID insertPosition(GroupRewriter& rewriter, const Match& match)
+static ValueID insertPosition(SelectionContext& context, GroupRewriter& rewriter, const Match& match)
 {
     if (!match.position)
         return rewriter.insert(makeInteger(match.defaultPosition));
+
+    // Position 0 lies in every string.
+    if (const Type& type = context.typeOf(match.position); type.isInteger() && type.integers == Range::one(0))
+        return match.position;
 
     ValueID length = rewriter.insert(IRBuilder::make(Opcode::GetStringLength, { match.subject }));
     Value range = IRBuilder::make(Opcode::StringRange, { length, match.position });
@@ -337,7 +341,7 @@ static void fillSearch(Value& search, const Match& match, ValueID position, Stri
 static void rewriteSearch(SelectionContext& context, GroupRewriter& rewriter, const Match& match)
 {
     StringID literal = literalOf(context, match);
-    ValueID position = insertPosition(rewriter, match);
+    ValueID position = insertPosition(context, rewriter, match);
     if (match.rootForm == RootForm::Index) {
         fillSearch(rewriter.replaceRoot(match.row), match, position, literal);
         rewriter.leaveUnclaimed(match.group.root);
@@ -408,7 +412,7 @@ static void recordLiteralSeparators(SelectionContext& context)
         StringID separator = findLiteralSeparator(context, function.at(id));
         if (!separator)
             continue;
-        function.at(id).setLiteralSeparator(separator);
+        function.edit(id).setLiteralSeparator(separator);
         ++numberOfSeparators;
     }
     context.didSelectForms(SelectionRuleID::StringLiteralForms, numberOfSeparators);

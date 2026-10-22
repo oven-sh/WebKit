@@ -27,7 +27,6 @@
 #include "CompleteSubspace.h"
 
 #include "AllocatorInlines.h"
-#include "CollectorMechanism.h"
 #include "JSCellInlines.h"
 #include "LocalAllocatorInlines.h"
 #include "MarkedBlockCage.h"
@@ -124,7 +123,7 @@ void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory&
 {
     constexpr unsigned maxNumberOfLargerCells = 16;
     constexpr unsigned maxBytesInLargerCells = 4 * KB;
-    if (!isEnabled(CollectorMechanism::LargerCells) || directory.m_numberOfLargerCells >= maxNumberOfLargerCells || (directory.m_numberOfLargerCells + 1) * directory.m_cellSize > maxBytesInLargerCells)
+    if (directory.m_numberOfLargerCells >= maxNumberOfLargerCells || (directory.m_numberOfLargerCells + 1) * directory.m_cellSize > maxBytesInLargerCells)
         return nullptr;
     size_t size = sizeOfLargerCells(directory.m_cellSize);
     if (!size)
@@ -139,6 +138,8 @@ void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory&
 void* CompleteSubspace::allocateSlow(VM& vm, size_t size, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     void* result = tryAllocateSlow(vm, size, deferralContext);
+    if (!result && failureMode == AllocationFailureMode::Assert && vm.heap.tryUseReserveOfExhaustedCage()) [[unlikely]]
+        result = tryAllocateSlow(vm, size, deferralContext);
     if (!result) [[unlikely]] {
         if (failureMode == AllocationFailureMode::Assert)
             MarkedBlockCage::logExhaustion();

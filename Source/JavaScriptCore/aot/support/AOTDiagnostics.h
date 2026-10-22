@@ -108,6 +108,7 @@ public:
 
     Diagnostics(Diagnostics&&);
     Diagnostics& operator=(Diagnostics&&);
+    void resolveLocations(const Typed::Program&);
     void finish(const Typed::Program*);
 
     JS_EXPORT_PRIVATE const Vector<UserDiagnostic>& userDiagnostics() const;

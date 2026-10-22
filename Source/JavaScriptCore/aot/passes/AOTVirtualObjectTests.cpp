@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTNarrowFieldTypes.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -64,6 +65,9 @@ static KnownBoolean evaluateTypeTestOfFields(const Program& program, const Virtu
     KnownBoolean result = description.absentResult ? evaluateTypeTest(program, type.withoutNullish(), tested) : evaluateTypeTest(program, type, tested);
     if (result != KnownBoolean::Unknown)
         return result;
+    // What the built-in would make is an ordinary object of the engine: of no layout of the program, of no class, no function.
+    if (description.kind == VirtualObjectKind::BuiltinFields && !tested.anyObject)
+        return KnownBoolean::False;
     return evaluateTypeTest(program, knownValueOf(description), tested);
 }
 
@@ -90,9 +94,15 @@ static KnownBoolean hasLayoutIn(const Program& program, const VirtualObjectDescr
     return type.anyObject || type.layouts ? KnownBoolean::Unknown : KnownBoolean::False;
 }
 
+static bool rejectsNullishValues(const Value& test)
+{
+    return test.opcode == Opcode::IsSlotFilled && test.holdsDeclaredType();
+}
+
 static KnownBoolean evaluateFieldTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
-    VirtualFieldAccess access = lookUpField(context.objects, context.family.descriptionOf(shape), test);
+    const VirtualObjectDescription& description = context.family.descriptionOf(shape);
+    VirtualFieldAccess access = lookUpField(context.objects, description, test);
     switch (access.lookup) {
     case FieldLookup::Unknown:
     case FieldLookup::DynamicElement:
@@ -104,8 +114,19 @@ static KnownBoolean evaluateFieldTest(const ShapeContext& context, const Virtual
     }
     std::optional<uint32_t> field = context.family.findField(access.field);
     bool isPastEnd = access.field.kind == VirtualFieldKind::Element && access.field.index >= shape.length;
-    if (field && hasStored(shape, *field) && !isPastEnd)
-        return access.whenPresent == PresentField::IsOwnData ? KnownBoolean::True : KnownBoolean::Unknown;
+    if (field && hasStored(shape, *field) && !isPastEnd) {
+        if (access.whenPresent != PresentField::IsOwnData)
+            return KnownBoolean::Unknown;
+        if (rejectsNullishValues(test) && context.objects.program.at(typeOfField(context.objects, description, access.field)).mayBeUndefinedOrNull())
+            return KnownBoolean::Unknown;
+        return KnownBoolean::True;
+    }
+    // The property is there. Whether its value lies in the slot nobody knows, and the way that looks for it by name finds it wherever it lies.
+    if (field && hasStoredCounterpart(context.family, shape, *field)) {
+        if (access.whenPresent != PresentField::IsOwnData)
+            return KnownBoolean::Unknown;
+        return knownBoolean(test.opcode != Opcode::IsSlotFilled);
+    }
     return access.whenAbsent == AbsentField::FindsNothing ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
@@ -161,12 +182,18 @@ static bool isSubjectOperand(Opcode opcode, uint32_t operandIndex)
         return operandIndex == OperandIndex::ElemHas::object;
     case Opcode::HasArrayElement:
         return operandIndex == OperandIndex::HasArrayElement::array;
+    case Opcode::IsElementPresent:
+        return operandIndex == OperandIndex::IsElementPresent::array;
     case Opcode::HasArrayStorage:
         return operandIndex == OperandIndex::HasArrayStorage::array;
     case Opcode::IsInBounds:
         return operandIndex == OperandIndex::IsInBounds::array;
     case Opcode::HasNoExtraProperties:
         return operandIndex == OperandIndex::HasNoExtraProperties::object;
+    case Opcode::HasNoFieldOutsideSlot:
+        return operandIndex == OperandIndex::HasNoFieldOutsideSlot::object;
+    case Opcode::HasBirthFieldsFilled:
+        return operandIndex == OperandIndex::HasBirthFieldsFilled::object;
     case Opcode::IsNotFrozen:
         return operandIndex == OperandIndex::IsNotFrozen::object;
     case Opcode::HasLayoutPrototype:
@@ -177,8 +204,6 @@ static bool isSubjectOperand(Opcode opcode, uint32_t operandIndex)
         return operandIndex == OperandIndex::IsPristine::value;
     case Opcode::HasKeyOrder:
         return operandIndex == OperandIndex::HasKeyOrder::object;
-    case Opcode::IsShapeEpochCurrent:
-        return operandIndex == OperandIndex::IsShapeEpochCurrent::guard;
     case Opcode::IsClosureOf:
         return operandIndex == OperandIndex::IsClosureOf::value;
     default:
@@ -214,14 +239,16 @@ static KnownBoolean evaluateTestOfConstant(const ShapeContext& context, VirtualC
     case Opcode::PropHas:
     case Opcode::ElemHas:
     case Opcode::HasArrayElement:
+    case Opcode::IsElementPresent:
     case Opcode::HasArrayStorage:
     case Opcode::IsInBounds:
     case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasBirthFieldsFilled:
     case Opcode::IsNotFrozen:
     case Opcode::HasLayoutPrototype:
     case Opcode::BelongsToInstance:
     case Opcode::HasKeyOrder:
-    case Opcode::IsShapeEpochCurrent:
         return KnownBoolean::Unknown;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -273,6 +300,26 @@ static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const Virtua
     return knownBoolean(position.asInteger() >= 0 && position.asInteger() < static_cast<int64_t>(shape.length));
 }
 
+static KnownBoolean evaluateBirthTest(const ShapeContext& context, const VirtualShape& shape)
+{
+    const Program& program = context.objects.program;
+    const VirtualObjectDescription& description = context.family.descriptionOf(shape);
+    if (!isLayoutObject(description))
+        return KnownBoolean::Unknown;
+    const Layout& layout = program.at(description.layout);
+    for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+        if (!isFilledAtBirth(program, { description.layout, index }))
+            continue;
+        PropertyKeyID key = layout.fields[index].key;
+        std::optional<uint32_t> field = key ? context.family.findField(VirtualField::named(key)) : std::nullopt;
+        if (!field || !hasStored(shape, *field))
+            return KnownBoolean::Unknown;
+        if (holdsRawValueFromBirth(program, { description.layout, index }) && program.at(typeOfField(context.objects, description, VirtualField::named(key))).mayBeUndefinedOrNull())
+            return KnownBoolean::Unknown;
+    }
+    return KnownBoolean::True;
+}
+
 static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
     const Program& program = context.objects.program;
@@ -292,23 +339,32 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::PropHas:
     case Opcode::ElemHas:
     case Opcode::HasArrayElement:
+    case Opcode::IsElementPresent:
         return evaluateFieldTest(context, shape, test);
     case Opcode::HasArrayStorage:
         return evaluateArrayStorageTest(context, shape, test);
     case Opcode::IsInBounds:
         return evaluateBoundsTest(context, shape, test);
     case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoFieldOutsideSlot:
+        if (hasUnprovenField(context.family, shape))
+            return KnownBoolean::False;
+        [[fallthrough]];
     case Opcode::IsNotFrozen:
     case Opcode::BelongsToInstance:
         return isLayoutObject(description) ? KnownBoolean::True : KnownBoolean::Unknown;
+    case Opcode::HasBirthFieldsFilled:
+        if (hasUnprovenField(context.family, shape))
+            return KnownBoolean::False;
+        return evaluateBirthTest(context, shape);
     case Opcode::HasLayoutPrototype:
         return evaluatePrototypeTest(context, shape);
     case Opcode::IsPristine:
         return isArray(description) && test.builtinClass() == BuiltinClasses::Array ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasKeyOrder:
+        if (hasUnprovenField(context.family, shape))
+            return KnownBoolean::False;
         return evaluateKeyOrderTest(context, shape, test);
-    case Opcode::IsShapeEpochCurrent:
-        return KnownBoolean::True;
     case Opcode::IsClosureOf:
         return knownBoolean(description.kind == VirtualObjectKind::Closure && description.function == test.function());
     default:
@@ -346,19 +402,6 @@ KnownBoolean evaluateTestOfTwoShapes(const ShapeContext& context, const VirtualS
     return knownBoolean(areSameObject);
 }
 
-static CastOutcome castOutcomeOf(KnownBoolean isWithinCastType)
-{
-    switch (isWithinCastType) {
-    case KnownBoolean::Unknown:
-        return CastOutcome::Unknown;
-    case KnownBoolean::False:
-        return CastOutcome::Throws;
-    case KnownBoolean::True:
-        return CastOutcome::Passes;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isNullish(const VirtualShape& shape)
 {
     return shape.kind == VirtualShapeKind::Constant && (shape.constant == VirtualConstant::Undefined || shape.constant == VirtualConstant::Null);
@@ -370,17 +413,21 @@ CastOutcome evaluateCast(const ShapeContext& context, const VirtualShape& shape,
         return CastOutcome::Unknown;
     switch (cast.opcode) {
     case Opcode::Upcast:
+    case Opcode::NarrowByField:
     case Opcode::AssumeType:
-    case Opcode::Predict:
     case Opcode::FinishObject:
     case Opcode::CheckInitialized:
         return CastOutcome::Passes;
-    case Opcode::Claim:
-        return castOutcomeOf(evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.castType())));
+    case Opcode::Check:
+        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.castType())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
     case Opcode::RequireObjectCoercible:
         return isNullish(shape) ? CastOutcome::Throws : CastOutcome::Passes;
     case Opcode::RequireObject:
         return shape.kind == VirtualShapeKind::Fields && context.family.descriptionOf(shape).hasIdentity ? CastOutcome::Passes : CastOutcome::Throws;
+    // Both stand for slots that lie somewhere: in a cell.
+    case Opcode::ReadAgain:
+    case Opcode::BorrowedParameter:
+        return CastOutcome::Unknown;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

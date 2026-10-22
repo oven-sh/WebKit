@@ -9,7 +9,7 @@
 # FREQUENCIES-NEXT: b5 frequency: Unlikely
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="testedMemberCall" parameters=[{type=anything predicted=Array<number>}, {type=function}] results=[{type=anything}] {
+function f0 name="testedMemberCall" parameters=[{type=Array<number> flags=[IsExpected]}, {type=function}] results=[{type=anything}] {
   b0(v0: anything ~ Array<number>, v1: function):
     v2 = TypeTest v0 testedType=Array<number>
     Branch v2 -> taken b1(| 0), notTaken b4()

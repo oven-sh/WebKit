@@ -79,8 +79,7 @@ static BlockID createLoopHeader(FunctionPassContext& context, IRBuilder& builder
     ValueSubstitution substitution(function);
     for (ValueID entryParameter : entryParameters) {
         ValueID headerParameter = builder.addParameter(header, function.at(entryParameter).type);
-        function.at(headerParameter).setWritten(function.at(entryParameter).written());
-        function.at(headerParameter).setPrediction(function.at(entryParameter).prediction());
+        function.edit(headerParameter).setExpected(function.at(entryParameter).expected());
         substitution.replace(entryParameter, headerParameter);
     }
     substitution.apply(function, &context.analyses);
@@ -98,7 +97,7 @@ static void replaceCallWithJump(IRBuilder& builder, TailRecursionSite site, Bloc
     const Value& call = function.at(site.call);
     Arguments arguments(call.variadicOperands());
 
-    Block& block = function.at(site.block);
+    Block& block = function.edit(site.block);
     size_t indexOfCall = block.values.reverseFind(site.call);
     RELEASE_ASSERT(indexOfCall != notFound);
     block.terminator = Terminator { };

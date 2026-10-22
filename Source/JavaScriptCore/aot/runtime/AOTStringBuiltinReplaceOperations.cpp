@@ -36,12 +36,80 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceString, JSCell*, (Instance* in
     OPERATION_RETURN(scope, (stringReplaceStringString<StringReplaceSubstitutions::Yes, StringReplaceUseTable::No, BoyerMooreHorspoolTable<uint8_t>>(globalObject, string, stringView, searchView, replacement, replacementText, nullptr)));
 }
 
+template<typename CharacterType>
+static JSString* replaceRanges(JSGlobalObject* globalObject, VM& vm, StringView subject, std::span<const unsigned> matchStarts, unsigned matchLength, StringView replacement, unsigned resultLength)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::span<CharacterType> buffer;
+    auto impl = StringImpl::tryCreateUninitialized(resultLength, buffer);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    auto append = [&](StringView piece) ALWAYS_INLINE_LAMBDA {
+        piece.getCharacters(buffer.first(piece.length()));
+        skip(buffer, piece.length());
+    };
+    unsigned endOfLastMatch = 0;
+    for (unsigned start : matchStarts) {
+        append(subject.substring(endOfLastMatch, start - endOfLastMatch));
+        append(replacement);
+        endOfLastMatch = start + matchLength;
+    }
+    append(subject.substring(endOfLastMatch));
+    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
+}
+
+// A text that is sought as it stands and a replacement that stands for itself: the two literals of most calls. A piece of another string is searched where it lies,
+// a string without the text is its own result, and any other result is written once. Null without an exception: the texts are of another kind.
+static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* search, JSString* replacement)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    StringImpl* soughtImpl = search->tryGetValueImpl();
+    StringImpl* replacementImpl = replacement->tryGetValueImpl();
+    if (!soughtImpl || !replacementImpl || !soughtImpl->length())
+        return nullptr;
+    StringView sought { *soughtImpl };
+    StringView replacementText { *replacementImpl };
+    if (replacementText.find('$') != notFound)
+        return nullptr;
+
+    auto subject = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    unsigned matchLength = sought.length();
+    auto findFrom = [&](unsigned start) ALWAYS_INLINE_LAMBDA {
+        return matchLength == 1 ? subject->find(sought[0], start) : subject->find(vm.adaptiveStringSearcherTables(), sought, start);
+    };
+    size_t found = findFrom(0);
+    if (found == notFound)
+        return string;
+    Vector<unsigned, 16> matchStarts;
+    do {
+        matchStarts.append(static_cast<unsigned>(found));
+        found = findFrom(static_cast<unsigned>(found) + matchLength);
+    } while (found != notFound);
+
+    size_t resultLength = subject->length() - matchStarts.size() * matchLength + matchStarts.size() * static_cast<size_t>(replacementText.length());
+    if (resultLength > JSString::MaxLength) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    if (!resultLength)
+        return jsEmptyString(vm);
+    if (subject->is8Bit() && replacementText.is8Bit())
+        RELEASE_AND_RETURN(scope, replaceRanges<Latin1Character>(globalObject, vm, subject, matchStarts.span(), matchLength, replacementText, static_cast<unsigned>(resultLength)));
+    RELEASE_AND_RETURN(scope, replaceRanges<char16_t>(globalObject, vm, subject, matchStarts.span(), matchLength, replacementText, static_cast<unsigned>(resultLength)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* searchCell, JSCell* replacementCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceAllString);
     JSString* string = cellArgument<JSString>(stringCell, Entry::operationAOTStringReplaceAllString);
     JSString* search = cellArgument<JSString>(searchCell, Entry::operationAOTStringReplaceAllString);
     JSString* replacement = cellArgument<JSString>(replacementCell, Entry::operationAOTStringReplaceAllString);
+    if (JSString* result = tryReplaceAllWithPlainText(globalObject, vm, string, search, replacement))
+        OPERATION_RETURN(scope, result);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     auto stringView = string->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     auto searchView = search->value(globalObject);
@@ -49,10 +117,72 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance*
     OPERATION_RETURN(scope, replaceUsingStringSearch<StringReplaceMode::Global>(vm, globalObject, string, stringView, searchView, replacement));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringSplitString, JSCell*, (Instance* instance, JSCell* string, JSCell* separator, uint32_t limit))
+// A text cut at a flat text that is not empty. The places are found where the characters lie, the array is made once, at its length, and is the program's to write to.
+// Null without an exception: the engine's way. It remembers the pieces of an atom.
+static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* separator, uint32_t limit)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    StringImpl* separatorImpl = separator->tryGetValueImpl();
+    if (!separatorImpl || !separatorImpl->length() || !limit || globalObject->isHavingABadTime())
+        return nullptr;
+    if (StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom())
+        return nullptr;
+
+    Vector<unsigned, 16> ends;
+    unsigned separatorLength = separatorImpl->length();
+    {
+        auto subject = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        StringView sought { *separatorImpl };
+        size_t found;
+        unsigned position = 0;
+        while ((found = separatorLength == 1 ? subject->find(sought[0], position) : subject->find(vm.adaptiveStringSearcherTables(), sought, position)) != notFound) {
+            ends.append(static_cast<unsigned>(found));
+            if (ends.size() == limit)
+                break;
+            position = static_cast<unsigned>(found) + separatorLength;
+        }
+        if (found == notFound)
+            ends.append(subject->length());
+    }
+    if (ends.size() >= MIN_SPARSE_ARRAY_INDEX)
+        return nullptr;
+
+    JSArray* result = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), ends.size());
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    if (ends.size() == 1 && ends[0] == string->length()) {
+        result->butterfly()->contiguous().at(result, 0).set(vm, result, string);
+        return result;
+    }
+    // view() has made every rope flat but a piece of another string, whose pieces are pieces of that string.
+    JSString* base = string;
+    unsigned start = 0;
+    if (string->isSubstring()) {
+        auto* rope = uncheckedDowncast<JSRopeString>(string);
+        base = rope->substringBase();
+        start = rope->substringOffset();
+    }
+    unsigned offsetInBase = start;
+    for (unsigned i = 0; i < ends.size(); ++i) {
+        unsigned end = offsetInBase + ends[i];
+        result->butterfly()->contiguous().at(result, i).set(vm, result, jsSubstringOfResolved(vm, base, start, end - start));
+        start = end + separatorLength;
+    }
+    return result;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringSplitString, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* separatorCell, uint32_t limit))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringSplitString);
-    OPERATION_RETURN(scope, stringSplitFast(globalObject, cellArgument<JSString>(string, Entry::operationAOTStringSplitString), cellArgument<JSString>(separator, Entry::operationAOTStringSplitString), limit));
+    JSString* string = cellArgument<JSString>(stringCell, Entry::operationAOTStringSplitString);
+    JSString* separator = cellArgument<JSString>(separatorCell, Entry::operationAOTStringSplitString);
+    if (JSArray* result = trySplitAtPlainText(globalObject, vm, string, separator, limit))
+        OPERATION_RETURN(scope, result);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, stringSplitFast(globalObject, string, separator, limit));
 }
 
 static JSString* replaceMatchesGeneric(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* regExpObject, JSValue replacement)
@@ -85,7 +215,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllRegExp, JSCell*, (Instance*
     auto* subject = cellArgument<JSString>(string, Entry::operationAOTStringReplaceAllRegExp);
     auto* regExpObject = cellArgument<RegExpObject>(regExp, Entry::operationAOTStringReplaceAllRegExp);
     if (!regExpObject->regExp()->global()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+        throwException(globalObject, scope, createReplaceAllNonGlobalRegExpError(globalObject));
         OPERATION_RETURN(scope, nullptr);
     }
     OPERATION_RETURN(scope, replaceMatches(globalObject, vm, subject, regExpObject, JSValue::decode(replacement)));

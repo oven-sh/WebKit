@@ -1,0 +1,71 @@
+# In a checked function of the program the type that a test expects is what the checker says, so the copy behind the failed test is rare code.
+# In a function that nobody has checked, and in the library, the expected type is a guess and the copy is only unlikely. Layouts that are guessed are often wrong, and what is read from such an object
+# is seldom known better than by name, so there the copy holds the stretch alone and comes back behind the last access that the test was for: the three functions have the same body
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0] impossibleMutations=[DeleteField, RedefineProperty]}
+function f0 name="checked" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = PropGet v1 key="y" receivers=[L0, ..]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="checked"
+# CHECK: = Builtin builtin=GlobalThis
+# CHECK-NOT: frequency=Unlikely:
+# CHECK: frequency=Rare:
+# CHECK-NOT: frequency=Unlikely:
+# CHECK: = Builtin builtin=GlobalThis
+
+function f1 name="notChecked" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = PropGet v1 key="y" receivers=[L0, ..]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="notChecked"
+# CHECK: = Builtin builtin=GlobalThis
+# CHECK: frequency=Unlikely:
+# CHECK-NOT: = Builtin builtin=GlobalThis
+
+function f2 name="checkedInLibrary" role=Library flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = PropGet v1 key="y" receivers=[L0, ..]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="checkedInLibrary"
+# CHECK: = Builtin builtin=GlobalThis
+# CHECK: frequency=Unlikely:
+# CHECK-NOT: = Builtin builtin=GlobalThis

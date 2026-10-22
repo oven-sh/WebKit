@@ -8,12 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAscendingSearch.h"
 #include "AOTBuildContext.h"
 #include "AOTCodeUnits.h"
+#include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <span>
@@ -29,6 +32,11 @@ namespace {
 constexpr unsigned shortestWindow = 2;
 constexpr unsigned longestWindow = 24;
 constexpr int64_t minSavings = 64;
+// A site pays a call and a return each time it runs. Where it may run, that has to buy at least this many bytes,
+constexpr uint32_t minBytesSavedAtSiteThatMayRun = 3;
+// and its piece has to stay in the caches because many sites call it, or save this many bytes a site.
+constexpr size_t minSitesOfSmallPieceThatMayRun = 512;
+constexpr uint32_t minBytesSavedByPieceWithFewSites = 16;
 constexpr unsigned numberOfShards = 256;
 constexpr unsigned unitsInChunk = 1 << 16;
 constexpr uint64_t hashBase = 0x9e3779b97f4a7c15ULL;
@@ -47,6 +55,7 @@ enum : uint8_t {
     IsTarget = 2,
     IsCall = 4,
     IsTaken = 8,
+    MayRun = 16,
 };
 
 ALWAYS_INLINE uint64_t mix(uint64_t value)
@@ -182,12 +191,16 @@ public:
 
     Outlining run()
     {
+        PhaseTimes times(m_context, PassID::GenerateCode);
         gatherUnits();
+        times.didFinish("outliner: gather units"_s);
         m_result.sites.resize(m_functions.size());
         if (m_numberOfUnits) {
             findLongestRepeatCandidates(findRuns());
+            times.didFinish("outliner: find longest repeats"_s);
             for (unsigned length = longestWindow; length >= shortestWindow; --length)
                 selectWindowsOf(length);
+            times.didFinish("outliner: select windows"_s);
         }
         parallelSort(m_context.parallelLoops(), m_chosenLocations.mutableSpan(), [](const ChosenLocation& a, const ChosenLocation& b) {
             return a.function != b.function ? a.function < b.function : a.firstUnit < b.firstUnit;
@@ -206,6 +219,7 @@ public:
             });
         });
         countStatistics();
+        times.didFinish("outliner: list sites"_s);
         m_context.destroyLater(std::tuple { WTF::move(m_firstUnit), WTF::move(m_prefixHashes), WTF::move(m_offsets), WTF::move(m_lengths), WTF::move(m_flags), WTF::move(m_runs), WTF::move(m_longestRepeatCandidate), WTF::move(m_chosenLocations), WTF::move(m_active), WTF::move(m_stillActive), WTF::move(m_found), WTF::move(m_windows) });
         return WTF::move(m_result);
     }
@@ -342,14 +356,16 @@ private:
     void gatherUnitsOf(unsigned function, std::span<const uint32_t> aliasesInBody)
     {
         collectUnits(function);
+        // Among the units of the function: upperBoundFrom(). The sites of a list ascend. A local site comes right in front of its target, which mostly lies near it.
+        size_t positionOfLastSite = 0;
         forEachCodeOffset(m_functions[function], [&](uint32_t offset, CodeOffsetRole role, unsigned size) {
             switch (role) {
             case CodeOffsetRole::Site:
-                pinUnitsOverlapping(function, offset, size);
+                pinUnitsOverlapping(function, offset, size, positionOfLastSite);
                 break;
             case CodeOffsetRole::Target:
             case CodeOffsetRole::Boundary:
-                markTarget(function, offset);
+                markTarget(function, offset, positionOfLastSite);
                 break;
             case CodeOffsetRole::Call:
             case CodeOffsetRole::ReturnAddress:
@@ -358,8 +374,8 @@ private:
         });
         for (uint32_t index : aliasesInBody) {
             const EntryAlias& alias = m_inputs.aliases[index];
-            markTarget(function, alias.start);
-            markTarget(function, *alias.innerEntryOffset());
+            markTarget(function, alias.start, positionOfLastSite);
+            markTarget(function, *alias.innerEntryOffset(), positionOfLastSite);
         }
     }
 
@@ -385,9 +401,10 @@ private:
             m_lengths[unit] = std::min<uint32_t>(codeUnit.length, std::numeric_limits<uint8_t>::max());
             switch (codeUnit.kind) {
             case CodeUnit::Kind::Plain:
+            case CodeUnit::Kind::PlainOffStackPointer:
                 if (codeUnit.length > std::numeric_limits<uint8_t>::max() || !canCallFrom(codeUnit.offset))
                     break;
-                m_flags[unit] = MayBeInWindow;
+                m_flags[unit] = MayBeInWindow | (codeUnit.mayRun ? MayRun : 0);
                 m_prefixHashes[unit + 1] = computeHash(body.bytes.span().subspan(codeUnit.offset, codeUnit.length));
                 break;
             case CodeUnit::Kind::Call: {
@@ -397,7 +414,7 @@ private:
                 if (!canCallFrom(codeUnit.offset) || !canEndWindow(code, *call, firstReadSite && firstReadSite->returnOffset == end))
                     break;
                 if (auto identity = identityOf(function, *call)) {
-                    m_flags[unit] = MayBeInWindow | IsCall;
+                    m_flags[unit] = MayBeInWindow | IsCall | (codeUnit.mayRun ? MayRun : 0);
                     m_prefixHashes[unit + 1] = computeHash(body, *call, *identity);
                 }
                 break;
@@ -411,17 +428,17 @@ private:
         RELEASE_ASSERT(unit == m_firstUnit[function + 1] && end == body.bytes.size());
     }
 
-    std::optional<uint32_t> unitContaining(unsigned function, uint32_t byteOffset) const
+    std::optional<uint32_t> unitContaining(unsigned function, uint32_t byteOffset, size_t& position) const
     {
         if (byteOffset >= m_functions[function].body.bytes.size())
             return std::nullopt;
         auto offsets = m_offsets.span().subspan(m_firstUnit[function], m_firstUnit[function + 1] - m_firstUnit[function]);
-        return m_firstUnit[function] + static_cast<uint32_t>(std::ranges::upper_bound(offsets, byteOffset) - offsets.begin()) - 1;
+        return m_firstUnit[function] + static_cast<uint32_t>(upperBoundFrom(position, offsets, byteOffset, std::less<uint32_t> { })) - 1;
     }
 
-    void markTarget(unsigned function, uint32_t target)
+    void markTarget(unsigned function, uint32_t target, size_t positionToSearchFrom)
     {
-        auto unit = unitContaining(function, target);
+        auto unit = unitContaining(function, target, positionToSearchFrom);
         if (!unit)
             return;
         if (m_offsets[*unit] == target)
@@ -430,9 +447,9 @@ private:
             m_flags[*unit] &= ~MayBeInWindow;
     }
 
-    void pinUnitsOverlapping(unsigned function, uint32_t offset, unsigned size)
+    void pinUnitsOverlapping(unsigned function, uint32_t offset, unsigned size, size_t& position)
     {
-        auto first = unitContaining(function, offset);
+        auto first = unitContaining(function, offset, position);
         if (!first)
             return;
         uint32_t end = offset + std::max(size, 1u);
@@ -547,6 +564,16 @@ private:
     ALWAYS_INLINE uint32_t sizeInBytesOf(uint32_t unit, unsigned length) const { return m_offsets[unit + length - 1] + m_lengths[unit + length - 1] - m_offsets[unit]; }
     // A taken window is at least this long, so one that overlaps this window covers its first or last unit.
     ALWAYS_INLINE bool isFree(uint32_t unit, unsigned length) const { return !((m_flags[unit] | m_flags[unit + length - 1]) & IsTaken); }
+    ALWAYS_INLINE bool savesTooLittleWhereItMayRun(uint32_t unit, unsigned length) const
+    {
+        return ((m_flags[unit] | m_flags[unit + length - 1]) & MayRun) && sizeInBytesOf(unit, length) < sizeOfNearCall + minBytesSavedAtSiteThatMayRun;
+    }
+    bool mayRun(uint32_t unit, unsigned length) const
+    {
+        return std::ranges::any_of(m_flags.span().subspan(unit, length), [](uint8_t flags) {
+            return flags & MayRun;
+        });
+    }
     unsigned functionOf(uint32_t unit) const { return std::ranges::upper_bound(m_firstUnit, unit) - m_firstUnit.begin() - 1; }
 
     bool hasSingleCaller(std::span<const Window> sortedByUnit) const { return sortedByUnit.back().unit < m_firstUnit[functionOf(sortedByUnit.front().unit) + 1]; }
@@ -613,7 +640,7 @@ private:
         forEachIndexInParallel(m_context.parallelLoops(), numberOfChunks, [&](unsigned chunk) {
             forEachLocationIn(chunk, [&](size_t location) {
                 uint32_t unit = m_active[location];
-                if (!isFree(unit, length)) {
+                if (!isFree(unit, length) || savesTooLittleWhereItMayRun(unit, length)) {
                     m_found[location] = { 0, std::numeric_limits<uint32_t>::max(), 0 };
                     return;
                 }
@@ -721,6 +748,13 @@ private:
             }
             if (chosen.isEmpty())
                 continue;
+            if (chosen.size() < minSitesOfSmallPieceThatMayRun && sizeInBytesOf(chosen[0].unit, length) < sizeOfNearCall + minBytesSavedByPieceWithFewSites) {
+                chosen.removeAllMatching([&](const ChosenWindow& window) {
+                    return mayRun(window.unit, length);
+                });
+                if (chosen.isEmpty())
+                    continue;
+            }
             uint32_t first = chosen[0].unit;
             uint32_t sizeInBytes = sizeInBytesOf(first, length);
             bool endsInCall = m_flags[first + length - 1] & IsCall;

@@ -1,0 +1,199 @@
+# One function for each kind of use, each with the record that covers it: nothing is reported.
+# RUN: verify-relations
+# CHECK-NOT: subject
+# CHECK-NOT: store
+# CHECK-NOT: returned
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Environment name="scope" fields=[{key="held" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="returns" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="throws" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsThrown]}]} {
+  b0(v0: anything):
+    Throw v0
+}
+function f3 name="keepsInAVariable" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsStoredInVariable]}]} {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f4 name="reads" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead]}, {kind=ReadFrom index=1 source=0 key="a"}]} {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return
+}
+function f5 name="stores" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersWritten]}, {kind=Parameter index=1}] stores=[{source=1 target=0 key="a" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="a" mode=Strict
+    Return
+}
+function f6 name="makes" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1 fate=[IsReturned] results=1}] stores=[{source=0 target=1 creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f7 name="calls" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsCalled]}, {kind=Parameter index=1}, {kind=CallResult index=2 fate=[IsReturned] results=1}] handed=[{source=0 call=2 argument=0}, {source=1 call=2 argument=2}] resultsFullyListed=1} {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f8 name="compares" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsCompared]}, {kind=Parameter index=1 fate=[IsCompared]}]} {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v0, v1
+    Return
+}
+function f9 name="adds" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsConvertedToPrimitive]}, {kind=Parameter index=1 fate=[IsConvertedToPrimitive]}, {kind=Computed index=2 fate=[IsReturned] results=1}] operands=[{source=0 user=2 position=0}, {source=1 user=2 position=1}] resultsFullyListed=1} {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f10 name="deletes" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersDeletedOrDefined]}] stores=[{source=4294967295 target=0 key="a"}]} {
+  b0(v0: anything):
+    v1 = PropDelete v0 key="a" mode=Strict
+    Return
+}
+function f11 name="captures" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Allocation index=1}, {kind=Allocation index=2 fate=[IsReturned] results=1}] stores=[{source=0 target=1 creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}] handed=[{source=1 call=2 argument=0}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f12
+    Return v2
+}
+function f12 name="closure" module=m0 kind=Arrow captures=[{type=env L1}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=ReadFrom index=1 source=0 fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+function f13 name="oneOfTwo" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsReturned] results=1}, {kind=Parameter index=1 fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4: anything):
+    Return v4
+}
+function f14 name="fallsOffTheEnd" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Constant index=4294967295 fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    Return
+}
+function f15 name="saysItDoesNotKnow" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsIncomplete]}]} {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Throw v0
+}
+function f16 name="hasNoRecord" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Throw v0
+}
+function f17 name="onlyLooks" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}]} {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    v2 = ToBoolean v0
+    v3 = LogicalNot v2
+    v4 = TypeTest v0 testedType=string
+    Return
+}
+function f18 name="comesOutOfATest" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsReturned, IsThrown] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    Return v2
+  b2():
+    Throw v0
+}
+function f19 name="storesIntoWhatNobodyKnows" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsStoredInUnknownObject]}]} {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    PropSet v1, v0 key="a" mode=Strict
+    Return
+}
+function f20 name="storesWhatNobodyKnows" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersWritten]}] stores=[{source=4294967295 target=0 key="a" isOnEveryPath=true isBeforeTargetLeaves=true}]} {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    PropSet v0, v1 key="a" mode=Strict
+    Return
+}
+function f21 name="iterates" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, IsIterated]}, {kind=ReadFrom index=2 source=0 fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 iteratorKind=Sync
+    v2 = IteratorResume v1 iteratorKind=Sync
+    v3 = ResultAt v2 index=1
+    Return v3
+}
+function f22 name="readsUnderAComputedKey" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead]}, {kind=Parameter index=1 fate=[IsConvertedToPrimitive]}, {kind=ReadFrom index=2 source=0}] operands=[{source=1 user=2 position=1}]} {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return
+}
+function f23 name="handsOnOneOfTwoOrSomethingElse" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsCalled]}, {kind=Parameter index=1}, {kind=CallResult index=6}] handed=[{source=0 call=6 argument=0}, {source=1 call=6 argument=2}, {source=4294967295 call=6 argument=2}]} {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v4 = GetModuleVariable variable=g0
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = Call v0, -, v5
+    Return
+}
+function f24 name="copiesTheProperties" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, HasKeysEnumerated]}, {kind=Allocation index=1 fate=[IsReturned, HasMembersWritten] results=1}, {kind=ReadFrom index=2 source=0 fate=[IsIncomplete]}] stores=[{source=4294967295 target=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = NewObject layout=L2
+    CopyDataProperties v1, v0
+    Return v1
+}
+function f25 name="asksWhatAnInstanceIs" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, IsHandedToUnknownCode]}, {kind=Parameter index=1 fate=[HasMembersRead, IsIncomplete]}]} {
+  b0(v0: anything, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return
+}
+function f26 name="storesIntoTheGlobalObject" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsStoredInUnknownObject]}]} {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="a" mode=Strict
+    Return
+}
+function f27 name="storesIntoTheGlobalObjectAndReturnsIt" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsStoredInUnknownObject]}, {kind=Constant index=1 fate=[IsReturned] results=1}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="a" mode=Strict
+    Return v1
+}
+function f28 name="readsWhereNobodyFollows" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead]}, {kind=Parameter index=1 fate=[HasMembersRead, IsStoredInUnknownObject]}, {kind=ReadFrom index=2 source=0 fate=[IsIncomplete]}, {kind=ReadFrom index=2 source=1 fate=[IsIncomplete]}]} {
+  b0(v0: anything, v1: anything):
+    v2 = SuperGet v0, v1 key="a"
+    Return v2
+}
+layout L2 name="Empty" fields=[]
+function f29 name="copiesWhatItsParameterHolds" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, HasKeysEnumerated]}, {kind=Allocation index=1 fate=[IsReturned] results=1}, {kind=ReadFrom index=1 source=0}] stores=[{source=2 target=1 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0(v0: anything):
+    v1 = CopyObject v0
+    Return v1
+}
+function f30 name="copiesWhatNobodyLists" module=m0 results=[{type=anything}] relations={subjects=[{kind=Allocation index=1 fate=[IsReturned] results=1}] stores=[{source=4294967295 target=0 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CopyObject v0
+    Return v1
+}
+function f31 name="answersALiteralOfConstants" module=m0 results=[{type=anything}] relations={subjects=[{kind=Allocation index=0 fate=[IsReturned] results=1}] stores=[{source=4294967295 target=0 isOnEveryPath=true isBeforeTargetLeaves=true}] resultsFullyListed=1} {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0

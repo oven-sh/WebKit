@@ -28,7 +28,7 @@ function f2 name="beside-a-library-built-in" parameters=[{type=f0|builtin(Functi
 # CHECK-NEXT: [[tag]]: string = GetCapture [[closure]] function=f0
 # CHECK-NEXT: = CallDirect [[tag]], v2 function=f0
 # CHECK: [[rest]]([[inherited]]: builtin(FunctionPrototypeCall)) frequency=Unlikely:
-# CHECK-NEXT: = Call [[inherited]], v1, v2 calleeKey="call" callees=[builtin(FunctionPrototypeCall)]
+# CHECK-NEXT: = Call [[inherited]], v1, v2 calleeKey="call" callees=[f0, builtin(FunctionPrototypeCall)]
 function f3 name="beside-a-native-built-in" parameters=[{type=undefined|f0|builtin(FunctionPrototypeToString)}, {type=function}, {type=anything}] results=[{type=anything}] {
   b0(v0: undefined|f0|builtin(FunctionPrototypeToString), v1: function, v2: anything):
     v3 = Call v0, v1, v2 calleeKey="toString" callees=[f0, builtin(FunctionPrototypeToString)]
@@ -40,4 +40,4 @@ function f3 name="beside-a-native-built-in" parameters=[{type=undefined|f0|built
 # CHECK-NEXT: [[tag]]: string = GetCapture [[closure]] function=f0
 # CHECK-NEXT: = CallDirect [[tag]], v2 function=f0
 # CHECK: ([[inherited]]: undefined|builtin(FunctionPrototypeToString)) frequency=Unlikely:
-# CHECK-NEXT: = Call [[inherited]], v1, v2 calleeKey="toString" callees=[builtin(FunctionPrototypeToString)]
+# CHECK-NEXT: = Call [[inherited]], v1, v2 calleeKey="toString" callees=[f0, builtin(FunctionPrototypeToString)]

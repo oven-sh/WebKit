@@ -36,7 +36,8 @@ public:
     FrequencyPropagation(Graph& graph, const Cycles& cycles, const FrequencyEstimatorConstants& constants, double minFrequency, double maxFrequency)
         : m_graph(graph)
         , m_cycles(cycles)
-        , m_iterationsPerLoop(constants.iterationsPerLoop)
+        , m_iterations(FillWith { }, cycles.size(), constants.iterationsPerLoop)
+        , m_returningShares(FillWith { }, cycles.size(), 1.0)
         , m_maxFlow(constants.maxMultipliedFrequency)
         , m_minFrequency(minFrequency)
         , m_maxFrequency(maxFrequency)
@@ -48,6 +49,20 @@ public:
     void run(const ForEachShare& forEachShare)
     {
         Vector<double> incoming(FillWith { }, m_graph.numNodes(), 0.0);
+        if (!m_cycles.size()) {
+            incoming[m_graph.index(m_graph.root())] = 1;
+            const Vector<Node>& postOrder = m_cycles.nodesInPostOrder();
+            for (unsigned index = postOrder.size(); index--;) {
+                Node node = postOrder[index];
+                double flow = std::min(incoming[m_graph.index(node)], m_maxFlow);
+                m_frequencies[m_graph.index(node)] = std::clamp(flow, m_minFrequency, m_maxFrequency);
+                forEachShare(node, [&](Node successor, double share) {
+                    incoming[m_graph.index(successor)] += flow * share;
+                });
+            }
+            return;
+        }
+        Vector<double> flows(FillWith { }, m_graph.numNodes(), 0.0);
         Vector<double, 16> entering(FillWith { }, m_cycles.size(), 0.0);
         Node root = m_graph.root();
         incoming[m_graph.index(root)] = 1;
@@ -57,8 +72,9 @@ public:
         for (unsigned index = postOrder.size(); index--;) {
             Node node = postOrder[index];
             unsigned nodeCycle = m_cycles.innermost(node);
-            double flow = std::min(m_cycles.isHeader(node) ? entering[nodeCycle] * m_iterationsPerLoop : incoming[m_graph.index(node)], m_maxFlow);
+            double flow = std::min(m_cycles.isHeader(node) ? entering[nodeCycle] * m_iterations[nodeCycle] : incoming[m_graph.index(node)], m_maxFlow);
             m_frequencies[m_graph.index(node)] = std::clamp(flow, m_minFrequency, m_maxFrequency);
+            flows[m_graph.index(node)] = flow;
             forEachShare(node, [&](Node successor, double share) {
                 double amount = flow * share;
                 unsigned cycle = m_cycles.innermost(successor);
@@ -71,7 +87,16 @@ public:
                     entering[cycle] += amount;
             });
         }
+        // What a header gets from inside its cycle has come round.
+        for (unsigned cycle = 0; cycle < m_cycles.size(); ++cycle) {
+            unsigned header = m_graph.index(m_cycles[cycle].header());
+            m_returningShares[cycle] = flows[header] > 0 ? incoming[header] / flows[header] : 1;
+        }
     }
+
+    double iterationsOf(unsigned cycle) const { return m_iterations[cycle]; }
+    void setIterations(unsigned cycle, double iterations) { m_iterations[cycle] = iterations; }
+    double returningShareOf(unsigned cycle) const { return m_returningShares[cycle]; }
 
     double frequencyOf(Node node) const { return m_frequencies[m_graph.index(node)]; }
     Vector<double> takeFrequencies() { return WTF::move(m_frequencies); }
@@ -79,7 +104,8 @@ public:
 private:
     Graph& m_graph;
     const Cycles& m_cycles;
-    double m_iterationsPerLoop;
+    Vector<double, 16> m_iterations;
+    Vector<double, 16> m_returningShares;
     double m_maxFlow;
     double m_minFrequency;
     double m_maxFrequency;
@@ -108,11 +134,19 @@ public:
 
     void run()
     {
+        estimateWeights();
+        estimateFrequencies();
+    }
+
+    // Behind this the weights and the classes of the edges are final. Only frequencyOf() needs estimateFrequencies(), which reads both and changes neither.
+    void estimateWeights()
+    {
         propagateWeightsBackward();
         markRareEdges();
         capWeights();
-        propagateFrequencies();
     }
+
+    void estimateFrequencies() { propagateFrequencies(); }
 
     double frequencyOf(Node node) const { return m_propagation.frequencyOf(node); }
     double weightOf(Node node) const { return m_weights[m_graph.index(node)]; }
@@ -126,8 +160,13 @@ private:
 
     double edgeWeight(Node from, unsigned successorIndex) const
     {
-        double weight = weightOf(m_adaptor.successor(from, successorIndex));
-        switch (m_adaptor.edgeClass(from, successorIndex)) {
+        return edgeWeight(m_adaptor.successor(from, successorIndex), m_adaptor.edgeClass(from, successorIndex));
+    }
+
+    double edgeWeight(Node successor, EdgeClass edgeClass) const
+    {
+        double weight = weightOf(successor);
+        switch (edgeClass) {
         case EdgeClass::Normal:
             return weight;
         case EdgeClass::Unlikely:
@@ -179,44 +218,96 @@ private:
 
     double leavingShare(Node from, Node to) const
     {
+        if (!m_cycles.size())
+            return 1;
         unsigned fromCycle = m_cycles.innermost(from);
+        unsigned common = m_cycles.nearestCommon(fromCycle, m_cycles.innermost(to));
         double share = 1;
-        for (unsigned left = m_cycles.depth(fromCycle) - m_cycles.depth(m_cycles.nearestCommon(fromCycle, m_cycles.innermost(to))); left--;)
-            share /= m_constants.iterationsPerLoop;
+        for (unsigned cycle = fromCycle; cycle != common; cycle = m_cycles[cycle].parent)
+            share /= m_propagation.iterationsOf(cycle);
         return share;
     }
 
     template<typename Send>
     void splitFlow(Node node, unsigned numberOfSuccessors, const Send& send) const
     {
+        struct OutgoingEdge {
+            Node successor;
+            double share;
+            double weight;
+            bool isRare;
+        };
+
+        // As below, where one edge has all the weight that stays: a weight is above zero, and w / w is 1.
+        if (numberOfSuccessors == 1) {
+            Node successor = m_adaptor.successor(node, 0);
+            double share = leavingShare(node, successor);
+            if (m_adaptor.edgeClass(node, 0) == EdgeClass::Rare)
+                share *= m_constants.rareEdgeShare;
+            else if (share < 1)
+                share *= share > m_constants.maxUnlikelyEdgeShare ? m_constants.maxUnlikelyEdgeShare / share : 1;
+            else
+                share = 1;
+            send(successor, share);
+            return;
+        }
+
+        Vector<OutgoingEdge, 4> edges;
+        edges.reserveInitialCapacity(numberOfSuccessors);
         double stayingWeight = 0;
         double leaving = 0;
         double rare = 0;
         for (unsigned successorIndex = 0; successorIndex < numberOfSuccessors; ++successorIndex) {
-            double share = leavingShare(node, m_adaptor.successor(node, successorIndex));
-            if (m_adaptor.edgeClass(node, successorIndex) == EdgeClass::Rare)
-                rare += share * m_constants.rareEdgeShare;
-            else if (share < 1)
-                leaving += share;
-            else
-                stayingWeight += edgeWeight(node, successorIndex);
+            Node successor = m_adaptor.successor(node, successorIndex);
+            EdgeClass edgeClass = m_adaptor.edgeClass(node, successorIndex);
+            OutgoingEdge edge { successor, leavingShare(node, successor), 0, edgeClass == EdgeClass::Rare };
+            if (edge.isRare)
+                rare += edge.share * m_constants.rareEdgeShare;
+            else if (edge.share < 1)
+                leaving += edge.share;
+            else {
+                edge.weight = edgeWeight(successor, edgeClass);
+                stayingWeight += edge.weight;
+            }
+            edges.append(edge);
         }
         double leavingScale = leaving > m_constants.maxUnlikelyEdgeShare ? m_constants.maxUnlikelyEdgeShare / leaving : 1;
         rare = std::min(rare, m_constants.maxUnlikelyEdgeShare);
-        for (unsigned successorIndex = 0; successorIndex < numberOfSuccessors; ++successorIndex) {
-            Node successor = m_adaptor.successor(node, successorIndex);
-            double share = leavingShare(node, successor);
-            if (m_adaptor.edgeClass(node, successorIndex) == EdgeClass::Rare)
+        for (const OutgoingEdge& edge : edges) {
+            double share = edge.share;
+            if (edge.isRare)
                 share *= m_constants.rareEdgeShare;
             else if (share < 1)
                 share *= leavingScale * (1 - rare);
             else
-                share = (1 - rare) * (1 - leaving * leavingScale) * edgeWeight(node, successorIndex) / stayingWeight;
-            send(successor, share);
+                share = (1 - rare) * (1 - leaving * leavingScale) * edge.weight / stayingWeight;
+            send(edge.successor, share);
         }
     }
 
+    // A cycle that flow seldom goes round is no loop: a hot loop and its rare copy that lead into each other, a step that is tried again where it failed.
     void propagateFrequencies()
+    {
+        propagateFrequenciesOnce();
+        unsigned deepest = 0;
+        for (unsigned cycle = 0; cycle < m_cycles.size(); ++cycle)
+            deepest = std::max(deepest, m_cycles.depth(cycle));
+        // From the inside out: what comes back to the header of a loop has passed through the cycles inside it, and a factor of ten that is wrong there lets little of it out again.
+        for (unsigned depth = deepest; depth; --depth) {
+            bool hasCycleSeldomGoneRound = false;
+            for (unsigned cycle = 0; cycle < m_cycles.size(); ++cycle) {
+                double returning = m_propagation.returningShareOf(cycle);
+                if (m_cycles.depth(cycle) != depth || returning > m_constants.unlikelyEdgeShare)
+                    continue;
+                m_propagation.setIterations(cycle, 1 / (1 - returning));
+                hasCycleSeldomGoneRound = true;
+            }
+            if (hasCycleSeldomGoneRound)
+                propagateFrequenciesOnce();
+        }
+    }
+
+    void propagateFrequenciesOnce()
     {
         m_propagation.run([&](Node node, const auto& send) {
             unsigned numberOfSuccessors = m_adaptor.numSuccessors(node);

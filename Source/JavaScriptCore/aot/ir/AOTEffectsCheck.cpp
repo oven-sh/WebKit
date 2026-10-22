@@ -30,11 +30,16 @@ static void addGroupMember(EffectsOnEdges& group, const EffectsOnEdges& member)
         group.handler.merge(group.normal);
 }
 
+void ReplacedEffects::add(const EffectsOnEdges& effects, Opcode operation)
+{
+    addGroupMember(m_effects, effects);
+    if (!m_operations.contains(operation))
+        m_operations.append(operation);
+}
+
 void ReplacedEffects::add(const EffectContext& context, const Function& function, const Value& value)
 {
-    addGroupMember(m_effects, effectsOf(context, function, value));
-    if (!m_operations.contains(value.opcode))
-        m_operations.append(value.opcode);
+    add(effectsOf(context, function, value), value.opcode);
 }
 
 void ReplacedEffects::add(const EffectContext& context, const Function& function, const Terminator& terminator)
@@ -138,6 +143,9 @@ static void checkReplacementEffects(const EffectsOnEdges& effects, bool isNamedR
 
 void checkReplacement(const EffectContext& context, const Function& function, const ReplacementSite& site, const Value& replacement, const ReplacedEffects& replaced, Diagnostics& diagnostics)
 {
+    // A check of a validating build stands beside the code. It takes the place of nothing.
+    if (familyOf(replacement.opcode) == OperationFamily::RuntimeValidation)
+        return;
     checkReplacementEffects(effectsOf(context, function, replacement), mayReplace(replacement.opcode, replaced), replaced, { context.program, function, site, nameOf(replacement.opcode), replacement.origin(), diagnostics });
 }
 
@@ -188,7 +196,19 @@ void checkDeclaredEffects(Diagnostics& diagnostics)
 void checkSummaryCoversBody(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, Diagnostics& diagnostics)
 {
     FunctionSummary fresh = summarizeBody(context, id, analyses);
-    if (!fresh.onCall().isSubsetOf(context.summaries.of(id).onCall()))
+    EffectsOnEdges claimed = context.summaries.of(id).onCall();
+    // The memory of a parameter does not say on which edge it is reached, and that of a parameter that the body stores holds what goes to either exit. Whether a callee
+    // stores its parameter is asked of the summaries at hand, which say so more often than flow's, with which the claim was made.
+    Effects onAnyEdge = claimed.onAnyEdge();
+    bool coversParameters = fresh.throughParameters.reads.isSubsetOf(onAnyEdge.reads) && fresh.throughParameters.writes.isSubsetOf(onAnyEdge.writes);
+    // The same holds one call down: an argument that is no parameter of this body, like the list made of a rest parameter, books the memory of the callee's parameter with the exits, on both edges of the call.
+    auto withMemoryOfObjectsOnAnyEdge = [&](Effects effects) {
+        effects.reads.merge(onAnyEdge.reads.restrictedTo(perObjectHeaps));
+        effects.writes.merge(onAnyEdge.writes.restrictedTo(perObjectHeaps));
+        return effects;
+    };
+    claimed = { withMemoryOfObjectsOnAnyEdge(claimed.normal), withMemoryOfObjectsOnAnyEdge(claimed.handler) };
+    if (!fresh.elsewhere.isSubsetOf(claimed) || !coversParameters)
         diagnostics.add(InternalError { .kind = InternalErrorKind::EffectsExceedSummary, .function = id });
 }
 
@@ -201,7 +221,7 @@ static Effects effectsOfEntering(const Program& program, FunctionID target, Buil
     return description.own.onAnyEdge();
 }
 
-// An entrypoint without a call stands where flow has found nobody who calls the target by value. What it does is for code that nobody has seen, and no call has a description that names the target.
+// An entrypoint without a call stands where flow has found nobody who calls the target by value. It throws at a call that flow lost track of, and no call has a description that names the target.
 static bool entersTarget(const Function& entrypoint)
 {
     return std::ranges::any_of(entrypoint.blocks, [&](const Block& block) {
@@ -224,6 +244,9 @@ void checkCallByValueCoversEntrypoint(const Program& program, FunctionID target,
         for (ValueID id : entrypoint.blocks[index].values) {
             const Value& value = entrypoint.at(id);
             if (effectRuleOf(value.opcode) == EffectRule::Call || familyOf(value.opcode) == OperationFamily::RuntimeValidation)
+                continue;
+            // The code that the read of the prototype property may run is described with the operands of the construction: describeReadOfConstructPrototype().
+            if (value.opcode == Opcode::GetConstructPrototype)
                 continue;
             if (!effectsOf(context, entrypoint, value).onAnyEdge().isSubsetOf(claimed))
                 diagnostics.add(InternalError { .kind = InternalErrorKind::EffectsExceedSummary, .function = target, .block = BlockID(index), .value = id });

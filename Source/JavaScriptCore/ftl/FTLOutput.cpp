@@ -52,6 +52,7 @@ Output::Output(State& state)
 
 Output::Output(B3::Procedure& proc)
     : m_proc(proc)
+    , m_blockLinks { BlockLink { } }
 {
 }
 
@@ -66,36 +67,38 @@ LBasicBlock Output::newBlock()
 {
     LBasicBlock result = m_proc.addBlock(m_frequency);
 
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned link = result->index() + 1;
-    unsigned next = m_nextBlock ? m_nextBlock->index() + 1 : 0;
-    if (m_blockLinks.size() <= link)
-        m_blockLinks.grow(link + 1);
-    unsigned previous = m_blockLinks[next].previous;
-    m_blockLinks[link] = { result, previous, next };
-    m_blockLinks[previous].next = link;
-    m_blockLinks[next].previous = link;
-#else
+    if (ordersBlocksByIndex()) {
+        unsigned link = result->index() + 1;
+        unsigned next = m_nextBlock ? m_nextBlock->index() + 1 : 0;
+        if (m_blockLinks.size() <= link)
+            m_blockLinks.grow(link + 1);
+        unsigned previous = m_blockLinks[next].previous;
+        m_blockLinks[link] = { result, previous, next };
+        m_blockLinks[previous].next = link;
+        m_blockLinks[next].previous = link;
+        return result;
+    }
+
     if (!m_nextBlock)
         m_blockOrder.append(result);
     else
         m_blockOrder.insertBefore(m_nextBlock, result);
-#endif
 
     return result;
 }
 
 void Output::applyBlockOrder()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    Vector<LBasicBlock, 32> blocks;
-    blocks.reserveInitialCapacity(m_blockLinks.size() - 1);
-    for (unsigned link = m_blockLinks[0].next; link; link = m_blockLinks[link].next)
-        blocks.append(m_blockLinks[link].block);
-    m_proc.setBlockOrder(blocks);
-#else
+    if (ordersBlocksByIndex()) {
+        Vector<LBasicBlock, 32> blocks;
+        blocks.reserveInitialCapacity(m_blockLinks.size() - 1);
+        for (unsigned link = m_blockLinks[0].next; link; link = m_blockLinks[link].next)
+            blocks.append(m_blockLinks[link].block);
+        m_proc.setBlockOrder(blocks);
+        return;
+    }
+
     m_proc.setBlockOrder(m_blockOrder);
-#endif
 }
 
 LBasicBlock Output::appendTo(LBasicBlock block, LBasicBlock nextBlock)

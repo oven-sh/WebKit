@@ -1,13 +1,14 @@
-# A closure that is only stored into a deferred closure slot has no code. Validation passes over it and over the store, and the build succeeds
+# A closure that a constructor only stores into a deferred closure slot becomes the initial value of the slot and has no code. Validation passes over it and over the allocation that lists it, and the build succeeds
 # FORM: AsRead
 # RUN: compile
 # RUN(PLACED): pipeline CheckPlacement
-# OPTIONS: validate check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations
-# STATISTIC: FlowDeferredClosureFields >= 1
+# OPTIONS: validate check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations,pass:PromoteEnvironmentsToVariables
+# STATISTIC: FieldsDeferringClosures >= 1
 # STATISTIC: DeferredClosureSlots >= 1
 # CHECK: image not empty
 # PLACED: = GetDeferredClosureSlot
-# PLACED: = NewClosure {{*}} function=f2 {{*}}closureForm=Deferred
+# PLACED: [[closure]]: f2 = NewClosure function=f2 {{*}}closureForm=Deferred [isMadeOnDemand]
+# PLACED-NEXT: = NewObject {{*}}, [[closure]] layout=L0 fields=[0]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -34,6 +35,6 @@ function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
     Return v2
 }
 function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     Return
 }

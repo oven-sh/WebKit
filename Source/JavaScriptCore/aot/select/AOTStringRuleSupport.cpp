@@ -96,7 +96,9 @@ static std::optional<CharacterRead> readOfElement(SelectionContext& context, con
     std::optional<ElementAccessPlan> plan = planElementAccessOf(context.program(), context.function(), element);
     if (!plan || plan->form != ElementAccessForm::String)
         return std::nullopt;
-    return createIndexedRead(use.user, Opcode::StringRangeCharacterOrUndefined, element.propertyOperand());
+    // A position that is known to lie inside the text finds a character, and the row that never answers undefined says so whatever becomes of its operands.
+    bool mayBeUndefined = context.typeOf(use.user).primitives & Primitive::Undefined;
+    return createIndexedRead(use.user, mayBeUndefined ? Opcode::StringRangeCharacterOrUndefined : Opcode::StringRangeCharacterOrEmpty, element.propertyOperand());
 }
 
 static std::optional<CharacterRead> readOfEquality(SelectionContext& context, const Use& use)
@@ -187,9 +189,9 @@ StringBuilderPartForm partFormOf(SelectionContext& context, ValueID part, CodeSh
     const Type& type = context.typeOf(part);
     if (isConstantPart(context, part, type))
         return StringBuilderPartForm::Constant;
-    // Value is one call. Every form below is inline code with that call as its slow path.
+    // In compact code a part is one call. The call for a string takes the string itself: it has no list of values to fill and does not ask what it was given.
     if (shape == CodeShape::Compact)
-        return StringBuilderPartForm::Value;
+        return type.isAnyString() ? StringBuilderPartForm::String : StringBuilderPartForm::Value;
     if (type.isInteger())
         return StringBuilderPartForm::Integer;
     if (type.isNumber())

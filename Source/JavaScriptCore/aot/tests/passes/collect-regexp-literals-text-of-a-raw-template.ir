@@ -1,0 +1,93 @@
+# String.raw`^${digits}\.${digits}$`: the raw strings of the site and substitutions that are known texts make a known text. A known number in a template, raw or not, stands as its digits.
+# No text, and a warning: a substitution that nobody knows; a first argument that is not the template object of the site.
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# DIAGNOSTIC: RegExpWithoutCode 2
+# CHECK: regexp requests: 3
+# CHECK-NEXT: evaluated "^[0-9]+\\.[0-9]+$" flags=- sites=f1:v6
+# CHECK-NEXT: evaluated "^\\w{1,64}$" flags=- sites=f4:v6
+# CHECK-NEXT: evaluated "^[a-z]{2,64}|0.5$" flags=- sites=f5:v7
+# CHECK-NEXT: variable g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="digits" module=m0 declared={type=anything}
+variable g1 name="most" module=m0 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="[0-9]+"
+    PutModuleVariable v0 variable=g0
+    v2 = CallDirect function=f1
+    v3 = CallDirect function=f2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="strings" [isFreeName]
+    v6 = CallDirect v5 function=f3
+    v7 = Double number=64
+    PutModuleVariable v7 variable=g1
+    v9 = CallDirect function=f4
+    v10 = CallDirect function=f5
+    Return v6
+}
+
+function f1 name="substitutionsAreKnownTexts" results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="^" raw="^"}, {cooked="." raw="\\."}, {cooked="$" raw="$"}]
+    v1 = GetModuleVariable variable=g0
+    v2 = Builtin builtin=String
+    v3 = PropGet v2 key="raw"
+    v4 = Call v3, v2, v0, v1, v1
+    v5 = Builtin builtin=RegExp
+    v6 = Construct v5, -, v4 @10
+    Return v6
+}
+
+function f2 name="substitutionNobodyKnows" results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="^" raw="^"}, {cooked="$" raw="$"}]
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Builtin builtin=String
+    v4 = PropGet v3 key="raw"
+    v5 = Call v4, v3, v0, v2
+    v6 = Builtin builtin=RegExp
+    v7 = Construct v6, -, v5 @20
+    Return v7
+}
+
+function f3 name="stringsFromElsewhere" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Builtin builtin=String
+    v3 = PropGet v2 key="raw"
+    v4 = Call v3, v2, v0, v1
+    v5 = Builtin builtin=RegExp
+    v6 = Construct v5, -, v4 @30
+    Return v6
+}
+
+function f4 name="numberInRawTemplate" results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="^w{1," raw="^\\w{1,"}, {cooked="}$" raw="}$"}]
+    v1 = GetModuleVariable variable=g1
+    v2 = Builtin builtin=String
+    v3 = PropGet v2 key="raw"
+    v4 = Call v3, v2, v0, v1
+    v5 = Builtin builtin=RegExp
+    v6 = Construct v5, -, v4 @40
+    Return v6
+}
+
+function f5 name="numbersInTemplate" results=[{type=anything}] {
+  b0():
+    v0 = String string="^[a-z]{2,"
+    v1 = GetModuleVariable variable=g1
+    v2 = String string="}|"
+    v3 = Double number=0.5
+    v4 = String string="$"
+    v5 = Strcat v0, v1, v2, v3, v4
+    v6 = Builtin builtin=RegExp
+    v7 = Construct v6, -, v5 @50
+    Return v7
+}

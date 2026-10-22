@@ -63,7 +63,7 @@ function f5 name="isTruthy" parameters=[{type=anything}] results=[{type=anything
 }
 )IR"_s;
 
-// A hundred accesses in a row call the run time at most three times where a cache answers: a site is written at its second miss.
+// A hundred accesses in a row call the run time at most three times where a cache answers: a site is filled at its second miss.
 #define MEASURE_ACCESSES R"JS(
 const operations = ["GetByIdAndCache", "GetById", "GetByValAndCache", "GetByVal", "InByIdAndCache", "HasOwnByIdAndCache"];
 const calls = () => {

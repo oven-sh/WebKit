@@ -10,8 +10,10 @@
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardAvailability.h"
 #include "AOTIR.h"
 #include "AOTResultRules.h"
+#include "AOTSharedMemo.h"
 #include "AOTVerifier.h"
 #include <optional>
 #include <span>
@@ -30,11 +32,37 @@ struct MethodDefinitionSite {
     ValueID value;
 };
 
+struct ModuleEvaluationSite {
+    ModuleID referrer;
+    ModuleID target;
+    BlockID block;
+    ValueID value;
+    bool isBare { false };
+};
+
+struct SlotInReceivers {
+    LayoutID memberWithoutField;
+    LayoutID memberWithRemovedField;
+    bool isAlwaysFilled { true };
+    bool mayHoldDeferredClosure { false };
+};
+
+struct SlotInReceiversEntry {
+    LayoutSetID receivers;
+    PropertyKeyID key;
+    SlotInReceivers slot;
+};
+
+// What follows from a set of receivers and a key is found once for all the functions of a program that is verified whole.
+using SlotsInReceivers = SharedMemo<SlotInReceiversEntry>;
+
 class FunctionVerifier {
     WTF_MAKE_NONCOPYABLE(FunctionVerifier);
 public:
     FunctionVerifier(const Program&, FunctionID, const Function&, IRForm, BuildContext&, const VerifierInputs&);
     ~FunctionVerifier();
+
+    void shareAnswers(SlotsInReceivers& slots) { m_slotsInReceivers = &slots; }
 
     bool run();
     bool runStructure();
@@ -75,6 +103,7 @@ public:
     bool isValid(RegExpRecordID) const;
     bool isValid(GuardBitID) const;
     bool isValid(SiteCacheID id) const { return !!id; }
+    bool isValid(GlobalBindingID id) const { return !!id; }
     bool isValidField(LayoutID, uint32_t field) const;
     bool isValidInlineFrame(uint32_t frame) const { return !frame || frame < m_function.inlineFrames.size(); }
 
@@ -115,8 +144,7 @@ private:
     void verifyLoopMarks();
 
     void verifyGuards();
-    void verifyGuardOperand(BlockID, ValueID user, const Value&, uint32_t operandIndex, ValueID guard);
-    bool relyingOnTypesIsEnough(const Value& access) const;
+    void verifyGuardOperand(BlockID, ValueID user, const Value&, ProofSet neededFromGuard, ValueID guard);
 
     void verifyOperations();
     void verifyOperation(BlockID, uint32_t indexInBlock, ValueID, const Value&);
@@ -139,10 +167,16 @@ private:
     void verifyBuiltinOperation(BlockID, ValueID, const Value&);
     void verifyDirectEval(BlockID, ValueID, const Value&);
     void verifySlotOperation(BlockID, ValueID, const Value&);
+    void verifyUsesOfBorrowedObject(ValueID);
+    bool standsBehindBorrowedParameter(ValueID parameter);
+    void verifyObjectMadeOnDemand(BlockID, ValueID, const Value&);
     void verifyKeyedTail(BlockID, ValueID, const Value&, size_t numberOfKeys);
     void verifyElementOperation(BlockID, ValueID, const Value&);
     void verifyStringBuilderOperation(BlockID, ValueID, const Value&);
     void verifyResolvedCall(BlockID, ValueID, const Value&);
+    void verifyModuleEvaluation(BlockID, ValueID, const Value&);
+    void verifyBareEvaluations();
+    void verifyRequestsOfEvaluations();
     void runSubsystemCheckers();
 
     const Type& typeOf(ValueID id) const { return m_program.typeOf(m_function, id); }
@@ -150,6 +184,7 @@ private:
 
     FunctionAnalyses& analyses();
     TypingContext typing();
+    SlotInReceivers slotInReceivers(LayoutSetID, PropertyKeyID);
 
     const Program& m_program;
     FunctionID m_id;
@@ -159,6 +194,7 @@ private:
     VerifierInputs m_inputs;
     std::optional<FunctionAnalyses> m_analyses;
     std::optional<ScratchTypeArena> m_types;
+    SlotsInReceivers* m_slotsInReceivers { nullptr };
     Vector<InternalError> m_errors;
     bool m_hasValidStructure { false };
     bool m_hasFrameAllocation { false };
@@ -166,6 +202,7 @@ private:
     ValueID m_initialYield;
     Vector<ValueID, 4> m_yields;
     Vector<MethodDefinitionSite> m_methodDefinitions;
+    Vector<ModuleEvaluationSite> m_moduleEvaluations;
 };
 
 class ProgramVerifier {
@@ -204,6 +241,7 @@ private:
     void verifyEntries();
     void verifyData();
     void verifyDataNode(DataID, const DataNode&);
+    void verifyDataTypes();
     void verifySmallRecords();
 
     void verifyFunctionHeaders();

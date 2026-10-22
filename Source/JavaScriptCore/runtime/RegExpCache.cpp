@@ -29,6 +29,7 @@
 #include "config.h"
 #include "RegExpCache.h"
 
+#include "AOTRegExpRecords.h"
 #include "AOTRemovableFeature.h"
 #include "HeapCellInlines.h"
 #include "StrongInlines.h"
@@ -64,12 +65,34 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
     if (!regExp->isValid())
         return regExp;
 
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        const AOT::ImageRegExp* record = regExp->imageRecord();
+        if (!record || record->form() == AOT::RegExpRecordForm::NoMetadata)
+            keepParsedPattern(regExp);
+    }
+#endif
+
     {
         Locker locker { m_lock };
         weakAdd(m_weakCache, key, Weak<RegExp>(regExp, this));
         return regExp;
     }
 }
+
+#if ENABLE(AOT)
+void RegExpCache::keepParsedPattern(RegExp* regExp)
+{
+    if (!m_parsedPatterns) {
+        auto patterns = makeUniqueWithoutFastMallocCheck<ParsedPatterns>();
+        patterns->fill(nullptr);
+        WTF::storeStoreFence();
+        m_parsedPatterns = WTF::move(patterns);
+    }
+    (*m_parsedPatterns)[m_nextParsedPattern] = regExp;
+    m_nextParsedPattern = (m_nextParsedPattern + 1) % maxParsedPatternsKept;
+}
+#endif
 
 NEVER_INLINE RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
 {
@@ -119,6 +142,11 @@ void RegExpCache::deleteAllCode()
 {
     m_strongCache.fill(nullptr);
     m_nextEntryInStrongCache = 0;
+#if ENABLE(AOT)
+    if (m_parsedPatterns)
+        m_parsedPatterns->fill(nullptr);
+    m_nextParsedPattern = 0;
+#endif
 
     Locker locker { m_lock };
     for (auto& [key, weakHandle] : m_weakCache) {
@@ -147,6 +175,12 @@ void RegExpCache::visitAggregateImpl(Visitor& visitor)
 {
     for (auto cell : m_strongCache)
         visitor.appendUnbarriered(cell);
+#if ENABLE(AOT)
+    if (ParsedPatterns* patterns = m_parsedPatterns.get()) {
+        for (auto cell : *patterns)
+            visitor.appendUnbarriered(cell);
+    }
+#endif
     visitor.appendUnbarriered(m_emptyRegExp);
 }
 DEFINE_VISIT_AGGREGATE(RegExpCache);

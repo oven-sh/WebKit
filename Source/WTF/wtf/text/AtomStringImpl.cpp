@@ -27,6 +27,7 @@
 #include <wtf/Threading.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
 #if USE(WEB_THREAD)
@@ -77,9 +78,44 @@ static ALWAYS_INLINE StringTableImpl& stringTable()
     return Thread::currentSingleton().atomStringTable()->table();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static ALWAYS_INLINE AtomStringImpl* lookUpReadOnlyAtom(StringView text, unsigned hash)
+{
+    auto lookUp = AtomStringTable::readOnlyAtomLookup();
+    if (!lookUp) [[likely]]
+        return nullptr;
+    return lookUp(text, hash);
+}
+
+// HashTable::add() fills the bucket it found empty and cannot be told to leave it empty. So where read-only atoms exist, the table is searched before it is added to.
+template<typename HashTranslator, typename T>
+static NEVER_INLINE AtomStringImpl* findAtomBeforeAdding(AtomStringTable::ReadOnlyAtomLookup lookUp, StringTableImpl& atomStringTable, const T& value)
+{
+    auto iterator = atomStringTable.find<HashTranslator>(value);
+    if (iterator != atomStringTable.end())
+        return uncheckedDowncast<AtomStringImpl>(iterator->get());
+    return lookUp(HashTranslator::text(value), HashTranslator::hash(value));
+}
+
+static NEVER_INLINE AtomStringImpl* findAtomBeforeAdding(AtomStringTable::ReadOnlyAtomLookup lookUp, StringTableImpl& atomStringTable, StringImpl& string)
+{
+    auto iterator = atomStringTable.find(&string);
+    if (iterator != atomStringTable.end())
+        return uncheckedDowncast<AtomStringImpl>(iterator->get());
+    return lookUp(StringView(string), string.hash());
+}
+#endif
+
 template<typename T, typename HashTranslator>
 static inline Ref<AtomStringImpl> addToStringTable(AtomStringTableLocker&, StringTableImpl& atomStringTable, const T& value)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto lookUp = AtomStringTable::readOnlyAtomLookup()) [[unlikely]] {
+        if (AtomStringImpl* atom = findAtomBeforeAdding<HashTranslator>(lookUp, atomStringTable, value))
+            return *atom;
+    }
+#endif
+
     auto addResult = atomStringTable.add<HashTranslator>(value);
 
     // If the string is newly-translated, then we need to adopt it.
@@ -101,6 +137,11 @@ struct UTF16BufferTranslator {
     static unsigned LEGACY_NODELETE hash(const UTF16Buffer& buf)
     {
         return buf.hash;
+    }
+
+    static StringView text(const UTF16Buffer& buf)
+    {
+        return buf.characters;
     }
 
     static bool equal(AtomStringTable::StringEntry const& str, const UTF16Buffer& buf)
@@ -147,6 +188,11 @@ struct SubstringLocation {
 };
 
 struct SubstringTranslator {
+    static StringView text(const SubstringLocation& buffer)
+    {
+        return StringView(*buffer.baseString).substring(buffer.start, buffer.length);
+    }
+
     static void translate(AtomStringTable::StringEntry& location, const SubstringLocation& buffer, unsigned hash)
     {
         SUPPRESS_UNCOUNTED_ARG Ref stringImpl = StringImpl::createSubstringSharingImpl(*buffer.baseString, buffer.start, buffer.length);
@@ -208,6 +254,11 @@ struct Latin1BufferTranslator {
         return buf.hash;
     }
 
+    static StringView text(const Latin1Buffer& buf)
+    {
+        return buf.characters;
+    }
+
     static bool equal(AtomStringTable::StringEntry const& str, const Latin1Buffer& buf)
     {
         return WTF::equal(str.get(), buf.characters);
@@ -228,6 +279,11 @@ struct BufferFromStaticDataTranslator {
     static unsigned LEGACY_NODELETE hash(const Buffer& buf)
     {
         return buf.hash;
+    }
+
+    static StringView text(const Buffer& buf)
+    {
+        return buf.characters;
     }
 
     static bool equal(AtomStringTable::StringEntry const& str, const Buffer& buf)
@@ -262,6 +318,11 @@ struct StaticStringAtomTranslator {
     static unsigned LEGACY_NODELETE hash(const Buffer& buf)
     {
         return buf.hash;
+    }
+
+    static StringView text(const Buffer& buf)
+    {
+        return buf.characters;
     }
 
     static bool equal(AtomStringTable::StringEntry const& str, const Buffer& buf)
@@ -342,10 +403,11 @@ static inline Ref<AtomStringImpl> addSymbol(StringImpl& base)
     return addSymbol(locker, stringTable(), base);
 }
 
-static Ref<AtomStringImpl> addStatic(AtomStringTableLocker& locker, StringTableImpl& atomStringTable, const StringImpl& base)
+static Ref<AtomStringImpl> addStatic(AtomStringTableLocker& locker, AtomStringTable& table, const StringImpl& base)
 {
     ASSERT(base.length());
     ASSERT(base.isStatic());
+    StringTableImpl& atomStringTable = table.table();
 
     // StaticStringImpl with StringAtom: store the static pointer directly in the
     // atom table with no heap allocation. The isAtom() flag is already set at
@@ -361,18 +423,19 @@ static Ref<AtomStringImpl> addStatic(AtomStringTableLocker& locker, StringTableI
         return addToStringTable<StaticStringAtomBuffer<char16_t>, StaticStringAtomTranslator<char16_t>>(locker, atomStringTable, buffer);
     }
 
-    if (base.is8Bit()) {
-        Latin1Buffer buffer { base.span8(), base.hash() };
-        return addToStringTable<Latin1Buffer, BufferFromStaticDataTranslator<Latin1Character>>(locker, atomStringTable, buffer);
-    }
-    UTF16Buffer buffer { base.span16(), base.hash() };
-    return addToStringTable<UTF16Buffer, BufferFromStaticDataTranslator<char16_t>>(locker, atomStringTable, buffer);
+    unsigned sizeBefore = atomStringTable.size();
+    Ref atom = base.is8Bit()
+        ? addToStringTable<Latin1Buffer, BufferFromStaticDataTranslator<Latin1Character>>(locker, atomStringTable, Latin1Buffer { base.span8(), base.hash() })
+        : addToStringTable<UTF16Buffer, BufferFromStaticDataTranslator<char16_t>>(locker, atomStringTable, UTF16Buffer { base.span16(), base.hash() });
+    if (atomStringTable.size() != sizeBefore)
+        table.holdAtomOfStaticString(atom.get());
+    return atom;
 }
 
 static inline Ref<AtomStringImpl> addStatic(const StringImpl& base)
 {
     AtomStringTableLocker locker;
-    return addStatic(locker, stringTable(), base);
+    return addStatic(locker, *Thread::currentSingleton().atomStringTable(), base);
 }
 
 RefPtr<AtomStringImpl> AtomStringImpl::add(const StaticStringImpl& string)
@@ -397,6 +460,12 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(StringImpl& string)
     ASSERT_WITH_MESSAGE(!string.isAtom(), "AtomStringImpl should not hit the slow case if the string is already an atom.");
 
     AtomStringTableLocker locker;
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto lookUp = AtomStringTable::readOnlyAtomLookup()) [[unlikely]] {
+        if (AtomStringImpl* atom = findAtomBeforeAdding(lookUp, stringTable(), string))
+            return *atom;
+    }
+#endif
     auto addResult = stringTable().add(&string);
 
     if (addResult.isNewEntry) {
@@ -423,6 +492,12 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(Ref<StringImpl>&& string)
     ASSERT_WITH_MESSAGE(!string->isAtom(), "AtomStringImpl should not hit the slow case if the string is already an atom.");
 
     AtomStringTableLocker locker;
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto lookUp = AtomStringTable::readOnlyAtomLookup()) [[unlikely]] {
+        if (AtomStringImpl* atom = findAtomBeforeAdding(lookUp, stringTable(), string.get()))
+            return *atom;
+    }
+#endif
     auto addResult = stringTable().add(string.ptr());
 
     if (addResult.isNewEntry) {
@@ -443,7 +518,7 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(AtomStringTable& stringTable, St
 
     if (string.isStatic()) {
         AtomStringTableLocker locker;
-        return addStatic(locker, stringTable.table(), string);
+        return addStatic(locker, stringTable, string);
     }
 
     if (string.isSymbol()) {
@@ -454,6 +529,12 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(AtomStringTable& stringTable, St
     ASSERT_WITH_MESSAGE(!string.isAtom(), "AtomStringImpl should not hit the slow case if the string is already an atom.");
 
     AtomStringTableLocker locker;
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto lookUp = AtomStringTable::readOnlyAtomLookup()) [[unlikely]] {
+        if (AtomStringImpl* atom = findAtomBeforeAdding(lookUp, stringTable.table(), string))
+            return *atom;
+    }
+#endif
     auto addResult = stringTable.table().add(&string);
 
     if (addResult.isNewEntry) {
@@ -499,7 +580,11 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUpSlowCase(StringImpl& string)
     auto iterator = atomStringTable.find(&string);
     if (iterator != atomStringTable.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
+#if USE(BUN_JSC_ADDITIONS)
+    return lookUpReadOnlyAtom(StringView(string), string.hash());
+#else
     return nullptr;
+#endif
 }
 
 RefPtr<AtomStringImpl> AtomStringImpl::add(std::span<const char8_t> characters)
@@ -521,7 +606,11 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const Latin1Character> c
     auto iterator = table.find<Latin1BufferTranslator>(buffer);
     if (iterator != table.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
+#if USE(BUN_JSC_ADDITIONS)
+    return lookUpReadOnlyAtom(buffer.characters, buffer.hash);
+#else
     return nullptr;
+#endif
 }
 
 RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const char16_t> characters)
@@ -533,14 +622,24 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const char16_t> characte
     auto iterator = table.find<UTF16BufferTranslator>(buffer);
     if (iterator != table.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
+#if USE(BUN_JSC_ADDITIONS)
+    return lookUpReadOnlyAtom(buffer.characters, buffer.hash);
+#else
     return nullptr;
+#endif
 }
 
 #if ASSERT_ENABLED
 bool AtomStringImpl::isInAtomStringTable(StringImpl* string)
 {
     AtomStringTableLocker locker;
-    return stringTable().contains(string);
+    if (stringTable().contains(string))
+        return true;
+#if USE(BUN_JSC_ADDITIONS)
+    return lookUpReadOnlyAtom(StringView(*string), string->hash()) == string;
+#else
+    return false;
+#endif
 }
 #endif
 

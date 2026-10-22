@@ -178,6 +178,16 @@ ConversionEmitter::ConversionEmitter(CodeGenerator& generator)
 
 Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type)
 {
+    return box(context, operand, type, isSeldomEntered(context));
+}
+
+Boxed ConversionEmitter::boxInArm(const OperationContext& context, Operand operand, const Type& type)
+{
+    return box(context, operand, type, true);
+}
+
+Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type, bool isSeldomEntered)
+{
     switch (operand.representation) {
     case Representation::Void:
         if (!isValueWithoutBits(type))
@@ -188,12 +198,16 @@ Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, c
     case Representation::Int32:
         return boxInt32(operand.as<Word32>());
     case Representation::Int64:
+        if (isSeldomEntered && !isWithinInt32(type.integers))
+            return boxByStub(BoxedNumberForm::Integer, operand.value);
         return boxInteger(operand.as<Integer>(), type.integers);
     case Representation::Double:
+        if (isSeldomEntered && !operand.value->hasDouble() && !convertedInt32Of(operand.as<Number>()))
+            return boxByStub(BoxedNumberForm::Double, operand.value);
         return boxNumber(operand.as<Number>());
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-        return boxOptional(operand, type);
+        return boxOptional(operand, type, isSeldomEntered);
     case Representation::Cell:
         return boxCell(operand.as<CellPointer>());
     case Representation::Cell32:
@@ -210,7 +224,26 @@ Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, c
     return undefined();
 }
 
-Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type)
+bool ConversionEmitter::isSeldomEntered(const OperationContext& context) const
+{
+    if ((m_placeOnEdge ? m_placeOnEdge->frequency : m_function.at(context.block()).frequency) != BlockFrequency::Normal)
+        return true;
+    // The forms for such code call a leaf stub. Where that gives a function that calls nothing a frame, a stack check and a poll, only a coroutine body, which has them anyway, takes these forms in all but fast code.
+    return (leavesCallerWithoutFrame(AOT::boxNumber(BoxedNumberForm::Double)) || m_function.role == FunctionRole::CoroutineBody) && shapeAt(context) != CodeShape::Fast;
+}
+
+Boxed ConversionEmitter::boxByStub(BoxedNumberForm form, LValue number)
+{
+    CallOptions options { .pureFunction = pureFunction(PureOperation::BoxNumber, static_cast<uint32_t>(form), true) };
+    return Boxed(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::boxNumber(form), singleElementSpan(number), options).first);
+}
+
+Boxed ConversionEmitter::boxNumberByStub(Number value)
+{
+    return boxByStub(BoxedNumberForm::Double, value.value());
+}
+
+Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type, bool isSeldomEntered)
 {
     auto boxMarker = [&] {
         return MarkerEmitter(generator()).convertMarkers(operand, type, Representation::JSValue, std::nullopt).as<Boxed>();
@@ -220,6 +253,8 @@ Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type)
     };
     if (!(type.primitives & Primitive::Number))
         return boxMarker();
+    if (isSeldomEntered)
+        return boxByStub(operand.is<OptionalInteger>() ? BoxedNumberForm::OptionalInteger : BoxedNumberForm::OptionalDouble, operand.value);
     if (!(type.primitives & markerPrimitives))
         return boxUnmarked();
 
@@ -398,8 +433,18 @@ Boxed ConversionEmitter::boxNumber(Number value)
     m_out.appendTo(int32Case);
     join.add(boxInt32(low));
     m_out.appendTo(doubleCase);
-    join.add(boxDouble(purified(value)));
+    join.add(boxDouble(value));
     return join.finish();
+}
+
+Boxed ConversionEmitter::boxDouble(Number value)
+{
+    return boxBitsOfPurifiedDouble(purified(value));
+}
+
+Boxed ConversionEmitter::boxBitsOfPurifiedDouble(Number value)
+{
+    return Boxed(m_out.sub(m_out.bitCast(value.value(), B3::Int64), m_numberTag));
 }
 
 Boxed ConversionEmitter::boxInteger(Integer value, Range range)
@@ -416,7 +461,7 @@ Boxed ConversionEmitter::boxInteger(Integer value, Range range)
     m_out.appendTo(int32Case);
     join.add(boxInt32(low));
     m_out.appendTo(doubleCase);
-    join.add(boxDouble(toNumber(value)));
+    join.add(boxBitsOfPurifiedDouble(toNumber(value)));
     return join.finish();
 }
 
@@ -478,6 +523,16 @@ static int64_t largestMagnitudeIn(Range range)
 
 std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number)
 {
+    auto converted = [&](LValue source) -> std::optional<ExactInteger> {
+        B3::IntRange known = B3::rangeFor(m_proc, source);
+        Range range { known.min(), known.max() };
+        if (!range.isSubsetOf(neverRounded))
+            return std::nullopt;
+        if (source->type() != B3::Int32)
+            return ExactInteger { Integer(source), range };
+        return ExactInteger { .value = widen(Word32(source), range), .range = range, .word = Word32(source) };
+    };
+
     switch (number->opcode()) {
     case B3::ConstDouble: {
         double constant = number->asDouble();
@@ -486,15 +541,19 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         int64_t whole = static_cast<int64_t>(constant);
         return ExactInteger { integer(whole), Range::one(whole) };
     }
-    case B3::IToD: {
-        LValue source = number->child(0);
-        B3::IntRange known = B3::rangeFor(m_proc, source);
-        Range range { known.min(), known.max() };
-        if (!range.isSubsetOf(neverRounded))
+    case B3::IToD:
+        return converted(number->child(0));
+    case B3::Patchpoint: {
+        const std::optional<B3::PureFunction>& function = number->as<B3::PatchpointValue>()->pureFunction;
+        if (!function || !isRemainderThatIsNeverNaN(*function))
             return std::nullopt;
-        if (source->type() != B3::Int32)
-            return ExactInteger { Integer(source), range };
-        return ExactInteger { .value = widen(Word32(source), range), .range = range, .word = Word32(source) };
+        return converted(number->child(0));
+    }
+    case B3::Neg: {
+        std::optional<ExactInteger> operand = findExactIntegerBehind(number->child(0));
+        if (!operand || operand->mayBeRounded)
+            return std::nullopt;
+        return ExactInteger { sub(integer(0), operand->value), Range { -operand->range.maximum, -operand->range.minimum } };
     }
     case B3::Mul: {
         std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
@@ -584,7 +643,8 @@ Word32 ConversionEmitter::toInt32(Number value)
     }
 #endif
     Integer truncated = toInteger(value);
-    Condition fits = below(integer(1), add(truncated, integer(std::numeric_limits<int64_t>::min() + 1)));
+    // x86-64 truncates whatever is outside int64 to the least of them. ARM64 stops at either end.
+    Condition fits = isX86_64() ? notEqual(truncated, integer(std::numeric_limits<int64_t>::min())) : below(integer(1), add(truncated, integer(std::numeric_limits<int64_t>::min() + 1)));
     return either<Word32>(fits, [&] {
         return low32(truncated);
     }, [&] {
@@ -594,7 +654,11 @@ Word32 ConversionEmitter::toInt32(Number value)
 
 Number ConversionEmitter::purified(Number value)
 {
-    return select(equal(value, value), value, number(PNaN));
+    return either<Number>(equal(value, value), [&] {
+        return value;
+    }, [&] {
+        return number(PNaN);
+    });
 }
 
 Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Representation to)
@@ -827,13 +891,26 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
 
 Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, LiteralStringWord word, const Type& type)
 {
+    const bool isNarrow = !m_options.recorded.useWideReferences();
+    auto callConversionStub = [&](LiteralStringWord literal) {
+        return boxCell(CellPointer(callStub(context, AOT::literalStringToString(), { literal.value() }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true) }).first));
+    };
+    const ptrdiff_t offsetOfCells = isNarrow ? AOT_INSTANCE_OFFSET(runtime.constants.literalStrings) : AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings);
     auto loadOrCreateCell = [&](LiteralStringWord literal, TypedPointer cellWord) {
+        auto create = [&] {
+            return boxCell(callOperation<CellPointer>(context, RuntimeOperation::LiteralStringToString, { literal }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true), .isOnRarePath = true }));
+        };
+        if (isNarrow) {
+            NarrowReference reference(m_out.load32(cellWord));
+            Boxed created = boxCell(decode(reference));
+            return either<Boxed>(isNotZero(Word32(reference.value())), [&] {
+                return created;
+            }, create);
+        }
         Boxed created(m_out.load64(cellWord));
         return either<Boxed>(isNotEmpty(created), [&] {
             return created;
-        }, [&] {
-            return boxCell(callOperation<CellPointer>(context, RuntimeOperation::LiteralStringToString, { literal }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true), .isOnRarePath = true }));
-        });
+        }, create);
     };
 
     std::optional<uint32_t> number;
@@ -852,29 +929,37 @@ Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, Liter
         RELEASE_ASSERT(*number < inputs().literalStrings.strings().size());
         if (!*number)
             return boxCell(emptyString());
-        Pointer cells = loadImmutablePointer(AOT_INSTANCE_OFFSET(runtime.constants.literalStrings));
-        TypedPointer cellWord = m_out.address(m_heaps.AOTInstance_stringCells, cells.value(), static_cast<ptrdiff_t>(*number) * sizeof(JSCell*));
+        if (shapeAt(context) != CodeShape::Fast)
+            return callConversionStub(LiteralStringWord(m_out.constInt64(literalStringWord(*number))));
+        Pointer cells = loadImmutablePointer(offsetOfCells);
+        ptrdiff_t sizeOfCellWord = isNarrow ? sizeof(uint32_t) : sizeof(JSCell*);
+        TypedPointer cellWord = m_out.address(m_heaps.AOTInstance_stringCells, cells.value(), static_cast<ptrdiff_t>(*number) * sizeOfCellWord);
         return loadOrCreateCell(LiteralStringWord(m_out.constInt64(literalStringWord(*number))), cellWord);
     }
 
-    static_assert(2 << literalStringShift == sizeof(JSCell*));
-    Integer halfOffset = sub(Integer(word.value()), integer(emptyLiteralStringWord));
+    if (shapeAt(context) != CodeShape::Fast)
+        return callConversionStub(word);
+
+    static_assert(1 << literalStringShift == sizeof(uint32_t) && 2 << literalStringShift == sizeof(JSCell*));
+    Integer scaledNumber = sub(Integer(word.value()), integer(emptyLiteralStringWord));
     LBasicBlock literalCase = newBlock();
     LBasicBlock boxedCase = newBlock();
     Join<Boxed> join(m_out);
-    m_out.branch(below(halfOffset, integer(minCell32 - emptyLiteralStringWord)).value(), normalEdge(literalCase), normalEdge(boxedCase));
+    m_out.branch(below(scaledNumber, integer(minCell32 - emptyLiteralStringWord)).value(), normalEdge(literalCase), normalEdge(boxedCase));
 
     m_out.appendTo(boxedCase);
     join.add(Boxed(word.value()));
 
     m_out.appendTo(literalCase);
-    Pointer cells = loadImmutablePointer(AOT_INSTANCE_OFFSET(runtime.constants.literalStrings));
-    join.add(loadOrCreateCell(word, m_out.baseIndex(m_heaps.AOTInstance_stringCells, cells.value(), halfOffset.value(), FTL::ScaleTwo)));
+    Pointer cells = loadImmutablePointer(offsetOfCells);
+    join.add(loadOrCreateCell(word, m_out.baseIndex(m_heaps.AOTInstance_stringCells, cells.value(), scaledNumber.value(), isNarrow ? FTL::ScaleOne : FTL::ScaleTwo)));
     return join.finish();
 }
 
 Condition ConversionEmitter::isStringCell(LiteralStringWord word)
 {
+    if (std::optional<NarrowReference> narrow = narrowWordBehind(word))
+        return isCellReferenceAmongAllWords(*narrow);
     return aboveOrEqual(word, LiteralStringWord(m_out.constInt64(minCell32)));
 }
 

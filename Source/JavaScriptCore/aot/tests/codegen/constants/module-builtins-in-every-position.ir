@@ -5,13 +5,13 @@
 # RUN(TYPES): pipeline ApplyFlowResults
 # CHECK: image not empty
 # TYPES: layout L0 name="Holder" {{*}}key="meta" declared={type=builtin(ImportMeta)
-# TYPES: layout L1 name="Wrapper" {{*}}key="exports" declared={type=builtin(ModuleObjectExports) {{*}}key="require" declared={type=builtin(ModuleRequire) {{*}}key="module" declared={type=builtin(ModuleObject)
+# TYPES: layout L1 name="Wrapper" {{*}}key="exports" declared={type=builtin(ModuleObjectExports)} {{*}}key="require" declared={type=builtin(ModuleRequire)} {{*}}key="module" declared={type=builtin(ModuleObject)}
 # TYPES: variable g0 name="meta" {{*}}builtin(ImportMeta)
 # TYPES: name="first" {{*}}parameters=[{type=builtin(ImportMeta)
 # TYPES: name="second" {{*}}parameters=[{type=builtin(ImportMeta)
 
-module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
-module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 syntheticExports=[{name="default" variable=g4}]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g4
 entry module=m0
 layout L0 name="Holder" fields=[{key="meta" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Wrapper" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}, {key="require" declared={type=anything} flags=[IsRequired]}, {key="module" declared={type=anything} flags=[IsRequired]}]
@@ -19,7 +19,7 @@ variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefi
 variable g1 name="holder" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="callback" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="received" module=m0 declared={type=anything} initialization=Undefined
-variable g4 name="default" module=m1 declared={type=anything}
+variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
@@ -71,12 +71,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v40 = Call v1, -, v39
     Return
 }
-function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = NewObject -, v1, v2, v3 layout=L1 fields=[0, 1, 2]
-    v7 = FinishObject v6
-    v8 = NewClosure v7 function=f5
-    PropSet v3, v8 key="exports"
+function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleObjectExports module=m1
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m1
+    v2 = ModuleBuiltin builtin=ModuleObject module=m1
+    v3 = NewObject -, v0, v1, v2 layout=L1 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    v5 = NewClosure v4 function=f5
+    PutModuleVariable v5 variable=g4
     Return
 }
 function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {

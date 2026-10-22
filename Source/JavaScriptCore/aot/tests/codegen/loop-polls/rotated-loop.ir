@@ -1,6 +1,6 @@
 # A loop whose test moves to its end polls there, once an iteration. The copy of the test in front of the loop runs once an entry and does not poll. The function has two loops: one for an integer bound, one for any other
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:StripMinePolls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code
 # STATISTIC: LoopsRotated >= 1
 # CHECK: f1: size={{*}} polls=2

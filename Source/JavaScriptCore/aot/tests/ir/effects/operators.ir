@@ -1,4 +1,5 @@
-# An operator on numbers does nothing, on other primitives it has its written set, and an object operand adds the lookups of its conversion and the code they can reach
+# An operator on numbers does nothing, on other primitives it has its declared set, and an object operand adds the lookups of its conversion and the code they can reach.
+# What only makes a text of primitives that are no symbols (text + 1, String(1)) throws for lack of memory alone, so it goes away with its unused result; a BigInt added to a BigInt may be too large by the language's rule
 # FORM: Prepared
 # RUN: effects summaries f0 f1 f2 f3
 
@@ -16,7 +17,7 @@ function f0 name="add" parameters=[{type=number}, {type=string}, {type=bigint}, 
 }
 # CHECK-LABEL: function f0
 # CHECK-NEXT: v5 Add: none
-# CHECK-NEXT: v6 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v6 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v7 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v8 Add: reads(all) {{*}}callsUnknownCode
 # CHECK-NEXT: v9 Add: reads(ObjectFields, PrototypeLinks, NamedProperties, StringStorage, AllocatorState) writes(ModuleVariables/1, StringStorage, AllocatorState, RuntimeState) throws collects
@@ -54,8 +55,8 @@ function f3 name="conversions" parameters=[{type=number}, {type=string}, {type=s
     Return
 }
 # CHECK-LABEL: function f3
-# CHECK-NEXT: v3 ToString: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v4 ToString: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v3 ToString: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v4 ToString: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v5 ToNumber: none
 # CHECK-NEXT: v6 ToNumber: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
 function f4 name="Amount" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

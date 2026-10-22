@@ -142,7 +142,7 @@ namespace {
 
 struct TestedProgram {
     ASCIILiteral text { programText };
-    Wire::AdmittedCode admittedCode { Wire::AdmittedCode::RuntimeCode };
+    Wire::AdmittedCode admittedCode { Wire::AdmittedCode::Inspector };
 };
 
 } // anonymous namespace
@@ -236,7 +236,7 @@ generator: throws TypeError: Value could not be cloned.
 // The table has structuredClone as a member of the host. The shell has no host and defines a function of its own under the name, after start-up has locked what the program takes for constants.
 static void testProgramThatNamesTheFunctionOfTheShell()
 {
-    for (Wire::AdmittedCode admittedCode : { Wire::AdmittedCode { }, Wire::AdmittedCode::RuntimeCode }) {
+    for (Wire::AdmittedCode admittedCode : { Wire::AdmittedCode { }, Wire::AdmittedCode::Inspector }) {
         checkShellOutput(R"js(
     print("in the script: " + typeof structuredClone + ", " + describeClone({ a: 1 }));
     print("in the program: " + (registry.clone === structuredClone) + ", " + registry.cloned);

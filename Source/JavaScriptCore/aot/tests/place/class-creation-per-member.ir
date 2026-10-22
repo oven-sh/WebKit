@@ -3,6 +3,7 @@
 # RUN(EAGER): plan-slots classes
 # RUN(CODE): pipeline Select
 # RUN(RECORDS): tables layouts
+# RUN(ROWS): tables field-table
 # STATISTIC: ClassMembersCreatedByClassRecord = 10
 # STATISTIC: ClassMembersCreatedAtDefinition = 5
 # STATISTIC: ClassesCreatedLazily = 3
@@ -42,6 +43,14 @@
 # RECORDS-NEXT: method name="z" kind=Method flags=[] function=
 # RECORDS-NEXT: method name="a" kind=Method flags=[] function=
 # RECORDS-NEXT: class index=L5
+
+# A class whose record says all that its prototype object has gets a row, which is complete. The numbers are cells of the closure table.
+# ROWS: members class=L1 unknown
+# ROWS-NEXT: member class=L2 name=
+# ROWS: member class=L3 name="z" method=
+# ROWS-NOT: member class=L3 name="s"
+# ROWS: member class=L4 name=
+# ROWS: members class=L5 unknown
 
 # CODE-LABEL: function f0 name="main"
 # CODE: NewClass {{*}}layout=L1

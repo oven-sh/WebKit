@@ -1,0 +1,42 @@
+# class Point { constructor(x) {} static origin(label) { return label } }; back = input(new Point(1)); new back.constructor("s"); back.constructor.origin("s")
+# The unknown object stands for the instance, and above the instance lies the prototype object that names the class. So the read of `constructor` answers the class itself beside the unknown object:
+# the construction enters the constructor with a string, and the static method, which nothing else names, is reached.
+# RUN: valueflow-solve unreached calls
+# CHECK: f0 v12 -> unknown {{*}}f1
+# CHECK-NEXT: f0 v14 -> unknown {{*}}f2
+# CHECK-NOT: unreached f2
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="Point" {{*}}parameters=[{type=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key="origin"
+    v4 = FinishClass v1 layout=L0
+    v5 = Integer integer=1
+    v6 = Construct v4, -, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Call v8, -, v6
+    v10 = PropGet v9 key="constructor"
+    v11 = String string="s"
+    v12 = Construct v10, -, v11
+    v13 = PropGet v10 key="origin"
+    v14 = Call v13, v10, v11
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+function f2 name="origin" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

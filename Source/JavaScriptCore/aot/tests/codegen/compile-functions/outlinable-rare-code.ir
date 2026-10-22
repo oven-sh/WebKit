@@ -1,6 +1,6 @@
 # In a function that the host calls again and again, the code that only a rare edge leads to may be outlined; the code that is reached without one may not, and neither may a loop behind a rare edge
 # FORM: AsRead
-# OPTIONS: disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
+# OPTIONS: disable=pass:InlineCalls,pass:OutlineColdOperations
 # RUN: generate-code units
 # CHECK-LABEL: f1: size=
 # CHECK-NEXT: units plain=0 call=0 pinned=
@@ -64,7 +64,7 @@ function f4 name="loopsBeforeThrowing" parameters=[{type=boolean}] results=[{typ
   b1():
     LoopHint
     v2 = CallDirect function=f5
-    v3 = ToBoolean v2
+    v3 = TypeTest v2 testedType=undefined
     Branch v3 -> taken b1(), notTaken b2()
   b2():
     Throw v0

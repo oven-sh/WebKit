@@ -13,10 +13,10 @@ layout L1 name="WithNever" fields=[{key="id" declared={type=number}}, {key="neve
 # CHECK: [[object]]:{{*}}= NewObject -, {{*}}, {{*}} layout=L0 fields=[0, 2]
 # CHECK-NEXT: Branch {{*}} -> taken [[storesName]](), notTaken
 # CHECK: [[storesName]]():
-# CHECK-NEXT: PutSlot [[object]], [[object]], {{*}} key="name" receivers=[L0] level=Predicted
+# CHECK-NEXT: PutSlot [[object]], [[object]], {{*}} key="name" receivers=[L0] level=Expected
 # CHECK: Branch {{*}} -> taken [[storesFlag]](), notTaken
 # CHECK: [[storesFlag]]():
-# CHECK-NEXT: PutSlot [[object]], [[object]], {{*}} key="flag" receivers=[L0] level=Predicted
+# CHECK-NEXT: PutSlot [[object]], [[object]], {{*}} key="flag" receivers=[L0] level=Expected
 # CHECK: = JSONObjectFinish {{*}}, [[object]], {{*}} layout=L0
 
 # The parse gives up at a member whose field takes no value, so nothing stores it.

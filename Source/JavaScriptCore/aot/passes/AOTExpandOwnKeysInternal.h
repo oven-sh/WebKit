@@ -16,14 +16,37 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+inline constexpr OpcodeSet opcodesOfWalks { Opcode::CopyDataProperties, Opcode::CopyObject, Opcode::CallBuiltin };
+inline constexpr OpcodeSet opcodesOfKeyOrderTests { Opcode::HasKeyOrder, Opcode::HasNoExtraProperties };
+// ExpandOwnKeys has nothing to do in a function without any of these.
+inline constexpr OpcodeSet ownKeyExpansionOpcodes = opcodesOfWalks | opcodesOfKeyOrderTests | OpcodeSet { Opcode::ForInStep };
+
 enum class OwnKeyWalk : uint8_t {
     Values,
     Entries,
     Assign,
     Spread,
+    Copy,
     Stringify,
     StringifyIntoText,
 };
+
+constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
+{
+    switch (walk) {
+    case OwnKeyWalk::Assign:
+    case OwnKeyWalk::Spread:
+        return true;
+    // It makes an object of undefined and null too, which the original operation does.
+    case OwnKeyWalk::Copy:
+    case OwnKeyWalk::Values:
+    case OwnKeyWalk::Entries:
+    case OwnKeyWalk::Stringify:
+    case OwnKeyWalk::StringifyIntoText:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
 
 struct OwnKeyWalkSite {
     OwnKeyWalk walk { OwnKeyWalk::Values };
@@ -81,8 +104,9 @@ public:
     bool contains(ValueID allocation, ProgramPoint) const;
 
 private:
+    FunctionPassContext& m_context;
     Vector<AllocationUse, 8> m_uses;
-    BitVector m_unchanged;
+    mutable std::optional<BitVector> m_unchanged;
 };
 
 std::optional<OwnKeyWalk> ownKeyWalkOf(const Program&, const Value&);
@@ -91,7 +115,6 @@ Vector<OwnKeyWalkSite, 4> findOwnKeyWalkSites(FunctionPassContext&);
 std::optional<OwnKeyWalkPlan> planOwnKeyWalk(FunctionPassContext&, const UnchangedAllocations&, const OwnKeyWalkSite&);
 std::optional<AssignPlan> planAssign(FunctionPassContext&, const UnchangedAllocations&, const OwnKeyWalkSite&);
 std::optional<OwnKeyWalkPlan> planWalkOfEnumeratedObject(FunctionPassContext&, ValueID forInOpen);
-bool isWorthExpanding(FunctionPassContext&, const OwnKeyWalkSite&);
 
 class OwnKeyWalkExpander final : public Emission {
 public:
@@ -114,12 +137,13 @@ private:
     // A walk that is done goes on at afterWalk. Without one it ends the expansion, as the original operation always does.
     void emitArms(const OwnKeyWalkSite&, const OwnKeyWalkPlan&, const IRBuilder::Expansion&, BlockID afterWalk);
     Vector<WalkedField, 8> fieldsWalkedBy(OwnKeyWalk, const OwnKeyWalkArm&) const;
-    TestedObject emitArmTests(const OwnKeyWalkSite&, const OwnKeyWalkPlan&, const OwnKeyWalkArm&, BlockID nextArm);
+    TestedObject emitArmTests(ValueID source, const OwnKeyWalkPlan&, const OwnKeyWalkArm&, BlockID nextArm);
 
     ValueID emitValues(const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
     ValueID emitEntries(const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
     void emitAssign(const OwnKeyWalkSite&, const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
     void emitSpread(const OwnKeyWalkSite&, const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
+    ValueID emitCopy(const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
     void emitCopyOfFields(const OwnKeyWalkSite&, const TestedObject&, const OwnKeyWalkArm&, BlockID nextArm);
     ValueID emitOriginalOperation(const OwnKeyWalkSite&);
 

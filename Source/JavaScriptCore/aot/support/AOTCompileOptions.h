@@ -16,6 +16,7 @@
 #include <array>
 #include <optional>
 #include <type_traits>
+#include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/CString.h>
 
 namespace JSC {
@@ -40,6 +41,7 @@ using Wire::OutputOptions;
 using Wire::ReferenceWidth;
 using Wire::ReportSet;
 using Wire::SelectionRuleID;
+using Wire::Sabotage;
 using Wire::TestingSwitch;
 
 template<typename Flags>
@@ -72,24 +74,29 @@ struct RecordedOptions {
     uint32_t layoutSeed { 0 };
     uint32_t droppedGuardOrdinal { 0 };
     uint16_t droppedGuardOpcode { 0 };
-    bool dropsGuard { false };
     bool validates { false };
     bool countsBranches { false };
+    bool countsArrivals { false };
+    // Built with --no-compile-function-source.
+    bool omitsFunctionSource { false };
     uint8_t architecture { 0 };
     uint8_t referenceWidth { 0 };
     uint8_t mismatchPolicy { 0 };
-    uint8_t testing { 0 };
     uint8_t heatOverride { 0 };
+    uint16_t testing { 0 };
     uint8_t admittedCode { 0 };
-    uint8_t reserved { 0 };
+    uint8_t sabotage { 0 };
+    std::array<uint8_t, 6> unused { };
 
     bool useWideReferences() const { return referenceWidth == static_cast<uint8_t>(ReferenceWidth::Wide); }
     MismatchPolicy policy() const { return static_cast<MismatchPolicy>(mismatchPolicy); }
-    bool has(TestingSwitch flag) const { return testing & static_cast<uint8_t>(flag); }
-    bool usesPredictions() const { return !has(TestingSwitch::IgnorePredictions); }
-    bool analyzesValueFlow() const { return has(TestingSwitch::AnalyzeValueFlow); }
+    bool has(TestingSwitch flag) const { return testing & static_cast<uint16_t>(flag); }
+    bool isSabotaged(Sabotage part) const { return sabotage == static_cast<uint8_t>(part); }
+    bool usesExpectedTypes() const { return !has(TestingSwitch::IgnoreExpectedTypes); }
     HeatOverride heat() const { return static_cast<HeatOverride>(heatOverride); }
     AdmittedCode admitted() const { return static_cast<AdmittedCode>(admittedCode); }
+    // The end of every message about code that is not in the executable. No message spells the flag itself.
+    ASCIILiteral adviceToKeepFunctionSource() const { return omitsFunctionSource ? " Or rebuild without --no-compile-function-source."_s : ""_s; }
     JS_EXPORT_PRIVATE std::optional<DroppedGuard> droppedGuard() const;
 
     JS_EXPORT_PRIVATE bool isEnabled(FlowResultKind, uint32_t subject) const;
@@ -108,7 +115,7 @@ private:
     bool isInSwitchRange(std::optional<uint32_t> id) const;
 };
 
-static_assert(sizeof(RecordedOptions) == 104);
+static_assert(sizeof(RecordedOptions) == 112);
 static_assert(std::is_trivially_copyable_v<RecordedOptions>);
 static_assert(std::has_unique_object_representations_v<RecordedOptions>);
 static_assert(numberOfEnumerators<AdmittedCode> <= 8 * sizeof(RecordedOptions::admittedCode));
@@ -133,24 +140,29 @@ struct CompileOptions {
     std::array<uint8_t, 16> executableIdentity { };
     double sizeClassProgression { 0 };
     unsigned threadCount { 1 };
-    uint32_t flowOrderSeed { 0 };
     CompileAction action { CompileAction::Compile };
     bool verifiesAfterEveryPass { false };
     bool verifiesAfterEveryStage { false };
+    bool verifiesProgram { false };
     bool validatesBackEnd { false };
     bool validatesReferences { false };
-    bool validatesReferenceGuards { false };
+    // Once the flow analysis is at rest every rule runs once more over the solved sets. Whatever that adds is an update that the solve has lost, and an error.
     bool checksFlowFixpoint { false };
+    // A function that is reached and cannot get past its first block but by a throw of its own is dead code that nobody has called dead, or a value there has lost a source: an error.
+    bool checksThatFunctionsGetPastEntry { false };
+    bool validatesReferenceGuards { false };
+    bool countsChangesBehindSimplify { false };
     ReportSet reports { };
     ExcludedCode excludedCode { };
     OutputOptions output { };
     LoggingOptions logging;
 
     bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }
+    bool isCheckOnly() const { return action == CompileAction::CheckOnly; }
     bool collectsDeclines() const { return hasFlag(reports, ReportSet::Declines); }
     bool collectsAllocationRemarks() const { return hasFlag(reports, ReportSet::Allocations); }
+    // Code comes in at any place and at any time, so nothing holds for the program as a whole.
     bool admitsUnseenCode() const { return recorded.admitted() != AdmittedCode { }; }
-    bool admitsRuntimeCode() const { return hasFlag(recorded.admitted(), AdmittedCode::RuntimeCode); }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }

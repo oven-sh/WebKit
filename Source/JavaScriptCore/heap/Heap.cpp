@@ -33,7 +33,6 @@
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
-#include "CollectorMechanism.h"
 #include "CompleteSubspaceInlines.h"
 #include "CollectorInlines.h"
 #include "ConservativeRoots.h"
@@ -102,6 +101,7 @@
 #include "ShadowChicken.h"
 #include "SimpleMarkingConstraint.h"
 #include "StopIfNecessaryTimer.h"
+#include "StoredCellLog.h"
 #include "StringSplitCache.h"
 #include "StructureAlignedMemoryAllocator.h"
 #include "SubspaceInlines.h"
@@ -323,6 +323,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , auxiliaryHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::Auxiliary))
     , immutableButterflyHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::JSCellWithIndexingHeader))
     , cellHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::JSCell))
+    , outerCellHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::JSCell, true))
     , destructibleCellHeapCellType(CellAttributes(NeedsDestruction, HeapCell::JSCell))
     , apiGlobalObjectHeapCellType(IsoHeapCellType::Args<JSAPIGlobalObject>())
     , callbackConstructorHeapCellType(IsoHeapCellType::Args<JSCallbackConstructor>())
@@ -382,20 +383,16 @@ Heap::Heap(VM& vm, HeapType heapType)
     , fastMallocAllocator(makeUnique<FastMallocAlignedMemoryAllocator>())
     , primitiveGigacageAllocator(makeUnique<GigacageAlignedMemoryAllocator>(Gigacage::Primitive))
     , structureAllocator(makeUnique<StructureAlignedMemoryAllocator>())
-    , cagedAllocator(makeUnique<CagedAlignedMemoryAllocator>())
+    , cagedAllocator(MarkedBlockCage::isEnabled() ? makeUnique<CagedAlignedMemoryAllocator>() : nullptr)
 
     // Subspaces
     , primitiveGigacageAuxiliarySpace("Primitive Gigacage Auxiliary"_s, *this, auxiliaryHeapCellType, primitiveGigacageAllocator.get()) // Hash:0x3e7cd762
     , auxiliarySpace("Auxiliary"_s, *this, auxiliaryHeapCellType, fastMallocAllocator.get()) // Hash:0x96255ba1
     , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, cellAllocator()) // Hash:0xaadcb3c1
     , cellSpace("JSCell"_s, *this, cellHeapCellType, cellAllocator()) // Hash:0xadfb5a79
-#if ENABLE(AOT)
-    , aotClosureSpace("AOTClosure"_s, *this, cellHeapCellType, cellAllocator())
-    , cagedAuxiliarySpace("Caged Auxiliary"_s, *this, auxiliaryHeapCellType, cellAllocator())
-#endif
     , destructibleObjectSpace("JSDestructibleObject"_s, *this, destructibleObjectHeapCellType, cellAllocator()) // Hash:0x4f5ed7a9
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(INIT_SERVER_ISO_SUBSPACE)
-    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
+    FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
     , codeBlockSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, CodeBlock) // Hash:0x2b743c6a
     , functionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, FunctionExecutable) // Hash:0xbcb36268
     , programExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, ProgramExecutable) // Hash:0x4c9208f7
@@ -437,6 +434,8 @@ Heap::~Heap()
 
 MarkedBlockCage& Heap::cage()
 {
+    if (!cagedAllocator) [[unlikely]]
+        cagedAllocator = makeUnique<CagedAlignedMemoryAllocator>();
     return cagedAllocator->cage();
 }
 
@@ -744,7 +743,8 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         reconcileWeakReferencesInMarkedCells<Structure>(structureSpace, collectionScope);
         reconcileWeakReferencesInMarkedCells<BrandedStructure>(brandedStructureSpace, collectionScope);
 #if ENABLE(AOT)
-        reconcileWeakReferencesInMarkedCells<AOT::CompiledStructure>(compiledStructureSpace, collectionScope);
+        if (m_compiledStructureSpace)
+            reconcileWeakReferencesInMarkedCells<AOT::CompiledStructure>(*m_compiledStructureSpace, collectionScope);
 #endif
 #if ENABLE(WEBASSEMBLY)
         reconcileWeakReferencesInMarkedCells<WebAssemblyGCStructure>(webAssemblyGCStructureSpace, collectionScope);
@@ -949,6 +949,10 @@ void Heap::endMarking()
 
     updateOldGenerationCellBytes(m_bytesMarkedThisCycle.exchange(0, std::memory_order_relaxed));
 
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::HeapHooks::didFinishMarking(vm());
+#endif
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
 #if USE(BUN_JSC_ADDITIONS)
@@ -1026,9 +1030,11 @@ void Heap::prepareForAllocation()
 
     m_objectSpace.prepareForAllocation();
 #if ASAN_ENABLED
-    m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
-        handle->poisonDeadCellsIfUnswept();
-    });
+    if (Options::useAOT()) {
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+            handle->poisonDeadCellsIfUnswept();
+        });
+    }
 #endif
     updateAllocationLimits();
 
@@ -2072,7 +2078,7 @@ bool Heap::stopIfNecessarySlow(unsigned oldState)
     // prevent us from polling this so much. Ideally, stopIfNecessary would ignore the mutatorHasConnBit
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
-    if ((oldState & mutatorHasConnBit) && !m_collector->isNotRunning())
+    if ((oldState & mutatorHasConnBit) && !(Options::useAOT() && m_collector->isNotRunning()))
         collectInMutatorThread();
     
     return false;
@@ -2292,7 +2298,9 @@ void Heap::sweepAndClearCachesInEpilogue()
 
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         vm().jsonCache().clearStrings();
-        vm().numericStrings.clearOnGarbageCollection();
+        // Compiled code reads these tables itself. They have a fixed size, so what they keep is bounded.
+        if (!Options::useAOT())
+            vm().numericStrings.clearOnGarbageCollection();
         vm().stringReplaceCache.clear();
     }
     vm().keyAtomStringCache.clear();
@@ -2553,7 +2561,7 @@ void Heap::updateAllocationLimits()
 #endif
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
-    m_hasAllocatedSinceLastCollection = !Options::useAOT() || !isEnabled(CollectorMechanism::EmptyEdenSkips);
+    m_hasAllocatedSinceLastCollection = !Options::useAOT();
     m_lastOversizedAllocationThisCycle = 0;
 
     dataLogIf(Options::logGC(), "=> ", currentHeapSize / 1024, "kb, ");
@@ -2716,7 +2724,7 @@ void Heap::disableStopIfNecessaryTimer()
 bool Heap::shouldSweepSynchronously()
 {
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
-    return ASAN_ENABLED || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
+    return (ASAN_ENABLED && Options::useAOT()) || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -2835,9 +2843,16 @@ void Heap::writeBarrierSlowPath(const JSCell* from)
 
 void Heap::writeBarrierSlowPath(const JSCell* from, JSCell* to)
 {
-    if (vm().hasCompiledCode() && !mutatorShouldBeFenced() && m_storedCellLog.tryRemember(from, to))
+    if (m_storedCellLog && !mutatorShouldBeFenced() && m_storedCellLog->tryRemember(from, to))
         return;
     writeBarrierSlowPath(from);
+}
+
+StoredCellLog& Heap::storedCellLog()
+{
+    if (!m_storedCellLog)
+        m_storedCellLog = makeUniqueWithoutFastMallocCheck<StoredCellLog>();
+    return *m_storedCellLog;
 }
 
 bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
@@ -2845,6 +2860,14 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
     if (!MarkedBlockCage::isRequired() || deferralContext || isDeferred())
         return false;
     collectNow(Sync, CollectionScope::Full);
+    return true;
+}
+
+bool Heap::tryUseReserveOfExhaustedCage()
+{
+    if (!MarkedBlockCage::isRequired() || !cage().releaseReserve())
+        return false;
+    vm().traps().setNeedsOutOfMemoryError(true);
     return true;
 }
 
@@ -3140,9 +3163,9 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                     visitor.appendUnbarriered(pair.key);
             }
             
-            {
+            if (m_storedCellLog) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ExternalRememberedSet);
-                m_storedCellLog.visitAndReset(visitor);
+                m_storedCellLog->visitAndReset(visitor);
             }
 
             if (!m_markListSet.isEmpty()) {
@@ -3448,9 +3471,23 @@ void Heap::scheduleOpportunisticFullCollection()
         return m_##name.get(); \
     }
 
-FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW)
+FOR_EACH_JSC_DYNAMIC_COMMON_ISO_SUBSPACE(DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW)
 
 #undef DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW
+
+#define DEFINE_DYNAMIC_STRUCTURE_ISO_SUBSPACE_MEMBER_SLOW(name, heapCellType, type) \
+    IsoSubspace* Heap::name##Slow() \
+    { \
+        ASSERT(!m_##name); \
+        auto space = makeUnique<IsoSubspace>(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get()); \
+        WTF::storeStoreFence(); \
+        m_##name = WTF::move(space); \
+        return m_##name.get(); \
+    }
+
+FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(DEFINE_DYNAMIC_STRUCTURE_ISO_SUBSPACE_MEMBER_SLOW)
+
+#undef DEFINE_DYNAMIC_STRUCTURE_ISO_SUBSPACE_MEMBER_SLOW
 
 #define DEFINE_DYNAMIC_SPACE_AND_SET_MEMBER_SLOW(name, heapCellType, type, spaceType) \
     IsoSubspace* Heap::name##Slow() \
@@ -3477,7 +3514,7 @@ DEFINE_DYNAMIC_SPACE_AND_SET_MEMBER_SLOW(moduleProgramExecutableSpace, destructi
         return m_##name.get(); \
     }
 
-FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_DYNAMIC_NON_ISO_SUBSPACE_MEMBER_SLOW)
+FOR_EACH_JSC_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_DYNAMIC_NON_ISO_SUBSPACE_MEMBER_SLOW)
 #undef DEFINE_DYNAMIC_NON_ISO_SUBSPACE_MEMBER_SLOW
 
 #if ENABLE(WEBASSEMBLY)

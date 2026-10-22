@@ -28,7 +28,7 @@ inline bool canReplaceParameter(const Function& function, ValueID argument, Valu
 {
     const Value& replacement = function.at(argument);
     const Value& replaced = function.at(parameter);
-    return replacement.type == replaced.type && replacement.written() == replaced.written() && replacement.prediction() == replaced.prediction();
+    return replacement.type == replaced.type && replacement.expected() == replaced.expected();
 }
 
 inline bool isCastOf(const Function& function, const ValueSubstitution& substitution, ValueID value, ValueID of)

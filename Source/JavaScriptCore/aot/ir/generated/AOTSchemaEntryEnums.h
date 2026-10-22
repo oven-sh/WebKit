@@ -12,47 +12,51 @@ namespace JSC { namespace AOT { namespace Typed {
 
 enum class Opcode : uint16_t {
     Undefined, Null, Absent, Boolean, Integer, Double, String, BigInt, Builtin, ModuleBuiltin, Data, NewClosure, GetModuleVariable, PutModuleVariable,
-    GetEnvironmentField, PutEnvironmentField, ScopeHasBinding, NewObject, FinishObject, NewArray, AppendElement, AppendSpread, AppendHole, NewRegExp,
-    NewTemplateObject, NewRuntimeError, NewSuppressedError, CreateUnmappedArguments, CreateMappedArguments, GetMappedArgument, SetMappedArgument,
-    PropGet, PropSet, PropDefine, PropHas, PropDelete, ElemGet, ElemSet, ElemHas, ElemDelete, ElemDefine, DefineGetter, DefineSetter, SetFunctionName,
-    SetLiteralPrototype, CopyDataProperties, GetSuperBase, SuperGet, SuperSet, Add, Sub, Mul, Div, Mod, Pow, BitAnd, BitOr, BitXor, LShift, RShift,
-    URShift, Negate, ToNumeric, Increment, Decrement, BitNot, ToNumber, Less, LessEq, Greater, GreaterEq, Eq, StrictEq, InstanceOf, ToBoolean,
-    LogicalNot, TypeOf, ToString, Strcat, ToPropertyKey, ToObject, ToThis, Upcast, Claim, ClaimDeclared, ClaimRead, Predict, CheckInitialized,
-    RequireObjectCoercible, RequireObject, TypeTest, Call, Construct, CallList, ConstructList, CallDirect, Results, ResultAt, CatchValue,
-    CatchException, LoopHint, ResolveHeritage, NewClass, GetClassPrototype, DefineMethod, FinishClass, NewClassToken, GetConstructPrototype,
-    SuperConstruct, SuperConstructList, PrivateGet, PrivateSet, PrivateDefine, PrivateHas, IteratorOpen, IteratorResume, IteratorClose, ForInOpen,
-    ForInStep, Await, Yield, InitialYield, ModuleNamespace, ImportModule, RequireModule, ResolveModule, ThrowModuleFailure, ImportDynamic,
-    RequireDynamic, ResolveDynamic, DirectEval, IsConstructor, ArraySpeciesCreate, GetByValWithThis, GetOwnProperty, ToLength, ThrowNewError,
-    ResumeGenerator, StepGenerator, IsGeneratorSuspendedAtStart, IsUnmodifiedGenerator, CreateIteratorResult, StepArrayIterator, RequireBuiltinModule,
-    NativeBinding, LinkTimeConstant, HasJSType, GetInternalField, PutInternalField, NewPromise, CreatePromise, ResolvePromise, RejectPromise,
-    IsPristineArray, ArrayStorageKind, HasContiguousIndex, GetContiguousIndex, GetDoubleIndex, PutContiguousIndex, PutDoubleIndex, NewContiguousArray,
-    NewDoubleArray, NewArrayLike, NewArrayWithCapacity, TryPutByValDirect, TryPutIndex, GrowNewArray, TruncateNewArray, CollectionTable, MapNext,
-    SetNext, KeyConstant, Unspecified, Parameter, GetEncodedModuleVariable, AssumeType, ReportMismatch, CallGroup, ShapeTest, IsSlotFilled,
-    HasNoExtraProperties, IsNotFrozen, HasLayoutPrototype, BelongsToInstance, IsPristine, HasArrayStorage, IsInBounds, IsNotThenable,
-    IsMemberUnchanged, IsPrototypeLinkUnchanged, IsClassEvaluatedOnce, IsRequireEdgeReady, HasKeyOrder, IsShapeEpochCurrent, IsClosureOf,
-    IsEnumeratorCurrent, GetShapeEpoch, AllGuards, GetSlot, GetSlotOrUndefined, GetDeferredClosureSlot, PutSlot, PutSlotOrAdd, PropHasOwn, CopyObject,
-    TryCopyFields, GetArrayLength, GetArrayElement, PutArrayElement, HasArrayElement, AppendElements, HasSpareArrayCapacity, ReserveArrayCapacity,
-    GetTypedArrayLength, GetTypedArrayElement, PutTypedArrayElement, GetStringLength, GetStringCodeUnit, GetArgument, GetRestLength,
-    ReturnsToResultTest, CreateRest, GetMyArgumentByVal, CallForwardVarargs, ConstructSuperForwardVarargs, GetCapture, MaterializeEnvironment,
+    GetEnvironmentField, PutEnvironmentField, ScopeHasBinding, NewObject, NewDictionary, FinishObject, NewArray, AppendElement, AppendSpread,
+    AppendHole, NewRegExp, NewTemplateObject, NewRuntimeError, NewSuppressedError, CreateUnmappedArguments, CreateMappedArguments, GetMappedArgument,
+    SetMappedArgument, PropGet, PropSet, PropDefine, PropHas, PropDelete, ElemGet, ElemSet, ElemHas, ElemDelete, ElemDefine, DefineGetter,
+    DefineSetter, TryDefineLiveBinding, TryReExportFields, SetFunctionName, SetLiteralPrototype, CopyDataProperties, CopyObject, GetSuperBase,
+    SuperGet, SuperSet, Add, Sub, Mul, Div, Mod, Pow, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Negate, ToNumeric, Increment, Decrement, BitNot,
+    ToNumber, Less, LessEq, Greater, GreaterEq, Eq, StrictEq, InstanceOf, ToBoolean, LogicalNot, TypeOf, ToString, Strcat, ToPropertyKey, ToObject,
+    ToThis, Upcast, NarrowByField, Check, Convert, CheckInitialized, RequireObjectCoercible, RequireObject, TypeTest, Call, Construct, CallList,
+    ConstructList, CallDirect, Results, ResultAt, CatchValue, CatchException, LoopHint, ResolveHeritage, NewClass, GetClassPrototype, DefineMethod,
+    FinishClass, NewClassToken, GetConstructPrototype, SuperConstruct, SuperConstructList, PrivateGet, PrivateSet, PrivateDefine, PrivateHas,
+    IteratorOpen, IteratorResume, IteratorClose, ForInOpen, ForInStep, Await, Yield, InitialYield, ModuleNamespace, ImportModule, RequireModule,
+    EvaluateModule, RecordRequire, ResolveModule, ThrowModuleFailure, ImportDynamic, RequireDynamic, ResolveDynamic, DirectEval, IsConstructor,
+    ArraySpeciesCreate, GetByValWithThis, GetOwnProperty, ToLength, ThrowNewError, ResumeGenerator, StepGenerator, IsGeneratorSuspendedAtStart,
+    IsUnmodifiedGenerator, CreateIteratorResult, StepArrayIterator, RequireBuiltinModule, NativeBinding, LinkTimeConstant, HasJSType,
+    GetInternalField, PutInternalField, NewPromise, CreatePromise, ResolvePromise, RejectPromise, IsPristineArray, ArrayStorageKind,
+    HasContiguousIndex, GetContiguousIndex, GetDoubleIndex, PutContiguousIndex, PutDoubleIndex, NewContiguousArray, NewDoubleArray, NewArrayLike,
+    NewArrayWithCapacity, TryPutByValDirect, TryPutIndex, GrowNewArray, TruncateNewArray, CollectionTable, MapNext, SetNext, IsClosureOf, KeyConstant,
+    Unspecified, EmptyArgumentList, Parameter, GetEncodedModuleVariable, AssumeType, ReadAgain, BorrowedParameter, ReportMismatch, CallTable,
+    ShapeTest, IsSlotFilled, HasNoExtraProperties, HasNoFieldOutsideSlot, HasBirthFieldsFilled, IsNotFrozen, HasLayoutPrototype, BelongsToInstance,
+    IsPristine, HasArrayStorage, IsInBounds, IsElementPresent, IsInsideView, IsNotThenable, AreMembersUnchanged, HasKeyOrder, IsEnumeratorCurrent,
+    AllGuards, GetSlot, GetSlotOrUndefined, GetSlotGetter, GetFlattenedSlot, GetFlattenedSlotOrUndefined, GetDeferredClosureSlot,
+    GetDeferredClosureSlotOrUndefined, PutSlot, PutSlotOrAdd, FinishBirth, TryFinishBirth, MakeBorrowedObject, PropHasOwn, TryCopyFields,
+    GetGlobalBinding, SetGlobalBinding, GetArrayLength, GetArrayElement, PutArrayElement, HasArrayElement, AppendElements, HasSpareArrayCapacity,
+    ReserveArrayCapacity, ConvertToDoubleStorage, GetTypedArrayLength, GetTypedArrayElement, PutTypedArrayElement, GetStringLength, GetStringCodeUnit,
+    GetArgument, GetRestLength, CreateRest, GetMyArgumentByVal, CallForwardVarargs, ConstructSuperForwardVarargs, GetCapture, MaterializeEnvironment,
     MarkEnvironmentEscaped, ReleaseEnvironment, CallBuiltin, DivideIntegers, ToInt32, ToUint32, ToIntegerOrInfinity, NewSetFromData, NewMapFromData,
-    NewArgumentList, SharedRegExpLiteral, DestructureIterable, EnumeratorGetByVal, RequireAttachedTypedArray, CreateAsyncFromSyncIterator,
-    ThrowNotIterable, NewGenerator, NewAsyncGenerator, IsUnmodifiedAsyncGenerator, StepAsyncGenerator, AwaitBySavingFrame, AwaitCallBySavingFrame,
-    YieldBySavingFrame, AsyncGeneratorYield, ReturnAsyncResult, PromiseAllOfElements, HasInPrototypeChain, GetRequiredValue, StringBuilderBegin,
-    StringBuilderAppend, StringBuilderAppendBuiltin, StringBuilderAppendJSON, StringBuilderLength, StringBuilderToString, StringBuilderFinish,
-    StringBuilderDiscard, StringBuilderCheckpoint, StringBuilderRollBack, ValidateType, ValidateCallee, ValidateFirstRun, ValidateSameValue,
-    JSONSourceOpen, JSONSourceStart, JSONSourceClose, JSONSourceAbandon, JSONDecodeBytes, JSONGetByte, JSONStartsWith, JSONAdvance, JSONSkipByte,
-    JSONSkipWhitespace, JSONParseString, JSONParseKey, JSONParseNumber, JSONParseInteger, JSONParseValue, JSONFindMember, JSONMemberRepeats,
-    JSONKeyRepeats, JSONKeyHasEscapes, JSONHasStackSpace, JSONObjectBegin, JSONObjectKey, JSONObjectFinish, JSONParseExtraMembers, JSONAddExtraMember,
-    IsPlainDataObject, GetOwnDataProperty, CloneAs, ExpectRows, StringBuilderReserve, StringBuilderCommit, JSONAppendKey, JSONAppendToken,
-    JSONAppendBoolean, JSONAppendInteger, JSONAppendNumber, JSONAppendDate, JSONAppendString, JSONAppendValue, PropGetChecked, PropGetChain,
-    PropGetPair, PropGetAndTest, CallMethod, TryPutByIds, PutSlots, DefineOwnProperty, DefineAccessors, IntegerBound, FulfillFreshPromise, Substring,
-    SubstringOrUndefined, FlattenString, StringRange, StringOrder, StringOrderToCharacter, StringEqualsLiteral, ValueEqualsLiteral,
-    ValueLooselyEqualsLiteral, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter, StringLastIndexOfLiteral,
-    StringRangeCodeUnitOrNaN, StringRangeCodeUnitOrMinusOne, StringRangeCodePointOrUndefined, StringRangeCharacterOrEmpty,
+    NewArgumentList, SharedRegExpLiteral, IsBuiltinLocationUnchanged, IsFunctionOfBuiltin, GetBuiltinValue, DestructureIterable, EnumeratorGetByVal,
+    RequireAttachedTypedArray, CreateAsyncFromSyncIterator, ThrowNotIterable, IsCollectionTableFull, ReserveCollectionCapacity, NewGenerator,
+    NewAsyncGenerator, TakeGeneratorPrototype, IsGeneratorUnstarted, IsGeneratorRunning, MarkGeneratorRunning, TakeGeneratorStepStatus,
+    IsUnmodifiedAsyncGenerator, StepAsyncGenerator, AwaitMayContinue, AwaitBySavingFrame, AwaitCallBySavingFrame, YieldBySavingFrame,
+    AsyncGeneratorYield, ReturnAsyncResult, PromiseAllOfElements, HasInPrototypeChain, BeginModuleEvaluation, FinishModuleEvaluation,
+    AbandonModuleEvaluation, StringBuilderBegin, StringBuilderAppend, StringBuilderAppendBuiltin, StringBuilderAppendJSON, StringBuilderLength,
+    StringBuilderToString, StringBuilderFinish, StringBuilderDiscard, StringBuilderCheckpoint, StringBuilderRollBack, ValidateType, ValidateCallee,
+    ValidateLookup, ValidateFirstRun, ValidateSameValue, JSONSourceOpen, JSONSourceStart, JSONSourceClose, JSONSourceAbandon, JSONDecodeBytes,
+    JSONGetByte, JSONStartsWith, JSONAdvance, JSONSkipByte, JSONSkipWhitespace, JSONParseString, JSONParseKey, JSONParseNumber, JSONParseInteger,
+    JSONParseValue, JSONFindMember, JSONMemberRepeats, JSONKeyRepeats, JSONKeyHasEscapes, JSONHasStackSpace, JSONObjectBegin, JSONObjectKey,
+    JSONObjectFinish, JSONParseExtraMembers, JSONAddExtraMember, IsPlainDataObject, GetOwnDataProperty, CloneAs, ExpectRows, StringBuilderReserve,
+    StringBuilderCommit, JSONAppendKey, JSONAppendToken, JSONAppendBoolean, JSONAppendInteger, JSONAppendNumber, JSONAppendDate, JSONAppendString,
+    JSONAppendValue, PropGetChain, PropGetPair, PropGetAndTest, CallMethod, TryPutByIds, PutSlots, DefineOwnProperty, DefineAccessors, IntegerBound,
+    FulfillFreshPromise, Substring, SubstringOrUndefined, FlattenString, StringRange, StringOrder, StringOrderToCharacter, StringEqualsLiteral,
+    ValueEqualsLiteral, ValueLooselyEqualsLiteral, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter,
+    StringLastIndexOfLiteral, StringRangeCodeUnitOrNaN, StringRangeCodeUnitOrMinusOne, StringRangeCodePointOrUndefined, StringRangeCharacterOrEmpty,
     StringRangeCharacterOrUndefined, StringRangeEqualsLiteral, StringRangeToNumber, StringRangeParseInt, StringRangeSubstringOrUndefined,
     StringBuilderAppendConstant, StringBuilderAppendInteger, StringBuilderAppendNumber, StringBuilderAppendString, StringBuilderAppendStringRange,
-    StringBuilderAppendBoolean, StringBuilderAppendStringOrNullish, StringBuilderAppendValue, ResolveCallTarget, CallResolved, RegExpMatchLiteral,
-    CallInline, Box, Unbox, IntegerToNumber, NumberToInteger, WidenInteger, NarrowInteger, Decode, Compress
+    StringBuilderAppendBoolean, StringBuilderAppendStringOrNullish, StringBuilderAppendValue, MapGetByKeyParts, HasByKeyParts, ResolveCallTarget,
+    CallResolved, RegExpMatchLiteral, CallInline, Box, Unbox, IntegerToNumber, NumberToInteger, WidenInteger, NarrowInteger, Decode, Compress
 };
 enum class TerminatorKind : uint8_t {
     Jump, Branch, Switch, SwitchString, Return, ReturnCall, Throw, Rethrow, Unreachable, SwitchOnShape, TryCallInline, TestAndBranch
@@ -61,13 +65,13 @@ enum class OperationFamily : uint8_t {
     Constant, Binding, Allocation, Access, Operator, Cast, Call, Exception, Hint, Control, Class, PrivateAccess, Iteration, ForIn, Coroutine, Module,
     Eval, EngineIntrinsic, RuntimeIntrinsic, PromiseIntrinsic, ArrayIntrinsic, CollectionIntrinsic, Guard, GuardValue, SlotAccess, OwnAccess,
     ElementAccess, Arguments, Environment, BuiltinCall, ExpandedIteration, SavedFrame, StringBuilder, RuntimeValidation, JSONParse, Validation,
-    JSONWrite, FusedAccess, SlotRun, ObjectCreation, SelectedOperator, String, StringRangeRead, StringBuilderPart, ResolvedCall, InlineBuiltin,
-    Representation
+    JSONWrite, FusedAccess, SlotRun, ObjectCreation, SelectedOperator, String, StringRangeRead, StringBuilderPart, KeyPartsLookup, ResolvedCall,
+    InlineBuiltin, Representation
 };
 enum class AbstractHeap : uint8_t {
-    ModuleVariables, EnvironmentFields, ObjectFields, ShapeWords, OrderWords, ShapeEpoch, MemberGuards, PrototypeLinks, NamedProperties, Elements,
-    ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState,
-    StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState
+    ModuleVariables, EnvironmentFields, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage,
+    TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage,
+    StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState
 };
 enum class OpaqueKind : uint8_t {
     IteratorState, Enumerator, Exception, ClassToken, StringBuilder, Cursor, KeyOrder, Guard, FlatString, CodeAddress, BuilderCursor
@@ -75,26 +79,27 @@ enum class OpaqueKind : uint8_t {
 enum class ProgramList : uint8_t {
     Bytes, Words, Strings, PropertyKeys, Types, ClassParts, TypeSites, DeclaredTypes, ExpectedResults, TemplateParts, ValidationRules,
     ValidationMembers, ValidationNodes, Layouts, Fields, StaticFields, Variables, Modules, ModuleRequests, ModuleExports, SyntheticExports,
-    RequiredNames, ColumnAdjustments, ModuleFailures, EvalScopes, EvalBindings, Functions, Code, DataNodes, DataMembers, Data, Entries, HostReads,
-    RuntimeFunctions, WebAssemblyModules
+    RequiredNames, ColumnAdjustments, ModuleFailures, EvalScopes, EvalBindings, RelationSubjects, StoredIntos, HandedTos, OperandsOf, Functions, Code,
+    DataNodes, DataMembers, Data, Entries, HostReads, RuntimeFunctions, WebAssemblyModules
 };
 enum class InlineBuiltin : uint8_t {
     ArrayAt, ArrayIndexOf, ArrayIncludes, ArrayJoin, ArrayConcat, ArrayShift, ArrayPop, ArraySlice, ArraySplice, ArrayUnshift, ArraySplicePrefix,
     ArrayIterator, ArrayPush, ArrayIsArray, ArrayLength, ArraySetLength, ArrayWithLength, ArrayOf, ArrayFrom, TypedArrayLength, TypedArrayByteLength,
     TypedArrayByteOffset, TypedArrayWithLength, OwnPropertyKeys, ObjectGetOwnPropertyDescriptor, ObjectHasOwn, ObjectPropertyIsEnumerable,
-    OwnPropertyDescriptorFields, ObjectCreate, GetPrototypeOf, SetPrototypeOf, CallObjectConstructor, ObjectFreeze, ObjectPrototypeToString, ObjectIs,
-    ReturnThis, NewMap, MapGet, MapHas, SetHas, MapSet, SetAdd, MapSize, SetSize, SetFromIterable, MapFromEntries, WeakMapGet, WeakMapHas, WeakSetHas,
-    MapDelete, SetDelete, MapClear, SetClear, MapIterator, SetIterator, PromiseResolve, PromiseThen, PromiseCatch, DataViewGet, DataViewSet, Atomics,
-    BufferAccess, MathMinOfArray, MathMaxOfArray, CallNumberConstructor, NumberToString, ParseInt, NumberToStringAppend, MathAbs, MathFloor, MathCeil,
-    MathTrunc, MathRound, MathFround, MathF16Round, MathSqrt, MathPow, MathMin, MathMax, MathImul, MathClz32, MathSign, MathFunction, MathATan2,
-    MathHypot, IsNaN, IsFinite, NumberIsNaN, NumberIsFinite, NumberIsInteger, NumberIsSafeInteger, MathRandom, DateGetField, DateToISOString, DateNow,
-    DateGetTime, DateGetMilliseconds, DateSetTime, FunctionBind, ReflectApply, FunctionApply, StringRepeat, StringPadStart, StringPadEnd,
-    StringIsWellFormed, StringToWellFormed, StringNormalize, StringFromCodePoint, CallStringConstructor, StringUTF8ByteLength, StringLength, StringAt,
-    StringCharAt, StringCharCodeAt, StringCodePointAt, StringSlice, StringSubstring, StringSubstr, StringStartsWith, StringEndsWith, StringIncludes,
-    StringIndexOf, StringLastIndexOf, StringToLowerCase, StringToUpperCase, StringTrim, StringTrimStart, StringTrimEnd, StringLocaleCompare,
-    StringConcat, StringFromCharCode, StringSplitPrefix, StringSliceAppend, StringSubstringAppend, CallStringConstructorAppend, NewRegExp,
-    StringMatch, StringSearch, RegExpExec, RegExpTest, RegExpFlags, RegExpSource, StringReplace, StringReplaceAll, StringSplit, RegExpFlag,
-    RegExpGetLastIndex, RegExpSetLastIndex, RegExpExecPrefix, StringMatchPrefix, NewError, FormatDateTime, FormatNumber
+    OwnPropertyDescriptorFields, ObjectValues, ObjectEntries, ObjectCreate, GetPrototypeOf, SetPrototypeOf, CallObjectConstructor, ObjectFreeze,
+    ObjectPrototypeToString, ObjectIs, ReturnThis, NewMap, NewSet, MapGet, MapHas, SetHas, MapSet, SetAdd, MapSize, SetSize, SetFromIterable,
+    MapFromEntries, WeakMapGet, WeakMapHas, WeakSetHas, MapDelete, SetDelete, MapClear, SetClear, MapIterator, SetIterator, PromiseResolve,
+    PromiseThen, PromiseCatch, DataViewGet, DataViewSet, Atomics, BufferAccess, MathMinOfArray, MathMaxOfArray, CallNumberConstructor, NumberToString,
+    ParseInt, NumberToStringAppend, MathAbs, MathFloor, MathCeil, MathTrunc, MathRound, MathFround, MathF16Round, MathSqrt, MathPow, MathMin, MathMax,
+    MathImul, MathClz32, MathSign, MathFunction, MathATan2, MathHypot, IsNaN, IsFinite, NumberIsNaN, NumberIsFinite, NumberIsInteger,
+    NumberIsSafeInteger, MathRandom, DateGetField, DateToISOString, DateNow, DateGetTime, DateGetMilliseconds, DateSetTime, FunctionBind,
+    ReflectApply, FunctionApply, StringRepeat, StringPadStart, StringPadEnd, StringIsWellFormed, StringToWellFormed, StringNormalize,
+    StringFromCodePoint, CallStringConstructor, StringUTF8ByteLength, StringLength, StringAt, StringCharAt, StringCharCodeAt, StringCodePointAt,
+    StringSlice, StringSubstring, StringSubstr, StringStartsWith, StringEndsWith, StringIncludes, StringIndexOf, StringLastIndexOf, StringToLowerCase,
+    StringToUpperCase, StringTrim, StringTrimStart, StringTrimEnd, StringLocaleCompare, StringConcat, StringFromCharCode, StringSplitPrefix,
+    StringSliceAppend, StringSubstringAppend, CallStringConstructorAppend, NewRegExp, StringMatch, StringSearch, RegExpExec, RegExpTest, RegExpFlags,
+    RegExpSource, StringReplace, StringReplaceAll, StringSplit, RegExpFlag, RegExpGetLastIndex, RegExpSetLastIndex, RegExpExecPrefix,
+    StringMatchPrefix, NewError, FormatDateTime, FormatNumber
 };
 enum class InlineBuiltinFamily : uint8_t {
     ArrayBuiltin, ArrayStorageBuiltin, ArrayBufferViewBuiltin, OwnPropertyBuiltin, ObjectBuiltin, HashTableBuiltin, MapSetBuiltin, PromiseBuiltin,
@@ -102,72 +107,82 @@ enum class InlineBuiltinFamily : uint8_t {
 };
 enum class RuntimeOperation : uint16_t {
     ScopeHasBinding, NewClassToken, PrivateGet, PrivateHas, PrivateSet, PrivateDefine, GetSuperBase, GetSuperPropertyById, SuperGet, SuperSet,
-    DefineById, DefineField, DefineOwnProperty, DefineAccessor, DefineAccessors, DefineMethod, SetFunctionName, SetLiteralPrototype, Construct, Apply,
-    NewArgumentList, ConstructWithArray, SuperConstruct, SuperConstructList, ThrowUnlessCallable, ThrowUnlessCallableNamed, CreateThis,
-    ResolveHeritage, NewClass, GetClassPrototype, GetConstructPrototype, SetConstructPrototype, AllocateSlow, NewFromData, NewSetFromData,
-    NewMapFromData, CopyDataProperties, CopyObject, CloneObjectAs, IsPlainDataObject, GetOwnDataProperty, ExpectRows, TryPutProperties,
-    MaterializeEnvironment, NewClosureSlow, BarrierSlow, BarrierSlowPreservingRegisters, RememberElement, NewArray, NewArrayOfHoles,
-    NewArrayAtReviewedSite, ArrayPush, ArrayPushNumber, ArraySlice, ArrayCopy, AppendElements, AppendHole, ReserveArrayCapacity, ArrayPutAtIndex,
-    ArrayPutNumberAtIndex, ArrayPutAtNumber, NewTypedArray, TypedArrayPut, TypedArrayLength, ThrowIfTypedArrayIsDetached, Concat, ConcatThree,
-    Substring, Flatten, CompareStrings, StringHasAt, StringIndexOfFrom, IntToString, DoubleToString, CharToString, ToLiteralString,
-    LiteralStringToString, StringBuilderBegin, StringBuilderAppend, StringBuilderAppendString, StringBuilderAppendStringRange,
-    StringBuilderAppendByHost, StringBuilderAppendJSON, StringBuilderReserve, StringBuilderRollBack, StringBuilderToString, StringBuilderFinish,
-    StringBuilderDiscard, Concatenate, ValueAdd, ValueSub, ValueMul, ValueDiv, ValueMod, ValuePow, ValueBitAnd, ValueBitOr, ValueBitXor, ValueLShift,
-    ValueRShift, ValueURShift, ValueNegate, ValueBitNot, ToNumeric, ToKey, Increment, Decrement, ToNumber, ToString, ToBoolean, ToObject, ToThis,
-    TypeOf, IsCallable, CompareLess, CompareLessEq, CompareGreater, CompareGreaterEq, CompareEq, CompareStrictEq, CompareEqToString, Fmod, Pow,
-    ToInt32, TryConvertToInteger, AddNumberAndValueAsNumber, SubNumberAndValueAsNumber, MulNumberAndValueAsNumber, DivNumberAndValueAsNumber,
-    InstanceOfAndCache, DefaultHasInstance, DestructureIterable, GetPropertyEnumerator, EnumeratorNext, EnumeratorGetByVal,
-    CreateAsyncFromSyncIterator, ThrowNotIterable, NewPromise, CreatePromise, ResolvePromise, ResolvePromiseOrReturnResult, RejectPromise,
-    RejectWithException, NewGenerator, SaveFrameAndAwait, SaveFrameAndAwaitCall, AwaitWithSavedFrame, AwaitCallWithSavedFrame, SaveFrameAndYield,
-    StepAsyncGenerator, PromiseThen, PromiseCatch, PromiseAll, Throw, ThrowToHandlerInFunction, Catch, CatchException, ThrowAtSite,
-    ThrowStackOverflowError, NewRuntimeError, NewRuntimeErrorWithName, NewSuppressedError, ThrowRuntimeError, EnforceType, ReportMismatch,
-    ReportValidationFailure, ContentsHaveType, PollSlow, PollAtPrologue, DirectEval, StringConstant, NewStringConstant, KeyConstant, BuiltinCell,
-    ModuleBuiltinCell, BigIntConstant, SingletonClosure, NewTemplateObject, CreateUnmappedArguments, CreateMappedArguments, GetFromArguments,
-    GetMappedArgument, SetMappedArgument, GetModuleNamespace, IsNamespaceOfModule, ImportModule, RequireModule, ResolveModule, ThrowModuleFailure,
-    ImportDynamic, RequireDynamic, ResolveDynamic, GetById, PutById, PutByIdSloppy, DeleteById, DeleteByIdSloppy, InByIdAndCache, HasOwnByIdAndCache,
-    GetByIdAndCache, PutByIdAndCache, FillSiteCache, GetFreeName, GetFreeNameForTypeOf, SetFreeName, SetFreeNameSloppy, DeleteFreeName, GetByVal,
-    GetByValAndCache, PutByVal, PutByValAndCache, PutByValAndCacheSloppy, InByValAndCache, HasOwnByValAndCache, DeleteByVal, DeleteByValSloppy,
-    GetByValWithThis, GetOwnProperty, GetGeneric, GetByValGeneric, InByValGeneric, PutByValGeneric, ReadField, StoreField, CreateField,
-    CallGetterOfSlot, CallSetterOfSlot, AddPropertyBySlot, DidCreateField, DidCreateFieldAt, DidCreateFieldOutOfLineAt, DidCreateFieldsAt,
-    EnsureExtensionGranules, StoreDoubleInExtension, GetExtraProperty, HasExtraProperty, PutExtraProperty, MaterializeDeferredClosure, NewMap, MapGet,
-    MapHas, SetHas, MapSet, SetAdd, WeakMapSet, MapDelete, SetDelete, MapClear, SetClear, NewMapIterator, NewSetIterator, MapNext, SetNext,
-    TryNewSetFromIterable, TryNewMapFromEntries, ArraySplice, ArrayGrow, AllocateStorage, ArrayUnshift, ArrayJoin, ArrayFromTypedArray,
-    ArrayIndexOfDouble, ArrayIndexOfInt32, NewArrayWithIndexingType, NewArrayFromDoubles, NewArrayIterator, GrowNewArray, TruncateNewArray,
-    NewArrayWithHoles, OwnPropertyKeys, HasOwnProperty, PropertyIsEnumerable, GetOwnPropertyDescriptor, GetOwnPropertyFields, ObjectCreate,
-    IsConstructor, ArraySpeciesCreate, ResumeGenerator, IsGeneratorSuspendedAtStart, ToLength, RequireBuiltinModule, NativeBinding, LinkTimeConstant,
-    NewBigInt64, DateNow, DateToISOString, PrepareBoundFunctionAllocation, NewError, FormatDateTime, FormatNumber, NumberToStringWithRadix,
-    Int32ToStringWithRadix, AppendNumberWithRadix, MathSin, MathSinh, MathCos, MathCosh, MathTan, MathTanh, MathASin, MathASinh, MathACos, MathACosh,
-    MathATan, MathATanh, MathLog, MathLog10, MathLog2, MathCbrt, MathExp, MathExpm1, MathLog1p, MathF16Round, MathATan2, MathHypot, MathHypot3,
-    ParseInt8, ParseInt16, StringToNumber8, StringToNumber16, StringFindCharacter8, StringFindCharacter16, StringReverseFindCharacter8,
-    StringReverseFindCharacter16, StringFind8, StringFind16, StringReverseFind8, StringReverseFind16, StringUTF8Length8, StringUTF8Length16,
-    CountSeparators8, CountSeparators16, FindSeparators8, FindSeparators16, StringImplsAreEqual, CompareStringImpls, StringImplEqualsImageString,
-    HashStringImpl, FindLongSeparators8, FindLongSeparators16, CountLongSeparators8, CountLongSeparators16, StringFindLiteral8,
-    StringReverseFindLiteral8, StringSplitPrefix, StringEqualsLiteral, StringEqualsLiteralInRegister, StringStartsWithLiteral, StringEndsWithLiteral,
-    StringIndexOfLiteral, StringLastIndexOfLiteral, StringIndexOfCharacter, StringsAreEqual, StringTrim, StringLastIndexOf, StringLocaleCompare,
-    StringToLowerCase, StringToUpperCase, StringRepeat, StringPad, ShortStringOfString, RegExpExec, RegExpTest, RegExpFind, RegExpTestBoxed,
-    RegExpMatchLiteral, RegExpMatchLiteralWithoutObject, NewRegExpLiteral, SharedRegExpLiteral, NewRegExp, RegExpFlags, RegExpSource,
+    DefineById, DefineField, DefineOwnProperty, DefineAccessor, DefineAccessors, DefineMethod, TryDefineLiveBinding, TryReExportFields,
+    SetFunctionName, SetLiteralPrototype, Construct, Apply, NewArgumentList, ConstructWithArray, SuperConstruct, SuperConstructList,
+    ThrowUnlessCallable, ThrowUnlessCallableNamed, CreateThis, ResolveHeritage, NewClass, GetClassPrototype, GetConstructPrototype,
+    SetConstructPrototype, AllocateSlow, GetHeaderOfAllocation, NewDictionary, NewFromData, NewSetFromData, NewMapFromData, CopyDataProperties,
+    CopyObject, TryCopyTwoObjects, CloneObjectAs, IsPlainDataObject, GetOwnDataProperty, ExpectRows, TryPutProperties, MaterializeEnvironment,
+    NewClosureSlow, MoveClosureToHeap, BarrierSlow, BarrierSlowPreservingRegisters, RememberElement, NewArray, NewArrayOfHoles,
+    NewArrayAtReviewedSite, ArrayPush, ArrayPushNumber, ArraySlice, ArrayCopy, AppendElements, AppendHole, ReserveArrayCapacity,
+    ReserveCollectionCapacity, TryFinishBirth, ConvertToDoubleStorage, ArrayPutAtIndex, ArrayPutNumberAtIndex, ArrayPutAtNumber, NewTypedArray,
+    TypedArrayPut, TypedArrayLength, ThrowIfTypedArrayIsDetached, Concat, ConcatThree, Substring, Flatten, CompareStrings, StringHasAt,
+    StringIndexOfFrom, IntToString, DoubleToString, CharToString, ToLiteralString, LiteralStringToString, StringBuilderBegin, StringBuilderAppend,
+    StringBuilderAppendString, StringBuilderAppendStringRange, StringBuilderAppendByHost, StringBuilderAppendJSON, StringBuilderReserve,
+    StringBuilderRollBack, StringBuilderToString, StringBuilderFinish, StringBuilderDiscard, StackStringBuilderGrow, StackStringBuilderAppend,
+    StackStringBuilderAppendStringRange, StackStringBuilderFinish, StackStringBuilderDiscard, Concatenate, MapGetByKeyParts, HasByKeyParts, ValueAdd,
+    ValueSub, ValueMul, ValueDiv, ValueMod, ValuePow, ValueBitAnd, ValueBitOr, ValueBitXor, ValueLShift, ValueRShift, ValueURShift, ValueNegate,
+    ValueBitNot, ToNumeric, ToKey, Increment, Decrement, ToNumber, ToString, ToBoolean, ToObject, ToThis, TypeOf, IsCallable, CompareLess,
+    CompareLessEq, CompareGreater, CompareGreaterEq, CompareEq, CompareStrictEq, CompareEqToString, Fmod, Pow, ToInt32, TryConvertToInteger,
+    AddNumberAndValueAsNumber, SubNumberAndValueAsNumber, MulNumberAndValueAsNumber, DivNumberAndValueAsNumber, InstanceOfAndCache,
+    DefaultHasInstance, DestructureIterable, GetPropertyEnumerator, EnumeratorNext, EnumeratorGetByVal, CreateAsyncFromSyncIterator, ThrowNotIterable,
+    NewPromise, CreatePromise, ResolvePromise, ResolvePromiseOrReturnResult, RejectPromise, RejectWithException, NewGenerator, TakeGeneratorPrototype,
+    SaveFrameAndAwait, SaveFrameAndAwaitCall, SaveFrameAndAwaitAfterTurn, AwaitWithSavedFrame, AwaitCallWithSavedFrame, AwaitWithSavedFrameAfterTurn,
+    SaveFrameAndYield, AsyncIteratorStep, FinishAsyncIteratorStep, PromiseThen, PromiseCatch, PromiseAll, Throw, ThrowToHandlerInFunction, Catch,
+    CatchException, ThrowAtSite, ThrowStackOverflowError, NewRuntimeError, NewRuntimeErrorWithName, NewSuppressedError, ThrowRuntimeError,
+    ReportMismatch, ReportValidationFailure, PhotographOperand, CompareOperandWithPhotograph, NoteFailedGuard, ContentsHaveType, ValidateLookup,
+    PollSlow, PollAtPrologue, DirectEval, StringConstant, NewStringConstant, KeyConstant, BuiltinCell, ModuleBuiltinCell, FillBuiltinValue,
+    ArmBuiltinLocation, FindOwnSlotStructure, CallCustomGetter, BigIntConstant, SingletonClosure, NewTemplateObject, CreateUnmappedArguments,
+    CreateMappedArguments, GetFromArguments, GetMappedArgument, SetMappedArgument, GetModuleNamespace, IsNamespaceOfModule, ImportModule,
+    RequireModule, RecordRequire, ResolveModule, ThrowModuleFailure, BeginModuleEvaluation, AbandonModuleEvaluation, ImportDynamic, RequireDynamic,
+    ResolveDynamic, GetById, PutById, PutByIdSloppy, DeleteById, DeleteByIdSloppy, InByIdAndCache, HasOwnByIdAndCache, GetByIdAndCache,
+    PutByIdAndCache, FillSiteCache, RecordArrival, GetFreeName, GetFreeNameForTypeOf, SetFreeName, SetFreeNameSloppy, DeleteFreeName,
+    GetGlobalBinding, GetGlobalObjectBinding, SetGlobalBinding, SetGlobalBindingSloppy, SetGlobalObjectBinding, SetGlobalObjectBindingSloppy,
+    ValidateGlobalBinding, GetByVal, GetByValAndCache, PutByVal, PutByValAndCache, PutByValAndCacheSloppy, InByValAndCache, HasOwnByValAndCache,
+    DeleteByVal, DeleteByValSloppy, GetByValWithThis, GetOwnProperty, GetGeneric, GetByValGeneric, InByValGeneric, PutByValGeneric, ReadField,
+    StoreField, CreateField, CallGetterOfSlot, CallSetterOfSlot, AddPropertyBySlot, DidCreateField, DidCreateFieldAt, DidCreateFieldOutOfLineAt,
+    DidCreateFieldsAt, EnsureExtensionGranules, EnsureExtensionGranulesWithoutCollecting, GetExtraProperty, HasExtraProperty, PutExtraProperty,
+    MaterializeDeferredClosure, GetFieldOutsideSlot, MakeFlattenedObjectAt, NewMap, NewSet, MapGet, MapHas, SetHas, MapSet, SetAdd, WeakMapSet,
+    MapDelete, SetDelete, MapClear, SetClear, NewMapIterator, NewSetIterator, MapNext, SetNext, TryNewSetFromIterable, TryNewMapFromEntries,
+    ArraySplice, ArrayGrow, AllocateStorage, ArrayUnshift, ArrayJoin, ArrayJoinOfAnyReceiver, NumberOfAnyValue, StringOfAnyValue,
+    ObjectToStringOfAnyValue, TextOfBytes, EncodeTextToBytes, EncodeTextIntoBytes, TypedArraySetOfAnyValue, TypedArraySubarrayOfAnyValue,
+    CodeURIOfAnyValue, ArraySearchOfAnyValue, ByteLengthOfAnyValue, ArrayFromTypedArray, ArrayIndexOfDouble, ArrayIndexOfInt32,
+    NewArrayWithIndexingType, NewArrayFromDoubles, NewArrayIterator, GrowNewArray, TruncateNewArray, NewArrayWithHoles, OwnPropertyKeys, ObjectValues,
+    ObjectEntries, PropertyIsEnumerable, GetOwnPropertyDescriptor, GetOwnPropertyFields, ObjectCreate, IsConstructor, ArraySpeciesCreate,
+    ResumeGenerator, IsGeneratorSuspendedAtStart, ToLength, RequireBuiltinModule, NativeBinding, LinkTimeConstant, NewBigInt64, DateNow,
+    DateToISOString, PrepareBoundFunctionAllocation, NewError, FormatDateTime, FormatNumber, NumberToStringWithRadix, Int32ToStringWithRadix,
+    AppendNumberWithRadix, MathSin, MathSinh, MathCos, MathCosh, MathTan, MathTanh, MathASin, MathASinh, MathACos, MathACosh, MathATan, MathATanh,
+    MathLog, MathLog10, MathLog2, MathCbrt, MathExp, MathExpm1, MathLog1p, MathF16Round, MathATan2, MathHypot, MathHypot3, ParseInt8, ParseInt16,
+    StringToNumber8, StringToNumber16, StringFindCharacter8, StringFindCharacter16, StringReverseFindCharacter8, StringReverseFindCharacter16,
+    StringFind8, StringFind16, StringReverseFind8, StringReverseFind16, StringUTF8Length8, StringUTF8Length16, CountSeparators8, CountSeparators16,
+    FindSeparators8, FindSeparators16, StringImplsAreEqual, CompareStringImpls, StringImplEqualsImageString, HashStringImpl, FindLongSeparators8,
+    FindLongSeparators16, CountLongSeparators8, CountLongSeparators16, StringFindLiteral8, StringReverseFindLiteral8, StringSplitPrefix,
+    StringEqualsLiteral, StringEqualsLiteralInRegister, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral,
+    StringLastIndexOfLiteral, StringIndexOfCharacter, StringsAreEqual, StringTrim, StringLastIndexOf, StringLocaleCompare, StringToLowerCase,
+    StringToUpperCase, StringRepeat, StringPad, ShortStringOfString, RegExpExec, RegExpTest, RegExpFind, RegExpTestBoxed, RegExpMatchLiteral,
+    RegExpMatchLiteralWithoutObject, RegExpMatchFlatProgram8, NewRegExpLiteral, SharedRegExpLiteral, NewRegExp, RegExpFlags, RegExpSource,
     StringReplaceString, StringReplaceAllString, StringReplaceRegExp, StringReplaceAllRegExp, StringReplaceRegExpString, StringSplitString,
     StringSplitRegExp, StringMatchRegExp, StringSearchRegExp, RegExpExecPrefix, StringMatchPrefix, JSONSourceOpen, JSONSourceClose, JSONSourceAbandon,
     JSONDecodeBytes, JSONParseString, JSONParseKey, JSONParseValue, JSONParseNumber, JSONParseInteger, JSONFindMember, JSONMemberRepeats,
     JSONKeyRepeats, JSONObjectKey, JSONObjectFinish, JSONParseExtraMembers, JSONAddExtraMember, JSONAppendString, JSONAppendInteger, JSONAppendNumber,
-    JSONAppendDate, JSONAppendValue
+    JSONAppendDate, JSONAppendValue, JSONStringifyPrimitive
 };
 enum class NaturalTable : uint8_t { Addition, Arithmetic, Bitwise, Numeric, BitwiseNot };
 enum class OperandClass : uint8_t { NumberLike, BigInt, String, Any };
 enum class NamedEffectSet : uint8_t {
-    CreatesConstant, Allocates, UsesRuntime, ResolvesRopes, CreatesString, GrowsArray, AppendsToBuilder, ReadsObjectGraph, DefinesProperty,
-    RuntimeAllocates, RuntimeCreatesConstant, RuntimeCreatesString, RuntimeGrowsArray, RuntimeCreatesField, RuntimeMatchesRegExp
+    CreatesConstant, Allocates, AllocatesWithoutCollecting, UsesRuntime, ResolvesRopes, CreatesString, GrowsArray, AppendsToBuilder, ReadsObjectGraph,
+    DefinesProperty, DefinesMemberOfClass, RuntimeAllocates, RuntimeCreatesConstant, RuntimeCreatesString, RuntimeGrowsArray, RuntimeCreatesField,
+    RuntimeMatchesRegExp
 };
 
-inline constexpr unsigned numberOfOpcodes = 362;
-inline constexpr unsigned numberOfWireOpcodes = 171;
+inline constexpr unsigned numberOfOpcodes = 392;
+inline constexpr unsigned numberOfWireOpcodes = 177;
 inline constexpr unsigned numberOfTerminatorKinds = 12;
 inline constexpr unsigned numberOfWireTerminatorKinds = 9;
-inline constexpr unsigned numberOfAbstractHeaps = 25;
+inline constexpr unsigned numberOfAbstractHeaps = 24;
 inline constexpr unsigned numberOfWireOpaqueKinds = 4;
-inline constexpr unsigned numberOfProgramLists = 35;
-inline constexpr unsigned numberOfRuntimeOperations = 404;
-inline constexpr unsigned numberOfInlineBuiltins = 153;
+inline constexpr unsigned numberOfProgramLists = 39;
+inline constexpr unsigned numberOfRuntimeOperations = 460;
+inline constexpr unsigned numberOfInlineBuiltins = 156;
 
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(Opcode); JS_EXPORT_PRIVATE ASCIILiteral nameOf(TerminatorKind);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(OperationFamily); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AbstractHeap);
@@ -185,9 +200,8 @@ constexpr bool isObservable(AbstractHeap heap)
     case AbstractHeap::CollectionEntries: case AbstractHeap::InternalFields: case AbstractHeap::RegExpState: case AbstractHeap::PromiseState:
     case AbstractHeap::ExternalState:
         return true;
-    case AbstractHeap::ShapeEpoch: case AbstractHeap::MemberGuards: case AbstractHeap::CollectionStorage: case AbstractHeap::StringStorage:
-    case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState: case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState:
-    case AbstractHeap::ValidationState:
+    case AbstractHeap::MemberGuards: case AbstractHeap::CollectionStorage: case AbstractHeap::StringStorage: case AbstractHeap::StringBuilderContents:
+    case AbstractHeap::ParserState: case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -197,11 +211,11 @@ constexpr bool isOrdered(AbstractHeap heap)
 {
     switch (heap) {
     case AbstractHeap::ModuleVariables: case AbstractHeap::EnvironmentFields: case AbstractHeap::ObjectFields: case AbstractHeap::ShapeWords:
-    case AbstractHeap::OrderWords: case AbstractHeap::ShapeEpoch: case AbstractHeap::MemberGuards: case AbstractHeap::PrototypeLinks:
-    case AbstractHeap::NamedProperties: case AbstractHeap::Elements: case AbstractHeap::ArrayStorage: case AbstractHeap::TypedArrayStorage:
-    case AbstractHeap::TypedArrayElements: case AbstractHeap::CollectionStorage: case AbstractHeap::CollectionEntries:
-    case AbstractHeap::InternalFields: case AbstractHeap::RegExpState: case AbstractHeap::PromiseState: case AbstractHeap::StringStorage:
-    case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState: case AbstractHeap::ExternalState: case AbstractHeap::RuntimeState:
+    case AbstractHeap::OrderWords: case AbstractHeap::MemberGuards: case AbstractHeap::PrototypeLinks: case AbstractHeap::NamedProperties:
+    case AbstractHeap::Elements: case AbstractHeap::ArrayStorage: case AbstractHeap::TypedArrayStorage: case AbstractHeap::TypedArrayElements:
+    case AbstractHeap::CollectionStorage: case AbstractHeap::CollectionEntries: case AbstractHeap::InternalFields: case AbstractHeap::RegExpState:
+    case AbstractHeap::PromiseState: case AbstractHeap::StringStorage: case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState:
+    case AbstractHeap::ExternalState: case AbstractHeap::RuntimeState:
         return true;
     case AbstractHeap::AllocatorState: case AbstractHeap::ValidationState:
         return false;
@@ -216,11 +230,10 @@ constexpr bool holdsValues(AbstractHeap heap)
     case AbstractHeap::NamedProperties: case AbstractHeap::Elements: case AbstractHeap::CollectionEntries: case AbstractHeap::InternalFields:
     case AbstractHeap::PromiseState:
         return true;
-    case AbstractHeap::ShapeWords: case AbstractHeap::OrderWords: case AbstractHeap::ShapeEpoch: case AbstractHeap::MemberGuards:
-    case AbstractHeap::ArrayStorage: case AbstractHeap::TypedArrayStorage: case AbstractHeap::TypedArrayElements:
-    case AbstractHeap::CollectionStorage: case AbstractHeap::RegExpState: case AbstractHeap::StringStorage: case AbstractHeap::StringBuilderContents:
-    case AbstractHeap::ParserState: case AbstractHeap::ExternalState: case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState:
-    case AbstractHeap::ValidationState:
+    case AbstractHeap::ShapeWords: case AbstractHeap::OrderWords: case AbstractHeap::MemberGuards: case AbstractHeap::ArrayStorage:
+    case AbstractHeap::TypedArrayStorage: case AbstractHeap::TypedArrayElements: case AbstractHeap::CollectionStorage: case AbstractHeap::RegExpState:
+    case AbstractHeap::StringStorage: case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState: case AbstractHeap::ExternalState:
+    case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -234,9 +247,9 @@ constexpr bool isPerObject(AbstractHeap heap)
     case AbstractHeap::CollectionStorage: case AbstractHeap::CollectionEntries: case AbstractHeap::InternalFields: case AbstractHeap::PromiseState:
     case AbstractHeap::StringBuilderContents:
         return true;
-    case AbstractHeap::ModuleVariables: case AbstractHeap::ShapeEpoch: case AbstractHeap::MemberGuards: case AbstractHeap::TypedArrayStorage:
-    case AbstractHeap::TypedArrayElements: case AbstractHeap::RegExpState: case AbstractHeap::StringStorage: case AbstractHeap::ParserState:
-    case AbstractHeap::ExternalState: case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
+    case AbstractHeap::ModuleVariables: case AbstractHeap::MemberGuards: case AbstractHeap::TypedArrayStorage: case AbstractHeap::TypedArrayElements:
+    case AbstractHeap::RegExpState: case AbstractHeap::StringStorage: case AbstractHeap::ParserState: case AbstractHeap::ExternalState:
+    case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -247,12 +260,11 @@ constexpr bool hasSingleValueLocations(AbstractHeap heap)
     switch (heap) {
     case AbstractHeap::ModuleVariables: case AbstractHeap::EnvironmentFields: case AbstractHeap::ObjectFields: case AbstractHeap::NamedProperties:
         return true;
-    case AbstractHeap::ShapeWords: case AbstractHeap::OrderWords: case AbstractHeap::ShapeEpoch: case AbstractHeap::MemberGuards:
-    case AbstractHeap::PrototypeLinks: case AbstractHeap::Elements: case AbstractHeap::ArrayStorage: case AbstractHeap::TypedArrayStorage:
-    case AbstractHeap::TypedArrayElements: case AbstractHeap::CollectionStorage: case AbstractHeap::CollectionEntries:
-    case AbstractHeap::InternalFields: case AbstractHeap::RegExpState: case AbstractHeap::PromiseState: case AbstractHeap::StringStorage:
-    case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState: case AbstractHeap::ExternalState: case AbstractHeap::AllocatorState:
-    case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
+    case AbstractHeap::ShapeWords: case AbstractHeap::OrderWords: case AbstractHeap::MemberGuards: case AbstractHeap::PrototypeLinks:
+    case AbstractHeap::Elements: case AbstractHeap::ArrayStorage: case AbstractHeap::TypedArrayStorage: case AbstractHeap::TypedArrayElements:
+    case AbstractHeap::CollectionStorage: case AbstractHeap::CollectionEntries: case AbstractHeap::InternalFields: case AbstractHeap::RegExpState:
+    case AbstractHeap::PromiseState: case AbstractHeap::StringStorage: case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState:
+    case AbstractHeap::ExternalState: case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -298,11 +310,11 @@ constexpr bool isInteriorPointer(OpaqueKind kind)
 constexpr unsigned numberOfIndexesOf(AbstractHeap heap)
 {
     switch (heap) {
-    case AbstractHeap::OrderWords: case AbstractHeap::ShapeEpoch: case AbstractHeap::PrototypeLinks: case AbstractHeap::ArrayStorage:
-    case AbstractHeap::TypedArrayStorage: case AbstractHeap::TypedArrayElements: case AbstractHeap::CollectionStorage:
-    case AbstractHeap::CollectionEntries: case AbstractHeap::InternalFields: case AbstractHeap::RegExpState: case AbstractHeap::PromiseState:
-    case AbstractHeap::StringStorage: case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState: case AbstractHeap::ExternalState:
-    case AbstractHeap::AllocatorState: case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
+    case AbstractHeap::OrderWords: case AbstractHeap::PrototypeLinks: case AbstractHeap::ArrayStorage: case AbstractHeap::TypedArrayStorage:
+    case AbstractHeap::TypedArrayElements: case AbstractHeap::CollectionStorage: case AbstractHeap::CollectionEntries:
+    case AbstractHeap::InternalFields: case AbstractHeap::RegExpState: case AbstractHeap::PromiseState: case AbstractHeap::StringStorage:
+    case AbstractHeap::StringBuilderContents: case AbstractHeap::ParserState: case AbstractHeap::ExternalState: case AbstractHeap::AllocatorState:
+    case AbstractHeap::RuntimeState: case AbstractHeap::ValidationState:
         return 0;
     case AbstractHeap::ModuleVariables: case AbstractHeap::ObjectFields: case AbstractHeap::ShapeWords: case AbstractHeap::MemberGuards:
     case AbstractHeap::NamedProperties: case AbstractHeap::Elements:
@@ -386,20 +398,20 @@ constexpr std::optional<OpaqueKind> opaqueKindOf(OperandKind kind)
 
 } // namespace Typed
 
-template<> inline constexpr unsigned numberOfEnumerators<Typed::Opcode> = 362;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::Opcode> = 392;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::TerminatorKind> = 12;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::OperationFamily> = 47;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::AbstractHeap> = 25;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::OperationFamily> = 48;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::AbstractHeap> = 24;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::OpaqueKind> = 11;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::ProgramList> = 35;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::InlineBuiltin> = 153;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::ProgramList> = 39;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::InlineBuiltin> = 156;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::InlineBuiltinFamily> = 16;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::RuntimeOperation> = 404;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::RuntimeOperation> = 460;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::NaturalTable> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::OperandClass> = 4;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::NamedEffectSet> = 15;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::NamedEffectSet> = 17;
 
-template<> inline constexpr unsigned numberOfWireEnumerators<Typed::Opcode> = 171;
+template<> inline constexpr unsigned numberOfWireEnumerators<Typed::Opcode> = 177;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::TerminatorKind> = 9;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::OperationFamily> = 0;
 template<> inline constexpr unsigned numberOfWireEnumerators<Typed::AbstractHeap> = 0;

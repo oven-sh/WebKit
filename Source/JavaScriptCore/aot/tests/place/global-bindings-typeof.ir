@@ -1,0 +1,26 @@
+# `typeof name` asks another question than a read of the name: where nothing is bound to it, the one answers undefined and the other throws. So it has a record of its own
+# FORM: Selected
+# RUN: pass NumberAndEncode
+# STATISTIC: GlobalBindingsPlaced = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="main" results=[{type=anything}] {
+  b0():
+    v0 = GetGlobalBinding key="shared" level=Expected [seesScriptBindings, isForTypeOf]
+    v1 = GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+    v2 = GetGlobalBinding key="shared" level=Expected [seesScriptBindings, isForTypeOf]
+    v3 = GetGlobalBinding key="shared" level=Expected
+    Return v0
+}
+
+# CHECK: globalBinding 0 "shared" read seesScriptBindings isForTypeOf
+# CHECK-NEXT: globalBinding 1 "shared" read seesScriptBindings
+# CHECK-NEXT: globalBinding 2 "shared" read
+# CHECK-NOT: globalBinding
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v0:{{*}}= GetGlobalBinding key="shared" level=Expected binding=0 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v1:{{*}}= GetGlobalBinding key="shared" level=Expected binding=1 [seesScriptBindings]
+# CHECK-NEXT: v2:{{*}}= GetGlobalBinding key="shared" level=Expected binding=0 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v3:{{*}}= GetGlobalBinding key="shared" level=Expected binding=2

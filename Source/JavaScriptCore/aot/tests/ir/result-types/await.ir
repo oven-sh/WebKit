@@ -1,4 +1,4 @@
-# Await of a primitive is the primitive; what a promise holds is only predicted, because Await names no guard for an untouched then
+# Await of a primitive is the primitive; what a promise holds is only expected, because Await names no guard for an untouched then
 # FORM: Prepared
 # RUN: result-types
 # CHECK: v5: number

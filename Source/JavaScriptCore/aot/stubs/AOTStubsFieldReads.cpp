@@ -9,10 +9,17 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTClassToken.h"
 #include "AOTCompiledStructure.h"
 #include "AOTInstance.h"
+#include "AOTLayoutData.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
+#include "AOTStubRegisters.h"
+#include "JSCellButterfly.h"
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
@@ -121,6 +128,24 @@ void computeFieldAddress(StubAssembler& jit, const FieldAddressRegisters& r, boo
     jit.urshift32(r.slotData, TrustedImm32(SlotData::offsetBits), r.representation);
 }
 
+void loadGetterSetterInField(StubAssembler& jit, GPRReg address, GPRReg representation, GPRReg result, JumpList& isAbsent)
+{
+    static_assert(traitsOf(SlotRepresentation::Cell32).isNarrowReference && traitsOf(SlotRepresentation::OptionalCell32).isNarrowReference);
+    static_assert(widthOf(SlotRepresentation::JSValue) == sizeof(EncodedJSValue) && widthOf(SlotRepresentation::Cell) == sizeof(EncodedJSValue));
+    JumpList isNarrow;
+    isNarrow.append(jit.branch32(CCallHelpers::Equal, representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::OptionalCell32))));
+    isNarrow.append(jit.branch32(CCallHelpers::Equal, representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::Cell32))));
+    jit.load64(Address(address), result);
+    isAbsent.append(jit.branchTest64(CCallHelpers::Zero, result));
+    Jump isLoaded = jit.jump();
+
+    isNarrow.link(&jit);
+    jit.load32(Address(address), result);
+    isAbsent.append(jit.branch32(CCallHelpers::Below, result, TrustedImm32(minCell32)));
+    decodeCell32(jit, result, result);
+    isLoaded.link(&jit);
+}
+
 static void returnValue(StubAssembler& jit, const FieldReadRegisters& r)
 {
     jit.move(r.value, r.result);
@@ -133,19 +158,19 @@ static void returnInt32(StubAssembler& jit, const FieldReadRegisters& r)
     jit.returnToCaller();
 }
 
-static void returnDouble(StubAssembler& jit, const FieldReadRegisters& r)
+static void returnDouble(StubAssembler& jit, const FieldReadRegisters& r, PureDouble number)
 {
-    boxDouble(jit, r.number, r.result);
+    boxDouble(jit, number, r.result);
     jit.returnToCaller();
 }
 
-static void returnNumber(StubAssembler& jit, const FieldReadRegisters& r)
+static void returnNumber(StubAssembler& jit, const FieldReadRegisters& r, PureDouble number)
 {
     JumpList notInt32;
-    branchIfNotExactInt32(jit, r.number, r.value, notInt32, r.numberScratch);
+    branchIfNotExactInt32(jit, number.fpr(), r.value, notInt32, r.numberScratch);
     returnInt32(jit, r);
     notInt32.link(&jit);
-    returnDouble(jit, r);
+    returnDouble(jit, r, number);
 }
 
 static void readEncodedValue(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
@@ -222,8 +247,7 @@ static void readNarrowInteger(StubAssembler& jit, const SlotTraits& traits, cons
         Jump notInt32 = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(0));
         returnInt32(jit, r);
         notInt32.link(&jit);
-        jit.convertInt64ToDouble(r.value, r.number);
-        returnDouble(jit, r);
+        returnDouble(jit, r, PureDouble::convertInt64(jit, r.value, r.number));
         return;
     }
     }
@@ -241,16 +265,16 @@ static void readInt64(StubAssembler& jit, const SlotTraits& traits, const FieldR
     returnInt32(jit, r);
     exceedsInt32.link(&jit);
     branchOnMarkers(jit, traits, r.value, exits, shared);
-    jit.convertInt64ToDouble(r.value, r.number);
-    returnDouble(jit, r);
+    returnDouble(jit, r, PureDouble::convertInt64(jit, r.value, r.number));
 }
 
-static void readInt32OrDouble(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
+static void readOptionalInt32(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
 {
+    RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger && traits.width == sizeof(int32_t) && traits.hasAbsent);
     jit.load32(Address(r.field.address), r.value);
-    Jump notInlineNumber = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(minInlineInt32));
+    Jump isMarker = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(minInlineInt32));
     returnInt32(jit, r);
-    notInlineNumber.link(&jit);
+    isMarker.link(&jit);
     branchOnMarkers(jit, traits, r.value, exits, shared);
     exits.cannot.append(jit.jump());
 }
@@ -258,8 +282,8 @@ static void readInt32OrDouble(StubAssembler& jit, const SlotTraits& traits, cons
 static void readDouble(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
 {
     jit.loadDouble(Address(r.field.address), r.number);
-    Jump isNaN = jit.branchIfNaN(r.number);
-    returnNumber(jit, r);
+    Jump isNaN;
+    returnNumber(jit, r, PureDouble::branchIfNaN(jit, r.number, isNaN));
     if (!traits.hasAbsent && !traits.hasUndefined && !traits.hasNull) {
         shared.isNaN.append(isNaN);
         return;
@@ -274,8 +298,7 @@ static void readFloat(StubAssembler& jit, const FieldReadRegisters& r, SharedRea
 {
     jit.loadFloat(Address(r.field.address), r.number);
     jit.convertFloatToDouble(r.number, r.number);
-    shared.isNaN.append(jit.branchIfNaN(r.number));
-    returnNumber(jit, r);
+    returnNumber(jit, r, PureDouble::branchIfNaN(jit, r.number, shared.isNaN));
 }
 
 static void readBoolean(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
@@ -291,12 +314,17 @@ static void readBoolean(StubAssembler& jit, const SlotTraits& traits, const Fiel
     returnValue(jit, r);
 }
 
-static void readDeferredClosure(StubAssembler& jit, const FieldReadRegisters& r, FieldReadExits& exits)
+static void readDeferredClosure(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
 {
+    RELEASE_ASSERT(traits.hasAbsent && traits.absentBits == absentDeferredClosure);
     jit.load32(Address(r.field.address), r.value);
-    exits.cannot.append(jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32)));
+    Jump isNotCreated = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
     decodeCell32(jit, r.value, r.result);
     jit.returnToCaller();
+
+    isNotCreated.link(&jit);
+    exits.isAbsent.append(branchIfBitsEqual(jit, traits.width, r.value, traits.absentBits));
+    exits.cannot.append(jit.jump());
 }
 
 static void emitReadOf(StubAssembler& jit, SlotRepresentation representation, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
@@ -320,12 +348,9 @@ static void emitReadOf(StubAssembler& jit, SlotRepresentation representation, co
         if (traits.width == sizeof(int64_t))
             readInt64(jit, traits, r, exits, shared);
         else if (traits.hasAbsent)
-            readInt32OrDouble(jit, traits, r, exits, shared);
+            readOptionalInt32(jit, traits, r, exits, shared);
         else
             readNarrowInteger(jit, traits, r);
-        return;
-    case SlotValueKind::Int32OrDouble:
-        readInt32OrDouble(jit, traits, r, exits, shared);
         return;
     case SlotValueKind::Double:
         readDouble(jit, traits, r, exits, shared);
@@ -337,7 +362,7 @@ static void emitReadOf(StubAssembler& jit, SlotRepresentation representation, co
         readBoolean(jit, traits, r, exits);
         return;
     case SlotValueKind::DeferredClosure:
-        readDeferredClosure(jit, r, exits);
+        readDeferredClosure(jit, traits, r, exits);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -348,8 +373,16 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     RELEASE_ASSERT(noOverlap(r.field.object, r.field.address, r.field.representation, r.value, r.number, r.numberScratch));
     RELEASE_ASSERT(noOverlap(r.result, r.field.address, r.field.representation, r.value));
 
+    // The code for a boxed value reads a cell: both have the empty value for "absent". The code for a narrow reference that may be undefined or null reads one that may not: it never holds their markers.
+    constexpr SlotTraits boxed = traitsOf(SlotRepresentation::JSValue);
+    constexpr SlotTraits cell = traitsOf(SlotRepresentation::Cell);
+    static_assert(boxed.width == cell.width && boxed.hasAbsent && cell.hasAbsent && boxed.absentBits == cell.absentBits && !cell.isNarrowReference);
+    constexpr SlotTraits optionalCell32 = traitsOf(SlotRepresentation::OptionalCell32);
+    constexpr SlotTraits cell32 = traitsOf(SlotRepresentation::Cell32);
+    static_assert(optionalCell32.width == cell32.width && optionalCell32.isNarrowReference && cell32.isNarrowReference && optionalCell32.absentBits == cell32.absentBits && !cell32.absentBits);
+
     SharedReadResults shared;
-    emitDispatchOnRepresentation(jit, r.field.representation, [&](SlotRepresentation representation) {
+    emitDispatchOnRepresentationForRead(jit, r.field.representation, [&](SlotRepresentation representation) {
         emitReadOf(jit, representation, r, exits, shared);
     });
 
@@ -424,6 +457,136 @@ void returnFieldPresence(StubAssembler& jit, const CachedSlot& slot, const Field
     isUnknown.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
     jit.move(TrustedImm32(0), jit.result());
     jit.returnToCaller();
+}
+
+StubSignature signatureOfPrivateGet(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(StubRegister::A1) });
+    signature.immediate = gprOf(stubImmediateRegister);
+    return signature;
+}
+
+static Address slotOfButterfly(GPRReg butterfly, unsigned slot)
+{
+    return Address(butterfly, static_cast<int32_t>(JSCellButterfly::offsetOfData() + slot * sizeof(EncodedJSValue)));
+}
+
+// At a location above zero from the object, below zero from its butterfly. The location is extended in place.
+static void loadAtLocation(StubAssembler& jit, GPRReg object, GPRReg location, GPRReg storage, GPRReg result)
+{
+    jit.signExtend32ToPtr(location, location);
+    Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, location, CCallHelpers::TrustedImmPtr(nullptr));
+    jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
+    jit.load64(BaseIndex(storage, location, CCallHelpers::TimesOne), result);
+    Jump done = jit.jump();
+    isInObject.link(&jit);
+    jit.load64(BaseIndex(object, location, CCallHelpers::TimesOne), result);
+    done.link(&jit);
+}
+
+// The two usual reads of a private name. A compiled object of the very class that declares the name, where the class is evaluated once, keeps it in the slot of its field.
+// An object that is no compiled object keeps it as a property, and the token knows where for the Structures it has met: see ClassToken::KnownStructureSlot.
+// Everything else, and every error, is the operation's.
+void generatePrivateGet(StubAssembler& jit)
+{
+    constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
+    static_assert(sizeof(FieldData) == 1u << fieldSizeShift);
+    using WordsOfLayout = std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>;
+    LayoutData withEveryEvaluationBit { };
+    withEveryEvaluationBit.evaluationBits = 3;
+    LayoutData evaluatedOnce { };
+    evaluatedOnce.evaluationBits = static_cast<uint32_t>(EvaluationState::ProvenOnce);
+    const uint32_t evaluationMask = std::bit_cast<WordsOfLayout>(withEveryEvaluationBit)[0];
+    const uint32_t provenOnce = std::bit_cast<WordsOfLayout>(evaluatedOnce)[0];
+    RELEASE_ASSERT(evaluationMask && provenOnce && !(provenOnce & ~evaluationMask));
+
+    const GPRReg object = jit.operand(0);
+    const GPRReg token = jit.operand(1);
+    const GPRReg field = jit.immediate();
+    const GPRReg T10 = jit.allocateScratch(StubRegister::T10);
+    const GPRReg T11 = jit.allocateScratch(StubRegister::T11);
+    const GPRReg T12 = jit.allocateScratch(StubRegister::T12);
+    RELEASE_ASSERT(noOverlap(object, token, field, T10, T11, T12));
+    JumpList goesToRunTime;
+
+    goesToRunTime.append(jit.branchIfNotCell(object));
+    Jump isNotCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
+    {
+        const GPRReg layout = T12;
+        const GPRReg record = T11;
+        constexpr uint32_t flagsLeftToRunTime = fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsAccessor;
+        loadStructure(jit, object, layout);
+        jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
+        // The number is an int32 in a JSValue: its lower half is the number.
+        jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), T10);
+        goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, T10, Address(layout, OBJECT_OFFSETOF(LayoutData, index))));
+        jit.load32(Address(layout), T10);
+        jit.and32(TrustedImm32(static_cast<int32_t>(evaluationMask)), T10);
+        goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, T10, TrustedImm32(static_cast<int32_t>(provenOnce))));
+        jit.zeroExtend32ToWord(field, record);
+        jit.lshift64(TrustedImm32(fieldSizeShift), record);
+        jit.addPtr(layout, record);
+        goesToRunTime.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags))), TrustedImm32(flagsLeftToRunTime)));
+
+        const FieldReadRegisters registers {
+            .field = {
+                .object = object,
+                .slotData = T10,
+                .extensionWordOffset = T11,
+                .address = T11,
+                .representation = T12,
+            },
+            .value = T10,
+            .result = jit.result(),
+            .number = jit.allocateScratch(FPRInfo::fpRegT0),
+            .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
+        };
+        FieldReadExits exits;
+        jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), registers.field.slotData);
+        computeFieldAddress(jit, registers.field, false, exits.isAbsent);
+        readFieldAndReturn(jit, registers, exits);
+        goesToRunTime.append(exits.isAbsent);
+        goesToRunTime.append(exits.cannot);
+    }
+
+    isNotCompiledObject.link(&jit);
+    {
+        const GPRReg records = T12;
+        const GPRReg location = T11;
+        const GPRReg storage = T10;
+        constexpr unsigned bytesOfRecord = ClassToken::slotsPerRecord * sizeof(EncodedJSValue);
+        constexpr unsigned shiftOfRecordsOfField = WTF::fastLog2(ClassToken::recordsPerField * bytesOfRecord);
+        static_assert(ClassToken::recordsPerField * bytesOfRecord == 1u << shiftOfRecordsOfField && ClassToken::recordsProbedByCompiledCode == 2);
+        jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), records);
+        goesToRunTime.append(jit.branchTest64(CCallHelpers::Zero, records));
+        jit.zeroExtend32ToWord(field, location);
+        jit.lshift64(TrustedImm32(shiftOfRecordsOfField), location);
+        jit.addPtr(location, records);
+        jit.load32(Address(object, JSCell::structureIDOffset()), storage);
+        Jump isFirst = jit.branch32(CCallHelpers::Equal, storage, slotOfButterfly(records, ClassToken::StructureNumber));
+        goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, storage, slotOfButterfly(records, ClassToken::slotsPerRecord + ClassToken::StructureNumber)));
+        jit.addPtr(TrustedImm32(bytesOfRecord), records);
+        isFirst.link(&jit);
+
+        jit.load32(slotOfButterfly(records, ClassToken::LocationOfBrand), location);
+        Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, location);
+        loadAtLocation(jit, object, location, storage, location);
+        goesToRunTime.append(jit.branch64(CCallHelpers::NotEqual, location, token));
+        needsNoBrand.link(&jit);
+        jit.load32(slotOfButterfly(records, ClassToken::LocationOfValue), location);
+        loadAtLocation(jit, object, location, storage, jit.result());
+        jit.returnToCaller();
+    }
+
+    goesToRunTime.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTPrivateGet, {
+        .returns = OperationCall::Returns::Value,
+        .firstArgument = OperationCall::FirstArgument::Instance,
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .secondArgumentIn = object,
+        .thirdArgumentIn = token,
+        .fourthArgumentIn = field,
+    });
 }
 
 } } // namespace JSC::AOT

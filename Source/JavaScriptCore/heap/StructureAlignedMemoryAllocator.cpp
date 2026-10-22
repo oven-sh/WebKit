@@ -30,13 +30,34 @@
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include "Options.h"
-#include "ReservedRangeHeap.h"
 #include "StructureID.h"
-#include <wtf/NeverDestroyed.h>
+#include <bmalloc/bmalloc.h>
+#include <wtf/BitVector.h>
+#include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/RAMSize.h>
 
 #if OS(DARWIN)
 #include <wtf/cocoa/Entitlements.h>
+#endif
+#if CPU(ADDRESS64)
+#include <wtf/NeverDestroyed.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#if USE(LIBPAS)
+#include <bmalloc/bmalloc_heap.h>
+#include <bmalloc/bmalloc_heap_config.h>
+#include <bmalloc/bmalloc_heap_inlines.h>
+#include <bmalloc/bmalloc_heap_ref.h>
+#include <bmalloc/pas_primitive_heap_ref.h>
+#elif USE(MIMALLOC)
+#include <bmalloc/mimalloc.h>
+#if OS(LINUX)
+#include <sys/mman.h>
+#include <errno.h>
+#elif OS(DARWIN)
+#include <mach/mach.h>
+#endif
+#endif
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 #include <wtf/OSAllocator.h>
@@ -69,6 +90,17 @@ void* StructureAlignedMemoryAllocator::tryReallocateMemory(void*, size_t)
 }
 
 #if CPU(ADDRESS64)
+#if USE(LIBPAS)
+
+static const bmalloc_type structureHeapType { BMALLOC_TYPE_INITIALIZER(MarkedBlock::blockSize, MarkedBlock::blockSize, "Structure Heap") };
+static pas_primitive_heap_ref structureHeap { BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(&structureHeapType) };
+
+#elif USE(MIMALLOC)
+
+static mi_arena_id_t structureArena { };
+static mi_heap_t* structureHeap { };
+
+#endif
 
 class StructureMemoryManager {
 public:
@@ -79,38 +111,167 @@ public:
             preferredStructureHeapSize = static_cast<size_t>(Options::structureHeapSizeInKB()) * KB;
         RELEASE_ASSERT(hasOneBitSet(preferredStructureHeapSize));
 
-        // We need to align the address range to mappedHeapSize to ensure that the range does not span
-        // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
-        // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
-        // order to encode StructureIDs.
-        m_heap = ReservedRangeHeap::tryCreate({
-            .name = "Structure Heap"_s,
-            .size = preferredStructureHeapSize,
-            .minSize = std::min<size_t>(preferredStructureHeapSize, MB),
-            // Don't use the first page because zero is used as the empty StructureID and the first allocation will conflict.
-            .unusedPrefixSize = MarkedBlock::blockSize,
-            .addressSpaceBudget = addressSpaceToReserve() / addressSpaceDivisorForStructures,
-            .usage = OSAllocator::StructureAllocatorPages,
-        });
-        RELEASE_ASSERT(m_heap, preferredStructureHeapSize);
-        g_jscConfig.startOfStructureHeap = m_heap->start();
-        uintptr_t mappedHeapSize = m_heap->size();
+        uintptr_t mappedHeapSize = preferredStructureHeapSize;
+        if (Options::useAOT())
+            mappedHeapSize = structureHeapSizeWithinBudget(mappedHeapSize);
+        for (unsigned i = 0; i < 8; ++i) {
+            // We need to align the address range to mappedHeapSize to ensure that the range does not span
+            // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
+            // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
+            // order to encode StructureIDs.
+#if OS(LINUX) && defined(BUN_HARDENED)
+            static constexpr uintptr_t lowestRandomAddress = 64 * GB;
+            static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
+            uintptr_t firstWindow = (lowestRandomAddress + mappedHeapSize - 1) / mappedHeapSize;
+            uintptr_t endWindow = highestRandomAddress / mappedHeapSize;
+            for (unsigned attempt = 0; attempt < 16 && !g_jscConfig.startOfStructureHeap; ++attempt) {
+                void* requestedAddress = std::bit_cast<void*>((firstWindow + cryptographicallyRandomNumber<uint32_t>() % (endWindow - firstWindow)) * mappedHeapSize);
+                void* reserved = OSAllocator::tryReserveUncommitted(mappedHeapSize, OSAllocator::StructureAllocatorPages, requestedAddress);
+                if (!reserved)
+                    break;
+                if (reserved == requestedAddress)
+                    g_jscConfig.startOfStructureHeap = std::bit_cast<uintptr_t>(reserved);
+                else
+                    OSAllocator::releaseDecommitted(reserved, mappedHeapSize, 0);
+            }
+            if (g_jscConfig.startOfStructureHeap)
+                break;
+#endif
+            g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages));
+            if (g_jscConfig.startOfStructureHeap)
+                break;
+            mappedHeapSize /= 2;
+        }
         RELEASE_ASSERT(g_jscConfig.startOfStructureHeap, g_jscConfig.startOfStructureHeap, preferredStructureHeapSize, mappedHeapSize);
         RELEASE_ASSERT(hasOneBitSet(mappedHeapSize), mappedHeapSize);
         uintptr_t alignmentMask = mappedHeapSize - 1;
         RELEASE_ASSERT(!(g_jscConfig.startOfStructureHeap & alignmentMask), g_jscConfig.startOfStructureHeap, mappedHeapSize, alignmentMask);
         g_jscConfig.sizeOfStructureHeap = mappedHeapSize;
         g_jscConfig.structureIDBase = g_jscConfig.startOfStructureHeap & ~StructureID::structureIDMask;
+
+        // Don't use the first page because zero is used as the empty StructureID and the first allocation will conflict.
+        m_useSystemHeap = !bmalloc::api::isEnabled();
+#if USE(MIMALLOC)
+        if (Options::useAOT() && mappedHeapSize < smallestStructureHeapSizeForMimalloc)
+            m_useSystemHeap = true;
+#endif
+#if USE(LIBPAS)
+        if (!m_useSystemHeap) [[likely]] {
+#if PLATFORM(PLAYSTATION)
+            // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
+            // https://bugs.webkit.org/show_bug.cgi?id=292771
+            OSAllocator::commit((void *) g_jscConfig.startOfStructureHeap, MarkedBlock::blockSize, true, false);
+#endif
+            bmalloc_force_auxiliary_heap_into_reserved_memory(&structureHeap, reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize, reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + g_jscConfig.sizeOfStructureHeap);
+            return;
+        }
+        m_usedBlocks.set(0);
+#elif USE(MIMALLOC)
+        if (!m_useSystemHeap) [[likely]] {
+            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
+            size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
+            // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
+            // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
+            // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.
+            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena));
+            structureHeap = mi_heap_new_in_arena(structureArena);
+#if OS(LINUX) && defined(MADV_DOFORK)
+            // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
+            // mi_arena_t and theaps inside this region and registers them in
+            // process-wide lists that _mi_process_fork_child walks pre-exec.
+            while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+#elif OS(DARWIN)
+            // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
+            // same rationale as the Linux MADV_DOFORK branch above.
+            vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
+#endif
+            return;
+        }
+        m_usedBlocks.set(0);
+#else
+        m_usedBlocks.set(0);
+#endif
     }
 
     void* tryMallocStructureBlock()
     {
-        return m_heap->tryAllocateAligned(MarkedBlock::blockSize, MarkedBlock::blockSize);
+        if (!m_useSystemHeap) [[likely]] {
+#if USE(LIBPAS)
+            void* result = bmalloc_try_allocate_auxiliary_with_alignment_inline(&structureHeap, MarkedBlock::blockSize, MarkedBlock::blockSize);
+
+#if PLATFORM(PLAYSTATION)
+            // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
+            // https://bugs.webkit.org/show_bug.cgi?id=292771
+            OSAllocator::commit(result, MarkedBlock::blockSize, true, false);
+#endif
+            return result;
+#elif USE(MIMALLOC)
+            return mi_heap_malloc_aligned(structureHeap, MarkedBlock::blockSize, MarkedBlock::blockSize);
+#endif
+        }
+
+        size_t freeIndex;
+        {
+            Locker locker(m_lock);
+            constexpr size_t startIndex = 0;
+            freeIndex = m_usedBlocks.findBit(startIndex, 0);
+            ASSERT(freeIndex <= m_usedBlocks.bitCount());
+            RELEASE_ASSERT(g_jscConfig.sizeOfStructureHeap <= computePreferredStructureHeapReservationSize());
+            if (freeIndex * MarkedBlock::blockSize >= g_jscConfig.sizeOfStructureHeap)
+                return nullptr;
+            // If we can't find a free block then `freeIndex == m_usedBlocks.bitCount()` and this set will grow the bit vector.
+            m_usedBlocks.set(freeIndex);
+        }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        auto* block = reinterpret_cast<uint8_t*>(g_jscConfig.startOfStructureHeap) + freeIndex * MarkedBlock::blockSize;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        commitBlock(block);
+        return block;
     }
 
     void freeStructureBlock(void* blockPtr)
     {
-        m_heap->free(blockPtr);
+        if (!m_useSystemHeap) [[likely]] {
+#if USE(LIBPAS)
+            bmalloc_deallocate_inline(blockPtr);
+            return;
+#elif USE(MIMALLOC)
+            mi_free(blockPtr);
+            return;
+#endif
+        }
+
+        decommitBlock(blockPtr);
+        uintptr_t block = reinterpret_cast<uintptr_t>(blockPtr);
+        RELEASE_ASSERT(g_jscConfig.startOfStructureHeap <= block && block < g_jscConfig.startOfStructureHeap + g_jscConfig.sizeOfStructureHeap);
+        RELEASE_ASSERT(roundUpToMultipleOf<MarkedBlock::blockSize>(block) == block);
+
+        Locker locker(m_lock);
+        m_usedBlocks.quickClear((block - g_jscConfig.startOfStructureHeap) / MarkedBlock::blockSize);
+    }
+
+    static void commitBlock(void* block)
+    {
+#if OS(UNIX) && !PLATFORM(PLAYSTATION) && ASSERT_ENABLED
+        constexpr bool readable = true;
+        constexpr bool writable = true;
+        OSAllocator::protect(block, MarkedBlock::blockSize, readable, writable);
+#else
+        constexpr bool writable = true;
+        constexpr bool executable = false;
+        OSAllocator::commit(block, MarkedBlock::blockSize, writable, executable);
+#endif
+    }
+
+    static void decommitBlock(void* block)
+    {
+#if OS(UNIX) && !PLATFORM(PLAYSTATION) && ASSERT_ENABLED
+        constexpr bool readable = false;
+        constexpr bool writable = false;
+        OSAllocator::protect(block, MarkedBlock::blockSize, readable, writable);
+#else
+        OSAllocator::decommit(block, MarkedBlock::blockSize);
+#endif
     }
 
 private:
@@ -119,7 +280,9 @@ private:
     // The actual preferred size will be the next power-of-two below this value
     // This value results in a 512MiB reservation on 3GiB devices, 1GiB on 4GiB
     static constexpr size_t maximumPercentageOfPhysicalMemoryToReserveWhenVAConstrained = 20;
-    ReservedRangeHeap* m_heap { nullptr };
+    Lock m_lock;
+    bool m_useSystemHeap { true };
+    BitVector m_usedBlocks;
 };
 
 static LazyNeverDestroyed<StructureMemoryManager> s_structureMemoryManager;

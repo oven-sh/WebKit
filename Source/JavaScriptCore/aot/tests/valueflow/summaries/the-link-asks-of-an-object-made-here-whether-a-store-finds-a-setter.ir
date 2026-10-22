@@ -1,0 +1,45 @@
+# function keeps(value) { kept = value }                                          a setter
+# function puts(o, other) { const box = { set x(value) { kept = value } }; box.x = o }   the store finds the setter, which has o: that the box dies here says nothing
+# function fills(o) { const box = { x: 0 }; box.x = o }                           a plain store into a plain object: o dies with the box
+# Of a parameter the caller asks whether an access runs code of the object. Of an object that the function has made itself nobody else will ever ask.
+# RUN: relational-summary
+# CHECK: f2
+# CHECK-NEXT: p0: anything
+# CHECK-NEXT: p1: nothing | contents: nothing
+# CHECK: f3
+# CHECK-NEXT: p0: nothing | contents: nothing
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Box"
+layout L2 name="Plain" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v1, v1
+    v4 = NewClosure function=f3
+    v5 = Call v4, -, v1
+    Return
+}
+function f1 name="keeps" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {index=1 fate=[IsStoredInVariable]}]} {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f2 name="puts" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{}, {index=1}, {kind=Allocation index=2 fate=[HasMembersWritten, HasMembersDeletedOrDefined]}, {kind=Allocation index=3}] stores=[{source=3 target=2 key="x" isOnEveryPath=true}, {target=2 key="x" isOnEveryPath=true}]} {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L1 fields=[]
+    v3 = NewClosure function=f1
+    DefineSetter v2, v3 key="x"
+    PropSet v2, v0 key="x" mode=Strict
+    Return
+}
+function f3 name="fills" parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{}, {kind=Allocation index=2 fate=[HasMembersWritten]}] stores=[{source=4294967295 target=1 key="x" creationOperand=1 isOnEveryPath=true isBeforeTargetLeaves=true}, {target=1 key="x" isOnEveryPath=true}]} {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    PropSet v2, v0 key="x" mode=Strict
+    Return
+}

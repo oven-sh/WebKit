@@ -87,6 +87,8 @@ public:
     void loadHolder(StubAssembler&, GPRReg result) const;
     void loadHiddenWordOffset(StubAssembler&, GPRReg result) const;
     void loadFirstPayloadWord(StubAssembler&, GPRReg result) const;
+    // Its low half is the first payload word. What is above is not zero.
+    GPRReg registerOfFirstPayloadWord() const;
     void loadSecondPayloadWord(StubAssembler&, GPRReg result) const;
     void loadPayloadBits(StubAssembler&, GPRReg result) const;
 
@@ -118,6 +120,8 @@ struct HashedProbeRegisters {
     GPRReg header;
     GPRReg payload;
     GPRReg scratch;
+    // Gets what loadSlotKind gives. May be uid or structureID.
+    GPRReg kind { InvalidGPRReg };
 };
 
 // Adds to hasNoStructure in an out-of-line part: the list has to outlive the generator, and an out-of-line part added after this call links it.
@@ -128,6 +132,17 @@ void loadFrontRow(CCallHelpers&, SlotAccess, GPRReg structureID, GPRReg row, GPR
 void loadFrontCell(StubAssembler&, SlotAccess, const FrontProbeRegisters&);
 Jump branchUnlessOwnInlineValue(StubAssembler&, GPRReg column, GPRReg cell, GPRReg scratch);
 Jump branchIfCellNameDiffers(StubAssembler&, GPRReg column, GPRReg cell, GPRReg scratch);
+#if CPU(X86_64)
+void loadFrontRowOfCell(CCallHelpers&, SlotAccess, GPRReg cell, GPRReg row, GPRReg scratch);
+// The cell of the front table for a Structure and a name lies at plane + index * 8. structureIDAndIndex holds the StructureID.
+void locateFrontCell(StubAssembler&, SlotAccess, GPRReg structureIDAndIndex, GPRReg column, GPRReg plane);
+// Answers what most reads find, each by a comparison with the cell where it lies: a value of the receiver's own in its cell, then that nothing has the name.
+// Falls through with the cell in `cell` where it has the name and says something else. Changes neither the receiver nor the column there, nor where it leaves for hasOtherName.
+void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName);
+// Where branchUnlessOwnInlineValue branches, its scratch register holds the upper half of the cell, with the bits of the name cleared if the cell has that name.
+Jump branchIfUpperHalfHasOtherName(StubAssembler&, GPRReg upperHalf);
+void jumpToPackedSlotHandlerByUpperHalf(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg upperHalf);
+#endif
 void loadIdentifier(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
 
 constexpr uint32_t integrityBitsBlockingStore(SlotOperation operation)
@@ -154,15 +169,61 @@ struct FieldTableProbe {
     std::optional<uint32_t> boundName { };
     bool nameHasColumn { true };
     bool receiverIsCell { false };
+    // Where the layout has no field of the name, and neither the object nor what is above it can have the name, the read gives undefined.
+    bool answersAbsent { false };
+    // For a probe behind the tables: what it answers is never filed, so one answer in AbsenceFilter::readsBetweenMisses is left to otherwise, where a pair that comes again and again gets its slot.
+    bool leavesNowAndThen { false };
+    // For a probe that returns what it reads: where the entry has the name and its slot in the cell does not hold the value, which mostly means that an optional field is missing, the read goes on in
+    // GetByIdOfEmptySlot or GetByIdOfSilentSlot, which answer undefined or go on through the tables by name. Without this such a slot is left to otherwise.
+    std::optional<CallerFrame> answersMissingFields { };
 };
 
 // Reads a field of a compiled object that is in its slot in the cell into result, which may be any of the probe's registers, and goes on with finish, which leaves the stub.
 // Changes neither receiver nor name where it leaves for otherwise.
-void readFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish);
+// finishWhereAbsent, which leaves the stub too, takes the place of "undefined in result, then finish".
+void readFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish, const ScopedLambda<void()>* finishWhereAbsent = nullptr);
 void returnFieldByTable(StubAssembler&, const FieldTableProbe&, JumpList& otherwise);
-// Stores value in a field of a compiled object that is in its slot, has one of the entry's own forms and needs no type test, and returns.
-void storeFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg value, GPRReg scratch, SlotOperation, JumpList& otherwise);
+// Binds GetByIdOfSilentSlot and GetByIdOfEmptySlot. The object is a compiled object whose layout has a field of the name, in the cell, and the slot does not hold the value. Mostly an optional field is missing.
+// While no field of the object lies outside its slot, an empty slot says that the object has no such property, and then the Structure and the names of Object.prototype say whether anything above it has.
+// Through the caches that answer cost 170 to 230 instructions at every visit of code that comes by a few times. Nothing falls through. Keeps object and name where it leaves.
+void answerMissingField(StubAssembler&, CallerFrame, GPRReg object, GPRReg name, GPRReg T10, GPRReg T11, GPRReg T12, JumpList& otherwise);
+// Stores value in a field of a compiled object that is in its slot, has one of the entry's own forms and needs no type test, and returns. Any other field goes on to the stub that is told its record.
+// One in 256 of those leaves by isSampled, where the caller has such a list, with the registers of the probe as they were.
+void storeFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg value, GPRReg scratch, SlotOperation, JumpList& otherwise, JumpList* isSampled = nullptr);
 void findHashedSlot(StubAssembler&, SlotAccess, const HashedProbeRegisters&, JumpList& miss);
+
+#if CPU(X86_64)
+enum class ObjectLookupQuestion : uint8_t { Read, In, HasOwn };
+// By number: name holds the number of the name and is kept. By uid: name is one more scratch register.
+enum class ObjectLookupName : bool { IsGivenByNumber, IsGivenByUID };
+
+// receiver is kept on every way out.
+struct ObjectLookupRegisters {
+    GPRReg receiver;
+    GPRReg name;
+    GPRReg uid;
+    GPRReg object;
+    GPRReg structure;
+    GPRReg size;
+    GPRReg vector;
+    GPRReg index;
+};
+
+// Asks the receiver and then the objects above it, each for what it has at this moment. Nothing is filed and nothing has to have been filed: the first question about a name costs what every other one does.
+// An ordinary object is described by the property table of its Structure, a compiled object by the row of its shape, the records of its fields and the property table of its extra properties.
+// Leaves for isUnknown at any object that looks properties up in a way of its own.
+void answerFromObjectsAndReturn(StubAssembler&, ObjectLookupQuestion, const ObjectLookupRegisters&, ObjectLookupName, JumpList& isUnknown);
+// Takes the Structure of an ordinary object in structure and leaves there what its property table has for uid: the offset, above the eight bits of the attributes. Writes size, vector and index.
+void findInPropertyTable(StubAssembler&, const ObjectLookupRegisters&, JumpList& isAbsent, JumpList& isUnknown);
+// object is a compiled object. Leaves in index where the row of its shape has the entry of the field with the name. Writes name, where the name is given by its uid, and vector.
+void locateFieldOfObject(StubAssembler&, const ObjectLookupRegisters&, ObjectLookupName, JumpList& hasNoField, JumpList& isUnknown);
+// Where receiver itself has the property as a plain value that may be written, puts value in its place and returns, and nothing is filed: an ordinary object by the property table of its Structure,
+// a compiled object whose layout has no field of the name among its extra properties. A definition only where the property has the attributes of a plain one.
+// uid is the uid itself, without the access that a search of the hashed table puts into its low bits. Leaves for cannot with receiver, value, uid and, where the name is given by its number, name as they were.
+void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot);
+// What the objects answer is never filed, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
+void countMissOfPair(StubAssembler&, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling);
+#endif
 
 inline Jump branchIfSlotKindDiffers(StubAssembler& jit, const ProbedSlot& slot, Slot::Kind kind, GPRReg scratch)
 {
@@ -182,6 +243,23 @@ inline Jump branchIfSlotKindDiffers(StubAssembler& jit, const ProbedSlot& slot, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Taken unless the slot is of kind Field or FieldGetter, which differ in the lowest bit alone.
+inline Jump branchUnlessSlotNamesField(StubAssembler& jit, const ProbedSlot& slot, GPRReg scratch)
+{
+    switch (slot.form) {
+    case SlotForm::Slot:
+        extractBits(jit, slot.header, Slot::kindShiftInHeader + 1, 8 * sizeof(Slot::Kind) - 1, scratch);
+        return jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<uint8_t>(Slot::Kind::Field) >> 1));
+    case SlotForm::PackedSlot: {
+        constexpr unsigned kindShiftInCell = 8 * PackedSlot::offsetOfBiasedKindAndFlags();
+        constexpr uint8_t biasedKind = (static_cast<uint8_t>(Slot::Kind::Field) ^ PackedSlot::ownInlineValueBits) & PackedSlot::kindMask;
+        extractBits(jit, slot.header, kindShiftInCell + 1, PackedSlot::kindBits - 1, scratch);
+        return jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(biasedKind >> 1));
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void loadSlotKind(StubAssembler&, const ProbedSlot&, GPRReg kind);
 // On x86-64 cell is zero-extended in place.
 void loadOwnInlineValue(StubAssembler&, GPRReg object, GPRReg cell, GPRReg result);
@@ -193,10 +271,11 @@ void callSlotHandler(StubAssembler&, SlotHandlerTable, GPRReg kind);
 void linkToSlotExit(StubAssembler&, JumpList&, SlotHandlerTable, SlotExit);
 void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher, const CachedSlot&);
 
-// result may be receiver or storage. storage may be the register that holds the payload of the slot.
+// result may be receiver or storage. storage may be the register that holds the payload of the slot. wordIndex may be the register that holds the header of a Slot.
 void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
 void loadInheritedValueBySlot(StubAssembler&, const CachedSlot&, GPRReg storage, GPRReg wordIndex, GPRReg result);
-void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, JumpList& isUnknown);
+enum class KindOfProbedSlot : uint8_t { IsInHeader, IsInT10 };
+void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
 
 void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics);
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);

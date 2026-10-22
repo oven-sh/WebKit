@@ -1,4 +1,5 @@
-# The nodes of a validation list from the limit on are interpreted and the nodes below it stay compiled, in the validator that a parser asks for
+# The nodes of a validation list from the limit on are interpreted and the nodes below it stay compiled, in the validator that a parser asks for.
+# The interpreter builds ordinary objects, which are in no family of layouts, so the field that takes its copy is an `object`
 # FORM: Prepared optimizing
 # OPTIONS: limit=MaxParserPlanNodes:2
 # RUN: derived-functions Validator:x0.0
@@ -7,7 +8,7 @@
 module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=L0 layouts=[L0, L1] validation=[{shape=Object{layout=L0 members=[{key="a" node=1 field=0}, {key="b" node=2 field=1}]} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Object{layout=L1 members=[{key="x" node=1 field=0}]} type=L1}]
 expectedresult x1 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="x" node=1 field=0}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
-layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="b" declared={type=object written=L1}}]
+layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="b" declared={type=object}}]
 layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
 
 # CHECK: function {{*}}role=Validator {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}

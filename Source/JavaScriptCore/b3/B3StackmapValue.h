@@ -37,6 +37,10 @@ namespace JSC {
 
 class CCallHelpers;
 
+namespace AOT { namespace Typed {
+class DirectCodeGenerator;
+} }
+
 namespace B3 {
 
 class StackmapGenerationParams;
@@ -228,6 +232,14 @@ public:
     void setRunsWithoutFrame(bool runsWithoutFrame) { m_runsWithoutFrame = runsWithoutFrame; }
     bool runsWithoutFrame() const { return m_runsWithoutFrame; }
 
+    // Of a patchpoint that runs without a frame: a frame has been set up, and torn down again, on every path to it. It relies on the stack check of the setup.
+    void setFollowsFrameSetup(bool followsFrameSetup) { m_followsFrameSetup = followsFrameSetup; }
+    bool followsFrameSetup() const { return m_followsFrameSetup; }
+
+    // What the generator emits, or what that calls, takes the frame pointer register for the frame of this function.
+    void setNeedsFrameRecord(bool needsFrameRecord) { m_needsFrameRecord = needsFrameRecord; }
+    bool needsFrameRecord() const { return m_needsFrameRecord; }
+
     // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
     void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
     bool sharesLatePath() const { return m_sharesLatePath; }
@@ -313,6 +325,7 @@ private:
     friend class PatchpointSpecial;
     friend class StackmapGenerationParams;
     friend class StackmapSpecial;
+    friend class AOT::Typed::DirectCodeGenerator;
     
     Vector<ValueRep> m_reps;
     RefPtr<StackmapGenerator> m_generator;
@@ -321,6 +334,8 @@ private:
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.
     bool m_areConstraintsFrozen { false };
     bool m_runsWithoutFrame { false };
+    bool m_followsFrameSetup { false };
+    bool m_needsFrameRecord { false };
     bool m_sharesLatePath { false };
 };
 

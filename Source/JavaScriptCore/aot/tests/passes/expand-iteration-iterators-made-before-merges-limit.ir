@@ -38,4 +38,5 @@ function f0 name="keysOrValues" parameters=[{type=Map<string, number>}, {type=bo
 # CHECK-NEXT: Switch [[arm]] cases=[0] -> case [[walk]](), otherwise [[protocol]]()
 # CHECK: = MapNext [[map]],
 # CHECK: [[protocol]]() frequency=Unlikely:
-# CHECK-NEXT: = PropGet v4 key=@@iterator
+# CHECK-NEXT: = CallDirect v4 function=[[openIterator]] [isNeverInlined]
+# CHECK: function [[openIterator]] name="openIterator"

@@ -36,21 +36,31 @@ static RegExpRequest makeRequest(Typed::Program& program, const Source& source, 
     };
 }
 
-static CompiledRegExps compileRequests(std::span<const Source> literals, std::span<const Source> candidates, BuildContext& context)
+namespace {
+
+struct FoundText {
+    Source source;
+    RegExpRequestOrigin origin { RegExpRequestOrigin::Candidate };
+};
+
+} // anonymous namespace
+
+static CompiledRegExps compileRequests(std::span<const Source> literals, std::span<const FoundText> foundTexts, BuildContext& context)
 {
     Typed::TestProgram program;
-    auto makeRequests = [&](std::span<const Source> sources, RegExpRequestOrigin origin) {
-        Vector<RegExpRequest> requests;
-        for (const Source& source : sources) {
-            requests.append(makeRequest(program.program, source, origin));
-            AOT_TEST_CHECK(requests.size() == 1 || requests[requests.size() - 2].pattern.index() < requests.last().pattern.index());
-        }
-        return requests;
+    auto append = [&](Vector<RegExpRequest>& requests, const Source& source, RegExpRequestOrigin origin) {
+        requests.append(makeRequest(program.program, source, origin));
+        AOT_TEST_CHECK(requests.size() == 1 || requests[requests.size() - 2].pattern.index() < requests.last().pattern.index());
     };
-    Vector<RegExpRequest> candidateRequests = makeRequests(candidates, RegExpRequestOrigin::Candidate);
-    RegExpRequests requests(makeRequests(literals, RegExpRequestOrigin::Literal), WTF::move(candidateRequests));
+    Vector<RegExpRequest> requestsForFoundTexts;
+    for (const FoundText& text : foundTexts)
+        append(requestsForFoundTexts, text.source, text.origin);
+    Vector<RegExpRequest> requestsForLiterals;
+    for (const Source& literal : literals)
+        append(requestsForLiterals, literal, RegExpRequestOrigin::Literal);
+    RegExpRequests requests(WTF::move(requestsForLiterals), WTF::move(requestsForFoundTexts));
     CompiledRegExps compiled = compileRegExps(program.program, requests, context);
-    AOT_TEST_CHECK(compiled.results.size() == literals.size() + candidates.size());
+    AOT_TEST_CHECK(compiled.results.size() == literals.size() + foundTexts.size());
     return compiled;
 }
 
@@ -88,24 +98,33 @@ static void testRequestPastSectionSizeLimitLosesCode()
 static void testCandidateBudget()
 {
     Source large { "(\\w+)@[a-z\\xe0-\\xff]+\\.(com|org)"_s, { } };
-    std::array<Source, 3> candidates { Source { "ab+c"_s, { } }, large, Source { "de+f"_s, { } } };
-    std::array<uint64_t, 3> sizes;
+    Source evaluated { makeString(large.pattern, '-', large.pattern, '-', large.pattern), { } };
+    std::array<FoundText, 4> foundTexts {
+        FoundText { { "ab+c"_s, { } }, RegExpRequestOrigin::Candidate },
+        FoundText { large, RegExpRequestOrigin::Candidate },
+        FoundText { { "de+f"_s, { } }, RegExpRequestOrigin::Candidate },
+        FoundText { evaluated, RegExpRequestOrigin::Evaluated },
+    };
+    std::array<uint64_t, 4> sizes;
     {
         BuildContext context(makeDefaultCompileOptions());
-        CompiledRegExps compiled = compileRequests({ }, candidates, context);
+        CompiledRegExps compiled = compileRequests({ }, foundTexts, context);
         for (size_t index = 0; index < sizes.size(); ++index) {
             AOT_TEST_CHECK(compiled.results[index].form == Form::Code);
             sizes[index] = compiled.results[index].codeSize();
         }
     }
-    AOT_TEST_CHECK(sizes[1] > sizes[2]);
+    uint64_t budget = sizes[0] + sizes[2];
+    AOT_TEST_CHECK(sizes[1] > sizes[2] && sizes[3] > budget);
 
-    BuildContext context(makeOptions(makeString("limit=RegExpCandidateCodeBytesPerSite:"_s, sizes[0] + sizes[2])));
-    CompiledRegExps compiled = compileRequests(singleElementSpan(large), candidates, context);
+    // A text that the build evaluated counts as a literal does: the budget of a site is for what flow names.
+    BuildContext context(makeOptions(makeString("limit=RegExpCandidateCodeBytesPerSite:"_s, budget)));
+    CompiledRegExps compiled = compileRequests(singleElementSpan(large), foundTexts, context);
     AOT_TEST_CHECK(compiled.results[0].form == Form::Code);
     AOT_TEST_CHECK(compiled.results[1].form == Form::Code);
     AOT_TEST_CHECK(isDeclined(compiled.results[2], Form::NoCode, RegExpDeclineReason::CandidateBudgetExhausted));
     AOT_TEST_CHECK(compiled.results[3].form == Form::Code);
+    AOT_TEST_CHECK(compiled.results[4].form == Form::Code && compiled.results[4].codeSize() == sizes[3]);
     AOT_TEST_CHECK(limitHits(context, LimitID::RegExpCandidateCodeBytesPerSite) == 1);
 }
 
@@ -277,6 +296,28 @@ static void testUnicodePropertyLookup()
     AOT_TEST_CHECK(!unbalanced.isValid() && !unbalanced.hasUnicodePropertyLookup);
 }
 
+static size_t numberOfClassesMadeFor(ASCIILiteral patternString, OptionSet<Yarr::Flags> flags = { })
+{
+    Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
+    const Yarr::YarrPattern pattern(patternString, flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::CharacterClassForms);
+    AOT_TEST_CHECK(!Yarr::hasError(error));
+    return pattern.m_userCharacterClasses.size();
+}
+
+// Where the text of the class parsed last follows once more, the parser reads none of it and the pattern gets no second class. The flags in force are part of what a class holds.
+static void testARepeatedClassIsParsedOnce()
+{
+    AOT_TEST_CHECK(numberOfClassesMadeFor("[ab]"_s) == 1);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("[ab][ab]"_s) == 1);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("x[ab]*y[ab]+z([ab])|[ab]{2}"_s) == 1);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("[ab][cd][ab]"_s) == 3);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("[ab][ab]c][ab-]"_s) == 2);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("[^ab][^ab][ab]"_s) == 2);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("[ab](?i:[ab][ab])[ab]"_s) == 3);
+    AOT_TEST_CHECK(numberOfClassesMadeFor("(?<name>[ab])\\k<name>[ab]"_s) == 1);
+    AOT_TEST_CHECK(!summarizeRegExp("[ab][ab"_s, { }).isValid() && !summarizeRegExp("[b-a][b-a]"_s, { }).isValid() && summarizeRegExp("[a-b][a-b]"_s, { }).isValid());
+}
+
 static unsigned analysisLimitHits(const CompiledRegExp& regExp, Yarr::CharSize charSize)
 {
     return regExp.code[static_cast<size_t>(charSize)]->analysisLimitHits;
@@ -299,6 +340,7 @@ std::span<const NativeTest> regExpCompilerTests()
 {
     static constexpr NativeTest tests[] = {
         { "regexp-compiler/compiled-forms"_s, testCompiledForms },
+        { "regexp-compiler/a-repeated-class-is-parsed-once"_s, testARepeatedClassIsParsedOnce },
         { "regexp-compiler/pattern-length-limit"_s, testPatternLengthLimit },
         { "regexp-compiler/deep-nesting-declines"_s, testDeepNestingDeclines },
         { "regexp-compiler/request-past-section-size-limit-loses-code"_s, testRequestPastSectionSizeLimitLosesCode },

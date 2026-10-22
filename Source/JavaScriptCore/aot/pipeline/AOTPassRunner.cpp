@@ -8,14 +8,26 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTCodeSizeEstimate.h"
 #include "AOTEffectSummaries.h"
-#include "AOTFlowAnalysis.h"
+#include "AOTExactBuffer.h"
+#include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTIRPrinter.h"
+#include "AOTPhaseTimes.h"
+#include "AOTThreads.h"
 #include "AOTTypePropagation.h"
+#include <bit>
+#include <numeric>
+#include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
+#include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -45,16 +57,20 @@ static bool acceptsForm(const PassDescriptor& descriptor, IRForm form)
     return descriptor.firstForm <= form && form <= descriptor.lastForm;
 }
 
-static void invalidateAnalyses(FunctionAnalyses& analyses, InvalidatedAnalyses invalidated)
+static void invalidateAnalyses(FunctionAnalyses& analyses, InvalidatedAnalyses invalidated, AnalysisSet kept)
 {
+    // What the cache of effects answers within a round depends on who has asked before, so no round outlives a run that has changed the function.
+    kept.remove(FunctionAnalysis::Effects);
     switch (invalidated) {
     case InvalidatedAnalyses::None:
         return;
     case InvalidatedAnalyses::Values:
-        analyses.didChangeValues();
+        analyses.invalidate(valueAnalyses - kept);
+        analyses.didRunPass();
         return;
     case InvalidatedAnalyses::All:
-        analyses.didChangeControlFlow();
+        analyses.invalidate(allAnalyses - kept);
+        analyses.didRunPass();
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -73,16 +89,52 @@ static bool hasCodeBehindNeverValue(const Function& function, const Block& block
 
 // A pass, or whoever built the function, may leave a conversion that always fails, or a value of whose type nothing is left, in the middle of a block.
 // What stands behind it is never reached, and nothing may stand there. No pass has to look for that itself.
-static bool cutCodeBehindNeverValues(FunctionPassContext& context)
+static bool cutCodeBehindNeverValues(FunctionPassContext& context, const BodyContents& contents)
 {
+    if (!contents.traits.contains(BodyTrait::NeverValues))
+        return false;
     const Function& function = context.function;
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
         if (!hasCodeBehindNeverValue(function, function.blocks[index]) || !context.analyses.cfg().isReachable(BlockID(index)))
             continue;
-        finishTypedValues(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build });
+        if (waitsForGenericVersion(context.program, function))
+            return false;
+        finishTypedValues(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo });
         return true;
     }
     return false;
+}
+
+auto PassRunner::passesEnabledBy(PassID changer) -> const PassBits&
+{
+    static const std::array<PassBits, numberOfPasses> enabledPasses = [] {
+        std::array<PassBits, numberOfPasses> result { };
+        for (PassID pass : allMembersOf<PassID>) {
+            if (pass == PassID::None)
+                continue;
+            passesEnabling(pass).forEach([&](PassID enabling) {
+                result[static_cast<unsigned>(enabling)].set(static_cast<unsigned>(pass));
+            });
+        }
+        return result;
+    }();
+    return enabledPasses[static_cast<unsigned>(changer)];
+}
+
+auto PassRunner::passesGivenWorkBy(PassID changer) -> const PassBits&
+{
+    static const std::array<PassBits, numberOfPasses> passesGivenWork = [] {
+        std::array<PassBits, numberOfPasses> result { };
+        for (PassID member : allMembersOf<PassID>) {
+            PassBits& passes = result[static_cast<unsigned>(member)];
+            passes.setAll();
+            passesThatCanWaitBehind(member).forEach([&](PassID pass) {
+                passes.clear(static_cast<unsigned>(pass));
+            });
+        }
+        return result;
+    }();
+    return passesGivenWork[static_cast<unsigned>(changer)];
 }
 
 PassRunner::PassRunner(BuildContext& build, std::optional<PassID> stopAfter)
@@ -96,28 +148,76 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context)
 {
     RELEASE_ASSERT(context.analyses.context().id == context.id);
     ScheduleRun run;
+    prepare(run);
+    size_t numberOfValuesAtStart = context.function.values.size();
     run.functionAsRead = context.subject().function;
     PassOutcome outcome = runFunctionPass(id, context, run);
-    addTotals(run);
+    addTotals(run, numberOfValuesAtStart);
     return outcome;
 }
+
+void PassRunner::prepare(ScheduleRun& run) const
+{
+    run.recordsChangers = m_build.options().verifiesAfterEveryPass;
+    if (run.recordsChangers || m_build.options().logging.logsPhaseTimes || hasFlag(m_build.options().reports, ReportSet::PassCodeBytes)) [[unlikely]]
+        run.notes.emplace();
+}
+
+static constexpr PassSet optionalPassesOfGenericVersions {
+    PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
+    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::MergeDuplicateBlocks, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
+};
+
+static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
+
+// An async function waits between its steps, so what it costs is seldom its own code. Where nothing says that it runs often it keeps its tests and makes no object that it need not make, and nothing else is tried on it.
+// Nothing says of a compact function that it runs at all. No test is placed in it, so it is general code as a generic version is, and goes the same way.
+static const PassSet* optionalPassesOfShortScheduleFor(const Function& function, bool hasNoWarmCode, bool isCompact)
+{
+    if (function.role == FunctionRole::GenericVersion || isCompact)
+        return &optionalPassesOfGenericVersions;
+    if (hasNoWarmCode && function.has(FunctionFlags::IsAsync))
+        return &optionalPassesOfColdAsyncFunctions;
+    return nullptr;
+}
+
+static constexpr uint64_t maxRoundsOfShortSchedule = 1;
 
 PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& program, const OptimizationInputs& inputs, FunctionID id, Function& function, TaskArenas& arenas) const
 {
     FunctionAnalyses analyses(AnalysisContext { m_build, program, &inputs.flow, &inputs.effects, id }, function);
     FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, m_build };
+    context.openSites.setLogIsWritten(true);
+    context.openSites.setVerifiesLists(m_build.options().verifiesAfterEveryPass);
     ScheduleRun run;
+    prepare(run);
+    size_t numberOfValuesAtStart = function.values.size();
     run.functionAsRead = context.subject().function;
-    if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context))
+    const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
+    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id);
+    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
+    if (run.optionalPassesOfShortSchedule)
+        run.maxRounds = maxRoundsOfShortSchedule;
+    if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context, run.contentsOf(function))) {
+        run.contents = std::nullopt;
         ++run.numberOfChanges;
-    runSteps(stepsOf(schedule), context, run);
-    addTotals(run);
+    }
+    // Whoever edits a function takes that word back.
+    const bool entersTyped = program.form() == IRForm::Prepared && function.hasBody() && function.valuesAreTypedAsDefined();
+    if (entersTyped)
+        context.pendingTyping.didEnterScheduleTyped(context.changes);
+    runSteps(stepsOf(schedule), context, run, WhatFollows::Nothing);
+    // The one schedule that does not end by typing what it has changed.
+    if (schedule == FunctionSchedule::Resolve && entersTyped && !function.valuesAreTypedAsDefined() && !run.isStopped)
+        runFunctionPass(PassID::RetypeValues, context, run);
+    addTotals(run, numberOfValuesAtStart);
     return run.numberOfChanges ? PassOutcome::Changed : PassOutcome::Unchanged;
 }
 
 void PassRunner::didFinishFunctionLoop()
 {
     flushFunctionPassTotals();
+    reportChangesBehindSimplify();
     if (m_build.diagnostics().hasErrors() || m_didRunLastPass.load(std::memory_order_relaxed))
         m_isStopped = true;
 }
@@ -128,13 +228,42 @@ void PassRunner::didReachForm(const Program& program)
         dumpFunctions(program, nameOf(program.form()));
 }
 
+void shrinkToFit(Function& function)
+{
+    for (Block& block : function.storageOfBlocks()) {
+        block.parameters.shrinkToFit();
+        block.values.shrinkToFit();
+        block.forEachTarget([](Target& target) {
+            target.arguments.shrinkToFit();
+            target.proofs.shrinkToFit();
+        });
+    }
+    moveToExactBuffer(function.storageOfValues());
+    moveToExactBuffer(function.storageOfBlocks());
+}
+
+void PassRunner::shrinkChangedFunctionsToFit(Program& program, const ProgramEditor& editor) const
+{
+    BodyIndex* index = program.bodyIndex();
+    RELEASE_ASSERT(index);
+    BodyIDs idsInRows = program.form() == IRForm::Prepared ? BodyIDs::Final : BodyIDs::MayBeProvisional;
+    Vector<FunctionID> changed = editor.functionsWithChangedOperations();
+    changed.appendVector(editor.functionsThatWereOnlyLowered());
+    forEachIndexInParallel(m_build.parallelLoops(), changed.size(), [&](unsigned position) {
+        Function& function = program.at(changed[position]);
+        if (index->write(changed[position], function, idsInRows))
+            shrinkToFit(function);
+    });
+}
+
 PassOutcome PassRunner::updateAnalyses(PassID id, const ProgramEditor& editor, ProgramAnalyses& analyses)
 {
+    const PassDescriptor& descriptor = descriptorOf(id);
     if (editor.changedFunctions().isEmpty()) {
-        analyses.invalidate({ }, editor);
+        analyses.invalidate({ }, editor, descriptor.editedFunctions, descriptor.effectsAddedByEdits);
         return PassOutcome::Unchanged;
     }
-    analyses.invalidate(descriptorOf(id).invalidatedResults, editor);
+    analyses.invalidate(descriptor.invalidatedResults, editor, descriptor.editedFunctions, descriptor.effectsAddedByEdits);
     return PassOutcome::Changed;
 }
 
@@ -187,9 +316,15 @@ bool PassRunner::canVerify(IRForm form) const
     return form != IRForm::Placed || m_verifierInputs.placed;
 }
 
+static String describeError(const InternalError&, const Function& verifiedBody);
+
 void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const Program& program) const
 {
-    if (!m_build.options().verifiesAfterEveryPass || descriptor.isVerifiedAfterNextPass)
+    if (!m_build.options().verifiesAfterEveryPass)
+        return;
+    if (const BodyIndex* index = program.bodyIndex())
+        index->check(program, m_build.parallelLoops());
+    if (descriptor.isVerifiedAfterNextPass)
         return;
     IRForm form = descriptor.produces.value_or(program.form());
     if (!canVerify(form))
@@ -205,7 +340,19 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     inputs.isOptimizing = form == IRForm::Prepared;
     inputs.effects = &effects;
     if (!verifyProgram(program, form, m_build, inputs)) {
-        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id });
+        InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id };
+        for (size_t index = 0; index < program.functions.size(); ++index) {
+            const Function& function = program.functions[index];
+            if (!function.hasBody())
+                continue;
+            Vector<InternalError> errors = findErrorsInFunction(program, FunctionID(index), function, form, m_build, inputs);
+            if (errors.isEmpty())
+                continue;
+            failure.function = findFunctionAsRead(&program, FunctionID(index));
+            failure.detail = describeError(errors.first(), function);
+            break;
+        }
+        m_build.diagnostics().add(failure);
         return;
     }
     if (descriptor.id == PassID::ApplyFlowResults) {
@@ -232,43 +379,271 @@ void PassRunner::updateIsStopped(PassID id)
         m_isStopped = true;
 }
 
+static uint64_t estimateBytesOfReachableCode(const Program& program, const Function& function)
+{
+    BitVector isReached(function.blocks.size());
+    Vector<BlockID, 32> worklist { entryBlock };
+    isReached.quickSet(entryBlock.index());
+    uint64_t bytes = 0;
+    auto visit = [&](BlockID target) {
+        if (!isReached.quickSet(target.index()))
+            worklist.append(target);
+    };
+    while (!worklist.isEmpty()) {
+        const Block& block = function.at(worklist.takeLast());
+        bytes += estimatedCodeBytes(program, function, block);
+        for (const Target& target : block.terminator.targets)
+            visit(target.block);
+        if (block.handler)
+            visit(block.handler->block);
+    }
+    return bytes;
+}
+
+static bool hasSameWords(const Instruction& a, const Instruction& b)
+{
+    return a.position == b.position && a.inlineFrame == b.inlineFrame && a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands());
+}
+
+static OptionSet<ValueEdit> editsBetween(const Value& before, const Value& after)
+{
+    OptionSet<ValueEdit> edits;
+    if (before.opcode != after.opcode || !hasSameWords(before, after))
+        edits.add(ValueEdit::Definition);
+    if (before.type != after.type || before.expected() != after.expected() || before.representation != after.representation)
+        edits.add(ValueEdit::Type);
+    return edits;
+}
+
+static OptionSet<BlockEdit> editsBetween(const Block& before, const Block& after)
+{
+    OptionSet<BlockEdit> edits;
+    if (before.values != after.values)
+        edits.add(BlockEdit::Values);
+    if (before.parameters != after.parameters)
+        edits.add(BlockEdit::Parameters);
+    if (before.terminator.kind != after.terminator.kind || !hasSameWords(before.terminator, after.terminator))
+        edits.add(BlockEdit::Terminator);
+    auto compareTargets = [&](const Target& a, const Target& b) {
+        if (a.block != b.block)
+            edits.add(BlockEdit::Edges);
+        if (a.arguments != b.arguments || a.proofs != b.proofs)
+            edits.add(BlockEdit::Arguments);
+    };
+    if (before.terminator.targets.size() != after.terminator.targets.size() || !before.handler != !after.handler)
+        edits.add({ BlockEdit::Edges, BlockEdit::Arguments });
+    else {
+        for (size_t index = 0; index < before.terminator.targets.size(); ++index)
+            compareTargets(before.terminator.targets[index], after.terminator.targets[index]);
+        if (before.handler)
+            compareTargets(*before.handler, *after.handler);
+    }
+    if (before.subject != after.subject || before.role != after.role || before.frequency != after.frequency || before.shape != after.shape)
+        edits.add(BlockEdit::Rest);
+    return edits;
+}
+
+// Every difference between the two bodies has an entry behind the cursor that names it. None where that holds.
+static String findEditWithoutEntry(const Function& before, const Function& after, const ChangeLog& log, const ChangeLog::Cursor& start)
+{
+    if (log.hasForgottenSince(start))
+        return { };
+    Vector<OptionSet<ValueEdit>> editsOfValues(after.values.size());
+    Vector<OptionSet<BlockEdit>> editsOfBlocks(after.blocks.size());
+    for (const ValueChange& change : log.valuesSince(start)) {
+        if (change.value.index() >= after.values.size())
+            return makeString("the log names v"_s, change.value.index(), ", which the function does not have"_s);
+        editsOfValues[change.value.index()].add(change.edits);
+    }
+    for (const BlockChange& change : log.blocksSince(start)) {
+        if (change.block.index() >= after.blocks.size())
+            return makeString("the log names b"_s, change.block.index(), ", which the function does not have"_s);
+        editsOfBlocks[change.block.index()].add(change.edits);
+    }
+    if (after.values.size() < before.values.size() || after.blocks.size() < before.blocks.size())
+        return "the function has lost values or blocks, and the log has not forgotten"_s;
+    for (size_t index = 0; index < after.values.size(); ++index) {
+        OptionSet<ValueEdit> edits = index < before.values.size() ? editsBetween(before.values[index], after.values[index]) : OptionSet<ValueEdit> { ValueEdit::Added };
+        if (!editsOfValues[index].containsAll(edits))
+            return makeString("v"_s, index, " was edited ("_s, edits.toRaw(), ") and the log says "_s, editsOfValues[index].toRaw());
+    }
+    for (size_t index = 0; index < after.blocks.size(); ++index) {
+        OptionSet<BlockEdit> edits = index < before.blocks.size() ? editsBetween(before.blocks[index], after.blocks[index]) : OptionSet<BlockEdit> { BlockEdit::Added };
+        if (!editsOfBlocks[index].containsAll(edits))
+            return makeString("b"_s, index, " was edited ("_s, edits.toRaw(), ") and the log says "_s, editsOfBlocks[index].toRaw());
+    }
+    return { };
+}
+
+auto PassRunner::PassClock::now() -> PassClock
+{
+    return { CPUTime::forCurrentThread(), InstructionCounts::ofCurrentThread() };
+}
+
+// A pass on a function of many values is timed. Of the small functions one in sixteen is, and stands for all sixteen: which ones does not depend on the run.
+static uint32_t numberOfRunsThatTimedRunStandsFor(FunctionID function, size_t numberOfValues)
+{
+    constexpr size_t fewestValuesOfFunctionThatIsAlwaysTimed = 64;
+    constexpr uint32_t smallFunctionsForEachTimedOne = 16;
+    if (numberOfValues >= fewestValuesOfFunctionThatIsAlwaysTimed)
+        return 1;
+    return function.index() % smallFunctionsForEachTimedOne ? 0 : smallFunctionsForEachTimedOne;
+}
+
 PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
 
     RELEASE_ASSERT(descriptor.scope == PassScope::Function);
-    if (run.unchangedAt[index] == run.numberOfChanges + 1)
+    context.changes.settle();
+    const bool reachedFixpoint = std::exchange(run.reachedFixpoint[index], false);
+    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index)) {
+        if (reachedFixpoint || run.passesEnabledByTable.get(index)) {
+            // Leave the same state behind as the idle run that this skips.
+            ++run.numberOfSkippedRuns;
+            run.numberOfValuesWalked += context.function.values.size();
+            const bool waits = run.passesThatWait.get(index);
+            if (!waits)
+                verifySkippedFunctionPass(descriptor, context, run);
+            run.didLookAtFunction(id);
+            if (waits)
+                run.passesThatWait.set(index);
+            dumpAfterFunctionPass(id, context);
+        } else if (run.passesBehindChange.get(index)) {
+            ++run.numberOfSkippedRuns;
+            if (!run.passesThatWait.get(index))
+                verifySkippedFunctionPass(descriptor, context, run);
+        }
         return PassOutcome::Unchanged;
+    }
     if (descriptor.necessity == PassNecessity::Optional && !m_build.isEnabled(id, run.functionAsRead))
+        return PassOutcome::Unchanged;
+    if (run.optionalPassesOfShortSchedule && descriptor.necessity == PassNecessity::Optional && !run.optionalPassesOfShortSchedule->contains(id))
         return PassOutcome::Unchanged;
     checkFormAndInputs(descriptor, context.program);
     RELEASE_ASSERT(!descriptor.derivesFunctions || context.inputs.derivedFunctions);
 
-    const bool isTimed = m_build.options().logging.logsPhaseTimes;
-    MonotonicTime start = isTimed ? MonotonicTime::now() : MonotonicTime();
-    ++run.runs[index];
-    PassOutcome outcome = descriptor.run(context);
-    if (isTimed)
-        run.nanoseconds[index] += (MonotonicTime::now() - start).nanosecondsAs<uint64_t>();
+    if (!triggersOf(id).isAlways && !run.mayFire(id, context.function)) {
+        // All that later runs go by is as it is behind a run that has found nothing to do.
+        if (run.notes) [[unlikely]]
+            ++run.notes->runsWithoutTrigger[index];
+        run.numberOfValuesWalked += context.function.values.size();
+        verifySkippedFunctionPass(descriptor, context, run);
+        run.passesThatRan.add(id);
+        run.didLookAtFunction(id);
+        dumpAfterFunctionPass(id, context);
+        stopBehind(id, run);
+        return PassOutcome::Unchanged;
+    }
+    return runFunctionPassThatMayFire(id, context, run);
+}
 
+// Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
+NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
+{
+    const PassDescriptor& descriptor = descriptorOf(id);
+    const unsigned index = static_cast<unsigned>(id);
+
+    const bool isTimed = m_build.options().logging.logsPhaseTimes;
+    size_t numberOfValuesBefore = context.function.values.size();
+    const uint32_t weight = isTimed ? numberOfRunsThatTimedRunStandsFor(run.functionAsRead, numberOfValuesBefore) : 0;
+    PassClock start;
+    if (weight)
+        start = run.clockAtEndOfLastPass ? *run.clockAtEndOfLastPass : PassClock::now();
+    run.clockAtEndOfLastPass = std::nullopt;
+    const bool countsCodeBytes = hasFlag(m_build.options().reports, ReportSet::PassCodeBytes) && context.program.form() == IRForm::Prepared && !descriptor.produces;
+    if (countsCodeBytes && !run.codeBytes)
+        run.codeBytes = estimateBytesOfReachableCode(context.program, context.function);
+    AnalysisSet analysesBefore = isTimed ? context.analyses.computed() : AnalysisSet { };
+    ++run.runs[index];
+    run.numberOfValuesWalked += numberOfValuesBefore;
+    context.analyses.setRunningPass(id);
+    context.keptAnalyses = { };
+    context.reachedFixpoint = false;
+    context.passesLeftIdle = { };
+    context.passesThatCanWait = { };
+    context.lookedOnlyNearby = false;
+    context.mayDecideTestsAcrossBlocks = run.mayDecideTestsAcrossBlocks;
+    if (id == PassID::SimplifyControlFlow)
+        run.mayDecideTestsAcrossBlocks = false;
+    std::optional<Function> functionBeforeRun;
+    ChangeLog::Cursor logBeforeRun;
+    if (m_build.options().verifiesAfterEveryPass) [[unlikely]]
+        functionBeforeRun.emplace(context.function);
+    if (functionBeforeRun || isTimed) [[unlikely]]
+        logBeforeRun = context.changes.end();
+    PassOutcome outcome = descriptor.run(context);
+    if (functionBeforeRun) [[unlikely]] {
+        if (String problem = findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun); !problem.isNull()) {
+            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
+            run.isStopped = true;
+        }
+    }
+    if (isTimed) {
+        if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))
+            m_functionPassTotals[index].needlessDrops.fetch_add(1, std::memory_order_relaxed);
+        if (context.changes.hasForgottenSince(logBeforeRun))
+            m_functionPassTotals[index].runsThatMadeLogForget.fetch_add(1, std::memory_order_relaxed);
+        else if (size_t entries = context.changes.numberOfEntriesSince(logBeforeRun)) {
+            m_functionPassTotals[index].logEntries.fetch_add(entries, std::memory_order_relaxed);
+            if (outcome == PassOutcome::Unchanged)
+                m_functionPassTotals[index].idleRunsWithLogEntries.fetch_add(1, std::memory_order_relaxed);
+        }
+        uint64_t nanoseconds = 0;
+        if (weight) {
+            PassClock end = PassClock::now();
+            nanoseconds = (end.time - start.time).nanosecondsAs<uint64_t>() * weight;
+            if (start.instructions && end.instructions)
+                run.notes->instructions[index] += (*end.instructions - *start.instructions) * weight;
+            run.clockAtEndOfLastPass = end;
+        }
+        run.notes->nanoseconds[index] += nanoseconds;
+        if (outcome == PassOutcome::Unchanged)
+            m_functionPassTotals[index].nanosecondsWithoutChange.fetch_add(nanoseconds, std::memory_order_relaxed);
+        m_functionPassTotals[index].valuesAdded.fetch_add(static_cast<int64_t>(context.function.values.size()) - static_cast<int64_t>(numberOfValuesBefore), std::memory_order_relaxed);
+    }
+
+    run.passesThatRan.add(id);
+    run.didLookAtFunction(id);
+    run.reachedFixpoint[index] = outcome == PassOutcome::Changed && context.reachedFixpoint;
     if (outcome == PassOutcome::Changed) {
-        invalidateAnalyses(context.analyses, descriptor.invalidatedAnalyses);
-        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass)
-            cutCodeBehindNeverValues(context);
+        invalidateAnalyses(context.analyses, descriptor.invalidatedAnalyses, context.keptAnalyses);
+        if (run.notes && !context.keptAnalyses.isEmpty()) [[unlikely]]
+            ++run.notes->runsThatKeptAnalyses[index];
+        run.contents = std::nullopt;
+        run.didChange(id, context.passesLeftIdle, context.passesThatCanWait);
+        if (run.reachedFixpoint[index])
+            run.didLookAtFunction(id);
+        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && cutCodeBehindNeverValues(context, run.contentsOf(context.function))) {
+            run.contents = std::nullopt;
+            run.didChange(PassID::None);
+        }
         ++run.numberOfChanges;
         ++run.changes[index];
-    } else
-        run.unchangedAt[index] = run.numberOfChanges + 1;
+        if (countsCodeBytes) {
+            uint64_t codeBytes = estimateBytesOfReachableCode(context.program, context.function);
+            (codeBytes > *run.codeBytes ? run.notes->codeBytesAdded[index] : run.notes->codeBytesRemoved[index]) += codeBytes > *run.codeBytes ? codeBytes - *run.codeBytes : *run.codeBytes - codeBytes;
+            run.codeBytes = codeBytes;
+        }
+        if (isTimed)
+            run.changingRuns.append(id);
+    }
 
+    if (context.lookedOnlyNearby)
+        run.passesThatWait.set(index);
     verifyAfterFunctionPass(descriptor, context, run);
     dumpAfterFunctionPass(id, context);
-
-    if (m_stopAfter == id) [[unlikely]] {
-        run.isStopped = true;
-        m_didRunLastPass.store(true, std::memory_order_relaxed);
-    }
+    stopBehind(id, run);
     return outcome;
+}
+
+void PassRunner::stopBehind(PassID id, ScheduleRun& run) const
+{
+    if (m_stopAfter != id) [[likely]]
+        return;
+    run.isStopped = true;
+    m_didRunLastPass.store(true, std::memory_order_relaxed);
 }
 
 // The messages are worded at the end of the build, from the body that the program has then. This is the body that failed.
@@ -293,10 +668,23 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
-    inputs.effects = &context.inputs.effects;
+    if (!inputs.effects)
+        inputs.effects = &context.inputs.effects;
+    // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
+    // The verifier behind the program pass has summaries of its own and judges them.
+    inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
     Vector<InternalError> errors;
     if (canVerify(form) && !descriptor.isVerifiedAfterNextPass)
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);
+    if (errors.isEmpty() && hasTypedValues(context.function)) {
+        // In an arena of its own: what is interned here must not reach the program, or the output would depend on this option.
+        ScratchTypeArena types(context.program.types);
+        if (std::optional<BrokenResultRule> broken = findBrokenResultRule(context.program, context.function, types, run.shapesWithMonotoneResult)) {
+            StringPrintStream description;
+            broken->dump(description, context.program, context.function);
+            errors.append(InternalError { .kind = InternalErrorKind::BrokenResultRule, .function = context.id, .value = broken->value, .detail = description.toString() });
+        }
+    }
     if (errors.isEmpty()) {
         context.analyses.verifyCached();
         return;
@@ -311,6 +699,134 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     run.isStopped = true;
 }
 
+static String describeChangers(const PassSet& changers)
+{
+    StringBuilder description;
+    description.append("after "_s);
+    bool isFirst = true;
+    for (PassID id : allMembersOf<PassID>) {
+        if (!changers.contains(id))
+            continue;
+        if (!std::exchange(isFirst, false))
+            description.append(", "_s);
+        description.append(nameOf(id));
+    }
+    return description.toString();
+}
+
+static String describeFirstDifference(const Program& program, const Function& function, const Function& changed)
+{
+    StringPrintStream out;
+    if (function.blocks.size() != changed.blocks.size() || function.values.size() != changed.values.size()) {
+        out.print("; ", function.blocks.size(), " blocks and ", function.values.size(), " values become ", changed.blocks.size(), " and ", changed.values.size());
+        return out.toString();
+    }
+    auto printTypeOrNone = [&](TypeID type) {
+        if (type)
+            printType(out, program, type);
+        else
+            out.print("none");
+    };
+    for (size_t index = 0; index < function.values.size(); ++index) {
+        const Value& before = function.values[index];
+        const Value& after = changed.values[index];
+        if (before.opcode == after.opcode && before.type == after.type && before.expected() == after.expected())
+            continue;
+        out.print("; v", index, " (", nameOf(before.opcode), ")");
+        if (before.opcode != after.opcode)
+            out.print(" becomes ", nameOf(after.opcode));
+        if (before.type != after.type) {
+            out.print(" of type ");
+            printTypeOrNone(before.type);
+            out.print(" gets the type ");
+            printTypeOrNone(after.type);
+        }
+        if (before.expected() != after.expected()) {
+            out.print(" expected to be ");
+            printTypeOrNone(before.expected());
+            out.print(" is expected to be ");
+            printTypeOrNone(after.expected());
+        }
+        break;
+    }
+    return out.toString();
+}
+
+// The table says that the pass finds nothing to do here. A run on a copy shows whether that is true.
+void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, const FunctionPassContext& context, ScheduleRun& run) const
+{
+    if (!m_build.options().verifiesAfterEveryPass) [[likely]]
+        return;
+    Function copy(context.function);
+    FunctionAnalyses analyses(context.analyses.context(), copy);
+    FunctionPassContext contextOfCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, m_build };
+    contextOfCopy.pendingTyping = context.pendingTyping.forCopyWith(contextOfCopy.changes, context.changes);
+    contextOfCopy.mayDecideTestsAcrossBlocks = run.mayDecideTestsAcrossBlocks;
+    if (descriptor.run(contextOfCopy) == PassOutcome::Unchanged)
+        return;
+
+    const PassSet& changers = run.notes->changersSinceLastRun[static_cast<unsigned>(descriptor.id)];
+    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.program, context.function, copy)) });
+    run.isStopped = true;
+}
+
+// The one walk that is to stand in the place of the schedule leaves the function as the schedule would. A run of the schedule on a copy shows what it has left undone, pass by pass.
+void PassRunner::countChangesBehindSimplify(std::span<const ScheduleStep> steps, const FunctionPassContext& context, const ScheduleRun& run) const
+{
+    if (!m_build.options().countsChangesBehindSimplify) [[likely]]
+        return;
+    Function copy(context.function);
+    FunctionAnalyses analyses(context.analyses.context(), copy);
+    FunctionPassContext contextOfCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, m_build };
+    contextOfCopy.pendingTyping = context.pendingTyping.forCopyWith(contextOfCopy.changes, context.changes);
+    contextOfCopy.isInRounds = context.isInRounds;
+    ScheduleRun runOfCopy;
+    prepare(runOfCopy);
+    runOfCopy.recordsChangers = false;
+    runOfCopy.functionAsRead = run.functionAsRead;
+    runOfCopy.optionalPassesOfShortSchedule = run.optionalPassesOfShortSchedule;
+    runOfCopy.maxRounds = run.maxRounds;
+    bool hasLoop = Typed::contentsOf(copy).opcodes.contains(Opcode::LoopHint);
+    runSteps(steps, contextOfCopy, runOfCopy);
+
+    uint64_t changes = 0;
+    for (unsigned index = 0; index < numberOfPasses; ++index) {
+        if (!runOfCopy.changes[index])
+            continue;
+        ChangesBehindSimplify& total = m_changesBehindSimplify[index];
+        total.runs.fetch_add(runOfCopy.changes[index], std::memory_order_relaxed);
+        total.functions.fetch_add(1, std::memory_order_relaxed);
+        total.functionsWithLoop.fetch_add(hasLoop, std::memory_order_relaxed);
+        uint32_t function = run.functionAsRead.index();
+        uint32_t first = total.firstFunction.load(std::memory_order_relaxed);
+        while (function < first && !total.firstFunction.compare_exchange_weak(first, function, std::memory_order_relaxed)) { }
+        changes += runOfCopy.changes[index];
+    }
+    if (!changes)
+        return;
+    m_build.statistics().count(StatisticID::ChangesBehindSimplify, changes);
+    m_programWithChangesBehindSimplify.store(&context.program, std::memory_order_relaxed);
+}
+
+void PassRunner::reportChangesBehindSimplify()
+{
+    const Program* counted = m_programWithChangesBehindSimplify.exchange(nullptr, std::memory_order_relaxed);
+    if (!counted) [[likely]]
+        return;
+    const Program& program = *counted;
+    for (PassID id : allMembersOf<PassID>) {
+        ChangesBehindSimplify& total = m_changesBehindSimplify[static_cast<unsigned>(id)];
+        uint64_t runs = total.runs.exchange(0, std::memory_order_relaxed);
+        uint64_t functions = total.functions.exchange(0, std::memory_order_relaxed);
+        uint64_t functionsWithLoop = total.functionsWithLoop.exchange(0, std::memory_order_relaxed);
+        FunctionID first(total.firstFunction.exchange(std::numeric_limits<uint32_t>::max(), std::memory_order_relaxed));
+        if (!runs)
+            continue;
+        StringID name = program.at(first).name;
+        dataLogLn("AOT changes behind Simplify: ", nameOf(id), " | ", runs, " runs change the function | at ", functions, " starts of the schedule, ", functionsWithLoop, " of them in a function with a loop | first in f", first.index(), " ", name ? program.strings.toWTFString(name) : "(no name)"_str);
+    }
+}
+
 void PassRunner::dumpAfterFunctionPass(PassID id, const FunctionPassContext& context) const
 {
     if (m_build.options().logging.dumpedPass != id) [[likely]]
@@ -323,24 +839,48 @@ void PassRunner::dumpAfterFunctionPass(PassID id, const FunctionPassContext& con
     printFunction(out, context.program, context.id, context.function);
 }
 
-void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassContext& context, ScheduleRun& run) const
+void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
 {
     for (size_t index = 0; index < steps.size() && !run.isStopped; ++index) {
         const ScheduleStep& step = steps[index];
+        WhatFollows whatFollowsStep = index + 1 == steps.size() ? whatFollows : WhatFollows::MoreSteps;
         switch (step.kind) {
         case ScheduleStep::Kind::RunPass:
+            if (!step.isBehindRounds && run.isAtRest(step.pass))
+                break;
+            if (step.isBehindRounds) {
+                // It has run in the rounds and changed nothing there, on purpose.
+                context.isBehindRounds = true;
+                run.giveWorkTo(step.pass);
+            }
+            context.isLastStepOfSchedule = whatFollowsStep == WhatFollows::Nothing;
             runFunctionPass(step.pass, context, run);
+            context.isLastStepOfSchedule = false;
+            context.isBehindRounds = false;
             break;
-        case ScheduleStep::Kind::RunSchedule:
-            runSteps(stepsOf(step.schedule), context, run);
+        case ScheduleStep::Kind::RunSchedule: {
+            std::span<const ScheduleStep> included = stepsOf(step.schedule);
+            if (!step.compacts)
+                included = included.first(included.size() - 1);
+            countChangesBehindSimplify(included, context, run);
+            runSteps(included, context, run, whatFollowsStep);
             break;
+        }
         case ScheduleStep::Kind::BeginFixpoint: {
             size_t end = findFixpointEnd(steps, index);
             std::span<const ScheduleStep> body = steps.subspan(index + 1, end - index - 1);
             const uint64_t maxRounds = m_build.limit(step.limit);
+            bool wasInRounds = std::exchange(context.isInRounds, true);
             for (uint64_t round = 0; ; ++round) {
                 if (round >= maxRounds) {
                     m_build.gaveUp(step.limit, context.subject());
+                    break;
+                }
+                if (round >= run.maxRounds)
+                    break;
+                if (round && run.numberOfValuesWalked > m_build.limit(LimitID::MaxOptimizationWork)) {
+                    if (!std::exchange(run.hasSpentItsWork, true))
+                        m_build.gaveUp(LimitID::MaxOptimizationWork, context.subject());
                     break;
                 }
                 uint32_t numberOfChangesBefore = run.numberOfChanges;
@@ -348,6 +888,7 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
                 if (run.numberOfChanges == numberOfChangesBefore || run.isStopped)
                     break;
             }
+            context.isInRounds = wasInRounds;
             index = end;
             break;
         }
@@ -357,32 +898,104 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
     }
 }
 
-void PassRunner::addTotals(const ScheduleRun& run) const
+void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart) const
 {
-    for (unsigned index = 0; index < numberOfPasses; ++index) {
-        if (!run.runs[index])
-            continue;
-        FunctionPassTotals& totals = m_functionPassTotals[index];
-        totals.runs.fetch_add(run.runs[index], std::memory_order_relaxed);
-        if (uint32_t changes = run.changes[index])
-            totals.changes.fetch_add(changes, std::memory_order_relaxed);
-        if (uint64_t nanoseconds = run.nanoseconds[index])
-            totals.nanoseconds.fetch_add(nanoseconds, std::memory_order_relaxed);
+    if (run.numberOfSkippedRuns)
+        m_build.statistics().count(StatisticID::FunctionPassRunsSkipped, run.numberOfSkippedRuns);
+    if (m_build.options().logging.logsPhaseTimes) {
+        FunctionPassTotals& totals = m_totalsBySize[std::min<unsigned>(std::bit_width(numberOfValuesAtStart), numberOfSizeClasses - 1)];
+        totals.runs.fetch_add(1, std::memory_order_relaxed);
+        totals.changes.fetch_add(numberOfValuesAtStart, std::memory_order_relaxed);
+        uint64_t nanoseconds = std::reduce(run.notes->nanoseconds.begin(), run.notes->nanoseconds.end(), uint64_t { 0 });
+        totals.nanoseconds.fetch_add(nanoseconds, std::memory_order_relaxed);
+        constexpr uint64_t nanosecondsOfSlowFunction = 500'000'000;
+        if (nanoseconds >= nanosecondsOfSlowFunction) {
+            StringPrintStream passes;
+            for (unsigned index = 0; index < numberOfPasses; ++index) {
+                if (run.notes->nanoseconds[index] * 20 >= nanoseconds)
+                    passes.print(" | ", nameOf(static_cast<PassID>(index)), " ", run.notes->nanoseconds[index] / 1'000'000, " ms in ", run.runs[index], " runs");
+            }
+            dataLogLn("AOT slow function: ", numberOfValuesAtStart, " values at the start | cpu ", nanoseconds / 1'000'000, " ms | ", run.numberOfValuesWalked / 1'000'000, " M values walked", passes.toString());
+            StringPrintStream repeatedPasses;
+            for (unsigned index = 0; index < numberOfPasses; ++index) {
+                if (run.runs[index] >= 10)
+                    repeatedPasses.print(" | ", nameOf(static_cast<PassID>(index)), " ", run.runs[index], " runs, ", run.changes[index], " changed");
+            }
+            dataLogLn("AOT repeated passes: ", numberOfValuesAtStart, " values at the start", repeatedPasses.toString());
+            StringPrintStream changingRuns;
+            for (PassID pass : run.changingRuns)
+                changingRuns.print(" ", nameOf(pass));
+            dataLogLn("AOT changing runs: ", numberOfValuesAtStart, " values at the start |", changingRuns.toString());
+        }
     }
+    static std::atomic<unsigned> numberOfThreadsWithShare { 0 };
+    static thread_local unsigned shareOfThread = numberOfThreadsWithShare.fetch_add(1, std::memory_order_relaxed) % numberOfSharesOfCounts;
+    CountsOfPasses& counts = m_countsOfPasses[shareOfThread];
+    run.passesThatRan.forEach([&](PassID pass) {
+        const unsigned index = static_cast<unsigned>(pass);
+        if (!run.runs[index])
+            return;
+        counts[index].runs.fetch_add(run.runs[index], std::memory_order_relaxed);
+        if (uint32_t changes = run.changes[index])
+            counts[index].changes.fetch_add(changes, std::memory_order_relaxed);
+    });
+    if (!run.notes) [[likely]]
+        return;
+    run.passesThatRan.forEach([&](PassID pass) {
+        const unsigned index = static_cast<unsigned>(pass);
+        FunctionPassTotals& totals = m_functionPassTotals[index];
+        if (uint32_t runsWithoutTrigger = run.notes->runsWithoutTrigger[index])
+            totals.runsWithoutTrigger.fetch_add(runsWithoutTrigger, std::memory_order_relaxed);
+        if (!run.runs[index])
+            return;
+        if (uint32_t runsThatKeptAnalyses = run.notes->runsThatKeptAnalyses[index])
+            totals.runsThatKeptAnalyses.fetch_add(runsThatKeptAnalyses, std::memory_order_relaxed);
+        if (uint64_t nanoseconds = run.notes->nanoseconds[index])
+            totals.nanoseconds.fetch_add(nanoseconds, std::memory_order_relaxed);
+        if (uint64_t instructions = run.notes->instructions[index])
+            totals.instructions.fetch_add(instructions, std::memory_order_relaxed);
+        if (uint64_t bytes = run.notes->codeBytesAdded[index])
+            totals.codeBytesAdded.fetch_add(bytes, std::memory_order_relaxed);
+        if (uint64_t bytes = run.notes->codeBytesRemoved[index])
+            totals.codeBytesRemoved.fetch_add(bytes, std::memory_order_relaxed);
+    });
 }
 
 void PassRunner::flushFunctionPassTotals()
 {
     for (PassID id : allMembersOf<PassID>) {
         FunctionPassTotals& totals = m_functionPassTotals[static_cast<unsigned>(id)];
-        uint64_t runs = totals.runs.exchange(0, std::memory_order_relaxed);
+        uint64_t runs = 0;
+        uint64_t changes = 0;
+        for (CountsOfPasses& counts : m_countsOfPasses) {
+            runs += counts[static_cast<unsigned>(id)].runs.exchange(0, std::memory_order_relaxed);
+            changes += counts[static_cast<unsigned>(id)].changes.exchange(0, std::memory_order_relaxed);
+        }
+        uint64_t runsWithoutTrigger = totals.runsWithoutTrigger.exchange(0, std::memory_order_relaxed);
+        if (runsWithoutTrigger && m_build.options().logging.logsPhaseTimes)
+            dataLogLn("AOT function loop: ", nameOf(id), " | ", runsWithoutTrigger, " runs left out: the body holds nothing that the pass looks for | ", totals.runsThatKeptAnalyses.exchange(0, std::memory_order_relaxed), " changing runs kept analyses");
         if (!runs)
             continue;
-        uint64_t changes = totals.changes.exchange(0, std::memory_order_relaxed);
         uint64_t nanoseconds = totals.nanoseconds.exchange(0, std::memory_order_relaxed);
+        if (int64_t valuesAdded = totals.valuesAdded.exchange(0, std::memory_order_relaxed))
+            dataLogLn("AOT function loop: ", nameOf(id), " | ", valuesAdded, " values added");
+        if (m_build.options().logging.logsPhaseTimes)
+            dataLogLn("AOT function loop: ", nameOf(id), " | ", runs, " runs | ", changes, " changed the function | ", totals.needlessDrops.exchange(0, std::memory_order_relaxed), " changed nothing and dropped analyses | cpu ", nanoseconds / 1'000'000, " ms, ", totals.nanosecondsWithoutChange.exchange(0, std::memory_order_relaxed) / 1'000'000, " ms of it in runs that changed nothing | instructions ", totals.instructions.exchange(0, std::memory_order_relaxed) / 1'000'000, " M | log entries ", totals.logEntries.exchange(0, std::memory_order_relaxed), " | runs that made the log forget ", totals.runsThatMadeLogForget.exchange(0, std::memory_order_relaxed), " | idle runs with entries ", totals.idleRunsWithLogEntries.exchange(0, std::memory_order_relaxed));
         m_build.statistics().addPassTime(id, { .wall = Seconds(0), .cpu = Seconds::fromNanoseconds(static_cast<double>(nanoseconds)), .runs = runs });
         m_build.statistics().countChanges(id, changes);
+        m_build.statistics().countCodeBytesAdded(id, totals.codeBytesAdded.exchange(0, std::memory_order_relaxed));
+        m_build.statistics().countCodeBytesRemoved(id, totals.codeBytesRemoved.exchange(0, std::memory_order_relaxed));
     }
+    for (unsigned sizeClass = 0; sizeClass < numberOfSizeClasses; ++sizeClass) {
+        FunctionPassTotals& totals = m_totalsBySize[sizeClass];
+        uint64_t functions = totals.runs.exchange(0, std::memory_order_relaxed);
+        uint64_t values = totals.changes.exchange(0, std::memory_order_relaxed);
+        uint64_t nanoseconds = totals.nanoseconds.exchange(0, std::memory_order_relaxed);
+        if (functions)
+            dataLogLn("AOT function loop: functions of fewer than ", 1u << sizeClass, " values | ", functions, " functions | ", values, " values | cpu ", static_cast<double>(nanoseconds) / 1e6, " ms");
+    }
+    if (m_build.options().logging.logsPhaseTimes)
+        FunctionAnalyses::logBuilds();
 }
 
 void PassRunner::dumpFunctions(const Program& program, ASCIILiteral point) const

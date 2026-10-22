@@ -35,9 +35,12 @@ enum class PropertyAnswerKind : uint8_t {
     Accessor,
     CustomAccessor,
     Field,
+    FieldAccessor,
     FieldCreation,
     FieldOrInheritedValue,
     FieldOrInheritedAccessor,
+    InheritedField,
+    FieldOrInheritedField,
     Variable,
     ExtraProperty,
     ExtraAccessor,
@@ -67,6 +70,10 @@ struct PropertyAnswer {
     SlotAccess access { SlotAccess::Read };
     bool isOwn { false };
     bool absentIsUndefined { false };
+    bool emptySlotMayBeUndefined { false };
+    bool undefinedNeedsNoStorage { false };
+    // Of FieldCreation: the order word of the receiver before and after, where whoever asks has seen both and the field, in a slot in the cell that holds any value as it is, takes any value.
+    std::optional<std::pair<uint32_t, uint32_t>> orderWords;
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };
     JSObject* holder { nullptr };
@@ -142,7 +149,12 @@ bool flattenOnce(VM&, JSObject*);
 
 enum class OutOfLineStorageChange : uint8_t { Unsupported, Stays, IsFirst, Doubled, GrowsBesideIndexingHeader };
 
-OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset);
+// A literal adds its properties at once, and their Structure comes behind that of the empty object. Whoever adds the same names one by one gets there with the last of them, by an alias in the table of the Structure in front:
+// what the Structure lists is what the chain in front of the addition lists and this name behind it, at the offsets that the chain would have given.
+bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
+
+// leadsToStructureOfRun: isLastAdditionOfRun() holds, so the Structure does not name the one in front of the addition as its predecessor.
+OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset, bool leadsToStructureOfRun = false);
 
 enum class StructureLookup : uint8_t { Unknown, Absent, Own, Inherited };
 

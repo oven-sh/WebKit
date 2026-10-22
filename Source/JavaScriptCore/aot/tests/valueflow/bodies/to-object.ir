@@ -2,7 +2,7 @@
 # RUN: valueflow-body f0
 # CHECK: body f0: nodes=6 sites=5 edges=2 edgesOnceReached=0 seeds=3 statements=2
 # CHECK-NEXT: n0 parameter v0
-# CHECK-NEXT: n1 parameter v1 & object
+# CHECK-NEXT: n1 parameter v1 : object
 # CHECK-NEXT: n2 result
 # CHECK-NEXT: n3 thrown
 # CHECK-NEXT: n4 merge v2

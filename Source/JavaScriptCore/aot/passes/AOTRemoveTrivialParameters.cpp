@@ -11,8 +11,11 @@
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTKnownValue.h"
+#include "AOTResultRules.h"
 #include "AOTParameterReplacement.h"
 #include <optional>
+#include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
@@ -24,8 +27,7 @@ struct PendingUpcast {
     ValueID parameter;
     ValueID argument;
     TypeID type;
-    TypeID written;
-    TypeID prediction;
+    TypeID expected;
 };
 
 class TrivialParameterRemover {
@@ -38,15 +40,67 @@ public:
         , m_parameters(WTF::move(parameters))
         , m_leaders(context.function.values.size(), [](size_t index) { return ValueID(index); })
         , m_candidates(context.function)
+        , m_positionOfParameter(FillWith { }, context.function.values.size(), noPosition)
     {
+        for (uint32_t index = 0; index < m_parameters.size(); ++index)
+            m_positionOfParameter[m_parameters[index].parameter.index()] = index;
     }
 
     size_t run()
     {
-        return findCandidates() ? replaceParameters() : 0;
+        bool hasCandidates = findCandidates();
+        return hasCandidates || hasParameterWithOneValue() ? replaceParameters() : 0;
     }
 
 private:
+    KnownValue onlyValueOf(const Block& block, ValueID parameter) const
+    {
+        if (block.handler || block.subject == parameter)
+            return { };
+        KnownValue value = knownValueOfType(m_context.program, m_context.types.at(m_function.at(parameter).type));
+        switch (value.kind()) {
+        case KnownValue::Kind::Undefined:
+        case KnownValue::Kind::Null:
+        case KnownValue::Kind::Boolean:
+        case KnownValue::Kind::Integer:
+            return value;
+        default:
+            return { };
+        }
+    }
+
+    bool hasParameterWithOneValue() const
+    {
+        return std::ranges::any_of(m_parameters, [&](const ParameterPosition& position) {
+            return onlyValueOf(m_function.at(position.block), position.parameter).isKnown();
+        });
+    }
+
+    void becomeConstant(ValueID id, KnownValue constant)
+    {
+        Value& value = m_function.edit(id);
+        switch (constant.kind()) {
+        case KnownValue::Kind::Undefined:
+            value.become(Opcode::Undefined);
+            break;
+        case KnownValue::Kind::Null:
+            value.become(Opcode::Null);
+            break;
+        case KnownValue::Kind::Boolean:
+            value.become(Opcode::Boolean);
+            value.setBoolean(constant.asBoolean());
+            break;
+        case KnownValue::Kind::Integer:
+            value.become(Opcode::Integer);
+            value.setInteger(constant.asInteger());
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        value.type = resultTypeOf(m_context.program, m_function, value, m_context.types);
+        value.setExpected({ });
+    }
+
     ValueID leaderOf(ValueID value) const { return m_leaders[m_candidates.resolve(value).index()]; }
 
     ValueID computeLeader(const ParameterPosition& position) const
@@ -54,10 +108,12 @@ private:
         ValueID only;
         bool receivesEdgeResult = false;
         for (Edge edge : m_cfg.incomingEdges(position.block)) {
-            ValueID passed = valuePassedOn(m_function, edge, position.index);
+            const Arguments& arguments = targetOf(m_function, edge).arguments;
+            bool isExplicitArgument = position.index < arguments.size();
+            ValueID passed = isExplicitArgument ? arguments[position.index] : valuePassedOn(m_function, edge, position.index);
             if (!passed)
                 return position.parameter;
-            receivesEdgeResult |= position.index >= numberOfExplicitArguments(m_function, edge);
+            receivesEdgeResult |= !isExplicitArgument;
 
             ValueID leader = leaderOf(passed);
             if (!leader || leader == position.parameter || leader == only || isCastOf(m_function, m_candidates, leader, position.parameter))
@@ -75,8 +131,53 @@ private:
     ValueID valueBehindCasts(const ParameterPosition& position) const
     {
         ValueID value = m_analyses.identityOf(position.parameter);
+        if (value == position.parameter)
+            return value;
         const Type& joined = m_context.types.at(m_function.at(position.parameter).type);
-        return m_context.types.at(m_function.at(value).type).isSubsetOf(joined, m_context.program) ? value : position.parameter;
+        auto fitsJoin = [&](ValueID candidate) {
+            return m_context.types.at(m_function.at(candidate).type).isSubsetOf(joined, m_context.program);
+        };
+        if (fitsJoin(value))
+            return value;
+        ValueID narrowed = findNarrowedValueOfEveryEdge(position);
+        return narrowed && fitsJoin(narrowed) ? narrowed : position.parameter;
+    }
+
+    ValueID sourceOfNarrowedValue(ValueID value) const
+    {
+        const Value& definition = m_function.at(value);
+        if (isCast(definition.opcode))
+            return m_candidates.resolve(definition.operand(0));
+        uint32_t index = m_positionOfParameter[value.index()];
+        if (index == noPosition)
+            return { };
+        const ParameterPosition& position = m_parameters[index];
+        std::optional<Edge> edge = m_cfg.singleIncomingEdge(position.block);
+        if (!edge)
+            return { };
+        ValueID passed = valuePassedOn(m_function, *edge, position.index);
+        return passed ? m_candidates.resolve(passed) : ValueID();
+    }
+
+    ValueID findNarrowedValueOfEveryEdge(const ParameterPosition& position) const
+    {
+        Vector<ValueID, 8> common;
+        bool hasCommon = false;
+        for (Edge edge : m_cfg.incomingEdges(position.block)) {
+            Vector<ValueID, 8> sources;
+            for (ValueID value = m_candidates.resolve(valuePassedOn(m_function, edge, position.index)); value; value = sourceOfNarrowedValue(value))
+                sources.append(value);
+            if (sources.contains(position.parameter))
+                continue;
+            if (!std::exchange(hasCommon, true)) {
+                common = WTF::move(sources);
+                continue;
+            }
+            common.removeAllMatching([&](ValueID value) {
+                return !sources.contains(value);
+            });
+        }
+        return common.isEmpty() ? ValueID() : common.first();
     }
 
     bool tryAssignLeaders(Vector<ParameterPosition>& undecided)
@@ -130,20 +231,27 @@ private:
                 numberOfRemovedParameters += replaceParametersOf(block, builder, replacements);
         }
         replacements.apply(m_function, &m_analyses);
-        m_analyses.didChangeValues();
+        if (numberOfRemovedParameters)
+            m_analyses.didChangeValues();
         return numberOfRemovedParameters;
     }
 
     size_t replaceParametersOf(BlockID id, IRBuilder& builder, ValueSubstitution& replacements)
     {
-        Block& block = m_function.at(id);
+        Block& block = m_function.edit(id);
         BitVector removedIndexes;
         Vector<PendingUpcast, 4> upcasts;
+        Vector<std::pair<ValueID, KnownValue>, 4> constants;
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
             ValueID parameter = block.parameters[index];
             ValueID argument = m_candidates.resolve(parameter);
-            if (argument == parameter)
+            if (argument == parameter) {
+                if (KnownValue constant = onlyValueOf(block, parameter); constant.isKnown() && m_positionOfParameter[parameter.index()] != noPosition) {
+                    removedIndexes.set(index);
+                    constants.append({ parameter, constant });
+                }
                 continue;
+            }
             bool canReplace = canReplaceParameter(m_function, argument, parameter);
             // A parameter dominates the handler of its block. An Upcast among the values of the block does not.
             if (!canReplace && block.handler)
@@ -154,18 +262,24 @@ private:
                 continue;
             }
             const Value& value = m_function.at(parameter);
-            upcasts.append({ parameter, argument, value.type, value.written(), value.prediction() });
+            upcasts.append({ parameter, argument, value.type, value.expected() });
         }
         builder.removeParameters(id, removedIndexes);
 
         uint32_t index = indexAfterCaughtValues(m_function, block);
+        for (auto [parameter, constant] : constants) {
+            becomeConstant(parameter, constant);
+            block.values.insert(index++, parameter);
+        }
         for (const PendingUpcast& upcast : upcasts) {
-            Value& value = m_function.at(upcast.parameter);
+            Value& value = m_function.edit(upcast.parameter);
             value.type = upcast.type;
-            value.setWritten(upcast.written);
-            value.setPrediction(upcast.prediction);
+            value.setExpected(upcast.expected);
             becomeUpcast(m_function, upcast.parameter, upcast.argument);
             block.values.insert(index++, upcast.parameter);
+            // The subject is named at the head of the block, above the Upcast.
+            if (block.subject == upcast.parameter)
+                block.subject = upcast.argument;
         }
         return removedIndexes.bitCount();
     }
@@ -177,6 +291,8 @@ private:
     Vector<ParameterPosition> m_parameters;
     Vector<ValueID> m_leaders;
     ValueSubstitution m_candidates;
+    static constexpr uint32_t noPosition = UINT32_MAX;
+    Vector<uint32_t> m_positionOfParameter;
 };
 
 } // anonymous namespace
@@ -204,7 +320,10 @@ size_t removeTrivialParameters(FunctionPassContext& context, Vector<ParameterPos
 PassOutcome removeTrivialParameters(FunctionPassContext& context)
 {
     size_t numberOfRemovedParameters = removeTrivialParameters(context, collectMergePointParameters(context.function, context.analyses.cfg()));
-    return numberOfRemovedParameters ? PassOutcome::Changed : PassOutcome::Unchanged;
+    if (!numberOfRemovedParameters)
+        return PassOutcome::Unchanged;
+    context.keptAnalyses = allAnalyses;
+    return PassOutcome::Changed;
 }
 
 } } } // namespace JSC::AOT::Typed

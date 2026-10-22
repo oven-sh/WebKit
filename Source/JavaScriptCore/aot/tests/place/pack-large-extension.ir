@@ -20,11 +20,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 
-# The store under a key nobody knows may fill any field. All are used alike, so the last 64 get the granules.
+# The store under a key nobody knows may fill any field, and no store names one: each would go out of line. All are used alike, so the first 64 get the granules.
 # CHECK: L0 CompiledObject size=8320 extension=520
-# CHECK-NEXT: .0 "n0" OptionalDouble @24
-# CHECK: .1035 "n1035" OptionalDouble @8304
-# CHECK-NEXT: .1036 "n1036" JSValue out@8
-# CHECK: .1099 "n1099" JSValue out@512
+# CHECK-NEXT: .0 "n0" JSValue out@8
+# CHECK: .63 "n63" JSValue out@512
+# CHECK-NEXT: .64 "n64" OptionalDouble @24
+# CHECK: .1099 "n1099" OptionalDouble @8304
 # CHECK-NEXT: extension Cell32 @16
 # CHECK-NEXT: extra-properties Cell32 @20

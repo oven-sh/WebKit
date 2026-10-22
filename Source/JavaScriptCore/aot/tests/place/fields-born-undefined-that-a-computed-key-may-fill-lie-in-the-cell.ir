@@ -1,0 +1,29 @@
+# A literal lists names with undefined to make room for them. Where a store may fill them without naming them, no count of stores says how seldom they are filled: they lie in the cell
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+# STATISTIC: FieldsOutOfLine = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=10 fields=[{key="close" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="data" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="end" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="error" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="readable" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = Undefined
+    v4 = NewObject -, v3, v3, v3, v3, v3 layout=L0 fields=[0, 1, 2, 3, 4]
+    v5 = FinishObject v4
+    ElemSet v5, v2, v0
+    v7 = ForInOpen v5
+    Return
+}
+
+# CHECK: L0 CompiledObject size=64 extension=0
+# CHECK-NEXT: .0 "close" JSValue @16
+# CHECK-NEXT: .1 "data" JSValue @24
+# CHECK-NEXT: .2 "end" JSValue @32
+# CHECK-NEXT: .3 "error" JSValue @40
+# CHECK-NEXT: .4 "readable" JSValue @48
+# CHECK-NEXT: extra-properties Cell32 @56

@@ -34,12 +34,28 @@ public:
     };
 
     template<typename ChooseHeader>
-    CycleForest(Graph& graph, const ChooseHeader& chooseHeader)
+    CycleForest(Graph& graph, const ChooseHeader& chooseHeader, unsigned maxDepth = UINT_MAX)
         : m_graph(graph)
+        , m_maxDepth(maxDepth)
         , m_innermost(FillWith { }, graph.numNodes(), none)
     {
         Builder<ChooseHeader> builder(*this, chooseHeader);
         builder.run();
+    }
+
+    struct Parts {
+        Vector<Cycle> cycles;
+        Vector<unsigned> innermost;
+        Vector<Node> postOrder;
+    };
+
+    CycleForest(Graph& graph, Parts&& parts)
+        : m_graph(graph)
+        , m_maxDepth(UINT_MAX)
+        , m_cycles(WTF::move(parts.cycles))
+        , m_innermost(WTF::move(parts.innermost))
+        , m_postOrder(WTF::move(parts.postOrder))
+    {
     }
 
     unsigned size() const { return m_cycles.size(); }
@@ -73,25 +89,13 @@ private:
             : m_forest(forest)
             , m_graph(forest.m_graph)
             , m_chooseHeader(chooseHeader)
-            , m_number(FillWith { }, m_graph.numNodes(), 0u)
-            , m_lowest(FillWith { }, m_graph.numNodes(), 0u)
-            , m_isOnStack(FillWith { }, m_graph.numNodes(), false)
         {
         }
 
         void run()
         {
-            Vector<Node> nodes;
-            nodes.reserveInitialCapacity(m_graph.numNodes());
-            for (unsigned index = 0; index < m_graph.numNodes(); ++index) {
-                if (Node node = m_graph.node(index))
-                    nodes.append(node);
-            }
-            decompose(nodes, none);
-            while (!m_pending.isEmpty()) {
-                Pending pending = m_pending.takeLast();
-                decompose(pending.nodes, pending.cycle);
-            }
+            if (mayHaveCycle())
+                findCycles();
             computePostOrder();
         }
 
@@ -106,8 +110,41 @@ private:
             Vector<Node> nodes;
         };
 
+        struct State {
+            unsigned number { 0 };
+            unsigned lowest { 0 };
+            unsigned innermost { none };
+            bool isOnStack { false };
+        };
+
+        bool mayHaveCycle() const
+        {
+            if constexpr (requires { m_graph.hasCycle(); })
+                return m_graph.hasCycle();
+            else
+                return true;
+        }
+
+        void findCycles()
+        {
+            m_states.fill(State { }, m_graph.numNodes());
+            Vector<Node> nodes;
+            nodes.reserveInitialCapacity(m_graph.numNodes());
+            for (unsigned index = 0; index < m_graph.numNodes(); ++index) {
+                if (Node node = m_graph.node(index))
+                    nodes.append(node);
+            }
+            decompose(nodes, none);
+            while (!m_pending.isEmpty()) {
+                Pending pending = m_pending.takeLast();
+                decompose(pending.nodes, pending.cycle);
+            }
+            for (unsigned index = 0; index < m_graph.numNodes(); ++index)
+                m_forest.m_innermost[index] = m_states[index].innermost;
+        }
+
         unsigned indexOf(Node node) const { return m_graph.index(node); }
-        bool isIn(unsigned cycle, Node node) const { return m_forest.m_innermost[indexOf(node)] == cycle; }
+        bool isIn(unsigned cycle, Node node) const { return m_states[indexOf(node)].innermost == cycle; }
 
         bool hasSelfEdge(Node node) const
         {
@@ -120,8 +157,9 @@ private:
 
         void enter(Node node)
         {
-            m_number[indexOf(node)] = m_lowest[indexOf(node)] = ++m_nextNumber;
-            m_isOnStack[indexOf(node)] = true;
+            State& state = m_states[indexOf(node)];
+            state.number = state.lowest = ++m_nextNumber;
+            state.isOnStack = true;
             m_stack.append(node);
             m_frames.append(Frame { node, 0 });
         }
@@ -131,44 +169,55 @@ private:
             std::optional<Node> scopeHeader;
             if (scope != none)
                 scopeHeader = m_forest.m_cycles[scope].header();
+            State* states = m_states.mutableSpan().data();
             for (Node node : nodes)
-                m_number[indexOf(node)] = 0;
+                states[indexOf(node)].number = 0;
             for (Node start : nodes) {
-                if (m_number[indexOf(start)])
+                if (states[indexOf(start)].number)
                     continue;
                 enter(start);
                 while (!m_frames.isEmpty())
-                    step(scope, scopeHeader);
+                    walkOn(states, scope, scopeHeader);
             }
         }
 
-        void step(unsigned scope, std::optional<Node> scopeHeader)
+        void walkOn(State* states, unsigned scope, std::optional<Node> scopeHeader)
         {
             Node node = m_frames.last().node;
-            auto&& successors = m_graph.successors(node);
-            if (m_frames.last().next < successors.size()) {
-                Node successor = successors[m_frames.last().next++];
-                if (!isIn(scope, successor) || (scopeHeader && successor == *scopeHeader))
-                    return;
-                if (!m_number[indexOf(successor)])
-                    enter(successor);
-                else if (m_isOnStack[indexOf(successor)])
-                    m_lowest[indexOf(node)] = std::min(m_lowest[indexOf(node)], m_number[indexOf(successor)]);
-                return;
+            State& state = states[indexOf(node)];
+            {
+                auto&& successors = m_graph.successors(node);
+                unsigned size = successors.size();
+                unsigned lowest = state.lowest;
+                for (unsigned next = m_frames.last().next; next < size;) {
+                    Node successor = successors[next++];
+                    const State& stateOfSuccessor = states[indexOf(successor)];
+                    if (stateOfSuccessor.innermost != scope || (scopeHeader && successor == *scopeHeader))
+                        continue;
+                    if (!stateOfSuccessor.number) {
+                        state.lowest = lowest;
+                        m_frames.last().next = next;
+                        enter(successor);
+                        return;
+                    }
+                    if (stateOfSuccessor.isOnStack)
+                        lowest = std::min(lowest, stateOfSuccessor.number);
+                }
+                state.lowest = lowest;
             }
             m_frames.removeLast();
             if (!m_frames.isEmpty()) {
-                unsigned parent = indexOf(m_frames.last().node);
-                m_lowest[parent] = std::min(m_lowest[parent], m_lowest[indexOf(node)]);
+                State& parent = states[indexOf(m_frames.last().node)];
+                parent.lowest = std::min(parent.lowest, state.lowest);
             }
-            if (m_lowest[indexOf(node)] != m_number[indexOf(node)])
+            if (state.lowest != state.number)
                 return;
             unsigned first = m_stack.size() - 1;
             while (m_stack[first] != node)
                 --first;
             std::span<const Node> members = m_stack.span().subspan(first);
             for (Node member : members)
-                m_isOnStack[indexOf(member)] = false;
+                states[indexOf(member)].isOnStack = false;
             if (members.size() > 1 || hasSelfEdge(node))
                 addCycle(members, scope);
             m_stack.shrink(first);
@@ -181,7 +230,7 @@ private:
             m_forest.m_cycles[cycle].parent = parent;
             m_forest.m_cycles[cycle].depth = m_forest.depth(parent) + 1;
             for (Node member : members)
-                m_forest.m_innermost[indexOf(member)] = cycle;
+                m_states[indexOf(member)].innermost = cycle;
 
             Vector<Node, 2> entries;
             for (Node member : members) {
@@ -201,7 +250,7 @@ private:
                 if (entry != header)
                     result.append(entry);
             }
-            if (members.size() == 1)
+            if (members.size() == 1 || m_forest.m_cycles[cycle].depth >= m_forest.m_maxDepth)
                 return;
             Pending pending { cycle, { } };
             pending.nodes.reserveInitialCapacity(members.size() - 1);
@@ -214,6 +263,8 @@ private:
 
         std::optional<Node> targetInOrder(Node from, Node to) const
         {
+            if (!m_forest.size())
+                return to;
             unsigned cycle = m_forest.innermost(to);
             unsigned common = m_forest.nearestCommon(m_forest.innermost(from), cycle);
             if (cycle == common) {
@@ -235,15 +286,23 @@ private:
             m_frames.append(Frame { root, 0 });
             while (!m_frames.isEmpty()) {
                 Node node = m_frames.last().node;
-                auto&& successors = m_graph.successors(node);
-                if (m_frames.last().next < successors.size()) {
-                    std::optional<Node> target = targetInOrder(node, successors[m_frames.last().next++]);
-                    if (target && !isSeen[indexOf(*target)]) {
+                bool didEnter = false;
+                {
+                    auto&& successors = m_graph.successors(node);
+                    unsigned size = successors.size();
+                    for (unsigned next = m_frames.last().next; next < size;) {
+                        std::optional<Node> target = targetInOrder(node, successors[next++]);
+                        if (!target || isSeen[indexOf(*target)])
+                            continue;
                         isSeen[indexOf(*target)] = true;
+                        m_frames.last().next = next;
                         m_frames.append(Frame { *target, 0 });
+                        didEnter = true;
+                        break;
                     }
-                    continue;
                 }
+                if (didEnter)
+                    continue;
                 m_forest.m_postOrder.append(node);
                 m_frames.removeLast();
             }
@@ -252,9 +311,7 @@ private:
         CycleForest& m_forest;
         Graph& m_graph;
         const ChooseHeader& m_chooseHeader;
-        Vector<unsigned> m_number;
-        Vector<unsigned> m_lowest;
-        Vector<bool> m_isOnStack;
+        Vector<State> m_states;
         Vector<Node, 32> m_stack;
         Vector<Frame, 32> m_frames;
         Vector<Pending> m_pending;
@@ -262,6 +319,7 @@ private:
     };
 
     Graph& m_graph;
+    unsigned m_maxDepth;
     Vector<Cycle> m_cycles;
     Vector<unsigned> m_innermost;
     Vector<Node> m_postOrder;

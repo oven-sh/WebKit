@@ -666,12 +666,10 @@ public:
     ALWAYS_INLINE static AnyTransitionResult transitAndNext(VM& vm, JSCell& storage, Entry from)
     {
 #if ENABLE(AOT)
-        if (isCompact(storage)) [[unlikely]] {
+        if (isCompact(storage)) {
             auto next = AOT::CompactStorage::transitAndNext(vm, &storage, from);
-            if (!next.storage || isCompact(*next.storage))
-                return { next.storage, next.entry, next.key, next.value };
-            auto result = transitAndNext(vm, ordinary(*next.storage), next.entry);
-            return { result.storage, result.entry, result.key, result.value };
+            ASSERT(!next.storage || isCompact(*next.storage));
+            return { next.storage, next.entry, next.key, next.value };
         }
 #endif
         auto result = transitAndNext(vm, ordinary(storage), from);
@@ -679,22 +677,22 @@ public:
     }
     ALWAYS_INLINE static JSCell* nextAndUpdateIterationEntry(VM& vm, JSCell& storage, Entry entry)
     {
-        auto result = transitAndNext(vm, storage, entry);
-        if (!result.storage)
-            return vm.orderedHashTableSentinel();
 #if ENABLE(AOT)
-        if (isCompact(*result.storage)) [[unlikely]] {
-            AOT::CompactStorage::setIterationEntry(result.storage, result.entry);
-            return result.storage;
+        if (isCompact(storage)) {
+            auto next = AOT::CompactStorage::transitAndNext(vm, &storage, entry);
+            if (!next.storage)
+                return vm.orderedHashTableSentinel();
+            ASSERT(isCompact(*next.storage));
+            AOT::CompactStorage::setIterationEntry(next.storage, next.entry);
+            return next.storage;
         }
 #endif
-        set(ordinary(*result.storage), iterationEntryIndex(), result.entry);
-        return result.storage;
+        return nextAndUpdateIterationEntry(vm, ordinary(storage), entry);
     }
     ALWAYS_INLINE static TableSize iterationEntry(JSCell& storage)
     {
 #if ENABLE(AOT)
-        if (isCompact(storage)) [[unlikely]]
+        if (isCompact(storage))
             return AOT::CompactStorage::iterationEntry(&storage);
 #endif
         return iterationEntry(ordinary(storage));
@@ -703,7 +701,7 @@ public:
     ALWAYS_INLINE static JSValue getIterationEntryKey(JSCell& storage)
     {
 #if ENABLE(AOT)
-        if (isCompact(storage)) [[unlikely]]
+        if (isCompact(storage))
             return AOT::CompactStorage::keyAt(&storage, AOT::CompactStorage::iterationEntry(&storage));
 #endif
         return getIterationEntryKey(ordinary(storage));
@@ -711,7 +709,7 @@ public:
     ALWAYS_INLINE static JSValue getIterationEntryValue(JSCell& storage)
     {
 #if ENABLE(AOT)
-        if (isCompact(storage)) [[unlikely]]
+        if (isCompact(storage))
             return AOT::CompactStorage::valueAt(&storage, AOT::CompactStorage::iterationEntry(&storage));
 #endif
         return getIterationEntryValue(ordinary(storage));

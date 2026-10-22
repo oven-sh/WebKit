@@ -28,6 +28,7 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setThisValueOperand(listCall.thisValueOperand());
         call.setCalleeKey(listCall.calleeKey());
         call.setCalleeName(listCall.calleeName());
+        call.setExpectedResult(listCall.expectedResult());
         call.setIsDemotedTailCall(listCall.isDemotedTailCall());
         break;
     case Opcode::ConstructList:
@@ -41,7 +42,6 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setLayout(listCall.layout());
         call.setParentOperand(listCall.parentOperand());
         call.setNewTargetOperand(listCall.newTargetOperand());
-        call.setKeepsShape(listCall.keepsShape());
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -253,6 +253,8 @@ std::optional<Vector<CopiedField, 8>> ObjectInterpreter::collectCopiedFields(Val
     const VirtualFamily& family = m_sinking.familyOf(source);
     std::span<const PropertyKeyID> excludedKeys = value.excludedKeys();
     Vector<CopiedField, 8> fields;
+    if (hasUnprovenField(family, singleShapeOf(source)))
+        return std::nullopt;
     for (uint32_t field : m_sinking.orders().fieldsOf(singleShapeOf(source).order)) {
         const VirtualField& property = family.fieldAt(field);
         if (property.kind != VirtualFieldKind::Named)
@@ -371,7 +373,7 @@ Execution ObjectInterpreter::executeCallWithList(ValueID id)
     if (isRewriting()) {
         cursor().setOrigin(function().at(id).origin());
         Vector<ValueID, 8> elements = listedElementsOf(list);
-        convertListCall(cursor().builder().function().at(id), elements.span());
+        convertListCall(cursor().builder().function().edit(id), elements.span());
     }
     forgetFieldsWrittenBy(id);
     keep(id);

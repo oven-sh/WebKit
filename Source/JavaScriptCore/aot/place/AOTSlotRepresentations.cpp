@@ -12,6 +12,7 @@
 #include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocation.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
@@ -32,7 +33,6 @@ struct MemberFacts {
     {
         mayReachUnknownJavaScript |= other.mayReachUnknownJavaScript;
         isFilledByNativeCode |= other.isFilledByNativeCode;
-        holdsWideReferences |= other.holdsWideReferences;
         needsWideReference |= other.needsWideReference;
         mayHaveUnorderedShape |= other.mayHaveUnorderedShape;
         canHaveExtension &= other.canHaveExtension;
@@ -40,7 +40,6 @@ struct MemberFacts {
 
     bool mayReachUnknownJavaScript { false };
     bool isFilledByNativeCode { false };
-    bool holdsWideReferences { false };
     bool needsWideReference { false };
     bool mayHaveUnorderedShape { false };
     bool canHaveExtension { true };
@@ -54,6 +53,7 @@ struct FieldInputs {
     const Type& type;
     const SlotRowUse& use;
     bool isCreatedByStore;
+    bool isInObjectBornWithoutValues;
     MemberFacts members;
 };
 
@@ -79,7 +79,7 @@ static bool needsWideReference(const SlotPlanContext& context, FieldReference fi
 
 static bool canHaveExtension(const SlotPlanContext& context, LayoutID id)
 {
-    return context.isCompiledObject(id) && !context.inputs.frameAllocation.mayBeInFrame(id);
+    return context.isCompiledObject(id) && !context.inputs.frameAllocation.mayBeInFrame(id) && !context.layoutsFlattenedInOthers.get(id.index());
 }
 
 static bool isCompressible(const Type& type)
@@ -105,8 +105,6 @@ SlotRepresentation representationFor(const SlotPlanContext& context, const Type&
         return SlotRepresentation::OptionalBoolean;
     if (choice.prefersInt32 && representation == SlotRepresentation::OptionalInt64 && type.integers.isSubsetOf({ minInlineInt32, INT32_MAX }))
         return SlotRepresentation::OptionalInt32;
-    if (choice.prefersInt32 && widthOf(representation) == 8 && type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | markerPrimitives))
-        return SlotRepresentation::Int32OrDouble;
     if (!choice.holdsWideReferences && !context.usesWideReferences && isCompressible(type)) {
         if (representation == SlotRepresentation::Cell)
             return SlotRepresentation::Cell32;
@@ -131,9 +129,17 @@ static SlotRepresentation representationOfField(const SlotPlanContext& context, 
     return representationFor(context, type, choice);
 }
 
+// The closures that the other fields of the object defer are made over it. It has no name, so only the allocation fills it and nothing takes it out of its slot.
+static bool holdsEnvironmentOfDeferredClosures(const FieldInputs& field)
+{
+    return isObjectLayout(field.layout.kind) && field.declaration.flags.contains(FieldFlags::IsHidden) && field.type.environment;
+}
+
 static bool needsAbsentState(const FieldInputs& field)
 {
     constexpr OptionSet<FieldStability> everyStability { FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined, FieldStability::IsNeverStoredWithOtherType };
+    if (holdsEnvironmentOfDeferredClosures(field))
+        return false;
     bool isAlwaysFilled = field.flow.occupancy == Occupancy::AlwaysFilled;
     switch (field.layout.kind) {
     case LayoutKind::CoroutineFrame:
@@ -170,13 +176,18 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
     if (field.declaration.flags.containsAny(privateNameFlags))
         return true;
 
-    bool isNeverWritten = isNeverStored(context.program, field.reference) && !field.use.initializingSites;
+    // The run time alone writes the slot of an accessor.
+    if (field.declaration.form.contains(FieldForm::IsAccessor))
+        return !isRemovedField(context.program, field.reference);
+
+    bool isNeverWritten = isNeverStored(context.program, field.reference) && !field.use.initializingSites && !field.use.storesIntoNewObjects;
     if (isNeverWritten && (field.declaration.flags.contains(FieldFlags::IsMethod) || !field.members.isFilledByNativeCode))
         return false;
     return !isRemovedField(context.program, field.reference);
 }
 
-// Such a slot has no absent state and needs none: what would empty it makes the object an ordinary one.
+// Zero says that nobody has asked for the closure yet. What takes the field out of its slot makes the closure first, so the slot leaves like any other: it reads empty
+// and the property lies with the extra properties. Any other object that the program stores is in the slot as a reference.
 static std::optional<FunctionID> deferredFunctionOf(const SlotPlanContext& context, const FieldInputs& field)
 {
     const LocationFlow& location = field.flow.location;
@@ -184,29 +195,26 @@ static std::optional<FunctionID> deferredFunctionOf(const SlotPlanContext& conte
         return std::nullopt;
     if (location.deferral == ClosureDeferral::Unknown || !location.deferredFunction)
         return std::nullopt;
-    if (field.members.needsWideReference || field.isCreatedByStore || field.use.storesOfOtherThanDeferredClosure)
+    if (field.members.needsWideReference)
         return std::nullopt;
     return location.deferredFunction;
 }
 
-static bool prefersInt32(const SlotPlanContext& context, const FieldInputs& field, bool needsAbsentState)
+static bool fitsInt32Slot(const Type& type)
 {
-    if (field.type.isInt32OrNullish() && field.type.integers.isSubsetOf({ minInlineInt32, INT32_MAX }))
-        return true;
-    if (!isPredictedInt32(context.program, field.declaration) || !field.members.canHaveExtension || field.members.holdsWideReferences)
-        return false;
-    if (field.use.wideStoresWithoutAllocation)
-        return false;
-    bool isOnlyUsedAsDouble = !field.use.integerUses && field.use.doubleUses;
-    return needsAbsentState || !field.type.isNumber() || !(field.use.doubleStores || isOnlyUsedAsDouble);
+    return type.isInt32OrNullish() && type.integers.isSubsetOf({ minInlineInt32, INT32_MAX });
 }
 
 // A field that an object lists before it has an Extension reads as undefined. An unordered object has no list, so its slots alone say what it has.
 static bool mayBeOutOfLine(const FieldInputs& field, const SlotClaim& claim)
 {
+    if (!field.members.canHaveExtension || holdsEnvironmentOfDeferredClosures(field))
+        return false;
     if (claim.existsAtCreation && field.members.mayHaveUnorderedShape)
         return false;
-    if (claim.representation == SlotRepresentation::DeferredClosure || field.use.storesWithoutAllocation)
+    if (claim.existsAtCreation && field.isInObjectBornWithoutValues && field.flow.location.storeNaming != StoreNaming::EveryStoreNamesLocation)
+        return false;
+    if (field.use.storesWithoutAllocation)
         return false;
     if (claim.existsAtCreation && field.use.storesIntoFilledSlots)
         return false;
@@ -215,9 +223,7 @@ static bool mayBeOutOfLine(const FieldInputs& field, const SlotClaim& claim)
     bool mayBeUndefined = field.type.primitives & Primitive::Undefined;
     if (field.declaration.flags.contains(FieldFlags::IsRequired) && !mayBeUndefined)
         return false;
-    if (claim.existsAtCreation && (!mayBeUndefined || claim.isInitializedWithValue))
-        return false;
-    return field.members.canHaveExtension;
+    return !claim.existsAtCreation || (mayBeUndefined && !claim.isInitializedWithValue);
 }
 
 static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& field)
@@ -235,20 +241,30 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
     claim.existsAtCreation = field.use.initializingSites || claim.isSetAtCreation || isAlwaysFilledByNativeCode;
     claim.isInitializedWithValue = field.use.sitesInitializingWithValue || (claim.isSetAtCreation && !field.use.initializingSites) || isAlwaysFilledByNativeCode;
 
-    if (auto function = deferredFunctionOf(context, field)) {
-        claim.needsAbsentState = false;
+    // The code is written for this slot already. Nothing that lies in a frame is stored to such a field.
+    if (location.deferral == ClosureDeferral::FlattenedObject) {
+        RELEASE_ASSERT(context.isCompiledObject(field.reference.layout) && !field.members.needsWideReference);
+        claim.needsAbsentState = true;
         claim.representation = SlotRepresentation::DeferredClosure;
-        claim.deferredFunction = *function;
-        claim.deferredClosureCapturesObject = location.deferral == ClosureDeferral::CapturesObject;
+        claim.defersFlattenedObject = true;
         return claim;
     }
 
-    claim.needsWideReference = field.members.needsWideReference;
+    if (auto function = deferredFunctionOf(context, field)) {
+        claim.needsAbsentState = true;
+        claim.representation = SlotRepresentation::DeferredClosure;
+        claim.deferredFunction = *function;
+        claim.deferredClosureCapturesObject = location.deferral == ClosureDeferral::CapturesObject;
+        claim.deferredClosureCapturesEnvironment = location.deferral == ClosureDeferral::CapturesEnvironment;
+        return claim;
+    }
+
+    // A narrow reference saves four bytes and is decoded at each read.
+    claim.needsWideReference = field.members.needsWideReference || (context.isMadeSeldom(field.reference.layout) && !holdsEnvironmentOfDeferredClosures(field));
     claim.representation = representationOfField(context, field.type, claim.needsAbsentState, {
-        .prefersInt32 = prefersInt32(context, field, claim.needsAbsentState),
+        .prefersInt32 = fitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
     });
-    claim.representationWithoutOverflowArea = representationOfField(context, field.type, claim.needsAbsentState, { .prefersInt32 = false, .holdsWideReferences = claim.needsWideReference });
     claim.mayBeOutOfLine = mayBeOutOfLine(field, claim);
     if (claim.mayBeOutOfLine)
         claim.outOfLineRepresentation = outOfLineRepresentationFor(context, field.type.withPrimitives(Primitive::Absent), claim.needsWideReference);
@@ -260,26 +276,10 @@ static const Field& declaredFieldAt(const Program& program, FieldReference refer
     return fieldAt(program, declarationOf(program, reference));
 }
 
-static void demoteLoneInt32Slot(const SlotPlanContext& context, LayoutID id, std::span<SlotClaim> fieldClaims)
+// An expected type bounds nothing: the field holds whatever arrives.
+static const Type& typeHeldBy(const Program& program, const Field& declaration)
 {
-    unsigned numberOfInt32Slots = 0;
-    FieldIndex lastInt32Slot = 0;
-    for (FieldIndex index = 0; index < fieldClaims.size(); ++index) {
-        if (!fieldClaims[index].hasStorage || fieldClaims[index].representation != SlotRepresentation::Int32OrDouble)
-            continue;
-        ++numberOfInt32Slots;
-        lastInt32Slot = index;
-    }
-    if (numberOfInt32Slots != 1)
-        return;
-
-    SlotClaim& claim = fieldClaims[lastInt32Slot];
-    const Type& type = context.program.at(declaredFieldAt(context.program, { id, lastInt32Slot }).declared.type);
-    claim.representation = representationOfField(context, type, claim.needsAbsentState, {
-        .prefersInt32 = false,
-        .holdsWideReferences = holdsWideReferences(context, id),
-    });
-    claim.representationWithoutOverflowArea = claim.representation;
+    return program.at(slotTypeOf(program, declaration));
 }
 
 static SlotClaim claimForExtraPropertiesWord(const SlotPlanContext& context, LayoutID id)
@@ -304,24 +304,26 @@ static SlotRow declaringRowOf(const SlotPlanContext& context, FieldReference ref
 static BitVector findFieldsCreatedByStores(const SlotPlanContext& context, const SlotUses& uses)
 {
     const Program& program = context.program;
-    BitVector declaringRows(context.rows.count());
-    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+    Vector<SlotRow> found = collectInParallel<SlotRow>(context.build.parallelLoops(), program.layouts.size(), [&](unsigned index, Vector<SlotRow>& rows) {
         LayoutID id(index);
         const Layout& layout = program.at(id);
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
             if (uses.rows[context.rows.rowOf(id, field)].privateDefinitionsByName)
-                declaringRows.quickSet(declaringRowOf(context, { id, field }));
+                rows.append(declaringRowOf(context, { id, field }));
         }
         if (!context.isCompiledObject(id) || !layout.constructor || keysAreNeverEnumerated(program, context.inputs.flow, id))
-            continue;
+            return;
 
         bool isAllocatedByRunTime = program.at(layout.constructor).kind != FunctionKind::BaseConstructor;
         uint32_t allocationSites = uses.layouts[index].allocationSites;
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
-            if (isAllocatedByRunTime || uses.rows[context.rows.rowOf(id, field)].initializingSites != allocationSites)
-                declaringRows.quickSet(declaringRowOf(context, { id, field }));
+            if (isAllocatedByRunTime || uses.rows[context.rows.rowOf(id, field)].initializingSitesOfOwnLayout != allocationSites)
+                rows.append(declaringRowOf(context, { id, field }));
         }
-    }
+    });
+    BitVector declaringRows(context.rows.count());
+    for (SlotRow row : found)
+        declaringRows.quickSet(row);
     return declaringRows;
 }
 
@@ -331,25 +333,39 @@ static MemberFacts memberFactsOf(const SlotPlanContext& context, FieldReference 
     return {
         .mayReachUnknownJavaScript = !everyAllocationClassCannot(context.program, context.inputs.flow, id, ObjectMutation::ReachUnknownJavaScript),
         .isFilledByNativeCode = isFilledByNativeCode(context.program.at(id)),
-        .holdsWideReferences = holdsWideReferences(context, id),
         .needsWideReference = needsWideReference(context, reference),
         .mayHaveUnorderedShape = mayHaveUnorderedShape(context.program, context.inputs.flow, id),
         .canHaveExtension = canHaveExtension(context, id),
     };
 }
 
+static bool isBornWithoutValues(const SlotPlanContext& context, const SlotUses& uses, LayoutID id)
+{
+    const Layout& layout = context.program.at(id);
+    if (layout.kind != LayoutKind::Record)
+        return false;
+    SlotRow firstRow = context.rows.firstRowOf(id);
+    for (FieldIndex index = 0; index < layout.fields.size(); ++index) {
+        if (uses.rows[firstRow + index].sitesInitializingWithValue)
+            return false;
+    }
+    return true;
+}
+
 static SlotClaim claimFor(const SlotPlanContext& context, const SlotUses& uses, const BitVector& fieldsCreatedByStores, FieldReference reference, const MemberFacts& members)
 {
     const Program& program = context.program;
     const Field& declaration = declaredFieldAt(program, reference);
+    const SlotRowUse& use = uses.rows[context.rows.rowOf(reference.layout, reference.field)];
     return claimFor(context, {
         .reference = reference,
         .layout = program.at(reference.layout),
         .declaration = declaration,
         .flow = flowOf(program, reference),
-        .type = program.at(declaration.declared.type),
-        .use = uses.rows[context.rows.rowOf(reference.layout, reference.field)],
+        .type = typeHeldBy(program, declaration),
+        .use = use,
         .isCreatedByStore = fieldsCreatedByStores.quickGet(declaringRowOf(context, reference)),
+        .isInObjectBornWithoutValues = use.initializingSites && !use.sitesInitializingWithValue && isBornWithoutValues(context, uses, reference.layout),
         .members = members,
     });
 }
@@ -362,11 +378,8 @@ static void claimRowsOf(const SlotPlanContext& context, const SlotUses& uses, co
         FieldReference reference { id, index };
         claims[firstRow + index] = claimFor(context, uses, fieldsCreatedByStores, reference, memberFactsOf(context, reference));
     }
-    if (!context.isCompiledObject(id))
-        return;
-
-    demoteLoneInt32Slot(context, id, claims.subspan(firstRow, numberOfFields));
-    claims[context.rows.extraPropertiesWordOf(id)] = claimForExtraPropertiesWord(context, id);
+    if (context.isCompiledObject(id))
+        claims[context.rows.extraPropertiesWordOf(id)] = claimForExtraPropertiesWord(context, id);
 }
 
 static FieldReference fieldAtRow(const SlotPlanContext& context, SlotRow row)
@@ -461,7 +474,6 @@ static std::optional<SharedValueKind> sharedValueKindOf(SlotRepresentation repre
         return SharedValueKind::Integer;
     case SlotValueKind::Float:
     case SlotValueKind::Double:
-    case SlotValueKind::Int32OrDouble:
         return SharedValueKind::Number;
     case SlotValueKind::Boolean:
         return SharedValueKind::Boolean;
@@ -488,22 +500,16 @@ ClaimSharer::ClaimSharer(const SlotPlanContext& context, const JoinedRows& joine
 void ClaimSharer::computeSpareBytes()
 {
     const SlotRows& rows = m_context.rows;
-    uint32_t hiddenWordWidth = widthOf(hiddenReferenceRepresentation(m_context.usesWideReferences));
     m_spareBytes.fill(0, m_context.program.layouts.size());
     forEachIndexInParallel(m_context.build.parallelLoops(), m_spareBytes.size(), [&](unsigned index) {
         LayoutID id(index);
         if (!m_context.isCompiledObject(id))
             return;
         uint32_t bytes = offsetOfFirstField;
-        bool hasOverflowAreas = false;
         for (SlotRow row = rows.firstRowOf(id); row < rows.firstRowOf(id) + rows.numberOfRowsOf(id); ++row) {
-            if (!m_claims[row].hasStorage)
-                continue;
-            bytes += widthOf(m_claims[row].representation);
-            hasOverflowAreas |= m_claims[row].representation == SlotRepresentation::Int32OrDouble;
+            if (m_claims[row].hasStorage)
+                bytes += widthOf(m_claims[row].representation);
         }
-        if (hasOverflowAreas)
-            bytes += hiddenWordWidth;
         m_spareBytes[index] = static_cast<uint32_t>(m_context.sizeClasses.cellSizeFor(bytes)) - bytes;
     });
 }
@@ -526,7 +532,7 @@ void ClaimSharer::collectUnits(const JoinedRows::Set& joined)
         size_t end = first + 1;
         while (end < rows.size() && inheritedRows.declaringRowOf(rows[end]) == inheritedRows.declaringRowOf(rows[first]))
             ++end;
-        const Type& type = program.at(declaredFieldAt(program, fieldAtRow(m_context, rows[first])).declared.type);
+        const Type& type = typeHeldBy(program, declaredFieldAt(program, fieldAtRow(m_context, rows[first])));
         auto kind = sharedValueKindOf(m_claims[rows[first]].representation);
         if (kind && type.isJavaScriptValue())
             m_units.append(ClaimUnit { rows.subspan(first, end - first), &type, type.hasOnlyPrimitives(markerPrimitives) ? SharedValueKind::OnlyMarkers : *kind });
@@ -538,17 +544,14 @@ SharedClaim ClaimSharer::claimFor(std::span<const ClaimUnit> units) const
 {
     SharedClaim shared;
     Type contents;
-    bool everyUnitHasOverflowArea = true;
     for (const ClaimUnit& unit : units) {
         const SlotClaim& claim = claimOf(unit);
         contents = contentsOfSharedSlot(contents, *unit.type);
         shared.needsAbsentState |= claim.needsAbsentState;
         shared.needsWideReference |= claim.needsWideReference;
-        everyUnitHasOverflowArea &= claim.representation == SlotRepresentation::Int32OrDouble;
     }
-    bool fitsInt32Slot = contents.isInt32OrNullish() && contents.integers.isSubsetOf({ minInlineInt32, INT32_MAX });
     shared.representation = representationOfField(m_context, contents, shared.needsAbsentState, {
-        .prefersInt32 = fitsInt32Slot || everyUnitHasOverflowArea,
+        .prefersInt32 = fitsInt32Slot(contents),
         .holdsWideReferences = shared.needsWideReference,
     });
     shared.outOfLineRepresentation = outOfLineRepresentationFor(m_context, contents.withPrimitives(Primitive::Absent), shared.needsWideReference);

@@ -79,6 +79,48 @@ static uint32_t nextBoolean(BodyDecoder& decoder)
     return decoder.checker().boolean(decoder.next());
 }
 
+// An operation whose words on the wire are a fixed number is decoded without a test between its words. Where a word is not valid, the words are decoded again one by one,
+// which finds the error to report.
+template<typename E>
+static uint32_t checkedEnumerator(uint32_t word, bool& isValid)
+{
+    isValid &= word < numberOfWireEnumerators<E>;
+    return word;
+}
+
+template<typename E>
+static uint32_t checkedOptionalEnumerator(uint32_t word, bool& isValid)
+{
+    isValid &= word < numberOfWireEnumerators<E> || word == Wire::none;
+    return word;
+}
+
+template<typename F>
+static uint32_t checkedFlagWord(uint32_t word, bool& isValid)
+{
+    constexpr uint64_t wireMask = (uint64_t { 1 } << numberOfWireEnumerators<F>) - 1;
+    isValid &= !(word & ~wireMask);
+    return word;
+}
+
+static uint32_t checkedBoolean(uint32_t word, bool& isValid)
+{
+    isValid &= word <= 1;
+    return word;
+}
+
+static void setCheckedDeclaredType(BodyDecoder& decoder, Instruction& instruction, unsigned firstWord, const uint32_t* words, bool& isValid)
+{
+    static_assert(sizeof(Wire::DeclaredType) == 3 * sizeof(uint32_t) && PayloadWords<DeclaredType>::count == 3);
+    static_assert(!offsetof(Wire::DeclaredType, type) && offsetof(Wire::DeclaredType, site) == sizeof(uint32_t) && offsetof(Wire::DeclaredType, flags) == 2 * sizeof(uint32_t));
+    constexpr uint32_t flagsThatExcludeEachOther = OptionSet<PositionFlags> { PositionFlags::IsExpected, PositionFlags::IsInt32Promise }.toRaw();
+    uint32_t flags = checkedFlagWord<PositionFlags>(words[2], isValid);
+    isValid &= (flags & flagsThatExcludeEachOther) != flagsThatExcludeEachOther;
+    instruction.setPayloadWordAt(firstWord, decoder.checkedID<TypeID>(words[0], isValid));
+    instruction.setPayloadWordAt(firstWord + 1, decoder.checkedOptionalID<TypeSiteID>(words[1], isValid));
+    instruction.setPayloadWordAt(firstWord + 2, flags);
+}
+
 template<typename WireRecord, typename Record>
 static Record nextRecord(BodyDecoder& decoder)
 {
@@ -124,20 +166,45 @@ static uint32_t nextWord(BodyDecoder& decoder)
 void decodeFields(BodyDecoder& decoder, Value& value)
 {
     switch (value.opcode) {
-    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint:
-    case Opcode::InitialYield: case Opcode::NewPromise: case Opcode::Parameter: case Opcode::GetShapeEpoch: case Opcode::ReturnsToResultTest:
+    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::NewDictionary: case Opcode::CatchValue: case Opcode::CatchException:
+    case Opcode::LoopHint: case Opcode::InitialYield: case Opcode::NewPromise: case Opcode::Parameter: case Opcode::AwaitMayContinue:
     case Opcode::StringBuilderBegin: case Opcode::JSONHasStackSpace:
         return;
     case Opcode::Boolean:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedBoolean(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextBoolean(decoder));
         return;
     case Opcode::Integer: case Opcode::Double:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, words[0]);
+            value.setPayloadWordAt(1, words[1]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordPairAt(0, decoder.nextPair());
         return;
     case Opcode::String: case Opcode::BigInt:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         return;
-    case Opcode::Builtin: case Opcode::NativeBinding:
+    case Opcode::Builtin: case Opcode::NativeBinding: case Opcode::IsBuiltinLocationUnchanged:
         value.setPayloadWordAt(0, nextExternal<BuiltinID>(decoder));
         return;
     case Opcode::ModuleBuiltin:
@@ -145,6 +212,14 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(1, nextID<ModuleID>(decoder));
         return;
     case Opcode::Data:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<DataID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<DataID>(decoder));
         return;
     case Opcode::NewClosure: case Opcode::CallDirect:
@@ -152,30 +227,77 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::GetModuleVariable: case Opcode::GetEncodedModuleVariable: case Opcode::ValidateFirstRun:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<VariableID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<VariableID>(decoder));
         return;
     case Opcode::PutModuleVariable:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<VariableID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<VariableID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         return;
     case Opcode::GetEnvironmentField: case Opcode::MaterializeEnvironment: case Opcode::JSONObjectKey:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[1], isValid));
+            value.setPayloadWordAt(1, words[2]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
         return;
     case Opcode::PutEnvironmentField:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[1], isValid));
+            value.setPayloadWordAt(1, words[2]);
+            value.setOperand(1, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::ScopeHasBinding: case Opcode::PropGet: case Opcode::PropHas: case Opcode::GetOwnProperty: case Opcode::PropHasOwn:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         return;
     case Opcode::NewObject:
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
-        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 5), 1, nextWord);
+        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 6), 1, nextWord);
         value.setOperand(0, decoder.nextOptionalOperand());
         decoder.decodeVariadicOperands(value);
         return;
@@ -184,21 +306,32 @@ void decodeFields(BodyDecoder& decoder, Value& value)
     case Opcode::ToPropertyKey: case Opcode::ToThis: case Opcode::ResolveHeritage: case Opcode::ForInOpen: case Opcode::Await: case Opcode::Yield:
     case Opcode::IsConstructor: case Opcode::ToLength: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
     case Opcode::StepArrayIterator: case Opcode::CreatePromise: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind:
-    case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::CollectionTable: case Opcode::BelongsToInstance:
-    case Opcode::IsNotThenable: case Opcode::HasSpareArrayCapacity: case Opcode::GetStringLength: case Opcode::MarkEnvironmentEscaped:
-    case Opcode::ReleaseEnvironment: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity:
-    case Opcode::RequireAttachedTypedArray: case Opcode::ThrowNotIterable: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StringBuilderLength:
-    case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint:
-    case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte:
-    case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
+    case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::CollectionTable: case Opcode::BorrowedParameter:
+    case Opcode::BelongsToInstance: case Opcode::IsNotThenable: case Opcode::FinishBirth: case Opcode::TryFinishBirth:
+    case Opcode::MakeBorrowedObject: case Opcode::HasSpareArrayCapacity: case Opcode::ConvertToDoubleStorage: case Opcode::GetStringLength:
+    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::ToInt32: case Opcode::ToUint32:
+    case Opcode::ToIntegerOrInfinity: case Opcode::RequireAttachedTypedArray: case Opcode::ThrowNotIterable: case Opcode::IsCollectionTableFull:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
+    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart:
+    case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONSkipByte:
+    case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber:
     case Opcode::JSONParseInteger: case Opcode::JSONParseValue: case Opcode::JSONKeyHasEscapes: case Opcode::IsPlainDataObject:
     case Opcode::FlattenString: case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger:
     case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         return;
     case Opcode::NewArray:
         value.setPayloadWordAt(0, nextID<TypeID>(decoder));
-        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 4), 1, nextWord);
+        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 6), 1, nextWord);
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::NewSuppressedError: case Opcode::ElemGet: case Opcode::ElemHas:
@@ -207,17 +340,35 @@ void decodeFields(BodyDecoder& decoder, Value& value)
     case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf:
     case Opcode::ForInStep: case Opcode::ArraySpeciesCreate: case Opcode::CreateIteratorResult: case Opcode::ResolvePromise:
     case Opcode::RejectPromise: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
-    case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::IsInBounds: case Opcode::IsShapeEpochCurrent:
-    case Opcode::ReserveArrayCapacity: case Opcode::GetStringCodeUnit: case Opcode::NewArgumentList: case Opcode::CreateAsyncFromSyncIterator:
-    case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield:
-    case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain: case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue:
-    case Opcode::JSONSourceClose: case Opcode::JSONKeyRepeats: case Opcode::StringBuilderCommit: case Opcode::StringOrder:
-    case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString:
-    case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
+    case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::ReadAgain: case Opcode::IsInBounds: case Opcode::ReserveArrayCapacity:
+    case Opcode::GetStringCodeUnit: case Opcode::NewArgumentList: case Opcode::CreateAsyncFromSyncIterator: case Opcode::TakeGeneratorPrototype:
+    case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult:
+    case Opcode::HasInPrototypeChain: case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue: case Opcode::JSONSourceClose:
+    case Opcode::JSONKeyRepeats: case Opcode::StringBuilderCommit: case Opcode::StringOrder: case Opcode::StringBuilderAppendInteger:
+    case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendBoolean:
+    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::NewRegExp:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[0], isValid));
+            value.setPayloadWordAt(1, checkedFlagWord<RegExpFlags>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         value.setPayloadWordAt(1, nextFlagWord<RegExpFlags>(decoder));
         return;
@@ -225,6 +376,15 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decodeRecordList<Wire::TemplateString, TemplateString>(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 2));
         return;
     case Opcode::NewRuntimeError:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedEnumerator<RuntimeErrorKind>(words[0], isValid));
+            value.setPayloadWordAt(1, decoder.checkedOptionalID<StringID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextEnumerator<RuntimeErrorKind>(decoder));
         value.setPayloadWordAt(1, nextOptionalID<StringID>(decoder));
         return;
@@ -241,57 +401,193 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         return;
     case Opcode::GetMappedArgument: case Opcode::ResultAt: case Opcode::GetInternalField: case Opcode::ShapeTest: case Opcode::GetMyArgumentByVal:
     case Opcode::DestructureIterable: case Opcode::StringBuilderReserve: case Opcode::StringOrderToCharacter: case Opcode::ResolveCallTarget:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, words[1]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextWord(decoder));
         return;
     case Opcode::SetMappedArgument: case Opcode::PutInternalField:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, words[1]);
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextWord(decoder));
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::PropSet:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[1], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ECMAMode>(words[2], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         value.setPayloadWordAt(1, nextEnumerator<ECMAMode>(decoder));
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::PropDefine:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::PropDelete:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[1], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ECMAMode>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         value.setPayloadWordAt(1, nextEnumerator<ECMAMode>(decoder));
         return;
     case Opcode::ElemSet:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ECMAMode>(words[2], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<ECMAMode>(decoder));
         value.setOperand(2, decoder.nextOperand());
         return;
     case Opcode::ElemDelete:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ECMAMode>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<ECMAMode>(decoder));
         return;
     case Opcode::ElemDefine: case Opcode::GetByValWithThis: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::MapNext: case Opcode::SetNext: case Opcode::IsEnumeratorCurrent:
-    case Opcode::StringBuilderAppendJSON: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber:
-    case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::Substring: case Opcode::SubstringOrUndefined:
-    case Opcode::StringRangeToNumber: case Opcode::StringRangeSubstringOrUndefined:
+    case Opcode::StepAsyncGenerator: case Opcode::StringBuilderAppendJSON: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger:
+    case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::Substring:
+    case Opcode::SubstringOrUndefined: case Opcode::StringRangeToNumber: case Opcode::StringRangeSubstringOrUndefined:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         return;
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::SuperGet:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedOptionalID<PropertyKeyID>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextOptionalID<PropertyKeyID>(decoder));
         return;
+    case Opcode::TryDefineLiveBinding: case Opcode::EnumeratorGetByVal:
+        if (const uint32_t* words = decoder.peekWords(5)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(3, decoder.checkedOperand(words[3], isValid));
+            value.setOperand(4, decoder.checkedOperand(words[4], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(5);
+                return;
+            }
+        }
+        value.setOperand(0, decoder.nextOperand());
+        value.setOperand(1, decoder.nextOperand());
+        value.setOperand(2, decoder.nextOperand());
+        value.setOperand(3, decoder.nextOperand());
+        value.setOperand(4, decoder.nextOperand());
+        return;
+    case Opcode::TryReExportFields:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<FunctionID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
+        value.setOperand(0, decoder.nextOperand());
+        value.setOperand(1, decoder.nextOperand());
+        value.setPayloadWordAt(0, nextID<FunctionID>(decoder));
+        return;
     case Opcode::SetFunctionName:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<MethodKind>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<MethodKind>(decoder));
@@ -302,11 +598,38 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 1), 1, nextID<PropertyKeyID>);
         decoder.decodeVariadicOperands(value);
         return;
+    case Opcode::CopyObject:
+        value.setOperand(0, decoder.nextOperand());
+        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 1), 1, nextID<PropertyKeyID>);
+        decoder.decodeVariadicOperands(value);
+        return;
     case Opcode::GetSuperBase:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedEnumerator<HomeObjectKind>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextEnumerator<HomeObjectKind>(decoder));
         value.setOperand(0, decoder.nextOperand());
         return;
     case Opcode::SuperSet:
+        if (const uint32_t* words = decoder.peekWords(6)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedEnumerator<ECMAMode>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[3], isValid));
+            value.setOperand(3, decoder.checkedOptionalOperand(words[4], isValid));
+            value.setPayloadWordAt(1, decoder.checkedOptionalID<PropertyKeyID>(words[5], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(6);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextEnumerator<ECMAMode>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
@@ -318,39 +641,115 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::ToObject:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedOptionalID<StringID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextOptionalID<StringID>(decoder));
         return;
-    case Opcode::Upcast: case Opcode::Predict: case Opcode::TypeTest: case Opcode::AssumeType: case Opcode::ValidateType: case Opcode::ValidateCallee:
+    case Opcode::Upcast: case Opcode::TypeTest: case Opcode::AssumeType: case Opcode::ValidateType: case Opcode::ValidateCallee:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<TypeID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<TypeID>(decoder));
         return;
-    case Opcode::Claim: case Opcode::ReportMismatch:
+    case Opcode::NarrowByField: case Opcode::ValidateLookup: case Opcode::GetOwnDataProperty:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
+        value.setOperand(0, decoder.nextOperand());
+        value.setOperand(1, decoder.nextOperand());
+        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
+        return;
+    case Opcode::Check: case Opcode::ReportMismatch:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<TypeID>(words[1], isValid));
+            value.setPayloadWordAt(1, decoder.checkedOptionalID<TypeSiteID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<TypeID>(decoder));
         value.setPayloadWordAt(1, nextOptionalID<TypeSiteID>(decoder));
         return;
-    case Opcode::ClaimDeclared:
+    case Opcode::Convert:
+        if (const uint32_t* words = decoder.peekWords(5)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            setCheckedDeclaredType(decoder, value, 0, words + 1, isValid);
+            value.setPayloadWordAt(3, checkedEnumerator<IllTypedCause>(words[4], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(5);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         decodeRecord<Wire::DeclaredType, DeclaredType>(decoder, value, 0);
-        return;
-    case Opcode::ClaimRead:
-        value.setOperand(0, decoder.nextOperand());
-        value.setOperand(1, decoder.nextOperand());
-        decodeRecord<Wire::ClaimSource, ClaimSource>(decoder, value, 0);
-        value.setPayloadWordAt(2, nextOptionalID<TypeSiteID>(decoder));
+        value.setPayloadWordAt(3, nextEnumerator<IllTypedCause>(decoder));
         return;
     case Opcode::CheckInitialized: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral:
     case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral: case Opcode::StringBuilderAppendConstant:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         return;
     case Opcode::RequireObjectCoercible:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<NullishAccess>(words[1], isValid));
+            value.setPayloadWordAt(1, decoder.checkedOptionalID<StringID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<NullishAccess>(decoder));
         value.setPayloadWordAt(1, nextOptionalID<StringID>(decoder));
         return;
     case Opcode::RequireObject:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<RuntimeErrorKind>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<RuntimeErrorKind>(decoder));
         return;
@@ -369,6 +768,19 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(0, nextOptionalID<StringID>(decoder));
         return;
     case Opcode::CallList:
+        if (const uint32_t* words = decoder.peekWords(6)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedOptionalID<PropertyKeyID>(words[3], isValid));
+            value.setPayloadWordAt(1, decoder.checkedOptionalID<StringID>(words[4], isValid));
+            value.setPayloadWordAt(2, decoder.checkedOptionalID<ExpectedResultID>(words[5], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(6);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setOperand(2, decoder.nextOperand());
@@ -377,22 +789,68 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(2, nextOptionalID<ExpectedResultID>(decoder));
         return;
     case Opcode::ConstructList:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedOptionalID<StringID>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setOperand(2, decoder.nextOperand());
         value.setPayloadWordAt(0, nextOptionalID<StringID>(decoder));
         return;
     case Opcode::NewClass:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
         return;
     case Opcode::GetClassPrototype: case Opcode::FinishClass: case Opcode::GetConstructPrototype: case Opcode::ExpectRows:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         return;
     case Opcode::DefineMethod:
+        if (const uint32_t* words = decoder.peekWords(8)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[3], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ClassSide>(words[4], isValid));
+            value.setPayloadWordAt(2, checkedEnumerator<MethodKind>(words[5], isValid));
+            value.setPayloadWordAt(3, words[6]);
+            value.setPayloadWordAt(4, decoder.checkedOptionalID<PropertyKeyID>(words[7], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(8);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
@@ -403,6 +861,14 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(4, nextOptionalID<PropertyKeyID>(decoder));
         return;
     case Opcode::NewClassToken: case Opcode::JSONObjectBegin:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         return;
     case Opcode::SuperConstruct:
@@ -412,18 +878,52 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::SuperConstructList: case Opcode::JSONParseExtraMembers:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         return;
     case Opcode::PrivateGet: case Opcode::PrivateHas:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[2], isValid));
+            value.setPayloadWordAt(1, words[3]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
         return;
     case Opcode::PrivateSet: case Opcode::PrivateDefine:
+        if (const uint32_t* words = decoder.peekWords(5)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[2], isValid));
+            value.setPayloadWordAt(1, words[3]);
+            value.setOperand(2, decoder.checkedOperand(words[4], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(5);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
@@ -431,11 +931,33 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setOperand(2, decoder.nextOperand());
         return;
     case Opcode::IteratorOpen:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<IteratorKind>(words[1], isValid));
+            value.setPayloadWordAt(1, words[2]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<IteratorKind>(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
         return;
     case Opcode::IteratorResume:
+        if (const uint32_t* words = decoder.peekWords(5)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<IteratorKind>(words[2], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ResumeMode>(words[3], isValid));
+            value.setPayloadWordAt(2, words[4]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(5);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextEnumerator<IteratorKind>(decoder));
@@ -443,32 +965,97 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(2, nextWord(decoder));
         return;
     case Opcode::IteratorClose:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<IteratorKind>(words[1], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<IteratorCompletion>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<IteratorKind>(decoder));
         value.setPayloadWordAt(1, nextEnumerator<IteratorCompletion>(decoder));
         return;
     case Opcode::ModuleNamespace:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[0], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ImportPhase>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
         value.setPayloadWordAt(1, nextEnumerator<ImportPhase>(decoder));
         return;
-    case Opcode::ImportModule:
+    case Opcode::ImportModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[0], isValid));
+            value.setPayloadWordAt(1, decoder.checkedID<ModuleID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
         value.setPayloadWordAt(1, nextID<ModuleID>(decoder));
         return;
     case Opcode::RequireModule: case Opcode::ResolveModule:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[0], isValid));
+            value.setPayloadWordAt(1, decoder.checkedID<ModuleID>(words[1], isValid));
+            value.setPayloadWordAt(2, decoder.checkedID<StringID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
         value.setPayloadWordAt(1, nextID<ModuleID>(decoder));
         value.setPayloadWordAt(2, nextID<StringID>(decoder));
         return;
     case Opcode::ThrowModuleFailure:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleFailureID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<ModuleFailureID>(decoder));
         return;
     case Opcode::ImportDynamic:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
         return;
-    case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::GetRequiredValue:
+    case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
         return;
@@ -480,15 +1067,45 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::ThrowNewError:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedEnumerator<ErrorKind>(words[0], isValid));
+            value.setPayloadWordAt(1, decoder.checkedID<StringID>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextEnumerator<ErrorKind>(decoder));
         value.setPayloadWordAt(1, nextID<StringID>(decoder));
         return;
     case Opcode::ResumeGenerator:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ResumeMode>(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<ResumeMode>(decoder));
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::StepGenerator:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ResumeMode>(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<GeneratorStepCheck>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<ResumeMode>(decoder));
         value.setOperand(1, decoder.nextOperand());
@@ -505,23 +1122,78 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(0, nextExternal<CheckedJSType>(decoder));
         value.setPayloadWordAt(1, nextExternal<CheckedJSType>(decoder));
         return;
-    case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen:
-    case Opcode::HasLayoutPrototype: case Opcode::GetArrayLength:
+    case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::GetArrayLength:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         return;
-    case Opcode::KeyConstant:
-        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
-        return;
-    case Opcode::Unspecified:
-        value.setPayloadWordAt(0, nextID<TypeID>(decoder));
-        return;
-    case Opcode::CallGroup:
+    case Opcode::IsClosureOf:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<FunctionID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<FunctionID>(decoder));
         value.setOperand(0, decoder.nextOperand());
-        decoder.decodeVariadicOperands(value);
         return;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::KeyConstant:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
+        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
+        return;
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<TypeID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
+        value.setPayloadWordAt(0, nextID<TypeID>(decoder));
+        return;
+    case Opcode::CallTable:
+        value.setPayloadWordAt(0, nextID<FunctionID>(decoder));
+        decoder.decodeVariadicOperands(value);
+        value.setPayloadWordAt(1, nextID<PropertyKeyID>(decoder));
+        value.setPayloadWordAt(2, nextWord(decoder));
+        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 5), 1, nextID<FunctionID>);
+        return;
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+        if (const uint32_t* words = decoder.peekWords(7)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[2], isValid));
+            value.setPayloadWordAt(1, words[3]);
+            value.setPayloadWordAt(2, checkedEnumerator<KnowledgeLevel>(words[4], isValid));
+            value.setPayloadWordAt(3, words[5]);
+            value.setPayloadWordAt(4, words[6]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(7);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
@@ -536,28 +1208,43 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(1, nextFlagWord<PristineAspects>(decoder));
         return;
     case Opcode::HasArrayStorage:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ArrayStorage>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<ArrayStorage>(decoder));
         return;
-    case Opcode::IsMemberUnchanged:
-        value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
-        value.setPayloadWordAt(1, nextEnumerator<ClassSide>(decoder));
-        value.setPayloadWordAt(2, nextID<PropertyKeyID>(decoder));
-        value.setPayloadWordAt(3, nextWord(decoder));
+    case Opcode::IsElementPresent:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ArrayStorage>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
+        value.setOperand(0, decoder.nextOperand());
+        value.setOperand(1, decoder.nextOperand());
+        value.setOperand(2, decoder.nextOptionalOperand());
+        value.setPayloadWordAt(0, nextEnumerator<ArrayStorage>(decoder));
         return;
-    case Opcode::IsPrototypeLinkUnchanged:
-        value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
-        value.setPayloadWordAt(1, nextEnumerator<ClassSide>(decoder));
-        value.setPayloadWordAt(2, nextWord(decoder));
+    case Opcode::IsInsideView:
+        value.setOperand(0, decoder.nextOperand());
+        value.setOperand(1, decoder.nextOperand());
+        value.setPayloadWordAt(0, nextExternal<JSC::TypedArrayType>(decoder));
         return;
-    case Opcode::IsClassEvaluatedOnce:
-        value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
-        value.setPayloadWordAt(1, nextWord(decoder));
-        return;
-    case Opcode::IsRequireEdgeReady:
-        value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
-        value.setPayloadWordAt(1, nextID<ModuleID>(decoder));
-        value.setPayloadWordAt(2, nextWord(decoder));
+    case Opcode::AreMembersUnchanged:
+        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 1), 4, nextWord);
+        value.setPayloadWordAt(0, nextWord(decoder));
         return;
     case Opcode::HasKeyOrder:
         value.setOperand(0, decoder.nextOperand());
@@ -566,11 +1253,22 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 2), 1, nextWord);
         value.setPayloadWordAt(1, nextWord(decoder));
         return;
-    case Opcode::IsClosureOf:
-        value.setPayloadWordAt(0, nextID<FunctionID>(decoder));
-        value.setOperand(0, decoder.nextOperand());
-        return;
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+        if (const uint32_t* words = decoder.peekWords(8)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[3], isValid));
+            value.setPayloadWordAt(1, words[4]);
+            value.setPayloadWordAt(2, checkedEnumerator<KnowledgeLevel>(words[5], isValid));
+            value.setPayloadWordAt(3, words[6]);
+            value.setPayloadWordAt(4, words[7]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(8);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setOperand(2, decoder.nextOperand());
@@ -580,18 +1278,73 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(3, nextWord(decoder));
         value.setPayloadWordAt(4, nextWord(decoder));
         return;
-    case Opcode::CopyObject:
-        value.setOperand(0, decoder.nextOperand());
-        decodeWordList(decoder, value, std::max<unsigned>(numberOfInlinePayloadWords, 1), 1, nextID<PropertyKeyID>);
-        decoder.decodeVariadicOperands(value);
-        value.setPayloadWordAt(0, nextWord(decoder));
-        return;
     case Opcode::TryCopyFields:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         return;
+    case Opcode::GetGlobalBinding:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[0], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<KnowledgeLevel>(words[1], isValid));
+            value.setPayloadWordAt(2, words[2]);
+            value.setPayloadWordAt(3, words[3]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
+        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
+        value.setPayloadWordAt(1, nextEnumerator<KnowledgeLevel>(decoder));
+        value.setPayloadWordAt(2, nextWord(decoder));
+        value.setPayloadWordAt(3, nextWord(decoder));
+        return;
+    case Opcode::SetGlobalBinding:
+        if (const uint32_t* words = decoder.peekWords(6)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[0], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ECMAMode>(words[1], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(2, checkedEnumerator<KnowledgeLevel>(words[3], isValid));
+            value.setPayloadWordAt(3, words[4]);
+            value.setPayloadWordAt(4, words[5]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(6);
+                return;
+            }
+        }
+        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
+        value.setPayloadWordAt(1, nextEnumerator<ECMAMode>(decoder));
+        value.setOperand(0, decoder.nextOperand());
+        value.setPayloadWordAt(2, nextEnumerator<KnowledgeLevel>(decoder));
+        value.setPayloadWordAt(3, nextWord(decoder));
+        value.setPayloadWordAt(4, nextWord(decoder));
+        return;
     case Opcode::GetArrayElement: case Opcode::HasArrayElement:
+        if (const uint32_t* words = decoder.peekWords(6)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ArrayStorage>(words[3], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<KnowledgeLevel>(words[4], isValid));
+            value.setPayloadWordAt(2, words[5]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(6);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
@@ -600,6 +1353,21 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(2, nextWord(decoder));
         return;
     case Opcode::PutArrayElement:
+        if (const uint32_t* words = decoder.peekWords(8)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(3, decoder.checkedOptionalOperand(words[3], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<ArrayStorage>(words[4], isValid));
+            value.setPayloadWordAt(1, checkedEnumerator<ECMAMode>(words[5], isValid));
+            value.setPayloadWordAt(2, checkedEnumerator<KnowledgeLevel>(words[6], isValid));
+            value.setPayloadWordAt(3, words[7]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(8);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
@@ -610,6 +1378,16 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(3, nextWord(decoder));
         return;
     case Opcode::AppendElements: case Opcode::FulfillFreshPromise:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
@@ -621,6 +1399,7 @@ void decodeFields(BodyDecoder& decoder, Value& value)
     case Opcode::GetTypedArrayElement:
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
+        value.setOperand(2, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextExternal<JSC::TypedArrayType>(decoder));
         value.setPayloadWordAt(1, nextEnumerator<KnowledgeLevel>(decoder));
         value.setPayloadWordAt(2, nextWord(decoder));
@@ -629,29 +1408,80 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
+        value.setOperand(3, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextExternal<JSC::TypedArrayType>(decoder));
         value.setPayloadWordAt(1, nextEnumerator<KnowledgeLevel>(decoder));
         value.setPayloadWordAt(2, nextWord(decoder));
         return;
     case Opcode::GetArgument: case Opcode::GetRestLength:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, words[0]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextWord(decoder));
         return;
     case Opcode::CreateRest:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, words[0]);
+            value.setPayloadWordAt(1, words[1]);
+            value.setPayloadWordAt(2, checkedEnumerator<AllocationStorage>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextWord(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
+        value.setPayloadWordAt(2, nextEnumerator<AllocationStorage>(decoder));
         return;
     case Opcode::CallForwardVarargs: case Opcode::StringIndexOfCharacter:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, words[2]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextWord(decoder));
         return;
     case Opcode::ConstructSuperForwardVarargs:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(1, words[3]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(1, nextWord(decoder));
         return;
     case Opcode::GetCapture:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<FunctionID>(words[0], isValid));
+            value.setPayloadWordAt(1, words[1]);
+            value.setOperand(0, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<FunctionID>(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
         value.setOperand(0, decoder.nextOperand());
@@ -668,29 +1498,88 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(6, nextOptionalID<StringID>(decoder));
         return;
     case Opcode::DivideIntegers:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<QuotientRounding>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<QuotientRounding>(decoder));
         return;
     case Opcode::NewSetFromData: case Opcode::NewMapFromData:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<DataID>(words[0], isValid));
+            value.setPayloadWordAt(1, words[1]);
+            value.setPayloadWordAt(2, words[2]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<DataID>(decoder));
         value.setPayloadWordAt(1, nextWord(decoder));
         value.setPayloadWordAt(2, nextWord(decoder));
         return;
     case Opcode::SharedRegExpLiteral:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[0], isValid));
+            value.setPayloadWordAt(1, checkedFlagWord<RegExpFlags>(words[1], isValid));
+            value.setPayloadWordAt(2, words[2]);
+            value.setPayloadWordAt(3, words[3]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         value.setPayloadWordAt(1, nextFlagWord<RegExpFlags>(decoder));
         value.setPayloadWordAt(2, nextWord(decoder));
         value.setPayloadWordAt(3, nextWord(decoder));
         return;
-    case Opcode::EnumeratorGetByVal:
+    case Opcode::IsFunctionOfBuiltin:
+        value.setOperand(0, decoder.nextOperand());
+        value.setPayloadWordAt(0, nextExternal<BuiltinID>(decoder));
+        return;
+    case Opcode::GetBuiltinValue:
+        value.setPayloadWordAt(0, nextExternal<BuiltinID>(decoder));
+        value.setPayloadWordAt(1, nextExternal<BuiltinOverloadID>(decoder));
+        return;
+    case Opcode::ReserveCollectionCapacity: case Opcode::StringBuilderAppendStringRange:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(3, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         value.setOperand(3, decoder.nextOperand());
-        value.setOperand(4, decoder.nextOperand());
         return;
     case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<FunctionID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(1, words[2]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<FunctionID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(1, nextWord(decoder));
@@ -703,9 +1592,34 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         return;
     case Opcode::PromiseAllOfElements:
         value.setPayloadWordAt(0, nextID<TypeID>(decoder));
+        value.setPayloadWordAt(1, nextWord(decoder));
         decoder.decodeVariadicOperands(value);
         return;
-    case Opcode::StringBuilderAppend:
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
+        value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
+        return;
+    case Opcode::AbandonModuleEvaluation:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<ModuleID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
+        value.setPayloadWordAt(0, nextID<ModuleID>(decoder));
+        value.setOperand(0, decoder.nextOperand());
+        return;
+    case Opcode::StringBuilderAppend: case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts:
         value.setOperand(0, decoder.nextOperand());
         decoder.decodeVariadicOperands(value);
         return;
@@ -716,31 +1630,68 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::JSONStartsWith: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         return;
     case Opcode::JSONAdvance: case Opcode::JSONAppendKey:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::JSONObjectFinish:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         return;
     case Opcode::JSONAddExtraMember:
+        if (const uint32_t* words = decoder.peekWords(5)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, decoder.checkedID<LayoutID>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[3], isValid));
+            value.setOperand(3, decoder.checkedOperand(words[4], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(5);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextID<LayoutID>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         value.setOperand(3, decoder.nextOperand());
-        return;
-    case Opcode::GetOwnDataProperty:
-        value.setOperand(0, decoder.nextOperand());
-        value.setOperand(1, decoder.nextOperand());
-        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         return;
     case Opcode::CloneAs:
         value.setOperand(0, decoder.nextOperand());
@@ -752,26 +1703,51 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(2, nextWord(decoder));
         return;
     case Opcode::JSONAppendToken:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedEnumerator<JSONToken>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextEnumerator<JSONToken>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         return;
     case Opcode::JSONAppendValue:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setPayloadWordAt(0, checkedEnumerator<JSONPosition>(words[0], isValid));
+            value.setOperand(0, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setPayloadWordAt(0, nextEnumerator<JSONPosition>(decoder));
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         return;
-    case Opcode::PropGetChecked:
-        value.setOperand(0, decoder.nextOperand());
-        value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
-        value.setPayloadWordAt(1, nextID<TypeID>(decoder));
-        value.setPayloadWordAt(2, nextID<TypeSiteID>(decoder));
-        value.setPayloadWordAt(3, nextEnumerator<CheckCause>(decoder));
-        value.setPayloadWordAt(4, decoder.next());
-        value.setPayloadWordAt(5, decoder.next());
-        return;
     case Opcode::PropGetChain:
+        if (const uint32_t* words = decoder.peekWords(6)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[1], isValid));
+            value.setPayloadWordAt(1, decoder.checkedID<PropertyKeyID>(words[2], isValid));
+            value.setPayloadWordAt(2, words[3]);
+            value.setPayloadWordAt(3, words[4]);
+            value.setPayloadWordAt(7, words[5]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(6);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         value.setPayloadWordAt(1, nextID<PropertyKeyID>(decoder));
@@ -780,6 +1756,20 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(7, nextWord(decoder));
         return;
     case Opcode::PropGetPair:
+        if (const uint32_t* words = decoder.peekWords(7)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[2], isValid));
+            value.setPayloadWordAt(1, decoder.checkedID<PropertyKeyID>(words[3], isValid));
+            value.setPayloadWordAt(2, words[4]);
+            value.setPayloadWordAt(3, words[5]);
+            value.setPayloadWordAt(7, words[6]);
+            if (isValid) [[likely]] {
+                decoder.skipWords(7);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
@@ -789,6 +1779,16 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         value.setPayloadWordAt(7, nextWord(decoder));
         return;
     case Opcode::PropGetAndTest:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<PropertyKeyID>(words[1], isValid));
+            value.setPayloadWordAt(1, decoder.checkedOptionalID<StringID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<PropertyKeyID>(decoder));
         value.setPayloadWordAt(1, nextOptionalID<StringID>(decoder));
@@ -818,6 +1818,19 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::DefineOwnProperty:
+        if (const uint32_t* words = decoder.peekWords(6)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setOperand(3, decoder.checkedOptionalOperand(words[3], isValid));
+            value.setOperand(4, decoder.checkedOptionalOperand(words[4], isValid));
+            value.setPayloadWordAt(0, checkedFlagWord<PropertyDescriptorFlags>(words[5], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(6);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
@@ -833,44 +1846,101 @@ void decodeFields(BodyDecoder& decoder, Value& value)
         decoder.decodeVariadicOperands(value);
         return;
     case Opcode::IntegerBound:
+        if (const uint32_t* words = decoder.peekWords(2)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<Opcode>(words[1], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(2);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setPayloadWordAt(0, nextEnumerator<Opcode>(decoder));
         return;
     case Opcode::StringRange:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setPayloadWordAt(0, checkedEnumerator<StringRangeMethod>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
         value.setPayloadWordAt(0, nextEnumerator<StringRangeMethod>(decoder));
         return;
     case Opcode::StringIndexOfLiteral: case Opcode::StringLastIndexOfLiteral:
+        if (const uint32_t* words = decoder.peekWords(3)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[2], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(3);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         return;
     case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodeUnitOrMinusOne: case Opcode::StringRangeCodePointOrUndefined:
     case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOptionalOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOptionalOperand(words[2], isValid));
+            value.setOperand(3, decoder.checkedOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOptionalOperand());
         value.setOperand(2, decoder.nextOptionalOperand());
         value.setOperand(3, decoder.nextOperand());
         return;
     case Opcode::StringRangeEqualsLiteral:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setPayloadWordAt(0, decoder.checkedID<StringID>(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         value.setPayloadWordAt(0, nextID<StringID>(decoder));
         return;
     case Opcode::StringRangeParseInt:
+        if (const uint32_t* words = decoder.peekWords(4)) {
+            bool isValid = true;
+            value.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            value.setOperand(1, decoder.checkedOperand(words[1], isValid));
+            value.setOperand(2, decoder.checkedOperand(words[2], isValid));
+            value.setOperand(3, decoder.checkedOptionalOperand(words[3], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(4);
+                return;
+            }
+        }
         value.setOperand(0, decoder.nextOperand());
         value.setOperand(1, decoder.nextOperand());
         value.setOperand(2, decoder.nextOperand());
         value.setOperand(3, decoder.nextOptionalOperand());
-        return;
-    case Opcode::StringBuilderAppendStringRange:
-        value.setOperand(0, decoder.nextOperand());
-        value.setOperand(1, decoder.nextOperand());
-        value.setOperand(2, decoder.nextOperand());
-        value.setOperand(3, decoder.nextOperand());
         return;
     case Opcode::CallResolved:
         value.setOperand(0, decoder.nextOperand());
@@ -908,6 +1978,14 @@ void decodeFields(BodyDecoder& decoder, Terminator& terminator)
     case TerminatorKind::Jump: case TerminatorKind::Unreachable:
         return;
     case TerminatorKind::Branch: case TerminatorKind::Throw: case TerminatorKind::Rethrow: case TerminatorKind::TestAndBranch:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            terminator.setOperand(0, decoder.checkedOperand(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         terminator.setOperand(0, decoder.nextOperand());
         return;
     case TerminatorKind::Switch:
@@ -919,6 +1997,14 @@ void decodeFields(BodyDecoder& decoder, Terminator& terminator)
         decodeWordList(decoder, terminator, std::max<unsigned>(numberOfInlinePayloadWords, 0), 1, nextID<StringID>);
         return;
     case TerminatorKind::Return:
+        if (const uint32_t* words = decoder.peekWords(1)) {
+            bool isValid = true;
+            terminator.setOperand(0, decoder.checkedOptionalOperand(words[0], isValid));
+            if (isValid) [[likely]] {
+                decoder.skipWords(1);
+                return;
+            }
+        }
         terminator.setOperand(0, decoder.nextOptionalOperand());
         return;
     case TerminatorKind::ReturnCall:

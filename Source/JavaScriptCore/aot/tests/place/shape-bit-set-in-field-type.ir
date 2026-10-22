@@ -1,77 +1,77 @@
 # A set that is tested with a bit set and is the declared type of a field has its words in the table of shape sets, where the run time's test of the field's type reads them
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
 # RUN: place shapes
 # RUN(TABLES): tables
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="First" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L1 name="Middle1" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L2 name="Middle2" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L3 name="Middle3" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L4 name="Middle4" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L5 name="Middle5" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L6 name="Middle6" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L7 name="Middle7" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L8 name="Middle8" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L9 name="Middle9" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L10 name="Middle10" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L11 name="Middle11" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L12 name="Middle12" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L13 name="Middle13" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L14 name="Middle14" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L15 name="Middle15" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L16 name="Middle16" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L17 name="Middle17" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L18 name="Middle18" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L19 name="Middle19" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L20 name="Middle20" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L21 name="Middle21" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L22 name="Middle22" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L23 name="Middle23" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L24 name="Middle24" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L25 name="Middle25" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L26 name="Middle26" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L27 name="Middle27" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L28 name="Middle28" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L29 name="Middle29" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L30 name="Middle30" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L31 name="Middle31" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L32 name="Middle32" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L33 name="Middle33" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L34 name="Middle34" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L35 name="Middle35" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L36 name="Middle36" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L37 name="Middle37" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L38 name="Middle38" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L39 name="Middle39" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L40 name="Middle40" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L41 name="Middle41" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L42 name="Middle42" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L43 name="Middle43" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L44 name="Middle44" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L45 name="Middle45" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L46 name="Middle46" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L47 name="Middle47" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L48 name="Middle48" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L49 name="Middle49" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L50 name="Middle50" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L51 name="Middle51" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L52 name="Middle52" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L53 name="Middle53" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L54 name="Middle54" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L55 name="Middle55" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L56 name="Middle56" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L57 name="Middle57" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L58 name="Middle58" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L59 name="Middle59" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L60 name="Middle60" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L61 name="Middle61" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L62 name="Middle62" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L63 name="Middle63" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L64 name="Middle64" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L65 name="Last" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L0 name="First" fields=[{key="x" declared={type=number}}]
+layout L1 name="Middle1" fields=[{key="x" declared={type=number}}]
+layout L2 name="Middle2" fields=[{key="x" declared={type=number}}]
+layout L3 name="Middle3" fields=[{key="x" declared={type=number}}]
+layout L4 name="Middle4" fields=[{key="x" declared={type=number}}]
+layout L5 name="Middle5" fields=[{key="x" declared={type=number}}]
+layout L6 name="Middle6" fields=[{key="x" declared={type=number}}]
+layout L7 name="Middle7" fields=[{key="x" declared={type=number}}]
+layout L8 name="Middle8" fields=[{key="x" declared={type=number}}]
+layout L9 name="Middle9" fields=[{key="x" declared={type=number}}]
+layout L10 name="Middle10" fields=[{key="x" declared={type=number}}]
+layout L11 name="Middle11" fields=[{key="x" declared={type=number}}]
+layout L12 name="Middle12" fields=[{key="x" declared={type=number}}]
+layout L13 name="Middle13" fields=[{key="x" declared={type=number}}]
+layout L14 name="Middle14" fields=[{key="x" declared={type=number}}]
+layout L15 name="Middle15" fields=[{key="x" declared={type=number}}]
+layout L16 name="Middle16" fields=[{key="x" declared={type=number}}]
+layout L17 name="Middle17" fields=[{key="x" declared={type=number}}]
+layout L18 name="Middle18" fields=[{key="x" declared={type=number}}]
+layout L19 name="Middle19" fields=[{key="x" declared={type=number}}]
+layout L20 name="Middle20" fields=[{key="x" declared={type=number}}]
+layout L21 name="Middle21" fields=[{key="x" declared={type=number}}]
+layout L22 name="Middle22" fields=[{key="x" declared={type=number}}]
+layout L23 name="Middle23" fields=[{key="x" declared={type=number}}]
+layout L24 name="Middle24" fields=[{key="x" declared={type=number}}]
+layout L25 name="Middle25" fields=[{key="x" declared={type=number}}]
+layout L26 name="Middle26" fields=[{key="x" declared={type=number}}]
+layout L27 name="Middle27" fields=[{key="x" declared={type=number}}]
+layout L28 name="Middle28" fields=[{key="x" declared={type=number}}]
+layout L29 name="Middle29" fields=[{key="x" declared={type=number}}]
+layout L30 name="Middle30" fields=[{key="x" declared={type=number}}]
+layout L31 name="Middle31" fields=[{key="x" declared={type=number}}]
+layout L32 name="Middle32" fields=[{key="x" declared={type=number}}]
+layout L33 name="Middle33" fields=[{key="x" declared={type=number}}]
+layout L34 name="Middle34" fields=[{key="x" declared={type=number}}]
+layout L35 name="Middle35" fields=[{key="x" declared={type=number}}]
+layout L36 name="Middle36" fields=[{key="x" declared={type=number}}]
+layout L37 name="Middle37" fields=[{key="x" declared={type=number}}]
+layout L38 name="Middle38" fields=[{key="x" declared={type=number}}]
+layout L39 name="Middle39" fields=[{key="x" declared={type=number}}]
+layout L40 name="Middle40" fields=[{key="x" declared={type=number}}]
+layout L41 name="Middle41" fields=[{key="x" declared={type=number}}]
+layout L42 name="Middle42" fields=[{key="x" declared={type=number}}]
+layout L43 name="Middle43" fields=[{key="x" declared={type=number}}]
+layout L44 name="Middle44" fields=[{key="x" declared={type=number}}]
+layout L45 name="Middle45" fields=[{key="x" declared={type=number}}]
+layout L46 name="Middle46" fields=[{key="x" declared={type=number}}]
+layout L47 name="Middle47" fields=[{key="x" declared={type=number}}]
+layout L48 name="Middle48" fields=[{key="x" declared={type=number}}]
+layout L49 name="Middle49" fields=[{key="x" declared={type=number}}]
+layout L50 name="Middle50" fields=[{key="x" declared={type=number}}]
+layout L51 name="Middle51" fields=[{key="x" declared={type=number}}]
+layout L52 name="Middle52" fields=[{key="x" declared={type=number}}]
+layout L53 name="Middle53" fields=[{key="x" declared={type=number}}]
+layout L54 name="Middle54" fields=[{key="x" declared={type=number}}]
+layout L55 name="Middle55" fields=[{key="x" declared={type=number}}]
+layout L56 name="Middle56" fields=[{key="x" declared={type=number}}]
+layout L57 name="Middle57" fields=[{key="x" declared={type=number}}]
+layout L58 name="Middle58" fields=[{key="x" declared={type=number}}]
+layout L59 name="Middle59" fields=[{key="x" declared={type=number}}]
+layout L60 name="Middle60" fields=[{key="x" declared={type=number}}]
+layout L61 name="Middle61" fields=[{key="x" declared={type=number}}]
+layout L62 name="Middle62" fields=[{key="x" declared={type=number}}]
+layout L63 name="Middle63" fields=[{key="x" declared={type=number}}]
+layout L64 name="Middle64" fields=[{key="x" declared={type=number}}]
+layout L65 name="Last" fields=[{key="x" declared={type=number}}]
 layout L66 name="Holder" fields=[{key="member" declared={type=L0|L65} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -217,23 +217,25 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b1():
     LoopHint
     v138 = PropGet v0 key="value0" [isFreeName]
-    v139 = Predict v138 predicted=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33
+    v139 = TypeTest v138 testedType=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33
     v140 = PropGet v139 key="x"
     v141 = PropGet v0 key="value1" [isFreeName]
-    v142 = Predict v141 predicted=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64
+    v142 = TypeTest v141 testedType=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64
     v143 = PropGet v142 key="x"
     v144 = PropGet v0 key="value2" [isFreeName]
-    v145 = Predict v144 predicted=L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65
+    v145 = TypeTest v144 testedType=L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65
     v146 = PropGet v145 key="x"
     v147 = ToBoolean v146
     Branch v147 -> taken b1(), notTaken b2()
   b2():
-    v148 = Predict v1 predicted=L0|L65
+    v148 = Convert v1 declared={type=L0|L65 flags=[IsExpected]}
     v149 = PropGet v148 key="x"
+    v150 = NewObject -, v134 layout=L66 fields=[0]
+    v151 = FinishObject v150
     Return
 }
 # The three sets that are tested in each iteration of the loop put First and Last at the two ends of the 64 layouts between them.
 # CHECK: L0 shapes 1..1
 # CHECK: L65 shapes 66..66
-# CHECK: set [L0, L65] bitset 1..66 @0 cost=9
-# TABLES: shapeSetBits 4 16
+# CHECK: set [L0, L65] bitset 1..66 @3 cost=9
+# TABLES: shapeSetBits 2 16

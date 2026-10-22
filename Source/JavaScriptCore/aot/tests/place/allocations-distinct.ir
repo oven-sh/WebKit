@@ -45,10 +45,10 @@ function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
 }
 
 # CHECK: allocation 0 L4 shape={{*}} fields=[] size=48 order=0x0 captures=1
-# CHECK-NEXT: allocation 1 L0 shape=[[pair]] fields=[0 1] size=32 order=0x20000
+# CHECK-NEXT: allocation 1 L0 shape=[[pair]] fields=[0 1] size=32 order=0x10000
 # CHECK-NOT: constructedBy
-# CHECK: allocation 2 L0 shape=[[pair]] fields=[1 0] size=32 order=0x20001
-# CHECK-NEXT: allocation 3 L1 shape={{*}} fields=[0 1] size=32 order=0x20000
+# CHECK: allocation 2 L0 shape=[[pair]] fields=[1 0] size=32 order=0x10001
+# CHECK-NEXT: allocation 3 L1 shape={{*}} fields=[0 1] size=32 order=0x10000
 # CHECK-NOT: constructedBy
 # CHECK: allocation 4 L2 shape={{*}} fields=[] size=16 order=0x0 constructedBy=f1
 # CHECK-NEXT: allocation 5 L3 shape={{*}} fields=[0] size=16 order=0x0

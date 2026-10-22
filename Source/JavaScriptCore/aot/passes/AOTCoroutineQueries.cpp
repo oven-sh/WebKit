@@ -58,21 +58,33 @@ std::optional<GeneratorBodyDescription> describeGeneratorBody(const Program& pro
     };
 }
 
+static ValueID driverOfAsyncBody(const Function& body)
+{
+    switch (coroutineOfBody(body).kind) {
+    case CoroutineKind::AsyncFunction:
+    case CoroutineKind::AsyncGenerator:
+        return driverOf(body);
+    case CoroutineKind::Generator:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 ValueID appendAwait(IRBuilder& builder, ValueID awaited)
 {
     Function& function = builder.function();
     if (function.isUnsplitCoroutine())
         return builder.append(Opcode::Await, { awaited });
+    return builder.append(Opcode::AwaitBySavingFrame, { awaited, driverOfAsyncBody(function) });
+}
 
-    RELEASE_ASSERT(function.role == FunctionRole::CoroutineBody);
-    switch (coroutineOfBody(function).kind) {
-    case CoroutineKind::AsyncFunction:
-    case CoroutineKind::AsyncGenerator:
-        return builder.append(Opcode::AwaitBySavingFrame, { awaited, driverOf(function) });
-    case CoroutineKind::Generator:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+// Where the iterator does not answer at once the step suspends this frame, and whoever finishes the step resumes the frame through its driver.
+// An unsplit coroutine has no driver yet: SplitCoroutines puts it in.
+ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID sent)
+{
+    Function& function = builder.function();
+    ValueID driver = function.isUnsplitCoroutine() ? builder.appendUndefined() : driverOfAsyncBody(function);
+    return builder.append(Opcode::StepAsyncGenerator, { iterator, sent, driver });
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,40 @@
+# function* numbers() { yield 2 }  numbers.prototype.next()
+# The prototype object of a generator function is an ordinary object that inherits from %GeneratorPrototype%. What is stored into it is found on the generators, so the object that stands for them
+# takes the stores. It is no generator: `next` called on it throws a TypeError. So what the read answers is not proven to be a generator, and the method that a store puts there is reached through a generator
+# RUN: valueflow-why values=f0:v1
+# CHECK: result {{*}} unknown
+# RUN(TYPES): pipeline ApplyFlowResults
+# TYPES-LABEL: function f0
+# TYPES-NOT: Generator
+# TYPES: calleeKey="next"
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = NewClosure function=f2
+    PropSet v1, v4 key="twice" mode=Strict
+    v6 = Call v0
+    v7 = PropGet v6 key="twice"
+    v8 = Call v7, v6 calleeKey="twice"
+    Return v3
+}
+function f1 name="numbers" module=m0 flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = Integer integer=2
+    v3 = Yield v2
+    v4 = Undefined
+    Return v4
+}
+function f2 name="twice" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=4
+    Return v1
+}

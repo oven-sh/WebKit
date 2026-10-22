@@ -61,8 +61,8 @@ function f4 name="storeMayAddField" parameters=[{type=L0}, {type=number}] result
     Return
 }
 # E-LABEL: function f4
-# E-NEXT: v2 PropSet: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
-# E-NEXT: v3 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# E-NEXT: v2 PropSet: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
+# E-NEXT: v3 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
 # E-NEXT: b0 Return
 function f5 name="hasSlotPossiblyEmpty" parameters=[{type=L0}] results=[{type=undefined}] {
   b0(v0: L0):

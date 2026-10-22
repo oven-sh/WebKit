@@ -31,6 +31,7 @@
 #include "AOTCompiledCall.h"
 #include "AOTModuleMicrotasks.h"
 #include "AOTModuleRecord.h"
+#include "MicrotaskQueueInlines.h"
 #endif
 #include "AggregateError.h"
 #include "BuiltinNames.h"
@@ -115,25 +116,29 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         }
     }
 
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && functionObject.isCell()) {
+        if (CallData callData = AOT::compiledCallDataOf(functionObject.asCell()); callData.type == CallData::Type::Compiled) {
+            ASSERT(!thisValue.isEmpty());
+            ASSERT(!vm.isCollectorBusyOnCurrentThread());
+            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+                return throwStackOverflowError(callData.compiled.realm, scope);
+            scope.release();
+            return AOT::enterCompiledCode(vm, callData, asObject(functionObject), thisValue, context, args...);
+        }
+    }
+#endif
+
     auto callData = JSC::getCallDataInline(functionObject);
     if (callData.type == CallData::Type::None)
         return throwTypeError(globalObject, scope, message);
 
-    ASSERT_WITH_MESSAGE(callData.type == CallData::Type::JS || callData.type == CallData::Type::Native || callData.type == CallData::Type::Compiled, "Expected object to be callable but received %d", static_cast<int>(callData.type));
+    ASSERT_WITH_MESSAGE(callData.type == CallData::Type::JS || callData.type == CallData::Type::Native, "Expected object to be callable but received %d", static_cast<int>(callData.type));
     ASSERT_WITH_MESSAGE(!thisValue.isEmpty(), "Expected thisValue to be non-empty. Use jsUndefined() if you meant to use undefined.");
 
     scope.assertNoException();
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
-
-#if ENABLE(AOT)
-    if (callData.type == CallData::Type::Compiled) {
-        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
-            return throwStackOverflowError(callData.compiled.realm, scope);
-        scope.release();
-        return AOT::enterCompiledCode(vm, callData, asObject(functionObject), thisValue, context, args...);
-    }
-#endif
 
     bool isJSCall = callData.type == CallData::Type::JS;
     JSScope* functionScope = nullptr;
@@ -341,8 +346,14 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
 #endif
     if (realm->promiseThenWatchpointSet().isStillValid()) [[likely]] {
 #if ENABLE(AOT)
-        if (vm.hasCompiledCode() && AOT::tryFinishStepInProgress(target, value, done))
-            return;
+        if (vm.hasCompiledCode()) {
+            if (AOT::tryFinishStepInProgress(target, value, done))
+                return;
+            if (AOT::takesBareSteps(target)) {
+                realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsBoolean(done), value, target BUN_ASYNC_CONTEXT);
+                return;
+            }
+        }
 #endif
         JSObject* iteratorResult;
         JSValue cached = producer->cachedDriverResult();
@@ -376,7 +387,7 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
 #undef BUN_ASYNC_CONTEXT
 }
 
-static void asyncFromSyncIteratorContinueOrDone(JSGlobalObject* globalObject, VM& vm, JSAsyncFromSyncIterator* iterator, JSValue result, JSPromise::Status status, bool done, MicrotaskCallCache* microtaskCallCache)
+void asyncFromSyncIteratorContinueOrDone(JSGlobalObject* globalObject, VM& vm, JSAsyncFromSyncIterator* iterator, JSValue result, JSPromise::Status status, bool done, MicrotaskCallCache* microtaskCallCache)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -632,6 +643,12 @@ static void asyncGeneratorDrainQueue(JSGlobalObject* globalObject, JSAsyncGenera
     generator->setState(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed));
 }
 
+void reportErrorOfMicrotask(JSGlobalObject* globalObject, JSValue exceptionOrValue)
+{
+    if (Bun__reportUnhandledError)
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exceptionOrValue));
+}
+
 // https://tc39.es/ecma262/#sec-asyncgeneratorresume (then AsyncGeneratorStart's completion handling).
 static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
 {
@@ -645,24 +662,40 @@ static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerato
     JSValue generatorThis = generator->thisValue();
     JSValue generatorFrame = generator->frame();
 #if ENABLE(AOT)
+    AOT::AsyncGeneratorBodyEntry compiledEntry;
     if (vm.hasCompiledCode())
-        AOT::willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
+        compiledEntry = AOT::willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
 #endif
 
     JSValue value;
     JSValue error;
+    bool isTerminated = false;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         value = callMicrotask(globalObject, generatorFunction, generatorThis, generator, "handler is not a function"_s, microtaskCallCache,
             generator, jsNumber(state >> JSAsyncGenerator::reasonShift), resumeValue, jsNumber(resumeMode), generatorFrame);
         if (catchScope.exception()) [[unlikely]] {
             error = catchScope.exception()->value();
-            if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
-                return;
+            isTerminated = !catchScope.clearExceptionExceptTermination();
         }
     }
+#if ENABLE(AOT)
+    generator = AOT::didReturnFromAsyncGeneratorBody(compiledEntry, generator, value, error, isTerminated);
+    if (!generator)
+        return;
+#endif
+    if (isTerminated) [[unlikely]]
+        return;
 
-    state = generator->state();
+    RELEASE_AND_RETURN(scope, finishAsyncGeneratorBodyCall(globalObject, generator, value, error, microtaskCallCache));
+}
+
+void finishAsyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue value, JSValue error, MicrotaskCallCache* microtaskCallCache)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    int32_t state = generator->state();
 
     // The body suspended at an `await` or a `yield`/`yield*`.
     if (state > 0) {
@@ -1820,8 +1853,18 @@ static JSGenerator::ResumeMode resumeModeForStatus(JSPromise::Status status)
 
 // A for-await driver (op_async_iterator_next's fast branch) resumed directly by the producer it is
 // consuming. `context` is the driver.
-static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resolution, JSPromise::Status status, MicrotaskCallCache* microtaskCallCache)
+static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue bareStepIsDone, JSValue resolution, JSPromise::Status status, MicrotaskCallCache* microtaskCallCache)
 {
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && context.isObject()) {
+        if (bareStepIsDone.isBoolean())
+            AOT::deliverBareStepToDriver(asObject(context), bareStepIsDone.asBoolean());
+        else
+            resolution = AOT::deliverStepToDriver(asObject(context), resolution, status == JSPromise::Status::Rejected);
+    }
+#else
+    UNUSED_PARAM(bareStepIsDone);
+#endif
     JSGenerator::ResumeMode resumeMode = resumeModeForStatus(status);
     if (auto* asyncFunctionGenerator = dynamicDowncast<JSAsyncFunctionGenerator>(context)) {
         asyncFunctionGeneratorBodyCall(asyncFunctionGenerator->realm(), vm, asyncFunctionGenerator, resolution, resumeMode, microtaskCallCache);
@@ -2005,6 +2048,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         }
         AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
 #endif
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && (userContext.isEmpty() || userContext.isUndefinedOrNull()) && AOT::tryRunHandlerOfJob(globalObject, vm, promiseOrCapability, handler, argument2, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop())) {
+            scope.release();
+            return;
+        }
+#endif
 
         JSValue result;
         JSValue error;
@@ -2108,6 +2157,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         AOT::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
         return;
     }
+
+    case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn: {
+#if USE(BUN_JSC_ADDITIONS)
+        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, payload, argument0, argument1, argument2, argument3);
+#else
+        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, payload, argument0, argument1, argument2);
+#endif
+        return;
+    }
 #endif
 
     case InternalMicrotask::AsyncFromSyncIteratorContinue:
@@ -2170,7 +2228,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         scope.release();
-        asyncGeneratorDriverResume(vm, contextArg, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
+        asyncGeneratorDriverResume(vm, contextArg, argument0, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
         return;
     }
 
@@ -2223,6 +2281,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         if (job.isEmpty() || job.isUndefinedOrNull())
             return;
 
+#if ENABLE(AOT)
+        // An error is reported under the context that is in place now.
+        if (vm.hasCompiledCode() && argument2.isEmpty() && argument3.isEmpty() && argument1.isUndefined() && AsyncContextSwapScope::current(vm, globalObject).isUndefined()
+            && AOT::tryRunFunctionOfJob(globalObject, vm, job, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop())) {
+            scope.release();
+            return;
+        }
+#endif
+
         auto callData = JSC::getCallData(job);
         if (callData.type == CallData::Type::None)
             return;
@@ -2253,8 +2320,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                     scope.release();
                     return;
                 }
-                if (Bun__reportUnhandledError)
-                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+                reportErrorOfMicrotask(globalObject, exception);
             }
         }
         return;

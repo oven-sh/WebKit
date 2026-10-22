@@ -10,9 +10,14 @@
 
 #include "AOTEffectSummaries.h"
 #include "AOTEffects.h"
+#include "AOTEffectsCache.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
 #include "AOTPropertyAccess.h"
+#include "AOTSwitchWindow.h"
 #include "AOTValueIdentity.h"
+#include <algorithm>
+#include <array>
 #include <wtf/SaturatingArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -31,6 +36,7 @@ constexpr unsigned slotAccess = 8;
 constexpr unsigned branch = 8;
 constexpr unsigned jump = 4;
 constexpr unsigned perCase = 8;
+constexpr unsigned perPlaceInWindow = 16;
 constexpr unsigned throwSite = 16;
 constexpr unsigned stringSwitch = 24;
 
@@ -50,7 +56,6 @@ static constexpr OpcodeSet opcodesWithoutCode {
     Opcode::ResultAt,
     Opcode::LoopHint,
     Opcode::Upcast,
-    Opcode::Predict,
     Opcode::AssumeType,
     Opcode::FinishObject,
     Opcode::AllGuards,
@@ -76,7 +81,28 @@ static bool namesMemberOfProvenLayouts(const Program& program, const Function& f
 static unsigned switchCaseBytes(const Terminator& terminator)
 {
     ASSERT(!terminator.targets.isEmpty());
+    if (std::optional<SwitchWindow> window = findSwitchWindow(terminator))
+        return CodeSize::perPlaceInWindow * static_cast<unsigned>(window->places.size());
     return CodeSize::perCase * static_cast<unsigned>(terminator.targets.size() - 1);
+}
+
+// Where the row of an operation bounds what all its values do, and the bound leaves out everything that is asked below, no value needs its effects computed.
+static bool neverCallsCollectsOrThrows(Opcode opcode)
+{
+    static const std::array<bool, numberOfOpcodes> answers = [] {
+        std::array<bool, numberOfOpcodes> result { };
+        for (Opcode member : allMembersOf<Opcode>) {
+            Effects atMost = declaredBoundOf(member);
+            result[static_cast<unsigned>(member)] = effectFactsOf(member).staysWithinDeclaredBound && !atMost.mayCallUnknownCode && !atMost.mayCollect && !atMost.mayThrow;
+        }
+        return result;
+    }();
+    return answers[static_cast<unsigned>(opcode)];
+}
+
+unsigned estimatedDirectCallBytes(unsigned numberOfOperands)
+{
+    return CodeSize::directCall + CodeSize::perOperand * numberOfOperands;
 }
 
 unsigned estimatedCodeBytes(const Program& program, const Function& function, const Value& value)
@@ -102,10 +128,13 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     case AccessClass::ByName:
         return namesMemberOfProvenLayouts(program, function, value) ? CodeSize::slotAccess : CodeSize::accessByName;
     case AccessClass::DirectCall:
-        return CodeSize::directCall + operandBytes;
+        return estimatedDirectCallBytes(value.numberOfOperands());
     case AccessClass::IndirectCall:
         return CodeSize::indirectCall + operandBytes;
     }
+
+    if (neverCallsCollectsOrThrows(opcode))
+        return allocatesInlineOf(opcode) ? CodeSize::allocation + operandBytes : CodeSize::simpleOperation;
 
     EffectSummaries unknownSummaries;
     Effects effects = effectsOf(EffectContext { program, unknownSummaries }, function, value).normal;
@@ -150,6 +179,22 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     for (ValueID id : block.values)
         bytes = saturatingSum<unsigned>(bytes, estimatedCodeBytes(program, function, function.at(id)));
     return bytes;
+}
+
+ValueID findCopyIntoCopy(const Function& function, const Block& block, ValueID copyObject)
+{
+    auto leavesNothingOut = [](const Value& value) {
+        return !value.request() && value.excludedKeys().empty() && value.excludedOperands().empty();
+    };
+    ASSERT(function.at(copyObject).opcode == Opcode::CopyObject);
+    std::span<const ValueID> values = block.values.span();
+    size_t next = std::ranges::find(values, copyObject) - values.begin() + 1;
+    if (next >= values.size() || !leavesNothingOut(function.at(copyObject)))
+        return { };
+    const Value& copy = function.at(values[next]);
+    if (copy.opcode != Opcode::CopyDataProperties || copy.targetOperand() != copyObject || !leavesNothingOut(copy))
+        return { };
+    return values[next];
 }
 
 } } } // namespace JSC::AOT::Typed

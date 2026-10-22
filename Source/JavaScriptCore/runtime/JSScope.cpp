@@ -58,6 +58,16 @@ void JSScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSScope);
 
+#if USE(BUN_JSC_ADDITIONS)
+static bool requiresPutOfSubclass(JSGlobalObject* globalObject, GetOrPut getOrPut)
+{
+    if (Options::useJIT())
+        return false;
+    const MethodTable* methodTable = globalObject->methodTable();
+    return getOrPut == Put && methodTable->put != JSGlobalObject::put;
+}
+#endif
+
 // Returns true if we found enough information to terminate optimization.
 static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, const Identifier& ident, GetOrPut getOrPut, size_t depth, bool& needsVarInjectionChecks, ResolveOp& op, InitializationMode initializationMode)
 {
@@ -168,6 +178,13 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                     op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
                     return true;
                 }
+
+#if USE(BUN_JSC_ADDITIONS)
+                if (requiresPutOfSubclass(globalObject, getOrPut)) {
+                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
+                    return true;
+                }
+#endif
 
                 op = ResolveOp(
                     makeType(GlobalVar, needsVarInjectionChecks), depth, nullptr, nullptr, entry.watchpointSet(),

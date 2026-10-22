@@ -12,8 +12,8 @@ expectedresult x3 type=anything validation=[{shape=Union{arms=[1, 2]} type=anyth
 layout L0 name="KindA" fields=[{key="kind" declared={type=string}}]
 layout L1 name="KindB" fields=[{key="kind" declared={type=string}}]
 layout L2 name="HasZ" fields=[{key="z" declared={type=number}}]
-layout L3 name="NestsZ" fields=[{key="p" declared={type=object written=L2}}]
-layout L4 name="NestsW" fields=[{key="p" declared={type=object written=L5}}]
+layout L3 name="NestsZ" fields=[{key="p" declared={type=L2}}]
+layout L4 name="NestsW" fields=[{key="p" declared={type=L5}}]
 layout L5 name="HasW" fields=[{key="w" declared={type=number}}]
 
 # CHECK: function {{*}}expectedResult=x0}

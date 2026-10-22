@@ -12,6 +12,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+enum class OwnerBarrier : bool { Omitted, Emitted };
+
 class BarrierEmitter final : public OperationEmitter {
 public:
     explicit BarrierEmitter(CodeGenerator&);
@@ -20,6 +22,7 @@ public:
     void barrierAfterStores(const ValueContext& store, CellPointer owner, std::span<const ValueID> stored);
     void elementBarrierAfterStore(const ValueContext& store, CellPointer array, std::span<const Boxed> stored);
     void barrier(const OperationContext&, CellPointer owner);
+    OwnerBarrier barrierOfExtension(const ValueContext& store) const;
     void markCardOfStatics(uint32_t offsetInStatics);
     Condition isBeyondBarrierThreshold(CellPointer);
     void fenceAfterInitialization();

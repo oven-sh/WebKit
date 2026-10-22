@@ -1,4 +1,4 @@
-# A claim that stands beside the call only after the body was simplified names a type that flow did not model at the call, so the result stays plain
+# A check that stands beside the call only after the body was simplified names a type that flow did not model at the call, so the result stays plain
 # FORM: AsRead
 # OPTIONS: report=Declines only-passes=ResolveBuiltins,SimplifyControlFlow,RemoveTrivialParameters,SelectTypedResults
 # RUN: pipeline SelectTypedResults
@@ -26,39 +26,40 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 
-function f1 name="claimBehindBlockParameterAsRead" parameters=[{type=string}] results=[{type=anything}] {
+function f1 name="conversionBehindBlockParameterAsRead" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     Jump -> next b1(v2)
   b1(v3):
-    v4 = ClaimDeclared v3 declared={type=undefined|null|L0}
-    Return v4
+    v4 = Convert v3 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v5 = PropGet v4 key="id"
+    Return v5
 }
-# CHECK-LABEL: function f1 name="claimBehindBlockParameterAsRead"
+# CHECK-LABEL: function f1 name="conversionBehindBlockParameterAsRead"
 # CHECK-NOT: JSONSourceOpen
 # CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
 # CHECK-NOT: JSONSourceOpen
-# CHECK: = Predict {{*}} predicted=undefined|null|L0
+# CHECK: = TypeTest {{*}} testedType=undefined|null|L0
 # CHECK-NOT: JSONSourceOpen
 
-function f2 name="claimBesideTheCallAsRead" parameters=[{type=string}] results=[{type=anything}] {
+function f2 name="conversionBesideTheCallAsRead" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
-    v3 = ClaimDeclared v2 declared={type=undefined|null|L0}
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
     Return v3
 }
-# CHECK-LABEL: function f2 name="claimBesideTheCallAsRead"
+# CHECK-LABEL: function f2 name="conversionBesideTheCallAsRead"
 # CHECK: = JSONSourceOpen v0
 
-function f3 name="noClaim" parameters=[{type=string}] results=[{type=anything}] {
+function f3 name="noConversion" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     Return v2
 }
-# CHECK-LABEL: function f3 name="noClaim"
+# CHECK-LABEL: function f3 name="noConversion"
 # CHECK-NOT: JSONSourceOpen
 # CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
 # CHECK-NOT: JSONSourceOpen

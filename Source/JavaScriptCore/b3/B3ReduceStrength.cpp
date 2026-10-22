@@ -238,6 +238,13 @@ static inline std::optional<CanonicalShuffleInfo> canonicalShuffleInfo(Canonical
     return std::nullopt;
 }
 
+#define DUMP_INT_RANGE_AND_RETURN(range)                           \
+    do {                                                           \
+        if (B3ReduceStrengthInternal::verbose) [[unlikely]]        \
+            dataLogLn("    IntRange for ", *value, " is ", range); \
+        return range;                                              \
+    } while (false);
+
 class ReduceStrength {
 public:
     ReduceStrength(Procedure& proc, ReduceStrengthPass pass)
@@ -360,7 +367,7 @@ public:
         lastChild.fill(nullptr, m_proc.size());
         childBefore.fill(nullptr, m_proc.size());
         BasicBlock* root = nullptr;
-        for (BasicBlock* block : m_proc.blocksInPostOrder() | std::views::reverse) {
+        for (BasicBlock* block : m_proc.cachedBlocksInPostOrder() | std::views::reverse) {
             BasicBlock* parent = m_dominators->idom(block);
             ASSERT(parent != block);
             if (parent)
@@ -2484,7 +2491,9 @@ private:
             // on constant materialization to be smart enough to materialize this constant the smart
             // way. We want this canonicalization because we want to know if two memory accesses see
             // the same address.
-            if (memory->offset()) {
+            //
+            // Whoever handles the fault of a trapping access may read the pointer out of its base register.
+            if (memory->offset() && !memory->traps()) {
                 if (Value* newAddress = address->addConstant(m_proc, memory->offset())) {
                     m_insertionSet.insertValue(m_index, newAddress);
                     address = newAddress;
@@ -3097,8 +3106,7 @@ private:
             // Into this: Branch(x, else, then)
             if (m_value->child(0)->opcode() == Equal && m_value->child(0)->child(1)->isInt(0)) {
                 m_value->child(0) = m_value->child(0)->child(0);
-                std::swap(m_block->taken(), m_block->notTaken());
-                m_proc.didReorderSuccessors();
+                swapSuccessorsOfBranch();
                 m_changed = true;
             }
             
@@ -3108,8 +3116,7 @@ private:
                 && m_value->child(0)->child(1)->isInt32(1)
                 && m_value->child(0)->child(0)->returnsBool()) {
                 m_value->child(0) = m_value->child(0)->child(0);
-                std::swap(m_block->taken(), m_block->notTaken());
-                m_proc.didReorderSuccessors();
+                swapSuccessorsOfBranch();
                 m_changed = true;
             }
 
@@ -4255,11 +4262,29 @@ private:
         }
     }
 
+    bool truncatesValueComputedFromLowWords()
+    {
+        if (!m_proc.hasEverAdded(Trunc))
+            return false;
+        for (Value* value : m_proc.values()) {
+            if (value->opcode() == Trunc && computesLowWordFromLowWords(value->child(0)))
+                return true;
+        }
+        return false;
+    }
+
     // A walk may give one of these values a user that needs the high word, and then the operation is computed in both widths.
     void findValuesUsedForLowWord()
     {
         if (!m_narrowsIntegers)
             return;
+
+        // Dead code is gone, so each of these operations is used, itself or through others of them, by a value that is none of them. If that is never a Trunc, it needs the high word.
+        if (!truncatesValueComputedFromLowWords()) {
+            m_lowWords.clear();
+            m_isUsedForLowWord.clearAll();
+            return;
+        }
 
         BitVector needsHighWord(m_proc.values().size());
         Vector<Value*, 32> worklist;
@@ -4390,7 +4415,79 @@ private:
 
     // FIXME: This should really be a forward analysis. Instead, we uses a bounded-search backwards
     // analysis.
-    IntRange rangeFor(Value* value) { return B3::rangeFor(m_proc, value); }
+    IntRange rangeFor(Value* value, unsigned timeToLive = 5)
+    {
+        if (m_reducesWithRanges)
+            return B3::rangeFor(m_proc, value);
+
+        if (!timeToLive)
+            DUMP_INT_RANGE_AND_RETURN(IntRange::top(value->type()));
+        
+        switch (value->opcode()) {
+        case Const32:
+        case Const64: {
+            int64_t intValue = value->asInt();
+            DUMP_INT_RANGE_AND_RETURN(IntRange(intValue, intValue));
+        }
+
+        case BitAnd:
+            if (value->child(1)->hasInt())
+                DUMP_INT_RANGE_AND_RETURN(IntRange::rangeForMask(value->child(1)->asInt(), value->type()));
+            break;
+
+        case SShr:
+            if (value->child(1)->hasInt32()) {
+                DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sShr(
+                    value->child(1)->asInt32(), value->type()));
+            }
+            break;
+
+        case ZShr:
+            if (value->child(1)->hasInt32()) {
+                DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).zShr(
+                    value->child(1)->asInt32(), value->type()));
+            }
+            break;
+
+        case Shl:
+            if (value->child(1)->hasInt32()) {
+                DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).shl(
+                    value->child(1)->asInt32(), value->type()));
+            }
+            break;
+
+        case Add:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).add(
+                rangeFor(value->child(1), timeToLive - 1), value->type()));
+
+        case Sub:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sub(
+                rangeFor(value->child(1), timeToLive - 1), value->type()));
+
+        case Mul:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).mul(
+                rangeFor(value->child(1), timeToLive - 1), value->type()));
+
+        case SExt8:
+        case SExt8To64:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sExt<int8_t>());
+        case SExt16:
+        case SExt16To64:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sExt<int16_t>());
+        case SExt32:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sExt<int32_t>());
+
+        case ZExt32:
+            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).zExt32());
+
+        default:
+            break;
+        }
+
+        DUMP_INT_RANGE_AND_RETURN(IntRange::top(value->type()));
+    }
+
+#undef DUMP_INT_RANGE_AND_RETURN
 
     bool tryReduceSameInputShuffleToDup(uint8_t dupLane)
     {
@@ -4414,6 +4511,8 @@ private:
 
     bool tryFoldSignComparison()
     {
+        if (!m_foldsImpliedComparisons)
+            return false;
         auto isSignTest = [](Value* value) {
             return (value->opcode() == LessThan || value->opcode() == GreaterEqual) && value->child(0)->isInteger() && value->child(1)->isInt(0);
         };
@@ -4561,6 +4660,15 @@ private:
         }
         m_value->replaceWithJump(m_block, target);
         m_changedCFG = true;
+    }
+
+    // Once the walk has changed the CFG, every analysis of it is dropped behind the walk.
+    void swapSuccessorsOfBranch()
+    {
+        if (!m_changedCFG)
+            m_proc.willReorderSuccessors();
+        std::swap(m_block->taken(), m_block->notTaken());
+        m_proc.didReorderSuccessors();
     }
 
     void removeUpsilonsFromUnreachableBlock()
@@ -5024,7 +5132,7 @@ private:
             if (numSuccessors > 1) {
                 if (allSame)
                     return true;
-            } else if (block->last()->opcode() == Jump && firstSuccessor != block && firstSuccessor->numPredecessors() == 1)
+            } else if (block->last()->opcode() != Patchpoint && firstSuccessor != block && firstSuccessor->numPredecessors() == 1)
                 return true;
         }
         return false;
@@ -5059,7 +5167,46 @@ private:
         if (!canSimplifyCFG())
             return;
         LargePredecessorLists<BasicBlock> lists;
-        for (BasicBlock* block : m_proc.blocksInPostOrder()) {
+
+        auto canMergeWithSuccessor = [&](BasicBlock* block) {
+            if (block->numSuccessors() != 1 || block->last()->opcode() == Patchpoint)
+                return false;
+            BasicBlock* successor = block->successorBlock(0);
+            return successor != block && successor->numPredecessors() == 1;
+        };
+
+        auto mergeWithSuccessor = [&](BasicBlock* block) {
+            BasicBlock* successor = block->successorBlock(0);
+            RELEASE_ASSERT(successor->predecessor(0) == block);
+
+            // We can merge the two blocks, because the predecessor only jumps to the successor
+            // and the successor is only reachable from the predecessor.
+
+            // Remove the terminal.
+            Value* value = block->values().takeLast();
+            Origin jumpOrigin = value->origin();
+            RELEASE_ASSERT(value->effects().terminal);
+            m_proc.deleteValue(value);
+
+            // Append the full contents of the successor to the predecessor.
+            block->values().appendVector(successor->values());
+            block->successors() = successor->successors();
+
+            // Make sure that the successor has nothing left in it. Make sure that the block
+            // has a terminal so that nobody chokes when they look at it.
+            successor->values().clear();
+            successor->appendNew<Value>(m_proc, Oops, jumpOrigin);
+            successor->clearSuccessors();
+
+            // Ensure that predecessors of block's new successors know what's up.
+            for (BasicBlock* newSuccessor : block->successorBlocks())
+                lists.replace(newSuccessor, successor, block);
+
+            dataLogLnIf(B3ReduceStrengthInternal::verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
+            m_changedCFG = true;
+        };
+
+        for (BasicBlock* block : m_proc.cachedBlocksInPostOrder()) {
             if (B3ReduceStrengthInternal::verbose)
                 dataLog("Considering block ", *block, ":\n");
 
@@ -5140,44 +5287,15 @@ private:
                 }
             }
 
+            // Finally handle jumps to a block with one predecessor.
+            if (!m_mergesBlocksAfterForwardingJumps && canMergeWithSuccessor(block))
+                mergeWithSuccessor(block);
         }
 
-        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
-            // Finally handle jumps to a block with one predecessor.
-            while (block->numSuccessors() == 1 && block->last()->opcode() == Jump) {
-                BasicBlock* successor = block->successorBlock(0);
-                if (successor == block || successor->numPredecessors() != 1)
-                    break;
-                {
-                    RELEASE_ASSERT(successor->predecessor(0) == block);
-
-                    // We can merge the two blocks, because the predecessor only jumps to the successor
-                    // and the successor is only reachable from the predecessor.
-
-                    // Remove the terminal.
-                    Value* value = block->values().takeLast();
-                    Origin jumpOrigin = value->origin();
-                    RELEASE_ASSERT(value->effects().terminal);
-                    m_proc.deleteValue(value);
-
-                    // Append the full contents of the successor to the predecessor.
-                    block->values().appendVector(successor->values());
-                    block->successors() = successor->successors();
-
-                    // Make sure that the successor has nothing left in it. Make sure that the block
-                    // has a terminal so that nobody chokes when they look at it.
-                    successor->values().clear();
-                    successor->appendNew<Value>(m_proc, Oops, jumpOrigin);
-                    successor->clearSuccessors();
-
-                    // Ensure that predecessors of block's new successors know what's up.
-                    for (BasicBlock* newSuccessor : block->successorBlocks()) {
-                        lists.replace(newSuccessor, successor, block);
-                    }
-
-                    dataLogLnIf(B3ReduceStrengthInternal::verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
-                    m_changedCFG = true;
-                }
+        if (m_mergesBlocksAfterForwardingJumps) {
+            for (BasicBlock* block : m_proc.blocksInPreOrder()) {
+                while (canMergeWithSuccessor(block))
+                    mergeWithSuccessor(block);
             }
         }
 
@@ -5259,20 +5377,10 @@ private:
             found |= onlyChild[phi] != phi;
         if (!found)
             return;
-        m_changed = true;
-        for (Value* value : m_proc.values()) {
-            UpsilonValue* upsilon = value->as<UpsilonValue>();
-            if (!upsilon)
-                continue;
-            Value* only = onlyChild[upsilon->phi()];
-            if (only && only != upsilon->phi())
-                upsilon->replaceWithNop();
-        }
-        for (Value* phi : phis) {
-            Value* only = onlyChild[phi]->foldIdentity();
-            if (only != phi)
-                phi->replaceWithIdentity(only);
-        }
+
+        PhiChildren phiChildren(m_proc);
+        for (Value* phi : phiChildren.phis())
+            simplifyPhi(phi, phiChildren[phi]);
     }
 
     void simplifyPhi(Value* phi, PhiChildren::UpsilonCollection upsilons)
@@ -5343,6 +5451,7 @@ private:
     const bool m_reducesWithRanges { m_proc.policy().optimization.reducesWithRanges };
     const bool m_foldsImpliedComparisons { m_proc.policy().optimization.foldsImpliedComparisons };
     const bool m_narrowsIntegers { m_proc.policy().optimization.narrowsIntegers };
+    const bool m_mergesBlocksAfterForwardingJumps { m_proc.policy().optimization.mergesBlocksAfterForwardingJumps };
     BitVector m_isUsedForLowWord;
     UncheckedKeyHashMap<Value*, Value*> m_lowWords;
     std::optional<MemoryNumbering> m_numbering;

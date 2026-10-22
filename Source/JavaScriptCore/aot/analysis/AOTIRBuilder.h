@@ -49,6 +49,9 @@ public:
 
     ValueID addParameter(BlockID, TypeID);
     void appendArgument(Edge, ValueID);
+    uint32_t numberOfParametersForEdgeResults(BlockID);
+    ValueID addParameter(BlockID, TypeID, uint32_t numberOfParametersForEdgeResults);
+    void appendArgument(Edge, ValueID, uint32_t numberOfParametersForEdgeResults);
     ValueID addEdgeResult(Edge, uint32_t proof);
     void removeParameters(BlockID, const BitVector& parameterIndexes);
 
@@ -69,6 +72,7 @@ public:
     ValueID appendDouble(double);
 
     ValueID insertBefore(ProgramPoint, Value&&);
+    bool hasInsertions() const { return !m_insertions.isEmpty(); }
     void applyInsertions();
     void eraseValues(BlockID, const BitVector& indexes);
 
@@ -88,6 +92,14 @@ public:
         ValueID provenOnNotTaken;
     };
     ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand = 0, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal);
+    // Blocks that are there already, in place of new ones that only jump to them. A block that no other edge enters takes the proof as its parameter.
+    // A test that proves nothing where it fails may lead anywhere from there. No block is open afterwards.
+    struct ProvenBranchTargets {
+        BlockID enteredOnlyWhenTaken;
+        std::optional<Target> whenNotTaken;
+    };
+    ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken, ProvenBranchTargets&&);
+    void appendValidationOfTestedValue(ValueID test);
 
     void emitSwitch(ValueID, Vector<std::pair<int64_t, Target>>&& cases, Target&& otherwise);
     void emitSwitchString(ValueID, Vector<std::pair<StringID, Target>>&& cases, Target&& otherwise);
@@ -151,9 +163,9 @@ private:
     friend class RegionCloner;
     friend class SSARepair;
 
-    ValueID addValue(Value&&);
-    void prepare(Value&);
-    ValueID appendPrepared(Value&&);
+    ValueID addValue(Value&&, OptionSet<ValueEdit> = ValueEdit::Added);
+    OptionSet<ValueEdit> prepare(Value&);
+    ValueID appendPrepared(Value&&, OptionSet<ValueEdit> = ValueEdit::Added);
     Expansion cutForExpansion(ProgramPoint);
 
     void forEachIncomingTarget(BlockID, NOESCAPE const ScopedLambda<void(Edge, Target&)>&);
@@ -164,6 +176,11 @@ private:
 
     void didChangeValues();
     void didChangeControlFlow();
+    void didAddDetachedValue(ValueID);
+    void didListValues(BlockID, std::span<const ValueID>);
+    void didEraseValues(BlockID, std::span<const ValueID>);
+    void didChangeBlock(BlockID);
+    void didChangeControlFlow(std::span<const BlockID> changedBlocks);
 
     const AnalysisContext m_context;
     Function& m_function;

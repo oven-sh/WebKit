@@ -65,6 +65,7 @@ function f0 name="overGenerator" flags=[IsGenerator, TakesCallee] parameters=[{t
 # ABSENT-NOT: IsUnmodifiedGenerator
 # ABSENT-NOT: check=IsUnmodified
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-COUNT-3: = StepGenerator
 # ABSENT-NOT: = StepGenerator
@@ -113,7 +114,7 @@ function f1 name="overUnprovenGenerator" flags=[IsGenerator, TakesCallee] parame
 # CHECK: b4(v18: anything):
 # CHECK-NEXT: = StepGenerator v1, v18 resumeMode=Return check=IsUnmodified
 # CHECK: [[protocol1]]([[iterable1]]: Generator) frequency=Unlikely:
-# CHECK-NEXT: = PropGet [[iterable1]] key=@@iterator
+# CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[modified1]]() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[protocol1]](v1)
 # ABSENT-LABEL: function f1 name="overUnprovenGenerator"
@@ -170,8 +171,8 @@ function f2 name="overArray" flags=[IsGenerator, TakesCallee] parameters=[{type=
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: = Call
 
-function f3 name="overUnknown" flags=[IsGenerator, TakesCallee] parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: function, v1: object ? L0):
+function f3 name="overUnknown" flags=[IsGenerator, TakesCallee] parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: function, v1: L0):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -267,7 +268,7 @@ function f4 name="overValueNobodyKnows" flags=[IsGenerator, TakesCallee] paramet
   b6(v23):
     Return v23
 }
-# Whoever sends values into an iterator expects a generator. passes/expand-iteration-generators.ir, notPredicted: a loop that sends nothing is not tested for one
+# Whoever sends values into an iterator expects a generator. passes/expand-iteration-generators.ir, notExpected: a loop that sends nothing is not tested for one
 # CHECK-LABEL: function f4 name="overValueNobodyKnows"
 # CHECK: [[isGenerator4]]: boolean = TypeTest v1 testedType=Generator
 # CHECK-NEXT: Branch [[isGenerator4]] -> taken [[generatorArm4]](| 0), notTaken [[others4]](| 0)
@@ -277,7 +278,7 @@ function f4 name="overValueNobodyKnows" flags=[IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: = TypeTest [[other4]] testedType=Array
 # ABSENT-LABEL: function f4 name="overValueNobodyKnows"
 # ABSENT: = StepGenerator
-# ABSENT: key=@@iterator
+# ABSENT: function=[[openIterator]] [isNeverInlined]
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

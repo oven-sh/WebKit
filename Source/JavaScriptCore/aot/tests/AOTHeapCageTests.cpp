@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
+#include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
+#include "FastMallocAlignedMemoryAllocator.h"
 #include "HeapInlines.h"
 #include "HeapIterationScope.h"
 #include "HeapUtil.h"
@@ -25,6 +27,7 @@
 #include "ReservedRangeHeap.h"
 #include "SourceCode.h"
 #include "VM.h"
+#include "VMTrapsInlines.h"
 #include <array>
 #include <cstring>
 #include <optional>
@@ -190,17 +193,19 @@ static void testFreeThenAllocateAgain()
     }
 }
 
-static void testRangeHalvesUnderBudget()
+static void testRangeTakesWhatBudgetLeaves()
 {
     auto sizeWithBudget = [](size_t budget) {
         ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({ .name = "Range under a budget"_s, .size = rangeSize, .minSize = 16 * MB, .addressSpaceBudget = budget });
-        AOT_TEST_CHECK(range && !(range->start() % range->size()));
+        AOT_TEST_CHECK(range && !(range->start() % roundUpToPowerOfTwo(range->size())));
         void* block = range->tryAllocateAligned(blockSize, blockSize);
         AOT_TEST_CHECK(block && isInside(*range, block, blockSize));
         return range->size();
     };
     AOT_TEST_CHECK(sizeWithBudget(32 * MB) == 32 * MB);
-    AOT_TEST_CHECK(sizeWithBudget(63 * MB) == 32 * MB);
+    AOT_TEST_CHECK(sizeWithBudget(33 * MB) == 33 * MB);
+    AOT_TEST_CHECK(sizeWithBudget(63 * MB) == 63 * MB);
+    AOT_TEST_CHECK(sizeWithBudget(63 * MB + blockSize) == 63 * MB);
     AOT_TEST_CHECK(sizeWithBudget(rangeSize) == rangeSize);
     AOT_TEST_CHECK(sizeWithBudget(std::numeric_limits<size_t>::max()) == rangeSize);
     AOT_TEST_CHECK(sizeWithBudget(MB) == 16 * MB);
@@ -285,7 +290,7 @@ static void runInProcessWithCage()
     }
 
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, makeString("--markedBlockCageSizeInMB="_s, cageSizeInMB) };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, makeString("--markedBlockCageSizeInMB="_s, cageSizeInMB), "--warmUpMarkedBlockStartAfterBlocks=64"_s };
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
         dataLogLn(result.output);
@@ -390,6 +395,79 @@ static void checkSecondHeapGetsItsOwnBase()
     AOT_TEST_CHECK(second.cage().contains(cellOfSecond) && !second.cage().contains(cellOfFirst));
 }
 
+// What is held back so that a full cage can end in an error: nothing until the cage is half full, then a block for each block that the heap takes.
+static void checkReserveIsKeptOnceHalfFull()
+{
+    TestVM test;
+    MarkedBlockCage& cage = test.cage();
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(!cage.reserveSize() && !cage.releaseReserve());
+
+    Vector<void*> blocks;
+    uintptr_t middle = cage.base() + cage.size() / 2;
+    do {
+        blocks.append(cage.tryAllocateAligned(blockSize, blockSize));
+        AOT_TEST_CHECK(blocks.last() && blocks.size() <= cage.size() / blockSize);
+    } while (std::bit_cast<uintptr_t>(blocks.last()) + blockSize <= middle);
+
+#if CPU(X86_64)
+    constexpr size_t whole = 4 * MB;
+    static_assert(cageSizeInMB * MB / 64 == whole);
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(cage.reserveSize() == blockSize);
+    for (size_t count = 0; count < 2 * whole / blockSize; ++count)
+        cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(cage.reserveSize() == whole);
+
+    AOT_TEST_CHECK(cage.releaseReserve() && !cage.reserveSize() && !cage.releaseReserve());
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(!cage.reserveSize());
+    cage.didThrowOutOfMemoryError();
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(cage.reserveSize() == blockSize);
+#else
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(!cage.reserveSize());
+#endif
+    for (void* block : blocks)
+        cage.free(block);
+}
+
+// An error that waits for the next function entry holds the limit that entries test, not the polls of loops, and an ordinary stop that comes and goes leaves it waiting.
+static void checkErrorWaitsAtFunctionEntriesAlone()
+{
+    TestVM test;
+    VMTraps& traps = test.vm().traps();
+    void* marker = std::bit_cast<void*>(StackManager::StopRequestMarkerValue);
+    StackManager::Mirror mirror;
+    traps.registerMirror(mirror);
+    AOT_TEST_CHECK(!traps.needsOutOfMemoryError() && !traps.stopsAtEveryPoll() && mirror.trapAwareSoftStackLimit() == traps.softStackLimit());
+
+    traps.setNeedsOutOfMemoryError(true);
+    AOT_TEST_CHECK(traps.needsOutOfMemoryError() && !traps.stopsAtEveryPoll() && mirror.trapAwareSoftStackLimit() == marker && mirror.softStackLimit() == traps.softStackLimit());
+
+    traps.requestStop();
+    AOT_TEST_CHECK(traps.stopsAtEveryPoll() && mirror.trapAwareSoftStackLimit() == marker);
+    traps.cancelStop();
+    AOT_TEST_CHECK(traps.needsOutOfMemoryError() && !traps.stopsAtEveryPoll() && mirror.trapAwareSoftStackLimit() == marker);
+
+    StackManager::Mirror later;
+    traps.registerMirror(later);
+    AOT_TEST_CHECK(later.trapAwareSoftStackLimit() == marker);
+
+    traps.requestStop();
+    traps.setNeedsOutOfMemoryError(false);
+    AOT_TEST_CHECK(!traps.needsOutOfMemoryError() && mirror.trapAwareSoftStackLimit() == marker);
+    traps.cancelStop();
+    AOT_TEST_CHECK(mirror.trapAwareSoftStackLimit() == traps.softStackLimit() && later.trapAwareSoftStackLimit() == traps.softStackLimit());
+
+    traps.setNeedsOutOfMemoryError(true);
+    traps.setNeedsOutOfMemoryError(false);
+    AOT_TEST_CHECK(mirror.trapAwareSoftStackLimit() == traps.softStackLimit());
+    traps.unregisterMirror(later);
+    traps.unregisterMirror(mirror);
+}
+
 static void checkRangeIsReused()
 {
     uintptr_t baseOfFirst;
@@ -401,6 +479,72 @@ static void checkRangeIsReused()
     TestVM second;
     second.createRealm();
     AOT_TEST_CHECK(baseOfFirst && second.cage().base() == baseOfFirst);
+}
+
+// Far more blocks than the helper thread keeps, with pauses in which it fills its supply: some come from the supply and some straight from the cage.
+static void checkBlocksToFillAreFreshBlocksOfTheCage()
+{
+    uintptr_t base;
+    {
+        CagedAlignedMemoryAllocator allocator;
+        base = allocator.cage().base();
+        AOT_TEST_CHECK(base && Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount());
+        unsigned numberOfBlocks = 4 * (Options::warmUpMarkedBlockStartAfterBlocks() + Options::warmUpMarkedBlockCount());
+        HashSet<void*> blocks;
+        for (unsigned count = 0; count < numberOfBlocks; ++count) {
+            void* block = allocator.tryAllocateBlockToFill();
+            AOT_TEST_CHECK(block && allocator.cage().contains(block) && !(std::bit_cast<uintptr_t>(block) % blockSize) && blocks.add(block).isNewEntry);
+            const uint64_t* words = static_cast<const uint64_t*>(block);
+            for (size_t index = 0; index < blockSize / sizeof(uint64_t); ++index)
+                AOT_TEST_CHECK(!words[index]);
+            fill(block, blockSize, static_cast<uint8_t>(count));
+            if (!(count % 24))
+                WTF::sleep(1_ms);
+        }
+        unsigned count = 0;
+        for (void* block : blocks)
+            count += isFilled(block, blockSize, *static_cast<uint8_t*>(block));
+        AOT_TEST_CHECK(count == blocks.size());
+        for (void* block : blocks)
+            allocator.freeAlignedMemory(block);
+    }
+    // The helper has ended and has given back what it held, so the range serves the next heap.
+    CagedAlignedMemoryAllocator next;
+    AOT_TEST_CHECK(next.cage().base() == base);
+    void* block = next.tryAllocateBlockToFill();
+    AOT_TEST_CHECK(block && next.cage().contains(block));
+    next.freeAlignedMemory(block);
+}
+
+// The blocks of array storage come from the other allocator, which waits for as many requests of its own. The cage's count starts its supply too.
+static void checkOtherAllocatorWarmsUpWithTheCage()
+{
+    auto takeBlockOutsideTheCage = [] {
+        FastMallocAlignedMemoryAllocator outside;
+        void* block = outside.tryAllocateAlignedMemory(blockSize, blockSize);
+        AOT_TEST_CHECK(block);
+        outside.freeAlignedMemory(block);
+    };
+    auto waitForSupply = [] {
+        for (unsigned attempt = 0; attempt < 2000 && !warmUpMarkedBlockCountForTesting(); ++attempt)
+            WTF::sleep(1_ms);
+        return warmUpMarkedBlockCountForTesting();
+    };
+    AOT_TEST_CHECK(warmUpMarkedBlocksAreEnabledForTesting() && Options::warmUpMarkedBlockStartAfterBlocks() > 2);
+    takeBlockOutsideTheCage();
+    WTF::sleep(20_ms);
+    AOT_TEST_CHECK(!warmUpMarkedBlockCountForTesting());
+
+    CagedAlignedMemoryAllocator allocator;
+    Vector<void*> blocks;
+    for (unsigned count = 0; count < Options::warmUpMarkedBlockStartAfterBlocks(); ++count)
+        blocks.append(allocator.tryAllocateBlockToFill());
+    takeBlockOutsideTheCage();
+    AOT_TEST_CHECK(waitForSupply());
+    for (void* block : blocks) {
+        AOT_TEST_CHECK(block);
+        allocator.freeAlignedMemory(block);
+    }
 }
 
 namespace {
@@ -500,7 +644,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/any-size"_s, testAnySize },
         { "heap-cage/reserved-range/reallocate-keeps-bytes"_s, testReallocateKeepsBytes },
         { "heap-cage/reserved-range/free-then-allocate-again"_s, testFreeThenAllocateAgain },
-        { "heap-cage/reserved-range/halves-under-budget"_s, testRangeHalvesUnderBudget },
+        { "heap-cage/reserved-range/takes-what-the-budget-leaves"_s, testRangeTakesWhatBudgetLeaves },
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
@@ -512,6 +656,10 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/butterfly-is-outside"_s, withCage<checkButterflyIsOutside> },
         { "heap-cage/cage/second-heap-gets-its-own-base"_s, withCage<checkSecondHeapGetsItsOwnBase> },
         { "heap-cage/cage/range-is-reused"_s, withCage<checkRangeIsReused> },
+        { "heap-cage/cage/reserve-is-kept-once-half-full"_s, withCage<checkReserveIsKeptOnceHalfFull> },
+        { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
+        { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
+        { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },
         { "heap-cage/scan/index-in-low-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInLowHalf>> },
         { "heap-cage/scan/index-in-high-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInHighHalf>> },
         { "heap-cage/scan/offset-from-base"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::Offset>> },

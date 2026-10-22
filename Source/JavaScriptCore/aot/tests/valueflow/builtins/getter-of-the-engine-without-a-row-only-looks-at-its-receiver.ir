@@ -1,0 +1,25 @@
+# try { JSON.parse(text) } catch (error) { error.sign }
+# Nobody knows what was thrown, so the name finds the getter Temporal.Duration.prototype.sign, which the table does not declare. It looks at its receiver and throws for whatever is no Temporal.Duration:
+# it stores nothing that a program sees, keeps nothing and calls nothing. So no code that nobody compiles has written, and nothing that has escaped was called.
+# RUN: valueflow-why values=f0:v4 flag=h6 flag=h23
+# CHECK: operand 0 {{*}}unknown
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: flag=h23
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    v0 = Builtin builtin=JSONParse
+    v1 = String string="{"
+    v2 = Call v0, -, v1
+    Return
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = PropGet v3 key="sign"
+    Return
+}

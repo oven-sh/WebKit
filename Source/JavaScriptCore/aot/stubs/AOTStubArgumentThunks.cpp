@@ -96,6 +96,12 @@ static void emitLoadsAndConstants(CCallHelpers& jit, const ArgumentMoves& words)
         case ArgumentSource::Stack64:
             jit.load64(CCallHelpers::Address(GPRInfo::callFrameRegister, static_cast<int32_t>(words[i + 1])), destination);
             break;
+        case ArgumentSource::Stack32OffStackPointer:
+            jit.load32(CCallHelpers::Address(CCallHelpers::stackPointerRegister, static_cast<int32_t>(words[i + 1])), destination);
+            break;
+        case ArgumentSource::Stack64OffStackPointer:
+            jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, static_cast<int32_t>(words[i + 1])), destination);
+            break;
         case ArgumentSource::Constant:
             jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(words[i + 1])), destination);
             break;

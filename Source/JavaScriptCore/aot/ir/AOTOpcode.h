@@ -10,6 +10,7 @@
 #include "AOTIRForm.h"
 #include "AOTSchemaEnums.h"
 #include <array>
+#include <bit>
 #include <initializer_list>
 #include <wtf/OptionSet.h>
 
@@ -58,12 +59,27 @@ public:
             m_words[i] |= other.m_words[i];
         return *this;
     }
+    constexpr EnumeratorBitSet& operator&=(const EnumeratorBitSet& other)
+    {
+        for (size_t i = 0; i < m_words.size(); ++i)
+            m_words[i] &= other.m_words[i];
+        return *this;
+    }
     constexpr bool intersects(const EnumeratorBitSet& other) const
     {
         uint64_t common = 0;
         for (size_t i = 0; i < m_words.size(); ++i)
             common |= m_words[i] & other.m_words[i];
         return common;
+    }
+    // In ascending order.
+    template<typename Functor>
+    constexpr void forEach(const Functor& functor) const
+    {
+        for (size_t i = 0; i < m_words.size(); ++i) {
+            for (uint64_t word = m_words[i]; word; word &= word - 1)
+                functor(static_cast<E>(i * 64 + std::countr_zero(word)));
+        }
     }
 
     friend constexpr bool operator==(const EnumeratorBitSet&, const EnumeratorBitSet&) = default;

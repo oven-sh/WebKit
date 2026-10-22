@@ -30,9 +30,7 @@ function f0 name="arguments-from-head" parameters=[{type=anything}, {type=anythi
 
 # CHECK-LABEL: function f1 name="constant-of-link"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: = String string="a"
 # CHECK-NEXT: [[second]]: "b" = String string="b"
-# CHECK-NEXT: = String string="c"
 # CHECK-NEXT: SwitchString v0 strings=["a", "b", "c"] -> case b1(v1), case b1([[second]]), case b1(v0), otherwise b1(v1)
 function f1 name="constant-of-link" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):

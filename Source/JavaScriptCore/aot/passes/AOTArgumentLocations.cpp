@@ -61,18 +61,22 @@ EntryConvention entryConventionOf(const Function& callee)
     case FunctionRole::Library:
     case FunctionRole::Model:
     case FunctionRole::Signature:
-    case FunctionRole::GroupEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
     case FunctionRole::GenericVersion:
     case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
     case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineRamp:
     case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
     case FunctionRole::ResultWrapper:
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
-    case FunctionRole::Continuation:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
@@ -89,17 +93,11 @@ ConventionRegisters maxConventionRegisters()
     return { numberOfDirectArgumentGPRs, numberOfDirectArgumentFPRs };
 }
 
-uint32_t numberOfStackWordsFor(std::span<const Representation> representations, ConventionRegisters registers)
-{
-    ArgumentAllocator allocator(registers);
-    for (Representation representation : representations)
-        allocator.allocate(representation);
-    return allocator.numberOfStackWords();
-}
-
 Representation declaredRepresentationOf(const Program& program, const DeclaredType& declared)
 {
     const Type& type = program.at(declared.type);
+    if (declared.flags.contains(PositionFlags::IsExpected) && type.isJavaScriptValue())
+        return Representation::JSValue;
     Representation representation = defaultRepresentationOf(type);
     if (representation != Representation::Void)
         return representation;
@@ -201,7 +199,8 @@ static ArgumentLocation computeSingleResultLocation(const Program& program, cons
 
     const DeclaredType& declared = callee.result();
     const Type& type = program.at(declared.type);
-    if (type.isNever() || type.hasOnlyPrimitives(Primitive::Undefined))
+    bool isProven = !declared.flags.contains(PositionFlags::IsExpected);
+    if (isProven && (type.isNever() || type.hasOnlyPrimitives(Primitive::Undefined)))
         return { .kind = ArgumentLocation::Kind::None, .representation = Representation::JSValue };
 
     Representation representation = declaredRepresentationOf(program, declared);

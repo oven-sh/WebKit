@@ -86,15 +86,15 @@ function f3 name="sunkPastCall" parameters=[{type=f4}, {type=anything}, {type=bo
 # CHECK-NEXT: [[cell3]]:{{*}}= NewObject v3 layout=L0
 # CHECK-NEXT: = Call v1, -, [[cell3]]
 
-function f4 name="F" flags=[HasThis] thisType={type=object written=L0} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f4 name="F" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     PropDefine v0, v1 key="x" receivers=[L0]
     Return
 }
 # CHECK-LABEL: function f4 name="F"
 
-function f5 name="F" role=AllocatedThisVersion flags=[HasThis] thisType={type=object written=L0} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4 parameterMap=[{}, {original=1}]} creator=Version{provenVersion=f4} {
-  b0(v0: object ? L0, v1: anything):
+function f5 name="F" role=AllocatedThisVersion flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4 parameterMap=[{}, {original=1}]} creator=Version{provenVersion=f4} {
+  b0(v0: L0, v1: anything):
     PropDefine v0, v1 key="x" receivers=[L0]
     Return
 }

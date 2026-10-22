@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Base" constructor=f1 flow={baseState=None}
-layout L1 kind=Instance name="Derived" predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0}
 
 function f0 name="target" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
   b0(v0: Array):
@@ -52,7 +52,7 @@ function f4 name="length" role=GenericEntrypoint flags=[HasThis] captures=[{type
 function f5 name="integerIndex" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
   b0(v0: f0, v1: anything):
     v2 = GetArgument argumentIndex=0
-    v3 = Claim v2 castType=i32
+    v3 = Check v2 castType=i32
     v4 = CreateRest firstArgument=1
     v5 = ElemGet v4, v3
     Return v5
@@ -101,7 +101,7 @@ function f8 name="forwardedCallWithoutThis" role=GenericEntrypoint flags=[HasThi
 function f9 name="forwardedSuperConstruct" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
   b0(v0: f0, v1: anything):
     v2 = GetArgument argumentIndex=0
-    v3 = Claim v2 castType=function
+    v3 = Check v2 castType=function
     v4 = CreateRest firstArgument=1
     v5 = SuperConstructList v3, v2, v4 layout=L1
     Return v5

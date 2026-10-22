@@ -55,6 +55,7 @@ BitVector findVariablesDescribedToRunTime(const Program& program, const FlowResu
         }
         for (auto& entry : module.syntheticExports)
             add(entry.variable);
+        add(module.exportsVariable);
     }
     for (auto& scope : program.evalScopes) {
         for (auto& binding : scope.bindings)
@@ -67,18 +68,30 @@ BitVector findVariablesDescribedToRunTime(const Program& program, const FlowResu
     return described;
 }
 
+// Nothing checks what arrives at an expected position, and a variable has no other place for a value that does not fit its form.
+static const Type& typeOfStoredValues(const Program& program, const Variable& variable)
+{
+    return program.at(variable.declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : variable.declared.type);
+}
+
 static bool isFilledWithUndefinedValue(const Program& program, const Variable& variable)
 {
     return variable.initialization == VariableInitialization::Undefined
         && variable.flow.initialization == InitializationState::Unknown
-        && defaultSlotRepresentationOf(program.at(variable.declared.type)) == SlotRepresentation::JSValue;
+        && defaultSlotRepresentationOf(typeOfStoredValues(program, variable)) == SlotRepresentation::JSValue;
+}
+
+static bool canHoldAbsentValue(const Program& program, const Variable& variable)
+{
+    return !!(typeOfStoredValues(program, variable).primitives & Primitive::Absent);
 }
 
 static BitVector findZeroEncodingCandidates(const Program& program, const BitVector& described)
 {
     BitVector candidates(program.variables.size());
     for (unsigned index = 0; index < program.variables.size(); ++index) {
-        if (!described.quickGet(index) && isFilledWithUndefinedValue(program, program.variables[index]))
+        const Variable& variable = program.variables[index];
+        if (!described.quickGet(index) && isFilledWithUndefinedValue(program, variable) && !canHoldAbsentValue(program, variable))
             candidates.quickSet(index);
     }
     return candidates;
@@ -119,8 +132,8 @@ static bool canUseEncodedValue(const Program& program, const Function& function,
         auto constant = constantThroughCasts(program, function, user.operand(otherOperand));
         return constant && constantsComparedBitwise.contains(function.at(*constant).opcode);
     }
-    if (user.opcode == Opcode::Claim)
-        return use.operandIndex == OperandIndex::Claim::value && !(program.at(user.type).primitives & Primitive::Undefined);
+    if (user.opcode == Opcode::Check)
+        return use.operandIndex == OperandIndex::Check::value && !(program.at(user.type).primitives & Primitive::Undefined);
     return false;
 }
 
@@ -154,17 +167,17 @@ static PlannedVariable planFunctionVariable(const Variable& variable)
     return { .storage = VariableStorage::ClosureTable, .encoding = VariableEncoding::FunctionAsZero, .representation = SlotRepresentation::DeferredClosure };
 }
 
-static SlotRepresentation variableRepresentationOf(const Program& program, const Variable& variable)
+static SlotRepresentation variableRepresentationOf(const SlotPlanContext& context, const Variable& variable)
 {
-    const Type& declared = program.at(variable.declared.type);
+    const Type& stored = typeOfStoredValues(context.program, variable);
     bool canObserveDeadZone = variable.initialization == VariableInitialization::Uninitialized && variable.flow.initialization == InitializationState::Unknown;
     bool isStaticField = !!variable.owner;
     if (canObserveDeadZone || isStaticField)
-        return defaultSlotRepresentationOf(declared.withPrimitives(Primitive::Absent));
-    return defaultSlotRepresentationOf(declared);
+        return representationFor(context, stored.withPrimitives(Primitive::Absent), { });
+    return representationFor(context, stored, { });
 }
 
-static PlannedVariable planVariable(const Program& program, const Variable& variable, const VariableUse& use, bool isDescribed, bool isZeroEncodingCandidate)
+static PlannedVariable planVariable(const SlotPlanContext& context, const Variable& variable, const VariableUse& use, bool isDescribed, bool isZeroEncodingCandidate)
 {
     if (!use.isNamedByCode && !isDescribed)
         return { .storage = VariableStorage::None };
@@ -175,11 +188,13 @@ static PlannedVariable planVariable(const Program& program, const Variable& vari
     case VariableInitialization::Undefined:
         break;
     }
+    // The page of a variable that reads zero as undefined is written only when the program stores, which is better than four bytes that are filled at program entry.
+    bool readsZeroAsUndefined = isZeroEncodingCandidate && !use.hasUncheckedRead;
     return {
         .storage = VariableStorage::Statics,
-        .encoding = isZeroEncodingCandidate && !use.hasUncheckedRead ? VariableEncoding::UndefinedAsZero : VariableEncoding::Plain,
-        .representation = variableRepresentationOf(program, variable),
-        .isUsedBeforeProgramEntry = use.isUsedBeforeProgramEntry || program.at(variable.module).kind == ModuleKind::RuntimeSource,
+        .encoding = readsZeroAsUndefined ? VariableEncoding::UndefinedAsZero : VariableEncoding::Plain,
+        .representation = readsZeroAsUndefined ? SlotRepresentation::JSValue : variableRepresentationOf(context, variable),
+        .isUsedBeforeProgramEntry = use.isUsedBeforeProgramEntry || context.program.at(variable.module).kind == ModuleKind::RuntimeSource,
     };
 }
 
@@ -190,7 +205,7 @@ Vector<PlannedVariable> planVariables(const SlotPlanContext& context, const Slot
     const BitVector candidates = findZeroEncodingCandidates(program, described);
     Vector<PlannedVariable> variables(program.variables.size());
     forEachIndexInParallel(context.build.parallelLoops(), program.variables.size(), [&](unsigned index) {
-        variables[index] = planVariable(program, program.variables[index], uses.variables[index], described.quickGet(index), candidates.quickGet(index));
+        variables[index] = planVariable(context, program.variables[index], uses.variables[index], described.quickGet(index), candidates.quickGet(index));
     });
     return variables;
 }

@@ -1,9 +1,11 @@
-# a module requests a target once in each phase
+# a module requests a target once in each phase and of each kind
 # FORM: AsRead
 # RUN: verify
-# DIAGNOSTIC: DuplicateListEntry 1
+# DIAGNOSTIC: DuplicateListEntry 2
 
 module m0 path="main" displayPath="main"
-module m1 path="goodTwoPhases" displayPath="goodTwoPhases" requests=[{target=m0}, {target=m0 phase=Defer}]
-module m2 path="badSameRequestTwice" displayPath="badSameRequestTwice" requests=[{target=m0}, {target=m0}]
+module m1 path="goodTwoPhases" displayPath="goodTwoPhases" requests=[{target=m0 completes=true}, {target=m0 phase=Defer}]
+module m2 path="badSameRequestTwice" displayPath="badSameRequestTwice" requests=[{target=m0 completes=true}, {target=m0 completes=true}]
+module m3 path="goodTwoKinds" displayPath="goodTwoKinds" requests=[{target=m0 completes=true}, {target=m0 kind=Require completes=true}]
+module m4 path="badSameRequireTwice" displayPath="badSameRequireTwice" requests=[{target=m0 kind=Require}, {target=m0 kind=Require completes=true}]
 entry module=m0

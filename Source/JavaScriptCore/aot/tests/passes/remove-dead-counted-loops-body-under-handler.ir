@@ -68,7 +68,7 @@ function f2 name="coveredBlockMayThrow" parameters=[{type=int[0, 100]}, {type=an
     v5 = Less v3, v0
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6) handler=b4():
-    v7 = Claim v1 castType=number
+    v7 = RequireObjectCoercible v1
     v8 = Integer integer=1
     v9 = Add v6, v8
     Jump -> next b1(v9)

@@ -22,13 +22,13 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function}
+    v1 = Convert v0 declared={type=function flags=[IsExpected]}
     v2 = NewClosure function=f2
-    v3 = ClaimDeclared v2 declared={type=anything predicted=function}
+    v3 = Convert v2 declared={type=function flags=[IsExpected]}
     v4 = String string=""
-    v5 = Predict v4 predicted=string
+    v5 = Convert v4 declared={type=string flags=[IsExpected]}
     v6 = Integer
-    v7 = Predict v6 predicted=number
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v5, v7)
   b2(v8, v9):
     LoopHint
@@ -43,19 +43,19 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     v16 = Mod v13, v15
     v17 = Add v14, v16
     v18 = Add v8, v17
-    v19 = ClaimDeclared v18 declared={type=anything predicted=string}
+    v19 = Convert v18 declared={type=string flags=[IsExpected]}
     Jump -> next b5()
   b5():
     v20 = Increment v13
-    v21 = ClaimDeclared v20 declared={type=anything predicted=number}
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v19, v21)
   b6(v22):
     Jump -> next b7()
   b7():
     v23 = Integer
-    v24 = Predict v23 predicted=number
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
     v25 = Integer
-    v26 = Predict v25 predicted=number
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
     Jump -> next b8(v24, v26)
   b8(v27, v28):
     LoopHint
@@ -65,20 +65,20 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b9(v32):
     Jump -> next b10()
   b10():
-    v33 = Predict v3 predicted=function
-    v34 = Predict v1 predicted=function
+    v33 = Convert v3 declared={type=function flags=[IsExpected]}
+    v34 = Convert v1 declared={type=function flags=[IsExpected]}
     v35 = Call v34, -, v8 calleeName="lex"
-    v36 = Predict v35 predicted=Array<L0>
+    v36 = Convert v35 declared={type=Array<L0> flags=[IsExpected]}
     v37 = Call v33, -, v36 calleeName="count"
-    v38 = Predict v37 predicted=Map
+    v38 = Convert v37 declared={type=Map flags=[IsExpected]}
     v39 = PropGet v38 key="size"
-    v40 = Predict v39 predicted=number
+    v40 = Convert v39 declared={type=number flags=[IsExpected]}
     v41 = Add v27, v40
-    v42 = ClaimDeclared v41 declared={type=anything predicted=number}
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
     Jump -> next b11()
   b11():
     v43 = Increment v32
-    v44 = ClaimDeclared v43 declared={type=anything predicted=number}
+    v44 = Convert v43 declared={type=number flags=[IsExpected]}
     Jump -> next b8(v42, v44)
   b12(v45):
     Jump -> next b13()
@@ -89,15 +89,15 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     v49 = Undefined
     Return v49
 }
-function f1 name="lex" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=Array<L0>}] {
+function f1 name="lex" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Array<L0> flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewArray contents=anything
-    v2 = Predict v1 predicted=Array<never>
-    v3 = Predict v2 predicted=Array
+    v2 = Convert v1 declared={type=Array<never> flags=[IsExpected]}
+    v3 = Convert v2 declared={type=Array flags=[IsExpected]}
     v4 = Integer
-    v5 = Predict v4 predicted=number
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v5)
   b2(v6):
     LoopHint
@@ -108,7 +108,7 @@ function f1 name="lex" length=1 thisType={type=anything} parameters=[{type=anyth
     Branch v11 -> taken b3(), notTaken b5()
   b3():
     v12 = PropGet v3 key="push"
-    v13 = Predict v12 predicted=function
+    v13 = Convert v12 declared={type=function flags=[IsExpected]}
     v14 = PropGet v0 key="slice"
     v15 = Integer integer=3
     v16 = Add v6, v15
@@ -120,21 +120,21 @@ function f1 name="lex" length=1 thisType={type=anything} parameters=[{type=anyth
   b4():
     v21 = Integer integer=3
     v22 = Add v6, v21
-    v23 = ClaimDeclared v22 declared={type=anything predicted=number}
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
     Jump -> next b2(v23)
   b5():
-    v24 = Predict v3 predicted=Array<L0>
+    v24 = Convert v3 declared={type=Array<L0> flags=[IsExpected]}
     Return v24
 }
-function f2 name="count" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=Map}] {
+function f2 name="count" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Map flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Map" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Map)
+    v3 = Convert v2 declared={type=builtin(Map) flags=[IsExpected]}
     v4 = Construct v3 calleeName="Map"
-    v5 = Predict v4 predicted=Map
+    v5 = Convert v4 declared={type=Map flags=[IsExpected]}
     v6 = IteratorOpen v0
     Jump -> next b2()
   b2():
@@ -149,10 +149,10 @@ function f2 name="count" length=1 thisType={type=anything} parameters=[{type=any
     Jump -> next b5()
   b5() handler=b10():
     v11 = PropGet v5 key="set"
-    v12 = Predict v11 predicted=function
+    v12 = Convert v11 declared={type=function flags=[IsExpected]}
     v13 = PropGet v10 key="text"
     v14 = PropGet v5 key="get"
-    v15 = Predict v14 predicted=function
+    v15 = Convert v14 declared={type=function flags=[IsExpected]}
     v16 = PropGet v10 key="text"
     v17 = Call v15, v5, v16 calleeKey="get" calleeName="get"
     v18 = TypeTest v17 testedType=undefined|null

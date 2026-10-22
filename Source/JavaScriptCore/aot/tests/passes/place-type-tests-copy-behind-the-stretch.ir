@@ -1,0 +1,233 @@
+# The generic copy also comes back, without a test, where the tested code knows nothing more than the copy: in f4 it enters the block in front of the header straight from its branch.
+# Where a test fails, the generic copy goes on behind the stretch, so nothing wider joins the code behind the test that passed. It comes back where the tested code has no proof left: behind an operation that may run unknown code, at the head of a loop, in a handler. On a way back into a loop, what is live there is tested for the type it has in the tested code. Outside loops the copy comes back only where that takes no test
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+# The first call of the tested code takes what the slot holds. The two paths meet behind it, where both have a result of any type
+function f0 name="comesBackBehindTheCall" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = Call v1, -, v2
+    v4 = Call v1, -, v3
+    Return v4
+}
+# PLAN-LABEL: function f0
+# PLAN: copy comes back at b0:2
+# CHECK-LABEL: function f0 name="comesBackBehindTheCall"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: v2: number = GetSlot
+# CHECK: v3: anything = Call v1, -, v2
+# CHECK-NEXT: Jump -> next [[behindCall0]](v3)
+# CHECK: [[behindCall0]]([[result0]]: anything):
+# CHECK-NEXT: v4: anything = Call v1, -, [[result0]]
+# CHECK-NEXT: Return v4
+# CHECK: [[generic0]]:{{*}}= PropGet v0 key="a"
+# CHECK: [[genericResult0]]: anything = Call v1, -, [[generic0]]
+# CHECK: Jump -> next [[behindCall0]]([[genericResult0]])
+
+# The tests of the second receiver stand behind the call. They get a block of their own, and the copy comes back in front of them
+function f1 name="comesBackInFrontOfTheNextTest" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything, v2: anything ~ L0):
+    v3 = PropGet v0 key="a"
+    v4 = Call v1, -, v3
+    v5 = PropGet v2 key="b"
+    v6 = Call v1, -, v4, v5
+    Return v6
+}
+# PLAN-LABEL: function f1
+# PLAN: copy comes back at b0:2
+# CHECK-LABEL: function f1 name="comesBackInFrontOfTheNextTest"
+# CHECK: v4: anything = Call v1, -, v3
+# CHECK-NEXT: Jump -> next [[tests1]](v4)
+# CHECK: [[tests1]]([[result1]]: anything):
+# CHECK-NEXT: = TypeTest v2 testedType=L0
+# CHECK: [[generic1]]:{{*}}= PropGet v0 key="a"
+# CHECK: [[genericResult1]]: anything = Call v1, -, [[generic1]]
+# CHECK: Jump -> next [[tests1]]([[genericResult1]])
+
+# The copy behind the test of an operand goes on too: the call of the tested code takes the sum as a number
+function f2 name="copyBehindTheTestOfAnOperand" flags=[IsChecked] parameters=[{type=number flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything):
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+    v4 = Integer integer=2
+    v5 = Call v1, -, v3, v4
+    Return v5
+}
+# PLAN-LABEL: function f2
+# PLAN-NOT: copy comes back
+# CHECK-LABEL: function f2 name="copyBehindTheTestOfAnOperand"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: v3: number = Add {{*}}, v2
+# CHECK: v5: anything = Call v1, -, v3, v4
+# CHECK-NEXT: Return v5
+# CHECK: [[sum2]]: number|string|bigint{{*}} = Add {{*}}, v2
+# CHECK: [[result2]]: anything = Call v1, -, [[sum2]],
+# CHECK-NEXT: Return [[result2]]
+
+# There is no place to come back to: the copy runs to the end of the function, and the join of the tested code holds numbers
+function f3 name="nothingRunsUnknownCode" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    v3 = Integer integer=7
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+}
+# PLAN-LABEL: function f3
+# PLAN-NOT: copy comes back
+# CHECK-LABEL: function f3 name="nothingRunsUnknownCode"
+# CHECK: b3(v4: number):
+# CHECK-NEXT: Return v4
+# CHECK: ([[generic3]]: anything{{*}}) frequency=Rare:
+# CHECK-NEXT: Return [[generic3]]
+
+# What goes around the loop has any type in the tested code as well, so the way back has no test. It enters the block in front of the header
+function f4 name="comesBackAtTheHeadOfTheLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = CallDirect function=f10
+    v5 = PropGet v4 key="a"
+    Branch v1 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v2
+}
+# PLAN-LABEL: function f4
+# PLAN: copy comes back at b1:0 b1:2
+# CHECK-LABEL: function f4 name="comesBackAtTheHeadOfTheLoop"
+# CHECK: Jump -> next [[entry4]](v0)
+# CHECK-NEXT: b1(v2: anything):
+# CHECK: v5: number = GetSlot
+# CHECK-NEXT: Branch v1 -> taken b1(v5), notTaken b2()
+# CHECK: [[generic4]]:{{*}}= PropGet {{*}} key="a"
+# CHECK-NEXT: Branch v1 -> taken [[entry4]]([[generic4]]), notTaken
+# CHECK: [[entry4]]([[entering4]]: anything{{*}}):
+# CHECK-NEXT: Jump -> next b1([[entering4]])
+
+# The results of a call are read where it is: the copy comes back behind the reads
+function f5 name="resultsAreReadInFrontOfTheWayBack" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = CallDirect v2 function=f6
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = Call v1, -, v4, v5
+    Return v6
+}
+# PLAN-LABEL: function f5
+# PLAN: copy comes back at b0:4
+# CHECK-LABEL: function f5 name="resultsAreReadInFrontOfTheWayBack"
+# CHECK: v3{{*}}= CallDirect v2 function=f6
+# CHECK: v4: number = ResultAt v3
+# CHECK-NEXT: v5: number = ResultAt v3 index=1
+# CHECK-NEXT: Jump -> next [[behindReads5]](v4, v5)
+# CHECK: [[generic5]]:{{*}}= PropGet v0 key="a"
+# CHECK: [[call5]]{{*}}= CallDirect [[generic5]] function=f6
+# CHECK: [[first5]]: number = ResultAt [[call5]]
+# CHECK-NEXT: [[second5]]: number = ResultAt [[call5]] index=1
+# CHECK-NEXT: Jump -> next [[behindReads5]]([[first5]], [[second5]])
+
+function f6 name="twoResults" flags=[IsChecked] parameters=[{type=anything}] results=[{type=number}, {type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Integer integer=1
+    v3 = Results v2, v2
+    Return v3
+}
+
+# In the tested code a number goes around the loop. What the copy read by name passes a test for a number, or the copy goes on with its own loop
+function f7 name="testsWhatGoesAroundTheLoop" flags=[IsChecked] parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = CallDirect function=f10
+    v5 = PropGet v4 key="a"
+    Branch v0 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v2
+}
+# PLAN-LABEL: function f7
+# PLAN: copy comes back at b1:0 b1:2
+# CHECK-LABEL: function f7 name="testsWhatGoesAroundTheLoop"
+# CHECK: Jump -> next [[entry7]](v1)
+# CHECK-NEXT: b1(v2: number):
+# CHECK: [[generic7]]:{{*}}= PropGet {{*}} key="a"
+# CHECK-NEXT: Branch v0 -> taken [[tests7]]([[generic7]]), notTaken
+# CHECK: [[tests7]]([[carried7]]: anything{{*}}) frequency=Rare:
+# CHECK-NEXT: [[test7]]: boolean{{*}} = TypeTest [[carried7]] testedType=number
+# CHECK-NEXT: Branch [[test7]] -> taken [[passed7]](| 0), notTaken [[failed7]](
+# CHECK: [[passed7]]([[narrowed7]]: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[entry7]]([[narrowed7]])
+# CHECK: [[failed7]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[header7]]([[carried7]])
+
+# What was read in front of the call is passed on behind it, so the way back behind the call would take a test. The function has no loop: the way back is not made, and the copy goes on to the end
+function f8 name="goesOnWhereTheWayBackWouldTakeATest" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = Call v1
+    v4 = Call v1, -, v2
+    Return v4
+}
+# PLAN-LABEL: function f8
+# PLAN: copy comes back at b0:2
+# CHECK-LABEL: function f8 name="goesOnWhereTheWayBackWouldTakeATest"
+# CHECK-NOT: testedType=number
+# CHECK: v2: number = GetSlot
+# CHECK: v3: anything = Call v1
+# CHECK: v4: anything = Call v1, -, v2
+# CHECK-NEXT: Return v4
+# CHECK: [[generic8]]:{{*}}= PropGet v0 key="a"
+# CHECK: = Call v1
+# CHECK: [[result8]]: anything = Call v1, -, [[generic8]]
+# CHECK-NEXT: Return [[result8]]
+# CHECK-NOT: testedType=number
+
+# What the copy throws is caught by the handler of the tested code, which is not copied
+function f9 name="handlerIsNotCopied" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0) handler=b2():
+    v1 = PropGet v0 key="a"
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# PLAN-LABEL: function f9
+# PLAN: copy comes back at b2:0
+# CHECK-LABEL: function f9 name="handlerIsNotCopied"
+# CHECK: b1():
+# CHECK-NEXT: Return v1
+# CHECK: = CatchValue
+# CHECK-NOT: = CatchValue
+# CHECK: v1: number = GetSlot
+# CHECK-NOT: = CatchValue
+# CHECK: frequency=Rare handler=b2():
+# CHECK-NEXT: [[generic9]]:{{*}}= PropGet v0 key="a"
+# CHECK-NOT: = CatchValue
+# CHECK: Return [[generic9]]
+# CHECK-NOT: = CatchValue
+
+function f10 name="unknownObject" flags=[IsChecked] results=[{type=L0 flags=[IsExpected]}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = Call v1
+    Return v2
+}

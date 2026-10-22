@@ -1,0 +1,22 @@
+# const error = new Error("x"); error.message = stored; error.message
+# A store of the program is a store like any other: the read finds the function beside the string
+# LIBRARY: own
+# RUN: valueflow-why values=f0:v5
+# CHECK: result n{{*}} 3 members: primitive0 primitive7 f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Error
+    v1 = String string="x"
+    v2 = Construct v0, v0, v1
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="message" mode=Strict
+    v5 = PropGet v2 key="message"
+    Return v5
+}
+function f1 name="stored" results=[{type=anything}] {
+  b0():
+    Return
+}

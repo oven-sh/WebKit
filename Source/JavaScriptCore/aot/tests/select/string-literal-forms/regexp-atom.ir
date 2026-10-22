@@ -1,4 +1,5 @@
 # A literal whose pattern is plain text is searched for like a string, while its object stays as created and nothing reads what the last match left in RegExp
+# TODO: flow-termination: `/abc/` read from a module variable has lost its text, so test and search are no searches for a literal string
 # FORM: AsRead
 # OPTIONS: disable=pass:InlineCalls
 # RUN: pipeline Select

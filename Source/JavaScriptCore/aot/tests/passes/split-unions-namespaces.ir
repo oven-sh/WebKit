@@ -1,5 +1,6 @@
 # An access on a value that may be a module namespace object gets an arm of its own behind a test for the layout of that namespace, and the arm reads the variable of the export
 # FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
 # RUN: pass SplitUnions
 # RUN(BOTH): pass SplitUnions ResolveAccesses
 # STATISTIC: UnionsSplit = 3
@@ -7,10 +8,10 @@
 
 variable g0 name="a" module=m1 declared={type=number} initialization=Undefined
 variable g1 name="a" module=m2 declared={type=string} initialization=Undefined
-module m0 path="main.js" displayPath="main.js" requests=[{target=m1}, {target=m2}]
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}, {target=m2 completes=true}]
 module m1 path="first.js" displayPath="first.js" exports=[{name="a" variable=g0}]
 module m2 path="second.js" displayPath="second.js" exports=[{name="a" variable=g1}]
-layout L0 name="Record" fields=[{key="a" declared={type=boolean} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L0 name="Record" fields=[{key="a" declared={type=boolean} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="one-of-two-namespaces" parameters=[{type=L(m1)|L(m2)}] results=[{type=anything}] {
   b0(v0: L(m1)|L(m2)):

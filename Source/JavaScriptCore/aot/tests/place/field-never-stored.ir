@@ -1,4 +1,4 @@
-# An optional field that nothing stores has no slot and a read of it finds no member, and a store through an unknown receiver counts for an object that has escaped
+# An optional field that nothing stores has no slot and a read of it goes by name, and a store through an unknown receiver counts for an object that has escaped
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses references=narrow
 # RUN: plan-slots layouts
@@ -47,8 +47,9 @@ function f1 name="read" results=[{type=anything}] {
 # CHECK-NEXT: L2 CompiledObject
 # CHECK-NEXT: .0 "stored"
 # CHECK-NEXT: .1 "storedOutside"
+# Code that nobody sees may store the field of an object that has escaped, and the object keeps its shape. So the field has a slot: out of line, because no store that the program shows fills it.
 # CHECK: L3 CompiledObject
 # CHECK-NEXT: .0 "stored"
-# CHECK-NOT: "neverStored"
+# CHECK-NEXT: .1 "neverStored" JSValue out@
 
-# ACCESSES: "neverStored" [L0] read NoMember none {{*}} test=never contents=absent
+# ACCESSES-NOT: "neverStored"

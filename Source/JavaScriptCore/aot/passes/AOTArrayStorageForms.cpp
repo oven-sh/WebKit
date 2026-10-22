@@ -12,6 +12,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIR.h"
 #include "AOTType.h"
+#include "JSCJSValueInlines.h"
+#include <algorithm>
+#include <cmath>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -32,26 +35,41 @@ ArrayStorage arrayStorageHolding(const Type& elements)
     return ArrayStorage::Contiguous;
 }
 
+ArrayStorage arrayStorageDeclaredBy(const Program& program, const ClassPart& array)
+{
+    const Type& elements = program.at(array.contentsAt(program.builtins(), ContentsSlot::Element));
+    return elements.isAnything() ? ArrayStorage::Other : arrayStorageHolding(elements);
+}
+
+ArrayStorage arrayStorageDeclaredBy(const Program& program, const Type& array)
+{
+    const ClassPart* part = array.singleBuiltinClass();
+    return part ? arrayStorageDeclaredBy(program, *part) : ArrayStorage::Other;
+}
+
+static ArrayStorage kindAtAllocation(ArrayStorage kind)
+{
+    return kind == ArrayStorage::Other ? ArrayStorage::Contiguous : kind;
+}
+
 ArrayStorage arrayStorageAtAllocation(const Type& elements)
 {
-    ArrayStorage kind = arrayStorageHolding(elements);
-    return kind == ArrayStorage::Other ? ArrayStorage::Contiguous : kind;
+    return kindAtAllocation(arrayStorageHolding(elements));
 }
 
 ArrayStorage arrayStorageAtAllocation(const Program& program, const Type& array)
 {
-    const ClassPart* part = array.singleBuiltinClass();
-    TypeID contents = part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeID();
-    return arrayStorageAtAllocation(program.at(contents ? contents : TypeTable::anything));
+    return kindAtAllocation(arrayStorageDeclaredBy(program, array));
 }
 
 ArrayStorage arrayStorageOfLiteral(const Program& program, const Type& array, ArrayLiteralParts parts)
 {
-    // Selection may give the literal the kind that the arrays of its site have turned into.
-    if (!parts.hasElements && !parts.hasHoles && !parts.hasCapacity)
-        return ArrayStorage::Other;
     if (parts.hasHoles)
         return ArrayStorage::Contiguous;
+    // A literal without an element has the declared kind, or a more general one that the arrays of its site have turned into, and none is more general than Contiguous.
+    // Where nothing is declared, what is pushed onto it decides when code is generated.
+    if (!parts.hasElements)
+        return arrayStorageDeclaredBy(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
     // A list of numbers that does not fit its kind is found when code is generated or when the literal runs.
     return arrayStorageAtAllocation(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
 }
@@ -60,6 +78,43 @@ ArrayStorage arrayStorageOfLiteral(const Program& program, const Value& literal)
 {
     RELEASE_ASSERT(literal.opcode == Opcode::NewArray);
     return arrayStorageOfLiteral(program, program.at(literal.type), { !literal.elementsOperands().empty(), !literal.holes().empty(), !!literal.capacityOperand() });
+}
+
+ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& array)
+{
+    bool areInt32 = true;
+    bool areDoublesOrHoles = true;
+    for (const DataNode& element : array.elements) {
+        const auto* number = element.tryAs<DataNode::Number>();
+        areInt32 &= number && jsNumber(purifyNaN(number->value)).isInt32();
+        areDoublesOrHoles &= number ? !std::isnan(number->value) : element.is<DataNode::Hole>();
+    }
+    // The readers of an array that is declared to hold numbers test for Double storage, also where every constant is a whole number.
+    if (areInt32 && arrayStorageHolding(program.at(array.contents)) != ArrayStorage::Double)
+        return ArrayStorage::Int32;
+    if (areDoublesOrHoles)
+        return ArrayStorage::Double;
+    return ArrayStorage::Contiguous;
+}
+
+bool isStorageOfArray(const DataNode::Array& array)
+{
+    return !array.elements.isEmpty() && std::ranges::all_of(array.elements, [](const DataNode& element) {
+        switch (element.kind()) {
+        case DataNode::Kind::Undefined:
+        case DataNode::Kind::Null:
+        case DataNode::Kind::Hole:
+        case DataNode::Kind::Boolean:
+        case DataNode::Kind::Number:
+            return true;
+        case DataNode::Kind::String:
+        case DataNode::Kind::BigInt:
+        case DataNode::Kind::Array:
+        case DataNode::Kind::Object:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    });
 }
 
 std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation)
@@ -78,14 +133,6 @@ std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation)
     }
 }
 
-std::optional<ArrayStorage> arrayStorageOfNewHoles(const BuiltinOverload& overload)
-{
-    const BuiltinImplementation& implementation = overload.code.implementation;
-    if (implementation.kind != BuiltinImplementationKind::Inline || implementation.inlineBuiltin != InlineBuiltin::ArrayWithLength)
-        return std::nullopt;
-    return arrayStorageAtAllocation(Type::never());
-}
-
 bool canStoreWithoutConversion(ArrayStorage kind, const Type& stored)
 {
     switch (kind) {
@@ -99,15 +146,6 @@ bool canStoreWithoutConversion(ArrayStorage kind, const Type& stored)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-ArrayStorage arrayStorageAfterStore(ArrayStorage kind, const Type& stored)
-{
-    if (canStoreWithoutConversion(kind, stored))
-        return kind;
-    if (kind == ArrayStorage::Int32 && canStoreWithoutConversion(ArrayStorage::Double, stored))
-        return ArrayStorage::Double;
-    return hasArrayStorageForm(kind) ? ArrayStorage::Contiguous : ArrayStorage::Other;
 }
 
 Type typeOfElementRead(ArrayStorage kind)

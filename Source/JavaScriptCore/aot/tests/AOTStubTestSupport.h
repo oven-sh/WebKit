@@ -70,7 +70,7 @@ inline Vector<StubKey> entriesOf(StubKey body)
 inline Vector<StubOptions> stubOptionVariants()
 {
     Vector<StubOptions> variants { StubOptions { } };
-    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::forceGCSlowPaths, &StubOptions::imageHasWebAssembly, &StubOptions::validates }) {
+    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::forceGCSlowPaths, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::validates }) {
         StubOptions options;
         options.*member = !(options.*member);
         variants.append(options);
@@ -79,7 +79,7 @@ inline Vector<StubOptions> stubOptionVariants()
     return variants;
 }
 
-inline StubSignature signatureFor(StubKey key) { return descriptorOf(key.family()).signature(key); }
+inline StubSignature signatureFor(StubKey key) { return signatureOf(key); }
 inline size_t indexOf(Entry entry) { return static_cast<size_t>(entry); }
 inline bool containsRegister(const RegisterSet& set, Reg reg) { return set.contains(reg, IgnoreVectors); }
 

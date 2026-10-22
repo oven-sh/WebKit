@@ -1,4 +1,4 @@
-# From the program as read: bind on a closure of a known function makes a closure of a bound function, and a function with a rest parameter is not bound
+# From the program as read: bind on a closure of a known function makes a closure of a bound function, which captures the bound argument and, as nothing asks instanceof of it, not the closure of its target. A function with a rest parameter is not bound
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=PlaceTypeTests,ResolveCalls,ChooseCallingConventions
@@ -9,7 +9,7 @@ entry module=m0
 # CHECK-LABEL: function f0 name="main"
 # CHECK: [[closure]]: f1 = NewClosure function=f1
 # CHECK: [[argument]]: fractional = Double number=1.5
-# CHECK: = NewClosure [[argument]], [[closure]] function=[[bound]]
+# CHECK: = NewClosure [[argument]] function=[[bound]]
 # CHECK: = CallBuiltin {{*}} overload=FunctionPrototypeBind/0
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -33,6 +33,6 @@ function f2 name="collects" kind=Arrow flags=[HasRestParameter] parameters=[{typ
   b0(v0: Array<anything>):
     Return v0
 }
-# CHECK: function [[bound]] name="target"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
+# CHECK: function [[bound]] name="target"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1}
 # CHECK: = CallDirect {{*}} function=f1
 # CHECK-NOT: role=BoundFunction

@@ -40,6 +40,6 @@ function f2 name="positionMayBeInside" parameters=[{type=string}, {type=int[-1, 
     Return v2
 }
 # CHECK-LABEL: function f2 name="positionMayBeInside"
-# CHECK: ([[atLeastZero2]]: int[0, 100]):
-# CHECK: = Less [[atLeastZero2]],
+# CHECK: [[unsigned2]]: int[0, 4294967295] = URShift v1,
+# CHECK: = Less [[unsigned2]],
 # CHECK: = GetStringCodeUnit v0,

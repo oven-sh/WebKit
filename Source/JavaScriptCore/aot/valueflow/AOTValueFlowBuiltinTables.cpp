@@ -9,7 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinPristine.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBodies.h"
+#include "AOTValueFlowBuiltins.h"
+#include "AOTValueFlowRulesModules.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSets.h"
 #include <algorithm>
 
@@ -72,6 +76,7 @@ static ValueSetID maskOf(const Program& program, const ValueFlowUniverse& univer
             case BuiltinTypePartKind::Builtin:
                 universe.appendObjectsOf(part.builtin, members);
                 members.append(ValueFlowUniverse::unknownObject());
+                members.append(ValueFlowUniverse::untrackedObject());
                 break;
             case BuiltinTypePartKind::InstanceOfReceiverClass:
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
@@ -162,12 +167,22 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
 
 ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
 {
+    m_classesAtOrBelow.grow(builtins.classCount());
+    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+        for (BuiltinClassID current(index); current; current = builtins.at(current).parent)
+            m_classesAtOrBelow[current.index()].append(BuiltinClassID(index));
+    }
+
     m_conversionToPrimitive = intern({ Protocol::ToPrimitive, false, { }, { } });
     auto behaviorFor = [&](OperandUses uses, Protocols declaredProtocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers) -> ValueFlowBehaviorID {
         Protocols protocols = declaredProtocols - protocolsWithoutHub;
         if (uses == OperandUses::all() || protocols.isEmpty())
             return { };
-        return intern({ protocols, uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents }), namedMembers, calledMembers });
+        bool isTransitive = uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
+        // Whoever looks through what its receivers hold and climbs their chains looks through what they inherit: that much of the walk is the hub's.
+        if (isTransitive && declaredProtocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }))
+            protocols.add(Protocol::PrototypeChain);
+        return intern({ protocols, isTransitive, namedMembers, calledMembers });
     };
     auto add = [&](const BuiltinParameter& parameter) {
         if (ValueFlowBehaviorID behavior = behaviorFor(parameter.uses, parameter.protocols, parameter.namedMembers, parameter.calledMembers))
@@ -179,6 +194,15 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
             add(*overload.receiver);
         for (const BuiltinParameter& parameter : overload.parameters)
             add(parameter);
+        if (overload.hasTypedResult())
+            m_functionsWithTypedResults.set(builtins.canonicalID(overload.builtin).index());
+    }
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (!m_functionsWithTypedResults.get(builtins.canonicalID(BuiltinID(index)).index()))
+            continue;
+        m_functionsWithTypedResults.set(index);
+        if (BuiltinName name = builtins.at(BuiltinID(index)).name; !m_namesOfFunctionsWithTypedResults.contains(name))
+            m_namesOfFunctionsWithTypedResults.append(name);
     }
 
     for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
@@ -192,30 +216,193 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
     }
 }
 
-void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUniverse& universe, ValueSetMaker& maker)
+static bool putsValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
 {
+    return std::ranges::any_of(uses.list, [&](const BuiltinHostUse& use) {
+        if (use.use == BuiltinHostReadUse::IsValueOf)
+            return builtins.canonicalID(use.builtin) == entry;
+        return use.use == BuiltinHostReadUse::Called && use.call && putsValueInto(builtins, use.call->result, entry);
+    });
+}
+
+// The function that the body of the module puts under the name on the object that it exports: a declaration of the module, over which nothing can be stored, or a closure that is made for the store.
+// None where the body stores under the name more than once.
+static FunctionID functionExportedUnder(const Program& program, ModuleID module, BuiltinName name)
+{
+    const Function& body = program.at(program.at(module).body);
+    PropertyKeyID key = program.keyOf(name);
+    FunctionID exported;
+    unsigned numberOfStores = 0;
+    auto take = [&](ValueID stored) {
+        ++numberOfStores;
+        const Value& definition = body.at(sameObjectThroughCasts(body, stored));
+        if (definition.opcode == Opcode::NewClosure)
+            exported = definition.function();
+        if (definition.opcode != Opcode::GetModuleVariable)
+            return;
+        const Variable& variable = program.at(definition.variable());
+        if (variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable))
+            exported = variable.function;
+    };
+    for (const Block& block : body.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = body.at(id);
+            if (value.opcode == Opcode::PropDefine && value.key() == key)
+                take(value.operand(OperandIndex::PropDefine::value));
+            if (value.opcode != Opcode::NewObject)
+                continue;
+            std::span<const uint32_t> fields = value.fields();
+            for (size_t index = 0; index < fields.size(); ++index) {
+                if (program.at(value.layout()).fields[fields[index]].key == key)
+                    take(value.operand(OperandIndex::NewObject::values + index));
+            }
+        }
+    }
+    return key && numberOfStores == 1 ? exported : FunctionID();
+}
+
+BuiltinID ValueFlowBuiltinTables::entryDescribing(ValueFlowObjectID closure) const
+{
+    for (const DescribedClosure& described : m_describedClosures) {
+        if (described.closure == closure)
+            return described.entry;
+    }
+    return { };
+}
+
+static BitVector findCodeThatRecordsDescribe(const Program& program)
+{
+    enum class NamedFunctions : uint8_t { None, AllDescribed, SomeNotDescribed };
+    Vector<NamedFunctions> namedFunctionsOfModule(program.modules.size(), [](size_t) {
+        return NamedFunctions::None;
+    });
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        ModuleID module = entry.function ? program.at(entry.function).module : ModuleID();
+        if (!module)
+            continue;
+        NamedFunctions& named = namedFunctionsOfModule[module.index()];
+        named = named != NamedFunctions::SomeNotDescribed && standsBehindDescribedBuiltins(program, entry.function) ? NamedFunctions::AllDescribed : NamedFunctions::SomeNotDescribed;
+    }
+
+    BitVector isExported(program.functions.size());
+    for (const Module& module : program.modules) {
+        for (const ModuleExport& moduleExport : module.exports) {
+            if (FunctionID function = moduleExport.variable ? program.at(moduleExport.variable).function : FunctionID())
+                isExported.quickSet(function.index());
+        }
+    }
+
+    BitVector code(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        bool isNamedOnlyInItsFile = function.role == FunctionRole::Library && !function.enclosingRuntimeFunction && function.module && !isExported.quickGet(index)
+            && function.kind != FunctionKind::Module && function.kind != FunctionKind::CommonJsModule;
+        if (standsBehindDescribedBuiltins(program, FunctionID(index)) || (isNamedOnlyInItsFile && namedFunctionsOfModule[function.module.index()] == NamedFunctions::AllDescribed))
+            code.quickSet(index);
+    }
+    return code;
+}
+
+void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUniverse& universe, ValueSets& sets, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideSets)
+{
+    ValueSetMaker maker(sets);
     const BuiltinTable& builtins = program.builtins();
+    m_codeThatRecordsDescribe = findCodeThatRecordsDescribe(program);
+    Vector<ValueFlowObjectID, 8> describedClosures;
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        BuiltinID entry(index);
+        if (builtins.canonicalID(entry) != entry)
+            continue;
+        for (const BuiltinModuleLoad& load : builtins.moduleLoadsOf(entry)) {
+            ModuleID module = load.condition ? ModuleID() : moduleOf(program, load.module);
+            for (size_t position = 0; module && position < load.usesOfExports.size(); ++position) {
+                bool isValue = std::ranges::any_of(load.usesOfExports[position].list, [&](const BuiltinHostUse& use) {
+                    return use.use == BuiltinHostReadUse::IsValueOf && use.memberPath.empty() && builtins.canonicalID(use.builtin) == entry;
+                });
+                // The first object of the entry stands for the operands, so no overload may allocate it.
+                bool isDescribed = std::ranges::all_of(builtins.overloadsOf(entry), [&](const BuiltinOverload& overload) {
+                    return doRecordsDescribe(builtins, overload) && builtins.at(overload.result.type).parts.empty();
+                });
+                FunctionID function = isValue && isDescribed ? functionExportedUnder(program, module, load.exports[position]) : FunctionID();
+                if (!function)
+                    continue;
+                m_describedClosures.append({ universe.closureOf(function), entry });
+                describedClosures.append(universe.closureOf(function));
+            }
+        }
+    }
+    m_closuresThatEntriesDescribe = maker.of(describedClosures.span());
+
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        BuiltinID entry(index);
+        if (builtins.canonicalID(entry) != entry)
+            continue;
+        bool hasValue = false;
+        bool hasEveryValue = true;
+        for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(entry)) {
+            if (!putsValueInto(builtins, called.uses, entry))
+                continue;
+            const RuntimeFunctionEntry* function = findRuntimeFunction(program, called.function);
+            hasValue = true;
+            hasEveryValue &= !called.condition && function && function->function;
+        }
+        if (hasValue && hasEveryValue)
+            m_entriesHoldingValueFromLibrary.set(index);
+    }
+
+    HashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classesWithPrototype;
+    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+        if (BuiltinID prototype = builtins.at(BuiltinClassID(index)).prototype)
+            ++classesWithPrototype.add(builtins.canonicalID(prototype).index(), 0).iterator->value;
+    }
+    m_objectStandingForClass = Vector<ValueFlowObjectID>(builtins.classCount(), [&](size_t index) {
+        BuiltinID prototype = builtins.at(BuiltinClassID(static_cast<uint32_t>(index))).prototype;
+        return prototype && classesWithPrototype.get(builtins.canonicalID(prototype).index()) == 1 ? universe.objectOf(prototype) : ValueFlowObjectID();
+    });
+    auto standingForClassAndThoseBelow = [&](BuiltinClassID builtinClass) {
+        Vector<ValueFlowObjectID, 8> standing;
+        for (uint32_t other = 0; other < builtins.classCount(); ++other) {
+            if (m_objectStandingForClass[other] && builtins.isSameOrSubclassOf(BuiltinClassID(other), builtinClass))
+                standing.append(m_objectStandingForClass[other]);
+        }
+        return maker.of(standing.span());
+    };
+
     for (uint32_t index = 0; builtins.contains(BuiltinTypeID(index)); ++index) {
         m_maskOfType.append(Typed::maskOf(program, universe, maker, builtins.at(BuiltinTypeID(index))));
         m_membersSurelyOfType.append(Typed::membersSurelyOf(program, universe, maker, builtins.at(BuiltinTypeID(index))));
 
         const BuiltinType& type = builtins.at(BuiltinTypeID(index));
         ValueSetID whilePristine = ValueSets::nothing;
+        ValueSetID classesSurelyOfType = ValueSets::nothing;
+        ValueSetID classesWhilePristine = ValueSets::nothing;
         for (const BuiltinTypePart& part : type.parts) {
-            if (part.kind == BuiltinTypePartKind::Instance && !part.pristine.isEmpty() && part.contents.empty() && pristineTestOf(builtins, part.builtinClass) == PristineTest::MayPass)
+            if (part.kind != BuiltinTypePartKind::Instance || !part.contents.empty())
+                continue;
+            if (part.pristine.isEmpty())
+                classesSurelyOfType = maker.unite(classesSurelyOfType, standingForClassAndThoseBelow(part.builtinClass));
+            else if (pristineTestOf(builtins, part.builtinClass) == PristineTest::MayPass) {
                 whilePristine = maker.unite(whilePristine, universe.sureInstancesOf(part.builtinClass));
+                classesWhilePristine = maker.unite(classesWhilePristine, standingForClassAndThoseBelow(part.builtinClass));
+            }
         }
         m_membersOfTypeWhilePristine.append(whilePristine);
+        m_classesSurelyOfType.append(classesSurelyOfType);
+        m_classesOfTypeWhilePristine.append(classesWhilePristine);
 
-        ValueSetID primitives = maker.intersect(m_maskOfType.last(), universe.anyPrimitive());
+        // A part that stands for an operand, or for what an operand holds, admits everything and makes nothing: a transfer or a callback brings what it stands for.
+        BuiltinType typeWithoutParts = type;
+        typeWithoutParts.parts = { };
+        ValueSetID maskWithoutParts = Typed::maskOf(program, universe, maker, typeWithoutParts);
+        ValueSetID primitives = maker.intersect(maskWithoutParts, universe.anyPrimitive());
         if (!type.isAnything() && !type.primitives.contains(BuiltinPrimitive::String) && !type.stringLiterals.empty()) {
-            ValueSetID literals = maker.intersect(m_maskOfType.last(), universe.keys());
+            ValueSetID literals = maker.intersect(maskWithoutParts, universe.keys());
             primitives = maker.unite(maker.intersect(primitives, ValueSets::complement(maker.of(ValueFlowUniverse::primitive(PrimitiveSet::String)))), literals);
         }
         m_primitivesOfType.append(primitives);
     }
 
-    m_heap = makeUnique<ValueFlowHeapTables>(program, universe, maker);
+    m_heap = makeUnique<ValueFlowHeapTables>(program, universe, sets, maker, loops, runBesideSets);
 }
 
 ValueFlowBehaviorID ValueFlowBuiltinTables::intern(const ValueFlowBehavior& behavior)

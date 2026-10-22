@@ -9,6 +9,7 @@
 
 #include "AOTIRParser.h"
 #include "AOTReaderTestSupport.h"
+#include "AOTWireBody.h"
 #include <array>
 #include <utility>
 #include <wtf/text/StringBuilder.h>
@@ -54,11 +55,12 @@ void testListCounts()
 {
     ReaderFixture fixture;
     const std::pair<List, uint32_t> counts[] = {
-        { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 20 }, { List::ExpectedResults, 1 },
+        { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 15 }, { List::ExpectedResults, 1 },
         { List::TemplateParts, 1 }, { List::ValidationRules, 2 }, { List::ValidationMembers, 1 }, { List::ValidationNodes, 3 }, { List::Layouts, 4 },
         { List::Fields, 4 }, { List::StaticFields, 1 }, { List::Variables, 4 }, { List::Modules, 2 }, { List::ModuleRequests, 1 },
         { List::ModuleExports, 2 }, { List::SyntheticExports, 2 }, { List::RequiredNames, 1 }, { List::ColumnAdjustments, 1 },
-        { List::ModuleFailures, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 }, { List::Functions, 9 }, { List::DataNodes, 2 },
+        { List::ModuleFailures, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 }, { List::RelationSubjects, 1 }, { List::StoredIntos, 1 },
+        { List::HandedTos, 1 }, { List::OperandsOf, 1 }, { List::Functions, 9 }, { List::DataNodes, 2 },
         { List::DataMembers, 2 }, { List::Data, 1 }, { List::Entries, 1 }, { List::HostReads, 1 }, { List::RuntimeFunctions, 2 },
         { List::WebAssemblyModules, 1 },
     };
@@ -283,9 +285,9 @@ void testTypesAreCanonicalized()
         expectAccepted(name, readBytes(storage.span()));
     };
     auto typeOfLiterals = [](const Program& program) { return program.variables[0].declared.type; };
-    auto typeOfInt32 = [](const Program& program) { return program.layouts[0].fields[0].declared.predicted; };
+    auto typeOfInt32 = [](const Program& program) { return program.layouts[0].fields[0].declared.type; };
     auto typeOfNumber = [](const Program& program) { return program.layouts[2].fields[0].declared.type; };
-    auto typeOfObjects = [](const Program& program) { return program.variables[1].declared.written; };
+    auto typeOfObjects = [](const Program& program) { return program.variables[1].declared.type; };
     auto primitives = [](Wire::Primitives first, Wire::Primitives second) { return static_cast<uint32_t>(first) | static_cast<uint32_t>(second); };
 
     size_t literalPrimitives = typeOffset(fixture, types.literals, offsetof(Wire::Type, primitives));
@@ -302,8 +304,8 @@ constexpr ASCIILiteral declaredLayoutsText = R"IR(layout L0 name="I" module=m0
 layout L1 name="J" module=m0 supertypes=[L0]
 layout L2 kind=Instance name="C" module=m0 supertypes=[L0]
 variable g0 name="a" module=m0 declared={type=undefined|L0}
-variable g1 name="b" module=m0 declared={type=object predicted=L0}
-variable g2 name="c" module=m0 declared={type=L1 written=L2}
+variable g1 name="b" module=m0 declared={type=L0 flags=[IsExpected]}
+variable g2 name="c" module=m0 declared={type=L2}
 module m0 path="/a.ts" displayPath="a.ts"
 function f0 name="f" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
   b0(v0: L1):
@@ -312,20 +314,20 @@ function f0 name="f" module=m0 parameters=[{type=L1}] results=[{type=anything}] 
 entry module=m0
 )IR"_s;
 
-void testLayoutsMoveToWrittenTypes()
+// Each layout in a type stands for its family. Nothing is moved aside, and no position is widened to any object.
+void testPositionsKeepTheirLayouts()
 {
     ReaderFixture fixture(declaredLayoutsText);
     auto program = fixture.read();
-    auto expectPosition = [&](const DeclaredType& declared, ASCIILiteral type, ASCIILiteral written, ASCIILiteral predicted) {
+    auto expectPosition = [&](const DeclaredType& declared, ASCIILiteral type, OptionSet<PositionFlags> flags) {
         AOT_TEST_CHECK(printedType(*program, declared.type) == type);
-        AOT_TEST_CHECK(printedType(*program, declared.written) == written);
-        AOT_TEST_CHECK(printedType(*program, declared.predicted) == predicted);
+        AOT_TEST_CHECK(declared.flags == flags);
     };
-    expectPosition(program->variables[0].declared, "undefined|object"_s, "undefined|L0|L1|L2"_s, "-"_s);
-    expectPosition(program->variables[1].declared, "object"_s, "-"_s, "L0|L1|L2"_s);
-    expectPosition(program->variables[2].declared, "object"_s, "L2"_s, "-"_s);
-    expectPosition(program->functions[0].parameters[0], "object"_s, "L1"_s, "-"_s);
-    AOT_TEST_CHECK(program->functions[0].at(ValueID(0u)).type == TypeTable::object);
+    expectPosition(program->variables[0].declared, "undefined|L0|L1|L2"_s, { });
+    expectPosition(program->variables[1].declared, "L0|L1|L2"_s, { PositionFlags::IsExpected });
+    expectPosition(program->variables[2].declared, "L2"_s, { });
+    expectPosition(program->functions[0].parameters[0], "L1"_s, { });
+    AOT_TEST_CHECK(program->functions[0].at(ValueID(0u)).type == program->functions[0].parameters[0].type);
     expectAccepted("declared layouts"_s, readBytes(fixture.bytes.span()));
 
     ReadResult prepared = readBytesInForm(fixture.bytes.span(), IRForm::Prepared);
@@ -342,20 +344,27 @@ void testLongListsAreNotWidened()
         text.append("layout L"_s, index, '\n');
         type.append(index ? "|L"_s : "L"_s, index);
     }
-    text.append("variable g0 name=\"g\" module=m0 declared={type=object written="_s, type.toString(), "}\nmodule m0 path=\"/a.ts\" displayPath=\"a.ts\"\nentry module=m0\n"_s);
+    text.append("variable g0 name=\"g\" module=m0 declared={type="_s, type.toString(), "}\nmodule m0 path=\"/a.ts\" displayPath=\"a.ts\"\nentry module=m0\n"_s);
 
     ReaderFixture fixture(text.toString());
     auto program = Program::read(fixture.bytes.span(), build);
     AOT_TEST_CHECK(program);
-    AOT_TEST_CHECK(membersOf(*program, program->at(program->variables[0].declared.written)).size() == numberOfLayouts);
+    AOT_TEST_CHECK(membersOf(*program, program->at(program->variables[0].declared.type)).size() == numberOfLayouts);
     AOT_TEST_CHECK(build.takeLosses(program.get()).isEmpty());
 }
 
 void testFormParameter()
 {
     static_assert(!formsOf(Opcode::Unspecified).contains(IRForm::AsRead) && formsOf(Opcode::Unspecified).contains(IRForm::Prepared));
-    static_assert(formsOf(Opcode::Predict).contains(IRForm::Prepared) && !formsOf(Opcode::Predict).contains(IRForm::Selected));
-    ReaderFixture fixture;
+    static_assert(formsOf(Opcode::Convert).contains(IRForm::AsRead) && !formsOf(Opcode::Convert).contains(IRForm::Prepared));
+    static_assert(formsOf(Opcode::Check).contains(IRForm::Prepared) && !formsOf(Opcode::Check).contains(IRForm::Selected));
+    ReaderFixture fixtureWithRequest;
+    expectAccepted("request in the first form"_s, readBytesInForm(fixtureWithRequest.bytes.span(), IRForm::AsRead));
+    expectRejected("request in the second form"_s, readBytesInForm(fixtureWithRequest.bytes.span(), IRForm::Prepared), Kind::RequiredPassLeftOperation);
+
+    String textWithoutRequest = makeStringByReplacingAll(String(readerFixtureText), "Convert v9 declared={type=number flags=[IsExpected]}"_s, "Check v9 castType=number"_s);
+    AOT_TEST_CHECK(textWithoutRequest != readerFixtureText);
+    ReaderFixture fixture(textWithoutRequest);
     expectAccepted("fixture in the first form"_s, readBytesInForm(fixture.bytes.span(), IRForm::AsRead));
     expectAccepted("fixture in the second form"_s, readBytesInForm(fixture.bytes.span(), IRForm::Prepared));
     expectRejected("opcode of an earlier form"_s, readBytesInForm(fixture.bytes.span(), IRForm::Selected), Kind::OpcodeNotInForm);
@@ -385,6 +394,110 @@ void testParameterSiteFunctions()
     AOT_TEST_CHECK(program->typeSites[0].function == f1 && !program->typeSites[1].function);
 }
 
+void testProgramOutlivesBytes()
+{
+    ReaderFixture fixture;
+    auto program = fixture.read();
+    fixture.bytes.fill(0xff);
+    const Module& module = program->modules[0];
+    AOT_TEST_CHECK(String::fromUTF8(program->string(module.path)) == "/a.ts"_s);
+    AOT_TEST_CHECK(String::fromUTF8(module.functionText) == "a => a\n"_s);
+    AOT_TEST_CHECK(module.positions.lineStarts.size() == 2 && module.positions.lineStarts[1] == 12);
+    AOT_TEST_CHECK(program->buffer().empty());
+}
+
+class BodyTranscript final : public WireBodyVisitor {
+public:
+    static void add(StringPrintStream& out, const Instruction& instruction)
+    {
+        out.print(" @", instruction.position, " flags ", static_cast<unsigned>(instruction.flags), " operands");
+        for (ValueID operand : instruction.operands())
+            out.print(" ", operand.index());
+        out.print(" payload");
+        for (uint32_t word : instruction.inlinePayload())
+            out.print(" ", word);
+        for (uint32_t word : instruction.payloadListFrom(numberOfInlinePayloadWords))
+            out.print(" ", word);
+        out.println();
+    }
+    static void add(StringPrintStream& out, const Target& target)
+    {
+        out.print("  target ", target.block.index(), " arguments");
+        for (ValueID argument : target.arguments)
+            out.print(" ", argument.index());
+        out.print(" proofs");
+        for (uint32_t proof : target.proofs)
+            out.print(" ", proof);
+        out.println();
+    }
+    static void addBlock(StringPrintStream& out, BlockID id, std::span<const ValueID> parameters, BlockRole role, BlockFrequency frequency, ValueID subject, const Target* handler, size_t numberOfValues)
+    {
+        out.print("block ", id.index(), " role ", static_cast<unsigned>(role), " frequency ", static_cast<unsigned>(frequency), " subject ", subject.index(), " values ", numberOfValues, " parameters");
+        for (ValueID parameter : parameters)
+            out.print(" ", parameter.index());
+        out.println();
+        if (handler)
+            add(out, *handler);
+    }
+    static void addValue(StringPrintStream& out, ValueID id, const Value& value)
+    {
+        out.print(" value ", id.index(), " ", nameOf(value.opcode));
+        add(out, value);
+    }
+    static void addTerminator(StringPrintStream& out, const Terminator& terminator)
+    {
+        out.print(" terminator ", nameOf(terminator.kind));
+        add(out, terminator);
+        for (const Target& target : terminator.targets)
+            add(out, target);
+    }
+
+    void beginBody(const WireBodyHead& head) final { text.println("body ", head.function.index(), " kind ", static_cast<unsigned>(head.record.kind), " values ", head.numberOfValues, " blocks ", head.numberOfBlocks); }
+    void beginBlock(const WireBlockHead& head) final { addBlock(text, head.block, head.parameters, head.role, head.frequency, head.subject, head.handler, head.numberOfValues); }
+    void visitValue(ValueID id, const Value& value) final { addValue(text, id, value); }
+    void visitTerminator(BlockID, const Terminator& terminator) final { addTerminator(text, terminator); }
+    void endBody() final { text.println("end"); }
+
+    StringPrintStream text;
+};
+
+void testWireBodiesAreWalkedAsRead()
+{
+    ReaderFixture fixture;
+    auto [program, bodies] = readProgramKeepingWireBodies(fixture.bytes.span(), fixture.build);
+    AOT_TEST_CHECK(program && bodies);
+    unsigned numberOfBodies = 0;
+    for (uint32_t index = 0; index < program->functions.size(); ++index) {
+        FunctionID id(index);
+        const Function& function = program->at(id);
+        AOT_TEST_CHECK(bodies->hasBody(id) == function.hasBody());
+        if (!function.hasBody())
+            continue;
+        ++numberOfBodies;
+
+        StringPrintStream expected;
+        OpcodeSet operations;
+        expected.println("body ", index, " kind ", static_cast<unsigned>(function.kind), " values ", function.values.size(), " blocks ", function.blocks.size());
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            const Block& block = function.blocks[blockIndex];
+            BodyTranscript::addBlock(expected, BlockID(blockIndex), block.parameters.span(), block.role, block.frequency, block.subject, block.handler ? &*block.handler : nullptr, block.values.size());
+            for (ValueID value : block.values) {
+                BodyTranscript::addValue(expected, value, function.at(value));
+                operations.add(function.at(value).opcode);
+            }
+            BodyTranscript::addTerminator(expected, block.terminator);
+        }
+        expected.println("end");
+
+        BodyTranscript transcript;
+        bodies->walk(id, transcript);
+        AOT_TEST_CHECK(transcript.text.toString() == expected.toString());
+        AOT_TEST_CHECK(bodies->operationsOf(id) == operations);
+    }
+    AOT_TEST_CHECK(numberOfBodies > 2);
+    AOT_TEST_CHECK(!bodies->hasBody(FunctionID(static_cast<uint32_t>(program->functions.size()))));
+}
+
 } // anonymous namespace
 
 std::span<const NativeTest> readerTests()
@@ -401,10 +514,12 @@ std::span<const NativeTest> readerTests()
         { "reader/type-words"_s, testTypeWords },
         { "reader/type-lists"_s, testTypeLists },
         { "reader/types-are-canonicalized"_s, testTypesAreCanonicalized },
-        { "reader/layouts-move-to-written-types"_s, testLayoutsMoveToWrittenTypes },
+        { "reader/positions-keep-their-layouts"_s, testPositionsKeepTheirLayouts },
         { "reader/long-lists-are-not-widened"_s, testLongListsAreNotWidened },
         { "reader/form-parameter"_s, testFormParameter },
         { "reader/parameter-site-functions"_s, testParameterSiteFunctions },
+        { "reader/program-outlives-bytes"_s, testProgramOutlivesBytes },
+        { "reader/wire-bodies-are-walked-as-read"_s, testWireBodiesAreWalkedAsRead },
     };
     return tests;
 }

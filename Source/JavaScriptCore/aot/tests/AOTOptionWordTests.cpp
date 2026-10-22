@@ -176,7 +176,8 @@ static bool reportsOnly(const Vector<InternalError>& errors, size_t offset)
 
 static unsigned defaultThreadCount()
 {
-    return std::clamp<unsigned>(WTF::numberOfProcessorCores(), 1, Limits::maxWorkers);
+    constexpr unsigned mostUsefulThreads = 16;
+    return std::clamp<unsigned>(WTF::numberOfProcessorCores(), 1, std::min<unsigned>(Limits::maxWorkers, mostUsefulThreads));
 }
 
 static CompileOptions createDefaultOptions(uint32_t layoutSeed)
@@ -246,6 +247,7 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "validate"_s, [](WireOptions& options) { options.checks = Wire::CheckSet::Validate; } },
     { "check=verify-each-pass,ValidateBackEnd"_s, [](WireOptions& options) { options.checks = flagSet({ Wire::CheckSet::VerifyEachPass, Wire::CheckSet::ValidateBackEnd }); } },
     { "verify-only"_s, [](WireOptions& options) { options.action = Wire::CompileAction::VerifyOnly; } },
+    { "check-only"_s, [](WireOptions& options) { options.action = Wire::CompileAction::CheckOnly; } },
     { "disable=flow-results"_s, [](WireOptions& options) {
         options.bisection.disabledFlowResults = (1ull << numberOfEnumerators<Wire::FlowResultKind>) - 1;
         disablePass(options.bisection.disabledPasses, PassID::AnalyzeFlow);
@@ -266,8 +268,11 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "heat=EverythingIsCold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
     { "heat=everything-is-cold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
     { "testing=ignore-branch-hints"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreBranchHints; } },
-    { "testing=IgnorePredictions"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnorePredictions; } },
+    { "testing=IgnoreExpectedTypes"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreExpectedTypes; } },
+    { "sabotage=InnerCellLetGoKeepsItsHeader"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellLetGoKeepsItsHeader; } },
+    { "sabotage=room-is-not-in-reference-list"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::RoomIsNotInReferenceList; } },
     { "count-branches"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountBranches; } },
+    { "count-arrivals"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountArrivals; } },
     { "drop-guard=TypeTest:2"_s, [](WireOptions& options) {
         options.testing = Wire::TestingSwitch::DropGuard;
         options.bisection.droppedGuard.opcode = static_cast<uint32_t>(Opcode::TypeTest);
@@ -279,8 +284,9 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "threads=3"_s, [](WireOptions& options) { options.threadCount = 3; } },
     { "report=Declines,Flow"_s, [](WireOptions& options) { options.reports = flagSet({ Wire::ReportSet::Declines, Wire::ReportSet::Flow }); } },
     { "admit=Inspector"_s, [](WireOptions& options) { options.admittedCode = Wire::AdmittedCode::Inspector; } },
-    { "admit=inspector,RuntimeCode"_s, [](WireOptions& options) { options.admittedCode = flagSet({ Wire::AdmittedCode::Inspector, Wire::AdmittedCode::RuntimeCode }); } },
+    { "admit=inspector"_s, [](WireOptions& options) { options.admittedCode = Wire::AdmittedCode::Inspector; } },
     { "exclude=EvaluatedText"_s, [](WireOptions& options) { options.excludedCode = Wire::ExcludedCode::EvaluatedText; } },
+    { "exclude=evaluated-text,FunctionSource"_s, [](WireOptions& options) { options.excludedCode = flagSet({ Wire::ExcludedCode::EvaluatedText, Wire::ExcludedCode::FunctionSource }); } },
     { "obfuscate"_s, [](WireOptions& options) { options.output = Wire::OutputOptions::Obfuscate; } },
 };
 
@@ -312,6 +318,10 @@ static constexpr ASCIILiteral rejectedWords[] = {
     "limit=MaxDataNodes:1"_s,
     "heat=Warm"_s,
     "testing=DropGuard"_s,
+    "testing=IgnorePredictions"_s,
+    "sabotage=Everything"_s,
+    "sabotage"_s,
+    "count-arrivals=1"_s,
     "drop-guard=Nothing:1"_s,
     "drop-guard=TypeTest"_s,
     "references=tiny"_s,
@@ -322,6 +332,7 @@ static constexpr ASCIILiteral rejectedWords[] = {
     "report=Everything"_s,
     "admit"_s,
     "admit=Everything"_s,
+    "admit=RuntimeCode"_s,
     "exclude=Everything"_s,
     "obfuscate=1"_s,
     "erase-types"_s,
@@ -412,13 +423,16 @@ static void testOptionWordsListedNamesAccepted()
         "limit=MinSwitchCases:0"_s,
         "heat=None"_s,
         "testing=IgnoreBranchHints"_s,
-        "testing=IgnorePredictions"_s,
+        "testing=IgnoreExpectedTypes"_s,
+        "sabotage=None"_s,
         "count-branches"_s,
+        "count-arrivals"_s,
         "references=narrow"_s,
         "type-errors=log"_s,
         "report=Flow"_s,
         "admit=Inspector"_s,
         "exclude=EvaluatedText"_s,
+        "exclude=FunctionSource"_s,
         "obfuscate"_s,
     };
     static constexpr ASCIILiteral unlistedWords[] = {
@@ -763,21 +777,47 @@ static void testRecordedOptionsHash()
     }
 }
 
+static CompileOptions readWords(std::initializer_list<StringView> words)
+{
+    return readValidOptions(optionsWith(words));
+}
+
 static void testAdmittedCodeIsRecorded()
 {
-    using enum Wire::AdmittedCode;
-
-    auto read = [](std::initializer_list<StringView> words) {
-        return readValidOptions(optionsWith(words));
-    };
-    AOT_TEST_CHECK(read({ }).recorded.admitted() == Wire::AdmittedCode { });
-    AOT_TEST_CHECK(!read({ }).admitsUnseenCode());
-    for (auto [word, admitted] : { std::pair { "admit=Inspector"_s, Inspector }, std::pair { "admit=RuntimeCode"_s, RuntimeCode } }) {
-        AOT_TEST_CHECK(read({ word }).recorded.admitted() == admitted);
-        AOT_TEST_CHECK(read({ word }).admitsUnseenCode());
+    AOT_TEST_CHECK(readWords({ }).recorded.admitted() == Wire::AdmittedCode { });
+    AOT_TEST_CHECK(!readWords({ }).admitsUnseenCode());
+    AOT_TEST_CHECK(readWords({ "admit=Inspector"_s }).recorded.admitted() == Wire::AdmittedCode::Inspector);
+    AOT_TEST_CHECK(readWords({ "admit=Inspector"_s }).admitsUnseenCode());
+    for (ASCIILiteral word : { "exclude=EvaluatedText"_s, "exclude=FunctionSource"_s }) {
+        AOT_TEST_CHECK(readWords({ word }).recorded.admitted() == Wire::AdmittedCode { });
+        AOT_TEST_CHECK(!readWords({ word }).admitsUnseenCode());
     }
-    AOT_TEST_CHECK(read({ "admit=Inspector"_s, "admit=RuntimeCode"_s }).recorded.admitted() == flagSet({ Inspector, RuntimeCode }));
-    AOT_TEST_CHECK(read({ "exclude=EvaluatedText"_s }).recorded.admitted() == Wire::AdmittedCode { });
+}
+
+static void testExcludedFunctionSourceIsRecorded()
+{
+    AOT_TEST_CHECK(!readWords({ }).recorded.omitsFunctionSource && readWords({ }).recorded.adviceToKeepFunctionSource().isEmpty());
+    AOT_TEST_CHECK(!readWords({ "exclude=EvaluatedText"_s }).recorded.omitsFunctionSource && readWords({ "exclude=EvaluatedText"_s }).excludesEvaluatedText());
+    CompileOptions withoutSource = readWords({ "exclude=FunctionSource"_s });
+    AOT_TEST_CHECK(withoutSource.recorded.omitsFunctionSource && !withoutSource.excludesEvaluatedText() && !withoutSource.recorded.adviceToKeepFunctionSource().isEmpty());
+}
+
+static void testInstrumentationAndTestingSwitchesAreRecorded()
+{
+    AOT_TEST_CHECK(!readWords({ }).recorded.countsBranches && !readWords({ }).recorded.countsArrivals && readWords({ }).recorded.usesExpectedTypes());
+    AOT_TEST_CHECK(readWords({ "count-branches"_s }).recorded.countsBranches && !readWords({ "count-branches"_s }).recorded.countsArrivals);
+    AOT_TEST_CHECK(readWords({ "count-arrivals"_s }).recorded.countsArrivals && !readWords({ "count-arrivals"_s }).recorded.countsBranches);
+    RecordedOptions both = readWords({ "count-branches"_s, "count-arrivals"_s }).recorded;
+    AOT_TEST_CHECK(both.countsBranches && both.countsArrivals);
+
+    RecordedOptions ignoring = readWords({ "testing=IgnoreExpectedTypes"_s }).recorded;
+    AOT_TEST_CHECK(!ignoring.usesExpectedTypes() && ignoring.has(Wire::TestingSwitch::IgnoreExpectedTypes) && !ignoring.has(Wire::TestingSwitch::DropGuard) && !ignoring.droppedGuard());
+    RecordedOptions sabotaged = readWords({ "sabotage=StackNamesNoInnerCell"_s }).recorded;
+    AOT_TEST_CHECK(sabotaged.isSabotaged(Wire::Sabotage::StackNamesNoInnerCell) && !sabotaged.isSabotaged(Wire::Sabotage::InnerCellLetGoKeepsItsHeader) && !sabotaged.isSabotaged(Wire::Sabotage::None));
+    AOT_TEST_CHECK(readWords({ }).recorded.isSabotaged(Wire::Sabotage::None) && !readWords({ }).recorded.sabotage);
+    RecordedOptions dropping = readWords({ "drop-guard=TypeTest:2"_s }).recorded;
+    AOT_TEST_CHECK(dropping.has(Wire::TestingSwitch::DropGuard) && dropping.usesExpectedTypes());
+    AOT_TEST_CHECK(dropping.droppedGuard() && dropping.droppedGuard()->opcode == Opcode::TypeTest && dropping.droppedGuard()->ordinal == 2);
 }
 
 std::span<const NativeTest> optionWordTests()
@@ -801,6 +841,8 @@ std::span<const NativeTest> optionWordTests()
         { "recorded-options/switch-range"_s, testSwitchRange },
         { "recorded-options/hash"_s, testRecordedOptionsHash },
         { "recorded-options/admitted-code"_s, testAdmittedCodeIsRecorded },
+        { "recorded-options/excluded-function-source"_s, testExcludedFunctionSourceIsRecorded },
+        { "recorded-options/instrumentation-and-testing-switches"_s, testInstrumentationAndTestingSwitchesAreRecorded },
     };
     return tests;
 }

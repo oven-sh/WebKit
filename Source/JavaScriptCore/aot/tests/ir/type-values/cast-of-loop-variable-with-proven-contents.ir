@@ -4,28 +4,28 @@
 # RUN: pass RetypeValues
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="claim" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
+function f0 name="check" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
   b0(v0: boolean, v1: Array<string, proven>, v2: Array):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = Claim v3 castType=Array<int>
-    v6 = Predict v2 predicted=Array
+    v5 = Check v3 castType=Array<int>
+    v6 = Upcast v2 castType=Array
     Branch v0 -> taken b2(), notTaken b3()
   b2():
     Jump -> next b1(v6)
   b3():
     Return v5
 }
-# CHECK-LABEL: function f0 name="claim"
-# CHECK: v5: Array<int> = Claim
+# CHECK-LABEL: function f0 name="check"
+# CHECK: v5: Array<int> = Check
 function f1 name="assumed" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=object}] results=[{type=anything}] {
   b0(v0: boolean, v1: Array<string, proven>, v2: object):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
     v5 = AssumeType v3 castType=Array<int>
-    v6 = Predict v2 predicted=object
+    v6 = Upcast v2 castType=object
     Branch v0 -> taken b2(), notTaken b3()
   b2():
     Jump -> next b1(v6)
@@ -40,7 +40,7 @@ function f2 name="upcast" parameters=[{type=boolean}, {type=Array<string, proven
   b1(v3):
     LoopHint
     v5 = Upcast v3 castType=Array<int>
-    v6 = Predict v2 predicted=Array<string>
+    v6 = Upcast v2 castType=Array<string>
     Branch v0 -> taken b2(), notTaken b3()
   b2():
     Jump -> next b1(v6)
@@ -54,8 +54,8 @@ function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<st
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = Claim v3 castType=Array<int>
-    v6 = Predict v2 predicted=Array<int, proven>
+    v5 = Check v3 castType=Array<int>
+    v6 = Upcast v2 castType=Array<int, proven>
     Branch v0 -> taken b2(), notTaken b3()
   b2():
     Jump -> next b1(v6)
@@ -63,14 +63,14 @@ function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<st
     Return v5
 }
 # CHECK-LABEL: function f3 name="contentsStayProven"
-# CHECK: v5: Array<int|string ~ int, proven> = Claim
+# CHECK: v5: Array<int|string, proven> = Check
 function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
   b0(v0: boolean, v1: Array<string, proven>, v2: Array):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = Claim v3 castType=Array<int>
-    v6 = Predict v2 predicted=Array
+    v5 = Check v3 castType=Array<int>
+    v6 = Upcast v2 castType=Array
     v7 = Integer
     v8 = ElemGet v5, v7
     Branch v0 -> taken b2(), notTaken b3()
@@ -80,4 +80,4 @@ function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<st
     Return v8
 }
 # CHECK-LABEL: function f4 name="usedByAnotherValue"
-# CHECK: v5: Array<int> = Claim
+# CHECK: v5: Array<int> = Check

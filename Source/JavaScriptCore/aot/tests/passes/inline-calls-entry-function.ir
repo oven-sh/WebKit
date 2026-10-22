@@ -3,7 +3,7 @@
 # OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
 # RUN: pipeline InlineCalls
 # STATISTIC: InlineDecisionInline >= 3
-# STATISTIC: InlineDecisionCostExceedsBenefit = 2
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
 # STATISTIC: InlineDecisionBarrier = 1
 
 module m0 path="main.js" displayPath="main.js" body=f0

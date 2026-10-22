@@ -35,6 +35,7 @@
 namespace JSC {
 
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectDefineProperty);
+static JSC_DECLARE_HOST_FUNCTION(reflectObjectDeleteProperty);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectGetOwnPropertyDescriptor);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectGetPrototypeOf);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectIsExtensible);
@@ -62,7 +63,7 @@ const ClassInfo ReflectObject::s_info = { "Reflect"_s, &Base::s_info, &reflectOb
     apply                    JSBuiltin                             DontEnum|Function 3
     construct                initializeReflectConstructFunction    DontEnum|PropertyCallback
     defineProperty           reflectObjectDefineProperty           DontEnum|Function 3
-    deleteProperty           JSBuiltin                             DontEnum|Function 2
+    deleteProperty           reflectObjectDeleteProperty           DontEnum|Function 2
     get                      JSBuiltin                             DontEnum|Function 2
     getOwnPropertyDescriptor reflectObjectGetOwnPropertyDescriptor DontEnum|Function 2
     getPrototypeOf           reflectObjectGetPrototypeOf           DontEnum|Function 1 ReflectGetPrototypeOfIntrinsic
@@ -262,8 +263,30 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSet, (JSGlobalObject* globalObject, CallFr
 
     // Do not raise any readonly errors that happen in strict mode.
     bool shouldThrowIfCantSet = false;
-    PutPropertySlot slot(receiver, shouldThrowIfCantSet);
+    // A store under an index takes no slot along, so nothing would say further on that it is Reflect who asks.
+    if (receiver == target && parseIndex(propertyName) && targetObject->structure()->hasImmutableIndexedProperties()) [[unlikely]]
+        return JSValue::encode(jsBoolean(false));
+    PutPropertySlot slot(receiver, shouldThrowIfCantSet, PutPropertySlot::ReflectSet);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot))));
+}
+
+// https://tc39.github.io/ecma262/#sec-reflect.deleteproperty
+JSC_DEFINE_HOST_FUNCTION(reflectObjectDeleteProperty, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue target = callFrame->argument(0);
+    if (!target.isObject())
+        return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.deleteProperty requires the first argument be an object"_s));
+    JSObject* targetObject = asObject(target);
+
+    auto propertyName = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    DeletePropertySlot slot;
+    slot.setAnswersRefusal();
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->deleteProperty(targetObject, globalObject, propertyName, slot))));
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.setprototypeof

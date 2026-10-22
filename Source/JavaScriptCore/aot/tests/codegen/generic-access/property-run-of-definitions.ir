@@ -1,0 +1,67 @@
+# A run of definitions calls its operation straight away in compact code, which probes no site cache. Where the code probes one it calls the operation on a miss, and a site that lost its cache to the limit takes the single definitions. A run of stores in compact code takes the single stores
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot limit=MaxSiteCaches:1
+# LOSS: MaxSiteCaches
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withSiteCache" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+}
+function f1 name="withoutSiteCache" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+}
+function f2 name="inCompactCode" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+}
+function f3 name="storesInCompactCode" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3() frequency=Rare:
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTTryPutProperties x1
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: operationAOTTryPutProperties
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTTryPutProperties x1
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: operationAOTTryPutProperties

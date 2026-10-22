@@ -55,6 +55,46 @@ static bool canMeasureAt(FunctionAnalyses& analyses, const MeasuredStorage& meas
     return !measured.guard || (analyses.dominates(measured.guard, point) && analyses.isGuardAvailable(measured.guard, point));
 }
 
+ValueID checkInFrontOf(const Function& function, const MeasuredStorage& measured)
+{
+    return !measured.guard && function.at(measured.owner).opcode == Opcode::RequireObjectCoercible ? measured.owner : ValueID();
+}
+
+// Nothing that anybody could tell lies between the point and the value, and no other way leads on from the point. So what the value does, a throw too, may as well be done at the point.
+bool ArrayCapacityPlanner::followsWithoutVisibleEffect(ProgramPoint point, ValueID id)
+{
+    ValueLocation target = m_analyses.useLists().locationOf(id);
+    const std::optional<Target>& handler = m_function.at(point.block).handler;
+    BlockID block = point.block;
+    uint32_t index = point.index + 1;
+    for (unsigned numberOfBlocks = 0; numberOfBlocks < 4; ++numberOfBlocks) {
+        const Block& current = m_function.at(block);
+        if (current.handler.has_value() != handler.has_value() || (handler && current.handler->block != handler->block))
+            return false;
+        uint32_t end = block == target.block ? target.index : current.values.size();
+        for (; index < end; ++index) {
+            ValueID between = current.values[index];
+            if (m_function.at(between).opcode != Opcode::LoopHint && !m_analyses.isUnobservable(between))
+                return false;
+        }
+        if (block == target.block)
+            return true;
+        if (current.terminator.kind != TerminatorKind::Jump)
+            return false;
+        block = current.terminator.targets[0].block;
+        index = 0;
+    }
+    return false;
+}
+
+bool ArrayCapacityPlanner::canMeasureBehindCheck(const MeasuredStorage& measured, ProgramPoint point)
+{
+    ValueID check = checkInFrontOf(m_function, measured);
+    if (!check || m_function.at(point.block).handler)
+        return false;
+    return m_analyses.dominates(m_function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
+}
+
 static const NaturalLoop* findOutermostLoopExcluding(const NaturalLoops& loops, BlockID block, BlockID excludedBlock)
 {
     const NaturalLoop* outermost = nullptr;
@@ -88,8 +128,13 @@ static bool mayChangeLengthIn(FunctionAnalyses& analyses, const NaturalLoop& loo
         if (!mayWrite(effects, measured.heap))
             return false;
 
+        // A capacity is a prediction: a callback is taken not to change the array that is walked for it.
         const Value& writer = function.at(id);
-        if (effects.onAnyEdge().mayRunOtherCode() || !isAppend(writer))
+        if (effects.onAnyEdge().mayRunOtherCode())
+            return false;
+        if (writer.opcode == Opcode::MapNext || writer.opcode == Opcode::SetNext)
+            return false;
+        if (!isAppend(writer))
             return true;
         ValueID appended = appendedArrayOf(writer);
         if (!appended)
@@ -98,7 +143,7 @@ static bool mayChangeLengthIn(FunctionAnalyses& analyses, const NaturalLoop& loo
         // The definition of the measured object dominates the literal, so the literal is a newer object.
         if (analyses.sameObjectThroughCasts(appended) == literal)
             return false;
-        return analyses.escape().alias(appended, measured.owner) != AliasResult::NoAlias;
+        return analyses.escape().mayAlias(appended, measured.owner);
     };
 
     BitVector rareBlocks = blocksRarerThanHeader(analyses, loop);
@@ -151,10 +196,13 @@ std::optional<Value> makeSizeReadOfWalkedCollection(FunctionPassContext& context
     ValueID collection = walkedCollectionOf(step);
     if (!collection)
         return std::nullopt;
+    return makeSizeRead(context, collection, step.opcode == Opcode::MapNext ? Builtins::MapPrototypeSize : Builtins::SetPrototypeSize);
+}
 
+std::optional<Value> makeSizeRead(FunctionPassContext& context, ValueID collection, BuiltinID getter)
+{
     TypingContext typing { context.program, context.function, context.types };
     BuiltinOperandTypes operands = operandTypesOf(typing, collection, { });
-    BuiltinID getter = step.opcode == Opcode::MapNext ? Builtins::MapPrototypeSize : Builtins::SetPrototypeSize;
     OverloadMatch match = matchOverload({ typing, getter, BuiltinCallMode::Get, operands, operands });
     if (match.state != BuiltinMatchState::Proven || !match.requirements.isEmpty())
         return std::nullopt;
@@ -247,10 +295,31 @@ TripCount ArrayCapacityPlanner::tripCount(const PlannedLiteral& literal, const N
     return { };
 }
 
+// What a parameter of a block is given on the edges that are as likely as the block, where that is one value.
+ValueID ArrayCapacityPlanner::valueOnLikelyEdges(ValueID id)
+{
+    if (m_function.at(id).opcode != Opcode::Parameter)
+        return id;
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    BlockID block = m_analyses.useLists().blockOf(id);
+    uint32_t parameterIndex = static_cast<uint32_t>(m_function.at(block).parameters.find(id));
+    ValueID given;
+    for (Edge edge : m_analyses.cfg().incomingEdges(block)) {
+        if (frequencies.classOf(block) < frequencies.classOf(edge.from))
+            continue;
+        ValueID passed = valuePassedOn(m_function, edge, parameterIndex);
+        if (!passed || (given && given != passed))
+            return id;
+        given = passed;
+    }
+    return given ? given : id;
+}
+
 CapacityTerm ArrayCapacityPlanner::termOf(const PlannedLiteral& literal, ValueID id)
 {
     if (!id)
         return { };
+    id = valueOnLikelyEdges(m_analyses.sameObjectThroughCasts(id));
 
     KnownValue known = knownValueOf(m_context.program, m_function, id);
     if (known.kind() == KnownValue::Kind::Integer) {
@@ -266,7 +335,7 @@ CapacityTerm ArrayCapacityPlanner::termOf(const PlannedLiteral& literal, ValueID
         return { CapacityTermKind::Integer, definition };
 
     std::optional<MeasuredStorage> measured = storageMeasuredBy(m_context.program, m_function.at(definition));
-    if (measured && canMeasureAt(m_analyses, *measured, literal.point)) {
+    if (measured && (canMeasureAt(m_analyses, *measured, literal.point) || canMeasureBehindCheck(*measured, literal.point))) {
         const NaturalLoop* loop = findOutermostLoopExcluding(m_analyses.naturalLoops(), m_analyses.useLists().blockOf(definition), literal.point.block);
         auto isAppend = [&](const Value& value) {
             return appendKindOf(value).has_value();

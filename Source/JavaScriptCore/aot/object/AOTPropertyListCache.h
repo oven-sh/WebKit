@@ -18,6 +18,8 @@
 namespace JSC {
 
 class JSCellButterfly;
+class JSPropertyNameEnumerator;
+class StructureChain;
 class VM;
 
 namespace AOT {
@@ -31,6 +33,9 @@ struct CachedPropertyList {
     uint32_t orderAndCount { 0 };
     JSCellButterfly* keys { nullptr };
     Vector<PropertyListEntry> properties;
+    // Of the objects whose Structure the enumerator names, below the prototypes of the chain.
+    JSPropertyNameEnumerator* enumerator { nullptr };
+    StructureChain* prototypeChain { nullptr };
 };
 
 class PropertyListCache {

@@ -1,4 +1,4 @@
-# validate<T>(v) checks its argument where nobody reads the result and in a block that runs rarely: the call is not dead, because it throws on a value outside T. A call that expects nothing is a direct call of the function of the library, here the stand-in
+# validate<T>(v) checks its argument where nobody reads the result and in a block that runs rarely: the call is not dead, because it throws on a value outside T. A call that expects nothing is a call of the function of the library and gets no validator. Here that function is the stand-in, which does nothing and answers undefined. Nobody has read its body yet where this pass runs first, so the call is still there
 # RUN: pipeline SelectTypedResults
 # STATISTIC: TypedResultsSelected = 2
 # STATISTIC: ValidatorsCreated = 1
@@ -50,7 +50,8 @@ function f3 name="expectsNothing" parameters=[{type=anything}] results=[{type=an
 }
 # CHECK-LABEL: function f3 name="expectsNothing"
 # CHECK-NOT: BunBundleValidate
-# CHECK: = CallDirect {{*}}function=[[library]]
+# CHECK-NOT: function=[[validator]]
+# CHECK: [[nothing]]: undefined = CallDirect function=[[library]]{{*}}
+# CHECK-NEXT: Return [[nothing]]
 # CHECK-NOT: BunBundleValidate
-# CHECK: function [[library]] name="library"
 # CHECK: function [[validator]] {{*}}role=Validator

@@ -32,6 +32,7 @@
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
 #include "BytecodeGeneratorBaseInlines.h"
+#include "ExceptionHelpers.h"
 #include "IndexingTypeInlines.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncDisposableStack.h"
@@ -318,7 +319,12 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
     if (!generator.needsTDZCheck(var))
         generator.emitGetFromScope(finalDest, scope.get(), var, ThrowIfNotFound);
     else {
+#if ENABLE(AOT)
+        // Nobody reads a temporary behind a check that has thrown.
+        RefPtr<RegisterID> uncheckedResult = Options::useAOT() && finalDest->isTemporary() ? finalDest : generator.newTemporary();
+#else
         RefPtr<RegisterID> uncheckedResult = generator.newTemporary();
+#endif
         generator.emitGetFromScope(uncheckedResult.get(), scope.get(), var, ThrowIfNotFound);
         generator.emitTDZCheck(uncheckedResult.get(), m_ident);
         generator.move(finalDest, uncheckedResult.get());
@@ -672,6 +678,40 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
             propertyList = propertyList->m_next;
         }
     }
+
+#if ENABLE(AOT)
+    if (!newObject && Options::useAOT()) {
+        constexpr unsigned maxNumberOfValues = 16;
+        Vector<PropertyNode*, maxNumberOfValues> properties;
+        bool canEvaluateValuesFirst = true;
+        for (auto* p = propertyList; p && canEvaluateValuesFirst; p = p->m_next) {
+            PropertyNode& node = *p->m_node;
+            ExpressionNode* value = node.m_assign;
+            canEvaluateValuesFirst = properties.size() < maxNumberOfValues
+                && (node.m_type & PropertyNode::Constant) && !(node.m_type & ~(PropertyNode::Constant | PropertyNode::Shorthand))
+                && node.name() && !parseIndex(*node.name()) && !node.isClassProperty() && !PropertyNode::isUnderscoreProtoSetter(generator.vm(), node)
+                && !(value->isBaseFuncExprNode() && static_cast<BaseFuncExprNode*>(value)->metadata()->superBinding() == SuperBinding::Needed);
+            properties.append(&node);
+        }
+        if (canEvaluateValuesFirst) {
+            Vector<bool, maxNumberOfValues> needsCopy(FillWith { }, properties.size(), false);
+            bool laterValuesArePure = true;
+            for (size_t index = properties.size(); index--;) {
+                needsCopy[index] = !laterValuesArePure;
+                laterValuesArePure &= properties[index]->m_assign->isPure(generator);
+            }
+            Vector<RefPtr<RegisterID>, maxNumberOfValues> values;
+            for (size_t index = 0; index < properties.size(); ++index) {
+                RefPtr<RegisterID> copy = needsCopy[index] ? generator.newTemporary() : nullptr;
+                values.append(generator.emitNode(copy.get(), properties[index]->m_assign));
+            }
+            newObject = generator.emitNewObject(generator.tempDestination(dst));
+            for (size_t index = 0; index < properties.size(); ++index)
+                generator.emitDirectPutById(newObject.get(), *properties[index]->name(), values[index].get());
+            return generator.move(dst, newObject.get());
+        }
+    }
+#endif
 
     if (!newObject)
         newObject = generator.emitNewObject(generator.tempDestination(dst));
@@ -1047,7 +1087,7 @@ void PropertyListNode::emitSaveComputedFieldName(BytecodeGenerator& generator, P
         Ref<Label> validPropertyNameLabel = generator.newLabel();
         RefPtr<RegisterID> prototypeString = generator.emitLoad(nullptr, JSValue(generator.addStringConstant(generator.propertyNames().prototype)));
         generator.emitJumpIfFalse(generator.emitBinaryOp<OpStricteq>(generator.newTemporary(), prototypeString.get(), propertyName.get(), OperandTypes(ResultType::stringType(), ResultType::stringType())), validPropertyNameLabel.get());
-        generator.emitThrowTypeError("Cannot declare a static field named 'prototype'"_s);
+        generator.emitThrowTypeError(StaticFieldNamedPrototypeError);
         generator.emitLabel(validPropertyNameLabel.get());
     }
 
@@ -1170,7 +1210,7 @@ RegisterID* BaseDotNode::emitGetPropertyValue(BytecodeGenerator& generator, Regi
             ASSERT(scope); // Private names are always captured.
             RefPtr<RegisterID> privateBrandSymbol = generator.emitGetPrivateBrand(generator.newTemporary(), scope.get(), privateTraits.isStatic());
             generator.emitCheckPrivateBrand(base, privateBrandSymbol.get(), privateTraits.isStatic());
-            generator.emitThrowTypeError("Trying to access an undefined private getter"_s);
+            generator.emitThrowTypeError(UndefinedPrivateGetterError);
             return dst;
         }
 
@@ -1229,7 +1269,7 @@ RegisterID* BaseDotNode::emitPutProperty(BytecodeGenerator& generator, RegisterI
             RefPtr<RegisterID> privateBrandSymbol = generator.emitGetPrivateBrand(generator.newTemporary(), scope.get(), privateTraits.isStatic());
             generator.emitCheckPrivateBrand(base, privateBrandSymbol.get(), privateTraits.isStatic());
 
-            generator.emitThrowTypeError("Trying to access an undefined private setter"_s);
+            generator.emitThrowTypeError(UndefinedPrivateSetterError);
             return value;
         }
 
@@ -1423,7 +1463,7 @@ RegisterID* FunctionCallValueNode::emitBytecode(BytecodeGenerator& generator, Re
         
         Ref<Label> thisIsEmptyLabel = generator.newLabel();
         generator.emitJumpIfTrue(generator.emitIsEmpty(generator.newTemporary(), generator.thisRegister()), thisIsEmptyLabel.get());
-        generator.emitThrowReferenceError("'super()' can't be called more than once in a constructor."_s);
+        generator.emitThrowReferenceError(SuperCalledTwiceError);
         generator.emitLabel(thisIsEmptyLabel.get());
 
         generator.move(generator.thisRegister(), ret);
@@ -2809,7 +2849,7 @@ RegisterID* PostfixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
             generator.emitCheckPrivateBrand(base.get(), privateBrandSymbol.get(), privateTraits.isStatic());
 
             generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
-            generator.emitThrowTypeError("Trying to access an undefined private setter"_s);
+            generator.emitThrowTypeError(UndefinedPrivateSetterError);
             return generator.tempDestination(dst);
         }
 
@@ -2827,7 +2867,7 @@ RegisterID* PostfixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
             generator.move(args.thisRegister(), base.get());
             value = generator.emitCall(generator.newTemporary(), getterFunction.get(), NoExpectedFunction, args, m_position, m_position, m_position, DebuggableCall::Yes);
         } else {
-            generator.emitThrowTypeError("Trying to access an undefined private getter"_s);
+            generator.emitThrowTypeError(UndefinedPrivateGetterError);
             return generator.tempDestination(dst);
         }
 
@@ -2845,7 +2885,7 @@ RegisterID* PostfixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
             return generator.move(dst, oldValue.get());
         } 
 
-        generator.emitThrowTypeError("Trying to access an undefined private getter"_s);
+        generator.emitThrowTypeError(UndefinedPrivateGetterError);
         return generator.move(dst, oldValue.get());
     }
 
@@ -2911,7 +2951,7 @@ RegisterID* DeleteBracketNode::emitBytecode(BytecodeGenerator& generator, Regist
     RefPtr<RegisterID> r1 = generator.emitNode(m_subscript);
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
     if (m_base->isSuperNode())
-        return emitThrowReferenceError(generator, "Cannot delete a super property"_s, dst);
+        return emitThrowReferenceError(generator, DeleteSuperPropertyError, dst);
     return generator.emitDeleteByVal(finalDest.get(), r0.get(), r1.get());
 }
 
@@ -2927,7 +2967,7 @@ RegisterID* DeleteDotNode::emitBytecode(BytecodeGenerator& generator, RegisterID
 
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
     if (m_base->isSuperNode())
-        return emitThrowReferenceError(generator, "Cannot delete a super property"_s, dst);
+        return emitThrowReferenceError(generator, DeleteSuperPropertyError, dst);
     return generator.emitDeleteById(finalDest.get(), r0.get(), m_ident);
 }
 
@@ -3105,7 +3145,7 @@ RegisterID* PrefixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
             generator.emitCheckPrivateBrand(base.get(), privateBrandSymbol.get(), privateTraits.isStatic());
 
             generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
-            generator.emitThrowTypeError("Trying to access an undefined private setter"_s);
+            generator.emitThrowTypeError(UndefinedPrivateSetterError);
             return generator.move(dst, propDst.get());
         }
 
@@ -3122,7 +3162,7 @@ RegisterID* PrefixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
             generator.move(args.thisRegister(), base.get());
             value = generator.emitCall(propDst.get(), getterFunction.get(), NoExpectedFunction, args, m_position, m_position, m_position, DebuggableCall::Yes);
         } else {
-            generator.emitThrowTypeError("Trying to access an undefined private getter"_s);
+            generator.emitThrowTypeError(UndefinedPrivateGetterError);
             return generator.move(dst, propDst.get());
         }
 
@@ -3140,7 +3180,7 @@ RegisterID* PrefixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
             return generator.move(dst, propDst.get());
         } 
 
-        generator.emitThrowTypeError("Trying to access an undefined private getter"_s);
+        generator.emitThrowTypeError(UndefinedPrivateGetterError);
         return generator.move(dst, propDst.get());
     }
 
@@ -5886,7 +5926,7 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         Ref<Label> superclassIsConstructorLabel = generator.newLabel();
         generator.emitJumpIfTrue(generator.emitIsConstructor(generator.newTemporary(), superclass.get()), superclassIsConstructorLabel.get());
         generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
-        generator.emitThrowTypeError("The superclass is not a constructor."_s);
+        generator.emitThrowTypeError(SuperclassNotConstructorError);
         generator.emitLabel(superclassIsConstructorLabel.get());
         generator.emitGetById(protoParent.get(), superclass.get(), generator.propertyNames().prototype);
 

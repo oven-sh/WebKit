@@ -26,6 +26,7 @@
 #include <wtf/text/MakeString.h>
 
 #if ENABLE(AOT)
+#include "AOTMembersLeftOut.h"
 #include "AOTRuntimeHooks.h"
 #endif
 
@@ -75,8 +76,17 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         // EXCEPTION_ASSERT(!scope.exception() || !result) holds. No ThrowScope
         // here: a ThrowScope would simulate a throw on every first static-table
         // lookup, and callers of getOwnPropertySlot don't check for one.
-        if (vm.exceptionForInspection()) [[unlikely]]
+        if (vm.exceptionForInspection()) [[unlikely]] {
+#if ENABLE(AOT)
+            JSValue standIn = vm.hasCompiledCode() && !isAccessor ? AOT::takeStandInForMemberLeftOut(thisObject->realm(), String(propertyName.uid())) : JSValue();
+            if (!standIn)
+                return false;
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            thisObject->putDirect(vm, propertyName, standIn, attributesForStructure(entry->attributes()));
+#else
             return false;
+#endif
+        }
 
         offset = thisObject->getDirectOffset(vm, propertyName, attributes);
         if (!isValidOffset(offset)) {

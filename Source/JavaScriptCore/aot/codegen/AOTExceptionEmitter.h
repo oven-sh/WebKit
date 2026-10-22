@@ -32,6 +32,9 @@ public:
     void throwValue(const TerminatorContext&, Boxed);
     void rethrow(const TerminatorContext&, CellPointer exception);
 
+    // The code that follows is what the call returns to. The block that is answered is entered with the same registers, and the result is what the callee could not return.
+    LBasicBlock attachLandingOfMisfit(B3::PatchpointValue*, uint32_t site);
+
 private:
     friend class RuntimeCallEmitter;
     friend class ThrowEmitter;

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
@@ -16,6 +17,7 @@
 #include "AOTIR.h"
 #include "AOTPropertyAccessReceivers.h"
 #include <algorithm>
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -159,6 +161,40 @@ OperandBehavior declaredBehaviorOf(const BuiltinOverload& overload, BuiltinOpera
     return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers };
 }
 
+Vector<BuiltinName> namesReadFromOperands(const BuiltinTable& table)
+{
+    Vector<BuiltinName> names;
+    for (Protocol protocol : allMembersOf<Protocol>)
+        names.append(table.keysReadBy(protocol));
+
+    auto addNamesOfEntry = [&](auto entry) {
+        uint32_t numberOfOperandInfos = numberOfNamedOperandsOf(entry) + hasVariadicOperand(entry);
+        for (uint32_t index = 0; index < numberOfOperandInfos; ++index)
+            names.append(namedMembersOf(entry, index));
+    };
+    for (Opcode opcode : allMembersOf<Opcode>)
+        addNamesOfEntry(opcode);
+    for (TerminatorKind kind : allMembersOf<TerminatorKind>)
+        addNamesOfEntry(kind);
+
+    auto addNamesOfParameter = [&](const BuiltinParameter& parameter) {
+        names.append(parameter.namedMembers.span());
+        names.append(parameter.calledMembers.span());
+        names.append(parameter.convertedMembers.span());
+    };
+    for (unsigned index = 0; index < table.overloadCount(); ++index) {
+        const BuiltinOverload& overload = table.at(BuiltinOverloadID(index));
+        if (overload.receiver)
+            addNamesOfParameter(*overload.receiver);
+        for (const BuiltinParameter& parameter : overload.parameters)
+            addNamesOfParameter(parameter);
+    }
+
+    std::ranges::sort(names, { }, &BuiltinName::index);
+    removeRepeatedElements(names);
+    return names;
+}
+
 static void describeCalledValue(const Program& program, const Type& callee, EffectDescription& description)
 {
     CalleeList callees = calleesOf(program, callee);
@@ -178,7 +214,7 @@ static bool mayReturnObject(const Program& program, const Type& calledValue)
         return true;
     return std::ranges::any_of(callees.functions, [&](FunctionID callee) {
         const Function& function = program.at(callee);
-        if (function.results.size() != 1 || function.isUnsplitCoroutine())
+        if (function.results.size() != 1 || function.isUnsplitCoroutine() || function.result().flags.contains(PositionFlags::IsExpected))
             return true;
         TypeID type = function.result().type;
         return !type || program.at(type).hasObjects();
@@ -197,6 +233,164 @@ static bool isFreeOfSettersAndTraps(const Type& operand)
     return hasOnlyInstances(operand, [](const ClassPart& part) {
         return part.provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Names });
     });
+}
+
+// An array makes a number of what is stored as its length, and a typed array of what is stored under an index.
+// A host class inherits native setters, which no pristine aspect speaks of, and each makes a string or a number of what it takes.
+static bool convertsStoredValues(const BuiltinTable& table, BuiltinClassID builtinClass)
+{
+    return table.isSameOrSubclassOf(builtinClass, BuiltinClasses::Array)
+        || table.isSameOrSubclassOf(builtinClass, BuiltinClasses::TypedArray)
+        || table.at(builtinClass).origin == BuiltinOrigin::Host;
+}
+
+// The constructor of a built-in base class makes the objects of the classes below it, and a tuple is an array.
+static bool mayConvertStoredValues(const Program& program, LayoutID id)
+{
+    const BuiltinTable& table = program.builtins();
+    LayoutID current = id;
+    for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
+        const Layout& layout = program.at(current);
+        switch (layout.kind) {
+        case LayoutKind::Record:
+        case LayoutKind::Container:
+            return false;
+        case LayoutKind::BuiltinResult:
+            return table.at(layout.builtinLayout).isTuple;
+        case LayoutKind::Instance:
+            break;
+        case LayoutKind::Environment:
+        case LayoutKind::Closure:
+        case LayoutKind::CoroutineFrame:
+        case LayoutKind::ModuleNamespace:
+            return true;
+        }
+
+        switch (layout.flow.baseState) {
+        case BaseState::None:
+            return false;
+        case BaseState::Layout:
+            current = layout.flow.base;
+            break;
+        case BaseState::BuiltinClass:
+            return convertsStoredValues(table, layout.flow.baseClass);
+        case BaseState::Unknown:
+            return layout.has(LayoutFlags::HasHeritage);
+        }
+    }
+    return true;
+}
+
+// A closure of the program keeps whatever is stored on it or defined on it.
+static bool mayConvertStoredValues(const Program& program, const Type& operand)
+{
+    if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
+        return true;
+
+    bool hasConvertingInstance = std::ranges::any_of(operand.classes, [&](const ClassPart& part) {
+        return convertsStoredValues(program.builtins(), part.builtinClass);
+    });
+    return hasConvertingInstance || std::ranges::any_of(membersOf(program, operand), [&](LayoutID member) {
+        return mayConvertStoredValues(program, member);
+    });
+}
+
+// The program made them and no exotic class stands behind them: no proxy, no array, no typed array, nothing of the host.
+static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& operand)
+{
+    if (operand.anyObject || operand.anyFunction || !operand.classes.isEmpty() || !operand.functions.isEmpty() || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
+        return false;
+    return std::ranges::none_of(membersOf(program, operand), [&](LayoutID member) {
+        return mayConvertStoredValues(program, member);
+    });
+}
+
+static constexpr uint64_t maxReachableTypes = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
+
+// No object is reached twice on one way down. The types tell: an object that may hold an object of its own type may close a cycle.
+static bool isTreeOfData(const Program& program, const Type& type, uint16_t admittedPrimitives, Vector<const Type*, 8>& typesAbove)
+{
+    if (type.primitives & ~admittedPrimitives)
+        return false;
+    if (!type.hasObjects())
+        return true;
+    if (typesAbove.contains(&type) || typesAbove.size() >= maxReachableTypes || !hasOnlyOrdinaryObjectsOfProgram(program, type))
+        return false;
+    std::optional<SortedSet<TypeID, 8>> ownValues = provenOwnValueTypesOf(program, type);
+    if (!ownValues)
+        return false;
+
+    typesAbove.append(&type);
+    bool holdsTrees = std::ranges::all_of(*ownValues, [&](TypeID held) {
+        return isTreeOfData(program, program.at(held), admittedPrimitives, typesAbove);
+    });
+    typesAbove.removeLast();
+    return holdsTrees;
+}
+
+// An admitted type names primitives, the numbers among them all or the integers of a range, and beside them no object or plain data.
+static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const Type& operand)
+{
+    const BuiltinType& admitted = program.builtins().at(admittedID);
+    uint16_t primitives = primitivesOfBuiltinType(admitted);
+    if (primitives & Primitive::String)
+        primitives |= Primitive::LiteralString;
+    if (primitives & Primitive::Symbol)
+        primitives |= Primitive::LiteralSymbol;
+
+    if (admitted.flags.contains(BuiltinTypeFlag::HasOnlyIntegers) && operand.primitives & Primitive::Integer && !operand.integers.isSubsetOf({ admitted.integers.minimum, admitted.integers.maximum }))
+        return false;
+    if (!admitted.flags.contains(BuiltinTypeFlag::HasPlainData))
+        return operand.hasOnlyPrimitives(primitives);
+    Vector<const Type*, 8> typesAbove;
+    return operand.isJavaScriptValue() && isTreeOfData(program, operand, primitives, typesAbove);
+}
+
+static bool mayRefuseChanges(const Program& program, const Type& operand, OperandUses changes)
+{
+    if (!hasOnlyOrdinaryObjectsOfProgram(program, operand))
+        return true;
+    // An ordinary object lets itself be frozen, whatever state it is in.
+    if (changes.containsOnly({ OperandUse::ChangesIntegrity }))
+        return false;
+    // A frozen object refuses a store, a read-only property refuses one under its name, and the setter of __proto__ refuses a cycle.
+    ReceiverState state = receiverStateOf(program, operand.layouts);
+    return !state.cannot(ObjectMutation::ChangeIntegrity) || !state.cannot(ObjectMutation::RedefineProperty) || !state.cannot(ObjectMutation::ChangePrototype);
+}
+
+bool mayFailOnOperand(const Program& program, const BuiltinParameter& parameter, const Type& operand)
+{
+    // The entry calls what it finds under a name. An operand that lacks the name, or holds something else there, makes it throw.
+    constexpr Protocols protocolsNeedingMembers { Protocol::Iterate, Protocol::CallsNamed, Protocol::Species, Protocol::HasInstance };
+    // An object without valueOf and toString has no primitive. A symbol has neither a string nor a number, and a BigInt has no number.
+    constexpr uint16_t primitivesWithStringAndNumber = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString;
+    constexpr OperandUses changingUses {
+        OperandUse::WritesContents,
+        OperandUse::MovesElements,
+        OperandUse::StoresByKey,
+        OperandUse::DeletesByKey,
+        OperandUse::AssignsFrom,
+        OperandUse::DefinesName,
+        OperandUse::TakesDescriptor,
+        OperandUse::ChangesIntegrity,
+        OperandUse::ChangesPrototype,
+    };
+
+    // The row says for which operands the entry raises nothing. Without its word the protocols tell.
+    if (parameter.admitted) {
+        if (!isAdmitted(program, parameter.admitted, operand))
+            return true;
+    } else if (parameter.protocols.containsAny(protocolsNeedingMembers))
+        return true;
+    else if (parameter.protocols.contains(Protocol::ToPrimitive) && !operand.hasOnlyPrimitives(primitivesWithStringAndNumber))
+        return true;
+    OperandUses changes = parameter.uses & changingUses;
+    return !changes.isEmpty() && operand.hasObjects() && mayRefuseChanges(program, operand, changes);
+}
+
+bool isDescribedByModel(const BuiltinOverload& overload)
+{
+    return overload.code.model && overload.effects.capability == BuiltinCapability::JS && !overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
 }
 
 static CalleeList membersRunBy(const Program& program, const Type& operand, const OperandBehavior& behavior)
@@ -235,8 +429,6 @@ static bool holdsOnlyPrimitives(const Program& program, const Type& operand)
 using MembersBeingDescribed = Vector<BuiltinID, 4>;
 
 static void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, MembersBeingDescribed&, EffectDescription&);
-
-static constexpr uint64_t maxReachableTypes = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
 
 static constexpr OperandUses usesOfReaders {
     OperandUse::Inspects,
@@ -407,6 +599,7 @@ void ReachableValueWalk::visitLayouts(const Type& layouts)
         m_description.addUnknownCode();
         return;
     }
+    m_description.followsFieldsOfOperands = true;
     for (TypeID type : *ownValues)
         reach(m_program.at(type));
 }
@@ -480,7 +673,7 @@ void ReachableValueWalk::describeOverloadOn(const Type& receivers, BuiltinOverlo
     describeOverload(m_program, id, nullptr, { }, m_description);
 
     const BuiltinOverload& overload = m_program.builtins().at(id);
-    bool isDeclaredByParameters = !overload.isUndeclared() && !overload.libraryFunction() && !overload.code.model;
+    bool isDeclaredByParameters = !overload.isUndeclared() && !overload.libraryFunction() && !isDescribedByModel(overload);
     if (!isDeclaredByParameters)
         return;
 
@@ -530,6 +723,20 @@ static void describeCodeOfContents(const Program& program, const Type& operand, 
         describeCallees(program, membersRunBy(program, Type::fromPrimitives(Primitive::String), behavior), BuiltinCallMode::Call, description);
 }
 
+Effects effectsOfCreatingPrototypeProperty(const Program& program, const Type& functions)
+{
+    Effects effects = Effects::none();
+    if (functions.anyFunction || functions.anyObject) {
+        effects.writes.add(AbstractHeap::MemberGuards);
+        return effects;
+    }
+    for (FunctionID function : functions.functions) {
+        if (prototypePropertyMayEndGuards(program, function))
+            effects.writes.add(program, MemoryLocation::memberGuards(program.at(function).constructedClass));
+    }
+    return effects;
+}
+
 void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, EffectDescription& description)
 {
     MembersBeingDescribed membersBeingDescribed;
@@ -539,6 +746,7 @@ void describeOperandCode(const Program& program, const Type& operand, const Oper
 static void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description)
 {
     constexpr OperandUses usesRunningSettersAndTraps { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DeletesByKey };
+    constexpr OperandUses usesStoringValues { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
 
     bool hasObjects = operand.hasObjects();
     if (!behavior.protocols.isEmpty()) {
@@ -551,10 +759,14 @@ static void describeOperandCode(const Program& program, const Type& operand, con
             describeCallees(program, membersRunBy(program, operand, behavior), BuiltinCallMode::Call, description);
             description.addOwn(readsOfMemberLookups(operand, behavior.protocols));
         }
+        description.addOwn(effectsOfCreatingPrototypeProperty(program, operand));
     }
     if (!hasObjects)
         return;
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesRunningSettersAndTraps) && !isFreeOfSettersAndTraps(operand))
+        description.addUnknownCode();
+    // The uses name neither the key nor the stored operand, so the conversion is code that nobody lists.
+    if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesStoringValues) && !description.callsUnknownCode && mayConvertStoredValues(program, operand))
         description.addUnknownCode();
     if (!behavior.uses.containsAny(callingUses))
         return;
@@ -576,10 +788,13 @@ static bool isPassedToOperandCode(const Program& program, const Type& operand, c
 {
     if (behavior.uses.containsAny(callingUses) && mayTakeCallee(program, operand))
         return true;
+    if (behavior.protocols.isEmpty() && behavior.declarer != OperandDeclarer::Builtin)
+        return false;
 
     OperandBehavior protocolBehavior = behavior;
     protocolBehavior.uses.remove(callingUses);
     EffectDescription description;
+    description.leavesOutOwnEffects = true;
     describeOperandCode(program, operand, protocolBehavior, description);
     return description.callsUnknownCode || !description.functions.isEmpty();
 }
@@ -604,13 +819,13 @@ OperandSummary joinOf(const OperandSummary& a, const OperandSummary& b)
 }
 
 template<typename Entry>
-static OperandSummary summarizeDeclaredOperand(const Program& program, const Type& type, Entry entry, uint32_t operandIndex)
+static OperandSummary summarizeDeclaredOperand(const Program& program, const Type& type, Entry entry, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     OperandBehavior behavior = declaredBehaviorOf(entry, operandIndex);
     OperandSummary summary = summarizeDeclaredUses(behavior);
     if (operandKindOf(entry, operandIndex) == OperandKind::Results)
         summary.uses.add(OperandUse::Returns);
-    if (!mayBeReference(type))
+    if (askedFor == UsesAskedFor::AllButPassesToUserCode || !mayBeReference(type))
         return summary;
 
     bool isHandedToUnnamedCode = !behavior.uses.contains(OperandUse::RetainsContents) && declaredBoundOf(entry).mayCallUnknownCode;
@@ -622,6 +837,13 @@ static OperandSummary summarizeDeclaredOperand(const Program& program, const Typ
 // The method that HasInstance runs on one operand takes the other operands of the entry as its arguments.
 static bool isArgumentOfHasInstanceMethod(const Program& program, const Function& function, const Value& user, uint32_t operandIndex)
 {
+    bool runsHasInstance = false;
+    forEachDeclaredOperand(user.opcode, [&](uint32_t declaredIndex) {
+        runsHasInstance |= protocolsOf(user.opcode, declaredIndex).contains(Protocol::HasInstance);
+    });
+    if (!runsHasInstance)
+        return false;
+
     bool isArgument = false;
     user.forEachOperand([&](ValueID other, uint32_t otherIndex) {
         if (otherIndex == operandIndex || !protocolsOf(user.opcode, otherIndex).contains(Protocol::HasInstance))
@@ -692,7 +914,7 @@ static OperandSummary summarizeArgumentOf(const EffectContext& context, const Va
     if (!entryParameter)
         return { };
 
-    OperandSummary summary = context.summaries.of(callee).parameter(*entryParameter).operand;
+    OperandSummary summary = context.summaries.of(callee).operand(*entryParameter);
     summary.uses.add(OperandUse::Inspects);
     if (summary.retainedIn != RetainedIn::Operand)
         return summary;
@@ -706,17 +928,22 @@ static OperandSummary summarizeArgumentOf(const EffectContext& context, const Va
     return summary;
 }
 
-static OperandSummary summarizeCallOperand(const EffectContext& context, const Type& type, const Value& call, uint32_t operandIndex)
+static OperandSummary summarizeCallOperand(const EffectContext& context, const Type& type, const Value& call, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     OperandBehavior behavior = declaredBehaviorOf(call.opcode, operandIndex);
     if (behavior.uses.contains(OperandUse::RetainsContents))
-        return summarizeDeclaredOperand(context.program, type, call.opcode, operandIndex);
+        return summarizeDeclaredOperand(context.program, type, call.opcode, operandIndex, askedFor);
 
     CalleeList callees = calleesOfCall(context.program, call);
+    bool isCalledValue = behavior.uses.containsAny(callingUses);
+    // Only a function that takes its callee gets hold of the closure it is entered through. Whoever made the closure knows its function, and applies what that does
+    // with its callee and its captures wherever the closure is called. A construction hands the called value on as new.target.
+    if (isCalledValue && call.opcode == Opcode::Call && !callees.isComplete)
+        return summarizeDeclaredUses(behavior);
     if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
         return { };
 
-    if (behavior.uses.containsAny(callingUses)) {
+    if (isCalledValue) {
         OperandSummary summary = summarizeDeclaredUses(behavior);
         for (FunctionID callee : callees.functions) {
             for (uint32_t parameter : entryParametersOfCalledValue(context.program.at(callee), call))
@@ -757,11 +984,11 @@ BuiltinOperand builtinOperandAt(const Value& builtinCall, uint32_t operandIndex)
 }
 
 template<typename Carrier>
-static OperandSummary summarizeOperandOfOverload(const Program&, const Type&, const Carrier& call, const BuiltinOverload&, BuiltinOperand);
+static OperandSummary summarizeOperandOfOverload(const Program&, const Type&, const Carrier& call, const BuiltinOverload&, BuiltinOperand, UsesAskedFor);
 
 // The function runs with a receiver that no overload was matched against, so it may behave as any of them.
 template<typename Carrier>
-static OperandSummary summarizeArgumentOfAnyOverload(const Program& program, const Type& type, const Carrier& call, const BuiltinOverload& named, BuiltinOperand operand)
+static OperandSummary summarizeArgumentOfAnyOverload(const Program& program, const Type& type, const Carrier& call, const BuiltinOverload& named, BuiltinOperand operand, UsesAskedFor askedFor)
 {
     std::optional<OperandSummary> joined;
     for (const BuiltinOverload& overload : program.builtins().overloadsOf(named.builtin)) {
@@ -769,14 +996,14 @@ static OperandSummary summarizeArgumentOfAnyOverload(const Program& program, con
             continue;
         if (mayRunUnnamedCode(overload))
             return { };
-        OperandSummary summary = summarizeOperandOfOverload(program, type, call, overload, operand);
+        OperandSummary summary = summarizeOperandOfOverload(program, type, call, overload, operand, askedFor);
         joined = joined ? joinOf(*joined, summary) : summary;
     }
     return joined.value_or(OperandSummary { });
 }
 
 template<typename Carrier>
-static OperandSummary summarizeBuiltinOperand(const Program& program, const Type& type, const Carrier& call, uint32_t operandIndex)
+static OperandSummary summarizeBuiltinOperand(const Program& program, const Type& type, const Carrier& call, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     const BuiltinOverload& overload = program.builtins().at(call.overload());
     if (mayRunUnnamedCode(overload))
@@ -787,7 +1014,7 @@ static OperandSummary summarizeBuiltinOperand(const Program& program, const Type
     case BuiltinCallForm::AnyReceiver:
         if (operand.isReceiver())
             return { };
-        return summarizeArgumentOfAnyOverload(program, type, call, overload, operand);
+        return summarizeArgumentOfAnyOverload(program, type, call, overload, operand, askedFor);
     case BuiltinCallForm::List:
         if (!operand.isReceiver())
             return { listedUses, RetainedIn::UnknownMemory, 0 };
@@ -797,11 +1024,11 @@ static OperandSummary summarizeBuiltinOperand(const Program& program, const Type
     case BuiltinCallForm::Prefix:
         break;
     }
-    return summarizeOperandOfOverload(program, type, call, overload, operand);
+    return summarizeOperandOfOverload(program, type, call, overload, operand, askedFor);
 }
 
 template<typename Carrier>
-static OperandSummary summarizeOperandOfOverload(const Program& program, const Type& type, const Carrier& call, const BuiltinOverload& overload, BuiltinOperand operand)
+static OperandSummary summarizeOperandOfOverload(const Program& program, const Type& type, const Carrier& call, const BuiltinOverload& overload, BuiltinOperand operand, UsesAskedFor askedFor)
 {
     OperandBehavior behavior = declaredBehaviorOf(overload, operand);
     OperandSummary summary { behavior.uses, behavior.retainedIn, behavior.retainingOperand };
@@ -812,40 +1039,43 @@ static OperandSummary summarizeOperandOfOverload(const Program& program, const T
     }
     if (holdsOnlyPrimitives(program, type))
         summary.uses.remove(OperandUse::AppliesToContents);
-    if (isPassedToOperandCode(program, type, behavior))
+    if (askedFor == UsesAskedFor::All && isPassedToOperandCode(program, type, behavior))
         summary.uses.add(OperandUse::PassesToUserCode);
     return summary;
 }
 
-static OperandSummary summarizeAccessOperand(const Program& program, const Function& function, const Type& type, const Value& access, uint32_t operandIndex)
+static OperandSummary summarizeAccessOperand(const Program& program, const Function& function, const Type& type, const Value& access, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     OperandBehavior behavior = declaredBehaviorOf(access.opcode, operandIndex);
     OperandSummary summary = summarizeDeclaredUses(behavior);
-    if (!mayBeReference(type))
+    if (askedFor == UsesAskedFor::AllButPassesToUserCode || !mayBeReference(type))
         return summary;
 
-    ProvenAccess proven = provenAccessOf(program, function, access);
-    bool isHandedToAccessor = proven.isComplete ? !proven.accessors.isEmpty() : declaredBoundOf(access.opcode).mayCallUnknownCode;
-    if (isHandedToAccessor || isPassedToOperandCode(program, type, behavior))
+    auto isHandedToAccessor = [&] {
+        ProvenAccess storage;
+        const ProvenAccess& proven = provenAccessOf(program, function, access, storage);
+        return proven.isComplete ? !proven.accessors.isEmpty() : declaredBoundOf(access.opcode).mayCallUnknownCode;
+    };
+    if (isPassedToOperandCode(program, type, behavior) || isHandedToAccessor())
         summary.uses.add(OperandUse::PassesToUserCode);
     return summary;
 }
 
-OperandSummary summarizeOperand(const EffectContext& context, const Function& function, const Value& user, uint32_t operandIndex)
+OperandSummary summarizeOperand(const EffectContext& context, const Function& function, const Value& user, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     const Type& type = operandTypeOf(context.program, function, user, operandIndex);
     switch (effectRuleOf(user.opcode)) {
     case EffectRule::Call:
-        return summarizeCallOperand(context, type, user, operandIndex);
+        return summarizeCallOperand(context, type, user, operandIndex, askedFor);
     case EffectRule::Builtin:
     case EffectRule::Inline:
-        return summarizeBuiltinOperand(context.program, type, user, operandIndex);
+        return summarizeBuiltinOperand(context.program, type, user, operandIndex, askedFor);
     case EffectRule::Access:
-        return summarizeAccessOperand(context.program, function, type, user, operandIndex);
+        return summarizeAccessOperand(context.program, function, type, user, operandIndex, askedFor);
     case EffectRule::Declared:
     case EffectRule::Operator: {
-        OperandSummary summary = summarizeDeclaredOperand(context.program, type, user.opcode, operandIndex);
-        if (mayBeReference(type) && isArgumentOfHasInstanceMethod(context.program, function, user, operandIndex))
+        OperandSummary summary = summarizeDeclaredOperand(context.program, type, user.opcode, operandIndex, askedFor);
+        if (askedFor == UsesAskedFor::All && mayBeReference(type) && isArgumentOfHasInstanceMethod(context.program, function, user, operandIndex))
             summary.uses.add(OperandUse::PassesToUserCode);
         return summary;
     }
@@ -853,18 +1083,18 @@ OperandSummary summarizeOperand(const EffectContext& context, const Function& fu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-OperandSummary summarizeOperand(const EffectContext& context, const Function& function, const Terminator& user, uint32_t operandIndex)
+OperandSummary summarizeOperand(const EffectContext& context, const Function& function, const Terminator& user, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     const Type& type = operandTypeOf(context.program, function, user, operandIndex);
     switch (effectRuleOf(user.kind)) {
     case EffectRule::Inline:
-        return summarizeBuiltinOperand(context.program, type, user, operandIndex);
+        return summarizeBuiltinOperand(context.program, type, user, operandIndex, askedFor);
     case EffectRule::Declared:
     case EffectRule::Operator:
     case EffectRule::Access:
     case EffectRule::Call:
     case EffectRule::Builtin:
-        return summarizeDeclaredOperand(context.program, type, user.kind, operandIndex);
+        return summarizeDeclaredOperand(context.program, type, user.kind, operandIndex, askedFor);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -897,7 +1127,7 @@ bool isWrittenOperand(Opcode opcode, uint32_t operandIndex)
     return isRetainingOperand;
 }
 
-OperandConfinement confinementOf(Opcode opcode)
+static OperandConfinement computeConfinementOf(Opcode opcode)
 {
     bool mayReachOtherObjects = false;
     bool namesWrittenOperand = false;
@@ -910,6 +1140,17 @@ OperandConfinement confinementOf(Opcode opcode)
     return OperandConfinement::WritesOnlyNamedOperands;
 }
 
+OperandConfinement confinementOf(Opcode opcode)
+{
+    static const std::array<OperandConfinement, numberOfOpcodes> answers = [] {
+        std::array<OperandConfinement, numberOfOpcodes> result { };
+        for (Opcode member : allMembersOf<Opcode>)
+            result[static_cast<unsigned>(member)] = computeConfinementOf(member);
+        return result;
+    }();
+    return answers[static_cast<unsigned>(opcode)];
+}
+
 static OperandMemory memoryAccessedByCallees(const EffectContext& context, const Value& call, uint32_t operandIndex, const CalleeList& callees)
 {
     bool isCalledValue = operandUsesOf(call.opcode, operandIndex).containsAny(callingUses);
@@ -919,11 +1160,11 @@ static OperandMemory memoryAccessedByCallees(const EffectContext& context, const
         CalleeSummary summary(context, id);
         if (isCalledValue) {
             for (uint32_t parameter : entryParametersOfCalledValue(callee, call))
-                memory.merge(summary->parameter(parameter).memory);
+                memory.merge(summary->memory(parameter));
             continue;
         }
         std::optional<uint32_t> parameter = entryParameterOf(callee, call, operandIndex);
-        memory.merge(parameter ? summary->parameter(*parameter).memory : OperandMemory());
+        memory.merge(parameter ? summary->memory(*parameter) : OperandMemory());
     }
     return memory;
 }
@@ -995,8 +1236,63 @@ static ResultFreshness freshnessOfBuiltinResult(const Program& program, const Fu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool answersWithDeclaredResult(Opcode opcode)
+{
+    return Value::opcodesWithOverload.contains(opcode) && resultRuleOf(opcode) == ResultRule::Declared;
+}
+
+static bool computeWhetherResultMayBeFresh(Opcode opcode)
+{
+    switch (effectRuleOf(opcode)) {
+    case EffectRule::Builtin:
+    case EffectRule::Inline:
+        return true;
+    case EffectRule::Declared:
+    case EffectRule::Operator:
+    case EffectRule::Access:
+    case EffectRule::Call:
+        break;
+    }
+    if (answersWithDeclaredResult(opcode))
+        return true;
+    // A site answers with the same object at every evaluation, and an earlier one may have published it.
+    if (boundToOf(opcode) == BoundTo::Site)
+        return false;
+
+    bool retainsOperandInResult = false;
+    bool returnsOperand = false;
+    forEachDeclaredOperand(opcode, [&](uint32_t operandIndex) {
+        const OperandInfo& info = operandInfoOf(opcode, operandIndex);
+        retainsOperandInResult |= info.uses.contains(OperandUse::Retains) && info.retainedIn == RetainedIn::Result;
+        returnsOperand |= info.uses.contains(OperandUse::Returns);
+    });
+    return !returnsOperand && (resultRuleOf(opcode) == ResultRule::Allocation || retainsOperandInResult);
+}
+
+bool resultMayBeFresh(Opcode opcode)
+{
+    static const std::array<bool, numberOfOpcodes> answers = [] {
+        std::array<bool, numberOfOpcodes> result { };
+        for (Opcode member : allMembersOf<Opcode>)
+            result[static_cast<unsigned>(member)] = computeWhetherResultMayBeFresh(member);
+        return result;
+    }();
+    return answers[static_cast<unsigned>(opcode)];
+}
+
 ResultFreshness freshnessOf(const EffectContext& context, const Function& function, const Value& value)
 {
+    auto computeEffects = [&] {
+        return effectsOf(context, function, value);
+    };
+    return freshnessOf(context, function, value, ScopedLambda<EffectsOnEdges()>(computeEffects));
+}
+
+ResultFreshness freshnessOf(const EffectContext& context, const Function& function, const Value& value, NOESCAPE const ScopedLambda<EffectsOnEdges()>& effectsOfValue)
+{
+    if (!resultMayBeFresh(value.opcode))
+        return ResultFreshness::Unknown;
+
     switch (effectRuleOf(value.opcode)) {
     case EffectRule::Builtin:
     case EffectRule::Inline:
@@ -1009,27 +1305,14 @@ ResultFreshness freshnessOf(const EffectContext& context, const Function& functi
     }
 
     // An operation selected for a call of an overload answers with what the overload declares, as the call did.
-    if (Value::opcodesWithOverload.contains(value.opcode) && resultRuleOf(value.opcode) == ResultRule::Declared)
+    if (answersWithDeclaredResult(value.opcode))
         return freshnessOfDeclaredResult(context.program, function, value.overload(), ValueID());
 
-    // A site answers with the same object at every evaluation, and an earlier one may have published it.
-    if (boundToOf(value.opcode) == BoundTo::Site)
-        return ResultFreshness::Unknown;
     // The closure table holds this closure, and an instance that was allocated without it inherits a property that names it.
-    if (value.opcode == Opcode::NewClosure && hasSingletonClosure(context.program, value.function()))
+    if (value.opcode == Opcode::NewClosure && namesClosureOfTable(context.program, value))
         return ResultFreshness::Unknown;
 
-    bool retainsOperandInResult = false;
-    bool returnsOperand = false;
-    forEachDeclaredOperand(value.opcode, [&](uint32_t operandIndex) {
-        const OperandInfo& info = operandInfoOf(value.opcode, operandIndex);
-        retainsOperandInResult |= info.uses.contains(OperandUse::Retains) && info.retainedIn == RetainedIn::Result;
-        returnsOperand |= info.uses.contains(OperandUse::Returns);
-    });
-    if (returnsOperand || (resultRuleOf(value.opcode) != ResultRule::Allocation && !retainsOperandInResult))
-        return ResultFreshness::Unknown;
-
-    Effects effects = effectsOf(context, function, value).onAnyEdge();
+    Effects effects = effectsOfValue().onAnyEdge();
     if (!effects.writes.containsOnly(bookkeepingHeaps) || effects.mayCallUnknownCode)
         return ResultFreshness::Unknown;
     return ResultFreshness::Fresh;
@@ -1037,7 +1320,7 @@ ResultFreshness freshnessOf(const EffectContext& context, const Function& functi
 
 ResultFreshness freshnessOf(const EffectContext& context, const Function& function, const Terminator& terminator)
 {
-    if (effectRuleOf(terminator.kind) != EffectRule::Inline)
+    if (!resultMayBeFresh(terminator.kind))
         return ResultFreshness::Unknown;
     return freshnessOfBuiltinResult(context.program, function, terminator);
 }

@@ -8,19 +8,17 @@
 #if ENABLE(AOT)
 
 #include "AOTSchemaEnums.h"
+#include "AOTSchemaRecords.h"
 #include "IndexingType.h"
 #include "PureNaN.h"
 #include "TypedArrayType.h"
 #include <array>
 #include <optional>
 
-namespace JSC { namespace AOT {
-
-struct BuiltinOverload;
-
-namespace Typed {
+namespace JSC { namespace AOT { namespace Typed {
 
 class Program;
+struct ClassPart;
 struct Type;
 struct Value;
 
@@ -75,6 +73,9 @@ constexpr Representation elementRepresentationOf(ArrayStorage kind)
 inline constexpr IndexingType arrayStorageTestMask = IndexingShapeMask;
 
 ArrayStorage arrayStorageHolding(const Type& elements);
+// The kind that the declared element type gives an array, for its creators and its readers alike. Other: nothing is declared.
+ArrayStorage arrayStorageDeclaredBy(const Program&, const ClassPart& array);
+ArrayStorage arrayStorageDeclaredBy(const Program&, const Type& array);
 ArrayStorage arrayStorageAtAllocation(const Type& elements);
 ArrayStorage arrayStorageAtAllocation(const Program&, const Type& array);
 
@@ -88,12 +89,14 @@ struct ArrayLiteralParts {
 // The prototypes of arrays are locked and take no index, so the realm of compiled code gives a literal no storage of another sort.
 ArrayStorage arrayStorageOfLiteral(const Program&, const Type& array, ArrayLiteralParts);
 ArrayStorage arrayStorageOfLiteral(const Program&, const Value& literal);
+// The kind that an array of constant data has once it is made, in the table of the image too.
+JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode::Array&);
+// No element is a cell, so what the table of the image holds is what the storage of the array holds, and the array points at it until it is written to.
+JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
 // The kind of an array that is created with a length and nothing in it. Its creator has no place for the elements that flow found in the arrays of its site,
-// so the readers predict this kind and not the one that would hold the elements. Nothing for any other creator.
+// so the readers expect this kind and not the one that would hold the elements. Nothing for any other creator.
 std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation);
-std::optional<ArrayStorage> arrayStorageOfNewHoles(const BuiltinOverload&);
 bool canStoreWithoutConversion(ArrayStorage, const Type& stored);
-ArrayStorage arrayStorageAfterStore(ArrayStorage, const Type& stored);
 
 Type typeOfElementRead(ArrayStorage);
 

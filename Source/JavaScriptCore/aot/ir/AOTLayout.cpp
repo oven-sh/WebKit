@@ -9,54 +9,52 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTEdgeResults.h"
 #include "AOTIRProgram.h"
+#include "AOTLayoutUses.h"
+#include "AOTNarrowFieldTypes.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include <algorithm>
+#include <optional>
 #include <utility>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned minFieldsToIndex = 8;
-
-static auto orderByKey(const Vector<Field>& fields)
-{
-    return [&fields](uint32_t a, uint32_t b) {
-        return std::pair(fields[a].key.index(), a) < std::pair(fields[b].key.index(), b);
-    };
-}
+static constexpr unsigned minFieldsToIndex = 4;
 
 void Layout::indexFields()
 {
     m_indexedFieldCount = static_cast<uint32_t>(fields.size());
     m_fieldsByKey.clear();
-    if (fields.size() < minFieldsToIndex)
-        return;
-    m_fieldsByKey.reserveInitialCapacity(fields.size());
-    for (uint32_t i = 0; i < fields.size(); ++i) {
-        if (fields[i].key)
-            m_fieldsByKey.append(i);
-    }
-    std::ranges::sort(m_fieldsByKey, orderByKey(fields));
+    m_keysByHash = 0;
+    if (fields.size() >= minFieldsToIndex)
+        m_fieldsByKey.fill(IndexedField { }, WTF::roundUpToPowerOfTwo(2 * fields.size()));
+    for (uint32_t i = 0; i < fields.size(); ++i)
+        addToIndex(i);
 }
 
-std::optional<uint32_t> Layout::findField(PropertyKeyID key) const
+// The first field with a key is the one that is found.
+void Layout::addToIndex(uint32_t field)
 {
-    RELEASE_ASSERT(m_indexedFieldCount == fields.size());
+    PropertyKeyID key = fields[field].key;
     if (!key)
-        return std::nullopt;
-    if (fields.size() < minFieldsToIndex) {
-        for (uint32_t i = 0; i < fields.size(); ++i) {
-            if (fields[i].key == key)
-                return i;
+        return;
+    uint32_t hash = hashOf(key);
+    m_keysByHash |= 1ull << (hash & 63);
+    if (m_fieldsByKey.isEmpty())
+        return;
+    uint32_t mask = static_cast<uint32_t>(m_fieldsByKey.size()) - 1;
+    for (uint32_t place = (hash >> 6) & mask;; place = (place + 1) & mask) {
+        IndexedField& indexed = m_fieldsByKey[place];
+        if (indexed.key == key)
+            return;
+        if (!indexed.key) {
+            indexed = { key, field };
+            return;
         }
-        return std::nullopt;
     }
-    auto found = std::ranges::lower_bound(m_fieldsByKey, key.index(), { }, [&](uint32_t i) {
-        return fields[i].key.index();
-    });
-    if (found != m_fieldsByKey.end() && fields[*found].key == key)
-        return *found;
-    return std::nullopt;
 }
 
 uint32_t Layout::appendField(Field&& field)
@@ -64,15 +62,12 @@ uint32_t Layout::appendField(Field&& field)
     RELEASE_ASSERT(m_indexedFieldCount == fields.size());
     uint32_t index = static_cast<uint32_t>(fields.size());
     fields.append(WTF::move(field));
-    if (fields.size() == minFieldsToIndex) {
+    if (fields.size() >= minFieldsToIndex && 2 * fields.size() > m_fieldsByKey.size()) {
         indexFields();
         return index;
     }
     ++m_indexedFieldCount;
-    if (fields.size() < minFieldsToIndex || !fields[index].key)
-        return index;
-    auto position = std::ranges::lower_bound(m_fieldsByKey, index, orderByKey(fields));
-    m_fieldsByKey.insert(position - m_fieldsByKey.begin(), index);
+    addToIndex(index);
     return index;
 }
 
@@ -94,6 +89,75 @@ FieldReference declarationOf(const Program& program, FieldReference reference)
 const FieldFlow& flowOf(const Program& program, FieldReference reference)
 {
     return fieldAt(program, declarationOf(program, reference)).flow;
+}
+
+bool hasOnlyCompiledBases(const Program& program, LayoutID id)
+{
+    LayoutID current = declaredLayoutOf(program, id);
+    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+        const Layout& layout = program.at(current);
+        if (!layout.has(LayoutFlags::HasHeritage))
+            return true;
+        current = layout.base;
+    }
+    return false;
+}
+
+bool isNeverRedefined(const Program& program, FieldReference reference)
+{
+    return flowOf(program, reference).stability.contains(FieldStability::IsNeverRedefined);
+}
+
+bool isNeverDeleted(const Program& program, FieldReference reference)
+{
+    return flowOf(program, reference).stability.contains(FieldStability::IsNeverDeleted);
+}
+
+bool isNeverMovedOutByStore(const Program& program, FieldReference reference)
+{
+    return flowOf(program, reference).stability.contains(FieldStability::IsNeverStoredWithOtherType);
+}
+
+bool slotTakesEveryValue(const Program& program, const Field& field)
+{
+    if (field.form.contains(FieldForm::IsAccessor) || field.flags.contains(FieldFlags::IsEnforced) || field.flow.location.deferral != ClosureDeferral::Unknown)
+        return false;
+    return field.declared.flags.contains(PositionFlags::IsExpected) && slotTypeOf(program, field) == TypeTable::anything;
+}
+
+bool staysInSlot(const Program& program, FieldReference reference)
+{
+    return isNeverRedefined(program, reference) && (isNeverMovedOutByStore(program, reference) || slotTakesEveryValue(program, fieldAt(program, declarationOf(program, reference))));
+}
+
+bool staysFilled(const Program& program, FieldReference reference)
+{
+    return flowOf(program, reference).occupancy == Occupancy::AlwaysFilled && isNeverDeleted(program, reference) && staysInSlot(program, reference);
+}
+
+bool isFilledAtBirth(const Program& program, FieldReference reference)
+{
+    Occupancy occupancy = flowOf(program, reference).occupancy;
+    return occupancy == Occupancy::FilledAtBirth || occupancy == Occupancy::FilledWithValueAtBirth;
+}
+
+bool keepsStateOfBirth(const Program& program, FieldReference reference)
+{
+    return flowOf(program, reference).occupancy != Occupancy::Unknown && isNeverDeleted(program, reference) && staysInSlot(program, reference);
+}
+
+bool isFilledWithValueAtBirth(const Program& program, FieldReference reference)
+{
+    return flowOf(program, reference).occupancy == Occupancy::FilledWithValueAtBirth;
+}
+
+bool hasFieldsFilledAtBirth(const Program& program, LayoutID id)
+{
+    for (uint32_t field = 0; field < program.at(id).fields.size(); ++field) {
+        if (isFilledAtBirth(program, { id, field }))
+            return true;
+    }
+    return false;
 }
 
 bool isNeverStored(const Program& program, FieldReference reference)
@@ -135,7 +199,7 @@ LayoutID expectedBaseOf(const Layout& layout)
     case BaseState::Layout:
         return layout.flow.base;
     case BaseState::Unknown:
-        return layout.predictedBase;
+        return layout.base;
     case BaseState::None:
         return layout.classFlow.prototypeBase;
     case BaseState::BuiltinClass:
@@ -146,7 +210,7 @@ LayoutID expectedBaseOf(const Layout& layout)
 
 LayoutID predictedHeritageOf(const Layout& layout)
 {
-    return layout.has(LayoutFlags::HasHeritage) ? layout.predictedBase : LayoutID();
+    return layout.has(LayoutFlags::HasHeritage) ? layout.base : LayoutID();
 }
 
 BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
@@ -170,6 +234,20 @@ bool isEvaluatedOnce(const Program& program, const Layout& layout)
     return layout.constructor && program.at(layout.constructor).captures.isEmpty();
 }
 
+bool guardsAreNeverSet(const Program& program, const Layout& layout)
+{
+    return layout.has(LayoutFlags::IsConstructorFunction) && !isEvaluatedOnce(program, layout);
+}
+
+bool prototypePropertyMayEndGuards(const Program& program, FunctionID id)
+{
+    LayoutID constructed = program.at(id).constructedClass;
+    if (!constructed)
+        return false;
+    const Layout& layout = program.at(constructed);
+    return layout.has(LayoutFlags::IsConstructorFunction) && layout.constructor == id && !isEvaluatedOnce(program, layout);
+}
+
 bool hasSingletonClosure(const Program& program, FunctionID id)
 {
     LayoutID constructed = program.at(id).constructedClass;
@@ -177,6 +255,12 @@ bool hasSingletonClosure(const Program& program, FunctionID id)
         return false;
     const Layout& layout = program.at(constructed);
     return layout.has(LayoutFlags::IsConstructorFunction) && layout.constructor == id && isEvaluatedOnce(program, layout);
+}
+
+bool namesClosureOfTable(const Program& program, const Value& closure)
+{
+    ASSERT(closure.opcode == Opcode::NewClosure);
+    return closure.isHeldByClosureTable() || hasSingletonClosure(program, closure.function());
 }
 
 Layout createDerivedLayout(const Program& program, LayoutID base)
@@ -187,7 +271,7 @@ Layout createDerivedLayout(const Program& program, LayoutID base)
     layout.name = declared.name;
     layout.module = declared.module;
     layout.position = declared.position;
-    layout.flags = { LayoutFlags::IsDerived };
+    layout.flags = LayoutFlags::IsDerived;
     layout.flow.baseState = BaseState::Layout;
     layout.flow.base = base;
     return layout;
@@ -211,13 +295,19 @@ Vector<LayoutSetID, 2> declaredFamiliesOf(const Program& program, LayoutID id)
     return families;
 }
 
-bool isDeclaredIn(const Program& program, std::span<const LayoutSetID> families, PropertyKeyID key)
+Vector<Vector<LayoutID>> declaredViewsOf(const Program& program, const BitVector& declaredLayouts)
 {
-    return std::ranges::any_of(families, [&](LayoutSetID family) {
-        return std::ranges::any_of(program.at(family).members, [&](LayoutID member) {
-            return program.at(member).findField(key).has_value();
-        });
-    });
+    Vector<Vector<LayoutID>> views(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        LayoutID view(index);
+        if (program.at(view).kind != LayoutKind::Record)
+            continue;
+        for (LayoutID member : program.at(program.declaredMembersOf(view)).members) {
+            if (member != view && declaredLayouts.get(member.index()))
+                views[member.index()].append(view);
+        }
+    }
+    return views;
 }
 
 void initializeLayouts(Program& program, BuildContext& build)
@@ -228,8 +318,6 @@ void initializeLayouts(Program& program, BuildContext& build)
             layout.ownFieldCount = static_cast<uint32_t>(layout.fields.size());
         layout.indexFields();
     });
-    program.indexClasses();
-    program.indexNames();
 }
 
 void initializeAddedLayout(Program& program, LayoutID id)
@@ -258,8 +346,12 @@ static void appendBaseFields(Program& program, LayoutID id)
         const Field& baseField = baseLayout.fields[i];
         if (std::optional<uint32_t> present = layout.findField(baseField.key)) {
             Field& field = layout.fields[*present];
-            if (field.flags.contains(FieldFlags::IsInherited))
+            if (field.flags.contains(FieldFlags::IsInherited)) {
                 field.declared = baseField.declared;
+                field.slotType = baseField.slotType;
+                field.form = baseField.form;
+                field.flags.set(FieldFlags::IsEnforced, baseField.flags.contains(FieldFlags::IsEnforced));
+            }
             continue;
         }
         FieldReference declaration = declarationOf(program, { base, i });
@@ -281,6 +373,215 @@ void appendInheritedFields(Program& program, LayoutID id)
     }
     while (!chain.isEmpty())
         appendBaseFields(program, chain.takeLast());
+}
+
+namespace {
+
+class LayoutUsesOfBody {
+public:
+    LayoutUsesOfBody(const Program& program, const BitVector& typesWithLayouts, const Function& function, LayoutUses& uses)
+        : m_program(program)
+        , m_typesWithLayouts(typesWithLayouts)
+        , m_function(function)
+        , m_uses(uses)
+    {
+    }
+
+    void collect();
+
+private:
+    bool namesLayouts(const DeclaredType& declared) const { return m_typesWithLayouts.quickGet(declared.type.index()); }
+    bool isResultOfCall(ValueID) const;
+    void addConversionOfResult(const DeclaredType&);
+    void addTailCasts(const Terminator&);
+
+    const Program& m_program;
+    const BitVector& m_typesWithLayouts;
+    const Function& m_function;
+    LayoutUses& m_uses;
+};
+
+} // anonymous namespace
+
+// The result of a call, awaited or not, about whose layouts no conversion on the way has said anything.
+bool LayoutUsesOfBody::isResultOfCall(ValueID id) const
+{
+    while (true) {
+        const Value& value = m_function.at(id);
+        if (Value::opcodesWithExpectedResult.contains(value.opcode))
+            return true;
+        bool isSameValue = value.opcode == Opcode::Await || (value.opcode == Opcode::Convert && !namesLayouts(value.declared()));
+        // A definition has a smaller id than its uses. Nothing has checked that yet.
+        if (!isSameValue || value.valueOperand().index() >= id.index())
+            return false;
+        id = value.valueOperand();
+    }
+}
+
+// A callee whose own type names the layouts of its result is no built-in that creates what its caller asks for: such a built-in answers `any`.
+void LayoutUsesOfBody::addConversionOfResult(const DeclaredType& declared)
+{
+    bool isResultTypeOfCallee = declared.site && m_program.at(declared.site).kind == TypeSiteKind::CallResult;
+    if (!isResultTypeOfCallee)
+        m_uses.typesOfConvertedResults.quickSet(declared.type.index());
+}
+
+void LayoutUsesOfBody::addTailCasts(const Terminator& terminator)
+{
+    if (terminator.kind != TerminatorKind::ReturnCall || !isResultOfCall(terminator.callOperand()))
+        return;
+    for (TailCast cast : terminator.casts()) {
+        if (!namesLayouts(cast.declared))
+            continue;
+        addConversionOfResult(cast.declared);
+        return;
+    }
+}
+
+void LayoutUsesOfBody::collect()
+{
+    auto name = [&](LayoutID layout) {
+        m_uses.name(layout);
+    };
+    for (const Block& block : m_function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = m_function.at(id);
+            forEachLayout(value, name);
+            if (value.opcode != Opcode::Convert)
+                continue;
+            DeclaredType declared = value.declared();
+            if (namesLayouts(declared) && isResultOfCall(value.valueOperand()))
+                addConversionOfResult(declared);
+        }
+        forEachLayout(block.terminator, name);
+        addTailCasts(block.terminator);
+    }
+}
+
+// The types that name a layout, themselves or in the contents of a class. A type is interned after the contents of its classes.
+static unsigned findTypesWithLayouts(const Program& program, BitVector& result, unsigned firstType)
+{
+    unsigned numberOfTypes = program.types.size();
+    result.ensureSize(numberOfTypes);
+    for (unsigned index = firstType; index < numberOfTypes; ++index) {
+        const Type& type = program.at(TypeID(index));
+        bool hasLayouts = type.layouts || std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+            return std::ranges::any_of(part.contents, [&](TypeID contents) {
+                return contents && result.quickGet(contents.index());
+            });
+        });
+        if (hasLayouts)
+            result.quickSet(index);
+    }
+    return numberOfTypes;
+}
+
+LayoutUseCollector::LayoutUseCollector(const Program& program, size_t numberOfLayouts, unsigned numberOfWorkers)
+    : m_program(program)
+    , m_numberOfLayouts(numberOfLayouts)
+    , m_usesOfWorkers(numberOfWorkers)
+{
+    m_numberOfTypes = findTypesWithLayouts(program, m_typesWithLayouts, 0);
+}
+
+LayoutUses& LayoutUseCollector::usesOf(unsigned worker)
+{
+    std::optional<LayoutUses>& uses = m_usesOfWorkers[worker];
+    if (!uses)
+        uses.emplace(m_numberOfLayouts, m_typesWithLayouts.size());
+    return *uses;
+}
+
+void LayoutUseCollector::collect(const Function& function, unsigned worker)
+{
+    if (function.hasBody())
+        LayoutUsesOfBody(m_program, m_typesWithLayouts, function, usesOf(worker)).collect();
+}
+
+void LayoutUseCollector::collect(const Data& data, unsigned worker)
+{
+    LayoutUses& uses = usesOf(worker);
+    forEachLayout(data, [&](LayoutID layout) {
+        uses.name(layout);
+    });
+}
+
+// What each thread finds is united, so the result does not depend on which thread looked at which function.
+LayoutUses LayoutUseCollector::takeUses()
+{
+    LayoutUses uses(m_numberOfLayouts, m_typesWithLayouts.size());
+    for (std::optional<LayoutUses>& usesOfWorker : m_usesOfWorkers) {
+        if (!usesOfWorker)
+            continue;
+        uses.named.merge(usesOfWorker->named);
+        uses.typesOfConvertedResults.merge(usesOfWorker->typesOfConvertedResults);
+        usesOfWorker = std::nullopt;
+    }
+    return uses;
+}
+
+// A built-in that creates a typed result creates the records that the type names, and in their fields and in the contents of arrays what the types of those name.
+static void nameLayoutsOfConvertedResults(const Program& program, const BitVector& typesWithLayouts, LayoutUses& uses)
+{
+    BitVector visitedTypes(program.types.size());
+    BitVector visitedLayouts(program.layouts.size());
+    Vector<TypeID, 16> worklist;
+    auto visit = [&](TypeID type) {
+        if (type && typesWithLayouts.quickGet(type.index()) && !visitedTypes.quickSet(type.index()))
+            worklist.append(type);
+    };
+
+    for (size_t index : uses.typesOfConvertedResults)
+        visit(TypeID(static_cast<uint32_t>(index)));
+    while (!worklist.isEmpty()) {
+        const Type& type = program.at(worklist.takeLast());
+        for (const ClassPart& part : type.classes) {
+            for (TypeID contents : part.contents)
+                visit(contents);
+        }
+        for (LayoutID member : membersOf(program, type)) {
+            const Layout& layout = program.at(member);
+            if (layout.kind != LayoutKind::Record || visitedLayouts.quickSet(member.index()))
+                continue;
+            uses.name(member);
+            for (const Field& field : layout.fields)
+                visit(field.declared.type);
+        }
+    }
+}
+
+void markUnallocatedLayouts(Program& program, BuildContext& build)
+{
+    LayoutUseCollector collector(program, program.layouts.size(), build.parallelLoops().width());
+    forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index, unsigned worker) {
+        collector.collect(program.functions[index], worker);
+    });
+    markUnallocatedLayouts(program, build.parallelLoops(), collector);
+}
+
+void markUnallocatedLayouts(Program& program, const ParallelLoops& loops, LayoutUseCollector& collector)
+{
+    forEachIndexInParallel(loops, program.data.size(), [&](unsigned index, unsigned worker) {
+        collector.collect(program.data[index], worker);
+    });
+    LayoutUses uses = collector.takeUses();
+    unsigned numberOfTypesSeen = collector.numberOfTypes();
+    BitVector typesWithLayouts = collector.takeTypesWithLayouts();
+    findTypesWithLayouts(program, typesWithLayouts, numberOfTypesSeen);
+    uses.named.ensureSize(program.layouts.size());
+    auto name = [&](LayoutID layout) {
+        uses.name(layout);
+    };
+    for (const ExpectedResult& expected : program.expectedResults)
+        forEachLayout(expected, name);
+    nameLayoutsOfConvertedResults(program, typesWithLayouts, uses);
+
+    forEachIndexInParallel(loops, program.numberOfLayoutsAsRead(), [&](unsigned index) {
+        Layout& layout = program.layouts[index];
+        bool isDeclaredType = layout.kind == LayoutKind::Record && !layout.constructor;
+        if (isDeclaredType && (layout.has(LayoutFlags::IsTypeParameter) || !uses.named.quickGet(index)))
+            layout.flow.allocation = AllocationState::NeverAllocated;
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

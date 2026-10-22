@@ -229,6 +229,14 @@ void Diagnostics::append(Vector<InternalError>&& errors)
     m_hasErrors.store(true, std::memory_order_relaxed);
 }
 
+void Diagnostics::resolveLocations(const Typed::Program& program)
+{
+    Locker locker { m_lock };
+    RELEASE_ASSERT(!m_isFinished);
+    AOT::resolveLocations(m_userDiagnostics, &program);
+    AOT::resolveLocations(m_internalErrors, &program);
+}
+
 void Diagnostics::finish(const Typed::Program* program)
 {
     Locker locker { m_lock };

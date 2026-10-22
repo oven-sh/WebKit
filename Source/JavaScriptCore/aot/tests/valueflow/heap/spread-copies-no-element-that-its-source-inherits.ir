@@ -1,0 +1,21 @@
+# above = {}; above[0] = "text"; source = Object.create(above) as a literal; target = { ...source }; return target[0]
+# A spread copies the own properties of its source. What lies under an index on an object above the source stays there.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Empty" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Integer integer=0
+    v2 = String string="text"
+    ElemSet v0, v1, v2
+    v4 = NewObject v0 layout=L0
+    v5 = NewObject layout=L0
+    CopyDataProperties v5, v4
+    v7 = FinishObject v5
+    v8 = ElemGet v7, v1
+    Return v8
+}

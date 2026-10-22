@@ -1,0 +1,29 @@
+# A block that nothing reaches any more may still jump to the merge, and what it passes has no form: the string stays where it is made.
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="deadWayIn" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
+  b0(v0: number, v1: number, v2: number, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string=","
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string=","
+    v7 = Add v1, v6
+    Jump -> next b3(v7)
+  b3(v8: string):
+    v9 = Strcat v8, v2
+    Return v9
+  b4():
+    v10 = String string="x"
+    Jump -> next b3(v10)
+}
+# CHECK-LABEL: function f0 name="deadWayIn"
+# CHECK: b1():
+# CHECK: Jump -> next b3(v5)
+# CHECK: b2():
+# CHECK: Jump -> next b3(v7)
+# CHECK: b3(v8: string):

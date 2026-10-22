@@ -7,6 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosure.h"
+#include "AOTSavedFrame.h"
+#include "AOTSlimClosure.h"
 #include "ArgList.h"
 #include "CallData.h"
 #include "JSCJSValue.h"
@@ -24,6 +27,24 @@ namespace AOT {
 JS_EXPORT_PRIVATE JSValue callCompiledCode(VM&, JSObject* callee, const CallData&, JSValue thisValue, JSCell* context, const ArgList&);
 JS_EXPORT_PRIVATE JSValue callCompiledCode(JSGlobalObject*, JSCell* closure, JSValue thisValue, const ArgList&);
 JS_EXPORT_PRIVATE JSObject* constructCompiledCode(VM&, JSObject* constructor, const CallData&, const ArgList&, JSValue newTarget);
+
+ALWAYS_INLINE CallData compiledCallDataOf(JSCell* cell)
+{
+    switch (cell->type()) {
+    case CompiledClosureType:
+        return Closure::getCallData(cell);
+    case SlimClosureType:
+        return SlimClosure::getCallData(cell);
+    case SlimClosureWithPropertiesType:
+        return ReifiedSlimClosure::getCallData(cell);
+    case ObjectType:
+        if (cell->classInfo() == SavedFrame::info())
+            return SavedFrame::getCallData(cell);
+        return { };
+    default:
+        return { };
+    }
+}
 
 template<typename... Args>
 ALWAYS_INLINE JSValue enterCompiledCode(VM& vm, const CallData& callData, JSObject* callee, JSValue thisValue, JSCell* context, Args... args)

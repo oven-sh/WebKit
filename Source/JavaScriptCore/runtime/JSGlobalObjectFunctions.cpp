@@ -867,7 +867,6 @@ static CodeBlock* getCallerCodeBlock(CallFrame* callFrame)
     return callerFrame->codeBlock();
 }
 
-// https://tc39.es/ecma262/#sec-copydataproperties
 #if ENABLE(AOT)
 // False, with nothing copied, where listing the own properties of the compiled object may run code, or one of them is named __proto__.
 static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSObject* source, const Invocable<bool(PropertyName)> auto& isExcluded)
@@ -897,6 +896,7 @@ static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSOb
 }
 #endif
 
+// https://tc39.es/ecma262/#sec-copydataproperties
 JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

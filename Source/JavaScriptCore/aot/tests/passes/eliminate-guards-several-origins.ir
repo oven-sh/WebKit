@@ -1,4 +1,4 @@
-# A guard that one of two tests stands behind proves less than either test, so it folds neither a repetition of one of them nor the epoch test that renews it
+# A guard that one of two tests stands behind proves less than either test, so it does not fold a repetition of one of them
 # FORM: Prepared
 # RUN: pass EliminateGuards
 # STATISTIC: GuardsEliminated = 1
@@ -17,22 +17,22 @@ function f0 name="oneOfTheTestsAgain" parameters=[{type=object}, {type=boolean}]
     v3 = ShapeTest v0 layouts=[L1]
     Branch v3 -> taken b3(| 0), notTaken b5()
   b3(v4):
-    v5 = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Predicted
+    v5 = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Expected
     v6 = ShapeTest v0 layouts=[L0]
     Branch v6 -> taken b4(| 0), notTaken b5()
   b4(v7):
-    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Predicted
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
     Return v8
   b5():
     Return v0
 }
 # CHECK-LABEL: function f0 name="oneOfTheTestsAgain"
 # CHECK: b3(v4: guard):
-# CHECK-NEXT: v5: number = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Predicted
+# CHECK-NEXT: v5: number = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Expected
 # CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v7: guard):
-# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
 
 function f1 name="sameTestOnBothArmsAgain" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object, v1: boolean):
@@ -44,11 +44,11 @@ function f1 name="sameTestOnBothArmsAgain" parameters=[{type=object}, {type=bool
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b3(| 0), notTaken b5()
   b3(v4):
-    v5 = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Predicted
+    v5 = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Expected
     v6 = ShapeTest v0 layouts=[L0]
     Branch v6 -> taken b4(| 0), notTaken b5()
   b4(v7):
-    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Predicted
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
     Return v8
   b5():
     Return v0
@@ -56,30 +56,4 @@ function f1 name="sameTestOnBothArmsAgain" parameters=[{type=object}, {type=bool
 # CHECK-LABEL: function f1 name="sameTestOnBothArmsAgain"
 # CHECK: b3(v4: guard
 # CHECK-NOT: ShapeTest
-# CHECK: = GetSlot v0, v7 key="x" receivers=[L0] level=Predicted
-
-function f2 name="epochTest" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
-    v2 = GetShapeEpoch
-    Branch v1 -> taken b1(), notTaken b2()
-  b1():
-    v3 = ShapeTest v0 layouts=[L0]
-    Branch v3 -> taken b3(| 0), notTaken b5()
-  b2():
-    v4 = ShapeTest v0 layouts=[L1]
-    Branch v4 -> taken b3(| 0), notTaken b5()
-  b3(v5):
-    v6 = IsShapeEpochCurrent v2, v5
-    Branch v6 -> taken b4(| 0), notTaken b5()
-  b4(v7):
-    v8 = GetSlot v0, v7 key="x" receivers=[L0, L1] level=Predicted
-    Return v8
-  b5():
-    Return v0
-}
-# CHECK-LABEL: function f2 name="epochTest"
-# CHECK: b3(v5: guard):
-# CHECK-NEXT: v6: boolean = IsShapeEpochCurrent v2, v5
-# CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v7: guard):
-# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0, L1] level=Predicted
+# CHECK: = GetSlot v0, v7 key="x" receivers=[L0] level=Expected

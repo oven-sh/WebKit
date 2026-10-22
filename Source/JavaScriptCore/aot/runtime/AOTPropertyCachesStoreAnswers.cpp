@@ -64,9 +64,17 @@ static ChainWalk walkChainAbove(const StoreQuery& query)
     return walkChain({ query.globalObject, before, hasSamePrototype ? query.base : nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, query.uid);
 }
 
-OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset offset)
+bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl* uid)
 {
-    if (before->isDictionary() || after->isDictionary() || after->previousID() != before || before->typeInfoBlob() != after->typeInfoBlob())
+    if (after->transitionKind() != TransitionKind::PropertyRunAddition || before->isDictionary() || !after->hasSameCellFlagsAs(*before))
+        return false;
+    PropertyOffset offsetOfLastName = invalidOffset;
+    return Structure::addPropertyTransitionToExistingStructure(before, uid, 0, offsetOfLastName) == after;
+}
+
+OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset offset, bool leadsToStructureOfRun)
+{
+    if (before->isDictionary() || after->isDictionary() || (after->previousID() != before && !leadsToStructureOfRun) || before->typeInfoBlob() != after->typeInfoBlob())
         return OutOfLineStorageChange::Unsupported;
     unsigned capacityBefore = before->outOfLineCapacity();
     unsigned capacityAfter = after->outOfLineCapacity();
@@ -87,9 +95,20 @@ bool isHostObjectOverridingPut(Structure* structure)
     return structure->typeInfo().overridesPut() && structure->typeInfo().type() == ObjectType;
 }
 
+// Whether an object above has the name, and in which form, is what the walk by name finds. This asks whether each of them takes part in a store as an ordinary object does.
+// A function does, for every name but its own, and so does a compiled object. Function.prototype has accessors, so the engine's test for its megamorphic caches fails below it for every name.
 static bool storesAreOrdinaryAlongPrototypeChain(Structure* structure)
 {
-    return canUseMegamorphicPutFastPath(structure);
+    for (;;) {
+        TypeInfo typeInfo = structure->typeInfo();
+        bool hasOrdinaryPut = !typeInfo.overridesPut() || isFunctionType(typeInfo.type()) || structure->isCompiledStructure();
+        if (typeInfo.overridesGetPrototype() || structure->hasPolyProto() || isProxyType(typeInfo.type()) || !hasOrdinaryPut)
+            return false;
+        JSValue prototype = structure->storedPrototype();
+        if (!prototype.isObject())
+            return true;
+        structure = asObject(prototype)->structure();
+    }
 }
 
 bool hasOrdinaryDefineOwnProperty(Structure* structure)
@@ -104,14 +123,16 @@ static bool isFunctionWithOrdinaryPut(VM& vm, JSCell* base, Structure* structure
         FunctionKindData kind = closure->kind();
         if (closure->classData() || kind.callable() == CallableKind::Bound || kind.isConstructor)
             return false;
-    } else if (base->type() != JSFunctionType || base->classInfo() != JSBoundFunction::info())
+    } else if (base->type() != SlimClosureWithPropertiesType && (base->type() != JSFunctionType || base->classInfo() != JSBoundFunction::info()))
         return false;
-    if (isFunctionOwnName(vm, uid))
+    // Closure::put() and ReifiedSlimClosure::put() note a display name, and Closure::put() refuses some names on a built-in function, which shares its Structure with the closures of the program.
+    if (isFunctionOwnName(vm, uid) || uid == vm.propertyNames->displayName.impl() || Closure::isNameThatBuiltinFunctionsRefuse(vm, uid))
         return false;
     if (structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype())
         return false;
+    // Nothing is above a function without a prototype.
     JSValue prototype = structure->storedPrototype();
-    return prototype.isObject() && storesAreOrdinaryAlongPrototypeChain(asObject(prototype)->structure());
+    return prototype.isNull() || (prototype.isObject() && storesAreOrdinaryAlongPrototypeChain(asObject(prototype)->structure()));
 }
 
 bool hasOrdinaryDefineForName(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid)
@@ -135,9 +156,9 @@ static bool hasOrdinarySetForName(VM& vm, const StoreQuery& query)
     return !query.structureBefore->typeInfo().overridesPut();
 }
 
-static OutOfLineStorageChange storageChangeOfCachedAddition(VM& vm, Structure* before, Structure* after, PropertyOffset offset, bool isFunction)
+static OutOfLineStorageChange storageChangeOfCachedAddition(VM& vm, Structure* before, Structure* after, PropertyOffset offset, bool isFunction, bool leadsToStructureOfRun)
 {
-    OutOfLineStorageChange change = outOfLineStorageChange(before, after, offset);
+    OutOfLineStorageChange change = outOfLineStorageChange(before, after, offset, leadsToStructureOfRun);
     if (change == OutOfLineStorageChange::Stays)
         return change;
     if (change == OutOfLineStorageChange::Unsupported || (isJSFunctionType(before->typeInfo().type()) && !isFunction) || before->isCompiledStructure())
@@ -212,18 +233,22 @@ static std::optional<PropertyAnswer> classifyReplacement(const StoreQuery& query
 static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
 {
     const PutPropertySlot& slot = query.slot;
-    if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::NewProperty || slot.base() != query.base)
-        return std::nullopt;
     VM& vm = query.globalObject->vm();
     Structure* before = query.structureBefore;
     Structure* after = query.base->structure();
+    // A store that came past an object with a put() of its own, a function or a compiled object, leaves nothing in the slot. The Structure of the receiver says what was done to it.
+    bool slotSaysSo = slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty && slot.base() == query.base;
+    bool structureSaysSo = after->previousID() == before && after->transitionKind() == TransitionKind::PropertyAddition && after->transitionPropertyName() == query.uid;
+    bool isLastOfRun = !slotSaysSo && !structureSaysSo && isLastAdditionOfRun(before, after, query.uid);
+    if (!slotSaysSo && !structureSaysSo && !isLastOfRun)
+        return std::nullopt;
     if (before->isDictionary() || after->isDictionary() || before->mayBePrototype() || before->mayHaveImmutableProperties() || !after->propertyAccessesAreCacheable())
         return std::nullopt;
     // A bound closure leaves the Structure it shares with other closures at its first store.
-    if (after->previousID() != before)
+    if (after->previousID() != before && !isLastOfRun)
         return uncacheableOnce(query);
     unsigned attributes = 0;
-    PropertyOffset offset = slot.cachedOffset();
+    PropertyOffset offset = slotSaysSo ? slot.cachedOffset() : after->transitionOffset();
     if (after->get(vm, query.uid, attributes) != offset || attributes)
         return std::nullopt;
 
@@ -240,7 +265,7 @@ static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
         answer.changeableObjects = WTF::move(walk.changeableObjects);
     }
 
-    switch (storageChangeOfCachedAddition(vm, before, after, offset, isFunction)) {
+    switch (storageChangeOfCachedAddition(vm, before, after, offset, isFunction, isLastOfRun)) {
     case OutOfLineStorageChange::Unsupported:
         return std::nullopt;
     case OutOfLineStorageChange::Stays:
@@ -267,6 +292,17 @@ static std::optional<PropertyAnswer> classifyOwnSetterCall(const StoreQuery& que
     return ownAnswer(query, PropertyAnswerKind::Accessor, offset);
 }
 
+static PropertyAnswer inheritedSetterAnswer(const StoreQuery& query, ChainWalk&& walk)
+{
+    PropertyAnswer answer;
+    answer.kind = PropertyAnswerKind::Accessor;
+    answer.access = accessFor(query.mode);
+    answer.offset = walk.offset;
+    answer.holder = walk.holder;
+    answer.changeableObjects = WTF::move(walk.changeableObjects);
+    return answer;
+}
+
 static std::optional<PropertyAnswer> classifySetterCall(const StoreQuery& query)
 {
     if (query.mode == PutMode::Define || !query.slot.isCacheableSetter())
@@ -281,15 +317,9 @@ static std::optional<PropertyAnswer> classifySetterCall(const StoreQuery& query)
             return std::nullopt;
     }
     ChainWalk walk = walkChainAbove(query);
-    if (storeThroughChain(walk) != StoreThroughChain::CallsSetter || walk.holder != holder)
+    if (storeThroughChain(walk) != StoreThroughChain::CallsSetter || walk.holder != holder || !isValidOffset(walk.offset))
         return uncacheableAfter(query, WTF::move(walk));
-    PropertyAnswer answer;
-    answer.kind = PropertyAnswerKind::Accessor;
-    answer.access = accessFor(query.mode);
-    answer.offset = walk.offset;
-    answer.holder = holder;
-    answer.changeableObjects = WTF::move(walk.changeableObjects);
-    return answer;
+    return inheritedSetterAnswer(query, WTF::move(walk));
 }
 
 static std::optional<PropertyAnswer> classifyCustomSetterCall(const StoreQuery& query)
@@ -305,7 +335,11 @@ static std::optional<PropertyAnswer> classifyStoreDecidedByChain(const StoreQuer
         return std::nullopt;
     if (!structureProvesOwnAbsence(query.globalObject->vm(), query.base, query.structureBefore, query.uid, ChainWalkMode::MayAllocate))
         return std::nullopt;
-    return uncacheableAfter(query, walkChainAbove(query));
+    ChainWalk walk = walkChainAbove(query);
+    bool receiverStoresAsOrdinaryObject = !query.structureBefore->typeInfo().overridesPut() && !isCopyOnWrite(query.structureBefore->indexingMode());
+    if (receiverStoresAsOrdinaryObject && storeThroughChain(walk) == StoreThroughChain::CallsSetter && isValidOffset(walk.offset) && walk.owner->structure()->isCompiledStructure())
+        return inheritedSetterAnswer(query, WTF::move(walk));
+    return uncacheableAfter(query, WTF::move(walk));
 }
 
 static PropertyAnswer classifyStoreToCompiledObject(const StoreQuery& query)

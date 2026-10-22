@@ -1,0 +1,32 @@
+# What a base constructor allocates under the prototype of new.target is expected to be its own layout or one below it. A class is below where flow has proven its parent and, where flow
+# says nothing of the parent, where the program text names it: `class Below extends Base {}` enters Base by super(), and the object is Below's. A class whose parent flow has proven to be another is not below
+# FORM: Prepared
+# RUN: print
+# CHECK-LABEL: name="parentNamedByText"
+# CHECK: v3: object ~ L0|L1|L2|L4 = NewObject v2 layout=L0
+# CHECK-LABEL: name="parentProvenToBeAnother"
+# CHECK: v3: object ~ L3 = NewObject v2 layout=L3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" constructor=f0 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L1 kind=Instance name="Below" base=L0 constructor=f1 flags=[HasHeritage]
+layout L2 kind=Instance name="BelowThat" base=L1 constructor=f2 flags=[HasHeritage]
+layout L3 kind=Instance name="Stranger" constructor=f3 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L4 kind=Instance name="Moved" base=L3 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0}
+function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="BelowThat" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="Stranger" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="Moved" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="parentNamedByText" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+function f6 name="parentProvenToBeAnother" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    Return v3
+}

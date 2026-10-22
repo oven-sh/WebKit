@@ -1,4 +1,4 @@
-# The result names exactly the fields and captures in which a frame cell holds a pointer to a frame cell
+# The result names exactly the captures in which a frame cell holds a pointer to a frame cell, and no field: a closure held by an environment field is on the heap
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # RUN(PLAN): frame-plan flow
@@ -7,9 +7,7 @@
 # CHECK-NEXT: L1 only in frames
 # CHECK-NEXT: L2 may be in a frame
 # CHECK-NEXT: L3 may be in a frame
-# CHECK-NEXT: f8 only in frames
 # CHECK-NEXT: f10 only in frames
-# CHECK-NEXT: L0.2 holds frame pointers
 # CHECK-NEXT: f10 capture 1 holds frame pointers
 # CHECK-NEXT: layout L0
 
@@ -41,10 +39,11 @@ function f1 name="closureInThirdField" parameters=[{type=anything}] results=[{ty
     Return v3
 }
 # CHECK-LABEL: function f1 name="closureInThirdField"
-# CHECK: = NewClosure function=f8 {{*}}storage=Frame
+# CHECK: = NewClosure function=f8
+# CHECK-NOT: storage=
 # CHECK: = NewObject {{*}}layout=L0 {{*}}storage=Frame
 # PLAN-LABEL: function f1
-# PLAN-NEXT: v1: Frame
+# PLAN-NEXT: v1: Heap HeldByHeapCell by v2(3)
 # PLAN-NEXT: v2: Frame
 
 function f2 name="environmentInSecondCapture" parameters=[{type=anything}] results=[{type=anything}] {
@@ -76,14 +75,14 @@ function f4 name="heapSite" parameters=[{type=anything}] results=[{type=anything
   b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = NewClosure v1 function=f11
-    v3 = Call v0, -, v2
+    v3 = Call v0, -, v0, v0, v2
     Return v3
 }
 # CHECK-LABEL: function f4 name="heapSite"
 # CHECK-NOT: storage=
 # PLAN-LABEL: function f4
 # PLAN-NEXT: v1: Heap MaterializationDoesNotPay
-# PLAN-NEXT: v2: Heap Escapes by v3(2)
+# PLAN-NEXT: v2: Heap Escapes by v3(4)
 
 function f5 name="closureIsInitialValueOfRecord" results=[{type=anything}] {
   b0():
@@ -135,7 +134,7 @@ function f11 name="testsOptions" kind=Arrow captures=[{type=env L2}] results=[{t
     Return v2
 }
 function f12 name="testsCallback" parameters=[{type=L3}] results=[{type=anything}] {
-  b0(v0: object ? L3):
+  b0(v0: L3):
     v1 = PropGet v0 key="callback"
     v2 = ToBoolean v1
     Return v2

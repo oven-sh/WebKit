@@ -18,34 +18,43 @@ public:
     void generateShapeTest(const ValueContext&);
     void generateIsSlotFilled(const ValueContext&);
     void generateHasNoExtraProperties(const ValueContext&);
+    void generateHasNoFieldOutsideSlot(const ValueContext&);
+    void generateHasBirthFieldsFilled(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
     void generateBelongsToInstance(const ValueContext&);
     void generateIsPristine(const ValueContext&);
     void generateHasArrayStorage(const ValueContext&);
     void generateIsInBounds(const ValueContext&);
+    void generateIsElementPresent(const ValueContext&);
+    void generateIsInsideView(const ValueContext&);
     void generateIsNotThenable(const ValueContext&);
-    void generateIsMemberUnchanged(const ValueContext&);
-    void generateIsPrototypeLinkUnchanged(const ValueContext&);
-    void generateIsClassEvaluatedOnce(const ValueContext&);
-    void generateIsRequireEdgeReady(const ValueContext&);
+    void generateAreMembersUnchanged(const ValueContext&);
     void generateHasKeyOrder(const ValueContext&);
-    void generateIsShapeEpochCurrent(const ValueContext&);
     void generateIsClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
 
-    Condition isGuardBitSet(GuardBitID);
+    Condition holds(GuardBitID);
     Condition belongsToInstance(CellPointer);
+    // Whether the cell is a compiled closure that inherits from the realm's Function.prototype and has only the properties it was created with.
+    Condition isClosureAsCreated(CellPointer);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
 
 private:
     Condition isPresentCell(Boxed, const Type&);
+    bool standsInFrontOfReadsAlone(const ValueContext& test);
+    uint8_t flagsTestedBy(const Value& test);
+    void planTestsOfFlags();
+    void generateTestOfFlags(const ValueContext&);
     CellPointer untestedCell(const OperationContext&, ValueID);
     CellPointer cellOrElse(const OperationContext&, ValueID, B3::FrequentedBlock isNotCell);
 
     Condition hasInstanceRealm(Pointer structure);
     void branchOnIsNotThenable(Boxed, const Type&, BranchTargets);
     void branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTargets);
+
+    bool m_didPlanTestsOfFlags { false };
+    HashMap<ValueID, uint8_t> m_flagsToTest;
 };
 
 } } } // namespace JSC::AOT::Typed

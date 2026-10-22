@@ -11,6 +11,7 @@
 #include "AOTCompactTable.h"
 #include "AOTImage.h"
 #include "AOTOperationScope.h"
+#include "AOTStringBuilderStorage.h"
 #include "AOTTableInImage.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
@@ -59,22 +60,19 @@ static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject*
     return baseImpl->is8Bit() ? find(baseImpl->span8().subspan(offset, length)) : find(baseImpl->span16().subspan(offset, length));
 }
 
-static ALWAYS_INLINE CompactTable::QuickLookup tryFindInImage(JSObject* collection, JSValue key)
+static CompactTable* heapTableOrNull(JSGlobalObject* globalObject, JSObject* collection)
 {
-    using QuickLookup = CompactTable::QuickLookup;
-    if (!key.isString())
-        return QuickLookup::Unknown;
     CompactTable* table = compactTableOrNull(collection);
-    const StringImpl* impl = asString(key)->tryGetValueImpl();
-    if (!table || !impl || !impl->hasHash() || !table->isInImage())
-        return QuickLookup::Unknown;
-    return table->tableInImage().find(*Image::current(), StringView(*impl), impl->existingHash()) ? QuickLookup::Found : QuickLookup::Absent;
+    if (!table || !table->isInImage()) [[likely]]
+        return table;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    CompactTable* moved = CompactTable::tryMoveToHeap(globalObject, collection);
+    scope.clearException();
+    return moved ? moved : table;
 }
 
 static ALWAYS_INLINE CompactTable::QuickLookup tryFindKeyQuickly(JSObject* collection, JSValue key)
 {
-    if (auto lookup = tryFindInImage(collection, key); lookup != CompactTable::QuickLookup::Unknown)
-        return lookup;
     JSValue value;
     return tryFindSubstringQuickly(collection, key, value);
 }
@@ -114,7 +112,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance
 static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGeneric(Instance* instance, JSCell* map, EncodedJSValue lookupKey)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapGet);
-    CompactTable* table = compactTableOrNull(uncheckedDowncast<JSMap>(map));
+    CompactTable* table = heapTableOrNull(globalObject, uncheckedDowncast<JSMap>(map));
     if (!table)
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     auto entry = table->find(globalObject, JSValue::decode(lookupKey));
@@ -125,7 +123,7 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGeneri
 static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGeneric(Instance* instance, JSCell* map, EncodedJSValue lookupKey)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapHas);
-    CompactTable* table = compactTableOrNull(uncheckedDowncast<JSMap>(map));
+    CompactTable* table = heapTableOrNull(globalObject, uncheckedDowncast<JSMap>(map));
     if (!table)
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
     auto entry = table->find(globalObject, JSValue::decode(lookupKey));
@@ -136,7 +134,7 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGeneri
 static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGeneric(Instance* instance, JSCell* set, EncodedJSValue lookupKey)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetHas);
-    CompactTable* table = compactTableOrNull(uncheckedDowncast<JSSet>(set));
+    CompactTable* table = heapTableOrNull(globalObject, uncheckedDowncast<JSSet>(set));
     if (!table)
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
     auto entry = table->find(globalObject, JSValue::decode(lookupKey));
@@ -144,9 +142,63 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGeneri
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(!!entry)));
 }
 
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetByKeyPartsGeneric(Instance*, JSCell*, uint32_t, const EncodedJSValue*);
+static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES hasByKeyPartsGeneric(Instance*, JSCell*, uint32_t, const EncodedJSValue*);
+
+JSC_DEFINE_JIT_OPERATION(operationAOTMapGetByKeyParts, EncodedJSValue, (Instance* instance, JSCell* map, uint32_t count, const EncodedJSValue* parts))
+{
+    ShortKeyCharacters key;
+    if (tryWriteShortKey(unsafeMakeSpan(parts, count), key)) [[likely]] {
+        CompactTable* table = compactTableOrNull(uncheckedDowncast<JSMap>(map));
+        std::optional<uint32_t> entry = table ? table->find(key.span()) : std::nullopt;
+        if (!entry)
+            return { JSValue::encode(jsUndefined()), nullptr };
+        if (table->isHeapTable()) [[likely]]
+            return { JSValue::encode(table->valueAt(*entry)), nullptr };
+    }
+    [[clang::musttail]] return mapGetByKeyPartsGeneric(instance, map, count, parts);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTHasByKeyParts, size_t, (Instance* instance, JSCell* collection, uint32_t count, const EncodedJSValue* parts))
+{
+    ShortKeyCharacters key;
+    if (tryWriteShortKey(unsafeMakeSpan(parts, count), key)) [[likely]] {
+        CompactTable* table = compactTableOrNull(asObject(collection));
+        return { table && table->find(key.span()), nullptr };
+    }
+    [[clang::musttail]] return hasByKeyPartsGeneric(instance, collection, count, parts);
+}
+
+static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetByKeyPartsGeneric(Instance* instance, JSCell* map, uint32_t count, const EncodedJSValue* parts)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapGetByKeyParts);
+    JSString* key = StringBuilderStorage::concatenate(globalObject, *instance, unsafeMakeSpan(parts, count), StringBuilderStorage::StringUse::LikelyKey);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    CompactTable* table = compactTableOrNull(uncheckedDowncast<JSMap>(map));
+    if (!table)
+        OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+    auto entry = table->find(globalObject, key);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(entry ? table->valueAt(*entry) : jsUndefined()));
+}
+
+static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES hasByKeyPartsGeneric(Instance* instance, JSCell* collection, uint32_t count, const EncodedJSValue* parts)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasByKeyParts);
+    JSString* key = StringBuilderStorage::concatenate(globalObject, *instance, unsafeMakeSpan(parts, count), StringBuilderStorage::StringUse::LikelyKey);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    CompactTable* table = compactTableOrNull(asObject(collection));
+    if (!table)
+        OPERATION_RETURN(scope, false);
+    auto entry = table->find(globalObject, key);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    OPERATION_RETURN(scope, entry.has_value());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue lookupKey, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapSet);
+    instance->allocation.compactTableGrowthPlans = CompactTable::growthPlans();
     uncheckedDowncast<JSMap>(map)->set(globalObject, JSValue::decode(lookupKey), JSValue::decode(value));
     OPERATION_RETURN(scope, JSValue::encode(map));
 }
@@ -154,6 +206,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance* instance
 JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue lookupKey))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetAdd);
+    instance->allocation.compactTableGrowthPlans = CompactTable::growthPlans();
     uncheckedDowncast<JSSet>(set)->add(globalObject, JSValue::decode(lookupKey));
     OPERATION_RETURN(scope, JSValue::encode(set));
 }

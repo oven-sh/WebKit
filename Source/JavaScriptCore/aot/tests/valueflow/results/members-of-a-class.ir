@@ -1,8 +1,8 @@
 # A class whose one definition runs at most once is evaluated at most once. Its members stay what it defines as long as nothing stores to, deletes from or redefines the object that holds them:
-# a store to the prototype object of the second class takes that away from all its members
+# a store to the prototype object of the second class under the name of its method takes that away from the method, and what is stored is listed beside it. Nothing takes the closure of its method as a value, so that closure is only ever called
 # RUN: valueflow-apply
 # CHECK: layout L0 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f2 mutability=Fixed isWritableData=true}]
-# CHECK: layout L1 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="handle" function=f4}]
+# CHECK: layout L1 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="handle" function=f4 closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="handle" function=f2 isWritableData=true}, {key="handle" function=f4 closureUse=CalledOnly isWritableData=true}]}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -31,6 +31,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v14 = PropGet v12 key="y"
     Return
 }
+# An empty slot reads as undefined: the read is one site and has no test.
 # CHECK: "x" {L0 L1 L2} read weight={{*}} sites=1
 # CHECK-NEXT: one location Double @
 # CHECK-NEXT: without slot {L2}

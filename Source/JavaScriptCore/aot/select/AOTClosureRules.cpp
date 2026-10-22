@@ -18,58 +18,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isDeferredSlot(const PlacedSlot& slot, FunctionID function)
-{
-    return slot.representation == SlotRepresentation::DeferredClosure && slot.deferredFunction == function;
-}
-
-static bool initializesDeferredSlot(SelectionContext& context, const Value& allocation, ValueID stored, FunctionID function)
-{
-    std::span<const ValueID> values = allocation.valuesOperands();
-    auto value = std::ranges::find(values, stored);
-    if (value == values.end())
-        return false;
-    uint32_t field = allocation.fields()[value - values.begin()];
-    return isDeferredSlot(context.slots().slot(allocation.layout(), field), function);
-}
-
-static bool storesIntoDeferredSlot(SelectionContext& context, const Value& store, ValueID stored, FunctionID function)
-{
-    std::optional<uint8_t> storedOperand = storedOf(store.opcode);
-    if (accessClassOf(store.opcode) != AccessClass::Slot || !storedOperand || store.operand(*storedOperand) != stored)
-        return false;
-
-    const Program& program = context.program();
-    const SlotPlan& slots = context.slots();
-    PropertyKeyID key = store.key();
-    SlotAgreement agreement = slots.agreementOf(program, key, store.receivers());
-    if (!agreement.hasOneLocation() || !agreement.coversEveryMember())
-        return false;
-    return std::ranges::all_of(agreement.groups[0].members, [&](LayoutID member) {
-        std::optional<uint32_t> field = program.at(member).findField(key);
-        return field && isDeferredSlot(slots.slot(member, *field), function);
-    });
-}
-
-static bool isDeferredStore(SelectionContext& context, ValueID id)
-{
-    const Function& function = context.function();
-    ValueID stored = id;
-    std::optional<ValueID> user = context.singleUser(stored);
-    while (user && function.at(*user).opcode == Opcode::Upcast) {
-        stored = *user;
-        user = context.singleUser(stored);
-    }
-    if (!user)
-        return false;
-
-    FunctionID closureFunction = function.at(id).function();
-    const Value& store = function.at(*user);
-    if (store.opcode == Opcode::NewObject)
-        return initializesDeferredSlot(context, store, stored, closureFunction);
-    return storesIntoDeferredSlot(context, store, stored, closureFunction);
-}
-
 static ClosureForm cellFormOf(SelectionContext& context, const Value& closure)
 {
     ClosureForm form = closure.closureForm();
@@ -142,9 +90,9 @@ static void addAllocationRemarks(SelectionContext& context, std::span<const Valu
 static ClosureForm chooseForm(SelectionContext& context, ValueID id)
 {
     const Value& closure = context.function().at(id);
-    if (closure.isMadeOnDemand() || isDeferredStore(context, id))
+    if (closure.isMadeOnDemand())
         return ClosureForm::Deferred;
-    if (hasSingletonClosure(context.program(), closure.function()))
+    if (namesClosureOfTable(context.program(), closure))
         return ClosureForm::Singleton;
     return context.slots().closureFormOf(closure.function());
 }
@@ -158,7 +106,7 @@ void selectClosureForm(SelectionContext& context)
     Function& function = context.pass().function;
     uint32_t numberOfChangedForms = 0;
     for (ValueID id : closures) {
-        Value& closure = function.at(id);
+        Value& closure = function.edit(id);
         ClosureForm form = chooseForm(context, id);
         if (closure.closureForm() == form)
             continue;

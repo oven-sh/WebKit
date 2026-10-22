@@ -1,4 +1,4 @@
-# The conversion of an argument that can never pass the entry test of the callee always throws: it has the type never, it ends its block, and neither the conversions behind it nor the call are made
+# An argument whose type has nothing in common with the type its callee declares never gets to the call: its conversion has the type never, it ends its block, and neither the conversions behind it nor the call are left
 # FORM: Prepared
 # RUN: pass ResolveCalls
 # CHECK: outcome: Changed
@@ -31,9 +31,9 @@ function f4 name="first-argument-never-fits" parameters=[{type=f0}, {type=number
 }
 # CHECK-LABEL: function f4 name="first-argument-never-fits"
 # CHECK-NEXT: b0(v0: f0, v1: number, v2: anything):
-# CHECK-NEXT: : never = Claim v1 castType=string cause=AddedByPass
+# CHECK-NEXT: : never = AssumeType v1 castType=string
 # CHECK-NEXT: Unreachable
-# CHECK-NOT: Claim
+# CHECK-NOT: AssumeType
 # CHECK-NOT: CallDirect
 function f5 name="second-argument-never-fits" parameters=[{type=f0}, {type=anything}, {type=string}] results=[{type=anything}] {
   b0(v0: f0, v1: anything, v2: string):
@@ -42,8 +42,8 @@ function f5 name="second-argument-never-fits" parameters=[{type=f0}, {type=anyth
 }
 # CHECK-LABEL: function f5 name="second-argument-never-fits"
 # CHECK-NEXT: b0(v0: f0, v1: anything, v2: string):
-# CHECK-NEXT: : string = Claim v1 castType=string cause=AddedByPass
-# CHECK-NEXT: : never = Claim v2 castType=number cause=AddedByPass
+# CHECK-NEXT: : string = AssumeType v1 castType=string
+# CHECK-NEXT: : never = AssumeType v2 castType=number
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: CallDirect
 function f6 name="missing-argument-never-fits" parameters=[{type=f0}, {type=string}] results=[{type=anything}] {
@@ -54,7 +54,7 @@ function f6 name="missing-argument-never-fits" parameters=[{type=f0}, {type=stri
 # CHECK-LABEL: function f6 name="missing-argument-never-fits"
 # CHECK-NEXT: b0(v0: f0, v1: string):
 # CHECK-NEXT: [[missing]]: undefined = Undefined
-# CHECK-NEXT: : never = Claim [[missing]] castType=number cause=AddedByPass
+# CHECK-NEXT: : never = AssumeType [[missing]] castType=number
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: CallDirect
 function f7 name="arguments-may-fit" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -64,8 +64,8 @@ function f7 name="arguments-may-fit" parameters=[{type=f0}, {type=anything}, {ty
 }
 # CHECK-LABEL: function f7 name="arguments-may-fit"
 # CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
-# CHECK-NEXT: [[first]]: string = Claim v1 castType=string cause=AddedByPass
-# CHECK-NEXT: [[second]]: number = Claim v2 castType=number cause=AddedByPass
+# CHECK-NEXT: [[first]]: string = AssumeType v1 castType=string
+# CHECK-NEXT: [[second]]: number = AssumeType v2 castType=number
 # CHECK-NEXT: = CallDirect [[first]], [[second]] function=f0
 function f8 name="fits-one-of-two-callees" parameters=[{type=f0|f1}, {type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: f0|f1, v1: number, v2: number):
@@ -73,7 +73,7 @@ function f8 name="fits-one-of-two-callees" parameters=[{type=f0|f1}, {type=numbe
     Return v3
 }
 # CHECK-LABEL: function f8 name="fits-one-of-two-callees"
-# CHECK: : never = Claim v1 castType=string cause=AddedByPass
+# CHECK: : never = AssumeType v1 castType=string
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: function=f0
 # CHECK: = CallDirect v1, v2 function=f1
@@ -84,13 +84,8 @@ function f9 name="async-callee" parameters=[{type=f2}, {type=string}] results=[{
     Return v2
 }
 # CHECK-LABEL: function f9 name="async-callee"
-# CHECK: [[rejection]]() role=CatchHandler frequency=Rare:
-# CHECK-NEXT: [[error]]: anything = CatchValue
-# CHECK-NEXT: [[rejected]]: Promise = NewPromise
-# CHECK-NEXT: RejectPromise [[rejected]], [[error]]
-# CHECK-NEXT: Jump -> next [[join]]([[rejected]])
-# CHECK: () handler=[[rejection]]():
-# CHECK-NEXT: : never = Claim v1 castType=number site=w0 cause=MayFail
+# CHECK-NEXT: b0(v0: f2, v1: string):
+# CHECK-NEXT: : never = AssumeType v1 castType=number
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: function=f2
-# CHECK: [[join]]([[promise]]: Promise):
+# CHECK-NOT: RejectPromise

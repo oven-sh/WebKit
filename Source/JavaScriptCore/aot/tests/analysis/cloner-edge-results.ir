@@ -11,7 +11,7 @@
 # RUN(INSIDE): duplicate function=f4 region=b3,b4 redirect=b2.0
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={members=[L0]}
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
 function f0 name="narrowedOperandIntoHead" parameters=[{type=anything}] results=[{type=string}] {
   b0(v0: anything):
     Jump -> next b1()
@@ -58,7 +58,7 @@ function f1 name="guardIntoHead" parameters=[{type=object}] results=[{type=numbe
   b1(v2):
     Jump -> next b2(v2)
   b2(v3):
-    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
     Return v4
   b3():
     v5 = Integer integer=0
@@ -134,5 +134,5 @@ function f4 name="allocationIsGuardAfterRegion" parameters=[{type=boolean}, {typ
 # INSIDE: check: CanClone
 # INSIDE-NEXT: function f4
 # INSIDE: v3: number = GetSlot v2, v2 key="x"
-# INSIDE: [[object]]: object ~ L0 = NewObject -, v1 layout=L0 fields=[0]
+# INSIDE: [[object]]: L0 = NewObject -, v1 layout=L0 fields=[0]
 # INSIDE: = GetSlot [[object]], [[object]] key="x"

@@ -16,6 +16,9 @@
 #include <algorithm>
 #include <array>
 #include <expected>
+#include <optional>
+#include <utility>
+#include <wtf/text/Base64.h>
 
 namespace JSC { namespace AOT {
 
@@ -73,11 +76,42 @@ UserDiagnosticKind diagnosticKindOf(Wasm::ImageDeclineReason reason)
 using CompiledModule = std::expected<Wasm::ModuleForImage, Wasm::ImageDeclineReason>;
 using DeclineCount = std::pair<Wasm::ImageDeclineReason, uint32_t>;
 
+namespace {
+
 struct KnownModule {
     std::array<uint8_t, 20> digest;
     size_t size;
+    bool isInImage;
+    bool isInText { false };
     Vector<DeclineCount, 2> declines;
 };
+
+class ModuleSet {
+public:
+    ModuleSet(VM& vm, const CodeTemplates& templates, BuildContext& context)
+        : m_vm(vm)
+        , m_templates(templates)
+        , m_context(context)
+    {
+    }
+
+    KnownModule& add(std::span<const uint8_t> bytes);
+    WebAssemblyImageInputs finish() { return m_builder.finish(); }
+
+private:
+    VM& m_vm;
+    const CodeTemplates& m_templates;
+    BuildContext& m_context;
+    WasmSectionBuilder m_builder;
+    Vector<KnownModule> m_modules;
+};
+
+} // anonymous namespace
+
+static LimitID limitOf(Wasm::ImageDeclineReason reason)
+{
+    return reason == Wasm::ImageDeclineReason::CodeTooLarge ? LimitID::WasmImageCodeSize : LimitID::None;
+}
 
 static CompiledModule compileModule(VM& vm, std::span<const uint8_t> bytes, const CodeTemplates& templates, BuildContext& context)
 {
@@ -103,41 +137,116 @@ static Vector<DeclineCount, 2> collectDeclines(const CompiledModule& module)
     return declines;
 }
 
-WebAssemblyImageInputs compileWebAssemblyModules(VM& vm, const Typed::Program& program, const CodeTemplates& templates, BuildContext& context)
+KnownModule& ModuleSet::add(std::span<const uint8_t> bytes)
 {
-    WasmSectionBuilder builder;
-    Vector<KnownModule> knownModules;
-    for (auto& entry : program.webAssemblyModules) {
-        auto digest = Wasm::CodeInImage::digestOf(entry.bytes);
-        size_t index = knownModules.findIf([&](auto& known) {
-            return known.digest == digest && known.size == entry.bytes.size();
-        });
-        if (index == notFound) {
-            index = knownModules.size();
-            auto module = compileModule(vm, entry.bytes, templates, context);
-            Vector<DeclineCount, 2> declines = collectDeclines(module);
-            bool isInImage = module && builder.append(WTF::move(*module));
-            if (module && !isInImage)
-                declines = { { Wasm::ImageDeclineReason::CodeTooLarge, 1 } };
-            if (!isInImage)
-                builder.appendDeclined({ digest, static_cast<uint32_t>(entry.bytes.size()) });
-            knownModules.append(KnownModule { digest, entry.bytes.size(), WTF::move(declines) });
-        }
-        for (auto [reason, count] : knownModules[index].declines) {
-            auto limit = reason == Wasm::ImageDeclineReason::CodeTooLarge ? LimitID::WasmImageCodeSize : LimitID::None;
-            reportDecline(context, entry.module, diagnosticKindOf(reason), limit, count);
+    auto digest = Wasm::CodeInImage::digestOf(bytes);
+    size_t index = m_modules.findIf([&](auto& known) {
+        return known.digest == digest && known.size == bytes.size();
+    });
+    if (index != notFound)
+        return m_modules[index];
+
+    auto module = compileModule(m_vm, bytes, m_templates, m_context);
+    Vector<DeclineCount, 2> declines = collectDeclines(module);
+    bool isInImage = module && m_builder.append(WTF::move(*module));
+    if (module && !isInImage)
+        declines = { { Wasm::ImageDeclineReason::CodeTooLarge, 1 } };
+    if (!isInImage)
+        m_builder.appendDeclined({ digest, static_cast<uint32_t>(bytes.size()) });
+    m_modules.append(KnownModule { .digest = digest, .size = bytes.size(), .isInImage = isInImage, .declines = WTF::move(declines) });
+    return m_modules.last();
+}
+
+// The run time finds code by the digest of the bytes a module is made from, so text that only looks like a module costs bytes and never an answer.
+static std::span<const uint8_t> base64OfEmbeddedModule(std::span<const uint8_t> text)
+{
+    auto modulePrefix = "AGFzbQEAAA"_span;
+    auto base64Marker = "base64,"_span;
+    constexpr size_t minLength = 64;
+    constexpr size_t maxPrefixLength = 64;
+    static_assert(maxPrefixLength <= minLength);
+    if (text.size() < minLength)
+        return { };
+    if (spanHasPrefix(text, modulePrefix))
+        return text;
+    if (text[0] != 'd')
+        return { };
+    size_t at = WTF::find(text.first(maxPrefixLength), base64Marker);
+    if (at == notFound)
+        return { };
+    text = text.subspan(at + base64Marker.size());
+    if (!spanHasPrefix(text, modulePrefix))
+        return { };
+    return text;
+}
+
+static std::optional<Vector<uint8_t>> decodeEmbeddedModule(std::span<const uint8_t> text)
+{
+    std::span<const uint8_t> base64 = base64OfEmbeddedModule(text);
+    if (base64.empty())
+        return std::nullopt;
+    return base64Decode(base64);
+}
+
+static void addModulesInText(const Typed::Program& program, const BitVector* stringsInImage, ModuleSet& modules, BuildContext& context)
+{
+    uint64_t numberFound = 0;
+    uint64_t numberDeclined = 0;
+    for (size_t index = 0; index < program.strings.size(); ++index) {
+        if (stringsInImage && !stringsInImage->get(index))
+            continue;
+        std::optional<Vector<uint8_t>> bytes = decodeEmbeddedModule(program.strings[Typed::StringID(index)]);
+        if (!bytes)
+            continue;
+        KnownModule& module = modules.add(bytes->span());
+        if (std::exchange(module.isInText, true))
+            continue;
+        ++numberFound;
+        if (!module.isInImage)
+            ++numberDeclined;
+        for (auto [reason, count] : module.declines) {
+            if (LimitID limit = limitOf(reason); limit != LimitID::None)
+                context.gaveUp(limit);
         }
     }
-    return builder.finish();
+    context.statistics().count(StatisticID::WebAssemblyModulesFoundInText, numberFound);
+    context.statistics().count(StatisticID::WebAssemblyModulesInTextDeclined, numberDeclined);
+}
+
+WebAssemblyImageInputs compileWebAssemblyModules(VM& vm, const Typed::Program& program, const CodeTemplates& templates, BuildContext& context, const BitVector* stringsInImage)
+{
+    ModuleSet modules(vm, templates, context);
+    for (auto& entry : program.webAssemblyModules) {
+        for (auto [reason, count] : modules.add(entry.bytes).declines)
+            reportDecline(context, entry.module, diagnosticKindOf(reason), limitOf(reason), count);
+    }
+    addModulesInText(program, stringsInImage, modules, context);
+    return modules.finish();
+}
+
+bool mayHaveWebAssemblyModules(const Typed::Program& program)
+{
+    if (!program.webAssemblyModules.isEmpty())
+        return true;
+    for (size_t index = 0; index < program.strings.size(); ++index) {
+        if (!base64OfEmbeddedModule(program.strings[Typed::StringID(index)]).empty())
+            return true;
+    }
+    return false;
 }
 
 #else
 
-WebAssemblyImageInputs compileWebAssemblyModules(VM&, const Typed::Program& program, const CodeTemplates&, BuildContext& context)
+WebAssemblyImageInputs compileWebAssemblyModules(VM&, const Typed::Program& program, const CodeTemplates&, BuildContext& context, const BitVector*)
 {
     for (auto& entry : program.webAssemblyModules)
         reportDecline(context, entry.module, UserDiagnosticKind::WasmUnsupportedCPU, LimitID::None, 1);
     return { };
+}
+
+bool mayHaveWebAssemblyModules(const Typed::Program& program)
+{
+    return !program.webAssemblyModules.isEmpty();
 }
 
 #endif // ENABLE(WEBASSEMBLY_OMGJIT)

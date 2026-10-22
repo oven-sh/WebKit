@@ -19,11 +19,11 @@ Opcode namedOperationFor(Opcode elementOperation);
 struct ElementAccessQuery {
     Access access { Access::Read };
     const Type& receiver;
-    const Type* receiverPrediction { nullptr };
+    const Type* receiverExpected { nullptr };
     const Type& key;
-    const Type* keyPrediction { nullptr };
+    const Type* keyExpected { nullptr };
     const Type* stored { nullptr };
-    const Type* storedPrediction { nullptr };
+    const Type* storedExpected { nullptr };
 };
 
 enum class ElementAccessForm : uint8_t {
@@ -32,6 +32,7 @@ enum class ElementAccessForm : uint8_t {
     Array,
     TypedArray,
     String,
+    ArgumentsElement,
     Split,
 };
 
@@ -46,8 +47,7 @@ struct ConstantKey {
 };
 
 ConstantKey constantKeyOf(const Program&, const Type& key);
-// The test of a value that is predicted to be a number asks for int32 or for any number. A narrower range in a prediction is what flow happened to see.
-TypeID testedNumberTypeContaining(const Type& predictedNumber);
+TypeID testedNumberTypeContaining(const Type& expectedNumber);
 PropertyKeyID internKey(TypeArena&, const ConstantKey&);
 void becomeNamedAccess(Value& elementAccess, PropertyKeyID);
 
@@ -62,16 +62,21 @@ struct ElementAccessPlan {
     bool keyIsIntegral { false };
     bool testsReceiverClass { false };
     bool testsReceiverIsString { false };
+    bool checksNullish { false };
     bool testsKeyIsNumber { false };
     bool testsStoredValue { false };
     bool testsArrayStorage { false };
     bool testsInBounds { false };
     bool isInBounds { false };
+    bool testsPresence { false };
+    bool isPresent { false };
+    bool readsHoleAsNaN { false };
+    bool isInsideView { false };
     OptionSet<PristineAspects> requiredAspects;
     UnprovenCause cause { UnprovenCause::Unknown };
 
-    bool isResolved() const { return form != ElementAccessForm::ByKey && form != ElementAccessForm::Split && form != ElementAccessForm::String; }
-    bool needsNoTest() const { return !testsReceiverClass && !testsReceiverIsString && !testsKeyIsNumber && !testsStoredValue && !testsArrayStorage && !testsInBounds && requiredAspects.isEmpty(); }
+    bool isResolved() const { return form == ElementAccessForm::NamedKey || form == ElementAccessForm::Array || form == ElementAccessForm::TypedArray; }
+    bool needsNoTest() const { return !testsReceiverClass && !testsReceiverIsString && !checksNullish && !testsKeyIsNumber && !testsStoredValue && !testsArrayStorage && !testsInBounds && !testsPresence && requiredAspects.isEmpty(); }
     // The form String says that the types prove a character read. This access has that form once its tests have narrowed its operands.
     bool isCharacterReadAfterTests() const { return form == ElementAccessForm::ByKey && !needsNoTest(); }
 

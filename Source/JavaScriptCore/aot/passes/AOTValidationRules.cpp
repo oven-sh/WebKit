@@ -350,7 +350,7 @@ ValueID ValidationRuleEmitter::appendExpressionTest(StringView source, ValueID s
     literal.setRegExpFlags({ });
     ValueID regExp = builder.append(WTF::move(literal));
     // Placement keys the cell of a literal by (function, position), and every other value of a derived function has the same position.
-    builder.function().at(regExp).setOrigin({ regExp.index(), builder.origin().inlineFrame });
+    builder.function().edit(regExp).setOrigin({ regExp.index(), builder.origin().inlineFrame });
     return appendMatchedBuiltinCall(m_emission, Builtins::RegExpPrototypeTest, BuiltinCallMode::Call, regExp, singleElementSpan(string));
 }
 

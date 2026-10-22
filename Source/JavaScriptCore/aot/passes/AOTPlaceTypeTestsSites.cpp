@@ -9,7 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCodeShapes.h"
+#include "AOTHeat.h"
 #include <algorithm>
+#include <optional>
+#include <ranges>
+#include <tuple>
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -21,7 +26,216 @@ struct WeightedCondition {
     double weight { 0 };
 };
 
+// The tests of member conditions that sites of one block make for one object, with nothing between the sites that ends what such a test proves.
+struct ConditionsTestsOfObject {
+    ValueID object;
+    Vector<uint32_t, 8> tests;
+};
+
 } // anonymous namespace
+
+static std::optional<uint32_t> findConditionsTest(const TestSites& sites, const TestSite& site)
+{
+    for (uint32_t test = site.firstTest; test < site.firstTest + site.numberOfTests; ++test) {
+        if (sites.tests[test].opcode == Opcode::AreMembersUnchanged)
+            return test;
+    }
+    return std::nullopt;
+}
+
+// Where the test of its own conditions has failed, the rule for calls goes on to tests of each object. It knows that test by its conditions, so a member call and an access that calls keep it.
+static ValueID objectAskedAbout(FunctionPassContext& context, const TestSite& site)
+{
+    const Function& function = context.function;
+    const Value& use = function.at(site.use);
+    switch (site.rule) {
+    case TestSiteRuleID::PropertyAccess:
+        return context.analyses.identityOf(use.operand(*receiverOf(use.opcode)));
+    case TestSiteRuleID::Call:
+        break;
+    case TestSiteRuleID::EnumeratedKeyUse:
+    case TestSiteRuleID::UnionReceiver:
+    case TestSiteRuleID::BuiltinUse:
+    case TestSiteRuleID::ElementAccess:
+    case TestSiteRuleID::Operator:
+    case TestSiteRuleID::RepeatedTest:
+        return { };
+    }
+
+    if (use.opcode == Opcode::NewObject)
+        return context.analyses.identityOf(site.use);
+    if (use.opcode != Opcode::GetConstructPrototype)
+        return { };
+    std::optional<Use> allocation = context.analyses.useLists().singleUse(site.use);
+    if (!allocation || allocation->kind != Use::Kind::Operand || function.at(allocation->user).opcode != Opcode::NewObject)
+        return { };
+    return context.analyses.identityOf(allocation->user);
+}
+
+static bool mayEndMemberConditions(const Effects& effects)
+{
+    return effects.maySuspend || effects.writes.contains(AbstractHeap::MemberGuards);
+}
+
+static auto orderOf(const MemberConditionRecord& condition)
+{
+    return std::tuple { condition.kind, condition.layout, condition.side, condition.key };
+}
+
+// Placement gives each set of conditions one bit, so a test costs the same however many conditions it lists.
+// One test in front of the first site leaves no branch between the allocation of a constructor and its stores, nor between two of the stores.
+static void shareConditionsTest(FunctionPassContext& context, TestSites& sites, BlockID block, const ConditionsTestsOfObject& group)
+{
+    if (group.tests.size() < 2)
+        return;
+
+    Vector<MemberConditionRecord, 8> conditions;
+    for (uint32_t test : group.tests) {
+        for (MemberConditionRecord condition : sites.tests[test].conditions())
+            conditions.append(condition);
+    }
+    std::ranges::sort(conditions, { }, orderOf);
+    conditions.shrink(conditions.size() - std::ranges::unique(conditions).size());
+
+    Value shared = IRBuilder::make(Opcode::AreMembersUnchanged);
+    shared.setConditions(conditions.span());
+    if (context.analyses.findEarlierTest(shared, block) == EarlierTest::Failed)
+        return;
+    for (uint32_t test : group.tests)
+        sites.tests[test] = shared;
+}
+
+static void shareConditionsTestsIn(FunctionPassContext& context, TestSites& sites, std::span<const TestSite> sitesOfBlock)
+{
+    auto numberOfConditionsTests = std::ranges::count_if(sitesOfBlock, [&](const TestSite& site) {
+        return findConditionsTest(sites, site).has_value();
+    });
+    if (numberOfConditionsTests < 2)
+        return;
+
+    BlockID block = sitesOfBlock.front().point.block;
+    const BlockValues& values = context.function.at(block).values;
+    Vector<ConditionsTestsOfObject, 2> groups;
+    auto shareTestsOfGroups = [&] {
+        for (const ConditionsTestsOfObject& group : groups)
+            shareConditionsTest(context, sites, block, group);
+        groups.shrink(0);
+    };
+
+    uint32_t index = sitesOfBlock.front().point.index;
+    for (const TestSite& site : sitesOfBlock) {
+        for (; index < site.point.index; ++index) {
+            if (mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
+                shareTestsOfGroups();
+        }
+
+        std::optional<uint32_t> test = findConditionsTest(sites, site);
+        if (ValueID object = test ? objectAskedAbout(context, site) : ValueID()) {
+            size_t position = groups.findIf([&](const ConditionsTestsOfObject& group) {
+                return group.object == object;
+            });
+            if (position == notFound) {
+                position = groups.size();
+                groups.append(ConditionsTestsOfObject { object, { } });
+            }
+            groups[position].tests.append(*test);
+        }
+
+        if (mayEndMemberConditions(site.effectsWhenPassed))
+            shareTestsOfGroups();
+        ++index;
+    }
+    shareTestsOfGroups();
+}
+
+// In the copy behind a failed test each site asks for itself, so one member that has changed costs the other sites of its object one test and not their fast paths.
+static void shareConditionsTests(FunctionPassContext& context, TestSites& sites)
+{
+    std::span<const TestSite> remaining = sites.sites.span();
+    while (!remaining.empty()) {
+        BlockID block = remaining.front().point.block;
+        auto end = std::ranges::find_if_not(remaining, [&](const TestSite& site) {
+            return site.point.block == block;
+        });
+        size_t count = end - remaining.begin();
+        if (context.function.at(block).frequency == BlockFrequency::Normal)
+            shareConditionsTestsIn(context, sites, remaining.first(count));
+        remaining = remaining.subspan(count);
+    }
+}
+
+namespace {
+
+// A test of member conditions, and the point that is reached only where it has passed.
+struct ConditionsTestInFront {
+    ProgramPoint passedAt;
+    Value test;
+};
+
+} // anonymous namespace
+
+static bool listsConditionsOf(const Value& test, const Value& other)
+{
+    return std::ranges::all_of(other.conditions(), [&](const MemberConditionRecord& condition) {
+        return std::ranges::contains(test.conditions(), condition);
+    });
+}
+
+static Value makeTestOfConditionsOf(const Value& test)
+{
+    Vector<MemberConditionRecord, 8> conditions;
+    for (MemberConditionRecord condition : test.conditions())
+        conditions.append(condition);
+    Value copy = IRBuilder::make(Opcode::AreMembersUnchanged);
+    copy.setConditions(conditions.span());
+    return copy;
+}
+
+// A test that has passed answers for each condition that it lists, and placement knows a test by all that it lists. `a.symbol = s; a.locals = t; b.symbol = s`: the stores into `a` share a test,
+// and the store into `b` asks for less than that test has answered. So a site whose conditions are all listed by a test that stands in front of it on every way asks for that test:
+// where what it has proven still holds the site gets none, and where it has ended a test costs the same however many conditions it lists. The test may be of an earlier run of the pass.
+static void askForConditionsTestsInFront(FunctionPassContext& context, TestSites& sites)
+{
+    auto hasConditionsTest = [&](const TestSite& site) {
+        return findConditionsTest(sites, site).has_value();
+    };
+    if (std::ranges::none_of(sites.sites, hasConditionsTest))
+        return;
+
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    Vector<ConditionsTestInFront, 8> testsInFront;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch())
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        BlockID passed = terminator.taken().block;
+        if (test.opcode == Opcode::AreMembersUnchanged && passed != terminator.notTaken().block && cfg.singleIncomingEdge(passed))
+            testsInFront.append({ ProgramPoint::atHeadOf(passed), makeTestOfConditionsOf(test) });
+    }
+
+    auto isInFrontOf = [&](ProgramPoint passedAt, ProgramPoint point) {
+        if (passedAt.block == point.block)
+            return passedAt.index <= point.index;
+        return context.analyses.dominators().dominates(passedAt.block, point.block);
+    };
+    for (const TestSite& site : sites.sites) {
+        std::optional<uint32_t> test = findConditionsTest(sites, site);
+        if (!test)
+            continue;
+        if (function.at(site.point.block).frequency == BlockFrequency::Normal && objectAskedAbout(context, site)) {
+            for (const ConditionsTestInFront& candidate : testsInFront | std::views::reverse) {
+                if (candidate.test.conditions().size() <= sites.tests[*test].conditions().size() || !listsConditionsOf(candidate.test, sites.tests[*test]) || !isInFrontOf(candidate.passedAt, site.point))
+                    continue;
+                if (context.analyses.findEarlierTest(candidate.test, site.point.block) != EarlierTest::Failed)
+                    sites.tests[*test] = candidate.test;
+                break;
+            }
+        }
+        testsInFront.append({ site.point, sites.tests[*test] });
+    }
+}
 
 static Vector<TestConditionID> addConditionsOfTests(const TestSites& sites, TestConditions& conditions)
 {
@@ -109,9 +323,32 @@ static void removeDroppedSites(TestSites& sites, const BitVector& dropped)
     sites.sites.shrink(numberOfRemainingSites);
 }
 
+// What a test buys in the cold code of a cold function, against the copy that it costs. The general form of these is one call.
+static bool paysInColdCode(TestSiteRuleID rule)
+{
+    switch (rule) {
+    case TestSiteRuleID::ElementAccess:
+    case TestSiteRuleID::Operator:
+        return false;
+    default:
+        return true;
+    }
+}
+
+// Without looking at the blocks: none of them runs more often than the function is entered.
+static bool isColdEverywhere(FunctionPassContext& context)
+{
+    const Heat& heat = context.inputs.heat;
+    return isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(context.analyses.cfg());
+}
+
 TestSites collectTestSites(FunctionPassContext& context)
 {
-    if (!context.build.recordedOptions().usesPredictions())
+    if (!context.build.recordedOptions().usesExpectedTypes())
+        return { };
+    // Most compact functions have no loop at all, and they are nearly half of a very large program: no rule looks at them.
+    bool isCompactFunction = context.inputs.heat.isCompact(context.program, context.id);
+    if (isCompactFunction && isColdEverywhere(context))
         return { };
 
     TestSiteReporter reporter(context);
@@ -121,10 +358,22 @@ TestSites collectTestSites(FunctionPassContext& context)
     }
 
     TestSites sites = reporter.takeSites();
+    for (const TestSite& site : sites.sites)
+        RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
+    // A test buys a fast path and costs a copy of what stands behind it. Code that runs once cannot win that back.
+    // In the cold code of a cold function the general form of some operations is smaller than a test and no slower. A loop there keeps its tests.
+    // Nothing says of a compact function that it runs at all, so there that goes for every operation. What is expected of a value stays with the value, for the record that the general form looks into first.
+    bool isColdFunction = isCold(context.inputs.heat.of(context.program, context.id));
+    sites.sites.removeAllMatching([&](const TestSite& site) {
+        HeatClass heatClass = heatClassOf(context, site.point.block);
+        return heatClass == HeatClass::RunsOnce || (isColdFunction && heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode(site.rule)));
+    });
     const CFG& cfg = context.analyses.cfg();
     std::ranges::sort(sites.sites, { }, [&](const TestSite& site) {
         return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index };
     });
+    shareConditionsTests(context, sites);
+    askForConditionsTestsInFront(context, sites);
     return sites;
 }
 

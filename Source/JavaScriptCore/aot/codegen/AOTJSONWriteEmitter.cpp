@@ -9,11 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
+#include "AOTConversionEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonIntegerBytes);
+static_assert(StringBuilderEmitter::maxInlineDigits <= jsonNumberBytes);
 static_assert(sizeof(uint32_t) + sizeof(uint8_t) <= jsonBooleanBytes);
 
 JSONWriteEmitter::JSONWriteEmitter(CodeGenerator& generator)
@@ -93,7 +95,23 @@ void JSONWriteEmitter::generateJSONAppendInteger(const ValueContext& value)
 
 void JSONWriteEmitter::generateJSONAppendNumber(const ValueContext& value)
 {
-    define(value, callLeaf<Pointer>(RuntimeOperation::JSONAppendNumber, { cursorOf(value), in<Number>(value->valueOperand()) }));
+    Pointer cursor = cursorOf(value);
+    Number appended = in<Number>(value->valueOperand());
+    Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
+    LBasicBlock hasFewDigits = newBlock();
+    LBasicBlock byCall = newBlock();
+    Join<Pointer> join(m_out);
+
+    Condition isWholeWithFewDigits = logicalAnd(equal(toNumber(truncated), appended), below(truncated, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
+    branch(isWholeWithFewDigits, { normalEdge(hasFewDigits), normalEdge(byCall) });
+
+    m_out.appendTo(hasFewDigits);
+    join.add(builders().writeDigits(cursor, low32(truncated)));
+
+    m_out.appendTo(byCall);
+    join.add(callLeaf<Pointer>(RuntimeOperation::JSONAppendNumber, { cursor, appended }));
+
+    define(value, join.finish());
 }
 
 void JSONWriteEmitter::generateJSONAppendDate(const ValueContext& value)

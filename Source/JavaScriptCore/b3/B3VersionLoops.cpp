@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3ClampLoopBound.h"
 #include "B3CountedLoops.h"
 #include "B3EnsureLoopPreHeaders.h"
 #include "B3Limits.h"
@@ -20,7 +21,6 @@
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3RegionCloner.h"
-#include "B3StripMineLoops.h"
 #include "B3ValueInlines.h"
 #include <wtf/IndexSet.h>
 
@@ -87,7 +87,6 @@ private:
         FastLoopBounds bounds;
         RegionCloner::BlockMap hotCopies;
         RegionCloner::BlockMap excursionCopies;
-        PatchpointValue* pollCopy { nullptr };
         Value* testedCopy { nullptr };
         Value* testedCopyInExcursion { nullptr };
     };
@@ -272,8 +271,6 @@ private:
         Value* clone = m_cloner.appendClone(value, copy, map);
         if (!plan.rewritesLoopTest())
             return;
-        if (kind == CopyKind::FastLoop && value == plan.poll)
-            version.pollCopy = clone->as<PatchpointValue>();
         if (value != plan.countedLoop->testedValue())
             return;
         if (kind == CopyKind::FastLoop)
@@ -365,20 +362,13 @@ private:
         RELEASE_ASSERT(version.testedCopy);
         CountedLoop fast = fastLoopOf(version);
 
-        StripTargets targets;
+        ClampTargets targets;
         targets.limit = version.bounds.limit;
-        targets.relationHoldsOnEntry = targets.limit ? !fast.isTopTested : plan.rangeChecks.relationHoldsOnEntry;
-        if (targets.limit)
-            targets.beyondLimit = fast.isTopTested ? original.header : copyOriginalLatch(original.latch);
+        targets.beyondLimit = fast.isTopTested ? original.header : copyOriginalLatch(original.latch);
         if (BasicBlock* test = version.excursionCopies.get(original.test))
             targets.otherTests.append(LoopTestCopy { test, test->successorBlock(fast.latchSuccessorIndex), version.testedCopyInExcursion, fast.isTopTested ? original.test : nullptr });
 
-        if (!plan.poll) {
-            clampLoopBound(m_proc, fast, targets);
-            return;
-        }
-        RELEASE_ASSERT(version.pollCopy);
-        stripMineLoop(m_proc, fast, version.pollCopy, targets);
+        clampLoopBound(m_proc, fast, targets);
     }
 
     BasicBlock* copyOriginalLatch(BasicBlock* latch)

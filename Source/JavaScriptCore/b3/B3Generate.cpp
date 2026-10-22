@@ -64,7 +64,6 @@
 #include "B3SinkValues.h"
 #include "B3SpecializeSelect.h"
 #include "B3SplitBranchConditions.h"
-#include "B3StripMineLoops.h"
 #include "B3ThreadJumps.h"
 #include "B3Validate.h"
 #include "B3VersionLoops.h"
@@ -90,14 +89,19 @@ struct PipelineState {
     bool hasLoops { false };
     bool didRotateLoops { false };
     bool didVersionLoops { false };
-    bool didStripMineLoops { false };
+};
+
+enum class NeededEstimate : uint8_t {
+    None,
+    EdgeClasses,
+    BlockFrequencies,
 };
 
 struct Step {
     ASCIILiteral name;
     bool (*isEnabled)(Procedure&, const PipelineState&);
     Cleanups (*run)(Procedure&, PipelineState&);
-    bool needsFrequencies { false };
+    NeededEstimate neededEstimate { NeededEstimate::None };
 };
 
 bool always(Procedure&, const PipelineState&)
@@ -125,7 +129,7 @@ Cleanups runPass(Procedure& procedure, PipelineState&)
 template<auto pass>
 Cleanups runLoopPass(Procedure& procedure, PipelineState&)
 {
-    if (procedure.naturalLoops().numLoops())
+    if (procedure.hasCycle() && procedure.naturalLoops().numLoops())
         pass(procedure);
     return { };
 }
@@ -190,7 +194,7 @@ static constexpr Step steps[] = {
         runPass<splitBranchConditions> },
     { "estimateFrequencies"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.policy().optimization.estimatesFrequencies; },
-        runNothing, true },
+        runNothing, NeededEstimate::EdgeClasses },
     { "clientPhasesBeforeOptimization"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::BeforeOptimization); },
         runClientPhases<ClientPhase::Point::BeforeOptimization> },
@@ -239,13 +243,13 @@ static constexpr Step steps[] = {
     { "findLoops"_s,
         [](Procedure& procedure, const PipelineState&) {
             const LoopPolicy& loops = procedure.policy().loops;
-            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions || loops.stripMinesPolls);
+            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions);
         },
         [](Procedure& procedure, PipelineState& state) -> Cleanups {
-            state.hasLoops = !!procedure.naturalLoops().numLoops();
+            state.hasLoops = procedure.hasCycle() && procedure.naturalLoops().numLoops();
             return { };
         },
-        true },
+        NeededEstimate::EdgeClasses },
     { "simplifyTerminals"_s,
         [](Procedure&, const PipelineState& state) { return state.hasLoops; },
         runPass<simplifyTerminals> },
@@ -287,15 +291,6 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, PipelineState& state) {
             return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
-    { "stripMineLoops"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.stripMinesPolls; },
-        [](Procedure& procedure, PipelineState& state) {
-            state.didStripMineLoops = stripMineLoops(procedure);
-            return cleanupsIfChanged(state.didStripMineLoops, Cleanup::FixSSA);
-        } },
-    { "hoistLoopInvariantValues"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.didStripMineLoops && hoistsInvariantValues(procedure); },
-        runPass<hoistLoopInvariantValues> },
     { "eliminateWasmGCAllocations"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.usesWasmGCStructAllocations() && procedure.policy().upstream.eliminatesWasmGCAllocations; },
         runPass<eliminateWasmGCAllocations> },
@@ -330,11 +325,11 @@ static constexpr Step steps[] = {
     { "legalizeMemoryOffsets"_s, always, runPass<legalizeMemoryOffsets> },
     { "sinkValues"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().optimization.sinksValues; },
-        runPass<sinkValues>, true },
+        runPass<sinkValues>, NeededEstimate::BlockFrequencies },
     { "clientPhasesAfterSinking"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::AfterSinking); },
         runClientPhases<ClientPhase::Point::AfterSinking> },
-    { "moveConstants"_s, always, runPass<moveConstants>, true },
+    { "moveConstants"_s, always, runPass<moveConstants>, NeededEstimate::BlockFrequencies },
     { "lowerRelocatableValues"_s,
         [](Procedure& procedure, const PipelineState&) { return !procedure.dataSections().empty(); },
         runPass<lowerRelocatableValues> },
@@ -368,7 +363,7 @@ static constexpr Step steps[] = {
             procedure.freeUnneededB3ValuesAfterLowering();
             return { };
         },
-        true },
+        NeededEstimate::BlockFrequencies },
 };
 
 void runCleanups(std::span<Procedure* const> procedures, std::span<PipelineState> states)
@@ -409,7 +404,9 @@ void runSteps(std::span<Procedure* const> procedures)
             PipelineState& state = states[index];
             if (procedure.report().failure || !step.isEnabled(procedure, state))
                 continue;
-            if (step.needsFrequencies)
+            if (step.neededEstimate == NeededEstimate::EdgeClasses)
+                procedure.updateEdgeClasses();
+            else if (step.neededEstimate == NeededEstimate::BlockFrequencies)
                 procedure.updateFrequencies();
             state.pendingCleanups = step.run(procedure, state);
             hasPendingCleanups |= !state.pendingCleanups.isEmpty();

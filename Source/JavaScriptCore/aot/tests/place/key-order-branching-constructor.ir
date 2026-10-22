@@ -53,7 +53,7 @@ function f2 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameter
 # CHECK-NEXT: TestAndBranch [[hasNoKeys]] -> taken [[empty]](| 0), notTaken
 # CHECK: [[empty]](
 # CHECK-NEXT: = NewArray contents=anything
-# CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK: = CallInline -, v0 inlineBuiltin=ObjectValues overload=ObjectValues/0
 # CHECK-LABEL: function f2 name="Branching"
 # CHECK: PutSlots [[object]], -, v1, v1 placedKeys=[{key="y" {{*}}mayAdd=true}, {key="x" {{*}}mayAdd=true}]
 # CHECK: PutSlots [[object]], -, v1, v1 placedKeys=[{key="x" {{*}}mayAdd=true}, {key="y" {{*}}mayAdd=true}]

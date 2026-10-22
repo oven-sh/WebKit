@@ -67,12 +67,8 @@ private:
     unsigned m_frame { 0 };
 };
 
-struct CallSiteTable {
-    Vector<uint8_t> bytes;
-    Vector<uint32_t> offsets;
-};
-
-CallSiteTable encodeCallSites(const LinkedFunctions&, BuildContext&);
+// A stream for each function. Empty for one without return sites and prologue checks.
+Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, BuildContext&);
 std::optional<uint32_t> endOfLastReturnSite(const CompiledCode&);
 
 void* resumeAddressAfterStackCheck(const void* returnAddress);

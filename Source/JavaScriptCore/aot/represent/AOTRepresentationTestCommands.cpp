@@ -28,7 +28,6 @@ static constexpr OpcodeSet rowsWithDeclaredOperands {
     Opcode::PutEnvironmentField,
     Opcode::NewObject,
     Opcode::CallDirect,
-    Opcode::CallGroup,
     Opcode::Results,
     Opcode::PutSlot,
     Opcode::PutSlotOrAdd,

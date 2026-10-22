@@ -1,28 +1,23 @@
 # function down(n, next): number { return n === 0 ? 0.5 : next(n - 1, next) }   sink(down)   down(input, input)
-# Nobody knows `next`, so flow cannot prove the written result and the tail call lies on a cycle through code nobody sees: the callers of `down` test its result. The generic entrypoint is such a caller,
-# and any call by value enters it, a tail call too. A frame that stayed behind for the test would then be a frame per call of the chain. So the entrypoint asks whether the frame it returns to already
-# waits to test a result: then it returns with a tail call that has to reuse the frame, else it calls, tests and returns
+# Nobody knows `next`, so nothing proves that `down` returns a number. A test behind the call of `next` would end the tail call, and a frame that stayed behind for the test would be a frame per call of the chain.
+# So nobody tests the result where it is returned: the type of the result is only expected, `down` keeps its tail call, and whoever reads the result as a number tests it there.
+# The generic entrypoint reads it as nothing: it hands the result on with a tail call, like the entrypoint of a function without types
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=AnalyzeFlow
 # CHECK-LABEL: function f1 name="down"
+# CHECK: results=[{type=undefined|null|number site=w0 flags=[IsExpected]}]
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
 # CHECK: ReturnCall
 # CHECK-NOT: requirement=Allowed
 # CHECK-LABEL: function f2 name="untyped"
 # CHECK: name="down"{{*}}role=GenericEntrypoint
-# CHECK: [[isTested]]: boolean {{*}}= ReturnsToResultTest
-# CHECK-NEXT: TestAndBranch [[isTested]] -> taken [[goesOn]](), notTaken [[waits]]()
-# CHECK: [[goesOn]]():
-# CHECK-NEXT: [[passedOn]]: {{*}} = CallDirect {{*}} resultCheck=ByCallers
-# CHECK-NEXT: ReturnCall [[passedOn]]
-# CHECK-NOT: requirement=Allowed
-# CHECK: [[waits]]():
-# CHECK-NEXT: [[untested]]: {{*}} = CallDirect {{*}} resultCheck=ByCallers
-# CHECK-NEXT: [[tested]]: {{*}} = Claim [[untested]] castType=undefined|null|number site=w0
-# CHECK-NEXT: Return [[tested]]
-# An entrypoint that has nothing to test asks nothing
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK: [[passedOn]]:{{*}}= CallDirect {{*}}function=f1
+# CHECK-NEXT: ReturnCall [[passedOn]] requirement=Allowed
 # CHECK: name="untyped"{{*}}role=GenericEntrypoint
-# CHECK-NOT: ReturnsToResultTest
 # CHECK: ReturnCall {{*}} requirement=Allowed
 
 module m0 path="main.ts" displayPath="main.ts" body=f0

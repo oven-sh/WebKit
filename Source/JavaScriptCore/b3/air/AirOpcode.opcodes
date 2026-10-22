@@ -113,6 +113,10 @@
 #
 # /accessesMemoryFirst: a form with one memory operand accesses it in its first machine instruction.
 # /mayFault: some operand values fault though no form accesses memory.
+#
+# B3::LowerToAir and the register allocators pick any valid form. When you add a form to an opcode that the
+# JIT tiers already use, also list it in AirExtendedForms.h. That restricts it to procedures whose policy sets
+# extendsInstructionSelection, so the code the JIT tiers emit does not change.
 
 # Note that the opcodes here have a leading capital (Add32) but must correspond to MacroAssembler
 # API that has a leading lower-case (add32).
@@ -1676,8 +1680,10 @@ arm64: BranchFloatWithZero U:G:32, U:F:32 /branch
 
 # Branch on already-set condition flags (for use after ccmp)
 # /effects ensures this stays adjacent to the preceding ccmp instruction
+# With a ResCond the flags are those of the result of the operation in front of it (AirReuseConditionFlags.h: setsFlagsToResult).
 64: BranchOnFlags U:G:32 /branch /effects /usesFlags /preservesFlags
     RelCond
+    x86_64: ResCond
 
 BranchAdd32 U:G:32, U:G:32, U:G:32, ZD:G:32 /branch
     ResCond, Tmp, Tmp, Tmp

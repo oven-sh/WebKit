@@ -1,0 +1,42 @@
+# An access on a proven union of layouts whose lookups differ gets no arms in cold code: each arm tests the receiver, and the one access by name is shorter
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SplitUnions
+# STATISTIC: UnionsSplit = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Empty" flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="on-a-rare-path" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = PropGet v0 key="x"
+    Return v2
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="on-a-rare-path"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: v2{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: Return v2
+
+function f1 name="in-a-loop" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="x"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="in-a-loop"
+# CHECK: [[isPoint]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isPoint]] -> taken [[pointArm]](| 0), notTaken [[emptyArm]](| 0)
+# CHECK: [[pointArm]]([[point]]: L0):
+# CHECK-NEXT: = PropGet [[point]] key="x" receivers=[L0]
+# CHECK: [[emptyArm]]([[empty]]: L1):
+# CHECK-NEXT: = PropGet [[empty]] key="x" receivers=[L1]

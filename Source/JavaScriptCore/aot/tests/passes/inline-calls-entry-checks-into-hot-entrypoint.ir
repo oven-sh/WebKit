@@ -1,0 +1,51 @@
+# The tests that were split off the head of a function are entered by compiled code too, so they stay, and what the generic entrypoint takes in is a second copy.
+# A hot entrypoint is worth the copy where the body is small and returns its result in another form: without it a call by value sets up a frame, calls the tests and converts what they return,
+# with it the call goes from the entrypoint to the typed body. See inline-calls-entry-checks-stay-out-of-a-hot-entrypoint.ir for all others
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineCalls VerifyProgram
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="callsByName" module=m0 parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2 [isNeverInlined]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="callsByName"
+# CHECK: = CallDirect v0 function=f2
+function f2 name="shared" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f3 fallback=f4} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f3 [isNeverInlined]
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f4 [isNeverInlined]
+    ReturnCall v4 requirement=Allowed
+}
+function f3 name="shared" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2} {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    Return v1
+}
+function f4 name="shared" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2} creator=Version{provenVersion=f3} {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    Return v1
+}
+function f5 name="shared" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+  b0(v0: f2, v1: anything, v2: anything):
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+}
+# CHECK-LABEL: function f5 name="shared"
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-NOT: function=f2
+# CHECK: = CallDirect {{*}} function=f3

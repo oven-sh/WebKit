@@ -162,7 +162,7 @@ private:
     void computeLiveness()
     {
         m_liveAtHead.grow(m_proc.size());
-        Vector<B3::BasicBlock*> blocksInPostOrder = m_proc.blocksInPostOrder();
+        const Vector<B3::BasicBlock*>& blocksInPostOrder = m_proc.cachedBlocksInPostOrder();
         bool changed = true;
         while (changed) {
             changed = false;

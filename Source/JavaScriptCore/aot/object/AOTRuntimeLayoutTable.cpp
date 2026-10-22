@@ -22,6 +22,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "DeferGCInlines.h"
+#include "GetterSetter.h"
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
 #include "PropertyName.h"
@@ -134,7 +135,7 @@ static bool isInstanceOfBuiltinClass(JSCell* cell, BuiltinClassID id)
     case BuiltinInstanceTest::None:
         return false;
     case BuiltinInstanceTest::JSTypeEquals:
-        return JSTypeRange { builtinClass.type, builtinClass.type == ArrayType ? DerivedArrayType : builtinClass.type }.contains(cell->type());
+        return cell->type() == builtinClass.type;
     case BuiltinInstanceTest::ClassInfoInherits:
         return inheritsBuiltinClass(cell, id);
     case BuiltinInstanceTest::SharingModeEquals:
@@ -191,8 +192,52 @@ const FieldData* RuntimeLayoutTable::findField(VM& vm, const LayoutData& layout,
         ASSERT(!index || layout.fields()[*index].name == *number);
         return index ? &layout.fields()[*index] : nullptr;
     }
-    for (const FieldData& field : layout.fields()) {
-        if (field.name == *number)
+    return findFieldWithoutColumn(layout, *number);
+}
+
+static constexpr uint16_t noFieldInSlot = UINT16_MAX;
+static_assert(maxFieldsInOrder * 2 < 1u << (32 - 12) && maxFieldsInOrder < noFieldInSlot);
+
+static size_t firstSlotOfName(uint32_t identifierNumber, size_t mask)
+{
+    return (identifierNumber * 0x9e3779b1u >> 12) & mask;
+}
+
+static Vector<uint16_t> indexFieldsByName(std::span<const FieldData> fields)
+{
+    Vector<uint16_t> slots;
+    slots.fill(noFieldInSlot, std::bit_ceil(fields.size() * 2));
+    size_t mask = slots.size() - 1;
+    // Of two fields with one name the first is the one that a walk over the fields finds.
+    for (size_t index = 0; index < fields.size(); ++index) {
+        size_t slot = firstSlotOfName(fields[index].name, mask);
+        while (slots[slot] != noFieldInSlot && fields[slots[slot]].name != fields[index].name)
+            slot = (slot + 1) & mask;
+        if (slots[slot] == noFieldInSlot)
+            slots[slot] = static_cast<uint16_t>(index);
+    }
+    return slots;
+}
+
+const FieldData* RuntimeLayoutTable::findFieldWithoutColumn(const LayoutData& layout, uint32_t identifierNumber)
+{
+    constexpr size_t minNumberOfFieldsToIndex = 12;
+    std::span<const FieldData> fields = layout.fields();
+    if (fields.size() < minNumberOfFieldsToIndex) {
+        for (const FieldData& field : fields) {
+            if (field.name == identifierNumber)
+                return &field;
+        }
+        return nullptr;
+    }
+    auto found = m_fieldsByName.find(layout.index + 1);
+    if (found == m_fieldsByName.end())
+        found = m_fieldsByName.add(layout.index + 1, indexFieldsByName(fields)).iterator;
+    const Vector<uint16_t>& slots = found->value;
+    size_t mask = slots.size() - 1;
+    for (size_t slot = firstSlotOfName(identifierNumber, mask); slots[slot] != noFieldInSlot; slot = (slot + 1) & mask) {
+        const FieldData& field = fields[slots[slot]];
+        if (field.name == identifierNumber)
             return &field;
     }
     return nullptr;
@@ -217,6 +262,8 @@ void RuntimeLayoutTable::failIfNameIsNotListed(VM& vm, const LayoutData& layout,
     std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
     if (number && std::ranges::binary_search(listed, AddedNameData { layout.index, *number }))
         return;
+    if (number && std::ranges::binary_search(listed, AddedNameData { layout.index, AddedNameData::getsSharedNames }) && std::ranges::binary_search(listed, AddedNameData { AddedNameData::layoutOfSharedNames, *number }))
+        return;
     dataLogLn("AOT: an object of layout ", layout.index, " gets the property ", String(name), ", which is not among the names that its objects get");
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, JSValue() });
 }
@@ -228,7 +275,7 @@ bool RuntimeLayoutTable::everyObjectHadRemovedField(const LayoutData& layout) co
 
 UniquedStringImpl* RuntimeLayoutTable::nameOf(VM& vm, const FieldData& field)
 {
-    return vm.aotState().identifiers->identifier(field.name).impl();
+    return vm.aotState().identifiers->uid(field.name);
 }
 
 bool RuntimeLayoutTable::hasSymbolKey(const FieldData& field) const
@@ -282,9 +329,41 @@ bool RuntimeLayoutTable::valueHasType(const RuntimeType& type, JSValue value) co
             return true;
     } else if (!cell->isObject())
         return false;
-    return std::ranges::any_of(type.cellTests(), [&](const RuntimeCellTest& test) {
-        return cellPassesTest(test, cell);
-    });
+    return objectHasType(type, cell);
+}
+
+bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) const
+{
+    // A member that holds one of many functions has a test for each of them.
+    bool hasAskedForFunction = false;
+    std::optional<FunctionID> function;
+    for (const RuntimeCellTest& test : type.cellTests()) {
+        if (test.kind != CellTestKind::IsClosureOf) {
+            if (cellPassesTest(test, cell))
+                return true;
+            continue;
+        }
+        if (!std::exchange(hasAskedForFunction, true))
+            function = functionOf(cell);
+        if (function == test.function())
+            return true;
+    }
+    return false;
+}
+
+std::optional<AcceptedValue> RuntimeLayoutTable::accept(const FieldData& field, JSValue value) const
+{
+    // The slot of an accessor field holds its GetterSetter. The type of the field is that of the getter: compiled code calls what it finds in a filled slot as one of the functions that the type lists.
+    if (field.isAccessor()) {
+        if (!value || !value.isCell() || value.asCell()->type() != GetterSetterType)
+            return std::nullopt;
+        if (!valueHasType(typeOf(field), uncheckedDowncast<GetterSetter>(value.asCell())->getter()))
+            return std::nullopt;
+        return AcceptedValue(value);
+    }
+    if (!slotAdmits(field, value))
+        return std::nullopt;
+    return AcceptedValue(value);
 }
 
 bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cell) const
@@ -303,7 +382,7 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
     case CellTestKind::InheritsClassInfo:
         return inheritsBuiltinClass(cell, test.builtinClass());
     case CellTestKind::IsPristine:
-        return isInstanceOfBuiltinClass(cell, test.builtinClass()) && cell->isPristine();
+        return isInstanceOfBuiltinClass(cell, test.builtinClass()) && cell->structure()->isPristine();
     case CellTestKind::IsBuiltinCell: {
         // The built-in may have arrived by a generic path before compiled code filled its word.
         DeferGCForAWhile deferGC(*m_state.instance.vm);
@@ -311,10 +390,9 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
     }
     case CellTestKind::IsClosureOf:
         return functionOf(cell) == test.function();
-    case CellTestKind::IsSymbol: {
-        UniquedStringImpl* uid = m_state.instance.image.programIdentifiers[test.symbolKeyNumber()];
-        return uid && cell->isSymbol() && &asSymbol(cell)->uid() == uid;
-    }
+    case CellTestKind::IsSymbol:
+        // A symbol that nothing has made yet is the uid of no cell.
+        return cell->isSymbol() && &asSymbol(cell)->uid() == m_state.instance.vm->aotState().identifiers->tryGetIdentifierConcurrently(test.symbolKeyNumber());
     case CellTestKind::SharingModeIs:
         return hasSharingMode(cell, test.sharingMode());
     case CellTestKind::IsNamespaceOf: {

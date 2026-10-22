@@ -19,7 +19,6 @@
 namespace JSC { namespace AOT {
 
 enum class AwaitConditionBase : uint8_t {
-    SavedFrame,
     Instance,
     VM,
     MicrotaskQueue,
@@ -32,6 +31,7 @@ enum class AwaitConditionTest : uint8_t {
     HasNoBit,
     IsZero,
     EqualsOther,
+    EqualsFramePointer,
 };
 
 struct AwaitConditionWord {
@@ -57,24 +57,31 @@ inline constexpr ptrdiff_t offsetOfMicrotaskQueue = AOT_INSTANCE_OFFSET(realm.mi
 inline constexpr ptrdiff_t offsetOfPromiseHeader = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header);
 inline constexpr AwaitConditionWord noWord { AwaitConditionBase::Instance, 0, 0, false };
 
-inline constexpr std::array<AwaitCondition, 3> awaitConditionsOnState { {
-    { { AwaitConditionBase::SavedFrame, SavedFrame::offsetOfFlags(), 1, false }, AwaitConditionTest::HasAnyBit, SavedFrame::isEnteredByJobLoopFlag, noWord },
+// The first one stands for three: a job entered the frame as the last thing it does, the frame is still that one, and awaitMustSuspend is clear.
+inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnState { {
+    { { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue), 8, false }, AwaitConditionTest::EqualsFramePointer, 0, noWord },
     { { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfStart(), 8, false }, AwaitConditionTest::EqualsOther, 0, { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfEnd(), 8, false } },
-    { { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(awaitMustSuspend), 1, false }, AwaitConditionTest::IsZero, 0, noWord },
 } };
 
 inline constexpr AwaitCondition awaitedHasPromiseStructure { { AwaitConditionBase::AwaitedCellHeader, JSCell::structureIDOffset(), 4, false }, AwaitConditionTest::EqualsOther, 0, { AwaitConditionBase::Instance, offsetOfPromiseHeader, 4, true } };
 inline constexpr AwaitCondition awaitedIsFulfilled { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasAnyBit, static_cast<uint64_t>(JSPromise::Status::Fulfilled) << promiseFlagsShift, noWord };
 inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnObject { awaitedHasPromiseStructure, awaitedIsFulfilled };
 
-// A pending promise without a reaction takes one in its own two words, and a VM that tracks no async context has none to keep beside it.
+// A pending promise without a reaction takes one in its own two words, with the async context, a cell, in the place that the reaction of another task has for its cell.
+// While the VM tracks no async context there is none to capture, to keep or to put in place.
 inline constexpr uint64_t pendingPromiseWithoutReactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
 inline constexpr AwaitCondition tracksNoAsyncContext { { AwaitConditionBase::VM, OBJECT_OFFSETOF(VM, m_asyncContextTrackingEnabled), 1, false }, AwaitConditionTest::IsZero, 0, noWord };
 inline constexpr AwaitCondition awaitedTakesInlineReaction { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasNoBit, ~pendingPromiseWithoutReactionBits, noWord };
-inline constexpr uint64_t resumeReactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag)
-    | static_cast<uint64_t>(JSPromise::InlineReactionKind::InternalMicrotask) << JSPromise::inlineReactionKindShift
-    | static_cast<uint64_t>(InternalMicrotask::CompiledAsyncFunctionResume) << JSPromise::inlineReactionMicrotaskShift) << promiseFlagsShift;
+constexpr uint64_t inlineReactionBitsOf(InternalMicrotask task)
+{
+    return (static_cast<uint64_t>(JSPromise::isHandledFlag)
+        | static_cast<uint64_t>(JSPromise::InlineReactionKind::InternalMicrotask) << JSPromise::inlineReactionKindShift
+        | static_cast<uint64_t>(task) << JSPromise::inlineReactionMicrotaskShift) << promiseFlagsShift;
+}
+inline constexpr uint64_t resumeReactionBits = inlineReactionBitsOf(InternalMicrotask::CompiledAsyncFunctionResume);
 static_assert(static_cast<uint64_t>(InternalMicrotask::CompiledAsyncFunctionResume) << JSPromise::inlineReactionMicrotaskShift <= JSPromise::inlineReactionMicrotaskMask);
+static_assert(static_cast<uint64_t>(InternalMicrotask::AsyncGeneratorBodyCallNormal) << JSPromise::inlineReactionMicrotaskShift <= JSPromise::inlineReactionMicrotaskMask);
+static_assert(static_cast<uint64_t>(InternalMicrotask::AsyncGeneratorYieldAwaited) << JSPromise::inlineReactionMicrotaskShift <= JSPromise::inlineReactionMicrotaskMask);
 
 inline constexpr uint64_t promiseIsHandledBits = static_cast<uint64_t>(JSPromise::isHandledFlag) << promiseFlagsShift;
 inline constexpr uint64_t fulfilledPromiseBits = (static_cast<uint64_t>(JSPromise::Status::Fulfilled) | JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;

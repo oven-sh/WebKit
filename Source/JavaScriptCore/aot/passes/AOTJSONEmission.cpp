@@ -45,18 +45,22 @@ static DerivedSignature signatureOfKey(Emission& emission, const DerivedFunction
     case FunctionRole::Model:
     case FunctionRole::Signature:
     case FunctionRole::GenericEntrypoint:
-    case FunctionRole::GroupEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
     case FunctionRole::GenericVersion:
     case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
     case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineRamp:
     case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
     case FunctionRole::ResultWrapper:
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
-    case FunctionRole::Continuation:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         break;
@@ -213,7 +217,6 @@ ValueID Emission::appendCallOf(FunctionID function, std::initializer_list<ValueI
     Value call = IRBuilder::make(Opcode::CallDirect);
     call.setFunction(function);
     call.setArgumentsOperands(std::span<const ValueID> { arguments.begin(), arguments.size() });
-    call.setResultCheck(ResultCheck::ByCallee);
 
     std::optional<DerivedSignature> signature = signatureOfProvisionalCallee(*this, function);
     if (!signature)
@@ -238,7 +241,7 @@ Emission::TestedObject Emission::emitShapeTest(ValueID value, std::span<const La
     LayoutSetID tested = layoutSetOf(layouts);
     ValueID object = emitTypeTest(value, TypeTable::object, notTaken);
     const Type& type = typeOf(object);
-    if (type.hasOnlyLayouts() && isSubsetOf(program().at(type.layouts), program().at(tested)))
+    if (type.hasOnlyLayouts(program()) && isSubsetOf(program().at(type.layouts), program().at(tested)))
         return { object, { } };
 
     Value test = IRBuilder::make(Opcode::ShapeTest, { object });
@@ -267,7 +270,7 @@ ValueID Emission::appendSlotRead(Opcode opcode, const TestedObject& object, Layo
     Value read = IRBuilder::make(opcode, { object.object, object.guard });
     read.setKey(program().at(layout).fields[field].key);
     read.setReceivers(layoutSetOf(singleElementSpan(layout)));
-    read.setLevel(object.guard ? KnowledgeLevel::Predicted : KnowledgeLevel::Proven);
+    read.setLevel(object.guard ? KnowledgeLevel::Expected : KnowledgeLevel::Proven);
     return m_builder.append(WTF::move(read));
 }
 
@@ -328,7 +331,6 @@ static Type withoutProofsAboutArrays(const Type& type)
         part.contentsAreProven = false;
         part.provenPristine = { };
         part.arrayStorage = ArrayStorage::Other;
-        part.predictedContents.clear();
     }
     return result;
 }
@@ -360,6 +362,8 @@ ValueID Emission::emitRequireFieldType(ValueID value, TypeID fieldType, ProofsBy
     ValueID tested = emitRequireStoredType(value, testedType, notTaken);
     if (testedType == fieldType || typeOf(tested).isSubsetOf(program().at(fieldType), program()))
         return tested;
+    if (m_inputs.build.validates())
+        m_builder.append(makeValidateType(tested, fieldType));
     return m_builder.append(makeAssumeType(tested, fieldType));
 }
 

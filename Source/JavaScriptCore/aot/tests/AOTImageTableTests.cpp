@@ -202,7 +202,7 @@ static void testZigZag()
 static void checkSideTableParts(OptionSet<ImageFunctionFlag> flags, bool hasFrameRange)
 {
     static constexpr std::array<uint8_t, 3> handlerBytes { 1, 2, 3 };
-    static constexpr std::array<uint8_t, 2> positionBytes { 9, 9 };
+    static constexpr std::array<uint8_t, 2> callSiteBytes { 9, 9 };
     constexpr uint32_t fillerSize = 3;
     constexpr uint32_t frameStart = 2 * codeOffsetUnit;
 
@@ -211,39 +211,38 @@ static void checkSideTableParts(OptionSet<ImageFunctionFlag> flags, bool hasFram
         SideTableParts::appendFrameRange(frameRanges, 0, frameStart, frameStart + codeOffsetUnit);
     SideTableInputs inputs { };
     inputs.frameRanges = frameRanges.span();
+    inputs.frame = 200;
     if (flags.contains(ImageFunctionFlag::HasFrameMaps))
         inputs.frameMapRange = std::pair<uint32_t, uint32_t>(7, 3);
-    if (flags.contains(ImageFunctionFlag::HasCallSites))
-        inputs.callSites = 300;
     if (flags.contains(ImageFunctionFlag::HasHandlers))
         inputs.handlers = handlerBytes;
-    if (flags.contains(ImageFunctionFlag::HasPositions))
-        inputs.positions = positionBytes;
+    if (flags.contains(ImageFunctionFlag::HasCallSites))
+        inputs.callSites = callSiteBytes;
 
     Vector<uint8_t> stream(FillWith { }, fillerSize, 0);
     SideTableParts::append(stream, inputs);
 
     const uint8_t* start = stream.span().data();
-    SideTableParts parts = SideTableParts::read(ImageFunction::create(fillerSize, 0, 0, flags), start);
+    SideTableParts parts = SideTableParts::read(ImageFunction::create(fillerSize, 0, flags), start);
 
     AOT_TEST_CHECK(std::ranges::equal(parts.frameRanges, frameRanges.span()));
     AOT_TEST_CHECK(parts.hasFrameAt(frameStart) == hasFrameRange);
+    AOT_TEST_CHECK(parts.frame == (hasFrameRange ? 200u : 0u));
     AOT_TEST_CHECK(parts.firstFrameMapWord == (inputs.frameMapRange ? 7u : 0u));
     AOT_TEST_CHECK(parts.numberOfFrameMapWords == (inputs.frameMapRange ? 3u : 0u));
-    AOT_TEST_CHECK(parts.callSites == inputs.callSites.value_or(0));
     AOT_TEST_CHECK(std::ranges::equal(parts.handlers, inputs.handlers));
-    if (inputs.positions.empty()) {
-        AOT_TEST_CHECK(!parts.positions);
+    if (inputs.callSites.empty()) {
+        AOT_TEST_CHECK(!parts.callSites);
         return;
     }
-    AOT_TEST_CHECK(parts.positions == start + stream.size() - positionBytes.size());
-    AOT_TEST_CHECK(*parts.positions == 9);
+    AOT_TEST_CHECK(parts.callSites == start + stream.size() - callSiteBytes.size());
+    AOT_TEST_CHECK(*parts.callSites == 9);
 }
 
 static void testSideTableParts()
 {
     using enum ImageFunctionFlag;
-    static constexpr std::array groups { HasFrameMaps, HasCallSites, HasHandlers, HasPositions };
+    static constexpr std::array groups { HasFrameMaps, HasCallSites, HasHandlers };
     for (unsigned chosen = 0; chosen < 1u << groups.size(); ++chosen) {
         OptionSet<ImageFunctionFlag> flags;
         for (unsigned group = 0; group < groups.size(); ++group)
@@ -255,7 +254,7 @@ static void testSideTableParts()
 
 static void testSideTablePartsWithoutGroups()
 {
-    static constexpr std::array<uint8_t, 2> positions { 9, 9 };
+    static constexpr std::array<uint8_t, 2> callSites { 9, 9 };
     constexpr size_t sizeOfEmptyFrameRanges = 1;
 
     Vector<uint8_t> withoutAnything;
@@ -264,15 +263,15 @@ static void testSideTablePartsWithoutGroups()
     AOT_TEST_CHECK(!withoutAnything[0]);
 
     SideTableInputs inputs { };
-    inputs.positions = positions;
+    inputs.callSites = callSites;
     Vector<uint8_t> withoutRange;
     SideTableParts::append(withoutRange, inputs);
-    AOT_TEST_CHECK(withoutRange.size() == sizeOfEmptyFrameRanges + positions.size());
+    AOT_TEST_CHECK(withoutRange.size() == sizeOfEmptyFrameRanges + callSites.size());
 
     inputs.frameMapRange = std::pair<uint32_t, uint32_t>(7, 0);
     Vector<uint8_t> withEmptyRange;
     SideTableParts::append(withEmptyRange, inputs);
-    AOT_TEST_CHECK(withEmptyRange.size() == sizeOfEmptyFrameRanges + positions.size());
+    AOT_TEST_CHECK(withEmptyRange.size() == sizeOfEmptyFrameRanges + callSites.size());
 }
 
 static Vector<uint8_t> streamWithFrameRanges(std::initializer_list<CodeRange> ranges)
@@ -293,7 +292,7 @@ static Vector<uint8_t> streamWithFrameRanges(std::initializer_list<CodeRange> ra
 static void testFrameRanges()
 {
     constexpr uint32_t unit = codeOffsetUnit;
-    ImageFunction function = ImageFunction::create(0, 0, 0, { });
+    ImageFunction function = ImageFunction::create(0, 0, { });
 
     Vector<uint8_t> withoutRange = streamWithFrameRanges({ });
     SideTableParts frameless = SideTableParts::read(function, withoutRange.span().data());
@@ -305,6 +304,40 @@ static void testFrameRanges()
     for (uint32_t offset : { 2 * unit, 5 * unit - 1, 5 * unit, 7 * unit - 1, 9 * unit, 300 * unit - 1 })
         AOT_TEST_CHECK(parts.hasFrameAt(offset));
     for (uint32_t offset : { 0u, 2 * unit - 1, 7 * unit, 8 * unit, 9 * unit - 1, 300 * unit, 1000 * unit })
+        AOT_TEST_CHECK(!parts.hasFrameAt(offset));
+}
+
+static Vector<uint8_t> streamWithFrameChanges(std::initializer_list<uint32_t> changes)
+{
+    Vector<uint8_t> frameRanges;
+    uint32_t previousChange = 0;
+    for (uint32_t change : changes) {
+        SideTableParts::appendFrameChange(frameRanges, previousChange, change);
+        previousChange = change;
+    }
+    SideTableInputs inputs { };
+    inputs.frameRanges = frameRanges.span();
+    Vector<uint8_t> stream;
+    SideTableParts::append(stream, inputs);
+    return stream;
+}
+
+static void testFrameRangeWithoutEnd()
+{
+    constexpr uint32_t unit = codeOffsetUnit;
+    ImageFunction function = ImageFunction::create(0, 0, { });
+
+    Vector<uint8_t> fromStart = streamWithFrameChanges({ 0 });
+    SideTableParts everywhere = SideTableParts::read(function, fromStart.span().data());
+    AOT_TEST_CHECK(everywhere.frameRanges.size() == 1);
+    for (uint32_t offset : { 0u, unit, 1000000 * unit })
+        AOT_TEST_CHECK(everywhere.hasFrameAt(offset));
+
+    Vector<uint8_t> stream = streamWithFrameChanges({ 3 * unit, 5 * unit, 9 * unit });
+    SideTableParts parts = SideTableParts::read(function, stream.span().data());
+    for (uint32_t offset : { 3 * unit, 5 * unit - 1, 9 * unit, 1000000 * unit })
+        AOT_TEST_CHECK(parts.hasFrameAt(offset));
+    for (uint32_t offset : { 0u, 3 * unit - 1, 5 * unit, 9 * unit - 1 })
         AOT_TEST_CHECK(!parts.hasFrameAt(offset));
 }
 
@@ -337,18 +370,16 @@ static void testFunctionRecordWords()
     constexpr uint32_t sideTables = 0x12345678;
     OptionSet<ImageFunctionFlag> flags { ImageFunctionFlag::HasInlineFrames, ImageFunctionFlag::HasPositions };
 
-    ImageFunction largest = ImageFunction::create(sideTables, ImageFunction::functionMask, ImageFunction::frameMask, flags);
+    ImageFunction largest = ImageFunction::create(sideTables, ImageFunction::functionMask, flags);
     AOT_TEST_CHECK(largest.sideTables == sideTables);
-    AOT_TEST_CHECK(largest.functionIndex == ImageFunction::functionMask);
-    AOT_TEST_CHECK(largest.frameAndFlags == (ImageFunction::frameMask | static_cast<uint32_t>(flags.toRaw()) << ImageFunction::flagsShift));
+    AOT_TEST_CHECK(largest.functionAndFlags == (ImageFunction::functionMask | static_cast<uint32_t>(flags.toRaw()) << ImageFunction::flagsShift));
     AOT_TEST_CHECK(largest.function() == ImageFunction::functionMask);
-    AOT_TEST_CHECK(largest.frame() == ImageFunction::frameMask);
     AOT_TEST_CHECK(largest.flags() == flags);
     AOT_TEST_CHECK(largest.has(ImageFunctionFlag::HasPositions));
     AOT_TEST_CHECK(!largest.has(ImageFunctionFlag::HasHandlers));
 
-    ImageFunction smallest = ImageFunction::create(0, 0, 0, { });
-    AOT_TEST_CHECK(!smallest.sideTables && !smallest.functionIndex && !smallest.frameAndFlags);
+    ImageFunction smallest = ImageFunction::create(0, 0, { });
+    AOT_TEST_CHECK(!smallest.sideTables && !smallest.functionAndFlags);
 }
 
 static void testAccepts()
@@ -466,7 +497,7 @@ static void testSectionSizeNotWholeRecords()
 {
     using enum ImageSection;
     static constexpr std::array sections {
-        Functions, FunctionStarts, CodeGranules, FunctionsByID, InnerEntries, Frames, FrameMaps, ClosureWords, SharedCodeCopies,
+        Functions, FunctionStarts, CodeGranules, InnerEntries, Frames, FrameMaps, ClosureWords, SharedCodeCopies,
         Strings, LongStrings, Identifiers, StringConstants, RegExps, RegExpHashes, StubAddresses, StubReturnSites,
     };
     for (ImageSection section : sections) {
@@ -751,15 +782,11 @@ static void testStamp()
 
 static void testAdmittedCodeIsInHeader()
 {
-    using enum Wire::AdmittedCode;
-
     AOT_TEST_CHECK(Image::admittedCode(smallImage().bytes.span()) == Wire::AdmittedCode { });
-    for (Wire::AdmittedCode admitted : { Inspector, RuntimeCode, static_cast<Wire::AdmittedCode>(static_cast<uint32_t>(Inspector) | static_cast<uint32_t>(RuntimeCode)) }) {
-        TestBuild build(4, { .admittedCode = admitted });
-        TestImage image = build.build(bodies(plainBody(1), plainBody(2), plainBody(3)));
-        AOT_TEST_CHECK(image.image->header().options.admitted() == admitted);
-        AOT_TEST_CHECK(Image::admittedCode(image.bytes.span()) == admitted);
-    }
+    TestBuild build(4, { .admittedCode = Wire::AdmittedCode::Inspector });
+    TestImage image = build.build(bodies(plainBody(1), plainBody(2), plainBody(3)));
+    AOT_TEST_CHECK(image.image->header().options.admitted() == Wire::AdmittedCode::Inspector);
+    AOT_TEST_CHECK(Image::admittedCode(image.bytes.span()) == Wire::AdmittedCode::Inspector);
 }
 
 static void testAdmittedCodeNeedsHeaderOfThisFormat()
@@ -770,7 +797,7 @@ static void testAdmittedCodeNeedsHeaderOfThisFormat()
         return Image::admittedCode(copy.span());
     };
     AOT_TEST_CHECK(admittedAfter([](ImageHeader&) { }) == Wire::AdmittedCode { });
-    AOT_TEST_CHECK(admittedAfter([](ImageHeader& header) { header.options.admittedCode = static_cast<uint8_t>(Wire::AdmittedCode::RuntimeCode); }) == Wire::AdmittedCode::RuntimeCode);
+    AOT_TEST_CHECK(admittedAfter([](ImageHeader& header) { header.options.admittedCode = static_cast<uint8_t>(Wire::AdmittedCode::Inspector); }) == Wire::AdmittedCode::Inspector);
     AOT_TEST_CHECK(!admittedAfter([](ImageHeader& header) { header.magic ^= 1; }));
     AOT_TEST_CHECK(!admittedAfter([](ImageHeader& header) { header.stamp ^= 1; }));
     AOT_TEST_CHECK(!admittedAfter([](ImageHeader& header) { header.identity = otherIdentity(); }));
@@ -826,6 +853,30 @@ static ConstantPool poolOf(Vector<CompiledCode>&& code, const TestOptions& optio
 {
     BuildContext context(wireOptions(options));
     return buildConstantPool(createLinkedFunctions(WTF::move(code), context), context);
+}
+
+// The pool begins with the shared constants as they are. A constant of a body that equals a part is that part; one that equals only a piece of a part, or two parts in a row, has bytes of its own.
+static void testConstantsOfBodiesAreFoundAmongSharedConstants()
+{
+    std::array<double, 4> shared { 0.25, 0.5, 0.75, 0 };
+    std::array<ConstantRange, 2> parts { { { 0, 2 * sizeof(double) }, { 2 * sizeof(double), sizeof(double) } } };
+    auto constantOf = [&](size_t first, size_t count) {
+        std::span<const uint8_t> bytes = asBytes(std::span(shared).subspan(first, count));
+        return ConstantData { Vector<uint8_t>(bytes), alignmentOfConstant(bytes.size()) };
+    };
+    BuildContext context(wireOptions({ }));
+    LinkedFunctions functions = createLinkedFunctions(bodies(bodyWithConstants(1, { constantOf(0, 2), constantOf(2, 1), constantOf(1, 1) }), bodyWithConstants(2, { doubleConstant(0.1), constantOf(2, 1), constantOf(0, 4) })), context);
+    ConstantPool pool = buildConstantPool(functions, context, { asBytes(std::span(shared)), parts });
+    AOT_TEST_CHECK(pool.sizeOfSharedConstants == sizeof(shared) && equalSpans(pool.bytes.span().first(sizeof(shared)), asBytes(std::span(shared))));
+    AOT_TEST_CHECK(!pool.constantOffsetsByBody[0][0] && pool.constantOffsetsByBody[0][1] == parts[1].offset && pool.constantOffsetsByBody[1][1] == parts[1].offset);
+    for (uint32_t offset : { pool.constantOffsetsByBody[0][2], pool.constantOffsetsByBody[1][0], pool.constantOffsetsByBody[1][2] })
+        AOT_TEST_CHECK(offset >= sizeof(shared));
+    AOT_TEST_CHECK(pool.bytes.size() == sizeof(shared) + sizeof(shared) + 2 * sizeof(double));
+    AOT_TEST_CHECK(equalSpans(pool.bytes.span().subspan(pool.constantOffsetsByBody[0][2], sizeof(double)), asBytes(std::span(shared).subspan(1, 1))));
+    AOT_TEST_CHECK(equalSpans(pool.bytes.span().subspan(pool.constantOffsetsByBody[1][2], sizeof(shared)), asBytes(std::span(shared))));
+
+    ConstantPool withoutShared = buildConstantPool(functions, context);
+    AOT_TEST_CHECK(!withoutShared.sizeOfSharedConstants && withoutShared.bytes.size() == sizeof(shared) + 2 * sizeof(double) + 3 * sizeof(double));
 }
 
 static void testEqualConstantsShare()
@@ -892,6 +943,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/format/side-table-parts"_s, testSideTableParts },
         { "image/format/side-table-parts-without-groups"_s, testSideTablePartsWithoutGroups },
         { "image/format/frame-ranges"_s, testFrameRanges },
+        { "image/format/frame-range-without-end"_s, testFrameRangeWithoutEnd },
         { "image/format/register-packing"_s, testRegisterPacking },
         { "image/format/image-frame-bits"_s, testImageFrameBits },
         { "image/format/function-record-words"_s, testFunctionRecordWords },
@@ -946,6 +998,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/admitted-code/needs-header-of-this-format"_s, testAdmittedCodeNeedsHeaderOfThisFormat },
         { "image/flags/need-header-of-this-format"_s, testFlagsNeedHeaderOfThisFormat },
         { "image/constants/equal-constants-share"_s, testEqualConstantsShare },
+        { "image/constants/constants-of-bodies-are-found-among-shared-constants"_s, testConstantsOfBodiesAreFoundAmongSharedConstants },
         { "image/constants/aligned"_s, testConstantsAreAligned },
         { "image/constants/jump-tables-have-own-ranges"_s, testJumpTablesHaveOwnRanges },
         { "image/constants/threads"_s, testConstantPoolWithThreads },

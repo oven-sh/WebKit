@@ -127,6 +127,7 @@ BasicBlock* Procedure::addBlock(double frequency)
     m_blocksInPreOrder.shrink(0);
     m_blocksInPostOrder.shrink(0);
     m_blockRarity = nullptr;
+    m_frequencyEstimate = nullptr;
     m_areFrequenciesCurrent = false;
     std::unique_ptr<BasicBlock> block(new (arenaOrNull()) BasicBlock(m_blocks.size(), frequency));
     block->m_isInArena = !!arenaOrNull();
@@ -317,6 +318,7 @@ void Procedure::invalidateCFG()
     m_backwardsCFG = nullptr;
     m_backwardsDominators = nullptr;
     m_blockRarity = nullptr;
+    m_frequencyEstimate = nullptr;
     m_areFrequenciesCurrent = false;
 }
 
@@ -418,36 +420,47 @@ void Procedure::dump(PrintStream& out) const
         out.print(*m_byproducts);
 }
 
+// Returns whether an edge leads to a block that the walk has entered and not left. Only a walk in post order leaves blocks.
 template<GraphOrder order>
-static void appendBlocksInOrder(Procedure& proc, Vector<BasicBlock*>& output)
+static bool appendBlocksInOrder(Procedure& proc, Vector<BasicBlock*>& output)
 {
     constexpr uintptr_t isSecondVisit = 1;
     static_assert(alignof(BasicBlock) > isSecondVisit);
+    constexpr uint8_t notReached = 0;
+    constexpr uint8_t entered = 1;
+    constexpr uint8_t left = 2;
     output.reserveCapacity(proc.size());
-    Vector<uint8_t, 512> visited;
-    visited.fill(0, proc.size());
-    uint8_t* isVisited = visited.mutableSpan().data();
+    Vector<uint8_t, 512> states;
+    states.fill(notReached, proc.size());
+    uint8_t* stateOf = states.mutableSpan().data();
     Vector<uintptr_t, 128> stack;
     stack.append(std::bit_cast<uintptr_t>(proc[0]));
+    bool hasCycle = false;
     while (!stack.isEmpty()) {
         uintptr_t entry = stack.takeLast();
         if (entry & isSecondVisit) {
-            output.unsafeAppendWithoutCapacityCheck(std::bit_cast<BasicBlock*>(entry - isSecondVisit));
+            BasicBlock* block = std::bit_cast<BasicBlock*>(entry - isSecondVisit);
+            stateOf[block->index()] = left;
+            output.unsafeAppendWithoutCapacityCheck(block);
             continue;
         }
         BasicBlock* block = std::bit_cast<BasicBlock*>(entry);
-        if (isVisited[block->index()])
+        if (stateOf[block->index()] != notReached)
             continue;
-        isVisited[block->index()] = 1;
+        stateOf[block->index()] = entered;
         if (order == GraphOrder::PreOrder)
             output.unsafeAppendWithoutCapacityCheck(block);
         else
             stack.append(entry | isSecondVisit);
         for (const FrequentedBlock& successor : block->successors()) {
-            if (!isVisited[successor.block()->index()])
+            uint8_t state = stateOf[successor.block()->index()];
+            if (state == notReached)
                 stack.append(std::bit_cast<uintptr_t>(successor.block()));
+            else if (order == GraphOrder::PostOrder)
+                hasCycle |= state == entered;
         }
     }
+    return hasCycle;
 }
 
 void Procedure::didReorderSuccessors()
@@ -456,37 +469,70 @@ void Procedure::didReorderSuccessors()
     m_blocksInPostOrder.shrink(0);
 }
 
+void Procedure::willReorderSuccessors()
+{
+    if (m_frequencyEstimate)
+        updateFrequencies();
+}
+
+static Vector<BasicBlock*> blocksInOrderOfGenericWalk(Procedure& proc, GraphOrder order)
+{
+    Vector<BasicBlock*> result;
+    result.reserveInitialCapacity(proc.size());
+    appendNodesInOrder(proc.cfg(), order, result);
+    return result;
+}
+
 const Vector<BasicBlock*>& Procedure::cachedBlocksInPreOrder()
 {
     if (m_blocksInPreOrder.isEmpty())
         appendBlocksInOrder<GraphOrder::PreOrder>(*this, m_blocksInPreOrder);
     else if (shouldValidateIRAtEachPhase(*this))
-        RELEASE_ASSERT(m_blocksInPreOrder == blocksInPreOrder());
+        RELEASE_ASSERT(m_blocksInPreOrder == blocksInOrderOfGenericWalk(*this, GraphOrder::PreOrder));
     return m_blocksInPreOrder;
 }
 
 const Vector<BasicBlock*>& Procedure::cachedBlocksInPostOrder()
 {
     if (m_blocksInPostOrder.isEmpty())
-        appendBlocksInOrder<GraphOrder::PostOrder>(*this, m_blocksInPostOrder);
+        m_hasCycle = appendBlocksInOrder<GraphOrder::PostOrder>(*this, m_blocksInPostOrder);
     else if (shouldValidateIRAtEachPhase(*this))
-        RELEASE_ASSERT(m_blocksInPostOrder == blocksInPostOrder());
+        RELEASE_ASSERT(m_blocksInPostOrder == blocksInOrderOfGenericWalk(*this, GraphOrder::PostOrder));
     return m_blocksInPostOrder;
+}
+
+static bool hasEdgeAgainstPostOrder(const Vector<BasicBlock*>& postOrder)
+{
+    IndexSet<BasicBlock*> left;
+    for (BasicBlock* block : postOrder) {
+        for (BasicBlock* successor : block->successorBlocks()) {
+            if (!left.contains(successor))
+                return true;
+        }
+        left.add(block);
+    }
+    return false;
+}
+
+bool Procedure::hasCycle()
+{
+    const Vector<BasicBlock*>& postOrder = cachedBlocksInPostOrder();
+    if (shouldValidateIRAtEachPhase(*this))
+        RELEASE_ASSERT(m_hasCycle == hasEdgeAgainstPostOrder(postOrder));
+    return m_hasCycle;
 }
 
 Vector<BasicBlock*> Procedure::blocksInPreOrder()
 {
     Vector<BasicBlock*> result;
-    result.reserveInitialCapacity(size());
-    appendNodesInOrder(cfg(), GraphOrder::PreOrder, result);
+    appendBlocksInOrder<GraphOrder::PreOrder>(*this, result);
     return result;
 }
 
 Vector<BasicBlock*> Procedure::blocksInPostOrder()
 {
     Vector<BasicBlock*> result;
-    result.reserveInitialCapacity(size());
-    appendNodesInOrder(cfg(), GraphOrder::PostOrder, result);
+    appendBlocksInOrder<GraphOrder::PostOrder>(*this, result);
     return result;
 }
 
@@ -627,12 +673,21 @@ BlockRarity& Procedure::blockRarity()
     return *m_blockRarity;
 }
 
+void Procedure::updateEdgeClasses()
+{
+    if (m_areFrequenciesCurrent || m_frequencyEstimate || !m_policy.optimization.estimatesFrequencies)
+        return;
+    m_frequencyEstimate = FrequencyEstimate::create(*this);
+    m_blockRarity = nullptr;
+}
+
 void Procedure::updateFrequencies()
 {
     if (m_areFrequenciesCurrent || !m_policy.optimization.estimatesFrequencies)
         return;
-    estimateFrequencies(*this);
-    m_blockRarity = nullptr;
+    updateEdgeClasses();
+    m_frequencyEstimate->setBlockFrequencies();
+    m_frequencyEstimate = nullptr;
     m_areFrequenciesCurrent = true;
 }
 
@@ -769,6 +824,7 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
     m_blocksInPostOrder.clear();
     m_knownInductions.clear();
     m_blockRarity = nullptr;
+    m_frequencyEstimate = nullptr;
     // We cannot clear m_stackSlots() or m_tuples here, as they are unfortunately modified and read respectively by Air.
     m_variables.clearAll();
     m_blocks.clear();

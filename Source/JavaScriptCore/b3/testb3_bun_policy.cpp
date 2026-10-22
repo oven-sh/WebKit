@@ -72,9 +72,11 @@ static void enableEveryAirSwitch(Air::Policy& air)
     air.frame.mayPushSpillsAtFrameSetup = true;
     air.frame.ordersSlotsByUse = true;
     air.frame.prefersStackPointerAddresses = true;
+    air.frame.mayOmitFrameRecord = true;
     air.layout.movesBlocksWithoutSuccessorsToEnd = true;
     air.layout.placesRareBlocksInGaps = true;
     air.layout.placesRareBlocksAfterGuards = true;
+    air.layout.makesGapsForRareBlocks = true;
     air.layout.ordersBlocksByEdgeFrequency = true;
     air.layout.recordsRareCodeStart = true;
     air.layout.mergesIdenticalBlocks = true;
@@ -97,7 +99,6 @@ static Policy policyWithEverySwitchOn()
     policy.loops.foldsComparisonsWithBounds = true;
     policy.loops.versions = true;
     policy.loops.clampsLoopBounds = true;
-    policy.loops.stripMinesPolls = true;
     policy.switchLowering.usesBitTests = true;
     enableEveryAirSwitch(policy.air);
     return policy;
@@ -143,7 +144,7 @@ static bool hasSameFrameLayout(const Policy& policy, const Policy& other)
 static bool hasSameRareBlockLayout(const Policy& policy, const Policy& other)
 {
     auto fieldsOf = [](const Air::LayoutPolicy& layout) {
-        return std::tuple(layout.placesRareBlocksInGaps, layout.placesRareBlocksAfterGuards, layout.ordersBlocksByEdgeFrequency);
+        return std::tuple(layout.placesRareBlocksInGaps, layout.placesRareBlocksAfterGuards, layout.makesGapsForRareBlocks, layout.ordersBlocksByEdgeFrequency);
     };
     return fieldsOf(policy.air.layout) == fieldsOf(other.air.layout);
 }
@@ -173,7 +174,6 @@ static std::span<const SwitchFields> switchFields()
         SWITCH_FIELD(FoldComparisonsWithBounds, loops, foldsComparisonsWithBounds),
         SWITCH_FIELD(VersionLoops, loops, versions),
         SWITCH_FIELD(ClampLoopBounds, loops, clampsLoopBounds),
-        SWITCH_FIELD(StripMinePolls, loops, stripMinesPolls),
         SWITCH_FIELD(BitTests, switchLowering, usesBitTests),
         SWITCH_FIELD(KnownRanges, knownProperties, trustsKnownRanges),
         SWITCH_FIELD(KnownDereferenceableBytes, knownProperties, trustsKnownDereferenceableBytes),
@@ -184,6 +184,7 @@ static std::span<const SwitchFields> switchFields()
         SWITCH_FIELD(SplitLiveRangesAroundFrame, air.splitting, splitsAroundFrame),
         SWITCH_FIELD(ShrinkWrapFrame, air.frame, shrinkWraps),
         SwitchFields { PolicySwitch::FrameLayout, "ordersSlotsByUse"_s, hasSameFrameLayout },
+        SWITCH_FIELD(OmitFrameRecord, air.frame, mayOmitFrameRecord),
         SWITCH_FIELD(MoveBlocksWithoutSuccessorsToEnd, air.layout, movesBlocksWithoutSuccessorsToEnd),
         SwitchFields { PolicySwitch::RareBlockLayout, "placesRareBlocksInGaps"_s, hasSameRareBlockLayout },
         SWITCH_FIELD(MergeIdenticalBlocks, air.layout, mergesIdenticalBlocks),
@@ -297,6 +298,7 @@ static void testRandomProgramPolicyCoversSwitches()
     for (const SwitchFields& fields : switchFields()) {
         bool isLeftOff = fields.policySwitch == PolicySwitch::PinnedConstants
             || fields.policySwitch == PolicySwitch::ShrinkWrapFrame
+            || fields.policySwitch == PolicySwitch::OmitFrameRecord
             || fields.policySwitch == PolicySwitch::DuplicateReturns;
         if (fields.areEqual(policy, disabledPolicy) == isLeftOff)
             continue;
@@ -461,6 +463,35 @@ static void testCachedBlockOrdersAreReused()
 
     proc.invalidateCFG();
     checkBlockChainOrders(proc, { root, exit });
+}
+
+static void testHasCycle()
+{
+    enum class LastEdge : uint8_t { ToExit, ToItself, ToBlockAbove };
+    for (LastEdge lastEdge : { LastEdge::ToExit, LastEdge::ToItself, LastEdge::ToBlockAbove }) {
+        Procedure proc(policyWith([](Policy&) { }));
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* left = proc.addBlock();
+        BasicBlock* right = proc.addBlock();
+        BasicBlock* join = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        BasicBlock* otherExit = proc.addBlock();
+        Value* condition = cCallArgumentValues<int64_t>(proc, root)[0];
+        graph.branch(root, condition, left, right);
+        graph.jump(left, join);
+        graph.branch(right, condition, join, left);
+        graph.branch(join, condition, exit, lastEdge == LastEdge::ToExit ? otherExit : lastEdge == LastEdge::ToItself ? join : right);
+        graph.ret(exit, graph.int64(exit, 1));
+        graph.ret(otherExit, graph.int64(otherExit, 2));
+        proc.resetReachability();
+        CHECK_EQ(proc.hasCycle(), lastEdge != LastEdge::ToExit);
+        CHECK_EQ(proc.hasCycle(), lastEdge != LastEdge::ToExit);
+
+        join->successorBlock(1) = lastEdge == LastEdge::ToExit ? left : exit;
+        proc.resetReachability();
+        CHECK_EQ(proc.hasCycle(), lastEdge == LastEdge::ToExit);
+    }
 }
 
 static void testPointerConstantFailsWhenPositionIndependent()
@@ -995,6 +1026,7 @@ void addBunPolicyTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testCachedBlockOrdersAreInvalidated());
     RUN(testCachedBlockOrdersFollowSwappedSuccessors());
     RUN(testCachedBlockOrdersAreReused());
+    RUN(testHasCycle());
     RUN(testPointerConstantFailsWhenPositionIndependent());
     RUN(testFirstFailureWins());
     RUN(testRemarksAreCollectedOnRequest());

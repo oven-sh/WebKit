@@ -411,7 +411,7 @@ function f1 name="settled" parameters=[{type=anything}] results=[{type=anything}
 static constexpr ASCIILiteral stepsOfArrayIterator = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=70 function=f1
+runtimefunction id=69 function=f1
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -444,11 +444,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v20 = CallDirect function=f2
     Return
 }
-function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Claim v0 castType=object
+    v1 = Check v0 castType=object
     v2 = GetInternalField v1
-    v3 = Claim v2 castType=i32
+    v3 = Check v2 castType=i32
     v4 = Integer integer=-1
     v5 = StrictEq v3, v4
     Branch v5 -> taken b1(), notTaken b2()
@@ -459,7 +459,7 @@ function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeF
     Return v8
   b2():
     v9 = GetInternalField v1 index=1
-    v10 = Claim v9 castType=Array<anything>
+    v10 = Check v9 castType=Array<anything>
     v11 = PropGet v10 key="length"
     v12 = ToLength v11
     v13 = Less v3, v12
@@ -495,7 +495,7 @@ function f2 name="readKept" results=[{type=anything}] {
 static constexpr ASCIILiteral stepsOfGenerator = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=71 function=f2
+runtimefunction id=70 function=f2
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -535,7 +535,7 @@ function f1 name="g" flags=[IsGenerator, TakesCallee] results=[{type=anything}] 
     v6 = String string="returned"
     Return v6
 }
-function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=71 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 check=IsGenerator
     v3 = ResultAt v2

@@ -18,7 +18,8 @@ namespace Typed {
 class Program;
 class TypeTable;
 
-// Solves the program and fills the tables that the stage AnalyzeFlow hands to the compiler. What the solve does not answer stays unknown.
+// The stage AnalyzeFlow: solves the program and fills the tables that the compiler reads from then on. What the solve does not answer stays unknown, and applying an unknown record changes nothing.
+// A build that admits code which the compiler never sees is not solved: its tables state nothing.
 // A test may ask for one line about each set that names an object outside the type as read of the place where it arrives.
 FlowResults analyzeValueFlow(Program&, TypeTable&, BuildContext&, Vector<String>* setsOutsideTypes = nullptr);
 

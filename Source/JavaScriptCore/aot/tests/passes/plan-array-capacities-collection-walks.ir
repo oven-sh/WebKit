@@ -1,7 +1,7 @@
 # An array that gets one element for each entry of a Map or a Set is allocated with room for as many elements as the collection has entries
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
-# STATISTIC: ArrayCapacitiesPlanned = 3
+# STATISTIC: ArrayCapacitiesPlanned = 4
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pushPerMapEntry" parameters=[{type=Map}] results=[{type=Array<anything>}] {
@@ -134,8 +134,9 @@ function f4 name="unknownCodeInLoop" parameters=[{type=Map}, {type=anything}] re
     Return v2
 }
 # CHECK-LABEL: function f4
-# CHECK-NOT: MapPrototypeSize
-# CHECK-NOT: capacity=
+# CHECK: [[size4]]: {{*}} = CallBuiltin v0 overload=MapPrototypeSize/0
+# CHECK: [[sum4]]: {{*}} = Add {{*}}, [[size4]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum4]]
 
 function f5 name="loopLeftEarly" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
   b0(v0: Map, v1: boolean):

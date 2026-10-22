@@ -1,11 +1,11 @@
-# An array of holes and a rest array are allocated in line in fast code alone: balanced and compact code call the stub
+# An array of holes and a rest array take their cell from the stub in code of every shape
 # FORM: AsRead
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
 # CHECK: f1: size=
 # CHECK: stub NewArrayWithLength.Contiguous x2
 # CHECK: f2: size=
-# CHECK-NOT: stub NewArrayWithLength
+# CHECK: stub NewArrayWithLength.Contiguous x2
 # The generic entrypoint of the function with the rest parameter is balanced.
 # CHECK: operation operationAOTNewArray x1
 # CHECK-NEXT: stub NewArrayWithLength.Contiguous x1

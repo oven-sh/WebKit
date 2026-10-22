@@ -56,6 +56,7 @@ function f0 name="arrayOrNullish" parameters=[{type=undefined|null|Array<number,
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
 
 function f1 name="arrayOrNumber" parameters=[{type=number|Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
   b0(v0: number|Array<number, pristine[Names]>, v1: anything):
@@ -77,13 +78,14 @@ function f1 name="arrayOrNumber" parameters=[{type=number|Array<number, pristine
 # CHECK: [[isArray1]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray1]] -> taken [[array1]](| 0), notTaken [[number1]](| 0)
 # CHECK: [[protocol1]]([[iterable1]]: number|Array<number, pristine[Names]>) frequency=Unlikely:
-# CHECK-NEXT: = PropGet [[iterable1]] key=@@iterator
+# CHECK-NEXT: [[open1]]: undefined = CallDirect [[iterable1]] function=f2 [isNeverInlined]
+# CHECK: = ResultAt [[open1]] index=1
 # CHECK: [[number1]]([[rest1]]: number) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[protocol1]]([[rest1]])
-# CHECK: key="next"
 # ABSENT-LABEL: function f1 name="arrayOrNumber"
 # ABSENT-NOT: RequireObjectCoercible
 # ABSENT-NOT: IsPristine
+# ABSENT-LABEL: function f2 name="openIterator"
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

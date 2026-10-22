@@ -102,21 +102,18 @@ StringRemap StringInterningPhase::finish(std::span<const unsigned> taskOrder)
     });
     remap.m_tasksWithNewStrings.ensureSize(m_firstUses.size());
 
-    BitVector listedTasks(m_firstUses.size());
     for (unsigned task : taskOrder) {
         RELEASE_ASSERT(task < m_firstUses.size());
-        listedTasks.quickSet(task);
         if (m_firstUses[task].isEmpty())
             continue;
         remap.m_tasksWithNewStrings.quickSet(task);
+        remap.m_isIdentity = false;
         for (StringID provisional : m_firstUses[task]) {
             StringID& finalID = remap.m_finalIDs[ProvisionalStringID::storageOf(provisional)][ProvisionalStringID::positionOf(provisional)];
             if (!finalID)
                 finalID = m_table.intern(textOf(provisional));
         }
     }
-    for (unsigned task = 0; task < m_firstUses.size(); ++task)
-        RELEASE_ASSERT(listedTasks.quickGet(task) || m_firstUses[task].isEmpty());
     return remap;
 }
 

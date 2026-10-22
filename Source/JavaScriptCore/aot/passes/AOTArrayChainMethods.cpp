@@ -133,11 +133,11 @@ std::optional<ArrayMethodCall> arrayMethodCallOf(const Program& program, const F
     const Value& value = function.at(id);
     if (value.opcode == Opcode::GetArrayLength)
         return ArrayMethodCall { findChainMethod(Builtins::ArrayPrototypeLength), id, value.arrayOperand(), { } };
-    if (builtinCallOpcodes.contains(value.opcode))
-        return builtinMethodCallOf(program, function, id);
+    if (!arrayMethodCallOpcodes.contains(value.opcode))
+        return std::nullopt;
     if (value.opcode == Opcode::CallDirect)
         return libraryMethodCallOf(program, function, id);
-    return std::nullopt;
+    return builtinMethodCallOf(program, function, id);
 }
 
 FunctionID findChainTraversal(const Program& program)

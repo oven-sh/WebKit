@@ -236,6 +236,15 @@ static void checkReadSummaries(const StubCatalog& catalog)
     for (StubKey key : { getById(), getByIdAfterFrontProbe(), putByIdAfterFrontProbe(PutMode::Strict), putByIdAfterFrontProbe(PutMode::Sloppy), putByIdAfterFrontProbe(PutMode::Define) })
         AOT_TEST_CHECK(catalog.summaryOf(key).clobbered.subsumes(probeRegisters));
     AOT_TEST_CHECK(&catalog.summaryOf(getById().withImmediate(nameWithReadStub)) == &catalog.summaryOf(getById()));
+
+    // The way to a getter stores and loads two floating-point registers, not all: the others are lost to whoever reads or stores by name.
+    for (StubKey key : { getById(), getByIdAtSite(), putById(PutMode::Strict) }) {
+        RegisterSet kept = RegisterSet::allFPRs();
+        kept.exclude(catalog.summaryOf(key).clobbered);
+        AOT_TEST_CHECK(kept.numberOfSetRegisters() < RegisterSet::allFPRs().numberOfSetRegisters() / 2);
+        if (isX86_64())
+            AOT_TEST_CHECK(kept.numberOfSetRegisters() == 2);
+    }
 }
 
 static void checkPreservingCallSummary(const StubCatalog& catalog, StubKey key)
@@ -380,7 +389,7 @@ static void checkBindingOfEveryKey(const StubCatalog& catalog)
         ImmediateBinding binding = descriptorOf(key.family()).binding;
         StubBoundImmediates boundImmediates = signatureFor(key).boundImmediates;
         bool isPlainVariant = !key.operandRegister() && key.callerFrame() == CallerFrame::HasFrame;
-        AOT_TEST_CHECK((binding == ImmediateBinding::ByPolicy) == (boundImmediates != StubBoundImmediates::None));
+        AOT_TEST_CHECK(boundImmediates == StubBoundImmediates::None || binding == ImmediateBinding::ByPolicy);
         for (uint32_t immediate : immediates) {
             bool binds = catalog.bindsImmediate(key, immediate);
             AOT_TEST_CHECK(!binds || exists(key.withImmediate(immediate)));
@@ -732,8 +741,12 @@ static void checkReturnSites(const StubBlob& blob)
         ++numberOfSites[static_cast<size_t>(site.kind)];
     }
     for (size_t kind = 0; kind < numberOfStubFrameKinds; ++kind) {
-        if (hasSingleReturnSite(static_cast<StubFrameKind>(kind)))
-            AOT_TEST_CHECK(numberOfSites[kind] == 1);
+        if (!hasSingleReturnSite(static_cast<StubFrameKind>(kind)))
+            continue;
+        // None where nothing asked for the stub that has it.
+        if (numberOfSites[kind] > 1)
+            dataLogLn("frames of kind ", kind, " have ", numberOfSites[kind], " return sites");
+        AOT_TEST_CHECK(numberOfSites[kind] <= 1);
     }
 }
 

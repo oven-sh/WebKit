@@ -31,6 +31,7 @@
 
 namespace JSC {
 
+class ErrorInstance;
 namespace AOT { struct ReturnAddressTrace; }
     
 class Exception final : public JSCell {
@@ -50,6 +51,8 @@ public:
         DoNotCaptureStack
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
+    // Walks no frame. Null unless the value is an Error that still holds the return addresses of its own stack.
+    static Exception* tryCreateWithStackOfError(VM&, JSValue thrownValue);
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
@@ -97,6 +100,9 @@ private:
     Exception(VM&, JSValue thrownValue);
     void finishCreation(VM&, StackCaptureAction);
     bool tryRetainReturnAddresses(VM&);
+    void retainReturnAddresses(VM&, AOT::ReturnAddressTrace*, Vector<StackFrame>&& otherFrames);
+    static ErrorInstance* errorToTakeStackFrom(VM&, JSValue thrownValue);
+    void takeStackFrom(VM&, ErrorInstance&);
     JS_EXPORT_PRIVATE void materializeStack();
     static void destroy(JSCell*);
     static constexpr uintptr_t didNotifyInspectorOfThrowFlag = 1;

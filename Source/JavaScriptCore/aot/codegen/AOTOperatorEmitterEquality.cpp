@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsValues.h"
 #include "AOTTypeTable.h"
@@ -233,6 +234,19 @@ Condition EqualityEmitter::equalityOnLiteralStrings(const ValueContext& value, b
     ValueID right = value->rightOperand();
     LiteralStringWord x = in<LiteralStringWord>(left);
     LiteralStringWord y = in<LiteralStringWord>(right);
+    auto equalsLiteral = [&](LiteralStringWord loaded, LiteralStringWord literal) -> std::optional<Condition> {
+        if (!literal.value()->hasInt64())
+            return std::nullopt;
+        uint64_t bits = static_cast<uint64_t>(literal.value()->asInt64());
+        std::optional<NarrowReference> narrow = bits >= emptyLiteralStringWord && bits < minCell32 ? narrowWordBehind(loaded) : std::nullopt;
+        if (!narrow)
+            return std::nullopt;
+        return equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(bits))));
+    };
+    if (std::optional<Condition> isEqual = equalsLiteral(x, y))
+        return *isEqual;
+    if (std::optional<Condition> isEqual = equalsLiteral(y, x))
+        return *isEqual;
     Condition haveEqualWords = equalityOnBoxedBits(value, Boxed(x.value()), Boxed(y.value()), isStrict);
     if (!mayBeStringCell(x, typeOf(left)) || !mayBeStringCell(y, typeOf(right)))
         return haveEqualWords;
@@ -242,7 +256,7 @@ Condition EqualityEmitter::equalityOnLiteralStrings(const ValueContext& value, b
     return either<Condition>(logicalOr(haveEqualWords, logicalNot(areStringCells)), [&] {
         return haveEqualWords;
     }, [&] {
-        return emitter<StringEmitter>().areEqual(value, CellPointer(x.value()), CellPointer(y.value()));
+        return emitter<StringEmitter>().areEqual(value, CellPointer(x.value()), CellPointer(y.value()), StringEmitter::StringIdentity::Distinct);
     });
 }
 
@@ -259,9 +273,12 @@ Condition EqualityEmitter::equalityOnNullableStrings(const ValueContext& value, 
     m_out.appendTo(hasSameBits);
     join.add(boolean(true));
     m_out.appendTo(hasOtherBits);
-    branch(areBothCells(x, y), { normalEdge(areStrings), normalEdge(oneIsNullish) });
+    bool leftIsString = typeOf(value->leftOperand()).isString();
+    bool rightIsString = typeOf(value->rightOperand()).isString();
+    Condition areCells = leftIsString ? (rightIsString ? boolean(true) : isCell(y)) : (rightIsString ? isCell(x) : areBothCells(x, y));
+    branch(areCells, { normalEdge(areStrings), normalEdge(oneIsNullish) });
     m_out.appendTo(areStrings);
-    join.add(emitter<StringEmitter>().areEqual(value, unboxCell(x), unboxCell(y)));
+    join.add(emitter<StringEmitter>().areEqual(value, unboxCell(x), unboxCell(y), StringEmitter::StringIdentity::Distinct));
     m_out.appendTo(oneIsNullish);
     join.add(isStrict ? boolean(false) : logicalAnd(isNotCell(x), isNotCell(y)));
     return join.finish();
@@ -337,7 +354,7 @@ Condition EqualityEmitter::areValuesEqual(const OperationContext& context, Boxed
     m_out.appendTo(firstIsString);
     branch(hasCellType(unboxCell(y), StringType), { normalEdge(areStrings), normalEdge(isOther) });
     m_out.appendTo(areStrings);
-    join.add(emitter<StringEmitter>().areEqual(context, unboxCell(x), unboxCell(y)));
+    join.add(emitter<StringEmitter>().areEqual(context, unboxCell(x), unboxCell(y), StringEmitter::StringIdentity::Distinct));
     m_out.appendTo(isSame);
     join.add(boolean(true));
     m_out.appendTo(isOther);
@@ -349,11 +366,11 @@ Condition EqualityEmitter::areValuesEqual(const OperationContext& context, Boxed
 
 } // anonymous namespace
 
-static MixedOperands mixedOperandsOf(const Function& function, const Value& value)
+static MixedOperands mixedOperandsOf(const CodeGenerator& generator, const Value& value)
 {
     ValueID left = value.leftOperand();
     ValueID right = value.rightOperand();
-    if (function.at(left).representation == Representation::JSValue)
+    if (generator.representationOf(left) == Representation::JSValue)
         return { right, left };
     return { left, right };
 }
@@ -382,6 +399,10 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
         result = equality.equalityOnIntegers(value);
         break;
     case OperatorForm::Numbers:
+        if (isEqualityOfNumbers(m_program, m_function, value.value())) {
+            generateEqualityOfNumbers(value);
+            return;
+        }
         result = equality.equalityOnNumbers(value, isStrict);
         break;
     case OperatorForm::NumberAndValue:
@@ -410,7 +431,7 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
             result = equality.looseEqualityOnBoxed(value);
             break;
         }
-        MixedOperands operands = mixedOperandsOf(m_function, value.value());
+        MixedOperands operands = mixedOperandsOf(m_generator, value.value());
         result = equality.isInt32EqualToValue(in<Word32>(operands.typed), in<Boxed>(operands.boxed));
         break;
     }
@@ -436,7 +457,7 @@ Condition OperatorEmitter::equalityOnNumberAndValue(const ValueContext& value, b
 {
     if (!isStrict)
         return EqualityEmitter(generator()).looseEqualityOnBoxed(value);
-    MixedOperands operands = mixedOperandsOf(m_function, value.value());
+    MixedOperands operands = mixedOperandsOf(m_generator, value.value());
     Number number = in<Number>(operands.typed);
     Boxed other = in<Boxed>(operands.boxed);
     return logicalAnd(isNumber(other), equal(number, numberToDouble(other)));
@@ -451,7 +472,7 @@ Condition OperatorEmitter::equalityOnStringAndValue(const ValueContext& value, b
 {
     if (!isStrict)
         return EqualityEmitter(generator()).looseEqualityOnBoxed(value);
-    MixedOperands operands = mixedOperandsOf(m_function, value.value());
+    MixedOperands operands = mixedOperandsOf(m_generator, value.value());
     CellPointer string = in<CellPointer>(operands.typed);
     Boxed other = in<Boxed>(operands.boxed);
     LBasicBlock isString = newBlock();

@@ -11,6 +11,7 @@
 #include "AOTAccessEmitter.h"
 #include "AOTArrayAllocationProfile.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTCellFormat.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTRuntimeValidationEmitter.h"
@@ -29,6 +30,7 @@ enum class ElementConversion : uint8_t {
     UseBoxed,
     BoxInt32,
     BoxDouble,
+    BoxDoubleAsInt32,
     CheckBoxedInt32,
     Int32ToDouble,
     UseDouble,
@@ -45,6 +47,9 @@ static ElementConversion conversionTo(const ArrayStorageForm& form, Representati
             return ElementConversion::BoxInt32;
         if (stored == Representation::JSValue && type.primitives & Primitive::Integer)
             return ElementConversion::CheckBoxedInt32;
+        // The representation follows the uses of a value, so an int32 that is mostly wanted as a number arrives as a double.
+        if (isUnboxedDouble && type.isInt32())
+            return ElementConversion::BoxDoubleAsInt32;
         return ElementConversion::NeverFits;
     }
     if (form.element == Representation::Double) {
@@ -98,6 +103,19 @@ void ElementAccessEmitter::forEachFormByWritableShape(Word32 mode, const ArraySt
     m_out.jump(hasNoForm);
 }
 
+void ElementAccessEmitter::forEachFormByReadableShape(Word32 maskedMode, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm)
+{
+    for (const ArrayStorageForm* form : forms) {
+        LBasicBlock hasForm = newBlock();
+        LBasicBlock hasOtherForm = newBlock();
+        m_out.branch(hasShape(maskedMode, *form).value(), normalEdge(hasForm), form == forms.last() ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+        m_out.appendTo(hasForm);
+        emitArm(*form);
+        m_out.appendTo(hasOtherForm);
+    }
+    m_out.jump(hasNoForm);
+}
+
 std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorageForm& form, ValueID stored, LBasicBlock doesNotFit)
 {
     const Type& type = typeOf(stored);
@@ -121,6 +139,8 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
             branchUnless(equal(number, number), doesNotFit);
         return Operand(emitter<ConversionEmitter>().boxNumber(number));
     }
+    case ElementConversion::BoxDoubleAsInt32:
+        return Operand(boxInt32(emitter<ConversionEmitter>().toInt32(Number(operand.value))));
     case ElementConversion::CheckBoxedInt32:
         branchUnless(isInt32(operand.as<Boxed>()), doesNotFit);
         return operand;
@@ -140,9 +160,17 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
 
 void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement, LBasicBlock isBeyondVector)
 {
+    LengthTest test = testLength(index, elements);
+    // Outside fast code the stub behind a store also puts an element behind the last one.
+    if (store.opcode() == Opcode::PutArrayElement && store.shape() != CodeShape::Fast) {
+        branchUnless(test.isInside, isBeyondVector);
+        replaceElement(store, form, elements, test.indexInside, rawElement);
+        return;
+    }
+
     LBasicBlock isBeyondLength = newBlock();
     LBasicBlock isWithinLength = newBlock();
-    m_out.branch(below(index, publicLength(elements)).value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
+    m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
 
     m_out.appendTo(isBeyondLength);
     branchUnless(below(index, vectorLength(elements)), isBeyondVector);
@@ -150,7 +178,7 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
     if (!replacesBoxedInt32(store, form)) {
         m_out.jump(isWithinLength);
         m_out.appendTo(isWithinLength);
-        replaceElement(store, form, elements, index, rawElement);
+        replaceElement(store, form, elements, test.indexInside, rawElement);
         return;
     }
 
@@ -159,7 +187,7 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
     m_out.jump(continuation);
 
     m_out.appendTo(isWithinLength);
-    replaceElement(store, form, elements, index, rawElement);
+    replaceElement(store, form, elements, test.indexInside, rawElement);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
@@ -189,7 +217,7 @@ void ElementAccessEmitter::storeInsideLength(const ValueContext& value, const Ar
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements elements = elementsOf(array);
     Integer index = indexInsideLength(value->positionOperand());
-    if (generator().validates()) {
+    if (generator().validatesOrChecksProofs()) {
         RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
         validation.checkPrecondition(value, hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), form));
         validation.checkPrecondition(value, below(index, publicLength(elements)));
@@ -230,7 +258,7 @@ void ElementAccessEmitter::storeWithKnownStorage(const ValueContext& value, cons
 
     LBasicBlock slowPath = newBlock();
     LBasicBlock continuation = newBlock();
-    Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath);
+    Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath, NaNIndexMode::ProduceOutOfBoundsIndex);
     // The guard accepts copy-on-write storage, which only the operation may replace.
     branchUnless(hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), form), slowPath);
     Operand rawElement = *rawElementToStore(form, stored, slowPath);
@@ -247,7 +275,7 @@ void ElementAccessEmitter::storeWithKnownStorage(const ValueContext& value, cons
 void ElementAccessEmitter::storeWithAnyStorage(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    if (value.shape() == CodeShape::Compact) {
+    if (value.shape() != CodeShape::Fast) {
         storeOutOfLine(value, array);
         return;
     }
@@ -255,10 +283,14 @@ void ElementAccessEmitter::storeWithAnyStorage(const ValueContext& value)
     ValueID stored = value->valueOperand();
     LBasicBlock slowPath = newBlock();
     LBasicBlock continuation = newBlock();
-    Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath);
+    Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath, NaNIndexMode::ProduceOutOfBoundsIndex);
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     ArrayElements elements = elementsOf(array);
-    forEachFormByWritableShape(mode, candidateFormsFor(stored, storageExpectedToHold(representationOf(stored))), slowPath, [&](const ArrayStorageForm& form) {
+    // Only the storage that the stored value is expected to go into has an arm in line. The operations have a short way in front of them for the others.
+    ArrayStorageFormList forms = candidateFormsFor(stored, storageExpectedToHold(representationOf(stored)));
+    if (forms.size() > 1)
+        forms.shrink(1);
+    forEachFormByWritableShape(mode, forms, slowPath, [&](const ArrayStorageForm& form) {
         Operand rawElement = *rawElementToStore(form, stored, slowPath);
         storeInVector(value, form, elements, index, rawElement, slowPath);
         m_out.jump(continuation);
@@ -276,19 +308,23 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     ValueID position = value->positionOperand();
     ValueID stored = value->valueOperand();
     const Type& storedType = typeOf(stored);
-    Boxed boxedValue = emitter<ConversionEmitter>().box(value, get(stored), storedType);
+    bool isFast = value.shape() == CodeShape::Fast;
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Boxed boxedValue = isFast ? conversions.box(value, get(stored), storedType) : conversions.boxInArm(value, get(stored), storedType);
     if (value->mode() == ECMAMode::Sloppy) {
         emitter<AccessEmitter>().putByVal(value, boxCell(array), boxedPosition(position), boxedValue, AccessEmitter::putModeOf(ECMAMode::Sloppy));
         return;
     }
 
-    if (Operand key = get(position); key.is<Number>()) {
-        callVoidOperation(value, RuntimeOperation::ArrayPutAtNumber, { array, boxedValue, key }, { .isOnRarePath = true });
+    bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32();
+    Operand key = get(position);
+    // The stubs take the position as it is, store wherever the vector has room, and keep the registers of the code around the arm.
+    ArrayStoredValue storedValue = mayConvertToDouble ? ArrayStoredValue::Number : ArrayStoredValue::Value;
+    if (key.is<Number>()) {
+        callStub(value, arrayPutAtNumber(storedValue), { array.value(), boxedValue.value(), key.value });
         return;
     }
-    bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32();
-    RuntimeOperation operation = mayConvertToDouble ? RuntimeOperation::ArrayPutNumberAtIndex : RuntimeOperation::ArrayPutAtIndex;
-    callVoidOperation(value, operation, { array, boxedValue, integerOf(position) }, { .isOnRarePath = true });
+    callStub(value, arrayPutAtIndex(storedValue), { array.value(), boxedValue.value(), integerOf(position).value() });
 }
 
 void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer array, ValueID element)
@@ -299,11 +335,16 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
     }
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(store->arrayOperand())).kind;
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(store->arrayOperand()));
+    ArrayStorageFormList forms = candidateFormsFor(element, expected);
+    // An array of any other kind than its element type declares takes the stub, which knows them all.
+    if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
+        forms.shrink(1);
     LBasicBlock slowPath = newBlock();
     LBasicBlock continuation = newBlock();
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     ArrayElements elements = elementsOf(array);
-    forEachFormByWritableShape(mode, candidateFormsFor(element, expected), slowPath, [&](const ArrayStorageForm& form) {
+    forEachFormByWritableShape(mode, forms, slowPath, [&](const ArrayStorageForm& form) {
         appendWithMode(store, form, elements, element, slowPath);
         m_out.jump(continuation);
     });
@@ -358,135 +399,6 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     return join.finish();
 }
 
-namespace {
-
-struct ElementAppend {
-    ArrayElements source;
-    ArrayElements target;
-    Integer count;
-    Integer targetLength;
-};
-
-class AppendedElementCopier final : public OperationEmitter {
-public:
-    explicit AppendedElementCopier(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
-
-    ArrayStorageFormList sourceFormsFor(ValueID source, const ArrayStorageForm& targetForm);
-    void copy(const ValueContext&, const ArrayStorageForm& sourceForm, const ArrayStorageForm& targetForm, const ElementAppend&, LBasicBlock outOfLine);
-
-private:
-    void copyIntoContiguousStorage(const ValueContext&, const ArrayStorageForm& sourceForm, const ElementAppend&);
-    void forEachPosition(Integer count, NOESCAPE const Invocable<void(Integer)> auto& emitElement);
-};
-
-} // anonymous namespace
-
-static bool canHoldElementsOf(const ArrayStorageForm& target, const ArrayStorageForm& source)
-{
-    if (target.kind == source.kind || target.kind == ArrayStorage::Contiguous)
-        return true;
-    return target.kind == ArrayStorage::Double && source.kind == ArrayStorage::Int32;
-}
-
-static bool mayHoldElementsOfType(const ArrayStorageForm& form, const Type& elements)
-{
-    if (form.element == Representation::Int32)
-        return elements.primitives & Primitive::Integer;
-    if (form.element == Representation::Double)
-        return elements.primitives & Primitive::Number;
-    return true;
-}
-
-ArrayStorageFormList AppendedElementCopier::sourceFormsFor(ValueID source, const ArrayStorageForm& targetForm)
-{
-    const ClassPart* part = typeOf(source).singleBuiltinClass();
-    TypeID contents = part ? part->contentsAt(m_builtins, ContentsSlot::Element) : TypeID();
-    const Type& elements = m_program.at(contents ? contents : TypeTable::anything);
-    ArrayStorageFormList forms;
-    auto appendIfPossible = [&](const ArrayStorageForm& form) {
-        if (canHoldElementsOf(targetForm, form) && mayHoldElementsOfType(form, elements))
-            forms.appendIfNotContains(&form);
-    };
-    if (const ArrayStorageForm* expected = findArrayStorageForm(arrayStorageHolding(elements)))
-        appendIfPossible(*expected);
-    for (const ArrayStorageForm& form : arrayStorageForms | std::views::reverse)
-        appendIfPossible(form);
-    return forms;
-}
-
-void AppendedElementCopier::forEachPosition(Integer count, NOESCAPE const Invocable<void(Integer)> auto& emitElement)
-{
-    LBasicBlock loop = newBlock();
-    LBasicBlock element = newBlock();
-    LBasicBlock done = newBlock();
-    ValueFromBlock start = m_out.anchor(integer(0).value());
-    m_out.jump(loop);
-
-    m_out.appendTo(loop);
-    Integer position(m_out.phi(B3::Int64, start));
-    branch(below(position, count), { normalEdge(element), normalEdge(done) });
-
-    m_out.appendTo(element);
-    emitElement(position);
-    m_out.addIncomingToPhi(position.value(), m_out.anchor(add(position, integer(1)).value()));
-    m_out.jump(loop);
-
-    m_out.appendTo(done);
-}
-
-void AppendedElementCopier::copyIntoContiguousStorage(const ValueContext& value, const ArrayStorageForm& sourceForm, const ElementAppend& append)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    const ArrayStorageForm& targetForm = arrayStorageFormOf(ArrayStorage::Contiguous);
-    // The collector visits the elements below the length, which are holes until they are copied.
-    elements.setPublicLength(append.target, add(append.targetLength, append.count));
-    forEachPosition(append.count, [&](Integer position) {
-        Operand rawElement = elements.loadRawElement(sourceForm, append.source, position);
-        Boxed element = select(elements.isHoleIn(value->sourceOperand(), sourceForm, rawElement), undefined(), elements.boxRawElement(sourceForm, rawElement));
-        elements.storeRawElement(targetForm, append.target, add(append.targetLength, position), element);
-    });
-    if (sourceForm.holdsCells)
-        emitter<BarrierEmitter>().barrier(value, append.target.array);
-}
-
-// The iterator of an array reads a hole as undefined, which only contiguous storage holds.
-void AppendedElementCopier::copy(const ValueContext& value, const ArrayStorageForm& sourceForm, const ArrayStorageForm& targetForm, const ElementAppend& append, LBasicBlock outOfLine)
-{
-    RELEASE_ASSERT(canHoldElementsOf(targetForm, sourceForm));
-    if (targetForm.kind == ArrayStorage::Contiguous) {
-        copyIntoContiguousStorage(value, sourceForm, append);
-        return;
-    }
-
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    LBasicBlock hasHole = newBlock();
-    LBasicBlock copied = newBlock();
-    Integer numberOfCopiedElements;
-    auto storeAt = [&](Integer position, Operand rawElement) {
-        elements.storeRawElement(targetForm, append.target, add(append.targetLength, position), rawElement);
-    };
-    forEachPosition(append.count, [&](Integer position) {
-        Operand rawElement = elements.loadRawElement(sourceForm, append.source, position);
-        numberOfCopiedElements = position;
-        branchUnless(logicalNot(elements.isHoleIn(value->sourceOperand(), sourceForm, rawElement)), hasHole);
-        storeAt(position, sourceForm.kind == targetForm.kind ? rawElement : Operand(toNumber(unboxInt32(rawElement.as<Boxed>()))));
-    });
-    elements.setPublicLength(append.target, add(append.targetLength, append.count));
-    m_out.jump(copied);
-
-    // Whatever lies between the length and the end of the vector is a hole.
-    m_out.appendTo(hasHole);
-    forEachPosition(numberOfCopiedElements, [&](Integer position) {
-        storeAt(position, elements.rawHole(targetForm));
-    });
-    m_out.jump(outOfLine);
-
-    m_out.appendTo(copied);
-}
-
 void ElementAccessEmitter::generateHasSpareArrayCapacity(const ValueContext& value)
 {
     ArrayElements elements = elementsOf(in<CellPointer>(value->arrayOperand()));
@@ -498,47 +410,72 @@ void ElementAccessEmitter::generateReserveArrayCapacity(const ValueContext& valu
     callVoidOperation(value, RuntimeOperation::ReserveArrayCapacity, { in<CellPointer>(value->arrayOperand()), integerOf(value->additionalOperand()) });
 }
 
+// An array of integers, or one that has held nothing yet, is converted: any other array that comes by pays one compare and no call. None with Double storage comes by.
+// Where the type says that the array holds numbers and nothing else, one with storage for any value is looked through: general code has made it. Not in a frame: whoever made it there reads it as it was made.
+void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& value)
+{
+    static_assert(UndecidedShape + 2 == Int32Shape && !(IndexingShapeMask & 1));
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    LBasicBlock converts = newBlock();
+    LBasicBlock continuation = newBlock();
+    Word32 shape = indexingMode(array, IndexingShapeMask);
+    const ClassPart* declared = typeOf(value->arrayOperand()).singleBuiltinClass();
+    // What a hole reads as is among the elements of an array that may have holes.
+    if (declared && m_program.at(declared->contentsAt(m_program.builtins(), ContentsSlot::Element)).withoutPrimitives(Primitive::Undefined).isNumber()) {
+        LBasicBlock isOfOtherKind = newBlock();
+        LBasicBlock stillConverts = newBlock();
+        LBasicBlock holdsAnyValue = newBlock();
+        LBasicBlock liesInFrame = newBlock();
+        LBasicBlock isOnHeap = newBlock();
+        LBasicBlock mayHoldNumbers = newBlock();
+        LBasicBlock isYoung = newBlock();
+        LBasicBlock isShort = newBlock();
+        branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
+
+        m_out.appendTo(isOfOtherKind);
+        uint32_t numberOfPlace = (m_function.position + value.id().index()) % ArrayWords::numberOfCounts;
+        TypedPointer count = mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.shortYoungArraysConverted) + numberOfPlace);
+        branch(below(Word32(m_out.load8ZeroExt32(count)), word32(ArrayWords::maxShortYoungArraysConverted)), { normalEdge(stillConverts), normalEdge(continuation) });
+
+        m_out.appendTo(stillConverts);
+        branch(equal(shape, word32(ContiguousShape)), { normalEdge(holdsAnyValue), normalEdge(continuation) });
+
+        m_out.appendTo(holdsAnyValue);
+        Word32 state(m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, array.value(), JSCell::cellStateOffset())));
+        branch(equal(state, word32(frameCellState)), { normalEdge(liesInFrame), normalEdge(isOnHeap) });
+
+        // No array is shorter lived.
+        m_out.appendTo(liesInFrame);
+        m_out.store32As8(word32(ArrayWords::maxShortYoungArraysConverted).value(), count);
+        m_out.jump(continuation);
+
+        m_out.appendTo(isOnHeap);
+        branch(below(loadMutable32(AOT_INSTANCE_OFFSET(arrays.elementsLookedAtInVain)), word32(ArrayWords::maxElementsLookedAtInVain)), { normalEdge(mayHoldNumbers), normalEdge(continuation) });
+
+        m_out.appendTo(mayHoldNumbers);
+        branch(equal(state, word32(static_cast<int32_t>(CellState::PossiblyBlack))), { rareEdge(converts), normalEdge(isYoung) });
+
+        m_out.appendTo(isYoung);
+        branch(below(publicLength(elementsOf(array)), integer(ArrayWords::minLengthThatPaysAtOnce)), { normalEdge(isShort), rareEdge(converts) });
+
+        m_out.appendTo(isShort);
+        m_out.store32(word32(static_cast<int32_t>(numberOfPlace)).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
+        m_out.jump(converts);
+    } else
+        branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(continuation) });
+
+    m_out.appendTo(converts);
+    callVoidOperation(value, RuntimeOperation::ConvertToDoubleStorage, { array }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+}
+
 void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
-    if (value.shape() == CodeShape::Compact) {
-        callVoidOperation(value, RuntimeOperation::AppendElements, { array, source });
-        return;
-    }
-
-    AppendedElementCopier copier(generator());
-    LBasicBlock hasElements = newBlock();
-    LBasicBlock outOfLine = newBlock();
-    LBasicBlock continuation = newBlock();
-    ElementAppend append { elementsOf(source), elementsOf(array), { }, { } };
-    append.count = publicLength(append.source);
-    m_out.branch(isZero(append.count).value(), normalEdge(continuation), normalEdge(hasElements));
-
-    m_out.appendTo(hasElements);
-    append.targetLength = publicLength(append.target);
-    const ArrayStorageForm& targetForm = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(value->arrayOperand()));
-    branchUnless(belowOrEqual(append.count, integer(maxLengthForElementwiseCopy)), outOfLine);
-    branchUnless(belowOrEqual(add(append.targetLength, append.count), vectorLength(append.target)), outOfLine);
-    branchUnless(hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), targetForm), outOfLine);
-    Word32 sourceShape = indexingMode(source, arrayStorageTestMask);
-    ArrayStorageFormList sourceForms = copier.sourceFormsFor(value->sourceOperand(), targetForm);
-    for (const ArrayStorageForm* sourceForm : sourceForms) {
-        LBasicBlock hasForm = newBlock();
-        LBasicBlock hasOtherForm = newBlock();
-        m_out.branch(hasShape(sourceShape, *sourceForm).value(), normalEdge(hasForm), sourceForm == sourceForms.last() ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
-        m_out.appendTo(hasForm);
-        copier.copy(value, *sourceForm, targetForm, append, outOfLine);
-        m_out.jump(continuation);
-        m_out.appendTo(hasOtherForm);
-    }
-    m_out.jump(outOfLine);
-
-    m_out.appendTo(outOfLine);
-    callVoidOperation(value, RuntimeOperation::AppendElements, { array, source }, { .isOnRarePath = true });
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
+    callStub(value, appendElements(), { array.value(), source.value() });
 }
 
 } } } // namespace JSC::AOT::Typed

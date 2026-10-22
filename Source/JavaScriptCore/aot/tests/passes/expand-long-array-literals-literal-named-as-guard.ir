@@ -1,0 +1,23 @@
+# const choices = [a(), b(), c()]; choices[i]; choices[i] = x
+# A literal proves its own storage, so the read and the store name the literal itself as their guard. The array of holes that is filled and cut in its place proves the same: a value that was named as a guard stays one.
+# FORM: Prepared
+# OPTIONS: limit=MaxArrayLiteralBatch:2
+# RUN: pass ExpandLongArrayLiterals
+# LOSS: MaxArrayLiteralBatch x1 f0 v5
+# CHECK: outcome: Changed
+# CHECK: [[filled]]: Array = NewContiguousArray
+# CHECK: v5: Array = TruncateNewArray [[filled]],
+# CHECK: = GetArrayElement v5, v1, v5 arrayStorage=Contiguous level=Expected
+# CHECK: PutArrayElement v5, v1, v6, v5 arrayStorage=Contiguous level=Expected
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsAndStores" parameters=[{type=anything}, {type=int[0, 2]}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 2]):
+    v2 = Call v0
+    v3 = Call v0
+    v4 = Call v0
+    v5 = NewArray v2, v3, v4 contents=anything
+    v6 = GetArrayElement v5, v1, v5 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    PutArrayElement v5, v1, v6, v5 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v6
+}

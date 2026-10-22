@@ -91,11 +91,12 @@ void printSlot(PrintStream& out, const PlacedSlot& slot)
         out.print(nameOf(slot.representation), " out@"_s, slot.offset);
         break;
     }
-    printOptional(out, " double@"_s, slot.doubleOffsetInExtension);
     printFlag(out, slot.mayExistWithoutStorage, "unlisted"_s);
     if (slot.deferredFunction)
         out.print(" "_s, letterOf(IDPrefix::Function), slot.deferredFunction.index());
     printFlag(out, slot.deferredClosureCapturesObject, "capturesObject"_s);
+    printFlag(out, slot.deferredClosureCapturesEnvironment, "capturesEnvironment"_s);
+    printFlag(out, slot.defersFlattenedObject, "flattenedObject"_s);
     printOptional(out, " record="_s, slot.indexInLayoutRecord);
 }
 
@@ -118,7 +119,16 @@ static void dumpLayout(IRPrinter& printer, LayoutID id, const PlannedLayout& lay
     printFlag(out, layout.holdsWideReferences, "wide"_s);
     printFlag(out, layout.keysAreNeverEnumerated, "unordered"_s);
     printOptional(out, " escaped@"_s, layout.isEscapedOffset);
+    printFlag(out, layout.mayBeInnerObject, "inner"_s);
     out.print("\n"_s);
+    for (const PlacedInnerObject& inner : layout.innerObjects) {
+        out.print("  inner object of field "_s, inner.field, " "_s);
+        if (inner.layout)
+            printer.print(inner.layout);
+        else
+            out.print("array of capacity "_s, inner.arrayCapacity);
+        out.print(" @"_s, inner.offset, inner.isAlwaysInPlace ? " always"_s : ""_s, "\n"_s);
+    }
 
     const Vector<Field>& fields = printer.program().at(id).fields;
     for (FieldIndex index = 0; index < layout.numberOfFields(); ++index) {
@@ -164,7 +174,7 @@ static void dumpVariable(IRPrinter& printer, VariableID id, const PlannedVariabl
 
 static bool isDefault(const ClassCreationPlan& plan)
 {
-    return !plan.createsMembersLazily && !plan.createsPrototypeBeforeClassObject && !plan.createsClassObjectOnMutation && plan.members.isEmpty();
+    return !plan.createsMembersLazily && !plan.createsPrototypeBeforeClassObject && !plan.createsClassObjectOnMutation && !plan.guardsHoldWhileClear && plan.members.isEmpty();
 }
 
 static void dumpClassCreation(IRPrinter& printer, LayoutID id, const ClassCreationPlan& plan)
@@ -175,6 +185,7 @@ static void dumpClassCreation(IRPrinter& printer, LayoutID id, const ClassCreati
     printFlag(out, plan.createsMembersLazily, "lazy"_s);
     printFlag(out, plan.createsPrototypeBeforeClassObject, "prototypeFirst"_s);
     printFlag(out, plan.createsClassObjectOnMutation, "onMutation"_s);
+    printFlag(out, plan.guardsHoldWhileClear, "guardsHoldWhileClear"_s);
     out.print(" "_s);
     printList(out, plan.members, [&](MemberCreation creation) {
         out.print(nameOf(creation));
@@ -189,15 +200,20 @@ void dumpFillEstimates(PrintStream& out, const Program& program, const SlotUses&
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
         LayoutID id(index);
         const Vector<Field>& fields = program.at(id).fields;
-        if (fields.isEmpty() || !uses.rows[rows.rowOf(id, 0)].holderWeight)
+        if (fields.isEmpty() || !uses.rows[rows.rowOf(id, 0)].holderHeat)
             continue;
+        auto percentOfHolders = [&](const SlotRowUse& use, double heat) {
+            return static_cast<unsigned>(std::min(9999.0, 100 * heat / use.holderHeat));
+        };
         printer.print(id);
-        out.print(" allocated="_s, uses.layouts[index].allocationWeight, "\n"_s);
+        out.print(" allocated="_s, uses.layouts[index].creationHeat, "\n"_s);
         for (FieldIndex field = 0; field < fields.size(); ++field) {
             const SlotRowUse& use = uses.rows[rows.rowOf(id, field)];
             out.print("  ."_s, field, " "_s);
             printer.print(fields[field].key);
-            out.print(" filled="_s, use.fillWeight);
+            out.print(" filled="_s, percentOfHolders(use, use.fillHeat), "%"_s);
+            if (use.heatFilledBesideCreation)
+                out.print(" besideCreation="_s, percentOfHolders(use, use.heatFilledBesideCreation), "%"_s);
             printFlag(out, use.storesOfConstructorWithValue, "byConstructor"_s);
             printFlag(out, use.isLikelyFilled(), "likely"_s);
             out.print("\n"_s);

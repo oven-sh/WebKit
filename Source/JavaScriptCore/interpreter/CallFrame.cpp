@@ -201,17 +201,19 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
     RELEASE_ASSERT(callee().isCell());
     SourceOrigin sourceOrigin;
     bool haveSkippedFirstFrame = false;
-    StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
+    StackVisitor::visit(this, vm, [&](auto& visitor) {
         if (!std::exchange(haveSkippedFirstFrame, true))
             return IterationStatus::Continue;
 
 #if ENABLE(AOT)
-        if (visitor->isCompiledFrame()) {
-            const AOT::CompiledFrame& frame = visitor->compiledFrame();
-            if (frame.visibility != AOT::TraceVisibility::Visible)
-                return IterationStatus::Continue;
-            sourceOrigin = frame.sourceOrigin();
-            return IterationStatus::Done;
+        if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                const AOT::CompiledFrame& frame = visitor->compiledFrame();
+                if (frame.visibility != AOT::TraceVisibility::Visible)
+                    return IterationStatus::Continue;
+                sourceOrigin = frame.sourceOrigin();
+                return IterationStatus::Done;
+            }
         }
 #endif
 
@@ -254,10 +256,18 @@ JSGlobalObject* CallFrame::globalObjectOfClosestCodeBlock(VM& vm, CallFrame* cal
     // FIXME: We need to handle JSONP interpretation case in ProgramExecutable since it does not have vm.topCallFrame.
     // rdar://83691438
     JSGlobalObject* globalObject = nullptr;
-    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
+    StackVisitor::visit(callFrame, vm, [&](auto& visitor) {
+#if ENABLE(AOT)
+        if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                globalObject = visitor->lexicalGlobalObject(vm);
+                return IterationStatus::Done;
+            }
+        }
+#endif
         // Note that this is OK for InlineCache Callee.
-        if (visitor->isNativeCalleeFrame() || visitor->isCompiledFrame()) {
-            globalObject = visitor->lexicalGlobalObject(vm);
+        if (visitor->isNativeCalleeFrame()) {
+            globalObject = visitor->callFrame()->lexicalGlobalObject(vm);
             return IterationStatus::Done;
         }
         if (auto* codeBlock = visitor->codeBlock()) {
@@ -387,14 +397,27 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     ASSERT(!isEmptyTopLevelCallFrameForDebugger());
     ASSERT(codeBlockToKeepAliveUntilFrameIsUnwound->inherits<CodeBlock>());
 
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    CallFrame* throwOriginFrame = this;
     JSGlobalObject* globalObject = nullptr;
-    StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
-        if (visitor->callFrame() == this || visitor->isNativeCalleeFrame())
-            return IterationStatus::Continue;
-        globalObject = visitor->lexicalGlobalObject(vm);
-        return IterationStatus::Done;
-    });
-    if (!globalObject)
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        throwOriginFrame = nullptr;
+        StackVisitor::visitWithCompiledFrames(this, vm, [&](StackVisitor& visitor) {
+            if (visitor->callFrame() == this || visitor->isNativeCalleeFrame())
+                return IterationStatus::Continue;
+            globalObject = visitor->lexicalGlobalObject(vm);
+            return IterationStatus::Done;
+        });
+    } else
+#endif
+    do {
+        throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
+    } while (throwOriginFrame && throwOriginFrame->callee().isNativeCallee());
+
+    if (throwOriginFrame)
+        globalObject = throwOriginFrame->jsCallee()->realm();
+    else if (!globalObject)
         globalObject = vm.entryScope->globalObject();
     JSObject* zombieFrameCallee = globalObject->zombieFrameCallee();
 

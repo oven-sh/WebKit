@@ -33,17 +33,18 @@ function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[
   b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = CallDirect v3 function=f2
-    v5 = Integer integer=0
-    v6 = BitOr v1, v5
-    PropSet v3, v6 key="count" mode=Strict
-    v8 = ToNumber v1
-    PropSet v3, v8 key="ratio" mode=Strict
-    PropSet v3, v3 key="next" mode=Strict
-    Return v3
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = Integer integer=0
+    v7 = BitOr v1, v6
+    PropSet v4, v7 key="count" mode=Strict
+    v9 = ToNumber v1
+    PropSet v4, v9 key="ratio" mode=Strict
+    PropSet v4, v4 key="next" mode=Strict
+    Return v4
 }
-function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
     v1 = Undefined
     PropDefine v0, v1 key="count"
     PropDefine v0, v1 key="ratio"
@@ -54,19 +55,20 @@ function f3 name="FilledOnOnePath" kind=BaseConstructor flags=[HasNewTarget] par
   b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
-    v4 = CallDirect v3 function=f4
-    v5 = ToBoolean v1
-    Branch v5 -> taken b1(), notTaken b2()
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
   b1():
-    v6 = Integer integer=0
-    v7 = BitOr v1, v6
-    PropSet v3, v7 key="count" mode=Strict
+    v7 = Integer integer=0
+    v8 = BitOr v1, v7
+    PropSet v4, v8 key="count" mode=Strict
     Jump -> next b2()
   b2():
-    Return v3
+    Return v4
 }
-function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
-  b0(v0: object ? L1):
+function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L1):
     v1 = Undefined
     PropDefine v0, v1 key="count"
     Return
@@ -99,16 +101,21 @@ function f7 name="readRatio" results=[{type=anything}] {
 # CHECK: "count" Int32 @
 # CHECK: "ratio" Double @
 # CHECK: L1 CompiledObject
-# CHECK: "count" OptionalInt64 @
-# CODE-LABEL: function f5 name="readFilled"
-# CODE: [[next]]: undefined|L0 @JSValue = GetSlot v0 key="next"
+# CHECK: "count" OptionalInt32 @
+# Only its entrypoint enters each reader, so the body is there
+# CODE-LABEL: name="readFilled" module=m0 role=GenericEntrypoint
+# CODE: [[filled]]: L0 @Cell = GetModuleVariable variable=g0
+# CODE-NEXT: [[next]]: undefined|L0 @JSValue = GetSlot [[filled]] key="next"
 # CODE-NEXT: L0 @JSValue = AssumeType [[next]] castType=L0
 # CODE-NOT: TypeTest
 # CODE: [[count]]: i32 @Int32 = GetSlot {{*}} key="count"
 # CODE-NOT: TypeTest
 # CODE: i32 @Int32 = BitXor [[count]],
-# CODE-LABEL: function f6 name="readFilledOnOnePath"
-# CODE: [[optionalCount]]: undefined|i32 @OptionalInt64 = GetSlot v0 key="count"
-# CODE: TypeTest [[optionalCount]] testedType=number
-# CODE-LABEL: function f7 name="readRatio"
-# CODE: number @Double = GetSlot v0 key="ratio"
+# CODE-LABEL: name="readFilledOnOnePath" module=m0 role=GenericEntrypoint
+# CODE: [[filledOnOnePath]]: L1 @Cell = GetModuleVariable variable=g1
+# CODE-NEXT: [[holdsNumber]]: boolean @Boolean = IsSlotFilled [[filledOnOnePath]] key="count" {{*}}[holdsDeclaredType]
+# CODE-NEXT: TestAndBranch [[holdsNumber]]
+# CODE: @Int32 = GetSlot [[filledOnOnePath]], {{*}} key="count" {{*}}[holdsDeclaredType]
+# CODE-LABEL: name="readRatio" module=m0 role=GenericEntrypoint
+# CODE: [[filledAgain]]: L0 @Cell = GetModuleVariable variable=g0
+# CODE-NEXT: number @Double = GetSlot [[filledAgain]] key="ratio"

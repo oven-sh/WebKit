@@ -72,6 +72,7 @@ class CFG;
 class CompilationScratch;
 class ConstPtrValue;
 class Dominators;
+class FrequencyEstimate;
 class MemoryValue;
 class NaturalLoops;
 class Value;
@@ -188,9 +189,12 @@ public:
     JS_EXPORT_PRIVATE Vector<BasicBlock*> blocksInPostOrder();
     JS_EXPORT_PRIVATE const Vector<BasicBlock*>& cachedBlocksInPreOrder() LIFETIME_BOUND;
     JS_EXPORT_PRIVATE const Vector<BasicBlock*>& cachedBlocksInPostOrder() LIFETIME_BOUND;
+    JS_EXPORT_PRIVATE bool hasCycle();
 
     // The cached orders follow the order of a block's successors, which no other analysis of the CFG does.
     JS_EXPORT_PRIVATE void didReorderSuccessors();
+    // The frequencies of blocks are sums that are added up in the order of the successors.
+    JS_EXPORT_PRIVATE void willReorderSuccessors();
 
     SparseCollection<Air::StackSlot>& stackSlots();
     const SparseCollection<Air::StackSlot>& stackSlots() const;
@@ -237,6 +241,7 @@ public:
     BackwardsCFG& backwardsCFG();
     JS_EXPORT_PRIVATE BackwardsDominators& backwardsDominators();
     JS_EXPORT_PRIVATE BlockRarity& blockRarity();
+    JS_EXPORT_PRIVATE void updateEdgeClasses();
     JS_EXPORT_PRIVATE void updateFrequencies();
 
     void addFastConstant(const ValueKey&);
@@ -443,6 +448,7 @@ private:
     std::unique_ptr<BackwardsCFG> m_backwardsCFG;
     std::unique_ptr<BackwardsDominators> m_backwardsDominators;
     std::unique_ptr<BlockRarity> m_blockRarity;
+    std::unique_ptr<FrequencyEstimate> m_frequencyEstimate;
     UncheckedKeyHashSet<ValueKey> m_fastConstants;
     const char* m_lastPhaseName;
     std::unique_ptr<OpaqueByproducts> m_byproducts;
@@ -466,6 +472,7 @@ private:
     Vector<BasicBlock*> m_blocksInPreOrder;
     Vector<BasicBlock*> m_blocksInPostOrder;
     WTF::BitSet<256> m_opcodesEverAdded;
+    bool m_hasCycle { false };
     bool m_areFrequenciesCurrent { false };
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };

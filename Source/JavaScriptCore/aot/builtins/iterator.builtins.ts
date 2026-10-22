@@ -16,7 +16,7 @@ const updatesState = [b.readsContents(), b.writesContents()];
 const promiseOfIteratorResult = b
   .instance("Promise")
   .holding({ value: b.ordinaryObjectOf("IteratorResult"), reason: b.any }).fresh;
-const rejectedPromise = b.instance("Promise").holding({ value: b.never }).fresh;
+const rejectedPromise = b.instance("Promise").holding({ value: b.never, reason: b.instance("TypeError").unaliased }).fresh;
 
 const itemCallback = (times: b.CallbackTimes, result: b.CallbackResultUse) => [
   b.called({ times, args: [item, b.length], result }),
@@ -95,13 +95,15 @@ const resumeMethod = (name: string, parameter: string, ...sent: readonly b.UseSp
     implementation: b.compiled("GeneratorPrototype", name),
   }) satisfies b.FunctionField;
 
+// The jobs that run the body hold an async generator while a step is under way, and they do nothing else with it: whoever steps it hands it to native code no more than whoever steps a generator.
+// The promise is fulfilled with an iterator result whose value is what the generator hands out. A layout has one type for each field, so no type says that here: the rule of flow for the steps of built-in iterators does.
 const asyncResumeMethod = (parameter: string, ...sent: readonly b.UseSpec[]) =>
   [
     {
       args: { [parameter]: b.any },
       returns: promiseOfIteratorResult,
       capability: "js",
-      uses: { this: [b.retained, ...updatesState], [parameter]: [b.retained, ...sent] },
+      uses: { this: updatesState, [parameter]: [b.retained, ...sent] },
       implementation: b.hostCall,
     },
     {
@@ -124,6 +126,9 @@ export default b.declarations(
   b.class("Iterator", {
     isNeverPristine: true,
     lockedMembers: ["prototype"],
+    call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
+    // Only for a class that extends it: with itself as new.target it throws.
+    construct: { ...operandCodeEffects, returns: b.instance("Iterator").fresh, implementation: b.hostCall },
     static: {
       from: {
         ...operandCodeEffects,
@@ -154,7 +159,7 @@ export default b.declarations(
       },
       "@@dispose": {
         ...operandCodeEffects,
-        this: b.any,
+        this: b.any.refusing(b.null),
         uses: { this: [iteratorProtocol] },
         implementation: b.compiled("JSIteratorPrototype", "dispose"),
       },
@@ -255,7 +260,8 @@ export default b.declarations(
     prototypeTable: b.staticTable("runtime/AsyncGeneratorPrototype.cpp", "asyncGeneratorPrototypeTable"),
     proto: {
       next: asyncResumeMethod("value"),
-      return: asyncResumeMethod("value"),
+      // The value is awaited: the constructor of a promise is read and the promise gets a reaction, and the `then` of any other object is called.
+      return: asyncResumeMethod("value", b.runs("Thenable", b.named("constructor")), ...updatesState),
       throw: asyncResumeMethod("exception", b.storedIn(b.resultSlot("reason"))),
     },
   }),
@@ -266,6 +272,7 @@ export default b.declarations(
     jsType: "DisposableStackType",
     stateHeap: internalFields,
     types: [b.exactType("DisposableStack")],
+    call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: {
       returns: b.instance("DisposableStack").fresh,
       capability: "heap",

@@ -26,7 +26,7 @@ class SelectionContext;
 class RewriteSession {
     WTF_MAKE_NONCOPYABLE(RewriteSession);
 public:
-    RewriteSession(SelectionContext&, SelectionRuleID);
+    RewriteSession(SelectionContext&, SelectionRuleID, size_t numberOfGroups);
 
     void add(const SelectionGroup&);
     Vector<uint32_t> takeOrder();
@@ -46,20 +46,24 @@ private:
 
     using ResultsByAnchor = UncheckedKeyHashMap<ValueID, Vector<ValueID, 2>>;
 
+    ValueSubstitution& substitution();
     void rebuildBlockValues();
     void updateClaims();
+    void applyInsertions();
 
     SelectionContext& m_context;
     SelectionRuleID m_rule;
+    const bool m_checksEffects;
     Function& m_function;
     IRBuilder m_builder;
-    ValueSubstitution m_substitution;
+    std::optional<ValueSubstitution> m_substitution;
     Vector<GroupState> m_groups;
     BitVector m_isErasedFromBlock;
     ResultsByAnchor m_resultsAfter;
     Vector<ValueID> m_unclaimedValues;
     Vector<ValueID> m_slowPathValues;
     uint32_t m_firstNewValue { 0 };
+    uint32_t m_firstNewBlock { 0 };
     bool m_needsCompaction { false };
 };
 
@@ -121,12 +125,14 @@ private:
     void finishMembers();
     void finishCreatedValues();
     void checkCreatedEntries();
+    void didChangeOwnBlocks();
 
     RewriteSession& m_session;
     const SelectionGroup& m_group;
     uint32_t m_groupIndex;
     uint32_t m_firstCreatedValue { 0 };
     uint32_t m_firstSlowPathValue { 0 };
+    uint32_t m_firstCreatedBlock { 0 };
     Vector<Value, 4> m_originals;
     Vector<FastResult, 2> m_fastResults;
     Vector<BlockID, 2> m_blocksWithCreatedTerminators;
@@ -135,6 +141,8 @@ private:
     std::optional<IRBuilder::Expansion> m_expansion;
     std::optional<Terminator> m_duplicatedTerminator;
 };
+
+void changeBranchKind(Terminator&, TerminatorKind);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -11,6 +11,7 @@
 #include "AOTLosses.h"
 #include "AOTPass.h"
 #include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -34,7 +35,7 @@ struct SunkAllocation {
 
 Vector<SunkAllocation> predictSinking(FunctionAnalyses&);
 
-unsigned sinkableAllocationsAfterInlining(FunctionPassContext&, ValueID call, bool calleeReturnsFreshAggregate);
+unsigned sinkableAllocationsAfterInlining(FunctionPassContext&, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate);
 
 void convertListCall(Value& call, std::span<const ValueID> elements);
 

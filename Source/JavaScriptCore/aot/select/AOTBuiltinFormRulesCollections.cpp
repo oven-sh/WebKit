@@ -14,6 +14,7 @@ InlineForm chooseFormOfHashTableBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
     case InlineBuiltin::NewMap:
+    case InlineBuiltin::NewSet:
     case InlineBuiltin::MapGet:
     case InlineBuiltin::MapHas:
     case InlineBuiltin::SetHas:

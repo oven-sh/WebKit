@@ -3,7 +3,7 @@
 # OPTIONS: only-passes=AnalyzeFlow
 # RUN: place statics
 
-module m0 path="a.ts" displayPath="a.ts" body=f0 requests=[{target=m1}] exports=[{name="x" variable=g7}]
+module m0 path="a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="x" variable=g7}]
 module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f2
 entry module=m0
 variable g0 name="a" module=m0 declared={type=undefined|number} initialization=Undefined
@@ -65,7 +65,7 @@ function f3 name="readsInRuntimeModule" module=m1 results=[{type=anything}] {
     v0 = GetModuleVariable variable=g8
     Return v0
 }
-# CHECK: statics size=88 filledAtEntry=32
+# CHECK: statics size=80 filledAtEntry=32
 # CHECK-NEXT: g0 offset=24 representation=OptionalDouble encoding=Plain region=FilledAtProgramEntry initial=[[undefinedDouble]]
 # CHECK-NEXT: g1 offset=16 representation=OptionalInt64 encoding=Plain region=FilledAtProgramEntry
 # CHECK-NEXT: g2 offset=40 representation=JSValue encoding=UndefinedAsZero region=FilledAtInstanceCreation initial=0x0000000000000000
@@ -76,6 +76,5 @@ function f3 name="readsInRuntimeModule" module=m1 results=[{type=anything}] {
 # CHECK-NEXT: g7 offset=8 representation=JSValue encoding=Plain region=FilledAtProgramEntry initial=0x000000000000000a
 # Code of a runtime module may run before the program is entered.
 # CHECK-NEXT: g8 offset=32 representation=OptionalDouble encoding=Plain region=FilledAtInstanceCreation initial=[[undefinedDouble]]
-# CHECK-NEXT: module-value m0 @72
-# CHECK-NEXT: module-value m1 @80
-# CHECK-NEXT: roots=[0 8 40 48 72 80]
+# CHECK-NEXT: module-value m1 @72
+# CHECK-NEXT: roots=[0 8 40 48 72]

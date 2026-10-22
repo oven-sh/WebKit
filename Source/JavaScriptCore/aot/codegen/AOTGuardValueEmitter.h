@@ -15,7 +15,6 @@ class GuardValueEmitter final : public OperationEmitter {
 public:
     explicit GuardValueEmitter(CodeGenerator&);
 
-    void generateGetShapeEpoch(const ValueContext&);
     void generateAllGuards(const ValueContext&);
 };
 

@@ -26,8 +26,6 @@ namespace JSC::AOT {
 
 enum class RuntimeValidation : bool { Off, On };
 
-JSObject* createCommonJSModuleOfTestHost(JSGlobalObject*);
-
 class Realms {
 public:
     explicit Realms(RuntimeValidation = RuntimeValidation::Off);

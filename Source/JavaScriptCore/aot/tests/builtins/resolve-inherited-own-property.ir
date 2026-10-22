@@ -42,12 +42,12 @@ function f5 name="sloppyStoreThatMayFail" parameters=[{type=L0}, {type=number}] 
 # CHECK-NOT: CallBuiltin
 # CHECK: PropSet v0, v1 key="length" mode=Sloppy
 
-function f6 name="layoutIsNotProven" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f6 name="layoutIsOnlyExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
     v1 = PropGet v0 key="length"
     Return v1
 }
-# CHECK-LABEL: function f6 name="layoutIsNotProven"
+# CHECK-LABEL: function f6 name="layoutIsOnlyExpected"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="length"
 

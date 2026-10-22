@@ -1,4 +1,4 @@
-# Two reads of one value share the test of its class, and the value that passed the test has the prediction of one of them. Only the read that predicted a storage tests it and relies on it: the other one takes any storage
+# Two reads of one value share the test of its class, and the value that passed the test has the expected type of one of them. Only the read that expects a storage tests it and relies on it: the other one takes any storage
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Changed
@@ -6,9 +6,9 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="storageFirst" parameters=[{type=anything}, {type=int[0, 9]}] results=[{type=anything}] {
   b0(v0: anything, v1: int[0, 9]):
-    v2 = Predict v0 predicted=Array<anything, Contiguous>
+    v2 ~ Array<anything, Contiguous> = Upcast v0 castType=anything
     v3 = ElemGet v2, v1 [keyIsIntegral]
-    v4 = Predict v0 predicted=Array
+    v4 ~ Array = Upcast v0 castType=anything
     v5 = ElemGet v4, v1 [keyIsIntegral]
     v6 = Add v3, v5
     Return v6
@@ -18,9 +18,9 @@ function f0 name="storageFirst" parameters=[{type=anything}, {type=int[0, 9]}] r
 # CHECK-LABEL: function f1 name="storageSecond"
 function f1 name="storageSecond" parameters=[{type=anything}, {type=int[0, 9]}] results=[{type=anything}] {
   b0(v0: anything, v1: int[0, 9]):
-    v2 = Predict v0 predicted=Array
+    v2 ~ Array = Upcast v0 castType=anything
     v3 = ElemGet v2, v1 [keyIsIntegral]
-    v4 = Predict v0 predicted=Array<anything, Contiguous>
+    v4 ~ Array<anything, Contiguous> = Upcast v0 castType=anything
     v5 = ElemGet v4, v1 [keyIsIntegral]
     v6 = Add v3, v5
     Return v6

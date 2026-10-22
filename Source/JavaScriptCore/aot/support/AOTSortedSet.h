@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompactList.h"
 #include <algorithm>
 #include <concepts>
 #include <initializer_list>
@@ -51,10 +52,13 @@ public:
 private:
     enum class CommonValues : bool { Remove, Retain };
 
+    static constexpr unsigned numberOfValuesInPlace = std::max<size_t>(inlineCapacity, 12 / sizeof(T));
+    using Values = std::conditional_t<!!numberOfValuesInPlace, Typed::InlineList<T, std::max(numberOfValuesInPlace, 1u)>, Vector<T>>;
+
     size_t lowerBound(T value) const { return std::lower_bound(begin(), end(), value) - begin(); }
     void filter(const SortedSet&, CommonValues);
 
-    Vector<T, inlineCapacity> m_values;
+    Values m_values;
 };
 
 template<typename T, size_t inlineCapacity>
@@ -122,7 +126,8 @@ bool SortedSet<T, inlineCapacity>::unite(const SortedSet& other)
         m_values = other.m_values;
         return true;
     }
-    Vector<T, inlineCapacity> united(size() + other.size());
+    Values united;
+    united.grow(size() + other.size());
     united.shrink(std::set_union(begin(), end(), other.begin(), other.end(), united.begin()) - united.begin());
     m_values = WTF::move(united);
     return true;

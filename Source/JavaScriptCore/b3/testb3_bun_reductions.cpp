@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "testb3_bun.h"
+#include "testb3_bun_selection.h"
 
 #if ENABLE(B3_JIT)
 
@@ -541,6 +541,17 @@ static unsigned numberOfJoinedSubtrees(Procedure& proc, B3::Opcode opcode)
     });
 }
 
+static void buildChainOfLoadedWords(Graph& graph, B3::Opcode opcode, unsigned wordCount)
+{
+    BasicBlock* root = graph.proc.addBlock();
+    Value* pointer = cCallArgumentValues<int32_t*>(graph.proc, root)[0];
+    Value* result = graph.load(root, Int32, pointer, 0, firstHeap);
+    for (unsigned i = 1; i < wordCount; ++i)
+        result = graph.make(root, opcode, result, graph.load(root, Int32, pointer, i * sizeof(int32_t), firstHeap));
+    graph.ret(root, result);
+    resetAndValidate(graph.proc);
+}
+
 static void testChainOfAssociativeOperationsStaysChain()
 {
     constexpr unsigned wordCount = 9;
@@ -548,13 +559,7 @@ static void testChainOfAssociativeOperationsStaysChain()
         for (bool chainsAssociativeOperations : { true, false }) {
             Procedure proc(associativeOperationPolicy(chainsAssociativeOperations));
             Graph graph { proc };
-            BasicBlock* root = proc.addBlock();
-            Value* pointer = cCallArgumentValues<int32_t*>(proc, root)[0];
-            Value* result = graph.load(root, Int32, pointer, 0, firstHeap);
-            for (unsigned i = 1; i < wordCount; ++i)
-                result = graph.make(root, opcode, result, graph.load(root, Int32, pointer, i * sizeof(int32_t), firstHeap));
-            graph.ret(root, result);
-            resetAndValidate(proc);
+            buildChainOfLoadedWords(graph, opcode, wordCount);
             CHECK_EQ(optimizeAssociativeExpressionTrees(proc), !chainsAssociativeOperations);
             eliminateDeadCode(proc);
             validate(proc);
@@ -589,9 +594,38 @@ static void testChainOfAssociativeOperationsCombinesLeaves()
     }
 }
 
-static void checkSignComparison(B3::Opcode outer, B3::Opcode leftTest, B3::Opcode rightTest, Type leftType, Type rightType)
+// Upstream rebalances a tree of any size, and the JIT tiers emit upstream's code.
+static void testRebalancingStopsAtLimitExceptInJIT()
 {
-    Procedure proc;
+    constexpr unsigned maxLeaves = defaultValueOf(Limit::MaxLeavesToRebalance);
+    struct Case {
+        bool isPolicyOfJIT;
+        unsigned wordCount;
+        bool isRebalanced;
+    };
+    for (Case testCase : { Case { false, maxLeaves, true }, Case { false, maxLeaves + 1, false }, Case { true, maxLeaves + 1, true } }) {
+        Procedure proc(testCase.isPolicyOfJIT ? Policy::fromProcessOptions() : associativeOperationPolicy(false));
+        Graph graph { proc };
+        buildChainOfLoadedWords(graph, Add, testCase.wordCount);
+        CHECK_EQ(optimizeAssociativeExpressionTrees(proc), testCase.isRebalanced);
+        eliminateDeadCode(proc);
+        validate(proc);
+        CHECK_EQ(limitHits(proc, Limit::MaxLeavesToRebalance), testCase.isRebalanced ? 0u : 1u);
+        CHECK_EQ(numberOfValues(proc, Add), testCase.wordCount - 1);
+        CHECK_EQ(!!numberOfJoinedSubtrees(proc, Add), testCase.isRebalanced);
+
+        Vector<int32_t> words;
+        for (unsigned i = 0; i < testCase.wordCount; ++i)
+            words.append(i + 1);
+        CHECK_EQ(invoke<int32_t>(*compileProc(proc), words.span().data()), static_cast<int32_t>(testCase.wordCount * (testCase.wordCount + 1) / 2));
+    }
+}
+
+static void checkSignComparison(B3::Opcode outer, B3::Opcode leftTest, B3::Opcode rightTest, Type leftType, Type rightType, bool usesPolicy)
+{
+    Procedure proc(policyWith([&](Policy& policy) {
+        policy.optimization.foldsImpliedComparisons = usesPolicy;
+    }));
     Graph graph { proc };
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
@@ -604,7 +638,7 @@ static void checkSignComparison(B3::Opcode outer, B3::Opcode leftTest, B3::Opcod
     graph.ret(root, graph.make(root, ZExt32, graph.make(root, outer, left, right)));
     resetAndValidate(proc);
     reduceStrengthOnce(proc);
-    if (leftType == rightType) {
+    if (leftType == rightType && usesPolicy) {
         CHECK_EQ(numberOfValues(proc, BitXor), 1u);
         CHECK_EQ(numberOfValues(proc, [](Value* value) {
             return value->opcode() == Equal || value->opcode() == NotEqual || value->opcode() == LessThan || value->opcode() == GreaterEqual;
@@ -626,9 +660,11 @@ static void testSignComparisonBecomesExclusiveOr()
     for (B3::Opcode outer : { Equal, NotEqual }) {
         for (B3::Opcode leftTest : { LessThan, GreaterEqual }) {
             for (B3::Opcode rightTest : { LessThan, GreaterEqual }) {
-                checkSignComparison(outer, leftTest, rightTest, Int32, Int32);
-                checkSignComparison(outer, leftTest, rightTest, Int64, Int64);
-                checkSignComparison(outer, leftTest, rightTest, Int32, Int64);
+                for (bool usesPolicy : { false, true }) {
+                    checkSignComparison(outer, leftTest, rightTest, Int32, Int32, usesPolicy);
+                    checkSignComparison(outer, leftTest, rightTest, Int64, Int64, usesPolicy);
+                    checkSignComparison(outer, leftTest, rightTest, Int32, Int64, usesPolicy);
+                }
             }
         }
     }
@@ -834,6 +870,115 @@ static void testReplacementOfExcludedConstantFoldsOnPath()
     }
 }
 
+namespace {
+
+enum class ExtendedForm : uint8_t {
+    ProductWithImmediate,
+    SignExtensionOfLoad,
+    TestOfLoad,
+    SelectOnTestOfLoad,
+};
+
+} // anonymous namespace
+
+static constexpr int64_t factorOfProduct = 1000003;
+
+static Air::Opcode airOpcodeOf(ExtendedForm form)
+{
+    switch (form) {
+    case ExtendedForm::ProductWithImmediate:
+        return Air::Mul64;
+    case ExtendedForm::SignExtensionOfLoad:
+        return Air::SignExtend32To64;
+    case ExtendedForm::TestOfLoad:
+        return Air::Test64;
+    case ExtendedForm::SelectOnTestOfLoad:
+        return Air::MoveConditionallyTest64;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return Air::Oops;
+}
+
+static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
+{
+    BasicBlock* root = graph.proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(graph.proc, root);
+    Value* pointer = arguments[0];
+    Value* operand = arguments[1];
+    Value* other = arguments[2];
+    auto appendMaskedLoad = [&] {
+        return graph.make(root, BitAnd, graph.load(root, Int64, pointer, 0, firstHeap), operand);
+    };
+    switch (form) {
+    case ExtendedForm::ProductWithImmediate:
+        graph.ret(root, graph.make(root, Mul, operand, graph.int64(root, factorOfProduct)));
+        return;
+    case ExtendedForm::SignExtensionOfLoad:
+        graph.ret(root, graph.make(root, SExt32, graph.load(root, Int32, pointer, 0, firstHeap)));
+        return;
+    case ExtendedForm::TestOfLoad:
+        graph.ret(root, graph.make(root, ZExt32, graph.make(root, Equal, appendMaskedLoad(), graph.int64(root, 0))));
+        return;
+    case ExtendedForm::SelectOnTestOfLoad:
+        graph.ret(root, graph.select(root, appendMaskedLoad(), operand, other));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static int64_t resultOfExtendedForm(ExtendedForm form, int64_t loaded, int64_t operand, int64_t other)
+{
+    switch (form) {
+    case ExtendedForm::ProductWithImmediate:
+        return static_cast<int64_t>(static_cast<uint64_t>(operand) * static_cast<uint64_t>(factorOfProduct));
+    case ExtendedForm::SignExtensionOfLoad:
+        return static_cast<int32_t>(loaded);
+    case ExtendedForm::TestOfLoad:
+        return !(loaded & operand);
+    case ExtendedForm::SelectOnTestOfLoad:
+        return (loaded & operand) ? operand : other;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return 0;
+}
+
+// Upstream's Air has these opcodes without the form that takes an immediate or an address, and the JIT tiers emit upstream's code.
+static void testExtendedFormsAreSelectedOnRequest()
+{
+    struct Case {
+        Policy policy;
+        bool extendsInstructionSelection;
+    };
+    const Case cases[] = { { Policy::fromProcessOptions(), false }, { Policy(), false }, { selectionPolicy(), true } };
+    for (const Case& testCase : cases) {
+        for (ExtendedForm form : { ExtendedForm::ProductWithImmediate, ExtendedForm::SignExtensionOfLoad, ExtendedForm::TestOfLoad, ExtendedForm::SelectOnTestOfLoad }) {
+            bool isSelected = testCase.extendsInstructionSelection && (isX86() || form == ExtendedForm::SignExtensionOfLoad);
+            Procedure lowered(testCase.policy);
+            Graph loweredGraph { lowered };
+            buildUserOfExtendedForm(loweredGraph, form);
+            lowerToAirForTesting(lowered);
+            CHECK_EQ(numberOfInsts(lowered, airOpcodeOf(form)), 1u);
+            CHECK_EQ(numberOfInsts(lowered, [&](Air::Inst& inst) {
+                return inst.kind.opcode == airOpcodeOf(form) && std::ranges::any_of(inst.args(), [](const Air::Arg& arg) {
+                    return arg.isImm() || arg.isMemory();
+                });
+            }), isSelected ? 1u : 0u);
+
+            Procedure proc(testCase.policy);
+            Graph graph { proc };
+            buildUserOfExtendedForm(graph, form);
+            auto code = compileProc(proc);
+            for (int64_t loaded : { 0ll, 6ll, -1ll, 0x180000001ll }) {
+                int64_t memory[1] = { loaded };
+                for (int64_t operand : { 0ll, 1ll, 2ll, -5ll }) {
+                    constexpr int64_t other = 77;
+                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, other), resultOfExtendedForm(form, loaded, operand, other));
+                }
+            }
+        }
+    }
+}
+
 void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testMemoryNumberingIrreducibleCycle());
@@ -852,11 +997,13 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testLowWordOfWideShiftAndDivisionStayWide());
     RUN(testChainOfAssociativeOperationsStaysChain());
     RUN(testChainOfAssociativeOperationsCombinesLeaves());
+    RUN(testRebalancingStopsAtLimitExceptInJIT());
     RUN(testSignComparisonBecomesExclusiveOr());
     RUN(testBranchOnKnownConditionAtLevelOne());
     RUN(testComparisonLooksThroughConstantReplacement());
     RUN(testComparisonLooksThroughReplacementOfNaN());
     RUN(testReplacementOfExcludedConstantFoldsOnPath());
+    RUN(testExtendedFormsAreSelectedOnRequest());
 }
 
 #endif // ENABLE(B3_JIT)

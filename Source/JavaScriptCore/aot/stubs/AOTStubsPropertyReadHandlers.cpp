@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPropertyCachesFront.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyAccessors.h"
@@ -133,6 +134,13 @@ static void callGetter(ReadSlotBody& body, GPRReg getterSetter)
 {
     const StubSignature finisher = signatureOfSlotCannot(slotCannot(SlotFinisher::CallGetter, body.origin));
     RELEASE_ASSERT(finisher.operands[finisher.numberOfOperands - 1] == Reg(getterSetter));
+    // Whoever jumps to a handler has written the two registers of the slot itself, and the number of the name is an immediate of the call: no caller keeps a value in them.
+    RegisterSet lostToEveryCaller;
+    for (GPRReg reg : { body.operands.header, body.operands.payload, body.operands.identifierNumber }) {
+        if (reg != InvalidGPRReg)
+            lostToEveryCaller.add(reg, IgnoreVectors);
+    }
+    body.jit.recordClobbers(lostToEveryCaller);
     JumpList cannot;
     callGetterAndReturn(body.jit, body.R0, getterSetter, cannot);
     linkToSlotCannot(body.jit, cannot, body.table, SlotFinisher::CallGetter, body.slot);
@@ -145,6 +153,32 @@ static void emitGetterCall(ReadSlotBody& body)
     callGetter(body, getterSetter);
 }
 
+// The slot of an accessor field holds the GetterSetter. Many an object of the same Structure has it empty: the accessor is defined on some objects of the layout only.
+static void emitFieldGetterCall(ReadSlotBody& body)
+{
+    JumpList isAbsent;
+    StubAssembler& jit = body.jit;
+    const CachedSlot& slot = body.slot;
+    const FieldAddressRegisters field { .object = body.R0, .slotData = body.T10, .extensionWordOffset = body.T11, .address = body.T11, .representation = body.T14 };
+    const GPRReg getterSetter = body.T10;
+
+    slot.loadFirstPayloadWord(jit, field.slotData);
+    Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+    computeFieldAddress(jit, field, false, isAbsent);
+    Label hasAddress = jit.label();
+    loadGetterSetterInField(jit, field.address, field.representation, getterSetter, isAbsent);
+    callGetter(body, getterSetter);
+
+    isOutOfLine.link(&jit);
+    slot.loadHiddenWordOffset(jit, field.extensionWordOffset);
+    computeFieldAddress(jit, field, true, isAbsent);
+    jit.jump().linkTo(hasAddress, &jit);
+
+    isAbsent.link(&jit);
+    body.uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
+    returnUndefined(body);
+}
+
 static void emitCustomGetterCall(ReadSlotBody& body)
 {
     const GPRReg accessorIndex = clobberPayloadRegister(body);
@@ -154,12 +188,12 @@ static void emitCustomGetterCall(ReadSlotBody& body)
     callCustomGetterAndReturn(body.jit, body.R0, accessorIndex, uid);
 }
 
-static FieldReadRegisters allocateFieldReadRegisters(ReadSlotBody& body, GPRReg object)
+static FieldReadRegisters allocateFieldReadRegisters(ReadSlotBody& body, GPRReg object, GPRReg slotData)
 {
     return {
         .field = {
             .object = object,
-            .slotData = body.T10,
+            .slotData = slotData,
             .extensionWordOffset = body.T11,
             .address = body.T11,
             .representation = body.T14,
@@ -171,14 +205,49 @@ static FieldReadRegisters allocateFieldReadRegisters(ReadSlotBody& body, GPRReg 
     };
 }
 
+// The value of a data property does not depend on the receiver, so the holder takes the receiver's place and the lookup tables answer for its own Structure.
+static void readFromHolder(ReadSlotBody& body)
+{
+    StubAssembler& jit = body.jit;
+    body.slot.loadHolder(jit, body.R0);
+    switch (body.origin) {
+    case SlotOrigin::ById:
+    case SlotOrigin::ByIdInStubFrame: {
+        const CallerFrame callerFrame = callerFrameOf(body.origin);
+        const StubKey frontProbe = getById().withCallerFrame(callerFrame);
+        const StubSignature signature = signatureOfGetById(frontProbe);
+        RELEASE_ASSERT(signature.operands[receiverOperand] == Reg(body.R0) && signature.immediate == body.operands.identifierNumber);
+        if (body.slot.form() == SlotForm::Slot)
+            jit.linkToStub(jit.branch32(CCallHelpers::Above, body.operands.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)), getByIdHashed().withCallerFrame(callerFrame));
+        jit.jumpToStub(frontProbe);
+        return;
+    }
+    case SlotOrigin::ByVal: {
+        // The probe by key clobbers like a call, and a handler does not.
+        const GPRReg uid = body.T10;
+        const GPRReg structureID = body.T11;
+        const GPRReg header = jit.clobberOperand(headerOperand);
+        const GPRReg payload = clobberPayloadRegister(body);
+        loadNameOfKey(jit, body.operands.keyCell, uid, structureID, body.miss);
+        jit.load32(Address(body.R0, JSCell::structureIDOffset()), structureID);
+        findHashedSlot(jit, SlotAccess::Read, { .structureID = structureID, .uid = uid, .entry = body.T14, .header = header, .payload = payload, .scratch = payload }, body.miss);
+        jumpToSlotHandler(jit, body.table, header, uid);
+        return;
+    }
+    case SlotOrigin::FreeName:
+    case SlotOrigin::FreeNameForTypeOf:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static void emitFieldRead(ReadSlotBody& body)
 {
     StubAssembler& jit = body.jit;
     const CachedSlot& slot = body.slot;
-    const FieldReadRegisters registers = allocateFieldReadRegisters(body, body.R0);
+    const FieldReadRegisters registers = allocateFieldReadRegisters(body, body.R0, slot.registerOfFirstPayloadWord());
     FieldReadExits exits;
 
-    slot.loadFirstPayloadWord(jit, registers.field.slotData);
     Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
     computeFieldAddress(jit, registers.field, false, exits.isAbsent);
     Label hasAddress = jit.label();
@@ -190,8 +259,18 @@ static void emitFieldRead(ReadSlotBody& body)
     jit.jump().linkTo(hasAddress, &jit);
 
     exits.isAbsent.link(&jit);
-    body.uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
-    returnUndefined(body);
+    if (slot.kind() == Slot::Kind::FieldOrInheritedField)
+        readFromHolder(body);
+    else {
+        // No cell of the front table has room for the second flag.
+        Jump isUndefinedEitherWay;
+        if (slot.form() == SlotForm::Slot)
+            isUndefinedEitherWay = slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined);
+        body.uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
+        if (isUndefinedEitherWay.isSet())
+            isUndefinedEitherWay.link(&jit);
+        returnUndefined(body);
+    }
 
     linkToSlotCannot(jit, exits.cannot, body.table, SlotFinisher::ReadField, slot);
 }
@@ -200,11 +279,10 @@ static void emitFieldOrInheritedRead(ReadSlotBody& body)
 {
     StubAssembler& jit = body.jit;
     const CachedSlot& slot = body.slot;
-    const FieldReadRegisters registers = allocateFieldReadRegisters(body, body.R0);
+    const FieldReadRegisters registers = allocateFieldReadRegisters(body, body.R0, slot.registerOfFirstPayloadWord());
     const GPRReg inherited = body.T10;
     FieldReadExits exits;
 
-    slot.loadFirstPayloadWord(jit, registers.field.slotData);
     Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
     computeFieldAddress(jit, registers.field, false, exits.isAbsent);
     Label hasAddress = jit.label();
@@ -218,6 +296,9 @@ static void emitFieldOrInheritedRead(ReadSlotBody& body)
     exits.isAbsent.link(&jit);
     loadInheritedValueBySlot(jit, slot, body.T10, body.T11, inherited);
     Jump isGetter = slot.branchIfFlag(jit, Slot::inheritsGetter);
+    Jump isAbsentWhereEmpty = slot.branchUnlessFlag(jit, Slot::emptySlotMayBeUndefined);
+    body.uncached.append(jit.branchIfNotUndefined(inherited));
+    isAbsentWhereEmpty.link(&jit);
     jit.move(inherited, body.R0);
     jit.returnToCaller();
 
@@ -231,7 +312,7 @@ static void emitVariableRead(ReadSlotBody& body)
 {
     StubAssembler& jit = body.jit;
     const GPRReg statics = jit.clobberOperand(headerOperand);
-    const FieldReadRegisters registers = allocateFieldReadRegisters(body, statics);
+    const FieldReadRegisters registers = allocateFieldReadRegisters(body, statics, body.T10);
     FieldReadExits exits;
 
     body.slot.loadFirstPayloadWord(jit, registers.field.slotData);
@@ -326,9 +407,12 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
         return traits.origin != SlotOrigin::FreeName;
     case Slot::Kind::FarValue:
     case Slot::Kind::FieldOrInherited:
+    case Slot::Kind::FieldOrInheritedField:
         return !isPacked && !isFreeName;
     case Slot::Kind::CustomGetter:
     case Slot::Kind::Field:
+    case Slot::Kind::FieldGetter:
+    case Slot::Kind::InheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraProperty:
     case Slot::Kind::ExtraGetter:
@@ -370,10 +454,17 @@ static void emitReadBySlot(ReadSlotBody& body)
         emitCustomGetterCall(body);
         return;
     case Slot::Kind::Field:
+    case Slot::Kind::FieldOrInheritedField:
         emitFieldRead(body);
+        return;
+    case Slot::Kind::FieldGetter:
+        emitFieldGetterCall(body);
         return;
     case Slot::Kind::FieldOrInherited:
         emitFieldOrInheritedRead(body);
+        return;
+    case Slot::Kind::InheritedField:
+        readFromHolder(body);
         return;
     case Slot::Kind::Variable:
         emitVariableRead(body);
@@ -475,7 +566,7 @@ static OperationCall createExitCall(GPRReg second, GPRReg third, std::optional<G
 static void tryLeafLookup(StubAssembler& jit, Entry leafLookup, GPRReg second)
 {
     const GPRReg receiver = jit.operand(receiverOperand);
-    const GPRReg receiverAfterCall = jit.allocateScratch(StubRegister::T12);
+    const GPRReg receiverAfterCall = jit.reuseScratch(StubRegister::T12);
     callLeafLookup(jit, leafLookup, second, std::nullopt, receiverAfterCall);
     Jump hasNoAnswer = jit.branchTest64(CCallHelpers::Zero, receiver);
     jit.returnToCaller();
@@ -500,6 +591,22 @@ static void emitUncachedReadById(StubAssembler& jit)
     needsOperation.append(jit.branchIfNotCell(receiver));
     needsOperation.append(jit.branchIfNotObject(receiver));
     loadIdentifier(jit, identifierNumber, uid, needsOperation);
+#if CPU(X86_64)
+    // No slot says what the read finds, as where a getter lies in a field of an object above the receiver. The objects themselves say it.
+    JumpList objectsDoNotSay;
+    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, {
+        .receiver = receiver,
+        .name = identifierNumber,
+        .uid = uid,
+        .object = jit.allocateScratch(StubRegister::T12),
+        .structure = jit.allocateScratch(StubRegister::T11),
+        .size = jit.allocateScratch(StubRegister::T13),
+        .vector = jit.allocateScratch(StubRegister::T14),
+        .index = jit.scratchRegister(),
+    }, ObjectLookupName::IsGivenByNumber, objectsDoNotSay);
+    objectsDoNotSay.link(&jit);
+    loadIdentifier(jit, identifierNumber, uid, needsOperation);
+#endif
     tryLeafLookup(jit, Entry::operationAOTGetGeneric, uid);
 
     needsOperation.link(&jit);

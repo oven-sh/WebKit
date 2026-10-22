@@ -22,11 +22,11 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-DeclaredType createDeclaredType(TypeID type, TypeID predicted = { })
+DeclaredType createDeclaredType(TypeID type, OptionSet<PositionFlags> flags = { })
 {
     DeclaredType declared;
     declared.type = type;
-    declared.predicted = predicted;
+    declared.flags = flags;
     return declared;
 }
 
@@ -185,33 +185,27 @@ static void declaredEntryTypeOfThisFollowsLevel()
     TypeArena arena(test.program.types);
     Function function;
     function.flags = { FunctionFlags::HasThis };
-    function.thisType = createDeclaredType(TypeTable::anything, TypeTable::function);
+    function.thisType = createDeclaredType(TypeTable::function, PositionFlags::IsExpected);
     function.thisType.site = TypeSiteID(4u);
     TypingContext typing { test.program, function, arena };
     AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::anything);
-    AOT_TEST_CHECK(declaredEntryTypeOf(typing.atLevel(TypeLevel::Written), function, 0) == TypeTable::anything);
-    AOT_TEST_CHECK(declaredEntryTypeOf(typing.predicting(), function, 0) == TypeTable::function);
+    AOT_TEST_CHECK(declaredEntryTypeOf(typing.atLevel(TypeLevel::Expected), function, 0) == TypeTable::function);
+    AOT_TEST_CHECK(declaredEntryTypeOf(typing.expecting(), function, 0) == TypeTable::function);
 
-    function.thisType.written = TypeTable::object;
-    AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::anything);
-    AOT_TEST_CHECK(declaredEntryTypeOf(typing.atLevel(TypeLevel::Written), function, 0) == TypeTable::object);
-    AOT_TEST_CHECK(declaredEntryTypeOf(typing.predicting(), function, 0) == TypeTable::function);
-    function.thisType.predicted = { };
-    AOT_TEST_CHECK(declaredEntryTypeOf(typing.predicting(), function, 0) == TypeTable::object);
+    function.thisType.flags = { };
+    AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::function);
+    AOT_TEST_CHECK(declaredEntryTypeOf(typing.expecting(), function, 0) == TypeTable::function);
 }
 
-static void forEachTypeVisitsEveryLevelOfThisType()
+static void forEachTypeVisitsThisTypeOnce()
 {
-    Function function;
-    function.thisType = createDeclaredType(TypeID(101u), TypeID(103u));
-    Vector<TypeID> visited;
-    forEachType(static_cast<const FunctionRecord&>(function), [&](TypeID id) { visited.append(id); });
-    AOT_TEST_CHECK(hasElements(visited, { TypeID(101u), TypeID(103u) }));
-
-    function.thisType.written = TypeID(102u);
-    visited.clear();
-    forEachType(static_cast<const FunctionRecord&>(function), [&](TypeID id) { visited.append(id); });
-    AOT_TEST_CHECK(hasElements(visited, { TypeID(101u), TypeID(102u), TypeID(103u) }));
+    for (OptionSet<PositionFlags> flags : { OptionSet<PositionFlags> { }, OptionSet<PositionFlags> { PositionFlags::IsExpected } }) {
+        Function function;
+        function.thisType = createDeclaredType(TypeID(101u), flags);
+        Vector<TypeID> visited;
+        forEachType(static_cast<const FunctionRecord&>(function), [&](TypeID id) { visited.append(id); });
+        AOT_TEST_CHECK(hasElements(visited, { TypeID(101u) }));
+    }
 }
 
 static void restParameterIsNotPositional()
@@ -262,17 +256,17 @@ static void copyOfFunctionSharesNothing()
     BlockID exit = addBlock(function);
     ValueID element = addValue(function, entry, Opcode::Undefined);
     ValueID array = addValue(function, entry, Opcode::NewArray, { ValueID(), element });
-    function.at(array).setHoles(std::array<uint32_t, 2> { 1, 2 });
+    function.edit(array).setHoles(std::array<uint32_t, 2> { 1, 2 });
     jump(function, entry, exit, { element });
-    function.at(entry).handler = Target { exit, { array }, { } };
+    function.edit(entry).handler = Target { exit, { array }, { } };
     function.parameters = { createDeclaredType(TypeTable::number) };
 
     Function copy = function;
-    copy.at(array).setHoles(std::array<uint32_t, 1> { 7 });
-    copy.at(array).appendVariadicOperand(array);
-    copy.at(entry).terminator.next().arguments.append(array);
-    copy.at(entry).handler->arguments.clear();
-    copy.at(entry).values.clear();
+    copy.edit(array).setHoles(std::array<uint32_t, 1> { 7 });
+    copy.edit(array).appendVariadicOperand(array);
+    copy.edit(entry).terminator.next().arguments.append(array);
+    copy.edit(entry).handler->arguments.clear();
+    copy.edit(entry).values.clear();
     copy.parameters[0].type = TypeTable::string;
     addBlock(copy);
 
@@ -292,7 +286,7 @@ static void declarationLocationNeedsModule()
 
     ValueID value = addValue(function, addBlock(function), Opcode::Undefined);
     AOT_TEST_CHECK(!function.at(value).hasPosition() && isAt(function.locationOf(value), ModuleID(), 0));
-    function.at(value).position = 40;
+    function.edit(value).position = 40;
     AOT_TEST_CHECK(isAt(function.locationOf(value), ModuleID(3u), 40) && isAt(function.locationOf(Origin { 41, 0 }), ModuleID(3u), 41));
 }
 
@@ -307,9 +301,9 @@ static void compactKeepsBlockReachedThroughHandlerOnly()
     ValueID kept = addValue(function, entry, Opcode::Integer);
     ValueID subject = addValue(function, entry, Opcode::Null);
     jump(function, entry, exit);
-    function.at(entry).handler = Target { handler, { kept }, { } };
-    function.at(handler).role = BlockRole::IterationCleanup;
-    function.at(handler).subject = subject;
+    function.edit(entry).handler = Target { handler, { kept }, { } };
+    function.edit(handler).role = BlockRole::IterationCleanup;
+    function.edit(handler).subject = subject;
     addParameter(function, handler);
     addValue(function, handler, Opcode::CatchException);
     addValue(function, unreachable, Opcode::Undefined);
@@ -335,10 +329,10 @@ static void compactSortsBlocksWithoutEarlierPredecessor()
     addValue(function, handler, Opcode::CatchValue);
     jump(function, entry, second);
     jump(function, second, last);
-    function.at(second).handler = Target { handler, { }, { } };
-    function.at(handler).role = BlockRole::CatchHandler;
+    function.edit(second).handler = Target { handler, { }, { } };
+    function.edit(handler).role = BlockRole::CatchHandler;
     jump(function, handler, last);
-    function.at(last).terminator.become(TerminatorKind::Return);
+    function.edit(last).terminator.become(TerminatorKind::Return);
 
     AOT_TEST_CHECK(compactFunction(function));
     AOT_TEST_CHECK(function.blocks.size() == 4 && function.values.size() == 3);
@@ -367,7 +361,7 @@ static void compactKeepsValidBlockOrder()
     branch(function, entry, condition, header, exit);
     jump(function, header, latch);
     jump(function, latch, header);
-    function.at(exit).terminator.become(TerminatorKind::Return);
+    function.edit(exit).terminator.become(TerminatorKind::Return);
 
     AOT_TEST_CHECK(compactFunction(function));
     AOT_TEST_CHECK(function.blocks.size() == 4 && function.values.size() == 4);
@@ -384,20 +378,86 @@ static void remapIDsRewritesTypesOfValues()
     ValueID typed = addValue(function, addBlock(function), Opcode::Undefined);
     ValueID unlisted = addUnlistedValue(function, Opcode::Undefined);
     ValueID untouched = addUnlistedValue(function, Opcode::Undefined);
-    function.at(typed).type = fixture.firstType;
-    function.at(typed).setWritten(fixture.secondType);
-    function.at(typed).setPrediction(fixture.thirdType);
-    function.at(unlisted).type = fixture.thirdType;
-    function.at(untouched).setPrediction(TypeTable::string);
+    function.edit(typed).type = fixture.firstType;
+    function.edit(typed).setExpected(fixture.secondType);
+    function.edit(unlisted).type = fixture.thirdType;
+    function.edit(untouched).setExpected(TypeTable::string);
 
     fixture.remap(function);
     AOT_TEST_CHECK(function.at(typed).type == fixture.types(fixture.firstType) && !TypeTable::isProvisional(function.at(typed).type));
-    AOT_TEST_CHECK(function.at(typed).written() == fixture.types(fixture.secondType) && !TypeTable::isProvisional(function.at(typed).written()));
-    AOT_TEST_CHECK(function.at(typed).prediction() == fixture.types(fixture.thirdType) && !TypeTable::isProvisional(function.at(typed).prediction()));
-    AOT_TEST_CHECK(function.at(typed).type != function.at(typed).written() && function.at(typed).written() != function.at(typed).prediction());
-    AOT_TEST_CHECK(function.at(unlisted).type == fixture.types(fixture.thirdType) && !function.at(unlisted).written() && !function.at(unlisted).prediction());
-    AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && !function.at(untouched).written() && function.at(untouched).prediction() == TypeTable::string);
+    AOT_TEST_CHECK(function.at(typed).expected() == fixture.types(fixture.secondType) && !TypeTable::isProvisional(function.at(typed).expected()));
+    AOT_TEST_CHECK(function.at(typed).type != function.at(typed).expected());
+    AOT_TEST_CHECK(function.at(unlisted).type == fixture.types(fixture.thirdType) && !function.at(unlisted).expected());
+    AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && function.at(untouched).expected() == TypeTable::string);
     AOT_TEST_CHECK(fixture.test.program.at(function.at(typed).type).primitives == (Primitive::String | Primitive::Boolean));
+}
+
+// Two arenas give one type two provisional ids, so an expected type may turn out to be the type itself. An expected type is set where it says more than the type does.
+static void remapIDsClearsExpectedTypeThatBecomesTheType()
+{
+    TestProgram test;
+    StringInterningPhase stringPhase(test.program.strings, 1);
+    TypeInterningPhase typePhase(test.program.types, 2);
+    TypeID inFirstArena;
+    TypeID inSecondArena;
+    TypeID narrower;
+    {
+        TypeArena first(typePhase, 0);
+        TypeArena second(typePhase, 1);
+        inFirstArena = first.unionOf(TypeTable::string, TypeTable::boolean);
+        inSecondArena = second.unionOf(TypeTable::string, TypeTable::boolean);
+        narrower = TypeTable::string;
+    }
+    AOT_TEST_CHECK(TypeTable::isProvisional(inFirstArena) && TypeTable::isProvisional(inSecondArena) && inFirstArena != inSecondArena);
+    FunctionRemap functions;
+    StringRemap strings = stringPhase.finish();
+    TypeRemap types = typePhase.finish(std::array<unsigned, 2> { 0, 1 }, functions, strings);
+    AOT_TEST_CHECK(types(inFirstArena) == types(inSecondArena));
+
+    Function function;
+    BlockID entry = addBlock(function);
+    ValueID sameType = addValue(function, entry, Opcode::Undefined);
+    ValueID narrowerType = addValue(function, entry, Opcode::Undefined);
+    function.edit(sameType).type = inFirstArena;
+    function.edit(sameType).setExpected(inSecondArena);
+    function.edit(narrowerType).type = inFirstArena;
+    function.edit(narrowerType).setExpected(narrower);
+
+    remapIDs(function, types, strings, functions);
+    AOT_TEST_CHECK(function.at(sameType).type == types(inFirstArena) && !function.at(sameType).expected());
+    AOT_TEST_CHECK(function.at(narrowerType).type == types(inFirstArena) && function.at(narrowerType).expected() == narrower);
+}
+
+static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
+{
+    TestProgram test;
+    TypeInterningPhase typePhase(test.program.types, 2);
+    {
+        TypeArena builder(typePhase, 0);
+        TypeArena optimizer(typePhase, 1);
+        Function function;
+        BlockID entry = addBlock(function);
+        ValueID typed = addValue(function, entry, Opcode::Undefined);
+        ValueID typeTest = addValue(function, entry, Opcode::TypeTest);
+        ValueID untouched = addValue(function, entry, Opcode::Undefined);
+        function.edit(typed).type = builder.unionOf(TypeTable::string, TypeTable::boolean);
+        function.edit(typed).setExpected(builder.unionOf(TypeTable::string, TypeTable::undefined));
+        function.edit(typeTest).type = TypeTable::boolean;
+        function.edit(typeTest).setTestedType(builder.unionOf(TypeTable::string, TypeTable::boolean));
+        function.edit(untouched).type = TypeTable::anything;
+
+        TypeID computed = optimizer.unionOf(TypeTable::string, TypeTable::boolean);
+        AOT_TEST_CHECK(TypeTable::isProvisional(computed) && computed != function.at(typed).type);
+        AOT_TEST_CHECK(numberOfForeignIDs(function, optimizer) == 3 && !numberOfForeignIDs(function, builder));
+
+        adoptIDs(function, optimizer);
+        AOT_TEST_CHECK(!numberOfForeignIDs(function, optimizer) && numberOfForeignIDs(function, builder) == 3);
+        AOT_TEST_CHECK(function.at(typed).type == computed);
+        AOT_TEST_CHECK(function.at(typed).expected() == optimizer.unionOf(TypeTable::string, TypeTable::undefined));
+        AOT_TEST_CHECK(function.at(typeTest).testedType() == computed && function.at(typeTest).type == TypeTable::boolean);
+        AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && !function.at(untouched).expected());
+    }
+    typePhase.discard();
 }
 
 static void remapIDsRewritesPayloadsOfValues()
@@ -411,12 +471,12 @@ static void remapIDsRewritesPayloadsOfValues()
     ValueID call = addValue(function, entry, Opcode::Call);
     ValueID closure = addValue(function, entry, Opcode::NewClosure);
     ValueID typeTest = addValue(function, entry, Opcode::TypeTest);
-    function.at(copy).setExcludedKeys(std::array<PropertyKeyID, 3> { PropertyKeyID(3u), fixture.key, PropertyKeyID(1u) });
-    function.at(string).setString(fixture.string);
-    function.at(shapeTest).setLayouts(fixture.layouts);
-    function.at(call).setCallees(fixture.callees);
-    function.at(closure).setFunction(fixture.function);
-    function.at(typeTest).setTestedType(fixture.firstType);
+    function.edit(copy).setExcludedKeys(std::array<PropertyKeyID, 3> { PropertyKeyID(3u), fixture.key, PropertyKeyID(1u) });
+    function.edit(string).setString(fixture.string);
+    function.edit(shapeTest).setLayouts(fixture.layouts);
+    function.edit(call).setCallees(fixture.callees);
+    function.edit(closure).setFunction(fixture.function);
+    function.edit(typeTest).setTestedType(fixture.firstType);
 
     fixture.remap(function);
     AOT_TEST_CHECK(hasElements(function.at(copy).excludedKeys(), { PropertyKeyID(3u), fixture.types(fixture.key), PropertyKeyID(1u) }));
@@ -439,21 +499,20 @@ static void remapIDsRewritesPayloadsOfTerminators()
     BlockID switchString = addBlock(function);
     BlockID switchOnShape = addBlock(function);
     TailCast cast;
-    cast.declared = createDeclaredType(fixture.firstType, fixture.secondType);
-    cast.declared.written = fixture.thirdType;
+    cast.declared = createDeclaredType(fixture.firstType, PositionFlags::IsExpected);
     TailCast finalCast;
     finalCast.declared = createDeclaredType(TypeTable::number);
-    function.at(returnCall).terminator.become(TerminatorKind::ReturnCall);
-    function.at(returnCall).terminator.setCasts(std::array<TailCast, 2> { finalCast, cast });
-    function.at(switchString).terminator.become(TerminatorKind::SwitchString);
-    function.at(switchString).terminator.setStrings(std::array<StringID, 2> { StringID(0u), fixture.string });
-    function.at(switchOnShape).terminator.become(TerminatorKind::SwitchOnShape);
-    function.at(switchOnShape).terminator.setLayoutSets(std::array<LayoutSetID, 1> { fixture.layouts });
+    function.edit(returnCall).terminator.become(TerminatorKind::ReturnCall);
+    function.edit(returnCall).terminator.setCasts(std::array<TailCast, 2> { finalCast, cast });
+    function.edit(switchString).terminator.become(TerminatorKind::SwitchString);
+    function.edit(switchString).terminator.setStrings(std::array<StringID, 2> { StringID(0u), fixture.string });
+    function.edit(switchOnShape).terminator.become(TerminatorKind::SwitchOnShape);
+    function.edit(switchOnShape).terminator.setLayoutSets(std::array<LayoutSetID, 1> { fixture.layouts });
 
     fixture.remap(function);
     auto casts = function.at(returnCall).terminator.casts();
     AOT_TEST_CHECK(casts.size() == 2 && casts[0] == finalCast);
-    AOT_TEST_CHECK(casts[1].declared.type == fixture.types(fixture.firstType) && casts[1].declared.written == fixture.types(fixture.thirdType) && casts[1].declared.predicted == fixture.types(fixture.secondType));
+    AOT_TEST_CHECK(casts[1].declared == createDeclaredType(fixture.types(fixture.firstType), PositionFlags::IsExpected));
     AOT_TEST_CHECK(hasElements(function.at(switchString).terminator.strings(), { StringID(0u), fixture.strings(fixture.string) }));
     AOT_TEST_CHECK(hasElements(function.at(switchOnShape).terminator.layoutSets(), { fixture.types(fixture.layouts) }));
 }
@@ -464,9 +523,8 @@ static void remapIDsRewritesHeader()
     Function function;
     function.name = fixture.string;
     function.captures = { createDeclaredType(fixture.firstType) };
-    function.thisType = createDeclaredType(TypeTable::anything, fixture.secondType);
-    function.parameters = { createDeclaredType(TypeTable::string) };
-    function.parameters[0].written = fixture.thirdType;
+    function.thisType = createDeclaredType(fixture.secondType, PositionFlags::IsExpected);
+    function.parameters = { createDeclaredType(TypeTable::string), createDeclaredType(fixture.thirdType) };
     function.results = { createDeclaredType(fixture.thirdType) };
     function.role = FunctionRole::GenericVersion;
     function.creator = CreatorRecord::Version { fixture.function };
@@ -476,8 +534,8 @@ static void remapIDsRewritesHeader()
 
     fixture.remap(function);
     AOT_TEST_CHECK(function.name == fixture.strings(fixture.string) && function.captures[0].type == fixture.types(fixture.firstType));
-    AOT_TEST_CHECK(function.thisType.type == TypeTable::anything && function.thisType.predicted == fixture.types(fixture.secondType));
-    AOT_TEST_CHECK(function.parameters[0].type == TypeTable::string && function.parameters[0].written == fixture.types(fixture.thirdType));
+    AOT_TEST_CHECK(function.thisType == createDeclaredType(fixture.types(fixture.secondType), PositionFlags::IsExpected));
+    AOT_TEST_CHECK(function.parameters[0].type == TypeTable::string && function.parameters[1].type == fixture.types(fixture.thirdType));
     AOT_TEST_CHECK(function.results[0].type == fixture.types(fixture.thirdType));
     AOT_TEST_CHECK(function.creator.as<CreatorRecord::Version>().provenVersion == fixture.finalFunction && function.derivation.source == fixture.finalFunction);
     AOT_TEST_CHECK(!function.inlineFrames[0].callee && function.inlineFrames[1].callee == fixture.finalFunction);
@@ -488,8 +546,8 @@ static void remapIDsWithIdentityRemapsChangesNothing()
     RemapFixture fixture;
     Function function;
     ValueID value = addValue(function, addBlock(function), Opcode::TypeTest);
-    function.at(value).type = fixture.firstType;
-    function.at(value).setTestedType(fixture.secondType);
+    function.edit(value).type = fixture.firstType;
+    function.edit(value).setTestedType(fixture.secondType);
     function.captures = { createDeclaredType(fixture.thirdType) };
     function.derivation.source = fixture.function;
 
@@ -505,12 +563,12 @@ static void remapIDsWithIdentityRemapsChangesNothing()
 #define FOR_EACH_AOT_IR_FUNCTION_TEST(v) \
     v(constructorFormOfEachKind) v(coroutinesAreNotConstructors) v(moduleBodiesByKind) \
     v(entryParameterIndexesOfEveryFlagCombination) v(implicitEntryParametersHaveNoDeclaredPosition) \
-    v(declaredEntryTypeOfThisFollowsLevel) v(forEachTypeVisitsEveryLevelOfThisType) \
+    v(declaredEntryTypeOfThisFollowsLevel) v(forEachTypeVisitsThisTypeOnce) \
     v(restParameterIsNotPositional) v(presenceFlagsCoverImplicitParameters) \
     v(bodyIsBlocksAndValues) v(copyOfFunctionSharesNothing) v(declarationLocationNeedsModule) \
     v(compactKeepsBlockReachedThroughHandlerOnly) v(compactSortsBlocksWithoutEarlierPredecessor) v(compactKeepsValidBlockOrder) \
-    v(remapIDsRewritesTypesOfValues) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
-    v(remapIDsWithIdentityRemapsChangesNothing)
+    v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
+    v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne)
 
 std::span<const NativeTest> irFunctionTests()
 {

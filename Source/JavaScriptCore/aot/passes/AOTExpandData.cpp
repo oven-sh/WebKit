@@ -24,6 +24,7 @@ namespace {
 struct DataTreeSummary {
     uint64_t numberOfNodes { 0 };
     bool hasMemberWithoutField { false };
+    bool fitsReadOnlyEncoding { true };
     bool hasNeverAllocatedLayout { false };
 };
 
@@ -53,6 +54,7 @@ static void addObjectTo(DataTreeSummary& summary, const Program& program, const 
     summary.hasNeverAllocatedLayout |= layout.flow.allocation == AllocationState::NeverAllocated;
     for (const DataMember& member : object.members)
         summary.hasMemberWithoutField |= !layout.findField(member.key);
+    summary.fitsReadOnlyEncoding &= fitsReadOnlyEncoding(program, object);
 }
 
 static DataTreeSummary summarize(const Program& program, const DataNode& root)
@@ -66,12 +68,16 @@ static DataTreeSummary summarize(const Program& program, const DataNode& root)
     return summary;
 }
 
-// The read-only encoding of an object has fields only, so a tree with any other member is expanded whatever its size.
-static bool shouldExpand(const DataTreeSummary& tree, uint64_t maxNodes)
+// A definition by name that runs once finds nothing in any cache, so there the members that are no fields are cheaper from the read-only encoding whatever the size of the tree.
+static bool shouldExpand(const DataTreeSummary& tree, uint64_t maxNodes, bool runsAtMostOnce)
 {
     if (tree.hasNeverAllocatedLayout)
         return false;
-    return tree.hasMemberWithoutField || tree.numberOfNodes <= maxNodes;
+    if (!tree.fitsReadOnlyEncoding)
+        return true;
+    if (tree.hasMemberWithoutField && runsAtMostOnce)
+        return false;
+    return tree.numberOfNodes <= maxNodes;
 }
 
 static std::optional<size_t> numberOfChildrenOf(const DataNode& node)
@@ -161,14 +167,18 @@ static bool isArrayIndex(const Program& program, PropertyKeyID key)
     return program.nameClassOf(key) == NameClass::Index;
 }
 
+// An allocation fills a slot without a test.
+static bool fitsSlotOf(const DataExpansion& expansion, const Field& field, ValueID value)
+{
+    TypingContext typing { expansion.program, expansion.insertion.function, expansion.insertion.types };
+    return typing.typeOf(value).isSubsetOf(typing.typeOf(field.declared), expansion.program);
+}
+
 static Value makeObject(const DataExpansion& expansion, const DataNode::Object& object, const OpenNode& closed, const FlowDataNodeStamp& stamp)
 {
     const Program& program = expansion.program;
     const Layout& layout = program.at(object.layout);
     const Vector<DataMember>& members = object.members;
-    auto convertToField = [&](size_t memberIndex, uint32_t field) {
-        return convertTo(expansion.insertion, closed.values[memberIndex], layout.fields[field].declared);
-    };
 
     // Array indexes are listed before the other own keys, which are listed in the order of their creation.
     Vector<uint32_t, 8> fields;
@@ -177,9 +187,9 @@ static Value makeObject(const DataExpansion& expansion, const DataNode::Object& 
     bool canAddToHead = true;
     for (size_t index = 0; index < members.size(); ++index) {
         std::optional<uint32_t> field = layout.findField(members[index].key);
-        if (field && canAddToHead) {
+        if (field && canAddToHead && fitsSlotOf(expansion, layout.fields[*field], closed.values[index])) {
             fields.append(*field);
-            values.append(convertToField(index, *field));
+            values.append(closed.values[index]);
             continue;
         }
         membersDefinedAfterHead.append(index);
@@ -192,25 +202,31 @@ static Value makeObject(const DataExpansion& expansion, const DataNode::Object& 
     allocation.setValuesOperands(values.span());
     allocation.setAllocationSite(stamp.site);
     allocation.setAllocationClass(stamp.allocationClass);
-    allocation.setKeepsShape(stamp.keepsShape);
     if (membersDefinedAfterHead.isEmpty())
         return allocation;
 
     ValueID head = expansion.insertion.insert(WTF::move(allocation));
-    for (size_t index : membersDefinedAfterHead) {
-        std::optional<uint32_t> field = layout.findField(members[index].key);
-        ValueID value = field ? convertToField(index, *field) : closed.values[index];
-        expansion.insertion.insert(makeDefinition(head, members[index].key, value));
-    }
+    for (size_t index : membersDefinedAfterHead)
+        expansion.insertion.insert(makeDefinition(head, members[index].key, closed.values[index]));
     return IRBuilder::make(Opcode::FinishObject, { head });
 }
 
-static Value makeAggregate(const DataExpansion& expansion, const OpenNode& closed)
+static Value makeAggregate(const DataExpansion& expansion, const OpenNode& closed, const FlowDataNodeStamp& stamp)
 {
-    FlowDataNodeStamp stamp = expansion.flow.dataNodeStamp(expansion.rootSite, closed.ordinal);
     if (const auto* array = closed.node->tryAs<DataNode::Array>())
         return makeArray(*array, closed, stamp);
     return makeObject(expansion, closed.node->as<DataNode::Object>(), closed, stamp);
+}
+
+// The field that takes an array may have been narrowed to what flow has proven of that very array.
+static ValueID insertWithProof(const DataExpansion& expansion, Value&& aggregate, const FlowDataNodeStamp& stamp)
+{
+    ValueID made = expansion.insertion.insert(WTF::move(aggregate));
+    if (!stamp.type)
+        return made;
+    Value cast = IRBuilder::make(Opcode::AssumeType, { made });
+    cast.setCastType(stamp.type);
+    return expansion.insertion.insert(WTF::move(cast));
 }
 
 static void addLeaf(const DataExpansion& expansion, OpenNode& parent, const DataNode& leaf)
@@ -237,12 +253,13 @@ static Value makeRootValue(const DataExpansion& expansion, const DataNode& root)
 
         while (!openNodes.isEmpty() && openNodes.last().isComplete()) {
             OpenNode closed = openNodes.takeLast();
-            Value aggregate = makeAggregate(expansion, closed);
+            FlowDataNodeStamp stamp = expansion.flow.dataNodeStamp(expansion.rootSite, closed.ordinal);
+            Value aggregate = makeAggregate(expansion, closed, stamp);
             if (openNodes.isEmpty()) {
                 rootValue = WTF::move(aggregate);
                 return;
             }
-            openNodes.last().values.append(expansion.insertion.insert(WTF::move(aggregate)));
+            openNodes.last().values.append(insertWithProof(expansion, WTF::move(aggregate), stamp));
         }
     });
     RELEASE_ASSERT(openNodes.isEmpty());
@@ -268,8 +285,8 @@ static void expandDataAt(FunctionPassContext& context, IRBuilder& builder, Progr
     Value replacement = makeRootValue({ context.program, context.inputs.flow, insertion, rootSite }, root);
     replacement.setOrigin(origin);
     replacement.type = resultTypeOf(context.program, function, replacement, context.types);
-    replacement.setPrediction(predictionOf(context.program, function, replacement, context.types));
-    function.at(id) = WTF::move(replacement);
+    replacement.setExpected(expectedTypeOf(context.program, function, replacement, context.types));
+    function.edit(id) = WTF::move(replacement);
 }
 
 PassOutcome expandData(FunctionPassContext& context)
@@ -286,13 +303,21 @@ PassOutcome expandData(FunctionPassContext& context)
             const Value& value = function.at(function.at(block).values[index]);
             if (value.opcode != Opcode::Data)
                 continue;
-            if (!shouldExpand(summarize(program, program.at(value.data()).root), maxNodes))
+            if (!shouldExpand(summarize(program, program.at(value.data()).root), maxNodes, context.runsAtMostOnce(block))) {
+                // Flow has proven the storage of the arrays of such a tree on the word that each becomes a literal, which allocates what its stamp says.
+                RELEASE_ASSERT(!isExpandedForItsSizeAlone(program.at(value.data()).root, maxNodes));
                 continue;
+            }
             expandDataAt(context, builder, { block, index });
             outcome = PassOutcome::Changed;
         }
     }
-    builder.applyInsertions();
+    if (outcome == PassOutcome::Changed) {
+        builder.applyInsertions();
+        // The builder knows the values that it has put in, not those that have taken the place of the data. With this the analyses were told of every edit.
+        context.analyses.didChangeValues();
+        context.keptAnalyses = allAnalyses;
+    }
     return outcome;
 }
 

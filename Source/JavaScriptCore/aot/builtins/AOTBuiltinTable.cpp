@@ -9,24 +9,74 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinNameSlots.h"
+#include "AOTBuiltinTableArrays.h"
+#include "AOTRemovableFeature.h"
 #include "CommonIdentifiers.h"
 #include "IdentifierInlines.h"
 #include "VM.h"
 #include <algorithm>
+#include <mutex>
 #include <utility>
 #include <wtf/ASCIICType.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringHash.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/SymbolImpl.h>
 #include <wtf/text/SymbolRegistry.h>
 
 namespace JSC { namespace AOT {
 
+// builtinTableData lists every array of the table and stays in every executable. For an array that is recorded here the link does not count that as a use.
+template<auto array>
+static ALWAYS_INLINE void letArrayLeaveWithCompiler()
+{
+    recordRemovableTableEntry<builtinTableData, RemovableFeature::ImageCompiler, RemovedFeatureStub::Abort, array>();
+}
+
+// Whoever reads an element of such an array names the array in its own code, so the array stays in an executable for as long as one of its readers does.
+template<typename T, size_t count>
+static ALWAYS_INLINE std::span<const T> keptByThisReader(std::span<const T> listed, const T (&array)[count])
+{
+#if COMPILER(CLANG)
+    __asm__ volatile("" : : "r"(static_cast<const T*>(array)));
+#else
+    UNUSED_PARAM(array);
+#endif
+    return listed;
+}
+
+template<size_t numberOfTexts, size_t numberOfCharacters>
+static ALWAYS_INLINE BuiltinTexts keptByThisReader(BuiltinTexts listed, const BuiltinTextStorage<numberOfTexts, numberOfCharacters>& storage)
+{
+#if COMPILER(CLANG)
+    __asm__ volatile("" : : "r"(&storage));
+#else
+    UNUSED_PARAM(storage);
+#endif
+    return listed;
+}
+
 const BuiltinTable& BuiltinTable::singleton()
 {
+    letArrayLeaveWithCompiler<&builtinTableOverloads>();
+    letArrayLeaveWithCompiler<&builtinTableDispatches>();
+    letArrayLeaveWithCompiler<&builtinTableDispatchNodes>();
+    letArrayLeaveWithCompiler<&builtinTableTypes>();
+    letArrayLeaveWithCompiler<&builtinTableFeatureUses>();
+    letArrayLeaveWithCompiler<&builtinTableModuleLoads>();
+    letArrayLeaveWithCompiler<&builtinTableCalledFunctions>();
+    letArrayLeaveWithCompiler<&builtinTableStartupCalledFunctions>();
+    letArrayLeaveWithCompiler<&builtinTableHostObjects>();
+    letArrayLeaveWithCompiler<&builtinTableNamedMemberCalls>();
+    letArrayLeaveWithCompiler<&builtinTableHostMethodCalls>();
+    letArrayLeaveWithCompiler<&builtinTableForms>();
+    letArrayLeaveWithCompiler<&builtinTableClassTokens>();
+    letArrayLeaveWithCompiler<&builtinTableClassesByMemberName>();
     static constinit const BuiltinTable table(builtinTableData);
     return table;
 }
@@ -71,9 +121,47 @@ const Builtin& BuiltinTable::at(BuiltinID id) const
     return checkedAt(m_data.builtins, id.index());
 }
 
+static std::atomic<const BuiltinOverload*> unpackedOverloads;
+
+static NEVER_INLINE const BuiltinOverload* unpackOverloads(std::span<const BuiltinPackedOverload> packedOverloads)
+{
+    static Lock lock;
+    Locker locker { lock };
+    if (const BuiltinOverload* overloads = unpackedOverloads.load(std::memory_order_relaxed))
+        return overloads;
+    auto* overloads = static_cast<BuiltinOverload*>(fastMalloc(packedOverloads.size() * sizeof(BuiltinOverload)));
+    for (size_t index = 0; index < packedOverloads.size(); ++index) {
+        const BuiltinPackedOverload& packed = packedOverloads[index];
+        new (NotNull, &overloads[index]) BuiltinOverload {
+            .builtin = packed.builtin,
+            .mode = packed.mode,
+            .flags = packed.flags,
+            .receiver = packed.receiver,
+            .parameters = packed.parameters,
+            .result = builtinTableResultsOfOverloads[packed.result],
+            .effects = builtinTableEffectsOfOverloads[packed.effects],
+            .flow = builtinTableFlowsOfOverloads[packed.flow],
+            .code = builtinTableCodeOfOverloads[packed.code],
+            .textHash = packed.textHash,
+        };
+    }
+    unpackedOverloads.store(overloads, std::memory_order_release);
+    return overloads;
+}
+
+// There is one table, so there is one list.
+static ALWAYS_INLINE std::span<const BuiltinOverload> unpacked(std::span<const BuiltinPackedOverload> packedOverloads)
+{
+    ASSERT(packedOverloads.data() == builtinTableOverloads);
+    const BuiltinOverload* overloads = unpackedOverloads.load(std::memory_order_acquire);
+    if (!overloads) [[unlikely]]
+        overloads = unpackOverloads(packedOverloads);
+    return unsafeMakeSpan(overloads, packedOverloads.size());
+}
+
 const BuiltinOverload& BuiltinTable::at(BuiltinOverloadID id) const
 {
-    return checkedAt(m_data.overloads, id.index());
+    return checkedAt(unpacked(keptByThisReader(m_data.overloads, builtinTableOverloads)), id.index());
 }
 
 const BuiltinClass& BuiltinTable::at(BuiltinClassID id) const
@@ -93,17 +181,22 @@ const BuiltinLayout& BuiltinTable::at(BuiltinLayoutID id) const
 
 const BuiltinType& BuiltinTable::at(BuiltinTypeID id) const
 {
-    return checkedAt(m_data.types, id.index());
+    return checkedAt(keptByThisReader(m_data.types, builtinTableTypes), id.index());
 }
 
 const BuiltinDispatchNode& BuiltinTable::at(BuiltinDispatchNodeID id) const
 {
-    return checkedAt(m_data.dispatchNodes, id.index());
+    return checkedAt(keptByThisReader(m_data.dispatchNodes, builtinTableDispatchNodes), id.index());
 }
 
 const RuntimeModuleData& BuiltinTable::at(RuntimeModuleID id) const
 {
     return checkedAt(m_data.runtime.modules, id.index());
+}
+
+const BuiltinRealmStructure& BuiltinTable::at(RealmStructureID id) const
+{
+    return checkedAt(m_data.runtime.realmStructures, id.index());
 }
 
 const RuntimeFunctionData& BuiltinTable::at(RuntimeFunctionID id) const
@@ -118,7 +211,7 @@ std::span<const BuiltinOverload> BuiltinTable::overloadsOf(BuiltinID id) const
     const Builtin& builtin = at(id);
     if (!builtin.overloadCount)
         return { };
-    return m_data.overloads.subspan(builtin.firstOverload.index(), builtin.overloadCount);
+    return unpacked(keptByThisReader(m_data.overloads, builtinTableOverloads)).subspan(builtin.firstOverload.index(), builtin.overloadCount);
 }
 
 BuiltinTableIDRange<BuiltinOverloadID> BuiltinTable::overloadIDsOf(BuiltinID id) const
@@ -127,14 +220,30 @@ BuiltinTableIDRange<BuiltinOverloadID> BuiltinTable::overloadIDsOf(BuiltinID id)
     return { builtin.firstOverload, builtin.overloadCount };
 }
 
+std::span<const BuiltinOverloadSummary> BuiltinTable::overloadSummariesOf(BuiltinID id) const
+{
+    const Builtin& builtin = at(id);
+    if (!builtin.overloadCount)
+        return { };
+    std::span<const BuiltinOverloadSummary> summaries = m_data.attachments.overloadSummaries;
+    RELEASE_ASSERT(summaries.size() == m_data.overloads.size());
+    return summaries.subspan(builtin.firstOverload.index(), builtin.overloadCount);
+}
+
+const BuiltinOverloadSummary& BuiltinTable::summaryOf(BuiltinOverloadID id) const
+{
+    return checkedAt(m_data.attachments.overloadSummaries, id.index());
+}
+
 std::optional<BuiltinDispatchTarget> BuiltinTable::dispatchOf(BuiltinID id, BuiltinCallMode mode) const
 {
     auto keyOf = [](const BuiltinDispatch& dispatch) {
         return std::pair { dispatch.builtin, dispatch.mode };
     };
     std::pair key { id, mode };
-    auto found = std::ranges::lower_bound(m_data.dispatches, key, { }, keyOf);
-    if (found == m_data.dispatches.end() || keyOf(*found) != key)
+    std::span<const BuiltinDispatch> dispatches = keptByThisReader(m_data.dispatches, builtinTableDispatches);
+    auto found = std::ranges::lower_bound(dispatches, key, { }, keyOf);
+    if (found == dispatches.end() || keyOf(*found) != key)
         return std::nullopt;
     return found->root;
 }
@@ -167,6 +276,8 @@ BuiltinID BuiltinTable::findOwnMember(BuiltinID holder, BuiltinName name) const
     std::optional<size_t> position = findPosition(members, &Builtin::name, name);
     // A module's namespace binds `default` to the object. The object has no such property.
     if (!position || members[*position].flags.contains(BuiltinFlag::IsDefaultExport))
+        return { };
+    if (!members[*position].platforms.contains(targetOfThisBuild().platform))
         return { };
     return membersOf(holder).at(static_cast<uint32_t>(*position));
 }
@@ -260,6 +371,12 @@ bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinN
     return false;
 }
 
+BuiltinTypeID BuiltinTable::typeOfNameDefinedOnNewInstances(BuiltinClassID declaringClass, BuiltinName name) const
+{
+    const BuiltinResultProperty* found = findRecord(at(declaringClass).typesOfNamesDefinedOnNewInstances, &BuiltinResultProperty::name, name);
+    return found ? found->type : BuiltinTypeID();
+}
+
 bool BuiltinTable::definesCharactersOnNewInstances(BuiltinClassID builtinClass) const
 {
     for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
@@ -288,7 +405,7 @@ bool BuiltinTable::listsOwnPropertiesOfNewInstances(BuiltinClassID builtinClass)
 
 std::span<const BuiltinClassID> BuiltinTable::classesWithInstanceMember(BuiltinName name) const
 {
-    const BuiltinNameClasses* found = findRecord(m_data.names.classesByMemberName, &BuiltinNameClasses::name, name);
+    const BuiltinNameClasses* found = findRecord(keptByThisReader(m_data.names.classesByMemberName, builtinTableClassesByMemberName), &BuiltinNameClasses::name, name);
     if (!found)
         return { };
     return found->classes;
@@ -399,28 +516,85 @@ std::span<const BuiltinName> BuiltinTable::openNamesOf(BuiltinID holder) const
     return found->openNames;
 }
 
+bool BuiltinTable::isHostFunctionOfEngine(BuiltinID id) const
+{
+    const Builtin& entry = at(id);
+    if (entry.origin != BuiltinOrigin::Engine || (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method))
+        return false;
+    // An overload that is code in line alone enters nothing. What the library implements says so in some overload.
+    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.mode == BuiltinCallMode::Call && (overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::None);
+    });
+}
+
+bool BuiltinTable::isFunctionOfEngine(BuiltinID id) const
+{
+    const Builtin& entry = at(id);
+    if (entry.origin != BuiltinOrigin::Engine || (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method))
+        return false;
+    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.mode == BuiltinCallMode::Call && overload.callee != BuiltinCallee::InternalFunction && overload.callee != BuiltinCallee::CustomGetter;
+    });
+}
+
+bool BuiltinTable::isClosedOnHostFunctions(BuiltinName name) const
+{
+    return name == BuiltinNames::call || name == BuiltinNames::apply || name == BuiltinNames::bind || name == nameOf(WellKnownSymbol::HasInstance);
+}
+
 bool BuiltinTable::isClosedKey(BuiltinID holder, BuiltinName name) const
 {
     if (std::ranges::binary_search(closedKeysOf(holder), name))
+        return true;
+    if (isClosedOnHostFunctions(name) && isFunctionOfEngine(holder))
         return true;
     if (!at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) || isSymbolName(name))
         return false;
     return !findOwnMember(holder, name) && !std::ranges::binary_search(openNamesOf(holder), name);
 }
 
+const BuiltinNamesReadByNativeCode* BuiltinTable::namesReadByNativeCode(BuiltinID holder) const
+{
+    return findRecord(m_data.runtime.namesReadByNativeCode, &BuiltinNamesReadByNativeCode::holder, holder);
+}
+
 std::span<const BuiltinFeatureUse> BuiltinTable::featureUsesOf(BuiltinID id) const
 {
-    return findRecords(m_data.attachments.featureUses, id);
+    return findRecords(keptByThisReader(m_data.attachments.featureUses, builtinTableFeatureUses), id);
 }
 
 std::span<const BuiltinModuleLoad> BuiltinTable::moduleLoadsOf(BuiltinID id) const
 {
-    return findRecords(m_data.attachments.moduleLoads, id);
+    return findRecords(keptByThisReader(m_data.attachments.moduleLoads, builtinTableModuleLoads), id);
 }
 
 std::span<const BuiltinCalledFunction> BuiltinTable::calledFunctionsOf(BuiltinID id) const
 {
-    return findRecords(m_data.attachments.calledFunctions, id);
+    return findRecords(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), id);
+}
+
+std::span<const BuiltinCalledFunction> BuiltinTable::startupCalledFunctions() const
+{
+    return keptByThisReader(m_data.attachments.startupCalledFunctions, builtinTableStartupCalledFunctions);
+}
+
+std::span<const BuiltinHostObject> BuiltinTable::hostObjects() const
+{
+    return keptByThisReader(m_data.attachments.hostObjects, builtinTableHostObjects);
+}
+
+const BuiltinNamedMemberCall* BuiltinTable::callOfMemberNamed(BuiltinName name) const
+{
+    std::span<const BuiltinNamedMemberCall> calls = keptByThisReader(m_data.attachments.namedMemberCalls, builtinTableNamedMemberCalls);
+    auto found = std::ranges::find(calls, name, &BuiltinNamedMemberCall::name);
+    return found == calls.end() ? nullptr : &*found;
+}
+
+std::span<const BuiltinHostMethodCall> BuiltinTable::hostMethodCalls() const
+{
+    return keptByThisReader(m_data.attachments.hostMethodCalls, builtinTableHostMethodCalls);
 }
 
 const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
@@ -436,7 +610,7 @@ bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
 
 const BuiltinForms* BuiltinTable::formsOf(BuiltinID id) const
 {
-    return findRecord(m_data.attachments.forms, &BuiltinForms::builtin, id);
+    return findRecord(keptByThisReader(m_data.attachments.forms, builtinTableForms), &BuiltinForms::builtin, id);
 }
 
 std::optional<BuiltinBoxedStub> BuiltinTable::boxedCallStubOf(BuiltinID id) const
@@ -457,13 +631,16 @@ std::span<const BuiltinName> BuiltinTable::keysReadBy(Protocol protocol) const
 
 BuiltinName BuiltinTable::nameOf(std::span<const uint8_t> utf8) const
 {
-    std::span<const ASCIILiteral> textNames = m_data.names.textNames;
-    auto found = std::lower_bound(textNames.begin(), textNames.end(), utf8, [](ASCIILiteral name, std::span<const uint8_t> bytes) {
-        return compareSpans(name.span(), bytes) < 0;
+    BuiltinTexts textNames = m_data.names.textNames;
+    auto positions = std::views::iota(size_t { 0 }, textNames.size());
+    auto found = std::ranges::lower_bound(positions, utf8, [](std::span<const uint8_t> name, std::span<const uint8_t> bytes) {
+        return compareSpans(name, bytes) < 0;
+    }, [&](size_t position) {
+        return byteCast<uint8_t>(textNames[position]);
     });
-    if (found == textNames.end() || !equalSpans(found->span(), utf8))
+    if (found == positions.end() || !equalSpans(byteCast<uint8_t>(textNames[*found]), utf8))
         return { };
-    return BuiltinName(static_cast<uint32_t>(found - textNames.begin()));
+    return BuiltinName(static_cast<uint32_t>(*found));
 }
 
 BuiltinName BuiltinTable::textNameOf(UniquedStringImpl* key) const
@@ -477,7 +654,7 @@ BuiltinName BuiltinTable::textNameOf(UniquedStringImpl* key) const
         if ((slot & ~positionBitsOfNameSlot) != hashBitsOfNameSlot(hash))
             continue;
         uint32_t position = (slot & positionBitsOfNameSlot) - 1;
-        if (equal(key, m_data.names.textNames[position]))
+        if (equal(key, byteCast<Latin1Character>(m_data.names.textNames[position])))
             return BuiltinName(position);
     }
     return { };
@@ -520,7 +697,7 @@ bool BuiltinTable::isRegisteredSymbolName(BuiltinName name) const
     return contains(name) && name.index() >= m_data.names.textNames.size() + m_data.names.symbolNames.size();
 }
 
-static ASCIILiteral literalOf(const BuiltinTableNames& names, BuiltinName name)
+static std::span<const char> charactersOf(const BuiltinTableNames& names, BuiltinName name)
 {
     size_t index = name.index();
     if (index < names.textNames.size())
@@ -528,12 +705,17 @@ static ASCIILiteral literalOf(const BuiltinTableNames& names, BuiltinName name)
     index -= names.textNames.size();
     if (index < names.symbolNames.size())
         return names.symbolNames[index];
-    return checkedAt(names.registeredSymbolNames, index - names.symbolNames.size());
+    return names.registeredSymbolNames[index - names.symbolNames.size()];
+}
+
+static ASCIILiteral literalOf(const BuiltinTableNames& names, BuiltinName name)
+{
+    return ASCIILiteral::fromLiteralUnsafe(charactersOf(names, name).data());
 }
 
 std::span<const uint8_t> BuiltinTable::textOf(BuiltinName name) const
 {
-    return byteCast<uint8_t>(literalOf(m_data.names, name).span());
+    return byteCast<uint8_t>(charactersOf(m_data.names, name));
 }
 
 String BuiltinTable::textOf(BuiltinID id) const
@@ -544,20 +726,24 @@ String BuiltinTable::textOf(BuiltinID id) const
         path.append(at(holder).name);
 
     StringBuilder text;
-    for (size_t i = path.size(); i--;) {
-        ASCIILiteral component = literalOf(m_data.names, path[i]);
-        if (isRegisteredSymbolName(path[i])) {
-            text.append("[Symbol.for("_s);
-            text.appendQuotedJSONString(String(component));
-            text.append(")]"_s);
-        } else if (isSymbolName(path[i]))
-            text.append("[Symbol."_s, component, ']');
-        else if (text.isEmpty())
-            text.append(component);
-        else
-            text.append('.', component);
-    }
+    for (size_t i = path.size(); i--;)
+        appendComponent(text, path[i]);
     return text.toString();
+}
+
+void BuiltinTable::appendComponent(StringBuilder& text, BuiltinName name) const
+{
+    ASCIILiteral component = literalOf(m_data.names, name);
+    if (isRegisteredSymbolName(name)) {
+        text.append("[Symbol.for("_s);
+        text.appendQuotedJSONString(String(component));
+        text.append(")]"_s);
+    } else if (isSymbolName(name))
+        text.append("[Symbol."_s, component, ']');
+    else if (text.isEmpty())
+        text.append(component);
+    else
+        text.append('.', component);
 }
 
 static const Identifier& identifierOfSymbol(VM& vm, WellKnownSymbol symbol)
@@ -608,9 +794,9 @@ BuiltinName BuiltinTable::nameOf(VM& vm, UniquedStringImpl* key) const
     }
     if (!static_cast<SymbolImpl*>(key)->isRegistered())
         return { };
-    std::span<const ASCIILiteral> registeredNames = m_data.names.registeredSymbolNames;
+    BuiltinTexts registeredNames = m_data.names.registeredSymbolNames;
     for (size_t index = 0; index < registeredNames.size(); ++index) {
-        if (equal(key, registeredNames[index]))
+        if (equal(key, byteCast<Latin1Character>(registeredNames[index])))
             return BuiltinName(static_cast<uint32_t>(m_data.names.textNames.size() + m_data.names.symbolNames.size() + index));
     }
     return { };
@@ -636,29 +822,137 @@ std::optional<double> BuiltinTable::numberOf(BuiltinID id) const
     return found->value;
 }
 
-StringView BuiltinTable::tokenOf(BuiltinID id) const
+BuiltinName BuiltinTable::nameOfString(BuiltinID id, BuiltinTarget target) const
 {
-    return checkedAt(m_data.tokens.builtins, id.index());
+    for (const BuiltinStringConstant& constant : findRecords(m_data.attachments.stringConstants, id)) {
+        if (constant.platforms.contains(target.platform) && constant.architectures.contains(target.architecture))
+            return constant.text;
+    }
+    return { };
+}
+
+std::optional<StringView> BuiltinTable::stringOf(BuiltinID id) const
+{
+    BuiltinName name = nameOfString(id);
+    if (!name)
+        return std::nullopt;
+    return StringView(byteCast<Latin1Character>(charactersOf(m_data.names, name)));
+}
+
+static StringView viewAt(BuiltinTexts texts, size_t index)
+{
+    return StringView(byteCast<Latin1Character>(texts[index]));
+}
+
+static bool separatesPartsOfToken(char16_t character)
+{
+    switch (character) {
+    case '.':
+    case ':':
+    case '/':
+    case '-':
+    case '[':
+    case ']':
+    case '@':
+    case '%':
+    case '(':
+    case ')':
+    case '"':
+        return true;
+    default:
+        return isASCIIWhitespace(character);
+    }
+}
+
+static ASCIILiteral wordForPunctuation(char16_t character)
+{
+    switch (character) {
+    case '$':
+        return "Dollar"_s;
+    case '&':
+        return "Ampersand"_s;
+    case '\'':
+        return "Apostrophe"_s;
+    case '*':
+        return "Asterisk"_s;
+    case '+':
+        return "Plus"_s;
+    case '`':
+        return "Backtick"_s;
+    default:
+        return { };
+    }
+}
+
+enum class TokenParts : bool { Capitalized, BehindUnderscores };
+
+static void appendTokenParts(StringBuilder& token, StringView text, TokenParts form)
+{
+    bool startsPart = true;
+    for (char16_t character : text.codeUnits()) {
+        if (separatesPartsOfToken(character)) {
+            startsPart = true;
+            continue;
+        }
+        if (startsPart && form == TokenParts::BehindUnderscores)
+            token.append('_');
+        if (ASCIILiteral word = wordForPunctuation(character); !word.isNull())
+            token.append(word);
+        else
+            token.append(startsPart && form == TokenParts::Capitalized ? toASCIIUpper(character) : character);
+        startsPart = false;
+    }
+}
+
+static void appendPlainToken(StringBuilder& token, StringView text)
+{
+    StringBuilder parts;
+    appendTokenParts(parts, text, TokenParts::Capitalized);
+    StringView written = parts;
+    if (written == "Self"_s || written == "_"_s || written == "ALL"_s || written == "COUNT"_s || (!written.isEmpty() && isASCIIDigit(written[0])))
+        token.append('_');
+    token.append(written);
+}
+
+// assignTokens() in src/codegen/builtins/number.ts of Bun's tree, which names the constants of AOTBuiltinIDs.h.
+String BuiltinTable::tokenOf(BuiltinID id) const
+{
+    StringBuilder token;
+    if (!std::ranges::binary_search(m_data.tokens.builtinsWithQualifiedTokens, id)) {
+        appendPlainToken(token, textOf(id));
+        return token.toString();
+    }
+    BuiltinID holder = at(id).holder;
+    if (!holder) {
+        appendPlainToken(token, textOf(id));
+        token.append('_');
+        return token.toString();
+    }
+    StringBuilder member;
+    appendComponent(member, at(id).name);
+    appendPlainToken(token, textOf(holder));
+    appendTokenParts(token, member, TokenParts::BehindUnderscores);
+    return token.toString();
 }
 
 StringView BuiltinTable::tokenOf(BuiltinClassID id) const
 {
-    return checkedAt(m_data.tokens.classes, id.index());
+    return viewAt(keptByThisReader(m_data.tokens.classes, builtinTableClassTokens), id.index());
 }
 
 StringView BuiltinTable::tokenOf(BuiltinSlotID id) const
 {
-    return checkedAt(m_data.tokens.slots, id.index());
+    return viewAt(m_data.tokens.slots, id.index());
 }
 
 StringView BuiltinTable::tokenOf(BuiltinLayoutID id) const
 {
-    return checkedAt(m_data.tokens.layouts, id.index());
+    return viewAt(m_data.tokens.layouts, id.index());
 }
 
 StringView BuiltinTable::tokenOf(RuntimeModuleID id) const
 {
-    return checkedAt(m_data.tokens.modules, id.index());
+    return viewAt(m_data.tokens.modules, id.index());
 }
 
 String BuiltinTable::tokenOf(BuiltinOverloadID id) const
@@ -668,10 +962,10 @@ String BuiltinTable::tokenOf(BuiltinOverloadID id) const
 }
 
 template<typename ID>
-static ID findToken(std::span<const ASCIILiteral> tokens, StringView token)
+static ID findToken(BuiltinTexts tokens, StringView token)
 {
     for (unsigned i = 0; i < tokens.size(); ++i) {
-        if (token == tokens[i])
+        if (token == viewAt(tokens, i))
             return ID(i);
     }
     return { };
@@ -679,12 +973,26 @@ static ID findToken(std::span<const ASCIILiteral> tokens, StringView token)
 
 BuiltinID BuiltinTable::builtinFromToken(StringView token) const
 {
-    return findToken<BuiltinID>(m_data.tokens.builtins, token);
+    if (this != &singleton()) {
+        for (unsigned i = 0; i < m_data.builtins.size(); ++i) {
+            if (token == tokenOf(BuiltinID(i)))
+                return BuiltinID(i);
+        }
+        return { };
+    }
+    static LazyNeverDestroyed<HashMap<String, BuiltinID>> builtinsByToken;
+    static std::once_flag once;
+    std::call_once(once, [&] {
+        builtinsByToken.construct();
+        for (unsigned i = 0; i < m_data.builtins.size(); ++i)
+            builtinsByToken->add(tokenOf(BuiltinID(i)), BuiltinID(i));
+    });
+    return builtinsByToken->get(token.toString());
 }
 
 BuiltinClassID BuiltinTable::classFromToken(StringView token) const
 {
-    return findToken<BuiltinClassID>(m_data.tokens.classes, token);
+    return findToken<BuiltinClassID>(keptByThisReader(m_data.tokens.classes, builtinTableClassTokens), token);
 }
 
 BuiltinSlotID BuiltinTable::slotFromToken(StringView token) const

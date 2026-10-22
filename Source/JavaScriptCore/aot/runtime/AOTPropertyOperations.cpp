@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTClassPrototype.h"
+#include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTErrorMessages.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -17,10 +19,10 @@
 #include "AOTOperationScope.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTPropertyCachesNamedAccess.h"
 #include "AOTRuntimeRecords.h"
 #include "AOTSchemaEnums.h"
 #include "AOTState.h"
-#include "AOTTypeErrorMessages.h"
 #include "ExceptionHelpers.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
@@ -28,33 +30,42 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr ASCIILiteral homeObjectPrototypeIsNotObjectMessage = "The prototype of the home object is not an object"_s;
+JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& identifier)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ClassTable& classes = instance->state->objects->classes;
+    if (auto found = base.isObject() ? classes.findThroughLazyPrototypes(vm, asObject(base), identifier.impl(), false) : std::nullopt) {
+        if (found->member) {
+            JSValue member = found->member->holder->getDirect(found->member->offset);
+            if (!found->member->isAccessor)
+                return member;
+            RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(member.asCell())->callGetter(globalObject, base));
+        }
+        if (!found->firstObjectAbove)
+            return jsUndefined();
+        PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
+        bool has = found->firstObjectAbove->getPropertySlot(globalObject, identifier, slot);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!has)
+            return jsUndefined();
+        RELEASE_AND_RETURN(scope, slot.getValue(globalObject, identifier));
+    }
+    RELEASE_AND_RETURN(scope, base.get(globalObject, identifier));
+}
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instance, EncodedJSValue base, uint32_t name))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetById);
     JSValue value = JSValue::decode(base);
-    const Identifier& identifier = identifierAt(instance, name);
     if (value.isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, nullishMessage(value, identifier.string(), false));
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, value, identifierAt(instance, name)));
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    ClassTable& classes = instance->state->objects->classes;
-    if (auto found = value.isObject() ? classes.findThroughLazyPrototypes(vm, asObject(value), identifier.impl(), false) : std::nullopt) {
-        if (found->member) {
-            JSValue member = found->member->holder->getDirect(found->member->offset);
-            if (!found->member->isAccessor)
-                OPERATION_RETURN(scope, JSValue::encode(member));
-            OPERATION_RETURN(scope, JSValue::encode(uncheckedDowncast<GetterSetter>(member.asCell())->callGetter(globalObject, value)));
-        }
-        if (!found->firstObjectAbove)
-            OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
-        PropertySlot slot(value, PropertySlot::InternalMethodType::Get);
-        bool has = found->firstObjectAbove->getPropertySlot(globalObject, identifier, slot);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        OPERATION_RETURN(scope, JSValue::encode(has ? slot.getValue(globalObject, identifier) : jsUndefined()));
-    }
-    OPERATION_RETURN(scope, JSValue::encode(value.get(globalObject, identifier)));
+    if (Options::aotCountsPath()) [[unlikely]]
+        instance->state->propertyCaches->countMiss("read without caches"_s, false, value, identifierAt(instance, name).impl());
+    OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, value, identifierAt(instance, name))));
 }
 
 static void putToCompiledObject(Instance* instance, Object* object, const Identifier& identifier, JSValue value, PutPropertySlot& slot)
@@ -65,18 +76,62 @@ static void putToCompiledObject(Instance* instance, Object* object, const Identi
     Object::putWithKnownField(object, instance->globalObject, identifier, value, slot, field);
 }
 
+// No slot is filed for a store through `globalThis`, which is a proxy. A name that the global object has as a writable data property is in no symbol table and meets no setter,
+// so the store replaces the value as JSObject::put would at the end of a long way.
+static bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedStringImpl* uid, JSValue value)
+{
+    JSGlobalObject* target = instance->globalObject;
+    if (base != JSValue(target->globalThis()) || base.asCell()->type() != GlobalProxyType)
+        return false;
+    Structure* structure = target->structure();
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    // Compiled code never holds the global object itself, so no stub looks under its Structure. What is filed there spares the next store the search among the locked names.
+    const Slot* filed = caches.findByKey(structure, uid, SlotAccess::Store);
+    if (filed && (!filed->has(Slot::isOwn) || (filed->kind != Slot::Kind::Value && filed->kind != Slot::Kind::FarValue)))
+        return false;
+    PropertyOffset offset = filed ? filed->offsetInStorage() : invalidOffset;
+    if (!filed) {
+        unsigned attributes = 0;
+        offset = structure->get(vm, uid, attributes);
+        if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid))
+            return false;
+        if (structure->propertyAccessesAreCacheable()) {
+            PropertyAnswer answer;
+            answer.kind = PropertyAnswerKind::Value;
+            answer.access = SlotAccess::Store;
+            answer.isOwn = true;
+            answer.offset = offset;
+            structure->didCachePropertyReplacement(vm, offset);
+            caches.cache({ structure, { uid, std::nullopt }, SlotAccess::Store }, answer);
+        }
+    }
+    structure->didReplaceProperty(offset);
+    target->putDirectOffset(vm, offset, value);
+    return true;
+}
+
 template<PutMode mode>
 static void putById(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue base, uint32_t name, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     const Identifier& identifier = identifierAt(instance, name);
     if (base.isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, nullishMessage(base, identifier.string(), true));
+        throwException(globalObject, scope, createNotAnObjectError(globalObject, base, identifier));
         return;
     }
+    if (Options::aotCountsPath()) [[unlikely]]
+        instance->state->propertyCaches->countMiss("store without caches"_s, false, base, identifier.impl());
+    if (base.isCell() && base.asCell()->type() == SlimClosureType)
+        RELEASE_AND_RETURN(scope, putAndCache({ instance, globalObject, vm, *instance->state->propertyCaches, identifier, name, nullptr }, base.asCell(), value, mode));
     PutPropertySlot slot(base, mode == PutMode::Strict);
-    if (Object* object = compiledObjectOrNull(base))
-        RELEASE_AND_RETURN(scope, putToCompiledObject(instance, object, identifier, value, slot));
+    if (Object* object = compiledObjectOrNull(base)) {
+        putToCompiledObject(instance, object, identifier, value, slot);
+        RETURN_IF_EXCEPTION(scope, void());
+        object->state().objects->classes.didStoreByName(vm, object->layout(), identifier.impl());
+        return;
+    }
+    if (tryReplaceGlobalProperty(instance, vm, base, identifier.impl(), value))
+        return;
     scope.release();
     base.put(globalObject, identifier, value, slot);
 }
@@ -163,20 +218,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSuperBase, EncodedJSValue, (Ins
     switch (static_cast<Typed::HomeObjectKind>(homeKind)) {
     case Typed::HomeObjectKind::Object:
         break;
-    case Typed::HomeObjectKind::ClassPrototype:
-        homeObject = objectArgument(JSValue::encode(cellArgument<Closure>(homeObject, entry)->prototypeProperty(vm)), entry);
+    case Typed::HomeObjectKind::ClassPrototype: {
+        Closure* classObject = cellArgument<Closure>(homeObject, entry);
+        homeObject = objectArgument(JSValue::encode(classObject->prototypeProperty(vm)), entry);
+        instance->state->objects->classes.rememberPlaceOfPrototypeProperty(vm, classObject, homeObject);
         break;
+    }
     }
     if (homeObject->structure()->typeInfo().overridesGetPrototype()) [[unlikely]]
         crashOnWrongOperand(entry);
     OPERATION_RETURN(scope, JSValue::encode(homeObject->getPrototypeDirect()));
 }
 
-static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue base)
+static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue base, const Identifier* member = nullptr)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!base.isObject()) {
-        throwTypeError(globalObject, scope, homeObjectPrototypeIsNotObjectMessage);
+        throwException(globalObject, scope, member ? createSuperBaseNotAnObjectError(globalObject, base, *member) : createNotAnObjectError(globalObject, base));
         return nullptr;
     }
     return asObject(base);
@@ -185,9 +243,14 @@ static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue ba
 JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyById, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetSuperPropertyById);
-    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base));
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     const Identifier& identifier = identifierAt(instance, name);
+    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    // Whoever calls although a slot is filed has not probed the caches: compact code, and a block that was taken for rare may run often. The lookup that runs no code answers for a data property and for none.
+    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
+        if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
+            OPERATION_RETURN(scope, JSValue::encode(found));
+    }
     ClassPrototype::ensureMembers(parent);
     Object::ensureStructureForExtraPropertiesIfNeeded(vm, parent);
     Structure* structureBefore = parent->structure();

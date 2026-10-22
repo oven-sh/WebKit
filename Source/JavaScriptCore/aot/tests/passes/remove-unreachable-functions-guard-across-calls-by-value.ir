@@ -82,9 +82,7 @@ function f7 name="callByIndex" parameters=[{type=anything}] results=[{type=anyth
 # CHECK: LoopHint
 # CHECK-NOT: = HasArrayStorage
 # CHECK-NOT: = IsPristine
-# CHECK-NOT: = IsShapeEpochCurrent
 # CHECK: = GetArrayElement
 # CHECK-NOT: = HasArrayStorage
 # CHECK-NOT: = IsPristine
-# CHECK-NOT: = IsShapeEpochCurrent
 # CHECK: = Call{{*}}callees=[

@@ -9,8 +9,15 @@
 
 namespace JSC { namespace AOT {
 
-template<typename E, size_t count>
-static ASCIILiteral nameAt(const std::array<ASCIILiteral, count>& names, E value)
+// The names one behind the other, each with a zero behind it, and where each starts: no address, so nothing that a loader has to put right.
+template<size_t count, size_t numberOfCharacters>
+struct EnumeratorNames {
+    uint16_t starts[count];
+    char characters[numberOfCharacters];
+};
+
+template<typename E, size_t count, size_t numberOfCharacters>
+static ASCIILiteral nameAt(const EnumeratorNames<count, numberOfCharacters>& names, E value)
 {
     auto number = static_cast<uint32_t>(value);
     if constexpr (isFlagWord<E>) {
@@ -18,636 +25,1048 @@ static ASCIILiteral nameAt(const std::array<ASCIILiteral, count>& names, E value
         number = WTF::ctz(number);
     }
     RELEASE_ASSERT(number < count);
-    return names[number];
+    return ASCIILiteral::fromLiteralUnsafe(&names.characters[names.starts[number]]);
 }
 
 namespace Wire {
 
+ASCIILiteral nameOf(IllTypedCause value)
+{
+    static constexpr EnumeratorNames<24, 388> names {
+        {
+            0, 5, 18, 32, 42, 58, 81, 93, 113, 131, 153, 170, 192, 212, 225, 238, 251, 266, 276, 291, 313, 332, 350, 372
+        },
+        "None\0" "Unclassified\0" "FromLooseType\0" "Assertion\0" "SuppressedError\0" "DeclarationWithoutBody\0" "OutsideData\0"
+        "LayoutOutsideFamily\0" "MemberWithoutSlot\0" "StoreOutsideFieldType\0" "ComputedKeyStore\0" "UnprovenReceiverStore\0" "NativeWritesOperand\0"
+        "StateChanged\0" "UnseenWriter\0" "UnseenCaller\0" "UnprovenCallee\0" "OtherThis\0" "CalledByEngine\0" "ContainerWriterUnseen\0"
+        "ElementMayBeAbsent\0" "ScopeOpenedByEval\0" "ReadBeforeInitialized\0" "LookupMayChange"
+    };
+    return nameAt(names, value);
+}
+
 ASCIILiteral nameOf(Primitives value)
 {
-    static constexpr std::array<ASCIILiteral, 9> names {
-        "Undefined"_s, "Null"_s, "False"_s, "True"_s, "Number"_s, "String"_s, "Symbol"_s, "BigInt"_s, "Absent"_s
+    static constexpr EnumeratorNames<9, 61> names {
+        {
+            0, 10, 15, 21, 26, 33, 40, 47, 54
+        },
+        "Undefined\0" "Null\0" "False\0" "True\0" "Number\0" "String\0" "Symbol\0" "BigInt\0" "Absent"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Stage value)
 {
-    static constexpr std::array<ASCIILiteral, 16> names {
-        "Any"_s, "Load"_s, "BindModules"_s, "Check"_s, "Lower"_s, "LinkAndEmit"_s, "ReadAndVerify"_s, "AnalyzeFlow"_s, "Optimize"_s, "PlanSlots"_s,
-        "Select"_s, "NumberAndEncode"_s, "ChooseRepresentations"_s, "GenerateCode"_s, "BuildImage"_s, "RunTime"_s
+    static constexpr EnumeratorNames<16, 167> names {
+        {
+            0, 4, 9, 21, 27, 33, 45, 59, 71, 80, 90, 97, 113, 135, 148, 159
+        },
+        "Any\0" "Load\0" "BindModules\0" "Check\0" "Lower\0" "LinkAndEmit\0" "ReadAndVerify\0" "AnalyzeFlow\0" "Optimize\0" "PlanSlots\0" "Select\0"
+        "NumberAndEncode\0" "ChooseRepresentations\0" "GenerateCode\0" "BuildImage\0" "RunTime"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Protects value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "CompileTime"_s, "CodeSize"_s, "BitWidth"_s, "Memory"_s };
+    static constexpr EnumeratorNames<4, 37> names {
+        {
+            0, 12, 21, 30
+        },
+        "CompileTime\0" "CodeSize\0" "BitWidth\0" "Memory"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(DegradesTo value)
 {
-    static constexpr std::array<ASCIILiteral, 15> names {
-        "BuildError"_s, "NotOptimized"_s, "WiderType"_s, "DeclaredType"_s, "GenericPath"_s, "SharedInstance"_s, "LayoutObject"_s, "HeapAllocation"_s,
-        "OutOfLineStorage"_s, "OrdinaryObject"_s, "HashedTable"_s, "CallByOperation"_s, "Interpreter"_s, "FewerThreads"_s, "RuntimeError"_s
+    static constexpr EnumeratorNames<15, 200> names {
+        {
+            0, 11, 24, 34, 47, 59, 74, 87, 102, 119, 134, 146, 162, 174, 187
+        },
+        "BuildError\0" "NotOptimized\0" "WiderType\0" "DeclaredType\0" "GenericPath\0" "SharedInstance\0" "LayoutObject\0" "HeapAllocation\0"
+        "OutOfLineStorage\0" "OrdinaryObject\0" "HashedTable\0" "CallByOperation\0" "Interpreter\0" "FewerThreads\0" "RuntimeError"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(LimitID value)
 {
-    static constexpr std::array<ASCIILiteral, 209> names {
-        "None"_s, "MaxFoldedStringBytes"_s, "MaxComputedSpecifierCandidates"_s, "MaxDataNodes"_s, "MaxNestingDepth"_s, "MaxTypeNodes"_s,
-        "MaxValidationNodes"_s, "MaxExpectedResultLayouts"_s, "MaxSupertypePairs"_s, "MaxCaptures"_s, "MaxProgramIds"_s, "MaxLayoutsInType"_s,
-        "MaxLiteralsInType"_s, "MaxSymbolLiteralsInType"_s, "MaxClassesInType"_s, "MaxFunctionsInType"_s, "MaxBuiltinsInType"_s,
-        "MaxRegExpLiteralsInType"_s, "MaxWorkers"_s, "MaxInt32ProofWork"_s, "MaxTypeValuesRounds"_s, "MaxEscapeAnalysisWork"_s,
-        "MaxUseEffectHistoryBits"_s, "MaxGuardAvailabilityWork"_s, "MaxBlocksForDominatorSelfCheck"_s, "MaxFlowWorkPerFunction"_s,
-        "MaxFlowInstances"_s, "MaxValueFlowEdgesLogged"_s, "MaxValueFlowCopiedNodesPercent"_s, "MaxFlowInstanceValues"_s,
-        "MaxNestedCallSiteInstances"_s, "MaxNestedInstancesOfNewObjects"_s, "MaxSitesPerLayout"_s, "MaxAppendedFieldsPerLayout"_s,
-        "MaxDerivedLayoutsPerFamily"_s, "MaxCallSiteVersionValues"_s, "MaxPositionalParts"_s, "MaxFlowRangeGrowth"_s,
-        "MaxEscapedObjectsBesideUnknown"_s, "MaxGenericVersionGrowthPercent"_s, "MinNarrowedUsesForGenericVersion"_s, "MaxOptimizationRounds"_s,
-        "MaxSinkingRounds"_s, "MaxAccessPlanMembers"_s, "MaxDispatchCases"_s, "MaxDeclarationsPredictedFromNames"_s, "MaxExpandedDataNodes"_s,
-        "MaxArrayLiteralBatch"_s, "MaxBlocksSearchedForLiteralStores"_s, "MaxOutlinedOperands"_s, "MaxOutlinedRegionValues"_s, "MaxResultClones"_s,
-        "MaxForwardingDepth"_s, "MaxPromotedParameters"_s, "MaxParameterWrapperValues"_s, "MaxTestedTypesPerFunction"_s,
-        "MaxGuardEliminationRounds"_s, "MaxClonedBytesPerStretch"_s, "MaxBytesOfSeparatedLoop"_s, "MaxSeparatedLoopsPerFunction"_s,
-        "MaxLoopVersions"_s, "MaxContinuationsPerFunction"_s, "MaxContinuationSizePercent"_s, "MaxFusedConcatenationParts"_s,
-        "MaxReservedStackArguments"_s, "MaxArgumentRegisters"_s, "MaxThreadedBlockValues"_s, "MaxThreadingReachabilitySteps"_s, "MaxReadsPerSolve"_s,
-        "MaxMergedReadPredecessors"_s, "MaxVirtualObjectFields"_s, "MaxVirtualObjectVariants"_s, "MaxVirtualArrayLength"_s, "MaxMaterializations"_s,
-        "MaxDuplicatedTailValues"_s, "MaxCounterStep"_s, "MaxIntegerRelationSteps"_s, "MaxFrameEnvironmentFields"_s, "MaxInlineDepth"_s,
-        "MaxInlinedCallerBytes"_s, "MaxInlineHeadBytes"_s, "MaxOnlyCallSiteBytes"_s, "InlineBudgetColdBytes"_s, "InlineBudgetWarmBytes"_s,
-        "InlineBudgetHotBytes"_s, "MaxHotCodeValues"_s, "InlineSunkAllocationBytes"_s, "InlineCycleWeight"_s, "MaxConditionChainLength"_s,
-        "MaxFusedArrayCapacity"_s, "MinAppendsForStringBuilder"_s, "MaxStringWebsPerFunction"_s, "MaxParserPlanNodes"_s, "MaxParsedObjectMembers"_s,
-        "MaxExpandedKeyOrders"_s, "MaxExpandedKeyFields"_s, "MaxVersionedIterationBytes"_s, "MaxDestructuredElements"_s, "MinRequestedJSONCapacity"_s,
-        "MaxJSONLayoutSetMembers"_s, "MaxBuiltinCallArguments"_s, "MaxPlannedArrayCapacity"_s, "MaxSelectionGroupSpan"_s,
-        "MaxSelectionGroupMembers"_s, "MaxNumberPathValues"_s, "MinByIdsPerRun"_s, "MinSwitchCases"_s, "MaxSwitchStringCases"_s, "MaxSwitchCases"_s,
-        "MaxInlineArrayLiteralLength"_s, "MaxInlineSpliceInsertions"_s, "MaxInlineConcatOperands"_s, "MaxInlinePushOperands"_s,
-        "MaxInlineTypedArrayCopyLength"_s, "MaxInlineClearedElements"_s, "MaxInlineStringCompareLength"_s, "MaxRegisterStringLength"_s,
-        "MaxLengthCopiedInline"_s, "FieldsInKeyOrder"_s, "KeyOrdersPerLayout"_s, "MaxShapes"_s, "MaxShapeSetBits"_s, "MaxIdentifiers"_s,
-        "MaxFieldOffset"_s, "MaxExtensionGranules"_s, "MaxStaticsSize"_s, "MaxSiteCaches"_s, "MaxGuardBitsPerClassSide"_s, "MaxPropertyListNames"_s,
-        "MaxEvalBindingDepth"_s, "MaxEvalBindingOffset"_s, "MaxListedStrings"_s, "MaxLiteralStrings"_s, "MaxComparedCharactersPerCharacter"_s,
-        "MaxFrameSizeInBytes"_s, "MaxBarrierBlocks"_s, "MaxFrameMapRoots"_s, "MaxLandingPadsSearched"_s, "MaxClonedValuesPerLoopVersion"_s,
-        "MaxValuesPerHotRegion"_s, "MaxBlocksScannedBeforeLoop"_s, "MaxClonedValuesPerUnswitchedLoop"_s, "MaxClonedValuesPerExcursion"_s,
-        "MaxValuesScannedForExecutedLoad"_s, "MaxSourcesOfLoopTest"_s, "MaxRangeCheckBoundsPerLoop"_s, "MaxCopiedValuesPerRotatedLoop"_s,
-        "MaxRareBlocksPerRotatedLoop"_s, "MaxThreadedTestCopyCost"_s, "MaxThreadedPathCost"_s, "MaxBlocksOnThreadedPath"_s, "MaxThreadedTestDepth"_s,
-        "MaxPredecessorsForConditionQueries"_s, "MaxConditionQueriesPerBlock"_s, "MaxSelectNestingDepth"_s, "MaxSpeculatedValuesPerSelect"_s,
-        "MaxSelectsPerJoin"_s, "MaxValuesSearchedForDominatingLoad"_s, "MaxLoopsLeftBySinking"_s, "MaxHoistedLoadsPerLoop"_s,
-        "MaxLivenessStepsPerBlock"_s, "MaxLinearDominatorSteps"_s, "MaxSlotsForDenseInterference"_s, "MaxBlocksPerPlacedConstant"_s,
-        "MaxRangeAnalysisDepth"_s, "MaxRecordedWritesPerMemoryState"_s, "MaxLeavesToRebalance"_s, "MaxBitTestTargets"_s,
-        "MaxCompareChainSearchSize"_s, "MaxClobberSitesPerSplit"_s, "ClosureAllocationSites"_s, "ImageFunctions"_s, "CodeBytes"_s,
-        "SitesPerFunction"_s, "InlineFramesPerFunction"_s, "DirectCallReach"_s, "FunctionCallReach"_s, "TableBytes"_s, "VectorBytes"_s,
-        "UncheckedStackBytes"_s, "RegExpPatternLengthWithCode"_s, "RegExpNestingDepthWithCode"_s, "RegExpCandidateCodeBytesPerSite"_s,
-        "RegExpCandidateTextLength"_s, "RegExpSectionSize"_s, "RegExpClassTableClusterSize"_s, "WasmImageCodeSize"_s, "LookupTableNames"_s,
-        "LookupTableBases"_s, "HashedTableEntries"_s, "CustomAccessorRecords"_s, "ForeignCallbackStubs"_s, "PromisesWalkedPerImport"_s,
-        "BranchCounters"_s, "MaxNamesComparedWithLongKey"_s, "MinLongKeyUnitsPerPiece"_s, "LongKeyExtraPieces"_s, "MaxCachedKeyLength"_s,
-        "MaxCapacityGrownByStub"_s, "MaxOpenJSONSources"_s, "MinStringBuilderCapacity"_s, "MaxRetainedStringBuilderCapacity"_s,
-        "MinLengthAppendedByReference"_s, "MinLengthAdoptedByFinish"_s, "MaxPooledStringBuilders"_s, "MaxStringBuilderSegments"_s,
-        "MinRopeJoinLength"_s, "MinRopeJoinUnitsPerElement"_s, "MaxReservedArrayCapacity"_s
+    static constexpr EnumeratorNames<213, 4756> names {
+        {
+            0, 5, 26, 57, 70, 86, 99, 118, 143, 161, 179, 191, 205, 222, 240, 264, 281, 300, 318, 342, 353, 371, 391, 413, 437, 462, 493, 517, 540,
+            569, 596, 618, 638, 655, 670, 691, 708, 742, 763, 784, 818, 838, 862, 878, 897, 919, 945, 970, 995, 1021, 1047, 1072, 1098, 1124, 1155,
+            1179, 1208, 1235, 1271, 1297, 1318, 1341, 1371, 1388, 1414, 1437, 1462, 1484, 1504, 1528, 1543, 1567, 1593, 1613, 1628, 1650, 1669, 1695,
+            1717, 1738, 1760, 1782, 1803, 1820, 1838, 1864, 1882, 1906, 1928, 1955, 1980, 1999, 2022, 2043, 2064, 2091, 2115, 2140, 2164, 2188, 2212,
+            2234, 2259, 2279, 2294, 2309, 2330, 2345, 2373, 2399, 2423, 2445, 2457, 2487, 2512, 2538, 2567, 2591, 2613, 2630, 2649, 2659, 2675, 2690,
+            2705, 2726, 2741, 2755, 2773, 2798, 2819, 2839, 2860, 2877, 2895, 2929, 2957, 2977, 2994, 3011, 3034, 3064, 3086, 3113, 3146, 3174, 3206,
+            3227, 3254, 3284, 3312, 3336, 3356, 3380, 3401, 3436, 3464, 3486, 3515, 3533, 3568, 3590, 3613, 3638, 3662, 3691, 3718, 3740, 3772, 3793,
+            3811, 3837, 3861, 3884, 3899, 3909, 3926, 3950, 3966, 3984, 3995, 4007, 4027, 4055, 4082, 4114, 4138, 4164, 4182, 4210, 4228, 4245, 4262,
+            4281, 4303, 4324, 4348, 4363, 4391, 4415, 4434, 4453, 4476, 4495, 4520, 4553, 4582, 4607, 4631, 4656, 4674, 4701, 4726
+        },
+        "None\0" "MaxFoldedStringBytes\0" "MaxComputedSpecifierCandidates\0" "MaxDataNodes\0" "MaxNestingDepth\0" "MaxTypeNodes\0"
+        "MaxValidationNodes\0" "MaxExpectedResultLayouts\0" "MaxSupertypePairs\0" "MaxInferenceNodes\0" "MaxCaptures\0" "MaxProgramIds\0"
+        "MaxLayoutsInType\0" "MaxLiteralsInType\0" "MaxSymbolLiteralsInType\0" "MaxClassesInType\0" "MaxFunctionsInType\0" "MaxBuiltinsInType\0"
+        "MaxRegExpLiteralsInType\0" "MaxWorkers\0" "MaxInt32ProofWork\0" "MaxTypeValuesRounds\0" "MaxEscapeAnalysisWork\0" "MaxUseEffectHistoryBits\0"
+        "MaxGuardAvailabilityWork\0" "MaxBlocksForDominatorSelfCheck\0" "MaxValueFlowEdgesLogged\0" "MaxValueFlowSetMembers\0"
+        "MaxValueFlowMembersToldApart\0" "MaxAppendedFieldsPerLayout\0" "MaxOptimizationRounds\0" "MaxOptimizationWork\0" "MaxSinkingRounds\0"
+        "MaxSinkingWork\0" "MaxAccessPlanMembers\0" "MaxDispatchCases\0" "MaxDeclarationsPredictedFromNames\0" "MaxExpandedDataNodes\0"
+        "MaxArrayLiteralBatch\0" "MaxBlocksSearchedForLiteralStores\0" "MaxOutlinedOperands\0" "MaxOutlinedRegionValues\0" "MaxResultClones\0"
+        "MaxForwardingDepth\0" "MaxPromotedParameters\0" "MaxParameterWrapperValues\0" "MaxValuesInCalleeVersion\0" "MaxBytesOfCalleeVersions\0"
+        "MaxTestedTypesPerFunction\0" "MaxGuardEliminationRounds\0" "MaxClonedBytesPerStretch\0" "MaxBlocksInGenericVersion\0"
+        "MaxGenericVersionJoinWork\0" "MaxBlocksCopiedBehindStretches\0" "MaxBytesOfSeparatedLoop\0" "MaxSeparatedLoopsPerFunction\0"
+        "MaxFusedConcatenationParts\0" "MaxBlocksBetweenFusedConcatenations\0" "MaxReservedStackArguments\0" "MaxArgumentRegisters\0"
+        "MaxThreadedBlockValues\0" "MaxThreadingReachabilitySteps\0" "MaxReadsPerSolve\0" "MaxMergedReadPredecessors\0" "MaxVirtualObjectFields\0"
+        "MaxVirtualObjectVariants\0" "MaxVirtualArrayLength\0" "MaxMaterializations\0" "MaxDuplicatedTailValues\0" "MaxCounterStep\0"
+        "MaxIntegerRelationSteps\0" "MaxFrameEnvironmentFields\0" "MaxFrameArrayLength\0" "MaxInlineDepth\0" "MaxInlinedCallerBytes\0"
+        "MaxInlineHeadBytes\0" "MaxSelectedHeadOperations\0" "MaxSelectedHeadBlocks\0" "MaxOnlyCallSiteBytes\0" "InlineBudgetColdBytes\0"
+        "InlineBudgetWarmBytes\0" "InlineBudgetHotBytes\0" "MaxHotCodeValues\0" "MaxWarmCodeValues\0" "InlineSunkAllocationBytes\0"
+        "InlineCycleWeight\0" "MaxConditionChainLength\0" "MaxFusedArrayCapacity\0" "MinAppendsForStringBuilder\0" "MaxStringWebsPerFunction\0"
+        "MaxParserPlanNodes\0" "MaxParsedObjectMembers\0" "MaxExpandedKeyOrders\0" "MaxExpandedKeyFields\0" "MaxVersionedIterationBytes\0"
+        "MaxDestructuredElements\0" "MinRequestedJSONCapacity\0" "MaxJSONLayoutSetMembers\0" "MaxBuiltinCallArguments\0" "MaxPlannedArrayCapacity\0"
+        "MaxSelectionGroupSpan\0" "MaxSelectionGroupMembers\0" "MaxNumberPathValues\0" "MinByIdsPerRun\0" "MinSwitchCases\0" "MaxSwitchStringCases\0"
+        "MaxSwitchCases\0" "MaxInlineArrayLiteralLength\0" "MaxInlineSpliceInsertions\0" "MaxInlineConcatOperands\0" "MaxInlinePushOperands\0"
+        "MaxKeyParts\0" "MaxInlineTypedArrayCopyLength\0" "MaxInlineClearedElements\0" "MaxInlineSearchedElements\0" "MaxInlineStringCompareLength\0"
+        "MaxRegisterStringLength\0" "MaxLengthCopiedInline\0" "FieldsInKeyOrder\0" "KeyOrdersPerLayout\0" "MaxShapes\0" "MaxShapeSetBits\0"
+        "MaxIdentifiers\0" "MaxFieldOffset\0" "MaxExtensionGranules\0" "MaxStaticsSize\0" "MaxSiteCaches\0" "MaxGlobalBindings\0"
+        "MaxGuardBitsPerClassSide\0" "MaxPropertyListNames\0" "MaxEvalBindingDepth\0" "MaxEvalBindingOffset\0" "MaxListedStrings\0"
+        "MaxLiteralStrings\0" "MaxComparedCharactersPerCharacter\0" "MaxContractedModuleRequests\0" "MaxFrameSizeInBytes\0" "MaxBarrierBlocks\0"
+        "MaxFrameMapRoots\0" "MaxLandingPadsSearched\0" "MaxClonedValuesPerLoopVersion\0" "MaxValuesPerHotRegion\0" "MaxBlocksScannedBeforeLoop\0"
+        "MaxClonedValuesPerUnswitchedLoop\0" "MaxClonedValuesPerExcursion\0" "MaxValuesScannedForExecutedLoad\0" "MaxSourcesOfLoopTest\0"
+        "MaxRangeCheckBoundsPerLoop\0" "MaxCopiedValuesPerRotatedLoop\0" "MaxRareBlocksPerRotatedLoop\0" "MaxThreadedTestCopyCost\0"
+        "MaxThreadedPathCost\0" "MaxBlocksOnThreadedPath\0" "MaxThreadedTestDepth\0" "MaxPredecessorsForConditionQueries\0"
+        "MaxConditionQueriesPerBlock\0" "MaxSelectNestingDepth\0" "MaxSpeculatedValuesPerSelect\0" "MaxSelectsPerJoin\0"
+        "MaxValuesSearchedForDominatingLoad\0" "MaxLoopsLeftBySinking\0" "MaxHoistedLoadsPerLoop\0" "MaxLivenessStepsPerBlock\0"
+        "MaxLinearDominatorSteps\0" "MaxSlotsForDenseInterference\0" "MaxBlocksPerPlacedConstant\0" "MaxRangeAnalysisDepth\0"
+        "MaxRecordedWritesPerMemoryState\0" "MaxLeavesToRebalance\0" "MaxBitTestTargets\0" "MaxCompareChainSearchSize\0" "MaxClobberSitesPerSplit\0"
+        "ClosureAllocationSites\0" "ImageFunctions\0" "CodeBytes\0" "SitesPerFunction\0" "InlineFramesPerFunction\0" "DirectCallReach\0"
+        "FunctionCallReach\0" "TableBytes\0" "VectorBytes\0" "UncheckedStackBytes\0" "RegExpPatternLengthWithCode\0" "RegExpNestingDepthWithCode\0"
+        "RegExpCandidateCodeBytesPerSite\0" "RegExpCandidatesPerSite\0" "RegExpCandidateTextLength\0" "RegExpSectionSize\0"
+        "RegExpClassTableClusterSize\0" "WasmImageCodeSize\0" "LookupTableNames\0" "LookupTableBases\0" "HashedTableEntries\0"
+        "CustomAccessorRecords\0" "ForeignCallbackStubs\0" "PromisesWalkedPerImport\0" "BranchCounters\0" "MaxNamesComparedWithLongKey\0"
+        "MinLongKeyUnitsPerPiece\0" "LongKeyExtraPieces\0" "MaxCachedKeyLength\0" "MaxCapacityGrownByStub\0" "MaxOpenJSONSources\0"
+        "MinStringBuilderCapacity\0" "MaxRetainedStringBuilderCapacity\0" "MinLengthAppendedByReference\0" "MinLengthAdoptedByFinish\0"
+        "MaxPooledStringBuilders\0" "MaxStringBuilderSegments\0" "MinRopeJoinLength\0" "MinRopeJoinUnitsPerElement\0" "MaxReservedArrayCapacity\0"
+        "MaxReservedCollectionCapacity"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PassID value)
 {
-    static constexpr std::array<ASCIILiteral, 87> names {
-        "None"_s, "AdmitAssertedObjects"_s, "TypeValues"_s, "CheckInt32Promises"_s, "VerifyProgram"_s, "CheckRegExpLiterals"_s, "AnalyzeFlow"_s,
-        "ApplyFlowResults"_s, "CheckLockedBuiltinWrites"_s, "BuildCallGraph"_s, "ComputeEffectSummaries"_s, "EstimateHeat"_s,
-        "SummarizeForInlining"_s, "RemoveUnreadExports"_s, "PromoteEnvironmentsToVariables"_s, "DeferDefinitions"_s, "RemoveUnreadFields"_s,
-        "RemoveUnusedResults"_s, "RemoveUnusedParameters"_s, "RemoveUnreachableFunctions"_s, "SplitFreshResults"_s, "PromoteAggregateParameters"_s,
-        "SplitCoroutines"_s, "CreateEntrypoints"_s, "GroupCallsByValue"_s, "ChooseCallingConventions"_s, "DeferClosuresInFields"_s,
-        "AllocateInFrames"_s, "ReuseEnvironments"_s, "NumberLiteralStrings"_s, "EmbedConstantCollections"_s, "CollectRegExpLiterals"_s,
-        "OutlineColdOperations"_s, "SplitFunctionsAtCalls"_s, "ElideStackChecks"_s, "ResolveBuiltins"_s, "ResolveCalls"_s, "ResolveAccesses"_s,
-        "SplitUnions"_s, "PlaceTypeTests"_s, "ExpandIteration"_s, "ExpandOwnKeys"_s, "SelectTypedResults"_s, "RetypeValues"_s, "InlineCalls"_s,
-        "SimplifyCasts"_s, "SinkAllocations"_s, "EliminateRedundantReads"_s, "EliminateGuards"_s, "SeparateUnlikelyLoopPaths"_s,
-        "ConvertCountersToIntegers"_s, "RemoveDeadCountedLoops"_s, "FuseArrayChains"_s, "FuseGeneratorLoops"_s, "CreateStringBuilders"_s,
-        "FuseConcatenations"_s, "ExpandData"_s, "FoldConstants"_s, "SimplifyControlFlow"_s, "RemoveTrivialParameters"_s,
-        "PropagateBranchConditions"_s, "HoistTestsIntoPredecessors"_s, "ThreadJumps"_s, "InferSwitches"_s, "EliminateDeadCode"_s,
-        "MergeDuplicateBlocks"_s, "CompactBlocks"_s, "RemoveRedundantHandlers"_s, "HoistLoopInvariantReads"_s, "SimplifyBuiltinCalls"_s,
-        "ReduceIntegerDivisions"_s, "PlanArrayCapacities"_s, "FoldConstantRegExps"_s, "ShareRegExpLiterals"_s, "InsertObjectCoercibleChecks"_s,
-        "EliminateTailRecursion"_s, "ResolveAwaitedCalls"_s, "SinkConstants"_s, "ExpandLongArrayLiterals"_s, "PlanSlots"_s, "Select"_s,
-        "NumberAndEncode"_s, "PlaceSiteCaches"_s, "CheckPlacement"_s, "ChooseRepresentations"_s, "RemoveRedundantBarriers"_s, "GenerateCode"_s
+    static constexpr EnumeratorNames<109, 2093> names {
+        {
+            0, 5, 27, 45, 56, 75, 89, 109, 126, 145, 167, 179, 196, 221, 236, 259, 272, 293, 313, 344, 361, 385, 403, 432, 451, 471, 494, 521, 544,
+            568, 586, 613, 629, 641, 659, 684, 706, 726, 743, 764, 782, 803, 828, 850, 872, 894, 906, 923, 941, 957, 973, 996, 1009, 1025, 1037, 1052,
+            1068, 1091, 1105, 1124, 1137, 1149, 1163, 1179, 1203, 1219, 1245, 1271, 1294, 1310, 1329, 1356, 1377, 1396, 1407, 1421, 1441, 1465, 1491,
+            1518, 1541, 1553, 1567, 1585, 1606, 1620, 1644, 1668, 1689, 1712, 1732, 1757, 1777, 1797, 1825, 1848, 1868, 1882, 1906, 1919, 1943, 1970,
+            1980, 1987, 2003, 2019, 2034, 2056, 2080
+        },
+        "None\0" "AllocateTaggedLayouts\0" "CheckTypesAtEntry\0" "TypeValues\0" "CheckInt32Promises\0" "VerifyProgram\0" "CheckRegExpLiterals\0"
+        "NarrowFieldTypes\0" "NameCreatedSymbols\0" "GuardTaintedPositions\0" "AnalyzeFlow\0" "ApplyFlowResults\0" "CheckLockedBuiltinWrites\0"
+        "BuildCallGraph\0" "ComputeEffectSummaries\0" "EstimateHeat\0" "SummarizeForInlining\0" "RemoveUnreadExports\0"
+        "PromoteEnvironmentsToVariables\0" "DeferDefinitions\0" "NarrowConstantVariables\0" "DeferInitializers\0" "ReadCapturesFromEnvironments\0"
+        "RemoveUnreadFields\0" "RemoveUnusedResults\0" "RemoveUnusedParameters\0" "RemoveUnreachableFunctions\0" "SplitBehindEntryChecks\0"
+        "SkipAnsweredEntryChecks\0" "SplitFreshResults\0" "PromoteAggregateParameters\0" "SplitCoroutines\0" "CallModules\0" "CreateEntrypoints\0"
+        "ChooseCallingConventions\0" "DeferClosuresInFields\0" "FlattenInnerObjects\0" "AllocateInFrames\0" "AllocateInnerObjects\0"
+        "ReuseEnvironments\0" "NumberLiteralStrings\0" "EmbedConstantCollections\0" "MarkResultsUsedAsKeys\0" "CollectRegExpLiterals\0"
+        "OutlineColdOperations\0" "InlineHeads\0" "ElideStackChecks\0" "AddGenericVersion\0" "ResolveBuiltins\0" "BindGlobalNames\0"
+        "CallThroughMethodTable\0" "ResolveCalls\0" "ResolveAccesses\0" "SplitUnions\0" "PlaceTypeTests\0" "ExpandIteration\0"
+        "ExpandProvenIterations\0" "ExpandOwnKeys\0" "SelectTypedResults\0" "RetypeValues\0" "InlineCalls\0" "SimplifyCasts\0" "SinkAllocations\0"
+        "EliminateRedundantReads\0" "EliminateGuards\0" "SeparateUnlikelyLoopPaths\0" "ConvertCountersToIntegers\0" "RemoveDeadCountedLoops\0"
+        "FuseArrayChains\0" "FuseGeneratorLoops\0" "StartGeneratorsAtFirstStep\0" "CreateStringBuilders\0" "FuseConcatenations\0" "ExpandData\0"
+        "FoldConstants\0" "SimplifyControlFlow\0" "RemoveTrivialParameters\0" "PropagateBranchConditions\0" "HoistTestsIntoPredecessors\0"
+        "TestNarrowerTypesFirst\0" "ThreadJumps\0" "InferSwitches\0" "EliminateDeadCode\0" "MergeDuplicateBlocks\0" "CompactBlocks\0"
+        "RemoveRedundantHandlers\0" "HoistLoopInvariantReads\0" "SimplifyBuiltinCalls\0" "ReduceIntegerDivisions\0" "PlanArrayCapacities\0"
+        "PlanCollectionCapacities\0" "FoldConstantRegExps\0" "ShareRegExpLiterals\0" "InsertObjectCoercibleChecks\0" "EliminateTailRecursion\0"
+        "ResolveAwaitedCalls\0" "SinkConstants\0" "ExpandLongArrayLiterals\0" "FinishBirths\0" "RestartInGenericVersion\0"
+        "PlaceAllocationsAtTheirUse\0" "PlanSlots\0" "Select\0" "NumberAndEncode\0" "PlaceSiteCaches\0" "CheckPlacement\0" "ChooseRepresentations\0"
+        "RemoveRedundantBarriers\0" "GenerateCode"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(SelectionRuleID value)
 {
-    static constexpr std::array<ASCIILiteral, 32> names {
-        "None"_s, "PlannedSlots"_s, "ClassDefinition"_s, "DescriptorLiteral"_s, "AccessorGroup"_s, "SlotStoreRun"_s, "PropertyRun"_s, "MethodCall"_s,
-        "CheckedPropertyRead"_s, "PropertyReadAndTest"_s, "EncodedVariableTest"_s, "PropertyChain"_s, "PropertyPair"_s, "SubstringView"_s,
-        "SwitchString"_s, "SwitchNumber"_s, "StringLiteralForms"_s, "HoistStringCharacters"_s, "SharedStringOrder"_s, "IntegerBound"_s,
-        "FreshPromiseFulfillment"_s, "ResolvedCallTarget"_s, "RegExpLiteralMatch"_s, "ThrowNewError"_s, "InlineBuiltin"_s, "StringBuilderParts"_s,
-        "ArrayLiteralStorage"_s, "DataEncoding"_s, "ClosureForm"_s, "NumberPaths"_s, "OperatorForm"_s, "TestAndBranch"_s
+    static constexpr EnumeratorNames<33, 502> names {
+        {
+            0, 5, 18, 34, 52, 66, 79, 91, 102, 122, 142, 156, 169, 183, 196, 209, 228, 250, 268, 281, 305, 318, 337, 356, 370, 385, 399, 418, 438,
+            451, 463, 475, 488
+        },
+        "None\0" "PlannedSlots\0" "ClassDefinition\0" "DescriptorLiteral\0" "AccessorGroup\0" "SlotStoreRun\0" "PropertyRun\0" "MethodCall\0"
+        "PropertyReadAndTest\0" "EncodedVariableTest\0" "PropertyChain\0" "PropertyPair\0" "SubstringView\0" "SwitchString\0" "SwitchNumber\0"
+        "StringLiteralForms\0" "HoistStringCharacters\0" "SharedStringOrder\0" "IntegerBound\0" "FreshPromiseFulfillment\0" "AwaitInPlace\0"
+        "ResolvedCallTarget\0" "RegExpLiteralMatch\0" "ThrowNewError\0" "KeyPartsLookup\0" "InlineBuiltin\0" "StringBuilderParts\0"
+        "ArrayLiteralStorage\0" "DataEncoding\0" "ClosureForm\0" "NumberPaths\0" "OperatorForm\0" "TestAndBranch"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FlowResultKind value)
 {
-    static constexpr std::array<ASCIILiteral, 35> names {
-        "ProvenLayoutSets"_s, "NarrowedTypes"_s, "RemovedNullish"_s, "LiteralValues"_s, "IntegerRanges"_s, "WholeNumbers"_s, "ExactFunctions"_s,
-        "ProvenContents"_s, "ArrayStorageKinds"_s, "PristineInstances"_s, "ConstantBuiltinLocations"_s, "CalleeSets"_s, "ReceiverSets"_s,
-        "ClassBases"_s, "AppendedFields"_s, "HolderMutations"_s, "OwnNames"_s, "ClassEvaluations"_s, "StoreCounts"_s, "Initialization"_s,
-        "ConstructorFieldOrders"_s, "ThisLeaks"_s, "FrameLocalAllocations"_s, "OperandSummaries"_s, "ResultChecks"_s, "CallVersions"_s,
-        "ObjectUses"_s, "DeferredClosures"_s, "ReachedFunctions"_s, "ExecutionCounts"_s, "ModuleOrder"_s, "NotThenable"_s, "Predictions"_s,
-        "DictionaryObjects"_s, "DerivedLayouts"_s
+    static constexpr EnumeratorNames<23, 354> names {
+        {
+            0, 17, 31, 46, 60, 75, 90, 108, 126, 151, 162, 175, 186, 201, 217, 226, 243, 255, 270, 293, 310, 321, 338
+        },
+        "ProvenLayoutSets\0" "NarrowedTypes\0" "RemovedNullish\0" "LiteralValues\0" "ExactFunctions\0" "ProvenContents\0" "ArrayStorageKinds\0"
+        "PristineInstances\0" "ConstantBuiltinLocations\0" "CalleeSets\0" "ReceiverSets\0" "ClassBases\0" "AppendedFields\0" "HolderMutations\0"
+        "OwnNames\0" "ClassEvaluations\0" "StoreCounts\0" "Initialization\0" "ConstructorFieldOrders\0" "OperandSummaries\0" "ObjectUses\0"
+        "ReachedFunctions\0" "ExecutionCounts"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StatisticID value)
 {
-    static constexpr std::array<ASCIILiteral, 610> names {
-        "None"_s, "SourceFilesChecked"_s, "SourceFilesInferred"_s, "SourceFilesTypesOnly"_s, "SourceFilesData"_s, "SourceFilesRuntime"_s,
-        "SourceFilesDemoted"_s, "SourceBytes"_s, "SourceLines"_s, "TypedVersionsUsed"_s, "TypedVersionsRejected"_s, "CheckerQueries"_s,
-        "CheckerQueriesGivenUp"_s, "CheckerMembersGivenUp"_s, "BuiltinTypesDegradedToViews"_s, "SchemaArgumentsDropped"_s, "ModulesBound"_s,
-        "FunctionsLowered"_s, "FunctionsDroppedByLink"_s, "ProgramBytes"_s, "TypesInterned"_s, "ProvisionalTypesInterned"_s, "LayoutSetsInterned"_s,
-        "CalleeSetsInterned"_s, "FunctionTypesWithoutMembers"_s, "FunctionTypesWithOneMember"_s, "FunctionTypesWithFewMembers"_s,
-        "FunctionTypesWithManyMembers"_s, "RequestsResolvedToNothing"_s, "RequestsResolvedToUpcast"_s, "RequestsResolvedToClaim"_s,
-        "RequestsResolvedToReport"_s, "RequestsResolvedToPrediction"_s, "RequestsAdmittingObjects"_s, "PositionsAdmittingObjects"_s,
-        "AssertedObjectsPassedToUnknownCallees"_s, "RequestsAdmittingOtherKinds"_s, "PositionsAdmittingOtherKinds"_s, "FlowNodes"_s, "FlowEdges"_s,
-        "FlowWorklistSteps"_s, "FlowInstances"_s, "FlowLiteralSets"_s, "FlowAllocationSites"_s, "FlowAllocationClasses"_s, "FlowProvenPositions"_s,
-        "FlowUnprovenPositions"_s, "FlowStatementRuns"_s, "FlowStatementRunsWithoutChange"_s, "FlowStatementWakeUps"_s, "FlowStatementsStartedOver"_s,
-        "FlowMembersRepeated"_s, "FlowCursorsNotReached"_s, "FlowNarrowedPositions"_s, "FlowProvenContentsSites"_s, "FlowConstantBuiltinLocations"_s,
-        "FlowWrittenBuiltinLocations"_s, "FlowRemovedClaims"_s, "FlowRemainingClaims"_s, "FlowGenericVersions"_s, "FlowCallSiteVersions"_s,
-        "FlowDerivedLayouts"_s, "FlowUnreachedFunctions"_s, "FlowAppendedFields"_s, "FlowProvenBases"_s, "FlowDeferredClosureFields"_s,
-        "FlowConstructorsLeakingThis"_s, "FlowSetsOutsideTypes"_s, "AccessesProven"_s, "AccessesWritten"_s, "AccessesPredicted"_s,
-        "AccessesUnknown"_s, "DirectCalls"_s, "IndirectCalls"_s, "GroupCalls"_s, "ClosuresFull"_s, "ClosuresSlim"_s, "ClosuresDeferred"_s,
-        "ClosuresInFrames"_s, "ClosuresNeverCreated"_s, "EnvironmentsOnHeap"_s, "EnvironmentsInFrames"_s, "ObjectsInFrames"_s,
-        "EnvironmentsMaterializedLate"_s, "EnvironmentsReused"_s, "EnvironmentsPromotedToVariables"_s, "CapturesPromotedToVariables"_s,
-        "AggregateParametersPromoted"_s, "FreshResultsSplit"_s, "ResultsReturnedInRegisters"_s, "ResultClonesCreated"_s, "UnusedResultsRemoved"_s,
-        "UnusedParametersRemoved"_s, "UnreadFieldsRemoved"_s, "UnreadVariableStoresRemoved"_s, "ClosuresDeferredInVariables"_s,
-        "FieldsDeferringClosures"_s, "ClosuresDeferredInFields"_s, "StoresListedByAllocations"_s, "UnreachableFunctionsRemoved"_s,
-        "ConstantCollectionsEmbedded"_s, "ColdSitesOutlined"_s, "OutlinedBodiesCreated"_s, "BodySummariesComputed"_s, "BodySummariesKept"_s,
-        "EffectSummaryNodes"_s, "EffectSummaryNodesInAndAboveCycles"_s, "FunctionsTypedFromNever"_s, "FunctionsTypedFromChanges"_s,
-        "FunctionsTypedAsBefore"_s, "StackChecksCoveredByCallers"_s, "StackChecksDeferredToCallee"_s, "TailRecursionsEliminated"_s,
-        "ReturnCallsDemoted"_s, "ResultsBoxedForTailCalls"_s, "SecondaryEntries"_s, "StretchesGuarded"_s, "TypeTestsPlaced"_s,
-        "StretchesNotClonable"_s, "GuardsEliminated"_s, "EpochTestsInserted"_s, "UnionsSplit"_s, "AllocationsRemoved"_s, "AllocationsSunk"_s,
-        "AllocationsMergedAtJoins"_s, "StoresFoldedIntoAllocations"_s, "TailsDuplicatedForSinking"_s, "LoopsSeparatedFromUnlikelyPaths"_s,
-        "LoopsWithoutWayBack"_s, "LoopsWithVersions"_s, "LoopVersionsCreated"_s, "BytesCopiedForLoopVersions"_s, "InlineDecisionUnknown"_s,
-        "InlineDecisionInline"_s, "InlineDecisionInlineHead"_s, "InlineDecisionBarrier"_s, "InlineDecisionSignatureMismatch"_s,
-        "InlineDecisionClosesCycle"_s, "InlineDecisionDepthLimit"_s, "InlineDecisionCallerSizeLimit"_s, "InlineDecisionCostExceedsBenefit"_s,
-        "InlineBenefitCallOverhead"_s, "InlineBenefitFoldedCode"_s, "InlineBenefitKnownCalleeArgument"_s, "InlineBenefitKnownReceiver"_s,
-        "InlineBenefitSunkAllocation"_s, "InlineBenefitOnlyCallSite"_s, "InlineBenefitWrapper"_s, "CallsResolved"_s, "CallsGuarded"_s,
-        "DispatchArms"_s, "ConstructsResolved"_s, "AwaitedCallsResolved"_s, "BuiltinReadsResolved"_s, "BuiltinCallsResolved"_s,
-        "BuiltinConversionsInserted"_s, "GenericEntrypoints"_s, "GroupEntrypoints"_s, "BoundFunctions"_s, "CoroutinesSplit"_s,
-        "GeneratorLoopsFused"_s, "ArrayChainsFused"_s, "StringBuildersCreated"_s, "StringBuildersJoined"_s, "ConcatenationsFused"_s,
-        "IterationsExpandedByClass"_s, "IterationsExpandedGenerically"_s, "EnumeratedKeyUsesResolved"_s, "OwnKeyWalksExpanded"_s,
-        "TypedResultsSelected"_s, "ParsersCreated"_s, "SerializersCreated"_s, "ValidatorsCreated"_s, "CountersConverted"_s,
-        "IntegerDivisionsReduced"_s, "ArrayCapacitiesPlanned"_s, "ArrayGrowthsPlanned"_s, "ArraysNarrowed"_s, "LiteralStringsNumbered"_s, "Slots"_s,
-        "SharedSlots"_s, "SharesRefused"_s, "FieldsOutOfLine"_s, "HiddenWordsPlaced"_s, "DeferredClosureSlots"_s, "Shapes"_s,
-        "ShapeTestNeverPasses"_s, "ShapeTestRange"_s, "ShapeTestBitSet"_s, "SiteCachesPlaced"_s, "SitesWithoutSiteCache"_s, "GuardBitsPlaced"_s,
-        "RequestsShared"_s, "ClassMembersCreatedByClassRecord"_s, "ClassMembersCreatedAtDefinition"_s, "ClassesCreatedLazily"_s,
-        "SlimClosureFunctions"_s, "FullClosureFunctions"_s, "KeysWithoutColumn"_s, "TypeSiteTextsLeftOut"_s, "ConversionsInserted"_s,
-        "ValuesInInt32"_s, "ValuesInInt64"_s, "ValuesInDouble"_s, "ValuesBoxed"_s, "ReferencesCompressed"_s, "ExactIntegersBehindNumbers"_s,
-        "NumbersUnboxedWithoutBranch"_s, "TypeChecksInB3"_s, "TypeChecksByOperation"_s, "ThrowSites"_s, "ShortStringsReadInPlace"_s,
-        "CopyOnWriteArraysCreatedInline"_s, "BarriersEmitted"_s, "BarriersOnUnmarkableOwners"_s, "BarriersCoveredLater"_s, "SuspensionRoots"_s,
-        "NarrowReferenceGuards"_s, "NarrowReferencesAcrossSafepoints"_s, "NarrowReferencesStoredInFrames"_s, "FunctionsWithoutFrame"_s,
-        "FunctionsWithFrameOnSomePaths"_s, "FunctionsEnteredWithoutStackCheck"_s, "ProgramTableBytesTypes"_s, "ProgramTableBytesLayouts"_s,
-        "ProgramTableBytesFieldTable"_s, "ProgramTableBytesStatics"_s, "ProgramTableBytesFunctions"_s, "ProgramTableBytesModules"_s,
-        "ProgramTableBytesRequests"_s, "ProgramTableBytesData"_s, "ProgramTableBytesOther"_s, "StubsGenerated"_s, "StubBytes"_s,
-        "CodeUnitsRecorded"_s, "FunctionsFolded"_s, "BytesFolded"_s, "JumpOnlyFunctionsRemoved"_s, "BodiesOutlined"_s, "BytesOutlined"_s,
-        "JumpsToNextFunctionRemoved"_s, "Veneers"_s, "StubCopiesEmitted"_s, "CodeBytesEmitted"_s, "TableBytesEmitted"_s, "LoopsVersioned"_s,
-        "LoopsRotated"_s, "LoopPollsStripMined"_s, "RangeChecksRemoved"_s, "LoopBoundsClamped"_s, "KnownInductionsUsed"_s,
-        "NullChecksFoldedIntoAccesses"_s, "ImageFunctionsEmitted"_s, "FrameShapesEmitted"_s, "CallSiteBytesEmitted"_s, "LargestSiteCountInFunction"_s,
-        "LargestInlineFrameCountInFunction"_s, "TextBytesEmitted"_s, "ConstantBytesEmitted"_s, "StringConstantsNumbered"_s, "IdentifiersNumbered"_s,
-        "RegExpsCompiled"_s, "RegExpsInterpreted"_s, "RegExpFramesElided"_s, "RegExpAtoms"_s, "RegExpCandidatesCompiled"_s,
-        "RegExpCandidatesDropped"_s, "RegExpAnalysisLimitHits"_s, "WasmFunctionsCompiled"_s, "WasmFunctionsInterpreted"_s,
-        "MaxFoldedStringBytesHits"_s, "MaxComputedSpecifierCandidatesHits"_s, "MaxDataNodesHits"_s, "MaxNestingDepthHits"_s, "MaxTypeNodesHits"_s,
-        "MaxValidationNodesHits"_s, "MaxExpectedResultLayoutsHits"_s, "MaxSupertypePairsHits"_s, "MaxCapturesHits"_s, "MaxProgramIdsHits"_s,
-        "MaxLayoutsInTypeHits"_s, "MaxLiteralsInTypeHits"_s, "MaxSymbolLiteralsInTypeHits"_s, "MaxClassesInTypeHits"_s, "MaxFunctionsInTypeHits"_s,
-        "MaxBuiltinsInTypeHits"_s, "MaxRegExpLiteralsInTypeHits"_s, "MaxWorkersHits"_s, "MaxInt32ProofWorkHits"_s, "MaxTypeValuesRoundsHits"_s,
-        "MaxEscapeAnalysisWorkHits"_s, "MaxUseEffectHistoryBitsHits"_s, "MaxGuardAvailabilityWorkHits"_s, "MaxBlocksForDominatorSelfCheckHits"_s,
-        "MaxFlowWorkPerFunctionHits"_s, "MaxFlowInstancesHits"_s, "MaxValueFlowEdgesLoggedHits"_s, "MaxValueFlowCopiedNodesPercentHits"_s,
-        "MaxFlowInstanceValuesHits"_s, "MaxNestedCallSiteInstancesHits"_s, "MaxNestedInstancesOfNewObjectsHits"_s, "MaxSitesPerLayoutHits"_s,
-        "MaxAppendedFieldsPerLayoutHits"_s, "MaxDerivedLayoutsPerFamilyHits"_s, "MaxCallSiteVersionValuesHits"_s, "MaxPositionalPartsHits"_s,
-        "MaxFlowRangeGrowthHits"_s, "MaxEscapedObjectsBesideUnknownHits"_s, "MaxGenericVersionGrowthPercentHits"_s,
-        "MinNarrowedUsesForGenericVersionHits"_s, "MaxOptimizationRoundsHits"_s, "MaxSinkingRoundsHits"_s, "MaxAccessPlanMembersHits"_s,
-        "MaxDispatchCasesHits"_s, "MaxDeclarationsPredictedFromNamesHits"_s, "MaxExpandedDataNodesHits"_s, "MaxArrayLiteralBatchHits"_s,
-        "MaxBlocksSearchedForLiteralStoresHits"_s, "MaxOutlinedOperandsHits"_s, "MaxOutlinedRegionValuesHits"_s, "MaxResultClonesHits"_s,
-        "MaxForwardingDepthHits"_s, "MaxPromotedParametersHits"_s, "MaxParameterWrapperValuesHits"_s, "MaxTestedTypesPerFunctionHits"_s,
-        "MaxGuardEliminationRoundsHits"_s, "MaxClonedBytesPerStretchHits"_s, "MaxBytesOfSeparatedLoopHits"_s, "MaxSeparatedLoopsPerFunctionHits"_s,
-        "MaxLoopVersionsHits"_s, "MaxContinuationsPerFunctionHits"_s, "MaxContinuationSizePercentHits"_s, "MaxFusedConcatenationPartsHits"_s,
-        "MaxReservedStackArgumentsHits"_s, "MaxArgumentRegistersHits"_s, "MaxThreadedBlockValuesHits"_s, "MaxThreadingReachabilityStepsHits"_s,
-        "MaxReadsPerSolveHits"_s, "MaxMergedReadPredecessorsHits"_s, "MaxVirtualObjectFieldsHits"_s, "MaxVirtualObjectVariantsHits"_s,
-        "MaxVirtualArrayLengthHits"_s, "MaxMaterializationsHits"_s, "MaxDuplicatedTailValuesHits"_s, "MaxCounterStepHits"_s,
-        "MaxIntegerRelationStepsHits"_s, "MaxFrameEnvironmentFieldsHits"_s, "MaxInlineDepthHits"_s, "MaxInlinedCallerBytesHits"_s,
-        "MaxInlineHeadBytesHits"_s, "MaxOnlyCallSiteBytesHits"_s, "InlineBudgetColdBytesHits"_s, "InlineBudgetWarmBytesHits"_s,
-        "InlineBudgetHotBytesHits"_s, "MaxHotCodeValuesHits"_s, "InlineSunkAllocationBytesHits"_s, "InlineCycleWeightHits"_s,
-        "MaxConditionChainLengthHits"_s, "MaxFusedArrayCapacityHits"_s, "MinAppendsForStringBuilderHits"_s, "MaxStringWebsPerFunctionHits"_s,
-        "MaxParserPlanNodesHits"_s, "MaxParsedObjectMembersHits"_s, "MaxExpandedKeyOrdersHits"_s, "MaxExpandedKeyFieldsHits"_s,
-        "MaxVersionedIterationBytesHits"_s, "MaxDestructuredElementsHits"_s, "MinRequestedJSONCapacityHits"_s, "MaxJSONLayoutSetMembersHits"_s,
-        "MaxBuiltinCallArgumentsHits"_s, "MaxPlannedArrayCapacityHits"_s, "MaxSelectionGroupSpanHits"_s, "MaxSelectionGroupMembersHits"_s,
-        "MaxNumberPathValuesHits"_s, "MinByIdsPerRunHits"_s, "MinSwitchCasesHits"_s, "MaxSwitchStringCasesHits"_s, "MaxSwitchCasesHits"_s,
-        "MaxInlineArrayLiteralLengthHits"_s, "MaxInlineSpliceInsertionsHits"_s, "MaxInlineConcatOperandsHits"_s, "MaxInlinePushOperandsHits"_s,
-        "MaxInlineTypedArrayCopyLengthHits"_s, "MaxInlineClearedElementsHits"_s, "MaxInlineStringCompareLengthHits"_s,
-        "MaxRegisterStringLengthHits"_s, "MaxLengthCopiedInlineHits"_s, "FieldsInKeyOrderHits"_s, "KeyOrdersPerLayoutHits"_s, "MaxShapesHits"_s,
-        "MaxShapeSetBitsHits"_s, "MaxIdentifiersHits"_s, "MaxFieldOffsetHits"_s, "MaxExtensionGranulesHits"_s, "MaxStaticsSizeHits"_s,
-        "MaxSiteCachesHits"_s, "MaxGuardBitsPerClassSideHits"_s, "MaxPropertyListNamesHits"_s, "MaxEvalBindingDepthHits"_s,
-        "MaxEvalBindingOffsetHits"_s, "MaxListedStringsHits"_s, "MaxLiteralStringsHits"_s, "MaxComparedCharactersPerCharacterHits"_s,
-        "MaxFrameSizeInBytesHits"_s, "MaxBarrierBlocksHits"_s, "MaxFrameMapRootsHits"_s, "MaxLandingPadsSearchedHits"_s,
-        "MaxClonedValuesPerLoopVersionHits"_s, "MaxValuesPerHotRegionHits"_s, "MaxBlocksScannedBeforeLoopHits"_s,
-        "MaxClonedValuesPerUnswitchedLoopHits"_s, "MaxClonedValuesPerExcursionHits"_s, "MaxValuesScannedForExecutedLoadHits"_s,
-        "MaxSourcesOfLoopTestHits"_s, "MaxRangeCheckBoundsPerLoopHits"_s, "MaxCopiedValuesPerRotatedLoopHits"_s, "MaxRareBlocksPerRotatedLoopHits"_s,
-        "MaxThreadedTestCopyCostHits"_s, "MaxThreadedPathCostHits"_s, "MaxBlocksOnThreadedPathHits"_s, "MaxThreadedTestDepthHits"_s,
-        "MaxPredecessorsForConditionQueriesHits"_s, "MaxConditionQueriesPerBlockHits"_s, "MaxSelectNestingDepthHits"_s,
-        "MaxSpeculatedValuesPerSelectHits"_s, "MaxSelectsPerJoinHits"_s, "MaxValuesSearchedForDominatingLoadHits"_s, "MaxLoopsLeftBySinkingHits"_s,
-        "MaxHoistedLoadsPerLoopHits"_s, "MaxLivenessStepsPerBlockHits"_s, "MaxLinearDominatorStepsHits"_s, "MaxSlotsForDenseInterferenceHits"_s,
-        "MaxBlocksPerPlacedConstantHits"_s, "MaxRangeAnalysisDepthHits"_s, "MaxRecordedWritesPerMemoryStateHits"_s, "MaxLeavesToRebalanceHits"_s,
-        "MaxBitTestTargetsHits"_s, "MaxCompareChainSearchSizeHits"_s, "MaxClobberSitesPerSplitHits"_s, "ClosureAllocationSitesHits"_s,
-        "ImageFunctionsHits"_s, "CodeBytesHits"_s, "SitesPerFunctionHits"_s, "InlineFramesPerFunctionHits"_s, "DirectCallReachHits"_s,
-        "FunctionCallReachHits"_s, "TableBytesHits"_s, "VectorBytesHits"_s, "UncheckedStackBytesHits"_s, "RegExpPatternLengthWithCodeHits"_s,
-        "RegExpNestingDepthWithCodeHits"_s, "RegExpCandidateCodeBytesPerSiteHits"_s, "RegExpCandidateTextLengthHits"_s, "RegExpSectionSizeHits"_s,
-        "RegExpClassTableClusterSizeHits"_s, "WasmImageCodeSizeHits"_s, "LookupTableNamesHits"_s, "LookupTableBasesHits"_s,
-        "HashedTableEntriesHits"_s, "CustomAccessorRecordsHits"_s, "ForeignCallbackStubsHits"_s, "PromisesWalkedPerImportHits"_s,
-        "BranchCountersHits"_s, "MaxNamesComparedWithLongKeyHits"_s, "MinLongKeyUnitsPerPieceHits"_s, "LongKeyExtraPiecesHits"_s,
-        "MaxCachedKeyLengthHits"_s, "MaxCapacityGrownByStubHits"_s, "MaxOpenJSONSourcesHits"_s, "MinStringBuilderCapacityHits"_s,
-        "MaxRetainedStringBuilderCapacityHits"_s, "MinLengthAppendedByReferenceHits"_s, "MinLengthAdoptedByFinishHits"_s,
-        "MaxPooledStringBuildersHits"_s, "MaxStringBuilderSegmentsHits"_s, "MinRopeJoinLengthHits"_s, "MinRopeJoinUnitsPerElementHits"_s,
-        "MaxReservedArrayCapacityHits"_s, "AdmitAssertedObjectsChanges"_s, "TypeValuesChanges"_s, "CheckInt32PromisesChanges"_s,
-        "VerifyProgramChanges"_s, "CheckRegExpLiteralsChanges"_s, "AnalyzeFlowChanges"_s, "ApplyFlowResultsChanges"_s,
-        "CheckLockedBuiltinWritesChanges"_s, "BuildCallGraphChanges"_s, "ComputeEffectSummariesChanges"_s, "EstimateHeatChanges"_s,
-        "SummarizeForInliningChanges"_s, "RemoveUnreadExportsChanges"_s, "PromoteEnvironmentsToVariablesChanges"_s, "DeferDefinitionsChanges"_s,
-        "RemoveUnreadFieldsChanges"_s, "RemoveUnusedResultsChanges"_s, "RemoveUnusedParametersChanges"_s, "RemoveUnreachableFunctionsChanges"_s,
-        "SplitFreshResultsChanges"_s, "PromoteAggregateParametersChanges"_s, "SplitCoroutinesChanges"_s, "CreateEntrypointsChanges"_s,
-        "GroupCallsByValueChanges"_s, "ChooseCallingConventionsChanges"_s, "DeferClosuresInFieldsChanges"_s, "AllocateInFramesChanges"_s,
-        "ReuseEnvironmentsChanges"_s, "NumberLiteralStringsChanges"_s, "EmbedConstantCollectionsChanges"_s, "CollectRegExpLiteralsChanges"_s,
-        "OutlineColdOperationsChanges"_s, "SplitFunctionsAtCallsChanges"_s, "ElideStackChecksChanges"_s, "ResolveBuiltinsChanges"_s,
-        "ResolveCallsChanges"_s, "ResolveAccessesChanges"_s, "SplitUnionsChanges"_s, "PlaceTypeTestsChanges"_s, "ExpandIterationChanges"_s,
-        "ExpandOwnKeysChanges"_s, "SelectTypedResultsChanges"_s, "RetypeValuesChanges"_s, "InlineCallsChanges"_s, "SimplifyCastsChanges"_s,
-        "SinkAllocationsChanges"_s, "EliminateRedundantReadsChanges"_s, "EliminateGuardsChanges"_s, "SeparateUnlikelyLoopPathsChanges"_s,
-        "ConvertCountersToIntegersChanges"_s, "RemoveDeadCountedLoopsChanges"_s, "FuseArrayChainsChanges"_s, "FuseGeneratorLoopsChanges"_s,
-        "CreateStringBuildersChanges"_s, "FuseConcatenationsChanges"_s, "ExpandDataChanges"_s, "FoldConstantsChanges"_s,
-        "SimplifyControlFlowChanges"_s, "RemoveTrivialParametersChanges"_s, "PropagateBranchConditionsChanges"_s,
-        "HoistTestsIntoPredecessorsChanges"_s, "ThreadJumpsChanges"_s, "InferSwitchesChanges"_s, "EliminateDeadCodeChanges"_s,
-        "MergeDuplicateBlocksChanges"_s, "CompactBlocksChanges"_s, "RemoveRedundantHandlersChanges"_s, "HoistLoopInvariantReadsChanges"_s,
-        "SimplifyBuiltinCallsChanges"_s, "ReduceIntegerDivisionsChanges"_s, "PlanArrayCapacitiesChanges"_s, "FoldConstantRegExpsChanges"_s,
-        "ShareRegExpLiteralsChanges"_s, "InsertObjectCoercibleChecksChanges"_s, "EliminateTailRecursionChanges"_s, "ResolveAwaitedCallsChanges"_s,
-        "SinkConstantsChanges"_s, "ExpandLongArrayLiteralsChanges"_s, "PlanSlotsChanges"_s, "SelectChanges"_s, "NumberAndEncodeChanges"_s,
-        "PlaceSiteCachesChanges"_s, "CheckPlacementChanges"_s, "ChooseRepresentationsChanges"_s, "RemoveRedundantBarriersChanges"_s,
-        "GenerateCodeChanges"_s, "PlannedSlotsGroups"_s, "ClassDefinitionGroups"_s, "DescriptorLiteralGroups"_s, "AccessorGroupGroups"_s,
-        "SlotStoreRunGroups"_s, "PropertyRunGroups"_s, "MethodCallGroups"_s, "CheckedPropertyReadGroups"_s, "PropertyReadAndTestGroups"_s,
-        "EncodedVariableTestGroups"_s, "PropertyChainGroups"_s, "PropertyPairGroups"_s, "SubstringViewGroups"_s, "SwitchStringGroups"_s,
-        "SwitchNumberGroups"_s, "StringLiteralFormsGroups"_s, "HoistStringCharactersGroups"_s, "SharedStringOrderGroups"_s, "IntegerBoundGroups"_s,
-        "FreshPromiseFulfillmentGroups"_s, "ResolvedCallTargetGroups"_s, "RegExpLiteralMatchGroups"_s, "ThrowNewErrorGroups"_s,
-        "InlineBuiltinGroups"_s, "StringBuilderPartsGroups"_s, "ArrayLiteralStorageGroups"_s, "DataEncodingGroups"_s, "ClosureFormGroups"_s,
-        "NumberPathsGroups"_s, "OperatorFormGroups"_s, "TestAndBranchGroups"_s, "LoadNanoseconds"_s, "BindModulesNanoseconds"_s, "CheckNanoseconds"_s,
-        "LowerNanoseconds"_s, "LinkAndEmitNanoseconds"_s, "ReadAndVerifyNanoseconds"_s, "AnalyzeFlowNanoseconds"_s, "OptimizeNanoseconds"_s,
-        "PlanSlotsNanoseconds"_s, "SelectNanoseconds"_s, "NumberAndEncodeNanoseconds"_s, "ChooseRepresentationsNanoseconds"_s,
-        "GenerateCodeNanoseconds"_s, "BuildImageNanoseconds"_s, "RunTimeNanoseconds"_s
+    static constexpr EnumeratorNames<958, 25271> names {
+        {
+            0, 5, 24, 44, 65, 81, 100, 119, 131, 143, 161, 183, 198, 220, 242, 270, 293, 306, 323, 344, 361, 384, 397, 427, 452, 485, 505, 541, 574,
+            604, 635, 662, 695, 711, 733, 756, 770, 795, 814, 833, 861, 888, 916, 945, 968, 996, 1022, 1047, 1071, 1096, 1116, 1138, 1158, 1180, 1202,
+            1226, 1244, 1264, 1287, 1306, 1327, 1348, 1374, 1405, 1427, 1464, 1479, 1495, 1511, 1523, 1537, 1548, 1569, 1586, 1599, 1612, 1629, 1646,
+            1659, 1680, 1699, 1720, 1736, 1751, 1770, 1795, 1824, 1843, 1875, 1903, 1936, 1956, 1988, 2019, 2060, 2084, 2117, 2145, 2163, 2196, 2223,
+            2243, 2264, 2288, 2308, 2325, 2343, 2360, 2377, 2383, 2400, 2420, 2448, 2476, 2512, 2539, 2566, 2587, 2617, 2647, 2678, 2702, 2727, 2753,
+            2781, 2803, 2838, 2866, 2884, 2906, 2928, 2946, 2965, 3000, 3024, 3050, 3073, 3097, 3119, 3135, 3147, 3175, 3203, 3228, 3247, 3272, 3289,
+            3306, 3322, 3350, 3376, 3397, 3414, 3426, 3449, 3475, 3497, 3524, 3549, 3573, 3596, 3613, 3638, 3661, 3681, 3705, 3734, 3760, 3789, 3812,
+            3831, 3847, 3881, 3906, 3934, 3960, 3992, 4012, 4034, 4055, 4080, 4102, 4134, 4160, 4185, 4215, 4248, 4274, 4298, 4331, 4358, 4386, 4412,
+            4433, 4452, 4473, 4487, 4508, 4521, 4534, 4553, 4574, 4601, 4622, 4643, 4670, 4689, 4706, 4719, 4734, 4749, 4765, 4782, 4802, 4831, 4848,
+            4870, 4891, 4911, 4931, 4957, 4987, 5013, 5033, 5054, 5081, 5097, 5112, 5131, 5149, 5167, 5191, 5214, 5241, 5271, 5291, 5316, 5331, 5354,
+            5360, 5372, 5386, 5402, 5420, 5441, 5448, 5469, 5484, 5500, 5517, 5539, 5560, 5576, 5591, 5624, 5656, 5677, 5698, 5719, 5737, 5758, 5778,
+            5792, 5806, 5821, 5833, 5854, 5881, 5909, 5920, 5944, 5974, 6003, 6034, 6064, 6091, 6107, 6134, 6155, 6171, 6193, 6226, 6257, 6279, 6309,
+            6343, 6358, 6378, 6402, 6424, 6445, 6471, 6501, 6533, 6563, 6591, 6614, 6637, 6662, 6690, 6715, 6742, 6767, 6793, 6815, 6838, 6853, 6863,
+            6881, 6897, 6909, 6934, 6949, 6963, 6990, 6998, 7016, 7048, 7097, 7114, 7132, 7147, 7160, 7179, 7197, 7217, 7244, 7271, 7300, 7337, 7359,
+            7378, 7399, 7426, 7460, 7477, 7504, 7530, 7554, 7577, 7598, 7622, 7644, 7666, 7691, 7714, 7741, 7766, 7791, 7816, 7839, 7865, 7890, 7913,
+            7937, 7954, 7975, 7995, 8018, 8041, 8062, 8081, 8102, 8126, 8146, 8162, 8181, 8200, 8212, 8237, 8261, 8285, 8307, 8332, 8362, 8395, 8420,
+            8455, 8472, 8492, 8509, 8532, 8561, 8583, 8605, 8621, 8639, 8660, 8682, 8710, 8731, 8754, 8776, 8804, 8819, 8841, 8865, 8891, 8919, 8948,
+            8983, 9011, 9038, 9071, 9102, 9128, 9152, 9173, 9192, 9217, 9238, 9276, 9301, 9326, 9364, 9388, 9416, 9436, 9459, 9485, 9515, 9544, 9573,
+            9603, 9633, 9662, 9692, 9722, 9757, 9785, 9818, 9849, 9889, 9919, 9944, 9971, 10005, 10026, 10056, 10083, 10112, 10138, 10162, 10190,
+            10209, 10237, 10267, 10291, 10310, 10336, 10359, 10389, 10415, 10440, 10466, 10492, 10517, 10538, 10560, 10590, 10612, 10640, 10666,
+            10697, 10726, 10749, 10776, 10801, 10826, 10857, 10885, 10914, 10942, 10970, 10998, 11024, 11053, 11077, 11096, 11115, 11140, 11159,
+            11191, 11221, 11249, 11275, 11291, 11325, 11354, 11384, 11417, 11445, 11471, 11492, 11515, 11529, 11549, 11568, 11587, 11612, 11631,
+            11649, 11671, 11700, 11725, 11749, 11774, 11795, 11817, 11855, 11887, 11911, 11932, 11953, 11980, 12014, 12040, 12071, 12108, 12140,
+            12176, 12201, 12232, 12266, 12298, 12326, 12350, 12378, 12403, 12442, 12474, 12500, 12533, 12555, 12594, 12620, 12647, 12676, 12704,
+            12737, 12768, 12794, 12830, 12855, 12877, 12907, 12935, 12962, 12981, 12995, 13016, 13044, 13064, 13086, 13101, 13117, 13141, 13173,
+            13204, 13240, 13268, 13298, 13320, 13352, 13374, 13395, 13416, 13439, 13465, 13490, 13518, 13537, 13569, 13597, 13620, 13643, 13670,
+            13693, 13722, 13759, 13792, 13821, 13849, 13878, 13900, 13931, 13960, 13994, 14023, 14048, 14066, 14092, 14113, 14140, 14164, 14190,
+            14219, 14238, 14262, 14294, 14316, 14346, 14366, 14394, 14421, 14459, 14483, 14514, 14539, 14575, 14601, 14628, 14658, 14692, 14722,
+            14753, 14778, 14812, 14835, 14854, 14879, 14911, 14940, 14967, 14991, 15019, 15044, 15072, 15104, 15133, 15162, 15191, 15210, 15234,
+            15259, 15282, 15305, 15335, 15355, 15378, 15397, 15419, 15442, 15472, 15493, 15519, 15539, 15558, 15579, 15602, 15633, 15656, 15689,
+            15722, 15752, 15775, 15801, 15835, 15863, 15889, 15907, 15928, 15955, 15986, 16019, 16053, 16083, 16102, 16123, 16148, 16176, 16197,
+            16228, 16259, 16287, 16317, 16344, 16376, 16403, 16430, 16465, 16495, 16522, 16543, 16574, 16594, 16625, 16659, 16676, 16690, 16713,
+            16736, 16758, 16787, 16818, 16838, 16874, 16906, 16931, 16964, 16992, 17026, 17057, 17090, 17126, 17152, 17183, 17222, 17251, 17288,
+            17315, 17350, 17384, 17429, 17460, 17498, 17530, 17573, 17606, 17640, 17677, 17718, 17755, 17793, 17825, 17866, 17896, 17922, 17954,
+            17993, 18029, 18063, 18094, 18129, 18161, 18196, 18235, 18271, 18307, 18343, 18369, 18400, 18432, 18462, 18492, 18529, 18556, 18586,
+            18612, 18641, 18671, 18708, 18736, 18769, 18796, 18822, 18850, 18880, 18918, 18948, 18988, 19028, 19065, 19095, 19128, 19169, 19204,
+            19237, 19262, 19290, 19324, 19362, 19402, 19443, 19480, 19506, 19534, 19566, 19601, 19629, 19667, 19705, 19740, 19777, 19811, 19850,
+            19884, 19918, 19960, 19997, 20031, 20059, 20097, 20124, 20162, 20203, 20227, 20248, 20278, 20308, 20337, 20373, 20411, 20438, 20476,
+            20510, 20537, 20572, 20602, 20638, 20671, 20706, 20744, 20772, 20805, 20846, 20877, 20916, 20945, 20982, 21018, 21065, 21098, 21138,
+            21172, 21217, 21252, 21288, 21327, 21370, 21409, 21449, 21483, 21526, 21558, 21586, 21620, 21661, 21699, 21735, 21768, 21805, 21839,
+            21876, 21917, 21955, 21993, 22031, 22059, 22092, 22126, 22158, 22190, 22229, 22258, 22290, 22318, 22349, 22381, 22420, 22450, 22485,
+            22514, 22542, 22572, 22604, 22644, 22676, 22718, 22760, 22799, 22831, 22866, 22909, 22946, 22981, 23008, 23038, 23074, 23114, 23156,
+            23199, 23238, 23266, 23296, 23330, 23367, 23397, 23437, 23477, 23514, 23553, 23589, 23630, 23666, 23702, 23746, 23785, 23821, 23851,
+            23891, 23920, 23960, 24003, 24029, 24052, 24084, 24116, 24147, 24185, 24225, 24254, 24273, 24295, 24319, 24339, 24358, 24376, 24393,
+            24419, 24445, 24465, 24484, 24504, 24523, 24542, 24567, 24595, 24619, 24638, 24668, 24687, 24712, 24737, 24757, 24778, 24798, 24823,
+            24849, 24868, 24886, 24904, 24923, 24943, 24959, 24982, 24999, 25016, 25039, 25064, 25087, 25107, 25128, 25146, 25173, 25206, 25230, 25252
+        },
+        "None\0" "SourceFilesChecked\0" "SourceFilesInferred\0" "SourceFilesTypesOnly\0" "SourceFilesData\0" "SourceFilesRuntime\0"
+        "SourceFilesDemoted\0" "SourceBytes\0" "SourceLines\0" "TypedVersionsUsed\0" "TypedVersionsRejected\0" "CheckerQueries\0"
+        "CheckerQueriesGivenUp\0" "CheckerMembersGivenUp\0" "BuiltinTypesDegradedToViews\0" "SchemaArgumentsDropped\0" "ModulesBound\0"
+        "FunctionsLowered\0" "KnownHelperFunctions\0" "KnownHelperCalls\0" "FunctionsDroppedByLink\0" "ProgramBytes\0"
+        "LoadRuntimeProjectNanoseconds\0" "LinkMergeKeysNanoseconds\0" "LinkChooseDefinitionsNanoseconds\0" "LinkMarkNanoseconds\0"
+        "LinkMergeStringsAndTypesNanoseconds\0" "LinkMergePropertyKeysNanoseconds\0" "LinkBuildTypeTableNanoseconds\0"
+        "LinkMoveDefinitionsNanoseconds\0" "LinkNameProgramNanoseconds\0" "ReleaseLoadedProjectsNanoseconds\0" "EmitNanoseconds\0"
+        "EngineCallNanoseconds\0" "AfterEngineNanoseconds\0" "TypesInterned\0" "ProvisionalTypesInterned\0" "LayoutSetsInterned\0"
+        "CalleeSetsInterned\0" "FunctionTypesWithoutMembers\0" "FunctionTypesWithOneMember\0" "FunctionTypesWithFewMembers\0"
+        "FunctionTypesWithManyMembers\0" "TaggedLayoutsAllocated\0" "TaggedLayoutsNeverAllocated\0" "RequestsResolvedToNothing\0"
+        "RequestsResolvedToUpcast\0" "RequestsResolvedToCheck\0" "ConversionsOutsideFamily\0" "FlowAllocationSites\0" "FlowAllocationClasses\0"
+        "FlowProvenPositions\0" "FlowUnprovenPositions\0" "FlowNarrowedPositions\0" "FlowProvenContentsSites\0" "FlowRemovedChecks\0"
+        "FlowRemainingChecks\0" "FlowUnreachedFunctions\0" "FlowAppendedFields\0" "FlowSetsOutsideTypes\0" "LayoutsOutsideFamily\0"
+        "FlowCallsOfUnknownCallees\0" "FlowAccessesOfUnknownReceivers\0" "FieldsNarrowedToInt32\0" "InitialValuesStoredBehindAllocations\0"
+        "AccessesProven\0" "AccessesGuarded\0" "AccessesUnknown\0" "DirectCalls\0" "IndirectCalls\0" "TableCalls\0" "MethodTableSelectors\0"
+        "MethodTableBytes\0" "ClosuresFull\0" "ClosuresSlim\0" "ClosuresDeferred\0" "ClosuresInFrames\0" "ClosuresLent\0" "ClosuresNeverCreated\0"
+        "EnvironmentsOnHeap\0" "EnvironmentsInFrames\0" "ObjectsInFrames\0" "ArraysInFrames\0" "RestArraysInFrames\0" "EmptyArgumentListsShared\0"
+        "EnvironmentsMaterializedLate\0" "EnvironmentsReused\0" "EnvironmentsPromotedToVariables\0" "CapturesPromotedToVariables\0"
+        "FunctionsWithTypesCheckedAtEntry\0" "TypesCheckedAtEntry\0" "FunctionsSplitBehindEntryChecks\0" "ResultsProvenBehindEntryChecks\0"
+        "GenericVersionsBehindEntryChecksCompiled\0" "ShorterEntrancesCreated\0" "CallsThatSkipAnsweredEntryChecks\0" "AggregateParametersPromoted\0"
+        "FreshResultsSplit\0" "FreshResultsKeptWholeForClosures\0" "ResultsReturnedInRegisters\0" "ResultClonesCreated\0" "UnusedResultsRemoved\0"
+        "UnusedParametersRemoved\0" "ModulesWithoutState\0" "ModulesWithState\0" "RequireSitesBound\0" "ModulesWithNames\0" "ModulesWithValue\0"
+        "Faces\0" "RequiresRecorded\0" "UnreadFieldsRemoved\0" "UnreadVariableStoresRemoved\0" "ClosuresDeferredInVariables\0"
+        "ClosuresDeferredInEnvironmentFields\0" "ClassesDeferredInVariables\0" "RegExpsDeferredInVariables\0" "InitializersDeferred\0"
+        "VariablesFilledByInitializers\0" "VariablesAddedForInitializers\0" "DeadZonesKeptBesideDefinitions\0" "FieldsDeferringClosures\0"
+        "ClosuresDeferredInFields\0" "StoresListedByAllocations\0" "UnreachableFunctionsRemoved\0" "FunctionsStartedEarly\0"
+        "FunctionsStartedEarlyButNotReached\0" "ConstantCollectionsEmbedded\0" "ColdSitesOutlined\0" "OutlinedBodiesCreated\0"
+        "BodySummariesComputed\0" "BodySummariesKept\0" "EffectSummaryNodes\0" "EffectSummaryNodesInAndAboveCycles\0" "FunctionsTypedFromNever\0"
+        "FunctionsTypedFromChanges\0" "FunctionsTypedAsBefore\0" "FunctionPassRunsSkipped\0" "ChangesBehindSimplify\0" "EffectsComputed\0"
+        "EffectsKept\0" "StackChecksCoveredByCallers\0" "StackChecksDeferredToCallee\0" "TailRecursionsEliminated\0" "ReturnCallsDemoted\0"
+        "ResultsBoxedForTailCalls\0" "SecondaryEntries\0" "StretchesGuarded\0" "TypeTestsPlaced\0" "TypeTestsPlacedOnClosedSets\0"
+        "TypeTestsPlacedOnOpenSets\0" "StretchesNotClonable\0" "GuardsEliminated\0" "UnionsSplit\0" "GenericVersionsCreated\0"
+        "GenericVersionsNotCreated\0" "ExitsToGenericVersion\0" "WaysBackFromGenericVersion\0" "RestartsInGenericVersion\0"
+        "BlocksInGenericVersions\0" "ChecksReplacedByGuards\0" "TaintedPositions\0" "ChecksOnTaintedPositions\0" "PositionsProvenByTypes\0"
+        "ChecksProvenByTypes\0" "StretchCopiesToWaysBack\0" "StretchCopiesToEndOfFunction\0" "WaysBackFromStretchCopies\0"
+        "WaysBackNotMadeForSizeOfCopy\0" "TestsOnWaysBackNotMade\0" "AllocationsRemoved\0" "AllocationsSunk\0" "AllocationsBuiltApartOnRarerPaths\0"
+        "AllocationsMergedAtJoins\0" "StoresFoldedIntoAllocations\0" "TailsDuplicatedForSinking\0" "LoopsSeparatedFromUnlikelyPaths\0"
+        "LoopsWithoutWayBack\0" "InlineDecisionUnknown\0" "InlineDecisionInline\0" "InlineDecisionInlineHead\0" "InlineDecisionBarrier\0"
+        "InlineDecisionSignatureMismatch\0" "InlineDecisionClosesCycle\0" "InlineDecisionDepthLimit\0" "InlineDecisionCallerSizeLimit\0"
+        "InlineDecisionCostExceedsBenefit\0" "InlineBenefitCallOverhead\0" "InlineBenefitFoldedCode\0" "InlineBenefitKnownCalleeArgument\0"
+        "InlineBenefitKnownReceiver\0" "InlineBenefitSunkAllocation\0" "InlineBenefitOnlyCallSite\0" "InlineBenefitWrapper\0" "SelectedHeadsFound\0"
+        "SelectedHeadsInlined\0" "CallsResolved\0" "RestArraysHandedOver\0" "CallsGuarded\0" "DispatchArms\0" "ConstructsResolved\0"
+        "AwaitedCallsResolved\0" "AwaitsSunkIntoPredecessors\0" "BuiltinReadsResolved\0" "BuiltinCallsResolved\0" "BuiltinConversionsInserted\0"
+        "GenericEntrypoints\0" "TableEntrypoints\0" "TableLookups\0" "BoundFunctions\0" "CalleeVersions\0" "CoroutinesSplit\0" "AsyncWorkersMade\0"
+        "GeneratorLoopsFused\0" "GeneratorsStartedAtFirstStep\0" "ArrayChainsFused\0" "StringBuildersCreated\0" "StringBuildersJoined\0"
+        "ConcatenationsFused\0" "ResultsMarkedAsKeys\0" "IterationsExpandedByClass\0" "IterationsExpandedGenerically\0" "EnumeratedKeyUsesResolved\0"
+        "OwnKeyWalksExpanded\0" "TypedResultsSelected\0" "LiteralArgumentsTakenApart\0" "URLsLeftUnbuilt\0" "ParsersCreated\0" "SerializersCreated\0"
+        "ValidatorsCreated\0" "CountersConverted\0" "IntegerDivisionsReduced\0" "ArrayCapacitiesPlanned\0" "ElementPresenceTestsPlaced\0"
+        "IntegerArrayConversionsPlaced\0" "ArrayGrowthsPlanned\0" "CollectionGrowthsPlanned\0" "ArraysNarrowed\0" "LiteralStringsNumbered\0" "Slots\0"
+        "SharedSlots\0" "SharesRefused\0" "FieldsOutOfLine\0" "HiddenWordsPlaced\0" "DeferredClosureSlots\0" "Shapes\0" "ShapeTestNeverPasses\0"
+        "ShapeTestRange\0" "ShapeTestBitSet\0" "SiteCachesPlaced\0" "SitesWithoutSiteCache\0" "GlobalBindingsPlaced\0" "GuardBitsPlaced\0"
+        "RequestsShared\0" "ClassMembersCreatedByClassRecord\0" "ClassMembersCreatedAtDefinition\0" "ClassesCreatedLazily\0" "SlimClosureFunctions\0"
+        "FullClosureFunctions\0" "KeysWithoutColumn\0" "TypeSiteTextsLeftOut\0" "ConversionsInserted\0" "ValuesInInt32\0" "ValuesInInt64\0"
+        "ValuesInDouble\0" "ValuesBoxed\0" "ReferencesCompressed\0" "ExactIntegersBehindNumbers\0" "NumbersUnboxedWithoutBranch\0" "ThrowSites\0"
+        "ShortStringsReadInPlace\0" "StringLiteralsComparedInPlace\0" "StringPositionsWithKnownSign\0" "CopyOnWriteArraysCreatedInline\0"
+        "NativeFunctionsCalledDirectly\0" "NativeFunctionTestsEmitted\0" "BarriersEmitted\0" "BarriersOnUnmarkableOwners\0" "BarriersCoveredLater\0"
+        "SuspensionRoots\0" "NarrowReferenceGuards\0" "NarrowReferencesAcrossSafepoints\0" "NarrowReferencesStoredInFrames\0"
+        "FunctionsWithoutFrame\0" "FunctionsWithFrameOnSomePaths\0" "FunctionsEnteredWithoutStackCheck\0" "BirthsFinished\0" "BirthsLeftToRunTime\0"
+        "LayoutsWithInnerObjects\0" "InnerObjectsAllocated\0" "InnerArraysAllocated\0" "InnerObjectsAlwaysInPlace\0" "FieldsHoldingFlattenedObjects\0"
+        "FieldsDeferringFlattenedObjects\0" "AllocationsOfFlattenedObjects\0" "ReadsMakingFlattenedObjects\0" "SwitchesTestedByWindow\0"
+        "ProgramTableBytesTypes\0" "ProgramTableBytesLayouts\0" "ProgramTableBytesFieldTable\0" "ProgramTableBytesStatics\0"
+        "ProgramTableBytesFunctions\0" "ProgramTableBytesModules\0" "ProgramTableBytesRequests\0" "ProgramTableBytesData\0" "ProgramTableBytesOther\0"
+        "StubsGenerated\0" "StubBytes\0" "CodeUnitsRecorded\0" "FunctionsFolded\0" "BytesFolded\0" "JumpOnlyFunctionsRemoved\0" "BodiesOutlined\0"
+        "BytesOutlined\0" "JumpsToNextFunctionRemoved\0" "Veneers\0" "StubCopiesEmitted\0" "BytesGeneratedInHotAndWarmBands\0"
+        "BytesGeneratedOutsideColdBlocksInHotAndWarmBands\0" "CodeBytesEmitted\0" "TableBytesEmitted\0" "LoopsVersioned\0" "LoopsRotated\0"
+        "RangeChecksRemoved\0" "LoopBoundsClamped\0" "KnownInductionsUsed\0" "FunctionsGeneratedDirectly\0" "DirectGenerationsAbandoned\0"
+        "NullChecksFoldedIntoAccesses\0" "ReferencesPublishedAsDereferenceable\0" "ImageFunctionsEmitted\0" "FrameShapesEmitted\0"
+        "CallSiteBytesEmitted\0" "LargestSiteCountInFunction\0" "LargestInlineFrameCountInFunction\0" "TextBytesEmitted\0"
+        "FunctionRecordBytesEmitted\0" "FunctionStartBytesEmitted\0" "CodeGranuleBytesEmitted\0" "InnerEntryBytesEmitted\0" "FrameMapBytesEmitted\0"
+        "ClosureWordBytesEmitted\0" "FaultSiteBytesEmitted\0" "SideTableBytesEmitted\0" "StringRecordBytesEmitted\0" "IdentifierBytesEmitted\0"
+        "StringConstantBytesEmitted\0" "StringHeaderBytesEmitted\0" "RegExpRecordBytesEmitted\0" "ProgramTableBytesEmitted\0"
+        "OtherTableBytesEmitted\0" "SideTableBytesFrameRanges\0" "SideTableBytesReferences\0" "SideTableBytesHandlers\0" "SideTableBytesPositions\0"
+        "CallSitesEmitted\0" "SitePositionsEmitted\0" "InlineFramesEmitted\0" "SharedCodeBytesEmitted\0" "RegExpCodeBytesEmitted\0"
+        "LayoutRecordsEmitted\0" "TypeRecordsEmitted\0" "ConstantBytesEmitted\0" "StringConstantsNumbered\0" "IdentifiersNumbered\0"
+        "RegExpsCompiled\0" "RegExpsInterpreted\0" "RegExpFramesElided\0" "RegExpAtoms\0" "RegExpCandidatesCompiled\0" "RegExpCandidatesDropped\0"
+        "RegExpAnalysisLimitHits\0" "WasmFunctionsCompiled\0" "WasmFunctionsInterpreted\0" "WebAssemblyModulesFoundInText\0"
+        "WebAssemblyModulesInTextDeclined\0" "MaxFoldedStringBytesHits\0" "MaxComputedSpecifierCandidatesHits\0" "MaxDataNodesHits\0"
+        "MaxNestingDepthHits\0" "MaxTypeNodesHits\0" "MaxValidationNodesHits\0" "MaxExpectedResultLayoutsHits\0" "MaxSupertypePairsHits\0"
+        "MaxInferenceNodesHits\0" "MaxCapturesHits\0" "MaxProgramIdsHits\0" "MaxLayoutsInTypeHits\0" "MaxLiteralsInTypeHits\0"
+        "MaxSymbolLiteralsInTypeHits\0" "MaxClassesInTypeHits\0" "MaxFunctionsInTypeHits\0" "MaxBuiltinsInTypeHits\0" "MaxRegExpLiteralsInTypeHits\0"
+        "MaxWorkersHits\0" "MaxInt32ProofWorkHits\0" "MaxTypeValuesRoundsHits\0" "MaxEscapeAnalysisWorkHits\0" "MaxUseEffectHistoryBitsHits\0"
+        "MaxGuardAvailabilityWorkHits\0" "MaxBlocksForDominatorSelfCheckHits\0" "MaxValueFlowEdgesLoggedHits\0" "MaxValueFlowSetMembersHits\0"
+        "MaxValueFlowMembersToldApartHits\0" "MaxAppendedFieldsPerLayoutHits\0" "MaxOptimizationRoundsHits\0" "MaxOptimizationWorkHits\0"
+        "MaxSinkingRoundsHits\0" "MaxSinkingWorkHits\0" "MaxAccessPlanMembersHits\0" "MaxDispatchCasesHits\0"
+        "MaxDeclarationsPredictedFromNamesHits\0" "MaxExpandedDataNodesHits\0" "MaxArrayLiteralBatchHits\0" "MaxBlocksSearchedForLiteralStoresHits\0"
+        "MaxOutlinedOperandsHits\0" "MaxOutlinedRegionValuesHits\0" "MaxResultClonesHits\0" "MaxForwardingDepthHits\0" "MaxPromotedParametersHits\0"
+        "MaxParameterWrapperValuesHits\0" "MaxValuesInCalleeVersionHits\0" "MaxBytesOfCalleeVersionsHits\0" "MaxTestedTypesPerFunctionHits\0"
+        "MaxGuardEliminationRoundsHits\0" "MaxClonedBytesPerStretchHits\0" "MaxBlocksInGenericVersionHits\0" "MaxGenericVersionJoinWorkHits\0"
+        "MaxBlocksCopiedBehindStretchesHits\0" "MaxBytesOfSeparatedLoopHits\0" "MaxSeparatedLoopsPerFunctionHits\0" "MaxFusedConcatenationPartsHits\0"
+        "MaxBlocksBetweenFusedConcatenationsHits\0" "MaxReservedStackArgumentsHits\0" "MaxArgumentRegistersHits\0" "MaxThreadedBlockValuesHits\0"
+        "MaxThreadingReachabilityStepsHits\0" "MaxReadsPerSolveHits\0" "MaxMergedReadPredecessorsHits\0" "MaxVirtualObjectFieldsHits\0"
+        "MaxVirtualObjectVariantsHits\0" "MaxVirtualArrayLengthHits\0" "MaxMaterializationsHits\0" "MaxDuplicatedTailValuesHits\0"
+        "MaxCounterStepHits\0" "MaxIntegerRelationStepsHits\0" "MaxFrameEnvironmentFieldsHits\0" "MaxFrameArrayLengthHits\0" "MaxInlineDepthHits\0"
+        "MaxInlinedCallerBytesHits\0" "MaxInlineHeadBytesHits\0" "MaxSelectedHeadOperationsHits\0" "MaxSelectedHeadBlocksHits\0"
+        "MaxOnlyCallSiteBytesHits\0" "InlineBudgetColdBytesHits\0" "InlineBudgetWarmBytesHits\0" "InlineBudgetHotBytesHits\0" "MaxHotCodeValuesHits\0"
+        "MaxWarmCodeValuesHits\0" "InlineSunkAllocationBytesHits\0" "InlineCycleWeightHits\0" "MaxConditionChainLengthHits\0"
+        "MaxFusedArrayCapacityHits\0" "MinAppendsForStringBuilderHits\0" "MaxStringWebsPerFunctionHits\0" "MaxParserPlanNodesHits\0"
+        "MaxParsedObjectMembersHits\0" "MaxExpandedKeyOrdersHits\0" "MaxExpandedKeyFieldsHits\0" "MaxVersionedIterationBytesHits\0"
+        "MaxDestructuredElementsHits\0" "MinRequestedJSONCapacityHits\0" "MaxJSONLayoutSetMembersHits\0" "MaxBuiltinCallArgumentsHits\0"
+        "MaxPlannedArrayCapacityHits\0" "MaxSelectionGroupSpanHits\0" "MaxSelectionGroupMembersHits\0" "MaxNumberPathValuesHits\0"
+        "MinByIdsPerRunHits\0" "MinSwitchCasesHits\0" "MaxSwitchStringCasesHits\0" "MaxSwitchCasesHits\0" "MaxInlineArrayLiteralLengthHits\0"
+        "MaxInlineSpliceInsertionsHits\0" "MaxInlineConcatOperandsHits\0" "MaxInlinePushOperandsHits\0" "MaxKeyPartsHits\0"
+        "MaxInlineTypedArrayCopyLengthHits\0" "MaxInlineClearedElementsHits\0" "MaxInlineSearchedElementsHits\0" "MaxInlineStringCompareLengthHits\0"
+        "MaxRegisterStringLengthHits\0" "MaxLengthCopiedInlineHits\0" "FieldsInKeyOrderHits\0" "KeyOrdersPerLayoutHits\0" "MaxShapesHits\0"
+        "MaxShapeSetBitsHits\0" "MaxIdentifiersHits\0" "MaxFieldOffsetHits\0" "MaxExtensionGranulesHits\0" "MaxStaticsSizeHits\0"
+        "MaxSiteCachesHits\0" "MaxGlobalBindingsHits\0" "MaxGuardBitsPerClassSideHits\0" "MaxPropertyListNamesHits\0" "MaxEvalBindingDepthHits\0"
+        "MaxEvalBindingOffsetHits\0" "MaxListedStringsHits\0" "MaxLiteralStringsHits\0" "MaxComparedCharactersPerCharacterHits\0"
+        "MaxContractedModuleRequestsHits\0" "MaxFrameSizeInBytesHits\0" "MaxBarrierBlocksHits\0" "MaxFrameMapRootsHits\0"
+        "MaxLandingPadsSearchedHits\0" "MaxClonedValuesPerLoopVersionHits\0" "MaxValuesPerHotRegionHits\0" "MaxBlocksScannedBeforeLoopHits\0"
+        "MaxClonedValuesPerUnswitchedLoopHits\0" "MaxClonedValuesPerExcursionHits\0" "MaxValuesScannedForExecutedLoadHits\0"
+        "MaxSourcesOfLoopTestHits\0" "MaxRangeCheckBoundsPerLoopHits\0" "MaxCopiedValuesPerRotatedLoopHits\0" "MaxRareBlocksPerRotatedLoopHits\0"
+        "MaxThreadedTestCopyCostHits\0" "MaxThreadedPathCostHits\0" "MaxBlocksOnThreadedPathHits\0" "MaxThreadedTestDepthHits\0"
+        "MaxPredecessorsForConditionQueriesHits\0" "MaxConditionQueriesPerBlockHits\0" "MaxSelectNestingDepthHits\0"
+        "MaxSpeculatedValuesPerSelectHits\0" "MaxSelectsPerJoinHits\0" "MaxValuesSearchedForDominatingLoadHits\0" "MaxLoopsLeftBySinkingHits\0"
+        "MaxHoistedLoadsPerLoopHits\0" "MaxLivenessStepsPerBlockHits\0" "MaxLinearDominatorStepsHits\0" "MaxSlotsForDenseInterferenceHits\0"
+        "MaxBlocksPerPlacedConstantHits\0" "MaxRangeAnalysisDepthHits\0" "MaxRecordedWritesPerMemoryStateHits\0" "MaxLeavesToRebalanceHits\0"
+        "MaxBitTestTargetsHits\0" "MaxCompareChainSearchSizeHits\0" "MaxClobberSitesPerSplitHits\0" "ClosureAllocationSitesHits\0"
+        "ImageFunctionsHits\0" "CodeBytesHits\0" "SitesPerFunctionHits\0" "InlineFramesPerFunctionHits\0" "DirectCallReachHits\0"
+        "FunctionCallReachHits\0" "TableBytesHits\0" "VectorBytesHits\0" "UncheckedStackBytesHits\0" "RegExpPatternLengthWithCodeHits\0"
+        "RegExpNestingDepthWithCodeHits\0" "RegExpCandidateCodeBytesPerSiteHits\0" "RegExpCandidatesPerSiteHits\0" "RegExpCandidateTextLengthHits\0"
+        "RegExpSectionSizeHits\0" "RegExpClassTableClusterSizeHits\0" "WasmImageCodeSizeHits\0" "LookupTableNamesHits\0" "LookupTableBasesHits\0"
+        "HashedTableEntriesHits\0" "CustomAccessorRecordsHits\0" "ForeignCallbackStubsHits\0" "PromisesWalkedPerImportHits\0" "BranchCountersHits\0"
+        "MaxNamesComparedWithLongKeyHits\0" "MinLongKeyUnitsPerPieceHits\0" "LongKeyExtraPiecesHits\0" "MaxCachedKeyLengthHits\0"
+        "MaxCapacityGrownByStubHits\0" "MaxOpenJSONSourcesHits\0" "MinStringBuilderCapacityHits\0" "MaxRetainedStringBuilderCapacityHits\0"
+        "MinLengthAppendedByReferenceHits\0" "MinLengthAdoptedByFinishHits\0" "MaxPooledStringBuildersHits\0" "MaxStringBuilderSegmentsHits\0"
+        "MinRopeJoinLengthHits\0" "MinRopeJoinUnitsPerElementHits\0" "MaxReservedArrayCapacityHits\0" "MaxReservedCollectionCapacityHits\0"
+        "AllocateTaggedLayoutsChanges\0" "CheckTypesAtEntryChanges\0" "TypeValuesChanges\0" "CheckInt32PromisesChanges\0" "VerifyProgramChanges\0"
+        "CheckRegExpLiteralsChanges\0" "NarrowFieldTypesChanges\0" "NameCreatedSymbolsChanges\0" "GuardTaintedPositionsChanges\0"
+        "AnalyzeFlowChanges\0" "ApplyFlowResultsChanges\0" "CheckLockedBuiltinWritesChanges\0" "BuildCallGraphChanges\0"
+        "ComputeEffectSummariesChanges\0" "EstimateHeatChanges\0" "SummarizeForInliningChanges\0" "RemoveUnreadExportsChanges\0"
+        "PromoteEnvironmentsToVariablesChanges\0" "DeferDefinitionsChanges\0" "NarrowConstantVariablesChanges\0" "DeferInitializersChanges\0"
+        "ReadCapturesFromEnvironmentsChanges\0" "RemoveUnreadFieldsChanges\0" "RemoveUnusedResultsChanges\0" "RemoveUnusedParametersChanges\0"
+        "RemoveUnreachableFunctionsChanges\0" "SplitBehindEntryChecksChanges\0" "SkipAnsweredEntryChecksChanges\0" "SplitFreshResultsChanges\0"
+        "PromoteAggregateParametersChanges\0" "SplitCoroutinesChanges\0" "CallModulesChanges\0" "CreateEntrypointsChanges\0"
+        "ChooseCallingConventionsChanges\0" "DeferClosuresInFieldsChanges\0" "FlattenInnerObjectsChanges\0" "AllocateInFramesChanges\0"
+        "AllocateInnerObjectsChanges\0" "ReuseEnvironmentsChanges\0" "NumberLiteralStringsChanges\0" "EmbedConstantCollectionsChanges\0"
+        "MarkResultsUsedAsKeysChanges\0" "CollectRegExpLiteralsChanges\0" "OutlineColdOperationsChanges\0" "InlineHeadsChanges\0"
+        "ElideStackChecksChanges\0" "AddGenericVersionChanges\0" "ResolveBuiltinsChanges\0" "BindGlobalNamesChanges\0"
+        "CallThroughMethodTableChanges\0" "ResolveCallsChanges\0" "ResolveAccessesChanges\0" "SplitUnionsChanges\0" "PlaceTypeTestsChanges\0"
+        "ExpandIterationChanges\0" "ExpandProvenIterationsChanges\0" "ExpandOwnKeysChanges\0" "SelectTypedResultsChanges\0" "RetypeValuesChanges\0"
+        "InlineCallsChanges\0" "SimplifyCastsChanges\0" "SinkAllocationsChanges\0" "EliminateRedundantReadsChanges\0" "EliminateGuardsChanges\0"
+        "SeparateUnlikelyLoopPathsChanges\0" "ConvertCountersToIntegersChanges\0" "RemoveDeadCountedLoopsChanges\0" "FuseArrayChainsChanges\0"
+        "FuseGeneratorLoopsChanges\0" "StartGeneratorsAtFirstStepChanges\0" "CreateStringBuildersChanges\0" "FuseConcatenationsChanges\0"
+        "ExpandDataChanges\0" "FoldConstantsChanges\0" "SimplifyControlFlowChanges\0" "RemoveTrivialParametersChanges\0"
+        "PropagateBranchConditionsChanges\0" "HoistTestsIntoPredecessorsChanges\0" "TestNarrowerTypesFirstChanges\0" "ThreadJumpsChanges\0"
+        "InferSwitchesChanges\0" "EliminateDeadCodeChanges\0" "MergeDuplicateBlocksChanges\0" "CompactBlocksChanges\0"
+        "RemoveRedundantHandlersChanges\0" "HoistLoopInvariantReadsChanges\0" "SimplifyBuiltinCallsChanges\0" "ReduceIntegerDivisionsChanges\0"
+        "PlanArrayCapacitiesChanges\0" "PlanCollectionCapacitiesChanges\0" "FoldConstantRegExpsChanges\0" "ShareRegExpLiteralsChanges\0"
+        "InsertObjectCoercibleChecksChanges\0" "EliminateTailRecursionChanges\0" "ResolveAwaitedCallsChanges\0" "SinkConstantsChanges\0"
+        "ExpandLongArrayLiteralsChanges\0" "FinishBirthsChanges\0" "RestartInGenericVersionChanges\0" "PlaceAllocationsAtTheirUseChanges\0"
+        "PlanSlotsChanges\0" "SelectChanges\0" "NumberAndEncodeChanges\0" "PlaceSiteCachesChanges\0" "CheckPlacementChanges\0"
+        "ChooseRepresentationsChanges\0" "RemoveRedundantBarriersChanges\0" "GenerateCodeChanges\0" "AllocateTaggedLayoutsCodeBytesAdded\0"
+        "CheckTypesAtEntryCodeBytesAdded\0" "TypeValuesCodeBytesAdded\0" "CheckInt32PromisesCodeBytesAdded\0" "VerifyProgramCodeBytesAdded\0"
+        "CheckRegExpLiteralsCodeBytesAdded\0" "NarrowFieldTypesCodeBytesAdded\0" "NameCreatedSymbolsCodeBytesAdded\0"
+        "GuardTaintedPositionsCodeBytesAdded\0" "AnalyzeFlowCodeBytesAdded\0" "ApplyFlowResultsCodeBytesAdded\0"
+        "CheckLockedBuiltinWritesCodeBytesAdded\0" "BuildCallGraphCodeBytesAdded\0" "ComputeEffectSummariesCodeBytesAdded\0"
+        "EstimateHeatCodeBytesAdded\0" "SummarizeForInliningCodeBytesAdded\0" "RemoveUnreadExportsCodeBytesAdded\0"
+        "PromoteEnvironmentsToVariablesCodeBytesAdded\0" "DeferDefinitionsCodeBytesAdded\0" "NarrowConstantVariablesCodeBytesAdded\0"
+        "DeferInitializersCodeBytesAdded\0" "ReadCapturesFromEnvironmentsCodeBytesAdded\0" "RemoveUnreadFieldsCodeBytesAdded\0"
+        "RemoveUnusedResultsCodeBytesAdded\0" "RemoveUnusedParametersCodeBytesAdded\0" "RemoveUnreachableFunctionsCodeBytesAdded\0"
+        "SplitBehindEntryChecksCodeBytesAdded\0" "SkipAnsweredEntryChecksCodeBytesAdded\0" "SplitFreshResultsCodeBytesAdded\0"
+        "PromoteAggregateParametersCodeBytesAdded\0" "SplitCoroutinesCodeBytesAdded\0" "CallModulesCodeBytesAdded\0"
+        "CreateEntrypointsCodeBytesAdded\0" "ChooseCallingConventionsCodeBytesAdded\0" "DeferClosuresInFieldsCodeBytesAdded\0"
+        "FlattenInnerObjectsCodeBytesAdded\0" "AllocateInFramesCodeBytesAdded\0" "AllocateInnerObjectsCodeBytesAdded\0"
+        "ReuseEnvironmentsCodeBytesAdded\0" "NumberLiteralStringsCodeBytesAdded\0" "EmbedConstantCollectionsCodeBytesAdded\0"
+        "MarkResultsUsedAsKeysCodeBytesAdded\0" "CollectRegExpLiteralsCodeBytesAdded\0" "OutlineColdOperationsCodeBytesAdded\0"
+        "InlineHeadsCodeBytesAdded\0" "ElideStackChecksCodeBytesAdded\0" "AddGenericVersionCodeBytesAdded\0" "ResolveBuiltinsCodeBytesAdded\0"
+        "BindGlobalNamesCodeBytesAdded\0" "CallThroughMethodTableCodeBytesAdded\0" "ResolveCallsCodeBytesAdded\0" "ResolveAccessesCodeBytesAdded\0"
+        "SplitUnionsCodeBytesAdded\0" "PlaceTypeTestsCodeBytesAdded\0" "ExpandIterationCodeBytesAdded\0" "ExpandProvenIterationsCodeBytesAdded\0"
+        "ExpandOwnKeysCodeBytesAdded\0" "SelectTypedResultsCodeBytesAdded\0" "RetypeValuesCodeBytesAdded\0" "InlineCallsCodeBytesAdded\0"
+        "SimplifyCastsCodeBytesAdded\0" "SinkAllocationsCodeBytesAdded\0" "EliminateRedundantReadsCodeBytesAdded\0" "EliminateGuardsCodeBytesAdded\0"
+        "SeparateUnlikelyLoopPathsCodeBytesAdded\0" "ConvertCountersToIntegersCodeBytesAdded\0" "RemoveDeadCountedLoopsCodeBytesAdded\0"
+        "FuseArrayChainsCodeBytesAdded\0" "FuseGeneratorLoopsCodeBytesAdded\0" "StartGeneratorsAtFirstStepCodeBytesAdded\0"
+        "CreateStringBuildersCodeBytesAdded\0" "FuseConcatenationsCodeBytesAdded\0" "ExpandDataCodeBytesAdded\0" "FoldConstantsCodeBytesAdded\0"
+        "SimplifyControlFlowCodeBytesAdded\0" "RemoveTrivialParametersCodeBytesAdded\0" "PropagateBranchConditionsCodeBytesAdded\0"
+        "HoistTestsIntoPredecessorsCodeBytesAdded\0" "TestNarrowerTypesFirstCodeBytesAdded\0" "ThreadJumpsCodeBytesAdded\0"
+        "InferSwitchesCodeBytesAdded\0" "EliminateDeadCodeCodeBytesAdded\0" "MergeDuplicateBlocksCodeBytesAdded\0" "CompactBlocksCodeBytesAdded\0"
+        "RemoveRedundantHandlersCodeBytesAdded\0" "HoistLoopInvariantReadsCodeBytesAdded\0" "SimplifyBuiltinCallsCodeBytesAdded\0"
+        "ReduceIntegerDivisionsCodeBytesAdded\0" "PlanArrayCapacitiesCodeBytesAdded\0" "PlanCollectionCapacitiesCodeBytesAdded\0"
+        "FoldConstantRegExpsCodeBytesAdded\0" "ShareRegExpLiteralsCodeBytesAdded\0" "InsertObjectCoercibleChecksCodeBytesAdded\0"
+        "EliminateTailRecursionCodeBytesAdded\0" "ResolveAwaitedCallsCodeBytesAdded\0" "SinkConstantsCodeBytesAdded\0"
+        "ExpandLongArrayLiteralsCodeBytesAdded\0" "FinishBirthsCodeBytesAdded\0" "RestartInGenericVersionCodeBytesAdded\0"
+        "PlaceAllocationsAtTheirUseCodeBytesAdded\0" "PlanSlotsCodeBytesAdded\0" "SelectCodeBytesAdded\0" "NumberAndEncodeCodeBytesAdded\0"
+        "PlaceSiteCachesCodeBytesAdded\0" "CheckPlacementCodeBytesAdded\0" "ChooseRepresentationsCodeBytesAdded\0"
+        "RemoveRedundantBarriersCodeBytesAdded\0" "GenerateCodeCodeBytesAdded\0" "AllocateTaggedLayoutsCodeBytesRemoved\0"
+        "CheckTypesAtEntryCodeBytesRemoved\0" "TypeValuesCodeBytesRemoved\0" "CheckInt32PromisesCodeBytesRemoved\0" "VerifyProgramCodeBytesRemoved\0"
+        "CheckRegExpLiteralsCodeBytesRemoved\0" "NarrowFieldTypesCodeBytesRemoved\0" "NameCreatedSymbolsCodeBytesRemoved\0"
+        "GuardTaintedPositionsCodeBytesRemoved\0" "AnalyzeFlowCodeBytesRemoved\0" "ApplyFlowResultsCodeBytesRemoved\0"
+        "CheckLockedBuiltinWritesCodeBytesRemoved\0" "BuildCallGraphCodeBytesRemoved\0" "ComputeEffectSummariesCodeBytesRemoved\0"
+        "EstimateHeatCodeBytesRemoved\0" "SummarizeForInliningCodeBytesRemoved\0" "RemoveUnreadExportsCodeBytesRemoved\0"
+        "PromoteEnvironmentsToVariablesCodeBytesRemoved\0" "DeferDefinitionsCodeBytesRemoved\0" "NarrowConstantVariablesCodeBytesRemoved\0"
+        "DeferInitializersCodeBytesRemoved\0" "ReadCapturesFromEnvironmentsCodeBytesRemoved\0" "RemoveUnreadFieldsCodeBytesRemoved\0"
+        "RemoveUnusedResultsCodeBytesRemoved\0" "RemoveUnusedParametersCodeBytesRemoved\0" "RemoveUnreachableFunctionsCodeBytesRemoved\0"
+        "SplitBehindEntryChecksCodeBytesRemoved\0" "SkipAnsweredEntryChecksCodeBytesRemoved\0" "SplitFreshResultsCodeBytesRemoved\0"
+        "PromoteAggregateParametersCodeBytesRemoved\0" "SplitCoroutinesCodeBytesRemoved\0" "CallModulesCodeBytesRemoved\0"
+        "CreateEntrypointsCodeBytesRemoved\0" "ChooseCallingConventionsCodeBytesRemoved\0" "DeferClosuresInFieldsCodeBytesRemoved\0"
+        "FlattenInnerObjectsCodeBytesRemoved\0" "AllocateInFramesCodeBytesRemoved\0" "AllocateInnerObjectsCodeBytesRemoved\0"
+        "ReuseEnvironmentsCodeBytesRemoved\0" "NumberLiteralStringsCodeBytesRemoved\0" "EmbedConstantCollectionsCodeBytesRemoved\0"
+        "MarkResultsUsedAsKeysCodeBytesRemoved\0" "CollectRegExpLiteralsCodeBytesRemoved\0" "OutlineColdOperationsCodeBytesRemoved\0"
+        "InlineHeadsCodeBytesRemoved\0" "ElideStackChecksCodeBytesRemoved\0" "AddGenericVersionCodeBytesRemoved\0" "ResolveBuiltinsCodeBytesRemoved\0"
+        "BindGlobalNamesCodeBytesRemoved\0" "CallThroughMethodTableCodeBytesRemoved\0" "ResolveCallsCodeBytesRemoved\0"
+        "ResolveAccessesCodeBytesRemoved\0" "SplitUnionsCodeBytesRemoved\0" "PlaceTypeTestsCodeBytesRemoved\0" "ExpandIterationCodeBytesRemoved\0"
+        "ExpandProvenIterationsCodeBytesRemoved\0" "ExpandOwnKeysCodeBytesRemoved\0" "SelectTypedResultsCodeBytesRemoved\0"
+        "RetypeValuesCodeBytesRemoved\0" "InlineCallsCodeBytesRemoved\0" "SimplifyCastsCodeBytesRemoved\0" "SinkAllocationsCodeBytesRemoved\0"
+        "EliminateRedundantReadsCodeBytesRemoved\0" "EliminateGuardsCodeBytesRemoved\0" "SeparateUnlikelyLoopPathsCodeBytesRemoved\0"
+        "ConvertCountersToIntegersCodeBytesRemoved\0" "RemoveDeadCountedLoopsCodeBytesRemoved\0" "FuseArrayChainsCodeBytesRemoved\0"
+        "FuseGeneratorLoopsCodeBytesRemoved\0" "StartGeneratorsAtFirstStepCodeBytesRemoved\0" "CreateStringBuildersCodeBytesRemoved\0"
+        "FuseConcatenationsCodeBytesRemoved\0" "ExpandDataCodeBytesRemoved\0" "FoldConstantsCodeBytesRemoved\0"
+        "SimplifyControlFlowCodeBytesRemoved\0" "RemoveTrivialParametersCodeBytesRemoved\0" "PropagateBranchConditionsCodeBytesRemoved\0"
+        "HoistTestsIntoPredecessorsCodeBytesRemoved\0" "TestNarrowerTypesFirstCodeBytesRemoved\0" "ThreadJumpsCodeBytesRemoved\0"
+        "InferSwitchesCodeBytesRemoved\0" "EliminateDeadCodeCodeBytesRemoved\0" "MergeDuplicateBlocksCodeBytesRemoved\0"
+        "CompactBlocksCodeBytesRemoved\0" "RemoveRedundantHandlersCodeBytesRemoved\0" "HoistLoopInvariantReadsCodeBytesRemoved\0"
+        "SimplifyBuiltinCallsCodeBytesRemoved\0" "ReduceIntegerDivisionsCodeBytesRemoved\0" "PlanArrayCapacitiesCodeBytesRemoved\0"
+        "PlanCollectionCapacitiesCodeBytesRemoved\0" "FoldConstantRegExpsCodeBytesRemoved\0" "ShareRegExpLiteralsCodeBytesRemoved\0"
+        "InsertObjectCoercibleChecksCodeBytesRemoved\0" "EliminateTailRecursionCodeBytesRemoved\0" "ResolveAwaitedCallsCodeBytesRemoved\0"
+        "SinkConstantsCodeBytesRemoved\0" "ExpandLongArrayLiteralsCodeBytesRemoved\0" "FinishBirthsCodeBytesRemoved\0"
+        "RestartInGenericVersionCodeBytesRemoved\0" "PlaceAllocationsAtTheirUseCodeBytesRemoved\0" "PlanSlotsCodeBytesRemoved\0"
+        "SelectCodeBytesRemoved\0" "NumberAndEncodeCodeBytesRemoved\0" "PlaceSiteCachesCodeBytesRemoved\0" "CheckPlacementCodeBytesRemoved\0"
+        "ChooseRepresentationsCodeBytesRemoved\0" "RemoveRedundantBarriersCodeBytesRemoved\0" "GenerateCodeCodeBytesRemoved\0" "PlannedSlotsGroups\0"
+        "ClassDefinitionGroups\0" "DescriptorLiteralGroups\0" "AccessorGroupGroups\0" "SlotStoreRunGroups\0" "PropertyRunGroups\0"
+        "MethodCallGroups\0" "PropertyReadAndTestGroups\0" "EncodedVariableTestGroups\0" "PropertyChainGroups\0" "PropertyPairGroups\0"
+        "SubstringViewGroups\0" "SwitchStringGroups\0" "SwitchNumberGroups\0" "StringLiteralFormsGroups\0" "HoistStringCharactersGroups\0"
+        "SharedStringOrderGroups\0" "IntegerBoundGroups\0" "FreshPromiseFulfillmentGroups\0" "AwaitInPlaceGroups\0" "ResolvedCallTargetGroups\0"
+        "RegExpLiteralMatchGroups\0" "ThrowNewErrorGroups\0" "KeyPartsLookupGroups\0" "InlineBuiltinGroups\0" "StringBuilderPartsGroups\0"
+        "ArrayLiteralStorageGroups\0" "DataEncodingGroups\0" "ClosureFormGroups\0" "NumberPathsGroups\0" "OperatorFormGroups\0"
+        "TestAndBranchGroups\0" "LoadNanoseconds\0" "BindModulesNanoseconds\0" "CheckNanoseconds\0" "LowerNanoseconds\0" "LinkAndEmitNanoseconds\0"
+        "ReadAndVerifyNanoseconds\0" "AnalyzeFlowNanoseconds\0" "OptimizeNanoseconds\0" "PlanSlotsNanoseconds\0" "SelectNanoseconds\0"
+        "NumberAndEncodeNanoseconds\0" "ChooseRepresentationsNanoseconds\0" "GenerateCodeNanoseconds\0" "BuildImageNanoseconds\0" "RunTimeNanoseconds"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RuntimeCounterID value)
 {
-    static constexpr std::array<ASCIILiteral, 40> names {
-        "None"_s, "ObjectsBecameOrdinaryByIndexedAccessor"_s, "ObjectsBecameOrdinaryByNativeDefinition"_s,
-        "ObjectsBecameOrdinaryByRepresentationLimit"_s, "FieldsLeftSlotByDelete"_s, "FieldsLeftSlotByRedefinition"_s,
-        "FieldsLeftSlotByStoreOfOtherType"_s, "MemberGuardsCleared"_s, "PrototypeLinkGuardsCleared"_s, "KeyOrdersStoredOutOfLine"_s,
-        "ShapeEpochBumps"_s, "ClassesEvaluatedAgain"_s, "FieldMovePlansMade"_s, "AssignmentPlansMade"_s, "CopiesCollectedByName"_s,
-        "CopiesByOrdinaryLookups"_s, "SiteCacheRefills"_s, "HashedTableEvictions"_s, "ChainDependentsDropped"_s, "StubCannotReadField"_s,
-        "StubCannotStoreField"_s, "StubCannotCreateField"_s, "StubCannotCallGetter"_s, "StubCannotCallSetter"_s, "StubCannotGrowStorage"_s,
-        "TypedParsesFellBackPerValue"_s, "ValidationsFellBackPerValue"_s, "JSONStringifySlowPaths"_s, "RegExpsCreatedWithoutRecord"_s,
-        "ThrownErrorsNotCreated"_s, "InterpretedGlobalCode"_s, "InterpretedEvalCode"_s, "InterpretedFunctionCode"_s, "InterpretedModuleCode"_s,
-        "InterpreterReadSlowPaths"_s, "InterpreterStoreSlowPaths"_s, "InterpreterPresenceSlowPaths"_s, "InterpreterCallSlowPaths"_s,
-        "InterpreterAllocationSlowPaths"_s, "InterpreterBranchSlowPaths"_s
+    static constexpr EnumeratorNames<54, 1237> names {
+        {
+            0, 5, 28, 57, 90, 110, 137, 162, 184, 212, 231, 251, 273, 297, 320, 348, 362, 382, 399, 420, 439, 462, 484, 504, 520, 536, 564, 584, 605,
+            627, 648, 669, 691, 719, 747, 770, 798, 821, 842, 868, 893, 915, 935, 959, 981, 1006, 1032, 1061, 1086, 1117, 1144, 1173, 1198, 1219
+        },
+        "None\0" "FieldsLeftSlotByDelete\0" "FieldsLeftSlotByRedefinition\0" "FieldsLeftSlotByStoreOfOtherType\0" "MemberGuardsCleared\0"
+        "PrototypeLinkGuardsCleared\0" "KeyOrdersStoredOutOfLine\0" "ClassesEvaluatedAgain\0" "ClassesMadeWhenFirstTouched\0" "FieldMovePlansMade\0"
+        "AssignmentPlansMade\0" "CopiesCollectedByName\0" "CopiesByOrdinaryLookups\0" "CompiledStructuresMade\0" "AllocationSiteRecordsFilled\0"
+        "StarsRecorded\0" "StarsCarriedOutLate\0" "SiteCacheRefills\0" "HashedTableEvictions\0" "HashedTableGrowths\0" "ChainDependentsDropped\0"
+        "GlobalBindingNotFiled\0" "FirstMissesNotFiled\0" "AnswersNotFiled\0" "PairsFiledAgain\0" "PairsFiledAgainWhilePresent\0"
+        "StubCannotReadField\0" "StubCannotStoreField\0" "StubCannotCreateField\0" "StubCannotCallGetter\0" "StubCannotCallSetter\0"
+        "StubCannotGrowStorage\0" "TypedParsesFellBackPerValue\0" "ValidationsFellBackPerValue\0" "JSONStringifySlowPaths\0"
+        "RegExpsCreatedWithoutRecord\0" "ThrownErrorsNotCreated\0" "RegExpPatternsParsed\0" "RegExpsCompiledToBytecode\0" "RegExpMatchesInterpreted\0"
+        "InterpretedGlobalCode\0" "InterpretedEvalCode\0" "InterpretedFunctionCode\0" "InterpretedModuleCode\0" "InterpreterReadSlowPaths\0"
+        "InterpreterStoreSlowPaths\0" "InterpreterPresenceSlowPaths\0" "InterpreterCallSlowPaths\0" "InterpreterAllocationSlowPaths\0"
+        "InterpreterBranchSlowPaths\0" "InterpreterOperatorSlowPaths\0" "CalledClosuresNotCreated\0" "FlattenedObjectsMade\0" "DirectEvalsParsed"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(DiagnosticSeverity value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Error"_s, "Warning"_s, "Note"_s };
+    static constexpr EnumeratorNames<3, 19> names {
+        {
+            0, 6, 14
+        },
+        "Error\0" "Warning\0" "Note"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Int32ProofFailure value)
 {
-    static constexpr std::array<ASCIILiteral, 13> names {
-        "Unknown"_s, "OutOfRange"_s, "AnyNumber"_s, "Untyped"_s, "Product"_s, "Quotient"_s, "NegatedZero"_s, "Remainder"_s, "Power"_s, "NotANumber"_s,
-        "NegativeZero"_s, "Fraction"_s, "WorkLimit"_s
+    static constexpr EnumeratorNames<13, 125> names {
+        {
+            0, 8, 19, 29, 37, 45, 54, 66, 76, 82, 93, 106, 115
+        },
+        "Unknown\0" "OutOfRange\0" "AnyNumber\0" "Untyped\0" "Product\0" "Quotient\0" "NegatedZero\0" "Remainder\0" "Power\0" "NotANumber\0"
+        "NegativeZero\0" "Fraction\0" "WorkLimit"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(UserDiagnosticKind value)
 {
-    static constexpr std::array<ASCIILiteral, 28> names {
-        "Unknown"_s, "LimitExceeded"_s, "InvalidRegExpLiteral"_s, "UnprovenInt32"_s, "ConstantNotInt32"_s, "LockedBuiltinWriteAlwaysRuns"_s,
-        "LockedBuiltinWriteMayRun"_s, "LockedBuiltinWriteIsIgnored"_s, "CodeOutsideImageIsRefused"_s, "FrameTooLarge"_s, "TooManyShapes"_s,
-        "TooManyIdentifiers"_s, "TooManyFunctions"_s, "RegExpWithoutCode"_s, "WasmUnsupportedCPU"_s, "WasmInvalidModule"_s, "WasmNoFunctions"_s,
-        "WasmHasGCTypes"_s, "WasmCodeTooLarge"_s, "WasmUsesExceptions"_s, "WasmUsesTailCalls"_s, "WasmTestsReferenceTypes"_s,
-        "WasmCallsUnlistedOperation"_s, "WasmNamesTypeOfOtherModule"_s, "WasmSavesVectorRegister"_s, "WasmSavedRegisterOrder"_s,
-        "WasmProcessAddressInCode"_s, "WasmCodeGeneratorFailed"_s
+    static constexpr EnumeratorNames<29, 587> names {
+        {
+            0, 8, 22, 43, 57, 74, 101, 130, 155, 183, 209, 223, 237, 256, 273, 291, 310, 328, 344, 359, 376, 395, 413, 437, 464, 491, 515, 538, 563
+        },
+        "Unknown\0" "LimitExceeded\0" "InvalidRegExpLiteral\0" "UnprovenInt32\0" "ConstantNotInt32\0" "Int32OfDependencyNotProven\0"
+        "LockedBuiltinWriteAlwaysRuns\0" "LockedBuiltinWriteMayRun\0" "LockedBuiltinWriteIsIgnored\0" "CodeOutsideImageIsRefused\0" "FrameTooLarge\0"
+        "TooManyShapes\0" "TooManyIdentifiers\0" "TooManyFunctions\0" "RegExpWithoutCode\0" "WasmUnsupportedCPU\0" "WasmInvalidModule\0"
+        "WasmNoFunctions\0" "WasmHasGCTypes\0" "WasmCodeTooLarge\0" "WasmUsesExceptions\0" "WasmUsesTailCalls\0" "WasmTestsReferenceTypes\0"
+        "WasmCallsUnlistedOperation\0" "WasmNamesTypeOfOtherModule\0" "WasmSavesVectorRegister\0" "WasmSavedRegisterOrder\0"
+        "WasmProcessAddressInCode\0" "WasmCodeGeneratorFailed"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(InternalErrorKind value)
 {
-    static constexpr std::array<ASCIILiteral, 132> names {
-        "Unknown"_s, "InvalidCompileOptions"_s, "VerificationFailedAfterPass"_s, "VerificationFailedAtTheEnd"_s, "ProgramTooShort"_s, "NotAProgram"_s,
-        "SchemaMismatch"_s, "SectionOutOfBounds"_s, "ListOutOfBounds"_s, "UnknownEnumerator"_s, "UnknownFlag"_s, "UnknownVariantCase"_s,
-        "EngineOnlyOnWire"_s, "IdOutOfRange"_s, "DuplicateString"_s, "DuplicatePropertyKey"_s, "StringNotCanonical"_s, "NameClassMismatch"_s,
-        "UnsortedList"_s, "DuplicateListEntry"_s, "TypeRefersForward"_s, "IRTextError"_s, "InvalidPropertyKey"_s, "InvalidClass"_s, "InvalidLayout"_s,
-        "InvalidVariable"_s, "InvalidModule"_s, "InvalidModuleFailure"_s, "InvalidData"_s, "InvalidEntry"_s, "NoEntryPoint"_s, "OpcodeNotInForm"_s,
-        "RequiredPassLeftOperation"_s, "RequestAfterTyping"_s, "OperandMissing"_s, "UnexpectedOperand"_s, "NotExactlyOneParameter"_s,
-        "FunctionFlagMissing"_s, "ArgumentCountMismatch"_s, "PayloadOutOfRange"_s, "PlacedPayloadMissing"_s, "FlagNotDeclared"_s,
-        "ValueListedTwice"_s, "ValueNotListed"_s, "ParameterNotInList"_s, "EdgeToEntryBlock"_s, "TargetCountMismatch"_s,
-        "EdgeArgumentCountMismatch"_s, "InvalidProof"_s, "InvalidHandler"_s, "HandlerArgumentNotAvailable"_s, "InvalidBlockRole"_s,
-        "BlockOrderInvalid"_s, "TypeOutOfDate"_s, "WrongRepresentation"_s, "OperandTypeMismatch"_s, "StoredTypeMismatch"_s, "EdgeArgumentMismatch"_s,
-        "EntryParametersMismatch"_s, "ReturnTypeMismatch"_s, "UpcastNotSubset"_s, "ResultIndexOutOfRange"_s, "ValueAfterNever"_s,
-        "InvalidEnvironmentUse"_s, "UseNotDominated"_s, "GuardNotAvailable"_s, "InvalidGuard"_s, "OperandMustBeDefinition"_s,
-        "CycleWithoutLoopMark"_s, "InvalidCatch"_s, "InvalidReturnCall"_s, "InvalidTestAndBranch"_s, "InvalidBuiltinCall"_s, "InvalidSuspension"_s,
-        "IntrinsicOutsideLibraryCode"_s, "PredictionAfterSelection"_s, "InvalidInlineFrame"_s, "InvalidCreatorRecord"_s,
-        "ClosureOnDemandWithoutField"_s, "FlowWriterOutsideDeclaredType"_s, "FlowMembersInvalid"_s, "FlowProofOverLosableShape"_s,
-        "FlowVersionMismatch"_s, "FlowRemovedClaimNotProven"_s, "FlowRuntimeFunctionMissing"_s, "FlowNotAtFixpoint"_s, "EffectsExceedReplacedGroup"_s,
-        "EffectsOfPreparedTooNarrow"_s, "EffectsExceedSummary"_s, "StoreOutsideDeclaredEffects"_s, "RequiredTailCallNotConverted"_s,
-        "FramePointerReturned"_s, "FramePointerThrown"_s, "FramePointerRetained"_s, "CalleeRetainsFramePointer"_s, "FramePointerInTailCall"_s,
-        "FramePointerAcrossSuspension"_s, "FrameCellAcrossIterations"_s, "RawPointerAcrossSuspension"_s, "RawPointerOutlivesStorage"_s,
-        "RawPointerWithoutBase"_s, "RawWordEscapes"_s, "ResolvedTargetMismatch"_s, "CursorInFunctionValue"_s, "CursorGuardMismatch"_s,
-        "CursorUsedAfterClose"_s, "KeyOrderOfOtherObject"_s, "BuilderCapacityExceeded"_s, "BuilderCursorUsedAfterMove"_s, "SlotAccessNotPlaced"_s,
-        "PlacementCheckFailed"_s, "ProgramTableCheckFailed"_s, "RuntimeTypeStricterThanPlan"_s, "UnsupportedConversion"_s, "OpcodeWithoutCode"_s,
-        "FrameMapNotEncodable"_s, "AbsoluteAddressInProcedure"_s, "RelocationNotLowered"_s, "VariableReadBeforeSet"_s,
-        "FrameAddressAcrossSuspension"_s, "NarrowReferenceWithoutPointer"_s, "DisplacedNarrowReference"_s, "InvalidCodeUnits"_s,
-        "UncheckedStackCycle"_s, "UncheckedStackTooDeep"_s, "CallToFunctionWithoutCode"_s, "CallToStubNotGenerated"_s, "ProcessAddressInImageCode"_s,
-        "RelocationNotApplied"_s, "WritableSectionInImage"_s, "FunctionWithoutCode"_s, "FrameSavesUnknownRegister"_s
+    static constexpr EnumeratorNames<142, 2887> names {
+        {
+            0, 8, 30, 58, 85, 112, 128, 140, 155, 174, 190, 208, 220, 239, 256, 269, 285, 306, 325, 343, 356, 375, 393, 405, 424, 437, 451, 471, 487,
+            503, 517, 538, 562, 574, 595, 608, 621, 637, 663, 682, 697, 715, 738, 758, 780, 798, 819, 835, 852, 867, 886, 903, 923, 949, 962, 977,
+            1005, 1022, 1040, 1054, 1071, 1091, 1111, 1130, 1151, 1175, 1194, 1210, 1232, 1248, 1270, 1286, 1311, 1329, 1342, 1366, 1387, 1400, 1418,
+            1439, 1458, 1476, 1504, 1531, 1550, 1571, 1588, 1607, 1635, 1661, 1680, 1710, 1729, 1755, 1773, 1791, 1809, 1836, 1863, 1884, 1912, 1941,
+            1962, 1981, 2002, 2028, 2051, 2080, 2106, 2133, 2159, 2181, 2196, 2219, 2241, 2261, 2282, 2304, 2328, 2355, 2375, 2396, 2420, 2448, 2470,
+            2488, 2509, 2536, 2557, 2579, 2608, 2638, 2663, 2680, 2700, 2722, 2748, 2771, 2797, 2818, 2841, 2861
+        },
+        "Unknown\0" "InvalidCompileOptions\0" "VerificationFailedAfterPass\0" "VerificationFailedAtTheEnd\0" "SkippedPassChangesFunction\0"
+        "ProgramTooShort\0" "NotAProgram\0" "SchemaMismatch\0" "SectionOutOfBounds\0" "ListOutOfBounds\0" "UnknownEnumerator\0" "UnknownFlag\0"
+        "UnknownVariantCase\0" "EngineOnlyOnWire\0" "IdOutOfRange\0" "DuplicateString\0" "DuplicatePropertyKey\0" "StringNotCanonical\0"
+        "NameClassMismatch\0" "UnsortedList\0" "DuplicateListEntry\0" "TypeRefersForward\0" "IRTextError\0" "InvalidPropertyKey\0" "InvalidClass\0"
+        "InvalidLayout\0" "InvalidDeclaredType\0" "FamilyNotClosed\0" "InvalidVariable\0" "InvalidModule\0" "InvalidModuleFailure\0"
+        "InvalidModuleEvaluation\0" "InvalidData\0" "DataOutsideFieldType\0" "InvalidEntry\0" "NoEntryPoint\0" "OpcodeNotInForm\0"
+        "RequiredPassLeftOperation\0" "RequestAfterTyping\0" "OperandMissing\0" "UnexpectedOperand\0" "NotExactlyOneParameter\0"
+        "FunctionFlagMissing\0" "ArgumentCountMismatch\0" "PayloadOutOfRange\0" "PlacedPayloadMissing\0" "FlagNotDeclared\0" "ValueListedTwice\0"
+        "ValueNotListed\0" "ParameterNotInList\0" "EdgeToEntryBlock\0" "TargetCountMismatch\0" "EdgeArgumentCountMismatch\0" "InvalidProof\0"
+        "InvalidHandler\0" "HandlerArgumentNotAvailable\0" "InvalidBlockRole\0" "BlockOrderInvalid\0" "TypeOutOfDate\0" "BrokenResultRule\0"
+        "WrongRepresentation\0" "OperandTypeMismatch\0" "StoredTypeMismatch\0" "EdgeArgumentMismatch\0" "EntryParametersMismatch\0"
+        "ReturnTypeMismatch\0" "UpcastNotSubset\0" "ResultIndexOutOfRange\0" "ValueAfterNever\0" "InvalidEnvironmentUse\0" "UseNotDominated\0"
+        "FunctionEndsInFirstBlock\0" "GuardNotAvailable\0" "InvalidGuard\0" "OperandMustBeDefinition\0" "CycleWithoutLoopMark\0" "InvalidCatch\0"
+        "InvalidReturnCall\0" "InvalidTestAndBranch\0" "InvalidBuiltinCall\0" "InvalidSuspension\0" "IntrinsicOutsideLibraryCode\0"
+        "ExpectedTypeAfterSelection\0" "InvalidInlineFrame\0" "InvalidCreatorRecord\0" "InvalidRelations\0" "UseWithoutRelation\0"
+        "ClosureOnDemandWithoutField\0" "ObjectOnDemandWithoutRoom\0" "BorrowedObjectHeld\0" "FlowWriterOutsideDeclaredType\0" "FlowMembersInvalid\0"
+        "FlowRemovedCheckNotProven\0" "MaskCutKnownValue\0" "FlowEndedTooEarly\0" "FlowRuleWasNotDue\0" "EffectsExceedReplacedGroup\0"
+        "EffectsOfPreparedTooNarrow\0" "EffectsExceedSummary\0" "StoreOutsideDeclaredEffects\0" "RequiredTailCallNotConverted\0"
+        "FramePointerReturned\0" "FramePointerThrown\0" "FramePointerRetained\0" "CalleeRetainsFramePointer\0" "FramePointerInTailCall\0"
+        "FramePointerAcrossSuspension\0" "FrameCellAcrossIterations\0" "RawPointerAcrossSuspension\0" "RawPointerOutlivesStorage\0"
+        "RawPointerWithoutBase\0" "RawWordEscapes\0" "ResolvedTargetMismatch\0" "CursorInFunctionValue\0" "CursorGuardMismatch\0"
+        "CursorUsedAfterClose\0" "KeyOrderOfOtherObject\0" "BuilderCapacityExceeded\0" "BuilderCursorUsedAfterMove\0" "SlotAccessNotPlaced\0"
+        "PlacementCheckFailed\0" "ProgramTableCheckFailed\0" "RuntimeTypeStricterThanPlan\0" "UnsupportedConversion\0" "OpcodeWithoutCode\0"
+        "FrameMapNotEncodable\0" "AbsoluteAddressInProcedure\0" "RelocationNotLowered\0" "VariableReadBeforeSet\0" "FrameAddressAcrossSuspension\0"
+        "NarrowReferenceWithoutPointer\0" "DisplacedNarrowReference\0" "InvalidCodeUnits\0" "UncheckedStackCycle\0" "UncheckedStackTooDeep\0"
+        "CallToFunctionWithoutCode\0" "CallToStubNotGenerated\0" "ProcessAddressInImageCode\0" "RelocationNotApplied\0" "WritableSectionInImage\0"
+        "FunctionWithoutCode\0" "FrameSavesUnknownRegister"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(KnowledgeLevel value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Unknown"_s, "Predicted"_s, "Written"_s, "Proven"_s };
+    static constexpr EnumeratorNames<3, 24> names {
+        {
+            0, 8, 17
+        },
+        "Unknown\0" "Expected\0" "Proven"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(AccessCost value)
+{
+    static constexpr EnumeratorNames<4, 36> names {
+        {
+            0, 7, 21, 31
+        },
+        "ByName\0" "TestsReceiver\0" "TestsSlot\0" "Free"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AccessKind value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names { "Unknown"_s, "Read"_s, "Store"_s, "Define"_s, "Has"_s, "Delete"_s, "Call"_s, "Construct"_s };
+    static constexpr EnumeratorNames<8, 52> names {
+        {
+            0, 8, 13, 19, 26, 30, 37, 42
+        },
+        "Unknown\0" "Read\0" "Store\0" "Define\0" "Has\0" "Delete\0" "Call\0" "Construct"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(UnprovenCauseFamily value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "UnprovenType"_s, "UnknownCode"_s, "Mutation"_s, "Limit"_s };
+    static constexpr EnumeratorNames<4, 40> names {
+        {
+            0, 13, 25, 34
+        },
+        "UnprovenType\0" "UnknownCode\0" "Mutation\0" "Limit"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(UnprovenCause value)
 {
-    static constexpr std::array<ASCIILiteral, 24> names {
-        "Unknown"_s, "ResultDisabled"_s, "LimitReached"_s, "UnknownObject"_s, "NonLayoutObject"_s, "BuiltinBase"_s, "UnknownBase"_s,
-        "ClassEvaluatedAgain"_s, "ReachesNativeCode"_s, "ReachesUnknownJavaScript"_s, "UnknownWriter"_s, "UnknownCallee"_s, "UnprovenContents"_s,
-        "FieldDeleted"_s, "UnknownKeyDelete"_s, "PropertyRedefined"_s, "PropertyAdded"_s, "UnknownKeyStore"_s, "StoreOfOtherType"_s,
-        "IntegrityChanged"_s, "PrototypeChanged"_s, "OwnPropertyHidesMember"_s, "OtherNewTarget"_s, "LeftByPasses"_s
+    static constexpr EnumeratorNames<35, 599> names {
+        {
+            0, 8, 23, 36, 50, 66, 78, 90, 110, 128, 153, 167, 181, 198, 211, 228, 246, 260, 276, 293, 310, 327, 350, 365, 378, 402, 413, 444, 460,
+            476, 503, 527, 549, 569, 579
+        },
+        "Unknown\0" "ResultDisabled\0" "LimitReached\0" "UnknownObject\0" "NonLayoutObject\0" "BuiltinBase\0" "UnknownBase\0" "ClassEvaluatedAgain\0"
+        "ReachesNativeCode\0" "ReachesUnknownJavaScript\0" "UnknownWriter\0" "UnknownCallee\0" "UnprovenContents\0" "FieldDeleted\0"
+        "UnknownKeyDelete\0" "PropertyRedefined\0" "PropertyAdded\0" "UnknownKeyStore\0" "StoreOfOtherType\0" "IntegrityChanged\0"
+        "PrototypeChanged\0" "OwnPropertyHidesMember\0" "OtherNewTarget\0" "LeftByPasses\0" "UndescribedNativeResult\0" "UnseenCode\0"
+        "UncheckedConversionOfUntracked\0" "DataFromOutside\0" "ThrownByRunTime\0" "ParameterOfEscapedFunction\0" "ContentsOfEscapedObject\0"
+        "ResultOfUnknownCallee\0" "ObjectWithoutLayout\0" "Untracked\0" "LayoutOutsideFamily"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CheckCause value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "Unknown"_s, "UnknownObject"_s, "UnknownCallee"_s, "UnprovenContents"_s, "MayFail"_s, "LimitReached"_s, "ResultDisabled"_s, "AddedByPass"_s
+    static constexpr EnumeratorNames<8, 101> names {
+        {
+            0, 8, 22, 36, 53, 61, 74, 89
+        },
+        "Unknown\0" "UnknownObject\0" "UnknownCallee\0" "UnprovenContents\0" "MayFail\0" "LimitReached\0" "ResultDisabled\0" "AddedByPass"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(UnseenCodeCause value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "Unknown"_s, "EvaluatesText"_s, "ImportsUncompiledModule"_s, "LoadsModuleByName"_s, "RunsUnseenCode"_s, "OptionAdmitsCode"_s,
-        "LimitReached"_s, "FlowResultDisabled"_s
+    static constexpr EnumeratorNames<9, 144> names {
+        {
+            0, 8, 22, 46, 64, 79, 96, 109, 128
+        },
+        "Unknown\0" "EvaluatesText\0" "ImportsUncompiledModule\0" "LoadsModuleByName\0" "RunsUnseenCode\0" "OptionAdmitsCode\0" "LimitReached\0"
+        "FlowResultDisabled\0" "RunsMachineCode"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(LocaleUseKind value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "HostDefault"_s, "Constant"_s };
+    static constexpr EnumeratorNames<3, 29> names {
+        {
+            0, 8, 20
+        },
+        "Unknown\0" "HostDefault\0" "Constant"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TypeTestFailure value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "TakesGenericPath"_s, "Throws"_s };
+    static constexpr EnumeratorNames<2, 24> names {
+        {
+            0, 17
+        },
+        "TakesGenericPath\0" "Throws"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ArrivalStamp value)
+{
+    static constexpr EnumeratorNames<3, 19> names {
+        {
+            0, 5, 10
+        },
+        "None\0" "Open\0" "Complete"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ImageVerdict value)
 {
-    static constexpr std::array<ASCIILiteral, 15> names {
-        "Unsupported"_s, "Accepted"_s, "CompiledCodeDisabled"_s, "NotAnImage"_s, "Truncated"_s, "Misaligned"_s, "AlreadyInUse"_s,
-        "LowPagesAccessible"_s, "NoCode"_s, "CannotMapCode"_s, "NeedsCellCage"_s, "OptionsConflict"_s, "MalformedTables"_s, "StampMismatch"_s,
-        "IdentityMismatch"_s
+    static constexpr EnumeratorNames<15, 204> names {
+        {
+            0, 12, 21, 42, 53, 63, 74, 87, 106, 113, 127, 141, 157, 173, 187
+        },
+        "Unsupported\0" "Accepted\0" "CompiledCodeDisabled\0" "NotAnImage\0" "Truncated\0" "Misaligned\0" "AlreadyInUse\0" "LowPagesAccessible\0"
+        "NoCode\0" "CannotMapCode\0" "NeedsCellCage\0" "OptionsConflict\0" "MalformedTables\0" "StampMismatch\0" "IdentityMismatch"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(DeclineKind value)
 {
-    static constexpr std::array<ASCIILiteral, 17> names {
-        "Unknown"_s, "HotCallNotInlined"_s, "HotCallNotResolved"_s, "GeneratorLoopNotFused"_s, "ArrayChainNotFused"_s, "StringBuilderNotCreated"_s,
-        "StringBuildersNotJoined"_s, "AllocationNotSunk"_s, "TypedResultNotSelected"_s, "IterationNotExpandedByClass"_s, "LoopNotVersioned"_s,
-        "LoopPollNotStripMined"_s, "LoopBoundNotClamped"_s, "StretchNotGuarded"_s, "ResultNodeInterpreted"_s, "PositionAdmitsObjects"_s,
-        "AssertedObjectPassedToUnknownCallee"_s
+    static constexpr EnumeratorNames<15, 305> names {
+        {
+            0, 8, 26, 45, 67, 86, 110, 134, 152, 175, 203, 220, 240, 258, 280
+        },
+        "Unknown\0" "HotCallNotInlined\0" "HotCallNotResolved\0" "GeneratorLoopNotFused\0" "ArrayChainNotFused\0" "StringBuilderNotCreated\0"
+        "StringBuildersNotJoined\0" "AllocationNotSunk\0" "TypedResultNotSelected\0" "IterationNotExpandedByClass\0" "LoopNotVersioned\0"
+        "LoopBoundNotClamped\0" "StretchNotGuarded\0" "ResultNodeInterpreted\0" "GenericVersionNotCreated"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TypedResultDeclineReason value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "None"_s, "NoTarget"_s, "TargetIsNotModeledByFlow"_s, "TargetHasNoTypedPart"_s, "PromiseIsNotAwaitedAtOnce"_s, "HostHasNoBytesForm"_s,
-        "RowsHaveSeveralLayouts"_s, "AnotherSourceIsOpen"_s
+    static constexpr EnumeratorNames<8, 148> names {
+        {
+            0, 5, 14, 39, 60, 86, 105, 128
+        },
+        "None\0" "NoTarget\0" "TargetIsNotModeledByFlow\0" "TargetHasNoTypedPart\0" "PromiseIsNotAwaitedAtOnce\0" "HostHasNoBytesForm\0"
+        "RowsHaveSeveralLayouts\0" "AnotherSourceIsOpen"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CallDeclineReason value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "None"_s, "UnknownCallee"_s, "CalleeNotCallable"_s, "CalleeNeedsClosure"_s, "UnknownMember"_s, "NeedsTest"_s, "EffectsBeforeCall"_s,
-        "TooManyCallees"_s
+    static constexpr EnumeratorNames<8, 113> names {
+        {
+            0, 5, 19, 37, 56, 70, 80, 98
+        },
+        "None\0" "UnknownCallee\0" "CalleeNotCallable\0" "CalleeNeedsClosure\0" "UnknownMember\0" "NeedsTest\0" "EffectsBeforeCall\0" "TooManyCallees"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(GeneratorFusionDeclineReason value)
 {
-    static constexpr std::array<ASCIILiteral, 11> names {
-        "Unknown"_s, "None"_s, "BodyIsNotDescribed"_s, "HasNoStep"_s, "SeveralLiveInstances"_s, "StepMayReachOtherGenerator"_s,
-        "MayEscapeBeforeStep"_s, "BodyIsBoundToFrame"_s, "BodyIsTooLarge"_s, "CallerIsTooLarge"_s, "InlineDepth"_s
+    static constexpr EnumeratorNames<11, 173> names {
+        {
+            0, 8, 13, 32, 42, 63, 90, 110, 129, 144, 161
+        },
+        "Unknown\0" "None\0" "BodyIsNotDescribed\0" "HasNoStep\0" "SeveralLiveInstances\0" "StepMayReachOtherGenerator\0" "MayEscapeBeforeStep\0"
+        "BodyIsBoundToFrame\0" "BodyIsTooLarge\0" "CallerIsTooLarge\0" "InlineDepth"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ArrayChainDeclineReason value)
 {
-    static constexpr std::array<ASCIILiteral, 10> names {
-        "Unknown"_s, "None"_s, "SourceIsNotPristine"_s, "CallbackIsNotAFunction"_s, "CalleeIsUnknown"_s, "CallbackSeesIntermediateArray"_s,
-        "CallbacksInterfere"_s, "SkippedCallIsObservable"_s, "CallbackWritesSource"_s, "ValueBetweenLinksInterferes"_s
+    static constexpr EnumeratorNames<10, 194> names {
+        {
+            0, 8, 13, 33, 56, 72, 102, 121, 145, 166
+        },
+        "Unknown\0" "None\0" "SourceIsNotPristine\0" "CallbackIsNotAFunction\0" "CalleeIsUnknown\0" "CallbackSeesIntermediateArray\0"
+        "CallbacksInterfere\0" "SkippedCallIsObservable\0" "CallbackWritesSource\0" "ValueBetweenLinksInterferes"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StringBuilderDeclineReason value)
 {
-    static constexpr std::array<ASCIILiteral, 6> names {
-        "Unknown"_s, "Created"_s, "TooFewAppends"_s, "TwoStatesLive"_s, "StateIsNotFirstOperand"_s, "WebLimit"_s
+    static constexpr EnumeratorNames<6, 76> names {
+        {
+            0, 8, 16, 30, 44, 67
+        },
+        "Unknown\0" "Created\0" "TooFewAppends\0" "TwoStatesLive\0" "StateIsNotFirstOperand\0" "WebLimit"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(LoopDeclineReason value)
 {
-    static constexpr std::array<ASCIILiteral, 14> names {
-        "None"_s, "NotInnermost"_s, "SeveralEntries"_s, "NoSingleLikelyPath"_s, "UncloneableValue"_s, "NothingToHoist"_s, "NotCounted"_s,
-        "CounterMayWrap"_s, "BoundNotInvariant"_s, "TestNotOnLikelyPath"_s, "EffectsBeforeTopTest"_s, "PollNotOnEveryIteration"_s, "SeveralPolls"_s,
-        "LimitReached"_s
+    static constexpr EnumeratorNames<12, 182> names {
+        {
+            0, 5, 18, 33, 52, 69, 84, 95, 110, 128, 148, 169
+        },
+        "None\0" "NotInnermost\0" "SeveralEntries\0" "NoSingleLikelyPath\0" "UncloneableValue\0" "NothingToHoist\0" "NotCounted\0" "CounterMayWrap\0"
+        "BoundNotInvariant\0" "TestNotOnLikelyPath\0" "EffectsBeforeTopTest\0" "LimitReached"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(InterpretedCause value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names {
-        "None"_s, "TooManyNodes"_s, "RepeatedRecursion"_s, "MemberKeyIsNotText"_s, "LayoutIsNotModeled"_s, "MemberIsNotNamedField"_s,
-        "FieldTypeIsNotTestable"_s
+    static constexpr EnumeratorNames<7, 119> names {
+        {
+            0, 5, 18, 36, 55, 74, 96
+        },
+        "None\0" "TooManyNodes\0" "RepeatedRecursion\0" "MemberKeyIsNotText\0" "LayoutIsNotModeled\0" "MemberIsNotNamedField\0"
+        "FieldTypeIsNotTestable"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AllocationHeapCause value)
 {
-    static constexpr std::array<ASCIILiteral, 17> names {
-        "None"_s, "NotTracked"_s, "HasNoFrameForm"_s, "Escapes"_s, "SeveralLiveInstances"_s, "HasUntrackedAlias"_s, "LiveAcrossSuspension"_s,
-        "LiveAtReturnCall"_s, "HeldByHeapCell"_s, "HeldAcrossIterations"_s, "ChangedByUse"_s, "SeenByNativeCode"_s, "ClosureIsNotOnlyCalled"_s,
-        "LayoutDefersClosures"_s, "FieldsCreatedLater"_s, "ExceedsLimit"_s, "MaterializationDoesNotPay"_s
+    static constexpr EnumeratorNames<17, 284> names {
+        {
+            0, 5, 16, 31, 39, 60, 78, 99, 116, 131, 152, 165, 182, 205, 226, 245, 258
+        },
+        "None\0" "NotTracked\0" "HasNoFrameForm\0" "Escapes\0" "SeveralLiveInstances\0" "HasUntrackedAlias\0" "LiveAcrossSuspension\0"
+        "LiveAtReturnCall\0" "HeldByHeapCell\0" "HeldAcrossIterations\0" "ChangedByUse\0" "SeenByNativeCode\0" "ClosureIsNotOnlyCalled\0"
+        "LayoutDefersClosures\0" "FieldsCreatedLater\0" "ExceedsLimit\0" "MaterializationDoesNotPay"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AllocationOutcome value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names {
-        "Unknown"_s, "Removed"_s, "Heap"_s, "Frame"_s, "FrameUntilMaterialized"_s, "Slim"_s, "Deferred"_s
+    static constexpr EnumeratorNames<7, 64> names {
+        {
+            0, 8, 16, 21, 27, 50, 55
+        },
+        "Unknown\0" "Removed\0" "Heap\0" "Frame\0" "FrameUntilMaterialized\0" "Slim\0" "Deferred"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AllocationKind value)
 {
-    static constexpr std::array<ASCIILiteral, 13> names {
-        "Other"_s, "Object"_s, "Array"_s, "Closure"_s, "Environment"_s, "Arguments"_s, "Rest"_s, "IteratorResult"_s, "Generator"_s, "Promise"_s,
-        "BoundFunction"_s, "StringRange"_s, "Collection"_s
+    static constexpr EnumeratorNames<13, 124> names {
+        {
+            0, 6, 13, 19, 27, 39, 49, 54, 69, 79, 87, 101, 113
+        },
+        "Other\0" "Object\0" "Array\0" "Closure\0" "Environment\0" "Arguments\0" "Rest\0" "IteratorResult\0" "Generator\0" "Promise\0"
+        "BoundFunction\0" "StringRange\0" "Collection"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ResultSection value)
 {
-    static constexpr std::array<ASCIILiteral, 23> names {
-        "Image"_s, "Text"_s, "UserDiagnostics"_s, "InternalErrors"_s, "EntryModuleIds"_s, "UnseenCode"_s, "BuiltinsUsed"_s, "FeaturesUsed"_s,
-        "LocalesUsed"_s, "Accesses"_s, "AccessCounts"_s, "TypeTests"_s, "RemainingChecks"_s, "Declines"_s, "AllocationRemarks"_s, "Losses"_s,
-        "Functions"_s, "OperationCounts"_s, "PassTimes"_s, "Statistics"_s, "LimitValues"_s, "Symbols"_s, "ObfuscatedSites"_s
+    static constexpr EnumeratorNames<27, 338> names {
+        {
+            0, 6, 11, 27, 42, 57, 68, 81, 94, 106, 115, 128, 138, 154, 163, 181, 188, 198, 214, 224, 235, 247, 255, 271, 284, 303, 318
+        },
+        "Image\0" "Text\0" "UserDiagnostics\0" "InternalErrors\0" "EntryModuleIds\0" "UnseenCode\0" "BuiltinsUsed\0" "FeaturesUsed\0" "LocalesUsed\0"
+        "Accesses\0" "AccessCounts\0" "TypeTests\0" "RemainingChecks\0" "Declines\0" "AllocationRemarks\0" "Losses\0" "Functions\0"
+        "OperationCounts\0" "PassTimes\0" "Statistics\0" "LimitValues\0" "Symbols\0" "ObfuscatedSites\0" "ArrivalSites\0" "ArrivalSiteLayouts\0"
+        "ArrivalLayouts\0" "ArrivalLayoutFields"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CompileAction value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Compile"_s, "VerifyOnly"_s };
+    static constexpr EnumeratorNames<3, 29> names {
+        {
+            0, 8, 19
+        },
+        "Compile\0" "VerifyOnly\0" "CheckOnly"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Architecture value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "ARM64"_s, "X86_64"_s };
+    static constexpr EnumeratorNames<2, 13> names {
+        {
+            0, 6
+        },
+        "ARM64\0" "X86_64"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ReferenceWidth value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Wide"_s, "Narrow"_s };
+    static constexpr EnumeratorNames<2, 12> names {
+        {
+            0, 5
+        },
+        "Wide\0" "Narrow"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(MismatchPolicy value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Throw"_s, "Report"_s };
+    static constexpr EnumeratorNames<2, 13> names {
+        {
+            0, 6
+        },
+        "Throw\0" "Report"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(HeatOverride value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names {
-        "None"_s, "OnlyLoopsAreHot"_s, "EverythingIsHot"_s, "EverythingIsCold"_s, "NothingIsHottest"_s
+    static constexpr EnumeratorNames<5, 71> names {
+        {
+            0, 5, 21, 37, 54
+        },
+        "None\0" "OnlyLoopsAreHot\0" "EverythingIsHot\0" "EverythingIsCold\0" "NothingIsHottest"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(Sabotage value)
+{
+    static constexpr EnumeratorNames<15, 447> names {
+        {
+            0, 5, 27, 66, 103, 141, 175, 212, 241, 266, 293, 327, 366, 388, 424
+        },
+        "None\0" "StackNamesNoInnerCell\0" "NarrowReferenceOnStackNamesNoInnerCell\0" "InnerObjectIsVisitedWithoutItsFields\0"
+        "InnerArrayIsVisitedWithoutItsElements\0" "InnerCellVisitedInPlaceStaysWhite\0" "InnerCellIsMarkedWithoutItsOuterCell\0"
+        "InnerCellLetGoKeepsItsHeader\0" "RoomIsNotInReferenceList\0" "RoomsLeftEmptyAreNotZeroed\0" "NoBarrierBehindFreshStoreIntoRoom\0"
+        "NoBarrierForStoreThroughBorrowedObject\0" "StoreLeavesRoomAsItIs\0" "FlattenedObjectIsMadeWithoutBarrier\0" "MakingLeavesRoomAsItIs"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BuiltinUse value)
 {
-    static constexpr std::array<ASCIILiteral, 6> names { "Tested"_s, "Read"_s, "Called"_s, "Constructed"_s, "Written"_s, "Escaped"_s };
+    static constexpr EnumeratorNames<6, 47> names {
+        {
+            0, 7, 12, 19, 31, 39
+        },
+        "Tested\0" "Read\0" "Called\0" "Constructed\0" "Written\0" "Escaped"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ArrivalLayoutFlags value)
+{
+    static constexpr EnumeratorNames<1, 10> names {
+        {
+            0
+        },
+        "IsDerived"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ArrivalFieldFlags value)
+{
+    static constexpr EnumeratorNames<1, 11> names {
+        {
+            0
+        },
+        "IsOptional"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AllocationEscapeReason value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "Returned"_s, "Thrown"_s, "StoredInUnknownMemory"_s, "PassedToUnknownCode"_s, "RetainedByCallee"_s, "StoredInEscapingObject"_s,
-        "LeakedByContainer"_s, "LimitReached"_s
+    static constexpr EnumeratorNames<8, 129> names {
+        {
+            0, 9, 16, 38, 58, 75, 98, 116
+        },
+        "Returned\0" "Thrown\0" "StoredInUnknownMemory\0" "PassedToUnknownCode\0" "RetainedByCallee\0" "StoredInEscapingObject\0"
+        "LeakedByContainer\0" "LimitReached"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CheckSet value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names {
-        "VerifyEachPass"_s, "Validate"_s, "ValidateBackEnd"_s, "ValidateReferences"_s, "FlowFixpoint"_s, "VerifyEachStage"_s,
-        "ValidateReferenceGuards"_s
+    static constexpr EnumeratorNames<9, 161> names {
+        {
+            0, 15, 24, 40, 59, 75, 99, 126, 139
+        },
+        "VerifyEachPass\0" "Validate\0" "ValidateBackEnd\0" "ValidateReferences\0" "VerifyEachStage\0" "ValidateReferenceGuards\0"
+        "CountChangesBehindSimplify\0" "FlowFixpoint\0" "FunctionsGetPastEntry"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ReportSet value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "Flow"_s, "Declines"_s, "Symbols"_s, "Allocations"_s, "Functions"_s };
+    static constexpr EnumeratorNames<7, 67> names {
+        {
+            0, 5, 14, 22, 34, 44, 53
+        },
+        "Flow\0" "Declines\0" "Symbols\0" "Allocations\0" "Functions\0" "Arrivals\0" "PassCodeBytes"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TestingSwitch value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "IgnoreBranchHints"_s, "ForceGCSlowPaths"_s, "MayEncounterMasqueradesAsUndefined"_s, "DropGuard"_s, "IgnorePredictions"_s,
-        "LoseFlowWakeUps"_s, "AnalyzeValueFlow"_s, "DropReferenceGuards"_s
+    static constexpr EnumeratorNames<15, 310> names {
+        {
+            0, 18, 35, 70, 80, 100, 120, 136, 156, 177, 207, 222, 242, 266, 287
+        },
+        "IgnoreBranchHints\0" "ForceGCSlowPaths\0" "MayEncounterMasqueradesAsUndefined\0" "DropGuard\0" "IgnoreExpectedTypes\0"
+        "DropReferenceGuards\0" "ProveEverything\0" "NoCallConvertsCells\0" "NoLayoutIsMadeSeldom\0" "FlattenUntilHeldWhereverLegal\0"
+        "DelayFlowRules\0" "DelayOtherFlowRules\0" "GenerateAllCodeDirectly\0" "CheckProofsAtRunTime\0" "ConvertOperandsAtFetch"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Instrumentation value)
 {
-    static constexpr std::array<ASCIILiteral, 1> names { "CountBranches"_s };
+    static constexpr EnumeratorNames<2, 28> names {
+        {
+            0, 14
+        },
+        "CountBranches\0" "CountArrivals"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AdmittedCode value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Inspector"_s, "RuntimeCode"_s };
+    static constexpr EnumeratorNames<1, 10> names {
+        {
+            0
+        },
+        "Inspector"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ExcludedCode value)
 {
-    static constexpr std::array<ASCIILiteral, 1> names { "EvaluatedText"_s };
+    static constexpr EnumeratorNames<2, 29> names {
+        {
+            0, 14
+        },
+        "EvaluatedText\0" "FunctionSource"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OutputOptions value)
 {
-    static constexpr std::array<ASCIILiteral, 1> names { "Obfuscate"_s };
+    static constexpr EnumeratorNames<1, 10> names {
+        {
+            0
+        },
+        "Obfuscate"
+    };
     return nameAt(names, value);
 }
 
@@ -657,1197 +1076,1988 @@ namespace Typed {
 
 ASCIILiteral nameOf(IRForm value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "AsRead"_s, "Prepared"_s, "Selected"_s, "Placed"_s };
+    static constexpr EnumeratorNames<4, 32> names {
+        {
+            0, 7, 16, 25
+        },
+        "AsRead\0" "Prepared\0" "Selected\0" "Placed"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ResultRule value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "None"_s, "Constant"_s, "Natural"_s, "Allocation"_s, "Declared"_s, "Unknown"_s, "Cast"_s, "Results"_s
+    static constexpr EnumeratorNames<8, 63> names {
+        {
+            0, 5, 14, 22, 33, 42, 50, 55
+        },
+        "None\0" "Constant\0" "Natural\0" "Allocation\0" "Declared\0" "Unknown\0" "Cast\0" "Results"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(EffectRule value)
 {
-    static constexpr std::array<ASCIILiteral, 6> names { "Declared"_s, "Operator"_s, "Access"_s, "Call"_s, "Builtin"_s, "Inline"_s };
+    static constexpr EnumeratorNames<6, 45> names {
+        {
+            0, 9, 18, 25, 30, 38
+        },
+        "Declared\0" "Operator\0" "Access\0" "Call\0" "Builtin\0" "Inline"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RetainedIn value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "UnknownMemory"_s, "Result"_s, "Operand"_s };
+    static constexpr EnumeratorNames<3, 29> names {
+        {
+            0, 14, 21
+        },
+        "UnknownMemory\0" "Result\0" "Operand"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Branches value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "No"_s, "May"_s, "Only"_s };
+    static constexpr EnumeratorNames<3, 12> names {
+        {
+            0, 3, 7
+        },
+        "No\0" "May\0" "Only"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Access value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "None"_s, "Read"_s, "Store"_s, "Define"_s, "Has"_s };
+    static constexpr EnumeratorNames<5, 27> names {
+        {
+            0, 5, 10, 16, 23
+        },
+        "None\0" "Read\0" "Store\0" "Define\0" "Has"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Interpretation value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names { "None"_s, "Allocation"_s, "Cast"_s, "Read"_s, "Store"_s, "Test"_s, "List"_s, "Guards"_s };
+    static constexpr EnumeratorNames<8, 49> names {
+        {
+            0, 5, 16, 21, 26, 32, 37, 42
+        },
+        "None\0" "Allocation\0" "Cast\0" "Read\0" "Store\0" "Test\0" "List\0" "Guards"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ValueFlowEdgeClass value)
+{
+    static constexpr EnumeratorNames<5, 44> names {
+        {
+            0, 8, 18, 25, 37
+        },
+        "Unsound\0" "Allocates\0" "Copies\0" "TableProves\0" "Checks"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BoundTo value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Nothing"_s, "Frame"_s, "Function"_s, "Site"_s };
+    static constexpr EnumeratorNames<4, 28> names {
+        {
+            0, 8, 14, 23
+        },
+        "Nothing\0" "Frame\0" "Function\0" "Site"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ProgramEvent value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "None"_s, "EvaluatesText"_s, "LoadsModule"_s };
+    static constexpr EnumeratorNames<3, 31> names {
+        {
+            0, 5, 19
+        },
+        "None\0" "EvaluatesText\0" "LoadsModule"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AccessClass value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "None"_s, "Slot"_s, "ByName"_s, "DirectCall"_s, "IndirectCall"_s };
+    static constexpr EnumeratorNames<5, 41> names {
+        {
+            0, 5, 10, 17, 28
+        },
+        "None\0" "Slot\0" "ByName\0" "DirectCall\0" "IndirectCall"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionReferenceKind value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Call"_s, "Closure"_s, "Constructor"_s, "Dispatch"_s };
+    static constexpr EnumeratorNames<4, 34> names {
+        {
+            0, 5, 13, 25
+        },
+        "Call\0" "Closure\0" "Constructor\0" "Dispatch"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ModuleReferenceKind value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Target"_s, "Referrer"_s };
+    static constexpr EnumeratorNames<2, 16> names {
+        {
+            0, 7
+        },
+        "Target\0" "Referrer"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Representation value)
 {
-    static constexpr std::array<ASCIILiteral, 13> names {
-        "Unchosen"_s, "Void"_s, "Boolean"_s, "Int32"_s, "Int64"_s, "Double"_s, "OptionalInt64"_s, "OptionalDouble"_s, "Cell"_s, "Cell32"_s,
-        "JSValue"_s, "LiteralString"_s, "RawWord"_s
+    static constexpr EnumeratorNames<13, 112> names {
+        {
+            0, 9, 14, 22, 28, 34, 41, 55, 70, 75, 82, 90, 104
+        },
+        "Unchosen\0" "Void\0" "Boolean\0" "Int32\0" "Int64\0" "Double\0" "OptionalInt64\0" "OptionalDouble\0" "Cell\0" "Cell32\0" "JSValue\0"
+        "LiteralString\0" "RawWord"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ProofLifetime value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Forever"_s, "Stretch"_s };
+    static constexpr EnumeratorNames<2, 16> names {
+        {
+            0, 8
+        },
+        "Forever\0" "Stretch"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Proof value)
 {
-    static constexpr std::array<ASCIILiteral, 27> names {
-        "None"_s, "TestedType"_s, "Truthiness"_s, "Equality"_s, "IntegerBound"_s, "ExactFunction"_s, "CaseValue"_s, "Shape"_s, "SlotFilled"_s,
-        "NoExtraProperties"_s, "NotFrozen"_s, "OwnInstance"_s, "Pristine"_s, "ArrayStorage"_s, "InBounds"_s, "NotThenable"_s, "MemberUnchanged"_s,
-        "PrototypeLinkUnchanged"_s, "EvaluatedOnce"_s, "KeyOrder"_s, "EpochCurrent"_s, "UnmodifiedGenerator"_s, "EnumeratorCurrent"_s, "PlainData"_s,
-        "SourceOpen"_s, "TextMatches"_s, "RequireEdgeReady"_s
+    static constexpr EnumeratorNames<28, 354> names {
+        {
+            0, 5, 16, 27, 36, 49, 63, 73, 84, 90, 101, 119, 138, 156, 166, 178, 187, 200, 209, 221, 237, 260, 274, 283, 303, 321, 331, 342
+        },
+        "None\0" "TestedType\0" "Truthiness\0" "Equality\0" "IntegerBound\0" "ExactFunction\0" "CaseValue\0" "NotNullish\0" "Shape\0" "SlotFilled\0"
+        "NoExtraProperties\0" "NoFieldOutsideSlot\0" "BirthFieldsFilled\0" "NotFrozen\0" "OwnInstance\0" "Pristine\0" "ArrayStorage\0" "InBounds\0"
+        "NotThenable\0" "MemberUnchanged\0" "PrototypeLinkUnchanged\0" "EvaluatedOnce\0" "KeyOrder\0" "UnmodifiedGenerator\0" "EnumeratorCurrent\0"
+        "PlainData\0" "SourceOpen\0" "TextMatches"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OperandKind value)
 {
-    static constexpr std::array<ASCIILiteral, 26> names {
-        "Any"_s, "Boolean"_s, "Integer"_s, "Number"_s, "String"_s, "PropertyKey"_s, "Object"_s, "Callable"_s, "Array"_s, "Layout"_s, "Declared"_s,
-        "Environment"_s, "EvalOperand"_s, "Results"_s, "IteratorState"_s, "Enumerator"_s, "Exception"_s, "ClassToken"_s, "Guard"_s, "Convertible"_s,
-        "StringBuilder"_s, "Cursor"_s, "KeyOrder"_s, "FlatString"_s, "CodeAddress"_s, "BuilderCursor"_s
+    static constexpr EnumeratorNames<26, 247> names {
+        {
+            0, 4, 12, 20, 27, 34, 46, 53, 62, 68, 75, 84, 96, 108, 116, 130, 141, 151, 162, 168, 180, 194, 201, 210, 221, 233
+        },
+        "Any\0" "Boolean\0" "Integer\0" "Number\0" "String\0" "PropertyKey\0" "Object\0" "Callable\0" "Array\0" "Layout\0" "Declared\0"
+        "Environment\0" "EvalOperand\0" "Results\0" "IteratorState\0" "Enumerator\0" "Exception\0" "ClassToken\0" "Guard\0" "Convertible\0"
+        "StringBuilder\0" "Cursor\0" "KeyOrder\0" "FlatString\0" "CodeAddress\0" "BuilderCursor"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PayloadKind value)
 {
-    static constexpr std::array<ASCIILiteral, 39> names {
-        "String"_s, "PropertyKey"_s, "Function"_s, "Layout"_s, "Field"_s, "Variable"_s, "Module"_s, "ModuleFailure"_s, "Type"_s, "TypeSite"_s,
-        "EvalScope"_s, "Data"_s, "ExpectedResult"_s, "Builtin"_s, "Enum"_s, "Flags"_s, "Bool"_s, "UInt32"_s, "Int64"_s, "Double"_s, "External"_s,
-        "Record"_s, "Variant"_s, "List"_s, "LayoutSet"_s, "CalleeSet"_s, "AccessSite"_s, "AllocationSite"_s, "AllocationClass"_s, "FieldAccess"_s,
-        "Allocation"_s, "RegExpRecord"_s, "SiteCache"_s, "GuardBit"_s, "Request"_s, "StaticsOffset"_s, "OrderWord"_s, "Origin"_s, "Opcode"_s
+    static constexpr EnumeratorNames<40, 365> names {
+        {
+            0, 7, 19, 28, 35, 41, 50, 57, 71, 76, 85, 95, 100, 115, 123, 128, 134, 139, 146, 152, 159, 168, 175, 183, 188, 198, 208, 219, 234, 250,
+            262, 273, 286, 296, 310, 319, 327, 341, 351, 358
+        },
+        "String\0" "PropertyKey\0" "Function\0" "Layout\0" "Field\0" "Variable\0" "Module\0" "ModuleFailure\0" "Type\0" "TypeSite\0" "EvalScope\0"
+        "Data\0" "ExpectedResult\0" "Builtin\0" "Enum\0" "Flags\0" "Bool\0" "UInt32\0" "Int64\0" "Double\0" "External\0" "Record\0" "Variant\0"
+        "List\0" "LayoutSet\0" "CalleeSet\0" "AccessSite\0" "AllocationSite\0" "AllocationClass\0" "FieldAccess\0" "Allocation\0" "RegExpRecord\0"
+        "SiteCache\0" "GlobalBinding\0" "GuardBit\0" "Request\0" "StaticsOffset\0" "OrderWord\0" "Origin\0" "Opcode"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ElementBase value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Unknown"_s, "Array"_s, "Arguments"_s, "Object"_s };
+    static constexpr EnumeratorNames<4, 31> names {
+        {
+            0, 8, 14, 24
+        },
+        "Unknown\0" "Array\0" "Arguments\0" "Object"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OperandUse value)
 {
-    static constexpr std::array<ASCIILiteral, 21> names {
-        "Inspects"_s, "Retains"_s, "Returns"_s, "Calls"_s, "CallsPerElement"_s, "CallsRepeatedly"_s, "ReadsContents"_s, "WritesContents"_s,
-        "RetainsContents"_s, "MovesElements"_s, "StoresByKey"_s, "DeletesByKey"_s, "AssignsFrom"_s, "DefinesName"_s, "TakesDescriptor"_s,
-        "ChangesIntegrity"_s, "ChangesPrototype"_s, "BecomesPrototype"_s, "PassesToUserCode"_s, "AppliesTransitively"_s, "AppliesToContents"_s
+    static constexpr EnumeratorNames<21, 293> names {
+        {
+            0, 9, 17, 25, 31, 47, 63, 77, 92, 108, 122, 134, 147, 159, 171, 187, 204, 221, 238, 255, 275
+        },
+        "Inspects\0" "Retains\0" "Returns\0" "Calls\0" "CallsPerElement\0" "CallsRepeatedly\0" "ReadsContents\0" "WritesContents\0"
+        "RetainsContents\0" "MovesElements\0" "StoresByKey\0" "DeletesByKey\0" "AssignsFrom\0" "DefinesName\0" "TakesDescriptor\0"
+        "ChangesIntegrity\0" "ChangesPrototype\0" "BecomesPrototype\0" "PassesToUserCode\0" "AppliesTransitively\0" "AppliesToContents"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Protocol value)
 {
-    static constexpr std::array<ASCIILiteral, 11> names {
-        "OwnKeys"_s, "OwnValues"_s, "ToPrimitive"_s, "Thenable"_s, "Iterate"_s, "Species"_s, "ToJSON"_s, "HasInstance"_s, "PrototypeChain"_s,
-        "Named"_s, "CallsNamed"_s
+    static constexpr EnumeratorNames<11, 106> names {
+        {
+            0, 8, 18, 30, 39, 47, 55, 62, 74, 89, 95
+        },
+        "OwnKeys\0" "OwnValues\0" "ToPrimitive\0" "Thenable\0" "Iterate\0" "Species\0" "ToJSON\0" "HasInstance\0" "PrototypeChain\0" "Named\0"
+        "CallsNamed"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NameClass value)
 {
-    static constexpr std::array<ASCIILiteral, 13> names {
-        "Ordinary"_s, "Index"_s, "CanonicalNumericString"_s, "Proto"_s, "Constructor"_s, "ObjectPrototypeMember"_s, "Length"_s, "Prototype"_s,
-        "CallOrApply"_s, "Bind"_s, "LastIndex"_s, "Then"_s, "ToJSON"_s
+    static constexpr EnumeratorNames<13, 134> names {
+        {
+            0, 9, 15, 38, 44, 56, 78, 85, 95, 107, 112, 122, 127
+        },
+        "Ordinary\0" "Index\0" "CanonicalNumericString\0" "Proto\0" "Constructor\0" "ObjectPrototypeMember\0" "Length\0" "Prototype\0" "CallOrApply\0"
+        "Bind\0" "LastIndex\0" "Then\0" "ToJSON"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PropertyKeyKind value)
 {
-    static constexpr std::array<ASCIILiteral, 6> names {
-        "Text"_s, "EnginePrivateName"_s, "PrivateName"_s, "WellKnownSymbol"_s, "CreatedSymbol"_s, "RegisteredSymbol"_s
+    static constexpr EnumeratorNames<6, 82> names {
+        {
+            0, 5, 23, 35, 51, 65
+        },
+        "Text\0" "EnginePrivateName\0" "PrivateName\0" "WellKnownSymbol\0" "CreatedSymbol\0" "RegisteredSymbol"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(WellKnownSymbol value)
 {
-    static constexpr std::array<ASCIILiteral, 15> names {
-        "AsyncDispose"_s, "AsyncIterator"_s, "Dispose"_s, "HasInstance"_s, "IsConcatSpreadable"_s, "Iterator"_s, "Match"_s, "MatchAll"_s, "Replace"_s,
-        "Search"_s, "Species"_s, "Split"_s, "ToPrimitive"_s, "ToStringTag"_s, "Unscopables"_s
+    static constexpr EnumeratorNames<15, 155> names {
+        {
+            0, 13, 27, 35, 47, 66, 75, 81, 90, 98, 105, 113, 119, 131, 143
+        },
+        "AsyncDispose\0" "AsyncIterator\0" "Dispose\0" "HasInstance\0" "IsConcatSpreadable\0" "Iterator\0" "Match\0" "MatchAll\0" "Replace\0"
+        "Search\0" "Species\0" "Split\0" "ToPrimitive\0" "ToStringTag\0" "Unscopables"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ContentsSlot value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Element"_s, "Key"_s, "Value"_s };
+    static constexpr EnumeratorNames<3, 18> names {
+        {
+            0, 8, 12
+        },
+        "Element\0" "Key\0" "Value"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ArrayStorage value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Other"_s, "Int32"_s, "Double"_s, "Contiguous"_s };
+    static constexpr EnumeratorNames<4, 30> names {
+        {
+            0, 6, 12, 19
+        },
+        "Other\0" "Int32\0" "Double\0" "Contiguous"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TypeSiteKind value)
 {
-    static constexpr std::array<ASCIILiteral, 16> names {
-        "Unknown"_s, "Parameter"_s, "This"_s, "Capture"_s, "Result"_s, "Field"_s, "StaticField"_s, "Variable"_s, "Element"_s, "MapKey"_s,
-        "MapValue"_s, "SetElement"_s, "PromiseValue"_s, "CallResult"_s, "PropertyRead"_s, "Assertion"_s
+    static constexpr EnumeratorNames<16, 147> names {
+        {
+            0, 8, 18, 23, 31, 38, 44, 56, 65, 73, 80, 89, 100, 113, 124, 137
+        },
+        "Unknown\0" "Parameter\0" "This\0" "Capture\0" "Result\0" "Field\0" "StaticField\0" "Variable\0" "Element\0" "MapKey\0" "MapValue\0"
+        "SetElement\0" "PromiseValue\0" "CallResult\0" "PropertyRead\0" "Assertion"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CastResolution value)
 {
-    static constexpr std::array<ASCIILiteral, 6> names { "Unresolved"_s, "Nothing"_s, "Upcast"_s, "Claim"_s, "Prediction"_s, "Assume"_s };
+    static constexpr EnumeratorNames<5, 39> names {
+        {
+            0, 11, 19, 26, 32
+        },
+        "Unresolved\0" "Nothing\0" "Upcast\0" "Check\0" "Assume"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ValidatedPrimitive value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "String"_s, "Number"_s, "Boolean"_s, "BigInt"_s };
+    static constexpr EnumeratorNames<4, 29> names {
+        {
+            0, 7, 14, 22
+        },
+        "String\0" "Number\0" "Boolean\0" "BigInt"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TemplatePlaceholder value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "String"_s, "Number"_s, "BigInt"_s };
+    static constexpr EnumeratorNames<3, 21> names {
+        {
+            0, 7, 14
+        },
+        "String\0" "Number\0" "BigInt"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TextFormat value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names { "Email"_s, "Uuid"_s, "Ipv4"_s, "Ipv6"_s, "Date"_s, "DateTime"_s, "Url"_s };
+    static constexpr EnumeratorNames<7, 39> names {
+        {
+            0, 6, 11, 16, 21, 26, 35
+        },
+        "Email\0" "Uuid\0" "Ipv4\0" "Ipv6\0" "Date\0" "DateTime\0" "Url"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(UndeclaredMembers value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Allowed"_s, "Rejected"_s, "Validated"_s };
+    static constexpr EnumeratorNames<3, 27> names {
+        {
+            0, 8, 17
+        },
+        "Allowed\0" "Rejected\0" "Validated"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PrimitiveSet value)
 {
-    static constexpr std::array<ASCIILiteral, 13> names {
-        "Undefined"_s, "Null"_s, "False"_s, "True"_s, "Integer"_s, "WholeNumber"_s, "FractionalNumber"_s, "String"_s, "Symbol"_s, "BigInt"_s,
-        "Absent"_s, "LiteralString"_s, "LiteralSymbol"_s
+    static constexpr EnumeratorNames<13, 119> names {
+        {
+            0, 10, 15, 21, 26, 34, 46, 63, 70, 77, 84, 91, 105
+        },
+        "Undefined\0" "Null\0" "False\0" "True\0" "Integer\0" "WholeNumber\0" "FractionalNumber\0" "String\0" "Symbol\0" "BigInt\0" "Absent\0"
+        "LiteralString\0" "LiteralSymbol"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TypeFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "HasIntegers"_s, "AnyObject"_s, "AnyFunction"_s };
+    static constexpr EnumeratorNames<4, 58> names {
+        {
+            0, 12, 22, 34
+        },
+        "HasIntegers\0" "AnyObject\0" "AnyFunction\0" "HasMembersWithoutLayout"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PristineAspects value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Storage"_s, "Names"_s, "AsCreated"_s, "Dense"_s };
+    static constexpr EnumeratorNames<4, 30> names {
+        {
+            0, 8, 14, 24
+        },
+        "Storage\0" "Names\0" "AsCreated\0" "Dense"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PositionFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "IsInt32Promise"_s, "IsFromCompiler"_s, "AdmitsObjects"_s };
+    static constexpr EnumeratorNames<6, 89> names {
+        {
+            0, 15, 30, 41, 51, 66
+        },
+        "IsInt32Promise\0" "IsFromCompiler\0" "IsExpected\0" "OmitsNull\0" "OmitsUndefined\0" "IsDeclaredByDependency"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(LayoutKind value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "Record"_s, "Instance"_s, "Container"_s, "Environment"_s, "Closure"_s, "CoroutineFrame"_s, "BuiltinResult"_s, "ModuleNamespace"_s
+    static constexpr EnumeratorNames<8, 91> names {
+        {
+            0, 7, 16, 26, 38, 46, 61, 75
+        },
+        "Record\0" "Instance\0" "Container\0" "Environment\0" "Closure\0" "CoroutineFrame\0" "BuiltinResult\0" "ModuleNamespace"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(MethodKind value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Method"_s, "Getter"_s, "Setter"_s };
+    static constexpr EnumeratorNames<3, 21> names {
+        {
+            0, 7, 14
+        },
+        "Method\0" "Getter\0" "Setter"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ClassSide value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Prototype"_s, "Static"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 10
+        },
+        "Prototype\0" "Static"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(VariableInitialization value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Uninitialized"_s, "Undefined"_s, "Function"_s };
+    static constexpr EnumeratorNames<3, 33> names {
+        {
+            0, 14, 24
+        },
+        "Uninitialized\0" "Undefined\0" "Function"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionKind value)
 {
-    static constexpr std::array<ASCIILiteral, 10> names {
-        "Plain"_s, "Arrow"_s, "Method"_s, "Getter"_s, "Setter"_s, "BaseConstructor"_s, "DerivedConstructor"_s, "Initializer"_s, "Module"_s,
-        "CommonJsModule"_s
+    static constexpr EnumeratorNames<10, 102> names {
+        {
+            0, 6, 12, 19, 26, 33, 49, 68, 80, 87
+        },
+        "Plain\0" "Arrow\0" "Method\0" "Getter\0" "Setter\0" "BaseConstructor\0" "DerivedConstructor\0" "Initializer\0" "Module\0" "CommonJsModule"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(EntryParameter value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names {
-        "Capture"_s, "This"_s, "Callee"_s, "NewTarget"_s, "ArgumentCount"_s, "Parameter"_s, "HiddenRest"_s
+    static constexpr EnumeratorNames<7, 65> names {
+        {
+            0, 8, 13, 20, 30, 44, 54
+        },
+        "Capture\0" "This\0" "Callee\0" "NewTarget\0" "ArgumentCount\0" "Parameter\0" "HiddenRest"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(RelationSubjectKind value)
+{
+    static constexpr EnumeratorNames<6, 59> names {
+        {
+            0, 10, 21, 32, 41, 50
+        },
+        "Parameter\0" "Allocation\0" "CallResult\0" "ReadFrom\0" "Constant\0" "Computed"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ECMAMode value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Strict"_s, "Sloppy"_s };
+    static constexpr EnumeratorNames<2, 14> names {
+        {
+            0, 7
+        },
+        "Strict\0" "Sloppy"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(EvalBindingKind value)
 {
-    static constexpr std::array<ASCIILiteral, 15> names {
-        "Variable"_s, "Constant"_s, "FunctionName"_s, "This"_s, "NewTarget"_s, "HomeObject"_s, "ClassObject"_s, "Arguments"_s, "PrivateName"_s,
-        "PrivateMethod"_s, "PrivateAccessor"_s, "WithObject"_s, "EvalVariables"_s, "MappedArgument"_s, "SimpleCatchParameter"_s
+    static constexpr EnumeratorNames<15, 182> names {
+        {
+            0, 9, 18, 31, 36, 46, 57, 69, 79, 91, 105, 121, 132, 146, 161
+        },
+        "Variable\0" "Constant\0" "FunctionName\0" "This\0" "NewTarget\0" "HomeObject\0" "ClassObject\0" "Arguments\0" "PrivateName\0"
+        "PrivateMethod\0" "PrivateAccessor\0" "WithObject\0" "EvalVariables\0" "MappedArgument\0" "SimpleCatchParameter"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ModuleKind value)
 {
-    static constexpr std::array<ASCIILiteral, 6> names { "SourceText"_s, "CommonJs"_s, "Data"_s, "RuntimeSource"_s, "Runtime"_s, "External"_s };
+    static constexpr EnumeratorNames<6, 56> names {
+        {
+            0, 11, 20, 25, 39, 47
+        },
+        "SourceText\0" "CommonJs\0" "Data\0" "RuntimeSource\0" "Runtime\0" "External"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CommonJsParameter value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "Exports"_s, "Require"_s, "Module"_s, "Filename"_s, "Dirname"_s };
+    static constexpr EnumeratorNames<5, 40> names {
+        {
+            0, 8, 16, 23, 32
+        },
+        "Exports\0" "Require\0" "Module\0" "Filename\0" "Dirname"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ExternalKind value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "UncompiledCode"_s, "HostValue"_s };
+    static constexpr EnumeratorNames<2, 25> names {
+        {
+            0, 15
+        },
+        "UncompiledCode\0" "HostValue"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(SyntheticExportRule value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "None"_s, "CommonJs"_s, "CommonJsIgnoringAnnotation"_s, "RuntimeModule"_s };
+    static constexpr EnumeratorNames<4, 55> names {
+        {
+            0, 5, 14, 41
+        },
+        "None\0" "CommonJs\0" "CommonJsIgnoringAnnotation\0" "RuntimeModule"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RequireResult value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Namespace"_s, "ModuleExports"_s, "DefaultExport"_s };
+    static constexpr EnumeratorNames<3, 38> names {
+        {
+            0, 10, 24
+        },
+        "Namespace\0" "ModuleExports\0" "DefaultExport"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ImportPhase value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Evaluation"_s, "Defer"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 11
+        },
+        "Evaluation\0" "Defer"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ModuleRequestKind value)
+{
+    static constexpr EnumeratorNames<2, 15> names {
+        {
+            0, 7
+        },
+        "Import\0" "Require"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ModuleExportKind value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Variable"_s, "Namespace"_s, "Indirect"_s };
+    static constexpr EnumeratorNames<3, 28> names {
+        {
+            0, 9, 19
+        },
+        "Variable\0" "Namespace\0" "Indirect"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionVisibility value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Public"_s, "Private"_s, "PrivateRecursive"_s };
+    static constexpr EnumeratorNames<3, 32> names {
+        {
+            0, 7, 15
+        },
+        "Public\0" "Private\0" "PrivateRecursive"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ResumeMode value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Next"_s, "Throw"_s, "Return"_s };
+    static constexpr EnumeratorNames<3, 18> names {
+        {
+            0, 5, 11
+        },
+        "Next\0" "Throw\0" "Return"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(IteratorKind value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Sync"_s, "Async"_s };
+    static constexpr EnumeratorNames<2, 11> names {
+        {
+            0, 5
+        },
+        "Sync\0" "Async"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(IteratorCompletion value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Normal"_s, "Throw"_s };
+    static constexpr EnumeratorNames<2, 13> names {
+        {
+            0, 7
+        },
+        "Normal\0" "Throw"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(HomeObjectKind value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Object"_s, "ClassPrototype"_s };
+    static constexpr EnumeratorNames<2, 22> names {
+        {
+            0, 7
+        },
+        "Object\0" "ClassPrototype"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NullishAccess value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Read"_s, "Write"_s, "Iterate"_s };
+    static constexpr EnumeratorNames<4, 26> names {
+        {
+            0, 5, 11, 19
+        },
+        "Read\0" "Write\0" "Iterate\0" "Spread"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ErrorKind value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "Error"_s, "EvalError"_s, "RangeError"_s, "ReferenceError"_s, "SyntaxError"_s, "TypeError"_s, "URIError"_s, "AggregateError"_s
+    static constexpr EnumeratorNames<8, 88> names {
+        {
+            0, 6, 16, 27, 42, 54, 64, 73
+        },
+        "Error\0" "EvalError\0" "RangeError\0" "ReferenceError\0" "SyntaxError\0" "TypeError\0" "URIError\0" "AggregateError"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RuntimeErrorKind value)
 {
-    static constexpr std::array<ASCIILiteral, 21> names {
-        "UninitializedBinding"_s, "ConstantAssignment"_s, "UninitializedThis"_s, "ThisAlreadyBound"_s, "DeleteSuperProperty"_s,
-        "UnresolvableReference"_s, "ImportAssignment"_s, "NotDestructurable"_s, "DerivedConstructorResult"_s, "StaticPrototypeKey"_s,
-        "IteratorResultNotObject"_s, "IteratorWithoutThrowMethod"_s, "IteratorIsNotAnObject"_s, "InvalidPrivateRead"_s, "InvalidPrivateWrite"_s,
-        "InvalidPrivateBrand"_s, "PrivateFieldExists"_s, "PrivateMethodWrite"_s, "PrivateAccessorWithoutGetter"_s, "PrivateAccessorWithoutSetter"_s,
-        "PrivateStaticTestOfNonObject"_s
+    static constexpr EnumeratorNames<24, 515> names {
+        {
+            0, 21, 40, 58, 75, 95, 117, 134, 152, 177, 196, 220, 247, 269, 288, 308, 328, 347, 366, 395, 424, 453, 475, 495
+        },
+        "UninitializedBinding\0" "ConstantAssignment\0" "UninitializedThis\0" "ThisAlreadyBound\0" "DeleteSuperProperty\0" "UnresolvableReference\0"
+        "ImportAssignment\0" "NotDestructurable\0" "DerivedConstructorResult\0" "StaticPrototypeKey\0" "IteratorResultNotObject\0"
+        "IteratorWithoutThrowMethod\0" "IteratorIsNotAnObject\0" "InvalidPrivateRead\0" "InvalidPrivateWrite\0" "InvalidPrivateBrand\0"
+        "PrivateFieldExists\0" "PrivateMethodWrite\0" "PrivateAccessorWithoutGetter\0" "PrivateAccessorWithoutSetter\0"
+        "PrivateStaticTestOfNonObject\0" "SpreadResultNotObject\0" "LeftOutOfExecutable\0" "FunctionNotCompiled"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BlockRole value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names {
-        "Ordinary"_s, "CatchHandler"_s, "CleanupHandler"_s, "IterationCleanup"_s, "DisposalCleanup"_s
+    static constexpr EnumeratorNames<5, 70> names {
+        {
+            0, 9, 22, 37, 54
+        },
+        "Ordinary\0" "CatchHandler\0" "CleanupHandler\0" "IterationCleanup\0" "DisposalCleanup"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BlockFrequency value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Normal"_s, "Unlikely"_s, "Rare"_s };
+    static constexpr EnumeratorNames<3, 21> names {
+        {
+            0, 7, 16
+        },
+        "Normal\0" "Unlikely\0" "Rare"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CodeShape value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Unchosen"_s, "Compact"_s, "Balanced"_s, "Fast"_s };
+    static constexpr EnumeratorNames<4, 31> names {
+        {
+            0, 9, 17, 26
+        },
+        "Unchosen\0" "Compact\0" "Balanced\0" "Fast"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(LayoutFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "HasHeritage"_s, "IsConstructorFunction"_s, "IsDerived"_s };
+    static constexpr EnumeratorNames<8, 148> names {
+        {
+            0, 12, 34, 58, 74, 91, 120, 130
+        },
+        "HasHeritage\0" "IsConstructorFunction\0" "HasMembersWithoutLayout\0" "IsTypeParameter\0" "IsNeverAllocated\0"
+        "IsWrittenUnderDictionaryType\0" "IsDerived\0" "IsOfCreatedObject"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FieldFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 9> names {
-        "IsRequired"_s, "IsMethod"_s, "IsPrivate"_s, "IsImmutable"_s, "IsBrand"_s, "IsHidden"_s, "IsInherited"_s, "IsAppendedByFlow"_s,
-        "IsRemovedAsUnread"_s
+    static constexpr EnumeratorNames<12, 145> names {
+        {
+            0, 11, 20, 30, 42, 50, 59, 74, 92, 104, 116, 134
+        },
+        "IsRequired\0" "IsMethod\0" "IsPrivate\0" "IsImmutable\0" "IsBrand\0" "IsHidden\0" "IsNeverWritten\0" "IsAlsoInPrototype\0" "IsInherited\0"
+        "IsAddedLate\0" "IsRemovedAsUnread\0" "IsEnforced"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(FieldForm value)
+{
+    static constexpr EnumeratorNames<4, 56> names {
+        {
+            0, 11, 27, 45
+        },
+        "IsReadOnly\0" "IsNotEnumerable\0" "IsNotConfigurable\0" "IsAccessor"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(VariableFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 1> names { "IsImmutable"_s };
+    static constexpr EnumeratorNames<1, 12> names {
+        {
+            0
+        },
+        "IsImmutable"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 13> names {
-        "IsAsync"_s, "IsGenerator"_s, "IsSloppy"_s, "HasRestParameter"_s, "HasThis"_s, "HasNewTarget"_s, "TakesCallee"_s, "HasArgumentCount"_s,
-        "HasHiddenRest"_s, "IsChecked"_s, "IsHiddenInStackTraces"_s, "HasExplicitName"_s, "IsNakedConstructor"_s
+    static constexpr EnumeratorNames<16, 235> names {
+        {
+            0, 8, 20, 29, 46, 54, 67, 79, 96, 110, 120, 142, 158, 177, 193, 210
+        },
+        "IsAsync\0" "IsGenerator\0" "IsSloppy\0" "HasRestParameter\0" "HasThis\0" "HasNewTarget\0" "TakesCallee\0" "HasArgumentCount\0"
+        "HasHiddenRest\0" "IsChecked\0" "IsHiddenInStackTraces\0" "HasExplicitName\0" "IsNakedConstructor\0" "IsNamedBySymbol\0" "AllocatesOwnThis\0"
+        "IsSplitOffGenericVersion"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ValueFate value)
+{
+    static constexpr EnumeratorNames<17, 276> names {
+        {
+            0, 11, 20, 30, 49, 71, 95, 117, 126, 140, 155, 173, 200, 218, 229, 240, 263
+        },
+        "IsReturned\0" "IsThrown\0" "IsYielded\0" "IsStoredInVariable\0" "IsStoredInEnvironment\0" "IsStoredInUnknownObject\0"
+        "IsHandedToUnknownCode\0" "IsCalled\0" "IsConstructed\0" "HasMembersRead\0" "HasMembersWritten\0" "HasMembersDeletedOrDefined\0"
+        "HasKeysEnumerated\0" "IsIterated\0" "IsCompared\0" "IsConvertedToPrimitive\0" "IsIncomplete"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(EvalScopeFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names {
-        "IsInFunction"_s, "IsInArrowFunction"_s, "IsInFieldInitializer"_s, "IsInDerivedConstructor"_s, "AllowsSuperProperty"_s, "AllowsSuperCall"_s,
-        "AllowsNewTarget"_s
+    static constexpr EnumeratorNames<7, 127> names {
+        {
+            0, 13, 31, 52, 75, 95, 111
+        },
+        "IsInFunction\0" "IsInArrowFunction\0" "IsInFieldInitializer\0" "IsInDerivedConstructor\0" "AllowsSuperProperty\0" "AllowsSuperCall\0"
+        "AllowsNewTarget"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ModuleFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "HasTopLevelAwait"_s, "IsLibrary"_s, "IsLoadedByImportOnly"_s, "HasNoSideEffects"_s };
+    static constexpr EnumeratorNames<9, 154> names {
+        {
+            0, 17, 27, 48, 65, 76, 92, 116, 138
+        },
+        "HasTopLevelAwait\0" "IsLibrary\0" "IsLoadedByImportOnly\0" "HasNoSideEffects\0" "KeepsError\0" "IsBundlerHelper\0"
+        "NamesWayToModuleObjects\0" "HasInstalledPositions\0" "EvaluatesItself"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RegExpFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 8> names {
-        "HasIndices"_s, "Global"_s, "IgnoreCase"_s, "Multiline"_s, "DotAll"_s, "Unicode"_s, "UnicodeSets"_s, "Sticky"_s
+    static constexpr EnumeratorNames<8, 73> names {
+        {
+            0, 11, 18, 29, 39, 46, 54, 66
+        },
+        "HasIndices\0" "Global\0" "IgnoreCase\0" "Multiline\0" "DotAll\0" "Unicode\0" "UnicodeSets\0" "Sticky"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(WriterState value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "AllKnown"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "AllKnown"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StoreCount value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "Never"_s, "AtMostOnce"_s };
+    static constexpr EnumeratorNames<3, 25> names {
+        {
+            0, 8, 14
+        },
+        "Unknown\0" "Never\0" "AtMostOnce"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(InitializationState value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "StoredBeforeEveryRead"_s, "SetAtCreation"_s };
+    static constexpr EnumeratorNames<3, 44> names {
+        {
+            0, 8, 30
+        },
+        "Unknown\0" "StoredBeforeEveryRead\0" "SetAtCreation"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ReadState value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "OnlyCalled"_s, "NeverRead"_s };
+    static constexpr EnumeratorNames<4, 42> names {
+        {
+            0, 8, 19, 32
+        },
+        "Unknown\0" "OnlyCalled\0" "OnlyAccessed\0" "NeverRead"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ClosureDeferral value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "CapturesNothing"_s, "CapturesObject"_s };
+    static constexpr EnumeratorNames<5, 75> names {
+        {
+            0, 8, 24, 39, 59
+        },
+        "Unknown\0" "CapturesNothing\0" "CapturesObject\0" "CapturesEnvironment\0" "FlattenedObject"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Occupancy value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "AlwaysFilled"_s };
+    static constexpr EnumeratorNames<4, 58> names {
+        {
+            0, 8, 22, 45
+        },
+        "Unknown\0" "FilledAtBirth\0" "FilledWithValueAtBirth\0" "AlwaysFilled"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PrototypeNameState value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "AbsentOnPrototypes"_s };
+    static constexpr EnumeratorNames<2, 27> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "AbsentOnPrototypes"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ExecutionCount value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "AtMostOnce"_s };
+    static constexpr EnumeratorNames<2, 19> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "AtMostOnce"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AllocationState value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "NeverAllocated"_s };
+    static constexpr EnumeratorNames<2, 23> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "NeverAllocated"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(KeyEnumeration value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "NeverEnumerated"_s };
+    static constexpr EnumeratorNames<2, 24> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "NeverEnumerated"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FieldCreation value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "OnlyAtConstruction"_s };
-    return nameAt(names, value);
-}
-
-ASCIILiteral nameOf(ThisLeak value)
-{
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "DoesNotLeak"_s };
+    static constexpr EnumeratorNames<2, 27> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "OnlyAtConstruction"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(MemberMutability value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "Fixed"_s };
+    static constexpr EnumeratorNames<2, 14> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "Fixed"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BaseState value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Unknown"_s, "None"_s, "Layout"_s, "BuiltinClass"_s };
+    static constexpr EnumeratorNames<4, 33> names {
+        {
+            0, 8, 13, 20
+        },
+        "Unknown\0" "None\0" "Layout\0" "BuiltinClass"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FrameLocality value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "FrameLocal"_s };
+    static constexpr EnumeratorNames<2, 19> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "FrameLocal"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionReachability value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "Unreached"_s };
+    static constexpr EnumeratorNames<2, 18> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "Unreached"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CallerState value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "AllKnown"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "AllKnown"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ClosureUse value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "CalledOnly"_s };
+    static constexpr EnumeratorNames<2, 19> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "CalledOnly"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NamespaceUse value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "NamedReadsOnly"_s, "NeverCreated"_s };
-    return nameAt(names, value);
-}
-
-ASCIILiteral nameOf(ResultCheck value)
-{
-    static constexpr std::array<ASCIILiteral, 2> names { "ByCallee"_s, "ByCallers"_s };
+    static constexpr EnumeratorNames<3, 36> names {
+        {
+            0, 8, 23
+        },
+        "Unknown\0" "NamedReadsOnly\0" "NeverCreated"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BuiltinLocationState value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "Constant"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "Constant"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StoreNaming value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Unknown"_s, "EveryStoreNamesLocation"_s };
+    static constexpr EnumeratorNames<2, 32> names {
+        {
+            0, 8
+        },
+        "Unknown\0" "EveryStoreNamesLocation"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ObjectMutation value)
 {
-    static constexpr std::array<ASCIILiteral, 11> names {
-        "ReachNativeCode"_s, "ReachUnknownJavaScript"_s, "DeleteField"_s, "RedefineProperty"_s, "AddProperty"_s, "ChangeIntegrity"_s,
-        "ChangePrototype"_s, "BecomePrototype"_s, "StoreAfterCreation"_s, "StoreOfOtherType"_s, "LoseShape"_s
+    static constexpr EnumeratorNames<10, 164> names {
+        {
+            0, 16, 39, 51, 68, 80, 96, 112, 128, 147
+        },
+        "ReachNativeCode\0" "ReachUnknownJavaScript\0" "DeleteField\0" "RedefineProperty\0" "AddProperty\0" "ChangeIntegrity\0" "ChangePrototype\0"
+        "BecomePrototype\0" "StoreAfterCreation\0" "StoreOfOtherType"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FieldStability value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "IsNeverDeleted"_s, "IsNeverRedefined"_s, "IsNeverStoredWithOtherType"_s };
+    static constexpr EnumeratorNames<3, 59> names {
+        {
+            0, 15, 32
+        },
+        "IsNeverDeleted\0" "IsNeverRedefined\0" "IsNeverStoredWithOtherType"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ObservedUse value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Serialized"_s, "ReachesTypedParse"_s };
+    static constexpr EnumeratorNames<2, 29> names {
+        {
+            0, 11
+        },
+        "Serialized\0" "ReachesTypedParse"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionRole value)
 {
-    static constexpr std::array<ASCIILiteral, 23> names {
-        "Source"_s, "Library"_s, "Model"_s, "Signature"_s, "GenericEntrypoint"_s, "GroupEntrypoint"_s, "GenericVersion"_s, "AllocatedThisVersion"_s,
-        "CallSiteVersion"_s, "CoroutineRamp"_s, "CoroutineBody"_s, "BoundFunction"_s, "ResultWrapper"_s, "ResultWorker"_s, "ParameterWrapper"_s,
-        "OutlinedBody"_s, "Continuation"_s, "Serializer"_s, "Parser"_s, "ValidatingParser"_s, "Validator"_s, "ChainStep"_s, "StubBody"_s
+    static constexpr EnumeratorNames<27, 344> names {
+        {
+            0, 7, 15, 21, 31, 49, 65, 77, 92, 113, 127, 143, 157, 171, 185, 197, 211, 225, 238, 255, 267, 280, 291, 298, 315, 325, 335
+        },
+        "Source\0" "Library\0" "Model\0" "Signature\0" "GenericEntrypoint\0" "TableEntrypoint\0" "TableLookup\0" "GenericVersion\0"
+        "AllocatedThisVersion\0" "ConstructBody\0" "CallSiteVersion\0" "CalleeVersion\0" "CoroutineRamp\0" "CoroutineBody\0" "AsyncWorker\0"
+        "BoundFunction\0" "ResultWrapper\0" "ResultWorker\0" "ParameterWrapper\0" "EntryChecks\0" "OutlinedBody\0" "Serializer\0" "Parser\0"
+        "ValidatingParser\0" "Validator\0" "ChainStep\0" "StubBody"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ArgumentPassing value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Buffer"_s, "Registers"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 7
+        },
+        "Buffer\0" "Registers"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CoroutineKind value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Generator"_s, "AsyncFunction"_s, "AsyncGenerator"_s };
+    static constexpr EnumeratorNames<3, 39> names {
+        {
+            0, 10, 24
+        },
+        "Generator\0" "AsyncFunction\0" "AsyncGenerator"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NullishResult value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Never"_s, "Undefined"_s, "Null"_s };
+    static constexpr EnumeratorNames<3, 21> names {
+        {
+            0, 6, 16
+        },
+        "Never\0" "Undefined\0" "Null"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TypedResultForm value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "None"_s, "ParsedText"_s, "ParsedBody"_s, "Rows"_s, "ValidatedValue"_s };
+    static constexpr EnumeratorNames<5, 47> names {
+        {
+            0, 5, 16, 27, 32
+        },
+        "None\0" "ParsedText\0" "ParsedBody\0" "Rows\0" "ValidatedValue"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(FunctionCapabilities value)
 {
-    static constexpr std::array<ASCIILiteral, 7> names {
-        "MayChangeSignature"_s, "MayBeCloned"_s, "MayBeInlined"_s, "HasOrdinaryFrame"_s, "HasOnlyDirectCallers"_s, "IsNeverCalledByHost"_s,
-        "IsHiddenInStackTraces"_s
+    static constexpr EnumeratorNames<7, 124> names {
+        {
+            0, 19, 31, 44, 61, 82, 102
+        },
+        "MayChangeSignature\0" "MayBeCloned\0" "MayBeInlined\0" "HasOrdinaryFrame\0" "HasOnlyDirectCallers\0" "IsNeverCalledByHost\0"
+        "IsHiddenInStackTraces"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AllocationStorage value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Heap"_s, "Frame"_s, "FrameUntilMaterialized"_s };
+    static constexpr EnumeratorNames<3, 34> names {
+        {
+            0, 5, 11
+        },
+        "Heap\0" "Frame\0" "FrameUntilMaterialized"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ClosureForm value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Full"_s, "Slim"_s, "Deferred"_s, "Singleton"_s };
+    static constexpr EnumeratorNames<4, 29> names {
+        {
+            0, 5, 10, 19
+        },
+        "Full\0" "Slim\0" "Deferred\0" "Singleton"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ArrayLiteralStorage value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Fresh"_s, "Profiled"_s };
+    static constexpr EnumeratorNames<2, 15> names {
+        {
+            0, 6
+        },
+        "Fresh\0" "Profiled"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TailCallRequirement value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Required"_s, "Allowed"_s };
+    static constexpr EnumeratorNames<2, 17> names {
+        {
+            0, 9
+        },
+        "Required\0" "Allowed"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(DataEncoding value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Unselected"_s, "Expanded"_s, "ReadOnlyTree"_s, "CopyOnWriteArray"_s };
+    static constexpr EnumeratorNames<4, 50> names {
+        {
+            0, 11, 20, 33
+        },
+        "Unselected\0" "Expanded\0" "ReadOnlyTree\0" "CopyOnWriteArray"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ExpectedElements value)
+{
+    static constexpr EnumeratorNames<3, 31> names {
+        {
+            0, 9, 20
+        },
+        "Anything\0" "Int32Array\0" "Uint8Array"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OperatorForm value)
 {
-    static constexpr std::array<ASCIILiteral, 22> names {
-        "Unselected"_s, "Generic"_s, "Integers"_s, "CheckedIntegers"_s, "Numbers"_s, "NumberAndValue"_s, "Bits"_s, "Booleans"_s, "BigInts"_s,
-        "Strings"_s, "StringAndValue"_s, "Int32AndValue"_s, "StringAndPrimitive"_s, "NullableStrings"_s, "NullableStringAndPrimitive"_s, "String"_s,
-        "Number"_s, "NumberByOperation"_s, "NullableString"_s, "NullableNumber"_s, "MayBeString"_s, "MayBeStringOrNumber"_s
+    static constexpr EnumeratorNames<22, 282> names {
+        {
+            0, 11, 19, 28, 44, 52, 67, 72, 81, 89, 97, 112, 126, 145, 161, 188, 195, 202, 220, 235, 250, 262
+        },
+        "Unselected\0" "Generic\0" "Integers\0" "CheckedIntegers\0" "Numbers\0" "NumberAndValue\0" "Bits\0" "Booleans\0" "BigInts\0" "Strings\0"
+        "StringAndValue\0" "Int32AndValue\0" "StringAndPrimitive\0" "NullableStrings\0" "NullableStringAndPrimitive\0" "String\0" "Number\0"
+        "NumberByOperation\0" "NullableString\0" "NullableNumber\0" "MayBeString\0" "MayBeStringOrNumber"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(IteratorResumeResult value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Done"_s, "Value"_s };
+    static constexpr EnumeratorNames<2, 11> names {
+        {
+            0, 5
+        },
+        "Done\0" "Value"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ForInStepResult value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Done"_s, "Key"_s, "Position"_s };
+    static constexpr EnumeratorNames<3, 18> names {
+        {
+            0, 5, 9
+        },
+        "Done\0" "Key\0" "Position"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(YieldResult value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Sent"_s, "Mode"_s };
+    static constexpr EnumeratorNames<2, 10> names {
+        {
+            0, 5
+        },
+        "Sent\0" "Mode"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(GeneratorStepCheck value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "IsUnmodifiedGenerator"_s, "IsGenerator"_s, "IsUnmodified"_s, "None"_s };
+    static constexpr EnumeratorNames<4, 52> names {
+        {
+            0, 22, 34, 47
+        },
+        "IsUnmodifiedGenerator\0" "IsGenerator\0" "IsUnmodified\0" "None"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(GeneratorStepStatus value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Yielded"_s, "Completed"_s, "NotStepped"_s };
+    static constexpr EnumeratorNames<3, 29> names {
+        {
+            0, 8, 18
+        },
+        "Yielded\0" "Completed\0" "NotStepped"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StepGeneratorResult value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Value"_s, "Status"_s };
+    static constexpr EnumeratorNames<2, 13> names {
+        {
+            0, 6
+        },
+        "Value\0" "Status"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StepArrayIteratorResult value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Done"_s, "Value"_s };
+    static constexpr EnumeratorNames<2, 11> names {
+        {
+            0, 5
+        },
+        "Done\0" "Value"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(MapNextResult value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "HasEntry"_s, "Entry"_s, "Key"_s, "Value"_s };
+    static constexpr EnumeratorNames<4, 25> names {
+        {
+            0, 9, 15, 19
+        },
+        "HasEntry\0" "Entry\0" "Key\0" "Value"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(SetNextResult value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "HasEntry"_s, "Entry"_s, "Element"_s };
+    static constexpr EnumeratorNames<3, 23> names {
+        {
+            0, 9, 15
+        },
+        "HasEntry\0" "Entry\0" "Element"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(BuiltinCallForm value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "Whole"_s, "Fields"_s, "Prefix"_s, "AnyReceiver"_s, "List"_s };
+    static constexpr EnumeratorNames<5, 37> names {
+        {
+            0, 6, 13, 20, 32
+        },
+        "Whole\0" "Fields\0" "Prefix\0" "AnyReceiver\0" "List"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(QuotientRounding value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "Floor"_s, "Ceil"_s, "Truncate"_s, "Round"_s, "ToInt32"_s };
+    static constexpr EnumeratorNames<5, 34> names {
+        {
+            0, 6, 11, 20, 26
+        },
+        "Floor\0" "Ceil\0" "Truncate\0" "Round\0" "ToInt32"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AsyncGeneratorStepStatus value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Yielded"_s, "Completed"_s, "Awaited"_s };
+    static constexpr EnumeratorNames<3, 25> names {
+        {
+            0, 7, 15
+        },
+        "Result\0" "Yielded\0" "Completed"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(MemberConditionKind value)
+{
+    static constexpr EnumeratorNames<6, 122> names {
+        {
+            0, 16, 39, 58, 85, 101
+        },
+        "MemberUnchanged\0" "PrototypeLinkUnchanged\0" "ClassEvaluatedOnce\0" "InstancePrototypeUnchanged\0" "MemberNotHidden\0"
+        "MemberPassedByStores"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(JSONOutcome value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "Parsed"_s, "Rejected"_s };
+    static constexpr EnumeratorNames<3, 24> names {
+        {
+            0, 8, 15
+        },
+        "Unknown\0" "Parsed\0" "Rejected"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(JSONMemberSearch value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Unknown"_s, "Found"_s, "Absent"_s };
+    static constexpr EnumeratorNames<3, 21> names {
+        {
+            0, 8, 14
+        },
+        "Unknown\0" "Found\0" "Absent"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(JSONPosition value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Root"_s, "Property"_s, "Element"_s };
+    static constexpr EnumeratorNames<3, 22> names {
+        {
+            0, 5, 14
+        },
+        "Root\0" "Property\0" "Element"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(JSONToken value)
 {
-    static constexpr std::array<ASCIILiteral, 9> names {
-        "OpenObject"_s, "CloseObject"_s, "OpenArray"_s, "CloseArray"_s, "Comma"_s, "Null"_s, "EmptyObject"_s, "EmptyArray"_s, "CloseObjectOverComma"_s
+    static constexpr EnumeratorNames<9, 99> names {
+        {
+            0, 11, 23, 33, 44, 50, 55, 67, 78
+        },
+        "OpenObject\0" "CloseObject\0" "OpenArray\0" "CloseArray\0" "Comma\0" "Null\0" "EmptyObject\0" "EmptyArray\0" "CloseObjectOverComma"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StringRangeMethod value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "Slice"_s, "Substring"_s, "Substr"_s, "SingleIndex"_s, "SingleRelativeIndex"_s };
+    static constexpr EnumeratorNames<5, 55> names {
+        {
+            0, 6, 16, 23, 35
+        },
+        "Slice\0" "Substring\0" "Substr\0" "SingleIndex\0" "SingleRelativeIndex"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RegExpMatchForm value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Test"_s, "Exec"_s, "Search"_s, "Match"_s };
+    static constexpr EnumeratorNames<4, 23> names {
+        {
+            0, 5, 10, 17
+        },
+        "Test\0" "Exec\0" "Search\0" "Match"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PropertyDescriptorFlags value)
 {
-    static constexpr std::array<ASCIILiteral, 9> names {
-        "HasValue"_s, "HasWritable"_s, "IsWritable"_s, "HasEnumerable"_s, "IsEnumerable"_s, "HasConfigurable"_s, "IsConfigurable"_s, "HasGet"_s,
-        "HasSet"_s
+    static constexpr EnumeratorNames<9, 104> names {
+        {
+            0, 9, 21, 32, 46, 59, 75, 90, 97
+        },
+        "HasValue\0" "HasWritable\0" "IsWritable\0" "HasEnumerable\0" "IsEnumerable\0" "HasConfigurable\0" "IsConfigurable\0" "HasGet\0" "HasSet"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OwnKeysKind value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Keys"_s, "Names"_s, "Symbols"_s, "All"_s };
+    static constexpr EnumeratorNames<4, 23> names {
+        {
+            0, 5, 11, 19
+        },
+        "Keys\0" "Names\0" "Symbols\0" "All"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PrototypeQuery value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "ObjectGetPrototypeOf"_s, "ReflectGetPrototypeOf"_s };
+    static constexpr EnumeratorNames<2, 43> names {
+        {
+            0, 21
+        },
+        "ObjectGetPrototypeOf\0" "ReflectGetPrototypeOf"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PrototypeChange value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "ObjectSetPrototypeOf"_s, "ReflectSetPrototypeOf"_s };
+    static constexpr EnumeratorNames<2, 43> names {
+        {
+            0, 21
+        },
+        "ObjectSetPrototypeOf\0" "ReflectSetPrototypeOf"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(DateField value)
 {
-    static constexpr std::array<ASCIILiteral, 9> names {
-        "FullYear"_s, "Month"_s, "Date"_s, "Day"_s, "Hours"_s, "Minutes"_s, "Seconds"_s, "TimezoneOffset"_s, "Year"_s
+    static constexpr EnumeratorNames<9, 66> names {
+        {
+            0, 9, 15, 20, 24, 30, 38, 46, 61
+        },
+        "FullYear\0" "Month\0" "Date\0" "Day\0" "Hours\0" "Minutes\0" "Seconds\0" "TimezoneOffset\0" "Year"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TimeZone value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Local"_s, "UTC"_s };
+    static constexpr EnumeratorNames<2, 10> names {
+        {
+            0, 6
+        },
+        "Local\0" "UTC"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(MathFunctionKind value)
 {
-    static constexpr std::array<ASCIILiteral, 19> names {
-        "Sin"_s, "Sinh"_s, "Cos"_s, "Cosh"_s, "Tan"_s, "Tanh"_s, "ASin"_s, "ASinh"_s, "ACos"_s, "ACosh"_s, "ATan"_s, "ATanh"_s, "Log"_s, "Log10"_s,
-        "Log2"_s, "Cbrt"_s, "Exp"_s, "Expm1"_s, "Log1p"_s
+    static constexpr EnumeratorNames<19, 96> names {
+        {
+            0, 4, 9, 13, 18, 22, 27, 32, 38, 43, 49, 54, 60, 64, 70, 75, 80, 84, 90
+        },
+        "Sin\0" "Sinh\0" "Cos\0" "Cosh\0" "Tan\0" "Tanh\0" "ASin\0" "ASinh\0" "ACos\0" "ACosh\0" "ATan\0" "ATanh\0" "Log\0" "Log10\0" "Log2\0"
+        "Cbrt\0" "Exp\0" "Expm1\0" "Log1p"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AtomicsOperation value)
 {
-    static constexpr std::array<ASCIILiteral, 9> names {
-        "Load"_s, "Store"_s, "Add"_s, "And"_s, "CompareExchange"_s, "Exchange"_s, "Or"_s, "Sub"_s, "Xor"_s
+    static constexpr EnumeratorNames<9, 55> names {
+        {
+            0, 5, 11, 15, 19, 35, 44, 47, 51
+        },
+        "Load\0" "Store\0" "Add\0" "And\0" "CompareExchange\0" "Exchange\0" "Or\0" "Sub\0" "Xor"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AccessDirection value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Read"_s, "Write"_s };
+    static constexpr EnumeratorNames<2, 11> names {
+        {
+            0, 5
+        },
+        "Read\0" "Write"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NumberKind value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "Signed"_s, "Unsigned"_s, "Float"_s, "BigInt"_s };
+    static constexpr EnumeratorNames<4, 29> names {
+        {
+            0, 7, 16, 22
+        },
+        "Signed\0" "Unsigned\0" "Float\0" "BigInt"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Endianness value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Little"_s, "Big"_s };
+    static constexpr EnumeratorNames<2, 11> names {
+        {
+            0, 7
+        },
+        "Little\0" "Big"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(SearchValueKind value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "String"_s, "RegExp"_s };
+    static constexpr EnumeratorNames<2, 14> names {
+        {
+            0, 7
+        },
+        "String\0" "RegExp"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(SlotRepresentation value)
 {
-    static constexpr std::array<ASCIILiteral, 22> names {
-        "JSValue"_s, "Cell"_s, "Cell32"_s, "OptionalCell32"_s, "Int32"_s, "Uint32"_s, "Int64"_s, "OptionalInt64"_s, "OptionalInt32"_s, "Double"_s,
-        "OptionalDouble"_s, "Int32OrDouble"_s, "Float"_s, "Boolean"_s, "OptionalBoolean"_s, "Uint8"_s, "Int8"_s, "Uint16"_s, "Int16"_s,
-        "LiteralString"_s, "LiteralString32"_s, "DeferredClosure"_s
+    static constexpr EnumeratorNames<21, 204> names {
+        {
+            0, 8, 13, 20, 35, 41, 48, 54, 68, 82, 89, 104, 110, 118, 134, 140, 145, 152, 158, 172, 188
+        },
+        "JSValue\0" "Cell\0" "Cell32\0" "OptionalCell32\0" "Int32\0" "Uint32\0" "Int64\0" "OptionalInt64\0" "OptionalInt32\0" "Double\0"
+        "OptionalDouble\0" "Float\0" "Boolean\0" "OptionalBoolean\0" "Uint8\0" "Int8\0" "Uint16\0" "Int16\0" "LiteralString\0" "LiteralString32\0"
+        "DeferredClosure"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CellTestKind value)
 {
-    static constexpr std::array<ASCIILiteral, 11> names {
-        "IsObject"_s, "IsCallable"_s, "CellTypeIs"_s, "ShapeIn"_s, "InheritsClassInfo"_s, "IsPristine"_s, "IsBuiltinCell"_s, "IsClosureOf"_s,
-        "IsSymbol"_s, "SharingModeIs"_s, "IsNamespaceOf"_s
+    static constexpr EnumeratorNames<11, 131> names {
+        {
+            0, 9, 20, 31, 39, 57, 68, 82, 94, 103, 117
+        },
+        "IsObject\0" "IsCallable\0" "CellTypeIs\0" "ShapeIn\0" "InheritsClassInfo\0" "IsPristine\0" "IsBuiltinCell\0" "IsClosureOf\0" "IsSymbol\0"
+        "SharingModeIs\0" "IsNamespaceOf"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(PutMode value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "Strict"_s, "Sloppy"_s, "Define"_s };
+    static constexpr EnumeratorNames<3, 21> names {
+        {
+            0, 7, 14
+        },
+        "Strict\0" "Sloppy\0" "Define"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(StubExit value)
 {
-    static constexpr std::array<ASCIILiteral, 2> names { "Miss"_s, "Cannot"_s };
+    static constexpr EnumeratorNames<2, 12> names {
+        {
+            0, 5
+        },
+        "Miss\0" "Cannot"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(CacheLifetime value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "StrongRoot"_s, "WeakByKey"_s, "ClearedEachCollection"_s };
+    static constexpr EnumeratorNames<3, 43> names {
+        {
+            0, 11, 21
+        },
+        "StrongRoot\0" "WeakByKey\0" "ClearedEachCollection"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(EvaluationState value)
 {
-    static constexpr std::array<ASCIILiteral, 3> names { "SeenTwice"_s, "PredictedOnce"_s, "ProvenOnce"_s };
+    static constexpr EnumeratorNames<3, 35> names {
+        {
+            0, 10, 24
+        },
+        "SeenTwice\0" "PredictedOnce\0" "ProvenOnce"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(Opcode value)
 {
-    static constexpr std::array<ASCIILiteral, 362> names {
-        "Undefined"_s, "Null"_s, "Absent"_s, "Boolean"_s, "Integer"_s, "Double"_s, "String"_s, "BigInt"_s, "Builtin"_s, "ModuleBuiltin"_s, "Data"_s,
-        "NewClosure"_s, "GetModuleVariable"_s, "PutModuleVariable"_s, "GetEnvironmentField"_s, "PutEnvironmentField"_s, "ScopeHasBinding"_s,
-        "NewObject"_s, "FinishObject"_s, "NewArray"_s, "AppendElement"_s, "AppendSpread"_s, "AppendHole"_s, "NewRegExp"_s, "NewTemplateObject"_s,
-        "NewRuntimeError"_s, "NewSuppressedError"_s, "CreateUnmappedArguments"_s, "CreateMappedArguments"_s, "GetMappedArgument"_s,
-        "SetMappedArgument"_s, "PropGet"_s, "PropSet"_s, "PropDefine"_s, "PropHas"_s, "PropDelete"_s, "ElemGet"_s, "ElemSet"_s, "ElemHas"_s,
-        "ElemDelete"_s, "ElemDefine"_s, "DefineGetter"_s, "DefineSetter"_s, "SetFunctionName"_s, "SetLiteralPrototype"_s, "CopyDataProperties"_s,
-        "GetSuperBase"_s, "SuperGet"_s, "SuperSet"_s, "Add"_s, "Sub"_s, "Mul"_s, "Div"_s, "Mod"_s, "Pow"_s, "BitAnd"_s, "BitOr"_s, "BitXor"_s,
-        "LShift"_s, "RShift"_s, "URShift"_s, "Negate"_s, "ToNumeric"_s, "Increment"_s, "Decrement"_s, "BitNot"_s, "ToNumber"_s, "Less"_s, "LessEq"_s,
-        "Greater"_s, "GreaterEq"_s, "Eq"_s, "StrictEq"_s, "InstanceOf"_s, "ToBoolean"_s, "LogicalNot"_s, "TypeOf"_s, "ToString"_s, "Strcat"_s,
-        "ToPropertyKey"_s, "ToObject"_s, "ToThis"_s, "Upcast"_s, "Claim"_s, "ClaimDeclared"_s, "ClaimRead"_s, "Predict"_s, "CheckInitialized"_s,
-        "RequireObjectCoercible"_s, "RequireObject"_s, "TypeTest"_s, "Call"_s, "Construct"_s, "CallList"_s, "ConstructList"_s, "CallDirect"_s,
-        "Results"_s, "ResultAt"_s, "CatchValue"_s, "CatchException"_s, "LoopHint"_s, "ResolveHeritage"_s, "NewClass"_s, "GetClassPrototype"_s,
-        "DefineMethod"_s, "FinishClass"_s, "NewClassToken"_s, "GetConstructPrototype"_s, "SuperConstruct"_s, "SuperConstructList"_s, "PrivateGet"_s,
-        "PrivateSet"_s, "PrivateDefine"_s, "PrivateHas"_s, "IteratorOpen"_s, "IteratorResume"_s, "IteratorClose"_s, "ForInOpen"_s, "ForInStep"_s,
-        "Await"_s, "Yield"_s, "InitialYield"_s, "ModuleNamespace"_s, "ImportModule"_s, "RequireModule"_s, "ResolveModule"_s, "ThrowModuleFailure"_s,
-        "ImportDynamic"_s, "RequireDynamic"_s, "ResolveDynamic"_s, "DirectEval"_s, "IsConstructor"_s, "ArraySpeciesCreate"_s, "GetByValWithThis"_s,
-        "GetOwnProperty"_s, "ToLength"_s, "ThrowNewError"_s, "ResumeGenerator"_s, "StepGenerator"_s, "IsGeneratorSuspendedAtStart"_s,
-        "IsUnmodifiedGenerator"_s, "CreateIteratorResult"_s, "StepArrayIterator"_s, "RequireBuiltinModule"_s, "NativeBinding"_s, "LinkTimeConstant"_s,
-        "HasJSType"_s, "GetInternalField"_s, "PutInternalField"_s, "NewPromise"_s, "CreatePromise"_s, "ResolvePromise"_s, "RejectPromise"_s,
-        "IsPristineArray"_s, "ArrayStorageKind"_s, "HasContiguousIndex"_s, "GetContiguousIndex"_s, "GetDoubleIndex"_s, "PutContiguousIndex"_s,
-        "PutDoubleIndex"_s, "NewContiguousArray"_s, "NewDoubleArray"_s, "NewArrayLike"_s, "NewArrayWithCapacity"_s, "TryPutByValDirect"_s,
-        "TryPutIndex"_s, "GrowNewArray"_s, "TruncateNewArray"_s, "CollectionTable"_s, "MapNext"_s, "SetNext"_s, "KeyConstant"_s, "Unspecified"_s,
-        "Parameter"_s, "GetEncodedModuleVariable"_s, "AssumeType"_s, "ReportMismatch"_s, "CallGroup"_s, "ShapeTest"_s, "IsSlotFilled"_s,
-        "HasNoExtraProperties"_s, "IsNotFrozen"_s, "HasLayoutPrototype"_s, "BelongsToInstance"_s, "IsPristine"_s, "HasArrayStorage"_s, "IsInBounds"_s,
-        "IsNotThenable"_s, "IsMemberUnchanged"_s, "IsPrototypeLinkUnchanged"_s, "IsClassEvaluatedOnce"_s, "IsRequireEdgeReady"_s, "HasKeyOrder"_s,
-        "IsShapeEpochCurrent"_s, "IsClosureOf"_s, "IsEnumeratorCurrent"_s, "GetShapeEpoch"_s, "AllGuards"_s, "GetSlot"_s, "GetSlotOrUndefined"_s,
-        "GetDeferredClosureSlot"_s, "PutSlot"_s, "PutSlotOrAdd"_s, "PropHasOwn"_s, "CopyObject"_s, "TryCopyFields"_s, "GetArrayLength"_s,
-        "GetArrayElement"_s, "PutArrayElement"_s, "HasArrayElement"_s, "AppendElements"_s, "HasSpareArrayCapacity"_s, "ReserveArrayCapacity"_s,
-        "GetTypedArrayLength"_s, "GetTypedArrayElement"_s, "PutTypedArrayElement"_s, "GetStringLength"_s, "GetStringCodeUnit"_s, "GetArgument"_s,
-        "GetRestLength"_s, "ReturnsToResultTest"_s, "CreateRest"_s, "GetMyArgumentByVal"_s, "CallForwardVarargs"_s, "ConstructSuperForwardVarargs"_s,
-        "GetCapture"_s, "MaterializeEnvironment"_s, "MarkEnvironmentEscaped"_s, "ReleaseEnvironment"_s, "CallBuiltin"_s, "DivideIntegers"_s,
-        "ToInt32"_s, "ToUint32"_s, "ToIntegerOrInfinity"_s, "NewSetFromData"_s, "NewMapFromData"_s, "NewArgumentList"_s, "SharedRegExpLiteral"_s,
-        "DestructureIterable"_s, "EnumeratorGetByVal"_s, "RequireAttachedTypedArray"_s, "CreateAsyncFromSyncIterator"_s, "ThrowNotIterable"_s,
-        "NewGenerator"_s, "NewAsyncGenerator"_s, "IsUnmodifiedAsyncGenerator"_s, "StepAsyncGenerator"_s, "AwaitBySavingFrame"_s,
-        "AwaitCallBySavingFrame"_s, "YieldBySavingFrame"_s, "AsyncGeneratorYield"_s, "ReturnAsyncResult"_s, "PromiseAllOfElements"_s,
-        "HasInPrototypeChain"_s, "GetRequiredValue"_s, "StringBuilderBegin"_s, "StringBuilderAppend"_s, "StringBuilderAppendBuiltin"_s,
-        "StringBuilderAppendJSON"_s, "StringBuilderLength"_s, "StringBuilderToString"_s, "StringBuilderFinish"_s, "StringBuilderDiscard"_s,
-        "StringBuilderCheckpoint"_s, "StringBuilderRollBack"_s, "ValidateType"_s, "ValidateCallee"_s, "ValidateFirstRun"_s, "ValidateSameValue"_s,
-        "JSONSourceOpen"_s, "JSONSourceStart"_s, "JSONSourceClose"_s, "JSONSourceAbandon"_s, "JSONDecodeBytes"_s, "JSONGetByte"_s, "JSONStartsWith"_s,
-        "JSONAdvance"_s, "JSONSkipByte"_s, "JSONSkipWhitespace"_s, "JSONParseString"_s, "JSONParseKey"_s, "JSONParseNumber"_s, "JSONParseInteger"_s,
-        "JSONParseValue"_s, "JSONFindMember"_s, "JSONMemberRepeats"_s, "JSONKeyRepeats"_s, "JSONKeyHasEscapes"_s, "JSONHasStackSpace"_s,
-        "JSONObjectBegin"_s, "JSONObjectKey"_s, "JSONObjectFinish"_s, "JSONParseExtraMembers"_s, "JSONAddExtraMember"_s, "IsPlainDataObject"_s,
-        "GetOwnDataProperty"_s, "CloneAs"_s, "ExpectRows"_s, "StringBuilderReserve"_s, "StringBuilderCommit"_s, "JSONAppendKey"_s,
-        "JSONAppendToken"_s, "JSONAppendBoolean"_s, "JSONAppendInteger"_s, "JSONAppendNumber"_s, "JSONAppendDate"_s, "JSONAppendString"_s,
-        "JSONAppendValue"_s, "PropGetChecked"_s, "PropGetChain"_s, "PropGetPair"_s, "PropGetAndTest"_s, "CallMethod"_s, "TryPutByIds"_s, "PutSlots"_s,
-        "DefineOwnProperty"_s, "DefineAccessors"_s, "IntegerBound"_s, "FulfillFreshPromise"_s, "Substring"_s, "SubstringOrUndefined"_s,
-        "FlattenString"_s, "StringRange"_s, "StringOrder"_s, "StringOrderToCharacter"_s, "StringEqualsLiteral"_s, "ValueEqualsLiteral"_s,
-        "ValueLooselyEqualsLiteral"_s, "StringStartsWithLiteral"_s, "StringEndsWithLiteral"_s, "StringIndexOfLiteral"_s, "StringIndexOfCharacter"_s,
-        "StringLastIndexOfLiteral"_s, "StringRangeCodeUnitOrNaN"_s, "StringRangeCodeUnitOrMinusOne"_s, "StringRangeCodePointOrUndefined"_s,
-        "StringRangeCharacterOrEmpty"_s, "StringRangeCharacterOrUndefined"_s, "StringRangeEqualsLiteral"_s, "StringRangeToNumber"_s,
-        "StringRangeParseInt"_s, "StringRangeSubstringOrUndefined"_s, "StringBuilderAppendConstant"_s, "StringBuilderAppendInteger"_s,
-        "StringBuilderAppendNumber"_s, "StringBuilderAppendString"_s, "StringBuilderAppendStringRange"_s, "StringBuilderAppendBoolean"_s,
-        "StringBuilderAppendStringOrNullish"_s, "StringBuilderAppendValue"_s, "ResolveCallTarget"_s, "CallResolved"_s, "RegExpMatchLiteral"_s,
-        "CallInline"_s, "Box"_s, "Unbox"_s, "IntegerToNumber"_s, "NumberToInteger"_s, "WidenInteger"_s, "NarrowInteger"_s, "Decode"_s, "Compress"_s
+    static constexpr EnumeratorNames<392, 6053> names {
+        {
+            0, 10, 15, 22, 30, 38, 45, 52, 59, 67, 81, 86, 97, 115, 133, 153, 173, 189, 199, 213, 226, 235, 249, 262, 273, 283, 301, 317, 336, 360,
+            382, 400, 418, 426, 434, 445, 453, 464, 472, 480, 488, 499, 510, 523, 536, 557, 575, 591, 611, 630, 641, 654, 663, 672, 676, 680, 684,
+            688, 692, 696, 703, 709, 716, 723, 730, 738, 745, 755, 765, 775, 782, 791, 796, 803, 811, 821, 824, 833, 844, 854, 865, 872, 881, 888,
+            902, 911, 918, 925, 939, 945, 953, 970, 993, 1007, 1016, 1021, 1031, 1040, 1054, 1065, 1073, 1082, 1093, 1108, 1117, 1133, 1142, 1160,
+            1173, 1185, 1199, 1221, 1236, 1255, 1266, 1277, 1291, 1302, 1315, 1330, 1344, 1354, 1364, 1370, 1376, 1389, 1405, 1418, 1432, 1447, 1461,
+            1475, 1494, 1508, 1523, 1538, 1549, 1563, 1582, 1599, 1614, 1623, 1637, 1653, 1667, 1695, 1717, 1738, 1756, 1777, 1791, 1808, 1818, 1835,
+            1852, 1863, 1877, 1892, 1906, 1922, 1939, 1958, 1977, 1992, 2011, 2026, 2045, 2060, 2073, 2094, 2112, 2124, 2137, 2154, 2170, 2178, 2186,
+            2198, 2210, 2222, 2240, 2250, 2275, 2286, 2296, 2314, 2329, 2339, 2349, 2362, 2383, 2405, 2426, 2438, 2457, 2475, 2486, 2502, 2513, 2530,
+            2543, 2557, 2577, 2589, 2609, 2619, 2627, 2646, 2660, 2677, 2705, 2728, 2762, 2770, 2783, 2795, 2810, 2829, 2840, 2854, 2871, 2888, 2903,
+            2919, 2935, 2951, 2966, 2988, 3009, 3032, 3052, 3073, 3094, 3110, 3128, 3140, 3154, 3165, 3184, 3203, 3232, 3243, 3266, 3289, 3308, 3320,
+            3335, 3343, 3352, 3372, 3387, 3402, 3418, 3438, 3465, 3485, 3501, 3521, 3540, 3566, 3594, 3611, 3633, 3659, 3672, 3690, 3713, 3734, 3753,
+            3774, 3798, 3825, 3844, 3861, 3880, 3903, 3922, 3942, 3960, 3981, 4001, 4023, 4046, 4070, 4089, 4109, 4136, 4160, 4180, 4202, 4222, 4243,
+            4267, 4289, 4302, 4317, 4332, 4349, 4367, 4382, 4398, 4414, 4432, 4448, 4460, 4475, 4487, 4500, 4519, 4535, 4548, 4564, 4581, 4596, 4611,
+            4629, 4644, 4662, 4680, 4696, 4710, 4727, 4749, 4768, 4786, 4805, 4813, 4824, 4845, 4865, 4879, 4895, 4913, 4931, 4948, 4963, 4980, 4996,
+            5009, 5021, 5036, 5047, 5059, 5068, 5086, 5102, 5115, 5135, 5145, 5166, 5180, 5192, 5204, 5227, 5247, 5266, 5292, 5316, 5338, 5359, 5382,
+            5407, 5432, 5462, 5494, 5522, 5554, 5579, 5599, 5619, 5651, 5679, 5706, 5732, 5758, 5789, 5816, 5851, 5876, 5893, 5907, 5925, 5938, 5957,
+            5968, 5972, 5978, 5994, 6010, 6023, 6037, 6044
+        },
+        "Undefined\0" "Null\0" "Absent\0" "Boolean\0" "Integer\0" "Double\0" "String\0" "BigInt\0" "Builtin\0" "ModuleBuiltin\0" "Data\0"
+        "NewClosure\0" "GetModuleVariable\0" "PutModuleVariable\0" "GetEnvironmentField\0" "PutEnvironmentField\0" "ScopeHasBinding\0" "NewObject\0"
+        "NewDictionary\0" "FinishObject\0" "NewArray\0" "AppendElement\0" "AppendSpread\0" "AppendHole\0" "NewRegExp\0" "NewTemplateObject\0"
+        "NewRuntimeError\0" "NewSuppressedError\0" "CreateUnmappedArguments\0" "CreateMappedArguments\0" "GetMappedArgument\0" "SetMappedArgument\0"
+        "PropGet\0" "PropSet\0" "PropDefine\0" "PropHas\0" "PropDelete\0" "ElemGet\0" "ElemSet\0" "ElemHas\0" "ElemDelete\0" "ElemDefine\0"
+        "DefineGetter\0" "DefineSetter\0" "TryDefineLiveBinding\0" "TryReExportFields\0" "SetFunctionName\0" "SetLiteralPrototype\0"
+        "CopyDataProperties\0" "CopyObject\0" "GetSuperBase\0" "SuperGet\0" "SuperSet\0" "Add\0" "Sub\0" "Mul\0" "Div\0" "Mod\0" "Pow\0" "BitAnd\0"
+        "BitOr\0" "BitXor\0" "LShift\0" "RShift\0" "URShift\0" "Negate\0" "ToNumeric\0" "Increment\0" "Decrement\0" "BitNot\0" "ToNumber\0" "Less\0"
+        "LessEq\0" "Greater\0" "GreaterEq\0" "Eq\0" "StrictEq\0" "InstanceOf\0" "ToBoolean\0" "LogicalNot\0" "TypeOf\0" "ToString\0" "Strcat\0"
+        "ToPropertyKey\0" "ToObject\0" "ToThis\0" "Upcast\0" "NarrowByField\0" "Check\0" "Convert\0" "CheckInitialized\0" "RequireObjectCoercible\0"
+        "RequireObject\0" "TypeTest\0" "Call\0" "Construct\0" "CallList\0" "ConstructList\0" "CallDirect\0" "Results\0" "ResultAt\0" "CatchValue\0"
+        "CatchException\0" "LoopHint\0" "ResolveHeritage\0" "NewClass\0" "GetClassPrototype\0" "DefineMethod\0" "FinishClass\0" "NewClassToken\0"
+        "GetConstructPrototype\0" "SuperConstruct\0" "SuperConstructList\0" "PrivateGet\0" "PrivateSet\0" "PrivateDefine\0" "PrivateHas\0"
+        "IteratorOpen\0" "IteratorResume\0" "IteratorClose\0" "ForInOpen\0" "ForInStep\0" "Await\0" "Yield\0" "InitialYield\0" "ModuleNamespace\0"
+        "ImportModule\0" "RequireModule\0" "EvaluateModule\0" "RecordRequire\0" "ResolveModule\0" "ThrowModuleFailure\0" "ImportDynamic\0"
+        "RequireDynamic\0" "ResolveDynamic\0" "DirectEval\0" "IsConstructor\0" "ArraySpeciesCreate\0" "GetByValWithThis\0" "GetOwnProperty\0"
+        "ToLength\0" "ThrowNewError\0" "ResumeGenerator\0" "StepGenerator\0" "IsGeneratorSuspendedAtStart\0" "IsUnmodifiedGenerator\0"
+        "CreateIteratorResult\0" "StepArrayIterator\0" "RequireBuiltinModule\0" "NativeBinding\0" "LinkTimeConstant\0" "HasJSType\0"
+        "GetInternalField\0" "PutInternalField\0" "NewPromise\0" "CreatePromise\0" "ResolvePromise\0" "RejectPromise\0" "IsPristineArray\0"
+        "ArrayStorageKind\0" "HasContiguousIndex\0" "GetContiguousIndex\0" "GetDoubleIndex\0" "PutContiguousIndex\0" "PutDoubleIndex\0"
+        "NewContiguousArray\0" "NewDoubleArray\0" "NewArrayLike\0" "NewArrayWithCapacity\0" "TryPutByValDirect\0" "TryPutIndex\0" "GrowNewArray\0"
+        "TruncateNewArray\0" "CollectionTable\0" "MapNext\0" "SetNext\0" "IsClosureOf\0" "KeyConstant\0" "Unspecified\0" "EmptyArgumentList\0"
+        "Parameter\0" "GetEncodedModuleVariable\0" "AssumeType\0" "ReadAgain\0" "BorrowedParameter\0" "ReportMismatch\0" "CallTable\0" "ShapeTest\0"
+        "IsSlotFilled\0" "HasNoExtraProperties\0" "HasNoFieldOutsideSlot\0" "HasBirthFieldsFilled\0" "IsNotFrozen\0" "HasLayoutPrototype\0"
+        "BelongsToInstance\0" "IsPristine\0" "HasArrayStorage\0" "IsInBounds\0" "IsElementPresent\0" "IsInsideView\0" "IsNotThenable\0"
+        "AreMembersUnchanged\0" "HasKeyOrder\0" "IsEnumeratorCurrent\0" "AllGuards\0" "GetSlot\0" "GetSlotOrUndefined\0" "GetSlotGetter\0"
+        "GetFlattenedSlot\0" "GetFlattenedSlotOrUndefined\0" "GetDeferredClosureSlot\0" "GetDeferredClosureSlotOrUndefined\0" "PutSlot\0"
+        "PutSlotOrAdd\0" "FinishBirth\0" "TryFinishBirth\0" "MakeBorrowedObject\0" "PropHasOwn\0" "TryCopyFields\0" "GetGlobalBinding\0"
+        "SetGlobalBinding\0" "GetArrayLength\0" "GetArrayElement\0" "PutArrayElement\0" "HasArrayElement\0" "AppendElements\0"
+        "HasSpareArrayCapacity\0" "ReserveArrayCapacity\0" "ConvertToDoubleStorage\0" "GetTypedArrayLength\0" "GetTypedArrayElement\0"
+        "PutTypedArrayElement\0" "GetStringLength\0" "GetStringCodeUnit\0" "GetArgument\0" "GetRestLength\0" "CreateRest\0" "GetMyArgumentByVal\0"
+        "CallForwardVarargs\0" "ConstructSuperForwardVarargs\0" "GetCapture\0" "MaterializeEnvironment\0" "MarkEnvironmentEscaped\0"
+        "ReleaseEnvironment\0" "CallBuiltin\0" "DivideIntegers\0" "ToInt32\0" "ToUint32\0" "ToIntegerOrInfinity\0" "NewSetFromData\0"
+        "NewMapFromData\0" "NewArgumentList\0" "SharedRegExpLiteral\0" "IsBuiltinLocationUnchanged\0" "IsFunctionOfBuiltin\0" "GetBuiltinValue\0"
+        "DestructureIterable\0" "EnumeratorGetByVal\0" "RequireAttachedTypedArray\0" "CreateAsyncFromSyncIterator\0" "ThrowNotIterable\0"
+        "IsCollectionTableFull\0" "ReserveCollectionCapacity\0" "NewGenerator\0" "NewAsyncGenerator\0" "TakeGeneratorPrototype\0"
+        "IsGeneratorUnstarted\0" "IsGeneratorRunning\0" "MarkGeneratorRunning\0" "TakeGeneratorStepStatus\0" "IsUnmodifiedAsyncGenerator\0"
+        "StepAsyncGenerator\0" "AwaitMayContinue\0" "AwaitBySavingFrame\0" "AwaitCallBySavingFrame\0" "YieldBySavingFrame\0" "AsyncGeneratorYield\0"
+        "ReturnAsyncResult\0" "PromiseAllOfElements\0" "HasInPrototypeChain\0" "BeginModuleEvaluation\0" "FinishModuleEvaluation\0"
+        "AbandonModuleEvaluation\0" "StringBuilderBegin\0" "StringBuilderAppend\0" "StringBuilderAppendBuiltin\0" "StringBuilderAppendJSON\0"
+        "StringBuilderLength\0" "StringBuilderToString\0" "StringBuilderFinish\0" "StringBuilderDiscard\0" "StringBuilderCheckpoint\0"
+        "StringBuilderRollBack\0" "ValidateType\0" "ValidateCallee\0" "ValidateLookup\0" "ValidateFirstRun\0" "ValidateSameValue\0" "JSONSourceOpen\0"
+        "JSONSourceStart\0" "JSONSourceClose\0" "JSONSourceAbandon\0" "JSONDecodeBytes\0" "JSONGetByte\0" "JSONStartsWith\0" "JSONAdvance\0"
+        "JSONSkipByte\0" "JSONSkipWhitespace\0" "JSONParseString\0" "JSONParseKey\0" "JSONParseNumber\0" "JSONParseInteger\0" "JSONParseValue\0"
+        "JSONFindMember\0" "JSONMemberRepeats\0" "JSONKeyRepeats\0" "JSONKeyHasEscapes\0" "JSONHasStackSpace\0" "JSONObjectBegin\0" "JSONObjectKey\0"
+        "JSONObjectFinish\0" "JSONParseExtraMembers\0" "JSONAddExtraMember\0" "IsPlainDataObject\0" "GetOwnDataProperty\0" "CloneAs\0" "ExpectRows\0"
+        "StringBuilderReserve\0" "StringBuilderCommit\0" "JSONAppendKey\0" "JSONAppendToken\0" "JSONAppendBoolean\0" "JSONAppendInteger\0"
+        "JSONAppendNumber\0" "JSONAppendDate\0" "JSONAppendString\0" "JSONAppendValue\0" "PropGetChain\0" "PropGetPair\0" "PropGetAndTest\0"
+        "CallMethod\0" "TryPutByIds\0" "PutSlots\0" "DefineOwnProperty\0" "DefineAccessors\0" "IntegerBound\0" "FulfillFreshPromise\0" "Substring\0"
+        "SubstringOrUndefined\0" "FlattenString\0" "StringRange\0" "StringOrder\0" "StringOrderToCharacter\0" "StringEqualsLiteral\0"
+        "ValueEqualsLiteral\0" "ValueLooselyEqualsLiteral\0" "StringStartsWithLiteral\0" "StringEndsWithLiteral\0" "StringIndexOfLiteral\0"
+        "StringIndexOfCharacter\0" "StringLastIndexOfLiteral\0" "StringRangeCodeUnitOrNaN\0" "StringRangeCodeUnitOrMinusOne\0"
+        "StringRangeCodePointOrUndefined\0" "StringRangeCharacterOrEmpty\0" "StringRangeCharacterOrUndefined\0" "StringRangeEqualsLiteral\0"
+        "StringRangeToNumber\0" "StringRangeParseInt\0" "StringRangeSubstringOrUndefined\0" "StringBuilderAppendConstant\0"
+        "StringBuilderAppendInteger\0" "StringBuilderAppendNumber\0" "StringBuilderAppendString\0" "StringBuilderAppendStringRange\0"
+        "StringBuilderAppendBoolean\0" "StringBuilderAppendStringOrNullish\0" "StringBuilderAppendValue\0" "MapGetByKeyParts\0" "HasByKeyParts\0"
+        "ResolveCallTarget\0" "CallResolved\0" "RegExpMatchLiteral\0" "CallInline\0" "Box\0" "Unbox\0" "IntegerToNumber\0" "NumberToInteger\0"
+        "WidenInteger\0" "NarrowInteger\0" "Decode\0" "Compress"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(TerminatorKind value)
 {
-    static constexpr std::array<ASCIILiteral, 12> names {
-        "Jump"_s, "Branch"_s, "Switch"_s, "SwitchString"_s, "Return"_s, "ReturnCall"_s, "Throw"_s, "Rethrow"_s, "Unreachable"_s, "SwitchOnShape"_s,
-        "TryCallInline"_s, "TestAndBranch"_s
+    static constexpr EnumeratorNames<12, 118> names {
+        {
+            0, 5, 12, 19, 32, 39, 50, 56, 64, 76, 90, 104
+        },
+        "Jump\0" "Branch\0" "Switch\0" "SwitchString\0" "Return\0" "ReturnCall\0" "Throw\0" "Rethrow\0" "Unreachable\0" "SwitchOnShape\0"
+        "TryCallInline\0" "TestAndBranch"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OperationFamily value)
 {
-    static constexpr std::array<ASCIILiteral, 47> names {
-        "Constant"_s, "Binding"_s, "Allocation"_s, "Access"_s, "Operator"_s, "Cast"_s, "Call"_s, "Exception"_s, "Hint"_s, "Control"_s, "Class"_s,
-        "PrivateAccess"_s, "Iteration"_s, "ForIn"_s, "Coroutine"_s, "Module"_s, "Eval"_s, "EngineIntrinsic"_s, "RuntimeIntrinsic"_s,
-        "PromiseIntrinsic"_s, "ArrayIntrinsic"_s, "CollectionIntrinsic"_s, "Guard"_s, "GuardValue"_s, "SlotAccess"_s, "OwnAccess"_s,
-        "ElementAccess"_s, "Arguments"_s, "Environment"_s, "BuiltinCall"_s, "ExpandedIteration"_s, "SavedFrame"_s, "StringBuilder"_s,
-        "RuntimeValidation"_s, "JSONParse"_s, "Validation"_s, "JSONWrite"_s, "FusedAccess"_s, "SlotRun"_s, "ObjectCreation"_s, "SelectedOperator"_s,
-        "String"_s, "StringRangeRead"_s, "StringBuilderPart"_s, "ResolvedCall"_s, "InlineBuiltin"_s, "Representation"_s
+    static constexpr EnumeratorNames<48, 548> names {
+        {
+            0, 9, 17, 28, 35, 44, 49, 54, 64, 69, 77, 83, 97, 107, 113, 123, 130, 135, 151, 168, 185, 200, 220, 226, 237, 248, 258, 272, 282, 294,
+            306, 324, 335, 349, 367, 377, 388, 398, 410, 418, 433, 450, 457, 473, 491, 506, 519, 533
+        },
+        "Constant\0" "Binding\0" "Allocation\0" "Access\0" "Operator\0" "Cast\0" "Call\0" "Exception\0" "Hint\0" "Control\0" "Class\0"
+        "PrivateAccess\0" "Iteration\0" "ForIn\0" "Coroutine\0" "Module\0" "Eval\0" "EngineIntrinsic\0" "RuntimeIntrinsic\0" "PromiseIntrinsic\0"
+        "ArrayIntrinsic\0" "CollectionIntrinsic\0" "Guard\0" "GuardValue\0" "SlotAccess\0" "OwnAccess\0" "ElementAccess\0" "Arguments\0"
+        "Environment\0" "BuiltinCall\0" "ExpandedIteration\0" "SavedFrame\0" "StringBuilder\0" "RuntimeValidation\0" "JSONParse\0" "Validation\0"
+        "JSONWrite\0" "FusedAccess\0" "SlotRun\0" "ObjectCreation\0" "SelectedOperator\0" "String\0" "StringRangeRead\0" "StringBuilderPart\0"
+        "KeyPartsLookup\0" "ResolvedCall\0" "InlineBuiltin\0" "Representation"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(AbstractHeap value)
 {
-    static constexpr std::array<ASCIILiteral, 25> names {
-        "ModuleVariables"_s, "EnvironmentFields"_s, "ObjectFields"_s, "ShapeWords"_s, "OrderWords"_s, "ShapeEpoch"_s, "MemberGuards"_s,
-        "PrototypeLinks"_s, "NamedProperties"_s, "Elements"_s, "ArrayStorage"_s, "TypedArrayStorage"_s, "TypedArrayElements"_s, "CollectionStorage"_s,
-        "CollectionEntries"_s, "InternalFields"_s, "RegExpState"_s, "PromiseState"_s, "StringStorage"_s, "StringBuilderContents"_s, "ParserState"_s,
-        "ExternalState"_s, "AllocatorState"_s, "RuntimeState"_s, "ValidationState"_s
+    static constexpr EnumeratorNames<24, 354> names {
+        {
+            0, 16, 34, 47, 58, 69, 82, 97, 113, 122, 135, 153, 172, 190, 208, 223, 235, 248, 262, 284, 296, 310, 325, 338
+        },
+        "ModuleVariables\0" "EnvironmentFields\0" "ObjectFields\0" "ShapeWords\0" "OrderWords\0" "MemberGuards\0" "PrototypeLinks\0"
+        "NamedProperties\0" "Elements\0" "ArrayStorage\0" "TypedArrayStorage\0" "TypedArrayElements\0" "CollectionStorage\0" "CollectionEntries\0"
+        "InternalFields\0" "RegExpState\0" "PromiseState\0" "StringStorage\0" "StringBuilderContents\0" "ParserState\0" "ExternalState\0"
+        "AllocatorState\0" "RuntimeState\0" "ValidationState"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OpaqueKind value)
 {
-    static constexpr std::array<ASCIILiteral, 11> names {
-        "IteratorState"_s, "Enumerator"_s, "Exception"_s, "ClassToken"_s, "StringBuilder"_s, "Cursor"_s, "KeyOrder"_s, "Guard"_s, "FlatString"_s,
-        "CodeAddress"_s, "BuilderCursor"_s
+    static constexpr EnumeratorNames<11, 119> names {
+        {
+            0, 14, 25, 35, 46, 60, 67, 76, 82, 93, 105
+        },
+        "IteratorState\0" "Enumerator\0" "Exception\0" "ClassToken\0" "StringBuilder\0" "Cursor\0" "KeyOrder\0" "Guard\0" "FlatString\0"
+        "CodeAddress\0" "BuilderCursor"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(ProgramList value)
 {
-    static constexpr std::array<ASCIILiteral, 35> names {
-        "Bytes"_s, "Words"_s, "Strings"_s, "PropertyKeys"_s, "Types"_s, "ClassParts"_s, "TypeSites"_s, "DeclaredTypes"_s, "ExpectedResults"_s,
-        "TemplateParts"_s, "ValidationRules"_s, "ValidationMembers"_s, "ValidationNodes"_s, "Layouts"_s, "Fields"_s, "StaticFields"_s, "Variables"_s,
-        "Modules"_s, "ModuleRequests"_s, "ModuleExports"_s, "SyntheticExports"_s, "RequiredNames"_s, "ColumnAdjustments"_s, "ModuleFailures"_s,
-        "EvalScopes"_s, "EvalBindings"_s, "Functions"_s, "Code"_s, "DataNodes"_s, "DataMembers"_s, "Data"_s, "Entries"_s, "HostReads"_s,
-        "RuntimeFunctions"_s, "WebAssemblyModules"_s
+    static constexpr EnumeratorNames<39, 463> names {
+        {
+            0, 6, 12, 20, 33, 39, 50, 60, 74, 90, 104, 120, 138, 154, 162, 169, 182, 192, 200, 215, 229, 246, 260, 278, 293, 304, 317, 334, 346, 356,
+            367, 377, 382, 392, 404, 409, 417, 427, 444
+        },
+        "Bytes\0" "Words\0" "Strings\0" "PropertyKeys\0" "Types\0" "ClassParts\0" "TypeSites\0" "DeclaredTypes\0" "ExpectedResults\0"
+        "TemplateParts\0" "ValidationRules\0" "ValidationMembers\0" "ValidationNodes\0" "Layouts\0" "Fields\0" "StaticFields\0" "Variables\0"
+        "Modules\0" "ModuleRequests\0" "ModuleExports\0" "SyntheticExports\0" "RequiredNames\0" "ColumnAdjustments\0" "ModuleFailures\0"
+        "EvalScopes\0" "EvalBindings\0" "RelationSubjects\0" "StoredIntos\0" "HandedTos\0" "OperandsOf\0" "Functions\0" "Code\0" "DataNodes\0"
+        "DataMembers\0" "Data\0" "Entries\0" "HostReads\0" "RuntimeFunctions\0" "WebAssemblyModules"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(InlineBuiltin value)
 {
-    static constexpr std::array<ASCIILiteral, 153> names {
-        "ArrayAt"_s, "ArrayIndexOf"_s, "ArrayIncludes"_s, "ArrayJoin"_s, "ArrayConcat"_s, "ArrayShift"_s, "ArrayPop"_s, "ArraySlice"_s,
-        "ArraySplice"_s, "ArrayUnshift"_s, "ArraySplicePrefix"_s, "ArrayIterator"_s, "ArrayPush"_s, "ArrayIsArray"_s, "ArrayLength"_s,
-        "ArraySetLength"_s, "ArrayWithLength"_s, "ArrayOf"_s, "ArrayFrom"_s, "TypedArrayLength"_s, "TypedArrayByteLength"_s, "TypedArrayByteOffset"_s,
-        "TypedArrayWithLength"_s, "OwnPropertyKeys"_s, "ObjectGetOwnPropertyDescriptor"_s, "ObjectHasOwn"_s, "ObjectPropertyIsEnumerable"_s,
-        "OwnPropertyDescriptorFields"_s, "ObjectCreate"_s, "GetPrototypeOf"_s, "SetPrototypeOf"_s, "CallObjectConstructor"_s, "ObjectFreeze"_s,
-        "ObjectPrototypeToString"_s, "ObjectIs"_s, "ReturnThis"_s, "NewMap"_s, "MapGet"_s, "MapHas"_s, "SetHas"_s, "MapSet"_s, "SetAdd"_s,
-        "MapSize"_s, "SetSize"_s, "SetFromIterable"_s, "MapFromEntries"_s, "WeakMapGet"_s, "WeakMapHas"_s, "WeakSetHas"_s, "MapDelete"_s,
-        "SetDelete"_s, "MapClear"_s, "SetClear"_s, "MapIterator"_s, "SetIterator"_s, "PromiseResolve"_s, "PromiseThen"_s, "PromiseCatch"_s,
-        "DataViewGet"_s, "DataViewSet"_s, "Atomics"_s, "BufferAccess"_s, "MathMinOfArray"_s, "MathMaxOfArray"_s, "CallNumberConstructor"_s,
-        "NumberToString"_s, "ParseInt"_s, "NumberToStringAppend"_s, "MathAbs"_s, "MathFloor"_s, "MathCeil"_s, "MathTrunc"_s, "MathRound"_s,
-        "MathFround"_s, "MathF16Round"_s, "MathSqrt"_s, "MathPow"_s, "MathMin"_s, "MathMax"_s, "MathImul"_s, "MathClz32"_s, "MathSign"_s,
-        "MathFunction"_s, "MathATan2"_s, "MathHypot"_s, "IsNaN"_s, "IsFinite"_s, "NumberIsNaN"_s, "NumberIsFinite"_s, "NumberIsInteger"_s,
-        "NumberIsSafeInteger"_s, "MathRandom"_s, "DateGetField"_s, "DateToISOString"_s, "DateNow"_s, "DateGetTime"_s, "DateGetMilliseconds"_s,
-        "DateSetTime"_s, "FunctionBind"_s, "ReflectApply"_s, "FunctionApply"_s, "StringRepeat"_s, "StringPadStart"_s, "StringPadEnd"_s,
-        "StringIsWellFormed"_s, "StringToWellFormed"_s, "StringNormalize"_s, "StringFromCodePoint"_s, "CallStringConstructor"_s,
-        "StringUTF8ByteLength"_s, "StringLength"_s, "StringAt"_s, "StringCharAt"_s, "StringCharCodeAt"_s, "StringCodePointAt"_s, "StringSlice"_s,
-        "StringSubstring"_s, "StringSubstr"_s, "StringStartsWith"_s, "StringEndsWith"_s, "StringIncludes"_s, "StringIndexOf"_s, "StringLastIndexOf"_s,
-        "StringToLowerCase"_s, "StringToUpperCase"_s, "StringTrim"_s, "StringTrimStart"_s, "StringTrimEnd"_s, "StringLocaleCompare"_s,
-        "StringConcat"_s, "StringFromCharCode"_s, "StringSplitPrefix"_s, "StringSliceAppend"_s, "StringSubstringAppend"_s,
-        "CallStringConstructorAppend"_s, "NewRegExp"_s, "StringMatch"_s, "StringSearch"_s, "RegExpExec"_s, "RegExpTest"_s, "RegExpFlags"_s,
-        "RegExpSource"_s, "StringReplace"_s, "StringReplaceAll"_s, "StringSplit"_s, "RegExpFlag"_s, "RegExpGetLastIndex"_s, "RegExpSetLastIndex"_s,
-        "RegExpExecPrefix"_s, "StringMatchPrefix"_s, "NewError"_s, "FormatDateTime"_s, "FormatNumber"_s
+    static constexpr EnumeratorNames<156, 2130> names {
+        {
+            0, 8, 21, 35, 45, 57, 68, 77, 88, 100, 113, 131, 145, 155, 168, 180, 195, 211, 219, 229, 246, 267, 288, 309, 325, 356, 369, 396, 424, 437,
+            451, 464, 479, 494, 516, 529, 553, 562, 573, 580, 587, 594, 601, 608, 615, 622, 630, 638, 654, 669, 680, 691, 702, 712, 722, 731, 740,
+            752, 764, 779, 791, 804, 816, 828, 836, 849, 864, 879, 901, 916, 925, 946, 954, 964, 973, 983, 993, 1004, 1017, 1026, 1034, 1042, 1050,
+            1059, 1069, 1078, 1091, 1101, 1111, 1117, 1126, 1138, 1153, 1169, 1189, 1200, 1213, 1229, 1237, 1249, 1269, 1281, 1294, 1307, 1321, 1334,
+            1349, 1362, 1381, 1400, 1416, 1436, 1458, 1479, 1492, 1501, 1514, 1531, 1549, 1561, 1577, 1590, 1607, 1622, 1637, 1651, 1669, 1687, 1705,
+            1716, 1732, 1746, 1766, 1779, 1798, 1816, 1834, 1856, 1884, 1894, 1906, 1919, 1930, 1941, 1953, 1966, 1980, 1997, 2009, 2020, 2039, 2058,
+            2075, 2093, 2102, 2117
+        },
+        "ArrayAt\0" "ArrayIndexOf\0" "ArrayIncludes\0" "ArrayJoin\0" "ArrayConcat\0" "ArrayShift\0" "ArrayPop\0" "ArraySlice\0" "ArraySplice\0"
+        "ArrayUnshift\0" "ArraySplicePrefix\0" "ArrayIterator\0" "ArrayPush\0" "ArrayIsArray\0" "ArrayLength\0" "ArraySetLength\0" "ArrayWithLength\0"
+        "ArrayOf\0" "ArrayFrom\0" "TypedArrayLength\0" "TypedArrayByteLength\0" "TypedArrayByteOffset\0" "TypedArrayWithLength\0" "OwnPropertyKeys\0"
+        "ObjectGetOwnPropertyDescriptor\0" "ObjectHasOwn\0" "ObjectPropertyIsEnumerable\0" "OwnPropertyDescriptorFields\0" "ObjectValues\0"
+        "ObjectEntries\0" "ObjectCreate\0" "GetPrototypeOf\0" "SetPrototypeOf\0" "CallObjectConstructor\0" "ObjectFreeze\0"
+        "ObjectPrototypeToString\0" "ObjectIs\0" "ReturnThis\0" "NewMap\0" "NewSet\0" "MapGet\0" "MapHas\0" "SetHas\0" "MapSet\0" "SetAdd\0"
+        "MapSize\0" "SetSize\0" "SetFromIterable\0" "MapFromEntries\0" "WeakMapGet\0" "WeakMapHas\0" "WeakSetHas\0" "MapDelete\0" "SetDelete\0"
+        "MapClear\0" "SetClear\0" "MapIterator\0" "SetIterator\0" "PromiseResolve\0" "PromiseThen\0" "PromiseCatch\0" "DataViewGet\0" "DataViewSet\0"
+        "Atomics\0" "BufferAccess\0" "MathMinOfArray\0" "MathMaxOfArray\0" "CallNumberConstructor\0" "NumberToString\0" "ParseInt\0"
+        "NumberToStringAppend\0" "MathAbs\0" "MathFloor\0" "MathCeil\0" "MathTrunc\0" "MathRound\0" "MathFround\0" "MathF16Round\0" "MathSqrt\0"
+        "MathPow\0" "MathMin\0" "MathMax\0" "MathImul\0" "MathClz32\0" "MathSign\0" "MathFunction\0" "MathATan2\0" "MathHypot\0" "IsNaN\0"
+        "IsFinite\0" "NumberIsNaN\0" "NumberIsFinite\0" "NumberIsInteger\0" "NumberIsSafeInteger\0" "MathRandom\0" "DateGetField\0"
+        "DateToISOString\0" "DateNow\0" "DateGetTime\0" "DateGetMilliseconds\0" "DateSetTime\0" "FunctionBind\0" "ReflectApply\0" "FunctionApply\0"
+        "StringRepeat\0" "StringPadStart\0" "StringPadEnd\0" "StringIsWellFormed\0" "StringToWellFormed\0" "StringNormalize\0" "StringFromCodePoint\0"
+        "CallStringConstructor\0" "StringUTF8ByteLength\0" "StringLength\0" "StringAt\0" "StringCharAt\0" "StringCharCodeAt\0" "StringCodePointAt\0"
+        "StringSlice\0" "StringSubstring\0" "StringSubstr\0" "StringStartsWith\0" "StringEndsWith\0" "StringIncludes\0" "StringIndexOf\0"
+        "StringLastIndexOf\0" "StringToLowerCase\0" "StringToUpperCase\0" "StringTrim\0" "StringTrimStart\0" "StringTrimEnd\0" "StringLocaleCompare\0"
+        "StringConcat\0" "StringFromCharCode\0" "StringSplitPrefix\0" "StringSliceAppend\0" "StringSubstringAppend\0" "CallStringConstructorAppend\0"
+        "NewRegExp\0" "StringMatch\0" "StringSearch\0" "RegExpExec\0" "RegExpTest\0" "RegExpFlags\0" "RegExpSource\0" "StringReplace\0"
+        "StringReplaceAll\0" "StringSplit\0" "RegExpFlag\0" "RegExpGetLastIndex\0" "RegExpSetLastIndex\0" "RegExpExecPrefix\0" "StringMatchPrefix\0"
+        "NewError\0" "FormatDateTime\0" "FormatNumber"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(InlineBuiltinFamily value)
 {
-    static constexpr std::array<ASCIILiteral, 16> names {
-        "ArrayBuiltin"_s, "ArrayStorageBuiltin"_s, "ArrayBufferViewBuiltin"_s, "OwnPropertyBuiltin"_s, "ObjectBuiltin"_s, "HashTableBuiltin"_s,
-        "MapSetBuiltin"_s, "PromiseBuiltin"_s, "BufferBuiltin"_s, "MathBuiltin"_s, "DateBuiltin"_s, "FunctionBuiltin"_s, "StringBuiltin"_s,
-        "RegExpBuiltin"_s, "ErrorBuiltin"_s, "IntlBuiltin"_s
+    static constexpr EnumeratorNames<16, 242> names {
+        {
+            0, 13, 33, 56, 75, 89, 106, 120, 135, 149, 161, 173, 189, 203, 217, 230
+        },
+        "ArrayBuiltin\0" "ArrayStorageBuiltin\0" "ArrayBufferViewBuiltin\0" "OwnPropertyBuiltin\0" "ObjectBuiltin\0" "HashTableBuiltin\0"
+        "MapSetBuiltin\0" "PromiseBuiltin\0" "BufferBuiltin\0" "MathBuiltin\0" "DateBuiltin\0" "FunctionBuiltin\0" "StringBuiltin\0" "RegExpBuiltin\0"
+        "ErrorBuiltin\0" "IntlBuiltin"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(RuntimeOperation value)
 {
-    static constexpr std::array<ASCIILiteral, 404> names {
-        "ScopeHasBinding"_s, "NewClassToken"_s, "PrivateGet"_s, "PrivateHas"_s, "PrivateSet"_s, "PrivateDefine"_s, "GetSuperBase"_s,
-        "GetSuperPropertyById"_s, "SuperGet"_s, "SuperSet"_s, "DefineById"_s, "DefineField"_s, "DefineOwnProperty"_s, "DefineAccessor"_s,
-        "DefineAccessors"_s, "DefineMethod"_s, "SetFunctionName"_s, "SetLiteralPrototype"_s, "Construct"_s, "Apply"_s, "NewArgumentList"_s,
-        "ConstructWithArray"_s, "SuperConstruct"_s, "SuperConstructList"_s, "ThrowUnlessCallable"_s, "ThrowUnlessCallableNamed"_s, "CreateThis"_s,
-        "ResolveHeritage"_s, "NewClass"_s, "GetClassPrototype"_s, "GetConstructPrototype"_s, "SetConstructPrototype"_s, "AllocateSlow"_s,
-        "NewFromData"_s, "NewSetFromData"_s, "NewMapFromData"_s, "CopyDataProperties"_s, "CopyObject"_s, "CloneObjectAs"_s, "IsPlainDataObject"_s,
-        "GetOwnDataProperty"_s, "ExpectRows"_s, "TryPutProperties"_s, "MaterializeEnvironment"_s, "NewClosureSlow"_s, "BarrierSlow"_s,
-        "BarrierSlowPreservingRegisters"_s, "RememberElement"_s, "NewArray"_s, "NewArrayOfHoles"_s, "NewArrayAtReviewedSite"_s, "ArrayPush"_s,
-        "ArrayPushNumber"_s, "ArraySlice"_s, "ArrayCopy"_s, "AppendElements"_s, "AppendHole"_s, "ReserveArrayCapacity"_s, "ArrayPutAtIndex"_s,
-        "ArrayPutNumberAtIndex"_s, "ArrayPutAtNumber"_s, "NewTypedArray"_s, "TypedArrayPut"_s, "TypedArrayLength"_s, "ThrowIfTypedArrayIsDetached"_s,
-        "Concat"_s, "ConcatThree"_s, "Substring"_s, "Flatten"_s, "CompareStrings"_s, "StringHasAt"_s, "StringIndexOfFrom"_s, "IntToString"_s,
-        "DoubleToString"_s, "CharToString"_s, "ToLiteralString"_s, "LiteralStringToString"_s, "StringBuilderBegin"_s, "StringBuilderAppend"_s,
-        "StringBuilderAppendString"_s, "StringBuilderAppendStringRange"_s, "StringBuilderAppendByHost"_s, "StringBuilderAppendJSON"_s,
-        "StringBuilderReserve"_s, "StringBuilderRollBack"_s, "StringBuilderToString"_s, "StringBuilderFinish"_s, "StringBuilderDiscard"_s,
-        "Concatenate"_s, "ValueAdd"_s, "ValueSub"_s, "ValueMul"_s, "ValueDiv"_s, "ValueMod"_s, "ValuePow"_s, "ValueBitAnd"_s, "ValueBitOr"_s,
-        "ValueBitXor"_s, "ValueLShift"_s, "ValueRShift"_s, "ValueURShift"_s, "ValueNegate"_s, "ValueBitNot"_s, "ToNumeric"_s, "ToKey"_s,
-        "Increment"_s, "Decrement"_s, "ToNumber"_s, "ToString"_s, "ToBoolean"_s, "ToObject"_s, "ToThis"_s, "TypeOf"_s, "IsCallable"_s,
-        "CompareLess"_s, "CompareLessEq"_s, "CompareGreater"_s, "CompareGreaterEq"_s, "CompareEq"_s, "CompareStrictEq"_s, "CompareEqToString"_s,
-        "Fmod"_s, "Pow"_s, "ToInt32"_s, "TryConvertToInteger"_s, "AddNumberAndValueAsNumber"_s, "SubNumberAndValueAsNumber"_s,
-        "MulNumberAndValueAsNumber"_s, "DivNumberAndValueAsNumber"_s, "InstanceOfAndCache"_s, "DefaultHasInstance"_s, "DestructureIterable"_s,
-        "GetPropertyEnumerator"_s, "EnumeratorNext"_s, "EnumeratorGetByVal"_s, "CreateAsyncFromSyncIterator"_s, "ThrowNotIterable"_s, "NewPromise"_s,
-        "CreatePromise"_s, "ResolvePromise"_s, "ResolvePromiseOrReturnResult"_s, "RejectPromise"_s, "RejectWithException"_s, "NewGenerator"_s,
-        "SaveFrameAndAwait"_s, "SaveFrameAndAwaitCall"_s, "AwaitWithSavedFrame"_s, "AwaitCallWithSavedFrame"_s, "SaveFrameAndYield"_s,
-        "StepAsyncGenerator"_s, "PromiseThen"_s, "PromiseCatch"_s, "PromiseAll"_s, "Throw"_s, "ThrowToHandlerInFunction"_s, "Catch"_s,
-        "CatchException"_s, "ThrowAtSite"_s, "ThrowStackOverflowError"_s, "NewRuntimeError"_s, "NewRuntimeErrorWithName"_s, "NewSuppressedError"_s,
-        "ThrowRuntimeError"_s, "EnforceType"_s, "ReportMismatch"_s, "ReportValidationFailure"_s, "ContentsHaveType"_s, "PollSlow"_s,
-        "PollAtPrologue"_s, "DirectEval"_s, "StringConstant"_s, "NewStringConstant"_s, "KeyConstant"_s, "BuiltinCell"_s, "ModuleBuiltinCell"_s,
-        "BigIntConstant"_s, "SingletonClosure"_s, "NewTemplateObject"_s, "CreateUnmappedArguments"_s, "CreateMappedArguments"_s, "GetFromArguments"_s,
-        "GetMappedArgument"_s, "SetMappedArgument"_s, "GetModuleNamespace"_s, "IsNamespaceOfModule"_s, "ImportModule"_s, "RequireModule"_s,
-        "ResolveModule"_s, "ThrowModuleFailure"_s, "ImportDynamic"_s, "RequireDynamic"_s, "ResolveDynamic"_s, "GetById"_s, "PutById"_s,
-        "PutByIdSloppy"_s, "DeleteById"_s, "DeleteByIdSloppy"_s, "InByIdAndCache"_s, "HasOwnByIdAndCache"_s, "GetByIdAndCache"_s, "PutByIdAndCache"_s,
-        "FillSiteCache"_s, "GetFreeName"_s, "GetFreeNameForTypeOf"_s, "SetFreeName"_s, "SetFreeNameSloppy"_s, "DeleteFreeName"_s, "GetByVal"_s,
-        "GetByValAndCache"_s, "PutByVal"_s, "PutByValAndCache"_s, "PutByValAndCacheSloppy"_s, "InByValAndCache"_s, "HasOwnByValAndCache"_s,
-        "DeleteByVal"_s, "DeleteByValSloppy"_s, "GetByValWithThis"_s, "GetOwnProperty"_s, "GetGeneric"_s, "GetByValGeneric"_s, "InByValGeneric"_s,
-        "PutByValGeneric"_s, "ReadField"_s, "StoreField"_s, "CreateField"_s, "CallGetterOfSlot"_s, "CallSetterOfSlot"_s, "AddPropertyBySlot"_s,
-        "DidCreateField"_s, "DidCreateFieldAt"_s, "DidCreateFieldOutOfLineAt"_s, "DidCreateFieldsAt"_s, "EnsureExtensionGranules"_s,
-        "StoreDoubleInExtension"_s, "GetExtraProperty"_s, "HasExtraProperty"_s, "PutExtraProperty"_s, "MaterializeDeferredClosure"_s, "NewMap"_s,
-        "MapGet"_s, "MapHas"_s, "SetHas"_s, "MapSet"_s, "SetAdd"_s, "WeakMapSet"_s, "MapDelete"_s, "SetDelete"_s, "MapClear"_s, "SetClear"_s,
-        "NewMapIterator"_s, "NewSetIterator"_s, "MapNext"_s, "SetNext"_s, "TryNewSetFromIterable"_s, "TryNewMapFromEntries"_s, "ArraySplice"_s,
-        "ArrayGrow"_s, "AllocateStorage"_s, "ArrayUnshift"_s, "ArrayJoin"_s, "ArrayFromTypedArray"_s, "ArrayIndexOfDouble"_s, "ArrayIndexOfInt32"_s,
-        "NewArrayWithIndexingType"_s, "NewArrayFromDoubles"_s, "NewArrayIterator"_s, "GrowNewArray"_s, "TruncateNewArray"_s, "NewArrayWithHoles"_s,
-        "OwnPropertyKeys"_s, "HasOwnProperty"_s, "PropertyIsEnumerable"_s, "GetOwnPropertyDescriptor"_s, "GetOwnPropertyFields"_s, "ObjectCreate"_s,
-        "IsConstructor"_s, "ArraySpeciesCreate"_s, "ResumeGenerator"_s, "IsGeneratorSuspendedAtStart"_s, "ToLength"_s, "RequireBuiltinModule"_s,
-        "NativeBinding"_s, "LinkTimeConstant"_s, "NewBigInt64"_s, "DateNow"_s, "DateToISOString"_s, "PrepareBoundFunctionAllocation"_s, "NewError"_s,
-        "FormatDateTime"_s, "FormatNumber"_s, "NumberToStringWithRadix"_s, "Int32ToStringWithRadix"_s, "AppendNumberWithRadix"_s, "MathSin"_s,
-        "MathSinh"_s, "MathCos"_s, "MathCosh"_s, "MathTan"_s, "MathTanh"_s, "MathASin"_s, "MathASinh"_s, "MathACos"_s, "MathACosh"_s, "MathATan"_s,
-        "MathATanh"_s, "MathLog"_s, "MathLog10"_s, "MathLog2"_s, "MathCbrt"_s, "MathExp"_s, "MathExpm1"_s, "MathLog1p"_s, "MathF16Round"_s,
-        "MathATan2"_s, "MathHypot"_s, "MathHypot3"_s, "ParseInt8"_s, "ParseInt16"_s, "StringToNumber8"_s, "StringToNumber16"_s,
-        "StringFindCharacter8"_s, "StringFindCharacter16"_s, "StringReverseFindCharacter8"_s, "StringReverseFindCharacter16"_s, "StringFind8"_s,
-        "StringFind16"_s, "StringReverseFind8"_s, "StringReverseFind16"_s, "StringUTF8Length8"_s, "StringUTF8Length16"_s, "CountSeparators8"_s,
-        "CountSeparators16"_s, "FindSeparators8"_s, "FindSeparators16"_s, "StringImplsAreEqual"_s, "CompareStringImpls"_s,
-        "StringImplEqualsImageString"_s, "HashStringImpl"_s, "FindLongSeparators8"_s, "FindLongSeparators16"_s, "CountLongSeparators8"_s,
-        "CountLongSeparators16"_s, "StringFindLiteral8"_s, "StringReverseFindLiteral8"_s, "StringSplitPrefix"_s, "StringEqualsLiteral"_s,
-        "StringEqualsLiteralInRegister"_s, "StringStartsWithLiteral"_s, "StringEndsWithLiteral"_s, "StringIndexOfLiteral"_s,
-        "StringLastIndexOfLiteral"_s, "StringIndexOfCharacter"_s, "StringsAreEqual"_s, "StringTrim"_s, "StringLastIndexOf"_s, "StringLocaleCompare"_s,
-        "StringToLowerCase"_s, "StringToUpperCase"_s, "StringRepeat"_s, "StringPad"_s, "ShortStringOfString"_s, "RegExpExec"_s, "RegExpTest"_s,
-        "RegExpFind"_s, "RegExpTestBoxed"_s, "RegExpMatchLiteral"_s, "RegExpMatchLiteralWithoutObject"_s, "NewRegExpLiteral"_s,
-        "SharedRegExpLiteral"_s, "NewRegExp"_s, "RegExpFlags"_s, "RegExpSource"_s, "StringReplaceString"_s, "StringReplaceAllString"_s,
-        "StringReplaceRegExp"_s, "StringReplaceAllRegExp"_s, "StringReplaceRegExpString"_s, "StringSplitString"_s, "StringSplitRegExp"_s,
-        "StringMatchRegExp"_s, "StringSearchRegExp"_s, "RegExpExecPrefix"_s, "StringMatchPrefix"_s, "JSONSourceOpen"_s, "JSONSourceClose"_s,
-        "JSONSourceAbandon"_s, "JSONDecodeBytes"_s, "JSONParseString"_s, "JSONParseKey"_s, "JSONParseValue"_s, "JSONParseNumber"_s,
-        "JSONParseInteger"_s, "JSONFindMember"_s, "JSONMemberRepeats"_s, "JSONKeyRepeats"_s, "JSONObjectKey"_s, "JSONObjectFinish"_s,
-        "JSONParseExtraMembers"_s, "JSONAddExtraMember"_s, "JSONAppendString"_s, "JSONAppendInteger"_s, "JSONAppendNumber"_s, "JSONAppendDate"_s,
-        "JSONAppendValue"_s
+    static constexpr EnumeratorNames<460, 7551> names {
+        {
+            0, 16, 30, 41, 52, 63, 77, 90, 111, 120, 129, 140, 152, 170, 185, 201, 214, 235, 253, 269, 289, 299, 305, 321, 340, 355, 374, 394, 419,
+            430, 446, 455, 473, 495, 517, 530, 552, 566, 578, 593, 608, 627, 638, 656, 670, 688, 707, 718, 735, 758, 773, 791, 803, 834, 850, 859,
+            875, 898, 908, 924, 935, 945, 960, 971, 992, 1018, 1033, 1056, 1072, 1094, 1111, 1125, 1139, 1156, 1184, 1191, 1203, 1213, 1221, 1236,
+            1248, 1266, 1278, 1293, 1306, 1322, 1344, 1363, 1383, 1409, 1440, 1466, 1490, 1511, 1533, 1555, 1575, 1596, 1619, 1644, 1680, 1705, 1731,
+            1743, 1760, 1774, 1783, 1792, 1801, 1810, 1819, 1828, 1840, 1851, 1863, 1875, 1887, 1900, 1912, 1924, 1934, 1940, 1950, 1960, 1969, 1978,
+            1988, 1997, 2004, 2011, 2022, 2034, 2048, 2063, 2080, 2090, 2106, 2124, 2129, 2133, 2141, 2161, 2187, 2213, 2239, 2265, 2284, 2303, 2323,
+            2345, 2360, 2379, 2407, 2424, 2435, 2449, 2464, 2493, 2507, 2527, 2540, 2563, 2581, 2603, 2630, 2650, 2674, 2703, 2721, 2739, 2763, 2775,
+            2788, 2799, 2805, 2830, 2836, 2851, 2863, 2887, 2903, 2927, 2946, 2964, 2979, 3003, 3021, 3050, 3066, 3083, 3098, 3107, 3122, 3133, 3148,
+            3166, 3178, 3190, 3208, 3225, 3244, 3265, 3282, 3297, 3314, 3332, 3356, 3378, 3395, 3413, 3431, 3450, 3470, 3483, 3497, 3511, 3525, 3544,
+            3566, 3590, 3604, 3619, 3634, 3642, 3650, 3664, 3675, 3692, 3707, 3726, 3742, 3758, 3772, 3786, 3798, 3819, 3831, 3849, 3864, 3881, 3904,
+            3921, 3944, 3967, 3996, 4018, 4027, 4044, 4053, 4070, 4093, 4109, 4129, 4141, 4159, 4176, 4191, 4202, 4218, 4233, 4249, 4259, 4270, 4282,
+            4299, 4316, 4334, 4349, 4366, 4392, 4410, 4434, 4475, 4492, 4509, 4526, 4553, 4573, 4595, 4602, 4609, 4616, 4623, 4630, 4637, 4644, 4655,
+            4665, 4675, 4684, 4693, 4708, 4723, 4731, 4739, 4761, 4782, 4794, 4804, 4820, 4833, 4843, 4866, 4883, 4900, 4925, 4937, 4955, 4975, 4999,
+            5028, 5046, 5068, 5089, 5109, 5128, 5146, 5171, 5191, 5208, 5221, 5238, 5256, 5272, 5285, 5299, 5320, 5345, 5366, 5379, 5393, 5412, 5428,
+            5456, 5465, 5486, 5500, 5517, 5529, 5537, 5553, 5584, 5593, 5608, 5621, 5645, 5668, 5690, 5698, 5707, 5715, 5724, 5732, 5741, 5750, 5760,
+            5769, 5779, 5788, 5798, 5806, 5816, 5825, 5834, 5842, 5852, 5862, 5875, 5885, 5895, 5906, 5916, 5927, 5943, 5960, 5981, 6003, 6031, 6060,
+            6072, 6085, 6104, 6124, 6142, 6161, 6178, 6196, 6212, 6229, 6249, 6268, 6296, 6311, 6331, 6352, 6373, 6395, 6414, 6440, 6458, 6478, 6508,
+            6532, 6554, 6575, 6600, 6623, 6639, 6650, 6668, 6688, 6706, 6724, 6737, 6747, 6767, 6778, 6789, 6800, 6816, 6835, 6867, 6891, 6908, 6928,
+            6938, 6950, 6963, 6983, 7006, 7026, 7049, 7075, 7093, 7111, 7129, 7148, 7165, 7183, 7198, 7214, 7232, 7248, 7264, 7277, 7292, 7308, 7325,
+            7340, 7358, 7373, 7387, 7404, 7426, 7445, 7462, 7480, 7497, 7512, 7528
+        },
+        "ScopeHasBinding\0" "NewClassToken\0" "PrivateGet\0" "PrivateHas\0" "PrivateSet\0" "PrivateDefine\0" "GetSuperBase\0" "GetSuperPropertyById\0"
+        "SuperGet\0" "SuperSet\0" "DefineById\0" "DefineField\0" "DefineOwnProperty\0" "DefineAccessor\0" "DefineAccessors\0" "DefineMethod\0"
+        "TryDefineLiveBinding\0" "TryReExportFields\0" "SetFunctionName\0" "SetLiteralPrototype\0" "Construct\0" "Apply\0" "NewArgumentList\0"
+        "ConstructWithArray\0" "SuperConstruct\0" "SuperConstructList\0" "ThrowUnlessCallable\0" "ThrowUnlessCallableNamed\0" "CreateThis\0"
+        "ResolveHeritage\0" "NewClass\0" "GetClassPrototype\0" "GetConstructPrototype\0" "SetConstructPrototype\0" "AllocateSlow\0"
+        "GetHeaderOfAllocation\0" "NewDictionary\0" "NewFromData\0" "NewSetFromData\0" "NewMapFromData\0" "CopyDataProperties\0" "CopyObject\0"
+        "TryCopyTwoObjects\0" "CloneObjectAs\0" "IsPlainDataObject\0" "GetOwnDataProperty\0" "ExpectRows\0" "TryPutProperties\0"
+        "MaterializeEnvironment\0" "NewClosureSlow\0" "MoveClosureToHeap\0" "BarrierSlow\0" "BarrierSlowPreservingRegisters\0" "RememberElement\0"
+        "NewArray\0" "NewArrayOfHoles\0" "NewArrayAtReviewedSite\0" "ArrayPush\0" "ArrayPushNumber\0" "ArraySlice\0" "ArrayCopy\0" "AppendElements\0"
+        "AppendHole\0" "ReserveArrayCapacity\0" "ReserveCollectionCapacity\0" "TryFinishBirth\0" "ConvertToDoubleStorage\0" "ArrayPutAtIndex\0"
+        "ArrayPutNumberAtIndex\0" "ArrayPutAtNumber\0" "NewTypedArray\0" "TypedArrayPut\0" "TypedArrayLength\0" "ThrowIfTypedArrayIsDetached\0"
+        "Concat\0" "ConcatThree\0" "Substring\0" "Flatten\0" "CompareStrings\0" "StringHasAt\0" "StringIndexOfFrom\0" "IntToString\0"
+        "DoubleToString\0" "CharToString\0" "ToLiteralString\0" "LiteralStringToString\0" "StringBuilderBegin\0" "StringBuilderAppend\0"
+        "StringBuilderAppendString\0" "StringBuilderAppendStringRange\0" "StringBuilderAppendByHost\0" "StringBuilderAppendJSON\0"
+        "StringBuilderReserve\0" "StringBuilderRollBack\0" "StringBuilderToString\0" "StringBuilderFinish\0" "StringBuilderDiscard\0"
+        "StackStringBuilderGrow\0" "StackStringBuilderAppend\0" "StackStringBuilderAppendStringRange\0" "StackStringBuilderFinish\0"
+        "StackStringBuilderDiscard\0" "Concatenate\0" "MapGetByKeyParts\0" "HasByKeyParts\0" "ValueAdd\0" "ValueSub\0" "ValueMul\0" "ValueDiv\0"
+        "ValueMod\0" "ValuePow\0" "ValueBitAnd\0" "ValueBitOr\0" "ValueBitXor\0" "ValueLShift\0" "ValueRShift\0" "ValueURShift\0" "ValueNegate\0"
+        "ValueBitNot\0" "ToNumeric\0" "ToKey\0" "Increment\0" "Decrement\0" "ToNumber\0" "ToString\0" "ToBoolean\0" "ToObject\0" "ToThis\0" "TypeOf\0"
+        "IsCallable\0" "CompareLess\0" "CompareLessEq\0" "CompareGreater\0" "CompareGreaterEq\0" "CompareEq\0" "CompareStrictEq\0"
+        "CompareEqToString\0" "Fmod\0" "Pow\0" "ToInt32\0" "TryConvertToInteger\0" "AddNumberAndValueAsNumber\0" "SubNumberAndValueAsNumber\0"
+        "MulNumberAndValueAsNumber\0" "DivNumberAndValueAsNumber\0" "InstanceOfAndCache\0" "DefaultHasInstance\0" "DestructureIterable\0"
+        "GetPropertyEnumerator\0" "EnumeratorNext\0" "EnumeratorGetByVal\0" "CreateAsyncFromSyncIterator\0" "ThrowNotIterable\0" "NewPromise\0"
+        "CreatePromise\0" "ResolvePromise\0" "ResolvePromiseOrReturnResult\0" "RejectPromise\0" "RejectWithException\0" "NewGenerator\0"
+        "TakeGeneratorPrototype\0" "SaveFrameAndAwait\0" "SaveFrameAndAwaitCall\0" "SaveFrameAndAwaitAfterTurn\0" "AwaitWithSavedFrame\0"
+        "AwaitCallWithSavedFrame\0" "AwaitWithSavedFrameAfterTurn\0" "SaveFrameAndYield\0" "AsyncIteratorStep\0" "FinishAsyncIteratorStep\0"
+        "PromiseThen\0" "PromiseCatch\0" "PromiseAll\0" "Throw\0" "ThrowToHandlerInFunction\0" "Catch\0" "CatchException\0" "ThrowAtSite\0"
+        "ThrowStackOverflowError\0" "NewRuntimeError\0" "NewRuntimeErrorWithName\0" "NewSuppressedError\0" "ThrowRuntimeError\0" "ReportMismatch\0"
+        "ReportValidationFailure\0" "PhotographOperand\0" "CompareOperandWithPhotograph\0" "NoteFailedGuard\0" "ContentsHaveType\0" "ValidateLookup\0"
+        "PollSlow\0" "PollAtPrologue\0" "DirectEval\0" "StringConstant\0" "NewStringConstant\0" "KeyConstant\0" "BuiltinCell\0" "ModuleBuiltinCell\0"
+        "FillBuiltinValue\0" "ArmBuiltinLocation\0" "FindOwnSlotStructure\0" "CallCustomGetter\0" "BigIntConstant\0" "SingletonClosure\0"
+        "NewTemplateObject\0" "CreateUnmappedArguments\0" "CreateMappedArguments\0" "GetFromArguments\0" "GetMappedArgument\0" "SetMappedArgument\0"
+        "GetModuleNamespace\0" "IsNamespaceOfModule\0" "ImportModule\0" "RequireModule\0" "RecordRequire\0" "ResolveModule\0" "ThrowModuleFailure\0"
+        "BeginModuleEvaluation\0" "AbandonModuleEvaluation\0" "ImportDynamic\0" "RequireDynamic\0" "ResolveDynamic\0" "GetById\0" "PutById\0"
+        "PutByIdSloppy\0" "DeleteById\0" "DeleteByIdSloppy\0" "InByIdAndCache\0" "HasOwnByIdAndCache\0" "GetByIdAndCache\0" "PutByIdAndCache\0"
+        "FillSiteCache\0" "RecordArrival\0" "GetFreeName\0" "GetFreeNameForTypeOf\0" "SetFreeName\0" "SetFreeNameSloppy\0" "DeleteFreeName\0"
+        "GetGlobalBinding\0" "GetGlobalObjectBinding\0" "SetGlobalBinding\0" "SetGlobalBindingSloppy\0" "SetGlobalObjectBinding\0"
+        "SetGlobalObjectBindingSloppy\0" "ValidateGlobalBinding\0" "GetByVal\0" "GetByValAndCache\0" "PutByVal\0" "PutByValAndCache\0"
+        "PutByValAndCacheSloppy\0" "InByValAndCache\0" "HasOwnByValAndCache\0" "DeleteByVal\0" "DeleteByValSloppy\0" "GetByValWithThis\0"
+        "GetOwnProperty\0" "GetGeneric\0" "GetByValGeneric\0" "InByValGeneric\0" "PutByValGeneric\0" "ReadField\0" "StoreField\0" "CreateField\0"
+        "CallGetterOfSlot\0" "CallSetterOfSlot\0" "AddPropertyBySlot\0" "DidCreateField\0" "DidCreateFieldAt\0" "DidCreateFieldOutOfLineAt\0"
+        "DidCreateFieldsAt\0" "EnsureExtensionGranules\0" "EnsureExtensionGranulesWithoutCollecting\0" "GetExtraProperty\0" "HasExtraProperty\0"
+        "PutExtraProperty\0" "MaterializeDeferredClosure\0" "GetFieldOutsideSlot\0" "MakeFlattenedObjectAt\0" "NewMap\0" "NewSet\0" "MapGet\0"
+        "MapHas\0" "SetHas\0" "MapSet\0" "SetAdd\0" "WeakMapSet\0" "MapDelete\0" "SetDelete\0" "MapClear\0" "SetClear\0" "NewMapIterator\0"
+        "NewSetIterator\0" "MapNext\0" "SetNext\0" "TryNewSetFromIterable\0" "TryNewMapFromEntries\0" "ArraySplice\0" "ArrayGrow\0"
+        "AllocateStorage\0" "ArrayUnshift\0" "ArrayJoin\0" "ArrayJoinOfAnyReceiver\0" "NumberOfAnyValue\0" "StringOfAnyValue\0"
+        "ObjectToStringOfAnyValue\0" "TextOfBytes\0" "EncodeTextToBytes\0" "EncodeTextIntoBytes\0" "TypedArraySetOfAnyValue\0"
+        "TypedArraySubarrayOfAnyValue\0" "CodeURIOfAnyValue\0" "ArraySearchOfAnyValue\0" "ByteLengthOfAnyValue\0" "ArrayFromTypedArray\0"
+        "ArrayIndexOfDouble\0" "ArrayIndexOfInt32\0" "NewArrayWithIndexingType\0" "NewArrayFromDoubles\0" "NewArrayIterator\0" "GrowNewArray\0"
+        "TruncateNewArray\0" "NewArrayWithHoles\0" "OwnPropertyKeys\0" "ObjectValues\0" "ObjectEntries\0" "PropertyIsEnumerable\0"
+        "GetOwnPropertyDescriptor\0" "GetOwnPropertyFields\0" "ObjectCreate\0" "IsConstructor\0" "ArraySpeciesCreate\0" "ResumeGenerator\0"
+        "IsGeneratorSuspendedAtStart\0" "ToLength\0" "RequireBuiltinModule\0" "NativeBinding\0" "LinkTimeConstant\0" "NewBigInt64\0" "DateNow\0"
+        "DateToISOString\0" "PrepareBoundFunctionAllocation\0" "NewError\0" "FormatDateTime\0" "FormatNumber\0" "NumberToStringWithRadix\0"
+        "Int32ToStringWithRadix\0" "AppendNumberWithRadix\0" "MathSin\0" "MathSinh\0" "MathCos\0" "MathCosh\0" "MathTan\0" "MathTanh\0" "MathASin\0"
+        "MathASinh\0" "MathACos\0" "MathACosh\0" "MathATan\0" "MathATanh\0" "MathLog\0" "MathLog10\0" "MathLog2\0" "MathCbrt\0" "MathExp\0"
+        "MathExpm1\0" "MathLog1p\0" "MathF16Round\0" "MathATan2\0" "MathHypot\0" "MathHypot3\0" "ParseInt8\0" "ParseInt16\0" "StringToNumber8\0"
+        "StringToNumber16\0" "StringFindCharacter8\0" "StringFindCharacter16\0" "StringReverseFindCharacter8\0" "StringReverseFindCharacter16\0"
+        "StringFind8\0" "StringFind16\0" "StringReverseFind8\0" "StringReverseFind16\0" "StringUTF8Length8\0" "StringUTF8Length16\0"
+        "CountSeparators8\0" "CountSeparators16\0" "FindSeparators8\0" "FindSeparators16\0" "StringImplsAreEqual\0" "CompareStringImpls\0"
+        "StringImplEqualsImageString\0" "HashStringImpl\0" "FindLongSeparators8\0" "FindLongSeparators16\0" "CountLongSeparators8\0"
+        "CountLongSeparators16\0" "StringFindLiteral8\0" "StringReverseFindLiteral8\0" "StringSplitPrefix\0" "StringEqualsLiteral\0"
+        "StringEqualsLiteralInRegister\0" "StringStartsWithLiteral\0" "StringEndsWithLiteral\0" "StringIndexOfLiteral\0" "StringLastIndexOfLiteral\0"
+        "StringIndexOfCharacter\0" "StringsAreEqual\0" "StringTrim\0" "StringLastIndexOf\0" "StringLocaleCompare\0" "StringToLowerCase\0"
+        "StringToUpperCase\0" "StringRepeat\0" "StringPad\0" "ShortStringOfString\0" "RegExpExec\0" "RegExpTest\0" "RegExpFind\0" "RegExpTestBoxed\0"
+        "RegExpMatchLiteral\0" "RegExpMatchLiteralWithoutObject\0" "RegExpMatchFlatProgram8\0" "NewRegExpLiteral\0" "SharedRegExpLiteral\0"
+        "NewRegExp\0" "RegExpFlags\0" "RegExpSource\0" "StringReplaceString\0" "StringReplaceAllString\0" "StringReplaceRegExp\0"
+        "StringReplaceAllRegExp\0" "StringReplaceRegExpString\0" "StringSplitString\0" "StringSplitRegExp\0" "StringMatchRegExp\0"
+        "StringSearchRegExp\0" "RegExpExecPrefix\0" "StringMatchPrefix\0" "JSONSourceOpen\0" "JSONSourceClose\0" "JSONSourceAbandon\0"
+        "JSONDecodeBytes\0" "JSONParseString\0" "JSONParseKey\0" "JSONParseValue\0" "JSONParseNumber\0" "JSONParseInteger\0" "JSONFindMember\0"
+        "JSONMemberRepeats\0" "JSONKeyRepeats\0" "JSONObjectKey\0" "JSONObjectFinish\0" "JSONParseExtraMembers\0" "JSONAddExtraMember\0"
+        "JSONAppendString\0" "JSONAppendInteger\0" "JSONAppendNumber\0" "JSONAppendDate\0" "JSONAppendValue\0" "JSONStringifyPrimitive"
     };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NaturalTable value)
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "Addition"_s, "Arithmetic"_s, "Bitwise"_s, "Numeric"_s, "BitwiseNot"_s };
+    static constexpr EnumeratorNames<5, 47> names {
+        {
+            0, 9, 20, 28, 36
+        },
+        "Addition\0" "Arithmetic\0" "Bitwise\0" "Numeric\0" "BitwiseNot"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(OperandClass value)
 {
-    static constexpr std::array<ASCIILiteral, 4> names { "NumberLike"_s, "BigInt"_s, "String"_s, "Any"_s };
+    static constexpr EnumeratorNames<4, 29> names {
+        {
+            0, 11, 18, 25
+        },
+        "NumberLike\0" "BigInt\0" "String\0" "Any"
+    };
     return nameAt(names, value);
 }
 
 ASCIILiteral nameOf(NamedEffectSet value)
 {
-    static constexpr std::array<ASCIILiteral, 15> names {
-        "CreatesConstant"_s, "Allocates"_s, "UsesRuntime"_s, "ResolvesRopes"_s, "CreatesString"_s, "GrowsArray"_s, "AppendsToBuilder"_s,
-        "ReadsObjectGraph"_s, "DefinesProperty"_s, "RuntimeAllocates"_s, "RuntimeCreatesConstant"_s, "RuntimeCreatesString"_s, "RuntimeGrowsArray"_s,
-        "RuntimeCreatesField"_s, "RuntimeMatchesRegExp"_s
+    static constexpr EnumeratorNames<17, 295> names {
+        {
+            0, 16, 26, 53, 65, 79, 93, 104, 121, 138, 154, 175, 192, 215, 236, 254, 274
+        },
+        "CreatesConstant\0" "Allocates\0" "AllocatesWithoutCollecting\0" "UsesRuntime\0" "ResolvesRopes\0" "CreatesString\0" "GrowsArray\0"
+        "AppendsToBuilder\0" "ReadsObjectGraph\0" "DefinesProperty\0" "DefinesMemberOfClass\0" "RuntimeAllocates\0" "RuntimeCreatesConstant\0"
+        "RuntimeCreatesString\0" "RuntimeGrowsArray\0" "RuntimeCreatesField\0" "RuntimeMatchesRegExp"
     };
     return nameAt(names, value);
 }

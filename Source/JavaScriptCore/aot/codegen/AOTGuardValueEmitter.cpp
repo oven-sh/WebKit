@@ -10,16 +10,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static_assert(sizeof(InstanceHeader::shapeEpoch) == sizeof(int64_t));
-
 GuardValueEmitter::GuardValueEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
 {
-}
-
-void GuardValueEmitter::generateGetShapeEpoch(const ValueContext& value)
-{
-    define(value, loadField<Integer>(instance(), m_heaps.AOTInstance_shapeEpoch));
 }
 
 void GuardValueEmitter::generateAllGuards(const ValueContext&)

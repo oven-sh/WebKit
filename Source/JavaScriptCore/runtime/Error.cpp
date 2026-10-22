@@ -131,7 +131,8 @@ public:
         : m_startCallFrame(startCallFrame)
     { }
 
-    IterationStatus operator()(StackVisitor& visitor) const
+    template<typename Visitor>
+    IterationStatus operator()(Visitor& visitor) const
     {
         if (!m_foundStartCallFrame && (visitor->callFrame() == m_startCallFrame))
             m_foundStartCallFrame = true;
@@ -146,8 +147,10 @@ public:
             return IterationStatus::Continue;
 
 #if ENABLE(AOT)
-        if (visitor->isCompiledFrame())
-            return IterationStatus::Done;
+        if constexpr (Visitor::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame())
+                return IterationStatus::Done;
+        }
 #endif
 
         auto* codeBlock = visitor->codeBlock();
@@ -211,7 +214,7 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
     for (unsigned i = 0 ; i < stackTrace->size(); ++i) {
         StackFrame& frame = stackTrace->at(i);
 #if ENABLE(AOT)
-        if (frame.isCompiledFrame()) {
+        if (frame.isCompiledFrame()) [[unlikely]] {
             lineColumn = frame.computeLineAndColumn();
             if (!lineColumn.line)
                 continue;
@@ -380,22 +383,13 @@ Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static String withNoteOnFirstLine(const String& message, ASCIILiteral note)
+String withAOTErrorNote(const String& message)
 {
+    constexpr ASCIILiteral note = " (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)"_s;
     size_t endOfFirstLine = message.find('\n');
     if (endOfFirstLine == notFound)
         return makeString(message, note);
     return makeString(StringView(message).left(endOfFirstLine), note, StringView(message).substring(endOfFirstLine));
-}
-
-String withAOTErrorNote(const String& message)
-{
-    return withNoteOnFirstLine(message, " (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)"_s);
-}
-
-String withAOTTypeCheckNote(const String& message)
-{
-    return withNoteOnFirstLine(message, " (bun compile checks types at run time: https://bun.com/docs/bundler/aot-troubleshooting)"_s);
 }
 #endif
 

@@ -45,7 +45,7 @@ function f3 name="objectLiteral" results=[{type=anything}] {
     v0 = Builtin builtin=Promise
     v1 = PropGet v0 key="resolve"
     v2 = Integer integer=1
-    v3 = NewObject -, v2 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v2 layout=L0 fields=[0]
     v4 = Call v1, v0, v3 calleeKey="resolve"
     Return v4
 }

@@ -66,12 +66,20 @@ public:
 
     Execution execute(ValueID);
     void executeTerminator(const Terminator&);
+    // While the function is analyzed: what execute() does for an entry of AllocationSinking::relevantValuesOf().
+    void executeRelevantValue(const BlockValues&, uint32_t entry);
+    // While the function is analyzed: a terminator that mentions no name is passed over.
+    void executeTerminatorOf(BlockID);
+    // While the states at the heads are computed: what enterEdge() does on an edge that AllocationSinking::isPlain() holds for. False if it is left to enterEdge().
+    bool tryEnterPlainEdge(BlockID target);
+    void checkThatOtherValuesChangeNothing(BlockID);
     void enterEdge(const OutgoingEdge&, const Terminator*, const SinkingState* headOfTarget);
     bool isDeadEdge(const Terminator&, uint32_t targetIndex) const;
     bool hasInterpretedTest(const Terminator&) const;
 
     VirtualObjectID objectOf(ValueID) const;
     VirtualObjectID guardedObjectOf(ValueID) const;
+    bool hasPositionFromAnsweredTest(ValueID access, VirtualObjectID) const;
     VirtualObjectID destructuredObjectOf(ValueID) const;
 
     void requireCell(ValueID, const BuildCause&);
@@ -117,6 +125,8 @@ private:
     std::optional<uint32_t> fieldFor(VirtualObjectID, const VirtualField&);
     FieldRead classifyRead(VirtualObjectID, const VirtualFieldAccess&, std::optional<uint32_t> field) const;
     bool canStore(VirtualObjectID, const VirtualFieldAccess&, uint32_t field, ValueID stored) const;
+    bool canStoreUnprovenValue(VirtualObjectID, const VirtualFieldAccess&, uint32_t namedField) const;
+    bool canReadEitherField(ValueID read, VirtualObjectID, const VirtualFieldAccess&, uint32_t namedField) const;
     bool canHold(VirtualObjectID holder, uint32_t field, VirtualObjectID held) const;
     bool fitsRead(ValueID read, VirtualObjectID, std::optional<uint32_t> field, FieldRead) const;
     bool fitsType(VirtualObjectID, TypeID) const;
@@ -135,6 +145,7 @@ private:
     void buildBeforeBranch(const Terminator&);
     void narrow(VirtualObjectID, uint32_t keptTagBits);
     void narrowOnEdge(const Terminator&, uint32_t targetIndex);
+    void forgetAnswersOfTests();
     std::optional<uint32_t> tagBitsOfShapeCase(const Terminator&, VirtualObjectID, uint32_t targetIndex) const;
 
     void bindParameters(const OutgoingEdge&);
@@ -204,9 +215,8 @@ private:
     SinkingState& m_state;
     ObjectValueMap* m_values;
     EnteredEdge m_enteredEdge;
+    bool m_noCellHasValidFields { false };
 };
-
-// CallList, ConstructList or SuperConstructList becomes the call that names the elements of its list.
 
 inline constexpr OpcodeSet interpretedReads {
     Opcode::GetEnvironmentField, Opcode::GetMappedArgument, Opcode::PropGet, Opcode::ElemGet, Opcode::PrivateGet, Opcode::GetSlot,
@@ -219,8 +229,8 @@ inline constexpr OpcodeSet interpretedStores {
 };
 
 inline constexpr OpcodeSet interpretedCasts {
-    Opcode::FinishObject, Opcode::Upcast, Opcode::Claim, Opcode::Predict, Opcode::AssumeType, Opcode::CheckInitialized,
-    Opcode::RequireObjectCoercible, Opcode::RequireObject,
+    Opcode::FinishObject, Opcode::Upcast, Opcode::NarrowByField, Opcode::Check, Opcode::AssumeType, Opcode::CheckInitialized,
+    Opcode::RequireObjectCoercible, Opcode::RequireObject, Opcode::ReadAgain, Opcode::BorrowedParameter,
 };
 
 inline constexpr OpcodeSet interpretedListUses {

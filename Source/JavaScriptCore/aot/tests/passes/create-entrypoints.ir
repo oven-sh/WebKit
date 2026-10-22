@@ -3,7 +3,6 @@
 # RUN: pass CreateEntrypoints
 # RUN(COUNTED): pass CreateEntrypoints
 # STATISTIC: GenericEntrypoints = 3
-# STATISTIC: GroupEntrypoints = 0
 # STATISTIC: CreateEntrypointsChanges = 3
 # CHECK: outcome: Changed
 # COUNTED-COUNT-3: role=GenericEntrypoint
@@ -42,7 +41,7 @@ function f5 name="calledByCompiledCodeOnly" role=Library enclosingRuntimeFunctio
 }
 runtimefunction id=0 function=f1
 runtimefunction id=131072 function=f5
-# CHECK: name="main" module=m0 kind=Module role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
+# CHECK: name="main" module=m0 kind=Module role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
 # CHECK: = CallDirect function=f0
 # CHECK: name="registered"{{*}}role=GenericEntrypoint{{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1}
 # CHECK: = CallDirect function=f1

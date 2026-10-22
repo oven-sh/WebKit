@@ -26,8 +26,16 @@ struct SourcePosition {
 
 static constexpr unsigned sitesBetweenPositionCheckpoints = 512;
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription&);
-std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* positions, CallSiteIndex);
+struct OwnPosition {
+    static OwnPosition of(const SiteDescription&);
+
+    uint32_t line { 0 };
+    uint32_t source { 0 };
+};
+
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, OwnPosition ofFunctionInFront);
+std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
+void forgetRememberedPositions();
 
 } } // namespace JSC::AOT
 

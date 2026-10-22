@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectsOfRules.h"
-#include "AOTFusedAccessEmitter.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
@@ -20,10 +19,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
-
-struct CheckedReadMatch {
-    SelectionGroup group;
-};
 
 struct TestedReadMatch {
     SelectionGroup group;
@@ -61,7 +56,7 @@ static bool canFuseRead(SelectionContext& context, ValueID read, ValueID user)
 
 static bool prefersSeparateReads(SelectionContext& context, BlockID block)
 {
-    return context.shapeOf(block) == CodeShape::Fast && !context.analyses().blockCycles().isInCycle(block);
+    return context.shapeOf(block) == CodeShape::Fast && !context.analyses().isInCycle(block);
 }
 
 static bool canFuseTest(SelectionContext& context, ValueID test)
@@ -90,37 +85,6 @@ static void copyAccessStamp(Value& fused, const Value& read)
 {
     fused.setAccessSite(read.accessSite());
     fused.setReceivers(read.receivers());
-}
-
-void selectCheckedPropertyRead(SelectionContext& context)
-{
-    const Program& program = context.program();
-    const Function& function = context.function();
-    Vector<CheckedReadMatch> matches;
-    for (ValueID claim : context.candidates(Opcode::Claim)) {
-        const Value& value = function.at(claim);
-        if (!value.site())
-            continue;
-        ValueID read = value.valueOperand();
-        if (!canFuseRead(context, read, claim) || !checkedReadKindOf(program, program.at(value.castType())))
-            continue;
-        CheckedReadMatch match { createFusedGroup(read, claim) };
-        if (context.tryClaim(SelectionRuleID::CheckedPropertyRead, match.group) == ClaimResult::Claimed)
-            matches.append(WTF::move(match));
-    }
-
-    context.rewriteGroups(SelectionRuleID::CheckedPropertyRead, matches, [](GroupRewriter& rewriter, const CheckedReadMatch& match) {
-        const Value& read = rewriter.original(match.group.members.first().value);
-        const Value& claim = rewriter.original(match.group.root);
-        Value& checked = rewriter.replaceRoot(Opcode::PropGetChecked);
-        checked.setObjectOperand(read.objectOperand());
-        checked.setKey(read.key());
-        checked.setCheckedType(claim.castType());
-        checked.setSite(claim.site());
-        checked.setCause(claim.cause());
-        checked.setReadOrigin(read.origin());
-        copyAccessStamp(checked, read);
-    });
 }
 
 static std::optional<ComparedRead> findComparedRead(SelectionContext& context, ValueID comparison)

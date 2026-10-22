@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInterpreterSlowPaths.h"
 #include "AOTObjectModelCaches.h"
 #include "AOTState.h"
 #include "JSCJSValueInlines.h"
@@ -32,7 +33,6 @@ ObjectModelCaches::ObjectModelCaches(State& state)
     , assignmentPlans(state)
     , propertyLists(state)
     , classStructures(state)
-    , classHierarchy(state)
     , memberGuardWatchpoints(state)
 {
 }

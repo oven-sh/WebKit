@@ -46,8 +46,6 @@ static Function buildParserOf(ResultNodeRef ref, FunctionRole role, DerivedFunct
     ResultNode node = describeNode(inputs.program, ref);
 
     DerivedFunctionHead head = createDerivedFunction(inputs, role, creatorOf(ref, node), signatureOfNode(inputs, node));
-    if (!ref.isValidated())
-        head.function.results[1].predicted = node.type;
 
     IRBuilder builder(inputs.analysisContext(), head.function, inputs.types);
     builder.moveToEndOf(head.entry);

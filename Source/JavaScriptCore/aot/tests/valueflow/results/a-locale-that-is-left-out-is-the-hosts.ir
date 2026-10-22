@@ -1,0 +1,25 @@
+# (1.5).toLocaleString(); "a".localeCompare("b", undefined); new Intl.Collator([])
+# Where no locale is passed the system's applies, which may be any.
+# RUN: valueflow-results
+# CHECK: locale HostDefault
+# CHECK-NOT: locale Constant
+# CHECK-NOT: locale Unknown
+
+data d0 root=Array { contents=string elements=[] }
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NumberPrototypeToLocaleString
+    v1 = Double number=1.5
+    v2 = Call v0, v1
+    v3 = Builtin builtin=StringPrototypeLocaleCompare
+    v4 = String string="a"
+    v5 = String string="b"
+    v6 = Undefined
+    v7 = Call v3, v4, v5, v6
+    v8 = Builtin builtin=IntlCollator
+    v9 = Data data=d0
+    v10 = Construct v8, -, v9
+    Return v10
+}

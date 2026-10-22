@@ -1,7 +1,7 @@
 # A required name tells the run time whether the link succeeds when the exporter does not export the name
 # RUN: tables modules
 
-module m0 path="/typed.ts" displayPath="typed.ts" body=f0 requests=[{target=m1}] requiredNames=[{module=m1 name="required"}, {module=m1 name="optional" mayBeAbsent=true}]
+module m0 path="/typed.ts" displayPath="typed.ts" body=f0 requests=[{target=m1 completes=true}] requiredNames=[{module=m1 name="required"}, {module=m1 name="optional" mayBeAbsent=true}]
 module m1 path="/legacy.cjs" displayPath="legacy.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
 entry module=m0
 
@@ -9,8 +9,8 @@ function f0 name="typed" kind=Module results=[{type=anything}] {
   b0():
     Return
 }
-function f1 name="legacy" module=m1 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+function f1 name="legacy" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
     Return
 }
 

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTThreads.h"
@@ -47,7 +48,6 @@ public:
 private:
     bool mayReserve(FunctionID) const;
     void raise(FunctionID, uint32_t numberOfWords);
-    void raiseSingle(FunctionID, uint32_t numberOfWords);
 
     const ConventionInputs& m_context;
     const Program& m_program;
@@ -74,29 +74,17 @@ StackWordReservation::StackWordReservation(const ConventionInputs& context, cons
 
 bool StackWordReservation::mayReserve(FunctionID id) const
 {
-    const Function& function = m_program.at(id);
-    return function.hasBody() && hasStackArgumentAreaOf(function.role);
+    RecordFacts facts = recordFactsOf(m_program, id);
+    return facts.hasBody && hasStackArgumentAreaOf(facts.role);
 }
 
-void StackWordReservation::raiseSingle(FunctionID id, uint32_t numberOfWords)
+void StackWordReservation::raise(FunctionID id, uint32_t numberOfWords)
 {
     uint32_t& reserved = m_reserved[id.index()];
     if (reserved >= numberOfWords)
         return;
     reserved = numberOfWords;
     m_worklist.append(id);
-}
-
-void StackWordReservation::raise(FunctionID id, uint32_t numberOfWords)
-{
-    if (m_reserved[id.index()] >= numberOfWords)
-        return;
-    if (m_program.at(id).role != FunctionRole::GroupEntrypoint) {
-        raiseSingle(id, numberOfWords);
-        return;
-    }
-    for (FunctionID entrypoint : m_context.entrypointsOfSameGroup(id))
-        raiseSingle(entrypoint, numberOfWords);
 }
 
 void StackWordReservation::reserveForCallsByValue(std::span<const TailCallSite> sites)
@@ -155,14 +143,6 @@ void reserveStackWords(const ConventionInputs& context, std::span<const TailCall
     reservation.store(tables);
 }
 
-void chooseArgumentSpills(const ConventionInputs& context, CallingConventionTables& tables)
-{
-    const Program& program = context.program();
-    forEachIndexInParallel(context.build.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        tables.conventions[index].spillsArgumentRegisters = entryConventionOf(program.functions[index]) == EntryConvention::GenericBuffer;
-    });
-}
-
 static ValueID tailCallOf(const Block& block)
 {
     return block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
@@ -185,7 +165,8 @@ static bool canHaveSecondaryEntries(const ConventionInputs& context, FunctionID 
     const Function& function = context.program().at(id);
     return function.hasBody()
         && entryConventionOf(function) == EntryConvention::Direct
-        && function.role != FunctionRole::GroupEntrypoint
+        && function.role != FunctionRole::TableEntrypoint
+        && function.role != FunctionRole::TableLookup
         && function.role != FunctionRole::StubBody
         && context.isEnabledFor(id);
 }
@@ -222,25 +203,25 @@ static std::optional<uint8_t> findFirstOmittedGPR(const Function& caller, const 
     return static_cast<uint8_t>(firstOmittedGPR);
 }
 
-static void collectEntryRequests(const ConventionInputs& context, const CallingConventionTables& tables, const Function& caller, Vector<EntryRequest>& requests)
+static void collectEntryRequests(const ConventionInputs& context, const CallingConventionTables& tables, FunctionID callerID, Vector<EntryRequest>& requests)
 {
     const Program& program = context.program();
-    for (const Block& block : caller.blocks) {
-        ValueID tailCall = tailCallOf(block);
-        for (ValueID id : block.values) {
-            const Value& call = caller.at(id);
-            if (call.opcode != Opcode::CallDirect || id == tailCall || !passesUndefined(caller, call))
-                continue;
-            FunctionID callee = call.function();
-            if (!canHaveSecondaryEntries(context, callee))
-                continue;
-            ArgumentLocations locations = computeArgumentLocations(program, program.at(callee), tables.conventions[callee.index()], tables.registers);
-            if (passesIntegersOnStack(locations))
-                continue;
-            if (std::optional<uint8_t> firstOmittedGPR = findFirstOmittedGPR(caller, call, locations))
-                requests.append(EntryRequest { callee, *firstOmittedGPR });
-        }
-    }
+    // An argument that is undefined is an operation of the caller.
+    if (!mayHoldValueWith(program, callerID, { Opcode::Undefined }))
+        return;
+    const Function& caller = program.functions[callerID.index()];
+    forEachListedValue(program, callerID, { Opcode::CallDirect }, [&](BlockID block, uint32_t, ValueID id, const Value& call) {
+        if (!passesUndefined(caller, call) || id == tailCallOf(caller.at(block)))
+            return;
+        FunctionID callee = call.function();
+        if (!canHaveSecondaryEntries(context, callee))
+            return;
+        ArgumentLocations locations = computeArgumentLocations(program, program.at(callee), tables.conventions[callee.index()], tables.registers);
+        if (passesIntegersOnStack(locations))
+            return;
+        if (std::optional<uint8_t> firstOmittedGPR = findFirstOmittedGPR(caller, call, locations))
+            requests.append(EntryRequest { callee, *firstOmittedGPR });
+    });
 }
 
 void chooseSecondaryEntries(const ConventionInputs& context, CallingConventionTables& tables)
@@ -249,7 +230,7 @@ void chooseSecondaryEntries(const ConventionInputs& context, CallingConventionTa
     const ParallelLoops& loops = context.build.parallelLoops();
     unsigned count = program.functions.size();
     Vector<EntryRequest> requests = collectInParallel<EntryRequest>(loops, count, [&](unsigned index, Vector<EntryRequest>& collected) {
-        collectEntryRequests(context, tables, program.functions[index], collected);
+        collectEntryRequests(context, tables, FunctionID(index), collected);
     });
     sortAndRemoveDuplicates(loops, requests);
 

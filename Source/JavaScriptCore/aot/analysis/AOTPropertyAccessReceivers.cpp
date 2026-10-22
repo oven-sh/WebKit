@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowResults.h"
-#include "AOTValueIdentity.h"
+#include "AOTRemoveUnreadFields.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
 
@@ -44,14 +44,6 @@ static constexpr uint16_t primitivesInParts()
 
 static_assert(primitivesInParts() == Primitive::Defined);
 
-void ReceiverState::meetWith(const ReceiverState& other)
-{
-    bool areNeverEnumerated = keys == KeyEnumeration::NeverEnumerated && other.keys == KeyEnumeration::NeverEnumerated;
-    impossibleMutations = impossibleMutations & other.impossibleMutations;
-    keys = areNeverEnumerated ? KeyEnumeration::NeverEnumerated : KeyEnumeration::Unknown;
-    addedKeysAreComplete = addedKeysAreComplete && other.addedKeysAreComplete;
-}
-
 static ReceiverState stateWithoutObjects()
 {
     return { OptionSet<ObjectMutation>::all(), KeyEnumeration::NeverEnumerated, true };
@@ -63,6 +55,11 @@ ReceiverState receiverStateOf(const Program& program, LayoutID id)
     if (flow.allocation == AllocationState::NeverAllocated)
         return stateWithoutObjects();
     return { flow.impossibleMutations, flow.keys, flow.addedKeysAreComplete };
+}
+
+ReceiverState receiverStateOf(const Program& program, LayoutSetID layouts)
+{
+    return program.familyTables().stateOf(layouts);
 }
 
 ReceiverState receiverStateOf(const Program& program, std::span<const LayoutID> layouts)
@@ -83,23 +80,12 @@ OwnPropertyGain ownPropertyGainOf(const Program& program, LayoutID id, PropertyK
     // The list has names only.
     if (program.nameClassOf(key) == NameClass::Index)
         return OwnPropertyGain::Unknown;
-    if (state.addedKeysAreComplete && !std::ranges::binary_search(program.at(id).flow.addedKeys, key))
-        return OwnPropertyGain::Impossible;
-    return OwnPropertyGain::Unknown;
-}
-
-// A namespace object has no shape: the test for its layout asks for its module, which never changes.
-static bool alwaysPassesTestOfLayout(const Program& program, LayoutID layout)
-{
-    return program.at(layout).kind == LayoutKind::ModuleNamespace || receiverStateOf(program, layout).cannot(ObjectMutation::LoseShape);
-}
-
-LayoutTestKind layoutTestKindFor(const Program& program, std::span<const LayoutID> layouts)
-{
-    bool isPermanent = !layouts.empty() && std::ranges::all_of(layouts, [&](LayoutID layout) {
-        return alwaysPassesTestOfLayout(program, layout);
-    });
-    return isPermanent ? LayoutTestKind::Type : LayoutTestKind::Shape;
+    const LayoutFlow& flow = program.at(id).flow;
+    if (!state.addedKeysAreComplete || std::ranges::binary_search(flow.addedKeys, key))
+        return OwnPropertyGain::Unknown;
+    if (flow.isReachedThroughUnknownReceivers && program.mayBeStoredThroughUnknownReceiver(key))
+        return OwnPropertyGain::Unknown;
+    return OwnPropertyGain::Impossible;
 }
 
 InstanceCount instanceCountOf(const PropertyAccessContext& context)
@@ -125,33 +111,18 @@ void addConditions(MemberConditions& list, std::span<const MemberCondition> cond
 
 ReceiverCandidates ReceiverCandidates::underGuard(std::span<const LayoutID> testedLayouts)
 {
-    return { .proof = ReceiverProof::Guard, .level = KnowledgeLevel::Predicted, .proven = LayoutList(testedLayouts) };
+    return { .proof = ReceiverProof::Guard, .level = KnowledgeLevel::Expected, .proven = LayoutList(testedLayouts) };
 }
 
-// A set as written lists declared layouts. What is below one of them by a proven chain of bases is expected wherever it is.
-static LayoutList expectedMembersOf(const Program& program, std::span<const LayoutID> members)
+bool hasMemberToFindUnder(const Program& program, LayoutID layout, PropertyKeyID name)
 {
-    LayoutList expected;
-    for (LayoutID member : members) {
-        if (program.at(member).flow.allocation != AllocationState::NeverAllocated)
-            expected.add(member);
-        for (LayoutID below : program.layoutsBelow(member))
-            expected.add(below);
-    }
-    return expected;
+    if (!std::ranges::binary_search(program.layoutsWithName(name), layout))
+        return false;
+    std::optional<FieldReference> field = findField(program, layout, name, BaseChain::Proven);
+    return !field || !isRemovedField(program, *field);
 }
 
-static LayoutList allocatedMembersOf(const Program& program, std::span<const LayoutID> members)
-{
-    LayoutList allocated;
-    for (LayoutID member : members) {
-        if (program.at(member).flow.allocation != AllocationState::NeverAllocated)
-            allocated.add(member);
-    }
-    return allocated;
-}
-
-LayoutList allocatedLayoutsWith(const Program& program, std::span<const PropertyKeyID> names)
+LayoutList allocatedLayoutsWith(const Program& program, std::span<const PropertyKeyID> names, size_t stopsCountingAbove)
 {
     LayoutList layouts;
     if (names.empty())
@@ -162,73 +133,53 @@ LayoutList allocatedLayoutsWith(const Program& program, std::span<const Property
     });
     for (LayoutID layout : program.layoutsWithName(rarestName)) {
         bool hasEveryName = std::ranges::all_of(names, [&](PropertyKeyID name) {
-            return std::ranges::binary_search(program.layoutsWithName(name), layout);
+            return hasMemberToFindUnder(program, layout, name);
         });
-        if (hasEveryName)
-            layouts.add(layout);
+        if (!hasEveryName)
+            continue;
+        layouts.add(layout);
+        if (layouts.size() > stopsCountingAbove)
+            break;
     }
     return layouts;
 }
 
-ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, const Type* prediction, LayoutSetID stamp)
+ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, const Type* expected, LayoutSetID stamp)
 {
+    bool mayHaveNoLayout = hasMembersWithoutLayout(program, receiver);
+
     ReceiverCandidates result;
     result.mayBeNullish = receiver.mayBeUndefinedOrNull();
     result.hasOtherParts = receiver.primitives & ~Primitive::UndefinedOrNull
         || receiver.anyObject
         || receiver.anyFunction
+        || mayHaveNoLayout
         || !receiver.classes.isEmpty()
         || !receiver.functions.isEmpty()
         || !receiver.builtins.isEmpty()
         || !receiver.isJavaScriptValue();
 
-    const LayoutSet* stamped = stamp ? &program.at(stamp) : nullptr;
+    if (!receiver.layouts && !receiver.anyObject)
+        return result;
 
-    if (receiver.layouts) {
+    FamilyTables::Candidates members = program.familyTables().candidatesOf(receiver.layouts, expected ? expected->layouts : LayoutSetID(), stamp);
+    if (receiver.layouts && !mayHaveNoLayout) {
         result.proof = ReceiverProof::Type;
         result.level = KnowledgeLevel::Proven;
-        result.proven = allocatedMembersOf(program, membersOf(program, receiver));
-
-        // A stamp proves nothing alone. Like a prediction, it says which members of the type to expect.
-        LayoutList expected = result.proven;
-        if (prediction && prediction->layouts)
-            expected.intersect(expectedMembersOf(program, membersOf(program, *prediction)));
-        if (stamped && stamped->isComplete)
-            expected.intersect(LayoutList(stamped->members.span()));
-        if (!expected.isEmpty() && expected.size() < result.proven.size())
-            result.predicted = WTF::move(expected);
+        result.proven = WTF::move(members.proven);
+        result.predicted = WTF::move(members.predicted);
         return result;
     }
 
-    if (!receiver.anyObject)
-        return result;
-
-    if (prediction && prediction->layouts)
-        result.predicted = expectedMembersOf(program, membersOf(program, *prediction));
-    else if (stamped)
-        result.predicted = LayoutList(stamped->members.span());
+    result.predicted = WTF::move(members.predicted.isEmpty() ? members.proven : members.predicted);
     if (!result.predicted.isEmpty())
-        result.level = KnowledgeLevel::Predicted;
+        result.level = KnowledgeLevel::Expected;
     return result;
-}
-
-static bool hasLayoutsFromClaim(const Program& program, const Function& function, ValueID receiver)
-{
-    for (ValueID id : CastChain(function, receiver)) {
-        const Value& value = function.at(id);
-        if (value.opcode == Opcode::Claim && program.at(value.type).layouts && !program.typeOf(function, value.valueOperand()).layouts)
-            return true;
-    }
-    return false;
 }
 
 ReceiverCandidates receiverCandidates(const Program& program, const Function& function, ValueID receiver, LayoutSetID stamp)
 {
-    // A written type is no proof of a shape: it predicts one where the checker predicts nothing narrower.
-    ReceiverCandidates result = candidatesOf(program, program.typeOf(function, receiver), &program.predictionOrTypeOf(function, receiver), stamp);
-    if (result.level == KnowledgeLevel::Proven && hasLayoutsFromClaim(program, function, receiver))
-        result.level = KnowledgeLevel::Written;
-    return result;
+    return candidatesOf(program, program.typeOf(function, receiver), &program.expectedOrTypeOf(function, receiver), stamp);
 }
 
 static ASCIILiteral nameOf(ReceiverProof proof)
@@ -312,20 +263,38 @@ UnionParts unionPartsOf(const Type& type)
             appendPart(parts, primitivePart.kind, primitivePartOf(type, primitivePart.primitives));
     }
 
-    appendPart(parts, UnionPartKind::Layouts, Type::forLayoutSet(type.layouts));
+    if (type.layouts)
+        appendPart(parts, UnionPartKind::Layouts, Type::forLayoutSet(type.layouts));
     for (const ClassPart& classPart : type.classes)
         appendPart(parts, UnionPartKind::BuiltinClass, builtinClassPartOf(type, classPart));
 
-    Type functions;
-    functions.functions = type.functions;
-    appendPart(parts, UnionPartKind::Functions, WTF::move(functions));
+    if (!type.functions.isEmpty()) {
+        Type functions;
+        functions.functions = type.functions;
+        appendPart(parts, UnionPartKind::Functions, WTF::move(functions));
+    }
 
-    Type builtins;
-    builtins.builtins = type.builtins;
-    appendPart(parts, UnionPartKind::Builtins, WTF::move(builtins));
+    if (!type.builtins.isEmpty()) {
+        Type builtins;
+        builtins.builtins = type.builtins;
+        appendPart(parts, UnionPartKind::Builtins, WTF::move(builtins));
+    }
 
-    appendPart(parts, UnionPartKind::OtherObjects, otherObjectsPartOf(type));
+    if (!isClosedUnion(type))
+        appendPart(parts, UnionPartKind::OtherObjects, otherObjectsPartOf(type));
     return parts;
+}
+
+size_t maxNumberOfUnionParts(const Type& type)
+{
+    size_t numberOfParts = type.classes.size();
+    for (const PrimitivePart& primitivePart : primitiveParts)
+        numberOfParts += !!(type.primitives & primitivePart.primitives);
+    numberOfParts += !!type.layouts;
+    numberOfParts += !type.functions.isEmpty();
+    numberOfParts += !type.builtins.isEmpty();
+    numberOfParts += !isClosedUnion(type);
+    return numberOfParts;
 }
 
 bool isClosedUnion(const UnionParts& parts)

@@ -9,6 +9,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTCompiledStructure.h"
+#include "AOTEffects.h"
 #include "AOTInstance.h"
 #include "AOTMemoryLocation.h"
 #include "B3AbstractHeapRepository.h"
@@ -42,8 +43,8 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_vm, AOT_INSTANCE_OFFSET(vm)) \
     v(AOTInstance_fixedFields, 0) \
     v(AOTClosure_entry, offsetOfClosureEntry) \
-    v(AOTSlimClosure_word, offsetOfSlimClosureWord) \
     v(AOTCompiledStructure_flags, CompiledStructure::offsetOfFlags()) \
+    v(AOTObject_shapeWord, offsetOfShapeWord) \
     v(ArrayBuffer_shared, ArrayBuffer::offsetOfShared()) \
     v(JSArrayBuffer_impl, JSArrayBuffer::offsetOfImpl()) \
     v(JSPropertyNameEnumerator_cachedOrderWord, JSPropertyNameEnumerator::cachedOrderWordOffset()) \
@@ -52,10 +53,11 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
 
 #define FOR_EACH_AOT_MUTABLE_FIELD_HEAP(v) \
     v(AOTInstance_mutableFields, 0, RuntimeState) \
-    v(AOTInstance_shapeEpoch, AOT_INSTANCE_OFFSET(shapeEpoch), ShapeEpoch) \
     v(AOTInstance_stringCells, 0, AllocatorState) \
     v(AOTInstance_siteCaches, 0, RuntimeState) \
+    v(AOTInstance_globalBindings, 0, RuntimeState) \
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
+    v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
     v(weakTableStorage, 0, CollectionStorage) \
     v(weakTableEntries, 0, CollectionEntries) \
@@ -86,6 +88,8 @@ struct AOTHeaps final : B3::AbstractHeapRepository {
 
     void appendHeaps(const Typed::LocationMasks&, B3HeapList&) const;
     void appendHeapsWrittenByCollection(B3HeapList&) const;
+    static bool mayConvertCells(const Typed::Effects& effectsOfCall);
+    void appendHeapsOfConvertedCells(B3HeapList&) const;
 
     std::optional<CoveredLocations> locationsOf(const B3::AbstractHeap&) const;
     bool isCoveredBy(const B3::AbstractHeap& written, const Typed::LocationMasks& declaredWrites) const;
@@ -103,6 +107,7 @@ private:
 
     void removeTemporaryClientHeaps() final;
     bool hasTemporaryClientHeaps() const final;
+    void appendGrownClientHeaps(Vector<GrownHeap, 16>&) final;
 
     void initializeEntireHeaps();
     void initializeBuckets();
@@ -119,6 +124,7 @@ private:
     std::array<B3::AbstractHeap, Typed::numberOfHeaps> m_entireHeaps;
     std::array<Buckets, Typed::numberOfIndexedHeaps> m_buckets;
     std::array<ExactHeaps, Typed::numberOfIndexedHeaps> m_exactHeaps;
+    Vector<Bucket*, 16> m_bucketsWithExactHeaps;
     UncheckedKeyHashMap<const B3::AbstractHeap*, CoveredLocations> m_locationsOfHeap;
 };
 

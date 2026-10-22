@@ -55,11 +55,18 @@ public:
             m_result = result;
     }
 
+    // Ends the scope early. Whether whoever called the function has run code by that: a function of the table that has run none itself is no code of the program.
+    // A built-in calls such a function on its own: behind Object.freeze(Array.prototype) concat calls the getter of Array[Symbol.species] and then Array. What it changes is held against its caller like the caller's own doing.
+    ALWAYS_INLINE bool finishAndAskWhetherCodeRan()
+    {
+        return !m_checker || close();
+    }
+
 private:
     class Checker;
 
     JS_EXPORT_PRIVATE void open(VM&, const NativeCall&, const NativeCallExpectation&);
-    JS_EXPORT_PRIVATE void close();
+    JS_EXPORT_PRIVATE bool close();
 
     Checker* m_checker { nullptr };
     JSValue m_result;

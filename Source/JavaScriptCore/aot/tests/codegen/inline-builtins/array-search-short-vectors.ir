@@ -1,0 +1,201 @@
+# `includes` and `indexOf` with a number compare the elements of a short vector of doubles or of int32 by a loop in the code. Only a vector with more elements than the limit is handed to the operation of its storage kind,
+# so each search names both operations once, in rare code: a function that only searches sets no frame up at its entry, as one that always calls does, and a short vector is searched without one.
+# Compact code has no loop: the same function with its search in a rare block has other code. An array of another kind takes the miss edge
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# RUN(CALLS): generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="includesInBalancedCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
+  b2(v3):
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f0: size=[[includesWithLoop]] frame=
+# CALLS-LABEL: f0: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# S: f0 b1 Balanced
+function f1 name="includesInCompactCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
+  b2(v3) frequency=Rare:
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NOT: f1: size=[[includesWithLoop]] frame=
+# CALLS-LABEL: f1: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# S: f1 b1 Compact
+function f2 name="indexOfInBalancedCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
+  b2(v3):
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f2: size=[[indexOfWithLoop]] frame=
+# CALLS-LABEL: f2: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# S: f2 b1 Balanced
+function f3 name="indexOfInCompactCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
+  b2(v3) frequency=Rare:
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NOT: f3: size=[[indexOfWithLoop]] frame=
+# CALLS-LABEL: f3: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# S: f3 b1 Compact
+function f4 name="includesInFastCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
+  b2(v4):
+    v5 = NewArray v4 contents=anything
+    Branch v2 -> taken b1(), notTaken b4()
+  b3() frequency=Rare:
+    v6 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b2(v6)
+  b4():
+    Return
+}
+# CHECK: f4: size=
+# CALLS-LABEL: f4: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x
+# S: f4 b1 Fast
+function f5 name="indexOfInFastCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
+  b2(v4):
+    v5 = NewArray v4 contents=anything
+    Branch v2 -> taken b1(), notTaken b4()
+  b3() frequency=Rare:
+    v6 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b2(v6)
+  b4():
+    Return
+}
+# CHECK: f5: size=
+# CALLS-LABEL: f5: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x
+# S: f5 b1 Fast
+function f6 name="includesWithInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
+  b2(v3):
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f6: size=
+# CALLS-LABEL: f6: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# S: f6 b1 Balanced
+function f7 name="indexOfWithInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
+  b2(v3):
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f7: size=
+# CALLS-LABEL: f7: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# S: f7 b1 Balanced
+function f8 name="alwaysCalls" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Return v2
+}
+# CHECK: f8: size={{*}} frame={{*}}@[[setup]]-
+function f9 name="onlyIncludes" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number):
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b1(), miss b2()
+  b1(v2):
+    Return v2
+  b2() frequency=Rare:
+    v3 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b1(v3)
+}
+# CHECK: f9: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CALLS-LABEL: f9: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+function f10 name="onlyIndexOf" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number):
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b1(), miss b2()
+  b1(v2):
+    Return v2
+  b2() frequency=Rare:
+    v3 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b1(v3)
+}
+# CHECK: f10: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CALLS-LABEL: f10: size=
+# CALLS: operation operationAOTArrayIndexOfDouble x1
+# CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
+# CHECK-NOT: no code

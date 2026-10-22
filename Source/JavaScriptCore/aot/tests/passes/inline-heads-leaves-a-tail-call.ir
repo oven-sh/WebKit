@@ -1,0 +1,26 @@
+# A tail call costs no return and no frame: it stays
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsFound = 1
+# STATISTIC: SelectedHeadsInlined = 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = CallDirect v0, v1 function=f1
+    ReturnCall v2 requirement=Allowed
+}
+function f1 name="early" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=i32
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="caller"
+# CHECK-NOT: TypeTest
+# CHECK: ReturnCall

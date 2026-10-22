@@ -1,0 +1,99 @@
+# Every access that goes by name or by key has a number, counted through the functions in block and value order. A pair of reads has two. A call by value has one: what arrives there is the callee; a direct call has none. A free name has no receiver, so it has none, and neither has a deletion
+# A site is Expected where its function holds a slot operation of the same access, and expects the layouts that operation takes. Elsewhere the list is what the types and the stamp say about the receiver
+# FORM: Selected
+# OPTIONS: count-arrivals
+# RUN: arrival-sites
+# CHECK: function f0
+# CHECK-NEXT: v2 site: 0 operation: PropGet kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: v3 site: 1 operation: PropSet kind: Store level: Unknown stamp: None expected: []
+# CHECK-NEXT: v4 site: 2 operation: PropHas kind: Has level: Unknown stamp: None expected: []
+# CHECK-NEXT: v5 site: 3 operation: ElemGet kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: v6 site: 4 operation: ElemSet kind: Store level: Unknown stamp: None expected: []
+# CHECK-NEXT: v7 site: 5 operation: ElemHas kind: Has level: Unknown stamp: None expected: []
+# CHECK-NEXT: function f2
+# CHECK-NEXT: v2 site: 6 operation: PropGetPair kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: v2 site: 7 operation: PropGetPair kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: v4 site: 8 operation: PropGetChain kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: v5 site: 9 operation: CallMethod kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: v6 site: 10 operation: PropGetAndTest kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: function f3
+# CHECK-NEXT: v4 site: 11 operation: PropGet kind: Read level: Expected stamp: Open expected: [L0]
+# CHECK-NEXT: function f4
+# CHECK-NEXT: v1 site: 12 operation: PropGet kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: function f5
+# CHECK-NEXT: v1 site: 13 operation: PropGet kind: Read level: Proven stamp: Complete expected: [L0, L1]
+# CHECK-NEXT: function f6
+# CHECK-NEXT: v3 site: 14 operation: PropGet kind: Read level: Unknown stamp: None expected: []
+# CHECK-NEXT: function f7
+# CHECK-NEXT: v2 site: 15 operation: Call kind: Call level: Unknown stamp: None expected: []
+# CHECK-NEXT: v3 site: 16 operation: Construct kind: Construct level: Unknown stamp: None expected: []
+# CHECK-NOT: site:
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L1 name="Named" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v1 key="x"
+    PropSet v1, v2 key="y" mode=Strict
+    v4 = PropHas v1 key="z"
+    v5 = ElemGet v1, v2
+    ElemSet v1, v2, v5 mode=Strict
+    v7 = ElemHas v1, v2
+    v8 = PropDelete v1 key="x" mode=Strict
+    Return v5
+}
+function f1 name="withoutAccess" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f2 name="fusedAccesses" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGetPair v0, v1 key="x" secondKey="y"
+    v3 = ResultAt v2
+    v4 = PropGetChain v0 key="x" secondKey="y"
+    v5 = CallMethod v0, v1 key="m"
+    v6 = PropGetAndTest v0 key="x"
+    TestAndBranch v6 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v4
+}
+function f3 name="missOfGuard" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v2 key="x" receivers=[L0] level=Expected accessSite=1
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
+    Return v4
+}
+function f4 name="expectedParameterWithoutGuard" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x" accessSite=2
+    Return v1
+}
+function f5 name="provenReceiver" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="other" accessSite=3 receivers=[L0]
+    Return v1
+}
+function f6 name="slotOperationOfAnotherAccess" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven accessSite=4
+    v3 = PropGet v1 key="x" accessSite=5
+    Return v3
+}
+function f7 name="callsByValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1
+    v3 = Construct v0, -, v1
+    v4 = CallDirect function=f1
+    Return v2
+}

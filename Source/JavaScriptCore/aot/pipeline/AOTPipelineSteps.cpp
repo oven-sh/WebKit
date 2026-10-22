@@ -8,28 +8,41 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAdmitAssertedObjects.h"
+#include "AOTAddGenericVersion.h"
+#include "AOTAllocateInnerObjects.h"
+#include "AOTFlattenInnerObjects.h"
+#include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
+#include "AOTCheckTypesAtEntry.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTCoroutines.h"
+#include "AOTCallModules.h"
 #include "AOTCreateEntrypoints.h"
 #include "AOTDeferClosuresInFields.h"
 #include "AOTDeferDefinitions.h"
+#include "AOTDeferInitializers.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTElideStackChecks.h"
 #include "AOTEmbedConstantCollections.h"
-#include "AOTFlowAnalysis.h"
+#include "AOTFactsOfSelectedBodies.h"
+#include "AOTFlowApply.h"
 #include "AOTFrameAllocation.h"
 #include "AOTFreshResults.h"
-#include "AOTGroupCallsByValue.h"
 #include "AOTHeat.h"
+#include "AOTCreatedObjectLayouts.h"
+#include "AOTNameCreatedSymbols.h"
+#include "AOTMarkResultsUsedAsKeys.h"
+#include "AOTNarrowConstantVariables.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTNumberLiteralStrings.h"
+#include "AOTInlineHeads.h"
 #include "AOTOutlineColdOperations.h"
 #include "AOTPassList.h"
 #include "AOTPlacement.h"
 #include "AOTPromoteEnvironmentsToVariables.h"
+#include "AOTReadCapturesFromEnvironments.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTRemoveUnreadExports.h"
@@ -39,12 +52,14 @@
 #include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
-#include "AOTSplitFunctionsAtCalls.h"
+#include "AOTSplitBehindEntryChecks.h"
 #include "AOTStringArena.h"
 #include "AOTSummarizeForInlining.h"
+#include "AOTTaggedLayouts.h"
 #include "AOTValueFlowResults.h"
 #include "AOTVerifier.h"
 #include "AOTVirtualObjectParameters.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -61,13 +76,14 @@ static SlotPlanInputs createSlotPlanInputs(Pipeline& pipeline)
     };
 }
 
-static PlacementInputs createPlacementInputs(Pipeline& pipeline)
+PlacementInputs Pipeline::createPlacementInputs(const CallGraph& callGraph)
 {
+    Pipeline& pipeline = *this;
     const FlowResults& flow = pipeline.flow();
     const PipelineOutput& output = pipeline.output();
     return {
         .flow = flow,
-        .callGraph = pipeline.analyses().callGraph(flow),
+        .callGraph = callGraph,
         .heat = pipeline.analyses().heat(flow),
         .callingConventions = *output.callingConventions,
         .frameAllocation = *output.frameAllocation,
@@ -79,11 +95,37 @@ static PlacementInputs createPlacementInputs(Pipeline& pipeline)
     };
 }
 
-PassOutcome Pipeline::admitAssertedObjects()
+PassOutcome Pipeline::allocateTaggedLayouts()
 {
-    editProgram(PassID::AdmitAssertedObjects, [&] {
-        Typed::admitAssertedObjects(m_program, m_build);
+    editProgram(PassID::AllocateTaggedLayouts, [&] {
+        Typed::allocateTaggedLayouts(m_program, m_build);
+        Typed::giveLayoutsToCreatedObjects(m_program, m_build);
     });
+    didAddFunctions();
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::checkTypesAtEntry()
+{
+    edit(PassID::CheckTypesAtEntry, [&](ProgramEditor& editor) {
+        Typed::checkTypesAtEntry(editor, m_build);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::narrowFieldTypes()
+{
+    editProgram(PassID::NarrowFieldTypes, [&] {
+        m_int32ParameterCandidates = Typed::narrowFieldTypes(m_program, m_build);
+    }, BodiesAreChanged::ThroughEditors);
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::nameCreatedSymbols()
+{
+    editProgram(PassID::NameCreatedSymbols, [&] {
+        Typed::nameCreatedSymbols(m_program, m_build);
+    }, BodiesAreChanged::ThroughEditors);
     return m_runner.lastProgramPassOutcome();
 }
 
@@ -101,12 +143,18 @@ PassOutcome Pipeline::verify(IRForm form)
     return m_runner.lastProgramPassOutcome();
 }
 
+PassOutcome Pipeline::guardTaintedPositions()
+{
+    editProgram(PassID::GuardTaintedPositions, [&] {
+        Typed::guardTaintedPositions(m_program, m_build, TaintedPositionsRun::BeforeFlow);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
 PassOutcome Pipeline::analyzeFlow()
 {
     *m_output->flow = read(PassID::AnalyzeFlow, [&] {
-        if (m_build.recordedOptions().analyzesValueFlow())
-            return analyzeValueFlow(m_program, m_program.types, m_build);
-        return Typed::analyzeFlow(m_program, m_program.types, m_build);
+        return analyzeValueFlow(m_program, m_program.types, m_build);
     });
     m_runner.setVerifierInputs({ .flow = &flow() });
     return m_runner.lastProgramPassOutcome();
@@ -115,7 +163,12 @@ PassOutcome Pipeline::analyzeFlow()
 PassOutcome Pipeline::applyFlowResults()
 {
     editProgram(PassID::ApplyFlowResults, [&] {
-        Typed::applyFlowResults(m_program, flow(), m_build);
+        Typed::applyFlowResults(m_program, *m_output->flow, m_build, Typed::LinkedFunctions::ThoseThatTypeResults);
+        m_build.destroyLater(FlowApplyAccess::takeApplication(*m_output->flow));
+        if (m_output->flow->hasResults())
+            Typed::guardTaintedPositionsAfterFlow(m_program, *m_output->flow, m_build);
+        if (m_output->flow->hasResults())
+            Typed::expectInt32ParametersWithRemainingChecks(m_program, std::exchange(m_int32ParameterCandidates, { }).span(), m_build);
     });
     didAddFunctions();
     return m_runner.lastProgramPassOutcome();
@@ -153,6 +206,26 @@ PassOutcome Pipeline::summarizeForInlining()
     return PassOutcome::Unchanged;
 }
 
+PassOutcome Pipeline::splitBehindEntryChecks()
+{
+    // The pass drops the heat that it asks for, and leaves most bodies as they are.
+    m_analyses.keepPartsOfBodiesForNextHeat();
+    edit(PassID::SplitBehindEntryChecks, [&](ProgramEditor& editor) {
+        Typed::splitBehindEntryChecks(editor, &inputsFor(PassID::SplitBehindEntryChecks).heat, m_build);
+    });
+    didAddFunctions();
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::skipAnsweredEntryChecks()
+{
+    edit(PassID::SkipAnsweredEntryChecks, [&](ProgramEditor& editor) {
+        Typed::skipAnsweredEntryChecks(editor, inputsFor(PassID::SkipAnsweredEntryChecks).heat, m_build);
+    });
+    didAddFunctions();
+    return m_runner.lastProgramPassOutcome();
+}
+
 PassOutcome Pipeline::removeUnreadExports()
 {
     edit(PassID::RemoveUnreadExports, [&](ProgramEditor& editor) {
@@ -164,7 +237,32 @@ PassOutcome Pipeline::removeUnreadExports()
 PassOutcome Pipeline::deferDefinitions()
 {
     edit(PassID::DeferDefinitions, [&](ProgramEditor& editor) {
-        Typed::deferDefinitions(editor, m_build);
+        Typed::deferDefinitions(editor, flow(), m_build);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::narrowConstantVariables()
+{
+    edit(PassID::NarrowConstantVariables, [&](ProgramEditor& editor) {
+        m_output->flow->setConstantLists(Typed::narrowConstantVariables(editor, flow(), m_build));
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::deferInitializers()
+{
+    edit(PassID::DeferInitializers, [&](ProgramEditor& editor) {
+        Typed::deferInitializers(editor, inputsFor(PassID::DeferInitializers), m_runner);
+    });
+    didAddFunctions();
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::markResultsUsedAsKeys()
+{
+    edit(PassID::MarkResultsUsedAsKeys, [&](ProgramEditor& editor) {
+        Typed::markResultsUsedAsKeys(editor, m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -181,6 +279,14 @@ PassOutcome Pipeline::promoteEnvironmentsToVariables()
 {
     edit(PassID::PromoteEnvironmentsToVariables, [&](ProgramEditor& editor) {
         Typed::promoteEnvironmentsToVariables(editor, *m_output->flow, m_build);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::readCapturesFromEnvironments()
+{
+    edit(PassID::ReadCapturesFromEnvironments, [&](ProgramEditor& editor) {
+        Typed::readCapturesFromEnvironments(editor, *m_output->flow, m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -210,9 +316,21 @@ PassOutcome Pipeline::removeUnusedParameters()
     return m_runner.lastProgramPassOutcome();
 }
 
+PassOutcome Pipeline::callModules()
+{
+    edit(PassID::CallModules, [&](ProgramEditor& editor) {
+        Typed::callModules(editor, flow(), m_build);
+    });
+    didAddFunctions();
+    return m_runner.lastProgramPassOutcome();
+}
+
 PassOutcome Pipeline::removeUnreachableFunctions()
 {
     edit(PassID::RemoveUnreachableFunctions, [&](ProgramEditor& editor) {
+        // Select gives calls by value other forms, and the body that throws is written in the form in front of it.
+        if (m_program.form() == IRForm::Prepared)
+            closeEntrypointsThatNothingEnters(editor, flow(), m_output->calleesOfSites, m_build);
         Typed::removeUnreachableFunctions(editor, m_analyses.callGraph(flow()), m_build);
     });
     m_output->derivedFunctions->forgetFunctionsWithoutBody(m_program);
@@ -222,7 +340,9 @@ PassOutcome Pipeline::removeUnreachableFunctions()
 PassOutcome Pipeline::splitFreshResults()
 {
     edit(PassID::SplitFreshResults, [&](ProgramEditor& editor) {
-        Typed::splitFreshResults(editor, inputsFor(PassID::SplitFreshResults), m_runner);
+        OptimizationInputs inputs = inputsFor(PassID::SplitFreshResults);
+        inputs.callGraph.computeRanks(m_build);
+        Typed::splitFreshResults(editor, inputs, m_runner);
     });
     didAddFunctions();
     return m_runner.lastProgramPassOutcome();
@@ -249,32 +369,46 @@ PassOutcome Pipeline::splitCoroutines()
 PassOutcome Pipeline::createEntrypoints()
 {
     edit(PassID::CreateEntrypoints, [&](ProgramEditor& editor) {
-        Typed::createEntrypoints(editor, inputsFor(PassID::CreateEntrypoints), *m_output->callGroups, m_build);
+        Typed::createEntrypoints(editor, inputsFor(PassID::CreateEntrypoints), m_build);
     });
     didAddFunctions();
-    return m_runner.lastProgramPassOutcome();
-}
-
-PassOutcome Pipeline::groupCallsByValue()
-{
-    *m_output->callGroups = read(PassID::GroupCallsByValue, [&] {
-        return Typed::groupCallsByValue(m_program, flow(), m_build);
-    });
     return m_runner.lastProgramPassOutcome();
 }
 
 PassOutcome Pipeline::chooseCallingConventions()
 {
     *m_output->callingConventions = edit(PassID::ChooseCallingConventions, [&](ProgramEditor& editor) {
-        return Typed::chooseCallingConventions(editor, inputsFor(PassID::ChooseCallingConventions), *m_output->callGroups, m_runner);
+        return Typed::chooseCallingConventions(editor, inputsFor(PassID::ChooseCallingConventions), m_runner);
     });
     return m_runner.lastProgramPassOutcome();
 }
 
 PassOutcome Pipeline::allocateInFrames()
 {
+    if (!m_runner.isStopped()) {
+        inputsFor(PassID::AllocateInFrames);
+        m_output->flow->setBorrowedParameters(m_analyses.borrowedParameters());
+        m_output->flow->setFrameArrayParameters(computeFrameArrayParameters(m_program, m_build));
+    }
     *m_output->frameAllocation = edit(PassID::AllocateInFrames, [&](ProgramEditor& editor) {
-        return Typed::allocateInFrames(editor, inputsFor(PassID::AllocateInFrames), m_build);
+        return Typed::allocateInFrames(editor, inputsFor(PassID::AllocateInFrames), *m_output->flow, m_build);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::flattenInnerObjects()
+{
+    edit(PassID::FlattenInnerObjects, [&](ProgramEditor& editor) {
+        Typed::flattenInnerObjects(editor, flow(), inputsFor(PassID::FlattenInnerObjects).heat, m_build);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::allocateInnerObjects()
+{
+    edit(PassID::AllocateInnerObjects, [&](ProgramEditor& editor) {
+        OptimizationInputs inputs = inputsFor(PassID::AllocateInnerObjects);
+        Typed::allocateInnerObjects(editor, flow(), inputs.callGraph, inputs.heat, m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -282,13 +416,16 @@ PassOutcome Pipeline::allocateInFrames()
 PassOutcome Pipeline::reuseEnvironments()
 {
     *m_output->environmentReuse = edit(PassID::ReuseEnvironments, [&](ProgramEditor& editor) {
-        return Typed::reuseEnvironments(editor, flow(), *m_output->frameAllocation, m_build);
+        return Typed::reuseEnvironments(editor, flow(), *m_output->frameAllocation, m_build, [&] {
+            return m_analyses.borrowedParameters();
+        });
     });
     return m_runner.lastProgramPassOutcome();
 }
 
 PassOutcome Pipeline::numberLiteralStrings()
 {
+    internPiecesOfModulePaths(m_program);
     *m_output->literalStrings = read(PassID::NumberLiteralStrings, [&] {
         return Typed::numberLiteralStrings(m_program, m_build);
     });
@@ -298,7 +435,12 @@ PassOutcome Pipeline::numberLiteralStrings()
 PassOutcome Pipeline::embedConstantCollections()
 {
     *m_output->constantCollections = edit(PassID::EmbedConstantCollections, [&](ProgramEditor& editor) {
-        return Typed::embedConstantCollections(editor, flow(), m_build);
+        // The table of borrowed parameters looks at the bodies that have changed. What it reads of them is kept for the effect summaries, which are brought up to date a few passes on.
+        const EffectSummaries* summariesFromFlow = m_analyses.keptSummariesFromFlow();
+        std::optional<EffectSummaries> ownSummaries;
+        if (!summariesFromFlow)
+            summariesFromFlow = &ownSummaries.emplace(createSummariesFromFlow(m_program, flow(), m_analyses.borrowedParameters(), m_build));
+        return Typed::embedConstantCollections(editor, flow(), summariesFromFlow, m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -312,21 +454,25 @@ PassOutcome Pipeline::collectRegExpLiterals()
     return m_runner.lastProgramPassOutcome();
 }
 
-PassOutcome Pipeline::outlineColdOperations()
+PassOutcome Pipeline::outlineColdOperations(OutliningSiteFinder* finder, const ReadersOfOutlinedFunctions* readers)
 {
     edit(PassID::OutlineColdOperations, [&](ProgramEditor& editor) {
-        Typed::outlineColdOperations(editor, inputsFor(PassID::OutlineColdOperations), m_build);
+        Typed::outlineColdOperations(editor, inputsFor(PassID::OutlineColdOperations), m_build, finder, readers);
     });
     didAddFunctions();
     return m_runner.lastProgramPassOutcome();
 }
 
-PassOutcome Pipeline::splitFunctionsAtCalls()
+PassOutcome Pipeline::inlineHeads(const ReaderOfScheduledFunction* readEditedFunction)
 {
-    edit(PassID::SplitFunctionsAtCalls, [&](ProgramEditor& editor) {
-        Typed::splitFunctionsAtCalls(editor, inputsFor(PassID::SplitFunctionsAtCalls), m_build);
+    auto findDirectCallees = [&](FunctionID id) -> const Vector<FunctionID>* {
+        const ReferencesOfBody* references = m_factsOfSelectedBodies ? m_factsOfSelectedBodies->referencesOf(id) : nullptr;
+        return references ? &references->directCallees : nullptr;
+    };
+    DirectCalleesOfFunction directCalleesOf(findDirectCallees);
+    edit(PassID::InlineHeads, [&](ProgramEditor& editor) {
+        Typed::inlineHeads(editor, inputsFor(PassID::InlineHeads), m_build, readEditedFunction, &directCalleesOf);
     });
-    didAddFunctions();
     return m_runner.lastProgramPassOutcome();
 }
 
@@ -347,12 +493,129 @@ PassOutcome Pipeline::planSlots()
     return m_runner.lastProgramPassOutcome();
 }
 
+void Pipeline::planSlotsBesideOtherReadersOfPreparedBodies()
+{
+    internPiecesOfModulePaths(m_program);
+    SlotPlanInputs inputs = createSlotPlanInputs(*this);
+    inputsFor(PassID::PlanSlots);
+    inputsFor(PassID::NumberLiteralStrings);
+    CachesAroundStepsThatRunBesideEachOther caches(m_program, m_build);
+    *m_output->slots = m_runner.runAnalysisBeside(PassID::PlanSlots, m_program, [&] {
+        return Typed::planSlots(m_program, inputs, m_build);
+    }, [&] {
+        *m_output->literalStrings = m_runner.runAnalysisBeside(PassID::NumberLiteralStrings, m_program, [&] {
+            return Typed::numberLiteralStrings(m_program, m_build);
+        }, [&] {
+            m_analyses.effects(flow());
+        });
+    });
+}
+
+PassOutcome Pipeline::numberAndEncodeBesideOtherReadersOfSelectedBodies()
+{
+    inputsFor(PassID::CollectRegExpLiterals);
+    inputsFor(PassID::ElideStackChecks);
+    const CallGraph& callGraph = m_analyses.callGraph(flow());
+    m_runner.didCompute(descriptorOf(PassID::CollectRegExpLiterals).outputs);
+    return numberAndEncode([&] {
+        collectRegExpsAndElideStackChecks(callGraph);
+    });
+}
+
+void Pipeline::collectRegExpsAndElideStackChecks(const CallGraph& callGraph)
+{
+    *m_output->regExpRequests = m_runner.runAnalysisBeside(PassID::CollectRegExpLiterals, m_program, [&] {
+        StringArena strings(m_program.strings);
+        return collectRegExpRequests(m_program, flow(), strings, m_build);
+    }, [&] {
+        *m_output->stackChecks = m_runner.runAnalysis(PassID::ElideStackChecks, m_program, [&] {
+            return Typed::elideStackChecks(m_program, callGraph, m_build);
+        });
+    });
+    if (!m_runner.isStopped())
+        m_output->startCompilingRegExps(m_program, m_build);
+}
+
+// Of a placement, the choice of representations asks for slots, for the field access of an operation and for the statics. All else that is numbered reads no body,
+// much of it on one thread: it is numbered beside the loop that chooses. The words that wait for it are written behind both.
+void Pipeline::numberBesideChoosingRepresentations(NOESCAPE const ScopedLambda<void(ASCIILiteral)>& didFinish)
+{
+    bool wasRunning = !m_runner.isStopped();
+    inputsFor(PassID::CollectRegExpLiterals);
+    inputsFor(PassID::ElideStackChecks);
+    const CallGraph& callGraph = m_analyses.callGraph(flow());
+    m_runner.didCompute(descriptorOf(PassID::CollectRegExpLiterals).outputs);
+    m_build.statistics().count(StatisticID::GenericVersionsBehindEntryChecksCompiled, std::ranges::count_if(m_program.functions, [](const Function& function) {
+        return function.hasBody() && function.role == FunctionRole::GenericVersion;
+    }));
+
+    PlacementInputs inputs = createPlacementInputs(callGraph);
+    PlacementInSteps steps(inputs, m_build, m_factsOfSelectedBodies ? &m_factsOfSelectedBodies->scansForPlacement() : nullptr);
+    Placement& placement = *m_output->placement;
+    placement = edit(PassID::NumberAndEncode, [&](ProgramEditor& editor) {
+        return steps.numberWhatRepresentationsAsk(editor, [&] {
+            collectRegExpsAndElideStackChecks(callGraph);
+        });
+    });
+    didFinish(nameOf(PassID::NumberAndEncode));
+    advanceTo(IRForm::Placed, wasRunning);
+    if (m_runner.isStopped()) {
+        m_factsOfSelectedBodies = nullptr;
+        return;
+    }
+
+    const Heat& heat = m_analyses.heat(flow());
+    steps.prepareToResolveFieldAccesses();
+    Vector<Vector<SiteCacheRequest>> siteCacheRequests(m_program.functions.size());
+    bool needsWeightsOfSiteCaches = !m_factsOfSelectedBodies || m_factsOfSelectedBodies->scansForPlacement().numberOfOperationsWithWordForSiteCache() > m_build.limit(LimitID::MaxSiteCaches);
+    auto readPlacedFunction = [&](FunctionID id, Function& function) {
+        steps.resolveFieldAccessesOf(placement, id, function);
+        collectSiteCacheRequests(m_program, placement, flow(), heat, m_build, id, needsWeightsOfSiteCaches, siteCacheRequests[id.index()]);
+    };
+    auto numberRest = [&] {
+        steps.numberRest(placement);
+    };
+    m_output->calledFunctions.grow(m_program.functions.size());
+    auto listCalledFunctions = [&](FunctionID id) {
+        Vector<FunctionID>& called = m_output->calledFunctions[id.index()];
+        called.shrink(0);
+        forEachCalledFunction(m_program.functions[id.index()], [&](FunctionID target) {
+            called.append(target);
+        });
+    };
+    ScopedLambda<void(FunctionID, Function&)> inFront(readPlacedFunction);
+    ScopedLambda<void()> beside(numberRest);
+    ReaderOfScheduledFunction readerOfRepresentedFunction(listCalledFunctions);
+    const ReaderOfScheduledFunction* readersOfRepresentedFunction[] = { &readerOfRepresentedFunction };
+    runSchedule(FunctionSchedule::Represent, { .inFront = &inFront, .behind = readersOfRepresentedFunction, .beside = &beside });
+    didFinish(descriptorOf(FunctionSchedule::Represent).name);
+
+    *m_output->siteCaches = edit(PassID::PlaceSiteCaches, [&](ProgramEditor& editor) {
+        steps.resolveSites(editor, placement);
+        return Typed::placeSiteCaches(editor, placement, flow(), heat, m_build, siteCacheRequests.span());
+    });
+    m_build.destroyLater(WTF::move(siteCacheRequests));
+    m_factsOfSelectedBodies = nullptr;
+    m_placedTableSizes = placement.tableSizes();
+    m_runner.setVerifierInputs({ .flow = &flow(), .placed = &m_placedTableSizes });
+    didFinish(nameOf(PassID::PlaceSiteCaches));
+}
+
 PassOutcome Pipeline::numberAndEncode()
 {
-    PlacementInputs inputs = createPlacementInputs(*this);
+    return numberAndEncode([] { });
+}
+
+PassOutcome Pipeline::numberAndEncode(NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites)
+{
+    m_build.statistics().count(StatisticID::GenericVersionsBehindEntryChecksCompiled, std::ranges::count_if(m_program.functions, [](const Function& function) {
+        return function.hasBody() && function.role == FunctionRole::GenericVersion;
+    }));
+    PlacementInputs inputs = createPlacementInputs(m_analyses.callGraph(flow()));
     *m_output->placement = edit(PassID::NumberAndEncode, [&](ProgramEditor& editor) {
-        return Typed::numberAndEncode(editor, inputs, m_build);
+        return Typed::numberAndEncode(editor, inputs, m_build, readBodiesBesideCollectingSites, m_factsOfSelectedBodies ? &m_factsOfSelectedBodies->scansForPlacement() : nullptr);
     });
+    m_factsOfSelectedBodies = nullptr;
     m_placedTableSizes = m_output->placement->tableSizes();
     m_runner.setVerifierInputs({ .flow = &flow(), .placed = &m_placedTableSizes });
     return m_runner.lastProgramPassOutcome();
@@ -368,7 +631,7 @@ PassOutcome Pipeline::placeSiteCaches()
 
 PassOutcome Pipeline::checkPlacement()
 {
-    PlacementInputs inputs = createPlacementInputs(*this);
+    PlacementInputs inputs = createPlacementInputs(m_analyses.callGraph(flow()));
     read(PassID::CheckPlacement, [&] {
         Typed::checkPlacement(m_program, inputs, *m_output->placement, *m_output->siteCaches, m_build);
     });
@@ -380,10 +643,22 @@ PassOutcome Pipeline::checkPlacement()
 PassOutcome Pipeline::runProgramPass(PassID id)
 {
     switch (id) {
-    case PassID::AdmitAssertedObjects:
-        return admitAssertedObjects();
+    case PassID::AllocateTaggedLayouts:
+        return allocateTaggedLayouts();
+    case PassID::CheckTypesAtEntry:
+        return checkTypesAtEntry();
+    case PassID::SplitBehindEntryChecks:
+        return splitBehindEntryChecks();
+    case PassID::SkipAnsweredEntryChecks:
+        return skipAnsweredEntryChecks();
+    case PassID::NarrowFieldTypes:
+        return narrowFieldTypes();
+    case PassID::NameCreatedSymbols:
+        return nameCreatedSymbols();
     case PassID::VerifyProgram:
         return verify(m_program.form());
+    case PassID::GuardTaintedPositions:
+        return guardTaintedPositions();
     case PassID::AnalyzeFlow:
         return analyzeFlow();
     case PassID::ApplyFlowResults:
@@ -404,8 +679,16 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return promoteEnvironmentsToVariables();
     case PassID::DeferDefinitions:
         return deferDefinitions();
+    case PassID::NarrowConstantVariables:
+        return narrowConstantVariables();
+    case PassID::DeferInitializers:
+        return deferInitializers();
+    case PassID::MarkResultsUsedAsKeys:
+        return markResultsUsedAsKeys();
     case PassID::DeferClosuresInFields:
         return deferClosuresInFields();
+    case PassID::ReadCapturesFromEnvironments:
+        return readCapturesFromEnvironments();
     case PassID::RemoveUnreadFields:
         return removeUnreadFields();
     case PassID::RemoveUnusedResults:
@@ -420,14 +703,18 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return promoteAggregateParameters();
     case PassID::SplitCoroutines:
         return splitCoroutines();
+    case PassID::CallModules:
+        return callModules();
     case PassID::CreateEntrypoints:
         return createEntrypoints();
-    case PassID::GroupCallsByValue:
-        return groupCallsByValue();
     case PassID::ChooseCallingConventions:
         return chooseCallingConventions();
     case PassID::AllocateInFrames:
         return allocateInFrames();
+    case PassID::AllocateInnerObjects:
+        return allocateInnerObjects();
+    case PassID::FlattenInnerObjects:
+        return flattenInnerObjects();
     case PassID::ReuseEnvironments:
         return reuseEnvironments();
     case PassID::NumberLiteralStrings:
@@ -438,8 +725,8 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return collectRegExpLiterals();
     case PassID::OutlineColdOperations:
         return outlineColdOperations();
-    case PassID::SplitFunctionsAtCalls:
-        return splitFunctionsAtCalls();
+    case PassID::InlineHeads:
+        return inlineHeads();
     case PassID::ElideStackChecks:
         return elideStackChecks();
     case PassID::PlanSlots:
@@ -465,21 +752,24 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::AnalyzeFlow:
         output.flow->dump(out, m_program);
         return;
-    case PassID::BuildCallGraph:
-        m_analyses.callGraph(flow()).dump(out, m_program);
+    case PassID::BuildCallGraph: {
+        const CallGraph& callGraph = m_analyses.callGraph(flow());
+        callGraph.computeRanks(m_build);
+        callGraph.dump(out, m_program);
         return;
+    }
     // A run of all stages that was stopped after a pass has handed these two to the output, and a stopped runner computes nothing again.
     case PassID::ComputeEffectSummaries:
-        (m_runner.isStopped() ? *output.effects : m_analyses.effects(flow())).dump(out, m_program);
+        if (m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID()))
+            Typed::computeEffectSummaries(m_program, flow(), m_build).dump(out, m_program);
+        else
+            (m_runner.isStopped() ? *output.effects : m_analyses.effects(flow())).dump(out, m_program);
         return;
     case PassID::EstimateHeat:
         (m_runner.isStopped() ? *output.heat : m_analyses.heat(flow())).dump(out, m_program);
         return;
     case PassID::SummarizeForInlining:
         m_analyses.inlining(flow()).dump(out, m_program);
-        return;
-    case PassID::GroupCallsByValue:
-        output.callGroups->dump(out, m_program);
         return;
     case PassID::ChooseCallingConventions:
         output.callingConventions->dump(out, m_program);
@@ -512,14 +802,26 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
         output.siteCaches->dump(out, m_program);
         return;
     case PassID::None:
-    case PassID::AdmitAssertedObjects:
+    case PassID::AllocateTaggedLayouts:
+    case PassID::CheckTypesAtEntry:
+    case PassID::SplitBehindEntryChecks:
+    case PassID::SkipAnsweredEntryChecks:
+    case PassID::NarrowFieldTypes:
+    case PassID::NameCreatedSymbols:
     case PassID::VerifyProgram:
+    case PassID::GuardTaintedPositions:
     case PassID::ApplyFlowResults:
     case PassID::CheckLockedBuiltinWrites:
     case PassID::RemoveUnreadExports:
     case PassID::PromoteEnvironmentsToVariables:
     case PassID::DeferDefinitions:
+    case PassID::NarrowConstantVariables:
+    case PassID::DeferInitializers:
+    case PassID::MarkResultsUsedAsKeys:
     case PassID::DeferClosuresInFields:
+    case PassID::AllocateInnerObjects:
+    case PassID::FlattenInnerObjects:
+    case PassID::ReadCapturesFromEnvironments:
     case PassID::RemoveUnreadFields:
     case PassID::RemoveUnusedResults:
     case PassID::RemoveUnusedParameters:
@@ -527,9 +829,10 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::SplitFreshResults:
     case PassID::PromoteAggregateParameters:
     case PassID::SplitCoroutines:
+    case PassID::CallModules:
     case PassID::CreateEntrypoints:
     case PassID::OutlineColdOperations:
-    case PassID::SplitFunctionsAtCalls:
+    case PassID::InlineHeads:
     case PassID::CheckPlacement:
     case PassID::GenerateCode:
     FOR_EACH_AOT_FUNCTION_PASS(AOT_FUNCTION_PASS_CASE)

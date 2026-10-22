@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSelectionContext.h"
 #include <algorithm>
@@ -16,15 +17,37 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-RewriteSession::RewriteSession(SelectionContext& context, SelectionRuleID rule)
+// The rewrites of these rules write the root, what they have made themselves and the branch that takes a copy of the root, and ask for no analysis meanwhile.
+// All of that stands in blocks that the rewriter and the session name, so the use lists outlive the session.
+static constexpr bool writesOnlyNamedBlocks(SelectionRuleID rule)
+{
+    switch (rule) {
+    case SelectionRuleID::PlannedSlots:
+    case SelectionRuleID::MethodCall:
+    case SelectionRuleID::PropertyReadAndTest:
+    case SelectionRuleID::PropertyChain:
+    case SelectionRuleID::PropertyPair:
+    case SelectionRuleID::StringLiteralForms:
+    case SelectionRuleID::InlineBuiltin:
+    case SelectionRuleID::OperatorForm:
+        return true;
+    default:
+        return false;
+    }
+}
+
+RewriteSession::RewriteSession(SelectionContext& context, SelectionRuleID rule, size_t numberOfGroups)
     : m_context(context)
     , m_rule(rule)
+    , m_checksEffects(context.build().options().verifiesProgram)
     , m_function(context.pass().function)
     , m_builder(context.analyses().context(), m_function, context.pass().types, &context.analyses())
-    , m_substitution(m_function)
     , m_isErasedFromBlock(m_function.values.size())
     , m_firstNewValue(static_cast<uint32_t>(m_function.values.size()))
+    , m_firstNewBlock(static_cast<uint32_t>(m_function.blocks.size()))
 {
+    m_groups.reserveInitialCapacity(numberOfGroups);
+    context.analyses().setEveryChangeIsReported(writesOnlyNamedBlocks(rule));
 }
 
 void RewriteSession::add(const SelectionGroup& group)
@@ -46,13 +69,23 @@ void RewriteSession::add(const SelectionGroup& group)
     };
     for (const GroupMember& member : group.members) {
         if (member.isOnlyErased) {
-            RELEASE_ASSERT(analyses.effectsOf(member.value).onAnyEdge().isRemovableWhenUnused());
+            RELEASE_ASSERT(analyses.isRemovableWhenUnused(member.value));
             continue;
         }
-        if (analyses.effectsOf(member.value) != EffectsOnEdges::none())
-            state.replaced.add(analyses.effectContext(), m_function, m_function.at(member.value));
+        if (!m_checksEffects)
+            continue;
+        const EffectsOnEdges& effects = analyses.effectsOf(member.value);
+        if (effects != EffectsOnEdges::none())
+            state.replaced.add(effects, m_function.at(member.value).opcode);
     }
     m_groups.append(WTF::move(state));
+}
+
+ValueSubstitution& RewriteSession::substitution()
+{
+    if (!m_substitution)
+        m_substitution.emplace(m_function);
+    return *m_substitution;
 }
 
 Vector<uint32_t> RewriteSession::takeOrder()
@@ -66,10 +99,12 @@ Vector<uint32_t> RewriteSession::takeOrder()
     return order;
 }
 
+// A member stands in the block of its group, or in a block that the session has cut off that block.
 void RewriteSession::rebuildBlockValues()
 {
     BlockValues values;
-    for (Block& block : m_function.blocks) {
+    bool hasResults = !m_resultsAfter.isEmpty();
+    auto rebuild = [&](Block& block) {
         bool isChanged = false;
         values.shrink(0);
         for (ValueID id : block.values) {
@@ -78,6 +113,8 @@ void RewriteSession::rebuildBlockValues()
                 continue;
             }
             values.append(id);
+            if (!hasResults)
+                continue;
             if (auto results = m_resultsAfter.find(id); results != m_resultsAfter.end()) {
                 values.appendVector(results->value);
                 isChanged = true;
@@ -85,7 +122,25 @@ void RewriteSession::rebuildBlockValues()
         }
         if (isChanged)
             block.values = values;
+    };
+
+    BitVector isRebuilt(m_firstNewBlock);
+    for (const GroupState& group : m_groups) {
+        if (isRebuilt.add(group.block.index()))
+            rebuild(m_function.edit(group.block));
     }
+    for (size_t index = m_firstNewBlock; index < m_function.blocks.size(); ++index)
+        rebuild(m_function.edit(BlockID(index)));
+}
+
+// With nothing queued the builder drops every analysis of values.
+void RewriteSession::applyInsertions()
+{
+    if (m_builder.hasInsertions()) {
+        m_builder.applyInsertions();
+        return;
+    }
+    m_context.analyses().didChangeValuesButNotUses();
 }
 
 void RewriteSession::updateClaims()
@@ -109,12 +164,20 @@ void RewriteSession::updateClaims()
 void RewriteSession::finish()
 {
     FunctionAnalyses& analyses = m_context.analyses();
-    m_builder.applyInsertions();
+    applyInsertions();
     if (!m_isErasedFromBlock.isEmpty() || !m_resultsAfter.isEmpty())
         rebuildBlockValues();
-    if (!m_substitution.isEmpty())
-        m_substitution.apply(m_function, &analyses);
-    analyses.didChangeControlFlow();
+    if (m_substitution && !m_substitution->isEmpty())
+        m_substitution->apply(m_function, &analyses);
+    // Whoever has added a block, or written a target or a handler, has said so where it did.
+    if (UseLists* useLists = analyses.updatingUseLists()) {
+        for (const GroupState& group : m_groups)
+            useLists->didChangeBlock(group.block);
+        for (size_t index = m_firstNewBlock; index < m_function.blocks.size(); ++index)
+            useLists->didChangeBlock(BlockID(index));
+    }
+    analyses.didChangeValuesButNotUses();
+    analyses.setEveryChangeIsReported(false);
 
     updateClaims();
     m_context.didFinishRewrites(m_rule, static_cast<uint32_t>(m_groups.size()), m_needsCompaction);

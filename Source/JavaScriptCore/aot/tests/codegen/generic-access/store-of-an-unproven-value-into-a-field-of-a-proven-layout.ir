@@ -1,0 +1,40 @@
+# A literal that is made on a path that is seldom taken, from values of which nothing is proven: no test is placed there, so the allocation lists fillers and each value is stored behind it.
+# The receiver is the new object, so the site knows the field: it names the record of the field to a stub, which tests the value against the type of the field and stores it. Nothing is looked up, missed or filed.
+# A value that the slot does not admit goes on as a store by name and leaves the slot. A slot that holds any value, or any int32, is answered by the table of fields as before.
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN: generate-code calls
+# RUN(GO): run-in-shell globalThis.publish = make => { for (const [done, label, any] of [[true, "a", 1], [false, "b", "two"], [5, 7, null], [undefined, null, {}], ["yes", Symbol.iterator, 1.5]]) { const made = make(true, done, label, any); print(String(made.done), String(made.label), String(made.any), Object.keys(made).join()); } };
+# GO: true a 1 done,label,any
+# GO-NEXT: false b two done,label,any
+# GO-NEXT: 5 7 null done,label,any
+# GO-NEXT: undefined null [object Object] done,label,any
+# GO-NEXT: yes Symbol(Symbol.iterator) 1.5 done,label,any
+# GO-NEXT: exited with 0
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: stub PutByIdAtSite
+# CHECK: stub PutKnownField.Strict.n0 x2
+# CHECK-NOT: stub PutByIdAtSite
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Entry" module=m0 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}, {key="any" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="publish" [isFreeName]
+    v3 = Call v2, -, v1
+    Return
+}
+function f1 name="make" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v5 = NewObject -, v1, v2, v3 layout=L0 fields=[0, 1, 2]
+    v6 = FinishObject v5
+    Return v6
+  b2():
+    Return v0
+}

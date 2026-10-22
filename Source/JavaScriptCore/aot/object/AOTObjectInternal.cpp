@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
+#include "AOTImage.h"
 #include "AOTObjectModel.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
@@ -28,12 +30,33 @@ void crashOnImpossibleMutation(VM& vm, const Object& object, const FieldData& fi
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
+void crashOnLostStateOfBirth(VM& vm, const Object& object, const FieldData& field, ASCIILiteral event)
+{
+    const LayoutData& layout = object.layout();
+    const ImageText& text = vm.aotState().image->text();
+    StringID layoutName(layout.name);
+    dataLogLn("AOT: ", event, " of field ", String(propertyNameOf(vm, object, field)), " of layout ", layout.index, " (", layoutName && text.hasText(layoutName) ? text.view(layoutName) : StringView("-"_s), "), which compiled code reads without a test");
+    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
+}
+
+static thread_local const JSObject* objectListedWithoutOrder;
+
+KeyListingThatShowsNoOrder::KeyListingThatShowsNoOrder(const JSObject* object)
+    : m_outer(std::exchange(objectListedWithoutOrder, object))
+{
+}
+
+KeyListingThatShowsNoOrder::~KeyListingThatShowsNoOrder()
+{
+    objectListedWithoutOrder = m_outer;
+}
+
 void failIfKeysMustNotBeListed(VM& vm, const Object& object)
 {
     const LayoutData& layout = object.layout();
     if (object.state().objects->layouts.everyObjectHadRemovedField(layout))
         crashOnValidationFailure(vm, { ValidationFailureKind::RemovedFieldNamed, { }, { }, &object });
-    if (layout.keysAreNeverEnumerated)
+    if (layout.keysAreNeverEnumerated && objectListedWithoutOrder != &object)
         crashOnValidationFailure(vm, { ValidationFailureKind::KeysListed, { }, { }, &object });
 }
 
@@ -69,10 +92,14 @@ bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field
 {
     ASSERT(!object.isInSlot(field) && !livesInExtraProperties(vm, object, field));
     // The creation is the one store of a field that is stored once, so this does not ask tryStore, which refuses every store to such a field.
-    if (field.slot.representation() == SlotRepresentation::DeferredClosure || !state.objects->layouts.fieldAccepts(field, value) || !object.store(vm, field, value))
+    std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);
+    if (!accepted || !object.store(vm, field, *accepted))
         return false;
-    object.didCreateField(state, field);
-    didChangeOwnProperties(vm, object, VM::StructureChainIntegrityEvent::Add, state.objects->layouts.nameOf(vm, field));
+    object.didCreateField(state, field, !!object.slotOf(field));
+    if (field.isFilledAtBirth)
+        object.tryFinishBirth();
+    if (object.structure()->mayBePrototype()) [[unlikely]]
+        didChangeOwnProperties(vm, object, VM::StructureChainIntegrityEvent::Add, state.objects->layouts.nameOf(vm, field));
     return true;
 }
 
@@ -80,6 +107,8 @@ void putProperty(VM& vm, JSObject* holder, PropertyName name, Object::LeavingPro
 {
     if (property.attributes & PropertyAttribute::Accessor)
         holder->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(property.valueOrAccessor), property.attributes);
+    else if (property.attributes & PropertyAttribute::CustomAccessorOrValue)
+        holder->putDirectCustomAccessor(vm, name, property.valueOrAccessor, property.attributes);
     else
         holder->putDirect(vm, name, property.valueOrAccessor, property.attributes);
 }
@@ -88,6 +117,19 @@ void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityE
 {
     if (object.structure()->mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(event, &object, nameOrNull);
+}
+
+bool interceptsIndexedAccesses(const Object& object)
+{
+    JSObject* extra = object.extraProperties();
+    return extra && extra->structure()->mayInterceptIndexedAccesses();
+}
+
+// The extra properties are nobody's prototype, so JSObject::notifyPresenceOfIndexedAccessors() tells nobody on their behalf.
+void didChangeIndexedProperties(VM& vm, Object& object, bool interceptedIndexedAccessesBefore)
+{
+    if (!interceptedIndexedAccessesBefore && object.mayBePrototype() && interceptsIndexedAccesses(object))
+        object.structure()->realm()->haveABadTime(vm, &object);
 }
 
 } } // namespace JSC::AOT

@@ -11,25 +11,44 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFunctionAnalyses.h"
 #include <array>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 IterationExpansion::IterationExpansion(FunctionPassContext& pass, IRBuilder& builder, SSARepair& repair, IterationOrigin origin)
-    : m_pass(pass)
+    : m_pass(&pass)
+    , m_program(pass.program)
+    , m_function(pass.function)
+    , m_types(pass.types)
     , m_builder(builder)
-    , m_repair(repair)
+    , m_repair(&repair)
     , m_origin(origin)
+{
+}
+
+IterationExpansion::IterationExpansion(const Program& program, Function& sharedFunction, TypeArena& types, IRBuilder& builder)
+    : m_pass(nullptr)
+    , m_program(program)
+    , m_function(sharedFunction)
+    , m_types(types)
+    , m_builder(builder)
+    , m_repair(nullptr)
+    , m_origin(IterationOrigin::Source)
 {
 }
 
 StateVariable IterationExpansion::addVariable(ValueID initialDefinition)
 {
-    return { m_repair.addVariable(initialDefinition), initialDefinition };
+    return { m_repair->addVariable(initialDefinition), initialDefinition };
 }
 
 void IterationExpansion::define(const StateVariable& variable, ValueID definition)
 {
-    m_repair.addDefinition(variable.variable, definition);
+    if (m_returnsResultsOfStep) {
+        m_positionBehindStep = definition;
+        return;
+    }
+    m_repair->addDefinition(variable.variable, definition);
 }
 
 void IterationExpansion::beginOperation(const IRBuilder::Expansion& operation)
@@ -39,6 +58,12 @@ void IterationExpansion::beginOperation(const IRBuilder::Expansion& operation)
 
 void IterationExpansion::finishStep(ValueID done, ValueID value)
 {
+    if (m_returnsResultsOfStep) {
+        static_assert(!static_cast<size_t>(IteratorResumeResult::Done) && static_cast<size_t>(IteratorResumeResult::Value) == 1);
+        ValueID position = std::exchange(m_positionBehindStep, m_positionInFrontOfStep);
+        m_builder.emitReturn(m_builder.append(Opcode::Results, { done, value, position }));
+        return;
+    }
     RELEASE_ASSERT(m_operation && m_operation->results.size() == 2);
     std::array<ValueID, 2> results;
     results[static_cast<size_t>(IteratorResumeResult::Done)] = done;
@@ -142,6 +167,12 @@ PropertyKeyID IterationExpansion::keyOf(WellKnownSymbol symbol)
 PropertyKeyID IterationExpansion::keyOf(BuiltinName name)
 {
     return program().keyOf(name);
+}
+
+ValueID chooseArgumentOfProtocolEntry(FunctionPassContext& pass, BlockID protocolEntry, ValueID narrowed, ValueID tested)
+{
+    TypingContext typing { pass.program, pass.function, pass.types };
+    return typing.typeOf(narrowed).isSubsetOf(typing.typeOf(pass.function.at(protocolEntry).parameters[0]), pass.program) ? narrowed : tested;
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -11,10 +11,12 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
-#include "AOTPropertyWalk.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "BrandedStructure.h"
+#include "HeapIterationScope.h"
 #include "JSCInlines.h"
+#include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
 #include "StrongInlines.h"
 #include "WeakInlines.h"
@@ -48,8 +50,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="make" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = Claim v1 castType=number
-    v4 = Claim v2 castType=string
+    v3 = Check v1 castType=number
+    v4 = Check v2 castType=string
     v5 = NewObject -, v3 layout=L0 fields=[0]
     ElemSet v5, v4, v3
     v7 = Call v0, -, v5
@@ -130,6 +132,12 @@ static Structure* createOrdinaryStructure(LoadedProgram& program, unsigned numbe
     return structure;
 }
 
+// Without the flags that repeat what the layout says, which are the same in every Structure of the layout.
+static OptionSet<CompiledStructure::Flag> flagsOfVariant(const CompiledStructure* structure)
+{
+    return structure->flags() - OptionSet { CompiledStructure::Flag::HasFieldsWithSymbolKeys, CompiledStructure::Flag::HasOnlyPlainSlots, CompiledStructure::Flag::IsCopiedByWords };
+}
+
 template<typename T>
 static T wordAt(const CompiledStructure* structure, ptrdiff_t offset)
 {
@@ -141,8 +149,8 @@ static void testUsualStructureIsCreatedInItsSpace(LoadedProgram& program)
     VM& vm = program.vm();
     const LayoutData& layout = layoutNamed(program, "Circle"_s);
     CompiledStructure* structure = structures(program).objectStructure(vm, layout.shape);
-    AOT_TEST_CHECK(structure->subspace() == &vm.heap.compiledStructureSpace);
-    AOT_TEST_CHECK(program.realm()->objectPrototype()->structure()->subspace() != &vm.heap.compiledStructureSpace);
+    AOT_TEST_CHECK(structure->subspace() == vm.heap.compiledStructureSpace<SubspaceAccess::OnMainThread>());
+    AOT_TEST_CHECK(program.realm()->objectPrototype()->structure()->subspace() != vm.heap.compiledStructureSpace<SubspaceAccess::OnMainThread>());
     AOT_TEST_CHECK(structure->structure() == vm.structureStructure.get() && static_cast<JSCell*>(structure)->type() == StructureType);
 
     AOT_TEST_CHECK(structure->isCompiledStructure() && structure->describesObject() && !structure->describesEnvironment());
@@ -150,7 +158,7 @@ static void testUsualStructureIsCreatedInItsSpace(LoadedProgram& program)
     AOT_TEST_CHECK(&structure->layout() == &layout);
     AOT_TEST_CHECK(structure->realm() == program.realm());
     AOT_TEST_CHECK(structure->storedPrototype() == JSValue(program.realm()->objectPrototype()));
-    AOT_TEST_CHECK(structure->flags().isEmpty() && !structure->mayBePrototype());
+    AOT_TEST_CHECK(flagsOfVariant(structure) == OptionSet { CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype } && !structure->mayBePrototype());
     AOT_TEST_CHECK(!structure->extraPropertiesStructure() && !structure->extraPropertiesCellSize());
 
     AOT_TEST_CHECK(structures(program).objectStructure(vm, layout.shape) == structure);
@@ -174,11 +182,13 @@ static void testWordsCompiledCodeReads(LoadedProgram& program)
         AOT_TEST_CHECK(structure->extraPropertiesSlot() == layout.extraPropertiesSlot());
         AOT_TEST_CHECK(!wordAt<SlotData>(structure, CompiledStructure::offsetOfExtensionSlot()).encoded() && !structure->extensionSlot());
         AOT_TEST_CHECK(wordAt<uint8_t>(structure, CompiledStructure::offsetOfFlags()) == structure->flags().toRaw());
-        AOT_TEST_CHECK(wordAt<uint32_t>(structure, CompiledStructure::offsetOfExtraPropertiesStructureID()) == structure->extraPropertiesStructureID().bits());
-        AOT_TEST_CHECK(wordAt<uint16_t>(structure, CompiledStructure::offsetOfExtraPropertiesCellSize()) == structure->extraPropertiesCellSize());
     }
-    AOT_TEST_CHECK(!wordAt<uint32_t>(usual, CompiledStructure::offsetOfExtraPropertiesStructureID()));
+    // Compiled code reads the words about the extra properties behind a test of the flag. In a Structure without the flag they hold something else.
+    AOT_TEST_CHECK(!usual->hasExtraProperties() && !usual->extraPropertiesStructureID() && !usual->extraPropertiesCellSize() && !usual->numberOfExtraKeys());
+    AOT_TEST_CHECK(named->hasExtraProperties() && named->extraPropertiesStructureID() == extra->id());
     AOT_TEST_CHECK(wordAt<uint32_t>(named, CompiledStructure::offsetOfExtraPropertiesStructureID()) == extra->id().bits());
+    AOT_TEST_CHECK(wordAt<uint16_t>(named, CompiledStructure::offsetOfExtraPropertiesCellSize()) == named->extraPropertiesCellSize());
+    AOT_TEST_CHECK(wordAt<uint16_t>(named, CompiledStructure::offsetOfNumberOfExtraKeys()) == CompiledStructure::unknownNumberOfExtraKeys && !named->numberOfExtraKeys());
     AOT_TEST_CHECK(wordAt<uint16_t>(named, CompiledStructure::offsetOfExtraPropertiesCellSize()) == roundUpToMultipleOf<MarkedSpace::sizeStep>(JSFinalObject::allocationSize(extra->inlineCapacity())));
 }
 
@@ -206,7 +216,7 @@ static void testFlagOfFieldsWithSymbolKeys(LoadedProgram& program)
         CompiledStructure* usual = usualStructure(program, name);
         const CompiledStructure* const all[] = { usual, structures(program).asPrototype(vm, *usual), structures(program).withExtraProperties(vm, *usual, nullptr), structures(program).withPrototype(vm, *usual, jsNull()) };
         for (const CompiledStructure* structure : all)
-            AOT_TEST_CHECK(structure->flags().contains(CompiledStructure::Flag::HasFieldsWithSymbolKeys) == !!structure->layout().hasFieldsWithSymbolKeys);
+            AOT_TEST_CHECK(structure->flags().contains(CompiledStructure::Flag::HasFieldsWithSymbolKeys) == !!structure->layout().hasFieldsWithSymbolKeys && structure->hasOnlyPlainSlots() == !!structure->layout().hasOnlyPlainSlots && structure->isCopiedByWords() == !!structure->layout().isCopiedByWords);
     }
 }
 
@@ -217,7 +227,7 @@ static void testStructureOfEnvironments(LoadedProgram& program)
     Structure* structure = structures(program).structure(vm, shape);
     auto* compiled = dynamicDowncast<CompiledStructure>(structure);
     AOT_TEST_CHECK(compiled && compiled->describesEnvironment() && !compiled->describesObject());
-    AOT_TEST_CHECK(compiled->subspace() == &vm.heap.compiledStructureSpace);
+    AOT_TEST_CHECK(compiled->subspace() == vm.heap.compiledStructureSpace<SubspaceAccess::OnMainThread>());
     AOT_TEST_CHECK(compiled->typeInfo().type() == CompiledEnvironmentType);
     AOT_TEST_CHECK(compiled->storedPrototype().isNull() && compiled->flags().isEmpty());
     AOT_TEST_CHECK(compiled->environmentShapePage() == shape >> environmentShapesPerPageShift);
@@ -263,7 +273,7 @@ static void testVariantWithAnotherPrototype(LoadedProgram& program)
     CompiledStructure* variant = table.withPrototype(vm, *usual, prototype);
     AOT_TEST_CHECK(variant != usual && table.withPrototype(vm, *usual, prototype) == variant);
     AOT_TEST_CHECK(variant->storedPrototype() == JSValue(prototype) && variant->hasOtherPrototype());
-    AOT_TEST_CHECK(variant->flags() == OptionSet { CompiledStructure::Flag::HasOtherPrototype });
+    AOT_TEST_CHECK(flagsOfVariant(variant) == OptionSet { CompiledStructure::Flag::HasOtherPrototype });
     AOT_TEST_CHECK(&variant->layout() == &usual->layout());
     AOT_TEST_CHECK(table.objectStructure(vm, usual->layout().shape, prototype) == variant);
 
@@ -298,7 +308,7 @@ static void testVariantThatMayBePrototype(LoadedProgram& program)
     CompiledStructure* variant = table.asPrototype(vm, *usual);
     AOT_TEST_CHECK(variant != usual && table.asPrototype(vm, *usual) == variant && table.asPrototype(vm, *variant) == variant);
     AOT_TEST_CHECK(variant->mayBePrototype() && !usual->mayBePrototype());
-    AOT_TEST_CHECK(&variant->layout() == &usual->layout() && variant->storedPrototype() == usual->storedPrototype() && variant->flags().isEmpty());
+    AOT_TEST_CHECK(&variant->layout() == &usual->layout() && variant->storedPrototype() == usual->storedPrototype() && flagsOfVariant(variant) == flagsOfVariant(usual));
 }
 
 static void testVariantsWithExtraProperties(LoadedProgram& program)
@@ -369,7 +379,7 @@ static void testComponentsOfVariantAreIndependent(LoadedProgram& program)
     CompiledStructure* otherWay = table.withPrototype(vm, *table.asPrototype(vm, *table.withExtraProperties(vm, *table.withOutOfLineKeyOrder(vm, *usual, entries), extra)), prototype);
     AOT_TEST_CHECK(oneWay == otherWay);
     AOT_TEST_CHECK(oneWay->storedPrototype() == JSValue(prototype) && oneWay->mayBePrototype() && oneWay->extraPropertiesStructure() == extra);
-    AOT_TEST_CHECK(oneWay->flags() == OptionSet({ CompiledStructure::Flag::HasExtraProperties, CompiledStructure::Flag::HasOtherPrototype, CompiledStructure::Flag::HasOutOfLineKeyOrder, CompiledStructure::Flag::HasFieldsWithSymbolKeys }));
+    AOT_TEST_CHECK(flagsOfVariant(oneWay) == OptionSet({ CompiledStructure::Flag::HasExtraProperties, CompiledStructure::Flag::HasOtherPrototype, CompiledStructure::Flag::HasOutOfLineKeyOrder }));
 
     CompiledStructure* numbered = table.withNumberedKeyOrder(vm, *oneWay);
     AOT_TEST_CHECK(numbered != oneWay && !numbered->hasOutOfLineKeyOrder());
@@ -410,67 +420,192 @@ static NEVER_INLINE void createVariants(LoadedProgram& program, MarkedArgumentBu
     }
 }
 
-static void testVariantNobodyHoldsIsCollectedAndMadeAgain(LoadedProgram& program)
+static NEVER_INLINE void checkVariantsAreThoseMadeBefore(LoadedProgram& program, const MarkedArgumentBuffer& prototypes, const Vector<Weak<Structure>>& variants)
 {
     VM& vm = program.vm();
-    StructureTable& table = structures(program);
+    CompiledStructure* usual = usualStructure(program, "Circle"_s);
+    AOT_TEST_CHECK(vm.heap.isMarked(usual));
+    for (unsigned i = 0; i < numberOfShortLivedVariants; ++i) {
+        CompiledStructure* variant = structures(program).withPrototype(vm, *usual, prototypes.at(i));
+        AOT_TEST_CHECK(variant != usual && variant->storedPrototype() == prototypes.at(i) && variant->hasOtherPrototype());
+        AOT_TEST_CHECK(variants[i] && variants[i].get() == variant);
+    }
+}
+
+// No object has one of the variants. What the program has learned about them is kept for the next object under the same prototype, and for no longer.
+static void testVariantNobodyHoldsLivesAsLongAsItsPrototype(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSObject* object = allocateObject(program, "Circle"_s);
     MarkedArgumentBuffer prototypes;
     Vector<Weak<Structure>> variants;
     createVariants(program, prototypes, variants);
     vm.heap.collectSync(CollectionScope::Full);
     vm.heap.collectSync(CollectionScope::Full);
+    checkVariantsAreThoseMadeBefore(program, prototypes, variants);
 
+    prototypes.clear();
+    sanitizeStackForVM(vm);
+    vm.heap.collectSync(CollectionScope::Full);
+    vm.heap.collectSync(CollectionScope::Full);
     unsigned numberCollected = 0;
     for (const Weak<Structure>& variant : variants)
         numberCollected += !variant;
     AOT_TEST_CHECK(numberCollected > numberOfShortLivedVariants / 2);
-
-    CompiledStructure* usual = usualStructure(program, "Circle"_s);
-    AOT_TEST_CHECK(vm.heap.isMarked(usual));
-    for (unsigned i = 0; i < numberOfShortLivedVariants; ++i) {
-        CompiledStructure* variant = table.withPrototype(vm, *usual, prototypes.at(i));
-        AOT_TEST_CHECK(variant != usual && variant->storedPrototype() == prototypes.at(i) && variant->hasOtherPrototype());
-        AOT_TEST_CHECK(table.withPrototype(vm, *usual, prototypes.at(i)) == variant);
-        if (variants[i])
-            AOT_TEST_CHECK(variants[i].get() == variant);
-    }
+    ensureStillAliveHere(object);
 }
 
-static void testUsualStructureIsImmortal(LoadedProgram& program)
+static void testUsualStructureLivesWithItsObjects(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    StructureID id = usualStructure(program, "Tagged"_s)->id();
+    JSObject* object = allocateObject(program, "Tagged"_s);
+    StructureID id = object->structureID();
+    AOT_TEST_CHECK(usualStructure(program, "Tagged"_s)->id() == id);
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full, CollectionScope::Full }) {
         vm.heap.collectSync(scope);
         CompiledStructure* structure = usualStructure(program, "Tagged"_s);
         AOT_TEST_CHECK(structure->id() == id && vm.heap.isMarked(structure) && &structure->layout() == &layoutNamed(program, "Tagged"_s));
     }
+    ensureStillAliveHere(object);
 }
 
-static void testObjectThatLosesItsShapeGetsAnOrdinaryStructure(LoadedProgram& program)
+static NEVER_INLINE void allocateAndDropObject(LoadedProgram& program, Weak<Structure>& structure)
+{
+    structure = Weak<Structure>(allocateObject(program, "Tagged"_s)->structure());
+}
+
+static void testUsualStructureWithoutObjectsOutlastsCollections(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    JSObject* object = allocateObject(program, "Circle"_s);
-    JSObject* neighbor = allocateObject(program, "Circle"_s);
-    Identifier radius = Identifier::fromString(vm, "radius"_s);
-    AOT_TEST_CHECK(object->putDirect(vm, radius, jsNumber(2.5)));
-    AOT_TEST_CHECK(PropertyWalk::isCompiledObject(object) && object->structure()->isCompiledStructure());
-    uint64_t epoch = program.instance().shapeEpoch;
+    Weak<Structure> dropped;
+    allocateAndDropObject(program, dropped);
+    AOT_TEST_CHECK(dropped);
+    sanitizeStackForVM(vm);
+    vm.heap.collectSync(CollectionScope::Eden);
+    AOT_TEST_CHECK(dropped);
+    vm.heap.collectSync(CollectionScope::Full);
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(dropped);
 
-    PropertyWalk::convertToOrdinaryObject(vm, object);
-    Structure* structure = object->structure();
-    AOT_TEST_CHECK(!PropertyWalk::isCompiledObject(object) && object->type() == FinalObjectType);
-    AOT_TEST_CHECK(structure->variant() == Structure::StructureVariant::Normal && !dynamicDowncast<CompiledStructure>(structure));
-    AOT_TEST_CHECK(structure->subspace() != &vm.heap.compiledStructureSpace);
+    JSObject* object = allocateObject(program, "Tagged"_s);
+    CompiledStructure* structure = usualStructure(program, "Tagged"_s);
+    AOT_TEST_CHECK(structure == dropped.get());
+    AOT_TEST_CHECK(object->structure() == structure && &structure->layout() == &layoutNamed(program, "Tagged"_s));
+    AOT_TEST_CHECK(!structure->hasExtraProperties() && !structure->hasOtherPrototype() && !structure->mayBePrototype());
     AOT_TEST_CHECK(structure->storedPrototype() == JSValue(program.realm()->objectPrototype()));
-    AOT_TEST_CHECK(isValidOffset(structure->get(vm, radius)) && object->getDirect(vm, radius) == jsNumber(2.5));
-    AOT_TEST_CHECK(program.instance().shapeEpoch == epoch + 1);
-
-    AOT_TEST_CHECK(PropertyWalk::isCompiledObject(neighbor) && neighbor->structure() == usualStructure(program, "Circle"_s));
+    AOT_TEST_CHECK(allocateObject(program, "Tagged"_s)->structure() == structure);
 }
 
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<compiledStructureTests, programText, body>;
+
+static uint32_t allocationOf(LoadedProgram& program, ASCIILiteral layoutName)
+{
+    const ProgramTables& tables = program.state().tables;
+    uint32_t shape = layoutNamed(program, layoutName).shape;
+    for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
+        if (tables.allocations()[number].shape == shape)
+            return number;
+    }
+    failNativeTest(__FILE__, __LINE__, layoutName.characters());
+}
+
+// Compiled code goes on behind the operation as behind the stub. Whatever lay in the free cell is gone: until compiled code has written a slot, nothing in it can be taken for a reference.
+static void testSlowAllocationWritesWhatTheStubWrites(LoadedProgram& program)
+{
+    constexpr uint8_t leftInFreeCell = 0xa5;
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    uint32_t number = allocationOf(program, "Tagged"_s);
+    const AllocationData& allocation = program.state().tables.allocations()[number];
+    AOT_TEST_CHECK(!program.instance().objects.allocationSite(number) && allocation.size() > 2 * sizeof(uint64_t));
+
+    auto makeVisitable = [&](JSCell* cell) {
+        zeroSpan(std::span { reinterpret_cast<uint8_t*>(cell) + 2 * sizeof(uint64_t), allocation.size() - 2 * sizeof(uint64_t) });
+        for (const FieldData& field : uncheckedDowncast<Object>(cell)->layout().fields())
+            uncheckedDowncast<Object>(cell)->clear(field);
+    };
+    auto checkHeaderAndWords = [&](JSCell* cell) {
+        const AllocationSiteRecord* record = program.instance().objects.allocationSite(number);
+        AOT_TEST_CHECK(record && record->header == cellHeaderFor(usualStructure(program, "Tagged"_s)));
+        AOT_TEST_CHECK(reinterpret_cast<uint64_t*>(cell)[0] == record->header && reinterpret_cast<uint64_t*>(cell)[1] == record->orderAndShapeWords);
+        AOT_TEST_CHECK(uncheckedDowncast<Object>(cell)->orderWord() == allocation.orderWord() && &uncheckedDowncast<Object>(cell)->layout() == &layoutNamed(program, "Tagged"_s));
+    };
+
+    JSCell* first = structures(program).allocateAsCompiledCodeDoes(vm, number);
+    checkHeaderAndWords(first);
+    makeVisitable(first);
+
+    // The first cells of a size that has no block yet lie in larger cells of another allocator.
+    const uint8_t* freeList = static_cast<const uint8_t*>(program.instance().objects.allocationSite(number)->allocator) + LocalAllocator::offsetOfFreeList();
+    size_t cellSize = MarkedSpace::optimalSizeFor(allocation.size());
+    auto startOfInterval = [&] { return *reinterpret_cast<uint8_t* const*>(freeList + FreeList::offsetOfIntervalStart()); };
+    auto endOfInterval = [&] { return *reinterpret_cast<uint8_t* const*>(freeList + FreeList::offsetOfIntervalEnd()); };
+    for (unsigned attempt = 0; attempt < 64 && startOfInterval() + 2 * cellSize > endOfInterval(); ++attempt)
+        makeVisitable(structures(program).allocateAsCompiledCodeDoes(vm, number));
+    uint8_t* next = startOfInterval();
+    AOT_TEST_CHECK(next + 2 * cellSize <= endOfInterval());
+    std::span body { next + 2 * sizeof(uint64_t), allocation.size() - 2 * sizeof(uint64_t) };
+    memsetSpan(body, leftInFreeCell);
+    JSCell* second = structures(program).allocateAsCompiledCodeDoes(vm, number);
+    AOT_TEST_CHECK(reinterpret_cast<uint8_t*>(second) == next);
+    checkHeaderAndWords(second);
+    AOT_TEST_CHECK(std::ranges::all_of(body, [](uint8_t byte) { return !byte; }));
+    makeVisitable(second);
+
+    // Whoever is not compiled code gets an object that it may hand on as it is.
+    memsetSpan(std::span { next + cellSize + 2 * sizeof(uint64_t), allocation.size() - 2 * sizeof(uint64_t) }, leftInFreeCell);
+    auto* third = uncheckedDowncast<Object>(structures(program).allocate(vm, number));
+    AOT_TEST_CHECK(reinterpret_cast<uint8_t*>(third) == next + cellSize);
+    for (const FieldData& field : third->layout().fields())
+        AOT_TEST_CHECK(!third->isInSlot(field));
+}
+
+// An object in a frame needs the header alone. A cell allocated for it and dropped would lie in the heap with that header and without its fields.
+static void testHeaderOfAnAllocationComesWithoutACell(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    uint32_t number = allocationOf(program, "Tagged"_s);
+    AOT_TEST_CHECK(!program.instance().objects.allocationSite(number));
+    auto numberOfCellsWithHeader = [&](uint64_t header) {
+        unsigned count = 0;
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            count += isJSCellKind(kind) && *reinterpret_cast<uint64_t*>(cell) == header;
+            return IterationStatus::Continue;
+        });
+        return count;
+    };
+
+    uint64_t header = operationAOTGetHeaderOfAllocation(&program.instance(), number);
+    const AllocationSiteRecord* record = program.instance().objects.allocationSite(number);
+    AOT_TEST_CHECK(record && record->header == header && header == cellHeaderFor(usualStructure(program, "Tagged"_s)));
+    AOT_TEST_CHECK(!numberOfCellsWithHeader(header));
+    AOT_TEST_CHECK(operationAOTGetHeaderOfAllocation(&program.instance(), number) == header && !numberOfCellsWithHeader(header));
+
+    // The count sees a cell that is there.
+    JSCell* cell = operationAOTAllocateSlow(&program.instance(), number);
+    AOT_TEST_CHECK(*reinterpret_cast<uint64_t*>(cell) == header && numberOfCellsWithHeader(header) == 1);
+}
+
+// An environment and a closure have more than a header that compiled code leaves to whoever allocates them.
+static void testSlowAllocationOfAnEnvironment(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    const ProgramTables& tables = program.state().tables;
+    uint32_t shape = shapeOfEnvironment(program);
+    bool found = false;
+    for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
+        if (tables.allocations()[number].shape != shape)
+            continue;
+        found = true;
+        JSCell* cell = structures(program).allocateAsCompiledCodeDoes(vm, number);
+        AOT_TEST_CHECK(cell->structure() == structures(program).structure(vm, shape));
+        AOT_TEST_CHECK(*reinterpret_cast<uint64_t*>(cell) == program.instance().objects.allocationSite(number)->header);
+    }
+    AOT_TEST_CHECK(found);
+}
 
 std::span<const NativeTest> compiledStructureTests()
 {
@@ -488,9 +623,12 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/variants-with-out-of-line-key-order"_s, withProgram<testVariantsWithOutOfLineKeyOrder> },
         { "compiled-structures/components-of-variant-are-independent"_s, withProgram<testComponentsOfVariantAreIndependent> },
         { "compiled-structures/extra-structure-lives-with-the-compiled-structure"_s, withProgram<testExtraStructureLivesWithTheCompiledStructure> },
-        { "compiled-structures/variant-nobody-holds-is-collected-and-made-again"_s, withProgram<testVariantNobodyHoldsIsCollectedAndMadeAgain> },
-        { "compiled-structures/usual-structure-is-immortal"_s, withProgram<testUsualStructureIsImmortal> },
-        { "compiled-structures/object-that-loses-its-shape-gets-an-ordinary-structure"_s, withProgram<testObjectThatLosesItsShapeGetsAnOrdinaryStructure> },
+        { "compiled-structures/variant-nobody-holds-lives-as-long-as-its-prototype"_s, withProgram<testVariantNobodyHoldsLivesAsLongAsItsPrototype> },
+        { "compiled-structures/usual-structure-lives-with-its-objects"_s, withProgram<testUsualStructureLivesWithItsObjects> },
+        { "compiled-structures/usual-structure-without-objects-outlasts-collections"_s, withProgram<testUsualStructureWithoutObjectsOutlastsCollections> },
+        { "compiled-structures/slow-allocation-writes-what-the-stub-writes"_s, withProgram<testSlowAllocationWritesWhatTheStubWrites> },
+        { "compiled-structures/header-of-an-allocation-comes-without-a-cell"_s, withProgram<testHeaderOfAnAllocationComesWithoutACell> },
+        { "compiled-structures/slow-allocation-of-an-environment"_s, withProgram<testSlowAllocationOfAnEnvironment> },
     };
     return tests;
 }

@@ -235,6 +235,7 @@ Pointer JSONParseEmitter::framePointerAtThisPoint()
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::pointerType());
     patchpoint->effects = B3::Effects::none();
     patchpoint->effects.reads = B3::HeapRange::top();
+    patchpoint->setNeedsFrameRecord(true);
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         jit.move(GPRInfo::callFrameRegister, params[0].gpr());
     });

@@ -1,8 +1,8 @@
-# A method bound to this in a constructor makes a closure of a bound function over the object and the method, and that function calls the method directly. A call of what the field holds tests for no closure of the method: the callee is none. Where the prototype may hold another function under the name, bind stays a call
+# A method bound to this in a constructor makes a closure of a bound function over the object, and that function calls the method directly. The method captures nothing and its closures stay as they were created, so the bound function does not hold the closure of the method. A call of what the field holds tests for no closure of the method: the callee is none. Where the prototype may hold another function under the name, a guard of the member stands in front, and behind its failing side bind stays a call
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
-# OPTIONS: check=VerifyEachPass only-passes=InsertObjectCoercibleChecks,ResolveCalls,PlaceTypeTests,ChooseCallingConventions
-# STATISTIC: BoundFunctions = 1
+# OPTIONS: check=VerifyEachPass only-passes=InsertObjectCoercibleChecks,ResolveCalls,PlaceTypeTests,ChooseCallingConventions heat=EverythingIsHot
+# STATISTIC: BoundFunctions = 2
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -46,8 +46,9 @@ function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
     Return v2
 }
 # CHECK-LABEL: function f1 name="Worker"
-# CHECK: [[object]]: L0 = NewObject
-# CHECK: = NewClosure [[object]], {{*}} function=[[bound]]
+# CHECK: [[allocated]]: L0 = NewObject
+# CHECK: [[object]]: L0 = AssumeType [[allocated]] castType=L0
+# CHECK: = NewClosure [[object]] function=[[bound]]
 # CHECK-NOT: CallBuiltin
 function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
@@ -67,7 +68,10 @@ function f3 name="Patched" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 # CHECK-LABEL: function f3 name="Patched"
-# CHECK-NOT: NewClosure
+# CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="run"}
+# CHECK: = NewClosure function=f4 [isHeldByClosureTable]
+# CHECK: frequency=Unlikely:
+# CHECK: = PropGet {{*}} key="run"
 # CHECK: = CallBuiltin {{*}} overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure
 function f4 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
@@ -80,5 +84,5 @@ function f5 name="patch" kind=Method flags=[HasThis] thisType={type=anything} re
     Return
 }
 # CHECK-LABEL: function f5 name="patch"
-# CHECK: function [[bound]] name="run"{{*}}role=BoundFunction captures=[{type=L0{{*}}}, {type=function}]
+# CHECK: function [[bound]] name="run"{{*}}role=BoundFunction captures=[{type=L0}]
 # CHECK: = CallDirect {{*}} function=f2

@@ -1,0 +1,58 @@
+# table = { run: one, stop: two }; table.late = three; for (key of Object.keys(table)) picked = table[key]; picked(); other = {}; other[text] = four; Object.keys(other)
+# Nobody else holds the literal, so its names are the fields of its layout and the names under which statements have added a property: the list holds those constants,
+# and a read under one of them finds what lies under the three names and nothing that the object inherits. Where a property was added under a key nobody knows, the list holds a text nobody knows.
+# RUN: valueflow-why values=f0:v13 values=f0:v21
+# CHECK: values=f0:v13
+# CHECK: operand 1 {{*}} 3 members: key{{*}} key{{*}} key{{*}}
+# CHECK-NEXT: result {{*}} members: {{*}}f1 f2 f3
+# CHECK: values=f0:v21
+# CHECK: result {{*}} 2 members: primitive0 primitive7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="stop" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PropSet v3, v2 key="late"
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectKeys
+    v7 = Call v6, v5, v3
+    v8 = Integer integer=0
+    v9 = ElemGet v7, v8
+    v10 = TypeTest v9 testedType=undefined
+    Branch v10 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v11):
+    Return
+  b2(v12):
+    v13 = ElemGet v3, v12
+    v14 = Call v13, -
+    v15 = NewObject layout=L1 fields=[]
+    v16 = String string="a"
+    v17 = Add v16, v16
+    v18 = NewClosure function=f4
+    ElemSet v15, v17, v18
+    v20 = Call v6, v5, v15
+    v21 = ElemGet v20, v8
+    Return v21
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    Return
+}

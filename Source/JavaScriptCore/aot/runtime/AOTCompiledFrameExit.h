@@ -19,6 +19,8 @@ struct CompiledFrameExit {
     void* returnPC { nullptr };
     EntryFrame* entryFrame { nullptr };
     bool crossedEntryFrame { false };
+    // The frame that returns to returnPC.
+    CallFrame* calleeFrame { nullptr };
 };
 
 } // namespace AOT

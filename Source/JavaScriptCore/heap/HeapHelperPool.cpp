@@ -26,8 +26,6 @@
 #include "config.h"
 #include "HeapHelperPool.h"
 
-#include "CollectorMechanism.h"
-
 #include <mutex>
 #include <wtf/NeverDestroyed.h>
 #include "Options.h"
@@ -47,7 +45,7 @@ ParallelHelperPool& heapHelperPool()
             constexpr auto threadName = "Heap Helper Thread"_s;
 #endif
             Ref pool = ParallelHelperPool::create(threadName);
-            if (!Options::useAOT() || !isEnabled(CollectorMechanism::LazyMarkerHelpers))
+            if (!Options::useAOT())
                 pool->ensureThreads(Options::numberOfGCMarkers() - 1);
             helperPool.construct(WTF::move(pool));
         });

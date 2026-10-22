@@ -76,7 +76,10 @@ static Vector<uint8_t> compileProgram()
 {
     Vector<uint8_t> image;
     runOnBuildThread([&] {
-        BuildContext build(makeDefaultCompileOptions());
+        // Only in fast code has an empty array literal a profile and a last array, which is the word that each collection clears.
+        Wire::CompileOptions options = makeDefaultCompileOptions();
+        AOT_TEST_CHECK(!applyOptionWord(options, "heat=EverythingIsHot"_s));
+        BuildContext build(options);
         std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(makeProgramText()), Typed::IRForm::AsRead, build);
         AOT_TEST_CHECK(program);
         std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);

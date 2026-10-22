@@ -18,16 +18,19 @@ static void linkGenerator(ValueFlowRuleContext& context, FunctionID function, Cl
     ValueFlowNodeID returned = nodes.result(function, 0);
     ValueFlowNodeID sent = nodes.sent(function);
 
-    // An async generator awaits what it yields and what it returns.
-    bool isAsync = context.program().at(function).has(FunctionFlags::IsAsync);
-    context.connect(isAsync ? context.lookup(context.valueOf(yielded), awaitedValueName) : yielded, context.written(generator, steppedValuesName));
-    context.connect(isAsync ? context.lookup(context.valueOf(returned), awaitedValueName) : returned, context.written(generator, returnedValueName));
+    // An async generator awaits what it yields and what it returns by itself. What `yield*` yields or returns for another iterator goes on as that iterator has handed it out.
+    context.connect(yielded, context.written(generator, steppedValuesName));
+    context.connect(returned, context.written(generator, returnedValueName));
+    if (context.program().at(function).has(FunctionFlags::IsAsync)) {
+        context.connect(context.lookup(context.valueOf(yielded), awaitedValueName), context.written(generator, steppedValuesName));
+        context.connect(context.lookup(context.valueOf(returned), awaitedValueName), context.written(generator, returnedValueName));
+    }
 
     // A step of a loop hands in undefined, and native code whatever it likes.
     context.add(sent, universe.undefinedValue());
     connectContentsOfSlot(context, generator, sentValuesName, sent);
-    if (context.meet(generator, context.valueOf(ValueFlowProgramNodes::escaped())))
-        context.add(sent, unknownValue(context));
+    if (context.holdsAnyOf(generator, ValueFlowProgramNodes::escaped()))
+        context.add(sent, unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction));
 
     // Whoever resumes the body throws the unknown value.
     context.connect(nodes.thrown(function), ValueFlowProgramNodes::escaped());
@@ -76,7 +79,7 @@ void runGeneratorOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         context.connect(sent[0], held);
     });
     if (statement.thrown) {
-        context.add(statement.thrown, unknownValue(context));
+        context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         if (mode == ResumeMode::Throw)
             context.connect(sent[0], statement.thrown);
     }

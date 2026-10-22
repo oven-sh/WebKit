@@ -3,13 +3,14 @@
 # RUN: pass ExpandIteration
 # RUN(ABSENT): pass ExpandIteration
 # RUN(LEFT): pass ExpandIteration
+# OPTIONS: limit=MaxVersionedIterationBytes:750
 # LOSS: MaxVersionedIterationBytes x1 f1 v3
 # STATISTIC: IterationsExpandedByClass = 4
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="breakOuter" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
+function f0 name="breakOuter" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -21,48 +22,50 @@ function f0 name="breakOuter" parameters=[{type=anything}, {type=anything}] resu
   b2():
     Jump -> next b3()
   b3() handler=b11():
-    v7 = IteratorOpen v6
+    v7 = Check v6 castType=object
+    v8 = IteratorOpen v7
     Jump -> next b4()
   b4() handler=b11():
     LoopHint
-    v9 = IteratorResume v7
-    v10 = ResultAt v9
-    v11 = ResultAt v9 index=1
-    Branch v10 -> taken b9(), notTaken b5()
+    v10 = IteratorResume v8
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b9(), notTaken b5()
   b5() handler=b11():
     Jump -> next b6()
   b6() handler=b10():
-    v12 = Call v1, -, v11
-    v13 = ToBoolean v12
-    Branch v13 -> taken b7(), notTaken b4()
+    v13 = Call v1, -, v12
+    v14 = ToBoolean v13
+    Branch v14 -> taken b7(), notTaken b4()
   b7() handler=b11():
-    IteratorClose v7
+    IteratorClose v8
     Jump -> next b8()
   b8():
     IteratorClose v2
     Jump -> next b12()
   b9() handler=b11():
     Jump -> next b1()
-  b10() role=IterationCleanup subject=v7 handler=b11():
-    v16 = CatchException
-    IteratorClose v7 completion=Throw
-    Rethrow v16
+  b10() role=IterationCleanup subject=v8 handler=b11():
+    v17 = CatchException
+    IteratorClose v8 completion=Throw
+    Rethrow v17
   b11() role=IterationCleanup subject=v2:
-    v18 = CatchException
+    v19 = CatchException
     IteratorClose v2 completion=Throw
-    Rethrow v18
+    Rethrow v19
   b12():
     Return
 }
 # Both loops over arrays: the text as written, nothing is closed and nothing is covered.
 # CHECK-LABEL: function f0 name="breakOuter"
-# CHECK: b0(v0: anything, v1: anything):
+# CHECK: b0(v0: object, v1: anything):
 # CHECK-NEXT: [[outerIsArray0]]: boolean = TypeTest v0 testedType=Array
 # CHECK-NEXT: Branch [[outerIsArray0]] -> taken {{*}}, notTaken [[outerIsOther0]](| 0)
 # CHECK: b3():
-# CHECK-NEXT: = TypeTest v6 testedType=Array
+# CHECK-NEXT: v7: object = Check v6 castType=object
+# CHECK-NEXT: = TypeTest v7 testedType=Array
 # CHECK: b6():
-# CHECK-NEXT: v12: anything = Call v1, -, v11
+# CHECK-NEXT: v13: anything = Call v1, -, v12
 # CHECK: b7():
 # CHECK-NEXT: Jump
 # CHECK-NEXT: b8():
@@ -72,13 +75,14 @@ function f0 name="breakOuter" parameters=[{type=anything}, {type=anything}] resu
 # CHECK-NEXT: = Call [[innerNext0]], [[innerIterator0]]
 # CHECK: frequency=Unlikely handler=[[innerLanding0]]():
 # CHECK-NEXT: = Call v1, -,
-# CHECK: = PropGet [[innerIterator0]] key="return"
+# CHECK: = CallDirect [[innerIterator0]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: [[innerLanding0]]() role=CleanupHandler frequency=Unlikely:
 # The outer protocol: the body over an inner array is covered by the outer landing block alone.
 # CHECK: LoopHint
 # CHECK-NEXT: = Call [[outerNext0]], [[outerIterator0]]
 # CHECK: frequency=Unlikely handler=[[outerLanding0]]():
-# CHECK-NEXT: = TypeTest {{*}} testedType=Array
+# CHECK-NEXT: [[innerObject0]]: object = Check {{*}} castType=object
+# CHECK-NEXT: = TypeTest [[innerObject0]] testedType=Array
 # CHECK: = Results [[arrayDone0]], [[arrayValue0]]
 # CHECK: Branch [[arrayDone0]] -> taken {{*}}, notTaken [[beforeArrayBody0]]()
 # CHECK: [[beforeArrayBody0]]() frequency=Unlikely handler=[[outerLanding0]]():
@@ -99,20 +103,19 @@ function f0 name="breakOuter" parameters=[{type=anything}, {type=anything}] resu
 # CHECK-NEXT: [[protocolBody0]]() frequency=Unlikely handler=[[secondInnerLanding0]]():
 # CHECK-NEXT: = Call v1, -, [[protocolValue0]]
 # CHECK: frequency=Unlikely handler=[[outerLanding0]]():
-# CHECK-NEXT: = PropGet [[secondInnerIterator0]] key="return"
+# CHECK-NEXT: = CallDirect [[secondInnerIterator0]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: Jump -> next [[exit0]]()
 # CHECK-NEXT: [[exit0]]() frequency=Unlikely:
-# CHECK-NEXT: = PropGet [[outerIterator0]] key="return"
+# CHECK-NEXT: = CallDirect [[outerIterator0]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: [[secondInnerLanding0]]() role=CleanupHandler frequency=Unlikely handler=[[outerLanding0]]():
-# CHECK: = PropGet [[secondInnerIterator0]] key="return"
 # CHECK: [[outerLanding0]]() role=CleanupHandler frequency=Unlikely:
-# CHECK: [[outerProtocol0]]([[outerIterable0]]: anything) frequency=Unlikely:
-# CHECK-NEXT: [[outerObject0]]: {{*}} = RequireObjectCoercible [[outerIterable0]] nullishAccess=Iterate
-# CHECK: [[outerIsOther0]]([[outerRest0]]: anything) frequency=Unlikely:
+# CHECK: = CallDirect [[outerIterator0]] function=[[closeIteratorAfterThrow]] [isNeverInlined]
+# CHECK: [[outerProtocol0]]([[outerObject0]]: object) frequency=Unlikely:
+# CHECK-NEXT: [[outerOpened0]]: undefined = CallDirect [[outerObject0]] function=[[openIterator]] [isNeverInlined]
+# CHECK-NEXT: [[outerIterator0]]: object = ResultAt [[outerOpened0]]
+# CHECK: [[outerIsOther0]]([[outerRest0]]: object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[outerProtocol0]]([[outerRest0]])
-# CHECK: [[outerOpened0]]: anything = Call {{*}}, [[outerObject0]]
-# CHECK-NEXT: [[outerIterator0]]: object = RequireObject [[outerOpened0]] runtimeError=IteratorIsNotAnObject
-# CHECK: = PropGet [[outerIterator0]] key="return"
+# CHECK: = CallDirect [[secondInnerIterator0]] function=[[closeIteratorAfterThrow]] [isNeverInlined]
 # ABSENT-LABEL: function f0 name="breakOuter"
 # ABSENT-NOT: Switch
 # ABSENT-NOT: ) handler=
@@ -120,8 +123,8 @@ function f0 name="breakOuter" parameters=[{type=anything}, {type=anything}] resu
 # ABSENT-COUNT-4: = Call v1, -,
 # ABSENT-NOT: = Call v1, -,
 
-function f1 name="largeOuterBody" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything, v2: anything):
+function f1 name="largeOuterBody" parameters=[{type=object}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything, v2: anything):
     v3 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -139,36 +142,37 @@ function f1 name="largeOuterBody" parameters=[{type=anything}, {type=anything}, 
     v11 = Call v2, -, v10
     v12 = Call v2, -, v11
     v13 = Call v2, -, v12
-    v14 = IteratorOpen v13
+    v14 = Check v13 castType=object
+    v15 = IteratorOpen v14
     Jump -> next b4()
   b4() handler=b11():
     LoopHint
-    v16 = IteratorResume v14
-    v17 = ResultAt v16
-    v18 = ResultAt v16 index=1
-    Branch v17 -> taken b9(), notTaken b5()
+    v17 = IteratorResume v15
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    Branch v18 -> taken b9(), notTaken b5()
   b5() handler=b11():
     Jump -> next b6()
   b6() handler=b10():
-    v19 = Call v1, -, v18
-    v20 = ToBoolean v19
-    Branch v20 -> taken b7(), notTaken b4()
+    v20 = Call v1, -, v19
+    v21 = ToBoolean v20
+    Branch v21 -> taken b7(), notTaken b4()
   b7() handler=b11():
-    IteratorClose v14
+    IteratorClose v15
     Jump -> next b8()
   b8():
     IteratorClose v3
     Jump -> next b12()
   b9() handler=b11():
     Jump -> next b1()
-  b10() role=IterationCleanup subject=v14 handler=b11():
-    v23 = CatchException
-    IteratorClose v14 completion=Throw
-    Rethrow v23
+  b10() role=IterationCleanup subject=v15 handler=b11():
+    v24 = CatchException
+    IteratorClose v15 completion=Throw
+    Rethrow v24
   b11() role=IterationCleanup subject=v3:
-    v25 = CatchException
+    v26 = CatchException
     IteratorClose v3 completion=Throw
-    Rethrow v25
+    Rethrow v26
   b12():
     Return
 }
@@ -179,13 +183,13 @@ function f1 name="largeOuterBody" parameters=[{type=anything}, {type=anything}, 
 # CHECK-NEXT: Switch [[form1]] cases=[0] -> case
 # CHECK: b3() handler=b11():
 # CHECK-NEXT: v8: anything = Call v2, -, v7
-# CHECK: = TypeTest v13 testedType=Array
+# CHECK: = TypeTest v14 testedType=Array
 # CHECK: b6() handler=b11():
-# CHECK-NEXT: v19: anything = Call v1, -, v18
+# CHECK-NEXT: v20: anything = Call v1, -, v19
 # CHECK: b8():
 # CHECK-NEXT: Switch [[form1]] cases=[0] -> case
 # CHECK: b11() role=CleanupHandler:
-# CHECK-NEXT: v25: exception = CatchException
+# CHECK-NEXT: v26: exception = CatchException
 # CHECK-NEXT: Switch [[form1]] cases=[0] -> case
 # CHECK: Jump -> next [[innerHeader1]]()
 # CHECK-NEXT: [[innerHeader1]]() frequency=Unlikely handler=b11():
@@ -195,14 +199,18 @@ function f1 name="largeOuterBody" parameters=[{type=anything}, {type=anything}, 
 # CHECK-NEXT: [[innerBody1]]() frequency=Unlikely handler=[[innerLanding1]]():
 # CHECK-NEXT: = Call v1, -,
 # CHECK: frequency=Unlikely handler=b11():
-# CHECK-NEXT: = PropGet [[innerIterator1]] key="return"
+# CHECK-NEXT: = CallDirect [[innerIterator1]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: [[innerLanding1]]() role=CleanupHandler frequency=Unlikely handler=b11():
 # CHECK: ([[form1]]: int[0, 1],
+# CHECK: function [[openIterator]] name="openIterator"
+# CHECK: function [[closeIterator]] name="closeIterator"
+# CHECK: function [[closeIteratorAfterThrow]] name="closeIteratorAfterThrow"
 # ABSENT-LABEL: function f1 name="largeOuterBody"
 # ABSENT-COUNT-6: = Call v2, -,
 # ABSENT-NOT: = Call v2, -,
 # ABSENT-COUNT-2: = Call v1, -,
 # ABSENT-NOT: = Call v1, -,
+# ABSENT-LABEL: function f2 name="openIterator"
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

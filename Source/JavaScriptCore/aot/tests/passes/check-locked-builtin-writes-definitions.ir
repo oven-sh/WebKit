@@ -1,0 +1,35 @@
+# Object.defineProperty(Array.prototype, "includes", { value: Array.prototype.includes }); (.., "indexOf", { writable: false }); (.., "join", descriptorFromElsewhere); (.., "map", { value: replacement })
+# The run time accepts a definition that repeats what a locked member is or only takes from what it admits, so the build says nothing of the first three. The fourth spells out another value: an error
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectDefineProperty
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ArrayPrototype
+    v3 = String string="includes"
+    v4 = Builtin builtin=ArrayPrototypeIncludes
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v0, v1, v2, v3, v5 @10
+    v7 = String string="indexOf"
+    v8 = Boolean boolean=false
+    v9 = NewObject -, v8 layout=L0 fields=[1]
+    v10 = Call v0, v1, v2, v7, v9 @20
+    v11 = String string="join"
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="descriptorFromElsewhere" [isFreeName]
+    v14 = Call v0, v1, v2, v11, v13 @30
+    v15 = String string="map"
+    v16 = NewClosure function=f1
+    v17 = NewObject -, v16 layout=L0 fields=[0]
+    v18 = Call v0, v1, v2, v15, v17 @40
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+  b0():
+    Return
+}

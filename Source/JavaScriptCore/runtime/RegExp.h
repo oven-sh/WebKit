@@ -75,7 +75,7 @@ public:
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
 #if ENABLE(AOT)
     JS_EXPORT_PRIVATE static RegExp* createFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>, const AOT::ImageRegExp&);
-    const AOT::ImageRegExp* imageRecord() const { return m_imageRecord; }
+    JS_EXPORT_PRIVATE const AOT::ImageRegExp* imageRecord() const;
 #endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
@@ -88,7 +88,11 @@ public:
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(RegExp, m_flags); }
     static constexpr ptrdiff_t offsetOfMinimumSize() { return OBJECT_OFFSETOF(RegExp, m_minimumSize); }
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(RegExp, m_state); }
-    static constexpr uint8_t stateWithJITCode() { return JITCode; }
+#if ENABLE(AOT)
+    static constexpr uint8_t stateWithImageCode() { return ImageCode; }
+    static constexpr uint8_t stateWithBytecode() { return ByteCode; }
+    static constexpr ptrdiff_t offsetOfRegExpBytecode() { return OBJECT_OFFSETOF(RegExp, m_regExpBytecode); }
+#endif
     static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
     static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
     static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
@@ -190,6 +194,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     bool hasCode()
     {
+#if ENABLE(AOT)
+        if (m_state == ImageCode || m_state == ImageAtom)
+            return true;
+#endif
         return m_state == JITCode || m_state == ByteCode;
     }
 
@@ -258,6 +266,8 @@ private:
 #if ENABLE(AOT)
     void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
+    int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
+    static void countInterpretedMatch(VM&);
     void crashIfLiteralIsInterpreted() const;
 #endif
 
@@ -265,6 +275,10 @@ private:
         ParseError,
         JITCode,
         ByteCode,
+#if ENABLE(AOT)
+        ImageCode,
+        ImageAtom,
+#endif
         NotCompiled
     };
 
@@ -285,7 +299,7 @@ private:
 
 #if ENABLE(YARR_JIT)
     Yarr::YarrCodeBlock& ensureRegExpJITCode();
-    void compileWithJIT(VM*, const Yarr::YarrPattern&, Yarr::CharSize, std::optional<StringView> sampleString, Yarr::ExecutionMode);
+    bool compileWithJIT(VM*, Yarr::YarrPattern&, Yarr::CharSize, std::optional<StringView> sampleString, Yarr::ExecutionMode);
 #endif
 
     struct RareData {
@@ -308,6 +322,9 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
+#if ENABLE(AOT)
+    uint16_t m_imageRecordNumber { 0 };
+#endif
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
@@ -315,9 +332,6 @@ private:
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
 #endif
     std::unique_ptr<RareData> m_rareData;
-#if ENABLE(AOT)
-    const AOT::ImageRegExp* m_imageRecord { nullptr };
-#endif
     FixedVector<int> m_ovector;
     mutable ThreadSafeLazyUniquePtr<const WTF::BitSet<256>> m_firstCharacterBitmap;
 #if ENABLE(REGEXP_TRACING)

@@ -67,11 +67,24 @@ struct PointerSummary {
         return hasTrackedValue && (!invalidations.isEmpty() || !invalidatingTerminators.isEmpty());
     }
 
+    // Every tracked value, unless the operation works on one object and leaves the pointers into the others as they are.
+    const BitVector* pointersInvalidatedBy(ValueID id) const
+    {
+        if (groupInvalidatedBy.isEmpty() || groupInvalidatedBy[id.index()] == everyGroup)
+            return nullptr;
+        return &pointersOfGroup[groupInvalidatedBy[id.index()]];
+    }
+
+    static constexpr uint32_t everyGroup = UINT32_MAX;
+
     OpaqueKind kind;
     BitVector pointers;
     BitVector sessions;
     BitVector invalidations;
     BitVector invalidatingTerminators;
+    // By operation that invalidates. Empty where every such operation invalidates every pointer.
+    Vector<uint32_t> groupInvalidatedBy;
+    Vector<BitVector> pointersOfGroup;
 };
 
 class StalePointerProblem {
@@ -91,8 +104,12 @@ public:
 
     void execute(State& stale, ValueID id) const
     {
-        if (m_summary.invalidations.get(id.index()))
-            stale = m_tracked;
+        if (m_summary.invalidations.get(id.index())) {
+            if (const BitVector* invalidated = m_summary.pointersInvalidatedBy(id))
+                stale.merge(*invalidated);
+            else
+                stale = m_tracked;
+        }
         stale.clear(id.index());
     }
 
@@ -158,6 +175,7 @@ private:
     void addIfPointer(ValueID);
     void collectSourceGuards(std::span<const ValueID> guards);
     void collectBuilderInvalidations();
+    void groupCursorsByBuilder();
     bool invalidatesBuilderCursors(ValueID);
 
     bool isReturnedCall(BlockID, ValueID) const;
@@ -276,6 +294,76 @@ void TypedDataVerifier::collectBuilderInvalidations()
         }
         if (mayMoveBuilderBuffer(m_analyses.effectsOfTerminator(block)))
             m_builderCursors.invalidatingTerminators.quickSet(block.index());
+    }
+    groupCursorsByBuilder();
+}
+
+// Each builder has a buffer of its own, so what is done to one builder moves no other's. Builders that meet in a parameter of a block count as one, and a cursor belongs to the builder that it was reserved in.
+void TypedDataVerifier::groupCursorsByBuilder()
+{
+    uint32_t numberOfValues = m_function.values.size();
+    Vector<uint32_t> parent(numberOfValues, [](size_t index) {
+        return static_cast<uint32_t>(index);
+    });
+    auto find = [&](uint32_t value) {
+        while (parent[value] != value)
+            value = parent[value] = parent[parent[value]];
+        return value;
+    };
+    auto unite = [&](ValueID first, ValueID second) {
+        uint32_t a = find(first.index());
+        uint32_t b = find(second.index());
+        parent[std::max(a, b)] = std::min(a, b);
+    };
+    auto isBuilderOrCursor = [&](ValueID id) {
+        std::optional<OpaqueKind> kind = kindOf(id);
+        return kind == OpaqueKind::StringBuilder || kind == OpaqueKind::BuilderCursor || m_builderCursors.pointers.get(id.index());
+    };
+
+    for (BlockID block : m_cfg.reversePostOrder()) {
+        for (ValueID id : m_function.at(block).values) {
+            ValueID first = isBuilderOrCursor(id) ? id : ValueID();
+            m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                if (!isBuilderOrCursor(operand))
+                    return;
+                if (first)
+                    unite(first, operand);
+                first = operand;
+            });
+        }
+        forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
+            auto& parameters = m_function.at(target.block).parameters;
+            for (uint32_t index = 0; index < target.arguments.size(); ++index) {
+                if (isBuilderOrCursor(parameters[index]))
+                    unite(parameters[index], target.arguments[index]);
+            }
+        });
+    }
+
+    Vector<uint32_t> numberOfGroup(FillWith { }, numberOfValues, PointerSummary::everyGroup);
+    auto groupOf = [&](ValueID id) {
+        uint32_t& number = numberOfGroup[find(id.index())];
+        if (number == PointerSummary::everyGroup) {
+            number = m_builderCursors.pointersOfGroup.size();
+            m_builderCursors.pointersOfGroup.append(BitVector(numberOfValues));
+        }
+        return number;
+    };
+    for (size_t pointer : m_builderCursors.pointers)
+        m_builderCursors.pointersOfGroup[groupOf(ValueID(static_cast<uint32_t>(pointer)))].quickSet(pointer);
+
+    m_builderCursors.groupInvalidatedBy.fill(PointerSummary::everyGroup, numberOfValues);
+    for (size_t index : m_builderCursors.invalidations) {
+        ValueID id(static_cast<uint32_t>(index));
+        if (m_analyses.mayRunOtherCodeOnAnyEdge(id))
+            continue;
+        ValueID builder = kindOf(id) == OpaqueKind::StringBuilder ? id : ValueID();
+        m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+            if (kindOf(operand) == OpaqueKind::StringBuilder)
+                builder = operand;
+        });
+        if (builder)
+            m_builderCursors.groupInvalidatedBy[index] = groupOf(builder);
     }
 }
 

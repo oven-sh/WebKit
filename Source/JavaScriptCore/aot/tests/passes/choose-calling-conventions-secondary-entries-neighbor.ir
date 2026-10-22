@@ -1,17 +1,13 @@
-# An entry for arguments that are left out belongs to the function alone: its entrypoints and its neighbors are as they are without it
+# An entry for arguments that are left out belongs to the function alone: its neighbors are as they are without it
 # FORM: Prepared
-# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# RUN: pass CreateEntrypoints ChooseCallingConventions
 # STATISTIC: SecondaryEntries = 1
-# STATISTIC: GroupCalls = 1
 # CHECK: f3 Direct ({{*}}:JSValue, {{*}}:JSValue) -> ({{*}}:JSValue) entries=[1@1]
 # CHECK-NEXT: f4 Direct ({{*}}:JSValue, {{*}}:JSValue) -> ({{*}}:JSValue)
 # CHECK-NOT: entries=
-# CHECK: [[entry]] Direct ({{*}}:Cell, {{*}}:JSValue, {{*}}:JSValue) -> ({{*}}:JSValue) closures=AllSlim
-# CHECK-NEXT: GenericRegisters ({{*}}) -> ({{*}}:JSValue) value-entry=[[entry]]
-# CHECK-NOT: entries=
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="callsGroup" parameters=[{type=f3|f4|f5|f6|f7}, {type=anything}] results=[{type=anything}] {
+function f0 name="callsByValue" parameters=[{type=f3|f4|f5|f6|f7}, {type=anything}] results=[{type=anything}] {
   b0(v0: f3|f4|f5|f6|f7, v1: anything):
     v2 = Call v0, -, v1, v1 accessSite=0 callees=[f3, f4, f5, f6, f7]
     Return v2

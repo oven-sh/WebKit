@@ -16,6 +16,7 @@
 #include "StackAlignment.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -35,6 +36,7 @@ static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr size_t imageSectionAlignment = 16;
 static constexpr size_t imageConstantsAlignment = 16;
+constexpr uint32_t alignmentOfConstant(size_t size) { return static_cast<uint32_t>(std::min(imageConstantsAlignment, size_t { 1 } << std::countr_zero(size))); }
 static_assert(!(imagePageSize % imageSectionAlignment));
 
 #if CPU(X86_64)
@@ -51,12 +53,11 @@ enum class ImageSection : uint8_t {
     Functions,
     FunctionStarts,
     CodeGranules,
-    FunctionsByID,
     InnerEntries,
     Frames,
     FrameMaps,
     ClosureWords,
-    CallSites,
+    Positions,
     FaultSites,
     SideTables,
     SharedCodeCopies,
@@ -65,6 +66,7 @@ enum class ImageSection : uint8_t {
     Text,
     Identifiers,
     StringConstants,
+    StringHeaders,
     RegExps,
     RegExpHashes,
     RegExpDetails,
@@ -73,9 +75,13 @@ enum class ImageSection : uint8_t {
     StubAddresses,
     StubReturnSites,
     SlotHandlers,
+    // The code offset of the lookup of each selector of the method table, in units of codeOffsetUnit.
+    MethodLookups,
+    // The code offsets that calls through the method table load. Each instance maps a copy-on-write clone of it, so it begins at a page and nothing else lies in its pages. Nothing writes it.
+    MethodTable,
 };
-static constexpr unsigned numberOfImageSections = 25;
-static_assert(static_cast<unsigned>(ImageSection::SlotHandlers) + 1 == numberOfImageSections);
+static constexpr unsigned numberOfImageSections = 27;
+static_assert(static_cast<unsigned>(ImageSection::MethodTable) + 1 == numberOfImageSections);
 
 struct ImageSectionRange {
     uint32_t offset;
@@ -107,25 +113,28 @@ struct ImageCodeRanges {
     uint32_t ffiCodeSize;
 };
 
-// Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, without LoadsModulesByName only while no module is found by a name,
-// and without ReplacesLoaderAnswers only while a constant name loads the module it stood for in the build. The run time refuses all three.
+// Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
+// The run time refuses both.
 // Without AdmitsLibraryText the image holds of a module of the host's library only what seen code reaches, so the run time lets nothing of that library run from its text.
+// Without ShowsWaysBetweenModuleObjects no code of the program names a way from one module object to another (Typed::namesWaysToModuleObjects()): whoever reads process.mainModule, `require.main`,
+// or `children` or `parent` of a module object finds undefined.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
     LoadsModulesByName = 1 << 2,
-    ReplacesLoaderAnswers = 1 << 3,
-    AdmitsLibraryText = 1 << 4,
+    AdmitsLibraryText = 1 << 3,
+    ShowsWaysBetweenModuleObjects = 1 << 4,
 };
 
 // codeOffset and sections[].offset count from the header. Every member of ImageCodeRanges that is an offset counts from codeOffset.
+// address is where the image has to be in memory for the addresses in it to be right. AOTImageText.h says where they are and who sets them.
 struct ImageHeader {
     bool has(ImageFlag flag) const { return flags & static_cast<uint32_t>(flag); }
     bool isObfuscated() const { return has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return has(ImageFlag::LoadsModulesByName); }
-    bool replacesLoaderAnswers() const { return has(ImageFlag::ReplacesLoaderAnswers); }
     bool admitsLibraryText() const { return has(ImageFlag::AdmitsLibraryText); }
+    bool showsWaysBetweenModuleObjects() const { return has(ImageFlag::ShowsWaysBetweenModuleObjects); }
 
     uint64_t magic;
     uint64_t stamp;
@@ -133,6 +142,7 @@ struct ImageHeader {
     uint64_t size;
     uint64_t codeOffset;
     uint64_t codeSize;
+    uint64_t address;
     RecordedOptions options;
     ImageHeapOptions heap;
     ImageSectionRange sections[numberOfImageSections];
@@ -145,6 +155,7 @@ static_assert(std::is_trivially_copyable_v<ImageHeader> && std::is_standard_layo
 static_assert(!(offsetof(ImageHeader, sections) % 4));
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16);
 static_assert(offsetof(ImageHeader, size) == 32 && offsetof(ImageHeader, codeOffset) == 40 && offsetof(ImageHeader, codeSize) == 48, "Bun's test/aot/cli/compiled-image.ts and test/aot/shell/expectations.py read these members by offset");
+static_assert(offsetof(ImageHeader, address) == 56, "Bun's writers of executables list this member for the loader");
 
 enum class ImageFunctionFlag : uint8_t {
     HasInlineFrames = 1 << 0,
@@ -152,38 +163,43 @@ enum class ImageFunctionFlag : uint8_t {
     HasFrameMaps = 1 << 2,
     HasCallSites = 1 << 3,
     HasPositions = 1 << 4,
+    // At its entry, in front of the stack words of its caller and above its return address.
+    SpillsArgumentRegisters = 1 << 5,
 };
 
 // function() is a FunctionID index. An image function index is a position in ImageSection::Functions.
 struct ImageFunction {
     static constexpr unsigned numberOfFunctionBits = 24;
-    static constexpr unsigned numberOfFrameBits = 24;
-    static constexpr unsigned flagsShift = numberOfFrameBits;
+    static constexpr unsigned flagsShift = numberOfFunctionBits;
     static constexpr uint32_t functionMask = (1u << numberOfFunctionBits) - 1;
-    static constexpr uint32_t frameMask = (1u << numberOfFrameBits) - 1;
 
-    static ImageFunction create(uint32_t sideTables, uint32_t function, uint32_t frame, OptionSet<ImageFunctionFlag> flags)
+    static ImageFunction create(uint32_t sideTables, uint32_t function, OptionSet<ImageFunctionFlag> flags)
     {
-        RELEASE_ASSERT(function <= functionMask && frame <= frameMask);
-        return { sideTables, function, frame | static_cast<uint32_t>(flags.toRaw()) << flagsShift };
+        RELEASE_ASSERT(function <= functionMask);
+        return { sideTables, function | static_cast<uint32_t>(flags.toRaw()) << flagsShift };
     }
 
-    uint32_t function() const { return functionIndex; }
-    uint32_t frame() const { return frameAndFlags & frameMask; }
-    OptionSet<ImageFunctionFlag> flags() const { return OptionSet<ImageFunctionFlag>::fromRaw(static_cast<uint8_t>(frameAndFlags >> flagsShift)); }
+    uint32_t function() const { return functionAndFlags & functionMask; }
+    OptionSet<ImageFunctionFlag> flags() const { return OptionSet<ImageFunctionFlag>::fromRaw(static_cast<uint8_t>(functionAndFlags >> flagsShift)); }
     bool has(ImageFunctionFlag flag) const { return flags().contains(flag); }
 
     uint32_t sideTables;
-    uint32_t functionIndex;
-    uint32_t frameAndFlags;
+    uint32_t functionAndFlags;
 };
-static_assert(sizeof(ImageFunction) == 12 && std::has_unique_object_representations_v<ImageFunction>);
+static_assert(sizeof(ImageFunction) == 8 && std::has_unique_object_representations_v<ImageFunction>);
 static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 1ull << ImageFunction::numberOfFunctionBits);
-static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 1ull << ImageFunction::numberOfFrameBits, "no image has more frame shapes than functions");
 static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
 
+// A frame is named by the place of its frame record: the word below its return address. While the frame is set up the stack pointer is frameSizeInBytes() below that place.
+// A frame without a record leaves the frame pointer register as it found it, and the word is a slot like any other.
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
+    static constexpr uint16_t hasNoFrameRecordBit = 1u << 15;
+    // Not in the table: Image::frameAtReturnOffset() sets it from ImageFunctionFlag::SpillsArgumentRegisters, which holds where the function has no frame too.
+    static constexpr uint16_t liesBelowSpilledArgumentsBit = 1u << 14;
+    // Not in the table either: of code that has no frame record and nothing else on the stack, so that its return address is on top.
+    static constexpr uint16_t isEmptyBit = 1u << 13;
+    static constexpr ImageFrame empty() { return { 0, hasNoFrameRecordBit | isEmptyBit, 0 }; }
 #if CPU(ARM64)
     static constexpr unsigned firstEncodedGPR = 16;
     static constexpr unsigned firstEncodedFPR = 32;
@@ -201,6 +217,11 @@ struct ImageFrame {
     }
 
     unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
+    bool hasFrameRecord() const { return !(calleeSavesStart & hasNoFrameRecordBit); }
+    // In words below the place of the frame record.
+    unsigned startOfCalleeSaves() const { return calleeSavesStart & maxCalleeSavesStart; }
+    bool liesBelowSpilledArguments() const { return calleeSavesStart & liesBelowSpilledArgumentsBit; }
+    bool isEmpty() const { return calleeSavesStart & isEmptyBit; }
     uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 16 | frameSizeInUnits; }
 
     uint32_t calleeSaveRegisters;
@@ -225,27 +246,39 @@ static_assert(sizeof(StubAddressInImage) == 16);
 // SlotHandlers has an offset into the shared code for each member of PropertyCacheWords::handlers, in the order of that array.
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
+// frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
+// The answer is no in front of the first of them and stays what it is behind the last.
+// frame is a position in ImageSection::Frames. Only a function with frame ranges has one.
+// callSites is the stream of AOTCallSiteTable.cpp. It comes last, so that whoever walks the stack reads one run of bytes for a function.
+// What only a stack trace that is printed asks for, the positions, lies in ImageSection::Positions.
 struct SideTableInputs {
     std::span<const uint8_t> frameRanges;
+    uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
-    std::optional<uint32_t> callSites;
     std::span<const uint8_t> handlers;
-    std::span<const uint8_t> positions;
+    std::span<const uint8_t> callSites;
 };
 
 struct SideTableParts {
     static SideTableParts read(const ImageFunction&, const uint8_t* sideTables);
     static void append(Vector<uint8_t>& stream, const SideTableInputs&);
     static void appendFrameRange(Vector<uint8_t>& bytes, uint32_t previousEnd, uint32_t begin, uint32_t end);
+    static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
 
     bool hasFrameAt(uint32_t offset) const;
 
     std::span<const uint8_t> frameRanges;
+    uint32_t frame { 0 };
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
-    uint32_t callSites { 0 };
     std::span<const uint8_t> handlers;
-    const uint8_t* positions { nullptr };
+    const uint8_t* callSites { nullptr };
+};
+
+// ImageSection::Positions: for each function of the image, in their order, the size of its positions and the positions. In front of them the place of every 32nd of these entries.
+struct PositionIndex {
+    static constexpr unsigned functionsBetween = 32;
+    static constexpr size_t numberOfEntriesFor(size_t numberOfFunctions) { return (numberOfFunctions + functionsBetween - 1) / functionsBetween; }
 };
 
 inline SideTableParts SideTableParts::read(const ImageFunction& function, const uint8_t* sideTables)
@@ -255,19 +288,19 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
     size_t frameRangesSize = static_cast<size_t>(readVarint(cursor));
     parts.frameRanges = unsafeMakeSpan(cursor, frameRangesSize);
     cursor += frameRangesSize;
+    if (frameRangesSize)
+        parts.frame = static_cast<uint32_t>(readVarint(cursor));
     if (function.has(ImageFunctionFlag::HasFrameMaps)) {
         parts.firstFrameMapWord = static_cast<uint32_t>(readVarint(cursor));
         parts.numberOfFrameMapWords = static_cast<uint32_t>(readVarint(cursor));
     }
-    if (function.has(ImageFunctionFlag::HasCallSites))
-        parts.callSites = static_cast<uint32_t>(readVarint(cursor));
     if (function.has(ImageFunctionFlag::HasHandlers)) {
         size_t size = static_cast<size_t>(readVarint(cursor));
         parts.handlers = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
-    if (function.has(ImageFunctionFlag::HasPositions))
-        parts.positions = cursor;
+    if (function.has(ImageFunctionFlag::HasCallSites))
+        parts.callSites = cursor;
     return parts;
 }
 
@@ -275,17 +308,17 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
 {
     appendVarint(stream, inputs.frameRanges.size());
     stream.append(inputs.frameRanges);
+    if (!inputs.frameRanges.empty())
+        appendVarint(stream, inputs.frame);
     if (inputs.frameMapRange && inputs.frameMapRange->second) {
         appendVarint(stream, inputs.frameMapRange->first);
         appendVarint(stream, inputs.frameMapRange->second);
     }
-    if (inputs.callSites)
-        appendVarint(stream, *inputs.callSites);
     if (!inputs.handlers.empty()) {
         appendVarint(stream, inputs.handlers.size());
         stream.append(inputs.handlers);
     }
-    stream.append(inputs.positions);
+    stream.append(inputs.callSites);
 }
 
 inline void SideTableParts::appendFrameRange(Vector<uint8_t>& bytes, uint32_t previousEnd, uint32_t begin, uint32_t end)
@@ -295,21 +328,26 @@ inline void SideTableParts::appendFrameRange(Vector<uint8_t>& bytes, uint32_t pr
     appendVarint(bytes, (end - begin) / codeOffsetUnit);
 }
 
+inline void SideTableParts::appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)
+{
+    RELEASE_ASSERT(previousChange <= change && !(previousChange % codeOffsetUnit) && !(change % codeOffsetUnit));
+    appendVarint(bytes, (change - previousChange) / codeOffsetUnit);
+}
+
 inline bool SideTableParts::hasFrameAt(uint32_t offset) const
 {
     const uint8_t* cursor = frameRanges.data();
     const uint8_t* end = cursor + frameRanges.size();
     uint64_t position = offset / codeOffsetUnit;
-    uint64_t boundary = 0;
+    uint64_t change = 0;
+    bool hasFrame = false;
     while (cursor < end) {
-        boundary += readVarint(cursor);
-        if (position < boundary)
-            return false;
-        boundary += readVarint(cursor);
-        if (position < boundary)
-            return true;
+        change += readVarint(cursor);
+        if (position < change)
+            return hasFrame;
+        hasFrame = !hasFrame;
     }
-    return false;
+    return hasFrame;
 }
 
 } } // namespace JSC::AOT

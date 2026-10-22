@@ -1,4 +1,5 @@
 # No part of the program reads what the last match left in RegExp, so a match against a literal without the flags g, y and d needs no object, also where the literal comes from a variable of the module
+# TODO: flow-termination: a variable that holds one RegExp literal loses its pattern and flags, so a match through it keeps the object
 # FORM: AsRead
 # OPTIONS: disable=pass:InlineCalls
 # RUN: pipeline Select

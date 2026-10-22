@@ -20,7 +20,7 @@ record PropertyKey wire customText {
 
 flags Primitives abi { Undefined Null False True Number String Symbol BigInt Absent }
 flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber FractionalNumber String Symbol BigInt Absent LiteralString LiteralSymbol }
-flags TypeFlags { HasIntegers AnyObject AnyFunction }
+flags TypeFlags { HasIntegers AnyObject AnyFunction HasMembersWithoutLayout }
 enum ContentsSlot { Element Key Value }
 enum ArrayStorage { Other Int32 Double Contiguous }
 flags PristineAspects { | engine Storage Names AsCreated Dense }
@@ -32,20 +32,24 @@ record Type wire customEngine customText {
 }
 record ClassPart wire customEngine {
     builtinClass: BuiltinClass contents: Span<Type>
-    | engine contentsAreProven: Bool arrayStorage: ArrayStorage provenPristine: PristineAspects predictedContents: List<Type>
+    | engine contentsAreProven: Bool arrayStorage: ArrayStorage provenPristine: PristineAspects
 }
 
 enum TypeSiteKind (logWord: Text) {
-    Unknown("type-mismatch") Parameter("enter-function") This("enter-function") Capture("enter-function") Result("enter-return") Field("enter-field")
-    StaticField("enter-field") Variable("enter-variable") Element("read-element") MapKey("read-element") MapValue("read-element")
-    SetElement("read-element") PromiseValue("read-element") CallResult("call-result") PropertyRead("read-property") Assertion("as-convert")
+    Unknown("unknown") Parameter("argument") This("this") Capture("capture") Result("return") Field("field")
+    StaticField("field") Variable("variable") Element("element") MapKey("element") MapValue("element")
+    SetElement("element") PromiseValue("element") CallResult("call-result") PropertyRead("property") Assertion("cast")
 }
 record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
-flags PositionFlags { IsInt32Promise IsFromCompiler | engine AdmitsObjects }
-record DeclaredType wire { type: Type written: Type? predicted: Type? site: TypeSite? flags: PositionFlags }
+flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency }
+record DeclaredType wire { type: Type site: TypeSite? flags: PositionFlags }
 
-variant ClaimSource wire { None Field { key: PropertyKey } Contents { slot: ContentsSlot } }
-enum CastResolution { | engine Unresolved Nothing Upcast Claim Prediction Assume }
+enum IllTypedCause abi {
+    None Unclassified FromLooseType Assertion SuppressedError DeclarationWithoutBody OutsideData LayoutOutsideFamily MemberWithoutSlot
+    StoreOutsideFieldType ComputedKeyStore UnprovenReceiverStore NativeWritesOperand StateChanged UnseenWriter UnseenCaller UnprovenCallee
+    OtherThis CalledByEngine ContainerWriterUnseen ElementMayBeAbsent ScopeOpenedByEval ReadBeforeInitialized LookupMayChange
+}
+enum CastResolution { | engine Unresolved Nothing Upcast Check Assume }
 record TailCast wire { declared: DeclaredType | engine resolution: CastResolution }
 
 enum ValidatedPrimitive { String Number Boolean BigInt }

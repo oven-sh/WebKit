@@ -14,6 +14,7 @@
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
+#include <array>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -53,23 +54,20 @@ static bool isResultRead(const Function& function, ValueID id, ValueID producer)
 
 static void becomeParameter(Function& function, ValueID id)
 {
-    function.at(id).become(Opcode::Parameter);
+    function.edit(id).become(Opcode::Parameter);
 }
 
-static void copyNarrowerTypes(Function& function, ValueID to, ValueID from)
+static void copyExpectedType(Function& function, ValueID to, ValueID from)
 {
-    const Value& source = function.at(from);
-    Value& destination = function.at(to);
-    destination.setWritten(source.written());
-    destination.setPrediction(source.prediction());
+    function.edit(to).setExpected(function.at(from).expected());
 }
 
 static void replaceProducerWithResults(Function& function, ValueID producer, std::span<const ValueID> parameters, BlockID continuation)
 {
-    Value& results = function.at(producer);
+    Value& results = function.edit(producer);
     results.become(Opcode::Results);
     results.setValuesOperands(parameters);
-    function.at(continuation).values.insert(0, producer);
+    function.edit(continuation).values.insert(0, producer);
 }
 
 static ResultReads collectResultReads(const Program& program, const Function& function, TypeArena& types, const UseLists& useLists, ValueID producer, uint32_t numberOfResults)
@@ -104,7 +102,7 @@ static Vector<ValueID, 1> replaceResultReads(IRBuilder& builder, ResultReads&& r
     for (auto& result : reads.results) {
         ValueID parameter = builder.addParameter(continuation, result.type);
         if (result.firstRead)
-            copyNarrowerTypes(function, parameter, result.firstRead);
+            copyExpectedType(function, parameter, result.firstRead);
         parameters.append(parameter);
     }
 
@@ -158,12 +156,12 @@ static Vector<ValueID, 1> convertResultReads(IRBuilder& builder, TypeArena& type
         ValueID& parameter = parameters[resultIndex];
         if (parameter) {
             becomeParameter(function, parameter);
-            function.at(continuation).parameters.append(parameter);
+            function.edit(continuation).parameters.append(parameter);
             continue;
         }
         parameter = builder.addParameter(continuation, resultTypeAt(builder.context().program, function, types, producer, resultIndex));
         if (firstReads[resultIndex])
-            copyNarrowerTypes(function, parameter, firstReads[resultIndex]);
+            copyExpectedType(function, parameter, firstReads[resultIndex]);
     }
 
     for (ValueID read : reads) {
@@ -186,8 +184,8 @@ IRBuilder::Expansion IRBuilder::cutForExpansion(ProgramPoint point)
     setHandler(handler);
     BlockID continuation = addBlock(m_function.at(point.block).frequency);
     {
-        auto& from = m_function.at(point.block);
-        auto& to = m_function.at(continuation);
+        auto& from = m_function.edit(point.block);
+        auto& to = m_function.edit(continuation);
         to.values.append(from.values.subspan(point.index + 1));
         from.values.shrink(point.index);
         to.terminator = std::exchange(from.terminator, Terminator { });
@@ -208,6 +206,9 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point)
         RELEASE_ASSERT(m_analyses);
         reads = collectResultReads(m_context.program, m_function, m_types, m_analyses->useLists(), id, *numberOfResults);
     }
+    Vector<BlockID, 8> changedBlocks { point.block };
+    for (const ResultUse& rewritten : reads.uses)
+        changedBlocks.append(rewritten.use.block);
 
     Expansion expansion = cutForExpansion(point);
     if (numberOfResults)
@@ -216,10 +217,10 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point)
         becomeUndefined(m_function, id);
     else {
         becomeParameter(m_function, id);
-        m_function.at(expansion.continuation).parameters.append(id);
+        m_function.edit(expansion.continuation).parameters.append(id);
         expansion.results.append(id);
     }
-    didChangeControlFlow();
+    didChangeControlFlow(changedBlocks.span());
     return expansion;
 }
 
@@ -230,10 +231,15 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point, std::span<con
     RELEASE_ASSERT(numberOfResults);
     for (ValueID read : resultReads)
         RELEASE_ASSERT(isResultRead(m_function, read, id));
+    // A read becomes a cast of a parameter where it stands, and only the lists know where that is.
+    if (UseLists* useLists = m_analyses ? m_analyses->updatingUseLists() : nullptr) {
+        for (ValueID read : resultReads)
+            useLists->didChangeOperandsOf(read);
+    }
 
     Expansion expansion = cutForExpansion(point);
     expansion.results = convertResultReads(*this, m_types, resultReads, id, *numberOfResults, expansion.continuation);
-    didChangeControlFlow();
+    didChangeControlFlow(singleElementSpan(point.block));
     return expansion;
 }
 
@@ -306,13 +312,13 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point, DeferredResul
     for (const ExpandedResult& result : results) {
         ValueID parameter = addParameter(expansion.continuation, result.type);
         if (result.firstRead)
-            copyNarrowerTypes(m_function, parameter, result.firstRead);
+            copyExpectedType(m_function, parameter, result.firstRead);
         expansion.results.append(parameter);
     }
     for (auto [producer, read] : reads)
         deferred.replace(read, expansion.results[m_function.at(read).index()]);
     replaceProducerWithResults(m_function, id, expansion.results.span(), expansion.continuation);
-    didChangeControlFlow();
+    didChangeControlFlow(singleElementSpan(point.block));
     return expansion;
 }
 
@@ -334,11 +340,11 @@ void IRBuilder::endExpansion(const Expansion& expansion, std::span<const ValueID
 void IRBuilder::mergeContinuation(const Expansion& expansion, BlockID predecessor)
 {
     RELEASE_ASSERT(!m_block && m_insertions.isEmpty());
-    Block& block = m_function.at(predecessor);
+    Block& block = m_function.edit(predecessor);
     RELEASE_ASSERT(block.terminator.kind == TerminatorKind::Jump && block.terminator.targets[0].block == expansion.continuation);
     RELEASE_ASSERT(block.handler == m_function.at(expansion.continuation).handler);
     Arguments arguments = WTF::move(block.terminator.targets[0].arguments);
-    Block continuation = std::exchange(m_function.at(expansion.continuation), Block { });
+    Block continuation = std::exchange(m_function.edit(expansion.continuation), Block { });
     for (unsigned index = 0; index < continuation.parameters.size(); ++index) {
         becomeUpcast(m_function, continuation.parameters[index], arguments[index]);
         block.values.append(continuation.parameters[index]);
@@ -346,7 +352,7 @@ void IRBuilder::mergeContinuation(const Expansion& expansion, BlockID predecesso
     block.values.appendVector(continuation.values);
     block.terminator = WTF::move(continuation.terminator);
     block.frequency = rarerOf(block.frequency, continuation.frequency);
-    didChangeControlFlow();
+    didChangeControlFlow(std::array { predecessor, expansion.continuation });
 }
 
 } } } // namespace JSC::AOT::Typed

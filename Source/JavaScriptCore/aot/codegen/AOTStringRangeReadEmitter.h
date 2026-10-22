@@ -37,6 +37,7 @@ private:
 
     CharacterView viewOfRange(const ValueContext&);
     IndexedRead openIndexedRead(const ValueContext&);
+    Integer readCodePointByStub(const ValueContext&);
     void defineCharacter(const ValueContext&, const IndexedRead&, Boxed whenOutOfRange);
 };
 

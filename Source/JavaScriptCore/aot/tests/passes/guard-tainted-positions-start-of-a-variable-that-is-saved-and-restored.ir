@@ -1,0 +1,44 @@
+# var flags: number, cleared: number, fed: number   flags = cleared = fed = 1; around()   function around() { const saved = flags; flags |= 4; flags = saved; fed = cleared; cleared = undefined }
+# A `var` that lives in an environment starts as undefined: the allocation lists it so. A store comes before every read of `flags`. In flow what is read from it is stored back, so the undefined of its start
+# goes round and stays in its set. Nobody ever reads that undefined: whoever stores one to `flags` would have to have read it from there first. So the type loses it, and the allocation no longer lists the field.
+# `cleared` keeps it: the program itself stores undefined there. So does `fed`, which takes what was read from `cleared`.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key="flags" declared={type=undefined|number}}, {key="cleared" declared={type=undefined|number}}, {key="fed" declared={type=undefined|number}}]
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Undefined
+    v2 = NewObject -, v1, v1, v1 layout=L0 fields=[0, 1, 2]
+    v3 = NewClosure v2 function=f1
+    PutEnvironmentField v2, v0 layout=L0
+    PutEnvironmentField v2, v0 layout=L0 field=1
+    PutEnvironmentField v2, v0 layout=L0 field=2
+    v7 = Call v3
+    Return v7
+}
+# CHECK: layout L0 kind=Environment {{*}}{key="flags" declared={type=int} {{*}}{key="cleared" declared={type=undefined|1} {{*}}{key="fed" declared={type=undefined|1}
+function f1 name="around" flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Integer integer=4
+    v3 = BitOr v1, v2
+    PutEnvironmentField v0, v3 layout=L0
+    PutEnvironmentField v0, v1 layout=L0
+    v6 = GetEnvironmentField v0 layout=L0 field=1
+    PutEnvironmentField v0, v6 layout=L0 field=2
+    v8 = Undefined
+    PutEnvironmentField v0, v8 layout=L0 field=1
+    v10 = GetEnvironmentField v0 layout=L0
+    v11 = GetEnvironmentField v0 layout=L0 field=2
+    v12 = NewArray v10, v6, v11 contents=anything holes=[]
+    Return v12
+}
+# CHECK-LABEL: function f1 name="around"
+# CHECK: : int = GetEnvironmentField {{*}}layout=L0
+# CHECK: : undefined|1 = GetEnvironmentField {{*}}layout=L0 field=1
+# CHECK: : int = GetEnvironmentField {{*}}layout=L0
+# CHECK: : undefined|1 = GetEnvironmentField {{*}}layout=L0 field=2

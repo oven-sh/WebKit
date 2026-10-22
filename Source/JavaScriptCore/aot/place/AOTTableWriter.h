@@ -73,9 +73,9 @@ public:
 
     void appendByte(uint8_t byte) { appendUnshared(singleElementSpan(byte)); }
 
-    uint32_t appendUnshared(std::span<const uint8_t> bytes)
+    uint32_t appendUnshared(std::span<const uint8_t> bytes, size_t alignment = 1)
     {
-        std::optional<uint32_t> offset = tryAllocate(bytes.size(), 1);
+        std::optional<uint32_t> offset = tryAllocate(bytes.size(), alignment);
         if (!offset)
             return 0;
         memcpySpan(m_bytes.mutableSpan().subspan(*offset), bytes);

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCalleeVersions.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
@@ -18,10 +19,8 @@
 #include "AOTSummarizeForInlining.h"
 #include "AOTTypePropagation.h"
 #include <algorithm>
-#include <memory>
 #include <optional>
 #include <span>
-#include <utility>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -86,6 +85,11 @@ static bool isAccepted(const InlineSite& site)
     return isAccepted(site.verdict.decision);
 }
 
+static constexpr bool canCallCalleeVersion(InlineDecision decision)
+{
+    return decision != InlineDecision::Inline && decision != InlineDecision::Barrier && decision != InlineDecision::SignatureMismatch;
+}
+
 static InlinedPart partToCopy(InlineDecision decision)
 {
     RELEASE_ASSERT(isAccepted(decision));
@@ -97,14 +101,6 @@ static bool isCandidate(const Value& value)
     return value.opcode == Opcode::CallDirect && !value.isNeverInlined() && !value.isAfterInlinedHead();
 }
 
-// The code of such a call says at its return address that the result is tested there, and an entrypoint that a tail call of the callee enters relies on it.
-// The tail calls of a copy of the callee would return to code that says nothing.
-static bool marksItsReturnSite(const Block& block, ValueID id, const Value& call)
-{
-    bool isTailCall = block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == id;
-    return call.resultCheck() == ResultCheck::ByCallers && !isTailCall;
-}
-
 namespace {
 
 class CallInliner {
@@ -114,18 +110,20 @@ public:
     PassOutcome run();
 
 private:
-    Vector<InlineSite> findCandidates(uint32_t firstValue) const;
+    Vector<InlineSite> findCandidates(uint32_t firstFrame) const;
     PassOutcome markNoReturnCallBlocks();
 
     bool canSummarize(FunctionID callee) const;
     const InliningSummary& summaryOf(FunctionID callee);
     InlineVerdict computeVerdict(const InlineSite&);
 
-    uint64_t computeCallerBytes();
+    uint64_t computeInlinedBytes();
     bool fitsInCaller(const InlineSite&, CallerBudget&);
     void spendCallerBudget(Vector<InlineSite>&);
 
     PassOutcome markCallsClosingCycles(std::span<const InlineSite>);
+    PassOutcome callCalleeVersions(std::span<const InlineSite>);
+    bool wouldHaveTooManyCopies(const InlineSite&, uint32_t entryParameter);
     void countVerdicts(std::span<const InlineSite>);
     void reportDeclines(std::span<const InlineSite>);
 
@@ -135,7 +133,6 @@ private:
     const Program& m_program;
     Function& m_caller;
     IRBuilder m_builder;
-    Vector<std::pair<FunctionID, std::unique_ptr<InliningSummary>>, 2> m_computedSummaries;
 };
 
 CallInliner::CallInliner(FunctionPassContext& context)
@@ -151,9 +148,10 @@ CallInliner::CallInliner(FunctionPassContext& context)
 PassOutcome CallInliner::run()
 {
     PassOutcome outcome = PassOutcome::Unchanged;
-    uint32_t firstUndecidedValue = 0;
+    // The frames of a copy are new, and they keep their numbers where typing cuts the copy and numbers the values again.
+    uint32_t firstUndecidedFrame = 0;
     while (true) {
-        Vector<InlineSite> sites = findCandidates(firstUndecidedValue);
+        Vector<InlineSite> sites = findCandidates(firstUndecidedFrame);
         outcome |= markNoReturnCallBlocks();
         if (sites.isEmpty())
             return outcome;
@@ -166,37 +164,45 @@ PassOutcome CallInliner::run()
         }
         spendCallerBudget(sites);
         outcome |= markCallsClosingCycles(sites.span());
+        outcome |= callCalleeVersions(sites.span());
         countVerdicts(sites.span());
 
         bool hasAcceptedSite = sites.containsIf([](const InlineSite& site) {
             return isAccepted(site);
         });
         if (!hasAcceptedSite) {
-            if (!firstUndecidedValue)
+            if (!firstUndecidedFrame)
                 reportDeclines(sites.span());
             return outcome;
         }
-        firstUndecidedValue = static_cast<uint32_t>(m_caller.values.size());
+        firstUndecidedFrame = static_cast<uint32_t>(inlineFrameCountOf(m_caller));
         copyAcceptedSites(sites.span());
         outcome = PassOutcome::Changed;
     }
 }
 
-Vector<InlineSite> CallInliner::findCandidates(uint32_t firstValue) const
+Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
 {
     const CFG& cfg = m_context.analyses.cfg();
     Vector<InlineSite> sites;
     for (uint32_t blockIndex = 0; blockIndex < m_caller.blocks.size(); ++blockIndex) {
         BlockID blockID(blockIndex);
-        if (!cfg.isReachable(blockID))
+        if (!cfg.isReachable(blockID) || isRecordedAsRare(m_caller, blockID))
             continue;
         const Block& block = m_caller.at(blockID);
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             ValueID id = block.values[index];
-            if (id.index() >= firstValue && isCandidate(m_caller.at(id)) && !marksItsReturnSite(block, id, m_caller.at(id)))
+            if (m_caller.at(id).inlineFrame >= firstFrame && isCandidate(m_caller.at(id)))
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
+    if (sites.isEmpty())
+        return sites;
+
+    const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
+    sites.removeAllMatching([&](const InlineSite& site) {
+        return frequencies.classOf(site.block) == BlockFrequency::Rare;
+    });
     return sites;
 }
 
@@ -205,7 +211,7 @@ PassOutcome CallInliner::markNoReturnCallBlocks()
     const InliningSummaries& inlining = m_context.inputs.inlining;
     PassOutcome outcome = PassOutcome::Unchanged;
     for (BlockID blockID : m_context.analyses.cfg().reversePostOrder()) {
-        Block& block = m_caller.at(blockID);
+        const Block& block = m_caller.at(blockID);
         if (block.frequency == BlockFrequency::Rare)
             continue;
         bool callsNoReturnFunction = block.values.containsIf([&](ValueID id) {
@@ -214,7 +220,7 @@ PassOutcome CallInliner::markNoReturnCallBlocks()
         });
         if (!callsNoReturnFunction)
             continue;
-        block.frequency = BlockFrequency::Rare;
+        m_caller.edit(blockID, BlockEdit::Rest).frequency = BlockFrequency::Rare;
         outcome = PassOutcome::Changed;
     }
     if (outcome == PassOutcome::Changed)
@@ -235,15 +241,11 @@ const InliningSummary& CallInliner::summaryOf(FunctionID callee)
     if (inlining.contains(callee) || !canSummarize(callee))
         return inlining.of(m_program, callee);
 
-    for (const auto& [function, summary] : m_computedSummaries) {
-        if (function == callee)
-            return *summary;
-    }
-
-    AnalysisContext context { m_context.build, m_program, &m_context.inputs.flow, &m_context.inputs.effects, callee };
-    InliningSummary summary = summarizeFunctionForInlining(context, m_program.at(callee), HeatClass::Warm);
-    m_computedSummaries.append({ callee, makeUniqueWithoutFastMallocCheck<InliningSummary>(WTF::move(summary)) });
-    return *m_computedSummaries.last().second;
+    // Nothing of the caller goes into it.
+    return m_context.inputs.derivedFunctions->inliningSummaryOf(callee, [&] {
+        AnalysisContext context { m_context.build, m_program, &m_context.inputs.flow, &m_context.inputs.effects, callee };
+        return summarizeFunctionForInlining(context, m_program.at(callee), HeatClass::Warm);
+    });
 }
 
 InlineVerdict CallInliner::computeVerdict(const InlineSite& site)
@@ -254,11 +256,20 @@ InlineVerdict CallInliner::computeVerdict(const InlineSite& site)
     return computeInlineVerdict(m_context, *site.summary, site.call);
 }
 
-uint64_t CallInliner::computeCallerBytes()
+// The limit is on what inlining adds. A caller that is large by itself takes in as much as a small one.
+uint64_t CallInliner::computeInlinedBytes()
 {
+    const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
     uint64_t bytes = 0;
-    for (BlockID block : m_context.analyses.cfg().reversePostOrder())
-        bytes += estimatedCodeBytes(m_program, m_caller, m_caller.at(block));
+    for (BlockID block : m_context.analyses.cfg().reversePostOrder()) {
+        if (frequencies.classOf(block) == BlockFrequency::Rare)
+            continue;
+        for (ValueID id : m_caller.at(block).values) {
+            const Value& value = m_caller.at(id);
+            if (value.inlineFrame)
+                bytes += estimatedCodeBytes(m_program, m_caller, value);
+        }
+    }
     return bytes;
 }
 
@@ -272,7 +283,7 @@ bool CallInliner::fitsInCaller(const InlineSite& site, CallerBudget& budget)
     uint32_t costBytes = site.verdict.costBytes;
     if (costBytes && !site.verdict.benefits.contains(InlineBenefit::Wrapper)) {
         if (!budget.bytes)
-            budget.bytes = computeCallerBytes();
+            budget.bytes = computeInlinedBytes();
         if (m_context.exceeds(LimitID::MaxInlinedCallerBytes, *budget.bytes + costBytes, site.call))
             return false;
         *budget.bytes += costBytes;
@@ -313,9 +324,54 @@ PassOutcome CallInliner::markCallsClosingCycles(std::span<const InlineSite> site
     for (const InlineSite& site : sites) {
         if (handlingOf(site.verdict.decision).followUp != FollowUp::MarkNeverInlined)
             continue;
-        m_caller.at(site.call).setIsNeverInlined(true);
+        m_caller.edit(site.call).setIsNeverInlined(true);
         outcome = PassOutcome::Changed;
     }
+    return outcome;
+}
+
+// The type of the parameter lists the functions that it is seen to receive, and each may get a copy of the callee. A helper that the whole program hands its callbacks to
+// would be there a hundred times, and most of the copies would never run: one copy serves all of its callers.
+bool CallInliner::wouldHaveTooManyCopies(const InlineSite& site, uint32_t entryParameter)
+{
+    const Function& callee = m_program.at(m_caller.at(site.call).function());
+    const Type& parameter = m_program.typeOf(callee, callee.at(entryBlock).parameters[entryParameter]);
+    return m_context.exceeds(LimitID::MaxBytesOfCalleeVersions, uint64_t { parameter.functions.size() } * site.summary->codeBytes, site.call);
+}
+
+PassOutcome CallInliner::callCalleeVersions(std::span<const InlineSite> sites)
+{
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (const InlineSite& site : sites) {
+        if (!canCallCalleeVersion(site.verdict.decision))
+            continue;
+        const Value& call = m_caller.at(site.call);
+        for (size_t index : site.summary->calledParameters) {
+            if (index >= call.numberOfOperands())
+                break;
+            uint32_t entryParameter = static_cast<uint32_t>(index);
+            const Type& passed = m_program.typeOf(m_caller, call.operand(entryParameter));
+            FunctionID argument = passed.singleFunction();
+            BuiltinID builtinArgument = singleBuiltinFunction(m_program, passed);
+            if ((!argument && !builtinArgument) || ProvisionalFunctions::contains(argument) || !canHaveCalleeVersion(m_program, call.function(), entryParameter))
+                continue;
+            if (m_context.exceeds(LimitID::MaxValuesInCalleeVersion, m_program.at(call.function()).values.size(), site.call))
+                break;
+            bool mayBeNullish = passed.mayBeUndefinedOrNull();
+            bool sharesCopy = isLibraryCode(m_program, m_program.at(call.function())) || isInColderPartOfProgram(m_context.inputs.heat, m_program, m_context.id);
+            // All who pass one built-in function share the copy for it, and few built-in functions are passed at all.
+            bool isForCalleeAlone = builtinArgument || ((isHot(heatClassOf(m_context, site.block)) || !sharesCopy) && !wouldHaveTooManyCopies(site, entryParameter));
+            m_caller.edit(site.call, ValueEdit::Definition).setFunction(m_context.derivedFunction(!isForCalleeAlone
+                ? calleeVersionKeyForAnyFunction(call.function(), entryParameter, mayBeNullish)
+                : argument ? calleeVersionKey(call.function(), entryParameter, argument, mayBeNullish)
+                : calleeVersionKeyForBuiltin(call.function(), entryParameter, builtinArgument, mayBeNullish)));
+            outcome = PassOutcome::Changed;
+            break;
+        }
+    }
+    // The call names another function. Its operands and its place are as they were.
+    if (outcome == PassOutcome::Changed)
+        m_context.analyses.invalidate(valueAnalyses - analysesThatReadNoTypes);
     return outcome;
 }
 
@@ -367,14 +423,19 @@ void CallInliner::copyAcceptedSites(std::span<const InlineSite> sites)
 
     for (uint32_t index = static_cast<uint32_t>(m_caller.values.size()); index-- > firstCopiedValue;)
         changedValues.append(ValueID(index));
-    narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_caller, m_context.analyses, m_context.types, m_context.build }, changedValues.span());
+    narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_caller, m_context.analyses, m_context.types, m_context.build, &m_context.typingMemo }, changedValues.span());
 }
 
 } // anonymous namespace
 
 PassOutcome inlineCalls(FunctionPassContext& context)
 {
-    return CallInliner(context).run();
+    PassOutcome outcome = CallInliner(context).run();
+    // Every analysis is dropped behind a copied body, those that look into a call behind the choice of a callee version, the frequencies behind the mark on a block. No analysis reads the mark on a call that closes a cycle.
+    // The effects begin a new round all the same, and what is made from them goes with them: a later pass that asks for effects in the middle of its own edits goes by the answers that the round holds.
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
+    return outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

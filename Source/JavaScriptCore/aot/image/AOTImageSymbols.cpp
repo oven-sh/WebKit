@@ -19,6 +19,7 @@
 #include "AOTRegExpRequests.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubDescriptor.h"
+#include "AOTWasmModules.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/BitVector.h>
@@ -289,7 +290,7 @@ static void appendRegExpCode(Vector<ImageSymbol>& symbols, const ImageSymbolInpu
 
 static void appendWebAssemblyCode(Vector<ImageSymbol>& symbols, const CodeLayout& layout, const Typed::Program& program)
 {
-    if (program.webAssemblyModules.isEmpty() || layout.webAssemblyCodeOffset >= layout.constantsOffset)
+    if (!mayHaveWebAssemblyModules(program) || layout.webAssemblyCodeOffset >= layout.constantsOffset)
         return;
     symbols.append(ImageSymbol {
         .kind = SymbolKind::WebAssemblyCode,
@@ -481,7 +482,7 @@ static void printOutlining(PrintStream& out, std::span<const ImageSymbol> symbol
 static void printTables(PrintStream& out, std::span<const uint8_t> image, const Typed::Program& program, const IdentifierNumbering& identifiers)
 {
     ImageSectionRange range = headerOf(image).sections[static_cast<size_t>(ImageSection::ProgramTables)];
-    unsigned layoutsWithMessageData = 0;
+    constexpr unsigned layoutsWithMessageData = 0;
     unsigned describedTypes = 0;
     if (range.size) {
         auto& tables = *reinterpret_cast<const ProgramTables*>(image.subspan(range.offset, range.size).data());
@@ -489,8 +490,6 @@ static void printTables(PrintStream& out, std::span<const uint8_t> image, const 
         std::ranges::sort(typeOffsets);
         for (size_t i = 0; i < typeOffsets.size(); ++i)
             describedTypes += typeOffsets[i] && (!i || typeOffsets[i] != typeOffsets[i - 1]);
-        for (uint32_t shape = 1; shape < tables.firstEnvironmentShape; ++shape)
-            layoutsWithMessageData += tables.hasLayoutForShape(shape) && tables.layoutForShape(shape).hasMessageData;
     }
     out.println("Z\t", range.size, "\t", layoutsWithMessageData, "\t", describedTypes);
 

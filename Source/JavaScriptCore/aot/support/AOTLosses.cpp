@@ -43,7 +43,6 @@ DeclineReason decodeDeclineReason(DeclineKind kind, uint32_t word)
     case DeclineKind::TypedResultNotSelected:
         return memberAt<Wire::TypedResultDeclineReason>(word);
     case DeclineKind::LoopNotVersioned:
-    case DeclineKind::LoopPollNotStripMined:
     case DeclineKind::LoopBoundNotClamped:
         return memberAt<Wire::LoopDeclineReason>(word);
     case DeclineKind::ResultNodeInterpreted:
@@ -53,8 +52,7 @@ DeclineReason decodeDeclineReason(DeclineKind kind, uint32_t word)
     case DeclineKind::StringBuildersNotJoined:
     case DeclineKind::IterationNotExpandedByClass:
     case DeclineKind::StretchNotGuarded:
-    case DeclineKind::PositionAdmitsObjects:
-    case DeclineKind::AssertedObjectPassedToUnknownCallee:
+    case DeclineKind::GenericVersionNotCreated:
         RELEASE_ASSERT(!word);
         return std::monostate { };
     }
@@ -281,6 +279,19 @@ void Losses::addLimitHit(LimitID limit, const Subject& subject)
         return;
     }
     mergeLoss(stripe.losses[index], loss);
+}
+
+Vector<Typed::FunctionID> Losses::functionsWithUnresolvedWitnesses()
+{
+    Vector<Typed::FunctionID> functions;
+    for (Stripe& stripe : m_stripes) {
+        Locker locker { stripe.lock };
+        for (const Wire::LossRecord& loss : stripe.losses) {
+            if (Typed::ValueID(loss.witness.value) && !hasModule(loss.witness.location))
+                functions.append(Typed::FunctionID(loss.witness.function));
+        }
+    }
+    return functions;
 }
 
 Vector<Wire::LossRecord> Losses::takeLosses(const Typed::Program* program)

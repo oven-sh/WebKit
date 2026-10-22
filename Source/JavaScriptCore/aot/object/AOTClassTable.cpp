@@ -8,10 +8,11 @@
 
 #if ENABLE(AOT)
 
-#include "AOTClassHierarchy.h"
+#include "AOTClassMemberTable.h"
 #include "AOTClassPrototype.h"
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
+#include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImmortalCells.h"
 #include "AOTObject.h"
@@ -19,10 +20,12 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
+#include "TopExceptionScope.h"
 #include <algorithm>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -55,7 +58,12 @@ ClassTable::ClassTable(State& state)
     , m_tables(state.tables)
 {
     state.instance.classes.classPrototypes = state.tableArena.allocate<JSCell*>(m_tables.numberOfClasses());
+    state.instance.classes.placesOfPrototypeProperties = m_placesOfPrototypeProperties.data();
+    state.instance.classes.prototypesOfClassObjects = m_prototypesOfClassObjects.data();
     state.caches->add(CacheKind::WeakByKey, "class sides by holder"_s, *this);
+    state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
+    state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
+    state.caches->addClearedEachCollection("instances of classes below"_s, asWritableBytes(std::span { m_instancesOfClassesBelow }));
 }
 
 ClassTable::~ClassTable() = default;
@@ -126,6 +134,41 @@ Structure* ClassTable::lazyClassObjectStructureInheritingFrom(VM& vm, JSObject* 
     return structure;
 }
 
+Structure* ClassTable::classObjectStructureInheritingFrom(VM& vm, JSObject* parent)
+{
+    Structure* structure = m_classObjectStructures.get(parent);
+    if (!structure) {
+        bool hasNoParentClass = parent == m_state.instance.globalObject->functionPrototype();
+        Structure* withoutProperties = hasNoParentClass ? m_state.objects->closures.closureStructure(vm, classObjectClosureStructure) : lazyClassObjectStructureInheritingFrom(vm, parent);
+        PropertyOffset offset;
+        structure = Structure::addPropertyTransition(vm, withoutProperties, vm.propertyNames->prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, offset);
+        m_classObjectStructures.set(parent, structure);
+        m_state.immortalCells->add(structure);
+    }
+    return structure;
+}
+
+Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
+{
+    ClosureTable& closures = m_state.objects->closures;
+    FunctionID constructor(classLayout.classData().classConstructor);
+    bool isCreatedOnChange = classLayout.createsClassObjectOnMutation && classLayout.createsPrototypeBeforeClassObject;
+    Structure* structure = isCreatedOnChange ? lazyClassObjectStructure(vm, classLayout) : closures.closureStructureFor(vm, constructor);
+    RELEASE_ASSERT(!closures.closureIfCreated(constructor));
+    Closure* created = Closure::create(vm, structure, constructor);
+    closures.registerClassObject(created);
+    // What the record cannot say, the parent or the name of a member, is computed by code, and NewClass follows that code.
+    bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
+    if (!recordNamesParent || hasComputedMemberNames(classLayout))
+        return created;
+    ASSERT(hasOneClassObject(classLayout));
+    count(m_state.instance, RuntimeCounterID::ClassesMadeWhenFirstTouched);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    defineClass(m_state.instance.globalObject, created, classLayout, JSValue(), JSValue());
+    scope.assertNoException();
+    return created;
+}
+
 bool ClassTable::hasStaticMethodNamed(const LayoutData& classLayout, UniquedStringImpl* name) const
 {
     std::optional<uint32_t> key = keyOf(m_state, name);
@@ -144,7 +187,9 @@ JSObject* ClassTable::createClassPrototype(VM& vm, const LayoutData& classLayout
         m_classPrototypeStructures.set(parent, structure);
         m_state.immortalCells->add(structure);
     }
-    JSObject* prototype = ClassPrototype::create(vm, structure, classLayout.index);
+    // What findOwnDeclaredMember() asks of a class before it answers from the record.
+    uint32_t memberRow = hasOneClassObject(classLayout) ? m_tables.classMemberRows()[m_tables.rankOfClass(classLayout.index)] : ClassRowEntry::noRow;
+    JSObject* prototype = ClassPrototype::create(vm, structure, classLayout.index, memberRow);
     registerClassPrototype(classLayout, prototype);
     return prototype;
 }
@@ -154,11 +199,34 @@ JSObject* ClassTable::classPrototypeIfExists(const LayoutData& classLayout) cons
     return static_cast<JSObject*>(prototypeCellOf(m_state, classLayout));
 }
 
+JSObject* ClassTable::classPrototypeOfInstances(VM& vm, const LayoutData& classLayout)
+{
+    JSObject* prototype = classPrototype(vm, classLayout);
+    if (!m_constructorFunctionsThatAreOnlyBases.isEmpty() && m_constructorFunctionsThatAreOnlyBases.remove(classLayout.index)) [[unlikely]] {
+        MemberGuardWatchpoints::MethodTableUpdate update(m_state);
+        armGuardsOfConstructorFunction(vm, classLayout, prototype, uncheckedDowncast<Closure>(m_state.objects->closures.closureIfCreated(FunctionID(classLayout.classData().classConstructor))));
+    }
+    return prototype;
+}
+
+JSObject* ClassTable::classPrototypeOfBase(VM& vm, const LayoutData& classLayout)
+{
+    if (isDefinedByClass(classLayout) || classPrototypeIfExists(classLayout))
+        return classPrototype(vm, classLayout);
+    if (classLayout.evaluation() == EvaluationState::SeenTwice)
+        return nullptr;
+    if (classLayout.evaluation() == EvaluationState::ProvenOnce && hasOneClassObject(classLayout))
+        m_state.objects->closures.closure(vm, FunctionID(classLayout.classData().classConstructor));
+    return defineClassOfConstructorFunction(vm, classLayout, UseOfFunction::IsBase);
+}
+
 JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
 {
     if (JSObject* prototype = classPrototypeIfExists(classLayout))
         return prototype;
     if (classLayout.evaluation() == EvaluationState::PredictedOnce) {
+        if (!isDefinedByClass(classLayout))
+            return defineClassOfConstructorFunction(vm, classLayout, UseOfFunction::MakesObjects);
         // The guards of such a class describe its first evaluation, whose class object is the registered one.
         FunctionID constructor(classLayout.classData().classConstructor);
         JSCell* registered = constructor && functionKindData(constructor).isConstructor ? m_state.objects->closures.closureIfCreated(constructor) : nullptr;
@@ -173,51 +241,103 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
         if (baseClass && !isDefinedByClass(*baseClass))
             return nullptr;
         JSObject* parent = baseClass ? classPrototype(vm, *baseClass) : m_state.instance.globalObject->objectPrototype();
-        return parent ? createClassPrototype(vm, classLayout, parent) : nullptr;
+        if (!parent)
+            return nullptr;
+        JSObject* prototype = createClassPrototype(vm, classLayout, parent);
+        if (leavesDefinitionToRecord(classLayout))
+            didCreatePrototypeLeftToRecord(classLayout);
+        return prototype;
     }
     if (hasOneClassObject(classLayout))
         m_state.objects->closures.closure(vm, FunctionID(classLayout.classData().classConstructor));
     if (!isDefinedByClass(classLayout))
-        return defineClassOfConstructorFunction(vm, classLayout);
+        return defineClassOfConstructorFunction(vm, classLayout, UseOfFunction::MakesObjects);
     return classPrototypeIfExists(classLayout);
+}
+
+// The class of a constructor function is that of the first function of its text that gets a prototype property, which comes before its first construction.
+// A second function that gets one tells that the text was evaluated again. What it constructs is born below another prototype object, of which the guards say nothing,
+// and compiled code asks no object that it has made itself which one it was born below. So the guards end for good, as those of a class that is evaluated again.
+void ClassTable::didCreatePrototypePropertyOf(Closure* function)
+{
+    const LayoutData* classLayout = classConstructedBy(function->function());
+    if (!classLayout || isDefinedByClass(*classLayout) || classLayout->evaluation() != EvaluationState::PredictedOnce)
+        return;
+    ClosureTable& closures = m_state.objects->closures;
+    if (function->function() != FunctionID(classLayout->classData().classConstructor) || !closures.hasCellFor(function->function()))
+        return;
+    JSCell* registered = closures.closureIfCreated(function->function());
+    if (!registered || registered == function) {
+        closures.registerClassObject(function);
+        return;
+    }
+    m_constructorFunctionsWithoutClass.add(classLayout->index);
+    didEvaluateClassAgain(m_state, *classLayout);
 }
 
 // No operation defines the class of a constructor function. Its holders are the function and the object in its prototype property when the prototype of the instances is first asked for,
 // which is at the first construction: a program fills or replaces that object before. The guards can tell the names of an ordinary object and of a compiled one.
-JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData& classLayout)
+// Where that object can hold no class, the function never gets one: the Structures and the allocation sites of its instances name another prototype from then on.
+// A function may get its class because a function or a class below it gets one. Its own guards speak of objects that it makes itself, and most such functions make none
+// (nobody constructs a Stream): until it does, its holders are entered and report, and its guards stand in the way of no set, as those of a class that does not exist yet.
+JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData& classLayout, UseOfFunction use)
 {
+    if (m_constructorFunctionsWithoutClass.contains(classLayout.index))
+        return nullptr;
     auto* classObject = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(FunctionID(classLayout.classData().classConstructor)));
     if (!classObject)
         return nullptr;
     JSValue stored = classObject->prototypeProperty(vm);
-    if (!stored || !stored.isObject())
-        return nullptr;
-    JSObject* prototype = asObject(stored);
-    if (prototype->type() != FinalObjectType && !isCompiledObject(prototype))
-        return nullptr;
+    JSObject* prototype = stored && stored.isObject() ? asObject(stored) : nullptr;
     ClassSide sideOfOtherClass;
-    if (classHeldBy(prototype, sideOfOtherClass))
+    if (!prototype || (prototype->type() != FinalObjectType && !isCompiledObject(prototype)) || classHeldBy(prototype, sideOfOtherClass)) {
+        m_constructorFunctionsWithoutClass.add(classLayout.index);
+        disarmMemberGuards(classLayout);
         return nullptr;
+    }
 
+    MemberGuardWatchpoints::MethodTableUpdate update(m_state);
     registerClassPrototype(classLayout, prototype);
+    // The program has filled the object by now, one name after the other.
+    prototype->structure()->dropTransitionChain(vm);
+    if (const LayoutData* base = assumedBaseOf(classLayout))
+        classPrototypeOfBase(vm, *base);
+    if (use == UseOfFunction::MakesObjects) {
+        armGuardsOfConstructorFunction(vm, classLayout, prototype, classObject);
+        return prototype;
+    }
+    m_constructorFunctionsThatAreOnlyBases.add(classLayout.index);
+    enterHolderWithoutGuards(vm, classLayout, ClassSide::Prototype, prototype);
+    enterHolderWithoutGuards(vm, classLayout, ClassSide::Static, classObject);
+    checkParentsOfConstructorFunction(classLayout, prototype, classObject);
+    return prototype;
+}
+
+void ClassTable::checkParentsOfConstructorFunction(const LayoutData& classLayout, JSObject* prototype, Closure* classObject)
+{
     const LayoutData* base = assumedBaseOf(classLayout);
-    JSObject* assumedParent = base ? classPrototype(vm, *base) : m_state.instance.globalObject->objectPrototype();
+    JSObject* assumedParent = base ? classPrototypeIfExists(*base) : m_state.instance.globalObject->objectPrototype();
+    if (!assumedParent || prototype->getPrototypeDirect() != JSValue(assumedParent))
+        didDefineWithOtherParent(classLayout, ClassSide::Prototype);
+    if (classObject->getPrototypeDirect() != JSValue(m_state.instance.globalObject->functionPrototype()))
+        didDefineWithOtherParent(classLayout, ClassSide::Static);
+}
+
+void ClassTable::armGuardsOfConstructorFunction(VM& vm, const LayoutData& classLayout, JSObject* prototype, Closure* classObject)
+{
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
-    if (assumedParent && prototype->getPrototypeDirect() == JSValue(assumedParent))
-        m_state.objects->caches->classHierarchy.didDefineClass(classLayout);
-    else
-        didChangePrototypeLink(classLayout, ClassSide::Prototype);
-    if (classObject->getPrototypeDirect() != JSValue(m_state.instance.globalObject->functionPrototype()))
-        didChangePrototypeLink(classLayout, ClassSide::Static);
-    return prototype;
+    checkParentsOfConstructorFunction(classLayout, prototype, classObject);
 }
 
 void ClassTable::registerClassPrototype(const LayoutData& classLayout, JSObject* prototype)
 {
-    ASSERT(classLayout.evaluation() == EvaluationState::ProvenOnce && !classPrototypeIfExists(classLayout));
+    ASSERT((classLayout.evaluation() == EvaluationState::ProvenOnce || !isDefinedByClass(classLayout)) && !classPrototypeIfExists(classLayout));
     prototypeCellOf(m_state, classLayout) = prototype;
     m_state.immortalCells->add(prototype);
+    // Guards that hold while they are clear have nothing to begin.
+    if (!classLayout.classData().guardsHoldWhileClear)
+        didCreateHolder(classLayout, ClassSide::Prototype);
 }
 
 void ClassTable::finishLazyParts(VM& vm, const LayoutData& classLayout)
@@ -235,11 +355,27 @@ void ClassTable::finishLazyParts(VM& vm, const LayoutData& classLayout)
     }
 }
 
+// A member that an operation of the definition creates is added to the Structure in place, and a Structure that is kept says what the record alone creates.
+// So the first evaluation of a class with such members keeps none: most classes have no second one.
+bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const
+{
+    ASSERT(&classLayout == classObject.classData());
+    if (classLayout.evaluation() == EvaluationState::ProvenOnce)
+        return false;
+    if (m_state.objects->closures.closureIfCreated(classObject.function()) != &classObject)
+        return true;
+    auto isCreatedAtDefinition = [](const MethodData& method) {
+        return !!(method.flags & methodIsCreatedAtDefinition);
+    };
+    return std::ranges::none_of(classLayout.methods(), isCreatedAtDefinition) && std::ranges::none_of(classLayout.staticMethods(), isCreatedAtDefinition);
+}
+
 void ClassTable::forgetDefinition(VM& vm, const LayoutData& classLayout)
 {
     ASSERT(classLayout.evaluation() == EvaluationState::ProvenOnce);
     ObjectModel& objects = *m_state.objects;
     m_classesWithForgottenDefinition.add(classLayout.index);
+    m_instancesOfClassesBelow.fill({ });
     disarmMemberGuards(classLayout);
 
     auto forgetFunction = [&](FunctionID function) {
@@ -268,6 +404,7 @@ void ClassTable::forgetDefinition(VM& vm, const LayoutData& classLayout)
     if (JSObject* prototype = classPrototypeIfExists(classLayout))
         m_classSidesByHolder.remove(prototype);
     prototypeCellOf(m_state, classLayout) = nullptr;
+    m_constructorFunctionsThatAreOnlyBases.remove(classLayout.index);
 }
 
 size_t ClassTable::removeDeadEntries(VM& vm, CollectionScope scope)

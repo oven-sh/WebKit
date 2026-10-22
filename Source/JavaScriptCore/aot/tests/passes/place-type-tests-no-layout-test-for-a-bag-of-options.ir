@@ -1,0 +1,24 @@
+# A record type of dozens of fields that are all optional describes a bag of options: what arrives is mostly an ordinary object that was merged or copied name by name, and it would fail the test for the layout every time.
+# The read goes by name where it stands. A record with a required field, and a small one, are tested for as ever.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+layout L0 name="Options" fields=[{key="o0" declared={type=anything}}, {key="o1" declared={type=anything}}, {key="o2" declared={type=anything}}, {key="o3" declared={type=anything}}, {key="o4" declared={type=anything}}, {key="o5" declared={type=anything}}, {key="o6" declared={type=anything}}, {key="o7" declared={type=anything}}, {key="o8" declared={type=anything}}, {key="o9" declared={type=anything}}, {key="o10" declared={type=anything}}, {key="o11" declared={type=anything}}, {key="o12" declared={type=anything}}, {key="o13" declared={type=anything}}, {key="o14" declared={type=anything}}, {key="o15" declared={type=anything}}, {key="o16" declared={type=anything}}, {key="o17" declared={type=anything}}, {key="o18" declared={type=anything}}, {key="o19" declared={type=anything}}, {key="o20" declared={type=anything}}, {key="o21" declared={type=anything}}, {key="o22" declared={type=anything}}, {key="o23" declared={type=anything}}]
+layout L1 name="FewOptions" fields=[{key="o0" declared={type=anything}}, {key="o1" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bag" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="o3"
+    Return v1
+}
+# CHECK-LABEL: name="bag"
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet v0 key="o3"
+
+function f1 name="few" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
+    v1 = PropGet v0 key="o1"
+    Return v1
+}
+# CHECK-LABEL: name="few"
+# CHECK: = TypeTest v0 testedType=L1

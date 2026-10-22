@@ -14,6 +14,7 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
@@ -118,17 +119,31 @@ Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, J
     return Object::create(vm, structure, classLayout, classLayout.size, orderWordOf(0, 0));
 }
 
+// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its number.
+static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
+static_assert(ClosureWord::functionMask < constructorIsNewTarget);
+
+// What createThis() allocates depends on new.target, on which function is constructed and on the instance of that function.
+static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, JSObject* constructor, JSObject* newTarget)
+{
+    uint32_t rememberedConstructor = rareData.compiledAllocationConstructor();
+    if (constructor == newTarget)
+        return rememberedConstructor == constructorIsNewTarget;
+    std::optional<FunctionID> function = functionOf(constructor);
+    return function && rememberedConstructor == function->index() && constructor->structure()->realm() == remembered->realm();
+}
+
 JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constructor, JSObject* newTarget)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSFunction* target = dynamicDowncast<JSFunction>(newTarget);
     FunctionRareData* rareData = target ? target->rareData() : nullptr;
-    if (rareData && rareData->compiledAllocationConstructor() == constructor) {
-        Structure* structure = rareData->compiledAllocationStructure();
-        if (const LayoutData* layout = compiledLayoutOrNull(structure))
-            return Object::create(vm, structure, *layout, layout->size, rareData->compiledAllocationOrderWord());
-        return constructEmptyObject(vm, structure);
+    Structure* remembered = rareData ? rareData->compiledAllocationStructure() : nullptr;
+    if (remembered && isRememberedFor(*rareData, remembered, constructor, newTarget)) {
+        if (const LayoutData* layout = compiledLayoutOrNull(remembered))
+            return Object::create(vm, remembered, *layout, layout->size, orderWordOf(0, 0));
+        return constructEmptyObject(vm, remembered);
     }
 
     std::optional<FunctionID> function = functionOf(constructor);
@@ -139,18 +154,13 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSObject* prototype = resolved->prototype;
     const LayoutData* layout = resolved->layout;
-    bool canRemember = resolved->wasReadWithoutSideEffects && target;
+    bool canRemember = resolved->wasReadWithoutSideEffects && target && function;
 
-    if (layout && layout->shape) {
-        Object* object = createClassInstance(vm, *layout, prototype);
-        if (canRemember)
-            target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), object->orderWord(), constructor);
-        return object;
-    }
-
-    JSFinalObject* object = createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
+    JSObject* object = layout && layout->shape
+        ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
+        : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
     if (canRemember)
-        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), 0, constructor);
+        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : function->index());
     return object;
 }
 
@@ -165,6 +175,25 @@ JSObject* ClassTable::prototypeForInstancesOf(VM& vm, JSObject* compiledCallee)
     return prototypeOrObjectPrototype(ownPrototypeProperty(vm, compiledCallee), m_state.instance.globalObject);
 }
 
+void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSObject* prototype)
+{
+    Structure* structure = function->structure();
+    if (structure->isDictionary() || vm.aotState().validatesRuntime)
+        return;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, vm.propertyNames->prototype, attributes);
+    if (!isValidOffset(offset)) {
+        const LayoutData* classLayout = classConstructedBy(function->function());
+        if (classLayout && isDefinedByClass(*classLayout))
+            m_prototypesOfClassObjects[indexOfClassObject(function)] = { function, prototype };
+        return;
+    }
+    if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+        return;
+    uint32_t structureID = structure->id().bits();
+    m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
+}
+
 // The object that the definition of a class made its prototype. What a program stores as the prototype of a constructor function names no class.
 const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
@@ -175,41 +204,73 @@ const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
     return held && side == ClassSide::Prototype && isDefinedByClass(*held) ? held : nullptr;
 }
 
+static JSCell* closureEnvironmentOf(State& state, const Object& object, const FieldData& field)
+{
+    SlotData slot = object.layout().closureEnvironmentSlotOf(field);
+    return cellInSlot(slot.representation(), &object.at<uint8_t>(slot.offset), state.instance.cellCageBase);
+}
+
 static JSValue valueForInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, JSObject& instance)
 {
-    if (field.slot.representation() != SlotRepresentation::DeferredClosure)
+    if (field.slot.representation() != SlotRepresentation::DeferredClosure || field.defersFlattenedObject)
         return allocated.read(field);
-    JSValue captured = field.flags & fieldDeferredClosureCapturesObject ? JSValue(&instance) : JSValue();
+    if (allocated.at<uint32_t>(field.slot.offset) != uncreatedDeferredClosure)
+        return allocated.read(field);
+    JSValue captured;
+    if (field.flags & fieldDeferredClosureCapturesObject)
+        captured = &instance;
+    else if (field.flags & fieldDeferredClosureCapturesEnvironment)
+        captured = closureEnvironmentOf(state, allocated, field);
     return state.objects->closures.createClosureOver(vm, allocated.layout().deferredClosureOf(field), captured);
 }
 
-// Where the field of the instance has the same type, what compiled code stored moves over without a test: no run-time type describes a class token. A subclass that declares the name again tests it.
-// A slot without an absent state looks filled whether the allocation listed its field or not, and compiled code lists no field where the prototype may select another class.
+static void shareClosureEnvironment(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance, const FieldData& target)
+{
+    JSCell* environment = closureEnvironmentOf(state, allocated, field);
+    if (!environment)
+        return;
+    SlotData slot = instance.layout().closureEnvironmentSlotOf(target);
+    bool isStored = tryWriteSlot(*state.strings, slot.representation(), &instance.at<uint8_t>(slot.offset), environment);
+    RELEASE_ASSERT(isStored);
+    vm.writeBarrier(&instance, environment);
+}
+
+static bool looksFilledWhenNotListed(const FieldData& field)
+{
+    return !field.canLeaveSlot();
+}
+
+// A subclass may declare the name again with another type, so the field of the instance tests what compiled code stored.
+// Some slots look filled whether the allocation listed their field or not, and compiled code lists no field where the prototype may select another class.
 // So what such a slot holds creates no field: it moves only into a slot that has no absent state either. A subclass that declares the name again may have one.
 static void copyFieldToInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance)
 {
     UniquedStringImpl* name = propertyNameOf(vm, allocated, field);
     const FieldData* target = instance.fieldNamed(state, name);
-    if (target && target->slot.representation() == SlotRepresentation::DeferredClosure)
-        return;
-    if (!field.canLeaveSlot() && (!target || target->canLeaveSlot()))
+    if (target && target->slot.representation() == SlotRepresentation::DeferredClosure && target->flags & field.flags & fieldDeferredClosureCapturesEnvironment)
+        shareClosureEnvironment(vm, state, allocated, field, instance, *target);
+    if (looksFilledWhenNotListed(field) && (!target || target->canLeaveSlot()))
         return;
     JSValue value = valueForInstance(vm, state, allocated, field, instance);
     ASSERT(value);
-    bool isAccepted = target && (target->type == field.type || state.objects->layouts.fieldAccepts(*target, value));
-    if (isAccepted && instance.store(vm, *target, value)) {
+    bool hasSameAttributes = target && instance.attributesOf(*target) == allocated.attributesOf(field);
+    std::optional<AcceptedValue> accepted = hasSameAttributes ? state.objects->layouts.accept(*target, value) : std::nullopt;
+    if (accepted && instance.store(vm, *target, *accepted)) {
         if (target->canLeaveSlot())
-            instance.didCreateField(state, *target);
+            instance.didCreateField(state, *target, !!instance.slotOf(*target));
         return;
     }
+    // Until its first store such a slot holds a placeholder, which need not be a value of the field's type. The slot of the new instance holds one as well.
+    if (looksFilledWhenNotListed(field))
+        return;
     instance.putDirectFromNativeCode(vm, name, value, allocated.attributesOf(field));
 }
 
-// The instance declares other fields or none. A slot without an absent state looks filled whether the allocation listed its field or not, and compiled code
+// The instance declares other fields or none. Some slots look filled whether the allocation listed their field or not, and compiled code
 // lists no field where the prototype may select another class.
 static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, JSObject& instance)
 {
-    if (!field.canLeaveSlot())
+    if (looksFilledWhenNotListed(field))
         return;
     UniquedStringImpl* name = propertyNameOf(vm, allocated, field);
     JSValue value = valueForInstance(vm, state, allocated, field, instance);
@@ -227,6 +288,18 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype)
 {
     const LayoutData& allocatedLayout = allocated->layout();
+    InstanceOfClassBelow& recent = m_instancesOfClassesBelow[indexOfInstanceOfClassBelow(prototype)];
+    // Where the keys are never enumerated, the order word lists nothing whatever the slots hold.
+    bool listsNoField = !allocatedLayout.keysAreNeverEnumerated && allocated->orderWord() == orderWordOf(0, 0);
+    if (recent.prototype == prototype && recent.allocatedLayout == &allocatedLayout && listsNoField) {
+        const LayoutData& requested = recent.structure->layout();
+        RuntimeLayoutTable& layouts = m_state.objects->layouts;
+        if (const RuntimeLayoutTable::BodyAtBirth* body = layouts.bodyAtBirthIfKnown(requested))
+            return Object::createAsAtBirth(vm, recent.structure, body->bytes.span(), body->isBornUnfinished);
+        Object* instance = Object::create(vm, recent.structure, requested, requested.size, orderWordOf(0, 0));
+        layouts.rememberBodyAtBirth(requested, std::span { reinterpret_cast<const uint8_t*>(instance) + sizeof(JSCell), requested.size - sizeof(JSCell) }, instance->perCellBit());
+        return instance;
+    }
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
@@ -240,6 +313,8 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
         allocated->forEachFieldInKeyOrder(m_state, [&](uint16_t index) {
             copyFieldToInstance(vm, m_state, *allocated, allocatedLayout.fields()[index], *instance);
         });
+        if (listsNoField)
+            recent = { prototype, &allocatedLayout, uncheckedDowncast<CompiledStructure>(instance->structure()) };
         return instance;
     }
 

@@ -1,6 +1,5 @@
 # Unknown code does not call what flow proves to run at most once: a module body that calls unknown code is on no cycle with it and has one activation, and so has what it calls once
 # FORM: AsRead
-# OPTIONS: admit=RuntimeCode
 # RUN: heat-graph flow
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -9,16 +8,18 @@ entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="publish" [isFreeName]
-    v2 = NewClosure function=f2
-    v3 = Call v1, -, v2
-    v4 = CallDirect function=f1
-    v5 = ToBoolean v1
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v4
+    v6 = CallDirect function=f1
+    v7 = ToBoolean v1
     Jump -> next b1()
   b1():
     LoopHint
-    v7 = CallDirect function=f3
-    Branch v5 -> taken b2(), notTaken b3()
+    v9 = CallDirect function=f3
+    Branch v7 -> taken b2(), notTaken b3()
   b2():
     Jump -> next b1()
   b3():
@@ -36,8 +37,8 @@ function f3 name="calledInLoop" results=[{type=undefined}] {
   b0():
     Return
 }
-# CHECK: f0 size 12 mass 47.000000: f1*1.000000 f3*10.000000 unknown*
-# CHECK: host: f0*1.000000 f2*1.000000 f4*1.000000
+# CHECK: f0 size 14 mass 49.000000: f1*1.000000 f2*1.000000 f3*10.000000 unknown*
+# CHECK: host: f0*1.000000 f4*1.000000
 # CHECK-NEXT: unknown: f2*0.500000 f4*0.500000
 # CHECK-NEXT: activations:
 # CHECK-NEXT: f0 1.000000

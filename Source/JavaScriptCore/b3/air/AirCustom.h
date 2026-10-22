@@ -379,6 +379,8 @@ struct WasmBoundsCheckCustom : public CommonCustomBase<WasmBoundsCheckCustom> {
     static MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&);
 };
 
+// The number of scratch registers, those registers, the registers that the callee saves, then a register and a word of the frame for each spill that the setup pushes.
+// Words count from the top of what the setup allocates.
 struct EnterFrameCustom : public CommonCustomBase<EnterFrameCustom> {
     static unsigned numberOfScratchRegisters(const Inst& inst)
     {
@@ -392,6 +394,10 @@ struct EnterFrameCustom : public CommonCustomBase<EnterFrameCustom> {
         unsigned endOfScratchRegisters = 1 + numberOfScratchRegisters(inst);
         for (unsigned i = 1; i < inst.args().size(); ++i) {
             Arg& arg = inst.args()[i];
+            if (arg.isImm()) {
+                functor(arg, Arg::Use, GP, Width32);
+                continue;
+            }
             Bank bank = arg.tmp().bank();
             functor(arg, i < endOfScratchRegisters ? Arg::Scratch : Arg::Use, bank, conservativeWidthWithoutVectors(bank));
         }
@@ -433,11 +439,16 @@ struct EnterFrameCustom : public CommonCustomBase<EnterFrameCustom> {
     static MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&);
 };
 
+// The registers that the callee saves, then a register and a word of the frame for each reload that the teardown pops. Words count from the stack pointer.
 struct LeaveFrameCustom : public CommonCustomBase<LeaveFrameCustom> {
     template<typename Func>
     static void forEachArg(Inst& inst, NOESCAPE const Func& functor)
     {
         for (Arg& arg : inst.args()) {
+            if (arg.isImm()) {
+                functor(arg, Arg::Use, GP, Width32);
+                continue;
+            }
             Bank bank = arg.tmp().bank();
             functor(arg, Arg::Def, bank, conservativeWidthWithoutVectors(bank));
         }

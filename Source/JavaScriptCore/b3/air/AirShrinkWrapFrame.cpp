@@ -19,6 +19,7 @@
 #include "AirStackColoring.h"
 #include "B3Common.h"
 #include "B3Procedure.h"
+#include "B3StackmapValue.h"
 #include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 
@@ -42,15 +43,6 @@ uint64_t bitsOf(const RegisterSet& registers)
     return result;
 }
 
-bool hasNonRareEdge(BasicBlock* from, BasicBlock* to)
-{
-    for (const FrequentedBlock& edge : from->successors()) {
-        if (edge.block() == to && !edge.isRare())
-            return true;
-    }
-    return false;
-}
-
 bool takesSlotAddress(Inst& inst)
 {
     bool result = false;
@@ -68,11 +60,22 @@ void addressIncomingArgumentsThroughStackPointer(Inst& inst)
     }
 }
 
+std::optional<FrameCoverage> findReasonOutsideCodeToCoverEveryPath(Code& code)
+{
+    if (!code.policy().frame.shrinkWraps)
+        return FrameCoverage::EveryPathBecauseShrinkWrappingIsOff;
+    if (code.proc().numEntrypoints() > 1)
+        return FrameCoverage::EveryPathBecauseOfSeveralEntrypoints;
+    return std::nullopt;
+}
+
 class FrameShrinkWrapper {
 public:
     FrameShrinkWrapper(Code&, const StackColoring&);
     FramePlacement run();
-    std::optional<BitVector> findRegionBeforeAllocation(const BitVector& crowdedBlocks);
+    std::optional<BitVector> findRegionBeforeAllocation();
+    std::optional<BitVector> growRegionBeforeAllocation(const BitVector& region, const BitVector& crowdedBlocks);
+    std::optional<BitVector> findRegionFromAllLocalNeeds(const BitVector& crowdedBlocks);
 
 private:
     struct SplitEdge {
@@ -82,13 +85,19 @@ private:
 
     bool isInRegion(BasicBlock* block) const { return m_isInRegion.quickGet(block->index()); }
     bool addToRegion(BasicBlock* block) { return !m_isInRegion.quickSet(block->index()); }
+    bool hasRead(BasicBlock* block) const { return m_hasRead.quickGet(block->index()); }
     void findLocalNeeds();
+    void findLocalNeedsOf(BasicBlock*);
+    bool findPathWithoutLocalNeeds();
+    std::optional<BitVector> closeRegionBeforeAllocation();
     uint64_t computeFrameSizeBound() const;
     std::optional<FrameCoverage> findReasonToCoverEveryPath(bool isFrameLarge) const;
     void coverEveryPath();
     void addBlocksWithLiveCalleeSaves(const RegLiveness&);
     bool canSlotAddressEscape(BasicBlock*, uint64_t registersLiveAtTail) const;
     void addBlocksAfterAddressEscapes(const RegLiveness&);
+    void findLikelyPaths();
+    bool continuesLikelyPath(BasicBlock* from, const FrequentedBlock& edge) const;
     bool closeOverLikelyPaths();
     bool closeOverCertainPaths();
     bool growOverLiveScratchRegisters(const RegLiveness&);
@@ -108,6 +117,8 @@ private:
     BlockInsertionSet m_blockInsertionSet;
     InsertionSet m_insertionSet;
     BitVector m_isInRegion;
+    BitVector m_hasRead;
+    BitVector m_isOnLikelyPath;
     BitVector m_addressesIncomingArguments;
     BitVector m_takesSlotAddress;
     BitVector m_setsUpFrameAtHead;
@@ -123,6 +134,8 @@ FrameShrinkWrapper::FrameShrinkWrapper(Code& code, const StackColoring& coloring
     , m_blockInsertionSet(code)
     , m_insertionSet(code)
     , m_isInRegion(code.size())
+    , m_hasRead(code.size())
+    , m_isOnLikelyPath(code.size())
     , m_addressesIncomingArguments(code.size())
     , m_takesSlotAddress(code.size())
     , m_setsUpFrameAtHead(code.size())
@@ -175,10 +188,29 @@ FramePlacement FrameShrinkWrapper::run()
     return WTF::move(m_placement);
 }
 
-std::optional<BitVector> FrameShrinkWrapper::findRegionBeforeAllocation(const BitVector& crowdedBlocks)
+std::optional<BitVector> FrameShrinkWrapper::findRegionBeforeAllocation()
+{
+    if (!findPathWithoutLocalNeeds())
+        return std::nullopt;
+    return findRegionFromAllLocalNeeds({ });
+}
+
+std::optional<BitVector> FrameShrinkWrapper::findRegionFromAllLocalNeeds(const BitVector& crowdedBlocks)
 {
     findLocalNeeds();
     m_isInRegion.merge(crowdedBlocks);
+    return closeRegionBeforeAllocation();
+}
+
+std::optional<BitVector> FrameShrinkWrapper::growRegionBeforeAllocation(const BitVector& region, const BitVector& crowdedBlocks)
+{
+    m_isInRegion.merge(region);
+    m_isInRegion.merge(crowdedBlocks);
+    return closeRegionBeforeAllocation();
+}
+
+std::optional<BitVector> FrameShrinkWrapper::closeRegionBeforeAllocation()
+{
     if (findReasonToCoverEveryPath(false))
         return std::nullopt;
     closeRegion(nullptr);
@@ -187,46 +219,77 @@ std::optional<BitVector> FrameShrinkWrapper::findRegionBeforeAllocation(const Bi
     return WTF::move(m_isInRegion);
 }
 
+// Where every path from the entry block to an exit meets a local need, closeOverCertainPaths() adds the entry block. Only the blocks in front of those needs are read.
+bool FrameShrinkWrapper::findPathWithoutLocalNeeds()
+{
+    Vector<BasicBlock*, 16> worklist;
+    worklist.append(m_code[0]);
+    while (!worklist.isEmpty()) {
+        BasicBlock* block = worklist.takeLast();
+        if (isInRegion(block) || hasRead(block))
+            continue;
+        findLocalNeedsOf(block);
+        if (isInRegion(block))
+            continue;
+        if (!block->numSuccessors())
+            return true;
+        for (BasicBlock* successor : block->successorBlocks())
+            worklist.append(successor);
+    }
+    return false;
+}
+
 void FrameShrinkWrapper::findLocalNeeds()
 {
-    const unsigned conservativeCallArgBytes = m_code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP);
     for (BasicBlock* block : m_code) {
-        for (Inst& inst : *block) {
-            const bool isPatch = inst.kind.opcode == Patch;
-            bool namesLockedSlot = false;
-            for (Arg& arg : inst.args()) {
-                if (arg.isCallArg()) {
-                    ASSERT(arg.offset() >= 0);
-                    m_code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
-                } else if (arg.isStack())
-                    namesLockedSlot |= arg.stackSlot()->isLocked();
-                else if (isPatch && isIncomingArgumentAddress(arg))
-                    m_addressesIncomingArguments.quickSet(block->index());
-            }
-            if (namesLockedSlot && takesSlotAddress(inst))
-                m_takesSlotAddress.quickSet(block->index());
+        if (!hasRead(block))
+            findLocalNeedsOf(block);
+    }
+}
 
-            FrameNeeds needs = frameNeedsOf(inst, m_savedCalleeSaves);
-            if (needs.needsFrame || needs.namesStackPointer)
-                addToRegion(block);
-            if (needs.addressesIncomingArguments) {
+void FrameShrinkWrapper::findLocalNeedsOf(BasicBlock* block)
+{
+    m_hasRead.quickSet(block->index());
+    const unsigned conservativeCallArgBytes = m_code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP);
+    for (Inst& inst : *block) {
+        const bool isPatch = inst.kind.opcode == Patch;
+        bool namesLockedSlot = false;
+        for (Arg& arg : inst.args()) {
+            if (arg.isCallArg()) {
+                ASSERT(arg.offset() >= 0);
+                m_code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
+            } else if (arg.isStack())
+                namesLockedSlot |= arg.stackSlot()->isLocked();
+            else if (isPatch && isIncomingArgumentAddress(arg))
                 m_addressesIncomingArguments.quickSet(block->index());
-                Inst copy = inst;
-                addressIncomingArgumentsThroughStackPointer(copy);
-                if (!copy.isValidForm(m_code.targetFeatures()))
-                    addToRegion(block);
-            }
         }
+        if (namesLockedSlot && takesSlotAddress(inst))
+            m_takesSlotAddress.quickSet(block->index());
 
-        if (block->at(0).clobbersAtBlockEntry()) {
-            for (BasicBlock* predecessor : block->predecessors())
-                addToRegion(predecessor);
+        FrameNeeds needs = frameNeedsOf(inst, m_savedCalleeSaves);
+        if (needs.needsFrame || needs.namesStackPointer)
+            addToRegion(block);
+        else if (isPatch && inst.origin) {
+            if (auto* stackmap = inst.origin->as<StackmapValue>(); stackmap && stackmap->followsFrameSetup())
+                addToRegion(block);
         }
-        Inst& terminal = block->last();
-        if (terminal.kind.opcode == Patch && terminal.needsFrame()) {
-            for (BasicBlock* successor : block->successorBlocks())
-                addToRegion(successor);
+        if (needs.addressesIncomingArguments) {
+            m_addressesIncomingArguments.quickSet(block->index());
+            Inst copy = inst;
+            addressIncomingArgumentsThroughStackPointer(copy);
+            if (!copy.isValidForm(m_code.targetFeatures()))
+                addToRegion(block);
         }
+    }
+
+    if (block->at(0).clobbersAtBlockEntry()) {
+        for (BasicBlock* predecessor : block->predecessors())
+            addToRegion(predecessor);
+    }
+    Inst& terminal = block->last();
+    if (terminal.kind.opcode == Patch && terminal.needsFrame()) {
+        for (BasicBlock* successor : block->successorBlocks())
+            addToRegion(successor);
     }
 }
 
@@ -262,10 +325,8 @@ uint64_t FrameShrinkWrapper::computeFrameSizeBound() const
 
 std::optional<FrameCoverage> FrameShrinkWrapper::findReasonToCoverEveryPath(bool isFrameLarge) const
 {
-    if (!m_code.policy().frame.shrinkWraps)
-        return FrameCoverage::EveryPathBecauseShrinkWrappingIsOff;
-    if (m_code.proc().numEntrypoints() > 1)
-        return FrameCoverage::EveryPathBecauseOfSeveralEntrypoints;
+    if (std::optional<FrameCoverage> reason = findReasonOutsideCodeToCoverEveryPath(m_code))
+        return reason;
     if (!m_isInRegion.isEmpty() && isFrameLarge)
         return FrameCoverage::EveryPathBecauseFrameIsLarge;
     if (isInRegion(m_code[0]))
@@ -343,6 +404,28 @@ void FrameShrinkWrapper::addBlocksAfterAddressEscapes(const RegLiveness& livenes
     }
 }
 
+void FrameShrinkWrapper::findLikelyPaths()
+{
+    Vector<BasicBlock*, 16> worklist;
+    for (BasicBlock* block : m_code) {
+        if (block == m_code[0] || m_code.isEntrypoint(block) || !block->numPredecessors()) {
+            m_isOnLikelyPath.quickSet(block->index());
+            worklist.append(block);
+        }
+    }
+    while (!worklist.isEmpty()) {
+        for (const FrequentedBlock& edge : worklist.takeLast()->successors()) {
+            if (edge.isLikely() && !m_isOnLikelyPath.quickSet(edge.block()->index()))
+                worklist.append(edge.block());
+        }
+    }
+}
+
+bool FrameShrinkWrapper::continuesLikelyPath(BasicBlock* from, const FrequentedBlock& edge) const
+{
+    return edge.isLikely() && (m_isOnLikelyPath.quickGet(from->index()) || !m_isOnLikelyPath.quickGet(edge.block()->index()));
+}
+
 bool FrameShrinkWrapper::closeOverLikelyPaths()
 {
     Vector<BasicBlock*, 16> worklist;
@@ -354,18 +437,27 @@ bool FrameShrinkWrapper::closeOverLikelyPaths()
     BitVector isReachedFromRegion = m_isInRegion;
     addRegionToWorklist();
     while (!worklist.isEmpty()) {
-        for (const FrequentedBlock& edge : worklist.takeLast()->successors()) {
-            if (!edge.isRare() && !isReachedFromRegion.quickSet(edge.block()->index()))
+        BasicBlock* block = worklist.takeLast();
+        for (const FrequentedBlock& edge : block->successors()) {
+            if (continuesLikelyPath(block, edge) && !isReachedFromRegion.quickSet(edge.block()->index()))
                 worklist.append(edge.block());
         }
     }
+
+    auto hasEdgeOnLikelyPath = [&](BasicBlock* from, BasicBlock* to) {
+        for (const FrequentedBlock& edge : from->successors()) {
+            if (edge.block() == to && continuesLikelyPath(from, edge))
+                return true;
+        }
+        return false;
+    };
 
     BitVector reachesRegion = m_isInRegion;
     addRegionToWorklist();
     while (!worklist.isEmpty()) {
         BasicBlock* block = worklist.takeLast();
         for (BasicBlock* predecessor : block->predecessors()) {
-            if (reachesRegion.quickGet(predecessor->index()) || !hasNonRareEdge(predecessor, block))
+            if (reachesRegion.quickGet(predecessor->index()) || !hasEdgeOnLikelyPath(predecessor, block))
                 continue;
             reachesRegion.quickSet(predecessor->index());
             worklist.append(predecessor);
@@ -439,6 +531,7 @@ bool FrameShrinkWrapper::growOverLiveScratchRegisters(const RegLiveness& livenes
 
 void FrameShrinkWrapper::closeRegion(const RegLiveness* liveness)
 {
+    findLikelyPaths();
     bool changed;
     do {
         changed = closeOverLikelyPaths();
@@ -581,7 +674,9 @@ void FrameShrinkWrapper::insertTeardowns()
 {
     for (size_t blockIndex : m_isInRegion) {
         BasicBlock* block = m_code[blockIndex];
-        if (!isReturn(block->last().kind.opcode)) {
+        // A patch that ends the function and runs without a frame: a tail call.
+        bool leavesFunction = isReturn(block->last().kind.opcode) || (block->last().kind.opcode == Patch && !block->numSuccessors() && !block->last().needsFrame());
+        if (!leavesFunction) {
             insertOnOutgoingEdges(block);
             continue;
         }
@@ -593,11 +688,26 @@ void FrameShrinkWrapper::insertTeardowns()
 
 } // anonymous namespace
 
-std::optional<BitVector> findFrameRegionBeforeAllocation(Code& code, const BitVector& crowdedBlocks)
+std::optional<BitVector> findFrameRegionBeforeAllocation(Code& code)
+{
+    ASSERT(code.policy().frame.emitsFrame);
+    if (findReasonOutsideCodeToCoverEveryPath(code))
+        return std::nullopt;
+    StackColoring noSpills;
+    std::optional<BitVector> region = FrameShrinkWrapper(code, noSpills).findRegionBeforeAllocation();
+    if (shouldValidateIRAtEachPhase(code.proc()))
+        RELEASE_ASSERT(region == FrameShrinkWrapper(code, noSpills).findRegionFromAllLocalNeeds({ }));
+    return region;
+}
+
+std::optional<BitVector> growFrameRegionBeforeAllocation(Code& code, const BitVector& region, const BitVector& crowdedBlocks)
 {
     ASSERT(code.policy().frame.emitsFrame);
     StackColoring noSpills;
-    return FrameShrinkWrapper(code, noSpills).findRegionBeforeAllocation(crowdedBlocks);
+    std::optional<BitVector> grownRegion = FrameShrinkWrapper(code, noSpills).growRegionBeforeAllocation(region, crowdedBlocks);
+    if (shouldValidateIRAtEachPhase(code.proc()))
+        RELEASE_ASSERT(grownRegion == FrameShrinkWrapper(code, noSpills).findRegionFromAllLocalNeeds(crowdedBlocks));
+    return grownRegion;
 }
 
 FramePlacement shrinkWrapFrame(Code& code, const StackColoring& coloring)

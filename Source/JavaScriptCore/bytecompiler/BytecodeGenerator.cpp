@@ -39,6 +39,7 @@
 #include "BytecodeOptimizer.h"
 #include "BytecodeUseDef.h"
 #include "DefinePropertyAttributes.h"
+#include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSAsyncGenerator.h"
 #include "JSBigInt.h"
@@ -582,32 +583,14 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
         break;
     case ConstructorKind::Naked:
         if (!isConstructor()) {
-            String constructorName = functionNode->ident().string();
-            if (!constructorName || constructorName.isEmpty())
-                emitThrowTypeError("Cannot call a constructor without |new|"_s);
-            else {
-                auto errorMessageStr = tryMakeString("Cannot call a constructor "_s, constructorName, " without |new|"_s);
-                if (!errorMessageStr)
-                    emitThrowTypeError("Cannot call a constructor without |new|"_s);
-                else
-                    emitThrowTypeError(Identifier::fromString(m_vm, errorMessageStr));
-            }
+            emitThrowTypeError(Identifier::fromString(m_vm, constructorCalledWithoutNewErrorMessage(constructorKind(), functionNode->ident().string())));
             return;
         }
         break;
     case ConstructorKind::Base:
     case ConstructorKind::Extends:
         if (!isConstructor()) {
-            String constructorName = functionNode->ident().string();
-            if (!constructorName || constructorName.isEmpty())
-                emitThrowTypeError("Cannot call a class constructor without |new|"_s);
-            else {
-                auto errorMessageStr = tryMakeString("Cannot call a class constructor "_s, constructorName, " without |new|"_s);
-                if (!errorMessageStr)
-                    emitThrowTypeError("Cannot call a class constructor without |new|"_s);
-                else
-                    emitThrowTypeError(Identifier::fromString(m_vm, errorMessageStr));
-            }
+            emitThrowTypeError(Identifier::fromString(m_vm, constructorCalledWithoutNewErrorMessage(constructorKind(), functionNode->ident().string())));
             return;
         }
         break;
@@ -3186,7 +3169,7 @@ RegisterID* BytecodeGenerator::emitHasPrivateBrand(RegisterID* dst, RegisterID* 
     if (isStatic) {
         Ref<Label> isObjectLabel = newLabel();
         emitJumpIfTrue(emitIsObject(newTemporary(), base), isObjectLabel.get());
-        emitThrowTypeError("Cannot access static private method or accessor of a non-Object"_s);
+        emitThrowTypeError(StaticPrivateBrandOfNonObjectError);
         emitLabel(isObjectLabel.get());
         emitEqualityOp<OpStricteq>(dst, base, brand);
     } else
@@ -3200,7 +3183,7 @@ void BytecodeGenerator::emitCheckPrivateBrand(RegisterID* base, RegisterID* bran
         Ref<Label> brandCheckOkLabel = newLabel();
         emitTDZCheck(brand);
         emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), base, brand), brandCheckOkLabel.get());
-        emitThrowTypeError("Cannot access static private method or accessor"_s);
+        emitThrowTypeError(StaticPrivateBrandError);
         emitLabel(brandCheckOkLabel.get());
         return;
     
@@ -4149,16 +4132,7 @@ RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)
                 emitJumpIfTrue(emitIsUndefined(newTemporary(), src), isUndefinedLabel.get());
 
                 ASSERT(m_scopeNode->isFunctionNode());
-                String className = static_cast<FunctionNode*>(m_scopeNode)->ident().string();
-                if (!className || className.isEmpty())
-                    emitThrowTypeError("Cannot return a non-object type in the constructor of a derived class."_s);
-                else {
-                    auto errorMessageStr = tryMakeString("Cannot return a non-object type in the constructor of a derived class "_s, className, "."_s);
-                    if (!errorMessageStr) [[unlikely]]
-                        emitThrowTypeError("Cannot return a non-object type in the constructor of a derived class."_s);
-                    else
-                        emitThrowTypeError(Identifier::fromString(m_vm, errorMessageStr));
-                }
+                emitThrowTypeError(Identifier::fromString(m_vm, derivedConstructorResultErrorMessage(static_cast<FunctionNode*>(m_scopeNode)->ident().string())));
 
                 emitLabel(isUndefinedLabel.get());
             }
@@ -5151,7 +5125,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
 
                 Ref<Label> typeIsObject = newLabel();
                 emitJumpIfTrue(emitIsObject(newTemporary(), value.get()), typeIsObject.get());
-                emitThrowTypeError("Iterator result interface is not an object."_s);
+                emitThrowTypeError(IteratorResultNotObjectError);
                 emitLabel(typeIsObject.get());
 
                 emitJumpIfTrue(emitGetById(newTemporary(), value.get(), propertyNames().done), loopDone.get());
@@ -5469,14 +5443,10 @@ void BytecodeGenerator::emitRequireObjectCoercibleForDestructuring(RegisterID* v
     Ref<Label> target = newLabel();
     OpJnundefinedOrNull::emit(this, value, target->bind(this));
 
-    if (propertyName && !propertyName->isNull()) {
-        auto errorMessageStr = tryMakeString("Cannot destructure property '"_s, propertyName->string(), "' from null or undefined value"_s);
-        if (!errorMessageStr) [[unlikely]]
-            emitThrowTypeError("Cannot destructure null or undefined value"_s);
-        else
-            emitThrowTypeError(Identifier::fromString(m_vm, errorMessageStr));
-    } else
-        emitThrowTypeError("Cannot destructure null or undefined value"_s);
+    if (propertyName && !propertyName->isNull())
+        emitThrowTypeError(Identifier::fromString(m_vm, destructureNullishErrorMessage(*propertyName)));
+    else
+        emitThrowTypeError(DestructureNullishError);
 
     emitLabel(target.get());
 }
@@ -5628,7 +5598,7 @@ RegisterID* BytecodeGenerator::emitIteratorGenericNext(RegisterID* dst, Register
     {
         Ref<Label> typeIsObject = newLabel();
         emitJumpIfTrue(emitIsObject(newTemporary(), dst), typeIsObject.get());
-        emitThrowTypeError("Iterator result interface is not an object."_s);
+        emitThrowTypeError(IteratorResultNotObjectError);
         emitLabel(typeIsObject.get());
     }
     return dst;
@@ -5661,7 +5631,7 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
         emitAwait(value.get(), value.get(), node->divot());
 
     emitJumpIfTrue(emitIsObject(newTemporary(), value.get()), done.get());
-    emitThrowTypeError("Iterator result interface is not an object."_s);
+    emitThrowTypeError(IteratorResultNotObjectError);
     emitLabel(done.get());
 }
 
@@ -5726,7 +5696,7 @@ RegisterID* BytecodeGenerator::emitDelegateYield(RegisterID* argument, Throwable
 
                     emitIteratorGenericClose(iterator.get(), node, emitAwaitInClose);
 
-                    emitThrowTypeError("The iterator, to which yield* delegated iteration, does not have a 'throw' method."_s);
+                    emitThrowTypeError(YieldStarIteratorWithoutThrowError);
 
                     emitLabel(throwMethodFound.get());
                     CallArguments throwArguments(*this, nullptr, 1);
@@ -5761,7 +5731,7 @@ RegisterID* BytecodeGenerator::emitDelegateYield(RegisterID* argument, Throwable
 
                     Ref<Label> returnIteratorResultIsObject = newLabel();
                     emitJumpIfTrue(emitIsObject(newTemporary(), value.get()), returnIteratorResultIsObject.get());
-                    emitThrowTypeError("Iterator result interface is not an object."_s);
+                    emitThrowTypeError(IteratorResultNotObjectError);
 
                     emitLabel(returnIteratorResultIsObject.get());
 
@@ -5797,7 +5767,7 @@ RegisterID* BytecodeGenerator::emitDelegateYield(RegisterID* argument, Throwable
 
             Ref<Label> iteratorValueIsObject = newLabel();
             emitJumpIfTrue(emitIsObject(newTemporary(), value.get()), iteratorValueIsObject.get());
-            emitThrowTypeError("Iterator result interface is not an object."_s);
+            emitThrowTypeError(IteratorResultNotObjectError);
             emitLabel(iteratorValueIsObject.get());
 
             emitJumpIfTrue(emitGetById(newTemporary(), value.get(), propertyNames().done), loopDone.get());

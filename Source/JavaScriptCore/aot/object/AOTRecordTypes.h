@@ -57,6 +57,24 @@ using Typed::TypeSiteKind;
 template<typename T>
 inline constexpr bool isImageRecord = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T> && std::has_unique_object_representations_v<T>;
 
+// A number under 2^24 in a table of the image.
+struct Number24 {
+    static constexpr uint32_t max = (1u << 24) - 1;
+
+    constexpr Number24() = default;
+    explicit constexpr Number24(uint32_t number)
+        : bytes { static_cast<uint8_t>(number), static_cast<uint8_t>(number >> 8), static_cast<uint8_t>(number >> 16) }
+    {
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(number <= max);
+    }
+
+    constexpr operator uint32_t() const { return bytes[0] | bytes[1] << 8 | bytes[2] << 16; }
+
+    uint8_t bytes[3] { };
+};
+static_assert(sizeof(Number24) == 3 && alignof(Number24) == 1 && isImageRecord<Number24>);
+static_assert(Number24(0xabcdef) == 0xabcdefu && Number24(Number24::max) == Number24::max && !Number24());
+
 static_assert(sizeof(FunctionID) == sizeof(uint32_t));
 static_assert(sizeof(StringID) == sizeof(uint32_t));
 static_assert(sizeof(ModuleID) == sizeof(uint32_t));

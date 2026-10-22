@@ -60,18 +60,43 @@ void FunctionVerifier::verifyDominance()
 
 void FunctionVerifier::verifyUsesOf(ValueID definition)
 {
+    const UseLists& useLists = analyses().useLists();
+    std::span<const Use> uses = useLists.usesOf(definition);
+    if (uses.empty())
+        return;
+
+    // What FunctionAnalyses::dominates() asks about the definition is the same for all its uses.
+    const CFG& cfg = analyses().cfg();
+    ValueLocation location = useLists.locationOf(definition);
+    auto dominates = [&](ProgramPoint point) {
+        if (!cfg.isReachable(point.block))
+            return false;
+        switch (location.placement) {
+        case ValuePlacement::Detached:
+            return false;
+        case ValuePlacement::Parameter:
+            return location.block == point.block || analyses().dominators().dominates(location.block, point.block);
+        case ValuePlacement::InBlock:
+            if (location.block == point.block)
+                return location.index < point.index;
+            return analyses().dominators().terminatorDominates(location.block, point.block);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+
     bool isParameter = m_function.at(definition).opcode == Opcode::Parameter;
-    for (const Use& use : analyses().useLists().usesOf(definition)) {
+    bool definitionHasResult = hasResult(m_function, definition);
+    for (const Use& use : uses) {
         if (use.kind == Use::Kind::HandlerArgument)
             continue;
 
         ValueID reportedValue = use.kind == Use::Kind::Operand ? use.user : definition;
-        if (!analyses().dominates(definition, use)) {
+        if (!dominates(useLists.pointOf(use))) {
             fail(InternalErrorKind::UseNotDominated, use.block, reportedValue, definition.index());
             return;
         }
         // Only a listed value dominates a use, and the structure step has checked the opcode of every listed value.
-        if (!hasResult(m_function, definition)) {
+        if (!definitionHasResult) {
             fail(InternalErrorKind::OperandTypeMismatch, use.block, reportedValue, definition.index());
             return;
         }
@@ -104,6 +129,8 @@ void FunctionVerifier::verifyHandlerArguments(BlockID block, const Block& conten
 void FunctionVerifier::verifyLoopMarks()
 {
     const CFG& cfg = analyses().cfg();
+    if (!cfg.hasCycle())
+        return;
     const BlockCycles& cycles = analyses().blockCycles();
     auto isInCycle = [&](BlockID block) {
         return cycles.isInCycle(block);

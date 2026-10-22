@@ -63,7 +63,6 @@ static Vector<StringComparison> collectStringComparisons(SelectionContext& conte
 {
     const Function& function = context.function();
     FunctionAnalyses& analyses = context.analyses();
-    const UseLists& uses = analyses.useLists();
 
     Vector<StringComparison> comparisons;
     for (Opcode opcode : relationalOpcodes) {
@@ -76,7 +75,7 @@ static Vector<StringComparison> collectStringComparisons(SelectionContext& conte
             ValueID left = analyses.sameObjectThroughCasts(value.leftOperand());
             ValueID right = analyses.sameObjectThroughCasts(value.rightOperand());
             if (left != right)
-                comparisons.append(StringComparison { id, left, right, uses.pointOf(id) });
+                comparisons.append(StringComparison { id, left, right, analyses.useLists().pointOf(id) });
         }
     }
     return comparisons;

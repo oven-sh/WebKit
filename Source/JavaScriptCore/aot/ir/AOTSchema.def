@@ -8,6 +8,7 @@ enum RetainedIn { | engine UnknownMemory Result Operand }
 enum Branches { | engine No May Only }
 enum Access { | engine None Read Store Define Has }
 enum Interpretation { | engine None Allocation Cast Read Store Test List Guards }
+enum ValueFlowEdgeClass { | engine Unsound Allocates Copies TableProves Checks }
 enum BoundTo { | engine Nothing Frame Function Site }
 enum ProgramEvent { | engine None EvaluatesText LoadsModule }
 enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
@@ -18,12 +19,12 @@ enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double Optional
 enum ProofLifetime { | engine Forever Stretch }
 enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
     | engine None(Forever, false) TestedType(Forever, false) Truthiness(Forever, false) Equality(Forever, false) IntegerBound(Forever, false)
-    ExactFunction(Forever, false) CaseValue(Forever, false)
-    Shape(Stretch, true) SlotFilled(Stretch, true) NoExtraProperties(Stretch, true) NotFrozen(Stretch, true) OwnInstance(Stretch, true)
+    ExactFunction(Forever, false) CaseValue(Forever, false) NotNullish(Forever, false)
+    Shape(Stretch, true) SlotFilled(Stretch, true) NoExtraProperties(Stretch, true) NoFieldOutsideSlot(Stretch, true) BirthFieldsFilled(Stretch, true) NotFrozen(Stretch, true) OwnInstance(Stretch, true)
     Pristine(Stretch, true) ArrayStorage(Stretch, true) InBounds(Stretch, true) NotThenable(Stretch, false) MemberUnchanged(Stretch, false)
-    PrototypeLinkUnchanged(Stretch, true) EvaluatedOnce(Stretch, false) KeyOrder(Stretch, true) EpochCurrent(Stretch, false)
+    PrototypeLinkUnchanged(Stretch, true) EvaluatedOnce(Stretch, false) KeyOrder(Stretch, true)
     UnmodifiedGenerator(Stretch, false) EnumeratorCurrent(Stretch, false) PlainData(Stretch, false)
-    SourceOpen(Stretch, false) TextMatches(Stretch, false) RequireEdgeReady(Stretch, false)
+    SourceOpen(Stretch, false) TextMatches(Stretch, false)
 }
 
 enum OperandKind (wants: Representation) {
@@ -37,7 +38,7 @@ enum PayloadKind (isId: Bool, words: UInt32) {
     Type(true, 1) TypeSite(true, 1) EvalScope(true, 1) Data(true, 1) ExpectedResult(true, 1) Builtin(true, 1) Enum(false, 1) Flags(false, 1)
     Bool(false, 1) UInt32(false, 1) Int64(false, 2) Double(false, 2) External(false, 1) Record(false, 0) Variant(false, 0) List(false, 0)
     | engine LayoutSet(true, 1) CalleeSet(true, 1) AccessSite(true, 1) AllocationSite(true, 1) AllocationClass(true, 1) FieldAccess(true, 1) Allocation(true, 1)
-    RegExpRecord(true, 1) SiteCache(true, 1) GuardBit(true, 1) Request(false, 1) StaticsOffset(false, 1) OrderWord(false, 1) Origin(false, 2)
+    RegExpRecord(true, 1) SiteCache(true, 1) GlobalBinding(true, 1) GuardBit(true, 1) Request(false, 1) StaticsOffset(false, 1) OrderWord(false, 1) Origin(false, 2)
     Opcode(false, 1)
 }
 
@@ -59,7 +60,6 @@ heap EnvironmentFields[Layout, Field] observable ordered holdsValues perObject o
 heap ObjectFields[PropertyKey] observable ordered holdsValues perObject oneValuePerLocation
 heap ShapeWords[LayoutSet] observable ordered perObject
 heap OrderWords observable ordered perObject
-heap ShapeEpoch ordered
 heap MemberGuards[Layout] ordered
 heap PrototypeLinks observable ordered holdsValues perObject
 heap NamedProperties[PropertyKey] observable ordered holdsValues perObject oneValuePerLocation
@@ -82,6 +82,7 @@ heap ValidationState
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
 effects Allocates = reads(AllocatorState) writes(AllocatorState) collects
+effects AllocatesWithoutCollecting = reads(AllocatorState) writes(AllocatorState)
 effects UsesRuntime = reads(RuntimeState) writes(RuntimeState)
 effects ResolvesRopes = reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
 effects CreatesString = reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
@@ -113,6 +114,7 @@ column access : Access
 column receiver : Operand
 column stored : Operand
 column interpreted : Interpretation
+column flow : ValueFlowEdgeClass
 column boundTo : BoundTo
 column proves : Proof
 column relies : Proofs

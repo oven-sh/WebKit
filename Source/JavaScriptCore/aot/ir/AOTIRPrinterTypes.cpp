@@ -86,7 +86,7 @@ static bool isPrintedBefore(const StringTable& strings, RegExpLiteralInType a, R
     return a.rawFlags < b.rawFlags;
 }
 
-static bool isDerived(const Program& program, LayoutID id)
+static bool isBuiltinOrNamespaceLayout(const Program& program, LayoutID id)
 {
     if (id.index() >= program.layouts.size())
         return false;
@@ -94,12 +94,12 @@ static bool isDerived(const Program& program, LayoutID id)
     return kind == LayoutKind::BuiltinResult || kind == LayoutKind::ModuleNamespace;
 }
 
-// A parser places the derived layouts after every layout of the text, including those a pass appended after them.
+// A parser places the layouts of built-ins and namespaces after every layout of the text, including those a pass appended after them.
 static void visitInPrintedOrder(const Program& program, std::span<const LayoutID> layouts, NOESCAPE const Invocable<void(LayoutID)> auto& functor)
 {
-    for (bool visitsDerivedLayouts : { false, true }) {
+    for (bool visitsBuiltinAndNamespaceLayouts : { false, true }) {
         for (LayoutID layout : layouts) {
-            if (isDerived(program, layout) == visitsDerivedLayouts)
+            if (isBuiltinOrNamespaceLayout(program, layout) == visitsBuiltinAndNamespaceLayouts)
                 functor(layout);
         }
     }
@@ -339,20 +339,21 @@ void IRPrinter::printObjectParts(const Type& type, CommaPrinter& bar)
         m_out.print(bar);
         printInvalid("layoutset"_s, type.layouts.index());
     } else if (type.layouts) {
-        visitInPrintedOrder(m_program, types.at(type.layouts).members.span(), [&](LayoutID layout) {
+        const LayoutSet& set = types.at(type.layouts);
+        visitInPrintedOrder(m_program, set.members.span(), [&](LayoutID layout) {
             m_out.print(bar);
             print(layout);
         });
+        if (set.hasMembersWithoutLayout)
+            m_out.print(bar, "nolayout"_s);
     }
     if (type.environment) {
         m_out.print(bar, "env "_s);
         print(type.environment);
     }
-    if (printsEngineFields()) {
-        for (FunctionID function : type.functions) {
-            m_out.print(bar);
-            print(function);
-        }
+    for (FunctionID function : type.functions) {
+        m_out.print(bar);
+        print(function);
     }
     for (BuiltinID builtin : type.builtins) {
         m_out.print(bar, "builtin("_s);
@@ -374,7 +375,7 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
     Vector<RegExpLiteralInType, 4> literals;
     if (part.builtinClass == BuiltinClasses::RegExp)
         literals.append(type.regExpLiterals());
-    bool hasEngineParts = part.contentsAreProven || part.arrayStorage != ArrayStorage::Other || !part.provenPristine.isEmpty() || !part.predictedContents.isEmpty() || !literals.isEmpty();
+    bool hasEngineParts = part.contentsAreProven || part.arrayStorage != ArrayStorage::Other || !part.provenPristine.isEmpty() || !literals.isEmpty();
     bool printsEngineParts = printsEngineFields() && hasEngineParts;
     if (!hasKnownContents && !printsEngineParts)
         return;
@@ -384,10 +385,6 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
     for (unsigned index = 0; index < numberOfContents; ++index) {
         m_out.print(comma);
         print(part.contentsAt(index));
-        if (printsEngineParts && part.predictedContentsAt(index) != part.contentsAt(index)) {
-            m_out.print(" ~ "_s);
-            print(part.predictedContentsAt(index));
-        }
     }
     if (printsEngineParts) {
         std::ranges::sort(literals, [&](RegExpLiteralInType a, RegExpLiteralInType b) {
@@ -430,6 +427,8 @@ void IRPrinter::print(LayoutSetID id)
         m_out.print(comma);
         print(member);
     });
+    if (set.hasMembersWithoutLayout)
+        m_out.print(comma, "nolayout"_s);
     if (!set.isComplete)
         m_out.print(comma, ".."_s);
     m_out.print("]"_s);

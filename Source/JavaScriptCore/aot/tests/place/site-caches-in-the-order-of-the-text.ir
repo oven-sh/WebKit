@@ -4,7 +4,7 @@
 # RUN: place site-caches
 # STATISTIC: SiteCachesPlaced = 6
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="library.js" displayPath="library.js" body=f3
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

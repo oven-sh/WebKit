@@ -1,0 +1,33 @@
+# let kept;  function callOnly(f) { f() }   callOnly(function me() { kept = me });  unknown(callOnly)
+# `callOnly` does nothing but call its parameter. The function that is passed takes its own closure as the callee and stores it into a variable: the closure is kept, not only what it has captured.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK-NEXT: p0: anything
+# CHECK: f2
+# CHECK-NEXT: p0: stored-in-variable
+# RUN(SITES): fates-at-calls
+# SITES: f0 v2 Call operand 2: stored-in-variable+called
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="unknown" [isFreeName]
+    v5 = Call v4, -, v0
+    Return
+}
+function f1 name="callOnly" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsCalled]}] handed=[{source=0 call=1 argument=0}]} {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return
+}
+function f2 name="me" module=m0 flags=[TakesCallee] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsStoredInVariable]}]} {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}

@@ -1,8 +1,8 @@
 # The order of execution is computed from the stamps: a variable that its module stores before anything that reads it can run is stored before every read, and its type loses the dead zone.
 # A function that is called before the store reads the dead zone
 # RUN: valueflow-apply
-# CHECK: variable g0 name="early" {{*}}declared={type=int written=anything|absent} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
-# CHECK: variable g1 name="late" {{*}}declared={type=int|absent written=anything|absent} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+# CHECK: variable g0 name="early" {{*}}declared={type=1} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+# CHECK: variable g1 name="late" {{*}}declared={type=1|absent} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

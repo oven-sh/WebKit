@@ -28,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static bool canHoldFramePointers(const Value& cell)
 {
-    return hasFrameStorage(cell) && cell.storage() == AllocationStorage::Frame;
+    return hasFrameStorage(cell) && cell.storage() == AllocationStorage::Frame && !arrayAllocationsWithStorage.contains(cell.opcode);
 }
 
 namespace {
@@ -45,12 +45,14 @@ public:
 private:
     void verifyOperands(BlockID);
     void verifyOperand(BlockID, ValueID user, uint32_t operandIndex);
+    void verifyArrayOperand(BlockID, ValueID user, uint32_t operandIndex);
     void verifyRetainedOperand(BlockID, ValueID user, uint32_t operandIndex, RetainedIn);
     void verifyTerminator(BlockID);
     void verifyTerminatorOperand(BlockID, const Terminator&, uint32_t operandIndex);
     void verifyReturnCall(BlockID, ValueID call);
     void verifySuspensions(BlockID);
     void verifyCalleeParameter(BlockID, ValueID allocation);
+    void verifyLentClosure(BlockID, ValueID allocation);
     void verifyIterations(ValueID allocation, ValueLocation);
 
     void report(InternalErrorKind, BlockID, ValueID);
@@ -71,6 +73,8 @@ private:
     const Function& m_function;
     Vector<InternalError> m_found;
     const FramePointers& m_pointers;
+    FramePointers m_arrays;
+    std::optional<FramePointers> m_pointersBesideArrays;
     EffectSummaries m_unknownSummaries;
     const CFG& m_cfg;
     const UseLists& m_useLists;
@@ -86,12 +90,15 @@ FramePointerVerifier::FramePointerVerifier(FunctionAnalyses& analyses, const Fra
     , m_id(analyses.context().id)
     , m_function(analyses.function())
     , m_pointers(pointers)
+    , m_arrays(m_program, m_function, FrameCells::Arrays)
     , m_cfg(analyses.cfg())
     , m_useLists(analyses.useLists())
     , m_cycles(analyses.blockCycles())
     , m_liveness(m_function, m_cfg, m_useLists, livenessOptions)
     , m_identities(analyses.identities())
 {
+    if (!m_arrays.isEmpty())
+        m_pointersBesideArrays.emplace(m_program, m_function, FrameCells::AllButArrays);
 }
 
 Vector<InternalError> FramePointerVerifier::run()
@@ -107,6 +114,7 @@ Vector<InternalError> FramePointerVerifier::run()
         if (!isReachable)
             continue;
         verifyCalleeParameter(location.block, allocation);
+        verifyLentClosure(location.block, allocation);
         if (m_cycles.isInCycle(location.block))
             verifyIterations(allocation, location);
     }
@@ -125,12 +133,23 @@ OperandUses FramePointerVerifier::argumentUses(FunctionID callee, uint32_t entry
 
 void FramePointerVerifier::verifyOperands(BlockID block)
 {
+    const FramePointers& otherCells = m_pointersBesideArrays ? *m_pointersBesideArrays : m_pointers;
     for (ValueID user : m_function.at(block).values) {
         m_function.at(user).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            if (m_pointers.contains(operand))
+            if (!m_arrays.isEmpty() && m_arrays.contains(operand))
+                verifyArrayOperand(block, user, operandIndex);
+            if (otherCells.contains(operand))
                 verifyOperand(block, user, operandIndex);
         });
     }
+}
+
+void FramePointerVerifier::verifyArrayOperand(BlockID block, ValueID userID, uint32_t operandIndex)
+{
+    const Value& user = m_function.at(userID);
+    if (mayBeGivenFrameArray(m_program, m_flow, m_function, user, operandIndex))
+        return;
+    report(effectRuleOf(user.opcode) == EffectRule::Call ? InternalErrorKind::CalleeRetainsFramePointer : InternalErrorKind::FramePointerRetained, block, userID);
 }
 
 void FramePointerVerifier::verifyOperand(BlockID block, ValueID userID, uint32_t operandIndex)
@@ -187,7 +206,7 @@ void FramePointerVerifier::verifyRetainedOperand(BlockID block, ValueID userID, 
     case RetainedIn::Result:
         if (!canHoldInitialValue(user, operandIndex))
             report(InternalErrorKind::FramePointerRetained, block, userID);
-        if (user.opcode == Opcode::NewClosure && mayLeakCapture(m_flow, user, *user.variadicOperandIndex(operandIndex)))
+        if (user.opcode == Opcode::NewClosure && mayLeakCapture(m_program, m_flow, user, *user.variadicOperandIndex(operandIndex)))
             report(InternalErrorKind::CalleeRetainsFramePointer, block, userID);
         return;
     case RetainedIn::Operand:
@@ -280,8 +299,8 @@ void FramePointerVerifier::verifyTerminatorOperand(BlockID block, const Terminat
 void FramePointerVerifier::verifyReturnCall(BlockID block, ValueID call)
 {
     bool passesFramePointer = false;
-    m_function.at(call).forEachOperand([&](ValueID operand, uint32_t) {
-        passesFramePointer |= m_pointers.contains(operand);
+    m_function.at(call).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        passesFramePointer |= m_pointers.contains(operand) && !isLentTo(m_function, m_function.at(call), operandIndex);
     });
     if (passesFramePointer)
         report(InternalErrorKind::FramePointerInTailCall, block, call);
@@ -320,6 +339,31 @@ void FramePointerVerifier::verifyCalleeParameter(BlockID block, ValueID allocati
     std::optional<unsigned> calleeParameterIndex = m_program.at(value.function()).calleeParameterIndex();
     if (calleeParameterIndex && argumentUses(value.function(), *calleeParameterIndex).containsAny(usesLeakingFramePointers))
         report(InternalErrorKind::CalleeRetainsFramePointer, block, allocation);
+}
+
+void FramePointerVerifier::verifyLentClosure(BlockID block, ValueID allocation)
+{
+    const Value& closure = m_function.at(allocation);
+    if (closure.opcode != Opcode::NewClosure || !closure.isLent())
+        return;
+
+    Vector<Use, 4> uses;
+    Vector<ValueID, 2> worklist { allocation };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : m_useLists.usesOf(worklist.takeLast())) {
+            if (use.kind == Use::Kind::Operand && isCastOrConversion(m_function.at(use.user).opcode))
+                worklist.append(use.user);
+            else
+                uses.append(use);
+        }
+    }
+    bool isLentLast = std::ranges::all_of(uses, [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        return !isLentTo(m_function, m_function.at(use.user), use.operandIndex) || isLastUse(m_function, m_cfg, m_useLists, allocation, uses.span(), use);
+    });
+    if (!isLentLast || closure.storage() != AllocationStorage::Frame)
+        report(InternalErrorKind::FramePointerRetained, block, allocation);
 }
 
 void FramePointerVerifier::verifyIterations(ValueID allocation, ValueLocation location)

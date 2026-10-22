@@ -195,7 +195,7 @@ static void testCellsGivenToCalleesUnderContinuousCollection()
 
 // function countTrue(item, test) { if (item === undefined) return 0; return (test(item) ? 1 : 0) + countTrue(item.next, test) }
 // print(countTrue(items, item => item.id > 2) + countTrue(items, () => true) * 100)
-// The closures lie in the frame of the module body. SplitFunctionsAtCalls cuts countTrue behind its first test, and the entry part hands `test` to the part that was cut off.
+// The closures lie in the frame of the module body, and countTrue hands `test` on to itself.
 static constexpr ASCIILiteral closureHandedToPartCutOff = R"IR(layout L0 name="Item" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="countTrue" declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -264,7 +264,7 @@ entry module=m0
 static void testClosureHandedToPartCutOff()
 {
     checkOutputOfProgramInShell(closureHandedToPartCutOff, "201\n"_s, { });
-    for (ASCIILiteral option : { "validate"_s, "check=VerifyEachPass"_s, "disable=pass:SplitFunctionsAtCalls"_s, "disable=pass:AllocateInFrames"_s })
+    for (ASCIILiteral option : { "validate"_s, "check=VerifyEachPass"_s, "disable=pass:AllocateInFrames"_s })
         checkOutputOfProgramInShell(closureHandedToPartCutOff, "201\n"_s, { option });
 }
 
@@ -274,26 +274,26 @@ static void testClosureHandedToPartCutOff()
 // await (async () => { await null })()
 // print("after the second await " + record.items)
 // The three closures lie in the frame of the module body, which is saved at the second await and comes back at another address.
-static constexpr ASCIILiteral closuresBetweenTwoAwaits = R"IR(layout L0 fields=[{key="name" declared={type=anything predicted=string} flags=[IsRequired]}, {key="items" declared={type=anything predicted=number} flags=[IsRequired]}]
-layout L1 fields=[{key="then" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
-variable g0 name="record" declared={type=anything|absent predicted=L0} flags=[IsImmutable]
+static constexpr ASCIILiteral closuresBetweenTwoAwaits = R"IR(layout L0 fields=[{key="name" declared={type=string flags=[IsExpected]} flags=[IsRequired]}, {key="items" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+layout L1 fields=[{key="then" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+variable g0 name="record" declared={type=L0|absent flags=[IsExpected]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
 function f0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
   b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function}
+    v1 = Convert v0 declared={type=function flags=[IsExpected]}
     v2 = Data data=d0
-    v3 = Predict v2 predicted=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsExpected]}
     PutModuleVariable v3 variable=g0
     v5 = NewObject layout=L1
     v6 = NewClosure function=f2
-    v7 = ClaimDeclared v6 declared={type=anything predicted=function}
+    v7 = Convert v6 declared={type=function flags=[IsExpected]}
     PropDefine v5, v7 key="then"
     v9 = FinishObject v5
     v10 = Await v9
-    v11 = Predict v1 predicted=function
+    v11 = Convert v1 declared={type=function flags=[IsExpected]}
     v12 = NewClosure function=f3
     v13 = Call v11, -, v12 calleeName="attempt"
     v14 = NewClosure function=f4
@@ -302,13 +302,13 @@ function f0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=
     v17 = Call v11, -, v16 calleeName="attempt"
     v18 = NewClosure function=f6
     v19 = Call v18
-    v20 = Predict v19 predicted=Promise
+    v20 = Convert v19 declared={type=Promise flags=[IsExpected]}
     v21 = Await v20
     v22 = Builtin builtin=GlobalThis
     v23 = PropGet v22 key="print" [isFreeName]
     v24 = String string="after the second await "
     v25 = PropGet v3 key="items"
-    v26 = Predict v25 predicted=number
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
     v27 = Add v24, v26
     v28 = Call v23, -, v27 calleeName="print"
     v29 = Undefined
@@ -347,7 +347,7 @@ function f2 name="then" kind=Method length=1 thisType={type=anything} parameters
     v3 = Undefined
     Return v3
 }
-function f3 kind=Arrow thisType={type=anything} results=[{type=anything predicted=string}] {
+function f3 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():
@@ -355,12 +355,12 @@ function f3 kind=Arrow thisType={type=anything} results=[{type=anything predicte
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="record"
     v3 = PropGet v2 key="name"
-    v4 = Predict v3 predicted=string
+    v4 = Convert v3 declared={type=string flags=[IsExpected]}
     v5 = Add v0, v4
-    v6 = ClaimDeclared v5 declared={type=anything predicted=string}
+    v6 = Convert v5 declared={type=string flags=[IsExpected]}
     Return v6
 }
-function f4 kind=Arrow thisType={type=anything} results=[{type=anything predicted=string}] {
+function f4 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():
@@ -368,35 +368,35 @@ function f4 kind=Arrow thisType={type=anything} results=[{type=anything predicte
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="record"
     v3 = PropGet v2 key="items"
-    v4 = Predict v3 predicted=number
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
     v5 = Add v0, v4
-    v6 = ClaimDeclared v5 declared={type=anything predicted=string}
+    v6 = Convert v5 declared={type=string flags=[IsExpected]}
     Return v6
 }
-function f5 kind=Arrow thisType={type=anything} results=[{type=anything predicted=string}] {
+function f5 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():
     v0 = String string="third "
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Object" [isFreeName]
-    v3 = Predict v2 predicted=builtin(Object)
+    v3 = Convert v2 declared={type=builtin(Object) flags=[IsExpected]}
     v4 = PropGet v3 key="keys"
-    v5 = Predict v4 predicted=function
-    v6 = Predict v5 predicted=builtin(ObjectKeys)
+    v5 = Convert v4 declared={type=function flags=[IsExpected]}
+    v6 = Convert v5 declared={type=builtin(ObjectKeys) flags=[IsExpected]}
     v7 = GetModuleVariable variable=g0
     v8 = CheckInitialized v7 name="record"
     v9 = Call v6, v3, v8 calleeKey="keys" calleeName="keys"
-    v10 = Predict v9 predicted=Array<string>
+    v10 = Convert v9 declared={type=Array<string> flags=[IsExpected]}
     v11 = PropGet v10 key="join"
-    v12 = Predict v11 predicted=function
+    v12 = Convert v11 declared={type=function flags=[IsExpected]}
     v13 = Call v12, v10 calleeKey="join" calleeName="join"
-    v14 = Predict v13 predicted=string
+    v14 = Convert v13 declared={type=string flags=[IsExpected]}
     v15 = Add v0, v14
-    v16 = ClaimDeclared v15 declared={type=anything predicted=string}
+    v16 = Convert v15 declared={type=string flags=[IsExpected]}
     Return v16
 }
-function f6 kind=Arrow flags=[IsAsync] thisType={type=anything} results=[{type=anything predicted=Promise}] {
+function f6 kind=Arrow flags=[IsAsync] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
   b0():
     Jump -> next b1()
   b1():

@@ -23,25 +23,28 @@ constexpr OperationFamily familyOf(Opcode opcode)
     switch (opcode) {
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double:
     case Opcode::String: case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Data: case Opcode::NewClosure:
-    case Opcode::KeyConstant: case Opcode::Unspecified:
+    case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::EmptyArgumentList:
         return OperationFamily::Constant;
     case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::GetEnvironmentField: case Opcode::PutEnvironmentField:
     case Opcode::ScopeHasBinding: case Opcode::Parameter: case Opcode::GetEncodedModuleVariable:
         return OperationFamily::Binding;
-    case Opcode::NewObject: case Opcode::FinishObject: case Opcode::NewArray: case Opcode::AppendElement: case Opcode::AppendSpread:
-    case Opcode::AppendHole: case Opcode::NewRegExp: case Opcode::NewTemplateObject: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError:
-    case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument:
+    case Opcode::NewObject: case Opcode::NewDictionary: case Opcode::FinishObject: case Opcode::NewArray: case Opcode::AppendElement:
+    case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewRegExp: case Opcode::NewTemplateObject: case Opcode::NewRuntimeError:
+    case Opcode::NewSuppressedError: case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument:
+    case Opcode::SetMappedArgument: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject:
         return OperationFamily::Allocation;
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::PropDelete: case Opcode::ElemGet:
     case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::DefineGetter:
-    case Opcode::DefineSetter: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype: case Opcode::CopyDataProperties:
-    case Opcode::GetSuperBase: case Opcode::SuperGet: case Opcode::SuperSet: case Opcode::CopyObject: case Opcode::TryCopyFields:
+    case Opcode::DefineSetter: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::SetFunctionName:
+    case Opcode::SetLiteralPrototype: case Opcode::CopyDataProperties: case Opcode::CopyObject: case Opcode::GetSuperBase: case Opcode::SuperGet:
+    case Opcode::SuperSet: case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding:
         return OperationFamily::Access;
-    case Opcode::Upcast: case Opcode::Claim: case Opcode::ClaimDeclared: case Opcode::ClaimRead: case Opcode::Predict: case Opcode::CheckInitialized:
-    case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest: case Opcode::AssumeType: case Opcode::ReportMismatch:
+    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::Convert: case Opcode::CheckInitialized:
+    case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest: case Opcode::AssumeType: case Opcode::ReadAgain:
+    case Opcode::BorrowedParameter: case Opcode::ReportMismatch:
         return OperationFamily::Cast;
     case Opcode::Call: case Opcode::Construct: case Opcode::CallList: case Opcode::ConstructList: case Opcode::CallDirect: case Opcode::Results:
-    case Opcode::ResultAt: case Opcode::CallGroup:
+    case Opcode::ResultAt: case Opcode::CallTable:
         return OperationFamily::Call;
     case Opcode::CatchValue: case Opcode::CatchException:
         return OperationFamily::Exception;
@@ -58,8 +61,9 @@ constexpr OperationFamily familyOf(Opcode opcode)
         return OperationFamily::ForIn;
     case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield:
         return OperationFamily::Coroutine;
-    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
-    case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::GetRequiredValue:
+    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::EvaluateModule: case Opcode::RecordRequire:
+    case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation:
         return OperationFamily::Module;
     case Opcode::DirectEval:
         return OperationFamily::Eval;
@@ -77,43 +81,51 @@ constexpr OperationFamily familyOf(Opcode opcode)
     case Opcode::NewDoubleArray: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::TryPutByValDirect:
     case Opcode::TryPutIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
         return OperationFamily::ArrayIntrinsic;
-    case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext:
+    case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext: case Opcode::IsCollectionTableFull:
+    case Opcode::ReserveCollectionCapacity:
         return OperationFamily::CollectionIntrinsic;
-    case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
-    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable:
-    case Opcode::IsMemberUnchanged: case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady:
-    case Opcode::HasKeyOrder: case Opcode::IsShapeEpochCurrent: case Opcode::IsClosureOf: case Opcode::IsEnumeratorCurrent:
+    case Opcode::IsClosureOf: case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
+    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
+    case Opcode::IsEnumeratorCurrent:
         return OperationFamily::Guard;
-    case Opcode::GetShapeEpoch: case Opcode::AllGuards:
+    case Opcode::AllGuards:
         return OperationFamily::GuardValue;
-    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         return OperationFamily::SlotAccess;
     case Opcode::PropHasOwn:
         return OperationFamily::OwnAccess;
     case Opcode::GetArrayLength: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement:
-    case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::GetTypedArrayLength:
-    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
+    case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
+    case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetStringLength:
+    case Opcode::GetStringCodeUnit:
         return OperationFamily::ElementAccess;
-    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::ReturnsToResultTest: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal:
-    case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs:
+    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
+    case Opcode::ConstructSuperForwardVarargs:
         return OperationFamily::Arguments;
     case Opcode::GetCapture: case Opcode::MaterializeEnvironment: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
         return OperationFamily::Environment;
     case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity:
     case Opcode::NewSetFromData: case Opcode::NewMapFromData: case Opcode::NewArgumentList: case Opcode::SharedRegExpLiteral:
+    case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin: case Opcode::GetBuiltinValue:
         return OperationFamily::BuiltinCall;
     case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray:
     case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable:
         return OperationFamily::ExpandedIteration;
-    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator:
-    case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield:
-    case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
+    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype: case Opcode::IsGeneratorUnstarted:
+    case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus: case Opcode::IsUnmodifiedAsyncGenerator:
+    case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame:
+    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
         return OperationFamily::SavedFrame;
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderAppendJSON:
     case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard:
     case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
         return OperationFamily::StringBuilder;
-    case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue:
+    case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateLookup: case Opcode::ValidateFirstRun:
+    case Opcode::ValidateSameValue:
         return OperationFamily::RuntimeValidation;
     case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon:
     case Opcode::JSONDecodeBytes: case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance: case Opcode::JSONSkipByte:
@@ -128,8 +140,7 @@ constexpr OperationFamily familyOf(Opcode opcode)
     case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate:
     case Opcode::JSONAppendString: case Opcode::JSONAppendValue:
         return OperationFamily::JSONWrite;
-    case Opcode::PropGetChecked: case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::CallMethod:
-    case Opcode::TryPutByIds:
+    case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::CallMethod: case Opcode::TryPutByIds:
         return OperationFamily::FusedAccess;
     case Opcode::PutSlots:
         return OperationFamily::SlotRun;
@@ -150,6 +161,8 @@ constexpr OperationFamily familyOf(Opcode opcode)
     case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange: case Opcode::StringBuilderAppendBoolean:
     case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
         return OperationFamily::StringBuilderPart;
+    case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts:
+        return OperationFamily::KeyPartsLookup;
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral:
         return OperationFamily::ResolvedCall;
     case Opcode::CallInline:
@@ -178,33 +191,39 @@ constexpr OperationFamily familyOf(TerminatorKind kind)
 constexpr IRFormSet formsOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::AppendSpread: case Opcode::ClaimDeclared: case Opcode::ClaimRead: case Opcode::IteratorOpen: case Opcode::IteratorResume:
-    case Opcode::IteratorClose: case Opcode::CreateIteratorResult: case Opcode::StepArrayIterator:
+    case Opcode::AppendSpread: case Opcode::Convert: case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose:
+    case Opcode::CreateIteratorResult: case Opcode::StepArrayIterator:
         return IRFormSet::between(IRForm::AsRead, IRForm::AsRead);
-    case Opcode::Predict: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield:
+    case Opcode::Check: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::EvaluateModule:
         return IRFormSet::between(IRForm::AsRead, IRForm::Prepared);
-    case Opcode::Unspecified: case Opcode::AssumeType: case Opcode::CallGroup: case Opcode::ShapeTest: case Opcode::IsSlotFilled:
-    case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance:
-    case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable: case Opcode::IsMemberUnchanged:
-    case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady: case Opcode::HasKeyOrder:
-    case Opcode::IsShapeEpochCurrent: case Opcode::IsClosureOf: case Opcode::IsEnumeratorCurrent: case Opcode::GetShapeEpoch: case Opcode::AllGuards:
-    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
-    case Opcode::PropHasOwn: case Opcode::CopyObject: case Opcode::TryCopyFields: case Opcode::GetArrayLength: case Opcode::GetArrayElement:
-    case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::HasSpareArrayCapacity:
-    case Opcode::ReserveArrayCapacity: case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
-    case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::GetArgument: case Opcode::GetRestLength:
-    case Opcode::ReturnsToResultTest: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::AssumeType: case Opcode::ReadAgain: case Opcode::BorrowedParameter:
+    case Opcode::CallTable: case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance:
+    case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent: case Opcode::IsInsideView:
+    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder: case Opcode::IsEnumeratorCurrent: case Opcode::AllGuards:
+    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::MakeBorrowedObject:
+    case Opcode::PropHasOwn: case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetArrayLength:
+    case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements:
+    case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage: case Opcode::GetTypedArrayLength:
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
+    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
     case Opcode::ConstructSuperForwardVarargs: case Opcode::GetCapture: case Opcode::MaterializeEnvironment: case Opcode::MarkEnvironmentEscaped:
     case Opcode::ReleaseEnvironment: case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::ToInt32: case Opcode::ToUint32:
     case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData: case Opcode::NewArgumentList:
-    case Opcode::SharedRegExpLiteral: case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray:
-    case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
-    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame:
-    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
-    case Opcode::HasInPrototypeChain: case Opcode::GetRequiredValue: case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppendBuiltin:
+    case Opcode::SharedRegExpLiteral: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin: case Opcode::GetBuiltinValue:
+    case Opcode::DestructureIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray:
+    case Opcode::CreateAsyncFromSyncIterator: case Opcode::ThrowNotIterable: case Opcode::IsCollectionTableFull:
+    case Opcode::ReserveCollectionCapacity: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning: case Opcode::TakeGeneratorStepStatus:
+    case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult:
+    case Opcode::PromiseAllOfElements: case Opcode::HasInPrototypeChain: case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation:
+    case Opcode::AbandonModuleEvaluation: case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppendBuiltin:
     case Opcode::StringBuilderAppendJSON: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
-    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::ValidateType:
-    case Opcode::ValidateCallee: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen:
+    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::ValidateCallee:
+    case Opcode::ValidateLookup: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue: case Opcode::JSONSourceOpen:
     case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONDecodeBytes:
     case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance: case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace:
     case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue:
@@ -216,18 +235,18 @@ constexpr IRFormSet formsOf(Opcode opcode)
     case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::Substring:
     case Opcode::SubstringOrUndefined: case Opcode::FlattenString: case Opcode::StringRange: case Opcode::StringLastIndexOfLiteral:
         return IRFormSet::between(IRForm::Prepared, IRForm::Placed);
-    case Opcode::GetEncodedModuleVariable: case Opcode::PropGetChecked: case Opcode::PropGetChain: case Opcode::PropGetPair:
-    case Opcode::PropGetAndTest: case Opcode::CallMethod: case Opcode::TryPutByIds: case Opcode::PutSlots: case Opcode::DefineOwnProperty:
-    case Opcode::DefineAccessors: case Opcode::IntegerBound: case Opcode::FulfillFreshPromise: case Opcode::StringOrder:
-    case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral:
-    case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral: case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter:
-    case Opcode::StringRangeCodeUnitOrNaN: case Opcode::StringRangeCodeUnitOrMinusOne: case Opcode::StringRangeCodePointOrUndefined:
-    case Opcode::StringRangeCharacterOrEmpty: case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeEqualsLiteral:
-    case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::StringRangeSubstringOrUndefined:
-    case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber:
-    case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange: case Opcode::StringBuilderAppendBoolean:
-    case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue: case Opcode::ResolveCallTarget: case Opcode::CallResolved:
-    case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
+    case Opcode::GetEncodedModuleVariable: case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::CallMethod:
+    case Opcode::TryPutByIds: case Opcode::PutSlots: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::IntegerBound:
+    case Opcode::FulfillFreshPromise: case Opcode::StringOrder: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral:
+    case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
+    case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringRangeCodeUnitOrNaN:
+    case Opcode::StringRangeCodeUnitOrMinusOne: case Opcode::StringRangeCodePointOrUndefined: case Opcode::StringRangeCharacterOrEmpty:
+    case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber:
+    case Opcode::StringRangeParseInt: case Opcode::StringRangeSubstringOrUndefined: case Opcode::StringBuilderAppendConstant:
+    case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString:
+    case Opcode::StringBuilderAppendStringRange: case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish:
+    case Opcode::StringBuilderAppendValue: case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts: case Opcode::ResolveCallTarget:
+    case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
         return IRFormSet::between(IRForm::Selected, IRForm::Placed);
     case Opcode::StringBuilderAppend:
         return IRFormSet::between(IRForm::Prepared, IRForm::Prepared);
@@ -262,21 +281,25 @@ constexpr ResultRule resultRuleOf(Opcode opcode)
     case Opcode::KeyConstant:
         return ResultRule::Constant;
     case Opcode::GetModuleVariable: case Opcode::GetEnvironmentField: case Opcode::CallDirect: case Opcode::ResultAt: case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList: case Opcode::ModuleNamespace: case Opcode::Unspecified: case Opcode::Parameter:
-    case Opcode::GetEncodedModuleVariable: case Opcode::CallGroup: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined:
-    case Opcode::GetDeferredClosureSlot: case Opcode::ConstructSuperForwardVarargs: case Opcode::GetCapture: case Opcode::CallBuiltin:
-    case Opcode::PropGetChecked: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
+    case Opcode::SuperConstructList: case Opcode::ModuleNamespace: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter:
+    case Opcode::GetEncodedModuleVariable: case Opcode::CallTable: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter:
+    case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined: case Opcode::ConstructSuperForwardVarargs: case Opcode::GetCapture: case Opcode::CallBuiltin:
+    case Opcode::GetBuiltinValue: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
         return ResultRule::Declared;
     case Opcode::PutModuleVariable: case Opcode::PutEnvironmentField: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole:
     case Opcode::SetMappedArgument: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::ElemSet: case Opcode::ElemDefine:
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype:
     case Opcode::CopyDataProperties: case Opcode::SuperSet: case Opcode::LoopHint: case Opcode::DefineMethod: case Opcode::PrivateSet:
-    case Opcode::PrivateDefine: case Opcode::IteratorClose: case Opcode::InitialYield: case Opcode::ResolvePromise: case Opcode::RejectPromise:
-    case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GrowNewArray: case Opcode::ReportMismatch: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd: case Opcode::PutArrayElement: case Opcode::AppendElements: case Opcode::ReserveArrayCapacity:
-    case Opcode::PutTypedArrayElement: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::RequireAttachedTypedArray:
-    case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderRollBack:
-    case Opcode::ValidateType: case Opcode::ValidateCallee: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue:
+    case Opcode::PrivateDefine: case Opcode::IteratorClose: case Opcode::InitialYield: case Opcode::EvaluateModule: case Opcode::RecordRequire:
+    case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GrowNewArray:
+    case Opcode::ReportMismatch: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth:
+    case Opcode::SetGlobalBinding: case Opcode::PutArrayElement: case Opcode::AppendElements: case Opcode::ReserveArrayCapacity:
+    case Opcode::ConvertToDoubleStorage: case Opcode::PutTypedArrayElement: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
+    case Opcode::RequireAttachedTypedArray: case Opcode::ReserveCollectionCapacity: case Opcode::TakeGeneratorPrototype:
+    case Opcode::MarkGeneratorRunning: case Opcode::FinishModuleEvaluation: case Opcode::AbandonModuleEvaluation: case Opcode::StringBuilderAppend:
+    case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderRollBack: case Opcode::ValidateType:
+    case Opcode::ValidateCallee: case Opcode::ValidateLookup: case Opcode::ValidateFirstRun: case Opcode::ValidateSameValue:
     case Opcode::JSONSourceAbandon: case Opcode::ExpectRows: case Opcode::StringBuilderCommit: case Opcode::PutSlots: case Opcode::DefineAccessors:
     case Opcode::FulfillFreshPromise: case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger:
     case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
@@ -289,18 +312,18 @@ constexpr ResultRule resultRuleOf(Opcode opcode)
     case Opcode::NewMapFromData: case Opcode::NewArgumentList: case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
     case Opcode::PromiseAllOfElements: case Opcode::CloneAs:
         return ResultRule::Allocation;
-    case Opcode::GetMappedArgument: case Opcode::PropGet: case Opcode::ElemGet: case Opcode::SuperGet: case Opcode::Call: case Opcode::CallList:
-    case Opcode::CatchValue: case Opcode::PrivateGet: case Opcode::Await: case Opcode::RequireModule: case Opcode::ResolveModule:
-    case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::DirectEval: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis:
-    case Opcode::GetOwnProperty: case Opcode::ResumeGenerator: case Opcode::RequireBuiltinModule: case Opcode::NativeBinding:
-    case Opcode::LinkTimeConstant: case Opcode::GetInternalField: case Opcode::GetContiguousIndex: case Opcode::CollectionTable:
-    case Opcode::GetArrayElement: case Opcode::GetArgument: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
-    case Opcode::EnumeratorGetByVal: case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame: case Opcode::ReturnAsyncResult:
-    case Opcode::GetRequiredValue: case Opcode::JSONDecodeBytes: case Opcode::GetOwnDataProperty: case Opcode::PropGetChain: case Opcode::CallMethod:
-    case Opcode::CallResolved:
+    case Opcode::GetMappedArgument: case Opcode::PropGet: case Opcode::ElemGet: case Opcode::SuperGet: case Opcode::Call: case Opcode::Construct:
+    case Opcode::CallList: case Opcode::ConstructList: case Opcode::CatchValue: case Opcode::PrivateGet: case Opcode::Await:
+    case Opcode::RequireModule: case Opcode::ResolveModule: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::DirectEval:
+    case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ResumeGenerator:
+    case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::GetInternalField:
+    case Opcode::GetContiguousIndex: case Opcode::CollectionTable: case Opcode::GetGlobalBinding: case Opcode::GetArrayElement:
+    case Opcode::GetArgument: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs: case Opcode::EnumeratorGetByVal:
+    case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame: case Opcode::ReturnAsyncResult: case Opcode::JSONDecodeBytes:
+    case Opcode::GetOwnDataProperty: case Opcode::PropGetChain: case Opcode::CallMethod: case Opcode::MapGetByKeyParts: case Opcode::CallResolved:
         return ResultRule::Unknown;
-    case Opcode::Upcast: case Opcode::Claim: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject:
-    case Opcode::AssumeType:
+    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible:
+    case Opcode::RequireObject: case Opcode::AssumeType:
         return ResultRule::Cast;
     case Opcode::Results: case Opcode::IteratorResume: case Opcode::ForInStep: case Opcode::Yield: case Opcode::StepGenerator:
     case Opcode::StepArrayIterator: case Opcode::MapNext: case Opcode::SetNext: case Opcode::DestructureIterable: case Opcode::StepAsyncGenerator:
@@ -339,7 +362,7 @@ constexpr EffectRule effectRuleOf(Opcode opcode)
     case Opcode::ToLength: case Opcode::ValueLooselyEqualsLiteral:
         return EffectRule::Operator;
     case Opcode::Call: case Opcode::Construct: case Opcode::CallList: case Opcode::ConstructList: case Opcode::CallDirect:
-    case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::CallGroup: case Opcode::CallForwardVarargs:
+    case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::CallTable: case Opcode::CallForwardVarargs:
     case Opcode::ConstructSuperForwardVarargs: case Opcode::AwaitCallBySavingFrame: case Opcode::CallResolved:
         return EffectRule::Call;
     case Opcode::CallBuiltin:
@@ -366,35 +389,38 @@ constexpr uint32_t numberOfNamedOperandsOf(Opcode opcode)
     switch (opcode) {
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double:
     case Opcode::String: case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Data: case Opcode::NewClosure:
-    case Opcode::GetModuleVariable: case Opcode::NewRegExp: case Opcode::NewTemplateObject: case Opcode::NewRuntimeError: case Opcode::Strcat:
-    case Opcode::CallDirect: case Opcode::Results: case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint:
+    case Opcode::GetModuleVariable: case Opcode::NewDictionary: case Opcode::NewRegExp: case Opcode::NewTemplateObject: case Opcode::NewRuntimeError:
+    case Opcode::Strcat: case Opcode::CallDirect: case Opcode::Results: case Opcode::CatchValue: case Opcode::CatchException: case Opcode::LoopHint:
     case Opcode::NewClassToken: case Opcode::InitialYield: case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule:
-    case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ThrowNewError: case Opcode::RequireBuiltinModule:
-    case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::NewPromise: case Opcode::KeyConstant: case Opcode::Unspecified:
-    case Opcode::Parameter: case Opcode::GetEncodedModuleVariable: case Opcode::IsMemberUnchanged: case Opcode::IsPrototypeLinkUnchanged:
-    case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady: case Opcode::GetShapeEpoch: case Opcode::AllGuards: case Opcode::GetArgument:
-    case Opcode::GetRestLength: case Opcode::ReturnsToResultTest: case Opcode::CreateRest: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
-    case Opcode::SharedRegExpLiteral: case Opcode::PromiseAllOfElements: case Opcode::StringBuilderBegin: case Opcode::ValidateFirstRun:
+    case Opcode::EvaluateModule: case Opcode::RecordRequire: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ThrowNewError:
+    case Opcode::RequireBuiltinModule: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::NewPromise: case Opcode::KeyConstant:
+    case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter: case Opcode::GetEncodedModuleVariable: case Opcode::CallTable:
+    case Opcode::AreMembersUnchanged: case Opcode::AllGuards: case Opcode::GetGlobalBinding: case Opcode::GetArgument: case Opcode::GetRestLength:
+    case Opcode::CreateRest: case Opcode::NewSetFromData: case Opcode::NewMapFromData: case Opcode::SharedRegExpLiteral:
+    case Opcode::IsBuiltinLocationUnchanged: case Opcode::GetBuiltinValue: case Opcode::AwaitMayContinue: case Opcode::PromiseAllOfElements:
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::StringBuilderBegin: case Opcode::ValidateFirstRun:
     case Opcode::JSONHasStackSpace: case Opcode::JSONObjectBegin:
         return 0;
     case Opcode::PutEnvironmentField: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::NewSuppressedError:
     case Opcode::CreateUnmappedArguments: case Opcode::SetMappedArgument: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::ElemGet:
-    case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype: case Opcode::CopyDataProperties:
+    case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::TryReExportFields: case Opcode::SetFunctionName: case Opcode::CopyDataProperties:
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd:
     case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::Less: case Opcode::LessEq:
-    case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::ClaimRead:
+    case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::NarrowByField:
     case Opcode::Call: case Opcode::Construct: case Opcode::SuperConstruct: case Opcode::PrivateGet: case Opcode::PrivateHas:
     case Opcode::IteratorResume: case Opcode::ImportDynamic: case Opcode::ArraySpeciesCreate: case Opcode::ResumeGenerator:
     case Opcode::StepGenerator: case Opcode::CreateIteratorResult: case Opcode::PutInternalField: case Opcode::ResolvePromise:
     case Opcode::RejectPromise: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
-    case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::IsSlotFilled:
-    case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::IsInBounds: case Opcode::HasKeyOrder:
-    case Opcode::IsShapeEpochCurrent: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
-    case Opcode::TryCopyFields: case Opcode::GetArrayLength: case Opcode::ReserveArrayCapacity: case Opcode::GetTypedArrayElement:
-    case Opcode::GetStringCodeUnit: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs: case Opcode::DivideIntegers:
-    case Opcode::NewArgumentList: case Opcode::CreateAsyncFromSyncIterator: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame:
-    case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain:
-    case Opcode::StringBuilderAppendBuiltin: case Opcode::StringBuilderRollBack: case Opcode::ValidateSameValue: case Opcode::JSONSourceClose:
+    case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::ReadAgain:
+    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::IsInBounds: case Opcode::IsInsideView: case Opcode::HasKeyOrder:
+    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::TryCopyFields: case Opcode::GetArrayLength: case Opcode::ReserveArrayCapacity: case Opcode::GetStringCodeUnit:
+    case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs: case Opcode::DivideIntegers: case Opcode::NewArgumentList:
+    case Opcode::CreateAsyncFromSyncIterator: case Opcode::TakeGeneratorPrototype: case Opcode::AwaitBySavingFrame: case Opcode::YieldBySavingFrame:
+    case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::HasInPrototypeChain: case Opcode::StringBuilderAppendBuiltin:
+    case Opcode::StringBuilderRollBack: case Opcode::ValidateLookup: case Opcode::ValidateSameValue: case Opcode::JSONSourceClose:
     case Opcode::JSONAdvance: case Opcode::JSONKeyRepeats: case Opcode::GetOwnDataProperty: case Opcode::CloneAs: case Opcode::StringBuilderCommit:
     case Opcode::JSONAppendKey: case Opcode::JSONAppendToken: case Opcode::PropGetPair: case Opcode::PutSlots: case Opcode::StringOrder:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
@@ -405,20 +431,21 @@ constexpr uint32_t numberOfNamedOperandsOf(Opcode opcode)
     case Opcode::SuperGet: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewClass: case Opcode::DefineMethod:
     case Opcode::SuperConstructList: case Opcode::PrivateSet: case Opcode::PrivateDefine: case Opcode::ForInStep: case Opcode::DirectEval:
     case Opcode::GetByValWithThis: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::TryPutByValDirect:
-    case Opcode::TryPutIndex: case Opcode::MapNext: case Opcode::SetNext: case Opcode::IsEnumeratorCurrent: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd: case Opcode::GetArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements:
-    case Opcode::PutTypedArrayElement: case Opcode::StringBuilderAppendJSON: case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers:
-    case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate:
-    case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::FulfillFreshPromise: case Opcode::Substring:
-    case Opcode::SubstringOrUndefined: case Opcode::StringRange: case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber:
-    case Opcode::StringRangeSubstringOrUndefined: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral:
+    case Opcode::TryPutIndex: case Opcode::MapNext: case Opcode::SetNext: case Opcode::IsElementPresent: case Opcode::IsEnumeratorCurrent:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::GetArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements:
+    case Opcode::GetTypedArrayElement: case Opcode::StepAsyncGenerator: case Opcode::StringBuilderAppendJSON: case Opcode::JSONObjectFinish:
+    case Opcode::JSONParseExtraMembers: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger: case Opcode::JSONAppendNumber:
+    case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::FulfillFreshPromise:
+    case Opcode::Substring: case Opcode::SubstringOrUndefined: case Opcode::StringRange: case Opcode::StringRangeEqualsLiteral:
+    case Opcode::StringRangeToNumber: case Opcode::StringRangeSubstringOrUndefined: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral:
         return 3;
-    case Opcode::SuperSet: case Opcode::PutArrayElement: case Opcode::JSONAddExtraMember: case Opcode::StringRangeCodeUnitOrNaN:
+    case Opcode::TryDefineLiveBinding: case Opcode::EnumeratorGetByVal: case Opcode::DefineOwnProperty:
+        return 5;
+    case Opcode::SetLiteralPrototype: case Opcode::SuperSet: case Opcode::PutArrayElement: case Opcode::PutTypedArrayElement:
+    case Opcode::ReserveCollectionCapacity: case Opcode::JSONAddExtraMember: case Opcode::StringRangeCodeUnitOrNaN:
     case Opcode::StringRangeCodeUnitOrMinusOne: case Opcode::StringRangeCodePointOrUndefined: case Opcode::StringRangeCharacterOrEmpty:
     case Opcode::StringRangeCharacterOrUndefined: case Opcode::StringRangeParseInt: case Opcode::StringBuilderAppendStringRange:
         return 4;
-    case Opcode::EnumeratorGetByVal: case Opcode::DefineOwnProperty:
-        return 5;
     default:
         return 1;
     }
@@ -441,11 +468,11 @@ constexpr bool hasVariadicOperand(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::NewClosure: case Opcode::NewObject: case Opcode::NewArray: case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments:
-    case Opcode::CopyDataProperties: case Opcode::Strcat: case Opcode::Call: case Opcode::Construct: case Opcode::CallDirect: case Opcode::Results:
-    case Opcode::SuperConstruct: case Opcode::DirectEval: case Opcode::CallGroup: case Opcode::AllGuards: case Opcode::CopyObject:
+    case Opcode::CopyDataProperties: case Opcode::CopyObject: case Opcode::Strcat: case Opcode::Call: case Opcode::Construct: case Opcode::CallDirect:
+    case Opcode::Results: case Opcode::SuperConstruct: case Opcode::DirectEval: case Opcode::CallTable: case Opcode::AllGuards:
     case Opcode::CallBuiltin: case Opcode::AwaitCallBySavingFrame: case Opcode::PromiseAllOfElements: case Opcode::StringBuilderAppend:
     case Opcode::StringBuilderAppendBuiltin: case Opcode::CloneAs: case Opcode::CallMethod: case Opcode::TryPutByIds: case Opcode::PutSlots:
-    case Opcode::DefineAccessors: case Opcode::CallResolved: case Opcode::CallInline:
+    case Opcode::DefineAccessors: case Opcode::MapGetByKeyParts: case Opcode::HasByKeyParts: case Opcode::CallResolved: case Opcode::CallInline:
         return true;
     default:
         return false;
@@ -465,25 +492,26 @@ constexpr bool hasVariadicOperand(TerminatorKind kind)
 constexpr uint16_t declaredFlagsOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::NewClosure: case Opcode::NewObject: case Opcode::PropSet: case Opcode::PropDelete: case Opcode::ElemGet: case Opcode::ElemSet:
-    case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::Strcat: case Opcode::Construct: case Opcode::CallList: case Opcode::LoopHint:
-    case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::IteratorResume: case Opcode::ResolveModule:
-    case Opcode::ResolveDynamic: case Opcode::CreateIteratorResult: case Opcode::CallGroup: case Opcode::HasArrayStorage:
-    case Opcode::HasArrayElement: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetMyArgumentByVal:
-    case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs: case Opcode::ThrowNotIterable: case Opcode::AwaitCallBySavingFrame:
-    case Opcode::StringBuilderFinish: case Opcode::JSONStartsWith: case Opcode::PropGetPair: case Opcode::CallMethod: case Opcode::IntegerBound:
-    case Opcode::CallResolved: case Opcode::CallInline:
-        return 0x1;
-    case Opcode::PutEnvironmentField: case Opcode::AppendElement: case Opcode::SetMappedArgument: case Opcode::PropGet: case Opcode::IteratorOpen:
-    case Opcode::PutInternalField: case Opcode::PutContiguousIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd: case Opcode::GetArrayElement: case Opcode::CallBuiltin: case Opcode::JSONAppendKey: case Opcode::PutSlots:
-    case Opcode::FulfillFreshPromise:
-        return 0x3;
-    case Opcode::Call:
+    case Opcode::NewClosure: case Opcode::NewObject: case Opcode::Call:
         return 0x7;
+    case Opcode::PutEnvironmentField: case Opcode::AppendElement: case Opcode::SetMappedArgument: case Opcode::PropGet:
+    case Opcode::TryReExportFields: case Opcode::IteratorOpen: case Opcode::ResolveDynamic: case Opcode::PutInternalField:
+    case Opcode::PutContiguousIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+    case Opcode::GetGlobalBinding: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::CallBuiltin:
+    case Opcode::JSONAppendKey: case Opcode::PutSlots: case Opcode::FulfillFreshPromise:
+        return 0x3;
+    case Opcode::PropSet: case Opcode::PropDelete: case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete:
+    case Opcode::SetLiteralPrototype: case Opcode::Strcat: case Opcode::Construct: case Opcode::CallList: case Opcode::LoopHint:
+    case Opcode::IteratorResume: case Opcode::Await: case Opcode::EvaluateModule: case Opcode::ResolveModule: case Opcode::IsSlotFilled:
+    case Opcode::HasNoFieldOutsideSlot: case Opcode::HasArrayStorage: case Opcode::IsElementPresent: case Opcode::IsInsideView: case Opcode::GetSlot:
+    case Opcode::GetFlattenedSlot: case Opcode::GetDeferredClosureSlot: case Opcode::SetGlobalBinding: case Opcode::HasArrayElement:
+    case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs: case Opcode::ThrowNotIterable: case Opcode::AwaitBySavingFrame:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::StringBuilderFinish: case Opcode::JSONStartsWith: case Opcode::PropGetPair:
+    case Opcode::CallMethod: case Opcode::TryPutByIds: case Opcode::IntegerBound: case Opcode::CallResolved: case Opcode::CallInline:
+        return 0x1;
     case Opcode::CallDirect:
         return 0x1f;
-    case Opcode::PutArrayElement:
+    case Opcode::GetArrayElement: case Opcode::PutArrayElement:
         return 0xf;
     default:
         return 0x0;
@@ -501,16 +529,20 @@ constexpr uint16_t declaredFlagsOf(TerminatorKind kind)
 constexpr uint16_t wireFlagsOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::PropGet: case Opcode::Call: case Opcode::IteratorOpen: case Opcode::GetArrayElement: case Opcode::PutArrayElement:
+    case Opcode::PropGet: case Opcode::TryReExportFields: case Opcode::Call: case Opcode::IteratorOpen: case Opcode::ResolveDynamic:
+    case Opcode::GetGlobalBinding: case Opcode::PutArrayElement: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
     case Opcode::CallBuiltin: case Opcode::JSONAppendKey:
         return 0x3;
-    case Opcode::PropSet: case Opcode::PropDelete: case Opcode::Construct: case Opcode::IteratorResume: case Opcode::ResolveModule:
-    case Opcode::ResolveDynamic: case Opcode::CallGroup: case Opcode::HasArrayStorage: case Opcode::HasArrayElement:
-    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
-    case Opcode::ConstructSuperForwardVarargs: case Opcode::ThrowNotIterable: case Opcode::AwaitCallBySavingFrame: case Opcode::StringBuilderFinish:
-    case Opcode::JSONStartsWith: case Opcode::PropGetPair: case Opcode::CallMethod: case Opcode::IntegerBound: case Opcode::CallResolved:
-    case Opcode::CallInline:
+    case Opcode::PropSet: case Opcode::PropDelete: case Opcode::Construct: case Opcode::IteratorResume: case Opcode::Await:
+    case Opcode::EvaluateModule: case Opcode::ResolveModule: case Opcode::IsSlotFilled: case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasArrayStorage: case Opcode::IsElementPresent: case Opcode::IsInsideView: case Opcode::GetSlot: case Opcode::GetFlattenedSlot:
+    case Opcode::GetDeferredClosureSlot: case Opcode::SetGlobalBinding: case Opcode::HasArrayElement: case Opcode::GetMyArgumentByVal:
+    case Opcode::CallForwardVarargs: case Opcode::ThrowNotIterable: case Opcode::AwaitBySavingFrame: case Opcode::AwaitCallBySavingFrame:
+    case Opcode::StringBuilderFinish: case Opcode::JSONStartsWith: case Opcode::PropGetPair: case Opcode::CallMethod: case Opcode::TryPutByIds:
+    case Opcode::IntegerBound: case Opcode::CallResolved: case Opcode::CallInline:
         return 0x1;
+    case Opcode::GetArrayElement:
+        return 0xf;
     default:
         return 0x0;
     }

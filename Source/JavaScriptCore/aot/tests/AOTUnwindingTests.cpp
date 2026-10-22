@@ -103,7 +103,7 @@ function f4 name="passes" parameters=[{type=anything}] results=[{type=anything}]
 }
 function f5 name="keepsValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = Claim v1 castType=number
+    v2 = Check v1 castType=number
     v3 = Integer integer=1
     v4 = Add v2, v3
     v5 = Add v4, v3
@@ -292,12 +292,15 @@ globalThis.printWithErrorsNotCreated = function printWithErrorsNotCreated(work) 
 };
 )js"_s;
 
-static std::unique_ptr<CompileOutput> compileWithValidation(ASCIILiteral referencesWord)
+enum class Validation : bool { Off, On };
+
+static std::unique_ptr<CompileOutput> compile(ASCIILiteral referencesWord, Validation validation)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
         Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
+        if (validation == Validation::On)
+            AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
         AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
         BuildContext build(options);
         std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
@@ -314,9 +317,9 @@ static std::unique_ptr<CompileOutput> compileWithValidation(ASCIILiteral referen
     return output;
 }
 
-static ChildProcessResult runInShell(ASCIILiteral referencesWord, ASCIILiteral statements, std::initializer_list<ASCIILiteral> shellOptions)
+static ChildProcessResult runInShell(ASCIILiteral referencesWord, ASCIILiteral statements, std::initializer_list<ASCIILiteral> shellOptions, Validation validation = Validation::On)
 {
-    std::unique_ptr<CompileOutput> output = compileWithValidation(referencesWord);
+    std::unique_ptr<CompileOutput> output = compile(referencesWord, validation);
     TemporaryFile image(".image"_s, output->image.span());
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()) };
     for (ASCIILiteral option : shellOptions)
@@ -328,10 +331,10 @@ static ChildProcessResult runInShell(ASCIILiteral referencesWord, ASCIILiteral s
     return result;
 }
 
-static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput)
+static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput, Validation validation = Validation::On)
 {
     for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        ChildProcessResult result = runInShell(referencesWord, statements, { });
+        ChildProcessResult result = runInShell(referencesWord, statements, { }, validation);
         if (!result.exitedWith(EXIT_SUCCESS) || result.output != expectedOutput)
             dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
         AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && result.output == expectedOutput);
@@ -474,6 +477,8 @@ nothing was thrown to the caller
 )"_s);
 }
 
+// A validating build looks at the type of the new error between its creation and the throw, so there the two stay two operations and the error is always created.
+// The fourth row calls what is no function. The stub that calls a value finds that out, and its operation creates the error without asking who catches it.
 static void testIgnoredErrorIsNotCreated()
 {
     checkShellOutput(R"js(
@@ -485,9 +490,9 @@ static void testIgnoredErrorIsNotCreated()
 )js"_s, R"(ignored what was thrown; errors not created: 1
 ignored what was thrown; errors not created: 1
 ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 1
+ignored what was thrown; errors not created: 0
 not thrown; errors not created: 0
-)"_s);
+)"_s, Validation::Off);
 }
 
 static void testObservableErrorIsCreated()

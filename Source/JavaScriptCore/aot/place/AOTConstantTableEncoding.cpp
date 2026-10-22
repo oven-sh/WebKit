@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowBuiltinLocations.h"
+#include "AOTIdentifierTable.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
@@ -38,16 +39,16 @@ static Vector<TextProperties> computeTextProperties(const TableEncoder& encoder,
 
 static Vector<uint32_t> createHashTable(size_t numberOfEntries)
 {
-    return Vector<uint32_t>(FillWith { }, WTF::roundUpToPowerOfTwo(std::max<uint32_t>(numberOfEntries, 4) * 2), 0);
+    return Vector<uint32_t>(FillWith { }, std::max<uint32_t>(numberOfEntries, 4) * 2, 0);
 }
 
 static void insertIntoHashTable(Vector<uint32_t>& table, uint32_t hash, uint32_t entry)
 {
     ASSERT(entry);
-    uint32_t mask = table.size() - 1;
-    uint32_t slot = hash & mask;
+    uint32_t numberOfSlots = table.size();
+    uint32_t slot = AOT::LiteralStringTable::firstSlot(hash, numberOfSlots);
     while (table[slot])
-        slot = (slot + 1) & mask;
+        slot = slot + 1 == numberOfSlots ? 0 : slot + 1;
     table[slot] = entry;
 }
 
@@ -68,38 +69,20 @@ static void encodeConstantBuiltinMembers(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::constantBuiltinMembers, constantBuiltinMembers);
 }
 
-static void encodeClosedAbsentNames(TableEncoder& encoder)
-{
-    Vector<ClosedAbsentNamesOfHolder> holders;
-    Vector<uint32_t> names;
-    std::span<const BuiltinID> holdersWithFixedLink = encoder.flow.holdersWithFixedPrototypeLink();
-    auto listHoldersBefore = [&](unsigned limit) {
-        while (!holdersWithFixedLink.empty() && holdersWithFixedLink.front().index() < limit) {
-            if (holders.isEmpty() || holders.last().holder != holdersWithFixedLink.front().index())
-                holders.append({ holdersWithFixedLink.front().index(), static_cast<uint32_t>(names.size()), 0 });
-            holdersWithFixedLink = holdersWithFixedLink.subspan(1);
-        }
-    };
-    for (const ClosedAbsentName& name : encoder.flow.closedAbsentNames()) {
-        listHoldersBefore(name.holder.index());
-        if (holders.isEmpty() || holders.last().holder != name.holder.index())
-            holders.append({ name.holder.index(), static_cast<uint32_t>(names.size()), 0 });
-        names.append(encoder.identifierNumber(name.key));
-        ++holders.last().numberOfNames;
-    }
-    listHoldersBefore(UINT_MAX);
-    for (const ClosedAbsentNamesOfHolder& holder : holders)
-        std::ranges::sort(names.mutableSpan().subspan(holder.firstName, holder.numberOfNames));
-    encoder.setTable(ProgramTableIndex::holdersOfClosedAbsentNames, holders);
-    encoder.setTable(ProgramTableIndex::closedAbsentNames, names);
-}
-
 static void encodeBigIntConstants(TableEncoder& encoder)
 {
     Vector<uint32_t> bigIntConstants;
     for (StringID digits : encoder.placement.bigIntConstants())
         bigIntConstants.append(encoder.stringNumber(digits));
     encoder.setTable(ProgramTableIndex::bigIntConstants, bigIntConstants);
+}
+
+static void encodeKeyCellIdentifiers(TableEncoder& encoder)
+{
+    Vector<uint32_t> identifiers;
+    for (PropertyKeyID key : encoder.placement.keyCells())
+        identifiers.append(encoder.identifierNumber(key));
+    encoder.setTable(ProgramTableIndex::keyCellIdentifiers, identifiers);
 }
 
 static void encodeLiteralStrings(TableEncoder& encoder)
@@ -124,6 +107,8 @@ static void encodeLiteralStrings(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::literalStringLimits, limits);
 }
 
+// The atom tables of the process ask this table for the atom of the image before they make one of their own, so it lists each identifier that is found by its text.
+// The number of an identifier is also the number of its string header.
 static void encodeIdentifiersByHash(TableEncoder& encoder)
 {
     Vector<uint32_t> numbers;
@@ -137,10 +122,10 @@ static void encodeIdentifiersByHash(TableEncoder& encoder)
     }
 
     Vector<TextProperties> properties = computeTextProperties(encoder, texts.span());
-    Vector<uint32_t> table = createHashTable(numbers.size());
-    for (size_t index = 0; index < numbers.size(); ++index)
-        insertIntoHashTable(table, properties[index].hash, numbers[index] + 1);
-    encoder.setTable(ProgramTableIndex::identifiersByHash, table);
+    Vector<IdentifierTable::Key> keys(numbers.size(), [&](size_t index) {
+        return IdentifierTable::Key { properties[index].hash, numbers[index] };
+    });
+    encoder.setTable(ProgramTableIndex::identifiersByHash, IdentifierTable::create(keys.span()));
 }
 
 static bool isEngineSymbol(PropertyKeyKind kind)
@@ -182,8 +167,8 @@ void encodeConstantTables(TableEncoder& encoder)
 {
     encodeBuiltinCells(encoder);
     encodeConstantBuiltinMembers(encoder);
-    encodeClosedAbsentNames(encoder);
     encodeBigIntConstants(encoder);
+    encodeKeyCellIdentifiers(encoder);
     encodeLiteralStrings(encoder);
     encodeIdentifiersByHash(encoder);
     encodeIdentifiersOfEngineSymbols(encoder);

@@ -29,6 +29,8 @@ struct CountedBranch {
     ModuleID module;
     uint32_t position { 0 };
     bool isNegated { false };
+    // None where the terminator itself is counted.
+    ValueID test;
 };
 
 Vector<CountedBranch> findCountedBranches(const Program&, const Function&);
@@ -45,12 +47,14 @@ public:
     bool isCounting() const { return m_limit; }
     uint32_t firstOf(FunctionID) const;
     std::optional<uint32_t> counterFor(FunctionID, uint32_t ordinal, unsigned side) const;
+    std::optional<uint32_t> counterOfEntries(FunctionID) const;
     JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
 
 private:
     friend BranchCounterNumbers numberBranchCounters(const Program&, BuildContext&);
 
     Vector<uint32_t> m_first;
+    uint64_t m_firstOfEntries { 0 };
     uint32_t m_limit { 0 };
 };
 

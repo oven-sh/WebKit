@@ -130,6 +130,10 @@ struct StubDescriptor {
     StubLeafness leafness;
     StubClobbers clobbers;
     StubOwnEffects ownEffects;
+};
+
+// A compiled program reads the descriptors: its fault handler asks exists(). Only the compiler reads the generators, so the code that emits stubs leaves an executable together with the compiler.
+struct StubGenerator {
     void (*generate)(StubAssembler&);
     StubSignature (*signature)(StubKey);
 };
@@ -139,6 +143,23 @@ struct StubDescriptor {
     StubSignature signatureOf##Name(StubKey);
 #include "AOTStubFamilies.def"
 #undef v
+
+inline constexpr std::array<StubGenerator, numberOfStubFamilies> stubGenerators { {
+#define v(Name, Linkage, forms, axes, minCount, maxCount, isas, framelessISAs, operandRegisters, binding, calls, clobbers, ownEffects, Body) \
+    { StubFamily::Name == StubFamily::Body ? &generate##Body : nullptr, &signatureOf##Name },
+#include "AOTStubFamilies.def"
+#undef v
+} };
+
+constexpr const StubGenerator& generatorOf(StubFamily family)
+{
+    return stubGenerators[static_cast<size_t>(family)];
+}
+
+inline StubSignature signatureOf(StubKey key)
+{
+    return generatorOf(key.family()).signature(key);
+}
 
 namespace StubFamilyTokens {
 
@@ -191,7 +212,7 @@ inline constexpr unsigned N = numberOfArgumentGPRs;
 
 inline constexpr std::array<StubDescriptor, numberOfStubFamilies> descriptors { {
 #define v(Name, Linkage, forms, axes, minCount, maxCount, isas, framelessISAs, operandRegisters, binding, calls, clobbers, ownEffects, Body) \
-    { StubFamily::Name, StubFamily::Body, #Name ""_s, StubLinkage::Linkage, formNamesOf##Name, static_cast<uint8_t>(std::max<size_t>(formNamesOf##Name.size(), 1)), axes, minCount, maxCount, isas, framelessISAs, OperandRegisterChoice::operandRegisters, ImmediateBinding::binding, StubLeafness::calls, StubClobbers::clobbers, ownEffects, StubFamily::Name == StubFamily::Body ? &generate##Body : nullptr, &signatureOf##Name },
+    { StubFamily::Name, StubFamily::Body, #Name ""_s, StubLinkage::Linkage, formNamesOf##Name, static_cast<uint8_t>(std::max<size_t>(formNamesOf##Name.size(), 1)), axes, minCount, maxCount, isas, framelessISAs, OperandRegisterChoice::operandRegisters, ImmediateBinding::binding, StubLeafness::calls, StubClobbers::clobbers, ownEffects },
 #include "AOTStubFamilies.def"
 #undef v
 } };

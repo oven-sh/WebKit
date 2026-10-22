@@ -200,7 +200,7 @@ constexpr uint8_t vectorAndScalarModule[] = {
 };
 #endif
 
-constexpr ASCIILiteral twoImportersText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+constexpr ASCIILiteral twoImportersText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="other.js" displayPath="other.js" body=f1
 entry module=m0
 webassemblymodule module=m0

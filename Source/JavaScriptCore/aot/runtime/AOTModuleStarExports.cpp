@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTModuleRecord.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
@@ -23,31 +24,34 @@ StarExportResolver::StarExportResolver(Modules& modules)
 {
 }
 
-JSValue StarExportResolver::capturedValue(JSGlobalObject* realm, JSObject* captured, const Identifier& name)
+JSValue StarExportResolver::storedValue(JSGlobalObject* realm, JSObject* table, const Identifier& name)
 {
     if (std::optional<uint32_t> index = parseIndex(name))
-        return captured->getDirectIndex(realm, *index);
-    return captured->getDirect(realm->vm(), name);
+        return table->getDirectIndex(realm, *index);
+    return table->getDirect(realm->vm(), name);
 }
 
-void StarExportResolver::forEachCapturedExport(JSGlobalObject* realm, JSObject* captured, const ScopedLambda<void(const Identifier&, JSValue)>& functor)
+void StarExportResolver::forEachCapturedExport(Modules& modules, ModuleID module, const ScopedLambda<void(const Identifier&, JSValue)>& functor)
 {
-    VM& vm = realm->vm();
+    Instance& instance = modules.instance();
+    VM& vm = *instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSObject* captured = modules.capturedExports(module);
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    JSObject::getOwnPropertyNames(captured, realm, names, DontEnumPropertiesMode::Include);
+    JSObject::getOwnPropertyNames(captured, instance.globalObject, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, void());
     for (const Identifier& name : names) {
-        JSValue value = capturedValue(realm, captured, name);
-        RETURN_IF_EXCEPTION(scope, void());
-        functor(name, value);
+        JSValue value = storedValue(instance.globalObject, captured, name);
+        functor(name, value == JSValue(captured) ? JSValue() : value);
     }
 }
 
+// The module that stands for a CommonJS file among ES modules has the names that the file turns out to export, where the build did not find them.
 bool StarExportResolver::isSolvedFromTable(ModuleID module) const
 {
-    return m_modules.data(module).hasExportTable();
+    const ModuleData& data = m_modules.data(module);
+    return data.hasExportTable() && !data.capturesExports();
 }
 
 // Each importer of a host value has an External record of its own. The value says which of them are one module.
@@ -153,14 +157,76 @@ bool StarExportResolver::join(StarCandidates& candidates, UniquedStringImpl* nam
     return true;
 }
 
+// `export *` lists the names and binds none of them, so a deferred export stays unread: the build compiled its getter only if something binds the name or makes a namespace object.
+// capturedValueOf() finds such an export by a binding that names the source. Under any other binding the value is read here: a variable has bound the name already, or another record stands for the same host value.
 void StarExportResolver::addCapturedCandidates(ModuleID source, StarCandidates& candidates, ExportedNames exportedNames)
 {
-    JSGlobalObject* realm = m_modules.instance().globalObject;
-    const Identifier& defaultKeyword = realm->vm().propertyNames->defaultKeyword;
-    forEachCapturedExport(realm, m_modules.capturedExports(source), [&](const Identifier& name, JSValue value) {
-        if (exportedNames == ExportedNames::All || name != defaultKeyword)
-            join(candidates, name.impl(), { bindingOfCapturedName(source, name.impl()), value });
-    });
+    Instance& instance = m_modules.instance();
+    VM& vm = *instance.vm;
+    JSGlobalObject* realm = instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* captured = m_modules.capturedExports(source);
+
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    JSObject::getOwnPropertyNames(captured, realm, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (const Identifier& name : names) {
+        if (exportedNames == ExportedNames::WithoutDefault && name == vm.propertyNames->defaultKeyword)
+            continue;
+        StarBinding binding = bindingOfCapturedName(source, name.impl());
+        JSValue value = storedValue(realm, captured, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (value == JSValue(captured)) {
+            auto* capturedBinding = std::get_if<CapturedBinding>(&binding);
+            if (capturedBinding && capturedBinding->module == source)
+                value = JSValue();
+            else {
+                value = m_modules.capturedValue(source, name);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+        }
+        join(candidates, name.impl(), { binding, value });
+    }
+}
+
+// GetExportedNames() of the specification.
+static Vector<Identifier> exportedNamesOf(JSGlobalObject* realm, AbstractModuleRecord* root)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<Identifier> names;
+    UncheckedKeyHashSet<UniquedStringImpl*> listedNames;
+    UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
+    Vector<AbstractModuleRecord*, 8> pending;
+    pending.append(root);
+    while (!pending.isEmpty()) {
+        AbstractModuleRecord* record = pending.takeLast();
+        if (!exportStarSet.add(record).isNewEntry)
+            continue;
+        auto list = [&](const Identifier& name) {
+            if (record != root && name == vm.propertyNames->defaultKeyword)
+                return;
+            if (listedNames.add(name.impl()).isNewEntry)
+                names.append(name);
+        };
+        if (auto* compiled = dynamicDowncast<ModuleRecord>(record)) {
+            Vector<Identifier> compiledNames;
+            compiled->collectExportedNames(realm, compiledNames);
+            RETURN_IF_EXCEPTION(scope, { });
+            for (const Identifier& name : compiledNames)
+                list(name);
+            continue;
+        }
+        for (const auto& entry : record->exportEntries())
+            list(entry.value.exportName);
+        for (const auto& [moduleName, moduleRequestType] : record->starExportEntries()) {
+            AbstractModuleRecord* target = record->hostResolveImportedModule(realm, Identifier::fromUid(vm, moduleName.get()), moduleRequestType);
+            RETURN_IF_EXCEPTION(scope, { });
+            pending.append(target);
+        }
+    }
+    return names;
 }
 
 void StarExportResolver::addUncompiledCandidates(ModuleID source, StarCandidates& candidates, ExportedNames exportedNames)
@@ -179,7 +245,9 @@ void StarExportResolver::addUncompiledCandidates(ModuleID source, StarCandidates
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, void());
+    UncheckedKeyHashSet<UniquedStringImpl*> namespaceKeys;
     for (const Identifier& name : names) {
+        namespaceKeys.add(name.impl());
         if (exportedNames == ExportedNames::WithoutDefault && name == vm.propertyNames->defaultKeyword)
             continue;
         Resolution resolution = record->resolveExport(realm, name);
@@ -191,14 +259,22 @@ void StarExportResolver::addUncompiledCandidates(ModuleID source, StarCandidates
         join(candidates, name.impl(), { binding, JSValue(), namespaceObject });
     }
     // A name that is ambiguous in one target of `export *` is ambiguous in the exporter, and it is no key of the namespace object.
-    for (const Identifier& name : record->ambiguousExportNames())
-        join(candidates, name.impl(), { StarBinding { }, JSValue(), nullptr, true });
+    Vector<Identifier> exported = exportedNamesOf(realm, record);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (const Identifier& name : exported) {
+        if (namespaceKeys.contains(name.impl()))
+            continue;
+        Resolution resolution = record->resolveExport(realm, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (resolution.type == Resolution::Type::Ambiguous)
+            join(candidates, name.impl(), { StarBinding { }, JSValue(), nullptr, true });
+    }
 }
 
 void StarExportResolver::addSourceCandidates(ModuleID source, StarCandidates& candidates, ExportedNames exportedNames)
 {
     const ModuleData& data = m_modules.data(source);
-    RELEASE_ASSERT(!data.hasExportTable());
+    RELEASE_ASSERT(!isSolvedFromTable(source));
     if (data.isUncompiledCode()) {
         addUncompiledCandidates(source, candidates, exportedNames);
         return;
@@ -341,13 +417,15 @@ const StarCandidate* StarExportResolver::find(ModuleID exporter, UniquedStringIm
 
 JSValue StarExportResolver::capturedValueOf(const StarCandidate& candidate)
 {
+    VM& vm = *m_modules.instance().vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     if (candidate.capturedValue)
         return candidate.capturedValue;
     auto* captured = std::get_if<CapturedBinding>(&candidate.binding);
     if (!captured)
         return { };
-    Instance& instance = m_modules.instance();
-    return capturedValue(instance.globalObject, m_modules.capturedExports(captured->module), Identifier::fromUid(*instance.vm, captured->name));
+    RELEASE_AND_RETURN(scope, m_modules.capturedValue(captured->module, Identifier::fromUid(vm, captured->name)));
 }
 
 NameResolution StarExportResolver::resolve(ModuleID exporter, uint32_t nameIdentifier)
@@ -355,6 +433,10 @@ NameResolution StarExportResolver::resolve(ModuleID exporter, uint32_t nameIdent
     Instance& instance = m_modules.instance();
     auto scope = DECLARE_THROW_SCOPE(*instance.vm);
     const Identifier& name = m_modules.identifier(nameIdentifier);
+
+    // It exports no stars, and a deferred export is not read for the answer.
+    if (m_modules.data(exporter).exportRule == SyntheticExportRule::RuntimeModule)
+        return m_modules.hasCapturedExport(exporter, name) ? NameResolution::Found : NameResolution::NotFound;
 
     if (m_modules.data(exporter).isUncompiledCode()) {
         AbstractModuleRecord* record = m_modules.uncompiledRecord(exporter);

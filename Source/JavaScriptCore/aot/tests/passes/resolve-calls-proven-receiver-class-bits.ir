@@ -1,0 +1,164 @@
+# What a member call, a getter and a setter cost on a receiver whose layout is proven. A closed class: no test. Otherwise one test of one bit, whatever is open: the objects (they may get a property of the name
+# or another prototype), the member (it may be redefined), or both, for one class or for a family that shares the method. No test asks the object. The operations as they were stand on the failing side.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 7
+# CHECK: outcome: Changed
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: HasNoExtraProperties
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Closed" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f1 mutability=Fixed}] namedMembers=[{key="run" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="OpenObjects" constructor=f2 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f3 mutability=Fixed}, {key="size" kind=Getter function=f4 mutability=Fixed}, {key="size" kind=Setter function=f5 mutability=Fixed}] namedMembers=[{key="run" function=f3 mutability=Fixed}, {key="size" kind=Getter function=f4 mutability=Fixed}, {key="size" kind=Setter function=f5 mutability=Fixed}]}
+layout L2 kind=Instance name="OpenMember" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="run" function=f7}] namedMembers=[{key="run" function=f7}]}
+layout L3 kind=Instance name="Open" constructor=f8 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="run" function=f9}] namedMembers=[{key="run" function=f9}]}
+layout L4 kind=Instance name="OpenHeir" base=L3 constructor=f10 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true}
+function f0 name="Closed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+function f2 name="OpenObjects" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="run" kind=Method flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: L1):
+    Return
+}
+function f4 name="size" kind=Getter flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: L1):
+    Return
+}
+function f5 name="size" kind=Setter flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    Return
+}
+function f6 name="OpenMember" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="run" kind=Method flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: L2):
+    Return
+}
+function f8 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="run" kind=Method flags=[HasThis] thisType={type=L3|L4} results=[{type=anything}] {
+  b0(v0: L3|L4):
+    Return
+}
+function f10 name="OpenHeir" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f11 name="closed-class" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}
+# CHECK-LABEL: function f11 name="closed-class"
+# CHECK-NOT: AreMembersUnchanged
+# CHECK-NOT: Branch
+# CHECK: = CallDirect v0 function=f1
+
+function f12 name="objects-may-hide-the-method" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}
+# CHECK-LABEL: function f12 name="objects-may-hide-the-method"
+# CHECK: [[holds12]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L1 key="run"}]
+# CHECK-NEXT: Branch [[holds12]] -> taken [[direct12]](), notTaken [[byName12]]()
+# CHECK: [[direct12]]():
+# CHECK-NEXT: = CallDirect v0 function=f3
+# CHECK: [[byName12]]() frequency=Unlikely:
+# CHECK-NEXT: [[read12]]: anything = PropGet v0 key="run"
+# CHECK-NEXT: = Call [[read12]], v0 calleeKey="run"
+
+function f13 name="member-may-be-redefined" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}
+# CHECK-LABEL: function f13 name="member-may-be-redefined"
+# CHECK: [[holds13]]: boolean = AreMembersUnchanged conditions=[{layout=L2 key="run"}]
+# CHECK-NEXT: Branch [[holds13]] -> taken [[direct13]](), notTaken {{*}}
+# CHECK: [[direct13]]():
+# CHECK-NEXT: = CallDirect v0 function=f7
+
+function f14 name="both-are-open" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: L3):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}
+# CHECK-LABEL: function f14 name="both-are-open"
+# CHECK: [[holds14]]: boolean = AreMembersUnchanged conditions=[{layout=L3 key="run"}, {kind=MemberNotHidden layout=L3 key="run"}]
+# CHECK-NEXT: Branch [[holds14]] -> taken [[direct14]](), notTaken {{*}}
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: [[direct14]]():
+# CHECK-NEXT: = CallDirect v0 function=f9
+
+function f15 name="family-under-one-method" parameters=[{type=L3|L4}] results=[{type=anything}] {
+  b0(v0: L3|L4):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}
+# CHECK-LABEL: function f15 name="family-under-one-method"
+# CHECK-NOT: TypeTest
+# CHECK: [[holds15]]: boolean = AreMembersUnchanged conditions=[{layout=L3 key="run"}, {layout=L4 key="run"}, {kind=MemberNotHidden layout=L3 key="run"}, {kind=MemberNotHidden layout=L4 key="run"}]
+# CHECK-NEXT: Branch [[holds15]] -> taken [[direct15]](), notTaken {{*}}
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: [[direct15]]():
+# CHECK-NEXT: = CallDirect v0 function=f9
+
+function f16 name="getter" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f16 name="getter"
+# CHECK: [[holds16]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L1 key="size"}]
+# CHECK-NEXT: Branch [[holds16]] -> taken [[direct16]](), notTaken [[byName16]]()
+# CHECK: [[direct16]]():
+# CHECK-NEXT: = CallDirect v0 function=f4
+# CHECK: [[byName16]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="size"
+
+function f17 name="setter" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f17 name="setter"
+# CHECK: [[holds17]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L1 key="size"}]
+# CHECK-NEXT: Branch [[holds17]] -> taken [[direct17]](), notTaken [[byName17]]()
+# CHECK: [[direct17]]():
+# CHECK-NEXT: CallDirect v0, v1 function=f5
+# CHECK: [[byName17]]() frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="size"
+
+function f18 name="effects-between-the-read-and-the-call" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v1, -
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f18 name="effects-between-the-read-and-the-call"
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: [[read18]]: anything = PropGet v0 key="run"
+# CHECK: = Call [[read18]], v0, {{*}} calleeKey="run"
+
+function f19 name="behind-a-cleared-bit" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L1 key="run"}]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f19 name="behind-a-cleared-bit"
+# CHECK: b2():
+# CHECK-NEXT: [[read19]]: anything = PropGet v0 key="run"
+# CHECK-NEXT: = Call [[read19]], v0 calleeKey="run"
+# CHECK-NEXT: Return

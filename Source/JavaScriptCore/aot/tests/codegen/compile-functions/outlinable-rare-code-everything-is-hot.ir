@@ -1,6 +1,6 @@
 # Where every block counts as hot, the code that only a rare edge leads to is not outlined either
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:OutlineColdOperations
 # RUN: generate-code units
 # CHECK-LABEL: f1: size=
 # CHECK-NEXT: units plain=0 call=0 pinned=

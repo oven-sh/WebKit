@@ -9,6 +9,7 @@
 
 #include "AOTModules.h"
 #include "ThrowScope.h"
+#include <span>
 #include <type_traits>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -16,9 +17,10 @@
 
 namespace JSC { namespace AOT {
 
-// The modules that a link reaches from a root, in the order of the requests. No code of the program runs while they are recorded.
+// The modules that a link reaches from a root and that have work in it, in the order of the requests. No code of the program runs while they are recorded.
 // A module leaves ModuleStatus::Unlinked together with everything it requests and never returns to it while it is linked,
 // so each step of the link, in this job or a later one, replays the record and passes over what another link has finished since.
+// The build recorded the walk from the entry point the process starts at, and the walks that go round a large cycle of modules: their steps are read from the image, and nothing is allocated for them.
 class ModuleLinkWalk {
     WTF_MAKE_NONCOPYABLE(ModuleLinkWalk);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleLinkWalk);
@@ -28,6 +30,10 @@ public:
     ModuleLinkWalk(const Modules&, ModuleID root);
 
     ModuleID root() const { return m_root; }
+    // Such a walk enters the root only. Of the modules below it, didLeave() hears of those that resolve names, whether another link has finished them or not.
+    bool hasPlan() const { return !m_plan.empty(); }
+    // Of a plan other than the entry point's.
+    std::optional<ModuleID> memberOfCycle() const { return m_memberOfCycle; }
 
     // shouldEnter(module) answers for a module with requests, visitLeaf(leaf, module) may throw, didLeave(module, resolvesNames) follows the requests of an entered module.
     // Returns whether the root was entered.
@@ -46,14 +52,37 @@ private:
     static_assert(std::is_trivially_copyable_v<Step> && sizeof(Step) == 8);
 
     void append(ModuleID, StepKind, bool resolvesNames = false);
+    template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
+    bool replayPlan(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
 
     ModuleID m_root;
+    std::span<const LinkPlanStepData> m_plan;
+    std::optional<ModuleID> m_memberOfCycle;
     Vector<Step, 64> m_steps;
 };
 
 template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
+ALWAYS_INLINE bool ModuleLinkWalk::replayPlan(ThrowScope& scope, const ShouldEnterFunctor& shouldEnter, const VisitLeafFunctor& visitLeaf, const DidLeaveFunctor& didLeave) const
+{
+    if (!shouldEnter(m_root))
+        return false;
+    for (const LinkPlanStepData& step : m_plan) {
+        if (step.resolvesNames) {
+            didLeave(step.targetModule(), true);
+            continue;
+        }
+        visitLeaf(Leaf::CapturesExports, step.targetModule());
+        RETURN_IF_EXCEPTION(scope, true);
+    }
+    return true;
+}
+
+template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
 ALWAYS_INLINE bool ModuleLinkWalk::replay(ThrowScope& scope, const ShouldEnterFunctor& shouldEnter, const VisitLeafFunctor& visitLeaf, const DidLeaveFunctor& didLeave) const
 {
+    if (hasPlan())
+        return replayPlan(scope, shouldEnter, visitLeaf, didLeave);
+
     std::span<const Step> steps = m_steps.span();
     for (size_t index = 0; index < steps.size(); ++index) {
         const Step& step = steps[index];

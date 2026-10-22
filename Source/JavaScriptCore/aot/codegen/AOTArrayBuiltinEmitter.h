@@ -29,6 +29,7 @@ public:
     void generateArrayConcat(const InlineCall&);
     void generateArrayShift(const InlineCall&);
     void generateArrayPop(const InlineCall&);
+    bool resultGetsNamedProperties(const InlineCall&);
     void generateArraySlice(const InlineCall&);
     void generateArraySplice(const InlineCall&);
     void generateArraySplicePrefix(const InlineCall&);
@@ -73,7 +74,8 @@ private:
     Operand resultFromRawElement(const InlineCall&, const ArrayStorageForm&, Operand rawElement);
     Operand undefinedResult(const InlineCall&);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
-    void forEachFormOrMiss(const InlineCall&, Word32 maskedMode, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    void forEachReadableFormOrMiss(const InlineCall&, CellPointer array, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    void forEachWritableFormOrMiss(const InlineCall&, CellPointer array, const ScopedLambda<void(const ArrayStorageForm&)>&);
 
     CellPointer joinOrMiss(const InlineCall&);
     ConcatOperands collectConcatOperands(const InlineCall&, const ArrayStorageForm&);
@@ -81,6 +83,7 @@ private:
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
     bool hasIntegerSpliceRange(const InlineCall&);
     std::optional<int64_t> deleteCountOfInlineSplice(const InlineCall&);
+    Integer wholeNumberOrElse(ValueID, LBasicBlock isNotWhole);
     void spliceInline(const InlineCall&, Integer start, int64_t removed, LBasicBlock outOfLine, const SpliceArm&);
     void spliceElements(const InlineCall&, OperandJoin&, const InlineSplice&, const ArrayStorageForm&, LBasicBlock outOfLine);
     // nullopt: an item never fits the form, and the block has ended.
@@ -93,6 +96,12 @@ private:
     Boxed spliceByFunction(const InlineCall&);
     RemovedPrefix readRemovedPrefix(const InlineCall&, Boxed removedElements, unsigned count);
     Integer indexOfNumber(const InlineCall&, CellPointer array);
+    // What the search takes a hole for: indexOf() passes it over, includes() reads undefined there.
+    enum class HoleIs : bool { Nothing, Undefined };
+    Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
+    Integer indexOfSearched(const InlineCall&, HoleIs);
+    // Ends the block it is called in. The answer for a short vector goes to `found`, a longer one goes to `isLong` with nothing compared.
+    void scanShortVector(const ArrayStorageForm&, const ArrayElements&, Operand searchedRawElement, Join<Integer>& found, LBasicBlock isLong);
 };
 
 static_assert(sizeof(ArrayBuiltinEmitter) == sizeof(OperationEmitter));

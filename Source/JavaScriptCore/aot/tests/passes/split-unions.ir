@@ -1,11 +1,11 @@
 # An access on a value proven to be a union of parts of different kinds is copied once per part, behind type tests whose edges pass the narrowed value
 # FORM: Prepared
 # RUN: pass SplitUnions
-# STATISTIC: UnionsSplit = 9
+# STATISTIC: UnionsSplit = 10
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Scanner" fields=[{key="pos" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L0 name="Scanner" fields=[{key="pos" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="string-or-array" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
   b0(v0: string|Array<number>):
@@ -39,7 +39,7 @@ function f1 name="three-parts" parameters=[{type=string|Array<number>|Uint8Array
 # CHECK-NEXT: = PropGet [[numbers]] key="length"
 # CHECK: ([[bytes]]: Uint8Array):
 # CHECK-NEXT: = PropGet [[bytes]] key="length"
-function f2 name="expected-part-comes-first" parameters=[{type=string|Array<number> predicted=Array<number>}] results=[{type=anything}] {
+function f2 name="expected-part-comes-first" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
   b0(v0: string|Array<number> ~ Array<number>):
     v1 = PropGet v0 key="length"
     Return v1
@@ -160,10 +160,25 @@ function f11 name="nullish-in-the-type" parameters=[{type=undefined|string|Array
     v1 = PropGet v0 key="length"
     Return v1
 }
+# Undefined and null stop no split. The access throws for them, which is what the copy by name in the unlikely rest does.
 # CHECK-LABEL: function f11 name="nullish-in-the-type"
 # CHECK-NEXT: b0(v0: undefined|string|Array<number>):
-# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NEXT: [[isString11]]: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[isString11]] -> taken [[stringArm11]](| 0), notTaken [[others11]](| 0)
+# CHECK-NEXT: [[join11]](v1: anything):
 # CHECK-NEXT: Return v1
+# CHECK-NEXT: [[stringArm11]]([[string11]]: string):
+# CHECK-NEXT: [[characters11]]: anything = PropGet [[string11]] key="length"
+# CHECK-NEXT: Jump -> next [[join11]]([[characters11]])
+# CHECK-NEXT: [[others11]]([[other11]]: undefined|Array<number>):
+# CHECK-NEXT: [[isArray11]]: boolean = TypeTest [[other11]] testedType=Array
+# CHECK-NEXT: Branch [[isArray11]] -> taken [[arrayArm11]](| 0), notTaken [[rest11]](| 0)
+# CHECK-NEXT: [[arrayArm11]]([[array11]]: Array<number>):
+# CHECK-NEXT: [[elements11]]: anything = PropGet [[array11]] key="length"
+# CHECK-NEXT: Jump -> next [[join11]]([[elements11]])
+# CHECK-NEXT: [[rest11]]([[nullish11]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: {{*}}: never = PropGet [[nullish11]] key="length"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 function f12 name="element-under-a-key-of-any-type" parameters=[{type=Array<number>|Uint8Array}, {type=anything}] results=[{type=anything}] {
   b0(v0: Array<number>|Uint8Array, v1: anything):

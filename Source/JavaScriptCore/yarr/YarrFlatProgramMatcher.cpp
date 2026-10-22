@@ -136,6 +136,8 @@ struct Machine {
         , ops(program.ops.span().data())
         , characterSets(program.characterSets.span().data())
         , firstSets(program.firstSets.span().data())
+        , dispatchClasses(program.dispatchClasses.span().data())
+        , dispatchEntries(program.dispatchEntries.span().data())
         , wideRanges(program.wideRanges.span())
         , input(subject.data())
         , length(subject.size())
@@ -485,6 +487,26 @@ struct Machine {
         return Step::Next;
     }
 
+    ALWAYS_INLINE Step runChoiceByTable()
+    {
+        uint32_t entry = FlatProgram::thisAndLaterAlternativesBeginHere;
+        if (position >= length)
+            entry = dispatchEntries[op->argument + dispatchClasses[op->needed + 256]];
+        else if (sizeof(CharType) == 1 || input[position] <= 255)
+            entry = dispatchEntries[op->argument + dispatchClasses[op->needed + static_cast<unsigned>(input[position])]];
+        if (entry == FlatProgram::onlyThisAlternativeBeginsHere)
+            return Step::Next;
+        if (entry == FlatProgram::thisAndLaterAlternativesBeginHere) {
+            if (!tryReserveFrames(1))
+                return Step::NeedsFrames;
+            push(position, 0, 0);
+            return Step::Next;
+        }
+        if (entry == FlatProgram::noAlternativeBeginsHere)
+            return Step::Failed;
+        return jumpTo(entry - FlatProgram::firstDispatchTarget);
+    }
+
     ALWAYS_INLINE Step runJump() { return jumpTo(op->target); }
     ALWAYS_INLINE Step runJumpIfBelow() { return jumpIf(registers()[op->registerIndex] < op->argument); }
     ALWAYS_INLINE Step runJumpIfNotBelow() { return jumpIf(registers()[op->registerIndex] >= op->argument); }
@@ -705,6 +727,7 @@ struct Machine {
     }
 
     ALWAYS_INLINE Step resumeChoiceByFirst() { return resumeChoice(); }
+    ALWAYS_INLINE Step resumeChoiceByTable() { return resumeChoice(); }
     ALWAYS_INLINE Step resumeNegativeLookaheadBegin() { return resumeChoice(); }
 
     ALWAYS_INLINE Step resumeGreedyLoopChoice()
@@ -812,6 +835,7 @@ struct Machine {
             return;
         case Kind::Choice:
         case Kind::ChoiceByFirst:
+        case Kind::ChoiceByTable:
         case Kind::NegativeLookaheadBegin:
         case Kind::GreedyRun:
         case Kind::LazyRun:
@@ -835,6 +859,7 @@ struct Machine {
             return true;
         case Kind::Choice:
         case Kind::ChoiceByFirst:
+        case Kind::ChoiceByTable:
         case Kind::GreedyLoopChoice:
         case Kind::NegativeLookaheadBegin:
         case Kind::GreedyRun:
@@ -896,6 +921,8 @@ struct Machine {
     const FlatOp* const ops;
     const CharacterSetBits* const characterSets;
     const FirstSetBits* const firstSets;
+    const uint16_t* const dispatchClasses;
+    const uint32_t* const dispatchEntries;
     const std::span<const CharacterRange> wideRanges;
     const CharType* const input;
     const unsigned length;
@@ -917,11 +944,16 @@ struct Machine {
 
 } // anonymous namespace
 
+JSRegExpResult matchFlatProgram(const FlatProgram& program, std::span<const Latin1Character> input, unsigned start, unsigned* output)
+{
+    return Machine<Latin1Character>(program, input, start, output).run();
+}
+
 JSRegExpResult matchFlatProgram(const FlatProgram& program, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
     if (input.is8Bit())
-        return Machine<Latin1Character>(program, input.span8(), start, output).run();
+        return matchFlatProgram(program, input.span8(), start, output);
     return Machine<char16_t>(program, input.span16(), start, output).run();
 }
 

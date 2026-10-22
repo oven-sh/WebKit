@@ -28,17 +28,20 @@ struct RecordedOptions;
 struct StubRecording;
 
 namespace Typed {
+class FlowResults;
 class Program;
 }
 
 // Everything that may change the code of a stub. The image records every member.
 struct StubOptions {
-    static StubOptions from(const RecordedOptions&, const Typed::Program&);
+    static StubOptions from(const RecordedOptions&, const Typed::Program&, const Typed::FlowResults&);
 
     bool useWideReferences { false };
     bool forceGCSlowPaths { false };
     bool imageHasWebAssembly { false };
+    bool hasOneInstance { false };
     bool validates { false };
+    bool countsAllocations { false };
     uint32_t layoutSeed { 0 };
     CPUFeatureSet targetFeatures;
 };

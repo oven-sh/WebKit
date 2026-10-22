@@ -66,12 +66,29 @@ std::optional<RegExpLiteralInType> singleRegExpLiteralAsCreatedOf(const Type& ty
     return type.regExpLiterals()[0];
 }
 
+// `kept <= kept`: what is dropped in one place is the subject in the other.
+static bool namesProducerInSecondPlace(const Function& function, ValueID root, ValueID operand)
+{
+    unsigned numberOfPlaces = 0;
+    function.at(root).forEachOperand([&](ValueID other, uint32_t) {
+        for (ValueID producer : CastChain(function, operand)) {
+            if (std::ranges::contains(CastChain(function, other), producer)) {
+                ++numberOfPlaces;
+                return;
+            }
+        }
+    });
+    return numberOfPlaces > 1;
+}
+
 static SelectionGroup groupWithProducersOf(SelectionContext& context, ValueID root, ValueID operand)
 {
     const Function& function = context.function();
     SelectionGroup group = groupOfOne(root);
+    if (namesProducerInSecondPlace(function, root, operand))
+        return group;
     for (ValueID producer : CastChain(function, operand)) {
-        if (function.at(producer).opcode == Opcode::Parameter || !context.analyses().effectsOf(producer).onAnyEdge().isRemovableWhenUnused())
+        if (function.at(producer).opcode == Opcode::Parameter || !context.analyses().isRemovableWhenUnused(producer))
             return groupOfOne(root);
         group.members.insert(0, GroupMember { .value = producer, .isUsedOutside = false, .isOnlyErased = true });
     }

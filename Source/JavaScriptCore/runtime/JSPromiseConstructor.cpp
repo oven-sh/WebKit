@@ -28,6 +28,7 @@
 
 #if ENABLE(AOT)
 #include "AOTBuiltinModules.h"
+#include "AOTSavedFrame.h"
 #endif
 #include "AggregateError.h"
 #include "BuiltinNames.h"
@@ -483,9 +484,26 @@ static JSObject* promiseAllSlow(JSGlobalObject* globalObject, JSValue thisValue,
     return promise;
 }
 
-static ALWAYS_INLINE JSPromise* promiseAllFast(JSGlobalObject* globalObject, VM& vm, unsigned vectorLengthHint, NOESCAPE const auto& forEachElement)
+static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue thisValue)
 {
+    JSValue iterable = callFrame->argument(0);
+    return promiseAllSlow(globalObject, thisValue, vectorLengthHintForCombinator(iterable), [&](const auto& visit) {
+        forEachInIterable(globalObject, iterable, visit);
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+
+    if (!thisValue.isObject()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "|this| is not an object"_s);
+
+    if (!isFastPromiseConstructor(globalObject, thisValue)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
@@ -497,11 +515,12 @@ static ALWAYS_INLINE JSPromise* promiseAllFast(JSGlobalObject* globalObject, VM&
         promise->reject(vm, exception);
     };
 
-    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, vectorLengthHint);
+    JSValue iterable = callFrame->argument(0);
+    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, vectorLengthHintForCombinator(iterable));
     if (!values) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         callReject();
-        return promise;
+        return JSValue::encode(promise);
     }
 
     JSPromiseCombinatorsGlobalContext* globalContext = JSPromiseCombinatorsGlobalContext::create(vm, promise, values, 1);
@@ -509,7 +528,7 @@ static ALWAYS_INLINE JSPromise* promiseAllFast(JSGlobalObject* globalObject, VM&
     uint64_t index = 0;
     JSFunction* onRejected = nullptr;
 
-    forEachElement([&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
+    forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         values->putDirectIndex(globalObject, index, jsUndefined());
@@ -564,7 +583,153 @@ static ALWAYS_INLINE JSPromise* promiseAllFast(JSGlobalObject* globalObject, VM&
 
     if (scope.exception()) [[unlikely]] {
         callReject();
+        return JSValue::encode(promise);
+    }
+
+    uint64_t count = globalContext->remainingElementsCount() - 1;
+    globalContext->setRemainingElementsCount(count);
+    if (!count) {
+        scope.release();
+        promise->resolve(globalObject, vm, values);
+        if (scope.exception()) [[unlikely]] {
+            callReject();
+            return JSValue::encode(promise);
+        }
+    }
+
+    return JSValue::encode(promise);
+}
+
+#if ENABLE(AOT)
+static ALWAYS_INLINE bool isDirectCall(uint32_t directCalls, uint64_t index)
+{
+    static_assert(AOT::SavedFrame::maxCombinatorElements == sizeof(directCalls) * 8);
+    return index < AOT::SavedFrame::maxCombinatorElements && (directCalls >> index & 1);
+}
+
+static JSPromise* promiseOfDirectCall(JSGlobalObject* globalObject, VM& vm, JSValue result)
+{
+    if (result.isCell()) {
+        JSCell* cell = result.asCell();
+        if (cell->structureID() == globalObject->promiseStructure()->id())
+            return uncheckedDowncast<JSPromise>(cell);
+        if (cell->classInfo() == AOT::SavedFrame::info())
+            return uncheckedDowncast<AOT::SavedFrame>(cell)->ensurePromise(globalObject, vm);
+    }
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->fulfill(vm, result);
+    return promise;
+}
+
+static bool tryAddDirectCallWithoutPromise(JSGlobalObject* globalObject, VM& vm, JSPromiseCombinatorsGlobalContext* globalContext, uint32_t index, JSValue result)
+{
+    if (!globalObject->promiseThenWatchpointSet().isStillValid() || globalObject->promiseSpeciesWatchpointSet().state() != IsWatched) [[unlikely]]
+        return false;
+
+    if (result.isCell()) {
+        JSCell* cell = result.asCell();
+        if (cell->structureID() == globalObject->promiseStructure()->id())
+            return false;
+        if (cell->classInfo() == AOT::SavedFrame::info()) {
+            auto* savedFrame = uncheckedDowncast<AOT::SavedFrame>(cell);
+            if (savedFrame->promise())
+                return false;
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            savedFrame->setCombinatorElement(vm, globalContext, index);
+            return true;
+        }
+    }
+
+    globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, result, jsNumber(index));
+    return true;
+}
+
+static JSPromise* promiseAllOfElementsFast(JSGlobalObject* globalObject, VM& vm, std::span<const EncodedJSValue> elements, uint32_t directCalls)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+
+    auto callReject = [&]() -> void {
+        Exception* exception = scope.exception();
+        ASSERT(exception);
+        TRY_CLEAR_EXCEPTION(scope, void());
+        scope.release();
+        promise->reject(vm, exception);
+    };
+
+    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, static_cast<unsigned>(elements.size()));
+    if (!values) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        callReject();
         return promise;
+    }
+
+    JSPromiseCombinatorsGlobalContext* globalContext = JSPromiseCombinatorsGlobalContext::create(vm, promise, values, 1);
+
+    JSFunction* onRejected = nullptr;
+
+    auto addElement = [&](uint64_t index, JSValue value) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        values->putDirectIndex(globalObject, index, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, void());
+
+        if (isDirectCall(directCalls, index)) {
+            if (tryAddDirectCallWithoutPromise(globalObject, vm, globalContext, static_cast<uint32_t>(index), value))
+                return;
+            value = promiseOfDirectCall(globalObject, vm, value);
+        } else if (canSkipIntermediatePromise(globalObject, value)) {
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            scope.release();
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, value, jsNumber(index));
+            return;
+        }
+
+        JSPromise* nextPromise = JSPromise::resolvedPromise(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+
+        if (nextPromise->isThenFastAndNonObservable()) [[likely]] {
+            auto* constructor = promiseSpeciesConstructor(globalObject, nextPromise);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (constructor == globalObject->promiseConstructor()) [[likely]] {
+                scope.release();
+                nextPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, globalContext, jsNumber(index));
+                return;
+            }
+        }
+
+        if (!onRejected)
+            onRejected = promise->createFirstRejectFunction(vm, globalObject);
+        JSValue then = nextPromise->get(globalObject, vm.propertyNames->then);
+        RETURN_IF_EXCEPTION(scope, void());
+        CallData thenCallData = getCallDataInline(then);
+        if (thenCallData.type == CallData::Type::None) [[unlikely]] {
+            throwTypeError(globalObject, scope, "then is not a function"_s);
+            return;
+        }
+
+        JSPromiseCombinatorsContext* context = JSPromiseCombinatorsContext::create(vm, globalContext, index);
+        auto* onFulfilled = JSFunctionWithFields::create(vm, globalObject, vm.promiseAllFulfillFunctionExecutable());
+        onFulfilled->setField(vm, JSFunctionWithFields::Field::PromiseAllContext, context);
+
+        auto thenArguments = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(onFulfilled),
+            JSValue::encode(onRejected),
+        });
+        scope.release();
+        call(globalObject, then, thenCallData, nextPromise, ArgList { thenArguments.data(), thenArguments.size() });
+    };
+
+    for (uint64_t index = 0; index < elements.size(); ++index) {
+        addElement(index, JSValue::decode(elements[index]));
+        if (scope.exception()) [[unlikely]] {
+            callReject();
+            return promise;
+        }
     }
 
     uint64_t count = globalContext->remainingElementsCount() - 1;
@@ -581,44 +746,27 @@ static ALWAYS_INLINE JSPromise* promiseAllFast(JSGlobalObject* globalObject, VM&
     return promise;
 }
 
-JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSPromise* promiseAllOfElements(JSGlobalObject* globalObject, std::span<const EncodedJSValue> elements, uint32_t directCalls)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+    if (isFastPromiseConstructor(globalObject, globalObject->promiseConstructor())) [[likely]]
+        return promiseAllOfElementsFast(globalObject, vm, elements, directCalls);
 
-    if (!thisValue.isObject()) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, "|this| is not an object"_s);
-
-    JSValue iterable = callFrame->argument(0);
-    auto forEachElement = [&](const auto& visit) {
-        forEachInIterable(globalObject, iterable, visit);
-    };
-
-    if (!isFastPromiseConstructor(globalObject, thisValue)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, thisValue, vectorLengthHintForCombinator(iterable), forEachElement)));
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllFast(globalObject, vm, vectorLengthHintForCombinator(iterable), forEachElement)));
-}
-
-JSPromise* promiseAllOfElements(JSGlobalObject* globalObject, std::span<const EncodedJSValue> elements)
-{
-    VM& vm = globalObject->vm();
     auto forEachElement = [&](const auto& visit) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        for (EncodedJSValue element : elements) {
-            visit(vm, globalObject, JSValue::decode(element));
+        for (uint64_t index = 0; index < elements.size(); ++index) {
+            JSValue element = JSValue::decode(elements[index]);
+            if (isDirectCall(directCalls, index))
+                element = promiseOfDirectCall(globalObject, vm, element);
+            visit(vm, globalObject, element);
             RETURN_IF_EXCEPTION(scope, void());
         }
     };
-
-    if (isFastPromiseConstructor(globalObject, globalObject->promiseConstructor())) [[likely]]
-        return promiseAllFast(globalObject, vm, elements.size(), forEachElement);
-
-    JSObject* promise = promiseAllSlow(globalObject, globalObject->promiseConstructor(), elements.size(), forEachElement);
+    JSObject* promise = promiseAllSlow(globalObject, globalObject->promiseConstructor(), static_cast<unsigned>(elements.size()), forEachElement);
     return promise ? uncheckedDowncast<JSPromise>(promise) : nullptr;
 }
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(promiseAllFulfillFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

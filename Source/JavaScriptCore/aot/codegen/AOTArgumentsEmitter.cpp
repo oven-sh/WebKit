@@ -91,22 +91,15 @@ void ArgumentsEmitter::generateGetRestLength(const ValueContext& value)
     define(value, restLength(value->firstArgument()));
 }
 
-void ArgumentsEmitter::generateReturnsToResultTest(const ValueContext& value)
-{
-    RELEASE_ASSERT(m_records.frame.readsCallerFrame);
-    LValue returnAddress = m_out.loadPtr(m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), CallFrame::returnPCOffset()));
-    auto wordAt = [&](ptrdiff_t offset) {
-        return Word32(m_out.load32(m_out.address(m_heaps.AOTImage_tables, returnAddress, offset)));
-    };
-    Condition hasFirstWord = equal(wordAt(0), word32(static_cast<int32_t>(ResultTestMark::firstWord)));
-    Condition hasSecondWord = equal(wordAt(sizeof(uint32_t)), word32(static_cast<int32_t>(ResultTestMark::secondWord)));
-    defineTest(value, logicalAnd(hasFirstWord, hasSecondWord));
-}
-
 void ArgumentsEmitter::generateCreateRest(const ValueContext& value)
 {
     uint32_t firstArgument = value->firstArgument();
-    define(value, emitter<CellAllocationEmitter>().newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
+    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
+    if (value->storage() == AllocationStorage::Heap) {
+        define(value, cells.newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
+        return;
+    }
+    define(value, cells.newArrayInFrameFromBuffer(value, restLength(firstArgument), restList(firstArgument), static_cast<unsigned>(build().limit(LimitID::MaxFrameArrayLength))));
 }
 
 Integer ArgumentsEmitter::indexOfBoxedKey(Boxed key, LBasicBlock isNotIndex)
@@ -183,6 +176,7 @@ void ArgumentsEmitter::emitTailCallWithList(Boxed callee, Boxed thisValue, Word3
         jump->append(B3::ConstrainedValue(operands[i], B3::ValueRep::reg(signature.operands[i])));
     jump->clobber(RegisterSet::macroClobberedGPRs());
     jump->effects.terminal = true;
+    jump->setNeedsFrameRecord(true);
     jump->setGenerator([records = &m_records](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         RELEASE_ASSERT(params.context().frameIsSetUp);
@@ -205,7 +199,7 @@ void ArgumentsEmitter::generateCallForwardVarargs(const ValueContext& value)
     }
 
     if (!typeOf(calleeOperand).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        calls.requireCallableBeforeTailCall(value, callee, std::nullopt);
+        calls.requireCallableBeforeTailCall(value, callee);
     emitTailCallWithList(callee, thisValue, count, list);
     calls.didEmitTailCall();
     m_records.frame.dropsArgumentListFrames = true;

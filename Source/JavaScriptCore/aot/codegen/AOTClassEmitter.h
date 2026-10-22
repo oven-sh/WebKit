@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -24,6 +25,10 @@ public:
     void generateGetConstructPrototype(const ValueContext&);
     void generateSuperConstruct(const ValueContext&);
     void generateSuperConstructList(const ValueContext&);
+
+private:
+    std::optional<uint32_t> rankOfClassWithOnePrototypeObject(const ValueContext&) const;
+    void failUnlessOperationReads(const ValueContext&, CellPointer classObject, CellPointer prototypeInTable);
 };
 
 } } } // namespace JSC::AOT::Typed

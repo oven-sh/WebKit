@@ -151,7 +151,7 @@ void checkUncheckedStackUsage(const LinkedFunctions& functions, const ResolvedCa
         return calls[position];
     });
 
-    if (auto position = findCycleUsingStack(functions, calls, components)) {
+    if (auto position = findCycleUsingStack(functions, calls, components); position && !context.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime)) {
         context.diagnostics().add(InternalError { .kind = InternalErrorKind::UncheckedStackCycle, .function = functions[*position].function });
         return;
     }

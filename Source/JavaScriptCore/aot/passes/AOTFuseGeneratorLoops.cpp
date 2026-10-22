@@ -37,7 +37,7 @@ struct CandidateSearch {
     FunctionPassContext& pass;
     const EscapeAnalysis& escape;
     std::span<const ListedStep> steps;
-    uint64_t callerBytes { 0 };
+    uint64_t inlinedBytes { 0 };
 };
 
 } // anonymous namespace
@@ -73,6 +73,20 @@ static uint64_t codeBytesOf(const Program& program, const Function& function)
     uint64_t bytes = 0;
     for (const Block& block : function.blocks)
         bytes += estimatedCodeBytes(program, function, block);
+    return bytes;
+}
+
+// The limit on the caller is on what has been added to it. A caller that is large by itself takes in a body like any other.
+static uint64_t inlinedBytesOf(const Program& program, const Function& function)
+{
+    uint64_t bytes = 0;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (value.inlineFrame)
+                bytes += estimatedCodeBytes(program, function, value);
+        }
+    }
     return bytes;
 }
 
@@ -237,7 +251,7 @@ static bool usesGeneratorOnlyToYield(const Value& value, ValueID generatorParame
     bool usesOnlyToYield = true;
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (operand == generatorParameter)
-            usesOnlyToYield &= value.opcode == Opcode::YieldBySavingFrame && operandIndex == OperandIndex::YieldBySavingFrame::generator;
+            usesOnlyToYield &= value.opcode == Opcode::IsGeneratorRunning || (value.opcode == Opcode::YieldBySavingFrame && operandIndex == OperandIndex::YieldBySavingFrame::generator);
     });
     return usesOnlyToYield;
 }
@@ -277,7 +291,7 @@ static GeneratorFusionDeclineReason findSizeObstacle(const CandidateSearch& sear
     uint64_t bodyBytes = codeBytesOf(pass.program, body);
     if (pass.exceeds(LimitID::MaxOnlyCallSiteBytes, bodyBytes, generator))
         return GeneratorFusionDeclineReason::BodyIsTooLarge;
-    if (pass.exceeds(LimitID::MaxInlinedCallerBytes, search.callerBytes + bodyBytes, generator))
+    if (pass.exceeds(LimitID::MaxInlinedCallerBytes, search.inlinedBytes + bodyBytes, generator))
         return GeneratorFusionDeclineReason::CallerIsTooLarge;
     if (pass.exceeds(LimitID::InlineFramesPerFunction, inlineFrameCountOf(pass.function) + inlineFrameCountOf(body), generator))
         return GeneratorFusionDeclineReason::CallerIsTooLarge;
@@ -314,7 +328,7 @@ static GeneratorFusionDeclineReason findObstacle(const CandidateSearch& search, 
         return GeneratorFusionDeclineReason::BodyIsNotDescribed;
     candidate.body = WTF::move(*description);
 
-    if (search.escape.at(*object).liveInstances != LiveInstances::AtMostOne)
+    if (search.escape.liveInstancesOf(*object) != LiveInstances::AtMostOne)
         return GeneratorFusionDeclineReason::SeveralLiveInstances;
     if (GeneratorFusionDeclineReason obstacle = addSites(search, steps.span(), candidate); obstacle != GeneratorFusionDeclineReason::None)
         return obstacle;
@@ -342,11 +356,11 @@ Vector<FusionCandidate> findFusionCandidates(FunctionPassContext& pass)
     if (candidates.isEmpty() || operations.steps.isEmpty())
         return candidates;
 
-    const EscapeAnalysis& escape = pass.analyses.escape();
+    const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();
     if (escape.gaveUp())
         return candidates;
 
-    CandidateSearch search { pass, escape, operations.steps.span(), codeBytesOf(pass.program, pass.function) };
+    CandidateSearch search { pass, escape, operations.steps.span(), inlinedBytesOf(pass.program, pass.function) };
     for (FusionCandidate& candidate : candidates)
         candidate.obstacle = findObstacle(search, candidate);
     return candidates;
@@ -401,6 +415,9 @@ PassOutcome fuseGeneratorLoops(FunctionPassContext& pass)
 
     for (const FusionCandidate& candidate : candidates)
         reportDecline(pass, candidate);
+    // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
+    if (outcome == PassOutcome::Changed)
+        pass.keptAnalyses = allAnalyses;
     return outcome;
 }
 

@@ -13,11 +13,10 @@ for (const [name, make] of Object.entries(functions)) {
     const expected = flags(make());
     shouldBe(flags($vm.makePropertiesImmutable(make())), expected, name + ": all at once");
     for (const key of ["name", "length", "prototype"]) shouldBe(flags($vm.makePropertiesImmutable(make()), [key]), flags(make(), [key]), name + ": " + key + " alone");
-    const f = $vm.makePropertiesImmutable(make()); shouldThrow(() => delete f.name, name + ": name is not deleted (immutability alone refuses it, so sloppy code is told too)"); shouldBe(Object.hasOwn(f, "name"), Object.hasOwn(make(), "name"), name + ": and is there");
+    const f = $vm.makePropertiesImmutable(make()); shouldBe(delete f.name, false, name + ": name is not deleted (this is sloppy code: the refusal has the language's form)"); shouldBe(Object.hasOwn(f, "name"), Object.hasOwn(make(), "name"), name + ": and is there");
     shouldBe(Reflect.defineProperty(f, "length", { value: 99 }), false, name + ": length is not redefined"); shouldBe(f.length, make().length, name + ": and is what it was");
 }
 for (const [name, make] of Object.entries(arrays)) {
     shouldBe(flags($vm.makePropertiesImmutable(make()), ["length"]), flags(make(), ["length"]), name + ": length");
     const a = $vm.makePropertiesImmutable(make()), n = a.length; a.length = 0; shouldBe(a.length, n, name + ": length stays");
-    shouldBe(flags($vm.makePropertiesImmutable(make(), true), ["length"]), "length:fff", name + ", fixed: length");
 }

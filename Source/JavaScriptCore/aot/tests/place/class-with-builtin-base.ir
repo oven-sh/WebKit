@@ -15,7 +15,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="List" module=m0 constructor=f1 fields=[{key="tag" declared={type=anything}}, {key="size" declared={type=anything}}] flags=[HasHeritage]
-layout L1 kind=Instance name="Longer" module=m0 predictedBase=L0 constructor=f2 fields=[{key="extra" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Longer" module=m0 base=L0 constructor=f2 fields=[{key="extra" declared={type=anything}}] flags=[HasHeritage]
 layout L2 kind=Instance name="Plain" module=m0 constructor=f3 fields=[{key="x" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():

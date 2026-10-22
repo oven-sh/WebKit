@@ -64,15 +64,6 @@ static void addDataPrefix(CodeSketch& sketch, uint32_t word)
     AOT_TEST_CHECK(sketch.size() == sizeOfDataPrefix);
 }
 
-static void addValueEntry(CodeSketch& sketch, uint32_t valueEntry = 5)
-{
-    static_assert(sizeof(ValueEntryWords) == MacroAssembler::relocationSize(RelocationKind::Distance32));
-    AOT_TEST_CHECK(!sketch.size());
-    appendRelocatedSite(sketch, RelocationKind::Distance32, { SymbolSpace::Function, sketch.calleeIndex(valueEntry) });
-    sketch.code().body.entries[0].offset = sketch.size();
-    sketch.code().entry.hasValueEntry = true;
-}
-
 static void addSecondaryEntry(CodeSketch& sketch, unsigned size = 4)
 {
     AOT_TEST_CHECK(!sketch.size());
@@ -235,7 +226,7 @@ static bool isAtPrimaryEntryOf(const EntryAlias& alias, uint32_t body)
 
 static bool entriesAreEqual(const EntryDescription& first, const EntryDescription& second)
 {
-    return first.numberOfParameters == second.numberOfParameters && first.isGenericEntrypoint == second.isGenericEntrypoint && first.hasValueEntry == second.hasValueEntry;
+    return first.numberOfParameters == second.numberOfParameters && first.isGenericEntrypoint == second.isGenericEntrypoint;
 }
 
 static bool isJumpToFunction(const CodeBody& body, const Relocation& relocation, uint32_t offset, uint32_t target)
@@ -329,7 +320,7 @@ static void testFaultAtEndGrowsBody()
     checkTrimmedBody(threaded, sizeAfter);
 
     const CodeBody& body = threaded.functions[0].body;
-    const CodeUnit& last = body.units.last();
+    CodeUnit last = body.units.last();
     AOT_TEST_CHECK(last.kind == CodeUnit::Kind::Pinned);
     AOT_TEST_CHECK(last.offset == sizeBefore);
     AOT_TEST_CHECK(last.length == sizeAfter - sizeBefore);
@@ -416,7 +407,7 @@ static void checkHeadIsPrepended(CreateJumpBody create, uint32_t prefixSize)
     AOT_TEST_CHECK(std::ranges::equal(code.body.bytes.subspan(headSize), targetBytes));
     AOT_TEST_CHECK(code.body.relocations.isEmpty());
     AOT_TEST_CHECK(code.body.paddingStart == code.body.bytes.size());
-    AOT_TEST_CHECK(code.body.units[0].kind == CodeUnit::Kind::Pinned && !code.body.units[0].offset && code.body.units[0].length == headSize);
+    AOT_TEST_CHECK(code.body.units.first().kind == CodeUnit::Kind::Pinned && code.body.units.first().length == headSize);
     AOT_TEST_CHECK(code.frame.frameRanges.size() == 1);
     AOT_TEST_CHECK(code.frame.frameRanges[0].begin == headSize && code.frame.frameRanges[0].end == code.body.bytes.size());
     AOT_TEST_CHECK(verifyCodeUnits(code) == CodeUnitsError::None);
@@ -443,6 +434,93 @@ static void testPrependedHeadIsPadded()
     AOT_TEST_CHECK(std::ranges::equal(code.body.bytes.subspan(headSize, entry - headSize), nops));
     AOT_TEST_CHECK(std::ranges::equal(code.body.bytes.subspan(entry), targetBytes));
     AOT_TEST_CHECK(verifyCodeUnits(code) == CodeUnitsError::None);
+}
+
+// A word, a jump to the part behind, the jump to the body. Behind it: the jump to the fallback.
+static CompiledCode entrance(uint32_t function, uint32_t body, uint32_t fallback)
+{
+    CodeSketch sketch(function);
+    sketch.pinned(0x0105);
+    sketch.jumpTo(sketch.size() + 2 * static_cast<uint32_t>(sizeOfJump));
+    sketch.jumpToFunction(body);
+    sketch.jumpToFunction(fallback);
+    return sketch.take();
+}
+
+// Both entries are aligned. Where the word and the jump in front of the jump to the body have an odd size, a prefix without meaning on the first instruction makes it even.
+static constexpr uint32_t sizeOfPrefixOfEntrance = (sizeOfPlainWord + sizeOfJump) % imageFunctionAlignment;
+
+static void testEntranceEndsInJumpToNextBody()
+{
+    constexpr uint32_t sizeBehindJump = static_cast<uint32_t>(sizeOfJump);
+    constexpr uint32_t firstInstruction = sizeBehindJump + sizeOfPrefixOfEntrance;
+    static_assert(sizeOfPrefixOfEntrance == (isX86() ? 1 : 0));
+    Vector<uint8_t> bytesOfBody = framed(2).body.bytes;
+    Threaded threaded(bodies(entrance(1, 2, 3), framed(2), framed(3)));
+    AOT_TEST_CHECK(hasIds(threaded.functions, { 1, 2, 3 }));
+    AOT_TEST_CHECK(threaded.aliases.isEmpty());
+    AOT_TEST_CHECK(findByFunction(threaded.functions, 2).body.bytes == bytesOfBody);
+
+    const CodeBody& body = findByFunction(threaded.functions, 1).body;
+    AOT_TEST_CHECK(body.primaryEntryOffset() == sizeBehindJump);
+    AOT_TEST_CHECK(!sizeOfPrefixOfEntrance || body.bytes[sizeBehindJump] == 0x3e);
+    AOT_TEST_CHECK(startsWithWord(body.bytes.subspan(firstInstruction), 0x0105));
+    AOT_TEST_CHECK(!((body.bytes.size() - sizeOfJump - body.primaryEntryOffset()) % imageFunctionAlignment));
+    AOT_TEST_CHECK(body.relocations.size() == 2);
+    AOT_TEST_CHECK(isJumpToFunction(body, body.relocations[0], 0, 3));
+    AOT_TEST_CHECK(isJumpToFunction(body, body.relocations[1], static_cast<uint32_t>(body.bytes.size() - sizeOfJump), 2));
+    AOT_TEST_CHECK(body.paddingStart == body.bytes.size());
+
+    AOT_TEST_CHECK(body.localSites.size() == 1);
+    const LinkedSite& site = body.localSites[0];
+    AOT_TEST_CHECK(site.offset == firstInstruction + sizeOfPlainWord && !site.target);
+    Vector<uint8_t> expected(body.bytes.subspan(site.offset, sizeOfJump));
+    AOT_TEST_CHECK(MacroAssembler::setRelocationDistance(site.kind, expected.mutableSpan(), -static_cast<int64_t>(site.offset)));
+    AOT_TEST_CHECK(std::ranges::equal(body.bytes.subspan(site.offset, sizeOfJump), expected));
+}
+
+#if CPU(X86_64)
+static void testEntranceOfEvenSizeHasNoPrefix()
+{
+    constexpr uint32_t sizeBehindJump = static_cast<uint32_t>(sizeOfJump);
+    CodeSketch sketch(1);
+    sketch.pinned(0x0105);
+    sketch.pinnedBytes(1);
+    sketch.jumpTo(sketch.size() + 2 * static_cast<uint32_t>(sizeOfJump));
+    sketch.jumpToFunction(2);
+    sketch.jumpToFunction(3);
+    size_t size = sketch.size();
+    Threaded threaded(bodies(sketch.take(), framed(2), framed(3)));
+    const CodeBody& body = findByFunction(threaded.functions, 1).body;
+    AOT_TEST_CHECK(body.primaryEntryOffset() == sizeBehindJump);
+    AOT_TEST_CHECK(body.bytes.size() == size);
+    AOT_TEST_CHECK(startsWithWord(body.bytes.subspan(sizeBehindJump), 0x0105));
+}
+#endif
+
+// The head of an entrypoint that only leads to the entrance lies in front of the entrance's entry and moves with it.
+static void testHeadMovesWithEntrance()
+{
+    constexpr uint32_t sizeBehindJump = static_cast<uint32_t>(sizeOfJump);
+    Threaded threaded(bodies(movesAndJump(1, 2, 0x0207), entrance(2, 3, 4), framed(3), framed(4)));
+    AOT_TEST_CHECK(hasIds(threaded.functions, { 2, 3, 4 }));
+    AOT_TEST_CHECK(isPlacedAt(findByFunction(threaded.aliases, 1), 2, AliasPlacement::BeforeBody, sizeBehindJump, 0));
+
+    const CodeBody& body = findByFunction(threaded.functions, 2).body;
+    AOT_TEST_CHECK(body.primaryEntryOffset() == sizeBehindJump + sizeOfPlainWord);
+    AOT_TEST_CHECK(isJumpToFunction(body, body.relocations[0], 0, 4));
+    AOT_TEST_CHECK(startsWithWord(body.bytes.subspan(sizeBehindJump), 0x0207));
+    AOT_TEST_CHECK(startsWithWord(body.bytes.subspan(body.primaryEntryOffset()), 0x0105));
+    AOT_TEST_CHECK(isJumpToFunction(body, body.relocations[1], static_cast<uint32_t>(body.bytes.size() - sizeOfJump), 3));
+}
+
+static void testEntranceFarFromItsBodyStays()
+{
+    Vector<uint8_t> bytes = entrance(1, 3, 2).body.bytes;
+    Threaded threaded(bodies(entrance(1, 3, 2), framed(2), framed(3)));
+    const CodeBody& body = findByFunction(threaded.functions, 1).body;
+    AOT_TEST_CHECK(!body.primaryEntryOffset());
+    AOT_TEST_CHECK(body.bytes == bytes);
 }
 
 static void checkSecondHeadIsAppended(CreateJumpBody create, uint32_t prefixSize)
@@ -495,14 +573,15 @@ static void testTwoGuests()
 
 static void testAppendedJumpThroughChain()
 {
-    Threaded threaded(bodies(framed(1), movesAndJump(2, 3), oneJump(3, 4), framed(4)));
+    Threaded threaded(bodies(framed(1), movesAndJump(5, 3, 6), movesAndJump(2, 3), oneJump(3, 4), framed(4)));
     AOT_TEST_CHECK(hasIds(threaded.functions, { 1, 4 }));
+    AOT_TEST_CHECK(isPlacedAt(findByFunction(threaded.aliases, 5), 4, AliasPlacement::BeforeBody));
+    AOT_TEST_CHECK(startsWithWord(findByFunction(threaded.functions, 4).body.bytes.span(), 6));
     const EntryAlias& alias = findByFunction(threaded.aliases, 2);
     AOT_TEST_CHECK(alias.body == FunctionID(1u) && alias.placement == AliasPlacement::AfterBody);
     AOT_TEST_CHECK(isAtPrimaryEntryOf(findByFunction(threaded.aliases, 3), 4));
     const CodeBody& host = findByFunction(threaded.functions, 1).body;
     AOT_TEST_CHECK(isJumpToFunction(host, host.relocations.last(), alias.start + sizeOfPlainWord, 4));
-    AOT_TEST_CHECK(!findByFunction(threaded.functions, 4).body.primaryEntryOffset());
 }
 
 template<typename Edit>
@@ -597,7 +676,9 @@ static void testFirstBodyHasNoHost()
 {
     CompiledCode first = movesAndJump(1, 2);
     Vector<uint8_t> bytes = first.body.bytes;
-    Threaded threaded(bodies(WTF::move(first), oneJump(2, 3), framed(3)));
+    Threaded threaded(bodies(WTF::move(first), oneJump(2, 3), framedAfter(3, [](CodeSketch& sketch) {
+        addSecondaryEntry(sketch);
+    })));
     AOT_TEST_CHECK(hasIds(threaded.functions, { 1, 3 }));
     AOT_TEST_CHECK(threaded.aliases.size() == 1);
     AOT_TEST_CHECK(isAtPrimaryEntryOf(findByFunction(threaded.aliases, 2), 3));
@@ -777,22 +858,6 @@ static CompiledCode addressBody(uint32_t function, uint32_t callee)
     });
 }
 
-static CompiledCode valueEntryBody(uint32_t function, uint32_t valueEntry, bool hasValueEntry = true)
-{
-    return editedDuplicate(function, [&](CodeSketch& sketch) {
-        addValueEntry(sketch, valueEntry);
-        sketch.code().entry.hasValueEntry = hasValueEntry;
-    });
-}
-
-static void testEqualValueEntries()
-{
-    Folded folded(bodies(valueEntryBody(1, 5), valueEntryBody(2, 5), framed(5)));
-    AOT_TEST_CHECK(hasIds(folded.functions, { 1, 5 }));
-    AOT_TEST_CHECK(isAtPrimaryEntryOf(findByFunction(folded.aliases, 2), 1));
-    AOT_TEST_CHECK(findByFunction(folded.aliases, 2).entry.hasValueEntry);
-}
-
 static void testOtherEntryOffset()
 {
     CompiledCode second = editedDuplicate(2, [](CodeSketch& sketch) {
@@ -905,12 +970,17 @@ static constexpr NativeTest mergingTests[] = {
     { "image/jump-threading/caller-callees-unchanged"_s, testCallerCalleesUnchanged },
     { "image/jump-threading/prepended"_s, [] { checkHeadIsPrepended(movesAndJump, 0); } },
     { "image/jump-threading/prepended-head-is-padded"_s, testPrependedHeadIsPadded },
+    { "image/jump-threading/entrance-ends-in-jump-to-next-body"_s, testEntranceEndsInJumpToNextBody },
+#if CPU(X86_64)
+    { "image/jump-threading/entrance-of-even-size-has-no-prefix"_s, testEntranceOfEvenSizeHasNoPrefix },
+#endif
+    { "image/jump-threading/head-moves-with-entrance"_s, testHeadMovesWithEntrance },
+    { "image/jump-threading/entrance-far-from-its-body-stays"_s, testEntranceFarFromItsBodyStays },
     { "image/jump-threading/prefix-and-jump"_s, [] { checkHeadIsPrepended(prefixAndJump, sizeOfDataPrefix); } },
     { "image/jump-threading/second-head-is-appended"_s, [] { checkSecondHeadIsAppended(movesAndJump, 0); } },
     { "image/jump-threading/second-prefix-is-appended"_s, [] { checkSecondHeadIsAppended(prefixAndJump, sizeOfDataPrefix); } },
     { "image/jump-threading/two-guests"_s, testTwoGuests },
     { "image/jump-threading/appended-jump-through-chain"_s, testAppendedJumpThroughChain },
-    { "image/jump-threading/target-with-value-entry-takes-no-head"_s, [] { checkTargetTakesNoHead([](CodeSketch& sketch) { addValueEntry(sketch); }); } },
     { "image/jump-threading/target-with-two-entries-takes-no-head"_s, [] { checkTargetTakesNoHead([](CodeSketch& sketch) { addSecondaryEntry(sketch); }); } },
 #if CPU(X86_64)
     { "image/jump-threading/appended-to-host-with-odd-entry"_s, testAppendedToHostWithOddEntry },
@@ -926,7 +996,6 @@ static constexpr NativeTest mergingTests[] = {
     { "image/jump-threading/has-frame"_s, [] { checkJumpBodyStays([](CodeSketch& sketch) { sketch.withFrame(); }); } },
     { "image/jump-threading/jump-to-stub"_s, [] { checkNothingRemoved(bodies(framed(1), duplicateBody(2, 5), framed(3))); } },
     { "image/jump-threading/has-site"_s, [] { checkJumpBodyStays([](CodeSketch& sketch) { sketch.addSite(); }); } },
-    { "image/jump-threading/has-value-entry"_s, [] { checkJumpBodyStays([](CodeSketch& sketch) { addValueEntry(sketch); }); } },
     { "image/jump-threading/has-secondary-entry"_s, [] { checkJumpBodyStays([](CodeSketch& sketch) { addSecondaryEntry(sketch); }); } },
     { "image/jump-threading/jump-to-thunk"_s, [] { checkJumpBodyStays([](CodeSketch&) { }, jumpToThunk); } },
     { "image/jump-threading/jump-to-secondary-entry"_s, [] { checkJumpBodyStays([](CodeSketch&) { }, [](CodeSketch& sketch) { sketch.lastRelocation().entry = 1; }); } },
@@ -949,7 +1018,6 @@ static constexpr NativeTest mergingTests[] = {
     { "image/folding/equal-jump-tables"_s, [] { checkFolded(bodies(jumpTableBody(1, { 0, 4 }), jumpTableBody(2, { 0, 4 })), { 1 }); } },
     { "image/folding/equal-addresses"_s, [] { checkFolded(bodies(addressBody(1, 5), addressBody(2, 5), framed(5)), { 1, 5 }); } },
     { "image/folding/equal-moves"_s, [] { checkFolded(bodies(thunkCallBody(1, 1), thunkCallBody(2, 1)), { 1 }); } },
-    { "image/folding/equal-value-entries"_s, testEqualValueEntries },
     { "image/folding/other-bytes"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 8))); } },
     { "image/folding/other-size"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 7, catchException(), 2))); } },
     { "image/folding/other-stub"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 7, rejectInFrame()))); } },
@@ -960,8 +1028,6 @@ static constexpr NativeTest mergingTests[] = {
     { "image/folding/other-constant-alignment"_s, [] { checkNotFolded(bodies(constantBody(1, 1), constantBody(2, 1, 16))); } },
     { "image/folding/other-jump-table"_s, [] { checkNotFolded(bodies(jumpTableBody(1, { 0, 4 }), jumpTableBody(2, { 4, 0 }))); } },
     { "image/folding/other-address"_s, [] { checkNotFolded(bodies(addressBody(1, 5), addressBody(2, 6), framed(5), framed(6))); } },
-    { "image/folding/other-value-entry"_s, [] { checkNotFolded(bodies(valueEntryBody(1, 5), valueEntryBody(2, 6), framed(5), framed(6))); } },
-    { "image/folding/other-value-entry-flag"_s, [] { checkNotFolded(bodies(valueEntryBody(1, 5), valueEntryBody(2, 5, false), framed(5))); } },
     { "image/folding/other-entry-offset"_s, testOtherEntryOffset },
     { "image/folding/visible-function-with-site"_s, [] { checkNotFolded(bodies(visibleBodyWithSite(1), visibleBodyWithSite(2))); } },
     { "image/folding/ordinary-frames"_s, [] { checkRecordsNotFolded([](CodeSketch& sketch) { sketch.withFrame(); }); } },

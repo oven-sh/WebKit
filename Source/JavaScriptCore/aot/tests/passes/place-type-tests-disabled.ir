@@ -1,4 +1,4 @@
-# With the pass switched off a prediction gets no test
+# With the pass switched off an expected type gets no test
 # FORM: Prepared
 # OPTIONS: disable=pass:PlaceTypeTests
 # RUN: pass PlaceTypeTests
@@ -8,12 +8,12 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="mulOfPredictedNumbers" parameters=[{type=anything predicted=number}, {type=anything predicted=number}] results=[{type=number|bigint}] {
+function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
   b0(v0: anything ~ number, v1: anything ~ number):
     v2 = Mul v0, v1
     Return v2
 }
-# CHECK-LABEL: function f0 name="mulOfPredictedNumbers"
+# CHECK-LABEL: function f0 name="mulOfExpectedNumbers"
 # CHECK-NEXT: b0(v0: anything ~ number, v1: anything ~ number):
 # CHECK-NEXT: v2:{{*}}= Mul v0, v1
 # CHECK-NEXT: Return v2

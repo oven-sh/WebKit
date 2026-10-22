@@ -2,12 +2,12 @@
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
 # RUN: pipeline ResolveAccesses
-# RUN(ORDER): flow-order locations failed
-# ORDER: g3: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g4: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g5: Unknown AtMostOnce
-# ORDER: read-before-initialization g5
-# ORDER-NOT: read-before-initialization
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g3 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g4 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g5 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: module m0 path=
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

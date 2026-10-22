@@ -15,7 +15,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static bool isWithin(const Program& program, TypeID type, TypeID bound)
 {
-    return program.at(type).isSubsetOf(program.at(bound), program);
+    return type == bound || program.at(type).isSubsetOf(program.at(bound), program);
 }
 
 static bool mayBeUndefined(const Type& type)
@@ -108,6 +108,21 @@ static std::optional<uint32_t> tagBitsWhenCarried(const VirtualFamily& family, c
     if (carriedBits & absentBits)
         return std::nullopt;
     return carriedBits;
+}
+
+enum class UnprovenVariants : uint8_t { None, Some, All };
+
+static UnprovenVariants unprovenVariantsOf(const VirtualFamily& family, const ObjectState& state, uint32_t namedField)
+{
+    std::optional<uint32_t> unprovenField = family.findCounterpart(namedField);
+    if (!unprovenField)
+        return UnprovenVariants::None;
+    size_t count = std::ranges::count_if(state.variants, [&](const ObjectVariant& variant) {
+        return hasStored(family.at(variant.shape), *unprovenField);
+    });
+    if (!count)
+        return UnprovenVariants::None;
+    return count == state.variants.size() ? UnprovenVariants::All : UnprovenVariants::Some;
 }
 
 static TypeID typeOfCell(const AllocationSinking& sinking, VirtualObjectID object)
@@ -225,6 +240,23 @@ static ValueID emitValueOrUndefined(AllocationSinking& sinking, ObjectInterprete
     return result;
 }
 
+static ValueID emitValueOfEitherField(AllocationSinking& sinking, ObjectInterpreter& interpreter, VirtualObjectID object, uint32_t namedField, uint32_t unprovenField, TypeID type)
+{
+    std::optional<uint32_t> unprovenBits = tagBitsWhenCarried(sinking.familyOf(object), *interpreter.state().find(object), unprovenField);
+    RELEASE_ASSERT(unprovenBits);
+
+    RewriteCursor& cursor = sinking.cursor();
+    IRBuilder& builder = cursor.builder();
+    ValueID proven = interpreter.valueOfField(object, namedField);
+    ValueID unproven = interpreter.valueOfField(object, unprovenField);
+    ValueID isUnproven = interpreter.emitTagTest(object, *unprovenBits);
+    BlockID continuation = cursor.addUncoveredBlock();
+    ValueID result = builder.addParameter(continuation, type);
+    builder.emitBranch(isUnproven, Target { continuation, { unproven }, { } }, Target { continuation, { proven }, { } });
+    cursor.moveTo(continuation);
+    return result;
+}
+
 Execution ObjectInterpreter::executeRead(ValueID id)
 {
     ValueID receiver = function().at(id).operand(0);
@@ -233,6 +265,8 @@ Execution ObjectInterpreter::executeRead(ValueID id)
         return executeOther(id);
 
     auto executeOnCell = [&] {
+        if (hasPositionFromAnsweredTest(id, object))
+            m_sinking.abandon(object);
         requireCell(receiver, causeOf(id, 0));
         return executeOther(id);
     };
@@ -275,6 +309,21 @@ Execution ObjectInterpreter::executeRead(ValueID id)
     }
 
     std::optional<uint32_t> field = access->lookup == FieldLookup::Field ? family.findField(access->field) : std::nullopt;
+    switch (field ? unprovenVariantsOf(family, state, *field) : UnprovenVariants::None) {
+    case UnprovenVariants::None:
+        break;
+    case UnprovenVariants::Some:
+        if (!canReadEitherField(id, object, *access, *field))
+            return executeOnCell();
+        if (isRewriting())
+            replaceRead(id, emitValueOfEitherField(m_sinking, *this, object, *field, *family.findCounterpart(*field), function().at(id).type));
+        return Execution::Interpreted;
+    case UnprovenVariants::All:
+        if (function().at(id).opcode != Opcode::PropGet)
+            return executeOnCell();
+        field = family.findCounterpart(*field);
+        break;
+    }
     FieldRead read = classifyRead(object, *access, field);
     if (!fitsRead(id, object, field, read))
         return executeOnCell();
@@ -299,6 +348,22 @@ Execution ObjectInterpreter::executeRead(ValueID id)
         return Execution::Interpreted;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Some variants hold the value in the slot of the field and the others hold one that nothing proves to fit. A read by name takes either.
+bool ObjectInterpreter::canReadEitherField(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField) const
+{
+    const ObjectState& state = *stateOf(object);
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    uint32_t unprovenField = *family.findCounterpart(namedField);
+    if (function().at(read).opcode != Opcode::PropGet || access.whenPresent != PresentField::IsOwnData || function().at(read).type != TypeTable::anything)
+        return false;
+    if (state.objectHeldIn(namedField) || state.objectHeldIn(unprovenField) || !tagBitsWhenCarried(family, state, unprovenField))
+        return false;
+    return std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
+        const VirtualShape& shape = family.at(variant.shape);
+        return hasStored(shape, namedField) || hasStored(shape, unprovenField);
+    });
 }
 
 FieldRead ObjectInterpreter::classifyRead(VirtualObjectID object, const VirtualFieldAccess& access, std::optional<uint32_t> field) const
@@ -445,6 +510,8 @@ Execution ObjectInterpreter::executeStore(ValueID id)
         return executeOther(id);
 
     auto executeOnCell = [&] {
+        if (hasPositionFromAnsweredTest(id, object))
+            m_sinking.abandon(object);
         requireCell(receiver, causeOf(id, 0));
         return executeOther(id);
     };
@@ -483,8 +550,15 @@ Execution ObjectInterpreter::executeStore(ValueID id)
         return kinds.hasExactlyOneBitSet() ? storeArgument(id, object, *access) : executeOnCell();
 
     std::optional<uint32_t> field = fieldFor(object, access->field);
-    if (!field || !canStore(object, *access, *field, stored))
+    if (!field)
         return executeOnCell();
+    if (!canStore(object, *access, *field, stored)) {
+        if (opcode != Opcode::PropSet || !canStoreUnprovenValue(object, *access, *field))
+            return executeOnCell();
+        field = fieldFor(object, VirtualField::unprovenNamed(access->field.key));
+        if (!field)
+            return executeOnCell();
+    }
     if (m_state.isDestructured(object)) {
         m_sinking.abandon(object);
         return executeOnCell();
@@ -524,14 +598,29 @@ bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAcces
             return false;
         if (description.kind == VirtualObjectKind::Array && virtualField.kind == VirtualFieldKind::Element && virtualField.index >= shape.length)
             return false;
-        bool runsNoCode = hasStored(shape, field) ? access.whenPresent == PresentField::IsOwnData : access.whenAbsent == AbsentField::FindsNothing;
+        bool isPresent = hasStored(shape, field) || hasStoredCounterpart(family, shape, field);
+        bool runsNoCode = isPresent ? access.whenPresent == PresentField::IsOwnData : access.whenAbsent == AbsentField::FindsNothing;
         return runsNoCode && isWithin(program(), storedType, typeOfField(m_sinking.objectContext(), description, virtualField));
+    });
+}
+
+// The store by name of a value that the slot may not admit. At run time the field leaves its slot if it has to, and the object stays what it was for everybody who looks by name.
+bool ObjectInterpreter::canStoreUnprovenValue(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField) const
+{
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    if (access.whenPresent != PresentField::IsOwnData || family.refusesUnprovenValues() || m_sinking.storesByNameWaitIn(m_state.block))
+        return false;
+    return std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
+        const VirtualShape& shape = family.at(variant.shape);
+        if (shape.kind != VirtualShapeKind::Fields || !canHoldUnprovenValue(program(), family.descriptionOf(shape), access.field))
+            return false;
+        return hasStored(shape, namedField) || hasStoredCounterpart(family, shape, namedField);
     });
 }
 
 bool ObjectInterpreter::canHold(VirtualObjectID holder, uint32_t field, VirtualObjectID held) const
 {
-    if (m_sinking.decisions().holdsCells(holder, field))
+    if (m_sinking.decisions().holdsCells(holder, field) || m_sinking.familyOf(holder).fieldAt(field).kind == VirtualFieldKind::UnprovenNamed)
         return false;
 
     const VirtualFamily& heldFamily = m_sinking.familyOf(held);
@@ -561,14 +650,16 @@ void ObjectInterpreter::storeField(VirtualObjectID object, uint32_t field, Value
     }
 
     ObjectState& state = *stateOf(object);
+    VirtualFamily& family = m_sinking.familyOf(object);
     if (held)
         state.hold(field, held);
     else
         state.release(field);
+    if (std::optional<uint32_t> counterpart = family.findCounterpart(field))
+        state.release(*counterpart);
     if (isRewriting())
         values().ensure(object).setField(field, held ? ValueID() : resolve(stored));
 
-    VirtualFamily& family = m_sinking.familyOf(object);
     for (ObjectVariant& variant : state.variants) {
         RELEASE_ASSERT(family.at(variant.shape).kind == VirtualShapeKind::Fields);
         VirtualShape next = shapeAfterStore(family, m_sinking.orders(), family.at(variant.shape), field);

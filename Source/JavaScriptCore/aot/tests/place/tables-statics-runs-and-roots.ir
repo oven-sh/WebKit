@@ -3,7 +3,7 @@
 # RUN(STATICS): tables statics
 # RUN(PLACED): place statics
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="values.js" displayPath="values.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}, {name="c" variable=g2}, {name="d" variable=g3}, {name="e" variable=g4}]
 entry module=m0
 variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
@@ -66,9 +66,8 @@ function f3 name="early" module=m1 results=[{type=anything}] {
 # STATICS-NEXT: run firstWord=0 words=5 bits=0xa
 # STATICS-NEXT: run firstWord=5 words=1 bits=
 # STATICS-NEXT: roots offset=0 size=40
-# STATICS-NEXT: roots offset=56 size=16
+# STATICS-NEXT: roots offset=56 size=8
 # PLACED: g4 offset=32 representation=JSValue {{*}}region=FilledAtProgramEntry
 # PLACED-NEXT: g5 offset=48 representation=Double {{*}}region=FilledAtInstanceCreation initial=0x0000000000000000
 # PLACED-NEXT: g6 offset=40 representation=OptionalDouble {{*}}region=FilledAtProgramEntry
-# PLACED-NEXT: module-value m0 @56
-# PLACED-NEXT: module-value m1 @64
+# PLACED-NEXT: module-value m1 @56

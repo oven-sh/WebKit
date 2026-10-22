@@ -1,4 +1,5 @@
 # A slot that holds only cells, null, undefined and absent takes 32 bits, and 64 where it may point into a frame
+# TODO: memory: a closure stored into an environment that lies in the frame is not itself put in the frame
 # FORM: AsRead
 # OPTIONS: references=narrow only-passes=ComputeEffectSummaries,AllocateInFrames
 # RUN: plan-slots layouts

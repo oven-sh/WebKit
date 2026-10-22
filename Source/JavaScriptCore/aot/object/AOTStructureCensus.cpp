@@ -56,6 +56,11 @@ static ASCIILiteral variantOf(Structure* structure)
     auto* compiled = uncheckedDowncast<CompiledStructure>(structure);
     if (!compiled->describesObject())
         return "compiled-other"_s;
+    // The usual prototype of a layout is an object, so any other Structure without a prototype has the flag.
+    if (compiled->storedPrototype().isNull() && !compiled->hasOtherPrototype())
+        return "compiled-template"_s;
+    if (compiled->heldExtraProperties())
+        return "compiled-holding-extra-properties"_s;
     if (compiled->hasExtraProperties())
         return "compiled-with-extra-properties"_s;
     if (compiled->hasOutOfLineKeyOrder())

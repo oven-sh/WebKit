@@ -1,0 +1,90 @@
+# empty = []; empty.push({ i: 1 })    wholeNumbers = [1, 2]    whole = [1, 2]; fractions = [1.5]; first(whole); first(fractions)    nested = [[1], [2]]
+# long = [1, 2, .. 16]    besideLong = [1]; second(long); second(besideLong)    withObject = [{ i: 1 }]
+# A literal of constants, `[]` among them, comes from the front end as constant data. ExpandData makes allocations of a small tree, and of a tree of arrays and constants alone its size decides that by itself:
+# each of its arrays becomes a literal that allocates what its stamp says, so its storage is proven like that of any other literal.
+# A tree over the limit is made out of its record, whose maker picks the storage by the record: nothing is said of it, nor of the numbers that meet it.
+# Whether a tree with an object in it is expanded depends on its layouts, so nothing is said there either.
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="empty"
+# CHECK: declared={type=Array<L0, proven, Contiguous
+# CHECK-LABEL: variable g1 name="wholeNumbers"
+# CHECK: declared={type=Array<int[1, 2], proven, Int32
+# CHECK-LABEL: variable g2 name="whole"
+# CHECK: declared={type=Array<int[1, 2]|fractional, proven, Double
+# CHECK-LABEL: variable g3 name="fractions"
+# CHECK: declared={type=Array<int[1, 2]|fractional, proven, Double
+# CHECK-LABEL: variable g4 name="nested"
+# CHECK: declared={type=Array<Array<int[1, 2], proven, Int32
+# CHECK-LABEL: variable g5 name="long"
+# CHECK: declared={type=Array<int[1, 16], proven
+# CHECK-NOT: Int32
+# CHECK-LABEL: variable g6 name="besideLong"
+# CHECK: declared={type=Array<1, proven
+# CHECK-NOT: Int32
+# CHECK-LABEL: variable g7 name="withObject"
+# CHECK: declared={type=Array<L0, proven
+# CHECK-NOT: Contiguous
+# CHECK-LABEL: function f0 name="main"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="i" declared={type=anything}}] ownFieldCount=1
+variable g0 name="empty" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="wholeNumbers" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="whole" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="fractions" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="nested" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="long" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="besideLong" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="withObject" module=m0 declared={type=anything} initialization=Undefined
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}]} module=m0
+data d2 root=Array{contents=number elements=[Number{value=1}, Number{value=2}]} module=m0
+data d3 root=Array{contents=number elements=[Number{value=1.5}]} module=m0
+data d4 root=Array{contents=anything elements=[Array{contents=number elements=[Number{value=1}]}, Array{contents=number elements=[Number{value=2}]}]} module=m0
+data d5 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}]} module=m0
+data d6 root=Array{contents=number elements=[Number{value=1}]} module=m0
+data d7 root=Array{contents=anything elements=[Object{layout=L0 members=[{key="i" value=Number{value=1}}]}]} module=m0
+data d8 root=Object{layout=L0 members=[{key="i" value=Number{value=1}}]} module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    v2 = PropGet v0 key="push"
+    v3 = Data data=d8
+    v4 = Call v2, v0, v3 calleeKey="push" calleeName="push"
+    v5 = Data data=d1
+    PutModuleVariable v5 variable=g1
+    v7 = Data data=d2
+    PutModuleVariable v7 variable=g2
+    v9 = Data data=d3
+    PutModuleVariable v9 variable=g3
+    v11 = NewClosure function=f1
+    v12 = Call v11, -, v7
+    v13 = Call v11, -, v9
+    v14 = Data data=d4
+    PutModuleVariable v14 variable=g4
+    v16 = Data data=d5
+    PutModuleVariable v16 variable=g5
+    v18 = Data data=d6
+    PutModuleVariable v18 variable=g6
+    v20 = NewClosure function=f2
+    v21 = Call v20, -, v16
+    v22 = Call v20, -, v18
+    v23 = Data data=d7
+    PutModuleVariable v23 variable=g7
+    Return
+}
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    Return v2
+}

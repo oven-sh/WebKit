@@ -1,0 +1,31 @@
+# `const context = { cwd }; context.file = () => load(context); return context`: two steps, so that the function can name the object. The literal stands in this function and does not list
+# the field, so the store finds the slot empty: it does not test for a filled slot, which would fail every time and send the store by name. Another literal of the layout lists the field
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+layout L0 name="Context" module=m0 fields=[{key="cwd" declared={type=anything}}, {key="file" declared={type=anything}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+
+function f1 name="makeContext" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="seen" [isFreeName]
+    v5 = Call v4, -, v2
+    PropSet v2, v5 key="file"
+    Return v2
+}
+# CHECK-LABEL: name="makeContext"
+# CHECK-NOT: IsSlotFilled
+# CHECK: PutSlotOrAdd {{*}} key="file"

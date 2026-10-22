@@ -25,7 +25,7 @@ function f3 name="hasClosure" parameters=[{type=number}] results=[{type=number}]
 }
 function f4 name="hasClosure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
   b0(v0: f3, v1: anything, v2: anything):
-    v3 = Claim v2 castType=number
+    v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f3
     Return v4
 }

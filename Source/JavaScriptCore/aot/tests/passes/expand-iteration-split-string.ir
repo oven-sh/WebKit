@@ -48,6 +48,7 @@ function f0 name="constantSeparator" parameters=[{type=string}, {type=anything}]
 # CHECK-NOT: ElemGet
 # CHECK-NOT: IsPristine
 # CHECK-NOT: @@iterator
+# CHECK-NOT: [isNeverInlined]
 
 function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
   b0(v0: string, v1: anything):
@@ -55,7 +56,7 @@ function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] resu
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
     v4 = AssumeType v3 castType=Array<string, proven>
     v5 = Integer integer=1
-    v6 = Predict v4 predicted=Array<string, Contiguous>
+    v6 = Upcast v4 castType=Array<string>
     v7 = IteratorOpen v6
     Jump -> next b1()
   b1():
@@ -73,7 +74,7 @@ function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] resu
 # CHECK-LABEL: function f1 name="throughCasts"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK-NOT: AssumeType
-# CHECK-NOT: Predict
+# CHECK-NOT: Upcast
 # CHECK: = CallBuiltin v0, v2, {{*}} overload=StringPrototypeIndexOf/0
 # CHECK: string = Substring v0,
 
@@ -347,7 +348,7 @@ function f13 name="nestedLoops" parameters=[{type=string}, {type=anything}] resu
     v9 = ResultAt v7 index=1
     Branch v8 -> taken b5(), notTaken b2()
   b2():
-    v10 = Claim v9 castType=string
+    v10 = Check v9 castType=string
     v11 = CallBuiltin v10, v3 overload=StringPrototypeSplit/0
     v12 = IteratorOpen v11
     Jump -> next b3()

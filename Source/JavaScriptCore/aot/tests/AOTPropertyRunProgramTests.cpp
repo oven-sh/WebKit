@@ -38,7 +38,7 @@ function f1 name="storeSix" parameters=[{type=anything}, {type=anything}] result
 }
 )IR"_s;
 
-// A full collection ends the back-off of the one site cache, so that its first miss in each case is due for a refill. The very first miss of the site fills nothing: the site may never run again.
+// Each case runs for longer than the longest back-off of the one site cache, 255 misses, so that one of its misses is due for a refill. The very first miss of the site fills nothing: the site may never run again.
 // The six names lie in a row in inline storage, on both sides of its end, in another order, or in a dictionary.
 static constexpr ASCIILiteral statements = R"JS(
 globalThis.publish = storeSix => {
@@ -50,9 +50,8 @@ globalThis.publish = storeSix => {
         return object;
     };
     const measure = (what, object) => {
-        gc();
         const callsBefore = calls();
-        for (let i = 1; i <= 50; i++) storeSix(object, i);
+        for (let i = 1; i <= 300; i++) storeSix(object, i);
         let numberOfKeys = 0;
         for (const key in object) numberOfKeys++;
         print(what + ": " + (calls() - callsBefore) + " calls, " + [object.a, object.b, object.c, object.d, object.e, object.f] + ", " + numberOfKeys + " keys");
@@ -67,10 +66,10 @@ globalThis.publish = storeSix => {
 static void testRefusedRunCallsOperationOnce()
 {
     checkOutputOfProgramInShell(programText,
-        "in a row: 2 calls, 50,50,50,50,50,50, 6 keys\n"
-        "across the end of inline storage: 1 calls, 50,50,50,50,50,50, 10 keys\n"
-        "other order: 1 calls, 50,50,50,50,50,50, 6 keys\n"
-        "dictionary: 1 calls, 50,50,50,50,50,50, 206 keys\n"_s,
+        "in a row: 2 calls, 300,300,300,300,300,300, 6 keys\n"
+        "across the end of inline storage: 1 calls, 300,300,300,300,300,300, 10 keys\n"
+        "other order: 1 calls, 300,300,300,300,300,300, 6 keys\n"
+        "dictionary: 1 calls, 300,300,300,300,300,300, 206 keys\n"_s,
         { }, statements, { "--aotCountsPath=/dev/null"_s });
 }
 
@@ -79,10 +78,9 @@ static constexpr ASCIILiteral statementsWithNewObjects = R"JS(
 globalThis.publish = storeSix => {
     const calls = () => Number(aotOperationCount("operationAOTTryPutProperties"));
     const measure = (what, create) => {
-        gc();
         const callsBefore = calls();
         let object;
-        for (let i = 1; i <= 50; i++) {
+        for (let i = 1; i <= 300; i++) {
             object = create();
             storeSix(object, i);
         }
@@ -103,13 +101,13 @@ globalThis.publish = storeSix => {
 static void testAddedRunCallsOperationOnce()
 {
     checkOutputOfProgramInShell(programText,
-        "no prototype: 2 calls, a,b,c,d,e,f, 50,50,50,50,50,50\n"
-        "Object.prototype: 1 calls, a,b,c,d,e,f, 50,50,50,50,50,50\n"
-        "other prototype: 1 calls, a,b,c,d,e,f, 50,50,50,50,50,50\n"
-        "two prototypes: 1 calls, a,b,c,d,e,f, 50,50,50,50,50,50\n"
-        "no room in the cell: 1 calls, before,a,b,c,d,e,f, 50,50,50,50,50,50\n"
-        "array: 1 calls, a,b,c,d,e,f, 50,50,50,50,50,50\n"
-        "function: 1 calls, a,b,c,d,e,f, 50,50,50,50,50,50\n"_s,
+        "no prototype: 2 calls, a,b,c,d,e,f, 300,300,300,300,300,300\n"
+        "Object.prototype: 1 calls, a,b,c,d,e,f, 300,300,300,300,300,300\n"
+        "other prototype: 1 calls, a,b,c,d,e,f, 300,300,300,300,300,300\n"
+        "two prototypes: 1 calls, a,b,c,d,e,f, 300,300,300,300,300,300\n"
+        "no room in the cell: 1 calls, before,a,b,c,d,e,f, 300,300,300,300,300,300\n"
+        "array: 1 calls, a,b,c,d,e,f, 300,300,300,300,300,300\n"
+        "function: 1 calls, a,b,c,d,e,f, 300,300,300,300,300,300\n"_s,
         { }, statementsWithNewObjects, { "--aotCountsPath=/dev/null"_s });
 }
 
@@ -145,10 +143,9 @@ globalThis.publish = storeSix => {
     const kept = [];
     let seen = 0;
     const measure = what => {
-        gc();
         const callsBefore = calls();
         let object;
-        for (let i = 1; i <= 50; i++) {
+        for (let i = 1; i <= 300; i++) {
             object = Object.create(base);
             try { storeSix(object, i); } catch (error) { if (!(error instanceof TypeError)) print(error); }
         }
@@ -177,14 +174,14 @@ globalThis.publish = storeSix => {
 )JS"
 
 #define OUTPUT_WHILE_THE_CHAIN_CHANGES \
-    "nothing inherited: a,b,c,d,e,f, 50,50,50,50,50,50, seen 0\n" \
-    "other name on the prototype: a,b,c,d,e,f, 50,50,50,50,50,50, seen 0\n" \
-    "inherited setter: a,b,d,e,f, 50,50,,50,50,50, seen 1275\n" \
-    "setter deleted: a,b,c,d,e,f, 50,50,50,50,50,50, seen 1275\n" \
-    "inherited read-only property: a,b,c,d, 50,50,50,50,-1,, seen 1275\n" \
-    "inherited writable property: a,b,c,d,e,f, 50,50,50,50,50,50, seen 1275\n" \
-    "setter above the prototype: a,b,c,d,e, 50,50,50,50,50,, seen -50\n" \
-    "nothing above the prototype: a,b,c,d,e,f, 50,50,50,50,50,50, seen -50\n"
+    "nothing inherited: a,b,c,d,e,f, 300,300,300,300,300,300, seen 0\n" \
+    "other name on the prototype: a,b,c,d,e,f, 300,300,300,300,300,300, seen 0\n" \
+    "inherited setter: a,b,d,e,f, 300,300,,300,300,300, seen 45150\n" \
+    "setter deleted: a,b,c,d,e,f, 300,300,300,300,300,300, seen 45150\n" \
+    "inherited read-only property: a,b,c,d, 300,300,300,300,-1,, seen 45150\n" \
+    "inherited writable property: a,b,c,d,e,f, 300,300,300,300,300,300, seen 45150\n" \
+    "setter above the prototype: a,b,c,d,e, 300,300,300,300,300,, seen -300\n" \
+    "nothing above the prototype: a,b,c,d,e,f, 300,300,300,300,300,300, seen -300\n"
 
 static void testChangeOfChainDropsRememberedRun()
 {

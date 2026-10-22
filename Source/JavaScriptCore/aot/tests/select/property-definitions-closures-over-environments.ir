@@ -1,0 +1,28 @@
+# A descriptor literal that goes away hands the environment in its hidden field back to the closures that were made on demand over it
+# FORM: Prepared
+# OPTIONS: references=narrow
+# RUN: pass Select
+# STATISTIC: DescriptorLiteralGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="GetterOverEnvironment" fields=[{key="get" declared={type=anything} flow={location={initialization=SetAtCreation deferral=CapturesEnvironment deferredFunction=f0}}}, {declared={type=env L1} flags=[IsRequired, IsHidden] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={closureEnvironmentField=1}
+layout L1 kind=Environment name="scope" fields=[{key="count" declared={type=anything}}]
+function f0 name="overEnvironment" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    Return
+}
+function f1 name="getterOverEnvironment" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: string, v2: anything):
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = NewClosure function=f0 [isMadeOnDemand]
+    v5 = NewObject -, v3, v4 layout=L0 fields=[1, 0]
+    v6 = FinishObject v5
+    v7 = CallBuiltin -, v0, v1, v6 overload=ObjectDefineProperty/0
+    Return v7
+}
+# CHECK-LABEL: function f1 name="getterOverEnvironment"
+# CHECK-NOT: isMadeOnDemand
+# CHECK: [[scope]]:{{*}}= NewObject -, v2 layout=L1
+# CHECK: [[getter]]:{{*}}= NewClosure [[scope]] function=f0
+# CHECK-NOT: layout=L0
+# CHECK: = DefineOwnProperty v0, v1, -, [[getter]] descriptorFlags=[HasGet]

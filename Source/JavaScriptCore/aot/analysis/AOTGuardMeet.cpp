@@ -21,6 +21,8 @@ static constexpr ProofSet proofsUnitedOverOrigins {
     Proof::OwnInstance,
     Proof::SlotFilled,
     Proof::NoExtraProperties,
+    Proof::NoFieldOutsideSlot,
+    Proof::BirthFieldsFilled,
     Proof::NotFrozen,
     Proof::KeyOrder,
 };
@@ -138,7 +140,7 @@ static bool testImplies(const Value& test, const Value& impliedTest)
         return false;
     Proof proof = provesOf(test.opcode);
     if (proof == Proof::SlotFilled)
-        return test.key() == impliedTest.key();
+        return test.key() == impliedTest.key() && (test.holdsDeclaredType() || !impliedTest.holdsDeclaredType());
     if (proof == Proof::Pristine && Value::opcodesWithAspects.contains(test.opcode))
         return test.builtinClass() == impliedTest.builtinClass() && test.aspects().containsAll(impliedTest.aspects());
     if (proof == Proof::ArrayStorage)
@@ -158,6 +160,8 @@ static bool allocationImplies(const Program& program, const Value& allocation, c
     case Proof::Shape:
     case Proof::OwnInstance:
     case Proof::NoExtraProperties:
+    case Proof::NoFieldOutsideSlot:
+    case Proof::BirthFieldsFilled:
     case Proof::NotFrozen:
         return allocation.layout() == impliedAllocation.layout();
     case Proof::SlotFilled:
@@ -177,18 +181,17 @@ static bool allocationImplies(const Program& program, const Value& allocation, c
     case Proof::IntegerBound:
     case Proof::ExactFunction:
     case Proof::CaseValue:
+    case Proof::NotNullish:
     case Proof::InBounds:
     case Proof::NotThenable:
     case Proof::MemberUnchanged:
     case Proof::PrototypeLinkUnchanged:
     case Proof::EvaluatedOnce:
-    case Proof::EpochCurrent:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
     case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
-    case Proof::RequireEdgeReady:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -229,13 +232,8 @@ bool GuardAvailability::isAsStrongAs(const GuardFact& fact, const GuardFact& oth
     if ((fact.proofs | other.proofs) != fact.proofs)
         return false;
 
-    if (other.proofs == ProofSet { Proof::Shape }) {
-        const Program& program = m_analyses.program();
-        Vector<LayoutID, 4> admitted = layoutsProvenBy(program, m_function, other);
-        return std::ranges::all_of(layoutsProvenBy(program, m_function, fact), [&](LayoutID layout) {
-            return std::ranges::binary_search(admitted, layout);
-        });
-    }
+    if (other.proofs == ProofSet { Proof::Shape })
+        return provenLayoutsAreSubsetOf(m_analyses.program(), m_function, fact, other);
 
     return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
         return std::ranges::any_of(other.origins, [&](const GuardOrigin& otherOrigin) {

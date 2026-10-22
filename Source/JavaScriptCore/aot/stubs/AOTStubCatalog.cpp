@@ -31,7 +31,7 @@ static unsigned findIndex(const HashMap<uint64_t, unsigned>& indexByKey, StubKey
 static bool usesCallConvention(const StubRecording& recording)
 {
     return std::ranges::any_of(recording.entries, [](StubKey entry) {
-        return descriptorOf(entry.family()).signature(entry).usesCallConvention;
+        return signatureOf(entry).usesCallConvention;
     });
 }
 
@@ -257,7 +257,7 @@ void StubCatalog::checkDeclarations() const
 StubCatalog::Answer StubCatalog::createAnswer(StubKey key) const
 {
     const Node& node = nodeOf(bodyOf(key));
-    Answer answer { { descriptorOf(key.family()).signature(key), node.clobbered, node.clobberedInline }, node.effects, node.leavesStubs };
+    Answer answer { { signatureOf(key), node.clobbered, node.clobberedInline }, node.effects, node.leavesStubs };
     addClobbersOfEveryCall(answer.summary.clobbered, answer.summary.signature);
     addClobbersOfEveryCall(answer.summary.clobberedInline, answer.summary.signature);
     return answer;

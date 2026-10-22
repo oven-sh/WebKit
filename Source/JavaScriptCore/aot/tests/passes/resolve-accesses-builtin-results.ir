@@ -1,4 +1,5 @@
 # A field of a record that a built-in's own code makes is read by name, without a test for a shape that the record never has. A field of the record that a library function allocates is a slot
+# TODO: flow-termination: flow says nothing about the fields of the iterator's step record, so its `value` and `done` are not read from slots
 # RUN: pipeline Select
 # CHECK-LABEL: function f0 name="main"
 # CHECK: [[stepOfMap]]: object = CallBuiltin {{*}}overload=MapIteratorPrototypeNext/0
@@ -12,13 +13,13 @@
 # UNTESTED-LABEL: function f0 name="main"
 # UNTESTED-NOT: TypeTest
 # UNTESTED-NOT: ShapeTest
-# UNTESTED-NOT: level=Predicted
+# UNTESTED-NOT: level=Expected
 # UNTESTED-LABEL: function f1 name="next"
 
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=70 function=f1
+runtimefunction id=69 function=f1
 variable g0 name="stepOfMap" module=m0 declared={type=anything} initialization=Uninitialized
 variable g1 name="stepOfArray" module=m0 declared={type=anything} initialization=Uninitialized
 variable g2 name="counts" module=m0 declared={type=anything} initialization=Uninitialized
@@ -48,7 +49,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v21 = CallDirect function=f2
     Return
 }
-function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
   b0(v0: anything):
     v1 = Builtin builtin=MathRandom
     v2 = Call v1

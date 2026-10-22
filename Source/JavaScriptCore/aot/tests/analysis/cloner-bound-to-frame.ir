@@ -78,7 +78,7 @@ function f3 name="stepsAsyncGenerator" flags=[IsAsync] parameters=[{type=AsyncGe
     Jump -> next b2()
   b2():
     v2 = Undefined
-    v3 = StepAsyncGenerator v0, v2
+    v3 = StepAsyncGenerator v0, v2, v2
     v4 = ResultAt v3
     Return v4
 }

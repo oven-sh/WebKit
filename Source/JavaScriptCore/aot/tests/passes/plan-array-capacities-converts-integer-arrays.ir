@@ -1,0 +1,188 @@
+# An array of whole numbers that fails a test for Double storage is converted on the failing edge, once, so that it passes the next time. The conversion stands on that edge alone, behind no test for another kind, only where the summary that callers have of the function covers it, and only where no proof about an array that may be the converted one is used behind the edge. An array under construction that is declared to hold numbers is allocated with Double storage though all that is stored fits an int32
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# RUN(TWICE): pass PlanArrayCapacities PlanArrayCapacities
+# STATISTIC: IntegerArrayConversionsPlaced = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+# The access by key on the failing side is unknown code that gets the array, so callers expect the array to change
+function f0 name="numbers" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    Return v7
+  b3() frequency=Unlikely:
+    v8 = ElemGet v0, v1
+    Return v8
+}
+# CHECK-LABEL: function f0 name="numbers"
+# CHECK: v2: boolean = HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken [[repair0]]()
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK: [[repair0]]() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NOT: ConvertToDoubleStorage
+# A second run finds the conversion at the head of the failing side.
+# TWICE-LABEL: function f0 name="numbers"
+# TWICE-COUNT-1: ConvertToDoubleStorage v0
+# TWICE-NOT: ConvertToDoubleStorage
+
+function f1 name="testInFrontOfLoop" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    LoopHint
+    v5 = IsElementPresent v0, v1, v3 arrayStorage=Double [keyIsIntegral]
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(v3), notTaken b3()
+  b3():
+    Return v8
+  b4() frequency=Unlikely:
+    v10 = ElemGet v0, v1
+    Return v10
+}
+# CHECK-LABEL: function f1 name="testInFrontOfLoop"
+# CHECK: Branch v2 -> taken b1(| 0), notTaken [[repair1]]()
+# CHECK: Branch v5 -> taken b2(| 0), notTaken b4()
+# CHECK: [[repair1]]() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NOT: ConvertToDoubleStorage
+# TWICE-LABEL: function f1 name="testInFrontOfLoop"
+# TWICE-COUNT-1: ConvertToDoubleStorage v0
+# TWICE-NOT: ConvertToDoubleStorage
+
+function f2 name="integers" parameters=[{type=Array<i32>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<i32>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Int32 [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Expected [keyIsIntegral, isPresent]
+    Return v7
+  b3() frequency=Unlikely:
+    v8 = ElemGet v0, v1
+    Return v8
+}
+# CHECK-LABEL: function f2 name="integers"
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b3()
+# CHECK-NOT: ConvertToDoubleStorage
+# TWICE-LABEL: function f2 name="integers"
+
+function f3 name="texts" parameters=[{type=Array<string>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<string>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v7
+  b3() frequency=Unlikely:
+    v8 = ElemGet v0, v1
+    Return v8
+}
+# CHECK-LABEL: function f3 name="texts"
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b3()
+# CHECK-NOT: ConvertToDoubleStorage
+
+# The function only reads, and its callers keep what they have proven about the array across a call of it
+function f4 name="summaryDoesNotCoverTheConversion" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    Return v7
+  b3() frequency=Unlikely:
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: function f4 name="summaryDoesNotCoverTheConversion"
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b3()
+# CHECK-NOT: ConvertToDoubleStorage
+
+# The failing side comes back in front of a read that relies on the kind of another array, which may be the same one
+function f5 name="proofAboutAnotherArrayIsUsedBehindTheEdge" parameters=[{type=Array<number, pristine[Storage]>}, {type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: Array<number, pristine[Storage]>, v2: int[0, 1000]):
+    v3 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = HasArrayStorage v1 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = GetArrayElement v0, v2, v4 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    v8 = ElemGet v1, v2
+    v9 = StrictEq v7, v8
+    Return v9
+  b4() frequency=Unlikely:
+    v10 = ElemGet v0, v2
+    Return v10
+}
+# CHECK-LABEL: function f5 name="proofAboutAnotherArrayIsUsedBehindTheEdge"
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NOT: ConvertToDoubleStorage
+
+function f6 name="int32StoresIntoDeclaredNumbers" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
+    v3 ~ Array<number> = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v2
+    v6 = Integer integer=1
+    v7 = TryPutByValDirect v3, v6, v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="int32StoresIntoDeclaredNumbers"
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Double
+# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Double
+
+function f7 name="int32StoresIntoDeclaredIntegers" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
+    v3 ~ Array<i32> = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v2
+    Return v3
+}
+# CHECK-LABEL: function f7 name="int32StoresIntoDeclaredIntegers"
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
+
+function f8 name="int32StoresWhereNothingIsDeclared" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v2
+    Return v3
+}
+# CHECK-LABEL: function f8 name="int32StoresWhereNothingIsDeclared"
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32

@@ -20,24 +20,26 @@ using Flags = OptionSet<Flag>;
 
 namespace {
 
-enum class Edge : uint8_t { Static, Deferred, DynamicStarExport };
+enum class Edge : uint8_t { Static, Deferred, DynamicStarExport, Require };
 
 class Graph {
 public:
     unsigned addSourceText(Flags wireFlags = { }) { return add(ModuleKind::SourceText, ExternalKind::UncompiledCode, SyntheticExportRule::None, wireFlags); }
     unsigned addData() { return add(ModuleKind::Data, ExternalKind::UncompiledCode, SyntheticExportRule::None, { }); }
     unsigned addCommonJS() { return add(ModuleKind::CommonJs, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, { }); }
+    unsigned addCommonJSWithoutBoundNames() { return add(ModuleKind::CommonJs, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, Flag::CapturesOnDemand); }
     unsigned addRuntimeModule() { return add(ModuleKind::Runtime, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, { }); }
     unsigned addHostValue() { return add(ModuleKind::External, ExternalKind::HostValue, SyntheticExportRule::CommonJs, { }); }
     unsigned addUncompiledCode() { return add(ModuleKind::External, ExternalKind::UncompiledCode, SyntheticExportRule::None, { }); }
 
     void request(unsigned from, unsigned to, Edge edge = Edge::Static)
     {
-        m_nodes[from].requests.append(ModuleRequestData { to, edge == Edge::Deferred, edge == Edge::DynamicStarExport });
+        m_nodes[from].requests.append(ModuleRequestData::create(to, edge == Edge::Deferred, edge == Edge::DynamicStarExport, edge == Edge::Require));
     }
 
     void addRequiredName(unsigned module) { ++m_nodes[module].numberOfRequiredNames; }
     void addSyntheticExport(unsigned module) { ++m_nodes[module].numberOfSyntheticExports; }
+    void addBody(unsigned module) { m_nodes[module].data.body = Number24(0); }
 
     void compute()
     {
@@ -48,9 +50,9 @@ public:
             node.data.firstRequiredName = endRecord.firstRequiredName;
             m_modules.append(node.data);
             m_requests.appendVector(node.requests);
-            endRecord.firstRequest += node.requests.size();
-            endRecord.firstSyntheticExport += node.numberOfSyntheticExports;
-            endRecord.firstRequiredName += node.numberOfRequiredNames;
+            endRecord.firstRequest = Number24(endRecord.firstRequest + node.requests.size());
+            endRecord.firstSyntheticExport = Number24(endRecord.firstSyntheticExport + node.numberOfSyntheticExports);
+            endRecord.firstRequiredName = Number24(endRecord.firstRequiredName + node.numberOfRequiredNames);
         }
         m_modules.append(endRecord);
         computeModuleFlags(m_modules.mutableSpan(), m_requests.span());
@@ -75,9 +77,8 @@ private:
         data.externalKind = externalKind;
         data.exportRule = exportRule;
         data.flags = wireFlags.toRaw();
-        data.body = UINT32_MAX;
-        data.referrer = UINT32_MAX;
-        data.runtimeModule = UINT32_MAX;
+        data.body = optionalNumber24(UINT32_MAX);
+        data.referrerOrRuntimeModule = optionalNumber24(UINT32_MAX);
         m_nodes.append(Node { data, { }, 0, 0 });
         return m_nodes.size() - 1;
     }
@@ -145,7 +146,8 @@ static void testModulesOfACycleAreNotSimple()
     throughThree.request(b, c);
     throughThree.request(c, a, Edge::Deferred);
     throughThree.compute();
-    AOT_TEST_CHECK(throughThree.has(a, Flag::IsSynchronous) && throughThree.has(b, Flag::IsSynchronous) && throughThree.has(c, { Flag::IsSynchronous, Flag::HasDeferredRequest }));
+    AOT_TEST_CHECK(throughThree.has(a, { Flag::IsSynchronous, Flag::NeedsEvaluation }) && throughThree.has(b, { Flag::IsSynchronous, Flag::NeedsEvaluation }));
+    AOT_TEST_CHECK(throughThree.has(c, { Flag::IsSynchronous, Flag::HasDeferredRequest, Flag::NeedsEvaluation }));
 }
 
 static void testTopLevelAwaitAtALeaf()
@@ -161,8 +163,8 @@ static void testTopLevelAwaitAtALeaf()
     graph.request(importer, awaiting);
     graph.request(sibling, leafOfSibling);
     graph.compute();
-    AOT_TEST_CHECK(graph.has(awaiting, Flag::HasTopLevelAwait));
-    AOT_TEST_CHECK(graph.has(importer, Flag::IsSimple) && graph.has(root, Flag::IsSimple));
+    AOT_TEST_CHECK(graph.has(awaiting, { Flag::HasTopLevelAwait, Flag::NeedsEvaluation }));
+    AOT_TEST_CHECK(graph.has(importer, { Flag::IsSimple, Flag::NeedsEvaluation }) && graph.has(root, { Flag::IsSimple, Flag::NeedsEvaluation }));
     AOT_TEST_CHECK(graph.has(sibling, plainModule) && graph.has(leafOfSibling, plainModule));
 }
 
@@ -175,14 +177,14 @@ static void testDeferredEdgeToTopLevelAwait()
     graph.request(root, importer);
     graph.request(importer, awaiting, Edge::Deferred);
     graph.compute();
-    AOT_TEST_CHECK(graph.has(importer, { Flag::IsSimple, Flag::HasDeferredRequest }) && graph.has(root, Flag::IsSimple));
+    AOT_TEST_CHECK(graph.has(importer, { Flag::IsSimple, Flag::HasDeferredRequest, Flag::NeedsEvaluation }) && graph.has(root, { Flag::IsSimple, Flag::NeedsEvaluation }));
 
     Graph withoutAwait;
     unsigned plainImporter = withoutAwait.addSourceText();
     unsigned plainLeaf = withoutAwait.addSourceText();
     withoutAwait.request(plainImporter, plainLeaf, Edge::Deferred);
     withoutAwait.compute();
-    AOT_TEST_CHECK(withoutAwait.has(plainImporter, plainModule | Flag::HasDeferredRequest) && withoutAwait.has(plainLeaf, plainModule));
+    AOT_TEST_CHECK(withoutAwait.has(plainImporter, plainModule | Flags { Flag::HasDeferredRequest, Flag::NeedsEvaluation }) && withoutAwait.has(plainLeaf, plainModule));
 }
 
 static void testUncompiledLeaf()
@@ -196,9 +198,9 @@ static void testUncompiledLeaf()
     graph.request(root, sibling);
     graph.request(importer, uncompiled);
     graph.compute();
-    AOT_TEST_CHECK(graph.has(uncompiled, { Flag::NeedsLink, Flag::ReachesUncompiledCode }));
-    AOT_TEST_CHECK(graph.has(importer, { Flag::IsSimple, Flag::NeedsLink, Flag::ReachesUncompiledCode }));
-    AOT_TEST_CHECK(graph.has(root, { Flag::IsSimple, Flag::NeedsLink, Flag::ReachesUncompiledCode }));
+    AOT_TEST_CHECK(graph.has(uncompiled, { Flag::NeedsLink, Flag::ReachesUncompiledCode, Flag::NeedsEvaluation }));
+    AOT_TEST_CHECK(graph.has(importer, { Flag::IsSimple, Flag::NeedsLink, Flag::ReachesUncompiledCode, Flag::NeedsEvaluation }));
+    AOT_TEST_CHECK(graph.has(root, { Flag::IsSimple, Flag::NeedsLink, Flag::ReachesUncompiledCode, Flag::NeedsEvaluation }));
     AOT_TEST_CHECK(graph.has(sibling, plainModule));
 }
 
@@ -219,6 +221,86 @@ static void testLeafWhoseExportsAreCaptured()
         AOT_TEST_CHECK(graph.has(root, { Flag::IsSynchronous, Flag::IsSimple, Flag::NeedsLink }));
         AOT_TEST_CHECK(graph.has(sibling, plainModule));
     }
+}
+
+static void testBodyIsEvaluationWork()
+{
+    Graph graph;
+    unsigned root = graph.addSourceText();
+    unsigned importer = graph.addSourceText();
+    unsigned sibling = graph.addSourceText();
+    unsigned withBody = graph.addSourceText();
+    graph.request(root, sibling);
+    graph.request(root, importer);
+    graph.request(importer, withBody);
+    graph.addBody(withBody);
+    graph.compute();
+    for (unsigned module : { root, importer, withBody })
+        AOT_TEST_CHECK(graph.has(module, plainModule | Flag::NeedsEvaluation));
+    AOT_TEST_CHECK(graph.has(sibling, plainModule));
+
+    // A module of the library runs when its importer is linked.
+    Graph linked;
+    unsigned importerOfLibrary = linked.addSourceText();
+    unsigned library = linked.addRuntimeModule();
+    linked.request(importerOfLibrary, library);
+    linked.addBody(library);
+    linked.compute();
+    AOT_TEST_CHECK(linked.has(library, { Flag::IsSynchronous, Flag::NeedsLink }) && linked.has(importerOfLibrary, { Flag::IsSynchronous, Flag::IsSimple, Flag::NeedsLink }));
+
+    // A CommonJS file runs where the evaluation comes to it.
+    Graph evaluated;
+    unsigned importerOfCommonJS = evaluated.addSourceText();
+    unsigned commonJS = evaluated.addCommonJSWithoutBoundNames();
+    evaluated.request(importerOfCommonJS, commonJS);
+    evaluated.addBody(commonJS);
+    evaluated.compute();
+    AOT_TEST_CHECK(evaluated.has(commonJS, { Flag::CapturesOnDemand, Flag::IsSynchronous, Flag::NeedsEvaluation }) && evaluated.has(importerOfCommonJS, plainModule | Flag::NeedsEvaluation));
+}
+
+// What a module requires runs inside its body, so the module waits for nothing and has nothing more to evaluate on that account. It is linked together with what it requires.
+static void testRequireIsFollowedByLinkAlone()
+{
+    Graph graph;
+    unsigned importer = graph.addSourceText();
+    unsigned requirer = graph.addCommonJSWithoutBoundNames();
+    unsigned awaiting = graph.addSourceText(Flag::HasTopLevelAwait);
+    unsigned withBody = graph.addSourceText();
+    unsigned importerOfLibrary = graph.addSourceText();
+    unsigned library = graph.addRuntimeModule();
+    graph.request(importer, requirer);
+    graph.request(requirer, awaiting, Edge::Require);
+    graph.request(requirer, withBody, Edge::Require);
+    graph.request(requirer, importerOfLibrary, Edge::Require);
+    graph.request(importerOfLibrary, library);
+    graph.addBody(withBody);
+    graph.compute();
+    AOT_TEST_CHECK(graph.has(requirer, { Flag::CapturesOnDemand, Flag::IsSynchronous, Flag::NeedsLink }));
+    AOT_TEST_CHECK(graph.has(importer, plainModule | Flag::NeedsLink));
+    AOT_TEST_CHECK(graph.has(importerOfLibrary, plainModule | Flag::NeedsLink) && graph.has(withBody, plainModule | Flag::NeedsEvaluation));
+}
+
+static void testRequireMakesNoCycleOfImports()
+{
+    Graph graph;
+    unsigned first = graph.addSourceText();
+    unsigned second = graph.addSourceText();
+    unsigned library = graph.addRuntimeModule();
+    graph.request(first, second);
+    graph.request(second, first, Edge::Require);
+    graph.request(second, library);
+    graph.compute();
+    AOT_TEST_CHECK(graph.has(first, plainModule | Flag::NeedsLink) && graph.has(second, plainModule | Flag::NeedsLink));
+}
+
+static void testCommonJSWithoutBoundNamesIsNoLinkWork()
+{
+    Graph graph;
+    unsigned importer = graph.addSourceText();
+    unsigned commonJS = graph.addCommonJSWithoutBoundNames();
+    graph.request(importer, commonJS);
+    graph.compute();
+    AOT_TEST_CHECK(graph.has(commonJS, { Flag::CapturesOnDemand, Flag::IsSynchronous }) && graph.has(importer, plainModule));
 }
 
 static void testListsAreLinkWork()
@@ -257,10 +339,10 @@ static void testCycleMemberReachesAnAwait()
         graph.request(second, between);
         graph.request(between, leaf);
         graph.compute();
-        Flags ifSynchronous = hasAwait ? Flags { } : Flags { Flag::IsSynchronous };
+        Flags decidedByLeaf = hasAwait ? Flags { Flag::NeedsEvaluation } : Flags { Flag::IsSynchronous };
         for (unsigned member : { first, second, third })
-            AOT_TEST_CHECK(graph.has(member, ifSynchronous));
-        AOT_TEST_CHECK(graph.has(importer, ifSynchronous | Flag::IsSimple) && graph.has(between, ifSynchronous | Flag::IsSimple));
+            AOT_TEST_CHECK(graph.has(member, decidedByLeaf));
+        AOT_TEST_CHECK(graph.has(importer, decidedByLeaf | Flag::IsSimple) && graph.has(between, decidedByLeaf | Flag::IsSimple));
     }
 }
 
@@ -274,8 +356,8 @@ static void testCycleMemberAwaits()
     graph.request(second, first);
     graph.request(first, uncompiled);
     graph.compute();
-    AOT_TEST_CHECK(graph.has(first, { Flag::NeedsLink, Flag::ReachesUncompiledCode }));
-    AOT_TEST_CHECK(graph.has(second, { Flag::HasTopLevelAwait, Flag::NeedsLink, Flag::ReachesUncompiledCode }));
+    AOT_TEST_CHECK(graph.has(first, { Flag::NeedsLink, Flag::ReachesUncompiledCode, Flag::NeedsEvaluation }));
+    AOT_TEST_CHECK(graph.has(second, { Flag::HasTopLevelAwait, Flag::NeedsLink, Flag::ReachesUncompiledCode, Flag::NeedsEvaluation }));
 }
 
 static void testDynamicStarExportIsTheModulesOwn()
@@ -305,7 +387,7 @@ static void testLongChain()
         for (unsigned module = 0; module + 1 < numberOfModules; ++module)
             graph.request(module, module + 1);
         graph.compute();
-        Flags expected = endsInAwait ? Flags { Flag::IsSimple } : plainModule;
+        Flags expected = endsInAwait ? Flags { Flag::IsSimple, Flag::NeedsEvaluation } : plainModule;
         for (unsigned module = 0; module + 1 < numberOfModules; ++module)
             AOT_TEST_CHECK(graph.has(module, expected));
     }
@@ -342,6 +424,10 @@ std::span<const NativeTest> moduleGraphTests()
         { "module-graph/deferred-edge-to-top-level-await"_s, testDeferredEdgeToTopLevelAwait },
         { "module-graph/uncompiled-leaf"_s, testUncompiledLeaf },
         { "module-graph/leaf-whose-exports-are-captured"_s, testLeafWhoseExportsAreCaptured },
+        { "module-graph/body-is-evaluation-work"_s, testBodyIsEvaluationWork },
+        { "module-graph/require-is-followed-by-link-alone"_s, testRequireIsFollowedByLinkAlone },
+        { "module-graph/require-makes-no-cycle-of-imports"_s, testRequireMakesNoCycleOfImports },
+        { "module-graph/commonjs-without-bound-names-is-no-link-work"_s, testCommonJSWithoutBoundNamesIsNoLinkWork },
         { "module-graph/lists-are-link-work"_s, testListsAreLinkWork },
         { "module-graph/cycle-member-reaches-an-await"_s, testCycleMemberReachesAnAwait },
         { "module-graph/cycle-member-awaits"_s, testCycleMemberAwaits },

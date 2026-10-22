@@ -47,16 +47,18 @@ static_assert(allRepresentationsSatisfy([](SlotTraits traits) {
         && !(traits.hasUndefined && traits.hasNull && traits.undefinedBits == traits.nullBits);
 }));
 static_assert(allRepresentationsSatisfy([](SlotTraits traits) {
-    return traits.valueKind != SlotValueKind::DeferredClosure || (traits.holdsCell && !traits.hasAbsent && !traits.hasUndefined && !traits.hasNull);
+    return !traits.isNarrowReference || std::max({ traits.absentBits, traits.undefinedBits, traits.nullBits }) < minCell32;
+}));
+static_assert(allRepresentationsSatisfy([](SlotTraits traits) {
+    return traits.valueKind != SlotValueKind::DeferredClosure || (traits.isNarrowReference && traits.hasAbsent && traits.absentBits == absentDeferredClosure && !traits.hasUndefined && !traits.hasNull);
 }));
 
 static_assert(traitsOf(SlotRepresentation::OptionalCell32).undefinedBits == JSValue::ValueUndefined);
-static_assert(traitsOf(SlotRepresentation::Int32OrDouble).absentBits == 0x80000001);
-static_assert(minInlineInt32 > doubleInExtensionInt32 && doubleInExtensionInt32 > nullInt32);
+static_assert(traitsOf(SlotRepresentation::OptionalInt32).absentBits == 0x80000001);
+static_assert(std::max({ absentInt32, undefinedInt32, nullInt32 }) < minInlineInt32);
 static_assert(traitsOf(SlotRepresentation::DeferredClosure).valueKind == SlotValueKind::DeferredClosure);
 static_assert(!traitsOf(SlotRepresentation::Cell32).hasUndefined);
 static_assert(traitsOf(SlotRepresentation::Cell32).valueKind != SlotValueKind::DeferredClosure);
-static_assert(!traitsOf(SlotRepresentation::DeferredClosure).hasAbsent);
 static_assert(!traitsOf(SlotRepresentation::Double).hasAbsent);
 
 void writeSlotBits(SlotRepresentation representation, void* slot, uint64_t bits)
@@ -152,7 +154,6 @@ JSValue readSlot(SlotRepresentation representation, const void* slot, const Prog
         default:
             return jsNumber(purifyNaN(as(double())));
         }
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
         switch (int32_t word = as(int32_t())) {
         case undefinedInt32:
@@ -165,8 +166,16 @@ JSValue readSlot(SlotRepresentation representation, const void* slot, const Prog
             RELEASE_ASSERT(word >= minInlineInt32);
             return jsNumber(word);
         }
-    case SlotRepresentation::DeferredClosure:
-        break;
+    case SlotRepresentation::DeferredClosure: {
+        // Only the object can make the closure that its slot still defers. Undefined and null are the words that any narrow reference has for them.
+        uint32_t word = as(uint32_t());
+        if (word == absentDeferredClosure)
+            return { };
+        if (word == undefinedCell32 || word == nullCell32)
+            return JSValue::decode(word);
+        RELEASE_ASSERT(word >= minCell32);
+        return decode(word);
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -199,7 +208,6 @@ static bool tryWriteInteger(SlotRepresentation representation, void* slot, int64
     case SlotRepresentation::Int64:
     case SlotRepresentation::OptionalInt64:
         return writeIfInRange(-maxSlotInteger, maxSlotInteger, int64_t());
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
         return writeIfInRange(minInlineInt32, INT32_MAX, int32_t());
     case SlotRepresentation::Float:
@@ -254,7 +262,6 @@ bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, vo
         return marker(undefinedInteger, nullInteger) || number();
     case SlotRepresentation::OptionalDouble:
         return marker(undefinedDouble, nullDouble) || number();
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
         return marker(undefinedInt32, nullInt32) || number();
     case SlotRepresentation::Cell:
@@ -268,7 +275,10 @@ bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, vo
             return storeInSlot(slot, static_cast<uint32_t>(JSValue::encode(value)));
         [[fallthrough]];
     case SlotRepresentation::Cell32:
+        return cell32();
     case SlotRepresentation::DeferredClosure:
+        if (value && value.isUndefinedOrNull())
+            return storeInSlot(slot, static_cast<uint32_t>(JSValue::encode(value)));
         return cell32();
     case SlotRepresentation::OptionalBoolean:
         return (!value || value.isUndefinedOrNull() || value.isBoolean()) && storeInSlot(slot, static_cast<uint8_t>(JSValue::encode(value)));
@@ -305,7 +315,6 @@ bool tryWriteInt32(SlotRepresentation representation, void* slot, int32_t number
     case SlotRepresentation::Uint16:
     case SlotRepresentation::Int16:
     case SlotRepresentation::Uint32:
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
         return tryWriteInteger(representation, slot, number);
     case SlotRepresentation::Cell:
@@ -339,7 +348,6 @@ bool tryWriteDouble(SlotRepresentation representation, void* slot, double number
     case SlotRepresentation::Uint32:
     case SlotRepresentation::Int64:
     case SlotRepresentation::OptionalInt64:
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
         return Typed::isTrackedInteger(number) && tryWriteInteger(representation, slot, static_cast<int64_t>(number));
     case SlotRepresentation::Cell:
@@ -376,7 +384,6 @@ bool tryWriteBoolean(SlotRepresentation representation, void* slot, bool value)
     case SlotRepresentation::Cell:
     case SlotRepresentation::OptionalInt64:
     case SlotRepresentation::OptionalDouble:
-    case SlotRepresentation::Int32OrDouble:
     case SlotRepresentation::OptionalInt32:
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:

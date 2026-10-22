@@ -41,6 +41,7 @@
 #include "StructureTransitionTable.h"
 #include "TypeInfoBlob.h"
 #include "Watchpoint.h"
+#include <span>
 #include <wtf/Atomics.h>
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/CompactPtr.h>
@@ -68,6 +69,7 @@ class JSString;
 struct DumpContext;
 struct HashTable;
 struct HashTableValue;
+struct PropertyAdditionList;
 
 namespace Integrity {
 class Analyzer;
@@ -217,6 +219,7 @@ public:
     static constexpr int s_maxTransitionLength = 128;
     static constexpr int s_maxTransitionLengthForNonEvalPutById = 512;
     static constexpr int s_maxTransitionLengthForRemove = 4096; // Picked from benchmarking measurement.
+    static constexpr unsigned s_minDroppableTransitionChainLength = 4;
 
     using SeenProperties = TinyBloomFilter<CompactPtr<UniquedStringImpl>::StorageType>;
 
@@ -307,7 +310,20 @@ public:
     JS_EXPORT_PRIVATE static Structure* makeListedPropertiesImmutableTransition(VM&, Structure*, ImmutablePropertyNames&, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* addPropertyRunTransitionToExistingStructure(Structure*, const PropertyRun&);
     JS_EXPORT_PRIVATE static Structure* addPropertyRunTransition(VM&, Structure*, const PropertyRun&, DeferredStructureTransitionWatchpointFire* = nullptr);
-    bool isCacheableTransitionFrom(const Structure* previous) const { return previousID() == previous && typeInfo().inlineTypeFlags() == previous->typeInfo().inlineTypeFlags() && hasPristineElements() == previous->hasPristineElements(); }
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* base, std::span<UniquedStringImpl* const> names, unsigned attributes = 0, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* base, std::span<UniquedStringImpl* const> names, std::span<const unsigned> attributes, DeferredStructureTransitionWatchpointFire* = nullptr);
+    // For the one object that has these names in this order: no Structure is looked for, and none is remembered for the next. The base has no property. The names differ from each other, and none is an index.
+    // With more names than a line of Structures may have, the object is a dictionary.
+    JS_EXPORT_PRIVATE static Structure* createForOneObject(VM&, Structure* base, std::span<UniquedStringImpl* const> names);
+    JS_EXPORT_PRIVATE bool dropTransitionChain(VM&);
+    JS_EXPORT_PRIVATE bool restoreTransitionChain(Structure* previous);
+    bool isTransitionFrom(const Structure* previous) const
+    {
+        Structure* recordedPrevious = previousID();
+        return recordedPrevious == previous || (!recordedPrevious && isPinnedPropertyAdditionFrom(previous));
+    }
+    bool hasSameCellFlagsAs(const Structure& other) const { return typeInfo().inlineTypeFlags() == other.typeInfo().inlineTypeFlags() && hasPristineElements() == other.hasPristineElements(); }
+    bool isCacheableTransitionFrom(Structure* previous) { return (previousID() == previous || restoreTransitionChain(previous)) && hasSameCellFlagsAs(*previous); }
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -393,7 +409,15 @@ public:
     }
 
     bool mayHaveImmutableProperties() const { return m_bitField & s_anyImmutablePropertiesBits; }
+    // Asked by whoever is about to write. Where the answer is no, the owner of the listed names is told of the write: see ImmutablePropertyNames::OutsideNames::willWrite().
     ALWAYS_INLINE bool isImmutableProperty(UniquedStringImpl* uid) const
+    {
+        if (!mayHaveImmutableProperties()) [[likely]]
+            return false;
+        return hasImmutableProperties() || refusesWriteToListedProperty(uid);
+    }
+    // Asked by whoever writes nothing: a reader that wants to know whether what it has read can change.
+    ALWAYS_INLINE bool isImmutablePropertyForReader(UniquedStringImpl* uid) const
     {
         if (!mayHaveImmutableProperties()) [[likely]]
             return false;
@@ -413,10 +437,9 @@ public:
     }
     inline ImmutablePropertyNames* listedImmutablePropertyNames() const; // Defined in StructureInlines.h
 
-    bool isPristine() const { return typeInfo().isPristine(); }
+    bool isPristine() const { return typeInfo().hasPristineNames(); }
     JS_EXPORT_PRIVATE bool tryMarkPristine(VM&);
     bool clearsPristineBitsOf(const Structure& previous) const { return (previous.isPristine() && !isPristine()) || (previous.hasPristineElements() && !hasPristineElements()); }
-    JS_EXPORT_PRIVATE static void didClearPristineBits(VM&);
 
     bool hasFrozenElementsInPlace() const { return transitionKind() == TransitionKind::FreezeElementsInPlace; }
 
@@ -964,6 +987,7 @@ protected:
     Structure(VM&, StructureVariant, Structure* previous); // Branded/Normal only
     Structure(VM&, StructureVariant, JSGlobalObject*, const TypeInfo&, const ClassInfo*); // WebAssemblyGC only
     JS_EXPORT_PRIVATE Structure(VM&, StructureVariant, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*); // Compiled only
+    JS_EXPORT_PRIVATE Structure(VM&, const Structure& templateStructure, JSValue prototype); // Compiled only
 
 private:
     friend class LLIntOffsetsExtractor;
@@ -995,7 +1019,7 @@ private:
     template<ShouldPin, typename Func>
     PropertyOffset add(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     PropertyOffset add(VM&, PropertyName, unsigned attributes);
-    void didAddProperty(PropertyName, unsigned attributes);
+    void didAddProperty(VM&, PropertyName, unsigned attributes);
     template<ShouldPin, typename Func>
     PropertyOffset remove(VM&, PropertyName, NOESCAPE const Func&);
     PropertyOffset remove(VM&, PropertyName);
@@ -1075,6 +1099,7 @@ private:
     bool LEGACY_NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
 
     JS_EXPORT_PRIVATE bool isListedImmutableProperty(UniquedStringImpl*) const;
+    JS_EXPORT_PRIVATE bool refusesWriteToListedProperty(UniquedStringImpl*) const;
     JS_EXPORT_PRIVATE bool listsNumericKeysAsImmutable() const;
     JS_EXPORT_PRIVATE bool listsPrototypeAsImmutable() const;
     struct PristineBits {
@@ -1089,6 +1114,11 @@ private:
     static PristineBits pristineBitsAfterAddition(VM&, Structure*, PristineBits, UniquedStringImpl*);
     static PristineBits pristineBitsAfterTransition(VM&, Structure*, PristineBits, Structure* transition);
     static Structure* findPropertyRunStructure(VM&, Structure*, UniquedStringImpl* lastName);
+    static Structure* createWithPropertyAdditions(VM&, Structure* base, const PropertyAdditionList&, DeferredStructureTransitionWatchpointFire*);
+    void didAddPropertyWithAttributes(VM&, PropertyName, unsigned attributes);
+    JS_EXPORT_PRIVATE bool canDropTransitionChain();
+    bool dropTransitionChain(const AbstractLocker&, VM&, PropertyTable*);
+    JS_EXPORT_PRIVATE bool isPinnedPropertyAdditionFrom(const Structure* previous) const;
 
     // These need to be properly aligned at the beginning of the 'Structure'
     // part of the object.

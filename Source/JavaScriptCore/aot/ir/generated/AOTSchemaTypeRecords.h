@@ -45,50 +45,11 @@ struct TypeSite {
 
 struct DeclaredType {
     TypeID type;
-    TypeID written;
-    TypeID predicted;
     TypeSiteID site;
     OptionSet<PositionFlags> flags;
 
     friend bool operator==(const DeclaredType&, const DeclaredType&) = default;
 };
-
-struct ClaimSource {
-    enum class Kind : uint8_t { None, Field, Contents };
-
-    struct None { friend bool operator==(const None&, const None&) = default; };
-    struct Field {
-        PropertyKeyID key;
-
-        friend bool operator==(const Field&, const Field&) = default;
-    };
-    struct Contents {
-        ContentsSlot slot { ContentsSlot::Element };
-
-        friend bool operator==(const Contents&, const Contents&) = default;
-    };
-
-    using Cases = Variant<None, Field, Contents>;
-
-    ClaimSource() = default;
-    template<typename Case> requires (!std::is_same_v<std::remove_cvref_t<Case>, ClaimSource>)
-    ClaimSource(Case&& value)
-        : cases(std::forward<Case>(value))
-    {
-    }
-
-    Kind kind() const { return static_cast<Kind>(cases.index()); }
-    template<typename Case> bool is() const { return std::holds_alternative<Case>(cases); }
-    template<typename Case> const Case& as() const LIFETIME_BOUND { return std::get<Case>(cases); }
-    template<typename Case> Case& as() LIFETIME_BOUND { return std::get<Case>(cases); }
-    template<typename Case> const Case* tryAs() const LIFETIME_BOUND { return std::get_if<Case>(&cases); }
-    template<typename Case> Case* tryAs() LIFETIME_BOUND { return std::get_if<Case>(&cases); }
-
-    friend bool operator==(const ClaimSource&, const ClaimSource&) = default;
-
-    Cases cases;
-};
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ClaimSource::Kind);
 
 struct TailCast {
     DeclaredType declared;

@@ -1,0 +1,127 @@
+# let n; .. n[0] .. n[1]: each read of `n` checks that it is initialized and is an object, and hands on the array that it was given. The second read names the guards that were made about the first.
+# As a call, the checks would return a value of its own: the guards would speak of what the call returns and the second read of what went into it. So these checks stay where they are.
+# The same checks in front of no guard are outlined.
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="guarded" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b4()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v4 -> taken b2(| 0), notTaken b4()
+  b2(v5) frequency=Rare:
+    v6 = HasArrayStorage v3 arrayStorage=Contiguous
+    Branch v6 -> taken b3(| 0), notTaken b4()
+  b3(v7) frequency=Rare:
+    v8 = AllGuards v5, v7
+    v9 = Integer
+    v10 = GetArrayElement v3, v9, v8 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    v11 = CheckInitialized v0 name="n"
+    v12 = RequireObjectCoercible v11
+    v13 = Integer integer=1
+    v14 = GetArrayElement v12, v13, v8 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    v15 = Add v10, v14 form=Generic
+    Return v15
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-2: = RequireObjectCoercible
+# CHECK-LABEL: function f1
+# CHECK: = CallDirect v0 function=
+
+function f1 name="plain1" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f2 name="plain2" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f3 name="plain3" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f4 name="plain4" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f5 name="plain5" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f6 name="plain6" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f7 name="plain7" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}
+
+function f8 name="plain8" parameters=[{type=undefined|null|absent|Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|absent|Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CheckInitialized v0 name="n"
+    v3 = RequireObjectCoercible v2
+    Return v3
+  b2():
+    Return
+}

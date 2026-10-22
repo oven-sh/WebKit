@@ -1,0 +1,48 @@
+# function run(cb) { cb() }   function f(k, v) { run(() => { k.held = v }) }   f({ n: 1 }, { n: 1 });  unknown(run)
+# `f` hands nothing but a closure to `run`, and `run` does nothing but call what it was handed, whoever hands it. What becomes of k and v stands in the body of the closure: v hangs in k.
+# RUN: relational-summary
+# CHECK: f2
+# CHECK-NEXT: p0: {{*}}members-written
+# CHECK-NEXT: p1: stored-in-unknown-object
+# RUN(SITES): fates-at-calls
+# SITES: f0 v4 Call operand 2: {{*}}members-written
+# SITES-NEXT: f0 v4 Call operand 3: stored-in-unknown-object
+# SITES: f2 v5 Call operand 2: called contents=stored-in-unknown-object
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thing" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Environment name="f" fields=[{key="k" declared={type=anything}}, {key="v" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = Call v0, -, v2, v3
+    v5 = NewClosure function=f1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="unknown" [isFreeName]
+    v8 = Call v7, -, v5
+    Return
+}
+function f1 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[IsCalled]}] handed=[{source=0 call=1 argument=0}]} {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return
+}
+function f2 name="f" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Parameter index=1}, {kind=Allocation index=2 fate=[IsCalled]}, {kind=Allocation index=3}, {kind=Allocation index=4}] stores=[{source=0 target=3 isOnEveryPath=true isBeforeTargetLeaves=true}, {source=1 target=3 isOnEveryPath=true isBeforeTargetLeaves=true}] handed=[{source=3 call=4 argument=0}, {source=2 call=5 argument=0}, {source=4 call=5 argument=2}]} {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v4 = NewClosure v3 function=f3
+    v5 = Call v2, -, v4
+    Return
+}
+function f3 name="body" module=m0 kind=Arrow captures=[{type=env L1}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead]}, {kind=ReadFrom index=1 source=0 fate=[HasMembersWritten]}, {kind=ReadFrom index=2 source=0}] stores=[{source=2 target=1 key="held" isOnEveryPath=true}]} {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    v2 = GetEnvironmentField v0 layout=L1 field=1
+    PropSet v1, v2 key="held" mode=Strict
+    Return
+}

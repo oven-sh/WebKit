@@ -17,7 +17,7 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     addBunLoopTests(config, tasks);
     addBunCountedLoopTests(config, tasks);
     addBunComparisonFoldingTests(config, tasks);
-    addBunStripMiningTests(config, tasks);
+    addBunLoopPhaseTests(config, tasks);
     addBunLoopVersioningTests(config, tasks);
     addBunLoopPlanTests(config, tasks);
     addBunCountedLoopVersioningTests(config, tasks);

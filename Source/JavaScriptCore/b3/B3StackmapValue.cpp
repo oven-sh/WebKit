@@ -94,6 +94,10 @@ void StackmapValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
         comma, "generator = ", RawPointer(m_generator.get()));
     if (m_runsWithoutFrame)
         out.print(comma, "runsWithoutFrame"_s);
+    if (m_followsFrameSetup)
+        out.print(comma, "followsFrameSetup"_s);
+    if (m_needsFrameRecord)
+        out.print(comma, "needsFrameRecord"_s);
     if (m_sharesLatePath)
         out.print(comma, "sharesLatePath"_s);
     if constexpr (B3StackmapValueInternal::dumpRegisters) {

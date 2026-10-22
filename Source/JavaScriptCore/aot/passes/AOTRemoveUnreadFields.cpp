@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowResults.h"
@@ -114,12 +115,15 @@ struct ScanContext {
     LiveCandidates& live;
     OpcodeSet opcodesNamingLayouts;
     OpcodeSet opcodesStoringThroughOperands;
+    OpcodeSet scannedOpcodes;
+    BitVector keysOfCandidates;
 };
 
 class FunctionScanner {
 public:
     FunctionScanner(const ScanContext& context, FunctionID id)
         : m_context(context)
+        , m_id(id)
         , m_function(context.program.at(id))
         , m_canChangeFunction(context.build.isEnabled(PassID::RemoveUnreadFields, id))
     {
@@ -139,6 +143,7 @@ private:
     void markLive(std::span<const uint32_t> candidates);
 
     const ScanContext& m_context;
+    FunctionID m_id;
     const Function& m_function;
     bool m_canChangeFunction;
     std::optional<BitVector> m_usedValues;
@@ -169,12 +174,15 @@ static bool supportsRemoval(LayoutKind kind)
 static bool isUnread(const Layout& layout, const Field& field)
 {
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsInherited, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden };
-    if (field.flags.containsAny(excludedFlags))
+    if (field.flags.containsAny(excludedFlags) || field.form.contains(FieldForm::IsAccessor))
         return false;
     if (!layout.isEnvironment() && !field.key)
         return false;
     if (field.flow.location.writers != WriterState::AllKnown)
         return false;
+    // It has no storage as it is, whatever flow says of the names of its stores. Only a candidate gets its storage back.
+    if (hasNoAccesses(field.flow.location))
+        return true;
     // A store that the scan cannot find would define the key at run time on an object without the field.
     if (field.flow.location.storeNaming != StoreNaming::EveryStoreNamesLocation)
         return false;
@@ -183,6 +191,7 @@ static bool isUnread(const Layout& layout, const Field& field)
     case ReadState::NeverRead:
         return true;
     case ReadState::Unknown:
+    case ReadState::OnlyAccessed:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -221,6 +230,9 @@ static BitVector findVariablesReadOutsideBodies(const Program& program, const Fl
         }
         for (const SyntheticExport& entry : module.syntheticExports)
             add(entry.variable);
+        // The run time reads the variable that holds `module.exports` for whoever asks for the value of the module, takes its names from that value, or holds its module object.
+        if (module.exportsVariable && program.at(module.exportsVariable).flow.reads == ReadState::Unknown)
+            add(module.exportsVariable);
     }
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings)
@@ -229,15 +241,14 @@ static BitVector findVariablesReadOutsideBodies(const Program& program, const Fl
     return variables;
 }
 
-// Only GetModuleVariable reads a variable that no export, eval scope or class object names, so the scan sees every read of it.
-// A store that nothing reads still keeps its value alive: it stays where somebody can tell that the value was let go.
+// Only GetModuleVariable reads a variable that no module, eval scope or class object names, so the scan sees every read of it.
 static BitVector findCandidateVariables(const Program& program, const FlowResults& flow)
 {
     BitVector isReadOutsideBodies = findVariablesReadOutsideBodies(program, flow);
     BitVector candidates(program.variables.size());
     for (unsigned index = 0; index < program.variables.size(); ++index) {
         const Variable& variable = program.variables[index];
-        if (!variable.owner && variable.flow.writers == WriterState::AllKnown && !variable.flow.mayKeepObservedObjectAlive && !isReadOutsideBodies.quickGet(index))
+        if (!variable.owner && variable.flow.writers == WriterState::AllKnown && !isReadOutsideBodies.quickGet(index))
             candidates.quickSet(index);
     }
     return candidates;
@@ -259,17 +270,26 @@ static CandidateTable findCandidateFields(const Program& program)
     return candidates;
 }
 
+// The keys under which a lookup finds a candidate, or a field that was inherited from one.
+static BitVector findKeysOfCandidates(const Program& program, const ParallelLoops& loops, const CandidateTable& candidates)
+{
+    Vector<PropertyKeyID> found = collectInParallel<PropertyKeyID>(loops, program.layouts.size(), [&](unsigned index, Vector<PropertyKeyID>& keys) {
+        LayoutID layout(index);
+        const auto& fields = program.at(layout).fields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            if (fields[field].key && candidates.find(declarationOf(program, { layout, field })))
+                keys.append(fields[field].key);
+        }
+    });
+    BitVector keys;
+    for (PropertyKeyID key : found)
+        keys.set(key.index());
+    return keys;
+}
+
 static OpcodeSet findOpcodesNamingLayouts()
 {
-    OpcodeSet opcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        bool namesLayout = std::ranges::any_of(payloadFieldsOf(opcode), [](const PayloadFieldInfo& field) {
-            return field.kind == PayloadKind::Layout;
-        });
-        if (namesLayout)
-            opcodes.add(opcode);
-    }
-    return opcodes;
+    return Value::opcodesWithLayout;
 }
 
 static bool callsBuiltin(EffectRule rule)
@@ -350,12 +370,7 @@ static void markParsedLayoutsLive(const ScanContext& context)
 
 static LayoutID layoutPayloadOf(const Value& value)
 {
-    LayoutID layout;
-    for (const PayloadFieldInfo& field : payloadFieldsOf(value.opcode)) {
-        if (field.kind == PayloadKind::Layout)
-            layout = decodePayloadWord<LayoutID>(value.payloadWordAt(field.firstWord));
-    }
-    return layout;
+    return Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
 }
 
 static void forEachNamedField(const Value& value, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
@@ -421,11 +436,9 @@ static BitVector findUsedValues(const Function& function)
 
 Vector<RemovableAccess> FunctionScanner::run()
 {
-    for (uint32_t blockIndex = 0; blockIndex < m_function.blocks.size(); ++blockIndex) {
-        BlockID block(blockIndex);
-        for (ValueID id : m_function.at(block).values)
-            scan(ListedValue { block, id, m_function.at(id) });
-    }
+    forEachListedValue(m_context.program, m_id, m_context.scannedOpcodes, [&](BlockID block, uint32_t, ValueID id, const Value& value) {
+        scan(ListedValue { block, id, value });
+    });
     return WTF::move(m_removableAccesses);
 }
 
@@ -501,6 +514,11 @@ void FunctionScanner::scanAccessByKey(const ListedValue& listed)
         return;
     }
 
+    // Most keys are the key of no candidate, and then no member has a candidate under the key.
+    bool isKeyOfCandidate = m_context.keysOfCandidates.get(key.index());
+    if (!isKeyOfCandidate)
+        return;
+
     bool reachesOnlyCandidates = reached.isComplete;
     Vector<uint32_t, 1> found;
     for (LayoutID member : reached.members) {
@@ -560,12 +578,23 @@ void FunctionScanner::markLive(std::span<const uint32_t> candidates)
         m_context.live.markLive(candidate);
 }
 
+// The opcodes for which FunctionScanner::scan() does something.
+static OpcodeSet findScannedOpcodes(const OpcodeSet& opcodesNamingLayouts, const OpcodeSet& opcodesStoringThroughOperands)
+{
+    OpcodeSet opcodes = opcodesNamingLayouts | Value::opcodesWithVariable | opcodesStoringThroughOperands;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (findsFieldByKey(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}
+
 static Vector<FunctionAccesses> scanFunctions(const ScanContext& context)
 {
     const Program& program = context.program;
     return collectInParallel<FunctionAccesses>(context.build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
-        if (!program.at(id).hasBody())
+        if (!mayListValueWith(program, id, context.scannedOpcodes) || !program.at(id).hasBody())
             return;
         Vector<RemovableAccess> accesses = FunctionScanner(context, id).run();
         if (!accesses.isEmpty())
@@ -608,19 +637,21 @@ static uint64_t recordRemovedFields(ProgramEditor& editor, const CandidateTable&
     uint64_t numberOfRemovedFields = 0;
     for (uint32_t candidate = 0; candidate < candidates.list.size(); ++candidate) {
         FieldReference reference = candidates.list[candidate];
-        LocationFlow& location = editor.at(reference.layout).fields[reference.field].flow.location;
-        bool hadNoAccesses = hasNoAccesses(location);
-        if (live.isLive(candidate)) {
-            if (hadNoAccesses)
-                location.stores = StoreCount::Unknown;
+        bool hadNoAccesses = hasNoAccesses(editor.program().at(reference.layout).fields[reference.field].flow.location);
+        if (live.isLive(candidate) != hadNoAccesses)
+            continue;
+        Field& field = editor.at(reference);
+        if (hadNoAccesses) {
+            field.flow.location.stores = StoreCount::Unknown;
             continue;
         }
-        if (hadNoAccesses)
-            continue;
-        location.stores = StoreCount::Never;
-        location.reads = ReadState::NeverRead;
+        field.flow.location.stores = StoreCount::Never;
+        field.flow.location.reads = ReadState::NeverRead;
+        // No allocation lists it any more: an object is finished without it.
+        if (field.flow.occupancy == Occupancy::FilledAtBirth || field.flow.occupancy == Occupancy::FilledWithValueAtBirth)
+            field.flow.occupancy = Occupancy::Unknown;
         if (validates)
-            editor.at(reference.layout).fields[reference.field].flags.add(FieldFlags::IsRemovedAsUnread);
+            field.flags.add(FieldFlags::IsRemovedAsUnread);
         ++numberOfRemovedFields;
     }
     return numberOfRemovedFields;
@@ -694,7 +725,7 @@ static void removeAccessesInBlock(const ScanContext& context, IRBuilder& builder
         while (!accesses.empty() && accesses.front().access == id)
             accesses = accesses.subspan(1);
 
-        Value& access = function.at(id);
+        Value& access = function.edit(id);
         if (access.opcode == Opcode::NewObject)
             rebuildAllocation(context, access);
         else
@@ -749,6 +780,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
 {
     const Program& program = editor.program();
     BuildContext& build = runner.build();
+
     CandidateTable candidates;
     if (areReceiverSetsEnabled(program, build))
         candidates = findCandidateFields(program);
@@ -758,7 +790,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         return;
 
     LiveCandidates live(candidates.size());
-    ScanContext context { program, inputs.effects, build, candidates, live, findOpcodesNamingLayouts(), findOpcodesStoringThroughOperands() };
+    OpcodeSet opcodesNamingLayouts = findOpcodesNamingLayouts();
+    OpcodeSet opcodesStoringThroughOperands = findOpcodesStoringThroughOperands();
+    ScanContext context { program, inputs.effects, build, candidates, live, opcodesNamingLayouts, opcodesStoringThroughOperands, findScannedOpcodes(opcodesNamingLayouts, opcodesStoringThroughOperands), findKeysOfCandidates(program, build.parallelLoops(), candidates) };
     markEvalBindingsLive(context);
     markDataLayoutsLive(context);
     markParsedLayoutsLive(context);

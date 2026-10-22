@@ -42,10 +42,9 @@ Vector<ConstantData> copyConstants(const B3::Procedure& procedure)
     constants.reserveInitialCapacity(procedure.dataSections().size());
     for (const B3::Procedure::DataSectionRecord& section : procedure.dataSections()) {
         RELEASE_ASSERT(section.size);
-        size_t lowestSetBit = size_t { 1 } << std::countr_zero(section.size);
         constants.append({
             Vector<uint8_t>(unsafeMakeSpan(static_cast<const uint8_t*>(section.data), section.size)),
-            static_cast<uint32_t>(std::min(imageConstantsAlignment, lowestSetBit)),
+            alignmentOfConstant(section.size),
         });
     }
     return constants;
@@ -65,16 +64,19 @@ static CodeBody describeBody(CodeRecords& records, EmittedCode& emitted)
     LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
     CodeBody body;
     body.relocations = WTF::move(emitted.relocations);
-    records.stubCalls.describeCalls(body.relocations.span(), body);
+    records.stubCalls.describeCalls(body.relocations.span(), body, &linkBuffer);
     body.units = records.units.link(emitted.buffer, body.relocations.span());
+    body.sizeOfHotBlocks = records.units.sizeOfHotBlocks();
     body.localSites = linkBuffer.linkedSites();
     body.bytes = Vector<uint8_t>(emitted.buffer.bytes());
 
     uint32_t size = safeCast<uint32_t>(body.bytes.size());
     body.paddingStart = std::min(linkBuffer.offsetOf(emitted.paddingStart), size);
     body.entries = describeEntries(records, linkBuffer);
-    body.constants = copyConstants(emitted.procedure);
-    body.jumpTables = takeJumpTables(emitted.procedure);
+    if (emitted.procedure) {
+        body.constants = copyConstants(*emitted.procedure);
+        body.jumpTables = takeJumpTables(*emitted.procedure);
+    }
     return body;
 }
 
@@ -108,18 +110,31 @@ static RegisterAtOffsetList registersRestoredByUnwinding(const B3::Procedure& pr
 
 static FrameDescription describeFrame(const CodeRecords& records, EmittedCode& emitted, FunctionID id, const Function& function)
 {
-    LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
-    const B3::Procedure& procedure = emitted.procedure;
-    const B3::Air::Code& code = procedure.code();
     FrameDescription frame;
-    frame.frameSizeInBytes = procedure.frameSize();
-    frame.calleeSaveRegisters = registersRestoredByUnwinding(procedure, function);
-    frame.frameRanges = describeFrameRanges(code, linkBuffer);
-    RELEASE_ASSERT(code.frameLayout().hasFrame == frame.hasFrame());
+    frame.spillsArgumentRegisters = records.frame.spillsArgumentRegisters;
     frame.stackUsedAtCalls = records.frame.stackUsedAtCalls;
     frame.isEnteredWithoutStackCheck = emitted.stackChecks.isEnteredWithoutStackCheck;
     frame.isProvenToFitOnStack = emitted.stackChecks.isProvenToFitOnStack;
+    if (!emitted.procedure)
+        return frame;
+
+    LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
+    const B3::Procedure& procedure = *emitted.procedure;
+    const B3::Air::Code& code = procedure.code();
+    frame.frameSizeInBytes = procedure.frameSize();
+    frame.hasFrameRecord = !code.frameLayout().hasFrame || code.frameLayout().hasFrameRecord;
+    frame.calleeSaveRegisters = registersRestoredByUnwinding(procedure, function);
+    frame.frameRanges = describeFrameRanges(code, linkBuffer);
+    // A frame that is set up for its stack check alone is torn down at once: no byte of code runs in it.
+    RELEASE_ASSERT(code.frameLayout().hasFrame || !frame.hasFrame());
     frame.prologueChecks = linkStackChecks(linkBuffer, id, records);
+    // A frame is allocated whole when such a check calls, and without a record only its size leads from there to the caller.
+    if (!frame.hasFrameRecord) {
+        for (const PrologueCheck& check : frame.prologueChecks) {
+            RELEASE_ASSERT(frame.frameRanges.isEmpty() || frame.frameRanges.last().end <= check.callOffset);
+            frame.frameRanges.append({ check.callOffset, check.callOffset + static_cast<uint32_t>(sizeOfNearCall) });
+        }
+    }
     return frame;
 }
 

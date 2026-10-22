@@ -75,7 +75,6 @@ static_assert(perObjectHeaps.containsAll({
 }));
 static_assert(!perObjectHeaps.containsAny({
     AbstractHeap::ModuleVariables,
-    AbstractHeap::ShapeEpoch,
     AbstractHeap::MemberGuards,
     AbstractHeap::AllocatorState,
     AbstractHeap::RuntimeState,

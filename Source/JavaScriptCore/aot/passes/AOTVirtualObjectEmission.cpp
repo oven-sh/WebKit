@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNarrowFieldTypes.h"
 #include "AOTTypeArena.h"
 #include <wtf/StdLibExtras.h>
 
@@ -239,6 +240,37 @@ Value makeFieldStore(const Program& program, const VirtualObjectDescription& des
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool canHoldUnprovenValue(const Program& program, const VirtualObjectDescription& description, const VirtualField& named)
+{
+    if (description.kind != VirtualObjectKind::Object || named.kind != VirtualFieldKind::Named)
+        return false;
+    std::optional<uint32_t> layoutField = layoutFieldOf(program, description, named);
+    if (!layoutField)
+        return false;
+    const Field& field = program.at(description.layout).fields[*layoutField];
+    return canBeStoredBehindAllocation(field) && tryCreateFiller(program, program.at(slotTypeOf(program, field)));
+}
+
+Value makeFiller(const Program& program, const VirtualObjectDescription& description, const VirtualField& unprovenNamed)
+{
+    RELEASE_ASSERT(unprovenNamed.kind == VirtualFieldKind::UnprovenNamed);
+    const Field& field = program.at(description.layout).fields[requiredLayoutField(program, description, unprovenNamed)];
+    std::optional<Value> filler = tryCreateFiller(program, program.at(slotTypeOf(program, field)));
+    RELEASE_ASSERT(filler);
+    return WTF::move(*filler);
+}
+
+Value makeStoreByName(const FieldValue& unprovenNamed, ValueID cell)
+{
+    RELEASE_ASSERT(unprovenNamed.field.kind == VirtualFieldKind::UnprovenNamed);
+    Value store(Opcode::PropSet);
+    store.setObjectOperand(cell);
+    store.setValueOperand(unprovenNamed.value);
+    store.setKey(unprovenNamed.field.key);
+    store.setMode(ECMAMode::Strict);
+    return store;
 }
 
 void setExactReceivers(Value& slotOperation, LayoutID layout, TypeArena& types)

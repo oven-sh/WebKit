@@ -1,14 +1,13 @@
-# A function that is entered only by direct calls from functions that checked the stack has a small frame without a check; a function that calls itself checks
+# A function that is entered behind a check has a small frame without one, whether through a closure or by a direct call from such a function; a function that calls itself checks
 # FORM: AsRead
 # RUN: generate-code
-# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls,pass:RemoveUnusedParameters
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:RemoveUnusedParameters
 # STATISTIC: StackChecksCoveredByCallers >= 1
-# CHECK: f1: size={{*}} prologueChecks=1
-# CHECK-NOT: enteredWithoutStackCheck
+# CHECK: f1: size={{*}} frame={{*}}@{{*}} prologueChecks=0 enteredWithoutStackCheck provenToFitOnStack
 # CHECK: f2: size={{*}} frame={{*}}@{{*}} prologueChecks=0 enteredWithoutStackCheck provenToFitOnStack
 # CHECK: f3: size={{*}} prologueChecks=1
 # CHECK-NOT: enteredWithoutStackCheck
-# CHECK: f4: size=
+# CHECK: f5: size=
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowResults.h"
+#include "AOTOperationData.h"
 #include "AOTReuseEnvironments.h"
 #include <algorithm>
 #include <array>
@@ -28,8 +29,14 @@ enum class VariableGroup : uint8_t {
     UndefinedDouble,
     AbsentInteger,
     AbsentDouble,
+    UndefinedReference4,
+    UndefinedInteger4,
+    AbsentInteger4,
+    UndefinedByte,
     ZeroValue,
+    ZeroFunction,
     ZeroWord8,
+    ZeroReference4,
     ZeroWord4,
     ZeroWord2,
     ZeroWord1,
@@ -75,14 +82,15 @@ using RegionStep = void (*)(StaticsBuilder&);
 
 } // anonymous namespace
 
-static constexpr unsigned numberOfFilledGroups = 5;
-static constexpr unsigned numberOfVariableGroups = 10;
+static constexpr unsigned numberOfFilledGroups = 9;
+static constexpr unsigned numberOfVariableGroups = 16;
 static constexpr unsigned numberOfBuckets = numberOfFilledGroups + numberOfVariableGroups;
 static constexpr unsigned wordSize = sizeof(uint64_t);
 
 static_assert(static_cast<unsigned>(VariableGroup::ZeroValue) == numberOfFilledGroups);
 static_assert(static_cast<unsigned>(VariableGroup::ZeroWord1) + 1 == numberOfVariableGroups);
 static_assert(!traitsOf(SlotRepresentation::JSValue).absentBits && !traitsOf(SlotRepresentation::LiteralString).absentBits);
+static_assert(!traitsOf(SlotRepresentation::OptionalCell32).absentBits && !traitsOf(SlotRepresentation::LiteralString32).absentBits && !traitsOf(SlotRepresentation::OptionalBoolean).absentBits);
 static_assert(widthOf(SlotRepresentation::JSValue) == wordSize && widthOf(SlotRepresentation::LiteralString) == wordSize && widthOf(SlotRepresentation::OptionalInt64) == wordSize && widthOf(SlotRepresentation::OptionalDouble) == wordSize);
 static_assert(defaultLimitValue(LimitID::MaxStaticsSize, Architecture::ARM64) <= UINT32_MAX && defaultLimitValue(LimitID::MaxStaticsSize, Architecture::X86_64) <= UINT32_MAX);
 static_assert(sizeof(EncodedJSValue) == wordSize && sizeof(JSCell*) == wordSize);
@@ -99,25 +107,25 @@ uint64_t initialWordOf(const Program& program, VariableID id, const PlannedVaria
         bool isStaticField = !!variable.owner;
         return isStaticField ? traitsOf(planned.representation).absentBits : 0;
     }
-    switch (variable.initialization) {
-    case VariableInitialization::Undefined:
+    // A variable that is born as a definition says so with zero, which is no plain encoding.
+    if (variable.initialization == VariableInitialization::Undefined)
         return traitsOf(planned.representation).undefinedBits;
-    case VariableInitialization::Uninitialized:
-        return traitsOf(planned.representation).absentBits;
-    case VariableInitialization::Function:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(variable.initialization == VariableInitialization::Uninitialized);
+    return traitsOf(planned.representation).absentBits;
 }
 
-static VariableGroup zeroGroupOf(SlotRepresentation representation)
+static VariableGroup zeroGroupOf(const PlacedVariable& placed)
 {
-    switch (widthOf(representation)) {
+    switch (widthOf(placed.representation)) {
     case 8:
+        if (!traitsOf(placed.representation).holdsCell)
+            return VariableGroup::ZeroWord8;
         // The words that the collector visits lie together, so the image lists them as a few ranges.
-        return traitsOf(representation).holdsCell ? VariableGroup::ZeroValue : VariableGroup::ZeroWord8;
+        // A read that finds zero takes the closure of the declared function from the closure table and leaves the word as it is, so the word is written only where the program assigns to the name.
+        // Hardly any program does: these words lie apart from the ones that get filled, and their pages are never written.
+        return placed.encoding == VariableEncoding::FunctionAsZero ? VariableGroup::ZeroFunction : VariableGroup::ZeroValue;
     case 4:
-        return VariableGroup::ZeroWord4;
+        return traitsOf(placed.representation).isNarrowReference ? VariableGroup::ZeroReference4 : VariableGroup::ZeroWord4;
     case 2:
         return VariableGroup::ZeroWord2;
     case 1:
@@ -127,12 +135,12 @@ static VariableGroup zeroGroupOf(SlotRepresentation representation)
     }
 }
 
-static VariableGroup groupOf(VariableInitialization initialization, SlotRepresentation representation, uint64_t initialWord)
+static VariableGroup groupOf(VariableInitialization initialization, const PlacedVariable& placed)
 {
-    if (!initialWord)
-        return zeroGroupOf(representation);
+    if (!placed.initialWord)
+        return zeroGroupOf(placed);
     bool startsUndefined = initialization == VariableInitialization::Undefined;
-    switch (representation) {
+    switch (placed.representation) {
     case SlotRepresentation::JSValue:
     case SlotRepresentation::LiteralString:
         return VariableGroup::UndefinedValue;
@@ -140,6 +148,13 @@ static VariableGroup groupOf(VariableInitialization initialization, SlotRepresen
         return startsUndefined ? VariableGroup::UndefinedInteger : VariableGroup::AbsentInteger;
     case SlotRepresentation::OptionalDouble:
         return startsUndefined ? VariableGroup::UndefinedDouble : VariableGroup::AbsentDouble;
+    case SlotRepresentation::OptionalCell32:
+    case SlotRepresentation::LiteralString32:
+        return VariableGroup::UndefinedReference4;
+    case SlotRepresentation::OptionalInt32:
+        return startsUndefined ? VariableGroup::UndefinedInteger4 : VariableGroup::AbsentInteger4;
+    case SlotRepresentation::OptionalBoolean:
+        return VariableGroup::UndefinedByte;
     case SlotRepresentation::Uint8:
     case SlotRepresentation::Int8:
     case SlotRepresentation::Uint16:
@@ -151,12 +166,7 @@ static VariableGroup groupOf(VariableInitialization initialization, SlotRepresen
     case SlotRepresentation::Double:
     case SlotRepresentation::Cell:
     case SlotRepresentation::Boolean:
-    case SlotRepresentation::Int32OrDouble:
-    case SlotRepresentation::OptionalInt32:
     case SlotRepresentation::Cell32:
-    case SlotRepresentation::OptionalCell32:
-    case SlotRepresentation::OptionalBoolean:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         break;
     }
@@ -195,7 +205,7 @@ static Vector<PlacedVariable> createPlacedVariables(const PlacementContext& cont
 
 static unsigned bucketOf(const Program& program, VariableID id, const PlacedVariable& placed)
 {
-    unsigned group = static_cast<unsigned>(groupOf(program.at(id).initialization, placed.representation, placed.initialWord));
+    unsigned group = static_cast<unsigned>(groupOf(program.at(id).initialization, placed));
     return placed.region == StaticsRegion::FilledAtProgramEntry ? group : numberOfFilledGroups + group;
 }
 
@@ -233,7 +243,9 @@ static void placeVariables(StaticsBuilder& builder)
             auto& variable = plan.variables[index];
             unsigned width = widthOf(variable.representation);
             variable.offset = builder.allocator.allocate(width, width);
-            if (!traitsOf(variable.representation).holdsCell)
+            // A root is visited as a word of eight bytes. The image lists the narrow references in a table of their own.
+            SlotTraits traits = traitsOf(variable.representation);
+            if (!traits.holdsCell || traits.isNarrowReference)
                 continue;
             RELEASE_ASSERT(width == wordSize && !(variable.offset % wordSize));
             plan.roots.append(variable.offset);
@@ -241,7 +253,7 @@ static void placeVariables(StaticsBuilder& builder)
     };
     auto indices = order.indices.span();
     place(indices.first(order.numberFilledAtProgramEntry));
-    plan.sizeFilledAtProgramEntry = static_cast<uint32_t>(builder.allocator.end());
+    plan.sizeFilledAtProgramEntry = builder.allocator.alignTo(wordSize);
     place(indices.subspan(order.numberFilledAtProgramEntry));
 }
 
@@ -259,9 +271,32 @@ static Vector<uint32_t> allocateRootWords(StaticsBuilder& builder, size_t count)
     return offsets;
 }
 
+// What `module.exports` holds is a variable of the program. The namespace object of a module with an export table is made for an operation that wants an object.
+static bool hasValueWord(const PlacementContext& context, ModuleID id)
+{
+    switch (context.program.at(id).kind) {
+    case ModuleKind::SourceText:
+    case ModuleKind::Data:
+        return context.inputs.flow.module(id).namespaceUse != NamespaceUse::NeverCreated;
+    case ModuleKind::CommonJs:
+        return false;
+    case ModuleKind::RuntimeSource:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static void placeModuleValues(StaticsBuilder& builder)
 {
-    builder.plan.moduleValueOffsets = allocateRootWords(builder, builder.context.program.modules.size());
+    builder.plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(builder.context.program.modules.size(), [&](size_t index) -> std::optional<uint32_t> {
+        if (!hasValueWord(builder.context, ModuleID(index)))
+            return std::nullopt;
+        uint32_t offset = builder.allocator.allocate(wordSize, wordSize);
+        builder.plan.roots.append(offset);
+        return offset;
+    });
 }
 
 static void placeGuardWords(StaticsBuilder& builder)
@@ -275,26 +310,18 @@ static void placeGuardWords(StaticsBuilder& builder)
     for (size_t first = 0; first < bits.size();) {
         uint32_t wordOffset = builder.allocator.allocate(wordSize, wordSize);
         size_t end = first;
-        while (end < bits.size() && bits[end].classLayout == bits[first].classLayout && bits[end].side == bits[first].side)
+        // The bits of one side of a class fill words that follow each other, and so do the bits of sets of conditions, which belong to no class: the first bit of a word starts the next one.
+        while (end < bits.size() && bits[end].classLayout == bits[first].classLayout && bits[end].side == bits[first].side && (end == first || bits[end].bit % MemberGuardData::bitsPerWord))
             bits[end++].wordOffset = wordOffset;
+        RELEASE_ASSERT(!bits[first].classLayout || !bits[first].bit || wordOffset == bits[first - 1].wordOffset + wordSize);
         first = end;
     }
 }
 
-static bool hasConstantCell(const PlacementContext& context, const ModuleBuiltinUse& use)
-{
-    const Program& program = context.program;
-    if (program.builtins().isUnder(use.builtin, Builtins::ImportMeta))
-        return true;
-    FunctionID body = program.at(use.module).body;
-    return body && context.inputs.flow.runsAtMostOnce(program, body);
-}
-
+// A module runs at most once, so it has one module object, one require function and one `import.meta`.
 static void placeModuleBuiltinCells(StaticsBuilder& builder)
 {
     for (const ModuleBuiltinUse& use : builder.sites.moduleBuiltins) {
-        if (!hasConstantCell(builder.context, use))
-            continue;
         uint32_t offset = builder.allocator.allocate(wordSize, wordSize);
         builder.plan.moduleBuiltinCells.append({ use.builtin, use.module, offset });
         builder.plan.roots.append(offset);
@@ -304,6 +331,17 @@ static void placeModuleBuiltinCells(StaticsBuilder& builder)
 static void placeSharedStorage(StaticsBuilder& builder)
 {
     builder.literals.sharedStorageOffsets = allocateRootWords(builder, builder.sites.copyOnWriteArrays.size());
+}
+
+// The table of constant data begins with these nodes, in this order.
+static void placeStorageInImage(StaticsBuilder& builder)
+{
+    uint64_t next = DataNodeHeader::firstNode;
+    builder.literals.nodesOfStorageInImage = builder.sites.arraysWithStorageInImage.map([&](DataID data) {
+        uint32_t node = safeCast<uint32_t>(next);
+        next += DataNodeHeader::numberOfWords(DataNodeHeader::Kind::Array, builder.context.program.at(data).root.as<DataNode::Array>().elements.size());
+        return node;
+    });
 }
 
 static void placeRegExpCells(StaticsBuilder& builder)
@@ -348,6 +386,7 @@ static constexpr RegionStep regionSteps[] = {
     placeGuardWords,
     placeModuleBuiltinCells,
     placeSharedStorage,
+    placeStorageInImage,
     placeRegExpCells,
     placeTemplateObjects,
     placeArrayProfiles,

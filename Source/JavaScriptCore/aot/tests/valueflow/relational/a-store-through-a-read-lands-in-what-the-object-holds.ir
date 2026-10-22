@@ -1,0 +1,60 @@
+# function own(k, v) { const temp = { slot: k }; temp.slot.held = v }
+# function handed(temp, k, v) { temp.slot = k; temp.slot.held = v }
+# function fill(t, v) { t.slot.held = v }   function inTwoCalls(temp, k, v) { temp.slot = k; fill(temp, v) }
+# The store names the temporary and the value lands in `k`. That the temporary dies with the call says nothing about the value: it is stored into every subject that lives in the temporary.
+# RUN: relational-summary
+# CHECK: f1
+# CHECK: p1: {{*}} stored-into-parameters=1 
+# CHECK: f2
+# CHECK: p1: {{*}} stored-into-parameters=1
+# CHECK: p2: {{*}} stored-into-parameters=3
+# CHECK: f3
+# CHECK: p1: {{*}} stored-into-parameters=1
+# CHECK: f4
+# CHECK: p2: {{*}} stored-into-parameters=3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Temp" fields=[{key="slot" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Thing" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f4
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = NewObject -, v3 layout=L1 fields=[0]
+    v6 = NewObject -, v3 layout=L0 fields=[0]
+    v7 = Call v0, -, v4, v5
+    v8 = Call v1, -, v6, v4, v5
+    v9 = Call v2, -, v6, v4, v5
+    Return
+}
+function f1 name="own" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Parameter index=1}, {kind=Allocation index=2 fate=[HasMembersRead]}, {kind=ReadFrom index=3 source=2 key="slot" fate=[HasMembersWritten]}] stores=[{source=0 target=2 key="slot" isOnEveryPath=true isBeforeTargetLeaves=true}, {source=1 target=3 key="held" isOnEveryPath=true}]} {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = PropGet v2 key="slot"
+    PropSet v3, v1 key="held" mode=Strict
+    Return
+}
+function f2 name="handed" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead, HasMembersWritten]}, {kind=Parameter index=1}, {kind=Parameter index=2}, {kind=ReadFrom index=4 source=0 key="slot" fate=[HasMembersWritten]}] stores=[{source=1 target=0 key="slot" isOnEveryPath=true}, {source=2 target=3 key="held" isOnEveryPath=true}]} {
+  b0(v0: anything, v1: anything, v2: anything):
+    PropSet v0, v1 key="slot" mode=Strict
+    v4 = PropGet v0 key="slot"
+    PropSet v4, v2 key="held" mode=Strict
+    Return
+}
+function f3 name="fill" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersRead]}, {kind=Parameter index=1}, {kind=ReadFrom index=2 source=0 key="slot" fate=[HasMembersWritten]}] stores=[{source=1 target=2 key="held" isOnEveryPath=true}]} {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="slot"
+    PropSet v2, v1 key="held" mode=Strict
+    Return
+}
+function f4 name="inTwoCalls" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0 fate=[HasMembersWritten]}, {kind=Parameter index=1}, {kind=Parameter index=2}, {kind=Allocation index=4 fate=[IsCalled]}] stores=[{source=1 target=0 key="slot" isOnEveryPath=true}] handed=[{source=3 call=5 argument=0}, {source=0 call=5 argument=2}, {source=2 call=5 argument=3}]} {
+  b0(v0: anything, v1: anything, v2: anything):
+    PropSet v0, v1 key="slot" mode=Strict
+    v4 = NewClosure function=f3
+    v5 = Call v4, -, v0, v2
+    Return
+}

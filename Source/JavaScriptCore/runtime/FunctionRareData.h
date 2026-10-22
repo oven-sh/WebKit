@@ -74,10 +74,17 @@ public:
     static constexpr ptrdiff_t offsetOfInternalFunctionAllocationProfile() { return OBJECT_OFFSETOF(FunctionRareData, m_internalFunctionAllocationProfile); }
     static constexpr ptrdiff_t offsetOfExecutable() { return OBJECT_OFFSETOF(FunctionRareData, m_executable); }
 #if ENABLE(AOT)
+    // What AOT::ClassTable::createThis() allocated with this function as new.target, and a number that stands for the compiled function it was constructing.
+    static constexpr uint32_t maxCompiledAllocationConstructor = (1u << 24) - 1;
     Structure* compiledAllocationStructure() const { return m_compiledAllocationStructureID.get(); }
-    uint32_t compiledAllocationOrderWord() const { return m_compiledAllocationOrderWord; }
-    JSObject* compiledAllocationConstructor() const { return m_compiledAllocationConstructor.get(); }
-    JS_EXPORT_PRIVATE void setCompiledAllocation(VM&, Structure*, uint32_t orderWord, JSObject* constructor);
+    uint32_t compiledAllocationConstructor() const { return static_cast<uint32_t>(m_compiledAllocationConstructorHighBits) << 16 | m_compiledAllocationConstructorLowBits; }
+    void setCompiledAllocation(VM& vm, Structure* structure, uint32_t constructor)
+    {
+        RELEASE_ASSERT(constructor <= maxCompiledAllocationConstructor);
+        m_compiledAllocationConstructorHighBits = static_cast<uint8_t>(constructor >> 16);
+        m_compiledAllocationConstructorLowBits = static_cast<uint16_t>(constructor);
+        m_compiledAllocationStructureID.set(vm, this, structure);
+    }
 #endif
 
     ObjectAllocationProfileWithPrototype* objectAllocationProfile()
@@ -167,16 +174,20 @@ private:
     WriteBarrierStructureID m_boundFunctionStructureID;
     WriteBarrier<ExecutableBase> m_executable;
     std::unique_ptr<AllocationProfileClearingWatchpoint> m_allocationProfileClearingWatchpoint;
-#if ENABLE(AOT)
-    WriteBarrierStructureID m_compiledAllocationStructureID;
-    uint32_t m_compiledAllocationOrderWord { 0 };
-    WriteBarrier<JSObject> m_compiledAllocationConstructor;
-#endif
     bool m_hasReifiedLength : 1;
     bool m_hasReifiedName : 1;
     bool m_hasModifiedLengthForBoundOrNonHostFunction : 1;
     bool m_hasModifiedNameForBoundOrNonHostFunction : 1;
+#if ENABLE(AOT)
+    uint8_t m_compiledAllocationConstructorHighBits { 0 };
+    uint16_t m_compiledAllocationConstructorLowBits { 0 };
+    WriteBarrierStructureID m_compiledAllocationStructureID;
+#endif
 };
+
+#if ENABLE(AOT)
+static_assert(sizeof(FunctionRareData) == 72, "What the compiler keeps here fills the padding at the end of the cell");
+#endif
 
 class FunctionRareData::AllocationProfileClearingWatchpoint final : public Watchpoint {
 public:

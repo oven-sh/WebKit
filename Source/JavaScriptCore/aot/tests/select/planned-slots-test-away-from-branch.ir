@@ -1,11 +1,11 @@
-# A test that a slot is filled, over layouts that hold the field in two places, is dispatched on shape together with the branch that passes its proof. Where the test does not stand right in front of one branch that is its only user, each such branch first gets a test of its own
+# A test that a slot is filled, over layouts that hold the field in two places, is dispatched on the layouts of its receiver together with the branch that passes its proof. Where the test does not stand right in front of one branch that is its only user, each such branch first gets a test of its own
 # FORM: Prepared
-# OPTIONS: references=narrow
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: pass Select
 # RUN(PLACE): pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}] flow={members=[L0]}
+layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L0]}
 layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
 variable g0 name="saved" declared={type=anything} initialization=Undefined
 
@@ -23,10 +23,10 @@ function f0 name="store-between-test-and-branch" parameters=[{type=L0|L1}, {type
 # CHECK-LABEL: function f0 name="store-between-test-and-branch"
 # CHECK-NEXT: b0(v0: L0|L1, v1: anything):
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
-# CHECK-NEXT: SwitchOnShape v0
-# CHECK: [[textBehindStore]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[textBehindStore]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[textBehindStore]] -> taken [[filledBehindStore]](| 0), notTaken
-# CHECK: [[countBehindStore]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L1] level=Proven
+# CHECK: [[countBehindStore]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
 # CHECK-NEXT: TestAndBranch [[countBehindStore]] -> taken [[filledBehindStore]](| 0), notTaken
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: receivers=[L0, L1]
@@ -47,10 +47,10 @@ function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean
 # CHECK-NEXT: b0(v0: L0|L1, v1: boolean):
 # CHECK-NEXT: Branch v1 -> taken [[later]](), notTaken
 # CHECK-NEXT: [[later]]():
-# CHECK-NEXT: SwitchOnShape v0
-# CHECK: [[textLater]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[textLater]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[textLater]] -> taken [[filledLater]](| 0), notTaken
-# CHECK: [[countLater]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L1] level=Proven
+# CHECK: [[countLater]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
 # CHECK-NEXT: TestAndBranch [[countLater]] -> taken [[filledLater]](| 0), notTaken
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: receivers=[L0, L1]
@@ -71,16 +71,16 @@ function f2 name="two-branches" parameters=[{type=L0|L1}] results=[{type=anythin
 }
 # CHECK-LABEL: function f2 name="two-branches"
 # CHECK-NEXT: b0(v0: L0|L1):
-# CHECK-NEXT: SwitchOnShape v0
-# CHECK: [[firstText]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[firstText]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[firstText]] -> taken
-# CHECK: [[firstCount]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L1] level=Proven
+# CHECK: [[firstCount]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
 # CHECK-NEXT: TestAndBranch [[firstCount]] -> taken
 # CHECK: PutModuleVariable {{*}} variable=g0
-# CHECK-NEXT: SwitchOnShape v0
-# CHECK: [[secondText]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[secondText]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[secondText]] -> taken
-# CHECK: [[secondCount]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L1] level=Proven
+# CHECK: [[secondCount]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
 # CHECK-NEXT: TestAndBranch [[secondCount]] -> taken
 # CHECK-NOT: receivers=[L0, L1]
 
@@ -97,10 +97,10 @@ function f3 name="branched-on-and-returned" parameters=[{type=L0|L1}] results=[{
 }
 # CHECK-LABEL: function f3 name="branched-on-and-returned"
 # CHECK-NEXT: b0(v0: L0|L1):
-# CHECK-NEXT: SwitchOnShape v0
+# CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK: [[joined]]([[answer]]: boolean):
-# CHECK-NEXT: SwitchOnShape v0
-# CHECK: [[textOfBranch]]: boolean = IsSlotFilled v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[textOfBranch]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[textOfBranch]] -> taken
 # CHECK: Return [[answer]]
 # CHECK-NOT: receivers=[L0, L1]

@@ -38,6 +38,7 @@ using Kind = CodeUnit::Kind;
 using B3::Air::Arg;
 using B3::Air::Inst;
 using B3::Air::Tmp;
+using ImageTests::changeUnits;
 
 struct LinkedCode {
     Vector<uint8_t> bytes;
@@ -349,7 +350,7 @@ static void testAirInstructions()
     Vector<Label> labels;
     Vector<uint32_t> offsets;
     LinkedCode code = emitAndLink([&](Emission& emission) {
-        emission.units.setColdBlocks(blocks.indicesOf({ 0 }));
+        emission.units.setColdBlocks(blocks.indicesOf({ 0 }), { });
         emission.units.willGenerate(blocks[0]);
         for (const InstCase& testCase : cases)
             labels.append(emitInstruction(emission, testCase.inst));
@@ -370,7 +371,7 @@ static void testHotLoopInColdFunction()
     BlockLabels labels[3];
     BlockOffsets offsets[3];
     LinkedCode code = emitAndLink([&](Emission& emission) {
-        emission.units.setColdBlocks(blocks.indicesOf({ 0, 2 }));
+        emission.units.setColdBlocks(blocks.indicesOf({ 0, 2 }), blocks.indicesOf({ 2 }));
         for (unsigned block = 0; block < 3; ++block)
             labels[block] = emitBlock(emission, blocks[block]);
     }, [&](LinkBuffer& linkBuffer) {
@@ -385,6 +386,9 @@ static void testHotLoopInColdFunction()
         checkUnit(code.units, offsets[block].last, offsets[block].end, Kind::End);
     }
     checkUnit(code.units, offsets[1].move, offsets[1].end, Kind::Pinned);
+    // Block 0 is cold by an estimate only, block 2 is rarely run.
+    for (const CodeUnit& unit : code.units)
+        AOT_TEST_CHECK(unit.mayRun == (unit.offset >= offsets[0].move && unit.offset < offsets[0].end));
 }
 
 static void testWithoutColdBlocksEverythingIsPinned()
@@ -691,16 +695,30 @@ static Fixture makeFixture()
     return fixture;
 }
 
-static CodeUnit& unitAt(Fixture& fixture, uint32_t offset)
+static CodeUnit unitAt(const Fixture& fixture, uint32_t offset)
 {
-    Vector<CodeUnit>& units = fixture.code.body.units;
+    Vector<CodeUnit> units = fixture.code.body.units.unpack();
     return units[indexOfUnitAt(units, offset)];
 }
 
-static CodeUnit& onlyUnit(Fixture& fixture, Kind kind)
+static CodeUnit onlyUnit(const Fixture& fixture, Kind kind)
 {
-    Vector<CodeUnit>& units = fixture.code.body.units;
+    Vector<CodeUnit> units = fixture.code.body.units.unpack();
     return units[indexOfOnly(units, kind)];
+}
+
+static void changeUnitAt(Fixture& fixture, uint32_t offset, const auto& change)
+{
+    changeUnits(fixture.code.body, [&](Vector<CodeUnit>& units) {
+        change(units[indexOfUnitAt(units, offset)]);
+    });
+}
+
+static void setKindOfUnitAt(Fixture& fixture, uint32_t offset, Kind kind)
+{
+    changeUnitAt(fixture, offset, [&](CodeUnit& unit) {
+        unit.kind = kind;
+    });
 }
 
 static void testFixtureIsValid()
@@ -709,13 +727,14 @@ static void testFixtureIsValid()
     AOT_TEST_CHECK(verifyCodeUnits(fixture.code) == CodeUnitsError::None);
 
     const CodeBody& body = fixture.code.body;
-    checkUnit(body.units, fixture.plain, fixture.pinned, Kind::Plain);
-    checkUnit(body.units, fixture.pinned, fixture.call, Kind::Pinned);
+    Vector<CodeUnit> units = body.units.unpack();
+    checkUnit(units, fixture.plain, fixture.pinned, Kind::Plain);
+    checkUnit(units, fixture.pinned, fixture.call, Kind::Pinned);
     AOT_TEST_CHECK(fixture.call - fixture.pinned == 8);
     AOT_TEST_CHECK(onlyUnit(fixture, Kind::Call).offset == fixture.call);
     AOT_TEST_CHECK(onlyUnit(fixture, Kind::Call).length == sizeOfNearCall);
-    checkUnit(body.units, fixture.address, fixture.afterBranch, Kind::Pinned);
-    checkUnit(body.units, fixture.afterBranch, fixture.end, Kind::Plain);
+    checkUnit(units, fixture.address, fixture.afterBranch, Kind::Pinned);
+    checkUnit(units, fixture.afterBranch, fixture.end, Kind::Plain);
     AOT_TEST_CHECK(fixture.end - fixture.afterBranch == 8);
     AOT_TEST_CHECK(unitAt(fixture, fixture.end).kind == Kind::End);
 
@@ -748,10 +767,12 @@ static void testBodyWithoutUnits()
         AOT_TEST_CHECK(!fixture.code.body.localSites.isEmpty());
     });
     checkChanged(CodeUnitsError::None, [](Fixture& fixture) {
-        for (CodeUnit& unit : fixture.code.body.units) {
-            if (unit.kind == Kind::Plain)
-                unit.kind = Kind::Pinned;
-        }
+        changeUnits(fixture.code.body, [](Vector<CodeUnit>& units) {
+            for (CodeUnit& unit : units) {
+                if (unit.kind == Kind::Plain)
+                    unit.kind = Kind::Pinned;
+            }
+        });
         dropUnitsWithoutOutlinableCode(fixture.code.body);
         AOT_TEST_CHECK(fixture.code.body.units.isEmpty());
         AOT_TEST_CHECK(fixture.code.body.localSites.isEmpty());
@@ -765,46 +786,57 @@ static void testBodyWithoutUnits()
 static void testUnitsDoNotTileCodeGap()
 {
     checkChanged(CodeUnitsError::UnitsDoNotTileCode, [](Fixture& fixture) {
-        Vector<CodeUnit>& units = fixture.code.body.units;
-        units.removeAt(indexOfUnitAt(units, fixture.afterBranch));
+        changeUnits(fixture.code.body, [&](Vector<CodeUnit>& units) {
+            units.removeAt(indexOfUnitAt(units, fixture.afterBranch));
+        });
     });
 }
 
 static void testUnitsDoNotTileCodeOverlap()
 {
-    checkChanged(CodeUnitsError::UnitsDoNotTileCode, [](Fixture& fixture) { unitAt(fixture, fixture.afterBranch).length += 4; });
+    checkChanged(CodeUnitsError::UnitsDoNotTileCode, [](Fixture& fixture) {
+        changeUnitAt(fixture, fixture.afterBranch, [](CodeUnit& unit) {
+            unit.length += 4;
+        });
+    });
 }
 
 static void testUnitsDoNotTileCodeShort()
 {
-    checkChanged(CodeUnitsError::UnitsDoNotTileCode, [](Fixture& fixture) { fixture.code.body.units.removeLast(); });
+    checkChanged(CodeUnitsError::UnitsDoNotTileCode, [](Fixture& fixture) {
+        changeUnits(fixture.code.body, [](Vector<CodeUnit>& units) {
+            units.removeLast();
+        });
+    });
 }
 
 static void testUnitsDoNotTileCodeZeroLength()
 {
     checkChanged(CodeUnitsError::UnitsDoNotTileCode, [](Fixture& fixture) {
-        Vector<CodeUnit>& units = fixture.code.body.units;
-        units.insert(indexOfUnitAt(units, fixture.afterBranch), CodeUnit { fixture.afterBranch, 0, Kind::Pinned });
+        changeUnits(fixture.code.body, [&](Vector<CodeUnit>& units) {
+            units.insert(indexOfUnitAt(units, fixture.afterBranch), CodeUnit { fixture.afterBranch, 0, Kind::Pinned });
+        });
     });
 }
 
 static void testCallIsNotAUnit()
 {
-    checkChanged(CodeUnitsError::CallIsNotAUnit, [](Fixture& fixture) { onlyUnit(fixture, Kind::Call).kind = Kind::Plain; });
+    checkChanged(CodeUnitsError::CallIsNotAUnit, [](Fixture& fixture) { setKindOfUnitAt(fixture, fixture.call, Kind::Plain); });
     checkChanged(CodeUnitsError::CallIsNotAUnit, [](Fixture& fixture) {
-        Vector<CodeUnit>& units = fixture.code.body.units;
-        size_t index = indexOfOnly(units, Kind::Call);
-        units[index].length += units[index + 1].length;
-        units.removeAt(index + 1);
+        changeUnits(fixture.code.body, [](Vector<CodeUnit>& units) {
+            size_t index = indexOfOnly(units, Kind::Call);
+            units[index].length += units[index + 1].length;
+            units.removeAt(index + 1);
+        });
     });
-    checkChanged(CodeUnitsError::CallIsNotAUnit, [](Fixture& fixture) { unitAt(fixture, fixture.afterBranch).kind = Kind::Call; });
-    checkChanged(CodeUnitsError::None, [](Fixture& fixture) { onlyUnit(fixture, Kind::Call).kind = Kind::Pinned; });
+    checkChanged(CodeUnitsError::CallIsNotAUnit, [](Fixture& fixture) { setKindOfUnitAt(fixture, fixture.afterBranch, Kind::Call); });
+    checkChanged(CodeUnitsError::None, [](Fixture& fixture) { setKindOfUnitAt(fixture, fixture.call, Kind::Pinned); });
 }
 
 static void testSiteIsNotPinned()
 {
     checkChanged(CodeUnitsError::SiteIsNotPinned, [](Fixture& fixture) { fixture.code.sites.faultingAccesses[0].codeOffset = fixture.afterBranch; });
-    checkChanged(CodeUnitsError::SiteIsNotPinned, [](Fixture& fixture) { unitAt(fixture, fixture.address).kind = Kind::Plain; });
+    checkChanged(CodeUnitsError::SiteIsNotPinned, [](Fixture& fixture) { setKindOfUnitAt(fixture, fixture.address, Kind::Plain); });
     checkChanged(CodeUnitsError::SiteIsNotPinned, [](Fixture& fixture) { fixture.code.body.localSites[0].offset = fixture.afterBranch; });
     checkChanged(CodeUnitsError::SiteIsNotPinned, [](Fixture& fixture) { fixture.code.body.relocations[1].offset = fixture.afterBranch - 1; });
     checkChanged(CodeUnitsError::SiteIsNotPinned, [](Fixture& fixture) {
@@ -862,6 +894,65 @@ static void testOffsetOutsideCode()
     checkChanged(CodeUnitsError::None, [](Fixture& fixture) { fixture.code.frame.frameRanges.append(CodeRange { 0, codeSize(fixture) }); });
 }
 
+static bool areEqual(const CodeUnit& a, const CodeUnit& b)
+{
+    return a.offset == b.offset && a.length == b.length && a.kind == b.kind && a.mayRun == b.mayRun;
+}
+
+static void checkUnpacksTo(const PackedCodeUnits& packed, std::initializer_list<CodeUnit> expected)
+{
+    Vector<CodeUnit> units = packed.unpack();
+    AOT_TEST_CHECK(packed.size() == expected.size() && packed.isEmpty() == !expected.size());
+    AOT_TEST_CHECK(std::ranges::equal(units, expected, areEqual));
+    if (!expected.size()) {
+        AOT_TEST_CHECK(!packed.codeSize());
+        return;
+    }
+    AOT_TEST_CHECK(packed.codeSize() == units.last().offset + units.last().length);
+    AOT_TEST_CHECK(areEqual(packed.first(), units.first()) && areEqual(packed.last(), units.last()));
+}
+
+static void testPackedUnitsRoundTrip()
+{
+    checkUnpacksTo({ }, { });
+    Vector<CodeUnit> units {
+        { 0, 1, Kind::Plain, true }, { 1, 15, Kind::PlainOffStackPointer, false }, { 16, 16, Kind::Pinned, false }, { 32, 5, Kind::Call, true },
+        { 37, 0xffff, Kind::Pinned, false }, { 37 + 0xffff, 0x100, Kind::Plain, true }, { 37 + 0xffff + 0x100, 2, Kind::End, false },
+    };
+    PackedCodeUnits packed(units);
+    AOT_TEST_CHECK(std::ranges::equal(packed.unpack(), units, areEqual));
+    AOT_TEST_CHECK(packed.size() == units.size() && packed.codeSize() == 37 + 0xffff + 0x100 + 2);
+    packed.clear();
+    checkUnpacksTo(packed, { });
+}
+
+static void testPackedUnitsAppendAndPrepend()
+{
+    PackedCodeUnits packed;
+    packed.append({ 0, 4, Kind::Plain, true });
+    packed.append({ 4, 40, Kind::Pinned, false });
+    checkUnpacksTo(packed, { { 0, 4, Kind::Plain, true }, { 4, 40, Kind::Pinned, false } });
+    Vector<CodeUnit> head { { 0, 300, Kind::Pinned, false }, { 300, 8, Kind::Pinned, false } };
+    packed.prepend(head.span());
+    checkUnpacksTo(packed, { { 0, 300, Kind::Pinned, false }, { 300, 8, Kind::Pinned, false }, { 308, 4, Kind::Plain, true }, { 312, 40, Kind::Pinned, false } });
+}
+
+static void testPackedUnitsShrinkCodeSize()
+{
+    Vector<CodeUnit> units { { 0, 4, Kind::Plain, true }, { 4, 20, Kind::Pinned, false }, { 24, 4, Kind::End, false }, { 28, 12, Kind::Pinned, false } };
+    auto shrunkTo = [&](uint32_t size) {
+        PackedCodeUnits packed(units);
+        packed.shrinkCodeSize(size);
+        return packed;
+    };
+    checkUnpacksTo(shrunkTo(40), { units[0], units[1], units[2], units[3] });
+    checkUnpacksTo(shrunkTo(44), { units[0], units[1], units[2], units[3] });
+    checkUnpacksTo(shrunkTo(32), { units[0], units[1], units[2], { 28, 4, Kind::Pinned, false } });
+    checkUnpacksTo(shrunkTo(28), { units[0], units[1], units[2] });
+    checkUnpacksTo(shrunkTo(8), { units[0], { 4, 4, Kind::Pinned, false } });
+    checkUnpacksTo(shrunkTo(0), { });
+}
+
 std::span<const NativeTest> codeUnitTests()
 {
     static constexpr NativeTest tests[] = {
@@ -891,6 +982,9 @@ std::span<const NativeTest> codeUnitTests()
         { "code-units/return-address-is-not-a-boundary"_s, testReturnAddressIsNotABoundary },
         { "code-units/offsets-do-not-ascend"_s, testOffsetsDoNotAscend },
         { "code-units/offset-outside-code"_s, testOffsetOutsideCode },
+        { "code-units/packed-units-round-trip"_s, testPackedUnitsRoundTrip },
+        { "code-units/packed-units-append-and-prepend"_s, testPackedUnitsAppendAndPrepend },
+        { "code-units/packed-units-shrink-code-size"_s, testPackedUnitsShrinkCodeSize },
     };
     return tests;
 }

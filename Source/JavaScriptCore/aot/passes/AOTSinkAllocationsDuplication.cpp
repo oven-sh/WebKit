@@ -33,7 +33,7 @@ static void resetAnalysis(AllocationSinking& sinking)
 {
     for (uint32_t index = 0; index < sinking.numberOfCandidates(); ++index) {
         Candidate& candidate = sinking.at(VirtualObjectID(index));
-        if (candidate.abandonedBy == LimitID::None)
+        if (candidate.abandonedBy == LimitID::None && !candidate.isLeftOut)
             candidate.isAbandoned = false;
     }
     sinking.decisions() = SinkingDecisions { };
@@ -69,6 +69,7 @@ Vector<Edge, 2> AllocationSinking::collectCellEdges(VirtualObjectID object, Bloc
             continue;
 
         const Block& source = m_function.at(edge.from);
+        prepare(edge.from);
         SinkingState state = *head;
         ObjectInterpreter interpreter(*this, SinkingMode::Analyze, state);
         for (ValueID id : source.values)
@@ -171,7 +172,7 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
         if (!candidate.isJoin && candidate.mergeBlock && candidate.abandonedBy == LimitID::None)
             plans.append(DuplicationPlan { VirtualObjectID(index), candidate.mergeBlock, { } });
     }
-    if (plans.isEmpty())
+    if (plans.isEmpty() || hasSpentItsWork())
         return false;
 
     Vector<Candidate> savedCandidates = m_candidates;
@@ -188,6 +189,7 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
     };
 
     resetAnalysis(*this);
+    startWorkOver();
     solve();
     for (DuplicationPlan& plan : plans) {
         plan.cellEdges = collectCellEdges(plan.object, plan.merge);
@@ -214,7 +216,9 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
     }
 
     restoreAnalysis();
-    analyze();
+    startWorkOver();
+    m_decisions.takeDidChange();
+    analyzeUntilNothingChanges();
     return false;
 }
 

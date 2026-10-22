@@ -1,6 +1,6 @@
-# A caller stops growing at the limit on its size
+# A caller stops growing at the limit on what inlining adds to it
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:200
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:100
 # RUN: pass InlineCalls
 # STATISTIC: InlineDecisionInline = 1
 # STATISTIC: InlineDecisionCallerSizeLimit = 2

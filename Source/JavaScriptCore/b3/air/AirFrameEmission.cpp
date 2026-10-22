@@ -11,17 +11,20 @@
 #include "AirCode.h"
 #include "AirCustom.h"
 #include "AirGenerationContext.h"
-#include "AirInst.h"
+#include "AirInstInlines.h"
+#include "AirLimits.h"
+#include "AirOpcodeUtils.h"
 #include "AllowMacroScratchRegisterUsageIf.h"
 #include "AssemblyHelpersSpoolers.h"
 #include "CCallHelpers.h"
+#include <array>
 
 namespace JSC { namespace B3 { namespace Air {
 
 static void emitStackCheck(CCallHelpers& jit, GenerationContext& context, unsigned bytesAllocated, unsigned bytesBelow)
 {
     if (StackCheckGenerator* generator = context.code->stackCheckGenerator())
-        generator->run(jit, context, StackCheckSite { bytesAllocated, bytesBelow });
+        generator->run(jit, context, StackCheckSite { bytesAllocated, bytesBelow, 0, 0 });
 }
 
 static bool mayUseMacroScratchRegisters(const Inst& enterFrame)
@@ -107,12 +110,231 @@ static void popCalleeSaves(CCallHelpers& jit, const RegisterAtOffsetList& list)
 }
 #endif
 
+#if CPU(X86_64)
+static unsigned bytesBelowReturnAddress(const Code& code)
+{
+    return code.frameSize() + static_cast<unsigned>(sizeof(CPURegister));
+}
+
+static void allocateOnStack(CCallHelpers& jit, unsigned bytes)
+{
+    // Any register serves: this push only allocates the word.
+    if (bytes == sizeof(CPURegister))
+        jit.push(GPRInfo::returnValueGPR);
+    else if (bytes)
+        jit.subPtr(CCallHelpers::TrustedImm32(bytes), CCallHelpers::stackPointerRegister);
+}
+
+static void releaseOnStack(CCallHelpers& jit, unsigned bytes, std::optional<GPRReg> deadRegister)
+{
+    if (bytes == sizeof(CPURegister) && deadRegister)
+        jit.pop(*deadRegister);
+    else if (bytes)
+        jit.addPtr(CCallHelpers::TrustedImm32(bytes), CCallHelpers::stackPointerRegister);
+}
+
+static constexpr unsigned maxWordsWalked = AirLimits::maxFrameSizeWithPushedRegisters / sizeof(CPURegister) + 1;
+
+// Operands come in pairs: a register and the word of the frame that it is pushed into or popped out of.
+static std::array<GPRReg, maxWordsWalked> registersByWord(std::span<const Arg> operands, unsigned numberOfWords)
+{
+    RELEASE_ASSERT(!(operands.size() % 2) && numberOfWords <= maxWordsWalked);
+    std::array<GPRReg, maxWordsWalked> result;
+    result.fill(InvalidGPRReg);
+    for (size_t i = 0; i < operands.size(); i += 2) {
+        unsigned word = static_cast<unsigned>(operands[i + 1].value());
+        RELEASE_ASSERT(word < numberOfWords && result[word] == InvalidGPRReg);
+        result[word] = operands[i].gpr();
+    }
+    return result;
+}
+
+// From the top of the frame down: a push for each word that a register goes into, one move of the stack pointer for each stretch between them.
+static void emitFrameSetupWithPushes(CCallHelpers& jit, GenerationContext& context, std::span<const Arg> pushedSpills)
+{
+    Code& code = *context.code;
+    const FrameLayout& layout = code.frameLayout();
+    RELEASE_ASSERT(layout.slotArea == SlotArea::BelowFrameRecord);
+    RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+    const unsigned numberOfSaves = static_cast<unsigned>(saves.registerCount());
+    const unsigned numberOfWords = numberOfWordsAllocatedAtFrameSetup(code);
+    auto sources = registersByWord(pushedSpills, numberOfWords);
+
+    if (layout.hasFrameRecord)
+        jit.emitFunctionPrologue();
+    unsigned word = 0;
+    unsigned end = numberOfWords;
+    if (layout.calleeSaveForm == CalleeSaveForm::PushedBelowFrameRecord) {
+        pushCalleeSaves(jit, saves);
+        word = numberOfSaves;
+    } else if (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom)
+        end -= numberOfSaves;
+    unsigned wordsToAllocate = 0;
+    for (; word < end; ++word) {
+        if (sources[word] == InvalidGPRReg) {
+            ++wordsToAllocate;
+            continue;
+        }
+        allocateOnStack(jit, wordsToAllocate * sizeof(CPURegister));
+        wordsToAllocate = 0;
+        jit.push(sources[word]);
+    }
+    allocateOnStack(jit, wordsToAllocate * sizeof(CPURegister));
+    if (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom)
+        pushCalleeSaves(jit, saves);
+
+    const unsigned frameSize = code.frameSize();
+    if (StackCheckGenerator* generator = code.stackCheckGenerator())
+        generator->run(jit, context, layout.hasFrameRecord ? StackCheckSite { frameSize, frameSize, 0, 0 } : StackCheckSite { 0, frameSize, bytesBelowReturnAddress(code), 0 });
+    if (layout.calleeSaveForm == CalleeSaveForm::Stored) {
+        for (const RegisterAtOffset& entry : saves) {
+            if (entry.reg().isGPR())
+                jit.storePtr(entry.reg().gpr(), code.addressInFrame(entry.offset()));
+            else
+                jit.storeDouble(entry.reg().fpr(), code.addressInFrame(entry.offset()));
+        }
+    }
+}
+
+// From the stack pointer up: a pop for each word that goes into a register.
+static void emitFrameTeardownWithPops(CCallHelpers& jit, const Code& code, std::optional<GPRReg> deadRegister, std::span<const Arg> poppedReloads)
+{
+    const FrameLayout& layout = code.frameLayout();
+    RELEASE_ASSERT(layout.slotArea == SlotArea::BelowFrameRecord);
+    RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+    const unsigned numberOfSaves = static_cast<unsigned>(saves.registerCount());
+    const unsigned numberOfWords = numberOfWordsAllocatedAtFrameSetup(code);
+    auto destinations = registersByWord(poppedReloads, numberOfWords);
+
+    unsigned word = 0;
+    unsigned end = numberOfWords;
+    switch (layout.calleeSaveForm) {
+    case CalleeSaveForm::PushedAtFrameBottom:
+        popCalleeSaves(jit, saves);
+        word = numberOfSaves;
+        break;
+    case CalleeSaveForm::PushedBelowFrameRecord:
+        end -= numberOfSaves;
+        break;
+    case CalleeSaveForm::Stored:
+        for (const RegisterAtOffset& entry : saves) {
+            if (entry.reg().isGPR())
+                jit.loadPtr(code.addressInFrame(entry.offset()), entry.reg().gpr());
+            else
+                jit.loadDouble(code.addressInFrame(entry.offset()), entry.reg().fpr());
+        }
+        break;
+    }
+    unsigned wordsToRelease = 0;
+    for (; word < end; ++word) {
+        if (destinations[word] == InvalidGPRReg) {
+            ++wordsToRelease;
+            continue;
+        }
+        releaseOnStack(jit, wordsToRelease * sizeof(CPURegister), deadRegister);
+        wordsToRelease = 0;
+        jit.pop(destinations[word]);
+    }
+    releaseOnStack(jit, wordsToRelease * sizeof(CPURegister), deadRegister);
+    if (layout.calleeSaveForm == CalleeSaveForm::PushedBelowFrameRecord)
+        popCalleeSaves(jit, saves);
+    if (layout.hasFrameRecord)
+        jit.emitFunctionEpilogueWithEmptyFrame();
+}
+
+static void emitFrameSetupWithoutRecord(CCallHelpers& jit, GenerationContext& context)
+{
+    Code& code = *context.code;
+    const FrameLayout& layout = code.frameLayout();
+    RELEASE_ASSERT(layout.slotArea == SlotArea::BelowFrameRecord);
+    RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+    const unsigned frameSize = code.frameSize();
+    const unsigned bytesToAllocate = bytesBelowReturnAddress(code);
+    const unsigned bytesOfSaves = static_cast<unsigned>(saves.registerCount() * sizeof(CPURegister));
+    auto checkStack = [&](unsigned bytesAllocated) {
+        if (StackCheckGenerator* generator = code.stackCheckGenerator())
+            generator->run(jit, context, StackCheckSite { 0, frameSize, bytesAllocated, bytesToAllocate - bytesAllocated });
+    };
+
+    if (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom) {
+        allocateOnStack(jit, bytesToAllocate - bytesOfSaves);
+        pushCalleeSaves(jit, saves);
+        checkStack(bytesToAllocate);
+        return;
+    }
+
+    unsigned pushedBytes = 0;
+    if (layout.calleeSaveForm == CalleeSaveForm::PushedBelowFrameRecord) {
+        pushCalleeSaves(jit, saves);
+        pushedBytes = bytesOfSaves;
+    }
+    bool checksBeforeAllocating = frameSize > code.policy().frame.maxBytesAllocatedBeforeStackCheck;
+    if (checksBeforeAllocating)
+        checkStack(pushedBytes);
+    allocateOnStack(jit, bytesToAllocate - pushedBytes);
+    if (!checksBeforeAllocating)
+        checkStack(bytesToAllocate);
+    if (layout.calleeSaveForm == CalleeSaveForm::Stored) {
+        for (const RegisterAtOffset& entry : saves) {
+            if (entry.reg().isGPR())
+                jit.storePtr(entry.reg().gpr(), code.addressInFrame(entry.offset()));
+            else
+                jit.storeDouble(entry.reg().fpr(), code.addressInFrame(entry.offset()));
+        }
+    }
+}
+
+static void emitCalleeSaveLoadsWithoutRecord(CCallHelpers& jit, const Code& code)
+{
+    for (const RegisterAtOffset& entry : code.calleeSaveRegisterAtOffsetList()) {
+        if (entry.reg().isGPR())
+            jit.loadPtr(code.addressInFrame(entry.offset()), entry.reg().gpr());
+        else
+            jit.loadDouble(code.addressInFrame(entry.offset()), entry.reg().fpr());
+    }
+}
+
+static void emitFrameTeardownWithoutRecord(CCallHelpers& jit, const Code& code, std::optional<GPRReg> deadRegister)
+{
+    RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+    const unsigned bytesToRelease = bytesBelowReturnAddress(code);
+    const unsigned bytesOfSaves = static_cast<unsigned>(saves.registerCount() * sizeof(CPURegister));
+    switch (code.frameLayout().calleeSaveForm) {
+    case CalleeSaveForm::PushedAtFrameBottom:
+        popCalleeSaves(jit, saves);
+        releaseOnStack(jit, bytesToRelease - bytesOfSaves, deadRegister);
+        return;
+    case CalleeSaveForm::PushedBelowFrameRecord:
+        releaseOnStack(jit, bytesToRelease - bytesOfSaves, deadRegister);
+        popCalleeSaves(jit, saves);
+        return;
+    case CalleeSaveForm::Stored:
+        emitCalleeSaveLoadsWithoutRecord(jit, code);
+        releaseOnStack(jit, bytesToRelease, deadRegister);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#endif
+
 void emitFrameSetup(CCallHelpers& jit, GenerationContext& context, const Inst& enterFrame)
 {
     Code& code = *context.code;
     const FrameLayout& layout = code.frameLayout();
     ASSERT(layout.isPlanned && layout.hasFrame && !context.frameIsSetUp);
     AllowMacroScratchRegisterUsageIf allowScratch(jit, mayUseMacroScratchRegisters(enterFrame));
+#if CPU(X86_64)
+    std::span<const Arg> pushedSpills = enterFrame.args().subspan(1 + EnterFrameCustom::numberOfScratchRegisters(enterFrame) + code.calleeSaveRegisterAtOffsetList().registerCount());
+    if (!pushedSpills.empty()) {
+        emitFrameSetupWithPushes(jit, context, pushedSpills);
+        return;
+    }
+    if (!layout.hasFrameRecord) {
+        emitFrameSetupWithoutRecord(jit, context);
+        return;
+    }
+#endif
+    RELEASE_ASSERT(layout.hasFrameRecord);
     RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
     unsigned frameSize = code.frameSize();
 #if CPU(ARM64)
@@ -130,20 +352,9 @@ void emitFrameSetup(CCallHelpers& jit, GenerationContext& context, const Inst& e
     unsigned pushedBytes = 0;
 #if CPU(X86_64)
     unsigned bytesOfSaves = static_cast<unsigned>(saves.registerCount() * sizeof(CPURegister));
-    std::span<const Arg> pushedSpills = enterFrame.args().last(layout.numberOfSpillsPushedAtFrameSetup);
-    bool hasSavesAtBottom = layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom;
-    if (hasSavesAtBottom || !pushedSpills.empty()) {
-        unsigned above = frameSize - (hasSavesAtBottom ? bytesOfSaves : 0);
-        for (const Arg& spill : pushedSpills)
-            jit.push(spill.gpr());
-        unsigned left = above - static_cast<unsigned>(pushedSpills.size() * sizeof(CPURegister));
-        // Any register serves: this push only allocates the word.
-        if (left == sizeof(CPURegister))
-            jit.push(GPRInfo::returnValueGPR);
-        else if (left)
-            jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(above), CCallHelpers::stackPointerRegister);
-        if (hasSavesAtBottom)
-            pushCalleeSaves(jit, saves);
+    if (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom) {
+        allocateOnStack(jit, frameSize - bytesOfSaves);
+        pushCalleeSaves(jit, saves);
         emitStackCheck(jit, context, frameSize, frameSize);
         return;
     }
@@ -173,13 +384,52 @@ void emitCalleeSaveRestore(CCallHelpers& jit, const Code& code)
 {
     const FrameLayout& layout = code.frameLayout();
     RELEASE_ASSERT(layout.isPlanned && layout.hasFrame && layout.slotArea == SlotArea::BelowFrameRecord);
+#if CPU(X86_64)
+    if (!layout.hasFrameRecord) {
+        emitCalleeSaveLoadsWithoutRecord(jit, code);
+        return;
+    }
+#endif
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
 }
 
-void emitFrameTeardown(CCallHelpers& jit, const Code& code)
+std::optional<GPRReg> registerDeadBehindFrameTeardown(const Code& code, BasicBlock* block, unsigned indexOfLeaveFrame)
+{
+    if (indexOfLeaveFrame + 1 >= block->size())
+        return std::nullopt;
+    Inst& next = block->at(indexOfLeaveFrame + 1);
+    // A return passes on its operand and the registers the callee saves.
+    if (isReturn(next.kind.opcode) && !code.policy().registers.savedByCallee.contains(registerDeadAtReturns, IgnoreVectors))
+        return registerDeadAtReturns;
+#if CPU(X86_64)
+    if (next.kind.opcode == Patch && next.extraEarlyClobberedRegs().contains(CCallHelpers::s_scratchRegister, IgnoreVectors))
+        return CCallHelpers::s_scratchRegister;
+#endif
+    return std::nullopt;
+}
+
+unsigned numberOfWordsAllocatedAtFrameSetup(const Code& code)
+{
+    return code.frameSize() / sizeof(CPURegister) + !code.frameLayout().hasFrameRecord;
+}
+
+void emitFrameTeardown(CCallHelpers& jit, const Code& code, std::optional<GPRReg> deadRegister, std::span<const Arg> poppedReloads)
 {
     const FrameLayout& layout = code.frameLayout();
     ASSERT(layout.isPlanned && layout.hasFrame);
+#if CPU(X86_64)
+    if (!poppedReloads.empty()) {
+        emitFrameTeardownWithPops(jit, code, deadRegister, poppedReloads);
+        return;
+    }
+    if (!layout.hasFrameRecord) {
+        emitFrameTeardownWithoutRecord(jit, code, deadRegister);
+        return;
+    }
+#else
+    UNUSED_PARAM(deadRegister);
+    RELEASE_ASSERT(poppedReloads.empty());
+#endif
     RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
 #if CPU(ARM64)
     if (layout.slotArea == SlotArea::AboveFrameRecord) {
@@ -221,6 +471,15 @@ unsigned maxBytesOfFrameTeardown(const Code& code)
     constexpr unsigned maxBytesOfPop = 2;
     constexpr unsigned maxBytesOfLoad = 9;
     constexpr unsigned bytesOfLeave = 1;
+    if (!layout.hasFrameRecord) {
+        constexpr unsigned maxBytesOfLoadOffStackPointer = maxBytesOfLoad + 1;
+        constexpr unsigned maxBytesOfAdd = 7;
+        constexpr unsigned bytesOfPopIntoDeadRegister = 1;
+        static_assert(registerDeadAtReturns < X86Registers::r8);
+        unsigned bytesReleasedAtOnce = code.frameSize() + static_cast<unsigned>(sizeof(CPURegister)) - (layout.calleeSaveForm == CalleeSaveForm::Stored ? 0 : numberOfSaves * static_cast<unsigned>(sizeof(CPURegister)));
+        unsigned bytesOfRelease = !bytesReleasedAtOnce ? 0 : bytesReleasedAtOnce == sizeof(CPURegister) ? bytesOfPopIntoDeadRegister : maxBytesOfAdd;
+        return numberOfSaves * (layout.calleeSaveForm == CalleeSaveForm::Stored ? maxBytesOfLoadOffStackPointer : maxBytesOfPop) + bytesOfRelease;
+    }
     return numberOfSaves * (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom ? maxBytesOfPop : maxBytesOfLoad) + bytesOfLeave;
 #elif CPU(ARM64)
     constexpr unsigned bytesPerInstruction = 4;

@@ -21,6 +21,7 @@ public:
     void generateArrayLength(const InlineCall&);
     void generateArraySetLength(const InlineCall&);
     void generateArrayWithLength(const InlineCall&);
+    const Type& typeOfArraysCreatedBy(const InlineCall&);
     void generateArrayOf(const InlineCall&);
 
 private:

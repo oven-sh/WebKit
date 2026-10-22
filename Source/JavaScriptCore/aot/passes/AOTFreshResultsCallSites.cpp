@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
@@ -34,6 +35,11 @@ struct TrialExpansion {
     size_t endValue { 0 };
     unsigned numberOfAllocations { 0 };
     unsigned numberOfUnsunkAllocations { 0 };
+};
+
+struct CallerOfWrappers {
+    FunctionID id;
+    Vector<WrapperCallSite, 4> sites;
 };
 
 } // anonymous namespace
@@ -95,24 +101,42 @@ static bool isRemovedOrSunk(SunkAllocationOutcome outcome)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Nothing is gained in rare code by itself. But where its result meets another one at a block parameter, the object that comes the frequent way is built for as long as this one is a cell.
+static bool meetsOtherValues(FunctionAnalyses& analyses, ValueID result)
+{
+    const Function& function = analyses.function();
+    Vector<ValueID, 4> worklist { result };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : analyses.useLists().usesOf(worklist.takeLast())) {
+            if (use.kind == Use::Kind::EdgeArgument)
+                return true;
+            if (use.kind == Use::Kind::Operand && interpretedOf(function.at(use.user).opcode) == Interpretation::Cast)
+                worklist.append(use.user);
+        }
+    }
+    return false;
+}
+
 Vector<WrapperCallSite, 4> FreshResultSplitter::findWrapperCalls(FunctionID id, const Function& caller) const
 {
     Vector<WrapperCallSite, 4> sites;
-    for (const Block& block : caller.blocks) {
-        for (ValueID call : block.values) {
-            const Value& value = caller.at(call);
-            if (value.opcode != Opcode::CallDirect || value.isNeverInlined() || !isWrapper(value.function()))
-                continue;
-            sites.append(WrapperCallSite { call, value.function() });
-        }
-    }
+    forEachDirectCall(program(), id, [&](BlockID block, ValueID call, FunctionID callee) {
+        if (!isWrapper(callee))
+            return;
+        // In frequent code a call is marked because it would have closed a cycle when its callee was the whole function. The wrapper only calls the worker.
+        if (caller.at(call).isNeverInlined() && caller.at(block).frequency != BlockFrequency::Normal)
+            return;
+        sites.append(WrapperCallSite { call, callee });
+    });
     if (sites.isEmpty())
         return sites;
 
     FunctionAnalyses analyses(contextFor(id), caller);
     sites.removeAllMatching([&](const WrapperCallSite& site) {
         ValueLocation location = analyses.useLists().locationOf(site.call);
-        return location.placement != ValuePlacement::InBlock || isCold(heatClassOf(m_inputs.heat, analyses, location.block));
+        if (location.placement != ValuePlacement::InBlock)
+            return true;
+        return isCold(heatClassOf(m_inputs.heat, analyses, location.block)) && !meetsOtherValues(analyses, site.call);
     });
     return sites;
 }
@@ -165,12 +189,14 @@ Vector<WrapperCallSite, 4> FreshResultSplitter::chooseProfitableCalls(FunctionID
     return chosen;
 }
 
-unsigned FreshResultSplitter::expandProfitableCalls(FunctionID caller, Function& function, TaskArenas& arenas) const
+unsigned FreshResultSplitter::expandProfitableCalls(FunctionID caller, Function& function, std::span<const WrapperCallSite> sites, TaskArenas& arenas) const
 {
-    Vector<WrapperCallSite, 4> sites = findWrapperCalls(caller, function);
-    if (sites.isEmpty())
-        return 0;
-    Vector<WrapperCallSite, 4> chosen = chooseProfitableCalls(caller, function, sites.span(), arenas);
+    if (build().options().verifiesAfterEveryPass) {
+        RELEASE_ASSERT(std::ranges::equal(sites, findWrapperCalls(caller, function), [](const WrapperCallSite& a, const WrapperCallSite& b) {
+            return a.call == b.call && a.wrapper == b.wrapper;
+        }));
+    }
+    Vector<WrapperCallSite, 4> chosen = chooseProfitableCalls(caller, function, sites, arenas);
     if (chosen.isEmpty())
         return 0;
 
@@ -189,18 +215,23 @@ void FreshResultSplitter::expandCallSites()
     if (m_wrappers.isEmpty())
         return;
 
-    Vector<FunctionID> callers = collectInParallel<FunctionID>(build().parallelLoops(), program().functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
+    const ParallelLoops& loops = build().parallelLoops();
+    Vector<CallerOfWrappers> callers = collectInParallel<CallerOfWrappers>(loops, program().functions.size(), largeFunctions(program(), loops).span(), [&](unsigned index, Vector<CallerOfWrappers>& found) {
         FunctionID id(index);
-        const Function& function = program().at(id);
-        if (!function.hasBody() || isWrapper(id) || !build().isEnabled(PassID::SplitFreshResults, id))
+        if (!hasBody(program(), id) || isWrapper(id) || !build().isEnabled(PassID::SplitFreshResults, id))
             return;
-        if (!findWrapperCalls(id, function).isEmpty())
-            found.append(id);
+        Vector<WrapperCallSite, 4> sites = findWrapperCalls(id, program().at(id));
+        if (!sites.isEmpty())
+            found.append(CallerOfWrappers { id, WTF::move(sites) });
+    });
+    Vector<FunctionID> ids = callers.map([](const CallerOfWrappers& caller) {
+        return caller.id;
     });
 
+    // An edit changes its own caller alone, and what is a site in a caller hangs on nothing in another one.
     std::atomic<uint64_t> numberOfExpandedCalls { 0 };
-    editFunctionsInParallel(m_editor, build(), callers.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
-        numberOfExpandedCalls.fetch_add(expandProfitableCalls(id, function, arenas), std::memory_order_relaxed);
+    editFunctionsInParallel(m_editor, build(), ids.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
+        numberOfExpandedCalls.fetch_add(expandProfitableCalls(id, function, callers[index].sites.span(), arenas), std::memory_order_relaxed);
     });
     build().statistics().count(StatisticID::ResultsReturnedInRegisters, numberOfExpandedCalls.load(std::memory_order_relaxed));
 }

@@ -1,13 +1,13 @@
-# A guard from before a loop is available in the loop unless some block of the loop may end it
+# A guard from before a loop is available in the loop unless some block of the loop may end it. Nothing ends a shape test
 # FORM: Prepared
 # RUN: guards points
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
-function f0 name="nothingInLoopEndsIt" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
+function f0 name="nothingInLoopEndsIt" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = HasNoExtraProperties v0
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):
     Jump -> next b2()
@@ -25,7 +25,7 @@ function f0 name="nothingInLoopEndsIt" parameters=[{type=object}, {type=anything
     Return
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK-NEXT: v3 facts: [NoExtraProperties of v0 by v2 reads NamedProperties]
 # CHECK: b1:0 available: [v3]
 # CHECK-NEXT: b2:0 available: [v3]
 # CHECK-NEXT: b2:1 available: [v3]
@@ -36,7 +36,82 @@ function f0 name="nothingInLoopEndsIt" parameters=[{type=object}, {type=anything
 # CHECK-NEXT: b4:0 available: [v3]
 # CHECK-NEXT: b5:0 available: []
 
-function f1 name="lastBlockOfLoopEndsIt" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+function f1 name="lastBlockOfLoopEndsIt" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = HasNoExtraProperties v0
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v6 = ToBoolean v1
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Call v1
+    Jump -> next b2()
+  b4():
+    Return v4
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v3 facts: [NoExtraProperties of v0 by v2 reads NamedProperties]
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK-NEXT: b2:0 available: []
+# CHECK-NEXT: b2:1 available: []
+# CHECK-NEXT: b2:2 available: []
+# CHECK-NEXT: b3:0 available: []
+# CHECK-NEXT: b3:1 available: []
+# CHECK-NEXT: b4:0 available: []
+# CHECK-NEXT: b5:0 available: []
+
+function f2 name="carriedAroundLoopAndEnded" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = HasNoExtraProperties v0
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    LoopHint
+    v5 = Call v1
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(v3), notTaken b2()
+  b2():
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v3 facts: [NoExtraProperties of v0 by v2 reads NamedProperties]
+# CHECK: b1:0 available: []
+# CHECK-NEXT: b1:1 available: []
+# CHECK-NEXT: b1:2 available: []
+# CHECK-NEXT: b1:3 available: []
+# CHECK-NEXT: b2:0 available: []
+
+function f3 name="carriedAroundLoopAndKept" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = HasNoExtraProperties v0
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    LoopHint
+    v5 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(v3), notTaken b2()
+  b2():
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v3 facts: [NoExtraProperties of v0 by v2 reads NamedProperties]
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK-NEXT: b1:3 available: [v3]
+# CHECK-NEXT: b2:0 available: [v3]
+
+function f4 name="shapeTestOutlastsUnknownCodeInLoop" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
   b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b5()
@@ -55,58 +130,14 @@ function f1 name="lastBlockOfLoopEndsIt" parameters=[{type=object}, {type=anythi
   b5():
     Return
 }
-# CHECK-LABEL: function f1
-# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads -]
 # CHECK: b1:0 available: [v3]
 # CHECK-NEXT: b1:1 available: [v3]
-# CHECK-NEXT: b2:0 available: []
-# CHECK-NEXT: b2:1 available: []
-# CHECK-NEXT: b2:2 available: []
-# CHECK-NEXT: b3:0 available: []
-# CHECK-NEXT: b3:1 available: []
-# CHECK-NEXT: b4:0 available: []
-# CHECK-NEXT: b5:0 available: []
-
-function f2 name="carriedAroundLoopAndEnded" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
-    Branch v2 -> taken b1(| 0), notTaken b3()
-  b1(v3):
-    LoopHint
-    v5 = Call v1
-    v6 = ToBoolean v5
-    Branch v6 -> taken b1(v3), notTaken b2()
-  b2():
-    Return
-  b3():
-    Return
-}
-# CHECK-LABEL: function f2
-# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
-# CHECK: b1:0 available: []
-# CHECK-NEXT: b1:1 available: []
-# CHECK-NEXT: b1:2 available: []
-# CHECK-NEXT: b1:3 available: []
-# CHECK-NEXT: b2:0 available: []
-
-function f3 name="carriedAroundLoopAndKept" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
-    v2 = ShapeTest v0 layouts=[L0]
-    Branch v2 -> taken b1(| 0), notTaken b3()
-  b1(v3):
-    LoopHint
-    v5 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
-    v6 = ToBoolean v5
-    Branch v6 -> taken b1(v3), notTaken b2()
-  b2():
-    Return
-  b3():
-    Return
-}
-# CHECK-LABEL: function f3
-# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
-# CHECK: b1:0 available: [v3]
-# CHECK-NEXT: b1:1 available: [v3]
-# CHECK-NEXT: b1:2 available: [v3]
-# CHECK-NEXT: b1:3 available: [v3]
 # CHECK-NEXT: b2:0 available: [v3]
+# CHECK-NEXT: b2:1 available: [v3]
+# CHECK-NEXT: b2:2 available: [v3]
+# CHECK-NEXT: b3:0 available: [v3]
+# CHECK-NEXT: b3:1 available: [v3]
+# CHECK-NEXT: b4:0 available: [v3]
+# CHECK-NEXT: b5:0 available: []

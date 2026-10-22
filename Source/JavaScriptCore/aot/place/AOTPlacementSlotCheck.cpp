@@ -12,6 +12,7 @@
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocation.h"
 #include "AOTFunctionKinds.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSlotPlanSteps.h"
@@ -70,7 +71,7 @@ static constexpr Range integerRangeOf(SlotTraits traits)
 
 static_assert(integerRangeOf(traitsOf(SlotRepresentation::Int32)) == Range::int32());
 static_assert(integerRangeOf(traitsOf(SlotRepresentation::Uint32)) == Range::uint32());
-static_assert(!representsAbsentAsZero(SlotRepresentation::DeferredClosure));
+static_assert(canLeaveSlot(SlotRepresentation::DeferredClosure) && !representsAbsentAsZero(SlotRepresentation::DeferredClosure));
 static_assert(traitsOf(SlotRepresentation::DeferredClosure).isNarrowReference);
 
 static uint16_t markerPrimitivesOf(const SlotTraits& traits)
@@ -131,7 +132,6 @@ bool canHold(const Program&, SlotRepresentation representation, const Type& type
         return isStorable(type, traits, { .primitives = Primitive::Integer, .integers = { minInlineInt32, INT32_MAX } });
     case SlotRepresentation::Double:
     case SlotRepresentation::OptionalDouble:
-    case SlotRepresentation::Int32OrDouble:
         return isStorable(type, traits, { .primitives = Primitive::Number, .integers = Range::full() });
     case SlotRepresentation::Float:
         return isStorable(type, traits, { });
@@ -147,9 +147,11 @@ bool canHold(const Program&, SlotRepresentation representation, const Type& type
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static LayoutStorage storageRequiredBy(const Layout& layout)
+static LayoutStorage storageRequiredBy(const Program& program, LayoutID id)
 {
-    bool mayBeAllocated = layout.flow.allocation != AllocationState::NeverAllocated;
+    const Layout& layout = program.at(id);
+    // An instance of a class below a built-in class is a cell of the built-in class.
+    bool mayBeAllocated = layout.flow.allocation != AllocationState::NeverAllocated && !builtinBaseClassOf(program, id);
     switch (layout.kind) {
     case LayoutKind::Record:
     case LayoutKind::Instance:
@@ -189,6 +191,7 @@ private:
     bool isCreatedWithoutKeys() const;
     bool isStorageAllowed(const PlacedSlot&, const Type&) const;
     bool hasRequiredWidth(FieldIndex, const PlacedSlot&) const;
+    bool holdsClosureEnvironmentInCell() const;
     bool isDeferredClosureProven(const PlacedSlot&, const Field& declaration) const;
 
     const PlacementCheckContext& m_context;
@@ -243,12 +246,12 @@ void PlannedLayoutChecker::run()
 bool PlannedLayoutChecker::hasRequiredStorage() const
 {
     size_t numberOfRows = m_planned.hasSlots() ? m_layout.fields.size() + numberOfHiddenWords : 0;
-    return m_planned.storage == storageRequiredBy(m_layout) && m_planned.slots.size() == numberOfRows;
+    return m_planned.storage == storageRequiredBy(m_context.program, m_id) && m_planned.slots.size() == numberOfRows;
 }
 
 void PlannedLayoutChecker::checkBounds(const PlacedSlot& slot)
 {
-    if (slot.offset % slot.width() || (slot.doubleOffsetInExtension && *slot.doubleOffsetInExtension % sizeOfOverflowArea))
+    if (slot.offset % slot.width())
         fail(PlacementRule::SlotAlignment);
     if (extentAt(slot.offset, slot.width()).end > (slot.isOutOfLine() ? m_planned.extensionSize : m_planned.size))
         fail(PlacementRule::SlotPastCellEnd);
@@ -281,8 +284,6 @@ void PlannedLayoutChecker::checkExtensionExtents()
     for (const PlacedSlot& slot : m_planned.slots) {
         if (slot.isOutOfLine())
             extents.append(extentAt(slot.offset, slot.width()));
-        if (slot.hasStorage() && slot.doubleOffsetInExtension)
-            extents.append(extentAt(*slot.doubleOffsetInExtension, sizeOfOverflowArea));
     }
     if (!(extents.isEmpty() ? !m_planned.extensionSize : areDisjoint(extents.mutableSpan(), offsetOfFirstExtensionSlot, m_planned.extensionSize)))
         fail(PlacementRule::ExtensionOverlap);
@@ -294,7 +295,7 @@ void PlannedLayoutChecker::checkHiddenWords()
 {
     constexpr OptionSet<ObjectMutation> mutationsCreatingExtraProperties { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::StoreOfOtherType };
     bool needsExtension = std::ranges::any_of(m_planned.slots, [](const PlacedSlot& slot) {
-        return slot.hasStorage() && slot.needsExtension();
+        return slot.isOutOfLine();
     });
     bool needsExtraPropertiesWord = isCompiledObject() && someAllocationClassMay(m_program, m_context.inputs.flow, m_id, mutationsCreatingExtraProperties);
     if (needsExtension != m_planned.hasExtension() || (needsExtraPropertiesWord && !m_planned.hasExtraPropertiesWord()))
@@ -327,18 +328,17 @@ void PlannedLayoutChecker::checkField(FieldIndex index)
 {
     const PlacedSlot& slot = m_planned.slots[index];
     const Field& declaration = fieldAt(m_program, declarationOf(m_program, { m_id, index }));
-    const Type& type = m_program.at(declaration.declared.type);
+    const Type& type = m_program.at(slotTypeOf(m_program, declaration));
 
     if (!canHold(m_program, slot.representation, type))
         fail(PlacementRule::RepresentationCannotHoldType);
-    if (!canLeaveSlot(slot.representation) && slot.representation != SlotRepresentation::DeferredClosure && !canOmitAbsentState(declaration.flow))
+    if (!canLeaveSlot(slot.representation) && !canOmitAbsentState(declaration.flow))
         fail(PlacementRule::AbsentStateMissing);
     if (!isStorageAllowed(slot, type))
         fail(PlacementRule::OutOfLineNotAllowed);
     if (!hasRequiredWidth(index, slot))
         fail(PlacementRule::WideReferenceMissing);
-    bool needsDoubleArea = slot.representation == SlotRepresentation::Int32OrDouble;
-    if (!isDeferredClosureProven(slot, declaration) || needsDoubleArea != slot.doubleOffsetInExtension.has_value())
+    if (!isDeferredClosureProven(slot, declaration))
         fail(PlacementRule::DeferredClosureNotProven);
 }
 
@@ -384,8 +384,6 @@ bool PlannedLayoutChecker::isStorageAllowed(const PlacedSlot& slot, const Type& 
 
 bool PlannedLayoutChecker::hasRequiredWidth(FieldIndex index, const PlacedSlot& slot) const
 {
-    if (m_keepsFieldsInCell && slot.representation == SlotRepresentation::Int32OrDouble)
-        return false;
     if (!traitsOf(slot.representation).isNarrowReference)
         return true;
     if (m_usesWideReferences || m_isCoroutineFrame || m_planned.holdsWideReferences)
@@ -393,15 +391,29 @@ bool PlannedLayoutChecker::hasRequiredWidth(FieldIndex index, const PlacedSlot& 
     return !m_context.inputs.frameAllocation.mayHoldFramePointer(FieldReference { m_id, index });
 }
 
+// The closures that an object makes on demand over one environment find it in a hidden field, whose slot the record of each such field names.
+bool PlannedLayoutChecker::holdsClosureEnvironmentInCell() const
+{
+    std::optional<uint32_t> field = m_layout.flow.closureEnvironmentField;
+    if (!field || *field >= m_planned.numberOfFields())
+        return false;
+    const PlacedSlot& slot = m_planned.slots[*field];
+    return slot.storage == SlotStorage::Inline && slot.representation == SlotRepresentation::Cell32;
+}
+
 bool PlannedLayoutChecker::isDeferredClosureProven(const PlacedSlot& slot, const Field& declaration) const
 {
     if (slot.representation != SlotRepresentation::DeferredClosure)
-        return !slot.deferredFunction && !slot.deferredClosureCapturesObject;
+        return !slot.deferredFunction && !slot.deferredClosureCapturesObject && !slot.deferredClosureCapturesEnvironment && !slot.defersFlattenedObject;
     const LocationFlow& location = declaration.flow.location;
+    if (slot.defersFlattenedObject || location.deferral == ClosureDeferral::FlattenedObject)
+        return slot.defersFlattenedObject && location.deferral == ClosureDeferral::FlattenedObject && !slot.deferredFunction && !slot.deferredClosureCapturesObject && !slot.deferredClosureCapturesEnvironment;
     return location.deferral != ClosureDeferral::Unknown
         && slot.deferredFunction
         && slot.deferredFunction == location.deferredFunction
         && slot.deferredClosureCapturesObject == (location.deferral == ClosureDeferral::CapturesObject)
+        && slot.deferredClosureCapturesEnvironment == (location.deferral == ClosureDeferral::CapturesEnvironment)
+        && (!slot.deferredClosureCapturesEnvironment || holdsClosureEnvironmentInCell())
         && !declaration.flags.contains(FieldFlags::IsPrivate);
 }
 

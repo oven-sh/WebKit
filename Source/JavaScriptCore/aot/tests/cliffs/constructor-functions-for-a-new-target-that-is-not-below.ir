@@ -1,0 +1,71 @@
+# The run time gives a constructor function an object with the layout of new.target only where that layout is or may be below the function's own. For any other new.target it makes an ordinary object.
+# Plain is constructed for itself alone: `this` has its layout. Parent is new.target of Child (Reflect.construct(Child, [], Parent)) and is not below it: what Child gets may be an ordinary object,
+# so nothing is assumed about `this` of Child but that it is an object, and an instance of Parent is no longer taken for one wherever it arrives: the layouts are expected there, in sets that are not complete.
+# RUN: pipeline ApplyFlowResults
+# CHECK-LABEL: function f0
+# CHECK: [[plain]]: anything ~ object = Construct {{*}} calleeName="Plain"
+# CHECK-NEXT: : L0 = AssumeType [[plain]] castType=L0
+# CHECK: [[parent]]: anything ~ object = Construct {{*}} calleeName="Parent"
+# CHECK-NEXT: : object = AssumeType [[parent]] castType=object
+# CHECK: calleeName="construct"
+# CHECK-LABEL: function f1 name="Plain"
+# CHECK: PropSet {{*}} key="p" {{*}} receivers=[L0]
+# CHECK-LABEL: function f3 name="Child"
+# CHECK-NOT: castType=L1
+# CHECK-NOT: castType=L2
+# CHECK: PropSet {{*}} key="x" {{*}} receivers=[L1, L2, ..]
+# CHECK-NOT: castType=L1
+# CHECK-NOT: castType=L2
+# CHECK: PropSet {{*}} key="z" {{*}} receivers=[L2, ..]
+# CHECK: Return
+
+layout L0 kind=Instance name="Plain" module=m0 constructor=f1 fields=[{key="p" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Parent" module=m0 constructor=f2 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Child" module=m0 constructor=f3 fields=[{key="x" declared={type=anything}}, {key="z" declared={type=anything}}] flags=[IsConstructorFunction]
+data d0 root=Array{contents=anything} module=m0
+module m0 path="/$bunfs/root/main" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Construct v0 calleeName="Plain"
+    v4 = Construct v1 calleeName="Parent"
+    v5 = Construct v2 calleeName="Child"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Reflect" [isFreeName]
+    v8 = PropGet v7 key="construct"
+    v9 = Data data=d0
+    v10 = Call v8, v7, v2, v9, v1 calleeKey="construct" calleeName="construct"
+    v11 = PropGet v3 key="p"
+    v12 = PropGet v4 key="x"
+    v13 = PropGet v5 key="z"
+    v14 = PropGet v10 key="z"
+    v15 = Add v11, v12
+    v16 = Add v15, v13
+    v17 = Add v16, v14
+    Return v17
+}
+function f1 name="Plain" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="p"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Parent" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="Child" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="x"
+    PropSet v0, v1 key="z"
+    v4 = Undefined
+    Return v4
+}
+entry module=m0

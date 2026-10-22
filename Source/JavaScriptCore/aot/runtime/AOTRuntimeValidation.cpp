@@ -10,13 +10,24 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTCellFormat.h"
+#include "AOTClassTable.h"
+#include "AOTCompiledCallee.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTFunctionTables.h"
+#include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTOperandSnapshot.h"
 #include "AOTOperationScope.h"
+#include "AOTProgramStrings.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSchemaRuntimeOperations.h"
+#include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
+#include "DeferGCInlines.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
@@ -29,7 +40,7 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(static_cast<unsigned>(ValidationFailureKind::BindingReadBeforeStore) + 1 == numberOfValidationFailureKinds);
+static_assert(static_cast<unsigned>(ValidationFailureKind::OperationWroteHeap) + 1 == numberOfValidationFailureKinds);
 
 ASCIILiteral nameOf(ValidationFailureKind kind)
 {
@@ -112,6 +123,22 @@ ASCIILiteral nameOf(ValidationFailureKind kind)
         return "GuardNoLongerHolds"_s;
     case ValidationFailureKind::BindingReadBeforeStore:
         return "BindingReadBeforeStore"_s;
+    case ValidationFailureKind::SlotEmpty:
+        return "SlotEmpty"_s;
+    case ValidationFailureKind::LookupDiffers:
+        return "LookupDiffers"_s;
+    case ValidationFailureKind::HeapSlotType:
+        return "HeapSlotType"_s;
+    case ValidationFailureKind::MaskCutKnownValue:
+        return "MaskCutKnownValue"_s;
+    case ValidationFailureKind::FamilyNotClosed:
+        return "FamilyNotClosed"_s;
+    case ValidationFailureKind::FunctionCellInFrameGotProperties:
+        return "FunctionCellInFrameGotProperties"_s;
+    case ValidationFailureKind::OperationConvertedCell:
+        return "OperationConvertedCell"_s;
+    case ValidationFailureKind::OperationWroteHeap:
+        return "OperationWroteHeap"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -298,6 +325,102 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
 }
 
+namespace {
+
+struct Photograph {
+    JSObject* object { nullptr };
+    AbstractHeaps written;
+    OperandSnapshot before;
+};
+
+} // anonymous namespace
+
+// One call of a thread is photographed at a time: it runs no other compiled code. A call that throws leaves its photographs behind, and the next one takes their places.
+static std::span<Photograph, PhotographedCall::maxOperands> photographsOfThread()
+{
+    static thread_local Photograph* photographs = nullptr;
+    if (!photographs)
+        photographs = new Photograph[PhotographedCall::maxOperands];
+    return std::span<Photograph, PhotographedCall::maxOperands>(photographs, PhotographedCall::maxOperands);
+}
+
+void photographOperand(VM& vm, JSValue operand, AbstractHeaps written, unsigned position)
+{
+    DeferGCForAWhile deferGC(vm);
+    auto photographs = photographsOfThread();
+    for (Photograph& later : photographs.subspan(position))
+        later.object = nullptr;
+    if (!canCapture(operand))
+        return;
+    photographs[position] = { asObject(operand), written, capture(asObject(operand)) };
+}
+
+static String describeCalleeOf(uint32_t positionAndCallee)
+{
+    uint32_t callee = positionAndCallee >> PhotographedCall::calleeShift;
+    if (callee & PhotographedCall::calleeIsStub)
+        return makeString("stub "_s, descriptorOf(static_cast<StubFamily>(callee & ~PhotographedCall::calleeIsStub)).name);
+    return nameOf(static_cast<Entry>(callee));
+}
+
+void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndCallee, FunctionID function, Typed::ValueID value)
+{
+    DeferGCForAWhile deferGC(vm);
+    unsigned position = positionAndCallee & ((1u << PhotographedCall::calleeShift) - 1);
+    auto photographs = photographsOfThread();
+    const Photograph& photograph = photographs[position];
+    JSObject* object = photograph.object;
+    if (!object || operand != JSValue(object))
+        return;
+    AbstractHeaps written;
+    for (const Photograph& other : photographs) {
+        if (other.object == object)
+            written.add(other.written);
+    }
+
+    bool isArray = isJSArray(object);
+    for (const OperandDifference& difference : differencesBetween(vm, object, photograph.before, capture(object))) {
+        AbstractHeaps heaps = difference.change == OperandChange::InternalStateChanged ? heapsOfClassOf(object) : heapsHolding(difference.change);
+        // `{ 0: x }` defines a property under the name "0". Whoever reads an element of an object that is no array reads its named properties too.
+        if (!isArray && (difference.change == OperandChange::ElementsChanged || difference.change == OperandChange::ArrayStorageChanged))
+            heaps.add(AbstractHeap::NamedProperties);
+        if (heaps.isEmpty() || written.containsAny(heaps))
+            continue;
+        String message = makeString("operand "_s, position, ": "_s, nameOf(difference.change), difference.detail.isEmpty() ? ""_s : " "_s, difference.detail, ", the call writes "_s, describe(written), " through it, not "_s, describe(heaps), " (f"_s, function.index(), " v"_s, value.index(), ')');
+        RuntimeReporter* reporter = vm.aotState().reporter.get();
+        if (reporter && reporter->isExplicitlyEnabled()) {
+            reporter->reportNativeCall(ValidationFailureKind::OperationWroteHeap, describeCalleeOf(positionAndCallee), message);
+            continue;
+        }
+        dataLogLn("AOT operation: ", describeCalleeOf(positionAndCallee), " ", message);
+        crashOnValidationFailure(vm, { ValidationFailureKind::OperationWroteHeap, function, value, object });
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPhotographOperand, void, (Instance* instance, EncodedJSValue operand, uint64_t writtenHeaps, uint32_t position))
+{
+    photographOperand(*instance->vm, JSValue::decode(operand), AbstractHeaps::fromRaw(writtenHeaps), position);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCompareOperandWithPhotograph, void, (Instance* instance, EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex))
+{
+    compareOperandWithPhotograph(*instance->vm, JSValue::decode(operand), positionAndCallee, FunctionID(function), Typed::ValueID(valueIndex));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFailedGuard, void, (Instance*, uint32_t function, uint32_t opcode, uint32_t ordinal))
+{
+    static Lock lock;
+    static HashSet<uint64_t>* noted;
+    Locker locker { lock };
+    if (!noted)
+        noted = new HashSet<uint64_t>;
+    constexpr unsigned bitsOfOrdinal = 20;
+    constexpr unsigned bitsOfOpcode = 12;
+    uint64_t guard = (static_cast<uint64_t>(function) << (bitsOfOpcode + bitsOfOrdinal)) | (static_cast<uint64_t>(opcode) << bitsOfOrdinal) | (ordinal & ((1u << bitsOfOrdinal) - 1));
+    if (noted->add(guard + 1).isNewEntry)
+        dataLogLn("AOT guard failed: f", function, " ", nameOf(static_cast<Typed::Opcode>(opcode)), " ", ordinal);
+}
+
 OperationPermissions permissionsOf(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
@@ -327,7 +450,8 @@ NEVER_INLINE void OperationValidationScope::open(Entry entry)
 NEVER_INLINE void OperationValidationScope::close()
 {
     bool didEnterVM = m_mayNotEnterVM && m_vm.didEnterVM;
-    bool didCollect = m_mayNotCollect && collectionVersions() != m_collectionVersions;
+    // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
+    bool didCollect = m_mayNotCollect && !m_vm.exceptionForInspection() && collectionVersions() != m_collectionVersions;
     if (didEnterVM || didCollect)
         dataLogLn("AOT: ", nameOf(m_entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
     if (didEnterVM)
@@ -335,6 +459,108 @@ NEVER_INLINE void OperationValidationScope::close()
     if (didCollect)
         crashOnValidationFailure(m_vm, { ValidationFailureKind::OperationCollected, { }, { }, { } });
     m_vm.didEnterVM |= m_didEnterVMBefore;
+}
+
+static bool stillPassesTest(State& state, const RuntimeCellTest& test, JSCell* cell)
+{
+    // What was pristine when it was stored need not be so now.
+    if (test.kind == CellTestKind::IsPristine)
+        return true;
+    // To look up a built-in that nothing has asked for yet may create it.
+    if (test.kind == CellTestKind::IsBuiltinCell) {
+        JSCell* builtin = unsafeMakeSpan(state.instance.prefix().builtinCells, state.tables.builtinCells().size())[test.builtinCellNumber()];
+        return !builtin || builtin == cell;
+    }
+    return state.objects->layouts.cellPassesTest(test, cell);
+}
+
+static bool slotMayHold(State& state, const RuntimeType& type, JSValue value)
+{
+    const RuntimeLayoutTable& layouts = state.objects->layouts;
+    OptionSet<PrimitiveSet> primitives = type.primitiveSet();
+    JSCell* cell = value.isCell() ? value.asCell() : nullptr;
+    if (!cell || cell->isHeapBigInt())
+        return layouts.valueHasType(type, value);
+    if (cell->isString()) {
+        // To compare a rope with the literals of a type is to flatten it.
+        if (asString(cell)->isRope())
+            return primitives.containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString });
+        return layouts.valueHasType(type, value);
+    }
+    if (cell->isSymbol() && primitives.containsAny({ PrimitiveSet::Symbol, PrimitiveSet::LiteralSymbol }))
+        return true;
+    if (!cell->isSymbol() && !cell->isObject())
+        return false;
+    return std::ranges::any_of(type.cellTests(), [&](const RuntimeCellTest& test) {
+        return stillPassesTest(state, test, cell);
+    });
+}
+
+// The cell of a literal string is created when something reads the slot.
+static bool slotMayHoldLiteralString(const Image& image, const RuntimeType& type, uint64_t word)
+{
+    std::span<const uint32_t> literals = type.literalStrings();
+    if (literals.empty())
+        return type.primitiveSet().contains(PrimitiveSet::String);
+    if (!type.primitiveSet().containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString }))
+        return false;
+    const ImageText& text = image.text();
+    StringView held = text.view(StringID(image.programTables().literalStrings()[literalStringIndex(static_cast<uint32_t>(word))]));
+    return std::ranges::any_of(literals, [&](uint32_t literal) {
+        return text.equals(StringID(literal), held);
+    });
+}
+
+[[noreturn]] static void crashOnSlotType(VM& vm, const LayoutData& layout, const FieldData& field, JSValue found)
+{
+    const ImageText& text = vm.aotState().image->text();
+    StringID name = text.identifier(field.name).text();
+    dataLogLn("AOT: field ", layout.indexOf(field), " (", name && text.hasText(name) ? text.view(name) : StringView("-"_s), ") of layout ", layout.index, " holds a value outside its type");
+    crashOnValidationFailure(vm, { ValidationFailureKind::HeapSlotType, { }, { }, found });
+}
+
+void validateSlotTypes(VM& vm, const Object& object)
+{
+    State& state = object.state();
+    const LayoutData& layout = object.layout();
+    for (const FieldData& field : layout.fields()) {
+        // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
+        if (field.isBrand() || field.isAccessor())
+            continue;
+        const void* slot = object.slotOf(field);
+        if (!slot)
+            continue;
+
+        SlotRepresentation representation = field.slot.representation();
+        SlotTraits traits = traitsOf(representation);
+        uint64_t bits = readSlotBits(representation, slot);
+        // A slot that cannot say "absent" holds zero until its first store.
+        if (bits == (traits.hasAbsent ? traits.absentBits : 0))
+            continue;
+        if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits))
+            continue;
+
+        const RuntimeType& type = state.objects->layouts.typeOf(field);
+        if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits)) {
+            if (!slotMayHoldLiteralString(*vm.aotState().image, type, bits))
+                crashOnSlotType(vm, layout, field, { });
+            continue;
+        }
+        // The words below the smallest integer of such a slot are markers or nothing at all, and readSlot() stops at one that is nothing without saying where it was.
+        if (representation == SlotRepresentation::OptionalInt32 && static_cast<int32_t>(bits) < minInlineInt32)
+            crashOnSlotType(vm, layout, field, { });
+
+        // A slot that defers a closure holds no cell until something asks for the closure.
+        bool defersClosure = traits.valueKind == SlotValueKind::DeferredClosure;
+        JSValue value = defersClosure ? JSValue(cellInSlot(representation, slot, cageBaseOf(&object))) : readSlot(representation, slot, *state.strings);
+        if (!value)
+            continue;
+        // A hidden field holds the environment that the deferred closures of the object capture. It is no value of the language, so no type describes it.
+        if (value.isCell() && value.asCell()->type() == CompiledEnvironmentType)
+            continue;
+        if (!slotMayHold(state, type, value))
+            crashOnSlotType(vm, layout, field, value);
+    }
 }
 
 void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
@@ -346,8 +572,14 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
         }
     }
 
-    if (scope != CollectionScope::Full)
+    // Every compiled object lies in the space of cells.
+    if (scope != CollectionScope::Full) {
+        vm.cellSpace().forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
+            if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(heapCell)))
+                validateSlotTypes(vm, *object);
+        });
         return;
+    }
 
     vm.heap.objectSpace().forEachSubspace([&](Subspace& subspace) {
         subspace.forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind kind) {
@@ -357,11 +589,48 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
             validateShapeWord(cell);
             if (cell->type() == CompiledEnvironmentType)
                 return;
-            if (auto* array = dynamicDowncast<JSArray>(cell))
+            if (Object* object = compiledObjectOrNull(cell))
+                validateSlotTypes(vm, *object);
+            else if (auto* array = dynamicDowncast<JSArray>(cell))
                 array->validatePristine(vm);
         });
         return IterationStatus::Continue;
     });
+}
+
+// An inquiry runs no code of the program. It may create a closure that a slot defers. A class that creates its members on demand is asked as getWithoutCaches() asks it, through its table:
+// an inquiry of its prototype object would create the members, and that ends guards of stores which no lookup of the program ends. The test behind the lookup would find a guard gone that holds without it.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance* instance, JSCell* receiver, uint32_t key, JSCell* expected))
+{
+    VM& vm = *instance->vm;
+    DeferGCForAWhile deferGC(vm);
+    JSGlobalObject* globalObject = instance->globalObject;
+    const Identifier& name = identifierAt(instance, key);
+    JSObject* object = asObject(receiver);
+    JSObject* firstObjectAsked = object;
+    JSValue found;
+    if (auto throughTable = instance->state->objects->classes.findThroughLazyPrototypes(vm, object, name.impl(), false)) {
+        if (throughTable->member) {
+            if (throughTable->member->isAccessor)
+                return false;
+            found = throughTable->member->holder->getDirect(throughTable->member->offset);
+        } else if (!(firstObjectAsked = throughTable->firstObjectAbove))
+            return false;
+    }
+    if (!found) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (!firstObjectAsked->getPropertySlot(globalObject, name, slot) || !slot.isValue())
+            return false;
+        found = slot.getValue(globalObject, name);
+    }
+    if (!found.isCell())
+        return false;
+    if (found.asCell() == expected)
+        return true;
+    // Each evaluation of a class makes its own closures of one definition, and a definition has several compiled forms.
+    std::optional<FunctionID> foundFunction = functionOf(found.asCell());
+    std::optional<FunctionID> expectedFunction = functionOf(expected);
+    return foundFunction && expectedFunction && sourceFunctionOf(*foundFunction) == sourceFunctionOf(*expectedFunction);
 }
 
 } } // namespace JSC::AOT

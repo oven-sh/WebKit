@@ -23,6 +23,7 @@ RememberedSlotSet::RememberedSlotSet(std::span<const uint8_t> table, unsigned re
     m_tableSize = table.size();
     m_regionShift = regionShift;
     m_numberOfCards = numberOfCardsFor(m_tableSize, regionShift);
+    m_maxNumberOfListedCards = maxNumberOfListedCardsFor(m_numberOfCards);
     m_ownedCards.fill(neverWrittenCard, m_numberOfCards);
     m_cards = m_ownedCards.mutableSpan().data();
 }
@@ -34,6 +35,7 @@ RememberedSlotSet::RememberedSlotSet(std::span<const uint8_t> table, unsigned re
     m_tableSize = table.size();
     m_regionShift = regionShift;
     m_numberOfCards = numberOfCardsFor(m_tableSize, regionShift);
+    m_maxNumberOfListedCards = maxNumberOfListedCardsFor(m_numberOfCards);
     RELEASE_ASSERT(zeroedCards.size() >= m_numberOfCards && !(std::bit_cast<uintptr_t>(zeroedCards.data()) % cardsPerWord), zeroedCards.size(), m_numberOfCards);
     m_cards = zeroedCards.data();
 }
@@ -46,6 +48,8 @@ void RememberedSlotSet::didMoveTable(std::span<const uint8_t> table)
     m_tableStart = std::bit_cast<uintptr_t>(table.data());
     m_tableSize = table.size();
     m_numberOfCards = numberOfCardsFor(m_tableSize, m_regionShift);
+    m_maxNumberOfListedCards = maxNumberOfListedCardsFor(m_numberOfCards);
+    m_writtenCards.shrink(0);
     m_ownedCards.fill(neverWrittenCard, m_numberOfCards);
     m_cards = m_ownedCards.mutableSpan().data();
     recordAll();
@@ -53,6 +57,7 @@ void RememberedSlotSet::didMoveTable(std::span<const uint8_t> table)
 
 void RememberedSlotSet::recordAll()
 {
+    m_listsEveryWrittenCard = false;
     if (m_regionShift == shiftOfSingleRegion) {
         m_cards[0] = writtenCard;
         return;

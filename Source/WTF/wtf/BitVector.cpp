@@ -226,11 +226,10 @@ bool BitVector::equalsSlowCase(const BitVector& other) const
 
 bool BitVector::equalsSlowCaseFast(const BitVector& other) const
 {
-    if (isInline() != other.isInline())
-        return equalsSlowCaseSimple(other);
-    
-    auto myWords = outOfLineBits()->wordsSpan();
-    auto otherWords = other.outOfLineBits()->wordsSpan();
+    const uintptr_t myInlineBits = cleanseInlineBits(m_bitsOrPointer);
+    const uintptr_t otherInlineBits = cleanseInlineBits(other.m_bitsOrPointer);
+    auto myWords = isInline() ? singleElementSpan(myInlineBits) : outOfLineBits()->wordsSpan();
+    auto otherWords = other.isInline() ? singleElementSpan(otherInlineBits) : other.outOfLineBits()->wordsSpan();
     
     size_t myNumWords = myWords.size();
     size_t otherNumWords = otherWords.size();

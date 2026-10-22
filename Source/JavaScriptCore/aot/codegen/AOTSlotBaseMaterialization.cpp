@@ -108,7 +108,7 @@ private:
 
     void findAddresses()
     {
-        for (B3::BasicBlock* block : m_proc.blocksInPreOrder()) {
+        for (B3::BasicBlock* block : m_proc.cachedBlocksInPreOrder()) {
             for (B3::Value* value : *block) {
                 if (computesAddress(value))
                     m_addresses.add(value);

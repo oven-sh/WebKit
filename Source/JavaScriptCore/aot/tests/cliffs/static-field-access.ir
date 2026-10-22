@@ -2,26 +2,26 @@
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
 # RUN: pipeline ResolveAccesses
-# RUN(ORDER): flow-order locations failed
-# ORDER: g4: StoredBeforeEveryRead Unknown
-# ORDER-NEXT: g5: StoredBeforeEveryRead AtMostOnce
-# ORDER-NEXT: g6: StoredBeforeEveryRead AtMostOnce
-# ORDER-NOT: read-before-initialization
-# CHECK: variable g4 module=m0 declared={type=int
-# CHECK: variable g5 module=m0 declared={type="c"
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g4 module=m0 {{*}}initialization=StoredBeforeEveryRead
+# ORDER: variable g5 module=m0 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER: variable g6 module=m0 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# CHECK: variable g4 module=m0 declared={type=i32
+# "c" is no property key of the program, so flow has no member for it: it is a string like any other
+# CHECK: variable g5 module=m0 declared={type=string}
 # CHECK: variable g6 module=m0 declared={type=i32
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g4}, {key="label" variable=g5}]
-layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f5 staticFields=[{key="extra" variable=g6}] flags=[HasHeritage]
+layout L1 kind=Instance name="Child" base=L0 constructor=f5 staticFields=[{key="extra" variable=g6}] flags=[HasHeritage]
 variable g0 name="bump" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
 variable g1 name="Counter" module=m0 declared={type=function|absent} flags=[IsImmutable]
 variable g2 name="Counter" module=m0 declared={type=function|absent} flags=[IsImmutable]
 variable g3 name="Child" module=m0 declared={type=function|absent} flags=[IsImmutable]
-variable g4 module=m0 declared={type=anything predicted=number} owner=L0
-variable g5 module=m0 declared={type=anything predicted=string} owner=L0
-variable g6 module=m0 declared={type=anything predicted=number} owner=L1
+variable g4 module=m0 declared={type=number flags=[IsExpected]} owner=L0
+variable g5 module=m0 declared={type=string flags=[IsExpected]} owner=L0
+variable g6 module=m0 declared={type=number flags=[IsExpected]} owner=L1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f1
@@ -67,7 +67,7 @@ function f2 name="next" kind=Method results=[{type=anything}] {
     Return v6
 }
 # CHECK-LABEL: function f2 name="next"
-# CHECK: [[before]]: int{{*}}= GetModuleVariable variable=g4
+# CHECK: [[before]]: i32 = GetModuleVariable variable=g4
 # CHECK: PutModuleVariable [[sum]] variable=g4
 # CHECK: = GetModuleVariable variable=g4
 # CHECK-NOT: key="count"

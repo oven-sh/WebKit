@@ -1,0 +1,46 @@
+# In untyped code a callee may be Object.defineProperty as it may be anything else, and an object may be a locked built-in as it may be anything else. A warning at each such call and store
+# says nothing, so the build warns only where it knows what is written: the callee is a built-in function, the object written to is one of a list, and a computed key is one of a list.
+# Here the first four writes are not such: the callee, the object (twice) and the key may each be something that nobody has seen.
+# The last two are: Object.defineProperty on a value that is the locked built-in in some runs, and a store under a key that is one of two names
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName] @10
+    v2 = Builtin builtin=ObjectPrototype
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = Builtin builtin=Object
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = PropGet v1 key="callee" @20
+    v8 = PropGet v1 key="object" @30
+    v9 = PropGet v1 key="name" @40
+    v10 = NewObject layout=L0 fields=[]
+    v11 = String string="hasOwnProperty"
+    v12 = String string="toString"
+    v13 = String string="propertyIsEnumerable"
+    v14 = String string="isPrototypeOf"
+    v15 = String string="toLocaleString"
+    v16 = ToBoolean v9
+    Branch v16 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3, v2, v2, v11)
+  b2():
+    Jump -> next b3(v7, v8, v10, v12)
+  b3(v17: anything, v18: anything, v19: anything, v20: anything):
+    v21 = Call v17, v4, v2, v13, v6 @50
+    PropSet v18, v5 key="valueOf" mode=Strict @60
+    v23 = Call v3, v4, v18, v14, v6 @70
+    ElemSet v2, v9, v5 mode=Strict @80
+    Jump -> next b4()
+  b4():
+    v25 = Call v3, v4, v19, v15, v6 @90
+    ElemSet v2, v20, v5 mode=Strict @100
+    Return
+}

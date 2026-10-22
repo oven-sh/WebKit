@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTModules.h"
+#include "Identifier.h"
 #include <optional>
 #include <span>
 #include <wtf/HashMap.h>
@@ -65,7 +66,8 @@ struct StarCandidate {
     OwnExportEntry ownEntry { OwnExportEntry::None };
 };
 
-using StarCandidates = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, StarCandidate>;
+// Ordered by the hashes of the names, not by their addresses: whoever walks the candidates and reads deferred exports runs their getters in the same order in every process.
+using StarCandidates = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, StarCandidate, IdentifierRepHash>;
 
 enum class NameResolution : uint8_t { NotFound, Found, Ambiguous };
 
@@ -85,11 +87,15 @@ public:
     const StarCandidate* find(ModuleID exporter, UniquedStringImpl* name);
     NameResolution resolve(ModuleID exporter, uint32_t nameIdentifier);
     std::optional<UnresolvedName> findUnresolvedName(std::span<const ModuleID> modules);
+    // Reads a deferred export now. To find a candidate reads none.
     JSValue capturedValueOf(const StarCandidate&);
     StarBinding bindingOf(const ModuleExportData&);
 
-    static JSValue capturedValue(JSGlobalObject*, JSObject* captured, const Identifier& name);
-    static void forEachCapturedExport(JSGlobalObject*, JSObject* captured, const ScopedLambda<void(const Identifier&, JSValue)>&);
+    // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: Modules::capturedValue() reads that one.
+    static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
+    // Reads every deferred export of the module.
+    // Without a value for a deferred export: listing the names reads none of them. Modules::capturedValue() reads one.
+    static void forEachCapturedExport(Modules&, ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
 
 private:
     using CandidatesByModule = UncheckedKeyHashMap<ModuleID, StarCandidates>;

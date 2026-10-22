@@ -356,6 +356,7 @@ X86_INSTRUCTIONS =
      "idivq",
      "udivq",
      "notq",
+     "popcntq",
      "atomicxchgaddb",
      "atomicxchgaddh",
      "atomicxchgaddi",

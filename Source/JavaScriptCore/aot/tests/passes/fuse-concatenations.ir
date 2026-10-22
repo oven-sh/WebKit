@@ -1,7 +1,7 @@
 # A concatenation with one use folds into the concatenation that uses it
 # FORM: Prepared
 # RUN: pass FuseConcatenations
-# STATISTIC: ConcatenationsFused = 5
+# STATISTIC: ConcatenationsFused = 6
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="chain" parameters=[{type=string}, {type=string}, {type=string}, {type=string}] results=[{type=string}] {
@@ -74,8 +74,8 @@ function f6 name="otherBlock" parameters=[{type=string}, {type=string}] results=
     Return v3
 }
 # CHECK-LABEL: function f6 name="otherBlock"
-# CHECK-COUNT-2: = Add
-# CHECK-NOT: Strcat
+# CHECK-NOT: = Add
+# CHECK: string = Strcat v0, v1, v0
 
 function f7 name="underHandler" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
   b0(v0: string, v1: string) handler=b2():

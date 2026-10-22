@@ -46,6 +46,21 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
 #endif
 }
 
+// An access that calls an accessor keeps few floating-point registers: storing and loading all of them was a third of the way to a getter and back.
+static RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
+{
+    constexpr unsigned numberKept = 2;
+    RegisterSet lost = RegisterSet::macroClobberedFPRs();
+    Vector<Reg, 32> others;
+    registersClobberedBy(callee).forEach([&](Reg reg) {
+        if (reg.isFPR() && !lost.contains(reg, IgnoreVectors))
+            others.append(reg);
+    });
+    for (unsigned index = 0; index + numberKept < others.size(); ++index)
+        lost.add(others[index], IgnoreVectors);
+    return lost;
+}
+
 void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& preservingCall, const ScopedLambda<void()>& emitCall)
 {
 #if CPU(X86_64)
@@ -60,12 +75,14 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     // The size of the save area aligns the stack of a stub that has pushed nothing, and the prologue pushed one register.
     subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
-    preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, [&](unsigned) {
+    // The stub returns behind the call, so what it has written itself is lost to its caller anyway.
+    RegisterSet lostAnyway = m_recording.clobbered();
+    lostAnyway.merge(RegisterSet::macroClobberedGPRs());
+    lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
+    preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, [&](unsigned) {
         emitCall();
     });
-#if CPU(X86_64)
-    addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
-#endif
+    // The epilogue takes the stack pointer from the frame pointer, so the padding is not taken off first.
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
         ret();

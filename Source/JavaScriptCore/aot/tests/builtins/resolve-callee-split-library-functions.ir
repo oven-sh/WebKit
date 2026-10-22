@@ -1,4 +1,4 @@
-# A method written in JavaScript gets an arm of the split on the callee only where its library function is compiled: without a body behind it the arm would end in the same call as the generic path
+# A method implemented in JavaScript gets an arm of the split on the callee only where its library function is compiled: without a body behind it the arm would end in the same call as the generic path
 # FORM: Prepared
 # RUN: pass ResolveBuiltins
 # CHECK: outcome: Changed
@@ -17,8 +17,7 @@ function f0 name="oneOfThreeIsCompiled" parameters=[{type=anything}] results=[{t
 # CHECK-NEXT: Branch [[isReturn]] -> taken [[arm]](| 0), notTaken [[rest]](| 0)
 # CHECK-NOT: TypeTest
 # CHECK: [[arm]]({{*}}: builtin(WrapForValidIteratorPrototypeReturn)):
-# CHECK-NEXT: [[wrapper]]: anything ~ WrapForValidIterator = Predict v0 predicted=WrapForValidIterator
-# CHECK-NEXT: anything = CallBuiltin [[wrapper]] overload=WrapForValidIteratorPrototypeReturn/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: anything = CallBuiltin v0 overload=WrapForValidIteratorPrototypeReturn/0 builtinCallForm=AnyReceiver
 # CHECK-NOT: TypeTest
 # CHECK: [[rest]]([[other]]: anything) frequency=Unlikely:
 # CHECK-NEXT: anything = Call [[other]], v0 calleeKey="return"
@@ -34,10 +33,10 @@ function f1 name="noneIsCompiled" parameters=[{type=anything}] results=[{type=an
 # CHECK: v2: anything = Call v1, v0 calleeKey="throw"
 # CHECK-NEXT: Return v2
 
-function f2 name="returnOfIteratorHelper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}]
-function f3 name="returnOfWrapper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=89 thisType={type=anything} results=[{type=anything}] {
+function f2 name="returnOfIteratorHelper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}]
+function f3 name="returnOfWrapper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
     Return v0
 }
-runtimefunction id=88 function=f2
-runtimefunction id=89 function=f3
+runtimefunction id=87 function=f2
+runtimefunction id=88 function=f3

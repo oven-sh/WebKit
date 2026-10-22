@@ -23,6 +23,7 @@
 #include "MarkedBlockCage.h"
 #include "Options.h"
 #include "Symbol.h"
+#include <algorithm>
 #include <optional>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
@@ -34,6 +35,7 @@ namespace JSC::AOT {
 std::span<const NativeTest> programStringsTests();
 
 static constexpr ASCIILiteral programText = R"IR(layout L0 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"} flags=[IsRequired]}, {key="x" declared={type=number}}]
+layout L1 name="Holder" fields=[]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -67,7 +69,17 @@ function f1 name="constants" parameters=[{type=anything}] results=[{type=anythin
     v19 = Call v0, -, v18
     v20 = String string="second constant"
     v21 = Call v0, -, v20
+    v22 = NewObject layout=L1 fields=[]
+    v23 = NewClosure function=f2
+    DefineGetter v22, v23 key="hue"
+    v25 = FinishObject v22
+    v26 = Call v0, -, v25
     Return
+}
+function f2 name="readHue" flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
 }
 )IR"_s;
 
@@ -137,13 +149,30 @@ static uint32_t literalNumberOf(LoadedProgram& program, StringView wanted)
     failNativeTest(__FILE__, __LINE__, "the text is a literal string of the image");
 }
 
-static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifier&)> auto& matches)
+static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifierWord&)> auto& matches)
 {
     for (uint32_t number = 1; number < imageText().numberOfIdentifiers(); ++number) {
         if (matches(imageText().identifier(number)))
             return number;
     }
     failNativeTest(__FILE__, __LINE__, "the image has the identifier");
+}
+
+static uint32_t identifierNumberOfText(StringView wanted)
+{
+    return identifierNumberOf([&](const ImageIdentifierWord& record) {
+        return record.kind() == PropertyKeyKind::Text && record.text() && imageText().equals(record.text(), wanted);
+    });
+}
+
+static uint32_t keyCellNumberOf(LoadedProgram& program, uint32_t identifier)
+{
+    std::span<const uint32_t> identifiers = program.state().tables.keyCellIdentifiers();
+    for (uint32_t number = 0; number < identifiers.size(); ++number) {
+        if (identifiers[number] == identifier)
+            return number;
+    }
+    failNativeTest(__FILE__, __LINE__, "the identifier has a key cell");
 }
 
 static bool hasText(LoadedProgram& program, JSString* string, StringView expected)
@@ -235,9 +264,7 @@ static void testSmallStringsAreTheEngines(LoadedProgram& program)
     VM& vm = program.vm();
     ProgramStrings& strings = *program.state().strings;
     StringID empty(program.state().tables.literalStrings()[literalNumberOf(program, ""_s)]);
-    StringID letter = imageText().identifier(identifierNumberOf([&](const ImageIdentifier& record) {
-        return record.kind() == PropertyKeyKind::Text && record.text() && imageText().equals(record.text(), "x"_s);
-    })).text();
+    StringID letter = imageText().identifier(identifierNumberOfText("x"_s)).text();
     AOT_TEST_CHECK(strings.string(vm, empty) == vm.smallStrings.emptyString());
     AOT_TEST_CHECK(strings.createConstant(vm, empty.index()) == vm.smallStrings.emptyString());
     AOT_TEST_CHECK(strings.string(vm, letter) == vm.smallStrings.singleCharacterString('x'));
@@ -277,11 +304,48 @@ static void testLiteralStringWords(LoadedProgram& program)
         AOT_TEST_CHECK(hasText(program, cell, text));
         AOT_TEST_CHECK(strings.stringForLiteralStringWord(word) == cell);
         AOT_TEST_CHECK(strings.literalStringWordFor(cell) == word);
-        AOT_TEST_CHECK(program.instance().runtime.constants.literalStrings[literalStringIndex(static_cast<uint32_t>(word))] == cell);
+        AOT_TEST_CHECK(strings.literalStringIfCreated(literalStringIndex(static_cast<uint32_t>(word))) == cell);
     }
     AOT_TEST_CHECK(literalNumberOf(program, "red"_s) != literalNumberOf(program, "green"_s));
     AOT_TEST_CHECK(strings.literalStringWordFor(jsEmptyString(vm)) == emptyLiteralStringWord);
     AOT_TEST_CHECK(isLiteralStringWord(emptyLiteralStringWord));
+}
+
+static void testLiteralStringWordsInHeaders(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ProgramStrings& strings = *program.state().strings;
+    for (const String& text : { String("red"_s), String("green"_s), japanese(2) }) {
+        uint32_t word = literalStringWord(literalNumberOf(program, text));
+        const StringImpl* header = strings.stringForLiteralStringWord(word)->tryGetValueImpl();
+        AOT_TEST_CHECK(header && imageText().literalStringWordOfHeader(*header) == word);
+        AOT_TEST_CHECK(!imageText().literalStringWordOfHeader(*text.isolatedCopy().impl()));
+    }
+    // The header of a constant that is no literal string is made with its cell, outside of the image.
+    JSString* cell = strings.constant(vm, constantNumberOf("first constant"_s));
+    const StringImpl* other = cell->tryGetValueImpl();
+    AOT_TEST_CHECK(other && !imageText().literalStringWordOfHeader(*other));
+    AOT_TEST_CHECK(strings.literalStringWordFor(cell) == std::bit_cast<uint64_t>(cell));
+}
+
+// In the first instance of the process the header is as one of the image: static, with its hash, over the characters in the image. There is one for each constant made.
+static void testConstantGetsHeader(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ProgramStrings& strings = *program.state().strings;
+    const ConstantCellWords& constants = program.instance().runtime.constants;
+    AOT_TEST_CHECK(constants.sizeOfStringHeaders && constants.nextStringHeader == constants.startOfStringHeaders);
+    unsigned numberMade = 0;
+    for (const String& text : { String("first constant"_s), String("second constant"_s), japanese(3) }) {
+        uint32_t number = constantNumberOf(text);
+        AOT_TEST_CHECK(imageText().hasListedHash(imageText().stringConstant(number)));
+        const StringImpl* header = strings.constant(vm, number)->tryGetValueImpl();
+        AOT_TEST_CHECK(header && header->isStatic() && header->hasHash() && header->existingHash() == text.isolatedCopy().impl()->hash());
+        AOT_TEST_CHECK(StringView(*header) == text && header->is8Bit() == text.is8Bit() && Image::current()->containsCharactersOf(*header));
+        AOT_TEST_CHECK(std::bit_cast<const uint8_t*>(header) == constants.startOfStringHeaders + numberMade++ * sizeof(ImageStringHeader));
+        AOT_TEST_CHECK(strings.constant(vm, number)->tryGetValueImpl() == header);
+    }
+    AOT_TEST_CHECK(constants.nextStringHeader == constants.startOfStringHeaders + numberMade * sizeof(ImageStringHeader));
 }
 
 static void testLiteralStringWordOfRope(LoadedProgram& program)
@@ -359,15 +423,15 @@ static void testKeyCellOfWellKnownSymbol(LoadedProgram& program)
         { WellKnownSymbol::HasInstance, "Symbol.hasInstance"_s },
     };
     for (const Case& testCase : cases) {
-        uint32_t number = identifierNumberOf([&](const ImageIdentifier& record) {
-            return record.kind() == PropertyKeyKind::WellKnownSymbol && record.hashOrSymbol() == static_cast<uint32_t>(testCase.symbol);
-        });
+        uint32_t number = keyCellNumberOf(program, identifierNumberOf([&](const ImageIdentifierWord& record) {
+            return record.kind() == PropertyKeyKind::WellKnownSymbol && record.wellKnownSymbol() == testCase.symbol;
+        }));
         JSCell* cell = strings.keyCell(vm, number);
         AOT_TEST_CHECK(cell->isSymbol());
         AOT_TEST_CHECK(JSValue(cell) == program.realms().evaluate(program.realm(), testCase.expression));
         AOT_TEST_CHECK(JSValue(cell) == program.realms().evaluate(program.realms().plain(), testCase.expression));
         AOT_TEST_CHECK(strings.keyCell(vm, number) == cell);
-        AOT_TEST_CHECK(program.instance().runtime.constants.keyCells[number] == cell);
+        AOT_TEST_CHECK(strings.keyCellIfCreated(number) == cell);
     }
 }
 
@@ -375,15 +439,16 @@ static void testKeyCellOfText(LoadedProgram& program)
 {
     VM& vm = program.vm();
     ProgramStrings& strings = *program.state().strings;
-    uint32_t number = identifierNumberOf([&](const ImageIdentifier& record) {
-        return record.kind() == PropertyKeyKind::Text && record.text() && imageText().equals(record.text(), "color"_s);
-    });
-    AOT_TEST_CHECK(!program.instance().runtime.constants.keyCells[number]);
+    // No operation hands the name of the field over as a value.
+    AOT_TEST_CHECK(!std::ranges::contains(program.state().tables.keyCellIdentifiers(), identifierNumberOfText("color"_s)));
+
+    uint32_t number = keyCellNumberOf(program, identifierNumberOfText("hue"_s));
+    AOT_TEST_CHECK(!strings.keyCellIfCreated(number));
     JSCell* cell = strings.keyCell(vm, number);
-    AOT_TEST_CHECK(cell->isString() && hasText(program, uncheckedDowncast<JSString>(cell), "color"_s));
-    AOT_TEST_CHECK(uncheckedDowncast<JSString>(cell)->tryGetValueImpl() == Identifier::fromString(vm, "color"_s).impl());
+    AOT_TEST_CHECK(cell->isString() && hasText(program, uncheckedDowncast<JSString>(cell), "hue"_s));
+    AOT_TEST_CHECK(uncheckedDowncast<JSString>(cell)->tryGetValueImpl() == Identifier::fromString(vm, "hue"_s).impl());
     AOT_TEST_CHECK(strings.keyCell(vm, number) == cell);
-    AOT_TEST_CHECK(program.instance().runtime.constants.keyCells[number] == cell);
+    AOT_TEST_CHECK(strings.keyCellIfCreated(number) == cell);
 
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
         vm.heap.collectSync(scope);
@@ -422,7 +487,7 @@ static void testTextWithoutCells(LoadedProgram& program)
     AOT_TEST_CHECK(ProgramStrings::hasText(image, wide, japanese(3)) && !ProgramStrings::hasText(image, wide, japanese(2)));
     AOT_TEST_CHECK(ProgramStrings::atomOf(image, narrow) == AtomString("first constant"_s));
 
-    uint32_t color = identifierNumberOf([&](const ImageIdentifier& record) {
+    uint32_t color = identifierNumberOf([&](const ImageIdentifierWord& record) {
         return record.kind() == PropertyKeyKind::Text && record.text() && imageText().equals(record.text(), "color"_s);
     });
     AOT_TEST_CHECK(ProgramStrings::text(tables, ProgramStrings::identifierString(tables, color)) == "color"_s);
@@ -467,6 +532,8 @@ std::span<const NativeTest> programStringsTests()
         { "program-strings/small-strings-are-the-engines"_s, narrow<testSmallStringsAreTheEngines> },
         { "program-strings/created-constant-is-fresh"_s, narrow<testCreatedConstantIsFresh> },
         { "program-strings/literal-string-words"_s, narrow<testLiteralStringWords> },
+        { "program-strings/literal-string-words-in-headers"_s, narrow<testLiteralStringWordsInHeaders> },
+        { "program-strings/constant-gets-header"_s, narrow<testConstantGetsHeader> },
         { "program-strings/literal-string-word-of-rope"_s, narrow<testLiteralStringWordOfRope> },
         { "program-strings/literal-string-word-of-substring"_s, narrow<testLiteralStringWordOfSubstring> },
         { "program-strings/string-that-is-no-literal"_s, narrow<testStringThatIsNoLiteral> },

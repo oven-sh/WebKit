@@ -3,13 +3,13 @@
 # RUN: derived-functions AllocatedThisVersion:f3 AllocatedThisVersion:f4 AllocatedThisVersion:f5 AllocatedThisVersion:f7
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Shape" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None members=[L0, L1, L2, L3, L4] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L1 kind=Instance name="Circle" module=m0 predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1, L2] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L2 kind=Instance name="Ring" module=m0 predictedBase=L1 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L2] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L3 kind=Instance name="Relinkable" module=m0 predictedBase=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L3] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeProperty=Fixed}
-layout L4 kind=Instance name="Unlinked" module=m0 predictedBase=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L4] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L5 kind=Instance name="Cached" module=m0 constructor=f6 flow={baseState=None members=[L5, L6] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
-layout L6 kind=Instance name="BelowCached" module=m0 predictedBase=L5 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L5 members=[L6] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L0 kind=Instance name="Shape" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None members=[L0, L1, L2, L3, L4]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Circle" module=m0 base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1, L2]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Ring" module=m0 base=L1 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L2]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Relinkable" module=m0 base=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L3]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeProperty=Fixed}
+layout L4 kind=Instance name="Unlinked" module=m0 base=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L4]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L5 kind=Instance name="Cached" module=m0 constructor=f6 flow={baseState=None members=[L5, L6]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L6 kind=Instance name="BelowCached" module=m0 base=L5 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L5 members=[L6]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 
 function f0 name="main" results=[{type=undefined}] {
   b0():
@@ -26,13 +26,13 @@ function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
 function f2 name="Circle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
-    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f1] [keepsShape]
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f1]
     Return v4
 }
 function f3 name="Ring" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
-    v4 = SuperConstruct v3, v1, v2 layout=L2 callees=[f2] [keepsShape]
+    v4 = SuperConstruct v3, v1, v2 layout=L2 callees=[f2]
     Return v4
 }
 # CHECK-LABEL: function f3 name="Ring"
@@ -41,13 +41,13 @@ function f3 name="Ring" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee
 function f4 name="Relinkable" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L3 {
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
-    v4 = SuperConstruct v3, v1, v2 layout=L3 callees=[f1] [keepsShape]
+    v4 = SuperConstruct v3, v1, v2 layout=L3 callees=[f1]
     Return v4
 }
 function f5 name="Unlinked" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L4 {
   b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
-    v4 = SuperConstruct v3, v1, v2 layout=L4 [keepsShape]
+    v4 = SuperConstruct v3, v1, v2 layout=L4
     Return v4
 }
 function f6 name="Cached" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=undefined|object}] results=[{type=object}] constructedClass=L5 {
@@ -94,7 +94,7 @@ function f7 name="BelowCached" kind=DerivedConstructor flags=[HasNewTarget, Take
 # CHECK: function [[relinkableVersion]] name="Relinkable" module=m0 kind=DerivedConstructor role=AllocatedThisVersion
 # CHECK-NEXT: b0([[relinkableThis]]:{{*}}, [[relinkableCallee]]: function, [[relinkableNewTarget]]: anything, [[relinkableX]]: anything):
 # CHECK-NEXT: = GetSuperBase [[relinkableCallee]]
-# CHECK-NEXT: [[unchanged]]: boolean = IsPrototypeLinkUnchanged layout=L3 side=Static
+# CHECK-NEXT: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L3 side=Static}]
 # CHECK-NEXT: Branch [[unchanged]] -> taken [[direct]](| 0), notTaken [[startsOver]]()
 # CHECK: [[direct]]([[guard]]: guard):
 # CHECK-NOT: SuperConstruct

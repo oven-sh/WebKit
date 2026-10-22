@@ -833,13 +833,13 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlobalObje
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA {
-            cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             return IterationStatus::Continue;
         });
         return JSValue::encode(jsUndefined());
@@ -893,15 +893,15 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalObject* 
     }, length);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue mapped = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue mapped = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, IterationStatus::Done);
 
             scope.release();
@@ -989,14 +989,14 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObjec
         return { };
     }
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto nativeValue) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, IterationStatus::Done);
 
             scope.release();
@@ -1071,9 +1071,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject*
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
 
@@ -1081,7 +1081,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject*
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1138,9 +1138,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalOb
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
 
@@ -1148,7 +1148,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalOb
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1205,9 +1205,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObj
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
 
@@ -1215,7 +1215,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObj
         typedArrayViewForEachImpl<ForEachDirection::Backward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1272,9 +1272,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlob
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
 
@@ -1282,7 +1282,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlob
         typedArrayViewForEachImpl<ForEachDirection::Backward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1339,9 +1339,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
 
@@ -1349,7 +1349,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1406,9 +1406,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject*
 
     JSValue thisArg = callFrame->argument(1);
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(functorValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
 
@@ -1416,7 +1416,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject*
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1479,9 +1479,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObjec
     JSValue accumulator = hasInitialValue ? callFrame->uncheckedArgument(1) : jsUndefined();
 
     bool initialized = hasInitialValue;
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(callback), callData, 4);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(callback), callData, 4);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) -> IterationStatus {
@@ -1491,7 +1491,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObjec
                 return IterationStatus::Continue;
             }
 
-            accumulator = cachedCall->callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
+            accumulator = cachedCall.callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
             return IterationStatus::Continue;
         });
         return JSValue::encode(accumulator);
@@ -1548,9 +1548,9 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobal
     JSValue accumulator = hasInitialValue ? callFrame->uncheckedArgument(1) : jsUndefined();
 
     bool initialized = hasInitialValue;
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(callback), callData, 4);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(callback), callData, 4);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Backward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) -> IterationStatus {
@@ -1560,7 +1560,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobal
                 return IterationStatus::Continue;
             }
 
-            accumulator = cachedCall->callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
+            accumulator = cachedCall.callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
             return IterationStatus::Continue;
         });
 
@@ -1680,9 +1680,9 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
 
     auto result = src;
 
-    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(comparatorValue), callData, 2);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (cachedCall) [[likely]] {
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(comparatorValue), callData, 2);
+        RETURN_IF_EXCEPTION(scope, { });
         result = arrayStableSort<MergeStrategy::Simple>(vm, src, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1691,7 +1691,7 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
             JSValue rightValue = ViewClass::Adaptor::toJSValue(globalObject, right);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
 
-            JSValue jsResult = cachedCall->callWithArguments(globalObject, jsUndefined(), leftValue, rightValue);
+            JSValue jsResult = cachedCall.callWithArguments(globalObject, jsUndefined(), leftValue, rightValue);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
 
             RELEASE_AND_RETURN(scope, coerceComparatorResultToBoolean(globalObject, jsResult));

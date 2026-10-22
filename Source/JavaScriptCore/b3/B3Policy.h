@@ -91,6 +91,7 @@ struct OptimizationPolicy {
     bool mergesAdjacentConstantStores { false };
     bool sinksValues { false };
     bool placesConstantsByFrequency { false };
+    bool mergesBlocksAfterForwardingJumps { false };
 };
 
 struct SelectionPolicy {
@@ -103,8 +104,8 @@ struct LoopPolicy {
     bool foldsComparisonsWithBounds { false };
     bool versions { false };
     bool clampsLoopBounds { false };
-    bool stripMinesPolls { false };
     bool hoistsOnlyFromLikelyPaths { false };
+    bool hoistsImmutableLoadsPastWrites { false };
 };
 
 struct SwitchLoweringPolicy {
@@ -152,7 +153,6 @@ enum class PolicySwitch : uint8_t {
     FoldComparisonsWithBounds,
     VersionLoops,
     ClampLoopBounds,
-    StripMinePolls,
     BitTests,
     KnownRanges,
     KnownDereferenceableBytes,
@@ -163,6 +163,7 @@ enum class PolicySwitch : uint8_t {
     SplitLiveRangesAroundFrame,
     ShrinkWrapFrame,
     FrameLayout,
+    OmitFrameRecord,
     MoveBlocksWithoutSuccessorsToEnd,
     RareBlockLayout,
     MergeIdenticalBlocks,

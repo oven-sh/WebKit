@@ -11,8 +11,8 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L1 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="value" declared={type=number} flags=[IsRequired]}] staticFields=[{key="count" variable=g0}]
-layout L2 kind=Instance name="Derived" module=m0 predictedBase=L1 constructor=f5 supertypes=[L1] flags=[HasHeritage]
-layout L3 kind=Instance name="NeverAllocated" module=m0 predictedBase=L1 constructor=f6 supertypes=[L1] flags=[HasHeritage]
+layout L2 kind=Instance name="Derived" module=m0 base=L1 constructor=f5 supertypes=[L1] flags=[HasHeritage]
+layout L3 kind=Instance name="NeverAllocated" module=m0 base=L1 constructor=f6 supertypes=[L1] flags=[HasHeritage]
 layout L4 kind=Environment name="scope" fields=[{key="captured" declared={type=string}}]
 variable g0 name="count" module=m0 declared={type=number} owner=L1
 variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
@@ -100,7 +100,7 @@ function f9 name="createsScope" parameters=[{type=string}] results=[{type=anythi
     v2 = NewClosure v1 function=f8
     v3 = Builtin builtin=GlobalThis
     v4 = PropGet v3 key="publish" [isFreeName]
-    v5 = Call v4, -, v2
+    v5 = Call v4, -, v4, v4, v2
     Return
 }
 
@@ -110,11 +110,11 @@ function f9 name="createsScope" parameters=[{type=string}] results=[{type=anythi
 # CHECK-NEXT: boundFunctions 0 0
 
 # RECORD: layout shape={{*}} index=L0 kind=Record name="Point"
-# RECORD-NEXT: field 0 name="x" {{*}}slot=Double@16
+# RECORD-NEXT: field 0 name="x" {{*}}slot=OptionalDouble@16
 
 # BASE: layout shape=[[shape]] index=L1 kind=Instance name="Base"
 # BASE-NEXT: field 0 name="value" {{*}}slot=[[representation]]@16
-# BASE: class index=L1 shape=[[shape]] base=- predictedBase=- constructor=[[constructor]] environment=- evaluation=ProvenOnce
+# BASE: class index=L1 shape=[[shape]] base=- expectedBase=- constructor=[[constructor]] environment=- evaluation=ProvenOnce
 # BASE-NEXT: method name="first" kind=Method {{*}}function=[[first]]
 # BASE-NEXT: method name="second" kind=Method {{*}}function=[[second]]
 # BASE-NEXT: method name="size" kind=Getter {{*}}function=[[size]]

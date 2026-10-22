@@ -1,7 +1,7 @@
 # SlotStoreRun and PropertyRun turn several stores to one object into one operation
 # FORM: Prepared
 # OPTIONS: heat=only-loops-are-hot
-# STATISTIC: SlotStoreRunGroups = 9
+# STATISTIC: SlotStoreRunGroups = 10
 # STATISTIC: PropertyRunGroups = 4
 # RUN: pass Select
 
@@ -149,39 +149,39 @@ function f11 name="five-adding-stores" parameters=[{type=L1}, {type=number}, {ty
 # CHECK-NEXT: b0(
 # CHECK-NEXT: PutSlots v0, -, v1, v2, v3, v4, v5 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}, {key="e" level=Proven mayAdd=true}] receivers=[L1]
 # CHECK-NEXT: Return v0
-function f12 name="one-guard" parameters=[{type=object written=L0}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number, v2: number):
+function f12 name="one-guard" parameters=[{type=object}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number, v2: number):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
-    PutSlotOrAdd v0, v4, v1 key="y" receivers=[L0] level=Written
-    PutSlotOrAdd v0, v4, v2 key="w" receivers=[L0] level=Written
+    PutSlotOrAdd v0, v4, v1 key="y" receivers=[L0] level=Expected
+    PutSlotOrAdd v0, v4, v2 key="w" receivers=[L0] level=Expected
     Return v0
   b2():
     Return v0
 }
 # CHECK-LABEL: function f12 name="one-guard"
 # CHECK: b1(v4: guard):
-# CHECK-NEXT: PutSlots v0, v4, v1, v2 placedKeys=[{key="y" level=Written mayAdd=true}, {key="w" level=Written mayAdd=true}] receivers=[L0]
+# CHECK-NEXT: PutSlots v0, v4, v1, v2 placedKeys=[{key="y" level=Expected mayAdd=true}, {key="w" level=Expected mayAdd=true}] receivers=[L0]
 # CHECK-NEXT: Return v0
-function f13 name="two-guards" parameters=[{type=object written=L0}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number, v2: number):
+function f13 name="two-guards" parameters=[{type=object}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number, v2: number):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
     v5 = ShapeTest v0 layouts=[L0]
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6):
-    PutSlotOrAdd v0, v4, v1 key="y" receivers=[L0] level=Written
-    PutSlotOrAdd v0, v6, v2 key="w" receivers=[L0] level=Written
+    PutSlotOrAdd v0, v4, v1 key="y" receivers=[L0] level=Expected
+    PutSlotOrAdd v0, v6, v2 key="w" receivers=[L0] level=Expected
     Return v0
   b3():
     Return v0
 }
 # CHECK-LABEL: function f13 name="two-guards"
 # CHECK: b2(v6: guard):
-# CHECK-NEXT: PutSlotOrAdd v0, v4, v1 key="y"
-# CHECK-NEXT: PutSlotOrAdd v0, v6, v2 key="w"
+# CHECK-NEXT: [[both]]:{{*}}= AllGuards v4, v6
+# CHECK-NEXT: PutSlots v0, [[both]], v1, v2 placedKeys=[{key="y" level=Expected mayAdd=true}, {key="w" level=Expected mayAdd=true}] receivers=[L0]
 # CHECK-NEXT: Return v0
 function f14 name="under-handler" parameters=[{type=L0}, {type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: L0, v1: number, v2: number) handler=b2():

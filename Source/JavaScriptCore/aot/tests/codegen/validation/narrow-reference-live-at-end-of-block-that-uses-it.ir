@@ -2,7 +2,7 @@
 # FORM: AsRead
 # RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
 # RUN(CHOSEN): pipeline ChooseRepresentations
-# OPTIONS: references=narrow check=validate-back-end,validate-reference-guards
+# OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=NoLayoutIsMadeSeldom
 # OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
 # CHECK: image not empty
 # CHECK: statistic NarrowReferenceGuards 1
@@ -31,16 +31,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b2():
     Jump -> next b3(v2)
   b3(v6):
-    v7 = ClaimDeclared v6 declared={type=L0}
+    v7 = Convert v6 declared={type=L0}
     v8 = PropGet v3 key="use" [isFreeName]
     v9 = CallDirect v7, v8, v5 function=f1
-    v10 = Call v8, -, v9
-    Return v10
+    v10 = TypeTest v9 testedType=null
+    v11 = Call v8, -, v10
+    Return v11
 }
 function f1 name="testThenCallThenReturn" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=null|L0}] {
-  b0(v0: object ? L0, v1: anything, v2: boolean):
+  b0(v0: L0, v1: anything, v2: boolean):
     v3 = PropGet v0 key="next"
-    v4 = ClaimRead v3, v0 source=Field{key="next"}
+    v4 = Convert v3 declared={type=null|L0}
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v5 = TypeTest v4 testedType=undefined|null

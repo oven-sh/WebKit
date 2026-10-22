@@ -1,4 +1,4 @@
-# A concatenation is marked as a likely key where each of its uses leads to the key of a lookup, also through a cast and through a block parameter
+# A concatenation is marked as a likely key where each of its uses on the usual paths leads to the key of a lookup, also through a cast and through a block parameter
 # FORM: Prepared
 # RUN: pass CreateStringBuilders
 # CHECK: outcome: Changed
@@ -36,7 +36,7 @@ function f2 name="keyThroughCasts" parameters=[{type=anything}, {type=string}, {
     v3 = String string=","
     v4 = Strcat v1, v3, v2
     v5 = Upcast v4 castType=anything
-    v6 = Claim v5 castType=string
+    v6 = Check v5 castType=string
     v7 = ElemGet v0, v6
     Return v7
 }
@@ -90,4 +90,33 @@ function f6 name="stringIsTheObjectRead" parameters=[{type=string}, {type=string
     Return v4
 }
 # CHECK-LABEL: name="stringIsTheObjectRead"
+# CHECK-NOT: isLikelyKey
+
+function f7 name="passedOnOffTheUsualPath" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string, v3: boolean):
+    v4 = Add v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v5
+  b2() frequency=Rare:
+    v6 = PropGet v0 key="get"
+    v7 = Call v6, v0, v4
+    Return v7
+}
+# CHECK-LABEL: name="passedOnOffTheUsualPath"
+# CHECK: v4: string = Strcat v1, v2 [isLikelyKey]
+
+function f8 name="onlyPassedOnOffTheUsualPath" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: string, v3: boolean):
+    v4 = Add v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2() frequency=Rare:
+    v5 = PropGet v0 key="get"
+    v6 = Call v5, v0, v4
+    Return v6
+}
+# CHECK-LABEL: name="onlyPassedOnOffTheUsualPath"
 # CHECK-NOT: isLikelyKey

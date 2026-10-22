@@ -46,6 +46,7 @@ GroupRewriter::GroupRewriter(RewriteSession& session, const SelectionGroup& grou
     , m_groupIndex(groupIndex)
     , m_firstCreatedValue(static_cast<uint32_t>(session.m_function.values.size()))
     , m_firstSlowPathValue(static_cast<uint32_t>(session.m_slowPathValues.size()))
+    , m_firstCreatedBlock(static_cast<uint32_t>(session.m_function.blocks.size()))
 {
     RELEASE_ASSERT(!group.members.isEmpty() && group.members.last().value == group.root);
     m_originals.reserveInitialCapacity(group.members.size());
@@ -80,14 +81,14 @@ void GroupRewriter::updateRootIndex()
 
 void GroupRewriter::flushInsertions()
 {
-    builder().applyInsertions();
+    m_session.applyInsertions();
     updateRootIndex();
 }
 
 void GroupRewriter::reopenBlock(BlockID block)
 {
-    function().at(block).terminator = Terminator { };
-    analyses().didChangeControlFlow();
+    function().edit(block).terminator = Terminator { };
+    analyses().didChangeControlFlow(singleElementSpan(block));
     builder().moveToEndOf(block);
 }
 
@@ -101,12 +102,12 @@ ValueID GroupRewriter::insert(Value&& value)
 Value& GroupRewriter::replaceRoot(Opcode opcode)
 {
     RELEASE_ASSERT(!m_expansion);
-    Value& value = function().at(m_group.root);
+    Value& value = function().edit(m_group.root);
     value.become(opcode);
     m_didReplaceRoot = true;
     if (branchesOf(opcode) == Branches::No)
-        unfuseBranch(function().at(state().block).terminator, m_group.root);
-    analyses().didChangeValues();
+        unfuseBranch(function().edit(state().block).terminator, m_group.root);
+    analyses().didChangeBlock(state().block);
     return value;
 }
 
@@ -125,14 +126,14 @@ void GroupRewriter::replaceWithResult(ValueID member, ValueID producer, uint32_t
         return;
     }
 
-    Value& value = function().at(member);
+    Value& value = function().edit(member);
     value.become(Opcode::ResultAt);
     value.setOperand(OperandIndex::ResultAt::results, producer);
     value.setIndex(index);
-    analyses().didChangeValues();
+    analyses().didChangeBlock(state().block);
     if (member == m_group.root) {
         m_didReplaceRoot = true;
-        unfuseBranch(function().at(state().block).terminator, m_group.root);
+        unfuseBranch(function().edit(state().block).terminator, m_group.root);
         return;
     }
 
@@ -143,12 +144,12 @@ void GroupRewriter::replaceWithResult(ValueID member, ValueID producer, uint32_t
 void GroupRewriter::replaceWithValue(ValueID member, ValueID replacement)
 {
     RELEASE_ASSERT(findMember(m_group, member) && !m_group.hasSlowPath);
-    m_session.m_substitution.replace(member, replacement);
+    m_session.substitution().replace(member, replacement);
     m_session.m_isErasedFromBlock.set(member.index());
     m_session.m_needsCompaction = true;
     if (member == m_group.root) {
         m_didReplaceRoot = false;
-        unfuseBranch(function().at(state().block).terminator, m_group.root);
+        unfuseBranch(function().edit(state().block).terminator, m_group.root);
     }
 
     TypeID previous = function().at(member).type;
@@ -175,7 +176,7 @@ void GroupRewriter::retype(ValueID id)
 {
     SelectionContext& context = m_session.m_context;
     TypeArena& types = context.pass().types;
-    Value& value = function().at(id);
+    Value& value = function().edit(id);
     TypeID computed = resultTypeOf(context.program(), function(), value, types);
     if (computed == value.type)
         return;
@@ -189,7 +190,7 @@ void GroupRewriter::finishMembers()
     for (const GroupMember& member : m_group.members.span().first(m_group.members.size() - 1)) {
         m_session.m_isErasedFromBlock.set(member.value.index());
         bool isListedAgain = resultsAfterRoot != m_session.m_resultsAfter.end() && resultsAfterRoot->value.contains(member.value);
-        bool hasSuccessor = m_session.m_substitution.resolve(member.value) != member.value;
+        bool hasSuccessor = m_session.m_substitution && m_session.m_substitution->resolve(member.value) != member.value;
         RELEASE_ASSERT(!member.isUsedOutside || isListedAgain || hasSuccessor);
         m_session.m_needsCompaction |= !isListedAgain;
         if (isListedAgain)
@@ -205,9 +206,8 @@ void GroupRewriter::finishCreatedValues()
 
     for (uint32_t index = m_firstCreatedValue; index < function().values.size(); ++index) {
         ValueID id(index);
-        Value& value = function().at(id);
-        value.setWritten({ });
-        value.setPrediction({ });
+        Value& value = function().edit(id);
+        value.setExpected({ });
         if (value.opcode == Opcode::Parameter)
             narrowedValues.append(id);
     }
@@ -241,21 +241,34 @@ void GroupRewriter::checkCreatedEntries()
         checkReplacement(effects, function(), ReplacementSite { functionID, block, { } }, function().at(block).terminator, replaced, diagnostics);
 }
 
+// A rule writes the operands of the root behind replaceRoot(), and those of what it has appended behind the builder's call.
+void GroupRewriter::didChangeOwnBlocks()
+{
+    UseLists* useLists = analyses().updatingUseLists();
+    if (!useLists)
+        return;
+    useLists->didChangeBlock(state().block);
+    for (size_t index = m_firstCreatedBlock; index < function().blocks.size(); ++index)
+        useLists->didChangeBlock(BlockID(index));
+}
+
 void GroupRewriter::finish()
 {
     RELEASE_ASSERT(!std::exchange(m_didFinish, true));
     finishMembers();
+    didChangeOwnBlocks();
 
     if (m_duplicatedTerminator) {
-        function().at(m_expansion->continuation).terminator = Terminator { };
-        analyses().didChangeControlFlow();
+        function().edit(m_expansion->continuation).terminator = Terminator { };
+        analyses().didChangeControlFlow(singleElementSpan(m_expansion->continuation));
         m_session.m_needsCompaction = true;
     }
 
     if (isRootListed())
         retype(m_group.root);
     finishCreatedValues();
-    checkCreatedEntries();
+    if (m_session.m_checksEffects)
+        checkCreatedEntries();
 }
 
 } } } // namespace JSC::AOT::Typed

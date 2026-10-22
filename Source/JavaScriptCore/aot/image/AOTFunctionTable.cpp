@@ -37,11 +37,6 @@ struct FrameShape {
     uint16_t frameSizeInUnits;
 };
 
-struct FrameTable {
-    Vector<ImageFrame> frames;
-    Vector<uint32_t> frameOf;
-};
-
 } // anonymous namespace
 
 static bool checkFunctionLimit(const LinkedFunctions& functions, const Vector<EntryAlias>& aliases, BuildContext& context)
@@ -80,13 +75,15 @@ static FrameShape frameShapeOf(const FrameDescription& frame)
     }
     if (frame.calleeSaveRegisters.registerCount()) {
         ptrdiff_t offset = frame.calleeSaveRegisters.at(0).offset();
-        RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))) && -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
+        RELEASE_ASSERT((offset < 0 || (!offset && !frame.hasFrameRecord)) && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))) && -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
         shape.calleeSavesStart = static_cast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
     }
+    if (!frame.hasFrameRecord)
+        shape.calleeSavesStart |= ImageFrame::hasNoFrameRecordBit;
     return shape;
 }
 
-static std::optional<FrameTable> collectFrames(const LinkedFunctions& functions, BuildContext& context)
+std::optional<FrameTable> collectFrames(const LinkedFunctions& functions, BuildContext& context)
 {
     Vector<FrameShape> shapes(functions.size());
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
@@ -113,24 +110,25 @@ static std::optional<FrameTable> collectFrames(const LinkedFunctions& functions,
     return result;
 }
 
-static ImageFunction encodeFunction(const CompiledCode& code, uint32_t callSites, uint32_t sideTables, uint32_t frame, bool hasPositions)
+static ImageFunction encodeFunction(const CompiledCode& code, bool hasCallSites, uint32_t sideTables, bool hasPositions)
 {
     const SiteDescription& sites = code.sites;
     OptionSet<ImageFunctionFlag> flags;
     flags.set(ImageFunctionFlag::HasInlineFrames, sites.hasEncodedInlineFrames());
     flags.set(ImageFunctionFlag::HasHandlers, !sites.handlers.isEmpty());
     flags.set(ImageFunctionFlag::HasFrameMaps, !sites.frameMapWords.isEmpty());
-    flags.set(ImageFunctionFlag::HasCallSites, !!callSites);
+    flags.set(ImageFunctionFlag::HasCallSites, hasCallSites);
     flags.set(ImageFunctionFlag::HasPositions, hasPositions && !sites.positions.isEmpty());
-    return ImageFunction::create(sideTables, code.function.index(), frame, flags);
+    flags.set(ImageFunctionFlag::SpillsArgumentRegisters, code.frame.spillsArgumentRegisters);
+    return ImageFunction::create(sideTables, code.function.index(), flags);
 }
 
-static Vector<ImageFunction> encodeFunctions(const FunctionTableInputs& inputs, const Vector<uint32_t>& frameOf, const ParallelLoops& loops)
+static Vector<ImageFunction> encodeFunctions(const FunctionTableInputs& inputs, const ParallelLoops& loops)
 {
     const LinkedFunctions& functions = inputs.functions;
     Vector<ImageFunction> records(functions.size());
     forEachIndexInParallel(loops, functions.size(), [&](unsigned position) {
-        records[position] = encodeFunction(functions[position], inputs.callSiteOffsets[position], inputs.sideTableOffsets[position], frameOf[position], inputs.hasPositions);
+        records[position] = encodeFunction(functions[position], !inputs.callSites[position].isEmpty(), inputs.sideTableOffsets[position], inputs.hasPositions);
     });
     return records;
 }
@@ -158,18 +156,6 @@ static Vector<uint32_t> encodeCodeGranules(const CodeLayout& layout)
         codeGranules.append(function);
     }
     return codeGranules;
-}
-
-static Vector<uint32_t> encodeFunctionsByID(const CodeIndex& index, size_t numberOfFunctions)
-{
-    Vector<uint32_t> positions;
-    positions.reserveInitialCapacity(numberOfFunctions);
-    for (uint32_t function = 0; function <= ImageFunction::functionMask && positions.size() < numberOfFunctions; ++function) {
-        if (std::optional<uint32_t> position = index.indexOf(FunctionID(function)))
-            positions.append(*position);
-    }
-    RELEASE_ASSERT(positions.size() == numberOfFunctions);
-    return positions;
 }
 
 static uint32_t bodyPositionOf(const EntryAlias& alias, const CodeIndex& index)
@@ -218,15 +204,17 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, co
     const LinkedFunctions& functions = inputs.functions;
     const Vector<uint32_t>& starts = inputs.layout.bodyStarts;
     const ClosureFunctionRangeData& range = inputs.programTables.closureFunctions;
-    std::span<const FunctionKindData> kinds = inputs.programTables.functionKinds();
-    RELEASE_ASSERT(range.omittedWordCount <= range.first && range.first <= range.end && range.end <= kinds.size());
+    RELEASE_ASSERT(range.omittedWordCount <= range.first && range.first <= range.end && range.end <= inputs.programTables.numberOfFunctions());
     Vector<uint64_t> words(FillWith { }, range.end, 0);
     auto setWord = [&](FunctionID function, uint32_t codeOffset, const EntryDescription& entry) {
         uint32_t index = function.index();
         if (index >= words.size())
             return;
         RELEASE_ASSERT(codeOffset && !(codeOffset % imageFunctionAlignment));
-        words[index] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, index, closureWordFlags(kinds[index]));
+        ClosureWord::Flags flags = closureWordFlags(inputs.programTables.kindOfFunction(index));
+        flags.borrowedArguments = entry.borrowedArguments;
+        flags.endsItsTailCalls = entry.endsItsTailCalls;
+        words[index] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, index, flags);
     };
     forEachIndexInParallel(loops, functions.size(), [&](unsigned position) {
         const CompiledCode& code = functions[position];
@@ -241,40 +229,86 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, co
     return words;
 }
 
+static void encodeMethodTable(const FunctionTableInputs& inputs, const ParallelLoops& loops, EncodedFunctionTables& tables)
+{
+    std::span<const uint32_t> entries = inputs.programTables.methodTableFunctions();
+    std::span<const uint32_t> lookups = inputs.programTables.methodLookupFunctions();
+    if (entries.empty())
+        return;
+
+    uint32_t numberOfFunctions = 0;
+    for (std::span<const uint32_t> list : { entries, lookups }) {
+        for (uint32_t function : list) {
+            if (function != MethodTableData::noFunction)
+                numberOfFunctions = std::max(numberOfFunctions, function + 1);
+        }
+    }
+    Vector<uint32_t> offsetOfFunction(FillWith { }, numberOfFunctions, 0u);
+    auto setOffset = [&](FunctionID function, uint32_t codeOffset) {
+        if (function.index() >= offsetOfFunction.size())
+            return;
+        RELEASE_ASSERT(codeOffset && !(codeOffset % codeOffsetUnit));
+        offsetOfFunction[function.index()] = codeOffset / codeOffsetUnit;
+    };
+    const LinkedFunctions& functions = inputs.functions;
+    const Vector<uint32_t>& starts = inputs.layout.bodyStarts;
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned position) {
+        const CompiledCode& code = functions[position];
+        setOffset(code.function, starts[position] + code.body.primaryEntryOffset());
+    });
+    forEachIndexInParallel(loops, inputs.aliases.size(), [&](unsigned index) {
+        const EntryAlias& alias = inputs.aliases[index];
+        uint32_t body = bodyPositionOf(alias, inputs.index);
+        setOffset(alias.function, starts[body] + alias.innerEntryOffset().value_or(functions[body].body.primaryEntryOffset()));
+    });
+
+    auto offsetsOf = [&](std::span<const uint32_t> list) {
+        return Vector<uint32_t>(list.size(), [&](size_t index) {
+            if (list[index] == MethodTableData::noFunction)
+                return 0u;
+            RELEASE_ASSERT(offsetOfFunction[list[index]]);
+            return offsetOfFunction[list[index]];
+        });
+    };
+    tables.methodTable = bytesOf(offsetsOf(entries));
+    tables.methodLookups = bytesOf(offsetsOf(lookups));
+}
+
 EncodedFunctionTables encodeFunctionTables(const FunctionTableInputs& inputs, BuildContext& context)
 {
     const LinkedFunctions& functions = inputs.functions;
     const CodeLayout& layout = inputs.layout;
     const ParallelLoops& loops = context.parallelLoops();
     RELEASE_ASSERT(layout.bodyStarts.size() == functions.size());
-    RELEASE_ASSERT(inputs.callSiteOffsets.size() == functions.size() && inputs.sideTableOffsets.size() == functions.size());
+    RELEASE_ASSERT(inputs.callSites.size() == functions.size() && inputs.sideTableOffsets.size() == functions.size());
 
     if (!checkFunctionLimit(functions, inputs.aliases, context))
         return { };
 
-    std::optional<FrameTable> frameTable;
     EncodedFunctionTables tables;
     runTasksInParallel(loops, {
-        [&] {
-            frameTable = collectFrames(functions, context);
-            if (frameTable)
-                tables.functions = bytesOf(encodeFunctions(inputs, frameTable->frameOf, loops));
-        },
+        [&] { tables.functions = bytesOf(encodeFunctions(inputs, loops)); },
         [&] { tables.functionStarts = encodeFunctionStarts(layout.bodyStarts); },
         [&] { tables.codeGranules = bytesOf(encodeCodeGranules(layout)); },
-        [&] { tables.functionsByID = bytesOf(encodeFunctionsByID(inputs.index, functions.size())); },
         [&] { tables.innerEntries = bytesOf(encodeInnerEntries(inputs, loops)); },
         [&] { tables.closureWords = bytesOf(encodeClosureWords(inputs, loops)); },
+        [&] { encodeMethodTable(inputs, loops, tables); },
     });
-    if (!frameTable)
-        return { };
-    tables.frames = bytesOf(frameTable->frames);
     return tables;
 }
 
+// Only a report of the sampling profiler asks, so the order by FunctionID is made when the first one does.
 std::optional<uint32_t> Image::imageFunctionOf(FunctionID id) const
 {
-    std::span functionsByID = section<uint32_t>(ImageSection::FunctionsByID);
+    std::call_once(m_didSortFunctionsByID, [&] {
+        m_functionsByID = Vector<uint32_t>(header().counts.functions, [](size_t function) {
+            return static_cast<uint32_t>(function);
+        });
+        std::ranges::sort(m_functionsByID, { }, [&](uint32_t function) {
+            return this->function(function).function();
+        });
+    });
+    std::span<const uint32_t> functionsByID = m_functionsByID.span();
     auto found = std::ranges::lower_bound(functionsByID, id.index(), { }, [&](uint32_t function) -> uint32_t {
         return this->function(function).function();
     });

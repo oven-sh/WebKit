@@ -10,25 +10,29 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCompileOptions.h"
+#include "AOTFlowResults.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRegExpSummary.h"
 #include "AOTStringUses.h"
+#include "AOTWasmModules.h"
 #include "YarrFlags.h"
 #include <array>
 #include <span>
 
 namespace JSC { namespace AOT {
 
-StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Program& program)
+StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Program& program, const Typed::FlowResults& flow)
 {
     return {
         .useWideReferences = recorded.useWideReferences(),
         .forceGCSlowPaths = recorded.has(TestingSwitch::ForceGCSlowPaths),
-        .imageHasWebAssembly = !program.webAssemblyModules.isEmpty(),
+        .imageHasWebAssembly = mayHaveWebAssemblyModules(program),
+        .hasOneInstance = flow.programInstances() == Typed::ProgramInstances::AtMostOne,
         .validates = recorded.validates,
+        .countsAllocations = recorded.countsBranches,
         .layoutSeed = recorded.layoutSeed,
         .targetFeatures = CPUFeatureSet::fromBits(static_cast<uint32_t>(recorded.targetFeatures)),
     };

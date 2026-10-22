@@ -16,8 +16,9 @@ function f0 name="hashTableBuiltins" parameters=[{type=Map}, {type=Set}, {type=a
     v10 = CallBuiltin v1, v2 overload=SetPrototypeAdd/0
     v11 = CallBuiltin v0 overload=MapPrototypeSize/0
     v12 = CallBuiltin v1 overload=SetPrototypeSize/0
-    v13 = NewArray v5, v6, v7, v8, v9, v10, v11, v12 contents=anything
-    Return v13
+    v13 = CallBuiltin -, v4 overload=Set/1
+    v14 = NewArray v5, v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Return v14
 }
 # FORMS: function f0
 # FORMS-NEXT: v5 {{*}} NewMap {{*}} Whole
@@ -28,6 +29,7 @@ function f0 name="hashTableBuiltins" parameters=[{type=Map}, {type=Set}, {type=a
 # FORMS-NEXT: v10 {{*}} SetAdd {{*}} Whole
 # FORMS-NEXT: v11 {{*}} MapSize {{*}} Whole
 # FORMS-NEXT: v12 {{*}} SetSize {{*}} Whole
+# FORMS-NEXT: v13 {{*}} NewSet {{*}} Whole
 # CHECK-LABEL: function f0 name="hashTableBuiltins"
 # CHECK-NOT: CallBuiltin
 # CHECK-NOT: TryCallInline

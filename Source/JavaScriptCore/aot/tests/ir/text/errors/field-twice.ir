@@ -1,4 +1,4 @@
-# A payload field written twice
+# The same payload field twice
 # RUN: print
 # DIAGNOSTIC: IRTextError
 

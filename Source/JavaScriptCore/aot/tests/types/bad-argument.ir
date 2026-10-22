@@ -6,7 +6,6 @@
 # RUN(INTERSECT): intersect t0
 # RUN(CAST): cast t0 t1
 # RUN(CANONICAL): canonical -
-# RUN(PROOFS): without-proofs all
 # RUN(REP): rep Cell
 # RUN(MEMBERS): members L0
 # RUN(TRUTHY): truthy t0
@@ -30,8 +29,6 @@
 # CAST-NOT: argument
 # CANONICAL: error: bad argument -
 # CANONICAL-NOT: no function
-# PROOFS: error: bad argument all
-# PROOFS-NOT: no function
 # REP: error: bad argument Cell
 # REP-NOT: no function
 # MEMBERS: error: bad argument L0

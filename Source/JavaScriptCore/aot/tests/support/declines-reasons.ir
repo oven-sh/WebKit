@@ -1,7 +1,7 @@
 # the reason of a decline is a member of the enum of its kind, two reasons at one place are two declines, and a decline without a reason prints none
 # OPTIONS: report=Declines
-# RUN: losses declines HotCallNotResolved,f0,at=0:1,reason=TooManyCallees GeneratorLoopNotFused,f0,at=0:2,reason=InlineDepth GeneratorLoopNotFused,f0,at=0:3 ArrayChainNotFused,f0,at=0:4,reason=CallbacksInterfere StringBuilderNotCreated,f0,at=0:5,count=3,reason=TooFewAppends AllocationNotSunk,f0,at=0:6,reason=Thrown+Returned TypedResultNotSelected,f0,at=0:7,reason=NoTarget LoopNotVersioned,f0,at=0:8,reason=NotCounted LoopNotVersioned,f0,at=0:8,reason=SeveralEntries LoopNotVersioned,f0,at=0:8,reason=NotCounted LoopPollNotStripMined,f0,at=0:9,reason=SeveralPolls LoopBoundNotClamped,f0,at=0:10,reason=BoundNotInvariant ResultNodeInterpreted,f0,at=0:11,reason=TooManyNodes HotCallNotInlined,f0,at=0:12,count=2 LoopNotVersioned,f0,at=0:13,reason=None LoopNotVersioned,f0,at=0:14 AllocationNotSunk,f0,at=0:15 GeneratorLoopNotFused,f0,at=0:16,reason=None
-# CHECK: declines 17 of 18 added
+# RUN: losses declines HotCallNotResolved,f0,at=0:1,reason=TooManyCallees GeneratorLoopNotFused,f0,at=0:2,reason=InlineDepth GeneratorLoopNotFused,f0,at=0:3 ArrayChainNotFused,f0,at=0:4,reason=CallbacksInterfere StringBuilderNotCreated,f0,at=0:5,count=3,reason=TooFewAppends AllocationNotSunk,f0,at=0:6,reason=Thrown+Returned TypedResultNotSelected,f0,at=0:7,reason=NoTarget LoopNotVersioned,f0,at=0:8,reason=NotCounted LoopNotVersioned,f0,at=0:8,reason=SeveralEntries LoopNotVersioned,f0,at=0:8,reason=NotCounted LoopBoundNotClamped,f0,at=0:10,reason=BoundNotInvariant ResultNodeInterpreted,f0,at=0:11,reason=TooManyNodes HotCallNotInlined,f0,at=0:12,count=2 LoopNotVersioned,f0,at=0:13,reason=None LoopNotVersioned,f0,at=0:14 AllocationNotSunk,f0,at=0:15 GeneratorLoopNotFused,f0,at=0:16,reason=None
+# CHECK: declines 16 of 17 added
 # CHECK-NEXT: HotCallNotResolved f0 - 0:1 None [0] reason=TooManyCallees
 # CHECK-NEXT: GeneratorLoopNotFused f0 - 0:2 None [0] reason=InlineDepth
 # CHECK-NEXT: GeneratorLoopNotFused f0 - 0:3 None [0] reason=Unknown
@@ -11,7 +11,6 @@
 # CHECK-NEXT: TypedResultNotSelected f0 - 0:7 None [0] reason=NoTarget
 # CHECK-NEXT: LoopNotVersioned f0 - 0:8 None [0] reason=SeveralEntries
 # CHECK-NEXT: LoopNotVersioned f0 - 0:8 None [0] reason=NotCounted
-# CHECK-NEXT: LoopPollNotStripMined f0 - 0:9 None [0] reason=SeveralPolls
 # CHECK-NEXT: LoopBoundNotClamped f0 - 0:10 None [0] reason=BoundNotInvariant
 # CHECK-NEXT: ResultNodeInterpreted f0 - 0:11 None [0] reason=TooManyNodes
 # CHECK-NEXT: HotCallNotInlined f0 - 0:12 None [2]

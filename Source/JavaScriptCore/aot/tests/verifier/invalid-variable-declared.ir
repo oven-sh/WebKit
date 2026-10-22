@@ -1,11 +1,10 @@
-# the declared position of a variable: the prediction overlaps the type, and an int32 promise has an int32 type
+# the declared position of a variable: an int32 promise has an int32 type, and an expected type may be any type
 # FORM: AsRead
 # RUN: verify
-# DIAGNOSTIC: InvalidVariable 2
+# DIAGNOSTIC: InvalidVariable 1
 
-variable g0 name="badPrediction" module=m0 declared={type=number predicted=string}
-variable g1 name="goodPrediction" module=m0 declared={type=number|string predicted=string}
-variable g2 name="badPromise" module=m0 declared={type=number flags=[IsInt32Promise]}
-variable g3 name="goodPromise" module=m0 declared={type=i32 flags=[IsInt32Promise]}
+variable g0 name="badPromise" module=m0 declared={type=number flags=[IsInt32Promise]}
+variable g1 name="goodPromise" module=m0 declared={type=i32 flags=[IsInt32Promise]}
+variable g2 name="goodExpectedType" module=m0 declared={type=string flags=[IsExpected]}
 module m0 path="main" displayPath="main"
 entry module=m0

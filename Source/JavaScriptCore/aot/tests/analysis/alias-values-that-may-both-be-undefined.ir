@@ -1,0 +1,25 @@
+# function f(a: A, b: B, c: A): the type of a reference lists undefined and null beside the layout. Two values that may both be undefined are no one piece of memory:
+# whether they alias is asked of the objects that they may be.
+# FORM: Prepared
+# RUN: analyses aliases function=f0 alias-values=v0,v1,v2,v3,v4
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="A" fields=[{key="flags" declared={type=number} flags=[IsRequired]}]
+layout L1 name="B" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+function f0 name="alias" parameters=[{type=undefined|null|L0}, {type=undefined|null|L1}, {type=undefined|null|L0}, {type=undefined|number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L1, v2: undefined|null|L0, v3: undefined|number, v4: anything):
+    Return v4
+}
+# CHECK: function f0
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v0 v1 alias: NoAlias
+# CHECK-NEXT: v0 v2 alias: MayAlias
+# CHECK-NEXT: v0 v3 alias: NoAlias
+# CHECK-NEXT: v0 v4 alias: MayAlias
+# CHECK-NEXT: v1 v2 alias: NoAlias
+# CHECK-NEXT: v1 v3 alias: NoAlias
+# CHECK-NEXT: v1 v4 alias: MayAlias
+# CHECK-NEXT: v2 v3 alias: NoAlias
+# CHECK-NEXT: v2 v4 alias: MayAlias
+# CHECK-NEXT: v3 v4 alias: NoAlias

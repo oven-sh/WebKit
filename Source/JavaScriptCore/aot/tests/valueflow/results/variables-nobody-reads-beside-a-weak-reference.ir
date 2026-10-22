@@ -1,0 +1,41 @@
+# A weak reference somewhere in the program says nothing about a variable that nobody reads as a value: a declaration that is only called, or never read, still says so,
+# and so does a variable that holds an object. The function that the weak reference takes is read as a value
+# RUN: valueflow-apply
+# CHECK: variable g0 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled isUnchangedDuringActivation=true}
+# CHECK: variable g1 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true}
+# CHECK: variable g2 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation isUnchangedDuringActivation=true}
+# CHECK: variable g3 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead reads=NeverRead}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="called" module=m0 declared={type=anything} initialization=Function function=f1
+variable g1 name="unread" module=m0 declared={type=anything} initialization=Function function=f2
+variable g2 name="watched" module=m0 declared={type=anything} initialization=Function function=f3
+variable g3 name="holder" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Held" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0
+    v2 = GetModuleVariable variable=g2
+    v3 = Builtin builtin=WeakRef
+    v4 = Construct v3, -, v2
+    v5 = NewObject -, v1 layout=L0 fields=[0]
+    PutModuleVariable v5 variable=g3
+    Return v4
+}
+function f1 name="called" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}
+function f2 name="unread" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    Return v0
+}
+function f3 name="watched" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    Return v0
+}

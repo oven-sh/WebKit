@@ -20,53 +20,55 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     DefineMethod v4, v5 layout=L0 key="bump"
     v7 = FinishClass v4 layout=L0
     v8 = Construct v7, -, v2
-    v9 = PropGet v8 key="bump"
-    v10 = Call v9, v8, v2 calleeKey="bump"
-    v11 = CallDirect v8, v2 function=f5
-    v12 = CallDirect v8, v2 function=f3
-    v13 = Builtin builtin=ObjectKeys
-    v14 = Call v13, -, v8
-    PutModuleVariable v14 variable=g0
-    v16 = NewClosure function=f6
-    v17 = NewClass v16 layout=L1
-    v18 = FinishClass v17 layout=L1
-    v19 = Construct v18, -, v2
-    v20 = Call v13, -, v19
-    PutModuleVariable v20 variable=g0
-    v22 = NewClosure function=f7
-    v23 = NewClass v22 layout=L2
-    v24 = FinishClass v23 layout=L2
-    v25 = Construct v24, -, v2
-    PutModuleVariable v25 variable=g0
+    v9 = Convert v8 declared={type=L0}
+    v10 = PropGet v9 key="bump"
+    v11 = Call v10, v9, v2 calleeKey="bump"
+    v12 = CallDirect v9, v2 function=f5
+    v13 = CallDirect v9, v2 function=f3
+    v14 = Builtin builtin=ObjectKeys
+    v15 = Call v14, -, v9
+    PutModuleVariable v15 variable=g0
+    v17 = NewClosure function=f6
+    v18 = NewClass v17 layout=L1
+    v19 = FinishClass v18 layout=L1
+    v20 = Construct v19, -, v2
+    v21 = Call v14, -, v20
+    PutModuleVariable v21 variable=g0
+    v23 = NewClosure function=f7
+    v24 = NewClass v23 layout=L2
+    v25 = FinishClass v24 layout=L2
+    v26 = Construct v25, -, v2
+    PutModuleVariable v26 variable=g0
     Return
 }
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = CallDirect v3, v1 function=f2
-    PropSet v3, v1 key="b"
-    v6 = CallDirect v3, v1 function=f3
-    PropSet v3, v1 key="b"
-    Return v3
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4, v1 function=f2
+    PropSet v4, v1 key="b"
+    v7 = CallDirect v4, v1 function=f3
+    PropSet v4, v1 key="b"
+    Return v4
 }
-function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
     PropDefine v0, v1 key="a"
     Return
 }
 function f3 name="helper" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     PropSet v0, v1 key="c"
     Return
 }
 function f4 name="bump" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     PropSet v0, v1 key="a"
     Return
 }
 function f5 name="later" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: number):
+  b0(v0: L0, v1: number):
     PropSet v0, v1 key="b"
     PropSet v0, v1 key="c"
     Return
@@ -88,21 +90,22 @@ function f7 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] par
 }
 # The second store of "b" finds the slot filled. Nothing here proves that, so it tests the slot like the first.
 # CHECK-LABEL: function f1 name="Counter"
-# CHECK: PutSlotOrAdd v3, -, v1 key="b"
-# CHECK: PutSlotOrAdd v3, -, v1 key="b"
+# CHECK: PutSlotOrAdd v4, -, v1 key="b"
+# CHECK: PutSlotOrAdd v4, -, v1 key="b"
 # CHECK-LABEL: function f2 name="initialize"
-# CHECK: PutSlotOrAdd v0, -, v1 key="a"
+# CHECK: PutSlotOrAdd [[initialized]], -, v1 key="a"
 # The helper also runs on a finished object. It is one function, so its store tests the slot each time.
 # CHECK-LABEL: function f3 name="helper"
-# CHECK: PutSlotOrAdd v0, -, v1 key="c"
+# CHECK: PutSlotOrAdd [[helped]], -, v1 key="c"
 # CHECK-LABEL: function f4 name="bump"
 # CHECK: PutSlot v0, -, v1 key="a"
 # CHECK-LABEL: function f5 name="later"
-# CHECK: PutSlot v0, -, v1 key="b"
-# CHECK-NEXT: PutSlot v0, -, v1 key="c"
+# CHECK: PutSlot [[finished]], -, v1 key="b"
+# CHECK-NEXT: PutSlot [[finished]], -, v1 key="c"
 # CHECK-LABEL: function f6 name="Listed"
-# CHECK: = NewObject v2, v1 layout=L1 fields=[0]
-# CHECK-NEXT: PutSlot v3, -, v1 key="x"
-# CHECK-NEXT: PutSlotOrAdd v3, -, v1 key="y"
+# CHECK: v3:{{*}}= NewObject v2, v1 layout=L1 fields=[0]
+# CHECK-NEXT: [[listed]]: L1 = AssumeType v3 castType=L1
+# CHECK-NEXT: PutSlot [[listed]], -, v1 key="x"
+# CHECK-NEXT: PutSlotOrAdd [[listed]], -, v1 key="y"
 # CHECK-LABEL: function f7 name="NeverEnumerated"
-# CHECK: PutSlot v3, -, v1 key="x"
+# CHECK: PutSlot [[neverEnumerated]], -, v1 key="x"

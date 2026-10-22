@@ -54,7 +54,6 @@ private:
         case AbstractHeap::ModuleVariables:
         case AbstractHeap::EnvironmentFields:
         case AbstractHeap::OrderWords:
-        case AbstractHeap::ShapeEpoch:
         case AbstractHeap::MemberGuards:
         case AbstractHeap::PrototypeLinks:
         case AbstractHeap::Elements:
@@ -90,7 +89,7 @@ Effects effectsOfAccessForm(const Program& program, Opcode operation, PropertyKe
 {
     AccessFormBuilder builder(program, key, receivers);
     forEachDeclaredEffect(operation, builder);
-    return builder.effects();
+    return withDeclaredKindOfThrow(operation, builder.effects());
 }
 
 bool isArrayIndex(const Type& position)
@@ -126,9 +125,26 @@ static constexpr Effects effectsOfLookupByKey = [] {
     return effects;
 }();
 
+// ResolveAccesses leaves such a lookup on the arm where the slot of a field holds no value of the field's type. It does no more than the read in whose place it stands.
+std::optional<Effects> effectsOfLookupFromBase(const Program& program, const Function& function, const Value& value)
+{
+    if (value.opcode != Opcode::SuperGet || !value.key())
+        return std::nullopt;
+    const Type& base = program.typeOf(function, value.operand(OperandIndex::SuperGet::base));
+    if (!provenLookupUnderAnyKey(program, base).isComplete)
+        return std::nullopt;
+    Effects effects = effectsOfLookupByKey;
+    effects.mayThrow |= base.mayBeUndefinedOrNull();
+    return effects;
+}
+
 static_assert(effectsOfLookupByNumberName.isSubsetOf(declaredBoundOf(Opcode::GetArrayElement)));
 static_assert(effectsOfLookupByNumberName.isSubsetOf(declaredBoundOf(Opcode::HasArrayElement)));
 static_assert(declaredBoundOf(Opcode::PutArrayElement).writes.contains(AbstractHeap::NamedProperties));
+
+// DefinesProperty of the schema, which is all that the row of DefineGetter says.
+static constexpr Effects effectsOfDefinition = declaredBoundOf(Opcode::DefineGetter);
+static_assert(!effectsOfDefinition.mayRunOtherCode());
 
 static bool takesAnyNumberAsArrayPosition(Opcode operation)
 {
@@ -201,7 +217,7 @@ static bool mayThrowOnReceiver(const Program& program, const Function& function,
     return program.typeOf(function, value.operand(*receiver)).mayBeUndefinedOrNull();
 }
 
-static void describeAccessors(const Program& program, const Function& function, const Value& value, std::span<const FunctionID> accessors, EffectDescription& description)
+static void describeAccessors(const Program& program, const Value& value, std::span<const FunctionID> accessors, EffectDescription& description)
 {
     if (accessors.empty())
         return;
@@ -210,20 +226,8 @@ static void describeAccessors(const Program& program, const Function& function, 
     for (FunctionID accessor : accessors)
         callees.add(accessor);
 
-    std::optional<uint8_t> receiver = receiverOf(value.opcode);
-    TypeID thisValue = receiver ? function.at(value.operand(*receiver)).type : TypeTable::anything;
-    if (interpretedOf(value.opcode) != Interpretation::Store) {
-        describeCallees(program, callees, BuiltinCallMode::Get, { thisValue, std::span<const TypeID> { } }, description);
-        return;
-    }
-
-    std::optional<unsigned> stored = OperandPosition::value(value.opcode);
-    if (!stored) {
-        describeCallees(program, callees, BuiltinCallMode::Set, { thisValue, std::nullopt }, description);
-        return;
-    }
-    TypeID storedType = function.at(value.operand(*stored)).type;
-    describeCallees(program, callees, BuiltinCallMode::Set, { thisValue, std::span<const TypeID> { &storedType, 1 } }, description);
+    bool stores = interpretedOf(value.opcode) == Interpretation::Store;
+    describeCallees(program, callees, stores ? BuiltinCallMode::Set : BuiltinCallMode::Get, description);
 }
 
 void describeAccess(const Program& program, const Function& function, const Value& value, const Effects& declared, EffectDescription& description)
@@ -236,7 +240,8 @@ void describeAccess(const Program& program, const Function& function, const Valu
         return;
     }
 
-    ProvenAccess proven = provenAccessOf(program, function, value);
+    ProvenAccess storage;
+    const ProvenAccess& proven = provenAccessOf(program, function, value, storage);
     if (!proven.isComplete) {
         describeBound(declared, description);
         if (!declared.mayCallUnknownCode)
@@ -254,7 +259,9 @@ void describeAccess(const Program& program, const Function& function, const Valu
     }
     if (proven.isLookupByKey)
         description.addOwn(effectsOfLookupByKey);
-    describeAccessors(program, function, value, proven.accessors.span(), description);
+    if (proven.definesOwnProperty)
+        description.addOwn(effectsOfDefinition);
+    describeAccessors(program, value, proven.accessors.span(), description);
     if (!proven.methods.isEmpty() || !proven.builtins.isEmpty() || proven.mayFindNothing) {
         // A row that looks at own properties only declares no read of the prototype links.
         Effects walk = effectsOfChainWalk(program, proven.key);

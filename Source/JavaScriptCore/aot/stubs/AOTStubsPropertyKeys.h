@@ -17,37 +17,52 @@
 namespace JSC { namespace AOT {
 
 enum class SecondReceiver : uint8_t { FirstResult, FirstReceiver, Other };
-enum class CheckedReadKind : uint8_t { Number, Boolean, String, Array };
 enum class FoundMethod : uint8_t { Callable, Cell };
 enum class PresenceQuestion : uint8_t { In, HasOwn };
 enum class FreeNameRead : uint8_t { Read, TypeOf };
 enum class InstanceOfOperand : uint8_t { Constructor, Prototype };
 enum class CreatedFields : uint8_t { One, OneOutOfLine, Run };
+enum class CreatedFieldsAtPlace : uint8_t { One, Run };
 enum class SlotExit : uint8_t { Miss, Uncached };
 enum class SlotFinisher : uint8_t { ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage };
 
 constexpr StubKey getById() { return StubKey(StubFamily::GetById); }
 constexpr StubKey getByIdAfterFrontProbe() { return StubKey(StubFamily::GetByIdAfterFrontProbe); }
 constexpr StubKey getByIdHashed() { return StubKey(StubFamily::GetByIdHashed); }
+constexpr StubKey getByIdOfSilentSlot() { return StubKey(StubFamily::GetByIdOfSilentSlot); }
+constexpr StubKey getByIdOfNarrowCellInExtension() { return StubKey(StubFamily::GetByIdOfNarrowCellInExtension); }
+constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmptySlot); }
+constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
+constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey getByIdChain() { return StubKey(StubFamily::GetByIdChain); }
 constexpr StubKey getByIdPair(SecondReceiver receiver) { return StubKey(StubFamily::GetByIdPair).withForm(static_cast<uint8_t>(receiver)); }
 constexpr StubKey getByIdIsTruthy() { return StubKey(StubFamily::GetByIdIsTruthy); }
 constexpr StubKey getByIdEqualsLiteral(unsigned literalLength) { return StubKey(StubFamily::GetByIdEqualsLiteral).withCount(literalLength); }
-constexpr StubKey getByIdChecked(CheckedReadKind kind) { return StubKey(StubFamily::GetByIdChecked).withForm(static_cast<uint8_t>(kind)); }
 constexpr StubKey findMethodById(FoundMethod found) { return StubKey(StubFamily::FindMethodById).withForm(static_cast<uint8_t>(found)); }
 constexpr StubKey findMethodByIdAtSite() { return StubKey(StubFamily::FindMethodByIdAtSite); }
 constexpr StubKey callMethodById(unsigned numberOfArguments) { return StubKey(StubFamily::CallMethodById).withCount(numberOfArguments); }
 constexpr StubKey tryGetSuperById() { return StubKey(StubFamily::TryGetSuperById); }
+constexpr StubKey getSuperBaseOfClass() { return StubKey(StubFamily::GetSuperBaseOfClass); }
 constexpr StubKey getFreeName(FreeNameRead read) { return StubKey(StubFamily::GetFreeName).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey instanceOf(InstanceOfOperand operand) { return StubKey(StubFamily::InstanceOf).withForm(static_cast<uint8_t>(operand)); }
 constexpr StubKey getExtraPropertyFrontEnd() { return StubKey(StubFamily::GetExtraPropertyFrontEnd); }
 
+// The operands: the object and the token of the evaluation of the class. The immediate: the index of the field in the record of the layout that declares it.
+constexpr StubKey privateGet() { return StubKey(StubFamily::PrivateGet); }
+
 constexpr StubKey putById(PutMode mode) { return StubKey(StubFamily::PutById).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAfterFrontProbe(PutMode mode) { return StubKey(StubFamily::PutByIdAfterFrontProbe).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdHashed(PutMode mode) { return StubKey(StubFamily::PutByIdHashed).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey putByIdBehindFieldTable(PutMode mode) { return StubKey(StubFamily::PutByIdBehindFieldTable).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAtSite(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
+// For a caller that knows that the slot lies in the cell and holds any value as it is, and that the type of the field is that of any value.
+constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
+constexpr StubKey putByIdOnce(PutMode mode) { return StubKey(StubFamily::PutByIdOnce).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey createKnownField(PutMode mode) { return StubKey(StubFamily::CreateKnownField).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey putBooleanOrDoubleField(PutMode mode) { return StubKey(StubFamily::PutBooleanOrDoubleField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey setFreeName(PutMode mode)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(mode != PutMode::Define);
@@ -56,6 +71,8 @@ constexpr StubKey setFreeName(PutMode mode)
 constexpr StubKey putExtraPropertyFrontEnd() { return StubKey(StubFamily::PutExtraPropertyFrontEnd); }
 
 constexpr StubKey didCreateField(CreatedFields fields) { return StubKey(StubFamily::DidCreateField).withForm(static_cast<uint8_t>(fields)); }
+constexpr StubKey didCreateFieldAtPlace(CreatedFieldsAtPlace fields) { return StubKey(StubFamily::DidCreateFieldAtPlace).withForm(static_cast<uint8_t>(fields)); }
+constexpr StubKey rememberKeyOrderStep() { return StubKey(StubFamily::RememberKeyOrderStep); }
 
 constexpr StubKey getByValCached() { return StubKey(StubFamily::GetByValCached); }
 constexpr StubKey getByValCachedCells() { return StubKey(StubFamily::GetByValCachedCells); }
@@ -169,12 +186,12 @@ static_assert(!static_cast<uint8_t>(PutMode::Strict) && static_cast<uint8_t>(Put
 static_assert(PackedSlot::maxName == (1u << secondNameShift) - 1);
 static_assert([] {
     for (StubKey lastFormKey : {
-        getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdAtSite(), inById(PresenceQuestion::HasOwn),
-        getByIdChain(), getByIdPair(SecondReceiver::Other), getByIdIsTruthy(), getByIdEqualsLiteral(1), getByIdChecked(CheckedReadKind::Array),
-        findMethodById(FoundMethod::Cell), findMethodByIdAtSite(), callMethodById(0), tryGetSuperById(),
+        getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfNarrowCellInExtension(), getByIdBehindFieldTable(), getByIdAtSite(), getLengthAtSite(), inById(PresenceQuestion::HasOwn),
+        getByIdChain(), getByIdPair(SecondReceiver::Other), getByIdIsTruthy(), getByIdEqualsLiteral(1),
+        findMethodById(FoundMethod::Cell), findMethodByIdAtSite(), callMethodById(0), tryGetSuperById(), getSuperBaseOfClass(),
         getFreeName(FreeNameRead::TypeOf), setFreeName(PutMode::Sloppy), instanceOf(InstanceOfOperand::Prototype),
-        putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdAtSite(PutMode::Define),
-        getExtraPropertyFrontEnd(), putExtraPropertyFrontEnd(), didCreateField(CreatedFields::Run),
+        putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define),
+        getExtraPropertyFrontEnd(), putExtraPropertyFrontEnd(), didCreateField(CreatedFields::Run), didCreateFieldAtPlace(CreatedFieldsAtPlace::Run),
         getByValCached(), getByValCachedCells(), inByValCached(PresenceQuestion::HasOwn), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
     }) {
         if (!exists(lastFormKey) || lastFormKey.form() + 1u != descriptorOf(lastFormKey.family()).numberOfForms)

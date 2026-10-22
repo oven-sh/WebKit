@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNarrowFieldTypes.h"
+#include "AOTTypeClosure.h"
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <compare>
@@ -27,16 +29,69 @@ Reader::Reader(Program& program, IRForm form, BuildContext& build)
 bool Reader::run()
 {
     return readHeader()
-        && readStrings()
-        && readPropertyKeys()
-        && computeDeclaredMembers()
-        && computeFunctionFamilies()
+        && readNamesAndFamilies()
         && readTypes()
-        && computePromisedTypes()
-        && readProgramLists()
-        && readLayouts()
-        && readFunctions()
+        && readListsLayoutsAndFunctions()
         && finishProgram();
+}
+
+bool Reader::readNamesAndFamilies()
+{
+    const auto& options = m_build.options();
+    if (options.verifiesProgram || options.isVerifyOnly())
+        return readStrings() && readPropertyKeys() && computeFamilies();
+
+    bool hasStrings = false;
+    bool hasPropertyKeys = false;
+    bool hasFamilies = false;
+    runTasksInParallel(m_build.parallelLoops(), {
+        [&] {
+            hasFamilies = computeFamilies();
+        },
+        [&] {
+            hasStrings = readStrings();
+        },
+        [&] {
+            hasPropertyKeys = readPropertyKeys();
+        },
+    });
+    return hasStrings && hasPropertyKeys && hasFamilies;
+}
+
+bool Reader::readListsLayoutsAndFunctions()
+{
+    // Whoever collects the layouts that a body names asks for the kinds of type sites.
+    if (!readListInParallel(m_sections.typeSites, m_program.typeSites))
+        return false;
+    // In a later form the text says which layouts are allocated.
+    if (m_form == IRForm::AsRead)
+        m_layoutUses.emplace(m_program, numberOfRecords<LayoutID>(), m_build.parallelLoops().width());
+    if (m_preparesFunctionsForTyping) {
+        m_longExpectations.emplace(m_program, m_build.parallelLoops());
+        m_constructorsOfTaggedFamilies.ensureSize(m_sections.functions.size());
+        for (const TaggedFamily& family : m_program.taggedFamilies) {
+            uint32_t constructor = m_sections.layouts[family.maker.index()].constructor;
+            if (constructor < m_sections.functions.size())
+                m_constructorsOfTaggedFamilies.quickSet(constructor);
+        }
+        m_program.setReaderPreparedFunctionsForTyping();
+    }
+
+    const auto& options = m_build.options();
+    if (options.verifiesProgram || options.isVerifyOnly())
+        return readProgramLists() && readLayouts() && reportFirst(readFunctions().span());
+
+    bool hasListsAndLayouts = false;
+    Vector<Failure> failuresInFunctions;
+    runTasksInParallel(m_build.parallelLoops(), {
+        [&] {
+            hasListsAndLayouts = readProgramLists() && readLayouts();
+        },
+        [&] {
+            failuresInFunctions = readFunctions();
+        },
+    });
+    return hasListsAndLayouts && reportFirst(failuresInFunctions.span());
 }
 
 bool Reader::report(const InternalError& error)
@@ -73,7 +128,7 @@ template<typename WireRecord, typename Record, size_t inlineCapacity>
 bool Reader::readListInParallel(std::span<const WireRecord> records, Vector<Record, inlineCapacity>& result)
 {
     constexpr size_t recordsPerChunk = 64;
-    result.grow(records.size());
+    growFromEmpty(m_build.parallelLoops(), result, records.size());
     auto failures = readInChunks(m_build.parallelLoops(), records.size(), recordsPerChunk, [&](uint32_t index) {
         RecordChecker checker(*this, inRecord(index));
         read(checker, records[index], result[index]);
@@ -98,6 +153,8 @@ bool Reader::readHeader()
     if (!sections)
         return report({ .kind = InternalErrorKind::SectionOutOfBounds, .count = sections.error() });
     m_sections = *sections;
+    if (!m_program.ownsBuffer())
+        m_sections.bytes = m_program.copyBorrowedBytes(m_sections.bytes, m_build.parallelLoops());
     return true;
 }
 
@@ -119,7 +176,8 @@ bool Reader::readStrings()
     if (!reportFirst(failures.span()))
         return false;
 
-    auto result = m_program.strings.initialize(m_builtins, m_build.parallelLoops(), WTF::move(strings));
+    auto whatIsSaid = m_preparesFunctionsForTyping ? StringTable::WhatIsSaidOfStrings::IsBelieved : StringTable::WhatIsSaidOfStrings::IsChecked;
+    auto result = m_program.strings.initialize(m_builtins, m_build.parallelLoops(), WTF::move(strings), whatIsSaid);
     switch (result.error) {
     case StringTable::Error::None:
         return true;
@@ -150,8 +208,7 @@ bool Reader::readPropertyKeys()
 
 bool Reader::readProgramLists()
 {
-    bool isValid = readListInParallel(m_sections.typeSites, m_program.typeSites)
-        && readList(m_sections.expectedResults, m_program.expectedResults)
+    bool isValid = readList(m_sections.expectedResults, m_program.expectedResults)
         && readListInParallel(m_sections.variables, m_program.variables)
         && readListInParallel(m_sections.modules, m_program.modules)
         && readList(m_sections.moduleFailures, m_program.moduleFailures)
@@ -177,9 +234,15 @@ bool Reader::finishProgram()
 {
     if (!setConstructedClasses())
         return false;
+    if (m_layoutUses) {
+        markUnallocatedLayouts(m_program, m_build.parallelLoops(), *m_layoutUses);
+        m_layoutUses.reset();
+        expectFieldsFilledWithOtherData(m_program, m_build);
+    }
+    m_program.indexClasses();
+    m_program.indexNames(m_build.parallelLoops());
     setParameterSiteFunctions();
     m_program.setForm(m_form);
-    allocateTaggedLayouts(m_program, m_build, m_taggedFamilies.span());
     return true;
 }
 
@@ -199,12 +262,18 @@ bool Reader::setConstructedClasses()
 
 void Reader::setParameterSiteFunctions()
 {
-    for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+    struct SiteOfFunction {
+        TypeSiteID site;
+        FunctionID function;
+    };
+    Vector<SiteOfFunction> sites = collectInParallel<SiteOfFunction>(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index, Vector<SiteOfFunction>& sites) {
         for (const DeclaredType& parameter : m_program.functions[index].parameters) {
             if (parameter.site)
-                m_program.typeSites[parameter.site.index()].function = FunctionID(index);
+                sites.append({ parameter.site, FunctionID(index) });
         }
-    }
+    });
+    for (SiteOfFunction site : sites)
+        m_program.typeSites[site.site.index()].function = site.function;
 }
 
 void RecordChecker::requireAscendingStrings(StringID previous, StringID next)
@@ -215,25 +284,10 @@ void RecordChecker::requireAscendingStrings(StringID previous, StringID next)
     requireAscending(compareProgramStrings(strings[previous], strings[next]));
 }
 
+// The build proves an int32 promise, and nothing is proven about a position that nothing checks.
 void RecordChecker::didRead(DeclaredType& declared)
 {
-    if (m_reader.form() != IRForm::AsRead)
-        return;
-    if (!m_reader.promisesType(declared))
-        declared.flags.remove(PositionFlags::IsInt32Promise);
-    TypeID promised = m_reader.promisedTypeOf(declared);
-    if (promised == declared.type)
-        return;
-    // A written type licenses a TypeError at a typed read. An int32 promise licenses none: it is a prediction that the build has proven.
-    TypeID& asWritten = declared.flags.contains(PositionFlags::IsInt32Promise) ? declared.predicted : declared.written;
-    if (!asWritten)
-        asWritten = declared.type;
-    declared.type = promised;
-}
-
-void RecordChecker::didRead(ClaimSource& source)
-{
-    require(source.kind() != ClaimSource::Kind::None, InternalErrorKind::UnknownVariantCase);
+    require(!declared.flags.containsAll({ PositionFlags::IsExpected, PositionFlags::IsInt32Promise }), InternalErrorKind::InvalidDeclaredType);
 }
 
 void RecordChecker::didRead(PropertyKey& key)
@@ -252,13 +306,34 @@ void RecordChecker::didRead(LayoutRecord& record)
     record.ownFieldCount = static_cast<uint32_t>(record.fields.size());
 }
 
-std::unique_ptr<Program> Program::read(std::span<const uint8_t> bytes, BuildContext& build)
+enum class ReadFor : bool { Itself, Pipeline };
+
+static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, ReadFor purpose)
 {
     auto program = makeUnique<Program>(BuiltinTable::singleton());
     program->borrowBuffer(bytes);
-    if (!Reader(*program, IRForm::AsRead, build).run())
+    Reader reader(*program, IRForm::AsRead, build);
+    reader.setExternalFunctionBodies(externalBodies);
+    // Whoever looks at the program as it was read, or between the first steps of the read stage, sees those steps one by one.
+    const auto& options = build.options();
+    bool isLookedAtAsRead = build.validates() || options.verifiesProgram || options.isVerifyOnly() || options.logging.dumpedPass || options.logging.dumps(IRForm::AsRead);
+    if (purpose == ReadFor::Pipeline && !isLookedAtAsRead)
+        reader.setPreparesFunctionsForTyping();
+    if (!reader.run())
         return nullptr;
+    program->copyBorrowedLineStarts(build.parallelLoops());
+    program->borrowBuffer({ });
     return program;
+}
+
+std::unique_ptr<Program> readProgramWithExternalBodies(std::span<const uint8_t> bytes, const ExternalFunctionBodies* externalBodies, BuildContext& build)
+{
+    return readProgram(bytes, externalBodies, build, ReadFor::Pipeline);
+}
+
+std::unique_ptr<Program> Program::read(std::span<const uint8_t> bytes, BuildContext& build)
+{
+    return readProgram(bytes, nullptr, build, ReadFor::Itself);
 }
 
 } } } // namespace JSC::AOT::Typed

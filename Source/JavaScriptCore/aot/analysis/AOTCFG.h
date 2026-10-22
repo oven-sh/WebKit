@@ -43,10 +43,19 @@ struct ProgramPoint {
     friend constexpr bool operator==(const ProgramPoint&, const ProgramPoint&) = default;
 };
 
-const Target& targetOf(const Function&, Edge);
-Target& targetOf(Function&, Edge);
-ProgramPoint pointBeforeTerminatorOf(const Function&, BlockID);
-uint32_t numberOfOutgoingEdges(const Block&);
+template<typename BlockType>
+ALWAYS_INLINE auto& findTarget(BlockType& block, Edge edge)
+{
+    if (!edge.isHandlerEdge()) [[likely]]
+        return block.terminator.targets[edge.targetIndex];
+    RELEASE_ASSERT(block.handler);
+    return *block.handler;
+}
+
+inline const Target& targetOf(const Function& function, Edge edge) { return findTarget(function.at(edge.from), edge); }
+inline Target& editTarget(Function& function, Edge edge, OptionSet<BlockEdit> edits = { BlockEdit::Edges, BlockEdit::Arguments }) { return findTarget(function.edit(edge.from, edits), edge); }
+inline ProgramPoint pointBeforeTerminatorOf(const Function& function, BlockID block) { return { block, static_cast<uint32_t>(function.at(block).values.size()) }; }
+inline uint32_t numberOfOutgoingEdges(const Block& block) { return static_cast<uint32_t>(block.terminator.targets.size()) + (block.handler ? 1 : 0); }
 Edge outgoingEdgeAt(const Function&, BlockID, uint32_t successorIndex);
 uint32_t indexAfterCaughtValues(const Function&, const Block&);
 bool returnsToCaller(TerminatorKind);
@@ -112,21 +121,52 @@ public:
 
     explicit CFG(const Function&);
 
+    bool describes(const Function&) const;
+
     BlockID root() const { return entryBlock; }
     unsigned numNodes() const { return m_numberOfBlocks; }
     unsigned index(BlockID block) const { return block.index(); }
-    BlockID node(unsigned index) const { return m_isReachable.get(index) ? BlockID(index) : BlockID(); }
+    BlockID node(unsigned index) const { return isReachable(BlockID(index)) ? BlockID(index) : BlockID(); }
     template<typename T> Map<T> newMap() const { return Map<T>(m_numberOfBlocks); }
 
-    std::span<const BlockID> successors(BlockID block) const { return entriesOf(block, m_successors, m_firstSuccessor); }
-    std::span<const BlockID> predecessors(BlockID block) const { return entriesOf(block, m_predecessors, m_firstPredecessor); }
-    std::span<const Edge> incomingEdges(BlockID block) const { return entriesOf(block, m_incomingEdges, m_firstIncomingEdge); }
+    ALWAYS_INLINE std::span<const BlockID> successors(BlockID block) const
+    {
+        RELEASE_ASSERT(block.index() < m_numberOfBlocks);
+        const uint32_t* first = m_firstSuccessor + block.index();
+        return { m_successors + first[0], first[1] - first[0] };
+    }
+    std::span<const BlockID> successorsOfAllBlocks() const { return { m_successors, m_firstSuccessor[m_numberOfBlocks] }; }
+    std::span<const uint32_t> firstSuccessorOfBlocks() const { return { m_firstSuccessor, static_cast<size_t>(m_numberOfBlocks) + 1 }; }
+    std::span<const BlockID> predecessors(BlockID block) const
+    {
+        if (m_firstPredecessor.isEmpty())
+            computePredecessors();
+        RELEASE_ASSERT(block.index() < m_numberOfBlocks);
+        std::span<const uint32_t> first = m_firstPredecessor.span();
+        uint32_t begin = first[block.index()];
+        return m_predecessors.span().subspan(begin, first[block.index() + 1] - begin);
+    }
+    ALWAYS_INLINE std::span<const Edge> incomingEdges(BlockID block) const
+    {
+        if (!m_firstIncomingEdge) [[unlikely]]
+            computeIncomingEdges();
+        RELEASE_ASSERT(block.index() < m_numberOfBlocks);
+        const uint32_t* first = m_firstIncomingEdge + block.index();
+        return { m_incomingEdges + first[0], first[1] - first[0] };
+    }
     std::optional<Edge> singleIncomingEdge(BlockID) const;
     bool hasHandler(BlockID block) const { return m_hasHandler.get(block.index()); }
     bool hasHandlers() const { return !m_hasHandler.isEmpty(); }
+    bool hasCycle() const { return m_hasCycle; }
+    uint32_t largestNumberOfSuccessors() const
+    {
+        if (m_largestNumberOfSuccessors == notReached) [[unlikely]]
+            findLargestNumberOfSuccessors();
+        return m_largestNumberOfSuccessors;
+    }
 
-    bool isReachable(BlockID block) const { return m_isReachable.get(block.index()); }
-    std::span<const BlockID> reversePostOrder() const { return m_reversePostOrder.span(); }
+    bool isReachable(BlockID block) const { return block.index() < m_numberOfBlocks && m_reversePostOrderIndex[block.index()] != notReached; }
+    std::span<const BlockID> reversePostOrder() const { return m_reversePostOrder; }
     uint32_t reversePostOrderIndex(BlockID block) const
     {
         RELEASE_ASSERT(isReachable(block));
@@ -140,29 +180,30 @@ public:
     void dump(PrintStream&) const;
 
 private:
-    void computeReversePostOrder(const Function&);
-    void computeEdges(const Function&);
-    void computePredecessors();
+    static constexpr uint32_t notReached = UINT32_MAX;
+    static constexpr uint32_t beingWalked = UINT32_MAX - 1;
 
-    template<typename T>
-    std::span<const T> entriesOf(BlockID block, const Vector<T>& entries, const Vector<uint32_t>& firstEntry) const
-    {
-        RELEASE_ASSERT(block.index() < m_numberOfBlocks);
-        uint32_t begin = firstEntry[block.index()];
-        return entries.subspan(begin, firstEntry[block.index() + 1] - begin);
-    }
+    void readSuccessors(const Function&);
+    void computeReversePostOrder();
+    void forgetUnreachableBlocks(uint32_t numberOfUnreachableBlocks);
+    void computeIncomingEdges() const;
+    void computePredecessors() const;
+    void findLargestNumberOfSuccessors() const;
 
     unsigned m_numberOfBlocks { 0 };
-    BitVector m_isReachable;
+    bool m_hasCycle { false };
+    mutable uint32_t m_largestNumberOfSuccessors { notReached };
     BitVector m_hasHandler;
-    Vector<BlockID> m_reversePostOrder;
-    Vector<uint32_t> m_reversePostOrderIndex;
-    Vector<BlockID> m_successors;
-    Vector<uint32_t> m_firstSuccessor;
-    Vector<Edge> m_incomingEdges;
-    Vector<uint32_t> m_firstIncomingEdge;
-    Vector<BlockID> m_predecessors;
-    Vector<uint32_t> m_firstPredecessor;
+    Vector<uint32_t, 88> m_tables;
+    const uint32_t* m_firstSuccessor { nullptr };
+    const BlockID* m_successors { nullptr };
+    const uint32_t* m_reversePostOrderIndex { nullptr };
+    std::span<const BlockID> m_reversePostOrder;
+    mutable Vector<uint32_t, 72> m_incomingTables;
+    mutable const uint32_t* m_firstIncomingEdge { nullptr };
+    mutable const Edge* m_incomingEdges { nullptr };
+    mutable Vector<BlockID> m_predecessors;
+    mutable Vector<uint32_t> m_firstPredecessor;
 };
 
 uint32_t numberOfSharedExplicitParameters(const Function&, const CFG&, BlockID);

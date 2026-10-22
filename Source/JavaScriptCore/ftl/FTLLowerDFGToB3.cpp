@@ -8010,8 +8010,7 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.appendTo(next);
             } else {
                 LBasicBlock checkLength = m_out.newBlock();
-                static_assert(FirstTypedArrayType + NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView - 1 == Float64ArrayType);
-                m_out.branch(isCellWithType(base, JSTypeRange { static_cast<JSType>(FirstTypedArrayType), Float64ArrayType }, std::nullopt), unsure(checkLength), rarely(bailout));
+                m_out.branch(isTypedArrayView(base), unsure(checkLength), rarely(bailout));
 
                 m_out.appendTo(checkLength);
                 LValue length = typedArrayLength(base, arrayMode.mayBeResizableOrGrowableSharedTypedArray(), std::nullopt, baseEdge);
@@ -24998,7 +24997,6 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock isRopeBlock = m_out.newBlock();
         LBasicBlock isSubstringBlock = m_out.newBlock();
         LBasicBlock substringBlock = m_out.newBlock();
-        LBasicBlock substringOf8BitBaseBlock = m_out.newBlock();
         LBasicBlock concatRopeBlock = m_out.newBlock();
         LBasicBlock resolveConcatRopeBlock = m_out.newBlock();
         LBasicBlock resolvedConcatRopeBlock = m_out.newBlock();
@@ -25038,7 +25036,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.testIsZeroPtr(fiber0, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
             unsure(concatRopeBlock), unsure(substringBlock));
 
-        m_out.appendTo(substringBlock, substringOf8BitBaseBlock);
+        m_out.appendTo(substringBlock, concatRopeBlock);
         LValue packedLengthAndBaseLower = m_out.load64(string, m_heaps.JSRopeString_fiber1);
         LValue packedBaseUpperAndOffset = m_out.load64(string, m_heaps.JSRopeString_fiber2);
         LValue substringBase = m_out.bitOr(
@@ -25046,13 +25044,6 @@ IGNORE_CLANG_WARNINGS_END
             m_out.shl(m_out.bitAnd(packedBaseUpperAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
         LValue substringOffset = m_out.lShr(packedBaseUpperAndOffset, m_out.constInt32(16));
         LValue baseImpl = m_out.loadPtr(substringBase, m_heaps.JSString_value);
-        m_out.branch(
-            m_out.testIsZero32(
-                m_out.load32(baseImpl, m_heaps.StringImpl_hashAndFlags),
-                m_out.constInt32(StringImpl::flagIs8Bit())),
-            rarely(concatRopeBlock), usually(substringOf8BitBaseBlock));
-
-        m_out.appendTo(substringOf8BitBaseBlock, concatRopeBlock);
         ValueFromBlock substringBuffer = m_out.anchor(
             m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset));
         ValueFromBlock substringLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));

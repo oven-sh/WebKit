@@ -24,7 +24,7 @@ function f1 name="alsoLogs" parameters=[{type=number}] results=[{type=undefined}
 # CHECK: ReturnCall v4 requirement=Allowed
 function f2 name="logs" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
   b0(v0: f0, v1: anything, v2: anything):
-    v3 = Claim v2 castType=number
+    v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f0
     ReturnCall v4 requirement=Allowed
 }
@@ -47,7 +47,7 @@ function f4 name="calledByHost" parameters=[{type=number}] results=[{type=undefi
 # CHECK-NEXT: Return v4
 function f5 name="calledByHost" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
   b0(v0: f4, v1: anything, v2: anything):
-    v3 = Claim v2 castType=number
+    v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f4
     ReturnCall v4 requirement=Allowed
 }

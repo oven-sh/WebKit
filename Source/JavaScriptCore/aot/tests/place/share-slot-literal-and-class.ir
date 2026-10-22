@@ -1,16 +1,16 @@
 # An object literal and a class lie below one interface. The numbers of one are narrower than those of the other, and the class never gives "label" anything but undefined.
 # Each name gets the representation that holds what both layouts hold, and one location. The cell of Full has no byte to spare, so its "end" stays as narrow as it is
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses references=narrow
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
 # STATISTIC: SharedSlots = 3
 # STATISTIC: SharesRefused = 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="Range" fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=undefined|string}}]
-layout L1 kind=Instance name="Span" constructor=f1 fields=[{key="owner" declared={type=string} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=undefined|string}}] supertypes=[L0]
-layout L2 name="Full" fields=[{key="end" declared={type=number} flags=[IsRequired]}, {key="small" declared={type=number} flags=[IsRequired]}, {key="middle" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="wide" declared={type=number} flags=[IsRequired]}]
+layout L0 name="Range" fields=[{key="pos" declared={type=int[0, 255]} flags=[IsRequired]}, {key="end" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string}}]
+layout L1 kind=Instance name="Span" constructor=f1 fields=[{key="owner" declared={type=string} flags=[IsRequired]}, {key="end" declared={type=int[0, 255]} flags=[IsRequired]}, {key="pos" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string}}] supertypes=[L0]
+layout L2 name="Full" fields=[{key="end" declared={type=int[0, 255]} flags=[IsRequired]}, {key="small" declared={type=int[0, 255]} flags=[IsRequired]}, {key="middle" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="wide" declared={type=number} flags=[IsRequired]}]
 variable g0 name="range" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="rangeOrFull" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -48,8 +48,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v30 = PropGet v15 key="wide"
     Return
 }
-function f1 name="Span" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=string}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: number, v3: number):
+function f1 name="Span" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=string}, {type=int[0, 65535]}, {type=int[0, 255]}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: int[0, 65535], v3: int[0, 255]):
     v4 = GetConstructPrototype v0 layout=L1
     v5 = Undefined
     v6 = NewObject v4, v1, v3, v2, v5 layout=L1 fields=[0, 1, 2, 3]

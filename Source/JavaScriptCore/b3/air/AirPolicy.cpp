@@ -85,10 +85,13 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_SET(frame, mayPushSpillsAtFrameSetup);
     AIR_POLICY_PRINT_IF_SET(frame, ordersSlotsByUse);
     AIR_POLICY_PRINT_IF_SET(frame, prefersStackPointerAddresses);
+    AIR_POLICY_PRINT_IF_SET(frame, mayOmitFrameRecord);
+    AIR_POLICY_PRINT_IF_DIFFERENT(frame, maxBytesAddedWithoutFrameRecord);
 
     AIR_POLICY_PRINT_IF_SET(layout, movesBlocksWithoutSuccessorsToEnd);
     AIR_POLICY_PRINT_IF_SET(layout, placesRareBlocksInGaps);
     AIR_POLICY_PRINT_IF_SET(layout, placesRareBlocksAfterGuards);
+    AIR_POLICY_PRINT_IF_SET(layout, makesGapsForRareBlocks);
     AIR_POLICY_PRINT_IF_SET(layout, ordersBlocksByEdgeFrequency);
     AIR_POLICY_PRINT_IF_SET(layout, recordsRareCodeStart);
     AIR_POLICY_PRINT_IF_SET(layout, mergesIdenticalBlocks);
@@ -100,6 +103,7 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_SET(peepholes, reusesConditionFlags);
     AIR_POLICY_PRINT_IF_SET(peepholes, pairsMemoryAccesses);
     AIR_POLICY_PRINT_IF_SET(peepholes, resequencesMovesBeforePatches);
+    AIR_POLICY_PRINT_IF_SET(peepholes, emitsShufflesInPairOrder);
     AIR_POLICY_PRINT_IF_DIFFERENT(peepholes, trapReach);
 }
 

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPlacement.h"
+#include "AOTStubsPropertyKeys.h"
 #include "JSCJSValueInlines.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -30,7 +31,10 @@ void PrivateAccessEmitter::generatePrivateGet(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
     CellPointer token = in<CellPointer>(value->tokenOperand());
-    define(value, callOperation<Boxed>(value, RuntimeOperation::PrivateGet, { object, token, indexInLayoutRecord(value) }));
+    std::optional<uint16_t> index = m_placement.slot(value->layout(), value->field()).indexInLayoutRecord;
+    if (!index)
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+    define(value, Boxed(callStub(value, privateGet(), { object.value(), token.value() }, { .immediate = index.value_or(0) }).first));
 }
 
 void PrivateAccessEmitter::generatePrivateSet(const ValueContext& value)

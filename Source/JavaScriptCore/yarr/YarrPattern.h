@@ -647,7 +647,7 @@ struct TermChain {
 struct CharacterSetWithRanges;
 
 struct YarrPattern {
-    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, PatternAnalysis = PatternAnalysis::Performed);
+    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, PatternAnalysis = PatternAnalysis::Skipped);
     JS_EXPORT_PRIVATE ~YarrPattern();
 
     void resetForReparsing()
@@ -749,6 +749,7 @@ struct YarrPattern {
     bool m_hasNamedCaptureGroups : 1;
     bool m_saveInitialStartValue : 1;
     ExecutionMode m_executionMode { ExecutionMode::IncludeSubpatterns };
+    PatternAnalysis m_analysis { PatternAnalysis::Skipped };
     OptionSet<Flags> m_flags;
     SpecificPattern m_specificPattern { SpecificPattern::None };
     std::unique_ptr<CharacterSetWithRanges> m_specificCharacterClass;
@@ -775,7 +776,7 @@ struct YarrPattern {
     String m_atom;
 
 private:
-    ErrorCode compile(StringView patternString, PatternAnalysis);
+    ErrorCode compile(StringView patternString);
 };
 
     void indentForNestingLevel(PrintStream&, unsigned);

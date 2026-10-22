@@ -25,10 +25,17 @@ public:
 
     bool contains(UniquedStringImpl* uid) const final { return m_first->contains(uid) || m_second->contains(uid); }
     String messageOfRefusal(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->messageOfRefusal(uid); }
+    String messageOfRefusedDeletion(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->messageOfRefusedDeletion(uid); }
     String messageOfRefusedPrototype() const final
     {
         String message = m_first->messageOfRefusedPrototype();
         return message.isNull() ? m_second->messageOfRefusedPrototype() : message;
+    }
+    bool refusalAlwaysThrows() const final { return m_first->refusalAlwaysThrows() || m_second->refusalAlwaysThrows(); }
+    void willWrite(UniquedStringImpl* uid) const final
+    {
+        m_first->willWrite(uid);
+        m_second->willWrite(uid);
     }
 
 private:

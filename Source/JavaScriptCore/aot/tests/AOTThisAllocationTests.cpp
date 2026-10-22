@@ -41,10 +41,10 @@ namespace JSC { namespace AOT {
 std::span<const NativeTest> thisAllocationTests();
 
 static constexpr ASCIILiteral enumeratedClassesText = R"IR(layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}, {key="label" declared={type=anything}}, {key="word" declared={type=anything}}, {key="list" declared={type=anything}}]
-layout L1 kind=Instance name="Derived" module=m0 predictedBase=L0 constructor=f2 fields=[{key="y" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f2 fields=[{key="y" declared={type=anything}}] flags=[HasHeritage]
 layout L2 kind=Instance name="Unrelated" module=m0 constructor=f3 fields=[{key="u" declared={type=anything}}]
 layout L3 kind=Instance name="Point" module=m0 constructor=f4 fields=[{key="px" declared={type=anything}}, {key="py" declared={type=anything}}] flags=[IsConstructorFunction]
-layout L4 kind=Instance name="Below" module=m0 predictedBase=L3 constructor=f5 fields=[{key="z" declared={type=anything}}] flags=[HasHeritage]
+layout L4 kind=Instance name="Below" module=m0 base=L3 constructor=f5 fields=[{key="z" declared={type=anything}}] flags=[HasHeritage]
 variable g0 name="Point" module=m0 declared={type=function} initialization=Function function=f4
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -114,7 +114,7 @@ function f3 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[
     PropSet v2, v3 key="u" mode=Strict
     Return v2
 }
-function f4 name="Point" flags=[HasThis] thisType={type=anything predicted=L3} results=[{type=anything}] {
+function f4 name="Point" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] {
   b0(v0: anything):
     v1 = Integer integer=4
     PropSet v0, v1 key="py" mode=Strict
@@ -133,8 +133,8 @@ function f5 name="Below" kind=DerivedConstructor flags=[HasNewTarget, TakesCalle
 )IR"_s;
 
 static constexpr ASCIILiteral neverEnumeratedClassesText = R"IR(layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}, {key="on" declared={type=anything}}]
-layout L1 kind=Instance name="Derived" module=m0 predictedBase=L0 constructor=f2 fields=[{key="y" declared={type=anything}}] flags=[HasHeritage]
-layout L2 kind=Instance name="Other" module=m0 predictedBase=L0 constructor=f3 fields=[{key="z" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f2 fields=[{key="y" declared={type=anything}}] flags=[HasHeritage]
+layout L2 kind=Instance name="Other" module=m0 base=L0 constructor=f3 fields=[{key="z" declared={type=anything}}] flags=[HasHeritage]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -230,7 +230,7 @@ function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
@@ -393,7 +393,7 @@ static Object* allocate(LoadedProgram& program, ASCIILiteral className, std::ini
     }
     Object* object = Object::create(vm, objects.structures.objectStructure(vm, layout.shape), layout, layout.size, orderWord);
     for (const ListedField& field : listed)
-        AOT_TEST_CHECK(object->store(vm, fieldNamed(program, layout, field.name), field.value));
+        AOT_TEST_CHECK(object->store(vm, fieldNamed(program, layout, field.name), AcceptedValue::provenAtBuildTime(field.value)));
     return object;
 }
 
@@ -589,7 +589,9 @@ static void checkPlaceholderIsNotDefinedOnTheInstance(LoadedProgram& program)
     for (ASCIILiteral className : { "Base"_s, "Derived"_s, "Other"_s }) {
         const LayoutData& layout = classNamed(program, className);
         AOT_TEST_CHECK(!layout.extraPropertiesSlot());
-        AOT_TEST_CHECK(!fieldNamed(program, layout, "x"_s).canLeaveSlot() && !layouts.fieldAccepts(fieldNamed(program, layout, "x"_s), jsNumber(0)));
+        // A slot has the kind of the one number that is stored, and no state for anything else.
+        const FieldData& x = fieldNamed(program, layout, "x"_s);
+        AOT_TEST_CHECK(!x.canLeaveSlot() && !layouts.fieldAccepts(x, jsNumber(0.5)) && !layouts.fieldAccepts(x, jsUndefined()));
         AOT_TEST_CHECK(!fieldNamed(program, layout, "on"_s).canLeaveSlot() && !layouts.fieldAccepts(fieldNamed(program, layout, "on"_s), jsBoolean(false)));
     }
 
@@ -610,11 +612,12 @@ static void checkOneStoreByNameFillsSlotWithoutAbsentState(LoadedProgram& progra
     VM& vm = program.vm();
     DeferGC deferGC(vm);
     const FieldData& field = fieldNamed(program, classNamed(program, "Derived"_s), "y"_s);
-    AOT_TEST_CHECK(field.flags & fieldIsStoredOnce && !field.canLeaveSlot());
+    // The run time is told that a field is stored once only where the slot has an absent state: the one store of any other field is a store like any other.
+    AOT_TEST_CHECK(!(field.flags & fieldIsStoredOnce) && !field.canLeaveSlot());
     JSObject* prototype = prototypeOf(program, "Derived"_s);
     Object* instance = instanceFor(program, allocate(program, "Base"_s, { }), prototype);
 
-    AOT_TEST_CHECK(!instance->tryStore(vm, field, jsNumber(3)) && !instance->tryStore(vm, field, jsUndefined()));
+    AOT_TEST_CHECK(!instance->tryStore(vm, field, jsNumber(0.5)) && !instance->tryStore(vm, field, jsUndefined()));
     storeByName(program, instance, "y"_s, jsNumber(2));
     AOT_TEST_CHECK(isInstanceOf(program, instance, "Derived"_s, prototype));
     AOT_TEST_CHECK(valueOf(program, instance, "y"_s) == jsNumber(2));
@@ -624,7 +627,7 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const ShellRun& run, s
 {
     Wire::CompileOptions options = makeDefaultCompileOptions();
     if (run.scriptUsesWhatTheProgramCreates)
-        AOT_TEST_CHECK(!applyOptionWord(options, "admit=RuntimeCode"_s));
+        AOT_TEST_CHECK(!applyOptionWord(options, "admit=Inspector"_s));
     for (ASCIILiteral word : optionWords)
         AOT_TEST_CHECK(!applyOptionWord(options, word));
     BuildContext build(options);

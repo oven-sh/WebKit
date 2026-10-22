@@ -144,7 +144,7 @@ function f11 name="validate" role=Library parameters=[{type=anything}] results=[
   b0(v0: anything):
     Return v0
 }
-function f12 name="holdsRule" role=Library parameters=[{type=anything}, {type=anything predicted=string}] results=[{type=anything predicted=boolean}] {
+function f12 name="holdsRule" role=Library parameters=[{type=anything}, {type=string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
   b0(v0: anything, v1: anything):
     v2 = String string="id-1!"
     v3 = StrictEq v0, v2

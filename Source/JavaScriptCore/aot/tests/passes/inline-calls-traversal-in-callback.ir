@@ -38,7 +38,7 @@ function f4 name="sameCallInTheText" parameters=[{type=number}] results=[{type=a
     Return v2
 }
 # CHECK-LABEL: function f4 name="sameCallInTheText"
-# CHECK: = CallDirect v0, v1 function=f0 [isNeverInlined] @20:3
+# CHECK: = CallDirect v0, v1 function=[[copy]] [isNeverInlined] @20:3
 
 function f5 name="namesNoFunction" parameters=[{type=number}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=10 module=m0}, {callee=f2 callPosition=3 parent=1 module=m0}] {
   b0(v0: number, v1: anything):
@@ -47,3 +47,5 @@ function f5 name="namesNoFunction" parameters=[{type=number}, {type=anything}] r
 }
 # CHECK-LABEL: function f5 name="namesNoFunction"
 # CHECK: = CallDirect v0, v1 function=f0 [isNeverInlined] @20:2
+# The call that is not copied into its caller names one function to call, so it goes to a copy of `each` for that function.
+# CHECK: function [[copy]] name="each" {{*}}role=CalleeVersion {{*}}parameters=[{type=number}, {type=f1}]

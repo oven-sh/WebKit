@@ -39,12 +39,18 @@ namespace AOT {
     v(operationArrayIncludesValueInt32OrContiguous)
 
 #define FOR_EACH_AOT_OPERATION_FOR_UNWINDING(v) \
-    v(operationAOTLookupExceptionHandler)
+    v(operationAOTLookupExceptionHandler) \
+    v(operationAOTFindLandingOfMisfit) \
+    v(operationAOTBytesAllocatedAtPrologueCheck)
 
 #define FOR_EACH_AOT_OPERATION_FOR_VALIDATION(v) \
     v(operationAOTCallNativeFunction)
 
+#define FOR_EACH_AOT_OPERATION_FOR_STUBS(v) \
+    v(operationAOTPrepareProxyCall)
+
 #define FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(v) \
+    FOR_EACH_AOT_OPERATION_FOR_STUBS(v) \
     FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
     FOR_EACH_AOT_OPERATION_FOR_VALIDATION(v) \
     FOR_EACH_AOT_OPERATION_SHARED_WITH_JIT(v) \
@@ -174,6 +180,12 @@ static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) &&
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Instance*, void* address, uint32_t sizeAndIsStore));
 #endif
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM*, Instance*));
+// How far the stack pointer at the stack check of a frame without a record is below the return address of the frame. Zero for a frame that has a record.
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, size_t, (Instance*, const void* returnAddress));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance*, void* returnAddress, EncodedJSValue misfit));
+// What is to be called in place of the Proxy that is the callee of the frame, and, where that is the trap, the list of arguments, or one where the caller makes it.
+// Nothing: the engine's function is to be called.
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance*, CallFrame* hostCallFrame, uint32_t makesList));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments));
 
 class RuntimeTable {
@@ -184,7 +196,6 @@ public:
     ~RuntimeTable();
 
     void** entries() { return m_entries; }
-    static constexpr ptrdiff_t offsetOfEntries() { return OBJECT_OFFSETOF(RuntimeTable, m_entries); }
 
     void finishInitialization(VM&);
 
@@ -196,15 +207,21 @@ public:
     uint32_t compactTableIterationEntry() const { return m_compactTableIterationEntry; }
     void setCompactTableIterationEntry(uint32_t entry) { m_compactTableIterationEntry = entry; }
 
+    const Identifier& nameOfApplyTrap(VM&);
+
 private:
+#if defined(BUN_HARDENED)
+    void** m_entries;
+#else
     void* m_entries[numberOfEntries] { };
+#endif
     uint64_t m_callCounts[numberOfEntries] { };
     DataOnlyCallLinkInfo m_callLinkInfoForCall;
     Structure* m_compactTableStructure { nullptr };
     uint32_t m_compactTableIterationEntry { 0 };
+    Identifier m_nameOfApplyTrap;
     bool m_countsCalls { false };
 };
-static_assert(!RuntimeTable::offsetOfEntries());
 
 } } // namespace JSC::AOT
 

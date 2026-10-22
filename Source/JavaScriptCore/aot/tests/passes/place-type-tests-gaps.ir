@@ -1,14 +1,16 @@
-# A proof is carried over a gap of at most 32 estimated bytes outside a cycle, and each gap is judged alone
+# A proof is carried over a gap of at most MaxClonedBytesPerStretch estimated bytes, here 32, outside a cycle as inside one, and each gap is judged alone. Every case has a use behind a gap that is too wide
 # FORM: Prepared
-# RUN(F0): test-placement function=f0 site=v2:v6 site=v5:v6
+# OPTIONS: limit=MaxClonedBytesPerStretch:32
+# LOSS: MaxClonedBytesPerStretch
+# RUN(F0): test-placement function=f0 site=v2:v12 site=v5:v12 site=v11:v12
 # RUN(F1): test-placement function=f1 site=v2:v16 site=v15:v16
-# RUN(F2): test-placement function=f2 site=v2:v8 site=v7:v8
+# RUN(F2): test-placement function=f2 site=v2:v14 site=v7:v14 site=v13:v14
 # RUN(F3): test-placement function=f3 site=v2:v9 site=v8:v9
 # RUN(F4): test-placement function=f4 site=v1:v27 site=v2:v27 site=v4:v27 site=v5:v27 site=v7:v27 site=v8:v27 site=v10:v27 site=v11:v27 site=v13:v27 site=v14:v27 site=v16:v27 site=v17:v27 site=v19:v27 site=v20:v27 site=v22:v27 site=v23:v27 site=v25:v27 site=v26:v27
 # RUN(F5): test-placement function=f5 site=v3:v11 site=v10:v11
-# RUN(F6): test-placement function=f6 site=v3:v7 site=v6:v7
+# RUN(F6): test-placement function=f6 site=v3:v13 site=v6:v13 site=v12:v13
 # RUN(F7): test-placement function=f7 site=v3:v14 site=v4:v15 site=v8:v14 site=v12:v14 site=v13:v15
-# RUN(F8): test-placement function=f8 site=v2:v8 site=v3:v9 site=v4:v9 site=v5:v9 site=v6:v9 site=v7:v8
+# RUN(F8): test-placement function=f8 site=v2:v10 site=v3:v11 site=v4:v11 site=v5:v11 site=v6:v11 site=v7:v10 site=v9:v10
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
@@ -20,10 +22,17 @@ function f0 name="narrowGap" parameters=[{type=object}, {type=number}] results=[
     v3 = Add v1, v1
     v4 = Add v3, v1
     v5 = PropGet v0 key="y"
-    v6 = ShapeTest v0 layouts=[L0]
-    Return v5
+    v6 = Add v4, v1
+    v7 = Add v6, v1
+    v8 = Add v7, v1
+    v9 = Add v8, v1
+    v10 = Add v9, v1
+    v11 = PropGet v0 key="x"
+    v12 = ShapeTest v0 layouts=[L0]
+    Return v11
 }
 # F0: stretch 0: test ShapeTest v0 layouts=[L0] before v2; uses v2 v5; cloned 16
+# F0-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v11; uses v11; cloned 0
 # F0-NOT: stretch
 
 function f1 name="wideGap" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
@@ -57,10 +66,17 @@ function f2 name="gapAtBudget" parameters=[{type=anything}, {type=number}] resul
     v5 = Add v4, v1
     v6 = Add v5, v1
     v7 = PropGet v0 key="y"
-    v8 = TypeTest v0 testedType=string
-    Return v7
+    v8 = Add v6, v1
+    v9 = Add v8, v1
+    v10 = Add v9, v1
+    v11 = Add v10, v1
+    v12 = Add v11, v1
+    v13 = PropGet v0 key="x"
+    v14 = TypeTest v0 testedType=string
+    Return v13
 }
 # F2: stretch 0: test TypeTest v0 testedType=string before v2; uses v2 v7; cloned 32
+# F2-NEXT: stretch 1: test TypeTest v0 testedType=string before v13; uses v13; cloned 0
 # F2-NOT: stretch
 
 function f3 name="gapPastBudget" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
@@ -156,10 +172,17 @@ function f6 name="bothPathsNarrow" parameters=[{type=object}, {type=boolean}, {t
     Jump -> next b3()
   b3():
     v6 = PropGet v0 key="y"
-    v7 = ShapeTest v0 layouts=[L0]
-    Return v6
+    v7 = Add v2, v2
+    v8 = Add v7, v2
+    v9 = Add v8, v2
+    v10 = Add v9, v2
+    v11 = Add v10, v2
+    v12 = PropGet v0 key="x"
+    v13 = ShapeTest v0 layouts=[L0]
+    Return v12
 }
 # F6: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3 v6; cloned 32
+# F6-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v12; uses v12; cloned 0
 # F6-NOT: stretch
 
 function f7 name="secondConditionRidesAlong" parameters=[{type=object}, {type=object}, {type=number}] results=[{type=anything}] {
@@ -190,11 +213,14 @@ function f8 name="usesAreNoGap" parameters=[{type=object}, {type=object}] result
     v5 = PropGet v1 key="x"
     v6 = PropGet v1 key="y"
     v7 = PropGet v0 key="y"
-    v8 = ShapeTest v0 layouts=[L0]
-    v9 = ShapeTest v1 layouts=[L0]
-    Return v7
+    v8 = NewObject layout=L1
+    v9 = PropGet v0 key="x"
+    v10 = ShapeTest v0 layouts=[L0]
+    v11 = ShapeTest v1 layouts=[L0]
+    Return v9
 }
 # F8: stretch 0: test ShapeTest v0 layouts=[L0] before v2; test ShapeTest v1 layouts=[L0] before v3; uses v2 v3 v4 v5 v6 v7; cloned 0
+# F8-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v9; uses v9; cloned 0
 # F8-NOT: stretch
 
 function f9 name="identity" parameters=[{type=number}] results=[{type=number}] {

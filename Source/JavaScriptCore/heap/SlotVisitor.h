@@ -228,7 +228,6 @@ private:
     
     void visitChildren(const JSCell*);
     template<bool mutatorsAreStopped> void visitChildren(FastMarkAppender&, const JSCell*);
-    void visitChildrenOfBlackCell(FastMarkAppender&, const JSCell*);
     void visitChildrenOutOfLoop(const JSCell*, CellVisitKind);
     void visitChildrenThroughMethodTable(const JSCell*);
 

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
 #include "AOTInstance.h"
 #include "Error.h"
 #include "JSCInlines.h"
@@ -41,7 +42,11 @@ void Modules::admitCodeNamedBy(JSValue specifier)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     auto text = asString(specifier)->view(m_instance.globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    m_admitsCodeOutsideImage = m_table.namesUncompiledCode(text);
+    // A large program asks for every name that it loads at run time, and has thousands of modules, few or none of them outside the image: the build has listed those.
+    m_admitsCodeOutsideImage = std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](uint32_t module) {
+        String name = m_table.pathText(ModuleID(module));
+        return text == name || (text->startsWith(name) && text[name.length()] == '/');
+    });
 }
 
 void Modules::appendUncompiledRequests(ModuleRecord* record)
@@ -126,10 +131,10 @@ AbstractModuleRecord* Modules::uncompiledRecord(ModuleID external)
     ModuleRegistryEntry* entry = loader()->registryEntry(key);
     AbstractModuleRecord* record = entry ? entry->record() : nullptr;
     if (!record) {
-        throwTypeError(m_instance.globalObject, scope, withAOTErrorNote(makeString("The module \""_s, m_table.pathText(external), "\" is not loaded"_s)));
+        throwException(m_instance.globalObject, scope, createExternalModuleNotLoadedError(m_instance.globalObject, m_table.pathText(external)));
         return nullptr;
     }
-    loaded.uncompiledRecord = record;
+    loaded.uncompiledRecord.set(*this, record);
     return record;
 }
 

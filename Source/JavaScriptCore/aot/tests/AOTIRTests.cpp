@@ -10,6 +10,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTEffects.h"
 #include "AOTIRTestSupport.h"
+#include "AOTLimits.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTTypeArena.h"
@@ -47,11 +48,11 @@ Terminator createTerminator(TerminatorKind kind, unsigned numberOfTargets)
     return terminator;
 }
 
-DeclaredType createDeclaredType(TypeID type, TypeID predicted = { })
+DeclaredType createDeclaredType(TypeID type, OptionSet<PositionFlags> flags = { })
 {
     DeclaredType declared;
     declared.type = type;
-    declared.predicted = predicted;
+    declared.flags = flags;
     return declared;
 }
 
@@ -122,6 +123,16 @@ static void compactListCopyAndMove()
     AOT_TEST_CHECK(hasElements(moved, { 1u, 2u }) && original.isEmpty());
     original.append(9);
     AOT_TEST_CHECK(hasElements(moved, { 1u, 2u }) && hasElements(original, { 9u }));
+    CompactList<uint32_t> copyOfSingleElement = original;
+    copyOfSingleElement[0] = 8;
+    AOT_TEST_CHECK(hasElements(original, { 9u }) && hasElements(copyOfSingleElement, { 8u }) && copyOfSingleElement.capacity() == 1);
+    CompactList<uint32_t> empty;
+    CompactList<uint32_t> copyOfEmpty = empty;
+    copyOfEmpty.append(std::array<uint32_t, 2> { 1, 2 });
+    AOT_TEST_CHECK(empty.isEmpty() && !empty.capacity() && hasElements(copyOfEmpty, { 1u, 2u }));
+    moved.shrink(0);
+    CompactList<uint32_t> copyOfEmptied = moved;
+    AOT_TEST_CHECK(copyOfEmptied.isEmpty() && !copyOfEmptied.capacity() && moved.capacity() == 2);
 }
 
 static void compactListRemoveAtEnd()
@@ -149,6 +160,107 @@ static void compactListEmptyOperationsLeaveSharedHeader()
     runOperations(Arguments());
     CompactList<uint32_t> list;
     AOT_TEST_CHECK(!list.size() && !list.capacity());
+}
+
+static void compactListStoresSingleElementInline()
+{
+    CompactList<uint32_t> list { 7 };
+    AOT_TEST_CHECK(hasElements(list, { 7u }) && list.capacity() == 1);
+    AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(list.begin()) - reinterpret_cast<uintptr_t>(&list) < sizeof(list));
+    CompactList<uint32_t> moved = WTF::move(list);
+    AOT_TEST_CHECK(list.isEmpty() && hasElements(moved, { 7u }));
+    moved[0] = UINT32_MAX;
+    moved.append(moved.span());
+    AOT_TEST_CHECK(hasElements(moved, { UINT32_MAX, UINT32_MAX }));
+    moved.removeLast();
+    moved.shrinkToFit();
+    AOT_TEST_CHECK(hasElements(moved, { UINT32_MAX }) && moved.capacity() == 1);
+    moved.insert(0, 1);
+    AOT_TEST_CHECK(hasElements(moved, { 1u, UINT32_MAX }));
+    moved.shrink(0);
+    moved.grow(1);
+    AOT_TEST_CHECK(hasElements(moved, { 0u }));
+    moved.clear();
+    moved.grow(1);
+    moved.removeAll(0);
+    AOT_TEST_CHECK(moved.isEmpty() && !moved.capacity());
+    CompactList<int64_t> wide { -1 };
+    AOT_TEST_CHECK(hasElements(wide, { static_cast<int64_t>(-1) }));
+}
+
+static void inlineListSpillsAndShrinksToFit()
+{
+    InlineList<uint32_t, 3> list { 1, 2, 3 };
+    AOT_TEST_CHECK(list.capacity() == 3 && sizeof(list) == 16);
+    list.insert(1, 9);
+    AOT_TEST_CHECK(hasElements(list, { 1u, 9u, 2u, 3u }) && list.capacity() > 3);
+    list.append(list.span().first(2));
+    list.insertSpan(0, list.span().last(1));
+    AOT_TEST_CHECK(hasElements(list, { 9u, 1u, 9u, 2u, 3u, 1u, 9u }));
+    AOT_TEST_CHECK(list.removeAll(9) == 3 && list.removeFirst(2) && !list.removeFirst(2) && list.reverseFind(1) == 2);
+    AOT_TEST_CHECK(hasElements(list, { 1u, 3u, 1u }) && list.capacity() > 3);
+    InlineList<uint32_t, 3> copy = list;
+    AOT_TEST_CHECK(copy == list && copy.capacity() == 3);
+    list.shrinkToFit();
+    AOT_TEST_CHECK(hasElements(list, { 1u, 3u, 1u }) && list.capacity() == 3);
+    InlineList<uint32_t, 3> moved = WTF::move(list);
+    AOT_TEST_CHECK(list.isEmpty() && moved == copy && moved.takeLast() == 1);
+    moved.grow(5);
+    moved.removeAt(1, 3);
+    AOT_TEST_CHECK(hasElements(moved, { 1u, 0u }));
+}
+
+static void inlineListCopiesElementsInPlace()
+{
+    InlineList<uint32_t, 3> list { 1, 2 };
+    InlineList<uint32_t, 3> copy = list;
+    copy.append(3);
+    AOT_TEST_CHECK(hasElements(list, { 1u, 2u }) && hasElements(copy, { 1u, 2u, 3u }) && copy.capacity() == 3);
+    copy = list;
+    AOT_TEST_CHECK(hasElements(copy, { 1u, 2u }) && copy.capacity() == 3);
+    copy.append(std::array<uint32_t, 2> { 3, 4 });
+    AOT_TEST_CHECK(hasElements(copy, { 1u, 2u, 3u, 4u }) && copy.capacity() > 3);
+    list = copy;
+    copy = InlineList<uint32_t, 3> { 5 };
+    AOT_TEST_CHECK(hasElements(list, { 1u, 2u, 3u, 4u }) && hasElements(copy, { 5u }));
+    InlineList<uint32_t, 3> empty;
+    list = empty;
+    InlineList<uint32_t, 3> copyOfEmpty = empty;
+    AOT_TEST_CHECK(list.isEmpty() && copyOfEmpty.isEmpty() && copyOfEmpty.capacity() == 3);
+}
+
+static void inlineListMovesAndDestroysElements()
+{
+    TargetList targets;
+    for (uint32_t index = 0; index < 4; ++index)
+        targets.append(Target { BlockID(index), { ValueID(index), ValueID(index + 1) }, { index } });
+    TargetList copy = targets;
+    targets.removeAt(1);
+    targets.insert(0, copy[3]);
+    AOT_TEST_CHECK(targets.size() == 4 && targets[0] == copy[3] && targets[1] == copy[0] && targets[2] == copy[2] && targets[3] == copy[3]);
+    targets.shrink(2);
+    targets.shrinkToFit();
+    AOT_TEST_CHECK(targets.capacity() == 2 && hasElements(targets[1].arguments, { ValueID(0u), ValueID(1u) }) && hasElements(targets[0].proofs, { 3u }));
+    copy = WTF::move(targets);
+    AOT_TEST_CHECK(targets.isEmpty() && copy.size() == 2 && copy.last().block == BlockID(0u));
+}
+
+static void outOfLineOptionalMatchesStdOptional()
+{
+    OutOfLineOptional<Target> handler;
+    AOT_TEST_CHECK(!handler && handler == std::nullopt && sizeof(handler) == sizeof(void*));
+    handler = Target { BlockID(3u), { ValueID(1u), ValueID(2u) }, { } };
+    OutOfLineOptional<Target> copy = handler;
+    copy->block = BlockID(4u);
+    AOT_TEST_CHECK(handler->block == BlockID(3u) && copy != handler && hasElements(copy->arguments, { ValueID(1u), ValueID(2u) }));
+    std::optional<Target> plain = handler;
+    AOT_TEST_CHECK(plain && handler == plain && *plain == *handler);
+    OutOfLineOptional<Target> taken = std::exchange(handler, std::nullopt);
+    AOT_TEST_CHECK(!handler && taken == plain);
+    handler = plain;
+    AOT_TEST_CHECK(handler == taken);
+    handler = std::optional<Target>();
+    AOT_TEST_CHECK(!handler.has_value());
 }
 
 static void effectsDumpUsesSchemaGrammar()
@@ -238,11 +350,11 @@ static void valueOperandsOfCall()
         call.appendVariadicOperand(ValueID(10 + index));
     AOT_TEST_CHECK(call.numberOfOperands() == 4 && call.numberOfVariadicOperands() == 2);
     AOT_TEST_CHECK(call.operand(2) == ValueID(12u) && call.operand(3) == ValueID(13u));
-    AOT_TEST_CHECK(hasElements(call.children, { ValueID(10u), ValueID(11u), ValueID() }));
-    AOT_TEST_CHECK(hasElements(call.arguments, { ValueID(12u), ValueID(13u) }) && hasElements(call.variadicOperands(), { ValueID(12u), ValueID(13u) }));
+    AOT_TEST_CHECK(call.child(0) == ValueID(10u) && call.child(1) == ValueID(11u) && !call.child(2));
+    AOT_TEST_CHECK(hasElements(call.operands(), { ValueID(10u), ValueID(11u), ValueID(12u), ValueID(13u) }) && hasElements(call.variadicOperands(), { ValueID(12u), ValueID(13u) }));
     AOT_TEST_CHECK(!call.variadicOperandIndex(1) && call.variadicOperandIndex(2) == 0u && call.variadicOperandIndex(3) == 1u);
     call.setOperand(3, ValueID(23u));
-    AOT_TEST_CHECK(hasElements(call.arguments, { ValueID(12u), ValueID(23u) }));
+    AOT_TEST_CHECK(hasElements(call.variadicOperands(), { ValueID(12u), ValueID(23u) }));
 }
 
 static void valueAbsentOperandKeepsIndex()
@@ -260,23 +372,22 @@ static void valueAbsentOperandKeepsIndex()
     AOT_TEST_CHECK(call.numberOfOperands() == 4 && !call.operand(1));
 }
 
-static void valueFourthNamedOperandIsInArguments()
+static void valueFourNamedOperands()
 {
     Value store(Opcode::SuperSet);
-    AOT_TEST_CHECK(store.numberOfOperands() == 4 && hasElements(store.arguments, { ValueID() }));
+    AOT_TEST_CHECK(store.numberOfOperands() == 4 && hasElements(store.operands(), { ValueID(), ValueID(), ValueID(), ValueID() }));
     store.setOperand(3, ValueID(7u));
-    AOT_TEST_CHECK(store.operand(3) == ValueID(7u) && hasElements(store.arguments, { ValueID(7u) }));
-    AOT_TEST_CHECK(hasElements(store.children, { ValueID(), ValueID(), ValueID() }));
+    AOT_TEST_CHECK(store.operand(3) == ValueID(7u) && hasElements(store.operands(), { ValueID(), ValueID(), ValueID(), ValueID(7u) }));
     AOT_TEST_CHECK(!store.numberOfVariadicOperands() && store.variadicOperands().empty());
 }
 
 static void valueVariadicOperandsFollowFiveNamedOperands()
 {
     Value value(Opcode::DefineOwnProperty);
-    AOT_TEST_CHECK(value.numberOfNamedOperands() == 5 && value.numberOfOperands() == 5 && hasElements(value.arguments, { ValueID(), ValueID() }));
+    AOT_TEST_CHECK(value.numberOfNamedOperands() == 5 && value.numberOfOperands() == 5 && hasElements(value.operands(), { ValueID(), ValueID(), ValueID(), ValueID(), ValueID() }));
     for (uint32_t index = 0; index < 5; ++index)
         value.setOperand(index, ValueID(10 + index));
-    AOT_TEST_CHECK(hasElements(value.children, { ValueID(10u), ValueID(11u), ValueID(12u) }) && hasElements(value.arguments, { ValueID(13u), ValueID(14u) }));
+    AOT_TEST_CHECK(hasElements(value.operands(), { ValueID(10u), ValueID(11u), ValueID(12u), ValueID(13u), ValueID(14u) }));
     AOT_TEST_CHECK(!value.numberOfVariadicOperands() && !value.variadicOperandIndex(4));
 
     for (uint32_t index = 5; index < 8; ++index)
@@ -290,11 +401,11 @@ static void valueVariadicOperandsFollowFiveNamedOperands()
     AOT_TEST_CHECK(nextIndex == 8);
 
     value.setVariadicOperands(value.variadicOperands().subspan(1));
-    AOT_TEST_CHECK(hasElements(value.arguments, { ValueID(13u), ValueID(14u), ValueID(16u), ValueID(17u) }));
+    AOT_TEST_CHECK(hasElements(value.operands().subspan(3), { ValueID(13u), ValueID(14u), ValueID(16u), ValueID(17u) }));
     value.removeVariadicOperand(0);
-    AOT_TEST_CHECK(hasElements(value.arguments, { ValueID(13u), ValueID(14u), ValueID(17u) }) && value.operand(5) == ValueID(17u));
+    AOT_TEST_CHECK(hasElements(value.operands().subspan(3), { ValueID(13u), ValueID(14u), ValueID(17u) }) && value.operand(5) == ValueID(17u));
     value.setVariadicOperands({ });
-    AOT_TEST_CHECK(value.numberOfOperands() == 5 && hasElements(value.arguments, { ValueID(13u), ValueID(14u) }));
+    AOT_TEST_CHECK(value.numberOfOperands() == 5 && hasElements(value.operands().subspan(3), { ValueID(13u), ValueID(14u) }));
 }
 
 static void valueRemoveVariadicOperandKeepsNamedOperands()
@@ -314,12 +425,11 @@ static void valueRemoveVariadicOperandKeepsNamedOperands()
 static void valueBecomeKeepsTypesOriginAndRepresentation()
 {
     Value value(Opcode::NewArray);
-    value.type = TypeTable::anything;
-    value.setWritten(TypeTable::object);
-    value.setPrediction(TypeTable::function);
+    value.type = TypeTable::object;
+    value.setExpected(TypeTable::function);
     value.setOrigin({ 40, 2 });
     value.representation = Representation::Cell;
-    value.flags = UINT16_MAX;
+    value.flags = UINT8_MAX;
     value.setHoles(std::array<uint32_t, 2> { 1, 2 });
     value.setOperand(0, ValueID(10u));
     value.appendVariadicOperand(ValueID(11u));
@@ -327,29 +437,93 @@ static void valueBecomeKeepsTypesOriginAndRepresentation()
 
     value.become(Opcode::Integer);
     AOT_TEST_CHECK(value.opcode == Opcode::Integer && !value.flags);
-    AOT_TEST_CHECK(!value.numberOfOperands() && value.arguments.isEmpty() && hasElements(value.children, { ValueID(), ValueID(), ValueID() }));
+    AOT_TEST_CHECK(!value.numberOfOperands() && value.operands().empty() && !value.child(0));
     AOT_TEST_CHECK(value.outOfLinePayload().empty() && !value.integer());
-    AOT_TEST_CHECK(value.type == TypeTable::anything && value.written() == TypeTable::object && value.prediction() == TypeTable::function);
+    AOT_TEST_CHECK(value.type == TypeTable::object && value.expected() == TypeTable::function);
     AOT_TEST_CHECK(value.position == 40 && value.inlineFrame == 2 && value.representation == Representation::Cell);
 }
 
-static void valueTypeLevelsFallBackToStrongerLevel()
+static void valueWithoutExpectedTypeFallsBackToItsType()
 {
     Value value(Opcode::Undefined);
     value.type = TypeTable::anything;
-    AOT_TEST_CHECK(!value.written() && !value.prediction());
-    AOT_TEST_CHECK(value.writtenOrType() == TypeTable::anything && value.predictionOrType() == TypeTable::anything);
-    value.setWritten(TypeTable::object);
-    AOT_TEST_CHECK(value.writtenOrType() == TypeTable::object && value.predictionOrType() == TypeTable::object);
-    value.setPrediction(TypeTable::function);
-    AOT_TEST_CHECK(value.writtenOrType() == TypeTable::object && value.predictionOrType() == TypeTable::function);
+    AOT_TEST_CHECK(!value.expected() && value.expectedOrType() == TypeTable::anything);
+    value.type = TypeTable::object;
+    AOT_TEST_CHECK(!value.expected() && value.expectedOrType() == TypeTable::object);
+    value.setExpected(TypeTable::function);
+    AOT_TEST_CHECK(value.type == TypeTable::object && value.expected() == TypeTable::function && value.expectedOrType() == TypeTable::function);
+    value.setExpected({ });
+    AOT_TEST_CHECK(!value.expected() && value.expectedOrType() == TypeTable::object);
 }
 
-static void checkFixedWordsSurviveListPayload(Opcode opcode, ASCIILiteral listName, unsigned numberOfFixedWords)
+static void valueExpectedTypeSurvivesRelayout()
+{
+    Value call(Opcode::Call);
+    call.setOperand(0, ValueID(10u));
+    call.setExpected(TypeTable::function);
+    call.appendVariadicOperand(ValueID(12u));
+    AOT_TEST_CHECK(call.expected() == TypeTable::function && call.operand(0) == ValueID(10u) && call.operand(2) == ValueID(12u));
+    Value copy = call;
+    Value moved = WTF::move(call);
+    AOT_TEST_CHECK(copy.expected() == TypeTable::function && moved.expected() == TypeTable::function && moved.operand(2) == ValueID(12u));
+    copy.become(Opcode::Undefined);
+    AOT_TEST_CHECK(copy.expected() == TypeTable::function && !copy.numberOfOperands());
+
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        Value value(opcode);
+        uint32_t numberOfOperands = value.numberOfNamedOperands();
+        unsigned numberOfWords = defaultPayloadOf(opcode).size();
+        for (uint32_t index = 0; index < numberOfOperands; ++index)
+            value.setOperand(index, ValueID(20 + index));
+        for (unsigned word = 0; word < numberOfWords; ++word)
+            value.setPayloadWordAt(word, 100 + word);
+        for (TypeID expected : { TypeTable::object, TypeID(), TypeTable::function }) {
+            value.setExpected(expected);
+            AOT_TEST_CHECK(value.expected() == expected && value.numberOfOperands() == numberOfOperands);
+            for (uint32_t index = 0; index < numberOfOperands; ++index)
+                AOT_TEST_CHECK(value.operand(index) == ValueID(20 + index));
+            for (unsigned word = 0; word < numberOfWords; ++word)
+                AOT_TEST_CHECK(value.payloadWordAt(word) == 100 + word);
+        }
+    }
+}
+
+static void flagsAndInlineFrameFitBitFields()
+{
+    Value value(Opcode::Undefined);
+    value.flags = UINT8_MAX;
+    constexpr uint64_t maxInlineFrames = defaultLimitValue(LimitID::InlineFramesPerFunction, hostArchitecture());
+    value.inlineFrame = maxInlineFrames;
+    AOT_TEST_CHECK(value.flags == UINT8_MAX && value.inlineFrame == maxInlineFrames);
+    for (Opcode opcode : allMembersOf<Opcode>)
+        AOT_TEST_CHECK(declaredFlagsOf(opcode) <= UINT8_MAX);
+    for (TerminatorKind kind : allMembersOf<TerminatorKind>)
+        AOT_TEST_CHECK(declaredFlagsOf(kind) <= UINT8_MAX);
+}
+
+static void valueSpansSurviveMove()
+{
+    Vector<Value> values;
+    values.append(Value(Opcode::NewArray));
+    values[0].appendVariadicOperand(ValueID(11u));
+    values[0].setHoles(std::array<uint32_t, 2> { 1, 2 });
+    std::span<const ValueID> operands = values[0].variadicOperands();
+    std::span<const uint32_t> holes = values[0].holes();
+    for (unsigned count = 0; count < 100; ++count)
+        values.append(Value(Opcode::Undefined));
+    AOT_TEST_CHECK(operands.data() == values[0].variadicOperands().data() && holes.data() == values[0].holes().data());
+    AOT_TEST_CHECK(hasElements(operands, { ValueID(11u) }) && hasElements(holes, { 1u, 2u }));
+}
+
+static void checkFixedWordsSurviveListPayload(Opcode opcode, ASCIILiteral listName)
 {
     std::span<const PayloadFieldInfo> fields = payloadFieldsOf(opcode);
     const PayloadFieldInfo& list = fieldNamed(opcode, listName);
-    AOT_TEST_CHECK(list.kind == PayloadKind::List && list.firstWord == numberOfFixedWords && numberOfFixedWords > numberOfInlinePayloadWords);
+    const unsigned numberOfFixedWords = list.firstWord;
+    AOT_TEST_CHECK(list.kind == PayloadKind::List && numberOfFixedWords > numberOfInlinePayloadWords);
+    AOT_TEST_CHECK(std::ranges::all_of(fields, [&](const PayloadFieldInfo& field) {
+        return field.kind == PayloadKind::List || field.firstWord < numberOfFixedWords;
+    }));
     size_t numberOfFixedOutOfLineWords = numberOfFixedWords - numberOfInlinePayloadWords;
 
     Value value(opcode);
@@ -374,8 +548,8 @@ static void checkFixedWordsSurviveListPayload(Opcode opcode, ASCIILiteral listNa
 
 static void valueListPayloadFollowsFixedWords()
 {
-    checkFixedWordsSurviveListPayload(Opcode::NewArray, "holes"_s, 4);
-    checkFixedWordsSurviveListPayload(Opcode::NewObject, "fields"_s, 5);
+    checkFixedWordsSurviveListPayload(Opcode::NewArray, "holes"_s);
+    checkFixedWordsSurviveListPayload(Opcode::NewObject, "fields"_s);
 
     Value array(Opcode::NewArray);
     array.setContents(TypeTable::number);
@@ -431,7 +605,7 @@ static void valueForEachReferenceSkipsNull()
     AOT_TEST_CHECK(!numberOfCalls);
 
     test.type = TypeTable::anything;
-    test.setPrediction(TypeTable::boolean);
+    test.setExpected(TypeTable::boolean);
     test.setTestedType(TypeTable::string);
     forEachReference(test, [&]<typename Reference>(Reference& reference) {
         ++numberOfCalls;
@@ -442,7 +616,7 @@ static void valueForEachReferenceSkipsNull()
             AOT_TEST_CHECK(false);
     });
     AOT_TEST_CHECK(numberOfCalls == 1 && test.testedType() == TypeTable::function);
-    AOT_TEST_CHECK(test.type == TypeTable::anything && test.prediction() == TypeTable::boolean);
+    AOT_TEST_CHECK(test.type == TypeTable::anything && test.expected() == TypeTable::boolean);
 
     Vector<TypeID> visited;
     forEachType(test, [&](TypeID id) { visited.append(id); });
@@ -532,9 +706,9 @@ static void blockHandlerIsATarget()
     ValueID subject = addValue(function, entry, Opcode::Null);
     jump(function, entry, exit, { passed });
     AOT_TEST_CHECK(!function.at(entry).handler && !function.at(handler).isHandlerBlock());
-    function.at(entry).handler = Target { handler, { kept }, { } };
-    function.at(entry).subject = subject;
-    function.at(handler).role = BlockRole::CatchHandler;
+    function.edit(entry).handler = Target { handler, { kept }, { } };
+    function.edit(entry).subject = subject;
+    function.edit(handler).role = BlockRole::CatchHandler;
     AOT_TEST_CHECK(function.at(handler).isHandlerBlock());
 
     Vector<BlockID> targets;
@@ -544,7 +718,7 @@ static void blockHandlerIsATarget()
     std::as_const(function.at(entry)).forEachChildOutsideValues([&](ValueID child) { children.append(child); });
     AOT_TEST_CHECK(hasElements(children, { passed, kept, subject }));
 
-    function.at(entry).forEachTarget([&](Target& target) { target.block = entry; });
+    function.edit(entry).forEachTarget([&](Target& target) { target.block = entry; });
     AOT_TEST_CHECK(function.at(entry).terminator.next().block == entry && function.at(entry).handler->block == entry);
 }
 
@@ -557,11 +731,11 @@ static void edgeResultsFillTrailingParameters()
     BlockID notTaken = addBlock(function);
     ValueID subject = addParameter(function, entry);
     ValueID condition = addValue(function, entry, Opcode::TypeTest, { subject });
-    function.at(condition).setTestedType(TypeTable::number);
+    function.edit(condition).setTestedType(TypeTable::number);
     branch(function, entry, condition, taken, notTaken);
-    function.at(entry).terminator.taken().arguments = { subject };
-    function.at(entry).terminator.taken().proofs = { 0u };
-    function.at(entry).terminator.notTaken().proofs = { 0u, 5u };
+    function.edit(entry).terminator.taken().arguments = { subject };
+    function.edit(entry).terminator.taken().proofs = { 0u };
+    function.edit(entry).terminator.notTaken().proofs = { 0u, 5u };
 
     AOT_TEST_CHECK(firstEdgeResultParameter(function, entry, 0) == 1 && numberOfEdgeResults(function, entry, 0) == 1);
     AOT_TEST_CHECK(!firstEdgeResultParameter(function, entry, 1) && numberOfEdgeResults(function, entry, 1) == 2);
@@ -587,20 +761,21 @@ static void edgeResultOfStretchProofIsAGuardOnTaken()
     BlockID taken = addBlock(function);
     BlockID notTaken = addBlock(function);
     ValueID object = addParameter(function, entry);
-    ValueID condition = addValue(function, entry, Opcode::ShapeTest, { object });
+    ValueID condition = addValue(function, entry, Opcode::IsSlotFilled, { object });
     branch(function, entry, condition, taken, notTaken);
-    function.at(entry).terminator.taken().proofs = { 0u, 1u };
-    function.at(entry).terminator.notTaken().proofs = { 0u };
+    function.edit(entry).terminator.taken().proofs = { 0u, 1u };
+    function.edit(entry).terminator.notTaken().proofs = { 0u };
 
     EdgeResult guard = edgeResultAt(function, { entry, 0, 0 });
-    AOT_TEST_CHECK(guard.kind == EdgeResultKind::Guard && guard.proof == Proof::Shape && guard.side == EdgeSide::Taken && guard.test == condition);
+    AOT_TEST_CHECK(provesForStretch(Proof::SlotFilled) && !provesForStretch(Proof::TestedType));
+    AOT_TEST_CHECK(guard.kind == EdgeResultKind::Guard && guard.proof == Proof::SlotFilled && guard.side == EdgeSide::Taken && guard.test == condition && guard.subject == object);
     AOT_TEST_CHECK(!tryGetEdgeResult(function, { entry, 0, 1 }) && !tryGetEdgeResult(function, { entry, 1, 0 }));
 
-    function.at(condition).become(Opcode::Boolean);
+    function.edit(condition).become(Opcode::Boolean);
     AOT_TEST_CHECK(!proofOfTerminator(function, function.at(entry)) && !tryGetEdgeResult(function, { entry, 0, 0 }));
 
     jump(function, entry, taken);
-    function.at(entry).terminator.next().proofs = { 0u };
+    function.edit(entry).terminator.next().proofs = { 0u };
     AOT_TEST_CHECK(!numberOfEdgeResults(function, entry, 0) && !tryGetEdgeResult(function, { entry, 0, 0 }));
 }
 
@@ -611,15 +786,16 @@ static void recordFitsRoleForEveryRole()
         Vector<FunctionRole> roles;
     };
     const RecordWithRoles cases[] = {
-        { CreatorRecord::None { }, { FunctionRole::Source, FunctionRole::Library, FunctionRole::Model, FunctionRole::OutlinedBody } },
-        { CreatorRecord::Entrypoint { }, { FunctionRole::GenericEntrypoint, FunctionRole::GroupEntrypoint } },
-        { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::CallSiteVersion } },
-        { CreatorRecord::Coroutine { }, { FunctionRole::CoroutineRamp, FunctionRole::CoroutineBody } },
+        { CreatorRecord::None { }, { FunctionRole::Source, FunctionRole::Library, FunctionRole::Model, FunctionRole::Signature, FunctionRole::OutlinedBody } },
+        { CreatorRecord::Entrypoint { }, { FunctionRole::GenericEntrypoint, FunctionRole::TableEntrypoint } },
+        { CreatorRecord::TableLookup { }, { FunctionRole::TableLookup } },
+        { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::ConstructBody, FunctionRole::CallSiteVersion, FunctionRole::CalleeVersion } },
+        { CreatorRecord::Coroutine { }, { FunctionRole::CoroutineRamp, FunctionRole::CoroutineBody, FunctionRole::AsyncWorker } },
         { CreatorRecord::BoundFunction { }, { FunctionRole::BoundFunction } },
         { CreatorRecord::ResultWrapper { }, { FunctionRole::ResultWrapper } },
         { CreatorRecord::ResultWorker { }, { FunctionRole::ResultWorker } },
         { CreatorRecord::ParameterWrapper { }, { FunctionRole::ParameterWrapper } },
-        { CreatorRecord::Continuation { }, { FunctionRole::Continuation } },
+        { CreatorRecord::EntryChecks { }, { FunctionRole::EntryChecks } },
         { CreatorRecord::Serializer { }, { FunctionRole::Serializer } },
         { CreatorRecord::Parser { }, { FunctionRole::Parser, FunctionRole::ValidatingParser } },
         { CreatorRecord::Validator { }, { FunctionRole::Validator } },
@@ -670,7 +846,7 @@ static void declaredEntryTypeOfCalleeIsFunction()
     TypingContext typing { test.program, function, arena };
     AOT_TEST_CHECK(function.calleeParameterIndex() == 0u && !function.declaredEntryParameter(0));
     AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::function);
-    function.blocks.clear();
+    function.editAllBlocks().clear();
     AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::function);
 }
 
@@ -744,8 +920,8 @@ static void locationOfInlinedValue()
     function.inlineFrames.grow(2);
     function.inlineFrames[1].callPosition = 40;
     function.inlineFrames[1].module = ModuleID(2u);
-    function.values[0].setOrigin({ 90, 1 });
-    function.values[1].setOrigin({ 70, 0 });
+    function.edit(ValueID(0u)).setOrigin({ 90, 1 });
+    function.edit(ValueID(1u)).setOrigin({ 70, 0 });
     AOT_TEST_CHECK(isAt(function.locationOf(ValueID(0u)), ModuleID(2u), 90));
     AOT_TEST_CHECK(isAt(function.locationOf(ValueID(1u)), ModuleID(1u), 70));
 }
@@ -758,8 +934,8 @@ static void locationWithoutFrameModuleIsCallSite()
     function.inlineFrames[1].callPosition = 40;
     function.inlineFrames[2].callPosition = 55;
     function.inlineFrames[2].parent = 1;
-    function.values[0].setOrigin({ 90, 2 });
-    function.values[1].setOrigin({ Instruction::noPosition, 2 });
+    function.edit(ValueID(0u)).setOrigin({ 90, 2 });
+    function.edit(ValueID(1u)).setOrigin({ Instruction::noPosition, 2 });
     AOT_TEST_CHECK(isAt(function.locationOf(ValueID(0u)), ModuleID(1u), 40));
     AOT_TEST_CHECK(isAt(function.locationOf(ValueID(1u)), ModuleID(), 0));
 }
@@ -804,9 +980,9 @@ static void compactDropsUnlistedValue()
     ValueID left = addValue(function, entry, Opcode::Undefined);
     ValueID dropped = addValue(function, entry, Opcode::Call);
     ValueID right = addValue(function, entry, Opcode::Integer);
-    function.at(entry).terminator.become(TerminatorKind::Return);
-    function.at(entry).terminator.setValueOperand(addValue(function, entry, Opcode::Add, { left, right }));
-    function.at(entry).values.removeFirst(dropped);
+    function.edit(entry).terminator.become(TerminatorKind::Return);
+    function.edit(entry).terminator.setValueOperand(addValue(function, entry, Opcode::Add, { left, right }));
+    function.edit(entry).values.removeFirst(dropped);
 
     AOT_TEST_CHECK(compactFunction(function));
     AOT_TEST_CHECK(function.values.size() == 3 && function.at(entry).values.size() == 3);
@@ -845,8 +1021,8 @@ static void compactRenumbersInBlockOrder()
     addUnlistedValue(function, Opcode::Call);
     ValueID parameter = addParameter(function, exit);
     ValueID argument = addValue(function, entry, Opcode::Integer);
-    function.at(sum).setOperand(0, parameter);
-    function.at(sum).setOperand(1, argument);
+    function.edit(sum).setOperand(0, parameter);
+    function.edit(sum).setOperand(1, argument);
     jump(function, entry, exit, { argument });
 
     AOT_TEST_CHECK(compactFunction(function));
@@ -862,23 +1038,24 @@ static void forEachTypeVisitsEveryPosition()
     Function function;
     function.captures = { createDeclaredType(TypeID(100u)) };
     function.thisType = createDeclaredType(TypeID(101u));
-    function.parameters = { createDeclaredType(TypeID(102u), TypeID(103u)) };
-    function.parameters[0].written = TypeID(107u);
+    function.parameters = { createDeclaredType(TypeID(102u)), createDeclaredType(TypeID(103u), PositionFlags::IsExpected) };
     function.results = { createDeclaredType(TypeID(104u)) };
     function.role = FunctionRole::CoroutineRamp;
     function.creator = createCoroutineRecord(CoroutineKind::AsyncFunction, TypeID(106u));
     Vector<TypeID> visited;
     forEachType(static_cast<const FunctionRecord&>(function), [&](TypeID id) { visited.append(id); });
     std::ranges::sort(visited);
-    AOT_TEST_CHECK(hasElements(visited, { TypeID(100u), TypeID(101u), TypeID(102u), TypeID(103u), TypeID(104u), TypeID(106u), TypeID(107u) }));
+    AOT_TEST_CHECK(hasElements(visited, { TypeID(100u), TypeID(101u), TypeID(102u), TypeID(103u), TypeID(104u), TypeID(106u) }));
 }
 
 #define FOR_EACH_AOT_IR_TEST(v) \
     v(compactListAppendInsertRemove) v(compactListAppendOwnSpan) v(compactListCopyAndMove) v(compactListRemoveAtEnd) v(compactListEmptyOperationsLeaveSharedHeader) \
+    v(compactListStoresSingleElementInline) v(inlineListSpillsAndShrinksToFit) v(inlineListCopiesElementsInPlace) v(inlineListMovesAndDestroysElements) v(outOfLineOptionalMatchesStdOptional) \
     v(effectsDumpUsesSchemaGrammar) v(effectsDumpCountsLocationsOfPartialHeap) v(effectsOnEdgesDumpShowsHandlerThatDiffers) v(abstractHeapSetIterationAscends) \
     v(parseEnumFindsEveryOpcode) v(parseEnumRejectsUnknownNames) \
-    v(valueOperandsOfCall) v(valueAbsentOperandKeepsIndex) v(valueFourthNamedOperandIsInArguments) v(valueVariadicOperandsFollowFiveNamedOperands) \
-    v(valueRemoveVariadicOperandKeepsNamedOperands) v(valueBecomeKeepsTypesOriginAndRepresentation) v(valueTypeLevelsFallBackToStrongerLevel) \
+    v(valueOperandsOfCall) v(valueAbsentOperandKeepsIndex) v(valueFourNamedOperands) v(valueVariadicOperandsFollowFiveNamedOperands) \
+    v(valueRemoveVariadicOperandKeepsNamedOperands) v(valueBecomeKeepsTypesOriginAndRepresentation) v(valueWithoutExpectedTypeFallsBackToItsType) \
+    v(valueExpectedTypeSurvivesRelayout) v(flagsAndInlineFrameFitBitFields) v(valueSpansSurviveMove) \
     v(valueListPayloadFollowsFixedWords) v(valueListPayloadStartsAfterInlineWords) v(valueInt64PayloadHasTwoWords) v(valueSamePayloadComparesFlagsAndBothParts) \
     v(valueForEachReferenceSkipsNull) \
     v(terminatorNamedTargets) v(terminatorStringCases) v(terminatorIntegerCasesHaveTwoWords) v(terminatorProofs) v(terminatorChildrenAreOperandsThenArguments) \

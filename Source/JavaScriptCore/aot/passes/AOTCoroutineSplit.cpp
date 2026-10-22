@@ -10,10 +10,12 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFlowCoroutines.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTPassRunner.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
@@ -28,19 +30,48 @@ struct StaleCalls {
 
 } // anonymous namespace
 
-static Vector<CoroutinePlan> findCoroutines(const Program& program)
+static Vector<CoroutinePlan> findCoroutines(const Program& program, const ParallelLoops& loops)
 {
     Vector<CoroutinePlan> plans;
-    for (unsigned index = 0; index < program.functions.size(); ++index) {
+    auto coroutines = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
-        if (!function.isUnsplitCoroutine() || !function.hasBody())
-            continue;
+        return function.isUnsplitCoroutine() && function.hasBody();
+    });
+    for (uint32_t index : coroutines) {
+        const Function& function = program.functions[index];
         CoroutinePlan plan;
         plan.record.kind = *coroutineKindOf(function);
         plan.record.ramp = FunctionID(index);
         plans.append(WTF::move(plan));
     }
     return plans;
+}
+
+static bool maySuspend(const AnalysisContext& context, const Function& function)
+{
+    FunctionAnalyses analyses(context, function);
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        if (analyses.effectsOfTerminator(block).onAnyEdge().maySuspend)
+            return true;
+        for (ValueID id : function.at(block).values) {
+            if (analyses.maySuspendOnAnyEdge(id))
+                return true;
+        }
+    }
+    return false;
+}
+
+// An async function without an await needs no frame that can be saved: it is an ordinary function whose result goes into a promise.
+static void findFunctionsThatNeverSuspend(const Program& program, const OptimizationInputs& inputs, BuildContext& build, Vector<CoroutinePlan>& plans)
+{
+    forEachIndexInParallel(build.parallelLoops(), plans.size(), [&](unsigned index) {
+        CoroutinePlan& plan = plans[index];
+        if (plan.record.kind != CoroutineKind::AsyncFunction)
+            return;
+        FunctionID id = plan.record.ramp;
+        plan.neverSuspends = !maySuspend(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, program.at(id));
+    });
 }
 
 static CoroutineTypes internCoroutineTypes(TypeTable& types)
@@ -66,6 +97,13 @@ static void planCoroutines(ProgramEditor& editor, const CoroutineTypes& types, V
     for (CoroutinePlan& plan : plans) {
         CreatorRecord::Coroutine& record = plan.record;
         record.body = FunctionID(nextFunction++);
+        plan.bodySlot = &editor.at(record.body);
+        if (plan.neverSuspends) {
+            record.promiseType = types.promise;
+            record.worker = record.body;
+            continue;
+        }
+
         record.promiseParameter = program.at(record.ramp).numberOfEntryParameters();
         switch (record.kind) {
         case CoroutineKind::Generator:
@@ -78,7 +116,6 @@ static void planCoroutines(ProgramEditor& editor, const CoroutineTypes& types, V
             record.promiseType = types.promise;
             break;
         }
-        plan.bodySlot = &editor.at(record.body);
     }
 }
 
@@ -95,9 +132,9 @@ static void buildFunctions(ProgramEditor& editor, const OptimizationInputs& inpu
     editFunctionsInParallel(editor, build, ramps.span(), bodies.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
         CoroutinePlan& plan = plans[index];
         AnalysisContext context { build, program, &inputs.flow, &inputs.effects, id };
-        Function ramp = buildCoroutineRamp(context, arenas.types, types, function, plan);
+        Function ramp = plan.neverSuspends ? buildRampOfWorker(context, arenas.types, types, function, plan) : buildCoroutineRamp(context, arenas.types, types, function, plan);
         context.id = plan.record.body;
-        *plan.bodySlot = buildCoroutineBody(context, arenas.types, types, WTF::move(function), plan);
+        *plan.bodySlot = plan.neverSuspends ? buildAsyncWorker(context, arenas.types, WTF::move(function), plan) : buildCoroutineBody(context, arenas.types, types, WTF::move(function), plan);
         function = WTF::move(ramp);
     });
 }
@@ -143,26 +180,27 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
     });
     editFunctionsInParallel(editor, build, callers.span(), [&](unsigned index, FunctionID, Function& caller, TaskArenas& arenas) {
         for (ValueID id : staleCalls[index].calls) {
-            Value& call = caller.at(id);
+            Value& call = caller.edit(id);
             call.type = resultTypeOf(program, caller, call, arenas.types);
-            call.setWritten(writtenTypeOf(program, caller, call, arenas.types));
-            call.setPrediction(predictionOf(program, caller, call, arenas.types));
+            call.setExpected(expectedTypeOf(program, caller, call, arenas.types));
         }
     });
 }
 
 void splitCoroutines(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
-    Vector<CoroutinePlan> plans = findCoroutines(editor.program());
+    Vector<CoroutinePlan> plans = findCoroutines(editor.program(), runner.build().parallelLoops());
     if (plans.isEmpty())
         return;
 
     BuildContext& build = runner.build();
+    findFunctionsThatNeverSuspend(editor.program(), inputs, build, plans);
     CoroutineTypes types = internCoroutineTypes(editor.types());
     planCoroutines(editor, types, plans);
     buildFunctions(editor, inputs, build, types, plans);
     retypeCallers(editor, build, plans);
     build.statistics().count(StatisticID::CoroutinesSplit, plans.size());
+    build.statistics().count(StatisticID::AsyncWorkersMade, static_cast<uint64_t>(std::ranges::count_if(plans, &CoroutinePlan::neverSuspends)));
 }
 
 } } } // namespace JSC::AOT::Typed

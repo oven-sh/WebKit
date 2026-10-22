@@ -6,7 +6,7 @@
 # CHECK: variable g0 name="exported"{{*}}stores=AtMostOnce
 # CHECK: variable g1 name="local"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
 
-module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1}]
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/by-key.ts" displayPath="by-key.ts" body=f1 exports=[{name="exported" variable=g0}]
 entry module=m0
 variable g0 name="exported" module=m1 declared={type=anything}

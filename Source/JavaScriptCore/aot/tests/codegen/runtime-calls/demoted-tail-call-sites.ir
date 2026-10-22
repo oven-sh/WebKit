@@ -22,11 +22,8 @@
 # CHECK: f11: size={{*}} tailCallSites=1
 # CHECK-NEXT: f12: size=
 # CHECK-NOT: tailCallSites
-# CHECK: f14: size={{*}} tailCallSites=1
-# CHECK-NEXT: f15: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f16: size={{*}} tailCallSites=1
-# CHECK-NEXT: f17: size=
+# CHECK: f13: size={{*}} tailCallSites=1
+# CHECK-NEXT: f14: size=
 # CHECK-NOT: tailCallSites
 
 module m0 path="main.js" displayPath="main.js"
@@ -88,34 +85,19 @@ function f10 name="callResolved" parameters=[{type=anything}, {type=anything}] r
     v3 = CallResolved v0, v2, -, v1
     Return v3
 }
-function f11 name="markedCallGroup" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
-    v2 = CallGroup v0, v1 function=f13 callees=[f0] [isDemotedTailCall]
-    Return v2
-}
-function f12 name="callGroup" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
-    v2 = CallGroup v0, v1 function=f13 callees=[f0]
-    Return v2
-}
-function f13 name="group" role=GroupEntrypoint parameters=[{type=function}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 group=[f0] arguments=Registers} {
-  b0(v0: function, v1: anything):
-    v2 = CallDirect v1 function=f0
-    Return v2
-}
-function f14 name="markedCallForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
+function f11 name="markedCallForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
   b0(v0: function):
     v1 = GetArgument argumentIndex=0
     v2 = CallForwardVarargs v1, v1 firstArgument=1 [isDemotedTailCall]
     Return v2
 }
-function f15 name="callForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
+function f12 name="callForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
   b0(v0: function):
     v1 = GetArgument argumentIndex=0
     v2 = CallForwardVarargs v1, v1 firstArgument=1
     Return v2
 }
-function f16 name="markedCallMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+function f13 name="markedCallMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
@@ -124,7 +106,7 @@ function f16 name="markedCallMethodInRareCode" parameters=[{type=anything}, {typ
   b2():
     Return v1
 }
-function f17 name="callMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+function f14 name="callMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:

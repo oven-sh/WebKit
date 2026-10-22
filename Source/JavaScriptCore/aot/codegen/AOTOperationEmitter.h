@@ -35,10 +35,17 @@ struct CallOptions {
     std::optional<ThrowSite> throwSite { };
     bool constructs { false };
     bool isTailCall { false };
-    bool isFollowedByResultTest { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };
+    // The callee runs code of the host, which the effects of the IR say nothing about: it may give a cell another Structure or another butterfly.
+    bool runsCodeOfHost { false };
     bool reportMayReturn { false };
+    // The callee makes an error, which keeps the frames that it finds and where each of them stands.
+    bool capturesStackTrace { false };
+    // The call stands at the head of a handler. Whoever threw has allocated what it threw, whatever its effects on the way back say.
+    bool followsThrow { false };
+    // The callee promises the type of its result, and the caller relies on it.
+    bool hasLandingOfMisfit { false };
 };
 
 struct StubCallResult {
@@ -72,7 +79,7 @@ protected:
     Representation representationOf(ValueID id) const { return m_generator.representationOf(id); }
 
     Operand get(ValueID id) const { return m_generator.get(id); }
-    template<typename T> T in(ValueID id) const { return m_generator.get(id).template as<T>(); }
+    template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
     Boxed boxed(ValueID) const;
     // An operand of kind Integer is in Int32 or Int64.
@@ -99,9 +106,8 @@ protected:
     void requireOrThrow(const OperationContext&, Condition mustHold, ThrowKind, std::optional<Operand>, uint32_t a, std::optional<uint32_t> b = std::nullopt);
 
     const TypeTestPlan& typeTestPlanFor(TypeID from, Representation, TypeID to);
-    Condition hasType(Operand, const TypeTestPlan&);
-    void branchOnType(Operand, const TypeTestPlan&, BranchTargets);
-    void requireType(const OperationContext&, Operand, const TypeTestPlan&, TypeSiteID);
+    Condition hasType(Operand, const TypeTestPlan&, CodeShape = CodeShape::Fast);
+    void branchOnType(Operand, const TypeTestPlan&, BranchTargets, CodeShape = CodeShape::Fast);
 
     void barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType);
 
@@ -132,8 +138,8 @@ void OperationEmitter::defineTestByBranching(const ValueContext& value, NOESCAPE
         defineTest(value, asBoolean(branchOnTest));
         return;
     }
-    if (m_generator.shouldDropGuard(value)) {
-        m_out.jump(value.branchTargets().taken.block());
+    if (std::optional<CodeGenerator::GuardUnderTest> guard = m_generator.takeGuardUnderTest(value)) {
+        branchOnTest(m_generator.targetsOf(value, *guard));
         return;
     }
     branchOnTest(value.branchTargets());

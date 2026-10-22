@@ -49,8 +49,12 @@ public:
 
     std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> build()
     {
-        if (m_pattern.eitherUnicode())
-            return makeUnexpected(FlatProgramDecline::UnicodeMode);
+        bool runsOnlyOn8BitSubjects = false;
+        if (m_pattern.eitherUnicode() && !consumesSingleCodeUnits(*m_pattern.m_body, Subjects::All)) {
+            if (!consumesSingleCodeUnits(*m_pattern.m_body, Subjects::With8BitCharacters))
+                return makeUnexpected(FlatProgramDecline::UnicodeMode);
+            runsOnlyOn8BitSubjects = true;
+        }
         if (m_pattern.m_containsModifiers)
             return makeUnexpected(FlatProgramDecline::Modifiers);
         if (m_pattern.m_containsLookbehinds)
@@ -66,6 +70,7 @@ public:
         if (m_pattern.hasEndAnchoredFixedSize())
             program->endAnchoredFixedSize = m_pattern.m_endAnchoredFixedSize;
         program->triesOnlyOnce = m_pattern.sticky();
+        program->runsOnlyOn8BitSubjects = runsOnlyOn8BitSubjects;
 
         auto& alternatives = m_pattern.m_body->m_alternatives;
         unsigned count = alternatives.size();
@@ -93,6 +98,8 @@ public:
         program->ops.shrinkToFit();
         program->characterSets.shrinkToFit();
         program->firstSets.shrinkToFit();
+        program->dispatchClasses.shrinkToFit();
+        program->dispatchEntries.shrinkToFit();
         program->wideRanges.shrinkToFit();
         program->text.shrinkToFit();
         program->wideText.shrinkToFit();
@@ -100,17 +107,96 @@ public:
     }
 
 private:
+    static bool isSingleCodeUnit(char32_t character) { return U_IS_BMP(character) && !U_IS_SURROGATE(character); }
+
+    static bool holdsSingleCodeUnits(const CharacterClass& characterClass)
+    {
+        if (characterClass.hasStrings() || characterClass.hasNonBMPCharacters())
+            return false;
+        bool hasSurrogate = std::ranges::any_of(characterClass.m_matches32, [](char32_t character) {
+            return U_IS_SURROGATE(character);
+        });
+        hasSurrogate |= std::ranges::any_of(characterClass.m_ranges32, [](const CharacterRange& range) {
+            return range.begin <= 0xdfff && range.end >= 0xd800;
+        });
+        return !hasSurrogate;
+    }
+
+    enum class Subjects : bool { All, With8BitCharacters };
+
+    // In unicode mode a step consumes a code point. Where no step can consume a surrogate, a code point that is consumed is one code unit, and the program for code units answers the same.
+    // A subject of 8-bit characters has no surrogate for a class to consume, whatever the class holds.
+    // The parser has made classes of the letters that have other cases. RegExp::matchInline keeps a match from beginning inside a surrogate pair.
+    static bool consumesSingleCodeUnits(const PatternDisjunction& disjunction, Subjects subjects, unsigned depth = 0)
+    {
+        if (depth > maxNestingDepth)
+            return false;
+        for (auto& alternative : disjunction.m_alternatives) {
+            for (const PatternTerm& term : alternative->m_terms) {
+                switch (term.type) {
+                case PatternTerm::Type::AssertionBOL:
+                case PatternTerm::Type::AssertionEOL:
+                    break;
+                case PatternTerm::Type::AssertionWordBoundary:
+                case PatternTerm::Type::NumberedBackReference:
+                case PatternTerm::Type::NamedBackReference:
+                case PatternTerm::Type::NumberedForwardReference:
+                case PatternTerm::Type::NamedForwardReference:
+                    if (term.ignoreCase())
+                        return false;
+                    break;
+                case PatternTerm::Type::PatternCharacter:
+                    if (!isSingleCodeUnit(term.patternCharacter))
+                        return false;
+                    break;
+                case PatternTerm::Type::CharacterClass:
+                    if (subjects == Subjects::With8BitCharacters) {
+                        if (term.characterClass->hasStrings())
+                            return false;
+                        break;
+                    }
+                    if (term.invert() || !holdsSingleCodeUnits(*term.characterClass))
+                        return false;
+                    break;
+                case PatternTerm::Type::ParenthesesSubpattern:
+                case PatternTerm::Type::ParentheticalAssertion:
+                    if (!consumesSingleCodeUnits(*term.parentheses.disjunction, subjects, depth + 1))
+                        return false;
+                    break;
+                case PatternTerm::Type::DotStarEnclosure:
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     using Kind = FlatOp::Kind;
     using Alternatives = std::span<const std::unique_ptr<PatternAlternative>>;
     using SetKey = std::tuple<const CharacterClass*, bool, char16_t, char16_t>;
 
     static constexpr unsigned maxNestingDepth = 64;
     static constexpr unsigned maxTermsVisitedForEmptiness = 64;
+    static constexpr unsigned maxSharedPrefixDepth = 32;
     static constexpr size_t maxIndexCount = std::numeric_limits<uint16_t>::max();
 
     struct EmitContext {
         uint64_t neededAfter { 0 };
         unsigned nestingDepth { 0 };
+        unsigned sharedPrefixDepth { 0 };
+    };
+
+    // What is left of an alternative from one of its terms on.
+    struct Branch {
+        const PatternAlternative* alternative;
+        unsigned begin;
+    };
+
+    // Branches that begin with the same step, in their order. stepTerms is 0 where the first member begins with no step that could be shared.
+    struct BranchGroup {
+        Vector<Branch, 2> members;
+        std::optional<FirstSetBits> first;
+        unsigned stepTerms { 0 };
     };
 
     struct InternedKeyHash {
@@ -226,6 +312,112 @@ private:
         return result;
     }
 
+    // The analysis gives up on a set that takes a walk over many terms, as the first set of a group of a hundred alternatives does. Each of those alternatives has its own.
+    std::optional<FirstSetBits> firstBits(const PatternAlternative& alternative, bool& hasWideMembers, unsigned depth = 0) const
+    {
+        if (auto known = latin1Bits(alternative.m_firstSet, hasWideMembers))
+            return known;
+        if (depth >= maxNestingDepth || alternative.m_terms.isEmpty() || alternative.matchDirection() != Forward)
+            return std::nullopt;
+        const PatternTerm& term = alternative.m_terms[0];
+        if (term.type != PatternTerm::Type::ParenthesesSubpattern || !term.quantityMinCount || term.matchDirection() != Forward)
+            return std::nullopt;
+        FirstSetBits result;
+        for (auto& nested : term.parentheses.disjunction->m_alternatives) {
+            auto first = firstBits(*nested, hasWideMembers, depth + 1);
+            if (!first)
+                return std::nullopt;
+            addAll(result, *first);
+        }
+        return result;
+    }
+
+    static constexpr unsigned endOfInput = 256;
+
+    template<typename Functor>
+    static void forEachMember(const FirstSetBits& set, const Functor& functor)
+    {
+        for (unsigned word = 0; word < set.bits.size(); ++word) {
+            for (uint64_t bits = set.bits[word]; bits; bits &= bits - 1)
+                functor(word * 64 + std::countr_zero(bits));
+        }
+        if (set.atEnd)
+            functor(endOfInput);
+    }
+
+    void fillDispatchTable(std::span<const unsigned> choices, std::span<const std::optional<FirstSetBits>> first)
+    {
+        using PerClass = std::array<uint16_t, FlatProgram::dispatchClassesPerTable>;
+        PerClass classes { };
+        PerClass sizes { };
+        PerClass memberCounts { };
+        PerClass classOfMembers { };
+        Vector<uint16_t, 16> touched;
+        unsigned classCount = 1;
+        sizes[0] = FlatProgram::dispatchClassesPerTable;
+        for (auto& set : first) {
+            if (!set)
+                continue;
+            forEachMember(*set, [&](unsigned member) {
+                if (!memberCounts[classes[member]]++)
+                    touched.append(classes[member]);
+            });
+            forEachMember(*set, [&](unsigned member) {
+                uint16_t whole = classes[member];
+                if (memberCounts[whole] == sizes[whole])
+                    return;
+                if (!classOfMembers[whole])
+                    classOfMembers[whole] = classCount++;
+                classes[member] = classOfMembers[whole];
+            });
+            for (uint16_t whole : touched) {
+                if (uint16_t part = std::exchange(classOfMembers[whole], 0)) {
+                    sizes[part] = memberCounts[whole];
+                    sizes[whole] -= memberCounts[whole];
+                }
+                memberCounts[whole] = 0;
+            }
+            touched.shrink(0);
+        }
+        auto& ops = m_program->ops;
+        auto& entries = m_program->dispatchEntries;
+        unsigned firstClass = m_program->dispatchClasses.size();
+        m_program->dispatchClasses.append(std::span<const uint16_t> { classes });
+        unsigned firstRow = entries.size();
+        entries.grow(firstRow + choices.size() * classCount);
+
+        auto forEachClassThatBegins = [&](const std::optional<FirstSetBits>& set, const auto& functor) {
+            if (set) {
+                forEachMember(*set, [&](unsigned member) {
+                    functor(classes[member]);
+                });
+                return;
+            }
+            for (unsigned i = 0; i < classCount; ++i)
+                functor(i);
+        };
+
+        Vector<uint32_t, 64> next;
+        next.fill(FlatProgram::noAlternativeBeginsHere, classCount);
+        forEachClassThatBegins(first[choices.size()], [&](unsigned i) {
+            next[i] = ops[choices.back()].target + FlatProgram::firstDispatchTarget;
+        });
+        for (unsigned alternative = choices.size(); alternative--;) {
+            auto row = entries.mutableSpan().subspan(firstRow + alternative * classCount, classCount);
+            for (unsigned i = 0; i < classCount; ++i)
+                row[i] = next[i];
+            uint32_t here = choices[alternative] + FlatProgram::firstDispatchTarget;
+            forEachClassThatBegins(first[alternative], [&](unsigned i) {
+                if (next[i] == here)
+                    return;
+                row[i] = next[i] == FlatProgram::noAlternativeBeginsHere ? FlatProgram::onlyThisAlternativeBeginsHere : FlatProgram::thisAndLaterAlternativesBeginHere;
+                next[i] = here;
+            });
+            ops[choices[alternative]].argument = firstRow + alternative * classCount;
+            ops[choices[alternative]].needed = firstClass;
+        }
+    }
+
     unsigned internFirstSet(const FirstSetBits& set)
     {
         auto [entry, isNew] = m_firstSetIndexes.try_emplace(set, m_program->firstSets.size());
@@ -241,7 +433,7 @@ private:
         FirstSetBits start;
         bool hasWideMembers = false;
         for (auto& alternative : alternatives) {
-            auto first = latin1Bits(alternative->m_firstSet, hasWideMembers);
+            auto first = firstBits(*alternative, hasWideMembers);
             if (!first)
                 return;
             addAll(start, *first);
@@ -319,21 +511,137 @@ private:
         return choice;
     }
 
-    bool emitAlternatives(Alternatives alternatives, EmitContext context)
+    std::optional<FirstSetBits> firstBits(const Branch& branch, bool& hasWideMembers) const
     {
-        if (context.nestingDepth >= maxNestingDepth)
-            return decline(FlatProgramDecline::NestedTooDeep);
-        ++context.nestingDepth;
-        unsigned count = alternatives.size();
+        if (!branch.begin)
+            return firstBits(*branch.alternative, hasWideMembers);
+        FirstSetBits result;
+        auto& terms = branch.alternative->m_terms;
+        for (unsigned i = branch.begin; i < terms.size(); ++i) {
+            const PatternTerm& term = terms[i];
+            if (!isAtom(term))
+                return std::nullopt;
+            if (!term.quantityMaxCount)
+                continue;
+            auto set = latin1Bits(term.m_matchedSet, hasWideMembers);
+            if (!set)
+                return std::nullopt;
+            addAll(result, *set);
+            if (term.quantityMinCount)
+                return result;
+        }
+        return std::nullopt;
+    }
+
+    static bool intersects(const FirstSetBits& a, const FirstSetBits& b)
+    {
+        return (a.bits[0] & b.bits[0]) || (a.bits[1] & b.bits[1]) || (a.bits[2] & b.bits[2]) || (a.bits[3] & b.bits[3]) || (a.atEnd && b.atEnd);
+    }
+
+    // A step takes its characters in one way only: a fixed number of them, or as many as there are. So (step a | step b) is step (a | b).
+    unsigned termsOfStepAt(const Branch& branch)
+    {
+        auto& terms = branch.alternative->m_terms;
+        if (branch.begin >= terms.size() || !isAtom(terms[branch.begin]))
+            return 0;
+        auto run = runAt(*branch.alternative, branch.begin);
+        if (!run)
+            return 1;
+        return run->kind == Kind::PossessiveRun ? run->terms : 0;
+    }
+
+    static bool beginWithSameTerms(const Branch& a, const Branch& b, unsigned count)
+    {
+        for (unsigned i = 0; i < count; ++i) {
+            const PatternTerm& one = a.alternative->m_terms[a.begin + i];
+            const PatternTerm& other = b.alternative->m_terms[b.begin + i];
+            if (!matchesSameCharacters(one, other) || one.quantityType != other.quantityType || one.quantityMinCount != other.quantityMinCount || one.quantityMaxCount != other.quantityMaxCount)
+                return false;
+        }
+        return true;
+    }
+
+    // A branch joins an earlier group over the heads of the groups between them only if none of those can begin where it can: then it does not matter which of them is tried first.
+    Vector<BranchGroup, 8> groupBranches(std::span<const Branch> branches, bool sharesSteps)
+    {
+        Vector<BranchGroup, 8> groups;
+        for (const Branch& branch : branches) {
+            bool hasWideMembers = false;
+            auto first = firstBits(branch, hasWideMembers);
+            unsigned stepTerms = sharesSteps ? termsOfStepAt(branch) : 0;
+            BranchGroup* home = nullptr;
+            bool mayPassOthers = first && !hasWideMembers && !first->atEnd;
+            for (unsigned i = stepTerms ? groups.size() : 0; i--;) {
+                BranchGroup& group = groups[i];
+                if (group.stepTerms == stepTerms && beginWithSameTerms(group.members[0], branch, stepTerms)) {
+                    home = &group;
+                    break;
+                }
+                if (!mayPassOthers || !group.first || intersects(*group.first, *first))
+                    break;
+            }
+            if (!home) {
+                groups.append(BranchGroup { { branch }, first, stepTerms });
+                continue;
+            }
+            home->members.append(branch);
+            if (home->first && first)
+                addAll(*home->first, *first);
+            else
+                home->first = std::nullopt;
+        }
+        return groups;
+    }
+
+    bool emitBranchGroup(const BranchGroup& group, EmitContext context)
+    {
+        const Branch& leader = group.members[0];
+        if (group.members.size() == 1)
+            return emitAlternative(*leader.alternative, context, leader.begin);
+
+        unsigned shared = group.stepTerms;
+        for (;;) {
+            unsigned stepTerms = termsOfStepAt({ leader.alternative, leader.begin + shared });
+            if (!stepTerms)
+                break;
+            bool isShared = true;
+            for (unsigned i = 1; isShared && i < group.members.size(); ++i) {
+                Branch rest { group.members[i].alternative, group.members[i].begin + shared };
+                isShared = termsOfStepAt(rest) == stepTerms && beginWithSameTerms({ leader.alternative, leader.begin + shared }, rest, stepTerms);
+            }
+            if (!isShared)
+                break;
+            shared += stepTerms;
+        }
+
+        for (unsigned i = leader.begin, end = leader.begin + shared; i < end;) {
+            if (auto run = runAt(*leader.alternative, i)) {
+                emitRun(*run, 0);
+                i += run->terms;
+            } else
+                i += emitFixedAtoms(*leader.alternative, i, end);
+        }
+        auto rest = group.members.map<Vector<Branch, 8>>([&](const Branch& member) {
+            return Branch { member.alternative, member.begin + shared };
+        });
+        ++context.sharedPrefixDepth;
+        return emitBranches(rest.span(), context);
+    }
+
+    bool emitBranches(std::span<const Branch> branches, EmitContext context)
+    {
+        if (hasExceededIndexLimit())
+            return decline(FlatProgramDecline::TooManySetsOrRegisters);
+        auto groups = groupBranches(branches, branches.size() > 2 && context.sharedPrefixDepth < maxSharedPrefixDepth);
+        unsigned count = groups.size();
         if (count == 1)
-            return emitAlternative(*alternatives[0], context);
+            return emitBranchGroup(groups[0], context);
 
         Vector<std::optional<FirstSetBits>, 8> first(count);
         Vector<FirstSetBits, 8> later(count);
-        for (unsigned i = 0; i < count; ++i) {
-            bool hasWideMembers = false;
-            first[i] = latin1Bits(alternatives[i]->m_firstSet, hasWideMembers);
-        }
+        for (unsigned i = 0; i < count; ++i)
+            first[i] = groups[i].first;
+        bool usesTable = count > 2;
         FirstSetBits unknown;
         unknown.bits.fill(~0ull);
         unknown.atEnd = true;
@@ -342,29 +650,48 @@ private:
             addAll(later[i], first[i + 1].value_or(unknown));
         }
 
-        unsigned smallestMinimumSize = alternatives[0]->m_minimumSize;
-        for (auto& alternative : alternatives)
-            smallestMinimumSize = std::min(smallestMinimumSize, alternative->m_minimumSize);
+        unsigned smallestMinimumSize = branches[0].alternative->m_minimumSize;
+        for (auto& branch : branches)
+            smallestMinimumSize = std::min(smallestMinimumSize, branch.alternative->m_minimumSize);
 
-        auto emitChecked = [&](const PatternAlternative& alternative) {
-            if (context.neededAfter && alternative.m_minimumSize > smallestMinimumSize)
-                emitNeedsInput(alternative.m_minimumSize + context.neededAfter);
-            return emitAlternative(alternative, context);
+        auto emitChecked = [&](const BranchGroup& group) {
+            const Branch& leader = group.members[0];
+            if (group.members.size() == 1 && !leader.begin && context.neededAfter && leader.alternative->m_minimumSize > smallestMinimumSize)
+                emitNeedsInput(leader.alternative->m_minimumSize + context.neededAfter);
+            return emitBranchGroup(group, context);
         };
 
         Vector<unsigned, 8> jumpsToEnd;
+        Vector<unsigned, 8> choices;
         for (unsigned i = 0; i + 1 < count; ++i) {
-            unsigned choice = emitAlternativeChoice(first[i], later[i]);
-            if (!emitChecked(*alternatives[i]))
+            unsigned choice = usesTable ? emit(Kind::ChoiceByTable) : emitAlternativeChoice(first[i], later[i]);
+            choices.append(choice);
+            if (!emitChecked(groups[i]))
                 return false;
             jumpsToEnd.append(emit(Kind::Jump));
             setTarget(choice);
         }
-        if (!emitChecked(*alternatives[count - 1]))
+        if (usesTable)
+            fillDispatchTable(choices.span(), first.span());
+        if (!emitChecked(groups[count - 1]))
             return false;
         for (unsigned jump : jumpsToEnd)
             setTarget(jump);
         return true;
+    }
+
+    bool emitAlternatives(Alternatives alternatives, EmitContext context)
+    {
+        if (context.nestingDepth >= maxNestingDepth)
+            return decline(FlatProgramDecline::NestedTooDeep);
+        ++context.nestingDepth;
+        if (alternatives.size() == 1)
+            return emitAlternative(*alternatives[0], context);
+        Vector<Branch, 8> branches;
+        branches.reserveInitialCapacity(alternatives.size());
+        for (auto& alternative : alternatives)
+            branches.append(Branch { alternative.get(), 0 });
+        return emitBranches(branches.span(), context);
     }
 
     bool emitGroupBody(const PatternTerm& term, EmitContext context)
@@ -684,14 +1011,14 @@ private:
         return !beginsRun;
     }
 
-    unsigned emitFixedAtoms(const PatternAlternative& alternative, unsigned i)
+    unsigned emitFixedAtoms(const PatternAlternative& alternative, unsigned i, unsigned limit = std::numeric_limits<unsigned>::max())
     {
         auto& terms = alternative.m_terms;
         const PatternTerm& term = terms[i];
         bool isWide = term.type == PatternTerm::Type::PatternCharacter && !isLatin1(term.patternCharacter);
         unsigned end = i;
         bool hasCase = false;
-        while (isTextCharacter(alternative, end, isWide)) {
+        while (end < limit && isTextCharacter(alternative, end, isWide)) {
             hasCase |= isCased(terms[end]);
             ++end;
         }
@@ -736,20 +1063,20 @@ private:
         return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, std::nullopt }, emitReference);
     }
 
-    bool emitAlternative(const PatternAlternative& alternative, EmitContext context)
+    bool emitAlternative(const PatternAlternative& alternative, EmitContext context, unsigned begin = 0)
     {
         if (alternative.matchDirection() != Forward)
             return decline(FlatProgramDecline::Lookbehind);
         auto& terms = alternative.m_terms;
         uint64_t neededAfter = context.neededAfter;
-        for (auto& term : terms)
-            neededAfter += minimumSize(term);
-        unsigned accounted = 0;
+        for (unsigned i = begin; i < terms.size(); ++i)
+            neededAfter += minimumSize(terms[i]);
+        unsigned accounted = begin;
         auto accountThrough = [&](unsigned last) {
             while (accounted <= last)
                 neededAfter -= minimumSize(terms[accounted++]);
         };
-        for (unsigned i = 0; i < terms.size(); ++i) {
+        for (unsigned i = begin; i < terms.size(); ++i) {
             if (hasExceededIndexLimit())
                 return decline(FlatProgramDecline::TooManySetsOrRegisters);
             const PatternTerm& term = terms[i];
@@ -783,11 +1110,11 @@ private:
                 i += emitFixedAtoms(alternative, i) - 1;
                 break;
             case PatternTerm::Type::ParenthesesSubpattern:
-                if (!emitGroup(term, { neededAfter, context.nestingDepth }))
+                if (!emitGroup(term, { neededAfter, context.nestingDepth, context.sharedPrefixDepth }))
                     return false;
                 break;
             case PatternTerm::Type::ParentheticalAssertion:
-                if (!emitLookahead(term, { 0, context.nestingDepth }))
+                if (!emitLookahead(term, { 0, context.nestingDepth, context.sharedPrefixDepth }))
                     return false;
                 break;
             case PatternTerm::Type::NumberedBackReference:
@@ -816,6 +1143,7 @@ private:
 size_t FlatProgram::estimatedSizeInBytes() const
 {
     return ops.capacity() * sizeof(FlatOp) + characterSets.capacity() * sizeof(CharacterSetBits) + firstSets.capacity() * sizeof(FirstSetBits)
+        + dispatchClasses.capacity() * sizeof(uint16_t) + dispatchEntries.capacity() * sizeof(uint32_t)
         + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t);
 }
 

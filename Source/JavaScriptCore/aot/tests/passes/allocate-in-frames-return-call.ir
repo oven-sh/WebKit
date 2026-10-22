@@ -1,4 +1,4 @@
-# The frame is gone when the callee of a tail call runs: a cell that is passed to one is on the heap
+# The frame is gone when the callee of a tail call runs: a cell that is passed to one is on the heap. Where the callee's own tail calls come to an end the caller gives up the tail call and keeps the cell in its frame
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # RUN(PLAN): frame-plan flow
@@ -22,6 +22,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = ToBoolean v1
     v9 = NewClosure function=f16
     v10 = CallDirect v9, v8 function=f15
+    v11 = CallDirect function=f19
+    v12 = CallDirect v1 function=f18
     Return
 }
 
@@ -32,11 +34,11 @@ function f1 name="closureInTailCall" results=[{type=anything}] {
     ReturnCall v1
 }
 # CHECK-LABEL: function f1 name="closureInTailCall"
-# CHECK: = NewClosure function=f8
-# CHECK-NOT: storage=
-# CHECK: ReturnCall {{*}}requirement=Allowed
+# CHECK: = NewClosure function=f8 {{*}}storage=Frame
+# CHECK-NOT: ReturnCall
+# CHECK: Return v1
 # PLAN-LABEL: function f1
-# PLAN-NEXT: v0: Heap LiveAtReturnCall by v1(0)
+# PLAN-NEXT: v0: Frame
 
 function f2 name="closureInCall" results=[{type=anything}] {
   b0():
@@ -56,11 +58,11 @@ function f3 name="closureInTailCallByValue" results=[{type=anything}] {
     ReturnCall v1
 }
 # CHECK-LABEL: function f3 name="closureInTailCallByValue"
-# CHECK: = NewClosure function=f10
-# CHECK-NOT: storage=
-# CHECK: ReturnCall
+# CHECK: = NewClosure function=f10 {{*}}storage=Frame
+# CHECK-NOT: ReturnCall
+# CHECK: Return v1
 # PLAN-LABEL: function f3
-# PLAN-NEXT: v0: Heap LiveAtReturnCall by v1(0)
+# PLAN-NEXT: v0: Frame
 
 function f4 name="closureDeadAtTailCall" results=[{type=anything}] {
   b0():
@@ -72,12 +74,12 @@ function f4 name="closureDeadAtTailCall" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f4 name="closureDeadAtTailCall"
 # CHECK: = NewClosure function=f11 {{*}}storage=Frame
-# CHECK: = NewClosure function=f12
-# CHECK-NOT: storage=
-# CHECK: ReturnCall
+# CHECK: = NewClosure function=f12 {{*}}storage=Frame
+# CHECK-NOT: ReturnCall
+# CHECK: Return v3
 # PLAN-LABEL: function f4
 # PLAN-NEXT: v0: Frame
-# PLAN-NEXT: v2: Heap LiveAtReturnCall by v3(0)
+# PLAN-NEXT: v2: Frame
 
 function f5 name="environmentInTailCall" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -86,11 +88,11 @@ function f5 name="environmentInTailCall" parameters=[{type=anything}] results=[{
     ReturnCall v2
 }
 # CHECK-LABEL: function f5 name="environmentInTailCall"
-# CHECK: = NewObject {{*}}layout=L0
-# CHECK-NOT: storage=
-# CHECK: ReturnCall
+# CHECK: = NewObject {{*}}layout=L0 {{*}}storage=Frame
+# CHECK-NOT: ReturnCall
+# CHECK: Return v2
 # PLAN-LABEL: function f5
-# PLAN-NEXT: v1: Heap LiveAtReturnCall by v2(0)
+# PLAN-NEXT: v1: Frame
 
 function f6 name="environmentInCall" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -171,6 +173,32 @@ function f16 name="callback" kind=Arrow results=[{type=anything}] {
 # CHECK-LABEL: function f16 name="callback"
 # PLAN-LABEL: function f16
 function f17 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f18 name="tailCallsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1
+}
+# CHECK-LABEL: function f18 name="tailCallsParameter"
+# PLAN-LABEL: function f18
+
+function f19 name="closureInTailCallOfCalleeThatGoesOnAnywhere" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f20
+    v1 = CallDirect v0 function=f18
+    ReturnCall v1
+}
+# CHECK-LABEL: function f19 name="closureInTailCallOfCalleeThatGoesOnAnywhere"
+# CHECK: = NewClosure function=f20
+# CHECK-NOT: storage=
+# CHECK: ReturnCall
+# PLAN-LABEL: function f19
+# PLAN-NEXT: v0: Heap LiveAtReturnCall by v1(0)
+
+function f20 name="callback" kind=Arrow results=[{type=anything}] {
   b0():
     Return
 }

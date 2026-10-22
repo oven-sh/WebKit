@@ -1,7 +1,7 @@
 # an operation that relies on a proof names a guard that gives this proof about its own operand, or the type of the operand is enough
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: InvalidGuard 12
+# DIAGNOSTIC: InvalidGuard 11
 
 module m0 path="main.js" displayPath="main.js"
 module m1 path="other.js" displayPath="other.js"
@@ -181,26 +181,6 @@ function f19 name="goodGuardOfEnumerator" parameters=[{type=object}, {type=strin
   b1(v5):
     v6 = EnumeratorGetByVal v0, v1, v3, v2, v5
     Return v6
-  b2():
-    Return
-}
-function f20 name="badRequiredValueUnderShapeGuard" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
-    v1 = ShapeTest v0 layouts=[L0]
-    Branch v1 -> taken b1(| 0), notTaken b2()
-  b1(v2):
-    v3 = GetRequiredValue v2 module=m1
-    Return v3
-  b2():
-    Return
-}
-function f21 name="goodRequiredValue" results=[{type=anything}] {
-  b0():
-    v0 = IsRequireEdgeReady module=m1 referrer=m0
-    Branch v0 -> taken b1(| 0), notTaken b2()
-  b1(v1):
-    v2 = GetRequiredValue v1 module=m1
-    Return v2
   b2():
     Return
 }

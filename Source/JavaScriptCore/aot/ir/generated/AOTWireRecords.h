@@ -104,25 +104,29 @@ static_assert(offsetof(LocaleUseRecord, builtin) == 12); static_assert(offsetof(
 
 struct AccessRecord {
     SourceLocation location; AccessKind kind { }; KnowledgeLevel level { }; UnprovenCause cause { }; LimitID limit { };
-    uint32_t layout { UINT32_MAX }; uint32_t copies { 0 }; Witness witness; uint32_t function { UINT32_MAX };
+    uint32_t layout { UINT32_MAX }; uint32_t copies { 0 }; Witness witness; uint32_t function { UINT32_MAX }; IllTypedCause illTypedCause { };
+    AccessCost cost { };
 
     friend bool operator==(const AccessRecord&, const AccessRecord&) = default;
 };
-static_assert(sizeof(AccessRecord) == 52 && alignof(AccessRecord) == 4 && std::is_trivially_copyable_v<AccessRecord>);
+static_assert(sizeof(AccessRecord) == 60 && alignof(AccessRecord) == 4 && std::is_trivially_copyable_v<AccessRecord>);
 static_assert(offsetof(AccessRecord, location) == 0); static_assert(offsetof(AccessRecord, kind) == 8);
 static_assert(offsetof(AccessRecord, level) == 12); static_assert(offsetof(AccessRecord, cause) == 16);
 static_assert(offsetof(AccessRecord, limit) == 20); static_assert(offsetof(AccessRecord, layout) == 24);
 static_assert(offsetof(AccessRecord, copies) == 28); static_assert(offsetof(AccessRecord, witness) == 32);
-static_assert(offsetof(AccessRecord, function) == 48);
+static_assert(offsetof(AccessRecord, function) == 48); static_assert(offsetof(AccessRecord, illTypedCause) == 52);
+static_assert(offsetof(AccessRecord, cost) == 56);
 
 struct AccessCountRecord {
-    uint32_t module { 0 }; std::array<uint32_t, 4> accesses { }; std::array<uint32_t, 4> calls { }; uint32_t typeTests { 0 };
+    uint32_t module { 0 }; std::array<uint32_t, 3> accesses { }; std::array<uint32_t, 3> calls { }; uint32_t typeTests { 0 };
+    std::array<uint32_t, 4> accessCosts { };
 
     friend bool operator==(const AccessCountRecord&, const AccessCountRecord&) = default;
 };
-static_assert(sizeof(AccessCountRecord) == 40 && alignof(AccessCountRecord) == 4 && std::is_trivially_copyable_v<AccessCountRecord>);
+static_assert(sizeof(AccessCountRecord) == 48 && alignof(AccessCountRecord) == 4 && std::is_trivially_copyable_v<AccessCountRecord>);
 static_assert(offsetof(AccessCountRecord, module) == 0); static_assert(offsetof(AccessCountRecord, accesses) == 4);
-static_assert(offsetof(AccessCountRecord, calls) == 20); static_assert(offsetof(AccessCountRecord, typeTests) == 36);
+static_assert(offsetof(AccessCountRecord, calls) == 16); static_assert(offsetof(AccessCountRecord, typeTests) == 28);
+static_assert(offsetof(AccessCountRecord, accessCosts) == 32);
 
 struct TypeTestRecord {
     SourceLocation location; uint32_t function { UINT32_MAX }; TypeTestFailure failure { }; uint32_t copies { 0 };
@@ -176,16 +180,16 @@ static_assert(offsetof(LossRecord, limit) == 0); static_assert(offsetof(LossReco
 static_assert(offsetof(LossRecord, count) == 12); static_assert(offsetof(LossRecord, witness) == 16);
 
 struct FunctionReportRecord {
-    uint32_t source { UINT32_MAX }; TextRange role; uint32_t codeBytes { 0 }; std::array<uint32_t, 4> accesses { }; std::array<uint32_t, 4> calls { };
-    uint32_t firstOperation { 0 }; uint32_t operationCount { 0 };
+    uint32_t source { UINT32_MAX }; TextRange role; uint32_t codeBytes { 0 }; std::array<uint32_t, 3> accesses { }; std::array<uint32_t, 3> calls { };
+    uint32_t firstOperation { 0 }; uint32_t operationCount { 0 }; std::array<uint32_t, 4> accessCosts { };
 
     friend bool operator==(const FunctionReportRecord&, const FunctionReportRecord&) = default;
 };
-static_assert(sizeof(FunctionReportRecord) == 56 && alignof(FunctionReportRecord) == 4 && std::is_trivially_copyable_v<FunctionReportRecord>);
+static_assert(sizeof(FunctionReportRecord) == 64 && alignof(FunctionReportRecord) == 4 && std::is_trivially_copyable_v<FunctionReportRecord>);
 static_assert(offsetof(FunctionReportRecord, source) == 0); static_assert(offsetof(FunctionReportRecord, role) == 4);
 static_assert(offsetof(FunctionReportRecord, codeBytes) == 12); static_assert(offsetof(FunctionReportRecord, accesses) == 16);
-static_assert(offsetof(FunctionReportRecord, calls) == 32); static_assert(offsetof(FunctionReportRecord, firstOperation) == 48);
-static_assert(offsetof(FunctionReportRecord, operationCount) == 52);
+static_assert(offsetof(FunctionReportRecord, calls) == 28); static_assert(offsetof(FunctionReportRecord, firstOperation) == 40);
+static_assert(offsetof(FunctionReportRecord, operationCount) == 44); static_assert(offsetof(FunctionReportRecord, accessCosts) == 48);
 
 struct OperationCountRecord {
     TextRange name; uint32_t count { 0 };
@@ -214,6 +218,39 @@ static_assert(sizeof(ObfuscatedSiteRecord) == 24 && alignof(ObfuscatedSiteRecord
 static_assert(offsetof(ObfuscatedSiteRecord, function) == 0); static_assert(offsetof(ObfuscatedSiteRecord, site) == 4);
 static_assert(offsetof(ObfuscatedSiteRecord, location) == 8); static_assert(offsetof(ObfuscatedSiteRecord, name) == 16);
 
+struct ArrivalSiteRecord {
+    uint32_t number { 0 }; SourceLocation location; uint32_t function { UINT32_MAX }; TextRange operation; AccessKind kind { };
+    KnowledgeLevel level { }; UnprovenCause cause { }; uint32_t firstExpectedLayout { 0 }; uint32_t expectedLayoutCount { 0 }; ArrivalStamp stamp { };
+
+    friend bool operator==(const ArrivalSiteRecord&, const ArrivalSiteRecord&) = default;
+};
+static_assert(sizeof(ArrivalSiteRecord) == 48 && alignof(ArrivalSiteRecord) == 4 && std::is_trivially_copyable_v<ArrivalSiteRecord>);
+static_assert(offsetof(ArrivalSiteRecord, number) == 0); static_assert(offsetof(ArrivalSiteRecord, location) == 4);
+static_assert(offsetof(ArrivalSiteRecord, function) == 12); static_assert(offsetof(ArrivalSiteRecord, operation) == 16);
+static_assert(offsetof(ArrivalSiteRecord, kind) == 24); static_assert(offsetof(ArrivalSiteRecord, level) == 28);
+static_assert(offsetof(ArrivalSiteRecord, cause) == 32); static_assert(offsetof(ArrivalSiteRecord, firstExpectedLayout) == 36);
+static_assert(offsetof(ArrivalSiteRecord, expectedLayoutCount) == 40); static_assert(offsetof(ArrivalSiteRecord, stamp) == 44);
+
+struct ArrivalLayoutRecord {
+    uint32_t layout { 0 }; uint32_t base { UINT32_MAX }; TextRange kind; TextRange name; uint32_t firstField { 0 }; uint32_t fieldCount { 0 };
+    ArrivalLayoutFlags flags { };
+
+    friend bool operator==(const ArrivalLayoutRecord&, const ArrivalLayoutRecord&) = default;
+};
+static_assert(sizeof(ArrivalLayoutRecord) == 36 && alignof(ArrivalLayoutRecord) == 4 && std::is_trivially_copyable_v<ArrivalLayoutRecord>);
+static_assert(offsetof(ArrivalLayoutRecord, layout) == 0); static_assert(offsetof(ArrivalLayoutRecord, base) == 4);
+static_assert(offsetof(ArrivalLayoutRecord, kind) == 8); static_assert(offsetof(ArrivalLayoutRecord, name) == 16);
+static_assert(offsetof(ArrivalLayoutRecord, firstField) == 24); static_assert(offsetof(ArrivalLayoutRecord, fieldCount) == 28);
+static_assert(offsetof(ArrivalLayoutRecord, flags) == 32);
+
+struct ArrivalLayoutFieldRecord {
+    TextRange name; ArrivalFieldFlags flags { };
+
+    friend bool operator==(const ArrivalLayoutFieldRecord&, const ArrivalLayoutFieldRecord&) = default;
+};
+static_assert(sizeof(ArrivalLayoutFieldRecord) == 12 && alignof(ArrivalLayoutFieldRecord) == 4 && std::is_trivially_copyable_v<ArrivalLayoutFieldRecord>);
+static_assert(offsetof(ArrivalLayoutFieldRecord, name) == 0); static_assert(offsetof(ArrivalLayoutFieldRecord, flags) == 8);
+
 struct SwitchRange {
     uint32_t firstID { 0 }; uint32_t count { 0 };
 
@@ -232,16 +269,14 @@ static_assert(offsetof(DroppedGuardWords, opcode) == 0); static_assert(offsetof(
 
 struct BisectionSwitches {
     uint64_t disabledFlowResults { 0 }; std::array<uint64_t, 4> disabledPasses { }; uint64_t disabledSelectionRules { 0 };
-    uint64_t disabledBackEndSwitches { 0 }; SwitchRange switchRange; DroppedGuardWords droppedGuard; uint32_t flowOrderSeed { 0 };
-    uint32_t reserved { 0 };
+    uint64_t disabledBackEndSwitches { 0 }; SwitchRange switchRange; DroppedGuardWords droppedGuard;
 
     friend bool operator==(const BisectionSwitches&, const BisectionSwitches&) = default;
 };
-static_assert(sizeof(BisectionSwitches) == 80 && alignof(BisectionSwitches) == 8 && std::is_trivially_copyable_v<BisectionSwitches>);
+static_assert(sizeof(BisectionSwitches) == 72 && alignof(BisectionSwitches) == 8 && std::is_trivially_copyable_v<BisectionSwitches>);
 static_assert(offsetof(BisectionSwitches, disabledFlowResults) == 0); static_assert(offsetof(BisectionSwitches, disabledPasses) == 8);
 static_assert(offsetof(BisectionSwitches, disabledSelectionRules) == 40); static_assert(offsetof(BisectionSwitches, disabledBackEndSwitches) == 48);
 static_assert(offsetof(BisectionSwitches, switchRange) == 56); static_assert(offsetof(BisectionSwitches, droppedGuard) == 64);
-static_assert(offsetof(BisectionSwitches, flowOrderSeed) == 72); static_assert(offsetof(BisectionSwitches, reserved) == 76);
 
 struct TargetOptions {
     uint64_t features { 0 }; Architecture architecture { }; ReferenceWidth referenceWidth { };
@@ -257,21 +292,22 @@ struct CompileOptions {
     std::array<uint8_t, 16> executableIdentity { }; uint32_t size { 0 }; CompileAction action { }; MismatchPolicy mismatchPolicy { };
     CheckSet checks { }; ReportSet reports { }; TestingSwitch testing { }; Instrumentation instrumentation { }; HeatOverride heatOverride { };
     LimitID loweredLimit { }; uint32_t threadCount { 0 }; uint32_t layoutSeed { 0 }; AdmittedCode admittedCode { }; OutputOptions output { };
-    ExcludedCode excludedCode { };
+    ExcludedCode excludedCode { }; Sabotage sabotage { }; uint32_t reserved { 0 };
 
     friend bool operator==(const CompileOptions&, const CompileOptions&) = default;
 };
 static_assert(sizeof(CompileOptions) == 184 && alignof(CompileOptions) == 8 && std::is_trivially_copyable_v<CompileOptions>);
-static_assert(offsetof(CompileOptions, bisection) == 0); static_assert(offsetof(CompileOptions, target) == 80);
-static_assert(offsetof(CompileOptions, loweredLimitValue) == 96); static_assert(offsetof(CompileOptions, sizeClassProgression) == 104);
-static_assert(offsetof(CompileOptions, executableIdentity) == 112); static_assert(offsetof(CompileOptions, size) == 128);
-static_assert(offsetof(CompileOptions, action) == 132); static_assert(offsetof(CompileOptions, mismatchPolicy) == 136);
-static_assert(offsetof(CompileOptions, checks) == 140); static_assert(offsetof(CompileOptions, reports) == 144);
-static_assert(offsetof(CompileOptions, testing) == 148); static_assert(offsetof(CompileOptions, instrumentation) == 152);
-static_assert(offsetof(CompileOptions, heatOverride) == 156); static_assert(offsetof(CompileOptions, loweredLimit) == 160);
-static_assert(offsetof(CompileOptions, threadCount) == 164); static_assert(offsetof(CompileOptions, layoutSeed) == 168);
-static_assert(offsetof(CompileOptions, admittedCode) == 172); static_assert(offsetof(CompileOptions, output) == 176);
-static_assert(offsetof(CompileOptions, excludedCode) == 180);
+static_assert(offsetof(CompileOptions, bisection) == 0); static_assert(offsetof(CompileOptions, target) == 72);
+static_assert(offsetof(CompileOptions, loweredLimitValue) == 88); static_assert(offsetof(CompileOptions, sizeClassProgression) == 96);
+static_assert(offsetof(CompileOptions, executableIdentity) == 104); static_assert(offsetof(CompileOptions, size) == 120);
+static_assert(offsetof(CompileOptions, action) == 124); static_assert(offsetof(CompileOptions, mismatchPolicy) == 128);
+static_assert(offsetof(CompileOptions, checks) == 132); static_assert(offsetof(CompileOptions, reports) == 136);
+static_assert(offsetof(CompileOptions, testing) == 140); static_assert(offsetof(CompileOptions, instrumentation) == 144);
+static_assert(offsetof(CompileOptions, heatOverride) == 148); static_assert(offsetof(CompileOptions, loweredLimit) == 152);
+static_assert(offsetof(CompileOptions, threadCount) == 156); static_assert(offsetof(CompileOptions, layoutSeed) == 160);
+static_assert(offsetof(CompileOptions, admittedCode) == 164); static_assert(offsetof(CompileOptions, output) == 168);
+static_assert(offsetof(CompileOptions, excludedCode) == 172); static_assert(offsetof(CompileOptions, sabotage) == 176);
+static_assert(offsetof(CompileOptions, reserved) == 180);
 
 } // namespace Wire
 
@@ -281,7 +317,8 @@ using Wire::TextRange; using Wire::SourceLocation; using Wire::Witness; using Wi
 using Wire::UnseenCodeRecord; using Wire::BuiltinUseRecord; using Wire::FeatureUseRecord; using Wire::LocaleUseRecord; using Wire::AccessRecord;
 using Wire::AccessCountRecord; using Wire::TypeTestRecord; using Wire::RemainingCheckRecord; using Wire::DeclineRecord;
 using Wire::AllocationRemarkRecord; using Wire::LossRecord; using Wire::FunctionReportRecord; using Wire::OperationCountRecord;
-using Wire::PassTimeRecord; using Wire::ObfuscatedSiteRecord; using Wire::SwitchRange; using Wire::DroppedGuardWords; using Wire::BisectionSwitches;
+using Wire::PassTimeRecord; using Wire::ObfuscatedSiteRecord; using Wire::ArrivalSiteRecord; using Wire::ArrivalLayoutRecord;
+using Wire::ArrivalLayoutFieldRecord; using Wire::SwitchRange; using Wire::DroppedGuardWords; using Wire::BisectionSwitches;
 using Wire::TargetOptions; using Wire::CompileOptions;
 
 } // namespace Typed

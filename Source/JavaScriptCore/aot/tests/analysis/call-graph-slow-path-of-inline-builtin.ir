@@ -55,4 +55,4 @@ function f6 name="target" results=[{type=undefined}] {
 
 # The function of the library stores to a variable and reads an element of anything. The call does neither
 # EFFECTS-LABEL: function f0
-# EFFECTS-NEXT: v2 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# EFFECTS-NEXT: v2 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects

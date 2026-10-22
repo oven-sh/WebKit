@@ -1,7 +1,7 @@
 # role, flags, creator record, derivation and capabilities of a function line agree: one bad function for each rule
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: InvalidCreatorRecord 51
+# DIAGNOSTIC: InvalidCreatorRecord 47
 
 module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=anything
@@ -29,68 +29,64 @@ function f16 name="badConstructedClassIsRecord" results=[{type=anything}] constr
 function f17 name="badConstructedClassHasOtherConstructor" results=[{type=anything}] constructedClass=L1
 function f18 name="badRecordOnSourceFunction" results=[{type=anything}] creator=Version{provenVersion=f0}
 function f19 name="goodGenericEntrypoint" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 takesNewTarget=true}
-function f20 name="goodGroupEntrypoint" role=GroupEntrypoint captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] creator=Entrypoint{target=f0 group=[f0] arguments=Registers constructEntrypoint=f19}
-function f21 name="goodEntrypointWithGroupEntrypoint" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 groupEntrypoint=f20}
-function f22 name="goodEntrypointWithoutNewTarget" role=GenericEntrypoint captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] creator=Entrypoint{target=f0 arguments=Registers}
-function f23 name="badRoleWithoutRecord" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}]
-function f24 name="badRecordOfOtherRole" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Version{provenVersion=f0}
-function f25 name="badEntrypointWithoutTarget" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{takesNewTarget=true}
-function f26 name="badGenericEntrypointWithGroup" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 group=[f0]}
-function f27 name="badGroupEntrypointWithoutGroup" role=GroupEntrypoint captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] creator=Entrypoint{target=f0 arguments=Registers}
-function f28 name="badGenericEntrypointWithoutCapture" role=GenericEntrypoint results=[{type=anything}] creator=Entrypoint{target=f0}
-function f29 name="badGenericEntrypointTakesCallee" role=GenericEntrypoint flags=[TakesCallee] captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0}
-function f30 name="badBufferAndParameters" role=GenericEntrypoint captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] creator=Entrypoint{target=f0}
-function f31 name="badConstructEntrypointIsSource" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 constructEntrypoint=f1}
-function f32 name="badConstructEntrypointWithoutNewTarget" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 constructEntrypoint=f22}
-function f33 name="badGroupEntrypointOfOtherTarget" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f1 groupEntrypoint=f20}
-function f34 name="goodGenericVersion" role=GenericVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
-function f35 name="goodAllocatedThisVersion" role=AllocatedThisVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
-function f36 name="badVersionOfItself" role=GenericVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f36}
-function f37 name="badVersionOfNothing" role=GenericVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{}
-function f38 name="goodGeneratorRamp" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{ramp=f38 body=f39}
-function f39 name="goodGeneratorBody" role=CoroutineBody results=[{type=anything}] creator=Coroutine{ramp=f38 body=f39}
-function f40 name="goodAsyncRamp" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f40 body=f41 entryWithoutPromise=f41 promiseType=Promise promiseParameter=1}
-function f41 name="goodAsyncBody" role=CoroutineBody parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f40 body=f41 entryWithoutPromise=f41 promiseType=Promise promiseParameter=1}
-function f42 name="badBodyOfOtherCoroutine" role=CoroutineBody results=[{type=anything}] creator=Coroutine{ramp=f38 body=f39}
-function f43 name="badRampIsNoRamp" role=CoroutineBody results=[{type=anything}] creator=Coroutine{ramp=f0 body=f43}
-function f44 name="badBodyIsNoBody" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{ramp=f44 body=f0}
-function f45 name="badGeneratorWithPromiseType" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{ramp=f45 body=f39 promiseType=Promise}
-function f46 name="badAsyncFunctionWithoutPromiseType" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f46 body=f41}
-function f47 name="badPromiseParameterIsNotLast" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f47 body=f41 promiseType=Promise promiseParameter=0}
-function f48 name="badEntryWithoutPromiseIsNotBody" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f48 body=f41 entryWithoutPromise=f39 promiseType=Promise}
-function f49 name="goodBoundFunction" role=BoundFunction results=[{type=anything}] creator=BoundFunction{target=f0 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
-function f50 name="badBoundFunctionWithoutTarget" role=BoundFunction results=[{type=anything}] creator=BoundFunction{numberOfBoundArguments=1}
-function f51 name="badMoreCapturedThanBound" role=BoundFunction results=[{type=anything}] creator=BoundFunction{target=f0 numberOfBoundArguments=1 numberOfCapturedArguments=2}
-function f52 name="goodResultWrapper" role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f53 nullish=Undefined}
-function f53 name="goodResultWorker" role=ResultWorker results=[{type=anything}] creator=ResultWorker{origin=f52}
-function f54 name="goodSecondResultWorker" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] creator=ResultWorker{origin=f0}
-function f55 name="badWorkerIsSource" role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f1}
-function f56 name="badWorkerOfOtherWrapper" role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f53}
-function f57 name="badWorkerWithoutOrigin" role=ResultWorker results=[{type=anything}] creator=ResultWorker{}
-function f58 name="badWorkerWithOtherParameters" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] creator=ResultWorker{origin=f52}
-function f59 name="goodParameterWrapper" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f0}
-function f60 name="badParameterWrapperWithoutBody" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{}
-function f61 name="badWrappedParameterPastParameters" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f0 parameter=1}
-function f62 name="goodOutlinedBody" role=OutlinedBody results=[{type=anything}]
-function f63 name="goodContinuation" role=Continuation results=[{type=anything}] creator=Continuation{origin=f0 index=1}
-function f64 name="badContinuationWithoutOrigin" role=Continuation results=[{type=anything}] creator=Continuation{index=1}
-function f65 name="goodSerializer" role=Serializer results=[{type=anything}] creator=Serializer{layout=L0}
-function f66 name="goodSerializerWithoutLayout" role=Serializer results=[{type=anything}] creator=Serializer{}
-function f67 name="badSerializerOfEnvironment" role=Serializer results=[{type=anything}] creator=Serializer{layout=L2}
-function f68 name="goodValidatingParser" role=ValidatingParser results=[{type=anything}] creator=Parser{type=anything layout=L0}
-function f69 name="badParserWithoutType" role=Parser results=[{type=anything}] creator=Parser{layout=L0}
-function f70 name="badParserOfEnvironment" role=Parser results=[{type=anything}] creator=Parser{type=anything layout=L2}
-function f71 name="goodValidator" role=Validator results=[{type=anything}] creator=Validator{type=anything layout=L0 expectedResult=x0}
-function f72 name="badValidatorWithoutType" role=Validator results=[{type=anything}] creator=Validator{expectedResult=x0}
-function f73 name="badValidatorOfEnvironment" role=Validator results=[{type=anything}] creator=Validator{type=anything layout=L2 expectedResult=x0}
-function f74 name="goodChainStep" role=ChainStep results=[{type=anything}] creator=ChainStep
-function f75 name="goodStubBody" role=StubBody results=[{type=anything}] creator=StubBody{builtin=MathMax}
-function f76 name="badStubBodyOfNumber" role=StubBody results=[{type=anything}] creator=StubBody{builtin=MathPI}
-function f77 name="badCapabilityOutsideRole" role=CoroutineBody results=[{type=anything}] capabilities=[MayBeInlined] creator=Coroutine{ramp=f38 body=f77}
-function f78 name="goodCapabilityAddedByPass" role=OutlinedBody results=[{type=anything}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces]
-function f79 name="badDerivedFromItself" role=OutlinedBody results=[{type=anything}] derivation={source=f79}
-function f80 name="goodParameterMap" role=OutlinedBody parameters=[{type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {}]}
-function f81 name="badParameterMapIsShort" role=OutlinedBody parameters=[{type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}]}
-function f82 name="badOriginalParameterPastSource" role=OutlinedBody parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=1}]}
-function f83 name="goodConstructedClassOfSource" kind=BaseConstructor role=AllocatedThisVersion flags=[HasNewTarget] results=[{type=anything}] derivation={source=f15} creator=Version{provenVersion=f15} constructedClass=L1
-function f84 name="badConstructedClassNotOfSource" role=AllocatedThisVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0} constructedClass=L1
+function f20 name="goodEntrypointWithConstructEntrypoint" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 constructEntrypoint=f19}
+function f21 name="goodEntrypointWithoutNewTarget" role=GenericEntrypoint captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] creator=Entrypoint{target=f0 arguments=Registers}
+function f22 name="badRoleWithoutRecord" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}]
+function f23 name="badRecordOfOtherRole" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Version{provenVersion=f0}
+function f24 name="badEntrypointWithoutTarget" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{takesNewTarget=true}
+function f25 name="badGenericEntrypointWithoutCapture" role=GenericEntrypoint results=[{type=anything}] creator=Entrypoint{target=f0}
+function f26 name="badGenericEntrypointTakesCallee" role=GenericEntrypoint flags=[TakesCallee] captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0}
+function f27 name="badBufferAndParameters" role=GenericEntrypoint captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] creator=Entrypoint{target=f0}
+function f28 name="badConstructEntrypointIsSource" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 constructEntrypoint=f1}
+function f29 name="badConstructEntrypointWithoutNewTarget" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 constructEntrypoint=f21}
+function f30 name="goodGenericVersion" role=GenericVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
+function f31 name="goodAllocatedThisVersion" role=AllocatedThisVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
+function f32 name="badVersionOfItself" role=GenericVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f32}
+function f33 name="badVersionOfNothing" role=GenericVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{}
+function f34 name="goodGeneratorRamp" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{ramp=f34 body=f35}
+function f35 name="goodGeneratorBody" role=CoroutineBody results=[{type=anything}] creator=Coroutine{ramp=f34 body=f35}
+function f36 name="goodAsyncRamp" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f36 body=f37 entryWithoutPromise=f37 promiseType=Promise promiseParameter=1}
+function f37 name="goodAsyncBody" role=CoroutineBody parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f36 body=f37 entryWithoutPromise=f37 promiseType=Promise promiseParameter=1}
+function f38 name="badBodyOfOtherCoroutine" role=CoroutineBody results=[{type=anything}] creator=Coroutine{ramp=f34 body=f35}
+function f39 name="badRampIsNoRamp" role=CoroutineBody results=[{type=anything}] creator=Coroutine{ramp=f0 body=f39}
+function f40 name="badBodyIsNoBody" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{ramp=f40 body=f0}
+function f41 name="badGeneratorWithPromiseType" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{ramp=f41 body=f35 promiseType=Promise}
+function f42 name="badAsyncFunctionWithoutPromiseType" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f42 body=f37}
+function f43 name="badPromiseParameterIsNotLast" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f43 body=f37 promiseType=Promise promiseParameter=0}
+function f44 name="badEntryWithoutPromiseIsNotBody" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f44 body=f37 entryWithoutPromise=f35 promiseType=Promise}
+function f45 name="goodBoundFunction" role=BoundFunction results=[{type=anything}] creator=BoundFunction{target=f0 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
+function f46 name="badBoundFunctionWithoutTarget" role=BoundFunction results=[{type=anything}] creator=BoundFunction{numberOfBoundArguments=1}
+function f47 name="badMoreCapturedThanBound" role=BoundFunction results=[{type=anything}] creator=BoundFunction{target=f0 numberOfBoundArguments=1 numberOfCapturedArguments=2}
+function f48 name="goodResultWrapper" role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f49 nullish=Undefined}
+function f49 name="goodResultWorker" role=ResultWorker results=[{type=anything}] creator=ResultWorker{origin=f48}
+function f50 name="goodSecondResultWorker" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] creator=ResultWorker{origin=f0}
+function f51 name="badWorkerIsSource" role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f1}
+function f52 name="badWorkerOfOtherWrapper" role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f49}
+function f53 name="badWorkerWithoutOrigin" role=ResultWorker results=[{type=anything}] creator=ResultWorker{}
+function f54 name="badWorkerWithOtherParameters" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] creator=ResultWorker{origin=f48}
+function f55 name="goodParameterWrapper" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f0}
+function f56 name="badParameterWrapperWithoutBody" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{}
+function f57 name="badWrappedParameterPastParameters" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f0 parameter=1}
+function f58 name="goodOutlinedBody" role=OutlinedBody results=[{type=anything}]
+function f59 name="secondGoodOutlinedBody" role=OutlinedBody results=[{type=anything}]
+function f60 name="thirdGoodOutlinedBody" role=OutlinedBody results=[{type=anything}]
+function f61 name="goodSerializer" role=Serializer results=[{type=anything}] creator=Serializer{layout=L0}
+function f62 name="goodSerializerWithoutLayout" role=Serializer results=[{type=anything}] creator=Serializer{}
+function f63 name="badSerializerOfEnvironment" role=Serializer results=[{type=anything}] creator=Serializer{layout=L2}
+function f64 name="goodValidatingParser" role=ValidatingParser results=[{type=anything}] creator=Parser{type=anything layout=L0}
+function f65 name="badParserWithoutType" role=Parser results=[{type=anything}] creator=Parser{layout=L0}
+function f66 name="badParserOfEnvironment" role=Parser results=[{type=anything}] creator=Parser{type=anything layout=L2}
+function f67 name="goodValidator" role=Validator results=[{type=anything}] creator=Validator{type=anything layout=L0 expectedResult=x0}
+function f68 name="badValidatorWithoutType" role=Validator results=[{type=anything}] creator=Validator{expectedResult=x0}
+function f69 name="badValidatorOfEnvironment" role=Validator results=[{type=anything}] creator=Validator{type=anything layout=L2 expectedResult=x0}
+function f70 name="goodChainStep" role=ChainStep results=[{type=anything}] creator=ChainStep
+function f71 name="goodStubBody" role=StubBody results=[{type=anything}] creator=StubBody{builtin=MathMax}
+function f72 name="badStubBodyOfNumber" role=StubBody results=[{type=anything}] creator=StubBody{builtin=MathPI}
+function f73 name="badCapabilityOutsideRole" role=CoroutineBody results=[{type=anything}] capabilities=[MayBeInlined] creator=Coroutine{ramp=f34 body=f73}
+function f74 name="goodCapabilityAddedByPass" role=OutlinedBody results=[{type=anything}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces]
+function f75 name="badDerivedFromItself" role=OutlinedBody results=[{type=anything}] derivation={source=f75}
+function f76 name="goodParameterMap" role=OutlinedBody parameters=[{type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {}]}
+function f77 name="badParameterMapIsShort" role=OutlinedBody parameters=[{type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}]}
+function f78 name="badOriginalParameterPastSource" role=OutlinedBody parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=1}]}
+function f79 name="goodConstructedClassOfSource" kind=BaseConstructor role=AllocatedThisVersion flags=[HasNewTarget] results=[{type=anything}] derivation={source=f15} creator=Version{provenVersion=f15} constructedClass=L1
+function f80 name="badConstructedClassNotOfSource" role=AllocatedThisVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0} constructedClass=L1

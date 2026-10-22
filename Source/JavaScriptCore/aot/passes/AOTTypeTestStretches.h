@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTTypeTestCoverage.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -22,7 +23,6 @@ enum class StretchOutcome : uint8_t { Unknown, Guarded, NotClonable };
 struct Stretch {
     StretchOutcome outcome { StretchOutcome::Unknown };
     unsigned numberOfUses { 0 };
-    unsigned numberOfTests { 0 };
     unsigned clonedBytes { 0 };
 };
 
@@ -39,13 +39,18 @@ class WantedProofs {
 public:
     WantedProofs(const TestEvents&, const TestCoverage&);
 
-    const BitVector& beforeRequirement(uint32_t requirement) const LIFETIME_BOUND { return m_beforeRequirement[requirement]; }
     bool isHoistedTestWanted(uint32_t hoistedTest) const { return m_wantedHoistedTests.get(hoistedTest); }
     bool isProofWanted(uint32_t existingProof) const { return m_wantedProofs.get(existingProof); }
 
     bool isInStretch(ValueID value) const { return m_valuesInStretch.get(value.index()); }
     bool isInStretchAtHead(BlockID block) const { return m_headsInStretch.get(block.index()); }
     bool isTerminatorInStretch(BlockID block) const { return m_terminatorsInStretch.get(block.index()); }
+
+    // In front of the tests that stand at the point.
+    bool isAnyProofWantedAt(ProgramPoint);
+
+    // What has to hold for a path that joins the edge in front of the tests that stand on it. Such a path does not have what the edge itself proves.
+    BitVector wantedInFrontOfTestsOn(Edge);
 
     // Slow paths that come back without a proof that is wanted behind them. They go on in the generic copy.
     std::span<const Edge> edgesIntoGenericCopy() const LIFETIME_BOUND { return m_edgesIntoGenericCopy.span(); }
@@ -55,6 +60,7 @@ private:
 
     BitVector wantedAtTail(BlockID, Recording);
     BitVector wantedOn(Edge, Recording);
+    void applyHoistedTestsBackward(Edge, BitVector& wanted, Recording);
     void walkBackward(BlockID, BitVector& wanted, Recording);
     void applyEventBackward(BlockID, const TestEvent&, BitVector& wanted, Recording);
     void markValues(BlockID, uint32_t begin, uint32_t end);
@@ -62,7 +68,9 @@ private:
     const TestEvents& m_events;
     const TestCoverage& m_coverage;
     Vector<BitVector> m_wantedAtHead;
-    Vector<BitVector> m_beforeRequirement;
+    Vector<BitVector> m_wantedAtTail;
+    BlockID m_blockOfEventFlags;
+    BitVector m_isProofWantedInFrontOfEvent;
     BitVector m_wantedHoistedTests;
     BitVector m_wantedProofs;
     BitVector m_valuesInStretch;
@@ -81,6 +89,9 @@ public:
 
     unsigned stretchAt(ProgramPoint) const;
     unsigned stretchAtHeadOf(BlockID) const;
+
+    // Whether the values on both sides of the point belong to one range.
+    bool isInsideRange(ProgramPoint) const;
 
     Vector<Stretch> takeStretches() { return WTF::move(m_stretches); }
     Vector<StretchRange> takeRanges() { return WTF::move(m_ranges); }
@@ -108,6 +119,18 @@ private:
     Vector<std::optional<unsigned>> m_firstRangeOf;
     Vector<Stretch> m_stretches;
 };
+
+inline bool TestStretches::isInsideRange(ProgramPoint point) const
+{
+    std::optional<unsigned> first = m_firstRangeOf[point.block.index()];
+    if (!first)
+        return false;
+    std::span<const StretchRange> candidates = m_ranges.subspan(*first);
+    auto firstLaterRange = std::ranges::partition_point(candidates, [&](const StretchRange& range) {
+        return range.block == point.block && range.begin < point.index;
+    });
+    return firstLaterRange != candidates.begin() && point.index < (firstLaterRange - 1)->end;
+}
 
 } } } // namespace JSC::AOT::Typed
 

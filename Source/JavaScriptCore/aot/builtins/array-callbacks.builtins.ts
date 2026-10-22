@@ -69,9 +69,15 @@ const foundOwnValue: Outcome = { returns: b.any, result: "Tested", receiverUses:
 const foundArrayIndex: Outcome = { returns: b.int(-1, b.checked(2 ** 32 - 1, "UINT32_MAX")), result: "Tested" };
 const foundIndex: Outcome = { returns: b.int(-1, Number.MAX_SAFE_INTEGER), result: "Tested" };
 
+// ArraySpeciesCreate: a new array, or whatever object the species constructor of the receiver makes. The method defines the elements on that object and keeps them nowhere else.
+// filter fills the array index by index. map leaves a hole where the receiver has one, and says so.
+const arrayFromSpecies = b.union(b.instance("Array").dense, b.object).freshUnlessSpecies;
+const elementOfResult = b.resultSlot("element");
+
 const speciesResult = (result: b.CallbackResultUse, ...receiverUses: readonly b.UseSpec[]): Outcome => ({
-  returns: b.object,
+  returns: result === "Escapes" ? b.object : arrayFromSpecies,
   result,
+  resultTo: result === "Stored" ? elementOfResult : undefined,
   receiverUses: [b.runs("Species"), ...receiverUses],
 });
 
@@ -191,16 +197,18 @@ export default b.declarations(
     args: { items: b.any, callback: b.callable },
     returns: b.object.unaliased,
     uses: {
-      items: [b.runs("Iterate")],
+      // The groups hold the items, and nothing describes the object that holds the groups.
+      items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.nativeMemory)],
       callback: [b.called({ times: "PerElement", args: [b.iterated("items"), b.length], result: "Escapes" })],
     },
+    model: b.functionIn("models/Objects", "groupBy"),
     implementation: b.compiled("ObjectConstructor", "groupBy"),
   }),
 
   b.static("Array.from", [
     {
       args: { items: b.instance("TypedArray").pristine("Names"), mapper: b.undefined.optional },
-      returns: newArrayOf(b.slot("items", "element")),
+      returns: newArrayOf(b.slot("items", "element")).dense,
       capability: "heap",
       throws: true,
       uses: { this: b.inspected, items: [b.readsContents()] },
@@ -210,14 +218,14 @@ export default b.declarations(
     {
       ...operandCodeEffects,
       args: { items: b.any, mapper: b.undefined.optional },
-      returns: newArrayOf(b.union(b.iterated("items"), b.undefined)),
+      returns: newArrayOf(b.union(b.iterated("items"), b.undefined)).dense,
       uses: { this: b.inspected, items: [itemsProtocols, b.contentsStoredIn(b.resultSlot("element"))] },
       implementation: b.compiled("ArrayConstructor", "from"),
     },
     {
       ...operandCodeEffects,
       args: { items: b.any, mapper: b.callable, thisArg: b.any.optional },
-      returns: newArrayOf(b.callbackResult("mapper")),
+      returns: newArrayOf(b.callbackResult("mapper")).dense,
       uses: {
         this: b.inspected,
         items: [itemsProtocols],
@@ -271,19 +279,19 @@ export default b.declarations(
   traversalMethod(
     "filter",
     arrayWithDefaultSpecies,
-    { returns: newArrayOf(element), result: "Tested" },
-    speciesResult("Tested", b.contentsStoredIn(b.nativeMemory)),
+    { returns: newArrayOf(element).dense, result: "Tested" },
+    speciesResult("Tested", b.contentsStoredIn(elementOfResult)),
   ),
   traversalMethod(
     "map",
     arrayWithDefaultSpecies,
-    { returns: newArrayOf(callbackResult), result: "Stored", resultTo: b.resultSlot("element") },
-    speciesResult("Escapes"),
+    { returns: newArrayOf(callbackResult).dense, result: "Stored", resultTo: b.resultSlot("element"), receiverUses: [b.copiesHolesToResult] },
+    speciesResult("Stored", b.copiesHolesToResult),
   ),
   traversalMethod(
     "flatMap",
     arrayWithDefaultSpecies,
-    { returns: newArrayOf(b.any), result: "Escapes" },
+    { returns: newArrayOf(b.any).dense, result: "Escapes" },
     speciesResult("Escapes"),
   ),
   b.privateAlias("Array.prototype.forEach", "Array.prototype.map"),
@@ -301,8 +309,8 @@ export default b.declarations(
   ),
   sortMethod(
     "toSorted",
-    { returns: newArrayOf(elementOrUndefined), receiverUses: [b.readsContents()] },
-    { returns: newArrayOf(b.any), receiverUses: [b.contentsStoredIn(b.resultSlot("element"))] },
+    { returns: newArrayOf(elementOrUndefined).dense, receiverUses: [b.readsContents()] },
+    { returns: newArrayOf(b.any).dense, receiverUses: [b.contentsStoredIn(b.resultSlot("element"))] },
     { usesFeature: "RareArrayMethods", nativeSymbols: ["arrayProtoFuncToSorted"] },
   ),
 );

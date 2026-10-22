@@ -17,13 +17,13 @@ function f0 name="awaitsAtTopLevel" kind=Module flags=[IsAsync] results=[{type=a
 }
 # CHECK-LABEL: function f0 name="awaitsAtTopLevel"
 # CHECK: kind=Module role=CoroutineRamp flags=[IsAsync]
-# CHECK: results=[{type=Promise written=anything}]
+# CHECK: results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0}
 # CHECK-NEXT: b0():
 # CHECK-NEXT: [[promise]]: Promise = NewPromise
 # CHECK-NEXT: [[started]]: anything = CallDirect [[promise]] function=f2
-# CHECK-NEXT: [[claimed]]: Promise = Claim [[started]] castType=Promise cause=AddedByPass
-# CHECK-NEXT: Return [[claimed]]
+# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] castType=Promise
+# CHECK-NEXT: Return [[returned]]
 function f1 name="awaitsNothing" module=m1 kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis

@@ -4,7 +4,7 @@
 # OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
 # STATISTIC: EnvironmentsPromotedToVariables = 0
 # STATISTIC: CapturesPromotedToVariables = 1
-# CHECK: variable g0 module=m0 declared={type=anything} flags=[IsImmutable] flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead mayKeepObservedObjectAlive=true}
+# CHECK: variable g0 module=m0 declared={type=anything} flags=[IsImmutable] flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 # CHECK-NOT: variable g1
 
 module m0 path="main.js" displayPath="main.js" body=f0

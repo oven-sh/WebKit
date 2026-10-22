@@ -1,4 +1,5 @@
 # The conversion of a proven object finds valueOf and toString of Object.prototype, which run no code on an object without a tag of its own: the operator is not unknown code and the object reaches no user code
+# TODO: nobody: a built-in that a protocol finds is described as a call on any receiver, so adding a plain object counts as running unknown code
 # FORM: Prepared
 # RUN: effects summaries f0
 # RUN(OPERANDS): operands f0

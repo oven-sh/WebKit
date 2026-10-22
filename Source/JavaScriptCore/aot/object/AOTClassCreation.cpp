@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassStructureCache.h"
 #include "AOTClosure.h"
@@ -62,7 +63,7 @@ private:
     void createPrototype();
     bool tryDeferClassObject();
     void prepareObjects();
-    const Identifier& keyFor(const MethodData&);
+    Identifier keyFor(const MethodData&);
     void defineMembers(JSObject* target, std::span<const MethodData>);
     void defineMember(JSObject* target, const MethodData&, const Identifier& key, JSObject* function);
     void restorePrototypeMarks();
@@ -184,6 +185,7 @@ void ClassDefinition::run(JSValue heritage, JSValue prototypeParent)
 
     if (resolveParents(heritage, prototypeParent) == ParentResolution::BaseNotDefined)
         return;
+    MemberGuardWatchpoints::MethodTableUpdate update(m_state);
     chooseStructures();
     createPrototype();
     if (tryDeferClassObject()) {
@@ -235,6 +237,10 @@ ClassDefinition::ParentResolution ClassDefinition::resolveParents(JSValue herita
             return ParentResolution::BaseNotDefined;
         RELEASE_ASSERT(m_prototypeParent);
     } else if (heritage || m_classLayout.hasUntypedBase) {
+        if (uint32_t builtinBase = m_classLayout.classData().builtinBase; !heritage && builtinBase != LayoutData::noBase) {
+            heritage = m_state.builtinCells->findObject(BuiltinID(builtinBase));
+            prototypeParent = asObject(heritage)->getDirect(m_vm, m_vm.propertyNames->prototype);
+        }
         RELEASE_ASSERT(heritage && (heritage.isObject() || heritage.isNull()));
         RELEASE_ASSERT(prototypeParent && (prototypeParent.isObject() || prototypeParent.isNull()));
         m_classObjectParent = heritage.getObject();
@@ -261,7 +267,7 @@ void ClassDefinition::chooseStructures()
 {
     if (m_part == ClassPart::Everything && m_classLayout.createsMembersLazily && m_prototypeParent.isObject())
         m_part = ClassPart::ClassObject;
-    m_mayShareStructures = m_part == ClassPart::Everything && m_classLayout.evaluation() != EvaluationState::ProvenOnce && !m_classObject->mayBePrototype() && !m_classObject->butterfly();
+    m_mayShareStructures = m_part == ClassPart::Everything && m_classes.keepsStructuresForNextEvaluation(*m_classObject, m_classLayout) && !m_classObject->mayBePrototype() && !m_classObject->butterfly();
     if (!m_mayShareStructures)
         return;
     m_shared = m_state.objects->caches->classStructures.find(m_classLayout.index, m_classObjectParent, prototypeParentCell());
@@ -289,8 +295,11 @@ void ClassDefinition::createPrototype()
 
 bool ClassDefinition::tryDeferClassObject()
 {
-    if (m_requestedPart != ClassPart::Everything || m_part != ClassPart::ClassObject || !m_classObjectParent || !m_classLayout.createsClassObjectOnMutation || m_classObject->mayBePrototype() || m_classObject->butterfly())
+    if (m_requestedPart != ClassPart::Everything || m_part != ClassPart::ClassObject || !m_classLayout.createsClassObjectOnMutation || m_classObject->mayBePrototype() || m_classObject->butterfly())
         return false;
+    // A class without a parent stays in the Structure that every class object is created with.
+    if (!m_classObjectParent)
+        return m_classObject->structure() == m_state.objects->closures.closureStructure(m_vm, classObjectClosureStructure);
     m_classObject->setStructure(m_vm, m_classes.lazyClassObjectStructureInheritingFrom(m_vm, m_classObjectParent));
     return true;
 }
@@ -310,13 +319,9 @@ void ClassDefinition::prepareObjects()
         m_classObjectMayBePrototype = m_classObject->mayBePrototype();
         bool wasReachable = m_requestedPart != ClassPart::Everything || m_classObjectMayBePrototype;
         RELEASE_ASSERT(!wasReachable || !m_classObjectParent || !m_classLayout.createsClassObjectOnMutation || m_classObject->getPrototypeDirect() == m_classObjectParent);
-        Structure* classObjectStructure = Closure::createStructure(m_vm, m_globalObject, m_classObjectParent ? m_classObjectParent : m_classObject->getPrototypeDirect().getObject());
-        if (m_classObject->butterfly()) {
+        if (m_classObject->butterfly())
             m_earlyStores.takeFrom(m_globalObject, m_classObject);
-            m_classObject->nukeStructureAndSetButterfly(m_vm, m_classObject->structureID(), nullptr);
-        }
-        m_classObject->setStructure(m_vm, classObjectStructure);
-        m_classObject->putDirectWithoutTransition(m_vm, m_vm.propertyNames->prototype, m_prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+        m_classObject->initializeClassObject(m_vm, m_classObjectParent ? m_classObjectParent : m_classObject->getPrototypeDirect().getObject(), m_prototype);
     }
     if (m_part == ClassPart::PrototypeMembers) {
         Structure* ordinaryStructure = JSFinalObject::createStructure(m_vm, m_globalObject, m_prototypeParent, ClassPrototype::inlineCapacity);
@@ -328,7 +333,7 @@ void ClassDefinition::prepareObjects()
         m_prototype->putDirectWithoutTransition(m_vm, m_vm.propertyNames->constructor, m_classObject, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
-const Identifier& ClassDefinition::keyFor(const MethodData& method)
+Identifier ClassDefinition::keyFor(const MethodData& method)
 {
     return m_vm.aotState().identifiers->identifier(method.name);
 }
@@ -358,15 +363,28 @@ void ClassDefinition::defineMember(JSObject* target, const MethodData& method, c
         storeShared(target, key.impl(), kind == MethodKind::Method ? static_cast<JSCell*>(function) : createAccessor());
         return;
     }
+    constexpr unsigned accessorAttributes = PropertyAttribute::Accessor | PropertyAttribute::DontEnum;
     bool isLazyFunctionProperty = target == m_classObject && (key == m_vm.propertyNames->name || key == m_vm.propertyNames->length || key == m_vm.propertyNames->prototype);
-    if (!isLazyFunctionProperty && !parseIndex(key) && !isValidOffset(target->structure()->get(m_vm, key))) {
+    bool isOrdinaryName = !isLazyFunctionProperty && !parseIndex(key);
+    unsigned attributes = 0;
+    PropertyOffset offset = isOrdinaryName ? target->structure()->get(m_vm, key, attributes) : invalidOffset;
+    if (isOrdinaryName && !isValidOffset(offset)) {
         if (kind == MethodKind::Method)
             target->putDirectWithoutTransition(m_vm, key, function, static_cast<unsigned>(PropertyAttribute::DontEnum));
         else
-            target->putDirectNonIndexAccessorWithoutTransition(m_vm, key, createAccessor(), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
+            target->putDirectNonIndexAccessorWithoutTransition(m_vm, key, createAccessor(), accessorAttributes);
         return;
     }
     m_hasOnlyPlainMembers = false;
+    // The other half of an accessor that the definition has just put there. Nobody has seen the object, and the property stays what the Structure says.
+    if (isValidOffset(offset) && kind != MethodKind::Method && attributes == accessorAttributes && target->structure()->isPinnedPropertyTable()) {
+        auto* current = uncheckedDowncast<GetterSetter>(target->getDirect(offset));
+        JSObject* getter = kind == MethodKind::Getter ? function : current->isGetterNull() ? nullptr : current->getter();
+        JSObject* setter = kind == MethodKind::Setter ? function : current->isSetterNull() ? nullptr : current->setter();
+        target->structure()->didReplaceProperty(offset);
+        target->putDirectOffset(m_vm, offset, GetterSetter::create(m_vm, m_globalObject, getter, setter));
+        return;
+    }
     PropertyDescriptor descriptor;
     switch (kind) {
     case MethodKind::Method:
@@ -394,7 +412,8 @@ void ClassDefinition::restorePrototypeMarks()
 {
     if (m_classObjectMayBePrototype)
         m_classObject->structure()->setMayBePrototype(true);
-    if (m_part == ClassPart::PrototypeMembers)
+    // No other object has the Structure that the members were added to, so the mark needs no transition.
+    if (createsPrototypeMembers() && !isShared())
         m_prototype->structure()->setMayBePrototype(true);
 }
 
@@ -410,8 +429,7 @@ void ClassDefinition::finish()
 
 bool ClassDefinition::hasAssumedBase() const
 {
-    const ClassData& classData = m_classLayout.classData();
-    uint32_t assumedBase = classData.base == LayoutData::noBase ? classData.predictedBase : classData.base;
+    uint32_t assumedBase = m_classLayout.assumedBase();
     if (assumedBase == LayoutData::noBase)
         return true;
     const LayoutData* baseClass = m_classes.classWithIndex(assumedBase);
@@ -423,9 +441,17 @@ bool ClassDefinition::hasAssumedBase() const
 
 void ClassDefinition::armGuards()
 {
+    using HolderState = ClassTable::HolderState;
+    bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
+    HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
+    // A static field may have the name of a static method, and lies in a variable.
+    HolderState stateOfClassObject = holdersHaveWhatRecordSays && m_classLayout.staticFields().empty() ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
+    // A constructor function gets its class at its first construction, which may never come: nobody constructs a Duplex. The guards of the class look up through its holders.
+    if (const LayoutData* base = m_classes.assumedBaseOf(m_classLayout); base && hasAssumedBase())
+        m_classes.classPrototypeOfBase(m_vm, *base);
     // The guard of the prototype property asks for the prototype object of the class, which the first call enters.
-    m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Prototype, m_prototype);
-    m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Static, m_classObject);
+    m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Prototype, m_prototype, createsPrototypeMembers() ? stateOfPrototype : HolderState::NotTouched);
+    m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Static, m_classObject, createsClassObject() ? stateOfClassObject : HolderState::NotTouched);
     if (m_requestedPart != ClassPart::Everything || hasAssumedBase())
         return;
     m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Static);
@@ -441,8 +467,13 @@ JSValue ClassTable::resolveHeritage(JSGlobalObject* globalObject, JSValue herita
     if (heritage.isNull())
         return jsNull();
     if (!heritage.isConstructor()) {
-        throwTypeError(globalObject, scope, "The superclass is not a constructor."_s);
+        throwException(globalObject, scope, createSuperclassNotConstructorError(globalObject));
         return { };
+    }
+    // A class object that nobody has looked at has the property as the record says: no code runs, and nothing but the stand-in for that object needs to be there.
+    if (auto* classObject = dynamicDowncast<Closure>(heritage.asCell()); classObject && classObject->isLazyClassObject()) {
+        if (JSValue prototype = classObject->prototypeProperty(vm))
+            return prototype;
     }
     JSValue prototypeParent = asObject(heritage)->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, { });
@@ -463,14 +494,118 @@ static void markFunctionPropertiesDeclaredAsFields(VM& vm, Closure* classObject,
         else if (key == vm.propertyNames->length)
             classObject->ensureRareData(vm)->setHasModifiedLengthForBoundOrNonHostFunction();
         else if (key == vm.propertyNames->displayName)
-            didStoreDisplayName(vm, classObject);
+            didChangeDisplayName(vm, classObject);
     }
 }
 
-void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, JSValue parent, JSValue prototypeParent)
+// Where the record says all that the definition does, the definition makes nothing. The class object stays the closure that it is until somebody looks at its properties,
+// classPrototype() makes the prototype object when it is first asked for, which comes before the first instance, and the guards of the class hold while their bits are clear.
+bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent)
+{
+    if (!leavesDefinitionToRecord(classLayout))
+        return false;
+    if (!m_classesWithForgottenDefinition.isEmpty() || classObject->butterfly() || classObject->mayBePrototype())
+        return false;
+    // Somebody may have asked for the prototype object first.
+    if (JSObject* prototype = classPrototypeIfExists(classLayout); prototype && (!classLayout.createsPrototypeBeforeClassObject || prototype->classInfo() != ClassPrototype::info()))
+        return false;
+    ClosureTable& closures = m_state.objects->closures;
+    FunctionID constructor = classObject->function();
+    JSCell* registered = closures.closureIfCreated(constructor);
+    if (registered && registered != classObject)
+        return false;
+
+    Structure* structure = closures.closureStructure(vm, classObjectClosureStructure);
+    if (classObject->structure() != structure)
+        return false;
+    // Only the definition knows what stands above a chain that ends with a heritage.
+    JSObject* parentOfPrototype = nullptr;
+    if (const LayoutData* baseClass = baseOf(classLayout)) {
+        FunctionID baseConstructor(baseClass->classData().classConstructor);
+        JSCell* baseClassObject = hasOneClassObject(*baseClass) ? closures.closure(vm, baseConstructor) : closures.closureIfCreated(baseConstructor);
+        if (!baseClassObject || (heritage && heritage != JSValue(baseClassObject)))
+            return false;
+        if (!classLayout.createsPrototypeBeforeClassObject) {
+            JSValue prototypeOfBase = uncheckedDowncast<Closure>(baseClassObject)->prototypeProperty(vm);
+            if (!prototypeOfBase || !prototypeOfBase.isObject())
+                return false;
+            parentOfPrototype = asObject(prototypeOfBase);
+        }
+        structure = lazyClassObjectStructureInheritingFrom(vm, asObject(baseClassObject));
+    } else if (heritage || classLayout.hasUntypedBase) {
+        // Where a base is only assumed, the definition compares.
+        if (!heritage || !heritage.isObject() || !prototypeParent || !prototypeParent.isObject() || classLayout.assumedBase() != LayoutData::noBase)
+            return false;
+        parentOfPrototype = asObject(prototypeParent);
+        structure = lazyClassObjectStructureInheritingFrom(vm, asObject(heritage));
+    }
+    if (!parentOfPrototype && !classLayout.createsPrototypeBeforeClassObject)
+        return false;
+
+    if (!registered)
+        closures.registerClassObject(classObject);
+    if (!classLayout.staticFields().empty())
+        markFunctionPropertiesDeclaredAsFields(vm, classObject, classLayout);
+    classObject->setStructure(vm, structure);
+    if (parentOfPrototype) {
+        parentOfPrototype->didBecomePrototype(vm);
+        createClassPrototype(vm, classLayout, parentOfPrototype);
+        didCreatePrototypeLeftToRecord(classLayout);
+    }
+    return true;
+}
+
+// A library makes a class for each of its kinds out of one text: `class Kind extends Parent {}` in a function. From the second evaluation on the guards of the class have ended, and an
+// earlier evaluation with these parents has left the two Structures. What is left to do is what the language asks for: a prototype object, and the two objects name each other.
+// A class whose record creates members, or that has a class of the program above it, goes the long way.
+bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent)
 {
     VM& vm = globalObject->vm();
-    const LayoutData& classLayout = *classObject->classData();
+    const ClassData& classData = classLayout.classData();
+    if (classData.numberOfMethods || classData.numberOfStaticMethods || classData.numberOfStaticFields || classLayout.assumedBase() != LayoutData::noBase)
+        return false;
+    if (classObject->butterfly() || classObject->mayBePrototype())
+        return false;
+    JSObject* classObjectParent = nullptr;
+    JSValue parentOfPrototype = globalObject->objectPrototype();
+    if (heritage) {
+        if (!prototypeParent)
+            return false;
+        classObjectParent = heritage.getObject();
+        parentOfPrototype = prototypeParent;
+    } else if (classLayout.hasUntypedBase)
+        return false;
+
+    ClassStructures kept = m_state.objects->caches->classStructures.find(classLayout.index, classObjectParent, parentOfPrototype.isCell() ? parentOfPrototype.asCell() : nullptr);
+    if (!kept || kept.classObjectStructure->realm() != globalObject || kept.classObjectStructure->storedPrototype() != (classObjectParent ? JSValue(classObjectParent) : classObject->getPrototypeDirect()))
+        return false;
+    PropertyOffset offsetOfPrototype = kept.classObjectStructure->get(vm, vm.propertyNames->prototype);
+    PropertyOffset offsetOfConstructor = kept.prototypeStructure->get(vm, vm.propertyNames->constructor);
+    RELEASE_ASSERT(isValidOffset(offsetOfPrototype) && isValidOffset(offsetOfConstructor));
+
+    if (!classObject->kind().isInRuntimeModule)
+        m_state.statics->ensureProgramStaticsInitialized();
+    if (parentOfPrototype.isObject())
+        asObject(parentOfPrototype)->didBecomePrototype(vm);
+    auto storageFor = [&](Structure* structure) -> Butterfly* {
+        return structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
+    };
+    JSObject* prototype = JSFinalObject::createWithButterfly(vm, kept.prototypeStructure, storageFor(kept.prototypeStructure));
+    if (Butterfly* storage = storageFor(kept.classObjectStructure))
+        classObject->nukeStructureAndSetButterfly(vm, classObject->structureID(), storage);
+    classObject->setStructure(vm, kept.classObjectStructure);
+    classObject->putDirectOffset(vm, offsetOfPrototype, prototype);
+    prototype->putDirectOffset(vm, offsetOfConstructor, classObject);
+    armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
+    armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
+    return true;
+}
+
+void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)
+{
+    VM& vm = globalObject->vm();
+    if (tryLeaveDefinitionToRecord(vm, classObject, classLayout, parent, prototypeParent))
+        return;
     bool isProvenOnce = classLayout.evaluation() == EvaluationState::ProvenOnce;
     ClosureTable& closures = m_state.objects->closures;
     // What escaped from a run that threw may have used the class since the reset, and the run time then created it from its record.
@@ -484,10 +619,17 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
     if (registered && registered != classObject) {
         RELEASE_ASSERT(!isProvenOnce);
         didEvaluateClassAgain(m_state, classLayout);
+        if (tryDefineAgainWithKeptStructures(globalObject, classObject, classLayout, parent, prototypeParent))
+            return;
     } else if (!registered && classLayout.evaluation() != EvaluationState::SeenTwice)
         closures.registerClassObject(classObject);
     markFunctionPropertiesDeclaredAsFields(vm, classObject, classLayout);
     ClassDefinition(*this, globalObject, classObject, ClassPart::Everything).run(parent, prototypeParent);
+}
+
+void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, JSValue parent, JSValue prototypeParent)
+{
+    defineClass(globalObject, classObject, *classObject->classData(), parent, prototypeParent);
 }
 
 void ClassTable::createClassPart(JSGlobalObject* globalObject, Closure* classObject, ClassPart part)

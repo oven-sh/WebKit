@@ -19,7 +19,7 @@ function f0 name="shapeTestUnderHandler" parameters=[{type=object}, {type=anythi
     v6 = ShapeTest v0 layouts=[L0]
     Branch v6 -> taken b2(| 0), notTaken b3()
   b2(v7):
-    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Predicted
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
     Jump -> next b4()
   b3():
     v9 = Call v1, -, v3
@@ -29,7 +29,7 @@ function f0 name="shapeTestUnderHandler" parameters=[{type=object}, {type=anythi
     v11 = ShapeTest v3 layouts=[L1]
     Branch v11 -> taken b5(| 0), notTaken b7()
   b5(v12):
-    v13 = GetSlot v3, v12 key="a" receivers=[L1] level=Predicted
+    v13 = GetSlot v3, v12 key="a" receivers=[L1] level=Expected
     v14 = ToBoolean v13
     Branch v14 -> taken b4(), notTaken b6()
   b6():
@@ -47,7 +47,7 @@ function f0 name="shapeTestUnderHandler" parameters=[{type=object}, {type=anythi
 # CHECK-NEXT: [[proof]]: guard = AllGuards [[kept]]
 # CHECK-NEXT: Jump -> next [[rest]]()
 # CHECK-NEXT: b2(v7: guard):
-# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
 # CHECK-NOT: ShapeTest
 # CHECK: [[rest]]() handler=b8():
 # CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]

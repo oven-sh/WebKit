@@ -8,12 +8,19 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNarrowFieldTypes.h"
+#include <algorithm>
+
 namespace JSC { namespace AOT { namespace Typed {
 
 #define FOR_EACH_AOT_STAMPED_SLOT_OPERATION(v) \
     v(GetSlot) \
     v(GetSlotOrUndefined) \
+    v(GetSlotGetter) \
+    v(GetFlattenedSlot) \
+    v(GetFlattenedSlotOrUndefined) \
     v(GetDeferredClosureSlot) \
+    v(GetDeferredClosureSlotOrUndefined) \
     v(IsSlotFilled) \
     v(PutSlot) \
     v(PutSlotOrAdd)
@@ -36,7 +43,11 @@ static_assert(Value::opcodesWithFieldAccess == OpcodeSet { FOR_EACH_AOT_STAMPED_
 static bool isInsideStoredType(const Program& program, const Type& stored, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     ScratchTypeArena scratch(program.types);
-    return stored.isSubsetOf(storedTypeOf(program, receivers, key, scratch), program);
+    bool slotsHoldUndefinedAndNull = std::ranges::all_of(receivers, [&](LayoutID receiver) {
+        std::optional<FieldReference> field = findField(program, receiver, key, BaseChain::Proven);
+        return field && slotHoldsUndefinedAndNull(program, *field);
+    });
+    return (slotsHoldUndefinedAndNull ? stored.withoutNullish() : stored).isSubsetOf(storedTypeOf(program, receivers, key, scratch), program);
 }
 #endif
 
@@ -49,11 +60,12 @@ void AccessRewriter::becomeSlotOperation(const NamedAccessSite& site, const Acce
 
     Value& value = valueAt(site.site);
     ReplacedEffects replaced;
-    replaced.add({ program, m_context.inputs.effects }, function, value);
+    if (m_checksEffects)
+        replaced.add({ program, m_context.inputs.effects }, function, value);
     SlotStamp stamp = createSlotStamp(m_context, value, plan);
 
     ASSERT(program.typeOf(function, operands.receiver).isSubsetOf(Type::object(), program));
-    ASSERT(operands.guard || program.typeOf(function, operands.receiver).layouts);
+    ASSERT(operands.guard || program.typeOf(function, operands.receiver).hasOnlyLayouts(program));
     ASSERT(!plan.stores() || isInsideStoredType(program, program.typeOf(function, operands.stored), plan.receivers.span(), stamp.key));
 
     value.become(plan.operation);
@@ -62,6 +74,31 @@ void AccessRewriter::becomeSlotOperation(const NamedAccessSite& site, const Acce
     if (plan.stores())
         value.setOperand(OperandIndex::PutSlot::value, operands.stored);
     setSlotStamp(value, stamp);
+    if (plan.operation == Opcode::GetSlot || plan.operation == Opcode::GetDeferredClosureSlot)
+        value.setHoldsDeclaredType(plan.testsDeclaredType && (plan.requiredProofs.contains(Proof::SlotFilled) || plan.requiredProofs.contains(Proof::BirthFieldsFilled)));
+    finish(site.site, replaced);
+}
+
+void AccessRewriter::becomeCallOfGetterInSlot(const NamedAccessSite& site, const AccessOperands& operands)
+{
+    const Program& program = m_context.program;
+    const PropertyAccessPlan& plan = site.plan;
+    RELEASE_ASSERT(plan.operation == Opcode::GetSlotGetter);
+
+    ReplacedEffects replaced;
+    if (m_checksEffects)
+        replaced.add({ program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
+    SlotStamp stamp = createSlotStamp(m_context, valueAt(site.site), plan);
+
+    Value read = IRBuilder::make(Opcode::GetSlotGetter, { operands.receiver, operands.guard });
+    setSlotStamp(read, { stamp.key, stamp.receivers, stamp.level, { } });
+    ValueID getter = insert(WTF::move(read), valueAt(site.site).origin());
+
+    Value& call = valueAt(site.site);
+    call.become(Opcode::Call);
+    call.setCalleeOperand(getter);
+    call.setThisValueOperand(operands.receiver);
+    call.setAccessSite(stamp.accessSite);
     finish(site.site, replaced);
 }
 
@@ -72,7 +109,8 @@ void AccessRewriter::becomeConstant(const NamedAccessSite& site)
 
     Value& value = valueAt(site.site);
     ReplacedEffects replaced;
-    replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
+    if (m_checksEffects)
+        replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
 
     value.become(plan.operation);
     if (plan.operation == Opcode::Boolean)
@@ -84,7 +122,8 @@ void AccessRewriter::becomeBuiltin(const NamedAccessSite& site)
 {
     Value& value = valueAt(site.site);
     ReplacedEffects replaced;
-    replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
+    if (m_checksEffects)
+        replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, value);
 
     value.become(Opcode::Builtin);
     value.setBuiltin(site.plan.member.builtin);
@@ -100,7 +139,8 @@ void AccessRewriter::becomeMethodClosure(const NamedAccessSite& site, const Acce
     RELEASE_ASSERT(captures.size() == (plan.capturesReceiver ? 1u : 0u));
 
     ReplacedEffects replaced;
-    replaced.add({ program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
+    if (m_checksEffects)
+        replaced.add({ program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
 
     ValueID capturedReceiver;
     if (plan.capturesReceiver) {
@@ -112,6 +152,8 @@ void AccessRewriter::becomeMethodClosure(const NamedAccessSite& site, const Acce
     Value& value = valueAt(site.site);
     value.become(Opcode::NewClosure);
     value.setFunction(method);
+    // A closure that is only called is nobody's object. Any other use may compare it with what another read of the member gave.
+    value.setIsHeldByClosureTable(plan.member.kind == MemberKind::Method && !site.query.isOnlyCalled);
     if (capturedReceiver)
         value.appendVariadicOperand(capturedReceiver);
     finish(site.site, replaced);

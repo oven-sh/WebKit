@@ -90,8 +90,10 @@ private:
 
 } // anonymous namespace
 
+// Image::locate() runs where the cache of call sites has no entry. It walks the starts of functions from the first one in the granule, and sixteen of them lie in a cache line.
 unsigned chooseCodeGranuleShift(const LinkedFunctions& functions, BuildContext& context)
 {
+    constexpr size_t maxStartsPassedOnAverage = 8;
     Vector<size_t> functionEnds(functions.size());
     Vector<uint8_t> isReturnedInto(functions.size());
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned index) {
@@ -114,7 +116,7 @@ unsigned chooseCodeGranuleShift(const LinkedFunctions& functions, BuildContext& 
             startsPassed += index - granuleStart;
             ++lookups;
         }
-        return 2 * startsPassed <= 5 * lookups;
+        return startsPassed <= maxStartsPassedOnAverage * lookups;
     };
     unsigned codeGranuleShift = maxCodeGranuleShift;
     while (codeGranuleShift > minCodeGranuleShift && !walkIsShort(codeGranuleShift))
@@ -421,6 +423,8 @@ static void countStatistics(const CodeLayout& layout, BuildContext& context)
     context.statistics().count(StatisticID::Veneers, numberOfVeneers);
     context.statistics().count(StatisticID::StubCopiesEmitted, layout.sharedCodeCopies.size());
     context.statistics().count(StatisticID::CodeBytesEmitted, layout.codeSize);
+    context.statistics().count(StatisticID::SharedCodeBytesEmitted, static_cast<uint64_t>(layout.sharedCodeSize) * layout.sharedCodeCopies.size());
+    context.statistics().count(StatisticID::RegExpCodeBytesEmitted, layout.webAssemblyCodeOffset - layout.regExpCodeOffset);
 }
 
 static void recordLimitHits(const LinkedFunctions& functions, const CodeLayout& layout, BuildContext& context)

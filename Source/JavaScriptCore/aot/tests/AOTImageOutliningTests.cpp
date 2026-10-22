@@ -23,6 +23,7 @@ static constexpr uint32_t sequenceMiddle = 12;
 static constexpr uint32_t pinnedUnitOffset = 8;
 static constexpr int64_t smallestSavingChosen = 64;
 static constexpr unsigned numberOfSitesWorthOneCopy = 8;
+static constexpr unsigned numberOfSitesWorthNothing = 2;
 static constexpr uint32_t aliasOfCalledFunction = calledFunction + 1;
 
 static constexpr int64_t savingOf(int64_t numberOfSites, int64_t numberOfCopies)
@@ -30,6 +31,7 @@ static constexpr int64_t savingOf(int64_t numberOfSites, int64_t numberOfCopies)
     return numberOfSites * removedBytes - numberOfCopies * (sequenceLength + returnSize);
 }
 static_assert(savingOf(numberOfSitesWorthOneCopy, 1) >= smallestSavingChosen && savingOf(numberOfSitesWorthOneCopy, 2) < smallestSavingChosen);
+static_assert(savingOf(numberOfSitesWorthNothing, 1) > 0 && savingOf(numberOfSitesWorthNothing, 1) < smallestSavingChosen);
 
 static bool isInSomeSite(const Outlining& outlining, uint32_t position, uint32_t offset)
 {
@@ -195,8 +197,85 @@ static void testCallOfInnerEntry()
 
 static void testNoSaving()
 {
-    checkNothingChosen(repeatedBodies(3));
+    checkNothingChosen(repeatedBodies(numberOfSitesWorthNothing));
 }
+
+static void testFewSites()
+{
+    constexpr unsigned numberOfSites = 4;
+    static_assert(savingOf(numberOfSites, 1) >= 16 && savingOf(numberOfSites, 1) < smallestSavingChosen);
+    checkNothingChosen(repeatedBodies(numberOfSites));
+}
+
+#if CPU(X86_64)
+// Seven bytes that every body has, in two units. A call in their place saves two bytes a site.
+static Vector<CompiledCode> bodiesRepeatingSevenBytes(bool mayRun)
+{
+    Vector<CompiledCode> bodies;
+    for (uint32_t function = 1; function <= numberOfBodies; ++function) {
+        CodeSketch sketch = sketchWithFrame(function);
+        sketch.plain(0x1000 + function);
+        uint32_t first = sketch.plain(0x11111111);
+        uint32_t second = sketch.plain(0x00222222 | function << 24);
+        sketch.end();
+        CompiledCode code = sketch.take();
+        Vector<CodeUnit> units;
+        for (CodeUnit unit : code.body.units) {
+            unit.mayRun = mayRun && (unit.offset == first || unit.offset == second);
+            if (unit.offset != second) {
+                units.append(unit);
+                continue;
+            }
+            AOT_TEST_CHECK(unit.length == 4 && unit.kind == Kind::Plain);
+            units.append(CodeUnit { second, 3, Kind::Plain, unit.mayRun });
+            units.append(CodeUnit { second + 3, 1, Kind::Pinned });
+        }
+        code.body.units = WTF::move(units);
+        bodies.append(WTF::move(code));
+    }
+    return bodies;
+}
+
+static void testSmallPieceWhereCodeMayRun()
+{
+    Steps rarelyRun(bodiesRepeatingSevenBytes(false));
+    rarelyRun.choose();
+    AOT_TEST_CHECK(rarelyRun.outlining.bodies.size() == 1);
+    AOT_TEST_CHECK(rarelyRun.outlining.bodies[0].length == 7 && rarelyRun.outlining.bodies[0].numberOfSites == numberOfBodies);
+    checkNothingChosen(bodiesRepeatingSevenBytes(true));
+
+    constexpr unsigned manySites = 512;
+    constexpr unsigned fewSites = manySites - 1;
+    auto bodiesThatMayRun = [](unsigned numberOfSequences, unsigned numberOfSites) {
+        Vector<CompiledCode> bodies;
+        for (uint32_t function = 1; function <= numberOfSites; ++function) {
+            CodeSketch sketch = sketchWithFrame(function);
+            sketch.plain(0x1000 + function);
+            for (unsigned i = 0; i < numberOfSequences; ++i)
+                appendSequence(sketch, 1 + 4 * i);
+            sketch.end();
+            bodies.append(sketch.take());
+        }
+        for (CompiledCode& code : bodies) {
+            changeUnits(code.body, [](Vector<CodeUnit>& units) {
+                for (CodeUnit& unit : units)
+                    unit.mayRun = unit.kind == Kind::Plain;
+            });
+        }
+        return bodies;
+    };
+    checkNothingChosen(bodiesThatMayRun(1, fewSites));
+    Steps longer(bodiesThatMayRun(2, fewSites));
+    longer.choose();
+    AOT_TEST_CHECK(longer.outlining.bodies.size() == 1);
+    AOT_TEST_CHECK(longer.outlining.bodies[0].length == 2 * sequenceLength && longer.outlining.bodies[0].numberOfSites == fewSites);
+
+    Steps usedOften(bodiesThatMayRun(1, manySites));
+    usedOften.choose();
+    AOT_TEST_CHECK(usedOften.outlining.bodies.size() == 1);
+    AOT_TEST_CHECK(usedOften.outlining.bodies[0].length == sequenceLength && usedOften.outlining.bodies[0].numberOfSites == manySites);
+}
+#endif
 
 static void testTargetInMiddle()
 {
@@ -223,7 +302,9 @@ static void testResumePointInMiddle()
 {
     checkNoSiteCrosses(sequenceBodies([](CodeSketch& sketch, uint32_t function) {
         uint32_t callOffset = sketch.callStub(pollAtPrologue());
-        sketch.code().body.units.last().kind = Kind::Pinned;
+        changeUnits(sketch.code().body, [](Vector<CodeUnit>& units) {
+            units.last().kind = Kind::Pinned;
+        });
         sketch.end();
         sketch.code().frame.prologueChecks.append(PrologueCheck { function, callOffset, sequenceMiddle });
     }), sequenceMiddle);
@@ -422,6 +503,7 @@ std::span<const NativeTest> outliningTests()
         { "image/outliner/plain-part-of-body"_s, testPlainPartOfBody },
         { "image/outliner/pinned-bytes-repeat"_s, testPinnedBytesRepeat },
         { "image/outliner/no-saving"_s, testNoSaving },
+        { "image/outliner/few-sites"_s, testFewSites },
         { "image/outliner/target-in-middle"_s, testTargetInMiddle },
         { "image/outliner/handler-in-middle"_s, testHandlerInMiddle },
         { "image/outliner/jump-table-target-in-middle"_s, testJumpTableTargetInMiddle },
@@ -441,6 +523,7 @@ std::span<const NativeTest> outliningTests()
         { "image/outliner/threads"_s, testThreads },
 #if CPU(X86_64)
         { "image/outliner/calls-of-one-body-match"_s, testCallsOfOneBodyMatch },
+        { "image/outliner/small-piece-where-code-may-run"_s, testSmallPieceWhereCodeMayRun },
         { "image/outliner/call-of-inner-entry"_s, testCallOfInnerEntry },
 #endif
     };

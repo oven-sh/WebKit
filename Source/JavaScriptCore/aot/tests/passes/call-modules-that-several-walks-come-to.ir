@@ -1,0 +1,87 @@
+# A module keeps its state where more than one walk may come to it first: an operation names it, or it is imported from under two modules of which neither is evaluated only by the other.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 3
+# STATISTIC: ModulesWithoutState = 3
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/own-of-main.js" displayPath="own-of-main.js" body=f1 requests=[{target=m3 completes=true}] exports=[{name="a" variable=g0}]
+module m2 path="/lazy.js" displayPath="lazy.js" body=f2 requests=[{target=m4 completes=true}, {target=m3 completes=true}]
+module m3 path="/shared.js" displayPath="shared.js" body=f3 requests=[{target=m5 completes=true}]
+module m4 path="/own-of-lazy.js" displayPath="own-of-lazy.js" body=f4
+module m5 path="/own-of-shared.js" displayPath="own-of-shared.js" body=f5
+entry module=m0
+# CHECK: module m0 {{*}}flags=[EvaluatesItself] body=f0
+# CHECK: module m1 path="/own-of-main.js" displayPath="own-of-main.js" requests=
+# CHECK: module m2 {{*}}flags=[EvaluatesItself] body=f2
+# Only the starts of main.js and lazy.js come to the shared module, and they call it: the loader has nothing to enter it by.
+# CHECK: module m3 path="/shared.js" displayPath="shared.js" requests=
+# CHECK: module m4 path="/own-of-lazy.js" displayPath="own-of-lazy.js" namespaceLayout=
+# CHECK: module m5 path="/own-of-shared.js" displayPath="own-of-shared.js" namespaceLayout=
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m2 referrer=m0
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# The shared module is called where the walk first comes to it, under own-of-main.js, and looks at its state itself.
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = BeginModuleEvaluation module=m0
+# CHECK: = CallDirect function=f3
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f6
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+function f1 name="ownOfMain" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f1 name="ownOfMain"
+# CHECK-NOT: ModuleEvaluation
+function f2 name="lazy" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f2 name="lazy"
+# CHECK: = BeginModuleEvaluation module=m2
+# CHECK: = CallDirect function=f4
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: = CallDirect function=f7
+# CHECK-NEXT: FinishModuleEvaluation module=m2
+function f3 name="shared" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f3 name="shared"
+# CHECK: = BeginModuleEvaluation module=m3
+# CHECK: = CallDirect function=f5
+# CHECK-NEXT: = CallDirect function=f8
+# CHECK-NEXT: FinishModuleEvaluation module=m3
+function f4 name="ownOfLazy" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f4 name="ownOfLazy"
+# CHECK-NOT: ModuleEvaluation
+function f5 name="ownOfShared" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f5 name="ownOfShared"
+# CHECK-NOT: ModuleEvaluation
+# CHECK-LABEL: function f6 name="main"{{*}}derivation={source=f0}
+# CHECK-LABEL: function f7 name="lazy"{{*}}derivation={source=f2}
+# CHECK-LABEL: function f8 name="shared"{{*}}derivation={source=f3}
+# CHECK-NOT: function f9

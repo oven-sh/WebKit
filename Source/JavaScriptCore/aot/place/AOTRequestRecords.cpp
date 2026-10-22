@@ -68,7 +68,7 @@ static unsigned hashOf(const RequestRecord& request)
             return computeHash(request.index(), record.scope, record.module);
         },
         [&](const DataRecord& record) {
-            return computeHash(request.index(), record.data, record.sharedStorageOffset);
+            return computeHash(request.index(), record.data, record.sharedStorageOffset, record.node);
         },
         [&](const CollectionDataRecord& record) {
             return computeHash(request.index(), record.data, record.hasValues);

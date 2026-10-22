@@ -588,18 +588,13 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
     }
 }
 
-bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
-{
-    if (!globalObject->promiseThenWatchpointSet().isStillValid()) [[unlikely]]
-        return false;
-
-    auto* structure = object->structure();
-    auto state = structure->definitelyNonThenableState();
-    if (state == Structure::DefinitelyNonThenableState::NonThenable && structure->realm() == globalObject)
-        return true;
-    if (state == Structure::DefinitelyNonThenableState::MaybeThenable)
-        return false;
 #if ENABLE(AOT)
+static NEVER_INLINE bool isDefinitelyNonThenableWithCompiledCode(JSObject* object, JSGlobalObject* globalObject, Structure* structure, Structure::DefinitelyNonThenableState state)
+{
+    // Only a Structure that lists the extra properties of its objects can say that none of them is called "then".
+    if (structure->isCompiledStructure() && AOT::PropertyWalk::listExtraPropertiesInStructure(globalObject->vm(), object))
+        return isDefinitelyNonThenable(object, globalObject);
+
     UniquedStringImpl* then = globalObject->vm().propertyNames->then.impl();
     if (state == Structure::DefinitelyNonThenableState::NotComputed && structure->isCompiledStructure() && structure->realm() == globalObject) {
         switch (AOT::PropertyWalk::hasPropertyOnChain(structure, then)) {
@@ -613,7 +608,6 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
             break;
         }
     }
-#endif
 
     bool result = true;
     bool dependsOnObjectState = false;
@@ -622,13 +616,11 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
     JSObject* holder = object;
     while (current) {
         bool mayHideProperty = current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
-#if ENABLE(AOT)
         if (mayHideProperty) {
             auto presence = AOT::PropertyWalk::hasOwnProperty(holder, then);
             mayHideProperty = presence != AOT::PropertyWalk::Presence::Absent;
             dependsOnObjectState |= presence != AOT::PropertyWalk::Presence::Unknown;
         }
-#endif
         if (current->hasSpecialProperties()
             || mayHideProperty
             || current->typeInfo().overridesGetPrototype()
@@ -636,11 +628,57 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
             result = false;
             break;
         }
-        bool cannotGainThen = current->hasImmutablePrototype() && (!current->isStructureExtensible() || current->isImmutableProperty(globalObject->vm().propertyNames->then.impl()));
+        bool cannotGainThen = current->hasImmutablePrototype() && (!current->isStructureExtensible() || current->isImmutablePropertyForReader(then));
         if (holder != object && !cannotGainThen && holder != structure->realm()->objectPrototype())
             isChainFixed = false;
         holder = current->storedPrototypeObject();
         current = holder ? holder->structure() : nullptr;
+    }
+
+    if (state == Structure::DefinitelyNonThenableState::NotComputed && !structure->isDictionary()) [[unlikely]] {
+        // A `true` result is cacheable only when no object above this one can gain `then`:
+        // each either has immutable properties or is Object.prototype, whose `then`
+        // absence promiseThenWatchpointSet watches.
+        if (dependsOnObjectState)
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::Uncacheable);
+        else if (!result)
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::MaybeThenable);
+        else if (isChainFixed)
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
+        else
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::Uncacheable);
+    }
+    return result;
+}
+#endif
+
+bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
+{
+    if (!globalObject->promiseThenWatchpointSet().isStillValid()) [[unlikely]]
+        return false;
+
+    auto* structure = object->structure();
+    auto state = structure->definitelyNonThenableState();
+    if (state == Structure::DefinitelyNonThenableState::NonThenable && structure->realm() == globalObject)
+        return true;
+    if (state == Structure::DefinitelyNonThenableState::MaybeThenable)
+        return false;
+#if ENABLE(AOT)
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+        return isDefinitelyNonThenableWithCompiledCode(object, globalObject, structure, state);
+#endif
+
+    bool result = true;
+    auto* current = structure;
+    while (current) {
+        if (current->hasSpecialProperties()
+            || current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence()
+            || current->typeInfo().overridesGetPrototype()
+            || !current->hasMonoProto()) {
+            result = false;
+            break;
+        }
+        current = current->storedPrototypeStructure();
     }
 
     // Dictionary structures are mutated in place when properties are added or removed,
@@ -648,17 +686,17 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
     // Give up caching entirely for them; the per-call walk above remains correct because
     // `hasSpecialProperties` is updated in place even for dictionaries.
     if (state == Structure::DefinitelyNonThenableState::NotComputed && !structure->isDictionary()) [[unlikely]] {
-        if (dependsOnObjectState)
-            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::Uncacheable);
-        else if (!result) {
+        if (!result) {
             // Always safe: a stale `false` only loses the optimization, never miscompiles.
             structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::MaybeThenable);
         } else {
-            // A `true` result is cacheable only when no object above this one can gain `then`:
-            // each either has immutable properties or is Object.prototype, whose `then`
-            // absence promiseThenWatchpointSet watches. Mark anything else Uncacheable
+            // A `true` result is cacheable only when the entire prototype chain stays
+            // under the protection of promiseThenWatchpointSet, which watches `then`
+            // absence on Object.prototype. That limits the cacheable chain to [self]
+            // (null proto) or [self, Object.prototype]. Mark anything else Uncacheable
             // so subsequent calls skip this check and go straight to the walk.
-            if (isChainFixed)
+            JSValue proto = structure->storedPrototype();
+            if (!proto.isObject() || asObject(proto) == structure->realm()->objectPrototype())
                 structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
             else
                 structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::Uncacheable);

@@ -11,10 +11,12 @@
 #include "AOTSlowPaths.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsField.h"
+#include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
 #include "JSObject.h"
 #include "StackAlignment.h"
 #include <array>
+#include <bit>
 #include <optional>
 
 namespace JSC { namespace AOT {
@@ -148,9 +150,98 @@ static KeyedProbeRegisters allocateKeyedProbeRegisters(StubAssembler& jit)
     };
 }
 
-static ProbedSlot findKeyedSlot(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, JumpList& miss)
+#if CPU(X86_64)
+// characters and length say a text of 8-bit characters. Leaves the name that PropertyCacheWords::namesOfTexts has for it in uid. Overwrites all its registers.
+static void findNameOfText(StubAssembler& jit, GPRReg characters, GPRReg length, GPRReg first, GPRReg last, GPRReg uid, JumpList& isNotFound)
 {
-    loadNameOfKey(jit, registers.key, registers.uid, registers.structureID, miss);
+    RELEASE_ASSERT(noOverlap(characters, length, first, last, uid, instanceGPR));
+    const GPRReg entry = uid;
+    static_assert(NameOfText::widthOfWordFor(NameOfText::maxLength) == 8 && NameOfText::maxLength == 16 && NameOfText::widthOfWordFor(7) == 4 && NameOfText::widthOfWordFor(3) == 2 && NameOfText::minLength == 2);
+    jit.sub32(length, TrustedImm32(NameOfText::minLength), entry);
+    isNotFound.append(jit.branch32(CCallHelpers::Above, entry, TrustedImm32(NameOfText::maxLength - NameOfText::minLength)));
+    Jump isBelowEight = jit.branch32(CCallHelpers::Below, length, TrustedImm32(8));
+    jit.load64(Address(characters), first);
+    jit.load64(BaseIndex(characters, length, CCallHelpers::TimesOne, -8), last);
+    Jump hasWordsOfEight = jit.jump();
+
+    isBelowEight.link(&jit);
+    Jump isBelowFour = jit.branch32(CCallHelpers::Below, length, TrustedImm32(4));
+    jit.load32(Address(characters), first);
+    jit.load32(BaseIndex(characters, length, CCallHelpers::TimesOne, -4), last);
+    Jump hasWordsOfFour = jit.jump();
+
+    isBelowFour.link(&jit);
+    jit.load16Unaligned(Address(characters), first);
+    jit.load16Unaligned(BaseIndex(characters, length, CCallHelpers::TimesOne, -2), last);
+
+    hasWordsOfEight.link(&jit);
+    hasWordsOfFour.link(&jit);
+    jit.x86Lea64(BaseIndex(first, last, CCallHelpers::TimesTwo), entry);
+    jit.add64(length, entry);
+    jit.move(TrustedImm64(static_cast<int64_t>(NameOfText::multiplier)), characters);
+    jit.mul64(characters, entry);
+    jit.urshift64(TrustedImm32(NameOfText::pairShift), entry);
+    jit.lshift64(TrustedImm32(NameOfText::sizeShift + 1), entry);
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfTexts)), entry);
+    auto branchUnlessEntryHasText = [&](int32_t offsetOfEntry, JumpList& hasOtherText) {
+        hasOtherText.append(jit.branch64(CCallHelpers::NotEqual, Address(entry, offsetOfEntry + OBJECT_OFFSETOF(NameOfText, first)), first));
+        hasOtherText.append(jit.branch64(CCallHelpers::NotEqual, Address(entry, offsetOfEntry + OBJECT_OFFSETOF(NameOfText, last)), last));
+        hasOtherText.append(jit.branch64(CCallHelpers::NotEqual, Address(entry, offsetOfEntry + OBJECT_OFFSETOF(NameOfText, length)), length));
+    };
+    JumpList isNotInFront;
+    branchUnlessEntryHasText(0, isNotInFront);
+    jit.loadPtr(Address(entry, OBJECT_OFFSETOF(NameOfText, uid)), uid);
+    Jump isFound = jit.jump();
+
+    isNotInFront.link(&jit);
+    branchUnlessEntryHasText(sizeof(NameOfText), isNotFound);
+    jit.loadPtr(Address(entry, sizeof(NameOfText) + OBJECT_OFFSETOF(NameOfText, uid)), uid);
+    isFound.link(&jit);
+}
+#endif
+
+// Overwrites the registers of the probe but the base and the key.
+static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoName)
+{
+    const GPRReg key = registers.key;
+    const GPRReg uid = registers.uid;
+    RELEASE_ASSERT(noOverlap(key, uid, instanceGPR));
+    Jump isString = jit.branchIfString(key);
+    hasNoName.append(jit.branchIfNotSymbol(key));
+    hasNoName.append(jit.loadCacheableIdentifierImpl(key, uid, false, true));
+    Jump isLoaded = jit.jump();
+
+    isString.link(&jit);
+#if CPU(X86_64)
+    // AssemblyHelpers::branchIfNotAtomStringImpl(), and where it leaves the text of the key is looked at: a flat string, or a piece of one.
+    const GPRReg characters = registers.entry;
+    const GPRReg length = registers.structureID;
+    jit.loadPtr(Address(key, JSString::offsetOfValue()), uid);
+    Jump isKnownAtom = jit.branchTest8(CCallHelpers::NonZero, Address(key, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
+    Jump isRope = jit.branchIfRopeStringImpl(uid);
+    Jump isAtom = jit.branchTest32(CCallHelpers::NonZero, Address(uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom()));
+    jit.load32(Address(uid, StringImpl::lengthMemoryOffset()), length);
+    jit.loadPtr(Address(uid, StringImpl::dataOffset()), characters);
+    Jump hasCharacters = jit.jump();
+
+    isRope.link(&jit);
+    loadSubstringCharacters(jit, key, uid, characters, length, hasNoName);
+
+    hasCharacters.link(&jit);
+    hasNoName.append(jit.branchTest32(CCallHelpers::Zero, Address(uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    findNameOfText(jit, characters, length, registers.header, registers.payload, uid, hasNoName);
+    isKnownAtom.link(&jit);
+    isAtom.link(&jit);
+#else
+    hasNoName.append(jit.loadCacheableIdentifierImpl(key, uid, true, false));
+#endif
+    isLoaded.link(&jit);
+}
+
+// The base and the key are cells. Leaves the kind of the slot in the register of the name. At isInNoTable that register has HashedSlot::keyFor() of the name and structureID the StructureID of the base.
+static ProbedSlot findKeyedSlot(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, JumpList& hasNoName, JumpList& isInNoTable)
+{
+    loadNameOfKeyCell(jit, registers, hasNoName);
     jit.load32(Address(registers.base, JSCell::structureIDOffset()), registers.structureID);
     findHashedSlot(jit, access, {
         .structureID = registers.structureID,
@@ -159,8 +250,38 @@ static ProbedSlot findKeyedSlot(StubAssembler& jit, SlotAccess access, const Key
         .header = registers.header,
         .payload = registers.payload,
         .scratch = registers.payload,
-    }, miss);
+        .kind = registers.uid,
+    }, isInNoTable);
     return { SlotForm::Slot, registers.header, registers.payload };
+}
+
+static ProbedSlot findKeyedSlot(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, JumpList& miss)
+{
+    return findKeyedSlot(jit, access, registers, miss, miss);
+}
+
+#if CPU(X86_64)
+// No table has the Structure and the name: mostly because they meet for the first time, as where an object serves as a dictionary. The objects themselves answer, and nothing is filed.
+static void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const KeyedProbeRegisters& registers, JumpList& isInNoTable, JumpList& miss)
+{
+    isInNoTable.link(&jit);
+    countMissOfPair(jit, registers.structureID, registers.uid, registers.header, miss);
+    answerFromObjectsAndReturn(jit, question, {
+        .receiver = registers.base,
+        .name = jit.allocateScratch(StubRegister::T9),
+        .uid = registers.uid,
+        .object = registers.header,
+        .structure = registers.structureID,
+        .size = registers.payload,
+        .vector = registers.entry,
+        .index = jit.scratchRegister(),
+    }, ObjectLookupName::IsGivenByUID, miss);
+}
+#endif
+
+static Jump branchIfKeyedSlotKindDiffers(StubAssembler& jit, const KeyedProbeRegisters& registers, Slot::Kind kind)
+{
+    return jit.branch32(CCallHelpers::NotEqual, registers.uid, TrustedImm32(static_cast<int32_t>(kind)));
 }
 
 void generateGetByValCached(StubAssembler& jit)
@@ -169,21 +290,30 @@ void generateGetByValCached(StubAssembler& jit)
     const GPRReg base = registers.base;
     const GPRReg key = registers.key;
     const GPRReg header = registers.header;
-    RELEASE_ASSERT(descriptorOf(getByVal(false).family()).signature(getByVal(false)).operands == jit.signature().operands);
+    RELEASE_ASSERT(signatureOf(getByVal(false)).operands == jit.signature().operands);
 
     jit.linkToStub(jit.branchIfNotCell(key), getByVal(false));
     jit.linkToStub(jit.branchIfNotCell(base), getByVal(false));
     jit.bindEntry(getByValCachedCells());
 
     JumpList miss;
-    const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, miss);
-    Jump isNotValue = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Value, registers.uid);
-    loadValueBySlot(jit, CachedSlot(slot.form, Slot::Kind::Value, slot.header, slot.payload), base, registers.uid, registers.structureID, base);
+#if CPU(X86_64)
+    JumpList isInNoTable;
+#else
+    JumpList& isInNoTable = miss;
+#endif
+    const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, miss, isInNoTable);
+    Jump isNotValue = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Value);
+    loadValueBySlot(jit, CachedSlot(slot.form, Slot::Kind::Value, slot.header, slot.payload), base, slot.payload, slot.header, base);
     jit.returnToCaller();
 
     isNotValue.link(&jit);
-    jumpToSlotHandler(jit, SlotHandlerTable::ReadByVal, header, registers.uid);
+    jumpToSlotHandlerOfKind(jit, SlotHandlerTable::ReadByVal, header, registers.uid);
 
+#if CPU(X86_64)
+    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, registers, isInNoTable, miss);
+
+#endif
     miss.link(&jit);
     callLeafLookup(jit, Entry::operationAOTGetByValGeneric, key, std::nullopt, header);
     Jump hasNoAnswer = jit.branchTest64(CCallHelpers::Zero, base);
@@ -229,14 +359,27 @@ static void returnTrueForOwnElement(StubAssembler& jit, const KeyedProbeRegister
     jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape));
+    Jump isDouble = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     isNotFound.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape)));
     isContiguous.link(&jit);
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
     jit.zeroExtend32ToWord(registers.key, index);
     isNotFound.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     isNotFound.append(jit.branchTest64(CCallHelpers::Zero, BaseIndex(storage, index, CCallHelpers::TimesEight)));
+    Label isFound = jit.label();
     jit.move(TrustedImm32(1), jit.result());
     jit.returnToCaller();
+
+    isDouble.link(&jit);
+    const GPRReg element = registers.payload;
+    const GPRReg hole = registers.entry;
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    jit.zeroExtend32ToWord(registers.key, index);
+    isNotFound.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    jit.load64(BaseIndex(storage, index, CCallHelpers::TimesEight), element);
+    jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), hole);
+    jit.branch64(CCallHelpers::NotEqual, element, hole).linkTo(isFound, &jit);
+    isNotFound.append(jit.jump());
 }
 
 void generateInByValCached(StubAssembler& jit)
@@ -255,8 +398,14 @@ void generateInByValCached(StubAssembler& jit)
     keyIsCell.link(&jit);
     needsOperation.append(jit.branchIfNotCell(base));
     needsOperation.append(jit.branchIfNotObject(base));
-    const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, miss);
-    Jump isNotField = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Field, registers.uid);
+#if CPU(X86_64)
+    JumpList isInNoTable;
+#else
+    JumpList& isInNoTable = miss;
+#endif
+    const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, miss, isInNoTable);
+    Jump isNotField = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Field);
+    Label readsSlot = jit.label();
     returnFieldPresence(jit, CachedSlot(SlotForm::Slot, Slot::Kind::Field, header, registers.payload), {
         .object = base,
         .slotData = registers.uid,
@@ -266,8 +415,18 @@ void generateInByValCached(StubAssembler& jit)
     }, needsOperation);
 
     isNotField.link(&jit);
-    returnPresenceBySlot(jit, question, slot, base, miss);
+    JumpList kindDoesNotSay;
+    returnPresenceBySlot(jit, question, slot, base, kindDoesNotSay, KindOfProbedSlot::IsInT10);
 
+    kindDoesNotSay.link(&jit);
+    loadSlotKind(jit, slot, registers.uid);
+    jit.branch32(CCallHelpers::Equal, registers.uid, TrustedImm32(static_cast<int32_t>(Slot::Kind::FieldGetter))).linkTo(readsSlot, &jit);
+    miss.append(jit.jump());
+
+#if CPU(X86_64)
+    answerFromObjectsAndReturn(jit, question == PresenceQuestion::In ? ObjectLookupQuestion::In : ObjectLookupQuestion::HasOwn, registers, isInNoTable, miss);
+
+#endif
     miss.link(&jit);
     callLeafLookup(jit, Entry::operationAOTInByValGeneric, key, std::nullopt, header);
     Jump hasNoAnswer = jit.branchTest32(CCallHelpers::Zero, base);
@@ -280,15 +439,37 @@ void generateInByValCached(StubAssembler& jit)
     jit.exitOnMiss(cachingOperationFor(question), { .secondArgumentIn = base, .thirdArgumentIn = key });
 }
 
+#if CPU(X86_64)
+// No table has the Structure and the name.
+static void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& isInNoTable, JumpList& miss)
+{
+    isInNoTable.link(&jit);
+    countMissOfPair(jit, registers.structureID, registers.uid, registers.header, miss);
+    // HashedSlot::keyFor(): the search has put the access into the low bits of the name.
+    jit.xor64(TrustedImm32(static_cast<int32_t>(accessOf(operation))), registers.uid);
+    replaceOwnValueAndReturn(jit, operation, {
+        .receiver = registers.base,
+        .name = jit.reuseScratch(StubRegister::T9),
+        .uid = registers.uid,
+        .object = registers.header,
+        .structure = registers.structureID,
+        .size = registers.payload,
+        .vector = registers.entry,
+        .index = jit.scratchRegister(),
+    }, ObjectLookupName::IsGivenByUID, value, miss);
+}
+#endif
+
 static void storeByKeyedSlot(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& miss)
 {
     const GPRReg base = registers.base;
     const GPRReg wordIndex = registers.uid;
     const GPRReg storage = registers.entry;
+    JumpList isInNoTable;
 
-    const ProbedSlot slot = findKeyedSlot(jit, accessOf(operation), registers, miss);
+    const ProbedSlot slot = findKeyedSlot(jit, accessOf(operation), registers, miss, isInNoTable);
     const CachedSlot ownValue(slot.form, Slot::Kind::Value, slot.header, slot.payload);
-    Jump isNotValue = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Value, registers.uid);
+    Jump isNotValue = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Value);
     ownValue.loadOwnWordIndex(jit, wordIndex);
     jit.move(base, storage);
     Jump isInline = ownValue.branchUnlessFlag(jit, Slot::isOutOfLine);
@@ -298,7 +479,13 @@ static void storeByKeyedSlot(StubAssembler& jit, SlotOperation operation, const 
     returnAfterStoring(jit, base, value);
 
     isNotValue.link(&jit);
-    jumpToSlotHandler(jit, slotHandlerTable(operation, SlotOrigin::ByVal, slot.form), slot.header, registers.uid);
+    jumpToSlotHandlerOfKind(jit, slotHandlerTable(operation, SlotOrigin::ByVal, slot.form), slot.header, registers.uid);
+
+#if CPU(X86_64)
+    replaceOwnValueAndReturn(jit, operation, registers, value, isInNoTable, miss);
+#else
+    miss.append(isInNoTable);
+#endif
 }
 
 static ECMAMode ecmaModeOf(PutMode mode)
@@ -345,7 +532,7 @@ void generatePutByValCached(StubAssembler& jit)
     const GPRReg base = registers.base;
     const GPRReg key = registers.key;
     const GPRReg value = jit.clobberOperand(2);
-    RELEASE_ASSERT(descriptorOf(storeElement.family()).signature(storeElement).operands == jit.signature().operands);
+    RELEASE_ASSERT(signatureOf(storeElement).operands == jit.signature().operands);
 
     jit.linkToStub(jit.branchIfNotCell(key), storeElement);
     jit.linkToStub(jit.branchIfNotCell(base), storeElement);
@@ -363,13 +550,49 @@ void generatePutByValCached(StubAssembler& jit)
     exitOnStoreMiss(jit, mode, registers, value);
 }
 
+static void defineOwnElementAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, GPRReg value, JumpList& miss)
+{
+    const GPRReg base = registers.base;
+    const GPRReg shape = registers.header;
+    const GPRReg storage = registers.header;
+    const GPRReg index = registers.uid;
+    const GPRReg newLength = registers.payload;
+
+    miss.append(jit.branchIfNotInt32(registers.key));
+    miss.append(jit.branchIfNotCell(base));
+    jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
+    jit.and32(TrustedImm32(IsArray | IndexingShapeMask | CopyOnWrite), shape);
+    Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ArrayWithContiguous));
+    miss.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ArrayWithInt32)));
+    miss.append(jit.branchIfNotInt32(value));
+    isContiguous.link(&jit);
+    Label loadStorage = jit.label();
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    jit.zeroExtend32ToWord(registers.key, index);
+    Jump isWithinLength = jit.branch32(CCallHelpers::Below, index, Address(storage, Butterfly::offsetOfPublicLength()));
+    Jump isBeyondVector = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfVectorLength()));
+    jit.add32(TrustedImm32(1), index, newLength);
+    jit.store32(newLength, Address(storage, Butterfly::offsetOfPublicLength()));
+    isWithinLength.link(&jit);
+    jit.store64(value, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    returnAfterStoring(jit, base, value);
+
+    isBeyondVector.link(&jit);
+    miss.append(jit.branch32(CCallHelpers::NotEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    growFullVector(jit, { base, storage, index, registers.payload, registers.entry, registers.structureID }, miss);
+    jit.jump().linkTo(loadStorage, &jit);
+}
+
 void generateDefineByValCached(StubAssembler& jit)
 {
     const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
     const GPRReg value = jit.clobberOperand(2);
 
     JumpList miss;
-    miss.append(jit.branchIfNotCell(registers.key));
+    Jump keyIsCell = jit.branchIfCell(registers.key);
+    defineOwnElementAndReturn(jit, registers, value, miss);
+
+    keyIsCell.link(&jit);
     miss.append(jit.branchIfNotCell(registers.base));
     storeByKeyedSlot(jit, SlotOperation::Define, registers, value, miss);
 

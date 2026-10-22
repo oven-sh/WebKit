@@ -46,9 +46,9 @@ variable g2 name="a" module=m1 declared={type=string} initialization=Undefined
 variable g3 name="__esModule" module=m1 declared={type=boolean} initialization=Undefined
 variable g4 name="__proto__" module=m1 declared={type=number} initialization=Undefined
 variable g5 name="b" module=m2 declared={type=number} initialization=Undefined
-module m0 path="main.js" displayPath="main.js" requests=[{target=m1}, {target=m3 phase=Defer}] exports=[{name="a" variable=g0}, {name="late" variable=g1}, {name="lazy" kind=Namespace module=m3 phase=Defer}, {name="n" kind=Namespace module=m1}]
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}, {target=m3 phase=Defer}] exports=[{name="a" variable=g0}, {name="late" variable=g1}, {name="lazy" kind=Namespace module=m3 phase=Defer}, {name="n" kind=Namespace module=m1}]
 module m1 path="lib.js" displayPath="lib.js" exports=[{name="__esModule" variable=g3}, {name="__proto__" variable=g4}, {name="a" variable=g2}]
-module m2 path="star.js" displayPath="star.js" requests=[{target=m4 isDynamicStarExport=true}] exports=[{name="b" variable=g5}, {name="c" kind=Indirect module=m4 importName="c"}]
+module m2 path="star.js" displayPath="star.js" requests=[{target=m4 isDynamicStarExport=true completes=true}] exports=[{name="b" variable=g5}, {name="c" kind=Indirect module=m4 importName="c"}]
 module m3 path="lazy.js" displayPath="lazy.js"
 module m4 path="plain.js" displayPath="plain.js" kind=External referrer=m2
 layout L0 kind=Instance name="Holder" fields=[{key=#"x"@L0 declared={type=number} flags=[IsPrivate]}]
@@ -130,12 +130,12 @@ function f9 name="read-of-one-of-two-namespaces" parameters=[{type=L(m0)|L(m1)}]
     Return v1
 }
 # CHECK-NEXT: F9 v1 PropGet [[a]]: form=Split level=Proven receivers=[{{*}}[[main]], [[lib]]]
-function f10 name="read-of-predicted-namespace" parameters=[{type=object predicted=L(m0)}] results=[{type=anything}] {
-  b0(v0: object ~ L(m0)):
+function f10 name="read-of-expected-namespace" parameters=[{type=L(m0) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L(m0)):
     v1 = PropGet v0 key="a"
     Return v1
 }
-# CHECK-NEXT: F10 v1 PropGet [[a]]: form=Variable level=Predicted operation=GetModuleVariable receivers=[{{*}}[[main]]] receiverTest=Type proofs=[OwnInstance] missPath member=(Variable level=Proven holder=[[main]] variable=V0)
+# CHECK-NEXT: F10 v1 PropGet [[a]]: form=Variable level=Expected operation=GetModuleVariable receivers=[{{*}}[[main]]] receiverTest=Type proofs=[OwnInstance] missPath member=(Variable level=Proven holder=[[main]] variable=V0)
 function f11 name="read-of-deferred-namespace" results=[{type=anything}] {
   b0():
     v0 = ModuleNamespace module=m3 phase=Defer

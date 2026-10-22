@@ -1,0 +1,68 @@
+# class A {}  class B {}  class D extends (Math.random() ? A : B) {}  new D()
+# A parent that is one of two classes of the program is followed like any callee: the call of super enters both constructors and no callee is unknown, so nothing is handed to code that nobody compiles.
+# results/base-of-a-class.ir says what such a class is told about its base
+# RUN: valueflow-solve calls
+# CHECK-NOT: unknown
+# CHECK: f0 v14 -> f3
+# CHECK-NOT: unknown
+# CHECK: f3 v3 -> {{*}}f1 f2
+# CHECK-NOT: unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped=f3
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="B" constructor=f2
+layout L2 kind=Instance name="D" base=L0 constructor=f3 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Builtin builtin=MathRandom
+    v7 = Call v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v5)
+  b3(v9):
+    v10 = NewClosure function=f3
+    v11 = ResolveHeritage v9
+    v12 = NewClass v10, v9, v11 layout=L2
+    v13 = FinishClass v12 layout=L2
+    v14 = Construct v13
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="B" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="D" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

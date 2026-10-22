@@ -109,7 +109,8 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
 
 MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
 {
-    MarkedBlock::Handle* handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator());
+    bool hasBlocks = m_blocks.size() > m_freeBlockIndices.size();
+    MarkedBlock::Handle* handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator(), hasBlocks ? MarkedBlock::IsFirstInDirectory::No : MarkedBlock::IsFirstInDirectory::Yes);
     if (!handle)
         return nullptr;
     

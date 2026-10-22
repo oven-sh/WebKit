@@ -19,9 +19,15 @@
 #include "AbstractSlotVisitorInlines.h"
 #include "AsyncGeneratorPrototype.h"
 #include "GeneratorPrototype.h"
+#include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSPromise.h"
+#include "JSSentinel.h"
+#include "Microtask.h"
+#include "MicrotaskQueue.h"
 #include "ObjectConstructor.h"
 #include "SlotVisitorInlines.h"
+#include <wtf/CompactPointerTuple.h>
 
 namespace JSC { namespace AOT {
 
@@ -29,11 +35,13 @@ CoroutineTable::CoroutineTable(State& state)
     : m_state(state)
     , m_instance(state.instance)
     , m_savedFrameEntrypoint(AOT::savedFrameEntrypoint().taggedPtr())
+    , m_handlerOfJobEntrypoint(AOT::handlerOfJobEntrypoint().taggedPtr())
 {
     VM& vm = *m_instance.vm;
     createStructures(vm);
     m_instance.coroutines.emptyGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, m_instance.globalObject->generatorPrototype());
     m_instance.coroutines.emptyAsyncGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, m_instance.globalObject->asyncGeneratorPrototype());
+    initializeCoroutineWords(vm);
     state.caches->add(CacheKind::StrongRoots, "coroutine resume state"_s, *this, RootVolatility::GreyedByExecution);
     state.caches->add(CacheKind::WeakByKey, "saved frames under validation"_s, *this);
 }
@@ -55,6 +63,32 @@ uint32_t CoroutineTable::createEmptyPrototypeStructure(VM& vm, JSObject* parent)
     Structure* empty = probe->structure();
     m_state.immortalCells->add(empty);
     return empty->id().bits();
+}
+
+static uint64_t jobWord(JSGlobalObject* globalObject, InternalMicrotask task, JSPromise::Status status, uint8_t flags = 0)
+{
+    uint16_t taskAndStatus = static_cast<uint16_t>(task) | static_cast<uint16_t>(static_cast<uint8_t>(status) | flags) << 8;
+    return CompactPointerTuple<JSCell*, uint16_t>(globalObject, taskAndStatus).data();
+}
+
+void CoroutineTable::initializeCoroutineWords(VM& vm)
+{
+    CoroutineWords& words = m_instance.coroutines;
+    words.savedFramesAreListed = validatesRuntime(vm);
+    words.resumeJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled);
+    words.resumeJobWords[1] = jobWord(m_instance.globalObject, InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Rejected);
+    words.bodyCallJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::AsyncGeneratorBodyCallNormal, JSPromise::Status::Fulfilled);
+    words.bodyCallJobWords[1] = jobWord(m_instance.globalObject, InternalMicrotask::AsyncGeneratorBodyCallNormal, JSPromise::Status::Rejected);
+    words.yieldAwaitedJobWord = jobWord(m_instance.globalObject, InternalMicrotask::AsyncGeneratorYieldAwaited, JSPromise::Status::Fulfilled);
+    words.driverResumeJobWord = jobWord(m_instance.globalObject, InternalMicrotask::AsyncGeneratorDriverResume, JSPromise::Status::Fulfilled);
+    words.reactionJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Fulfilled);
+    words.reactionJobWords[1] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Rejected);
+    words.reactionJobWords[2] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Fulfilled, promiseReactionJobAsyncContextFlag);
+    words.reactionJobWords[3] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Rejected, promiseReactionJobAsyncContextFlag);
+    words.performMicrotaskJobWord = jobWord(m_instance.globalObject, InternalMicrotask::BunPerformMicrotaskJob, JSPromise::Status::Pending);
+    words.promiseAllResolveJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllResolveJob, JSPromise::Status::Fulfilled);
+    words.asyncGeneratorAllocator = subspaceFor<JSAsyncGenerator>(vm)->allocatorFor(sizeof(JSAsyncGenerator), AllocatorForMode::EnsureAllocator).localAllocator();
+    words.asyncGeneratorSentinel = vm.fastAsyncGeneratorSentinel();
 }
 
 template<typename Visitor>

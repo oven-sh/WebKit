@@ -202,7 +202,9 @@ void ArrayIntrinsicEmitter::generateNewContiguousArray(const ValueContext& value
 
 void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
 {
-    newArrayOfHoles(value, integerOperand(value->lengthOperand()), value->sourceOperand(), formToConstruct(value), 0);
+    const Type& length = typeOf(value->lengthOperand());
+    bool isEmpty = length.isInteger() && length.integers == Range::one(0);
+    newArrayOfHoles(value, isEmpty ? integer(0) : integerOperand(value->lengthOperand()), value->sourceOperand(), formToConstruct(value), 0);
 }
 
 void ArrayIntrinsicEmitter::generateNewArrayWithCapacity(const ValueContext& value)

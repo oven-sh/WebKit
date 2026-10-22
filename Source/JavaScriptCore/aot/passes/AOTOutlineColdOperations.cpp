@@ -14,9 +14,11 @@
 #include "AOTIRBuilder.h"
 #include "AOTOutliningCandidates.h"
 #include "AOTPass.h"
+#include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <span>
 #include <utility>
@@ -25,6 +27,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint64_t outlinedBodyOverheadBytes = 48;
+static constexpr size_t sitesInLongHashRun = 1024;
 
 namespace {
 
@@ -33,10 +36,17 @@ struct SiteGroup {
     FunctionID body;
 };
 
-struct FunctionWork {
-    FunctionID id;
+struct WorkLists {
+    std::span<const uint32_t> sitesOf(unsigned index) const
+    {
+        size_t begin = firstSiteOf[index];
+        size_t end = index + 1 < firstSiteOf.size() ? firstSiteOf[index + 1] : sites.size();
+        return sites.subspan(begin, end - begin);
+    }
+
     Vector<uint32_t> sites;
-    Vector<std::pair<uint32_t, FunctionID>> bodiesToBuild;
+    Vector<uint32_t> firstSiteOf;
+    Vector<FunctionID> functions;
 };
 
 struct ErasedValues {
@@ -47,11 +57,23 @@ struct ErasedValues {
 struct RewriteInputs {
     AnalysisContext contextOf(FunctionID id) const { return { build, editor.program(), &optimization.flow, &optimization.effects, id }; }
 
+    // Says whether the function was read: one that holds an id which the loop replaces at its end is not.
+    bool readIfFinal(FunctionID id, const TaskArenas& arenas) const
+    {
+        if (!readers || arenas.types.hasUsedProvisionalRecords() || arenas.strings.hasUsedProvisionalStrings())
+            return false;
+        readers->read(id);
+        return true;
+    }
+
     ProgramEditor& editor;
     const OptimizationInputs& optimization;
     BuildContext& build;
-    const Vector<OutliningSite>& sites;
+    const ParallelArray<OutliningSite>& sites;
     const Vector<FunctionID>& bodyOfSite;
+    const ReadersOfOutlinedFunctions* readers;
+    // By function.
+    Vector<uint8_t>& wasRead;
 };
 
 class BodyBuilder {
@@ -98,8 +120,7 @@ static void convertToCall(Value& value, const OutliningSite& site, FunctionID ca
 {
     value.become(Opcode::CallDirect);
     value.type = site.resultType;
-    value.setWritten({ });
-    value.setPrediction({ });
+    value.setExpected({ });
     value.setFunction(callee);
     value.setArgumentsOperands(site.liveIns.span());
 }
@@ -111,26 +132,50 @@ static Value createCall(const OutliningSite& site, FunctionID callee)
     return call;
 }
 
-static uint64_t estimatedCallBytes(const Program& program, const OutliningSite& site)
+uint32_t estimatedCallBytes(const OutliningSite& site)
 {
-    // The body does not exist yet, and the estimate of a direct call does not read the callee.
-    Value call = createCall(site, site.function);
-    return estimatedCodeBytes(program, program.at(site.function), call);
+    return estimatedDirectCallBytes(site.liveIns.size());
 }
 
-static OutliningDecision decide(const Program& program, const OutliningSite& firstSite, uint64_t numberOfSites)
+static OutliningDecision decide(const OutliningSite& firstSite, uint64_t numberOfSites)
 {
     uint64_t inlineBytes = firstSite.codeBytes;
-    uint64_t callBytes = estimatedCallBytes(program, firstSite);
+    uint64_t callBytes = firstSite.callBytes;
     if (numberOfSites * inlineBytes <= numberOfSites * callBytes + inlineBytes + outlinedBodyOverheadBytes)
         return OutliningDecision::NotProfitable;
     return OutliningDecision::Outlined;
 }
 
-static void groupEqualSites(const Program& program, const Vector<OutliningSite>& sites, std::span<const uint32_t> sitesWithEqualHash, Vector<SiteGroup>& groups)
+static uint64_t createSortKey(unsigned hash, uint32_t site)
+{
+    return static_cast<uint64_t>(hash) << 32 | site;
+}
+
+static unsigned hashInSortKey(uint64_t key)
+{
+    return static_cast<unsigned>(key >> 32);
+}
+
+static uint32_t siteInSortKey(uint64_t key)
+{
+    return static_cast<uint32_t>(key);
+}
+
+// The savings of a group grow with its size, and no group is larger than its hash run.
+static bool canAnyGroupBeProfitable(const ParallelArray<OutliningSite>& sites, std::span<const uint64_t> keysWithEqualHash)
+{
+    if (keysWithEqualHash.size() < 2)
+        return false;
+    return std::ranges::any_of(keysWithEqualHash, [&](uint64_t key) {
+        return decide(sites[siteInSortKey(key)], keysWithEqualHash.size()) == OutliningDecision::Outlined;
+    });
+}
+
+static void groupEqualSites(const Program& program, const ParallelArray<OutliningSite>& sites, std::span<const uint64_t> keysWithEqualHash, Vector<SiteGroup>& groups)
 {
     size_t firstGroupWithHash = groups.size();
-    for (uint32_t site : sitesWithEqualHash) {
+    for (uint64_t key : keysWithEqualHash) {
+        uint32_t site = siteInSortKey(key);
         std::span<SiteGroup> candidates = groups.mutableSubspan(firstGroupWithHash);
         auto equalGroup = std::ranges::find_if(candidates, [&](const SiteGroup& group) {
             return areEqualSites(program, sites[group.sites.first()], sites[site]);
@@ -142,25 +187,36 @@ static void groupEqualSites(const Program& program, const Vector<OutliningSite>&
     }
 }
 
-static Vector<SiteGroup> findProfitableGroups(const Program& program, const ParallelLoops& loops, const Vector<OutliningSite>& sites)
+static Vector<SiteGroup> findProfitableGroups(const Program& program, const ParallelLoops& loops, const ParallelArray<OutliningSite>& sites)
 {
-    Vector<uint32_t> order(sites.size(), [](size_t index) {
-        return static_cast<uint32_t>(index);
+    Vector<uint64_t> sortKeys(sites.size());
+    forEachIndexInParallel(loops, sites.size(), [&](unsigned site) {
+        sortKeys[site] = createSortKey(sites[site].hash, site);
     });
-    parallelSort(loops, order.mutableSpan(), [&](uint32_t a, uint32_t b) {
-        return std::pair { sites[a].hash, a } < std::pair { sites[b].hash, b };
-    });
-    Vector<uint32_t> hashRunStarts = findIndicesInParallel(loops, order.size(), [&](unsigned position) {
-        return !position || sites[order[position - 1]].hash != sites[order[position]].hash;
+    parallelSort(loops, sortKeys.mutableSpan(), std::less<uint64_t> { });
+    Vector<uint32_t> hashRunStarts = findIndicesInParallel(loops, sortKeys.size(), [&](unsigned position) {
+        return !position || hashInSortKey(sortKeys[position - 1]) != hashInSortKey(sortKeys[position]);
     });
 
-    Vector<SiteGroup> groups = collectInParallel<SiteGroup>(loops, hashRunStarts.size(), [&](unsigned run, Vector<SiteGroup>& found) {
+    auto keysOfRun = [&](unsigned run) {
         size_t begin = hashRunStarts[run];
-        size_t end = run + 1 < hashRunStarts.size() ? hashRunStarts[run + 1] : order.size();
+        size_t end = run + 1 < hashRunStarts.size() ? hashRunStarts[run + 1] : sortKeys.size();
+        return sortKeys.subspan(begin, end - begin);
+    };
+    Vector<uint32_t> longestRunsFirst = findIndicesInParallel(loops, hashRunStarts.size(), [&](unsigned run) {
+        return keysOfRun(run).size() >= sitesInLongHashRun;
+    });
+    std::ranges::sort(longestRunsFirst, [&](uint32_t a, uint32_t b) {
+        return std::pair { keysOfRun(b).size(), a } < std::pair { keysOfRun(a).size(), b };
+    });
+
+    Vector<SiteGroup> groups = collectInParallel<SiteGroup>(loops, hashRunStarts.size(), longestRunsFirst.span(), [&](unsigned run, Vector<SiteGroup>& found) {
+        if (!canAnyGroupBeProfitable(sites, keysOfRun(run)))
+            return;
         size_t firstGroupWithHash = found.size();
-        groupEqualSites(program, sites, order.subspan(begin, end - begin), found);
+        groupEqualSites(program, sites, keysOfRun(run), found);
         found.removeAllMatching([&](const SiteGroup& group) {
-            return decide(program, sites[group.sites.first()], group.sites.size()) != OutliningDecision::Outlined;
+            return decide(sites[group.sites.first()], group.sites.size()) != OutliningDecision::Outlined;
         }, firstGroupWithHash);
     });
 
@@ -188,33 +244,33 @@ static Function createBodyHead(const Program& program, const OutliningSite& site
     return created;
 }
 
-static Vector<FunctionID> addBodyHeads(ProgramEditor& editor, const Vector<OutliningSite>& sites, Vector<SiteGroup>& groups)
+static Vector<FunctionID> addBodyHeads(ProgramEditor& editor, const ParallelLoops& loops, const ParallelArray<OutliningSite>& sites, Vector<SiteGroup>& groups)
 {
     Vector<FunctionID> bodyOfSite(FillWith { }, sites.size(), FunctionID());
-    for (SiteGroup& group : groups) {
-        const OutliningSite& firstSite = sites[group.sites.first()];
-        group.body = editor.addFunction(createBodyHead(editor.program(), firstSite));
+    FunctionID firstBody = editor.reserveFunctions(groups.size());
+    forEachIndexInParallel(loops, groups.size(), [&](unsigned index) {
+        SiteGroup& group = groups[index];
+        group.body = FunctionID(firstBody.index() + index);
+        editor.replaceFunction(group.body, createBodyHead(editor.program(), sites[group.sites.first()]));
         for (uint32_t site : group.sites)
             bodyOfSite[site] = group.body;
-    }
+    });
     return bodyOfSite;
 }
 
-static Vector<FunctionWork> createWorkLists(const Vector<OutliningSite>& sites, const Vector<SiteGroup>& groups, const Vector<FunctionID>& bodyOfSite)
+// The sites come in the order of their functions.
+static WorkLists createWorkLists(const ParallelLoops& loops, const ParallelArray<OutliningSite>& sites, const Vector<FunctionID>& bodyOfSite)
 {
-    Vector<FunctionWork> work;
-    size_t nextGroup = 0;
-    for (uint32_t site = 0; site < sites.size(); ++site) {
-        if (!bodyOfSite[site])
-            continue;
-        FunctionID id = sites[site].function;
-        if (work.isEmpty() || work.last().id != id)
-            work.append(FunctionWork { id, { }, { } });
-        work.last().sites.append(site);
-        if (nextGroup < groups.size() && groups[nextGroup].sites.first() == site)
-            work.last().bodiesToBuild.append({ site, groups[nextGroup++].body });
-    }
-    RELEASE_ASSERT(nextGroup == groups.size());
+    WorkLists work;
+    work.sites = findIndicesInParallel(loops, sites.size(), [&](unsigned site) {
+        return !!bodyOfSite[site];
+    });
+    work.firstSiteOf = findIndicesInParallel(loops, work.sites.size(), [&](unsigned position) {
+        return !position || sites[work.sites[position - 1]].function != sites[work.sites[position]].function;
+    });
+    work.functions = work.firstSiteOf.map([&](uint32_t position) {
+        return sites[work.sites[position]].function;
+    });
     return work;
 }
 
@@ -255,7 +311,7 @@ BlockID BodyBuilder::addBlockLike(BlockID original)
 {
     const Block& block = m_source.at(original);
     BlockID added = m_builder.addBlock(block.frequency);
-    m_builder.function().at(added).shape = block.shape;
+    m_builder.function().edit(added).shape = block.shape;
     return added;
 }
 
@@ -390,7 +446,7 @@ BlockID BodyBuilder::copyOf(BlockID block) const
 
 static void replaceRun(Function& function, const OutliningSite& site, FunctionID body, Vector<ErasedValues, 4>& erasedValues)
 {
-    convertToCall(function.at(site.root), site, body);
+    convertToCall(function.edit(site.root), site, body);
     if (site.numberOfEntryValues == 1)
         return;
 
@@ -456,19 +512,30 @@ static void replaceRegion(IRBuilder& builder, const OutliningSite& site, Functio
     builder.redirectEdge(Edge { site.entryBlock, 0 }, site.exitBlock, WTF::move(arguments));
 }
 
-static void rewriteFunction(const RewriteInputs& inputs, const FunctionWork& work, Function& function, TypeArena& types)
+// A function that comes early holds the first site of most groups, so the bodies are a loop of their own, over the functions as they are before a site is replaced.
+static void buildBodiesInParallel(const RewriteInputs& inputs, const Vector<SiteGroup>& groups)
 {
-    for (auto [siteIndex, body] : work.bodiesToBuild)
-        BodyBuilder(inputs.contextOf(body), function, inputs.sites[siteIndex], inputs.editor.at(body), types).build();
+    const Program& program = inputs.editor.program();
+    Vector<FunctionID> bodies = groups.map([](const SiteGroup& group) {
+        return group.body;
+    });
+    editFunctionsInParallel(inputs.editor, inputs.build, bodies.span(), [&](unsigned index, FunctionID id, Function& body, TaskArenas& arenas) {
+        const OutliningSite& site = inputs.sites[groups[index].sites.first()];
+        BodyBuilder(inputs.contextOf(id), program.at(site.function), site, body, arenas.types).build();
+        inputs.wasRead[id.index()] = inputs.readIfFinal(id, arenas);
+    });
+}
 
-    IRBuilder builder(inputs.contextOf(work.id), function, types);
-    for (uint32_t siteIndex : work.sites) {
+static void rewriteFunction(const RewriteInputs& inputs, FunctionID id, std::span<const uint32_t> sites, Function& function, TypeArena& types)
+{
+    IRBuilder builder(inputs.contextOf(id), function, types);
+    for (uint32_t siteIndex : sites) {
         if (inputs.sites[siteIndex].isRegion())
             replaceRegion(builder, inputs.sites[siteIndex], inputs.bodyOfSite[siteIndex]);
     }
 
     Vector<ErasedValues, 4> erasedValues;
-    for (uint32_t siteIndex : work.sites) {
+    for (uint32_t siteIndex : sites) {
         if (!inputs.sites[siteIndex].isRegion())
             replaceRun(function, inputs.sites[siteIndex], inputs.bodyOfSite[siteIndex], erasedValues);
     }
@@ -478,39 +545,64 @@ static void rewriteFunction(const RewriteInputs& inputs, const FunctionWork& wor
     compactFunction(function);
 }
 
-static void rewriteFunctionsInParallel(const RewriteInputs& inputs, const Vector<FunctionWork>& work, const Vector<SiteGroup>& groups)
+static void rewriteFunctionsInParallel(const RewriteInputs& inputs, const WorkLists& work)
 {
-    Vector<FunctionID> functions = work.map([](const FunctionWork& functionWork) {
-        return functionWork.id;
-    });
-    Vector<FunctionID> bodies = groups.map([](const SiteGroup& group) {
-        return group.body;
-    });
-    editFunctionsInParallel(inputs.editor, inputs.build, functions.span(), bodies.span(), [&](unsigned index, FunctionID, Function& function, TaskArenas& arenas) {
-        rewriteFunction(inputs, work[index], function, arenas.types);
+    lowerFunctionsInParallel(inputs.editor, inputs.build, work.functions.span(), { }, [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
+        rewriteFunction(inputs, id, work.sitesOf(index), function, arenas.types);
+        inputs.wasRead[id.index()] = inputs.readIfFinal(id, arenas);
     });
 }
 
-void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build)
+// What outlining has left as it was, and what held an id that was replaced when its loop ended.
+static void readRemainingFunctions(const Program& program, BuildContext& build, const OutliningSiteFinder& finder, const ReadersOfOutlinedFunctions& readers, std::span<const uint8_t> wasRead)
 {
+    std::span<const uint8_t> hasSites = finder.hasSites();
+    Vector<FunctionID> remaining = collectInParallel<FunctionID>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
+        bool isRead = index < wasRead.size() && wasRead[index];
+        if (!isRead && (index >= hasSites.size() || hasSites[index]))
+            found.append(FunctionID(index));
+    });
+    readFunctionsInParallel(program, build, remaining.span(), readers.read);
+}
+
+void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, OutliningSiteFinder* finder, const ReadersOfOutlinedFunctions* readers)
+{
+    RELEASE_ASSERT(finder || !readers);
+    PhaseTimes times(build, PassID::OutlineColdOperations);
     const Program& program = editor.program();
-    Vector<OutliningSite> sites = findOutliningSites(program, inputs, build);
-    if (sites.isEmpty())
+    ParallelArray<OutliningSite> sites = finder ? finder->takeSites() : findOutliningSites(program, inputs, build);
+    times.didFinish("find or take sites"_s);
+    const ParallelLoops& loops = build.parallelLoops();
+    Vector<SiteGroup> groups;
+    if (sites.size())
+        groups = findProfitableGroups(program, loops, sites);
+    times.didFinish("findProfitableGroups"_s);
+    if (groups.isEmpty()) {
+        if (readers)
+            readRemainingFunctions(program, build, *finder, *readers, { });
         return;
+    }
 
-    Vector<SiteGroup> groups = findProfitableGroups(program, build.parallelLoops(), sites);
-    if (groups.isEmpty())
-        return;
+    Vector<FunctionID> bodyOfSite = addBodyHeads(editor, loops, sites, groups);
+    if (readers)
+        readers->didAddFunctions();
+    times.didFinish("addBodyHeads"_s);
+    WorkLists work = createWorkLists(loops, sites, bodyOfSite);
+    Vector<uint8_t> wasRead(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    RewriteInputs rewriting { editor, inputs, build, sites, bodyOfSite, readers, wasRead };
+    times.didFinish("createWorkLists"_s);
+    buildBodiesInParallel(rewriting, groups);
+    times.didFinish("buildBodiesInParallel"_s);
+    rewriteFunctionsInParallel(rewriting, work);
+    times.didFinish("rewriteFunctionsInParallel"_s);
+    if (readers)
+        readRemainingFunctions(program, build, *finder, *readers, wasRead.span());
+    times.didFinish("readRemainingFunctions"_s);
 
-    Vector<FunctionID> bodyOfSite = addBodyHeads(editor, sites, groups);
-    Vector<FunctionWork> work = createWorkLists(sites, groups, bodyOfSite);
-    rewriteFunctionsInParallel({ editor, inputs, build, sites, bodyOfSite }, work, groups);
-
-    uint64_t numberOfOutlinedSites = 0;
-    for (const SiteGroup& group : groups)
-        numberOfOutlinedSites += group.sites.size();
     build.statistics().count(StatisticID::OutlinedBodiesCreated, groups.size());
-    build.statistics().count(StatisticID::ColdSitesOutlined, numberOfOutlinedSites);
+    build.statistics().count(StatisticID::ColdSitesOutlined, work.sites.size());
+    build.destroyLater(WTF::move(sites));
+    build.destroyLater(WTF::move(groups));
 }
 
 } } } // namespace JSC::AOT::Typed

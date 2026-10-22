@@ -124,10 +124,10 @@ function f4 name="usersFollow" parameters=[{type=i32}, {type=boolean}, {type=any
 # CHECK-NEXT: v6: int[-4294967296, 4294967294] = Add v5, v5
 # CHECK: b8(v7: int[-4294967296, 4294967294]):
 
-function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number|string, v1: boolean, v2: anything):
-    v3 = Boolean boolean=false
-    Branch v3 -> taken b1(), notTaken b2()
+function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, {type=anything}, {type=number|string}] results=[{type=anything}] {
+  b0(v0: number|string, v1: boolean, v2: anything, v3: number|string):
+    v4 = Boolean boolean=false
+    Branch v4 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b5(v2)
   b2():
@@ -135,19 +135,19 @@ function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, 
   b3():
     Jump -> next b5(v0)
   b4():
-    Jump -> next b5(v0)
-  b5(v4):
-    v5 = TypeTest v4 testedType=string
-    Branch v5 -> taken b6(| 0), notTaken b7(| 0)
-  b6(v6):
-    Return v6
-  b7(v7):
+    Jump -> next b5(v3)
+  b5(v5):
+    v6 = TypeTest v5 testedType=string
+    Branch v6 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v7):
     Return v7
+  b7(v8):
+    Return v8
 }
 # CHECK-LABEL: function f5 name="edgeResult"
-# CHECK: b5(v4: number|string):
-# CHECK: b6(v6: string):
-# CHECK: b7(v7: number):
+# CHECK: b5(v5: number|string):
+# CHECK: b6(v7: string):
+# CHECK: b7(v8: number):
 
 function f6 name="anythingFlowsIn" parameters=[{type=anything}, {type=boolean}, {type=string}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean, v2: string):

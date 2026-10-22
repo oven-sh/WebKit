@@ -1,4 +1,4 @@
-# A parameter counts the accesses by name that have it as their receiver and know no layout of it
+# A parameter counts the accesses by name that have it as their receiver and know no layout of it, and the stores under a key that have it as their receiver, with or without a layout
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass SummarizeForInlining
@@ -13,15 +13,15 @@ function f0 name="definesTwoReadsOne" parameters=[{type=object}, {type=anything}
     v4 = PropGet v0 key="x"
     Return v4
 }
-# CHECK: f0: barrier=None bytes=64 receiver(p0 accesses=3)
+# CHECK: f0: barrier=None bytes=64 receiver(p0 accesses=3 stores=2)
 
 function f1 name="receiverBehindCast" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
   b0(v0: anything, v1: object):
-    v2 = Predict v1 predicted=L0
+    v2 ~ L0 = Upcast v1 castType=object
     PropSet v2, v0 key="x"
     Return v0
 }
-# CHECK: f1: barrier=None bytes=24 receiver(p1 accesses=1)
+# CHECK: f1: barrier=None bytes=24 receiver(p1 accesses=1 stores=1)
 
 function f2 name="layoutIsProven" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
@@ -31,9 +31,9 @@ function f2 name="layoutIsProven" parameters=[{type=L0}] results=[{type=anything
 # CHECK: f2: barrier=None
 # CHECK-NOT: receiver(
 
-function f3 name="layoutIsClaimed" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
-    v1 = Claim v0 castType=L0
+function f3 name="layoutIsChecked" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Check v0 castType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
@@ -45,6 +45,6 @@ function f4 name="parameterIsStored" parameters=[{type=object}, {type=L0}] resul
     PropSet v1, v0 key="x"
     Return v0
 }
-# CHECK: f4: barrier=None
-# CHECK-NOT: receiver(
+# CHECK: f4: barrier=None {{*}} receiver(p1 accesses=0 stores=1)
+# CHECK-NOT: receiver(p0
 # CHECK: outcome: Unchanged

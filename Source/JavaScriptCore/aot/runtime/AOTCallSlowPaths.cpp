@@ -8,13 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallSiteCache.h"
 #include "AOTCompiledFrame.h"
 #include "AOTImage.h"
 #include "AOTOperationScope.h"
+#include "AOTState.h"
 #include "AOTUnwinding.h"
 #include "CallFrameInlines.h"
 #include "DeferGCInlines.h"
-#include "JITExceptions.h"
+#include "ExceptionHelpers.h"
+#include "OwedOutOfMemoryError.h"
 #include "VMEntryRecord.h"
 
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -27,8 +30,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* i
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowStackOverflowError);
     DeferGCForAWhile deferGC(vm);
+    if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[unlikely]] {
+        OPERATION_RETURN(scope);
+    }
     throwStackOverflowError(globalObject, scope);
     OPERATION_RETURN(scope);
+}
+
+// A caller that relies on the type has a landing for what is not of it. Any other caller takes whatever is returned, at its return address.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance* instance, void* returnAddress, EncodedJSValue misfit))
+{
+    const VMState& state = instance->vm->aotState();
+    const CallSiteCache::Entry* site = state.callSiteCache->find(returnAddress);
+    if (!site)
+        site = state.callSiteCache->resolve(*state.image, returnAddress);
+    if (!site || site->isStubReturnSite() || !site->handler || site->handler->catchesExceptions())
+        return returnAddress;
+    instance->scratch.misfit = misfit;
+    return const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
 }
 
 static ALWAYS_INLINE bool hasHandler(const CompiledUnwindResult& result)
@@ -68,7 +87,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         found = unwindCompiledFrames(vm, *frames, *vmEntryRecord(vm.topEntryFrame), false);
     bool isHandled = hasHandler(found);
     bool takesException = found.handler.kind == CompiledHandlerKind::Finally;
-    UGPRPair handlerCodeAndFrame = makeUGPRPair(std::bit_cast<UCPURegister>(found.handler.code), std::bit_cast<UCPURegister>(found.handler.callFrame));
+    UGPRPair handlerCodeAndFrame = makeUGPRPair(std::bit_cast<UCPURegister>(found.handler.code), std::bit_cast<UCPURegister>(found.handler.framePointer));
     if (rethrownException && isHandled && !needsException) {
         if (!takesException)
             exceptions.thrownValue = JSValue::encode(rethrownException->value());
@@ -91,8 +110,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
     }
     if (isHandled)
         return handlerCodeAndFrame;
-    genericUnwind(vm, std::bit_cast<CallFrame*>(frameRecord));
+    unwindBeyondCompiledFrames(vm, std::bit_cast<CallFrame*>(frameRecord), found.status);
     return makeUGPRPair(0, 0);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, size_t, (Instance*, const void* returnAddress))
+{
+    const Image& image = *Image::current();
+    std::optional<PrologueCheck> check = image.prologueCheckAt(returnAddress);
+    RELEASE_ASSERT(check);
+    const ImageFrame& frame = image.frameOf(check->function);
+    return frame.hasFrameRecord() ? 0 : frame.frameSizeInBytes() + sizeof(void*);
 }
 
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE

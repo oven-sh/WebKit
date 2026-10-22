@@ -1,0 +1,36 @@
+# A throw may leave a block in front of the allocation in it. In the handler the object is not defined, so nothing is known of it there and nothing is done to it
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FinishBirths
+# STATISTIC: BirthsFinished = 1
+# STATISTIC: BirthsLeftToRunTime = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=FilledAtBirth}}, {key="y" declared={type=anything} flow={occupancy=FilledAtBirth}}]
+layout L1 kind=Instance name="Holder" fields=[{key="held" declared={type=anything}}]
+
+function f0 name="theCallInFrontOfTheAllocationMayThrow" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L1
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v0
+    v3 = NewObject layout=L0
+    PutSlotOrAdd v3, v3, v0 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v1, v1, v3 key="held" receivers=[L1] level=Proven
+    Jump -> next b2()
+  b2():
+    PutSlotOrAdd v3, v3, v0 key="y" receivers=[L0] level=Proven
+    Return v3
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    v8 = Call v0, -, v7
+    Return v8
+}
+# CHECK-LABEL: name="theCallInFrontOfTheAllocationMayThrow"
+# CHECK: PutSlotOrAdd v3, v3, v0 key="y"
+# CHECK-NEXT: FinishBirth v3
+# CHECK-NEXT: Return v3
+# CHECK: = CatchValue
+# CHECK-NOT: FinishBirth

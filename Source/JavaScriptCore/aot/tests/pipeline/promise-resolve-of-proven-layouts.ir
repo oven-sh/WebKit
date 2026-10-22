@@ -3,32 +3,32 @@
 # OPTIONS: check=VerifyEachPass
 # CHECK: image not empty
 
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent predicted=number} flags=[IsRequired]}]
-layout L1 module=m0 position=537 fields=[{key="then" declared={type=anything predicted=undefined} flags=[IsRequired]}, {key="v" declared={type=anything} flags=[IsRequired]}]
-layout L2 module=m0 position=736 fields=[{key="then" declared={type=anything predicted=undefined} flags=[IsRequired]}, {key="v" declared={type=anything} flags=[IsRequired]}]
-layout L3 module=m0 position=145 fields=[{key="v" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]} flags=[IsRequired]}]
+layout L1 module=m0 position=537 fields=[{key="then" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="v" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 position=736 fields=[{key="then" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="v" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 position=145 fields=[{key="v" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 layout L4 module=m0 position=302
-layout L5 module=m0 position=349 fields=[{key="next" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
-layout L6 module=m0 position=63 fields=[{key="then" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}] supertypes=[L7]
-layout L7 fields=[{key="then" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
-layout L8 fields=[{key="done" declared={type=anything predicted=boolean} flags=[IsRequired]}, {key="value" declared={type=anything predicted=string} flags=[IsRequired]}]
+layout L5 module=m0 position=349 fields=[{key="next" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+layout L6 module=m0 position=63 fields=[{key="then" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] supertypes=[L7]
+layout L7 fields=[{key="then" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+layout L8 fields=[{key="done" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=string flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 name="numberOrThenable" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="install" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
 variable g2 name="use" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
 variable g3 name="loop" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
 variable g4 name="overwritten" module=m0 declared={type=function} initialization=Function function=f5 flags=[IsImmutable]
 variable g5 name="storedLate" module=m0 declared={type=function} initialization=Function function=f6 flags=[IsImmutable]
-variable g6 name="o" module=m0 declared={type=anything|absent predicted=L3} flags=[IsImmutable]
-variable g7 name="iterable" module=m0 declared={type=anything|absent predicted=L4} flags=[IsImmutable]
+variable g6 name="o" module=m0 declared={type=L3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g7 name="iterable" module=m0 declared={type=L4|absent flags=[IsExpected]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     Jump -> next b1() @0
   b1():
     v0 = NewClosure function=f7 @0
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v1 = Convert v0 declared={type=function flags=[IsExpected]} @0
     v2 = Data data=d0 @145
-    v3 = Predict v2 predicted=L3 @141
+    v3 = Convert v2 declared={type=L3 flags=[IsExpected]} @141
     PutModuleVariable v3 variable=g6 @141
     v5 = NewObject layout=L4 @304
     v6 = NewClosure function=f8 @304
@@ -36,9 +36,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     SetFunctionName v6, v7 @304
     PropDefine v5, v6 key=@@asyncIterator @304
     v10 = FinishObject v5 @302
-    v11 = Predict v10 predicted=L4 @291
+    v11 = Convert v10 declared={type=L4 flags=[IsExpected]} @291
     PutModuleVariable v11 variable=g7 @291
-    v13 = Predict v1 predicted=function @1149
+    v13 = Convert v1 declared={type=function flags=[IsExpected]} @1149
     v14 = Call v13 calleeName="main" @1149
     v15 = Undefined @1149
     Return v15 @1149
@@ -49,10 +49,10 @@ function f1 name="numberOrThenable" module=m0 flags=[HasExplicitName] length=1 t
   b1():
     v1 = Builtin builtin=GlobalThis @36
     v2 = PropGet v1 key="Promise" [isFreeName] @36
-    v3 = Predict v2 predicted=builtin(Promise) @36
+    v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]} @36
     v4 = PropGet v3 key="resolve" @36
-    v5 = Predict v4 predicted=function @36
-    v6 = Predict v5 predicted=builtin(PromiseResolve) @36
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @36
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @36
     v7 = ToBoolean v0 @52
     Branch v7 -> taken b2(| 0), notTaken b4(| 0) @52
   b2(v8):
@@ -65,15 +65,15 @@ function f1 name="numberOrThenable" module=m0 flags=[HasExplicitName] length=1 t
   b5():
     v11 = NewObject layout=L6 @65
     v12 = NewClosure function=f9 @65
-    v13 = ClaimDeclared v12 declared={type=anything predicted=function} @65
+    v13 = Convert v12 declared={type=function flags=[IsExpected]} @65
     PropDefine v11, v13 key="then" @65
     v15 = FinishObject v11 @63
     Jump -> next b6(v15) @63
   b6(v16):
     v17 = Call v6, v3, v16 calleeKey="resolve" calleeName="resolve" @44
-    v18 = Predict v17 predicted=Promise @36
+    v18 = Convert v17 declared={type=Promise flags=[IsExpected]} @36
     v19 = PropGet v18 key="then" @98
-    v20 = Predict v19 predicted=function @36
+    v20 = Convert v19 declared={type=function flags=[IsExpected]} @36
     v21 = NewClosure function=f10 @105
     v22 = Call v20, v18, v21 calleeKey="then" calleeName="then" @100
     v23 = Undefined @36
@@ -90,7 +90,7 @@ function f2 name="install" module=m0 position=155 flags=[HasExplicitName] thisTy
     v4 = Undefined @176
     Return v4 @176
 }
-function f3 name="use" module=m0 position=220 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=anything predicted=Promise}] {
+function f3 name="use" module=m0 position=220 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
   b0():
     Jump -> next b1() @220
   b1():
@@ -98,22 +98,22 @@ function f3 name="use" module=m0 position=220 flags=[IsAsync, HasExplicitName] t
     v1 = PropGet v0 key="print" [isFreeName] @243
     v2 = Builtin builtin=GlobalThis @262
     v3 = PropGet v2 key="Promise" [isFreeName] @262
-    v4 = Predict v3 predicted=builtin(Promise) @262
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]} @262
     v5 = PropGet v4 key="resolve" @262
-    v6 = Predict v5 predicted=function @262
-    v7 = Predict v6 predicted=builtin(PromiseResolve) @262
+    v6 = Convert v5 declared={type=function flags=[IsExpected]} @262
+    v7 = Convert v6 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @262
     v8 = GetModuleVariable variable=g6 @278
     v9 = CheckInitialized v8 name="o" @278
     v10 = Call v7, v4, v9 calleeKey="resolve" calleeName="resolve" @270
-    v11 = Predict v10 predicted=Promise<L3> @262
+    v11 = Convert v10 declared={type=Promise<L3> flags=[IsExpected]} @262
     v12 = Await v11 @256
-    v13 = Predict v12 predicted=L3 @256
+    v13 = Convert v12 declared={type=L3 flags=[IsExpected]} @256
     v14 = TypeOf v13 @249
     v15 = Call v1, -, v14 calleeName="print" @243
     v16 = Undefined @243
     Return v16 @243
 }
-function f4 name="loop" module=m0 position=429 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=anything predicted=Promise}] {
+function f4 name="loop" module=m0 position=429 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
   b0():
     Jump -> next b1() @429
   b1():
@@ -133,7 +133,7 @@ function f4 name="loop" module=m0 position=429 flags=[IsAsync, HasExplicitName] 
   b4():
     Jump -> next b5() @453
   b5() handler=b6():
-    v8 = Predict v6 predicted=string @470
+    v8 = Convert v6 declared={type=string flags=[IsExpected]} @470
     v9 = Builtin builtin=GlobalThis @485
     v10 = PropGet v9 key="print" [isFreeName] @485
     v11 = Call v10, -, v8 calleeName="print" @485
@@ -143,85 +143,85 @@ function f4 name="loop" module=m0 position=429 flags=[IsAsync, HasExplicitName] 
     IteratorClose v2 iteratorKind=Async completion=Throw @453
     Rethrow v12 @453
 }
-function f5 name="overwritten" module=m0 position=497 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=Promise<L1>}] {
+function f5 name="overwritten" module=m0 position=497 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Promise<L1> flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1() @497
   b1():
     v1 = Undefined @545
-    v2 = Predict v1 predicted=undefined @545
+    v2 = Convert v1 declared={type=undefined flags=[IsExpected]} @545
     v3 = NewObject -, v2, v0 layout=L1 fields=[0, 1] @537
     v4 = FinishObject v3 @537
-    v5 = Predict v4 predicted=L1 @533
+    v5 = Convert v4 declared={type=L1 flags=[IsExpected]} @533
     v6 = NewClosure v0 function=f12 @577
-    v7 = ClaimDeclared v6 declared={type=anything predicted=undefined} @568
+    v7 = Convert v6 declared={type=undefined flags=[IsExpected]} @568
     PropSet v5, v7 key="then" @568
     v9 = Builtin builtin=GlobalThis @641
     v10 = PropGet v9 key="Promise" [isFreeName] @641
-    v11 = Predict v10 predicted=builtin(Promise) @641
+    v11 = Convert v10 declared={type=builtin(Promise) flags=[IsExpected]} @641
     v12 = PropGet v11 key="resolve" @641
-    v13 = Predict v12 predicted=function @641
-    v14 = Predict v13 predicted=builtin(PromiseResolve) @641
+    v13 = Convert v12 declared={type=function flags=[IsExpected]} @641
+    v14 = Convert v13 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @641
     v15 = Call v14, v11, v5 calleeKey="resolve" calleeName="resolve" @649
-    v16 = Predict v15 predicted=Promise<L1> @641
+    v16 = Convert v15 declared={type=Promise<L1> flags=[IsExpected]} @641
     v17 = Undefined @672
-    v18 = Predict v17 predicted=undefined @672
+    v18 = Convert v17 declared={type=undefined flags=[IsExpected]} @672
     PropSet v5, v18 key="then" @663
     Return v16 @692
 }
-function f6 name="storedLate" module=m0 position=697 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=Promise<L2>}] {
+function f6 name="storedLate" module=m0 position=697 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Promise<L2> flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1() @697
   b1():
     v1 = Undefined @744
-    v2 = Predict v1 predicted=undefined @744
+    v2 = Convert v1 declared={type=undefined flags=[IsExpected]} @744
     v3 = NewObject -, v2, v0 layout=L2 fields=[0, 1] @736
     v4 = FinishObject v3 @736
-    v5 = Predict v4 predicted=L2 @732
+    v5 = Convert v4 declared={type=L2 flags=[IsExpected]} @732
     v6 = Builtin builtin=GlobalThis @777
     v7 = PropGet v6 key="Promise" [isFreeName] @777
-    v8 = Predict v7 predicted=builtin(Promise) @777
+    v8 = Convert v7 declared={type=builtin(Promise) flags=[IsExpected]} @777
     v9 = PropGet v8 key="resolve" @777
-    v10 = Predict v9 predicted=function @777
-    v11 = Predict v10 predicted=builtin(PromiseResolve) @777
+    v10 = Convert v9 declared={type=function flags=[IsExpected]} @777
+    v11 = Convert v10 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @777
     v12 = Call v11, v8, v5 calleeKey="resolve" calleeName="resolve" @785
-    v13 = Predict v12 predicted=Promise<L2> @777
+    v13 = Convert v12 declared={type=Promise<L2> flags=[IsExpected]} @777
     v14 = NewClosure v0 function=f13 @808
-    v15 = ClaimDeclared v14 declared={type=anything predicted=undefined} @799
+    v15 = Convert v14 declared={type=undefined flags=[IsExpected]} @799
     PropSet v5, v15 key="then" @799
     Return v13 @869
 }
-function f7 name="main" module=m0 position=874 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=anything predicted=Promise}] {
+function f7 name="main" module=m0 position=874 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
   b0():
     Jump -> next b1() @874
   b1():
     v0 = GetModuleVariable variable=g0 @900
-    v1 = Predict v0 predicted=function @900
+    v1 = Convert v0 declared={type=function flags=[IsExpected]} @900
     v2 = Boolean boolean=true @917
     v3 = Call v1, -, v2 calleeName="numberOrThenable" @900
     v4 = GetModuleVariable variable=g0 @926
-    v5 = Predict v4 predicted=function @926
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @926
     v6 = Boolean @943
     v7 = Call v5, -, v6 calleeName="numberOrThenable" @926
     v8 = GetModuleVariable variable=g2 @959
-    v9 = Predict v8 predicted=function @959
+    v9 = Convert v8 declared={type=function flags=[IsExpected]} @959
     v10 = Call v9 calleeName="use" @959
-    v11 = Predict v10 predicted=Promise @959
+    v11 = Convert v10 declared={type=Promise flags=[IsExpected]} @959
     v12 = Await v11 @953
     v13 = GetModuleVariable variable=g1 @968
-    v14 = Predict v13 predicted=function @968
+    v14 = Convert v13 declared={type=function flags=[IsExpected]} @968
     v15 = Call v14 calleeName="install" @968
     v16 = GetModuleVariable variable=g2 @987
-    v17 = Predict v16 predicted=function @987
+    v17 = Convert v16 declared={type=function flags=[IsExpected]} @987
     v18 = Call v17 calleeName="use" @987
-    v19 = Predict v18 predicted=Promise @987
+    v19 = Convert v18 declared={type=Promise flags=[IsExpected]} @987
     v20 = Await v19 @981
     v21 = GetModuleVariable variable=g3 @1002
-    v22 = Predict v21 predicted=function @1002
+    v22 = Convert v21 declared={type=function flags=[IsExpected]} @1002
     v23 = Call v22 calleeName="loop" @1002
-    v24 = Predict v23 predicted=Promise @1002
+    v24 = Convert v23 declared={type=Promise flags=[IsExpected]} @1002
     v25 = Await v24 @996
     v26 = Integer @1025
-    v27 = Predict v26 predicted=number @1021
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @1021
     Jump -> next b2(v27) @1021
   b2(v28):
     LoopHint @1021
@@ -235,27 +235,27 @@ function f7 name="main" module=m0 position=874 flags=[IsAsync, HasExplicitName] 
     v34 = PropGet v33 key="print" [isFreeName] @1046
     v35 = String string="overwritten" @1052
     v36 = GetModuleVariable variable=g4 @1073
-    v37 = Predict v36 predicted=function @1073
+    v37 = Convert v36 declared={type=function flags=[IsExpected]} @1073
     v38 = Call v37, -, v32 calleeName="overwritten" @1073
-    v39 = Predict v38 predicted=Promise<L1> @1073
+    v39 = Convert v38 declared={type=Promise<L1> flags=[IsExpected]} @1073
     v40 = Await v39 @1067
-    v41 = Predict v40 predicted=L1 @1067
+    v41 = Convert v40 declared={type=L1 flags=[IsExpected]} @1067
     v42 = Call v34, -, v35, v41 calleeName="print" @1046
     v43 = Builtin builtin=GlobalThis @1094
     v44 = PropGet v43 key="print" [isFreeName] @1094
     v45 = String string="storedLate" @1100
     v46 = GetModuleVariable variable=g5 @1127
-    v47 = Predict v46 predicted=function @1127
+    v47 = Convert v46 declared={type=function flags=[IsExpected]} @1127
     v48 = Call v47, -, v32 calleeName="storedLate" @1127
-    v49 = Predict v48 predicted=Promise<L2> @1127
+    v49 = Convert v48 declared={type=Promise<L2> flags=[IsExpected]} @1127
     v50 = Await v49 @1121
-    v51 = Predict v50 predicted=L2 @1121
+    v51 = Convert v50 declared={type=L2 flags=[IsExpected]} @1121
     v52 = TypeOf v51 @1114
     v53 = Call v44, -, v45, v52 calleeName="print" @1094
     Jump -> next b5() @1094
   b5():
     v54 = Increment v32 @1035
-    v55 = ClaimDeclared v54 declared={type=anything predicted=number} @1035
+    v55 = Convert v54 declared={type=number flags=[IsExpected]} @1035
     Jump -> next b2(v55) @1035
   b6(v56):
     Jump -> next b7() @1028
@@ -263,21 +263,21 @@ function f7 name="main" module=m0 position=874 flags=[IsAsync, HasExplicitName] 
     v57 = Undefined @1035
     Return v57 @1035
 }
-function f8 module=m0 position=304 kind=Method thisType={type=anything} results=[{type=anything predicted=L5}] {
+function f8 module=m0 position=304 kind=Method thisType={type=anything} results=[{type=L5 flags=[IsExpected]}] {
   b0():
     Jump -> next b1() @304
   b1():
     v0 = Absent @304
     v1 = NewObject -, v0 layout=L0 fields=[0] @304
     v2 = Integer @339
-    v3 = Predict v2 predicted=number @335
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @335
     PutEnvironmentField v1, v3 layout=L0 @335
     v5 = NewObject layout=L5 @351
     v6 = NewClosure v1 function=f14 @351
-    v7 = ClaimDeclared v6 declared={type=anything predicted=function} @351
+    v7 = Convert v6 declared={type=function flags=[IsExpected]} @351
     PropDefine v5, v7 key="next" @351
     v9 = FinishObject v5 @349
-    v10 = ClaimDeclared v9 declared={type=anything predicted=L5} @349
+    v10 = Convert v9 declared={type=L5 flags=[IsExpected]} @349
     Return v10 @349
 }
 function f9 name="then" module=m0 position=65 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
@@ -328,33 +328,33 @@ function f13 module=m0 position=808 length=1 captures=[{type=anything}] thisType
     v5 = Undefined @829
     Return v5 @829
 }
-function f14 name="next" module=m0 position=351 kind=Method flags=[HasExplicitName] captures=[{type=env L0}] thisType={type=anything} results=[{type=anything predicted=Promise<L8>}] {
+function f14 name="next" module=m0 position=351 kind=Method flags=[HasExplicitName] captures=[{type=env L0}] thisType={type=anything} results=[{type=Promise<L8> flags=[IsExpected]}] {
   b0(v0: env L0):
     Jump -> next b1() @351
   b1():
     v1 = Builtin builtin=GlobalThis @367
     v2 = PropGet v1 key="Promise" [isFreeName] @367
-    v3 = Predict v2 predicted=builtin(Promise) @367
+    v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]} @367
     v4 = PropGet v3 key="resolve" @367
-    v5 = Predict v4 predicted=function @367
-    v6 = Predict v5 predicted=builtin(PromiseResolve) @367
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @367
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @367
     v7 = GetEnvironmentField v0 layout=L0 @391
     v8 = CheckInitialized v7 name="i" @391
     v9 = ToNumeric v8 @391
     v10 = Increment v9 @391
-    v11 = ClaimDeclared v10 declared={type=anything predicted=number} @391
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @391
     v12 = GetEnvironmentField v0 layout=L0 @391
     v13 = CheckInitialized v12 name="i" @391
     PutEnvironmentField v0, v11 layout=L0 @391
     v15 = Integer integer=2 @398
     v16 = GreaterEq v9, v15 @391
-    v17 = ClaimDeclared v16 declared={type=anything predicted=boolean} @385
+    v17 = Convert v16 declared={type=boolean flags=[IsExpected]} @385
     v18 = String string="step" @408
-    v19 = ClaimDeclared v18 declared={type=anything predicted=string} @401
+    v19 = Convert v18 declared={type=string flags=[IsExpected]} @401
     v20 = NewObject -, v17, v19 layout=L8 fields=[0, 1] @383
     v21 = FinishObject v20 @383
     v22 = Call v6, v3, v21 calleeKey="resolve" calleeName="resolve" @375
-    ReturnCall v22 casts=[{declared={type=anything predicted=Promise<L8>}}] @375
+    ReturnCall v22 casts=[{declared={type=Promise<L8> flags=[IsExpected]}}] @375
 }
 data d0 root=Object{layout=L3 members=[{key="v" value=Number{value=1}}]} module=m0
 entry module=m0

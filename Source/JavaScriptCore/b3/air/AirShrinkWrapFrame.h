@@ -33,9 +33,12 @@ struct FramePlacement {
 
 JS_EXPORT_PRIVATE FramePlacement shrinkWrapFrame(Code&, const StackColoring&);
 
-// Before register allocation: the blocks that shrinkWrapFrame will cover whatever the allocator does, where it also covers `crowdedBlocks`.
+// Before register allocation: the blocks that shrinkWrapFrame will cover whatever the allocator does.
 // Nothing where they leave out no path.
-std::optional<BitVector> findFrameRegionBeforeAllocation(Code&, const BitVector& crowdedBlocks);
+std::optional<BitVector> findFrameRegionBeforeAllocation(Code&);
+
+// The same where shrinkWrapFrame also covers `crowdedBlocks`. `region` is what findFrameRegionBeforeAllocation() found in this code.
+std::optional<BitVector> growFrameRegionBeforeAllocation(Code&, const BitVector& region, const BitVector& crowdedBlocks);
 
 } } } // namespace JSC::B3::Air
 

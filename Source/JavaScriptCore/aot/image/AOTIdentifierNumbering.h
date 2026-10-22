@@ -40,6 +40,8 @@ private:
     uint32_t m_countWithLookupTableColumn { 1 };
 };
 
+// The number of a name with a column in the lookup table is its column, so these come first, by use. The others are numbered in the order of the program's text, behind the symbols
+// that the run time creates in one step. Most modules and functions of a large program never run, and what the image holds for their names then shares no page with what is read.
 IdentifierNumbering numberIdentifiers(const Typed::Program&, const KeyUses&, const BitVector& keysWithColumn, BuildContext&);
 
 } } // namespace JSC::AOT

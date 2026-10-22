@@ -1,0 +1,26 @@
+# function many(p0, .., p33) { p30.a = p0; p31.a = p1; p32.a = p2; return p33 }
+# A mask has 32 bits. What is stored into parameter 31 has the last bit; what is stored into parameter 32 has none, and counts as stored into an object that nobody knows.
+# RUN: relational-summary
+# CHECK: p0: nothing | contents: nothing stored-into-parameters=1073741824
+# CHECK-NEXT: p1: nothing | contents: nothing stored-into-parameters=2147483648
+# CHECK-NEXT: p2: stored-in-unknown-object | contents: nothing
+# CHECK: p33: returned | contents: nothing results=1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thing" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Call v0, -, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2
+    Return
+}
+function f1 name="many" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{kind=Parameter index=0}, {kind=Parameter index=1}, {kind=Parameter index=2}, {kind=Parameter index=3}, {kind=Parameter index=4}, {kind=Parameter index=5}, {kind=Parameter index=6}, {kind=Parameter index=7}, {kind=Parameter index=8}, {kind=Parameter index=9}, {kind=Parameter index=10}, {kind=Parameter index=11}, {kind=Parameter index=12}, {kind=Parameter index=13}, {kind=Parameter index=14}, {kind=Parameter index=15}, {kind=Parameter index=16}, {kind=Parameter index=17}, {kind=Parameter index=18}, {kind=Parameter index=19}, {kind=Parameter index=20}, {kind=Parameter index=21}, {kind=Parameter index=22}, {kind=Parameter index=23}, {kind=Parameter index=24}, {kind=Parameter index=25}, {kind=Parameter index=26}, {kind=Parameter index=27}, {kind=Parameter index=28}, {kind=Parameter index=29}, {kind=Parameter index=30 fate=[HasMembersWritten]}, {kind=Parameter index=31 fate=[HasMembersWritten]}, {kind=Parameter index=32 fate=[HasMembersWritten]}, {kind=Parameter index=33 fate=[IsReturned] results=1}] stores=[{source=0 target=30 key="a" isOnEveryPath=true}, {source=1 target=31 key="a" isOnEveryPath=true}, {source=2 target=32 key="a" isOnEveryPath=true}]} {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything, v14: anything, v15: anything, v16: anything, v17: anything, v18: anything, v19: anything, v20: anything, v21: anything, v22: anything, v23: anything, v24: anything, v25: anything, v26: anything, v27: anything, v28: anything, v29: anything, v30: anything, v31: anything, v32: anything, v33: anything):
+    PropSet v30, v0 key="a" mode=Strict
+    PropSet v31, v1 key="a" mode=Strict
+    PropSet v32, v2 key="a" mode=Strict
+    Return v33
+}

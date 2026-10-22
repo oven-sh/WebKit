@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFlowApply.h"
 #include "AOTResultRulesInternal.h"
 
@@ -58,6 +59,7 @@ static CollectionStep appendCollectionStep(IterationExpansion& expansion, const 
     case IterationForm::TypedArray:
     case IterationForm::String:
     case IterationForm::SplitString:
+    case IterationForm::OwnEntries:
     case IterationForm::Generator:
     case IterationForm::AsyncGenerator:
         break;
@@ -79,7 +81,12 @@ static ValueID appendContentsOfEntry(IterationExpansion& expansion, const ArmSta
     std::optional<Type> contents = tryTypeOfContentsRead(typing, typing.typeOf(state.subject), slot);
     if (!contents || typing.typeOf(result).isSubsetOf(*contents, expansion.program()))
         return result;
-    return expansion.builder().append(makeAssumeType(result, expansion.types().intern(*contents)));
+
+    IRBuilder& builder = expansion.builder();
+    TypeID castType = expansion.types().intern(*contents);
+    if (expansion.pass().build.validates())
+        builder.append(makeValidateType(result, castType));
+    return builder.append(makeAssumeType(result, castType));
 }
 
 // A collection whose contents have the type never is always empty. Nothing may follow the value that says so.

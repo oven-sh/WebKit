@@ -1,5 +1,5 @@
 # A narrow reference stays narrow as a block parameter and under a test of its truth: one Decode behind a join in place of one on every edge. It is decoded in front of whatever can run the collector
-# OPTIONS: references=narrow
+# OPTIONS: references=narrow disable=pass:RemoveUnreadFields testing=NoLayoutIsMadeSeldom
 # RUN: pipeline ChooseRepresentations
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -24,17 +24,19 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PutModuleVariable v10 variable=g1
     v12 = PropGet v0 key="keep" [isFreeName]
     v13 = NewClosure function=f5
-    v14 = NewClosure function=f6
-    v15 = Call v12, -, v13, v14
-    v16 = NewClosure function=f7
-    v17 = Call v12, -, v16
+    v14 = CallDirect v1 function=f6 [isNeverInlined]
+    v15 = ToBoolean v14
+    v16 = CallDirect v1 function=f7 [isNeverInlined]
+    v17 = ToBoolean v16
+    v18 = Call v12, -, v13, v15, v17
     Return
 }
 function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = CallDirect v3 function=f2
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
     PropSet v3, v3 key="next" mode=Strict
     PropSet v3, v3 key="previous" mode=Strict
     PropSet v3, v1 key="a" mode=Strict
@@ -42,8 +44,8 @@ function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[
     PropSet v3, v1 key="c" mode=Strict
     Return v3
 }
-function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
     v1 = Undefined
     PropDefine v0, v1 key="next"
     PropDefine v0, v1 key="previous"
@@ -53,12 +55,13 @@ function f3 name="FilledOnOnePath" kind=BaseConstructor flags=[HasNewTarget] par
   b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
-    v4 = CallDirect v3 function=f4
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
     PropSet v3, v1 key="a" mode=Strict
     PropSet v3, v1 key="b" mode=Strict
     PropSet v3, v1 key="c" mode=Strict
-    v8 = ToBoolean v1
-    Branch v8 -> taken b1(), notTaken b2()
+    v9 = ToBoolean v1
+    Branch v9 -> taken b1(), notTaken b2()
   b1():
     PropSet v3, v3 key="next" mode=Strict
     PropSet v3, v3 key="previous" mode=Strict
@@ -66,8 +69,8 @@ function f3 name="FilledOnOnePath" kind=BaseConstructor flags=[HasNewTarget] par
   b2():
     Return v3
 }
-function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
-  b0(v0: object ? L1):
+function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L1):
     v1 = Undefined
     PropDefine v0, v1 key="next"
     PropDefine v0, v1 key="previous"
@@ -107,13 +110,13 @@ function f7 name="collectorRunsBehindJoin" parameters=[{type=anything}] results=
     v6 = Call v0, -
     Return v5
 }
-# CHECK-LABEL: name="truthOfReference" module=m0 role=GenericEntrypoint
-# CHECK: [[next]]: undefined|L1 @Cell32 = GetSlot {{*}} key="next"
-# CHECK-NEXT: boolean @Boolean = ToBoolean [[next]]
-# CHECK-LABEL: name="returnedBehindJoin" module=m0 role=GenericEntrypoint
+# CHECK-LABEL: function f6 name="returnedBehindJoin"
 # CHECK: TestAndBranch {{*}} -> taken b1([[next]]), notTaken b1([[previous]])
 # CHECK-NEXT: b1([[joined]]: undefined|L1 @Cell32):
 # CHECK-NEXT: undefined|L1 @JSValue = Decode [[joined]]
-# CHECK-LABEL: name="collectorRunsBehindJoin" module=m0 role=GenericEntrypoint
+# CHECK-LABEL: function f7 name="collectorRunsBehindJoin"
 # CHECK: ({{*}}: undefined|L1 @JSValue):
 # CHECK-NEXT: = Call
+# CHECK-LABEL: name="truthOfReference" module=m0 role=GenericEntrypoint
+# CHECK: [[tested]]: undefined|L1 @Cell32 = GetSlot {{*}} key="next"
+# CHECK-NEXT: boolean @Boolean = ToBoolean [[tested]]

@@ -41,7 +41,7 @@ enum class WordAtShapeOffset : uint8_t { Unlisted, ShapeWord, UpperHalfOfPointer
 static_assert(!canPassShapeTest(pointerUpperHalfBits));
 
 static constexpr uint32_t valueUpperHalfBits = static_cast<uint32_t>(~JSValue::NumberTag >> 32);
-static_assert(!canPassShapeTest(valueUpperHalfBits));
+static_assert(!canPassShapeTest(valueUpperHalfBits) && !mayBeUpperHalfOfSlimClosureWord(valueUpperHalfBits));
 
 static_assert(!canPassShapeTest(closureWordUpperHalfBits));
 
@@ -50,7 +50,7 @@ static_assert(!canPassShapeTest(bigIntHashMask));
 // A vector length can contain shapeBlockMarker. The only JSCellButterfly that is a value is a class token: a longer one is storage that compiled code reaches through its owner.
 static constexpr uint32_t classTokenLengthBits = (1u << 17) - 1;
 static_assert(ClassToken::firstNameSlot + std::numeric_limits<decltype(LayoutData::numberOfFields)>::max() <= classTokenLengthBits);
-static_assert(!canPassShapeTest(classTokenLengthBits));
+static_assert(!canPassShapeTest(classTokenLengthBits) && !mayBeUpperHalfOfSlimClosureWord(classTokenLengthBits));
 
 #define FOR_EACH_JS_TYPE_WITH_BUTTERFLY(macro) \
     macro(ObjectType) \
@@ -219,7 +219,7 @@ static constexpr bool isValidWord(WordAtShapeOffset content, uint32_t word)
     case WordAtShapeOffset::UpperHalfOfValue:
         return !(word & ~valueUpperHalfBits);
     case WordAtShapeOffset::UpperHalfOfClosureWord:
-        return !(word & ~closureWordUpperHalfBits);
+        return !word || (!(word & ~closureWordUpperHalfBits) && mayBeUpperHalfOfSlimClosureWord(word));
     case WordAtShapeOffset::BigIntHash:
         return !(word & ~bigIntHashMask);
     case WordAtShapeOffset::VectorLength:
@@ -237,7 +237,7 @@ static constexpr bool isValidWord(WordAtShapeOffset content, uint32_t word)
 static_assert(isValidWord(WordAtShapeOffset::ShapeWord, shapeWordOf(1)) && !isValidWord(WordAtShapeOffset::ShapeWord, pointerUpperHalfBits));
 static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfPointer, 0) && isValidWord(WordAtShapeOffset::UpperHalfOfPointer, pointerUpperHalfBits) && !isValidWord(WordAtShapeOffset::UpperHalfOfPointer, 0u - 5));
 static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfValue, 0) && !isValidWord(WordAtShapeOffset::UpperHalfOfValue, static_cast<uint32_t>(JSValue::NumberTag >> 32)) && !isValidWord(WordAtShapeOffset::UpperHalfOfValue, 1u << (JSValue::DoubleEncodeOffsetBit - 32)));
-static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, ClosureWord::firstReservedFunction - 1) && !isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, compiledObjectShapeBit));
+static_assert(isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, closureWordMarker | (ClosureWord::firstReservedFunction - 1)) && !isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, ClosureWord::firstReservedFunction - 1) && !isValidWord(WordAtShapeOffset::UpperHalfOfClosureWord, compiledObjectShapeBit));
 static_assert(isValidWord(WordAtShapeOffset::BigIntHash, 0) && isValidWord(WordAtShapeOffset::BigIntHash, bigIntHashMask) && !isValidWord(WordAtShapeOffset::BigIntHash, 0u - 5) && !isValidWord(WordAtShapeOffset::BigIntHash, shapeBlockMarker));
 static_assert(isValidWord(WordAtShapeOffset::VectorLength, classTokenLengthBits) && isValidWord(WordAtShapeOffset::VectorLength, shapeBlockMarker) && !isValidWord(WordAtShapeOffset::VectorLength, 0u - 5));
 static_assert(isValidWord(WordAtShapeOffset::Zero, 0) && !isValidWord(WordAtShapeOffset::Zero, 1));

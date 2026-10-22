@@ -16,13 +16,18 @@
 #include "AOTEntryEmitter.h"
 #include "AOTFrameMaps.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTFunctionKinds.h"
 #include "AOTHeat.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageFormat.h"
 #include "AOTImpliedBranchMerging.h"
+#include "AOTIntegerUpdatesInMemory.h"
+#include "AOTPhiNarrowing.h"
 #include "AOTPrimitiveEmitter.h"
+#include "AOTRepresentationRules.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubAssembler.h"
+#include "AOTThrowEmitter.h"
 #include "AirCode.h"
 #include "AirLimits.h"
 #include "B3Generate.h"
@@ -54,7 +59,10 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .savesFrameOnSuspend = savesFrameOnSuspend,
         .readsCallerFrame = readsCallerFrame(inputs, id, function),
         .isAsync = function.has(FunctionFlags::IsAsync),
+        .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
         .isCold = isCold(inputs.heat.of(inputs.program, id)),
+        .runsOnce = inputs.heat.of(inputs.program, id) == HeatClass::RunsOnce,
+        .isHot = isHot(inputs.heat.of(inputs.program, id)),
         .returnsAreUnlikely = !savesFrameOnSuspend && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }),
     };
 }
@@ -81,18 +89,32 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
 {
     BitVector rareBlocks(code.size());
     BitVector reachedBlocks = findAirBlocksReachedWithoutRareEdge(code);
-    Vector<Vector<uint32_t, 2>> likelySuccessors(code.size());
+    auto forEachLikelySuccessorAmongRareBlocks = [&](B3::Air::BasicBlock* block, const auto& functor) {
+        for (const B3::Air::FrequentedBlock& successor : block->successors()) {
+            if (!successor.isRare() && !reachedBlocks.quickGet(successor.block()->index()))
+                functor(successor.block()->index());
+        }
+    };
+
+    // Every cycle has an edge that does not lead to a later block.
+    bool mayHaveCycle = false;
     for (B3::Air::BasicBlock* block : code) {
         if (reachedBlocks.quickGet(block->index()))
             continue;
         rareBlocks.quickSet(block->index());
-        for (const B3::Air::FrequentedBlock& successor : block->successors()) {
-            if (!successor.isRare() && !reachedBlocks.quickGet(successor.block()->index()))
-                likelySuccessors[block->index()].append(successor.block()->index());
-        }
+        forEachLikelySuccessorAmongRareBlocks(block, [&](unsigned successorIndex) {
+            mayHaveCycle |= successorIndex <= block->index();
+        });
     }
-    if (rareBlocks.isEmpty())
+    if (!mayHaveCycle)
         return rareBlocks;
+
+    Vector<Vector<uint32_t, 2>> likelySuccessors(code.size());
+    for (size_t blockIndex : rareBlocks) {
+        forEachLikelySuccessorAmongRareBlocks(code[blockIndex], [&](unsigned successorIndex) {
+            likelySuccessors[blockIndex].append(successorIndex);
+        });
+    }
     StronglyConnectedComponents components = computeStronglyConnectedComponents(code.size(), [&](unsigned block) -> const Vector<uint32_t, 2>& {
         return likelySuccessors[block];
     });
@@ -100,17 +122,41 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
     return rareBlocks;
 }
 
-BitVector findColdAirBlocks(const CodeGenerationInputs& inputs, FunctionID id, const B3::Air::Code& code)
+BlockColdnessRule::BlockColdnessRule(const CodeGenerationInputs& inputs, FunctionID id)
+    : m_inputs(inputs)
+    , m_id(id)
+    , m_activations(inputs.heat.activationsOf(inputs.program, id))
+    // Nothing says that a compact function runs, and a failed test at an entrance is expected of no call.
+    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id) || inputs.program.at(id).runsOnlyBehindFailedTest())
 {
-    double activations = inputs.heat.activationsOf(inputs.program, id);
+}
+
+BlockColdness BlockColdnessRule::of(double frequency, bool isRare) const
+{
+    double heat = m_activations * frequency;
+    HeatClass heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
+    // A shared sequence costs a call and a return each time it runs.
+    bool isExpectedNotToRun = isCold(heatClass) && !m_inputs.heat.isColdByLimitAlone(heat);
+    return {
+        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass)),
+        // In a function that is expected to run, what lies behind a rare edge is rare by an estimate only: a test that rests on a guess fails at every call or at none.
+        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
+    };
+}
+
+ColdAirBlocks findColdAirBlocks(const CodeGenerationInputs& inputs, FunctionID id, const B3::Air::Code& code)
+{
+    BlockColdnessRule rule(inputs, id);
     BitVector rareBlocks = findRareAirBlocks(code);
-    BitVector coldBlocks(code.size());
+    ColdAirBlocks result { BitVector(code.size()), BitVector(code.size()) };
     for (B3::Air::BasicBlock* block : code) {
-        HeatClass heatClass = inputs.heat.classOf(activations * block->frequency());
-        if (isCold(heatClass) || (rareBlocks.quickGet(block->index()) && !isHot(heatClass)))
-            coldBlocks.quickSet(block->index());
+        BlockColdness coldness = rule.of(block->frequency(), rareBlocks.quickGet(block->index()));
+        if (coldness.isCold)
+            result.cold.quickSet(block->index());
+        if (coldness.isRarelyRun)
+            result.rarelyRun.quickSet(block->index());
     }
-    return coldBlocks;
+    return result;
 }
 
 static BitVector findNarrowReferences(const Function& function)
@@ -123,22 +169,22 @@ static BitVector findNarrowReferences(const Function& function)
     return references;
 }
 
-static void appendClientPhases(B3::Policy& policy, const FunctionBackEndTraits& traits, const FrameMaps& frameMaps, Vector<FrameAddressViolation>& violations)
+static void appendClientPhases(B3::Policy& policy, const Program& program, const Function& function, const FunctionBackEndTraits& traits)
 {
-    policy.clientPhases.append(mergeImpliedBranchesAfterOptimization());
+    policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
+    policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
+    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization());
     if (traits.savesFrameOnSuspend)
         policy.clientPhases.append(materializeSlotBasesLate());
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
     policy.clientPhases.append(checkASANShadowBeforeAccesses());
 #endif
-    if (traits.savesFrameOnSuspend)
-        policy.clientPhases.append(validateFrameAddresses(violations, frameMaps.suspensionValues()));
 }
 
-std::unique_ptr<FunctionCodeGenerator> FunctionCodeGenerator::create(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID id, CodeGenerationTotals& totals)
+std::unique_ptr<FunctionCodeGenerator> FunctionCodeGenerator::create(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID id, CodeGenerationTotals& totals, DirectCodeAttempt attempt)
 {
     std::unique_ptr<FunctionCodeGenerator> generator(new FunctionCodeGenerator(worker, inputs, id, totals));
-    if (!generator->generateB3())
+    if (!generator->generateB3(attempt))
         return nullptr;
     return generator;
 }
@@ -154,7 +200,7 @@ FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker,
 {
 }
 
-bool FunctionCodeGenerator::generateB3()
+bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
 {
     BuildContext& build = m_worker.build;
     const AOT::CompileOptions& options = build.options();
@@ -166,15 +212,28 @@ bool FunctionCodeGenerator::generateB3()
 
     FunctionBackEndTraits traits = computeBackEndTraits(m_inputs, m_id, m_function, frameMaps);
     B3::Policy policy = b3PolicyFor(build, traits, m_relocationLowering);
-    appendClientPhases(policy, traits, frameMaps, m_frameAddressViolations);
-    if (!options.recorded.useWideReferences() && !options.recorded.has(TestingSwitch::DropReferenceGuards))
-        policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, { findNarrowReferences(m_function), frameMaps.suspensionValues() }));
+    policy.clientPhases.append(throwWhereTrapsAreCertain(m_records, m_inputs.stubCatalog));
+    appendClientPhases(policy, program, m_function, traits);
+    if (traits.savesFrameOnSuspend && options.verifiesProgram)
+        policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues()));
+    if (!options.recorded.useWideReferences() && !options.recorded.has(TestingSwitch::DropReferenceGuards)) {
+        NarrowReferenceOrigins origins { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand };
+        if (std::optional<DroppedGuard> dropped = droppedGuardIn(options.recorded, m_id)) {
+            origins.ordinalOfDroppedGuard = dropped->ordinal;
+            for (uint32_t index = 0; index < m_function.values.size(); ++index) {
+                if (m_function.values[index].opcode == dropped->opcode)
+                    origins.originsOfDroppedGuard.set(index);
+            }
+        }
+        policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, WTF::move(origins)));
+    }
     if (options.validatesReferences && !options.recorded.useWideReferences())
-        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues() }));
+        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
     m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportPoisonedAccess));
 #endif
     m_records.stubCalls.setCaller(m_id);
+    m_records.stubCalls.setChecksPreservedRegisters(options.validatesBackEnd);
     if (build.validates())
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportValidationFailure));
 
@@ -194,8 +253,15 @@ bool FunctionCodeGenerator::generateB3()
     RELEASE_ASSERT(m_records.frame.savesFrameOnSuspend <= traits.savesFrameOnSuspend);
     RELEASE_ASSERT(m_records.frame.readsCallerFrame == traits.readsCallerFrame);
 
-    if (options.logging.dumpsB3Graph && build.shouldDump(m_id)) [[unlikely]]
+    if (options.logging.dumpsB3Graph && build.shouldDump(m_id)) [[unlikely]] {
         dataLogLn("AOT B3:\n", proc);
+        proc.setShouldDumpIR();
+    }
+
+    bool isWorthOptimizing = !isGeneratedWithoutOptimizing(build, m_inputs.heat, m_inputs.program, m_id);
+    bool checksAir = options.validatesBackEnd || options.validatesReferences || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
+    if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function)
+        m_directCode = planDirectCode(proc, attempt);
     return true;
 }
 
@@ -204,6 +270,12 @@ CompiledCode FunctionCodeGenerator::finish()
     CompiledCode code;
     if (!m_procedure->report().failure)
         code = emitCode();
+    if (m_didFailToGenerateDirectly) {
+        m_worker.build.statistics().count(StatisticID::DirectGenerationsAbandoned);
+        return { };
+    }
+    if (m_directCode)
+        m_worker.build.statistics().count(StatisticID::FunctionsGeneratedDirectly);
     if (reportBackEnd())
         return { };
     return code;
@@ -215,13 +287,23 @@ CompiledCode FunctionCodeGenerator::emitCode()
     const AOT::CompileOptions& options = build.options();
     B3::Procedure& proc = *m_procedure;
 
-    m_records.units.setColdBlocks(findColdAirBlocks(m_inputs, m_id, proc.code()));
-    proc.code().setInstObserver(&m_records.observer);
+    if (!m_directCode) {
+        ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
+        m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
+        proc.code().setInstObserver(&m_records.observer);
+    }
 
     readTagsFromInstance(m_jit);
     emitEntryPreambles(m_jit, m_inputs, m_id, m_records);
     CCallHelpers::Label bodyStart = m_jit.label();
-    B3::generate(proc, m_jit);
+    if (m_directCode) {
+        BlockColdnessRule coldness(m_inputs, m_id);
+        if (!generateDirectCode(*m_directCode, m_jit, m_records, coldness)) {
+            m_didFailToGenerateDirectly = true;
+            return { };
+        }
+    } else
+        B3::generate(proc, m_jit);
     RELEASE_ASSERT(!CCallHelpers::differenceBetween(bodyStart, proc.code().entrypointLabel(0)));
     bool preamblesHavePrimaryEntry = m_records.entries.containsIf([](const RecordedEntry& entry) {
         return entry.id == primaryEntry;
@@ -251,7 +333,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
         return { };
     }
 
-    CompiledCode code = describeCode(build, m_inputs, m_id, m_function, m_records, EmittedCode { buffer, proc, m_stackChecks, paddingStart, WTF::move(*relocations) });
+    CompiledCode code = describeCode(build, m_inputs, m_id, m_function, m_records, EmittedCode { buffer, &proc, m_stackChecks, paddingStart, WTF::move(*relocations) });
     if (!code.frame.hasFrame())
         build.statistics().count(StatisticID::FunctionsWithoutFrame);
     if (proc.code().frameLayout().coverage == B3::Air::FrameCoverage::SomePaths)

@@ -10,6 +10,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTEffects.h"
 #include "AOTEffectsOfProtocols.h"
+#include "AOTOpcode.h"
 #include <optional>
 #include <span>
 #include <wtf/Vector.h>
@@ -18,6 +19,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct EffectDescription;
 struct Type;
+
+// To the program a lookup of `prototype` is a read. See prototypePropertyMayEndGuards().
+Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
 
 // The effect rule of an operation covers what its own stores and deletes run. A built-in stores with [[Set]] and deletes with [[Delete]],
 // and only the uses of its operands say so.
@@ -94,12 +98,22 @@ inline constexpr Effects listReadEffects = [] {
 OperandBehavior declaredBehaviorOf(Opcode, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(TerminatorKind, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(const BuiltinOverload&, BuiltinOperand);
+// Of an overload that only propagates errors: an operation of the entry on the operand may throw though no code of the operand runs.
+bool mayFailOnOperand(const Program&, const BuiltinParameter&, const Type& operand);
+// The records of the entry say all that it does. A model stands in for records that leave code unnamed.
+bool isDescribedByModel(const BuiltinOverload&);
+// Every name that an operand may be searched for though the operation has no such key: what the protocols read, and what the operations and the built-ins list for their operands.
+// Ascending, each once.
+Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);
 
 void addOperandCode(const EffectContext&, const Type& operand, const OperandBehavior&, EffectsOnEdges&);
 void describeOverload(const Program&, BuiltinOverloadID, BuiltinCallForm, const Type* receiver, std::span<const TypeID> arguments, EffectDescription&);
 
-OperandSummary summarizeOperand(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex);
-OperandSummary summarizeOperand(const EffectContext&, const Function&, const Terminator& user, uint32_t operandIndex);
+// AllButPassesToUserCode: what decides that one use and no other is not looked at, and the summary says nothing about it. Every other use, and where the operand is retained, is as in the whole summary.
+enum class UsesAskedFor : uint8_t { All, AllButPassesToUserCode };
+
+OperandSummary summarizeOperand(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
+OperandSummary summarizeOperand(const EffectContext&, const Function&, const Terminator& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
 OperandMemory memoryAccessedThrough(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, const EffectsOnEdges& effectsOfUser);
 
 enum class OperandConfinement : uint8_t { Unknown, WritesOnlyNamedOperands };
@@ -132,8 +146,12 @@ bool mayBeReference(const Type&);
 enum class ResultFreshness : uint8_t { Unknown, Unaliased, Fresh };
 
 ResultFreshness freshnessOf(const EffectContext&, const Function&, const Value&);
+ResultFreshness freshnessOf(const EffectContext&, const Function&, const Value&, NOESCAPE const ScopedLambda<EffectsOnEdges()>& effectsOfValue);
 // Of the result that the terminator itself passes along an edge.
 ResultFreshness freshnessOf(const EffectContext&, const Function&, const Terminator&);
+// False where freshnessOf() answers Unknown for every value of the opcode and for every terminator of the kind.
+bool resultMayBeFresh(Opcode);
+constexpr bool resultMayBeFresh(TerminatorKind kind) { return effectRuleOf(kind) == EffectRule::Inline; }
 
 } } } // namespace JSC::AOT::Typed
 

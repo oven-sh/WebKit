@@ -1,4 +1,5 @@
-# call, apply and bind read from a function are constants only where the function is proven to have no own member of that name; otherwise the method that was read is tested by identity
+# call, apply and bind read from a function are constants where the function is proven to have no own member of that name, or behind the test that the closure is as it was created.
+# Of a class of functions that has no such test, the method that was read is tested by identity
 # FORM: Prepared
 # RUN: pass ResolveBuiltins
 # RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
@@ -29,14 +30,19 @@ function f1 name="callOnFunction" parameters=[{type=function}, {type=anything}] 
 # CHECK: v2: anything = PropGet v0 key="call"
 # CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="call"
 # PLACED-LABEL: function f1 name="callOnFunction"
-# PLACED-NOT: IsPristine
-# PLACED: v2: anything = PropGet v0 key="call"
-# PLACED-NEXT: [[isCall]]: boolean = TypeTest v2 testedType=builtin(FunctionPrototypeCall)
-# PLACED-NEXT: Branch [[isCall]] -> taken
-# PLACED-NOT: IsPristine
+# PLACED-NEXT: b0(v0: function, v1: anything):
+# PLACED-NEXT: [[isAsCreated1]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# PLACED-NEXT: Branch [[isAsCreated1]] -> taken
+# PLACED-NOT: PropGet
+# PLACED: [[call1]]: builtin(FunctionPrototypeCall) = Builtin builtin=FunctionPrototypeCall
+# PLACED-NEXT: true = TypeTest [[call1]] testedType=builtin(FunctionPrototypeCall)
+# PLACED-NOT: PropGet
 # PLACED: anything = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
 # PLACED: frequency=Unlikely
-# PLACED-NEXT: anything = Call v2, v0, v1 calleeKey="call"
+# PLACED: [[read1]]: anything = PropGet v0 key="call"
+# PLACED-NEXT: Jump -> next [[generic1]]([[read1]])
+# PLACED-NEXT: [[generic1]]([[callee1]]: anything{{*}}) frequency=Unlikely:
+# PLACED-NEXT: anything = Call [[callee1]], v0, v1 calleeKey="call"
 
 function f2 name="applyOnKnownClosure" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
   b0(v0: anything, v1: Array):
@@ -49,10 +55,18 @@ function f2 name="applyOnKnownClosure" parameters=[{type=anything}, {type=Array}
 # CHECK: v3: anything = PropGet v2 key="apply"
 # CHECK-NEXT: v4: anything = Call v3, v2, v0, v1 calleeKey="apply"
 # PLACED-LABEL: function f2 name="applyOnKnownClosure"
-# PLACED: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
+# PLACED: [[isAsCreated2]]: boolean = IsPristine v2 builtinClass=Function aspects=[Names]
+# PLACED-NEXT: Branch [[isAsCreated2]] -> taken
+# PLACED-NOT: PropGet
+# PLACED: [[apply2]]: builtin(FunctionPrototypeApply) = Builtin builtin=FunctionPrototypeApply
+# PLACED-NEXT: true = TypeTest [[apply2]] testedType=builtin(FunctionPrototypeApply)
+# PLACED-NOT: PropGet
 # PLACED: anything = CallBuiltin v2, v0, v1 overload=FunctionPrototypeApply/0
 # PLACED: frequency=Unlikely
-# PLACED-NEXT: anything = Call v3, v2, v0, v1 calleeKey="apply"
+# PLACED: [[read2]]: anything = PropGet v2 key="apply"
+# PLACED-NEXT: Jump -> next [[generic2]]([[read2]])
+# PLACED-NEXT: [[generic2]]([[callee2]]: anything{{*}}) frequency=Unlikely:
+# PLACED-NEXT: anything = Call [[callee2]], v2, v0, v1 calleeKey="apply"
 
 function f3 name="bindOnFunction" parameters=[{type=function}, {type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: function, v1: anything, v2: number):
@@ -64,10 +78,18 @@ function f3 name="bindOnFunction" parameters=[{type=function}, {type=anything}, 
 # CHECK: v3: anything = PropGet v0 key="bind"
 # CHECK-NEXT: v4: anything = Call v3, v0, v1, v2 calleeKey="bind"
 # PLACED-LABEL: function f3 name="bindOnFunction"
-# PLACED: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeBind)
+# PLACED: [[isAsCreated3]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# PLACED-NEXT: Branch [[isAsCreated3]] -> taken
+# PLACED-NOT: PropGet
+# PLACED: [[bind3]]: builtin(FunctionPrototypeBind) = Builtin builtin=FunctionPrototypeBind
+# PLACED-NEXT: true = TypeTest [[bind3]] testedType=builtin(FunctionPrototypeBind)
+# PLACED-NOT: PropGet
 # PLACED: function = CallBuiltin v0, v1, v2 overload=FunctionPrototypeBind/0
 # PLACED: frequency=Unlikely
-# PLACED-NEXT: anything = Call v3, v0, v1, v2 calleeKey="bind"
+# PLACED: [[read3]]: anything = PropGet v0 key="bind"
+# PLACED-NEXT: Jump -> next [[generic3]]([[read3]])
+# PLACED-NEXT: [[generic3]]([[callee3]]: anything{{*}}) frequency=Unlikely:
+# PLACED-NEXT: anything = Call [[callee3]], v0, v1, v2 calleeKey="bind"
 
 function f4 name="constructorOfPristineFunction" parameters=[{type=Function<pristine[Names]>}] results=[{type=anything}] {
   b0(v0: Function<pristine[Names]>):
@@ -88,12 +110,18 @@ function f5 name="readsWithoutCall" parameters=[{type=function}] results=[{type=
 # CHECK: v1: anything = PropGet v0 key="length"
 # CHECK-NEXT: v2: anything = PropGet v0 key="name"
 # CHECK-NEXT: v3: anything = PropGet v0 key="constructor"
+# A function has length and name itself, and inherits constructor
 # PLACED-LABEL: function f5 name="readsWithoutCall"
 # PLACED-NEXT: b0(v0: function):
 # PLACED-NEXT: v1: anything = PropGet v0 key="length"
-# PLACED-NEXT: v2: anything = PropGet v0 key="name"
-# PLACED-NEXT: v3: anything = PropGet v0 key="constructor"
+# PLACED: v2: anything = PropGet v0 key="name"
+# PLACED: v3: builtin(Function) = Builtin builtin=Function
 # PLACED-NEXT: Return v3
+# PLACED: [[isAsCreated5]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
+# PLACED-NEXT: Branch [[isAsCreated5]] -> taken
+# PLACED: frequency=Unlikely:
+# PLACED-NEXT: [[read5]]: anything = PropGet v0 key="constructor"
+# PLACED-NEXT: Return [[read5]]
 
 function f6 name="callOnAsyncFunction" parameters=[{type=AsyncFunction}, {type=anything}] results=[{type=anything}] {
   b0(v0: AsyncFunction, v1: anything):
@@ -107,12 +135,14 @@ function f6 name="callOnAsyncFunction" parameters=[{type=AsyncFunction}, {type=a
 # PLACED-LABEL: function f6 name="callOnAsyncFunction"
 # PLACED-NOT: IsPristine
 # PLACED: v2: anything = PropGet v0 key="call"
-# PLACED-NEXT: [[isCallOfAsync]]: boolean = TypeTest v2 testedType=builtin(FunctionPrototypeCall)
-# PLACED-NEXT: Branch [[isCallOfAsync]] -> taken
 # PLACED-NOT: IsPristine
 # PLACED: anything = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
-# PLACED: frequency=Unlikely
+# PLACED-NOT: IsPristine
+# PLACED: [[isCallOfAsync]]: boolean = TypeTest v2 testedType=builtin(FunctionPrototypeCall)
+# PLACED-NEXT: Branch [[isCallOfAsync]] -> taken
+# PLACED-NEXT: frequency=Unlikely
 # PLACED-NEXT: anything = Call v2, v0, v1 calleeKey="call"
+# PLACED-NOT: IsPristine
 
 function f7 name="target" kind=Arrow results=[{type=anything}] {
   b0():

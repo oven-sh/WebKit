@@ -1,13 +1,15 @@
-# A copy that is no larger than its call is made in a caller that is already over the limit on its size
+# The limit is on what inlining adds to a caller, so a caller that is larger than the limit by itself takes in a callee like any other.
+# Once as much has been added as the limit allows, a copy that is no larger than its call is still made, and a larger one is not
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:100
 # RUN: pass InlineCalls
-# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionInline = 4
 # STATISTIC: InlineDecisionCallerSizeLimit = 1
-# LOSS: MaxInlinedCallerBytes x1 f3
+# LOSS: MaxInlinedCallerBytes x1 f5
+# LOSS: MaxInlineHeadBytes f2
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled}}]
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
 
 function f0 name="getter" parameters=[{type=L0}] results=[{type=number}] {
   b0(v0: L0):
@@ -22,28 +24,23 @@ function f1 name="getterAndOneOperation" parameters=[{type=L0}] results=[{type=n
     Return v2
 }
 
-function f2 name="largeCallerOfGetter" parameters=[{type=L0}] results=[{type=number}] {
-  b0(v0: L0):
-    v1 = CallDirect v0 function=f0
-    v2 = Mul v1, v1
-    v3 = Mul v2, v1
-    v4 = Mul v3, v1
-    v5 = Mul v4, v1
-    v6 = Mul v5, v1
-    v7 = Mul v6, v1
-    v8 = Mul v7, v1
-    v9 = Mul v8, v1
-    v10 = Mul v9, v1
-    v11 = Mul v10, v1
-    v12 = Mul v11, v1
-    v13 = Mul v12, v1
-    v14 = Mul v13, v1
-    Return v14
+function f2 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
 }
-# CHECK-LABEL: name="largeCallerOfGetter"
-# CHECK-NOT: CallDirect
-# CHECK: = GetSlot v0 key="x"
-# CHECK-NOT: CallDirect
 
 function f3 name="largeCallerOfLargerCallee" parameters=[{type=L0}] results=[{type=number}] {
   b0(v0: L0):
@@ -64,6 +61,41 @@ function f3 name="largeCallerOfLargerCallee" parameters=[{type=L0}] results=[{ty
     Return v14
 }
 # CHECK-LABEL: name="largeCallerOfLargerCallee"
+# CHECK-NOT: CallDirect
+# CHECK: = GetSlot v0 key="x"
+# CHECK-NOT: CallDirect
+
+function f4 name="getterBehindAllThatTheLimitAllows" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: L0, v1: number, v2: boolean):
+    v3 = CallDirect v0 function=f0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v1 function=f2
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    v6 = Mul v3, v5
+    Return v6
+}
+# CHECK-LABEL: name="getterBehindAllThatTheLimitAllows"
+# CHECK-NOT: CallDirect
+# CHECK: = GetSlot v0 key="x"
+# CHECK-NOT: CallDirect
+
+function f5 name="largerCalleeBehindAllThatTheLimitAllows" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: L0, v1: number, v2: boolean):
+    v3 = CallDirect v0 function=f1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v1 function=f2
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    v6 = Mul v3, v5
+    Return v6
+}
+# CHECK-LABEL: name="largerCalleeBehindAllThatTheLimitAllows"
 # CHECK-NOT: GetSlot
-# CHECK: v1: number = CallDirect v0 function=f1
+# CHECK: v3: number = CallDirect v0 function=f1
 # CHECK-NOT: GetSlot
+# CHECK-NOT: CallDirect

@@ -76,7 +76,7 @@ bool BarrierEmitter::ownerIsOnlyInFrames(const Value& store) const
     const Type& type = typeOf(owner);
     if (type.environment)
         return frameAllocation.isOnlyInFrames(type.environment);
-    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_program, type), [&](LayoutID layout) {
+    return type.hasOnlyLayouts(m_program) && std::ranges::all_of(membersOf(m_program, type), [&](LayoutID layout) {
         return frameAllocation.isOnlyInFrames(layout);
     });
 }
@@ -168,6 +168,12 @@ void BarrierEmitter::barrier(const OperationContext& context, CellPointer owner)
         m_out.appendTo(continuation);
     }
     didEmitBarrier(owner);
+}
+
+// The owner names its new Extension, which is a store like the one that needs the room.
+OwnerBarrier BarrierEmitter::barrierOfExtension(const ValueContext& store) const
+{
+    return decide(store, true) == BarrierDecision::Emit ? OwnerBarrier::Emitted : OwnerBarrier::Omitted;
 }
 
 void BarrierEmitter::markCardOfStatics(uint32_t offsetInStatics)

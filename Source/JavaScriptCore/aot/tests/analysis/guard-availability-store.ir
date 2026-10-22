@@ -1,4 +1,4 @@
-# A store ends a guard only when it may write what the test read, in an object that may be the tested one
+# A store ends a guard only when it may write what the test read, in an object that may be the tested one. No store ends a shape test, a store into a slot leaves the slot filled, and a store that adds a field leaves the object not frozen
 # FORM: Prepared
 # RUN: guards points uses
 
@@ -45,13 +45,13 @@ function f1 name="storeToTestedField" parameters=[{type=object}, {type=anything}
 }
 # CHECK-LABEL: function f1
 # CHECK: b2:0 available: [v3 v5]
-# CHECK-NEXT: b2:1 available: [v3]
-# CHECK-NEXT: b2:2 available: [v3]
+# CHECK-NEXT: b2:1 available: [v3 v5]
+# CHECK-NEXT: b2:2 available: [v3 v5]
 # CHECK: v7 guard v3: Available
 
-function f2 name="accessorDefinedOnPossibleAlias" parameters=[{type=object}, {type=object}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: function):
-    v3 = ShapeTest v0 layouts=[L0]
+function f2 name="accessorDefinedOnPossibleAlias" parameters=[{type=L0}, {type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: L0, v1: object, v2: function):
+    v3 = HasNoExtraProperties v0
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
     v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
@@ -61,6 +61,7 @@ function f2 name="accessorDefinedOnPossibleAlias" parameters=[{type=object}, {ty
     Return
 }
 # CHECK-LABEL: function f2
+# CHECK: v4 facts: [NoExtraProperties of v0 by v3 reads NamedProperties]
 # CHECK: b1:0 available: [v4]
 # CHECK-NEXT: b1:1 available: [v4]
 # CHECK-NEXT: b1:2 available: []
@@ -69,7 +70,7 @@ function f2 name="accessorDefinedOnPossibleAlias" parameters=[{type=object}, {ty
 function f3 name="accessorDefinedWhileTestedObjectIsConfined" parameters=[{type=object}, {type=anything}, {type=function}] results=[{type=anything}] {
   b0(v0: object, v1: anything, v2: function):
     v3 = NewObject -, v1 layout=L0 fields=[0]
-    v4 = ShapeTest v3 layouts=[L0]
+    v4 = HasNoExtraProperties v3
     Branch v4 -> taken b1(| 0), notTaken b2()
   b1(v5):
     DefineGetter v0, v2 key="z"
@@ -92,7 +93,7 @@ function f4 name="fieldAddedToPossibleAlias" parameters=[{type=object}, {type=ob
     v5 = ShapeTest v1 layouts=[L0]
     Branch v5 -> taken b2(| 0), notTaken b4()
   b2(v6):
-    v7 = IsNotFrozen v0, v4
+    v7 = HasKeyOrder v0, v4 layout=L0 fields=[0]
     Branch v7 -> taken b3(| 0), notTaken b4()
   b3(v8):
     PutSlotOrAdd v1, v6, v2 key="y" receivers=[L0] level=Proven
@@ -102,7 +103,7 @@ function f4 name="fieldAddedToPossibleAlias" parameters=[{type=object}, {type=ob
     Return
 }
 # CHECK-LABEL: function f4
-# CHECK: v8 facts: [NotFrozen of v0 by v7 reads ShapeWords OrderWords]
+# CHECK: v8 facts: [KeyOrder of v0 by v7 reads OrderWords]
 # CHECK: b3:0 available: [v4 v6 v8]
 # CHECK-NEXT: b3:1 available: [v4 v6]
 # CHECK-NEXT: b3:2 available: [v4 v6]
@@ -114,7 +115,7 @@ function f5 name="fieldAddedToOwnAllocation" parameters=[{type=object}, {type=an
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
-    v5 = IsNotFrozen v0, v4
+    v5 = HasKeyOrder v0, v4 layout=L0 fields=[0]
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6):
     PutSlotOrAdd v2, v2, v1 key="y" receivers=[L0] level=Proven
@@ -135,7 +136,7 @@ function f6 name="accessorDefinedAfterTestedObjectEscaped" parameters=[{type=obj
   b0(v0: object, v1: anything, v2: function):
     v3 = NewObject -, v1 layout=L0 fields=[0]
     PutModuleVariable v3 variable=g0
-    v5 = ShapeTest v3 layouts=[L0]
+    v5 = HasNoExtraProperties v3
     Branch v5 -> taken b1(| 0), notTaken b2()
   b1(v6):
     v7 = GetSlotOrUndefined v3, v6 key="x" receivers=[L0] level=Proven
@@ -155,7 +156,7 @@ function f7 name="allGuardsOfEndedGuard" parameters=[{type=object}, {type=object
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b4()
   b1(v4):
-    v5 = IsNotFrozen v0, v4
+    v5 = HasKeyOrder v0, v4 layout=L0 fields=[0]
     Branch v5 -> taken b2(| 0), notTaken b4()
   b2(v6):
     v7 = ShapeTest v1 layouts=[L0]
@@ -176,10 +177,10 @@ function f7 name="allGuardsOfEndedGuard" parameters=[{type=object}, {type=object
 
 function f8 name="fieldAddedThroughMergeOfTestedAndOwnObject" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: L0, v1: anything, v2: boolean):
-    v3 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
     Branch v2 -> taken b1(v0), notTaken b1(v3)
   b1(v4):
-    v5 = IsNotFrozen v0
+    v5 = HasKeyOrder v0 layout=L0 fields=[0]
     Branch v5 -> taken b2(| 0), notTaken b3()
   b2(v6):
     PutSlotOrAdd v4, -, v1 key="y" receivers=[L0] level=Proven
@@ -190,3 +191,39 @@ function f8 name="fieldAddedThroughMergeOfTestedAndOwnObject" parameters=[{type=
 # CHECK-LABEL: function f8
 # CHECK: b2:0 available: [v6]
 # CHECK-NEXT: b2:1 available: []
+
+function f9 name="accessorDefinedOnTestedObject" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    DefineGetter v0, v1 key="z"
+    v5 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f9
+# CHECK: v3 facts: [Shape of v0 by v2 reads -]
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK: v5 guard v3: Available
+
+function f10 name="fieldAddedToObjectTestedNotFrozen" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = IsNotFrozen v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlotOrAdd v0, v3, v1 key="y" receivers=[L0] level=Proven
+    PutSlot v0, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v0
+  b2():
+    Return
+}
+# CHECK-LABEL: function f10
+# CHECK: v3 facts: [NotFrozen of v0 by v2 reads ShapeWords]
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK: v5 guard v3: Available

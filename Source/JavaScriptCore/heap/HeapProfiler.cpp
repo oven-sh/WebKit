@@ -79,13 +79,12 @@ static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)
 void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)
 {
     ASSERT(!!m_activeAnalyzer != !!analyzer);
-    if (analyzer) {
+    if (analyzer)
         materializeLazySymbolTablesForHeapAnalysis(m_vm);
 #if ENABLE(AOT)
-        if (m_vm.hasCompiledCode())
-            AOT::HeapHooks::willAnalyzeHeap(m_vm);
+    if (analyzer && m_vm.hasCompiledCode())
+        AOT::HeapHooks::willAnalyzeHeap(m_vm);
 #endif
-    }
     m_activeAnalyzer = analyzer;
     m_vm.setActiveHeapAnalyzer(analyzer);
 }

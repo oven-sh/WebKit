@@ -92,7 +92,7 @@ public:
         m_context.analyses.didChangeValues();
         m_context.build.statistics().count(StatisticID::IntegerDivisionsReduced, numberOfCandidates);
 
-        narrowValueTypes(TypePropagationInputs { m_context.program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build }, m_divisions.span());
+        narrowValueTypes(TypePropagationInputs { m_context.program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build, &m_context.typingMemo }, m_divisions.span());
         return PassOutcome::Changed;
     }
 
@@ -176,14 +176,13 @@ private:
     void replaceRoundingCalls()
     {
         for (const RoundingCall& candidate : m_roundingCalls) {
-            Value& value = m_function.at(candidate.call);
+            Value& value = m_function.edit(candidate.call);
             value.become(Opcode::DivideIntegers);
             value.setDividendOperand(candidate.quotient.dividend);
             value.setDivisorOperand(candidate.quotient.divisor);
             value.setRounding(candidate.rounding);
             value.type = resultTypeOf(m_context.program, m_function, value, m_context.types);
-            value.setWritten({ });
-            value.setPrediction({ });
+            value.setExpected({ });
             m_divisions.append(candidate.call);
         }
     }
@@ -196,7 +195,7 @@ private:
             division.setRounding(QuotientRounding::ToInt32);
             builder.setOrigin(m_function.at(candidate.user).origin());
             ValueID quotient = builder.insertBefore(candidate.point, WTF::move(division));
-            m_function.at(candidate.user).setOperand(candidate.operandIndex, quotient);
+            m_function.edit(candidate.user).setOperand(candidate.operandIndex, quotient);
             m_divisions.append(quotient);
         }
         builder.applyInsertions();
@@ -216,6 +215,8 @@ PassOutcome reduceIntegerDivisions(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     while (IntegerDivisionReducer(context).run() == PassOutcome::Changed)
         outcome = PassOutcome::Changed;
+    if (outcome == PassOutcome::Changed)
+        context.keptAnalyses = allAnalyses;
     return outcome;
 }
 

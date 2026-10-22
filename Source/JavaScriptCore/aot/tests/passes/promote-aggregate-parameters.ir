@@ -12,11 +12,11 @@ layout L0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b
 layout L1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}, {key="g" declared={type=anything} flags=[IsRequired]}]
 layout L2 kind=Instance name="Widget" constructor=f15 flow={baseState=None}
 
-function f0 name="readsAtEntry" parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f0 name="readsAtEntry" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Claim v3 castType=number site=w0
+    v4 = Check v3 castType=number site=w0
     v5 = Builtin builtin=GlobalThis
     v6 = PropGet v5 key="sink" [isFreeName]
     v7 = Call v6, -, v2, v4, v1
@@ -26,9 +26,9 @@ function f0 name="readsAtEntry" parameters=[{type=object written=L0}, {type=anyt
 # CHECK: role=ParameterWrapper {{*}}creator=ParameterWrapper{body=[[entryBody]]}
 # CHECK: = PropGet v0 key="a"
 # CHECK: = PropGet v0 key="b"
-# CHECK: [[claimed]]: number = Claim
+# CHECK: [[checked]]: number = Check
 # CHECK-NOT: key="sink"
-# CHECK: = CallDirect {{*}}, [[claimed]] function=[[entryBody]]
+# CHECK: = CallDirect {{*}}, [[checked]] function=[[entryBody]]
 
 function f1 name="passesLiteral" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -37,8 +37,8 @@ function f1 name="passesLiteral" parameters=[{type=anything}] results=[{type=any
     Return v2
 }
 
-function f2 name="defaultBetweenReads" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f2 name="defaultBetweenReads" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
     v1 = PropGet v0 key="a" receivers=[L0]
     v2 = Undefined
     v3 = StrictEq v1, v2
@@ -70,8 +70,8 @@ function f3 name="callsByValue" parameters=[{type=f2}, {type=anything}] results=
     Return v3
 }
 
-function f4 name="narrowedBeforeRead" parameters=[{type=undefined|object written=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|object ? undefined|L0):
+function f4 name="narrowedBeforeRead" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
     v1 = TypeTest v0 testedType=undefined
     Branch v1 -> taken b1(), notTaken b2(| 0)
   b1() frequency=Rare:
@@ -99,8 +99,8 @@ function f5 name="passesLiteralOrNothing" parameters=[{type=anything}] results=[
     Return v2
 }
 
-function f6 name="passedOn" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f6 name="passedOn" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
     v1 = PropGet v0 key="a" receivers=[L0]
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="sink" [isFreeName]
@@ -110,8 +110,8 @@ function f6 name="passedOn" parameters=[{type=object written=L0}] results=[{type
 # CHECK-LABEL: function f6 name="passedOn"
 # CHECK-NOT: role=ParameterWrapper
 
-function f7 name="readInLoop" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f7 name="readInLoop" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
     Jump -> next b1()
   b1():
     LoopHint
@@ -127,8 +127,8 @@ function f7 name="readInLoop" parameters=[{type=object written=L0}] results=[{ty
 # CHECK-LABEL: function f7 name="readInLoop"
 # CHECK-NOT: role=ParameterWrapper
 
-function f8 name="largeStart" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f8 name="largeStart" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
     v1 = PropGet v0 key="a" receivers=[L0]
     v2 = Integer integer=0
     v3 = Integer integer=0
@@ -164,8 +164,8 @@ function f8 name="largeStart" parameters=[{type=object written=L0}] results=[{ty
 # CHECK-LABEL: function f8 name="largeStart"
 # CHECK-NOT: role=ParameterWrapper
 
-function f9 name="sevenFieldsRead" parameters=[{type=object written=L1}] results=[{type=anything}] {
-  b0(v0: object ? L1):
+function f9 name="sevenFieldsRead" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
     v1 = PropGet v0 key="a" receivers=[L1]
     v2 = PropGet v0 key="b" receivers=[L1]
     v3 = PropGet v0 key="c" receivers=[L1]
@@ -181,11 +181,11 @@ function f9 name="sevenFieldsRead" parameters=[{type=object written=L1}] results
 # CHECK-LABEL: function f9 name="sevenFieldsRead"
 # CHECK-NOT: role=ParameterWrapper
 
-function f10 name="neverPassedLiteral" parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f10 name="neverPassedLiteral" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Claim v3 castType=number site=w0
+    v4 = Check v3 castType=number site=w0
     v5 = Builtin builtin=GlobalThis
     v6 = PropGet v5 key="sink" [isFreeName]
     v7 = Call v6, -, v2, v4, v1
@@ -194,11 +194,11 @@ function f10 name="neverPassedLiteral" parameters=[{type=object written=L0}, {ty
 # CHECK-LABEL: function f10 name="neverPassedLiteral"
 # CHECK-NOT: role=ParameterWrapper
 
-function f11 name="sloppy" flags=[IsSloppy] parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f11 name="sloppy" flags=[IsSloppy] parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Claim v3 castType=number site=w0
+    v4 = Check v3 castType=number site=w0
     v5 = Builtin builtin=GlobalThis
     v6 = PropGet v5 key="sink" [isFreeName]
     v7 = Call v6, -, v2, v4, v1
@@ -221,18 +221,18 @@ function f12 name="passesLiterals" parameters=[{type=anything}] results=[{type=a
     Return v9
 }
 
-function f13 name="forwardsParameter" parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object ? L0, v1: anything):
+function f13 name="forwardsParameter" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
     v2 = CallDirect v0, v1 function=f10
     Return v2
 }
 
-function f14 name="shapeTestedBeforeRead" parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+function f14 name="shapeTestedBeforeRead" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = GetSlotOrUndefined v0, v2 key="a" receivers=[L0] level=Predicted
+    v3 = GetSlotOrUndefined v0, v2 key="a" receivers=[L0] level=Expected
     Jump -> next b3(v3)
   b2() frequency=Unlikely:
     v4 = PropGet v0 key="a"
@@ -251,8 +251,8 @@ function f14 name="shapeTestedBeforeRead" parameters=[{type=object written=L0}] 
 # CHECK-NOT: key="sink"
 # CHECK: = CallDirect v5 function=[[testedBody]]
 
-function f15 name="Widget" flags=[HasThis] thisType={type=object written=L2} parameters=[{type=object written=L0}] results=[{type=anything}] {
-  b0(v0: object ? L2, v1: object ? L0):
+function f15 name="Widget" flags=[HasThis] thisType={type=L2} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L2, v1: L0):
     v2 = PropGet v1 key="a" receivers=[L0]
     v3 = Builtin builtin=GlobalThis
     v4 = PropGet v3 key="sink" [isFreeName]
@@ -262,8 +262,8 @@ function f15 name="Widget" flags=[HasThis] thisType={type=object written=L2} par
 # CHECK-LABEL: function f15 name="Widget"
 # CHECK-NOT: role=ParameterWrapper
 
-function f16 name="constructsWithLiteral" parameters=[{type=f15}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: f15, v1: anything, v2: object):
+function f16 name="constructsWithLiteral" parameters=[{type=f15}, {type=anything}, {type=L2}] results=[{type=anything}] {
+  b0(v0: f15, v1: anything, v2: L2):
     v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
     v4 = Construct v0, -, v3 callees=[f15]
     v5 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
@@ -271,8 +271,8 @@ function f16 name="constructsWithLiteral" parameters=[{type=f15}, {type=anything
     Return v4
 }
 
-function f17 name="aggregateAtPosition40" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=object written=L0}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything, v14: anything, v15: anything, v16: anything, v17: anything, v18: anything, v19: anything, v20: anything, v21: anything, v22: anything, v23: anything, v24: anything, v25: anything, v26: anything, v27: anything, v28: anything, v29: anything, v30: anything, v31: anything, v32: anything, v33: anything, v34: anything, v35: anything, v36: anything, v37: anything, v38: anything, v39: anything, v40: object ? L0):
+function f17 name="aggregateAtPosition40" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything, v14: anything, v15: anything, v16: anything, v17: anything, v18: anything, v19: anything, v20: anything, v21: anything, v22: anything, v23: anything, v24: anything, v25: anything, v26: anything, v27: anything, v28: anything, v29: anything, v30: anything, v31: anything, v32: anything, v33: anything, v34: anything, v35: anything, v36: anything, v37: anything, v38: anything, v39: anything, v40: L0):
     v41 = PropGet v40 key="a" receivers=[L0]
     v42 = Builtin builtin=GlobalThis
     v43 = PropGet v42 key="sink" [isFreeName]

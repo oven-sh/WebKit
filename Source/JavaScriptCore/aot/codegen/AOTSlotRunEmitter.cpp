@@ -30,12 +30,15 @@ static_assert(slotKeyFor(outOfLineSlotKey - 1, true) <= slotKeyMask);
 struct SlotRunEmitter::Entry {
     const PlacedSlot& slot() const { return access->slot; }
     MemoryLocation location() const { return MemoryLocation::objectField(access->key, access->receivers); }
-    bool storeMayCollect() const { return slot().representation == SlotRepresentation::Int32OrDouble; }
+    bool needsGranule() const { return slot().isOutOfLine() && needsStorage; }
 
     const FieldAccess* access;
     ValueID value;
     bool mayCreate;
     bool isExpectedToCreate;
+    bool needsStorage;
+    // The slot is in the cell, or in a granule that the run sees to before it stores.
+    bool hasStorage { false };
 };
 
 struct SlotRunEmitter::Run {
@@ -56,11 +59,9 @@ struct SlotRunEmitter::Run {
         });
     }
 
-    const Entry* findOutOfLineEntry() const
+    const Entry* findEntryThatNeedsGranule() const
     {
-        auto found = std::ranges::find_if(entries, [](const Entry& entry) {
-            return entry.slot().isOutOfLine();
-        });
+        auto found = std::ranges::find_if(entries, &Entry::needsGranule);
         return found == entries.end() ? nullptr : &*found;
     }
 
@@ -68,7 +69,7 @@ struct SlotRunEmitter::Run {
     {
         uint64_t bits = 0;
         for (const Entry& entry : entries) {
-            if (entry.slot().isOutOfLine())
+            if (entry.needsGranule())
                 bits |= granuleBitOf(entry.slot().offset);
         }
         return bits;
@@ -132,56 +133,87 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
             fail(value, InternalErrorKind::SlotAccessNotPlaced);
             return;
         }
-        run.entries.append({ &access, stored[index], placedKey.mayAdd && slotAccess.mayCreateListedField(access), slotAccess.isExpectedToCreate(placedKey.accessSite) });
+        run.entries.append({ &access, stored[index], placedKey.mayAdd && slotAccess.mayCreateListedField(access), slotAccess.isExpectedToCreate(placedKey.accessSite), needsStorageFor(access.slot, typeOf(stored[index])) });
     }
+    uint64_t granuleBits = run.granuleBits();
+    for (Entry& entry : run.entries)
+        entry.hasStorage = !entry.slot().isOutOfLine() || granuleBits & granuleBitOf(entry.slot().offset);
     storeRun(value, in<CellPointer>(value->objectOperand()), run);
 }
 
 void SlotRunEmitter::storeRun(const ValueContext& value, CellPointer cell, const Run& run)
 {
-    RELEASE_ASSERT(!value->laterBarrierCovers());
     SlotEmitter& slots = emitter<SlotEmitter>();
 
-    if (const Entry* outOfLine = run.findOutOfLineEntry())
-        slots.ensureExtensionHolds(value, cell, outOfLine->access->extensionWord, run.granuleBits());
+    if (const Entry* entry = run.findEntryThatNeedsGranule()) {
+        uint64_t granuleBits = run.granuleBits();
+        slots.ensureExtensionHolds(value, cell, entry->access->extensionWord, granuleBits, granuleBits | emitter<SlotAccessEmitter>().granuleBitsOfStoresBehind(value, *entry->access), emitter<BarrierEmitter>().barrierOfExtension(value));
+    }
 
     // The keys are listed first, while the slots still say which fields are missing. No code of the program runs before the stores.
-    listMissingFields(value, cell, run);
+    std::optional<StateOfNewObject> newObject = emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand());
+    listMissingFields(value, cell, run, newObject);
 
-    // A store that may collect precedes every store of a cell, so that nothing collects between such a store and the barrier.
-    for (const Entry& entry : run.entries) {
-        if (entry.storeMayCollect())
-            slots.storeSlot(value, cell, entry.slot(), entry.location(), get(entry.value), &entry.access->extensionWord);
-    }
+    for (const Entry& entry : run.entries)
+        emitter<SlotAccessEmitter>().markCellIfMarkerReplacesRawValue(cell, *entry.access, entry.value);
+
     std::optional<Pointer> extension;
+    Vector<const Entry*, 4> storedWhereGranulesAre;
     for (const Entry& entry : run.entries) {
-        if (entry.storeMayCollect())
-            continue;
         if (!entry.slot().isOutOfLine()) {
-            slots.storeSlot(cell, entry.slot(), entry.location(), get(entry.value));
+            slots.storeSlot(cell, entry.slot(), entry.location(), get(entry.value), nullptr, typeOf(entry.value));
+            continue;
+        }
+        if (!entry.hasStorage) {
+            storedWhereGranulesAre.append(&entry);
             continue;
         }
         if (!extension)
             extension = slots.extensionOf(cell, entry.access->extensionWord);
         slots.storeInExtension(*extension, entry.slot(), entry.location(), get(entry.value));
     }
+
+    // An object that is filled for the first time has no Extension, and one test says so for all the granules that are then not there.
+    LBasicBlock stored = nullptr;
+    if (newObject && !newObject->mayHaveExtension && !extension)
+        storedWhereGranulesAre.shrink(0);
+    if (!storedWhereGranulesAre.isEmpty() && !extension && value.shape() != CodeShape::Compact) {
+        const PlacedSlot& extensionWord = storedWhereGranulesAre[0]->access->extensionWord;
+        LBasicBlock hasExtension = newBlock();
+        stored = newBlock();
+        branch(slots.hasNoExtension(cell, extensionWord), { normalEdge(stored), unlikelyEdge(hasExtension) });
+        m_out.appendTo(hasExtension);
+    }
+    for (const Entry* entry : storedWhereGranulesAre)
+        slots.storeIfExtensionHolds(cell, entry->slot(), entry->location(), get(entry->value), entry->access->extensionWord);
+    if (stored) {
+        m_out.jump(stored);
+        m_out.appendTo(stored);
+    }
     emitter<BarrierEmitter>().barrierAfterStores(value, cell, value->valuesOperands());
 }
 
+// A field without storage may be listed already. The run time passes over a key that the object lists.
 Condition SlotRunEmitter::isMissing(CellPointer cell, const Entry& entry)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
+    if (!entry.hasStorage)
+        return logicalNot(slots.holdsValue(cell, entry.slot(), entry.location(), &entry.access->extensionWord));
     return slots.holdsAbsent(slots.addressOf(cell, entry.slot(), entry.location(), &entry.access->extensionWord), entry.slot().representation);
 }
 
-void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer cell, const Run& run)
+void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer cell, const Run& run, const std::optional<StateOfNewObject>& newObject)
 {
     Vector<PropertyKeyID, 4> createdKeys = run.createdKeys();
     if (createdKeys.isEmpty())
         return;
 
     SlotAccessEmitter& slotAccess = emitter<SlotAccessEmitter>();
-    auto listFieldsIfAnyIsMissing = [&](KeyOrderPlaces places) {
+    if (std::optional<uint32_t> orderWordAfter = newObject ? slotAccess.orderWordAfterCreating(newObject->orderWord, value->receivers(), createdKeys.span()) : std::nullopt) {
+        slotAccess.storeOrderWord(cell, *orderWordAfter);
+        return;
+    }
+    auto listFieldsIfAnyIsMissing = [&] {
         LBasicBlock creates = newBlock();
         LBasicBlock continuation = newBlock();
         for (const Entry& entry : run.entries) {
@@ -194,8 +226,8 @@ void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer ce
         m_out.jump(continuation);
 
         m_out.appendTo(creates);
-        slotAccess.takeKeyOrderStepOr(cell, slotAccess.testKeyOrderStep(cell, value->receivers(), createdKeys.span(), places), [&] {
-            listFieldsInRuntime(value, cell, run);
+        slotAccess.takeRememberedKeyOrderStepOr(value, cell, [&](std::optional<uint32_t> placePlusOne) {
+            return listFieldsInRuntime(value, cell, run, placePlusOne);
         });
         m_out.jump(continuation);
         m_out.appendTo(continuation);
@@ -203,32 +235,33 @@ void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer ce
 
     // The order word alone says that every field of the run is missing, so the slots are tested only where the step does not apply.
     std::optional<KeyOrderStep> stepTestedFirst;
-    if (run.isExpectedToCreate())
-        stepTestedFirst = slotAccess.testKeyOrderStep(cell, value->receivers(), createdKeys.span(), KeyOrderPlaces::MostLikely);
-    slotAccess.takeKeyOrderStepOr(cell, stepTestedFirst, [&] {
-        listFieldsIfAnyIsMissing(stepTestedFirst ? KeyOrderPlaces::Others : KeyOrderPlaces::All);
-    });
+    if (run.isExpectedToCreate()) {
+        if (slotAccess.takeRememberedKeyOrderStepFirst(value, cell, value->receivers(), createdKeys.span(), listFieldsIfAnyIsMissing))
+            return;
+        stepTestedFirst = slotAccess.testLikeliestKeyOrderStep(cell, value->receivers(), createdKeys.span());
+    }
+    slotAccess.takeKeyOrderStepOr(cell, stepTestedFirst, listFieldsIfAnyIsMissing);
 }
 
-void SlotRunEmitter::listFieldsInRuntime(const ValueContext& value, CellPointer cell, const Run& run)
+bool SlotRunEmitter::listFieldsInRuntime(const ValueContext& value, CellPointer cell, const Run& run, std::optional<uint32_t> placePlusOne)
 {
     SlotAccessEmitter& slotAccess = emitter<SlotAccessEmitter>();
     if (std::ranges::count_if(run.entries, &Entry::mayCreate) == 1) {
         const Entry& created = *std::ranges::find_if(run.entries, &Entry::mayCreate);
-        slotAccess.didCreateField(value, cell, *created.access);
-        return;
+        return slotAccess.didCreateField(value, cell, *created.access, created.needsStorage, placePlusOne);
     }
 
     // A call takes the keys of one word, in the sequence of the run, and passes over a key that the object lists already.
     if (std::optional<Vector<uint64_t, 4>> words = run.packCreatedSlotKeys()) {
+        if (placePlusOne && words->size() == 1) {
+            callStub(value, didCreateFieldAtPlace(CreatedFieldsAtPlace::Run), { cell.value(), integer(static_cast<int64_t>(words->first())).value(), m_out.constInt64(*placePlusOne) });
+            return true;
+        }
         for (uint64_t word : *words) {
             Integer slotKeys = integer(static_cast<int64_t>(word));
-            if (value.shape() == CodeShape::Compact)
-                callVoidOperation(value, RuntimeOperation::DidCreateFieldsAt, { cell, slotKeys });
-            else
-                callStub(value, didCreateField(CreatedFields::Run), { cell.value(), slotKeys.value() });
+            callStub(value, didCreateField(CreatedFields::Run), { cell.value(), slotKeys.value() });
         }
-        return;
+        return false;
     }
 
     for (const Entry& entry : run.entries) {
@@ -238,10 +271,11 @@ void SlotRunEmitter::listFieldsInRuntime(const ValueContext& value, CellPointer 
         LBasicBlock next = newBlock();
         branch(isMissing(cell, entry), { normalEdge(creates), normalEdge(next) });
         m_out.appendTo(creates);
-        slotAccess.didCreateField(value, cell, *entry.access);
+        slotAccess.didCreateField(value, cell, *entry.access, entry.needsStorage);
         m_out.jump(next);
         m_out.appendTo(next);
     }
+    return false;
 }
 
 } } } // namespace JSC::AOT::Typed

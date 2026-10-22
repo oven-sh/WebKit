@@ -11,6 +11,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTSlotAccessEmitter.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -21,9 +22,9 @@ class Conversion final : public OperationEmitter {
 public:
     using Converter = std::optional<Operand> (Conversion::*)();
 
-    Conversion(CodeGenerator&, const ValueContext&);
+    Conversion(CodeGenerator&, const OperationContext&, ValueID sourceID, Operand source, const Type&, Representation to);
 
-    void generate(Converter);
+    Operand convert(Converter);
 
     std::optional<Operand> box();
     std::optional<Operand> unbox();
@@ -35,6 +36,7 @@ public:
     std::optional<Operand> compress();
 
 private:
+    std::optional<Operand> innerObject();
     std::optional<Operand> boxToValue();
     std::optional<Operand> boxToOptionalInteger();
     std::optional<Operand> boxToOptionalNumber();
@@ -47,7 +49,10 @@ private:
     std::optional<Operand> compressToLiteralString();
     ConversionEmitter::NumberUnboxing numberUnboxing();
 
-    const ValueContext& m_value;
+    // The conversion itself, or the operation that takes the converted value.
+    const OperationContext& m_value;
+    // None for what an earlier step of the same conversion has made.
+    const ValueID m_sourceID;
     const Operand m_source;
     const Type& m_type;
     const Representation m_to;
@@ -56,24 +61,25 @@ private:
 
 }
 
-Conversion::Conversion(CodeGenerator& generator, const ValueContext& value)
+Conversion::Conversion(CodeGenerator& generator, const OperationContext& context, ValueID sourceID, Operand source, const Type& type, Representation to)
     : OperationEmitter(generator)
-    , m_value(value)
-    , m_source(get(value->valueOperand()))
-    , m_type(typeOf(value->valueOperand()))
-    , m_to(value.representation())
+    , m_value(context)
+    , m_sourceID(sourceID)
+    , m_source(source)
+    , m_type(type)
+    , m_to(to)
     , m_conversions(emitter<ConversionEmitter>())
 {
 }
 
-void Conversion::generate(Converter convert)
+Operand Conversion::convert(Converter converter)
 {
-    std::optional<Operand> converted = (this->*convert)();
+    std::optional<Operand> converted = (this->*converter)();
     if (!converted) {
         fail(m_value, InternalErrorKind::UnsupportedConversion);
         converted = emitter<ConstantEmitter>().zeroOf(m_to);
     }
-    define(m_value, *converted);
+    return *converted;
 }
 
 std::optional<Operand> Conversion::box()
@@ -166,8 +172,19 @@ std::optional<Operand> Conversion::boxToOptionalNumber()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+std::optional<Operand> Conversion::innerObject()
+{
+    if (m_to != Representation::Cell || !m_sourceID)
+        return std::nullopt;
+    if (std::optional<CellPointer> inner = emitter<SlotAccessEmitter>().innerObjectReadBy(m_value, m_sourceID))
+        return Operand(*inner);
+    return std::nullopt;
+}
+
 std::optional<Operand> Conversion::unbox()
 {
+    if (std::optional<Operand> inner = innerObject())
+        return inner;
     switch (m_source.representation) {
     case Representation::JSValue:
         return unboxValue();
@@ -194,10 +211,12 @@ ConversionEmitter::NumberUnboxing Conversion::numberUnboxing()
 {
     if (m_to != Representation::Double && m_to != Representation::OptionalDouble)
         return ConversionEmitter::NumberUnboxing::Branches;
+    if (!m_sourceID || !analyses().cfg().hasCycle())
+        return ConversionEmitter::NumberUnboxing::Branches;
 
     const NaturalLoops& loops = analyses().naturalLoops();
     const NaturalLoop* loop = loops.innerMostLoopOf(m_value.block());
-    bool isInvariantInLoop = loop && !loops.belongsTo(analyses().useLists().blockOf(m_value->valueOperand()), *loop);
+    bool isInvariantInLoop = loop && !loops.belongsTo(analyses().useLists().blockOf(m_sourceID), *loop);
     return isInvariantInLoop ? ConversionEmitter::NumberUnboxing::ComputesBothSides : ConversionEmitter::NumberUnboxing::Branches;
 }
 
@@ -335,6 +354,8 @@ std::optional<Operand> Conversion::narrowInteger()
 
 std::optional<Operand> Conversion::decode()
 {
+    if (std::optional<Operand> inner = innerObject())
+        return inner;
     switch (m_source.representation) {
     case Representation::Cell32:
         return decodeNarrowReference();
@@ -473,44 +494,80 @@ RepresentationEmitter::RepresentationEmitter(CodeGenerator& generator)
 {
 }
 
+static Conversion::Converter converterOf(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::Box:
+        return &Conversion::box;
+    case Opcode::Unbox:
+        return &Conversion::unbox;
+    case Opcode::IntegerToNumber:
+        return &Conversion::integerToNumber;
+    case Opcode::NumberToInteger:
+        return &Conversion::numberToInteger;
+    case Opcode::WidenInteger:
+        return &Conversion::widenInteger;
+    case Opcode::NarrowInteger:
+        return &Conversion::narrowInteger;
+    case Opcode::Decode:
+        return &Conversion::decode;
+    case Opcode::Compress:
+        return &Conversion::compress;
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Operand RepresentationEmitter::convert(const OperationContext& context, Opcode conversion, ValueID sourceID, Operand source, const Type& type, Representation to)
+{
+    return Conversion(generator(), context, sourceID, source, type, to).convert(converterOf(conversion));
+}
+
+void RepresentationEmitter::generate(const ValueContext& value)
+{
+    ValueID source = value->valueOperand();
+    define(value, convert(value, value.opcode(), source, get(source), typeOf(source), value.representation()));
+}
+
 void RepresentationEmitter::generateBox(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::box);
+    generate(value);
 }
 
 void RepresentationEmitter::generateUnbox(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::unbox);
+    generate(value);
 }
 
 void RepresentationEmitter::generateIntegerToNumber(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::integerToNumber);
+    generate(value);
 }
 
 void RepresentationEmitter::generateNumberToInteger(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::numberToInteger);
+    generate(value);
 }
 
 void RepresentationEmitter::generateWidenInteger(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::widenInteger);
+    generate(value);
 }
 
 void RepresentationEmitter::generateNarrowInteger(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::narrowInteger);
+    generate(value);
 }
 
 void RepresentationEmitter::generateDecode(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::decode);
+    generate(value);
 }
 
 void RepresentationEmitter::generateCompress(const ValueContext& value)
 {
-    Conversion(generator(), value).generate(&Conversion::compress);
+    generate(value);
 }
 
 } } } // namespace JSC::AOT::Typed

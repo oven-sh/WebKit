@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEnvironment.h"
+#include "AOTErrorMessages.h"
 #include "AOTEvalScope.h"
 #include "AOTImmortalCells.h"
 #include "AOTInstance.h"
@@ -25,11 +26,13 @@
 #include "BuiltinNames.h"
 #include "CellSize.h"
 #include "DirectArguments.h"
+#include "DirectEvalCodeCache.h"
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSDestructibleObject.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSNativeStdFunction.h"
 #include "JSWithScope.h"
@@ -39,9 +42,10 @@
 #include "VariableEnvironment.h"
 #include <algorithm>
 #include <bit>
+#include <memory>
 #include <optional>
 #include <span>
-#include <wtf/text/MakeString.h>
+#include <wtf/HashMap.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -285,7 +289,6 @@ private:
     JSValue readStaticField(JSGlobalObject*, const EvalBindingData&) const;
     void storeStaticField(JSGlobalObject*, const EvalBindingData&, JSValue);
     bool storeVariable(JSGlobalObject*, const EvalBindingData&, PropertyName, JSValue);
-    bool valueHasDeclaredType(const EvalBindingData&, JSValue) const;
     bool tryWriteBinding(VM&, const EvalBindingData&, JSValue);
 
     Instance* m_instance;
@@ -456,12 +459,6 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
     return true;
 }
 
-bool EvalBindings::valueHasDeclaredType(const EvalBindingData& binding, JSValue value) const
-{
-    const RuntimeLayoutTable& layouts = m_instance->state->objects->layouts;
-    return layouts.valueHasType(layouts.typeAt(binding.type), value);
-}
-
 bool EvalBindings::tryWriteBinding(VM& vm, const EvalBindingData& binding, JSValue value)
 {
     ProgramStrings& strings = *m_instance->state->strings;
@@ -508,10 +505,7 @@ bool EvalBindings::storeVariable(JSGlobalObject* globalObject, const EvalBinding
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return false;
     }
-    if (!valueHasDeclaredType(binding, value) || !tryWriteBinding(vm, binding, value)) {
-        throwTypeError(globalObject, scope, withAOTTypeCheckNote(makeString("Cannot assign to '"_s, StringView(name.uid()), "': the value does not have the type the variable was declared with"_s)));
-        return false;
-    }
+    RELEASE_ASSERT(tryWriteBinding(vm, binding, value));
     return true;
 }
 
@@ -536,7 +530,7 @@ bool EvalBindings::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return false;
     case EvalBindingKind::This:
-        throwTypeError(globalObject, scope, withAOTErrorNote("super() cannot be called from direct eval in a compiled executable"_s));
+        throwException(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
         return false;
     case EvalBindingKind::Variable:
     case EvalBindingKind::Arguments:
@@ -888,6 +882,79 @@ static EvalContextType evalContextTypeOf(const DirectEvalRequest& request)
     return request.isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None;
 }
 
+class DirectEvalCaches final : public JSDestructibleObject {
+public:
+    using Base = JSDestructibleObject;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.destructibleObjectSpace(); }
+
+    static DirectEvalCaches* create(VM&, JSGlobalObject*);
+    static void destroy(JSCell*);
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    DirectEvalCodeCache& ensureCacheOf(uint32_t requestOffset);
+
+private:
+    DirectEvalCaches(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<DirectEvalCodeCache>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_caches;
+};
+
+const ClassInfo DirectEvalCaches::s_info = { "DirectEvalCaches"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DirectEvalCaches) };
+
+DirectEvalCaches* DirectEvalCaches::create(VM& vm, JSGlobalObject* globalObject)
+{
+    Structure* structure = Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* result = new (NotNull, allocateCell<DirectEvalCaches>(vm)) DirectEvalCaches(vm, structure);
+    result->finishCreation(vm);
+    return result;
+}
+
+void DirectEvalCaches::destroy(JSCell* cell)
+{
+    static_cast<DirectEvalCaches*>(cell)->~DirectEvalCaches();
+}
+
+template<typename Visitor>
+void DirectEvalCaches::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<DirectEvalCaches>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    Locker locker { thisObject->cellLock() };
+    for (auto& cache : thisObject->m_caches.values())
+        cache->visitAggregate(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(DirectEvalCaches);
+
+DirectEvalCodeCache& DirectEvalCaches::ensureCacheOf(uint32_t requestOffset)
+{
+    if (DirectEvalCodeCache* cache = m_caches.get(requestOffset))
+        return *cache;
+    auto created = makeUniqueWithoutFastMallocCheck<DirectEvalCodeCache>();
+    DirectEvalCodeCache& cache = *created;
+    Locker locker { cellLock() };
+    m_caches.add(requestOffset, WTF::move(created));
+    return cache;
+}
+
+static DirectEvalCaches& ensureCodeCaches(VM& vm, Instance& instance)
+{
+    DirectEvalCaches*& caches = instance.state->objects->caches->directEvalCaches;
+    if (!caches) {
+        caches = DirectEvalCaches::create(vm, instance.globalObject);
+        instance.state->immortalCells->add(caches);
+    }
+    return *caches;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* instance, EncodedJSValue text, uint32_t requestOffset, uint32_t count, const EncodedJSValue* operands))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDirectEval);
@@ -902,6 +969,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
 
     bool hasThisBinding = findBinding(unsafeMakeSpan(request.bindings, request.numberOfBindings), EvalBindingKind::This);
     RELEASE_ASSERT(!request.isInDerivedConstructor || hasThisBinding);
+    DirectEvalCaches& caches = ensureCodeCaches(vm, *instance);
     DirectEvalCaller caller {
         .callFrame = std::bit_cast<CallFrame*>(frameRecord),
         .scope = chain.innermost,
@@ -916,7 +984,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
         .isInsideOrdinaryFunction = !!request.allowsNewTarget,
         .privateNames = &chain.privateNames,
         .codeBlockWithCache = nullptr,
-        .callSite = BytecodeIndex(),
+        .cache = &caches.ensureCacheOf(requestOffset),
+        .cacheOwner = &caches,
+        .callSite = BytecodeIndex::fromBits(requestOffset),
     };
     OPERATION_RETURN(scope, JSValue::encode(evaluateDirectEval(globalObject, program, caller)));
 }

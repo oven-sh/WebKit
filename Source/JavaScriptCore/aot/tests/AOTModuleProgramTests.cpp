@@ -25,141 +25,155 @@ namespace JSC { namespace AOT {
 
 using OptionWords = std::initializer_list<ASCIILiteral>;
 
-static constexpr ASCIILiteral mainThatRequires = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/function.cjs" displayPath="function.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
-module m2 path="/filled.cjs" displayPath="filled.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2
-module m3 path="/chained.cjs" displayPath="chained.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3
+static constexpr ASCIILiteral mainThatRequires = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}]
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
-    v2 = RequireModule module=m1 referrer=m0 specifier="./function.cjs"
-    v3 = Call v2
-    v4 = String string="module.exports = function, called"
-    v5 = Call v1, -, v4, v3
-    v6 = PropGet v2 key="tag"
-    v7 = String string="a property of that function"
-    v8 = Call v1, -, v7, v6
-    v9 = RequireModule module=m2 referrer=m0 specifier="./filled.cjs"
-    v10 = PropGet v9 key="a"
-    v11 = String string="exports.a"
-    v12 = Call v1, -, v11, v10
-    v13 = PropGet v9 key="b"
-    v14 = String string="this.b"
-    v15 = Call v1, -, v14, v13
-    v16 = RequireModule module=m3 referrer=m0 specifier="./chained.cjs"
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3
+    v5 = String string="module.exports = function, called"
+    v6 = Call v1, -, v5, v4
+    v7 = PropGet v3 key="tag"
+    v8 = String string="a property of that function"
+    v9 = Call v1, -, v8, v7
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    v11 = GetModuleVariable variable=g1
+    v12 = PropGet v11 key="a"
+    v13 = String string="exports.a"
+    v14 = Call v1, -, v13, v12
+    EvaluateModule module=m3 referrer=m0 [isBare]
+    v16 = GetModuleVariable variable=g2
     v17 = PropGet v16 key="sum"
     v18 = String string="exports.a of the other module + 1"
     v19 = Call v1, -, v18, v17
-    v20 = RequireModule module=m3 referrer=m0 specifier="./chained.cjs"
-    v21 = StrictEq v20, v16
-    v22 = String string="a second require answers the same object"
-    v23 = Call v1, -, v22, v21
+    EvaluateModule module=m3 referrer=m0 [isBare]
+    v21 = GetModuleVariable variable=g2
+    v22 = StrictEq v21, v16
+    v23 = String string="a second require answers the same object"
+    v24 = Call v1, -, v23, v22
     Return
 }
 )IR"_s;
 
-static constexpr ASCIILiteral mainThatImports = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}, {target=m3}]
-module m1 path="/function.cjs" displayPath="function.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 syntheticExports=[{name="default" variable=g0}, {name="tag" variable=g1}]
-module m2 path="/filled.cjs" displayPath="filled.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2 syntheticExports=[{name="a" variable=g2}, {name="default" variable=g3}]
-module m3 path="/chained.cjs" displayPath="chained.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3 syntheticExports=[{name="sum" variable=g4}]
+// ES modules import each file through a module of its own, which evaluates the file. The names are found in what the file exports then.
+static constexpr ASCIILiteral mainThatImports = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
 entry module=m0
-variable g0 name="default" module=m1 declared={type=anything}
-variable g1 name="tag" module=m1 declared={type=anything}
-variable g2 name="a" module=m2 declared={type=anything}
-variable g3 name="default" module=m2 declared={type=anything}
-variable g4 name="sum" module=m3 declared={type=anything}
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
-    v2 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g3
     v3 = Call v2
     v4 = String string="the default import of module.exports = function, called"
     v5 = Call v1, -, v4, v3
-    v6 = GetModuleVariable variable=g1
+    v6 = GetModuleVariable variable=g4
     v7 = String string="a property of that function, imported by name"
     v8 = Call v1, -, v7, v6
-    v9 = GetModuleVariable variable=g2
+    v9 = GetModuleVariable variable=g5
     v10 = String string="exports.a, imported by name"
     v11 = Call v1, -, v10, v9
-    v12 = GetModuleVariable variable=g3
+    v12 = GetModuleVariable variable=g6
     v13 = PropGet v12 key="a"
     v14 = String string="the default import of exports, .a"
     v15 = Call v1, -, v14, v13
-    v16 = PropGet v12 key="b"
-    v17 = String string=".b"
+    v16 = GetModuleVariable variable=g7
+    v17 = String string="exports.a of the other module + 1, imported by name"
     v18 = Call v1, -, v17, v16
-    v19 = GetModuleVariable variable=g4
-    v20 = String string="exports.a of the other module + 1, imported by name"
-    v21 = Call v1, -, v20, v19
     Return
 }
 )IR"_s;
 
-static constexpr ASCIILiteral commonJSBodies = R"IR(function f1 name="functionModule" module=m1 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = Predict v3 predicted=builtin(ModuleObject)
-    v7 = NewClosure function=f4
-    v8 = String string="tagged"
-    PropSet v7, v8 key="tag"
-    PropSet v6, v7 key="exports"
+// Behind commonJSModules: the records of a kind stand in the order of their numbers.
+static constexpr ASCIILiteral facesOfCommonJSModules = R"IR(module m4 path="#4" displayPath="function.cjs" exportRule=CommonJs body=f5 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}, {name="tag" variable=g4}]
+module m5 path="#5" displayPath="filled.cjs" exportRule=CommonJs body=f6 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="a" variable=g5}, {name="default" variable=g6}]
+module m6 path="#6" displayPath="chained.cjs" exportRule=CommonJs body=f7 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="sum" variable=g7}]
+variable g3 name="default" module=m4 declared={type=anything}
+variable g4 name="tag" module=m4 declared={type=anything}
+variable g5 name="a" module=m5 declared={type=anything}
+variable g6 name="default" module=m5 declared={type=anything}
+variable g7 name="sum" module=m6 declared={type=anything}
+function f5 name="faceOfFunctionModule" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m4 [isBare]
     Return
 }
-function f2 name="filledModule" module=m2 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = Predict v1 predicted=builtin(ModuleObjectExports)
-    v7 = Integer integer=41
-    PropSet v6, v7 key="a"
-    v9 = Integer integer=1
-    PropSet v0, v9 key="b"
+function f6 name="faceOfFilledModule" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m5 [isBare]
     Return
 }
-function f3 name="chainedModule" module=m3 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="report" [isFreeName]
-    v8 = RequireModule module=m2 referrer=m3 specifier="./filled.cjs"
-    v9 = PropGet v8 key="a"
-    v10 = Integer integer=1
-    v11 = Add v9, v10
-    PropSet v1, v11 key="sum"
-    v13 = Predict v2 predicted=builtin(ModuleRequire)
-    v14 = String string="/function.cjs"
-    v15 = Call v13, -, v14
-    v16 = Call v15
-    v17 = String string="require called as a value"
-    v18 = Call v7, -, v17, v16
-    v19 = RequireModule module=m1 referrer=m3 specifier="./function.cjs"
-    v20 = StrictEq v19, v15
-    v21 = String string="answers what require(\"./function.cjs\") answers"
-    v22 = Call v7, -, v21, v20
-    v23 = PropGet v3 key="exports"
-    v24 = StrictEq v23, v1
-    v25 = String string="module.exports === exports"
-    v26 = Call v7, -, v25, v24
-    v27 = StrictEq v0, v1
-    v28 = String string="this === exports"
-    v29 = Call v7, -, v28, v27
-    v30 = String string="__filename"
-    v31 = Call v7, -, v30, v4
-    v32 = String string="__dirname"
-    v33 = Call v7, -, v32, v5
-    v34 = TypeOf v2
-    v35 = String string="typeof require"
-    v36 = Call v7, -, v35, v34
-    v37 = TypeOf v3
-    v38 = String string="typeof module"
-    v39 = Call v7, -, v38, v37
-    v40 = ModuleBuiltin builtin=ModuleRequire module=m3
-    v41 = StrictEq v2, v40
-    v42 = String string="require is the one of this module"
-    v43 = Call v7, -, v42, v41
-    v44 = ModuleBuiltin builtin=ModuleObject module=m3
-    v45 = StrictEq v3, v44
-    v46 = String string="module is the one of this module"
-    v47 = Call v7, -, v46, v45
+function f7 name="faceOfChainedModule" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m3 referrer=m6 [isBare]
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral commonJSModules = R"IR(module m1 path="/function.cjs" displayPath="function.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="/filled.cjs" displayPath="filled.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
+module m3 path="/chained.cjs" displayPath="chained.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2 requests=[{target=m2 kind=Require completes=true}, {target=m1 kind=Require completes=true}]
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m3 declared={type=anything} initialization=Undefined
+function f1 name="functionModule" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = String string="tagged"
+    PropSet v0, v1 key="tag"
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="filledModule" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = Integer integer=41
+    PropSet v0, v2 key="a"
+    Return
+}
+function f3 name="chainedModule" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g2
+    EvaluateModule module=m2 referrer=m3 [isBare]
+    v5 = GetModuleVariable variable=g1
+    v6 = PropGet v5 key="a"
+    v7 = Integer integer=1
+    v8 = Add v6, v7
+    PropSet v2, v8 key="sum"
+    EvaluateModule module=m1 referrer=m3 [isBare]
+    v11 = GetModuleVariable variable=g0
+    v12 = Call v11
+    v13 = String string="the function of the other module, called"
+    v14 = Call v1, -, v13, v12
+    v15 = ModuleBuiltin builtin=ModuleObject module=m3
+    v16 = PropGet v15 key="exports"
+    v17 = StrictEq v16, v2
+    v18 = String string="module.exports === exports"
+    v19 = Call v1, -, v18, v17
+    v20 = PropGet v15 key="id"
+    v21 = String string="module.id"
+    v22 = Call v1, -, v21, v20
+    v23 = ModuleBuiltin builtin=ModuleRequire module=m3
+    v24 = TypeOf v23
+    v25 = String string="typeof require"
+    v26 = Call v1, -, v25, v24
+    v27 = ModuleBuiltin builtin=ModuleObject module=m3
+    v28 = StrictEq v27, v15
+    v29 = String string="module is one object"
+    v30 = Call v1, -, v29, v28
+    v31 = NewDictionary
+    PropSet v15, v31 key="exports"
+    v33 = GetModuleVariable variable=g2
+    v34 = StrictEq v33, v31
+    v35 = String string="a store to module.exports is a store to the variable"
+    v36 = Call v1, -, v35, v34
+    PutModuleVariable v2 variable=g2
     Return
 }
 function f4 name="exported" module=m1 results=[{type=anything}] {
@@ -169,37 +183,91 @@ function f4 name="exported" module=m1 results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral commonJSEntryPoint = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
-module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+// The exports of the required module are variables and nothing else.
+static constexpr ASCIILiteral commonJSEntryPoint = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1
 entry module=m0
-function f0 name="main" kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="report" [isFreeName]
-    v8 = RequireModule module=m1 referrer=m0 specifier="./library.cjs"
-    v9 = PropGet v8 key="a"
-    v10 = String string="exports.a of the required module"
-    v11 = Call v7, -, v10, v9
-    v12 = String string="__filename"
-    v13 = Call v7, -, v12, v4
-    v14 = StrictEq v0, v1
-    v15 = String string="this === exports"
-    v16 = Call v7, -, v15, v14
-    v17 = PropGet v3 key="exports"
-    v18 = StrictEq v17, v1
-    v19 = String string="module.exports === exports"
-    v20 = Call v7, -, v19, v18
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="a" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v5 = GetModuleVariable variable=g1
+    v6 = String string="exports.a of the required module"
+    v7 = Call v1, -, v6, v5
+    v8 = ModuleBuiltin builtin=ModuleObject module=m0
+    v9 = PropGet v8 key="id"
+    v10 = String string="module.id"
+    v11 = Call v1, -, v10, v9
+    v12 = PropGet v8 key="exports"
+    v13 = StrictEq v12, v2
+    v14 = String string="module.exports === exports"
+    v15 = Call v1, -, v14, v13
     Return
 }
-function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = Integer integer=41
-    PropSet v1, v6 key="a"
+function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=41
+    PutModuleVariable v0 variable=g1
     Return
 }
 )IR"_s;
 
-static constexpr ASCIILiteral importMetaKept = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+static constexpr ASCIILiteral recordsOfRequire = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = PropGet v2 key="children"
+    v4 = PropGet v3 key="length"
+    v5 = String string="children before the first require"
+    v6 = Call v1, -, v5, v4
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v11 = PropGet v2 key="children"
+    v12 = PropGet v11 key="length"
+    v13 = String string="children behind two requires of one module"
+    v14 = Call v1, -, v13, v12
+    v15 = Integer integer=0
+    v16 = ElemGet v11, v15
+    v17 = PropGet v16 key="parent"
+    v18 = StrictEq v17, v2
+    v19 = String string="the parent of the child is the module"
+    v20 = Call v1, -, v19, v18
+    v21 = PropGet v16 key="exports"
+    v22 = GetModuleVariable variable=g1
+    v23 = StrictEq v21, v22
+    v24 = String string="the child shows what it exports"
+    v25 = Call v1, -, v24, v23
+    Return
+}
+function f1 name="child" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g1
+    v4 = ModuleBuiltin builtin=ModuleObject module=m1
+    v5 = PropGet v4 key="parent"
+    v6 = PropGet v5 key="id"
+    v7 = String string="the id of the parent, read while the child runs"
+    v8 = Call v1, -, v7, v6
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral importMetaKept = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/other.js" displayPath="other.js" body=f2 exports=[{name="otherMeta" variable=g1}]
 entry module=m0
 variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefined
@@ -264,8 +332,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral moduleBuiltinsInEveryPosition = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+static constexpr ASCIILiteral moduleBuiltinsInEveryPosition = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g4
 entry module=m0
 layout L0 name="Holder" fields=[{key="meta" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Wrapper" fields=[{key="exports" declared={type=anything} flags=[IsRequired]}, {key="require" declared={type=anything} flags=[IsRequired]}, {key="module" declared={type=anything} flags=[IsRequired]}]
@@ -273,6 +341,7 @@ variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefi
 variable g1 name="holder" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="callback" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="received" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
@@ -310,18 +379,23 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v26 = NewClosure function=f4
     v27 = PropGet v0 key="register" [isFreeName]
     v28 = Call v27, -, v26
-    v29 = RequireModule module=m1 referrer=m0 specifier="./library.cjs"
-    v30 = Call v29
-    v31 = String string="typeof exports, require, module, module.exports, read from fields"
-    v32 = Call v1, -, v31, v30
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v30 = GetModuleVariable variable=g4
+    v31 = Call v30
+    v32 = String string="typeof exports, require, module, module.exports, read from fields"
+    v33 = Call v1, -, v32, v31
     Return
 }
-function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy, HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
-    v6 = NewObject -, v1, v2, v3 layout=L1 fields=[0, 1, 2]
-    v7 = FinishObject v6
-    v8 = NewClosure v7 function=f5
-    PropSet v3, v8 key="exports"
+function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g4
+    v2 = ModuleBuiltin builtin=ModuleRequire module=m1
+    v3 = ModuleBuiltin builtin=ModuleObject module=m1
+    v4 = NewObject -, v0, v2, v3 layout=L1 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    v6 = NewClosure v5 function=f5
+    PutModuleVariable v6 variable=g4
     Return
 }
 function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {
@@ -432,20 +506,15 @@ static void checkShellOutput(const String& programText, OptionWords optionWords,
 
 static void testRequiredCommonJSModules()
 {
-    checkShellOutput(makeString(mainThatRequires, commonJSBodies), { "validate"_s }, R"(module.exports = function, called: called
+    checkShellOutput(makeString(mainThatRequires, commonJSModules), { "validate"_s }, R"(module.exports = function, called: called
 a property of that function: tagged
 exports.a: 41
-this.b: 1
-require called as a value: called
-answers what require("./function.cjs") answers: true
+the function of the other module, called: called
 module.exports === exports: true
-this === exports: true
-__filename: /chained.cjs
-__dirname: /
+module.id: /chained.cjs
 typeof require: function
-typeof module: object
-require is the one of this module: true
-module is the one of this module: true
+module is one object: true
+a store to module.exports is a store to the variable: true
 exports.a of the other module + 1: 42
 a second require answers the same object: true
 )"_s);
@@ -454,21 +523,16 @@ a second require answers the same object: true
 static void testImportedCommonJSModules()
 {
     // The loader reads the exports under every name, so the image would list members of the host's classes as constants, and the realm of the shell has no such class.
-    checkShellOutput(makeString(mainThatImports, commonJSBodies), { "validate"_s, "disable=flow:ConstantBuiltinLocations"_s }, R"(require called as a value: called
-answers what require("./function.cjs") answers: true
+    checkShellOutput(makeString(mainThatImports, commonJSModules, facesOfCommonJSModules), { "validate"_s, "disable=flow:ConstantBuiltinLocations"_s }, R"(the function of the other module, called: called
 module.exports === exports: true
-this === exports: true
-__filename: /chained.cjs
-__dirname: /
+module.id: /chained.cjs
 typeof require: function
-typeof module: object
-require is the one of this module: true
-module is the one of this module: true
+module is one object: true
+a store to module.exports is a store to the variable: true
 the default import of module.exports = function, called: called
 a property of that function, imported by name: tagged
 exports.a, imported by name: 41
 the default import of exports, .a: 41
-.b: 1
 exports.a of the other module + 1, imported by name: 42
 )"_s);
 }
@@ -476,9 +540,18 @@ exports.a of the other module + 1, imported by name: 42
 static void testCommonJSEntryPoint()
 {
     checkShellOutput(commonJSEntryPoint, { "validate"_s }, R"(exports.a of the required module: 41
-__filename: /main.cjs
-this === exports: true
+module.id: .
 module.exports === exports: true
+)"_s);
+}
+
+static void testRecordsOfRequire()
+{
+    checkShellOutput(recordsOfRequire, { }, R"(children before the first require: 0
+the id of the parent, read while the child runs: .
+children behind two requires of one module: 1
+the parent of the child is the module: true
+the child shows what it exports: true
 )"_s);
 }
 
@@ -516,6 +589,7 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/required-commonjs-modules"_s, testRequiredCommonJSModules },
         { "module-programs/imported-commonjs-modules"_s, testImportedCommonJSModules },
         { "module-programs/commonjs-entry-point"_s, testCommonJSEntryPoint },
+        { "module-programs/records-of-require"_s, testRecordsOfRequire },
         { "module-programs/import-meta-kept"_s, testImportMetaKept },
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },

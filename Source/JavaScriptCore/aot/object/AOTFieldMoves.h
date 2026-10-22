@@ -11,6 +11,7 @@
 #include "AOTRuntimeType.h"
 #include "JSCJSValue.h"
 #include "PropertyOffset.h"
+#include <optional>
 #include <wtf/FastMalloc.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
@@ -23,6 +24,7 @@ class VM;
 
 namespace AOT {
 
+class AcceptedValue;
 class Object;
 class RuntimeLayoutTable;
 
@@ -34,13 +36,14 @@ enum class FieldMoveKind : uint8_t {
     UnboxToCell32,
     BoxedToSlot,
     SlotToBoxed,
-    Int32OrDouble,
     SetAbsent,
 };
 
 struct FieldMove {
     static constexpr uint8_t fromIsOutOfLine = 1;
     static constexpr uint8_t toIsOutOfLine = 2;
+    // The slot of the source has a marker for undefined or null that the slot of the target lacks.
+    static constexpr uint8_t refusesUndefinedAndNull = 4;
 
     uint32_t from { 0 };
     uint32_t to { 0 };
@@ -74,6 +77,8 @@ struct FieldMovePlan {
 
     FieldMovePlanStatus status { FieldMovePlanStatus::NeverApplies };
     bool sourceHasDeferredClosures { false };
+    // A move makes one data property that can be written, listed and deleted out of another. No plan applies to a field that its layout gives other attributes.
+    bool namesFieldWithAttributes { false };
     uint32_t size { 0 };
     uint32_t orderWord { 0 };
     uint64_t granuleBits { 0 };
@@ -103,7 +108,8 @@ enum class ValueKind : uint8_t {
 OptionSet<ValueKind> valueKindOf(JSValue);
 OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType&);
 bool alwaysFits(const RuntimeLayoutTable&, const FieldData& from, const FieldData& to);
-bool canStoreInField(Object& target, const FieldData&, JSValue);
+// Asks the representation too, so the store of what it returns cannot fail.
+std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData&, JSValue);
 FieldMoveKind classifyMove(const RuntimeLayoutTable&, const FieldData* fromOrNull, const FieldData* toOrNull);
 
 } } // namespace JSC::AOT

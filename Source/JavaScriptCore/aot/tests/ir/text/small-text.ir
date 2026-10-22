@@ -1,4 +1,4 @@
-# A module and a function are a whole text, and no line is printed that was not written
+# A module and a function are a whole text, and no line is printed that the text does not have
 # RUN: round-trip
 # CHECK: module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: function f0 name="only" module=m0

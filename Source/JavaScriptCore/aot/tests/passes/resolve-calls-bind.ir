@@ -1,8 +1,9 @@
-# bind on a closure of one proven function makes a closure of a bound function, which captures what the target captures, this, the bound arguments and the closure
+# bind on a closure of one proven function makes a closure of a bound function, which captures what the target captures, this, the bound arguments and, where the target has captures of its own, the closure
+# In `function-is-not-known` the function that is bound is the `this` of a callee nobody knows, which may store into it. So that function is handed its own closure, and none of the targets
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
-# OPTIONS: check=VerifyEachPass only-passes=ResolveCalls,PlaceTypeTests,ChooseCallingConventions
-# STATISTIC: BoundFunctions = 6
+# OPTIONS: check=VerifyEachPass only-passes=ResolveCalls,PlaceTypeTests,ChooseCallingConventions heat=EverythingIsHot
+# STATISTIC: BoundFunctions = 7
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -36,7 +37,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v24 = CallDirect v5, v3 function=f20
     v25 = CallDirect v6, v3 function=f20
     v26 = NewClosure function=f21
-    v27 = Call v26, -, v5, v1
+    v27 = Call v26, -, v26, v1
     v28 = CallDirect v5, v1 function=f22
     v29 = Call v2, -, v11, v12, v13, v14, v15, v16, v17, v18
     v30 = Call v2, -, v19, v20, v21, v22, v23, v24, v25, v26
@@ -78,7 +79,7 @@ function f7 name="without-arguments" parameters=[{type=anything}] results=[{type
 }
 # CHECK-LABEL: function f7 name="without-arguments"
 # CHECK-NEXT: b0(v0: f1):
-# CHECK: = NewClosure v0 function=[[addBoundToNothing]]
+# CHECK: = NewClosure function=[[addBoundToNothing]]
 # CHECK-NOT: CallBuiltin
 function f8 name="this-of-an-arrow-function-is-dropped" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -88,7 +89,7 @@ function f8 name="this-of-an-arrow-function-is-dropped" parameters=[{type=anythi
 }
 # CHECK-LABEL: function f8 name="this-of-an-arrow-function-is-dropped"
 # CHECK-NEXT: b0(v0: f1, v1: anything):
-# CHECK: = NewClosure v0 function=[[addBoundToNothing]]
+# CHECK: = NewClosure function=[[addBoundToNothing]]
 # CHECK-NOT: CallBuiltin
 function f9 name="one-argument" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -98,7 +99,7 @@ function f9 name="one-argument" parameters=[{type=anything}, {type=anything}] re
     Return v4
 }
 # CHECK-LABEL: function f9 name="one-argument"
-# CHECK: = NewClosure v2, v0 function=[[addBoundToOne]]
+# CHECK: = NewClosure v2 function=[[addBoundToOne]]
 # CHECK-NOT: CallBuiltin
 function f10 name="more-arguments-than-parameters" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -109,7 +110,7 @@ function f10 name="more-arguments-than-parameters" parameters=[{type=anything}, 
     Return v5
 }
 # CHECK-LABEL: function f10 name="more-arguments-than-parameters"
-# CHECK: = NewClosure v2, v3, v0 function=[[addBoundToThree]]
+# CHECK: = NewClosure v2, v3 function=[[addBoundToThree]]
 # CHECK-NOT: CallBuiltin
 function f11 name="method-with-capture" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -120,7 +121,7 @@ function f11 name="method-with-capture" parameters=[{type=anything}, {type=anyth
 }
 # CHECK-LABEL: function f11 name="method-with-capture"
 # CHECK-NEXT: b0(v0: f2, v1: L0):
-# CHECK: [[label]]: "label" = GetCapture v0 function=f2
+# CHECK: [[label]]: string = GetCapture v0 function=f2
 # CHECK-NEXT: = NewClosure [[label]], v1, v2, v0 function=[[scaleBoundToOne]]
 # CHECK-NOT: CallBuiltin
 function f12 name="method-created-here" parameters=[{type=anything}] results=[{type=anything}] {
@@ -151,26 +152,26 @@ function f13 name="under-handler" parameters=[{type=anything}, {type=anything}] 
     Return v6
 }
 # CHECK-LABEL: function f13 name="under-handler"
-# CHECK: = NewClosure v2, v3, v0 function=[[addBoundToTwo]]
+# CHECK: = NewClosure v2, v3 function=[[addBoundToTwo]]
 # CHECK-NOT: CallBuiltin
-function f14 name="argument-outside-the-written-type" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f14 name="argument-outside-the-type-of-the-parameter" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="bind"
     v3 = Call v2, v0, v1, v1 calleeKey="bind"
     Return v3
 }
-# CHECK-LABEL: function f14 name="argument-outside-the-written-type"
+# CHECK-LABEL: function f14 name="argument-outside-the-type-of-the-parameter"
 # CHECK-NEXT: b0(v0: f1, v1: anything):
 # CHECK-NOT: NewClosure
 # CHECK: = CallBuiltin v0, v1, v1 overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure
-function f15 name="this-outside-the-written-type" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f15 name="this-outside-the-type-of-this" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="bind"
     v3 = Call v2, v0, v1 calleeKey="bind"
     Return v3
 }
-# CHECK-LABEL: function f15 name="this-outside-the-written-type"
+# CHECK-LABEL: function f15 name="this-outside-the-type-of-this"
 # CHECK-NEXT: b0(v0: f2, v1: anything):
 # CHECK-NOT: NewClosure
 # CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
@@ -214,11 +215,13 @@ function f19 name="function-can-be-constructed" parameters=[{type=anything}, {ty
     v3 = Call v2, v0, v1 calleeKey="bind"
     Return v3
 }
+# Flow does not say that the closures of `plain` are as they were created. The test in front of the call does. A target that can be constructed is captured with its closure.
 # CHECK-LABEL: function f19 name="function-can-be-constructed"
 # CHECK-NEXT: b0(v0: f3, v1: anything):
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
-# CHECK-NOT: NewClosure
+# CHECK: = IsPristine v0 builtinClass=Function aspects=[Names]
+# CHECK-NOT: = CallBuiltin
+# CHECK: = NewClosure v1, v0 function=
+# CHECK-NOT: = CallBuiltin
 function f20 name="two-functions" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="bind"
@@ -230,14 +233,14 @@ function f20 name="two-functions" parameters=[{type=anything}, {type=anything}] 
 # CHECK-NOT: NewClosure
 # CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure
-function f21 name="function-is-only-predicted" kind=Arrow parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+function f21 name="function-is-not-known" kind=Arrow parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
   b0(v0: function, v1: anything):
     v2 = PropGet v0 key="bind"
     v3 = Call v2, v0, v1 calleeKey="bind"
     Return v3
 }
-# CHECK-LABEL: function f21 name="function-is-only-predicted"
-# CHECK-NEXT: b0(v0: function ~ f1, v1: anything):
+# CHECK-LABEL: function f21 name="function-is-not-known"
+# CHECK-NEXT: b0(v0: function, v1: anything):
 # CHECK-NOT: NewClosure
 # CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure
@@ -251,13 +254,13 @@ function f22 name="bound-function-is-called-here" parameters=[{type=anything}, {
     Return v6
 }
 # CHECK-LABEL: function f22 name="bound-function-is-called-here"
-# CHECK: = NewClosure v2, v0 function=[[addBoundToOne]]
+# CHECK: = NewClosure v2 function=[[addBoundToOne]]
 # CHECK-NOT: = Call v
-# CHECK: = CallDirect v2, v0, v3 function=[[addBoundToOne]]
+# CHECK: = CallDirect v2, v3 function=[[addBoundToOne]]
 # CHECK-NOT: = Call v
-# CHECK: function [[addBoundToNothing]] name="add"{{*}}role=BoundFunction{{*}}captures=[{type=function}]{{*}}creator=BoundFunction{target=f1 capturesTargetClosure=true}
-# CHECK: function [[addBoundToOne]] name="add"{{*}}role=BoundFunction{{*}}captures=[{type=number}, {type=function}]{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
-# CHECK: function [[addBoundToTwo]] name="add"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=2 numberOfCapturedArguments=2 capturesTargetClosure=true}
-# CHECK: function [[addBoundToThree]] name="add"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=3 numberOfCapturedArguments=2 capturesTargetClosure=true}
+# CHECK: function [[addBoundToNothing]] name="add"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1}
+# CHECK: function [[addBoundToOne]] name="add"{{*}}role=BoundFunction{{*}}captures=[{type=number}]{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1}
+# CHECK: function [[addBoundToTwo]] name="add"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=2 numberOfCapturedArguments=2}
+# CHECK: function [[addBoundToThree]] name="add"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=3 numberOfCapturedArguments=2}
 # CHECK: function [[scaleBoundToNothing]] name="scale"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f2 capturesTargetClosure=true}
 # CHECK: function [[scaleBoundToOne]] name="scale"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f2 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}

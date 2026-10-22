@@ -1,4 +1,5 @@
 # A literal that is first an argument of a String method and then the receiver of test is shared, unless a flag makes the second use advance lastIndex
+# The type of the parameter has no site and is not only expected: every entrypoint assumes it, so flow lets nothing but a string in, whoever calls
 # FORM: AsRead
 # RUN: pipeline ShareRegExpLiterals
 

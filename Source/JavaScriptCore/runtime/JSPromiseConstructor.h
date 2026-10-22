@@ -64,7 +64,9 @@ JSC_DECLARE_HOST_FUNCTION(promiseAllSettledSlowRejectFunction);
 JSC_DECLARE_HOST_FUNCTION(promiseAnyRejectFunction);
 JSC_DECLARE_HOST_FUNCTION(promiseAnySlowRejectFunction);
 
-JS_EXPORT_PRIVATE JSPromise* promiseAllOfElements(JSGlobalObject*, std::span<const EncodedJSValue>);
+#if ENABLE(AOT)
+JS_EXPORT_PRIVATE JSPromise* promiseAllOfElements(JSGlobalObject*, std::span<const EncodedJSValue>, uint32_t directCalls);
+#endif
 
 Structure* createPromiseAllSettledFulfilledResultStructure(VM&, JSGlobalObject&);
 Structure* createPromiseAllSettledRejectedResultStructure(VM&, JSGlobalObject&);

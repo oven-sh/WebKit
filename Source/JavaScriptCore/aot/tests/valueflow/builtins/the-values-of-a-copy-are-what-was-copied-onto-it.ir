@@ -1,0 +1,77 @@
+# Object.values({ ...account }).map(each => ..): what a spread copies onto an object is written nowhere on the object: it lies on the objects that it was copied from, where a lookup by name finds it.
+# A built-in that takes all that an object holds goes there too, also through a copy of a copy. A member that has a setter and no getter reads as undefined.
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f3 result 0 type=Array<undefined|int, proven
+# CHECK: function f4 parameter 0 type=undefined|int|string proven
+# CHECK: function f5 parameter 0 type=undefined|int|string proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Account" fields=[{key="label" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Copy" fields=[]
+layout L2 name="CopyOfCopy" fields=[]
+layout L3 name="WithSetter" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return v0
+}
+function f1 name="ofCopy" results=[{type=anything}] {
+  b0():
+    v0 = String string="cd"
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject layout=L1
+    CopyDataProperties v3, v2
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectValues
+    v7 = Call v6, v5, v3
+    v8 = PropGet v7 key="map"
+    v9 = NewClosure function=f4
+    v10 = Call v8, v7, v9 calleeKey="map"
+    Return v10
+}
+function f2 name="ofCopyOfCopy" results=[{type=anything}] {
+  b0():
+    v0 = String string="cd"
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject layout=L1
+    CopyDataProperties v3, v2
+    v5 = NewObject layout=L2
+    CopyDataProperties v5, v3
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectValues
+    v9 = Call v8, v7, v5
+    v10 = PropGet v9 key="map"
+    v11 = NewClosure function=f5
+    v12 = Call v10, v9, v11 calleeKey="map"
+    Return v12
+}
+function f3 name="withSetterAlone" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = NewClosure function=f6
+    DefineSetter v1, v2 key="only"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectValues
+    v6 = Call v5, v4, v1
+    Return v6
+}
+function f4 name="first" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="second" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="taker" kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

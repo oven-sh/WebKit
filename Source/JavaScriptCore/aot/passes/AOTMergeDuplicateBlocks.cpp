@@ -63,9 +63,9 @@ public:
 
 private:
     const Arguments& argumentsOf(BlockID block) const { return m_function.at(block).terminator.next().arguments; }
-    bool isOwnValue(BlockID block, ValueID value) const { return m_analyses.useLists().blockOf(value) == block; }
+    bool isOwnValue(BlockID block, ValueID value) const { return m_function.at(block).values.contains(value); }
 
-    bool isCandidate(BlockID id) const
+    bool hasFormOfCandidate(BlockID id) const
     {
         const Block& block = m_function.at(id);
         if (block.terminator.kind != TerminatorKind::Jump || !block.parameters.isEmpty() || block.values.isEmpty() || block.isHandlerBlock())
@@ -73,10 +73,9 @@ private:
         const Target& target = block.terminator.next();
         if (target.arguments.isEmpty())
             return false;
-        bool hasOnlyConstants = std::ranges::all_of(block.values, [&](ValueID value) {
+        return std::ranges::all_of(block.values, [&](ValueID value) {
             return isRematerializable(m_function.at(value));
         });
-        return hasOnlyConstants && !m_analyses.dominators().dominates(id, target.block);
     }
 
     unsigned hashOf(BlockID block) const
@@ -96,10 +95,19 @@ private:
 
     void collectCandidates()
     {
+        Vector<std::pair<BlockID, BlockID>, 8> blocksByTarget;
         for (BlockID block : m_cfg.reversePostOrder()) {
-            if (!isCandidate(block))
+            if (hasFormOfCandidate(block))
+                blocksByTarget.append({ m_function.at(block).terminator.next().block, block });
+        }
+        if (blocksByTarget.size() < 2)
+            return;
+        std::ranges::sort(blocksByTarget);
+        for (size_t index = 0; index < blocksByTarget.size(); ++index) {
+            auto [target, block] = blocksByTarget[index];
+            bool isOnlyOneWithTarget = (!index || blocksByTarget[index - 1].first != target) && (index + 1 == blocksByTarget.size() || blocksByTarget[index + 1].first != target);
+            if (isOnlyOneWithTarget || m_analyses.dominators().dominates(block, target))
                 continue;
-            BlockID target = m_function.at(block).terminator.next().block;
             m_candidates.append({ target, m_analyses.dominators().dominates(target, block), hashOf(block), block });
         }
         std::ranges::sort(m_candidates, [](const Candidate& a, const Candidate& b) {
@@ -109,7 +117,7 @@ private:
 
     static bool areEqualConstants(const Value& a, const Value& b)
     {
-        return a.opcode == b.opcode && a.type == b.type && a.written() == b.written() && a.prediction() == b.prediction() && a.hasSamePayloadAs(b);
+        return a.opcode == b.opcode && a.type == b.type && a.expected() == b.expected() && a.hasSamePayloadAs(b);
     }
 
     bool areEqual(BlockID a, BlockID b) const
@@ -161,7 +169,7 @@ private:
                 ASSERT(!edge.isHandlerEdge() && !hasEdgeResults(m_function, edge));
                 redirections.append({ edge, duplicate.representative });
             }
-            Block& representative = m_function.at(duplicate.representative);
+            Block& representative = m_function.edit(duplicate.representative);
             const Block& block = m_function.at(duplicate.block);
             representative.frequency = moreFrequentOf(representative.frequency, block.frequency);
             if (representative.handler && representative.handler != block.handler)
@@ -172,6 +180,9 @@ private:
             builder.removeHandler(representative);
         for (const Redirection& redirection : redirections)
             builder.redirectEdge(redirection.edge, Target { redirection.representative, { }, { } });
+        // The builder reports the edges, not the frequency of a representative.
+        m_analyses.didChangeControlFlow();
+        m_context.keptAnalyses = allAnalyses;
     }
 
     FunctionPassContext& m_context;

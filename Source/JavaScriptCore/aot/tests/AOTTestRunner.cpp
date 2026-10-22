@@ -266,7 +266,7 @@ static void runOneDirective(const TestFile& file, const RunDirective& run, const
     });
 }
 
-Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const TestVariant& variant)
+Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const TestVariant& variant, std::optional<TestTodo>* todo)
 {
     TestFile file = parseTestFile(WTF::move(text));
     if (variant.onlyDiagnostic) {
@@ -282,6 +282,8 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
             return TestFailure { error.line, WTF::move(error.message) };
         });
     }
+    if (todo && !file.runs.isEmpty())
+        *todo = file.todo;
 
     Vector<TestFailure> failures;
     Wire::CompileOptions options = makeDefaultCompileOptions();
@@ -303,7 +305,7 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
     return failures;
 }
 
-static Vector<TestFailure> runOneFile(const String& path, Vector<RunOutput>* outputs, const TestVariant& variant)
+static Vector<TestFailure> runOneFile(const String& path, Vector<RunOutput>* outputs, const TestVariant& variant, std::optional<TestTodo>* todo)
 {
     std::optional<Vector<uint8_t>> bytes = FileSystem::readEntireFile(path);
     if (!bytes) {
@@ -314,13 +316,17 @@ static Vector<TestFailure> runOneFile(const String& path, Vector<RunOutput>* out
     String text = String::fromUTF8(bytes->span());
     if (text.isNull())
         return { TestFailure { 1, "is not UTF-8"_s } };
-    return runTestText(WTF::move(text), outputs, variant);
+    return runTestText(WTF::move(text), outputs, variant, todo);
 }
 
+enum class FileOutcome : uint8_t { Passed, Failed, Todo };
+
 struct FileResult {
-    bool hasPassed { false };
+    FileOutcome outcome { FileOutcome::Failed };
     String report;
 };
+
+static constexpr ASCIILiteral todoLineStart = "TODO "_s;
 
 // A stream that collects text cuts a very long string short.
 static void printLineByLine(PrintStream& out, StringView text)
@@ -339,7 +345,13 @@ static void printLineByLine(PrintStream& out, StringView text)
 static FileResult runOneFileInThisProcess(const String& path, const TestRunRequest& request)
 {
     Vector<RunOutput> outputs;
-    Vector<TestFailure> failures = runOneFile(path, request.showsOutput ? &outputs : nullptr, request.variant);
+    std::optional<TestTodo> todo;
+    Vector<TestFailure> failures = runOneFile(path, request.showsOutput ? &outputs : nullptr, request.variant, &todo);
+
+    bool isPlainRun = request.variant.optionWords.isEmpty() && !request.variant.onlyDiagnostic;
+    bool isOwed = todo && !failures.isEmpty();
+    if (todo && failures.isEmpty() && isPlainRun)
+        failures.append(TestFailure { todo->line, "passes: remove the TODO line"_s });
 
     String optionWords = emptyString();
     for (const String& word : request.variant.optionWords)
@@ -348,13 +360,17 @@ static FileResult runOneFileInThisProcess(const String& path, const TestRunReque
         optionWords = makeString(optionWords, ')');
 
     StringPrintStream report;
+    if (isOwed)
+        report.println(todoLineStart, path, ":", todo->line, ": ", todo->reason, optionWords);
     for (const TestFailure& failure : failures)
-        report.println("FAIL ", path, ":", failure.line, ": ", failure.message, optionWords);
+        report.println(isOwed ? "  still fails: " : "FAIL ", path, ":", failure.line, ": ", failure.message, optionWords);
     for (const RunOutput& output : outputs) {
         report.print("OUTPUT ", path, ":", output.line, ":\n");
         printLineByLine(report, output.text);
     }
-    return { failures.isEmpty(), report.toString() };
+    if (isOwed)
+        return { FileOutcome::Todo, report.toString() };
+    return { failures.isEmpty() ? FileOutcome::Passed : FileOutcome::Failed, report.toString() };
 }
 
 static size_t startOfLastLines(StringView text, size_t lineCount)
@@ -379,13 +395,14 @@ static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher,
     ChildProcessResult result = launcher.run(arguments.span());
 
     StringView output = result.output;
-    if (result.exitedWith(exitCodeForSuccess) || result.exitedWith(exitCodeForFailure)) {
-        return { result.exitedWith(exitCodeForSuccess), output.left(startOfLastLines(output, 1)).toString() };
-    }
+    if (result.exitedWith(exitCodeForFailure))
+        return { FileOutcome::Failed, output.left(startOfLastLines(output, 1)).toString() };
+    if (result.exitedWith(exitCodeForSuccess))
+        return { output.startsWith(todoLineStart) ? FileOutcome::Todo : FileOutcome::Passed, output.left(startOfLastLines(output, 1)).toString() };
 
     StringView lastLines = output.substring(startOfLastLines(output, maxCrashOutputLinesShown));
     ASCIILiteral lineEnd = lastLines.isEmpty() || lastLines.endsWith('\n') ? ""_s : "\n"_s;
-    return { false, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
+    return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
 }
 
 TestRunSummary runTestFiles(const TestRunRequest& request, PrintStream& out)
@@ -410,10 +427,17 @@ TestRunSummary runTestFiles(const TestRunRequest& request, PrintStream& out)
     TestRunSummary summary;
     for (const FileResult& result : results) {
         out.print(result.report);
-        if (result.hasPassed)
+        switch (result.outcome) {
+        case FileOutcome::Passed:
             ++summary.passed;
-        else
+            break;
+        case FileOutcome::Failed:
             ++summary.failed;
+            break;
+        case FileOutcome::Todo:
+            ++summary.todo;
+            break;
+        }
     }
     return summary;
 }

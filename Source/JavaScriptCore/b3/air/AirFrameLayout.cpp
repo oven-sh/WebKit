@@ -41,6 +41,9 @@ void FrameLayout::dump(PrintStream& out) const
         break;
     }
 
+    if (hasFrame && !hasFrameRecord)
+        out.print(comma, "no frame record");
+
     if (slotArea == SlotArea::AboveFrameRecord)
         out.print(comma, "slots above frame record: ", bytesAboveFrameRecord, " bytes");
 
@@ -63,6 +66,8 @@ void FrameLayout::dump(PrintStream& out) const
         out.print(comma, "teardowns: ", numberOfFrameTeardowns);
     if (numberOfSpillsPushedAtFrameSetup)
         out.print(comma, "spills pushed at setup: ", numberOfSpillsPushedAtFrameSetup);
+    if (numberOfReloadsPoppedAtFrameTeardown)
+        out.print(comma, "reloads popped at teardown: ", numberOfReloadsPoppedAtFrameTeardown);
 }
 
 } } } // namespace JSC::B3::Air

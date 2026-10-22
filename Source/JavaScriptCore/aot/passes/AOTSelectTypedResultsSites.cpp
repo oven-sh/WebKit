@@ -43,17 +43,17 @@ static TypedResultForm matchedFormOf(const Program& program, const Value& call)
 
 bool mayHaveTypedResult(const Program& program, const Value& value)
 {
+    if (!typedResultCallOpcodes.contains(value.opcode))
+        return false;
     // ResolveBuiltins has seen the call and does not know its callee. Whatever is called, the result is validated.
     if (value.opcode == Opcode::Call)
         return isValidated(program, value.expectedResult());
-    if (value.opcode != Opcode::CallBuiltin)
-        return false;
     return matchedFormOf(program, value) != TypedResultForm::None || isValidated(program, value.expectedResult());
 }
 
-static TypedResultTarget findTarget(FunctionPassContext& context, ValueID call)
+static TypeID findTypeOfTarget(FunctionPassContext& context, ValueID call)
 {
-    return findTypedResultTarget(context.program, context.function, context.analyses.useLists(), call);
+    return findTypeOfTypedResultTarget(context.program, context.function, context.analyses.useLists(), call);
 }
 
 static bool isCompiledContainer(const NodeDecisionInputs& inputs, ResultNodeRef ref, const ResultNode& node)
@@ -100,35 +100,123 @@ static bool isAwaitOf(const Value& user, ValueID promise)
     return user.opcode == Opcode::AwaitBySavingFrame && user.awaitedOperand() == promise;
 }
 
-static ValueID findImmediateAwait(FunctionPassContext& context, const TypedResultSite& site)
+static bool hasOnlyRemovableValues(FunctionPassContext& context, BlockID block, uint32_t first, uint32_t end)
+{
+    const BlockValues& values = context.function.at(block).values;
+    for (uint32_t index = first; index < end; ++index) {
+        if (!context.analyses.isUnobservable(values[index]))
+            return false;
+    }
+    return true;
+}
+
+// The one use of the promise behind the casts of it that stand in the block. `promise` becomes the last of those casts.
+static std::optional<Use> findUseBehindCasts(FunctionPassContext& context, BlockID block, ValueID& promise)
 {
     const UseLists& uses = context.analyses.useLists();
-    auto isOperandInBlockOfCall = [&](const std::optional<Use>& use) {
-        return use && use->kind == Use::Kind::Operand && use->block == site.block;
-    };
-
-    ValueID promise = site.call;
     std::optional<Use> use = uses.singleUse(promise);
-    while (isOperandInBlockOfCall(use) && isCast(context.function.at(use->user).opcode)) {
+    while (use && use->kind == Use::Kind::Operand && use->block == block && isCast(context.function.at(use->user).opcode)) {
         promise = use->user;
         use = uses.singleUse(promise);
     }
-    if (!isOperandInBlockOfCall(use) || !isAwaitOf(context.function.at(use->user), promise))
-        return { };
+    return use;
+}
 
-    const BlockValues& values = context.function.at(site.block).values;
-    for (uint32_t index = site.index + 1, end = uses.locationOf(use->user).index; index < end; ++index) {
-        if (!context.analyses.effectsOf(values[index]).onAnyEdge().isRemovableWhenUnused())
-            return { };
-    }
+// `firstIndex` is where the values start that run between the promise and its await.
+static ValueID findAwaitInBlock(FunctionPassContext& context, BlockID block, uint32_t firstIndex, ValueID promise)
+{
+    std::optional<Use> use = findUseBehindCasts(context, block, promise);
+    if (!use || use->kind != Use::Kind::Operand || use->block != block || !isAwaitOf(context.function.at(use->user), promise))
+        return { };
+    if (!hasOnlyRemovableValues(context, block, firstIndex, context.analyses.useLists().locationOf(use->user).index))
+        return { };
     return use->user;
+}
+
+// Every way into the block is a jump, which can say whether it brings the promise of the call.
+static bool isEnteredByJumpsAlone(FunctionPassContext& context, BlockID block)
+{
+    const Function& function = context.function;
+    if (function.at(block).isHandlerBlock() || context.analyses.isEnteredFromUnreachableBlock(block))
+        return false;
+    return std::ranges::all_of(context.analyses.cfg().incomingEdges(block), [&](Edge edge) {
+        return !edge.isHandlerEdge() && edge.from != block && function.at(edge.from).terminator.kind == TerminatorKind::Jump;
+    });
+}
+
+static void findImmediateAwait(FunctionPassContext& context, TypedResultSite& site)
+{
+    const Function& function = context.function;
+    site.awaitBlock = site.block;
+    site.await = findAwaitInBlock(context, site.block, site.index + 1, site.call);
+    if (site.await)
+        return;
+
+    ValueID promise = site.call;
+    std::optional<Use> use = findUseBehindCasts(context, site.block, promise);
+    if (!use || function.at(site.block).terminator.kind != TerminatorKind::Jump)
+        return;
+
+    // A pass that cuts a block behind a call leaves a jump there, into a block that nothing else enters.
+    BlockID next = function.at(site.block).terminator.next().block;
+    if (use->kind == Use::Kind::Operand && use->block == next && promise == site.call) {
+        if (!context.analyses.cfg().singleIncomingEdge(next) || !isEnteredByJumpsAlone(context, next) || function.at(next).handler != function.at(site.block).handler)
+            return;
+        if (!hasOnlyRemovableValues(context, site.block, site.index + 1, function.at(site.block).values.size()))
+            return;
+        site.awaitBlock = next;
+        site.await = findAwaitInBlock(context, next, 0, site.call);
+        return;
+    }
+
+    if (use->kind != Use::Kind::EdgeArgument || use->block != site.block)
+        return;
+    BlockID merge = targetOf(function, use->edge()).block;
+    if (!isEnteredByJumpsAlone(context, merge) || function.at(merge).handler != function.at(site.block).handler || use->operandIndex >= function.at(merge).parameters.size())
+        return;
+    if (!hasOnlyRemovableValues(context, site.block, site.index + 1, function.at(site.block).values.size()))
+        return;
+
+    site.awaitBlock = merge;
+    site.mergedPromise = function.at(merge).parameters[use->operandIndex];
+    site.await = findAwaitInBlock(context, merge, 0, site.mergedPromise);
+}
+
+// A frame has one source: opening a second one gives the buffer of the first away, and its cursors dangle.
+static bool isSourceOpenAcross(FunctionPassContext& context, BlockID block, uint32_t indexInBlock)
+{
+    const Function& function = context.function;
+    Liveness::LocalCalc liveAfterValue(context.analyses.liveness(), block);
+    for (uint32_t index = function.at(block).values.size(); index > indexInBlock + 1;)
+        liveAfterValue.execute(--index);
+
+    bool isOpen = false;
+    liveAfterValue.forEachLive([&](ValueID id) {
+        if (context.program.typeOf(function, id).isOpaque(OpaqueKind::Cursor)) {
+            isOpen = true;
+            return;
+        }
+        if (!isGuardValue(function, id))
+            return;
+        const GuardFacts& facts = context.analyses.guardFacts(id);
+        isOpen |= !facts.isKnown() || facts.find(Proof::SourceOpen);
+    });
+    return isOpen;
+}
+
+static bool isSourceOpenAcross(FunctionPassContext& context, const TypedResultSite& site)
+{
+    return isSourceOpenAcross(context, site.block, site.index);
 }
 
 static TypedResultChoice chooseParsedBody(FunctionPassContext& context, TypedResultSite site)
 {
-    site.await = findImmediateAwait(context, site);
+    findImmediateAwait(context, site);
     if (!site.await)
         return { .declineReason = TypedResultDeclineReason::PromiseIsNotAwaitedAtOnce };
+    // Another arm may bring an open source along.
+    if (site.mergedPromise && isSourceOpenAcross(context, site.awaitBlock, context.analyses.useLists().locationOf(site.await).index))
+        return { .declineReason = TypedResultDeclineReason::AnotherSourceIsOpen };
 
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinCall call = builtinCallOf(context.program, context.function.at(site.call));
@@ -140,28 +228,6 @@ static TypedResultChoice chooseParsedBody(FunctionPassContext& context, TypedRes
 
     site.source = call.receiver;
     return { .site = site };
-}
-
-// A frame has one source: opening a second one gives the buffer of the first away, and its cursors dangle.
-static bool isSourceOpenAcross(FunctionPassContext& context, const TypedResultSite& site)
-{
-    const Function& function = context.function;
-    Liveness::LocalCalc liveAfterCall(context.analyses.liveness(), site.block);
-    for (uint32_t index = function.at(site.block).values.size(); index > site.index + 1;)
-        liveAfterCall.execute(--index);
-
-    bool isOpen = false;
-    liveAfterCall.forEachLive([&](ValueID id) {
-        if (context.program.typeOf(function, id).isOpaque(OpaqueKind::Cursor)) {
-            isOpen = true;
-            return;
-        }
-        if (!isGuardValue(function, id))
-            return;
-        const GuardFacts& facts = context.analyses.guardFacts(id);
-        isOpen |= !facts.isKnown() || facts.find(Proof::SourceOpen);
-    });
-    return isOpen;
 }
 
 static bool hasExpectedRows(FunctionPassContext& context, ValueID call)
@@ -216,9 +282,13 @@ static TypedResultChoice chooseValidatedResult(FunctionPassContext& context, Typ
 static bool reachesOnlyModeledLayouts(const NodeDecisionInputs& inputs, AccessSiteID call, TypeID type)
 {
     std::span<const LayoutID> modeledLayouts = inputs.flow.typedResultLayouts(call);
-    return std::ranges::all_of(layoutsReachedBy(inputs.program, type), [&](LayoutID layout) {
-        return !allocatesLayout(inputs, layout) || std::ranges::binary_search(modeledLayouts, layout);
-    });
+    bool reachesOnlyModeled = true;
+    auto check = [&](LayoutID layout) {
+        reachesOnlyModeled = !allocatesLayout(inputs, layout) || std::ranges::binary_search(modeledLayouts, layout);
+        return reachesOnlyModeled ? IterationStatus::Continue : IterationStatus::Done;
+    };
+    forEachLayoutReachedBy(inputs.program, type, nullptr, ScopedLambda<IterationStatus(LayoutID)>(check));
+    return reachesOnlyModeled;
 }
 
 static TypedResultChoice chooseUnvalidatedResult(FunctionPassContext& context, TypedResultSite site, ExpectedResultID expected)
@@ -236,12 +306,12 @@ static TypedResultChoice chooseUnvalidatedResult(FunctionPassContext& context, T
     TypeID type;
     if (flow.hasResults()) {
         type = flow.typedResultType(call.accessSite());
-        if (!type && findTarget(context, site.call))
+        if (!type && findTypeOfTarget(context, site.call))
             return { .declineReason = TypedResultDeclineReason::TargetIsNotModeledByFlow };
         if (type && !reachesOnlyModeledLayouts({ program, flow, context.build }, call.accessSite(), type))
             return { .declineReason = TypedResultDeclineReason::TargetIsNotModeledByFlow };
     } else
-        type = expected ? program.at(expected).type : findTarget(context, site.call).type;
+        type = expected ? program.at(expected).type : findTypeOfTarget(context, site.call);
     if (!type)
         return { .declineReason = TypedResultDeclineReason::NoTarget };
 

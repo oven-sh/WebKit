@@ -57,7 +57,7 @@ function f3 name="testedByKey" parameters=[{type=number}, {type=string}] results
 # PLAN-NEXT: v2: Heap SeenByNativeCode by v3(0)
 
 function f4 name="reader" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: object ? L0):
+  b0(v0: L0):
     v1 = PropGet v0 key="x"
     v2 = Add v1, v1
     Return v2

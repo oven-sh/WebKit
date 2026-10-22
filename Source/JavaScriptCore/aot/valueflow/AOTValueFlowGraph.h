@@ -10,19 +10,26 @@
 #include "AOTThreads.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueSets.h"
+#include <array>
 #include <atomic>
+#include <bit>
 #include <memory>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/RefPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 // The nodes, the edges between them and the least solution of
-//     value(n) = mask(n) & union of value(p) over the edges p -> n
+//     value(n) = what mask(n) lets through of the union of value(p) over the edges p -> n
 // where a constant node holds its set for ever. Edges and nodes are only ever added, so values only ever grow, and after an addition only what the addition reaches is computed again.
+//
+// A placeholder is a member that stands for whatever one node, the covered node, holds. A node that holds the placeholder and hands on all it gets to the covered node says no more by listing what arrives later:
+// it is retired. What a retired node lists may then be less than the equation says, and what is missing is in the covered node.
 class ValueFlowGraph {
     WTF_MAKE_NONCOPYABLE(ValueFlowGraph);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowGraph);
@@ -32,183 +39,382 @@ public:
     struct Counters {
         uint64_t evaluations { 0 };
         uint64_t edgesLookedAt { 0 };
-        uint64_t sweeps { 0 };
-        uint64_t orderings { 0 };
-        uint64_t edgesAgainstTheOrder { 0 };
-        uint32_t numberOfLevels { 0 };
-        uint32_t numberOfPieces { 0 };
-        uint32_t nodesInCycles { 0 };
-        uint32_t largestCycle { 0 };
+        uint64_t waves { 0 };
+        // A node counts once for each placeholder.
+        uint32_t nodesFlowingIntoCoveredNodes { 0 };
+        uint32_t nodesRetired { 0 };
+        uint32_t edgesStraightIntoCoveredNodes { 0 };
         Seconds rows;
-        Seconds ordering;
-        Seconds sweeping;
+        Seconds waving;
     };
 
     // One maker for each thread of the loops.
     ValueFlowGraph(const ParallelLoops&, Makers);
     ~ValueFlowGraph();
 
-    uint32_t numberOfNodes() const { return m_value.size(); }
+    uint32_t numberOfNodes() const { return m_numberOfNodes; }
     size_t numberOfEdges() const { return m_numberOfEdges; }
-    std::span<const ValueSetID> values() const LIFETIME_BOUND { return m_value.span(); }
+    std::span<const ValueSetID> values() const LIFETIME_BOUND { return m_value.first(m_numberOfNodes); }
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_value[node.index()]; }
     // Once nothing moves any more. Nothing follows from it.
     void setSolvedValue(ValueFlowNodeID node, ValueSetID value) { m_value[node.index()] = value; }
-    ValueSetID maskOf(ValueFlowNodeID node) const { return m_mask[node.index()]; }
+    ValueSetID maskOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].admitted; }
+    ValueFlowMaskKind maskKindOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].kind; }
+    // None where a placeholder passes the mask of the node as a member like any other.
+    ValueSetID familyObjectsOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].familyObjects; }
+    void forEachSuccessor(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
+    {
+        RELEASE_ASSERT(!m_hasReleasedSolvingState);
+        forEachOther(m_successors[node.index()], [&](uint32_t successor) {
+            functor(ValueFlowNodeID(successor));
+        });
+    }
     void forEachPredecessor(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
     {
-        forEachOther(m_predecessors, node.index(), [&](uint32_t predecessor) {
+        if (m_hasReleasedSolvingState) {
+            for (uint32_t index = m_firstPredecessorInRows[node.index()]; index < m_firstPredecessorInRows[node.index() + 1]; ++index)
+                functor(ValueFlowNodeID(m_predecessorsInRows[index]));
+            return;
+        }
+        forEachOther(m_predecessors[node.index()], [&](uint32_t predecessor) {
             functor(ValueFlowNodeID(predecessor));
         });
     }
 
     ValueFlowNodeID addNodes(uint32_t count);
-    // Before the node has a value.
-    enum class MaskKind : uint8_t {
-        // The stand-in passes as what it may stand for.
-        OfType,
-        // What passes is what is in both.
-        Plain,
+    // Before the node has a value. What the kinds and the family objects mean: ValueSetMaker::pass().
+    void setMask(ValueFlowNodeID, ValueSetID, ValueFlowMaskKind = ValueFlowMaskKind::Plain, ValueSetID familyObjects = { });
+    // Before any node has a value. Without them no member stands for another at a mask.
+    void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
+    // Before the first solve, once for a placeholder. From then on a node is retired at the end of a solve if it has no mask, is not at rest, holds all of `whole`,
+    // and reaches the covered node over edges into nodes that have no mask and are not at rest, so that all it gets ends up there.
+    // A retired node keeps what it lists and takes no more members of `coverable`; whatever else arrives it takes as before. Each node with an edge into it gets an edge straight into the covered node.
+    // A covered node is never retired.
+    void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
+    // On account of any placeholder.
+    bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
+    // A placeholder with a covered node does not pass a mask that comes with family objects, and nothing takes its place by itself: what it covers moves.
+    // Lists each node at whose mask one has stopped since the last call, once for a placeholder, in ascending order. Whoever asks connects what the covered node holds of the family objects.
+    struct StoppedPlaceholder {
+        ValueFlowNodeID node;
+        ValueFlowObjectID placeholder;
     };
-    void setMask(ValueFlowNodeID, ValueSetID, MaskKind = MaskKind::OfType);
-    // Before any node has a value. Without it a mask lets through what it admits and nothing else.
-    void setStandIn(const ValueFlowStandIn& standIn) { m_standIn = standIn; }
-    void makeConstant(ValueFlowNodeID, ValueSetID);
+    void takeNodesAtWhichPlaceholdersStopped(Vector<StoppedPlaceholder>&);
+    bool flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID) const;
+    // Beside other threads: each with a worker's number of its own, and a node of its own.
+    void makeConstant(ValueFlowNodeID, ValueSetID, unsigned worker = 0);
     // A node that has just been added holds from the start what its mask lets through of what the other node holds; that does not count as a move.
     void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other);
+    // The same for many: `to` begins with what `from` holds. No `from` is the `to` of another.
+    void startWithValuesOf(std::span<const ValueFlowEdge>);
     // A node at rest keeps what it holds and takes no more. One that is woken takes what it has missed in the next solve.
     void putToRest(ValueFlowNodeID first, uint32_t count);
     void wake(ValueFlowNodeID first, uint32_t count);
-    bool isAtRest(ValueFlowNodeID node) const { return m_isAtRest.quickGet(node.index()); }
+    // A retired node is not at rest: whoever connects something to it still has to, or what is written there never reaches the covered node.
+    bool isAtRest(ValueFlowNodeID node) const { return m_gates[node.index()].flags & IsAtRest; }
 
     // The edges that are there from the start. They are not looked for when an edge is added later: an edge that is there twice does no harm.
     void addInitialEdges(std::span<const ValueFlowEdge>);
     // Leaves out the edges that have been added before. Answers how many had not. The edges may come in any order and with repeats.
     size_t addEdges(std::span<const ValueFlowEdge>);
-    // Whether addEdges() has taken the edge. From any thread while no edge is added.
-    bool hasAdded(ValueFlowEdge edge) const { return m_edgeSet.contains(edge); }
+    // Whether addEdges() has taken the edge, or the graph has made it itself. From any thread while no edge is added.
+    bool hasAdded(ValueFlowEdge edge) const
+    {
+        RELEASE_ASSERT(!m_hasReleasedSolvingState);
+        if (edge.from.index() >= m_numberOfNodes)
+            return false;
+        willUse(edge.from.index());
+        const Links& successors = m_successors[edge.from.index()];
+        if (successors.count > mostSuccessorsScanned)
+            return m_shards[shardOf(edge.from.index())]->edgesOfNodesWithManySuccessors.contains(edge);
+        const uint32_t* others = successors.begin();
+        for (uint32_t index = 0; index < successors.count; ++index) {
+            if (others[index] == edge.to.index())
+                return true;
+        }
+        return false;
+    }
+
+    // Ahead of hasAdded(): first the one for all edges that will be asked after, then the other.
+    void prefetchSuccessorsOf(ValueFlowNodeID from) const
+    {
+        if (from.index() < m_numberOfNodes)
+            __builtin_prefetch(&m_successors[from.index()]);
+    }
+    void prefetchWhereEdgeIsListed(ValueFlowEdge edge) const
+    {
+        if (edge.from.index() >= m_numberOfNodes)
+            return;
+        willUse(edge.from.index());
+        const Links& successors = m_successors[edge.from.index()];
+        if (successors.count > mostSuccessorsScanned)
+            m_shards[shardOf(edge.from.index())]->edgesOfNodesWithManySuccessors.prefetch(edge);
+        else if (successors.count > 2)
+            __builtin_prefetch(successors.block);
+    }
 
     // Brings the values up to date with what has been added since the last call, and lists the nodes whose value has moved, in ascending order.
-    void solve(Vector<ValueFlowNodeID>& moved);
+    enum class RetiredNodes : bool { AreConnectedInSolve, AreConnectedByCaller };
+    void solve(Vector<ValueFlowNodeID>& moved, RetiredNodes = RetiredNodes::AreConnectedInSolve);
+    void prefetchToStartWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other) const
+    {
+        __builtin_prefetch(&m_rows[other.index()]);
+        __builtin_prefetch(&m_value[other.index()]);
+        __builtin_prefetch(&m_gates[node.index()], 1);
+        __builtin_prefetch(&m_rows[node.index()], 1);
+        __builtin_prefetch(&m_value[node.index()], 1);
+    }
+    bool hasNodesJustRetired() const;
+    void connectPredecessorsOfNodesJustRetired();
+
+    // Behind the last solve. Frees what only adding edges and solving read: the set of known edges, the lists that the rows are built from, the successors, what has arrived.
+    // The values, the masks and the predecessors stay.
+    void releaseSolvingState();
+    void releaseRows();
 
     const Counters& counters() const { return m_counters; }
+    // Behind releaseSolvingState(): what it was before.
     size_t memoryInBytes() const;
 
 private:
-    // For each node the nodes at the other end of its edges of one direction, for the edges that were there when the rows were built.
-    struct Rows {
-        std::span<const uint32_t> of(uint32_t node) const LIFETIME_BOUND
-        {
-            if (node + 1 >= start.size())
-                return { };
-            return others.subspan(start[node], start[node + 1] - start[node]);
-        }
+    class Team;
 
-        Vector<uint32_t> start;
-        Vector<uint32_t> others;
+    template<typename T>
+    class ArrayByNode {
+        WTF_MAKE_NONCOPYABLE(ArrayByNode);
+    public:
+        ArrayByNode() = default;
+        ~ArrayByNode();
+
+        void grow(size_t numberInUse, size_t capacity);
+        void release();
+        // The kernel takes as long to take pages back as to hand them out, and it takes them back from several threads at once.
+        void release(Team&);
+        T* data() const { return m_elements; }
+        T& operator[](size_t index) LIFETIME_BOUND { return m_elements[index]; }
+        const T& operator[](size_t index) const LIFETIME_BOUND { return m_elements[index]; }
+        std::span<const T> first(size_t count) const LIFETIME_BOUND { return unsafeMakeSpan(m_elements, count); }
+        size_t memoryInBytes() const { return m_capacity * sizeof(T); }
+
+    private:
+        T* m_elements { nullptr };
+        size_t m_capacity { 0 };
     };
 
-    enum class Direction : uint8_t { Predecessors, Successors };
+    enum Flag : uint8_t {
+        IsAtRest = 1 << 0,
+        IsRetired = 1 << 1,
+        IgnoresArrivals = 1 << 2,
+        IsCoveredNode = 1 << 3,
+    };
 
-    // The same for the few edges that have come since: a chain per node. Adding an edge costs the same however many there are.
-    struct RecentRows {
-        struct Entry {
-            uint32_t other;
-            uint32_t next;
+    struct Gate {
+        uint32_t mask : 24;
+        uint32_t flags : 8;
+    };
+
+    struct Row {
+        uint64_t low;
+        uint32_t set;
+        uint32_t firstArrivalPlusOne;
+    };
+
+    struct Links {
+        const uint32_t* begin() const LIFETIME_BOUND { return count <= 2 ? two : block; }
+
+        union {
+            uint32_t two[2];
+            uint32_t* block;
         };
-
-        void add(std::span<const ValueFlowEdge>, Direction, uint32_t numberOfNodes);
-        void clear();
-
-        // By node; shorter than the nodes are many where the last ones have no entry.
-        Vector<uint32_t> first;
-        Vector<Entry> entries;
+        uint32_t count;
+        uint32_t older;
     };
 
-    struct Adjacency {
-        Rows older;
-        RecentRows recent;
+    class Arena {
+        WTF_MAKE_NONCOPYABLE(Arena);
+    public:
+        Arena() = default;
+        ~Arena();
+
+        uint32_t* allocate(uint32_t numberOfWords);
+        void free(uint32_t* block, uint32_t numberOfWords);
+        void release();
+        size_t memoryInBytes() const { return m_bytes; }
+
+    private:
+        std::array<uint32_t*, 32> m_free { };
+        uint32_t* m_next { nullptr };
+        uint32_t* m_end { nullptr };
+        Vector<void*> m_slabs;
+        size_t m_bytes { 0 };
     };
 
     class EdgeSet {
     public:
         bool add(ValueFlowEdge);
         bool contains(ValueFlowEdge) const;
-        size_t memoryInBytes() const { return m_slots.capacity() * sizeof(uint64_t); }
+        void prefetch(ValueFlowEdge) const;
+        size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
 
     private:
         void grow();
 
-        // Zero for a free slot: no edge leads from node 0 to node 0.
-        Vector<uint64_t> m_slots;
+        MallocSpan<uint64_t> m_slots;
         size_t m_size { 0 };
+    };
+
+    struct Mask {
+        ValueSetID admitted { ValueSets::anything };
+        ValueSetID familyObjects;
+        ValueFlowMaskKind kind { ValueFlowMaskKind::Plain };
+        uint64_t lowMembersAdmitted { 0 };
+
+        bool isSameAs(const Mask& other) const { return admitted == other.admitted && familyObjects == other.familyObjects && kind == other.kind; }
+    };
+
+    struct Covering {
+        ValueFlowObjectID placeholder;
+        uint32_t covered { 0 };
+        uint64_t lowMembersOfWhole { 0 };
+        ValueSetID listedMembersOfWhole;
+        ValueSetID allButCoverable;
+        // What the covered node held when the wave began. Whoever would send it no more than that sends nothing.
+        uint64_t lowMembersHeldByCoveredNode { 0 };
+        uint32_t setHeldByCoveredNode { 0 };
+        BitVector flowsIntoCovered;
+        Vector<uint32_t> nodesJustRetired;
+        BitVector isRetired;
+        BitVector hasStoppedAt;
+        Vector<uint32_t> nodesToLookAt;
     };
 
     struct Worker;
 
-    static Rows buildRows(std::span<const ValueFlowEdge>, Direction, uint32_t numberOfNodes);
-    void takeEdgesIntoRows();
-    void foldRecentRowsIntoOlder();
-
-    static void forEachOther(const Adjacency& adjacency, uint32_t node, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
+    static void forEachOther(const Links& links, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
     {
-        for (uint32_t other : adjacency.older.of(node))
-            functor(other);
-        if (node >= adjacency.recent.first.size())
-            return;
-        for (uint32_t entry = adjacency.recent.first[node]; entry != UINT32_MAX; entry = adjacency.recent.entries[entry].next)
-            functor(adjacency.recent.entries[entry].other);
+        const uint32_t* others = links.begin();
+        for (uint32_t index = 0; index < links.older; ++index)
+            functor(others[index]);
+        for (uint32_t index = links.count; index-- > links.older;)
+            functor(others[index]);
     }
 
-    std::span<const uint32_t> membersOf(uint32_t piece) const LIFETIME_BOUND { return m_members.subspan(m_firstMember[piece], m_firstMember[piece + 1] - m_firstMember[piece]); }
+    static constexpr uint32_t numberOfLowMembers = 64;
+    static constexpr uint32_t mostSuccessorsScanned = 8;
 
-    void order();
-    void makePiecesOfNewNodes();
-    uint32_t levelAfterPredecessorsOf(uint32_t piece) const;
-    ValueSetID pass(ValueSetID, uint32_t node, ValueSetMaker&) const;
-    void listAsDirty(uint32_t piece);
-    void push(ValueSetID, uint32_t piece, Worker&);
-    void pushToNode(ValueSetID, uint32_t node, Worker&);
-    void evaluate(uint32_t piece, Worker&);
-    void listPiecesDirtiedBy(Worker&);
+    static constexpr unsigned numberOfShards = 64;
+    static constexpr unsigned shardOf(uint32_t node) { return node >> 6 & (numberOfShards - 1); }
+    struct Message {
+        uint32_t to;
+        uint32_t set;
+        uint64_t low;
+    };
+    struct Arrival {
+        uint64_t low;
+        uint32_t set;
+        uint32_t nextPlusOne;
+    };
+    struct Arrivals {
+        Vector<uint32_t> nodes;
+        Vector<Arrival> list;
+    };
+    struct alignas(128) Shard {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Shard);
+
+        Arena blocksOfSuccessors;
+        Arena blocksOfPredecessors;
+        EdgeSet edgesOfNodesWithManySuccessors;
+        Arrivals arrivals;
+        std::array<std::array<Vector<Message>, numberOfShards>, 2> messages;
+        Vector<uint32_t> nodesWithRecentSuccessors;
+        Vector<uint32_t> nodesWithRecentPredecessors;
+        Vector<std::pair<uint32_t, uint32_t>> placeholdersStopped;
+    };
+
+    static void addLink(Arena&, Links&, uint32_t other);
+    uint64_t lowMembersOf(ValueSetID, ValueSetMaker&) const;
+    void pass(uint32_t node, uint32_t numberOfMask, uint64_t& low, uint64_t& lowInNoSet, ValueSetID& set, Worker&);
+    void hold(uint32_t node, uint64_t low, ValueSetID value, Worker&);
+    void takeArrival(Arrivals&, const Message&);
+    void takeArrivals(Arrivals&, std::span<const Message>);
+    void evaluate(uint32_t node, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
+    void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
+    void runWave(Team&);
+    void giveBackLargeBuffers();
+
+    // In front of the first look at the rows or the links of a node. See makePagesWritable().
+    ALWAYS_INLINE void willUse(uint32_t node) const
+    {
+        uint32_t page = node >> m_shiftFromNodeToPage;
+        if (!(m_arePagesWritable[page / 64].load(std::memory_order_relaxed) >> page % 64 & 1)) [[unlikely]]
+            makePagesWritable(page);
+    }
+    void makePagesWritable(uint32_t page) const;
+
+    void takeEdgesIntoLists(Team&, std::span<const ValueFlowEdge>);
+    bool addSuccessorIfAbsent(ValueFlowEdge);
+    void countRecentEdgesAsOlder();
+
+    bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
+    bool takesNoMore(uint32_t node) const;
+    void noteWhatCoveredNodesHold();
+    bool didCoveredNodeHoldAllOf(uint32_t covered, uint64_t low, uint32_t set) const;
+    ValueSetID whatRetiredNodeTakes(uint32_t node, ValueSetMaker&) const;
+    void connectPredecessorsOfRetiredNodes(Team&);
+    void connectStraightToCoveredNode(Covering&, uint32_t node);
+    void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
+    void retireNodes(Team&, std::span<const ValueFlowNodeID> moved);
+    void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 
     const ParallelLoops& m_loops;
     Makers m_makers;
+    const ValueSets& m_sets;
+    RefPtr<Team> m_team;
+    ValueSetID m_lowMembers;
 
-    Vector<ValueSetID> m_value;
-    Vector<ValueSetID> m_mask;
-    ValueFlowStandIn m_standIn;
-    BitVector m_hasPlainMask;
-    BitVector m_isAtRest;
+    uint32_t m_numberOfNodes { 0 };
+    size_t m_capacity { 0 };
+    ArrayByNode<Gate> m_gates;
+    ArrayByNode<Row> m_rows;
+    ArrayByNode<Links> m_successors;
+    ArrayByNode<Links> m_predecessors;
+    ArrayByNode<uint32_t> m_firstPredecessorInRows;
+    ArrayByNode<uint32_t> m_predecessorsInRows;
+    ArrayByNode<ValueSetID> m_value;
+    // A bit for the nodes whose rows fill one page, and whose links fill one.
+    mutable Vector<std::atomic<uint64_t>> m_arePagesWritable;
+    unsigned m_shiftFromNodeToPage { 0 };
+
+    Vector<Mask> m_masks;
+    HashedIndex m_numberOfMask;
+    ValueFlowPlaceholders m_placeholders;
     Vector<uint32_t> m_nodesWoken;
 
-    EdgeSet m_edgeSet;
+    Vector<Covering, 2> m_coverings;
+    BitVector m_hasMoved;
+
+    Vector<uint8_t> m_isNewEdge;
     size_t m_numberOfEdges { 0 };
-    Vector<ValueFlowEdge> m_edgesInOlderRows;
-    Vector<ValueFlowEdge> m_edgesInRecentRows;
-    Vector<ValueFlowEdge> m_edgesNotInRows;
-    Adjacency m_predecessors;
-    Adjacency m_successors;
+    size_t m_numberOfOlderEdges { 0 };
+    size_t m_numberOfRecentEdges { 0 };
+    Vector<ValueFlowEdge> m_edgesNotInLists;
+    Vector<ValueFlowEdge> m_edgesOfSolve;
+    Vector<Vector<uint32_t>> m_indicesBySource;
+    Vector<Vector<ValueFlowEdge>> m_edgesByTarget;
 
-    // A piece is what is evaluated at once: a node, or the nodes of a cycle of edges into nodes without a mask, which all hold the same. Pieces are numbered so that, but for the edges against the order,
-    // a piece comes after the pieces it takes from; pieces of one level take nothing from each other.
-    Vector<uint32_t> m_piece;
-    Vector<uint32_t> m_firstMember;
-    Vector<uint32_t> m_members;
-    Vector<uint32_t> m_level;
-    uint32_t m_numberOfNodesWithPiece { 0 };
-    bool m_hasEdgesAgainstTheOrder { false };
-    // In nodes and edges looked at.
-    uint64_t m_workSinceOrdering { 0 };
-
-    // What has arrived at a piece and has not been taken into its value. A piece with something here is listed as dirty.
-    std::unique_ptr<std::atomic<uint32_t>[]> m_pending;
-    size_t m_capacityOfPending { 0 };
-    Vector<uint32_t> m_piecesOfUnequalMembers;
-    Vector<Vector<uint32_t>> m_dirtyOfLevel;
-    size_t m_numberOfDirtyPiecesListed { 0 };
+    Vector<std::unique_ptr<Shard>> m_shards;
+    std::array<Vector<Message>, 2> m_messages;
+    Arrivals m_arrivals;
+    std::atomic<size_t> m_numberOfMessagesWithShards { 0 };
+    unsigned m_parity { 0 };
+    bool m_hasLeftMessagesWithShards { false };
+    bool m_hasSolved { false };
+    bool m_hasReleasedSolvingState { false };
+    size_t m_memoryInBytesBeforeRelease { 0 };
 
     Vector<std::unique_ptr<Worker>> m_workers;
+    Vector<Vector<uint32_t>> m_foundInShare;
+    Vector<uint32_t> m_found;
     Counters m_counters;
 };
 

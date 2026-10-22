@@ -61,8 +61,8 @@ function f3 name="openWithoutStepOrClose" parameters=[{type=anything}] results=[
 # What the open does by itself stays: the tests, and on the failing edges the reads and the call of the protocol.
 # CHECK-LABEL: function f3 name="openWithoutStepOrClose"
 # CHECK: = TypeTest v0 testedType=Array
-# CHECK: key=@@iterator
-# CHECK: key="next"
+# CHECK: [[open3]]: undefined = CallDirect {{*}} function=[[openStringOrIterator]] [isNeverInlined]
+# CHECK: = ResultAt [[open3]] index=1
 
 function f4 name="closeOnlyInLandingBlock" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
   b0(v0: anything, v1: anything):
@@ -80,7 +80,10 @@ function f4 name="closeOnlyInLandingBlock" parameters=[{type=anything}, {type=an
 }
 # CHECK-LABEL: function f4 name="closeOnlyInLandingBlock"
 # CHECK: role=CleanupHandler
-# CHECK: key="return"
+# CHECK: = CallDirect [[subject4]] function=[[closeStringOrIteratorAfterThrow]] [isNeverInlined]
+# CHECK: [[subject4]]: string|object = ResultAt
+# CHECK: function [[openStringOrIterator]] name="openStringOrIterator"
+# CHECK: function [[closeStringOrIteratorAfterThrow]] name="closeStringOrIteratorAfterThrow"
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

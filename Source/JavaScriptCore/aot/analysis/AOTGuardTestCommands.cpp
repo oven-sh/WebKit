@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectSummaries.h"
-#include "AOTFlowAnalysis.h"
 #include "AOTForwardDataflow.h"
 #include <wtf/EnumTraits.h>
 

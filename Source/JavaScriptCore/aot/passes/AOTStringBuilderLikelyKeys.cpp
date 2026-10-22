@@ -33,9 +33,7 @@ public:
     bool run();
 
 private:
-    bool canBeMarked(const Value&) const;
     bool isOnlyUsedAsKey(ValueID string);
-    bool isKeyOperand(const Use&) const;
 
     FunctionPassContext& m_context;
     Function& m_function;
@@ -49,30 +47,13 @@ bool LikelyKeyMarker::run()
     bool didChange = false;
     for (BlockID block : m_context.analyses.cfg().reversePostOrder()) {
         for (ValueID id : m_function.at(block).values) {
-            if (!canBeMarked(m_function.at(id)) || !isOnlyUsedAsKey(id))
+            if (!canBeMarkedAsLikelyKey(m_context.program, m_function, m_function.at(id)) || !isOnlyUsedAsKey(id))
                 continue;
-            Value& string = m_function.at(id);
-            if (string.opcode == Opcode::Add) {
-                Vector<ValueID, 2> parts { string.leftOperand(), string.rightOperand() };
-                string.become(Opcode::Strcat);
-                string.setVariadicOperands(parts.span());
-            }
-            string.setIsLikelyKey(true);
+            markAsLikelyKey(m_function, id);
             didChange = true;
         }
     }
     return didChange;
-}
-
-// Add converts an object with another hint than Strcat does.
-bool LikelyKeyMarker::canBeMarked(const Value& value) const
-{
-    if (Value::opcodesWithIsLikelyKey.contains(value.opcode))
-        return !value.isLikelyKey();
-    if (value.opcode != Opcode::Add || !isStringConcatenation(m_context.program, m_function, value))
-        return false;
-    const Program& program = m_context.program;
-    return isStringBuilderPart(program.typeOf(m_function, value.leftOperand())) && isStringBuilderPart(program.typeOf(m_function, value.rightOperand()));
 }
 
 bool LikelyKeyMarker::isOnlyUsedAsKey(ValueID string)
@@ -81,12 +62,18 @@ bool LikelyKeyMarker::isOnlyUsedAsKey(ValueID string)
     m_visitedValues.set(string.index());
     m_worklist.shrink(0);
     m_worklist.append(string);
+    bool isUsedAsKey = false;
     while (!m_worklist.isEmpty()) {
         std::span<const Use> uses = m_useLists.usesOf(m_worklist.takeLast());
         if (uses.empty())
             return false;
         for (const Use& use : uses) {
-            if (isKeyOperand(use))
+            if (isKeyOperand(m_context.program, m_function, use)) {
+                isUsedAsKey = true;
+                continue;
+            }
+            // As the call by name that stands in where a Map is not what its type says.
+            if (m_function.at(use.block).frequency != BlockFrequency::Normal)
                 continue;
 
             ValueID sameString;
@@ -100,23 +87,44 @@ bool LikelyKeyMarker::isOnlyUsedAsKey(ValueID string)
                 m_worklist.append(sameString);
         }
     }
-    return true;
+    return isUsedAsKey;
 }
 
-bool LikelyKeyMarker::isKeyOperand(const Use& use) const
+} // anonymous namespace
+
+// Add converts an object with another hint than Strcat does.
+bool canBeMarkedAsLikelyKey(const Program& program, const Function& function, const Value& value)
+{
+    if (Value::opcodesWithIsLikelyKey.contains(value.opcode))
+        return !value.isLikelyKey();
+    if (value.opcode != Opcode::Add || !isStringConcatenation(program, function, value))
+        return false;
+    return isStringBuilderPart(program.typeOf(function, value.leftOperand())) && isStringBuilderPart(program.typeOf(function, value.rightOperand()));
+}
+
+void markAsLikelyKey(Function& function, ValueID id)
+{
+    Value& string = function.edit(id);
+    if (string.opcode == Opcode::Add) {
+        Vector<ValueID, 2> parts { string.leftOperand(), string.rightOperand() };
+        string.become(Opcode::Strcat);
+        string.setVariadicOperands(parts.span());
+    }
+    string.setIsLikelyKey(true);
+}
+
+bool isKeyOperand(const Program& program, const Function& function, const Use& use)
 {
     if (use.kind != Use::Kind::Operand)
         return false;
-    const Value& user = m_function.at(use.user);
+    const Value& user = function.at(use.user);
     if (keyedAccesses.contains(user.opcode))
         return use.operandIndex == OperandPosition::property(user.opcode);
     if (user.opcode != Opcode::CallBuiltin || builtinOperandAt(user, use.operandIndex) != BuiltinOperand::argument(0))
         return false;
-    std::optional<InlineBuiltin> builtin = m_context.program.builtins().at(user.overload()).code.implementation.inlineBuiltin;
+    std::optional<InlineBuiltin> builtin = program.builtins().at(user.overload()).code.implementation.inlineBuiltin;
     return builtin && familyOf(*builtin) == InlineBuiltinFamily::HashTableBuiltin;
 }
-
-} // anonymous namespace
 
 bool markLikelyKeys(FunctionPassContext& context)
 {

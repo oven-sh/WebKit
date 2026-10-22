@@ -82,19 +82,14 @@ const TypeTestPlan& OperationEmitter::typeTestPlanFor(TypeID from, Representatio
     return emitter<TypeTestEmitter>().planFor(from, representation, to);
 }
 
-Condition OperationEmitter::hasType(Operand operand, const TypeTestPlan& plan)
+Condition OperationEmitter::hasType(Operand operand, const TypeTestPlan& plan, CodeShape shape)
 {
-    return emitter<TypeTestEmitter>().emitBoolean(operand, plan);
+    return emitter<TypeTestEmitter>().emitBoolean(operand, plan, shape);
 }
 
-void OperationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+void OperationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, BranchTargets targets, CodeShape shape)
 {
-    emitter<TypeTestEmitter>().emitBranch(operand, plan, targets);
-}
-
-void OperationEmitter::requireType(const OperationContext& context, Operand operand, const TypeTestPlan& plan, TypeSiteID site)
-{
-    emitter<TypeTestEmitter>().emitThrow(context, operand, plan, site);
+    emitter<TypeTestEmitter>().emitBranch(operand, plan, targets, shape);
 }
 
 void OperationEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType)

@@ -83,7 +83,7 @@ static JSValue describeHeap(const TableDescription& description, AbstractHeap he
 template<typename ID>
 static JSValue describeToken(const TableDescription& description, ID id)
 {
-    return id ? describeText(description, description.table.tokenOf(id).toString()) : jsNull();
+    return id ? describeText(description, makeString(description.table.tokenOf(id))) : jsNull();
 }
 
 static JSValue describeFunction(RuntimeFunctionID id)
@@ -253,6 +253,7 @@ static JSObject* describePlace(const TableDescription& description, const Builti
         return object;
     case BuiltinPlaceKind::ResultField:
         put(description, object, "index"_s, jsNumber(place.fieldIndex));
+        put(description, object, "holdsOnlyWhatIsStored"_s, jsBoolean(place.holdsOnlyWhatIsStored));
         return object;
     case BuiltinPlaceKind::NewValue: {
         JSObject* type = describeType(description, place.newValueType);
@@ -386,6 +387,8 @@ static JSObject* describeParameter(const TableDescription& description, const Bu
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSObject* refused = describeType(description, parameter.refused);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* admitted = parameter.admitted ? describeType(description, parameter.admitted) : nullptr;
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSArray* uses = describeWords(description, operandUseWords, parameter.uses);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSArray* roles = describeWords(description, builtinOperandRoleWords, parameter.roles);
@@ -404,6 +407,7 @@ static JSObject* describeParameter(const TableDescription& description, const Bu
     put(description, object, "conversion"_s, describeWord(description, builtinConversionWords, parameter.conversion));
     put(description, object, "converted"_s, converted);
     put(description, object, "refused"_s, refused);
+    put(description, object, "admitted"_s, admitted ? JSValue(admitted) : jsNull());
     put(description, object, "uses"_s, uses);
     put(description, object, "roles"_s, roles);
     put(description, object, "protocols"_s, protocols);
@@ -483,6 +487,7 @@ static JSObject* describeOverload(const TableDescription& description, BuiltinOv
     put(description, object, "result"_s, result);
     put(description, object, "capability"_s, describeWord(description, builtinCapabilityWords, overload.effects.capability));
     put(description, object, "throws"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::Throws)));
+    put(description, object, "onlyPropagatesErrors"_s, jsBoolean(overload.onlyPropagatesErrors()));
     put(description, object, "runsOnlyOperandCode"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode)));
     put(description, object, "readsStateBeforeConversions"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::ReadsStateBeforeConversions)));
     put(description, object, "isSpecialCase"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsSpecialCase)));
@@ -566,6 +571,7 @@ static JSObject* describeClass(const TableDescription& description, BuiltinClass
     put(description, object, "instanceTest"_s, describeWord(description, builtinInstanceTestWords, builtinClass.instanceTest));
     put(description, object, "isPrimitiveWrapper"_s, jsBoolean(builtinClass.isPrimitiveWrapper));
     put(description, object, "isNeverPristine"_s, jsBoolean(builtinClass.isNeverPristine));
+    put(description, object, "pristineTest"_s, describeWord(description, builtinPristineTestWords, builtinClass.pristineTest));
     put(description, object, "hasClosureInstances"_s, jsBoolean(builtinClass.hasClosureInstances));
     put(description, object, "definesCharactersOnNewInstances"_s, jsBoolean(builtinClass.definesCharactersOnNewInstances));
     JSValue namesDefinedOnNewInstances = jsNull();

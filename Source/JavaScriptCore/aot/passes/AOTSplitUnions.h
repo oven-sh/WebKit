@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectsCheck.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPropertyAccess.h"
@@ -19,15 +20,26 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct ValueSite {
-    BlockID block;
-    uint32_t index { 0 };
-    ValueID value;
-
-    ProgramPoint point() const { return { block, index }; }
-};
-
 void forEachValueSite(FunctionAnalyses&, const Function&, NOESCAPE const ScopedLambda<void(const ValueSite&)>&);
+
+// The functor may not edit the blocks or their lists.
+void forEachValueSite(FunctionAnalyses& analyses, const Function& function, const OpcodeSet& wanted, NOESCAPE const Invocable<void(const ValueSite&)> auto& functor)
+{
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        std::span<const ValueID> values = function.at(block).values.span();
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (wanted.contains(function.at(values[index]).opcode))
+                functor(ValueSite { block, index, values[index] });
+        }
+    }
+}
+
+// The operations for which isNamedAccess() or elementAccessOf() answers. SplitUnions looks at no other.
+inline constexpr OpcodeSet accessesByNameOrKey {
+    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
+    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
+    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
+};
 
 void checkRewrite(FunctionPassContext&, const ValueSite&, const ReplacedEffects&);
 
@@ -117,11 +129,8 @@ struct AccessesResolvedOnParts {
 
 AccessesResolvedOnParts countAccessesResolvedOnParts(FunctionPassContext&, std::span<const ValueID> receivers, const UnionParts&);
 
-enum class SplitReason : uint8_t { UnionParts, MemberArms, ConstantKeys, NumberKey };
-
 struct PlannedSplit {
     ValueSite site;
-    SplitReason reason { SplitReason::UnionParts };
     uint32_t operandIndex { 0 };
     ValueSplit split;
     Vector<LayoutSetID, 4> armReceivers;
@@ -141,7 +150,7 @@ private:
     Vector<PlannedSplit> planSplits();
     std::optional<PlannedSplit> planSplit(const ValueSite&);
     std::optional<PlannedSplit> planSplitByParts(const ValueSite&, uint32_t operandIndex);
-    std::optional<PlannedSplit> planSplitByArms(const ValueSite&);
+    std::optional<PlannedSplit> planSplitByArms(const ValueSite&, const PropertyAccessQuery&, const PropertyAccessPlan&);
     std::optional<PlannedSplit> planSplitByKeys(const ValueSite&);
     std::optional<PlannedSplit> planSplitOfNumberKey(const ValueSite&);
     void moveToMemberCall(PlannedSplit&);

@@ -14,6 +14,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PropertySlot.h"
+#include <algorithm>
 
 namespace JSC::AOT {
 
@@ -142,6 +143,35 @@ static void testGlobalProxyOfAnotherRealmIsNotFollowed(LoadedProgram& program)
     AOT_TEST_CHECK(!fixture.hasRow(proxy));
 }
 
+static void testFailedFillsAreAskedForMoreRarely(LoadedProgram& program)
+{
+    SiteOfSharedName fixture(program);
+    auto missesLeft = [&] {
+        return fixture.caches.siteCaches().stateOf(fixture.site).missesLeft;
+    };
+    JSObject* unfiled = constructEmptyObject(program.realm());
+    unfiled->putDirect(program.vm(), Identifier::fromString(program.vm(), "other"_s), jsNumber(1));
+    unfiled->putDirect(program.vm(), fixture.shared, jsNumber(8));
+    AOT_TEST_CHECK(!fixture.isInHashedTable(unfiled) && !fixture.hasRow(unfiled));
+
+    // The stubs count the misses of all empty sites together: how soon an empty site asks again does not depend on how often its fill has failed.
+    for (unsigned failures = 0; failures < 3; ++failures) {
+        fixture.caches.fillSiteCacheFromTables(fixture.site, unfiled, fixture.number, SlotAccess::Read);
+        AOT_TEST_CHECK(fixture.site->get().isEmpty() && missesLeft() == SiteCacheState::missesBeforeRefill(0));
+    }
+
+    JSObject* filed = createObjectWithSharedName(fixture);
+    AOT_TEST_CHECK(filed->structure() != unfiled->structure() && holdsOwnValueOf(fixture.readAndFill(filed), filed));
+    for (unsigned failures = 0; failures < SiteCacheState::maxRefillCount + 2; ++failures) {
+        unsigned refillCount = fixture.caches.siteCaches().stateOf(fixture.site).refillCount;
+        fixture.caches.fillSiteCacheFromTables(fixture.site, unfiled, fixture.number, SlotAccess::Read);
+        AOT_TEST_CHECK(holdsOwnValueOf(fixture.site->get(), filed));
+        AOT_TEST_CHECK(missesLeft() == SiteCacheState::missesBeforeRefill(refillCount));
+        AOT_TEST_CHECK(fixture.caches.siteCaches().stateOf(fixture.site).refillCount == std::min(refillCount + 1, SiteCacheState::maxRefillCount));
+    }
+    AOT_TEST_CHECK(missesLeft() == SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount));
+}
+
 static constexpr ASCIILiteral programWithClassText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Holder" module=m0 constructor=f1
@@ -221,7 +251,8 @@ static void testMembersOfClassFillSites()
         "method replaced: 8, no fill\n"
         "method shadowed: 9, no fill\n"
         "method behind a proxy: 10, asks for fills\n"_s,
-        { }, statementsUsingMembersOfClass, { "--aotCountsPath=/dev/null"_s });
+        // Hot: outside fast code a call of a method is one call of a stub and has no site cache to fill.
+        { "heat=EverythingIsHot"_s }, statementsUsingMembersOfClass, { "--aotCountsPath=/dev/null"_s });
 }
 
 template<LoadedProgramTest body>
@@ -234,6 +265,7 @@ std::span<const NativeTest> siteCacheFillTests()
         { "site-cache-fill/dictionary-gets-no-row"_s, withProgram<testDictionaryGetsNoRow> },
         { "site-cache-fill/global-proxy-follows-global-object"_s, withProgram<testGlobalProxyFollowsGlobalObject> },
         { "site-cache-fill/global-proxy-of-another-realm-is-not-followed"_s, withProgram<testGlobalProxyOfAnotherRealmIsNotFollowed> },
+        { "site-cache-fill/failed-fills-are-asked-for-more-rarely"_s, withProgram<testFailedFillsAreAskedForMoreRarely> },
         { "site-cache-fill/members-of-class-fill-sites"_s, testMembersOfClassFillSites },
     };
     return tests;

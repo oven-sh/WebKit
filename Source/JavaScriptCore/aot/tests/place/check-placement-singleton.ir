@@ -13,8 +13,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Call v1, -, v2
     Return
 }
-function f1 name="Point" flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=anything}] {
-  b0(v0: anything):
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
     v1 = Integer integer=1
     PropSet v0, v1 key="x" mode=Strict
     Return

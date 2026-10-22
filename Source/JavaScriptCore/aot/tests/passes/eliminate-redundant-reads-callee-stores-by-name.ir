@@ -10,27 +10,27 @@
 # CHECK: CallDirect {{*}}function=f2
 # CHECK: GetSlot {{*}}key="a" receivers=[L1]
 
-layout L0 module=m0 position=686 fields=[{key="a" declared={type=anything predicted=number} flags=[IsRequired]}]
-layout L1 module=m0 position=554 fields=[{key="a" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L0 module=m0 position=686 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+layout L1 module=m0 position=554 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 name="pad" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="callsStores" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
-variable g2 name="stores" module=m0 declared={type=anything|absent predicted=function} flags=[IsImmutable]
+variable g2 name="stores" module=m0 declared={type=function|absent flags=[IsExpected]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     Jump -> next b1() @0
   b1():
     v0 = NewClosure function=f3 @0
-    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v1 = Convert v0 declared={type=function flags=[IsExpected]} @0
     v2 = NewClosure function=f4 @0
-    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v3 = Convert v2 declared={type=function flags=[IsExpected]} @0
     v4 = NewClosure function=f5 @0
-    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @0
     v6 = NewClosure function=f6 @159
-    v7 = Predict v6 predicted=function @150
+    v7 = Convert v6 declared={type=function flags=[IsExpected]} @150
     PutModuleVariable v7 variable=g2 @150
     v9 = Integer @512
-    v10 = Predict v9 predicted=number @508
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @508
     Jump -> next b2(v10) @508
   b2(v11):
     LoopHint @508
@@ -40,12 +40,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b3(v15):
     Jump -> next b4() @515
   b4():
-    v16 = Predict v1 predicted=function @547
-    v17 = ClaimDeclared v15 declared={type=anything predicted=number} @556
+    v16 = Convert v1 declared={type=function flags=[IsExpected]} @547
+    v17 = Convert v15 declared={type=number flags=[IsExpected]} @556
     v18 = NewObject -, v17 layout=L1 fields=[0] @554
     v19 = FinishObject v18 @554
     v20 = Call v16, -, v19 calleeName="around" @547
-    v21 = Predict v20 predicted=number @547
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @547
     v22 = Integer integer=1000 @585
     v23 = Mul v15, v22 @581
     v24 = Integer integer=50 @592
@@ -58,27 +58,27 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Jump -> next b7() @604
   b7():
     v28 = Increment v15 @524
-    v29 = ClaimDeclared v28 declared={type=anything predicted=number} @524
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @524
     Jump -> next b2(v29) @524
   b8(v30):
     Jump -> next b9() @573
   b9():
     v31 = Builtin builtin=GlobalThis @614
     v32 = PropGet v31 key="Error" [isFreeName] @614
-    v33 = Predict v32 predicted=builtin(Error) @614
+    v33 = Convert v32 declared={type=builtin(Error) flags=[IsExpected]} @614
     v34 = String string="got " @620
     v35 = Add v34, v30 @620
     v36 = String string=" at " @635
     v37 = Add v35, v36 @620
     v38 = Add v37, v15 @620
     v39 = Construct v33, -, v38 calleeName="Error" @614
-    v40 = Predict v39 predicted=Error @610
+    v40 = Convert v39 declared={type=Error flags=[IsExpected]} @610
     Throw v40 @604
   b10(v41):
     Jump -> next b11() @515
   b11():
-    v42 = Predict v5 predicted=function @650
-    v43 = Predict v3 predicted=function @655
+    v42 = Convert v5 declared={type=function flags=[IsExpected]} @650
+    v43 = Convert v3 declared={type=function flags=[IsExpected]} @655
     v44 = Call v42, -, v43 calleeName="keep" @650
     v45 = NewObject layout=L0 @692
     v46 = NewClosure function=f7 @692
@@ -86,7 +86,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v48 = NewClosure function=f8 @706
     DefineGetter v45, v48 key="a" @706
     v50 = FinishObject v45 @686
-    v51 = Predict v50 predicted=L0 @673
+    v51 = Convert v50 declared={type=L0 flags=[IsExpected]} @673
     v52 = Builtin builtin=GlobalThis @727
     v53 = PropGet v52 key="print" [isFreeName] @727
     v54 = Boolean boolean=true @755
@@ -99,7 +99,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v61 = Undefined @763
     Return v61 @763
 }
-function f1 name="pad" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=number}] {
+function f1 name="pad" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1() @0
   b1():
@@ -140,10 +140,10 @@ function f1 name="pad" module=m0 flags=[HasExplicitName] length=1 thisType={type
     v35 = Integer integer=2 @140
     v36 = URShift v34, v35 @128
     v37 = Add v32, v36 @25
-    v38 = ClaimDeclared v37 declared={type=anything predicted=number} @25
+    v38 = Convert v37 declared={type=number flags=[IsExpected]} @25
     Return v38 @25
 }
-function f2 name="callsStores" module=m0 position=187 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=number}] {
+function f2 name="callsStores" module=m0 position=187 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1() @187
   b1():
@@ -151,47 +151,47 @@ function f2 name="callsStores" module=m0 position=187 flags=[HasExplicitName] le
     v2 = CheckInitialized v1 name="stores" @213
     v3 = Call v2, -, v0 calleeName="stores" @213
     v4 = GetModuleVariable variable=g0 @231
-    v5 = Predict v4 predicted=function @231
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @231
     v6 = Integer integer=1 @235
     v7 = Call v5, -, v6 calleeName="pad" @231
-    v8 = Predict v7 predicted=number @231
+    v8 = Convert v7 declared={type=number flags=[IsExpected]} @231
     v9 = GetModuleVariable variable=g0 @240
-    v10 = Predict v9 predicted=function @240
+    v10 = Convert v9 declared={type=function flags=[IsExpected]} @240
     v11 = Integer integer=2 @244
     v12 = Call v10, -, v11 calleeName="pad" @240
-    v13 = Predict v12 predicted=number @240
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @240
     v14 = Add v8, v13 @231
     v15 = GetModuleVariable variable=g0 @249
-    v16 = Predict v15 predicted=function @249
+    v16 = Convert v15 declared={type=function flags=[IsExpected]} @249
     v17 = Integer integer=3 @253
     v18 = Call v16, -, v17 calleeName="pad" @249
-    v19 = Predict v18 predicted=number @249
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @249
     v20 = Add v14, v19 @231
     v21 = GetModuleVariable variable=g0 @258
-    v22 = Predict v21 predicted=function @258
+    v22 = Convert v21 declared={type=function flags=[IsExpected]} @258
     v23 = Integer integer=4 @262
     v24 = Call v22, -, v23 calleeName="pad" @258
-    v25 = Predict v24 predicted=number @258
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @258
     v26 = Add v20, v25 @231
-    v27 = ClaimDeclared v26 declared={type=anything predicted=number} @231
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @231
     Return v27 @231
 }
-function f3 name="around" module=m0 position=268 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything predicted=number}] {
+function f3 name="around" module=m0 position=268 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything):
     Jump -> next b1() @268
   b1():
     v1 = PropGet v0 key="a" @304
     v2 = GetModuleVariable variable=g1 @319
-    v3 = Predict v2 predicted=function @319
+    v3 = Convert v2 declared={type=function flags=[IsExpected]} @319
     v4 = Call v3, -, v0 calleeName="callsStores" @319
-    v5 = Predict v4 predicted=number @319
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @319
     v6 = Integer integer=1000 @351
     v7 = Mul v1, v6 @342
     v8 = PropGet v0 key="a" @358
     v9 = Add v7, v8 @342
     v10 = Add v9, v5 @342
     v11 = Sub v10, v5 @342
-    v12 = ClaimDeclared v11 declared={type=anything predicted=number} @342
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @342
     Return v12 @342
 }
 function f4 name="onOnePath" module=m0 position=373 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -232,19 +232,19 @@ function f6 name="stores" module=m0 position=159 length=1 thisType={type=anythin
     v3 = Undefined @174
     Return v3 @174
 }
-function f7 name="a" module=m0 position=688 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+function f7 name="a" module=m0 position=688 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     Jump -> next b1() @688
   b1():
     v1 = Undefined @694
     Return v1 @694
 }
-function f8 name="a" module=m0 position=702 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=number}] {
+function f8 name="a" module=m0 position=702 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
   b0():
     Jump -> next b1() @702
   b1():
     v0 = Integer integer=3 @719
-    v1 = ClaimDeclared v0 declared={type=anything predicted=number} @719
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @719
     Return v1 @719
 }
 entry module=m0

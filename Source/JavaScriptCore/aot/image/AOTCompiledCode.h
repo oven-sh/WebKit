@@ -60,8 +60,9 @@ struct CodeBody {
 
     Vector<uint8_t> bytes;
     uint32_t paddingStart { 0 };
+    uint32_t sizeOfHotBlocks { 0 };
     Vector<CodeEntry, 1> entries;
-    Vector<CodeUnit> units;
+    PackedCodeUnits units;
     Vector<LinkedSite> localSites;
     Vector<Relocation> relocations;
     Vector<ReturnSite> returnSites;
@@ -92,6 +93,8 @@ struct FrameDescription {
     bool hasFrameAt(uint32_t offset) const;
 
     unsigned frameSizeInBytes { 0 };
+    bool hasFrameRecord { true };
+    bool spillsArgumentRegisters { false };
     RegisterAtOffsetList calleeSaveRegisters;
     Vector<CodeRange, 1> frameRanges;
     uint32_t stackUsedAtCalls { 0 };
@@ -111,8 +114,10 @@ inline bool FrameDescription::hasFrameAt(uint32_t offset) const
 
 struct EntryDescription {
     uint8_t numberOfParameters { 0 };
+    // ClosureWord::borrowsArgumentShift.
+    uint8_t borrowedArguments { 0 };
+    bool endsItsTailCalls { false };
     bool isGenericEntrypoint { false };
-    bool hasValueEntry { false };
 };
 
 struct SitePosition {

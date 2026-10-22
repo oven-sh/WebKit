@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
+#include "AOTProgramCaches.h"
 #include "AOTRemoveUnusedResults.h"
 #include "AOTThreads.h"
 
@@ -17,7 +18,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-using ResultSets = Vector<BitVector>;
+struct ResultSet {
+    BitVector retained;
+    bool isReadByCode { false };
+};
+
+using ResultSets = Vector<ResultSet>;
 
 struct ResultVersion {
     Function function;
@@ -40,22 +46,30 @@ struct CommittedVersions {
 
 static constexpr size_t maxGrowthDenominator = 8;
 
-static Vector<ResultSets> collectResultSets(size_t functionCount, const Vector<ResultCallSiteList>& callers, BuildContext& build)
+static Vector<ResultSets> collectResultSets(size_t functionCount, const Vector<ResultCallSiteList>& callers, BuildContext& build, const Invocable<bool(FunctionID)> auto& getsCode)
 {
     uint64_t maxSets = build.limit(LimitID::MaxResultClones);
     Vector<ResultSets> resultSets(functionCount);
     BitVector exceedsMaxSets(functionCount);
     for (auto& list : callers) {
+        bool isReadByCode = getsCode(list.caller);
         for (auto& site : list.sites) {
             BitVector retained = site.readResults;
             if (retained.isEmpty())
                 retained.set(0);
             size_t callee = site.callee.index();
             auto& sets = resultSets[callee];
-            if (exceedsMaxSets.quickGet(callee) || sets.contains(retained))
+            if (exceedsMaxSets.quickGet(callee))
                 continue;
+            size_t known = sets.findIf([&](const ResultSet& set) {
+                return set.retained == retained;
+            });
+            if (known != notFound) {
+                sets[known].isReadByCode |= isReadByCode;
+                continue;
+            }
             if (sets.size() < maxSets) {
-                sets.append(WTF::move(retained));
+                sets.append(ResultSet { WTF::move(retained), isReadByCode });
                 continue;
             }
             exceedsMaxSets.quickSet(callee);
@@ -99,15 +113,16 @@ static Vector<ResultVersion> tryCreateVersions(const PassRunner& runner, const P
     };
     BitVector allRead;
     for (auto& set : resultSets)
-        allRead.merge(set);
+        allRead.merge(set.retained);
     size_t sharedSize = numberOfListedValues(createVersion(allRead));
     size_t maxTotalSize = sharedSize + sharedSize / maxGrowthDenominator;
 
     size_t totalSize = 0;
     Vector<ResultVersion> versions;
     for (auto& set : resultSets) {
-        Function version = createVersion(set);
-        totalSize += numberOfListedValues(version);
+        Function version = createVersion(set.retained);
+        if (set.isReadByCode)
+            totalSize += numberOfListedValues(version);
         if (totalSize > maxTotalSize)
             return { };
         versions.append({ WTF::move(version), { } });
@@ -123,11 +138,14 @@ static Vector<Vector<ResultVersion>> createVersions(ProgramEditor& editor, const
     const ParallelLoops& loops = runner.build().parallelLoops();
     Vector<Vector<ResultVersion>> versions(candidates.size());
     InterningPhases phases(editor, candidates.size());
-    forEachIndexInParallel(loops, candidates.size(), [&](unsigned task) {
-        FunctionID original = candidates[task];
-        TaskArenas arenas(phases, task);
-        versions[task] = tryCreateVersions(runner, program, inputs, original, resultSets[original.index()], arenas);
-    });
+    {
+        ProgramCaches caches(program, runner.build());
+        forEachIndexInParallel(loops, candidates.size(), [&](unsigned task) {
+            FunctionID original = candidates[task];
+            TaskArenas arenas(phases, task);
+            versions[task] = tryCreateVersions(runner, program, inputs, original, resultSets[original.index()], arenas);
+        });
+    }
     BodyRemaps remaps = phases.finish();
     if (remaps.isIdentity())
         return versions;
@@ -136,6 +154,12 @@ static Vector<Vector<ResultVersion>> createVersions(ProgramEditor& editor, const
             applyRemaps(remaps, version.function);
     });
     return versions;
+}
+
+// What a call of the version is proven to give. Nothing checks what arrives at an expected position.
+static TypeID provenResultTypeOf(const DeclaredType& result)
+{
+    return result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type;
 }
 
 static void initializeCloneDerivation(Function& clone)
@@ -156,7 +180,7 @@ static CommittedVersions commitVersions(ProgramEditor& editor, const Vector<Func
         for (size_t index = 0; index < versions[task].size(); ++index) {
             auto& version = versions[task][index];
             auto& results = version.function.results;
-            TypeID singleResultType = results.size() == 1 ? results[0].type : TypeID();
+            TypeID singleResultType = results.size() == 1 ? provenResultTypeOf(results[0]) : TypeID();
             FunctionID id = original;
             if (!index)
                 editor.replaceFunction(original, WTF::move(version.function));
@@ -165,7 +189,7 @@ static CommittedVersions commitVersions(ProgramEditor& editor, const Vector<Func
                 id = editor.addFunctionLike(original, WTF::move(version.function));
                 ++committed.numberOfClones;
             }
-            committed.byOriginal[original.index()].append({ &resultSets[original.index()][index], id, singleResultType });
+            committed.byOriginal[original.index()].append({ &resultSets[original.index()][index].retained, id, singleResultType });
             if (!version.sites.isEmpty())
                 committed.callers.append({ id, WTF::move(version.sites) });
         }
@@ -203,23 +227,30 @@ static void retargetCallSites(ProgramEditor& editor, const ResultCallSiteList& l
 void FreshResultSplitter::cloneWorkersByReadResults()
 {
     Vector<ResultCallSiteList> callers = collectAllResultCallSites(program(), build());
-    Vector<ResultSets> resultSets = collectResultSets(program().functions.size(), callers, build());
+    Vector<ResultSets> resultSets = collectResultSets(program().functions.size(), callers, build(), [&](FunctionID caller) {
+        return !isWrapperThatNoCodeNames(caller);
+    });
     Vector<FunctionID> candidates = findCloneCandidates(program(), m_inputs.callGraph, build(), resultSets);
-    if (candidates.isEmpty())
+    if (candidates.isEmpty()) {
+        build().destroyLater(WTF::move(resultSets));
+        build().destroyLater(WTF::move(callers));
         return;
+    }
 
     CommittedVersions committed = commitVersions(m_editor, candidates, resultSets, createVersions(m_editor, m_inputs, m_runner, candidates, resultSets));
-    if (!committed.numberOfClones)
-        return;
-
-    callers.removeAllMatching([&](auto& list) {
-        return !committed.byOriginal[list.caller.index()].isEmpty();
-    });
-    callers.appendVector(WTF::move(committed.callers));
-    forEachIndexInParallel(build().parallelLoops(), callers.size(), [&](unsigned index) {
-        retargetCallSites(m_editor, callers[index], committed);
-    });
-    build().statistics().count(StatisticID::ResultClonesCreated, committed.numberOfClones);
+    if (committed.numberOfClones) {
+        callers.removeAllMatching([&](auto& list) {
+            return !committed.byOriginal[list.caller.index()].isEmpty();
+        });
+        callers.appendVector(WTF::move(committed.callers));
+        forEachIndexInParallel(build().parallelLoops(), callers.size(), [&](unsigned index) {
+            retargetCallSites(m_editor, callers[index], committed);
+        });
+        build().statistics().count(StatisticID::ResultClonesCreated, committed.numberOfClones);
+    }
+    build().destroyLater(WTF::move(committed));
+    build().destroyLater(WTF::move(resultSets));
+    build().destroyLater(WTF::move(callers));
 }
 
 } } } // namespace JSC::AOT::Typed

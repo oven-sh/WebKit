@@ -94,6 +94,12 @@ static NEVER_INLINE void installWebAssemblyInterpreter(JSC::Opcode* opcodeMap, J
 #endif
 }
 
+static NEVER_INLINE void installInterpretersOfTrimmedExecutable(JSC::Opcode* opcodeMap, JSC::Opcode* opcodeMapWide16, JSC::Opcode* opcodeMapWide32)
+{
+    callRemovable<RemovableFeature::Interpreter, RemovedFeatureStub::ReturnDefault, installBytecodeInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::ReturnDefault, installWebAssemblyInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+}
+
 #endif // !ENABLE(C_LOOP)
 
 #if CPU(ARM64E)
@@ -194,8 +200,12 @@ void initialize()
 
     // Step 1: fill in opcodeMaps.
     llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
-    callRemovable<RemovableFeature::Interpreter, RemovedFeatureStub::ReturnDefault, installBytecodeInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
-    callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::ReturnDefault, installWebAssemblyInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    if (Bun__removableFeatureState.isTrimmed) [[unlikely]]
+        installInterpretersOfTrimmedExecutable(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    else {
+        callRemovable<RemovableFeature::Interpreter, RemovedFeatureStub::Abort, installBytecodeInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+        callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::Abort, installWebAssemblyInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    }
 
 #if CPU(ARM64E)
     for (size_t i = 0; i < numOpcodeIDs; ++i) {
@@ -224,8 +234,8 @@ void initialize()
 #endif
 
 #if ENABLE(WEBASSEMBLY)
-    if (Options::useWasm())
-        callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::ReturnDefault, IPInt::verifyInitialization>();
+    if (g_opcodeConfig.ipint_dispatch_base)
+        callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::Abort, IPInt::verifyInitialization>();
 #endif
 
     static_assert(llint_throw_from_slow_path_trampoline < UINT8_MAX);

@@ -3,7 +3,7 @@
 # CHECK: unseen EvaluatesText Eval f2:v2
 # CHECK: unseen-code yes
 
-module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
 entry module=m0
 variable g0 name="kept" module=m1 declared={type=anything} initialization=Undefined

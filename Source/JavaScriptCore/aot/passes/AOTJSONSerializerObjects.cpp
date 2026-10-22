@@ -8,8 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessReceivers.h"
-#include "AOTSelectTypedResultsTypeNodes.h"
+#include "AOTResultRules.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -78,7 +79,7 @@ void JSONSerializerBuilder::appendObjects(ValueID value, const ValuePlan& plan, 
         appendCallOfSerializer(tested.object, layout, unknown);
         if (position.endsWithComma())
             appendToken(JSONToken::Comma);
-        leaveAfterUnknownCode();
+        leaveIfWritingRunsCode(tested.object);
         jumpTo(done);
 
         builder().moveToEndOf(unknown);
@@ -95,7 +96,7 @@ void JSONSerializerBuilder::appendObjects(ValueID value, const ValuePlan& plan, 
     if (afterSerializerGaveUp != generic) {
         builder().moveToEndOf(afterSerializerGaveUp);
         appendByHost(object, position);
-        leaveAfterUnknownCode();
+        leaveIfWritingRunsCode(object);
         jumpTo(done);
     }
     continueAt(done);
@@ -141,7 +142,7 @@ auto JSONSerializerBuilder::groupKeyOrders(LayoutID layout, std::span<const KeyO
             case JSONMemberSupport::ByName:
                 return false;
             case JSONMemberSupport::Slot:
-                return !!(program().at(fields[field].declared.type).primitives & Primitive::Undefined);
+                return !!(program().at(fields[field].slotType ? fields[field].slotType : fields[field].declared.type).primitives & Primitive::Undefined);
             }
             RELEASE_ASSERT_NOT_REACHED();
         });
@@ -223,6 +224,7 @@ void JSONSerializerBuilder::appendKeyOrderArms(const TestedObject& tested, Layou
         build.exceeds(LimitID::MaxExpandedKeyOrders, maxArms + numberOfArmsLeftOut, Subject { .function = inputs().functionAsRead, .layout = layout });
 
     const Vector<Field>& fields = program().at(layout).fields;
+    TypingContext typing { program(), function(), inputs().types };
     for (const KeyOrderFamily& family : families) {
         bool isLastFamily = &family == &families.last();
         BlockID next = builder().addBlock(isLastFamily ? BlockFrequency::Rare : BlockFrequency::Normal);
@@ -233,9 +235,10 @@ void JSONSerializerBuilder::appendKeyOrderArms(const TestedObject& tested, Layou
             if (jsonMemberSupportOf(program(), inputs().flow, layout, fieldIndex) == JSONMemberSupport::NotSerialized)
                 continue;
             const Field& field = fields[fieldIndex];
-            TypeID expectation = expectationOf(field.declared);
-            const Type* predicted = expectation == field.declared.type ? nullptr : &program().at(expectation);
-            arm.members.append(Member { field.key, fieldIndex, position, planType(program().at(field.declared.type), predicted) });
+            bool holdsMoreThanDeclared = field.slotType || field.declared.flags.contains(PositionFlags::IsExpected);
+            Type proven = field.slotType ? program().at(slotTypeOf(program(), field)) : typing.typeOf(field.declared);
+            const Type* expected = holdsMoreThanDeclared ? &program().at(field.declared.type) : nullptr;
+            arm.members.append(Member { field.key, fieldIndex, position, planType(proven, expected) });
         }
 
         TestedKeyOrder order = emitKeyOrderTests(tested, arm, next);
@@ -288,7 +291,7 @@ void JSONSerializerBuilder::appendMember(ObjectArm& arm, size_t index, MemberLis
     }
 
     const Type& type = typeOf(value);
-    bool mayBeOmitted = plan.kind == ValueKind::Generic || plan.certainty == TypeCertainty::Predicted || (type.primitives & primitivesWithoutJSONText) || type.hasObjects();
+    bool mayBeOmitted = plan.kind == ValueKind::Generic || plan.certainty == TypeCertainty::Expected || (type.primitives & primitivesWithoutJSONText) || type.hasObjects();
     if (mayBeOmitted) {
         if (std::optional<JSONToken> separator = separatorAfter(memberList)) {
             appendToken(*separator);

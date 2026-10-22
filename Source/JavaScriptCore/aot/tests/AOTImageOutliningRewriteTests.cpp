@@ -536,7 +536,9 @@ static void testAliasBeforeBodyStays()
 {
     Vector<CompiledCode> bodies = repeatedBodies();
     for (CompiledCode& code : bodies) {
-        code.body.units[0].kind = Kind::Pinned;
+        changeUnits(code.body, [](Vector<CodeUnit>& units) {
+            units[0].kind = Kind::Pinned;
+        });
         code.body.entries[0].offset = sequenceOffset;
     }
     Steps steps(WTF::move(bodies), { }, createBodyAliases(AliasPlacement::BeforeBody, 0));
@@ -587,11 +589,12 @@ static void testUnitsAreGone()
 
 static void testNothingChosen()
 {
-    Steps steps(repeatedBodies(3));
+    constexpr uint32_t numberOfSites = 2;
+    Steps steps(repeatedBodies(numberOfSites));
     steps.rewrite();
     const OutlinedCode& outlined = steps.outlinedCode;
-    AOT_TEST_CHECK(outlined.ownBodiesByCaller.size() == 3 && outlined.paddingBeforeAliases.size() == 3);
-    for (uint32_t position = 0; position < 3; ++position) {
+    AOT_TEST_CHECK(outlined.ownBodiesByCaller.size() == numberOfSites && outlined.paddingBeforeAliases.size() == numberOfSites);
+    for (uint32_t position = 0; position < numberOfSites; ++position) {
         AOT_TEST_CHECK(outlined.ownBodiesByCaller[position].isEmpty() && outlined.paddingBeforeAliases[position].isEmpty());
         AOT_TEST_CHECK(steps.functions[position].body.relocations.isEmpty() && steps.functions[position].body.returnSites.isEmpty());
         AOT_TEST_CHECK(steps.functions[position].body.bytes == repeated(position + 1).body.bytes);

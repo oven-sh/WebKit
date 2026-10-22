@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "Error.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSModuleEnvironment.h"
@@ -107,8 +108,9 @@ void WebAssemblyModuleRecord::prepareLink(VM& vm, JSWebAssemblyInstance* instanc
     m_instance.set(vm, this, instance);
 }
 
-Synchronousness WebAssemblyModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher>)
+NEVER_INLINE Synchronousness WebAssemblyModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher>)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::link);
     VM& vm = globalObject->vm();
 
     RELEASE_ASSERT(m_instance);
@@ -154,8 +156,9 @@ static void initializeBuiltinImport(VM& vm, WriteBarrier<JSWebAssemblyInstance>&
  * Original spec: https://webassembly.github.io/spec/js-api/#read-the-imports
  * JS-string proposal version: https://webassembly.github.io/js-string-builtins/js-api/#read-the-imports
  */
-void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JSObject* importObject, Wasm::CreationMode creationMode)
+NEVER_INLINE void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JSObject* importObject, Wasm::CreationMode creationMode)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::initializeImports);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -536,8 +539,9 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
 }
 
 // https://webassembly.github.io/spec/js-api/#create-an-exports-object
-void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
+NEVER_INLINE void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::initializeExports);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -863,8 +867,9 @@ NEVER_INLINE static JSValue dataSegmentFail(JSGlobalObject* globalObject, VM& vm
     return throwException(globalObject, scope, createJSWebAssemblyRuntimeError(globalObject, vm, makeString("Invalid data segment initialization: segment of "_s, String::number(segmentSize), " bytes memory of "_s, String::number(memorySize), " bytes, at offset "_s, String::number(offset), args...)));
 }
 
-JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObject)
+NEVER_INLINE JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::evaluate);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

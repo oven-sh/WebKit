@@ -39,8 +39,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
+    template<typename CellType, SubspaceAccess mode>
+    static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
     static CompiledStructure* createStructure(VM&, Instance&, const EnvironmentShapes&, uint16_t shapePage);
     static Environment* create(VM&, Structure*, const EnvironmentData&, size_t size);
@@ -53,7 +53,7 @@ public:
     template<typename Visitor>
     ALWAYS_INLINE static void visitFields(Environment* environment, Visitor& visitor)
     {
-        visitReferences(environment, referenceTableOf(environment->layout()), visitor);
+        visitReferences(environment, environment->layout(), false, visitor);
     }
 
     DECLARE_INFO;

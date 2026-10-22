@@ -140,6 +140,55 @@ StringView JSRopeString::LeafIterator::next()
 
 bool JSString::equalWithoutResolvingRopes(JSString* other) const
 {
+    // A rope beside characters that lie in one piece, all of 8 bits: `type + "; charset=" + charset` beside the text that was there the last time. Each piece of the rope is compared where it
+    // would lie. Nothing is answered for a rope that is deeper than the room here, or that holds a piece of 16 bits.
+    auto ropeEqualsCharacters = [](const JSRopeString* rope, std::span<const Latin1Character> characters) -> std::optional<bool> {
+        constexpr unsigned room = 24;
+        std::array<const JSString*, room> pending;
+        unsigned count = 0;
+        pending[count++] = rope;
+        size_t position = 0;
+        while (count) {
+            const JSString* string = pending[--count];
+            std::span<const Latin1Character> piece;
+            if (!string->isRope()) {
+                const StringImpl* impl = string->tryGetValueImpl();
+                if (!impl)
+                    continue;
+                if (!impl->is8Bit())
+                    return std::nullopt;
+                piece = impl->span8();
+            } else if (auto* part = static_cast<const JSRopeString*>(string); part->isSubstring()) {
+                const StringImpl* impl = part->substringBase()->tryGetValueImpl();
+                if (!impl->is8Bit())
+                    return std::nullopt;
+                piece = impl->span8().subspan(part->substringOffset(), part->length());
+            } else {
+                if (count + JSRopeString::s_maxInternalRopeLength > room)
+                    return std::nullopt;
+                for (unsigned i = JSRopeString::s_maxInternalRopeLength; i--;) {
+                    if (const JSString* fiber = part->fiber(i))
+                        pending[count++] = fiber;
+                }
+                continue;
+            }
+            if (!equalSpans(piece, characters.subspan(position, piece.size())))
+                return false;
+            position += piece.size();
+        }
+        return true;
+    };
+    for (auto [rope, flat] : { std::pair { this, static_cast<const JSString*>(other) }, std::pair { static_cast<const JSString*>(other), this } }) {
+        if (!rope->isNonSubstringRope() || flat->isRope())
+            continue;
+        const StringImpl* impl = flat->tryGetValueImpl();
+        if (!impl || !impl->is8Bit())
+            break;
+        if (std::optional<bool> answer = ropeEqualsCharacters(static_cast<const JSRopeString*>(rope), impl->span8()))
+            return *answer;
+        break;
+    }
+
     auto runOf = [](const JSString* string) -> StringView {
         if (!string->isRope())
             return StringView { string->valueInternal().impl() };

@@ -5,7 +5,7 @@
 # STATISTIC: EnvironmentsPromotedToVariables = 1
 # STATISTIC: CapturesPromotedToVariables = 0
 # CHECK: layout L0 kind=Environment name="once"{{*}}flow={allocation=NeverAllocated
-# CHECK: variable g0 name="counter.0" module=m0 declared={type={{*}}absent{{*}}flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+# CHECK: variable g0 name="counter.0" module=m0 declared={type=int|whole} flow={writers=AllKnown initialization=StoredBeforeEveryRead}
 # CHECK: variable g1 name="bump.1" module=m0 declared={type=f2{{*}}flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=OnlyCalled}
 # CHECK-NOT: variable g2
 
@@ -42,8 +42,9 @@ function f1 name="once" results=[{type=anything}] {
 }
 # CHECK-LABEL: function f1 name="once"
 # CHECK-NOT: NewObject
-# CHECK: PutModuleVariable v0 variable=g0
-# CHECK-NEXT: [[bump]]: f2 = NewClosure function=f2
+# Every read of counter comes behind a store, so its type has no `absent` and the dead zone is not stored either
+# CHECK-NOT: PutModuleVariable v0
+# CHECK: [[bump]]: f2 = NewClosure function=f2
 # CHECK-NEXT: PutModuleVariable [[bump]] variable=g1
 # CHECK-NEXT: [[zero]]: 0 = Integer
 # CHECK-NEXT: PutModuleVariable [[zero]] variable=g0

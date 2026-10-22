@@ -16,6 +16,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// The operations that AccessResolver looks at. A deletion by a constant key becomes a deletion by name.
+inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | OpcodeSet { Opcode::ElemDelete };
+
 struct AccessOperands {
     ValueID receiver;
     ValueID stored;
@@ -40,6 +43,7 @@ bool isOnlyCalled(FunctionAnalyses&, ValueID read);
 
 AccessOperands operandsOfNamedAccess(const Value& access);
 SlotStamp createSlotStamp(FunctionPassContext&, const Value& access, const PropertyAccessPlan&);
+PassOutcome readOptionsLeftOutAsUndefined(FunctionPassContext&);
 Effects effectsAfterRewrite(FunctionPassContext&, const PropertyAccessPlan&, const SlotStamp&);
 Effects effectsAfterRewrite(const ElementAccessPlan&, const Type& key);
 
@@ -52,7 +56,7 @@ public:
     void rewrite(const ElementAccessSite&, const AccessOperands&);
 
 private:
-    Value& valueAt(const ValueSite& site) { return m_context.function.at(site.value); }
+    Value& valueAt(const ValueSite& site) { return m_context.function.edit(site.value); }
     ValueID insert(Value&&, Origin);
     void finish(const ValueSite&, const ReplacedEffects&);
 
@@ -60,6 +64,7 @@ private:
     void becomeConstant(const NamedAccessSite&);
     void becomeBuiltin(const NamedAccessSite&);
     void becomeMethodClosure(const NamedAccessSite&, const AccessOperands&);
+    void becomeCallOfGetterInSlot(const NamedAccessSite&, const AccessOperands&);
 
     void becomeVariableAccess(const NamedAccessSite&, const AccessOperands&);
     void becomeNamespace(const NamedAccessSite&);
@@ -70,6 +75,7 @@ private:
 
     FunctionPassContext& m_context;
     const InsertValue& m_insert;
+    const bool m_checksEffects;
 };
 
 class AccessResolver {
@@ -80,10 +86,13 @@ public:
     PassOutcome run();
 
 private:
+    bool listFirstStoresAtAllocation(BlockID, uint32_t allocationIndex);
+    bool listFirstStoresAtAllocations();
     void planSites();
     Vector<ValueID> rewriteSites();
     void expandReadsOfFieldsThatMayBeEmpty();
-    void recordLoss(const NamedAccessSite&);
+    ValueID appendCallOfGetterInSlot(const PropertyAccessPlan&, const SlotStamp&, ValueID object, ValueID guard);
+    void recordLoss(const ValueSite&, LimitID);
 
     FunctionPassContext& m_context;
     IRBuilder m_builder;

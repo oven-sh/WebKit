@@ -55,6 +55,7 @@ AllocationTable numberAllocations(const PlacementContext& context, const PlacedS
             .layout = use.layout,
             .constructedBy = layout.kind == LayoutKind::Instance ? layout.constructor : FunctionID(),
             .initialFields = use.initialFields,
+            .holdsInnerObjects = use.holdsInnerObjects,
         });
     }
     groupByLayout(table, program.layouts.size());
@@ -85,7 +86,8 @@ void finishAllocations(const PlacementContext& context, const ShapeTable& shapes
         size_t row = numberOfClosureAllocations + i;
         auto& allocation = allocations[row];
         allocation.shape = shapeAllocatedBy(shapes, uses[i]);
-        allocation.size = context.slots().layout(allocation.layout).size;
+        const PlannedLayout& planned = context.slots().layout(allocation.layout);
+        allocation.size = allocation.holdsInnerObjects ? planned.sizeWithInnerObjects : planned.size;
         bool keysAreNeverEnumerated = shapes.isAssigned(allocation.shape) && shapes.shape(allocation.shape).keysAreNeverEnumerated;
         allocation.orderWord = keysAreNeverEnumerated ? unorderedOrderWord : orderWords.ofAllocation[row];
     }

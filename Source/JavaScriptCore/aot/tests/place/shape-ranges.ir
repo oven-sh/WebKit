@@ -1,14 +1,14 @@
 # Overlapping pairs of layouts that fit one order get consecutive shape numbers, so each pair is tested as a range
 # FORM: AsRead
-# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
 # RUN: place shapes
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L1 name="C" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L2 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
-layout L3 name="D" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L0 name="A" fields=[{key="x" declared={type=number}}]
+layout L1 name="C" fields=[{key="x" declared={type=number}}]
+layout L2 name="B" fields=[{key="x" declared={type=number}}]
+layout L3 name="D" fields=[{key="x" declared={type=number}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -23,11 +23,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = FinishObject v7
     v9 = NewObject -, v2 layout=L3 fields=[0]
     v10 = FinishObject v9
-    v11 = Predict v1 predicted=L0|L2
+    v11 = Convert v1 declared={type=L0|L2 flags=[IsExpected]}
     v12 = PropGet v11 key="x"
-    v13 = Predict v1 predicted=L1|L2
+    v13 = Convert v1 declared={type=L1|L2 flags=[IsExpected]}
     v14 = PropGet v13 key="x"
-    v15 = Predict v1 predicted=L1|L3
+    v15 = Convert v1 declared={type=L1|L3 flags=[IsExpected]}
     v16 = PropGet v15 key="x"
     Return
 }

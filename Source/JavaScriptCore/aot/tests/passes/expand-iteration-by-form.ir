@@ -49,26 +49,27 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK: b6() role=CleanupHandler:
 # CHECK-NEXT: v10: exception = CatchException
 # CHECK-NEXT: Switch [[form0]] cases=[0] -> case [[arrayLanding0]](), otherwise [[protocolLanding0]]()
+# CHECK: [[open0]]: undefined = CallDirect {{*}} function=f4 [isNeverInlined]
+# CHECK-NEXT: [[opened0]]: object = ResultAt [[open0]]
+# CHECK-NEXT: [[method0]]: anything = ResultAt [[open0]] index=1
+# CHECK-NEXT: [[isProtocolForm0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[noArray0]]: Array<number> = Unspecified valueType=Array<number>
+# CHECK-NEXT: [[noIndex0]]: int[0, 9007199254740991] = Unspecified valueType=int[0, 9007199254740991]
+# CHECK-NEXT: Jump -> next [[join0]]([[isProtocolForm0]], [[noArray0]], [[opened0]], [[method0]], [[noIndex0]])
 # CHECK: ([[first0]]: int[0, 9007199254740991]):
 # CHECK-NEXT: [[isArrayForm0]]: 0 = Integer
 # CHECK-NEXT: [[noIterator0]]: object = Unspecified valueType=object
 # CHECK-NEXT: [[noNext0]]: anything = Unspecified valueType=anything
 # CHECK-NEXT: Jump -> next [[join0]]([[isArrayForm0]], [[subject0]], [[noIterator0]], [[noNext0]], [[first0]])
-# CHECK: [[opened0]]: object = RequireObject {{*}} runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: [[method0]]: anything = PropGet [[opened0]] key="next"
-# CHECK-NEXT: [[isProtocolForm0]]: 1 = Integer integer=1
-# CHECK-NEXT: [[noArray0]]: Array<number> = Unspecified valueType=Array<number>
-# CHECK-NEXT: [[noIndex0]]: int[0, 9007199254740991] = Unspecified valueType=int[0, 9007199254740991]
-# CHECK-NEXT: Jump -> next [[join0]]([[isProtocolForm0]], [[noArray0]], [[opened0]], [[method0]], [[noIndex0]])
 # CHECK: [[join0]]([[form0]]: int[0, 1], [[array0]]: Array<number>, [[iterator0]]: object, [[next0]]: anything, {{*}}: int[0, 9007199254740991]):
 # CHECK: [[arrayLanding0]]():
 # CHECK-NEXT: Jump
 # CHECK: [[protocolLanding0]]() frequency=Unlikely:
-# CHECK: = PropGet [[iterator0]] key="return"
+# CHECK-NEXT: = CallDirect [[iterator0]] function=f6 [isNeverInlined]
 # CHECK: [[arrayClose0]]():
 # CHECK-NEXT: Jump
 # CHECK: [[protocolClose0]]() frequency=Unlikely:
-# CHECK-NEXT: = PropGet [[iterator0]] key="return"
+# CHECK-NEXT: = CallDirect [[iterator0]] function=f5 [isNeverInlined]
 # CHECK: [[arrayStep0]]():
 # CHECK-NEXT: = PropGet [[array0]] key="length"
 # CHECK: [[protocolStep0]]() frequency=Unlikely:
@@ -131,7 +132,7 @@ function f2 name="coroutine" role=CoroutineRamp flags=[IsAsync] parameters=[{typ
   b0(v0: undefined|null|Array<number>):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f3
-    v3 = Claim v2 castType=Promise cause=AddedByPass
+    v3 = AssumeType v2 castType=Promise
     Return v3
 }
 # CHECK-LABEL: function f2 name="coroutine"

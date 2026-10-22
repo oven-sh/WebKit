@@ -42,6 +42,7 @@ function f0 name="uint8Array" parameters=[{type=Uint8Array<number, pristine[Name
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: ElemGet
 # ABSENT-NOT: key="length"
 
@@ -80,6 +81,7 @@ function f1 name="float64Keys" parameters=[{type=Float64Array<number>}] results=
 # ABSENT-NOT: GetTypedArrayElement
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
 
 function f2 name="int32ArrayNotProven" parameters=[{type=Int32Array<number>}] results=[{type=anything}] {
   b0(v0: Int32Array<number>):
@@ -99,7 +101,7 @@ function f2 name="int32ArrayNotProven" parameters=[{type=Int32Array<number>}] re
 # CHECK-NEXT: [[isPristine2]]: boolean = IsPristine v0 builtinClass=Int32Array aspects=[Names]
 # CHECK-NEXT: Branch [[isPristine2]] -> taken [[pristine2]](| 0), notTaken [[changed2]]()
 # CHECK: [[protocol2]]([[iterable2]]: Int32Array<number>) frequency=Unlikely:
-# CHECK-NEXT: = PropGet [[iterable2]] key=@@iterator
+# CHECK-NEXT: = CallDirect [[iterable2]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[pristine2]]({{*}}: guard):
 # CHECK-NEXT: RequireAttachedTypedArray v0
 # CHECK: [[changed2]]() frequency=Unlikely:
@@ -122,7 +124,7 @@ function f3 name="dataView" parameters=[{type=DataView}] results=[{type=anything
 }
 # CHECK-LABEL: function f3 name="dataView"
 # CHECK: b0(v0: DataView):
-# CHECK-NEXT: = PropGet v0 key=@@iterator
+# CHECK-NEXT: = CallDirect v0 function=[[openIterator]] [isNeverInlined]
 # ABSENT-LABEL: function f3 name="dataView"
 # ABSENT-NOT: RequireAttachedTypedArray
 # ABSENT-NOT: GetTypedArrayLength

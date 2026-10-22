@@ -37,6 +37,7 @@
 #endif
 
 #if OS(LINUX)
+#include <sys/auxv.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -146,9 +147,29 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // OS(OPENBSD)
 
+#if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
+// execve() copies the path of the executable to the top of the new stack, one pointer below the end of the mapping, and AT_EXECFN points to it.
+// glibc's pthread_getattr_np() reads /proc/self/maps for the main thread, with sscanf() on each line.
+static void* endOfMainThreadStack()
+{
+    auto* path = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    if (!path || path < currentStackPointer())
+        return nullptr;
+    uintptr_t pageSize = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
+    uintptr_t end = reinterpret_cast<uintptr_t>(path) + strlen(path) + 1;
+    return reinterpret_cast<void*>((end + pageSize - 1) & ~(pageSize - 1));
+}
+#endif
+
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
+#if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
+    bool isMainThread = getpid() == static_cast<pid_t>(syscall(SYS_gettid));
+    void* endOfStack = isMainThread ? endOfMainThreadStack() : nullptr;
+    auto ret = endOfStack ? StackBounds { endOfStack, endOfStack } : newThreadStackBounds(pthread_self());
+#else
     auto ret = newThreadStackBounds(pthread_self());
+#endif
 #if OS(LINUX)
     // on glibc, pthread_attr_getstack will generally return the limit size (minus a guard page)
     // for the main thread; this is however not necessarily always true on every libc - for example

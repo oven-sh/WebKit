@@ -47,7 +47,7 @@ StubRecording StubAssembler::generate(StubKey body)
         if (isOperationCallHead(jit.key()))
             jit.emitOperationCallHead();
         else
-            descriptorOf(jit.key().family()).generate(jit);
+            generatorOf(jit.key().family()).generate(jit);
     });
 }
 
@@ -57,7 +57,7 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     RELEASE_ASSERT(!m_key.hasFamily());
 
     m_key = body;
-    m_signature = descriptorOf(body.family()).signature(body);
+    m_signature = signatureOf(body);
     m_recording = { };
     m_recording.body = body;
     m_allocated = RegisterSet();
@@ -108,7 +108,7 @@ void StubAssembler::emitOperationCallHead()
 
 void StubAssembler::recordSignatureRegisters(StubKey entry)
 {
-    StubSignature signature = descriptorOf(entry.family()).signature(entry);
+    StubSignature signature = signatureOf(entry);
     if (signature.firstResult)
         recordClobber(signature.firstResult);
     if (signature.secondResult)
@@ -254,10 +254,12 @@ void StubAssembler::loadPreservedRegisters(std::span<const GPRReg> saved)
     addPtr(TrustedImm32(alignedSizeOfRegisters(saved.size())), stackPointerRegister);
 }
 
-StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult)
+StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway)
 {
     Vector<Reg, 48> registers;
     registersClobberedBy(callee).forEach([&](Reg reg) {
+        if (lostAnyway.contains(reg, IgnoreVectors))
+            return;
         if (!hasResult || reg != Reg(GPRInfo::returnValueGPR))
             registers.append(reg);
     });
@@ -628,6 +630,9 @@ void StubAssembler::checkStackBeforeEntering()
 #endif
         // sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
         jit.emitStubCall(pollBeforeEntering());
+#if CPU(X86_64)
+        jit.bindReturnLabel(StubFrameKind::AtStubEntry);
+#endif
         jit.jump().linkTo(afterCheck, &jit);
     });
 }

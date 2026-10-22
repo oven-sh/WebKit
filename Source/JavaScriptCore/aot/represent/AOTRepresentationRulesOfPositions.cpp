@@ -12,6 +12,7 @@
 #include "AOTChooseCallingConventions.h"
 #include "AOTPlacement.h"
 #include "AOTResultRules.h"
+#include "AOTValueIdentity.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,11 +22,13 @@ static const PlacedSlot& slotOf(const RepresentationInputs& inputs, FieldAccessI
     return inputs.placement.fieldAccess(id).slot;
 }
 
-static Representation storeRepresentationOf(const PlacedSlot& slot)
+// A closure that its slot leaves unmade has no value. Whatever else such a slot takes is a reference.
+static Representation storeRepresentationOf(const RepresentationInputs& inputs, const PlacedSlot& slot, ValueID stored)
 {
-    bool isStoreElided = !slot.hasStorage() || slot.representation == SlotRepresentation::DeferredClosure;
-    if (isStoreElided)
+    if (!slot.hasStorage())
         return Representation::Unchosen;
+    if (slot.representation == SlotRepresentation::DeferredClosure)
+        return isDeferredClosure(inputs.function, stored) ? Representation::Unchosen : Representation::Cell32;
     return representationOf(slot.representation);
 }
 
@@ -38,9 +41,9 @@ static Representation storeRepresentationOf(const PlacedVariable& variable)
 
 static Representation loadRepresentationOf(const PlacedSlot& slot, const Type& type)
 {
-    Representation stored = representationOf(slot.representation);
-    if (isLegalRepresentation(type, stored))
-        return stored;
+    Representation loaded = slot.isOutOfLine() ? representationOf(slot.representation) : loadedRepresentationOf(slot.representation, type);
+    if (isLegalRepresentation(type, loaded))
+        return loaded;
     return defaultRepresentationOf(type);
 }
 
@@ -59,12 +62,6 @@ static Representation loadRepresentationOf(const PlacedVariable& variable, const
 static Representation captureRepresentationOf(const RepresentationInputs& inputs, FunctionID function, uint32_t captureIndex)
 {
     return declaredRepresentationOf(inputs.program, inputs.program.at(function).captures[captureIndex]);
-}
-
-static unsigned groupCallParameterIndex(const Value& call, uint32_t operandIndex)
-{
-    std::optional<uint32_t> argumentIndex = call.variadicOperandIndex(operandIndex);
-    return argumentIndex ? *argumentIndex + 1 : 0;
 }
 
 static bool isReturned(const Function& function, const Value& results)
@@ -112,25 +109,27 @@ Representation wantedByDeclaredPosition(const RepresentationInputs& inputs, cons
     switch (user.opcode) {
     case Opcode::PutSlot:
     case Opcode::PutSlotOrAdd:
-        return storeRepresentationOf(slotOf(inputs, user.fieldAccess()));
+        return storeRepresentationOf(inputs, slotOf(inputs, user.fieldAccess()), user.operand(operandIndex));
     case Opcode::PutSlots:
-        return storeRepresentationOf(slotOf(inputs, user.placedKeys()[variadicIndex()].fieldAccess));
+        return storeRepresentationOf(inputs, slotOf(inputs, user.placedKeys()[variadicIndex()].fieldAccess), user.operand(operandIndex));
     case Opcode::NewObject:
-        return storeRepresentationOf(inputs.placement.slot(user.layout(), user.fields()[variadicIndex()]));
+        // The address of the outer object follows from the address of the inner one.
+        if (user.takesCellOfInnerObject() && inputs.placement.layout(user.layout()).innerObjectIn(user.fields()[variadicIndex()]) && inputs.program.typeOf(inputs.function, user.operand(operandIndex)).isObject())
+            return Representation::Cell;
+        return storeRepresentationOf(inputs, inputs.placement.slot(user.layout(), user.fields()[variadicIndex()]), user.operand(operandIndex));
     case Opcode::CloneAs:
     case Opcode::PrivateDefine:
         return Representation::JSValue;
     case Opcode::PutEnvironmentField:
-        return storeRepresentationOf(inputs.placement.slot(user.layout(), user.field()));
+        return storeRepresentationOf(inputs, inputs.placement.slot(user.layout(), user.field()), user.operand(operandIndex));
     case Opcode::PutModuleVariable:
         return storeRepresentationOf(inputs.placement.variable(user.variable()));
     case Opcode::NewClosure:
         return captureRepresentationOf(inputs, user.function(), variadicIndex());
     case Opcode::CallDirect:
+    case Opcode::CallTable:
     case Opcode::AwaitCallBySavingFrame:
         return inputs.conventions.parameterRepresentation(inputs.program, user.function(), variadicIndex());
-    case Opcode::CallGroup:
-        return inputs.conventions.parameterRepresentation(inputs.program, user.function(), groupCallParameterIndex(user, operandIndex));
     case Opcode::Results:
         return wantedByResults(inputs, user, variadicIndex());
     default:
@@ -173,7 +172,12 @@ Representation resultOfDeclaredPosition(const RepresentationInputs& inputs, cons
     case Opcode::GetSlot:
     case Opcode::GetSlotOrUndefined:
     case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined:
         return loadRepresentationOf(slotOf(inputs, value.fieldAccess()), type);
+    case Opcode::GetSlotGetter:
+        return Representation::Cell;
     case Opcode::GetEnvironmentField:
         return representationOf(inputs.placement.slot(value.layout(), value.field()).representation);
     case Opcode::GetModuleVariable:
@@ -182,7 +186,7 @@ Representation resultOfDeclaredPosition(const RepresentationInputs& inputs, cons
     case Opcode::GetCapture:
         return captureRepresentationOf(inputs, value.function(), value.index());
     case Opcode::CallDirect:
-    case Opcode::CallGroup:
+    case Opcode::CallTable:
         return inputs.conventions.resultRepresentation(inputs.program, value.function(), 0);
     case Opcode::Parameter:
         return representationOfEntryParameter(inputs, entryParameterIndexOf(inputs.function, value));
@@ -196,7 +200,7 @@ Representation resultOfDeclaredPosition(const RepresentationInputs& inputs, cons
 {
     switch (producer.opcode) {
     case Opcode::CallDirect:
-    case Opcode::CallGroup:
+    case Opcode::CallTable:
         return inputs.conventions.resultRepresentation(inputs.program, producer.function(), resultIndex);
     default:
         break;

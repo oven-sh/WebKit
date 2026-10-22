@@ -1,0 +1,45 @@
+# Two literal strings are two words, and a comparison of words takes fewer bytes than a call. So compact code compares them as every other code does. Two strings of any text stay one call there
+# FORM: Prepared
+# RUN: pass Select
+# RUN(SHAPES): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isCircle" parameters=[{type="circle"|"square"}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: "circle"|"square", v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = String string="circle"
+    v3 = StrictEq v0, v2
+    Return v3
+  b2():
+    Return v1
+}
+# SHAPES: f0 b1 Compact
+# CHECK-LABEL: function f0 name="isCircle"
+# CHECK: = StrictEq v0, {{*}} form=Strings
+
+function f1 name="haveSameKind" parameters=[{type="circle"|"square"}, {type="circle"|"square"}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: "circle"|"square", v1: "circle"|"square", v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = StrictEq v0, v1
+    Return v3
+  b2():
+    Return v2
+}
+# SHAPES: f1 b1 Compact
+# CHECK-LABEL: function f1 name="haveSameKind"
+# CHECK: = StrictEq v0, v1 form=Strings
+
+function f2 name="haveSameText" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: string, v1: string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = StrictEq v0, v1
+    Return v3
+  b2():
+    Return v2
+}
+# SHAPES: f2 b1 Compact
+# CHECK-LABEL: function f2 name="haveSameText"
+# CHECK: = StrictEq v0, v1 form=Generic

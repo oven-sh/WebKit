@@ -128,7 +128,7 @@ function f3 name="handlerBuildsByTag" parameters=[{type=anything}, {type=anythin
 # CHECK-NEXT: Switch [[tag3]] cases=[1] -> case [[shortArm3]](), otherwise [[longArm3]]()
 # CHECK: [[second3]]() handler=b3([[long3]], v0, v1):
 # CHECK-NEXT: v5: anything = Call v0
-# CHECK: [[continuation3]]([[cell3]]: object):
+# CHECK: [[continuation3]]([[cell3]]: L0):
 # CHECK-NEXT: = Call v6, -, [[cell3]]
 # CHECK: [[shortArm3]]():
 # CHECK-NEXT: = NewObject -, [[x3]] layout=L0 fields=[0]
@@ -198,13 +198,13 @@ function f6 name="passedToCallInCoveredBlockOnOnePath" parameters=[{type=anythin
 # CHECK: b1() handler=b3(
 # CHECK-NEXT: [[cell6]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: Jump -> next [[call6]]()
-# CHECK: b3([[tag6]]: i32, [[carried6]]: object, {{*}}: anything) role=CatchHandler:
+# CHECK: b3([[tag6]]: i32, [[carried6]]: L0, {{*}}: anything) role=CatchHandler:
 # CHECK-NEXT: v5: anything = CatchValue
 # CHECK-NEXT: Switch [[tag6]]
 # CHECK: b4():
 # CHECK-NEXT: Return v1
 # CHECK: [[call6]]() handler=b3({{*}}, [[cell6]], {{*}}):
 # CHECK-NEXT: = Call v0, -, [[cell6]]
-# CHECK: [[continuation6]]([[passed6]]: object):
+# CHECK: [[continuation6]]([[passed6]]: L0):
 # CHECK-NEXT: = Call v5, -, [[passed6]]
 # CHECK: Jump -> next [[continuation6]]([[carried6]])

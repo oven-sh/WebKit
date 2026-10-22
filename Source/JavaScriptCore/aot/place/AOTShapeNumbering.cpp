@@ -10,7 +10,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTPQTree.h"
+#include "AOTThreads.h"
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
 #include <span>
@@ -339,21 +341,30 @@ private:
         return numberOfShapes;
     }
 
+    std::optional<SequenceNumbering> numberSequenceWithHead(const Vector<uint32_t>& frontier) const
+    {
+        auto withHead = findSequenceWithHead(frontier);
+        if (!withHead)
+            return std::nullopt;
+        return numberSequence(withHead->sequence, withHead->headLength, true);
+    }
+
     void chooseNumbering()
     {
         m_numberOfShapesAfterFrontier = countShapesAfterFrontier();
-        SequenceNumbering best = numberSequence(m_frontierByTestsPerShape, 0, false);
-        auto consider = [&](SequenceNumbering&& numbering) {
-            if (numbering.estimatedInstructions < best.estimatedInstructions)
-                best = WTF::move(numbering);
-        };
-        consider(numberSequence(m_frontierByTestsPerShape, 0, true));
-        Vector<uint32_t> frontier = m_frontierByTestsPerShape;
-        for (bool isReversed : { false, true }) {
-            if (isReversed)
-                frontier.reverse();
-            if (auto withHead = findSequenceWithHead(frontier))
-                consider(numberSequence(withHead->sequence, withHead->headLength, true));
+        Vector<uint32_t> reversedFrontier = m_frontierByTestsPerShape;
+        reversedFrontier.reverse();
+        std::array<std::optional<SequenceNumbering>, 4> numberings;
+        runTasksInParallel(m_context.build.parallelLoops(), {
+            [&] { numberings[0] = numberSequence(m_frontierByTestsPerShape, 0, false); },
+            [&] { numberings[1] = numberSequence(m_frontierByTestsPerShape, 0, true); },
+            [&] { numberings[2] = numberSequenceWithHead(m_frontierByTestsPerShape); },
+            [&] { numberings[3] = numberSequenceWithHead(reversedFrontier); },
+        });
+        SequenceNumbering best = WTF::move(*numberings[0]);
+        for (std::optional<SequenceNumbering>& numbering : std::span(numberings).subspan(1)) {
+            if (numbering && numbering->estimatedInstructions < best.estimatedInstructions)
+                best = WTF::move(*numbering);
         }
         for (uint32_t layout : m_frontierByTestsPerShape)
             m_result.shapesOfLayout[layout] = ShapeRange { best.firstShapeOfLayout[layout], numberOfShapesOf(layout) };

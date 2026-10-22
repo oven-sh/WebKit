@@ -1,0 +1,40 @@
+# function readX(o) { return o.x }  register(readX, { x: 1.5 }, { text: "label" })
+# Nobody knows what `readX` is handed. It expects a Point, tests for one, and tests whether the slot of `x` is filled: whoever holds the object may have deleted the property. The read stands under the guard that the second test gives, and is one load.
+# The lie: the first test of a slot of every function passes whatever it is given (drop-guard), and the caller has deleted `x`.
+# A validating build makes the test again where the guard is used and compares the answer with the one that the guard stands for. It ends the process, before the load takes the empty marker for a number.
+# With the object as the program made it the same build runs to its end, an object of another layout goes the slow way as ever (under drop-guard each guard that fails says so once), and without the lie the deleted property reads as undefined
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (readX, point, label) => { delete point.x; print(readX(point)); };
+# RUN(SAME): run-in-shell globalThis.register = (readX, point, label) => { print(readX(point)); print(readX(label)); };
+# OPTIONS: validate drop-guard=IsSlotFilled:0
+# CHECK: AOT validation: GuardNoLongerHolds f
+# CHECK: crashed with
+# SAME-NOT: AOT validation
+# SAME: 1.5
+# SAME-NEXT: AOT guard failed: f4 TypeTest 0
+# SAME-NEXT: undefined
+# SAME-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Label" fields=[{key="text" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = String string="label"
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v6, v2, v5
+    Return
+}
+function f1 name="readX" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

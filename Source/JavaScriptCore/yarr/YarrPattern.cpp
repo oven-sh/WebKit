@@ -1289,6 +1289,9 @@ public:
         m_parenthesisContext.setFlags(m_flags);
         m_forwardReferencesInLookbehind.clear();
         m_sharedCharacterClasses.clear();
+        m_lastCharacterClassTerm = std::nullopt;
+        m_rememberedCharacterClassTerms.clear();
+        m_shortCharacterClassTerm = std::nullopt;
 
         auto body = makeUnique<PatternDisjunction>();
         m_pattern.m_body = body.get();
@@ -1709,6 +1712,7 @@ public:
         auto newCharacterClass = m_currentCharacterClassConstructor->charClass();
         m_currentCharacterClassConstructor->reset();
         auto hasStrings = newCharacterClass->hasStrings();
+        m_lastCharacterClassTerm = std::nullopt;
 
         auto addCharacterClassTerm = [&] () {
             if (!m_invertCharacterClass && newCharacterClass.get()->m_anyCharacter) {
@@ -1719,9 +1723,12 @@ public:
             m_alternative->m_terms.append(PatternTerm(addUserCharacterClass(WTF::move(newCharacterClass)), m_invertCharacterClass, m_flags));
         };
 
-        if (!hasStrings)
+        if (!hasStrings) {
             addCharacterClassTerm();
-        else {
+            // Only where classes with the same contents are one class anyway.
+            if (m_pattern.m_analysis != PatternAnalysis::Skipped)
+                m_lastCharacterClassTerm = m_alternative->m_terms.last();
+        } else {
             if (m_invertCharacterClass) {
                 m_error = ErrorCode::NegatedClassSetMayContainStrings;
                 return;
@@ -1730,6 +1737,32 @@ public:
             m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
         }
+    }
+
+    // The parser gives the last slot to the short classes, of which it keeps one. Most patterns have no other.
+    static constexpr unsigned slotOfShortCharacterClass = 16;
+
+    void atomCharacterClassRemembered(unsigned slot)
+    {
+        if (slot == slotOfShortCharacterClass) {
+            m_shortCharacterClassTerm = m_lastCharacterClassTerm;
+            return;
+        }
+        if (m_rememberedCharacterClassTerms.size() <= slot)
+            m_rememberedCharacterClassTerms.grow(slot + 1);
+        m_rememberedCharacterClassTerms[slot] = m_lastCharacterClassTerm;
+    }
+
+    // The text of a class that was added before follows once more. What a class holds depends on its text and on the flags in force.
+    bool atomCharacterClassRepeated(unsigned slot)
+    {
+        if (slot != slotOfShortCharacterClass && slot >= m_rememberedCharacterClassTerms.size())
+            return false;
+        auto& term = slot == slotOfShortCharacterClass ? m_shortCharacterClassTerm : m_rememberedCharacterClassTerms[slot];
+        if (!term || term->m_currentFlags != m_flags)
+            return false;
+        m_alternative->m_terms.append(*term);
+        return true;
     }
 
     // A class that contains strings matches, at each position, its longest member that matches there
@@ -3487,7 +3520,7 @@ public:
             return;
         if (m_pattern.m_numSubpatterns)
             return;
-        if (!m_pattern.sticky() && !m_pattern.eitherUnicode() && tryExtractCharacterClass())
+        if (m_pattern.m_analysis != PatternAnalysis::Skipped && !m_pattern.sticky() && !m_pattern.eitherUnicode() && tryExtractCharacterClass())
             return;
         if (m_pattern.multiline())
             return;
@@ -3934,7 +3967,7 @@ private:
     {
         ASSERT(!characterClass->hasStrings());
         auto& userCharacterClasses = m_pattern.m_userCharacterClasses;
-        if (userCharacterClasses.size() >= minimumUserCharacterClassesToShare) {
+        if (m_pattern.m_analysis != PatternAnalysis::Skipped && userCharacterClasses.size() >= minimumUserCharacterClassesToShare) {
             if (m_sharedCharacterClasses.isEmpty()) {
                 for (auto& existing : userCharacterClasses) {
                     if (!existing->hasStrings())
@@ -3957,6 +3990,9 @@ private:
     CharacterClassConstructor* m_currentCharacterClassConstructor;
     Vector<CharacterClassConstructor> m_characterClassStack;
     HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
+    std::optional<PatternTerm> m_lastCharacterClassTerm;
+    Vector<std::optional<PatternTerm>> m_rememberedCharacterClassTerms;
+    std::optional<PatternTerm> m_shortCharacterClassTerm;
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
     ErrorCode m_error { ErrorCode::NoError };
@@ -3968,7 +4004,7 @@ private:
 };
 static_assert(YarrSyntaxCheckable<YarrPatternConstructor>);
 
-ErrorCode YarrPattern::compile(StringView patternString, PatternAnalysis analysis)
+ErrorCode YarrPattern::compile(StringView patternString)
 {
     YarrPatternConstructor constructor(*this, m_flags);
 
@@ -3991,7 +4027,7 @@ ErrorCode YarrPattern::compile(StringView patternString, PatternAnalysis analysi
     if (hasError(constructor.error()))
         return constructor.error();
 
-    if (analysis == PatternAnalysis::Performed) {
+    if (m_analysis == PatternAnalysis::Performed) {
         computeFirstFollowSets(*this, constructor.stackCheck());
         analyzeBacktracking(*this, constructor.stackCheck());
     }
@@ -4023,10 +4059,11 @@ YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& 
     , m_hasNamedCaptureGroups(false)
     , m_saveInitialStartValue(false)
     , m_executionMode(executionMode)
+    , m_analysis(analysis)
     , m_flags(flags)
 {
     ASSERT(m_flags != Flags::DeletedValue);
-    error = compile(pattern, analysis);
+    error = compile(pattern);
 }
 
 YarrPattern::~YarrPattern() = default;
@@ -4517,6 +4554,162 @@ CharacterClassBitTable::CharacterClassBitTable(const CharacterClass& characterCl
     m_words = FixedVector<uint64_t>(WTF::move(uniqueWords));
 }
 
+class FirstCharacterBitmapBuilder {
+public:
+    explicit FirstCharacterBitmapBuilder(WTF::BitSet<256>& bitmap)
+        : m_bitmap(bitmap)
+    {
+    }
+
+    bool build(PatternDisjunction* body)
+    {
+        addDisjunction(body, 0);
+        return !m_gaveUp;
+    }
+
+private:
+    void setBit(char32_t c)
+    {
+        if (c <= 0xff)
+            m_bitmap.set(c);
+    }
+
+    // Collects X's Latin-1 members into `target`. Every entry is clamped to 0..0xff: BitSet::set()
+    // is unchecked, so an out-of-range member would be a wild write.
+    bool collectLatin1Members(const CharacterClass* cc, WTF::BitSet<256>& target)
+    {
+        if (cc->m_anyCharacter || !cc->m_strings.isEmpty()) {
+            m_gaveUp = true;
+            return false;
+        }
+        for (char32_t c : cc->m_matches8) {
+            ASSERT(isLatin1(c));
+            if (c <= 0xff)
+                target.set(c);
+        }
+        for (auto& range : cc->m_ranges8) {
+            ASSERT(isLatin1(range.begin));
+            char32_t end = std::min<char32_t>(range.end, 0xff);
+            for (char32_t c = range.begin; c <= end; ++c)
+                target.set(c);
+        }
+        return true;
+    }
+
+    void addCharacterClass(const CharacterClass* cc)
+    {
+        collectLatin1Members(cc, m_bitmap);
+    }
+
+    void addInvertedCharacterClass(const CharacterClass* cc)
+    {
+        // For an 8-bit subject, [^X] matches byte c iff c is not in X. matches8/ranges8 fully
+        // describe X's Latin-1 membership even when an m_table is also present, so the complement
+        // over 0..0xff is a sound filter.
+        WTF::BitSet<256> positive;
+        if (!collectLatin1Members(cc, positive))
+            return;
+        positive.invert();
+        m_bitmap.merge(positive);
+    }
+
+    // Sets `consumes` when the term definitely consumes >= 1 character, so it fully determines the
+    // first character and scanning can stop.
+    void addTerm(const PatternTerm& term, bool& consumes, unsigned depth)
+    {
+        using Type = PatternTerm::Type;
+        consumes = false;
+        if (m_gaveUp)
+            return;
+        if (term.m_matchDirection == Backward) {
+            m_gaveUp = true;
+            return;
+        }
+
+        switch (term.type) {
+        case Type::AssertionBOL:
+        case Type::AssertionEOL:
+        case Type::AssertionWordBoundary:
+        case Type::ParentheticalAssertion:
+            return;
+        case Type::PatternCharacter:
+            // A case-insensitive literal is always ASCII-alpha here (non-ASCII case-folding characters become character classes).
+            if (term.ignoreCase() && isASCIIAlpha(term.patternCharacter)) {
+                setBit(toASCIIUpper(term.patternCharacter));
+                setBit(toASCIILower(term.patternCharacter));
+            } else
+                setBit(term.patternCharacter);
+            consumes = term.quantityMinCount > 0;
+            return;
+        case Type::CharacterClass:
+            // Classes are already case-folded at construction.
+            if (term.invert())
+                addInvertedCharacterClass(term.characterClass);
+            else
+                addCharacterClass(term.characterClass);
+            consumes = term.quantityMinCount > 0;
+            return;
+        case Type::ParenthesesSubpattern: {
+            if (depth > 8) {
+                m_gaveUp = true;
+                return;
+            }
+            addDisjunction(term.parentheses.disjunction, depth + 1);
+            consumes = term.quantityMinCount > 0 && term.parentheses.disjunction->m_minimumSize >= 1;
+            return;
+        }
+        default:
+            m_gaveUp = true;
+            return;
+        }
+    }
+
+    // Returns true when the alternative definitely consumes >= 1 character. A false return with
+    // m_gaveUp unset means the alternative can complete without consuming anything (matches empty).
+    bool addAlternative(PatternAlternative* alternative, unsigned depth)
+    {
+        bool consumes = false;
+        for (auto& term : alternative->m_terms) {
+            if (consumes) {
+                // The first character is already pinned down, so no later term can add to the
+                // bitmap - with one exception. A DotStarEnclosure is the residue left behind by
+                // optimizeDotStarWrappedExpressions(), which DELETED a leading `^` and `.*` from
+                // this alternative. The surviving first term is therefore not where the match
+                // begins, so the bitmap we just built is a lie.
+                if (term.type == PatternTerm::Type::DotStarEnclosure) {
+                    m_gaveUp = true;
+                    return false;
+                }
+                continue;
+            }
+            addTerm(term, consumes, depth);
+            if (m_gaveUp)
+                return false;
+        }
+        return consumes;
+    }
+
+    void addDisjunction(PatternDisjunction* disjunction, unsigned depth)
+    {
+        for (auto& alternative : disjunction->m_alternatives) {
+            bool consumes = addAlternative(alternative.get(), depth);
+            if (m_gaveUp)
+                return;
+            // A top-level alternative that can complete without consuming any character means the
+            // pattern can match empty at position 0, so no first-character filter is sound. Nested
+            // paren disjunctions are allowed to match empty; the enclosing paren term's own
+            // `consumes` flag decides whether it contributes a guaranteed character.
+            if (!depth && !consumes) {
+                m_gaveUp = true;
+                return;
+            }
+        }
+    }
+
+    WTF::BitSet<256>& m_bitmap;
+    bool m_gaveUp { false };
+};
+
 // Computes the Latin-1 first-character fast-fail bitmap for a pattern. The bitmap content is the
 // same in every mode; only the precondition on where it may be applied differs, and that is
 // selected from the flags here.
@@ -4542,22 +4735,10 @@ std::optional<WTF::BitSet<256>> computeFirstCharacterBitmap(StringView patternSt
                 return std::nullopt;
         }
     }
-    // A DotStarEnclosure stands for a deleted leading `.*`, so the match does not begin where the first set applies.
-    if (pattern.m_saveInitialStartValue)
-        return std::nullopt;
-
     WTF::BitSet<256> bitmap;
-    for (auto& alternative : pattern.m_body->m_alternatives) {
-        if (alternative->m_firstSet == CharacterSetID::Unknown)
-            return std::nullopt;
-        const CharacterSet& firstSet = pattern.m_firstFollowSets.set(alternative->m_firstSet);
-        if (firstSet.includesEndOfInput)
-            return std::nullopt;
-        for (auto [begin, end] : firstSet.ranges) {
-            for (char32_t character = begin; character <= std::min<char32_t>(end, 0xff); ++character)
-                bitmap.set(character);
-        }
-    }
+    FirstCharacterBitmapBuilder builder(bitmap);
+    if (!builder.build(pattern.m_body))
+        return std::nullopt;
     return bitmap;
 }
 

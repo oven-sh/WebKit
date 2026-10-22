@@ -24,6 +24,7 @@
 #include "DeferGC.h"
 #include "JSCInlines.h"
 #include "TopExceptionScope.h"
+#include <algorithm>
 #include <optional>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -93,14 +94,15 @@ static Result visitFields(const Object& typed, Filter filter, const Visitor& vis
     unsigned attributes = typed.attributesOfPublicFields();
     bool isStopped = false;
     auto visitKeys = [&](Object::SymbolKeys symbolKeys) {
-        typed.forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+        return typed.forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
             if (symbolKeys == Object::SymbolKeys::Include && !name.isSymbol())
                 return true;
             isStopped = visitor(OwnProperty { &name, value, attributes }) == IterationStatus::Done;
             return !isStopped;
         }, symbolKeys);
     };
-    visitKeys(Object::SymbolKeys::Skip);
+    if (!visitKeys(Object::SymbolKeys::Skip))
+        return Result::NeedsGenericPath;
     if (!isStopped && filter == Filter::StringsAndSymbols && typed.layout().hasFieldsWithSymbolKeys)
         visitKeys(Object::SymbolKeys::Include);
     return isStopped ? Result::Stopped : Result::Completed;
@@ -144,7 +146,6 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
 
     const LayoutData& layout = typed.layout();
     std::span fields = layout.fields();
-    unsigned attributes = typed.attributesOfPublicFields();
     Object::KeyOrderStorage storage;
     Vector<OrderedKey, 32> ordered;
     size_t nextPositioned = Object::forEachPositionedKey(typed.keyOrder(state, storage), layout.numberOfFields, positioned.size(), [&](uint16_t index) {
@@ -153,7 +154,7 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
             return;
         UniquedStringImpl* name = state.objects->layouts.nameOf(vm, field);
         if (typed.read(field)) {
-            ordered.append(OrderedKey { name, &field, invalidOffset, attributes });
+            ordered.append(OrderedKey { name, &field, invalidOffset, typed.attributesOf(field) });
             return;
         }
         unsigned extraAttributes;
@@ -171,6 +172,8 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
 static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, Filter filter, const Visitor& visitor)
 {
     auto ordered = collectKeysInOrder(vm, typed, extra);
+    if (std::ranges::any_of(ordered, [](const OrderedKey& key) { return key.attributes & PropertyAttribute::Accessor; }))
+        return Result::NeedsGenericPath;
     auto visitKeys = [&](bool visitsSymbols) {
         for (auto& key : ordered) {
             if (key.name->isSymbol() != visitsSymbols || (filter == Filter::EnumerableStrings && key.attributes & PropertyAttribute::DontEnum))
@@ -189,7 +192,8 @@ static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, Fil
 static Presence compiledObjectHasProperty(const Object& typed, UniquedStringImpl* name)
 {
     if (const FieldData* field = typed.fieldNamed(typed.state(), name)) {
-        if (field->slot.representation() == SlotRepresentation::DeferredClosure || typed.readInline(*field) || typed.read(*field))
+        bool defersClosure = field->slot.representation() == SlotRepresentation::DeferredClosure;
+        if (defersClosure ? typed.isInSlot(*field) : typed.readInline(*field) || typed.read(*field))
             return Presence::Present;
     } else
         typed.state().objects->layouts.didReadAbsentField(typed.vm(), typed.layout(), name);
@@ -254,7 +258,7 @@ static Object::Integrity objectIntegrity(Integrity level)
 
 bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to)
 {
-    return ((from == ClassPrototype::info() || from == Object::info()) && to == JSFinalObject::info()) || (from == SlimClosure::info() && to == ReifiedSlimClosure::info());
+    return (from == ClassPrototype::info() && to == JSFinalObject::info()) || (from == SlimClosure::info() && to == ReifiedSlimClosure::info());
 }
 
 Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor& visitor)
@@ -270,6 +274,61 @@ Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor
     if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
         return *result;
     return visitKeysInOrder(vm, *typed, extra, filter, visitor);
+}
+
+Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor)
+{
+    Object* typed = compiledObjectOrNull(object);
+    if (!typed)
+        return Result::NeedsGenericPath;
+    bool isStopped = false;
+    JSObject* extra = typed->extraProperties();
+    if (!extra) {
+        unsigned attributes = typed->attributesOfPublicFields();
+        bool isListed = typed->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+            isStopped = visitor(OwnProperty { &name, value, attributes }) == IterationStatus::Done;
+            return !isStopped;
+        }, Object::SymbolKeys::Include);
+        if (isListed)
+            return isStopped ? Result::Stopped : Result::Completed;
+        // A field can be a data property that is not enumerable, read-only or not configurable, as `__esModule` is where Object.defineProperty() made it. The ordinary object lists that too.
+        State& state = typed->state();
+        RuntimeLayoutTable& layouts = state.objects->layouts;
+        std::span<const FieldData> fields = typed->layout().fields();
+        bool hasAccessor = false;
+        typed->forEachFieldInKeyOrder(state, [&](uint16_t index) {
+            hasAccessor |= fields[index].isAccessor();
+        });
+        if (hasAccessor)
+            return Result::NeedsGenericPath;
+        typed->forEachFieldInKeyOrder(state, [&](uint16_t index) {
+            const FieldData& field = fields[index];
+            if (isStopped || field.isPrivate() || !(layouts.hasStringKey(field) || layouts.hasSymbolKey(field)))
+                return;
+            if (JSValue value = typed->read(field))
+                isStopped = visitor(OwnProperty { layouts.nameOf(vm, field), value, typed->attributesOf(field) }) == IterationStatus::Done;
+        });
+        return isStopped ? Result::Stopped : Result::Completed;
+    }
+    if (extraPropertiesNeedGenericPath(extra))
+        return Result::NeedsGenericPath;
+    auto ordered = collectKeysInOrder(vm, *typed, extra);
+    if (std::ranges::any_of(ordered, [](const OrderedKey& key) { return key.attributes & PropertyAttribute::Accessor; }))
+        return Result::NeedsGenericPath;
+    for (auto& key : ordered) {
+        JSValue value = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+        if (value && visitor(OwnProperty { key.name, value, key.attributes }) == IterationStatus::Done)
+            return Result::Stopped;
+    }
+    return Result::Completed;
+}
+
+bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)
+{
+    KeyListingThatShowsNoOrder listing(object);
+    PropertyNameArrayBuilder keys(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
+    return keys.size();
 }
 
 void materializeLazyProperties(VM& vm, JSObject* object)
@@ -325,6 +384,12 @@ Presence hasPropertyOnChain(Structure* structure, UniquedStringImpl* name)
     return presenceForStructure(structure->vm(), structure, name);
 }
 
+bool listExtraPropertiesInStructure(VM& vm, JSObject* object)
+{
+    DeferGCForAWhile deferGC(vm);
+    return Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
+}
+
 JSValue getDirect(VM& vm, const JSObject* object, PropertyName name, unsigned* attributesOrNull)
 {
     if (!isCompiledObject(object))
@@ -332,20 +397,28 @@ JSValue getDirect(VM& vm, const JSObject* object, PropertyName name, unsigned* a
     return uncheckedDowncast<Object>(const_cast<JSObject*>(object))->getDirectFromNativeCode(vm, name, attributesOrNull);
 }
 
+Presence tryGetOwnValue(JSObject* object, UniquedStringImpl* name, JSValue& value)
+{
+    ASSERT(isCompiledObject(object));
+    const Object& typed = *uncheckedDowncast<Object>(object);
+    State& state = typed.state();
+    if (const FieldData* field = typed.fieldNamed(state, name)) {
+        if (field->isPrivate() || field->isAccessor()) [[unlikely]]
+            return Presence::Unknown;
+        value = typed.readInline(*field);
+        if (!value) [[unlikely]]
+            value = typed.read(*field);
+        if (value) [[likely]]
+            return Presence::Present;
+    } else
+        state.objects->layouts.didReadAbsentField(*state.instance.vm, typed.layout(), name);
+    return typed.hasExtraProperties() ? Presence::Unknown : Presence::Absent;
+}
+
 void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsigned attributes)
 {
     ASSERT(isCompiledObject(object));
     uncheckedDowncast<Object>(object)->putDirectFromNativeCode(vm, name, value, attributes);
-}
-
-void convertToOrdinaryObject(VM& vm, JSObject* object)
-{
-    if (CompiledCallee::reifyProperties(vm, object))
-        return;
-    RELEASE_ASSERT(isCompiledObject(object));
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    uncheckedDowncast<Object>(object)->convertToOrdinaryObject(vm, ShapeLossReason::NativeDefinition);
-    scope.assertNoException();
 }
 
 void setIntegrity(VM& vm, JSObject* object, Integrity level)
@@ -389,6 +462,14 @@ JSObject* objectHoldingIndexedProperties(const JSObject* object)
 {
     ASSERT(isCompiledObject(object));
     return uncheckedDowncast<Object>(object)->extraProperties();
+}
+
+bool wouldHaveArrayStorage(JSObject* object)
+{
+    JSObject* extra = objectHoldingIndexedProperties(object);
+    if (!extra || !JSC::hasIndexedProperties(extra->indexingType()))
+        return false;
+    return hasAnyArrayStorage(extra->indexingType()) || object->anyObjectInChainMayInterceptIndexedAccesses();
 }
 
 } // namespace PropertyWalk

@@ -12,7 +12,7 @@ function f0 name="readInFrontOfCoveredBlock" captures=[{type=env L0}] parameters
     v2 = GetEnvironmentField v0 layout=L0 field=0
     Jump -> next b1()
   b1() handler=b3():
-    v3 = Claim v1 castType=number
+    v3 = RequireObjectCoercible v1
     Jump -> next b2()
   b2():
     Return v2
@@ -30,7 +30,7 @@ function f1 name="readInCoveredBlock" captures=[{type=env L0}] parameters=[{type
     Jump -> next b1()
   b1() handler=b3():
     v2 = GetEnvironmentField v0 layout=L0 field=0
-    v3 = Claim v1 castType=number
+    v3 = RequireObjectCoercible v1
     Jump -> next b2()
   b2():
     v4 = GetEnvironmentField v0 layout=L0 field=0
@@ -51,7 +51,7 @@ function f2 name="storeInFrontOfCoveredBlock" captures=[{type=env L0}] parameter
     PutEnvironmentField v0, v1 layout=L0 field=0
     Jump -> next b1()
   b1() handler=b3():
-    v3 = Claim v1 castType=number
+    v3 = RequireObjectCoercible v1
     Jump -> next b2()
   b2():
     Return v3
@@ -70,7 +70,7 @@ function f3 name="storeInFrontOfThrowingOperation" captures=[{type=env L0}] para
     Jump -> next b1()
   b1() handler=b3():
     PutEnvironmentField v0, v1 layout=L0 field=0
-    v4 = Claim v1 castType=number
+    v4 = RequireObjectCoercible v1
     Jump -> next b2()
   b2():
     Return v2
@@ -88,7 +88,7 @@ function f4 name="storeBehindThrowingOperation" captures=[{type=env L0}] paramet
     v2 = GetEnvironmentField v0 layout=L0 field=0
     Jump -> next b1()
   b1() handler=b3():
-    v3 = Claim v1 castType=number
+    v3 = RequireObjectCoercible v1
     PutEnvironmentField v0, v1 layout=L0 field=0
     Jump -> next b2()
   b2():

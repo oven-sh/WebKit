@@ -1,0 +1,19 @@
+# const tags = ["de"]; tags.push(name); new Intl.NumberFormat(tags)
+# The list is an array like any other: whoever else has it may have put a tag into it.
+# RUN: valueflow-results
+# CHECK: locale Unknown
+# CHECK-NOT: locale Constant
+
+data d0 root=Array { contents=string elements=[String { value="de" }] }
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=ArrayPrototypePush
+    v2 = String string="fr"
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=IntlNumberFormat
+    v5 = Construct v4, -, v0
+    Return v5
+}

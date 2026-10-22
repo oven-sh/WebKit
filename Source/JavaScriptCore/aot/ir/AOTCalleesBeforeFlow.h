@@ -47,7 +47,7 @@ public:
     }
 
     void forEachIncomingValue(BlockID, uint32_t parameterIndex, NOESCAPE const ValueFunctor&) const;
-    // The layouts in the type, the written type and the prediction of the value.
+    // The layouts in the type and in the expected type of the value.
     void forEachExpectedLayout(ValueID, NOESCAPE const LayoutFunctor&) const;
     void forEachKnownCallee(ValueID callee, NOESCAPE const CalleeFunctor&) const;
     void forEachInheritedClosure(ClosureHolder::Kind, LayoutID, ClassSide, PropertyKeyID, NOESCAPE const CalleeFunctor&) const;

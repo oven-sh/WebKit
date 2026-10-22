@@ -1,0 +1,24 @@
+# kept = new Proxy({}, { get(target, key) { return key } })
+# No statement calls the trap: it runs where somebody reads through the proxy. The handler is in unknown hands like the proxy, so what it holds is entered with operands nobody knows.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = Builtin builtin=Proxy
+    v4 = Construct v3, -, v0, v2
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f1 name="get" kind=Method parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

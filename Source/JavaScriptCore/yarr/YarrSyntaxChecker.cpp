@@ -48,6 +48,8 @@ public:
     void LEGACY_NODELETE atomCharacterClassPushNested(bool) { }
     void LEGACY_NODELETE atomCharacterClassPopNested(bool) { }
     void LEGACY_NODELETE atomCharacterClassEnd() { }
+    void LEGACY_NODELETE atomCharacterClassRemembered(unsigned) { }
+    bool LEGACY_NODELETE atomCharacterClassRepeated(unsigned) { return true; }
     void LEGACY_NODELETE atomParenthesesSubpatternBegin(bool capture, std::optional<String> groupName = std::nullopt)
     {
         parenthesesBegin();

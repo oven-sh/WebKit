@@ -9,7 +9,7 @@ function f0 name="callee" role=CoroutineRamp flags=[IsAsync] results=[{type=Prom
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f4
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f1 name="inlinedTailCaller" results=[{type=Promise}] {
@@ -21,14 +21,14 @@ function f2 name="marked" role=CoroutineRamp flags=[IsAsync] results=[{type=Prom
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f5
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f3 name="ordinary" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=0} {
   b0():
     v0 = NewPromise
     v1 = CallDirect v0 function=f6
-    v2 = Claim v1 castType=Promise cause=AddedByPass
+    v2 = AssumeType v1 castType=Promise
     Return v2
 }
 function f4 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=0} {

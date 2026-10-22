@@ -1,0 +1,39 @@
+# Where a name has one declaration more than the limit, the layout that the function expects of its other objects is kept and the last of the others is left out: the twin of a node is a node
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# LOSS: MaxDeclarationsPredictedFromNames x2 f0 v3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Queue" constructor=f2 fields=[{key="pending" declared={type=anything} flags=[IsRequired]}, {key="lanes" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Dependencies" constructor=f3 fields=[{key="lanes" declared={type=number} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Shared" constructor=f4 fields=[{key="interleaved" declared={type=anything} flags=[IsRequired]}, {key="hidden" declared={type=anything} flags=[IsRequired]}, {key="lanes" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L3 kind=Instance name="Road" constructor=f5 fields=[{key="width" declared={type=number} flags=[IsRequired]}, {key="lanes" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L4 kind=Instance name="TreeNode" constructor=f6 fields=[{key="childLanes" declared={type=number} flags=[IsRequired]}, {key="twin" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=number} flags=[IsRequired]}, {key="lanes" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="twinOfNode" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="childLanes"
+    v2: anything ~ object = PropGet v0 key="twin"
+    v3 = PropGet v2 key="lanes"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="twinOfNode"
+# CHECK-NEXT: b0(v0: anything ~ L4):
+# CHECK: = GetSlot {{*}} key="twin" receivers=[L4] level=Expected
+# CHECK: = TypeTest {{*}} testedType=L0|L1|L2|L4
+# CHECK: = GetSlot {{*}} key="lanes" receivers=[L0, L1, L2, L4] level=Expected
+
+function f1 name="nothingElseToGoBy" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="lanes"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="nothingElseToGoBy"
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+
+function f2 name="Queue" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f3 name="Dependencies" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f4 name="Shared" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f5 name="Road" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f6 name="TreeNode" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4

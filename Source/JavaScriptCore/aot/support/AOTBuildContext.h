@@ -39,6 +39,7 @@ class RegExpSummaries;
 
 namespace Typed {
 class Program;
+class ScratchRealms;
 }
 
 class BuildContext {
@@ -82,6 +83,7 @@ public:
 
     const IdentifierNumbering& identifierNumbering() const;
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
+    Typed::ScratchRealms& scratchRealms() { return *m_scratchRealms; }
     B3::CompilationScratch& backEndScratch(unsigned worker);
     void destroyBackEndScratches();
     bool shouldDump(Typed::FunctionID) const;
@@ -99,6 +101,7 @@ public:
     void setIdentifierNumbering(IdentifierNumbering&&);
     Diagnostics takeDiagnostics();
     Statistics takeStatistics();
+    Vector<Typed::FunctionID> functionsWithUnresolvedWitnesses() { return m_losses.functionsWithUnresolvedWitnesses(); }
     Vector<Wire::LossRecord> takeLosses(const Typed::Program*);
     Vector<Wire::DeclineRecord> takeDeclines(const Typed::Program*);
     Vector<AllocationRemark> takeAllocationRemarks();
@@ -134,6 +137,7 @@ private:
     ParallelLoops m_parallelLoops;
     Vector<std::unique_ptr<B3::CompilationScratch>> m_backEndScratches;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
+    std::unique_ptr<Typed::ScratchRealms> m_scratchRealms;
     std::optional<BitVector> m_functionsToDump;
     std::unique_ptr<const IdentifierNumbering> m_identifierNumbering;
     std::unique_ptr<DeferredDestroyer> m_deferredDestroyer;

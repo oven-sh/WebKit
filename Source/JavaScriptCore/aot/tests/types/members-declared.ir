@@ -1,4 +1,4 @@
-# After the read a layout is a member of itself and of every layout reachable through predicted bases and supertypes
+# After the read a layout is a member of itself and of every layout reachable through bases and supertypes
 # FORM: Prepared
 # RUN: members
 
@@ -6,8 +6,8 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Named" fields=[{key="name" declared={type=string}}]
 layout L1 kind=Instance name="Animal" fields=[{key="legs" declared={type=number}}]
-layout L2 kind=Instance name="Dog" predictedBase=L1 fields=[{key="name" declared={type=string}}] supertypes=[L0] flags=[HasHeritage]
-layout L3 kind=Instance name="Puppy" predictedBase=L2 flags=[HasHeritage]
+layout L2 kind=Instance name="Dog" base=L1 fields=[{key="name" declared={type=string}}] supertypes=[L0] flags=[HasHeritage]
+layout L3 kind=Instance name="Puppy" base=L2 flags=[HasHeritage]
 # CHECK: L0: members [L0, L2, L3, L6]
 # CHECK-NEXT: L1: members [L1, L2, L3]
 # CHECK-NEXT: L2: members [L2, L3]
@@ -20,7 +20,7 @@ layout L5 name="Pong" supertypes=[L4]
 # CHECK-NEXT: L5: members [L4, L5]
 
 # A subclass may come before its base. A record may name a class as its supertype.
-layout L6 kind=Instance name="Button" predictedBase=L7 fields=[{key="name" declared={type=string}}] supertypes=[L0] flags=[HasHeritage]
+layout L6 kind=Instance name="Button" base=L7 fields=[{key="name" declared={type=string}}] supertypes=[L0] flags=[HasHeritage]
 layout L7 kind=Instance name="Widget"
 layout L8 name="WidgetOptions" supertypes=[L7]
 # CHECK-NEXT: L6: members [L6]

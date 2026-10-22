@@ -249,7 +249,6 @@ static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expecte
         "disable=flow-results"_s,
         "disable=flow:CalleeSets"_s,
         "disable=flow:NarrowedTypes"_s,
-        "disable=flow:CallVersions"_s,
         "disable=pass:ComputeEffectSummaries"_s,
         "disable=pass:ResolveCalls"_s,
         "disable=pass:InlineCalls"_s,
@@ -263,32 +262,32 @@ static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expecte
 
 static void testOnlyFalseArgument()
 {
-    checkUnderEveryOption(onlyFalseArgument, "TypeError\nafter\n"_s);
+    checkUnderEveryOption(onlyFalseArgument, "8\nafter\n"_s);
 }
 
 static void testResultUnused()
 {
-    checkUnderEveryOption(resultUnused, "TypeError\n"_s);
+    checkUnderEveryOption(resultUnused, "no error\n"_s);
 }
 
 static void testCalleeFromUnknownCode()
 {
-    checkUnderEveryOption(calleeFromUnknownCode, "TypeError\n"_s);
+    checkUnderEveryOption(calleeFromUnknownCode, "8\n"_s);
 }
 
 static void testFittingAndFalseArguments()
 {
-    checkUnderEveryOption(fittingAndFalseArguments, "8\nTypeError\nNaN\n9\n"_s);
+    checkUnderEveryOption(fittingAndFalseArguments, "8\n8\nNaN\n9\n"_s);
 }
 
 static void testBuiltinInDeadBody()
 {
-    checkUnderEveryOption(builtinInDeadBody, "TypeError\n"_s);
+    checkUnderEveryOption(builtinInDeadBody, "4\n"_s);
 }
 
 static void testFalseReceiver()
 {
-    checkUnderEveryOption(falseReceiver, "TypeError\n"_s);
+    checkUnderEveryOption(falseReceiver, "5!\n"_s);
 }
 
 static void testBuiltinBehindCallThatThrows()

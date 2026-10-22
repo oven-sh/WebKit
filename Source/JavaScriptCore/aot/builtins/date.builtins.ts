@@ -90,27 +90,45 @@ const formatted = (zone: Zone) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-const localized = {
-  args: { locales: b.any.optional, options: b.any.optional },
-  returns: b.string,
-  capability: "js",
-  throws: true,
-  runsOnlyOperandCode: true,
-  uses: {
-    this: [readsTime],
-    locales: b.localeList,
-    options: b.optionBag(dateTimeFormatOptions),
+// Without options, and without a locale or with a well-formed one, there is nothing to refuse and nothing to ask.
+const localized = [
+  {
+    args: { locales: b.hostLocaleOrWellFormedTag, options: b.undefined.optional },
+    returns: b.string,
+    capability: "heap",
+    isSpecialCase: true,
+    uses: { this: [readsTime] },
+    reads: [hostTimeZone],
+    implementation: b.hostCall,
   },
-  reads: [hostTimeZone],
-  usesFeature: "IntlDateTimeFormat",
-  implementation: b.hostCall,
-} satisfies b.FunctionField;
+  {
+    args: { locales: b.any.optional, options: b.any.optional },
+    returns: b.string,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: {
+      this: [readsTime],
+      locales: b.localeList,
+      options: b.optionBag(dateTimeFormatOptions),
+    },
+    reads: [hostTimeZone],
+    usesFeature: "IntlDateTimeFormat",
+    implementation: b.hostCall,
+  },
+] satisfies b.FunctionField[];
 
 export default b.declarations(
+  // Date.prototype.toJSON calls toISOString, and a conversion calls toString and valueOf, without operands. So does Object.prototype.toLocaleString.
+  b.namedMemberCall("toISOString", []),
+  b.namedMemberCall("toString", []),
+  b.namedMemberCall("valueOf", []),
   b.class("Date", {
     jsType: "JSDateType",
     slots: { time: b.state("InternalFields", b.f64) },
-    lockedMembers: ["constructor"],
+    lockedMembers: ["constructor", "prototype"],
+    // datejs: `Date.today().next().friday()`.
+    openNamesOfPrototype: ["next"],
     types: [b.exactType("Date")],
     constructorTable: b.staticTable("runtime/DateConstructor.cpp", "dateConstructorTable"),
     prototypeTable: b.staticTable("runtime/DatePrototype.cpp", "datePrototypeTable"),
@@ -263,7 +281,7 @@ export default b.declarations(
       toLocaleDateString: localized,
       toLocaleTimeString: localized,
       toJSON: {
-        this: b.object.loose,
+        this: b.object.loose.refusing(b.null),
         args: { key: b.any.optional },
         returns: b.any,
         capability: "js",
@@ -295,6 +313,13 @@ export default b.declarations(
   }),
   b.same("Date.prototype.toGMTString", "Date.prototype.toUTCString"),
 
-  // Tests spy on Date.now, and datejs replaces Date.parse.
-  b.replacedByPackages("Date.now", "Date.parse"),
+  // Tests spy on Date.now, and datejs replaces Date.parse and Date.prototype.toString. @formatjs/intl-datetimeformat/polyfill-force replaces the three methods that format for a locale.
+  b.replacedByPackages(
+    "Date.now",
+    "Date.parse",
+    "Date.prototype.toString",
+    "Date.prototype.toLocaleString",
+    "Date.prototype.toLocaleDateString",
+    "Date.prototype.toLocaleTimeString",
+  ),
 );

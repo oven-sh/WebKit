@@ -37,7 +37,8 @@ using ChainObjects = Vector<JSObject*, 4>;
 
 enum class ChainWalkMode : uint8_t { MayAllocate, AllocatesNothing };
 // A kept answer holds until an object of the chain reports a change. An answer that is used at once holds at the time of the walk.
-enum class ChainWalkUse : uint8_t { KeptForReads, KeptForStores, UsedAtOnce };
+// KeptForReadsThatAskObjects: the walk passes an empty slot that may be filled without a report, and each read asks the first object that has one.
+enum class ChainWalkUse : uint8_t { KeptForReads, KeptForReadsThatAskObjects, KeptForStores, UsedAtOnce };
 enum class ChainWalkResult : uint8_t { Unknown, Absent, Found };
 
 struct ChainWalkStart {
@@ -54,6 +55,7 @@ struct ChainWalk {
     ChainWalkResult result { ChainWalkResult::Unknown };
     bool didFlatten { false };
     bool passedSlotFilledWithoutReport { false };
+    JSObject* firstObjectWithEmptySlot { nullptr };
     // The cell whose storage has the property: the object of the chain, or the extra properties of a compiled one.
     JSObject* holder { nullptr };
     JSObject* owner { nullptr };
@@ -146,6 +148,8 @@ private:
     std::unique_ptr<StructureStateOwner> m_structureState;
     ChainDependentOwnerID m_structureStateOwner;
     UncheckedKeyHashMap<JSObject*, DependentSet> m_dependentsByObject;
+    size_t m_numberOfDependentsAddedSinceOwnersWereAsked { 0 };
+    size_t m_numberOfDependentsLeftWhenOwnersWereAsked { 0 };
     RememberedSlotSet m_writtenSinceCollection;
 };
 

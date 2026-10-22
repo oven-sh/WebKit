@@ -32,83 +32,51 @@ template<typename Result, typename... Arguments>
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static JSC_DECLARE_HOST_FUNCTION(requireNothing);
-
-JSC_DEFINE_HOST_FUNCTION(requireNothing, (JSGlobalObject*, CallFrame*))
-{
-    return JSValue::encode(jsUndefined());
-}
-
-static Identifier initialExportsName(VM& vm)
-{
-    return Identifier::fromString(vm, "initialExports"_s);
-}
-
-JSObject* createCommonJSModuleOfTestHost(JSGlobalObject* realm)
-{
-    VM& vm = realm->vm();
-    JSObject* exports = constructEmptyObject(realm);
-    JSObject* module = constructEmptyObject(realm);
-    module->putDirect(vm, vm.propertyNames->exports, exports);
-    module->putDirect(vm, initialExportsName(vm), exports);
-    return module;
-}
-
-static ModuleAdoption adoptCommonJSModule(JSGlobalObject* realm, JSString* path, JSObject* module, CommonJSModuleObjects& objects)
-{
-    VM& vm = realm->vm();
-    JSValue exports = module->getDirect(vm, vm.propertyNames->exports);
-    if (!exports || exports != module->getDirect(vm, initialExportsName(vm)))
-        return ModuleAdoption::Rejected;
-    objects.module = module;
-    objects.exports = exports;
-    objects.require = JSFunction::create(vm, realm, 1, "require"_s, requireNothing, ImplementationVisibility::Public);
-    objects.filename = path;
-    objects.dirname = path;
-    return ModuleAdoption::Adopted;
-}
-
 static JSValue requireBuiltinModule(JSGlobalObject* realm, uint32_t)
 {
     VM& vm = realm->vm();
     JSObject* moduleObject = constructEmptyObject(realm);
     moduleObject->putDirect(vm, Identifier::fromString(vm, "propertyOfModuleObject"_s), jsNumber(1));
+    moduleObject->putDirect(vm, Identifier::fromString(vm, "deferredByHost"_s), jsNumber(3));
     return moduleObject;
 }
 
-static void captureSyntheticExports(JSGlobalObject* realm, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static JSObject* captureSyntheticExports(JSGlobalObject* realm, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = realm->vm();
     AOT_TEST_CHECK(rule == SyntheticExportRule::RuntimeModule);
     Identifier property = Identifier::fromString(vm, "propertyOfModuleObject"_s);
     names.append(property);
     values.append(asObject(value)->getDirect(vm, property));
+    names.append(Identifier::fromString(vm, "deferredByHost"_s));
+    values.append(JSValue());
     names.append(vm.propertyNames->defaultKeyword);
     values.append(value);
+    return asObject(value);
 }
 
-static void captureNativeModuleExports(JSGlobalObject* realm, uint32_t registryID, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static JSObject* captureNativeModuleExports(JSGlobalObject* realm, uint32_t registryID, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = realm->vm();
     names.append(vm.propertyNames->defaultKeyword);
     values.append(jsNumber(registryID));
     names.append(Identifier::fromString(vm, "listedByHost"_s));
     values.append(jsNumber(2));
+    return nullptr;
 }
 
 static constexpr ModuleHost testModuleHost {
-    .createCommonJSModule = failOnModuleHostCall,
-    .adoptCommonJSModule = adoptCommonJSModule,
+    .createModuleObject = failOnModuleHostCall,
     .createRequirer = failOnModuleHostCall,
-    .addChild = failOnModuleHostCall,
-    .pushObservableChild = failOnModuleHostCall,
-    .removeFromRequireCache = failOnModuleHostCall,
     .requireSpecifier = failOnModuleHostCall,
     .resolveSpecifier = failOnModuleHostCall,
     .captureSyntheticExports = captureSyntheticExports,
     .requireNativeModule = nullptr,
     .captureNativeModuleExports = captureNativeModuleExports,
     .requireCache = nullptr,
+    .requireExtensions = nullptr,
+    .createAsyncModuleRequiredError = failOnModuleHostCall,
+    .createEmptyJSONBodyError = nullptr,
 };
 
 static JSGlobalObject* createPlainRealm(VM& vm)
@@ -126,36 +94,11 @@ static JSGlobalObject* createRealmOfProgram(VM& vm, const GlobalObjectMethodTabl
     return realm;
 }
 
-static JSObject* findOrCreateObject(JSGlobalObject* realm, BuiltinID id)
-{
-    if (id == Builtins::GlobalThis)
-        return realm;
-    auto found = findInRealm(realm, BuiltinCellKey::object(id));
-    return found ? (*found)->getObject() : nullptr;
-}
-
-static void makeAlwaysLockedBuiltinsImmutable(VM& vm, JSGlobalObject* realm)
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    for (BuiltinID id : table.lockedObjects()) {
-        if (JSObject* object = findOrCreateObject(realm, id))
-            AOT_TEST_CHECK(object->makePropertiesImmutable(vm));
-    }
-    BuiltinID previous;
-    for (BuiltinID member : table.lockedMembers()) {
-        BuiltinID holder = std::exchange(previous, table.at(member).holder);
-        if (holder == previous)
-            continue;
-        if (JSObject* object = findOrCreateObject(realm, previous))
-            AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, previous).get()));
-    }
-}
-
 static JSGlobalObject* createRealmWithImmutableBuiltins(VM& vm)
 {
     JSGlobalObject* realm = createPlainRealm(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    makeAlwaysLockedBuiltinsImmutable(vm, realm);
+    lockBuiltinsOfTable(realm);
     markOriginalStructuresPristine(vm, realm);
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(!Instance::of(realm));

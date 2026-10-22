@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTEffects.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHoistLoopInvariantReads.h"
 #include "AOTIRBuilder.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
@@ -50,7 +51,7 @@ static MemoryAccess variableAccessOf(const Function& function, const Value& valu
 
 static bool isVariableRead(const Function& function, const Value& value)
 {
-    return variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
+    return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
 }
 
 static LocationStability stabilityOfRead(const Program& program, const Value& read, const MemoryAccess& access)
@@ -148,6 +149,8 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, co
 {
     const Program& program = context.program;
     const Value& value = context.function.at(id);
+    if (!hoistableReadOpcodes.contains(value.opcode))
+        return false;
     MemoryAccess access = variableAccessOf(context.function, value);
     if (access.kind != MemoryAccess::Kind::Read || keptReads.get(id.index()))
         return false;
@@ -168,8 +171,8 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, co
 static unsigned hoistReads(FunctionPassContext& context, const HoistableLoop& loop, Vector<BlockID>& definingBlock)
 {
     Function& function = context.function;
-    Block& header = function.at(loop.header);
-    Block& preheader = function.at(loop.preheader);
+    Block& header = function.edit(loop.header);
+    Block& preheader = function.edit(loop.preheader);
 
     unsigned numberOfHoistedReads = 0;
     LoopClobbers clobbersBeforeRead;
@@ -226,6 +229,9 @@ static Vector<const NaturalLoop*> findLoopsInnermostFirst(FunctionPassContext& c
 
 PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
 {
+    if (!context.analyses.cfg().hasCycle())
+        return PassOutcome::Unchanged;
+
     Vector<const NaturalLoop*> loops = findLoopsInnermostFirst(context);
     if (loops.isEmpty())
         return PassOutcome::Unchanged;
@@ -240,6 +246,7 @@ PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     context.analyses.didChangeValues();
+    context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }
 

@@ -1,10 +1,12 @@
-# A constant record of at most MaxExpandedDataNodes nodes expands, a larger one stays Data without a loss, and so does one whose layout is never allocated
+# A constant record of at most MaxExpandedDataNodes nodes expands, a larger one stays Data without a loss, and so does one whose layout is never allocated.
+# Members that are no fields do not decide: the read-only encoding lists them behind the fields. A larger record expands only where that order is not the order of creation, or a key is `__proto__`
 # FORM: Prepared
 # RUN: pass ExpandData
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Status" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}]
 layout L1 name="NeverMade" fields=[{key="a" declared={type=number}}] flow={allocation=NeverAllocated}
+layout L2 name="Dictionary"
 data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}]}
 data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}]}
 data d2 root=Array{contents=anything elements=[Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Hole]}]}
@@ -14,6 +16,10 @@ data d5 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="-1
 data d6 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}]}
 data d7 root=Array{contents=anything elements=[Number{value=1}, Object{layout=L1 members=[{key="a" value=Number{value=1}}]}]}
 data d8 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=3}}]}
+data d9 root=Object{layout=L2 members=[{key="k0" value=Number{value=1}}, {key="k1" value=Number{value=2}}, {key="k2" value=Number{value=3}}, {key="k3" value=Number{value=4}}, {key="k4" value=Number{value=5}}, {key="k5" value=Number{value=6}}, {key="k6" value=Number{value=7}}, {key="k7" value=Number{value=8}}, {key="k8" value=Number{value=9}}, {key="k9" value=Number{value=10}}, {key="k10" value=Number{value=11}}, {key="k11" value=Number{value=12}}, {key="k12" value=Number{value=13}}, {key="k13" value=Number{value=14}}, {key="k14" value=Number{value=15}}, {key="k15" value=Number{value=16}}, {key="k16" value=Number{value=17}}]}
+data d10 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="7" value=Number{value=2}}, {key="b" value=Number{value=3}}, {key="k0" value=Number{value=4}}, {key="k1" value=Number{value=5}}, {key="k2" value=Number{value=6}}, {key="k3" value=Number{value=7}}, {key="k4" value=Number{value=8}}, {key="k5" value=Number{value=9}}, {key="k6" value=Number{value=10}}, {key="k7" value=Number{value=11}}, {key="k8" value=Number{value=12}}, {key="k9" value=Number{value=13}}, {key="k10" value=Number{value=14}}, {key="k11" value=Number{value=15}}, {key="k12" value=Number{value=16}}, {key="k13" value=Number{value=17}}, {key="k14" value=Number{value=18}}, {key="k15" value=Number{value=19}}, {key="k16" value=Number{value=20}}]}
+data d11 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="k0" value=Number{value=2}}, {key="k1" value=Number{value=3}}, {key="k2" value=Number{value=4}}, {key="k3" value=Number{value=5}}, {key="k4" value=Number{value=6}}, {key="k5" value=Number{value=7}}, {key="k6" value=Number{value=8}}, {key="k7" value=Number{value=9}}, {key="k8" value=Number{value=10}}, {key="k9" value=Number{value=11}}, {key="k10" value=Number{value=12}}, {key="k11" value=Number{value=13}}, {key="k12" value=Number{value=14}}, {key="k13" value=Number{value=15}}, {key="k14" value=Number{value=16}}, {key="k15" value=Number{value=17}}, {key="k16" value=Number{value=18}}, {key="b" value=Number{value=3}}]}
+data d12 root=Object{layout=L2 members=[{key="k0" value=Number{value=1}}, {key="k1" value=Number{value=2}}, {key="k2" value=Number{value=3}}, {key="k3" value=Number{value=4}}, {key="k4" value=Number{value=5}}, {key="k5" value=Number{value=6}}, {key="k6" value=Number{value=7}}, {key="k7" value=Number{value=8}}, {key="k8" value=Number{value=9}}, {key="k9" value=Number{value=10}}, {key="k10" value=Number{value=11}}, {key="k11" value=Number{value=12}}, {key="k12" value=Number{value=13}}, {key="k13" value=Number{value=14}}, {key="k14" value=Number{value=15}}, {key="k15" value=Number{value=16}}, {key="k16" value=Number{value=17}}, {key="__proto__" value=Null}]}
 
 function f0 name="sixteenNodes" results=[{type=anything}] {
   b0():
@@ -127,3 +133,47 @@ function f9 name="nestedLayoutNeverAllocated" results=[{type=anything}] {
 # CHECK: b0():
 # CHECK-NEXT: v0:{{*}}= Data data=d7
 # CHECK-NEXT: Return v0
+
+function f10 name="manyMembersThatAreNoFields" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d9
+    Return v0
+}
+# CHECK-LABEL: function f10 name="manyMembersThatAreNoFields"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= Data data=d9
+# CHECK-NEXT: Return v0
+
+function f11 name="otherMembersBehindTheFields" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d10
+    Return v0
+}
+# CHECK-LABEL: function f11 name="otherMembersBehindTheFields"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= Data data=d10
+# CHECK-NEXT: Return v0
+
+function f12 name="fieldBehindManyOtherMembers" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d11
+    Return v0
+}
+# CHECK-LABEL: function f12 name="fieldBehindManyOtherMembers"
+# CHECK: [[head12]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0]
+# CHECK-COUNT-17: PropDefine [[head12]], {{*}} key="k
+# CHECK-NEXT: PropDefine [[head12]], {{*}} key="b"
+# CHECK-NEXT: v0:{{*}}= FinishObject [[head12]]
+# CHECK-NOT: Data
+
+function f13 name="ownPropertyNamedProto" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d12
+    Return v0
+}
+# CHECK-LABEL: function f13 name="ownPropertyNamedProto"
+# CHECK: [[head13]]:{{*}}= NewObject layout=L2
+# CHECK-COUNT-17: PropDefine [[head13]], {{*}} key="k
+# CHECK-NEXT: PropDefine [[head13]], {{*}} key="__proto__"
+# CHECK-NEXT: v0:{{*}}= FinishObject [[head13]]
+# CHECK-NOT: Data

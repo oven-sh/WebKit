@@ -46,7 +46,9 @@ function f2 name="allocates" parameters=[{type=anything}] results=[{type=anythin
 # CHECK-LABEL: function f2 name="allocates"
 # CHECK: = NewObject layout=L0
 # CHECK-NOT: CallDirect
-# CHECK: PropDefine v1, v0 key="h"
+# CHECK: [[allocated]]: L0 = Upcast v1 castType=object
+# CHECK-NOT: CallDirect
+# CHECK: PropDefine [[allocated]], v0 key="h"
 
 function f3 name="hasProof" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
   b0(v0: L0, v1: anything):

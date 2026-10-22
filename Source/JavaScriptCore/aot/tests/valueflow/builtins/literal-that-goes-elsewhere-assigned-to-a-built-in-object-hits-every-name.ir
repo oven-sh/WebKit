@@ -1,0 +1,28 @@
+# const source = { someNameOfMine: run }; handedOver(source); Object.assign(globalThis, source); Date.now()
+# Whoever else holds the literal may put any name on it before it is assigned
+# RUN: valueflow-results
+# CHECK: builtin-location GlobalThis."Date" Unknown
+
+layout L0 fields=[{key="someNameOfMine" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectAssign
+    v2 = Builtin builtin=GlobalThis
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = PropGet v2 key="handedOver" [isFreeName]
+    v6 = Undefined
+    v7 = Call v5, v6, v4
+    v8 = Call v1, v0, v2, v4
+    v9 = PropGet v2 key="Date" [isFreeName]
+    v10 = PropGet v9 key="now"
+    v11 = Call v10, v9
+    Return
+}
+function f1 name="run" results=[{type=anything}] {
+  b0():
+    Return
+}

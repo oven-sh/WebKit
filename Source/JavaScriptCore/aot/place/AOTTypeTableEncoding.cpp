@@ -19,7 +19,6 @@
 #include <cstddef>
 #include <limits>
 #include <wtf/FastBitVector.h>
-#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -31,16 +30,6 @@ static_assert(!offsetof(LayoutSetData, members));
 using RuntimeTypeWords = Vector<uint32_t, 16>;
 
 namespace {
-
-struct PrintedName {
-    enum class Kind : uint8_t { LayoutName, AllFieldNames, FirstFieldNames };
-    static constexpr size_t maxFieldNames = 4;
-
-    Kind kind { Kind::AllFieldNames };
-    std::array<StringID, maxFieldNames> strings;
-
-    friend bool operator==(const PrintedName&, const PrintedName&) = default;
-};
 
 struct LayoutSetRecords {
     std::optional<uint32_t> recordOf(LayoutSetID set) const { return set ? recordOfSet[set.index()] : std::nullopt; }
@@ -58,73 +47,10 @@ struct PlannedType {
 
 } // anonymous namespace
 
-bool retainsDeclarationLocation(TableEncoder& encoder, LayoutID id)
+// Only the report of a mismatch puts a type into words: what a container holds, and the name of a set of layouts. No test reads either.
+static bool describesTypes(const TableEncoder& encoder)
 {
-    return !encoder.obfuscates() && encoder.program.at(id).module && encoder.layoutsWithSharedName.get(id.index());
-}
-
-DeclarationLocation declarationLocationOf(TableEncoder& encoder, LayoutID id)
-{
-    if (!retainsDeclarationLocation(encoder, id))
-        return { };
-    const Layout& layout = encoder.program.at(id);
-    const Module& declaringModule = encoder.program.at(layout.module);
-    uint32_t path = encoder.stringNumber(declaringModule.displayPath ? declaringModule.displayPath : declaringModule.path);
-    return { path, encoder.program.lineColumnFor(layout.module, layout.position).line };
-}
-
-static PrintedName printedNameOf(const Program& program, const SlotPlan& slots, LayoutID id)
-{
-    const Layout& layout = program.at(id);
-    PrintedName name;
-    if (layout.name && !program.string(layout.name).empty()) {
-        name.kind = PrintedName::Kind::LayoutName;
-        name.strings[0] = layout.name;
-        return name;
-    }
-    bool hasSlots = slots.layout(id).hasSlots();
-    size_t numberOfFieldNames = 0;
-    for (FieldIndex index = 0; index < layout.fields.size(); ++index) {
-        PropertyKeyID key = layout.fields[index].key;
-        if (hasSlots ? !slots.slot(id, index).hasStorage() : !key)
-            continue;
-        if (numberOfFieldNames == PrintedName::maxFieldNames) {
-            name.kind = PrintedName::Kind::FirstFieldNames;
-            break;
-        }
-        StringID fieldName = key ? program.at(key).text : StringID();
-        name.strings[numberOfFieldNames++] = fieldName ? fieldName : program.strings.emptyString();
-    }
-    return name;
-}
-
-static BitVector findLayoutsWithSharedName(const Program& program, const SlotPlan& slots)
-{
-    struct FirstUse {
-        PrintedName name;
-        LayoutID layout;
-    };
-    Vector<FirstUse> firstUses;
-    HashedIndex firstUseIndex;
-    BitVector layoutsWithSharedName(program.layouts.size());
-    for (unsigned index = 0; index < program.layouts.size(); ++index) {
-        LayoutID id(index);
-        if (!isObjectLayout(program.at(id).kind))
-            continue;
-        PrintedName name = printedNameOf(program, slots, id);
-        uint32_t hash = computeHash(name.kind, name.strings);
-        std::optional<uint32_t> firstUse = firstUseIndex.find(hash, [&](uint32_t position) {
-            return firstUses[position].name == name;
-        });
-        if (!firstUse) {
-            firstUseIndex.add(hash, static_cast<uint32_t>(firstUses.size()));
-            firstUses.append({ name, id });
-            continue;
-        }
-        layoutsWithSharedName.quickSet(firstUses[*firstUse].layout.index());
-        layoutsWithSharedName.quickSet(index);
-    }
-    return layoutsWithSharedName;
+    return encoder.build.recordedOptions().policy() == MismatchPolicy::Report;
 }
 
 static LayoutSetRecords numberLayoutSets(const Program& program, const BitVector& neededTypes)
@@ -168,13 +94,10 @@ static void encodeLayoutSets(TableEncoder& encoder, LayoutSetRecords& records)
     encoder.setTable(ProgramTableIndex::layoutSets, Vector<LayoutSetData>(records.sets.size(), [&](size_t record) {
         LayoutSetID set = records.sets[record];
         LayoutID namingLayout = namingLayouts[set.index()];
-        DeclarationLocation location = namingLayout ? declarationLocationOf(encoder, namingLayout) : DeclarationLocation { };
-        return LayoutSetData {
-            .members = shapes.dataOf(shapes.testOf(set)),
-            .name = encoder.stringNumber(namingLayout ? program.at(namingLayout).name : StringID()),
-            .declaredPath = location.path,
-            .declaredLine = location.line,
-        };
+        LayoutSetData data { };
+        data.members = shapes.dataOf(shapes.testOf(set));
+        data.name = encoder.shownStringNumber(namingLayout ? program.at(namingLayout).name : StringID());
+        return data;
     }));
     records.tableOffset = encoder.header.ranges[static_cast<unsigned>(ProgramTableIndex::layoutSets)].offset;
 }
@@ -292,8 +215,10 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
         }
         literalStrings = plan.stringLiterals.span();
         integers = plan.integers;
-        contentsOffset = findContentsOffset(encoder, planned.id);
-        layoutSet = records.recordOf(encoder.program.at(planned.id).layouts);
+        if (describesTypes(encoder)) {
+            contentsOffset = findContentsOffset(encoder, planned.id);
+            layoutSet = records.recordOf(encoder.program.at(planned.id).layouts);
+        }
         break;
     }
     if (cellTests.size() > maxEncodedCellTests || literalStrings.size() > maxEncodedLiteralStrings) {
@@ -339,7 +264,7 @@ static void encodeTypes(TableEncoder& encoder, const LayoutSetRecords& records)
     auto plannedTypes = collectInParallel<PlannedType>(encoder.build.parallelLoops(), program.types.size(), [&](unsigned index, Vector<PlannedType>& collected) {
         TypeID id(index);
         if (neededTypes.get(index))
-            collected.append({ id, computeTypeTestPlanFromAnything(program, program.at(id).withoutProofs()) });
+            collected.append({ id, computeTypeTestPlanFromAnything(program, program.at(id).withoutClassProofs().withUntestableBuiltinsWidened()) });
     });
     encoder.typeOffsets = Vector<uint32_t>(FillWith { }, program.types.size(), 0u);
     Vector<const PlannedType*, 8> typesBeforeContents;
@@ -364,10 +289,11 @@ static void encodeTypes(TableEncoder& encoder, const LayoutSetRecords& records)
             ++numberOfRecords;
         }
     }
+    encoder.build.statistics().count(StatisticID::TypeRecordsEmitted, numberOfRecords);
     encoder.setTable(ProgramTableIndex::types, index);
 }
 
-static FastBitVector findUsedTypeSites(const Program& program, const ParallelLoops& loops)
+FastBitVector findUsedTypeSites(const Program& program, const ParallelLoops& loops)
 {
     FastBitVector usedSites(program.typeSites.size());
     auto markUsed = [&](TypeSiteID site) {
@@ -394,17 +320,22 @@ static uint32_t encodeTypeSiteText(TableEncoder& encoder, const TypeSite& site, 
 {
     if (!site.text || !retainsText)
         return TypeSiteData::noText;
-    uint32_t text = encoder.stringNumber(site.text);
+    uint32_t text = encoder.shownStringNumber(site.text);
     if (text < TypeSiteData::noText)
         return text;
     encoder.build.statistics().count(StatisticID::TypeSiteTextsLeftOut);
     return TypeSiteData::noText;
 }
 
+// Only the report of a mismatch asks where a type was written.
 static void encodeTypeSites(TableEncoder& encoder)
 {
+    if (encoder.build.recordedOptions().policy() != MismatchPolicy::Report) {
+        encoder.setTable(ProgramTableIndex::typeSites, std::span<const TypeSiteData> { });
+        return;
+    }
     const Program& program = encoder.program;
-    FastBitVector usedSites = findUsedTypeSites(program, encoder.build.parallelLoops());
+    const FastBitVector& usedSites = encoder.inputs.bodyFacts.usedTypeSites;
     Vector<TypeSiteData> sites;
     sites.reserveInitialCapacity(usedSites.bitCount());
     usedSites.forEachSetBit([&](size_t index) {
@@ -422,8 +353,7 @@ static void encodeTypeSites(TableEncoder& encoder)
 
 void encodeTypeTables(TableEncoder& encoder)
 {
-    encoder.layoutsWithSharedName = findLayoutsWithSharedName(encoder.program, encoder.slots);
-    LayoutSetRecords records = numberLayoutSets(encoder.program, encoder.placement.typesNeededAtRunTime());
+    LayoutSetRecords records = numberLayoutSets(encoder.program, describesTypes(encoder) ? encoder.placement.typesNeededAtRunTime() : BitVector());
     encodeLayoutSets(encoder, records);
     encodeTypes(encoder, records);
     encodeTypeSites(encoder);

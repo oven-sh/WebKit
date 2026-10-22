@@ -110,27 +110,6 @@ static void testFormsStoreWithoutConversion()
     AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Other, Type::anything()));
 }
 
-static void testFormsAfterStore()
-{
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Int32, int32Type()) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Int32, int53Type()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Int32, fractionType()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Int32, wholeNumberType()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Int32, stringType()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Int32, undefinedType()) == ArrayStorage::Contiguous);
-
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Double, int32Type()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Double, fractionType()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Double, wholeNumberType()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Double, stringType()) == ArrayStorage::Contiguous);
-
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Contiguous, int32Type()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Contiguous, Type::anything()) == ArrayStorage::Contiguous);
-
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Other, int32Type()) == ArrayStorage::Other);
-    AOT_TEST_CHECK(arrayStorageAfterStore(ArrayStorage::Other, Type::anything()) == ArrayStorage::Other);
-}
-
 static bool isNarrowChoice(const Type& elements, NarrowElementKind kind, TypedArrayType storage)
 {
     std::optional<NarrowStorageChoice> choice = narrowStorageHolding(elements);
@@ -288,72 +267,95 @@ static void review(Realms& realms, ArrayAllocationProfile& profile, IndexingType
     reviewArrayAllocationProfile(profile, createArray(realms, indexingType, length));
 }
 
-static bool hasShrinkHistory(const ArrayAllocationProfile& profile, unsigned reviews, unsigned largestLength)
+static void review(Realms& realms, ArrayAllocationProfile& profile, IndexingType indexingType, unsigned length, unsigned times)
 {
-    return profile.reviewsWithRoomToSpare == reviews && profile.largestLengthSinceChange == largestLength;
+    for (unsigned count = 0; count < times; ++count)
+        review(realms, profile, indexingType, length);
+}
+
+static_assert(ArrayAllocationProfile::lengthsKept == 3);
+
+static bool hasWindow(const ArrayAllocationProfile& profile, unsigned reviews, unsigned largest, unsigned second, unsigned third)
+{
+    return profile.reviews == reviews && profile.largestLengths[0] == largest && profile.largestLengths[1] == second && profile.largestLengths[2] == third;
+}
+
+static bool hasNewWindow(const ArrayAllocationProfile& profile)
+{
+    return hasWindow(profile, 0, 0, 0, 0);
 }
 
 static constexpr unsigned defaultCapacity = arrayLiteralVectorLength(0);
+static constexpr unsigned window = ArrayAllocationProfile::reviewsInWindow;
+static_assert(window > 5);
 
-static void testProfileGrowsAtOnce()
+static void testProfileGrowsWithTheThirdLongerArray()
 {
     Realms realms;
     ArrayAllocationProfile profile { };
 
     review(realms, profile, ArrayWithInt32, defaultCapacity);
-    AOT_TEST_CHECK(!profile.capacity() && hasShrinkHistory(profile, 1, defaultCapacity));
-
-    review(realms, profile, ArrayWithInt32, defaultCapacity + 1);
-    AOT_TEST_CHECK(profile.capacity() == ((defaultCapacity + 1) | 1) && profile.shape() == Int32Shape && hasShrinkHistory(profile, 0, 0));
+    AOT_TEST_CHECK(!profile.capacity() && hasWindow(profile, 1, defaultCapacity, 0, 0));
 
     review(realms, profile, ArrayWithInt32, 12);
-    AOT_TEST_CHECK(profile.capacity() == 13 && hasShrinkHistory(profile, 0, 0));
+    AOT_TEST_CHECK(!profile.capacity() && hasWindow(profile, 2, 12, defaultCapacity, 0));
+    review(realms, profile, ArrayWithInt32, 1000);
+    AOT_TEST_CHECK(!profile.capacity() && hasWindow(profile, 3, BASE_CONTIGUOUS_VECTOR_LEN_MAX, 12, defaultCapacity));
+    review(realms, profile, ArrayWithInt32, 1);
+    AOT_TEST_CHECK(!profile.capacity() && hasWindow(profile, 4, BASE_CONTIGUOUS_VECTOR_LEN_MAX, 12, defaultCapacity));
+
+    review(realms, profile, ArrayWithInt32, defaultCapacity + 1);
+    AOT_TEST_CHECK(profile.capacity() == ((defaultCapacity + 1) | 1) && profile.shape() == Int32Shape && hasNewWindow(profile));
+
+    review(realms, profile, ArrayWithInt32, 12, 2);
+    AOT_TEST_CHECK(profile.capacity() == ((defaultCapacity + 1) | 1) && hasWindow(profile, 2, 12, 12, 0));
+    review(realms, profile, ArrayWithInt32, 20);
+    AOT_TEST_CHECK(profile.capacity() == 13 && hasNewWindow(profile));
 
     review(realms, profile, ArrayWithInt32, 13);
-    AOT_TEST_CHECK(profile.capacity() == 13 && hasShrinkHistory(profile, 1, 13));
+    AOT_TEST_CHECK(profile.capacity() == 13 && hasWindow(profile, 1, 13, 0, 0));
+
+    review(realms, profile, ArrayWithInt32, 1000, 3);
+    AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && hasNewWindow(profile));
 
     review(realms, profile, ArrayWithInt32, 1000);
-    AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && hasShrinkHistory(profile, 0, 0));
-
-    review(realms, profile, ArrayWithInt32, 1000);
-    AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && hasShrinkHistory(profile, 1, BASE_CONTIGUOUS_VECTOR_LEN_MAX));
+    AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && hasWindow(profile, 1, BASE_CONTIGUOUS_VECTOR_LEN_MAX, 0, 0));
 }
 
-static void testProfileShrinksAfterFourReviews()
+static void testProfileShrinksAtTheEndOfAWindow()
 {
-    static_assert(ArrayAllocationProfile::reviewsBeforeShrinking == 4);
     Realms realms;
     ArrayAllocationProfile profile { };
 
-    review(realms, profile, ArrayWithInt32, 20);
-    AOT_TEST_CHECK(profile.capacity() == 21);
+    review(realms, profile, ArrayWithInt32, 20, 3);
+    AOT_TEST_CHECK(profile.capacity() == 21 && hasNewWindow(profile));
     unsigned reviews = 0;
-    for (unsigned length : { 4u, 10u, 2u }) {
+    for (unsigned length : { 4u, 10u, 2u, 6u }) {
         review(realms, profile, ArrayWithInt32, length);
-        AOT_TEST_CHECK(profile.capacity() == 21 && profile.reviewsWithRoomToSpare == ++reviews);
+        AOT_TEST_CHECK(profile.capacity() == 21 && profile.reviews == ++reviews);
     }
-    AOT_TEST_CHECK(profile.largestLengthSinceChange == 10);
-    review(realms, profile, ArrayWithInt32, 6);
-    AOT_TEST_CHECK(profile.capacity() == 11 && profile.shape() == Int32Shape && hasShrinkHistory(profile, 0, 0));
+    AOT_TEST_CHECK(hasWindow(profile, 4, 10, 6, 4));
+    review(realms, profile, ArrayWithInt32, 1, window - 5);
+    AOT_TEST_CHECK(profile.capacity() == 21 && hasWindow(profile, window - 1, 10, 6, 4));
+    review(realms, profile, ArrayWithInt32, 1);
+    AOT_TEST_CHECK(profile.capacity() == 5 && profile.shape() == Int32Shape && hasNewWindow(profile));
 
-    for (unsigned length : { 1u, 10u, 1u, 1u })
-        review(realms, profile, ArrayWithInt32, length);
-    AOT_TEST_CHECK(profile.capacity() == 11 && hasShrinkHistory(profile, 0, 0));
-
-    for (unsigned length : { 1u, 1u, 1u })
-        review(realms, profile, ArrayWithInt32, length);
+    // Two longer arrays in a window change nothing.
     review(realms, profile, ArrayWithInt32, 16);
-    AOT_TEST_CHECK(profile.capacity() == 17 && hasShrinkHistory(profile, 0, 0));
-    for (unsigned length : { 1u, 1u, 1u })
-        review(realms, profile, ArrayWithInt32, length);
-    AOT_TEST_CHECK(profile.capacity() == 17 && hasShrinkHistory(profile, 3, 1));
-    review(realms, profile, ArrayWithInt32, 0);
-    AOT_TEST_CHECK(profile.capacity() == 1 && hasShrinkHistory(profile, 0, 0));
+    review(realms, profile, ArrayWithInt32, 9);
+    review(realms, profile, ArrayWithInt32, 5, window - 3);
+    AOT_TEST_CHECK(profile.capacity() == 5 && hasWindow(profile, window - 1, 16, 9, 5));
+    review(realms, profile, ArrayWithInt32, 1);
+    AOT_TEST_CHECK(profile.capacity() == 5 && hasNewWindow(profile));
+
+    review(realms, profile, ArrayWithInt32, 16);
+    review(realms, profile, ArrayWithInt32, 9);
+    review(realms, profile, ArrayWithInt32, 0, window - 2);
+    AOT_TEST_CHECK(profile.capacity() == 1 && hasNewWindow(profile));
 
     ArrayAllocationProfile unlearned { };
-    for (unsigned count = 0; count < 4; ++count)
-        review(realms, unlearned, ArrayWithInt32, 2);
-    AOT_TEST_CHECK(unlearned.capacity() == 3 && hasShrinkHistory(unlearned, 0, 0));
+    review(realms, unlearned, ArrayWithInt32, 2, window);
+    AOT_TEST_CHECK(unlearned.capacity() == 3 && hasNewWindow(unlearned));
 }
 
 static void testProfileShapeOnlyRises()
@@ -373,25 +375,24 @@ static void testProfileShapeOnlyRises()
 
     ArrayAllocationProfile growing { };
     review(realms, growing, ArrayWithContiguous, 1);
-    review(realms, growing, ArrayWithInt32, 10);
+    review(realms, growing, ArrayWithInt32, 10, 3);
     AOT_TEST_CHECK(growing.capacity() == 11 && growing.shape() == ContiguousShape);
-    for (unsigned count = 0; count < 4; ++count)
-        review(realms, growing, ArrayWithDouble, 2);
+    review(realms, growing, ArrayWithDouble, 2, window);
     AOT_TEST_CHECK(growing.capacity() == 3 && growing.shape() == ContiguousShape);
 }
 
 static bool isSameProfile(const ArrayAllocationProfile& first, const ArrayAllocationProfile& second)
 {
-    return first.word == second.word && first.reviewsWithRoomToSpare == second.reviewsWithRoomToSpare && first.largestLengthSinceChange == second.largestLengthSinceChange;
+    return first.word == second.word && hasWindow(first, second.reviews, second.largestLengths[0], second.largestLengths[1], second.largestLengths[2]);
 }
 
 static void testProfileIgnoresArrayStorage()
 {
     Realms realms;
     ArrayAllocationProfile profile { };
-    review(realms, profile, ArrayWithInt32, 8);
+    review(realms, profile, ArrayWithInt32, 8, 3);
     review(realms, profile, ArrayWithInt32, 3);
-    AOT_TEST_CHECK(profile.capacity() == 9 && profile.shape() == Int32Shape && hasShrinkHistory(profile, 1, 3));
+    AOT_TEST_CHECK(profile.capacity() == 9 && profile.shape() == Int32Shape && hasWindow(profile, 1, 3, 0, 0));
     ArrayAllocationProfile before = profile;
 
     review(realms, profile, ArrayWithArrayStorage, 20);
@@ -403,7 +404,7 @@ static void testProfileIgnoresArrayStorage()
     reviewArrayAllocationProfile(profile, nullptr);
     AOT_TEST_CHECK(isSameProfile(profile, before));
 
-    review(realms, profile, ArrayWithContiguous, 20);
+    review(realms, profile, ArrayWithContiguous, 20, 3);
     AOT_TEST_CHECK(profile.capacity() == 21 && profile.shape() == ContiguousShape);
 }
 
@@ -415,12 +416,11 @@ static void testProfileKeepsCount()
     ArrayAllocationProfile profile { };
     profile.word = count;
 
-    review(realms, profile, ArrayWithInt32, 20);
+    review(realms, profile, ArrayWithInt32, 20, 3);
     AOT_TEST_CHECK(profile.capacity() == 21 && (profile.word & countMask) == count);
     review(realms, profile, ArrayWithDouble, 2);
     AOT_TEST_CHECK(profile.shape() == DoubleShape && (profile.word & countMask) == count);
-    for (unsigned reviews = 0; reviews < 3; ++reviews)
-        review(realms, profile, ArrayWithDouble, 2);
+    review(realms, profile, ArrayWithDouble, 2, window - 1);
     AOT_TEST_CHECK(profile.capacity() == 3 && (profile.word & countMask) == count);
     AOT_TEST_CHECK(profile.word == (count | static_cast<uint32_t>(DoubleShape) << ArrayAllocationProfile::shapeShift | 3));
 }
@@ -498,15 +498,14 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/holding"_s, testFormsHolding },
         { "arrays/forms/at-allocation"_s, testFormsAtAllocation },
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
-        { "arrays/forms/after-store"_s, testFormsAfterStore },
         { "arrays/forms/narrow"_s, testFormsNarrow },
         { "arrays/forms/element-read-types"_s, testFormsElementReadTypes },
         { "arrays/chains/shape-round-trip"_s, testChainShapeRoundTrip },
         { "arrays/chains/end-operands"_s, testChainEndOperands },
         { "arrays/chains/method-rows"_s, testChainMethodRows },
         { "arrays/chains/methods-agree-with-table"_s, testChainMethodsAgreeWithTable },
-        { "arrays/profile/grows-at-once"_s, testProfileGrowsAtOnce },
-        { "arrays/profile/shrinks-after-four-reviews"_s, testProfileShrinksAfterFourReviews },
+        { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
+        { "arrays/profile/shrinks-at-the-end-of-a-window"_s, testProfileShrinksAtTheEndOfAWindow },
         { "arrays/profile/shape-only-rises"_s, testProfileShapeOnlyRises },
         { "arrays/profile/ignores-array-storage"_s, testProfileIgnoresArrayStorage },
         { "arrays/profile/keeps-count"_s, testProfileKeepsCount },

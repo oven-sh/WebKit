@@ -38,6 +38,7 @@ public:
     JS_EXPORT_PRIVATE bool isStrict() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;
     bool isNakedConstructor() const;
+    bool isNamedBySymbol() const;
     JS_EXPORT_PRIVATE bool isAsync() const;
     JS_EXPORT_PRIVATE bool isNamedByOwner() const;
     JS_EXPORT_PRIVATE bool isInRuntimeModule() const;

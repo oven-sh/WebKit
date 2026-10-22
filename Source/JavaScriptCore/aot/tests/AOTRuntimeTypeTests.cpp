@@ -41,7 +41,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
-    v3 = Claim v2 castType=number
+    v3 = Check v2 castType=number
     v4 = NewObject -, v3 layout=L0 fields=[0]
     v5 = NewObject -, v3 layout=L1 fields=[0]
     v6 = NewObject -, v3, v3, v3, v3, v4, v5 layout=L2 fields=[0, 1, 2, 3, 4, 5]
@@ -139,7 +139,7 @@ static uint32_t findText(StringView wanted)
     failNativeTest(__FILE__, __LINE__, "the image has the text");
 }
 
-static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifier&)> auto& matches)
+static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifierWord&)> auto& matches)
 {
     for (uint32_t number = 1; number < imageText().numberOfIdentifiers(); ++number) {
         if (matches(imageText().identifier(number)))
@@ -150,8 +150,8 @@ static uint32_t identifierNumberOf(const Invocable<bool(const ImageIdentifier&)>
 
 static uint32_t numberOfWellKnownSymbol(WellKnownSymbol symbol)
 {
-    return identifierNumberOf([&](const ImageIdentifier& record) {
-        return record.kind() == PropertyKeyKind::WellKnownSymbol && record.hashOrSymbol() == static_cast<uint32_t>(symbol);
+    return identifierNumberOf([&](const ImageIdentifierWord& record) {
+        return record.kind() == PropertyKeyKind::WellKnownSymbol && record.wellKnownSymbol() == symbol;
     });
 }
 
@@ -176,13 +176,19 @@ static JSObject* allocateObject(LoadedProgram& program, ASCIILiteral layoutName)
     failNativeTest(__FILE__, __LINE__, layoutName.characters());
 }
 
+// The operand of the test in the record of a field's type: the holder has a field for each of the layouts.
 static uint32_t shapeTestFor(LoadedProgram& program, ASCIILiteral layoutName)
 {
     const ProgramTables& tables = program.state().tables;
     uint32_t shape = layoutNamed(program, layoutName).shape;
-    for (const LayoutSetData& set : tables.layoutSets()) {
-        if (set.members.first == shape && set.members.count == 1)
-            return tables.offsetOf(&set.members);
+    for (const FieldData& field : layoutNamed(program, "Holder"_s).fields()) {
+        for (const RuntimeCellTest& test : tables.typeAt(field.type).cellTests()) {
+            if (test.kind != CellTestKind::ShapeIn)
+                continue;
+            const ShapeTestData& members = tables.shapeTestAt(test.shapeTestOffset());
+            if (members.first() == shape && members.count == 1)
+                return test.shapeTestOffset();
+        }
     }
     failNativeTest(__FILE__, __LINE__, layoutName.characters());
 }
@@ -191,7 +197,7 @@ static FunctionID closureFunctionNamed(LoadedProgram& program, ASCIILiteral name
 {
     const ProgramTables& tables = program.state().tables;
     for (uint32_t function = tables.closureFunctions.first; function < tables.closureFunctions.end; ++function) {
-        if (imageText().equals(StringID(tables.functionNames()[function]), name))
+        if (imageText().equals(StringID(tables.nameOfFunction(function)), name))
             return FunctionID(function);
     }
     failNativeTest(__FILE__, __LINE__, name.characters());
@@ -520,19 +526,20 @@ static void testIsSymbol(LoadedProgram& program)
 static void testSymbolThatWasNeverCreated(LoadedProgram& program)
 {
     Values values(program);
-    uint32_t tag = identifierNumberOf([&](const ImageIdentifier& record) {
+    uint32_t tag = identifierNumberOf([&](const ImageIdentifierWord& record) {
         return record.kind() == PropertyKeyKind::CreatedSymbol && record.text() && imageText().equals(record.text(), "tag"_s);
     });
-    UniquedStringImpl* const* identifiers = program.instance().image.programIdentifiers;
-    AOT_TEST_CHECK(!identifiers[tag]);
+    ProgramIdentifiers& identifiers = *program.vm().aotState().identifiers;
+    AOT_TEST_CHECK(program.instance().image.programSymbols == &identifiers.symbols());
+    AOT_TEST_CHECK(!identifiers.tryGetIdentifierConcurrently(tag));
     TypeRecord type({ }, { RuntimeCellTest::isSymbol(tag) });
     for (JSValue symbol : { values.inPlainRealm("Symbol('tag')"_s), values.inPlainRealm("Symbol.for('tag')"_s), values.inPlainRealm("Symbol.iterator"_s), values.inPlainRealm("Symbol()"_s) })
         AOT_TEST_CHECK(!values.hasType(type, symbol));
-    AOT_TEST_CHECK(!identifiers[tag]);
+    AOT_TEST_CHECK(!identifiers.tryGetIdentifierConcurrently(tag));
 
-    const Identifier& created = program.vm().aotState().identifiers->identifier(tag);
-    AOT_TEST_CHECK(identifiers[tag] == created.impl());
-    AOT_TEST_CHECK(values.hasType(type, Symbol::create(program.vm(), uncheckedDowncast<SymbolImpl>(*created.impl()))));
+    UniquedStringImpl* created = identifiers.uid(tag);
+    AOT_TEST_CHECK(identifiers.tryGetIdentifierConcurrently(tag) == created);
+    AOT_TEST_CHECK(values.hasType(type, Symbol::create(program.vm(), uncheckedDowncast<SymbolImpl>(*created))));
     AOT_TEST_CHECK(!values.hasType(type, values.inPlainRealm("Symbol('tag')"_s)));
 }
 

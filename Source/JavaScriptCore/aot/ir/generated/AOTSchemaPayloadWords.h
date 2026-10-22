@@ -17,15 +17,15 @@ template<> struct PayloadWords<TemplateString> {
 };
 
 template<> struct PayloadWords<DeclaredType> {
-    static constexpr unsigned count = 5;
+    static constexpr unsigned count = 3;
     JS_EXPORT_PRIVATE static DeclaredType decode(std::span<const uint32_t, count>);
     JS_EXPORT_PRIVATE static void encode(const DeclaredType&, std::span<uint32_t, count>);
 };
 
-template<> struct PayloadWords<ClaimSource> {
-    static constexpr unsigned count = 2;
-    JS_EXPORT_PRIVATE static ClaimSource decode(std::span<const uint32_t, count>);
-    JS_EXPORT_PRIVATE static void encode(const ClaimSource&, std::span<uint32_t, count>);
+template<> struct PayloadWords<MemberConditionRecord> {
+    static constexpr unsigned count = 4;
+    JS_EXPORT_PRIVATE static MemberConditionRecord decode(std::span<const uint32_t, count>);
+    JS_EXPORT_PRIVATE static void encode(const MemberConditionRecord&, std::span<uint32_t, count>);
 };
 
 template<> struct PayloadWords<Origin> {
@@ -41,7 +41,7 @@ template<> struct PayloadWords<PlacedKey> {
 };
 
 template<> struct PayloadWords<TailCast> {
-    static constexpr unsigned count = 6;
+    static constexpr unsigned count = 4;
     JS_EXPORT_PRIVATE static TailCast decode(std::span<const uint32_t, count>);
     JS_EXPORT_PRIVATE static void encode(const TailCast&, std::span<uint32_t, count>);
 };

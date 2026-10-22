@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTInsertObjectCoercibleChecks.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include <optional>
@@ -21,6 +22,8 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet readAccesses { Opcode::PropGet, Opcode::ElemGet };
 static constexpr OpcodeSet writeAccesses { Opcode::PropSet, Opcode::ElemSet };
 static constexpr OpcodeSet iterationAccesses { Opcode::IteratorOpen };
+
+static_assert((readAccesses | writeAccesses | iterationAccesses | OpcodeSet { Opcode::RequireObjectCoercible }) == objectCoercibleCheckOpcodes);
 
 static constexpr OpcodeSet namedAccesses { Opcode::PropGet, Opcode::PropSet };
 static constexpr OpcodeSet keyedAccesses { Opcode::ElemGet, Opcode::ElemSet };
@@ -84,11 +87,12 @@ public:
 
     PassOutcome run()
     {
+        bool replacedTests = replaceTestsThatOnlyNullishValuesFail();
         if (!requiresAnyCheck())
-            return PassOutcome::Unchanged;
+            return replacedTests ? PassOutcome::Changed : PassOutcome::Unchanged;
         collectChecks();
         if (m_rewrites.isEmpty())
-            return PassOutcome::Unchanged;
+            return replacedTests ? PassOutcome::Changed : PassOutcome::Unchanged;
 
         insertChecks();
         for (const Rewrite& rewrite : m_rewrites)
@@ -98,7 +102,9 @@ public:
         Vector<ValueID, 8> results;
         for (const Check& check : m_checks)
             results.append(check.result);
-        narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build }, results.span());
+        narrowValueTypes(TypePropagationInputs { m_program, m_context.id, m_function, m_context.analyses, m_context.types, m_context.build, &m_context.typingMemo }, results.span());
+        if (!replacedTests)
+            m_context.keptAnalyses = allAnalyses;
         return PassOutcome::Changed;
     }
 
@@ -108,13 +114,111 @@ private:
     std::optional<NullishAccess> requiredCheckOf(const Value& access) const
     {
         std::optional<NullishAccess> kind = nullishAccessOf(access.opcode);
-        if (!kind || !needsCheck(typeOf(access.operand(receiverOperand))))
+        if (!kind || (!needsCheck(typeOf(access.operand(receiverOperand))) && !mayBeTakenApart(access.operand(receiverOperand))))
             return std::nullopt;
         if (namedAccesses.contains(access.opcode) && access.isFreeName())
             return std::nullopt;
         if (keyedAccesses.contains(access.opcode) && typeOf(access.operand(keyOperand)).hasObjects())
             return std::nullopt;
         return kind;
+    }
+
+    // `Object.getOwnPropertyDescriptor(o, k).value`: the descriptor is some object or undefined. Behind the check SinkAllocations has an object whose fields the call can deliver by themselves.
+    bool mayBeTakenApart(ValueID receiver) const
+    {
+        const Value& definition = m_function.at(sameObjectThroughCasts(m_function, receiver));
+        if (definition.opcode != Opcode::CallBuiltin || definition.builtinCallForm() != BuiltinCallForm::Whole || !isNarrowedByCheck(typeOf(receiver)))
+            return false;
+        return m_program.builtins().at(definition.overload()).code.fieldsForm.has_value();
+    }
+
+    bool throwsForNullishReceiver(const Value& access) const
+    {
+        if (!readAccesses.contains(access.opcode) && !writeAccesses.contains(access.opcode))
+            return false;
+        if (namedAccesses.contains(access.opcode) && access.isFreeName())
+            return false;
+        return !keyedAccesses.contains(access.opcode) || !typeOf(access.operand(keyOperand)).hasObjects();
+    }
+
+    static bool leavesNoTrace(const Value& value)
+    {
+        return isCastWithoutTest(value.opcode) || (effectRuleOf(value.opcode) == EffectRule::Declared && declaredBoundOf(value.opcode).isRemovableWhenUnused());
+    }
+
+    // The first thing that somebody could see on the way on which the test fails, where that is an access to the tested value.
+    ValueID findAccessBehindFailedTest(const Terminator& branch) const
+    {
+        constexpr unsigned maxBlocksOnTheWay = 4;
+        Vector<ValueID, 4> namesOfSubject { sameObjectThroughCasts(m_function, m_function.at(branch.conditionOperand()).valueOperand()) };
+        Vector<BlockID, maxBlocksOnTheWay> way;
+        const Target* target = &branch.notTaken();
+        while (way.size() < maxBlocksOnTheWay && !way.contains(target->block)) {
+            way.append(target->block);
+            const Block& block = m_function.at(target->block);
+            if (block.handler)
+                return { };
+            for (uint32_t index = 0; index < block.parameters.size(); ++index) {
+                if (index >= target->arguments.size() || namesOfSubject.contains(sameObjectThroughCasts(m_function, target->arguments[index])))
+                    namesOfSubject.append(block.parameters[index]);
+            }
+            for (ValueID id : block.values) {
+                const Value& value = m_function.at(id);
+                if (throwsForNullishReceiver(value) && namesOfSubject.contains(sameObjectThroughCasts(m_function, value.operand(receiverOperand))))
+                    return id;
+                if (!leavesNoTrace(value))
+                    return { };
+            }
+            if (block.terminator.kind != TerminatorKind::Jump)
+                return { };
+            target = &block.terminator.next();
+        }
+        return { };
+    }
+
+    // `p.name.length`: the field holds a string, undefined or null, and the read throws for the last two. The test that tells them from the string is the check, which costs nothing where the read goes through the value.
+    bool replaceTestsThatOnlyNullishValuesFail()
+    {
+        struct ReplacedTest {
+            BlockID block;
+            ValueID access;
+        };
+        Vector<ReplacedTest, 4> replacedTests;
+        for (BlockID id : m_context.analyses.cfg().reversePostOrder()) {
+            const Block& block = m_function.at(id);
+            if (block.handler || !block.terminator.isConditionalBranch())
+                continue;
+            const Value& test = m_function.at(block.terminator.conditionOperand());
+            if (test.opcode != Opcode::TypeTest || m_program.at(test.testedType()).mayBeUndefinedOrNull())
+                continue;
+            if (!typeOf(test.valueOperand()).without(m_program.at(test.testedType()), m_context.types).isUndefinedOrNull())
+                continue;
+            if (ValueID access = findAccessBehindFailedTest(block.terminator))
+                replacedTests.append({ id, access });
+        }
+        if (replacedTests.isEmpty())
+            return false;
+
+        IRBuilder builder(m_context.analyses.context(), m_function, m_context.types, &m_context.analyses);
+        for (const ReplacedTest& replaced : replacedTests) {
+            const Value& access = m_function.at(replaced.access);
+            Terminator& terminator = m_function.edit(replaced.block).terminator;
+            Value check = IRBuilder::make(Opcode::RequireObjectCoercible, { m_function.at(terminator.conditionOperand()).valueOperand() });
+            check.setNullishAccess(*nullishAccessOf(access.opcode));
+            check.setName(accessedNameOf(access));
+            Target taken = terminator.taken();
+            Arguments arguments = WTF::move(taken.arguments);
+
+            builder.setOrigin(access.origin());
+            terminator = Terminator { };
+            builder.moveToEndOf(replaced.block);
+            ValueID passed = builder.append(WTF::move(check));
+            for (size_t result = 0; result < taken.proofs.size(); ++result)
+                arguments.append(passed);
+            builder.emitJump(taken.block, WTF::move(arguments));
+        }
+        builder.emptyUnreachableBlocks();
+        return true;
     }
 
     // Another pass puts such a check where a read it resolved threw.
@@ -128,7 +232,7 @@ private:
         for (const Block& block : m_function.blocks) {
             for (ValueID id : block.values) {
                 const Value& value = m_function.at(id);
-                if (requiredCheckOf(value) || isNarrowingCheck(value))
+                if (objectCoercibleCheckOpcodes.contains(value.opcode) && (requiredCheckOf(value) || isNarrowingCheck(value)))
                     return true;
             }
         }
@@ -158,6 +262,9 @@ private:
         return check.point.block == block || m_context.analyses.dominators().terminatorDominates(check.point.block, block);
     }
 
+    // visitUse() does nothing unless some check is active.
+    bool hasActiveCheck() const { return !m_checkedReceivers.isEmpty(); }
+
     CheckID activeCheckOf(ValueID value, BlockID block) const
     {
         CheckID check = m_activeChecks[value.index()];
@@ -169,17 +276,23 @@ private:
     void visitBlock(BlockID blockID)
     {
         const Block& block = m_function.at(blockID);
-        if (block.handler)
-            visitArguments(Use::Kind::HandlerArgument, blockID, *block.handler, 0);
-        if (block.subject)
-            visitUse(block.subject, Use { Use::Kind::BlockSubject, blockID, { }, 0, 0 });
+        if (hasActiveCheck()) {
+            if (block.handler)
+                visitArguments(Use::Kind::HandlerArgument, blockID, *block.handler, 0);
+            if (block.subject)
+                visitUse(block.subject, Use { Use::Kind::BlockSubject, blockID, { }, 0, 0 });
+        }
 
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             ValueID id = block.values[index];
             const Value& value = m_function.at(id);
-            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                visitUse(operand, Use { Use::Kind::Operand, blockID, id, operandIndex, 0 });
-            });
+            if (hasActiveCheck()) {
+                value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                    visitUse(operand, Use { Use::Kind::Operand, blockID, id, operandIndex, 0 });
+                });
+            }
+            if (!objectCoercibleCheckOpcodes.contains(value.opcode))
+                continue;
             if (isNarrowingCheck(value)) {
                 if (!activeCheckOf(value.valueOperand(), blockID))
                     activate(Check { { blockID, index }, id, value.valueOperand(), value.nullishAccess(), value.name(), id });
@@ -190,6 +303,8 @@ private:
                 addCheck({ blockID, index }, id, *kind);
         }
 
+        if (!hasActiveCheck())
+            return;
         const Terminator& terminator = block.terminator;
         terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             visitUse(operand, Use { Use::Kind::TerminatorOperand, blockID, { }, operandIndex, 0 });

@@ -1,0 +1,99 @@
+# Two loops on separate paths read the characters of one string. Neither dominates the other, so each path flattens the string on the entry of its own loop, and a read behind the place where the paths meet takes the plain string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 5
+
+module m0 path="main.js" displayPath="main.js"
+
+# CHECK-LABEL: function f0 name="loops-on-two-paths"
+# CHECK-NOT: FlattenString
+# CHECK: b1():
+# CHECK-NEXT: [[first0]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v10: number = StringRangeCodeUnitOrNaN [[first0]], -, -, v6
+# CHECK-NOT: FlattenString
+# CHECK: b5():
+# CHECK-NEXT: [[second0]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v16: number = StringRangeCodeUnitOrNaN [[second0]], -, -, v12
+# CHECK-NOT: FlattenString
+function f0 name="loops-on-two-paths" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: boolean):
+    v3 = Undefined
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    Branch v2 -> taken b1(), notTaken b5()
+  b1():
+    Jump -> next b2(v4, v3)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v6, v1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = CallBuiltin v0, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = Add v6, v5
+    Jump -> next b2(v11, v10)
+  b4():
+    Return v7
+  b5():
+    Jump -> next b6(v4, v3)
+  b6(v12, v13):
+    LoopHint
+    v15 = Less v12, v1
+    Branch v15 -> taken b7(), notTaken b8()
+  b7():
+    v16 = CallBuiltin v0, v12 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v17 = Add v12, v5
+    Jump -> next b6(v17, v16)
+  b8():
+    Return v13
+}
+
+# CHECK-LABEL: function f1 name="read-where-the-paths-meet"
+# CHECK-NOT: FlattenString
+# CHECK: b1():
+# CHECK-NEXT: [[first1]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v10: number = StringRangeCodeUnitOrNaN [[first1]], -, -, v6
+# CHECK-NOT: FlattenString
+# CHECK: b5():
+# CHECK-NEXT: [[second1]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v16: number = StringRangeCodeUnitOrNaN [[second1]], -, -, v12
+# CHECK-NOT: FlattenString
+# CHECK: v18: number = StringRangeCodeUnitOrNaN v0, -, -, v1
+# CHECK-NOT: FlattenString
+function f1 name="read-where-the-paths-meet" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: boolean):
+    v3 = Undefined
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    Branch v2 -> taken b1(), notTaken b5()
+  b1():
+    Jump -> next b2(v4, v3)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v6, v1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = CallBuiltin v0, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = Add v6, v5
+    Jump -> next b2(v11, v10)
+  b4():
+    Jump -> next b9()
+  b5():
+    Jump -> next b6(v4, v3)
+  b6(v12, v13):
+    LoopHint
+    v15 = Less v12, v1
+    Branch v15 -> taken b7(), notTaken b8()
+  b7():
+    v16 = CallBuiltin v0, v12 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v17 = Add v12, v5
+    Jump -> next b6(v17, v16)
+  b8():
+    Jump -> next b9()
+  b9():
+    v18 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Return v18
+}

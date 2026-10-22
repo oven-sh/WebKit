@@ -15,6 +15,7 @@
         RUN(testTrapFoldsIntoAccess()); \
         RUN(testTrapStaysWithoutFoldableAccess()); \
         RUN(testConsecutiveTrapsFoldSeparately()); \
+        RUN(testTrapThroughBaseAndIndexFoldsIntoAccessThroughBoth()); \
         RUN(testTrapReachOfZeroRunsNoStep()); \
         RUN(testTrapStaysWithoutKeptValues()); \
         RUN_BUN_TRAP_POSITION_TESTS(); \
@@ -351,7 +352,8 @@ void testTrapStaysWithoutFoldableAccess()
         graph.appendReturnOfResult(block);
         ++numberOfObstaclesTried;
 
-        bool folds = obstacle == TrapObstacle::None || obstacle == TrapObstacle::RegisterInstructionsBetween || obstacle == TrapObstacle::ControlIndependentLoadBetween;
+        // A jump chooses nothing, so the search goes on in the block that it leads to.
+        bool folds = obstacle == TrapObstacle::None || obstacle == TrapObstacle::RegisterInstructionsBetween || obstacle == TrapObstacle::ControlIndependentLoadBetween || obstacle == TrapObstacle::AccessInNextBlock;
         if (folds)
             checkPassChangesCode(graph.code, foldTrapsIntoAccesses);
         else
@@ -388,6 +390,69 @@ void testConsecutiveTrapsFoldSeparately()
     std::array<int64_t, 3> first { 0, 0, std::bit_cast<int64_t>(second.data()) };
     auto compilation = compile(graph.proc);
     CHECK(invoke<int64_t>(*compilation, first.data(), 0) == 42);
+}
+
+enum class IndexedAccess : uint8_t {
+    SameBaseAndIndex,
+    OtherIndex,
+    OtherScale,
+    OtherBase,
+    WithoutIndex,
+    IndexChangesBetween,
+    BaseChangesBetween,
+};
+
+void testTrapThroughBaseAndIndexFoldsIntoAccessThroughBoth()
+{
+    for (IndexedAccess access : { IndexedAccess::SameBaseAndIndex, IndexedAccess::OtherIndex, IndexedAccess::OtherScale, IndexedAccess::OtherBase, IndexedAccess::WithoutIndex, IndexedAccess::IndexChangesBetween, IndexedAccess::BaseChangesBetween }) {
+        TrapGraph graph;
+        BasicBlock* root = graph.root;
+        Tmp index = graph.result;
+        Tmp other = graph.code.newTmp(GP);
+        Tmp checked = graph.code.newTmp(GP);
+        Tmp loaded = graph.code.newTmp(GP);
+        Arg trap = Arg::index(graph.base, index, 8, offsetOfTrap);
+        if (!Inst(Load8, nullptr, trap, checked).isValidForm(CPUFeatureSet::host()))
+            return;
+
+        root->append(Move, nullptr, index, other);
+        graph.trapOrigin = appendTrappingLoad(graph.proc, root, trap, checked);
+        if (access == IndexedAccess::IndexChangesBetween)
+            root->append(Add64, nullptr, Arg::imm(1), index);
+        if (access == IndexedAccess::BaseChangesBetween)
+            root->append(Add64, nullptr, Arg::imm(8), graph.base);
+        Arg address = Arg::index(graph.base, index, 8, offsetOfAccess);
+        if (access == IndexedAccess::OtherIndex)
+            address = Arg::index(graph.base, other, 8, offsetOfAccess);
+        if (access == IndexedAccess::OtherScale)
+            address = Arg::index(graph.base, index, 4, offsetOfAccess);
+        if (access == IndexedAccess::OtherBase)
+            address = Arg::index(other, index, 8, offsetOfAccess);
+        if (access == IndexedAccess::WithoutIndex)
+            address = Arg::addr(graph.base, offsetOfAccess);
+        root->append(Move, nullptr, address, loaded);
+        root->append(Move, nullptr, loaded, returnTmp());
+        appendReturn(root);
+
+        bool folds = access == IndexedAccess::SameBaseAndIndex;
+        if (folds)
+            checkPassChangesCode(graph.code, foldTrapsIntoAccesses);
+        else
+            checkPassLeavesCodeUnchanged(graph.code, foldTrapsIntoAccesses);
+        CHECK(graph.numberOfFoldedTraps() == folds);
+        Vector<Inst*> insts = instsWithEffects(graph.code);
+        CHECK(insts.size() == 1);
+        CHECK(insts[0]->origin == graph.trapOrigin);
+        CHECK((insts[0]->kind.opcode == Move) == folds);
+        if (!folds)
+            continue;
+
+        std::array<int64_t, 5> memory { 10, 11, 12, 13, 14 };
+        static_assert(offsetOfAccess == 2 * sizeof(int64_t));
+        auto compilation = compile(graph.proc);
+        CHECK(invoke<int64_t>(*compilation, memory.data(), 0) == 12);
+        CHECK(invoke<int64_t>(*compilation, memory.data(), 2) == 14);
+    }
 }
 
 void testTrapReachOfZeroRunsNoStep()

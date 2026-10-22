@@ -133,15 +133,22 @@ static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg
     isDone.link(&jit);
 }
 
-void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, JumpList& differ)
+void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, JumpList& differ, DifferingWords differingWords)
 {
     auto [first, second, size, firstWord, secondWord] = compared;
     RELEASE_ASSERT(noOverlap(first, second, size, firstWord, secondWord));
     forEachWordCovering(jit, { first, second }, size, [&](unsigned width, auto addressIn) {
         loadZeroExtended(jit, width, addressIn(first), firstWord);
+#if CPU(X86_64)
+        if (differingWords == DifferingWords::MayBeUnloaded && width == sizeof(uint32_t)) {
+            differ.append(jit.branch32(CCallHelpers::NotEqual, addressIn(second), firstWord));
+            return;
+        }
+#endif
         loadZeroExtended(jit, width, addressIn(second), secondWord);
         differ.append(jit.branch64(CCallHelpers::NotEqual, firstWord, secondWord));
     });
+    UNUSED_PARAM(differingWords);
 }
 
 void branchUnlessASCIIOutsideRange(StubAssembler& jit, const ScannedBytes& scanned, uint8_t first, uint8_t last, JumpList& isNot)

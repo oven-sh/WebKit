@@ -178,8 +178,8 @@ Vector<Inst> emitShuffle(
     // starting source.
     UncheckedKeyHashMap<Arg, Vector<ShufflePair>> shifts;
 
-    // The hash of an argument on the stack is the hash of an address, so the order of a table of arguments differs from run to run.
-    // Whatever the emitted code depends on goes by the order of the pairs.
+    // A stack Arg hashes by its StackSlot's address, so the iteration order of these tables is not reproducible.
+    const bool emitsInPairOrder = code.policy().peepholes.emitsShufflesInPairOrder;
     Vector<Arg, 8> shiftSources;
 
     // We interpret these as Swaps over src()'s that should be executed backwards, i.e. for a list
@@ -196,11 +196,19 @@ Vector<Inst> emitShuffle(
 
         Vector<ShufflePair> currentPairs;
 
-        for (const ShufflePair& firstPair : pairs) {
+        size_t nextPair = 0;
+        auto takeNextSource = [&]() -> Arg {
+            if (!emitsInPairOrder)
+                return mapping.isEmpty() ? Arg() : mapping.begin()->key;
+            for (; nextPair < pairs.size(); ++nextPair) {
+                if (mapping.contains(pairs[nextPair].src()))
+                    return pairs[nextPair].src();
+            }
+            return Arg();
+        };
+
+        while (Arg originalSrc = takeNextSource()) {
             ASSERT(currentPairs.isEmpty());
-            Arg originalSrc = firstPair.src();
-            if (!mapping.contains(originalSrc))
-                continue;
             ASSERT(!shifts.contains(originalSrc));
             if (AirEmitShuffleInternal::verbose)
                 dataLog("Processing from ", originalSrc, "\n");
@@ -305,6 +313,11 @@ Vector<Inst> emitShuffle(
 
     // A shift that became the tail of a longer one is no longer in the table.
     auto forEachShift = [&](const Invocable<void(Vector<ShufflePair>&)> auto& functor) {
+        if (!emitsInPairOrder) {
+            for (auto& entry : shifts)
+                functor(entry.value);
+            return;
+        }
         for (const Arg& source : shiftSources) {
             if (auto found = shifts.find(source); found != shifts.end())
                 functor(found->value);

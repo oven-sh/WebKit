@@ -11,7 +11,9 @@ namespace JSC { namespace AOT { namespace Typed {
 constexpr Access accessOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::PropGet: case Opcode::PrivateGet: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::PropGet: case Opcode::PrivateGet: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter:
+    case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined:
         return Access::Read;
     case Opcode::PropSet: case Opcode::PrivateSet: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
         return Access::Store;
@@ -38,7 +40,9 @@ constexpr std::optional<uint8_t> receiverOf(Opcode opcode)
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::ElemGet: case Opcode::ElemSet:
     case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::PrivateGet: case Opcode::PrivateSet:
     case Opcode::PrivateDefine: case Opcode::PrivateHas: case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined:
-    case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::PropHasOwn: case Opcode::EnumeratorGetByVal:
+    case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined: case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::PropHasOwn:
+    case Opcode::EnumeratorGetByVal:
         return 0;
     default:
         return std::nullopt;
@@ -88,18 +92,18 @@ constexpr Interpretation interpretedOf(Opcode opcode)
     case Opcode::PropDefine: case Opcode::ElemSet: case Opcode::ElemDefine: case Opcode::PrivateSet: case Opcode::PrivateDefine: case Opcode::PutSlot:
     case Opcode::PutSlotOrAdd: case Opcode::PutArrayElement:
         return Interpretation::Store;
-    case Opcode::FinishObject: case Opcode::Upcast: case Opcode::Claim: case Opcode::Predict: case Opcode::CheckInitialized:
-    case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::AssumeType:
+    case Opcode::FinishObject: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized:
+    case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::AssumeType: case Opcode::ReadAgain: case Opcode::BorrowedParameter:
         return Interpretation::Cast;
     case Opcode::AppendSpread: case Opcode::CopyDataProperties: case Opcode::CallList: case Opcode::ConstructList: case Opcode::ResultAt:
     case Opcode::SuperConstructList: case Opcode::AppendElements: case Opcode::DestructureIterable:
         return Interpretation::List;
     case Opcode::PropHas: case Opcode::ElemHas: case Opcode::StrictEq: case Opcode::ToBoolean: case Opcode::TypeTest: case Opcode::PrivateHas:
-    case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
-    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable:
-    case Opcode::IsMemberUnchanged: case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady:
-    case Opcode::HasKeyOrder: case Opcode::IsShapeEpochCurrent: case Opcode::IsClosureOf: case Opcode::IsEnumeratorCurrent: case Opcode::PropHasOwn:
-    case Opcode::HasArrayElement:
+    case Opcode::IsClosureOf: case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
+    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
+    case Opcode::IsEnumeratorCurrent: case Opcode::PropHasOwn: case Opcode::HasArrayElement: case Opcode::IsBuiltinLocationUnchanged:
         return Interpretation::Test;
     case Opcode::AllGuards:
         return Interpretation::Guards;
@@ -116,15 +120,71 @@ constexpr Interpretation interpretedOf(TerminatorKind kind)
     }
 }
 
+constexpr ValueFlowEdgeClass flowOf(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double:
+    case Opcode::String: case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::ScopeHasBinding: case Opcode::PropHas:
+    case Opcode::PropDelete: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::TryReExportFields: case Opcode::GetSuperBase:
+    case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::BitAnd:
+    case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::Negate:
+    case Opcode::ToNumeric: case Opcode::Increment: case Opcode::Decrement: case Opcode::BitNot: case Opcode::ToNumber: case Opcode::Less:
+    case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf:
+    case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::ToString: case Opcode::Strcat: case Opcode::ToPropertyKey:
+    case Opcode::Construct: case Opcode::ConstructList: case Opcode::LoopHint: case Opcode::ResolveHeritage: case Opcode::GetClassPrototype:
+    case Opcode::GetConstructPrototype: case Opcode::PrivateHas: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::ThrowModuleFailure:
+    case Opcode::IsConstructor: case Opcode::ToLength: case Opcode::ThrowNewError: case Opcode::IsGeneratorSuspendedAtStart:
+    case Opcode::IsUnmodifiedGenerator: case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex:
+    case Opcode::GetDoubleIndex: case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::IsClosureOf: case Opcode::KeyConstant:
+        return ValueFlowEdgeClass::TableProves;
+    case Opcode::Data: case Opcode::NewClosure: case Opcode::NewObject: case Opcode::NewDictionary: case Opcode::NewArray: case Opcode::NewRegExp:
+    case Opcode::NewTemplateObject: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::CreateUnmappedArguments:
+    case Opcode::CreateMappedArguments: case Opcode::CopyObject: case Opcode::NewClassToken: case Opcode::ImportModule: case Opcode::ImportDynamic:
+    case Opcode::CreateIteratorResult: case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::NewContiguousArray:
+    case Opcode::NewDoubleArray: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity:
+        return ValueFlowEdgeClass::Allocates;
+    case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::GetEnvironmentField: case Opcode::PutEnvironmentField:
+    case Opcode::FinishObject: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::GetMappedArgument:
+    case Opcode::SetMappedArgument: case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::ElemGet: case Opcode::ElemSet:
+    case Opcode::ElemDefine: case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype:
+    case Opcode::CopyDataProperties: case Opcode::SuperGet: case Opcode::SuperSet: case Opcode::ToObject: case Opcode::ToThis: case Opcode::Upcast:
+    case Opcode::Call: case Opcode::CallList: case Opcode::CallDirect: case Opcode::Results: case Opcode::ResultAt: case Opcode::CatchValue:
+    case Opcode::CatchException: case Opcode::NewClass: case Opcode::DefineMethod: case Opcode::FinishClass: case Opcode::SuperConstruct:
+    case Opcode::SuperConstructList: case Opcode::PrivateGet: case Opcode::PrivateSet: case Opcode::PrivateDefine: case Opcode::IteratorOpen:
+    case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield:
+    case Opcode::ModuleNamespace: case Opcode::RequireModule: case Opcode::EvaluateModule: case Opcode::RecordRequire: case Opcode::RequireDynamic:
+    case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ResumeGenerator:
+    case Opcode::StepGenerator: case Opcode::StepArrayIterator: case Opcode::RequireBuiltinModule: case Opcode::GetInternalField:
+    case Opcode::PutInternalField: case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::GetContiguousIndex:
+    case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
+    case Opcode::CollectionTable: case Opcode::MapNext: case Opcode::SetNext: case Opcode::Parameter: case Opcode::TakeGeneratorPrototype:
+    case Opcode::ValidateType:
+        return ValueFlowEdgeClass::Copies;
+    case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject:
+    case Opcode::TypeTest: case Opcode::HasJSType: case Opcode::ReportMismatch:
+        return ValueFlowEdgeClass::Checks;
+    default:
+        return ValueFlowEdgeClass::Unsound;
+    }
+}
+
+constexpr ValueFlowEdgeClass flowOf(TerminatorKind kind)
+{
+    switch (kind) {
+    default:
+        return ValueFlowEdgeClass::Unsound;
+    }
+}
+
 constexpr BoundTo boundToOf(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::NewTemplateObject: case Opcode::SharedRegExpLiteral:
         return BoundTo::Site;
     case Opcode::CatchValue: case Opcode::CatchException: case Opcode::Await: case Opcode::Yield: case Opcode::InitialYield: case Opcode::DirectEval:
-    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::ReturnsToResultTest: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal:
-    case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs: case Opcode::MaterializeEnvironment:
-    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::StepAsyncGenerator: case Opcode::AwaitBySavingFrame:
+    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs:
+    case Opcode::ConstructSuperForwardVarargs: case Opcode::MaterializeEnvironment: case Opcode::MarkEnvironmentEscaped:
+    case Opcode::ReleaseEnvironment: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
     case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult:
         return BoundTo::Frame;
     case Opcode::Parameter:
@@ -157,36 +217,34 @@ constexpr Proof provesOf(Opcode opcode)
         return Proof::UnmodifiedGenerator;
     case Opcode::IsPristineArray: case Opcode::IsPristine:
         return Proof::Pristine;
+    case Opcode::IsClosureOf: case Opcode::IsFunctionOfBuiltin:
+        return Proof::ExactFunction;
     case Opcode::ShapeTest:
         return Proof::Shape;
     case Opcode::IsSlotFilled:
         return Proof::SlotFilled;
     case Opcode::HasNoExtraProperties:
         return Proof::NoExtraProperties;
+    case Opcode::HasNoFieldOutsideSlot:
+        return Proof::NoFieldOutsideSlot;
+    case Opcode::HasBirthFieldsFilled:
+        return Proof::BirthFieldsFilled;
     case Opcode::IsNotFrozen:
         return Proof::NotFrozen;
-    case Opcode::HasLayoutPrototype: case Opcode::IsPrototypeLinkUnchanged:
+    case Opcode::HasLayoutPrototype:
         return Proof::PrototypeLinkUnchanged;
     case Opcode::BelongsToInstance:
         return Proof::OwnInstance;
     case Opcode::HasArrayStorage:
         return Proof::ArrayStorage;
-    case Opcode::IsInBounds:
+    case Opcode::IsInBounds: case Opcode::IsElementPresent: case Opcode::IsInsideView:
         return Proof::InBounds;
     case Opcode::IsNotThenable:
         return Proof::NotThenable;
-    case Opcode::IsMemberUnchanged:
+    case Opcode::AreMembersUnchanged: case Opcode::IsBuiltinLocationUnchanged:
         return Proof::MemberUnchanged;
-    case Opcode::IsClassEvaluatedOnce:
-        return Proof::EvaluatedOnce;
-    case Opcode::IsRequireEdgeReady:
-        return Proof::RequireEdgeReady;
     case Opcode::HasKeyOrder:
         return Proof::KeyOrder;
-    case Opcode::IsShapeEpochCurrent:
-        return Proof::EpochCurrent;
-    case Opcode::IsClosureOf:
-        return Proof::ExactFunction;
     case Opcode::IsEnumeratorCurrent:
         return Proof::EnumeratorCurrent;
     case Opcode::JSONSourceOpen:
@@ -215,10 +273,13 @@ constexpr Proof provesOf(TerminatorKind kind)
 constexpr EnumeratorBitSet<Proof, numberOfEnumerators<Proof>> reliesOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::HasKeyOrder:
-    case Opcode::GetSlotOrUndefined:
+    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::HasKeyOrder: case Opcode::GetSlotOrUndefined:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlotOrUndefined:
         return { Proof::Shape };
-    case Opcode::GetSlot: case Opcode::GetDeferredClosureSlot:
+    case Opcode::IsElementPresent:
+        return { Proof::ArrayStorage };
+    case Opcode::GetSlot: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot: case Opcode::GetDeferredClosureSlot:
         return { Proof::Shape, Proof::SlotFilled };
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::PutSlots:
         return { Proof::Shape, Proof::NotFrozen };
@@ -226,10 +287,10 @@ constexpr EnumeratorBitSet<Proof, numberOfEnumerators<Proof>> reliesOf(Opcode op
         return { Proof::Pristine, Proof::ArrayStorage };
     case Opcode::GetArrayElement: case Opcode::PutArrayElement:
         return { Proof::Pristine, Proof::ArrayStorage, Proof::InBounds };
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+        return { Proof::InBounds };
     case Opcode::EnumeratorGetByVal:
         return { Proof::EnumeratorCurrent };
-    case Opcode::GetRequiredValue:
-        return { Proof::RequireEdgeReady };
     case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon:
         return { Proof::SourceOpen };
     case Opcode::JSONAdvance:
@@ -256,10 +317,13 @@ constexpr EnumeratorBitSet<Proof, numberOfEnumerators<Proof>> reliesOf(Terminato
 constexpr std::optional<uint8_t> guardedOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::HasKeyOrder:
-    case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
-    case Opcode::GetArrayLength: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::JSONAdvance:
-    case Opcode::GetOwnDataProperty: case Opcode::CloneAs: case Opcode::PutSlots:
+    case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled:
+    case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::IsElementPresent: case Opcode::HasKeyOrder: case Opcode::GetSlot:
+    case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot: case Opcode::GetFlattenedSlotOrUndefined:
+    case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined: case Opcode::PutSlot: case Opcode::PutSlotOrAdd:
+    case Opcode::GetArrayLength: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement:
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::JSONAdvance: case Opcode::GetOwnDataProperty:
+    case Opcode::CloneAs: case Opcode::PutSlots:
         return 0;
     case Opcode::AppendElements: case Opcode::FulfillFreshPromise: case Opcode::RegExpMatchLiteral:
         return 1;
@@ -281,17 +345,20 @@ constexpr std::optional<uint8_t> guardedOf(TerminatorKind kind)
 constexpr Branches branchesOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::PropHas: case Opcode::ElemHas: case Opcode::Less: case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq:
-    case Opcode::StrictEq: case Opcode::InstanceOf: case Opcode::ToBoolean: case Opcode::TypeTest: case Opcode::PrivateHas:
-    case Opcode::IsUnmodifiedGenerator: case Opcode::HasJSType: case Opcode::IsPristineArray: case Opcode::ShapeTest: case Opcode::IsSlotFilled:
-    case Opcode::HasNoExtraProperties: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance:
-    case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsNotThenable: case Opcode::IsMemberUnchanged:
-    case Opcode::IsPrototypeLinkUnchanged: case Opcode::IsClassEvaluatedOnce: case Opcode::IsRequireEdgeReady: case Opcode::HasKeyOrder:
-    case Opcode::IsShapeEpochCurrent: case Opcode::IsClosureOf: case Opcode::IsEnumeratorCurrent: case Opcode::PropHasOwn: case Opcode::TryCopyFields:
-    case Opcode::HasArrayElement: case Opcode::HasSpareArrayCapacity: case Opcode::ReturnsToResultTest: case Opcode::IsUnmodifiedAsyncGenerator:
-    case Opcode::HasInPrototypeChain: case Opcode::JSONSourceOpen: case Opcode::JSONSourceClose: case Opcode::JSONStartsWith:
-    case Opcode::IsPlainDataObject: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral:
-    case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral: case Opcode::StringRangeEqualsLiteral:
+    case Opcode::PropHas: case Opcode::ElemHas: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::Less:
+    case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf:
+    case Opcode::ToBoolean: case Opcode::TypeTest: case Opcode::PrivateHas: case Opcode::IsUnmodifiedGenerator: case Opcode::HasJSType:
+    case Opcode::IsPristineArray: case Opcode::IsClosureOf: case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties:
+    case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen: case Opcode::HasLayoutPrototype:
+    case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
+    case Opcode::IsEnumeratorCurrent: case Opcode::PropHasOwn: case Opcode::TryCopyFields: case Opcode::HasArrayElement:
+    case Opcode::HasSpareArrayCapacity: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin: case Opcode::IsCollectionTableFull:
+    case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::AwaitMayContinue:
+    case Opcode::HasInPrototypeChain: case Opcode::BeginModuleEvaluation: case Opcode::JSONSourceOpen: case Opcode::JSONSourceClose:
+    case Opcode::JSONStartsWith: case Opcode::IsPlainDataObject: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral:
+    case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
+    case Opcode::StringRangeEqualsLiteral:
         return Branches::May;
     case Opcode::PropGetAndTest:
         return Branches::Only;
@@ -372,17 +439,19 @@ constexpr AccessClass accessClassOf(Opcode opcode)
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::PropDelete: case Opcode::ElemGet:
     case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine: case Opcode::SuperGet: case Opcode::SuperSet:
     case Opcode::PrivateGet: case Opcode::PrivateSet: case Opcode::PrivateDefine: case Opcode::PrivateHas: case Opcode::PropHasOwn:
-    case Opcode::PropGetChecked: case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::TryPutByIds:
+    case Opcode::PropGetChain: case Opcode::PropGetPair: case Opcode::PropGetAndTest: case Opcode::TryPutByIds:
         return AccessClass::ByName;
     case Opcode::Call: case Opcode::Construct: case Opcode::CallList: case Opcode::ConstructList: case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList: case Opcode::CallGroup: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs:
+    case Opcode::SuperConstructList: case Opcode::CallTable: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs:
     case Opcode::CallMethod: case Opcode::CallResolved:
         return AccessClass::IndirectCall;
     case Opcode::CallDirect: case Opcode::CallBuiltin: case Opcode::AwaitCallBySavingFrame: case Opcode::CallInline:
         return AccessClass::DirectCall;
-    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement:
-    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::EnumeratorGetByVal: case Opcode::PutSlots:
+    case Opcode::IsSlotFilled: case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetArrayElement:
+    case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+    case Opcode::EnumeratorGetByVal: case Opcode::PutSlots:
         return AccessClass::Slot;
     default:
         return AccessClass::None;
@@ -447,8 +516,10 @@ constexpr PassID removedByOf(Opcode opcode)
     switch (opcode) {
     case Opcode::AppendSpread: case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::StepArrayIterator:
         return PassID::ExpandIteration;
-    case Opcode::ClaimDeclared: case Opcode::ClaimRead:
+    case Opcode::Convert:
         return PassID::TypeValues;
+    case Opcode::EvaluateModule:
+        return PassID::CallModules;
     case Opcode::CreateIteratorResult:
         return PassID::ResolveBuiltins;
     default:
@@ -493,8 +564,8 @@ constexpr bool isIntrinsicOf(TerminatorKind kind)
 constexpr bool allocatesInlineOf(Opcode opcode)
 {
     switch (opcode) {
-    case Opcode::NewClosure: case Opcode::NewObject: case Opcode::NewArray: case Opcode::NewRegExp: case Opcode::NewPromise:
-    case Opcode::CreatePromise: case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike:
+    case Opcode::NewClosure: case Opcode::NewObject: case Opcode::NewDictionary: case Opcode::NewArray: case Opcode::NewRegExp:
+    case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike:
     case Opcode::NewArrayWithCapacity: case Opcode::CreateRest: case Opcode::MaterializeEnvironment:
         return true;
     default:
@@ -552,7 +623,7 @@ constexpr bool remembersOwnerOf(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::PutEnvironmentField: case Opcode::SetMappedArgument: case Opcode::PutInternalField: case Opcode::PutContiguousIndex:
-    case Opcode::PutSlot: case Opcode::FulfillFreshPromise:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::PutSlots: case Opcode::FulfillFreshPromise:
         return true;
     default:
         return false;

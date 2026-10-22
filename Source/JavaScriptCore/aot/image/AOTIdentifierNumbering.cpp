@@ -19,12 +19,15 @@ namespace JSC { namespace AOT {
 
 static_assert(!RowDisplacementTable::rowMarkerColumn);
 static_assert(defaultLimitValue(LimitID::LookupTableNames, hostArchitecture()) == RowDisplacementTable::maxColumn);
+static_assert(StringID(0u) < StringID(), "a symbol without a description sorts last");
+static_assert(PropertyKeyID(0u) < PropertyKeyID(), "a name without a key sorts last");
 
 namespace {
 
 struct NameCandidate {
     NumberedIdentifier identifier;
     bool hasPromisedColumn { false };
+    bool isEngineSymbol { false };
     uint32_t uses { 0 };
     uint32_t tableLookupUses { 0 };
     FunctionID firstTableLookupFunction { };
@@ -57,6 +60,22 @@ static bool isFoundByText(const Typed::Program& program, const NumberedIdentifie
     return !identifier.key || program.at(identifier.key).kind == PropertyKeyKind::Text;
 }
 
+// The run time creates the identifiers of all of these in one step, before it looks up the first uid.
+static bool isEngineSymbol(PropertyKeyKind kind)
+{
+    switch (kind) {
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::EnginePrivateName:
+        return true;
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::CreatedSymbol:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program, const KeyUses& uses, const BitVector& keysWithColumn)
 {
     unsigned numberOfKeys = program.types.numberOfPropertyKeys();
@@ -75,6 +94,7 @@ static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program,
         names.append(NameCandidate {
             .identifier = identifier,
             .hasPromisedColumn = keysWithColumn.get(index),
+            .isEngineSymbol = isEngineSymbol(program.at(key).kind),
             .uses = use.uses,
             .tableLookupUses = use.tableLookupUses,
             .firstTableLookupFunction = use.firstTableLookupFunction,
@@ -128,6 +148,18 @@ static void reportNamesWithoutColumn(std::span<const NameCandidate> namesWithout
     context.statistics().count(hitsOf(LimitID::LookupTableNames), lookedUpCount - 1);
 }
 
+// The front end numbers the strings in the order in which the program's text first mentions them, file by file, and the engine adds its own behind them.
+static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandidate> namesWithoutColumn)
+{
+    parallelSort(loops, namesWithoutColumn, [](const NameCandidate& a, const NameCandidate& b) {
+        if (a.isEngineSymbol != b.isEngineSymbol)
+            return a.isEngineSymbol;
+        if (a.identifier.text != b.identifier.text)
+            return a.identifier.text < b.identifier.text;
+        return a.identifier.key < b.identifier.key;
+    });
+}
+
 IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUses& uses, const BitVector& keysWithColumn, BuildContext& context)
 {
     Vector<NameCandidate> names = collectNumberedNames(program, uses, keysWithColumn);
@@ -135,6 +167,7 @@ IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUs
     auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(names.size(), context.limit(LimitID::LookupTableNames)));
     groupColumnsByFunction(names.mutableSpan().first(columnCount));
     reportNamesWithoutColumn(names.span().subspan(columnCount), context);
+    sortByFirstMention(context.parallelLoops(), names.mutableSpan().subspan(columnCount));
 
     IdentifierNumbering numbering;
     numbering.m_numbersByKey.fill(0, program.types.numberOfPropertyKeys());

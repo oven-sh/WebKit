@@ -1,0 +1,93 @@
+# capturing(a, b);  capturing(...list);  selfish(a);  method.call(a, b);  method.apply(a, list);  bound = method.bind(a);  bound(b);  queueMicrotask(capturing);  list.forEach(Object.freeze);  Reflect.apply(method, a, list)
+# JSON.stringify(a);  map.set(a, b);  map.get(a)
+# What a function does with a capture is done with the contents of the closure that is called, and what it stores into a capture lies behind the operand that holds the closure. A function that takes its callee gets hold of the closure.
+# `call`, `apply` and Reflect.apply are built-ins that call an operand: the records say which operand stands where, and the function that is called answers. `bind` keeps its operands in what it answers,
+# and nobody lists what a call of that enters. A closure that native code calls later is kept. A built-in may be the callback. Whether `stringify` finds a toJSON is decided by the type of the operand.
+# RUN: fates-at-calls f1.p0=members-written f1.p1=members-read f1.p2=nothing f1.p2.into-parameters=1 f2.p0=stored-in-variable f2.p1=compared f3.p0=members-read f3.p1=nothing f3.p1.results=1
+# CHECK: f0 v5 Call operand 0: called contents=members-written
+# CHECK-NEXT: f0 v5 Call operand 2: members-read contents=nothing read=[any]
+# CHECK-NEXT: f0 v5 Call operand 3: nothing contents=nothing stored-into-operands-or-deeper=[0]
+# CHECK-NEXT: f0 v7 CallList operand 0: called contents=members-written
+# CHECK-NEXT: f0 v7 CallList operand 2: members-read contents=stored-in-unknown-object+members-read read=[any]
+# CHECK-NEXT: f0 v9 Call operand 0: stored-in-variable+called contents=nothing
+# CHECK-NEXT: f0 v9 Call operand 2: compared contents=nothing
+# CHECK: f0 v12 Call operand 1: called contents=nothing
+# CHECK-NEXT: f0 v12 Call operand 2: members-read contents=nothing read=[any]
+# CHECK-NEXT: f0 v12 Call operand 3: returned contents=returned results=[any]
+# CHECK: f0 v14 Call operand 1: called contents=nothing
+# CHECK-NEXT: f0 v14 Call operand 2: members-read contents=nothing read=[any]
+# CHECK-NEXT: f0 v14 Call operand 3: members-read+converted-to-primitive contents=returned+converted-to-primitive read=[any]
+# CHECK: f0 v16 Call operand 1: members-read contents=nothing stored-into-results=[0] read=[any]
+# CHECK-NEXT: f0 v16 Call operand 2: nothing contents=nothing stored-into-results=[0]
+# CHECK-NEXT: f0 v17 Call operand 0: anything
+# CHECK-NEXT: f0 v17 Call operand 2: anything
+# CHECK: f0 v20 Call operand 2: stored-in-unknown-object+called contents=members-written
+# CHECK: f0 v24 Call operand 1: members-read contents=members-deleted-or-defined+keys-enumerated read=[any]
+# CHECK-NEXT: f0 v24 Call operand 2: called contents=nothing
+# CHECK: f0 v27 Call operand 2: called contents=nothing
+# CHECK-NEXT: f0 v27 Call operand 3: members-read contents=nothing read=[any]
+# CHECK-NEXT: f0 v27 Call operand 4: members-read+converted-to-primitive contents=returned+converted-to-primitive read=[any]
+# CHECK: f0 v30 Call operand 2: members-read+keys-enumerated+converted-to-primitive contents=members-read+keys-enumerated+converted-to-primitive read=[any]
+# CHECK: f0 v34 Call operand 1: returned+members-read+members-written contents=nothing results=[0] read=[any] written=[any]
+# CHECK-NEXT: f0 v34 Call operand 2: nothing contents=nothing stored-into-operands=[1]
+# CHECK-NEXT: f0 v34 Call operand 3: nothing contents=nothing stored-into-operands=[1]
+# CHECK: f0 v36 Call operand 1: members-read contents=returned read=[any]
+# CHECK-NEXT: f0 v36 Call operand 2: nothing contents=nothing
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Environment name="main" fields=[{key="kept" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = NewClosure v3 function=f1
+    v5 = Call v4, -, v1, v2
+    v6 = NewArray v1, v2 contents=anything
+    v7 = CallList v4, -, v6
+    v8 = NewClosure function=f2
+    v9 = Call v8, -, v1
+    v10 = NewClosure function=f3
+    v11 = PropGet v10 key="call"
+    v12 = Call v11, v10, v1, v2 calleeKey="call"
+    v13 = PropGet v10 key="apply"
+    v14 = Call v13, v10, v1, v6 calleeKey="apply"
+    v15 = PropGet v10 key="bind"
+    v16 = Call v15, v10, v1 calleeKey="bind"
+    v17 = Call v16, -, v2
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="queueMicrotask"
+    v20 = Call v19, -, v4
+    v21 = PropGet v6 key="forEach"
+    v22 = Builtin builtin=Object
+    v23 = PropGet v22 key="freeze"
+    v24 = Call v21, v6, v23 calleeKey="forEach"
+    v25 = Builtin builtin=Reflect
+    v26 = PropGet v25 key="apply"
+    v27 = Call v26, v25, v10, v1, v6 calleeKey="apply"
+    v28 = Builtin builtin=JSON
+    v29 = PropGet v28 key="stringify"
+    v30 = Call v29, v28, v1 calleeKey="stringify"
+    v31 = Builtin builtin=Map
+    v32 = Construct v31, -
+    v33 = PropGet v32 key="set"
+    v34 = Call v33, v32, v1, v2 calleeKey="set"
+    v35 = PropGet v32 key="get"
+    v36 = Call v35, v32, v1 calleeKey="get"
+    Return
+}
+function f1 name="capturing" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything, v2: anything):
+    Return
+}
+function f2 name="selfish" flags=[TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    Return
+}
+function f3 name="method" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

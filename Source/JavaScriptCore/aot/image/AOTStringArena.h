@@ -40,7 +40,7 @@ public:
     StringID operator()(StringID id) const { return ProvisionalStringID::isProvisional(id) ? finalIDOf(id) : id; }
     void apply(StringID& id) const { id = (*this)(id); }
 
-    bool isIdentity() const { return m_tasksWithNewStrings.isEmpty(); }
+    bool isIdentity() const { return m_isIdentity; }
     bool isIdentityFor(unsigned task) const { return !m_tasksWithNewStrings.get(task); }
 
 private:
@@ -50,6 +50,7 @@ private:
 
     Vector<Vector<StringID>> m_finalIDs;
     BitVector m_tasksWithNewStrings;
+    bool m_isIdentity { true };
 };
 
 class StringInterningPhase {
@@ -107,6 +108,8 @@ public:
     StringID intern(std::span<const uint8_t> canonicalProgramString);
     std::span<const uint8_t> at(StringID id) const { return m_table[id]; }
     const StringTable& table() const { return m_table; }
+    // False as long as the task has handed out no id that the phase replaces when it ends: StringRemap::isIdentityFor() will say the same of the task.
+    bool hasUsedProvisionalStrings() const { return m_firstUses && !m_firstUses->isEmpty(); }
 
 private:
     std::optional<StringID> useExistingIn(StringInterningPhase::Storage&, std::span<const uint8_t>, uint32_t hash);

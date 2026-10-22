@@ -60,17 +60,29 @@ const hostToString = (receiver: b.TableType) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-const withDigitCount = (parameter: string) =>
-  ({
-    this: b.f64.or(numberObject),
-    args: { [parameter]: digitCount },
-    returns: b.string,
-    capability: "heap",
-    throws: true,
-    uses: { this: b.inspected },
-    usesFeature: "NumberPrecisionMethods",
-    implementation: b.hostCall,
-  }) satisfies b.FunctionField;
+// A count within the bounds is never refused.
+const withDigitCount = (parameter: string, minimum: number) =>
+  [
+    {
+      this: b.f64.or(numberObject),
+      args: { [parameter]: b.union(b.undefined, b.int(minimum, 100)).optional },
+      returns: b.string,
+      capability: "heap",
+      isSpecialCase: true,
+      uses: { this: b.inspected },
+      implementation: b.hostCall,
+    },
+    {
+      this: b.f64.or(numberObject),
+      args: { [parameter]: digitCount },
+      returns: b.string,
+      capability: "heap",
+      throws: true,
+      uses: { this: b.inspected },
+      usesFeature: "NumberPrecisionMethods",
+      implementation: b.hostCall,
+    },
+  ] satisfies b.FunctionField[];
 
 const truncatedToBits = {
   args: { bits: b.index.loose, bigint: b.bigint.loose },
@@ -90,7 +102,12 @@ export default b.declarations(
     constructorTable: b.staticTable("runtime/NumberConstructor.cpp", "numberConstructorTable"),
     prototypeTable: b.staticTable("runtime/NumberPrototype.cpp", "numberPrototypeTable"),
     call: [
-      { ...conversionToNumber, args: { value: b.string }, uses: { value: [b.readAsCharacters] } },
+      {
+        ...conversionToNumber,
+        args: { value: b.union(b.string, b.strictNull, b.bool, b.f64).optional },
+        uses: { value: [b.readAsCharacters] },
+        isSpecialCase: true,
+      },
       { ...conversionToNumber, args: { value: numeric } },
     ],
     construct: {
@@ -114,11 +131,12 @@ export default b.declarations(
       isSafeInteger: numberTest("NumberIsSafeInteger"),
     },
     proto: {
-      toExponential: withDigitCount("fractionDigits"),
-      toFixed: withDigitCount("fractionDigits"),
-      toPrecision: withDigitCount("precision"),
+      toExponential: withDigitCount("fractionDigits", 0),
+      toFixed: withDigitCount("fractionDigits", 0),
+      toPrecision: withDigitCount("precision", 1),
       toString: [
         { ...inlineToString, args: { radix: b.undefined.optional }, appendForm: "NumberToStringAppend" },
+        { ...inlineToString, args: { radix: b.int(2, 36) }, isSpecialCase: true },
         { ...inlineToString, args: { radix: b.integer.loose }, throws: true },
         hostToString(numberObject),
       ],

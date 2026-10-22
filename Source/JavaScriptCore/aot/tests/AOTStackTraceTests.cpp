@@ -52,7 +52,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = Claim v0 castType=i32
+    v2 = Check v0 castType=i32
     v3 = Integer integer=0
     v4 = StrictEq v2, v3
     Branch v4 -> taken b1(), notTaken b2()
@@ -113,7 +113,7 @@ function f8 name="reads" parameters=[{type=anything}] results=[{type=anything}] 
 }
 function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = Claim v0 castType=i32
+    v2 = Check v0 castType=i32
     v3 = Integer integer=0
     v4 = StrictEq v2, v3
     Branch v4 -> taken b1(), notTaken b2()
@@ -174,7 +174,7 @@ static std::unique_ptr<CompileOutput> compileWithValidation(ASCIILiteral referen
         Wire::CompileOptions options = makeDefaultCompileOptions();
         AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
         // The script of the shell hands the program its own objects, closures and Error.captureStackTrace.
-        AOT_TEST_CHECK(!applyOptionWord(options, "admit=RuntimeCode"_s));
+        AOT_TEST_CHECK(!applyOptionWord(options, "admit=Inspector"_s));
         AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
         BuildContext build(options);
         std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);

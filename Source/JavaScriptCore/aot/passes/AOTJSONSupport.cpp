@@ -11,6 +11,7 @@
 #include "AOTExpandOwnKeysOrders.h"
 #include "AOTFlowPrototypes.h"
 #include "AOTFlowResults.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccess.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>
@@ -89,7 +90,7 @@ JSONMemberSupport jsonMemberSupportOf(const Program& program, const FlowResults&
     const Field& field = program.at(id).fields[fieldIndex];
     if (!isEnumerableStringField(program, field))
         return JSONMemberSupport::NotSerialized;
-    if (hasNoJSONText(program, flow, program.at(field.declared.type)))
+    if (hasNoJSONText(program, flow, program.at(slotTypeOf(program, field))))
         return JSONMemberSupport::WithoutText;
 
     PropertyAccessContext context { program };

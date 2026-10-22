@@ -100,7 +100,7 @@ IntegerRelations::Answer IntegerRelations::isAtMost(ValueID left, ValueID right,
     m_steps = 0;
     const Type& leftType = typeOf(left);
     const Type& rightType = typeOf(right);
-    if (!leftType.isNumber() || !rightType.isNumber() || !m_analyses.cfg().isReachable(at))
+    if (!isNumberOrAssumed(left, at) || !isNumberOrAssumed(right, at) || !m_analyses.cfg().isReachable(at))
         return Answer::Unknown;
     if (leftType.isInteger() && rightType.isInteger() && isAlwaysAtMost(leftType.integers, rightType.integers, offset))
         return Answer::Proven;
@@ -162,8 +162,11 @@ void IntegerRelations::assumeRange(ValueID id, Range range, BlockID scope)
 
 void IntegerRelations::assumeSameValue(ValueID copy, ValueID original)
 {
-    if (normalize(copy, AssumedSums::Follow, std::nullopt).base != normalize(original, AssumedSums::Follow, std::nullopt).base)
+    if (normalize(copy, AssumedSums::Follow, std::nullopt).base != normalize(original, AssumedSums::Follow, std::nullopt).base) {
         m_sameValues.append({ m_analyses.identityOf(copy), original });
+        m_comparedBases.shrink(0);
+        m_hasIndexOfComparisons = false;
+    }
 }
 
 std::optional<Range> IntegerRelations::assumedRangeOf(ValueID base, std::optional<BlockID> at) const
@@ -180,6 +183,11 @@ std::optional<Range> IntegerRelations::assumedRangeOf(ValueID base, std::optiona
 bool IntegerRelations::isIntegerOrAssumed(ValueID id, BlockID at) const
 {
     return typeOf(id).isInteger() || hasAssumption(normalize(id).base, at);
+}
+
+bool IntegerRelations::isNumberOrAssumed(ValueID id, BlockID at) const
+{
+    return typeOf(id).isNumber() || hasAssumption(normalize(id).base, at);
 }
 
 bool IntegerRelations::isIdentityConversion(const Value& value) const
@@ -267,7 +275,7 @@ Vector<IntegerRelations::Relationship, 2> IntegerRelations::relationshipsOfEdge(
     bool isTaken = side == EdgeSide::Taken;
     ValueID left = comparison.operand(0);
     ValueID right = comparison.operand(1);
-    if (!typeOf(left).isNumber() || !typeOf(right).isNumber())
+    if (!isNumberOrAssumed(left, at) || !isNumberOrAssumed(right, at))
         return relationships;
 
     bool isMirrored = comparison.opcode == Opcode::Greater || comparison.opcode == Opcode::GreaterEq;
@@ -296,12 +304,151 @@ Vector<IntegerRelations::Relationship, 2> IntegerRelations::relationshipsOfEdge(
     return relationships;
 }
 
+bool IntegerRelations::isEnteredOverEdgeOfComparison(BlockID block) const
+{
+    std::optional<Edge> edge = m_analyses.cfg().singleIncomingEdge(block);
+    if (!edge || edge->isHandlerEdge())
+        return false;
+    const Terminator& terminator = m_function.at(edge->from).terminator;
+    return terminator.isConditionalBranch() && edgeComparisons.contains(m_function.at(terminator.conditionOperand()).opcode);
+}
+
+// The nearest block above this one in the tree of dominators that is entered over the edge of a comparison and over no other.
+// The last block of a function of thousands of statements has thousands of blocks above it, and few of them say anything: each is looked at once, not once for each question.
+BlockID IntegerRelations::nextBlockBehindComparison(BlockID block)
+{
+    constexpr uint32_t notAsked = UINT32_MAX;
+    constexpr uint32_t noBlock = UINT32_MAX - 1;
+    if (m_nextBlockBehindComparison.size() != m_function.blocks.size())
+        m_nextBlockBehindComparison.fill(notAsked, m_function.blocks.size());
+    const Dominators& dominators = m_analyses.dominators();
+    Vector<BlockID, 16> waiting;
+    uint32_t answer = noBlock;
+    for (BlockID current = block; current; current = dominators.idom(current)) {
+        if (m_nextBlockBehindComparison[current.index()] != notAsked) {
+            answer = m_nextBlockBehindComparison[current.index()];
+            break;
+        }
+        waiting.append(current);
+        BlockID above = dominators.idom(current);
+        if (above && isEnteredOverEdgeOfComparison(above)) {
+            answer = above.index();
+            break;
+        }
+    }
+    for (BlockID current : waiting)
+        m_nextBlockBehindComparison[current.index()] = answer;
+    uint32_t next = m_nextBlockBehindComparison[block.index()];
+    return next == noBlock ? BlockID() : BlockID(next);
+}
+
+// Behind a row of a thousand loops a thousand edges of comparisons stand above a place, each about the counter of its own loop. relationshipsOfEdge() answers nothing for a comparison that is not about the base:
+// whether it is, is worked out once for each edge, not once for each step of each proof.
+bool IntegerRelations::comparisonOnEdgeIntoIsAbout(BlockID block, const Value& comparison, ValueID base)
+{
+    if (m_comparedBases.size() != m_function.blocks.size()) {
+        m_comparedBases.shrink(0);
+        m_comparedBases.grow(m_function.blocks.size());
+    }
+    ComparedBases& bases = m_comparedBases[block.index()];
+    if (!bases.isKnown)
+        bases = { normalize(comparison.operand(0)).base, normalize(comparison.operand(1)).base, true };
+    return bases.left == base || bases.right == base;
+}
+
+void IntegerRelations::indexComparisonsByBase()
+{
+    const CFG& cfg = m_analyses.cfg();
+    const Dominators& dominators = m_analyses.dominators();
+    size_t numberOfBlocks = m_function.blocks.size();
+    constexpr uint32_t notKnown = UINT32_MAX;
+    m_depthInDominatorTree.fill(notKnown, numberOfBlocks);
+    Vector<BlockID, 32> waiting;
+    auto depthOf = [&](BlockID block) {
+        uint32_t depth = 0;
+        for (BlockID current = block; current; current = dominators.idom(current)) {
+            if (m_depthInDominatorTree[current.index()] != notKnown) {
+                depth = m_depthInDominatorTree[current.index()] + 1;
+                break;
+            }
+            waiting.append(current);
+        }
+        while (!waiting.isEmpty())
+            m_depthInDominatorTree[waiting.takeLast().index()] = depth++;
+        return m_depthInDominatorTree[block.index()];
+    };
+    m_blocksBehindComparisonsAbout.clear();
+    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        BlockID block(index);
+        if (!cfg.isReachable(block))
+            continue;
+        depthOf(block);
+        if (!isEnteredOverEdgeOfComparison(block))
+            continue;
+        const Value& comparison = m_function.at(m_function.at(cfg.singleIncomingEdge(block)->from).terminator.conditionOperand());
+        comparisonOnEdgeIntoIsAbout(block, comparison, ValueID());
+        const ComparedBases& bases = m_comparedBases[index];
+        auto add = [&](ValueID base) {
+            m_blocksBehindComparisonsAbout.add(base ? base.index() + 1 : 0, Vector<BlockID, 2>()).iterator->value.append(block);
+        };
+        add(bases.left);
+        if (bases.right != bases.left)
+            add(bases.right);
+    }
+    for (auto& entry : m_blocksBehindComparisonsAbout) {
+        std::ranges::sort(entry.value, [&](BlockID first, BlockID second) {
+            return std::pair { m_depthInDominatorTree[second.index()], second.index() } < std::pair { m_depthInDominatorTree[first.index()], first.index() };
+        });
+    }
+    m_hasIndexOfComparisons = true;
+}
+
 template<typename Functor>
 bool IntegerRelations::forEachDominatingRelationship(ValueID base, BlockID at, const Functor& functor)
 {
     const CFG& cfg = m_analyses.cfg();
     const Dominators& dominators = m_analyses.dominators();
-    for (BlockID block = at; block; block = dominators.idom(block)) {
+    // A comparison that says something about the base stands behind its definition, so no edge above that block has one.
+    BlockID definingBlock = base && m_sameValues.isEmpty() ? m_analyses.useLists().blockOf(base) : BlockID();
+    // Where the definition does not stand above the place, a walk up the tree never meets its block and goes on to the root.
+    if (definingBlock && !dominators.dominates(definingBlock, at))
+        definingBlock = BlockID();
+    auto above = [&](BlockID block) {
+        BlockID next = block == definingBlock ? BlockID() : nextBlockBehindComparison(block);
+        return next && definingBlock && !dominators.dominates(definingBlock, next) ? BlockID() : next;
+    };
+    if (m_hasIndexOfComparisons && m_depthInDominatorTree.size() != m_function.blocks.size())
+        m_hasIndexOfComparisons = false;
+    if (!m_hasIndexOfComparisons && m_numberOfBlocksWalked > m_function.blocks.size()) {
+        m_numberOfBlocksWalked = 0;
+        indexComparisonsByBase();
+    }
+    if (m_hasIndexOfComparisons) {
+        // The blocks above a place stand in a row, so those of the list that are above it come in the order in which a walk up from the place meets them.
+        auto found = m_blocksBehindComparisonsAbout.find(base ? base.index() + 1 : 0);
+        if (found == m_blocksBehindComparisonsAbout.end())
+            return false;
+        // A proof inside the functor asks again, and an index that is made anew would move the list.
+        Vector<BlockID, 16> blocks;
+        for (BlockID block : found->value) {
+            if (m_depthInDominatorTree[block.index()] > m_depthInDominatorTree[at.index()] || !dominators.dominates(block, at))
+                continue;
+            if (definingBlock && !dominators.dominates(definingBlock, block))
+                break;
+            blocks.append(block);
+        }
+        for (BlockID block : blocks) {
+            Edge edge = *cfg.singleIncomingEdge(block);
+            const Value& comparison = m_function.at(m_function.at(edge.from).terminator.conditionOperand());
+            for (const Relationship& relationship : relationshipsOfEdge(comparison, edge.targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken, base, at)) {
+                if (functor(relationship))
+                    return true;
+            }
+        }
+        return false;
+    }
+    for (BlockID block = at; block; block = above(block)) {
+        ++m_numberOfBlocksWalked;
         std::optional<Edge> edge = cfg.singleIncomingEdge(block);
         if (!edge || edge->isHandlerEdge())
             continue;
@@ -310,6 +457,8 @@ bool IntegerRelations::forEachDominatingRelationship(ValueID base, BlockID at, c
             continue;
         const Value& comparison = m_function.at(terminator.conditionOperand());
         if (!edgeComparisons.contains(comparison.opcode))
+            continue;
+        if (!comparisonOnEdgeIntoIsAbout(block, comparison, base))
             continue;
         EdgeSide side = edge->targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken;
         for (const Relationship& relationship : relationshipsOfEdge(comparison, side, base, at)) {
@@ -487,13 +636,13 @@ IntegerRelations::Answer IntegerRelations::proveWhole(ValueID id, BlockID at, As
 {
     if (!takeStep())
         return Answer::Unknown;
+    Term term = normalize(id);
+    if (term.base && hasAssumption(term.base, at))
+        return Answer::Proven;
     const Type& type = typeOf(id);
     if (!type.isNumber())
         return Answer::Unknown;
-    if (type.isNumberWithoutFraction())
-        return Answer::Proven;
-    Term term = normalize(id);
-    if (!term.base || hasAssumption(term.base, at))
+    if (type.isNumberWithoutFraction() || !term.base)
         return Answer::Proven;
 
     const Value& value = m_function.at(id);

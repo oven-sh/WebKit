@@ -134,6 +134,12 @@ EdgeResult edgeResultAt(const Function& function, EdgeResultPosition position)
     return *result;
 }
 
+ValueID operandNarrowedOnEdge(const Function& function, EdgeResultPosition position)
+{
+    EdgeResult result = edgeResultAt(function, position);
+    return result.kind == EdgeResultKind::NarrowedOperand ? result.subject : ValueID();
+}
+
 Type truthyPartOf(const Type& type, TypeArena&)
 {
     if (!type.isJavaScriptValue())
@@ -184,14 +190,32 @@ static Type narrowByTruthiness(const TypingContext& context, const Type& source,
     return falsy;
 }
 
+static bool mayBeMemberWithoutLayout(const TypingContext& context, const Type& type)
+{
+    return type.layouts && context.types.at(type.layouts).hasMembersWithoutLayout;
+}
+
+static Type withMembersWithoutLayout(const TypingContext& context, Type&& type)
+{
+    if (mayBeMemberWithoutLayout(context, type))
+        return WTF::move(type);
+    LayoutSet layouts { .isComplete = true, .hasMembersWithoutLayout = true };
+    if (type.layouts)
+        layouts.members = context.types.at(type.layouts).members;
+    type.layouts = context.types.intern(WTF::move(layouts));
+    return WTF::move(type);
+}
+
 // No test tells the object of a built-in without a cell in the realm from other objects, so it fails a test that names it.
+// Nor does a test find the members of a family that have no layout: they fail a test of layouts, whichever it lists.
 static Type narrowByFailedTest(const TypingContext& context, const Type& source, const Type& tested)
 {
     const BuiltinTable& builtins = context.program.builtins();
     auto isUntestable = [&](BuiltinID builtin) {
         return !isTestableBuiltin(builtins, builtin);
     };
-    if (std::ranges::none_of(tested.builtins, isUntestable))
+    bool mayHaveNoLayout = mayBeMemberWithoutLayout(context, source);
+    if (!mayHaveNoLayout && std::ranges::none_of(tested.builtins, isUntestable))
         return source.without(tested, context.types);
     // Where every object passes, the test asks only whether the value is an object.
     if (source.withOnlyObjects().isSubsetOf(tested, context.program))
@@ -199,12 +223,25 @@ static Type narrowByFailedTest(const TypingContext& context, const Type& source,
 
     Type recognized = tested;
     removeAllMatching(recognized.builtins, isUntestable);
-    return source.without(recognized, context.types);
+    Type failing = source.without(recognized, context.types);
+    if (!mayHaveNoLayout)
+        return failing;
+    return withMembersWithoutLayout(context, WTF::move(failing));
+}
+
+static Type withoutMembersWithoutLayout(const TypingContext& context, const Type& type)
+{
+    if (!mayBeMemberWithoutLayout(context, type))
+        return type;
+    Type listed = type;
+    const Vector<LayoutID>& members = context.types.at(type.layouts).members;
+    listed.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet { Vector<LayoutID>(members), true });
+    return listed;
 }
 
 static Type narrowByTest(const TypingContext& context, const Type& source, const Type& tested, EdgeSide side)
 {
-    return side == EdgeSide::Taken ? source.castTo(tested, context.types) : narrowByFailedTest(context, source, tested);
+    return side == EdgeSide::Taken ? source.castTo(withoutMembersWithoutLayout(context, tested), context.types) : narrowByFailedTest(context, source, tested);
 }
 
 static Type zeroesJoined(const Type& other)
@@ -340,19 +377,27 @@ Type narrowTypeByTest(const TypingContext& context, const Type& source, const Va
     RELEASE_ASSERT(provesForever(proof));
     switch (proof) {
     case Proof::TestedType:
-        return narrowByTest(context, source, context.types.at(test.testedType()), side);
+        // A test names a type, or only the layouts it lets through.
+        if (Value::opcodesWithTestedType.contains(test.opcode))
+            return narrowByTest(context, source, context.types.at(test.testedType()), side);
+        return narrowByTest(context, source, Type::forLayoutSet(test.layouts()), side);
     case Proof::Truthiness:
         return narrowByTruthiness(context, source, side);
     case Proof::Equality:
     case Proof::IntegerBound:
         return narrowByComparison(context, test, operandIndex, source, side);
     case Proof::ExactFunction:
+        if (test.opcode == Opcode::IsFunctionOfBuiltin)
+            return narrowByTest(context, source, Type::forBuiltin(test.member()), side);
         return narrowByTest(context, source, Type::forFunction(test.function()), side);
     case Proof::None:
     case Proof::CaseValue:
+    case Proof::NotNullish:
     case Proof::Shape:
     case Proof::SlotFilled:
     case Proof::NoExtraProperties:
+    case Proof::NoFieldOutsideSlot:
+    case Proof::BirthFieldsFilled:
     case Proof::NotFrozen:
     case Proof::OwnInstance:
     case Proof::Pristine:
@@ -363,13 +408,11 @@ Type narrowTypeByTest(const TypingContext& context, const Type& source, const Va
     case Proof::PrototypeLinkUnchanged:
     case Proof::EvaluatedOnce:
     case Proof::KeyOrder:
-    case Proof::EpochCurrent:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
     case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
-    case Proof::RequireEdgeReady:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -497,10 +540,10 @@ TypeID typeOnEdge(const Program& program, const Function& function, EdgeResultPo
     return arena.intern(computeTypeOnEdge({ program, function, arena, TypeLevel::Proven }, position));
 }
 
-TypeID predictionOnEdge(const Program& program, const Function& function, EdgeResultPosition position, TypeArena& arena)
+TypeID expectedTypeOnEdge(const Program& program, const Function& function, EdgeResultPosition position, TypeID provenType, TypeArena& arena)
 {
-    const Type& type = arena.at(typeOnEdge(program, function, position, arena));
-    Type met = type.intersectWith(computeTypeOnEdge({ program, function, arena, TypeLevel::Predicted }, position), arena);
+    const Type& type = arena.at(provenType);
+    Type met = type.intersectWith(computeTypeOnEdge({ program, function, arena, TypeLevel::Expected }, position), arena);
     if (met.isNever() || met == type)
         return { };
     return arena.intern(met);

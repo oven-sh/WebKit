@@ -13,10 +13,13 @@
 #include "AOTCompiledCall.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
+#include "AOTHeapHooks.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
 #include "AOTObjectModel.h"
+#include "AOTProgramStrings.h"
 #include "AOTRuntimeLayoutTable.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
@@ -25,7 +28,9 @@
 #include "AsyncGeneratorPrototype.h"
 #include "Error.h"
 #include "ErrorInstance.h"
+#include "FunctionPrototype.h"
 #include "GeneratorPrototype.h"
+#include "GetterSetter.h"
 #include "HeapAnalyzer.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -98,14 +103,20 @@ static bool isBoundFunction(const Closure& closure)
     return closure.kind().callable() == CallableKind::Bound;
 }
 
+static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const Closure* closure)
+{
+    if (validatesRuntime(vm)) [[unlikely]]
+        validateFunctionCellIsNotInFrame(vm, closure);
+}
+
 JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* classObject = uncheckedDowncast<Closure>(callFrame->jsCallee());
     String name = classObject->kind().hasInferredName ? String() : writtenFunctionName(classObject->function());
-    ASCIILiteral description = FunctionDescription(classObject->function()).isNakedConstructor() ? "constructor"_s : "class constructor"_s;
-    return throwVMTypeError(globalObject, scope, makeString("Cannot call a "_s, description, name.isEmpty() ? ""_s : " "_s, name, " without |new|"_s));
+    ConstructorKind kind = FunctionDescription(classObject->function()).isNakedConstructor() ? ConstructorKind::Naked : ConstructorKind::Base;
+    return JSValue::encode(throwException(globalObject, scope, createConstructorCalledWithoutNewError(globalObject, kind, name)));
 }
 
 CallData Closure::getCallData(JSCell* cell)
@@ -122,6 +133,8 @@ CallData Closure::getCallData(JSCell* cell)
 
 CallData Closure::getConstructData(JSCell* cell)
 {
+    if (isBoundFunction(*uncheckedDowncast<Closure>(cell)))
+        return constructDataOfBoundClosure(uncheckedDowncast<Closure>(cell)->function());
     if (!FunctionTables::canConstruct(uncheckedDowncast<Closure>(cell)->kind()))
         return CallData();
     return CallData::forCompiledCode(constructEntrypoint().taggedPtr(), cell->structure()->realm());
@@ -215,6 +228,41 @@ void Closure::ensureClassObject(VM&)
         createClassObject(this);
 }
 
+// A cache answers for a static field by the Structure of the class object alone, so a class with static members shares its Structure with no other class.
+static Structure* structureSharedWithClassesInheritingFrom(VM& vm, const Closure& classObject, JSObject* parent)
+{
+    const LayoutData& classLayout = *classObject.classData();
+    if (!classLayout.staticMethods().empty() || !classLayout.staticFields().empty())
+        return nullptr;
+    // The table keeps each parent alive, so it is asked for the parents of which a program has a fixed number.
+    State& state = classObject.state();
+    if (parent != state.instance.globalObject->functionPrototype() && classLayout.evaluation() != EvaluationState::ProvenOnce)
+        return nullptr;
+    return state.objects->classes.classObjectStructureInheritingFrom(vm, parent);
+}
+
+void Closure::initializeClassObject(VM& vm, JSObject* parent, JSObject* prototype)
+{
+    ASSERT(kind().isConstructor && classData());
+    Structure* shared = structureSharedWithClassesInheritingFrom(vm, *this, parent);
+    if (!shared) {
+        Structure* own = createStructure(vm, structure()->realm(), parent);
+        if (butterfly())
+            nukeStructureAndSetButterfly(vm, structureID(), nullptr);
+        setStructure(vm, own);
+        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+        return;
+    }
+
+    ASSERT(shared->transitionPropertyName() == vm.propertyNames->prototype.impl());
+    bool wasPrototype = mayBePrototype();
+    nukeStructureAndSetButterfly(vm, structureID(), Butterfly::create(vm, this, shared));
+    setStructure(vm, shared);
+    putDirectOffset(vm, shared->transitionOffset(), prototype);
+    if (wasPrototype)
+        didBecomePrototype(vm);
+}
+
 void Closure::prepareForGenericAccess(VM& vm)
 {
     if (isBoundFunction(*this)) [[unlikely]]
@@ -233,6 +281,17 @@ JSValue Closure::prototypeProperty(VM& vm)
     return getDirect(vm, vm.propertyNames->prototype);
 }
 
+JSObject* createPrototypeObjectOfFunction(VM& vm, JSGlobalObject* globalObject, JSObject* function)
+{
+    // Both Structures are in the transition tables of the realm's Structure for empty objects, for all functions.
+    PropertyOffset offset;
+    Structure* structure = Structure::becomePrototypeTransition(vm, globalObject->objectStructureForObjectConstructor());
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->constructor, static_cast<unsigned>(PropertyAttribute::DontEnum), offset);
+    JSObject* prototype = constructEmptyObject(vm, structure);
+    prototype->putDirectOffset(vm, offset, function);
+    return prototype;
+}
+
 bool Closure::ensurePrototypeProperty(VM& vm)
 {
     if (getDirect(vm, vm.propertyNames->prototype))
@@ -246,17 +305,18 @@ bool Closure::ensurePrototypeProperty(VM& vm)
     JSObject* prototype;
     if (kind().isGenerator)
         prototype = constructEmptyObject(globalObject, kind().isAsync ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
-    else {
-        prototype = constructEmptyObject(globalObject);
-        prototype->putDirect(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    }
+    else
+        prototype = createPrototypeObjectOfFunction(vm, globalObject, this);
     putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    state().objects->classes.didCreatePrototypePropertyOf(this);
+    state().objects->closures.didGivePrototypePropertyTo(vm, this);
     return true;
 }
 
 void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attributes)
 {
     RELEASE_ASSERT(!kind().isConstructor);
+    validateIsNotInFrame(vm, this);
     prepareForGenericAccess(vm);
     if (FunctionRareData* rareData = this->rareData())
         rareData->clear("Store to prototype property of a function");
@@ -265,11 +325,101 @@ void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attribu
 
 void Closure::setNameProperty(VM& vm, JSString* name, unsigned attributes)
 {
+    validateIsNotInFrame(vm, this);
     prepareForGenericAccess(vm);
     putDirect(vm, vm.propertyNames->name, name, attributes);
     FunctionRareData* rareData = ensureRareData(vm);
     rareData->setHasReifiedName();
     rareData->setHasModifiedNameForBoundOrNonHostFunction();
+}
+
+static bool canDefineStaticMemberWithoutTransition(VM& vm, Closure& classObject, PropertyName key)
+{
+    const CommonIdentifiers& names = *vm.propertyNames;
+    if (key == names.prototype || key == names.name || key == names.length || key == names.displayName)
+        return false;
+    if (classObject.isLazyClassObject() || StaticFields::findOwnField(classObject, key.uid()))
+        return false;
+    StaticFields::ensureProperties(vm, classObject);
+    return true;
+}
+
+namespace {
+
+// Between NewClass and the end of the definition no code of the program can name the class, so no object inherits from its holders and no cache has walked past them.
+// What such a holder gets is reported to nobody.
+class HolderThatNobodyHasSeen {
+    WTF_MAKE_NONCOPYABLE(HolderThatNobodyHasSeen);
+public:
+    explicit HolderThatNobodyHasSeen(Structure* ownStructure)
+        : m_structure(ownStructure)
+        , m_mayBePrototype(ownStructure->mayBePrototype())
+    {
+        if (m_mayBePrototype)
+            m_structure->setMayBePrototype(false);
+    }
+
+    ~HolderThatNobodyHasSeen()
+    {
+        if (m_mayBePrototype)
+            m_structure->setMayBePrototype(true);
+    }
+
+private:
+    Structure* m_structure;
+    bool m_mayBePrototype;
+};
+
+} // anonymous namespace
+
+bool tryDefineClassMemberWithoutTransition(JSGlobalObject* globalObject, Closure& classObject, const LayoutData& classLayout, JSObject* holder, PropertyName key, JSObject* function, MethodKind kind)
+{
+    VM& vm = globalObject->vm();
+    validateIsNotInFrame(vm, &classObject);
+    if (parseIndex(key))
+        return false;
+    if (classObject.state().objects->classes.keepsStructuresForNextEvaluation(classObject, classLayout))
+        return false;
+    bool isStatic = holder == &classObject;
+    if (isStatic ? !canDefineStaticMemberWithoutTransition(vm, classObject, key) : holder->type() != FinalObjectType)
+        return false;
+
+    // The definition made a Structure for this object alone and has filled it in place. The one that lists the names kept off the prototype is in no table of transitions, so it is this object's alone too.
+    // After any other transition the object is treated like any other.
+    Structure* structure = holder->structure();
+    bool isOwnStructure = structure->transitionKind() == TransitionKind::Unknown || structure->transitionKind() == TransitionKind::MakeListedPropertiesImmutable;
+    if (!isOwnStructure || !structure->isPinnedPropertyTable() || structure->isDictionary())
+        return false;
+    if (!structure->isStructureExtensible() || structure->isImmutableProperty(key.uid()))
+        return false;
+
+    HolderThatNobodyHasSeen unseen(structure);
+    constexpr unsigned accessorAttributes = PropertyAttribute::Accessor | PropertyAttribute::DontEnum;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, key, attributes);
+    if (kind == MethodKind::Method) {
+        if (isValidOffset(offset))
+            return false;
+        holder->putDirectWithoutTransition(vm, key, function, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        return true;
+    }
+
+    JSObject* getter = kind == MethodKind::Getter ? function : nullptr;
+    JSObject* setter = kind == MethodKind::Setter ? function : nullptr;
+    if (!isValidOffset(offset)) {
+        holder->putDirectNonIndexAccessorWithoutTransition(vm, key, GetterSetter::create(vm, globalObject, getter, setter), accessorAttributes);
+        return true;
+    }
+    if (attributes != accessorAttributes)
+        return false;
+    auto* current = uncheckedDowncast<GetterSetter>(holder->getDirect(offset));
+    if (!getter && !current->isGetterNull())
+        getter = current->getter();
+    if (!setter && !current->isSetterNull())
+        setter = current->setter();
+    structure->didReplaceProperty(offset);
+    holder->putDirectOffset(vm, offset, GetterSetter::create(vm, globalObject, getter, setter));
+    return true;
 }
 
 JSObject* boundFunctionTarget(VM& vm, State& state, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
@@ -282,6 +432,65 @@ JSObject* boundFunctionTarget(VM& vm, State& state, FunctionID function, std::sp
     return std::bit_cast<JSObject*>(captures[*slot]);
 }
 
+CallData constructDataOfBoundClosure(FunctionID function)
+{
+    CallData constructData;
+    if (!boundFunctionData(function).constructs)
+        return constructData;
+    constructData.type = CallData::Type::Native;
+    constructData.native.function = constructBoundClosure;
+    constructData.native.isBoundFunction = false;
+    constructData.native.isWasm = false;
+    return constructData;
+}
+
+// [[Construct]] of a bound function: the target is constructed with the bound arguments in front of the given ones, and stands for the bound function where that is new.target.
+// The closure holds no more bound arguments than the target has parameters, and such a target sees no others.
+JSC_DEFINE_HOST_FUNCTION(constructBoundClosure, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* callee = callFrame->jsCallee();
+    FunctionID function;
+    std::span<const uint64_t> captures;
+    unsigned numberOfReferences = 0;
+    State* state = nullptr;
+    auto take = [&](auto* closure) {
+        function = closure->function();
+        captures = closure->captures();
+        numberOfReferences = closure->numberOfReferences();
+        state = &closure->state();
+    };
+    if (auto* slim = dynamicDowncast<SlimClosure>(callee))
+        take(slim);
+    else if (auto* reified = dynamicDowncast<ReifiedSlimClosure>(callee))
+        take(reified);
+    else
+        take(uncheckedDowncast<Closure>(callee));
+
+    const BoundFunctionData& bound = boundFunctionData(function);
+    RELEASE_ASSERT(bound.constructs && bound.firstArgumentSlot + bound.numberOfCapturedArguments <= numberOfReferences);
+    JSObject* target = boundFunctionTarget(vm, *state, function, captures, numberOfReferences);
+    MarkedArgumentBuffer arguments;
+    for (unsigned index = 0; index < bound.numberOfCapturedArguments; ++index) {
+        // An argument whose type lists its strings lies there as the number of the string.
+        uint64_t word = captures[bound.firstArgumentSlot + index];
+        arguments.append(isLiteralStringWord(word) ? JSValue(state->strings->stringForLiteralStringWord(word)) : JSValue::decode(word));
+    }
+    if (bound.numberOfCapturedArguments == bound.numberOfBoundArguments) {
+        for (unsigned index = 0; index < callFrame->argumentCount(); ++index)
+            arguments.append(callFrame->uncheckedArgument(index));
+    }
+    if (arguments.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return encodedJSValue();
+    }
+    JSValue newTarget = callFrame->newTarget();
+    if (newTarget == JSValue(callee))
+        newTarget = target;
+    RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, target, JSC::getConstructData(target), arguments, newTarget)));
+}
+
 bool Closure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
     Closure* closure = uncheckedDowncast<Closure>(object);
@@ -292,6 +501,7 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
+    validateIsNotInFrame(vm, closure);
     closure->prepareForGenericAccess(vm);
     if (closure->kind().isConstructor)
         StaticFields::ensureProperties(vm, *closure);

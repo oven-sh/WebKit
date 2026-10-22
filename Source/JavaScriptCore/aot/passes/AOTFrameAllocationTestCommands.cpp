@@ -9,15 +9,17 @@
 #if ENABLE(AOT)
 
 #include "AOTAnalysisTestCommands.h"
+#include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTEffectSummaries.h"
-#include "AOTFlowAnalysis.h"
 #include "AOTFrameAllocationPlanner.h"
 #include "AOTFreshResults.h"
+#include "AOTHeat.h"
 #include "AOTIRPrinter.h"
 #include "AOTPipeline.h"
 #include "AOTSinkAllocationsInternal.h"
 #include "AOTTestRunner.h"
+#include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -34,6 +36,10 @@ static void runOnFunctions(TestCommandContext& context)
     Program& program = *context.program;
     CommandWords words(context);
     FlowPreparation preparation = prepareFlow(context, words);
+    if (preparation.flow) {
+        preparation.flow->setBorrowedParameters(computeBorrowedParameters(program, context.build));
+        preparation.flow->setFrameArrayParameters(computeFrameArrayParameters(program, context.build));
+    }
     std::optional<FunctionID> onlyFunction = words.parseOptional("function"_s, functionParser(program));
     if (!words.finish())
         return;
@@ -169,7 +175,9 @@ static void printRemark(PrintStream& out, const AllocationRemark& remark)
 static void printFramePlan(TestCommandContext& context, FunctionID, FunctionAnalyses& analyses)
 {
     PrintStream& out = context.out;
-    FramePlanner planner(analyses);
+    // The heat of a program that nobody has estimated: each function is entered once.
+    Heat heat;
+    FramePlanner planner(analyses, heat);
     FramePlan plan = planner.run();
     for (const FrameDecision& decision : plan.decisions) {
         dumpID(out, decision.allocation);
@@ -280,6 +288,63 @@ static void printFreshResults(TestCommandContext& context, FunctionID, FunctionA
     context.out.println(computeFreshResults(analyses));
 }
 
+static ASCIILiteral describeBorrowing(const BorrowedParameters& borrowed, FunctionID id, uint32_t entryParameter)
+{
+    if (!borrowed.isBorrowed(id, entryParameter))
+        return "leaks"_s;
+    return borrowed.borrowsContents(id, entryParameter) ? "borrowed"_s : "borrowed contents-leak"_s;
+}
+
+static void runBorrowedParameters(TestCommandContext& context)
+{
+    CommandWords words(context);
+    prepareFlow(context, words);
+    if (!words.finish())
+        return;
+
+    const Program& program = *context.program;
+    BorrowedParameters borrowed = computeBorrowedParameters(program, context.build);
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID id(index);
+        const Function& function = program.at(id);
+        if (!function.hasBody())
+            continue;
+
+        context.out.print("f", id.index(), ":");
+        CommaPrinter separator(", "_s, " "_s);
+        uint32_t numberOfParameters = function.at(entryBlock).parameters.size();
+        for (uint32_t entryParameter = 0; entryParameter < numberOfParameters; ++entryParameter)
+            context.out.print(separator, entryParameter, " ", describeBorrowing(borrowed, id, entryParameter));
+        context.out.print("\n");
+    }
+}
+
+static void runFrameArrayParameters(TestCommandContext& context)
+{
+    CommandWords words(context);
+    prepareFlow(context, words);
+    if (!words.finish())
+        return;
+
+    const Program& program = *context.program;
+    FrameArrayParameters table = computeFrameArrayParameters(program, context.build);
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID id(index);
+        const Function& function = program.at(id);
+        if (!function.hasBody())
+            continue;
+
+        context.out.print("f", id.index(), ": [");
+        CommaPrinter separator;
+        uint32_t numberOfParameters = function.at(entryBlock).parameters.size();
+        for (uint32_t entryParameter = 0; entryParameter < numberOfParameters; ++entryParameter) {
+            if (table.mayTake(id, entryParameter))
+                context.out.print(separator, entryParameter);
+        }
+        context.out.println("]");
+    }
+}
+
 static void printLocation(PrintStream& out, const Program& program, SourceLocation location)
 {
     if (!hasModule(location)) {
@@ -329,6 +394,8 @@ std::span<const TestCommand> allocationTestCommands()
         { "sinking-states"_s, IRForm::Prepared, runOnFunctions<printSinkingStates>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "fresh-results"_s, IRForm::Prepared, runOnFunctions<printFreshResults>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
         { "frame-plan"_s, IRForm::Prepared, runOnFunctions<printFramePlan>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "borrowed-parameters"_s, IRForm::Prepared, runBorrowedParameters, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "frame-array-parameters"_s, IRForm::Prepared, runFrameArrayParameters, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
     };
     return commands;
 }

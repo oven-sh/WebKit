@@ -82,8 +82,7 @@ struct ValueEngineFields {
     FunctionID function;
     ValueID value;
     uint32_t typeWord { Wire::none };
-    uint32_t writtenWord { Wire::none };
-    uint32_t predictionWord { Wire::none };
+    uint32_t expectedWord { Wire::none };
     std::optional<Representation> representation;
 };
 
@@ -167,6 +166,7 @@ private:
     struct ProgramScan {
         std::array<uint32_t, numberOfEnumerators<ProgramList>> counts { };
         Vector<std::optional<uint32_t>> namespaceLayoutRanks;
+        uint32_t numberOfNamespaceLayouts { 0 };
     };
 
     struct BodyState {
@@ -180,6 +180,7 @@ private:
     struct TypeParts;
 
     uint32_t& countOf(ProgramList list) { return m_scan.counts[static_cast<unsigned>(list)]; }
+    uint32_t layoutWordOf(uint32_t numberInText);
 
     bool scanItems();
     void scanItem(Lexer&, const Token& keyword);
@@ -203,7 +204,7 @@ private:
     void parseTypePart(Wire::Type&, TypeParts&);
     void parseClassPart(TypeParts&, BuiltinClassID);
     Wire::PropertyKey parsePropertyKeyValue();
-    void completeType(uint32_t wireIndex, std::span<const TypeID> earlierTypes, Type&) const;
+    void completeType(uint32_t wireIndex, Type&) const;
 
     void applyPatches(Program&, std::span<const TypeID>);
     void applyValueEngineFields(const PatchContext&) const;

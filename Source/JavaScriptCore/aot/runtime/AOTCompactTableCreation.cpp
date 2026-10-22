@@ -10,6 +10,7 @@
 
 #include "AOTDataBuilder.h"
 #include "AOTInstance.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTTableInImage.h"
 #include "DeferGCInlines.h"
@@ -228,6 +229,216 @@ JSSet* CompactTable::tryCreateSetOfStrings(JSGlobalObject* globalObject, std::sp
     set->m_storage.setWithoutWriteBarrier(table);
     vm.mutatorFence();
     return set;
+}
+
+template<CompactTable::SlotKind kind>
+uint32_t CompactTable::fillWithNumbers(std::span<const EncodedJSValue> numbers)
+{
+    uint8_t* index = at<uint8_t>(offsetOfIndex());
+    EncodedJSValue* keys = at<EncodedJSValue>(offsetOfKeys());
+    unsigned indexBits = m_indexBits;
+    uint32_t used = 0;
+    for (EncodedJSValue number : numbers) {
+        unsigned hash = rapidHashMix64(number) & hashMask;
+        bool isPresent = probeIndex<kind>(index, indexBits, used, hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            return keys[entry] == number;
+        }).has_value();
+        if (isPresent)
+            continue;
+        keys[used] = number;
+        insertIntoIndex<kind>(index, indexBits, used, hash);
+        ++used;
+    }
+    return used;
+}
+
+JSSet* CompactTable::tryCreateSetOfNumbers(JSGlobalObject* globalObject, JSArray* list)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Butterfly* butterfly = list->butterfly();
+    unsigned length = butterfly->publicLength();
+    if (!length || length > maxCapacity) [[unlikely]]
+        return nullptr;
+
+    Vector<EncodedJSValue, 32> numbers(length);
+    switch (list->indexingType() & IndexingShapeMask) {
+    case Int32Shape:
+        for (unsigned i = 0; i < length; ++i) {
+            JSValue element = butterfly->contiguousInt32().at(list, i).get();
+            if (!element) [[unlikely]]
+                return nullptr;
+            numbers[i] = JSValue::encode(element);
+        }
+        break;
+    case DoubleShape:
+        for (unsigned i = 0; i < length; ++i) {
+            double element = butterfly->contiguousDouble().at(list, i);
+            if (element != element) [[unlikely]]
+                return nullptr;
+            numbers[i] = JSValue::encode(normalizeMapKey(JSValue(JSValue::EncodeAsDouble, element)));
+        }
+        break;
+    default:
+        return nullptr;
+    }
+
+    CompactTable* table = tryCreate(globalObject, Width::Wide, Width::None, length);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    uint32_t used = 0;
+    switch (table->slotKind()) {
+    case SlotKind::Tag:
+        used = table->fillWithNumbers<SlotKind::Tag>(numbers.span());
+        break;
+    case SlotKind::Short:
+        used = table->fillWithNumbers<SlotKind::Short>(numbers.span());
+        break;
+    case SlotKind::Long:
+        used = table->fillWithNumbers<SlotKind::Long>(numbers.span());
+        break;
+    case SlotKind::Huge:
+        used = table->fillWithNumbers<SlotKind::Huge>(numbers.span());
+        break;
+    }
+    WTF::storeStoreFence();
+    table->m_used = used;
+    table->m_alive = used;
+    if (length > maxCapacityWithShortSlots && used < length / 4) {
+        table = table->tryCopyWithWidths(globalObject, Width::Wide, Width::None, used + 1);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    JSSet* set = JSSet::create(vm, globalObject->setStructure());
+    set->m_storage.setWithoutWriteBarrier(table);
+    vm.mutatorFence();
+
+    if (validatesRuntime(vm)) [[unlikely]] {
+        JSSet* expected = JSSet::create(vm, globalObject->setStructure());
+        for (EncodedJSValue number : numbers) {
+            expected->add(globalObject, JSValue::decode(number));
+            scope.releaseAssertNoException();
+        }
+        CompactTable* expectedTable = tableOf(expected);
+        bool isSame = expectedTable->m_used == used && expectedTable->m_alive == used;
+        for (uint32_t entry = 0; isSame && entry < used; ++entry)
+            isSame = expectedTable->heapKeyAt(entry) == table->heapKeyAt(entry);
+        if (!isSame)
+            crashOnValidationFailure(vm, { ValidationFailureKind::FastPathResultDiffers, { }, { }, table });
+    }
+    return set;
+}
+
+// Reading the first two elements of such an array runs no code.
+static ALWAYS_INLINE const WriteBarrier<Unknown>* elementsOfOrdinaryPair(JSGlobalObject* globalObject, JSValue value)
+{
+    JSArray* pair = value && value.isCell() ? dynamicDowncast<JSArray>(value.asCell()) : nullptr;
+    if (!pair || (pair->indexingType() & IndexingShapeMask) != ContiguousShape || pair->butterfly()->publicLength() < 2 || !globalObject->isOriginalArrayStructure(pair->structure()))
+        return nullptr;
+    const WriteBarrier<Unknown>* elements = pair->butterfly()->contiguous().data();
+    return elements[0] && elements[1] ? elements : nullptr;
+}
+
+template<CompactTable::SlotKind kind>
+uint32_t CompactTable::fillWithPairsOfHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>> pairs)
+{
+    uint8_t* index = at<uint8_t>(offsetOfIndex());
+    uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    bool hasNarrowValues = m_valueWidth == Width::Narrow;
+    uint32_t* narrowValues = at<uint32_t>(offsetOfValues());
+    EncodedJSValue* wideValues = at<EncodedJSValue>(offsetOfValues());
+    unsigned indexBits = m_indexBits;
+    uint32_t used = 0;
+    for (auto& pair : pairs) {
+        const WriteBarrier<Unknown>* elements = asArray(pair.get())->butterfly()->contiguous().data();
+        JSString* key = asString(elements[0].get());
+        const StringImpl* impl = key->tryGetValueImpl();
+        unsigned hash = impl->existingHash();
+        std::optional<uint32_t> entry = probeIndex<kind>(index, indexBits, used, hash, [&](uint32_t candidate) ALWAYS_INLINE_LAMBDA {
+            return holdsSameText(cageBase, keys[candidate], impl, hash);
+        });
+        if (!entry) {
+            entry = used++;
+            keys[*entry] = MarkedBlockCage::encode(cageBase, key);
+            insertIntoIndex<kind>(index, indexBits, *entry, hash);
+        }
+        JSValue value = elements[1].get();
+        if (hasNarrowValues)
+            narrowValues[*entry] = value.isCell() ? MarkedBlockCage::encode(cageBase, value.asCell()) : static_cast<uint32_t>(JSValue::encode(value));
+        else
+            wideValues[*entry] = JSValue::encode(value);
+    }
+    return used;
+}
+
+JSMap* CompactTable::tryCreateMapOfStringKeys(JSGlobalObject* globalObject, JSArray* list)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance& instance = *Instance::of(globalObject);
+    std::span<const WriteBarrier<Unknown>> pairs { list->butterfly()->contiguous().data(), list->butterfly()->publicLength() };
+    if (pairs.empty() || pairs.size() > maxCapacity || instance.options().useWideReferences()) [[unlikely]]
+        return nullptr;
+
+    // canHold(), for a value that is there.
+    const MarkedBlockCage& cage = vm.heap.cage();
+    auto fitsNarrowColumn = [&](JSValue value) ALWAYS_INLINE_LAMBDA {
+        if (!value.isCell())
+            return value.isUndefinedOrNull() || value.isBoolean();
+        return cage.contains(value.asCell()) && !(std::bit_cast<uintptr_t>(value.asCell()) & (MarkedBlock::atomSize - 1));
+    };
+    Width valueWidth = Width::Narrow;
+    for (auto& pair : pairs) {
+        const WriteBarrier<Unknown>* elements = elementsOfOrdinaryPair(globalObject, pair.get());
+        if (!elements || !isResolvedString(elements[0].get()) || !fitsNarrowColumn(elements[0].get()))
+            return nullptr;
+        asString(elements[0].get())->tryGetValueImpl()->hash();
+        if (!fitsNarrowColumn(elements[1].get()))
+            valueWidth = Width::Wide;
+    }
+
+    CompactTable* table = tryCreate(globalObject, Width::Narrow, valueWidth, pairs.size());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    uintptr_t cageBase = instance.cellCageBase;
+    uint32_t used = 0;
+    switch (table->slotKind()) {
+    case SlotKind::Tag:
+        used = table->fillWithPairsOfHashedStrings<SlotKind::Tag>(cageBase, pairs);
+        break;
+    case SlotKind::Short:
+        used = table->fillWithPairsOfHashedStrings<SlotKind::Short>(cageBase, pairs);
+        break;
+    case SlotKind::Long:
+        used = table->fillWithPairsOfHashedStrings<SlotKind::Long>(cageBase, pairs);
+        break;
+    case SlotKind::Huge:
+        used = table->fillWithPairsOfHashedStrings<SlotKind::Huge>(cageBase, pairs);
+        break;
+    }
+    WTF::storeStoreFence();
+    table->m_used = used;
+    table->m_alive = used;
+    ensureStillAliveHere(list);
+
+    JSMap* map = JSMap::create(vm, globalObject->mapStructure());
+    map->m_storage.setWithoutWriteBarrier(table);
+    vm.mutatorFence();
+
+    if (validatesRuntime(vm)) [[unlikely]] {
+        JSMap* expected = JSMap::create(vm, globalObject->mapStructure());
+        for (auto& pair : pairs) {
+            const WriteBarrier<Unknown>* elements = asArray(pair.get())->butterfly()->contiguous().data();
+            expected->set(globalObject, elements[0].get(), elements[1].get());
+            scope.releaseAssertNoException();
+        }
+        CompactTable* expectedTable = tableOf(expected);
+        bool isSame = expectedTable->m_used == used && expectedTable->m_alive == used;
+        for (uint32_t entry = 0; isSame && entry < used; ++entry)
+            isSame = expectedTable->heapKeyAt(entry) == table->heapKeyAt(entry) && expectedTable->valueAt(entry) == table->valueAt(entry);
+        if (!isSame)
+            crashOnValidationFailure(vm, { ValidationFailureKind::FastPathResultDiffers, { }, { }, table });
+        ensureStillAliveHere(list);
+    }
+    return map;
 }
 
 } } // namespace JSC::AOT

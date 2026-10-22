@@ -25,10 +25,11 @@ function f1 name="forInStep" parameters=[{type=anything}] results=[{type=string}
     v6 = ResultAt v3 index=2
     Return v5
 }
+# Each of the two calls stands on an unlikely arm, which sets up a frame of its own, with its own check.
 # CHECK-NEXT: f1: size=
 # CHECK-NEXT: operation operationAOTEnumeratorNext x1
 # CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologue x2
 
 function f2 name="isEnumeratorCurrent" parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: anything):
@@ -43,7 +44,7 @@ function f2 name="isEnumeratorCurrent" parameters=[{type=anything}] results=[{ty
 # CHECK-NEXT: f2: size=
 # CHECK-NEXT: operation operationAOTEnumeratorNext x1
 # CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologue x2
 
 function f3 name="enumeratorGetByVal" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -65,7 +66,7 @@ function f3 name="enumeratorGetByVal" parameters=[{type=anything}] results=[{typ
 # CHECK-NEXT: operation operationAOTEnumeratorNext x1
 # CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
 # CHECK-NEXT: stub GetByValCachedCells x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologue x3
 
 function f4 name="destructureIterable" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -166,6 +167,6 @@ function f12 name="enumeratorGetByValInRareCode" parameters=[{type=anything}] re
 # CHECK-NEXT: operation operationAOTEnumeratorGetByVal x1
 # CHECK-NEXT: operation operationAOTEnumeratorNext x1
 # CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
-# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PollAtPrologue x3
 # CHECK-NOT: operation
 # CHECK-NOT: stub

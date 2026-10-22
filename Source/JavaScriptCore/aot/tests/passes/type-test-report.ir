@@ -1,4 +1,4 @@
-# The report has one record for each source position and kind of failure of a type test that runs, with the number of its copies
+# The report has one record for each source position of a type test that runs, with the number of its copies. A check counts like any other test: where it fails the code goes on in the generic version
 # FORM: Prepared
 # RUN: type-test-report
 
@@ -8,7 +8,7 @@ layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 
 function f0 name="caller" parameters=[{type=anything}, {type=object}] results=[{type=anything}] inlineFrames=[{}, {callee=f1 callPosition=50 module=m1}] {
   b0(v0: anything, v1: object):
-    v2 = Claim v0 castType=number @30
+    v2 = Check v0 castType=number @30
     v3 = TypeTest v0 testedType=number @30
     v4 = ShapeTest v1 layouts=[L0] @20:1
     v5 = TypeTest v0 testedType=string
@@ -28,14 +28,13 @@ function f1 name="callee" module=m1 parameters=[{type=object}] results=[{type=bo
 function f2 name="load" module=m1 role=ResultWrapper parameters=[{type=anything}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f3}
 function f3 name="load" module=m1 role=ResultWorker parameters=[{type=anything}] results=[{type=number}, {type=number}] derivation={source=f2} creator=ResultWorker{origin=f2} {
   b0(v0: anything):
-    v1 = Claim v0 castType=number @70
+    v1 = Check v0 castType=number @70
     v2 = Results v1, v1
     Return v2
 }
 # CHECK: m0:10 f0 TakesGenericPath copies=1
-# CHECK-NEXT: m0:30 f0 TakesGenericPath copies=1
-# CHECK-NEXT: m0:30 f0 Throws copies=1
+# CHECK-NEXT: m0:30 f0 TakesGenericPath copies=2
 # CHECK-NEXT: m0:40 f0 TakesGenericPath copies=1
 # CHECK-NEXT: m1:20 f1 TakesGenericPath copies=2
-# CHECK-NEXT: m1:70 f2 Throws copies=1
+# CHECK-NEXT: m1:70 f2 TakesGenericPath copies=1
 # CHECK-NOT: copies=

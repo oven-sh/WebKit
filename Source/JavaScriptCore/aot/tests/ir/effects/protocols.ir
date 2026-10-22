@@ -98,8 +98,8 @@ function f14 name="hasInstance" kind=Method flags=[HasThis] thisType={type=anyth
 # THENABLE-NEXT: v15: ?
 # THENABLE-NEXT: v16: none
 
-# ITERATE: v0: ?
-# ITERATE-NEXT: v1: ?
+# ITERATE: v0: none
+# ITERATE-NEXT: v1: none
 # ITERATE: v3: ?
 # ITERATE-NEXT: v4: none
 # ITERATE-NEXT: v5: none

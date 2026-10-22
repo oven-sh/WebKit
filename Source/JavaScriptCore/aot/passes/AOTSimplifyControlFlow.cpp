@@ -18,8 +18,11 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/Scope.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -41,11 +44,13 @@ public:
         , m_analyses(context.analyses)
         , m_builder(context.analyses.context(), context.function, context.types, &context.analyses)
         , m_validates(context.build.validates())
+        , m_looksAcrossBlocks(context.mayDecideTestsAcrossBlocks)
     {
     }
 
     PassOutcome run()
     {
+        m_onlyJoinedBlocks = !m_analyses.cfg().hasHandlers();
         Vector<BlockID> reachableBlocks(m_analyses.cfg().reversePostOrder());
         decideBranches(reachableBlocks);
         for (BlockID block : reachableBlocks)
@@ -54,15 +59,22 @@ public:
             m_analyses.didChangeControlFlow();
 
         bypassHandlers();
-        forwardEmptyBlocks();
+        m_onlyJoinedBlocks &= !m_numberOfChanges;
+        collapseTestsThatDecideNothing();
         m_numberOfChanges += m_builder.emptyUnreachableBlocks();
+        size_t numberOfChangesBeforeMerging = m_numberOfChanges;
         mergeChains(m_analyses.cfg());
         if (!m_numberOfChanges)
             return PassOutcome::Unchanged;
 
-        m_analyses.didChangeControlFlow();
+        if (m_numberOfChanges != numberOfChangesBeforeMerging)
+            m_analyses.didChangeControlFlow();
         return PassOutcome::Changed;
     }
+
+    bool onlyJoinedBlocks() const { return m_onlyJoinedBlocks; }
+    bool replacedParametersByKnownValues() const { return m_replacedParameterByKnownValue; }
+    bool mayFindMoreAtOnce() const { return m_mayFindMoreAtOnce; }
 
 private:
     static bool mayStrictlyEqual(const Type& subject, int64_t integer)
@@ -91,15 +103,22 @@ private:
 
     void decideBranches(const Vector<BlockID>& reachableBlocks)
     {
-        TypeTestBranches typeTests(m_analyses);
-        SlotValueTests slotValueTests(m_analyses, m_builder.types());
+        std::optional<TypeTestBranches> typeTests;
+        std::optional<SlotValueTests> slotValueTests;
+        if (m_looksAcrossBlocks) {
+            typeTests.emplace(m_analyses);
+            slotValueTests.emplace(m_analyses, m_builder.types(), typeTests->blocksThatBranchOnTypeTest());
+        }
         Vector<std::pair<BlockID, uint32_t>> decided;
+        auto noteWaysGivenUp = makeScopeExit([&] {
+            m_mayFindMoreAtOnce |= typeTests && typeTests->gaveUpOnLongWays();
+        });
         for (BlockID block : reachableBlocks) {
             if (m_function.at(block).terminator.kind != TerminatorKind::Branch)
                 continue;
 
             uint32_t target = 0;
-            switch (evaluateCondition(m_analyses, typeTests, slotValueTests, block)) {
+            switch (m_looksAcrossBlocks ? evaluateCondition(m_analyses, *typeTests, *slotValueTests, block) : evaluateConditionByDefinitions(m_analyses, block)) {
             case KnownBoolean::Unknown:
                 continue;
             case KnownBoolean::True:
@@ -113,6 +132,8 @@ private:
                 decided.append({ block, target });
         }
 
+        if (decided.isEmpty())
+            return;
         for (auto [block, target] : decided)
             decideTerminator(m_builder, block, target);
         for (auto [block, target] : decided)
@@ -146,14 +167,15 @@ private:
 
     bool simplifyBranch(BlockID block)
     {
-        Terminator& terminator = m_function.at(block).terminator;
+        const Terminator& terminator = m_function.at(block).terminator;
         bool changed = false;
         for (;;) {
             const Value& definition = m_function.at(definitionThroughUpcasts(m_function, terminator.conditionOperand()));
             if (definition.opcode != Opcode::LogicalNot)
                 break;
-            terminator.setConditionOperand(definition.valueOperand());
-            std::swap(terminator.taken(), terminator.notTaken());
+            Terminator& negated = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
+            negated.setConditionOperand(definition.valueOperand());
+            std::swap(negated.taken(), negated.notTaken());
             changed = true;
         }
         if (!terminator.taken().proofs.isEmpty() || terminator.taken() != terminator.notTaken())
@@ -200,9 +222,9 @@ private:
             return true;
         }
 
-        Terminator& terminator = m_function.at(block).terminator;
         Vector<uint32_t, 8> remainingIndexes;
         for (uint32_t index = 0; index < cases.size(); ++index) {
+            const Terminator& terminator = m_function.at(block).terminator;
             if (mayMatch(cases[index]) && terminator.targets[index] != terminator.otherwise())
                 remainingIndexes.append(index);
         }
@@ -213,6 +235,7 @@ private:
         if (remainingIndexes.size() == cases.size())
             return false;
 
+        Terminator& terminator = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         Vector<Case, 8> remainingCases;
         Vector<Target, 2> remainingTargets;
         for (uint32_t index : remainingIndexes) {
@@ -290,12 +313,14 @@ private:
             return false;
 
         BlockID body = bodyOf(m_function.at(id).handler->block);
-        Block& throwingBlock = m_function.at(id);
+        Block& throwingBlock = m_function.edit(id);
         Arguments arguments = throwingBlock.handler->arguments;
         m_builder.setOrigin(throwingBlock.terminator.origin());
         throwingBlock.terminator = Terminator { };
         m_builder.moveToEndOf(id);
         m_builder.emitJump(body, WTF::move(arguments));
+        // The builder reports the jump, not the terminator in whose place it stands.
+        m_analyses.didChangeControlFlow();
         ++m_numberOfChanges;
         return true;
     }
@@ -319,13 +344,12 @@ private:
         for (ValueID parameter : handlerParameters) {
             m_builder.setOrigin(m_function.at(parameter).origin());
             ValueID bodyParameter = m_builder.addParameter(body, m_function.at(parameter).type);
-            m_function.at(bodyParameter).setWritten(m_function.at(parameter).written());
-            m_function.at(bodyParameter).setPrediction(m_function.at(parameter).prediction());
+            m_function.edit(bodyParameter).setExpected(m_function.at(parameter).expected());
             substitution.replace(parameter, bodyParameter);
         }
 
-        Block& source = m_function.at(handler);
-        Block& destination = m_function.at(body);
+        Block& source = m_function.edit(handler);
+        Block& destination = m_function.edit(body);
         destination.values = std::exchange(source.values, { });
         destination.terminator = std::exchange(source.terminator, Terminator { });
         destination.handler = std::exchange(source.handler, std::nullopt);
@@ -334,6 +358,8 @@ private:
         m_builder.setOrigin(destination.terminator.origin());
         m_builder.moveToEndOf(handler);
         m_builder.emitJump(body, WTF::move(handlerParameters));
+        // The builder reports the jump, not what has moved into the body.
+        m_analyses.didChangeControlFlow();
         return body;
     }
 
@@ -347,7 +373,128 @@ private:
         return target != id && rarerOf(block.frequency, targetFrequency) == targetFrequency;
     }
 
-    void forwardEmptyBlocks()
+    void collapseTestsThatDecideNothing()
+    {
+        Vector<BlockID, 8> sources = forwardEmptyBlocks();
+        while (!sources.isEmpty()) {
+            Vector<ValueID, 8> testedValues = simplifyTerminatorsOf(sources.span());
+            if (testedValues.isEmpty())
+                return;
+            sources = eraseUnusedValues(WTF::move(testedValues));
+            sources.appendVector(forwardEmptyBlocks());
+        }
+    }
+
+    static ValueID testedValueOf(const Terminator& terminator)
+    {
+        switch (terminator.kind) {
+        case TerminatorKind::Branch:
+            return terminator.conditionOperand();
+        case TerminatorKind::Switch:
+        case TerminatorKind::SwitchString:
+            return terminator.subjectOperand();
+        case TerminatorKind::Jump:
+        case TerminatorKind::Return:
+        case TerminatorKind::ReturnCall:
+        case TerminatorKind::Throw:
+        case TerminatorKind::Rethrow:
+        case TerminatorKind::Unreachable:
+        case TerminatorKind::SwitchOnShape:
+        case TerminatorKind::TryCallInline:
+        case TerminatorKind::TestAndBranch:
+            return { };
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    Vector<ValueID, 8> simplifyTerminatorsOf(std::span<const BlockID> blocks)
+    {
+        Vector<ValueID, 8> testedValues;
+        bool changed = false;
+        for (BlockID block : blocks) {
+            ValueID tested = testedValueOf(m_function.at(block).terminator);
+            if (!tested || !simplifyTerminator(block))
+                continue;
+            changed = true;
+            m_onlyJoinedBlocks = false;
+            ++m_numberOfChanges;
+            if (m_function.at(block).terminator.kind == TerminatorKind::Jump)
+                testedValues.append(tested);
+        }
+        if (changed)
+            m_analyses.didChangeControlFlow();
+        return testedValues;
+    }
+
+    Vector<BlockID, 8> eraseUnusedValues(Vector<ValueID, 8>&& worklist)
+    {
+        const CFG& cfg = m_analyses.cfg();
+        const UseLists& useLists = m_analyses.useLists();
+        HashMap<ValueID, unsigned> numberOfErasedUses;
+        Vector<ValueLocation, 8> erased;
+        auto eraseUseOf = [&](ValueID used) {
+            ++numberOfErasedUses.add(used, 0).iterator->value;
+            worklist.append(used);
+        };
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            ValueLocation location = useLists.locationOf(id);
+            if (useLists.useCount(id) != numberOfErasedUses.get(id) || erased.contains(location))
+                continue;
+            switch (location.placement) {
+            case ValuePlacement::Detached:
+                continue;
+            case ValuePlacement::Parameter:
+                if (location.block == cfg.root())
+                    continue;
+                for (Edge edge : cfg.incomingEdges(location.block)) {
+                    IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+                    if (incoming.kind == IncomingValue::Kind::Argument)
+                        eraseUseOf(incoming.argument);
+                }
+                break;
+            case ValuePlacement::InBlock:
+                if (!m_analyses.isRemovableWhenUnused(id))
+                    continue;
+                m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                    eraseUseOf(operand);
+                });
+                break;
+            }
+            erased.append(location);
+        }
+        if (erased.isEmpty())
+            return { };
+
+        Vector<BlockID, 8> sources;
+        for (const ValueLocation& location : erased) {
+            if (location.placement != ValuePlacement::Parameter)
+                continue;
+            for (Edge edge : cfg.incomingEdges(location.block)) {
+                if (!edge.isHandlerEdge() && !sources.contains(edge.from))
+                    sources.append(edge.from);
+            }
+        }
+
+        std::ranges::sort(erased, { }, [](const ValueLocation& location) {
+            return std::tuple(location.block, location.placement, location.index);
+        });
+        for (size_t first = 0; first < erased.size();) {
+            size_t end = first;
+            BitVector indexes;
+            while (end < erased.size() && erased[end].block == erased[first].block && erased[end].placement == erased[first].placement)
+                indexes.set(erased[end++].index);
+            if (erased[first].placement == ValuePlacement::Parameter)
+                m_builder.removeParameters(erased[first].block, indexes);
+            else
+                m_builder.eraseValues(erased[first].block, indexes);
+            first = end;
+        }
+        m_numberOfChanges += erased.size();
+        return sources;
+    }
+
+    Vector<BlockID, 8> forwardEmptyBlocks()
     {
         Vector<Edge, 8> forwardedEdges;
         for (BlockID from : m_analyses.cfg().reversePostOrder()) {
@@ -360,18 +507,35 @@ private:
             }
         }
         if (forwardedEdges.isEmpty())
-            return;
+            return { };
 
-        const BlockCycles& cycles = m_analyses.blockCycles();
+        auto isInCycle = [&](BlockID block) {
+            return m_analyses.isInCycle(block);
+        };
         forwardedEdges.removeAllMatching([&](const Edge& edge) {
-            return cycles.isInCycle(targetOf(m_function, edge).block);
+            return isInCycle(targetOf(m_function, edge).block);
         });
 
-        for (Edge edge : forwardedEdges) {
-            const Target& next = m_function.at(targetOf(m_function, edge).block).terminator.next();
+        Vector<BlockID, 8> lastEmptyBlocks(forwardedEdges.size(), [&](size_t index) {
+            BlockID last = targetOf(m_function, forwardedEdges[index]).block;
+            for (;;) {
+                BlockID next = m_function.at(last).terminator.next().block;
+                if (!canForwardThrough(next) || isInCycle(next))
+                    return last;
+                last = next;
+            }
+        });
+
+        Vector<BlockID, 8> sources;
+        for (size_t index = 0; index < forwardedEdges.size(); ++index) {
+            Edge edge = forwardedEdges[index];
+            const Target& next = m_function.at(lastEmptyBlocks[index]).terminator.next();
             m_builder.redirectEdge(edge, next.block, Arguments(next.arguments));
+            if (sources.isEmpty() || sources.last() != edge.from)
+                sources.append(edge.from);
         }
         m_numberOfChanges += forwardedEdges.size();
+        return sources;
     }
 
     std::optional<BlockID> findMergeableSuccessor(const CFG& cfg, BlockID id) const
@@ -387,7 +551,7 @@ private:
 
     bool mayThrowIn(BlockID id)
     {
-        return m_analyses.effectsOfTerminator(id).mayThrow() || std::ranges::any_of(m_function.at(id).values, [&](ValueID value) {
+        return m_analyses.effectTraitsOfTerminator(id).normal.mayThrow() || std::ranges::any_of(m_function.at(id).values, [&](ValueID value) {
             return m_analyses.mayThrow(value);
         });
     }
@@ -475,11 +639,13 @@ private:
 
         if (!m_replacements)
             m_replacements.emplace(m_function);
-        Block& block = m_function.at(id);
+        Block& block = m_function.edit(id);
         Arguments arguments = WTF::move(block.terminator.next().arguments);
-        Block successor = std::exchange(m_function.at(*next), Block { });
+        Block successor = std::exchange(m_function.edit(*next), Block { });
+        m_onlyJoinedBlocks &= successor.parameters.isEmpty();
         for (unsigned index = 0; index < successor.parameters.size(); ++index) {
             ValueID parameter = successor.parameters[index];
+            m_replacedParameterByKnownValue = m_replacedParameterByKnownValue || m_function.at(arguments[index]).type != m_function.at(parameter).type || knownValueOf(m_program, m_function, arguments[index]).isKnown();
             if (canReplaceParameter(m_function, arguments[index], parameter)) {
                 m_replacements->replace(parameter, arguments[index]);
                 m_replacedParameters.append(parameter);
@@ -492,6 +658,7 @@ private:
         block.terminator = WTF::move(successor.terminator);
         if (choice == HandlerChoice::TakeSuccessorHandler)
             block.handler = WTF::move(successor.handler);
+        m_mayFindMoreAtOnce |= rarerOf(block.frequency, successor.frequency) != block.frequency || (block.values.isEmpty() && block.parameters.isEmpty());
         block.frequency = rarerOf(block.frequency, successor.frequency);
         if (m_throwingUncoveredBlocks.get(next->index()))
             m_throwingUncoveredBlocks.set(id.index());
@@ -515,19 +682,37 @@ private:
     FunctionAnalyses& m_analyses;
     IRBuilder m_builder;
     bool m_validates;
+    bool m_looksAcrossBlocks;
     Vector<std::pair<BlockID, BlockID>, 2> m_handlerBodies;
     std::optional<ValueSubstitution> m_replacements;
     Vector<ValueID, 8> m_replacedParameters;
     BitVector m_throwingUncoveredBlocks;
     const UseLists* m_useListsBeforeMerging { nullptr };
     size_t m_numberOfChanges { 0 };
+    bool m_onlyJoinedBlocks { false };
+    bool m_replacedParameterByKnownValue { false };
+    bool m_mayFindMoreAtOnce { false };
 };
 
 } // anonymous namespace
 
 PassOutcome simplifyControlFlow(FunctionPassContext& context)
 {
-    return ControlFlowSimplifier(context).run();
+    ControlFlowSimplifier simplifier(context);
+    PassOutcome outcome = simplifier.run();
+    context.lookedOnlyNearby = !context.mayDecideTestsAcrossBlocks;
+    if (outcome == PassOutcome::Unchanged)
+        return outcome;
+    context.keptAnalyses = allAnalyses;
+    if (!simplifier.replacedParametersByKnownValues())
+        context.passesThatCanWait.add(PassID::FoldConstants);
+    if (!simplifier.onlyJoinedBlocks())
+        return outcome;
+    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::PropagateBranchConditions, PassID::EliminateDeadCode };
+    if (!context.foldingAskedForUses)
+        context.passesLeftIdle.add(PassID::FoldConstants);
+    context.reachedFixpoint = !simplifier.mayFindMoreAtOnce();
+    return outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,63 @@
+# interface Identifier { kind: 80 }  interface IfStatement { kind: 245 }  interface Add { op: "add" }  interface Num { op: "num" }
+# Two layouts that have a field of the same name, whose types list only integers or only strings and have nothing in common, are the layouts of different objects.
+# Neither joins the family of the other, although each has the names the other requires. Each group here has a name of its own, so its families hold layouts of the group alone
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+
+# Integers. A range that holds 80 is not told apart from 80, and `number` lists no integers, so it says nothing.
+layout L0 name="Identifier" fields=[{key="kind" declared={type=80} flags=[IsRequired]}]
+layout L1 name="IfStatement" fields=[{key="kind" declared={type=245} flags=[IsRequired]}]
+layout L2 name="Token" fields=[{key="kind" declared={type=int[70, 90]} flags=[IsRequired]}]
+layout L3 name="AnyNode" fields=[{key="kind" declared={type=number} flags=[IsRequired]}]
+# CHECK: L0: members [L0, L2, L3]
+# CHECK-NEXT: L1: members [L1, L3]
+# CHECK-NEXT: L2: members [L0, L2, L3]
+# CHECK-NEXT: L3: members [L0, L1, L2, L3]
+
+# Strings. Two lists that share a string are not told apart. An integer is none of the strings.
+layout L4 name="Add" fields=[{key="op" declared={type="add"} flags=[IsRequired]}]
+layout L5 name="Num" fields=[{key="op" declared={type="num"} flags=[IsRequired]}]
+layout L6 name="AddOrSub" fields=[{key="op" declared={type="add"|"sub"} flags=[IsRequired]}]
+layout L7 name="Numbered" fields=[{key="op" declared={type=1} flags=[IsRequired]}]
+# CHECK-NEXT: L4: members [L4, L6]
+# CHECK-NEXT: L5: members [L5]
+# CHECK-NEXT: L6: members [L4, L6]
+# CHECK-NEXT: L7: members [L7]
+
+# Nothing checks what enters an expected position, so the field may hold the 1.
+layout L8 name="Checked" fields=[{key="tag" declared={type=1} flags=[IsRequired]}]
+layout L9 name="Expected" fields=[{key="tag" declared={type=2 flags=[IsExpected]} flags=[IsRequired]}]
+# CHECK-NEXT: L8: members [L8, L9]
+# CHECK-NEXT: L9: members [L8, L9]
+
+# Both fields may be undefined, which they have in common. Beside them: AlwaysTwo is never undefined, so it has nothing in common with "undefined or 1".
+layout L10 name="UnsetOrOne" fields=[{key="state" declared={type=undefined|1} flags=[IsRequired]}]
+layout L11 name="UnsetOrTwo" fields=[{key="state" declared={type=undefined|2} flags=[IsRequired]}]
+layout L12 name="AlwaysTwo" fields=[{key="state" declared={type=2} flags=[IsRequired]}]
+# CHECK-NEXT: L10: members [L10, L11]
+# CHECK-NEXT: L11: members [L10, L11, L12]
+# CHECK-NEXT: L12: members [L11, L12]
+
+# No conversion of the program makes one pass for the other: not one to the type itself (Asserted), and not one by way of a type that says nothing about the field (Far, by way of Middle).
+# Beside them: Below writes the literal of Target.
+layout L13 name="Target" fields=[{key="sort" declared={type=1} flags=[IsRequired]}]
+layout L14 name="Asserted" fields=[{key="sort" declared={type=2} flags=[IsRequired]}] supertypes=[L13]
+layout L15 name="Below" fields=[{key="sort" declared={type=1} flags=[IsRequired]}, {key="more" declared={type=number} flags=[IsRequired]}] supertypes=[L13]
+layout L16 name="Middle" fields=[{key="sort" declared={type=number} flags=[IsRequired]}] supertypes=[L13]
+layout L17 name="Far" fields=[{key="sort" declared={type=2} flags=[IsRequired]}] supertypes=[L16]
+# CHECK-NEXT: L13: members [L13, L15, L16]
+# CHECK-NEXT: L14: members [L14, L16, L17]
+# CHECK-NEXT: L15: members [L15]
+# CHECK-NEXT: L16: members [L13, L14, L15, L16, L17]
+# CHECK-NEXT: L17: members [L14, L16, L17]
+
+function f0 name="take" parameters=[{type=L0}, {type=L1}, {type=L4}, {type=L13}] results=[{type=anything}] {
+  b0(v0: L0, v1: L1, v2: L4, v3: L13):
+    Return
+}
+# READ-LABEL: function f0 name="take"
+# READ: parameters=[{type=L0|L2|L3}, {type=L1|L3}, {type=L4|L6}, {type=L13|L15|L16}]

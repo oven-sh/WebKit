@@ -96,6 +96,11 @@ extern "C" EncodedJSValue Bun__throwForRemovedFeature(JSGlobalObject* realm, uin
     return { };
 }
 
+extern "C" EncodedJSValue Bun__throwForRemovedFunction(JSGlobalObject* realm, uint16_t feature, StringImpl*)
+{
+    return Bun__throwForRemovedFeature(realm, feature);
+}
+
 extern "C" EncodedJSValue Bun__throwForRemovedBuiltin(JSGlobalObject* realm, uint16_t feature, uint32_t builtin)
 {
     ++AOT::handlerLog.throwCount;
@@ -795,7 +800,7 @@ void testListedFunctionsWithoutTrimming()
     AOT_TEST_CHECK(nativeCalls.removedGetter == 3 && nativeCalls.removedSetter == 3 && nativeCalls.removedHostFunction == 1 && !handlerLog.throwCount);
 }
 
-void testRemovalByNameAndUnused()
+void testRemovalOfUnusedFeature()
 {
     constexpr auto feature = RemovableFeature::Inspector;
     AOT_TEST_CHECK(callAfterStateChange([&] { return removalOf(feature); }) == FeatureRemoval::Present);
@@ -803,10 +808,6 @@ void testRemovalByNameAndUnused()
 
     setRemoval(feature, FeatureRemoval::Unused);
     AOT_TEST_CHECK(callAfterStateChange([&] { return removalOf(feature); }) == FeatureRemoval::Unused);
-    AOT_TEST_CHECK(callAfterStateChange([&] { return isFeatureRemoved(feature); }));
-
-    setRemoval(feature, FeatureRemoval::ByName);
-    AOT_TEST_CHECK(callAfterStateChange([&] { return removalOf(feature); }) == FeatureRemoval::ByName);
     AOT_TEST_CHECK(callAfterStateChange([&] { return isFeatureRemoved(feature); }));
 }
 
@@ -853,7 +854,7 @@ std::span<const NativeTest> removableFeatureTests()
         { "removable-feature/removed-accessors-through-inline-caches"_s, runInTrimmedExecutable<testRemovedAccessorsThroughInlineCaches> },
         { "removable-feature/removed-accessor-of-unrelated-receiver"_s, runInTrimmedExecutable<testRemovedAccessorOfUnrelatedReceiver> },
         { "removable-feature/listed-functions-without-trimming"_s, runWithCleanFeatureState<testListedFunctionsWithoutTrimming> },
-        { "removable-feature/removal-by-name-and-unused"_s, runWithCleanFeatureState<testRemovalByNameAndUnused> },
+        { "removable-feature/removal-of-unused-feature"_s, runWithCleanFeatureState<testRemovalOfUnusedFeature> },
         { "removable-feature/embedder-feature"_s, runWithCleanFeatureState<testEmbedderFeature> },
         { "removable-feature/one-feature-does-not-remove-another"_s, runWithCleanFeatureState<testOneFeatureDoesNotRemoveAnother> },
     };

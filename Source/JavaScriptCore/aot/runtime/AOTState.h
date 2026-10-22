@@ -10,6 +10,7 @@
 #include "AOTInstance.h"
 #include <algorithm>
 #include <memory>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <wtf/FastMalloc.h>
@@ -22,16 +23,20 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
+class AllocationCounts;
+class ArrivalCounts;
 class BuiltinCells;
 class BuiltinModuleTable;
 class CacheRegistry;
 class ChainDependents;
 class CoroutineTable;
+class GlobalBindings;
 class ImmortalCells;
 class Modules;
 class ProgramStatics;
 class ProgramStrings;
 class PropertyCaches;
+class SiteCaches;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
@@ -41,7 +46,11 @@ public:
     ZeroedPages() = default;
     ~ZeroedPages();
 
-    void* allocate(size_t bytes);
+    // AllAtOnce is for a table whose every page is written right away: one call into the kernel takes the place of a fault per page.
+    enum class FirstUse : uint8_t { PageByPage, AllAtOnce };
+    void* allocate(size_t bytes, FirstUse = FirstUse::PageByPage);
+    void release(void* pages);
+    std::span<const std::pair<void*, size_t>> ranges() const { return m_ranges.span(); }
 
 private:
     Vector<std::pair<void*, size_t>> m_ranges;
@@ -59,6 +68,29 @@ private:
     char* m_start { nullptr };
     size_t m_capacity { 0 };
     size_t m_used { 0 };
+};
+
+// Created at their first use, which in most programs is the first access that neither inline code nor a stub answers. A program without one never pays for them.
+class LazyPropertyCaches {
+    WTF_MAKE_NONCOPYABLE(LazyPropertyCaches);
+public:
+    explicit LazyPropertyCaches(State&);
+    ~LazyPropertyCaches();
+
+    PropertyCaches& operator*()
+    {
+        if (m_caches) [[likely]]
+            return *m_caches;
+        return create();
+    }
+    PropertyCaches* operator->() { return &**this; }
+    PropertyCaches* getIfCreated() const { return m_caches.get(); }
+
+private:
+    PropertyCaches& create();
+
+    State& m_state;
+    std::unique_ptr<PropertyCaches> m_caches;
 };
 
 struct State {
@@ -80,12 +112,16 @@ struct State {
     std::unique_ptr<ProgramStatics> statics;
     std::unique_ptr<BuiltinCells> builtinCells;
     std::unique_ptr<ChainDependents> chainDependents;
-    std::unique_ptr<PropertyCaches> propertyCaches;
+    std::unique_ptr<SiteCaches> siteCaches;
+    LazyPropertyCaches propertyCaches;
     std::unique_ptr<Modules> modules;
     std::unique_ptr<BuiltinModuleTable> builtinModules;
     std::unique_ptr<ObjectModel> objects;
     std::unique_ptr<CoroutineTable> coroutines;
     std::unique_ptr<BuiltinFamilyState> builtinFamilies;
+    std::unique_ptr<GlobalBindings> globalBindings;
+    std::unique_ptr<ArrivalCounts> arrivalCounts;
+    std::unique_ptr<AllocationCounts> allocationCounts;
 
 private:
     explicit State(Instance&);

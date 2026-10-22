@@ -20,6 +20,7 @@ struct TypeAlternative {
 
 TypeID expectationOf(const DeclaredType&);
 Vector<TypeAlternative, 4> alternativesOf(const Program&, TypeID);
+Vector<LayoutID, 4> headLayoutsOf(const Program&, const Type&);
 ResultNode describeTypeNode(const Program&, TypeID, uint32_t part);
 
 } } } // namespace JSC::AOT::Typed

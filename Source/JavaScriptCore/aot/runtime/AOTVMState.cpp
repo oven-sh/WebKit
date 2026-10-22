@@ -15,6 +15,7 @@
 #include "AOTHeapHooks.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTModuleRecord.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
@@ -44,11 +45,13 @@ void VMState::attachImage(VM& vm)
 
     structureIDBase = JSC::structureIDBase();
     validatesRuntime = image->header().options.validates || Options::validateAOTRuntime();
+    HeapHooks::sabotage = image->header().options.sabotage;
     vm.updateSoftReservedZoneSize(Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram);
 
     caches = makeUnique<CacheRegistry>();
     counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
     hasCompiledCode = true;
+    vm.setMayHaveUncacheableTransitions();
 
     addMarkingConstraints(vm);
     vm.heap.setValidatesCellVisits(validatesRuntime || Options::verifyGC());
@@ -59,7 +62,7 @@ void VMState::attachImage(VM& vm)
     callSiteCache = makeUnique<CallSiteCache>();
     propertyCaches = makeUnique<VMPropertyCaches>(vm);
     regExpLiterals = makeUnique<RegExpLiterals>(*caches);
-    regExpMatchOutput = makeUniqueArray<int>(image->header().counts.maxRegExpOutputSize);
+    regExpMatchOutput = makeUniqueArray<int>(std::max<size_t>(image->header().counts.maxRegExpOutputSize, 2 * (maxGroupsInRegExpMatchOutput + 1)));
 
     moduleRecordStructure.setWithoutWriteBarrier(ModuleRecord::createStructure(vm, nullptr, jsNull()));
     stringBuilderStorageStructure.setWithoutWriteBarrier(StringBuilderStorage::createStructure(vm, nullptr, jsNull()));
@@ -82,6 +85,7 @@ void VMState::releaseImage(VM& vm)
     ASSERT(vm.heap.isShuttingDown());
 
     reporter->writeAtExit();
+    forgetErrorOfCodeLeftOut(vm);
     Instance::destroyAll(vm);
     RELEASE_ASSERT(instances.isEmpty() && instancesToDestroy.isEmpty());
 

@@ -34,8 +34,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | OverridesGetOwnPropertyNames | OverridesPut | OverridesIsExtensible | OverridesGetCallData | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ImplementsHasInstance | ImplementsDefaultHasInstance;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
+    template<typename CellType, SubspaceAccess mode>
+    static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static SlimClosure* create(VM&, Structure*, FunctionID, std::span<const uint64_t> captures = { }, unsigned numberOfReferences = 0);
@@ -75,8 +75,13 @@ public:
     State& state() const;
     enum class PrototypeObject : bool { MadeAtFirstRead, MadeNow };
     ReifiedSlimClosure* reify(VM&, PrototypeObject = PrototypeObject::MadeAtFirstRead);
+    ReifiedSlimClosure* reifyWithAddedProperty(VM&, Structure* structureWithProperty, PropertyOffset, JSValue);
 
 private:
+    static constexpr unsigned numberOfInitialProperties = 4;
+    Structure* fillInitialProperties(VM&, std::span<JSValue, numberOfInitialProperties>);
+    ReifiedSlimClosure* becomeReified(VM&, Structure*, std::span<const JSValue>);
+
     SlimClosure(VM& vm, Structure* structure, uint64_t word)
         : Base(vm, structure)
         , m_word(word)
@@ -111,8 +116,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | OverridesPut | ImplementsHasInstance | ImplementsDefaultHasInstance;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
+    template<typename CellType, SubspaceAccess mode>
+    static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, Variant);
     static GetValueFunc prototypePropertyCreator();
@@ -127,8 +132,11 @@ public:
     static CallData getConstructData(JSCell*);
 
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
+    // Under every other name defineOwnProperty() is that of an ordinary object.
+    static bool hasOrdinaryDefineOwnProperty(VM&, PropertyName);
 
     FunctionID function() const { return FunctionID(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly())); }
     FunctionKindData kind() const { return functionKindData(function()); }

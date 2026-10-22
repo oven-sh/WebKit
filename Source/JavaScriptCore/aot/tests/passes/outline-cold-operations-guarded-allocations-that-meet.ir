@@ -24,7 +24,7 @@ function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}
   b5(v8) frequency=Rare:
     v9 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v11 = GetArrayElement v6, v9, v8 level=Predicted [keyIsIntegral]
+    v11 = GetArrayElement v6, v9, v8 level=Expected [keyIsIntegral]
     Return v11
   b6() frequency=Rare:
     Return
@@ -42,7 +42,7 @@ function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}
   b11(v16) frequency=Rare:
     v17 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v19 = GetArrayElement v14, v17, v16 level=Predicted [keyIsIntegral]
+    v19 = GetArrayElement v14, v17, v16 level=Expected [keyIsIntegral]
     Return v19
   b12() frequency=Rare:
     Return
@@ -60,7 +60,7 @@ function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}
   b17(v24) frequency=Rare:
     v25 = Integer integer=1
     PropSet v2, v1 key="seen"
-    v27 = GetArrayElement v22, v25, v24 level=Predicted [keyIsIntegral]
+    v27 = GetArrayElement v22, v25, v24 level=Expected [keyIsIntegral]
     Return v27
   b18() frequency=Rare:
     Return

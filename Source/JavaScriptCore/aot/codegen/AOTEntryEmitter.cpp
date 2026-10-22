@@ -9,8 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
+#include "AOTBorrowedParameters.h"
 #include "AOTChooseCallingConventions.h"
+#include "AOTClosureWord.h"
 #include "AOTConvention.h"
+#include "AOTFlowResults.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -124,7 +127,7 @@ uint32_t EntryEmitter::indexOfFirstArgumentInList() const
 
 static uint32_t stackWordsPassedBy(const CodeGenerationInputs& inputs, const Value& tailCall)
 {
-    if (tailCall.opcode == Opcode::CallDirect || tailCall.opcode == Opcode::CallGroup)
+    if (tailCall.opcode == Opcode::CallDirect)
         return inputs.conventions.stackWordsReservedByCallersOf(inputs.program, tailCall.function());
     if (tailCall.opcode != Opcode::Call)
         return 0;
@@ -150,12 +153,30 @@ bool readsCallerFrame(const CodeGenerationInputs& inputs, FunctionID id, const F
         || passesStackWordsInTailCall(inputs, function);
 }
 
+// The entrypoint hands its parameters on to the function, so the table says of the entrypoint what holds of both.
+static uint8_t argumentsBorrowedBy(const FlowResults& flow, FunctionID id, const Function& entrypoint)
+{
+    if (entrypoint.role != FunctionRole::GenericEntrypoint || entryConventionOf(entrypoint) != EntryConvention::GenericRegisters)
+        return 0;
+    if (entrypoint.newTargetParameterIndex() || entrypoint.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
+        return 0;
+
+    uint8_t borrowed = 0;
+    unsigned numberOfArguments = std::min<unsigned>(entrypoint.numberOfPositionalParameters(), ClosureWord::numberOfBorrowedArguments);
+    for (unsigned argument = 0; argument < numberOfArguments; ++argument) {
+        if (flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
+            borrowed |= 1u << argument;
+    }
+    return borrowed;
+}
+
 EntryDescription describeEntry(const CodeGenerationInputs& inputs, FunctionID id, const Function& function)
 {
     EntryDescription description;
     description.isGenericEntrypoint = function.role == FunctionRole::GenericEntrypoint;
     description.numberOfParameters = numberOfRegisterParameters(function);
-    description.hasValueEntry = !!inputs.conventions.valueEntryOf(id);
+    description.borrowedArguments = argumentsBorrowedBy(inputs.flow, id, function);
+    description.endsItsTailCalls = description.isGenericEntrypoint && inputs.flow.frameArrayParameters().endsItsTailCalls(id);
     return description;
 }
 

@@ -166,9 +166,7 @@ void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const A
     ValueInsertion insertion { context.analyses.context(), function, context.types, origin, insert };
 
     StepArguments arguments = createStepArguments(context, chain, insert);
-    std::optional<Value> call = tryMakeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
-    RELEASE_ASSERT(call);
-    ValueID fused = insert(WTF::move(*call));
+    ValueID fused = insert(makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() }));
     ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
     builder.applyInsertions();
 
@@ -270,6 +268,8 @@ PassOutcome fuseArrayChains(FunctionPassContext& context)
 
     context.function = WTF::move(fused);
     context.build.statistics().count(StatisticID::ArrayChainsFused, accepted.size());
+    // A chain is rewritten inside its block: the fused body has the blocks, the targets and the handlers of the body that it replaces.
+    context.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
 }
 

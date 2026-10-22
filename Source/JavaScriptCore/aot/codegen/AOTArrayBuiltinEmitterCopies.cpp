@@ -11,6 +11,7 @@
 #include "AOTAccessEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTBuiltinCallEmitter.h"
+#include "AOTConversionEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTFunctionAnalyses.h"
@@ -138,22 +139,22 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
     ArrayAllocationEmitter allocation(generator());
     LBasicBlock miss = missBlockOf(call);
     Join<CellPointer> join(m_out);
-    forEachFormOrMiss(call, elements.indexingMode(receiverOf(call), arrayStorageTestMask), [&](const ArrayStorageForm& form) {
+    forEachReadableFormOrMiss(call, receiverOf(call), [&](const ArrayStorageForm& form) {
         ConcatOperands operands = collectConcatOperands(call, form);
         missUnless(call, belowOrEqual(operands.length, integer(maxLengthForElementwiseCopy)));
         Integer header = allocation.headerOfNewArray(form);
         missUnless(call, isNotZero(header));
         Integer capacity = bitOr(operands.length, integer(1));
-        Integer size = add(mul(capacity, integer(sizeof(EncodedJSValue))), integer(sizeof(IndexingHeader)));
-        Pointer storage = allocation.allocateStorage(call.context(), size, miss);
+        CellPointer array = allocation.allocateEmptyArrayWithStorage(call.context(), header, capacity, miss);
+        Pointer storage = offsetBy(asPointer(array), sizeof(JSArray));
         ConcatTarget target { storage, capacity, { CellPointer(), offsetBy(storage, sizeof(IndexingHeader)) } };
         {
             CodeGenerator::InitializationScope scope(generator());
-            elements.setPublicLength(target.elements, operands.length);
-            storeField(target.elements.butterfly, m_heaps.Butterfly_vectorLength, low32(capacity));
             copyConcatenatedElements(call, operands, target, form);
+            elements.setPublicLength(target.elements, operands.length);
         }
-        join.add(allocation.allocateArrayCell(header, target.elements.butterfly, miss));
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+        join.add(array);
     });
     finish(call, join.finish());
 }
@@ -257,9 +258,23 @@ void ArrayBuiltinEmitter::spliceInline(const InlineCall& call, Integer start, in
     });
 }
 
+// `let at: number` that only ever holds whole numbers is a double for all that its type says: the code asks it.
 bool ArrayBuiltinEmitter::hasIntegerSpliceRange(const InlineCall& call)
 {
-    return call.numberOfArguments() >= 2 && typeOf(call.argument(0)).isInteger() && typeOf(call.argument(1)).isInteger();
+    return call.numberOfArguments() >= 2 && typeOf(call.argument(0)).isNumber() && typeOf(call.argument(1)).isNumber();
+}
+
+Integer ArrayBuiltinEmitter::wholeNumberOrElse(ValueID id, LBasicBlock isNotWhole)
+{
+    if (typeOf(id).isInteger())
+        return integerOperand(id);
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Number number = numberOperand(id);
+    if (std::optional<Integer> exact = conversions.exactIntegerBehind(number))
+        return *exact;
+    Integer whole = conversions.toInteger(number);
+    branchUnless(equal(toNumber(whole), number), isNotWhole);
+    return whole;
 }
 
 std::optional<int64_t> ArrayBuiltinEmitter::deleteCountOfInlineSplice(const InlineCall& call)
@@ -273,7 +288,7 @@ std::optional<int64_t> ArrayBuiltinEmitter::deleteCountOfInlineSplice(const Inli
 Boxed ArrayBuiltinEmitter::spliceByOperation(const InlineCall& call, LBasicBlock otherwise, const CallOptions& options)
 {
     auto int32OrElse = [&](ValueID id) {
-        Integer operand = integerOperand(id);
+        Integer operand = wholeNumberOrElse(id, otherwise);
         if (!typeOf(id).isInt32())
             branchUnless(equal(signExtended(low32(operand)), operand), otherwise);
         return low32(operand);
@@ -296,10 +311,11 @@ void ArrayBuiltinEmitter::generateArraySplice(const InlineCall& call)
 
     Representation representation = resultRepresentationOf(call);
     OperandJoin join(m_out, representation);
-    std::optional<int64_t> inlineDeleteCount = deleteCountOfInlineSplice(call);
+    // The operation is a call like the call of the function, and a fifth of its instructions. The elements are moved in place where the code is fast.
+    std::optional<int64_t> inlineDeleteCount = call.context().shape() == CodeShape::Fast ? deleteCountOfInlineSplice(call) : std::nullopt;
     if (inlineDeleteCount) {
         LBasicBlock outOfLine = newBlock();
-        spliceInline(call, integerOperand(call.argument(0)), *inlineDeleteCount, outOfLine, [&](const InlineSplice& splice, const ArrayStorageForm& form) {
+        spliceInline(call, wholeNumberOrElse(call.argument(0), outOfLine), *inlineDeleteCount, outOfLine, [&](const InlineSplice& splice, const ArrayStorageForm& form) {
             spliceElements(call, join, splice, form, outOfLine);
         });
         m_out.appendTo(outOfLine);
@@ -356,12 +372,11 @@ void ArrayBuiltinEmitter::generateArraySplicePrefix(const InlineCall& call)
         m_out.jump(continuation);
     };
 
-    bool hasFastPath = call.context().shape() != CodeShape::Compact && hasIntegerSpliceRange(call)
-        && !build().exceeds(LimitID::MaxInlineSpliceInsertions, itemsToInsert(call).size(), analyses().subject(call.context().valueID()));
-    std::optional<int64_t> inlineDeleteCount = hasFastPath ? deleteCountOfInlineSplice(call) : std::nullopt;
+    bool hasFastPath = hasIntegerSpliceRange(call) && !build().exceeds(LimitID::MaxInlineSpliceInsertions, itemsToInsert(call).size(), analyses().subject(call.context().valueID()));
+    std::optional<int64_t> inlineDeleteCount = hasFastPath && call.context().shape() != CodeShape::Compact ? deleteCountOfInlineSplice(call) : std::nullopt;
     if (inlineDeleteCount) {
         LBasicBlock outOfLine = newBlock();
-        spliceInline(call, integerOperand(call.argument(0)), *inlineDeleteCount, outOfLine, [&](const InlineSplice& splice, const ArrayStorageForm& form) {
+        spliceInline(call, wholeNumberOrElse(call.argument(0), outOfLine), *inlineDeleteCount, outOfLine, [&](const InlineSplice& splice, const ArrayStorageForm& form) {
             std::optional<RawItems> inserted = rawItemsToInsert(call, form, outOfLine);
             if (!inserted)
                 return;

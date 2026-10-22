@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTIRProgram.h"
 #include "AOTRepresentation.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
@@ -38,19 +39,6 @@ TypeID ClassPart::contentsAt(const BuiltinTable& builtins, ContentsSlot slot) co
 {
     std::optional<uint8_t> indexInType = indexInTypeOf(builtins, builtinClass, slot);
     return indexInType ? contentsAt(*indexInType) : TypeTable::anything;
-}
-
-TypeID ClassPart::predictedContentsAt(unsigned indexInType) const
-{
-    if (indexInType >= predictedContents.size() || !predictedContents[indexInType])
-        return contentsAt(indexInType);
-    return predictedContents[indexInType];
-}
-
-TypeID ClassPart::predictedContentsAt(const BuiltinTable& builtins, ContentsSlot slot) const
-{
-    std::optional<uint8_t> indexInType = indexInTypeOf(builtins, builtinClass, slot);
-    return indexInType ? predictedContentsAt(*indexInType) : TypeTable::anything;
 }
 
 Type Type::fromPrimitives(uint16_t primitives)
@@ -207,9 +195,24 @@ static bool hasOnlyObjectPart(const Type& type, ObjectPart part)
         && (part == ObjectPart::Builtins || type.builtins.isEmpty());
 }
 
-bool Type::hasOnlyLayouts() const
+bool Type::hasOnlyLayouts(const TypeTable& types) const
 {
-    return hasOnlyObjectPart(*this, ObjectPart::Layouts) && layouts;
+    return hasOnlyObjectPart(*this, ObjectPart::Layouts) && layouts && !types.at(layouts).hasMembersWithoutLayout;
+}
+
+bool Type::hasOnlyLayouts(const Program& program) const
+{
+    return hasOnlyLayouts(program.types);
+}
+
+bool hasMembersWithoutLayout(const TypeTable& types, const Type& type)
+{
+    return type.layouts && types.at(type.layouts).hasMembersWithoutLayout;
+}
+
+bool hasMembersWithoutLayout(const Program& program, const Type& type)
+{
+    return hasMembersWithoutLayout(program.types, type);
 }
 
 bool Type::isSingleValue() const
@@ -240,7 +243,7 @@ bool Type::isSingleValue() const
 
 LayoutID Type::singleLayout(const Program& program) const
 {
-    if (hasOnlyLayouts()) {
+    if (hasOnlyLayouts(program)) {
         std::span<const LayoutID> members = membersOf(program, *this);
         if (members.size() == 1)
             return members[0];
@@ -366,7 +369,6 @@ Type Type::withoutClassProofs() const
         part.contentsAreProven = false;
         part.provenPristine = { };
         part.arrayStorage = ArrayStorage::Other;
-        part.predictedContents.clear();
     }
     type.regExpLiteralSet.clear();
     type.canonicalize();
@@ -390,16 +392,6 @@ Type Type::withUntestableBuiltinsWidened() const
 {
     Type type = *this;
     widenUntestableBuiltins(type);
-    type.canonicalize();
-    return type;
-}
-
-Type Type::withoutProofs() const
-{
-    Type type = withoutClassProofs();
-    widenUntestableBuiltins(type);
-    if (type.layouts)
-        type.anyObject = true;
     type.canonicalize();
     return type;
 }
@@ -465,11 +457,9 @@ static void mergeClassParts(ClassPart& part, const ClassPart& other)
         if (part.contentsAt(i) != other.contentsAt(i))
             part.contents[i] = TypeTable::anything;
     }
-    if (part.predictedContents != other.predictedContents)
-        part.predictedContents.clear();
 }
 
-static void canonicalizeClasses(Vector<ClassPart, 1>& classes)
+static void canonicalizeClasses(ClassParts& classes)
 {
     auto isOutOfOrder = [](const ClassPart& a, const ClassPart& b) {
         return a.builtinClass >= b.builtinClass;
@@ -497,12 +487,6 @@ static void canonicalizeContents(ClassPart& part)
     }
     while (!part.contents.isEmpty() && part.contents.last() == TypeTable::anything)
         part.contents.removeLast();
-
-    Vector<TypeID, 2>& predicted = part.predictedContents;
-    for (unsigned index = 0; index < predicted.size(); ++index)
-        predicted[index] = part.predictedContentsAt(index);
-    while (!predicted.isEmpty() && predicted.last() == part.contentsAt(predicted.size() - 1))
-        predicted.removeLast();
 }
 
 static void canonicalizeObjects(Type& type)
@@ -514,8 +498,6 @@ static void canonicalizeObjects(Type& type)
     canonicalizeClasses(type.classes);
     for (ClassPart& part : type.classes)
         canonicalizeContents(part);
-    if (type.anyFunction)
-        type.functions.clear();
     if (!type.regExpLiteralSet.isEmpty() && !type.findClassPart(BuiltinClasses::RegExp))
         type.regExpLiteralSet.clear();
 }
@@ -542,9 +524,6 @@ void add(Hasher& hasher, const Type& type)
     for (const ClassPart& part : type.classes) {
         add(hasher, part.builtinClass, part.contentsAreProven, part.provenPristine.toRaw(), part.arrayStorage, static_cast<uint32_t>(part.contents.size()));
         for (TypeID contents : part.contents)
-            add(hasher, contents);
-        add(hasher, static_cast<uint32_t>(part.predictedContents.size()));
-        for (TypeID contents : part.predictedContents)
             add(hasher, contents);
     }
     add(hasher, type.functions, type.builtins, type.regExpLiteralSet);

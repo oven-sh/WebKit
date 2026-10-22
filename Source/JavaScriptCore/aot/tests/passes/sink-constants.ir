@@ -1,7 +1,7 @@
 # A constant that only other blocks use is created in the blocks that use it
 # FORM: Prepared
 # RUN: pass SinkConstants
-# STATISTIC: SinkConstantsChanges = 2
+# STATISTIC: SinkConstantsChanges = 7
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -79,9 +79,10 @@ function f4 name="blockArgument" parameters=[{type=boolean}] results=[{type=anyt
 }
 # CHECK-LABEL: function f4
 # CHECK: b0(
-# CHECK-NEXT: = NewClosure
-# CHECK: b1(
-# CHECK-NOT: NewClosure
+# CHECK-NEXT: Branch v0 -> taken [[edgeOfF4]](), notTaken b2()
+# CHECK: [[edgeOfF4]]():
+# CHECK-NEXT: [[closure]]: f0 = NewClosure function=f0
+# CHECK-NEXT: Jump -> next b1([[closure]])
 
 function f5 name="userReachesOtherUser" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
   b0(v0: boolean, v1: anything):
@@ -133,3 +134,81 @@ function f7 name="stringInTwoBlocks" parameters=[{type=boolean}, {type=string}] 
 # CHECK-NEXT: String string="both"
 # CHECK: b1(
 # CHECK-NOT: = String
+
+# The one user is a jump that hands the constant on, or a return
+function f8 name="handedOnByJump" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Builtin builtin=ArrayPrototypePush
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3: anything):
+    Return v3
+}
+# CHECK-LABEL: function f8
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[handedOn]]: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: Jump -> next b3([[handedOn]])
+
+function f9 name="returned" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Builtin builtin=ArrayPrototypePush
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f9
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[returned]]: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: Return [[returned]]
+
+# The constant is created in each turn of the loop as it is, so the block of the loop that uses it may create it
+function f10 name="createdAndUsedInOneLoop" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Builtin builtin=ArrayPrototypePush
+    v4 = ToBoolean v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Call v1, -, v3
+    Jump -> next b3()
+  b3():
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f10
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: ToBoolean
+# CHECK: b2():
+# CHECK-NEXT: [[inLoop]]: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: = Call v1, -, [[inLoop]]
+
+# The branch of its own block hands the constant on over one of its edges: it is created on that edge
+function f11 name="handedOnByBranch" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Builtin builtin=ArrayPrototypePush
+    Branch v0 -> taken b1(v2), notTaken b2()
+  b1(v3: anything):
+    Return v3
+  b2():
+    Jump -> next b1(v1)
+}
+# CHECK-LABEL: function f11
+# CHECK: b0(
+# CHECK-NEXT: Branch v0 -> taken [[edge]](), notTaken b2()
+# CHECK: [[edge]]():
+# CHECK-NEXT: [[onEdge]]: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: Jump -> next b1([[onEdge]])

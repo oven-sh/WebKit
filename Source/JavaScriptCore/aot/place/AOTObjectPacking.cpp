@@ -29,18 +29,11 @@ namespace {
 
 constexpr unsigned numberOfWidths = 4;
 constexpr uint32_t widestSlot = 1u << (numberOfWidths - 1);
-constexpr unsigned overflowAreaLogSize = 3;
 static_assert(widthOf(SlotRepresentation::JSValue) == widestSlot);
-static_assert(sizeOfOverflowArea == 1u << overflowAreaLogSize && sizeOfOverflowArea <= widestSlot);
 static_assert(!(offsetOfFirstField % widestSlot) && !(offsetOfFirstExtensionSlot % widestSlot) && extensionGranuleSize == widestSlot);
 static_assert(defaultLimitValue(LimitID::MaxExtensionGranules, hostArchitecture()) == maxExtensionGranules);
 
 using WidthCounts = std::array<uint32_t, numberOfWidths>;
-
-enum class RowPart : uint8_t {
-    Slot,
-    DoubleArea,
-};
 
 struct MemberRow {
     LayoutID layout;
@@ -60,6 +53,7 @@ struct PlacementStep {
     StepRank rank { StepRank::JoinsFamilies };
     bool placesHiddenWords { false };
     bool placesRowByItself { false };
+    bool placesTwoRowsInOneGranule { false };
     SiteWeight weight { 0 };
     size_t firstSharedRow { 0 };
     uint32_t numberOfSharedRows { 0 };
@@ -90,17 +84,6 @@ auto rowsOf(const SlotRows& rows, LayoutID id)
 {
     SlotRow first = rows.firstRowOf(id);
     return std::views::iota(first, first + rows.numberOfRowsOf(id));
-}
-
-bool hasPart(const PlacedSlot& slot, RowPart part)
-{
-    switch (part) {
-    case RowPart::Slot:
-        return slot.hasStorage();
-    case RowPart::DoubleArea:
-        return slot.storage == SlotStorage::Inline && slot.representation == SlotRepresentation::Int32OrDouble;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 uint64_t roomIn(uint64_t occupied, unsigned logSize)
@@ -239,19 +222,6 @@ void Area::reserve(uint32_t offset, unsigned logSize)
     occupy(occupied, offset, 1u << logSize);
 }
 
-uint32_t extensionEndOf(const SlotRows& rows, const Vector<PlacedSlot>& slots, LayoutID id)
-{
-    uint32_t end = 0;
-    for (SlotRow row : rowsOf(rows, id)) {
-        const PlacedSlot& slot = slots[row];
-        if (slot.isOutOfLine())
-            end = std::max(end, slot.end());
-        if (slot.doubleOffsetInExtension)
-            end = std::max(end, *slot.doubleOffsetInExtension + sizeOfOverflowArea);
-    }
-    return end;
-}
-
 Vector<OffsetUse, 8> countOffsetUses(Vector<uint32_t, 8>&& offsets)
 {
     std::ranges::sort(offsets);
@@ -294,12 +264,10 @@ private:
     std::span<MemberRow> memberRowsOf(const LocationRequest& request) { return m_memberRows.mutableSpan().subspan(request.firstMemberRow, request.numberOfMemberRows); }
     std::span<const MemberRow> memberRowsOf(const LocationRequest& request) const { return m_memberRows.span().subspan(request.firstMemberRow, request.numberOfMemberRows); }
 
-    bool isInExtension(MemberRow member, RowPart part) const { return part == RowPart::DoubleArea || slotOf(member).isOutOfLine(); }
-    const Vector<Area>& areasOf(MemberRow member, RowPart part) const { return isInExtension(member, part) ? m_extension : m_inline; }
-    const Area& areaOf(MemberRow member, RowPart part) const { return areasOf(member, part)[member.layout.index()]; }
-    Area& areaOf(MemberRow member, RowPart part) { return (isInExtension(member, part) ? m_extension : m_inline)[member.layout.index()]; }
-    unsigned logSizeOf(MemberRow, RowPart) const;
-    std::optional<uint32_t> offsetOf(MemberRow, RowPart) const;
+    const Vector<Area>& areasOf(MemberRow member) const { return slotOf(member).isOutOfLine() ? m_extension : m_inline; }
+    const Area& areaOf(MemberRow member) const { return areasOf(member)[member.layout.index()]; }
+    Area& areaOf(MemberRow member) { return (slotOf(member).isOutOfLine() ? m_extension : m_inline)[member.layout.index()]; }
+    unsigned logSizeOf(MemberRow member) const { return WTF::ctz(slotOf(member).width()); }
 
     void forEachCompiledObject(const Invocable<void(LayoutID)> auto& functor) const
     {
@@ -309,35 +277,54 @@ private:
         });
     }
 
-    void forEachSharedOffset(std::span<MemberRow> rows, RowPart part, const Invocable<void(std::span<MemberRow>)> auto& functor) const
+    void forEachSharedOffset(std::span<MemberRow> rows, const Invocable<void(std::span<MemberRow>)> auto& functor) const
     {
         auto unplaced = std::ranges::partition(rows, [&](MemberRow member) {
-            return offsetOf(member, part).has_value();
+            return m_isPlaced[member.row];
         });
         std::span<MemberRow> placed = rows.first(unplaced.begin() - rows.begin());
         auto orderOf = [&](MemberRow member) {
-            return std::pair(*offsetOf(member, part), member.row);
+            return std::pair(slotOf(member).offset, member.row);
         };
         if (!std::ranges::is_sorted(placed, { }, orderOf))
             std::ranges::sort(placed, { }, orderOf);
         forEachAdjacentGroup(placed, [&](MemberRow a, MemberRow b) {
-            return offsetOf(a, part) == offsetOf(b, part);
+            return slotOf(a).offset == slotOf(b).offset;
         }, functor);
     }
 
     bool isInherited(SlotRow row) const { return m_context.inheritedRows.declaringRowOf(row) != row; }
     bool areInOneFamily(MemberRow a, MemberRow b) const { return m_context.inheritedRows.declaringRowOf(a.row) == m_context.inheritedRows.declaringRowOf(b.row); }
-    uint32_t depthOfDeclaration(MemberRow member) const { return m_context.inheritedRows.depthOf(m_context.rows.layoutOf(m_context.inheritedRows.declaringRowOf(member.row))); }
+    LayoutID layoutOf(SlotRow row) const { return m_rowLayouts[row]; }
+    uint32_t depthOfDeclaration(MemberRow member) const { return m_declarationDepths[member.row]; }
+    void computeRowProperties();
+    const Field& declarationAt(LayoutID, SlotRow) const;
+    bool hasVisibleStore(LayoutID, SlotRow) const;
+    bool isOnlyDeclaredByMakers(SlotRow) const;
     void chooseStorage(LayoutID);
-    uint32_t countGranulesOfInheritedRows(LayoutID) const;
-    void chooseOutOfLineRows(LayoutID, uint32_t& granulesWanted);
-    void widenSlotsWithoutOverflowArea(LayoutID, uint32_t& granulesWanted);
+    struct RowsOutOfLine {
+        WidthCounts counts { };
+        uint32_t numberOfRows { 0 };
+        uint32_t numberOfRowsWithoutRoom { 0 };
+    };
+
+    RowsOutOfLine countInheritedRowsOutOfLine(LayoutID) const;
+    bool hasRoomInExtension(LayoutID, const RowsOutOfLine&, unsigned logSize) const;
+    bool tryMoveOutOfLine(LayoutID, SlotRow, RowsOutOfLine&);
+    bool mayExistWithoutStorage(LayoutID, SlotRow) const;
+    void moveOutOfLine(LayoutID, SlotRow);
+    void chooseOutOfLineRows(LayoutID, RowsOutOfLine&);
     void claimExtensionWord(LayoutID);
+    uint32_t bytesInCell(LayoutID) const;
+    void moveIntoCell(SlotRow);
+    void agreeOnStorage();
     void shareExtensionWords();
     void initializeAreas(LayoutID);
     void placeExtensionWords();
     void appendSteps(std::span<const MemberRow>, StepRank, SiteWeight, Vector<PlacementStep>&) const;
     void placeAtFirstFreeOffset(MemberRow);
+    void placeInOneGranule(MemberRow, MemberRow);
+    Vector<SlotRow> matchRowsStoredTogether(const BitVector& isInStep) const;
     Vector<PlacementStep> collectSteps(const BitVector& setsToPlaceFirst);
     void placeSharedRows(const BitVector& setsToPlaceFirst);
     BitVector findSetsWithoutOneLocation() const;
@@ -347,16 +334,20 @@ private:
     void reserveEmptySlotsBesideSharedRows();
     Vector<LocationRequest> collectRequests();
     void findMemberRows(LocationRequest&);
-    bool canPlace(MemberRow, RowPart, uint32_t offset) const;
-    void place(MemberRow, RowPart, uint32_t offset);
+    bool canPlace(MemberRow, uint32_t offset) const;
+    void place(MemberRow, uint32_t offset);
     void forEachFamily(std::span<const MemberRow>, const Invocable<void(std::span<const MemberRow>)> auto&) const;
-    bool canPlaceFamily(std::span<const MemberRow>, RowPart, uint32_t offset) const;
-    void tryPlaceRowsAt(Vector<MemberRow, 8>& unplaced, RowPart, uint32_t offset);
-    std::optional<uint32_t> findMostSharedOffset(std::span<const MemberRow>, RowPart) const;
-    void placeFamilyInGrownAreas(std::span<const MemberRow>, RowPart);
-    void placePartTogether(std::span<const MemberRow>, RowPart);
+    bool canPlaceFamily(std::span<const MemberRow>, uint32_t offset) const;
+    void tryPlaceRowsAt(Vector<MemberRow, 8>& unplaced, uint32_t offset);
+    std::optional<uint32_t> findMostSharedOffset(std::span<const MemberRow>) const;
+    void placeFamilyInGrownAreas(std::span<const MemberRow>);
+    uint32_t maxLimit(MemberRow) const;
+    std::optional<uint32_t> limitThatTakes(MemberRow, uint32_t offset) const;
+    std::optional<uint32_t> growthByPlacingAt(std::span<const MemberRow>, uint32_t offset) const;
+    bool tryPlaceAtOneOffset(std::span<const MemberRow> unplaced, std::span<const uint32_t> offsetsInUse);
+    void placeAtSharedOffsets(std::span<const MemberRow>, bool mayGrowCells = false);
     void unite(std::span<const MemberRow>);
-    void placeTogether(std::span<MemberRow>);
+    void placeTogether(std::span<MemberRow>, bool mayGrowCells);
     void placeOutOfLineRowsByWeight(LayoutID);
     void placeRemainingRows(LayoutID);
     void finishLayout(LayoutID);
@@ -372,6 +363,12 @@ private:
     Vector<Area> m_inline;
     Vector<Area> m_extension;
     Vector<bool> m_isPlaced;
+    Vector<LayoutID> m_rowLayouts;
+    Vector<uint32_t> m_declarationDepths;
+    BitVector m_rowsInUnorderedLayouts;
+    BitVector m_rowsTreatedAsStored;
+    BitVector m_rowsWithHeirs;
+    Vector<uint32_t> m_limitsBeforeGrowth;
     Vector<RowSet> m_rowSets;
     Vector<MemberRow> m_memberRows;
     uint32_t m_maxGranules;
@@ -387,6 +384,8 @@ ObjectPacker::ObjectPacker(const SlotPlanContext& context, const SlotUses& uses,
     , m_inline(context.program.layouts.size())
     , m_extension(context.program.layouts.size())
     , m_isPlaced(FillWith { }, context.rows.count(), false)
+    , m_rowsInUnorderedLayouts(context.rows.count())
+    , m_rowsTreatedAsStored(context.rows.count())
     , m_rowSets(context.rows.count())
     , m_maxGranules(static_cast<uint32_t>(std::min<uint64_t>(context.build.limit(LimitID::MaxExtensionGranules), maxExtensionGranules)))
 {
@@ -398,15 +397,18 @@ ObjectPacker::ObjectPacker(const SlotPlanContext& context, const SlotUses& uses,
     m_packed.isEscapedOffsets.grow(numberOfLayouts);
     m_packed.bytesKeptZero.grow(numberOfLayouts);
     m_packed.sharedLocationOfRow.fill(noSharedLocation, context.rows.count());
+    m_limitsBeforeGrowth.fill(0, numberOfLayouts);
 }
 
 PackedLayouts ObjectPacker::run()
 {
+    computeRowProperties();
     for (const Vector<LayoutID>& layouts : m_context.inheritedRows.layoutsByDepth()) {
         forEachIndexInParallel(loops(), layouts.size(), [&](unsigned index) {
             chooseStorage(layouts[index]);
         });
     }
+    agreeOnStorage();
     shareExtensionWords();
     forEachCompiledObject([&](LayoutID id) {
         initializeAreas(id);
@@ -424,26 +426,77 @@ PackedLayouts ObjectPacker::run()
     return WTF::move(m_packed);
 }
 
-unsigned ObjectPacker::logSizeOf(MemberRow member, RowPart part) const
+void ObjectPacker::computeRowProperties()
 {
-    switch (part) {
-    case RowPart::Slot:
-        return WTF::ctz(slotOf(member).width());
-    case RowPart::DoubleArea:
-        return overflowAreaLogSize;
+    const Program& program = m_context.program;
+    const InheritedRows& inheritedRows = m_context.inheritedRows;
+    m_rowLayouts.grow(m_context.rows.count());
+    forEachIndexInParallel(loops(), program.layouts.size(), [&](unsigned index) {
+        for (SlotRow row : rowsOf(m_context.rows, LayoutID(index)))
+            m_rowLayouts[row] = LayoutID(index);
+    });
+    m_declarationDepths.grow(m_context.rows.count());
+    forEachIndexInParallel(loops(), program.layouts.size(), [&](unsigned index) {
+        for (SlotRow row : rowsOf(m_context.rows, LayoutID(index)))
+            m_declarationDepths[row] = inheritedRows.depthOf(layoutOf(inheritedRows.declaringRowOf(row)));
+    });
+    m_rowsWithHeirs = BitVector(m_claims.size());
+    for (const InheritedRows::Family& family : m_context.inheritedRows.families()) {
+        for (SlotRow row : m_context.inheritedRows.rowsOf(family)) {
+            if (row != family.declaringRow)
+                m_rowsWithHeirs.quickSet(family.declaringRow);
+        }
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        LayoutID id(index);
+        if (!m_context.isCompiledObject(id))
+            continue;
+        bool mayBeUnordered = mayHaveUnorderedShape(program, m_context.inputs.flow, id);
+        bool isFilledByNativeCode = program.at(id).flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        if (!mayBeUnordered && !isFilledByNativeCode)
+            continue;
+        for (SlotRow row : rowsOf(m_context.rows, id)) {
+            SlotRow declaringRow = m_context.inheritedRows.declaringRowOf(row);
+            if (mayBeUnordered)
+                m_rowsInUnorderedLayouts.quickSet(declaringRow);
+            if (isFilledByNativeCode)
+                m_rowsTreatedAsStored.quickSet(declaringRow);
+        }
+    }
+    for (const JoinedRows::Set& joined : m_joinedRows.sets()) {
+        std::span<const SlotRow> rows = m_joinedRows.rowsOf(joined);
+        bool isStored = std::ranges::any_of(rows, [&](SlotRow row) {
+            return m_uses.rows[row].isStoredSomewhere();
+        });
+        if (!isStored)
+            continue;
+        for (SlotRow row : rows)
+            m_rowsTreatedAsStored.quickSet(m_context.inheritedRows.declaringRowOf(row));
+    }
 }
 
-std::optional<uint32_t> ObjectPacker::offsetOf(MemberRow member, RowPart part) const
+const Field& ObjectPacker::declarationAt(LayoutID id, SlotRow row) const
 {
-    switch (part) {
-    case RowPart::Slot:
-        return m_isPlaced[member.row] ? std::optional(slotOf(member).offset) : std::nullopt;
-    case RowPart::DoubleArea:
-        return slotOf(member).doubleOffsetInExtension;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    const Program& program = m_context.program;
+    return fieldAt(program, declarationOf(program, { id, row - m_context.rows.firstRowOf(id) }));
+}
+
+bool ObjectPacker::hasVisibleStore(LayoutID id, SlotRow row) const
+{
+    constexpr OptionSet<FieldFlags> privateNameFlags { FieldFlags::IsPrivate, FieldFlags::IsBrand };
+    const SlotRowUse& use = m_uses.rows[row];
+    if (use.isStoredSomewhere() || m_claims[row].existsAtCreation || !use.holderHeat || m_rowsTreatedAsStored.quickGet(row))
+        return true;
+    return declarationAt(id, row).flags.containsAny(privateNameFlags);
+}
+
+// `this.original = undefined` in the constructor of every node of a tree gives the objects one shape and fills nothing. Where the type of `this` leaves the member optional too,
+// how often a store of it runs elsewhere says nothing about how many objects get one. A few makers among many may give it a value.
+bool ObjectPacker::isOnlyDeclaredByMakers(SlotRow row) const
+{
+    constexpr uint64_t placesGivingUndefinedForEachGivingValue = 16;
+    const SlotRowUse& use = m_uses.rows[row];
+    return use.isOptionalInTypeOfThis && !m_claims[row].isInitializedWithValue && use.storesOfConstructorWithValue * placesGivingUndefinedForEachGivingValue < use.storesOfUndefined;
 }
 
 // The layout that declares a field has chosen before the layouts below it, which follow.
@@ -462,57 +515,103 @@ void ObjectPacker::chooseStorage(LayoutID id)
         slot.storage = SlotStorage::Inline;
         slot.deferredFunction = claim.deferredFunction;
         slot.deferredClosureCapturesObject = claim.deferredClosureCapturesObject;
+        slot.deferredClosureCapturesEnvironment = claim.deferredClosureCapturesEnvironment;
+        slot.defersFlattenedObject = claim.defersFlattenedObject;
     }
-    uint32_t granulesWanted = countGranulesOfInheritedRows(id);
-    chooseOutOfLineRows(id, granulesWanted);
-    widenSlotsWithoutOverflowArea(id, granulesWanted);
-    m_context.build.exceeds(LimitID::MaxExtensionGranules, granulesWanted, { .layout = id });
+    RowsOutOfLine outOfLine = countInheritedRowsOutOfLine(id);
+    chooseOutOfLineRows(id, outOfLine);
+    m_context.build.exceeds(LimitID::MaxExtensionGranules, outOfLine.numberOfRowsWithoutRoom ? m_maxGranules + outOfLine.numberOfRowsWithoutRoom : std::min(outOfLine.numberOfRows, m_maxGranules), { .layout = id });
     claimExtensionWord(id);
 }
 
-// Wherever the rows come to lie, an Extension with a granule for each slot and each double has room for them.
-uint32_t ObjectPacker::countGranulesOfInheritedRows(LayoutID id) const
+ObjectPacker::RowsOutOfLine ObjectPacker::countInheritedRowsOutOfLine(LayoutID id) const
 {
-    uint32_t count = 0;
+    RowsOutOfLine outOfLine;
     for (SlotRow row : rowsOf(m_context.rows, id)) {
-        const PlacedSlot& slot = m_packed.slots[row];
-        if (isInherited(row))
-            count += slot.isOutOfLine() || hasPart(slot, RowPart::DoubleArea);
-    }
-    return count;
-}
-
-void ObjectPacker::widenSlotsWithoutOverflowArea(LayoutID id, uint32_t& granulesWanted)
-{
-    for (SlotRow row : rowsOf(m_context.rows, id)) {
-        PlacedSlot& slot = m_packed.slots[row];
-        if (isInherited(row) || !hasPart(slot, RowPart::DoubleArea))
+        if (!isInherited(row) || !m_packed.slots[row].isOutOfLine())
             continue;
-        if (granulesWanted++ >= m_maxGranules)
-            slot.representation = m_claims[row].representationWithoutOverflowArea;
+        ++outOfLine.counts[WTF::ctz(m_packed.slots[row].width())];
+        ++outOfLine.numberOfRows;
     }
+    return outOfLine;
 }
 
-void ObjectPacker::chooseOutOfLineRows(LayoutID id, uint32_t& granulesWanted)
+// The members of a family agree on one offset for a row, and with a granule for each row there is one that all of them have free.
+// A layout by itself places its rows wherever they fit, and an area takes a row only where the rows that are left still fit. So what fits the empty Extension finds its place.
+bool ObjectPacker::hasRoomInExtension(LayoutID id, const RowsOutOfLine& outOfLine, unsigned logSize) const
+{
+    if (m_context.inheritedRows.isInFamily(id))
+        return outOfLine.numberOfRows < m_maxGranules;
+    WidthCounts room;
+    for (unsigned width = 0; width < numberOfWidths; ++width)
+        room[width] = (m_maxGranules * extensionGranuleSize) >> width;
+    WidthCounts counts = outOfLine.counts;
+    ++counts[logSize];
+    return remainingRowsFit(room, counts);
+}
+
+bool ObjectPacker::tryMoveOutOfLine(LayoutID id, SlotRow row, RowsOutOfLine& outOfLine)
+{
+    unsigned logSize = WTF::ctz(widthOf(m_claims[row].outOfLineRepresentation));
+    if (!hasRoomInExtension(id, outOfLine, logSize))
+        return false;
+    ++outOfLine.counts[logSize];
+    ++outOfLine.numberOfRows;
+    moveOutOfLine(id, row);
+    return true;
+}
+
+bool ObjectPacker::mayExistWithoutStorage(LayoutID id, SlotRow row) const
+{
+    if (m_claims[row].existsAtCreation)
+        return true;
+    const SlotRowUse& use = m_uses.rows[row];
+    if (!use.storesOfUndefined || m_rowsInUnorderedLayouts.quickGet(row))
+        return false;
+    const DeclaredType& declared = declarationAt(id, row).declared;
+    return declared.flags.contains(PositionFlags::IsExpected) || (m_context.program.at(declared.type).primitives & Primitive::Undefined);
+}
+
+void ObjectPacker::moveOutOfLine(LayoutID id, SlotRow row)
+{
+    PlacedSlot& slot = m_packed.slots[row];
+    slot.storage = SlotStorage::OutOfLine;
+    slot.representation = m_claims[row].outOfLineRepresentation;
+    slot.mayExistWithoutStorage = mayExistWithoutStorage(id, row);
+    slot.isFilledByConstructor = m_uses.rows[row].storesOfConstructorWithValue;
+}
+
+void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
 {
     uint32_t hiddenWordWidth = widthOf(hiddenReferenceRepresentation(m_context.usesWideReferences));
     uint32_t fixedBytes = 0;
     uint32_t optionalBytes = 0;
     uint32_t bytesSetAtCreation = 0;
-    bool hasDoubles = false;
+    bool hasRowsOutOfLine = false;
     Vector<SlotRow, 16> optionalRows;
     for (SlotRow row : rowsOf(m_context.rows, id)) {
         const SlotClaim& claim = m_claims[row];
         if (!claim.hasStorage)
             continue;
         uint32_t width = widthOf(claim.representation);
-        hasDoubles |= claim.representation == SlotRepresentation::Int32OrDouble;
         if (isInherited(row)) {
-            if (m_packed.slots[row].isOutOfLine())
+            if (m_packed.slots[row].isOutOfLine()) {
+                hasRowsOutOfLine = true;
                 continue;
+            }
             width = m_packed.slots[row].width();
+        } else if (claim.mayBeOutOfLine && !hasVisibleStore(id, row) && tryMoveOutOfLine(id, row, outOfLine)) {
+            hasRowsOutOfLine = true;
+            continue;
+        } else if (claim.mayBeOutOfLine && m_rowsWithHeirs.quickGet(row) && isOnlyDeclaredByMakers(row) && tryMoveOutOfLine(id, row, outOfLine)) {
+            // Every heir has the row where this layout puts it, and rows of its own to find room for.
+            hasRowsOutOfLine = true;
+            continue;
         }
-        if ((claim.isSetAtCreation && (claim.isInitializedWithValue || !claim.existsAtCreation)) || m_uses.rows[row].isLikelyFilled())
+        // A field that is added late is stored by a function of its own, which may store into one object again and again: how often it runs ranks such fields and does not say how many objects get one.
+        bool isAddedLate = row < m_context.rows.extensionWordOf(id) && declarationAt(id, row).flags.contains(FieldFlags::IsAddedLate);
+        bool isLikelyFilled = isAddedLate ? m_uses.rows[row].isFilledBesideCreation() : m_uses.rows[row].isLikelyFilled();
+        if ((claim.isSetAtCreation && (claim.isInitializedWithValue || !claim.existsAtCreation)) || isLikelyFilled)
             bytesSetAtCreation += width;
         if (!claim.mayBeOutOfLine || isInherited(row)) {
             fixedBytes += width;
@@ -524,17 +623,35 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, uint32_t& granulesWanted)
     if (optionalRows.isEmpty())
         return;
 
-    uint32_t everything = offsetOfFirstField + fixedBytes + optionalBytes + (hasDoubles ? hiddenWordWidth : 0);
+    uint32_t everything = offsetOfFirstField + fixedBytes + optionalBytes + (hasRowsOutOfLine ? hiddenWordWidth : 0);
     uint32_t required = offsetOfFirstField + hiddenWordWidth + fixedBytes;
     uint32_t atCreation = cellSizeFor(offsetOfFirstField + hiddenWordWidth + bytesSetAtCreation);
     uint32_t bytesBeyondCreation = referencesBeyondCreation * widthOf(SlotRepresentation::Cell32);
     uint32_t cap = std::max({ cellSizeFor(required), std::min(cellSizeFor(std::max(atCreation, required) + bytesBeyondCreation), maxInlineSize), std::min(atCreation, maxInlineSizeAtCreation) });
     if (cellSizeFor(everything) <= cap)
         return;
+    // An Extension saves room where many objects are made and few of them get the field. Where few are made it saves next to nothing, and every access of the field pays for it.
+    if (cellSizeFor(everything) <= maxInlineSizeAtCreation && m_context.isMadeSeldom(id))
+        return;
 
+    // Neither estimate says how many objects get a field. How often its stores run misses the field that is stored once and read ever after, and puts first what is stored again and again
+    // or with undefined. How often it is accessed misses what is filled and seldom looked at. They fail in different places, so a row is as good as the better of its two ranks.
+    SlotRow firstRow = m_context.rows.firstRowOf(id);
+    Vector<uint32_t, 32> betterRanks(FillWith { }, optionalRows.last() - firstRow + 1, std::numeric_limits<uint32_t>::max());
+    auto rankBy = [&](auto&& estimateOf) {
+        Vector<SlotRow, 16> ranked = optionalRows;
+        std::ranges::sort(ranked, [&](SlotRow a, SlotRow b) {
+            return std::tuple(estimateOf(m_uses.rows[a]), b) > std::tuple(estimateOf(m_uses.rows[b]), a);
+        });
+        for (uint32_t rank = 0; rank < ranked.size(); ++rank)
+            betterRanks[ranked[rank] - firstRow] = std::min(betterRanks[ranked[rank] - firstRow], rank);
+    };
+    rankBy([](const SlotRowUse& use) { return use.fillHeat; });
+    rankBy([](const SlotRowUse& use) { return use.accessWeight; });
     auto scoreOf = [&](SlotRow row) {
         const SlotClaim& claim = m_claims[row];
-        return std::tuple(claim.isSetAtCreation, claim.isInitializedWithValue, m_uses.rows[row].isLikelyFilled(), m_uses.rows[row].accessWeight);
+        const SlotRowUse& use = m_uses.rows[row];
+        return std::tuple(claim.isSetAtCreation, claim.isInitializedWithValue, use.isFilledBesideCreation(), std::numeric_limits<uint32_t>::max() - betterRanks[row - firstRow], hasVisibleStore(id, row), use.accessWeight);
     };
     std::ranges::sort(optionalRows, [&](SlotRow a, SlotRow b) {
         auto scoreOfA = scoreOf(a);
@@ -551,27 +668,96 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, uint32_t& granulesWanted)
     });
     // Where the Extension has too few granules, the rows that are worth the most stay in the cell.
     for (SlotRow row : optionalRows | std::views::reverse) {
-        const SlotClaim& claim = m_claims[row];
-        if (granulesWanted++ >= m_maxGranules)
-            continue;
-        PlacedSlot& slot = m_packed.slots[row];
-        slot.storage = SlotStorage::OutOfLine;
-        slot.representation = claim.outOfLineRepresentation;
-        slot.mayExistWithoutStorage = claim.existsAtCreation;
+        if (!tryMoveOutOfLine(id, row, outOfLine))
+            ++outOfLine.numberOfRowsWithoutRoom;
     }
 }
 
 void ObjectPacker::claimExtensionWord(LayoutID id)
 {
     bool hasExtension = std::ranges::any_of(rowsOf(m_context.rows, id), [&](SlotRow row) {
-        const PlacedSlot& slot = m_packed.slots[row];
-        return slot.isOutOfLine() || hasPart(slot, RowPart::DoubleArea);
+        return m_packed.slots[row].isOutOfLine();
     });
-    if (!hasExtension)
-        return;
     PlacedSlot& word = m_packed.slots[m_context.rows.extensionWordOf(id)];
+    if (!hasExtension) {
+        word = PlacedSlot { };
+        return;
+    }
     word.representation = hiddenReferenceRepresentation(m_context.usesWideReferences);
     word.storage = SlotStorage::Inline;
+}
+
+uint32_t ObjectPacker::bytesInCell(LayoutID id) const
+{
+    uint32_t bytes = offsetOfFirstField;
+    for (SlotRow row : rowsOf(m_context.rows, id)) {
+        const PlacedSlot& slot = m_packed.slots[row];
+        if (slot.hasStorage() && !slot.isOutOfLine())
+            bytes += slot.width();
+    }
+    return bytes;
+}
+
+void ObjectPacker::moveIntoCell(SlotRow row)
+{
+    PlacedSlot& slot = m_packed.slots[row];
+    slot.storage = SlotStorage::Inline;
+    slot.representation = m_claims[row].representation;
+    slot.mayExistWithoutStorage = false;
+    slot.isFilledByConstructor = false;
+}
+
+// One load reads a field that several layouts share only where it lies in the cell of all of them or in the Extension of all of them, and each layout has chosen by itself.
+// The heaviest set first, the rows that are out of line come into the cell. Some find spare bytes in the size class of their cell. Where cells grow, by the estimates
+// the accesses that are spared a dispatch must run this many times for each byte that the objects take.
+void ObjectPacker::agreeOnStorage()
+{
+    constexpr double accessesForEachByte = 256;
+    Vector<std::optional<uint32_t>> bytesInCells(m_context.program.layouts.size());
+    auto bytesOf = [&](LayoutID id) -> uint32_t& {
+        std::optional<uint32_t>& bytes = bytesInCells[id.index()];
+        if (!bytes)
+            bytes = bytesInCell(id);
+        return *bytes;
+    };
+    BitVector layoutsChanged(m_context.program.layouts.size());
+    Vector<SlotRow, 16> rowsOutOfLine;
+    for (const JoinedRows::Set& joined : m_joinedRows.sets()) {
+        rowsOutOfLine.shrink(0);
+        bool hasRowInCell = false;
+        for (SlotRow row : m_joinedRows.rowsOf(joined)) {
+            const PlacedSlot& slot = m_packed.slots[row];
+            if (!slot.hasStorage())
+                continue;
+            if (slot.isOutOfLine())
+                rowsOutOfLine.append(row);
+            else
+                hasRowInCell |= !!m_uses.rows[row].holderHeat;
+        }
+        if (!hasRowInCell || rowsOutOfLine.isEmpty())
+            continue;
+        // Hardly an object has the field, so an access of it mostly finds that there is no Extension to look into.
+        bool isOnlyDeclared = std::ranges::any_of(rowsOutOfLine, [&](SlotRow row) {
+            return isOnlyDeclaredByMakers(m_context.inheritedRows.declaringRowOf(row));
+        });
+        if (isOnlyDeclared)
+            continue;
+        double bytesAllocated = 0;
+        for (SlotRow row : rowsOutOfLine) {
+            uint32_t bytes = bytesOf(layoutOf(row));
+            bytesAllocated += m_uses.rows[row].holderHeat * (cellSizeFor(bytes + widthOf(m_claims[row].representation)) - cellSizeFor(bytes));
+        }
+        if (bytesAllocated * accessesForEachByte > static_cast<double>(joined.weight >> siteWeightFractionBits))
+            continue;
+        for (SlotRow row : rowsOutOfLine) {
+            LayoutID layout = layoutOf(row);
+            moveIntoCell(row);
+            layoutsChanged.quickSet(layout.index());
+            bytesOf(layout) += m_packed.slots[row].width();
+        }
+    }
+    for (unsigned index : layoutsChanged)
+        claimExtensionWord(LayoutID(index));
 }
 
 // The word lies in front of the fields, so either every member of a family has it or none.
@@ -579,7 +765,7 @@ void ObjectPacker::shareExtensionWords()
 {
     const InheritedRows& inheritedRows = m_context.inheritedRows;
     for (const InheritedRows::Family& family : inheritedRows.families()) {
-        if (family.declaringRow != m_context.rows.extensionWordOf(m_context.rows.layoutOf(family.declaringRow)))
+        if (family.declaringRow != m_context.rows.extensionWordOf(layoutOf(family.declaringRow)))
             continue;
         std::span<const SlotRow> words = inheritedRows.rowsOf(family);
         auto claimed = std::ranges::find_if(words, [&](SlotRow word) {
@@ -604,11 +790,10 @@ void ObjectPacker::initializeAreas(LayoutID id)
         ++(slot.isOutOfLine() ? extensionArea : inlineArea).unplaced[WTF::ctz(slot.width())];
         if (!slot.isOutOfLine())
             inlineEnd += slot.width();
-        if (hasPart(slot, RowPart::DoubleArea))
-            ++extensionArea.unplaced[overflowAreaLogSize];
     }
     inlineArea.initialize(offsetOfFirstField, cellSizeFor(inlineEnd));
     m_packed.inlineLimits[id.index()] = inlineArea.limit;
+    m_limitsBeforeGrowth[id.index()] = inlineArea.limit;
     // A granule that an object does not hold takes no room, so a row may lie wherever the layouts that share its location agree.
     if (m_packed.slots[m_context.rows.extensionWordOf(id)].hasStorage())
         extensionArea.initialize(offsetOfFirstExtensionSlot, offsetOfFirstExtensionSlot + m_maxGranules * extensionGranuleSize);
@@ -620,8 +805,8 @@ void ObjectPacker::placeExtensionWords()
         MemberRow word { id, m_context.rows.extensionWordOf(id) };
         if (!slotOf(word).hasStorage())
             return;
-        RELEASE_ASSERT(canPlace(word, RowPart::Slot, offsetOfFirstField));
-        place(word, RowPart::Slot, offsetOfFirstField);
+        RELEASE_ASSERT(canPlace(word, offsetOfFirstField));
+        place(word, offsetOfFirstField);
     });
 }
 
@@ -643,6 +828,30 @@ void ObjectPacker::appendSteps(std::span<const MemberRow> rows, StepRank rank, S
     }
 }
 
+static constexpr SlotRow noRow = std::numeric_limits<SlotRow>::max();
+
+// Two rows of four bytes share a granule of the Extension, and an object has the granule as soon as it has one of the two. So the rows that the program stores together lie together:
+// an object that gets both pays for one granule. Only for rows that are placed by themselves: nobody else has a say in where they lie.
+Vector<SlotRow> ObjectPacker::matchRowsStoredTogether(const BitVector& isInStep) const
+{
+    const SlotRows& slotRows = m_context.rows;
+    Vector<SlotRow> partners(FillWith { }, slotRows.count(), noRow);
+    auto isFree = [&](SlotRow row) {
+        const PlacedSlot& slot = m_packed.slots[row];
+        return partners[row] == noRow && slot.isOutOfLine() && slot.width() * 2 == extensionGranuleSize && !isInStep.quickGet(row) && m_context.isCompiledObject(layoutOf(row));
+    };
+    for (const RowsStoredTogether& stored : m_uses.rowsStoredTogether) {
+        if (!isFree(stored.first) || !isFree(stored.second))
+            continue;
+        LayoutID layout = layoutOf(stored.first);
+        if (depthOfDeclaration({ layout, stored.first }) != depthOfDeclaration({ layout, stored.second }))
+            continue;
+        partners[stored.first] = stored.second;
+        partners[stored.second] = stored.first;
+    }
+    return partners;
+}
+
 // A field lies where it lies in the class that declares it, so a base is placed before the layouts below it: then what is free in one member of a family is free in all.
 // At one depth come first the rows that several families or layouts have to agree on, the heaviest set first. A family by itself finds a place wherever its members have room.
 Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFirst)
@@ -653,7 +862,7 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
     BitVector isInStep(slotRows.count());
     m_sharedRows.reserveInitialCapacity(slotRows.count());
     auto appendRow = [&](SlotRow row) {
-        m_sharedRows.append(MemberRow { slotRows.layoutOf(row), row });
+        m_sharedRows.append(MemberRow { layoutOf(row), row });
     };
     auto markRows = [&](std::span<const MemberRow> rows) {
         for (MemberRow member : rows)
@@ -661,18 +870,27 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
     };
 
     std::span<const JoinedRows::Set> sets = m_joinedRows.sets();
-    for (uint32_t indexOfSet = 0; indexOfSet < sets.size(); ++indexOfSet) {
-        const JoinedRows::Set& joined = sets[indexOfSet];
-        size_t first = m_sharedRows.size();
+    Vector<size_t> setOffsets;
+    setOffsets.reserveInitialCapacity(sets.size() + 1);
+    for (const JoinedRows::Set& joined : sets) {
+        setOffsets.append(m_sharedRows.size());
         for (SlotRow row : m_joinedRows.rowsOf(joined)) {
             if (m_packed.slots[row].hasStorage())
                 appendRow(row);
         }
-        std::span<MemberRow> rows = m_sharedRows.mutableSpan().subspan(first);
-        std::ranges::sort(rows, { }, [&](MemberRow member) {
+    }
+    setOffsets.append(m_sharedRows.size());
+    auto setRows = [&](uint32_t indexOfSet) {
+        return m_sharedRows.mutableSpan().subspan(setOffsets[indexOfSet], setOffsets[indexOfSet + 1] - setOffsets[indexOfSet]);
+    };
+    forEachIndexInParallel(loops(), sets.size(), [&](unsigned indexOfSet) {
+        std::ranges::sort(setRows(indexOfSet), { }, [&](MemberRow member) {
             return std::tuple(slotOf(member).storage, slotOf(member).representation, depthOfDeclaration(member), inheritedRows.declaringRowOf(member.row), member.row);
         });
-        forEachAdjacentGroup(rows, [&](MemberRow a, MemberRow b) {
+    });
+    for (uint32_t indexOfSet = 0; indexOfSet < sets.size(); ++indexOfSet) {
+        const JoinedRows::Set& joined = sets[indexOfSet];
+        forEachAdjacentGroup(setRows(indexOfSet), [&](MemberRow a, MemberRow b) {
             return slotOf(a).storage == slotOf(b).storage && slotOf(a).representation == slotOf(b).representation;
         }, [&](std::span<MemberRow> group) {
             markRows(group);
@@ -695,15 +913,25 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
             appendRow(row);
         markRows(m_sharedRows.span().subspan(first));
         appendSteps(m_sharedRows.span().subspan(first), StepRank::OneFamily, 0, steps);
-        steps.last().placesHiddenWords = slotRows.isHiddenWord(family.declaringRow);
+        steps.last().placesHiddenWords = family.declaringRow >= slotRows.extensionWordOf(layoutOf(family.declaringRow));
     }
 
+    Vector<SlotRow> partners = matchRowsStoredTogether(isInStep);
     for (SlotRow row = 0; row < slotRows.count(); ++row) {
-        if (!m_packed.slots[row].isOutOfLine() || isInStep.quickGet(row) || !m_context.isCompiledObject(slotRows.layoutOf(row)))
+        if (!m_packed.slots[row].isOutOfLine() || isInStep.quickGet(row) || !m_context.isCompiledObject(layoutOf(row)))
+            continue;
+        if (partners[row] == noRow) {
+            appendRow(row);
+            appendSteps(m_sharedRows.span().last(1), StepRank::OneFamily, 0, steps);
+            steps.last().placesRowByItself = true;
+            continue;
+        }
+        if (partners[row] < row)
             continue;
         appendRow(row);
-        appendSteps(m_sharedRows.span().last(1), StepRank::OneFamily, 0, steps);
-        steps.last().placesRowByItself = true;
+        appendRow(partners[row]);
+        appendSteps(m_sharedRows.span().last(2), StepRank::OneFamily, 0, steps);
+        steps.last().placesTwoRowsInOneGranule = true;
     }
 
     std::ranges::sort(steps, [](const PlacementStep& a, const PlacementStep& b) {
@@ -716,11 +944,29 @@ void ObjectPacker::placeAtFirstFreeOffset(MemberRow member)
 {
     uint32_t width = slotOf(member).width();
     uint32_t offset = 0;
-    while (!canPlace(member, RowPart::Slot, offset)) {
+    while (!canPlace(member, offset)) {
         offset += width;
-        RELEASE_ASSERT(offset < areaOf(member, RowPart::Slot).limit);
+        RELEASE_ASSERT(offset < areaOf(member).limit);
     }
-    place(member, RowPart::Slot, offset);
+    place(member, offset);
+}
+
+void ObjectPacker::placeInOneGranule(MemberRow first, MemberRow second)
+{
+    const Area& area = areaOf(first);
+    for (uint32_t offset = 0; offset + extensionGranuleSize <= area.limit; offset += extensionGranuleSize) {
+        if (!area.isFree(offset, extensionGranuleSize) || !canPlace(first, offset))
+            continue;
+        place(first, offset);
+        uint32_t besideFirst = offset + slotOf(first).width();
+        if (canPlace(second, besideFirst))
+            place(second, besideFirst);
+        else
+            placeAtFirstFreeOffset(second);
+        return;
+    }
+    placeAtFirstFreeOffset(first);
+    placeAtFirstFreeOffset(second);
 }
 
 void ObjectPacker::placeSharedRows(const BitVector& setsToPlaceFirst)
@@ -728,12 +974,14 @@ void ObjectPacker::placeSharedRows(const BitVector& setsToPlaceFirst)
     for (const PlacementStep& step : collectSteps(setsToPlaceFirst)) {
         std::span<MemberRow> rows = m_sharedRows.mutableSpan().subspan(step.firstSharedRow, step.numberOfSharedRows);
         // A shared location is a unit of fields, which a later step may widen or move. A hidden word stays as it is.
-        if (step.placesRowByItself)
+        if (step.placesTwoRowsInOneGranule)
+            placeInOneGranule(rows[0], rows[1]);
+        else if (step.placesRowByItself)
             placeAtFirstFreeOffset(rows[0]);
         else if (step.placesHiddenWords)
-            placePartTogether(rows, RowPart::Slot);
+            placeAtSharedOffsets(rows);
         else
-            placeTogether(rows);
+            placeTogether(rows, step.weight);
     }
 }
 
@@ -765,10 +1013,8 @@ void ObjectPacker::forgetLocations()
     m_rowSets = Vector<RowSet>(m_context.rows.count());
     m_sharedRows.shrink(0);
     m_groupsInCells.shrink(0);
-    for (PlacedSlot& slot : m_packed.slots) {
+    for (PlacedSlot& slot : m_packed.slots)
         slot.offset = 0;
-        slot.doubleOffsetInExtension = std::nullopt;
-    }
     forEachCompiledObject([&](LayoutID id) {
         m_inline[id.index()] = { };
         m_extension[id.index()] = { };
@@ -803,6 +1049,9 @@ void ObjectPacker::placeSharedRowsInBestOrder()
     m_extension = WTF::move(extensionAreas);
     m_isPlaced = WTF::move(isPlaced);
     m_rowSets = WTF::move(rowSets);
+    forEachCompiledObject([&](LayoutID id) {
+        m_packed.inlineLimits[id.index()] = m_inline[id.index()].limit;
+    });
 }
 
 // The rows that no access shares can lie anywhere, so the bytes that a layout keeps zero for the slot of others are taken before them.
@@ -870,25 +1119,16 @@ void ObjectPacker::findMemberRows(LocationRequest& request)
     });
 }
 
-bool ObjectPacker::canPlace(MemberRow member, RowPart part, uint32_t offset) const
+bool ObjectPacker::canPlace(MemberRow member, uint32_t offset) const
 {
-    return areaOf(member, part).canPlace(offset, logSizeOf(member, part));
+    return areaOf(member).canPlace(offset, logSizeOf(member));
 }
 
-void ObjectPacker::place(MemberRow member, RowPart part, uint32_t offset)
+void ObjectPacker::place(MemberRow member, uint32_t offset)
 {
-    areaOf(member, part).place(offset, logSizeOf(member, part));
-    PlacedSlot& slot = m_packed.slots[member.row];
-    switch (part) {
-    case RowPart::Slot:
-        slot.offset = offset;
-        m_isPlaced[member.row] = true;
-        return;
-    case RowPart::DoubleArea:
-        slot.doubleOffsetInExtension = offset;
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    areaOf(member).place(offset, logSizeOf(member));
+    m_packed.slots[member.row].offset = offset;
+    m_isPlaced[member.row] = true;
 }
 
 void ObjectPacker::forEachFamily(std::span<const MemberRow> rowsByFamily, const Invocable<void(std::span<const MemberRow>)> auto& functor) const
@@ -902,31 +1142,31 @@ void ObjectPacker::forEachFamily(std::span<const MemberRow> rowsByFamily, const 
     }
 }
 
-bool ObjectPacker::canPlaceFamily(std::span<const MemberRow> family, RowPart part, uint32_t offset) const
+bool ObjectPacker::canPlaceFamily(std::span<const MemberRow> family, uint32_t offset) const
 {
     return std::ranges::all_of(family, [&](MemberRow member) {
-        return canPlace(member, part, offset);
+        return canPlace(member, offset);
     });
 }
 
-void ObjectPacker::tryPlaceRowsAt(Vector<MemberRow, 8>& unplacedByFamily, RowPart part, uint32_t offset)
+void ObjectPacker::tryPlaceRowsAt(Vector<MemberRow, 8>& unplacedByFamily, uint32_t offset)
 {
     Vector<MemberRow, 8> stillUnplaced;
     forEachFamily(unplacedByFamily.span(), [&](std::span<const MemberRow> family) {
-        if (!canPlaceFamily(family, part, offset)) {
+        if (!canPlaceFamily(family, offset)) {
             stillUnplaced.append(family);
             return;
         }
         for (MemberRow member : family)
-            place(member, part, offset);
+            place(member, offset);
     });
     unplacedByFamily = WTF::move(stillUnplaced);
 }
 
-std::optional<uint32_t> ObjectPacker::findMostSharedOffset(std::span<const MemberRow> rowsByFamily, RowPart part) const
+std::optional<uint32_t> ObjectPacker::findMostSharedOffset(std::span<const MemberRow> rowsByFamily) const
 {
-    const Vector<Area>& areas = areasOf(rowsByFamily[0], part);
-    unsigned logSize = logSizeOf(rowsByFamily[0], part);
+    const Vector<Area>& areas = areasOf(rowsByFamily[0]);
+    unsigned logSize = logSizeOf(rowsByFamily[0]);
     uint32_t first = UINT32_MAX;
     Vector<uint32_t, 8> limitsDescending;
     for (MemberRow member : rowsByFamily) {
@@ -940,7 +1180,7 @@ std::optional<uint32_t> ObjectPacker::findMostSharedOffset(std::span<const Membe
     for (uint32_t offset = first; mostRows < rowsByFamily.size() && offset < limitsDescending[mostRows]; offset += 1u << logSize) {
         size_t numberOfRows = 0;
         forEachFamily(rowsByFamily, [&](std::span<const MemberRow> family) {
-            if (canPlaceFamily(family, part, offset))
+            if (canPlaceFamily(family, offset))
                 numberOfRows += family.size();
         });
         if (numberOfRows <= mostRows)
@@ -952,35 +1192,116 @@ std::optional<uint32_t> ObjectPacker::findMostSharedOffset(std::span<const Membe
 }
 
 // The rows that are left to place fit each area by their number, which does not say that one offset suits every member.
-void ObjectPacker::placeFamilyInGrownAreas(std::span<const MemberRow> family, RowPart part)
+void ObjectPacker::placeFamilyInGrownAreas(std::span<const MemberRow> family)
 {
-    unsigned logSize = logSizeOf(family[0], part);
+    unsigned logSize = logSizeOf(family[0]);
     uint32_t size = 1u << logSize;
     uint32_t offset = 0;
     auto isFreeInEveryMember = [&] {
         return std::ranges::all_of(family, [&](MemberRow member) {
-            return areaOf(member, part).isFree(offset, size);
+            return areaOf(member).isFree(offset, size);
         });
     };
     while (!isFreeInEveryMember())
         offset += size;
     for (MemberRow member : family) {
-        Area& area = areaOf(member, part);
+        Area& area = areaOf(member);
         while (!area.canPlace(offset, logSize))
             area.growTo(cellSizeFor(area.limit + 1));
-        if (!isInExtension(member, part))
+        if (!slotOf(member).isOutOfLine())
             m_packed.inlineLimits[member.layout.index()] = area.limit;
-        place(member, part, offset);
+        place(member, offset);
     }
 }
 
-void ObjectPacker::placePartTogether(std::span<const MemberRow> rows, RowPart part)
+// Only the cells of layouts that are made seldom grow, by half of their size at the most.
+uint32_t ObjectPacker::maxLimit(MemberRow member) const
+{
+    uint32_t limit = areaOf(member).limit;
+    if (!m_context.isMadeSeldom(member.layout))
+        return limit;
+    uint32_t limitBeforeGrowth = m_limitsBeforeGrowth[member.layout.index()];
+    return std::max(limit, limitBeforeGrowth + limitBeforeGrowth / 2);
+}
+
+std::optional<uint32_t> ObjectPacker::limitThatTakes(MemberRow member, uint32_t offset) const
+{
+    const Area& area = areaOf(member);
+    unsigned logSize = logSizeOf(member);
+    if (area.canPlace(offset, logSize))
+        return area.limit;
+    uint32_t cap = maxLimit(member);
+    if (area.limit == cap)
+        return std::nullopt;
+    Area grown = area;
+    while (!grown.canPlace(offset, logSize)) {
+        uint32_t limit = cellSizeFor(grown.limit + 1);
+        if (limit > cap)
+            return std::nullopt;
+        grown.growTo(limit);
+    }
+    return grown.limit;
+}
+
+std::optional<uint32_t> ObjectPacker::growthByPlacingAt(std::span<const MemberRow> rows, uint32_t offset) const
+{
+    uint32_t growth = 0;
+    for (MemberRow member : rows) {
+        std::optional<uint32_t> limit = limitThatTakes(member, offset);
+        if (!limit)
+            return std::nullopt;
+        growth += *limit - areaOf(member).limit;
+    }
+    return growth;
+}
+
+// One load reads the field in every layout of the set, without a dispatch on the shape. The offset is the one for which the cells grow least.
+bool ObjectPacker::tryPlaceAtOneOffset(std::span<const MemberRow> unplaced, std::span<const uint32_t> offsetsInUse)
+{
+    unsigned logSize = logSizeOf(unplaced[0]);
+    uint32_t size = 1u << logSize;
+    std::optional<uint32_t> best;
+    uint32_t leastGrowth = 0;
+    auto consider = [&](uint32_t offset) {
+        bool isFreeInEveryMember = std::ranges::all_of(unplaced, [&](MemberRow member) {
+            return areaOf(member).isFree(offset, size);
+        });
+        if (!isFreeInEveryMember)
+            return;
+        auto growth = growthByPlacingAt(unplaced, offset);
+        if (!growth || (best && *growth >= leastGrowth))
+            return;
+        best = offset;
+        leastGrowth = *growth;
+    };
+    if (!offsetsInUse.empty())
+        consider(offsetsInUse[0]);
+    else {
+        uint32_t end = maxInlineSizeAtCreation;
+        for (MemberRow member : unplaced)
+            end = std::min(end, maxLimit(member));
+        for (uint32_t offset = 0; offset + size <= end && (!best || leastGrowth); offset += size)
+            consider(offset);
+    }
+    if (!best)
+        return false;
+    for (MemberRow member : unplaced) {
+        Area& area = areaOf(member);
+        while (!area.canPlace(*best, logSize))
+            area.growTo(cellSizeFor(area.limit + 1));
+        m_packed.inlineLimits[member.layout.index()] = area.limit;
+        place(member, *best);
+    }
+    return true;
+}
+
+void ObjectPacker::placeAtSharedOffsets(std::span<const MemberRow> rows, bool mayGrowCells)
 {
     Vector<MemberRow, 8> unplaced;
     Vector<uint32_t, 8> offsets;
     for (MemberRow member : rows) {
-        if (auto offset = offsetOf(member, part))
-            offsets.append(*offset);
+        if (m_isPlaced[member.row])
+            offsets.append(slotOf(member).offset);
         else
             unplaced.append(member);
     }
@@ -989,17 +1310,23 @@ void ObjectPacker::placePartTogether(std::span<const MemberRow> rows, RowPart pa
     std::ranges::sort(unplaced, { }, [&](MemberRow member) {
         return std::pair(m_context.inheritedRows.declaringRowOf(member.row), member.row);
     });
+    if (mayGrowCells && !slotOf(unplaced[0]).isOutOfLine()) {
+        std::ranges::sort(offsets);
+        offsets.shrink(std::ranges::unique(offsets).begin() - offsets.begin());
+        if (offsets.size() <= 1 && tryPlaceAtOneOffset(unplaced.span(), offsets.span()))
+            return;
+    }
     for (OffsetUse use : countOffsetUses(WTF::move(offsets)))
-        tryPlaceRowsAt(unplaced, part, use.offset);
+        tryPlaceRowsAt(unplaced, use.offset);
     while (unplaced.size() >= 2) {
-        auto offset = findMostSharedOffset(unplaced.span(), part);
+        auto offset = findMostSharedOffset(unplaced.span());
         if (!offset)
             break;
-        tryPlaceRowsAt(unplaced, part, *offset);
+        tryPlaceRowsAt(unplaced, *offset);
     }
     forEachFamily(unplaced.span(), [&](std::span<const MemberRow> family) {
         if (family.size() >= 2)
-            placeFamilyInGrownAreas(family, part);
+            placeFamilyInGrownAreas(family);
     });
 }
 
@@ -1009,19 +1336,11 @@ void ObjectPacker::unite(std::span<const MemberRow> rows)
         m_rowSets[member.row].unify(&m_rowSets[rows[0].row]);
 }
 
-void ObjectPacker::placeTogether(std::span<MemberRow> rows)
+void ObjectPacker::placeTogether(std::span<MemberRow> rows, bool mayGrowCells)
 {
-    bool hasDoubleAreas = hasPart(slotOf(rows[0]), RowPart::DoubleArea);
-    placePartTogether(rows, RowPart::Slot);
-    forEachSharedOffset(rows, RowPart::Slot, [&](std::span<MemberRow> rowsAtOffset) {
-        if (!hasDoubleAreas) {
-            unite(rowsAtOffset);
-            return;
-        }
-        placePartTogether(rowsAtOffset, RowPart::DoubleArea);
-        forEachSharedOffset(rowsAtOffset, RowPart::DoubleArea, [&](std::span<MemberRow> rowsAtLocation) {
-            unite(rowsAtLocation);
-        });
+    placeAtSharedOffsets(rows, mayGrowCells);
+    forEachSharedOffset(rows, [&](std::span<MemberRow> rowsAtOffset) {
+        unite(rowsAtOffset);
     });
 }
 
@@ -1046,14 +1365,12 @@ void ObjectPacker::placeRemainingRows(LayoutID id)
             continue;
         for (SlotRow row : rowsOf(m_context.rows, id)) {
             MemberRow member { id, row };
-            for (RowPart part : { RowPart::Slot, RowPart::DoubleArea }) {
-                if (!hasPart(slotOf(member), part) || logSizeOf(member, part) != logSize || offsetOf(member, part))
-                    continue;
-                const Area& area = areaOf(member, part);
-                auto offset = findFreeOffset(area.occupied, logSize, 0, area.limit);
-                RELEASE_ASSERT(offset);
-                place(member, part, *offset);
-            }
+            if (!slotOf(member).hasStorage() || logSizeOf(member) != logSize || m_isPlaced[row])
+                continue;
+            const Area& area = areaOf(member);
+            auto offset = findFreeOffset(area.occupied, logSize, 0, area.limit);
+            RELEASE_ASSERT(offset);
+            place(member, *offset);
         }
     }
 }
@@ -1061,12 +1378,16 @@ void ObjectPacker::placeRemainingRows(LayoutID id)
 void ObjectPacker::finishLayout(LayoutID id)
 {
     uint32_t inlineEnd = offsetOfFirstField;
+    uint32_t extensionSize = 0;
     for (SlotRow row : rowsOf(m_context.rows, id)) {
         const PlacedSlot& slot = m_packed.slots[row];
         if (slot.storage == SlotStorage::Inline)
             inlineEnd = std::max(inlineEnd, slot.end());
+        else if (slot.isOutOfLine())
+            extensionSize = std::max(extensionSize, slot.end());
     }
-    uint32_t extensionSize = extensionEndOf(m_context.rows, m_packed.slots, id);
+    if (!extensionSize)
+        m_packed.slots[m_context.rows.extensionWordOf(id)] = PlacedSlot { };
     m_packed.sizes[id.index()] = std::max(m_packed.sizes[id.index()], WTF::roundUpToMultipleOf(16, inlineEnd));
     m_packed.inlineLimits[id.index()] = m_inline[id.index()].limit;
     m_packed.extensionSizes[id.index()] = extensionSize;
@@ -1108,7 +1429,7 @@ bool ObjectPacker::hasOneLocation(std::span<const MemberRow> rows) const
     return std::ranges::all_of(rows.subspan(1), [&](MemberRow member) {
         if (!slotOf(member).hasLocationOf(first))
             return false;
-        return !first.needsExtension() || extensionWordOf(member).hasLocationOf(extensionWordOf(rows[0]));
+        return !first.isOutOfLine() || extensionWordOf(member).hasLocationOf(extensionWordOf(rows[0]));
     });
 }
 
@@ -1142,18 +1463,6 @@ OccupiedBytes occupiedBytesOf(const SlotPlanContext& context, const PackedLayout
     if (auto offset = packed.isEscapedOffsets[id.index()])
         words[*offset / 64] |= bytesAt(*offset, sizeof(bool));
     return words;
-}
-
-void updateExtensionSizes(const SlotPlanContext& context, PackedLayouts& packed)
-{
-    forEachIndexInParallel(context.build.parallelLoops(), context.program.layouts.size(), [&](unsigned index) {
-        LayoutID id(index);
-        if (!context.isCompiledObject(id))
-            return;
-        packed.extensionSizes[index] = extensionEndOf(context.rows, packed.slots, id);
-        if (!packed.extensionSizes[index])
-            packed.slots[context.rows.extensionWordOf(id)] = PlacedSlot { };
-    });
 }
 
 } } } // namespace JSC::AOT::Typed

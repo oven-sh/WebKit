@@ -6,16 +6,21 @@
 # CHECK: [[callee]]: anything = PropGet {{*}}key="toLocaleString"
 # CHECK-NEXT: ValidateType [[callee]] validatedType=builtin(ObjectPrototypeToLocaleString)
 # CHECK-NEXT: [[proven]]: builtin(ObjectPrototypeToLocaleString) = AssumeType [[callee]]
-# CHECK-NEXT: ValidateCallee [[proven]] validatedType=f1|builtin(ObjectPrototypeToLocaleString)
+# CHECK-NEXT: ValidateCallee [[proven]] validatedType=builtin(ObjectPrototypeToLocaleString)
 # CHECK-NEXT: [[result]]: anything = Call [[proven]],
-# CHECK-NEXT: ValidateType [[result]] validatedType=1
-# CHECK-NEXT: : 1 = AssumeType [[result]] castType=1
-# END-LABEL: function f0 name="main"
+# CHECK-NEXT: ValidateType [[result]] validatedType=int
+# CHECK-NEXT: : int = AssumeType [[result]] castType=int
+# CHECK-LABEL: function f2 name="callsByValue"
+# CHECK: [[byValue]]: 1 = Call {{*}}callees=[f3]
+# CHECK-NEXT: ValidateType [[byValue]] validatedType=1
+# CHECK-NEXT: : 1 = AssumeType [[byValue]] castType=1
+# The call becomes direct, its result has the type of the callee's result, and the cast goes.
+# END-LABEL: function f2 name="callsByValue"
 # END-NOT: AssumeType
-# END: [[result]]: anything = CallBuiltin
-# END-NEXT: ValidateType [[result]] validatedType=1
-# END-NEXT: : 2 = Integer integer=2
+# END: [[direct]]: 1 = CallDirect function=f3
+# END-NEXT: ValidateType [[direct]] validatedType=1
 # END-NOT: AssumeType
+# END-LABEL: function f3 name="one"
 
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
@@ -31,12 +36,26 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = Add v4, v0
     v6 = Builtin builtin=GlobalThis
     v7 = PropGet v6 key="print" [isFreeName]
-    v8 = Call v7, -, v5
+    v8 = CallDirect function=f2 [isNeverInlined]
+    v9 = Call v7, -, v5, v8
     Return
 }
-function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131083 thisType={type=anything} results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }
-runtimefunction id=131083 function=f1
+function f2 name="callsByValue" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0 [isNeverInlined]
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="one" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+runtimefunction id=131085 function=f1

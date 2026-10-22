@@ -23,8 +23,9 @@ static void checkFunctionIsUnknown(const FlowResults& flow, FunctionID id)
     const FunctionFlow& function = flow.function(id);
     AOT_TEST_CHECK(function == FunctionFlow { } && function.witness == noWitness);
     AOT_TEST_CHECK(function.reachability == FunctionReachability::Unknown && function.callers == CallerState::Unknown);
-    AOT_TEST_CHECK(function.executions == ExecutionCount::Unknown && function.closureUse == ClosureUse::Unknown && !function.genericVersion);
+    AOT_TEST_CHECK(function.executions == ExecutionCount::Unknown && function.closureUse == ClosureUse::Unknown);
     AOT_TEST_CHECK(flow.mayBeReached(id) && !flow.runsAtMostOnce(id));
+    AOT_TEST_CHECK(flow.closureUseOfBoundFunction(id, 0) == ClosureUse::Unknown && flow.closureUseOfBoundFunction(id, 1) == ClosureUse::Unknown);
     for (uint32_t parameter : { 0u, 1u, 100u })
         AOT_TEST_CHECK(flow.parameterSummary(id, parameter) == OperandSummary());
 }
@@ -39,8 +40,7 @@ static void checkSitesAreUnknown(const FlowResults& flow, uint32_t index)
     }
     AOT_TEST_CHECK(flow.lossOf(AccessSiteID(index)) == FlowSiteLoss { });
     AOT_TEST_CHECK(flow.lossOf(AccessSiteID(index)).cause == UnprovenCause::Unknown && flow.lossOf(AccessSiteID(index)).limit == LimitID::None && flow.lossOf(AccessSiteID(index)).witness == noWitness);
-    AOT_TEST_CHECK(!flow.resultSiteOf(AccessSiteID(index)));
-    AOT_TEST_CHECK(!flow.seesOnlyFinishedObjects(AccessSiteID(index)));
+    AOT_TEST_CHECK(!flow.seesOnlyFinishedObjects(AccessSiteID(index)) && !flow.mayCallBoundFunction(AccessSiteID(index)));
 
     const SinkCandidates& candidates = flow.sinkCandidates(AccessSiteID(index), 0);
     AOT_TEST_CHECK(candidates.strings.isEmpty() && candidates.mayBeUndefined && !candidates.isComplete);
@@ -79,7 +79,7 @@ static void checkHasNoResults(const FlowResults& flow)
     AOT_TEST_CHECK(flow.indirectCalls().empty() && flow.builtinLocations().empty() && flow.accessSites().empty() && flow.allocationSites().empty() && flow.allocationClasses().empty());
     AOT_TEST_CHECK(!flow.numberOfAccessSites() && !flow.numberOfAllocationSites() && !flow.numberOfAllocationClasses());
     AOT_TEST_CHECK(flow.unseenCode().empty() && flow.builtinUses().empty() && flow.featureUses().empty() && flow.localeUses().empty());
-    AOT_TEST_CHECK(flow.mayRunUnseenCode() && flow.mayReadLegacyRegExpStatics() && flow.programInstances() == ProgramInstances::Unknown);
+    AOT_TEST_CHECK(flow.mayRunUnseenCode() && flow.unseenCodeCanRun() && flow.mayReadLegacyRegExpStatics() && flow.programInstances() == ProgramInstances::Unknown);
 }
 
 static constexpr OperandSummary inspectedOnly { OperandUse::Inspects, RetainedIn::Result, 0 };
@@ -112,12 +112,13 @@ static FlowResultTables createTables(const TestProgram& test)
         { functionRunOnce, AccessSiteID(0u), unreachedFunction, FlowIndirectCallKind::BuiltinCallback, BuiltinCallbackTimes::PerElement, false },
         { functionRunOnce, AccessSiteID(0u), functionRunOnce, FlowIndirectCallKind::Protocol, BuiltinCallbackTimes::Repeatedly, true },
     };
+    tables.functions.boundFunctionUses = { { functionRunOnce, 1, ClosureUse::CalledOnly } };
     tables.functions.functionsSeeingOnlyFinishedObjects.set(functionRunOnce.index());
 
     tables.sites.accessSites.grow(1);
     tables.sites.accessSites[0].function = functionRunOnce;
     tables.sites.accessSiteLosses = { FlowSiteLoss { UnprovenCause::LimitReached, LimitID::MaxLayoutsInType, noWitness } };
-    tables.sites.resultSites = { AllocationSiteID(0u) };
+    tables.sites.callsOfBoundFunctions = { true };
     tables.sites.allocationSites.grow(1);
     tables.sites.allocationSites[0].allocationClass = AllocationClassID(0u);
     tables.sites.allocationClasses.grow(1);
@@ -145,6 +146,9 @@ static void checkFunctionAnswers(const FlowResults& flow, const Program& program
     AOT_TEST_CHECK(&flow.function(derivedFunction) == &flow.function(functionRunOnce));
     checkFunctionIsUnknown(flow, functionPastTheProgram);
 
+    AOT_TEST_CHECK(flow.closureUseOfBoundFunction(functionRunOnce, 1) == ClosureUse::CalledOnly && flow.closureUseOfBoundFunction(derivedFunction, 1) == ClosureUse::CalledOnly);
+    AOT_TEST_CHECK(flow.closureUseOfBoundFunction(functionRunOnce, 0) == ClosureUse::Unknown && flow.closureUseOfBoundFunction(unreachedFunction, 1) == ClosureUse::Unknown);
+
     AOT_TEST_CHECK(flow.parameterSummary(functionRunOnce, 0) == inspectedOnly && flow.parameterSummary(functionRunOnce, 1) == retainedInFirstOperand);
     AOT_TEST_CHECK(flow.parameterSummary(functionRunOnce, 2) == OperandSummary() && flow.parameterSummary(unreachedFunction, 0) == OperandSummary());
     AOT_TEST_CHECK(flow.parameterSummary(derivedFunction, 2) == inspectedOnly);
@@ -163,8 +167,7 @@ static void checkOtherAnswers(const FlowResults& flow)
 {
     AOT_TEST_CHECK(flow.numberOfAccessSites() == 1 && flow.numberOfAllocationSites() == 1 && flow.numberOfAllocationClasses() == 1);
     AOT_TEST_CHECK(flow.at(AccessSiteID(0u)).function == functionRunOnce && flow.lossOf(AccessSiteID(0u)).limit == LimitID::MaxLayoutsInType);
-    AOT_TEST_CHECK(flow.seesOnlyFinishedObjects(AccessSiteID(0u)));
-    AOT_TEST_CHECK(flow.resultSiteOf(AccessSiteID(0u)) == AllocationSiteID(0u));
+    AOT_TEST_CHECK(flow.seesOnlyFinishedObjects(AccessSiteID(0u)) && flow.mayCallBoundFunction(AccessSiteID(0u)));
     AOT_TEST_CHECK(&flow.classOf(AllocationSiteID(0u)) == &flow.at(AllocationClassID(0u)) && flow.at(AllocationClassID(0u)).impossibleMutations.contains(ObjectMutation::DeleteField));
     AOT_TEST_CHECK(flow.sinkCandidates(AccessSiteID(0u), 1).isComplete && flow.sinkCandidates(AccessSiteID(0u), 1).strings.size() == 1);
     AOT_TEST_CHECK(!flow.sinkCandidates(AccessSiteID(0u), 0).isComplete && !flow.sinkCandidates(AccessSiteID(0u), 2).isComplete);
@@ -178,7 +181,7 @@ static void checkOtherAnswers(const FlowResults& flow)
     AOT_TEST_CHECK(flow.usesOf(Builtins::MathAbs).isEmpty() && flow.usesOf(BuiltinID()).isEmpty());
 
     AOT_TEST_CHECK(flow.module(ModuleID(0u)).namespaceUse == NamespaceUse::NeverCreated && flow.module(ModuleID(1u)) == ModuleFlow { });
-    AOT_TEST_CHECK(!flow.mayRunUnseenCode() && !flow.mayReadLegacyRegExpStatics() && flow.programInstances() == ProgramInstances::AtMostOne);
+    AOT_TEST_CHECK(!flow.mayRunUnseenCode() && !flow.unseenCodeCanRun() && !flow.mayReadLegacyRegExpStatics() && flow.programInstances() == ProgramInstances::AtMostOne);
     checkNullIDsAreUnknown(flow);
 }
 

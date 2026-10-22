@@ -16,13 +16,16 @@
 # ORDER-NEXT: arm [L2]: Method level=Proven holder=L2 method=F5
 # RUN(NEEDSTEST): partition-members layouts=[L0,L1,L4] key="run"
 # NEEDSTEST: arm [L0, L1]: Method level=Proven holder=L0 method=F4
-# NEEDSTEST-NOT: proofs=
-# NEEDSTEST: arm [L4]: Method level=Predicted holder=L0 method=F4 proofs=[NoExtraProperties]
+# NEEDSTEST-NOT: conditions=
+# NEEDSTEST: arm [L4]: Method level=Expected holder=L0 method=F4 conditions=[MemberNotHidden(L4, Prototype, K{{*}})]
 # RUN(UNITEDCONDITIONS): partition-members layouts=[L5,L6] key="run"
-# UNITEDCONDITIONS: arm [L5, L6]: Method level=Predicted holder=L0 method=F4 conditions=[MemberUnchanged(L6, Prototype, K{{*}}), PrototypeLinkUnchanged(L5, Prototype)]
+# UNITEDCONDITIONS: arm [L5, L6]: Method level=Expected holder=L0 method=F4 conditions=[MemberUnchanged(L6, Prototype, K{{*}}), PrototypeLinkUnchanged(L5, Prototype)]
 # UNITEDCONDITIONS-NOT: arm
-# RUN(UNITEDPROOFS): partition-members layouts=[L4,L7] key="run"
-# UNITEDPROOFS: arm [L4, L7]: Method level=Predicted holder=L0 method=F4 proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+# RUN(ONECONDITIONPERLAYOUT): partition-members layouts=[L4,L7] key="run"
+# ONECONDITIONPERLAYOUT: arm [L4, L7]: Method level=Expected holder=L0 method=F4 conditions=[MemberNotHidden(L4, Prototype, K{{*}}), MemberNotHidden(L7, Prototype, K{{*}})]
+# ONECONDITIONPERLAYOUT-NOT: arm
+# RUN(UNITEDPROOFS): partition-members layouts=[L4,L7] key="missing"
+# UNITEDPROOFS: arm [L4, L7]: Absent level=Expected proofs=[NoExtraProperties, PrototypeLinkUnchanged]
 # UNITEDPROOFS-NOT: arm
 # RUN(FIELDS): partition-members layouts=[L8,L9] key="x"
 # FIELDS: arm [L8, L9]: Field level=Proven
@@ -49,18 +52,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="A" constructor=f0 fields=[{key="x" declared={type=number}}] flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f4 mutability=Fixed}]}
-layout L1 kind=Instance name="B" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="B" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L2 kind=Instance name="C" constructor=f2 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
 layout L3 kind=Instance name="D" constructor=f3 flags=[HasHeritage] flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L4 kind=Instance name="MayGainProperties" predictedBase=L0 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L5 kind=Instance name="LinkMayChange" predictedBase=L0 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L6 kind=Instance name="NamesIncomplete" predictedBase=L0 constructor=f10 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed staticNamesAreComplete=true}
-layout L7 kind=Instance name="MayChangePrototype" predictedBase=L0 constructor=f11 flags=[HasHeritage] flow={baseState=Layout base=L0 addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="MayGainProperties" base=L0 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="LinkMayChange" base=L0 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="NamesIncomplete" base=L0 constructor=f10 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed staticNamesAreComplete=true}
+layout L7 kind=Instance name="MayChangePrototype" base=L0 constructor=f11 flags=[HasHeritage] flow={baseState=Layout base=L0 addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L8 name="Point" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
 layout L9 name="Named" fields=[{key="name" declared={type=string}}, {key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
 layout L10 kind=Instance name="Computed" constructor=f12 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" kind=Getter function=f6 mutability=Fixed}]}
 layout L11 name="Empty" flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
-layout L12 kind=Instance name="BelowComputed" predictedBase=L10 constructor=f13 flags=[HasHeritage] flow={baseState=Layout base=L10 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L12 kind=Instance name="BelowComputed" base=L10 constructor=f13 flags=[HasHeritage] flow={baseState=Layout base=L10 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L13 kind=Instance name="ComputedAndStored" constructor=f14 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" kind=Getter function=f6 mutability=Fixed}, {key="x" kind=Setter function=f7 mutability=Fixed}]}
 
 function f0 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

@@ -8,12 +8,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinFamilyState.h"
+#include "AOTErrorMessages.h"
 #include "AOTInstance.h"
+#include "AOTObject.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTReturnAddressWalk.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
-#include "AOTTypeErrorMessages.h"
+#include "AOTState.h"
+#include "ClonedArguments.h"
 #include "DeferGCInlines.h"
 #include "ErrorConstructor.h"
 #include "ErrorInstance.h"
@@ -22,6 +27,7 @@
 #include "Interpreter.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
+#include "ProxyObject.h"
 #include "VMInlines.h"
 #include <wtf/StackPointer.h>
 
@@ -29,14 +35,7 @@ namespace JSC { namespace AOT {
 
 void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue callee)
 {
-    String description = errorDescriptionForValue(globalObject, callee);
-    RETURN_IF_EXCEPTION(scope, void());
-    throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
-}
-
-void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue callee, const Identifier& name)
-{
-    throwTypeError(globalObject, scope, makeString(name.string(), " is not a function, it is "_s, describe(callee)));
+    throwException(globalObject, scope, createNotAFunctionError(globalObject, callee));
 }
 
 static bool fitsOnStack(VM& vm, uint64_t length)
@@ -50,7 +49,7 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
     if (list.isUndefinedOrNull())
         return true;
     if (!list.isObject()) {
-        throwTypeError(globalObject, scope, "second argument to Function.prototype.apply must be an Array-like object"_s);
+        throwException(globalObject, scope, createInvalidFunctionApplyParameterError(globalObject, list));
         return false;
     }
     JSObject* object = asObject(list);
@@ -81,7 +80,7 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
-        throwTypeError(globalObject, scope, makeString(describe(callee), " is not a constructor"_s));
+        throwException(globalObject, scope, createNotAConstructorError(globalObject, callee));
         return { };
     }
     RELEASE_AND_RETURN(scope, construct(globalObject, callee, constructData, arguments, newTarget));
@@ -93,7 +92,7 @@ static JSValue constructParent(JSGlobalObject* globalObject, JSValue parent, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto constructData = JSC::getConstructData(parent);
     if (constructData.type == CallData::Type::None) {
-        throwTypeError(globalObject, scope, "The superclass is not a constructor."_s);
+        throwException(globalObject, scope, createNotAConstructorError(globalObject, parent));
         return { };
     }
     if (auto* errorConstructor = dynamicDowncast<ErrorConstructor>(parent); errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != parent) {
@@ -147,6 +146,89 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), JSValue::decode(thisValue), arguments)));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance* instance, CallFrame* hostCallFrame, uint32_t makesList))
+{
+    VM& vm = *instance->vm;
+    // As for a native function.
+    vm.topCallFrame = hostCallFrame;
+    const UGPRPair isEngines = makeUGPRPair(0, 0);
+    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(hostCallFrame->jsCallee());
+    JSValue handlerValue = proxy->handler();
+    if (!handlerValue.isObject())
+        return isEngines;
+    // ProxyObject::createStructure().
+    if (!(proxy->inlineTypeFlags() & ImplementsDefaultHasInstance))
+        return isEngines;
+    JSObject* target = proxy->target();
+    JSObject* handler = asObject(handlerValue);
+    JSGlobalObject* globalObject = instance->globalObject;
+    const Identifier& name = vm.aotState().runtimeTable->nameOfApplyTrap(vm);
+    JSValue trap = Object::tryGetOwnDataProperty(vm, handler, name);
+    if (!trap) {
+        PropertySlot slot(handler, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isPresent = handler->getPropertySlot(globalObject, name, slot);
+        if (vm.exceptionForInspection() || slot.isTaintedByOpaqueObject()) [[unlikely]]
+            return isEngines;
+        if (!isPresent)
+            return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+        if (!slot.isValue())
+            return isEngines;
+        trap = slot.getValue(globalObject, name);
+    }
+    if (trap.isUndefinedOrNull())
+        return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+    if (!trap.isCell())
+        return isEngines;
+    JSType typeOfTrap = trap.asCell()->type();
+    if (typeOfTrap != JSFunctionType && !isSlimClosureType(typeOfTrap) && !trap.asCell()->isCallable())
+        return isEngines;
+    JSValue thisValue = hostCallFrame->thisValue();
+    if (thisValue.isCell())
+        hostCallFrame->setThisValue(thisValue.toThis(globalObject, ECMAMode::strict()));
+    if (!makesList)
+        return makeUGPRPair(std::bit_cast<UCPURegister>(trap.asCell()), 1);
+    if (globalObject->isHavingABadTime())
+        return isEngines;
+    unsigned count = hostCallFrame->argumentCount();
+    JSArray* list;
+    {
+        ObjectInitializationScope initializationScope(vm);
+        list = JSArray::tryCreateUninitializedRestricted(initializationScope, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+        if (!list)
+            return isEngines;
+        for (unsigned i = 0; i < count; ++i)
+            list->initializeIndexWithoutBarrier(initializationScope, i, hostCallFrame->uncheckedArgument(i), ArrayWithContiguous);
+    }
+    return makeUGPRPair(std::bit_cast<UCPURegister>(trap.asCell()), std::bit_cast<UCPURegister>(list));
+}
+
+// An unmapped arguments object with the Structure it was made with has its length and its elements as plain data: they are read without a question to anybody.
+static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
+{
+    constexpr uint32_t maxLengthCopied = 64;
+    VM& vm = *instance->vm;
+    if (!arrayLike.isCell() || arrayLike.asCell()->structure() != instance->state->builtinFamilies->unmappedArguments.structure)
+        return nullptr;
+    JSObject* arguments = asObject(arrayLike);
+    if (!hasContiguous(arguments->indexingType()))
+        return nullptr;
+    JSValue length = arguments->getDirect(clonedArgumentsLengthPropertyOffset);
+    if (!length.isUInt32() || length.asUInt32() > maxLengthCopied || length.asUInt32() > arguments->butterfly()->publicLength())
+        return nullptr;
+    uint32_t count = length.asUInt32();
+    const WriteBarrier<Unknown>* elements = arguments->butterfly()->contiguous().data();
+    if (containsHole(elements, count))
+        return nullptr;
+    ObjectInitializationScope initializationScope(vm);
+    JSArray* list = JSArray::tryCreateUninitializedRestricted(initializationScope, instance->globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+    if (!list)
+        return nullptr;
+    for (uint32_t i = 0; i < count; ++i)
+        list->initializeIndexWithoutBarrier(initializationScope, i, elements[i].get(), ArrayWithContiguous);
+    ensureStillAliveHere(arguments);
+    return list;
+}
+
 // Function.prototype.apply up to the call: the callee is tested before the list is read.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue callee, EncodedJSValue arrayLike))
 {
@@ -156,6 +238,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
         throwNotAFunctionError(globalObject, scope, function);
         OPERATION_RETURN(scope, nullptr);
     }
+    if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
+        OPERATION_RETURN(scope, list);
     MarkedArgumentBuffer arguments;
     bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));
     EXCEPTION_ASSERT(didAppend == !scope.exception());
@@ -199,6 +283,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(constructParent(globalObject, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
+static StringView nameOfCalleeAtCallSite(VM& vm)
+{
+    std::optional<FaultSite> site;
+    forEachReturnAddressIntoCompiledFunctions(vm, [&](void*& returnAddress, const CallSiteCache::Entry&) {
+        site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(removeCodePtrTag(returnAddress)) - sizeOfNearCall);
+        return IterationStatus::Done;
+    });
+    if (!site || site->kind != FaultSiteKind::NullCheck)
+        return { };
+    ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(site->throwSite[0]);
+    if (static_cast<ThrowKind>(word.kind) != ThrowKind::NotAFunction)
+        return { };
+    return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.a));
+}
+
 static JSValue calleeOfDecodedReference(Instance* instance, EncodedJSValue callee)
 {
     JSValue value = valueOfDecodedReference(instance, static_cast<uint64_t>(callee));
@@ -210,13 +309,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessCallable);
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
-    uint32_t nameOfMethod = std::exchange(instance->runtime.exceptions.nameOfUncallableMethod, 0);
-    if (value.isCallable())
-        OPERATION_RETURN(scope);
-    if (nameOfMethod)
-        throwNotAFunctionError(globalObject, scope, value, identifierAt(instance, nameOfMethod - 1));
-    else
-        throwNotAFunctionError(globalObject, scope, value);
+    uint32_t namePlusOne = std::exchange(instance->runtime.exceptions.nameOfUncallableMethod, 0);
+    if (!value.isCallable())
+        throwException(globalObject, scope, namePlusOne ? createNotAFunctionError(globalObject, value, identifierAt(instance, namePlusOne - 1)) : createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
     OPERATION_RETURN(scope);
 }
 
@@ -226,7 +321,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* 
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
     if (!value.isCallable())
-        throwNotAFunctionError(globalObject, scope, value, identifierAt(instance, name));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, identifierAt(instance, name)));
     OPERATION_RETURN(scope);
 }
 

@@ -1,6 +1,8 @@
+//@ $skipModes << :lockdown # every array has slow-put array storage there, and no such array has pristine elements.
 //@ requireOptions("--useDollarVM=1")
 // The two pristine bits of a Structure: what marking needs, which transitions keep them, and what marking does to the Structures and
-// the inline caches that exist already.
+// the inline caches that exist already. And the flag in the cell, the one thing that compiled code tests: of an array it says that the
+// Structure has both bits, of another object that it has the first, and a cell from before the mark keeps it clear.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -8,7 +10,9 @@ function shouldBe(actual, expected, message) {
 }
 
 function bits(object) {
-    let names = $vm.isPristine(object), elements = $vm.hasPristineElements(object);
+    let names = $vm.hasPristineNames(object), elements = $vm.hasPristineElements(object);
+    if ($vm.isPristine(object))
+        shouldBe(names && (elements || !Array.isArray(object)), true, "the flag in the cell says no more than the Structure");
     return names && elements ? "both" : names ? "names" : elements ? "elements" : "none";
 }
 
@@ -79,8 +83,11 @@ let effects = {
 };
 for (let expected in effects) {
     for (let statements of effects[expected]) {
-        for (let array of arrayOfEachStructure)
-            shouldBe(bits(realm.eval(`(a => { ${statements}; return a; })(${array})`)), expected, `${statements} on ${array}`);
+        for (let array of arrayOfEachStructure) {
+            let changed = realm.eval(`(a => { ${statements}; return a; })(${array})`);
+            shouldBe(bits(changed), expected, `${statements} on ${array}`);
+            shouldBe($vm.isPristine(changed), expected == "both", `the flag in the cell after ${statements} on ${array}`);
+        }
     }
 }
 

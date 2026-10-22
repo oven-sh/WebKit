@@ -43,6 +43,7 @@ private:
     bool shouldConsider(FunctionID) const;
     bool isWrapper(FunctionID id) const { return m_wrappers.get(id.index()); }
     bool isWrapperOfLastRound(FunctionID id) const { return m_wrappersOfLastRound.get(id.index()); }
+    bool isWrapperThatNoCodeNames(FunctionID) const;
 
     void collectExistingWrappers();
     Vector<SplitCandidate> findCandidates();
@@ -54,7 +55,7 @@ private:
     Vector<WrapperCallSite, 4> findWrapperCalls(FunctionID, const Function& caller) const;
     bool expandCalls(FunctionPassContext&, std::span<const WrapperCallSite>) const;
     void expandCallSites();
-    unsigned expandProfitableCalls(FunctionID caller, Function&, TaskArenas&) const;
+    unsigned expandProfitableCalls(FunctionID caller, Function&, std::span<const WrapperCallSite>, TaskArenas&) const;
     Vector<WrapperCallSite, 4> chooseProfitableCalls(FunctionID caller, const Function&, std::span<const WrapperCallSite>, TaskArenas&) const;
 
     void cloneWorkersByReadResults();

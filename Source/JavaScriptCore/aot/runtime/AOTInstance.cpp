@@ -8,10 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTCellFormat.h"
+#include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTImage.h"
+#include "AOTImageLoading.h"
 #include "AOTIteration.h"
 #include "AOTLimits.h"
 #include "AOTOperationScope.h"
@@ -75,11 +79,29 @@ static void* reserveZeroedPages(size_t bytes)
     return pages;
 }
 
+// The table of the image is never written. An instance changes its own copy where something changes what its objects find under the name of a method.
+static void copyMethodTable(Instance* instance, const Image& image)
+{
+    std::span<const uint32_t> table = image.methodTable();
+    if (table.empty())
+        return;
+    InstanceSizes sizes = image.programTables().instanceSizes;
+    RELEASE_ASSERT(table.size_bytes() == sizes.sizeOfMethodTable);
+    auto* copy = reinterpret_cast<char*>(instance) + InstanceLayout::offsetOfMethodTable(sizes);
+    size_t size = InstanceLayout::bytesReservedForMethodTable(sizes);
+    if (mapPrivateCloneOfImagePages({ reinterpret_cast<const uint8_t*>(table.data()), size }, copy))
+        return;
+    memcpySpan(std::span { reinterpret_cast<uint32_t*>(copy), table.size() }, table);
+    OSAllocator::protect(copy, size, true, false);
+}
+
 static Instance* reserveMemory(const Image& image)
 {
     RELEASE_ASSERT(!(InstanceLayout::granuleBelowInstance % WTF::pageSize()) && !(InstanceLayout::granuleAboveInstance % WTF::pageSize()));
     auto [below, above] = reservationSizes(image);
-    return reinterpret_cast<Instance*>(static_cast<char*>(reserveZeroedPages(below + above)) + below);
+    auto* instance = reinterpret_cast<Instance*>(static_cast<char*>(reserveZeroedPages(below + above)) + below);
+    copyMethodTable(instance, image);
+    return instance;
 }
 
 static void releaseMemory(Instance* instance)
@@ -107,6 +129,17 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     prefix.structureIDBase = JSC::structureIDBase();
     prefix.notUndefinedOrNullMask = ~static_cast<int64_t>(JSValue::ValueUndefined);
     prefix.boxedNaN = JSValue::encode(jsNaN());
+    prefix.one = 1;
+    prefix.pureNaN = PNaN;
+    prefix.minInt64 = std::numeric_limits<int64_t>::min();
+    prefix.doubleEncodeOffset = JSValue::DoubleEncodeOffset;
+    prefix.boxedOne = JSValue::encode(jsNumber(1));
+    prefix.undefinedInteger = undefinedInteger;
+    prefix.nullInteger = nullInteger;
+    prefix.absentInteger = absentInteger;
+    prefix.undefinedDouble = undefinedDouble;
+    prefix.nullDouble = nullDouble;
+    prefix.absentDouble = absentDouble;
     prefix.arrayAllocator = subspaceFor<JSArray>(vm)->allocatorFor(sizeof(JSArray), AllocatorForMode::EnsureAllocator).localAllocator();
     prefix.ropeStringAllocator = subspaceFor<JSRopeString>(vm)->allocatorFor(sizeof(JSRopeString), AllocatorForMode::EnsureAllocator).localAllocator();
     RELEASE_ASSERT(static_cast<LocalAllocator*>(prefix.arrayAllocator)->cellSize() == sizeof(JSArray));
@@ -135,7 +168,24 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.tables = &image.programTables();
     words.fieldTableEntries = image.programTables().fieldTableEntries().data();
     words.fieldRecordIndices = image.programTables().fieldRecordIndices().data();
+    words.classAccessors = image.programTables().classAccessors().data();
+    words.data = image.programTables().data().data();
+    words.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(image.programTables().closureFunctionKinds().data()) - image.programTables().closureFunctions.first * sizeof(FunctionKindData);
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    words.stringRecords = image.text().stringRecords().data();
+    words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();
+    words.lazyStringHeaders = image.text().lazyHeaders();
+    words.lazyStringHeadersCapacity = image.text().lazyHeadersCapacity();
+#else
     words.programIdentifiers = vm.aotState().identifiers->identifiers();
+    words.sizeOfProgramIdentifiers = static_cast<uint64_t>(vm.aotState().identifiers->count()) * sizeof(UniquedStringImpl);
+#endif
+    static_assert(sizeof(ImageStringWord) == sizeof(uint32_t));
+    words.stringWords = image.section<uint32_t>(ImageSection::Strings).data();
+    words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
+    words.listedStrings = image.section<uint32_t>(ImageSection::LongStrings).data();
+    words.text = image.section<uint8_t>(ImageSection::Text).data();
+    words.programSymbols = &vm.aotState().identifiers->symbols();
     fillStubReturnAddresses(instance, image);
 }
 
@@ -168,7 +218,7 @@ static void fillNumberWords(Instance& instance)
 static void fillAllocationSpaces(Instance& instance, VM& vm)
 {
     instance.allocation.auxiliarySpace = &vm.auxiliarySpace();
-    instance.allocation.cagedAuxiliarySpace = &vm.heap.cagedAuxiliarySpace;
+    instance.allocation.cagedAuxiliarySpace = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>();
     instance.allocation.cellSpace = &vm.cellSpace();
     instance.allocation.primitiveAuxiliarySpace = &vm.primitiveGigacageAuxiliarySpace();
     instance.allocation.compactTableHeader = cellHeaderFor(vm.aotState().runtimeTable->compactTableStructure());
@@ -176,6 +226,7 @@ static void fillAllocationSpaces(Instance& instance, VM& vm)
 
 static void fillArrayHeaders(Instance& instance, JSGlobalObject* realm)
 {
+    instance.allocation.frameArrayHeader = 0;
     if (realm->isHavingABadTime())
         return;
     InstancePrefix& prefix = instance.prefix();
@@ -185,6 +236,12 @@ static void fillArrayHeaders(Instance& instance, JSGlobalObject* realm)
     instance.allocation.newCopyOnWriteArrayHeaders[0] = cellHeaderFor(realm->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithInt32));
     instance.allocation.newCopyOnWriteArrayHeaders[1] = cellHeaderFor(realm->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithDouble));
     prefix.newCopyOnWriteArrayWithContiguousHeader = cellHeaderFor(realm->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
+
+    Structure* arraysOfValues = realm->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    if (arraysOfValues->isPristine() && arraysOfValues->hasPristineElements()) {
+        constexpr unsigned cellStateShift = JSCell::cellStateOffset() * 8;
+        instance.allocation.frameArrayHeader = (prefix.newArrayWithContiguousHeader & ~(0xffull << cellStateShift)) | static_cast<uint64_t>(frameCellState) << cellStateShift;
+    }
 }
 
 static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
@@ -199,7 +256,9 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = idOf(realm->boundFunctionStructure());
     words.hostFunctionStructureID = idOf(realm->hostFunctionStructure());
-    words.boundFunctionExecutable = vm.getBoundFunction(true, SourceTaintedOrigin::Untainted);
+    // Compiled code binds compiled closures, which are no JSFunctions: a slim one ends before JSFunction's executable. JSBoundFunction::create picks the same for them.
+    constexpr bool targetIsJSFunction = false;
+    words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
     words.boundFunctionClassInfo = JSBoundFunction::info();
     words.objectPrototype = realm->objectPrototype();
@@ -211,8 +270,7 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
 static void fillInstanceClassInfos(Instance& instance)
 {
     std::span classInfos = unsafeMakeSpan(instance.state->tableArena.allocate<const ClassInfo*>(numberOfBuiltinClasses), numberOfBuiltinClasses);
-    for (unsigned index = 0; index < numberOfBuiltinClasses; ++index)
-        classInfos[index] = BuiltinBindings::instanceClassInfoOf(BuiltinClassID(index));
+    BuiltinBindings::fillInstanceClassInfos(classInfos);
     instance.realm.instanceClassInfos = classInfos.data();
 }
 
@@ -231,7 +289,7 @@ static void registerStackMirror(Instance* instance, VM& vm)
     Locker locker { loopPollPages.lock };
     void* page = loopPollPage(instance);
     loopPollPages.pages.append(page);
-    if (instance->stackMirror.get().trapAwareSoftStackLimit() == reinterpret_cast<void*>(StackManager::StopRequestMarkerValue))
+    if (vm.traps().stopsAtEveryPoll())
         RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), PROT_NONE));
 #endif
 }
@@ -256,8 +314,17 @@ static void initializeRuntimeWords(Instance& instance, VM& vm)
     size_t numberOfPropertyRuns = propertyRuns.empty() ? 0 : propertyRuns[0] - 1;
     words.literals.propertyRuns = state.tableArena.allocate<const PropertyRun*>(numberOfPropertyRuns);
 
-    if (instance.options().countsBranches)
+    if (instance.options().countsBranches) {
         words.counters.branchCounts = static_cast<uint64_t*>(state.pages.allocate(runtimeLimitValue(vm, LimitID::BranchCounters) * sizeof(uint64_t)));
+        words.counters.allocationCounts = static_cast<uint64_t*>(state.pages.allocate(ExactAllocationCounts::sizeInBytes(state.tables.allocations().size())));
+    }
+
+    if (size_t numberOfGlobalBindings = state.tables.globalBindings().size()) {
+        words.counters.globalBindings = InstanceLayout::holdsGlobalBindings(numberOfGlobalBindings * sizeof(GlobalBinding))
+            ? instance.tableAt<GlobalBinding>(InstanceLayout::offsetOfGlobalBindings)
+            : state.tableArena.allocate<GlobalBinding>(numberOfGlobalBindings);
+        state.globalBindings = makeUnique<GlobalBindings>(state);
+    }
 }
 
 Instance* reserveInstance(JSGlobalObject* realm)
@@ -302,6 +369,8 @@ void Instance::captureCellHeaders()
     for (auto& typedArrayAllocation : allocation.typedArrayAllocations)
         typedArrayAllocation = { };
     prepareInlineAllocation<JSPromise>(this, InlineAllocation::Promise, globalObject->promiseStructure());
+    // A cell has the pristine bit that its Structure had when the cell was made.
+    realm.emptyArgumentList = JSArray::create(*vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
 }
 
 Instance* Instance::create(JSGlobalObject* realm)
@@ -327,6 +396,8 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeIterationWords(*instance);
 
     State::create(*instance);
+    instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
+    instance->state->caches->addClearedEachCollection("cloned structures"_s, asMutableByteSpan(instance->allocation.clonedStructures));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance, vm);
 

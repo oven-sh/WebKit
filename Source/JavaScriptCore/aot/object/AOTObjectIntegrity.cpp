@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTState.h"
@@ -70,17 +71,14 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
     if ((orderWord() & bits) == bits)
         return;
     validateMutation(vm, *this, ObjectMutation::ChangeIntegrity);
-    bool startedInterceptingIndexedAccesses = false;
+    bool interceptedIndexedAccesses = interceptsIndexedAccesses(*this);
     if (JSObject* extra = extraProperties()) {
-        bool interceptedIndexedAccesses = extra->structure()->mayInterceptIndexedAccesses();
         setOrdinaryObjectIntegrity(globalObject, extra, integrity);
         didChangeExtraProperties(vm);
-        startedInterceptingIndexedAccesses = !interceptedIndexedAccesses && extra->structure()->mayInterceptIndexedAccesses();
     }
     at<uint32_t>(offsetOfOrderWord) |= bits;
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, nullptr);
-    if (startedInterceptingIndexedAccesses && mayBePrototype())
-        structure()->realm()->haveABadTime(vm, this);
+    didChangeIndexedProperties(vm, *this, interceptedIndexedAccesses);
 }
 
 bool Object::testIntegrity(VM& vm, Integrity integrity) const
@@ -93,7 +91,12 @@ bool Object::testIntegrity(VM& vm, Integrity integrity) const
     if (testsFrozen ? isFrozen() : isSealed())
         return true;
     for (const FieldData& field : layout().fields()) {
-        if (!field.isPrivate() && read(field))
+        if (field.isPrivate() || !read(field))
+            continue;
+        unsigned attributes = attributesOf(field);
+        if (!(attributes & PropertyAttribute::DontDelete))
+            return false;
+        if (testsFrozen && !field.isAccessor() && !(attributes & PropertyAttribute::ReadOnly))
             return false;
     }
     JSObject* extra = extraProperties();

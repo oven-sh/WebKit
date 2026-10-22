@@ -1,0 +1,110 @@
+# A list that one operation alone takes is made in front of that operation, and what it alone holds in front of it: tests that are placed in between cannot make it one of two
+# FORM: Prepared
+# RUN: pass PlaceAllocationsAtTheirUse
+# STATISTIC: PlaceAllocationsAtTheirUseChanges = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="listBehindARead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1 contents=anything
+    v3 = PropGet v0 key="callee"
+    v4 = CallList v3, v0, v2
+    Return v4
+}
+# CHECK-LABEL: function f0 name="listBehindARead"
+# CHECK: = PropGet v0 key="callee"
+# CHECK-NEXT: [[list]]: Array = NewArray v1
+# CHECK-NEXT: = CallList {{*}}, v0, [[list]]
+
+function f1 name="objectAndWhatItHolds" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=2
+    v3 = NewArray v1 contents=anything
+    v4 = CreateUnmappedArguments v2, v3, v0
+    v5 = PropGet v0 key="callee"
+    v6 = NewArgumentList v5, v4
+    v7 = CallList v5, v0, v6
+    Return v7
+}
+# CHECK-LABEL: function f1 name="objectAndWhatItHolds"
+# CHECK: = PropGet v0 key="callee"
+# CHECK-NEXT: [[rest]]: Array = NewArray v1
+# CHECK-NEXT: [[arguments]]: Arguments = CreateUnmappedArguments v2, [[rest]], v0
+# CHECK-NEXT: = NewArgumentList {{*}}, [[arguments]]
+
+function f2 name="inAnotherBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="callee"
+    v4 = CallList v3, v0, v2
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="inAnotherBlock"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: = PropGet v0 key="callee"
+# CHECK-NEXT: [[list]]: Array = NewArray v0
+# CHECK-NEXT: = CallList {{*}}, v0, [[list]]
+
+function f3 name="takenTwice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = PropGet v0 key="callee"
+    v3 = CallList v2, v0, v1
+    Return v1
+}
+# CHECK-LABEL: function f3 name="takenTwice"
+# CHECK: b0(
+# CHECK-NEXT: = NewArray v0
+# CHECK-NEXT: = PropGet
+
+function f4 name="takenInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="callee"
+    v4 = CallList v3, v0, v1
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="takenInALoop"
+# CHECK: b0(
+# CHECK-NEXT: = NewArray v0
+# CHECK-NEXT: Jump
+
+function f5 name="alreadyInFront" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0 contents=anything
+    v3 = CallList v1, v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f5 name="alreadyInFront"
+# CHECK: b0(
+# CHECK-NEXT: v2: Array = NewArray v0
+# CHECK-NEXT: v3: anything = CallList v1, v0, v2
+
+# The object copies its rest list when it is made, and a rest parameter of the program is that list: what else takes the list may change it in between.
+function f6 name="restListIsTakenElsewhere" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = Integer integer=2
+    v3 = CreateUnmappedArguments v2, v1, v0
+    v4 = PropGet v1 key="reverse"
+    v5 = Call v4, v1
+    v6 = NewArgumentList v0, v3
+    v7 = CallList v0, -, v6
+    Return v7
+}
+# CHECK-LABEL: function f6 name="restListIsTakenElsewhere"
+# CHECK: = Integer integer=2
+# CHECK-NEXT: = CreateUnmappedArguments v2, v1, v0
+# CHECK-NEXT: = PropGet v1 key="reverse"

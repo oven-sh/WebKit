@@ -16,9 +16,12 @@ enum class Equality : uint8_t { Loose, Strict };
 
 constexpr StubKey toBoolean() { return StubKey(StubFamily::ToBoolean); }
 constexpr StubKey valueIsTruthy() { return StubKey(StubFamily::ValueIsTruthy); }
+// Takes any value but the empty one.
+constexpr StubKey valueIsCallable() { return StubKey(StubFamily::ValueIsCallable); }
+constexpr StubKey throwUnlessCallable() { return StubKey(StubFamily::ThrowUnlessCallable); }
 constexpr StubKey equal(bool isStrict) { return StubKey(StubFamily::Equal).withForm(static_cast<uint8_t>(isStrict ? Equality::Strict : Equality::Loose)); }
 
-static_assert(exists(toBoolean()) && exists(valueIsTruthy()));
+static_assert(exists(toBoolean()) && exists(valueIsTruthy()) && exists(valueIsCallable()) && exists(throwUnlessCallable()));
 static_assert(exists(equal(false)) && exists(equal(true)));
 static_assert(!exists(equal(true).withForm(static_cast<uint8_t>(Equality::Strict) + 1)));
 

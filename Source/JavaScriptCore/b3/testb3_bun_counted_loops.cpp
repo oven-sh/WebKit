@@ -124,12 +124,12 @@ struct WordCounterCase {
     std::optional<IntRange> boundRange;
     bool doesNotWrap;
     bool counterRangeIsSafe;
-    bool isMined;
+    bool cannotWrap;
 };
 
 } // anonymous namespace
 
-static constexpr int64_t manyIterations = 2 * maxIterationsPerStrip + 10;
+static constexpr int64_t manyIterations = 2 * longRun + 10;
 
 static std::expected<CountedLoop, GaveUpReason> analyze(Procedure& proc, const B3::NaturalLoop& loop, std::optional<LoopTest> test = std::nullopt)
 {
@@ -845,12 +845,6 @@ static void buildCountedLoop(Graph& graph, PollState& state, Type type, bool con
     loop.finish(condition, constantIsFirst ? graph.make(loop.body, Add, one, indexInBody) : graph.make(loop.body, Add, indexInBody, one));
 }
 
-static void checkPolls(const PollState& state, int64_t numberOfIterations, bool isMined)
-{
-    int64_t numberOfPollsBetweenStrips = numberOfIterations > 0 ? (numberOfIterations - 1) / maxIterationsPerStrip : 0;
-    CHECK_EQ(state.numberOfPolls, isMined ? numberOfPollsBetweenStrips : numberOfIterations);
-}
-
 static void checkCountedLoopOfWidthAndOperandOrder(Type type, bool constantIsFirst, bool boundIsFirst)
 {
     Procedure proc(remarkPolicy());
@@ -858,13 +852,15 @@ static void checkCountedLoopOfWidthAndOperandOrder(Type type, bool constantIsFir
     PollState state;
     buildCountedLoop(graph, state, type, constantIsFirst, boundIsFirst);
 
-    CHECK(stripMineLoopsAndValidate(proc));
+    auto counted = analyze(proc);
+    CHECK(counted);
+    CHECK(counted->cannotWrap());
     auto code = compileProc(proc);
     for (int64_t bound : std::initializer_list<int64_t> { -1, 0, 1, 100, manyIterations }) {
         state = { };
         int64_t result = type == Int32 ? invoke<int64_t>(*code, static_cast<int32_t>(bound)) : invoke<int64_t>(*code, bound);
         CHECK_EQ(result, std::max<int64_t>(bound, 0));
-        checkPolls(state, std::max<int64_t>(bound, 0), true);
+        CHECK_EQ(state.numberOfPolls, std::max<int64_t>(bound, 0));
     }
 }
 
@@ -876,12 +872,6 @@ static void testCountedLoopsOfEitherWidthAndOperandOrder()
                 checkCountedLoopOfWidthAndOperandOrder(type, constantIsFirst, boundIsFirst);
         }
     }
-}
-
-static void checkStripMiningNeedsProof(Procedure& proc, bool isMined)
-{
-    CHECK_EQ(stripMineLoopsAndValidate(proc), isMined);
-    CHECK_EQ(hasRemark(proc, RemarkKind::PollNotStripMined, GaveUpReason::CounterMayWrap), !isMined);
 }
 
 static void checkWordCounterToLoadedBound(const WordCounterCase& testCase)
@@ -901,19 +891,18 @@ static void checkWordCounterToLoadedBound(const WordCounterCase& testCase)
     CHECK(counted);
     CHECK(counted->relation == testCase.relation);
     CHECK_EQ(counted->counterRangeIsSafe, testCase.counterRangeIsSafe);
-    CHECK_EQ(counted->cannotWrap(), testCase.isMined);
+    CHECK_EQ(counted->cannotWrap(), testCase.cannotWrap);
 
-    checkStripMiningNeedsProof(proc, testCase.isMined);
     auto code = compileProc(proc);
     for (int64_t boundAtRunTime : std::initializer_list<int64_t> { 0, 5, manyIterations }) {
         state = { };
         int64_t memory[1] = { boundAtRunTime };
         CHECK_EQ(invoke<int64_t>(*code, memory), boundAtRunTime + 1);
-        checkPolls(state, boundAtRunTime + 1, testCase.isMined);
+        CHECK_EQ(state.numberOfPolls, boundAtRunTime + 1);
     }
 }
 
-static void checkWrappedCounterToArgument(bool boundIsWrapped, bool doesNotWrap, bool isMined)
+static void checkWrappedCounterToArgument(bool boundIsWrapped, bool doesNotWrap, bool cannotWrap)
 {
     Procedure proc(remarkPolicy());
     Graph graph { proc };
@@ -924,12 +913,14 @@ static void checkWrappedCounterToArgument(bool boundIsWrapped, bool doesNotWrap,
     Value* condition = graph.make(loop.header, LessThan, graph.get(loop.header, loop.index), bound);
     loop.finish(condition, wrapped(graph, loop.body, graph.make(loop.body, Add, graph.get(loop.body, loop.index), graph.int64(loop.body, 1))), doesNotWrap);
 
-    checkStripMiningNeedsProof(proc, isMined);
+    auto counted = analyze(proc);
+    CHECK(counted);
+    CHECK_EQ(counted->cannotWrap(), cannotWrap);
     auto code = compileProc(proc);
     for (int64_t boundAtRunTime : std::initializer_list<int64_t> { 0, 5, manyIterations }) {
         state = { };
         CHECK_EQ(invoke<int64_t>(*code, boundAtRunTime), boundAtRunTime);
-        checkPolls(state, boundAtRunTime, isMined);
+        CHECK_EQ(state.numberOfPolls, boundAtRunTime);
     }
 }
 

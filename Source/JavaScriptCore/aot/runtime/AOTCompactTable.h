@@ -23,6 +23,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class JSArray;
 class JSMap;
 class JSSet;
 
@@ -62,16 +63,23 @@ public:
 
     static constexpr uint32_t initialCapacity = 4;
     static constexpr uint32_t maxCapacityWithTags = 8;
+    static constexpr uint32_t maxCapacityEmptiedByClear = 32;
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr uint32_t maxCapacityWithLongSlots = (1 << 20) - 2;
     static constexpr uint32_t maxCapacity = (1 << 28) - 2;
     static constexpr uint8_t keysAreWide = 0x80;
     static constexpr uint8_t keysAreInImage = 0x40;
+    // Somebody may stand behind an entry of the table: an iterator or a loop that has taken one. Until then whoever holds the table has yet to take its first entry.
+    static constexpr uint8_t wasWalked = 0x20;
     static constexpr uint8_t keysShiftMask = 0x1f;
     static constexpr uint8_t indexIsInImage = 0x80;
     static constexpr uint32_t capacityIsInImage = 1u << 31;
     static constexpr uint8_t keysShiftWithTags = 2;
     static_assert(2u << keysShiftWithTags == maxCapacityWithTags);
+    // A full table with narrow keys, no deleted entry and fewer entries than this grows by a plan.
+    static constexpr uint32_t maxCountWithGrowthPlan = 64;
+    static constexpr unsigned growthPlansPerValueWidth = maxCountWithGrowthPlan / 2;
+    static constexpr unsigned sizeStepShiftOfGrowthPlan = 56;
     static constexpr unsigned hashBits = 24;
     static constexpr unsigned hashMask = (1u << hashBits) - 1;
     static constexpr unsigned tagShiftOfTags = 16;
@@ -101,15 +109,33 @@ public:
     static Structure* createStructure(VM&);
     static Structure* structureOf(VM&);
     static CompactTable* tryCreate(JSGlobalObject*, Width key, Width value, uint32_t minCapacity);
+    static CompactTable* tryCreateForFirstEntry(JSGlobalObject*, bool hasValues, JSValue key, JSValue value);
+    // In front of an addition in a loop that the collection entered with `sizeAtEntry` entries, that has come by `finished` additions and has `remaining` ones left, this one among them.
+    // A full table is replaced by one with room for as many of those as have added an entry so far. Where nothing is known yet, where there is no memory, or where the usual growth gives
+    // as much as that estimate, the table stays. No step multiplies the entries by more than largestStepInLoop.
+    static constexpr uint32_t largestStepInLoop = 8;
+    static void reserveForAdditions(JSGlobalObject*, JSObject* owner, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry);
     static void ensureInitialTableAllocators(VM&);
+    // [static_cast<unsigned>(value width) / 4 * growthPlansPerValueWidth + count / 2]: the word at offsetOfCapacity() of the larger table, and above sizeStepShiftOfGrowthPlan the size step of its allocator.
+    static const uint64_t* growthPlans();
     static CompactTable* createInImage(VM&, State&, const TableInImage&);
     static JSSet* createSetInImage(JSGlobalObject*, const TableInImage&);
     static JSMap* createMapInImage(JSGlobalObject*, const TableInImage&);
     static JSSet* tryCreateSetOfStrings(JSGlobalObject*, std::span<const WriteBarrier<Unknown>> values);
+    // Null, and nothing done, unless the array has int32 or double storage without a hole.
+    static JSSet* tryCreateSetOfNumbers(JSGlobalObject*, JSArray*);
+    // The list is a contiguous array. Null, and nothing done, unless each element is an ordinary array of a resolved string and a value.
+    static JSMap* tryCreateMapOfStringKeys(JSGlobalObject*, JSArray* pairs);
     static CompactTable* tableOf(JSObject* owner);
+    static bool tryClearInPlace(JSObject* owner);
     static CompactTable* tryMoveToHeap(JSGlobalObject*, JSObject* owner);
 
     Status status() const { return m_status; }
+    JSCell* successorOfObsoleteTable() const
+    {
+        RELEASE_ASSERT(!isLive());
+        return *at<JSCell*>(offsetOfUsed());
+    }
     bool isLive() const { return m_status == Status::Live; }
     bool isInImage() const
     {
@@ -117,6 +143,7 @@ public:
         return m_keysShiftAndFlags & keysAreInImage;
     }
     bool isHeapTable() const { return isLive() && !(m_keysShiftAndFlags & keysAreInImage); }
+    bool isFullHeapTable() const { return isHeapTable() && m_used == m_capacity; }
     const TableInImage& tableInImage() const
     {
         RELEASE_ASSERT(isInImage());
@@ -368,7 +395,6 @@ public:
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
     static void clear(JSGlobalObject*, JSObject* owner);
-    static JSCellButterfly* convertToOrdinaryStorage(JSGlobalObject*, CompactTable*);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);
 
     template<typename Visitor> ALWAYS_INLINE static void visitFields(CompactTable*, Visitor&);
@@ -388,8 +414,6 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 private:
-    struct GrowthPlan;
-
     CompactTable(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
@@ -403,7 +427,6 @@ private:
 
     static uint32_t capacityFor(uint32_t minCapacity, Width key, Width value);
     static uint32_t capacityAfterGrowth(uint32_t alive, uint32_t used);
-    static const GrowthPlan& growthPlanFor(Width value, uint32_t count);
     static size_t offsetOfKeys(uint32_t capacity);
     static size_t allocationSize(uint32_t capacity, Width key, Width value);
     static unsigned hashOfStoredKey(JSValue);
@@ -442,10 +465,15 @@ private:
     void fillIndex(uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
     template<SlotKind> uint32_t fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
+    template<SlotKind> uint32_t fillWithPairsOfHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
+    template<SlotKind> uint32_t fillWithNumbers(std::span<const EncodedJSValue>);
     void append(VM&, JSValue key, unsigned hash, JSValue value);
-    CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value) const;
+    enum class QuickAddition : uint8_t { Unknown, Done };
+    QuickAddition tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
+    CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     CompactTable* copyWithAbsentKey(VM&, JSString* key, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);
+    void removeAllEntries();
 
     JSCell*& successor()
     {

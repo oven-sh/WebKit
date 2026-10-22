@@ -1,7 +1,7 @@
 # first = new Map; first.set(keyOne, one); second = new Map; second.set(keyTwo, two); for (const [k, v] of first) v(); for (const v of second.values()) v(); for (const k of second.keys()) k(); set = new Set; set.add(three); for (const e of set) e()
-# A step over a map allocates a pair at the step, so the entries of two maps stay apart. A pair does not tell the key from the value. The iterators of keys and of values hand out one of the two.
+# A step over a map allocates a pair at the step, so the entries of two maps stay apart. The second step of a pattern over the pair reads the value. The iterators of keys and of values hand out one of the two.
 # RUN: valueflow-solve calls
-# CHECK: f0 v20 -> f1 f2
+# CHECK: f0 v20 -> f2
 # CHECK: f0 v27 -> f4
 # CHECK: f0 v34 -> f3
 # CHECK: f0 v44 -> f5

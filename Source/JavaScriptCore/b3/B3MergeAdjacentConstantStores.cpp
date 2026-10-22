@@ -21,6 +21,7 @@
 #include "CCallHelpers.h"
 #include "CPU.h"
 #include <tuple>
+#include <wtf/HashSet.h>
 #include <wtf/Range.h>
 
 namespace JSC { namespace B3 {
@@ -83,6 +84,27 @@ private:
         return (value->opcode() == Store || value->opcode() == Store8 || value->opcode() == Store16) && !value->kind().traps() && !value->as<MemoryValue>()->hasFence();
     }
 
+    // An object of a thousand slots is filled by a thousand stores, in no order that anybody has promised. No two collected stores have one offset.
+    bool overlapsCollectedStore(int64_t begin, int64_t end, int64_t width)
+    {
+        constexpr unsigned mostStoresSearchedOneByOne = 16;
+        if (m_stores.size() <= mostStoresSearchedOneByOne) {
+            return std::ranges::any_of(m_stores, [&](const ConstantStore& other) {
+                return begin < other.offset() + width && other.offset() < end;
+            });
+        }
+        auto keyOf = [](int64_t offset) {
+            return static_cast<uint64_t>(offset + (static_cast<int64_t>(1) << 32));
+        };
+        for (; m_numberOfOffsetsNoted < m_stores.size(); ++m_numberOfOffsetsNoted)
+            m_offsets.add(keyOf(m_stores[m_numberOfOffsetsNoted].offset()));
+        for (int64_t offset = begin - width + 1; offset < end; ++offset) {
+            if (m_offsets.contains(keyOf(offset)))
+                return true;
+        }
+        return false;
+    }
+
     template<typename IsCandidate, typename DidEndRun>
     void forEachRun(BasicBlock* block, int64_t width, const IsCandidate& isCandidate, const DidEndRun& didEndRun)
     {
@@ -90,6 +112,10 @@ private:
             std::ranges::sort(m_stores, { }, &ConstantStore::offset);
             didEndRun();
             m_stores.shrink(0);
+            if (m_numberOfOffsetsNoted) {
+                m_offsets.clear();
+                m_numberOfOffsetsNoted = 0;
+            }
             m_collectedBytes = { };
             m_base = nullptr;
         };
@@ -101,9 +127,7 @@ private:
                 int64_t begin = store->offset();
                 int64_t end = begin + static_cast<int64_t>(store->accessByteSize());
                 Range<int64_t> bytes(begin, end);
-                bool overlaps = m_collectedBytes.overlaps(bytes) && std::ranges::any_of(m_stores, [&](const ConstantStore& other) {
-                    return begin < other.offset() + width && other.offset() < end;
-                });
+                bool overlaps = m_collectedBytes.overlaps(bytes) && overlapsCollectedStore(begin, end, width);
                 if (store->lastChild() != m_base || overlaps) {
                     endRun();
                     m_base = store->lastChild();
@@ -253,6 +277,9 @@ private:
     Procedure& m_proc;
     InsertionSet m_insertionSet;
     Vector<ConstantStore, 32> m_stores;
+    // Of the first m_numberOfOffsetsNoted of m_stores, once there are many.
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_offsets;
+    unsigned m_numberOfOffsetsNoted { 0 };
     Range<int64_t> m_collectedBytes;
     Vector<Pair, 16> m_pairs;
     Vector<ZeroStretch, 4> m_zeroStretches;

@@ -1,4 +1,4 @@
-# The written effects of a row as they are printed, one row for each kind of item: no effect, a flag, an entire heap, a location from the payload, unknown code
+# The declared effects of a row as they are printed, one row for each kind of item: no effect, a flag, an entire heap, a location from the payload, unknown code
 # FORM: Prepared
 # RUN: effects
 # RUN(ONLY): effects

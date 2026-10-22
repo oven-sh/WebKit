@@ -1,0 +1,39 @@
+# function run(f) { f.call(other, "text") }  run(measure); run(somethingNoTableLists); somethingNoTableLists(Function.prototype.call)
+# Function.prototype.call has escaped, so beside the unknown object it is not listed among the callees of `f.call(..)`: the unknown object stands for it.
+# The read of `call` from `measure` answers that function and not the unknown object. `measure` is a receiver of the unknown callee all the same, and so it is entered with operands nobody knows.
+# method-sees-only-the-receivers-that-answer-it.ir has the callees that are listed
+# RUN: valueflow-why values=f2:v2 values=f2:v3
+# CHECK: values=f2:v2
+# CHECK: operand 0 {{*}} unknown
+# CHECK: values=f2:v3
+# CHECK: operand 0 {{*}} unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Other"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = Call v0, -, v4
+    v6 = Builtin builtin=FunctionPrototypeCall
+    v7 = Call v4, -, v6
+    Return
+}
+function f1 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="call"
+    v2 = NewObject layout=L0
+    v3 = String string="text"
+    v4 = Call v1, v0, v2, v3 calleeKey="call"
+    Return v4
+}
+function f2 name="measure" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="size"
+    v3 = PropGet v1 key="length"
+    Return v2
+}

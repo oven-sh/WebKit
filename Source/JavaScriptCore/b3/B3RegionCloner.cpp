@@ -28,7 +28,7 @@ void RegionCloner::addBlock(BasicBlock* block)
     m_declaredBlocks.add(block);
 }
 
-void RegionCloner::demoteEscapingValues(PhiTreatment treatment)
+void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owners)
 {
     RELEASE_ASSERT(m_step == Step::Declaring);
     m_step = Step::Copying;
@@ -36,7 +36,8 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment)
     if (m_declaredBlocks.isEmpty())
         return;
 
-    m_proc.resetValueOwners();
+    if (owners == ValueOwners::MayBeStale)
+        m_proc.resetValueOwners();
 
     IndexSet<Value*> valuesToDemote;
     for (BasicBlock* block : m_proc) {

@@ -1,0 +1,31 @@
+# One test of one value is made in two places, and what passes it has the type of what was tested there: narrower in an arm that a branch has narrowed. Until the values are joined the first of them stands for both. A read behind the second test is planned for all that may pass there, not for what passes the first.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Twin" constructor=f1 fields=[{key="leaf" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Point" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}, {key="leaf" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="readBehindAnArm" parameters=[{type=undefined|null|L0|L1}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = TypeTest v0 testedType=L1
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: L1):
+    v3 = PropGet v2 key="x"
+    Jump -> next b3(v3)
+  b2(v4: undefined|null|L0):
+    v5 = PropGet v4 key="label"
+    Jump -> next b3(v5)
+  b3(v6: anything):
+    v7 = PropGet v0 key="leaf"
+    v8 = Add v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f0 name="readBehindAnArm"
+# CHECK: = GetSlot {{*}} key="label" receivers=[L0]
+# CHECK: = GetSlot {{*}} key="leaf" receivers=[L0, L1]
+# CHECK-NOT: key="leaf" receivers=[L0]
+
+function f1 name="Twin" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f2 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

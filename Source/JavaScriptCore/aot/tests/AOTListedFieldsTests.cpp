@@ -111,10 +111,10 @@ static Object* createItem(LoadedProgram& program, JSValue payload)
     VM& vm = program.vm();
     Object* item = allocate(program, "Item"_s);
     std::span<const FieldData> fields = item->layout().fields();
-    AOT_TEST_CHECK(item->store(vm, fields[0], jsNumber(7)));
-    AOT_TEST_CHECK(item->store(vm, fields[1], jsNontrivialString(vm, "Product 7"_s)));
-    AOT_TEST_CHECK(item->store(vm, fields[2], payload));
-    AOT_TEST_CHECK(item->store(vm, fields[3], jsBoolean(false)));
+    AOT_TEST_CHECK(item->store(vm, fields[0], AcceptedValue::provenAtBuildTime(jsNumber(7))));
+    AOT_TEST_CHECK(item->store(vm, fields[1], AcceptedValue::provenAtBuildTime(jsNontrivialString(vm, "Product 7"_s))));
+    AOT_TEST_CHECK(item->store(vm, fields[2], AcceptedValue::provenAtBuildTime(payload)));
+    AOT_TEST_CHECK(item->store(vm, fields[3], AcceptedValue::provenAtBuildTime(jsBoolean(false))));
     return item;
 }
 
@@ -234,7 +234,7 @@ static Object* createFilledWithOnes(LoadedProgram& program, ASCIILiteral layoutN
 {
     Object* object = allocate(program, layoutName);
     for (const FieldData& field : object->layout().fields())
-        AOT_TEST_CHECK(object->store(program.vm(), field, jsNumber(1)));
+        AOT_TEST_CHECK(object->store(program.vm(), field, AcceptedValue::provenAtBuildTime(jsNumber(1))));
     return object;
 }
 
@@ -322,7 +322,7 @@ static void checkCyclesAndDepth(LoadedProgram& program)
     VM& vm = program.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Object* cyclic = createItem(program, jsNull());
-    AOT_TEST_CHECK(cyclic->store(vm, cyclic->layout().fields()[2], cyclic));
+    AOT_TEST_CHECK(cyclic->store(vm, cyclic->layout().fields()[2], AcceptedValue::provenAtBuildTime(cyclic)));
     String text = JSONStringify(program.realm(), cyclic, 0);
     AOT_TEST_CHECK(text.isNull() && scope.exception());
     JSValue thrown = scope.exception()->value();

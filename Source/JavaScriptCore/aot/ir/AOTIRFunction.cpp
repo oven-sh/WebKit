@@ -32,6 +32,21 @@ const DeclaredType& Function::result() const
     return results[0];
 }
 
+void Function::willEditEdgesOf(const Block& block)
+{
+    block.forEachTarget([&](const Target& target) {
+        if (target.block)
+            m_changes.log->didEdit(target.block, BlockEdit::Incoming);
+    });
+}
+
+void Function::releaseBody()
+{
+    RELEASE_ASSERT(bodyIsReleased && !blocks.isEmpty());
+    editAllBlocks().clear();
+    editAllValues().clear();
+}
+
 bool Function::isModuleBody() const
 {
     switch (kind) {
@@ -266,61 +281,82 @@ static BitVector findReachableBlocks(const Function& function)
     return isReachable;
 }
 
-static void removeUnreachableBlocks(Function& function, const BitVector& isReachable)
+static Vector<BlockID> removeUnreachableBlocks(Function& function, const BitVector& isReachable)
 {
     unsigned count = function.blocks.size();
     if (isReachable.bitCount() == count)
-        return;
+        return { };
 
     Vector<BlockID> movedTo(count);
+    Function::Blocks::Storage& blocks = function.editAllBlocks();
     unsigned next = 0;
     for (unsigned b = 0; b < count; ++b) {
         if (!isReachable.quickGet(b))
             continue;
         if (next != b)
-            function.blocks[next] = WTF::move(function.blocks[b]);
+            blocks[next] = WTF::move(blocks[b]);
         movedTo[b] = BlockID(next++);
     }
-    function.blocks.shrink(next);
-    for (auto& block : function.blocks) {
+    blocks.shrink(next);
+    for (auto& block : blocks) {
         block.forEachTarget([&](Target& target) {
             target.block = movedTo[target.block.index()];
         });
     }
+    return movedTo;
 }
 
-static void sortIntoReversePostOrder(Function& function)
+static Vector<BlockID> sortIntoReversePostOrder(Function& function)
 {
     CFG cfg(function);
     std::span<const BlockID> order = cfg.reversePostOrder();
     RELEASE_ASSERT(order.size() == function.blocks.size() && order[0] == entryBlock);
 
-    decltype(function.blocks) blocks;
+    Function::Blocks::Storage blocks;
     blocks.reserveInitialCapacity(order.size());
     for (BlockID block : order)
-        blocks.append(WTF::move(function.at(block)));
-    function.blocks = WTF::move(blocks);
+        blocks.append(WTF::move(function.editAllBlocks()[block.index()]));
+    function.editAllBlocks() = WTF::move(blocks);
 
-    for (auto& block : function.blocks) {
+    for (auto& block : function.editAllBlocks()) {
         block.forEachTarget([&](Target& target) {
             target.block = BlockID(cfg.reversePostOrderIndex(target.block));
         });
     }
+    return Vector<BlockID>(order.size(), [&](size_t index) {
+        return BlockID(cfg.reversePostOrderIndex(BlockID(index)));
+    });
 }
 
-static void renumberValues(Function& function, size_t numberOfListedValues)
+// An empty list moves no block.
+static Vector<BlockID> movedFirstAndThen(Vector<BlockID>&& first, Vector<BlockID>&& then)
+{
+    if (first.isEmpty())
+        return WTF::move(then);
+    if (then.isEmpty())
+        return WTF::move(first);
+    for (BlockID& block : first) {
+        if (block)
+            block = then[block.index()];
+    }
+    return WTF::move(first);
+}
+
+static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedValues)
 {
     Vector<ValueID> newID(function.values.size());
-    decltype(function.values) values;
+    Function::Values::Storage values;
+    Function::Values::Storage& formerValues = function.editAllValues();
+    Function::Blocks::Storage& blocks = function.editAllBlocks();
     values.reserveInitialCapacity(numberOfListedValues);
     auto moveListedValue = [&](ValueID& id) {
         unsigned oldIndex = id.index();
         RELEASE_ASSERT(!newID[oldIndex]);
         id = ValueID(values.size());
         newID[oldIndex] = id;
-        values.append(WTF::move(function.values[oldIndex]));
+        values.append(WTF::move(formerValues[oldIndex]));
     };
-    for (auto& block : function.blocks) {
+    for (auto& block : blocks) {
         for (ValueID& parameter : block.parameters)
             moveListedValue(parameter);
         for (ValueID& value : block.values)
@@ -333,32 +369,68 @@ static void renumberValues(Function& function, size_t numberOfListedValues)
     };
     for (auto& value : values)
         value.forEachChild(remapChild);
-    for (auto& block : function.blocks)
+    for (auto& block : blocks)
         block.forEachChildOutsideValues(remapChild);
 
-    function.values = WTF::move(values);
+    // The relations name values by their numbers. Where one of those values is gone, they say nothing any more.
+    auto renumber = [&](uint32_t& index) {
+        if (index >= newID.size() || !newID[index])
+            return false;
+        index = newID[index].index();
+        return true;
+    };
+    bool namesRemovedValue = false;
+    for (RelationSubject& subject : function.relations.subjects) {
+        if (subject.kind != RelationSubjectKind::Parameter && subject.index != UINT32_MAX)
+            namesRemovedValue |= !renumber(subject.index);
+    }
+    for (HandedTo& handed : function.relations.handed)
+        namesRemovedValue |= !renumber(handed.call);
+    if (namesRemovedValue)
+        function.relations = { };
+
+    formerValues = WTF::move(values);
+    return newID;
 }
 
-bool compactFunction(Function& function)
+static size_t countListedValues(const Function& function)
+{
+    size_t count = 0;
+    for (const Block& block : function.blocks)
+        count += block.parameters.size() + block.values.size();
+    return count;
+}
+
+bool needsCompaction(const Function& function)
+{
+    return function.hasBody() && (!hasEarlierPredecessors(function) || countListedValues(function) != function.values.size());
+}
+
+bool compactFunction(Function& function, Renumbering* renumbering)
 {
     if (!function.hasBody())
         return false;
 
+    // Other numbers for the same values.
+    bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
     // By induction a block with an earlier predecessor is reachable, so a valid order has no unreachable block.
     bool wasOrdered = hasEarlierPredecessors(function);
+    Vector<BlockID> movedBlocks;
     if (!wasOrdered) {
-        removeUnreachableBlocks(function, findReachableBlocks(function));
+        movedBlocks = removeUnreachableBlocks(function, findReachableBlocks(function));
         if (!hasEarlierPredecessors(function))
-            sortIntoReversePostOrder(function);
+            movedBlocks = movedFirstAndThen(WTF::move(movedBlocks), sortIntoReversePostOrder(function));
     }
 
-    size_t numberOfListedValues = 0;
-    for (const Block& block : function.blocks)
-        numberOfListedValues += block.parameters.size() + block.values.size();
+    size_t numberOfListedValues = countListedValues(function);
     if (wasOrdered && numberOfListedValues == function.values.size())
         return false;
 
-    renumberValues(function, numberOfListedValues);
+    Vector<ValueID> movedValues = renumberValues(function, numberOfListedValues);
+    if (renumbering)
+        *renumbering = { WTF::move(movedBlocks), WTF::move(movedValues) };
+    if (valuesAreTypedAsDefined)
+        function.setValuesAreTypedAsDefined();
     return true;
 }
 
@@ -380,21 +452,87 @@ struct ProvisionalIDRewriter {
 
 } // anonymous namespace
 
+namespace {
+
+struct ForeignIDAdopter {
+    void operator()(TypeID& id) const { id = types.adopt(id); }
+    void operator()(LayoutSetID& id) const { id = types.adopt(id); }
+    void operator()(CalleeSetID& id) const { id = types.adopt(id); }
+    void operator()(PropertyKeyID& id) const { id = types.adopt(id); }
+    template<typename Tag> void operator()(ID<Tag>&) const { }
+
+    TypeArena& types;
+};
+
+} // anonymous namespace
+
+namespace {
+
+struct ForeignIDCounter {
+    void operator()(TypeID& id) const { count += !types.owns(id); }
+    void operator()(LayoutSetID& id) const { count += !types.owns(id); }
+    void operator()(CalleeSetID& id) const { count += !types.owns(id); }
+    void operator()(PropertyKeyID& id) const { count += !types.owns(id); }
+    template<typename Tag> void operator()(ID<Tag>&) const { }
+
+    const TypeArena& types;
+    size_t& count;
+};
+
+} // anonymous namespace
+
+size_t numberOfForeignIDs(const Function& constFunction, const TypeArena& types)
+{
+    Function& function = const_cast<Function&>(constFunction);
+    size_t count = 0;
+    ForeignIDCounter counter { types, count };
+    forEachReference(static_cast<FunctionRecord&>(function), counter);
+    for (Value& value : function.storageOfValues()) {
+        count += !types.owns(value.type) + !types.owns(value.expected());
+        forEachReference(value, counter);
+    }
+    for (Block& block : function.storageOfBlocks())
+        forEachReference(block.terminator, counter);
+    return count;
+}
+
+void adoptIDs(Function& function, TypeArena& types)
+{
+    // Other names for the same types.
+    bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
+    ForeignIDAdopter adopter { types };
+    forEachReference(static_cast<FunctionRecord&>(function), adopter);
+    for (Value& value : function.editAllValues()) {
+        value.type = types.adopt(value.type);
+        TypeID expected = types.adopt(value.expectedForTyping());
+        value.setExpected(expected == value.type ? TypeID() : expected);
+        forEachReference(value, adopter);
+    }
+    for (Block& block : function.editAllBlocks())
+        forEachReference(block.terminator, adopter);
+    if (valuesAreTypedAsDefined)
+        function.setValuesAreTypedAsDefined();
+}
+
 void remapIDs(Function& function, const TypeRemap& types, const StringRemap& strings, const FunctionRemap& functions)
 {
     if (types.isIdentity() && strings.isIdentity() && functions.isIdentity())
         return;
 
+    bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
     ProvisionalIDRewriter rewriter { types, strings, functions };
     forEachReference(static_cast<FunctionRecord&>(function), rewriter);
-    for (Value& value : function.values) {
+    for (Value& value : function.editAllValues()) {
         types.apply(value.type);
-        value.setWritten(types(value.written()));
-        value.setPrediction(types(value.prediction()));
+        // Two arenas give one type two provisional ids. An expected type is set where it says more than the type does, and here the two may turn out to be one.
+        TypeID expected = types(value.expectedForTyping());
+        value.setExpected(expected == value.type ? TypeID() : expected);
         forEachReference(value, rewriter);
     }
-    for (Block& block : function.blocks)
+    for (Block& block : function.editAllBlocks())
         forEachReference(block.terminator, rewriter);
+    if (valuesAreTypedAsDefined)
+        function.setValuesAreTypedAsDefined();
 }
 
 } } } // namespace JSC::AOT::Typed

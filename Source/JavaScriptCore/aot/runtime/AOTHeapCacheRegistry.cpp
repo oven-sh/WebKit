@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEmptyPages.h"
 #include "AOTRuntimeValidation.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "SlotVisitorInlines.h"
@@ -25,10 +26,7 @@ CacheRegistry::~CacheRegistry() = default;
 
 static bool isAllZero(std::span<const uint8_t> bytes)
 {
-    uint8_t combinedBits = 0;
-    for (uint8_t byte : bytes)
-        combinedBits |= byte;
-    return !combinedBits;
+    return holdsOnlyZeros(bytes);
 }
 
 // Reading a zero-filled page that was never written does not commit it. Writing does.

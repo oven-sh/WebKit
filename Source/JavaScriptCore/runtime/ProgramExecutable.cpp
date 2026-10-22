@@ -68,7 +68,7 @@ enum class GlobalPropertyLookUpStatus {
 static GlobalPropertyLookUpStatus hasRestrictedGlobalProperty(JSGlobalObject* globalObject, PropertyName propertyName)
 {
 #if ENABLE(AOT)
-    if (globalObject->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
+    if (globalObject->structure()->isImmutablePropertyForReader(propertyName.uid())) [[unlikely]]
         return GlobalPropertyLookUpStatus::Immutable;
 #endif
     PropertyDescriptor descriptor;
@@ -167,7 +167,7 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
                 return createSyntaxError(globalObject, makeString("Can't create duplicate variable that shadows a global property: '"_s, StringView(entry.key.get()), '\''));
 #if ENABLE(AOT)
             case GlobalPropertyLookUpStatus::Immutable:
-                return createSyntaxError(globalObject, withAOTErrorNote(makeString("Cannot declare '"_s, StringView(entry.key.get()), "': this executable was compiled with the global of that name as a constant, and a top-level let, const or class of a script would shadow it"_s)));
+                return createSyntaxError(globalObject, withAOTErrorNote(makeString("Cannot declare '"_s, StringView(entry.key.get()), "': compiled code treats the global '"_s, StringView(entry.key.get()), "' as a constant, so a script can't shadow it with a top-level let, const or class"_s)));
 #endif
             case GlobalPropertyLookUpStatus::Configurable:
                 // Lexical bindings can shadow global properties if the given property's attribute is configurable.

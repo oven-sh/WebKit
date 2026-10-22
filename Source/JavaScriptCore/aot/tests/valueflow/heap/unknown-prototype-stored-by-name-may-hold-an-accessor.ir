@@ -1,0 +1,25 @@
+# stored = { held: one }; stored.__proto__ = somethingNoTableLists; stored.label
+# A store under `__proto__` runs the setter of the table, so an object nobody knows lies above the object from then on. It may have a getter under any name that the object lacks, and that getter is handed the object as `this`:
+# the read lets the object escape, and what it holds is entered. one-receiver-with-an-unknown-getter-escapes-alone.ir has the same with `__proto__` in a literal.
+# The setter of the table is applied once for all the stores of a program that find it, with the receivers and the values of all of them. So the store of an object of the program has a file of its own:
+# known-prototype-stored-by-name-holds-no-accessor.ir
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StoredByName" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="somethingThatNoTableLists" [isFreeName]
+    PropSet v1, v3 key="__proto__" mode=Strict
+    v5 = PropGet v1 key="label"
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

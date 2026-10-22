@@ -181,6 +181,83 @@ static void testBranchOnExactSumFitsInt32()
     }
 }
 
+static void testBranchOnInt32OverflowInMemory()
+{
+    enum class Right : uint8_t { IsWord, IsConstant };
+    enum class Extra : uint8_t { None, LoadAfterStore, StoreBeforeStore, OtherUserOfOldValue };
+    struct Case {
+        B3::Opcode opcode;
+        B3::Opcode comparison;
+        Right right;
+        Extra extra;
+    };
+    constexpr int64_t constant = 100;
+    constexpr int64_t overflowMarker = 1ll << 40;
+    auto build = [&](Procedure& proc, Case testCase) {
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* fits = proc.addBlock();
+        BasicBlock* overflows = proc.addBlock();
+        auto arguments = cCallArgumentValues<int32_t*, int64_t>(proc, root);
+        Value* pointer = arguments[0];
+        Value* oldValue = graph.load(root, Int32, pointer, 4, firstHeap);
+        Value* right = testCase.right == Right::IsWord ? graph.make(root, SExt32, graph.make(root, Trunc, arguments[1])) : graph.int64(root, constant);
+        Value* exact = graph.make(root, testCase.opcode, graph.make(root, SExt32, oldValue), right);
+        Value* low = graph.make(root, Trunc, exact);
+        if (testCase.extra == Extra::StoreBeforeStore)
+            graph.store(root, graph.int32(root, 7), pointer, 8, firstHeap);
+        graph.store(root, low, pointer, 4, firstHeap);
+        Value* result = graph.int64(root, 0);
+        if (testCase.extra == Extra::LoadAfterStore)
+            result = graph.make(root, ZExt32, graph.load(root, Int32, pointer, 4, firstHeap));
+        if (testCase.extra == Extra::OtherUserOfOldValue)
+            result = graph.make(root, ZExt32, oldValue);
+        Value* isInt32 = graph.make(root, testCase.comparison, graph.make(root, SExt32, low), exact);
+        if (testCase.comparison == Equal)
+            graph.branch(root, isInt32, FrequentedBlock(fits), rarely(overflows));
+        else
+            graph.branch(root, isInt32, rarely(overflows), FrequentedBlock(fits));
+        graph.ret(fits, result);
+        graph.ret(overflows, graph.make(overflows, Add, result, graph.int64(overflows, overflowMarker)));
+        proc.resetReachability();
+    };
+    for (B3::Opcode opcode : { Add, Sub }) {
+        for (B3::Opcode comparison : { Equal, NotEqual }) {
+            for (Right right : { Right::IsWord, Right::IsConstant }) {
+                for (Extra extra : { Extra::None, Extra::LoadAfterStore, Extra::StoreBeforeStore, Extra::OtherUserOfOldValue }) {
+                    for (bool usesPolicy : { false, true }) {
+                        Case testCase { opcode, comparison, right, extra };
+                        Procedure lowered(usesPolicy ? selectionPolicy() : Policy());
+                        build(lowered, testCase);
+                        lowerToAirForTesting(lowered);
+                        unsigned numberOfUpdatesInMemory = numberOfInsts(lowered, [](Air::Inst& inst) {
+                            return (inst.kind.opcode == Air::BranchAdd32 || inst.kind.opcode == Air::BranchSub32) && inst.args().size() == 3 && inst.args()[2].isAddr();
+                        });
+                        CHECK_EQ(numberOfUpdatesInMemory, isX86() && usesPolicy && extra == Extra::None ? 1u : 0u);
+
+                        Procedure proc(usesPolicy ? selectionPolicy() : Policy());
+                        build(proc, testCase);
+                        auto code = compileProc(proc);
+                        for (int64_t a : { 0ll, 1ll, -1ll, 100ll, -100ll, 0x7fffffffll, 0x7fffff9cll, 0x7fffff9bll, -0x80000000ll, -0x7fffff9cll, -0x7fffff9dll }) {
+                            for (int64_t b : { 0ll, 1ll, -1ll, 0x7fffffffll, -0x80000000ll, 0x7654321000000001ll }) {
+                                int64_t y = right == Right::IsWord ? static_cast<int64_t>(static_cast<int32_t>(b)) : constant;
+                                int64_t sum = opcode == Add ? a + y : a - y;
+                                int32_t words[4] = { 11, static_cast<int32_t>(a), 22, 33 };
+                                int64_t result = extra == Extra::LoadAfterStore ? static_cast<int64_t>(static_cast<uint32_t>(sum)) : extra == Extra::OtherUserOfOldValue ? static_cast<int64_t>(static_cast<uint32_t>(a)) : 0;
+                                CHECK_EQ(invoke<int64_t>(*code, words, b), result + (sum == static_cast<int32_t>(sum) ? 0 : overflowMarker));
+                                CHECK_EQ(words[0], 11);
+                                CHECK_EQ(words[1], static_cast<int32_t>(static_cast<uint32_t>(sum)));
+                                CHECK_EQ(words[2], extra == Extra::StoreBeforeStore ? 7 : 22);
+                                CHECK_EQ(words[3], 33);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void testExactSumIsReadAfterJoin()
 {
     Procedure proc(selectionPolicy());
@@ -968,6 +1045,7 @@ void addBunSelectionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUseCountsDuplicateChild());
     RUN(testRedundantZeroExtension());
     RUN(testBranchOnExactSumFitsInt32());
+    RUN(testBranchOnInt32OverflowInMemory());
     RUN(testExactSumIsReadAfterJoin());
     RUN(testZeroExtensionClearsUpperHalf());
     RUN(testLow32BitsOfLoad64WithScaledIndex());

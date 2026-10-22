@@ -38,6 +38,8 @@ struct VerifierInputs {
     RawWordCheck rawWordCheck { RawWordCheck::Run };
     bool isOptimizing { false };
     const EffectSummaries* effects { nullptr };
+    // The summaries know less than those that the guards of the body were placed by, so they cannot say whether a guard still holds where it is used.
+    bool cannotJudgeGuards { false };
     // Data and the small records are checked once, in form AsRead. IR text of a later form was never in that form.
     bool hasUncheckedRecords { false };
     // The parser of IR text states the engine's fields of a function, its inline frames among them, after the reader has run, and verifies the structure again.

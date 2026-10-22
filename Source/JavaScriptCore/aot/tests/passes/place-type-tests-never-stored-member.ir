@@ -1,6 +1,6 @@
-# A store tests for the predicted layouts whose field some store reaches. A layout whose field flow proves never stored has no slot for it: the store does not name it, and the stored value is tested against the fields of the others. A read names both
+# A store tests for the expected layouts whose field some store reaches. A layout whose field flow proves never stored has no slot for it: the store does not name it, and the stored value is tested against the fields of the others. A read names both
 # FORM: AsRead
-# OPTIONS: admit=RuntimeCode references=narrow
+# OPTIONS: references=narrow heat=EverythingIsHot
 # RUN: pipeline PlaceTypeTests
 # RUN(BUILD): compile
 # RUN(PLAN): plan-slots layouts accesses
@@ -32,28 +32,30 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v15 = Call v1, -, v12, v14
     Return v15
 }
-function f1 name="set" parameters=[{type=anything predicted=L0|L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
+function f1 name="set" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything):
     PropSet v0, v1 key="late"
     Return
 }
 # CHECK-LABEL: function f1 name="set"
+# CHECK-NOT: testedType=L0|L1
+# CHECK: = TypeTest v0 testedType=L0
 # CHECK-NOT: [L0, L1]
-# CHECK: PutSlot [[object]], {{*}} key="late" receivers=[L0] level=Predicted
+# CHECK: PutSlot [[object]], {{*}} key="late" receivers=[L0] level=Expected
 # CHECK-NOT: [L0, L1]
-# CHECK: = ShapeTest [[object]] layouts=[L0]
+# CHECK: ([[object]]: L0):
 # CHECK-NOT: [L0, L1]
-# CHECK: = IsSlotFilled [[object]], {{*}} key="late" receivers=[L0] level=Predicted
+# CHECK: = IsSlotFilled [[object]]{{*}} key="late" receivers=[L0] level=Expected
 # CHECK-NOT: testedType=undefined
 # CHECK: = TypeTest v1 testedType=undefined|string
 # CHECK-NOT: [L0, L1]
-function f2 name="get" parameters=[{type=anything predicted=L0|L1}] results=[{type=anything}] {
-  b0(v0: anything):
+function f2 name="get" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1):
     v1 = PropGet v0 key="late"
     Return v1
 }
 # CHECK-LABEL: function f2 name="get"
-# CHECK: = ShapeTest {{*}} layouts=[L0, L1]
+# CHECK: = TypeTest {{*}} testedType=L0|L1
 
 # BUILD-NOT: diagnostic
 # BUILD: image not empty

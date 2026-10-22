@@ -27,31 +27,68 @@ template<typename> class RememberedSlot;
 
 namespace AOT {
 
-class CallSiteOverride;
-
 using RuntimeCounterID = Wire::RuntimeCounterID;
 inline constexpr unsigned numberOfRuntimeCounters = numberOfEnumerators<RuntimeCounterID>;
 
 struct ExceptionWords {
     EncodedJSValue thrownValue;
-    const CallSiteOverride* callSiteOverrides;
+    // Of the frame of the handler that unwinding has found, from there to the jump to the handler.
+    void* stackPointerOfHandler;
     // One more than the identifier number of the method that FindMethodById read, from there to the call of what it read, if that is not a cell. Zero otherwise.
     uint32_t nameOfUncallableMethod;
 };
+
+// What the last lookup of a bound name of the global scope found. All zero: nothing is filed. No Structure has the number zero, so such a record misses without a test of its own.
+// Reads and stores of one name have a record each, so an inline store meets only a location that a store filed.
+struct GlobalBinding {
+    // Not zero: the value, which nothing has replaced since it was filed.
+    EncodedJSValue constant;
+    // Of the global object when the location was filed. Where script bindings are seen, compiled code compares the two as one 64-bit word.
+    uint32_t structureID;
+    uint32_t lexicalBindingEpoch;
+    // Negative: the offset in bytes from the global object's butterfly. Positive: the address of a variable or of inline storage.
+    int64_t location;
+};
+static_assert(sizeof(GlobalBinding) == 24);
+static_assert(!OBJECT_OFFSETOF(GlobalBinding, constant) && OBJECT_OFFSETOF(GlobalBinding, structureID) == 8 && OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch) == 12 && OBJECT_OFFSETOF(GlobalBinding, location) == 16);
 
 struct CounterWords {
     static constexpr ptrdiff_t offsetOfValue(RuntimeCounterID counter) { return static_cast<ptrdiff_t>(static_cast<size_t>(counter) * sizeof(uint64_t)); }
 
     uint64_t values[numberOfRuntimeCounters];
     uint64_t* branchCounts;
+    // In a program that counts branches: what its stubs and its code allocate, every cell on every path. See ExactAllocationCounts.
+    uint64_t* allocationCounts;
+    // One record per GlobalBindingID, in zeroed pages. Null in a program that binds no name. Written once, before compiled code runs.
+    GlobalBinding* globalBindings;
 };
 static_assert(!OBJECT_OFFSETOF(CounterWords, values));
 
+// Of literalStrings and keyCells one table each exists: narrow references, or whole pointers in a program with wide references.
+// A key cell has the dense number that placement gives to an identifier that a KeyConstant names.
 struct ConstantCellWords {
+    // Where a stub makes the cell of a string constant itself: the allocator of such cells, and the cards of the string cells.
+    void* stringAllocator;
+    uint8_t* cardsOfStringCells;
+    // Where the headers of constants are made whose text has none in the image: the place of the next one, the end, and the whole stretch. See ProgramStrings::tryCreateHeader().
+    // All zero in every instance but the first of the process.
+    uint8_t* nextStringHeader;
+    uint8_t* endOfStringHeaders;
+    uint8_t* startOfStringHeaders;
+    uint64_t sizeOfStringHeaders;
     RememberedSlot<JSCell*>* wideStringCells;
-    JSCell** literalStrings;
+    uint32_t* literalStrings;
+    JSCell** wideLiteralStrings;
     uint64_t* literalStringCache;
-    JSCell** keyCells;
+    uint32_t* keyCells;
+    JSCell** wideKeyCells;
+    // The strings that `name` of a function answered lately. A word has the position of the name in ProgramTables::functionNames() plus one, and above it the cell.
+    // Its place is the position modulo the number of words. Cleared at each collection. Null in a program with wide references.
+    static constexpr uint32_t numberOfCachedFunctionNames = 256;
+    uint64_t* functionNameCache;
+    // What `name` answers for a function that ProgramTables::functionNameGroups() gives no entry: its name is the string with the number 0. In nearly every program that is the empty string,
+    // and this is the engine's. Null where it has text: `new Function("..")` with constant text comes first in a program, and so does "anonymous".
+    JSCell* nameOfFunctionsWithoutEntry;
     JSCell** bigIntCells;
 };
 

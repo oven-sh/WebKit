@@ -242,7 +242,7 @@ void SectionBuilder::numberSymbols()
 {
     for (uint8_t charSizeIndex = 0; charSizeIndex < numberOfCharSizes; ++charSizeIndex) {
         for (uint32_t regExp = 0; regExp < m_regExps.size(); ++regExp) {
-            if (m_regExps[regExp].form == RegExpRecordForm::Code)
+            if (m_regExps[regExp].form == RegExpRecordForm::Code && m_regExps[regExp].code[charSizeIndex])
                 m_bodies.append({ numberUnit(*m_regExps[regExp].code[charSizeIndex], regExp), regExp, charSizeIndex });
         }
     }
@@ -442,7 +442,7 @@ size_t SectionBuilder::formGroup(size_t firstBody)
 bool SectionBuilder::addFailureRoutine()
 {
     auto withoutCode = std::ranges::find_if(m_regExps, [](const CompiledRegExp& regExp) {
-        return regExp.form != RegExpRecordForm::Code;
+        return regExp.form != RegExpRecordForm::Code || !regExp.code[0] || !regExp.code[1];
     });
     if (withoutCode == m_regExps.end())
         return true;

@@ -32,8 +32,8 @@ namespace JSC { namespace AOT {
 
 static StringID writtenNameString(const ProgramTables& tables, FunctionID function)
 {
-    ASSERT(function.index() < tables.functionNames().size());
-    return StringID(tables.functionNames()[function.index()]);
+    ASSERT(function.index() < tables.numberOfFunctions());
+    return StringID(tables.nameOfFunction(function.index()));
 }
 
 static ASCIILiteral initialNamePrefix(FunctionKindData kind)
@@ -75,8 +75,7 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
 {
     if (functionKindData(function).hasInitialNamePrefix())
         return jsString(vm, initialNameProperty(function));
-    StringID name = writtenNameString(state.tables, function);
-    return hasWrittenName(*Image::current(), name) ? state.strings->string(vm, name) : jsEmptyString(vm);
+    return state.strings->writtenNameOfFunction(vm, function);
 }
 
 static bool isBoundFunction(FunctionID function)
@@ -122,23 +121,6 @@ static bool standsForEveryFrameOfItsFunction(JSObject* closure)
     return usesOwnPropertiesForStackTraceName(closure) && !captureCountsOf(*functionOf(closure)).captures;
 }
 
-void didStoreDisplayName(VM& vm, JSObject* closure)
-{
-    FunctionID closureFunction = *functionOf(closure);
-    if (isBoundFunction(closureFunction))
-        return;
-    FunctionTables& tables = FunctionTables::of(vm);
-    FunctionID sourceFunction = sourceFunctionOf(closureFunction);
-    Locker locker { tables.namesLock };
-    auto& entry = tables.closuresWithDisplayName.add(sourceFunction, FunctionTables::ClosureWithDisplayName { }).iterator->value;
-    JSObject* previous = entry.closure.get();
-    if (previous != closure) {
-        entry.isOneOfSeveral |= !!previous;
-        entry.closure = Weak<JSObject>(closure);
-    }
-    tables.hasDisplayNames.store(true, std::memory_order_relaxed);
-}
-
 static JSValue ownDisplayNameValue(VM& vm, JSObject* closure)
 {
     UniquedStringImpl* uid = vm.propertyNames->displayName.impl();
@@ -154,24 +136,63 @@ static JSValue ownDisplayNameValue(VM& vm, JSObject* closure)
     return closure->getDirect(offset);
 }
 
-static String singleClosureDisplayName(VM& vm, FunctionID function)
+static String ownDisplayNameText(VM& vm, JSObject* closure)
+{
+    JSValue value = ownDisplayNameValue(vm, closure);
+    if (!value || !value.isString())
+        return String();
+    String text = asString(value)->tryGetValueWithoutGC();
+    return text.isEmpty() ? String() : text;
+}
+
+void didChangeDisplayName(VM& vm, JSObject* closure)
+{
+    FunctionID closureFunction = *functionOf(closure);
+    if (isBoundFunction(closureFunction) || !standsForEveryFrameOfItsFunction(closure))
+        return;
+    FunctionTables& tables = FunctionTables::of(vm);
+    FunctionID sourceFunction = sourceFunctionOf(closureFunction);
+    auto* classObject = dynamicDowncast<Closure>(closure);
+    bool isClassObject = classObject && classObject->classData();
+    String text = isClassObject ? String() : ownDisplayNameText(vm, closure).isolatedCopy();
+    bool mayHaveDisplayName = isClassObject || !text.isNull();
+    Locker locker { tables.namesLock };
+    if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
+        return;
+    auto& entry = tables.displayNames.add(sourceFunction, FunctionTables::DisplayName { }).iterator->value;
+    if (entry.isOneOfSeveral)
+        return;
+    if (entry.functionObject && entry.functionObject != closure) {
+        // A frame does not say which of the two runs in it.
+        if (mayHaveDisplayName) {
+            entry = { };
+            entry.isOneOfSeveral = true;
+        }
+        return;
+    }
+    entry.functionObject = closure;
+    entry.text = WTF::move(text);
+    if (isClassObject) {
+        entry.stateOfClassObject = &classObject->state();
+        entry.constructorOfClass = closureFunction;
+    }
+    tables.hasDisplayNames.store(true, std::memory_order_relaxed);
+}
+
+static String displayNameInFrames(VM& vm, FunctionID function)
 {
     FunctionTables& tables = FunctionTables::of(vm);
     if (!tables.hasDisplayNames.load(std::memory_order_relaxed)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
     Locker locker { tables.namesLock };
-    auto entry = tables.closuresWithDisplayName.find(sourceFunction);
-    if (entry == tables.closuresWithDisplayName.end() || entry->value.isOneOfSeveral)
+    auto entry = tables.displayNames.find(sourceFunction);
+    if (entry == tables.displayNames.end() || entry->value.isOneOfSeveral)
         return String();
-    JSObject* closure = entry->value.closure.get();
-    if (!closure || !standsForEveryFrameOfItsFunction(closure))
-        return String();
-    JSValue value = ownDisplayNameValue(vm, closure);
-    if (!value || !value.isString())
-        return String();
-    String displayName = asString(value)->tryGetValueWithoutGC();
-    return displayName.isEmpty() ? String() : displayName;
+    if (!entry->value.stateOfClassObject)
+        return entry->value.text.isolatedCopy();
+    JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
+    return classObject == entry->value.functionObject ? ownDisplayNameText(vm, asObject(classObject)) : String();
 }
 
 static String functionNameAsWritten(FunctionID function)
@@ -183,6 +204,13 @@ static String functionNameAsWritten(FunctionID function)
     return kind.callable() == CallableKind::Bound ? makeString("bound "_s, written) : written;
 }
 
+// The engine names a frame by the property `name` that the function object got when the literal was evaluated, "get " and "set " included. The frame of a generator has no function object to ask.
+static String nameInFramesOfFunctionNamedBySymbol(FunctionID function)
+{
+    FunctionID source = sourceFunctionOf(function);
+    return functionKindData(source).isGenerator ? emptyString() : initialNameProperty(source);
+}
+
 String functionName(VM& vm, FunctionID function, NameForm form)
 {
     switch (form) {
@@ -191,8 +219,10 @@ String functionName(VM& vm, FunctionID function, NameForm form)
     case NameForm::InFrames:
         if (String name = nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
             return name;
-        if (String displayName = singleClosureDisplayName(vm, function); !displayName.isNull()) [[unlikely]]
+        if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
             return displayName;
+        if (FunctionDescription(function).isNamedBySymbol()) [[unlikely]]
+            return nameInFramesOfFunctionNamedBySymbol(function);
         return functionNameAsWritten(function);
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -258,15 +288,20 @@ JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
     auto texts = tables.functionTexts();
     if (texts.empty())
         return nullptr;
+    VM& vm = globalObject->vm();
+    FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
+    if (auto found = answered.find(function); found != answered.end()) {
+        if (JSString* text = found->value.get())
+            return text;
+    }
     std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
     auto entry = std::ranges::lower_bound(entries, function.index(), { }, &FunctionTextEntry::function);
     if (entry == entries.end() || entry->function != function.index())
         return nullptr;
-    VM& vm = globalObject->vm();
     std::span bytes { tables.at<Latin1Character>(texts[0].textOffset) + entry->start, entry->end - entry->start };
-    if (charactersAreAllASCII(bytes)) [[likely]]
-        return jsOwnedString(vm, StringImpl::createWithoutCopying(bytes));
-    return jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
+    JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
+    answered.set(function, Weak<JSString>(text));
+    return text;
 }
 
 } } // namespace JSC::AOT

@@ -1,4 +1,4 @@
-# A declared function is copied into its only call site whatever its size up to MaxOnlyCallSiteBytes: the site is a call by value when the call graph is built
+# A declared function over the budget stays a function, at its only call site as at two: whether the body would go with the copy is not known while callers are optimized
 # RUN: pipeline CheckPlacement
 # RUN(TWICE): pipeline CheckPlacement
 # RUN(VALUE): pipeline CheckPlacement
@@ -25,9 +25,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 # CHECK-LABEL: function f0 name="main"
-# CHECK-NOT: function=f1
-# CHECK-COUNT-16: = Mul
-# CHECK-NOT: function=f1
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-NOT: = Mul
+# CHECK: Return
 # TWICE-LABEL: function f0 name="main"
 # TWICE: = CallDirect {{*}} function=f2
 # TWICE: = CallDirect {{*}} function=f2

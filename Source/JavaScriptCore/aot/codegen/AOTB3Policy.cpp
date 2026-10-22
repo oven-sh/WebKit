@@ -29,12 +29,15 @@ namespace JSC { namespace AOT {
 
 static constexpr unsigned minCasesForJumpTableInConstantData = 7;
 static constexpr unsigned maxBytesAllocatedBeforeStackCheck = 4 * KB;
+// With this much the code of a large program is no larger than with a record in every frame: the functions that shrink make up for those that grow.
+static constexpr unsigned maxBytesAddedToHotFunctionWithoutFrameRecord = 96;
+static constexpr unsigned maxBytesAddedToWarmFunctionWithoutFrameRecord = 16;
 
 static_assert(maxBytesAllocatedBeforeStackCheck + maxStackUsedWithoutCheck < minimumReservedZoneSize);
 
-static constexpr uint32_t trapReach = FaultSite::reach - JSValue::ValueUndefined;
+static constexpr uint32_t trapReach = FaultSite::reach - (undefinedCell32 << cell32Shift);
 
-static_assert(JSValue::ValueNull < JSValue::ValueUndefined, "a trapping access faults for these two bases");
+static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueUndefined == undefinedCell32, "a trapping access faults for these two bases, and for what these two words decode to");
 
 #if CPU(X86_64)
 
@@ -48,6 +51,28 @@ static std::optional<B3::PinnedConstant> findPinnedConstant(uint64_t bits)
         return B3::PinnedConstant { .reg = instanceGPR, .offset = static_cast<int32_t>(AOT_INSTANCE_OFFSET(notCellMask)), .replacesImmediates = false };
     if (bits == ~static_cast<uint64_t>(JSValue::ValueUndefined))
         return B3::PinnedConstant { .reg = instanceGPR, .offset = static_cast<int32_t>(AOT_INSTANCE_PREFIX_OFFSET(notUndefinedOrNullMask)), .replacesImmediates = true };
+    // Three vector instructions make 1 or NaN in a register, and ten bytes any of the others. An operand in memory costs no instruction and four bytes.
+    struct Constant {
+        uint64_t bits;
+        ptrdiff_t offset;
+    };
+    static constexpr Constant constants[] = {
+        { std::bit_cast<uint64_t>(1.0), AOT_INSTANCE_PREFIX_OFFSET(one) },
+        { PNaNAsBits, AOT_INSTANCE_PREFIX_OFFSET(pureNaN) },
+        { static_cast<uint64_t>(JSValue::DoubleEncodeOffset), AOT_INSTANCE_PREFIX_OFFSET(doubleEncodeOffset) },
+        { static_cast<uint64_t>(JSValue::NumberTag | 1), AOT_INSTANCE_PREFIX_OFFSET(boxedOne) },
+        { static_cast<uint64_t>(undefinedInteger), AOT_INSTANCE_PREFIX_OFFSET(undefinedInteger) },
+        { static_cast<uint64_t>(nullInteger), AOT_INSTANCE_PREFIX_OFFSET(nullInteger) },
+        { static_cast<uint64_t>(absentInteger), AOT_INSTANCE_PREFIX_OFFSET(absentInteger) },
+        { undefinedDouble, AOT_INSTANCE_PREFIX_OFFSET(undefinedDouble) },
+        { nullDouble, AOT_INSTANCE_PREFIX_OFFSET(nullDouble) },
+        { absentDouble, AOT_INSTANCE_PREFIX_OFFSET(absentDouble) },
+        { static_cast<uint64_t>(std::numeric_limits<int64_t>::min()), AOT_INSTANCE_PREFIX_OFFSET(minInt64) },
+    };
+    for (const Constant& constant : constants) {
+        if (bits == constant.bits)
+            return B3::PinnedConstant { .reg = instanceGPR, .offset = static_cast<int32_t>(constant.offset), .replacesImmediates = false };
+    }
     return std::nullopt;
 }
 
@@ -111,6 +136,7 @@ static B3::OptimizationPolicy optimizationPolicyFor(const FunctionBackEndTraits&
     optimization.mergesAdjacentConstantStores = true;
     optimization.sinksValues = true;
     optimization.placesConstantsByFrequency = true;
+    optimization.mergesBlocksAfterForwardingJumps = true;
     return optimization;
 }
 
@@ -121,8 +147,8 @@ static B3::LoopPolicy loopPolicy()
     loops.foldsComparisonsWithBounds = true;
     loops.versions = true;
     loops.clampsLoopBounds = true;
-    loops.stripMinesPolls = true;
     loops.hoistsOnlyFromLikelyPaths = true;
+    loops.hoistsImmutableLoadsPastWrites = true;
     return loops;
 }
 
@@ -176,7 +202,7 @@ static B3::Air::LiveRangeSplitPolicy liveRangeSplitPolicy()
     return splitting;
 }
 
-static B3::Air::FramePolicy framePolicyFor(const FunctionBackEndTraits& traits)
+static B3::Air::FramePolicy framePolicyFor(const BuildContext& build, const FunctionBackEndTraits& traits)
 {
     B3::Air::FramePolicy frame;
     frame.emitsFrame = true;
@@ -189,6 +215,10 @@ static B3::Air::FramePolicy framePolicyFor(const FunctionBackEndTraits& traits)
     frame.mayPushSpillsAtFrameSetup = !traits.savesFrameOnSuspend;
     frame.ordersSlotsByUse = true;
     frame.prefersStackPointerAddresses = true;
+    // A saved frame is laid out around its record, and the stub that rejects a promise returns from the frame through it.
+    // The check of the registers that a stub preserves moves the stack pointer around the call.
+    frame.mayOmitFrameRecord = isX86_64() && !traits.savesFrameOnSuspend && !traits.rejectsOnThrow && !build.options().validatesBackEnd;
+    frame.maxBytesAddedWithoutFrameRecord = traits.isHot ? maxBytesAddedToHotFunctionWithoutFrameRecord : traits.isCold ? 0 : maxBytesAddedToWarmFunctionWithoutFrameRecord;
     return frame;
 }
 
@@ -197,7 +227,9 @@ static B3::Air::LayoutPolicy layoutPolicyFor(const FunctionBackEndTraits& traits
     B3::Air::LayoutPolicy layout;
     layout.movesBlocksWithoutSuccessorsToEnd = true;
     layout.placesRareBlocksInGaps = true;
-    layout.placesRareBlocksAfterGuards = traits.isCold;
+    // Most calls of a large program enter functions that are taken for cold. Behind its guard a rare block makes the usual way jump at every guard, which only code that runs once can afford.
+    layout.placesRareBlocksAfterGuards = traits.runsOnce;
+    layout.makesGapsForRareBlocks = traits.isCold && !traits.runsOnce;
     layout.ordersBlocksByEdgeFrequency = true;
     layout.recordsRareCodeStart = true;
     layout.mergesIdenticalBlocks = true;
@@ -214,6 +246,7 @@ static B3::Air::PeepholePolicy peepholePolicy()
     peepholes.reusesConditionFlags = true;
     peepholes.pairsMemoryAccesses = true;
     peepholes.resequencesMovesBeforePatches = true;
+    peepholes.emitsShufflesInPairOrder = true;
     peepholes.trapReach = trapReach;
     return peepholes;
 }
@@ -243,7 +276,7 @@ B3::Policy b3PolicyFor(const BuildContext& build, const FunctionBackEndTraits& t
 
     policy.air.registers = registerPolicyFor(traits);
     policy.air.splitting = liveRangeSplitPolicy();
-    policy.air.frame = framePolicyFor(traits);
+    policy.air.frame = framePolicyFor(build, traits);
     policy.air.layout = layoutPolicyFor(traits);
     policy.air.peepholes = peepholePolicy();
 

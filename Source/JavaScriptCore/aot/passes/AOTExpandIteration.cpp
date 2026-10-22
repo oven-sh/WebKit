@@ -9,19 +9,41 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include <algorithm>
+#include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool hasIterationOperation(const Function& function)
+static_assert(std::ranges::all_of(allMembersOf<Opcode>, [](Opcode opcode) {
+    return removedByOf(opcode) != PassID::ExpandIteration || expandedOpcodes.contains(opcode);
+}));
+
+// A step of a for..in stays in the function for good: once it has its position there is nothing left to do for it. A run that finds no work computes no analysis but the set of opcodes, which the next pass asks for too.
+static OptionSet<ExpansionStep> findStepsWithWork(FunctionPassContext& pass)
 {
+    OptionSet<ExpansionStep> steps;
+    if (!pass.analyses.opcodesOfValues().intersects(expandedOpcodes))
+        return steps;
+
+    const Function& function = pass.function;
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
-            Opcode opcode = function.at(id).opcode;
-            if (removedByOf(opcode) == PassID::ExpandIteration || opcode == Opcode::ForInStep)
-                return true;
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::ForInStep && value.positionOperand())
+                continue;
+            steps.add(stepThatExpands(value.opcode));
         }
     }
-    return false;
+    return steps;
+}
+
+static bool hasOpen(const Function& function)
+{
+    return std::ranges::any_of(function.blocks, [&](const Block& block) {
+        return block.values.containsIf([&](ValueID id) {
+            return function.at(id).opcode == Opcode::IteratorOpen;
+        });
+    });
 }
 
 static Iteration createIteration(const Function& function, const UseLists& useLists, ValueID open)
@@ -54,9 +76,13 @@ static Iteration createIteration(const Function& function, const UseLists& useLi
     return iteration;
 }
 
+// The caller asks until nothing is left, so its last call comes right after the function has changed. That call answers without computing any analysis.
 Vector<Iteration> collectIterations(FunctionPassContext& pass)
 {
     const Function& function = pass.function;
+    if (!hasOpen(function))
+        return { };
+
     const CFG& cfg = pass.analyses.cfg();
     const UseLists& useLists = pass.analyses.useLists();
 
@@ -72,27 +98,35 @@ Vector<Iteration> collectIterations(FunctionPassContext& pass)
 
 PassOutcome expandIteration(FunctionPassContext& pass)
 {
-    if (!hasIterationOperation(pass.function))
+    OptionSet<ExpansionStep> steps = findStepsWithWork(pass);
+    if (steps.isEmpty())
         return PassOutcome::Unchanged;
 
     IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
     PassOutcome outcome = builder.emptyUnreachableBlocks() ? PassOutcome::Changed : PassOutcome::Unchanged;
-    outcome |= threadForInPositions(pass, builder);
-    outcome |= expandArrayIteratorSteps(pass, builder);
+    if (steps.contains(ExpansionStep::ForInPositions))
+        outcome |= threadForInPositions(pass, builder);
+    if (steps.contains(ExpansionStep::ArrayIteratorSteps))
+        outcome |= expandArrayIteratorSteps(pass, builder);
 
     Vector<ValueID> opensOfSpreads;
-    outcome |= expandSpreads(pass, builder, opensOfSpreads);
+    if (steps.contains(ExpansionStep::Spreads))
+        outcome |= expandSpreads(pass, builder, opensOfSpreads);
+    if (steps.contains(ExpansionStep::Iterations) || !opensOfSpreads.isEmpty())
+        outcome |= expandIterations(pass, builder, opensOfSpreads.span(), ExpandedIterations::All);
+    return outcome;
+}
 
-    for (;;) {
-        Vector<Iteration> iterations = collectIterations(pass);
-        if (iterations.isEmpty())
-            break;
-        Iteration& last = iterations.last();
-        if (opensOfSpreads.contains(last.open))
-            last.origin = IterationOrigin::Spread;
-        expandOneIteration(pass, builder, last);
-        outcome = PassOutcome::Changed;
-    }
+// Until an iteration is expanded its steps are unknown code, to the function and, through its effect summary, to every caller.
+// An iteration that needs no test has nothing to wait for: no pass can place its tests better or prove more about it.
+PassOutcome expandProvenIterations(FunctionPassContext& pass)
+{
+    if (!findStepsWithWork(pass).contains(ExpansionStep::Iterations))
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
+    PassOutcome outcome = builder.emptyUnreachableBlocks() ? PassOutcome::Changed : PassOutcome::Unchanged;
+    outcome |= expandIterations(pass, builder, { }, ExpandedIterations::OnlyProven);
     return outcome;
 }
 

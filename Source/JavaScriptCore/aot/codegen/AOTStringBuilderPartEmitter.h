@@ -25,14 +25,20 @@ public:
     void generateStringBuilderAppendValue(const ValueContext&);
 
 private:
-    void appendString(const OperationContext&, CellPointer builder, CellPointer string);
-    void appendViewOfString(const OperationContext&, CellPointer builder, CellPointer string, const CharacterView&, LBasicBlock byCall);
-    void appendView(CellPointer builder, const CharacterView&, LBasicBlock byCall);
-    void appendViewOrCall(CellPointer builder, const CharacterView&, LBasicBlock byCall, NOESCAPE const Invocable<void()> auto& appendByCall);
-    void appendConstant(const OperationContext&, CellPointer builder, StringID);
-    void appendDigits(const OperationContext&, CellPointer builder, Word32 value);
-    void appendNullish(const OperationContext&, CellPointer builder, Condition isUndefined);
-    void appendPrimitive(const OperationContext&, CellPointer builder, Boxed primitive);
+    struct Builder {
+        CellPointer storage;
+        const StringBuilderEmitter::StackBuilder* onStack { nullptr };
+    };
+
+    Builder builderOf(const ValueContext&);
+    void appendString(const OperationContext&, Builder, CellPointer string);
+    void appendView(Builder, const CharacterView&, LBasicBlock byCall);
+    void appendViewOrCall(Builder, const CharacterView&, LBasicBlock byCall, NOESCAPE const Invocable<void()> auto& appendByCall);
+    void appendConstant(const OperationContext&, Builder, StringID);
+    void appendDigits(const OperationContext&, Builder, Word32 value);
+    void appendNullish(const OperationContext&, Builder, Condition isUndefined);
+    void appendPrimitive(const OperationContext&, Builder, Boxed primitive, bool isOnRarePath = false);
+    void appendInWordsOrByCall(const OperationContext&, Builder, int32_t bytesWritten, NOESCAPE const Invocable<Pointer(Pointer cursor)> auto& write, NOESCAPE const Invocable<Boxed()> auto& box);
 };
 
 } } } // namespace JSC::AOT::Typed

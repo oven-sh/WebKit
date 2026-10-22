@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTAnalysisContext.h"
-#include "AOTGroupCallsByValue.h"
 #include "AOTPass.h"
 #include <wtf/Vector.h>
 
@@ -21,38 +20,28 @@ namespace Typed {
 class StringArena;
 class TypeArena;
 
-void createEntrypoints(ProgramEditor&, const OptimizationInputs&, const CallGroups&, BuildContext&);
+void createEntrypoints(ProgramEditor&, const OptimizationInputs&, BuildContext&);
 
 enum class EntrypointVariants : uint8_t { WithoutNewTarget, WithNewTarget, Both };
 
-EntrypointVariants entrypointVariantsOf(const Function& target);
+EntrypointVariants entrypointVariantsOf(const Program&, const Function& target);
+// A constructor function that does not read new.target has a second entrypoint too. `new` of a value enters it where the function is its own new.target:
+// it allocates the object with the layout of the function, as a `new` that names the function does, and returns what was constructed. It is handed no `this`.
+bool hasAllocatingConstructEntrypoint(const Program&, const Function& target);
 
 inline constexpr uint32_t callEntrypointParameter = 0;
 inline constexpr uint32_t constructEntrypointParameter = 1;
+inline constexpr uint32_t allocatingConstructEntrypointParameter = 2;
 
 struct GenericEntrypointRequest {
     FunctionID target;
     bool takesNewTarget { false };
+    bool allocatesThis { false };
     FunctionID constructEntrypoint;
-    FunctionID groupEntrypoint;
-    GenericCallers callers { GenericCallers::Unknown };
     bool isEnteredByHost { false };
 };
 
 Function createGenericEntrypoint(const AnalysisContext&, TypeArena&, StringArena&, const GenericEntrypointRequest&);
-
-struct GroupSignature {
-    CalleeSetID members;
-    TypeID thisType;
-    Vector<TypeID, 4> parameters;
-    TypeID result;
-};
-
-// MadeUnlessCallerTests: for an entrypoint that any call by value enters. A tail call may have entered it, and a frame that stays behind for the test is then a frame per call of the chain.
-enum class EntrypointResultTest : uint8_t { MadeByEntrypoint, MadeUnlessCallerTests, LeftToReceiver };
-
-GroupSignature createGroupSignature(const Program&, const FlowResults&, TypeArena&, const CallGroups&, const CallGroup&);
-Function createGroupEntrypoint(const AnalysisContext&, TypeArena&, FunctionID target, const GroupSignature&, EntrypointResultTest);
 
 } } } // namespace JSC::AOT::Typed
 

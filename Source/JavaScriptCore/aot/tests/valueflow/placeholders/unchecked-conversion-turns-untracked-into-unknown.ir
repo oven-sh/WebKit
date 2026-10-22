@@ -1,0 +1,85 @@
+# let value: any = circle or square or triangle; take(value as Shape)    let shape: Shape = circle or square or triangle; keep(shape)    let only: any = circle; one(only as Shape)
+# The first two variables hold more layouts than the analysis follows in one set, so the untracked object stands for them.
+# A conversion with a cause is an unsound edge: nothing says that what arrives lies inside the type. Behind it the untracked object cannot be taken for an object of the family, so it becomes the unknown object, and nothing is proven there.
+# The objects are taken for what they may not be, they are handed to nobody: what the circle holds is not entered. An object that the analysis follows passes the conversion as it is.
+# A conversion without a cause is one that the families cover. It is a copy: the untracked object passes, and the type of the parameter behind it puts the family in its place.
+# TypeValues resolves every Convert of a program as read before the analysis runs. Text in the form of the optimization stage is typed and verified and nothing resolves it, so here the rule of the operation is seen by itself. In that form a type lists its layouts one by one: only text as read takes `L0` for its family.
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 2
+# STATISTIC: LayoutsOutsideFamily = 0
+# RUN: valueflow-families
+# CHECK: parameter positions 3 layout-outside 0 unknown-object 1 object-without-layout 0 no-object 0 untracked-object 0
+# RUN(VALUES): valueflow-why values=f0:v9 values=f0:v18 values=f0:v21
+# VALUES: values=f0:v9
+# VALUES: operand 0 {{*}} untracked
+# VALUES: result
+# VALUES-NOT: untracked
+# VALUES: unknown
+# VALUES-NOT: untracked
+# VALUES: values=f0:v18
+# VALUES: operand 2
+# VALUES-NOT: unknown
+# VALUES: untracked
+# VALUES: values=f0:v21
+# VALUES: operand 0 {{*}} 2 members: primitive{{*}} [[circle]]@f0
+# VALUES-NEXT: result {{*}} 2 members: primitive{{*}} [[circle]]@f0
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 name="Triangle" supertypes=[L0]
+variable g0 name="value" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="shape" module=m0 declared={type=undefined|L0|L1|L2|L3} initialization=Undefined
+variable g2 name="only" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="go" mode=Strict
+    v3 = NewObject layout=L2 fields=[]
+    v4 = NewObject layout=L3 fields=[]
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v4 variable=g0
+    v8 = GetModuleVariable variable=g0
+    v9 = Convert v8 declared={type=L0|L1|L2|L3} illTypedCause=FromLooseType
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v9
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v3 variable=g1
+    PutModuleVariable v4 variable=g1
+    v15 = GetModuleVariable variable=g1
+    v16 = Convert v15 declared={type=undefined|L0|L1|L2|L3}
+    v17 = NewClosure function=f3
+    v18 = Call v17, -, v16
+    PutModuleVariable v0 variable=g2
+    v20 = GetModuleVariable variable=g2
+    v21 = Convert v20 declared={type=L0|L1|L2|L3} illTypedCause=FromLooseType
+    v22 = NewClosure function=f4
+    v23 = Call v22, -, v21
+    Return
+}
+function f1 name="held" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="take" module=m0 parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3):
+    Return
+}
+function f3 name="keep" module=m0 parameters=[{type=undefined|L0|L1|L2|L3}] results=[{type=anything}] {
+  b0(v0: undefined|L0|L1|L2|L3):
+    Return
+}
+function f4 name="one" module=m0 parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3):
+    Return
+}

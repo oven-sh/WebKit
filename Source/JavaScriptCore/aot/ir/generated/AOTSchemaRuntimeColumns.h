@@ -27,6 +27,8 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::ScopeHasBinding;
     case Opcode::NewObject:
         return RuntimeOperation::AllocateSlow;
+    case Opcode::NewDictionary:
+        return RuntimeOperation::NewDictionary;
     case Opcode::NewArray: case Opcode::CreateRest:
         return RuntimeOperation::NewArray;
     case Opcode::AppendElement:
@@ -71,12 +73,18 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::DefineField;
     case Opcode::DefineGetter: case Opcode::DefineSetter:
         return RuntimeOperation::DefineAccessor;
+    case Opcode::TryDefineLiveBinding:
+        return RuntimeOperation::TryDefineLiveBinding;
+    case Opcode::TryReExportFields:
+        return RuntimeOperation::TryReExportFields;
     case Opcode::SetFunctionName:
         return RuntimeOperation::SetFunctionName;
     case Opcode::SetLiteralPrototype:
         return RuntimeOperation::SetLiteralPrototype;
     case Opcode::CopyDataProperties:
         return RuntimeOperation::CopyDataProperties;
+    case Opcode::CopyObject:
+        return RuntimeOperation::CopyObject;
     case Opcode::GetSuperBase:
         return RuntimeOperation::GetSuperBase;
     case Opcode::SuperGet:
@@ -147,8 +155,6 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::ToObject;
     case Opcode::ToThis:
         return RuntimeOperation::ToThis;
-    case Opcode::Claim:
-        return RuntimeOperation::EnforceType;
     case Opcode::Construct:
         return RuntimeOperation::Construct;
     case Opcode::CallList:
@@ -195,6 +201,8 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::ImportModule;
     case Opcode::RequireModule:
         return RuntimeOperation::RequireModule;
+    case Opcode::RecordRequire:
+        return RuntimeOperation::RecordRequire;
     case Opcode::ResolveModule:
         return RuntimeOperation::ResolveModule;
     case Opcode::ThrowModuleFailure:
@@ -251,20 +259,28 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::KeyConstant;
     case Opcode::ReportMismatch:
         return RuntimeOperation::ReportMismatch;
-    case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
         return RuntimeOperation::MaterializeDeferredClosure;
     case Opcode::PutSlotOrAdd:
         return RuntimeOperation::DidCreateField;
+    case Opcode::TryFinishBirth:
+        return RuntimeOperation::TryFinishBirth;
+    case Opcode::MakeBorrowedObject:
+        return RuntimeOperation::MakeFlattenedObjectAt;
     case Opcode::PropHasOwn:
-        return RuntimeOperation::HasOwnProperty;
-    case Opcode::CopyObject:
-        return RuntimeOperation::CopyObject;
+        return RuntimeOperation::HasOwnByIdAndCache;
+    case Opcode::GetGlobalBinding:
+        return RuntimeOperation::GetGlobalBinding;
+    case Opcode::SetGlobalBinding:
+        return RuntimeOperation::SetGlobalBinding;
     case Opcode::PutArrayElement:
         return RuntimeOperation::ArrayPutAtIndex;
     case Opcode::AppendElements:
         return RuntimeOperation::AppendElements;
     case Opcode::ReserveArrayCapacity:
         return RuntimeOperation::ReserveArrayCapacity;
+    case Opcode::ConvertToDoubleStorage:
+        return RuntimeOperation::ConvertToDoubleStorage;
     case Opcode::GetMyArgumentByVal:
         return RuntimeOperation::GetFromArguments;
     case Opcode::MaterializeEnvironment:
@@ -279,6 +295,10 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::NewArgumentList;
     case Opcode::SharedRegExpLiteral:
         return RuntimeOperation::SharedRegExpLiteral;
+    case Opcode::IsBuiltinLocationUnchanged:
+        return RuntimeOperation::ArmBuiltinLocation;
+    case Opcode::GetBuiltinValue:
+        return RuntimeOperation::FillBuiltinValue;
     case Opcode::DestructureIterable:
         return RuntimeOperation::DestructureIterable;
     case Opcode::EnumeratorGetByVal:
@@ -289,10 +309,14 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::CreateAsyncFromSyncIterator;
     case Opcode::ThrowNotIterable:
         return RuntimeOperation::ThrowNotIterable;
+    case Opcode::ReserveCollectionCapacity:
+        return RuntimeOperation::ReserveCollectionCapacity;
     case Opcode::NewGenerator: case Opcode::NewAsyncGenerator:
         return RuntimeOperation::NewGenerator;
+    case Opcode::TakeGeneratorPrototype:
+        return RuntimeOperation::TakeGeneratorPrototype;
     case Opcode::StepAsyncGenerator:
-        return RuntimeOperation::StepAsyncGenerator;
+        return RuntimeOperation::AsyncIteratorStep;
     case Opcode::AwaitBySavingFrame:
         return RuntimeOperation::SaveFrameAndAwait;
     case Opcode::AwaitCallBySavingFrame:
@@ -305,6 +329,10 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::PromiseAll;
     case Opcode::HasInPrototypeChain:
         return RuntimeOperation::DefaultHasInstance;
+    case Opcode::BeginModuleEvaluation:
+        return RuntimeOperation::BeginModuleEvaluation;
+    case Opcode::AbandonModuleEvaluation:
+        return RuntimeOperation::AbandonModuleEvaluation;
     case Opcode::StringBuilderBegin:
         return RuntimeOperation::StringBuilderBegin;
     case Opcode::StringBuilderAppend: case Opcode::StringBuilderAppendValue:
@@ -405,6 +433,10 @@ constexpr std::optional<RuntimeOperation> runtimeOf(Opcode opcode)
         return RuntimeOperation::StringBuilderAppendString;
     case Opcode::StringBuilderAppendStringRange:
         return RuntimeOperation::StringBuilderAppendStringRange;
+    case Opcode::MapGetByKeyParts:
+        return RuntimeOperation::MapGetByKeyParts;
+    case Opcode::HasByKeyParts:
+        return RuntimeOperation::HasByKeyParts;
     default:
         return std::nullopt;
     }

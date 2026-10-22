@@ -1,15 +1,15 @@
-# The arms of a dispatch are tested by weight: predicted members first, then the arm with more members, then the smaller layout
+# The arms of a dispatch are tested by weight: expected members first, then the arm with more members, then the smaller layout
 # FORM: Prepared
 # RUN: pass ResolveCalls
 # STATISTIC: CallsResolved = 4
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 kind=Instance name="Animal" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f1 mutability=Fixed}]}
-layout L1 kind=Instance name="Dog" predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f3 mutability=Fixed}]}
-layout L2 kind=Instance name="Cat" predictedBase=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
-layout L3 kind=Instance name="Puppy" predictedBase=L1 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f6 mutability=Fixed}]}
-layout L4 kind=Instance name="Hound" predictedBase=L1 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L0 kind=Instance name="Animal" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Dog" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f3 mutability=Fixed}]}
+layout L2 kind=Instance name="Cat" base=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="Puppy" base=L1 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f6 mutability=Fixed}]}
+layout L4 kind=Instance name="Hound" base=L1 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 function f0 name="Animal" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
@@ -45,13 +45,13 @@ function f8 name="more-members-first" parameters=[{type=L0|L1|L2|L3|L4}] results
 # CHECK: ({{*}}: L3):
 # CHECK-NEXT: = CallDirect {{*}} function=f6
 # CHECK-NOT: frequency=Unlikely
-function f9 name="predicted-member-first" parameters=[{type=L0|L1|L2|L3|L4 predicted=L3}] results=[{type=anything}] {
+function f9 name="expected-member-first" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
   b0(v0: L0|L1|L2|L3|L4 ~ L3):
     v1 = PropGet v0 key="speak"
     v2 = Call v1, v0 calleeKey="speak"
     Return v2
 }
-# CHECK-LABEL: function f9 name="predicted-member-first"
+# CHECK-LABEL: function f9 name="expected-member-first"
 # CHECK: = TypeTest v0 testedType=L3
 # CHECK: ({{*}}: L3):
 # CHECK-NEXT: = CallDirect {{*}} function=f6
@@ -61,13 +61,13 @@ function f9 name="predicted-member-first" parameters=[{type=L0|L1|L2|L3|L4 predi
 # CHECK-NEXT: = CallDirect {{*}} function=f1
 # CHECK: ({{*}}: L1|L4) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect {{*}} function=f3
-function f10 name="two-predicted-arms" parameters=[{type=L0|L1|L2|L3|L4 predicted=L3|L4}] results=[{type=anything}] {
+function f10 name="two-expected-arms" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
   b0(v0: L0|L1|L2|L3|L4 ~ L3|L4):
     v1 = PropGet v0 key="speak"
     v2 = Call v1, v0 calleeKey="speak"
     Return v2
 }
-# CHECK-LABEL: function f10 name="two-predicted-arms"
+# CHECK-LABEL: function f10 name="two-expected-arms"
 # CHECK: = TypeTest v0 testedType=L1|L4
 # CHECK: ({{*}}: L1|L4{{*}}):
 # CHECK-NEXT: = CallDirect {{*}} function=f3

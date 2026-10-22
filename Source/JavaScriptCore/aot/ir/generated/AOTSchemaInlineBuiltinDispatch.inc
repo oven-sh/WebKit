@@ -28,6 +28,8 @@
     case InlineBuiltin::ObjectHasOwn: emitter<OwnPropertyBuiltinEmitter>().generateObjectHasOwn(call); break;
     case InlineBuiltin::ObjectPropertyIsEnumerable: emitter<OwnPropertyBuiltinEmitter>().generateObjectPropertyIsEnumerable(call); break;
     case InlineBuiltin::OwnPropertyDescriptorFields: emitter<OwnPropertyBuiltinEmitter>().generateOwnPropertyDescriptorFields(call); break;
+    case InlineBuiltin::ObjectValues: emitter<OwnPropertyBuiltinEmitter>().generateObjectValues(call); break;
+    case InlineBuiltin::ObjectEntries: emitter<OwnPropertyBuiltinEmitter>().generateObjectEntries(call); break;
     case InlineBuiltin::ObjectCreate: emitter<ObjectBuiltinEmitter>().generateObjectCreate(call); break;
     case InlineBuiltin::GetPrototypeOf: emitter<ObjectBuiltinEmitter>().generateGetPrototypeOf(call); break;
     case InlineBuiltin::SetPrototypeOf: emitter<ObjectBuiltinEmitter>().generateSetPrototypeOf(call); break;
@@ -37,6 +39,7 @@
     case InlineBuiltin::ObjectIs: emitter<ObjectBuiltinEmitter>().generateObjectIs(call); break;
     case InlineBuiltin::ReturnThis: emitter<ObjectBuiltinEmitter>().generateReturnThis(call); break;
     case InlineBuiltin::NewMap: emitter<HashTableBuiltinEmitter>().generateNewMap(call); break;
+    case InlineBuiltin::NewSet: emitter<HashTableBuiltinEmitter>().generateNewSet(call); break;
     case InlineBuiltin::MapGet: emitter<HashTableBuiltinEmitter>().generateMapGet(call); break;
     case InlineBuiltin::MapHas: emitter<HashTableBuiltinEmitter>().generateMapHas(call); break;
     case InlineBuiltin::SetHas: emitter<HashTableBuiltinEmitter>().generateSetHas(call); break;

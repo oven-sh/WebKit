@@ -448,7 +448,7 @@ static void appendFunctionWithAccesses(StringBuilder& text, unsigned function)
 {
     text.append("function f"_s, function, " name=\"f"_s, function, "\" parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
     text.append("    v1 = PropGet v0 key=\"a\"\n    v2 = PropGet v1 key=\"b\"\n    v3 = PropGet v2 key=\"c\"\n"_s);
-    text.append("    v4 = Integer integer="_s, function, "\n    v5 = Call v3, v2, v4, v1\n    Return v5\n}\n"_s);
+    text.append("    v4 = Integer integer="_s, function, "\n    v5 = Call v3, v2, v4, v1, v1, v1, v1, v1, v1, v1, v1\n    Return v5\n}\n"_s);
 }
 
 static String programUsingSymbolSpaces()
@@ -477,8 +477,12 @@ static BuiltImage buildWholeProgram(ParsedProgram& parsed)
     std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), context);
     AOT_TEST_CHECK(pipeline && pipeline->isComplete);
     CodeGenerationPlan plan = prepareCodeGeneration(*pipeline, context);
-    GeneratedCode generated = generateAllCode(createCodeGenerationInputs(*pipeline, plan), pipeline->program->types, context);
-    Typed::EncodedProgramTables tables = Typed::encodeProgramTables({ *pipeline, plan.instanceSizes, plan.stringConstants }, context);
+    GeneratedCode generated = generateAllCode(createCodeGenerationInputs(*pipeline, plan), *pipeline->program, context);
+    for (const CompiledCode& code : generated.functions) {
+        const Typed::Function& function = pipeline->program->at(code.function);
+        AOT_TEST_CHECK(function.bodyIsReleased && function.hasBody() && function.blocks.isEmpty() && function.values.isEmpty());
+    }
+    Typed::EncodedProgramTables tables = Typed::encodeProgramTables({ *pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
     AOT_TEST_CHECK(!context.diagnostics().hasErrors());
 
     BuiltImage built = buildImage(ImageInputs {
@@ -502,22 +506,27 @@ static BuiltImage buildWholeProgram(ParsedProgram& parsed)
 static void testSymbolSpacesOfProgram()
 {
     using enum SymbolSpace;
-    ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = Wire::HeatOverride::EverythingIsCold });
-    BuiltImage built = buildWholeProgram(parsed);
-
     WTF::BitSet<numberOfSymbolSpaces> usedSpaces;
     auto addSpacesOf = [&](const Vector<Relocation>& relocations) {
         for (const Relocation& relocation : relocations)
             usedSpaces.set(static_cast<size_t>(relocation.space));
     };
-    for (const CompiledCode& function : built.functions)
-        addSpacesOf(function.body.relocations);
-    addSpacesOf(built.sharedCode.blob.code.relocations);
-    addSpacesOf(built.sharedCode.argumentThunks.code.relocations);
-    addSpacesOf(built.outlinedCode.sharedBodies.relocations);
-    addSpacesOf(built.outlinedCode.ownBodies.relocations);
-    for (SymbolSpace space : { Function, Stub, ArgumentThunk, OutlinedBody, Constant, JumpTable, SiteCache, RegExp })
+    // Cold code is outlined and asks a shared stub, which needs no cache of the site. Hot code names the cache of its site.
+    for (Wire::HeatOverride heat : { Wire::HeatOverride::EverythingIsCold, Wire::HeatOverride::EverythingIsHot }) {
+        ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = heat });
+        BuiltImage built = buildWholeProgram(parsed);
+        for (const CompiledCode& function : built.functions)
+            addSpacesOf(function.body.relocations);
+        addSpacesOf(built.sharedCode.blob.code.relocations);
+        addSpacesOf(built.sharedCode.argumentThunks.code.relocations);
+        addSpacesOf(built.outlinedCode.sharedBodies.relocations);
+        addSpacesOf(built.outlinedCode.ownBodies.relocations);
+    }
+    for (SymbolSpace space : { Function, Stub, ArgumentThunk, OutlinedBody, Constant, JumpTable, SiteCache, RegExp }) {
+        if (!usedSpaces.get(static_cast<size_t>(space)))
+            dataLogLn("no relocation names symbol space ", static_cast<size_t>(space));
         AOT_TEST_CHECK(usedSpaces.get(static_cast<size_t>(space)));
+    }
 }
 
 static constexpr ASCIILiteral programForOneInstance = "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
@@ -581,7 +590,10 @@ static void testRealmAfterCollectedRealm(LoadedProgram& program)
 
 static void testTwoRealmsHaveInstances(LoadedProgram& program)
 {
-    AOT_TEST_CHECK(Image::current()->programTables().flags & ProgramTables::mayRunInMultipleInstances);
+    // No built-in of Bun's starts a second instance in the VM of the program, so the compiler writes the flag for no program. The run time keeps the instances of one VM apart for a host that has such a built-in.
+    const ProgramTables& tables = Image::current()->programTables();
+    AOT_TEST_CHECK(!(tables.flags & ProgramTables::mayRunInMultipleInstances));
+    overwriteWordInImage(tables.flags, tables.flags | ProgramTables::mayRunInMultipleInstances);
     Instance* second = Instance::of(createRealmWithHostOf(program));
     AOT_TEST_CHECK(second);
     AOT_TEST_CHECK(second != &program.instance());
@@ -620,23 +632,32 @@ static void testLoadedImageHasNoWritablePage(LoadedProgram&)
 {
     const Image& image = *Image::current();
     uintptr_t start = std::bit_cast<uintptr_t>(&image.header());
-    uintptr_t codeStart = start + image.header().codeOffset;
     uintptr_t end = start + image.header().size;
-    AOT_TEST_CHECK(std::bit_cast<uintptr_t>(image.code().data()) == codeStart);
+    uintptr_t codeStart = std::bit_cast<uintptr_t>(image.code().data());
+    uintptr_t codeEnd = codeStart + image.header().size - image.header().codeOffset;
+    AOT_TEST_CHECK(codeEnd <= start || codeStart >= end);
 
     uintptr_t checkedEnd = start;
+    uintptr_t checkedCodeEnd = codeStart;
     bool isWritableAfterImage = false;
     for (const MappedPages& pages : readMappedPages()) {
+        AOT_TEST_CHECK(!pages.isWritable || !pages.isExecutable);
         if (pages.start <= end && end < pages.end)
             isWritableAfterImage = pages.isWritable;
+        if (pages.end > codeStart && pages.start < codeEnd) {
+            AOT_TEST_CHECK(pages.start <= checkedCodeEnd);
+            AOT_TEST_CHECK(pages.isExecutable);
+            checkedCodeEnd = pages.end;
+        }
         if (pages.end <= start || pages.start >= end)
             continue;
         AOT_TEST_CHECK(pages.start <= checkedEnd);
         AOT_TEST_CHECK(!pages.isWritable);
-        AOT_TEST_CHECK(pages.isExecutable == (pages.start >= codeStart));
+        AOT_TEST_CHECK(!pages.isExecutable);
         checkedEnd = pages.end;
     }
     AOT_TEST_CHECK(checkedEnd == end);
+    AOT_TEST_CHECK(checkedCodeEnd >= codeEnd);
 
     AOT_TEST_CHECK(isWritableAfterImage);
     auto* byteAfterImage = std::bit_cast<volatile uint8_t*>(end);

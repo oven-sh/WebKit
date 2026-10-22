@@ -1,6 +1,6 @@
 # A number that is read more often where the layout is known than through a set with a string keeps the representation of its own type. Members of a set that differ in it are groups of the agreement, and selection gives each group an access of its own
 # FORM: AsRead
-# OPTIONS: references=narrow only-passes=ResolveAccesses
+# OPTIONS: references=narrow only-passes=ResolveAccesses testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots accesses
 # RUN(PLACED): place accesses
 # STATISTIC: SharedSlots = 1
